@@ -53,7 +53,11 @@ def _deflate_negotiated(ws: ClientConnection) -> bool:
 
 
 def _closed_reason(e: ConnectionClosed) -> str:
-    rcvd = e.rcvd
+    """끊긴 쪽을 구분한다: 서버가 close 프레임을 보냈는지, 우리가 먼저 닫았는지(예: 1011 keepalive ping timeout · 1009 너무 큰 메시지),
+    아니면 둘 다 없이 TCP 가 끊겼는지. 공백 사유·상태 해시에 그대로 남아 원인 진단에 쓰인다."""
+    rcvd, sent = e.rcvd, e.sent
+    if rcvd is None and sent is not None:
+        return f"client closed ({sent.code}" + (f" {sent.reason[:120]})" if sent.reason else ")")
     if rcvd is None:
         return "connection lost (no close frame)"
     text = f"server closed ({rcvd.code}"
