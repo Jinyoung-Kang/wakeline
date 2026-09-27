@@ -53,8 +53,16 @@ contract: ## Python↔Java 스키마 계약 검사
 e2e: ## fixture 모드 E2E (Playwright)
 	SKYWX_FIXTURE_MODE=1 $(COMPOSE) up -d --build && cd apps/web && npx playwright test
 
-bench: ## k6 부하 시험 (brew install k6)
-	k6 run perf/rest.js && k6 run perf/ws.js
+bench: ## k6 부하 시험 — api 층 직접 측정(IP당 제한 잠시 상향, grafana/k6 컨테이너). 결과: perf/results/
+	PUBLIC_RATE_LIMIT_PER_MIN=1000000 WS_MAX_CONN_PER_IP=500 $(COMPOSE) up -d api
+	@echo "waiting for api…"; sleep 30
+	docker run --rm --network skywx_skywx -v "$(PWD)/perf:/perf" -w /perf -e BASE_URL=http://10.77.0.30:8000 grafana/k6:latest run rest.js
+	docker run --rm --network skywx_skywx -v "$(PWD)/perf:/perf" -w /perf -e BASE_URL=http://10.77.0.30:8000 grafana/k6:latest run ws.js
+	$(COMPOSE) up -d api   # 제한 원복
+	@echo "restored rate limits (.env values)"
+
+bench-edge: ## 로컬 k6 로 edge(8700) 경유 측정 — 요청 제한(IP당 10 r/s·분당 120)이 그대로 걸려 429 가 정상이다(제한 동작 확인용)
+	RPS=8 DURATION=1m k6 run perf/rest.js || true
 
 fixtures: ## 실응답 스냅샷 갱신 (외부 한도 소모 주의)
 	cd apps/collector && uv run python -m skywx_collector.tools.snapshot

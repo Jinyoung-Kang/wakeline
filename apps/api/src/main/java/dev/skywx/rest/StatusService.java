@@ -17,7 +17,7 @@ import java.util.Map;
 /** 공개 상태(비밀값·수치 예산 없음)와 운영 상태(공급자 해시 전체). collector 가 Redis 에 쓴 값을 읽는다. */
 @Service
 public class StatusService {
-    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "fixture");
+    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "fixture");
     private final SnapshotStore snapshots;
     private final SigmetStore sigmets;
     private final RadarStore radar;
@@ -49,6 +49,7 @@ public class StatusService {
                 "lag_s", round(lag(ss.fetchedAt(), now)), "stale", lag(ss.fetchedAt(), now) > 900 || ss.fetchedAt().equals(Instant.EPOCH)));
         var rf = radar.frames();
         m.put("radar", kv("provider", rf.provider(), "frames", rf.past().size(), "fetched_at", rf.fetchedAt(), "stale", lag(rf.fetchedAt(), now) > 600));
+        m.put("radar_kr", safeHash("skywx:radar_kr:meta"));
         m.put("engine", kv("index_polygons", engine.indexSize(), "last_cycle_ms", engine.lastCycleMs()));
         m.put("active_providers", safeHash("skywx:active"));
         return m;

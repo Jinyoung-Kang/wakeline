@@ -18,6 +18,7 @@ ALLOWED_HOSTS = frozenset(
         "auth.opensky-network.org",
         "aviationweather.gov",
         "api.rainviewer.com",
+        "apihub.kma.go.kr",
     }
 )
 

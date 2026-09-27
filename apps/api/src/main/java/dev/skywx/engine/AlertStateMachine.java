@@ -150,6 +150,7 @@ public final class AlertStateMachine {
         ev.put("distance_nm", p.distanceNm());
         ev.put("gs_kt", a == null ? null : a.gsKt());
         ev.put("track_deg", a == null ? null : a.trackDeg());
+        ev.put("position", a == null ? null : new double[]{a.lat(), a.lon()});
         ev.put("judged_at", Instant.now().toString());
         return new Alert(id, "PREDICTED", p.hex(), a == null ? null : a.callsign(), s.id(), s.firId(), s.hazard(), s.qualifier(),
                 createdAt, null, p.etaS(), p.altAtEntry(), ev, true);

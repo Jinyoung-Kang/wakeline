@@ -14,7 +14,7 @@ export const options = {
     checks: ["rate>0.99"],
   },
 };
-// 요청 제한(IP당 분당 120)을 넘기지 않도록 로컬에서는 SKYWX_PUBLIC_RATE_LIMIT_PER_MIN 을 크게 두고 측정한다(README 성능 절 참고).
+// `make bench` 는 api 에 직접(제한 상향) 붙는다. edge(8700) 경유(`make bench-edge`)는 요청 제한 때문에 8 rps 를 넘기면 429 가 정상이다.
 export default function () {
   const r = Math.random();
   let res;
@@ -25,7 +25,7 @@ export default function () {
 }
 
 export function handleSummary(data) {
-  return { "perf/results/rest-summary.json": JSON.stringify(data, null, 2), stdout: textSummary(data) };
+  return { "results/rest-summary.json": JSON.stringify(data, null, 2), stdout: textSummary(data) };
 }
 function textSummary(d) {
   const m = d.metrics;

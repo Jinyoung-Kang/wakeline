@@ -14,6 +14,7 @@ from skywx_collector.masking import mask
         ),
         ("Bearer abcdefghijklmnop", "abcdefghijklmnop"),
         ("url?serviceKey=SK123&type=json", "SK123"),
+        ("rdr_cmp_file.php?tm=1&authKey=KMA_SECRET_1", "KMA_SECRET_1"),
         ("api_key=KEY99", "KEY99"),
         ("password=hunter2", "hunter2"),
         ("token=tok_1", "tok_1"),

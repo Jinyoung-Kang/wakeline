@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     opensky_client_id: str = ""
     opensky_client_secret: str = ""
     aircraft_providers: str = "adsb_lol,adsb_fi,opensky"
+    kma_apihub_key: str = ""  # 기상청 API허브(레이더 합성자료 활용신청 필요)
+    kma_radar_poll_s: int = 600
+    kma_radar_cmp: str = "HSR"
 
     # 관심 지역·주기 (운영 설정이 덮어씀)
     region_center: str = "36.5,127.8"
@@ -39,6 +42,7 @@ class Settings(BaseSettings):
     budget_opensky: int = 4000
     budget_awc: int = 2000
     budget_rainviewer: int = 2000
+    budget_kma_radar: int = 1000
     opensky_reserve_credits: int = 400  # 남은 크레딧이 이 아래면 전세계 수집 중단
 
     # 경로

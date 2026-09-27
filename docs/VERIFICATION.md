@@ -59,10 +59,19 @@
 - **증상** 8080 은 같은 Mac 의 SmartCollab 이 사용.
 - **수정** 형제 프로젝트 compose 파일의 포트를 모두 조사해 8700 으로 변경, 127.0.0.1 바인딩.
 
+## #13 collector 로그에 API 키 노출
+- **증상** httpx 가 INFO 레벨로 요청 URL 전체(기상청 `authKey=` 쿼리 포함)를 기록.
+- **수정** httpx/httpcore 로거를 WARNING 으로, 마스킹 규칙에 `authKey=` 추가(11패턴). 운영 화면 오류 원문도 같은 마스킹을 거친다.
+- **회귀** `test_masking` 에 authKey 케이스 추가, 재기동 후 로그에 `authKey=` 0건.
+
+## #14 기상청 API허브 레이더(FR-31)
+- **관찰** 인증키는 유효하지만 API 별 "활용신청" 이 없으면 모든 엔드포인트가 403 JSON 을 돌려준다.
+- **구현** 어댑터·잡·예산·원천 보관·`/api/v1/radar/kr`(메타)·`/latest.png`·화면 패널까지 준비하고, 승인 전에는 사유(403)를 상태로 노출. 격자·투영 정보는 실응답으로 확인하기 전까지 추정하지 않으므로 지도 오버레이는 보류(영상 그대로 표시).
+
 ## 자동 검사 현황
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector 단위·계약 | pytest | 48 |
+| collector 단위·계약 | pytest | 50 |
 | api 단위·계약 | JUnit 5 | 37 |
 | web 단위 | Vitest | 13 (워커 일치 3 포함) |
 | 언어 간 계약 | tools/contract_check.py | 4 payload 검사 |

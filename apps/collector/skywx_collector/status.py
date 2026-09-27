@@ -17,6 +17,10 @@ class ProviderStatus:
     def __init__(self, redis: Redis):
         self._r = redis
 
+    @property
+    def redis(self) -> Redis:
+        return self._r
+
     def key(self, name: str) -> str:
         return f"skywx:provider:{name}"
 

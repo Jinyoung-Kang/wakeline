@@ -1,5 +1,6 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { KrRadarPanel } from "./KrRadarPanel";
 import { useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 
@@ -18,14 +19,17 @@ export function RadarTimeline() {
     return () => clearInterval(t);
   }, [playing, n, setIdx]);
   const time = radar?.past[cur]?.time;
+  const [kr, setKr] = useState(false);
   return (
-    <div className="flex h-9 shrink-0 items-center gap-3 border-t border-line bg-bg-1 px-3" data-testid="radar-timeline">
+    <div className="relative flex h-9 shrink-0 items-center gap-3 border-t border-line bg-bg-1 px-3" data-testid="radar-timeline">
+      {kr ? <KrRadarPanel onClose={() => setKr(false)} /> : null}
       <span className="label">Radar</span>
       <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0}>{playing ? "정지" : "재생"}</button>
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-64" disabled={n === 0} />
       <span className="mono text-[11px]">{time ? new Date(time * 1000).toISOString().slice(11, 16) + "Z" : "—"}</span>
       <span className="text-[10px] text-fg-3">{n} frames · 10 min · RainViewer(z≤7) · 최신으로: </span>
       <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0}>latest</button>
+      <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">기상청 HSR</button>
     </div>
   );
 }

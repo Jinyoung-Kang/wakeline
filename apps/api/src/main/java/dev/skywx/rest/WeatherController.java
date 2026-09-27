@@ -37,8 +37,10 @@ public class WeatherController {
     private final AirportRepository airports;
     private final AlertRepository alertRepo;
     private final AppProperties props;
+    private final org.springframework.data.redis.core.StringRedisTemplate redis;
 
-    public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props) {
+    public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props, org.springframework.data.redis.core.StringRedisTemplate redis) {
+        this.redis = redis;
         this.sigmets = sigmets;
         this.engine = engine;
         this.radar = radar;
@@ -113,6 +115,36 @@ public class WeatherController {
         m.put("attribution", "Radar © RainViewer (personal/educational use)");
         m.put("meta", Meta.of(req, f.provider(), f.fetchedAt(), 600));
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS)).body(m);
+    }
+
+    /** 기상청 레이더 합성 영상 메타(FR-31). 활용신청 전에는 available=false 와 사유. */
+    @GetMapping("/radar/kr")
+    public ResponseEntity<Map<String, Object>> radarKr(HttpServletRequest req) {
+        Map<Object, Object> h;
+        try { h = redis.opsForHash().entries("skywx:radar_kr:meta"); } catch (RuntimeException e) { h = Map.of(); }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("available", "1".equals(h.get("available")));
+        m.put("tm_kst", h.get("tm_kst"));
+        m.put("cmp", h.get("cmp"));
+        m.put("status", h.get("status"));
+        m.put("note", h.get("note"));
+        m.put("image_url", "1".equals(h.get("available")) ? "/api/v1/radar/kr/latest.png" : null);
+        m.put("attribution", "기상청 API허브 레이더 합성 영상 (본인 사용)");
+        m.put("georeferenced", false);
+        Instant fetched = h.get("fetched_at") == null ? null : Instant.parse(String.valueOf(h.get("fetched_at")));
+        m.put("meta", Meta.of(req, "kma_apihub", fetched, 1800));
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS)).body(m);
+    }
+
+    @GetMapping(value = "/radar/kr/latest.png")
+    public ResponseEntity<byte[]> radarKrImage() {
+        String b64;
+        try { b64 = redis.opsForValue().get("skywx:radar_kr:image"); } catch (RuntimeException e) { b64 = null; }
+        if (b64 == null) throw Problem.notFound("no KMA radar image yet");
+        Object ctype = redis.opsForHash().get("skywx:radar_kr:meta", "content_type");
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS))
+                .header("Content-Type", ctype == null ? "image/png" : String.valueOf(ctype))
+                .body(java.util.Base64.getDecoder().decode(b64));
     }
 
     @GetMapping(value = "/airports", produces = "application/geo+json")

@@ -15,10 +15,12 @@ from skywx_collector.fallback import ProviderChain
 from skywx_collector.http import HttpClient
 from skywx_collector.jobs.aircraft import AircraftJob
 from skywx_collector.jobs.context import JobContext
+from skywx_collector.jobs.kma_radar import KmaRadarJob
 from skywx_collector.jobs.maintenance import MaintenanceJob
 from skywx_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
 from skywx_collector.providers import fixture as fx
 from skywx_collector.providers.awc import AwcProvider
+from skywx_collector.providers.kma_radar import KmaRadarProvider
 from skywx_collector.providers.opensky import OpenSkyProvider
 from skywx_collector.providers.rainviewer import RainViewerProvider
 from skywx_collector.providers.readsb import adsb_fi, adsb_lol
@@ -29,6 +31,9 @@ from skywx_collector.scheduler import run_periodic
 from skywx_collector.status import ProviderStatus
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# httpx 는 INFO 로 전체 URL(쿼리의 authKey 포함)을 찍는다 — 비밀값이 로그에 남지 않도록 끈다
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
 
 
@@ -93,6 +98,7 @@ async def main() -> None:
     global_ = AircraftJob("global", ProviderChain("global", aircraft_providers, ctx.status), ctx)
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
     maint = MaintenanceJob(list(limits), ctx)
+    kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -107,6 +113,7 @@ async def main() -> None:
         run_periodic("radar", radar.run_once, lambda: ctx.rt.radar_poll_s, stop, initial_delay=2),
         run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
         run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
+        run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
     ]
     try:
         await asyncio.gather(*tasks)

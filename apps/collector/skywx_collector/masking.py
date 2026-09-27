@@ -10,6 +10,7 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9\-._~+/]+=*"), r"\1***"),
     (re.compile(r"(?i)(authorization:\s*)[^\r\n]+"), r"\1***"),
     (re.compile(r"(?i)(serviceKey=)[^&\s]+"), r"\1***"),
+    (re.compile(r"(?i)(authKey=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(api[_-]?key=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(password=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(token=)[^&\s]+"), r"\1***"),
