@@ -40,7 +40,10 @@ public class StatusService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("server_time", now);
         m.put("snapshot_version", snapshots.version());
-        m.put("fixture_mode", props.fixture());
+        // 배지는 api 설정이 아니라 collector 가 실제로 어떤 모드로 수집 중인지(heartbeat)를 따른다(VERIFICATION #15)
+        Map<String, Object> hb = collectorHeartbeat();
+        m.put("fixture_mode", "1".equals(String.valueOf(hb.get("fixture"))));
+        m.put("collector_mode_known", hb.containsKey("fixture"));
         m.put("region", kv("center", List.of(props.regionLat(), props.regionLon()), "radius_nm", props.regionRadiusNm(),
                 "provider", r.provider(), "aircraft", r.states().size(), "lag_s", round(r.lagSeconds(now)), "stale", r.stale(now, 60), "fetched_at", r.fetchedAt()));
         m.put("global", kv("provider", g.provider(), "aircraft", g.states().size(), "lag_s", round(g.lagSeconds(now)), "stale", g.stale(now, 300), "fetched_at", g.fetchedAt()));

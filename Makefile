@@ -1,8 +1,11 @@
 # SkyWx — 로컬 운영 명령 (macOS · Apple Silicon · Docker Desktop)
 SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose.yml --env-file .env
+# 격리 스택(E2E·데모): 프로젝트·포트·서브넷·볼륨이 개발 스택과 분리된다. fixture 모드라 외부 호출이 없다.
+ISO_ENV := SKYWX_FIXTURE_MODE=1 SKYWX_PORT=8701 SKYWX_NET_PREFIX=10.78.0
+ISO := $(ISO_ENV) docker compose -p skywx-e2e -f infra/compose.yml --env-file .env
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web contract e2e bench fixtures clean
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web contract e2e demo demo-down bench bench-edge fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -50,8 +53,16 @@ test-web: ## 프론트 단위 테스트
 contract: ## Python↔Java 스키마 계약 검사
 	cd apps/collector && uv run python ../../tools/contract_check.py
 
-e2e: ## fixture 모드 E2E (Playwright)
-	SKYWX_FIXTURE_MODE=1 $(COMPOSE) up -d --build && cd apps/web && npx playwright test
+e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 스택·볼륨 삭제. 개발 스택(8700)은 건드리지 않는다
+	$(ISO) up -d --build --wait
+	cd apps/web && E2E_BASE_URL=http://localhost:8701 npx playwright test; rc=$$?; cd ../.. && $(ISO) down -v --remove-orphans >/dev/null 2>&1; exit $$rc
+
+demo: init ## 외부 호출 없는 fixture 데모 스택 → http://localhost:8701 (make demo-down 으로 삭제)
+	$(ISO) up -d --build --wait
+	@echo "demo (fixture) → http://localhost:8701"
+
+demo-down: ## 데모 스택·볼륨 삭제
+	$(ISO) down -v --remove-orphans
 
 bench: ## k6 부하 시험 — api 층 직접 측정(IP당 제한 잠시 상향, grafana/k6 컨테이너). 결과: perf/results/
 	PUBLIC_RATE_LIMIT_PER_MIN=1000000 WS_MAX_CONN_PER_IP=500 $(COMPOSE) up -d api

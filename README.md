@@ -23,7 +23,7 @@
 | **데이터** | adsb.lol / adsb.fi (readsb v2) · OpenSky (선택) · AviationWeather.gov (SIGMET·METAR·TAF) · RainViewer · 기상청 API허브 레이더 합성(HSR 500 m, LCC→Mercator 서버 재투영) · OpenFreeMap |
 | **핵심** | 수집 → Redis Streams(at-least-once) → 불변 스냅샷 → STRtree 교차·10분 예측 → 히스테리시스 FSM → bbox diff 팬아웃(가상 스레드) → PostGIS 이력·재생 |
 | **보안** | 단일 진입점·XFF 덮어쓰기·IP 제한 2단·세션+CSRF 이중 제출·비인가 404·DB 역할 3개·비root/read-only 컨테이너·CSP nonce·비밀값 마스킹 |
-| **검증** | 자동 테스트 98개 + 언어 간 계약 검사 + E2E 4건 · 실데이터로 찾은 문제 11건 기록([docs/VERIFICATION.md](docs/VERIFICATION.md)) · 성능 실측([docs/PERF.md](docs/PERF.md)) |
+| **검증** | 자동 테스트 105개 + 언어 간 계약 검사 + 격리 E2E 5건 · 실데이터로 찾은 문제 15건 기록([docs/VERIFICATION.md](docs/VERIFICATION.md)) · 성능 실측([docs/PERF.md](docs/PERF.md)) |
 | **문서** | 설계서 v0.2([docs/](docs/)) · ADR 12건([docs/adr](docs/adr)) |
 
 ## 1. 풀려는 문제
@@ -65,14 +65,14 @@ make ops-user    # 운영자 계정(프롬프트). 초기 검증용 admin 비밀
 ```
 
 외부 키는 **없어도 동작**합니다(adsb.lol·adsb.fi·AWC·RainViewer 는 무인증). 전세계 뷰는 OpenSky 자격증명(`OPENSKY_CLIENT_ID/SECRET`), 한국 고해상도 레이더는 기상청 API허브 키(`KMA_APIHUB_KEY`, 레이더 합성자료 API 활용신청 승인 필요)가 있으면 켜집니다. 모두 collector 컨테이너에만 주입됩니다.
-외부 호출 없이 데모하려면 `.env` 에 `SKYWX_FIXTURE_MODE=1` 을 두고 `make up` — 실응답 스냅샷(fixtures/)을 재생하며 한반도 위 합성 SIGMET 으로 알림이 뜹니다(화면에 FIXTURE 배지).
+외부 호출 없이 데모하려면 `make demo` — 개발 스택과 분리된 스택(http://localhost:8701, 별도 DB·Redis)에서 실응답 스냅샷(fixtures/)을 재생하고 한반도 위 합성 SIGMET 으로 알림이 뜹니다(FIXTURE 배지). `make demo-down` 으로 지웁니다. 개발 스택에서 fixture 모드를 켜지 마세요 — 재생 자료가 이력 DB 에 섞입니다.
 
 | 명령 | 내용 |
 |---|---|
-| `make test` | pytest 48 · JUnit 37 · Vitest 13 |
+| `make test` | pytest 55 · JUnit 37 · Vitest 13 |
 | `make contract` | Python 이 만든 메시지 ↔ JSON Schema ↔ Java 클래스패스 복사본 대조 |
-| `make e2e` | fixture 모드로 띄운 뒤 Playwright 4 시나리오(`npx playwright install chromium` 필요) |
-| `make bench` | k6 REST 100 rps · WS 200 연결(`brew install k6`). k6 없이는 `perf/quick_*.py` |
+| `make e2e` | 격리된 fixture 스택(8701)을 띄워 Playwright 5 시나리오 → 스택·볼륨 삭제. 개발 스택은 건드리지 않음(`npx playwright install chromium` 필요) |
+| `make bench` | k6(grafana/k6 컨테이너)로 api 직접 측정 — REST 100 rps · WS 200 연결, 측정 동안만 IP 제한 상향. `make bench-edge` 는 edge 경유(429 가 정상) |
 | `make logs s=api` | 로그 |
 | `make clean` | 볼륨 포함 초기화 |
 

@@ -11,7 +11,9 @@ test("dashboard loads with attribution, lag badge and aircraft", async ({ page }
   await expect(page.getByTestId("attribution")).toContainText("RainViewer");
   await expect(page.getByTestId("attribution")).toContainText("OpenFreeMap");
   await expect(page.getByTestId("conn")).toContainText("open", { timeout: 20_000 });
-  await expect(page.getByTestId("fixture-badge")).toBeVisible();
+  await expect(page.getByTestId("fixture-badge")).toBeVisible({ timeout: 20_000 });
+  // 배지만이 아니라 실제 수집 출처가 fixture 인지(외부 호출 없음) 확인
+  await expect(page.getByTestId("statusbar")).toContainText("fixture", { timeout: 20_000 });
   await expect(page.getByTestId("lag-badge")).toContainText("lag", { timeout: 30_000 });
   await expect(page.getByTestId("layer-panel")).toBeVisible();
   expect(cspViolations).toEqual([]);
@@ -23,6 +25,8 @@ test("alert panel shows aircraft inside the synthetic fixture SIGMET with eviden
   const items = page.getByTestId("alert-item");
   await expect(items.first()).toBeVisible({ timeout: 60_000 });
   expect(await items.count()).toBeGreaterThanOrEqual(3);
+  // 합성 SIGMET(RKRR FX1 TS, 한반도 중부) 안의 항공기가 관측 알림으로 잡혀야 한다
+  await expect(page.locator('[data-testid="alert-item"][data-kind="OBSERVED"]', { hasText: "RKRR" }).first()).toBeVisible();
   await items.first().locator("button").click();
   await expect(page.getByTestId("evidence").first()).toBeVisible();
   await expect(page.getByTestId("evidence").first()).toContainText("고도대");
@@ -34,6 +38,14 @@ test("ops is 404 for anonymous API calls and shows login form", async ({ page, r
   expect(r.status()).toBe(404);
   await page.goto("/ops");
   await expect(page.getByTestId("ops-login")).toBeVisible();
+});
+
+test("status reports fixture collector and no external providers", async ({ request }) => {
+  const s = await (await request.get("/api/v1/status")).json();
+  expect(s.fixture_mode).toBe(true);
+  expect(s.region.provider).toBe("fixture");
+  expect(s.sigmet.provider).toBe("fixture");
+  expect(s.region.aircraft).toBeGreaterThan(50);
 });
 
 test("forged X-Forwarded-For does not bypass rate limiting (3 paths)", async ({ request }) => {

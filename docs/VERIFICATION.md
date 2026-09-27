@@ -69,14 +69,21 @@
 - **구현(승인 후)** 바이너리 포맷 문서(헤더 64+20×48 B, 반사도 short×2305×2881, 값 dBZ×100, NULL −20000/−25000/−30000)와 데이터위키의 proj 문자열·Affine 정의를 근거로 격자를 해석해 서버에서 웹 메르카토르 PNG 로 재투영, MapLibre image source 로 오버레이(ADR-012). 영상 API(`data=img`)는 해당 시각 파일이 없어 200 + "file not exist" 텍스트를 돌려주므로 바이너리만 쓴다.
 - **회귀** 실헤더 fixture 파싱 테스트, 기준점 재투영 픽셀 테스트, RainViewer 같은 시각 프레임과의 육안 대조(서해안 북부·전남 해안·부산 남동 해상 에코 위치 일치).
 
+## #15 E2E 가 fixture 모드가 아닌데 통과함(거짓 통과) · 개발 DB 오염
+- **증상** `make e2e` 4건 통과. 그러나 compose 로그에서 collector 가 재생성되지 않았고(`Running`), 컨테이너 환경변수는 api=1 · collector=0. 외부 공급자를 호출하는 상태에서 화면 배지는 "FIXTURE MODE · 외부 호출 없음" 이었다.
+- **원인** ① collector 는 `env_file` 만 읽어 셸의 `SKYWX_FIXTURE_MODE=1` 을 받지 못했다. ② 배지가 collector 의 실제 모드가 아니라 api 설정값을 보여 줬다. ③ E2E 가 개발 스택(8700)을 fixture 로 바꿔 돌리는 구조라, 앞서 수동 fixture 실행(09:03–09:05 UTC)의 재생 자료가 개발 DB 에 섞였다. 재생 SIGMET 이 `awc_isigmet` 출처로 저장돼 실자료와 구분도 안 됐다.
+- **수정** E2E·데모를 별도 compose 프로젝트(`skywx-e2e`, 포트 8701, 서브넷 10.78.0.0/24, 별도 볼륨)로 격리하고 끝나면 `down -v`. collector `environment` 에도 `SKYWX_FIXTURE_MODE` 전달. 배지 = collector heartbeat 의 실제 모드. 재생 SIGMET 출처는 `fixture`. nginx upstream 을 서비스 이름으로 바꿔 같은 설정이 두 스택에서 동작. E2E 에 "status 의 region·sigmet 출처가 fixture" 검사 추가(이 검사는 첫 실행을 실패시켰을 것이다).
+- **데이터 정리** 개발 DB 에서 fixture 창에 쓰인 SIGMET 132 · 알림 84 · 항적 1,143 · METAR 13 · 항공기 95 · 당일 통계 81 행을 백업 후 한 트랜잭션으로 삭제. 실 SIGMET·항적은 유지.
+- **회귀** `make e2e` 5건 통과, 종료 후 `skywx-e2e` 리소스 0, 개발 스택 `fixture_mode=false`.
+
 ## 자동 검사 현황
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector 단위·계약 | pytest | 54 |
+| collector 단위·계약 | pytest | 55 |
 | api 단위·계약 | JUnit 5 | 37 |
 | web 단위 | Vitest | 13 (워커 일치 3 포함) |
 | 언어 간 계약 | tools/contract_check.py | 4 payload 검사 |
-| E2E | Playwright(fixture 모드) | 4 시나리오(`apps/web/e2e`) |
+| E2E | Playwright(격리된 fixture 스택 8701) | 5 시나리오(`apps/web/e2e`) |
 
 ## #12 통계 화면 `/stats/traffic` 500
 - **원인** `SELECT dim hour` — `hour` 는 PostgreSQL 예약어.

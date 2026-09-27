@@ -103,7 +103,7 @@ def _ts(v: Any) -> datetime | None:
         return None
 
 
-def parse_isigmet(item: dict[str, Any], fetched_at: datetime) -> Sigmet | None:
+def parse_isigmet(item: dict[str, Any], fetched_at: datetime, provider: str = "awc_isigmet") -> Sigmet | None:
     fir = item.get("firId") or item.get("icaoId")
     series = item.get("seriesId")
     vf, vt = _ts(item.get("validTimeFrom")), _ts(item.get("validTimeTo"))
@@ -135,12 +135,12 @@ def parse_isigmet(item: dict[str, Any], fetched_at: datetime) -> Sigmet | None:
         move_spd=str(item["spd"]) if item.get("spd") is not None else None,
         chng=str(item["chng"]) if item.get("chng") is not None else None,
         raw_text=str(item.get("rawSigmet") or ""),
-        provider="awc_isigmet",
+        provider=provider,
         fetched_at=fetched_at,
     )
 
 
-def parse_airsigmet(item: dict[str, Any], fetched_at: datetime) -> Sigmet | None:
+def parse_airsigmet(item: dict[str, Any], fetched_at: datetime, provider: str = "awc_airsigmet") -> Sigmet | None:
     """미국 SIGMET/AIRMET(FR-28). 좌표는 단일 링. 고도는 altitudeLow1/Hi1(ft)."""
     icao = item.get("icaoId")
     series = item.get("seriesId")
@@ -173,6 +173,6 @@ def parse_airsigmet(item: dict[str, Any], fetched_at: datetime) -> Sigmet | None
         move_spd=str(item["movementSpd"]) if item.get("movementSpd") is not None else None,
         chng=None,
         raw_text=str(item.get("rawAirSigmet") or ""),
-        provider="awc_airsigmet",
+        provider=provider,
         fetched_at=fetched_at,
     )

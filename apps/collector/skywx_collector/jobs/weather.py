@@ -85,9 +85,16 @@ class SigmetJob:
         raw_ref = intl.extra.get("raw_ref") or ctx.raw.save("awc_isigmet", intl.raw, fetched_at)
         if us is not None and not us.extra.get("raw_ref"):
             ctx.raw.save("awc_airsigmet", us.raw, us.fetched_at)
-        sigmets = [s for s in (parse_isigmet(it, fetched_at) for it in intl.data) if s is not None]
+        fx = self.awc.name == "fixture"  # 재생 자료는 출처를 fixture 로 남긴다(실 AWC 자료로 오인되지 않게)
+        sigmets = [
+            s for s in (parse_isigmet(it, fetched_at, "fixture" if fx else "awc_isigmet") for it in intl.data) if s is not None
+        ]
         if us is not None:
-            sigmets += [s for s in (parse_airsigmet(it, us.fetched_at) for it in us.data) if s is not None]
+            sigmets += [
+                s
+                for s in (parse_airsigmet(it, us.fetched_at, "fixture" if fx else "awc_airsigmet") for it in us.data)
+                if s is not None
+            ]
         # 자연키 중복 제거(같은 경보가 두 번 오는 경우가 실응답에서 관측됨)
         uniq: dict[str, Any] = {}
         for s in sigmets:

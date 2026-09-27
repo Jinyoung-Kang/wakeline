@@ -1,4 +1,6 @@
-# SkyWx 로컬 스택 — 6 컨테이너. 공개 포트는 edge(127.0.0.1:8700) 하나뿐이다.
+# SkyWx 로컬 스택 — 6 컨테이너. 공개 포트는 edge(127.0.0.1:${SKYWX_PORT:-8700}) 하나뿐이다.
+# 같은 파일로 격리된 E2E·데모 스택도 띄운다: -p skywx-e2e, SKYWX_PORT=8701, SKYWX_NET_PREFIX=10.78.0 (Makefile e2e/demo).
+# 프로젝트가 다르면 컨테이너·볼륨·네트워크가 분리되어 개발 DB 에 fixture 데이터가 섞이지 않는다.
 name: skywx
 
 x-hardened: &hardened
@@ -10,7 +12,7 @@ x-hardened: &hardened
 services:
   edge:
     image: nginx:1.27-alpine
-    ports: ["127.0.0.1:8700:8700"]   # 8080 은 SmartCollab 이 사용 — SkyWx 는 8700
+    ports: ["127.0.0.1:${SKYWX_PORT:-8700}:8700"]   # 8080 은 SmartCollab 이 사용 — SkyWx 는 8700(E2E 8701)
     volumes:
       - ./edge/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./edge/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
@@ -18,7 +20,7 @@ services:
       web: { condition: service_healthy }
       api: { condition: service_healthy }
     networks:
-      skywx: { ipv4_address: 10.77.0.10 }
+      skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.10" }
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8700/healthz"]
@@ -27,6 +29,7 @@ services:
       retries: 6
 
   web:
+    image: skywx-web:local
     build: ../apps/web
     <<: *hardened
     tmpfs: ["/tmp"]
@@ -37,7 +40,7 @@ services:
       API_INTERNAL_URL: http://api:8000       # 서버 컴포넌트 전용. NEXT_PUBLIC_ 변수는 없다.
     expose: ["3000"]
     networks:
-      skywx: { ipv4_address: 10.77.0.20 }
+      skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.20" }
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 10s
@@ -45,6 +48,7 @@ services:
       retries: 10
 
   api:
+    image: skywx-api:local
     build: ../apps/api
     <<: *hardened
     tmpfs: ["/tmp"]
@@ -58,7 +62,7 @@ services:
       DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SKYWX_TRUSTED_PROXY: 10.77.0.10          # edge 만 X-Forwarded-For 를 말할 수 있다
+      SKYWX_TRUSTED_PROXY: ${SKYWX_NET_PREFIX:-10.77.0}.10   # edge 만 X-Forwarded-For 를 말할 수 있다
       SKYWX_REGION_CENTER: ${REGION_CENTER:-36.5,127.8}
       SKYWX_REGION_RADIUS_NM: ${REGION_RADIUS_NM:-250}
       SKYWX_OPS_SESSION_TTL_H: ${OPS_SESSION_TTL_H:-8}
@@ -74,7 +78,7 @@ services:
       resources:
         limits: { memory: 1g }
     networks:
-      skywx: { ipv4_address: 10.77.0.30 }
+      skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.30" }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/actuator/health/readiness"]
       interval: 10s
@@ -83,6 +87,7 @@ services:
       start_period: 40s
 
   collector:
+    image: skywx-collector:local
     build:
       context: ..
       dockerfile: apps/collector/Dockerfile
@@ -97,6 +102,8 @@ services:
       RAW_DIR: /data/raw
       FIXTURES_DIR: /app/fixtures
       SCHEMAS_DIR: /app/schemas
+      # environment 가 env_file 보다 우선한다 — 셸의 SKYWX_FIXTURE_MODE 가 api 와 collector 에 똑같이 전달되도록 여기서도 지정
+      SKYWX_FIXTURE_MODE: ${SKYWX_FIXTURE_MODE:-0}
     volumes:
       - raw:/data/raw
     depends_on:
@@ -107,7 +114,7 @@ services:
       resources:
         limits: { memory: 512m }
     networks:
-      skywx: { ipv4_address: 10.77.0.40 }
+      skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.40" }
 
   redis:
     image: redis:8-alpine
@@ -116,7 +123,7 @@ services:
       - ./redis/redis.conf:/etc/redis/redis.conf:ro
       - redis_data:/data
     networks:
-      skywx: { ipv4_address: 10.77.0.50 }
+      skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.50" }
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
@@ -135,7 +142,7 @@ services:
       - db_data:/var/lib/postgresql
       - ./db/init:/docker-entrypoint-initdb.d:ro
     networks:
-      skywx: { ipv4_address: 10.77.0.60 }
+      skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.60" }
     restart: unless-stopped
     shm_size: 256m
     healthcheck:
@@ -149,7 +156,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 10.77.0.0/24
+        - subnet: ${SKYWX_NET_PREFIX:-10.77.0}.0/24
 
 volumes:
   raw: {}
