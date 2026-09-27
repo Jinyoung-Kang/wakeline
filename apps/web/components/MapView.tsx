@@ -489,7 +489,7 @@ export function MapView() {
     const to = serverNowMs(Date.now());
     const from = to - SHIP_TRACK_WINDOW_MS;
     shipTrack.current = emptyShipTrack(selectedShip, Number.isNaN(anchor) ? null : anchor, from);
-    setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], gapsTruncated: false, segments: 0 } : null });
+    setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], gapsTruncated: false, segments: 0, fromMs: from } : null });
     const map = mapRef.current;
     if (!map) return;
     onReady(map, () => geo(map, "ship-track")?.setData(EMPTY_FC));
@@ -501,7 +501,7 @@ export function MapView() {
       mergeStatusGaps(track, getData().ais, ref.sinceMs);
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
       shipTrack.current = { ...ref, track, pending: [], loaded: true };
-      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length } });
+      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from } });
       onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(track)));
     };
     const q = `from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;

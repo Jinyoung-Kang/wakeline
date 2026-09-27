@@ -74,13 +74,13 @@ public final class WsMessages {
                             @JsonInclude(JsonInclude.Include.ALWAYS) FocusDemand focus) {}
 
     /**
-     * 핫 리전. state: active | pending | throttled | covered_by_region | error(수집기가 보고한 조회 실패) | limited(세션 제한 — 새 셀 60 s 에 6개).
+     * 핫 리전. state: active | pending | throttled | covered_by_region | error(수집기가 보고한 조회 실패) | disabled(운영자가 공급자를 끔) | limited(세션 제한 — 새 셀 60 s 에 6개).
      * cell·radius_nm 은 covered_by_region 이면 없다. interval_s·last_success_at 은 수집기가 wakeline:demand:status 에 보고한 값 그대로.
      */
     public record HotDemand(String cell, Integer radiusNm, String state, Integer intervalS, Instant lastSuccessAt) {}
 
     /**
-     * 선택 항공기 집중 추적. state: active | pending | throttled | not_found | error | expired_session_cap | limited(세션 제한 — 새 hex 60 s 에 6개).
+     * 선택 항공기 집중 추적. state: active | pending | throttled | not_found | error | disabled(운영자가 공급자를 끔) | expired_session_cap | limited(세션 제한 — 새 hex 60 s 에 6개).
      * since = 이 세션이 이 hex 를 (다시) 선택한 시각. interval_s·last_success_at 은 수집기 보고값.
      */
     public record FocusDemand(String hex, String state, Integer intervalS, Instant since, Instant lastSuccessAt) {}

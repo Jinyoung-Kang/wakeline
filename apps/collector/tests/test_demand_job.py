@@ -431,7 +431,7 @@ async def test_operator_disabled_provider_gets_no_demand_calls():
     assert len(prov.calls) == 2
     st = _status(r)
     for f in ("focus:abcdef", f"hot:{key}"):
-        assert st[f]["state"] == "throttled" and st[f]["last_error"] == "provider disabled by operator"
+        assert st[f]["state"] == "disabled" and st[f]["last_error"] == "provider disabled by operator"
         assert st[f]["interval_s"] is None and st[f]["last_success_at"]  # 주기는 없고, 직전 성공 시각은 그대로
     await r.hset("wakeline:provider:adsb_fi", "disabled", "0")
     clk[0] = 61.0
@@ -440,6 +440,35 @@ async def test_operator_disabled_provider_gets_no_demand_calls():
     assert [c[0] for c in prov.calls[2:]] == ["icao", "point"]  # 다시 켜면 곧바로 돈다
     st = _status(r)
     assert st["focus:abcdef"]["state"] == "active" and st[f"hot:{key}"]["state"] == "active"
+
+
+class QueuedDemandProvider(FakeDemandProvider):
+    """속도 상한 대기열에서 기다리는 조회를 흉내 낸다: gate 가 열려야 '전송'(calls 기록)한다."""
+
+    async def fetch_icao(self, hexes, *, wait_s):
+        assert self.gate is not None
+        await self.gate.wait()
+        self.calls.append(("icao", list(hexes), wait_s))
+        return self._res(self.ac)
+
+
+async def test_operator_disable_cancels_calls_already_waiting_to_be_sent():
+    """리뷰 2026-09-28b #2 후속: 끄기 전에 대기열에 들어간 조회도 끈 뒤에는 보내지 않는다."""
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000})
+    prov = QueuedDemandProvider()
+    prov.ac = [_ac("abcdef")]
+    prov.gate = asyncio.Event()
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    assert t._focus_task is not None and not t._focus_task.done()  # 대기 중
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    clk[0] = 1.0
+    await t.tick()
+    prov.gate.set()
+    await asyncio.sleep(0)
+    assert t._focus_task.done() and prov.calls == []
+    assert _status(r)["focus:abcdef"]["last_error"] == "provider disabled by operator"
 
 
 async def test_disabled_status_is_cleared_when_re_enabled_before_next_turn():

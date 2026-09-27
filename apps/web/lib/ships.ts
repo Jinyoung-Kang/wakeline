@@ -590,18 +590,28 @@ export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open
   return true;
 }
 
-/** 카드 요약: 공백 수 · 끝난 공백 길이 합(초) · 열린 공백이 있으면 그 시작(ms) */
-export function gapSummary(gaps: readonly AisGap[]): { count: number; closedS: number; openSinceMs: number | null } {
+/**
+ * 카드 요약: 창 [fromMs, toMs] 와 겹치는 공백 수 · 끝난 공백이 창 안에서 차지한 길이 합(초) · 열린 공백이 있으면 그 시작(ms).
+ * 창 밖으로 걸친 부분은 세지 않는다(창보다 먼저 시작한 공백을 통째로 더하면 '최근 6 h' 합계가 부풀려진다).
+ */
+export function gapSummary(gaps: readonly AisGap[], fromMs = -Infinity, toMs = Infinity): { count: number; closedS: number; openSinceMs: number | null } {
   let closed = 0;
+  let count = 0;
   let openSinceMs: number | null = null;
   for (const g of gaps) {
     const s = Date.parse(g.started_at);
     if (Number.isNaN(s)) continue;
-    if (g.ended_at == null) { openSinceMs = s; continue; }
+    if (g.ended_at == null) {
+      if (s <= toMs) { openSinceMs = s; count++; }
+      continue;
+    }
     const e = Date.parse(g.ended_at);
-    if (!Number.isNaN(e) && e > s) closed += e - s;
+    if (Number.isNaN(e) || e < fromMs || s > toMs) continue;
+    count++;
+    const clipped = Math.min(e, toMs) - Math.max(s, fromMs);
+    if (clipped > 0) closed += clipped;
   }
-  return { count: gaps.length, closedS: Math.round(closed / 1000), openSinceMs };
+  return { count, closedS: Math.round(closed / 1000), openSinceMs };
 }
 
 /** 한 공백의 길이(초). 열린 공백·모름은 null */
@@ -609,6 +619,21 @@ export function gapDurationS(g: AisGap): number | null {
   if (!g.ended_at) return null;
   const s = Date.parse(g.started_at), e = Date.parse(g.ended_at);
   return Number.isNaN(s) || Number.isNaN(e) ? null : Math.max(0, Math.round((e - s) / 1000));
+}
+
+/** properties.segments → [시작 ms, 끝 ms] 목록(시간순). 없거나 하나라도 읽을 수 없으면 null(그때는 공백 목록으로 끊는다). */
+function serverSegments(v: unknown): [number, number][] | null {
+  if (!Array.isArray(v)) return null;
+  const out: [number, number][] = [];
+  for (const x of v) {
+    if (!isObj(x)) return null;
+    const a = typeof (x.start ?? x.from) === "string" ? Date.parse(String(x.start ?? x.from)) : NaN;
+    const b = typeof (x.end ?? x.to) === "string" ? Date.parse(String(x.end ?? x.to)) : NaN;
+    if (Number.isNaN(a) || Number.isNaN(b) || b < a) return null;
+    out.push([a, b]);
+  }
+  out.sort((p, q) => p[0] - q[0]);
+  return out;
 }
 
 /** REST 공백 목록에서 읽는 원소 상한(끝에서부터 — 서버는 오래된 것부터 정렬해 준다) */
@@ -635,7 +660,12 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
   let budget = MAX_SHIP_TRACK_POINTS;
 
   if (Array.isArray(resp.points)) {
+    // 서버가 구간을 알려 주면(properties.segments) 그 경계를 따른다 — 서버는 잘리지 않은 긴 공백 목록으로 끊었고,
+    // 여기 공백 목록(out.gaps)은 최신 200개로 잘렸을 수 있다(계약 v3 §D). 구간에 속하지 않는 점(앞뒤가 끊긴 한 점)은 따로 둔다.
+    const bounds = serverSegments(props.segments);
     let seg: ShipTrackSeg | null = null;
+    let segIdx = -2;
+    let j = 0;
     for (const p of resp.points) {
       if (budget <= 0) break;
       if (!isObj(p)) continue;
@@ -643,7 +673,16 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
       const t = typeof p.ts === "string" ? Date.parse(p.ts) : NaN;
       if (!c || Number.isNaN(t)) continue;
       if (seg && seg.endMs != null && t <= seg.endMs) continue;
-      if (!seg || (seg.endMs != null && (t - seg.endMs > TRACK_BREAK_MS || gapBetween(out.gaps, seg.endMs, t)))) {
+      let brk: boolean;
+      if (bounds) {
+        while (j < bounds.length && bounds[j][1] < t) j++;
+        const idx = j < bounds.length && bounds[j][0] <= t ? j : -1;
+        brk = !seg || idx === -1 || idx !== segIdx;
+        segIdx = idx;
+      } else {
+        brk = !seg || (seg.endMs != null && (t - seg.endMs > TRACK_BREAK_MS || gapBetween(out.gaps, seg.endMs, t)));
+      }
+      if (brk || !seg) {
         seg = { pts: [], startMs: t, endMs: t };
         out.segs.push(seg);
       }

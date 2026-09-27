@@ -206,6 +206,13 @@ class DemandServiceTest {
             assertThat(lastDemand(focus).path("focus").has("last_error")).isFalse(); // 내부 사유 문구는 내보내지 않는다
             assertThat(lastDemand(hot).path("hot").path("state").asString()).isEqualTo("throttled");
             assertThat(lastDemand(hot).path("hot").path("interval_s").asInt()).isEqualTo(60);
+            // 운영자가 공급자를 끔(계약 v3 §C): 호출 상한(throttled)과 구분해 그대로 전한다
+            r.leases.status.put("focus:abc123", "{\"state\":\"disabled\",\"interval_s\":null,\"last_error\":\"provider disabled by operator\"}");
+            r.leases.status.put("hot:" + TOKYO_CELL, "{\"state\":\"disabled\",\"interval_s\":null}");
+            r.refresh();
+            assertThat(lastDemand(focus).path("focus").path("state").asString()).isEqualTo("disabled");
+            assertThat(lastDemand(focus).path("focus").has("interval_s")).isFalse();
+            assertThat(lastDemand(hot).path("hot").path("state").asString()).isEqualTo("disabled");
             r.leases.status.put("hot:" + TOKYO_CELL, "{\"state\":\"not_found\"}"); // 핫 리전에는 없는 값 → pending
             r.leases.status.put("focus:abc123", "{\"state\":\"bogus\"}");         // 모르는 값 → pending
             r.refresh();
@@ -327,6 +334,32 @@ class DemandServiceTest {
             r.k.msg(f, select("abc123"));
             r.refresh();
             assertThat(focusLeased(r)).containsExactly("abc123");
+        }
+    }
+
+    /** 리뷰 후속: 핫 셀 한도가 찬 세션이 선택을 해제하면(FOCUS→HOT) 새 셀은 막혀도 집중 추적 임대는 곧바로 빠진다. */
+    @Test void sessionLimit_deselectWithFullHotBudgetStillReleasesTheFocusLease() throws Exception {
+        try (Rig r = new Rig()) {
+            String sub = "{\"type\":\"subscribe\",\"bbox\":[%d.2,0.2,%d.8,0.8],\"zoom\":%d}";
+            FakeWsSession f = r.session("s", sub.formatted(150, 150, 9));
+            for (int i = 0; i < DemandService.SESSION_NEW_KEYS_MAX; i++) {
+                r.k.msg(f, sub.formatted(150 + 2 * i, 150 + 2 * i, 9));
+                r.refresh();
+                r.clock.addAndGet(1_000);
+            }
+            r.k.msg(f, select("abc123"));
+            r.refresh();
+            assertThat(focusLeased(r)).containsExactly("abc123");
+            assertThat(r.leases.last().hot()).isEmpty();
+            r.k.msg(f, sub.formatted(170, 170, 9)); // 선택 중 이동: 새 셀(핫 한도 소진) — 선택이 우선이라 아직 핫 수요 없음
+            r.refresh();
+            r.k.msg(f, "{\"type\":\"select\",\"hex\":null}");
+            r.refresh();
+            assertThat(focusLeased(r)).as("deselect always releases the focus lease").isEmpty();
+            assertThat(r.leases.last().hot()).isEmpty();
+            JsonNode d = lastDemand(f);
+            assertThat(d.path("hot").path("state").asString()).isEqualTo("limited");
+            assertThat(d.get("focus").isNull()).isTrue();
         }
     }
 

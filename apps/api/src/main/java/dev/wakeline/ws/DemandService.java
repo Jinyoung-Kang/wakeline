@@ -286,7 +286,8 @@ public class DemandService implements SmartLifecycle {
 
     /**
      * 세션 제한(계약 v3 §C): 수요를 세션의 임대(demandHeld)에 반영하고 true. 직전 임대에 없던 키(새 hex·새 셀)는 종류별 60 s 창에
-     * 6개까지만 — 넘으면 직전 임대를 그대로 두고 false(limited). 같은 키 유지·키 빼기(NONE·COVERED·30분 상한)는 언제나 반영한다.
+     * 6개까지만 — 넘으면 같은 종류의 직전 임대는 그대로 두고 false(limited). 종류가 바뀌는 변화(선택·선택 해제)였다면 직전 키는 빼고 새 키만
+     * 막는다. 같은 키 유지·키 빼기(NONE·COVERED·30분 상한)는 언제나 반영한다.
      * 거절한 시도는 창에 기록하지 않는다 — 창이 비면 다음 계산(≤ 10 s)에 반영된다.
      */
     static boolean admit(Want w, long nowMs) {
@@ -300,7 +301,12 @@ public class DemandService implements SmartLifecycle {
         boolean fresh = next != null && (prev == null || prev.kind() != next.kind() || !prev.key().equals(next.key()));
         if (fresh) {
             SlidingWindowLimiter newKeys = next.kind() == Kind.HOT ? s.newHotKeys : s.newFocusKeys;
-            if (!newKeys.tryAcquire(TimeUnit.MILLISECONDS.toNanos(nowMs))) return false;
+            if (!newKeys.tryAcquire(TimeUnit.MILLISECONDS.toNanos(nowMs))) {
+                // 종류가 바뀌는 변화(선택 해제: FOCUS→HOT, 선택: HOT→FOCUS)는 직전 키를 더 원하지 않는다는 뜻이다 — 빼기는 반영하고
+                // 새 키만 막는다. 그래야 한도가 찬 세션이 선택을 해제해도 아무도 보지 않는 항공기를 계속 조회하지 않는다.
+                if (prev != null && prev.kind() != next.kind()) s.demandHeld = null;
+                return false;
+            }
         }
         s.demandHeld = next;
         return true;
@@ -374,7 +380,7 @@ public class DemandService implements SmartLifecycle {
                 if (!hotLeased.contains(w.key()))
                     yield new WsMessages.DemandMsg("demand", new WsMessages.HotDemand(w.key(), c.radiusNm(), "throttled", null, null), null);
                 CollectorDemandStatus cs = st.get("hot:" + w.key());
-                String state = stateOf(cs, nowMs, Set.of("throttled", "error"));
+                String state = stateOf(cs, nowMs, Set.of("throttled", "error", "disabled"));
                 boolean known = !"pending".equals(state);
                 yield new WsMessages.DemandMsg("demand", new WsMessages.HotDemand(w.key(), c.radiusNm(), state,
                         known ? cs.intervalS() : null, cs == null ? null : cs.lastSuccessAt()), null);
@@ -386,7 +392,7 @@ public class DemandService implements SmartLifecycle {
                 if (!focusLeased.contains(w.key()))
                     yield new WsMessages.DemandMsg("demand", null, new WsMessages.FocusDemand(w.key(), "throttled", null, since, null));
                 CollectorDemandStatus cs = st.get("focus:" + w.key());
-                String state = stateOf(cs, nowMs, Set.of("throttled", "not_found", "error"));
+                String state = stateOf(cs, nowMs, Set.of("throttled", "not_found", "error", "disabled"));
                 boolean known = !"pending".equals(state);
                 yield new WsMessages.DemandMsg("demand", null, new WsMessages.FocusDemand(w.key(), state,
                         known ? cs.intervalS() : null, since, cs == null ? null : cs.lastSuccessAt()));

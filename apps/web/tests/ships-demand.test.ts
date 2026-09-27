@@ -591,19 +591,54 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
   it("ship card: gap summary (count · total seconds), the 60 s line-break rule, then the latest 5 gaps", () => {
     const T = Date.parse("2026-09-28T01:00:00Z");
     const gaps: AisGap[] = Array.from({ length: 7 }, (_, i) => ({ started_at: iso(T + i * 600_000), ended_at: iso(T + i * 600_000 + (i + 1) * 10_000), reason: null }));
-    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps, gapsTruncated: false, segments: 2 } });
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps, gapsTruncated: false, segments: 2, fromMs: null } });
     const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
     expect(html).toContain("최근 6 h 수신 공백 7회 · 합계 280 s");
     expect(html).toContain("60 s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)");
     expect(html.match(/수신 공백 \d\d-\d\d/g)).toHaveLength(5);
     expect(html).toContain("· 70 s"); // 가장 최근 공백의 길이
-    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: gaps.slice(0, 1), gapsTruncated: true, segments: 1 } });
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: gaps.slice(0, 1), gapsTruncated: true, segments: 1, fromMs: null } });
     expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).toContain("수신 공백 1회 이상(최신 목록만)");
     // 기록 조회에 실패했고 받은 공백도 없으면 "0회"라고 하지 않는다
-    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: "HTTP 503", gaps: [], gapsTruncated: false, segments: 0 } });
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: "HTTP 503", gaps: [], gapsTruncated: false, segments: 0, fromMs: null } });
     expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).not.toContain("ship-gap-summary");
-    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: [], gapsTruncated: false, segments: 1 } });
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: [], gapsTruncated: false, segments: 1, fromMs: null } });
     expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).toContain("최근 6 h 수신 공백 0회 · 합계 0 s");
+    // 기록 조회에 실패했는데 상태로 받은 공백이 있으면: 6 h 전체라고 하지 않는다(리뷰 후속)
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: "HTTP 503", gaps: gaps.slice(0, 1), gapsTruncated: false, segments: 0, fromMs: null } });
+    const failed = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    expect(failed).toContain("선택 뒤 받은 수신 공백 1회");
+    expect(failed).toContain("기록 조회 실패 — 6 h 전체가 아님");
+    expect(failed).not.toContain("최근 6 h 수신 공백");
+  });
+  it("gap summary counts only the part of each gap inside the track window", () => {
+    const T = Date.parse("2026-09-28T01:00:00Z");
+    const gaps: AisGap[] = [
+      { started_at: iso(T - 3_600_000), ended_at: iso(T + 60_000), reason: null }, // 창보다 1 h 먼저 시작 → 창 안 60 s 만
+      { started_at: iso(T + 120_000), ended_at: iso(T + 150_000), reason: null },
+      { started_at: iso(T - 7_200_000), ended_at: iso(T - 3_700_000), reason: null }, // 창 밖
+    ];
+    expect(gapSummary(gaps, T, T + 3_600_000)).toEqual({ count: 2, closedS: 90, openSinceMs: null });
+    expect(gapSummary(gaps)).toEqual({ count: 3, closedS: 3660 + 30 + 3500, openSinceMs: null });
+  });
+  it("REST track: lines follow the server's segments even when the gap list was truncated to the newest 200", () => {
+    const T = Date.parse("2026-09-28T01:00:00Z");
+    const oldOutage = { started_at: iso(T + 60_000), ended_at: iso(T + 660_000), reason: "old" }; // 10분 — 잘려 나간 가장 오래된 공백
+    const shortOnes = Array.from({ length: 249 }, (_, i) => ({ started_at: iso(T + 900_000 + i * 20_000), ended_at: iso(T + 900_000 + i * 20_000 + 3_000), reason: null }));
+    const pts = [0, 60, 720, 780].map((s) => ({ ts: iso(T + s * 1000), lon: 129 + s / 10_000, lat: 35 }));
+    const resp = {
+      type: "Feature",
+      geometry: { type: "MultiLineString", coordinates: [[[129, 35], [129.006, 35]], [[129.072, 35], [129.078, 35]]] },
+      properties: { segments: [{ start: iso(T), end: iso(T + 60_000), points: 2 }, { start: iso(T + 720_000), end: iso(T + 780_000), points: 2 }], gaps_truncated: true },
+      points: pts,
+      gaps: [oldOutage, ...shortOnes].slice(-200),
+    };
+    const tr = shipTrackFromRest(resp);
+    expect(tr.segs.map((x) => x.pts.length)).toEqual([2, 2]);
+    expect(tr.gapsTruncated).toBe(true);
+    // 서버 구간에 속하지 않는 점(앞뒤가 끊긴 한 점)은 따로 둔다
+    const lone = shipTrackFromRest({ ...resp, points: [...pts.slice(0, 2), { ts: iso(T + 400_000), lon: 129.04, lat: 35 }, ...pts.slice(2)] });
+    expect(lone.segs.map((x) => x.pts.length)).toEqual([2, 1, 2]);
   });
   it("AIS disabled (no key): the ship list and chip say so instead of waiting forever (review #15)", () => {
     setData({ ships: { mode: "waiting", version: 1, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] } });
@@ -621,6 +656,9 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
     setData({ ais: parseAisStatus({ sources: { ais: { connected: true, coverage: [[-90, -180, 90, 0], [-90, 45, 90, 180]] } } }, 0) });
     expect(legend(true)).toContain("선박 수신 범위(운영 설정)");
     expect(legend(false)).not.toContain("선박 수신 범위");
+    // 전 해역 구독이면 그릴 경계가 없다 → 범례도 없다
+    setData({ ais: parseAisStatus({ sources: { ais: { connected: true, coverage: [[-90, -180, 90, 180]] } } }, 0) });
+    expect(legend(true)).not.toContain("선박 수신 범위");
   });
   it("ship card: WS says the ship left the live set → no stale values presented as current", () => {
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: null } });

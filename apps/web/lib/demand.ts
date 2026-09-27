@@ -6,8 +6,8 @@
  */
 import type { Tone } from "./tooltip";
 
-export const HOT_STATES = ["active", "pending", "throttled", "covered_by_region"] as const;
-export const FOCUS_STATES = ["active", "pending", "throttled", "not_found", "error", "expired_session_cap"] as const;
+export const HOT_STATES = ["active", "pending", "throttled", "covered_by_region", "error", "disabled", "limited"] as const;
+export const FOCUS_STATES = ["active", "pending", "throttled", "not_found", "error", "disabled", "expired_session_cap", "limited"] as const;
 export type HotState = (typeof HOT_STATES)[number];
 export type FocusState = (typeof FOCUS_STATES)[number];
 
@@ -60,7 +60,7 @@ function fmtInterval(s: number) { return Number.isInteger(s) ? `${s}초` : `${s.
 /**
  * 선택 항공기의 집중 추적 칩(카드·지도). 서버가 이 hex 에 대해 보고한 상태가 없으면 null.
  * active "집중 추적 5초 · 3분째" · pending "집중 추적 대기" · throttled "호출 상한으로 지연" · not_found "공급자에서 찾지 못함" ·
- * error "집중 추적 오류" · expired_session_cap "집중 추적 30분 상한".
+ * error "집중 추적 오류" · disabled "공급자 꺼짐(운영자)" · expired_session_cap "집중 추적 30분 상한" · limited "추적 변경 제한".
  */
 export function focusChip(d: DemandInfo | null, hex: string | null, nowMs: number): Chip | null {
   const f = d?.focus;
@@ -81,6 +81,10 @@ export function focusChip(d: DemandInfo | null, hex: string | null, nowMs: numbe
       return { kind: "focus", tone: "bad", text: "집중 추적 오류", title: "공급자 조회가 실패하고 있습니다. 지도는 일반 갱신 주기로만 움직입니다." };
     case "expired_session_cap":
       return { kind: "focus", tone: "warn", text: "집중 추적 30분 상한 — 다시 선택하면 이어짐", title: "한 세션의 연속 집중 추적은 30분까지입니다(호출 비용 상한, ADR-013). 항공기를 다시 선택하면 새로 시작합니다." };
+    case "disabled":
+      return { kind: "focus", tone: "muted", text: "집중 추적 중지 · 공급자 꺼짐(운영자)", title: "운영자가 이 공급자(adsb.fi)를 꺼서 수집기가 조회하지 않습니다. 지도는 일반 갱신 주기로만 움직입니다." };
+    case "limited":
+      return { kind: "focus", tone: "warn", text: "추적 변경 제한 — 잠시 뒤 반영", title: "한 창에서 1분에 새로 집중 추적을 시작할 수 있는 항공기는 6대까지입니다(호출 남용 방지). 1분 안에 반영되며, 그동안 이 항공기는 따로 조회하지 않습니다." };
   }
 }
 
@@ -99,6 +103,12 @@ export function hotChip(d: DemandInfo | null): Chip | null {
       return { kind: "hot", tone: "warn", text: `핫 리전 호출 상한으로 지연${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 간격` : ""}${r ? `(${r})` : ""}`, title: `공급자 호출 상한 때문에 주기를 늘렸거나 이 칸을 건너뛰고 있습니다. ${title}` };
     case "covered_by_region":
       return { kind: "hot", tone: "muted", text: `관심 지역 수집 범위 안${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 갱신` : ""}`, title: "화면 중심이 고정 관심 지역 안이라 따로 조회하지 않습니다 — 관심 지역 수집이 이미 이곳을 다룹니다." };
+    case "error":
+      return { kind: "hot", tone: "bad", text: `핫 리전 조회 오류${r ? `(${r})` : ""}`, title: `공급자 조회가 실패하고 있습니다. 지도는 일반 갱신 주기로만 움직입니다. ${title}` };
+    case "disabled":
+      return { kind: "hot", tone: "muted", text: "핫 리전 중지 · 공급자 꺼짐(운영자)", title: "운영자가 이 공급자(adsb.fi)를 꺼서 수집기가 이 지역을 따로 조회하지 않습니다." };
+    case "limited":
+      return { kind: "hot", tone: "warn", text: "핫 리전 변경 제한 — 잠시 뒤 반영", title: "한 창에서 1분에 새로 조회를 시작할 수 있는 지역은 6칸까지입니다(호출 남용 방지). 1분 안에 반영되며, 그동안 이 칸은 따로 조회하지 않습니다." };
   }
 }
 

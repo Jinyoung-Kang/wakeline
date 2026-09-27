@@ -65,7 +65,7 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   const pb = positionBadge(s?.position_source);
   const rot = s ? shipRotation(s) : null;
   // 공백 요약: 기록 조회에 성공했거나(0회도 근거 있음) 선택 뒤 받은 공백이 있을 때만
-  const gaps = track && ((track.loaded && !track.error) || track.gaps.length) ? gapSummary(track.gaps) : null;
+  const gaps = track && ((track.loaded && !track.error) || track.gaps.length) ? gapSummary(track.gaps, track.fromMs ?? -Infinity, now > 0 ? now : Infinity) : null;
   const code = st?.ship_type ?? s?.ship_type ?? null;
   const name = st?.name ?? s?.name ?? null;
   const imo = imoField(st?.imo);
@@ -115,7 +115,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
           {gaps ? (
             <div className="mt-1 text-[11px]" data-testid="ship-gap-summary">
               <div className={gaps.count ? "text-warn" : "text-fg-2"}>
-                최근 6 h 수신 공백 {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
+                {track?.error ? "선택 뒤 받은 수신 공백" : "최근 6 h 수신 공백"} {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
+                {track?.error ? " (기록 조회 실패 — 6 h 전체가 아님)" : ""}
                 {gaps.openSinceMs != null ? ` · 진행 중 1회(지금까지 ${now ? fmtDuration((now - gaps.openSinceMs) / 1000) : "—"})` : ""}
               </div>
               <div className="text-fg-3">{GAP_BREAK_MIN_MS / 1000} s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)</div>

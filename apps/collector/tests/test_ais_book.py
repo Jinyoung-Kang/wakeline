@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import orjson
 from test_ais_helpers import T0_EPOCH
 
 from wakeline_collector.ais.book import STATE_FIELDS, ShipBook
@@ -140,3 +141,27 @@ def test_ttl_eviction_and_cap():
     assert b.evict() == 2  # …3, …1 은 100 s 넘게 갱신 없음
     assert len(b) == 1 and b.evicted == 3
     assert b.evict() == 0
+
+
+def test_auxiliary_craft_24b_keeps_a_size_known_from_message_19():
+    """보조 선박 24B 는 크기 키를 싣지 않는다: 메시지 19 로 받은 크기는 남고, 처음 보는 보조 선박의 크기는 모름(None)으로 나간다."""
+    from test_ais_helpers import static24
+
+    from wakeline_collector.ais.parse import parse_message
+
+    def part(msg: dict) -> StaticPart:
+        sp = parse_message(orjson.dumps(msg)).static
+        assert sp is not None
+        return StaticPart(mmsi=sp.mmsi, fields=sp.fields, seen_at=sp.seen_at, t=T0_EPOCH)
+
+    b = ShipBook("aisstream")
+    b.apply_static(static(mmsi="984401234", dim_a=6, dim_b=4, dim_c=2, dim_d=1), T0_EPOCH)  # 메시지 19 에서 온 크기
+    b.drain()
+    aux = static24(984401234, part_b=True, CallSign="TENDER1", ShipType=50, Dimension={"A": 209, "B": 444, "C": 1, "D": 0})
+    assert b.apply_static(part(aux), T0_EPOCH) == "changed"
+    s = b.drain()[1][0]
+    assert (s["call_sign"], s["dim_a"], s["dim_b"], s["dim_c"], s["dim_d"]) == ("TENDER1", 6, 4, 2, 1)
+    fresh = static24(984409999, part_b=True, CallSign="TENDER2", ShipType=50, Dimension={"A": 209, "B": 444, "C": 1, "D": 0})
+    b.apply_static(part(fresh), T0_EPOCH)
+    s2 = next(x for x in b.drain()[1] if x["mmsi"] == "984409999")
+    assert (s2["dim_a"], s2["dim_b"], s2["dim_c"], s2["dim_d"]) == (None, None, None, None)

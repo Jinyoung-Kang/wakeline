@@ -181,6 +181,9 @@ class DemandTracker:
         now = self._clock()
         disabled = bool(demand.fields) and await self.ctx.status.is_disabled(self.provider.name)  # 운영자 스위치는 틱마다
         if disabled:
+            # 이미 속도 상한 대기열에 들어간 조회도 보내지 않는다(리뷰 2026-09-28b #2 후속): 취소하면 대기열에서 빠진다.
+            # 이미 전송된 요청이면 예산은 쓴 것으로 둔다(과대 집계는 안전 쪽).
+            await self.aclose(wait_s=0)
             await self.status.put(self._disabled(demand))
         else:
             await self._lift_disabled()
@@ -285,9 +288,9 @@ class DemandTracker:
         self._served = set()
         updates: dict[str, dict[str, Any]] = {}
         for f in demand.focus:
-            self._status_if_changed(updates, f.field, "throttled", None, DISABLED_MSG)
+            self._status_if_changed(updates, f.field, "disabled", None, DISABLED_MSG)
         for c in demand.hot:
-            self._status_if_changed(updates, c.field, "throttled", None, DISABLED_MSG)
+            self._status_if_changed(updates, c.field, "disabled", None, DISABLED_MSG)
         return updates
 
     # ---- 상태 --------------------------------------------------------------------------------------------------------

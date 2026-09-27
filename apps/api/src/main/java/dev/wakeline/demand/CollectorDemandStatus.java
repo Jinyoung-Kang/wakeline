@@ -8,12 +8,13 @@ import java.time.format.DateTimeParseException;
 import java.util.Set;
 
 /**
- * 수집기가 wakeline:demand:status 에 쓴 한 필드(계약 v2 §A2): {state, interval_s, last_success_at, last_error, provider}.
+ * 수집기가 wakeline:demand:status 에 쓴 한 필드(계약 v2 §A2 · v3 §C): {state, interval_s, last_success_at, last_error, provider}.
+ * state disabled = 운영자가 공급자를 꺼서 조회하지 않음(호출 상한과 구분한다).
  * 수집기 값은 믿지 않는다 — 크기·상태 값·범위를 다시 검사하고, 맞지 않으면 없는 것으로 본다(화면은 '대기').
  * last_error·provider 는 화면에 내보내지 않는다(내부 사유 문구).
  */
 public record CollectorDemandStatus(String state, Integer intervalS, Instant lastSuccessAt) {
-    public static final Set<String> STATES = Set.of("active", "throttled", "not_found", "error");
+    public static final Set<String> STATES = Set.of("active", "throttled", "not_found", "error", "disabled");
     static final int MAX_RAW = 1024;
     static final int MAX_INTERVAL_S = 3600;
     /** active 로 믿을 최근 성공의 최소 창 — 그 뒤로는 max(이 값, 주기 × 3). */

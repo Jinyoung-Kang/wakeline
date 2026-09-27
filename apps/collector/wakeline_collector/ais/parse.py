@@ -349,11 +349,13 @@ def _static(mtype: str, body: dict[str, Any], mmsi: str, seen_at: str, t: float)
         if not isinstance(rep, dict) or rep.get("Valid") is not True:
             return None
         if part_b:
-            aux = mmsi.startswith(AUX_CRAFT_PREFIX)  # 보조 선박: 크기 자리가 모선 MMSI — 크기로 읽지 않는다
+            # 보조 선박(98MIDxxxx): 크기 자리에 모선 MMSI 가 실린다 — 크기로 읽지 않고 크기 키를 아예 싣지 않는다.
+            # None 으로 실으면 ShipBook 병합이 메시지 19 등에서 이미 받은 실제 크기를 지운다(이 프레임은 크기 정보가 없다).
+            aux = mmsi.startswith(AUX_CRAFT_PREFIX)
             f = {
                 "call_sign": clean_text(rep.get("CallSign"), MAX_CALL_SIGN),
                 "ship_type": _ship_type(rep.get("ShipType")),
-                **_dims(None if aux else rep.get("Dimension")),
+                **({} if aux else _dims(rep.get("Dimension"))),
             }
         else:
             f = {"name": clean_text(rep.get("Name"), MAX_NAME)}

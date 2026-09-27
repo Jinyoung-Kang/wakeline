@@ -326,7 +326,7 @@ def test_static_data_report_b_from_auxiliary_craft_has_no_dimensions():
     예: 모선 440123456 을 9/9/6/6 bit 로 나누면 209/444/1/0 이 되어 크기처럼 보인다."""
     aux = static24(984401234, part_b=True, CallSign="TENDER1", ShipType=50, Dimension={"A": 209, "B": 444, "C": 1, "D": 0})
     f = parse_message(dumps(aux)).static.fields
-    assert f == {"call_sign": "TENDER1", "ship_type": 50, "dim_a": None, "dim_b": None, "dim_c": None, "dim_d": None}
+    assert f == {"call_sign": "TENDER1", "ship_type": 50}  # 크기 키 없음 — 이미 아는 크기를 지우지 않는다(병합은 test_ais_book)
     # 보조 선박이 아니면(98 로 시작하지 않음) 그대로 크기다
     ship = static24(440123456, part_b=True, Dimension={"A": 209, "B": 44, "C": 1, "D": 0})
     assert parse_message(dumps(ship)).static.fields["dim_a"] == 209

@@ -6,7 +6,7 @@ import {
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
 import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_NODIR_PATH } from "@/lib/ship-layers";
-import { SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S } from "@/lib/ships";
+import { aisCoverageFeatures, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
 const ALT_TICKS: [number, string][] = [[0, "0"], [10000, "10k ft"], [25000, "FL250"], [40000, "FL400+"]];
@@ -63,7 +63,8 @@ export function MapLegend({ id }: { id: string }) {
 export function MapLegendView({ id, layers, radarSource }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma" }) {
   const kr = useServerData((d) => d.radarKr);
   const hasRv = useServerData((d) => (d.radar?.past.length ?? 0) > 0);
-  const hasCoverage = useServerData((d) => (d.ais?.coverage?.length ?? 0) > 0);
+  // 경계선이 실제로 그려질 때만(전 해역 구독이면 그릴 경계가 없다)
+  const hasCoverage = useServerData((d) => aisCoverageFeatures(d.ais?.coverage ?? null).features.length > 0);
   const grad = `linear-gradient(90deg, ${ALT_RAMP.map(([ft, c]) => `${c} ${(ft / ALT_MAX) * 100}%`).join(", ")})`;
   return (
     <div id={id} className="panel max-h-full w-[264px] overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
