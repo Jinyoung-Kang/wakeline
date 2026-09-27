@@ -48,6 +48,9 @@ async def test_replay_one_round_fast_shifts_time_to_now():
     assert not [p for p in parsed if p.reject]
     times = [p.position.t for p in parsed if p.position]
     assert min(times) >= t0 - 1 and max(times) <= time.time() + 1  # time_utc 를 지금으로 옮겼다
+    # Timestamp 60(값 없음) 보고 10건은 위치 출처 null, 나머지는 epfs(계약 v3 §B)
+    srcs = [p.position.position_source for p in parsed if p.position]
+    assert srcs.count(None) == 10 and srcs.count("epfs") == len(srcs) - 10
     assert all(b"_recv_offset_s" not in x for x in raws)
     assert orjson.loads(raws[0])["MetaData"]["time_utc"].endswith("+0000 UTC")
 

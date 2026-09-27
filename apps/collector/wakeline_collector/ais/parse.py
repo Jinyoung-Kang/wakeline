@@ -2,9 +2,11 @@
 
 '값 없음' 표기는 null 로 바꾸고 추정해서 채우지 않는다(소유자 규칙). 근거:
 - 위치 보고(ADR-014, USCG NAVCEN): lat 91 · lon 181(위치 없음 → 레코드 없음), SOG 102.3, COG 360, heading 511, ROT -128.
-  Timestamp 61 수동 입력 · 62 추측항법 · 63 위치 장치 비작동 → position_source. 그 밖(0–60)은 "gnss"(전자 위치 장치의 정상 보고).
+  Timestamp → position_source(계약 v3 §B): 0–59 = 전자 위치 장치(EPFS)가 낸 위치의 UTC 초 → "epfs" · 61 수동 입력 · 62 추측항법 ·
+  63 위치 장치 비작동. 60(값 없음 기본값)·필드 없음·범위 밖 → null(장치 종류·출처를 단정하지 않는다).
 - 정적·항해 정보(USCG NAVCEN 메시지 5 표, 2026-09-28 확인): IMO 0 · 선종 0 · 흘수 0 · A=B=C=D=0 · ETA 월 0 / 일 0 / 시 24 / 분 60 ·
   '@' 채움 문자열 = 값 없음. IMO 1–999,999 는 '사용 안 함'.
+- 메시지 24B 의 크기 30 bit 는 보조 선박(MMSI 98MIDxxxx)이면 모선 MMSI 다(gpsd AIVDM 문서 확인 2026-09-28) → 크기 null.
 - 수신 시각(seen_at)은 MetaData.time_utc(aisstream 수신 시각)다. 선박 송신 시각이 아니며, 없거나 해석할 수 없으면 메시지를 버린다
   (수신한 우리 시각으로 대신하지 않는다 — DH-13 과 같은 원칙).
 """
@@ -32,7 +34,9 @@ SUBSCRIBED_TYPES = (
     "ShipStaticData",
     "StaticDataReport",
 )
+POSITION_SOURCE_EPFS = "epfs"  # Timestamp 0–59
 POSITION_SOURCE = {61: "manual", 62: "estimated", 63: "inoperative"}
+AUX_CRAFT_PREFIX = "98"  # 보조 선박(모선에 딸린 작은 배) MMSI 98MIDxxxx
 STATIC_FIELDS = (
     "name",
     "call_sign",
@@ -76,7 +80,7 @@ class Position:
     heading_deg: int | None
     nav_status: int | None
     rot: int | None
-    position_source: str
+    position_source: str | None  # epfs · manual · estimated · inoperative · None(모름)
     seen_at: str  # ISO-8601 UTC, ms
     t: float  # seen_at 의 epoch 초
     msg_type: str
@@ -193,6 +197,15 @@ def _rot(v: Any) -> int | None:
     return _ranged(v, -127, 127)  # -128 = 값 없음
 
 
+def _position_source(v: Any) -> str | None:
+    ts = _int(v)
+    if ts is None:
+        return None
+    if 0 <= ts <= 59:
+        return POSITION_SOURCE_EPFS
+    return POSITION_SOURCE.get(ts)  # 60(값 없음)·범위 밖 → None
+
+
 def _dims(d: Any) -> dict[str, int | None]:
     if not isinstance(d, dict):
         return {"dim_a": None, "dim_b": None, "dim_c": None, "dim_d": None}
@@ -241,6 +254,23 @@ def _mmsi(meta: dict[str, Any], body: dict[str, Any]) -> str | None:
 # ── 메시지 ─────────────────────────────────────────────────────────
 
 
+def _is_error_doc(doc: dict[str, Any]) -> bool:
+    return "error" in doc and "Message" not in doc
+
+
+def is_provider_error(raw: bytes | str) -> bool:
+    """공급자 오류 프레임({"error": ...})인지 — parse_message 의 provider_error 와 같은 규칙. 수신 태스크가 데이터와 가르는 데 쓴다.
+    '"error"' 글자열이 있는 프레임만 파싱한다(나머지 데이터 프레임은 파싱하지 않고 그대로 대기열로)."""
+    marked = (b'"error"' in raw) if isinstance(raw, bytes) else ('"error"' in raw)
+    if not marked:
+        return False
+    try:
+        doc = orjson.loads(raw)
+    except orjson.JSONDecodeError:
+        return False
+    return isinstance(doc, dict) and _is_error_doc(doc)
+
+
 def parse_message(raw: bytes | str) -> Parsed:
     try:
         doc = orjson.loads(raw)
@@ -248,7 +278,7 @@ def parse_message(raw: bytes | str) -> Parsed:
         return Parsed(reject="json")
     if not isinstance(doc, dict):
         return Parsed(reject="shape")
-    if "error" in doc and "Message" not in doc:
+    if _is_error_doc(doc):
         err = doc.get("error")
         return Parsed(reject="provider_error", error_text=str(err)[:300] if err is not None else "")
     mtype = doc.get("MessageType")
@@ -282,7 +312,6 @@ def parse_message(raw: bytes | str) -> Parsed:
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return Parsed(static=static, reject="position_range")
     is_a = mtype == "PositionReport"
-    ts = _int(body.get("Timestamp"))
     pos = Position(
         mmsi=mmsi,
         lat=round(lat, 6),
@@ -292,7 +321,7 @@ def parse_message(raw: bytes | str) -> Parsed:
         heading_deg=_heading(body.get("TrueHeading")),
         nav_status=_ranged(body.get("NavigationalStatus"), 0, 15) if is_a else None,
         rot=_rot(body.get("RateOfTurn")) if is_a else None,
-        position_source=POSITION_SOURCE.get(ts, "gnss") if ts is not None else "gnss",
+        position_source=_position_source(body.get("Timestamp")),
         seen_at=seen_at,
         t=t,
         msg_type=mtype,
@@ -320,10 +349,11 @@ def _static(mtype: str, body: dict[str, Any], mmsi: str, seen_at: str, t: float)
         if not isinstance(rep, dict) or rep.get("Valid") is not True:
             return None
         if part_b:
+            aux = mmsi.startswith(AUX_CRAFT_PREFIX)  # 보조 선박: 크기 자리가 모선 MMSI — 크기로 읽지 않는다
             f = {
                 "call_sign": clean_text(rep.get("CallSign"), MAX_CALL_SIGN),
                 "ship_type": _ship_type(rep.get("ShipType")),
-                **_dims(rep.get("Dimension")),
+                **_dims(None if aux else rep.get("Dimension")),
             }
         else:
             f = {"name": clean_text(rep.get("Name"), MAX_NAME)}

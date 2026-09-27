@@ -14,6 +14,7 @@ from wakeline_collector.ais.parse import (
     SUBSCRIBED_TYPES,
     clean_text,
     go_time,
+    is_provider_error,
     iso_ms,
     parse_message,
     parse_time_utc,
@@ -120,19 +121,46 @@ def test_position_fields_mapping():
         5,
         -127,
     )
-    assert p.position_source == "gnss" and p.cls == "A" and p.msg_type == "PositionReport"
+    assert p.position_source == "epfs" and p.cls == "A" and p.msg_type == "PositionReport"
     assert p.seen_at == "2026-09-27T16:29:43.949Z" and p.t == pytest.approx(T0_EPOCH, abs=1e-3)
 
 
 @pytest.mark.parametrize(
     ("ts", "src"),
-    [(0, "gnss"), (59, "gnss"), (60, "gnss"), (61, "manual"), (62, "estimated"), (63, "inoperative"), (None, "gnss")],
+    [
+        (0, "epfs"),
+        (59, "epfs"),
+        (30.0, "epfs"),
+        (60, None),  # 값 없음(기본값) — 출처를 말하지 않는다
+        (61, "manual"),
+        (62, "estimated"),
+        (63, "inoperative"),
+        (None, None),  # 필드 없음
+        (64, None),
+        (-1, None),
+        (30.5, None),
+        ("30", None),
+        (True, None),
+    ],
 )
 def test_position_source_from_timestamp(ts, src):
     doc = position(Timestamp=ts)
     if ts is None:
         _body(doc).pop("Timestamp")
     assert parse_message(dumps(doc)).position.position_source == src
+
+
+def test_fixture_timestamp_60_reports_have_no_position_source():
+    """실수신 fixture 의 Timestamp 60(값 없음) 보고 10건은 null, 0–59 는 epfs(리뷰 #5 · 계약 v3 §B)."""
+    got: Counter[bool] = Counter()
+    for d in fixture_docs():
+        if d["MessageType"] not in POSITION_CLASS:
+            continue
+        ts = _body(d)["Timestamp"]
+        src = parse_message(dumps(d)).position.position_source
+        assert src == ("epfs" if 0 <= ts <= 59 else None), (ts, src)
+        got[ts == 60] += 1
+    assert got[True] == 10 and got[False] == 418
 
 
 @pytest.mark.parametrize(
@@ -291,6 +319,42 @@ def test_static_data_report_parts():
     invalid["Message"]["StaticDataReport"]["ReportB"]["Valid"] = False
     p = parse_message(dumps(invalid))
     assert p.static is None and p.reject == "part"
+
+
+def test_static_data_report_b_from_auxiliary_craft_has_no_dimensions():
+    """보조 선박(MMSI 98MIDxxxx)의 24B 는 크기 자리(30 bit)에 모선 MMSI 를 싣는다 — 크기로 내보내지 않는다(리뷰 #7).
+    예: 모선 440123456 을 9/9/6/6 bit 로 나누면 209/444/1/0 이 되어 크기처럼 보인다."""
+    aux = static24(984401234, part_b=True, CallSign="TENDER1", ShipType=50, Dimension={"A": 209, "B": 444, "C": 1, "D": 0})
+    f = parse_message(dumps(aux)).static.fields
+    assert f == {"call_sign": "TENDER1", "ship_type": 50, "dim_a": None, "dim_b": None, "dim_c": None, "dim_d": None}
+    # 보조 선박이 아니면(98 로 시작하지 않음) 그대로 크기다
+    ship = static24(440123456, part_b=True, Dimension={"A": 209, "B": 44, "C": 1, "D": 0})
+    assert parse_message(dumps(ship)).static.fields["dim_a"] == 209
+    # 24A(선명)는 보조 선박이어도 그대로
+    assert parse_message(dumps(static24(984401234, part_b=False, name="TENDER"))).static.fields == {"name": "TENDER"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b'{"error": "Api Key Is Not Valid"}', True),
+        ('{"error":"quota"}', True),
+        (b'{"error": null}', True),
+        (b'  {"error": 1, "detail": "x"}', True),
+        (b'{"error": "x", "Message": {}}', False),  # parse_message 와 같은 규칙: Message 가 있으면 데이터
+        (b'["error"]', False),
+        (b'{"error"', False),  # 깨진 JSON 은 오류 프레임이 아니다(정리 태스크가 json 으로 센다)
+        (b"", False),
+    ],
+)
+def test_is_provider_error(raw, expected):
+    assert is_provider_error(raw) is expected
+    if expected:
+        assert parse_message(raw).reject == "provider_error"
+
+
+def test_is_provider_error_false_for_every_fixture_message():
+    assert not [d for d in fixture_docs() if is_provider_error(dumps(d))]
 
 
 def test_time_parsing_variants():

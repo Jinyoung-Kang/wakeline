@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
 from fakes import FakeRedis
 from test_ais_helpers import decode, dumps, fixture_docs, validator
 
 from wakeline_collector.ais import sink as sink_mod
 from wakeline_collector.ais.book import ShipBook
-from wakeline_collector.ais.feed import FeedState
-from wakeline_collector.ais.parse import go_time
+from wakeline_collector.ais.feed import FeedState, GapTracker
+from wakeline_collector.ais.parse import go_time, parse_message
 from wakeline_collector.ais.queue import RawQueue
 from wakeline_collector.ais.sink import STATUS_KEY, AisSink
 from wakeline_collector.ais.worker import Worker
@@ -22,8 +23,8 @@ SHIPS = validator("stream_envelope.v1.json", "/$defs/ships_payload")
 GAP = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
 
 
-def _setup(provider="aisstream", **kw):
-    r = FakeRedis()
+def _setup(provider="aisstream", r=None, **kw):
+    r = r if r is not None else FakeRedis()
     q = RawQueue(1000)
     book = ShipBook(provider)
     feed = FeedState(provider)
@@ -135,6 +136,118 @@ async def test_gap_events_published_in_order_and_retried():
     gaps = [_assert_valid(f) for _, f in r.streams[STREAM_SHIPS]]
     assert [g["reason"] for g in gaps] == ["server closed (1000)", "server closed (1001)", "server closed (1002)"]
     assert all(f["kind"] == "ais_gap" and f["scope"] == "ships" and f["count"] == "1" for _, f in r.streams[STREAM_SHIPS])
+
+
+class StallingRedis(FakeRedis):
+    """다음 XADD 하나를 gate 가 열릴 때까지 붙잡는다 — Redis 가 잠깐 멈춘 사이 종료·새 공백이 겹치는 상황(리뷰 #8)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.stalled = asyncio.Event()
+        self.stall_next = True
+
+    async def xadd(self, stream, fields, maxlen=None, approximate=True):
+        if self.stall_next:
+            self.stall_next = False
+            self.stalled.set()
+            await self.gate.wait()
+        return await super().xadd(stream, fields, maxlen=maxlen, approximate=approximate)
+
+
+def _close_gaps(feed: FeedState, n: int, t0: float = 0.0) -> list[str]:
+    t = t0 or time.time()
+    out = []
+    for i in range(n):
+        feed.gaps.open(t + 10 * i, f"server closed (100{i})")
+        out.append(feed.gaps.close(t + 10 * i + 5)["started_at"])
+    return out
+
+
+def _sent_gaps(r: FakeRedis) -> list[str]:
+    return [decode(f)["started_at"] for _, f in r.streams.get(STREAM_SHIPS, []) if f["kind"] == "ais_gap"]
+
+
+@pytest.mark.parametrize("n", [1, 2, 3])
+async def test_final_during_a_stalled_loop_publish_never_pops_an_unsent_gap(n):
+    """발행 루프가 XADD 에서 멈춘 사이 final() 이 겹쳐도 IndexError·보내지 않은 공백의 제거가 없다(리뷰 #8)."""
+    r = StallingRedis()
+    _r, _q, _book, feed, _w, sink = _setup(r=r)
+    started = _close_gaps(feed, n)
+    loop_pub = asyncio.create_task(sink.publish_gaps())
+    await asyncio.wait_for(r.stalled.wait(), 1)
+    feed.on_stopped()
+    fin = asyncio.create_task(sink.final())
+    await asyncio.sleep(0.05)
+    r.gate.set()
+    await asyncio.wait_for(asyncio.gather(loop_pub, fin), 2)
+    assert _sent_gaps(r) == started  # 모두 한 번씩, 순서대로
+    assert not feed.gaps.pending and r.kv[STATUS_KEY]["state"] == "stopped"
+
+
+async def test_gap_evicted_while_in_flight_does_not_drop_the_next_one():
+    """보내는 중인 공백이 보관 상한 때문에 밀려나도, 다음(아직 안 보낸) 공백을 대신 지우지 않는다."""
+    r = StallingRedis()
+    _r, _q, _book, feed, _w, sink = _setup(r=r)
+    feed.gaps = GapTracker(pending_max=2)
+    t = time.time()
+    started = _close_gaps(feed, 2, t)
+    pub = asyncio.create_task(sink.publish_gaps())
+    await asyncio.wait_for(r.stalled.wait(), 1)  # 첫 공백을 보내는 중
+    started += _close_gaps(feed, 1, t + 100)  # 새 공백 → 가득 차 첫 공백이 보관에서 밀려난다
+    r.gate.set()
+    assert await asyncio.wait_for(pub, 2) == 3  # 밀려난 첫 공백(이미 보냄) + 남은 두 공백
+    assert _sent_gaps(r) == started and not feed.gaps.pending
+
+
+async def test_final_writes_stopped_status_even_if_publishing_fails(monkeypatch):
+    r, _q, _book, feed, _w, sink = _setup()
+
+    async def boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sink, "flush", boom)
+    feed.on_stopped()
+    await sink.final()
+    assert r.kv[STATUS_KEY]["state"] == "stopped" and sink.publish_errors == 1
+
+
+async def test_flush_cancelled_mid_xadd_keeps_ships_for_the_final_flush():
+    """종료 때 발행 루프를 취소해도 꺼낸 변경분을 잃지 않는다 — final() 의 flush 가 싣는다."""
+    r = StallingRedis()
+    _r, _q, book, feed, w, sink = _setup(r=r)
+    _load_fixture(w, feed)
+    dirty = book.dirty
+    t = asyncio.create_task(sink.flush())
+    await asyncio.wait_for(r.stalled.wait(), 1)
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert book.dirty == dirty
+    assert await sink.flush() == 1
+    assert len(decode(r.streams[STREAM_SHIPS][0][1])["ships"]) == dirty[0]
+
+
+async def test_timestamp_60_reports_publish_null_position_source():
+    """fixture 의 Timestamp 60(값 없음) 보고 10건은 발행 경로(정리 → ShipBook → XADD)를 지나도 null 이다(리뷰 #5)."""
+    r, _q, _book, feed, w, sink = _setup()
+    now = time.time()
+    ts60 = set()
+    for d in fixture_docs():
+        d["MetaData"]["time_utc"] = go_time(now + d.pop("_recv_offset_s") - 90)
+        body = d["Message"][d["MessageType"]]
+        if body.get("Timestamp") == 60:
+            ts60.add(parse_message(dumps(d)).position.mmsi)
+            w.handle(dumps(d))
+    assert await sink.flush() == 1
+    ships = _assert_valid(r.streams[STREAM_SHIPS][0][1])["ships"]
+    assert {s["mmsi"] for s in ships} == ts60 and all(s["position_source"] is None for s in ships)
+    # 전체 fixture: "gnss" 는 더 이상 만들지 않는다
+    r2, _q2, _book2, feed2, w2, sink2 = _setup()
+    _load_fixture(w2, feed2)
+    await sink2.flush()
+    srcs = {s["position_source"] for s in decode(r2.streams[STREAM_SHIPS][0][1])["ships"]}
+    assert "gnss" not in srcs and srcs <= {"epfs", "manual", "estimated", "inoperative", None}
 
 
 async def test_status_hash_fields():

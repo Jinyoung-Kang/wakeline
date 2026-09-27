@@ -75,6 +75,7 @@ class AisSink:
         self.publish_errors = 0
         self.status_errors = 0
         self.last_publish_at: float | None = None
+        self._gap_lock = asyncio.Lock()  # 발행 루프와 final() 이 같은 공백을 동시에 보내지 않게
 
     def _warn(self, msg: str, *args: object) -> None:
         now = self._mono()
@@ -132,44 +133,54 @@ class AisSink:
             try:
                 await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
             except (RedisError, OSError) as e:
-                rest_s = [s["mmsi"] for s in states[i * CHUNK :]]
-                rest_t = [s["mmsi"] for s in statics[i * CHUNK :]]
-                self.book.mark_dirty(rest_s, rest_t)
+                kept = self._keep_unsent(states, statics, i)
                 self.publish_errors += 1
-                self._warn("ships xadd failed (%s) — %d ships kept for the next flush", type(e).__name__, len(rest_s))
+                self._warn("ships xadd failed (%s) — %d ships kept for the next flush", type(e).__name__, kept)
                 break
+            except asyncio.CancelledError:
+                self._keep_unsent(states, statics, i)  # 종료 때 취소돼도 final() 의 flush 가 싣는다
+                raise
             sent += 1
             self.published_entries += 1
             self.published_ships += len(ships)
             self.last_publish_at = now
         return sent
 
+    def _keep_unsent(self, states: list[dict[str, Any]], statics: list[dict[str, Any]], part: int) -> int:
+        """part 번째(0부터)부터 보내지 못한 선박을 다시 '바뀜' 으로 표시한다. 반환: 위치 건수."""
+        rest_s = [s["mmsi"] for s in states[part * CHUNK :]]
+        self.book.mark_dirty(rest_s, [s["mmsi"] for s in statics[part * CHUNK :]])
+        return len(rest_s)
+
     # ── 공백 ─────────────────────────────────────────────────────
 
     async def publish_gaps(self) -> int:
-        pending = self.feed.gaps.pending
-        n = 0
-        while pending:
-            ev = pending[0]
-            env = self._env.envelope(
-                kind="ais_gap",
-                scope="ships",
-                provider=self.provider,
-                fetched_at=datetime.fromtimestamp(self._wall(), UTC),
-                raw_ref=self.raw_ref,
-                count=1,
-                payload=ev,
-            )
-            try:
-                await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
-            except (RedisError, OSError) as e:
-                self.publish_errors += 1
-                self._warn("ais_gap xadd failed (%s) — %d gap event(s) pending", type(e).__name__, len(pending))
-                break
-            pending.popleft()
-            n += 1
-            log.info("ais gap published: %s → %s (%s)", ev["started_at"], ev["ended_at"], ev["reason"])
-        return n
+        """보관한 닫힌 공백을 순서대로 보낸다. 보낸 그 이벤트만 지운다 — 보내는 사이 보관 상한 때문에 밀려났으면 지우지 않는다."""
+        async with self._gap_lock:
+            pending = self.feed.gaps.pending
+            n = 0
+            while pending:
+                ev = pending[0]
+                env = self._env.envelope(
+                    kind="ais_gap",
+                    scope="ships",
+                    provider=self.provider,
+                    fetched_at=datetime.fromtimestamp(self._wall(), UTC),
+                    raw_ref=self.raw_ref,
+                    count=1,
+                    payload=ev,
+                )
+                try:
+                    await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
+                except (RedisError, OSError) as e:
+                    self.publish_errors += 1
+                    self._warn("ais_gap xadd failed (%s) — %d gap event(s) pending", type(e).__name__, len(pending))
+                    break
+                if pending and pending[0] is ev:
+                    pending.popleft()
+                n += 1
+                log.info("ais gap published: %s → %s (%s)", ev["started_at"], ev["ended_at"], ev["reason"])
+            return n
 
     # ── 상태 해시 ────────────────────────────────────────────────
 
@@ -262,9 +273,14 @@ class AisSink:
             await _wait_any(stop, self.feed.changed, timeout)
 
     async def final(self) -> None:
-        """종료 직전: 남은 변경분·공백을 보내고 마지막 상태(stopped, 공백 열림)를 쓴다."""
-        await self.publish_gaps()
-        await self.flush()
+        """종료 직전: 남은 변경분·공백을 보내고 마지막 상태(stopped, 공백 열림)를 쓴다. 발행이 예상 밖으로 실패해도 상태는 쓴다.
+        호출자(main)는 발행 루프(run)를 먼저 멈춘 뒤 부른다."""
+        try:
+            await self.publish_gaps()
+            await self.flush()
+        except Exception:  # noqa: BLE001 — 마지막 상태 쓰기를 막지 않게
+            self.publish_errors += 1
+            log.exception("ais final publish failed")
         await self.write_status()
 
 

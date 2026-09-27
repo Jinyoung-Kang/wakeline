@@ -9,6 +9,8 @@
 
 종료(SIGTERM): 수신을 닫고(close_timeout 3 s) 대기열에 남은 원문을 정리한 뒤, 마지막 변경분·공백을 보내고 상태를
 stopped(마지막 메시지 시각부터 공백 열림)로 쓴다. 상한 합계 4 + 1 + 3 s(+ 대기열 정리 < 0.5 s)는 compose 기본 stop 유예(10 s) 안이다.
+발행 루프가 1 s 안에 빠져나오지 못하면(Redis 멈춤) 취소하고 끝난 것을 확인한 뒤에 마지막 발행을 한다 — 두 곳이 같은 공백을
+동시에 보내거나 옛 상태 쓰기가 stopped 뒤에 도착하지 않게.
 """
 
 from __future__ import annotations
@@ -147,11 +149,17 @@ async def main(
         if n:
             log.info("ais shutdown: processed %d queued message(s)", n)
         await asyncio.wait([sink_task], timeout=SINK_STOP_S)
+        if not sink_task.done():
+            log.warning("ais shutdown: sink loop still busy after %.0f s — cancelling it", SINK_STOP_S)
+            sink_task.cancel()
+        await asyncio.gather(sink_task, return_exceptions=True)
         feed.on_stopped()
         try:
             await asyncio.wait_for(sink.final(), timeout=FINAL_S)
         except TimeoutError:
             log.warning("ais shutdown: final publish timed out")
+        except Exception:  # noqa: BLE001 — 예상 밖 오류도 나머지 정리(연결 닫기)를 막지 않게
+            log.exception("ais shutdown: final publish failed")
     finally:
         for t in (stopper, worker_task, sink_task, *src_tasks):
             t.cancel()

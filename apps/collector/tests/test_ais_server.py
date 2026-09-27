@@ -29,7 +29,7 @@ from wakeline_collector.ais.feed import FeedState, parse_iso
 from wakeline_collector.ais.health import evaluate
 from wakeline_collector.ais.parse import SUBSCRIBED_TYPES, go_time
 from wakeline_collector.ais.queue import RawQueue
-from wakeline_collector.ais.sink import STATUS_KEY
+from wakeline_collector.ais.sink import STATUS_KEY, AisSink
 from wakeline_collector.publisher import STREAM_SHIPS
 
 KEY = "test-ais-key-0123456789abcdef"  # 가짜 키 — 로그·상태·스트림 어디에도 나오면 안 된다
@@ -257,6 +257,89 @@ async def test_handshake_rejected_backs_off_without_gap():
         server.close()
 
 
+def _error_frame(text: str = "Api Key Is Not Valid") -> bytes:
+    return json.dumps({"error": text}).encode()
+
+
+async def test_error_only_sessions_are_not_recovery():
+    """공급자 오류 프레임({"error": ...})은 데이터가 아니다(리뷰 #4): 오류만 받고 끊기는 연결이 되풀이돼도 열린 공백을 닫지 않고,
+    last_msg_at·msgs_total·수신 상태(receiving)를 바꾸지 않는다. 오류 프레임은 대기열에 넣어 정리 태스크가 provider_error 로 남긴다."""
+    error_sent: list[float] = []
+
+    async def script(idx, ws, srv):
+        if idx == 0:
+            for f in frames(5):
+                await ws.send(f)
+        else:  # 키 폐기·연결 수 초과: 오류 한 줄 뒤 끊김
+            error_sent.append(time.time())
+            await ws.send(_error_frame())
+        await asyncio.sleep(0.05)
+        await ws.close(1011, "try again later")
+
+    server, url = await start(FakeAis(script))
+    c, q, feed, _ = make_client(url, idle_timeout_s=5)
+    stop = asyncio.Event()
+    task = asyncio.create_task(c.run(stop))
+    try:
+        await wait_until(lambda: feed.sessions_ended >= 4)
+        assert feed.msgs_total == 5 and feed.last_msg_at is not None and feed.last_msg_at < min(error_sent)
+        # 첫 끊김에서 연 공백(마지막 데이터 수신 시각부터)이 그대로 열려 있고, '회복' 으로 닫힌 공백은 없다
+        assert feed.gaps.open_since == feed.last_msg_at
+        assert not feed.gaps.pending and feed.gaps.last is None
+        assert feed.state != "receiving"
+        raws = [q.get_nowait() for _ in range(q.qsize())]
+        assert sum(r == _error_frame() for r in raws) >= 3 and len(raws) - sum(r == _error_frame() for r in raws) == 5
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+
+
+async def test_error_only_sessions_from_start_record_no_gap():
+    """한 번도 데이터를 받지 못한 채 오류 프레임만 오면 '끊김' 도 '회복' 도 아니다 — 공백을 만들지 않는다."""
+
+    async def script(idx, ws, srv):
+        await ws.send(_error_frame())
+        await asyncio.sleep(0.05)
+        await ws.close(1008, "policy violation")
+
+    server, url = await start(FakeAis(script))
+    c, q, feed, _ = make_client(url, idle_timeout_s=5)
+    stop = asyncio.Event()
+    task = asyncio.create_task(c.run(stop))
+    try:
+        await wait_until(lambda: feed.sessions_ended >= 3)
+        assert feed.last_msg_at is None and feed.msgs_total == 0
+        assert feed.gaps.open_since is None and feed.gaps.last is None and not feed.gaps.pending
+        assert feed.last_error == "server closed (1008 policy violation)" and feed.state != "receiving"
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+
+
+async def test_error_frames_do_not_extend_the_idle_deadline():
+    """오류 프레임만 계속 오고 데이터가 없으면 조용한 연결과 같다 — idle 기한이 지나면 다시 붙는다."""
+
+    async def script(idx, ws, srv):
+        for _ in range(40):
+            await ws.send(_error_frame("slow down"))
+            await asyncio.sleep(0.05)
+        await ws.wait_closed()
+
+    server, url = await start(FakeAis(script))
+    c, q, feed, _ = make_client(url, idle_timeout_s=0.3)
+    stop = asyncio.Event()
+    task = asyncio.create_task(c.run(stop))
+    try:
+        await wait_until(lambda: feed.sessions_ended >= 1, 3)
+        assert feed.last_error == "idle 0.3 s — no messages" and feed.msgs_total == 0
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+
+
 async def test_connection_refused_is_reported():
     c, q, feed, _ = make_client("ws://127.0.0.1:9", open_timeout_s=1)  # discard 포트 — 열려 있지 않다
     stop = asyncio.Event()
@@ -345,7 +428,7 @@ async def test_main_live_mode_end_to_end():
     h = r.kv[STATUS_KEY]
     assert h["state"] == "stopped" and h["connected"] == "0" and h["gap_reason"] == "ais process stopped"
     assert h["last_gap_reason"] == "server closed (1001 going away)" and h["provider_error"] == "quota warning for ***"
-    assert int(h["msgs_total"]) >= 81 and h["deflate"] == "1"
+    assert int(h["msgs_total"]) == 80 and h["deflate"] == "1"  # 데이터 80건만 센다(오류 프레임 1건은 제외)
     # 키는 Redis 어디에도 없다(상태 해시·스트림 원문)
     blob = json.dumps(r.kv) + json.dumps([decode(f) for _, f in r.streams[STREAM_SHIPS]]) + json.dumps(r.streams)
     assert KEY not in blob
@@ -407,6 +490,71 @@ async def test_main_fixture_mode_publishes_and_carries_gap_over_restart():
     assert len(gaps) == 1 and gaps[0]["reason"] == "ais process stopped"
     ships = [f for _, f in r.streams[STREAM_SHIPS] if f["kind"] == "ships"]
     assert all(f["provider"] == "fixture" and f["raw_ref"] == "fixture/ais_east_asia_90s.jsonl" for f in ships)
+
+
+async def test_main_cancels_a_stuck_sink_loop_before_final(monkeypatch):
+    """발행 루프가 제한 시간 안에 빠져나오지 못하면(Redis 멈춤) 취소하고 끝난 것을 확인한 뒤에야 final() 을 부른다(리뷰 #8)."""
+    order: list[str] = []
+
+    async def stuck(self, stop):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            order.append("sink cancelled")
+            raise
+
+    orig_final = AisSink.final
+
+    async def final(self):
+        order.append("final")
+        await orig_final(self)
+
+    monkeypatch.setattr(AisSink, "run", stuck)
+    monkeypatch.setattr(AisSink, "final", final)
+    monkeypatch.setattr(ais_main, "SINK_STOP_S", 0.1)
+    r = ClosableRedis()
+    stop = asyncio.Event()
+    s = AisSettings(wakeline_fixture_mode=1)
+    task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=s, replay_speed=60))
+    await asyncio.sleep(0.3)
+    stop.set()
+    assert await asyncio.wait_for(task, 10) == 0
+    assert order == ["sink cancelled", "final"]
+    assert r.kv[STATUS_KEY]["state"] == "stopped"
+
+
+async def test_main_writes_stopped_status_when_the_final_publish_fails(monkeypatch):
+    async def boom(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(AisSink, "flush", boom)
+    r = ClosableRedis()
+    stop = asyncio.Event()
+    task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=AisSettings(wakeline_fixture_mode=1), replay_speed=60))
+    await asyncio.sleep(0.3)
+    stop.set()
+    assert await asyncio.wait_for(task, 10) == 0
+    assert r.kv[STATUS_KEY]["state"] == "stopped"
+
+
+async def test_main_exits_cleanly_when_final_itself_fails(monkeypatch):
+    async def boom(self):
+        raise RuntimeError("boom")
+
+    closed: list[bool] = []
+
+    class Tracking(ClosableRedis):
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(AisSink, "final", boom)
+    stop = asyncio.Event()
+    task = asyncio.create_task(
+        ais_main.main(stop=stop, redis=Tracking(), settings=AisSettings(wakeline_fixture_mode=1), replay_speed=60)
+    )
+    await asyncio.sleep(0.2)
+    stop.set()
+    assert await asyncio.wait_for(task, 10) == 0 and closed == [True]
 
 
 async def test_main_returns_1_when_a_task_dies(monkeypatch):

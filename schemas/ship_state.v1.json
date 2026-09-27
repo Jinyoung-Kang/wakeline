@@ -15,7 +15,7 @@
     "heading_deg": { "type": ["integer", "null"], "minimum": 0, "maximum": 359, "description": "선수방위(true heading, 도). 511 = 값 없음 → null" },
     "nav_status": { "type": ["integer", "null"], "minimum": 0, "maximum": 15, "description": "항해 상태 코드(class A 만, 보고값 그대로 — 15 = 정의되지 않음(기본값)). class B 는 null" },
     "rot": { "type": ["integer", "null"], "minimum": -127, "maximum": 127, "description": "선회율 원시 지시값 ROT_AIS(°/min 으로 환산하지 않은 보고값). -128 = 값 없음 → null. class B 는 null" },
-    "position_source": { "enum": ["gnss", "manual", "estimated", "inoperative"], "description": "보고의 Timestamp 필드: 61 → manual(수동 입력) · 62 → estimated(선박 자체 추측항법) · 63 → inoperative(위치 장치 비작동) · 그 밖(0–60) → gnss(전자 위치 장치의 정상 보고. 장치 종류는 단정하지 않는다)" },
+    "position_source": { "type": ["string", "null"], "enum": ["epfs", "manual", "estimated", "inoperative", "gnss", null], "description": "보고의 Timestamp 필드(계약 v3 §B): 0–59 → epfs(전자 위치 장치(EPFS)가 낸 위치의 UTC 초. 장치 종류는 단정하지 않는다) · 61 → manual(수동 입력) · 62 → estimated(선박 자체 추측항법) · 63 → inoperative(위치 장치 비작동) · 60(값 없음 기본값)·필드 없음·범위 밖 → null. \"gnss\" 는 레거시 값 — 배포 전환 중 스트림에 남은 옛 항목을 받기 위해서만 허용한다(수집기는 더 이상 만들지 않고, api 는 받자마자 null 로 바꾼다)" },
     "seen_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "MetaData.time_utc = aisstream 이 이 보고를 받은 시각(ms 절사). 선박 송신 시각이 아니다. 없으면 레코드를 만들지 않는다(우리 수신 시각으로 대신하지 않음)" },
     "provider": { "enum": ["aisstream", "fixture"] },
     "msg_type": { "enum": ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport"], "description": "aisstream MessageType" },

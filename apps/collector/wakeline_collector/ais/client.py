@@ -3,7 +3,9 @@
 - `wss://stream.aisstream.io/v0/stream` 에 permessage-deflate(compression="deflate")로 붙고, 붙자마자(1 s 안) 구독을 보낸다.
   구독 = {APIKey, BoundingBoxes, FilterMessageTypes}(문서 확인 2026-09-28). 쓰는 5개 형식만 받아 대역폭·CPU 를 줄인다.
 - 받은 프레임은 파싱하지 않고 RawQueue 에 넣기만 한다(기다리지 않음). 메시지 상한 1 MiB(압축 해제 후 크기에 적용), ping 20 s.
-- 메시지가 idle_timeout_s(기본 120 s) 동안 없으면 조용히 멈춘 연결로 보고 다시 붙는다(서버가 close 프레임 없이 끊는 사례 실측).
+- 공급자 오류 프레임({"error": ...})도 대기열에 넣지만(정리 태스크가 가려서 provider_error 로 기록) 데이터로 세지 않는다 —
+  공백을 닫거나 last_msg_at·msgs_total·수신 상태·idle 기한을 바꾸지 않는다(오류만 받고 끊기는 반복은 '회복' 이 아니다).
+- 데이터 메시지가 idle_timeout_s(기본 120 s) 동안 없으면 조용히 멈춘 연결로 보고 다시 붙는다(서버가 close 프레임 없이 끊는 사례 실측).
 - 끊기면 FeedState 가 공백을 열고, Backoff(1→60 s, ±20 %, 60 s 정상 연결 뒤에만 초기화) 만큼 쉬었다가 다시 붙는다.
 - 구독 영역이 바뀌면(BboxState) 같은 연결에서 구독을 다시 보낸다 — 5 s 에 한 번까지, 마지막 값만.
 
@@ -28,7 +30,7 @@ from websockets.extensions.permessage_deflate import PerMessageDeflate
 from wakeline_collector.ais.backoff import Backoff, SubscribeLimiter
 from wakeline_collector.ais.bbox import BBox, BboxState, format_bboxes, to_subscription
 from wakeline_collector.ais.feed import FeedState
-from wakeline_collector.ais.parse import SUBSCRIBED_TYPES
+from wakeline_collector.ais.parse import SUBSCRIBED_TYPES, is_provider_error
 from wakeline_collector.ais.queue import RawQueue
 from wakeline_collector.masking import mask
 
@@ -187,8 +189,10 @@ class AisStreamClient:
         put, on_message, wall = self.queue.put, self.feed.on_message, self._wall
         async with asyncio.timeout_at(loop.time() + self.idle_timeout_s) as deadline:
             async for msg in ws:
-                deadline.reschedule(loop.time() + self.idle_timeout_s)
                 put(msg)
+                if is_provider_error(msg):
+                    continue  # 데이터가 아니다(모듈 설명)
+                deadline.reschedule(loop.time() + self.idle_timeout_s)
                 on_message(wall())
 
     async def _resubscriber(self, ws: ClientConnection, version: int, limiter: SubscribeLimiter) -> None:

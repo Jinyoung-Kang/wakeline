@@ -9,7 +9,7 @@ import pytest
 from test_ais_helpers import ROOT, SCHEMAS, validator
 
 from wakeline_collector.ais.book import STATE_FIELDS
-from wakeline_collector.ais.parse import POSITION_CLASS, POSITION_SOURCE, STATIC_FIELDS
+from wakeline_collector.ais.parse import POSITION_CLASS, POSITION_SOURCE, POSITION_SOURCE_EPFS, STATIC_FIELDS
 
 COPY = ROOT / "apps" / "api" / "src" / "main" / "resources" / "schemas"
 
@@ -28,7 +28,9 @@ def test_ship_state_schema_matches_code():
     assert s["$id"] == "https://wakeline.invalid/schemas/ship_state.v1.json"
     assert tuple(s["required"]) == STATE_FIELDS and set(s["properties"]) == set(STATE_FIELDS)
     p = s["properties"]
-    assert set(p["position_source"]["enum"]) == {"gnss", *POSITION_SOURCE.values()}
+    # 계약 v3 §B: 수집기가 만드는 값 + null(모름) + 배포 전환 중에만 받는 레거시 "gnss"
+    assert p["position_source"]["type"] == ["string", "null"]
+    assert p["position_source"]["enum"] == [POSITION_SOURCE_EPFS, *POSITION_SOURCE.values(), "gnss", None]
     assert set(p["msg_type"]["enum"]) == set(POSITION_CLASS)
     assert set(p["class"]["enum"]) == set(POSITION_CLASS.values())
     assert set(p["provider"]["enum"]) == {"aisstream", "fixture"}
@@ -49,7 +51,7 @@ GOOD_STATE = {
     "heading_deg": 89,
     "nav_status": 0,
     "rot": 2,
-    "position_source": "gnss",
+    "position_source": "epfs",
     "seen_at": "2026-09-27T16:29:44.220Z",
     "provider": "aisstream",
     "msg_type": "PositionReport",
@@ -69,6 +71,9 @@ GOOD_STATE = {
         ({"lat": 91}, False),
         ({"mmsi": "44009102"}, False),
         ({"position_source": "guess"}, False),
+        ({"position_source": None}, True),  # Timestamp 60·없음·범위 밖 = 모름
+        ({"position_source": "gnss"}, True),  # 레거시(배포 전환 중 스트림에 남은 옛 항목)
+        ({"position_source": ""}, False),
         ({"seen_at": "yesterday"}, False),
         ({"extra": 1}, False),
     ],

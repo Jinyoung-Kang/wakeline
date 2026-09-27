@@ -7,7 +7,10 @@ from wakeline_collector.ais.client import _closed_reason
 
 
 def test_server_close_frame_is_reported_with_code_and_reason():
-    assert _closed_reason(ConnectionClosedOK(Close(1000, "bye"), Close(1000, "bye"), rcvd_then_sent=True)) == "server closed (1000 bye)"
+    assert (
+        _closed_reason(ConnectionClosedOK(Close(1000, "bye"), Close(1000, "bye"), rcvd_then_sent=True))
+        == "server closed (1000 bye)"
+    )
     assert _closed_reason(ConnectionClosedError(Close(1011, ""), None)) == "server closed (1011)"
 
 

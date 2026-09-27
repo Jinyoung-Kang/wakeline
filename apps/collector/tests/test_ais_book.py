@@ -26,7 +26,7 @@ def pos(mmsi="440091020", *, lat=37.0, lon=126.0, t=T0_EPOCH, sog=10.0, cls="A")
         91,
         0 if cls == "A" else None,
         0 if cls == "A" else None,
-        "gnss",
+        "epfs",
         iso_ms(t),
         t,
         "PositionReport",

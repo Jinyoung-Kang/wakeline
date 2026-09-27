@@ -26,6 +26,7 @@ from wakeline_collector.ais.feed import FeedState  # noqa: E402
 from wakeline_collector.ais.parse import (  # noqa: E402
     POSITION_CLASS,
     POSITION_SOURCE,
+    POSITION_SOURCE_EPFS,
     STATIC_FIELDS,
     SUBSCRIBED_TYPES,
     go_time,
@@ -218,13 +219,28 @@ def check_ships(env_v: Draft202012Validator) -> int:
     sentinel = [s["mmsi"] for s in ships if s["heading_deg"] == 511 or (s["cog_deg"] or 0) >= 360 or s["rot"] == -128]
     print(f"{'FAIL' if sentinel else 'ok  '} ais sentinel honesty: nulls {nulls} · static nulls {snulls}, {len(sentinel)} sentinel values leaked")
     failures += bool(sentinel)
+    # 위치 출처(계약 v3 §B): Timestamp 0–59 → epfs, 60(값 없음)·없음 → null. "gnss" 는 더 이상 만들지 않는다
+    wrong = []
+    for d in lines:
+        if d["MessageType"] in POSITION_CLASS:
+            ts = d["Message"][d["MessageType"]].get("Timestamp")
+            src = parse_message(json.dumps(d).encode()).position.position_source  # type: ignore[union-attr]
+            want = POSITION_SOURCE_EPFS if isinstance(ts, int) and 0 <= ts <= 59 else POSITION_SOURCE.get(ts)  # type: ignore[arg-type]
+            if src != want:
+                wrong.append((ts, src))
+    ts60 = sum(1 for d in lines if d["MessageType"] in POSITION_CLASS and d["Message"][d["MessageType"]].get("Timestamp") == 60)
+    gnss = sum(1 for s in ships if s["position_source"] == "gnss")
+    print(f"{'FAIL' if wrong or gnss else 'ok  '} ais position_source honesty: {ts60} Timestamp-60 reports → null, {len(wrong)} mismatches, {gnss} 'gnss' published")
+    failures += bool(wrong) or bool(gnss)
     # 스키마 열거값 = 코드 상수
     st = json.loads((SCHEMAS / "ship_state.v1.json").read_text())
     ss = json.loads((SCHEMAS / "ship_static.v1.json").read_text())
     bad = []
     if tuple(st["required"]) != STATE_FIELDS:
         bad.append("ship_state required != book.STATE_FIELDS")
-    if set(st["properties"]["position_source"]["enum"]) != {"gnss", *POSITION_SOURCE.values()}:
+    # 수집기가 만드는 값 + null(모름) + 배포 전환 중에만 받는 레거시 "gnss"
+    ps = st["properties"]["position_source"]
+    if ps.get("type") != ["string", "null"] or ps["enum"] != [POSITION_SOURCE_EPFS, *POSITION_SOURCE.values(), "gnss", None]:
         bad.append("position_source enum")
     if set(st["properties"]["msg_type"]["enum"]) != set(POSITION_CLASS) or set(st["properties"]["class"]["enum"]) != set(POSITION_CLASS.values()):
         bad.append("msg_type/class enum")
