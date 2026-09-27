@@ -41,7 +41,8 @@ export function MapView() {
     if (!el.current) return;
     maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL);
     const map = new maplibregl.Map({
-      container: el.current, style: STYLE_URL, center: REGION_CENTER, zoom: 6, minZoom: 2, maxZoom: 12,
+      container: el.current, style: STYLE_URL, center: REGION_CENTER, zoom: 6, minZoom: 1, maxZoom: 12,
+      hash: true, // #zoom/lat/lon — 지도 위치를 링크로 공유
       attributionControl: false, canvasContextAttributes: { antialias: false },
     });
     map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: "Aircraft: adsb.lol (ODbL) · adsb.fi · SIGMET/METAR: AviationWeather.gov · Radar: RainViewer" }), "bottom-right");
@@ -78,7 +79,8 @@ export function MapView() {
       const bbox: [number, number, number, number] = [
         Math.max(-180, b.getWest()), Math.max(-90, b.getSouth()), Math.min(180, b.getEast()), Math.min(90, b.getNorth()),
       ];
-      client.subscribe(bbox, Math.round(map.getZoom()));
+      client.subscribe(bbox, Math.floor(map.getZoom()));
+      worker.postMessage({ type: "viewport", bbox });
     };
     let moveTimer: ReturnType<typeof setTimeout> | null = null;
     map.on("moveend", () => {

@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 운영 API(인증 필요, 비인가 404). 공급자·실행 이력·품질 게이트·설정·감사·DLQ. 변경은 감사 기록. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1/ops")
 public class OpsController {

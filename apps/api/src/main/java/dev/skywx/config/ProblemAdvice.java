@@ -18,7 +18,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.net.URI;
 
 /** 모든 오류를 application/problem+json(RFC 9457)으로. 확장 필드 code · request_id. 스택·내부 메시지는 싣지 않는다. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestControllerAdvice
 public class ProblemAdvice {
     private static final Logger log = LoggerFactory.getLogger(ProblemAdvice.class);

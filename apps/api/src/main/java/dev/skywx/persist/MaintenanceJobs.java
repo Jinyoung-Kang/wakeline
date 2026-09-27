@@ -14,7 +14,7 @@ import java.time.ZoneOffset;
  * 파티션 생성·삭제(매일 03:00 UTC), 1분 요약(매시, 관심 지역만 · 30일), 통계 집계(03:30). 기동 시 파티션 보장.
  * 보존 정책 ADR-007: 원해상도 72 h, 1분 요약 30일, 알림·SIGMET·통계 영구.
  */
-@org.springframework.context.annotation.Profile("!cli")  // --create-ops-user CLI 에서는 웹·소비자·잡을 띄우지 않는다
+@org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
 public class MaintenanceJobs {
     private static final Logger log = LoggerFactory.getLogger(MaintenanceJobs.class);

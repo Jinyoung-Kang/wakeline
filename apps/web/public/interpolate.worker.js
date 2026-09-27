@@ -31,10 +31,24 @@
     if (dlon > 180) dlon -= 360; if (dlon < -180) dlon += 360;
     return [from[0] + (to[0] - from[0]) * k, wrap180(from[1] + dlon * k)];
   }
-  var states = new Map(), easing = new Map(), lastRender = new Map(), timer = null;
+  var states = new Map(), easing = new Map(), lastRender = new Map(), timer = null, tickMs = 250;
+  // 뷰포트 컬링: 메인 스레드가 보내는 [w, s, e, n] + 여백 안의 항공기만 렌더 상태로 만든다(전세계 7,000+ 대 대응).
+  var view = null;
+  function inView(lat, lon) {
+    if (!view) return true;
+    if (lat < view[1] || lat > view[3]) return false;
+    return view[0] <= view[2] ? lon >= view[0] && lon <= view[2] : lon >= view[0] || lon <= view[2];
+  }
+  // 대수가 많으면(저줌) 250 ms 보간이 화소 이하 이동이라 의미가 없다 → 1 s 로 낮춰 메인 스레드 setData 부하를 줄인다.
+  function retime(n) {
+    var want = n > 2000 ? 1000 : 250;
+    if (want !== tickMs && timer) { clearInterval(timer); timer = setInterval(tick, want); }
+    tickMs = want;
+  }
   function tick() {
     var now = Date.now(), out = [];
     states.forEach(function (s) {
+      if (!inView(s.lat, s.lon)) return;
       var r = predict(s, now);
       if (r.age_s > REMOVE_AFTER_S) return;
       var e = easing.get(s.hex);
@@ -46,7 +60,8 @@
       out.push(r);
     });
     lastRender.forEach(function (_v, h) { if (!states.has(h)) lastRender.delete(h); });
-    self.postMessage({ type: "render", at: now, states: out });
+    retime(out.length);
+    self.postMessage({ type: "render", at: now, states: out, total: states.size });
   }
   self.onmessage = function (ev) {
     var m = ev.data;
@@ -56,7 +71,13 @@
       m.remove.forEach(function (h) { states.delete(h); easing.delete(h); });
     }
     else if (m.type === "clear") { states.clear(); lastRender = new Map(); }
-    else if (m.type === "start") { if (!timer) timer = setInterval(tick, 250); }
+    else if (m.type === "viewport") {
+      var b = m.bbox, padLon = (b[2] - b[0]) * 0.15, padLat = (b[3] - b[1]) * 0.15;
+      view = [Math.max(-180, b[0] - padLon), Math.max(-90, b[1] - padLat), Math.min(180, b[2] + padLon), Math.min(90, b[3] + padLat)];
+      if (b[2] - b[0] >= 300) view = null; // 사실상 전세계 → 컬링 없음
+      tick();
+    }
+    else if (m.type === "start") { if (!timer) timer = setInterval(tick, tickMs); }
     else if (m.type === "stop") { if (timer) clearInterval(timer); timer = null; }
   };
   // 테스트에서 순수 함수를 꺼내 쓸 수 있게 노출(브라우저 워커에서는 무해)

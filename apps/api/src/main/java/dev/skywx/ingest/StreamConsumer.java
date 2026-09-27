@@ -40,7 +40,7 @@ import java.util.zip.GZIPInputStream;
  * XACK 는 처리 후에만 하므로 api 가 죽어도 메시지는 PEL 에 남아 재처리된다(at-least-once, 5.3절).
  * 재시작 시 각 스트림의 마지막 엔트리로 상태를 먼저 복원한다(≤ 60 s 복귀).
  */
-@org.springframework.context.annotation.Profile("!cli")  // --create-ops-user CLI 에서는 웹·소비자·잡을 띄우지 않는다
+@org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
 public class StreamConsumer implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(StreamConsumer.class);

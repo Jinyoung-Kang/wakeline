@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets;
  * 보안(6.2절 api 층). 공개 경로 허용, /api/v1/ops/** 는 ROLE_OPS + 세션 + CSRF(쿠키 SKYWX_CSRF → 헤더 X-CSRF-Token).
  * 비인가는 404(존재 여부 비공개), CSRF 실패는 403. 세션 쿠키 SKYWX_SESSION: HttpOnly · SameSite=Strict.
  */
-@org.springframework.context.annotation.Profile("!cli")  // --create-ops-user CLI 에서는 웹·소비자·잡을 띄우지 않는다
+@org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Configuration
 public class SecurityConfig {
     public static final String SESSION_COOKIE = "SKYWX_SESSION";

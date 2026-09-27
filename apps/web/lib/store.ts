@@ -12,7 +12,7 @@ export interface ServerData {
   provider: string;
   lagS: number | null;
   stale: boolean;
-  scope: "region" | "world";
+  scope: string;
   aircraftCount: number;
   sigmets: SigmetCollection | null;
   sigmetsVersion: number;

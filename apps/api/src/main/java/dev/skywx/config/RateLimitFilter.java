@@ -12,7 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /** /api/** 요청을 IP당 분당 N 회로 제한. 초과 시 429 + Retry-After + RFC 9457 본문. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
 @Order(10)
 public class RateLimitFilter extends OncePerRequestFilter {

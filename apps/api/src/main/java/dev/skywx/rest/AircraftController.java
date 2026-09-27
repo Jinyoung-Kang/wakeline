@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /** 항공기 REST v1. 스냅샷은 ETag(버전) + max-age=5. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1/aircraft")
 public class AircraftController {
@@ -51,10 +51,11 @@ public class AircraftController {
     public ResponseEntity<Map<String, Object>> snapshot(@RequestParam String bbox, @RequestParam(defaultValue = "lite") String detail, HttpServletRequest req) {
         Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
         Snapshot s = snapshots.region();
-        String etag = "\"v" + s.version() + "\"";
+        Snapshot g = snapshots.global();
+        String etag = "\"v" + s.version() + "-" + g.version() + "\"";
         if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).build();
         List<Map<String, Object>> features = new ArrayList<>();
-        for (AircraftState a : s.states().values()) {
+        for (AircraftState a : snapshots.mergedValues()) {
             if (!b.contains(a.lat(), a.lon())) continue;
             features.add(feature(a, "full".equals(detail) ? "full" : "lite"));
         }

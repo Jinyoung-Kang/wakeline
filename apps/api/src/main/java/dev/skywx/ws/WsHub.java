@@ -38,9 +38,9 @@ import java.util.concurrent.Executors;
  * 팬아웃 허브. 스냅샷 갱신 → 구독 세션마다 bbox 필터 → diff → 전송. 30 s 마다 전체 스냅샷(재동기), 30 s 마다 status·ping.
  * 세션별 diff 는 가상 스레드에서 병렬로 계산·전송한다(세션 상태는 세션 단위로만 접근).
  */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
-public class WsHub {
+public class WsHub implements org.springframework.context.SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(WsHub.class);
     private final Map<String, WsSession> sessions = new ConcurrentHashMap<>();
     private final ObjectMapper json;
@@ -66,6 +66,24 @@ public class WsHub {
         this.fanoutTimer = Timer.builder("skywx_ws_fanout_seconds").publishPercentiles(0.5, 0.95).register(meters);
     }
 
+    // ---- 정상 종료(설계 5.3): SIGTERM → 모든 WS 에 going_away(1001) → 클라이언트는 지수 백오프로 재접속 ----
+    private volatile boolean running;
+
+    @Override public void start() { running = true; }
+    @Override public boolean isRunning() { return running; }
+    /** 웹 서버(Tomcat)보다 먼저 멈추도록 높은 phase — 연결이 살아 있을 때 1001 을 보낸다. */
+    @Override public int getPhase() { return Integer.MAX_VALUE - 100; }
+
+    @Override
+    public void stop() {
+        running = false;
+        int n = 0;
+        for (WsSession s : sessions.values()) { s.close(CloseStatus.GOING_AWAY.withReason("server shutting down")); n++; }
+        sessions.clear();
+        pool.shutdown();
+        log.info("ws hub stopped: sent going_away to {} sessions", n);
+    }
+
     // ---- 세션 관리 ----
     void add(WsSession s) { sessions.put(s.id, s); }
     void remove(String id) { sessions.remove(id); }
@@ -89,12 +107,10 @@ public class WsHub {
     // ---- 이벤트 ----
     @EventListener
     public void onSnapshot(IngestEvents.SnapshotUpdated e) {
-        boolean global = "global".equals(e.current().scope());
         long t0 = System.nanoTime();
         List<java.util.concurrent.Future<?>> fs = new ArrayList<>();
         for (WsSession s : sessions.values()) {
             if (!s.subscribed()) continue;
-            if (global && !s.world) continue;
             fs.add(pool.submit(() -> fanoutOne(s, e.current().version())));
         }
         for (var f : fs) { try { f.get(); } catch (Exception ex) { log.debug("fanout task failed: {}", ex.toString()); } }
@@ -149,13 +165,9 @@ public class WsHub {
         synchronized (s.sent) { return DiffCalculator.compute(s.sent, visible(s), s.bbox); }
     }
 
-    /** 뷰포트에 보이는 상태: 관심 지역 스냅샷 + (world 뷰면) 전세계 스냅샷 중 지역에 없는 것. */
+    /** 뷰포트에 보이는 상태: 전세계 스냅샷 + 관심 지역 스냅샷(우선). 병합 맵은 버전별로 한 번만 만든다(SnapshotStore.merged). */
     private Iterable<AircraftState> visible(WsSession s) {
-        Snapshot region = snapshots.region();
-        if (!s.world) return region.states().values();
-        Map<String, AircraftState> merged = new LinkedHashMap<>(snapshots.global().states());
-        merged.putAll(region.states());
-        return merged.values();
+        return snapshots.mergedValues();
     }
 
     void sendFull(WsSession s) {
@@ -171,7 +183,7 @@ public class WsHub {
                 list.add(WsMessages.encode(a, s.detail, s.world));
             }
         }
-        var msg = new WsMessages.SnapshotMsg("snapshot", snapshots.version(), now, s.world ? "world" : "region", region.provider(),
+        var msg = new WsMessages.SnapshotMsg("snapshot", snapshots.version(), now, snapshots.global().states().isEmpty() ? "region" : "region+global", region.provider(),
                 region.fetchedAt(), region.lagSeconds(now), region.stale(now, 60), sigmets.state().version(), list);
         if (s.sendOrDrop(toJson(msg))) { s.lastFullAt = now; s.needsResync = false; s.lastSentVersion = snapshots.version(); }
     }

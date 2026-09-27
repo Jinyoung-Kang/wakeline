@@ -19,7 +19,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** /ws/v1 핸들러. 클라이언트 메시지 ≤ 4 KB, hello 5 s, 연결당 구독 1개, bbox 면적 상한(전세계 뷰는 줌 ≤ 5 만). */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
 public class SkyWsHandler extends TextWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(SkyWsHandler.class);
@@ -91,8 +91,8 @@ public class SkyWsHandler extends TextWebSocketHandler {
             bbox = Bbox.parse(b.get(0).asDouble() + "," + b.get(1).asDouble() + "," + b.get(2).asDouble() + "," + b.get(3).asDouble(), 0);
         } catch (RuntimeException e) { error(s, "BAD_BBOX", "bbox out of range", false); return; }
         int zoom = m.path("zoom").asInt(7);
-        boolean world = bbox.area() > props.maxBboxAreaSqdeg();
-        if (world && zoom > 5) { error(s, "BBOX_TOO_LARGE", "bbox area exceeds limit; zoom out to ≤ 5 for world view", false); return; }
+        if (bbox.area() > props.maxBboxAreaSqdeg() && zoom > 5) { error(s, "BBOX_TOO_LARGE", "bbox area exceeds limit; zoom out to ≤ 5 for world view", false); return; }
+        boolean world = zoom <= 5;
         s.bbox = bbox;
         s.zoom = zoom;
         s.world = world;

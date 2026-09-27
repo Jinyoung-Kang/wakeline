@@ -7,7 +7,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /** 기동 시 DB 설정을 Redis 로 미러해 collector 가 항상 같은 값을 본다. */
-@org.springframework.context.annotation.Profile("!cli")  // --create-ops-user CLI 에서는 웹·소비자·잡을 띄우지 않는다
+@org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
 public class StartupMirror {
     private static final Logger log = LoggerFactory.getLogger(StartupMirror.class);

@@ -9,7 +9,7 @@ import java.time.Instant;
 import java.util.Map;
 
 /** edge 가 노출하는 /healthz — 프로세스 생존 + 스트림 소비 지연(수치 최소). actuator 는 내부 포트에만. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 public class HealthController {
     private final SnapshotStore snapshots;

@@ -28,6 +28,7 @@ public final class WsSession {
     volatile Bbox bbox;
     volatile int zoom;
     volatile String detail = "lite";
+    /** 줌 ≤ 5: 저해상 인코딩(소수 2자리·필드 6개). 전세계 스냅샷은 줌과 무관하게 항상 합쳐 보낸다. */
     volatile boolean world;
     volatile String selectedHex;
     volatile boolean needsResync = true;

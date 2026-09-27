@@ -15,7 +15,8 @@ spring:
       data-source-properties:
         ApplicationName: skywx-api
   flyway:
-    enabled: true
+    # 스키마 변경은 compose 의 migrate 서비스(--migrate)만 한다. api 는 DML 전용 계정만 가진다(최소 권한).
+    enabled: false
     user: skywx_migrator
     password: ${DB_MIGRATOR_PASSWORD:}
     locations: classpath:db/migration

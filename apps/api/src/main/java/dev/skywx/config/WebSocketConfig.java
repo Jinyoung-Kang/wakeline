@@ -16,7 +16,7 @@ import org.springframework.web.socket.server.support.HttpSessionHandshakeInterce
 import java.util.Map;
 
 /** /ws/v1 등록. Origin 은 기본(same-origin) 검사. 핸드셰이크에서 클라이언트 IP(edge XFF)를 세션 속성에 담는다. */
-@org.springframework.context.annotation.Profile("!cli")  // --create-ops-user CLI 에서는 웹·소비자·잡을 띄우지 않는다
+@org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {

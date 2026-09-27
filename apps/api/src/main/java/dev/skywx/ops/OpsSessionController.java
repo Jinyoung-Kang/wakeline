@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 운영자 로그인(6.3절): BCrypt 검증 → 세션 ID 교체 → Redis 세션(TTL 8 h) → HttpOnly·SameSite=Strict 쿠키 + CSRF 쿠키. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1/ops/session")
 public class OpsSessionController {

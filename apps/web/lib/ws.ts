@@ -83,7 +83,7 @@ export class SkyWsClient {
         this.lastV = m.v as number;
         setData({
           snapshotVersion: m.v as number, snapshotAt: m.ts as string, provider: m.provider as string,
-          lagS: m.lag_s as number, stale: m.stale as boolean, scope: (m.scope as "region" | "world") ?? "region", aircraftCount: aircraft.length,
+          lagS: m.lag_s as number, stale: m.stale as boolean, scope: (m.scope as string) ?? "region", aircraftCount: aircraft.length,
         });
         break;
       }

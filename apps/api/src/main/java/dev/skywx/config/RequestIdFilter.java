@@ -15,7 +15,7 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 
 /** 요청마다 X-Request-Id 를 발급(클라이언트 값은 신뢰하지 않음)·에코하고 MDC 에 넣어 로그와 오류 본문에 같은 값이 실린다. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class RequestIdFilter extends OncePerRequestFilter {

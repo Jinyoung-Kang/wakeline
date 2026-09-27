@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /** 재생 · 통계 · 공개 상태 REST v1. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1")
 public class HistoryController {

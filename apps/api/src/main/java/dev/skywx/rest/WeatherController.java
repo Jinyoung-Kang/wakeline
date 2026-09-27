@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /** SIGMET · 알림 · 레이더 · 공항 REST v1. */
-@org.springframework.context.annotation.Profile("!cli")
+@org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1")
 public class WeatherController {

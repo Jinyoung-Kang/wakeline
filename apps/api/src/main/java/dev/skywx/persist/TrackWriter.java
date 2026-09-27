@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
  * 항적 배치 저장(가상 스레드). 큐 상한 50,000행 — 초과 시 오래된 것부터 버리고 지표로 남긴다(5.1절 DB 느림).
  * (hex, ts) PK 에 ON CONFLICT DO NOTHING 이라 재처리로 같은 행이 와도 중복되지 않는다. 실시간 경로는 DB 에 의존하지 않는다.
  */
-@org.springframework.context.annotation.Profile("!cli")  // --create-ops-user CLI 에서는 웹·소비자·잡을 띄우지 않는다
+@org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
 public class TrackWriter implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(TrackWriter.class);
