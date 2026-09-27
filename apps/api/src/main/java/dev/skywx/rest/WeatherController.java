@@ -57,7 +57,8 @@ public class WeatherController {
         Instant now = Instant.now();
         SigmetStore.State st = sigmets.state();
         String etag = "\"s" + st.version() + "-" + (active ? 1 : 0) + "\"";
-        if (bbox == null && hazard == null && etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).build();
+        if (bbox == null && hazard == null && etag.equals(req.getHeader("If-None-Match")))
+            return ResponseEntity.status(304).eTag(etag).cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).build();
         Bbox b = bbox == null ? null : Bbox.parse(bbox, 0);
         List<SigmetRecord> list = new ArrayList<>();
         for (SigmetRecord s : st.byId().values()) {
@@ -80,13 +81,13 @@ public class WeatherController {
         Map<String, Object> m = new LinkedHashMap<>(SigmetGeoJson.feature(s, Instant.now()));
         m.put("aircraft_inside", engine.aircraftInside(id));
         m.put("meta", Meta.of(req, s.provider(), s.fetchedAt(), 900));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(10, TimeUnit.SECONDS)).body(m);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(10, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> alerts(@RequestParam(required = false) String kind, HttpServletRequest req) {
         List<Alert> list = engine.activeAlerts(kind);
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS)).body(Map.of("items", list, "meta", Meta.of(req, "engine", Instant.now(), 60)));
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(Map.of("items", list, "meta", Meta.of(req, "engine", Instant.now(), 60)));
     }
 
     @GetMapping("/alerts/history")
@@ -102,12 +103,16 @@ public class WeatherController {
         m.put("items", page.items());
         m.put("next_cursor", page.nextCursor());
         m.put("meta", Meta.of(req, "db", Instant.now(), 60));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS)).body(m);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 
+    /** RainViewer 프레임 목록. ETag = 목록 생성 시각(generated) + 수신 시각 — 새 목록이 올 때만 바뀐다. */
     @GetMapping("/radar/frames")
     public ResponseEntity<Map<String, Object>> radarFrames(HttpServletRequest req) {
         RadarStore.Frames f = radar.frames();
+        String etag = "\"r" + f.generated() + "-" + Long.toString(f.fetchedAt().toEpochMilli(), 36) + "\"";
+        CacheControl cc = CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic();
+        if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("host", f.host());
         m.put("generated", f.generated());
@@ -116,18 +121,43 @@ public class WeatherController {
         m.put("max_zoom", 7);
         m.put("attribution", "Radar © RainViewer (personal/educational use)");
         m.put("meta", Meta.of(req, f.provider(), f.fetchedAt(), 600));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS)).body(m);
+        return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(m);
     }
 
-    /** 기상청 레이더 합성(FR-31): 최근 프레임 목록 + 웹 메르카토르 정합 좌표(문서 기반 LCC → EPSG:3857 재투영) + 범례. */
+    /**
+     * 기상청 레이더 합성(FR-31): 최근 프레임 목록 + 웹 메르카토르 정합 좌표(문서 기반 LCC → EPSG:3857 재투영) + 범례.
+     * 목록은 PNG 키가 아직 남아 있는 프레임만 싣는다 — 목록 키가 프레임(TTL 3 h)보다 오래 남아도 없는 이미지를 '있다' 고 하지 않는다(REL-19).
+     * available·georeferenced 는 수집기가 쓸 수 있다고 표시했고 실제 프레임이 하나 이상 있을 때만 true. ETag = 응답을 결정하는 값들의 해시.
+     */
     @GetMapping("/radar/kr")
     public ResponseEntity<Map<String, Object>> radarKr(HttpServletRequest req) {
         Map<Object, Object> h;
         String framesJson;
         try { h = redis.opsForHash().entries("skywx:radar_kr:meta"); framesJson = redis.opsForValue().get("skywx:radar_kr:frames"); }
         catch (RuntimeException e) { h = Map.of(); framesJson = null; }
+        List<Map<String, Object>> frames = new ArrayList<>();
+        if (framesJson != null) {
+            List<Map<String, Object>> listed = new ArrayList<>();
+            for (var f : json.readTree(framesJson)) {
+                String tm = f.path("tm").asString();
+                if (!tm.matches("^\\d{12}$")) continue;
+                Map<String, Object> fr = new LinkedHashMap<>();
+                fr.put("tm", tm);
+                fr.put("obs_tm", f.path("obs_tm").asString());
+                fr.put("fetched_at", f.path("fetched_at").asString());
+                fr.put("echo_cells", f.path("echo_cells").asInt());
+                fr.put("url", "/api/v1/radar/kr/" + tm + ".png");
+                listed.add(fr);
+            }
+            List<Boolean> exists = framesExist(listed.stream().map(fr -> (String) fr.get("tm")).toList());
+            for (int i = 0; i < listed.size(); i++) if (i < exists.size() && Boolean.TRUE.equals(exists.get(i))) frames.add(listed.get(i));
+        }
+        boolean available = "1".equals(h.get("available")) && !frames.isEmpty();
+        String etag = "\"k" + Integer.toHexString(java.util.Objects.hash(h.get("fetched_at"), h.get("latest_tm"), h.get("available"), h.get("status"),
+                frames.stream().map(fr -> fr.get("tm")).toList())) + "\"";
+        CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
+        if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
-        boolean available = "1".equals(h.get("available"));
         m.put("available", available);
         m.put("status", h.get("status"));
         m.put("note", h.get("note"));
@@ -142,22 +172,28 @@ public class WeatherController {
         m.put("min_dbz", h.get("min_dbz"));
         m.put("stations", h.get("stations"));
         m.put("image_size", h.get("width") == null ? null : new int[]{Integer.parseInt(String.valueOf(h.get("width"))), Integer.parseInt(String.valueOf(h.get("height")))});
-        List<Map<String, Object>> frames = new ArrayList<>();
-        if (framesJson != null) for (var f : json.readTree(framesJson)) {
-            Map<String, Object> fr = new LinkedHashMap<>();
-            fr.put("tm", f.path("tm").asString());
-            fr.put("obs_tm", f.path("obs_tm").asString());
-            fr.put("fetched_at", f.path("fetched_at").asString());
-            fr.put("echo_cells", f.path("echo_cells").asInt());
-            fr.put("url", "/api/v1/radar/kr/" + f.path("tm").asString() + ".png");
-            frames.add(fr);
-        }
         m.put("frames", frames);
         m.put("time_zone", "KST(UTC+9) for tm; fetched_at is UTC");
         m.put("attribution", "기상청 API허브 레이더 합성자료(HSR) · 투영·격자 정의: 기상기후데이터위키");
         Instant fetched = h.get("fetched_at") == null ? null : Instant.parse(String.valueOf(h.get("fetched_at")));
         m.put("meta", Meta.of(req, "kma_apihub", fetched, 900));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(30, TimeUnit.SECONDS)).body(m);
+        return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(m);
+    }
+
+    /** 프레임 PNG 키가 남아 있는지 한 번의 파이프라인(EXISTS × n)으로 확인한다. Redis 오류면 빈 목록(없다고 본다). */
+    private List<Boolean> framesExist(List<String> tms) {
+        if (tms.isEmpty()) return List.of();
+        try {
+            List<Object> r = redis.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) conn -> {
+                for (String tm : tms) conn.keyCommands().exists(("skywx:radar_kr:frame:" + tm).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                return null;
+            });
+            List<Boolean> out = new ArrayList<>(r.size());
+            for (Object o : r) out.add(o instanceof Boolean b ? b : o instanceof Number n && n.longValue() > 0);
+            return out;
+        } catch (RuntimeException e) {
+            return List.of();
+        }
     }
 
     @GetMapping(value = "/radar/kr/{tm}.png")
@@ -192,7 +228,7 @@ public class WeatherController {
         fc.put("type", "FeatureCollection");
         fc.put("features", features);
         fc.put("meta", Meta.of(req, "awc", latest, 1800));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS)).body(fc);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).body(fc);
     }
 
     @GetMapping("/airports/{icao}/wx")
@@ -202,7 +238,8 @@ public class WeatherController {
         Map<String, Object> wx = airports.wx(code);
         if (wx == null) throw Problem.notFound("airport not watched: " + code);
         Object ft = wx.get("fetched_at");
-        wx.put("meta", Meta.of(req, String.valueOf(wx.getOrDefault("provider", "awc")), ft instanceof Instant i ? i : null, 1800));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(300, TimeUnit.SECONDS)).body(wx);
+        Object provider = wx.get("provider");
+        wx.put("meta", Meta.of(req, provider == null ? null : String.valueOf(provider), ft instanceof Instant i ? i : null, 1800));
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(300, TimeUnit.SECONDS).cachePublic()).body(wx);
     }
 }

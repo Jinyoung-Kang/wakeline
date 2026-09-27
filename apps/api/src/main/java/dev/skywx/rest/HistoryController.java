@@ -41,19 +41,27 @@ public class HistoryController {
         this.props = props;
     }
 
-    /** 시각 at 의 항공기 스냅샷(3분 창) + 그때 유효했던 SIGMET. */
+    /**
+     * 시각 at 의 항공기 스냅샷(3분 창) + 그때 유효했던(철회·만료 전) SIGMET + 그 시각의 레이더 프레임.
+     * source: 행을 실제로 준 테이블(track_point | track_point_1m | none — COR-22). radar: 저장된 RainViewer 프레임(±10분)
+     * {host, path, time(유닉스 초)} — at 이 최근 2시간 밖이면 null(RainViewer 가 타일을 2시간만 제공한다, GAP-19).
+     */
     @GetMapping("/replay")
     public ResponseEntity<Map<String, Object>> replay(@RequestParam Instant at, @RequestParam String bbox, HttpServletRequest req) {
         Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
-        if (at.isAfter(Instant.now().plusSeconds(60)) || Duration.between(at, Instant.now()).toDays() > 31) throw Problem.badRequest("BAD_AT", "at must be within the last 31 days");
-        List<Map<String, Object>> aircraft = tracks.replay(at, b);
+        Instant now = Instant.now();
+        if (at.isAfter(now.plusSeconds(60)) || Duration.between(at, now).toDays() > 31) throw Problem.badRequest("BAD_AT", "at must be within the last 31 days");
+        TrackRepository.Replay r = tracks.replay(at, b);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("at", at);
-        m.put("aircraft", aircraft);
+        m.put("aircraft", r.aircraft());
         m.put("sigmets", sigmetRepo.validAt(at));
-        m.put("source", Duration.between(at, Instant.now()).toHours() <= props.trackRetentionHours() ? "track_point" : "track_point_1m");
+        m.put("source", r.source());
+        m.put("radar", tracks.radarFrameNear(at, now));
         m.put("meta", Meta.of(req, "db", at, Integer.MAX_VALUE));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(3600, TimeUnit.SECONDS)).body(m);
+        // 최근 시각은 행·프레임이 아직 들어오는 중이다 — 짧게만 캐시한다
+        long maxAge = Duration.between(at, now).toMinutes() < 15 ? 30 : 3600;
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(maxAge, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 
     @GetMapping("/stats/sigmet")
@@ -64,10 +72,21 @@ public class HistoryController {
         return ok(Map.of("group", g, "items", stats.sigmet(range[0], range[1], g)), req);
     }
 
+    /**
+     * 시간대별 트래픽(관심 지역 bbox 안의 서로 다른 항공기 수, 계약 §2). scope = "region", region = 그날 집계가 센 지역.
+     * 지역 기록이 없는 옛 집계(전세계 표본이 섞였을 수 있음)는 scope·region 이 null — 어느 범위인지 단정하지 않는다.
+     * 자료가 없는 시간은 items 에 없다(0 이 아니다).
+     */
     @GetMapping("/stats/traffic")
     public ResponseEntity<Map<String, Object>> statsTraffic(@RequestParam(required = false) LocalDate day, HttpServletRequest req) {
         LocalDate d = day == null ? LocalDate.now(java.time.ZoneOffset.UTC) : day;
-        return ok(Map.of("day", d, "items", stats.traffic(d)), req);
+        StatsRepository.Traffic t = stats.traffic(d);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("day", d);
+        body.put("scope", t.region() == null ? null : "region");
+        body.put("region", t.region());
+        body.put("items", t.items());
+        return ok(body, req);
     }
 
     @GetMapping("/stats/alerts")
@@ -80,7 +99,7 @@ public class HistoryController {
     public ResponseEntity<Map<String, Object>> status(HttpServletRequest req) {
         Map<String, Object> m = new LinkedHashMap<>(status.publicStatus());
         m.put("meta", Meta.of(req, "api", Instant.now(), 60));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS)).body(m);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 
     private static LocalDate[] range(LocalDate from, LocalDate to) {
@@ -93,6 +112,6 @@ public class HistoryController {
     private static ResponseEntity<Map<String, Object>> ok(Map<String, Object> body, HttpServletRequest req) {
         Map<String, Object> m = new LinkedHashMap<>(body);
         m.put("meta", Meta.of(req, "db", Instant.now(), Integer.MAX_VALUE));
-        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(600, TimeUnit.SECONDS)).body(m);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(600, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 }

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # 연결
     redis_host: str = "redis"
     redis_port: int = 6379
+    redis_username: str = ""  # Redis ACL 사용자(계약 §6: skywx_collector). 비우면 default 사용자
     redis_password: str = ""
     db_host: str = "db"
     db_port: int = 5432
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     http_user_agent: str = "skywx-dev/0.2 (contact: you@example.com)"
     opensky_client_id: str = ""
     opensky_client_secret: str = ""
+    # 우선순위. opensky 는 전세계(global) 전용 — 관심 지역 폴백에는 쓰지 않는다(크레딧 보호, FR-02).
     aircraft_providers: str = "adsb_lol,adsb_fi,opensky"
     kma_apihub_key: str = ""  # 기상청 API허브(레이더 합성자료 활용신청 필요)
     kma_radar_poll_s: int = 300
@@ -39,11 +41,11 @@ class Settings(BaseSettings):
     # 하루 예산 (호출 수 또는 크레딧). 0 = 한도 없음(카운트만)
     budget_adsb_lol: int = 10000
     budget_adsb_fi: int = 10000
-    budget_opensky: int = 4000
+    budget_opensky: int = 2880  # FR-02: 계정 일일 4,000 크레딧의 72% 이하(전세계 120 s × 4 크레딧 = 2,880/일)
     budget_awc: int = 2000
     budget_rainviewer: int = 2000
     budget_kma_radar: int = 1000
-    opensky_reserve_credits: int = 400  # 남은 크레딧이 이 아래면 전세계 수집 중단
+    opensky_reserve_credits: int = 400  # OpenSky 가 알려 준 남은 크레딧이 이 아래면 UTC 자정까지 OpenSky 호출 중단
 
     # 경로
     raw_dir: str = "/data/raw"

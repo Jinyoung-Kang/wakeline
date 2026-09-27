@@ -23,16 +23,26 @@ public class RateLimiter {
         this.script = new DefaultRedisScript<>(LUA, List.class);
     }
 
-    /** @return {count, ttlSeconds}. Redis 장애 시 {0, 60} — 제한을 열어 두되(가용성 우선) 지표로 남긴다. */
-    @SuppressWarnings("unchecked")
+    /**
+     * 공개 API 용(가용성 우선). @return {count, ttlSeconds}. Redis 장애 시 {0, window} — 제한을 연다(edge 의 1차 제한은 그대로 남는다).
+     */
     public long[] hit(String bucket, String ip, int windowS) {
         try {
-            long window = System.currentTimeMillis() / 1000 / windowS;
-            List<Long> r = redis.execute(script, List.of("rl:" + bucket + ":" + ip + ":" + window), String.valueOf(windowS));
-            if (r == null || r.size() < 2) return new long[]{0, windowS};
-            return new long[]{r.get(0), r.get(1)};
+            return hitStrict(bucket, ip, windowS);
         } catch (RuntimeException e) {
             return new long[]{0, windowS};
         }
+    }
+
+    /**
+     * 보안 경로용(로그인 등, 실패 시 닫힘). Redis 오류·빈 응답이면 예외를 던진다 — 호출자가 503 으로 거절한다(SEC-6).
+     * @return {count, ttlSeconds}
+     */
+    @SuppressWarnings("unchecked")
+    public long[] hitStrict(String bucket, String ip, int windowS) {
+        long window = System.currentTimeMillis() / 1000 / windowS;
+        List<Long> r = redis.execute(script, List.of("rl:" + bucket + ":" + ip + ":" + window), String.valueOf(windowS));
+        if (r == null || r.size() < 2) throw new IllegalStateException("rate limiter returned no result");
+        return new long[]{r.get(0), r.get(1)};
     }
 }

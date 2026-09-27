@@ -1,30 +1,63 @@
 "use client";
 import { use, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { CAT_COLORS, fmtTime } from "@/lib/format";
+import { useNow } from "@/lib/clock";
+import { serverNowMs } from "@/lib/store";
+import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, isMetarStale, metarAgeS } from "@/lib/format";
 
-interface Wx { airport: { icao: string; name?: string; country?: string; elev_ft?: number; lat: number; lon: number }; latest: Record<string, unknown> | null; history: { obs_time: string; flight_cat?: string; wind_dir?: number; wind_kt?: number; vis_sm?: number; ceiling_ft?: number; temp_c?: number }[] }
+interface Latest {
+  obs_time: string; raw: string; provider?: string; flight_cat?: string | null; flight_cat_source?: string | null; taf_raw?: string | null;
+  ceiling_ft?: number | null; ceiling_state?: string | null; vis_raw?: string | null; obs_age_s?: number | null; stale?: boolean | null;
+}
+interface Wx {
+  airport: { icao: string; name?: string; country?: string; elev_ft?: number; lat: number; lon: number };
+  latest: Latest | null;
+  history: { obs_time: string; flight_cat?: string | null; wind_dir?: number | null; wind_kt?: number | null; vis_sm?: number | null; vis_raw?: string | null; ceiling_ft?: number | null; temp_c?: number | null }[];
+}
 
+/** 공항 기상 이력(FR-22). 시각은 날짜 포함(UTC). 시정은 원문(vis_raw, 예 "6+")을 우선 — 파싱한 숫자(6)는 "6 이상"을 잃는다. */
 export default function AirportPage({ params }: { params: Promise<{ icao: string }> }) {
   const { icao } = use(params);
+  const code = icao.toUpperCase();
   const [wx, setWx] = useState<Wx | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${icao.toUpperCase()}/wx`).then(setWx).catch((e) => setErr(e.message)); }, [icao]);
+  const now = useNow(30_000);
+  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e) => setErr(e.message)); }, [code]);
   const m = wx?.latest;
+  const nowMs = now ? serverNowMs(now) : 0;
+  const age = m && nowMs ? metarAgeS(m, nowMs) : null;
+  const stale = m && nowMs ? isMetarStale(m, nowMs) : false;
+  const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
     <div className="h-full overflow-y-auto p-4">
-      <div className="label mb-2">Airport weather · {icao.toUpperCase()}</div>
+      <h1 className="label mb-2">Airport weather · {code}</h1>
       {err ? <div className="text-bad">{err}</div> : null}
       {wx ? <>
-        <div className="mb-3 text-sm font-semibold">{wx.airport.name} <span className="text-fg-3 text-[11px]">({wx.airport.lat?.toFixed(3)}, {wx.airport.lon?.toFixed(3)}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
+        <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <section className="panel p-3"><div className="label mb-1">METAR · {fmtTime(String(m.obs_time))} · {String(m.provider)}</div><pre className="mono whitespace-pre-wrap text-[11px]">{String(m.raw)}</pre>
-            <div className="mt-2 flex items-center gap-2"><span className="badge" style={{ color: CAT_COLORS[String(m.flight_cat)], borderColor: CAT_COLORS[String(m.flight_cat)] }}>{String(m.flight_cat ?? "—")}</span><span className="text-[10px] text-fg-3">{m.flight_cat_source === "awc" ? "AWC 제공 카테고리" : "실링·시정으로 계산한 카테고리"}</span></div></section>
-          <section className="panel p-3"><div className="label mb-1">TAF</div><pre className="mono whitespace-pre-wrap text-[11px]">{String(m.taf_raw ?? "—")}</pre></section>
+          <section className="panel p-3">
+            <div className="label mb-1">METAR · <span className="mono">{fmtTime(m.obs_time)}</span>{age != null ? ` · ${fmtDuration(age)} 전` : ""} · {m.provider ?? "—"}</div>
+            <pre className="mono whitespace-pre-wrap text-[11px]">{m.raw}</pre>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="badge" style={{ color: catColor, borderColor: catColor }}>{m.flight_cat ?? "—"}</span>
+              <span className="text-[10px] text-fg-3">{catSourceLabel(m.flight_cat_source, m.flight_cat)}</span>
+              <span className="text-[10px] text-fg-3">· 실링 <span className="mono text-fg-2">{ceilingLabel(m.ceiling_state, m.ceiling_ft)}</span></span>
+              {stale ? <span className="badge warn">오래됨 · 2시간 초과</span> : null}
+            </div>
+          </section>
+          <section className="panel p-3"><div className="label mb-1">TAF</div><pre className="mono whitespace-pre-wrap text-[11px]">{m.taf_raw ?? "—"}</pre></section>
         </div> : <div className="text-fg-3">METAR 없음</div>}
         <section className="panel mt-3 p-3"><div className="label mb-2">History (latest 24)</div>
-          <table><thead><tr><th>obs</th><th>cat</th><th>wind</th><th>vis (sm)</th><th>ceiling</th><th>temp</th></tr></thead>
-            <tbody>{wx.history.map((h) => <tr key={h.obs_time}><td className="mono">{fmtTime(h.obs_time)}</td><td style={{ color: CAT_COLORS[h.flight_cat ?? ""] }}>{h.flight_cat ?? "—"}</td><td className="mono">{h.wind_dir ?? "—"}° {h.wind_kt ?? "—"} kt</td><td className="mono">{h.vis_sm ?? "—"}</td><td className="mono">{h.ceiling_ft ?? "—"}</td><td className="mono">{h.temp_c ?? "—"}</td></tr>)}</tbody></table>
+          <table><thead><tr><th scope="col">obs (UTC)</th><th scope="col">cat</th><th scope="col">wind</th><th scope="col">vis (sm)</th><th scope="col">ceiling (ft)</th><th scope="col">temp (°C)</th></tr></thead>
+            <tbody>{wx.history.map((h) => <tr key={h.obs_time}>
+              <td className="mono">{fmtTime(h.obs_time)}</td>
+              <td style={{ color: h.flight_cat ? CAT_COLORS[h.flight_cat] : undefined }}>{h.flight_cat ?? "—"}</td>
+              <td className="mono">{h.wind_dir ?? "—"}° {h.wind_kt ?? "—"} kt</td>
+              <td className="mono">{h.vis_raw ?? h.vis_sm ?? "—"}</td>
+              <td className="mono">{h.ceiling_ft ?? "—"}</td>
+              <td className="mono">{h.temp_c ?? "—"}</td>
+            </tr>)}</tbody></table>
+          <div className="mt-1 text-[10px] text-fg-3">실링 “—” = 값 없음(실링층 없음 또는 높이 모름 — 이력 행에서는 구분하지 않음).</div>
         </section>
       </> : null}
     </div>

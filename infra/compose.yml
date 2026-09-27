@@ -1,6 +1,12 @@
 # SkyWx 로컬 스택 — 6 컨테이너. 공개 포트는 edge(127.0.0.1:${SKYWX_PORT:-8700}) 하나뿐이다.
 # 같은 파일로 격리된 E2E·데모 스택도 띄운다: -p skywx-e2e, SKYWX_PORT=8701, SKYWX_NET_PREFIX=10.78.0 (Makefile e2e/demo).
 # 프로젝트가 다르면 컨테이너·볼륨·네트워크가 분리되어 개발 DB 에 fixture 데이터가 섞이지 않는다.
+#
+# 컨테이너 권한(SEC-4): 모든 컨테이너가 no-new-privileges 이고 cap_drop ALL 이다. db 를 뺀 전부가 비root·read-only 루트 FS 다.
+#   db 만 엔트리포인트가 데이터 디렉터리 소유권을 맞춘 뒤 postgres(999)로 내려가므로 그 5개 권한(CHOWN·DAC_OVERRIDE·FOWNER·SETGID·SETUID)을 남긴다
+#   — postgres 프로세스 자체는 권한 0 으로 돈다(infra/tests/db_hardening_test.sh).
+# 제3자 이미지는 태그+다이제스트로 고정한다(Dependabot docker-compose 가 매주 갱신 PR).
+# Redis 는 서비스별 ACL 사용자(계약 §6, infra/redis/start.sh)로 접속한다 — api·collector 는 관리용 default 비밀번호를 모른다.
 name: skywx
 
 x-hardened: &hardened
@@ -11,8 +17,14 @@ x-hardened: &hardened
 
 services:
   edge:
-    image: nginx:1.27-alpine
+    # 비root nginx(uid 101). 1.27 계열은 2025-06 이후 재빌드가 없어 현재 stable(1.30) 을 쓴다.
+    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:4714e0b1b2577eaa1a6131d07c958b67f0eb68e6d0521e90c6e5287db8cf0bc5
+    <<: *hardened
+    user: "101:101"
+    tmpfs: ["/tmp:size=64m"]                        # pid · 프록시 임시 파일(nginx.conf)
     ports: ["127.0.0.1:${SKYWX_PORT:-8700}:8700"]   # 8080 은 SmartCollab 이 사용 — SkyWx 는 8700(E2E 8701)
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
     volumes:
       - ./edge/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./edge/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
@@ -20,10 +32,13 @@ services:
     depends_on:
       web: { condition: service_healthy }
       api: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { memory: 256m, pids: 256 }
     networks:
       skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.10" }
-    restart: unless-stopped
     healthcheck:
+      # Host 허용 목록(nginx.conf)에 127.0.0.1 이 있으므로 421 이 아니라 api 의 /healthz 까지 간다
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8700/healthz"]
       interval: 10s
       timeout: 3s
@@ -40,6 +55,9 @@ services:
       PORT: "3000"
       API_INTERNAL_URL: http://api:8000       # 서버 컴포넌트 전용. NEXT_PUBLIC_ 변수는 없다.
     expose: ["3000"]
+    deploy:
+      resources:
+        limits: { memory: 512m, pids: 256 }
     networks:
       skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.20" }
     healthcheck:
@@ -63,7 +81,9 @@ services:
       DB_API_PASSWORD: ${DB_API_PASSWORD}
       DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
       REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # api 와 같은 ACL 사용자(관리용 default 비밀번호는 주지 않는다)
+      REDIS_USERNAME: skywx_api
+      REDIS_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -75,6 +95,8 @@ services:
     build: ../apps/api
     <<: *hardened
     tmpfs: ["/tmp"]
+    # 종료 순서(소비 중지 → 트랙 flush → WS going_away)가 끝나도록 docker 기본 10 s 대신 30 s 를 준다(REL-15)
+    stop_grace_period: 30s
     environment:
       TZ: UTC
       SPRING_THREADS_VIRTUAL_ENABLED: "true"
@@ -83,8 +105,11 @@ services:
       DB_NAME: skywx
       DB_API_PASSWORD: ${DB_API_PASSWORD}
       REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_USERNAME: skywx_api                 # 계약 §6: 키 skywx:* · rl:* 만, 위험 명령 없음
+      REDIS_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
       SKYWX_TRUSTED_PROXY: ${SKYWX_NET_PREFIX:-10.77.0}.10   # edge 만 X-Forwarded-For 를 말할 수 있다
+      # WebSocket Origin 허용 목록(계약 §1). Host 에서 유도하지 않는다 — DNS rebinding 방어(SEC-7). 격리 스택은 SKYWX_PORT=8701 로 맞춰진다.
+      SKYWX_ALLOWED_ORIGINS: http://localhost:${SKYWX_PORT:-8700},http://127.0.0.1:${SKYWX_PORT:-8700}
       SKYWX_REGION_CENTER: ${REGION_CENTER:-36.5,127.8}
       SKYWX_REGION_RADIUS_NM: ${REGION_RADIUS_NM:-250}
       SKYWX_OPS_SESSION_TTL_H: ${OPS_SESSION_TTL_H:-8}
@@ -99,7 +124,7 @@ services:
       migrate: { condition: service_completed_successfully }
     deploy:
       resources:
-        limits: { memory: 1g }
+        limits: { memory: 1g, pids: 1024 }
     networks:
       skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.30" }
     healthcheck:
@@ -124,7 +149,8 @@ services:
       DB_NAME: skywx
       DB_COLLECTOR_PASSWORD: ${DB_COLLECTOR_PASSWORD}
       REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_USERNAME: skywx_collector           # 계약 §6: 수집기 키만, 세션·요청 제한·DLQ 접근 불가, 설정은 읽기 전용
+      REDIS_PASSWORD: ${REDIS_COLLECTOR_PASSWORD:?REDIS_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
       OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
       OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
       KMA_APIHUB_KEY: ${KMA_APIHUB_KEY:-}
@@ -150,27 +176,51 @@ services:
       api: { condition: service_healthy }      # Flyway 가 ingest 테이블을 만든 뒤에 시작
     deploy:
       resources:
-        limits: { memory: 512m }
+        limits: { memory: 512m, pids: 256 }
     networks:
       skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.40" }
+    healthcheck:
+      # 계약 §8: 관심 지역 작업의 heartbeat(skywx:collector.region_at)가 90 s 안이면 정상 — 프로세스는 살아 있지만 수집이 멈춘 상태를 잡는다(REL-20)
+      test: ["CMD", "python", "-m", "skywx_collector.health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
 
   redis:
-    image: redis:8-alpine
-    command: ["redis-server", "/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    <<: *hardened
+    user: "999:1000"                           # 이미지의 redis 사용자. 처음부터 비root 라 엔트리포인트의 권한 강하가 필요 없다
+    entrypoint: ["sh", "/etc/redis/start.sh"]  # ACL 사용자 생성 후 redis-server 실행(비밀번호는 명령행이 아니라 환경변수로)
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}                 # default(관리) — 헬스체크·운영 redis-cli 전용
+      REDIS_API_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
+      REDIS_COLLECTOR_PASSWORD: ${REDIS_COLLECTOR_PASSWORD:?REDIS_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
     volumes:
       - ./redis/redis.conf:/etc/redis/redis.conf:ro
+      - ./redis/start.sh:/etc/redis/start.sh:ro
       - redis_data:/data
+    deploy:
+      resources:
+        limits: { memory: 512m, pids: 128 }    # maxmemory 256mb + AOF 재작성 fork 여유
     networks:
       skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.50" }
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      # 비밀번호를 명령행(-a)에 두지 않는다: redis-cli 는 REDISCLI_AUTH 환경변수를 읽는다
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   db:
-    image: imresamu/postgis:18-3.6              # 공식 postgis/postgis 18-3.6 은 amd64 뿐이라 arm64 네이티브 빌드를 쓴다 (ADR-004)
+    image: imresamu/postgis:18-3.6@sha256:b5766ee720aca09c61b9a868abefbf273348a4b90ad4cf146b4f8c9ac85d48e4   # 공식 postgis/postgis 18-3.6 은 amd64 뿐이라 arm64 네이티브 빌드를 쓴다 (ADR-004)
+    read_only: true
+    tmpfs: ["/var/run/postgresql", "/tmp"]
+    cap_drop: ["ALL"]
+    # 엔트리포인트(root)가 데이터 디렉터리 소유권·권한을 맞추고 gosu 로 postgres(999)가 되는 데 필요한 것만
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    security_opt: ["no-new-privileges:true"]
     environment:
       POSTGRES_PASSWORD: ${DB_ROOT_PASSWORD}
       DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
@@ -179,6 +229,9 @@ services:
     volumes:
       - db_data:/var/lib/postgresql
       - ./db/init:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits: { memory: 1g, pids: 512 }
     networks:
       skywx: { ipv4_address: "${SKYWX_NET_PREFIX:-10.77.0}.60" }
     restart: unless-stopped

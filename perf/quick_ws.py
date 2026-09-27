@@ -1,21 +1,23 @@
-"""간이 WS 팬아웃 시험: N 연결이 구독하고 diff/snapshot 의 서버 ts → 수신 시각 지연을 잰다. 사용: python quick_ws.py ws://10.77.0.30:8000/ws/v1 200 90"""
-import asyncio, json, statistics, sys, time
-from urllib.parse import urlparse
+"""간이 WS 팬아웃 시험: N 연결이 구독하고 diff/snapshot 의 서버 ts → 수신 시각 지연을 잰다.
+사용: ORIGIN=http://localhost:8700 python quick_ws.py ws://10.77.0.30:8000/ws/v1 200 90
+
+api 는 WS Origin 을 명시 허용 목록(SKYWX_ALLOWED_ORIGINS, 기본 http://localhost:8700 · http://127.0.0.1:8700)으로만 받는다.
+접속 주소(api 직접 10.77.0.30:8000 등)와 무관하게 Origin 은 허용 목록의 값을 보낸다 — ORIGIN 환경변수, 기본 http://localhost:8700."""
+import asyncio, json, os, statistics, sys, time
 from datetime import datetime, timezone
 import websockets
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "ws://localhost:8700/ws/v1"
 N = int(sys.argv[2]) if len(sys.argv) > 2 else 200
 SECONDS = int(sys.argv[3]) if len(sys.argv) > 3 else 90
+ORIGIN = os.environ.get("ORIGIN", "http://localhost:8700")
 lags: list[float] = []
 counts = {"snapshot": 0, "diff": 0, "other": 0, "errors": 0}
 
 
 async def client(i: int):
     try:
-        # same-origin 검사(Origin ↔ Host): 접속 호스트와 같은 출처를 보낸다
-        u = urlparse(URL)
-        async with websockets.connect(URL, origin=f"http://{u.netloc}", max_size=4 * 1024 * 1024, open_timeout=20) as ws:
+        async with websockets.connect(URL, origin=ORIGIN, max_size=4 * 1024 * 1024, open_timeout=20) as ws:
             await ws.send(json.dumps({"type": "hello", "proto": 1, "client": "quick_ws"}))
             end = time.time() + SECONDS
             while time.time() < end:

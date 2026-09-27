@@ -1,80 +1,201 @@
 name: ci
-on: { push: { branches: [main] }, pull_request: {} }
-permissions: { contents: read, security-events: write }
+on:
+  push: { branches: [main] }
+  pull_request: {}
+  workflow_dispatch: {}
+
+# 기본은 읽기 전용. 더 필요한 작업(CodeQL 업로드)만 job 단위로 권한을 올린다.
+permissions: { contents: read }
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 서드파티 액션은 커밋 SHA 로 고정한다(태그는 옮겨질 수 있다 — 2026-03 trivy-action 태그 변조 사건).
+# 주석의 버전은 Dependabot(github-actions, .github/dependabot.yml)이 SHA 와 함께 갱신한다. Node 20 런타임이 러너에서 제거되어(2026-09) 모두 Node 24 판이다.
+
 jobs:
   collector:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: apps/collector } }
+    env:
+      # NFR-14 목표는 80 %. 바닥값은 측정값(2026-09-27 작업 트리 78 %) 아래로 떨어지지 않게 막는 래칫이다 — 80 % 에 닿으면 80 으로 올린다.
+      COLLECTOR_COV_MIN: "75"
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync
-        working-directory: apps/collector
-      - run: uv run ruff check . && uv run ruff format --check .
-        working-directory: apps/collector
-      - run: uv run pytest -q --cov=skywx_collector --cov-report=term-missing
-        working-directory: apps/collector
-      - run: uv run python ../../tools/contract_check.py
-        working-directory: apps/collector
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked
+      - name: lint (ruff)
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: type check (mypy) — 기존 오류를 정리할 때까지 보고만 한다
+        run: uv run mypy skywx_collector
+        continue-on-error: true
+      - name: unit tests + coverage floor
+        run: uv run pytest -q --cov=skywx_collector --cov-report=term-missing --cov-report=xml --cov-fail-under="$COLLECTOR_COV_MIN"
+      - name: dependency audit (pip-audit — uv.lock 의 런타임 의존성, 해시 고정)
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit@2.10.1 --disable-pip --require-hashes -r "$RUNNER_TEMP/requirements.txt" --progress-spinner off
+      - name: schema contract (Python ↔ Java)
+        run: uv run python ../../tools/contract_check.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with: { name: collector-coverage, path: apps/collector/coverage.xml, if-no-files-found: ignore }
+
   api:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults: { run: { working-directory: apps/api } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with: { distribution: temurin, java-version: "25" }
-      - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew --no-daemon test
-        working-directory: apps/api
-      - uses: actions/upload-artifact@v4
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: tests + JaCoCo report + coverage verification (NFR-14)
+        run: ./gradlew --no-daemon test jacocoTestReport jacocoTestCoverageVerification
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
-        with: { name: api-test-report, path: apps/api/build/reports/tests }
+        with:
+          name: api-test-report
+          path: |
+            apps/api/build/reports/tests
+            apps/api/build/reports/jacoco
+          if-no-files-found: ignore
+
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: apps/web } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: 24, cache: npm, cache-dependency-path: apps/web/package-lock.json }
       - run: npm ci
-        working-directory: apps/web
       - run: npx eslint . && npx tsc --noEmit && npx vitest run && npm run build
-        working-directory: apps/web
-      - run: npm audit --audit-level=high
-        working-directory: apps/web
+      - name: dependency audit (npm audit, High 이상 0 건 — NFR-10)
+        run: npm audit --audit-level=high
+
+  infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: "policy tests (.env 생성 · compose 해석 — 권한 축소 · Redis ACL 사용자 · Origin 목록 · 다이제스트 고정)"
+        run: make -s test-infra
+      - name: container tests (edge Host 허용 목록·비root · Redis ACL · db 권한 축소)
+        run: make -s infra-docker-test
+
   e2e:
     runs-on: ubuntu-latest
-    needs: [collector, api, web]
+    timeout-minutes: 40
+    needs: [collector, api, web, infra]
     steps:
-      - uses: actions/checkout@v4
-      - run: python3 tools/init_env.py && sed -i 's/^SKYWX_FIXTURE_MODE=0/SKYWX_FIXTURE_MODE=1/' .env
-      - run: docker compose -f infra/compose.yml --env-file .env up -d --build --wait
-      - uses: actions/setup-node@v4
-        with: { node-version: 24 }
-      - run: npm ci && npx playwright install --with-deps chromium && npx playwright test
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 24, cache: npm, cache-dependency-path: apps/web/package-lock.json }
+      - run: npm ci && npx playwright install --with-deps chromium
         working-directory: apps/web
-      - run: docker compose -f infra/compose.yml --env-file .env logs --tail=100
+      # 로컬과 같은 명령: 격리 fixture 스택(-p skywx-e2e, 127.0.0.1:8701)을 띄우고 E2E_BASE_URL=http://localhost:8701 로 돌린 뒤 지운다.
+      # 실패하면 Makefile 이 스택을 지우기 전에 상태·로그를 출력한다.
+      - run: make e2e
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions: { contents: read, pull-requests: read }
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-      - run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web
-      - uses: aquasecurity/trivy-action@0.28.0
-        with: { image-ref: skywx-api, severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
-      - uses: aquasecurity/trivy-action@0.28.0
-        with: { image-ref: skywx-collector, severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
-      - uses: aquasecurity/trivy-action@0.28.0
-        with: { image-ref: skywx-web, severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
+      - id: build
+        name: build own images (compose 가 붙이는 실제 태그 skywx-*:local)
+        run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web
+      # 우리가 빌드하는 이미지: 고칠 수 있는 HIGH/CRITICAL 이 있으면 실패(NFR-10). 앞 단계가 실패해도 세 이미지 모두 결과를 보인다.
+      - name: trivy skywx-api:local
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { image-ref: "skywx-api:local", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
+      - name: trivy skywx-collector:local
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { image-ref: "skywx-collector:local", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
+      - name: trivy skywx-web:local
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { image-ref: "skywx-web:local", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
+
+  # 우리가 쓰는 제3자 이미지(compose 에 다이제스트로 고정된 값 그대로 + make bench 의 k6).
+  # 상류가 관리 중인 런타임 이미지(edge·redis)는 차단, 교체 결정이 필요한 이미지(db)·배포되지 않는 도구(k6)는 보고만 한다 — 결과는 job 요약에 남는다.
+  third-party-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: edge, blocking: "1" }
+          - { target: redis, blocking: "1" }
+          - { target: db, blocking: "0" }    # imresamu/postgis 는 2026-02 이후 Debian 판 재빌드가 없다 — 이미지 교체 결정 전까지 보고만
+          - { target: k6, blocking: "0" }    # 부하 시험 도구(make bench), 스택에 배포되지 않는다
+    name: trivy third-party (${{ matrix.target }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - id: ref
+        name: resolve pinned image reference
+        env: { TARGET: "${{ matrix.target }}" }
+        run: |
+          python3 tools/init_env.py >/dev/null
+          if [ "$TARGET" = k6 ]; then ref="$(make -s print-K6_IMAGE)"
+          else ref="$(docker compose -f infra/compose.yml --env-file .env config --format json | jq -r --arg s "$TARGET" '.services[$s].image')"; fi
+          case "$ref" in *@sha256:*) ;; *) echo "::error::$TARGET image is not pinned by digest: $ref"; exit 1;; esac
+          echo "image=$ref" >> "$GITHUB_OUTPUT"
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+          output: trivy.txt
+      - name: report (and gate when blocking)
+        if: ${{ !cancelled() }}
+        env: { TARGET: "${{ matrix.target }}", IMAGE: "${{ steps.ref.outputs.image }}", BLOCKING: "${{ matrix.blocking }}" }
+        run: |
+          { echo "### $TARGET — \`$IMAGE\` (blocking=$BLOCKING)"; echo '```'; cat trivy.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat trivy.txt
+          if grep -Eq 'Total: [1-9]' trivy.txt; then
+            if [ "$BLOCKING" = 1 ]; then echo "::error::$TARGET: fixable HIGH/CRITICAL vulnerabilities — bump the pinned digest"; exit 1; fi
+            echo "::warning::$TARGET: fixable HIGH/CRITICAL vulnerabilities (report-only)"
+          fi
+
   codeql:
     runs-on: ubuntu-latest
-    strategy: { matrix: { language: [java-kotlin, javascript-typescript, python] } }
+    timeout-minutes: 40
+    permissions: { contents: read, security-events: write, actions: read }
+    strategy: { fail-fast: false, matrix: { language: [java-kotlin, javascript-typescript, python] } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with: { languages: "${{ matrix.language }}" }
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         if: matrix.language == 'java-kotlin'
         with: { distribution: temurin, java-version: "25" }
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2

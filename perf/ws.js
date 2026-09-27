@@ -5,6 +5,9 @@ import { Trend, Counter } from "k6/metrics";
 
 const HTTP_BASE = __ENV.BASE_URL || "http://localhost:8700";
 const BASE = HTTP_BASE.replace(/^http/, "ws");
+// api 는 WS Origin 을 명시 허용 목록(SKYWX_ALLOWED_ORIGINS, 기본 http://localhost:8700 · http://127.0.0.1:8700)으로만 받는다.
+// api 에 직접 붙을 때(BASE_URL=http://10.77.0.30:8000)도 Origin 은 브라우저가 보내는 값과 같아야 한다 → ORIGIN 으로 지정.
+const ORIGIN = __ENV.ORIGIN || "http://localhost:8700";
 const HOLD_MS = Number(__ENV.HOLD_S || 240) * 1000;
 const lag = new Trend("ws_diff_lag_ms", true);
 const msgs = new Counter("ws_messages");
@@ -21,8 +24,7 @@ export const options = {
 };
 
 export default function () {
-  // same-origin 검사: Origin 은 접속 호스트와 같아야 한다
-  const ws = new WebSocket(`${BASE}/ws/v1`, null, { headers: { Origin: HTTP_BASE } });
+  const ws = new WebSocket(`${BASE}/ws/v1`, null, { headers: { Origin: ORIGIN } });
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: "hello", proto: 1, client: "k6" }));
     setTimeout(() => ws.close(), HOLD_MS);
@@ -37,7 +39,7 @@ export default function () {
       if (m.type === "diff") diffs.add(1); else snaps.add(1);
     } else if (m.type === "error") errors.add(1);
   };
-  ws.onerror = () => errors.add(1);
+  ws.onerror = () => errors.add(1);   // Origin 이 허용 목록 밖이면 핸드셰이크가 거절되어 여기로 온다
 }
 
 export function handleSummary(data) {

@@ -65,6 +65,53 @@ class SchemaContractTest {
         assertThat(V.validatePayload("sigmet", payload)).isNull();
     }
 
+    /** 계약 §4: base_source·top_source 를 싣은 SIGMET 이 스키마를 통과하고 Codec 이 그대로 읽는다(top null 은 무제한 '가정'). */
+    @Test void sigmetSourceFields_validateAndDecode() throws Exception {
+        String payload = """
+                {"sigmets":[{"id":"ZLHW:1:1790481600","fir_id":"ZLHW","series_id":"1","hazard":"TURB","qualifier":"SEV","base_ft":0,"base_source":"assumed_surface",
+                 "top_ft":null,"top_source":"unknown","valid_from":"2026-09-27T04:00:00Z","valid_to":"2026-09-27T08:00:00Z",
+                 "geometry":{"type":"MultiPolygon","coordinates":[[[[100,35],[102,35],[102,37],[100,37],[100,35]]]]},
+                 "raw_text":"RAW","provider":"awc_isigmet","fetched_at":"2026-09-27T05:10:05Z"},
+                 {"id":"ZLHW:2:1790481600","fir_id":"ZLHW","series_id":"2","hazard":"TURB","base_ft":23000,"base_source":"json",
+                 "top_ft":35000,"top_source":"raw_text","valid_from":"2026-09-27T04:00:00Z","valid_to":"2026-09-27T08:00:00Z",
+                 "geometry":null,"excluded_reason":"no_coordinates","raw_text":"SEV TURB TOP ABV FL350","provider":"awc_isigmet","fetched_at":"2026-09-27T05:10:05Z"}]}""";
+        assertThat(V.validatePayload("sigmet", payload)).isNull();
+        var list = M.readTree(payload).path("sigmets");
+        var a = Codec.sigmet(list.get(0));
+        assertThat(a.baseSource()).isEqualTo("assumed_surface");
+        assertThat(a.baseAssumedSurface()).isTrue();
+        assertThat(a.topFt()).isNull();
+        assertThat(a.topSource()).isEqualTo("unknown");
+        assertThat(a.topAssumedUnbounded()).isTrue();
+        assertThat(a.bandContains(45000)).isTrue(); // 판정은 무제한 가정
+        var b = Codec.sigmet(list.get(1));
+        assertThat(b.topFt()).isEqualTo(35000);
+        assertThat(b.topSource()).isEqualTo("raw_text");
+        assertThat(b.baseAssumedSurface()).isFalse();
+        assertThat(b.topAssumedUnbounded()).isFalse();
+    }
+
+    @Test void sigmetSourceFields_badEnum_isRejected() {
+        String payload = """
+                {"sigmets":[{"id":"X:1:1","fir_id":"X","series_id":"1","hazard":"TS","base_ft":0,"base_source":"guessed","top_ft":null,"top_source":"unknown",
+                 "valid_from":"2026-09-27T04:00:00Z","valid_to":"2026-09-27T08:00:00Z","geometry":null,"raw_text":"R","provider":"awc_isigmet","fetched_at":"2026-09-27T05:10:05Z"}]}""";
+        assertThat(V.validatePayload("sigmet", payload)).isNotNull();
+    }
+
+    /** 이전 형식(출처 필드 없음): 추정하지 않는다 — base_source null, top 이 null 이면 top_source 는 정의상 unknown. */
+    @Test void legacySigmetWithoutSourceFields_decodesWithoutGuessing() throws Exception {
+        var n = M.readTree("""
+                {"id":"RKRR:F02:1","fir_id":"RKRR","series_id":"F02","hazard":"ICE","base_ft":0,"top_ft":null,
+                 "valid_from":"2026-09-27T04:00:00Z","valid_to":"2026-09-27T08:00:00Z","geometry":null,"raw_text":"RAW","provider":"awc_isigmet","fetched_at":"2026-09-27T05:10:05Z"}""");
+        var s = Codec.sigmet(n);
+        assertThat(s.baseSource()).isNull();
+        assertThat(s.baseAssumedSurface()).isFalse();
+        assertThat(s.topSource()).isEqualTo("unknown");
+        var withTop = Codec.sigmet(M.readTree(n.toString().replace("\"top_ft\":null", "\"top_ft\":21000")));
+        assertThat(withTop.topFt()).isEqualTo(21000);
+        assertThat(withTop.topSource()).isNull();
+    }
+
     @Test void realFixtureThroughPythonRules_wouldPass() throws Exception {
         // Python 정규화 결과를 흉내 낸 최소 변환으로 실응답 필드 범위가 스키마 안에 있음을 확인한다(전체 계약은 tools/contract_check.py).
         Path fx = Path.of("../../fixtures/adsb_lol_region.json");

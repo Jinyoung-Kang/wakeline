@@ -15,9 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps" / "collector"))
 
+from typing import get_args  # noqa: E402
+
 from jsonschema import Draft202012Validator, FormatChecker  # noqa: E402
 from referencing import Registry, Resource  # noqa: E402
 
+from skywx_collector.models import Sigmet  # noqa: E402
 from skywx_collector.normalize import from_readsb  # noqa: E402
 from skywx_collector.publisher import Publisher  # noqa: E402
 from skywx_collector.sigmet_parse import parse_airsigmet, parse_isigmet  # noqa: E402
@@ -77,6 +80,21 @@ def main() -> int:
     errs = list(sg_v.iter_errors(payload))
     print(f"{'FAIL' if errs else 'ok  '} sigmet payload: {len(intl)} intl + {len(us)} us, {len(errs)} schema errors")
     failures += bool(errs)
+    # 3-1. 고도대 출처(계약 §4): 모든 레코드가 싣고, 스키마 enum 과 모델 Literal 이 같다
+    props = json.loads((SCHEMAS / "sigmet.v1.json").read_text())["properties"]
+    bad = []
+    for fld in ("base_source", "top_source"):
+        model_vals = set(get_args(Sigmet.model_fields[fld].annotation))
+        if set(props.get(fld, {}).get("enum", [])) != model_vals:
+            bad.append(f"{fld}: schema enum != model {sorted(model_vals)}")
+    rows = payload["sigmets"]
+    missing = sum(1 for d in rows if "base_source" not in d or "top_source" not in d)
+    inconsistent = sum(1 for d in rows if (d["top_ft"] is None) != (d.get("top_source") == "unknown"))
+    assumed = sum(1 for d in rows if d.get("base_source") == "assumed_surface" and d["base_ft"] != 0)
+    if missing or inconsistent or assumed:
+        bad.append(f"records missing={missing} top/unknown inconsistent={inconsistent} assumed_surface base!=0={assumed}")
+    print(f"{'FAIL' if bad else 'ok  '} sigmet band provenance: " + ("; ".join(bad) if bad else f"{len(rows)} records"))
+    failures += bool(bad)
     # 4. 레이더 payload
     rv = json.loads((FIXTURES / "rainviewer_weather_maps.json").read_text())
     rd_v = validator("stream_envelope.v1.json", "/$defs/radar_payload")

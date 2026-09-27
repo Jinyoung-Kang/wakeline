@@ -10,17 +10,19 @@
   --color-line-2: #333a43;
   --color-fg: #e6e8eb;
   --color-fg-2: #a3aab4;
-  --color-fg-3: #6b737e;
+  /* 보조 글자: #0b0d10·#111418·#171b20·#1c2a3f 위에서 모두 WCAG AA(≥ 4.5:1) — 6.19 / 5.87 / 5.50 / 4.60 */
+  --color-fg-3: #8a929d;
   --color-accent: #4c90f0;
   --color-ok: #3ec98f;
   --color-warn: #f2b33d;
-  --color-bad: #e5484d;
+  --color-bad: #ef5d62; /* bg-2 위 5.2:1(작은 글자 AA) */
   --color-est: #b18cf5;
   --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", sans-serif;
 }
 
-html, body { height: 100%; background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 13px; }
+/* 숫자는 어디서나 고정폭 숫자(tabular-nums) — 갱신마다 자릿수 폭이 흔들리지 않는다 */
+html, body { height: 100%; background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 13px; font-variant-numeric: tabular-nums; }
 * { border-radius: 0 !important; }
 a { color: inherit; }
 ::selection { background: #2a4a7a; }
@@ -34,7 +36,7 @@ a { color: inherit; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--color-line); }
 .btn { border: 1px solid var(--color-line-2); background: var(--color-bg-2); color: var(--color-fg); padding: 4px 10px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
 .btn:hover { border-color: var(--color-accent); }
-.btn[aria-pressed="true"], .btn.active { background: #1c2a3f; border-color: var(--color-accent); color: #cfe0ff; }
+.btn[aria-pressed="true"], .btn[aria-current="page"], .btn.active { background: #1c2a3f; border-color: var(--color-accent); color: #cfe0ff; }
 .badge { display: inline-block; padding: 1px 6px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--color-line-2); color: var(--color-fg-2); }
 .badge.ok { border-color: #1f6b48; color: var(--color-ok); }
 .badge.warn { border-color: #7a5a1a; color: var(--color-warn); }
@@ -42,15 +44,34 @@ a { color: inherit; }
 .badge.est { border-color: #5a3f8c; color: var(--color-est); border-style: dashed; }
 input, select { background: var(--color-bg); border: 1px solid var(--color-line-2); color: var(--color-fg); padding: 4px 8px; font-size: 12px; }
 input:focus, select:focus { outline: 1px solid var(--color-accent); }
+/* 키보드 초점은 항상 보이게(2px, 1px 띄움). 마우스 클릭에는 표시하지 않는다(:focus-visible). */
+:focus-visible { outline: 2px solid var(--color-accent) !important; outline-offset: 1px; }
+.maplibregl-canvas:focus-visible { outline-offset: -2px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--color-line-2); }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th { text-align: left; font-weight: 600; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-fg-3); padding: 6px 8px; border-bottom: 1px solid var(--color-line-2); }
 td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-align: top; }
 .grid-bg { background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px); background-size: 24px 24px; }
-.maplibregl-ctrl-attrib { background: rgba(11,13,16,0.85) !important; color: var(--color-fg-3) !important; font-size: 10px !important; font-family: var(--font-mono); }
+/* 지도 위 출처(FR-20): 줄바꿈 허용·잘리지 않음. 폭은 지도의 70% 까지. */
+.maplibregl-ctrl-attrib { background: rgba(11,13,16,0.88) !important; color: var(--color-fg-3) !important; font-size: 10px !important; font-family: var(--font-mono); max-width: min(70vw, 760px); line-height: 1.45; }
+.maplibregl-ctrl-attrib-inner { white-space: normal; }
 .maplibregl-ctrl-attrib a { color: var(--color-fg-2) !important; }
 .maplibregl-ctrl-group { background: var(--color-bg-1) !important; border: 1px solid var(--color-line-2) !important; box-shadow: none !important; }
 .maplibregl-ctrl-group button { background: transparent !important; filter: invert(0.85); }
-.maplibregl-popup-content { background: var(--color-bg-1) !important; color: var(--color-fg) !important; border: 1px solid var(--color-line-2); padding: 8px 10px !important; font-size: 12px; }
-.maplibregl-popup-tip { border-top-color: var(--color-line-2) !important; }
+.maplibregl-popup-content { background: var(--color-bg-1) !important; color: var(--color-fg) !important; border: 1px solid var(--color-line-2); padding: 8px 10px !important; font-size: 12px; box-shadow: none !important; }
+.maplibregl-popup-tip { border-top-color: var(--color-line-2) !important; border-bottom-color: var(--color-line-2) !important; }
+/* 호버 툴팁 — 포인터 이벤트를 받지 않아 지도 조작을 막지 않는다 */
+.skywx-tip { pointer-events: none; z-index: 30; } /* 범례(z-10) 위에 */
+.skywx-tip .maplibregl-popup-content { padding: 6px 8px !important; min-width: 180px; }
+.tip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
+.tip-title { font-weight: 600; font-size: 12px; }
+.tip-sub { font-size: 10px; color: var(--color-fg-3); }
+.tip-row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; line-height: 1.5; border-top: 1px solid var(--color-line); }
+.tip-row .label { font-size: 9px; }
+.tip-flags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+/* 범례 */
+.legend-sw { display: inline-block; width: 10px; height: 10px; flex-shrink: 0; }
+.legend-line { display: inline-block; width: 22px; height: 0; flex-shrink: 0; border-top-width: 2px; }
 @keyframes flash { 0% { background: #3a2a1a; } 100% { background: transparent; } }
 .flash { animation: flash 1.2s ease-out; }

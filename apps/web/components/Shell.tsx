@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { AircraftSearch } from "./AircraftSearch";
+import { AttributionFooter } from "./AttributionFooter";
 
 const NAV = [
   { href: "/", label: "상황판" },
@@ -20,17 +22,22 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <span className="text-sm font-semibold tracking-[0.2em]">SKYWX</span>
             <span className="label hidden sm:inline">Aircraft · Hazardous Weather</span>
           </Link>
-          <nav className="flex gap-1">
+          <nav className="flex gap-1" aria-label="주 메뉴">
             {NAV.map((n) => (
-              <Link key={n.href} href={n.href} className="btn" aria-pressed={path === n.href || (n.href !== "/" && path.startsWith(n.href))}>
+              <Link key={n.href} href={n.href} className="btn" aria-current={path === n.href || (n.href !== "/" && path.startsWith(n.href)) ? "page" : undefined}>
                 {n.label}
               </Link>
             ))}
           </nav>
         </div>
-        <div className="label hidden md:block">portfolio · non-commercial · local</div>
+        <div className="flex items-center gap-4">
+          {/* 검색 결과로 지도를 옮기므로 상황판에서만 */}
+          {path === "/" ? <AircraftSearch /> : null}
+          <div className="label hidden xl:block">portfolio · non-commercial · local</div>
+        </div>
       </header>
       <main className="min-h-0 flex-1">{children}</main>
+      <AttributionFooter />
     </div>
   );
 }

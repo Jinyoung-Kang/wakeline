@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class AircraftState(BaseModel):
@@ -43,7 +43,10 @@ class Sigmet(BaseModel):
     hazard: str
     qualifier: str | None = None
     base_ft: int = 0
+    # 고도대 출처(계약 §4). assumed_surface = 하한 미발표(판정은 SFC 가정), unknown = 상한 미발표(판정은 무제한 가정)
+    base_source: Literal["json", "assumed_surface"] = "json"
     top_ft: int | None = None
+    top_source: Literal["json", "raw_text", "unknown"] = "unknown"
     valid_from: datetime
     valid_to: datetime
     geometry: dict[str, Any] | None = None
@@ -54,6 +57,16 @@ class Sigmet(BaseModel):
     raw_text: str
     provider: str
     fetched_at: datetime
+    # 스트림에 싣지 않는 품질 메모(JSON 상한이 잘못돼 쓰지 않은 경우 등). model_dump 에 포함되지 않는다.
+    _band_note: str | None = PrivateAttr(default=None)
+
+    @property
+    def band_note(self) -> str | None:
+        return self._band_note
+
+    @band_note.setter
+    def band_note(self, v: str | None) -> None:
+        self._band_note = v
 
 
 @dataclass

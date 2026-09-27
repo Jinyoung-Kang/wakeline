@@ -41,7 +41,18 @@ await page.getByRole("button", { name: "aircraft" }).click();
 await wait(2000);
 await shot("03-aircraft-detail");
 
-// 4. 동아시아 확장(전세계 스냅샷 병합)
+// 3b. 상단 검색(키보드: "/" → 입력 → 결과 목록) — 첫 결과를 Enter 로 선택하면 지도가 그 항공기로 이동
+await page.locator("body").press("/");
+await page.keyboard.type(process.env.SKYWX_SEARCH ?? "KAL");
+await page.getByTestId("aircraft-search-item").first().waitFor({ timeout: 10_000 }).catch(() => {});
+await wait(800);
+await shot("03b-search");
+await page.keyboard.press("Enter");
+await wait(3500);
+await shot("03c-search-selected");
+
+// 4. 동아시아 확장(전세계 스냅샷 병합) — 넓은 지도를 보이려고 범례를 접는다(이 브라우저 컨텍스트에만 기억)
+if ((await page.getByTestId("legend-toggle").getAttribute("aria-expanded")) === "true") await page.getByTestId("legend-toggle").click();
 await page.goto(BASE + "/#4.2/33/125"); // MapLibre hash: #zoom/lat/lon (공유 가능한 지도 위치)
 await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 });
 await wait(6000);

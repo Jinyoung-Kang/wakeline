@@ -1,0 +1,880 @@
+{
+ "findings": [
+  {
+   "id": "DH-1",
+   "title": "Aircraft age and STALE are computed from the raw browser clock, but the tooltip, ETA, SIGMET and METAR use the server-corrected clock",
+   "severity": "medium",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/public/interpolate.worker.js",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/AircraftCard.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/MapView.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/tooltip.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/StatusBar.tsx"
+   ],
+   "evidence": "interpolate.worker.js:71 `var now = Date.now(), out = [] ...` then `predict(s, now)`. The worker never receives the server offset: it handles only snapshot, diff, clear, viewport, invalidate, start and stop. AircraftCard.tsx:70 `const r = s && now ? predict(s, now) : null;` uses useNow(), which is the raw Date.now() (clock.ts:27-28). The same work added lib/store.ts observeServerTime/serverNowMs and uses it for the hover tooltip (MapView.tsx:198 `const now = serverNowMs(Date.now());`), ETA, SIGMET expiry and METAR age, but not for the per-aircraft staleness that the contract (§1) makes the main honesty flag. StatusBar.tsx:37-38 `fmtAgo(s.sigmetsFetchedAt, now)` and `fmtAgo(s.radar?.fetched_at, now)` also compare server timestamps with the raw client clock.",
+   "failure_scenario": "Browser clock 90 s fast (an unsynced VM or phone): the worker computes age = real age + 90 s > 60, so every adsb_fi aircraft is drawn at 40% opacity as STALE and dead-reckoned to the 60 s cap. The AircraftCard shows '위치 추정 상한 도달 · STALE' and '관측 시각 … (1m 35s 전)'. Meanwhile the tooltip (server-corrected) shows 'AGE 5s' and, because render.stale is true but its own age is ≤ 60, labels the aircraft 'STALE · 위치 추정 상한', which is self-contradictory. Browser clock 60 s slow: the age clamps to 0, nothing is extrapolated, and an aircraft whose reports stopped 100 s ago is still drawn and described as fresh. In both cases stale data is not marked correctly.",
+   "fix": "Post the offset to the worker whenever observeServerTime updates it (e.g. worker.postMessage({type:'clock', offsetMs})) and use Date.now()+offset in tick() and in the diff easing timestamp. In AircraftCard use predict(s, serverNowMs(now)). In StatusBar use fmtAgo(x, serverNowMs(now)).",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-2",
+   "title": "Merged view always prefers the region state, so during a region outage fresh OpenSky reports are hidden: aircraft go STALE and alerts close as LOST although they are still being reported",
+   "severity": "medium",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/ingest/SnapshotStore.java",
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/engine/AlertStateMachine.java"
+   ],
+   "evidence": "SnapshotStore.java:65-73 puts the fresh global states first and then `out.putAll(r.states());` unconditionally, so the region entry replaces the global one for the same hex regardless of seen_at. Contract §1 says that during a total provider outage the region snapshot is not replaced (it freezes). The new engine only counts fresh states (`a != null && a.fresh(now)`, AlertStateMachine.java:106). Otherwise it counts absence and emits LOST, labelled '신호 끊김(이탈 미확인)'. Live: /api/v1/aircraft?bbox=124,33,132,39 returns a mix of adsb_fi and opensky aircraft around RKSI, so the two feeds overlap in the region.",
+   "failure_scenario": "adsb_lol and adsb_fi both fail, so the region snapshot freezes at t0. OpenSky keeps reporting KAL123 inside a TS SIGMET every ~120 s. The merged map still holds the frozen adsb_fi state, which is no longer fresh after 60 s. The engine counts absence per global snapshot and, after 3 of them, closes the alert as LOST / signal_lost, and no ENTERED/PREDICTED is raised for any overlapping aircraft. The map shows the aircraft STALE at its t0 position (extrapolation capped at 60 s), while a fresh real position exists in the global snapshot. The UI therefore says 'signal lost' for an aircraft that is still being observed.",
+   "fix": "In SnapshotStore.build, resolve hexes present in both scopes by the newer seenAt, e.g. `for (a : r.states().values()) out.merge(a.hex(), a, (g0, r0) -> r0.seenAt().isBefore(g0.seenAt()) ? g0 : r0);`. Have Cycle.scopeOf use the chosen state's provider/scope, not just membership in regionHexes.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-3",
+   "title": "On-ground aircraft get a fabricated alt_ft = 0 (and OpenSky's reported altitude is discarded), shown as '고도 0 ft'",
+   "severity": "medium",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/collector/skywx_collector/normalize.py",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/AircraftCard.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/tooltip.ts"
+   ],
+   "evidence": "normalize.py:62-65 `on_ground = alt_raw == \"ground\" ... if on_ground: alt_ft = 0`, and :120 `alt_ft = 0 if on_ground else (int(round(alt_m * M_TO_FT)) ...)`. normalize.py is untouched by this work although audit COR-18 flagged it. AircraftCard.tsx:82 `[\"고도\", ... fmtAlt(s?.alt_ft)]` renders '0 ft', and tooltip.ts:36 does the same for ALT. Replay and search already render 'GND' for on_ground. Live: /api/v1/aircraft?bbox=124,33,132,39 returns CPA426 (adsb_fi, alt_baro 'ground') and 4 OpenSky aircraft at RKSI with `\"alt_ft\": 0`. The latest raw OpenSky payload has 1,140 on_ground states, 1,125 with baro_altitude null (0 invented) and 15 with a reported baro_altitude that was overwritten with 0.",
+   "failure_scenario": "Selecting a taxiing aircraft shows '고도 0 ft · 지상 yes'. At any airport whose elevation is not 0 this is a false altitude, colored on the map as a 0 ft icon. It is also persisted to track_point and averaged into track_point_1m, which pulls down 1-minute mean altitudes around take-off and landing. This violates the 'unknown = null' contract (§1).",
+   "fix": "normalize.py: when alt_baro == 'ground', set alt_ft=None (keep on_ground=True). For OpenSky, keep baro_altitude when present, else None. Web: render 'GND' when on_ground === true in AircraftCard and aircraftTip, as replay and search already do.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-4",
+   "title": "'TOP ABV FLxxx' is treated as an exact top: shown as a plain 'FL390' when AWC's JSON top is set, and used as a hard ceiling in judgement with no assumption label",
+   "severity": "medium",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/sigmet.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/alerts.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/replay.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/EvidenceCard.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/domain/SigmetRecord.java"
+   ],
+   "evidence": "sigmet.ts:31 `top_above: p.top_source === \"raw_text\" && topAboveFromRaw(p.raw_text, p.top_ft)` (same at alerts.ts:56), so ABV is only detected when top_source is raw_text. replay.ts:65 `bandSrc` never sets top_above. The engine uses the value as a hard ceiling: SigmetRecord.bandContains `altFt <= topFt`. EvidenceCard.tsx:46-48 lists assumptions only for assumed_surface and an unknown top. Live /api/v1/sigmets has 5 SIGMETs with top_source 'json' whose raw text says 'TOP ABV': FIMM:A01 (39000, 'TOP ABV FL390'), OEJD:02 (38000), TTZP:4 (45000), MMEX:F3 and MMEX:D3 (48000). The card shows '하한 미발표(SFC 가정) – FL390'.",
+   "failure_scenario": "An aircraft at FL410 inside FIMM:A01 ('EMBD TS … TOP ABV FL390') is judged outside: no alert, not listed under 'Aircraft inside'. The SIGMET card and tooltip state the upper limit is FL390, although the bulletin only says the tops are above FL390. For the raw_text cases the card correctly says 'FL380 이상 (원문)', but judgement still silently caps at FL380. That is a judgement assumption with no label, contrary to the contract's assumption-labelling rule.",
+   "fix": "Compute top_above from the raw text regardless of top_source (or have the collector publish top_above:boolean) in sigmet.ts, alerts.ts and replay.ts. In the engine, either treat an ABV top as unbounded-above, or record evidence.top_is_lower_bound=true. Show 'FLxxx 이상 → FLxxx 를 상한으로 판정(가정)' in the EvidenceCard assumptions and the SigmetCard '판정' row.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-5",
+   "title": "Daily 'alert_dwell_avg_s' includes legacy alerts with unknown close reason (possibly signal loss), which make up 99% of the current sample",
+   "severity": "medium",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/persist/MaintenanceJobs.java"
+   ],
+   "evidence": "MaintenanceJobs.java:212 `AND (close_reason IS NULL OR close_reason = 'left')`. The V3 migration itself states that already-closed legacy rows keep NULL because 'the old FSM also closed signal loss as LEFT, so filling left could be false'. Live DB for 2026-09-27: OBSERVED closed rows are left=78 (avg 450 s), NULL=8,098 (avg 665 s), signal_lost=16, restart=2,086. The stored stats_daily value is alert_dwell_avg_s = 664.",
+   "failure_scenario": "The Statistics page shows 'alert_dwell_avg_s OBSERVED 664' as the average dwell of confirmed exits. It is actually dominated by 8,098 rows whose left_at may be a fabricated exit time (COR-4), while the verifiable figure is 450 s. The 03:30 job recomputes the day with the same filter, so the wrong value becomes the permanent statistic.",
+   "fix": "Use `AND close_reason = 'left'` only. If legacy coverage is wanted, publish it as a separate, explicitly labelled metric such as 'alert_dwell_avg_s_unverified'.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-6",
+   "title": "Alerts ended by SIGMET expiry or withdrawal are reported and labelled as an aircraft exit ('이탈', '이탈 확인(바깥 관측 3회)')",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/engine/AlertStateMachine.java",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/alerts.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/AlertPanel.tsx"
+   ],
+   "evidence": "When the SIGMET leaves the index, the next fresh observations count as outside (AlertStateMachine.java:127-135), producing `EventType.LEFT` with CLOSE_LEFT. leftEvidence (:254) adds `sigmet_expired` only when `!t.sigmet.validAt(now)`. A SIGMET withdrawn before valid_to gets no flag at all, because t.sigmet still holds the old valid_to. The web ignores sigmet_expired: alerts.ts:21 `left: \"이탈 확인(바깥 관측 3회)\"` and :32 `LEFT: \"이탈\"` drive the banner (AlertPanel.tsx:52) and EvidenceCard. The row is also counted in dwell stats as a real exit.",
+   "failure_scenario": "A TS SIGMET is cancelled at 15:10 while CPA426 cruises in the middle of its polygon. About 30 s later the banner shows 'LEFT 이탈 · CPA426 · TS …' and history stores close_reason='left' with left_at 15:10:30. This records an exit that never happened, and the aircraft's position did not change.",
+   "fix": "In AlertStateMachine, when the tracked SIGMET is no longer in the active set (expired or withdrawn), add evidence end_cause = 'sigmet_expired' or 'sigmet_withdrawn' (or a new close_reason). In the web, show '경보 만료/철회로 종료' instead of '이탈' when that flag is present, and exclude those rows from dwell.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-7",
+   "title": "Airport history shows parsed visibility '6' for METAR '6+' (vis_raw not returned by the API), and the airport card shows visibility without a unit",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/persist/AirportRepository.java",
+    "/Users/jinyoung/Projects/skywx/apps/web/app/airports/[icao]/page.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/AirportCard.tsx"
+   ],
+   "evidence": "AirportRepository.java:50 history query `SELECT obs_time, flight_cat, flight_cat_source, wind_dir, wind_kt, vis_sm, ceiling_ft, ceiling_state, temp_c` has no vis_raw. page.tsx:56 `{h.vis_raw ?? h.vis_sm ?? \"—\"}`, and its doc comment (:18) claims vis_raw is preferred. Live /api/v1/airports/RKJB/wx history[0] = {vis_sm: 6.0, …} with no vis_raw, while latest.vis_raw = '6+'. AirportCard.tsx:56 `[\"시정\", m.vis_raw ?? \"—\"]` renders '6+' or '10' with no unit (AWC visib is in statute miles).",
+   "failure_scenario": "The RKJB history row shows vis '6' where the report said '6+' (6 or more), turning a lower bound into an exact value, which is the case the page comment says it avoids. On the airport card, a Korean user reads '시정 10' with no unit and can take it as 10 km.",
+   "fix": "Add vis_raw to the history SELECT. In AirportCard, render `${m.vis_raw} SM` (or '≥6 SM').",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-8",
+   "title": "SIGMETs not yet in force (valid_from in the future) are drawn and described exactly like active ones",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/sigmet.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/components/SigmetCard.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/tooltip.ts",
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/rest/SigmetGeoJson.java"
+   ],
+   "evidence": "sigmet.ts:11 `fc.features.filter((f) => f.geometry && !isExpired(f.properties, nowMs))`: only expiry is checked, and the server's `active` (validAt, false before valid_from) is ignored when valid_to parses. SigmetGeoJson.collection with active=true drops only `!validTo.isAfter(now)`, so future SIGMETs are in the WS collection. SigmetCard and sigmetTip flag only '만료됨' / '30분 내 만료'. Bulletins are routinely issued before validity (live UTAA:3 was issued 1437Z, 'VALID 271500/271900'). /api/v1/status showed count 133 vs active 132.",
+   "failure_scenario": "At 14:40Z the map fills the UTAA:3 polygon in the TS color and the tooltip shows 'LEFT 4h 20m', with no indication that it only takes effect at 15:00Z. The engine does not judge it yet, so the map depicts a hazard as in force when it is not, and it does not match the status bar's 'active' count.",
+   "fix": "In activeSigmetFeatures, carry a `pending` property when valid_from > now and style it distinctly (hollow or dashed plus legend entry), or hide it. Show '발효 전 · {valid_from}' in SigmetCard and sigmetTip.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-9",
+   "title": "Alert panel asserts 'no aircraft inside / predicted' before any alert data arrives, and keeps showing a counting-down list during a disconnect with no stale marking",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/components/AlertPanel.tsx"
+   ],
+   "evidence": "AlertPanel.tsx:58 renders `…현재 SIGMET 안에 있거나 10분 내 진입이 예상되는 항공기가 없습니다.` whenever list.length === 0. It never checks `alertsVersion` (null until the first 'alerts' message; reset to null on every welcome) or `conn`. When the socket closes, the store keeps the old alerts Map, and EtaBadge keeps counting eta_at down to '0s'.",
+   "failure_scenario": "On page load (WS connecting) or after the server has been unreachable for minutes, the panel states there are no aircraft in or near SIGMETs, which is an unknown shown as a definite 'none'. After a disconnect, the old INSIDE/PREDICTED items stay with ETAs frozen at '추정 ETA 0s', although they may already have been cleared, and nothing on the panel marks them as stale.",
+   "fix": "If alertsVersion == null, show '알림 수신 전'. If conn !== 'open', show a '연결 끊김 — 마지막 수신 목록(갱신 안 됨)' banner and stop the ETA countdown (or show '—').",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-10",
+   "title": "Stats page ignores the API's traffic scope/region and always labels the chart '관심 지역'",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/app/stats/page.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/rest/HistoryController.java"
+   ],
+   "evidence": "HistoryController /stats/traffic returns `scope: null, region: null` for days aggregated without a region record. Its doc says these may mix worldwide samples and 'do not assert the range'. stats/page.tsx:26-27 keeps only `t.items`, and :35-36 hard-code 'Distinct aircraft by hour (UTC) · 관심 지역' and '시간대별 관심 지역 고유 항공기 수'. The stored region (center and radius) is never shown.",
+   "failure_scenario": "For any day aggregated by the old job (or before traffic_region rows existed), the chart labels ~13k/hour worldwide OpenSky counts as the interest region. After the operator changes region settings, older days are still labelled '관심 지역' although they counted a different area. This is currently latent in this DB, where only 2026-09-27 has rows, all with a region.",
+   "fix": "Store the response's `scope` and `region`. If scope is null, label the chart '범위 미확인(전세계 표본 포함 가능)'. Otherwise show 'center lat,lon · radius NM (bbox)' in the title.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-11",
+   "title": "Unknown heading is drawn as north (icon-rotate defaults to 0), and replay's 1-minute averaged positions are flagged '기록 위치 · 보간 없음'",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/maplayers.ts",
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/replay.ts",
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/persist/TrackRepository.java"
+   ],
+   "evidence": "maplayers.ts:104 `\"icon-rotate\": [\"coalesce\", [\"get\", \"track_deg\"], 0]`. The replay 1m query returns `NULL::real track_deg` and `ST_MakePoint(avg(ST_X), avg(ST_Y))` (TrackRepository.java:56, MaintenanceJobs.java:93). replay.ts:79 flags every replay aircraft `기록 위치 · 보간 없음`. Live: 13 of 38 aircraft in the KR bbox have no track_deg.",
+   "failure_scenario": "Every aircraft in a replay older than raw retention (source track_point_1m) is drawn pointing due north, which the icon presents as its heading. The tooltip calls its minute-averaged position a recorded, non-interpolated position. Parked aircraft without a track also all point north on the live map.",
+   "fix": "Use a non-directional symbol, or omit the rotation, when track_deg is null (e.g. a separate symbol layer filtered by `has track_deg`, with a legend entry). In replayAircraftTip, flag provider '1m_summary' rows as '1분 평균 위치(요약)'.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-12",
+   "title": "The '10분 예측(추정)' line starts at the old observed position, not at 'now' as the engine's prediction does, so it can contradict the PREDICTED alert",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/lib/maplayers.ts",
+    "/Users/jinyoung/Projects/skywx/apps/api/src/main/java/dev/skywx/engine/IntersectionEngine.java"
+   ],
+   "evidence": "maplayers.ts:166-170 `const coords = [[a.lon, a.lat]]; for (i=1..10) deadReckon(a.lat, a.lon, …, i*60)`, so it spans seen_at…seen_at+10 min. IntersectionEngine.predictOne first advances the position by `age = now - seen_at` and then projects 10 min from now. OpenSky positions are routinely 1–5 min old (live global lag_s ≈ 120 s).",
+   "failure_scenario": "An OpenSky aircraft with a 150 s old position gets a PREDICTED alert with ETA 8 min. The dashed line labelled '추정 · 10분' ends 7.5 min from now and stops short of the polygon the alert says it will enter, so the map contradicts the alert and understates the horizon.",
+   "fix": "Start the line at the position advanced to serverNow (cap as the engine does), i.e. deadReckon by (serverNowMs - seen_at) first, or label the line with its actual time span.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-13",
+   "title": "Collector fabricates a fresh observation time (seen_at = fetched_at) when the provider gives no position timestamp",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/collector/skywx_collector/normalize.py"
+   ],
+   "evidence": "normalize.py:70 `seen_at = fetched_at - timedelta(seconds=seen_pos) if seen_pos is not None else fetched_at`, and :124 `seen_at = datetime.fromtimestamp(tpos, UTC) if tpos else fetched_at`. The schema requires seen_at, so the contract's 'seen_at missing → age —, no extrapolation' path can never trigger. This is latent right now: the latest raw payloads have 0 positioned records without seen_pos / time_position.",
+   "failure_scenario": "If a provider omits the position time, each fetch stamps the record 'observed now'. The UI shows age 0 s and extrapolates it as fresh. The engine's new distinct-observation hysteresis counts every fetch as a new observation, which is exactly what REL-5/COR-1 fixed, so a single stale position can confirm ENTERED.",
+   "fix": "Quarantine positioned records without a position timestamp (quality rule 'no_position_time') instead of substituting fetched_at, or make seen_at nullable end to end so the client shows '—' and the engine skips it.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-14",
+   "title": "Ops provider table shows an unknown budget limit as '∞'",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/app/ops/page.tsx",
+    "/Users/jinyoung/Projects/skywx/apps/collector/skywx_collector/status.py"
+   ],
+   "evidence": "ops/page.tsx:88 `{Number(p.budget_limit) > 0 ? String(p.budget_limit) : \"∞\"}`. status.py writes budget_limit only in success(), not in failure(). Limit 0 genuinely means unlimited (budget.py RESERVE_LUA `if limit > 0 and …`), but a missing field makes Number(undefined) NaN, which renders '∞'.",
+   "failure_scenario": "OpenSky fails authentication from start-up, so it has never succeeded. The row reads '— / ∞', telling the operator the credit budget is unlimited when the configured cap is 2,880.",
+   "fix": "`p.budget_limit == null || p.budget_limit === \"\" ? \"—\" : Number(p.budget_limit) > 0 ? String(p.budget_limit) : \"∞\"`, or write budget_limit in failure() too.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "DH-15",
+   "title": "Alert list shows a PREDICTED alert's estimated entry altitude in the same column as observed altitude, without a 추정 label",
+   "severity": "low",
+   "files": [
+    "/Users/jinyoung/Projects/skywx/apps/web/components/AlertPanel.tsx"
+   ],
+   "evidence": "AlertPanel.tsx:67 `<span className=\"mono w-14 …\">{fmtAlt(a.alt_ft)}</span>` for every row. For PREDICTED, alt_ft = p.altAtEntry(), extrapolated with vrate and possibly the vrate=0 assumption (AlertStateMachine.java:289). EvidenceCard labels it '진입 시 고도(추정)', but the list does not.",
+   "failure_scenario": "The list shows 'AAR123 TS … FL350' next to observed INSIDE rows showing current FL values, so a dead-reckoned altitude at a future entry time reads as an observed altitude.",
+   "fix": "For kind === 'PREDICTED', render the altitude with the est style and a '(추정)' suffix or title, e.g. `${fmtAlt(a.alt_ft)}*` with an est badge.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "WS-1",
+   "title": "Client resets its reconnect backoff on every socket open, so a server that accepts the upgrade and then closes (1013 connection limit, slow-consumer close, hello timeout) gets a reconnect about once per second forever",
+   "severity": "medium",
+   "files": [
+    "apps/web/lib/ws.ts",
+    "apps/api/src/main/java/dev/skywx/ws/SkyWsHandler.java",
+    "apps/api/src/main/java/dev/skywx/ws/WsSession.java"
+   ],
+   "evidence": "ws.ts:83-86 `ws.onopen = () => { if (this.ws !== ws) return; this.attempt = 0; ...` and ws.ts:99 `const delay = nextBackoffMs(this.attempt++);`. On the server, the capacity check runs in SkyWsHandler.afterConnectionEstablished (lines 60-63), which Spring calls after the 101 handshake: `if (!limiter.tryAcquire(ip)) { ... raw.close(CloseStatus.SERVICE_OVERLOAD.withReason(\"connection limit\")); return; }`. A slow consumer is closed from WsSession.sendNow (lines 133-138) after the 5 s blocking-send timeout. In both cases the browser has already fired `open`.",
+   "failure_scenario": "All localhost/NAT users arrive through the edge with one IP (XFF = $remote_addr) and ws-max-conn-per-ip is 5. Opening a 6th tab, or any client once 200 connections are used: open → attempt=0 → close 1013 → reconnect after nextBackoffMs(0) ≈ 0.8–1.2 s → open resets attempt to 0 again. Each rejected client therefore does an HTTP upgrade plus session setup about once per second for as long as it stays rejected, which hits the server hardest when it is already at capacity. The same happens to a slow mobile client at world zoom: it opens, the 2.4 MB snapshot times out after 5 s and the server closes it, it reconnects about 1 s later and downloads the snapshot again, looping indefinitely. The UI shows `retry 1` forever.",
+   "fix": "Stop resetting `attempt` in onopen. Reset it only after the connection has proved healthy, for example on the first `snapshot` or after it has stayed open for 30 s following welcome. In onclose, read the close code: for 1013 (overload) and 1008 (policy or rate limit), use at least the 30 s ceiling instead of 1 s.",
+   "real": true,
+   "sev_v": "medium",
+   "reason": "Confirmed from code. ws.ts:83-85 resets `this.attempt = 0` in onopen, and nothing else resets it; ws.ts:99 computes `nextBackoffMs(this.attempt++)`. The api's capacity check (SkyWsHandler.java:60-63, `raw.close(CloseStatus.SERVICE_OVERLOAD.withReason(\"connection limit\"))`) runs in afterConnectionEstablished. Tomcat calls that only after the 101 response is committed, so the browser fires `open` (attempt becomes 0) and then gets 1013. The next delay is therefore always nextBackoffMs(0), about 0.8–1.2 s, forever. The edge does not stop this: nginx.conf allows `limit_req zone=perip_ws` at 5 r/s with burst 10 and `limit_conn perip_conn 10`, while the api allows 5 per IP (application.yml:68). A 6th map tab from one IP, or any client arriving after 200 connections, therefore reconnects about once per second indefinitely and shows 'WS connecting/closed · retry 1'. The slow-consumer path is new in this work: the 5 s Tomcat blocking-send timeout (SkyWsHandler.applySendTimeout, then WsSession.sendNow:133-138 closeNow) produces the same loop after welcome, re-sending the initial snapshot every ~6 s. The lane report puts the world snapshot at ~750 KB, not the 2.4 MB claimed; that is still far beyond a 5 s budget on a slow link. Two parts of the finding are not realistic: the hello timeout, because the client sends hello immediately in onopen, and 1008, because the client budget is 16/10 s. The attempt reset itself dates from the baseline, but this work rewrote ws.ts and added the slow-consumer close, so the defect is left by this work.",
+   "fix_v": "In apps/web/lib/ws.ts, remove `this.attempt = 0` from onopen (line 85). Reset the counter only once the connection has proved healthy: on the first `snapshot` in onMessage, or when a `welcome` has been received and the socket has stayed open for 30 s (this covers hidden tabs, which defer subscribe). Do not rely on the close code alone, because a slow-consumer close usually reaches the browser as 1006. As an addition, in onclose read `(ev as CloseEvent).code`: for 1013 (overload) or 1008 (policy/rate limit), set attempt so that the next delay is the 30 s ceiling, e.g. `this.attempt = Math.max(this.attempt, 5)`, keeping the jitter. Add a unit test with the SocketLike fake: open followed immediately by close(1013), repeated, must produce growing delays."
+  },
+  {
+   "id": "WS-2",
+   "title": "The client has no receive watchdog, and feedLag stops aging the feed lag while conn is \"open\", so a half-open connection or hung api shows 'WS open' and a fresh 'lag 3s' badge indefinitely",
+   "severity": "medium",
+   "files": [
+    "apps/web/lib/ws.ts",
+    "apps/web/lib/ws-protocol.ts",
+    "apps/web/components/StatusBar.tsx"
+   ],
+   "evidence": "ws-protocol.ts:122-125 `export function feedLag(feed, nowMs, live, thresholdS) { ... const lag = live ? feed.lag_s : feed.lag_s + Math.max(0, (nowMs - feed.received_at) / 1000); return { lag, stale: feed.stale === true || lag > thresholdS }; }`. StatusBar.tsx:16-17 `const live = s.conn === \"open\"; const region = feedLag(s.feeds.region, now, live, REGION_STALE_S);`. ws.ts has no timer on received traffic: onmessage (line 91) only dispatches, and conn changes to \"closed\" only in onclose (line 97). The server sends a ping every 30 s (WsHub.heartbeat), but the client never uses a missing ping to detect a dead link.",
+   "failure_scenario": "The laptop changes Wi-Fi or NAT, a mobile network drops the path silently, or the api JVM hangs while TCP stays up. The browser gets no close event: no data is outstanding, and Chrome/macOS keepalive takes minutes to notice. conn stays \"open\", so feedLag returns the last server-reported lag_s unchanged. The status bar shows a green 'WS open' and an OK 'lag 3s' badge for minutes while nothing arrives. This breaks the data-honesty rule: the UI claims the regional feed is current when it is not. The contract §1 heartbeat (ping every 30 s) gives the client what it needs to detect this.",
+   "fix": "In SkyWsClient, store lastRxAt on every message and run an interval of about 10 s: if now - lastRxAt > 75 s (2.5 ping intervals), call ws.close() so the normal reconnect path runs and conn becomes \"closed\". As a further safeguard, have feedLag add elapsed time since received_at even while live once that elapsed time exceeds about 40 s (longer than the 30 s status/snapshot refresh).",
+   "real": true,
+   "sev_v": "medium",
+   "reason": "Confirmed. ws.ts has no receive timer: onmessage (line 91) only dispatches, and `ping` (line 290) only replies. conn becomes \"closed\" only in onclose (lines 92-97). feedLag (ws-protocol.ts:122-125), added in this work, returns the last server-reported lag_s unchanged whenever `live` is true, and StatusBar.tsx:16 sets `live = s.conn === \"open\"`. The server does send a ping every 30 s regardless of pause state (WsHub.heartbeat line 308, runHeartbeat line 423-429), so the client has a usable liveness signal it ignores. This is reachable. After laptop sleep/wake or a network change, the server closes its end after 2 missed pongs, but the client never writes (it only writes a pong in reply to a ping, which no longer arrives). Chromium's TCP keepalive (45 s idle followed by OS probe intervals) takes roughly 10 minutes to fail the socket. When the api hangs behind the edge, nginx keeps the client side open for up to `proxy_read_timeout 3600s`. During that time the status bar shows green 'WS open' and a fresh 'lag Ns' badge, which breaks the data-honesty rule for the primary freshness indicator (FR-11), and nothing reconnects. Aircraft icons still go stale through the worker's seen_at age, which partly limits the impact but makes the status bar contradict the map.",
+   "fix_v": "In SkyWsClient, set `lastRxAt = this.now()` in onopen and in onmessage. Start a setInterval of about 10 s in connect() and clear it in onclose, in close(), and when the socket is replaced. If `now - lastRxAt > 75_000` (2.5 ping intervals), treat the socket as dead without waiting for onclose, because a closing handshake on a half-open socket can take up to Chromium's 60 s timeout or the TCP timeout: `const dead = this.ws; this.ws = null; this.welcomed = false; this.clearPending(); try { dead?.close(4000) } catch {}; setData({conn:\"closed\"}); schedule reconnect with nextBackoffMs(this.attempt++)`. The existing `this.ws !== ws` guards already ignore late events from the dead socket. Put the shared close handling in a private method so onclose and the watchdog use one path. For the badge, also export lastRxAt, or a `rxFresh` flag, to the store, and in StatusBar use `live = s.conn === \"open\" && now - lastRxAt < 45_000`, so the lag ages as soon as updates stop arriving. Add a fake-socket test: no messages for 75 s must set conn to \"closed\" and schedule a reconnect."
+  },
+  {
+   "id": "WS-3",
+   "title": "Aircraft staleness and dead reckoning use the raw browser clock, while the tooltip, ETA and SIGMET expiry use the server-corrected clock, so the same aircraft shows contradictory age and stale state",
+   "severity": "low",
+   "files": [
+    "apps/web/public/interpolate.worker.js",
+    "apps/web/components/AircraftCard.tsx",
+    "apps/web/lib/tooltip.ts",
+    "apps/web/components/MapView.tsx",
+    "apps/web/lib/store.ts"
+   ],
+   "evidence": "interpolate.worker.js:71 `var now = Date.now(), out = [], ...` then predict(s, now) computes `age = (nowMs - seen)/1000`, stale and the 60/180 s cap from it. AircraftCard.tsx:70 `const r = s && now ? predict(s, now) : null;` uses useNow() raw time. MapView.tsx:198 `const now = serverNowMs(Date.now());` is passed to aircraftTip, which recomputes age from it (tooltip.ts:24-29) and combines it with the worker's `render.stale`: `age > thresholds(provider).staleAfterS ? \"STALE · 수신 지연\" : \"STALE · 위치 추정 상한\"`. store.ts observeServerTime/serverNowMs was added in this change specifically to correct browser clock skew, but the offset is never sent to the worker.",
+   "failure_scenario": "If the browser clock is 70 s fast, the worker computes age ≥ 70 s for fresh region aircraft. Every icon is drawn stale and extrapolated to the 60 s cap (about 8 km ahead for a jet), and the AircraftCard shows 'STALE · 수신 지연'. Meanwhile the hover tooltip, using server time, shows 'AGE 5s' and labels it 'STALE · 위치 추정 상한', which is a wrong reason. If the clock is 30 s slow, age is clamped to 0, so aircraft are not extrapolated (drawn about 30 s behind) and go stale 30 s late. In both cases the §1 staleness and extrapolation rules are applied to the wrong 'now'.",
+   "fix": "Send the clock offset to the worker (for example `worker.postMessage({type:\"clock\", offsetMs})` after observeServerTime changes, or on each snapshot/diff), and have the worker use `Date.now() + offsetMs` in tick() and for the diff easing timestamp. In AircraftCard, call predict(s, serverNowMs(now)) so the card, map and tooltip all use the same time base.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "Confirmed. The time base became inconsistent when this work introduced serverNowMs (the baseline had no clock correction anywhere). interpolate.worker.js:71 uses `var now = Date.now()` for predict(), so staleness, dead reckoning and the 60/180 s cap all run on the raw browser clock. AircraftCard.tsx:70 `predict(s, now)` uses raw useNow() time. MapView.tsx:198 passes `serverNowMs(Date.now())` to aircraftTip, and tooltip.ts:25-29 recomputes age from that and combines it with the worker's `render.stale`. With a skewed browser clock the tooltip AGE, the card AGE and the drawn stale state disagree, and the tooltip can choose the wrong reason label ('STALE · 위치 추정 상한' when the actual cause is the clock). The impact is small with NTP-synced clocks (offset under 1 s), and needs tens of seconds of skew to show, hence low. The easing timestamps inside the worker (lines 77 and 107) consistently use raw Date.now() on both sides and do not need the offset. A related caveat for the fix: observeServerTime (store.ts:79-86) uses `est = server_ts - receivedAt`, which underestimates the offset by the transfer time. A large snapshot that takes more than 5 s to arrive trips the immediate-jump rule and briefly skews the offset by seconds.",
+   "fix_v": "Send the offset to the worker. Export the current offset from store.ts (e.g. `clockOffset()`), and after each observeServerTime call in ws.ts post `worker.postMessage({type:\"clock\", offsetMs})` when it changes by more than 250 ms. In interpolate.worker.js keep `var offset = 0`, set it on a 'clock' message, and in tick() call `predict(s, now + offset)`, leaving the easing `at`/`now` on the raw clock. In AircraftCard.tsx:70 use `predict(s, serverNowMs(now))`. To make the offset reliable, estimate it only from small messages (welcome.server_time, status.server_time, diff.ts) and not from snapshot.ts, or keep the maximum `est` over a recent window, since latency only lowers est. Add a worker-sync test that a +70 s offset makes an aircraft with seen_at=now-5s non-stale."
+  },
+  {
+   "id": "WS-4",
+   "title": "The client→server rate limit allows about 40 messages per 10 s, while contract §1 sets 20 per 10 s with a 1008 close when exceeded",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ws/TokenBucket.java",
+    "apps/api/src/main/java/dev/skywx/ws/WsSession.java",
+    "apps/api/src/main/java/dev/skywx/ws/SkyWsHandler.java"
+   ],
+   "evidence": "WsSession.java:90 `new TokenBucket(RATE_MAX, TimeUnit.SECONDS.toNanos(RATE_WINDOW_S), System.nanoTime())` (capacity 20, refilled continuously at 2/s). The TokenBucket.java class comment says: \"버킷은 창 기준보다 관대하다\". RateAndLimitTest only checks that a client within 20/10 s is never rejected; it does not check that a 21st message in a window is rejected.",
+   "failure_scenario": "A client sends a burst of 20 messages at t=0, then one every 0.5 s. That is 39–40 messages (subscribe/resync, each forcing a full snapshot) inside one 10 s window, and the session is never closed with 1008 'rate limit'. The contract limit, and the SEC-2 amplification bound it was meant to enforce, is roughly doubled.",
+   "fix": "Implement the contract literally with a sliding-window log: a 20-slot ring of timestamps, rejecting when the oldest of the last 20 is less than 10 s ago. Alternatively, amend contract §1 to describe token-bucket semantics (burst 20, 2/s). Add a test that the 21st message within 10 s closes the session.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "The semantics are confirmed, but the finding overstates the impact and the test gap. TokenBucket(20, 10 s) (WsSession.java:90) refills 2 tokens/s with a burst of 20. In a sliding 10 s window a client can therefore send about 40 messages (20 banked tokens plus 20 refilled) without the 1008 close, while contract §1 says 'max 20 messages per 10 s'. The class comment admits it is 'more lenient than the window'. The evidence about tests is wrong: RateAndLimitTest.handler_21stMessageWithin10s_closes1008RateLimit (lines 93-106) does check that a 21-message burst closes with 1008. Only the spaced-burst case (20 at t=0, then 2/s) goes untested. The security effect is negligible: the sustained rate is still 20/10 s, and subscribe/resync are coalesced by the per-session single-flight INITIAL/FANOUT jobs (WsSession.schedule), so the SEC-2 amplification bound is effectively unchanged. The web client (SendBudget, 16 per sliding 10 s, plus rare hello/pong) never comes close either way. What remains is a literal violation of the binding contract with no interop break.",
+   "fix_v": "Preferred, because it matches the contract exactly and mirrors the web SendBudget: replace TokenBucket in WsSession with a 20-slot ring of System.nanoTime() timestamps. Reject, and close with 1008, when the slot holding the oldest of the last 20 accepted messages is less than 10 s old; otherwise overwrite it. A compliant client (at most 20 in any 10 s window) is still never rejected, so the leniency rationale in TokenBucket's comment is unnecessary. Add a test: 20 messages at t=0, then 1 at t=5 s, must be rejected. The alternative is doc-only: amend contract §1 to 'token bucket: burst 20, refill 2/s' and update the welcome fields and comment to say so."
+  },
+  {
+   "id": "WS-5",
+   "title": "SIGMET time-dependent properties (active, expiring_soon) are frozen per version for connected sessions, and the client uses the stale server flag and ignores valid_from",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ws/WsHub.java",
+    "apps/web/lib/sigmet.ts",
+    "apps/web/lib/maplayers.ts",
+    "apps/web/lib/tooltip.ts"
+   ],
+   "evidence": "WsHub.sigmetsPayload (lines 564-583) rebuilds the shared payload at each time boundary (nextSigmetBoundary: valid_from, valid_to−30 min, valid_to), but runSigmets (404-409) skips any session that already has that version: `if (s.sigmetsV == p.version()) return;`. Only SigmetsUpdated (each 300 s AWC poll) and SigmetsExpired (only when a SIGMET expires) push to connected sessions. On the client, maplayers.ts:63 styles the line from `[\"get\", \"expiring_soon\"]`, tooltip.ts:50 shows '30분 내 만료' from `p.expiring_soon`, and sigmet.ts:14-18 isExpired checks only valid_to. activeSigmetFeatures therefore draws SIGMETs whose valid_from is still in the future exactly like active ones (the server's active:false is ignored).",
+   "failure_scenario": "During an AWC outage (no new version) a connected tab never gets the rebuilt payload. A SIGMET entering its last 30 minutes keeps a solid outline and no '30분 내 만료' flag until it disappears, while a tab that connects later shows the dashed 'expiring' state for the same SIGMET. In normal operation the flags lag by up to one poll (5 min). A SIGMET issued ahead of its validity is drawn as an in-force hazard polygon before valid_from.",
+   "fix": "Derive time-dependent flags on the client from valid_from/valid_to with serverNowMs, on the existing 30 s sigClock re-filter: active = from ≤ now < to; expiring_soon = active && to − now < 30 min. Filter or visually distinguish not-yet-valid features in activeSigmetFeatures. The alternative is to push to every session whenever the payload is rebuilt at a boundary, but deriving client-side avoids re-sending 120 KB to every session.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "The mechanism is confirmed, but the finding overstates the impact. WsHub.sigmetsPayload (lines 564-583) rebuilds at time boundaries without changing `version`, and runSigmets (lines 404-409) skips `if (s.sigmetsV == p.version()) return;`. A connected tab therefore keeps the `expiring_soon`/`active` flags from its last push, while a newly connected tab gets the rebuilt ones. maplayers.ts:63 (dash) and tooltip.ts:50 ('30분 내 만료') read the server flag, and sigmet.ts:14-18 checks only valid_to. The claim that a tab 'never' gets the update during an AWC outage is inaccurate. Every AWC poll bumps the version (StreamConsumer.sigmet → replaceIfNewer, SIGMET_POLL_S=300), and so does any expiry anywhere in the worldwide set (EngineService.rebuildForExpiry → republish → SigmetsExpired → pushSigmets). The live api log shows expiry republishes at 15:15, 15:18, 15:25, 15:29 and 15:30. The actual effect is that the flag appears up to about 5 min late (for example at T−25 min instead of T−30), and in the same tooltip 'LEFT 27m' can be shown without the '30분 내 만료' flag. The flag is monotonic, so it is never falsely true. The valid_from half is not reached by current data: live GET /api/v1/sigmets had 0 of 134 features with a future valid_from, and in the DB 0 of 420 SIGMETs were first seen before their valid_from (max(valid_from − first_seen) = −9.6 s). The client ignoring valid_from is a latent gap, not an observed one.",
+   "fix_v": "Derive the time-dependent flags on the client with the existing 30 s sigClock re-filter (MapView.tsx:294-303). For each feature compute `from = Date.parse(valid_from)`, `to = Date.parse(valid_to)` and `nowMs = serverNowMs(...)`, then set `active = from <= nowMs && nowMs < to` and `expiring_soon = active && to - nowMs < 30*60_000`. Write these into the properties passed to setData, and include the expiring ids in the change-detection `key` so the layer updates. In tooltip.ts:50 use the same derived value (a small `sigmetTimeFlags(p, nowMs)` helper in lib/sigmet.ts) instead of `p.expiring_soon`. In activeSigmetFeatures, either skip features with `from > nowMs` or tag them `pending: true` and style them distinctly. Do not push the rebuilt 120 KB payload to every session at each boundary; the client-side derivation makes that unnecessary."
+  },
+  {
+   "id": "COL-1",
+   "title": "Concurrent Publisher.publish calls race on the shared local queue: duplicate XADDs, IndexError crashes, lost new entries and phantom queued bytes after every Redis recovery",
+   "severity": "medium",
+   "files": [
+    "apps/collector/skywx_collector/publisher.py"
+   ],
+   "evidence": "publisher.py:102-109\n```\nwhile self._queue:\n    s, f, n = self._queue[0]\n    try:\n        await self._r.xadd(s, f, maxlen=MAXLEN, approximate=True)\n    except (RedisError, OSError):\n        break\n    self._queue.popleft()\n    self._queued_bytes -= n\n```\nThe region, global, sigmet and radar jobs share one Publisher (main.py:78) and all run on one event loop (main.py:122-132). Each caller reads the head `_queue[0]`, awaits XADD, and then pops whatever sits at the head at that moment. Nothing serializes this. The REL-3 fix makes this queue reachable for the first time (in the baseline it could not be reached, because pick() and reserve() raised first). Reproduced with the repo's FakeRedis plus a 1–20 ms XADD delay (scratchpad colrev/pub_race3.py): 6 entries queued during an outage, Redis comes back, and 3 jobs publish at once. In 200 of 200 trials, q0 was XADDed twice, 2 of the 3 new publishes raised `IndexError: pop from an empty deque` and were never sent or queued, and `_queued_bytes` stayed at 700–900 with `queued == 0`.",
+   "failure_scenario": "Redis restarts or blips. While it is down, every job's publish blocks in the head XADD (connect timeout plus redis-py retries), so when Redis returns, several coroutines are inside the drain loop at once. Result: the same stream entry is added twice. The later coroutines pop entries they never sent, and at the end popleft() raises IndexError. That caller's own entry (for example the new SIGMET set or region snapshot) is lost. The exception escapes run_once, so the job skips its DB record, status and heartbeat, and the scheduler doubles its delay (SIGMET: next run in 600 s, so the api keeps the stale SIGMET set that long). `_queued_bytes` drifts because it subtracts the size of the entry it read, not the one it popped. That drift is permanent, so the 64 MB cap is enforced against phantom bytes (or goes negative).",
+   "fix": "Serialize the drain and send. Add `self._lock = asyncio.Lock()` and wrap the whole body of publish() in `async with self._lock:`. Alternatively, popleft the head before awaiting XADD and appendleft it back (restoring `_queued_bytes`) on failure, so no two coroutines ever hold the same entry. Add a test with 3 concurrent publishes after recovery that asserts no duplicates, no exceptions and `_queued_bytes == 0` when the queue is empty.",
+   "real": true,
+   "sev_v": "medium",
+   "reason": "Confirmed from code and by running the repro. publisher.py:102-109 reads `self._queue[0]`, awaits `xadd`, then calls `popleft()`/`_queued_bytes -= n` with nothing serializing callers. One Publisher is shared by all jobs on one event loop (main.py:78, 122-130). I ran scratchpad colrev/pub_race3.py with the repo's FakeRedis plus a small XADD delay. In 200 of 200 trials q0 was XADDed twice, two callers raised `IndexError: pop from an empty deque`, their own new entries were lost, and `_queued_bytes` stayed at 700-900 with `queued == 0`. The window is easy to hit in production. The installed redis-py 8.1.0 defaults to 10 retries with exponential backoff (base 10 ms, cap 1 s; redis/_defaults.py:37-39), so during an outage each job's head XADD blocks for seconds. That puts region, global, sigmet and radar inside the drain loop at the same time, and they all succeed together when Redis comes back. The REL-3 fix makes this path reachable: budget, pick and status now swallow Redis errors, so jobs get as far as publish() while Redis is down. The IndexError escapes run_once (aircraft.py:103 is not wrapped). run_periodic then counts it as a failure and applies exponential backoff, and the job skips record_run, status and heartbeat for that cycle. Entries can also be popped without ever being sent: when two callers are offset by one entry, one pops the entry the other just read. The byte drift is permanent, because the code subtracts the size of the entry it read, not the one it popped.",
+   "fix_v": "Serialize the whole method. Add `self._lock = asyncio.Lock()` in `__init__` and put the entire body of publish() (drain loop and direct XADD) inside `async with self._lock:`. Do not use the popleft-then-appendleft alternative. With it, a second caller would send q1 while q0 is still in flight, and a failed q0 would be put back ahead of a q1 that was already sent, which breaks the ordering the module promises. Add a test using FakeRedis with a delayed xadd: queue 6 entries while down, bring Redis back, run `asyncio.gather` over 3 publishes, then assert every entry was sent exactly once and in order, no exceptions were raised, and `queued == 0 and _queued_bytes == 0`."
+  },
+  {
+   "id": "COL-2",
+   "title": "Data-honesty rule broken: ground aircraft get a fabricated altitude of 0 ft, and OpenSky's reported baro altitude is thrown away (the collector half of COR-18 was not fixed)",
+   "severity": "medium",
+   "files": [
+    "apps/collector/skywx_collector/normalize.py"
+   ],
+   "evidence": "normalize.py:62-65\n```\non_ground = alt_raw == \"ground\"\nalt_ft: int | None\nif on_ground:\n    alt_ft = 0\n```\nnormalize.py:120 `alt_ft = 0 if on_ground else (int(round(alt_m * M_TO_FT)) if alt_m is not None else None)`.\nThe audit's COR-18 fix required `alt_ft=None when alt_baro=='ground'` and using OpenSky baro_altitude when present. The web lane marked COR-18 fixed, but normalize.py is not in the diff. The schema already allows null (aircraft_state.v1.json:17 `\"alt_ft\": {\"type\": [\"integer\", \"null\"]`). Live check: the latest global stream entry (1790522730533-0) has 1,124 on_ground states, and every one has alt_ft = 0. The web still renders it: AircraftCard.tsx:82 `fmtAlt(s?.alt_ft)` → \"0 ft\", tooltip.ts:36 `[\"ALT\", fmtAlt(...)]` → \"ALT 0 ft\", and the altitude color ramp in maplayers.ts:21-22 colors these aircraft as 0 ft.",
+   "failure_scenario": "A user selects a taxiing aircraft at RKSI (field elevation about 23 ft) or at any high-elevation airport. The card and tooltip show \"고도 0 ft\" as if the provider reported it. For OpenSky ground states that do carry a baro_altitude, the real value is replaced with 0. This is the kind of guessed value the project owner has forbidden: unknown must be null and show \"—\".",
+   "fix": "In from_readsb, set `alt_ft = None` when `alt_raw == \"ground\"` (keep on_ground=True). In from_opensky, use `alt_ft = int(round(alt_m*M_TO_FT)) if alt_m is not None else None` whatever on_ground is. Add normalize tests for both cases. The engine already skips on_ground aircraft (IntersectionEngine.java:44), so judgement is unaffected.",
+   "real": true,
+   "sev_v": "medium",
+   "reason": "Confirmed. normalize.py is not in the diff. Lines 62-65 (`if on_ground: alt_ft = 0`) and line 120 (`alt_ft = 0 if on_ground else ...`) are unchanged, although audit COR-18 named normalize.py and asked for alt_ft=None on ground. impl_reports shows the web lane marked COR-18 as \"fixed\". Live probe `GET /api/v1/aircraft?bbox=124,33,132,39` returned 35 aircraft, 15 of them on_ground, and every one has `alt_ft: 0`, including an opensky-sourced one. Examples: 7586d0/adsb_fi/CEB188 and 71ba17/opensky/JNA244. The web renders this as a real number: `fmtAlt(0)` gives \"0 ft\" (format.ts:36-37), shown by AircraftCard.tsx:82 and tooltip.ts:36, and the altitude ramp (maplayers.ts:21-22) colors these aircraft as 0 ft instead of ALT_UNKNOWN_COLOR. This is exactly the guessed value the owner's standing rule forbids, and the work claimed it was fixed. Null is safe for the other consumers. The model allows None (models.py:22). quality.py:58 checks `is not None`. IntersectionEngine.java:44 already filters out on_ground and null altitudes. track_point.alt_ft is nullable (V1__init.sql:12).",
+   "fix_v": "normalize.py: in from_readsb set `alt_ft = None` when `alt_raw == \"ground\"` and keep `on_ground=True`. Do not substitute alt_geom, which is a different quantity. In from_opensky use `alt_ft = int(round(alt_m * M_TO_FT)) if alt_m is not None else None` whatever on_ground is. Update tests/test_normalize.py:33, which currently asserts `alt_ft == 0`, and add an OpenSky case with on_ground=True plus baro_altitude present, and one with it null. No web change is needed: fmtAlt(null) already renders \"—\" and the map uses ALT_UNKNOWN_COLOR."
+  },
+  {
+   "id": "COL-3",
+   "title": "DB writer permanently drops writes that merely timed out (or lost their connection) while the DB was still reachable, and classifies them as 'rejected'",
+   "severity": "low",
+   "files": [
+    "apps/collector/skywx_collector/db.py"
+   ],
+   "evidence": "db.py:211-221\n```\ntry:\n    await asyncio.wait_for(op.fn(pool), OP_TIMEOUT_S)\nexcept Exception as e:  # noqa: BLE001\n    self.failures += 1\n    if await self._reachable(pool):\n        # DB 는 응답한다 → 이 작업 자체의 문제(제약 위반·스키마 불일치 등). 재시도해도 같으므로 버린다.\n        self._pop(op)\n        self.dropped += 1\n```\nAny exception is treated as permanent if a fresh `SELECT 1` succeeds, including TimeoutError from wait_for, QueryCanceledError, ConnectionDoesNotExistError and InterfaceError. Reproduced (scratchpad colrev/db_timeout.py): a pool whose write takes longer than OP_TIMEOUT_S while fetchval works logs `db: radar_frame rejected (TimeoutError: ) — dropped`, and the result is written 0, dropped 1, pending 0.",
+   "failure_scenario": "Postgres is slow but up: an IO stall, checkpoint, lock wait, or the api's retention DELETE contending on the same tables. An ingest_run/quality or metar_obs write takes more than 10 s, is cancelled, the probe on the second pooled connection answers at once, and the write is thrown away for good. That contradicts the module's contract ('DB 가 내려가 있으면 … 보관', drop only when the op itself is bad). METAR hours and quality counts silently go missing.",
+   "fix": "Classify by exception type. Drop only for deterministic data/schema errors (asyncpg.IntegrityConstraintViolationError, DataError, SyntaxOrAccessError and similar PostgresError subclasses). For TimeoutError, QueryCanceledError, ConnectionDoesNotExistError, InterfaceError, OSError and PostgresConnectionError, keep the op at the head and back off. Optionally add a per-op retry cap (for example 5) before dropping, so a poison op cannot block the queue forever.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "Confirmed from code and by running the repro. db.py:211-221 treats any exception as the op's own fault whenever a fresh `SELECT 1` probe on the second pooled connection (max_size=2) succeeds. That includes TimeoutError from `asyncio.wait_for(..., OP_TIMEOUT_S)`, and asyncpg's command_timeout is also 10 s. scratchpad colrev/db_timeout.py, with the DB alive but a write slower than the timeout, logs `radar_frame rejected (TimeoutError: ) — dropped` and ends with written=0 dropped=1. This contradicts the module's own rationale: \"재시도해도 같으므로 버린다\" does not hold for a timeout, lock wait, deadlock or a connection lost mid-op. record_run runs up to 3 statements in one transaction under a single 10 s budget, so a slow but healthy DB (checkpoint, IO stall, contention with the api's retention DELETEs) can exceed it. Impact is limited: it takes a >10 s stall with Postgres still answering, and only bookkeeping rows (ingest_run, quality, METAR, radar_frame) are lost.",
+   "fix_v": "Classify errors in `_step`. Drop immediately only for deterministic errors: `asyncpg.IntegrityConstraintViolationError`, `asyncpg.DataError`, `asyncpg.SyntaxOrAccessError` and `asyncpg.FeatureNotSupportedError`. Treat these as transient and keep the op at the head: `TimeoutError`, `asyncpg.QueryCanceledError`, `asyncpg.DeadlockDetectedError`, `asyncpg.LockNotAvailableError`, `asyncpg.SerializationError`, `asyncpg.PostgresConnectionError`/`ConnectionDoesNotExistError`, `asyncpg.InterfaceError` and `OSError`. For those, return False so the writer backs off. Add an attempt counter on `_Op` and drop after about 5 transient failures, so a poison op cannot block the queue forever. Add a test where a slow write times out while the probe succeeds, and assert the op stays pending and is written once it gets fast."
+  },
+  {
+   "id": "COL-4",
+   "title": "Shutdown flush can be skipped: in-flight jobs are not cancelled on SIGTERM and the collector keeps Docker's default 10 s stop timeout, so db.close() may never run",
+   "severity": "low",
+   "files": [
+    "apps/collector/skywx_collector/main.py",
+    "apps/collector/skywx_collector/scheduler.py",
+    "infra/compose.yml"
+   ],
+   "evidence": "main.py:131-135\n```\ntry:\n    await asyncio.gather(*tasks)\nfinally:\n    await http.aclose()\n    await db.close()\n```\nscheduler.py:28-32: `while not stop.is_set(): ... await run_once()`. stop only prevents the next iteration, so gather waits for every in-flight run_once. The SIGMET job does two sequential AWC calls (8 s read timeout each). The KMA job does 1 list call plus up to 4 binaries, each with an 8 s timeout, plus decode. db.close() then needs up to 5 s to drain and 5 s to close the pool. compose.yml sets `stop_grace_period: 30s` only for api (line 99). The collector has none (docker inspect StopTimeout=<nil>, so 10 s).",
+   "failure_scenario": "`docker compose stop` or a redeploy lands while the SIGMET or KMA job is mid-fetch against a slow upstream. The finally block has not started after 10 s, so Docker SIGKILLs the collector. The queued DB writes (ingest_run rows, METAR upserts, radar_frame rows) and the publisher's local queue are lost without being counted. The new background-writer design depends on close() running for its 'shutdown flush'.",
+   "fix": "In main(), after stop is set, wait for the tasks with a short grace (for example `done, pending = await asyncio.wait(tasks, timeout=3)`), then cancel the pending ones and gather them with return_exceptions=True before db.close(). Also add `stop_grace_period: 30s` to the collector service in compose, as was done for api.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "The mechanism is confirmed, but the finding overstates the impact. main.py:131-135 runs `http.aclose()/db.close()` only after `asyncio.gather(*tasks)`. run_periodic (scheduler.py:28-32) lets an in-flight run_once finish. The collector service in compose has no stop_grace_period (only api gets 30s at compose.yml:99), and docker inspect shows StopTimeout=<nil>, i.e. 10 s. ingest_run over the last 24 h has radar_kr at p99 16.4 s and max 25.0 s, and global at max 8.8 s, so a SIGTERM during a KMA run is SIGKILLed before the finally block. However, the db writer task keeps running during the grace window and flushes queued ops concurrently, so writes queued while the DB is up are normally written. Anything it cannot flush in time would be dropped by close() anyway. The publisher queue is in-memory and close() never flushes it, so it is not affected. What is actually lost is the in-flight job's own results: the KMA ingest_run row, a half-updated frames list or meta pair, and a budget reservation spent without a stored frame. Some of that depends on grace length, not just cancellation. The finding's suggested 3 s cancel would discard exactly those results.",
+   "fix_v": "Add `stop_grace_period: 30s` to the collector service in infra/compose.yml to match api; that covers the measured max KMA run of 25 s. In main(), bound the wait so close() always runs inside the grace. Wait with `done, pending = await asyncio.wait(tasks, timeout=20)` (not 3 s), then cancel `pending`, `await asyncio.gather(*pending, return_exceptions=True)`, and then run `http.aclose()`, `db.close(drain_s=5)` and `redis.aclose()`. Keep 20 s + 5 s drain + pool close under 30 s, or shorten drain_s accordingly."
+  },
+  {
+   "id": "COL-5",
+   "title": "Collector health threshold (fixed 90 s) is incompatible with the region_poll_s range the ops API accepts (5–120 s)",
+   "severity": "low",
+   "files": [
+    "apps/collector/skywx_collector/health.py",
+    "apps/api/src/main/java/dev/skywx/ops/SettingsService.java",
+    "apps/collector/skywx_collector/runtime_settings.py"
+   ],
+   "evidence": "health.py:13 `MAX_AGE_S = 90.0`. SettingsService.java:158 `case \"region_poll_s\" -> intRange(v, 5, 120);`. runtime_settings.py:37 `return max(5, self._get(\"region_poll_s\", settings.region_poll_s))` has no upper cap. region_at is written only once per region cycle (aircraft.py:53/130), and not at all on a fetch error (_on_fetch_error writes no heartbeat).",
+   "failure_scenario": "An operator sets region_poll_s=120, a value the ops API accepts, to save adsb budget. The heartbeat age now cycles 0→~122 s, so every cycle `python -m skywx_collector.health` fails for about 30 s. A single failed or 429 fetch doubles the gap to about 240 s, which is 3 or more consecutive failed checks, and the container turns unhealthy even though it is collecting normally. `make up` uses `--wait`, so it then fails.",
+   "fix": "Make the two agree. Either cap region_poll_s at 60 in SettingsService (and in RuntimeSettings.region_poll_s), or have the collector write its effective `region_poll_s` into skywx:collector and let health.py use `max(90, 2.5 × region_poll_s)` as the threshold.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "Confirmed from code. health.py (new in this work) uses a fixed `MAX_AGE_S = 90.0`. SettingsService.validate still accepts `region_poll_s` from 5 to 120, and runtime_settings.region_poll_s has no upper cap. region_at is written only on a successful cycle or when no provider is available. `_on_fetch_error` (aircraft.py:151-165) writes no heartbeat, and the scheduler does not back off on a handled fetch error, so a failed cycle doubles the gap. With the compose healthcheck (interval 30 s, retries 3) and poll=120 with all fetches succeeding, age stays above 90 s for about 31 s per cycle, which is at most 2 consecutive failed checks, so the container stays healthy. But one failed fetch (a 429 or timeout) makes the gap about 240 s, which is 4-5 consecutive failures, and the container turns unhealthy while it is collecting normally. Any poll above about 60 s turns unhealthy after two consecutive failed fetches. No service depends on collector health, so the effect is a false unhealthy status and alarm, not an outage. `make up --wait` is only affected if it runs during such a gap, since the first heartbeat at startup comes immediately.",
+   "fix_v": "Make the two agree. Either (a) cap region_poll_s at 60 in SettingsService.validate (`intRange(v, 5, 60)`) and clamp it the same way in RuntimeSettings.region_poll_s (`min(60, ...)`), or (b) have the region job write its effective `region_poll_s` into skywx:collector with the heartbeat and let health.py use `max(90, 2.5 * poll + 10)`. Option (a) is simpler and keeps contract §8 (90 s) valid. If (b) is chosen, update contract §8 to match."
+  },
+  {
+   "id": "COL-6",
+   "title": "quality_rule_count is booked to the day of the DB flush, not the day of the run, now that writes are queued",
+   "severity": "low",
+   "files": [
+    "apps/collector/skywx_collector/db.py"
+   ],
+   "evidence": "db.py:279-282\n```\nawait conn.executemany(\n    \"\"\"INSERT INTO quality_rule_count (day, rule, count) VALUES (CURRENT_DATE, $1, $2)\n       ON CONFLICT (day, rule) DO UPDATE SET count = quality_rule_count.count + EXCLUDED.count\"\"\",\n```\nWith the new background writer, a run's op can sit in the queue for up to about 55 min (500 ops) during a DB outage. CURRENT_DATE is evaluated at flush time, while the same op stores the correct started_at in ingest_run.",
+   "failure_scenario": "The DB is unavailable from 23:40 to 00:20 UTC. On reconnect, the quarantine counts from 23:40–23:59 runs are added to the next day's quality_rule_count rows. The ops screen's per-day rule counts then disagree with ingest_run/quality_event for both days.",
+   "fix": "Pass the run's UTC date explicitly: compute `day = started_at.astimezone(UTC).date()` in record_run and use `VALUES ($1, $2, $3)` with `(day, rule, count)` tuples.",
+   "real": true,
+   "sev_v": "low",
+   "reason": "Confirmed from code. db.py:279-282 uses `CURRENT_DATE` at flush time; the pool sets timezone UTC, so this is the UTC date of the write, not of the run. With the new background writer (queue up to 500 ops, kept during a DB outage), a run's op can be flushed long after the run, while the same op stores the correct `started_at` in ingest_run. OpsController.java:139 reports per-day rule counts from this table, so a DB outage spanning 00:00 UTC books the previous day's quarantine counts on the next day. In the baseline, writes were synchronous and failed outright, so this misattribution is new. Impact is small: it needs an outage across UTC midnight and only affects ops statistics.",
+   "fix_v": "In record_run compute `day = started_at.astimezone(UTC).date()` and write `INSERT INTO quality_rule_count (day, rule, count) VALUES ($1, $2, $3) ON CONFLICT ...` with `[(day, rule, n) for rule, n in per_rule.items()]`. Add a test that queues a run started at 23:59 UTC, flushes it after midnight and asserts the row's day."
+  },
+  {
+   "id": "COL-7",
+   "title": "KMA radar: any nx/ny up to 4096 is accepted and rendered with the hard-coded HB reference grid point, and one shared 'coordinates' is applied to all 12 listed frames (latent)",
+   "severity": "low",
+   "files": [
+    "apps/collector/skywx_collector/kma_grid.py",
+    "apps/collector/skywx_collector/jobs/kma_radar.py"
+   ],
+   "evidence": "kma_grid.py:115 `if not (0 < h.nx <= MAX_GRID and 0 < h.ny <= MAX_GRID):` accepts any size. Bounds and the pixel map are then computed with the fixed documented reference `REF_COL, REF_ROW, RES_M = 1121, 1681, 500.0` (line 27), which the module docstring documents only for the HB grid (2305×2881). The _pixel_map cache itself is keyed correctly on (nx, ny, width). But kma_radar.py:220-234 overwrites the single meta hash with the latest frame's `coordinates`, `width`, `height` and `grid`, and the frame entries (lines 205-213) carry no per-frame geometry.",
+   "failure_scenario": "KMA ships a file with map_code=1 but a different nx/ny (a format change or truncated header values that still pass the checks). The frame is rendered against a reference point that is not documented for that grid, yet published as `georeferenced: true`. Frames rendered with the previous grid then stay in the list for up to an hour and are drawn by the web using the new frame's coordinates, so they are misplaced. That is an undocumented projection shown as data.",
+   "fix": "Reject frames whose (nx, ny) differ from the documented HB grid (2305, 2881), treating them as _BadFrame, since the reference point is only documented for that grid. Alternatively, store coordinates, width and height per frame entry, and have the api/web use them per frame.",
+   "real": false,
+   "sev_v": "none",
+   "reason": "Not a defect introduced or left by this work. The baseline read_echo already accepted any nx/ny with the fixed HB reference point and no size bound. This work narrowed it by adding `MAX_GRID` and a decompressed-size cap, and the lru_cache is correctly keyed on (nx, ny). Writing one set of coordinates, width and height into skywx:radar_kr:meta is also baseline behavior (baseline kma_radar.py:169-173). Live data matches the documented grid: HMGET on skywx:radar_kr:meta returns grid `{\"nx\":2305,\"ny\":2881,\"res_m\":500.0,\"ref\":[1121,1681]}`, product HSR, 1152x1324. The failure needs a hypothetical KMA format change that keeps map_code=1 and dxy=500 but changes the grid size. That is optional hardening, not a demonstrated bug.",
+   "fix_v": "Optional hardening, not required: in read_echo also reject files where `(h.nx, h.ny) != (2305, 2881)` (for example `EXPECTED_GRID = (2305, 2881)`, raised as ValueError, which becomes _BadFrame), because the reference point (1121, 1681) is documented only for that grid."
+  },
+  {
+   "id": "API-CONC-1",
+   "title": "SIGMET sets replayed from the backlog are dropped before persistence, so SIGMET history (replay/stats/withdrawn_at) is lost for any api downtime (regression)",
+   "severity": "medium",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ingest/StreamConsumer.java",
+    "apps/api/src/main/java/dev/skywx/persist/SigmetRepository.java"
+   ],
+   "evidence": "StreamConsumer.java:304 `if (!fetchedAt.isAfter(sigmets.state().fetchedAt())) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다` (and :311 `if (st == null) { staleSkipped.increment(); return; }`). Bootstrap (:174-178) applies only the newest skywx:sigmet entry, then consume() replays every older set, and each one hits this early return. The only writer of the `sigmet` table is SigmetRepository.onSigmets (SigmetsUpdated), and the collector has no grant on it. At baseline 7bcd4fa every replayed set was upserted (`for (SigmetRecord s : e.state().byId().values()) upsert(s);`). Aircraft got a history-only path (AircraftBacklog → TrackWriter), but SIGMETs got nothing equivalent.",
+   "failure_scenario": "The api is down for 8 h (the stream keeps about 200 SIGMET sets, roughly 16 h). On restart, bootstrap persists only the newest set. Every SIGMET that was issued and then expired or was cancelled during the gap never reaches the `sigmet` table: /api/v1/replay for those hours shows the backlog track points (they are persisted) but no SIGMETs, and sigmet_by_fir/sigmet_by_hazard for that day undercount. SIGMETs cancelled during the gap get withdrawn_at = the restart-time set's fetched_at (SigmetRepository.markWithdrawn), so replay shows them as in force for the whole outage.",
+   "fix": "For a set that is not newer, still publish a persistence-only event (for example `SigmetBacklog(state)`) that SigmetRepository submits to the OrderedWriter in stream order, the same way AircraftBacklog works. Because the newest set was already persisted by bootstrap, restrict markWithdrawn for backlog sets to `valid_from <= :fetched AND (withdrawn_at IS NULL OR withdrawn_at > :fetched)`, and do not let an older set's upsert clear withdrawn_at. Alternatively, persist nothing during bootstrap and let the ordered replay persist every set while only the in-memory store is guarded.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-2",
+   "title": "Any exception in a synchronous listener (EngineService.run) sends a valid stream message to the DLQ and skips the later listeners (TrackWriter, WsHub)",
+   "severity": "medium",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ingest/StreamConsumer.java",
+    "apps/api/src/main/java/dev/skywx/engine/EngineService.java"
+   ],
+   "evidence": "StreamConsumer.java:242-251 `try { process(r, true); processed.increment(); } catch (Exception e) { rejected.increment(); deadLetter(r, e.getMessage()); } finally { ops().acknowledge(...) }`. process() publishes `events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap))` (:294) after the snapshot has already been swapped in. The multicaster has no ErrorHandler, so the first listener exception aborts delivery. EngineService.run (:116-137) has no try/catch around IntersectionEngine/AlertStateMachine; for example, IntersectionEngine.insideIntervals calls JTS `seg.intersection(it.polygon())`, which can throw TopologyException. In the built jar, listener registration order is engine/EngineService → persist/TrackWriter → ws/WsHub.",
+   "failure_scenario": "A SIGMET polygon or aircraft segment makes EngineService.run throw on a snapshot. SnapshotStore already holds the new snapshot, but TrackWriter.onSnapshot and WsHub.onSnapshot never run: that snapshot's track rows are lost, no WS fanout happens, and the perfectly valid message is counted `rejected` and copied to skywx:dlq with the engine's error text. While the offending SIGMET stays indexed (hours), this repeats on every region snapshot, and SigmetsUpdated likewise skips WsHub.onSigmets.",
+   "fix": "Guard the engine cycle: catch RuntimeException inside EngineService.run (log, increment an `skywx_engine_errors_total` counter, keep the previous FSM state) so one bad geometry cannot abort the event. Alternatively, configure SimpleApplicationEventMulticaster with an ErrorHandler that logs and continues. Only DLQ messages whose envelope or payload validation failed, not listener failures.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-3",
+   "title": "alert_dwell_avg_s averages closures that are not exits: legacy NULL-reason rows (which V3 says may be signal losses) and closures caused by SIGMET expiry",
+   "severity": "medium",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/persist/MaintenanceJobs.java",
+    "apps/api/src/main/resources/db/migration/V3__close_reason_sigmet_withdrawn_metar_ceiling.sql"
+   ],
+   "evidence": "MaintenanceJobs.java:207-213 `... WHERE kind = 'OBSERVED' AND left_at IS NOT NULL ... AND (close_reason IS NULL OR close_reason = 'left')`, documented as \"실제로 이탈한 OBSERVED\". V3 leaves legacy closed rows NULL precisely because \"이전 FSM 은 신호 소실도 LEFT 로 닫았으므로 'left' 로 채우면 거짓이 될 수 있다\" (those rows also come from the colliding-id LEFT updates of REL-1). The FSM also closes as close_reason 'left' when the SIGMET merely expired (AlertStateMachine.leftEvidence adds `sigmet_expired`). Live DB (read-only): 8,098 legacy OBSERVED rows with close_reason NULL and left_at set, all entered 2026-09-27; stats_daily already holds 2026-09-27 alert_dwell_avg_s = 664.37. Among new-id rows, 32 of 239 'left' closures carry sigmet_expired (avg 733 s vs 632 s).",
+   "failure_scenario": "The 03:30 UTC aggregateDaily (or catch-up) for 2026-09-27 averages about 8,100 unreliable legacy closures plus the expiry-driven closures, and /stats shows the result as the day's measured average dwell. This is exactly the kind of value the owner's data-honesty rule forbids.",
+   "fix": "Count only confirmed exits: `AND close_reason = 'left' AND NOT (evidence ? 'sigmet_expired')` (drop the `close_reason IS NULL` branch). If legacy days need a value, omit the row (no data) rather than include rows V3 marks as unknown.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-4",
+   "title": "FSM reports LEFT (close_reason 'left') when the SIGMET was cancelled or replaced, with no evidence flag",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/engine/AlertStateMachine.java"
+   ],
+   "evidence": "AlertStateMachine.java:127-137: once the SIGMET is gone from the index, every new observation is counted `outside` and after 3 the code emits `new Event(EventType.LEFT, t.alert.closed(now, Alert.CLOSE_LEFT, leftEvidence(t, now)))`. leftEvidence (:249-256) flags only expiry: `if (t.sigmet != null && !t.sigmet.validAt(now)) ev.put(\"sigmet_expired\", true);`. A SIGMET withdrawn before valid_to (absent from the new set; SigmetRepository marks withdrawn_at) still has validAt(now)==true on the cached record, so nothing is flagged.",
+   "failure_scenario": "An aircraft is inside SIGMET X when X is cancelled or superseded by a new series. The index rebuild drops X, the next 3 observations close the alert as 이탈 (LEFT, close_reason 'left') with no indication that the aircraft never exited, and the row also feeds alert_dwell_avg_s. The contract defines LEFT as a confirmed exit.",
+   "fix": "When the track's SIGMET is no longer in the active index, record `sigmet_ended: \"expired\"|\"withdrawn\"` in the closing evidence (check `sigmets` membership, not just validTo), and exclude such closures from dwell. Preferably add a distinct close_reason to the contract instead of reusing 'left'.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-5",
+   "title": "PREDICTION_UPDATED does not update the alt_ft_at_entry column, so history rows mix two predictions",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/persist/AlertRepository.java"
+   ],
+   "evidence": "AlertRepository.java:85-89 `UPDATE alert_event SET eta_s = :eta, evidence = :ev::jsonb WHERE id = :id AND hex = :hex ...`. The updated Alert carries a new altFt (p.altAtEntry()) and a new evidence.alt_ft_at_entry, but the column stays at the first prediction's value. history() returns `e.alt_ft_at_entry` next to the new eta_s/eta_at. Live DB: 65 of 518 new PREDICTED rows have alt_ft_at_entry != (evidence->>'alt_ft_at_entry')::int.",
+   "failure_scenario": "A PREDICTED alert is created with ETA 600 s and entry altitude 35,000 ft. A later update gives ETA 300 s and 37,000 ft. /alerts/history then shows eta 300 s with alt_ft_at_entry 35,000 while WS showed 37,000: one row combines values from two different predictions.",
+   "fix": "Add `alt_ft_at_entry = :alt` (a.altFt()) to the PREDICTION_UPDATED UPDATE.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-6",
+   "title": "Login creates and persists the authenticated session before the LOGIN audit insert; if the insert fails, the session exists with no audit row",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ops/OpsSessionController.java"
+   ],
+   "evidence": "OpsSessionController.java:75-83 `req.getSession(true); req.changeSessionId(); ... contextRepository.saveContext(ctx, req, res); req.getSession().setAttribute(\"ops_user_id\", user.id()); audit.record(req, user.id(), \"LOGIN\", ...)`. Spring Session's SessionRepositoryFilter commits the session (and Set-Cookie) in a finally block or on response commit, even when the handler throws.",
+   "failure_scenario": "The DB connection fails, or the pool times out, between authenticate() and the LOGIN audit INSERT. The client gets 503, but the Redis session holding the SecurityContext is committed and the cookie is set, so the operator is authenticated and can use /ops with no LOGIN row. This contradicts the SEC-11 rule that no change happens without an audit row. Logout has the mirror problem: audit fails, so the session is never invalidated.",
+   "fix": "Write the LOGIN audit row right after authenticate() succeeds and before creating the session or saving the context. If the audit fails, return 503 without establishing a session. For logout, invalidate the session regardless of the audit outcome, or audit in a finally block.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-7",
+   "title": "Unsynchronized RegionSettings.refreshNow lets a background refresh that read the old value overwrite the value just applied by a settings update",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ops/RegionSettings.java",
+    "apps/api/src/main/java/dev/skywx/ops/SettingsService.java"
+   ],
+   "evidence": "RegionSettings.java:61-68 `current()` spawns `Thread.ofVirtual()... refreshNow()` when the TTL has expired. SettingsService.update (:93) calls `region.refreshNow()` on the request thread after mirroring. refreshNow (:71-99) is not synchronized, ends with an unconditional `current = r;` (:96) and `loadedAtMs = System.currentTimeMillis();`, and has no ordering or generation check.",
+   "failure_scenario": "A /status request triggers a background refresh whose Redis multiGet returns the old region_center just before PUT /ops/settings/region_center mirrors the new value. The request thread's refreshNow sets current=new, then the background thread assigns current=old and resets loadedAtMs. For the next 30-60 s the api reports and uses the old center/radius (status region.center, catch-up summary bbox, stats traffic bbox) while the collector polls the new one.",
+   "fix": "Make refreshNow synchronized so reads and assignments are serialized, or tag each refresh with a monotonically increasing generation taken before the read and only publish if no newer generation has been published.",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "API-CONC-8",
+   "title": "XACK is sent before track rows are durable, so the documented at-least-once guarantee does not hold for track history",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/java/dev/skywx/ingest/StreamConsumer.java",
+    "apps/api/src/main/java/dev/skywx/persist/TrackWriter.java"
+   ],
+   "evidence": "StreamConsumer.java:41 claims \"XACK 는 처리 후에만 하므로 api 가 죽어도 메시지는 PEL 에 남아 재처리된다(at-least-once)\", but handle() (:249-251) ACKs in `finally` as soon as the listeners return, and TrackWriter.onSnapshot/onBacklog only enqueue into the in-memory ArrayBlockingQueue (TrackWriter.java:100-115). During a DB outage TrackWriter keeps retrying one batch while up to 50,000 rows accumulate in memory.",
+   "failure_scenario": "The DB is unavailable for a few minutes, so TrackWriter holds tens of thousands of rows in its queue while every message is XACKed. The api then dies (OOM with -XX:+ExitOnOutOfMemoryError, a container kill, or kill -9). The PEL is empty, the restart reprocesses nothing, and all queued track rows are permanently lost, although the design (NFR-08) says PEL reprocessing recovers them.",
+   "fix": "Either state accurately that track history is at-most-once on crash, or ACK aircraft messages from the writer side: record the stream id with each enqueued batch and XACK only ids whose rows TrackWriter has committed (for example, the consumer defers ACK and TrackWriter calls back with the highest committed id).",
+   "real": null,
+   "sev_v": null,
+   "reason": null,
+   "fix_v": null
+  },
+  {
+   "id": "SEC-R1",
+   "title": "The public OpenAPI document still lists every ops endpoint (SEC-9 left unfixed), and the new snapshot test now requires that exposure",
+   "severity": "low",
+   "files": [
+    "apps/api/src/main/resources/application.yml",
+    "apps/api/src/main/java/dev/skywx/config/SecurityConfig.java",
+    "apps/api/src/test/java/dev/skywx/it/OpenApiSnapshotIT.java",
+    "apps/api/openapi/openapi-v1.json"
+   ],
+   "evidence": "application.yml:56-57 `springdoc:\\n  api-docs.path: /api/v1/openapi` (api-docs remain enabled; the api logs the SpringDoc warning 'endpoint is enabled by default. To disable it in production...'). Live probe: `curl http://localhost:8700/api/v1/openapi` → 200 with 10 ops paths, including /api/v1/ops/settings/{key}, /api/v1/ops/providers/{name}/{action}, /api/v1/ops/stats/aggregate, /api/v1/ops/dlq and /api/v1/ops/audit. SecurityConfig.java:52 `if (ex instanceof CsrfException) problem(res, req, 403, \"CSRF_INVALID\", ...)` runs before any authentication check. SEC-9 is not in any lane's fixed, partially_fixed or skipped list. OpenApiSnapshotIT now fails the build if the public document stops matching the committed snapshot, which contains all the ops paths.",
+   "failure_scenario": "An anonymous visitor fetches /api/v1/openapi through the edge and gets the full ops attack surface, including parameter names and the If-Match contract. That defeats the design rule that unauthorized ops paths return 404 so their existence stays hidden. An anonymous POST/PUT/DELETE to any ops path returns a distinctive 403 CSRF_INVALID instead of 404, which confirms the path exists. Anyone who later disables springdoc or excludes the ops paths will be blocked by OpenApiSnapshotIT until they regenerate the snapshot.",
+   "fix": "Add a GroupedOpenApi bean with pathsToExclude(\"/api/v1/ops/**\"), or set springdoc.api-docs.enabled=false outside a dev profile, then regenerate apps/api/openapi/openapi-v1.json (./gradlew updateOpenApi). In accessDeniedHandler, return the 404 problem for a CsrfException when the request is unauthenticated (for example, SecurityContextHolder has no OpsAuthentication).",
+   "real": false,
+   "sev_v": "none",
+   "reason": "Refuted. This work did not introduce it and it breaks no design rule. (1) The diff leaves SecurityConfig.java unchanged, and the springdoc block in application.yml (`api-docs.path: /api/v1/openapi`) is also unchanged, so the exposure predates baseline 7bcd4fa. (2) The design publishes the ops surface on purpose. §9.2 lists every /ops endpoint, §9.4 says the springdoc OpenAPI output is 'springdoc가 생성, 저장소에 스냅샷 커밋' (generated by springdoc, snapshot committed to the repo), and README.md:13 advertises /api/v1/openapi as a public URL. In a public portfolio repo, hiding the document at runtime conceals nothing. (3) The 403 CSRF_INVALID for anonymous change requests is what FR-14 specifies ('CSRF 없는 변경 요청 → 403', change requests without CSRF → 403). SecurityConfig.java:41-43,52 returns it for existing and nonexistent ops paths alike, so it cannot confirm whether a given endpoint exists. (4) The audit already judged SEC-9 real=false on exactly these grounds, which is why no lane took it. (5) OpenApiSnapshotIT's hard assertions (lines 73-75) cover only public paths. The ops paths reach it only through the committed snapshot, which `./gradlew updateOpenApi` regenerates (build.gradle.kts:70-78). That is ordinary snapshot behaviour, not a lock-in. Live probe: GET /api/v1/openapi returns 200 with 10 /api/v1/ops/* paths, the same as before this work.",
+   "fix_v": "No change required. Optional hardening in line with NFR-11: add `GroupedOpenApi.builder().group(\"public\").pathsToExclude(\"/api/v1/ops/**\")` and regenerate the snapshot with ./gradlew updateOpenApi."
+  },
+  {
+   "id": "SEC-R2",
+   "title": "The one-shot migrate container still receives the api DB password and the skywx_api Redis credentials, although --migrate now needs only DB_MIGRATOR_PASSWORD",
+   "severity": "low",
+   "files": [
+    "infra/compose.yml",
+    "apps/api/src/main/java/dev/skywx/SkyWxApplication.java",
+    "infra/tests/test_compose_policy.py"
+   ],
+   "evidence": "infra/compose.yml:69-89 (migrate service): `DB_API_PASSWORD: ${DB_API_PASSWORD}` … `REDIS_USERNAME: skywx_api` / `REDIS_PASSWORD: ${REDIS_API_PASSWORD:?…}` plus `depends_on: … redis: { condition: service_healthy }`. The new SkyWxApplication.migrate(env) runs Flyway without a Spring context and reads only DB_HOST/DB_PORT/DB_NAME/DB_MIGRATOR_USER/DB_MIGRATOR_PASSWORD. Its Javadoc says 'api 계정·Redis 비밀번호 불필요, SEC-3'. The migrations contain no `${…}` placeholders. infra/tests/test_compose_policy.py:122 asserts `\"migrate\": (\"skywx_api\", \"REDIS_API_PASSWORD\")`, which locks in the over-grant.",
+   "failure_scenario": "The container that holds the DDL-owner password also holds the api DML password and the api Redis ACL password, which can read and write skywx:session:* and rl:*. This violates the least-privilege split that SEC-3 was meant to create. Every exited migrate container keeps those values in `docker inspect` Config.Env. Migrations also cannot run while Redis is unhealthy, even though they never touch Redis.",
+   "fix": "In the migrate service, drop DB_API_PASSWORD, REDIS_HOST, REDIS_USERNAME and REDIS_PASSWORD, and remove `redis` from its depends_on. Update test_compose_policy.py to assert that migrate has only DB_MIGRATOR_PASSWORD (plus DB_HOST/DB_NAME/TZ).",
+   "real": true,
+   "sev_v": "low",
+   "reason": "Confirmed in code and on the live stack. SkyWxApplication.migrate(env) (SkyWxApplication.java:50-72) runs Flyway with no Spring context and reads only DB_HOST, DB_PORT, DB_NAME, DB_MIGRATOR_USER and DB_MIGRATOR_PASSWORD. Its Javadoc (line 46) says 'api 계정·Redis 비밀번호 불필요, SEC-3' (no api account or Redis password needed), and SkyWxApplicationTest/MigrationDbTest assert 'migrateNeedsOnlyTheMigratorPassword'. The migrations contain no `${` placeholders. Make ops-user runs `exec api`, not the migrate service, so nothing else uses these variables. Yet infra/compose.yml:81-86 still injects `DB_API_PASSWORD: ${DB_API_PASSWORD}`, `REDIS_HOST: redis`, `REDIS_USERNAME: skywx_api` and `REDIS_PASSWORD: ${REDIS_API_PASSWORD:?…}`, and line 89 has `redis: { condition: service_healthy }`. This work edited that block (it moved REDIS_PASSWORD from admin to the api ACL user) and reported SEC-3 as fixed, but left the over-grant in place. infra/tests/test_compose_policy.py:122 now locks it in with `\"migrate\": (\"skywx_api\", \"REDIS_API_PASSWORD\")`. `docker inspect skywx-migrate-1` (names only) lists DB_API_PASSWORD, REDIS_USERNAME and REDIS_PASSWORD on the exited container. Severity stays low because the process is short-lived, runs only trusted Flyway and repo SQL, the running api holds the same credentials, and reading docker inspect already requires docker-host access. The Redis-health coupling has no practical effect because api depends on redis anyway. This is a least-privilege and consistency defect rather than an exploitable hole.",
+   "fix_v": "infra/compose.yml migrate service: delete DB_API_PASSWORD, REDIS_HOST, REDIS_USERNAME, REDIS_PASSWORD and the `redis:` entry under depends_on, keeping TZ, DB_HOST, DB_NAME and DB_MIGRATOR_PASSWORD with db as the only dependency. infra/tests/test_compose_policy.py:122: remove \"migrate\" from the Redis-user expectation map. Add a test that asserts set(migrate.environment) <= {\"TZ\",\"DB_HOST\",\"DB_NAME\",\"DB_PORT\",\"DB_MIGRATOR_USER\",\"DB_MIGRATOR_PASSWORD\"} and that the env values contain neither the DB_API_PASSWORD secret nor either Redis secret."
+  },
+  {
+   "id": "SEC-R3",
+   "title": "Residual SEC-1: postgres superuser can still log in over the network, and README still tells operators to keep the ops admin password in .env",
+   "severity": "low",
+   "files": [
+    "infra/db/init/01-roles.sh",
+    "README.md"
+   ],
+   "evidence": "Live pg_hba.conf in the db container ends with `host all all all scram-sha-256`, and infra/db/init has no reject rule for the superuser. SEC-1's fix asked for `host all postgres all reject`, and SEC-1 is in no lane's fixed, partially_fixed or skipped list. README.md:64 says `초기 검증용 admin 비밀번호는 .env 의 SKYWX_OPS_BOOTSTRAP_PASSWORD`. The current .env holds SKYWX_OPS_BOOTSTRAP_PASSWORD and SKYWX_SHOTS_OPS_PASSWORD (key names checked only), and no code reads either one. This contradicts the new stdin-only ops-user flow (contract §7).",
+   "failure_scenario": "Any container on the skywx bridge network that obtains DB_ROOT_PASSWORD (a leaked .env, a backup, or a future env mistake like the original collector env_file) can connect to db:5432 as the postgres superuser. It can then bypass the INSERT-only audit_log and the role separation that V3's grants rely on. Operators who follow the README keep a plaintext ops admin password at rest in .env, even though make ops-user was changed so the password never touches disk or argv.",
+   "fix": "In 01-roles.sh, prepend `host all postgres all reject` (keeping local socket access) to $PGDATA/pg_hba.conf and reload. Change README.md:64 to describe only the `make ops-user` prompt, and tell operators to delete SKYWX_OPS_BOOTSTRAP_PASSWORD and SKYWX_SHOTS_OPS_PASSWORD from .env (screenshots.mjs already takes SKYWX_OPS_PASSWORD from the shell only when it is set).",
+   "real": true,
+   "sev_v": "low",
+   "reason": "Only partly confirmed. The README part is real. README.md:64 still says `초기 검증용 admin 비밀번호는 .env 의 SKYWX_OPS_BOOTSTRAP_PASSWORD` (the initial admin password for verification is SKYWX_OPS_BOOTSTRAP_PASSWORD in .env), and git diff 7bcd4fa shows README.md untouched. Neither tools/init_env.py nor .env.example generates that variable, and no code reads it (grep finds only README.md). On a fresh clone the README therefore points at a password that does not exist, and it tells operators to keep an ops admin password in plaintext in .env, which contradicts the stdin-only make ops-user flow (contract §7, Makefile:41-54). This is also stale text in the portfolio README the user asked for. Mitigation: .env is now 0600. The pg_hba part does not qualify as a defect. Live pg_hba ends with `host all all all scram-sha-256` and postgres has rolsuper=t, but exploiting that requires DB_ROOT_PASSWORD, which lives only in the db container and the host .env (0600). Baseline 7bcd4fa already removed the collector env_file, no other container receives the password, and db publishes no host port. The audit's own fix_v labelled the reject rule 'optional defence in depth', so without a prior credential leak there is no reachable scenario. The local .env keys SKYWX_OPS_BOOTSTRAP_PASSWORD and SKYWX_SHOTS_OPS_PASSWORD are the user's local state, not repo code.",
+   "fix_v": "README.md:64: change the comment to `make ops-user    # 운영자 계정 생성/갱신 — 비밀번호는 프롬프트로만 입력(디스크·명령행에 남지 않음)` (create or update the operator account; the password is entered only at the prompt and never stored on disk or the command line). Drop the reference to SKYWX_OPS_BOOTSTRAP_PASSWORD, and optionally add a note that any leftover *_OPS_*PASSWORD keys in .env are unused and can be deleted. Optional hardening, not required: an infra/db/init/00-hba.sh that prepends `host all postgres all reject` to $PGDATA/pg_hba.conf. Healthchecks use the local socket, so they are unaffected."
+  }
+ ],
+ "residual": [
+  {
+   "id": "COR-1 [api-engine lane]",
+   "status": "done",
+   "evidence": "apps/web/components/EvidenceCard.tsx:22 `const confirmations = num(ev.confirmations);` and :41 shows `—` when it is null. The `?? 2` default is gone. The engine emits the true count at AlertStateMachine.java:239-240 (confirmations, confirmations_seen_at).",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "REL-1 [api-engine lane]",
+   "status": "done",
+   "evidence": "AlertRepository.java:85-95: PREDICTION_UPDATED and LEFT/LOST/PREDICTION_CLEARED UPDATEs now use `WHERE id = :id AND hex = :hex AND sigmet_id = :sig AND kind = :kind AND left_at IS NULL`. V3__...sql:15-18 flags overwritten rows with evidence.integrity and eta_s=NULL. Live DB: flyway V3 success, 182 rows flagged (ids 1790503088..1790508075), 0 rows with left_at < entered_at. The other 90 rows in the 1790507964-1790508093 range are unflagged: the old LEFT/CLEARED UPDATE only set left_at and left no trace, so a wrong close cannot be identified deterministically.",
+   "what_to_do": "Nothing. Optionally, document in VERIFICATION.md that pre-V3 left_at values in the old id range are unverifiable."
+  },
+  {
+   "id": "COR-2 [api-engine lane]",
+   "status": "done",
+   "evidence": "V3__close_reason_sigmet_withdrawn_metar_ceiling.sql:15-18 sets eta_s=NULL and adds evidence.integrity='evidence_overwritten_by_colliding_prediction_update' on `kind='OBSERVED' AND evidence->>'method'='dead_reckoning_10min'`. Live count: 182 flagged = 182 matching rows. The natural-key guard is in AlertRepository.java:87,92.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "COR-3 [api-engine lane]",
+   "status": "open",
+   "evidence": "The StatusBar part is done: StatusBar.tsx:33-36 shows the world provider and a global-lag-badge with STALE above GLOBAL_STALE_S=300. The collector part is missing: apps/collector/skywx_collector/quality.py:55-70 `_check` has only speed_gt_1200kt, alt_gt_60000ft, seen_in_future and position_jump. quality.py is unchanged since 7bcd4fa and no collector file mentions `stale`. Frozen OpenSky time_position points are still published and written to track_point on every fetch. The api filters them only at judgement time: AircraftState.fresh, and SnapshotStore.java:63-71 (600 s).",
+   "what_to_do": "In AircraftGate._check (quality.py) add `if (now - s.seen_at).total_seconds() > MAX_POSITION_AGE_S[provider]: return Quarantine(\"stale_position\", s.hex, {\"age_s\": ...})`. Use 600 s for opensky, matching SnapshotStore.GLOBAL_MAX_AGE_S, and a region value no tighter than the engine's 60 s, e.g. 300 s, so the map can still show stale icons. Add a pytest case."
+  },
+  {
+   "id": "REL-6 [api-engine lane]",
+   "status": "done",
+   "evidence": "The ETA counts down from eta_at: lib/alerts.ts:10-18 `etaRemainingS`, used every second in AlertPanel.tsx:79-86 (EtaBadge with useNow(1000)) and EvidenceCard.tsx:25,36. Grey-out was the audit's alternative to skipping stale input. It is not needed: the engine now skips non-fresh positions (IntersectionEngine.java:44,61; EngineService.java:144), so stale aircraft close as LOST instead of staying listed. EvidenceCard.tsx:44 shows position_age_s.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "PERF-6 [api-engine lane]",
+   "status": "done",
+   "evidence": "WsMessages.java:42-48 SnapshotMsg carries `Sources sources` (region/global: provider, fetched_at, lag_s, stale). A live GET /api/v1/aircraft?bbox=126,36,128,38 returns meta.sources.region{adsb_fi, lag 4.5, stale false} and meta.sources.global{opensky, lag 3.1, stale false}. StatusBar.tsx:33-36 has the global badge. ws.ts:230-243 (diff handler) no longer sets stale:false.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "COR-9 [api-engine lane]",
+   "status": "done",
+   "evidence": "lib/alerts.ts:10-18 computes max(0, eta_at - serverNow) with fallbacks to judged_at+eta_s and then eta_s. AlertPanel.tsx:79-86 and EvidenceCard.tsx:17,25 re-render every 1 s through useNow(1000) and serverNowMs.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "COR-4 [api-engine lane]",
+   "status": "done",
+   "evidence": "AlertRepository.java:90-95 closes LOST with left_at and close_reason (closeReason() maps LOST→signal_lost, :106-113). Startup restart close is at :62-67 (live: 2,561 restart rows). MaintenanceJobs.java:207-213 dwell uses `AND (close_reason IS NULL OR close_reason = 'left') HAVING count(*) > 0`. Web labels LOST '신호 끊김(이탈 미확인)' (lib/alerts.ts:22,33; AlertPanel.tsx:52). Caveat: rows closed before V3 (close_reason NULL) still count toward dwell when a pre-V3 day is re-aggregated. V3's own comment (lines 6) says those rows may be signal-lost closes.",
+   "what_to_do": "Nothing for new data. Optionally, limit the `close_reason IS NULL` branch to rows without evidence.integrity, or drop it, if historical days are re-aggregated."
+  },
+  {
+   "id": "REL-8 [api-engine lane]",
+   "status": "done",
+   "evidence": "TrackWriter.java:94-98 has `@EventListener public void onBacklog(IngestEvents.AircraftBacklog e) { enqueue(e.states()); }`. StreamConsumer.java:300 publishes AircraftBacklog. The report accepts skipping backlog SIGMET entries.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "REL-13 [api-engine lane]",
+   "status": "done",
+   "evidence": "WsHub.java:274-278 `@EventListener onSigmetsExpired(IngestEvents.SigmetsExpired e) { pushSigmets(); }`, published at EngineService.java:107. On the client, MapView.tsx:282-305 re-runs the SIGMET effect on a 30 s timer (SIGMET_EXPIRY_CHECK_MS, :22) and filters with activeSigmetFeatures/isExpired (lib/sigmet.ts:9-18, `valid_to <= now`).",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "REL-19 [collector lane]",
+   "status": "open",
+   "evidence": "The api part is done: WeatherController.java:137-155 lists only frames whose PNG key still exists (framesExist pipeline EXISTS) and sets `available = \"1\".equals(h.get(\"available\")) && !frames.isEmpty()`, with georeferenced the same. The web part is missing: StatusBar.tsx:38 renders `KMA ${frames.length}f HH:MMK` with no stale marker, and no web file reads radarKr.meta.stale (grep for `.meta.stale` finds nothing; lib/types.ts:164 declares it). Live /api/v1/radar/kr returns meta.stale (threshold 900 s), but the UI ignores it, so a stalled KMA collection keeps showing as current until the 3 h frame TTL.",
+   "what_to_do": "In StatusBar.tsx:38, append a STALE badge (e.g. `<span className=\"badge bad\">STALE</span>`) when `s.radarKr?.meta?.stale === true`. Mirror it in KrRadarPanel.tsx next to '최신 tm'."
+  },
+  {
+   "id": "COR-5 [collector lane]",
+   "status": "done",
+   "evidence": "lib/format.ts:106-123 has TOP_UNKNOWN_LABEL '상한 미발표(무제한 가정)', used when top is null or top_source='unknown' (no '∞'). EvidenceCard.tsx:46-48 lists the assumption under '판정 가정'. The engine labels it in evidence at AlertStateMachine.java:218-224 (band_ft top null, top_source, top_assumed_unbounded). Live /sigmets has 3 features with top_ft null and top_source 'unknown'.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "SEC-17 [collector lane]",
+   "status": "done",
+   "evidence": "V3 sql:22-33 adds base_source/top_source. SigmetRepository.java:115-139 persists them (dbBaseSource/dbTopSource). SigmetGeoJson.java:45-46 exposes them. Live /sigmets?active=true: 77 assumed_surface/json, 49 json/json, 4 assumed_surface/raw_text, 3 assumed_surface/unknown. Web: format.ts:106,117 BASE_ASSUMED_LABEL '하한 미발표(SFC 가정)'.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-16 [collector lane]",
+   "status": "done",
+   "evidence": "V3 sql:37-50: ceiling_state column added, `ALTER COLUMN flight_cat_source DROP NOT NULL` and `DROP DEFAULT`, plus CHECK constraints. The web AirportCard.tsx:57 uses ceilingLabel (format.ts:135-139: '실링 없음' only for 'none'). Live /airports ceiling_state/source counts: measured/awc 15, none/awc 4, unknown/null 2.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "REL-20 [collector lane]",
+   "status": "open",
+   "evidence": "The collector and compose healthchecks work (`docker ps` shows skywx-collector-1 healthy). The api part is untouched: HealthController.java:19-23 is unchanged since 7bcd4fa and still returns `\"status\", \"ok\"` whatever region_lag_s is (live /healthz returns 200). There is no HealthIndicator class in apps/api/src/main/java. application.yml:50-54 defines no management.endpoint.health.group. The only meters are skywx_stream_messages_total and skywx_stream_process_seconds (StreamConsumer.java:87-90). No stream lag or trimmed gauge exists.",
+   "what_to_do": "Add an IngestHealthIndicator that is DOWN when snapshots.region().lagSeconds(now) > 120. Register it in its own group (`management.endpoint.health.group.ingest.include=ingest`), not in readiness. Make /healthz return `status: \"degraded\"` from it. Add a @Scheduled(30 s) job that reads XINFO GROUPS lag per stream into a gauge `skywx_stream_lag{stream}`, and export the trimmed count (entries-added minus length, or first-entry id vs last-delivered id)."
+  },
+  {
+   "id": "SEC-5 [collector lane]",
+   "status": "open",
+   "evidence": "The Redis username is done: application.yml:26 `username: ${REDIS_USERNAME:}` and RedisConfig.java:34,54,69-71 call `conf.setUsername(...)` for both factories. The collector cannot touch skywx:session:* (infra/redis/start.sh:27-31). Spring Session defence in depth is missing: build.gradle.kts:25 uses spring-boot-starter-session-data-redis with no springSessionDefaultRedisSerializer bean anywhere in apps/api/src/main/java, so sessions use JDK serialization. apps/api/Dockerfile:18 JAVA_TOOL_OPTIONS has no -Djdk.serialFilter.",
+   "what_to_do": "Add a `@Bean(\"springSessionDefaultRedisSerializer\") RedisSerializer<Object>` using a JSON serializer with Spring Security Jackson modules. Or add `-Djdk.serialFilter=dev.skywx.**;org.springframework.security.**;org.springframework.session.**;java.base/*;!*` to JAVA_TOOL_OPTIONS in apps/api/Dockerfile:18, and verify that ops login and session read still work."
+  },
+  {
+   "id": "GAP-17 [web stage1 lane]",
+   "status": "open",
+   "evidence": "Done: stats page hourlyRows puts null for missing hours (lib/chart.ts:17-24). ops/page.tsx:87-88 uses `?? \"—\"`. airports/[icao]/page.tsx:56 renders `h.vis_raw ?? h.vis_sm ?? \"—\"`. MaintenanceJobs dwell has no coalesce and uses HAVING count(*) > 0 (MaintenanceJobs.java:207-213). Not done: the api history query AirportRepository.java:50 `SELECT obs_time, flight_cat, flight_cat_source, wind_dir, wind_kt, vis_sm, ceiling_ft, ceiling_state, temp_c` has no vis_raw. Live /airports/RKSI/wx history[0] has vis_sm 6.0 and no vis_raw, while latest has vis_raw '6+'. The history table therefore shows '6' for '6+' (a lower bound shown as an exact value).",
+   "what_to_do": "Add `vis_raw` to the history SELECT at AirportRepository.java:50. Regenerate apps/api/openapi/openapi-v1.json, update tools/rest_contract_check.py expectations if history fields are listed, and add an assertion in the REST IT."
+  },
+  {
+   "id": "SEC-5 [infra lane]",
+   "status": "open",
+   "evidence": "The api username part is done: application.yml:26, RedisConfig.java:34-71 setUsername for both the default and stream connection factories. The stack runs with the ACL and no WRONGPASS (api healthy). The defence-in-depth part (JSON Spring Session serializer or jdk.serialFilter) is absent: no serializer bean, and Dockerfile:18 JAVA_TOOL_OPTIONS has no serialFilter.",
+   "what_to_do": "Same as the SEC-5 collector-lane entry: add a JSON springSessionDefaultRedisSerializer bean or -Djdk.serialFilter in apps/api/Dockerfile:18."
+  },
+  {
+   "id": "SEC-7 [infra lane]",
+   "status": "done",
+   "evidence": "WebSocketConfig.java:41-45 builds OriginAllowList from props.allowedOrigins() and calls setAllowedOriginPatterns(origins.patterns()). Edge nginx.conf:52-55 has `listen 8700 default_server; server_name _; return 421;` and :59-60 `server_name localhost 127.0.0.1 [::1]`. Live: Host evil.example → 421, localhost → 200.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-7 [infra lane]",
+   "status": "open",
+   "evidence": "JaCoCo is done: build.gradle.kts:3 `jacoco`, :81-101 LINE ≥ 0.93 and check dependsOn verification, used by ci.yml:58. pip-audit is present (ci.yml:37-40). Collector gate is still below design: ci.yml:24 `COLLECTOR_COV_MIN: \"75\"`, and a re-measure now gives TOTAL 78% (122 passed), still under 80. scheduler.py is at 23% and tools/snapshot.py at 0%. mypy is non-blocking (ci.yml:32-34 continue-on-error: true). No doc currently claims 80% (grep README/docs finds nothing).",
+   "what_to_do": "Add collector tests (scheduler.py, tools/snapshot.py, the remaining jobs paths) until coverage is ≥ 80%, then set COLLECTOR_COV_MIN to \"80\" in ci.yml:24. Fix the mypy errors and remove continue-on-error at ci.yml:34."
+  },
+  {
+   "id": "REL-20 [infra lane]",
+   "status": "open",
+   "evidence": "The compose collector healthcheck works (collector healthy). The api pieces are missing: HealthController.java:22 always returns status ok, there is no ingest HealthIndicator or health group in application.yml:50-54, and there are no stream lag/trimmed metrics.",
+   "what_to_do": "Same as the REL-20 collector-lane entry: IngestHealthIndicator in its own health group, /healthz degraded on lag, skywx_stream_lag{stream} gauge from XINFO GROUPS, trimmed-count metric."
+  },
+  {
+   "id": "GAP-3 [api-ws lane]",
+   "status": "done",
+   "evidence": "ws.ts:137-147 `resume()` returns early when `!this.welcomed` and only sets conn 'open' after welcome. ws.ts:203-210 marks paused on welcome if isHidden() and defers subscribe; resume then sends subscribe (:141-145). Server-side coverage is in WsHubTest.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "COR-8 [api-ws lane]",
+   "status": "done",
+   "evidence": "public/interpolate.worker.js:26-32 and lib/interpolate.ts:54-72: missing seen_at gives age=null, age_unknown=true, stale=false and no extrapolation. There is no age-0 or fresh assumption and no removal by age. ws.ts diff handler (:230-243) never sets stale. worker-sync.test.ts:45 covers a missing-field case.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "PERF-11 [api-ws lane]",
+   "status": "done",
+   "evidence": "maplayers.ts:116-117 `icon-opacity` is 0.4 for stale and 0.7 for age_unknown. MapLegend.tsx:63-64 has legend rows for both. The worker sets on_ground null when missing (interpolate.worker.js:31) and emergency only from a present squawk. AircraftCard.tsx:73,87 shows '—' for unknown.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "PERF-8 [api-ws lane]",
+   "status": "open",
+   "evidence": "The code side is done (AircraftJsonCache.java, the 120 s world resync, seen_at refresh in DiffCalculator). docs/PERF.md has no working-tree change (`git diff 7bcd4fa --stat -- docs` is empty). Its WS rows (PERF.md:16-17, :32) are from the pre-change run with region-bbox sessions, not the ≥50% zoom ≤ 5 world mix.",
+   "what_to_do": "Run `make bench` (or perf/quick_ws.py) with 200 connections, at least half subscribing at zoom ≤ 5 with a world bbox. Record bytes/s, snapshot size, p95 latency, api heap/RSS and CPU in PERF.md. This is an orchestrator/user step because load tests were out of scope here."
+  },
+  {
+   "id": "GAP-2 [api-ws lane]",
+   "status": "done",
+   "evidence": "REST /aircraft meta.sources.{region,global} is verified live. StatusBar.tsx:33-36 has the global badge at 300 s. FR-11 thresholds are unit-tested on both sides: web tests/ws-protocol.test.ts:90-96 (61/59 s region, 300 s global, server stale flag, null=stale) and api WsHubTest.java:137 and WsMessagesTest.java:90. An E2E assertion is still missing; it is tracked under GAP-4.",
+   "what_to_do": "Nothing beyond GAP-4."
+  },
+  {
+   "id": "GAP-10 [api-ws lane]",
+   "status": "done",
+   "evidence": "MapView.tsx:437-446: on each `selected` update, pointFromState(selectedInfo.state) is appended with appendTrackPoint to the loaded REST track (or buffered in pending and merged at :427-431), then tracks setData is called.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-20 [api-ws lane]",
+   "status": "done",
+   "evidence": "lib/maplayers.ts:182-194 predictionTargets draws every active PREDICTED alert's aircraft, adds the selected aircraft only when prediction.available, and removes it when available=false. MapView.tsx:111-122,309,438 refreshes on alerts and selected changes.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-21 [api-ws lane]",
+   "status": "done",
+   "evidence": "The ETA counts down from eta_at (lib/alerts.ts:10-18; AlertPanel.tsx:79-86 useNow(1000)). ws-protocol.ts:67 BANNER_EVENTS = ENTERED, LEFT, LOST, PREDICTED, so PREDICTION_UPDATED and PREDICTION_CLEARED stay out of the banner.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "SEC-7 [api-ws lane]",
+   "status": "done",
+   "evidence": "infra/edge/nginx.conf:52-60: the default_server returns 421 (the lane suggested 444; either rejects), and the app server is limited to `server_name localhost 127.0.0.1 [::1]`. Live Host: evil.example → 421.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-16 [web stage2 lane]",
+   "status": "done",
+   "evidence": "Collector: flight_category.py:48-54 returns None unless vis is known and ceiling_state is measured or none. db.py:38 writes ceiling_state, flight_cat and flight_cat_source. Api: /airports and /airports/{icao}/wx return ceiling_state live (RKSI latest ceiling_state 'none', flight_cat_source 'awc'); AirportRepository.java:29,46.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-17 [web stage2 lane]",
+   "status": "open",
+   "evidence": "MaintenanceJobs coalesce is gone (MaintenanceJobs.java:207-213, HAVING count(*) > 0, no row when there is nothing to average). The airport history query still omits vis_raw: AirportRepository.java:50. Live RKSI history rows have vis_sm and no vis_raw.",
+   "what_to_do": "Add vis_raw to the history SELECT at AirportRepository.java:50 and refresh the OpenAPI snapshot."
+  },
+  {
+   "id": "COR-16 [api-persist lane]",
+   "status": "done",
+   "evidence": "lib/chart.ts:17-24 hourlyRows maps missing hours to null, and stats/page.tsx:11,36-37 explains '—' = 자료 없음. SIGMET charts are relabelled as 발표 건수 (stats/page.tsx:32-33, '최근 7일 … SIGMET 발표 건수'). Re-aggregating old days is an operator action (POST /ops/stats/aggregate), which was not run per instructions.",
+   "what_to_do": "Nothing in code. Optionally re-aggregate past days via /api/v1/ops/stats/aggregate?day=… so history uses the new rules."
+  },
+  {
+   "id": "COR-20 [api-persist lane]",
+   "status": "done",
+   "evidence": "maplayers.ts:26-28,88 give stale airports the CAT_STALE fill and stroke. MapView.tsx:168-169 computes isMetarStale per feature. AirportCard.tsx:38-51 shows an '오래됨' badge and drops the category color. MapLegend.tsx:92 has the legend row 'METAR 오래됨(> 2 h)'.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-19 [api-persist lane]",
+   "status": "done",
+   "evidence": "ReplayMap.tsx:90-106 adds and toggles the replay-radar raster from frame.radar {host, path}. replay/page.tsx:60-61 shows replayRadarLabel ('레이더 이력 없음' when null). ReplayMap.tsx:60 has click-to-card and :14 has the corrected comment.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-16 [api-persist lane]",
+   "status": "done",
+   "evidence": "format.ts:135-139 ceilingLabel returns '실링 없음' only for ceiling_state==='none' and '—' for unknown or null. It is used in AirportCard.tsx:57 and the tooltip.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-12 [api-persist lane]",
+   "status": "done",
+   "evidence": "components/AircraftSearch.tsx is mounted in Shell.tsx:4,35 on '/'. It calls /api/v1/aircraft/search?q= (:49) with ArrowUp/ArrowDown navigation (:81-84), and lib/search.ts holds the logic. The E2E test dashboard.spec.ts:52 covers '/', Enter selects and the card opens.",
+   "what_to_do": "Nothing."
+  },
+  {
+   "id": "GAP-4 [api-IT lane]",
+   "status": "open",
+   "evidence": "The api side meets the target (57 ITs under apps/api/src/test/java/dev/skywx/it/). Total Vitest is 87 tests, above the ≥25 target. Still missing: E2E has 8 tests (apps/web/e2e/dashboard.spec.ts:6-98) against the ≥12 target, and none covers FR-06 timeline switch, FR-10 1 s latency, FR-11 lag thresholds end-to-end or FR-19 total-outage behaviour. The collector has no real-Lua Budget test: test_aircraft_job.py:92,109 use fakes.py:115 `async def evalsha(...)`, a Python re-implementation, not the Lua script.",
+   "what_to_do": "Add ≥4 Playwright tests in the isolated E2E stack: timeline/radar source switch ≤ 200 ms, alert banner within 1 s of the fixture event, lag badge turning STALE past 60 s and 300 s (via fixture fetched_at), and FR-19 (stop the collector and assert aircraft stay rendered with STALE). Add a collector pytest running Budget.reserve/release against a real Redis (testcontainers) or fakeredis[lua] so the actual Lua script is executed."
+  },
+  {
+   "id": "GAP-7 [api-IT lane]",
+   "status": "open",
+   "evidence": "The api part is done (build.gradle.kts:81-101, LINE ≥ 0.93). pip-audit is in ci.yml:37-40. Collector coverage still gates at 75 (ci.yml:24), with 78% measured now. mypy is non-blocking (ci.yml:32-34 continue-on-error: true).",
+   "what_to_do": "Raise collector coverage to ≥ 80% and set COLLECTOR_COV_MIN=80. Fix the mypy errors and drop continue-on-error."
+  },
+  {
+   "id": "GAP-24 [api-IT lane]",
+   "status": "open",
+   "evidence": "RestSamplesIT.java:30-37 writes build/rest-samples and tools/rest_contract_check.py:8-12,646 supports --dir. Nothing runs it: the ci.yml api job (:47-65) runs only `./gradlew … test jacocoTestReport jacocoTestCoverageVerification`, and Makefile:75-76 `contract` runs only tools/contract_check.py. A REST shape change on one side does not fail CI.",
+   "what_to_do": "In the ci.yml api job, after the gradle step, add setup-uv plus `cd apps/collector && uv sync --frozen && uv run python ../../tools/rest_contract_check.py --dir ../api/build/rest-samples`. Also add that line to the Makefile `contract` (or test-api) target."
+  },
+  {
+   "id": "GAP-9 [unaddressed audit finding]",
+   "status": "open",
+   "evidence": "No report lists GAP-9 and docs/PERF.md is unchanged in the working tree. PERF.md:33 still reads `api 힙/메모리 | ≤ 512 MB 힙 | 컨테이너 RSS 492 MB … | 통과`. The live `docker stats` shows skywx-api-1 at 620.9MiB / 1GiB, and apps/api/Dockerfile:18 still uses MaxRAMPercentage=60 with no -Xmx cap. PERF.md:36 still says NFR-05 'JMH 미측정 … 미확정', although the api-engine lane added a predict benchmark (10k × 200 in 43 ms). PERF.md:38 NFR-04 is '미측정'. There are no /track, /replay or /stats measurements.",
+   "what_to_do": "Change the NFR-03 row to '미확정' or 'RSS ~620–722 MiB > 512 MB'. Either set -Xmx512m, or record an ADR revising the budget after scraping jvm_memory_used_bytes{area=\"heap\"} under load. Record the new 10k×200 benchmark value in the NFR-05 row. Add k6 or quick_rest runs for /aircraft/{hex}/track, /replay?at= and /stats/* and a Lighthouse/fps measurement for NFR-04, or mark each as 미측정 explicitly."
+  },
+  {
+   "id": "SEC-1 [unaddressed audit finding]",
+   "status": "open",
+   "evidence": "The core issue is fixed and deployed: infra/compose.yml:137-166 collector uses an explicit `environment:` with no env_file. Live `tools/dc exec collector env` names show only DB_COLLECTOR_PASSWORD, REDIS_PASSWORD (collector ACL user), OPENSKY_*, KMA_APIHUB_KEY and non-secrets, with no DB_ROOT, MIGRATOR, API or BOOTSTRAP. .env is 0600. Residuals: README.md:64 still says `초기 검증용 admin 비밀번호는 .env 의 SKYWX_OPS_BOOTSTRAP_PASSWORD`, and the local .env still defines SKYWX_OPS_BOOTSTRAP_PASSWORD and SKYWX_SHOTS_OPS_PASSWORD, although .env.example no longer has them. The db pg_hba still ends `host all all all scram-sha-256` with no `host all postgres all reject` (infra/db/init has only 01-roles.sh), so the superuser can still log in over the bridge network.",
+   "what_to_do": "Edit README.md:64 so it no longer tells operators to keep the admin password in .env (point to `make ops-user`). The user should rotate the admin password with `make ops-user` and delete SKYWX_OPS_BOOTSTRAP_PASSWORD from .env; SKYWX_SHOTS_OPS_PASSWORD should be removed or the portfolio account disabled once screenshots are done. Optionally add infra/db/init/02-hba.sh that prepends `host all postgres all reject` to $PGDATA/pg_hba.conf; healthchecks use the local socket and keep working."
+  }
+ ]
+}

@@ -47,4 +47,26 @@ class DiffCalculatorTest {
         var d = DiffCalculator.compute(sent, List.of(st("a", 36, 127, 1100)), KR);
         assertThat(d.upsert()).hasSize(1);
     }
+    static AircraftState at(String hex, Instant seen, String provider, int quality) {
+        return new AircraftState(hex, null, null, null, null, 36, 127, 1000, 400.0, 90.0, 0.0, false, null, seen, provider, seen, quality, false);
+    }
+
+    /** 서 있는 항공기: 값이 그대로여도 seen_at 이 20 s 이상 앞으로 가면 다시 보낸다(클라이언트가 stale 로 잘못 보지 않게). */
+    @Test void stationaryAircraft_seenAtRefreshedEvery20s() {
+        Map<String, AircraftState> sent = new HashMap<>();
+        DiffCalculator.compute(sent, List.of(at("a", T, "adsb_lol", 0)), KR);
+        assertThat(DiffCalculator.compute(sent, List.of(at("a", T.plusSeconds(10), "adsb_lol", 0)), KR).isEmpty()).isTrue();
+        var d = DiffCalculator.compute(sent, List.of(at("a", T.plusSeconds(20), "adsb_lol", 0)), KR);
+        assertThat(d.upsert()).hasSize(1);
+        assertThat(sent.get("a").seenAt()).isEqualTo(T.plusSeconds(20));
+    }
+
+    /** 공급자(stale 기준 60 s/300 s 가 바뀐다)·품질이 바뀌면 다시 보낸다. */
+    @Test void providerOrQualityChange_isUpserted() {
+        Map<String, AircraftState> sent = new HashMap<>();
+        DiffCalculator.compute(sent, List.of(at("a", T, "adsb_lol", 0)), KR);
+        assertThat(DiffCalculator.compute(sent, List.of(at("a", T, "opensky", 0)), KR).upsert()).hasSize(1);
+        assertThat(DiffCalculator.compute(sent, List.of(at("a", T, "opensky", 2)), KR).upsert()).hasSize(1);
+        assertThat(DiffCalculator.compute(sent, List.of(at("a", T, "opensky", 2)), KR).isEmpty()).isTrue();
+    }
 }

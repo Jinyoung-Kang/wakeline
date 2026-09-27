@@ -1,8 +1,14 @@
-"""공급자 폴백 체인(FR-16): 1순위 3회 연속 실패 → 다음 순위, 10분 뒤 복귀 시도. 전환은 provider_switch 이벤트로 기록."""
+"""공급자 폴백 체인(FR-16): 1순위 3회 연속 실패 → 다음 순위, 10분 뒤 복귀 시도. 전환은 provider_switch 이벤트로 기록.
+
+체인은 작업(region·global)마다 따로지만, 공급자 객체에 붙은 paused_until(UTC)은 두 체인이 함께 본다
+(예: OpenSky 남은 크레딧이 예비분 아래로 내려가면 자정까지 어느 체인도 쓰지 않는다).
+상태 기록(set_active·switch_event·is_disabled)은 ProviderStatus 가 Redis 오류를 삼키므로 선택을 막지 않는다.
+"""
 
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from skywx_collector.status import ProviderStatus
@@ -28,6 +34,11 @@ class ProviderChain:
     def mark_down(self, name: str, seconds: float) -> None:
         self._down_until[name] = time.monotonic() + seconds
 
+    @staticmethod
+    def paused(p: Any, now: datetime | None = None) -> bool:
+        until = getattr(p, "paused_until", None)
+        return isinstance(until, datetime) and until > (now or datetime.now(UTC))
+
     async def pick(self, order: list[str], *, need_global: bool = False) -> Any | None:
         now = time.monotonic()
         for name in order:
@@ -41,6 +52,8 @@ class ProviderChain:
             if getattr(p, "configured", True) is False:
                 continue
             if self._down_until.get(name, 0.0) > now:
+                continue
+            if self.paused(p):
                 continue
             if await self._status.is_disabled(name):
                 continue

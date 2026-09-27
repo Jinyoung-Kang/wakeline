@@ -1,37 +1,43 @@
 "use client";
-import { useEffect, useState } from "react";
 import { useServerData } from "@/lib/store";
-import { fmtAgo, fmtTime } from "@/lib/format";
+import { useNow } from "@/lib/clock";
+import { fmtAgo, fmtClock, fmtIso } from "@/lib/format";
+import { feedLag, GLOBAL_STALE_S, REGION_STALE_S } from "@/lib/ws-protocol";
 
-/** 상단 상태 바(FR-11): 출처·수집 시각·지연 배지·공급자·연결 상태. lag > 60 s(지역) 이면 배지. */
+/**
+ * 상단 상태 바(FR-11): 연결 상태·지역/전세계 피드별 출처·수집 시각·지연 배지(지역 > 60 s, 전세계 > 300 s 면 경고)·SIGMET·레이더.
+ * 지연은 서버가 보고한 값(스냅샷 sources·30 s status). 연결이 끊겼거나 일시정지면 받은 뒤 경과 시간을 더한다(화면 데이터가 멈췄으므로).
+ * 출처 표기는 가로 스크롤되는 이 줄이 아니라 모든 화면 하단의 고정 줄(AttributionFooter)에 있다(FR-20).
+ */
 export function StatusBar() {
   // useSyncExternalStore 의 getSnapshot 은 안정된 참조를 돌려줘야 한다 — 객체를 새로 만들지 않고 스토어 객체 자체를 선택한다.
   const s = useServerData((x) => x);
-  const d = { conn: s.conn, attempt: s.reconnectAttempt, provider: s.provider, at: s.snapshotAt, lag: s.lagS, stale: s.stale, n: s.aircraftCount, scope: s.scope, v: s.snapshotVersion, status: s.status, sigAt: s.sigmetsFetchedAt, sigProv: s.sigmetsProvider, radar: s.radar };
-  const [now, setNow] = useState(0);
-  useEffect(() => { const tick = () => setNow(Date.now()); const t = setInterval(tick, 1000); const raf = requestAnimationFrame(tick); return () => { clearInterval(t); cancelAnimationFrame(raf); }; }, []);
-  const regionLag = d.status?.region.lag_s ?? d.lag;
-  const lagBad = regionLag == null || regionLag > 60;
-  const fixture = d.status?.fixture_mode;
+  const now = useNow(1000);
+  const live = s.conn === "open";
+  const region = feedLag(s.feeds.region, now, live, REGION_STALE_S);
+  const world = s.feeds.global ? feedLag(s.feeds.global, now, live, GLOBAL_STALE_S) : null;
+  const fixture = s.status?.fixture_mode;
   return (
-    <div className="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-b border-line bg-bg-1 px-3 text-[11px] whitespace-nowrap" data-testid="statusbar">
-      <span className={`badge ${d.conn === "open" ? "ok" : d.conn === "paused" ? "warn" : "bad"}`} data-testid="conn">
-        WS {d.conn}{d.conn !== "open" && d.attempt > 0 ? ` · retry ${d.attempt}` : ""}
+    <div className="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-b border-line bg-bg-1 px-3 text-[11px] whitespace-nowrap" data-testid="statusbar" role="group" aria-label="수집·연결 상태">
+      <span className={`badge ${s.conn === "open" ? "ok" : s.conn === "paused" ? "warn" : "bad"}`} data-testid="conn">
+        WS {s.conn}{s.conn !== "open" && s.reconnectAttempt > 0 ? ` · retry ${s.reconnectAttempt}` : ""}
       </span>
       {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
-      <span className="mono"><span className="label mr-1">aircraft</span>{d.n}<span className="text-fg-3"> · {d.scope}</span></span>
-      <span className="mono"><span className="label mr-1">source</span>{d.provider}</span>
-      <span className="mono"><span className="label mr-1">fetched</span>{fmtTime(d.status?.region.fetched_at ?? d.at)}</span>
-      <span className={`badge ${lagBad ? "bad" : "ok"}`} data-testid="lag-badge">
-        {regionLag == null ? "NO DATA" : `lag ${Math.round(regionLag)}s`}{d.stale && regionLag != null ? " · STALE" : ""}
+      <span className="mono" title="현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다">
+        <span className="label mr-1">aircraft</span>{s.aircraftCount}
       </span>
-      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{d.sigProv} · {d.status?.sigmet.active ?? "—"} active · {fmtAgo(d.sigAt, now)}</span>
-      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{d.radar?.past.length ?? 0} frames · {fmtAgo(d.radar?.fetched_at, now)}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
-      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{d.status?.engine.index_polygons ?? "—"} polys · {d.status?.engine.last_cycle_ms ?? "—"} ms</span>
-      <span className="mono text-fg-3">v{d.v}</span>
-      <span className="ml-auto text-fg-3" data-testid="attribution">
-        Aircraft © adsb.lol (ODbL) · adsb.fi · OpenSky · Weather © AviationWeather.gov · Radar © RainViewer · Map © OpenFreeMap · OpenMapTiles · OpenStreetMap contributors
+      <span className="mono" data-testid="region-source"><span className="label mr-1">region</span>{s.feeds.region?.provider ?? "—"} · <span title={fmtIso(s.feeds.region?.fetched_at)}>{fmtClock(s.feeds.region?.fetched_at)}</span></span>
+      <span className={`badge ${region.stale ? "bad" : "ok"}`} data-testid="lag-badge" title={`지역 피드 지연(경고 > ${REGION_STALE_S} s)`}>
+        {region.lag == null ? "NO DATA" : `lag ${Math.round(region.lag)}s`}{region.lag != null && region.stale ? " · STALE" : ""}
       </span>
+      <span className="mono" data-testid="global-source"><span className="label mr-1">world</span>{s.feeds.global?.provider ?? "—"}</span>
+      <span className={`badge ${world == null ? "" : world.stale ? "bad" : "ok"}`} data-testid="global-lag-badge" title={world == null ? "전세계 피드 없음" : `전세계 피드 지연(경고 > ${GLOBAL_STALE_S} s)`}>
+        {world == null ? "—" : world.lag == null ? "NO DATA" : `lag ${Math.round(world.lag)}s`}{world?.lag != null && world.stale ? " · STALE" : ""}
+      </span>
+      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet.active ?? "—"} active · {now ? fmtAgo(s.sigmetsFetchedAt, now) : "—"}</span>
+      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{s.radar?.past.length ?? "—"} frames · {now ? fmtAgo(s.radar?.fetched_at, now) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
+      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{s.status?.engine.index_polygons ?? "—"} polys · {s.status?.engine.last_cycle_ms ?? "—"} ms</span>
+      <span className="mono text-fg-3">v{s.snapshotVersion}</span>
     </div>
   );
 }

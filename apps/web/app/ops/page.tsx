@@ -9,7 +9,10 @@ interface Runs { items: Any[]; summary_24h: Any[] }
 interface Quality { rule_counts: Any[]; recent: Any[] }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
 
-/** 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ. 비로그인은 404 → 로그인 폼. */
+/**
+ * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ. 비로그인은 404 → 로그인 폼.
+ * 시각은 모두 날짜 포함(MM-DD HH:MM:SSZ) — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다. 모르는 값은 "—"(0 으로 채우지 않는다).
+ */
 export default function OpsPage() {
   const [me, setMe] = useState<{ username: string } | null>(null);
   const [checked, setChecked] = useState(false);
@@ -29,9 +32,9 @@ function Login({ onLogin }: { onLogin: (u: { username: string }) => void }) {
     <div className="grid-bg flex h-full items-center justify-center">
       <form onSubmit={submit} className="panel w-80 p-4" data-testid="ops-login">
         <div className="label mb-3">Operator sign-in</div>
-        <label className="label block">username</label><input className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" />
-        <label className="label block">password</label><input className="mb-3 w-full" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" />
-        {err ? <div className="mb-2 text-[11px] text-bad">{err}</div> : null}
+        <label className="label block" htmlFor="ops-user">username</label><input id="ops-user" className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" />
+        <label className="label block" htmlFor="ops-pass">password</label><input id="ops-pass" className="mb-3 w-full" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" />
+        {err ? <div className="mb-2 text-[11px] text-bad" role="alert">{err}</div> : null}
         <button className="btn w-full" type="submit">Sign in</button>
         <div className="mt-3 text-[10px] text-fg-3">계정은 `make ops-user` 로만 만듭니다. 세션 8 h · HttpOnly · SameSite=Strict · CSRF 이중 제출.</div>
       </form>
@@ -65,7 +68,7 @@ function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: ()
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-3">
         <span className="label mr-2">Operations</span>
-        {(["providers", "runs", "quality", "settings", "audit", "dlq"] as const).map((t) => <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>)}
+        <div className="flex gap-1" role="group" aria-label="운영 탭">{(["providers", "runs", "quality", "settings", "audit", "dlq"] as const).map((t) => <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>)}</div>
         <button className="btn" onClick={refresh}>refresh</button>
         {err ? <span className="text-[11px] text-bad">{err}</span> : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
@@ -81,8 +84,8 @@ function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: ()
             <tbody>{prov.providers.map((p) => <tr key={String(p.name)}>
               <td className="mono">{String(p.name)}{p.disabled === "1" ? <span className="badge bad ml-1">disabled</span> : null}</td>
               <td className="mono">{fmtTime(String(p.last_success_at ?? ""))}</td><td className="mono">{String(p.last_latency_ms ?? "—")} ms</td><td className="mono">{String(p.last_records ?? "—")}</td>
-              <td className={`mono ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? 0)}</td>
-              <td className="mono">{String(p.budget_used ?? 0)} / {Number(p.budget_limit) > 0 ? String(p.budget_limit) : "∞"}</td><td className="mono">{String(p.budget_remaining ?? "—")}</td>
+              <td className={`mono ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
+              <td className="mono">{String(p.budget_used ?? "—")} / {Number(p.budget_limit) > 0 ? String(p.budget_limit) : "∞"}</td><td className="mono">{String(p.budget_remaining ?? "—")}</td>
               <td className="max-w-[320px] truncate text-fg-3" title={String(p.last_error ?? "")}>{String(p.last_error ?? "")} {p.last_error_at ? fmtTime(String(p.last_error_at)) : ""}</td>
               <td>{p.disabled === "1" ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
             </tr>)}</tbody></table>
@@ -131,7 +134,7 @@ function SettingsForm({ items, onSaved }: { items: Settings["items"]; onSaved: (
       {msg ? <div className="mb-2 text-[11px] text-accent">{msg}</div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated</th><th></th></tr></thead>
         <tbody>{items.map((s) => <tr key={s.key}><td className="mono">{s.key}</td>
-          <td><input className="mono w-72" value={edit[s.key] ?? String(s.value)} onChange={(e) => setEdit({ ...edit, [s.key]: e.target.value })} /></td>
+          <td><input className="mono w-72" aria-label={`${s.key} 값`} value={edit[s.key] ?? String(s.value)} onChange={(e) => setEdit({ ...edit, [s.key]: e.target.value })} /></td>
           <td className="mono">{s.version}</td><td className="mono text-fg-3">{s.updated_by ?? "—"} {fmtTime(s.updated_at)}</td>
           <td><button className="btn" onClick={() => save(s.key, s.version)} disabled={edit[s.key] === undefined}>save</button></td></tr>)}</tbody></table>
     </div>

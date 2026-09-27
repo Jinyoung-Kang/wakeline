@@ -1,26 +1,51 @@
+"use client";
 import type { Alert } from "@/lib/types";
-import { band, fmtAlt, fmtEta, fmtTime, hazardColor } from "@/lib/format";
+import { band, fmtAlt, fmtEta, fmtNum, fmtTime, hazardColor } from "@/lib/format";
+import { closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
+import { serverNowMs, useServerData } from "@/lib/store";
+import { useNow } from "@/lib/clock";
 
-/** 근거 카드(11.3절): 어느 경보·고도대·항공기 고도·유효시간·판정 시각·관측/추정·예측이면 ETA·방법. */
+const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : null);
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/**
+ * 근거 카드(11.3절): 어느 경보·고도대·항공기 고도·유효시간·판정 시각·관측/추정·예측이면 ETA·방법.
+ * 근거에 없는 값은 "—"(기본값으로 채우지 않는다). 판정에 쓴 가정(하한 SFC·상한 무제한·수직속도 0)은 가정이라고 밝힌다.
+ * 예측 ETA 는 eta_at 에서 1 s 마다 카운트다운한다(추정).
+ */
 export function EvidenceCard({ a }: { a: Alert }) {
-  const ev = a.evidence as Record<string, unknown>;
-  const bandFt = ev.band_ft as number[] | undefined;
+  const now = useNow(1000);
+  const ev = (a.evidence ?? {}) as Record<string, unknown>;
+  const sigmet = useServerData((d) => d.sigmets?.features.find((f) => f.properties.id === a.sigmet_id)?.properties ?? null);
+  const bandFt = evidenceBand(ev);
+  const src = bandFt ? evidenceBandSource(ev, sigmet, bandFt.top) : null;
+  const confirmations = num(ev.confirmations);
+  const distance = num(ev.distance_nm);
+  const posAge = num(ev.position_age_s);
+  const eta = now ? etaRemainingS(a, serverNowMs(now)) : a.eta_s ?? null;
   const rows: [string, React.ReactNode][] = [
     ["경보", `${a.fir_id} · ${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`],
     ["SIGMET id", <span key="id" className="mono text-fg-2">{a.sigmet_id}</span>],
-    ["고도대", bandFt ? band(bandFt[0], bandFt[1] === -1 ? null : bandFt[1]) : "—"],
-    [a.kind === "PREDICTED" ? "진입 시 고도(추정)" : "항공기 고도", fmtAlt(a.alt_ft)],
-    ["유효시간 종료", fmtTime(String(ev.valid_to ?? ""))],
-    ["판정 시각", fmtTime(String(ev.judged_at ?? a.entered_at))],
-    ["방법", String(ev.method ?? "—")],
+    ["고도대", bandFt ? band(bandFt.base, bandFt.top, src) : "—"],
+    [a.kind === "PREDICTED" ? "진입 시 고도(추정)" : "항공기 고도", <span key="alt" className="mono">{fmtAlt(a.alt_ft)}</span>],
+    ["유효시간", <span key="v" className="mono">{fmtTime(str(ev.valid_from))} – {fmtTime(str(ev.valid_to))}</span>],
+    ["판정 시각", <span key="j" className="mono">{fmtTime(str(ev.judged_at))}</span>],
+    ["방법", str(ev.method) ?? "—"],
   ];
   if (a.kind === "PREDICTED") {
-    rows.push(["ETA", <span key="eta" className="mono">{fmtEta(a.eta_s)}</span>]);
-    rows.push(["거리", `${String(ev.distance_nm ?? "—")} NM`]);
+    rows.push(["ETA(추정)", <span key="eta" className="mono">{fmtEta(eta)}</span>]);
+    rows.push(["거리", distance == null ? "—" : `${fmtNum(distance, "", 1)} NM`]);
+    rows.push(["판정 입력", `${fmtNum(num(ev.gs_kt), " kt")} · ${fmtNum(num(ev.track_deg), "°")}`]);
+    if (ev.vrate_assumed_zero === true) rows.push(["가정", "수직속도 미상 → 0 ft/min 가정"]);
   } else {
-    rows.push(["연속 확인", `${String(ev.confirmations ?? 2)}회`]);
-    rows.push(["출처 / 관측", `${String(ev.provider ?? "—")} · ${fmtTime(String(ev.seen_at ?? ""))}`]);
+    rows.push(["연속 확인", confirmations == null ? "—" : `${confirmations}회`]);
+    rows.push(["출처 / 관측", `${str(ev.provider) ?? "—"} · ${fmtTime(str(ev.seen_at))}`]);
   }
+  if (posAge != null) rows.push(["판정 시 위치 경과", `${fmtNum(posAge, " s", 0)}`]);
+  if (a.left_at) rows.push(["종료", `${fmtTime(a.left_at)} · ${closeReasonLabel(a.close_reason)}`]);
+  const assumptions: string[] = [];
+  if (src?.base_source === "assumed_surface") assumptions.push("하한 미발표 → 지상(SFC)부터로 가정");
+  if (bandFt && (bandFt.top == null || src?.top_source === "unknown")) assumptions.push("상한 미발표 → 무제한으로 가정");
   return (
     <div className="border border-line bg-bg px-2 py-1 text-[11px]" data-testid="evidence">
       <div className="mb-1 flex items-center gap-2">
@@ -31,6 +56,7 @@ export function EvidenceCard({ a }: { a: Alert }) {
       {rows.map(([k, v]) => (
         <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>
       ))}
+      {assumptions.length ? <div className="border-t border-line pt-0.5 text-[10px] text-warn" data-testid="evidence-assumptions">판정 가정: {assumptions.join(" · ")}</div> : null}
     </div>
   );
 }

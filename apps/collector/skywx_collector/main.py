@@ -1,4 +1,7 @@
-"""collector 진입점 — 작업 6종(region·global·sigmet·radar·metar·maintenance)을 하나의 이벤트 루프에서 돌린다."""
+"""collector 진입점 — 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)을 하나의 이벤트 루프에서 돌린다.
+
+실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +12,7 @@ import signal
 from redis.asyncio import Redis
 
 from skywx_collector.budget import Budget
-from skywx_collector.config import settings
+from skywx_collector.config import Settings, settings
 from skywx_collector.db import Db
 from skywx_collector.fallback import ProviderChain
 from skywx_collector.http import HttpClient
@@ -37,46 +40,52 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
 
 
-async def _connect_db(db: Db) -> None:
-    for attempt in range(60):
-        try:
-            await db.connect()
-            await db.pool.fetchval("SELECT 1 FROM ingest_run LIMIT 1")
-            return
-        except Exception as e:  # noqa: BLE001
-            log.info("db not ready (%s) — retry %d", type(e).__name__, attempt + 1)
-            await asyncio.sleep(3)
-    raise RuntimeError("database not reachable")
+def build_limits(s: Settings) -> dict[str, int]:
+    """공급자별 하루 예산(0 = 한도 없음, 카운트만). 유지보수 작업의 일별 스냅샷 대상 목록이기도 하다."""
+    return {
+        "adsb_lol": s.budget_adsb_lol,
+        "adsb_fi": s.budget_adsb_fi,
+        "opensky": s.budget_opensky,
+        "awc": s.budget_awc,
+        "rainviewer": s.budget_rainviewer,
+        "kma_radar": s.budget_kma_radar,
+        "fixture": 0,
+    }
+
+
+def make_redis(s: Settings) -> Redis:
+    """ACL 사용자(계약 §6: REDIS_USERNAME)를 지원한다. 비우면 default 사용자."""
+    return Redis(
+        host=s.redis_host,
+        port=s.redis_port,
+        username=s.redis_username or None,
+        password=s.redis_password or None,
+        decode_responses=True,
+        socket_timeout=5,
+        socket_connect_timeout=5,
+        health_check_interval=30,
+    )
 
 
 async def main() -> None:
     fixture = settings.fixture_mode
     log.info("skywx collector starting (fixture_mode=%s)", fixture)
-    redis = Redis(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        password=settings.redis_password or None,
-        decode_responses=True,
-        socket_timeout=5,
-        socket_connect_timeout=5,
-    )
+    redis = make_redis(settings)
     db = Db()
-    await _connect_db(db)
+    db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
     http = HttpClient()
-    limits = {
-        "adsb_lol": settings.budget_adsb_lol,
-        "adsb_fi": settings.budget_adsb_fi,
-        "opensky": settings.budget_opensky,
-        "awc": settings.budget_awc,
-        "rainviewer": settings.budget_rainviewer,
-        "fixture": 0,
-    }
+    limits = build_limits(settings)
+    publisher = Publisher(redis)
+
+    def metrics() -> dict[str, str]:
+        return {**db.metrics(), "publish_queued": str(publisher.queued), "publish_dropped": str(publisher.dropped)}
+
     ctx = JobContext(
         budget=Budget(redis, limits),
         db=db,
-        publisher=Publisher(redis),
+        publisher=publisher,
         raw=RawStore(),
-        status=ProviderStatus(redis),
+        status=ProviderStatus(redis, metrics=metrics),
         rt=RuntimeSettings(redis),
         fixture=fixture,
     )
@@ -93,6 +102,10 @@ async def main() -> None:
         awc, rv = AwcProvider(http), RainViewerProvider(http)
         if not aircraft_providers["opensky"].configured:
             log.info("opensky credentials not set — global view disabled")
+        if "opensky" in settings.provider_order:
+            log.info(
+                "opensky is global-only; region chain uses adsb_lol → adsb_fi (daily cap %d credits)", settings.budget_opensky
+            )
 
     region = AircraftJob("region", ProviderChain("region", aircraft_providers, ctx.status), ctx)
     global_ = AircraftJob("global", ProviderChain("global", aircraft_providers, ctx.status), ctx)

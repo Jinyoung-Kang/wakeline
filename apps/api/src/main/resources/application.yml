@@ -14,28 +14,34 @@ spring:
       connection-timeout: 5000
       data-source-properties:
         ApplicationName: skywx-api
+        reWriteBatchedInserts: true      # 항적 배치(2,000행)를 다중 VALUES INSERT 로 — 왕복 수를 줄인다
   flyway:
-    # 스키마 변경은 compose 의 migrate 서비스(--migrate)만 한다. api 는 DML 전용 계정만 가진다(최소 권한).
+    # 스키마 변경은 compose 의 migrate 서비스(--migrate)만 한다 — 그 프로세스가 DB_MIGRATOR_PASSWORD 를 직접 읽는다(SkyWxApplication).
+    # api 는 DML 전용 계정(skywx_api)만 가지며 DDL 비밀번호를 받지도, 참조하지도 않는다(최소 권한, SEC-3).
     enabled: false
-    user: skywx_migrator
-    password: ${DB_MIGRATOR_PASSWORD:}
-    locations: classpath:db/migration
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}         # 계약 §6: ACL 사용자 skywx_api (비어 있으면 default 사용자)
       password: ${REDIS_PASSWORD:}
       timeout: 3s
+  web.error:                            # Boot 4: server.error.* → spring.web.error.* (예전 키는 바인딩되지 않는다)
+    include-message: never
+    include-stacktrace: never
+  lifecycle:
+    # 종료 단계별 대기 상한(스트림 소비 중지 → WS going_away → 항적·알림 flush → Tomcat). compose stop_grace_period 30 s 안에 끝난다.
+    timeout-per-shutdown-phase: 10s
   session:
-    redis.namespace: skywx:session
+    # Boot 4 에서 spring.session.redis.* 는 더 이상 바인딩되지 않는다(→ spring.session.data.redis.*). 예전 키로는 세션이 기본
+    # 이름공간 spring:session:* 에 저장되어 Redis ACL(skywx_api: ~skywx:* ~rl:*)이 거부했다(NOPERM → 로그인 500).
+    data.redis.namespace: skywx:session
     timeout: ${SKYWX_OPS_SESSION_TTL_H:8}h
 
 server:
   port: 8000
   shutdown: graceful
   forward-headers-strategy: none        # XFF 는 TrustedProxyFilter 가 edge 에 한해 해석한다
-  error.include-message: never
-  error.include-stacktrace: never
   tomcat.max-http-form-post-size: 64KB
   max-http-request-header-size: 16KB
 
@@ -53,6 +59,8 @@ springdoc:
 
 skywx:
   trusted-proxy: ${SKYWX_TRUSTED_PROXY:}
+  # 관심 지역의 기본값(.env). 실제로 쓰는 값은 런타임 설정(app_setting → Redis skywx:settings, collector 와 같은 값)이다.
+  # 운영자가 /ops 에서 바꾼 적이 없으면 기동 시 이 값으로 런타임 설정을 맞춘다(COR-12).
   region-center: ${SKYWX_REGION_CENTER:36.5,127.8}
   region-radius-nm: ${SKYWX_REGION_RADIUS_NM:250}
   public-rate-limit-per-min: ${SKYWX_PUBLIC_RATE_LIMIT_PER_MIN:120}
@@ -60,6 +68,8 @@ skywx:
   ws-max-conn-per-ip: ${SKYWX_WS_MAX_CONN_PER_IP:5}
   ws-diff-interval-s: 10
   ws-resync-interval-s: 30
+  ws-resync-world-interval-s: 120        # 줌 ≤ 5(전세계) 세션의 주기 전체 스냅샷(계약 §1)
+  allowed-origins: ${SKYWX_ALLOWED_ORIGINS:http://localhost:8700,http://127.0.0.1:8700}   # WS Origin 명시 허용 목록(쉼표 구분)
   max-bbox-area-sqdeg: 2500
   fixture-mode: ${SKYWX_FIXTURE_MODE:0}
   schemas-dir: ${SKYWX_SCHEMAS_DIR:classpath:schemas}

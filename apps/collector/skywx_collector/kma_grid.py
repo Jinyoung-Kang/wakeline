@@ -11,19 +11,24 @@
 
 from __future__ import annotations
 
-import gzip
 import io
 import struct
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 
 import numpy as np
 from PIL import Image
 from pyproj import Transformer
 
+from skywx_collector.gz import gunzip_bounded
+
 LCC = "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38 +lon_0=126 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs"
 REF_COL, REF_ROW, RES_M = 1121, 1681, 500.0
 HEADER_BYTES = 1024
+# 해제 결과 상한: HSR 은 2305×2881×2 B × 자료블록 3개 ≈ 40 MB. 이를 넘는 파일은 압축 폭탄으로 보고 거부한다.
+MAX_RAW_BYTES = 64 * 1024 * 1024
+MAX_GRID = 4096  # nx·ny 상한(포맷상 short 이지만 이 이상은 합성장 크기로 비정상)
 NULL_OUTSIDE, NULL_UNOBSERVED, DISPLAY_MIN = -30000, -25000, -20000
 PTYPE_NAMES = {
     0: "PPI0",
@@ -101,12 +106,14 @@ def parse_header(buf: bytes) -> Header:
     return Header(version, ptype, tm, tm_in, num_stn, map_code, nx, ny, nz, dxy, num_data, data_code, stations)
 
 
-def read_echo(gz_bytes: bytes) -> tuple[Header, np.ndarray]:
-    """첫 자료블록(반사도, dBZ×100)을 (ny, nx) int16 배열로. 행 0 = 남쪽."""
-    raw = gzip.decompress(gz_bytes)
+def read_echo(gz_bytes: bytes, max_raw_bytes: int = MAX_RAW_BYTES) -> tuple[Header, np.ndarray]:
+    """첫 자료블록(반사도, dBZ×100)을 (ny, nx) int16 배열로. 행 0 = 남쪽. 해제 결과가 상한을 넘으면 거부(ValueError)."""
+    raw = gunzip_bounded(gz_bytes, max_raw_bytes)
     h = parse_header(raw)
     if h.map_code != 1 or h.dxy != int(RES_M):
         raise ValueError(f"unsupported map_code={h.map_code} dxy={h.dxy}")
+    if not (0 < h.nx <= MAX_GRID and 0 < h.ny <= MAX_GRID):
+        raise ValueError(f"grid size out of range nx={h.nx} ny={h.ny}")
     n = h.nx * h.ny
     if len(raw) < HEADER_BYTES + n * 2:
         raise ValueError("data block truncated")
@@ -119,32 +126,62 @@ def lcc_extent(h: Header) -> tuple[float, float, float, float]:
     return (-REF_COL * RES_M, -REF_ROW * RES_M, (h.nx - REF_COL) * RES_M, (h.ny - REF_ROW) * RES_M)
 
 
+_TO_MERC = Transformer.from_crs(LCC, "EPSG:3857", always_xy=True)
+_TO_LCC = Transformer.from_crs("EPSG:3857", LCC, always_xy=True)
+_TO_LL = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+
+
 def mercator_bounds(h: Header) -> tuple[float, float, float, float]:
     """격자 네 변을 따라 투영해 웹 메르카토르(EPSG:3857) 축 정렬 경계를 구한다."""
-    xmin, ymin, xmax, ymax = lcc_extent(h)
-    to_merc = Transformer.from_crs(LCC, "EPSG:3857", always_xy=True)
+    return _mercator_bounds(h.nx, h.ny)
+
+
+@lru_cache(maxsize=4)
+def _mercator_bounds(nx: int, ny: int) -> tuple[float, float, float, float]:
+    xmin, ymin, xmax, ymax = -REF_COL * RES_M, -REF_ROW * RES_M, (nx - REF_COL) * RES_M, (ny - REF_ROW) * RES_M
     xs = np.concatenate([np.linspace(xmin, xmax, 200), np.full(200, xmax), np.linspace(xmax, xmin, 200), np.full(200, xmin)])
     ys = np.concatenate([np.full(200, ymin), np.linspace(ymin, ymax, 200), np.full(200, ymax), np.linspace(ymax, ymin, 200)])
-    mx, my = to_merc.transform(xs, ys)
+    mx, my = _TO_MERC.transform(xs, ys)
     return float(mx.min()), float(my.min()), float(mx.max()), float(my.max())
+
+
+@dataclass(frozen=True)
+class _PixelMap:
+    """출력 픽셀 → 격자 대응(격자 크기·출력 폭에만 의존). 프레임마다 150만 점 재투영을 하지 않도록 캐시한다."""
+
+    height: int
+    inside: np.ndarray  # (height*width,) bool — 격자 범위 안의 픽셀
+    flat_idx: np.ndarray  # inside 픽셀의 격자 1차원 인덱스(row*nx + col)
+
+
+@lru_cache(maxsize=4)
+def _pixel_map(nx: int, ny: int, width: int) -> _PixelMap:
+    bx0, by0, bx1, by1 = _mercator_bounds(nx, ny)
+    height = int(round(width * (by1 - by0) / (bx1 - bx0)))
+    px = bx0 + (np.arange(width) + 0.5) * (bx1 - bx0) / width
+    py = by1 - (np.arange(height) + 0.5) * (by1 - by0) / height  # 위 → 아래
+    mxx, myy = np.meshgrid(px, py)
+    lx, ly = _TO_LCC.transform(mxx.ravel(), myy.ravel())
+    col = np.floor(lx / RES_M + REF_COL).astype(np.int64)
+    row = np.floor(ly / RES_M + REF_ROW).astype(np.int64)
+    inside = (col >= 0) & (col < nx) & (row >= 0) & (row < ny)
+    flat_idx = (row[inside] * nx + col[inside]).astype(np.int32)
+    inside.setflags(write=False)
+    flat_idx.setflags(write=False)
+    return _PixelMap(height, inside, flat_idx)
 
 
 def render_mercator_png(
     h: Header, grid: np.ndarray, width: int = 1152, min_dbz: float = 5.0, mask_alpha: int = 22
 ) -> tuple[bytes, dict]:
-    """웹 메르카토르 축 정렬 RGBA PNG 와 그 경계(lon/lat 네 모서리)를 만든다. 최근접 표본화."""
-    bx0, by0, bx1, by1 = mercator_bounds(h)
-    height = int(round(width * (by1 - by0) / (bx1 - bx0)))
-    px = bx0 + (np.arange(width) + 0.5) * (bx1 - bx0) / width
-    py = by1 - (np.arange(height) + 0.5) * (by1 - by0) / height  # 위 → 아래
-    mxx, myy = np.meshgrid(px, py)
-    to_lcc = Transformer.from_crs("EPSG:3857", LCC, always_xy=True)
-    lx, ly = to_lcc.transform(mxx.ravel(), myy.ravel())
-    col = np.floor(lx / RES_M + REF_COL).astype(np.int64)
-    row = np.floor(ly / RES_M + REF_ROW).astype(np.int64)
-    inside = (col >= 0) & (col < h.nx) & (row >= 0) & (row < h.ny)
-    vals = np.full(col.shape, NULL_OUTSIDE, dtype=np.int16)
-    vals[inside] = grid[row[inside], col[inside]]
+    """웹 메르카토르 축 정렬 RGBA PNG 와 그 경계(lon/lat 네 모서리)를 만든다. 최근접 표본화. CPU 작업 — 이벤트 루프 밖(스레드)에서 부른다."""
+    if grid.shape != (h.ny, h.nx):
+        raise ValueError(f"grid shape {grid.shape} != header ({h.ny}, {h.nx})")
+    bx0, by0, bx1, by1 = _mercator_bounds(h.nx, h.ny)
+    pm = _pixel_map(h.nx, h.ny, width)
+    height = pm.height
+    vals = np.full(pm.inside.shape, NULL_OUTSIDE, dtype=np.int16)
+    vals[pm.inside] = grid.ravel()[pm.flat_idx]
     vals = vals.reshape(height, width)
 
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
@@ -155,11 +192,10 @@ def render_mercator_png(
         rgba[(dbz >= lo) & (dbz >= min_dbz)] = color
     img = Image.fromarray(rgba, "RGBA")
     out = io.BytesIO()
-    img.save(out, format="PNG", optimize=True)
+    img.save(out, format="PNG", compress_level=6)  # optimize=True 는 프레임당 수백 ms 를 더 쓴다
 
-    to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
-    w, n = to_ll.transform(bx0, by1)
-    e, s = to_ll.transform(bx1, by0)
+    w, n = _TO_LL.transform(bx0, by1)
+    e, s = _TO_LL.transform(bx1, by0)
     meta = {
         "width": width,
         "height": height,

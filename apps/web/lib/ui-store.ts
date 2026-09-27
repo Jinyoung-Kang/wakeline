@@ -29,6 +29,11 @@ interface UiState {
   selectAirport: (icao: string | null) => void;
   panel: "alerts" | "aircraft" | "sigmet" | "airport";
   setPanel: (p: UiState["panel"]) => void;
+  /** 지도 이동 요청(검색 결과 선택 등). id 가 바뀔 때마다 MapView 가 한 번 이동한다. */
+  flyTo: { lon: number; lat: number; zoom: number; id: number } | null;
+  requestFlyTo: (lon: number, lat: number, zoom?: number) => void;
+  legendOpen: boolean;
+  setLegendOpen: (b: boolean) => void;
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -51,4 +56,8 @@ export const useUi = create<UiState>((set) => ({
   selectAirport: (icao) => set({ selectedAirport: icao, panel: icao ? "airport" : "alerts" }),
   panel: "alerts",
   setPanel: (p) => set({ panel: p }),
+  flyTo: null,
+  requestFlyTo: (lon, lat, zoom = 8) => set((s) => ({ flyTo: { lon, lat, zoom, id: (s.flyTo?.id ?? 0) + 1 } })),
+  legendOpen: true,
+  setLegendOpen: (b) => set({ legendOpen: b }),
 }));

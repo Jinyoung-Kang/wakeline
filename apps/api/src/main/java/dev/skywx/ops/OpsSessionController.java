@@ -45,14 +45,33 @@ public class OpsSessionController {
         this.props = props;
     }
 
+    /** IP당 분당 로그인 시도 상한. */
+    static final int LOGIN_LIMIT_PER_MIN = 10;
+
     public record Login(@NotBlank @Size(max = 64) String username, @NotBlank @Size(min = 8, max = 256) String password) {}
 
+    /**
+     * 로그인. 요청 제한은 실패 시 닫힘(Redis 장애면 503 — 제한 없이 무차별 대입을 받지 않는다, SEC-6).
+     * 실패도 감사 기록(LOGIN_FAILED, 잠금이 걸리면 ACCOUNT_LOCKED)을 남긴다. 응답은 사유를 구분하지 않는다.
+     */
     @PostMapping
     public ResponseEntity<Map<String, Object>> login(@Valid @RequestBody Login body, HttpServletRequest req, HttpServletResponse res) {
         String ip = ClientIp.resolve(req, props.trustedProxy());
-        if (limiter.hit("login", ip, 60)[0] > 10) throw new Problem(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "rate limited", "too many login attempts");
-        var user = users.authenticate(body.username(), body.password())
-                .orElseThrow(() -> new Problem(HttpStatus.UNAUTHORIZED, "BAD_CREDENTIALS", "unauthorized", "invalid credentials"));
+        long[] hit;
+        try {
+            hit = limiter.hitStrict("login", ip, 60);
+        } catch (RuntimeException e) {
+            throw Problem.unavailable("login temporarily unavailable");
+        }
+        if (hit[0] > LOGIN_LIMIT_PER_MIN) throw Problem.tooManyRequests("too many login attempts", hit[1]);
+        var result = users.authenticate(body.username(), body.password());
+        if (result.user().isEmpty()) {
+            audit.record(req, null, "LOGIN_FAILED", body.username(), null, Map.of("reason", result.failure().name().toLowerCase(java.util.Locale.ROOT)));
+            if (result.lockedNow())
+                audit.record(req, null, "ACCOUNT_LOCKED", body.username(), null, Map.of("minutes", OpsUserService.LOCK_MINUTES, "after_failures", OpsUserService.MAX_FAILED));
+            throw new Problem(HttpStatus.UNAUTHORIZED, "BAD_CREDENTIALS", "unauthorized", "invalid credentials");
+        }
+        var user = result.user().get();
         req.getSession(true);
         req.changeSessionId(); // 세션 고정 방지: 로그인 전 세션이 있었다면 ID 를 교체한다
         Authentication auth = new OpsAuthentication(user, List.of(new SimpleGrantedAuthority("ROLE_OPS")));

@@ -4,7 +4,10 @@ import { KrRadarPanel } from "./KrRadarPanel";
 import { useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 
-/** 레이더 타임라인(FR-06): 과거 2 h · 10분 간격 프레임. 소스는 사전 생성되어 전환은 불투명도만 바꾼다. */
+/**
+ * 레이더 타임라인(FR-06): 과거 2 h · 10분 간격 프레임. 지도는 현재 프레임만 받아 그리고(PERF-12), 재생 중에만 다음 프레임을 미리 받는다.
+ * RainViewer 는 커버리지 밖을 회색으로 가려 "에코 없음"과 구분한다(GAP-15).
+ */
 export function RadarTimeline() {
   const radar = useServerData((d) => d.radar);
   const radarKr = useServerData((d) => d.radarKr);
@@ -33,6 +36,10 @@ export function RadarTimeline() {
   const time = kma ? undefined : radar?.past[cur]?.time;
   const krTm = kma ? radarKr?.frames[cur]?.tm : undefined;
   const krAvailable = !!radarKr?.available && (radarKr?.frames.length ?? 0) > 0;
+  // 프레임 시각: RainViewer 는 UTC, 기상청 tm 은 KST(YYYYMMDDHHMM) — 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
+  const label = kma
+    ? (krTm && /^\d{12}$/.test(krTm) ? `${krTm.slice(4, 6)}-${krTm.slice(6, 8)} ${krTm.slice(8, 10)}:${krTm.slice(10, 12)} KST` : "—")
+    : time ? `${new Date(time * 1000).toISOString().slice(5, 16).replace("T", " ")}Z` : "—";
   const [kr, setKr] = useState(false);
   return (
     <div className="relative flex h-9 shrink-0 items-center gap-3 border-t border-line bg-bg-1 px-3" data-testid="radar-timeline">
@@ -40,11 +47,12 @@ export function RadarTimeline() {
       <span className="label">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
       <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : radarKr?.note ?? "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
-      <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0}>{playing ? "정지" : "재생"}</button>
-      <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-64" disabled={n === 0} />
-      <span className="mono text-[11px]">{kma ? (krTm ? `${krTm.slice(8, 10)}:${krTm.slice(10, 12)} KST` : "—") : time ? new Date(time * 1000).toISOString().slice(11, 16) + "Z" : "—"}</span>
-      <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7)`} · 최신으로: </span>
-      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0}>latest</button>
+      <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
+      <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-64" disabled={n === 0}
+        aria-label="레이더 프레임" aria-valuetext={label} />
+      <span className="mono text-[11px]" data-testid="radar-frame-time">{label}</span>
+      <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>
+      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로">latest</button>
       <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
     </div>
   );

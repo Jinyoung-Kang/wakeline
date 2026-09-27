@@ -17,4 +17,6 @@ COPY --chown=app:app schemas /app/schemas
 COPY --chown=app:app fixtures /app/fixtures
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 TZ=UTC
 USER app
+# 계약 §8: 관심 지역 heartbeat(skywx:collector.region_at)가 90 s 안이면 정상. compose 의 healthcheck 가 있으면 그쪽이 우선한다.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD ["python", "-m", "skywx_collector.health"]
 ENTRYPOINT ["python", "-m", "skywx_collector"]

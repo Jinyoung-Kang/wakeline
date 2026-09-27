@@ -14,7 +14,8 @@ public final class Meta {
     public static Map<String, Object> of(HttpServletRequest req, String provider, Instant fetchedAt, int staleAfterS) {
         Instant now = Instant.now();
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("provider", provider);
+        // 수집 이력이 없는 스냅샷의 자리표시("-")는 공급자 이름이 아니다 — null(모름)로 낸다
+        m.put("provider", provider == null || provider.isBlank() || "-".equals(provider) ? null : provider);
         m.put("fetched_at", fetchedAt == null || fetchedAt.equals(Instant.EPOCH) ? null : fetchedAt);
         double lag = fetchedAt == null || fetchedAt.equals(Instant.EPOCH) ? -1 : (now.toEpochMilli() - fetchedAt.toEpochMilli()) / 1000.0;
         m.put("lag_s", lag < 0 ? null : Math.round(lag * 10) / 10.0);

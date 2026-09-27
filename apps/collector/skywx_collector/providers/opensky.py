@@ -1,12 +1,16 @@
-"""OpenSky Network — OAuth2 client credentials(토큰 30분), 전세계 1회 4크레딧. 계정이 없으면 비활성."""
+"""OpenSky Network — OAuth2 client credentials(토큰 30분), 전세계 1회 4크레딧. 계정이 없으면 비활성.
+
+전세계(global) 전용이다. 관심 지역 폴백에 쓰면 10 s 주기 × 4크레딧으로 일일 한도를 몇 시간 만에 소진해
+전세계 화면이 하루 종일 죽는다(GAP-5/REL-14). 관심 지역은 adsb_lol → adsb_fi 만 쓰고, 둘 다 안 되면 stale 로 둔다(FR-19).
+"""
 
 from __future__ import annotations
 
 import time
+from datetime import datetime
 
 import orjson
 
-from skywx_collector.geo import bbox_around
 from skywx_collector.http import HttpClient
 from skywx_collector.models import BudgetInfo, ProviderResult
 
@@ -16,9 +20,9 @@ STATES_URL = "https://opensky-network.org/api/states/all"
 
 class OpenSkyProvider:
     name = "opensky"
-    supports_region = True
+    supports_region = False  # 크레딧 보호: 관심 지역 폴백 체인에서 제외
     supports_global = True
-    region_cost = 4  # 보수적으로 최대 비용(면적 > 400 sq°)으로 계상
+    region_cost = 0
     global_cost = 4
 
     def __init__(self, http: HttpClient, client_id: str, client_secret: str):
@@ -26,6 +30,8 @@ class OpenSkyProvider:
         self._id, self._secret = client_id, client_secret
         self._token: str | None = None
         self._token_exp = 0.0
+        # 남은 크레딧 < 예비분이면 이 시각(UTC)까지 호출하지 않는다. ProviderChain.pick 이 모든 체인에서 확인한다.
+        self.paused_until: datetime | None = None
 
     @property
     def configured(self) -> bool:
@@ -53,8 +59,7 @@ class OpenSkyProvider:
         return ProviderResult(self.name, resp.body, resp.fetched_at, resp.status, resp.latency_ms, data=data, budget=budget)
 
     async def fetch_region(self, lat: float, lon: float, radius_nm: int) -> ProviderResult:
-        lamin, lomin, lamax, lomax = bbox_around(lat, lon, radius_nm)
-        return await self._states({"lamin": lamin, "lomin": lomin, "lamax": lamax, "lomax": lomax})
+        raise NotImplementedError("opensky is global-only (region fallback disabled to protect the credit budget)")
 
     async def fetch_global(self) -> ProviderResult:
         return await self._states(None)
