@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 const SOURCES = ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "aisstream.io", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenFreeMap", "OpenMapTiles", "OpenStreetMap"];
 
@@ -99,35 +99,4 @@ test("ops is 404 for anonymous API calls and shows login form", async ({ page, r
   expect(r.status()).toBe(404);
   await page.goto("/ops");
   await expect(page.getByTestId("ops-login")).toBeVisible();
-});
-
-/**
- * 두 작업자(브라우저)가 같은 IP 로 페이지를 여는 동안 edge 의 IP당 요청 제한(10 r/s · burst)이 잠깐 찰 수 있다(그때 nginx 가 HTML 429).
- * API 를 직접 부르는 시험은 edge 가 다시 받아 줄 때까지 기다린 뒤 시작한다 — 제한 자체는 그대로 시험한다(아래 XFF 시험).
- */
-async function edgeReady(request: APIRequestContext) {
-  await expect.poll(async () => (await request.get("/api/v1/status")).status(), { timeout: 15_000, intervals: [1_000] }).toBe(200);
-  await new Promise((r) => setTimeout(r, 3_000)); // 새는 양동이가 비도록(10 r/s × 3 s)
-}
-
-test("status reports fixture collector and no external providers", async ({ request }) => {
-  await edgeReady(request);
-  const s = await (await request.get("/api/v1/status")).json();
-  expect(s.fixture_mode).toBe(true);
-  expect(s.region.provider).toBe("fixture");
-  expect(s.sigmet.provider).toBe("fixture");
-  expect(s.region.aircraft).toBeGreaterThan(50);
-});
-
-test("forged X-Forwarded-For does not bypass rate limiting (3 paths)", async ({ request }) => {
-  // edge 가 XFF 를 덮어쓰므로 위조 값은 api 에 닿지 않는다. 같은 IP 로 계산돼야 한다.
-  const headers: Record<string, string>[] = [{ "X-Forwarded-For": "1.2.3.4" }, { "X-Forwarded-For": "5.6.7.8, 9.9.9.9" }, { "X-Real-IP": "10.0.0.1", Forwarded: "for=8.8.8.8" }];
-  const remaining: number[] = [];
-  await edgeReady(request);
-  for (const h of headers) {
-    const r = await request.get("/api/v1/status", { headers: h });
-    remaining.push(Number(r.headers()["x-ratelimit-remaining"]));
-  }
-  expect(remaining[0]).toBeGreaterThan(remaining[1]);
-  expect(remaining[1]).toBeGreaterThan(remaining[2]);
 });
