@@ -1,0 +1,322 @@
+package dev.wakeline.ws;
+
+import dev.wakeline.domain.ShipState;
+import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.ingest.Receipt;
+import dev.wakeline.ingest.ShipStore;
+import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import static dev.wakeline.ws.WsTestKit.ac;
+import static dev.wakeline.ws.WsTestKit.ofType;
+import static dev.wakeline.ws.WsTestKit.types;
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * 선박 WS(계약 v2 §B3): 레이어, ships_snapshot/ships_diff 의 세션별 연속 sseq, 줌 &lt; 7 격자(칸 크기·재전송 억제·버전당 한 번 집계),
+ * 5,000 척 상한 → capped 격자, select_ship → ship_selected, resync·resume, 항공기 레이어 끄기.
+ */
+class ShipFanoutTest {
+    static final Instant T = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    /** 부산 부근 줌 7 뷰포트 */
+    static final String BUSAN = "{\"type\":\"subscribe\",\"bbox\":[128,34,130,36],\"zoom\":7}";
+
+    static ShipState pos(String mmsi, double lat, double lon, Instant seen) {
+        return new ShipState(mmsi, lat, lon, 12.0, 45.0, 44, 0, 3, "gnss", seen, "aisstream", "PositionReport", "A");
+    }
+
+    static ShipStatic stat(String mmsi, String name, Integer type) {
+        return new ShipStatic(mmsi, name, "D7AB", 9321483, type, 150, 30, 14, 16, 9.8, "KR PUS", 9, 29, 6, 30, T.minusSeconds(60), "aisstream");
+    }
+
+    /** ShipStore 에 반영하고 이벤트를 팬아웃에 넘긴다(timer 없음 — 바로 팬아웃). */
+    static ShipStore.Change publish(WsTestKit k, List<ShipState> st, List<ShipStatic> sc) {
+        ShipStore.Change c = k.ships.apply(st, sc, T, "aisstream", System.currentTimeMillis());
+        k.shipFanout.onShips(new IngestEvents.ShipsUpdated(T, "aisstream", st, sc, c.changed(), Set.of(), Receipt.NONE));
+        return c;
+    }
+
+    static FakeWsSession session(WsTestKit k, String id, String subscribe, boolean ships) throws Exception {
+        FakeWsSession f = k.connect(id, "10.0.0." + (Math.abs(id.hashCode()) % 200 + 1));
+        k.msg(f, "{\"type\":\"hello\",\"proto\":1}");
+        if (ships) k.msg(f, "{\"type\":\"layers\",\"aircraft\":true,\"ships\":true}");
+        k.msg(f, subscribe);
+        return f;
+    }
+
+    static List<Integer> sseqs(FakeWsSession f) {
+        List<Integer> out = new ArrayList<>();
+        for (String s : f.sent) {
+            JsonNode n = WsTestKit.parse(s);
+            String t = n.path("type").asString();
+            if (t.equals("ships_snapshot") || t.equals("ships_diff")) out.add(n.path("sseq").asInt());
+        }
+        return out;
+    }
+
+    @Test void layerOffByDefault_thenSnapshotWithSseq1_liteEncodingOmitsUnknowns() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T), pos("431000001", 35.5, 139.8, T)),
+                    List.of(stat("440000001", "HANJIN BUSAN", 70)));
+            FakeWsSession off = session(k, "off", BUSAN, false);
+            assertThat(types(off)).doesNotContain("ships_snapshot", "ships_diff", "ships_grid");
+            FakeWsSession on = session(k, "on", BUSAN, true);
+            List<JsonNode> snaps = ofType(on, "ships_snapshot");
+            assertThat(snaps).hasSize(1);
+            JsonNode sn = snaps.getFirst();
+            assertThat(sn.path("sseq").asInt()).isEqualTo(1);
+            assertThat(sn.path("ts").asString()).isNotBlank();
+            assertThat(sn.path("ships").size()).as("only ships in the viewport").isEqualTo(2);
+            JsonNode named = null, bare = null;
+            for (JsonNode s : sn.path("ships")) if (s.path("mmsi").asString().equals("440000001")) named = s; else bare = s;
+            assertThat(named.path("name").asString()).isEqualTo("HANJIN BUSAN");
+            assertThat(named.path("ship_type").asInt()).isEqualTo(70);
+            assertThat(named.path("heading_deg").asInt()).isEqualTo(44);
+            assertThat(named.path("position_source").asString()).isEqualTo("gnss");
+            assertThat(named.has("rot")).as("ShipLite has no rot").isFalse();
+            assertThat(bare.has("name")).as("no static → no name key (unknown, not empty)").isFalse();
+            assertThat(bare.has("ship_type")).isFalse();
+            // 레이어를 켠 세션만 선박을 받는다 — 다음 변경에서도
+            off.clear();
+            publish(k, List.of(pos("440000001", 35.15, 129.1, T.plusSeconds(10))), List.of());
+            assertThat(types(off)).doesNotContain("ships_diff");
+        }
+    }
+
+    @Test void diffs_areContiguous_noEmptyDiffs_removalsOnExpiryAndLeavingTheViewport() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of());
+            FakeWsSession f = session(k, "s", BUSAN, true);
+            publish(k, List.of(pos("440000001", 35.12, 129.1, T.plusSeconds(10))), List.of());                 // 이동 → diff 2
+            publish(k, List.of(pos("440000001", 35.12, 129.1, T.plusSeconds(20))), List.of());                 // 표시 값 같음, seen +10 s → 없음
+            publish(k, List.of(pos("440000001", 35.12, 129.1, T.plusSeconds(75))), List.of());                 // seen +65 s → diff 3(나이 갱신)
+            publish(k, List.of(pos("440000002", 37.5, 129.2, T.plusSeconds(80))), List.of());                  // 뷰포트 밖으로 → remove
+            publish(k, List.of(), List.of(stat("440000001", "NAMED LATER", 80)));                              // 정적 정보가 붙음 → diff 5
+            assertThat(sseqs(f)).containsExactly(1, 2, 3, 4, 5);
+            List<JsonNode> diffs = ofType(f, "ships_diff");
+            assertThat(diffs.get(0).path("upsert").get(0).path("lat").asDouble()).isEqualTo(35.12);
+            assertThat(diffs.get(2).path("remove")).extracting(JsonNode::asString).containsExactly("440000002");
+            assertThat(diffs.get(3).path("upsert").get(0).path("name").asString()).isEqualTo("NAMED LATER");
+            // 만료(실시간 목록에서 빠짐) → remove
+            ShipStore.Change c = k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
+            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            assertThat(sseqs(f)).containsExactly(1, 2, 3, 4, 5, 6);
+            assertThat(ofType(f, "ships_diff").getLast().path("remove")).extracting(JsonNode::asString).containsExactly("440000001");
+        }
+    }
+
+    @Test void resync_andPeriodicSnapshot_restartSseqAt1() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T)), List.of());
+            FakeWsSession f = session(k, "s", BUSAN, true);
+            publish(k, List.of(pos("440000001", 35.2, 129.1, T.plusSeconds(10))), List.of());
+            k.msg(f, "{\"type\":\"resync\"}"); // 웹은 sseq 틈에도 resync 를 보낸다 → 선박 스냅샷도
+            assertThat(sseqs(f)).containsExactly(1, 2, 1);
+            assertThat(ofType(f, "snapshot")).as("aircraft snapshot too").hasSize(2);
+            k.shipClock.addAndGet(ShipFanout.RESYNC_MS + 1);
+            publish(k, List.of(pos("440000001", 35.3, 129.1, T.plusSeconds(20))), List.of());
+            assertThat(sseqs(f)).containsExactly(1, 2, 1, 1);
+        }
+    }
+
+    @Test void grid_cellSizeByZoom_notResentWithoutChange_builtOncePerVersion() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T), pos("431000001", 35.5, 139.8, T)),
+                    List.of(stat("440000001", "A", 70), stat("440000002", "B", 71)));
+            FakeWsSession z2 = session(k, "z2", "{\"type\":\"subscribe\",\"bbox\":[-180,-90,180,90],\"zoom\":2}", true);
+            FakeWsSession z4 = session(k, "z4", "{\"type\":\"subscribe\",\"bbox\":[100,0,160,60],\"zoom\":4}", true);
+            FakeWsSession z6 = session(k, "z6", "{\"type\":\"subscribe\",\"bbox\":[125,30,135,40],\"zoom\":6}", true);
+            JsonNode g2 = ofType(z2, "ships_grid").getFirst();
+            assertThat(g2.path("cell_deg").asDouble()).isEqualTo(5.0);
+            assertThat(g2.has("capped")).isFalse();
+            int total = 0;
+            for (JsonNode c : g2.path("cells")) total += c.get(2).asInt();
+            assertThat(total).isEqualTo(3);
+            assertThat(ofType(z4, "ships_grid").getFirst().path("cell_deg").asDouble()).isEqualTo(2.0);
+            JsonNode g6 = ofType(z6, "ships_grid").getFirst();
+            assertThat(g6.path("cell_deg").asDouble()).isEqualTo(0.5);
+            assertThat(g6.path("cells").size()).as("bbox filter: the Tokyo ship is outside").isEqualTo(1);
+            assertThat(g6.path("cells").get(0).get(3).asString()).isEqualTo("cargo");
+            assertThat(k.meters.find("wakeline_ship_grid_build_seconds").timer().count()).as("one aggregation for all sessions").isEqualTo(1);
+
+            // 버전이 그대로면 다시 보내지 않는다(같은 보고 재전달)
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T)), List.of());
+            assertThat(ofType(z6, "ships_grid")).hasSize(1);
+            // 새 버전 → 다시(집계도 한 번 더)
+            publish(k, List.of(pos("440000001", 35.3, 129.1, T.plusSeconds(10))), List.of());
+            assertThat(ofType(z6, "ships_grid")).hasSize(2);
+            assertThat(ofType(z2, "ships_grid")).hasSize(2);
+            assertThat(k.meters.find("wakeline_ship_grid_build_seconds").timer().count()).isEqualTo(2);
+            assertThat(types(z6)).doesNotContain("ships_snapshot");
+            // 줌 7 로 들어오면 개별 선박(스냅샷 sseq 1)
+            k.msg(z6, BUSAN);
+            assertThat(ofType(z6, "ships_snapshot").getFirst().path("sseq").asInt()).isEqualTo(1);
+        }
+    }
+
+    @Test void moreThan5000ShipsInTheViewport_sendsACappedGridInstead() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            List<ShipState> many = new ArrayList<>();
+            for (int i = 0; i <= ShipFanout.MAX_SHIPS_PER_MESSAGE; i++)
+                many.add(pos(String.format("%09d", 300_000_000 + i), 34.001 + (i % 100) * 0.019, 128.001 + (i / 100) * 0.03, T));
+            publish(k, many, List.of());
+            FakeWsSession f = session(k, "dense", BUSAN, true);
+            assertThat(types(f)).doesNotContain("ships_snapshot");
+            JsonNode g = ofType(f, "ships_grid").getFirst();
+            assertThat(g.path("capped").asBoolean()).isTrue();
+            assertThat(g.path("cell_deg").asDouble()).isEqualTo(0.5);
+            assertThat(k.meters.find("wakeline_ws_ship_capped_total").counter().count()).isEqualTo(1);
+            // 5,000 척 이하로 줄면(만료) 개별 선박으로 돌아온다
+            k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T.plusSeconds(10))), List.of());
+            JsonNode sn = ofType(f, "ships_snapshot").getFirst();
+            assertThat(sn.path("sseq").asInt()).isEqualTo(1);
+            assertThat(sn.path("ships").size()).isEqualTo(1);
+        }
+    }
+
+    @Test void selectShip_immediateThenOnEachChange_stateNullWhenNotLive() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of(stat("440000001", "HANJIN BUSAN", 70)));
+            FakeWsSession f = session(k, "s", BUSAN, true);
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"44000001\"}");
+            assertThat(ofType(f, "error").getLast().path("code").asString()).isEqualTo("BAD_MMSI");
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":440000001}");
+            assertThat(ofType(f, "error").getLast().path("code").asString()).as("numbers are not accepted").isEqualTo("BAD_MMSI");
+
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            JsonNode s1 = ofType(f, "ship_selected").getLast();
+            assertThat(s1.path("mmsi").asString()).isEqualTo("440000001");
+            assertThat(s1.path("state").path("rot").asInt()).isEqualTo(3);
+            assertThat(s1.path("state").path("class").asString()).isEqualTo("A");
+            assertThat(s1.path("state").path("msg_type").asString()).isEqualTo("PositionReport");
+            assertThat(s1.path("static").path("name").asString()).isEqualTo("HANJIN BUSAN");
+            assertThat(s1.path("static").path("eta_minute").asInt()).isEqualTo(30);
+            assertThat(s1.path("static").path("updated_at").asString()).isNotBlank();
+
+            publish(k, List.of(pos("440000002", 35.3, 129.2, T.plusSeconds(10))), List.of());   // 다른 선박 → 없음
+            assertThat(ofType(f, "ship_selected")).hasSize(1);
+            publish(k, List.of(pos("440000001", 35.3, 129.1, T.plusSeconds(10))), List.of());   // 선택 선박 → 있음
+            assertThat(ofType(f, "ship_selected")).hasSize(2);
+            assertThat(ofType(f, "ship_selected").getLast().path("state").path("lat").asDouble()).isEqualTo(35.3);
+
+            // 실시간 목록에서 빠짐 → state null(키는 남는다), static 은 알고 있는 동안
+            ShipStore.Change c = k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
+            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            JsonNode gone = ofType(f, "ship_selected").getLast();
+            assertThat(gone.has("state")).isTrue();
+            assertThat(gone.get("state").isNull()).isTrue();
+
+            // 정적 정보만 아는 선박 · 전혀 모르는 선박
+            k.ships.apply(List.of(), List.of(stat("477000009", "ONLY STATIC", 30)), T, "aisstream", System.currentTimeMillis());
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"477000009\"}");
+            JsonNode onlyStatic = ofType(f, "ship_selected").getLast();
+            assertThat(onlyStatic.get("state").isNull()).isTrue();
+            assertThat(onlyStatic.path("static").path("name").asString()).isEqualTo("ONLY STATIC");
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"123456789\"}");
+            JsonNode unknown = ofType(f, "ship_selected").getLast();
+            assertThat(unknown.get("state").isNull()).isTrue();
+            assertThat(unknown.get("static").isNull()).isTrue();
+
+            // 선택 해제: 응답 없음, 이후 변경에도 없음
+            int n = ofType(f, "ship_selected").size();
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":null}");
+            publish(k, List.of(pos("123456789", 35.3, 129.1, T.plusSeconds(20))), List.of());
+            assertThat(ofType(f, "ship_selected")).hasSize(n);
+        }
+    }
+
+    @Test void layersToggle_andPauseResume() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T)), List.of());
+            FakeWsSession f = session(k, "s", BUSAN, true);
+            k.msg(f, "{\"type\":\"layers\",\"ships\":\"yes\"}");
+            assertThat(ofType(f, "error").getLast().path("code").asString()).isEqualTo("BAD_LAYERS");
+            k.msg(f, "{\"type\":\"layers\",\"ships\":false}");
+            publish(k, List.of(pos("440000001", 35.2, 129.1, T.plusSeconds(10))), List.of());
+            assertThat(sseqs(f)).containsExactly(1);
+            k.msg(f, "{\"type\":\"layers\",\"ships\":true}");
+            assertThat(sseqs(f)).containsExactly(1, 1);
+            // 일시정지 중에는 보내지 않고, resume 의 초기 세트가 선박 스냅샷을 다시 보낸다
+            k.msg(f, "{\"type\":\"pause\"}");
+            publish(k, List.of(pos("440000001", 35.3, 129.1, T.plusSeconds(20))), List.of());
+            assertThat(sseqs(f)).containsExactly(1, 1);
+            k.msg(f, "{\"type\":\"resume\"}");
+            assertThat(sseqs(f)).containsExactly(1, 1, 1);
+            assertThat(ofType(f, "ships_snapshot").getLast().path("ships").get(0).path("lat").asDouble()).isEqualTo(35.3);
+        }
+    }
+
+    @Test void aircraftLayerOff_stopsAircraftSnapshotsAndDiffs_onAgainStartsAtSeq1() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant now = Instant.now();
+            k.publish("region", now, ac("aaa001", 35, 129, 30000, now, "adsb_lol"));
+            FakeWsSession f = k.connect("s", "10.9.9.9");
+            k.msg(f, "{\"type\":\"hello\",\"proto\":1}");
+            k.msg(f, "{\"type\":\"layers\",\"aircraft\":false,\"ships\":true}");
+            k.msg(f, BUSAN);
+            assertThat(types(f)).doesNotContain("snapshot").contains("alerts", "sigmets", "status", "ships_snapshot");
+            k.publish("region", now.plusSeconds(10), ac("aaa001", 35.2, 129, 30000, now.plusSeconds(10), "adsb_lol"));
+            assertThat(types(f)).doesNotContain("snapshot", "diff");
+            k.msg(f, "{\"type\":\"layers\",\"aircraft\":true}");
+            List<JsonNode> snaps = ofType(f, "snapshot");
+            assertThat(snaps).hasSize(1);
+            assertThat(snaps.getFirst().path("seq").asInt()).isEqualTo(1);
+            k.publish("region", now.plusSeconds(20), ac("aaa001", 35.4, 129, 30000, now.plusSeconds(20), "adsb_lol"));
+            assertThat(ofType(f, "diff").getFirst().path("seq").asInt()).isEqualTo(2);
+            // 선택 항공기는 레이어와 무관하게 계속 받는다(명시적 선택)
+            k.msg(f, "{\"type\":\"layers\",\"aircraft\":false}");
+            k.msg(f, "{\"type\":\"select\",\"hex\":\"aaa001\"}");
+            k.publish("region", now.plusSeconds(30), ac("aaa001", 35.6, 129, 30000, now.plusSeconds(30), "adsb_lol"));
+            assertThat(ofType(f, "selected").getLast().path("state").path("lat").asDouble()).isEqualTo(35.6);
+            assertThat(ofType(f, "diff")).hasSize(1);
+        }
+    }
+
+    /** 이벤트가 몰려도(분할 발행·만료) 팬아웃은 10 s 에 한 번 — 실행기를 흉내 내 지연 값을 본다. */
+    @Test void fanoutIsThrottledToOncePerTenSeconds() throws Exception {
+        final class Recording extends ScheduledThreadPoolExecutor {
+            final List<Long> delays = new ArrayList<>();
+            Recording() { super(1); }
+            @Override public ScheduledFuture<?> schedule(Runnable r, long delay, TimeUnit unit) {
+                delays.add(unit.toMillis(delay));
+                r.run();
+                return null;
+            }
+        }
+        try (WsTestKit k = new WsTestKit()) {
+            Recording timer = new Recording();
+            ShipFanout throttled = new ShipFanout(k.hub, k.ships, k.meters, timer, k.shipClock::get);
+            throttled.requestFanout();
+            k.shipClock.addAndGet(3_000);
+            throttled.requestFanout();
+            assertThat(timer.delays).containsExactly(0L, ShipFanout.MIN_INTERVAL_MS - 3_000);
+            throttled.stop();
+            throttled.requestFanout();
+            assertThat(timer.delays).hasSize(2);
+            assertThat(throttled.isRunning()).isFalse();
+            assertThat(throttled.getPhase()).isLessThan(Integer.MAX_VALUE - 100); // WS 허브보다 늦게 멈춘다
+        }
+    }
+
+    @Test void changedRules() {
+        ShipStore.Ship a = new ShipStore.Ship(pos("440000001", 35, 129, T), null);
+        assertThat(ShipFanout.changed(null, a)).isTrue();
+        assertThat(ShipFanout.changed(a, a)).isFalse();
+        assertThat(ShipFanout.changed(a, new ShipStore.Ship(pos("440000001", 35.00005, 129, T.plusSeconds(10)), null))).as("GNSS jitter").isFalse();
+        assertThat(ShipFanout.changed(a, new ShipStore.Ship(pos("440000001", 35.001, 129, T.plusSeconds(10)), null))).isTrue();
+        ShipState noSpeed = new ShipState("440000001", 35, 129, null, 45.0, 44, 0, 3, "gnss", T.plusSeconds(5), "aisstream", "PositionReport", "A");
+        assertThat(ShipFanout.changed(a, new ShipStore.Ship(noSpeed, null))).as("speed became unknown").isTrue();
+        ShipState manual = new ShipState("440000001", 35, 129, 12.0, 45.0, 44, 0, 3, "manual", T.plusSeconds(5), "aisstream", "PositionReport", "A");
+        assertThat(ShipFanout.changed(a, new ShipStore.Ship(manual, null))).isTrue();
+    }
+}

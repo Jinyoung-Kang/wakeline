@@ -1,9 +1,9 @@
 "use client";
 import type { Alert } from "@/lib/types";
 import { band, fmtAlt, fmtEta, fmtNum, fmtTime, hazardColor } from "@/lib/format";
-import { closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
-import { serverNowMs, useServerData } from "@/lib/store";
-import { useNow } from "@/lib/clock";
+import { alertListState, closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
+import { useServerData } from "@/lib/store";
+import { useServerNow } from "@/lib/clock";
 
 const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : null);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -11,10 +11,11 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
 /**
  * 근거 카드(11.3절): 어느 경보·고도대·항공기 고도·유효시간·판정 시각·관측/추정·예측이면 ETA·방법.
  * 근거에 없는 값은 "—"(기본값으로 채우지 않는다). 판정에 쓴 가정(하한 SFC·상한 무제한·수직속도 0)은 가정이라고 밝힌다.
- * 예측 ETA 는 eta_at 에서 1 s 마다 카운트다운한다(추정).
+ * 예측 ETA 는 eta_at 에서 1 s 마다 카운트다운한다(추정). 알림 목록이 갱신되지 않는 동안(끊김·수신 대기·일시정지)은 "—"(DH-9).
  */
 export function EvidenceCard({ a }: { a: Alert }) {
-  const now = useNow(1000);
+  const now = useServerNow(1000);
+  const live = useServerData((d) => alertListState(d.conn, d.alertsVersion) === "live");
   const ev = (a.evidence ?? {}) as Record<string, unknown>;
   const sigmet = useServerData((d) => d.sigmets?.features.find((f) => f.properties.id === a.sigmet_id)?.properties ?? null);
   const bandFt = evidenceBand(ev);
@@ -22,7 +23,7 @@ export function EvidenceCard({ a }: { a: Alert }) {
   const confirmations = num(ev.confirmations);
   const distance = num(ev.distance_nm);
   const posAge = num(ev.position_age_s);
-  const eta = now ? etaRemainingS(a, serverNowMs(now)) : a.eta_s ?? null;
+  const eta = !live ? null : now ? etaRemainingS(a, now) : a.eta_s ?? null;
   const rows: [string, React.ReactNode][] = [
     ["경보", `${a.fir_id} · ${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`],
     ["SIGMET id", <span key="id" className="mono text-fg-2">{a.sigmet_id}</span>],

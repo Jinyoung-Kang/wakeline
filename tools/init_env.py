@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE, ENV = ROOT / ".env.example", ROOT / ".env"
-# 외부 키(OPENSKY_*, KMA_APIHUB_KEY)는 사람이 넣는다 — 여기서 만들지 않는다.
+# 외부 키(OPENSKY_*, KMA_APIHUB_KEY, aisstream_key)는 사람이 넣는다 — 여기서 만들지 않는다.
 INTERNAL = [
     "DB_ROOT_PASSWORD",
     "DB_MIGRATOR_PASSWORD",
@@ -26,7 +26,16 @@ INTERNAL = [
     "REDIS_PASSWORD",            # Redis default(관리) 사용자 — 헬스체크·운영 전용
     "REDIS_API_PASSWORD",        # Redis ACL 사용자 wakeline_api (계약 §6)
     "REDIS_COLLECTOR_PASSWORD",  # Redis ACL 사용자 wakeline_collector (계약 §6)
+    "REDIS_AIS_PASSWORD",        # Redis ACL 사용자 wakeline_ais (계약 v2 §C — 선박 수신 컨테이너)
 ]
+# 선택 외부 키 → 없을 때 꺼지는 기능. 값은 읽지도 출력하지도 않고 '비어 있는지'만 본다.
+# aisstream_key 는 사용자가 .env 에 저장한 이름 그대로(소문자)다 — compose 가 ais 컨테이너의 AISSTREAM_API_KEY 로 넘긴다.
+OPTIONAL_EXTERNAL = {
+    "OPENSKY_CLIENT_ID": "global view",
+    "OPENSKY_CLIENT_SECRET": "global view",
+    "KMA_APIHUB_KEY": "KMA radar",
+    "aisstream_key": "ships layer",
+}
 OWNER_ONLY = 0o600
 
 
@@ -75,9 +84,10 @@ def ensure_env(env: Path = ENV, example: Path = EXAMPLE, out=sys.stdout) -> list
         print(f"generated internal secrets: {', '.join(generated)}", file=out)
     if was_open and not created:
         print(f"{env.name}: permissions tightened to 600 (was readable by group/others)", file=out)
-    missing = [k for k in ("OPENSKY_CLIENT_ID", "OPENSKY_CLIENT_SECRET") if not re.search(rf"^{k}=.+$", text, re.M)]
+    missing = [k for k in OPTIONAL_EXTERNAL if not re.search(rf"^{re.escape(k)}=\S", text, re.M)]
     if missing:
-        print("optional external keys not set (global view stays off):", ", ".join(missing), file=out)
+        off = sorted({OPTIONAL_EXTERNAL[k] for k in missing})
+        print(f"optional external keys not set ({', '.join(off)} stays off):", ", ".join(missing), file=out)
     print(f"{env.name} ready", file=out)
     return generated
 

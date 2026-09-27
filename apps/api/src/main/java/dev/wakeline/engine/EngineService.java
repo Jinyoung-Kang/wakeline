@@ -6,6 +6,7 @@ import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.SnapshotStore;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
@@ -31,6 +32,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * 스냅샷마다(10 s) 교차·예측 판정 → 알림 FSM → 이벤트. SIGMET 갱신 시(5분) STRtree 재구축 + 전체 재판정.
  * 엔진 실행은 하나의 락으로 직렬화한다(스냅샷·SIGMET 이벤트가 겹쳐도 FSM 은 단일 스레드).
  * 판정 대상은 SnapshotStore 병합 뷰(600 s 넘은 global 기체 제외)이고, 관측·예측에는 '현재' 위치(opensky 300 s · 그 외 60 s)만 쓴다.
+ * <ul>
+ *   <li>한 주기의 예외(예: 잘못된 폴리곤의 JTS TopologyException)는 여기서 가둔다(API-CONC-2): 기록·wakeline_engine_errors_total 로 세고
+ *       FSM 은 이전 상태를 유지한다. 예외가 이벤트 발행자(스트림 소비)로 새면 유효한 메시지가 DLQ 로 가고 뒤의 리스너(항적·WS)가 건너뛰어졌다.</li>
+ *   <li>FSM 은 인덱스를 만든 바로 그 SIGMET 세트를 받아, 만료·철회된 경보의 알림을 SIGMET_ENDED 로 닫는다. 유효시간 만료 점검(30 s)도
+ *       인덱스를 다시 만든 뒤 한 주기를 돌린다 — 모든 피드가 멈춰도 만료된 경보의 알림이 열린 채 남지 않는다.</li>
+ * </ul>
  */
 @Service
 public class EngineService {
@@ -39,16 +46,25 @@ public class EngineService {
     /** 스코프 피드가 끊겼다고 보는 기준(StatusService 의 stale 과 같은 값): region 60 s · global 300 s. */
     static final int REGION_FEED_STALE_S = 60;
     static final int GLOBAL_FEED_STALE_S = 300;
+    /** 수요 스코프 피드 끊김 기준: focus(5 s 주기) 30 s · hot(30~120 s 주기, 셀 수명 90 s) 90 s — 그 뒤로는 다른 스코프의 메시지로 부재를 센다. */
+    static final int FOCUS_FEED_STALE_S = 30;
+    static final int HOT_FEED_STALE_S = (int) SnapshotStore.HOT_TTL_S;
 
     private final SnapshotStore snapshots;
     private final SigmetStore sigmets;
     private final ApplicationEventPublisher events;
-    private final AtomicReference<SigmetIndex> index = new AtomicReference<>(new SigmetIndex(List.of(), Instant.now()));
+    /** 인덱스와 그것을 만든 세트(한 벌로 바꾼다 — 판정과 종료 판단이 같은 세트를 본다). */
+    record IndexState(SigmetIndex index, AlertStateMachine.SigmetSet set) {}
+    private final AtomicReference<IndexState> index = new AtomicReference<>(
+            new IndexState(new SigmetIndex(List.of(), Instant.now()), AlertStateMachine.SigmetSet.of(Map.of(), Instant.EPOCH)));
     /** 재시작해도 겹치지 않는 시간 기반 id(REL-1/COR-2). */
     private final AlertIds alertIds = new AlertIds(System::currentTimeMillis);
     private final AlertStateMachine fsm = new AlertStateMachine(alertIds::next);
     private final Map<String, Deque<Double>> trackHistory = new HashMap<>();
     private final Timer cycleTimer;
+    private final Counter cycleErrors;
+    /** 같은 오류가 주기마다(10 s) 반복될 때 스택을 1분에 한 번만 남긴다. */
+    private volatile long lastErrorLogMs;
     private final Object lock = new Object();
     private volatile long lastCycleMs;
     private volatile int activeCount;
@@ -62,7 +78,8 @@ public class EngineService {
         this.sigmets = sigmets;
         this.events = events;
         this.cycleTimer = Timer.builder("wakeline_engine_cycle_seconds").publishPercentiles(0.5, 0.95).register(meters);
-        meters.gauge("wakeline_engine_index_size", index, i -> i.get().size());
+        this.cycleErrors = Counter.builder("wakeline_engine_errors_total").description("예외로 건너뛴 판정 주기(FSM 은 이전 상태 유지)").register(meters);
+        meters.gauge("wakeline_engine_index_size", index, i -> i.get().index().size());
         // FSM 은 엔진 스레드 전용 — 스크레이프 스레드는 마지막 주기에 기록한 값만 읽는다
         meters.gauge("wakeline_alerts_active", this, s -> s.activeCount);
     }
@@ -71,11 +88,22 @@ public class EngineService {
     public void onSigmets(IngestEvents.SigmetsUpdated e) {
         Instant now = Instant.now();
         synchronized (lock) {
-            index.set(new SigmetIndex(e.state().byId().values(), now));
+            index.set(build(e.state(), now));
             activeSigmetIds = activeIds(e.state().byId().values(), now);
         }
-        log.info("sigmet index rebuilt: {} polygons from {} sigmets", index.get().size(), e.state().byId().size());
+        log.info("sigmet index rebuilt: {} polygons from {} sigmets", indexSize(), e.state().byId().size());
         run(now);
+    }
+
+    /** 인덱스(만료 제외)와 세트. 인덱스 구축 실패(잘못된 폴리곤)는 호출자에게 올리지 않는다 — 이전 인덱스를 유지하고 센다. */
+    private IndexState build(SigmetStore.State st, Instant now) {
+        try {
+            return new IndexState(new SigmetIndex(st.byId().values(), now), AlertStateMachine.SigmetSet.of(st.byId(), st.fetchedAt()));
+        } catch (RuntimeException ex) {
+            cycleErrors.increment();
+            log.error("sigmet index build failed — keeping the previous index: {}", ex.toString(), ex);
+            return index.get();
+        }
     }
 
     @EventListener
@@ -99,12 +127,13 @@ public class EngineService {
             expired = new HashSet<>(activeSigmetIds);
             expired.removeAll(active);
             activeSigmetIds = active;
-            index.set(new SigmetIndex(st.byId().values(), now));
+            index.set(build(st, now));
             if (expired.isEmpty()) return; // 새로 생긴 것은 SigmetsUpdated 가 이미 알렸다
             published = sigmets.republish();
         }
         log.info("sigmet expiry: {} expired, {} active — index rebuilt, sigmets v{}", expired.size(), activeSigmetIds.size(), published.version());
         events.publishEvent(new IngestEvents.SigmetsExpired(published, Set.copyOf(expired)));
+        run(now); // 만료된 경보의 알림을 지금 닫는다(SIGMET_ENDED) — 새 스냅샷이 없어도(피드 장애 중)
     }
 
     static Set<String> activeIds(Collection<SigmetRecord> all, Instant now) {
@@ -116,25 +145,61 @@ public class EngineService {
     private void run(Instant now) {
         synchronized (lock) {
             long t0 = System.nanoTime();
-            SnapshotStore.View view = snapshots.view(now);
-            Map<String, AircraftState> all = view.states();
-            SigmetIndex idx = index.get();
-            Set<String> turning = updateTurning(all.values(), now);
-            lastTurning = Set.copyOf(turning);
-            var hits = IntersectionEngine.observe(all.values(), idx, now);
-            var predictions = IntersectionEngine.predict(all.values(), idx, now, fsm.confirmedByHex(), turning);
-            var cycle = new AlertStateMachine.Cycle(view.region().version(), view.global().version(),
-                    view.region().stale(now, REGION_FEED_STALE_S), view.global().stale(now, GLOBAL_FEED_STALE_S),
-                    view.region().states().keySet());
-            List<AlertStateMachine.Event> evs = fsm.step(hits, predictions, all, now, cycle);
+            List<AlertStateMachine.Event> evs;
+            int n, inside, predicted;
+            try {
+                SnapshotStore.View view = snapshots.view(now);
+                Map<String, AircraftState> all = view.states();
+                IndexState is = index.get();
+                Set<String> turning = updateTurning(all.values(), now);
+                lastTurning = Set.copyOf(turning);
+                var hits = IntersectionEngine.observe(all.values(), is.index(), now);
+                var predictions = IntersectionEngine.predict(all.values(), is.index(), now, fsm.confirmedByHex(), turning);
+                var cycle = new AlertStateMachine.Cycle(view.region().version(), view.global().version(),
+                        view.region().stale(now, REGION_FEED_STALE_S), view.global().stale(now, GLOBAL_FEED_STALE_S),
+                        view.region().states().keySet(), is.set(), new ViewScopes(view, now));
+                evs = fsm.step(hits, predictions, all, now, cycle);
+                n = all.size();
+                inside = hits.size();
+                predicted = predictions.size();
+            } catch (RuntimeException ex) {
+                cycleErrors.increment();
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastErrorLogMs > 60_000) {
+                    lastErrorLogMs = nowMs;
+                    log.error("engine cycle failed — skipped, alert state kept: {}", ex.toString(), ex);
+                } else {
+                    log.warn("engine cycle failed — skipped: {}", ex.toString());
+                }
+                return;
+            }
             activeCount = fsm.activeCount();
             lastCycleMs = (System.nanoTime() - t0) / 1_000_000;
             cycleTimer.record(Duration.ofNanos(System.nanoTime() - t0));
             if (!evs.isEmpty()) {
-                log.info("engine: {} aircraft, {} inside, {} predicted, {} events ({} ms)", all.size(), hits.size(), predictions.size(), evs.size(), lastCycleMs);
+                log.info("engine: {} aircraft, {} inside, {} predicted, {} events ({} ms)", n, inside, predicted, evs.size(), lastCycleMs);
                 events.publishEvent(new EngineEvents.AlertsChanged(evs));
             }
         }
+    }
+
+    /** 병합 뷰 → FSM 스코프 정보(신선도 우선 병합이라 '어느 스코프의 관측인가' 는 뷰가 안다, DH-2). */
+    record ViewScopes(SnapshotStore.View view, Instant now) implements AlertStateMachine.Scopes {
+        @Override public String scopeOf(String hex) { return view.scopeOf(hex); }
+        @Override public String sourceOf(String hex) { return view.sourceOf(hex); }
+        @Override public long version(String scope) { return view.scopeVersion(scope); }
+        @Override public boolean feedStale(String scope) {
+            Instant at = view.scopeFetchedAt(scope);
+            if (at == null || Instant.EPOCH.equals(at)) return true;
+            long thresholdS = switch (scope) {
+                case SnapshotStore.REGION -> REGION_FEED_STALE_S;
+                case SnapshotStore.GLOBAL -> GLOBAL_FEED_STALE_S;
+                case SnapshotStore.FOCUS -> FOCUS_FEED_STALE_S;
+                default -> HOT_FEED_STALE_S;
+            };
+            return now.toEpochMilli() - at.toEpochMilli() > thresholdS * 1000L;
+        }
+        @Override public boolean covering(String source, String hex) { return view.covering(source, hex, now.toEpochMilli()); }
     }
 
     /** 최근 3회 관측의 트랙 변화가 15° 를 넘으면 선회 중으로 보고 예측을 보류한다. 오래된 위치는 이력에 넣지 않는다. */
@@ -194,5 +259,5 @@ public class EngineService {
     }
 
     public long lastCycleMs() { return lastCycleMs; }
-    public int indexSize() { return index.get().size(); }
+    public int indexSize() { return index.get().index().size(); }
 }

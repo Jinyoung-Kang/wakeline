@@ -5,40 +5,148 @@
   "description": "구조화된 SIGMET 1건. geometry 가 null 이면 판정에서 제외(excluded_reason 에 사유: no_coordinates, line_or_point_geometry, invalid_polygon, area_too_large, too_many_points, too_many_rings). 링은 자르지 않는다.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "fir_id", "series_id", "hazard", "base_ft", "top_ft", "valid_from", "valid_to", "geometry", "raw_text", "provider", "fetched_at"],
+  "required": [
+    "id",
+    "fir_id",
+    "series_id",
+    "hazard",
+    "base_ft",
+    "top_ft",
+    "valid_from",
+    "valid_to",
+    "geometry",
+    "raw_text",
+    "provider",
+    "fetched_at"
+  ],
   "properties": {
-    "id": { "type": "string", "description": "fir_id:series_id:valid_from(unix) 자연키" },
-    "fir_id": { "type": "string" },
-    "fir_name": { "type": ["string", "null"] },
-    "issuer": { "type": ["string", "null"] },
-    "series_id": { "type": "string" },
-    "hazard": { "type": "string" },
-    "qualifier": { "type": ["string", "null"] },
-    "base_ft": { "type": "integer", "minimum": 0, "description": "ft. 발표값이 없으면 0 이고 base_source 가 assumed_surface" },
-    "base_source": { "enum": ["json", "assumed_surface"], "description": "json = 발표값, assumed_surface = 하한 미발표(판정은 SFC 가정)" },
-    "top_ft": { "type": ["integer", "null"], "description": "ft. null + top_source unknown = 상한 미발표" },
-    "top_source": { "enum": ["json", "raw_text", "unknown"], "description": "json = 발표값, raw_text = 원문 TOP FLnnn / TOP ABV FLnnn(ABV 는 상한의 하한), unknown = 미발표(판정은 무제한 가정)" },
-    "valid_from": { "type": "string", "format": "date-time" },
-    "valid_to": { "type": "string", "format": "date-time" },
+    "id": {
+      "type": "string",
+      "description": "fir_id:series_id:valid_from(unix) 자연키"
+    },
+    "fir_id": {
+      "type": "string"
+    },
+    "fir_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "issuer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "series_id": {
+      "type": "string"
+    },
+    "hazard": {
+      "type": "string"
+    },
+    "qualifier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "base_ft": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "ft. 발표값이 없으면 0 이고 base_source 가 assumed_surface"
+    },
+    "base_source": {
+      "enum": [
+        "json",
+        "assumed_surface"
+      ],
+      "description": "json = 발표값, assumed_surface = 하한 미발표(판정은 SFC 가정)"
+    },
+    "top_ft": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "ft. null + top_source unknown = 상한 미발표"
+    },
+    "top_source": {
+      "enum": [
+        "json",
+        "raw_text",
+        "raw_text_lower_bound",
+        "unknown"
+      ],
+      "description": "json = 발표값, raw_text = 원문 TOP FLnnn, raw_text_lower_bound = 원문 TOP ABV FLnnn(상한이 그 값 이상 — 판정은 위쪽 무제한 가정), unknown = 미발표(판정은 무제한 가정)"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_to": {
+      "type": "string",
+      "format": "date-time"
+    },
     "geometry": {
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "object",
-          "required": ["type", "coordinates"],
+          "required": [
+            "type",
+            "coordinates"
+          ],
           "properties": {
-            "type": { "const": "MultiPolygon" },
-            "coordinates": { "type": "array" }
+            "type": {
+              "const": "MultiPolygon"
+            },
+            "coordinates": {
+              "type": "array"
+            }
           }
         }
       ]
     },
-    "excluded_reason": { "type": ["string", "null"] },
-    "move_dir": { "type": ["string", "null"] },
-    "move_spd": { "type": ["string", "null"] },
-    "chng": { "type": ["string", "null"] },
-    "raw_text": { "type": "string" },
-    "provider": { "type": "string", "enum": ["awc_isigmet", "awc_airsigmet", "fixture"] },
-    "fetched_at": { "type": "string", "format": "date-time" }
+    "excluded_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "move_dir": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "move_spd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "chng": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raw_text": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string",
+      "enum": [
+        "awc_isigmet",
+        "awc_airsigmet",
+        "fixture"
+      ]
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    }
   }
 }

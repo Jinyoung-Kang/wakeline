@@ -24,17 +24,20 @@ import java.util.regex.Pattern;
  * /ws/v1 핸들러(계약서 §1). 클라이언트 메시지 ≤ 4 KB · 세션당 10 s 에 20 개(넘으면 1008 "rate limit") · hello 5 s(세션 타이머)
  * · 연결 상한(전체·IP별)을 원자적으로 예약 · 연결당 구독 1개 · bbox 면적 상한(전세계 뷰는 줌 ≤ 5 만).
  * 수신 스레드는 상태만 바꾸고 전송은 모두 세션 우편함(WsHub)에 맡긴다 — 여기서 블로킹 전송을 하지 않는다.
+ * 선박(계약 v2 §B3): {type:"layers", aircraft, ships}(boolean — 없는 키는 그대로, 다른 형식은 BAD_LAYERS) · {type:"select_ship", mmsi|null}
+ * (9자리 문자열 — 아니면 BAD_MMSI) · resync 는 항공기와 함께 선박 스냅샷도 다시 보낸다(웹은 sseq 틈에도 resync 를 보낸다).
  */
 @Profile("!cli & !migrate")
 @Component
-public class SkyWsHandler extends TextWebSocketHandler {
-    private static final Logger log = LoggerFactory.getLogger(SkyWsHandler.class);
+public class WakelineWsHandler extends TextWebSocketHandler {
+    private static final Logger log = LoggerFactory.getLogger(WakelineWsHandler.class);
     public static final String ATTR_IP = "wakeline.ip";
     /** Tomcat 세션별 블로킹 전송 시간 제한(ms, Long) — 기본 20 s 를 설계 5.1 의 5 s 로. */
     static final String TOMCAT_BLOCKING_SEND_TIMEOUT = "org.apache.tomcat.websocket.BLOCKING_SEND_TIMEOUT";
     static final int MAX_MESSAGE_BYTES = 4096;
     static final int MAX_ZOOM = 24;
     private static final Pattern HEX = Pattern.compile("^[0-9a-f]{6}$");
+    private static final Pattern MMSI = Pattern.compile("^[0-9]{9}$");
     private static final String PONG = "{\"type\":\"pong\"}";
 
     private final WsHub hub;
@@ -42,13 +45,15 @@ public class SkyWsHandler extends TextWebSocketHandler {
     private final ObjectMapper json;
     private final SnapshotStore snapshots;
     private final ConnectionLimiter limiter;
+    private final ShipFanout ships;
     private final Map<String, WsSession> byId = new ConcurrentHashMap<>();
 
-    public SkyWsHandler(WsHub hub, AppProperties props, ObjectMapper json, SnapshotStore snapshots) {
+    public WakelineWsHandler(WsHub hub, AppProperties props, ObjectMapper json, SnapshotStore snapshots, ShipFanout ships) {
         this.hub = hub;
         this.props = props;
         this.json = json;
         this.snapshots = snapshots;
+        this.ships = ships;
         this.limiter = new ConnectionLimiter(props.wsMaxConn(), props.wsMaxConnPerIp());
     }
 
@@ -85,7 +90,7 @@ public class SkyWsHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession raw, TextMessage message) {
         WsSession s = byId.get(raw.getId());
         if (s == null || s.isClosing() || s.inboundBlocked) return;
-        if (!s.inbound.tryConsume(System.nanoTime())) { hub.rateLimited(s); return; }
+        if (!s.inbound.tryAcquire(System.nanoTime())) { hub.rateLimited(s); return; }
         JsonNode m;
         try {
             m = json.readTree(message.getPayload());
@@ -99,9 +104,15 @@ public class SkyWsHandler extends TextWebSocketHandler {
             case "hello" -> hello(s, m);
             case "subscribe" -> subscribe(s, m);
             case "select" -> select(s, m);
-            case "pause" -> s.paused = true;
+            case "pause" -> { s.paused = true; hub.demandChanged(); } // 보지 않는 세션은 수요를 내지 않는다(계약 v2 §A1)
             case "resume" -> resume(s);
-            case "resync" -> { s.needsResync = true; hub.requestFanout(s); } // 다음 스냅샷을 기다리지 않고 바로
+            case "resync" -> { // 다음 스냅샷을 기다리지 않고 바로 — 항공기와 (켜져 있으면) 선박 모두
+                s.needsResync = true;
+                hub.requestFanout(s);
+                ships.resync(s);
+            }
+            case "layers" -> layers(s, m);
+            case "select_ship" -> selectShip(s, m);
             case "pong" -> s.missedPongs.set(0);
             case "ping" -> hub.reply(s, PONG);
             default -> hub.error(s, "UNKNOWN_TYPE", "unknown message type");
@@ -129,6 +140,7 @@ public class SkyWsHandler extends TextWebSocketHandler {
         s.sub = new WsSession.Sub(bbox, zoom, detail);
         s.paused = false;
         hub.sendInitial(s, false); // 대기 중인 초기 전송이 있으면 합쳐진다(마지막 bbox 가 이긴다)
+        hub.demandChanged();      // 줌·화면 중심이 바뀌면 핫 리전 수요가 바뀐다(1 s 로 모아 계산)
     }
 
     static Bbox parseBbox(JsonNode b) {
@@ -144,13 +156,63 @@ public class SkyWsHandler extends TextWebSocketHandler {
         return new Bbox(v[0], v[1], v[2], v[3]);
     }
 
+    /**
+     * 선택(계약 §1) — 선택은 집중 추적 수요가 된다(계약 v2 §A1). 같은 hex 를 다시 선택해도 선택 시각을 새로 잡는다
+     * (30분 상한 뒤 "다시 선택하면 이어진다"). 시각을 먼저 쓰고 hex 를 쓴다(WsSession.selectedAtMs 참고).
+     */
     private void select(WsSession s, JsonNode m) {
         JsonNode h = m.get("hex");
-        if (h == null || h.isNull()) { s.selectedHex = null; return; }
+        if (h == null || h.isNull()) {
+            s.selectedHex = null;
+            s.selectedAtMs = 0;
+            hub.demandChanged();
+            return;
+        }
         String hex = h.isString() ? h.asString().toLowerCase(Locale.ROOT) : "";
         if (!HEX.matcher(hex).matches()) { hub.error(s, "BAD_HEX", "hex must be 6 hex digits or null"); return; }
+        s.selectedAtMs = System.currentTimeMillis();
         s.selectedHex = hex;
         hub.requestSelected(s); // 바로 한 번, 이후 스냅샷마다 바뀌면
+        hub.demandChanged();
+    }
+
+    /**
+     * 레이어(계약 v2 §B3): 항공기를 끄면 항공기 목록과 핫 리전 수요를 멈추고, 켜면 seq 1 스냅샷부터 다시. 선박을 켜면 선박 전체를 보내고, 끄면 멈춘다.
+     * 없는 키는 그대로 둔다. boolean 이 아닌 값은 거절한다(어느 레이어도 바꾸지 않는다).
+     */
+    private void layers(WsSession s, JsonNode m) {
+        JsonNode a = m.get("aircraft"), sh = m.get("ships");
+        if ((a != null && !a.isBoolean()) || (sh != null && !sh.isBoolean())) {
+            hub.error(s, "BAD_LAYERS", "aircraft and ships must be booleans");
+            return;
+        }
+        boolean air = a == null ? s.layerAircraft : a.asBoolean();
+        boolean shp = sh == null ? s.layerShips : sh.asBoolean();
+        boolean airChanged = air != s.layerAircraft, shipsChanged = shp != s.layerShips;
+        s.layerAircraft = air;
+        s.layerShips = shp;
+        if (airChanged) {
+            if (air) {
+                s.needsResync = true;
+                hub.requestFanout(s);
+            }
+            hub.demandChanged(); // 항공기를 보지 않는 세션은 핫 리전 수요를 내지 않는다
+        }
+        if (shipsChanged) ships.layersChanged(s);
+    }
+
+    /** 선박 선택(계약 v2 §B3): 바로 ship_selected 한 번, 이후 그 선박이 바뀔 때마다. null 은 선택 해제(응답 없음). */
+    private void selectShip(WsSession s, JsonNode m) {
+        JsonNode v = m.get("mmsi");
+        if (v == null || v.isNull()) {
+            s.selectedMmsi = null;
+            ships.selected(s);
+            return;
+        }
+        String mmsi = v.isString() ? v.asString() : "";
+        if (!MMSI.matcher(mmsi).matches()) { hub.error(s, "BAD_MMSI", "mmsi must be 9 digits or null"); return; }
+        s.selectedMmsi = mmsi;
+        ships.selected(s);
     }
 
     /** 일시정지 중 놓친 것(알림·SIGMET·레이더·항공기)을 전체 초기 세트로 다시 보낸다(GAP-3/COR-7). */
@@ -158,6 +220,7 @@ public class SkyWsHandler extends TextWebSocketHandler {
         boolean wasPaused = s.paused;
         s.paused = false;
         if (wasPaused && s.sub != null) hub.sendInitial(s, true);
+        if (wasPaused) hub.demandChanged();
     }
 
     /** 이 세션의 블로킹 전송이 5 s 를 넘으면 Tomcat 이 IOException 을 던지게 한다(기본 20 s, REL-2). */

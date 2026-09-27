@@ -1,7 +1,7 @@
 /** 지도 레이어 정의(11.2절) — 상황판·재생 화면이 공유. */
 import type * as maplibregl from "maplibre-gl";
-import { ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR } from "./format";
-import { deadReckon } from "./interpolate";
+import { ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR } from "./format";
+import { deadReckon, seenAtMs, thresholds } from "./interpolate";
 import type { AircraftState, Alert, SelectedInfo } from "./types";
 
 export const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
@@ -29,23 +29,57 @@ export const AIRPORT_FILL_EXPR = [
   ["match", ["coalesce", ["get", "flight_cat"], "-"], ...Object.entries(CAT_COLORS).flat(), CAT_UNKNOWN_COLOR],
 ] as unknown as maplibregl.ExpressionSpecification;
 
-/** 항공기 SDF 아이콘(비행기 실루엣) — icon-color 로 고도 색 램프를 적용한다. */
-export function planeImage(size = 48): ImageData {
+/** 비행기 실루엣(48×48, 기수 위쪽) — 지도 아이콘과 범례가 같은 경로를 쓴다 */
+export const PLANE_PATH = "M24 2 L27 12 L27 22 L44 32 L44 36 L27 30 L26 40 L32 44 L32 47 L24 45 L16 47 L16 44 L22 40 L21 30 L4 36 L4 32 L21 22 L21 12 Z";
+/** 방위 모름 아이콘(48×48 마름모) — 어느 쪽도 가리키지 않는다(DH-11) */
+export const NODIR_PATH = "M24 10 L38 24 L24 38 L10 24 Z";
+
+/** 48×48 경로를 채운 SDF 마스크(검정·불투명) — icon-color 로 칠한다. 선박 아이콘(ship-layers.ts)도 쓴다. */
+export function sdfImage(path: string, size = 48): ImageData {
   const c = document.createElement("canvas");
   c.width = c.height = size;
   const ctx = c.getContext("2d")!;
   ctx.fillStyle = "#000";
-  ctx.beginPath();
-  const p = new Path2D("M24 2 L27 12 L27 22 L44 32 L44 36 L27 30 L26 40 L32 44 L32 47 L24 45 L16 47 L16 44 L22 40 L21 30 L4 36 L4 32 L21 22 L21 12 Z");
-  ctx.fill(p);
+  ctx.fill(new Path2D(path));
   return ctx.getImageData(0, 0, size, size);
 }
+/** 항공기 SDF 아이콘(비행기 실루엣) — icon-color 로 고도 색 램프를 적용한다. */
+export function planeImage(size = 48): ImageData {
+  return sdfImage(PLANE_PATH, size);
+}
+
+// ---- 항공기 기호(DH-3 · DH-11) ----
+const HAS_TRACK = ["==", ["typeof", ["get", "track_deg"]], "number"];
+/** 방위(track_deg)를 알면 비행기 실루엣, 모르면 방향 없는 마름모 — 모르는 방위를 북쪽(0°)으로 그리지 않는다. */
+export const AIRCRAFT_ICON_EXPR = ["case", HAS_TRACK, "plane", "plane-nodir"] as unknown as maplibregl.ExpressionSpecification;
+/** 방위를 알 때만 회전. 모르면 0(마름모는 회전해도 방향을 뜻하지 않는다). */
+export const AIRCRAFT_ROTATE_EXPR = ["case", HAS_TRACK, ["get", "track_deg"], 0] as unknown as maplibregl.ExpressionSpecification;
+/** 아이콘 색: 비상 > 선택 > 지상(공급자 on_ground, 고도 램프의 0 ft 색이 아님) > 고도 램프(모르면 회색). */
+export const AIRCRAFT_COLOR_EXPR = [
+  "case", ["boolean", ["get", "emergency"], false], "#e5484d",
+  ["boolean", ["get", "selected"], false], "#ffffff",
+  ["==", ["get", "on_ground"], true], GND_COLOR,
+  ALT_COLOR_EXPR,
+] as unknown as maplibregl.ExpressionSpecification;
+
+// ---- SIGMET 표현(DH-8): 발효 전(pending)은 연한 채움 + 점선, 곧 만료는 파선, 안에 항공기(관측 알림)는 굵게 ----
+const PENDING = ["boolean", ["get", "pending"], false];
+export const SIGMET_FILL_OPACITY_EXPR = [
+  "case", PENDING, 0.04, ["boolean", ["get", "inside"], false], 0.28, 0.15,
+] as unknown as maplibregl.ExpressionSpecification;
+export const SIGMET_LINE_DASH_EXPR = [
+  "case", PENDING, ["literal", [0.6, 2.4]], ["boolean", ["get", "expiring_soon"], false], ["literal", [2, 2]], ["literal", [1, 0]],
+] as unknown as maplibregl.ExpressionSpecification;
+export const SIGMET_LINE_WIDTH_EXPR = [
+  "case", PENDING, 1.2, ["boolean", ["get", "inside"], false], 3, 1.2,
+] as unknown as maplibregl.ExpressionSpecification;
 
 /** 레이더 레이어 자리 표시(빈 소스·숨김). 커버리지 마스크는 이 아래, 레이더 프레임은 이 위·SIGMET 아래에 끼운다. */
 export const RADAR_SLOT = "radar-slot";
 
 export function addBaseLayers(map: maplibregl.Map) {
   map.addImage("plane", planeImage(), { sdf: true });
+  map.addImage("plane-nodir", sdfImage(NODIR_PATH), { sdf: true });
 
   map.addSource("anchors", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: RADAR_SLOT, type: "line", source: "anchors", layout: { visibility: "none" } });
@@ -53,15 +87,11 @@ export function addBaseLayers(map: maplibregl.Map) {
   map.addSource("sigmets", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
   map.addLayer({
     id: "sigmet-fill", type: "fill", source: "sigmets",
-    paint: { "fill-color": HAZARD_COLOR_EXPR, "fill-opacity": ["case", ["boolean", ["get", "inside"], false], 0.28, 0.15] },
+    paint: { "fill-color": HAZARD_COLOR_EXPR, "fill-opacity": SIGMET_FILL_OPACITY_EXPR },
   });
   map.addLayer({
     id: "sigmet-line", type: "line", source: "sigmets",
-    paint: {
-      "line-color": HAZARD_COLOR_EXPR,
-      "line-width": ["case", ["boolean", ["get", "inside"], false], 3, 1.2],
-      "line-dasharray": ["case", ["boolean", ["get", "expiring_soon"], false], ["literal", [2, 2]], ["literal", [1, 0]]],
-    },
+    paint: { "line-color": HAZARD_COLOR_EXPR, "line-width": SIGMET_LINE_WIDTH_EXPR, "line-dasharray": SIGMET_LINE_DASH_EXPR },
   });
 
   map.addSource("tracks", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -99,9 +129,9 @@ export function addBaseLayers(map: maplibregl.Map) {
   map.addLayer({
     id: "aircraft-symbol", type: "symbol", source: "aircraft",
     layout: {
-      "icon-image": "plane",
+      "icon-image": AIRCRAFT_ICON_EXPR,
       "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.22, 7, 0.38, 11, 0.6],
-      "icon-rotate": ["coalesce", ["get", "track_deg"], 0],
+      "icon-rotate": AIRCRAFT_ROTATE_EXPR,
       "icon-rotation-alignment": "map",
       "icon-allow-overlap": true,
       "icon-ignore-placement": true,
@@ -110,9 +140,7 @@ export function addBaseLayers(map: maplibregl.Map) {
       "text-size": 10, "text-offset": [0, 1.3], "text-anchor": "top", "text-optional": true,
     },
     paint: {
-      "icon-color": ["case", ["boolean", ["get", "emergency"], false], "#e5484d",
-        ["boolean", ["get", "selected"], false], "#ffffff",
-        ALT_COLOR_EXPR],
+      "icon-color": AIRCRAFT_COLOR_EXPR,
       // stale(수신 지연·외삽 상한 도달) 0.4, 수신 경과를 모름(seen_at 없음) 0.7 — 모르는 것을 "신선함"으로 그리지 않는다
       "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, ["boolean", ["get", "age_unknown"], false], 0.7, 1],
       "icon-halo-color": ["case", ["boolean", ["get", "emergency"], false], "#ff0000", ["boolean", ["get", "estimated"], false], "rgba(0,0,0,0)", "#ffffff"],
@@ -156,19 +184,37 @@ export function frameDisplay(n: number, idx: number | null, enabled: boolean, pl
 
 /** 예측 궤적 라벨(지도 위 "추정") */
 export const PREDICTION_LABEL = "추정 · 10분";
+/** 서버 엔진과 같은 예측 조건(IntersectionEngine: 10 × 60 s, |lat| ≤ 85) */
+const PREDICT_STEPS = 10;
+const PREDICT_STEP_S = 60;
+const PREDICT_MAX_ABS_LAT = 85;
 
 /**
- * 10분 예측 궤적(추정): 마지막 관측 위치·시각에서 현재 지상속도·방위로 직선 외삽(1분 간격 10점).
- * 예측 가능 여부는 서버가 판단한다(선회·저속·지상·방위 없음·지연 → 그리지 않음). 여기서는 값이 있는지만 본다.
+ * 10분 예측 궤적(추정, DH-12): 서버 엔진(IntersectionEngine.predictOne)과 같게 — 관측 위치를 seen_at → 지금(서버 기준)까지 먼저 전진시킨 뒤,
+ * 그 위치에서 현재 지상속도·방위로 1분 간격 10점 직선 외삽. 그래서 선의 시작 = 지금, 끝 = 지금 + 10분이고 PREDICTED 알림의 ETA 와 맞는다.
+ * 예측 가능 여부는 서버가 판단한다(선회·저속·지상·방위 없음·지연 → 그리지 않음). 여기서는 값·시각이 있는지만 본다:
+ * 관측 시각을 모르면 선이 언제부터인지 모르므로, 지연 기준(60 s / opensky 300 s)을 넘으면 엔진이 예측하지 않으므로 그리지 않는다.
+ * 경도 ±180 을 넘는 궤적은 엔진처럼 생략한다.
  */
-export function predictionFeature(a: AircraftState): GeoJSON.Feature<GeoJSON.LineString> | null {
+export function predictionFeature(a: AircraftState, serverNowMs: number): GeoJSON.Feature<GeoJSON.LineString> | null {
   if (a.on_ground === true || a.gs_kt == null || a.track_deg == null || a.gs_kt <= 0 || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) return null;
-  const coords: [number, number][] = [[a.lon, a.lat]];
-  for (let i = 1; i <= 10; i++) {
-    const [lat, lon] = deadReckon(a.lat, a.lon, a.track_deg, a.gs_kt, i * 60);
+  const seen = seenAtMs(a.seen_at);
+  if (seen == null || !Number.isFinite(serverNowMs)) return null;
+  const age = Math.max(0, (serverNowMs - seen) / 1000);
+  if (age > thresholds(a.provider).staleAfterS) return null;
+  const [lat0, lon0] = age > 0 ? deadReckon(a.lat, a.lon, a.track_deg, a.gs_kt, age) : [a.lat, a.lon];
+  if (Math.abs(lat0) > PREDICT_MAX_ABS_LAT) return null;
+  const coords: [number, number][] = [[lon0, lat0]];
+  for (let i = 1; i <= PREDICT_STEPS; i++) {
+    const [lat, lon] = deadReckon(lat0, lon0, a.track_deg, a.gs_kt, i * PREDICT_STEP_S);
+    if (Math.abs(lon - coords[i - 1][0]) > 180) return null;
     coords.push([lon, lat]);
   }
-  return { type: "Feature", properties: { hex: a.hex, estimated: true, label: PREDICTION_LABEL }, geometry: { type: "LineString", coordinates: coords } };
+  return {
+    type: "Feature",
+    properties: { hex: a.hex, estimated: true, label: PREDICTION_LABEL, from: new Date(serverNowMs).toISOString(), horizon_s: PREDICT_STEPS * PREDICT_STEP_S },
+    geometry: { type: "LineString", coordinates: coords },
+  };
 }
 
 /**
@@ -190,7 +236,11 @@ export function predictionTargets(selected: SelectedInfo | null, alerts: Iterabl
   return [...out.values()];
 }
 
-/** 예측선 입력이 바뀌었는지 비교하는 키(바뀌지 않으면 setData 하지 않는다) */
-export function predictionKey(targets: AircraftState[]): string {
-  return targets.map((t) => `${t.hex}:${t.seen_at ?? ""}:${t.lat}:${t.lon}:${t.gs_kt ?? ""}:${t.track_deg ?? ""}`).join("|");
+/**
+ * 예측선 입력이 바뀌었는지 비교하는 키(바뀌지 않으면 setData 하지 않는다). 선의 시작이 "지금"이므로 대상이 있으면 초 단위 시각도 넣는다
+ * (최대 1 s 마다 다시 그림, 대상이 없으면 시각과 무관하게 같은 키).
+ */
+export function predictionKey(targets: AircraftState[], serverNowMs = 0): string {
+  if (targets.length === 0) return "";
+  return `${Math.floor(serverNowMs / 1000)}#` + targets.map((t) => `${t.hex}:${t.seen_at ?? ""}:${t.lat}:${t.lon}:${t.gs_kt ?? ""}:${t.track_deg ?? ""}`).join("|");
 }

@@ -19,7 +19,7 @@ import java.util.List;
 
 /**
  * 파티션 생성·삭제·보존 삭제(매일 03:00 UTC), 1분 요약(매시 :05, 관심 지역만 · 30일), 통계 집계(03:30). 기동 시 파티션 보장.
- * 보존 정책 ADR-007: 원해상도 72 h, 1분 요약 30일, 알림·SIGMET·통계 영구.
+ * 보존 정책 ADR-007: 원해상도 72 h, 1분 요약 30일, 알림·SIGMET·통계 영구. 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
  * 최근 7일 중 통계가 없는 날을 채운다(둘 다 멱등).
@@ -30,6 +30,10 @@ public class MaintenanceJobs {
     private static final Logger log = LoggerFactory.getLogger(MaintenanceJobs.class);
     static final int CATCH_UP_HOURS = 24;
     static final int CATCH_UP_DAYS = 7;
+    /** 선박 위치 보존(계약 v2 §B3). 함수가 24 h ~ 30일 밖의 값을 거절한다(V5). */
+    static final int SHIP_RETENTION_HOURS = 72;
+    /** 체류 통계에 넣는 '확인된 이탈' 조건(V4 마이그레이션의 재계산과 같은 식 — 바꾸면 둘 다 바꾼다). */
+    static final String CONFIRMED_EXIT = "close_reason = 'left' AND NOT coalesce((evidence->>'sigmet_expired')::boolean, false)";
     private final JdbcClient db;
     private final AppProperties props;
     private final RegionSettings region;
@@ -44,11 +48,13 @@ public class MaintenanceJobs {
 
     @Scheduled(initialDelay = 5_000, fixedDelay = 6 * 3600_000)
     public void ensurePartitions() {
-        try {
-            Integer n = db.sql("SELECT track_point_ensure_partitions(3)").query(Integer.class).single();
-            if (n > 0) log.info("created {} track_point partitions", n);
-        } catch (RuntimeException e) {
-            log.warn("ensure partitions failed: {}", e.toString());
+        for (String table : new String[]{"track_point", "ship_position"}) { // 하나가 실패해도 다른 것은 만든다
+            try {
+                Integer n = db.sql("SELECT " + table + "_ensure_partitions(3)").query(Integer.class).single();
+                if (n > 0) log.info("created {} {} partitions", n, table);
+            } catch (RuntimeException e) {
+                log.warn("ensure {} partitions failed: {}", table, e.toString());
+            }
         }
     }
 
@@ -56,6 +62,7 @@ public class MaintenanceJobs {
     @Scheduled(cron = "0 0 3 * * *", zone = "UTC")
     public void dropOldPartitions() {
         retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
+        retention("ship_position partitions", () -> db.sql("SELECT ship_position_drop_old(:h)").param("h", SHIP_RETENTION_HOURS).query(Integer.class).single());
         retention("track_point_1m", () -> db.sql("DELETE FROM track_point_1m WHERE ts_minute < now() - make_interval(days => :d)").param("d", props.summaryRetentionDays()).update());
         retention("metar_obs", () -> db.sql("DELETE FROM metar_obs WHERE obs_time < now() - interval '30 days'").update());
         retention("radar_frame", () -> db.sql("DELETE FROM radar_frame WHERE frame_time < now() - interval '7 days'").update());
@@ -167,8 +174,10 @@ public class MaintenanceJobs {
      *   <li>traffic_by_hour: 시간대별 서로 다른 항공기 수 — 관심 지역 bbox 안만(계약 §2, GAP-18). 전세계 표본이 섞이지 않는다.
      *       어느 지역을 셌는지 traffic_region(center_lat·center_lon·radius_nm)으로 함께 남긴다. 항적이 없는 시간은 행이 없다(0 이 아니라 '자료 없음').</li>
      *   <li>alerts_by_kind: 그날 시작된 알림 수.</li>
-     *   <li>alert_dwell_avg_s: 그날 시작해 실제로 이탈(close_reason left, 또는 사유 기록 전의 행)한 OBSERVED 의 평균 체류.
-     *       신호 소실·재시작으로 닫힌 것은 체류를 모르므로 뺀다. 해당 알림이 없으면 행을 만들지 않는다(0 을 지어내지 않는다, COR-16).</li>
+     *   <li>alert_dwell_avg_s: 그날 시작해 <b>이탈이 확인된</b>(close_reason = 'left', 바깥 관측 3회) OBSERVED 의 평균 체류(DH-5·API-CONC-3).
+     *       빼는 것: 사유 기록 전의 행(NULL — V3 가 밝혔듯 신호 소실도 LEFT 로 닫혔을 수 있다), 신호 소실·재시작(체류를 모른다),
+     *       경보 종료(sigmet_ended — 항공기는 나가지 않았다), 그리고 경보 만료 뒤에 닫힌 옛 'left' 행(evidence.sigmet_expired —
+     *       바깥 관측이 만료 때문이었을 수 있어 이탈 시각을 믿을 수 없다). 해당 알림이 없으면 행을 만들지 않는다(0 을 지어내지 않는다, COR-16).</li>
      * </ul>
      */
     public void aggregateDay(LocalDate day) {
@@ -209,8 +218,8 @@ public class MaintenanceJobs {
                     SELECT :d, 'alert_dwell_avg_s', 'OBSERVED', avg(extract(epoch FROM (left_at - entered_at)))
                     FROM alert_event
                     WHERE kind = 'OBSERVED' AND left_at IS NOT NULL AND entered_at >= :s AND entered_at < :e
-                      AND (close_reason IS NULL OR close_reason = 'left')
-                    HAVING count(*) > 0""")
+                      AND (%s)
+                    HAVING count(*) > 0""".formatted(CONFIRMED_EXIT))
                     .param("d", day).param("s", Sql.ts(start)).param("e", Sql.ts(end)).update();
         });
         log.info("daily stats aggregated for {} (region {},{} r={} NM)", day, r.lat(), r.lon(), r.radiusNm());

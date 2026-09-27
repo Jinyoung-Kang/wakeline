@@ -50,6 +50,37 @@ class StatusServiceTest {
         assertThat(r.get("radius_nm")).isEqualTo(300);
     }
 
+    /** 계약 v2 §A3: /status demand = {hot_active, focus_active, adsb_fi_rps_1m} — 수만, hex·셀 없음. */
+    @Test
+    void demandBlock_countsOnly_andRpsNullWithoutCollector() {
+        SnapshotStore snapshots = new SnapshotStore();
+        var stats = new dev.wakeline.demand.DemandStats();
+        stats.update(new dev.wakeline.demand.DemandStats.Counts(2, 5, 3, 6, 4, 7));
+        var status = new StatusService(snapshots, new SigmetStore(), new RadarStore(),
+                new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry()), new StringRedisTemplate(),
+                () -> new RegionSettings.Region(36.5, 127.8, 250), stats);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> d = (Map<String, Object>) status.publicStatus().get("demand");
+        assertThat(d).containsOnlyKeys("hot_active", "focus_active", "adsb_fi_rps_1m");
+        assertThat(d.get("hot_active")).isEqualTo(2);
+        assertThat(d.get("focus_active")).isEqualTo(5);
+        assertThat(d.get("adsb_fi_rps_1m")).isNull(); // Redis 없음 → 수집기 값 없음
+    }
+
+    @Test
+    void adsbFiRps_fromFreshHeartbeatOnly() {
+        Instant now = Instant.parse("2026-09-28T03:00:00Z");
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.2667", "region_at", now.minusSeconds(8).toString(), "focus_at", now.minusSeconds(200).toString()), now))
+                .isEqualTo(0.267);
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.3", "region_at", now.minusSeconds(121).toString()), now)).isNull(); // 수집기 멈춤
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.3"), now)).isNull();                                            // 시각 없음
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "abc", "region_at", now.toString()), now)).isNull();
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "NaN", "region_at", now.toString()), now)).isNull();
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "-1", "region_at", now.toString()), now)).isNull();
+        assertThat(StatusService.adsbFiRps(Map.of("region_at", now.toString()), now)).isNull();
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0", "region_at", "garbage", "kma_at", now.toString()), now)).isEqualTo(0.0);
+    }
+
     @Test
     void sigmetFeatureCarriesBandSourcesAndLegacyStaysUnknown() {
         Polygon p = GeoJson.GF.createPolygon(new Coordinate[]{new Coordinate(0, 0), new Coordinate(1, 0), new Coordinate(1, 1), new Coordinate(0, 0)});

@@ -7,6 +7,7 @@ import dev.wakeline.domain.Alert;
 import dev.wakeline.engine.PredictionAvailability;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
+import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
@@ -36,6 +37,7 @@ final class WsTestKit implements AutoCloseable {
             .build();
 
     final SnapshotStore snapshots = new SnapshotStore();
+    final ShipStore ships = new ShipStore();
     final SigmetStore sigmets = new SigmetStore();
     final RadarStore radar = new RadarStore();
     final AtomicReference<List<Alert>> alerts = new AtomicReference<>(List.of());
@@ -45,7 +47,10 @@ final class WsTestKit implements AutoCloseable {
     final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
     final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     final WsHub hub;
-    final SkyWsHandler handler;
+    final ShipFanout shipFanout;
+    final WakelineWsHandler handler;
+    /** 선박 팬아웃의 시계(ms) — 테스트가 움직인다(주기 스냅샷 60 s). */
+    final java.util.concurrent.atomic.AtomicLong shipClock = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
     final AppProperties props;
 
     WsTestKit() { this(Runnable::run, 5_000, 200, 5); }
@@ -54,7 +59,8 @@ final class WsTestKit implements AutoCloseable {
         props = props(maxConn, maxPerIp);
         hub = new WsHub(JSON, props, snapshots, sigmets, radar, status::get, alerts::get, a -> prediction.apply(a),
                 meters, pool, timer, helloTimeoutMs);
-        handler = new SkyWsHandler(hub, props, JSON, snapshots);
+        shipFanout = new ShipFanout(hub, ships, meters, null, shipClock::get); // timer 없음: 이벤트마다 바로 팬아웃
+        handler = new WakelineWsHandler(hub, props, JSON, snapshots, shipFanout);
     }
 
     static AppProperties props(int maxConn, int maxPerIp) {
@@ -78,6 +84,26 @@ final class WsTestKit implements AutoCloseable {
         Snapshot prev = snapshots.replace(s);
         hub.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
         return s;
+    }
+
+    /** hot 셀 메시지를 반영하고 이벤트를 허브에 전달한다(받아들여지지 않으면 null). */
+    Snapshot publishHot(String cell, Instant fetchedAt, AircraftState... states) {
+        Map<String, AircraftState> m = new LinkedHashMap<>();
+        for (AircraftState a : states) m.put(a.hex(), a);
+        Snapshot s = new Snapshot(snapshots.nextVersion(), "hot", "adsb_fi", fetchedAt, fetchedAt, "-", Map.copyOf(m));
+        Snapshot prev = snapshots.replaceHotIfNewer(cell, s);
+        if (prev != null) hub.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
+        return prev == null ? null : s;
+    }
+
+    /** focus 메시지를 반영하고 이벤트를 허브에 전달한다(받아들여지지 않으면 null). */
+    Snapshot publishFocus(Instant fetchedAt, AircraftState... states) {
+        Map<String, AircraftState> m = new LinkedHashMap<>();
+        for (AircraftState a : states) m.put(a.hex(), a);
+        Snapshot s = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", fetchedAt, fetchedAt, "-", Map.copyOf(m));
+        Snapshot prev = snapshots.applyFocus(s);
+        if (prev != null) hub.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
+        return prev == null ? null : s;
     }
 
     // ---- 세션 ----

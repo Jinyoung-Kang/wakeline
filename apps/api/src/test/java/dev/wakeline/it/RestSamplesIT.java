@@ -41,6 +41,7 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired SigmetStore sigmets;
     @Autowired RadarStore radar;
     @Autowired EngineService engine;
+    @Autowired dev.wakeline.rest.StatusService status;
 
     final Map<String, String> index = new LinkedHashMap<>();
 
@@ -102,8 +103,8 @@ class RestSamplesIT extends IntegrationTest {
         adm.sql("INSERT INTO airport (icao, iata, name, country, geom, elev_ft, watched) VALUES ('RKSI', 'ICN', 'Incheon', 'KR', "
                 + "ST_SetSRID(ST_MakePoint(126.45, 37.46), 4326), 23, true) ON CONFLICT (icao) DO NOTHING").update();
         adm.sql("""
-                INSERT INTO metar_obs (icao, obs_time, raw, temp_c, dewp_c, wind_dir, wind_kt, vis_sm, ceiling_ft, ceiling_state, flight_cat, flight_cat_source, provider, fetched_at)
-                VALUES ('RKSI', date_trunc('hour', now()), 'RKSI 271200Z 27010KT 9999 BKN030 20/15 Q1013', 20, 15, 270, 10, 6.2, 3000, 'measured', 'VFR', 'awc', 'awc', now())
+                INSERT INTO metar_obs (icao, obs_time, raw, temp_c, dewp_c, wind_dir, wind_kt, vis_sm, vis_raw, ceiling_ft, ceiling_state, flight_cat, flight_cat_source, provider, fetched_at)
+                VALUES ('RKSI', date_trunc('hour', now()), 'RKSI 271200Z 27010KT 9999 BKN030 20/15 Q1013', 20, 15, 270, 10, 6.0, '6+', 3000, 'measured', 'VFR', 'awc', 'awc', now())
                 ON CONFLICT DO NOTHING""").update();
 
         String day = LocalDate.now(ZoneOffset.UTC).toString();
@@ -131,6 +132,40 @@ class RestSamplesIT extends IntegrationTest {
         record("stats_sigmet", "/api/v1/stats/sigmet", 200);
         record("problem_400", "/api/v1/aircraft?bbox=1,2,3", 400);
         record("problem_404", "/api/v1/ops/providers", 404);
+
+        // 선박(계약 v2 §B3): ais 수집기와 같은 ACL 사용자로 발행 → 소비 → 메모리·DB. 공백 1건(끝난 것).
+        String mmsi = "440700100";
+        Instant seenShip = Instant.now().minusSeconds(5);
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(mmsi, 35.1, 129.05, seenShip),
+                Streams.shipState("440700101", 35.2, 129.1, seenShip)), List.of(Streams.shipStatic(mmsi, "IT SAMPLE", 70, seenShip.minusSeconds(60)))));
+        Instant gapStart = Instant.now().minusSeconds(1800).truncatedTo(ChronoUnit.MILLIS);
+        Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), gapStart, gapStart.plusSeconds(95), "server closed (1006)"));
+        await("ship rows", WAIT, () -> count("SELECT count(*) FROM ship_position WHERE mmsi = ?", mmsi) == 1
+                && count("SELECT count(*) FROM ship WHERE mmsi = ?", mmsi) == 1);
+        await("gap row", WAIT, () -> count("SELECT count(*) FROM ingest_gap WHERE reason = 'server closed (1006)'") >= 1);
+        record("ships", "/api/v1/ships?bbox=128,34,130,36", 200);
+        record("ship_detail", "/api/v1/ships/" + mmsi, 200);
+        record("ship_track", "/api/v1/ships/" + mmsi + "/track", 200);
+        record("ais_gaps", "/api/v1/ais/gaps", 200);
+        record("problem_bad_mmsi", "/api/v1/ships/12345", 400);
+        record("ship_detail_nostatic", "/api/v1/ships/440700101", 200); // 정적 정보 없음 → 분류 unknown(추정하지 않는다)
+
+        // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.
+        // 수집기 heartbeat 는 다른 테스트(수집기 없음 → adsb_fi_rps_1m 모름)에 남지 않게 기록 뒤 지운다.
+        Instant hb = Instant.now();
+        ItStack.ais().opsForHash().putAll("wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "4.20",
+                "last_msg_at", hb.toString(), "updated_at", hb.toString(), "gap_open_since", ""));
+        try {
+            ItStack.collector().opsForHash().putAll("wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
+            await("status sources.ais and demand rate", WAIT, () -> {
+                Map<String, Object> st = status.publicStatus();
+                return st.get("sources") instanceof Map<?, ?> src && src.get("ais") instanceof Map<?, ?> ais && Boolean.TRUE.equals(ais.get("connected"))
+                        && st.get("demand") instanceof Map<?, ?> d && d.get("adsb_fi_rps_1m") != null;
+            });
+            record("status_ais", "/api/v1/status", 200);
+        } finally {
+            ItStack.deleteKeys("wakeline:collector");
+        }
         Files.writeString(OUT.resolve("index.json"), Streams.JSON.writeValueAsString(index), StandardCharsets.UTF_8);
 
         // Java 쪽 최소 확인(자세한 필드 검증은 Python 도구가 한다)
@@ -157,6 +192,21 @@ class RestSamplesIT extends IntegrationTest {
             assertThat(a.path("evidence").path("confirmations").asInt()).isEqualTo(2);
         }
         assertThat(found).isTrue();
+        JsonNode shipFc = Streams.JSON.readTree(Files.readString(OUT.resolve("ships.json"))).path("body");
+        assertThat(shipFc.path("type").asString()).isEqualTo("FeatureCollection");
+        for (JsonNode f : shipFc.path("features")) assertThat(f.has("geometry")).isTrue();
+        JsonNode shipTrack = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_track.json"))).path("body");
+        assertThat(shipTrack.path("geometry").path("type").asString()).isEqualTo("MultiLineString");
+        // DH-7/GAP-17: 이력에도 시정 원문 — '6+'(6 SM 이상, 하한)가 정확한 값 6 처럼 보이지 않게
+        JsonNode wx = Streams.JSON.readTree(Files.readString(OUT.resolve("airport_wx.json"))).path("body");
+        assertThat(wx.path("latest").path("vis_raw").asString()).isEqualTo("6+");
+        assertThat(wx.path("history").get(0).path("vis_raw").asString()).isEqualTo("6+");
+        JsonNode noStatic = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_detail_nostatic.json"))).path("body");
+        assertThat(noStatic.has("static")).isFalse();
+        assertThat(noStatic.path("category").asString()).isEqualTo("unknown");
+        JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
+        assertThat(st.path("sources").path("ais").path("msgs_per_s").asDouble()).isEqualTo(4.2);
+        assertThat(st.path("demand").path("adsb_fi_rps_1m").asDouble()).isEqualTo(0.417); // 수집기 값(0.4167)을 api 가 소수 셋째 자리로
         JsonNode dbItem = Streams.JSON.readTree(Files.readString(OUT.resolve("aircraft_search_db.json"))).path("body").path("items").get(0);
         assertThat(dbItem.path("hex").asString()).isEqualTo("a1d0db");
         assertThat(dbItem.path("live").asBoolean()).isFalse();

@@ -24,6 +24,8 @@ public class SchemaValidator {
     private final JsonSchema aircraftPayload;
     private final JsonSchema sigmetPayload;
     private final JsonSchema radarPayload;
+    private final JsonSchema shipsPayload;
+    private final JsonSchema aisGapPayload;
 
     public SchemaValidator() {
         SchemaMapper mapper = iri -> {
@@ -38,6 +40,8 @@ public class SchemaValidator {
         aircraftPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/aircraft_payload"), config);
         sigmetPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/sigmet_payload"), config);
         radarPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/radar_payload"), config);
+        shipsPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ships_payload"), config);
+        aisGapPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ais_gap_payload"), config);
     }
 
     public String validateEnvelope(String json) { return first(envelope.validate(json, InputFormat.JSON)); }
@@ -47,6 +51,8 @@ public class SchemaValidator {
             case "aircraft" -> first(aircraftPayload.validate(json, InputFormat.JSON));
             case "sigmet" -> first(sigmetPayload.validate(json, InputFormat.JSON));
             case "radar" -> first(radarPayload.validate(json, InputFormat.JSON));
+            case "ships" -> first(shipsPayload.validate(json, InputFormat.JSON));
+            case "ais_gap" -> first(aisGapPayload.validate(json, InputFormat.JSON));
             default -> "unknown kind " + kind;
         };
     }

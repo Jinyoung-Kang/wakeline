@@ -63,10 +63,18 @@ class WsMessagesTest {
         assertThat(WsMessages.encode(full(), "full", true)).doesNotContainKey("quality");
     }
 
+    /** region·global 스냅샷 두 벌로 된 병합 뷰. */
+    static SnapshotStore.View viewOf(Snapshot region, Snapshot global) {
+        SnapshotStore store = new SnapshotStore();
+        store.replace(region);
+        store.replace(global);
+        return store.view(T);
+    }
+
     @Test void snapshotMessage_hasSeqSourcesAndRawAircraftArray() {
         Snapshot region = new Snapshot(7, "region", "adsb_lol", T.minusSeconds(4), T, "-", Map.of());
         Snapshot global = Snapshot.empty("global");
-        var view = new SnapshotStore.View(region, global, Map.of(), Long.MAX_VALUE);
+        var view = viewOf(region, global);
         var msg = new WsMessages.SnapshotMsg("snapshot", 1, 7, T, WsHub.sources(view, T), 3, "[{\"hex\":\"abc123\"}]");
         JsonNode n = JSON.readTree(JSON.writeValueAsString(msg));
         assertThat(n.path("seq").asInt()).isEqualTo(1);
@@ -85,7 +93,7 @@ class WsMessagesTest {
         Instant now = T;
         Snapshot region = new Snapshot(1, "region", "adsb_fi", now.minusSeconds(61), now, "-", Map.of());
         Snapshot global = new Snapshot(2, "global", "opensky", now.minusSeconds(299), now, "-", Map.of());
-        var s = WsHub.sources(new SnapshotStore.View(region, global, Map.of(), Long.MAX_VALUE), now);
+        var s = WsHub.sources(viewOf(region, global), now);
         assertThat(s.region().stale()).isTrue();   // 지역 60 s 초과
         assertThat(s.global().stale()).isFalse();  // 전세계 300 s 이하
         assertThat(s.global().provider()).isEqualTo("opensky");

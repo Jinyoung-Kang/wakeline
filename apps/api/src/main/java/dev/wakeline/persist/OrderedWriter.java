@@ -3,6 +3,7 @@ package dev.wakeline.persist;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import dev.wakeline.ingest.Receipt;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.NonTransientDataAccessResourceException;
@@ -24,6 +25,8 @@ import java.util.concurrent.TimeUnit;
  *   <li>일시 장애(연결 실패·풀 대기 초과·타임아웃)는 같은 작업을 백오프(1 s → 30 s)로 계속 재시도한다 — 뒤 작업이 앞지르지 않는다.</li>
  *   <li>그 밖의 오류(제약 위반 등)는 짧은 경합을 넘기도록 3회까지 재시도한 뒤 버리고 result="failed" 로 센다.</li>
  *   <li>종료: 스트림 소비·WS 가 멈춘 뒤(phase) 남은 작업을 최대 6 s 동안 한 번씩 시도하고, 못 쓴 것은 dropped 로 센다.</li>
+ *   <li>영수증(API-CONC-8): 작업이 스트림 메시지의 결과면(SIGMET 세트) 쓰였거나 영구 오류로 버렸을 때 놓는다 → 그 메시지를 ACK.
+ *       종료로 못 쓴 작업은 놓지 않는다 — 메시지가 PEL 에 남아 다음 기동에서 다시 처리된다. 큐가 넘쳐 버린 작업은 놓는다(지표로 센다).</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 쓰기 작업을 하지 않는다
@@ -39,16 +42,23 @@ public class OrderedWriter implements SmartLifecycle {
     /** 종료 시 비우기 마감. 소비 중지(≤5 s) + going_away + 이것(≤8 s, 항적 flush 와 동시) + Tomcat(≤10 s) 이 compose 유예 30 s 안에 든다. */
     static final long DRAIN_DEADLINE_MS = 6_000;
 
-    /** 한 작업. kind 는 지표 태그(alert·sigmet_set·alert_reconcile …). */
+    /** 한 작업. kind 는 지표 태그(alert·sigmet_set·alert_reconcile …). receipt 는 이 작업이 결과를 들고 있는 스트림 메시지(없으면 NONE). */
     public interface Task {
         String kind();
         void run();
+        default Receipt receipt() { return Receipt.NONE; }
     }
 
     public static Task task(String kind, Runnable r) {
+        return task(kind, r, Receipt.NONE);
+    }
+
+    /** 영수증을 든 작업 — 호출자가 제출 전에 receipt.hold() 한다. 이 큐가 결과에 따라 놓는다. */
+    public static Task task(String kind, Runnable r, Receipt receipt) {
         return new Task() {
             @Override public String kind() { return kind; }
             @Override public void run() { r.run(); }
+            @Override public Receipt receipt() { return receipt; }
         };
     }
 
@@ -77,12 +87,13 @@ public class OrderedWriter implements SmartLifecycle {
     /** 순서대로 쓰도록 넣는다. 가득 찼거나 이미 종료했으면 false(버린 것으로 센다). */
     public boolean submit(Task t) {
         if (stopped) {
-            count(t.kind(), "dropped");
+            count(t.kind(), "dropped"); // 영수증은 놓지 않는다 — 다음 기동에서 다시 처리된다
             return false;
         }
         if (queue.offer(t)) return true;
         count(t.kind(), "dropped");
         log.warn("persist queue full ({}), dropped {} task", QUEUE_MAX, t.kind());
+        t.receipt().release(); // 넘침: 되살릴 방법이 없다 — 센 뒤 ACK(PEL 이 끝없이 자라지 않게)
         return false;
     }
 
@@ -146,12 +157,14 @@ public class OrderedWriter implements SmartLifecycle {
             try {
                 t.run();
                 count(t.kind(), "ok");
+                t.receipt().release();
                 return true;
             } catch (RuntimeException e) {
                 boolean transientError = isTransient(e);
                 if (!transientError && ++permanentFailures >= PERMANENT_ATTEMPTS) {
                     count(t.kind(), "failed");
                     log.warn("{} persist failed permanently after {} attempts, dropped: {}", t.kind(), permanentFailures, e.toString());
+                    t.receipt().release(); // 다시 처리해도 같은 결과 — ACK 하고 failed 로 센다
                     return false;
                 }
                 if (!running) {
@@ -182,6 +195,7 @@ public class OrderedWriter implements SmartLifecycle {
             try {
                 t.run();
                 count(t.kind(), "ok");
+                t.receipt().release();
                 written++;
             } catch (RuntimeException e) {
                 count(t.kind(), "dropped");

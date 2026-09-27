@@ -90,7 +90,7 @@ def test_top_from_raw_text_only_when_json_top_null():
 
 def test_top_abv_and_whitespace_variants():
     s = parse_isigmet(_item(base=None, top=None, rawSigmet="EMBD TS FCST WI ... TOP ABV\nFL380 MOV NE 10KT NC="), NOW)
-    assert (s.top_ft, s.top_source) == (38000, "raw_text")  # ABV: 발표된 값(상한의 하한)을 그대로
+    assert (s.top_ft, s.top_source) == (38000, "raw_text_lower_bound")  # ABV: 발표값은 상한의 하한(DH-4)
     s = parse_isigmet(_item(base=None, top=None, rawSigmet="FRQ TS TOP  FL350\nSTNR NC="), NOW)
     assert (s.top_ft, s.top_source) == (35000, "raw_text")
 
@@ -168,3 +168,15 @@ def test_airsigmet_parses(fixtures_dir):
     items = json.loads((fixtures_dir / "awc_airsigmet.json").read_text())
     parsed = [parse_airsigmet(it, NOW) for it in items]
     assert all(p is not None for p in parsed) and parsed[0].provider == "awc_airsigmet"
+
+
+def test_top_abv_is_a_lower_bound_not_a_ceiling():
+    from wakeline_collector.sigmet_parse import raw_text_top, resolve_band
+
+    assert raw_text_top("EMBD TS TOP ABV FL390 MOV E") == (39000, True)
+    assert raw_text_top("EMBD TS TOP FL390 MOV E") == (39000, False)
+    assert raw_text_top("TOP FL380 ... TOP FL400") is None  # 서로 다른 값 — 추정하지 않는다
+    _, _, top, src, _ = resolve_band(None, None, "SEV TURB TOP ABV FL390")
+    assert (top, src) == (39000, "raw_text_lower_bound")
+    _, _, top, src, _ = resolve_band(None, None, "SEV TURB TOP FL390")
+    assert (top, src) == (39000, "raw_text")

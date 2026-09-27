@@ -44,7 +44,7 @@ class ProviderStatus:
 
     async def hset_meta(self, key: str, fields: dict[str, str]) -> None:
         try:
-            await self._r.hset(key, mapping=fields)
+            await self._r.hset(key, mapping=fields)  # type: ignore[arg-type]
         except Exception as e:  # noqa: BLE001
             self._warn("hset", e)
 
@@ -127,11 +127,12 @@ class ProviderStatus:
         self._disabled[name] = v == "1"
         return self._disabled[name]
 
-    async def heartbeat(self, job: str, *, lag_s: float | None, fixture: bool) -> None:
+    async def heartbeat(self, job: str, *, lag_s: float | None, fixture: bool, extra: dict[str, str] | None = None) -> None:
         fields = {
             f"{job}_at": _iso(datetime.now(UTC)),
             f"{job}_lag_s": "" if lag_s is None else f"{lag_s:.1f}",
             "fixture": "1" if fixture else "0",
+            **(extra or {}),
         }
         if self._metrics is not None:
             try:

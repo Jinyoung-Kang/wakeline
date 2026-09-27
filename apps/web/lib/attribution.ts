@@ -10,6 +10,8 @@ export interface Credit {
   href: string;
   /** 라이선스·조건 표기(있을 때만) */
   license?: { label: string; href: string };
+  /** 괄호 안 짧은 설명(링크 아님) — 예: 선박 자료 종류 "AIS" */
+  note?: string;
 }
 
 export const ODBL_URL = "https://opendatacommons.org/licenses/odbl/1-0/";
@@ -19,6 +21,7 @@ export const CREDITS: Credit[] = [
   { role: "Aircraft", label: "adsb.fi", href: "https://adsb.fi" },
   { role: "Aircraft", label: "OpenSky Network", href: "https://opensky-network.org" },
   { role: "SIGMET · METAR · TAF", label: "AviationWeather.gov", href: "https://aviationweather.gov" },
+  { role: "Ships", label: "aisstream.io", href: "https://aisstream.io", note: "AIS" },
   { role: "Radar", label: "RainViewer", href: "https://www.rainviewer.com" },
   { role: "Radar (KR)", label: "기상청 API허브", href: "https://apihub.kma.go.kr" },
   { role: "Map", label: "OpenFreeMap", href: "https://openfreemap.org" },
@@ -46,13 +49,13 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 export function mapAttributionHtml(opts: { extra?: string; includeMap?: boolean } = {}): string {
   const { extra, includeMap = true } = opts;
   const link = (c: { label: string; href: string }) => `<a href="${esc(c.href)}" target="_blank" rel="noopener noreferrer">${esc(c.label)}</a>`;
-  const parts = creditGroups(includeMap ? CREDITS : CREDITS.filter((c) => c.role !== "Map")).map((g) => `${esc(g.role)}: ${g.items.map((c) => link(c) + (c.license ? ` (${link(c.license)})` : "")).join(" · ")}`);
+  const parts = creditGroups(includeMap ? CREDITS : CREDITS.filter((c) => c.role !== "Map")).map((g) => `${esc(g.role)}: ${g.items.map((c) => link(c) + (c.license ? ` (${link(c.license)})` : "") + (c.note ? ` (${esc(c.note)})` : "")).join(" · ")}`);
   return (extra ? `${esc(extra)} · ` : "") + parts.join(" | ");
 }
 
 /** 순수 텍스트 버전(테스트·스크린리더 요약용) */
 export function attributionText(): string {
-  return creditGroups().map((g) => `${g.role}: ${g.items.map((c) => c.label + (c.license ? ` (${c.license.label})` : "")).join(" · ")}`).join(" | ");
+  return creditGroups().map((g) => `${g.role}: ${g.items.map((c) => c.label + (c.license ? ` (${c.license.label})` : "") + (c.note ? ` (${c.note})` : "")).join(" · ")}`).join(" | ");
 }
 
 /** 스타일 소스의 attribution 문자열들에 배경지도 크레딧(OpenStreetMap·OpenMapTiles)이 모두 있는가 */

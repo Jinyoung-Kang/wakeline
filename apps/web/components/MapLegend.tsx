@@ -2,20 +2,36 @@
 import { useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import {
-  ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, HAZARD_LEGEND, METAR_STALE_S,
+  ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, METAR_STALE_S,
 } from "@/lib/format";
-import { RADAR_COLOR_SCHEME } from "@/lib/maplayers";
+import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
+import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_NODIR_PATH } from "@/lib/ship-layers";
+import { SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S } from "@/lib/ships";
 
-const PLANE = "M24 2 L27 12 L27 22 L44 32 L44 36 L27 30 L26 40 L32 44 L32 47 L24 45 L16 47 L16 44 L22 40 L21 30 L4 36 L4 32 L21 22 L21 12 Z";
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
 const ALT_TICKS: [number, string][] = [[0, "0"], [10000, "10k ft"], [25000, "FL250"], [40000, "FL400+"]];
 
-/** 지도 아이콘과 같은 모양의 작은 비행기 */
-function Plane({ color, opacity = 1, halo, title }: { color: string; opacity?: number; halo?: string; title?: string }) {
+/** 지도 아이콘과 같은 모양의 작은 비행기(nodir = 방위 모름 마름모) */
+function Plane({ color, opacity = 1, halo, title, nodir }: { color: string; opacity?: number; halo?: string; title?: string; nodir?: boolean }) {
   return (
     <svg viewBox="-4 -4 56 56" width="14" height="14" aria-hidden={title ? undefined : true} role={title ? "img" : undefined} className="shrink-0">
       {title ? <title>{title}</title> : null}
-      <path d={PLANE} fill={color} fillOpacity={opacity} stroke={halo ?? "none"} strokeWidth={halo ? 4 : 0} strokeOpacity={opacity} />
+      <path d={nodir ? NODIR_PATH : PLANE_PATH} fill={color} fillOpacity={opacity} stroke={halo ?? "none"} strokeWidth={halo ? 4 : 0} strokeOpacity={opacity} />
+    </svg>
+  );
+}
+
+/** 지도 선박 아이콘과 같은 모양(heading = 선체 · cog = 점선 외곽 + 작은 선체 · none = 원) */
+function Hull({ color, mode = "heading", opacity = 1, title }: { color: string; mode?: "heading" | "cog" | "none"; opacity?: number; title?: string }) {
+  return (
+    <svg viewBox="-2 -2 52 52" width="14" height="14" aria-hidden={title ? undefined : true} role={title ? "img" : undefined} className="shrink-0">
+      {title ? <title>{title}</title> : null}
+      {mode === "heading" ? <path d={HULL_PATH} fill={color} fillOpacity={opacity} /> : null}
+      {mode === "none" ? <path d={SHIP_NODIR_PATH} fill={color} fillOpacity={opacity} /> : null}
+      {mode === "cog" ? <>
+        <path d={HULL_PATH} fill="none" stroke={color} strokeWidth={HULL_COG_STROKE} strokeDasharray={HULL_COG_DASH.join(" ")} strokeOpacity={opacity} />
+        <path d={HULL_PATH} fill={color} fillOpacity={opacity} transform={`translate(${HULL_COG_INNER.tx} ${HULL_COG_INNER.ty}) scale(${HULL_COG_INNER.scale})`} />
+      </> : null}
     </svg>
   );
 }
@@ -56,6 +72,8 @@ export function MapLegend({ id }: { id: string }) {
             </div>
           </li>
           <Row swatch={<Plane color={ALT_UNKNOWN_COLOR} />}>고도 모름</Row>
+          <Row swatch={<Plane color={GND_COLOR} />}>지상(GND · 공급자 on_ground) — 고도 색 아님</Row>
+          <Row swatch={<Plane color="#4c90f0" nodir />}>방위 모름 — 방향 없는 마름모(북쪽으로 그리지 않음)</Row>
           <Row swatch={<Plane color="#ffffff" />}>선택한 항공기</Row>
           <Row swatch={<Plane color="#e5484d" halo="#ff0000" />}>비상 squawk 7500·7600·7700</Row>
           <Row swatch={<Plane color="#4c90f0" halo="#ffffff" />}>관측 위치(흰 외곽선)</Row>
@@ -64,10 +82,29 @@ export function MapLegend({ id }: { id: string }) {
           <Row swatch={<Plane color="#4c90f0" opacity={0.7} />}>수신 경과 모름(70%)</Row>
         </Section>
       ) : null}
+      {layers.ships ? (
+        <Section title="선박 · 선종(아이콘 색, AIS)">
+          <li className="grid grid-cols-2 gap-x-2 gap-y-[2px] pb-1">
+            {SHIP_CATEGORIES.map((c) => (
+              <span key={c} className="flex items-center gap-1.5" title={`코드 ${SHIP_CATEGORY_CODES[c]}`}><Hull color={SHIP_CATEGORY_COLOR[c]} /><span className="text-[10px]">{SHIP_CATEGORY_LABEL[c]}</span></span>
+            ))}
+          </li>
+          <Row swatch={<Hull color="#c7ccd4" />}>선수방위(heading) 방향</Row>
+          <Row swatch={<Hull color="#c7ccd4" mode="cog" />}>침로 기준 — 선수방위 없음(점선 외곽)</Row>
+          <Row swatch={<Hull color="#c7ccd4" mode="none" />}>방향 모름 — 회전하지 않는 원</Row>
+          <Row swatch={<Hull color="#ffffff" />}>선택한 선박</Row>
+          <Row swatch={<Hull color="#c7ccd4" opacity={0.35} />}>STALE — {SHIP_STALE_S / 60}분 넘게 새 위치 없음(35%)</Row>
+          <Row swatch={<span className="inline-block h-3 w-3 rounded-full!" style={{ background: "rgba(92,184,92,0.45)", border: "1px solid #5cb85c" }} />}>줌 7 미만: 격자 칸 선박 수(원 크기 = 수, 색 = 가장 많은 선종)</Row>
+          {layers.tracks ? <>
+            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간)</Row>
+            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#8a929d" }} />}>공백 — AIS 끊김·15분 넘는 기록 없음(그 사이 위치 모름)</Row>
+          </> : null}
+        </Section>
+      ) : null}
       {layers.tracks || layers.prediction ? (
         <Section title="항적 · 예측">
           {layers.tracks ? <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "transparent", borderImage: `${grad} 1` }} />}>항적(DB 2 h + 실시간) · 고도 색</Row> : null}
-          {layers.prediction ? <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#b18cf5" }} />}>10분 예측 궤적 — 추정</Row> : null}
+          {layers.prediction ? <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#b18cf5" }} />}>10분 예측 궤적 — 추정(지금 위치부터 10분)</Row> : null}
         </Section>
       ) : null}
       {layers.sigmet ? (
@@ -79,6 +116,7 @@ export function MapLegend({ id }: { id: string }) {
           </li>
           <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#a3aab4", borderTopWidth: 1 }} />}>유효</Row>
           <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#a3aab4" }} />}>30분 안에 만료(점선)</Row>
+          <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dotted", borderTopColor: "#a3aab4" }} />}>발효 전(잔 점선·연한 채움) — 아직 판정 안 함</Row>
           <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#a3aab4", borderTopWidth: 3 }} />}>안에 항공기 있음(관측 알림)</Row>
         </Section>
       ) : null}

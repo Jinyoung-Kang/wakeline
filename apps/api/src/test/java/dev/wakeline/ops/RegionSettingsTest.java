@@ -1,9 +1,22 @@
 package dev.wakeline.ops;
 
+import dev.wakeline.config.AppProperties;
 import dev.wakeline.config.Problem;
 import dev.wakeline.domain.Bbox;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.node.JsonNodeFactory;
+
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -42,5 +55,40 @@ class RegionSettingsTest {
         for (String bad : new String[]{"99,127", "36.5,999", "85.1,0", "36.5,180.5", "36.5", "a,b", "36.5;127.8"})
             assertThatThrownBy(() -> SettingsService.validate("region_center", JsonNodeFactory.instance.stringNode(bad))).as(bad).isInstanceOf(Problem.class);
         assertThatThrownBy(() -> SettingsService.validate("region_center", JsonNodeFactory.instance.numberNode(36))).isInstanceOf(Problem.class);
+    }
+
+    /**
+     * API-CONC-7: TTL 만료로 시작된 백그라운드 갱신이 옛 값을 읽고 있는 동안 설정이 바뀌어 요청 스레드가 refreshNow 를 불러도,
+     * 마지막으로 반영되는 값은 새 값이어야 한다(이전에는 늦게 끝난 백그라운드 갱신이 옛 값으로 덮어썼다).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void concurrentRefreshCannotOverwriteANewerValueWithAnOlderRead() throws Exception {
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        CountDownLatch backgroundReading = new CountDownLatch(1);
+        CountDownLatch releaseBackground = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        when(hash.multiGet(any(), anyCollection())).thenAnswer(inv -> {
+            if (calls.incrementAndGet() == 1) { // 백그라운드 갱신: 미러 전에 옛 값을 읽고 늦게 돌아온다
+                backgroundReading.countDown();
+                releaseBackground.await(5, TimeUnit.SECONDS);
+                return List.of("36.5,127.8", "250");
+            }
+            return List.of("35.5,139.7", "150"); // 미러 뒤의 새 값
+        });
+        StringRedisTemplate redis = new StringRedisTemplate() {
+            @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations<String, HK, HV>) (HashOperations<?, ?, ?>) hash; }
+        };
+        AppProperties props = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, List.of());
+        RegionSettings region = new RegionSettings(redis, null, null, props);
+
+        Thread background = Thread.ofVirtual().start(region::refreshNow);
+        assertThat(backgroundReading.await(5, TimeUnit.SECONDS)).isTrue();
+        Thread update = Thread.ofVirtual().start(region::refreshNow); // SettingsService.update: 미러 → refreshNow
+        Thread.sleep(100);
+        releaseBackground.countDown();
+        background.join(5_000);
+        update.join(5_000);
+        assertThat(region.current()).isEqualTo(new RegionSettings.Region(35.5, 139.7, 150));
     }
 }

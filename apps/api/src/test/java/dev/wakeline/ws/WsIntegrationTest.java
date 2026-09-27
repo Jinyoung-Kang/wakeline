@@ -60,6 +60,7 @@ class WsIntegrationTest {
         @Bean SnapshotStore snapshotStore() { return new SnapshotStore(); }
         @Bean SigmetStore sigmetStore() { return new SigmetStore(); }
         @Bean RadarStore radarStore() { return new RadarStore(); }
+        @Bean dev.wakeline.ingest.ShipStore shipStore() { return new dev.wakeline.ingest.ShipStore(); }
         @Bean EngineService engineService(SnapshotStore s, SigmetStore g, ApplicationEventPublisher p, MeterRegistry m) { return new EngineService(s, g, p, m); }
         /** 연결 팩토리 없는 템플릿 — StatusService 는 Redis 오류를 삼키고 "redis unavailable" 로 둔다. */
         @Bean StatusService statusService(SnapshotStore s, SigmetStore g, RadarStore r, EngineService e, AppProperties props) {
@@ -80,7 +81,7 @@ class WsIntegrationTest {
                 Map.entry("wakeline.summary-retention-days", "30"),
                 // ws-resync-world-interval-s 는 비워 @DefaultValue(120) 를 확인한다. 목록은 WAKELINE_ALLOWED_ORIGINS 처럼 쉼표 문자열.
                 Map.entry("wakeline.allowed-origins", "http://localhost:8700, http://127.0.0.1:8700/"))));
-        ctx.register(Beans.class, WsHub.class, SkyWsHandler.class, WebSocketConfig.class);
+        ctx.register(Beans.class, WsHub.class, ShipFanout.class, WakelineWsHandler.class, WebSocketConfig.class);
 
         tomcat = new Tomcat();
         tomcat.setBaseDir(Files.createTempDirectory("wakeline-ws-it").toString());
@@ -149,10 +150,10 @@ class WsIntegrationTest {
         assertThat(c.next("alerts").path("version").asLong()).isZero();
         c.next("status");
 
-        WsSession s = ctx.getBean(SkyWsHandler.class).session(welcome.path("session_id").asString());
+        WsSession s = ctx.getBean(WakelineWsHandler.class).session(welcome.path("session_id").asString());
         assertThat(s).isNotNull();
         var nativeSession = ((NativeWebSocketSession) s.raw()).getNativeSession(jakarta.websocket.Session.class);
-        assertThat(nativeSession.getUserProperties().get(SkyWsHandler.TOMCAT_BLOCKING_SEND_TIMEOUT)).isEqualTo(5000L);
+        assertThat(nativeSession.getUserProperties().get(WakelineWsHandler.TOMCAT_BLOCKING_SEND_TIMEOUT)).isEqualTo(5000L);
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "bye").get(5, TimeUnit.SECONDS);
     }
 

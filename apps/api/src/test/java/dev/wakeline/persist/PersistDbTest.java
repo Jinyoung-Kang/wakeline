@@ -83,10 +83,15 @@ class PersistDbTest {
                 s.baseSource(), s.topSource());
     }
 
-    static SigmetStore.State set(Instant fetched, SigmetRecord... recs) {
+    /** 스트림 순서의 SIGMET 세트 한 벌(이력 저장 이벤트). */
+    static IngestEvents.SigmetSetReceived set(Instant fetched, SigmetRecord... recs) {
+        return set(fetched, dev.wakeline.ingest.Receipt.NONE, recs);
+    }
+
+    static IngestEvents.SigmetSetReceived set(Instant fetched, dev.wakeline.ingest.Receipt receipt, SigmetRecord... recs) {
         Map<String, SigmetRecord> m = new LinkedHashMap<>();
         for (SigmetRecord r : recs) m.put(r.id(), fetchedAt(r, fetched));
-        return new SigmetStore.State(1, fetched, fetched, "awc", m);
+        return new IngestEvents.SigmetSetReceived(fetched, "awc", m, receipt);
     }
 
     static Alert observed(long id, String hex, String sig, Instant entered) {
@@ -227,19 +232,19 @@ class PersistDbTest {
         var a = sig("A", "awc_isigmet", "RAW-A", T0.minusSeconds(3600), T0.plusSeconds(7200));
         var b = sig("B", "awc_isigmet", "RAW-B", T0.minusSeconds(3600), T0.plusSeconds(7200));
         var us = sig("U", "awc_airsigmet", "RAW-U", T0.minusSeconds(3600), T0.plusSeconds(7200));
-        sigmets.onSigmets(new IngestEvents.SigmetsUpdated(set(f1, a, b, us)));
+        sigmets.onSigmetSet(set(f1, a, b, us));
         writer.drainNow();
         String xminA = (String) sigmetRow("A").get("xmin");
 
         // 같은 내용, 새 수신 — 캐시가 막고(SQL 없음), 캐시가 비어 있어도 SQL 이 행을 다시 쓰지 않는다
-        sigmets.onSigmets(new IngestEvents.SigmetsUpdated(set(f2, a, b, us)));
+        sigmets.onSigmetSet(set(f2, a, b, us));
         writer.drainNow();
         assertThat(sigmetRow("A").get("xmin")).isEqualTo(xminA);
         new SigmetRepository(api, DbTestSupport.JSON, writer).upsert(fetchedAt(a, f2));
         assertThat(sigmetRow("A").get("xmin")).isEqualTo(xminA);
 
         // f3: B 가 사라짐. 미국(airsigmet) 항목은 세트에 하나도 없음 → 그 공급자는 판단하지 않는다(U 는 철회로 표시하지 않음)
-        sigmets.onSigmets(new IngestEvents.SigmetsUpdated(set(f3, a)));
+        sigmets.onSigmetSet(set(f3, a));
         writer.drainNow();
         assertThat(TrackRepository.toInstant(sigmetRow("B").get("withdrawn_at"))).isEqualTo(f3);
         assertThat(sigmetRow("U").get("withdrawn_at")).isNull();
@@ -248,13 +253,13 @@ class PersistDbTest {
         assertThat(sigmets.validAt(f2).stream().map(m -> m.get("id")).toList()).contains("B"); // 철회 전 시각에는 유효
 
         // B 가 다시 나타나면 철회 표시를 지운다
-        sigmets.onSigmets(new IngestEvents.SigmetsUpdated(set(T0, a, b)));
+        sigmets.onSigmetSet(set(T0, a, b));
         writer.drainNow();
         assertThat(sigmetRow("B").get("withdrawn_at")).isNull();
 
         // 내용이 바뀌면 쓴다
         var a2 = sig("A", "awc_isigmet", "RAW-A amended", a.validFrom(), a.validTo());
-        sigmets.onSigmets(new IngestEvents.SigmetsUpdated(set(T0.plusSeconds(1), a2, b)));
+        sigmets.onSigmetSet(set(T0.plusSeconds(1), a2, b));
         writer.drainNow();
         assertThat(sigmetRow("A").get("raw_text")).isEqualTo("RAW-A amended");
     }
@@ -263,7 +268,7 @@ class PersistDbTest {
     void oneInvalidSigmetDoesNotBlockTheRestOfTheSet() {
         var bad = sig("BAD", "awc_isigmet", "bad", T0, T0.minusSeconds(60)); // valid_to < valid_from — DB 제약 위반
         var good = sig("GOOD", "awc_isigmet", "good", T0.minusSeconds(60), T0.plusSeconds(3600));
-        sigmets.onSigmets(new IngestEvents.SigmetsUpdated(set(T0, bad, good)));
+        sigmets.onSigmetSet(set(T0, bad, good));
         writer.drainNow();
         assertThat(sigmetRow("GOOD")).isNotNull();
         assertThat(sigmetRow("BAD")).isNull();
@@ -352,12 +357,16 @@ class PersistDbTest {
     void permanentlyRejectedTrackRowsAreCountedAsFailed() throws Exception {
         TrackWriter tw = new TrackWriter(DbTestSupport.apiJdbc(), new AircraftRepository(api, DbTestSupport.JSON), meters, 5, 10);
         tw.start();
-        tw.enqueue(List.of(ac("f10001", 36, 127, Instant.parse("2001-01-01T00:00:00Z"), null))); // 파티션 없음(23514)
+        java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        tw.enqueue(List.of(ac("f10001", 36, 127, Instant.parse("2001-01-01T00:00:00Z"), null)), r); // 파티션 없음(23514)
+        r.release();
         long deadline = System.currentTimeMillis() + 10_000;
         while (System.currentTimeMillis() < deadline && meters.counter("wakeline_track_rows_total", "result", "failed").count() < 1) Thread.sleep(20);
         tw.stop();
         assertThat(meters.counter("wakeline_track_rows_total", "result", "failed").count()).isEqualTo(1.0);
         assertThat(meters.counter("wakeline_track_rows_total", "result", "written").count()).isZero();
+        assertThat(acked.get()).as("re-processing cannot fix a permanent error — the message is acknowledged").isEqualTo(1);
     }
 
     // ---------- 통계 · 요약 ----------
@@ -374,6 +383,12 @@ class PersistDbTest {
         admin.sql("UPDATE alert_event SET close_reason = 'signal_lost' WHERE id = 2").update();
         insertAlert(3, "b00003", "X", "OBSERVED", d0.plusSeconds(3600), d0.plusSeconds(3600 + 5));
         admin.sql("UPDATE alert_event SET close_reason = 'restart' WHERE id = 3").update();
+        // DH-5·API-CONC-3: 사유 미기록(NULL)·경보 종료(sigmet_ended)·만료 뒤에 닫힌 옛 left 는 확인된 이탈이 아니다 — 평균에서 뺀다
+        insertAlert(4, "b00004", "X", "OBSERVED", d0.plusSeconds(3600), d0.plusSeconds(3600 + 2000));
+        insertAlert(5, "b00005", "X", "OBSERVED", d0.plusSeconds(3600), d0.plusSeconds(3600 + 3000));
+        admin.sql("UPDATE alert_event SET close_reason = 'sigmet_ended' WHERE id = 5").update();
+        insertAlert(6, "b00006", "X", "OBSERVED", d0.plusSeconds(3600), d0.plusSeconds(3600 + 4000));
+        admin.sql("UPDATE alert_event SET close_reason = 'left', evidence = '{\"sigmet_expired\": true}'::jsonb WHERE id = 6").update();
         trackPoint("c00001", d0.plusSeconds(3600 + 30), 36.5, 127.8);   // 관심 지역 안
         trackPoint("c00002", d0.plusSeconds(3600 + 30), 0.5, 10.0);     // 전세계 표본 — 세지 않는다
         MaintenanceJobs jobs = new MaintenanceJobs(api, PROPS, region(), DbTestSupport.apiTx());
@@ -383,10 +398,14 @@ class PersistDbTest {
         for (var r : api.sql("SELECT metric || ':' || dim k, value FROM stats_daily WHERE day = :d").param("d", day).query().listOfRows())
             stats.put(String.valueOf(r.get("k")), ((Number) r.get("value")).doubleValue());
         assertThat(stats).containsEntry("sigmet_by_fir:RKRR", 1.0).containsEntry("traffic_by_hour:01", 1.0)
-                .containsEntry("alert_dwell_avg_s:OBSERVED", 600.0).containsEntry("alerts_by_kind:OBSERVED", 3.0)
+                .containsEntry("alert_dwell_avg_s:OBSERVED", 600.0).containsEntry("alerts_by_kind:OBSERVED", 6.0)
                 .containsEntry("traffic_region:center_lat", 36.5).containsEntry("traffic_region:radius_nm", 250.0);
         var traffic = new StatsRepository(api).traffic(day);
-        assertThat(traffic.region()).containsEntry("radius_nm", 250);
+        assertThat(traffic.region()).containsEntry("radius_nm", 250).containsEntry("center", List.of(36.5, 127.8));
+        // DH-10: 집계가 실제로 센 사각형(같은 식으로 결정적으로 복원)
+        var bb = new RegionSettings.Region(36.5, 127.8, 250).bbox();
+        assertThat(traffic.region()).containsEntry("bbox", List.of(bb.lomin(), bb.lamin(), bb.lomax(), bb.lamax()));
+        assertThat(new StatsRepository(api).traffic(day.minusDays(30)).region()).isNull(); // 지역 기록 없는 날 — 범위를 단정하지 않는다
 
         // 완료된(이탈) OBSERVED 가 없는 날: 체류 행을 만들지 않는다(0 을 지어내지 않는다)
         jobs.aggregateDay(day.minusDays(1));
@@ -428,6 +447,184 @@ class PersistDbTest {
         assertThat(admin.sql("SELECT count(*) FROM ingest_run").query(Long.class).single()).isZero();
     }
 
+    // ---------- 리뷰 수정(2026-09-28) ----------
+
+    /** API-CONC-4·DH-6: 경보 종료는 close_reason sigmet_ended, API-CONC-5: 예측 갱신은 진입 고도 열도 바꾼다. */
+    @Test
+    void sigmetEndedClosureAndPredictionAltitudeUpdateArePersisted() {
+        SigmetRecord s = sig("RKRR:F09", "awc_isigmet", "RAW9", T0.minusSeconds(3600), T0.plusSeconds(3600));
+        store.replace(T0, "awc", Map.of(s.id(), s));
+        AlertRepository repo = alerts();
+        long id = repo.idFloor() + 1;
+        Alert a = observed(id, "abc901", s.id(), T0.minusSeconds(60));
+        Alert ended = a.closed(T0.minusSeconds(5), Alert.CLOSE_SIGMET_ENDED, Map.of("end_cause", "withdrawn"));
+        events(repo, new Event(EventType.ENTERED, a), new Event(EventType.SIGMET_ENDED, ended));
+        Alert p = predicted(id + 1, "abc902", s.id(), T0.minusSeconds(30), 300);
+        Map<String, Object> ev2 = new LinkedHashMap<>(p.evidence());
+        ev2.put("alt_ft_at_entry", 37000);
+        Alert pu = new Alert(p.id(), p.kind(), p.hex(), p.callsign(), p.sigmetId(), p.firId(), p.hazard(), p.qualifier(), p.enteredAt(), null, null,
+                200, T0.plusSeconds(200), 37000, ev2, true);
+        events(repo, new Event(EventType.PREDICTED, p), new Event(EventType.PREDICTION_UPDATED, pu));
+        writer.drainNow();
+        assertThat(alertRow(id)).containsEntry("close_reason", "sigmet_ended");
+        assertThat(TrackRepository.toInstant(alertRow(id).get("left_at"))).isEqualTo(T0.minusSeconds(5));
+        Map<String, Object> pr = admin.sql("SELECT eta_s, alt_ft_at_entry, (evidence->>'alt_ft_at_entry')::int ev_alt FROM alert_event WHERE id = :id")
+                .param("id", id + 1).query().singleRow();
+        assertThat(pr).containsEntry("eta_s", 200).containsEntry("alt_ft_at_entry", 37000).containsEntry("ev_alt", 37000);
+        assertThat(AlertRepository.closeReason(new Event(EventType.SIGMET_ENDED, a))).isEqualTo(Alert.CLOSE_SIGMET_ENDED);
+    }
+
+    /**
+     * API-CONC-1: api 가 멈춘 동안 쌓인 SIGMET 세트(백로그)도 스트림 순서대로 이력에 남는다. 그 사이 철회된 경보는 실제로 빠진 세트의 시각으로,
+     * 부트스트랩이 알림 FK 로 먼저 쓴 최신 경보는 그보다 오래된 세트에 '빠졌다' 고 표시되지 않는다(first_seen 가드). 재전달된 세트는 건너뛴다.
+     */
+    @Test
+    void backlogSigmetSetsArePersistedInStreamOrderWithRealWithdrawalTimes() {
+        Instant f1 = T0.minusSeconds(1500), f2 = T0.minusSeconds(1200), f3 = T0.minusSeconds(900), f4 = T0.minusSeconds(600), f5 = T0.minusSeconds(300);
+        var a = sig("A", "awc_isigmet", "RAW-A", T0.minusSeconds(3600), T0.plusSeconds(7200));
+        var x = sig("X", "awc_isigmet", "RAW-X", T0.minusSeconds(1300), T0.plusSeconds(7200)); // 멈춘 동안 발표되고 철회된 경보
+        var y = sig("Y", "awc_isigmet", "RAW-Y", T0.minusSeconds(400), T0.plusSeconds(7200));  // 재시작 직전 최신 세트에만 있는 경보
+        var keep = sig("K", "awc_isigmet", "RAW-K", T0.minusSeconds(3600), T0.plusSeconds(7200));
+        sigmets.onSigmetSet(set(f1, a, keep));           // 멈추기 전
+        writer.drainNow();
+        // 재시작: 부트스트랩이 최신 세트(f5)를 메모리에 적용하고, 그 세트로 생긴 알림의 FK 로 Y 를 먼저 쓴다(순서보다 앞서)
+        sigmets.ensure(fetchedAt(y, f5));
+        // 소비가 밀린 세트를 스트림 순서대로 준다(f5 가 마지막)
+        sigmets.onSigmetSet(set(f2, a, x, keep));
+        sigmets.onSigmetSet(set(f3, x, keep));           // A 철회
+        sigmets.onSigmetSet(set(f3, x, keep));           // 재전달(같은 세트) — 건너뛴다
+        sigmets.onSigmetSet(set(f4, keep));              // X 철회
+        sigmets.onSigmetSet(set(f5, keep, y));
+        writer.drainNow();
+        assertThat(TrackRepository.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(TrackRepository.toInstant(sigmetRow("X").get("withdrawn_at"))).isEqualTo(f4);
+        assertThat(sigmetRow("Y").get("withdrawn_at")).as("Y had not appeared yet in f2..f4").isNull();
+        assertThat(sigmetRow("K").get("withdrawn_at")).isNull();
+        Map<String, Object> firstSeen = new LinkedHashMap<>();
+        for (var r : admin.sql("SELECT id, first_seen FROM sigmet").query().listOfRows()) firstSeen.put((String) r.get("id"), TrackRepository.toInstant(r.get("first_seen")));
+        assertThat(firstSeen).containsEntry("A", f1).containsEntry("X", f2).containsEntry("Y", f5);
+        // 재생: 그 시각에 유효했던 경보
+        assertThat(sigmets.validAt(f2.plusSeconds(1)).stream().map(m -> m.get("id")).toList()).contains("A", "X");
+        assertThat(sigmets.validAt(f3.plusSeconds(1)).stream().map(m -> m.get("id")).toList()).doesNotContain("A").contains("X");
+        assertThat(sigmets.validAt(f4.plusSeconds(1)).stream().map(m -> m.get("id")).toList()).doesNotContain("A", "X");
+        // 이미 저장한 세트보다 오래된 세트는 건너뛴다(이력을 과거로 되돌리지 않는다)
+        sigmets.onSigmetSet(set(f2, a, x, keep));
+        assertThat(writer.drainNow()).isZero();
+        assertThat(TrackRepository.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
+    }
+
+    /** API-CONC-8: SIGMET 세트 메시지의 영수증은 저장이 커밋된 뒤에 풀린다. 건너뛴 재전달은 영수증을 잡지 않는다. */
+    @Test
+    void sigmetSetReceiptIsReleasedOnlyAfterTheSetIsPersisted() {
+        var a = sig("RA", "awc_isigmet", "RAW", T0.minusSeconds(3600), T0.plusSeconds(3600));
+        java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        sigmets.onSigmetSet(set(T0, r, a));
+        r.release();                            // 소비자 자신의 보유
+        assertThat(acked.get()).as("not acked before the DB write").isZero();
+        writer.drainNow();
+        assertThat(acked.get()).isEqualTo(1);
+        dev.wakeline.ingest.Receipt dup = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        sigmets.onSigmetSet(set(T0, dup, a));   // 재전달 — 잡지 않으므로 소비자 보유만 풀면 바로 ACK
+        dup.release();
+        assertThat(acked.get()).isEqualTo(2);
+    }
+
+    /** API-CONC-8: 항적 메시지의 영수증은 그 행이 커밋된 뒤에만 풀린다 — DB 장애 중에는 ACK 되지 않고, 종료 때 못 쓴 메시지는 끝까지 ACK 되지 않는다. */
+    @Test
+    void trackReceiptsAreReleasedOnlyAfterTheirRowsAreDurable() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        javax.sql.DataSource flaky = new org.springframework.jdbc.datasource.DelegatingDataSource(DbTestSupport.apiDataSource()) {
+            @Override public java.sql.Connection getConnection() throws java.sql.SQLException {
+                if (down.get()) throw new java.sql.SQLTransientConnectionException("db down");
+                return super.getConnection();
+            }
+        };
+        TrackWriter tw = new TrackWriter(new org.springframework.jdbc.core.JdbcTemplate(flaky), new AircraftRepository(JdbcClient.create(flaky), DbTestSupport.JSON), meters, 10, 20);
+        tw.start();
+        Instant seen = Instant.now().minusSeconds(20);
+        java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt m1 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.ingest.Receipt m2 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.ingest.Receipt empty = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        tw.enqueue(List.of(ac("f20001", 36, 127, seen, null), ac("f20002", 36, 127, seen, null)), m1);
+        tw.enqueue(List.of(ac("f20003", 36, 127, seen, null)), m2);
+        tw.enqueue(List.of(), empty);
+        m1.release(); m2.release(); empty.release(); // 소비자 자신의 보유
+        assertThat(acked.get()).as("a message with no rows is acked at once").isEqualTo(1);
+        Thread.sleep(200);                       // 배치가 재시도 중(DB 장애)
+        assertThat(acked.get()).as("nothing acked while the rows are not durable").isEqualTo(1);
+        assertThat(tw.pendingMarks()).isEqualTo(2);
+        down.set(false);                         // DB 복구 → 커밋 → ACK
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline && acked.get() < 3) Thread.sleep(20);
+        assertThat(acked.get()).isEqualTo(3);
+        assertThat(admin.sql("SELECT count(*) FROM track_point WHERE hex LIKE 'f2000%'").query(Long.class).single()).isEqualTo(3L);
+
+        // 종료 때 DB 가 다시 죽어 있으면: 못 쓴 행의 메시지는 ACK 하지 않는다(다음 기동에서 PEL 로 다시 온다)
+        down.set(true);
+        dev.wakeline.ingest.Receipt m3 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        tw.enqueue(List.of(ac("f20004", 36, 127, seen, null)), m3);
+        m3.release();
+        tw.stop();
+        assertThat(acked.get()).isEqualTo(3);
+        assertThat(meters.counter("wakeline_track_rows_total", "result", "dropped").count()).isEqualTo(1.0);
+    }
+
+    /** 큐가 넘쳐 버린 행의 메시지는(되살릴 수 없으므로) 센 뒤 ACK 된다 — PEL 이 끝없이 자라지 않게. 진행 중 배치보다 먼저 풀리지는 않는다. */
+    @Test
+    void overflowDroppedRowsReleaseTheirReceiptsAfterTheOutstandingBatch() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        javax.sql.DataSource flaky = new org.springframework.jdbc.datasource.DelegatingDataSource(DbTestSupport.apiDataSource()) {
+            @Override public java.sql.Connection getConnection() throws java.sql.SQLException {
+                if (down.get()) throw new java.sql.SQLTransientConnectionException("db down");
+                return super.getConnection();
+            }
+        };
+        TrackWriter tw = new TrackWriter(new org.springframework.jdbc.core.JdbcTemplate(flaky), new AircraftRepository(JdbcClient.create(flaky), DbTestSupport.JSON), meters, 10, 20);
+        tw.start();
+        Instant seen = Instant.now().minusSeconds(20);
+        java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+        List<AircraftState> first = new ArrayList<>();
+        for (int i = 0; i < TrackWriter.BATCH; i++) first.add(ac(String.format("e3%04x", i), 36, 127, seen, null));
+        dev.wakeline.ingest.Receipt m1 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        tw.enqueue(first, m1);
+        m1.release();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline && tw.queued() > 0) Thread.sleep(10); // 첫 배치가 워커 손에(재시도 중)
+        List<AircraftState> flood = new ArrayList<>();
+        for (int i = 0; i < TrackWriter.QUEUE_MAX + 10; i++) flood.add(ac(String.format("%06x", 0x900000 + i), 36, 127, seen, null));
+        dev.wakeline.ingest.Receipt m2 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        tw.enqueue(flood, m2); // 자기 행 10개가 넘쳐 버려진다
+        m2.release();
+        assertThat(meters.counter("wakeline_track_rows_total", "result", "dropped").count()).isEqualTo(10.0);
+        assertThat(acked.get()).as("the outstanding batch is not durable yet").isZero();
+        tw.stop(); // DB 장애 그대로 — 어느 것도 ACK 하지 않는다
+        assertThat(acked.get()).isZero();
+    }
+
+    /** OrderedWriter: 영구 오류로 버린 작업은 영수증을 놓고(ACK), 종료 뒤 제출은 놓지 않는다(다음 기동에서 재처리). */
+    @Test
+    void orderedWriterReleasesReceiptsOnSuccessAndPermanentFailureButNotAfterShutdown() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt ok = new dev.wakeline.ingest.Receipt(acked::incrementAndGet).hold();
+        dev.wakeline.ingest.Receipt bad = new dev.wakeline.ingest.Receipt(acked::incrementAndGet).hold();
+        writer.start();
+        writer.submit(OrderedWriter.task("probe_ok", () -> { }, ok));
+        writer.submit(OrderedWriter.task("probe_bad", () -> api.sql("SELECT 1/0").query(Integer.class).single(), bad)); // 22012 — 영구 오류
+        ok.release(); bad.release();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline && acked.get() < 2) Thread.sleep(10);
+        assertThat(acked.get()).isEqualTo(2);
+        assertThat(meters.counter("wakeline_persist_tasks_total", "kind", "probe_bad", "result", "failed").count()).isEqualTo(1.0);
+        writer.stop();
+        dev.wakeline.ingest.Receipt late = new dev.wakeline.ingest.Receipt(acked::incrementAndGet).hold();
+        assertThat(writer.submit(OrderedWriter.task("probe_late", () -> { }, late))).isFalse();
+        late.release();
+        assertThat(acked.get()).isEqualTo(2);
+        assertThat(late.holds()).isEqualTo(1); // 다음 기동에서 다시 처리되도록 ACK 하지 않는다
+    }
+
     // ---------- 재생 · 공항 ----------
 
     @Test
@@ -441,8 +638,13 @@ class PersistDbTest {
         var fromSummary = tracks.replay(at, b);
         assertThat(fromSummary.source()).isEqualTo("track_point_1m");
         assertThat(fromSummary.aircraft().getFirst().get("on_ground")).isNull(); // 요약에는 지상 여부가 없다 — false 로 채우지 않는다
+        assertThat(fromSummary.aircraft().getFirst().get("track_deg")).isNull();
+        // DH-11: 1분 요약 행은 '평균 위치' 로 표시된다(기록된 한 점이 아니다) + 평균에 쓴 점 수
+        assertThat(fromSummary.aircraft().getFirst()).containsEntry("averaged", true).containsEntry("samples", 3);
         trackPoint("e00002", at.minusSeconds(30), 36, 127);
-        assertThat(tracks.replay(at, b).source()).isEqualTo("track_point");
+        var raw = tracks.replay(at, b);
+        assertThat(raw.source()).isEqualTo("track_point");
+        assertThat(raw.aircraft().getFirst()).containsEntry("averaged", false).doesNotContainKey("samples");
 
         admin.sql("INSERT INTO radar_frame (frame_time, host, path, fetched_at) VALUES (:a, 'https://tilecache.rainviewer.com', '/v2/radar/a', now()), (:b, 'https://tilecache.rainviewer.com', '/v2/radar/b', now())")
                 .param("a", Sql.ts(at.plusSeconds(240))).param("b", Sql.ts(at.minusSeconds(480))).update();
@@ -460,6 +662,15 @@ class PersistDbTest {
         admin.sql("""
                 INSERT INTO metar_obs (icao, obs_time, raw, ceiling_state, flight_cat, flight_cat_source, provider, fetched_at)
                 VALUES ('RKSI', now() - interval '3 hours', 'RKSI ...', 'unknown', NULL, NULL, 'awc', now())""").update();
+        admin.sql("""
+                INSERT INTO metar_obs (icao, obs_time, raw, vis_sm, vis_raw, ceiling_state, flight_cat, flight_cat_source, provider, fetched_at)
+                VALUES ('RKSS', now() - interval '4 hours', 'RKSS ... 6+SM', 6.0, '6+', 'none', 'VFR', 'awc', 'awc', now())""").update();
+        // DH-7: 이력에도 원문 시정(vis_raw)을 싣는다 — '6+'(6 SM 이상)가 '6' 으로 보이지 않게
+        Map<String, Object> wx = new AirportRepository(api).wx("RKSS");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> history = (List<Map<String, Object>>) wx.get("history");
+        assertThat(history.getFirst()).containsEntry("vis_raw", "6+");
+        assertThat(((Number) history.getFirst().get("vis_sm")).doubleValue()).isEqualTo(6.0);
+        admin.sql("DELETE FROM metar_obs WHERE icao = 'RKSS'").update();
         var rows = new AirportRepository(api).withLatestMetar(Bbox.world(), true);
         Map<String, Object> rksi = rows.stream().filter(r -> "RKSI".equals(r.get("icao"))).findFirst().orElseThrow();
         Map<String, Object> rkss = rows.stream().filter(r -> "RKSS".equals(r.get("icao"))).findFirst().orElseThrow();

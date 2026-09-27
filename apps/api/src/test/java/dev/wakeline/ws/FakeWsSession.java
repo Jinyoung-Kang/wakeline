@@ -34,7 +34,7 @@ final class FakeWsSession implements WebSocketSession {
 
     FakeWsSession(String id, String ip) {
         this.id = id;
-        attributes.put(SkyWsHandler.ATTR_IP, ip);
+        attributes.put(WakelineWsHandler.ATTR_IP, ip);
     }
 
     @Override public String getId() { return id; }

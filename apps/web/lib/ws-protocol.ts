@@ -1,12 +1,39 @@
 /**
  * WS 클라이언트의 순수 상태 로직(테스트 가능) — 계약서 §1.
- * seq 연속성·resync 게이트·송신 예산(서버 한도 20 msg/10 s)·알림 버전·피드(region/global) 정규화·지연 계산·재접속 백오프.
+ * seq 연속성·resync 게이트·송신 예산(서버 한도 20 msg/10 s)·알림 버전·피드(region/global) 정규화·지연 계산·재접속 백오프·수신 감시.
  */
 import type { Alert, AlertEventType, FeedInfo, SourceInfo } from "./types";
+
+// ---- 재접속·수신 감시(WS-1 · WS-2) ----
+
+/** 서버 heartbeat 주기(계약서 §1: ping 30 s 마다, 구독 세션에는 status 도 함께) */
+export const PING_INTERVAL_MS = 30_000;
+/** 이만큼(ping 2.5 회) 아무 메시지도 없으면 반쯤 열린 연결로 보고 닫고 다시 잇는다 */
+export const RX_DEAD_MS = 75_000;
+/** 이만큼(ping 1.5 회) 수신이 없으면 "실시간"이 아니다 — 화면의 피드 지연을 받은 뒤 경과만큼 늘린다 */
+export const RX_FRESH_MS = 45_000;
+/** 연결이 건강하다고 볼 조건: 첫 스냅샷, 또는 welcome 뒤 이만큼 열려 있음(숨긴 탭은 구독을 미뤄 스냅샷이 없다) */
+export const HEALTHY_AFTER_MS = 30_000;
+/** 서버가 과부하(1013 연결 상한)·정책(1008 rate limit)으로 닫으면 바로 다시 붙지 않는다 — 백오프 상한(30 s)부터 */
+export const LONG_BACKOFF_CODES: ReadonlySet<number> = new Set([1008, 1013]);
+export const LONG_BACKOFF_ATTEMPT = 5; // 1 s · 2^5 = 32 s → 상한 30 s
 
 export function nextBackoffMs(attempt: number, min = 1000, max = 30000): number {
   const base = Math.min(max, min * Math.pow(2, Math.max(0, attempt)));
   return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+
+/**
+ * 연결이 닫힌 뒤 다음 백오프 단계. 시도 횟수는 열림(onopen)으로 초기화하지 않는다 — 업그레이드를 받아 준 뒤 곧바로 닫는 서버
+ * (연결 상한 1013, 느린 소비자 종료)에 1 s 마다 다시 붙는 고리를 막는다. 초기화는 연결이 건강함이 확인된 뒤에만(HEALTHY_AFTER_MS).
+ */
+export function attemptAfterClose(attempt: number, code: unknown): number {
+  return typeof code === "number" && LONG_BACKOFF_CODES.has(code) ? Math.max(attempt, LONG_BACKOFF_ATTEMPT) : attempt;
+}
+
+/** 연결이 열려 있고 최근(RX_FRESH_MS 안)에 무엇이든 받았는가 — ping 은 30 s 마다 오므로 조용한 정상 연결도 참이다. */
+export function isRxFresh(conn: string, lastRxAt: number | null | undefined, nowMs: number): boolean {
+  return conn === "open" && lastRxAt != null && nowMs - lastRxAt < RX_FRESH_MS;
 }
 
 /**
@@ -115,12 +142,14 @@ export const REGION_STALE_S = 60;
 export const GLOBAL_STALE_S = 300;
 
 /**
- * 표시할 지연. 연결이 열려 있으면 서버가 보고한 값(30 s 마다 status/스냅샷으로 갱신).
- * 연결이 끊겼거나 일시정지면 화면 데이터가 더 이상 갱신되지 않으므로 받은 뒤 경과 시간을 더한다.
- * stale 은 서버 판정 또는 지연 > 임계값(지역 60 s / 전세계 300 s).
+ * 표시할 지연(WS-2). 실시간(live = 연결 열림 ∧ 최근 수신)이고 그 값을 받은 지 RX_FRESH_MS 안이면 서버가 보고한 값
+ * (status 는 30 s 마다, 스냅샷은 30/120 s 마다 새로 온다). 그 밖에는 — 끊김·일시정지·반쯤 열린 연결·status 가 멈춘 서버 —
+ * 화면 데이터가 그 뒤로 새로워졌다는 근거가 없으므로 받은 뒤 경과 시간을 더한다(신선하다고 주장하지 않는다).
+ * stale 은 서버 판정 또는 지연 > 임계값(지역 60 s / 전세계 300 s). nowMs·received_at 은 둘 다 브라우저 시계.
  */
 export function feedLag(feed: FeedInfo | null, nowMs: number, live: boolean, thresholdS: number): { lag: number | null; stale: boolean } {
   if (!feed || feed.lag_s == null) return { lag: null, stale: true };
-  const lag = live ? feed.lag_s : feed.lag_s + Math.max(0, (nowMs - feed.received_at) / 1000);
+  const elapsedMs = Math.max(0, nowMs - feed.received_at);
+  const lag = live && elapsedMs <= RX_FRESH_MS ? feed.lag_s : feed.lag_s + elapsedMs / 1000;
   return { lag, stale: feed.stale === true || lag > thresholdS };
 }

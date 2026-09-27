@@ -20,7 +20,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-baseline gap-2">
             <span className="text-sm font-semibold tracking-[0.2em]">WAKELINE</span>
-            <span className="label hidden sm:inline">Aircraft · Hazardous Weather</span>
+            <span className="label hidden sm:inline">Aircraft · Ships · Hazardous Weather</span>
           </Link>
           <nav className="flex gap-1" aria-label="주 메뉴">
             {NAV.map((n) => (

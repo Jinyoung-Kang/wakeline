@@ -93,8 +93,13 @@ tasks.jacocoTestCoverageVerification {
     violationRules {
         // 바닥값(래칫): 실제 측정값을 내림한 값 — 떨어지면 실패. 설계 목표(NFR-14)는 라인 80 %.
         // 측정 2026-09-27~28(깨끗한 실행 6회): LINE 93.4~93.9 %, BRANCH 74.1~74.7 % — Docker 로 통합 테스트(Testcontainers) 포함.
+        // 측정 2026-09-28 수요 추적·선박(ADR-013/014) 통합 테스트 추가 뒤(깨끗한 실행 3회, 378 테스트): LINE 95.40~95.42 %, BRANCH 81.03~81.08 %
+        //   (직전 단계 366 테스트: LINE 95.40 %, BRANCH 80.88 %) → LINE 0.93 → 0.95, BRANCH 바닥 0.80 추가.
         // Docker 가 없으면 Testcontainers 테스트가 건너뛰어져 커버리지가 낮아지고 이 검증은 실패한다(CI 러너에는 Docker 가 있다).
-        rule { limit { counter = "LINE"; minimum = "0.93".toBigDecimal() } }
+        rule {
+            limit { counter = "LINE"; minimum = "0.95".toBigDecimal() }
+            limit { counter = "BRANCH"; minimum = "0.80".toBigDecimal() }
+        }
     }
 }
 

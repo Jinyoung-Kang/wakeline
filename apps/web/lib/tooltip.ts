@@ -2,9 +2,10 @@
  * 지도 호버 툴팁 내용(GAP-26) — 순수 함수. 항공기(호출부호·고도·속도·수신 경과), SIGMET(유형·고도대·유효), 공항(ICAO·카테고리·METAR 경과).
  * 값은 받은 데이터 그대로, 없으면 "—". DOM 은 textContent 로만 만든다(원문·호출부호 등 외부 문자열을 HTML 로 해석하지 않는다).
  */
-import { band, catSourceLabel, ceilingLabel, fmtAlt, fmtDuration, fmtNum, fmtTime, isMetarStale, metarAgeS } from "./format";
+import { band, catSourceLabel, ceilingLabel, fmtAltGnd, fmtDuration, fmtNum, fmtTime, isMetarStale, metarAgeS } from "./format";
 import { seenAtMs, thresholds } from "./interpolate";
-import { sigmetBandSource, isExpired } from "./sigmet";
+import { isExpired, isPending, sigmetBandSource } from "./sigmet";
+import { fmtMotion, navStatusLabel, positionBadge, ROT_LABEL, SHIP_CATEGORY_LABEL, SHIP_STALE_S, shipAgeS, shipCategory, shipRotation, type ShipLite } from "./ships";
 import type { AircraftState, SigmetProps } from "./types";
 
 export type Tone = "warn" | "bad" | "est" | "ok" | "muted";
@@ -15,9 +16,12 @@ export interface Tip {
   flags: { text: string; tone: Tone }[];
 }
 
-/** 지도에 그려진 항공기(렌더 속성) + 메인 스레드의 원본 상태(있으면). 고도·속도는 관측값을 보여 준다. */
+/**
+ * 지도에 그려진 항공기(렌더 속성) + 메인 스레드의 원본 상태(있으면). 고도·속도는 관측값을 보여 준다.
+ * nowMs 는 서버 기준 시각(serverNowMs) — 워커의 stale 판정과 같은 기준(WS-3).
+ */
 export function aircraftTip(
-  render: { hex: string; callsign?: string | null; alt_ft?: number | null; stale?: boolean; estimated?: boolean; emergency?: boolean; age_unknown?: boolean },
+  render: { hex: string; callsign?: string | null; alt_ft?: number | null; stale?: boolean; estimated?: boolean; emergency?: boolean; age_unknown?: boolean; on_ground?: boolean | null; track_deg?: number | null },
   state: AircraftState | null | undefined,
   nowMs: number,
 ): Tip {
@@ -29,11 +33,13 @@ export function aircraftTip(
   if (render.stale) flags.push({ text: age != null && age > thresholds(provider).staleAfterS ? "STALE · 수신 지연" : "STALE · 위치 추정 상한", tone: "warn" });
   else if (render.estimated) flags.push({ text: "위치 추정(dead reckoning)", tone: "est" });
   if (age == null) flags.push({ text: "수신 경과 모름", tone: "muted" });
+  const track = state ? state.track_deg : render.track_deg;
+  if (track == null) flags.push({ text: "방위 모름 · 방향 없는 기호", tone: "muted" });
   return {
     title: state?.callsign ?? render.callsign ?? "—",
     subtitle: render.hex,
     rows: [
-      ["ALT", fmtAlt(state ? state.alt_ft : render.alt_ft)],
+      ["ALT", state ? fmtAltGnd(state.alt_ft, state.on_ground) : fmtAltGnd(render.alt_ft, render.on_ground)],
       ["GS", fmtNum(state?.gs_kt, " kt")],
       ["TRK", fmtNum(state?.track_deg, "°")],
       ["AGE", age == null ? "—" : fmtDuration(age)],
@@ -43,22 +49,28 @@ export function aircraftTip(
   };
 }
 
+/** nowMs 는 서버 기준 시각. 발효 전(DH-8)이면 "발효 전 · 시각"과 발효까지 남은 시간을 보여 준다(판정 대상 아님). */
 export function sigmetTip(p: SigmetProps, nowMs: number): Tip {
   const flags: Tip["flags"] = [];
   const expired = nowMs ? isExpired(p, nowMs) : false;
+  const pending = nowMs ? isPending(p, nowMs) : p.pending === true;
   if (expired) flags.push({ text: "만료됨", tone: "warn" });
+  else if (pending) flags.push({ text: `발효 전 · ${fmtTime(p.valid_from)}부터 · 판정 전`, tone: "muted" });
   else if (p.expiring_soon) flags.push({ text: "30분 내 만료", tone: "warn" });
-  if (p.inside) flags.push({ text: "안에 항공기(관측)", tone: "bad" });
+  if (p.inside && !pending) flags.push({ text: "안에 항공기(관측)", tone: "bad" });
   if (p.excluded_reason) flags.push({ text: `판정 제외: ${p.excluded_reason}`, tone: "muted" });
   const left = nowMs ? (Date.parse(p.valid_to) - nowMs) / 1000 : NaN;
+  const starts = nowMs ? (Date.parse(p.valid_from) - nowMs) / 1000 : NaN;
+  const rows: [string, string][] = [
+    ["BAND", band(p.base_ft, p.top_ft, sigmetBandSource(p))],
+    ["VALID", `${fmtTime(p.valid_from)} – ${fmtTime(p.valid_to)}`],
+  ];
+  if (pending) rows.push(["STARTS", Number.isFinite(starts) && starts > 0 ? `${fmtDuration(starts)} 뒤` : "—"]);
+  rows.push(["LEFT", Number.isFinite(left) && left > 0 ? fmtDuration(left) : "—"]);
   return {
     title: `${p.hazard}${p.qualifier ? ` ${p.qualifier}` : ""}`,
     subtitle: `${p.fir_id ?? "—"} ${p.series_id ?? ""}`.trim(),
-    rows: [
-      ["BAND", band(p.base_ft, p.top_ft, sigmetBandSource(p))],
-      ["VALID", `${fmtTime(p.valid_from)} – ${fmtTime(p.valid_to)}`],
-      ["LEFT", Number.isFinite(left) && left > 0 ? fmtDuration(left) : "—"],
-    ],
+    rows,
     flags,
   };
 }
@@ -91,6 +103,45 @@ export function airportTip(p: AirportProps, nowMs: number): Tip {
       ["CEIL", hasMetar ? ceilingLabel(p.ceiling_state, p.ceiling_ft) : "—"],
     ],
     flags,
+  };
+}
+
+/**
+ * 선박 툴팁(계약 v2 §B4). 지도 렌더 속성(방향 방식·STALE) + 원본(ShipLite). 이름·MMSI 는 외부 문자열 — renderTip 이 텍스트 노드로만 넣는다.
+ * nowMs = 서버 기준 시각.
+ */
+export function shipTip(s: ShipLite, nowMs: number): Tip {
+  const age = shipAgeS(s.seen_at, nowMs);
+  const rot = shipRotation(s);
+  const flags: Tip["flags"] = [];
+  if (age != null && age > SHIP_STALE_S) flags.push({ text: `STALE · ${fmtDuration(age)} 전 위치`, tone: "warn" });
+  if (age == null) flags.push({ text: "관측 시각 모름", tone: "muted" });
+  const pb = positionBadge(s.position_source);
+  if (pb) flags.push(pb);
+  if (rot.mode !== "heading") flags.push({ text: ROT_LABEL[rot.mode], tone: "muted" });
+  const cat = shipCategory(s.ship_type);
+  return {
+    title: s.name ?? "—",
+    subtitle: `MMSI ${s.mmsi}`,
+    rows: [
+      ["TYPE", s.ship_type == null ? `— · ${SHIP_CATEGORY_LABEL[cat]}` : `${s.ship_type} · ${SHIP_CATEGORY_LABEL[cat]}`],
+      ["SOG/COG/HDG", fmtMotion(s)],
+      ["STATUS", navStatusLabel(s.nav_status)],
+      ["AGE", age == null ? "—" : fmtDuration(age)],
+    ],
+    flags,
+  };
+}
+
+/** 격자 칸 툴팁 — 서버가 보낸 칸 중심·수·가장 많은 선종 그대로 */
+export function shipGridTip(p: { count?: unknown; cat?: unknown }, cellDeg: number | null): Tip {
+  const count = typeof p.count === "number" ? p.count : null;
+  const cat = typeof p.cat === "string" && p.cat in SHIP_CATEGORY_LABEL ? (p.cat as keyof typeof SHIP_CATEGORY_LABEL) : "unknown";
+  return {
+    title: count == null ? "—" : `선박 ${count.toLocaleString("en-US")}척`,
+    subtitle: cellDeg ? `${cellDeg}° 격자` : "격자",
+    rows: [["MOST", SHIP_CATEGORY_LABEL[cat]]],
+    flags: [{ text: "클릭하면 확대 — 줌 7 이상에서 개별 선박", tone: "muted" }],
   };
 }
 

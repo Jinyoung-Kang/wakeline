@@ -36,6 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
         "wakeline.trusted-proxy=" + IntegrationTest.TRUSTED_PROXY,
         "wakeline.public-rate-limit-per-min=120",
         "wakeline.allowed-origins=http://localhost:8700,http://127.0.0.1:8700",
+        // 모든 통합 테스트 클라이언트는 같은 IP(127.0.0.1)에서 온다 — 수요 상한(핫 리전 6 셀) 검증에 세션 8개가 필요해 IP 당 상한만 넓힌다
+        // (운영 기본 5. 상한 자체의 동작은 RateAndLimitTest·WsIntegrationTest 가 5 로 검증한다).
+        "wakeline.ws-max-conn-per-ip=10",
         "wakeline.region-center=36.5,127.8",
         "wakeline.region-radius-nm=250",
         "wakeline.fixture-mode=0",

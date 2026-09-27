@@ -29,7 +29,7 @@ MAX_TOTAL_POINTS = 10000  # 링 전체 점 상한(make_valid·unary_union 시간
 MAX_AREA_SQDEG = 40000.0  # 좌표 폭탄 방지: 위경도 면적 상한(대략 반구 수준)
 
 # 원문 상한: "TOP FL380", "TOP ABV FL380"(공백·줄바꿈 변형 허용). "TOPS" 는 일치하지 않는다(\s+ 필요).
-_TOP_RE = re.compile(r"\bTOP\s+(?:ABV\s+)?FL(\d{3})\b")
+_TOP_RE = re.compile(r"\bTOP\s+(ABV\s+)?FL(\d{3})\b")
 
 
 class _TooMany(Exception):
@@ -130,17 +130,28 @@ def _num(v: Any) -> float | None:
     return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
 
 
-def raw_text_top_ft(raw: str) -> int | None:
-    """원문이 상한을 하나의 값으로 명시하면 그 값(ft). 없거나 서로 다른 값이 여럿이면 None(추정하지 않는다)."""
-    levels = {int(m.group(1)) for m in _TOP_RE.finditer(raw or "")}
+def raw_text_top(raw: str) -> tuple[int, bool] | None:
+    """원문이 상한을 하나의 값으로 명시하면 (ft, 하한인가). "TOP ABV FLnnn" 은 상한이 그 값 *이상*이라는 뜻이라
+    lower_bound=True — 그 값을 상한으로 쓰면 더 높은 고도의 항공기를 경보 밖으로 잘못 뺀다(DH-4).
+    값이 없거나 서로 다른 값이 여럿이면 None(추정하지 않는다)."""
+    found = [(int(m.group(2)), m.group(1) is not None) for m in _TOP_RE.finditer(raw or "")]
+    levels = {fl for fl, _ in found}
     if len(levels) != 1:
         return None
     fl = levels.pop()
-    return fl * 100 if fl > 0 else None
+    if fl <= 0:
+        return None
+    return fl * 100, any(abv for _, abv in found)
+
+
+def raw_text_top_ft(raw: str) -> int | None:
+    """원문 상한 값(ft) — 하한 여부는 raw_text_top 참고."""
+    r = raw_text_top(raw)
+    return r[0] if r else None
 
 
 BaseSource = Literal["json", "assumed_surface"]
-TopSource = Literal["json", "raw_text", "unknown"]
+TopSource = Literal["json", "raw_text", "raw_text_lower_bound", "unknown"]
 
 
 def resolve_band(base: Any, top: Any, raw: str) -> tuple[int, BaseSource, int | None, TopSource, str | None]:
@@ -158,9 +169,9 @@ def resolve_band(base: Any, top: Any, raw: str) -> tuple[int, BaseSource, int | 
         return base_ft, base_source, int(t), "json", None
     if t is not None:
         note = "invalid_top"  # 발표값이 있으나 base 이하/0 이하 — 쓰지 않는다(넓히거나 좁혀 추정하지 않음)
-    rt = raw_text_top_ft(raw)
-    if rt is not None and rt >= base_ft:
-        return base_ft, base_source, rt, "raw_text", note
+    rt = raw_text_top(raw)
+    if rt is not None and rt[0] >= base_ft:
+        return base_ft, base_source, rt[0], ("raw_text_lower_bound" if rt[1] else "raw_text"), note
     return base_ft, base_source, None, "unknown", note
 
 

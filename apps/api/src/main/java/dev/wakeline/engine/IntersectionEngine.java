@@ -133,7 +133,7 @@ public final class IntersectionEngine {
         double untilTo = (s.validTo().toEpochMilli() - now.toEpochMilli()) / 1000.0;
         double v0 = Math.max(0, untilFrom), v1 = Math.min(horizon, untilTo);
         if (v0 > v1 || v0 >= untilTo) return null;
-        double[] band = bandInterval(alt0, vrFpm, s.baseFt(), s.topFt(), horizon);
+        double[] band = bandInterval(alt0, vrFpm, s.baseFt(), s.judgedTopFt(), horizon); // 관측과 같은 상한(미발표·'이상' → 무제한 가정)
         if (band == null) return null;
         // 빠른 길: 지금 이미 3조건이 참(수평 안·고도대 안·유효) — 관측의 영역이므로 구간 계산 없이 끝낸다
         if (band[0] == 0 && v0 == 0 && it.prepared().intersects(GeoJson.GF.createPoint(path[0]))) return null;

@@ -4,6 +4,7 @@
  * subscribe/getSnapshot 은 주기별로 한 번 만든 함수를 재사용한다(렌더마다 재구독하지 않도록 참조가 안정적).
  */
 import { useSyncExternalStore } from "react";
+import { serverNowMs } from "./store";
 
 interface Clock {
   now: number;
@@ -43,4 +44,13 @@ const serverSnapshot = () => 0;
 export function useNow(periodMs = 1000): number {
   const c = clockFor(periodMs);
   return useSyncExternalStore(c.subscribe, c.read, serverSnapshot);
+}
+
+/**
+ * 서버 기준 현재 시각(ms) — 서버가 준 절대 시각(seen_at·eta_at·valid_to·fetched_at)과 비교할 때는 이것을 쓴다(WS-3 · DH-1).
+ * 첫 렌더(0)는 0 그대로(호출부는 "아직 모름"으로 다룬다).
+ */
+export function useServerNow(periodMs = 1000): number {
+  const now = useNow(periodMs);
+  return now ? serverNowMs(now) : 0;
 }

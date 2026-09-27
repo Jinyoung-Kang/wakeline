@@ -50,6 +50,8 @@ management:
   endpoints.web.exposure.include: health,prometheus,info
   endpoint.health.probes.enabled: true
   endpoint.health.show-details: never
+  # 수집 경로(REL-20): 자기 그룹에만 — readiness·liveness 에 넣지 않는다(수집기 장애로 api 를 재시작·차단하지 않게). /actuator/health/ingest
+  endpoint.health.group.ingest.include: ingestPipeline
   health.redis.enabled: true
   health.db.enabled: true
 

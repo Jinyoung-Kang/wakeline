@@ -97,7 +97,7 @@ async def test_writes_in_order_with_quality_in_same_run():
     tables = [t for t, _ in pool.log]
     assert tables == ["ingest_run", "quality_event", "quality_rule_count", "airport", "metar_obs"]
     assert len(pool.log[1][1]) == 20  # 규칙별 대표 사례 20건
-    assert pool.log[2][1] == [("no_position", 25)]
+    assert pool.log[2][1] == [(now.date(), "no_position", 25)]  # 실행한 날(UTC)로 집계(COL-6)
     metar_args = pool.log[4][1][0]
     assert metar_args[10] == "none"  # ceiling_state 가 11번째 인자
     await db.close()
@@ -198,4 +198,129 @@ async def test_metar_batch_rejected_by_one_row_falls_back_to_row_by_row():
     await _settle(db)
     assert pool.log == [("metar_row", "RKSI"), ("metar_row", "RKSS")]  # 나머지 행은 살린다
     assert db.dropped == 1 and db.written == 1
+    await db.close()
+
+
+# ---- COL-3: 오류 분류(일시 오류는 보관·재시도, 결정적 오류만 버림) ---------------------------------------------------------
+class SlowPool(FakePool):
+    """쓰기가 OP_TIMEOUT_S 보다 오래 걸리지만 생존 확인(SELECT 1)은 바로 답하는 DB."""
+
+    def __init__(self):
+        super().__init__()
+        self.slow = True
+
+    async def execute(self, sql, *args):
+        if self.slow:
+            await asyncio.sleep(1.0)
+        await super().execute(sql, *args)
+
+
+async def test_timed_out_write_is_kept_and_written_when_db_gets_fast(monkeypatch):
+    monkeypatch.setattr(dbmod, "OP_TIMEOUT_S", 0.05)
+    pool = SlowPool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("adsb_fi", datetime.now(UTC), 1, 10)
+    await asyncio.sleep(0.15)
+    assert db.pending == 1 and db.dropped == 0 and db.failures >= 1 and db.available  # 버리지 않는다
+    pool.slow = False
+    await _settle(db)
+    assert [t for t, _ in pool.log] == ["provider_budget_day"] and db.written == 1 and db.dropped == 0
+    await db.close()
+
+
+async def test_transient_failures_while_db_up_are_capped(monkeypatch):
+    import asyncpg
+
+    monkeypatch.setattr(dbmod, "MAX_ATTEMPTS", 3)
+
+    class DeadlockPool(FakePool):
+        async def execute(self, sql, *args):
+            if "provider_budget_day" in sql and args[0] == "poison":
+                raise asyncpg.DeadlockDetectedError("deadlock detected")
+            await super().execute(sql, *args)
+
+    pool = DeadlockPool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("poison", datetime.now(UTC), 1, 10)
+    db.upsert_budget_day("ok", datetime.now(UTC), 1, 10)
+    await _settle(db)
+    assert [a[0] for _t, a in pool.log] == ["ok"]  # 독이 든 작업이 큐를 영원히 막지 않는다
+    assert db.dropped == 1 and db.failures == 3
+    await db.close()
+
+
+async def test_failures_while_db_down_do_not_count_toward_the_cap(monkeypatch):
+    monkeypatch.setattr(dbmod, "MAX_ATTEMPTS", 2)
+    pool = FakePool()
+    pool.up = False
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("p", datetime.now(UTC), 1, 10)
+    await asyncio.sleep(0.3)
+    assert db.failures >= 3 and db.pending == 1 and db.dropped == 0 and not db.available
+    pool.up = True
+    await _settle(db)
+    assert db.written == 1 and db.dropped == 0
+    await db.close()
+
+
+def test_error_classification():
+    import asyncpg
+
+    from wakeline_collector.db import classify_error
+
+    for e in (
+        asyncpg.UniqueViolationError("x"),
+        asyncpg.DataError("x"),
+        asyncpg.InsufficientPrivilegeError("x"),
+        asyncpg.UndefinedTableError("x"),
+        ValueError("x"),
+    ):
+        assert classify_error(e) == "permanent", e
+    for e in (
+        TimeoutError(),
+        asyncpg.QueryCanceledError("x"),
+        asyncpg.DeadlockDetectedError("x"),
+        asyncpg.LockNotAvailableError("x"),
+        asyncpg.SerializationError("x"),
+        asyncpg.ConnectionDoesNotExistError("x"),
+        asyncpg.InterfaceError("x"),
+        asyncpg.TooManyConnectionsError("x"),
+        ConnectionRefusedError(),
+        RuntimeError("unknown"),
+    ):
+        assert classify_error(e) == "transient", e
+
+
+# ---- COL-6: 규칙별 건수는 실행한 날로 --------------------------------------------------------------------------------------
+async def test_quality_count_booked_to_run_day_even_if_flushed_after_midnight():
+    pool = FakePool()
+    pool.up = False
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    started = datetime(2026, 9, 27, 23, 59, 30, tzinfo=UTC)
+    db.record_run("region", "adsb_lol", started, status="ok", quality=[("position_jump", "abcdef", {})])
+    await asyncio.sleep(0.05)
+    pool.up = True  # 자정 이후에 기록된다고 가정 — 날짜는 SQL 의 CURRENT_DATE 가 아니라 인자로 간다
+    await _settle(db)
+    rule_rows = [rows for t, rows in pool.log if t == "quality_rule_count"][0]
+    assert rule_rows == [(datetime(2026, 9, 27).date(), "position_jump", 1)]
     await db.close()

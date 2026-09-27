@@ -60,11 +60,33 @@ class InitEnvTest(unittest.TestCase):
             self.assertGreaterEqual(len(v[key]), 32, key)
         self.assertIn("REDIS_API_PASSWORD", v)
         self.assertIn("REDIS_COLLECTOR_PASSWORD", v)
+        self.assertIn("REDIS_AIS_PASSWORD", v)                   # 계약 v2 §C: wakeline_ais
         # 서비스별 비밀번호는 서로 달라야 한다
         self.assertEqual(len({v[k] for k in init_env.INTERNAL}), len(init_env.INTERNAL))
         # 외부 키는 만들지 않는다
         self.assertEqual(v.get("OPENSKY_CLIENT_SECRET"), "")
         self.assertEqual(v.get("KMA_APIHUB_KEY"), "")
+        self.assertRegex(self.env.read_text(), r"(?m)^aisstream_key=$")
+        self.assertNotIn("aisstream_key", init_env.INTERNAL)
+        self.assertIn("ships layer", self.out.getvalue())       # 없으면 무엇이 꺼지는지 알려 준다(값은 출력하지 않음)
+
+    def test_owner_env_with_lowercase_ais_key_and_no_trailing_newline(self):
+        """사용자 .env 처럼 마지막 줄이 소문자 aisstream_key=… 이고 줄바꿈이 없어도: 키는 그대로, REDIS_AIS_PASSWORD 는 새 줄에 추가."""
+        key = "owner-ais-key-" + "x" * 26
+        base = init_env.fill_secrets((ROOT / ".env.example").read_text().replace("REDIS_AIS_PASSWORD=\n", ""), [k for k in init_env.INTERNAL if k != "REDIS_AIS_PASSWORD"])[0]
+        base = base.replace("\naisstream_key=\n", "\n").rstrip("\n")
+        self.env.write_text(base + f"\naisstream_key={key}")      # 줄바꿈 없음
+        before = values(self.env.read_text())
+        generated = init_env.ensure_env(self.env, self.example, out=self.out)
+        self.assertEqual(generated, ["REDIS_AIS_PASSWORD"])
+        text = self.env.read_text()
+        self.assertIn(f"\naisstream_key={key}\n", text)            # 원래 줄은 그대로(뒤에 줄바꿈만)
+        v = values(text)
+        self.assertGreaterEqual(len(v["REDIS_AIS_PASSWORD"]), 32)
+        for k, old in before.items():
+            self.assertEqual(v[k], old, k)                         # 이미 있던 값은 하나도 바뀌지 않는다
+        self.assertNotIn(key, self.out.getvalue())
+        self.assertNotIn("ships layer", self.out.getvalue())       # 키가 있으면 '꺼짐' 안내 없음
 
     def test_existing_world_readable_env_is_tightened_and_values_kept(self):
         self.env.write_text("DB_ROOT_PASSWORD=keep-me\nOPENSKY_CLIENT_ID=my-id\nREDIS_PASSWORD=\n")

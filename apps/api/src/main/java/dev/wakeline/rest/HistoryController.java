@@ -73,7 +73,8 @@ public class HistoryController {
     }
 
     /**
-     * 시간대별 트래픽(관심 지역 bbox 안의 서로 다른 항공기 수, 계약 §2). scope = "region", region = 그날 집계가 센 지역.
+     * 시간대별 트래픽(관심 지역 bbox 안의 서로 다른 항공기 수, 계약 §2). scope = "region", region = 그날 집계가 센 지역
+     * {center, radius_nm, bbox — 집계가 실제로 쓴 사각형(DH-10)}.
      * 지역 기록이 없는 옛 집계(전세계 표본이 섞였을 수 있음)는 scope·region 이 null — 어느 범위인지 단정하지 않는다.
      * 자료가 없는 시간은 items 에 없다(0 이 아니다).
      */

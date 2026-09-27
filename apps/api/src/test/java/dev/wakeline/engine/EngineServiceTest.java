@@ -64,6 +64,37 @@ class EngineServiceTest {
         assertThat(active.getFirst().id()).isGreaterThan(System.currentTimeMillis() * 1000 - 60_000_000L);
     }
 
+    /**
+     * DH-2 재현: 관심 지역 피드가 멈춘(동결) 동안 전세계 피드가 같은 기체를 계속 보고한다. 예전에는 병합 뷰가 region 상태(오래되어 판정 불가)를
+     * 골라 진입을 못 하거나 신호 소실로 닫았다. 이제 더 새 관측(global)으로 판정한다.
+     */
+    @Test void dh2_frozenRegion_freshGlobalObservationsAreJudged() {
+        Instant now = Instant.now();
+        var st = sigmets.replace(now, "awc_isigmet", Map.of("A", sig("A", now.minusSeconds(3600), now.plusSeconds(3600))));
+        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        publish("region", now.minusSeconds(100), at("e00001", 36, 127, now.minusSeconds(100), "adsb_fi")); // 100 s 전에 멈춤(60 s 넘음)
+        publish("global", now.minusSeconds(40), at("e00001", 36, 127.1, now.minusSeconds(40), "opensky"));
+        publish("global", now.minusSeconds(30), at("e00001", 36, 127.2, now.minusSeconds(30), "opensky"));
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+        for (int i = 1; i <= 4; i++) publish("global", now.minusSeconds(30 - i), at("e00001", 36, 127.2 + i * 0.01, now.minusSeconds(30 - i), "opensky"));
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED); // LOST 없음
+        assertThat(engine.activeAlerts("observed")).singleElement().satisfies(a -> assertThat(a.evidence()).containsEntry("provider", "opensky"));
+    }
+
+    /** focus(집중 추적) 관측도 병합 뷰로 판정된다 — 관심 지역·전세계에 없는 기체도 5 s 관측으로 진입이 확정된다. */
+    @Test void focusObservations_areJudgedLikeRegion() {
+        Instant now = Instant.now();
+        var st = sigmets.replace(now, "awc_isigmet", Map.of("A", sig("A", now.minusSeconds(3600), now.plusSeconds(3600))));
+        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        for (int i = 0; i < 2; i++) {
+            Snapshot f = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", now.minusSeconds(10 - 5L * i), now, "-",
+                    Map.of("e00002", at("e00002", 36, 127 + i * 0.01, now.minusSeconds(10 - 5L * i), "adsb_fi")));
+            Snapshot prev = snapshots.applyFocus(f);
+            engine.onSnapshot(new IngestEvents.SnapshotUpdated(prev, f));
+        }
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+    }
+
     @Test void expiryRebuild_publishesSigmetsExpired_withNewVersion() throws Exception {
         Instant now = Instant.now();
         var st = sigmets.replace(now, "awc_isigmet", Map.of(
@@ -90,5 +121,67 @@ class EngineServiceTest {
         assertThat(engine.predictionAvailability("d00001")).isEqualTo(PredictionAvailability.AVAILABLE);
         assertThat(engine.predictionAvailability("d00002").reason()).isEqualTo(PredictionAvailability.STALE);
         assertThat(engine.predictionAvailability("ffffff")).isEqualTo(new PredictionAvailability(false, null));
+    }
+
+    /** DH-6: 유효시간 만료 점검이 새 스냅샷 없이도(피드 장애 중) 만료된 경보의 알림을 SIGMET_ENDED 로 닫는다 — LEFT 가 아니다. */
+    @Test void expiryCheck_closesAlertsOfExpiredSigmets_withoutNewSnapshots() throws Exception {
+        Instant now = Instant.now();
+        var st = sigmets.replace(now, "awc_isigmet", Map.of("E", sig("E", now.minusSeconds(3600), now.plusMillis(1_500))));
+        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        publish("region", now, at("e00001", 36, 127, now.minusSeconds(2), "adsb_lol"));
+        publish("region", now.plusMillis(1), at("e00001", 36, 127.01, now.minusSeconds(1), "adsb_lol"));
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+        Thread.sleep(1_700);
+        engine.rebuildForExpiry(); // 스냅샷 없음 — 만료 점검만
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED, AlertStateMachine.EventType.SIGMET_ENDED);
+        var ended = events.stream().filter(e -> e instanceof EngineEvents.AlertsChanged).flatMap(e -> ((EngineEvents.AlertsChanged) e).events().stream())
+                .filter(e -> e.type() == AlertStateMachine.EventType.SIGMET_ENDED).findFirst().orElseThrow().alert();
+        assertThat(ended.closeReason()).isEqualTo(dev.wakeline.domain.Alert.CLOSE_SIGMET_ENDED);
+        assertThat(ended.leftAt()).isEqualTo(now.plusMillis(1_500));
+        assertThat(ended.evidence()).containsEntry("end_cause", "expired");
+        assertThat(engine.activeAlerts("observed")).isEmpty();
+    }
+
+    /** API-CONC-4: 새 세트에서 빠진(철회·대체) 경보의 알림은 세트 수신 즉시 SIGMET_ENDED(withdrawn) — 바깥 관측 3회를 기다려 LEFT 로 닫지 않는다. */
+    @Test void withdrawnSigmet_closesAlertOnTheNextSet() {
+        Instant now = Instant.now();
+        var st = sigmets.replace(now, "awc_isigmet", Map.of("W", sig("W", now.minusSeconds(3600), now.plusSeconds(3600)),
+                "K", sig("K", now.minusSeconds(3600), now.plusSeconds(3600))));
+        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        publish("region", now, at("e00002", 36, 127, now.minusSeconds(2), "adsb_lol"));
+        publish("region", now.plusMillis(1), at("e00002", 36, 127.01, now.minusSeconds(1), "adsb_lol"));
+        assertThat(engine.activeAlerts("observed")).hasSize(2); // W 와 K 는 같은 폴리곤
+        Instant f2 = now.plusMillis(5);
+        var st2 = sigmets.replace(f2, "awc_isigmet", Map.of("K", sig("K", now.minusSeconds(3600), now.plusSeconds(3600))));
+        engine.onSigmets(new IngestEvents.SigmetsUpdated(st2));
+        var ended = events.stream().filter(e -> e instanceof EngineEvents.AlertsChanged).flatMap(e -> ((EngineEvents.AlertsChanged) e).events().stream())
+                .filter(e -> e.type() == AlertStateMachine.EventType.SIGMET_ENDED).toList();
+        assertThat(ended).singleElement().satisfies(e -> {
+            assertThat(e.alert().sigmetId()).isEqualTo("W");
+            assertThat(e.alert().evidence()).containsEntry("end_cause", "withdrawn");
+        });
+        assertThat(engine.activeAlerts("observed")).extracting(dev.wakeline.domain.Alert::sigmetId).containsExactly("K");
+    }
+
+    /** API-CONC-2: 판정 주기의 예외는 엔진 안에서 가둔다 — 이벤트 발행자(스트림 소비)로 새지 않고, 세고, 다음 주기는 정상. */
+    @Test void cycleFailure_isContainedAndCounted() {
+        java.util.concurrent.atomic.AtomicBoolean explode = new java.util.concurrent.atomic.AtomicBoolean(true);
+        SnapshotStore flaky = new SnapshotStore() {
+            @Override public View view(Instant now) {
+                if (explode.get()) throw new IllegalStateException("TopologyException: side location conflict");
+                return super.view(now);
+            }
+        };
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        EngineService e = new EngineService(flaky, sigmets, events::add, meters);
+        Instant now = Instant.now();
+        org.assertj.core.api.Assertions.assertThatCode(() -> e.onSnapshot(new IngestEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region"))))
+                .doesNotThrowAnyException();
+        org.assertj.core.api.Assertions.assertThatCode(() -> e.onSigmets(new IngestEvents.SigmetsUpdated(sigmets.replace(now, "awc_isigmet", Map.of()))))
+                .doesNotThrowAnyException();
+        assertThat(meters.counter("wakeline_engine_errors_total").count()).isEqualTo(2.0);
+        explode.set(false);
+        e.onSnapshot(new IngestEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region")));
+        assertThat(meters.counter("wakeline_engine_errors_total").count()).isEqualTo(2.0);
     }
 }

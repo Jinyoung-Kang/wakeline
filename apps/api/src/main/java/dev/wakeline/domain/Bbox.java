@@ -30,5 +30,10 @@ public record Bbox(double lomin, double lamin, double lomax, double lamax) {
         return lat >= lamin && lat <= lamax && lon >= lomin && lon <= lomax;
     }
 
+    /** 두 bbox 가 겹치는가(경계 포함). */
+    public boolean intersects(Bbox o) {
+        return o != null && lomin <= o.lomax && o.lomin <= lomax && lamin <= o.lamax && o.lamin <= lamax;
+    }
+
     public static Bbox world() { return new Bbox(-180, -90, 180, 90); }
 }

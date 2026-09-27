@@ -19,7 +19,8 @@ import java.time.Duration;
  *       --migrate(wakeline_migrator)로 스키마를 올린다. 앱은 DML 전용 wakeline_api 로 접속한다. 다른 DB 테스트(wakeline)와 섞이지 않게 DB 를 나눈다
  *       (Spring 컨텍스트는 테스트 사이에 캐시되어 스케줄 잡·쓰기 스레드가 계속 돈다).</li>
  *   <li>Redis: redis:8-alpine 에 실제 infra/redis/start.sh · redis.conf 를 compose 와 같은 경로에 넣고, 같은 사용자(999:1000)·엔트리포인트로 띄운다
- *       — ACL 사용자 default(관리) · wakeline_api · wakeline_collector. 앱은 wakeline_api, 테스트의 XADD 는 수집기와 같은 wakeline_collector 로 한다.</li>
+ *       — ACL 사용자 default(관리) · wakeline_api · wakeline_collector · wakeline_ais. 앱은 wakeline_api, 테스트의 XADD 는 수집기와 같은 wakeline_collector
+ *       (선박 스트림은 ais 수집기와 같은 wakeline_ais)로 한다.</li>
  * </ul>
  */
 public final class ItStack {
@@ -28,11 +29,13 @@ public final class ItStack {
     public static final String REDIS_ADMIN_PW = "redis-admin-test-pw";
     public static final String REDIS_API_PW = "redis-api-test-pw";
     public static final String REDIS_COLLECTOR_PW = "redis-collector-test-pw";
+    public static final String REDIS_AIS_PW = "redis-ais-test-pw";
 
     private static GenericContainer<?> redis;
     private static StringRedisTemplate admin;
     private static StringRedisTemplate collector;
     private static StringRedisTemplate apiUser;
+    private static StringRedisTemplate ais;
 
     private ItStack() {}
 
@@ -45,6 +48,7 @@ public final class ItStack {
                 .withEnv("REDIS_PASSWORD", REDIS_ADMIN_PW)
                 .withEnv("REDIS_API_PASSWORD", REDIS_API_PW)
                 .withEnv("REDIS_COLLECTOR_PASSWORD", REDIS_COLLECTOR_PW)
+                .withEnv("REDIS_AIS_PASSWORD", REDIS_AIS_PW)
                 // compose: user "999:1000", entrypoint ["sh", "/etc/redis/start.sh"] (이미지 CMD 는 쓰지 않는다)
                 .withCreateContainerCmdModifier(cmd -> cmd.withUser("999:1000").withEntrypoint("sh").withCmd("/etc/redis/start.sh"))
                 .withExposedPorts(6379)
@@ -54,6 +58,7 @@ public final class ItStack {
         admin = template(null, REDIS_ADMIN_PW);
         collector = template("wakeline_collector", REDIS_COLLECTOR_PW);
         apiUser = template("wakeline_api", REDIS_API_PW);
+        ais = template("wakeline_ais", REDIS_AIS_PW);
     }
 
     public static String redisHost() { start(); return redis.getHost(); }
@@ -64,6 +69,9 @@ public final class ItStack {
 
     /** 수집기와 같은 ACL 사용자 — 스트림 발행(XADD)은 이것으로 한다. */
     public static StringRedisTemplate collector() { start(); return collector; }
+
+    /** ais 수집기와 같은 ACL 사용자(ADR-014) — 선박 스트림 발행(XADD wakeline:ships)·상태 해시(wakeline:ais:status)는 이것으로 한다. */
+    public static StringRedisTemplate ais() { start(); return ais; }
 
     /** api 와 같은 ACL 사용자 — '이전 프로세스가 읽고 죽었다'(PEL 에 남김)를 흉내 낼 때 쓴다. */
     public static StringRedisTemplate apiUser() { start(); return apiUser; }

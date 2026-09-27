@@ -50,8 +50,8 @@ public class AircraftController {
     }
 
     /**
-     * bbox 안의 현재 항공기(병합 뷰: 관심 지역 + 전세계, 600 s 넘은 전세계 기체 제외).
-     * ETag = 두 스냅샷 버전 + 병합 뷰 만료 구간(시간만 흘러 오래된 전세계 기체가 빠진 경우도 다른 표현이다).
+     * bbox 안의 현재 항공기(병합 뷰: 관심 지역 · 핫 리전 · 집중 추적 · 전세계를 신선도 우선으로, 600 s 넘은 전세계 기체 제외).
+     * ETag = 병합 뷰 버전(어느 스코프든 바뀌면 오른다) + 만료 구간(시간만 흘러 오래된 기체가 빠진 경우도 다른 표현이다).
      * meta.sources: 스코프별 provider·fetched_at·lag_s·stale(WS 스냅샷과 같은 모양, 계약 §1).
      */
     @GetMapping(produces = "application/geo+json")
@@ -59,7 +59,7 @@ public class AircraftController {
         Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
-        String etag = "\"v" + view.region().version() + "-" + view.global().version() + "-" + Long.toString(view.recheckAtMs(), 36) + "\"";
+        String etag = "\"v" + view.version() + "-" + Long.toString(view.recheckAtMs(), 36) + "\"";
         CacheControl cc = CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic();
         if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         List<Map<String, Object>> features = new ArrayList<>();

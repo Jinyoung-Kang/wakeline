@@ -13,6 +13,7 @@ import java.util.Map;
  * 관측 나이(COR-20·계약 §2): obs_age_s = now − obs_time(METAR 가 없으면 null), stale = obs_age_s > 2 h(나이를 모르면 null).
  * 오래된 관측의 카테고리를 '현재' 처럼 보이지 않게 클라이언트가 이 값으로 구분한다.
  * ceiling_state(measured | none | unknown)는 collector 가 기록한다 — 없음(CLR)과 모름을 구분한다(GAP-16).
+ * 시정은 해석값(vis_sm, 법정마일)과 원문(vis_raw, 예: "6+" = 6 SM 이상)을 함께 준다 — 이력에서도 하한값이 정확한 값처럼 보이지 않게(DH-7).
  */
 @Repository
 public class AirportRepository {
@@ -47,7 +48,7 @@ public class AirportRepository {
                        wx_string, taf_raw, provider, fetched_at
                 FROM metar_obs WHERE icao = :i ORDER BY obs_time DESC LIMIT 1""").param("i", icao).query().listOfRows().stream().findFirst().orElse(null);
         var history = db.sql("""
-                SELECT obs_time, flight_cat, flight_cat_source, wind_dir, wind_kt, vis_sm, ceiling_ft, ceiling_state, temp_c
+                SELECT obs_time, flight_cat, flight_cat_source, wind_dir, wind_kt, vis_sm, vis_raw, ceiling_ft, ceiling_state, temp_c
                 FROM metar_obs WHERE icao = :i ORDER BY obs_time DESC LIMIT 24""")
                 .param("i", icao).query().listOfRows();
         var m = new java.util.LinkedHashMap<String, Object>();

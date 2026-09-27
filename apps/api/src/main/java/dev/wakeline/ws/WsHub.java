@@ -3,6 +3,7 @@ package dev.wakeline.ws;
 import dev.wakeline.config.AppProperties;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
+import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.AlertStateMachine;
 import dev.wakeline.engine.EngineEvents;
@@ -34,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +60,11 @@ import java.util.function.Supplier;
  *   <li>seq: 스냅샷마다 1, 실제로 보낸 diff 마다 +1(빈 diff 는 보내지 않는다) — 틈이 없다(PERF-2/COR-6).</li>
  *   <li>항공기 JSON 조각·SIGMET·알림·레이더·status 페이로드는 버전마다 한 번만 직렬화해 모든 세션이 같은 String 을 쓴다(PERF-8/PERF-9/SEC-2).</li>
  *   <li>알림은 버전(배치마다 +1)을 달고, 세션마다 반영한 버전을 기억해 빠진 배치를 순서대로(없으면 전체 목록) 보낸다 — 일시정지·백프레셔 뒤에도 어긋나지 않는다(COR-7/GAP-3).</li>
+ *   <li>수요 스코프(hot·focus, 계약 v2 §A3) 메시지는 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 세션에만 팬아웃한다 — 전체 팬아웃은
+ *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측을 두 번 보내지 않는다).</li>
+ *   <li>수요(demand) 메시지는 DemandService 가 계산해 {@link #pushDemand} 로 예약한다. 구독·선택·일시정지·연결 종료는 {@link #demandChanged} 로 알린다.</li>
+ *   <li>레이어(계약 v2 §B3): 항공기를 끈 세션에는 항공기 snapshot/diff 를 보내지 않는다(다시 켜면 seq 1 스냅샷부터). 선박 메시지는 {@link ShipFanout} 이
+ *       같은 우편함에서 보낸다 — 초기 세트(구독·resume·백프레셔)의 끝에서 {@link #setShipsHook 선박 훅}을 불러 선박 전체를 이어서 보낸다.</li>
  * </ul>
  */
 @Profile("!cli & !migrate")
@@ -192,10 +199,32 @@ public class WsHub implements SmartLifecycle {
 
     void remove(WsSession s) {
         s.markClosed();
-        sessions.remove(s.id, s);
+        if (sessions.remove(s.id, s)) demandChanged(); // 창을 닫으면 그 세션의 수요(임대)가 곧바로 빠진다
     }
 
     int count() { return sessions.size(); }
+
+    /** 현재 세션들(약한 일관성 — 수요 계산용). */
+    Collection<WsSession> sessionsView() { return sessions.values(); }
+
+    // ---- 수요(DemandService) ----
+    private volatile Runnable demandListener = () -> { };
+
+    /** 수요가 바뀌었을 수 있다(구독·선택·일시정지·종료) — 수요 서비스가 1 s 로 모아 다시 계산한다. 바로 돌아온다. */
+    void demandChanged() { demandListener.run(); }
+
+    void setDemandListener(Runnable r) { demandListener = r == null ? () -> { } : r; }
+
+    // ---- 선박(ShipFanout) ----
+    private volatile java.util.function.Consumer<WsSession> shipsHook = s -> { };
+
+    /** 초기 세트 끝에서 부를 선박 훅(우편함 안에서 불린다 — 훅은 선박 작업을 같은 우편함에 예약만 한다). */
+    void setShipsHook(java.util.function.Consumer<WsSession> hook) { shipsHook = hook == null ? s -> { } : hook; }
+
+    /** 세션의 최신 demand 메시지(s.demandJson)를 우편함 순서대로 보낸다(단일 비행 — 여러 번 불러도 최신 하나). */
+    void pushDemand(WsSession s) {
+        if (s.subscribed()) s.schedule(WsSession.Job.DEMAND, () -> runDemand(s));
+    }
 
     String toJson(Object o) { return json.writeValueAsString(o); }
 
@@ -252,6 +281,11 @@ public class WsHub implements SmartLifecycle {
         if (!s.schedule(WsSession.Job.FANOUT, () -> runFanout(s))) coalesced.increment();
     }
 
+    /** 모든 구독 세션에 팬아웃(병합 뷰가 스트림 이벤트 없이 바뀌었을 때 — 예: 선택 해제로 focus 관측이 빠짐). */
+    void fanoutAll() {
+        for (WsSession s : sessions.values()) if (s.subscribed()) requestFanout(s);
+    }
+
     void requestSelected(WsSession s) {
         s.schedule(WsSession.Job.SELECTED, () -> runSelected(s));
     }
@@ -260,10 +294,44 @@ public class WsHub implements SmartLifecycle {
 
     @EventListener
     public void onSnapshot(IngestEvents.SnapshotUpdated e) {
-        for (WsSession s : sessions.values()) if (s.subscribed()) requestFanout(s);
+        String scope = e.current().scope();
+        if (SnapshotStore.HOT.equals(scope) || SnapshotStore.FOCUS.equals(scope)) onDemandSnapshot(e, SnapshotStore.FOCUS.equals(scope));
+        else for (WsSession s : sessions.values()) if (s.subscribed() && wantsAircraft(s)) requestFanout(s);
         try {
             pool.execute(() -> fragments.prune(snapshots.merged()));
         } catch (RejectedExecutionException ignored) { }
+    }
+
+    /**
+     * hot·focus 메시지: 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 구독 세션만 팬아웃(diff 는 병합 뷰 기준이라 빠짐이 없다 —
+     * 범위 밖 세션은 다음 region/global 팬아웃에서 같은 결과를 받는다). focus 는 그 hex 를 선택한 세션에 selected 를 따로 예약한다.
+     */
+    private void onDemandSnapshot(IngestEvents.SnapshotUpdated e, boolean focus) {
+        Bbox area = envelope(e.previous().states().values(), e.current().states().values());
+        for (WsSession s : sessions.values()) {
+            if (!s.subscribed()) continue;
+            WsSession.Sub sub = s.sub;
+            if (area != null && sub != null && s.layerAircraft && sub.bbox().intersects(area)) requestFanout(s);
+            String sel = s.selectedHex;
+            if (focus && sel != null && e.current().states().containsKey(sel)) s.schedule(WsSession.Job.SELECTED, () -> runSelectedObservation(s));
+        }
+    }
+
+    /** 항공기 팬아웃이 필요한 세션인가: 항공기 레이어를 켰거나 선택 항공기가 있다(선택은 레이어와 무관한 명시적 선택). */
+    static boolean wantsAircraft(WsSession s) { return s.layerAircraft || s.selectedHex != null || s.selectedSent != null; }
+
+    /** 위치들을 감싸는 bbox(없으면 null). */
+    static Bbox envelope(Collection<AircraftState> a, Collection<AircraftState> b) {
+        double lomin = Double.POSITIVE_INFINITY, lamin = Double.POSITIVE_INFINITY, lomax = Double.NEGATIVE_INFINITY, lamax = Double.NEGATIVE_INFINITY;
+        int n = 0;
+        for (Collection<AircraftState> c : List.of(a, b)) {
+            for (AircraftState x : c) {
+                lomin = Math.min(lomin, x.lon()); lomax = Math.max(lomax, x.lon());
+                lamin = Math.min(lamin, x.lat()); lamax = Math.max(lamax, x.lat());
+                n++;
+            }
+        }
+        return n == 0 ? null : new Bbox(lomin, lamin, lomax, lamax);
     }
 
     @EventListener
@@ -333,11 +401,20 @@ public class WsHub implements SmartLifecycle {
         fanoutTimer.record(Duration.ofNanos(System.nanoTime() - t0));
     }
 
-    /** 스냅샷 + 알림(버전이 다르거나 force) + SIGMET(받지 않은 v 만) + 레이더(바뀌었거나 force) + status + 선택 항공기. */
+    /**
+     * 스냅샷(항공기 레이어를 켰을 때) + 알림(버전이 다르거나 force) + SIGMET(받지 않은 v 만) + 레이더(바뀌었거나 force) + status + 수요
+     * + 선택 항공기 + 선박(훅 — 같은 우편함에 이어서).
+     */
     private void sendInitialSet(WsSession s, boolean force) {
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
-        if (!sendSnapshot(s, view, now)) return;
+        if (s.layerAircraft) {
+            if (!sendSnapshot(s, view, now)) return;
+        } else { // 항공기를 끈 세션: 보낸 상태를 비워 다시 켤 때 스냅샷(seq 1)부터
+            s.sent.clear();
+            s.seq = 0;
+            s.needsResync = true;
+        }
         if (force || s.alertsV != alertsVersion) {
             if (!sendAlertsFull(s)) return;
         }
@@ -353,7 +430,10 @@ public class WsHub implements SmartLifecycle {
         }
         String st = statusJson();
         if (st != null && !send(s, st)) return;
+        String dj = s.demandJson; // 수요 상태(계산된 적이 있으면) — resume·백프레셔 재동기 뒤에도 화면이 추적 상태를 잃지 않게
+        if (dj != null && !send(s, dj)) return;
         if (s.selectedHex != null) sendSelected(s, view.states(), force);
+        shipsHook.accept(s);
     }
 
     private void runFanout(WsSession s) {
@@ -369,7 +449,9 @@ public class WsHub implements SmartLifecycle {
             SnapshotStore.View view = snapshots.view(now);
             WsSession.Sub sub = s.sub;
             int intervalS = sub.world() ? props.wsResyncWorldIntervalS() : props.wsResyncIntervalS();
-            if (s.needsResync || s.seq == 0 || Duration.between(s.lastFullAt, now).getSeconds() >= intervalS) {
+            if (!s.layerAircraft) {
+                // 항공기 레이어 꺼짐 — 항공기 목록은 보내지 않는다(선택 항공기만 아래에서)
+            } else if (s.needsResync || s.seq == 0 || Duration.between(s.lastFullAt, now).getSeconds() >= intervalS) {
                 sendSnapshot(s, view, now);
             } else {
                 DiffCalculator.Diff d = DiffCalculator.compute(s.sent, view.states().values(), sub.bbox());
@@ -420,6 +502,25 @@ public class WsHub implements SmartLifecycle {
         sendSelected(s, snapshots.merged(), true);
     }
 
+    /**
+     * focus 관측이 왔다(계약 v2 §A3: 집중 추적 갱신마다 selected). 이미 이 세션에 보낸 바로 그 상태 객체면(팬아웃이 먼저 보냄) 다시 보내지 않는다.
+     */
+    private void runSelectedObservation(WsSession s) {
+        if (!s.ready() || !s.hello) return;
+        String hex = s.selectedHex;
+        if (hex == null) return;
+        AircraftState a = snapshots.merged().get(hex);
+        WsSession.SelectedSent prev = s.selectedSent;
+        if (prev != null && hex.equals(prev.hex()) && prev.state() == a && a != null && Objects.equals(prev.prediction(), prediction.apply(a))) return;
+        sendSelected(s, snapshots.merged(), true);
+    }
+
+    private void runDemand(WsSession s) {
+        if (!s.ready() || !s.subscribed()) return;
+        String j = s.demandJson;
+        if (j != null) send(s, j);
+    }
+
     private void runHeartbeat(WsSession s) {
         if (!s.ready()) return;
         if (!send(s, PING)) return;
@@ -431,7 +532,7 @@ public class WsHub implements SmartLifecycle {
 
     // ---- 전송 도우미 ----
 
-    private boolean send(WsSession s, String payload) {
+    boolean send(WsSession s, String payload) {
         if (!s.ready()) return false;
         if (s.sendNow(payload)) return true;
         dropped.increment();
@@ -499,8 +600,9 @@ public class WsHub implements SmartLifecycle {
         return sb.append(']').toString();
     }
 
+    /** 참고용 전역 버전 v(계약 §1) — 병합 뷰가 바뀔 때마다 오른다(region·global·hot·focus 어느 것이든). */
     static long version(SnapshotStore.View view) {
-        return Math.max(view.region().version(), view.global().version());
+        return view.version();
     }
 
     /** 스냅샷 sources(계약 §1): 스코프별 provider·fetched_at·lag_s·stale. 전세계 피드가 한 번도 없으면 global = null. REST /aircraft meta 도 같은 모양을 쓴다. */
@@ -560,6 +662,9 @@ public class WsHub implements SmartLifecycle {
     /**
      * SIGMET 목록 페이로드. SigmetStore 버전별로 한 번 만들고, 속성 중 시각에 따라 바뀌는 값(active·expiring_soon)이 바뀌는
      * 다음 경계(valid_from · valid_to − 30분 · valid_to)가 지나면 다시 만든다.
+     * computed_at(WS-5): 그 시각 의존 값을 계산한 서버 시각. 이미 받은 세션에는 경계마다 다시 보내지 않으므로(목록 전체 ~120 KB 를 세션마다
+     * 다시 보내지 않게) 클라이언트가 가진 active·expiring_soon 은 computed_at 기준 값이다 — 화면은 valid_from/valid_to 와 서버 시각으로
+     * 직접 계산해야 하고, 이 필드는 서버 값이 언제 기준인지를 밝힌다.
      */
     SigmetPayload sigmetsPayload() {
         SigmetStore.State st = sigmets.state();
@@ -575,6 +680,7 @@ public class WsHub implements SmartLifecycle {
             m.put("v", st.version());
             m.put("fetched_at", st.fetchedAt());
             m.put("provider", st.provider());
+            m.put("computed_at", now);
             m.put("collection", SigmetGeoJson.collection(st.byId().values(), now, true));
             c = new SigmetPayload(st, st.version(), toJson(m), nextSigmetBoundary(st, nowMs));
             sigmetsCache.set(c);

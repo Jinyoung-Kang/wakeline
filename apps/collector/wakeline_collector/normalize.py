@@ -3,12 +3,21 @@
 - readsb v2 (adsb.lol · adsb.fi): 필드 정의는 readsb README-json [S8]. 단위 그대로.
 - OpenSky states/all: 배열 인덱스는 OpenSky REST 문서 [S1]. m→ft, m/s→kt, m/s→ft/min.
 값이 없으면 None 으로 둔다(추정하지 않는다).
+
+정직성(소유자 규칙):
+- 지상(alt_baro "ground" / OpenSky on_ground)은 on_ground=True 로만 표시한다. 고도를 0 ft 로 만들지 않는다 —
+  readsb 는 지상일 때 기압고도를 주지 않으므로 alt_ft=None, OpenSky 는 보고된 baro_altitude 를 그대로 쓴다(COL-2).
+- 위치 관측 시각(readsb seen_pos, OpenSky time_position)이 없으면 수신 시각으로 대신하지 않는다.
+  그런 레코드는 Rejected("no_position_time") 로 돌려 게이트가 격리·집계한다(DH-13, 원천에는 남는다).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from pydantic import ValidationError
 
 from wakeline_collector.models import AircraftState
 
@@ -49,25 +58,45 @@ def _track(v: Any) -> float | None:
     return round(t, 2)
 
 
-def from_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) -> AircraftState | None:
-    """readsb v2 aircraft 1건. 위치가 없으면 None(게이트가 '위치 없음'으로 집계)."""
+@dataclass(frozen=True)
+class Rejected:
+    """정규화 단계에서 스트림에 싣지 않기로 한 레코드(품질 게이트가 규칙별로 격리·집계)."""
+
+    rule: str  # no_position | no_position_time | invalid_record
+    hex: str | None  # 유효한 6자리 hex 일 때만(quality_event.hex 는 char(6))
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+def _hex(v: Any) -> str | None:
+    """6자리 16진 ICAO 주소(소문자). 그 외(비 ICAO '~' 주소 등)는 None."""
+    if not isinstance(v, str):
+        return None
+    h = v.strip().lower()
+    return h if len(h) == 6 and all(c in "0123456789abcdef" for c in h) else None
+
+
+def normalize_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) -> AircraftState | Rejected:
+    """readsb v2 aircraft 1건 → AircraftState, 또는 격리 사유."""
+    raw_hex = ac.get("hex")
+    hex_ = _hex(raw_hex)
     lat, lon = _num(ac.get("lat")), _num(ac.get("lon"))
     if lat is None or lon is None:
-        return None
-    hex_ = _str(ac.get("hex"), 6)
-    if not hex_ or len(hex_) != 6:
-        return None
-    hex_ = hex_.lower()
+        return Rejected("no_position", hex_)
+    if hex_ is None:
+        return Rejected("invalid_record", None, {"field": "hex", "value": str(raw_hex)[:16]})
+    seen_pos = _num(ac.get("seen_pos"))
+    if seen_pos is None:
+        return Rejected("no_position_time", hex_, {"provider": provider})
+    try:
+        seen_at = fetched_at - timedelta(seconds=seen_pos)
+    except OverflowError:
+        return Rejected("invalid_record", hex_, {"field": "seen_pos"})
     alt_raw = ac.get("alt_baro")
     on_ground = alt_raw == "ground"
-    alt_ft: int | None
-    if on_ground:
-        alt_ft = 0
-    else:
+    alt_ft: int | None = None
+    if not on_ground:
         a = _num(alt_raw)
         alt_ft = int(round(a)) if a is not None else None
-    seen_pos = _num(ac.get("seen_pos"))
-    seen_at = fetched_at - timedelta(seconds=seen_pos) if seen_pos is not None else fetched_at
     gs = _num(ac.get("gs"))
     track = _track(ac.get("track"))
     if track is None:
@@ -96,8 +125,18 @@ def from_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) -> Airc
             fetched_at=fetched_at.astimezone(UTC),
             quality=quality,
         )
-    except ValueError:
-        return None
+    except ValidationError as e:
+        return Rejected("invalid_record", hex_, {"errors": _fields(e)})
+
+
+def _fields(e: ValidationError) -> list[str]:
+    return sorted({".".join(str(p) for p in err["loc"]) for err in e.errors()})[:8]
+
+
+def from_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) -> AircraftState | None:
+    """normalize_readsb 의 편의형: 격리 사유 없이 상태 또는 None."""
+    r = normalize_readsb(ac, provider, fetched_at)
+    return r if isinstance(r, AircraftState) else None
 
 
 # OpenSky states/all 벡터 인덱스 (공식 REST 문서의 state vector 표)
@@ -106,29 +145,35 @@ _OS_LON, _OS_LAT, _OS_BARO_ALT, _OS_ON_GROUND, _OS_VELOCITY, _OS_TRACK, _OS_VRAT
 _OS_SQUAWK, _OS_CATEGORY = 14, 17
 
 
-def from_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | None:
-    if len(vec) < 12:
-        return None
+def normalize_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | Rejected:
+    """OpenSky state vector 1건 → AircraftState, 또는 격리 사유."""
+    if not isinstance(vec, list) or len(vec) < 12:
+        return Rejected("invalid_record", None, {"field": "vector", "len": len(vec) if isinstance(vec, list) else None})
+    hex_ = _hex(vec[_OS_ICAO24])
     lon, lat = _num(vec[_OS_LON]), _num(vec[_OS_LAT])
     if lat is None or lon is None:
-        return None
-    hex_ = _str(vec[_OS_ICAO24], 6)
-    if not hex_ or len(hex_) != 6:
-        return None
+        return Rejected("no_position", hex_)
+    if hex_ is None:
+        return Rejected("invalid_record", None, {"field": "icao24", "value": str(vec[_OS_ICAO24])[:16]})
+    tpos = _num(vec[_OS_TIME_POS])
+    if not tpos or tpos <= 0:
+        return Rejected("no_position_time", hex_, {"provider": "opensky"})
+    try:
+        seen_at = datetime.fromtimestamp(tpos, UTC)
+    except (OverflowError, OSError, ValueError):
+        return Rejected("invalid_record", hex_, {"field": "time_position"})
     on_ground = bool(vec[_OS_ON_GROUND])
     alt_m = _num(vec[_OS_BARO_ALT])
-    alt_ft = 0 if on_ground else (int(round(alt_m * M_TO_FT)) if alt_m is not None else None)
+    alt_ft = int(round(alt_m * M_TO_FT)) if alt_m is not None else None  # 지상이어도 보고값 그대로(0 으로 만들지 않음)
     vel = _num(vec[_OS_VELOCITY])
     vr = _num(vec[_OS_VRATE])
-    tpos = _num(vec[_OS_TIME_POS])
-    seen_at = datetime.fromtimestamp(tpos, UTC) if tpos else fetched_at
     track = _track(vec[_OS_TRACK])
     gs = round(vel * MS_TO_KT, 1) if vel is not None else None
     quality = 0 if (gs is not None and track is not None) or on_ground else 1
     cat = vec[_OS_CATEGORY] if len(vec) > _OS_CATEGORY else None
     try:
         return AircraftState(
-            hex=hex_.lower(),
+            hex=hex_,
             callsign=_str(vec[_OS_CALLSIGN], 8),
             lat=lat,
             lon=lon,
@@ -144,5 +189,11 @@ def from_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | None:
             fetched_at=fetched_at.astimezone(UTC),
             quality=quality,
         )
-    except ValueError:
-        return None
+    except ValidationError as e:
+        return Rejected("invalid_record", hex_, {"errors": _fields(e)})
+
+
+def from_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | None:
+    """normalize_opensky 의 편의형: 격리 사유 없이 상태 또는 None."""
+    r = normalize_opensky(vec, fetched_at)
+    return r if isinstance(r, AircraftState) else None

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { applyAlertsBatch, applyAlertsFull, feedLag, GLOBAL_STALE_S, needsResync, nextBackoffMs, REGION_STALE_S, ResyncGate, SendBudget, toFeed } from "@/lib/ws-protocol";
+import {
+  applyAlertsBatch, applyAlertsFull, attemptAfterClose, feedLag, GLOBAL_STALE_S, isRxFresh, LONG_BACKOFF_ATTEMPT, needsResync, nextBackoffMs, REGION_STALE_S, ResyncGate,
+  RX_DEAD_MS, RX_FRESH_MS, SendBudget, toFeed,
+} from "@/lib/ws-protocol";
 import type { Alert } from "@/lib/types";
 
 const alert = (id: number, over: Partial<Alert> = {}): Alert => ({
@@ -80,12 +83,19 @@ describe("feeds (region / global)", () => {
     // 지역 피드는 수집 이력이 없어도 "NO DATA" 로 보이도록 남긴다
     expect(toFeed({ provider: "-", lag_s: null }, 0, true)).toEqual({ provider: null, fetched_at: null, lag_s: null, stale: null, received_at: 0 });
   });
-  it("lag uses the reported value while live, and grows with elapsed time when disconnected", () => {
+  it("lag uses the reported value while live and recently refreshed, and grows with elapsed time when disconnected", () => {
     const f = toFeed({ provider: "opensky", lag_s: 100, stale: false }, 0)!;
-    expect(feedLag(f, 250_000, true, GLOBAL_STALE_S)).toEqual({ lag: 100, stale: false });
+    expect(feedLag(f, 30_000, true, GLOBAL_STALE_S)).toEqual({ lag: 100, stale: false });
     const off = feedLag(f, 250_000, false, GLOBAL_STALE_S);
     expect(off.lag).toBe(350);
     expect(off.stale).toBe(true);
+  });
+  it("WS-2: while 'open', a value not refreshed for > 45 s ages too (hung api / stalled status) — never a frozen fresh badge", () => {
+    const f = toFeed({ provider: "adsb_fi", lag_s: 3, stale: false }, 0)!;
+    expect(feedLag(f, RX_FRESH_MS, true, REGION_STALE_S)).toEqual({ lag: 3, stale: false });
+    const hung = feedLag(f, RX_FRESH_MS + 20_000, true, REGION_STALE_S);
+    expect(hung.lag).toBe(3 + 65);
+    expect(hung.stale).toBe(true);
   });
   it("stale when the server says so or lag exceeds 60 s (region) / 300 s (global); unknown lag is stale", () => {
     expect(feedLag(toFeed({ provider: "adsb_fi", lag_s: 61 }, 0), 0, true, REGION_STALE_S).stale).toBe(true);
@@ -93,5 +103,24 @@ describe("feeds (region / global)", () => {
     expect(feedLag(toFeed({ provider: "opensky", lag_s: 200 }, 0), 0, true, GLOBAL_STALE_S).stale).toBe(false);
     expect(feedLag(toFeed({ provider: "opensky", lag_s: 20, stale: true }, 0), 0, true, GLOBAL_STALE_S).stale).toBe(true);
     expect(feedLag(null, 0, true, REGION_STALE_S)).toEqual({ lag: null, stale: true });
+  });
+});
+
+describe("reconnect backoff and receive liveness (WS-1 / WS-2)", () => {
+  it("1013 overload and 1008 policy closes jump to the 30 s ceiling; other codes keep the current step", () => {
+    expect(attemptAfterClose(0, 1013)).toBe(LONG_BACKOFF_ATTEMPT);
+    expect(attemptAfterClose(0, 1008)).toBe(LONG_BACKOFF_ATTEMPT);
+    expect(attemptAfterClose(7, 1013)).toBe(7);
+    expect(attemptAfterClose(2, 1006)).toBe(2);
+    expect(attemptAfterClose(2, null)).toBe(2);
+    const r = Math.random; Math.random = () => 0.5;
+    try { expect(nextBackoffMs(LONG_BACKOFF_ATTEMPT)).toBe(30_000); } finally { Math.random = r; }
+  });
+  it("live = open and something (a ping at least) received within 45 s; the dead threshold is 2.5 pings", () => {
+    expect(isRxFresh("open", 1_000, 1_000 + RX_FRESH_MS - 1)).toBe(true);
+    expect(isRxFresh("open", 1_000, 1_000 + RX_FRESH_MS)).toBe(false);
+    expect(isRxFresh("open", null, 5)).toBe(false);
+    expect(isRxFresh("paused", 1_000, 1_001)).toBe(false);
+    expect(RX_DEAD_MS).toBe(75_000);
   });
 });

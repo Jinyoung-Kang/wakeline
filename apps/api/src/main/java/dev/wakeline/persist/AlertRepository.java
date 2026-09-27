@@ -21,8 +21,8 @@ import java.util.Map;
  * <ul>
  *   <li>기동 시 맨 먼저: 이전 실행이 열어 둔 행을 닫는다(left_at = now(), close_reason = 'restart', 계약 §3, REL-4·COR-10).
  *       이 프로세스가 만든 id(≥ 기동 시각 ms × 1000)는 건드리지 않는다 — DB 가 늦게 살아나 나중에 실행돼도 안전하다.</li>
- *   <li>ENTERED/PREDICTED: SIGMET 행 존재만 보장(FK) 후 INSERT. PREDICTION_UPDATED: eta·근거 갱신.
- *       LEFT/LOST/PREDICTION_CLEARED: left_at·close_reason·닫힘 근거 기록.</li>
+ *   <li>ENTERED/PREDICTED: SIGMET 행 존재만 보장(FK) 후 INSERT. PREDICTION_UPDATED: eta·진입 고도·근거 갱신.
+ *       LEFT/LOST/SIGMET_ENDED/PREDICTION_CLEARED: left_at·close_reason·닫힘 근거 기록.</li>
  *   <li>id 로 찾는 UPDATE 는 자연키(hex, sigmet_id, kind)도 함께 맞춘다 — id 가 다른 행을 가리키면(이전 형식 id 충돌) 건드리지 않는다.</li>
  * </ul>
  */
@@ -82,12 +82,13 @@ public class AlertRepository {
                         .param("id", a.id()).param("hex", a.hex()).param("cs", a.callsign()).param("sig", a.sigmetId()).param("kind", a.kind())
                         .param("at", Sql.ts(a.enteredAt())).param("eta", a.etaS()).param("alt", a.altFt()).param("ev", json.writeValueAsString(a.evidence())).update();
             }
+            // 예측 갱신은 한 예측의 값(eta·진입 고도·근거)을 함께 바꾼다 — 열 하나만 옛 예측으로 남지 않게(API-CONC-5)
             case PREDICTION_UPDATED -> n = db.sql("""
-                    UPDATE alert_event SET eta_s = :eta, evidence = :ev::jsonb
+                    UPDATE alert_event SET eta_s = :eta, alt_ft_at_entry = :alt, evidence = :ev::jsonb
                     WHERE id = :id AND hex = :hex AND sigmet_id = :sig AND kind = :kind AND left_at IS NULL""")
-                    .param("eta", a.etaS()).param("ev", json.writeValueAsString(a.evidence()))
+                    .param("eta", a.etaS()).param("alt", a.altFt()).param("ev", json.writeValueAsString(a.evidence()))
                     .param("id", a.id()).param("hex", a.hex()).param("sig", a.sigmetId()).param("kind", a.kind()).update();
-            case LEFT, LOST, PREDICTION_CLEARED -> n = db.sql("""
+            case LEFT, LOST, SIGMET_ENDED, PREDICTION_CLEARED -> n = db.sql("""
                     UPDATE alert_event SET left_at = :left, close_reason = :reason, evidence = :ev::jsonb
                     WHERE id = :id AND hex = :hex AND sigmet_id = :sig AND kind = :kind AND left_at IS NULL""")
                     .param("left", Sql.ts(a.leftAt() == null ? Instant.now() : a.leftAt())).param("reason", closeReason(ev))
@@ -102,11 +103,12 @@ public class AlertRepository {
         }
     }
 
-    /** 닫힘 이유: 엔진이 정한 값, 없으면 이벤트 종류로(LEFT→left, LOST→signal_lost, CLEARED→prediction_cleared). */
+    /** 닫힘 이유: 엔진이 정한 값, 없으면 이벤트 종류로(LEFT→left, LOST→signal_lost, SIGMET_ENDED→sigmet_ended, CLEARED→prediction_cleared). */
     static String closeReason(AlertStateMachine.Event ev) {
         if (ev.alert().closeReason() != null) return ev.alert().closeReason();
         return switch (ev.type()) {
             case LOST -> Alert.CLOSE_SIGNAL_LOST;
+            case SIGMET_ENDED -> Alert.CLOSE_SIGMET_ENDED;
             case PREDICTION_CLEARED -> Alert.CLOSE_PREDICTION_CLEARED;
             default -> Alert.CLOSE_LEFT;
         };

@@ -17,6 +17,7 @@ export function AttributionFooter() {
               {i > 0 ? " · " : ""}
               <a href={c.href} target="_blank" rel="noopener noreferrer" className="text-fg-2 hover:text-fg">{c.label}</a>
               {c.license ? <> (<a href={c.license.href} target="_blank" rel="noopener noreferrer" className="text-fg-2 hover:text-fg">{c.license.label}</a>)</> : null}
+              {c.note ? ` (${c.note})` : null}
             </span>
           ))}
         </span>

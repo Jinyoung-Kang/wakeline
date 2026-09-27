@@ -1,19 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { serverNowMs, useServerData } from "@/lib/store";
+import { useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
-import { useNow } from "@/lib/clock";
-import { band, fmtTime, hazardColor } from "@/lib/format";
-import { isExpired, sigmetBandSource } from "@/lib/sigmet";
+import { useServerNow } from "@/lib/clock";
+import { band, fmtDuration, fmtTime, hazardColor } from "@/lib/format";
+import { isExpired, isPending, sigmetBandSource } from "@/lib/sigmet";
 
-/** SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—". */
+/**
+ * SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—".
+ * 발효 전(valid_from > 지금)이면 "발효 전"과 남은 시간 — 엔진은 발효 전 경보로 판정하지 않는다(DH-8).
+ */
 export function SigmetCard({ id }: { id: string }) {
   const f = useServerData((d) => d.sigmets?.features.find((x) => x.properties.id === id) ?? null);
   const [inside, setInside] = useState<{ id: string; hexes: string[] | null } | null>(null);
   const selectSigmet = useUi((s) => s.selectSigmet);
   const select = useUi((s) => s.select);
-  const now = useNow(30_000);
+  const now = useServerNow(30_000);
   useEffect(() => {
     let live = true;
     apiGet<{ aircraft_inside?: string[] }>(`/api/v1/sigmets/${encodeURIComponent(id)}`)
@@ -24,7 +27,9 @@ export function SigmetCard({ id }: { id: string }) {
   if (!f) return <div className="p-3 text-[11px] text-fg-3">경보를 찾을 수 없습니다(만료되었거나 목록에서 빠짐).</div>;
   const p = f.properties;
   const hexes = inside && inside.id === id ? inside.hexes : null;
-  const expired = now ? isExpired(p, serverNowMs(now)) : false;
+  const expired = now ? isExpired(p, now) : false;
+  const pending = now ? isPending(p, now) : false;
+  const startsIn = pending ? (Date.parse(p.valid_from) - now) / 1000 : null;
   const rows: [string, React.ReactNode][] = [
     ["FIR", p.fir_name ?? p.fir_id ?? "—"],
     ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p))],
@@ -32,7 +37,7 @@ export function SigmetCard({ id }: { id: string }) {
     ["이동", p.move_dir || p.move_spd ? `${p.move_dir ?? "—"}${p.move_spd ? ` ${p.move_spd}` : ""}` : "—"],
     ["변화", p.chng ?? "—"],
     ["출처", <span key="s">{p.provider ?? "—"} · <span className="mono">{fmtTime(p.fetched_at)}</span></span>],
-    ["판정", p.excluded_reason ? `제외 (${p.excluded_reason})` : "폴리곤·고도대·유효시간 검사"],
+    ["판정", p.excluded_reason ? `제외 (${p.excluded_reason})` : pending ? "발효 전 — 발효 시각부터 폴리곤·고도대 검사" : "폴리곤·고도대·유효시간 검사"],
   ];
   return (
     <div className="flex h-full flex-col" data-testid="sigmet-card">
@@ -43,6 +48,7 @@ export function SigmetCard({ id }: { id: string }) {
           <span className="font-semibold">{p.hazard}{p.qualifier ? ` ${p.qualifier}` : ""}</span>
           <span className="mono text-fg-3">{p.fir_id} {p.series_id}</span>
           {expired ? <span className="badge warn" data-testid="sigmet-expired">만료됨</span> : null}
+          {pending ? <span className="badge" data-testid="sigmet-pending" title={`발효 ${fmtTime(p.valid_from)}`}>발효 전 · {fmtDuration(startsIn)} 뒤</span> : null}
         </div>
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>

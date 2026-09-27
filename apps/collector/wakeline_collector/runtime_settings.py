@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 from redis.asyncio import Redis
 
@@ -10,6 +11,7 @@ from wakeline_collector.config import settings
 
 KEY = "wakeline:settings"
 log = logging.getLogger("settings")
+REGION_POLL_RANGE_S = (5, 120)  # 운영 API(SettingsService) 가 받는 범위와 같다
 
 
 class RuntimeSettings:
@@ -19,11 +21,11 @@ class RuntimeSettings:
 
     async def refresh(self) -> None:
         try:
-            self._cache = await self._r.hgetall(KEY) or {}
+            self._cache = cast(dict[str, str], await self._r.hgetall(KEY)) or {}
         except Exception as e:  # noqa: BLE001 — Redis 장애 시 마지막 값 유지
             log.warning("settings refresh failed: %s", type(e).__name__)
 
-    def _get(self, key: str, default):
+    def _get(self, key: str, default: Any) -> Any:
         v = self._cache.get(key)
         if v is None or v == "":
             return default
@@ -34,7 +36,8 @@ class RuntimeSettings:
 
     @property
     def region_poll_s(self) -> int:
-        return max(5, self._get("region_poll_s", settings.region_poll_s))
+        lo, hi = REGION_POLL_RANGE_S
+        return max(lo, min(hi, int(self._get("region_poll_s", settings.region_poll_s))))
 
     @property
     def global_poll_s(self) -> int:

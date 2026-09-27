@@ -94,6 +94,38 @@ class FakeRedis:
         h[field] = str(int(h.get(field, 0)) + n)
         return int(h[field])
 
+    async def hmget(self, key: str, fields, *args) -> list[str | None]:
+        self._check()
+        names = [fields] if isinstance(fields, str) else list(fields)
+        h = self.kv.get(key, {})
+        return [h.get(f) for f in [*names, *args]]
+
+    async def hkeys(self, key: str) -> list[str]:
+        self._check()
+        return list(self.kv.get(key, {}))
+
+    async def hdel(self, key: str, *fields: str) -> int:
+        self._check()
+        h = self.kv.get(key, {})
+        return sum(1 for f in fields if h.pop(f, None) is not None)
+
+    # sorted sets (수요 임대)
+    async def zadd(self, key: str, mapping: dict[str, float]) -> int:
+        self._check()
+        z = self.kv.setdefault(key, {})
+        z.update({m: float(sc) for m, sc in mapping.items()})
+        return len(mapping)
+
+    async def zrangebyscore(self, key: str, min, max, start=None, num=None, withscores: bool = False):
+        self._check()
+        lo = float("-inf") if min == "-inf" else float(min)
+        hi = float("inf") if max == "+inf" else float(max)
+        items = sorted(((sc, m) for m, sc in self.kv.get(key, {}).items() if lo <= sc <= hi))
+        rows = [(m, sc) for sc, m in items]
+        if start is not None and num is not None:
+            rows = rows[start : start + num]
+        return rows if withscores else [m for m, _ in rows]
+
     # streams
     async def xadd(self, stream: str, fields: dict[str, str], maxlen: int | None = None, approximate: bool = True) -> str:
         self._check()
@@ -112,11 +144,11 @@ class FakeRedis:
         self._check()
         return "sha"
 
-    async def evalsha(self, sha: str, numkeys: int, key: str, cost: int, limit: int, ttl: int):
+    async def evalsha(self, sha: str, numkeys: int, key: str, cost: int, limit: int, ttl: int, headroom: int = 0):
         self._check()
         h = self.kv.setdefault(key, {})
         used = int(h.get("used", 0))
-        if limit > 0 and used + cost > limit:
+        if limit > 0 and used + cost > limit - headroom:
             return [0, used]
         used += cost
         h["used"], h["limit"] = str(used), str(limit)
@@ -127,16 +159,26 @@ class FakeRedis:
 
 
 class FakePipeline:
+    """명령을 모았다가 execute 에서 순서대로 실행한다(redis-py 파이프라인과 같은 모양)."""
+
     def __init__(self, r: FakeRedis) -> None:
         self._r = r
-        self._ops: list[tuple[str, tuple]] = []
+        self._ops: list[tuple[str, tuple, dict]] = []
 
-    def exists(self, *keys: str) -> FakePipeline:
-        self._ops.append(("exists", keys))
-        return self
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def queue(*args, **kwargs) -> FakePipeline:
+            self._ops.append((name, args, kwargs))
+            return self
+
+        return queue
 
     async def execute(self) -> list:
-        return [await getattr(self._r, name)(*args) for name, args in self._ops]
+        self._r._check()
+        ops, self._ops = self._ops, []
+        return [await getattr(self._r, name)(*args, **kwargs) for name, args, kwargs in ops]
 
 
 class FakeRaw:
@@ -152,6 +194,7 @@ class FakeRt:
     provider_order: list[str] = field(default_factory=lambda: ["adsb_lol", "adsb_fi", "opensky"])
     region: tuple[float, float, int] = (36.5, 127.8, 250)
     global_enabled: bool = True
+    region_poll_s: int = 10
 
 
 class RecordingDb(Db):
@@ -177,3 +220,10 @@ def make_ctx(redis: FakeRedis | None = None, *, limits: dict[str, int] | None = 
         rt=FakeRt(),  # type: ignore[arg-type]
         fixture=fixture,
     )
+
+
+async def _aclose(self) -> None:  # redis.asyncio.Redis.aclose 와 같은 이름
+    return None
+
+
+FakeRedis.aclose = _aclose  # type: ignore[attr-defined]

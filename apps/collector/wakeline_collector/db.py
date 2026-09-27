@@ -3,7 +3,10 @@
 DB 쓰기는 부가 경로다(설계 5.1 "실시간 경로는 DB에 의존하지 않음", 계약 §5).
 - 작업은 쓰기를 큐에 넣고 바로 돌아간다(await 하지 않음). 백그라운드 writer 하나가 순서대로 기록한다.
 - DB 가 내려가 있으면 writer 가 재연결을 기다리며 큐(최대 500건)에 보관하고, 넘치면 오래된 것부터 버린다.
-- 한 작업이 실패했는데 DB 는 살아 있으면(제약 위반 등 그 작업의 문제) 재시도해도 같으므로 그 작업만 버린다.
+- 실패는 예외 종류로 가른다(COL-3). 제약 위반·자료형·문법/권한 오류처럼 결정적인 것은 재시도해도 같으므로 그 작업만 버린다.
+  시간 초과·쿼리 취소·교착·잠금 대기·연결 끊김처럼 일시적인 것은 맨 앞에 두고 물러났다가 다시 시도한다.
+  DB 가 응답하는데도 같은 작업이 일시 오류로 MAX_ATTEMPTS 번 실패하면(독이 든 작업) 큐를 막지 않도록 버린다.
+  DB 가 응답하지 않는 동안의 실패는 시도 횟수에 세지 않는다(장애 동안 보관한다는 약속).
 - 실패·버림은 건수로 집계해 heartbeat(wakeline:collector)로 노출하고, 경고 로그는 분당 1회로 제한한다.
 """
 
@@ -31,6 +34,42 @@ OP_TIMEOUT_S = 10.0
 PROBE_TIMEOUT_S = 5.0
 RECONNECT_MIN_S, RECONNECT_MAX_S = 2.0, 30.0
 QUALITY_SAMPLES_PER_RULE = 20
+MAX_ATTEMPTS = 5  # DB 가 살아 있는데 일시 오류로 실패한 횟수 상한(독이 든 작업이 큐를 영원히 막지 않게)
+
+# 재시도해도 결과가 같은 오류 → 그 작업만 버린다
+PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
+    asyncpg.IntegrityConstraintViolationError,
+    asyncpg.DataError,
+    asyncpg.SyntaxOrAccessError,
+    asyncpg.FeatureNotSupportedError,
+    ValueError,  # 인자 인코딩 등 Python 쪽 결정적 오류
+    TypeError,
+    KeyError,
+)
+# 일시적 오류 → 맨 앞에 두고 물러났다가 재시도
+TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    TimeoutError,
+    asyncpg.QueryCanceledError,
+    asyncpg.OperatorInterventionError,
+    asyncpg.DeadlockDetectedError,
+    asyncpg.SerializationError,
+    asyncpg.LockNotAvailableError,
+    asyncpg.InsufficientResourcesError,
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    OSError,
+    ConnectionError,
+)
+
+
+def classify_error(e: BaseException) -> str:
+    """'transient' | 'permanent'. 모르는 예외는 일시적으로 보고 시도 횟수 상한에 맡긴다."""
+    if isinstance(e, TRANSIENT_ERRORS):
+        return "transient"
+    if isinstance(e, PERMANENT_ERRORS):
+        return "permanent"
+    return "transient"
+
 
 PoolFactory = Callable[[], Awaitable[Any]]
 
@@ -48,6 +87,7 @@ _METAR_UPSERT = """INSERT INTO metar_obs (icao, obs_time, raw, temp_c, dewp_c, w
 class _Op:
     name: str
     fn: Callable[[Any], Awaitable[None]]
+    attempts: int = 0  # DB 가 응답하는 상태에서 일시 오류로 실패한 횟수
 
 
 async def _create_pool() -> asyncpg.Pool:
@@ -212,13 +252,27 @@ class Db:
             await asyncio.wait_for(op.fn(pool), OP_TIMEOUT_S)
         except Exception as e:  # noqa: BLE001
             self.failures += 1
-            if await self._reachable(pool):
-                # DB 는 응답한다 → 이 작업 자체의 문제(제약 위반·스키마 불일치 등). 재시도해도 같으므로 버린다.
+            detail = (mask(str(e)) or "")[:160]
+            if classify_error(e) == "permanent":
+                # 이 작업 자체의 문제(제약 위반·스키마 불일치 등). 재시도해도 같으므로 버린다.
                 self._pop(op)
                 self.dropped += 1
-                self._ok = True
-                log.warning("db: %s rejected (%s: %s) — dropped", op.name, type(e).__name__, (mask(str(e)) or "")[:160])
+                self._ok = await self._reachable(pool)
+                log.warning("db: %s rejected (%s: %s) — dropped", op.name, type(e).__name__, detail)
                 return True
+            if await self._reachable(pool):
+                # DB 는 응답한다 → 이 작업의 일시 오류(시간 초과·교착·잠금 대기 등). 맨 앞에 두고 물러났다 재시도.
+                self._ok = True
+                op.attempts += 1
+                if op.attempts >= MAX_ATTEMPTS:
+                    self._pop(op)
+                    self.dropped += 1
+                    log.warning(
+                        "db: %s failed %d times while db is up (%s: %s) — dropped", op.name, op.attempts, type(e).__name__, detail
+                    )
+                    return True
+                self._warn("db: %s transient failure #%d (%s) — retrying", op.name, op.attempts, type(e).__name__)
+                return False
             self._ok = False
             self._warn("db: %s failed (%s) — db unreachable, keeping %d queued", op.name, type(e).__name__, len(self._q))
             return False
@@ -247,8 +301,10 @@ class Db:
         error_text: str | None = None,
         quality: list[tuple[str, str | None, dict[str, Any]]] | None = None,
     ) -> None:
-        """ingest_run 1행(+ 품질 사례·규칙별 건수)을 한 트랜잭션으로 기록한다."""
+        """ingest_run 1행(+ 품질 사례·규칙별 건수)을 한 트랜잭션으로 기록한다.
+        규칙별 건수는 실행이 시작된 UTC 날짜에 싣는다(COL-6: 큐에서 자정을 넘겨 기록돼도 실행한 날로)."""
         finished_at = datetime.now(UTC)
+        day = started_at.astimezone(UTC).date()
         rows, per_rule = quality_rows(quality or [])
         err = mask(error_text)
 
@@ -277,9 +333,9 @@ class Db:
                     )
                 if per_rule:
                     await conn.executemany(
-                        """INSERT INTO quality_rule_count (day, rule, count) VALUES (CURRENT_DATE, $1, $2)
+                        """INSERT INTO quality_rule_count (day, rule, count) VALUES ($1, $2, $3)
                            ON CONFLICT (day, rule) DO UPDATE SET count = quality_rule_count.count + EXCLUDED.count""",
-                        list(per_rule.items()),
+                        [(day, rule, n) for rule, n in per_rule.items()],
                     )
 
         self._submit(f"ingest_run({job})", fn)

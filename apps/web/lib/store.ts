@@ -1,12 +1,47 @@
 /** 서버 데이터 스토어 — useSyncExternalStore 기반(리렌더 최소화). UI 상태는 ui-store(zustand). */
 import { useSyncExternalStore } from "react";
+import { ServerClock } from "./server-clock";
+import type { DemandInfo } from "./demand";
+import type { AisGap, AisStatus, ShipGridCell, ShipLite, ShipState, ShipStatic } from "./ships";
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
 
+/**
+ * 선박 레이어 표시 상태(계약 v2 §B3). mode 는 서버가 마지막으로 보낸 메시지 종류:
+ * "points" = ships_snapshot/diff(줌 ≥ 7, 개별 선박 → shipStates), "grid" = ships_grid(줌 < 7 또는 상한 초과 capped), "waiting" = 레이어를 켰고 아직 받은 것 없음, "off" = 레이어 꺼짐.
+ * version 은 shipStates·grid 가 바뀔 때마다 1씩 — 지도는 이 값이 바뀔 때만 다시 그린다.
+ */
+export interface ShipsView {
+  mode: "off" | "waiting" | "points" | "grid";
+  version: number;
+  /** points: 선박 수 · grid: 칸 수 */
+  count: number;
+  /** grid: 칸 선박 수의 합 */
+  total: number;
+  ts: string | null;
+  cell_deg: number | null;
+  capped: boolean;
+  grid: ShipGridCell[];
+}
+
+/** WS "ship_selected" — 선택 선박의 최신 상태(ShipState)·정적 정보(ShipStatic) */
+export interface ShipSelectedInfo {
+  mmsi: string;
+  /** null = 실시간 목록에 없음(30분 넘게 수신 없음) */
+  state: ShipState | null;
+  static: ShipStatic | null;
+  received_at: number;
+}
+
+/** 선택 선박 항적 요약(지도는 MapView 가 그리고, 카드는 공백 목록을 보여 준다) */
+export interface ShipTrackInfo { mmsi: string; loaded: boolean; error: string | null; gaps: AisGap[]; segments: number }
+
 export interface ServerData {
   conn: ConnState;
   reconnectAttempt: number;
+  /** 마지막으로 WS 메시지(ping 포함)를 받은 브라우저 시각(ms, 5 s 단위로만 갱신). null = 이 연결에서 아직 없음 */
+  lastRxAt: number | null;
   snapshotVersion: number;
   snapshotAt: string | null;
   /** 지역·전세계 피드의 공급자·수집 시각·지연(스냅샷 sources 와 status 중 최근 것). global=null 이면 전세계 피드 없음 */
@@ -24,11 +59,21 @@ export interface ServerData {
   lastEvent: { type: AlertEventType; alert: Alert; at: number } | null;
   /** WS "selected" — 선택 항공기의 최신 full 상태와 예측 가능 여부 */
   selected: SelectedInfo | null;
+  /** WS "demand" — 이 세션의 핫 리전·집중 추적 상태(서버 보고값 그대로). 연결이 끊기면 null */
+  demand: DemandInfo | null;
+  ships: ShipsView;
+  shipSelected: ShipSelectedInfo | null;
+  shipTrack: ShipTrackInfo | null;
+  /** status.sources.ais — AIS 수신 상태(없으면 null) */
+  ais: AisStatus | null;
 }
+
+export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] };
 
 const initial: ServerData = {
   conn: "connecting",
   reconnectAttempt: 0,
+  lastRxAt: null,
   snapshotVersion: 0,
   snapshotAt: null,
   feeds: { region: null, global: null },
@@ -44,11 +89,18 @@ const initial: ServerData = {
   status: null,
   lastEvent: null,
   selected: null,
+  demand: null,
+  ships: SHIPS_OFF,
+  shipSelected: null,
+  shipTrack: null,
+  ais: null,
 };
 let data: ServerData = initial;
 
 /** 항공기 원본 상태(메인 스레드 사본) — 상세 카드·검색·예측선용. React 상태가 아니다. */
 export const aircraftStates = new Map<string, AircraftState>();
+/** 선박(ShipLite, MMSI → 상태) — 줌 ≥ 7 에서 서버가 보낸 화면 안 선박. React 상태가 아니다(바뀌면 ships.version 증가). */
+export const shipStates = new Map<string, ShipLite>();
 
 const listeners = new Set<() => void>();
 export function setData(patch: Partial<ServerData>) {
@@ -62,7 +114,8 @@ export function getData() {
 export function resetData() {
   data = { ...initial, alerts: new Map(), feeds: { region: null, global: null } };
   aircraftStates.clear();
-  clockOffsetMs = null;
+  shipStates.clear();
+  serverClock.reset();
 }
 function subscribe(l: () => void) {
   listeners.add(l);
@@ -72,19 +125,19 @@ export function useServerData<T>(selector: (d: ServerData) => T): T {
   return useSyncExternalStore(subscribe, () => selector(data), () => selector(data));
 }
 
-// ---- 서버 시계 보정 ----
-// ETA 카운트다운·SIGMET 만료처럼 서버 절대 시각(eta_at, valid_to)과 비교할 때 브라우저 시계 오차를 줄인다.
-// 서버 메시지의 ts/server_time − 수신 시각(네트워크 지연만큼 작게 추정됨). 리렌더를 일으키지 않도록 React 상태가 아니다.
-let clockOffsetMs: number | null = null;
-export function observeServerTime(serverIso: unknown, receivedAtMs: number) {
-  if (typeof serverIso !== "string") return;
-  const t = Date.parse(serverIso);
-  if (Number.isNaN(t)) return;
-  const est = t - receivedAtMs;
-  // 큰 점프(시계 변경·서버 교체)는 즉시 반영, 평소에는 완만하게(지터 억제)
-  clockOffsetMs = clockOffsetMs == null || Math.abs(est - clockOffsetMs) > 5000 ? est : clockOffsetMs * 0.8 + est * 0.2;
+// ---- 서버 시계 보정(WS-3 · DH-1) ----
+// 항공기 경과·stale·외삽(워커 포함), ETA 카운트다운, SIGMET 발효·만료, METAR·레이더 경과처럼 서버 절대 시각과 비교하는 모든 계산이
+// 이 오프셋 하나를 쓴다. 추정 방법은 server-clock.ts(작은 메시지 표본의 최댓값). 리렌더를 일으키지 않도록 React 상태가 아니다.
+const serverClock = new ServerClock();
+/** 서버 시각 표본(welcome·status·작은 diff). 오프셋이 바뀌었으면 true. monoMs = performance.now()(벽시계 변경 감지용, 선택) */
+export function observeServerTime(serverIso: unknown, receivedAtMs: number, monoMs?: number | null): boolean {
+  return serverClock.observe(serverIso, receivedAtMs, monoMs);
+}
+/** 서버 − 브라우저(ms). 아직 모르면 null. */
+export function clockOffsetMs(): number | null {
+  return serverClock.offsetMs;
 }
 /** 브라우저 시각(ms) → 서버 기준 추정 시각(ms). 서버 시각을 아직 모르면 그대로. */
 export function serverNowMs(clientNowMs: number): number {
-  return clientNowMs + (clockOffsetMs ?? 0);
+  return clientNowMs + (serverClock.offsetMs ?? 0);
 }

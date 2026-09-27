@@ -1,10 +1,13 @@
 """Redis Streams 발행. payload 는 gzip+base64 JSON. MAXLEN ~ 200.
 
 XADD 실패 시 로컬 큐(최대 1,000건 · 64 MB)에 보관하고 다음 발행 때 순서대로 재전송한다. 상한을 넘으면 가장 오래된 것부터 버린다(건수 집계).
+모든 작업(region·global·focus·hot·sigmet·radar)이 한 Publisher 를 같은 이벤트 루프에서 공유하므로, 큐 비우기와 전송은
+asyncio.Lock 으로 직렬화한다(COL-1: 동시 호출이 같은 항목을 두 번 보내거나 남의 항목을 꺼내던 경쟁). 순서 보장도 이 락에 기댄다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import gzip
 import logging
@@ -24,6 +27,7 @@ log = logging.getLogger("publisher")
 STREAM_AIRCRAFT = "wakeline:aircraft"
 STREAM_SIGMET = "wakeline:sigmet"
 STREAM_RADAR = "wakeline:radar"
+STREAM_SHIPS = "wakeline:ships"
 MAXLEN = 200
 QUEUE_MAX = 1000
 QUEUE_MAX_BYTES = 64 * 1024 * 1024
@@ -49,6 +53,7 @@ class Publisher:
         self._r = redis
         self._queue: deque[tuple[str, dict[str, str], int]] = deque()
         self._queued_bytes = 0
+        self._lock = asyncio.Lock()  # 큐 비우기 + 전송 직렬화(COL-1)
         self._last_log = 0.0
         self.dropped = 0  # 로컬 큐 상한으로 버린 건수
 
@@ -98,26 +103,32 @@ class Publisher:
         self._queued_bytes += size
 
     async def publish(self, stream: str, fields: dict[str, str]) -> str | None:
-        # 먼저 밀린 큐를 비운다(순서 보존)
-        while self._queue:
-            s, f, n = self._queue[0]
+        """발행. 반환값은 스트림 ID(바로 보냈을 때) 또는 None(로컬 큐에 보관)."""
+        async with self._lock:
+            # 먼저 밀린 큐를 비운다(순서 보존). 락 안이라 머리 항목을 읽은 코루틴만 그것을 꺼낸다.
+            while self._queue:
+                s, f, n = self._queue[0]
+                try:
+                    await self._xadd(s, f)
+                except (RedisError, OSError):
+                    break
+                self._queue.popleft()
+                self._queued_bytes -= n
+            if self._queue:
+                # Redis 가 아직 안 되면 새 항목은 바로 큐 뒤로(순서 보존)
+                self._enqueue(stream, fields)
+                self._warn("xadd pending; queued %d (%d B, dropped %d)", len(self._queue), self._queued_bytes, self.dropped)
+                return None
             try:
-                await self._r.xadd(s, f, maxlen=MAXLEN, approximate=True)
-            except (RedisError, OSError):
-                break
-            self._queue.popleft()
-            self._queued_bytes -= n
-        if self._queue:
-            # Redis 가 아직 안 되면 새 항목은 바로 큐 뒤로(순서 보존)
-            self._enqueue(stream, fields)
-            self._warn("xadd pending; queued %d (%d B, dropped %d)", len(self._queue), self._queued_bytes, self.dropped)
-            return None
-        try:
-            return await self._r.xadd(stream, fields, maxlen=MAXLEN, approximate=True)
-        except (RedisError, OSError) as e:
-            self._enqueue(stream, fields)
-            self._warn("xadd failed (%s); queued %d", type(e).__name__, len(self._queue))
-            return None
+                return await self._xadd(stream, fields)
+            except (RedisError, OSError) as e:
+                self._enqueue(stream, fields)
+                self._warn("xadd failed (%s); queued %d", type(e).__name__, len(self._queue))
+                return None
+
+    async def _xadd(self, stream: str, fields: dict[str, str]) -> str:
+        sid = await self._r.xadd(stream, fields, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
+        return sid if isinstance(sid, str) else sid.decode()
 
     @property
     def queued(self) -> int:

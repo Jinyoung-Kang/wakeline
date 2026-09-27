@@ -12,33 +12,53 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 토큰 버킷(20 msg / 10 s)과 원자적 연결 상한(SEC-12). */
+/** 슬라이딩 창 한도(20 msg / 어떤 10 s 창, 계약 §1 — WS-4)와 원자적 연결 상한(SEC-12). */
 class RateAndLimitTest {
     static final long S = 1_000_000_000L;
 
-    @Test void bucket_allows20Burst_thenRejects_thenRefills2PerSecond() {
-        TokenBucket b = new TokenBucket(20, 10 * S, 0);
-        for (int i = 0; i < 20; i++) assertThat(b.tryConsume(0)).isTrue();
-        assertThat(b.tryConsume(0)).isFalse();
-        assertThat(b.tryConsume(S / 4)).isFalse();       // 0.25 s → 0.5 토큰
-        assertThat(b.tryConsume(S)).isTrue();            // 1 s → 2 토큰(초당 2개 = 10 s 에 20개)
-        assertThat(b.tryConsume(S)).isTrue();
-        assertThat(b.tryConsume(S)).isFalse();
+    @Test void window_allows20Burst_thenRejectsUntilTheOldestLeavesTheWindow() {
+        SlidingWindowLimiter w = new SlidingWindowLimiter(20, 10 * S);
+        for (int i = 0; i < 20; i++) assertThat(w.tryAcquire(0)).isTrue();
+        assertThat(w.tryAcquire(0)).isFalse();
+        assertThat(w.tryAcquire(5 * S)).isFalse();          // 토큰 버킷이었다면 이미 10 개가 보충됐다
+        assertThat(w.tryAcquire(10 * S - 1)).isFalse();     // 가장 오래된 것이 아직 창 안
+        assertThat(w.tryAcquire(10 * S)).isTrue();          // 정확히 10 s 뒤 — 창 밖
     }
 
-    @Test void bucket_neverRejectsClientWithin20Per10sSlidingWindow() {
-        TokenBucket b = new TokenBucket(20, 10 * S, 0);
+    /** 리뷰 WS-4 재현: 0 s 에 20 개, 그 뒤 0.5 s 마다 1 개 — 이전 토큰 버킷은 한 창에 약 40 개를 받아들였다. */
+    @Test void window_spacedBurstAfterAFullBurst_isRejectedWithinTheSameWindow() {
+        SlidingWindowLimiter w = new SlidingWindowLimiter(20, 10 * S);
+        for (int i = 0; i < 20; i++) assertThat(w.tryAcquire(0)).isTrue();
+        int acceptedWithin10s = 20;
+        for (long t = S / 2; t < 10 * S; t += S / 2) if (w.tryAcquire(t)) acceptedWithin10s++;
+        assertThat(acceptedWithin10s).isEqualTo(20);
+    }
+
+    @Test void window_neverRejectsAClientThatStaysWithin20Per10s() {
+        SlidingWindowLimiter w = new SlidingWindowLimiter(20, 10 * S);
         // 10 s 창마다 정확히 20 개(창 시작에 몰아서) — 긴 시간 동안 한 번도 거절되지 않아야 한다
-        for (int w = 0; w < 30; w++) for (int i = 0; i < 20; i++) assertThat(b.tryConsume(w * 10 * S)).as("window %d msg %d", w, i).isTrue();
+        for (int k = 0; k < 30; k++) for (int i = 0; i < 20; i++) assertThat(w.tryAcquire(k * 10 * S)).as("window %d msg %d", k, i).isTrue();
+        // 고르게 0.5 s 마다(= 10 s 에 20 개) — 거절 없음
+        SlidingWindowLimiter even = new SlidingWindowLimiter(20, 10 * S);
+        for (int i = 0; i < 200; i++) assertThat(even.tryAcquire(i * (S / 2))).as("msg %d", i).isTrue();
     }
 
-    @Test void bucket_capsAtCapacityAfterIdle() {
-        TokenBucket b = new TokenBucket(20, 10 * S, 0);
-        for (int i = 0; i < 20; i++) b.tryConsume(0);
-        long later = 3600 * S;
-        int ok = 0;
-        for (int i = 0; i < 25; i++) if (b.tryConsume(later)) ok++;
-        assertThat(ok).isEqualTo(20);
+    @Test void window_anyTenSecondIntervalHoldsAtMost20AcceptedMessages() {
+        SlidingWindowLimiter w = new SlidingWindowLimiter(20, 10 * S);
+        java.util.Random r = new java.util.Random(7);
+        List<Long> accepted = new ArrayList<>();
+        long t = 0;
+        for (int i = 0; i < 5_000; i++) {
+            t += (long) (r.nextDouble() * 0.8 * S);
+            if (w.tryAcquire(t)) accepted.add(t);
+        }
+        for (int i = 20; i < accepted.size(); i++)
+            assertThat(accepted.get(i) - accepted.get(i - 20)).as("21 accepted within one window at %d", i).isGreaterThanOrEqualTo(10 * S);
+    }
+
+    @Test void window_rejectsBadArguments() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new SlidingWindowLimiter(0, S)).isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new SlidingWindowLimiter(1, 0)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test void limiter_perIpAndTotal_andRelease() {

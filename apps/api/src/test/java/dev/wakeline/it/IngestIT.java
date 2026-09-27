@@ -51,9 +51,14 @@ class IngestIT extends IntegrationTest {
     @Autowired ObjectMapper mapper;
     @Autowired MeterRegistry meters;
     @Autowired @Qualifier("streamRedisTemplate") StringRedisTemplate streamRedis;
+    @Autowired dev.wakeline.ingest.StreamMetrics streamMetrics;
+    @Autowired org.springframework.context.ApplicationContext context;
+    @org.springframework.boot.test.web.server.LocalManagementPort int managementPort;
 
-    long pending() {
-        var p = ItStack.admin().opsForStream().pending(Streams.AIRCRAFT, StreamConsumer.GROUP);
+    long pending() { return pending(Streams.AIRCRAFT); }
+
+    long pending(String stream) {
+        var p = ItStack.admin().opsForStream().pending(stream, StreamConsumer.GROUP);
         return p == null ? 0 : p.getTotalPendingMessages();
     }
 
@@ -301,5 +306,92 @@ class IngestIT extends IntegrationTest {
         StringRedisTemplate api = ItStack.apiUser();
         assertNoPerm(() -> api.opsForValue().get("budget:adsb_lol"));
         assertNoPerm(() -> api.keys("*"));
+    }
+
+    // ---------- 리뷰 수정(2026-09-28) ----------
+
+    /** API-CONC-8: PEL 에 남은 엔트리가 스트림에서 이미 지워졌으면(MAXLEN) 되살릴 수 없다 — 무한 재시도 대신 ACK 하고 trimmed 로 센다. */
+    @Test
+    void pendingEntryTrimmedFromTheStreamIsAcknowledgedAndCounted() {
+        double before = counter("wakeline_stream_messages_total", "result", "trimmed");
+        consumer.stop();
+        try {
+            Instant fetched = Streams.nextFetchedAt();
+            String id = Streams.xadd(Streams.AIRCRAFT, Streams.aircraft("region", fetched, List.of(Streams.state("a1b0a1", 37.3, 126.5, 28000, fetched, fetched))));
+            assertThat(readWithoutAck()).extracting(r -> r.getId().getValue()).containsExactly(id);
+            assertThat(pending()).isEqualTo(1);
+            ItStack.admin().opsForStream().delete(Streams.AIRCRAFT, id); // MAXLEN 으로 잘린 것과 같다
+        } finally {
+            consumer.start();
+        }
+        await("trimmed pending entry acknowledged", WAIT, () -> pending() == 0);
+        assertThat(counter("wakeline_stream_messages_total", "result", "trimmed")).isEqualTo(before + 1);
+    }
+
+    /**
+     * API-CONC-1: api 가 멈춘 동안 쌓인 SIGMET 세트는 재시작 뒤 스트림 순서대로 이력에 남는다(이전에는 최신 세트만 저장했다).
+     * A 는 f3 세트에서 빠졌다 → withdrawn_at = f3(재시작 시각이 아니다). B 는 f2 에 처음 나타났다 → first_seen = f2.
+     */
+    @Test
+    void sigmetSetsBackloggedWhileTheApiWasDownArePersistedInStreamOrder() {
+        String a = "RKRR:IT-BL-A:" + System.currentTimeMillis(), b = "RKRR:IT-BL-B:" + System.currentTimeMillis();
+        consumer.stop();
+        StreamConsumer restarted = null;
+        Instant f1 = Streams.nextFetchedAt(), f2 = Streams.nextFetchedAt().plusMillis(10), f3 = f2.plusMillis(10);
+        try {
+            Streams.xadd(Streams.SIGMET, Streams.sigmets(f1, List.of(Streams.sigmet(a, 100, 10, 101, 11, 0, 30000, f1))));
+            Streams.xadd(Streams.SIGMET, Streams.sigmets(f2, List.of(Streams.sigmet(a, 100, 10, 101, 11, 0, 30000, f2), Streams.sigmet(b, 102, 10, 103, 11, 0, 30000, f2))));
+            Streams.xadd(Streams.SIGMET, Streams.sigmets(f3, List.of(Streams.sigmet(b, 102, 10, 103, 11, 0, 30000, f3))));
+            restarted = new StreamConsumer(streamRedis, validator, snapshots, sigmets, radar, publisher, mapper, meters);
+            restarted.start(); // 부트스트랩: 최신(f3)을 메모리에 — 이력은 다시 전달될 때 순서대로
+            await("backlog consumed and acknowledged", WAIT, () -> pending(Streams.SIGMET) == 0 && count("SELECT count(*) FROM sigmet WHERE id = ?", b) == 1
+                    && count("SELECT count(*) FROM sigmet WHERE id = ? AND withdrawn_at IS NOT NULL", a) == 1);
+        } finally {
+            if (restarted != null) restarted.stop();
+            consumer.start();
+        }
+        assertThat(sigmets.state().fetchedAt()).isEqualTo(f3);
+        Map<String, Object> rowA = db.sql("SELECT withdrawn_at, first_seen FROM sigmet WHERE id = :id").param("id", a).query().singleRow();
+        Map<String, Object> rowB = db.sql("SELECT withdrawn_at, first_seen FROM sigmet WHERE id = :id").param("id", b).query().singleRow();
+        assertThat(dev.wakeline.persist.TrackRepository.toInstant(rowA.get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(dev.wakeline.persist.TrackRepository.toInstant(rowA.get("first_seen"))).isEqualTo(f1);
+        assertThat(dev.wakeline.persist.TrackRepository.toInstant(rowB.get("first_seen"))).isEqualTo(f2);
+        assertThat(rowB.get("withdrawn_at")).isNull();
+    }
+
+    /** REL-20: /healthz 는 항상 200(edge 헬스체크) + 수집 상태, 수집 경로는 자기 헬스 그룹, readiness 에는 들어가지 않는다. 스트림 지표를 낸다. */
+    @Test
+    void ingestHealthHasItsOwnGroupAndStreamMetricsAreExported() throws Exception {
+        Instant fetched = Streams.nextFetchedAt();
+        Streams.xadd(Streams.AIRCRAFT, Streams.aircraft("region", fetched, List.of(Streams.state("a1b0b1", 37.3, 126.5, 28000, fetched, fetched))));
+        await("region snapshot", WAIT, () -> snapshots.find("a1b0b1") != null);
+        Res h = get("/healthz");
+        assertThat(h.status()).isEqualTo(200);
+        assertThat(h.header("Cache-Control")).contains("no-store");
+        assertThat(h.json().path("status").asString()).isEqualTo("ok");
+        assertThat(h.json().path("region_lag_s").asLong()).isBetween(0L, 60L);
+
+        String mgmt = "http://127.0.0.1:" + managementPort;
+        var readiness = HTTP.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(mgmt + "/actuator/health/readiness")).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(readiness.statusCode()).isEqualTo(200);
+        var ingest = HTTP.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(mgmt + "/actuator/health/ingest")).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(ingest.statusCode()).isEqualTo(200);
+        assertThat(Streams.JSON.readTree(ingest.body()).path("status").asString()).isEqualTo("UP");
+
+        streamMetrics.refresh();
+        assertThat(streamMetrics.sample(Streams.AIRCRAFT).trimmedEntries()).isGreaterThanOrEqualTo(0);
+        var prom = HTTP.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(mgmt + "/actuator/prometheus")).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(prom.body()).contains("wakeline_stream_lag{stream=\"wakeline:aircraft\"}").contains("wakeline_stream_pending")
+                .contains("wakeline_stream_trimmed_entries").contains("wakeline_stream_unacked");
+    }
+
+    /** API-CONC-2: 컨텍스트가 파이프라인 리스너를 격리하는 멀티캐스터를 쓴다. */
+    @Test
+    void contextUsesTheListenerIsolatingMulticaster() {
+        assertThat(context.getBean(org.springframework.context.support.AbstractApplicationContext.APPLICATION_EVENT_MULTICASTER_BEAN_NAME))
+                .isInstanceOf(dev.wakeline.config.PipelineEventMulticaster.class);
     }
 }

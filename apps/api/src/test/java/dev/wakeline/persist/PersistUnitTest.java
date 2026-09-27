@@ -54,4 +54,32 @@ class PersistUnitTest {
         assertThat(r.get("obs_age_s")).isNull();
         assertThat(r.get("stale")).isNull(); // 관측이 없으면 '오래됨' 도 '최신' 도 아니다
     }
+
+    /** DB 가 오래 죽어 있으면 ACK 를 기다리는 표식은 상한(MAX_MARKS)에서 가장 오래된 것부터 놓는다 — 그 메시지는 스트림에서 이미 지워졌다. */
+    @Test
+    void pendingReceiptMarksAreBounded() throws Exception {
+        javax.sql.DataSource down = new org.springframework.jdbc.datasource.AbstractDataSource() {
+            @Override public java.sql.Connection getConnection() throws java.sql.SQLException { throw new java.sql.SQLTransientConnectionException("down"); }
+            @Override public java.sql.Connection getConnection(String u, String p) throws java.sql.SQLException { return getConnection(); }
+        };
+        var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        TrackWriter tw = new TrackWriter(new org.springframework.jdbc.core.JdbcTemplate(down), new AircraftRepository(
+                org.springframework.jdbc.core.simple.JdbcClient.create(down), null), meters, 50, 100);
+        tw.start();
+        java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.List<dev.wakeline.ingest.Receipt> rs = new java.util.ArrayList<>();
+        for (int i = 0; i <= TrackWriter.MAX_MARKS; i++) {
+            dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+            rs.add(r);
+            tw.enqueue(java.util.List.of(new dev.wakeline.domain.AircraftState(String.format("%06x", i), null, null, null, null, 36, 127, 30000,
+                    null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false)), r);
+            r.release();
+        }
+        assertThat(tw.pendingMarks()).isEqualTo(TrackWriter.MAX_MARKS);
+        assertThat(acked.get()).isEqualTo(1);
+        assertThat(rs.getFirst().holds()).isZero();
+        assertThat(meters.counter("wakeline_track_receipts_forced_total").count()).isEqualTo(1.0);
+        tw.stop();
+        assertThat(acked.get()).as("nothing else was durable").isEqualTo(1);
+    }
 }

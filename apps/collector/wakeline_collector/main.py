@@ -1,6 +1,11 @@
-"""collector 진입점 — 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)을 하나의 이벤트 루프에서 돌린다.
+"""collector 진입점 — 주기 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)과 수요 기반 추적(focus·hot,
+ADR-013)을 하나의 이벤트 루프에서 돌린다.
 
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
+외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
+
+종료(SIGTERM, COL-4): 진행 중 작업을 SHUTDOWN_GRACE_S 동안 끝내게 두고, 남은 작업은 취소한 뒤 DB 쓰기 큐를 DB_DRAIN_S 안에서 비운다.
+합계(18 + 4 + 4 s)는 compose stop_grace_period(30 s) 안이다 — 그래야 SIGKILL 전에 close() 가 돈다.
 """
 
 from __future__ import annotations
@@ -8,16 +13,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from typing import Any
 
 from redis.asyncio import Redis
 
 from wakeline_collector.budget import Budget
 from wakeline_collector.config import Settings, settings
 from wakeline_collector.db import Db
+from wakeline_collector.demand import DemandPoller, DemandStatus
 from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import HttpClient
 from wakeline_collector.jobs.aircraft import AircraftJob
 from wakeline_collector.jobs.context import JobContext
+from wakeline_collector.jobs.demand import DemandProvider, DemandTracker
 from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
@@ -26,8 +34,9 @@ from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
-from wakeline_collector.providers.readsb import adsb_fi, adsb_lol
+from wakeline_collector.providers.readsb import ADSB_FI_HOST, AdsbFiDemandProvider, adsb_fi, adsb_lol
 from wakeline_collector.publisher import Publisher
+from wakeline_collector.ratelimit import default_limiter
 from wakeline_collector.raw_store import RawStore
 from wakeline_collector.runtime_settings import RuntimeSettings
 from wakeline_collector.scheduler import run_periodic
@@ -38,6 +47,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
+
+SHUTDOWN_GRACE_S = 18.0  # 진행 중 작업(KMA 실측 최대 25 s 중 대부분)을 끝낼 시간
+DB_DRAIN_S = 4.0  # db.close: 큐 비우기 + 풀 닫기 각각의 상한
 
 
 def build_limits(s: Settings) -> dict[str, int]:
@@ -67,18 +79,32 @@ def make_redis(s: Settings) -> Redis:
     )
 
 
-async def main() -> None:
+async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> None:
+    """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
     fixture = settings.fixture_mode
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
-    redis = make_redis(settings)
-    db = Db()
+    redis = redis if redis is not None else make_redis(settings)
+    db = db or Db()
     db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
-    http = HttpClient()
+    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps)
+    http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
+    tracker: DemandTracker | None = None
 
     def metrics() -> dict[str, str]:
-        return {**db.metrics(), "publish_queued": str(publisher.queued), "publish_dropped": str(publisher.dropped)}
+        m = {
+            **db.metrics(),
+            "publish_queued": str(publisher.queued),
+            "publish_dropped": str(publisher.dropped),
+            # api /status 의 demand.adsb_fi_rps_1m 원천: 최근 60 s 동안 실제로 보낸 adsb.fi 호출 수 / 60
+            "adsb_fi_rps_1m": f"{limiter.rate_1m(ADSB_FI_HOST):.3f}",
+            "http_rps_1m": f"{limiter.rate_1m():.3f}",
+            "http_throttled": str(limiter.throttled),
+        }
+        if tracker is not None:
+            m.update(tracker.metrics())
+        return m
 
     ctx = JobContext(
         budget=Budget(redis, limits),
@@ -90,17 +116,21 @@ async def main() -> None:
         fixture=fixture,
     )
 
+    aircraft_providers: dict[str, Any]
+    demand_provider: DemandProvider
+    awc: Any
+    rv: Any
     if fixture:
-        aircraft_providers = {"fixture": fx.FixtureAircraftProvider()}
+        fx_aircraft = fx.FixtureAircraftProvider()
+        aircraft_providers = {"fixture": fx_aircraft}
         awc, rv = fx.FixtureAwcProvider(), fx.FixtureRainViewerProvider()
+        demand_provider = fx.FixtureDemandProvider(fx_aircraft, lambda: ctx.rt.region)
     else:
-        aircraft_providers = {
-            "adsb_lol": adsb_lol(http),
-            "adsb_fi": adsb_fi(http),
-            "opensky": OpenSkyProvider(http, settings.opensky_client_id, settings.opensky_client_secret),
-        }
+        opensky = OpenSkyProvider(http, settings.opensky_client_id, settings.opensky_client_secret)
+        aircraft_providers = {"adsb_lol": adsb_lol(http), "adsb_fi": adsb_fi(http), "opensky": opensky}
         awc, rv = AwcProvider(http), RainViewerProvider(http)
-        if not aircraft_providers["opensky"].configured:
+        demand_provider = AdsbFiDemandProvider(http)
+        if not opensky.configured:
             log.info("opensky credentials not set — global view disabled")
         if "opensky" in settings.provider_order:
             log.info(
@@ -112,14 +142,19 @@ async def main() -> None:
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
     maint = MaintenanceJob(list(limits), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
+    if settings.demand_enabled:
+        tracker = DemandTracker(
+            ctx, DemandPoller(redis), DemandStatus(redis), demand_provider, limiter=None if fixture else limiter
+        )
 
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop.set)
+    if stop is None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
 
     await ctx.rt.refresh()
-    tasks = [
+    coros = [
         run_periodic("region", region.run_once, lambda: ctx.rt.region_poll_s, stop, ctx.rt.refresh),
         run_periodic("global", global_.run_once, lambda: ctx.rt.global_poll_s, stop, initial_delay=5),
         run_periodic("sigmet", sigmet.run_once, lambda: ctx.rt.sigmet_poll_s, stop, initial_delay=1),
@@ -128,10 +163,29 @@ async def main() -> None:
         run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
         run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
     ]
+    if tracker is not None:
+        coros.append(tracker.run(stop))
+    tasks = [asyncio.create_task(c) for c in coros]
     try:
-        await asyncio.gather(*tasks)
+        await run_until_stopped(tasks, stop, grace_s=SHUTDOWN_GRACE_S)
     finally:
         await http.aclose()
-        await db.close()
+        await db.close(drain_s=DB_DRAIN_S)
         await redis.aclose()
         log.info("collector stopped")
+
+
+async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event, *, grace_s: float) -> None:
+    """stop 이 켜질 때까지(또는 작업이 모두 끝날 때까지) 기다린 뒤, 진행 중 작업을 grace_s 동안 끝내게 두고 남은 것은 취소한다(COL-4)."""
+    stopper = asyncio.create_task(stop.wait())
+    try:
+        await asyncio.wait([stopper, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        stop.set()  # 작업 하나가 예상 밖으로 끝났어도 나머지를 정리한다
+        _done, pending = await asyncio.wait(tasks, timeout=grace_s)
+        if pending:
+            log.warning("shutdown: %d job(s) still running after %.0f s — cancelling", len(pending), grace_s)
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+    finally:
+        stopper.cancel()

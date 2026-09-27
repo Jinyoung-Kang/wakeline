@@ -5,14 +5,18 @@ import {
   addBaseLayers, COVERAGE_PAINT, coverageTileUrl, frameDisplay, MAPLIBRE_WORKER_URL, predictionFeature, predictionKey, predictionTargets,
   RADAR_SLOT, radarTileUrl, STYLE_URL, type FrameRole,
 } from "@/lib/maplayers";
-import { aircraftStates, getData, serverNowMs, setData, useServerData } from "@/lib/store";
+import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
+import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
+import {
+  appendShipTrack, gridFeatures, isMmsi, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest, type AisGap, type ShipTrack,
+} from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
-import { SkyWsClient } from "@/lib/ws";
+import { WakelineWsClient } from "@/lib/ws";
 import { apiGet } from "@/lib/api";
 import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { isMetarStale } from "@/lib/format";
-import { aircraftTip, airportTip, renderTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
+import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
@@ -23,7 +27,27 @@ const SIGMET_EXPIRY_CHECK_MS = 30_000;
 /** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다. */
 const AIRPORTS_REFRESH_MS = 300_000;
 const AIRPORTS_RECHECK_MS = 60_000;
-const HOVER_LAYERS = ["aircraft-symbol", "airport-circle", "sigmet-fill"] as const;
+/** 호버·클릭 우선순위: 항공기 > 선박 > 선박 격자 > 공항 > SIGMET */
+const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-grid-circle", "airport-circle", "sigmet-fill"] as const;
+/** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
+const SHIP_STALE_CHECK_MS = 30_000;
+/** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
+const SHIP_PENDING_MAX = 500;
+
+type ShipTrackRef = { mmsi: string | null; track: ShipTrack; pending: { ts: number; lon: number; lat: number }[]; loaded: boolean; anchor: number | null; sinceMs: number };
+const emptyShipTrack = (mmsi: string | null, anchor: number | null = null, sinceMs = 0): ShipTrackRef => ({ mmsi, track: { segs: [], gaps: [] }, pending: [], loaded: false, anchor, sinceMs });
+
+/** 현재 AIS 공백(열린 것·마지막 것)을 항적의 공백 목록에 더한다 — 선택 중에 생긴 공백도 선을 끊도록. 항적 창(sinceMs) 전에 끝난 공백은 넣지 않는다. */
+function mergeAisGaps(gaps: AisGap[], sinceMs: number) {
+  const ais = getData().ais;
+  const add = (g: AisGap | null) => {
+    if (!g || (g.ended_at && Date.parse(g.ended_at) < sinceMs)) return;
+    if (!gaps.some((x) => x.started_at === g.started_at && x.ended_at === g.ended_at)) gaps.push(g);
+  };
+  if (ais?.gap_open_since) add({ started_at: ais.gap_open_since, ended_at: null, reason: null });
+  add(ais?.last_gap ?? null);
+  if (gaps.length > 200) gaps.splice(0, gaps.length - 200);
+}
 
 type Frame = { id: string; add: (map: maplibregl.Map) => void };
 /**
@@ -58,7 +82,7 @@ function geo(map: maplibregl.Map, id: string) {
 export function MapView() {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const clientRef = useRef<SkyWsClient | null>(null);
+  const clientRef = useRef<WakelineWsClient | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const radarLayers = useRef<string[]>([]);
   const sigmets = useServerData((d) => d.sigmets);
@@ -66,6 +90,8 @@ export function MapView() {
   const radar = useServerData((d) => d.radar);
   const radarKr = useServerData((d) => d.radarKr);
   const selectedInfo = useServerData((d) => d.selected);
+  const ships = useServerData((d) => d.ships);
+  const shipSelected = useServerData((d) => d.shipSelected);
   const radarSource = useUi((s) => s.radarSource);
   const krFrameIndex = useUi((s) => s.krFrameIndex);
   const krLayers = useRef<string[]>([]);
@@ -76,6 +102,8 @@ export function MapView() {
   const select = useUi((s) => s.select);
   const selectSigmet = useUi((s) => s.selectSigmet);
   const selectAirport = useUi((s) => s.selectAirport);
+  const selectedShip = useUi((s) => s.selectedShip);
+  const selectShip = useUi((s) => s.selectShip);
   const radarPlaying = useUi((s) => s.radarPlaying);
   const flyTo = useUi((s) => s.flyTo);
   /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
@@ -88,6 +116,9 @@ export function MapView() {
   const track = useRef<{ hex: string | null; pts: TrackPt[]; pending: TrackPt[]; loaded: boolean }>({ hex: null, pts: [], pending: [], loaded: false });
   const sigmetApplied = useRef<{ fc: SigmetCollection | null; key: string }>({ fc: null, key: "" });
   const [sigClock, setSigClock] = useState(0);
+  /** 선택 선박 항적: REST 한 번 + WS ship_selected 로 연장(AIS 공백·15분 틈은 점선) */
+  const shipTrack = useRef<ShipTrackRef>(emptyShipTrack(null));
+  const [shipClock, setShipClock] = useState(0);
 
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
@@ -105,7 +136,7 @@ export function MapView() {
     // 번들러(Turbopack)가 .ts 워커를 자산으로 취급하므로 순수 JS 워커를 public 에 둔다(tests/worker-sync 가 TS 구현과 일치를 검사).
     const worker = new Worker("/interpolate.worker.js");
     workerRef.current = worker;
-    const client = new SkyWsClient(worker);
+    const client = new WakelineWsClient(worker);
     clientRef.current = client;
 
     let predKey: string | null = null;
@@ -115,10 +146,12 @@ export function MapView() {
       const d = getData();
       const sel = d.selected && d.selected.hex === selectedRef.current ? d.selected : null;
       const targets = predictionTargets(sel, d.alerts.values(), aircraftStates);
-      const key = predictionKey(targets);
+      // 선은 "지금"(서버 기준)에서 시작한다(DH-12) — 엔진의 예측·알림 ETA 와 같은 시각 기준
+      const now = serverNowMs(Date.now());
+      const key = predictionKey(targets, now);
       if (key === predKey) return;
       predKey = key;
-      src.setData({ type: "FeatureCollection", features: targets.map(predictionFeature).filter((f): f is NonNullable<typeof f> => f != null) });
+      src.setData({ type: "FeatureCollection", features: targets.map((t) => predictionFeature(t, now)).filter((f): f is NonNullable<typeof f> => f != null) });
     };
 
     // 워커는 바뀐 것이 있을 때만 보낸다 → 받은 렌더를 잃지 않도록 마지막 것을 보관했다가 레이어가 준비되면 적용한다.
@@ -131,7 +164,10 @@ export function MapView() {
         type: "FeatureCollection",
         features: lastRender.map((s) => ({
           type: "Feature", id: s.hex,
-          properties: { hex: s.hex, callsign: s.callsign, alt_ft: s.alt_ft, track_deg: s.track_deg, stale: s.stale, age_unknown: s.age_unknown, estimated: s.estimated, emergency: s.emergency, selected: s.hex === sel },
+          properties: {
+            hex: s.hex, callsign: s.callsign, alt_ft: s.alt_ft, track_deg: s.track_deg, on_ground: s.on_ground, stale: s.stale, age_unknown: s.age_unknown,
+            estimated: s.estimated, emergency: s.emergency, selected: s.hex === sel,
+          },
           geometry: { type: "Point", coordinates: [s.lon, s.lat] },
         })),
       });
@@ -178,7 +214,16 @@ export function MapView() {
         .catch(() => { /* 실패하면 마지막 값을 유지하고 경과로 "오래됨"을 드러낸다 */ applyAirports(); });
     };
 
-    // ---- 호버 툴팁(GAP-26): 항공기 > 공항 > SIGMET. rAF 로 묶어 이동당 한 번만 조회. 내용은 텍스트 노드로만. ----
+    /** 보이는 레이어에서 우선순위대로 한 개 */
+    const pick = (pt: maplibregl.PointLike) => {
+      const present = PICK_LAYERS.filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
+      if (!present.length) return null;
+      const hits = map.queryRenderedFeatures(pt, { layers: [...present] });
+      for (const l of PICK_LAYERS) { const h = hits.find((x) => x.layer.id === l); if (h) return h; }
+      return null;
+    };
+
+    // ---- 호버 툴팁(GAP-26): 항공기 > 선박 > 선박 격자 > 공항 > SIGMET. rAF 로 묶어 이동당 한 번만 조회. 내용은 텍스트 노드로만. ----
     const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
     let hoverKey = "";
     let hoverAt = 0;
@@ -189,21 +234,28 @@ export function MapView() {
       hoverRaf = 0;
       const e = hoverEvt;
       if (!e) return;
-      const present = HOVER_LAYERS.filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
-      const hits = present.length ? map.queryRenderedFeatures(e.point, { layers: [...present] }) : [];
-      const f = hits.find((h) => h.layer.id === "aircraft-symbol") ?? hits.find((h) => h.layer.id === "airport-circle") ?? hits.find((h) => h.layer.id === "sigmet-fill");
+      const f = pick(e.point);
       map.getCanvas().style.cursor = f ? "pointer" : "";
       if (!f) { popup.remove(); hoverKey = ""; return; }
       const p = (f.properties ?? {}) as Record<string, unknown>;
       const now = serverNowMs(Date.now());
-      const key = `${f.layer.id}:${String(p.hex ?? p.icao ?? p.id)}`;
+      const key = `${f.layer.id}:${String(p.hex ?? p.mmsi ?? p.icao ?? p.id ?? (f.geometry.type === "Point" ? f.geometry.coordinates.join(",") : ""))}`;
       if (key !== hoverKey || now - hoverAt > 1000) {
         let tip: Tip | null = null;
         if (f.layer.id === "aircraft-symbol") {
           const hex = String(p.hex);
           const sel = getData().selected;
           const st = sel && sel.hex === hex && sel.state ? sel.state : aircraftStates.get(hex);
-          tip = aircraftTip({ hex, callsign: (p.callsign as string) ?? null, alt_ft: typeof p.alt_ft === "number" ? p.alt_ft : null, stale: p.stale === true, estimated: p.estimated === true, emergency: p.emergency === true, age_unknown: p.age_unknown === true }, st, now);
+          tip = aircraftTip({
+            hex, callsign: (p.callsign as string) ?? null, alt_ft: typeof p.alt_ft === "number" ? p.alt_ft : null, stale: p.stale === true, estimated: p.estimated === true,
+            emergency: p.emergency === true, age_unknown: p.age_unknown === true, on_ground: typeof p.on_ground === "boolean" ? p.on_ground : null,
+            track_deg: typeof p.track_deg === "number" ? p.track_deg : null,
+          }, st, now);
+        } else if (f.layer.id === "ship-symbol") {
+          const st = shipStates.get(String(p.mmsi));
+          if (st) tip = shipTip(st, now);
+        } else if (f.layer.id === "ship-grid-circle") {
+          tip = shipGridTip(p, getData().ships.cell_deg);
         } else if (f.layer.id === "airport-circle") {
           const ap = airportFeatures.find((x) => x.properties.icao === p.icao);
           if (ap) tip = airportTip(ap.properties, now);
@@ -224,6 +276,7 @@ export function MapView() {
     let apTimer: ReturnType<typeof setInterval> | null = null;
     map.on("load", () => {
       addBaseLayers(map);
+      addShipLayers(map);
       // 출처(FR-20): 스타일이 배경지도 크레딧을 이미 붙였으면 중복하지 않는다. 데이터 출처는 항상 전부(OpenSky·기상청 포함).
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
       map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ includeMap: !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
@@ -243,14 +296,23 @@ export function MapView() {
       map.on("mouseout", hideTip);
       map.on("dragstart", hideTip);
       map.on("click", (e: maplibregl.MapMouseEvent) => {
-        const hits = map.queryRenderedFeatures(e.point, { layers: ["aircraft-symbol", "airport-circle", "sigmet-fill"] });
-        const ac = hits.find((f) => f.layer.id === "aircraft-symbol");
-        if (ac) { select(String(ac.properties?.hex)); return; }
-        const ap = hits.find((f) => f.layer.id === "airport-circle");
-        if (ap) { selectAirport(String(ap.properties?.icao)); return; }
-        const sg = hits.find((f) => f.layer.id === "sigmet-fill");
-        if (sg) { selectSigmet(String(sg.properties?.id)); return; }
+        const f = pick(e.point);
+        const id = f?.layer.id;
+        if (id === "aircraft-symbol") { select(String(f!.properties?.hex)); return; }
+        if (id === "ship-symbol") { const m = String(f!.properties?.mmsi); if (isMmsi(m)) selectShip(m); return; }
+        if (id === "ship-grid-circle" && f!.geometry.type === "Point") {
+          // 격자 칸을 누르면 그 칸으로 확대 — 줌 7 이상에서 서버가 개별 선박을 보낸다
+          const [lon, lat] = f!.geometry.coordinates as [number, number];
+          const opts = { center: [lon, lat] as [number, number], zoom: Math.min(12, Math.max(7, map.getZoom() + 2)) };
+          const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+          if (reduce) map.jumpTo(opts); else map.easeTo({ ...opts, duration: 800, essential: true });
+          return;
+        }
+        if (id === "airport-circle") { selectAirport(String(f!.properties?.icao)); return; }
+        if (id === "sigmet-fill") { selectSigmet(String(f!.properties?.id)); return; }
+        // 빈 곳 클릭 = 선택 해제(집중 추적도 멈춘다)
         select(null);
+        selectShip(null);
       });
     });
 
@@ -287,20 +349,22 @@ export function MapView() {
     return () => { clearInterval(t); cancelAnimationFrame(raf); };
   }, []);
 
-  // ---- SIGMET 갱신(만료 제외) + 안에 항공기가 있는 경보 강조 ----
+  // ---- SIGMET 갱신(만료 제외 · 발효 전 구분) + 안에 항공기가 있는 경보 강조 ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !sigmets) return;
     const nowMs = serverNowMs(sigClock || Date.now());
     const inside = new Set([...alerts.values()].filter((a) => a.kind === "OBSERVED").map((a) => a.sigmet_id));
     const active = activeSigmetFeatures(sigmets, nowMs);
-    // 같은 컬렉션·같은 강조·같은 만료 결과면 다시 넣지 않는다(알림 배치마다 폴리곤 전체 재색인 방지)
-    const key = `${active.length}|${active.filter((f) => inside.has(f.properties.id)).map((f) => f.properties.id).sort().join(",")}`;
+    // 같은 컬렉션·같은 강조·같은 만료/발효 결과면 다시 넣지 않는다(알림 배치마다 폴리곤 전체 재색인 방지)
+    const ids = (pred: (f: (typeof active)[number]) => boolean) => active.filter(pred).map((f) => f.properties.id).sort().join(",");
+    const key = `${active.length}|${ids((f) => inside.has(f.properties.id))}|${ids((f) => f.properties.pending === true)}`;
     if (sigmetApplied.current.fc === sigmets && sigmetApplied.current.key === key) return;
     sigmetApplied.current = { fc: sigmets, key };
     const fc: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
-      features: active.map((f) => ({ ...f, properties: { ...f.properties, inside: inside.has(f.properties.id) } })) as GeoJSON.Feature[],
+      // 발효 전 경보는 엔진이 판정하지 않으므로 "안에 항공기" 강조도 하지 않는다
+      features: active.map((f) => ({ ...f, properties: { ...f.properties, inside: !f.properties.pending && inside.has(f.properties.id) } })) as GeoJSON.Feature[],
     };
     onReady(map, () => geo(map, "sigmets")?.setData(fc));
   }, [sigmets, alerts, sigClock]);
@@ -393,8 +457,75 @@ export function MapView() {
       vis(["airport-circle", "airport-label"], layers.airports);
       vis(["track-line"], layers.tracks);
       vis(["prediction-line", "prediction-label"], layers.prediction);
+      vis(SHIP_LAYERS.filter((l) => !l.startsWith("ship-track")), layers.ships);
+      vis(SHIP_LAYERS.filter((l) => l.startsWith("ship-track")), layers.ships && layers.tracks);
     });
   }, [layers]);
+
+  // ---- 서버에 켜진 레이어 알림(선박은 켠 세션에만 온다). 선박을 끄면 선택도 해제 ----
+  useEffect(() => {
+    clientRef.current?.setLayers(layers.aircraft, layers.ships);
+    if (!layers.ships && useUi.getState().selectedShip) selectShip(null);
+  }, [layers.aircraft, layers.ships, selectShip]);
+
+  // ---- 선박·격자 그리기: 서버 메시지(ships.version)·선택·STALE 재계산(30 s) ----
+  useEffect(() => {
+    const t = setInterval(() => setShipClock(Date.now()), SHIP_STALE_CHECK_MS);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const now = serverNowMs(Date.now());
+    onReady(map, () => {
+      geo(map, "ships")?.setData(ships.mode === "points" ? shipFeatures(shipStates.values(), selectedShip, now) : EMPTY_FC);
+      geo(map, "ship-grid")?.setData(ships.mode === "grid" ? gridFeatures(ships.grid) : EMPTY_FC);
+    });
+  }, [ships, selectedShip, shipClock]);
+
+  // ---- 선택 선박: WS select_ship + 항적(REST 한 번, 이후 ship_selected 로 연장) ----
+  useEffect(() => {
+    clientRef.current?.selectShip(selectedShip);
+    // 이어 붙일 기준: 선택한 순간 알던 선박의 마지막 관측 시각(REST 구간 끝 시각을 서버가 주지 않을 때만 쓴다)
+    const lite = selectedShip ? shipStates.get(selectedShip) : undefined;
+    const anchor = lite?.seen_at ? Date.parse(lite.seen_at) : NaN;
+    const to = serverNowMs(Date.now());
+    const from = to - SHIP_TRACK_WINDOW_MS;
+    shipTrack.current = emptyShipTrack(selectedShip, Number.isNaN(anchor) ? null : anchor, from);
+    setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], segments: 0 } : null });
+    const map = mapRef.current;
+    if (!map) return;
+    onReady(map, () => geo(map, "ship-track")?.setData(EMPTY_FC));
+    if (!selectedShip) return;
+    let cancelled = false;
+    const finish = (track: ShipTrack, error: string | null) => {
+      const ref = shipTrack.current;
+      if (cancelled || ref.mmsi !== selectedShip) return;
+      mergeAisGaps(track.gaps, ref.sinceMs);
+      for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
+      shipTrack.current = { ...ref, track, pending: [], loaded: true };
+      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), segments: track.segs.length } });
+      onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(track)));
+    };
+    const q = `from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(selectedShip)}/track?${q}`)
+      .then((r) => finish(shipTrackFromRest(r), null))
+      .catch((e: Error) => finish({ segs: [], gaps: [] }, String(e.message))); // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다
+    return () => { cancelled = true; };
+  }, [selectedShip]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const ref = shipTrack.current;
+    const st = shipSelected?.state;
+    if (!map || !shipSelected || shipSelected.mmsi !== ref.mmsi || !st?.seen_at) return;
+    const ts = Date.parse(st.seen_at);
+    if (Number.isNaN(ts)) return;
+    const p = { ts, lon: st.lon, lat: st.lat };
+    if (!ref.loaded) { if (ref.pending.length < SHIP_PENDING_MAX) ref.pending.push(p); return; }
+    mergeAisGaps(ref.track.gaps, ref.sinceMs);
+    if (appendShipTrack(ref.track, p, ref.anchor)) onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
+  }, [shipSelected]);
 
   // ---- 선택 항공기: WS select + 항적(REST 한 번, 이후 selected 로 연장) ----
   useEffect(() => {

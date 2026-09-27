@@ -53,11 +53,12 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
               <td className="mono">{fmtTime(h.obs_time)}</td>
               <td style={{ color: h.flight_cat ? CAT_COLORS[h.flight_cat] : undefined }}>{h.flight_cat ?? "—"}</td>
               <td className="mono">{h.wind_dir ?? "—"}° {h.wind_kt ?? "—"} kt</td>
-              <td className="mono">{h.vis_raw ?? h.vis_sm ?? "—"}</td>
+              <td className="mono">{h.vis_raw ?? (h.vis_sm != null ? <span title="원문(vis_raw) 없음 — 파싱한 숫자라 “6+” 같은 하한 표기를 잃었을 수 있음">{h.vis_sm}*</span> : "—")}</td>
               <td className="mono">{h.ceiling_ft ?? "—"}</td>
               <td className="mono">{h.temp_c ?? "—"}</td>
             </tr>)}</tbody></table>
-          <div className="mt-1 text-[10px] text-fg-3">실링 “—” = 값 없음(실링층 없음 또는 높이 모름 — 이력 행에서는 구분하지 않음).</div>
+          <div className="mt-1 text-[10px] text-fg-3">실링 “—” = 값 없음(실링층 없음 또는 높이 모름 — 이력 행에서는 구분하지 않음). 시정은 AWC 원문(법정마일, “6+” = 6 SM 이상).
+            {wx.history.some((h) => h.vis_raw == null && h.vis_sm != null) ? " * = 원문 없이 파싱한 숫자(하한 표기 “+” 를 잃었을 수 있음)." : ""}</div>
         </section>
       </> : null}
     </div>

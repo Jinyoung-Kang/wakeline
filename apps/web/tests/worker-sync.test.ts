@@ -7,7 +7,7 @@ import type { AircraftState, RenderState } from "@/lib/types";
 /** public/interpolate.worker.js(순수 JS)와 lib/interpolate.ts 가 같은 결과를 내야 한다(두 구현의 드리프트 방지). */
 interface WorkerApi {
   deadReckon: typeof deadReckon; predict: typeof predict; ease: typeof ease; wrap180: typeof wrap180;
-  seenAtMs: typeof seenAtMs; thresholds: typeof thresholds; tickIntervalMs: typeof tickIntervalMs; tick: () => boolean;
+  seenAtMs: typeof seenAtMs; thresholds: typeof thresholds; tickIntervalMs: typeof tickIntervalMs; tick: () => boolean; clockOffset: () => number;
 }
 interface Loaded { api: WorkerApi; posted: { type: string; states: RenderState[] }[]; send: (m: unknown) => void; clock: { now: number } }
 
@@ -131,5 +131,43 @@ describe("worker behaviour", () => {
     expect(r.age_unknown).toBe(true);
     expect(r.age_s).toBeNull();
     expect(r.estimated).toBe(false);
+  });
+});
+
+describe("worker uses the server clock offset (WS-3 / DH-1)", () => {
+  const at = (ms: number) => new Date(ms).toISOString();
+
+  it("browser clock 70 s fast: with the offset a 5 s-old aircraft is fresh and not extrapolated to the cap (without it, stale)", () => {
+    const w = loadWorker(T0 + 70_000); // 브라우저 시계 = 서버 + 70 s
+    const a: AircraftState = { hex: "f1", lat: 36, lon: 127, alt_ft: 30000, gs_kt: 450, track_deg: 90, seen_at: at(T0 - 5_000), provider: "adsb_fi" };
+    w.send({ type: "start" });
+    w.send({ type: "snapshot", aircraft: [a] });
+    const before = w.posted[w.posted.length - 1].states[0];
+    expect(before.stale).toBe(true); // 브라우저 시계만 쓰면 75 s 경과로 잘못 판정
+    w.send({ type: "clock", offsetMs: -70_000 });
+    expect(w.api.clockOffset()).toBe(-70_000);
+    const after = w.posted[w.posted.length - 1].states[0];
+    expect(after.stale).toBe(false);
+    expect(after.capped).toBe(false);
+    expect(after.age_s).toBeCloseTo(5, 6);
+    expect(after).toEqual(predict(a, T0)); // TS 구현에 서버 시각을 준 결과와 같다
+  });
+
+  it("browser clock 60 s slow: an aircraft silent for 100 s becomes stale only with the offset", () => {
+    const w = loadWorker(T0 - 60_000);
+    const a: AircraftState = { hex: "s1", lat: 36, lon: 127, alt_ft: 30000, gs_kt: 450, track_deg: 90, seen_at: at(T0 - 100_000), provider: "adsb_fi" };
+    w.send({ type: "start" });
+    w.send({ type: "snapshot", aircraft: [a] });
+    expect(w.posted[w.posted.length - 1].states[0].stale).toBe(false);
+    w.send({ type: "clock", offsetMs: 60_000 });
+    expect(w.posted[w.posted.length - 1].states[0].stale).toBe(true);
+  });
+
+  it("ignores malformed clock messages", () => {
+    const w = loadWorker(T0);
+    w.send({ type: "clock", offsetMs: "70000" });
+    w.send({ type: "clock", offsetMs: Number.NaN });
+    w.send({ type: "clock" });
+    expect(w.api.clockOffset()).toBe(0);
   });
 });

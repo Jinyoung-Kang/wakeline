@@ -1,4 +1,8 @@
-"""외부 호출 전용 HTTP 클라이언트 — 허용 호스트 목록(SSRF 방지)·타임아웃·리다이렉트 금지·응답 크기 상한."""
+"""외부 호출 전용 HTTP 클라이언트 — 허용 호스트 목록(SSRF 방지)·호출 속도 상한·타임아웃·리다이렉트 금지·응답 크기 상한.
+
+모든 외부 호출은 여기를 지나며, 호출 직전에 RateLimiter 허가(수집기 전체 + 호스트별 버킷, 우선순위)를 받는다.
+429 응답은 그 호스트를 잠시 막는다(모든 호출자 공통) — Retry-After 가 있으면 따른다.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,9 @@ from urllib.parse import urlparse
 import httpx
 
 from wakeline_collector.config import settings
+from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
+
+DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
 
 ALLOWED_HOSTS = frozenset(
     {
@@ -46,8 +53,14 @@ class FetchResponse:
         self.fetched_at, self.latency_ms = fetched_at, latency_ms
 
 
+def _retry_after_s(headers: dict[str, str]) -> float | None:
+    v = headers.get("retry-after", "").strip()
+    return float(v) if v.isdigit() else None  # HTTP-date 형식은 쓰지 않는다(기본 단계 백오프)
+
+
 class HttpClient:
-    def __init__(self) -> None:
+    def __init__(self, limiter: RateLimiter | None = None) -> None:
+        self.limiter = limiter or default_limiter(settings.http_global_rps, settings.adsb_fi_rps)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=4.0),
             follow_redirects=False,
@@ -59,18 +72,27 @@ class HttpClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def get(self, url: str, *, headers: dict[str, str] | None = None, params: dict | None = None) -> FetchResponse:
-        return await self._request("GET", url, headers=headers, params=params)
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        params: dict | None = None,
+        priority: int = PRIORITY_FIXED,
+        wait_s: float = DEFAULT_WAIT_S,
+    ) -> FetchResponse:
+        return await self._request("GET", url, priority=priority, wait_s=wait_s, headers=headers, params=params)
 
     async def post_form(self, url: str, data: dict[str, str]) -> FetchResponse:
-        return await self._request("POST", url, data=data)
+        return await self._request("POST", url, priority=PRIORITY_FIXED, wait_s=DEFAULT_WAIT_S, data=data)
 
-    async def _request(self, method: str, url: str, **kw) -> FetchResponse:
+    async def _request(self, method: str, url: str, *, priority: int, wait_s: float, **kw) -> FetchResponse:
         host = urlparse(url).hostname or ""
         if host not in ALLOWED_HOSTS:
             raise HostNotAllowed(host)
         if not url.startswith("https://"):
             raise HostNotAllowed(f"insecure scheme for {host}")
+        await self.limiter.acquire(host, priority=priority, wait_s=wait_s)  # Throttled 면 호출하지 않는다
         t0 = time.perf_counter()
         async with self._client.stream(method, url, **kw) as resp:
             chunks: list[bytes] = []
@@ -83,6 +105,8 @@ class HttpClient:
             body = b"".join(chunks)
             latency = int((time.perf_counter() - t0) * 1000)
             headers = {k.lower(): v for k, v in resp.headers.items()}
+            if resp.status_code == 429:
+                self.limiter.penalize(host, _retry_after_s(headers))
             if resp.status_code >= 400:
                 raise ProviderHttpError(resp.status_code, body[:200].decode("utf-8", "replace"), headers)
             return FetchResponse(body, resp.status_code, headers, datetime.now(UTC), latency)

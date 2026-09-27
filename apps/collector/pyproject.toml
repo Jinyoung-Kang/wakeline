@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=2.3",
     "pyproj>=3.7",
     "pillow>=11.3",
+    "websockets==17.1",
 ]
 
 [dependency-groups]

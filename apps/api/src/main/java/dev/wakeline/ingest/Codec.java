@@ -21,12 +21,13 @@ public final class Codec {
 
     /**
      * base_source·top_source 는 collector 가 채운다(계약 §4). 이전 형식 메시지(필드 없음)는 추정하지 않고 null 로 둔다.
-     * 단 top_ft 가 null 이면 상한은 정의상 '알 수 없음' 이므로 top_source 가 없을 때 unknown 으로 둔다(결정적).
+     * top_source 값: json | raw_text | raw_text_lower_bound(원문 "TOP ABV FLnnn" — 발표값은 상한의 하한, DH-4) | unknown.
+     * top_ft 가 null 이면 상한은 정의상 '알 수 없음'(계약 §4: top_ft null + unknown = 미발표)이므로 top_source 를 unknown 으로 맞춘다(결정적).
      */
     public static SigmetRecord sigmet(JsonNode n) {
         Integer top = integer(n, "top_ft");
         String topSource = text(n, "top_source");
-        if (topSource == null && top == null) topSource = SigmetRecord.TOP_UNKNOWN;
+        if (top == null) topSource = SigmetRecord.TOP_UNKNOWN;
         return new SigmetRecord(
                 n.path("id").asString(), n.path("fir_id").asString(), text(n, "fir_name"), text(n, "issuer"), n.path("series_id").asString(),
                 n.path("hazard").asString(), text(n, "qualifier"), n.path("base_ft").asInt(0), top,

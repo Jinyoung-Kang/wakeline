@@ -131,7 +131,7 @@ export interface SigmetProps {
   /** "assumed_surface" = AWC 하한 null → 판정은 SFC 가정 */
   base_source?: "json" | "assumed_surface" | null;
   /** "unknown" = 상한 미발표(top_ft null) → 판정은 무제한 가정. "raw_text" = 원문(TOP FLxxx)에서 결정적으로 읽음 */
-  top_source?: "json" | "raw_text" | "unknown" | null;
+  top_source?: "json" | "raw_text" | "raw_text_lower_bound" | "unknown" | null;
   valid_from: string;
   valid_to: string;
   active: boolean;
@@ -144,6 +144,8 @@ export interface SigmetProps {
   move_spd?: string | null;
   chng?: string | null;
   inside?: boolean;
+  /** 클라이언트가 붙인다: 발효 전(valid_from > 지금) — 엔진이 아직 판정하지 않는다(DH-8) */
+  pending?: boolean;
 }
 
 export interface KrRadar {

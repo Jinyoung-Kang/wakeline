@@ -5,7 +5,7 @@ import { apiGet } from "@/lib/api";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, isMetarStale, metarAgeS } from "@/lib/format";
+import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, fmtVisSm, isMetarStale, metarAgeS } from "@/lib/format";
 
 interface Wx {
   airport: { icao: string; name?: string; country?: string; elev_ft?: number };
@@ -20,6 +20,7 @@ interface Wx {
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).
  * METAR 가 2 시간보다 오래되면 "오래됨" — 지도에서도 회색 고리로 그린다(GAP-14).
+ * 시정은 AWC 원문 값(vis_raw, 법정마일)에 단위 SM 을 붙이고 "6+" 는 "6 SM 이상"(DH-7) — km 로 읽히지 않게.
  */
 export function AirportCard({ icao }: { icao: string }) {
   const [wx, setWx] = useState<Wx | null>(null);
@@ -53,7 +54,7 @@ export function AirportCard({ icao }: { icao: string }) {
             {([
               ["관측", `${fmtTime(m.obs_time)}${age != null ? ` · ${fmtDuration(age)} 전` : ""}`],
               ["바람", m.wind_dir != null ? `${m.wind_dir}° ${m.wind_kt ?? "—"} kt` : m.wind_kt != null ? `— ${m.wind_kt} kt` : "—"],
-              ["시정", m.vis_raw ?? "—"],
+              ["시정", fmtVisSm(m.vis_raw)],
               ["실링", ceilingLabel(m.ceiling_state, m.ceiling_ft)],
               ["기온/이슬점", `${m.temp_c ?? "—"} / ${m.dewp_c ?? "—"} °C`],
               ["현상", m.wx_string ?? "—"],

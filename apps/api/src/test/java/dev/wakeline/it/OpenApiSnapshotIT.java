@@ -71,7 +71,8 @@ class OpenApiSnapshotIT extends IntegrationTest {
         JsonNode spec = Streams.JSON.readTree(actual);
         assertThat(spec.path("openapi").asString()).startsWith("3.");
         for (String p : List.of("/api/v1/aircraft", "/api/v1/aircraft/{hex}", "/api/v1/aircraft/search", "/api/v1/sigmets", "/api/v1/alerts",
-                "/api/v1/alerts/history", "/api/v1/status", "/api/v1/replay", "/api/v1/airports", "/api/v1/radar/frames"))
+                "/api/v1/alerts/history", "/api/v1/status", "/api/v1/replay", "/api/v1/airports", "/api/v1/radar/frames",
+                "/api/v1/ships", "/api/v1/ships/{mmsi}", "/api/v1/ships/{mmsi}/track", "/api/v1/ais/gaps"))
             assertThat(spec.path("paths").has(p)).as("path " + p).isTrue();
 
         if (updateRequested()) {

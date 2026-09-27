@@ -1,12 +1,15 @@
 """fixture 모드 공급자 — 외부 호출 없이 fixtures/ 를 재생한다(FR-12).
 
 항공기는 기록된 위치에서 dead reckoning 으로 경과 시간만큼 이동시키고 provider='fixture' 로 표기한다.
+focus·hot(계약 v2 §A2)도 같은 이동 결과에서 골라 준다 — 같은 hex 가 region·focus 에서 다른 곳에 나타나지 않도록
+관심 지역 기준으로 한 번 움직인 뒤 요청한 hex / 셀 반경으로 거른다. 재생 자료는 한반도 주변뿐이라 멀리 있는 셀은 비어 있다(사실대로).
 SIGMET 은 유효시간을 현재로 옮기고, 한반도 위에 합성 경보(fixture_sigmet_kr.json) 를 추가한다.
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,7 @@ class FixtureAircraftProvider:
     supports_global = True
     region_cost = 0
     global_cost = 0
+    configured = True
 
     def __init__(self) -> None:
         self._t0 = time.time()
@@ -63,6 +67,37 @@ class FixtureAircraftProvider:
         return ProviderResult(
             self.name, orjson.dumps(data), datetime.now(UTC), 200, 0, data=data, extra={"raw_ref": "fixture:empty_global"}
         )
+
+
+class FixtureDemandProvider:
+    """focus·hot 재생 — 외부 호출 없음, 예산 0."""
+
+    name = "fixture"
+    cost = 0
+    host = ""
+
+    def __init__(self, base: FixtureAircraftProvider, region: Callable[[], tuple[float, float, int]]):
+        self._base = base
+        self._region = region
+
+    def _result(self, ac: list[dict[str, Any]], ref: str) -> ProviderResult:
+        data = {"ac": ac, "now": int(time.time() * 1000), "total": len(ac)}
+        return ProviderResult(self.name, orjson.dumps(data), datetime.now(UTC), 200, 0, data=data, extra={"raw_ref": ref})
+
+    async def fetch_icao(self, hexes: list[str], *, wait_s: float = 0.0) -> ProviderResult:
+        want = set(hexes)
+        moved = self._base._moved(*self._region())
+        ac = [a for a in moved["ac"] if str(a.get("hex", "")).lower() in want]
+        return self._result(ac, "fixture:adsb_lol_region.json#icao")
+
+    async def fetch_point(self, lat: float, lon: float, radius_nm: int, *, wait_s: float = 0.0) -> ProviderResult:
+        moved = self._base._moved(*self._region())
+        ac = [
+            a
+            for a in moved["ac"]
+            if a.get("lat") is not None and a.get("lon") is not None and haversine_nm(lat, lon, a["lat"], a["lon"]) <= radius_nm
+        ]
+        return self._result(ac, "fixture:adsb_lol_region.json#point")
 
 
 class FixtureAwcProvider:
@@ -134,4 +169,4 @@ class FixtureRainViewerProvider:
         )
 
 
-__all__ = ["FixtureAircraftProvider", "FixtureAwcProvider", "FixtureRainViewerProvider", "timedelta"]
+__all__ = ["FixtureAircraftProvider", "FixtureAwcProvider", "FixtureDemandProvider", "FixtureRainViewerProvider", "timedelta"]

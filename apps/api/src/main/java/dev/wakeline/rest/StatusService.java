@@ -1,9 +1,11 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.config.AppProperties;
+import dev.wakeline.demand.DemandStats;
 import dev.wakeline.ops.RegionSettings;
 import org.springframework.beans.factory.annotation.Autowired;
 import dev.wakeline.engine.EngineService;
+import dev.wakeline.ingest.AisStatus;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.Snapshot;
@@ -28,24 +30,43 @@ public class StatusService {
     private final StringRedisTemplate redis;
     /** 관심 지역(중심·반경) — collector 와 같은 런타임 설정(계약 §2, COR-12). */
     private final Supplier<RegionSettings.Region> region;
+    /** 수요 기반 추적 수(계약 v2 §A3) — DemandService 가 마지막 계산에서 남긴다. */
+    private final DemandStats demand;
+    /** AIS 수신 상태(계약 v2 §B3 status.sources.ais). 없으면(테스트) sources.ais = null. */
+    private final AisStatus ais;
+    /** collector heartbeat 가 이보다 오래되면 그 안의 adsb_fi_rps_1m 은 '현재' 값이 아니다(null). */
+    static final long HEARTBEAT_MAX_AGE_S = 120;
 
     @Autowired
-    public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, RegionSettings region) {
-        this(snapshots, sigmets, radar, engine, redis, (Supplier<RegionSettings.Region>) region::current);
+    public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, RegionSettings region,
+                         DemandStats demand, AisStatus ais) {
+        this(snapshots, sigmets, radar, engine, redis, (Supplier<RegionSettings.Region>) region::current, demand, ais);
     }
 
     /** 고정 지역(.env 값) — 런타임 설정 없이 도는 테스트용. */
     public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, AppProperties props) {
-        this(snapshots, sigmets, radar, engine, redis, fixed(RegionSettings.defaults(props)));
+        this(snapshots, sigmets, radar, engine, redis, fixed(RegionSettings.defaults(props)), new DemandStats());
     }
 
     StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region) {
+        this(snapshots, sigmets, radar, engine, redis, region, new DemandStats());
+    }
+
+    StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region,
+                  DemandStats demand) {
+        this(snapshots, sigmets, radar, engine, redis, region, demand, null);
+    }
+
+    StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region,
+                  DemandStats demand, AisStatus ais) {
+        this.ais = ais;
         this.snapshots = snapshots;
         this.sigmets = sigmets;
         this.radar = radar;
         this.engine = engine;
         this.redis = redis;
         this.region = region;
+        this.demand = demand;
     }
 
     private static Supplier<RegionSettings.Region> fixed(RegionSettings.Region r) { return () -> r; }
@@ -77,7 +98,40 @@ public class StatusService {
         m.put("radar_kr", safeHash("wakeline:radar_kr:meta"));
         m.put("engine", kv("index_polygons", engine.indexSize(), "last_cycle_ms", engine.lastCycleMs()));
         m.put("active_providers", safeHash("wakeline:active"));
+        // 수요 기반 추적(계약 v2 §A3): 수만(hex·셀은 내보내지 않는다). adsb.fi 호출률은 수집기가 실제로 보낸 최근 60 s 호출 수 / 60.
+        DemandStats.Counts dc = demand.counts();
+        m.put("demand", kv("hot_active", dc.hotActive(), "focus_active", dc.focusActive(), "adsb_fi_rps_1m", adsbFiRps(hb, now)));
+        // 선박(계약 v2 §B3): AIS 수신 상태 — 연결·지연·수신률·공백. AIS 를 본 적이 없으면 null(키 생략)
+        m.put("sources", kv("ais", ais == null ? null : ais.publicView(now.toEpochMilli())));
         return m;
+    }
+
+    /**
+     * collector heartbeat 의 adsb_fi_rps_1m(수집기 속도 상한이 센 실제 호출률). 값이 숫자가 아니거나, heartbeat 의 가장 최근 *_at 이
+     * 120 s 보다 오래되었으면(수집기가 멈춤 — 마지막 값이 지금 값이 아니다) null.
+     */
+    static Double adsbFiRps(Map<String, Object> hb, Instant now) {
+        Object raw = hb.get("adsb_fi_rps_1m");
+        if (raw == null) return null;
+        double v;
+        try {
+            v = Double.parseDouble(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (!Double.isFinite(v) || v < 0 || v > 1000) return null;
+        Instant newest = null;
+        for (var e : hb.entrySet()) {
+            if (!String.valueOf(e.getKey()).endsWith("_at")) continue;
+            try {
+                Instant t = Instant.parse(String.valueOf(e.getValue()));
+                if (newest == null || t.isAfter(newest)) newest = t;
+            } catch (java.time.format.DateTimeParseException ignored) {
+                // 시각이 아닌 값은 건너뛴다
+            }
+        }
+        if (newest == null || now.toEpochMilli() - newest.toEpochMilli() > HEARTBEAT_MAX_AGE_S * 1000) return null;
+        return Math.round(v * 1000) / 1000.0;
     }
 
     public List<Map<String, Object>> providerStatuses() {

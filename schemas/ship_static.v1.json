@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wakeline.invalid/schemas/ship_static.v1.json",
+  "title": "ShipStatic",
+  "description": "선박 정적·항해 정보 — AIS 메시지 5(class A 전 필드) · 24A(선명) · 24B(호출부호·선종·크기) · 19(선명·선종·크기)를 MMSI 별로 합친 최신값. 필드마다 그 필드를 실은 마지막 메시지의 값이며, 한 번도 받지 못했거나 '값 없음' 으로 보고된 필드는 null. 모두 선박이 입력·송신한 보고값이다(검증된 등록 정보가 아님).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mmsi", "name", "call_sign", "imo", "ship_type", "dim_a", "dim_b", "dim_c", "dim_d", "draught_m", "destination", "eta_month", "eta_day", "eta_hour", "eta_minute", "updated_at", "provider"],
+  "properties": {
+    "mmsi": { "type": "string", "pattern": "^[0-9]{9}$" },
+    "name": { "type": ["string", "null"], "minLength": 1, "maxLength": 20, "description": "선명. 뒤쪽 '@' 채움·공백을 걷어낸 값, 비면 null" },
+    "call_sign": { "type": ["string", "null"], "minLength": 1, "maxLength": 7, "description": "호출부호. '@' 채움·공백 제거, 비면 null" },
+    "imo": { "type": ["integer", "null"], "minimum": 1000000, "maximum": 1073741823, "description": "보고값(USCG NAVCEN): 1,000,000–9,999,999 = IMO 번호, 10,000,000 이상 = 기국 공식 번호. 0(값 없음)·1–999,999(사용 안 함) → null. 검증 숫자는 확인하지 않는다" },
+    "ship_type": { "type": ["integer", "null"], "minimum": 1, "maximum": 99, "description": "선종·화물 코드(USCG AIS 표). 0 = 값 없음 → null, 100 이상(예약) → null. 색·분류는 api ShipCategory · web lib/ships.ts 한 표에서 정한다" },
+    "dim_a": { "type": ["integer", "null"], "minimum": 0, "maximum": 511, "description": "위치 기준점 → 선수(m). A=B=C=D=0(기본값 = 값 없음)이면 넷 다 null. 전장 = A+B, 폭 = C+D(보고값)" },
+    "dim_b": { "type": ["integer", "null"], "minimum": 0, "maximum": 511, "description": "위치 기준점 → 선미(m)" },
+    "dim_c": { "type": ["integer", "null"], "minimum": 0, "maximum": 511, "description": "위치 기준점 → 좌현(m)" },
+    "dim_d": { "type": ["integer", "null"], "minimum": 0, "maximum": 511, "description": "위치 기준점 → 우현(m)" },
+    "draught_m": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 25.5, "description": "현재 최대 흘수(m, 0.1 단위). 0 = 값 없음 → null. 25.5 = '25.5 m 이상'" },
+    "destination": { "type": ["string", "null"], "minLength": 1, "maxLength": 20, "description": "목적지(선원 입력 자유 문자열). '@' 채움·공백 제거, 비면 null" },
+    "eta_month": { "type": ["integer", "null"], "minimum": 1, "maximum": 12, "description": "ETA 월(UTC, 선원 입력, 연도 없음). 0 = 값 없음 → null" },
+    "eta_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 31, "description": "ETA 일. 0 = 값 없음 → null" },
+    "eta_hour": { "type": ["integer", "null"], "minimum": 0, "maximum": 23, "description": "ETA 시(UTC). 24 = 값 없음 → null" },
+    "eta_minute": { "type": ["integer", "null"], "minimum": 0, "maximum": 59, "description": "ETA 분. 60 = 값 없음 → null" },
+    "updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "이 MMSI 의 정적 정보 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(MetaData.time_utc). 내용이 같으면 30분에 한 번 다시 싣되 이 값은 그대로다" },
+    "provider": { "enum": ["aisstream", "fixture"] }
+  }
+}

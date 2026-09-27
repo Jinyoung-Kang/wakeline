@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""REST 계약 검사(설계 14.1 — Java → Python 방향): Java api 가 만든 REST 응답이 웹·도구가 읽는 필드 계약(계약서 §1·§2)을 지키는지
-JSON Schema(Draft 2020-12)로 확인한다. 한쪽만 고치면 이 검사가 깨진다.
+"""REST 계약 검사(설계 14.1 — Java → Python 방향): Java api 가 만든 REST 응답이 웹·도구가 읽는 필드 계약(계약서 §1·§2,
+계약 v2 §A3 수요·§B3 선박)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
+한쪽만 고치면 이 검사가 깨진다.
 
 두 가지 입력:
   --base-url URL  실행 중인 스택(예: http://localhost:8700)에서 직접 받는다. 데이터에 따라 달라지는 검사(상세·SIGMET 상세)는
@@ -164,7 +165,8 @@ ALERT: Schema = {  # 계약 §1 Alert
         "qualifier": STR,
         "entered_at": TS,
         "left_at": TS,
-        "close_reason": {"enum": ["left", "signal_lost", "restart", "prediction_cleared"]},
+        # sigmet_ended(DH-6): SIGMET 만료·철회로 닫힘 — 이탈이 아니다(V4 CHECK 와 같은 목록)
+        "close_reason": {"enum": ["left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared"]},
         "eta_s": {"type": "integer", "minimum": 0},
         "eta_at": TS,
         "alt_ft": INT,
@@ -213,7 +215,8 @@ SIGMET_PROPS: Schema = {  # 계약 §1·§2 SIGMET feature properties
         "base_ft": {"type": "integer", "minimum": 0},
         "top_ft": INT,
         "base_source": {"enum": ["json", "assumed_surface"]},  # 없으면 옛 형식(출처 모름) — 추정해 채우지 않는다
-        "top_source": {"enum": ["json", "raw_text", "unknown"]},
+        # raw_text_lower_bound(DH-4): 'TOP ABV FLnnn' — top_ft 는 하한(판정은 상한 무제한 가정, 증거에 표시)
+        "top_source": {"enum": ["json", "raw_text", "raw_text_lower_bound", "unknown"]},
         "valid_from": TS,
         "valid_to": TS,
         "active": BOOL,
@@ -230,7 +233,10 @@ SIGMET_PROPS: Schema = {  # 계약 §1·§2 SIGMET feature properties
             "then": {"not": {"required": ["top_ft"]}},
         },
         {
-            "if": {"properties": {"top_source": {"enum": ["json", "raw_text"]}}, "required": ["top_source"]},
+            "if": {
+                "properties": {"top_source": {"enum": ["json", "raw_text", "raw_text_lower_bound"]}},
+                "required": ["top_source"],
+            },
             "then": {"required": ["top_ft"]},
         },
         {
@@ -263,7 +269,8 @@ PROBLEM: Schema = {  # RFC 9457 + 확장(code, request_id)
     "type": "object",
     "required": ["type", "title", "status", "detail", "instance", "code", "request_id"],
     "properties": {
-        "type": {"type": "string", "pattern": "^https://wakeline\\.dev/problems/[a-z0-9-]+$"},
+        # 문제 유형 URI 는 해석되지 않는 예약 도메인(RFC 6761 .invalid) — 남의 도메인을 가리키지 않는다
+        "type": {"type": "string", "pattern": "^https://wakeline\\.invalid/problems/[a-z0-9-]+$"},
         "title": {"type": "string", "minLength": 1},
         "status": {"type": "integer", "minimum": 400, "maximum": 599},
         "detail": STR,
@@ -272,6 +279,109 @@ PROBLEM: Schema = {  # RFC 9457 + 확장(code, request_id)
         "request_id": {"type": "string", "minLength": 8},
     },
     "not": {"anyOf": [{"required": ["trace"]}, {"required": ["exception"]}, {"required": ["stackTrace"]}]},
+}
+
+# ---------------------------------------------------------------- 선박(계약 v2 §B2·§B3) — 값이 없으면 키가 없다(null 을 싣지 않는다)
+
+MMSI: Schema = {"type": "string", "pattern": "^[0-9]{9}$"}
+SHIP_CATEGORY: Schema = {  # api ShipCategory · web lib/ships.ts 한 표(USCG AIS 표에서 결정적으로)
+    "enum": ["cargo", "tanker", "passenger", "fishing", "tug", "pleasure", "hsc", "special", "military", "other", "unknown"]
+}
+POSITION_SOURCE: Schema = {"enum": ["gnss", "manual", "estimated", "inoperative"]}
+SHIP_PROVIDER: Schema = {"enum": ["aisstream", "fixture"]}
+SHIP_KINEMATICS: dict[str, Any] = {
+    "lat": {"type": "number", "minimum": -90, "maximum": 90},
+    "lon": {"type": "number", "minimum": -180, "maximum": 180},
+    "sog_kn": {"type": "number", "minimum": 0, "maximum": 102.2},  # 102.3 = 값 없음 → 키 없음
+    "cog_deg": {"type": "number", "minimum": 0, "exclusiveMaximum": 360},  # 360 = 값 없음
+    "heading_deg": {"type": "integer", "minimum": 0, "maximum": 359},  # 511 = 값 없음
+    "nav_status": {"type": "integer", "minimum": 0, "maximum": 15},
+    "position_source": POSITION_SOURCE,
+    "seen_at": TS,
+}
+SHIP_LITE: Schema = {  # ShipLite(목록·WS 점) — 나열된 키만
+    "type": "object",
+    "required": ["mmsi", "lat", "lon", "seen_at", "position_source"],
+    "additionalProperties": False,
+    "properties": {
+        "mmsi": MMSI,
+        **SHIP_KINEMATICS,
+        "ship_type": {"type": "integer", "minimum": 1, "maximum": 99},  # 0 = 값 없음
+        "name": {"type": "string", "minLength": 1, "maxLength": 20},
+    },
+}
+SHIP_STATE: Schema = {  # ship_state.v1 그대로(null 키는 빠진다)
+    "type": "object",
+    "required": ["mmsi", "lat", "lon", "position_source", "seen_at", "provider", "msg_type", "class"],
+    "additionalProperties": False,
+    "properties": {
+        "mmsi": MMSI,
+        **SHIP_KINEMATICS,
+        "rot": {"type": "integer", "minimum": -127, "maximum": 127},
+        "provider": SHIP_PROVIDER,
+        "msg_type": {"enum": ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport"]},
+        "class": {"enum": ["A", "B"]},
+    },
+}
+SHIP_STATIC: Schema = {  # ship_static.v1 그대로(선원 입력값 — ETA 는 연도 없음)
+    "type": "object",
+    "required": ["mmsi", "provider"],
+    "additionalProperties": False,
+    "properties": {
+        "mmsi": MMSI,
+        "name": {"type": "string", "minLength": 1, "maxLength": 20},
+        "call_sign": {"type": "string", "minLength": 1, "maxLength": 7},
+        "imo": {"type": "integer", "minimum": 1000000, "maximum": 1073741823},
+        "ship_type": {"type": "integer", "minimum": 1, "maximum": 99},
+        **{k: {"type": "integer", "minimum": 0, "maximum": 511} for k in ("dim_a", "dim_b", "dim_c", "dim_d")},
+        "draught_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 25.5},
+        "destination": {"type": "string", "minLength": 1, "maxLength": 20},
+        "eta_month": {"type": "integer", "minimum": 1, "maximum": 12},
+        "eta_day": {"type": "integer", "minimum": 1, "maximum": 31},
+        "eta_hour": {"type": "integer", "minimum": 0, "maximum": 23},
+        "eta_minute": {"type": "integer", "minimum": 0, "maximum": 59},
+        "updated_at": TS,
+        "provider": SHIP_PROVIDER,
+    },
+}
+GAP: Schema = {  # AIS 수신 공백(끝난 공백은 ended_at, 열린 공백은 키 없음)
+    "type": "object",
+    "required": ["started_at", "reason"],
+    "properties": {"started_at": TS, "ended_at": TS, "reason": {"type": "string", "minLength": 1}, "provider": STR},
+}
+AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 heartbeat 가 오래되면 connected·msgs_per_s 는 키 없음(모름)
+    "type": "object",
+    "required": ["heartbeat_stale", "ships"],
+    "additionalProperties": False,  # 수집기 내부 오류 문구 등이 새지 않게 나열된 키만
+    "properties": {
+        "connected": BOOL,
+        "lag_s": {"type": "number", "minimum": 0},
+        "msgs_per_s": {"type": "number", "minimum": 0},
+        "gap_open_since": TS,
+        "last_gap": {
+            "type": "object",
+            "required": ["started_at", "ended_at"],
+            "additionalProperties": False,
+            "properties": {"started_at": TS, "ended_at": TS, "reason": STR},
+        },
+        "provider": SHIP_PROVIDER,
+        "last_msg_at": TS,
+        "ships": {"type": "integer", "minimum": 0},
+        "heartbeat_stale": BOOL,
+    },
+    # 오래된 heartbeat 로 '연결됨' 이나 수신량을 말하지 않는다
+    "if": {"properties": {"heartbeat_stale": {"const": True}}, "required": ["heartbeat_stale"]},
+    "then": {"not": {"anyOf": [{"required": ["connected"]}, {"required": ["msgs_per_s"]}]}},
+}
+DEMAND_COUNTS: Schema = {  # /status demand — 수만(hex·셀 키를 공개하지 않는다)
+    "type": "object",
+    "required": ["hot_active", "focus_active"],
+    "additionalProperties": False,
+    "properties": {
+        "hot_active": {"type": "integer", "minimum": 0, "maximum": 6},
+        "focus_active": {"type": "integer", "minimum": 0, "maximum": 50},
+        "adsb_fi_rps_1m": {"type": "number", "minimum": 0},
+    },
 }
 
 FEED: Schema = {
@@ -288,7 +398,20 @@ FEED: Schema = {
 SCHEMAS: dict[str, dict[str, Any]] = {
     "status": {
         "type": "object",
-        "required": ["server_time", "snapshot_version", "fixture_mode", "region", "global", "sigmet", "radar", "engine", "meta"],
+        # demand(계약 v2 §A3)·sources(§B3)는 값이 없어도 객체가 있다(수를 모르면 키가 빠질 뿐)
+        "required": [
+            "server_time",
+            "snapshot_version",
+            "fixture_mode",
+            "region",
+            "global",
+            "sigmet",
+            "radar",
+            "engine",
+            "demand",
+            "sources",
+            "meta",
+        ],
         "properties": {
             "server_time": TS,
             "snapshot_version": INT,
@@ -315,6 +438,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "required": ["index_polygons"],
                 "properties": {"index_polygons": INT, "last_cycle_ms": NUM},
             },
+            "demand": DEMAND_COUNTS,
+            "sources": {"type": "object", "additionalProperties": False, "properties": {"ais": AIS_SOURCE}},
             "meta": META,
         },
     },
@@ -468,9 +593,31 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "ceiling_state": {"enum": ["measured", "none", "unknown"]},
                     "flight_cat": {"enum": ["VFR", "MVFR", "IFR", "LIFR"]},
                     "flight_cat_source": {"enum": ["awc", "computed"]},
+                    "vis_sm": {"type": "number", "minimum": 0},
+                    "vis_raw": {"type": "string", "minLength": 1},  # 원문(예: '6+' = 6 SM 이상 — 하한)
                 },
             },
-            "history": {"type": "array"},
+            "history": {  # DH-7: 이력에도 시정 원문(vis_raw) — 하한값이 정확한 값처럼 보이지 않게
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["obs_time"],
+                    "properties": {
+                        "obs_time": TS,
+                        "flight_cat": {"enum": ["VFR", "MVFR", "IFR", "LIFR"]},
+                        "flight_cat_source": {"enum": ["awc", "computed"]},
+                        "ceiling_state": {"enum": ["measured", "none", "unknown"]},
+                        "vis_sm": {"type": "number", "minimum": 0},
+                        "vis_raw": {"type": "string", "minLength": 1},
+                        "wind_dir": INT,
+                        "wind_kt": NUM,
+                        "ceiling_ft": INT,
+                        "temp_c": NUM,
+                    },
+                    "if": {"required": ["flight_cat"]},
+                    "then": {"required": ["flight_cat_source"]},
+                },
+            },
             "meta": META,
         },
     },
@@ -479,7 +626,32 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["at", "aircraft", "sigmets", "source", "meta"],
         "properties": {
             "at": TS,
-            "aircraft": {"type": "array"},
+            "aircraft": {  # DH-11: 1분 요약 행은 averaged = true · samples, 방위·지상 여부 없음(0·false 로 채우지 않는다)
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["hex", "ts", "lat", "lon", "averaged"],
+                    "properties": {
+                        "hex": HEX,
+                        "ts": TS,
+                        "lat": NUM,
+                        "lon": NUM,
+                        "alt_ft": INT,
+                        "gs_kt": NUM,
+                        "track_deg": NUM,
+                        "on_ground": BOOL,
+                        "provider": STR,
+                        "averaged": BOOL,
+                        "samples": {"type": "integer", "minimum": 1},
+                    },
+                    "if": {"properties": {"averaged": {"const": True}}, "required": ["averaged"]},
+                    "then": {
+                        "required": ["samples"],
+                        "not": {"anyOf": [{"required": ["track_deg"]}, {"required": ["on_ground"]}]},
+                    },
+                    "else": {"not": {"required": ["samples"]}},
+                },
+            },
             "sigmets": {"type": "array"},
             "source": {"enum": ["track_point", "track_point_1m", "none"]},
             "radar": {
@@ -496,15 +668,127 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "day": {"type": "string", "format": "date"},
             "scope": {"const": "region"},
+            "region": {  # DH-10: 그날 집계가 센 지역과 실제로 쓴 사각형 — 모르면(옛 집계) scope·region 모두 없음
+                "type": "object",
+                "required": ["center", "radius_nm", "bbox"],
+                "properties": {
+                    "center": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2},
+                    "radius_nm": {"type": "number", "exclusiveMinimum": 0},
+                    "bbox": {"type": "array", "items": NUM, "minItems": 4, "maxItems": 4},
+                },
+            },
             "items": {"type": "array"},
             "meta": META,
         },
+        "dependentRequired": {"scope": ["region"], "region": ["scope"]},
     },
     "stats_alerts": {"type": "object", "required": ["items", "meta"], "properties": {"items": {"type": "array"}, "meta": META}},
     "stats_sigmet": {
         "type": "object",
         "required": ["items", "group", "meta"],
         "properties": {"items": {"type": "array"}, "group": {"enum": ["fir", "hazard"]}, "meta": META},
+    },
+    "ships": feature_collection(
+        {
+            **point_feature(SHIP_LITE),
+            "properties": {**point_feature(SHIP_LITE)["properties"], "id": MMSI},
+        },
+        {
+            **META,
+            "required": [*META["required"], "count", "total_in_bbox", "capped"],
+            "properties": {
+                **META["properties"],
+                "count": {"type": "integer", "minimum": 0, "maximum": 5000},
+                "total_in_bbox": {"type": "integer", "minimum": 0},
+                "capped": BOOL,
+                "ais": AIS_SOURCE,
+            },
+        },
+    ),
+    "ship_detail": {
+        "type": "object",
+        "required": ["mmsi", "category", "meta"],
+        "additionalProperties": False,
+        "properties": {
+            "mmsi": MMSI,
+            "state": SHIP_STATE,
+            "static": SHIP_STATIC,
+            "category": SHIP_CATEGORY,
+            "first_recorded_at": TS,
+            "last_position_at": TS,
+            "meta": META,
+        },
+        # 분류는 정적 정보의 선종에서만 나온다 — 정적 정보가 없으면 unknown(추정하지 않는다)
+        "if": {"not": {"required": ["static"]}},
+        "then": {"properties": {"category": {"const": "unknown"}}},
+    },
+    "ship_track": {
+        "type": "object",
+        "required": ["type", "geometry", "properties", "points", "gaps", "meta"],
+        "properties": {
+            "type": {"const": "Feature"},
+            "geometry": {
+                "type": "object",
+                "required": ["type", "coordinates"],
+                "properties": {
+                    "type": {"const": "MultiLineString"},
+                    "coordinates": {  # RFC 7946: LineString 은 2점 이상 — 한 점 구간은 points 에만
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "minItems": 2,
+                            "items": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2},
+                        },
+                    },
+                },
+            },
+            "properties": {
+                "type": "object",
+                "required": ["mmsi", "from", "to", "points", "truncated", "sampling", "segments"],
+                "properties": {
+                    "mmsi": MMSI,
+                    "from": TS,
+                    "to": TS,
+                    "points": {"type": "integer", "minimum": 0, "maximum": 5000},
+                    "truncated": BOOL,
+                    "sampling": {"const": "first_fix_per_60s"},  # 저장은 60 s 창의 첫 보고 — 화면이 '표본' 임을 밝힌다
+                    "segments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["start", "end", "points"],
+                            "properties": {"start": TS, "end": TS, "points": {"type": "integer", "minimum": 2}},
+                        },
+                    },
+                },
+            },
+            "points": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["ts", "lat", "lon", "position_source"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "ts": TS,
+                        **{k: v for k, v in SHIP_KINEMATICS.items() if k != "seen_at"},
+                    },
+                },
+            },
+            "gaps": {"type": "array", "items": GAP},
+            "meta": META,
+        },
+    },
+    "ais_gaps": {
+        "type": "object",
+        "required": ["from", "to", "items", "truncated", "meta"],
+        "properties": {
+            "from": TS,
+            "to": TS,
+            "items": {"type": "array", "maxItems": 500, "items": {**GAP, "required": ["started_at", "ended_at", "reason"]}},
+            "truncated": BOOL,
+            "open": {"type": "object", "required": ["started_at"], "properties": {"started_at": TS, "reason": STR}},
+            "meta": META,
+        },
     },
     "problem": PROBLEM,
 }
@@ -541,6 +825,14 @@ CHECKS = [
     Check("stats_sigmet", "stats_sigmet", 200, "application/json", True),
     Check("problem_400", "problem", 400, "application/problem+json", False),
     Check("problem_404", "problem", 404, "application/problem+json", False),
+    Check("ships", "ships", 200, "application/geo+json", True),
+    Check("ship_detail", "ship_detail", 200, "application/json", True),
+    Check("ship_track", "ship_track", 200, "application/geo+json", True),
+    Check("ais_gaps", "ais_gaps", 200, "application/json", True),
+    Check("problem_bad_mmsi", "problem", 400, "application/problem+json", False),
+    # 기록에만: 정적 정보 없는 선박(분류 unknown), 수집기 heartbeat 가 있는 /status(sources.ais · demand.adsb_fi_rps_1m)
+    Check("ship_detail_nostatic", "ship_detail", 200, "application/json", True, recorded_only=True),
+    Check("status_ais", "status_ais", 200, "application/json", True, recorded_only=True),
 ]
 
 
@@ -604,6 +896,15 @@ def live_paths(base: str) -> dict[str, str | None]:
     paths["sigmet_detail"] = "/api/v1/sigmets/" + urllib.parse.quote(sg[0]["id"], safe="") if sg else None
     ap = (fetch(base, airports_path).body or {}).get("features") or []
     paths["airport_wx"] = f"/api/v1/airports/{ap[0]['id']}/wx" if ap else None
+    # 선박(계약 v2 §B3): 동아시아 기본 구독 범위 안(≤ 2,500 sq°)에서 한 척을 골라 상세·항적
+    ships_path = "/api/v1/ships?bbox=118,20,150,46"
+    paths["ships"] = ships_path
+    paths["ais_gaps"] = "/api/v1/ais/gaps"
+    paths["problem_bad_mmsi"] = "/api/v1/ships/12345"
+    sh = (fetch(base, ships_path).body or {}).get("features") or []
+    mmsi = sh[0]["id"] if sh else None
+    paths["ship_detail"] = f"/api/v1/ships/{mmsi}" if mmsi else None
+    paths["ship_track"] = f"/api/v1/ships/{mmsi}/track" if mmsi else None
     return paths
 
 
@@ -636,7 +937,92 @@ def check(c: Check, r: Response) -> list[str]:
             errs.append("problem.status differs from the HTTP status")
         if r.body.get("instance") != r.path.split("?")[0]:
             errs.append("problem.instance is not the request path")
+    if isinstance(r.body, dict) and not errs:
+        errs.extend(CROSS_CHECKS.get(c.schema, lambda _b: [])(r.body))
     return errs
+
+
+# ---------------------------------------------------------------- 교차 검사(JSON Schema 로 쓸 수 없는 값 사이의 관계)
+
+
+def _ships(body: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    feats = body.get("features") or []
+    meta = body.get("meta") or {}
+    if meta.get("count") != len(feats):
+        errs.append(f"meta.count {meta.get('count')} != {len(feats)} features")
+    total = meta.get("total_in_bbox", 0)
+    if total < len(feats):
+        errs.append("meta.total_in_bbox is smaller than the features returned")
+    if meta.get("capped") != (total > len(feats)):
+        errs.append("meta.capped must say exactly whether features were cut off")
+    for i, f in enumerate(feats):
+        p = f.get("properties") or {}
+        if f.get("id") != p.get("mmsi"):
+            errs.append(f"features[{i}].id != properties.mmsi")
+        if (f.get("geometry") or {}).get("coordinates") != [p.get("lon"), p.get("lat")]:
+            errs.append(f"features[{i}] geometry is not [lon, lat] of its properties")
+    return errs
+
+
+def _ship_detail(body: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    for part in ("state", "static"):
+        if part in body and body[part].get("mmsi") != body.get("mmsi"):
+            errs.append(f"{part}.mmsi != mmsi")
+    if "state" not in body and "static" not in body and "first_recorded_at" not in body:
+        errs.append("a ship with no live state, no static info and no stored record must be a 404")
+    return errs
+
+
+def _ts(v: str) -> datetime:
+    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def _ship_track(body: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    props = body.get("properties") or {}
+    pts = body.get("points") or []
+    lines = (body.get("geometry") or {}).get("coordinates") or []
+    segs = props.get("segments") or []
+    if props.get("points") != len(pts):
+        errs.append(f"properties.points {props.get('points')} != {len(pts)} points")
+    if len(segs) != len(lines):
+        errs.append(f"{len(segs)} segments but {len(lines)} lines — segments[i] must describe geometry line i")
+    for i, (seg, line) in enumerate(zip(segs, lines, strict=False)):
+        if seg.get("points") != len(line):
+            errs.append(f"segments[{i}].points != length of line {i}")
+    ts = [_ts(p["ts"]) for p in pts]
+    if ts != sorted(ts):
+        errs.append("points are not in time order")
+    if ts and not (_ts(props["from"]) <= ts[0] and ts[-1] <= _ts(props["to"])):
+        errs.append("points outside [from, to]")
+    return errs
+
+
+def _ais_gaps(body: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    starts = []
+    for i, g in enumerate(body.get("items") or []):
+        if _ts(g["ended_at"]) <= _ts(g["started_at"]):
+            errs.append(f"items[{i}] ends before it starts")
+        starts.append(_ts(g["started_at"]))
+    if starts != sorted(starts):
+        errs.append("items are not oldest first")
+    if (body.get("meta") or {}).get("stale"):
+        errs.append("meta.stale on a DB listing (it is current as of the request)")
+    return errs
+
+
+SCHEMAS["status_ais"] = {
+    **SCHEMAS["status"],
+    "allOf": [
+        {"required": ["sources", "demand"]},
+        {"properties": {"sources": {"required": ["ais"]}, "demand": {"required": ["adsb_fi_rps_1m"]}}},
+    ],
+}
+
+CROSS_CHECKS = {"ships": _ships, "ship_detail": _ship_detail, "ship_track": _ship_track, "ais_gaps": _ais_gaps}
 
 
 def main(argv: list[str] | None = None) -> int:

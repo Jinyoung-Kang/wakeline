@@ -1,0 +1,449 @@
+/**
+ * 선박(AIS, 계약 v2 §B3/§B4)·수요 기반 추적 표시(§A3) — 순수 로직·지도 식·카드 렌더.
+ * 선종 분류는 api(ShipCategory)와 같은 표(tests/fixtures/ship-category-uscg.json)로 0–255 전부를 검사한다.
+ */
+import { existsSync, readFileSync } from "node:fs";
+import { createPropertyExpression, latest, validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  aisBadge, aisGapBadge, appendShipTrack, fmtCount, fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, gridFeatures, navStatusLabel,
+  parseAisStatus, parseCategory, parseGridCells, parseShipLite, parseShipState, parseShipStatic, positionBadge, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR,
+  shipCategory, shipFeatures, shipList, shipRotation, shipTrackFeatures, shipTrackFromRest, type ShipLite, type ShipTrack,
+} from "@/lib/ships";
+import {
+  addShipLayers, SHIP_COLOR_EXPR, SHIP_GRID_RADIUS_EXPR, SHIP_ICON_EXPR, SHIP_IMAGES, SHIP_LAYERS, SHIP_OPACITY_EXPR, SHIP_ROTATE_EXPR,
+} from "@/lib/ship-layers";
+import { elapsedLabel, focusChip, hotChip, mapDemandChip, parseDemand, type DemandInfo } from "@/lib/demand";
+import { loadLayers, saveLayers, type KV } from "@/lib/prefs";
+import { attributionText, mapAttributionHtml } from "@/lib/attribution";
+import { shipGridTip, shipTip } from "@/lib/tooltip";
+import { appendTrackPoint, trackFeatureCollection, type TrackPt } from "@/lib/track";
+import { resetData, setData, shipStates } from "@/lib/store";
+import { ShipCard, ShipPanelView } from "@/components/ShipCard";
+import { MapChipsView } from "@/components/MapChips";
+import { AircraftCard } from "@/components/AircraftCard";
+
+const NOW = Date.parse("2026-09-28T03:00:00Z");
+const iso = (ms: number) => new Date(ms).toISOString();
+
+function evalExpr(expr: unknown, spec: string, properties: Record<string, unknown>, zoom = 8): unknown {
+  const [group, prop] = spec.split(".");
+  const propSpec = (latest as unknown as Record<string, Record<string, unknown>>)[group][prop];
+  const r = createPropertyExpression(expr, `layers[0].${group.split("_")[0]}.${prop}`, propSpec as never);
+  if (r.result !== "success") throw new Error(r.value.map((e) => `${e.key}: ${e.message}`).join("; "));
+  return r.value.evaluate({ zoom } as never, { type: "Point", properties } as never);
+}
+const colorHex = (c: unknown) => {
+  const x = c as { r: number; g: number; b: number };
+  return "#" + [x.r, x.g, x.b].map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
+};
+
+// ---------------------------------------------------------------- 선종 분류
+
+describe("ship category — the USCG table shared with the api (contract v2 §B3)", () => {
+  const table = JSON.parse(readFileSync(new URL("./fixtures/ship-category-uscg.json", import.meta.url), "utf8")) as {
+    default: string; null_category: string; categories: Record<string, number[]>;
+  };
+  const expected = (code: number) => Object.entries(table.categories).find(([, codes]) => codes.includes(code))?.[0] ?? table.default;
+
+  it("every code 0–255 maps exactly as the table says; null/missing → unknown", () => {
+    for (let code = 0; code <= 255; code++) expect(shipCategory(code), `code ${code}`).toBe(expected(code));
+    expect(shipCategory(null)).toBe(table.null_category);
+    expect(shipCategory(undefined)).toBe(table.null_category);
+  });
+  it("malformed codes (non-integer, negative, string) are unknown, never guessed", () => {
+    for (const bad of [-1, 70.5, "70", NaN, Infinity, true]) expect(shipCategory(bad)).toBe("unknown");
+  });
+  it("the table and the code agree on the set of category names (one colour per category)", () => {
+    for (const c of Object.keys(table.categories)) expect(SHIP_CATEGORIES).toContain(c);
+    expect(SHIP_CATEGORIES).toContain(table.default);
+    for (const c of SHIP_CATEGORIES) expect(SHIP_CATEGORY_COLOR[c]).toMatch(/^#[0-9a-f]{6}$/);
+    expect(new Set(Object.values(SHIP_CATEGORY_COLOR)).size).toBe(SHIP_CATEGORIES.length);
+  });
+  it("a repository-level copy of the table (if the api lane adds one) must be identical", () => {
+    const shared = new URL("../../../fixtures/ship_category_uscg.json", import.meta.url);
+    if (!existsSync(shared)) return;
+    const other = JSON.parse(readFileSync(shared, "utf8"));
+    expect(other.categories).toEqual(table.categories);
+    expect(other.default).toBe(table.default);
+  });
+  it("server-sent dominant_category: known names pass, codes map through the table, anything else is unknown", () => {
+    expect(parseCategory("Cargo")).toBe("cargo");
+    expect(parseCategory(84)).toBe("tanker");
+    expect(parseCategory("warship")).toBe("unknown");
+    expect(parseCategory(null)).toBe("unknown");
+  });
+});
+
+// ---------------------------------------------------------------- 수신 검증·표시
+
+describe("ship message validation (untrusted input → null, never defaults)", () => {
+  it("ShipLite: 9-digit MMSI string and a valid position are required; bad fields become null", () => {
+    expect(parseShipLite({ mmsi: "43101130", lat: 1, lon: 1 })).toBeNull(); // 8 자리
+    expect(parseShipLite({ mmsi: 431011305, lat: 1, lon: 1 })).toBeNull(); // 숫자(앞자리 0 손실 가능) — 계약은 문자열
+    expect(parseShipLite({ mmsi: "431011305", lat: 91, lon: 1 })).toBeNull();
+    expect(parseShipLite({ mmsi: "431011305", lat: 1, lon: 181 })).toBeNull();
+    const s = parseShipLite({
+      mmsi: "431011305", lat: 35.39, lon: 139.83, sog_kn: 102.3, cog_deg: 360, heading_deg: 197, ship_type: 70,
+      name: "KIMITSU MARU        ", seen_at: "2026-09-28T02:59:00Z", position_source: "bogus", nav_status: 16,
+    })!;
+    expect(s).toMatchObject({ sog_kn: null, cog_deg: null, heading_deg: 197, ship_type: 70, name: "KIMITSU MARU", position_source: null, nav_status: null });
+  });
+  it("strings are trimmed of AIS '@' padding and capped; empty → null", () => {
+    expect(parseShipLite({ mmsi: "431011305", lat: 1, lon: 1, name: "@@@@@@" })!.name).toBeNull();
+    expect(parseShipLite({ mmsi: "431011305", lat: 1, lon: 1, name: "X".repeat(500) })!.name).toHaveLength(32);
+    expect(parseShipStatic({ mmsi: "431011305", destination: "BUSAN@@@@", call_sign: "  " })).toMatchObject({ destination: "BUSAN", call_sign: null });
+  });
+  it("ShipState keeps class/provider; ShipStatic validates ETA ranges and dimensions", () => {
+    expect(parseShipState({ mmsi: "440123456", lat: 35, lon: 129, class: "B", provider: "fixture", rot: -128.5 })).toMatchObject({ class: "B", provider: "fixture", rot: -128.5 });
+    const st = parseShipStatic({ mmsi: "440123456", eta_month: 0, eta_day: 12, eta_hour: 24, eta_minute: 60, imo: 0, dim_a: 100, draught_m: 30 })!;
+    expect(st).toMatchObject({ eta_month: null, eta_day: 12, eta_hour: null, eta_minute: null, imo: null, dim_a: 100, draught_m: null });
+  });
+  it("grid cells: malformed and empty cells are dropped", () => {
+    const cells = parseGridCells([[35, 129.5, 12, "cargo"], [95, 0, 1, "x"], [10, 10, 0, "cargo"], "junk", [20, 120, 3, 84], [20, 121, 2.5, "cargo"]]);
+    expect(cells).toEqual([{ lat: 35, lon: 129.5, count: 12, category: "cargo" }, { lat: 20, lon: 120, count: 3, category: "tanker" }]);
+    expect(gridFeatures(cells).features[0].properties).toMatchObject({ count: 12, label: "12", cat: "cargo" });
+    expect([fmtCount(999), fmtCount(1234), fmtCount(45_600)]).toEqual(["999", "1.2k", "46k"]);
+  });
+});
+
+describe("ship card formatting (contract v2 §B4)", () => {
+  it("ETA needs all four fields, is shown as crew input without a year; otherwise —", () => {
+    expect(fmtShipEta({ eta_month: 9, eta_day: 30, eta_hour: 6, eta_minute: 5 })).toBe("09-30 06:05 UTC · 선원 입력값, 연도 없음");
+    expect(fmtShipEta({ eta_month: 9, eta_day: 30, eta_hour: null, eta_minute: 5 })).toBe("—");
+    expect(fmtShipEta(null)).toBe("—");
+  });
+  it("size is A+B × C+D (reported); a zero sum is the ITU default = unknown", () => {
+    expect(fmtShipSize({ dim_a: 150, dim_b: 40, dim_c: 12, dim_d: 20 })).toBe("190 × 32 m · 보고값");
+    expect(fmtShipSize({ dim_a: 0, dim_b: 0, dim_c: 0, dim_d: 0 })).toBe("—");
+    expect(fmtShipSize({ dim_a: 0, dim_b: 90, dim_c: null, dim_d: 8 })).toBe("90 × — m · 보고값"); // 기준점 모름(A=0)이어도 길이는 합
+  });
+  it("draught 0 = not available; 25.5 = 25.5 m or more (USCG NAVCEN)", () => {
+    expect(fmtDraught(0)).toBe("—");
+    expect(fmtDraught(null)).toBe("—");
+    expect(fmtDraught(8.4)).toBe("8.4 m · 보고값");
+    expect(fmtDraught(25.5)).toBe("25.5 m 이상 · 보고값");
+  });
+  it("navigation status 15 is 'undefined' (not entered), out-of-range is —", () => {
+    expect(navStatusLabel(0)).toBe("기관 사용 항해 중 (0)");
+    expect(navStatusLabel(5)).toBe("계류 (5)");
+    expect(navStatusLabel(15)).toContain("미정의");
+    expect(navStatusLabel(16)).toBe("—");
+    expect(navStatusLabel(null)).toBe("—");
+  });
+  it("type = code + class; motion shows — per missing value; position source badges", () => {
+    expect(fmtShipType(84)).toBe("84 · 유조선·탱커");
+    expect(fmtShipType(null)).toBe("— (미보고)");
+    expect(fmtMotion({ sog_kn: 11, cog_deg: null, heading_deg: 33 })).toBe("11.0 kn / — / 33°");
+    expect(positionBadge("estimated")).toEqual({ text: "추정 위치", tone: "est" });
+    expect(positionBadge("manual")).toEqual({ text: "수동 위치", tone: "est" });
+    expect(positionBadge("gnss")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- 지도 표현
+
+const lite = (over: Partial<ShipLite> = {}): ShipLite => ({
+  mmsi: "538004068", lat: 25.1, lon: 120.7, sog_kn: 11, cog_deg: 36, heading_deg: 33, ship_type: 70, name: "TONY SMITH",
+  seen_at: iso(NOW - 30_000), position_source: "gnss", nav_status: 0, ...over,
+});
+
+describe("ship symbol: heading → cog → none (never drawn as north when unknown)", () => {
+  it("rotation source and angle", () => {
+    expect(shipRotation({ heading_deg: 33, cog_deg: 36 })).toEqual({ mode: "heading", deg: 33 });
+    expect(shipRotation({ heading_deg: null, cog_deg: 36 })).toEqual({ mode: "cog", deg: 36 });
+    expect(shipRotation({ heading_deg: null, cog_deg: null })).toEqual({ mode: "none", deg: 0 });
+  });
+  it("feature properties: category, stale after 15 min, unknown age, selected", () => {
+    const fc = shipFeatures([
+      lite(), lite({ mmsi: "111111111", seen_at: iso(NOW - 16 * 60_000), heading_deg: null, ship_type: null }),
+      lite({ mmsi: "222222222", seen_at: null, heading_deg: null, cog_deg: null }),
+    ], "538004068", NOW);
+    const p = fc.features.map((f) => f.properties!);
+    expect(p[0]).toMatchObject({ cat: "cargo", rot_mode: "heading", rot: 33, stale: false, age_unknown: false, selected: true });
+    expect(p[1]).toMatchObject({ cat: "unknown", rot_mode: "cog", rot: 36, stale: true, selected: false });
+    expect(p[2]).toMatchObject({ rot_mode: "none", rot: 0, age_unknown: true, stale: false });
+  });
+  it("the style expressions evaluate as intended (MapLibre spec implementation)", () => {
+    expect(String(evalExpr(SHIP_ICON_EXPR, "layout_symbol.icon-image", { rot_mode: "heading" }))).toBe("ship-hull");
+    expect(String(evalExpr(SHIP_ICON_EXPR, "layout_symbol.icon-image", { rot_mode: "cog" }))).toBe("ship-hull-cog");
+    expect(String(evalExpr(SHIP_ICON_EXPR, "layout_symbol.icon-image", { rot_mode: "none" }))).toBe("ship-nodir");
+    expect(evalExpr(SHIP_ROTATE_EXPR, "layout_symbol.icon-rotate", { rot_mode: "none", rot: 250 })).toBe(0);
+    expect(evalExpr(SHIP_ROTATE_EXPR, "layout_symbol.icon-rotate", { rot_mode: "cog", rot: 250 })).toBe(250);
+    expect(colorHex(evalExpr(SHIP_COLOR_EXPR, "paint_symbol.icon-color", { cat: "tanker" }))).toBe(SHIP_CATEGORY_COLOR.tanker);
+    expect(colorHex(evalExpr(SHIP_COLOR_EXPR, "paint_symbol.icon-color", { cat: "whatever" }))).toBe(SHIP_CATEGORY_COLOR.unknown);
+    expect(colorHex(evalExpr(SHIP_COLOR_EXPR, "paint_symbol.icon-color", { cat: "cargo", selected: true }))).toBe("#ffffff");
+    expect(evalExpr(SHIP_OPACITY_EXPR, "paint_symbol.icon-opacity", { stale: true })).toBe(0.35);
+    expect(evalExpr(SHIP_OPACITY_EXPR, "paint_symbol.icon-opacity", { age_unknown: true })).toBe(0.7);
+    const r1 = evalExpr(SHIP_GRID_RADIUS_EXPR, "paint_circle.circle-radius", { count: 1 }) as number;
+    const r100 = evalExpr(SHIP_GRID_RADIUS_EXPR, "paint_circle.circle-radius", { count: 100 }) as number;
+    const r10k = evalExpr(SHIP_GRID_RADIUS_EXPR, "paint_circle.circle-radius", { count: 10_000 }) as number;
+    expect(r1).toBeLessThan(r100);
+    expect(r100).toBeLessThan(r10k);
+  });
+  it("every ship source/layer validates against the style spec and starts hidden, below the aircraft", () => {
+    const g = globalThis as Record<string, unknown>;
+    const saved = { document: g.document, Path2D: g.Path2D };
+    const noop = () => {};
+    const ctx = { fillStyle: "", strokeStyle: "", lineWidth: 0, fill: noop, stroke: noop, setLineDash: noop, save: noop, restore: noop, translate: noop, scale: noop,
+      getImageData: () => ({ width: 48, height: 48, data: new Uint8ClampedArray(48 * 48 * 4) }) };
+    g.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
+    g.Path2D = class { constructor(public d: string) {} };
+    const style = { version: 8 as const, sources: {} as Record<string, unknown>, layers: [] as { id: string; layout?: { visibility?: string } }[] };
+    const images: string[] = [];
+    const befores: (string | undefined)[] = [];
+    try {
+      addShipLayers({
+        addImage: (id: string) => { images.push(id); },
+        addSource: (id: string, src: unknown) => { style.sources[id] = src; },
+        addLayer: (layer: { id: string }, before?: string) => { style.layers.push(layer); befores.push(before); },
+        getLayer: (id: string) => (id === "aircraft-symbol" ? {} : undefined),
+      } as never);
+    } finally { g.document = saved.document; g.Path2D = saved.Path2D; }
+    expect(images).toEqual([...SHIP_IMAGES]);
+    expect(style.layers.map((l) => l.id)).toEqual([...SHIP_LAYERS]);
+    expect(style.layers.every((l) => l.layout?.visibility === "none")).toBe(true);
+    expect(befores.every((b) => b === "aircraft-symbol")).toBe(true);
+    expect(validateStyleMin(style as never).map((e) => e.message)).toEqual([]);
+  });
+  it("tooltips carry only data values; names are plain text", () => {
+    const t = shipTip(lite({ heading_deg: null, position_source: "estimated", seen_at: iso(NOW - 20 * 60_000), name: "<img src=x>" }), NOW);
+    expect(t.title).toBe("<img src=x>"); // renderTip 는 textContent 로만 넣는다
+    expect(t.flags.map((f) => f.text)).toEqual(expect.arrayContaining(["추정 위치", "침로 기준(선수방위 없음)"]));
+    expect(t.flags.some((f) => f.text.startsWith("STALE"))).toBe(true);
+    expect(shipGridTip({ count: 1234, cat: "cargo" }, 2).title).toBe("선박 1,234척");
+  });
+});
+
+// ---------------------------------------------------------------- 항적(REST + 실시간, 공백)
+
+describe("selected ship track: REST MultiLineString + live appends, gaps drawn as dashed connectors", () => {
+  const T0 = Date.parse("2026-09-28T00:00:00Z");
+  it("GeoJSON MultiLineString with segment times and gaps", () => {
+    const t = shipTrackFromRest({
+      type: "Feature",
+      geometry: { type: "MultiLineString", coordinates: [[[129, 35], [129.01, 35.01], [999, 1]], [[129.1, 35.1], [129.11, 35.11]]] },
+      properties: { segments: [{ start: iso(T0), end: iso(T0 + 600_000) }, { from: iso(T0 + 3_600_000), to: iso(T0 + 3_660_000) }] },
+      gaps: [{ started_at: iso(T0 + 900_000), ended_at: iso(T0 + 1_200_000), reason: "disconnect" }],
+    });
+    expect(t.segs.map((s) => s.pts.length)).toEqual([2, 2]); // 범위 밖 좌표는 버림
+    expect(t.segs[1].startMs).toBe(T0 + 3_600_000);
+    const fc = shipTrackFeatures(t);
+    expect(fc.features.map((f) => f.properties!.kind)).toEqual(["track", "gap", "track"]);
+    expect(fc.features[1].properties!.label).toBe("AIS 공백 00:10–01:00");
+  });
+  it("points with ts are split at > 15 min jumps and at AIS gaps", () => {
+    const pts = [0, 60, 120, 1200, 1260, 1320].map((s, i) => ({ ts: iso(T0 + s * 1000), lon: 129 + i * 0.01, lat: 35 }));
+    const t = shipTrackFromRest({ points: pts, gaps: [{ started_at: iso(T0 + 1270_000), ended_at: iso(T0 + 1300_000) }] });
+    expect(t.segs.map((s) => s.pts.length)).toEqual([3, 2, 1]);
+    const labels = shipTrackFeatures(t).features.filter((f) => f.properties!.kind === "gap").map((f) => f.properties!.label);
+    expect(labels).toEqual(["기록 없음 00:02–00:20", "AIS 공백 00:21–00:22"]);
+  });
+  it("live points join the last segment, or start a new one after > 15 min / an AIS gap; stale and duplicate points are skipped", () => {
+    const t: ShipTrack = { segs: [{ pts: [[129, 35]], startMs: T0, endMs: T0 }], gaps: [] };
+    expect(appendShipTrack(t, { ts: T0, lon: 129.5, lat: 35 })).toBe(false); // 같은 시각
+    expect(appendShipTrack(t, { ts: T0 + 60_000, lon: 129.01, lat: 35 })).toBe(true);
+    expect(t.segs).toHaveLength(1);
+    expect(appendShipTrack(t, { ts: T0 + 20 * 60_000, lon: 129.2, lat: 35 })).toBe(true);
+    expect(t.segs).toHaveLength(2);
+    t.gaps.push({ started_at: iso(T0 + 21 * 60_000), ended_at: iso(T0 + 21.5 * 60_000), reason: null });
+    expect(appendShipTrack(t, { ts: T0 + 22 * 60_000, lon: 129.21, lat: 35 })).toBe(true);
+    expect(t.segs).toHaveLength(3);
+  });
+  it("without REST segment times the anchor (last observation known at selection) decides continuity", () => {
+    const t = shipTrackFromRest({ type: "LineString", coordinates: [[129, 35], [129.01, 35]] });
+    expect(t.segs[0].endMs).toBeNull();
+    const cont = structuredClone(t);
+    appendShipTrack(cont, { ts: T0 + 60_000, lon: 129.02, lat: 35 }, T0);
+    expect(cont.segs).toHaveLength(1);
+    const broken = structuredClone(t);
+    appendShipTrack(broken, { ts: T0 + 3_600_000, lon: 129.5, lat: 35 }, T0);
+    expect(broken.segs).toHaveLength(2);
+    const unknown = structuredClone(t);
+    appendShipTrack(unknown, { ts: T0 + 60_000, lon: 129.02, lat: 35 }, null); // 시각을 전혀 모르면 잇지 않는다(점선 "기록 공백")
+    expect(shipTrackFeatures(unknown).features.map((f) => f.properties!.label ?? f.properties!.kind)).toEqual(["track", "기록 공백"]);
+  });
+  it("garbage responses give an empty track", () => {
+    expect(shipTrackFromRest(null)).toEqual({ segs: [], gaps: [] });
+    expect(shipTrackFromRest({ type: "Feature", geometry: { type: "Point", coordinates: [1, 2] } }).segs).toEqual([]);
+  });
+});
+
+describe("dense aircraft track: focus observations (≈5 s) are all appended", () => {
+  it("every new observation extends the line", () => {
+    const pts: TrackPt[] = [];
+    const t0 = Date.parse("2026-09-28T02:00:00Z");
+    for (let i = 0; i < 60; i++) expect(appendTrackPoint(pts, { ts: t0 + i * 5000, lon: 127 + i * 0.002, lat: 36, alt_ft: 30000 })).toBe(true);
+    expect(trackFeatureCollection(pts).features).toHaveLength(59);
+  });
+});
+
+// ---------------------------------------------------------------- AIS 상태
+
+describe("AIS status badges (status.sources.ais)", () => {
+  it("parses status.sources.ais; missing → null", () => {
+    const a = parseAisStatus({ sources: { ais: { connected: true, lag_s: 3, msgs_per_s: 5.4, gap_open_since: null, last_gap: { started_at: iso(NOW - 3_600_000), ended_at: iso(NOW - 3_500_000) } } } }, 1000)!;
+    expect(a).toMatchObject({ connected: true, lag_s: 3, msgs_per_s: 5.4, gap_open_since: null });
+    expect(a.last_gap?.ended_at).toBe(iso(NOW - 3_500_000));
+    expect(parseAisStatus({ region: {} }, 1)).toBeNull();
+  });
+  it("connected · msg/s · lag; lag grows with time since receipt when the connection is not live", () => {
+    const a = parseAisStatus({ sources: { ais: { connected: true, lag_s: 3, msgs_per_s: 5.4 } } }, 1_000_000)!;
+    expect(aisBadge(a, 1_010_000, true)).toMatchObject({ text: "AIS · 5.4 msg/s · lag 3s", tone: "ok" });
+    expect(aisBadge(a, 1_200_000, false)).toMatchObject({ text: "AIS · 5.4 msg/s · lag 203s", tone: "warn" });
+    expect(aisBadge({ ...a, connected: false }, 1_010_000, true)).toMatchObject({ text: "AIS 끊김", tone: "bad" });
+    expect(aisBadge(null, 0, true)).toBeNull();
+  });
+  it("gap badge: open gap, or a gap that ended within 30 min", () => {
+    const base = { connected: true, lag_s: 1, msgs_per_s: 1, received_at: 0 };
+    expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 02:50– UTC · 진행 중", open: true });
+    const ended = { started_at: "2026-09-28T02:40:00Z", ended_at: "2026-09-28T02:45:00Z", reason: null };
+    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 02:40–02:45 UTC", open: false });
+    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: { ...ended, ended_at: "2026-09-28T02:20:00Z" } }, NOW)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- 수요(demand)
+
+describe("demand chips (contract v2 §A3/§B4): only what the server reported", () => {
+  const since = iso(NOW - 3 * 60_000 - 5_000);
+  const d = (focus: unknown, hot: unknown = null): DemandInfo => parseDemand({ type: "demand", focus, hot }, 0);
+  it("parse: unknown states and malformed hex/cell are dropped (not guessed)", () => {
+    expect(d({ hex: "71c123", state: "active", interval_s: 5, since }).focus).toMatchObject({ hex: "71c123", state: "active", interval_s: 5 });
+    expect(d({ hex: "71C123", state: "active" }).focus).toBeNull();
+    expect(d({ hex: "71c123", state: "turbo" }).focus).toBeNull();
+    expect(d(null, { cell: "35.5:139.5:150", radius_nm: 150, state: "active", interval_s: 30 }).hot).toMatchObject({ cell: "35.5:139.5:150", radius_nm: 150 });
+    expect(d(null, { cell: "x", state: "active", interval_s: -1 }).hot).toMatchObject({ cell: null, interval_s: null });
+  });
+  it("focus: every state has its own wording; the cadence appears only when reported", () => {
+    const f = (state: string, extra: Record<string, unknown> = {}) => focusChip(d({ hex: "71c123", state, since, ...extra }), "71c123", NOW)?.text;
+    expect(f("active", { interval_s: 5 })).toBe("집중 추적 5초 · 3분째");
+    expect(f("active")).toBe("집중 추적 · 3분째");
+    expect(f("pending")).toBe("집중 추적 대기");
+    expect(f("throttled", { interval_s: 10 })).toBe("호출 상한으로 지연 · 10초 간격");
+    expect(f("not_found")).toBe("공급자에서 찾지 못함");
+    expect(f("error")).toBe("집중 추적 오류");
+    expect(f("expired_session_cap")).toContain("30분 상한");
+    expect(focusChip(d({ hex: "71c123", state: "active", interval_s: 5 }), "abcdef", NOW)).toBeNull(); // 다른 항공기에 대한 보고
+    expect(elapsedLabel(iso(NOW - 30_000), NOW)).toBe("1분 미만");
+  });
+  it("hot: radius and cadence from the server; covered_by_region says so; map chip prefers focus when selected", () => {
+    const h = (state: string, extra: Record<string, unknown> = {}) => hotChip(d(null, { cell: "35.5:139.5:150", radius_nm: 150, state, ...extra }))?.text;
+    expect(h("active", { interval_s: 30 })).toBe("핫 리전 30초 갱신(반경 150 NM)");
+    expect(h("pending")).toBe("핫 리전 대기(반경 150 NM)");
+    expect(h("throttled", { interval_s: 60 })).toBe("핫 리전 호출 상한으로 지연 · 60초 간격(반경 150 NM)");
+    expect(h("covered_by_region")).toBe("관심 지역 수집 범위 안");
+    const both = d({ hex: "71c123", state: "active", interval_s: 5, since }, { radius_nm: 100, state: "active", interval_s: 30 });
+    expect(mapDemandChip(both, "71c123", NOW)?.kind).toBe("focus");
+    expect(mapDemandChip(both, null, NOW)?.kind).toBe("hot");
+  });
+});
+
+// ---------------------------------------------------------------- 저장·목록·출처
+
+describe("per-viewer layer prefs (localStorage, try/catch)", () => {
+  const mem = (): KV & { m: Map<string, string> } => { const m = new Map<string, string>(); return { m, getItem: (k) => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v); } }; };
+  it("round-trips known boolean keys only", () => {
+    const kv = mem();
+    saveLayers({ radar: true, sigmet: false, aircraft: true, ships: true, airports: true, tracks: true, prediction: false }, kv);
+    expect(loadLayers(kv)).toEqual({ radar: true, sigmet: false, aircraft: true, ships: true, airports: true, tracks: true, prediction: false });
+    kv.m.set("wakeline.layers", JSON.stringify({ ships: "yes", aircraft: false, evil: true }));
+    expect(loadLayers(kv)).toEqual({ aircraft: false });
+  });
+  it("corrupt JSON, oversized values and throwing storage fall back to defaults", () => {
+    const kv = mem();
+    kv.m.set("wakeline.layers", "{not json");
+    expect(loadLayers(kv)).toBeNull();
+    kv.m.set("wakeline.layers", JSON.stringify({ ships: true, pad: "x".repeat(2000) }));
+    expect(loadLayers(kv)).toBeNull();
+    const boom: KV = { getItem: () => { throw new Error("SecurityError"); }, setItem: () => { throw new Error("QuotaExceeded"); } };
+    expect(loadLayers(boom)).toBeNull();
+    expect(() => saveLayers({ radar: true, sigmet: true, aircraft: true, ships: true, airports: true, tracks: true, prediction: true }, boom)).not.toThrow();
+    expect(loadLayers(null)).toBeNull();
+  });
+});
+
+describe("ship list (select without the canvas)", () => {
+  it("named ships first by name, then MMSI; filter by name or MMSI; capped", () => {
+    const ships = [lite({ mmsi: "300000000", name: null }), lite({ mmsi: "200000000", name: "BRAVO" }), lite({ mmsi: "100000000", name: "ALPHA" })];
+    expect(shipList(ships, "").items.map((s) => s.mmsi)).toEqual(["100000000", "200000000", "300000000"]);
+    expect(shipList(ships, "brav").items.map((s) => s.mmsi)).toEqual(["200000000"]);
+    expect(shipList(ships, "3000").items.map((s) => s.mmsi)).toEqual(["300000000"]);
+    expect(shipList(ships, "", 2)).toMatchObject({ total: 3 });
+  });
+});
+
+describe("attribution names the AIS source", () => {
+  it("footer text and map credit include 'Ships: aisstream.io (AIS)'", () => {
+    expect(attributionText()).toContain("Ships: aisstream.io (AIS)");
+    expect(mapAttributionHtml()).toContain('Ships: <a href="https://aisstream.io"');
+    expect(mapAttributionHtml()).toContain("aisstream.io</a> (AIS)");
+  });
+});
+
+// ---------------------------------------------------------------- 컴포넌트 렌더
+
+describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server render)", () => {
+  beforeEach(() => resetData());
+  afterEach(() => resetData());
+
+  it("ship card: every field is present and unknown values render as —", () => {
+    setData({
+      shipSelected: {
+        mmsi: "431011305", received_at: 0, static: null,
+        state: { ...lite({ mmsi: "431011305", name: "KIMITSU MARU", heading_deg: null, cog_deg: null, sog_kn: null, nav_status: null, position_source: "manual" }), rot: null, provider: "fixture", msg_type: "PositionReport", class: "A" },
+      },
+    });
+    const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    for (const k of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "목적지", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각"]) {
+      expect(html).toContain(`data-field="${k}"`);
+    }
+    const field = (k: string) => new RegExp(`data-field="${k}"[^>]*>.*?<span class="text-right">(.*?)</span></div>`).exec(html)?.[1];
+    expect(field("호출부호")).toContain("—");
+    expect(field("IMO")).toContain("—");
+    expect(field("크기")).toBe("—");
+    expect(field("흘수")).toBe("—");
+    expect(field("목적지")).toBe("—");
+    expect(field("ETA")).toBe("—");
+    expect(field("항해 상태")).toBe("—");
+    expect(field("선박명")).toBe("KIMITSU MARU");
+    expect(html).toContain("수동 위치");
+    expect(html).toContain("방향 모름");
+  });
+  it("ship card: WS says the ship left the live set → no stale values presented as current", () => {
+    setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: null } });
+    const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    expect(html).toContain("실시간 목록에 없음");
+  });
+  it("ship panel: list of ships in view when nothing is selected; off/grid states explained", () => {
+    shipStates.set("100000000", lite({ mmsi: "100000000", name: "ALPHA" }));
+    setData({ ships: { mode: "points", version: 1, count: 1, total: 1, ts: null, cell_deg: null, capped: false, grid: [] } });
+    const panel = (shipsOn: boolean) => renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn }));
+    expect(panel(true)).toContain('data-mmsi="100000000"');
+    setData({ ships: { mode: "grid", version: 2, count: 3, total: 40, ts: null, cell_deg: 2, capped: false, grid: [] } });
+    expect(panel(true)).toContain("격자");
+    expect(panel(false)).toContain("선박 레이어가 꺼져 있습니다");
+  });
+  it("map chips: grid mode says ships are aggregated; demand chip only while the connection is live", () => {
+    setData({ ships: { mode: "grid", version: 2, count: 3, total: 1234, ts: null, cell_deg: 2, capped: false, grid: [] } });
+    const chips = (hex: string | null, shipsOn = true) => renderToStaticMarkup(createElement(MapChipsView, { hex, shipsOn }));
+    const html = chips(null);
+    expect(html).toContain('data-mode="grid"');
+    expect(html).toContain("선박 1.2k척 · 2° 격자 3칸으로 묶음");
+    expect(chips(null, false)).toBe("");
+    const demand = parseDemand({ focus: { hex: "71c123", state: "active", interval_s: 5 }, hot: { radius_nm: 100, state: "active", interval_s: 30 } }, 0);
+    setData({ demand, conn: "open", lastRxAt: -1 }); // 서버 렌더의 시계는 0 → 1 ms 전 수신 = 실시간
+    expect(chips("71c123")).toContain("집중 추적 5초");
+    expect(chips(null)).toContain("핫 리전 30초 갱신(반경 100 NM)");
+    setData({ conn: "closed" });
+    expect(chips("71c123")).not.toContain("집중 추적");
+  });
+  it("aircraft card: demand chip for the selected hex, or an explicit 'not received yet'", () => {
+    setData({ conn: "open", lastRxAt: -1, demand: parseDemand({ focus: { hex: "71c123", state: "throttled", interval_s: 10 } }, 0) });
+    expect(renderToStaticMarkup(createElement(AircraftCard, { hex: "71c123" }))).toContain("호출 상한으로 지연 · 10초 간격");
+    setData({ demand: null });
+    expect(renderToStaticMarkup(createElement(AircraftCard, { hex: "71c123" }))).toContain("집중 추적 상태 수신 전");
+  });
+});

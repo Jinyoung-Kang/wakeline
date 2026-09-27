@@ -167,3 +167,82 @@ async def test_disabled_flag_uses_last_known_value_when_redis_errors():
 def test_next_midnight():
     t = datetime(2026, 9, 27, 23, 59, 59, tzinfo=UTC)
     assert next_utc_midnight(t) == datetime(2026, 9, 28, tzinfo=UTC)
+
+
+# ---- COL-5 · DH-13 · COL-2 · 속도 상한 ----------------------------------------------------------------------------------
+async def test_region_heartbeat_carries_effective_poll_for_health():
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    ctx.rt.region_poll_s = 120  # type: ignore[misc]
+    job = AircraftJob("region", ProviderChain("region", {"adsb_lol": FakeReadsb("adsb_lol")}, ctx.status), ctx)
+    await job.run_once()
+    assert (await r.hgetall("wakeline:collector"))["region_poll_s"] == "120"
+    g = AircraftJob("global", ProviderChain("global", {"opensky": FakeOpenSky()}, ctx.status), ctx)
+    await g.run_once()
+    assert "global_at" in await r.hgetall("wakeline:collector")
+
+
+class RejectingReadsb(FakeReadsb):
+    async def fetch_region(self, lat, lon, radius):
+        self.calls += 1
+        now = datetime.now(UTC)
+        data = {
+            "ac": [
+                {"hex": "71c0a1", "lat": 37.0, "lon": 127.0, "alt_baro": "ground", "seen_pos": 1},
+                {"hex": "71c0a2", "lat": 37.1, "lon": 127.1, "alt_baro": 1000},  # seen_pos 없음
+                {"hex": "71c0a3"},  # 위치 없음
+                "garbage",
+            ]
+        }
+        return ProviderResult(self.name, orjson.dumps(data), now, 200, 12, data=data)
+
+
+async def test_region_quarantines_missing_position_time_and_keeps_ground_altitude_null():
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    recorded = []
+    real = ctx.db.record_run
+
+    def spy(*a, **kw):
+        recorded.append(kw)
+        real(*a, **kw)
+
+    ctx.db.record_run = spy  # type: ignore[method-assign]
+    job = AircraftJob("region", ProviderChain("region", {"adsb_lol": RejectingReadsb("adsb_lol")}, ctx.status), ctx)
+    await job.run_once()
+    states = _decode(r.streams[STREAM_AIRCRAFT][0][1])["states"]
+    assert [(s["hex"], s["on_ground"], s["alt_ft"]) for s in states] == [("71c0a1", True, None)]
+    q = recorded[0]["quality"]
+    assert sorted(x[0] for x in q) == ["no_position", "no_position_time"]
+    assert recorded[0]["records_in"] == 3 and recorded[0]["records_quarantined"] == 2
+
+
+class ThrottledReadsb(FakeReadsb):
+    async def fetch_region(self, lat, lon, radius):
+        from wakeline_collector.ratelimit import Throttled
+
+        self.calls += 1
+        raise Throttled("opendata.adsb.fi", "cooling down 60 s after HTTP 429")
+
+
+async def test_throttled_call_releases_budget():
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_fi": 100})
+    job = AircraftJob("region", ProviderChain("region", {"adsb_fi": ThrottledReadsb("adsb_fi")}, ctx.status), ctx)
+    await job.run_once()
+    assert (await ctx.budget.usage("adsb_fi"))[0] == 0  # 보내지 않은 호출은 예산에서 되돌린다
+    assert "throttled" in (await r.hgetall("wakeline:provider:adsb_fi"))["last_error"]
+
+
+async def test_region_429_backs_off():
+    from wakeline_collector.http import ProviderHttpError
+
+    class RL(FakeReadsb):
+        async def fetch_region(self, lat, lon, radius):
+            raise ProviderHttpError(429, "too many")
+
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    chain = ProviderChain("region", {"adsb_lol": RL("adsb_lol")}, ctx.status)
+    await AircraftJob("region", chain, ctx).run_once()
+    assert chain._down_until["adsb_lol"] > 0 and ctx.db.names == ["ingest_run(region)"]  # type: ignore[attr-defined]

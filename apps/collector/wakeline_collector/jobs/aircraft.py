@@ -17,9 +17,11 @@ from wakeline_collector.config import settings
 from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.normalize import from_opensky, from_readsb
+from wakeline_collector.models import AircraftState
+from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb
 from wakeline_collector.publisher import STREAM_AIRCRAFT
-from wakeline_collector.quality import AircraftGate
+from wakeline_collector.quality import AircraftGate, Quarantine
+from wakeline_collector.ratelimit import Throttled
 
 log = logging.getLogger("job.aircraft")
 
@@ -50,7 +52,7 @@ class AircraftJob:
         order = ["fixture"] if ctx.fixture else ctx.rt.provider_order
         prov = await self.chain.pick(order, need_global=need_global)
         if prov is None:
-            await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture)
+            await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture, extra=self._hb_extra())
             if not self._warned_no_provider:
                 log.warning("%s: no provider available (not configured, disabled, cooling down or paused)", self.scope)
                 self._warned_no_provider = True
@@ -81,12 +83,12 @@ class AircraftJob:
         raw_ref = result.extra.get("raw_ref") or ctx.raw.save(prov.name, result.raw, result.fetched_at)
         fetched_at = result.fetched_at
         if prov.name == "opensky":
-            vectors = result.data.get("states") or []
-            states = [from_opensky(v, fetched_at) for v in vectors]
+            results = [normalize_opensky(v, fetched_at) for v in result.data.get("states") or []]
         else:
-            states = [from_readsb(ac, prov.name, fetched_at) for ac in result.data.get("ac") or []]
-        missing = sum(1 for s in states if s is None)
-        gate = self.gate.apply(states, missing, datetime.now(UTC))
+            results = [normalize_readsb(ac, prov.name, fetched_at) for ac in result.data.get("ac") or [] if isinstance(ac, dict)]
+        states = [r for r in results if isinstance(r, AircraftState)]
+        pre = [Quarantine(r.rule, r.hex, r.detail) for r in results if isinstance(r, Rejected)]
+        gate = self.gate.apply(states, 0, datetime.now(UTC), pre=pre)
         payload = {
             "region": None if need_global else {"lat": lat, "lon": lon, "radius_nm": radius},
             "states": [s.model_dump(mode="json") for s in gate.kept],
@@ -110,7 +112,7 @@ class AircraftJob:
             status="ok",
             http_status=result.http_status,
             latency_ms=result.latency_ms,
-            records_in=len(states),
+            records_in=len(results),
             records_quarantined=len(gate.quarantined),
             raw_ref=raw_ref,
             quality=[(q.rule, q.hex, q.detail) for q in gate.quarantined],
@@ -127,7 +129,9 @@ class AircraftJob:
             remaining=remaining,
             scope=self.scope,
         )
-        await ctx.status.heartbeat(self.job_name, lag_s=(datetime.now(UTC) - fetched_at).total_seconds(), fixture=ctx.fixture)
+        await ctx.status.heartbeat(
+            self.job_name, lag_s=(datetime.now(UTC) - fetched_at).total_seconds(), fixture=ctx.fixture, extra=self._hb_extra()
+        )
         self.chain.record_success(prov.name)
         if remaining is not None and remaining < settings.opensky_reserve_credits and hasattr(prov, "paused_until"):
             # 공급자 객체에 건다 → region·global 두 체인이 모두 건너뛴다
@@ -148,11 +152,15 @@ class AircraftJob:
             result.latency_ms,
         )
 
+    def _hb_extra(self) -> dict[str, str] | None:
+        """관심 지역 heartbeat 에 실제 주기를 함께 싣는다 — 헬스체크 기준이 주기를 따른다(COL-5)."""
+        return {"region_poll_s": str(self.ctx.rt.region_poll_s)} if self.scope == "region" else None
+
     async def _on_fetch_error(self, name: str, cost: int, started: datetime, e: Exception) -> None:
         ctx = self.ctx
         http_status = e.status if isinstance(e, ProviderHttpError) else None
-        if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
-            await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
+        if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout | Throttled) and cost:
+            await ctx.budget.release(name, cost)  # 연결조차 못 했거나 속도 상한으로 보내지 않았으면 공급자 쪽 사용량도 없다
         await ctx.status.failure(name, at=datetime.now(UTC), error=repr(e), http_status=http_status)
         ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=repr(e))
         if http_status == 429:

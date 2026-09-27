@@ -2,7 +2,9 @@ package dev.wakeline.ws;
 
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Bbox;
+import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.engine.PredictionAvailability;
+import dev.wakeline.ingest.ShipStore;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -31,7 +33,13 @@ public final class WsSession {
     public static final int RATE_MAX = 20;
     public static final int RATE_WINDOW_S = 10;
 
-    enum Job { INITIAL, FANOUT, ALERTS, SIGMETS, RADAR, HEARTBEAT, SELECTED }
+    enum Job { INITIAL, FANOUT, ALERTS, SIGMETS, RADAR, HEARTBEAT, SELECTED, DEMAND, SHIPS, SHIP_SELECTED }
+
+    /** 이 세션에 마지막으로 보낸 선박 표현: 없음 · 개별 선박(ships_snapshot/diff) · 격자(ships_grid). */
+    enum ShipsMode { OFF, POINTS, GRID }
+
+    /** 마지막으로 보낸 ship_selected(같은 객체면 다시 보내지 않는다). */
+    record ShipSelectedSent(String mmsi, ShipStore.Ship ship, ShipStatic stat) {}
 
     /** 구독 한 벌(bbox·줌·상세도)을 한 번에 바꾼다 — 필드별로 따로 읽어 섞이는 일이 없게. */
     record Sub(Bbox bbox, int zoom, String detail) {
@@ -48,7 +56,7 @@ public final class WsSession {
     private final WebSocketSession raw;
     private final SerialOutbox outbox;
     private final AtomicBoolean[] scheduled = new AtomicBoolean[Job.values().length];
-    final TokenBucket inbound;
+    final SlidingWindowLimiter inbound;
     final Instant openedAt = Instant.now();
     private final AtomicBoolean closing = new AtomicBoolean();
 
@@ -57,6 +65,12 @@ public final class WsSession {
     volatile boolean paused;
     volatile Sub sub;
     volatile String selectedHex;
+    /**
+     * 이 hex 를 (다시) 선택한 시각(epoch ms) — 집중 추적 30분 상한과 demand.focus.since 의 기준(ADR-013). 같은 hex 를 다시 선택해도
+     * 새로 시작한다("다시 선택하면 이어진다"). 핸들러는 이 값을 먼저 쓰고 selectedHex 를 쓴다(수요 스레드가 hex 를 읽은 뒤 이 값을 읽으면
+     * 적어도 그 선택의 시각을 본다).
+     */
+    volatile long selectedAtMs;
     /** 치명적 프로토콜 오류로 닫는 중 — 이후 수신 메시지는 무시한다. */
     volatile boolean inboundBlocked;
     /** 답 없는 ping 수(heartbeat 가 올리고 pong 이 0 으로) */
@@ -67,6 +81,25 @@ public final class WsSession {
     final AtomicBoolean stateResync = new AtomicBoolean();
     /** 다음 초기 전송을 강제(알림·레이더를 버전과 무관하게) — resume·백프레셔 재동기. */
     final AtomicBoolean initialForce = new AtomicBoolean();
+    /**
+     * 켜진 레이어(계약 v2 §B3 {type:"layers"}). 기본: 항공기 켬 · 선박 끔. 항공기를 끈 세션에는 항공기 snapshot/diff 를 보내지 않고 핫 리전 수요도
+     * 내지 않는다(선택 항공기의 selected·집중 추적은 명시적 선택이라 그대로). 선박은 켠 세션에만 보낸다.
+     */
+    volatile boolean layerAircraft = true;
+    volatile boolean layerShips;
+    /** 선택 선박 MMSI(9자리) 또는 null. */
+    volatile String selectedMmsi;
+    /** 다음 선박 작업은 버전과 무관하게 전체(스냅샷·격자)를 보낸다 — 구독·레이어·resync·resume·백프레셔. */
+    final AtomicBoolean shipsForce = new AtomicBoolean();
+    /** 다음 ship_selected 는 바뀌지 않았어도 보낸다 — select_ship·resume. */
+    final AtomicBoolean shipSelectedForce = new AtomicBoolean();
+
+    // ---- 수요(DemandService 스레드가 쓴다) ----
+    /** 이 세션의 최신 demand 메시지(JSON) — 우편함의 DEMAND 작업·초기 세트가 보낸다. 아직 계산 전이면 null. */
+    volatile String demandJson;
+    /** 수요 스레드 전용: 마지막으로 전송을 예약한 demand JSON 과 그 시각(바뀌었거나 30 s 가 지나면 다시 보낸다). */
+    String demandQueuedJson;
+    long demandQueuedAtMs;
 
     // ---- 전송 쪽(우편함 안에서만) ----
     /** 이 세션에 마지막으로 보낸 상태(hex → state). diff 기준. */
@@ -81,13 +114,25 @@ public final class WsSession {
     /** 이 세션이 받은 레이더 프레임 목록(동일성 비교). */
     Object radarSent;
     SelectedSent selectedSent;
+    // ---- 선박 전송 상태(우편함 안에서만) ----
+    ShipsMode shipsMode = ShipsMode.OFF;
+    /** 마지막으로 보낸 선박(mmsi → 보낸 객체). ships_diff 기준. */
+    final Map<String, ShipStore.Ship> shipsSent = new HashMap<>();
+    /** 마지막으로 보낸 ships_snapshot/diff 의 sseq(스냅샷 = 1). 0 = 아직 스냅샷 없음. */
+    int sseq;
+    long shipsLastFullMs;
+    /** 마지막으로 보낸 선박 목록의 ShipStore 버전(같으면 diff 를 계산하지 않는다). */
+    long shipsSentVersion = -1;
+    /** 마지막으로 보낸 격자의 키(버전·칸 크기·bbox·capped) — 같으면 다시 보내지 않는다. */
+    String shipsGridKey;
+    ShipSelectedSent shipSelectedSent;
 
     WsSession(WebSocketSession raw, String ip, Executor executor) {
         this.id = raw.getId();
         this.ip = ip;
         this.raw = raw;
         this.outbox = new SerialOutbox(executor);
-        this.inbound = new TokenBucket(RATE_MAX, TimeUnit.SECONDS.toNanos(RATE_WINDOW_S), System.nanoTime());
+        this.inbound = new SlidingWindowLimiter(RATE_MAX, TimeUnit.SECONDS.toNanos(RATE_WINDOW_S));
         for (int i = 0; i < scheduled.length; i++) scheduled[i] = new AtomicBoolean();
     }
 

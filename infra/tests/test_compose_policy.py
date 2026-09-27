@@ -1,7 +1,8 @@
-"""infra/compose.yml 정책 시험 (SEC-4 · SEC-5 · SEC-7 · SEC-8 · SEC-13 · REL-20).
+"""infra/compose.yml 정책 시험 (SEC-4 · SEC-5 · SEC-7 · SEC-8 · SEC-13 · REL-20 · SEC-R2 · SEC-R3 · 계약 v2 §B1·§C).
 
 `docker compose config` 로 해석한 결과(개발 스택과 격리 E2E 스택 둘 다)를 검사한다 — 컨테이너를 띄우지 않는다.
 임시 디렉터리에 init_env 로 만든 .env 를 쓰므로 실제 .env 는 읽지도 바꾸지도 않는다. docker CLI 가 없으면 건너뛴다.
+격리 스택의 환경변수는 Makefile 의 ISO_ENV(`make -s print-ISO_ENV`)를 그대로 쓴다 — make e2e·demo 와 같은 값.
 
 실행: python3 -m unittest discover -s infra/tests -v
 """
@@ -26,13 +27,38 @@ assert _spec.loader is not None
 _spec.loader.exec_module(init_env)
 
 ENTRYPOINT_CAPS = {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}
-LONG_RUNNING = ["edge", "web", "api", "collector", "redis", "db"]
+LONG_RUNNING = ["edge", "web", "api", "collector", "ais", "redis", "db"]
+# 시험용 .env 에 넣는 가짜 외부 키(사용자 .env 의 이름 그대로 — 소문자 aisstream_key). 실제 키가 아니다.
+FAKE_EXTERNAL = {
+    "aisstream_key": "test-ais-key-not-real-0123456789",
+    "OPENSKY_CLIENT_ID": "test-opensky-id",
+    "OPENSKY_CLIENT_SECRET": "test-opensky-secret-not-real",
+    "KMA_APIHUB_KEY": "test-kma-key-not-real",
+}
+# migrate(--migrate)가 실제로 읽는 환경변수(WakelineApplication.migrate) — 이 밖의 값은 주지 않는다(SEC-R2)
+MIGRATE_ENV_ALLOWED = {"TZ", "DB_HOST", "DB_NAME", "DB_PORT", "DB_MIGRATOR_USER", "DB_MIGRATOR_PASSWORD"}
+# ais 컨테이너(계약 v2 §B1)가 받는 값 — DB 비밀번호·다른 외부 키는 없다
+AIS_ENV_ALLOWED = {
+    "TZ", "REDIS_HOST", "REDIS_USERNAME", "REDIS_PASSWORD", "AISSTREAM_API_KEY", "AIS_BBOXES",
+    "HTTP_USER_AGENT", "FIXTURES_DIR", "SCHEMAS_DIR", "WAKELINE_FIXTURE_MODE",
+}
 
 
 def _docker_compose_available() -> bool:
     if not shutil.which("docker"):
         return False
     return subprocess.run(["docker", "compose", "version"], capture_output=True).returncode == 0
+
+
+def iso_env() -> dict[str, str]:
+    """Makefile 의 ISO_ENV("K=V K2= …")를 사전으로 — 격리 스택이 실제로 받는 셸 환경."""
+    r = subprocess.run(["make", "-s", "--no-print-directory", "print-ISO_ENV"], cwd=ROOT, capture_output=True, text=True, check=True)
+    out: dict[str, str] = {}
+    for tok in r.stdout.split():
+        k, sep, v = tok.partition("=")
+        assert sep and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k), tok
+        out[k] = v
+    return out
 
 
 @unittest.skipUnless(_docker_compose_available(), "docker compose 없음")
@@ -43,9 +69,15 @@ class ComposePolicyTest(unittest.TestCase):
         d = Path(cls._tmp.name)
         cls.env_file = d / ".env"
         init_env.ensure_env(cls.env_file, ROOT / ".env.example", out=io.StringIO())
-        cls.secrets = dict(re.findall(r"^([A-Z0-9_]+)=(.*)$", cls.env_file.read_text(), re.M))
+        # 사용자 .env 처럼 외부 키가 채워진 상태를 흉내 낸다(값은 가짜) — 개발 스택에서는 필요한 컨테이너에만, 격리 스택에서는 어디에도 없어야 한다
+        text = cls.env_file.read_text()
+        for k, v in FAKE_EXTERNAL.items():
+            text = re.sub(rf"^{re.escape(k)}=.*$", f"{k}={v}", text, flags=re.M) if re.search(rf"^{re.escape(k)}=", text, re.M) else text + f"{k}={v}\n"
+        cls.env_file.write_text(text)
+        cls.secrets = dict(re.findall(r"^([A-Za-z0-9_]+)=(.*)$", cls.env_file.read_text(), re.M))
+        cls.iso_env = iso_env()
         cls.dev = cls._config({})
-        cls.iso = cls._config({"WAKELINE_FIXTURE_MODE": "1", "WAKELINE_PORT": "8701", "WAKELINE_NET_PREFIX": "10.78.0"}, project="wakeline-e2e")
+        cls.iso = cls._config(cls.iso_env, project="wakeline-e2e")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -53,7 +85,9 @@ class ComposePolicyTest(unittest.TestCase):
 
     @classmethod
     def _config(cls, extra: dict[str, str], project: str | None = None) -> dict:
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("WAKELINE_", "REDIS_", "DB_", "COMPOSE_"))}
+        # 호스트 셸의 값이 해석 결과에 섞이지 않게(시험은 임시 .env + 명시한 값만 본다)
+        drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream")
+        env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
         env.update(extra)
         cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(cls.env_file), "config", "--format", "json"]
         r = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -116,29 +150,71 @@ class ComposePolicyTest(unittest.TestCase):
                 else:
                     self.assertRegex(s["image"], r"^[^@]+:[^@]+@sha256:[0-9a-f]{64}$")
 
-    # --- SEC-5: Redis ACL 사용자 ---
+    # --- SEC-5 · 계약 v2 §C: Redis ACL 사용자 ---
     def test_services_use_their_own_redis_user(self):
         admin = self.secrets["REDIS_PASSWORD"]
-        expect = {"api": ("wakeline_api", "REDIS_API_PASSWORD"), "migrate": ("wakeline_api", "REDIS_API_PASSWORD"),
-                  "collector": ("wakeline_collector", "REDIS_COLLECTOR_PASSWORD")}
-        for name, (user, pw_key) in expect.items():
-            with self.subTest(service=name):
-                env = self.svc(name)["environment"]
-                self.assertEqual(env["REDIS_USERNAME"], user)
-                self.assertEqual(env["REDIS_PASSWORD"], self.secrets[pw_key])
-                self.assertNotIn(admin, env.values(), "관리용 default 비밀번호를 받지 않는다")
-        self.assertNotEqual(self.secrets["REDIS_API_PASSWORD"], self.secrets["REDIS_COLLECTOR_PASSWORD"])
+        expect = {"api": ("wakeline_api", "REDIS_API_PASSWORD"),
+                  "collector": ("wakeline_collector", "REDIS_COLLECTOR_PASSWORD"),
+                  "ais": ("wakeline_ais", "REDIS_AIS_PASSWORD")}
+        for cfg in (self.dev, self.iso):
+            for name, (user, pw_key) in expect.items():
+                with self.subTest(service=name, project=cfg["name"]):
+                    env = self.svc(name, cfg)["environment"]
+                    self.assertEqual(env["REDIS_USERNAME"], user)
+                    self.assertEqual(env["REDIS_PASSWORD"], self.secrets[pw_key])
+                    self.assertNotIn(admin, env.values(), "관리용 default 비밀번호를 받지 않는다")
+        pws = [self.secrets[k] for k in ("REDIS_PASSWORD", "REDIS_API_PASSWORD", "REDIS_COLLECTOR_PASSWORD", "REDIS_AIS_PASSWORD")]
+        self.assertEqual(len(set(pws)), len(pws), "서비스마다 다른 비밀번호")
+
+    def test_only_redis_sees_redis_secrets_it_does_not_use(self):
+        """Redis 비밀번호는 그 사용자를 쓰는 서비스와 redis 자신에게만 있다."""
+        owner = {"REDIS_PASSWORD": {"redis"}, "REDIS_API_PASSWORD": {"redis", "api"},
+                 "REDIS_COLLECTOR_PASSWORD": {"redis", "collector"}, "REDIS_AIS_PASSWORD": {"redis", "ais"}}
+        for key, allowed in owner.items():
+            for name, s in self.dev["services"].items():
+                with self.subTest(secret=key, service=name):
+                    if name not in allowed:
+                        self.assertNotIn(self.secrets[key], (s.get("environment") or {}).values())
 
     def test_collector_gets_no_other_service_secrets(self):
         env = self.svc("collector")["environment"]
-        for k in ("DB_ROOT_PASSWORD", "DB_MIGRATOR_PASSWORD", "DB_API_PASSWORD", "REDIS_API_PASSWORD"):
+        for k in ("DB_ROOT_PASSWORD", "DB_MIGRATOR_PASSWORD", "DB_API_PASSWORD", "REDIS_API_PASSWORD", "REDIS_AIS_PASSWORD", "aisstream_key"):
             with self.subTest(secret=k):
                 self.assertNotIn(self.secrets[k], env.values())
+
+    # --- SEC-R2: migrate 는 DDL 계정 비밀번호만 ---
+    def test_migrate_gets_only_what_migrate_reads(self):
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                m = self.svc("migrate", cfg)
+                env = m["environment"]
+                self.assertLessEqual(set(env), MIGRATE_ENV_ALLOWED, "WakelineApplication.migrate 가 읽지 않는 값은 주지 않는다")
+                self.assertEqual(env["DB_MIGRATOR_PASSWORD"], self.secrets["DB_MIGRATOR_PASSWORD"])
+                for k in ("DB_ROOT_PASSWORD", "DB_API_PASSWORD", "DB_COLLECTOR_PASSWORD",
+                          "REDIS_PASSWORD", "REDIS_API_PASSWORD", "REDIS_COLLECTOR_PASSWORD", "REDIS_AIS_PASSWORD"):
+                    self.assertNotIn(self.secrets[k], env.values(), k)
+                self.assertEqual(set(m.get("depends_on", {})), {"db"}, "Redis 를 기다리지 않는다(쓰지 않는다)")
+                self.assertEqual(m.get("restart"), "no")
+                self.assertEqual(m.get("command"), ["--migrate"])
+
+    # --- 외부 키: 쓰는 컨테이너에만(개발), 격리 스택에는 없음 ---
+    def test_external_keys_only_where_used(self):
+        where = {"aisstream_key": ("ais", "AISSTREAM_API_KEY"), "OPENSKY_CLIENT_ID": ("collector", "OPENSKY_CLIENT_ID"),
+                 "OPENSKY_CLIENT_SECRET": ("collector", "OPENSKY_CLIENT_SECRET"), "KMA_APIHUB_KEY": ("collector", "KMA_APIHUB_KEY")}
+        for key, (owner, var) in where.items():
+            fake = FAKE_EXTERNAL[key]
+            with self.subTest(key=key):
+                self.assertEqual(self.svc(owner)["environment"][var], fake, f"{owner} 가 {var} 로 받는다")
+                for name, s in self.dev["services"].items():
+                    if name != owner:
+                        self.assertNotIn(fake, (s.get("environment") or {}).values(), f"{name} 에는 없어야 한다")
+                for name, s in self.iso["services"].items():
+                    self.assertNotIn(fake, (s.get("environment") or {}).values(), f"격리 스택 {name} 에는 없어야 한다")
 
     def test_redis_passwords_not_on_command_line(self):
         r = self.svc("redis")
         argv = " ".join((r.get("entrypoint") or []) + (r.get("command") or []) + r["healthcheck"]["test"])
-        for k in ("REDIS_PASSWORD", "REDIS_API_PASSWORD", "REDIS_COLLECTOR_PASSWORD"):
+        for k in ("REDIS_PASSWORD", "REDIS_API_PASSWORD", "REDIS_COLLECTOR_PASSWORD", "REDIS_AIS_PASSWORD"):
             with self.subTest(secret=k):
                 self.assertNotIn(self.secrets[k], argv)
                 self.assertEqual(r["environment"][k], self.secrets[k])
@@ -166,12 +242,73 @@ class ComposePolicyTest(unittest.TestCase):
 
     def test_isolated_stack_is_separate(self):
         self.assertEqual(self.iso["name"], "wakeline-e2e")
-        self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_FIXTURE_MODE"], "1")
-        self.assertEqual(self.svc("collector", self.iso)["environment"]["WAKELINE_FIXTURE_MODE"], "1")
+        for name in ("api", "collector", "ais"):
+            with self.subTest(service=name):
+                self.assertEqual(self.svc(name, self.iso)["environment"]["WAKELINE_FIXTURE_MODE"], "1")
+        self.assertEqual(self.svc("ais", self.iso)["environment"]["AISSTREAM_API_KEY"], "", "fixture 재생 — 키 없음")
         self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_TRUSTED_PROXY"], "10.78.0.10")
+        self.assertEqual(self.iso["networks"]["wakeline"]["ipam"]["config"][0]["subnet"], "10.78.0.0/24")
+
+    def test_iso_env_blanks_every_external_key(self):
+        for k in FAKE_EXTERNAL:
+            with self.subTest(key=k):
+                self.assertEqual(self.iso_env.get(k), "", "Makefile ISO_ENV 가 빈 값으로 덮어써야 한다")
 
     def test_api_has_shutdown_grace(self):
         self.assertIn("stop_grace_period", self.svc("api"))
+
+    # --- 계약 v2 §B1 · §C: ais 서비스 ---
+    def test_ais_service(self):
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                a = self.svc("ais", cfg)
+                self.assertEqual(a["image"], "wakeline-collector:local", "collector 와 같은 이미지")
+                self.assertEqual(a["build"]["dockerfile"], self.svc("collector", cfg)["build"]["dockerfile"])
+                # 이미지 ENTRYPOINT 가 python -m wakeline_collector 라서 command 로는 바꿀 수 없다 — entrypoint 를 바꾼다
+                self.assertEqual(a["entrypoint"], ["python", "-m", "wakeline_collector.ais"])
+                self.assertFalse(a.get("command"))
+                self.assertEqual(a["healthcheck"]["test"], ["CMD", "python", "-m", "wakeline_collector.ais.health"])
+                self.assertIn("start_period", a["healthcheck"])
+                self.assertEqual(int(a["deploy"]["resources"]["limits"]["memory"]), 256 * 1024 * 1024)
+                self.assertTrue(a["deploy"]["resources"]["limits"].get("pids"))
+                self.assertEqual(a["depends_on"]["redis"]["condition"], "service_healthy")
+                self.assertNotIn("db", a["depends_on"], "DB 를 쓰지 않는다")
+                self.assertNotIn(str(a.get("user", "")), ("0", "root", "0:0"), "이미지의 비root 사용자(app)")
+                self.assertFalse(a.get("volumes"), "쓰기 볼륨 없음(read-only + tmpfs)")
+                self.assertTrue(any(t.startswith("/tmp") for t in a.get("tmpfs", [])))
+                self.assertLessEqual(set(a["environment"]), AIS_ENV_ALLOWED)
+                self.assertEqual(a["environment"]["AIS_BBOXES"], "18,105,46,150", "동아시아로 시작(ADR-014 §7)")
+                self.assertEqual(a.get("ports", []), [])
+                for k in ("DB_ROOT_PASSWORD", "DB_MIGRATOR_PASSWORD", "DB_API_PASSWORD", "DB_COLLECTOR_PASSWORD"):
+                    self.assertNotIn(self.secrets[k], a["environment"].values(), k)
+
+    def test_ais_image_user_is_not_root(self):
+        """이미지가 로컬에 있으면 USER 가 root 가 아닌지 본다(compose 는 user 를 지정하지 않고 이미지의 app 사용자를 쓴다)."""
+        r = subprocess.run(["docker", "image", "inspect", "-f", "{{.Config.User}}", "wakeline-collector:local"], capture_output=True, text=True)
+        if r.returncode != 0:
+            self.skipTest("wakeline-collector:local 이미지 없음")
+        self.assertNotIn(r.stdout.strip(), ("", "0", "root", "0:0"))
+
+    # --- SEC-R3: 슈퍼유저 로컬 소켓 전용 ---
+    def test_db_superuser_local_socket_only(self):
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                db = self.svc("db", cfg)
+                self.assertEqual(db["environment"]["WAKELINE_PG_SUPERUSER_TCP"], "reject")
+                mounts = {v["target"]: v for v in db["volumes"]}
+                self.assertTrue(mounts["/docker-entrypoint-initdb.d"]["read_only"])
+                self.assertEqual(db["healthcheck"]["test"][0], "CMD-SHELL")
+                self.assertNotRegex(db["healthcheck"]["test"][1], r"\s-h\s", "헬스체크는 로컬 소켓(-h 없음)")
+        self.assertTrue((ROOT / "infra/db/init/02-superuser-local-only.sh").stat().st_mode & 0o111, "실행 가능해야 initdb 가 실행한다")
+
+    # --- 로그 회전(디스크 고갈 방지) ---
+    def test_every_service_rotates_logs(self):
+        for name, s in self.dev["services"].items():
+            with self.subTest(service=name):
+                log = s.get("logging") or {}
+                self.assertEqual(log.get("driver"), "json-file")
+                self.assertTrue(log.get("options", {}).get("max-size"))
+                self.assertTrue(log.get("options", {}).get("max-file"))
 
 
 if __name__ == "__main__":

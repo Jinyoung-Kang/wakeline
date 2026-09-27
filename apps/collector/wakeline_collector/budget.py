@@ -2,6 +2,7 @@
 
 Redis 장애 시 예약은 예외를 올리지 않는다(실시간 경로 보호). 한도가 엄격한 공급자(strict: OpenSky 크레딧 등)는
 예약할 수 없으면 호출하지 않고(fail closed), 나머지는 호출을 계속한다(fail open, 사용량은 기록되지 않음).
+headroom: 우선순위가 낮은 호출(focus·hot)은 한도에서 이만큼을 남겨 두고 멈춘다 — 저장되는 limit 은 그대로다.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ RESERVE_LUA = """
 local used = tonumber(redis.call('HGET', KEYS[1], 'used') or '0')
 local cost = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
-if limit > 0 and used + cost > limit then
+local headroom = tonumber(ARGV[4] or '0')
+if limit > 0 and used + cost > limit - headroom then
   return {0, used}
 end
 used = redis.call('HINCRBY', KEYS[1], 'used', cost)
@@ -54,20 +56,21 @@ class Budget:
             self._last_log = now
             log.warning("budget %s failed (%s) — redis unavailable?", what, type(e).__name__)
 
-    async def _eval(self, key: str, cost: int, limit: int) -> tuple[int, int]:
+    async def _eval(self, key: str, cost: int, limit: int, headroom: int) -> tuple[int, int]:
         if self._sha is None:
             self._sha = await self._r.script_load(RESERVE_LUA)
         try:
-            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, 48 * 3600)
+            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, 48 * 3600, headroom)
         except Exception:  # noqa: BLE001 — NOSCRIPT 등: 재로드 후 1회 재시도
             self._sha = await self._r.script_load(RESERVE_LUA)
-            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, 48 * 3600)
+            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, 48 * 3600, headroom)
         return int(ok), int(used)
 
-    async def reserve(self, provider: str, cost: int = 1) -> tuple[bool, int]:
-        """(허용 여부, 예약 후 사용량). 한도 초과면 사용량은 그대로. Redis 장애면 사용량 UNKNOWN(-1)."""
+    async def reserve(self, provider: str, cost: int = 1, *, headroom: int = 0) -> tuple[bool, int]:
+        """(허용 여부, 예약 후 사용량). 한도 초과면 사용량은 그대로. Redis 장애면 사용량 UNKNOWN(-1).
+        headroom > 0 이면 한도 - headroom 을 넘는 예약을 거절한다(한도가 0 = 무제한이면 무시)."""
         try:
-            ok, used = await self._eval(day_key(provider), cost, self.limit(provider))
+            ok, used = await self._eval(day_key(provider), cost, self.limit(provider), max(0, headroom))
             return bool(ok), used
         except Exception as e:  # noqa: BLE001
             self._sha = None

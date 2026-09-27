@@ -205,17 +205,116 @@ class AlertStateMachineTest {
         assertThat(fsm.activeObserved()).hasSize(1);
     }
 
-    @Test void leftAfterSigmetExpiry_isMarked() {
+    // ---------- 경보 종료(SIGMET_ENDED, DH-6·API-CONC-4) ----------
+
+    private static AlertStateMachine.Cycle cycleWith(long v, AlertStateMachine.SigmetSet set) {
+        return new AlertStateMachine.Cycle(v, 0, false, false, REGION, set);
+    }
+
+    private static AlertStateMachine.SigmetSet setOf(Instant fetchedAt, SigmetRecord... recs) {
+        Map<String, SigmetRecord> m = new java.util.LinkedHashMap<>();
+        for (SigmetRecord r : recs) m.put(r.id(), r);
+        return AlertStateMachine.SigmetSet.of(m, fetchedAt);
+    }
+
+    /** 확정(진입) 뒤 i=3..n 은 세트 set 으로 판정 — 항공기는 계속 같은 자리(안쪽)에 있다. */
+    private List<AlertStateMachine.Event> enterThen(AlertStateMachine fsm, SigmetRecord sig, AlertStateMachine.SigmetSet before,
+                                                    AlertStateMachine.SigmetSet after, int steps) {
+        List<AlertStateMachine.Event> out = new ArrayList<>();
+        for (int i = 1; i <= steps; i++) {
+            AircraftState a = obs(i, true);
+            boolean inIndex = i <= 2;
+            var hits = inIndex ? Map.of(HEX, List.of(new IntersectionEngine.Hit(HEX, sig, 0, 17000))) : Map.<String, List<IntersectionEngine.Hit>>of();
+            out.addAll(fsm.step(hits, List.of(), Map.of(HEX, a), a.seenAt(), cycleWith(i, inIndex ? before : after)));
+        }
+        return out;
+    }
+
+    @Test void sigmetExpiry_closesAsSigmetEnded_atValidTo_notLeft() {
         SigmetRecord shortLived = sigmet("C", 14000, 21000, NOW.minusSeconds(600), NOW.plusSeconds(25));
+        AlertStateMachine.SigmetSet set = setOf(NOW, shortLived);
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        var out = enterThen(fsm, shortLived, set, set, 6);
+        assertThat(types(out)).containsExactly(ENTERED, SIGMET_ENDED); // 이탈(LEFT)이 아니다 — 항공기는 그대로 안에 있었다
+        Alert ended = out.get(1).alert();
+        assertThat(ended.closeReason()).isEqualTo(Alert.CLOSE_SIGMET_ENDED);
+        assertThat(ended.leftAt()).isEqualTo(NOW.plusSeconds(25));          // 만료 시각(판정 주기 시각이 아니라)
+        assertThat(ended.evidence()).containsEntry("end_cause", "expired").containsEntry("sigmet_valid_to", NOW.plusSeconds(25).toString())
+                .doesNotContainKey("sigmet_set_fetched_at").doesNotContainKey("sigmet_expired");
+        assertThat(fsm.activeObserved()).isEmpty();
+    }
+
+    @Test void sigmetWithdrawnFromTheSet_closesAsSigmetEnded_withdrawn() {
+        SigmetRecord other = sigmet("OTHER", 14000, 21000);
+        AlertStateMachine.SigmetSet before = setOf(NOW, s, other);
+        Instant f2 = NOW.plusSeconds(25);
+        AlertStateMachine.SigmetSet after = setOf(f2, other); // 같은 공급자의 다른 경보는 있다 → 철회(취소·대체)
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        var out = enterThen(fsm, s, before, after, 3);
+        assertThat(types(out)).containsExactly(ENTERED, SIGMET_ENDED);
+        Alert ended = out.get(1).alert();
+        assertThat(ended.leftAt()).isEqualTo(f2);
+        assertThat(ended.evidence()).containsEntry("end_cause", "withdrawn").containsEntry("sigmet_set_fetched_at", f2.toString());
+    }
+
+    @Test void sigmetMissingTogetherWithItsWholeProvider_isNotCalledWithdrawn() {
+        SigmetRecord us = new SigmetRecord("US1", "KZNY", null, null, "U1", "TS", null, 0, null, NOW.minusSeconds(600), NOW.plusSeconds(3600),
+                box(126, 35, 128, 37), null, null, null, null, "RAW", "awc_airsigmet", NOW, SigmetRecord.BASE_ASSUMED_SURFACE, SigmetRecord.TOP_UNKNOWN);
+        AlertStateMachine.SigmetSet before = setOf(NOW, s, us);
+        AlertStateMachine.SigmetSet after = setOf(NOW.plusSeconds(25), s); // awc_airsigmet 피드가 통째로 빠진 세트
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        var out = enterThen(fsm, us, before, after, 3);
+        assertThat(types(out)).containsExactly(ENTERED, SIGMET_ENDED);
+        assertThat(out.get(1).alert().evidence()).containsEntry("end_cause", "provider_missing");
+    }
+
+    @Test void endedSigmet_dropsUnconfirmedTracksSilently_andLeftAtNeverPrecedesEntry() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        AircraftState a1 = obs(1, true);
+        fsm.step(hitsFor(a1, true), List.of(), Map.of(HEX, a1), a1.seenAt(), cycleWith(1, setOf(NOW, s)));
+        AircraftState a2 = obs(2, true);
+        // 확정 전(안쪽 1회)에 경보가 빠졌다 — 알림이 없었으므로 아무것도 내지 않는다
+        assertThat(fsm.step(Map.of(), List.of(), Map.of(HEX, a2), a2.seenAt(), cycleWith(2, setOf(NOW.minusSeconds(3600))))).isEmpty();
+        assertThat(fsm.activeObserved()).isEmpty();
+        // 수집기 시계가 늦어 세트 수신 시각이 진입보다 앞서도 left_at 은 진입 시각보다 앞서지 않는다
+        AlertStateMachine fsm2 = new AlertStateMachine(ids::incrementAndGet);
+        var out = enterThen(fsm2, s, setOf(NOW, s, sigmet("OTHER", 1, 2)), setOf(NOW.minusSeconds(3600), sigmet("OTHER", 1, 2)), 3);
+        Alert ended = out.get(1).alert();
+        assertThat(ended.leftAt()).isEqualTo(ended.enteredAt());
+    }
+
+    @Test void predictionOfAnEndedSigmet_isClearedWithTheCause() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        AircraftState a = acSeen("abc002", 36, 125, 17000, NOW, "adsb_lol");
+        fsm.step(Map.of(), List.of(pred(s, 240, NOW)), Map.of("abc002", a), NOW, new AlertStateMachine.Cycle(1, 0, false, false, Set.of("abc002"), setOf(NOW, s, sigmet("OTHER", 1, 2))));
+        var ev = fsm.step(Map.of(), List.of(), Map.of("abc002", a), NOW.plusSeconds(10),
+                new AlertStateMachine.Cycle(2, 0, false, false, Set.of("abc002"), setOf(NOW.plusSeconds(5), sigmet("OTHER", 1, 2))));
+        assertThat(types(ev)).containsExactly(PREDICTION_CLEARED);
+        assertThat(ev.getFirst().alert().evidence()).containsEntry("cleared_by", "sigmet_ended").containsEntry("end_cause", "withdrawn");
+        assertThat(ev.getFirst().alert().closeReason()).isEqualTo(Alert.CLOSE_PREDICTION_CLEARED);
+    }
+
+    /** DH-4: "TOP ABV FL390" 은 상한의 하한 — 판정은 무제한 가정, 근거에 두 가정을 밝힌다. */
+    @Test void lowerBoundTop_isJudgedUnbounded_andBothAssumptionsAreLabelled() {
+        SigmetRecord abv = new SigmetRecord("ABV", "FIMM", null, null, "A01", "TS", "EMBD", 0, 39000, NOW.minusSeconds(600), NOW.plusSeconds(3600),
+                box(126, 35, 128, 37), null, null, null, null, "EMBD TS ... TOP ABV FL390", "awc_isigmet", NOW,
+                SigmetRecord.BASE_ASSUMED_SURFACE, SigmetRecord.TOP_RAW_TEXT_LOWER_BOUND);
+        assertThat(abv.topIsLowerBound()).isTrue();
+        assertThat(abv.judgedTopFt()).isNull();
+        assertThat(abv.bandContains(41000)).as("FL410 is inside a SIGMET whose tops are above FL390").isTrue();
         AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
         List<AlertStateMachine.Event> out = new ArrayList<>();
-        for (int i = 1; i <= 5; i++) {
+        for (int i = 1; i <= 2; i++) {
             AircraftState a = obs(i, true);
-            var hits = i <= 2 ? Map.of(HEX, List.of(new IntersectionEngine.Hit(HEX, shortLived, 0, 17000))) : Map.<String, List<IntersectionEngine.Hit>>of();
-            out.addAll(fsm.step(hits, List.of(), Map.of(HEX, a), a.seenAt(), cycle(i, 0, REGION)));
+            out.addAll(fsm.step(Map.of(HEX, List.of(new IntersectionEngine.Hit(HEX, abv, 0, 41000))), List.of(), Map.of(HEX, a), a.seenAt(), cycle(i, 0, REGION)));
         }
-        assertThat(types(out)).containsExactly(ENTERED, LEFT);
-        assertThat(out.get(1).alert().evidence()).containsEntry("sigmet_expired", true);
+        Map<String, Object> ev = out.getFirst().alert().evidence();
+        assertThat(ev.get("band_ft")).isEqualTo(java.util.Arrays.asList(0, 39000));
+        assertThat(ev).containsEntry("top_source", "raw_text_lower_bound").containsEntry("top_is_lower_bound", true)
+                .containsEntry("top_assumed_unbounded", true);
+        // 발표된 상한(json)은 그대로 상한이다
+        assertThat(sigmet("J", 14000, 21000).bandContains(21001)).isFalse();
+        assertThat(sigmet("J", 14000, 21000).topIsLowerBound()).isFalse();
     }
 
     private static IntersectionEngine.Prediction pred(SigmetRecord s, int etaS, Instant judgedAt) {
@@ -270,5 +369,97 @@ class AlertStateMachineTest {
         var ev = fsm.step(Map.of(), List.of(p0, p1), Map.of("abc002", a), NOW, cycle(1, 0, Set.of("abc002")));
         assertThat(types(ev)).containsExactly(PREDICTED);
         assertThat(ev.getFirst().alert().etaS()).isEqualTo(200);
+    }
+
+    // ---------- 수요 스코프(계약 v2 §A3) · 신선도 병합(DH-2) ----------
+
+    /** 테스트용 스코프 정보: hex → 출처, 스코프 → 버전, 끊긴 스코프, 조회가 끝난 (출처, hex). */
+    static final class FakeScopes implements AlertStateMachine.Scopes {
+        final Map<String, String> source = new java.util.HashMap<>();
+        final Map<String, Long> versions = new java.util.HashMap<>();
+        final Set<String> stale = new java.util.HashSet<>();
+        final Set<String> ended = new java.util.HashSet<>();
+
+        @Override public String scopeOf(String hex) {
+            String src = source.get(hex);
+            return src == null ? null : src.startsWith("hot:") ? "hot" : src;
+        }
+        @Override public String sourceOf(String hex) { return source.get(hex); }
+        @Override public long version(String scope) { return versions.getOrDefault(scope, 0L); }
+        @Override public boolean feedStale(String scope) { return stale.contains(scope); }
+        @Override public boolean covering(String src, String hex) { return !ended.contains(src + "|" + hex); }
+    }
+
+    private static AlertStateMachine.Cycle cyc(FakeScopes sc) {
+        return new AlertStateMachine.Cycle(sc.version("region"), sc.version("global"), false, false, Set.of(), null, sc);
+    }
+
+    /** focus(5 s) 관측으로 진입 → 선택 해제로 focus 조회가 끝나고 관측이 없어짐 → focus 메시지 3번 뒤 LOST(coverage_ended). */
+    @Test void focusScope_absenceCountedOnFocusMessages_coverageEndedFlagged() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        FakeScopes sc = new FakeScopes();
+        String hex = "abc0f1";
+        sc.source.put(hex, "focus");
+        for (int i = 1; i <= 2; i++) {
+            sc.versions.put("focus", (long) i);
+            AircraftState a = acSeen(hex, 36, 127, 17000, NOW.plusSeconds(5L * i), "adsb_fi");
+            var ev = fsm.step(hitsFor(a, true), List.of(), Map.of(hex, a), a.seenAt(), cyc(sc));
+            if (i == 2) assertThat(types(ev)).containsExactly(ENTERED);
+        }
+        sc.source.remove(hex);
+        sc.ended.add("focus|" + hex); // 선택 해제 — 임대에서 빠졌다
+        // region 메시지는 focus 스코프의 부재로 세지 않는다
+        sc.versions.put("region", 100L);
+        assertThat(fsm.step(Map.of(), List.of(), Map.of(), NOW.plusSeconds(20), cyc(sc))).isEmpty();
+        List<AlertStateMachine.Event> all = new ArrayList<>();
+        for (long v = 3; v <= 5; v++) {
+            sc.versions.put("focus", v);
+            all.addAll(fsm.step(Map.of(), List.of(), Map.of(), NOW.plusSeconds(20 + v), cyc(sc)));
+        }
+        assertThat(types(all)).containsExactly(LOST);
+        Map<String, Object> ev = all.getFirst().alert().evidence();
+        assertThat(ev).containsEntry("scope", "focus").containsEntry("coverage_ended", true);
+    }
+
+    /** 수요 스코프 피드가 끊기면(수집기 focus 중단) 다른 스코프의 새 메시지로 센다 — 알림이 얼어붙지 않는다. 조회 중이면 coverage_ended 없음. */
+    @Test void hotScope_feedStale_countsAnyScope_noCoverageFlagWhileStillCovered() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        FakeScopes sc = new FakeScopes();
+        String hex = "abc0f2";
+        sc.source.put(hex, "hot:35.5:139.5:150");
+        for (int i = 1; i <= 2; i++) {
+            sc.versions.put("hot", (long) i);
+            AircraftState a = acSeen(hex, 36, 127, 17000, NOW.plusSeconds(30L * i), "adsb_fi");
+            fsm.step(hitsFor(a, true), List.of(), Map.of(hex, a), a.seenAt(), cyc(sc));
+        }
+        assertThat(fsm.activeObserved()).hasSize(1);
+        sc.source.remove(hex);
+        sc.stale.add("hot");
+        List<AlertStateMachine.Event> all = new ArrayList<>();
+        for (long v = 10; v <= 12; v++) {
+            sc.versions.put("region", v);
+            all.addAll(fsm.step(Map.of(), List.of(), Map.of(), NOW.plusSeconds(200 + v), cyc(sc)));
+        }
+        assertThat(types(all)).containsExactly(LOST);
+        assertThat(all.getFirst().alert().evidence()).containsEntry("scope", "hot").doesNotContainKey("coverage_ended");
+    }
+
+    /** DH-2: 병합 관측이 global 이면 부재는 global 기준(관심 지역 스냅샷이 계속 와도 소실로 세지 않는다). */
+    @Test void scopeFollowsChosenObservation_notRegionMembership() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        FakeScopes sc = new FakeScopes();
+        String hex = "abc0f3";
+        sc.source.put(hex, "global"); // region 스냅샷에도 있지만(동결) 더 새 global 관측이 뽑혔다
+        for (int i = 1; i <= 2; i++) {
+            sc.versions.put("global", (long) i);
+            AircraftState a = acSeen(hex, 36, 127, 17000, NOW.plusSeconds(120L * i), "opensky");
+            fsm.step(hitsFor(a, true), List.of(), Map.of(hex, a), a.seenAt(), new AlertStateMachine.Cycle(0, i, false, false, Set.of(hex), null, sc));
+        }
+        assertThat(fsm.activeObserved()).hasSize(1);
+        sc.source.remove(hex);
+        for (long v = 50; v <= 60; v++) { // region 스냅샷만 계속 — global 은 그대로
+            sc.versions.put("region", v);
+            assertThat(fsm.step(Map.of(), List.of(), Map.of(), NOW.plusSeconds(300 + v), cyc(sc))).isEmpty();
+        }
     }
 }

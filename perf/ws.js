@@ -9,7 +9,11 @@ const BASE = HTTP_BASE.replace(/^http/, "ws");
 // api 에 직접 붙을 때(BASE_URL=http://10.77.0.30:8000)도 Origin 은 브라우저가 보내는 값과 같아야 한다 → ORIGIN 으로 지정.
 const ORIGIN = __ENV.ORIGIN || "http://localhost:8700";
 const HOLD_MS = Number(__ENV.HOLD_S || 240) * 1000;
+// SHIPS=1: 선박 레이어도 켠다(계약 v2 §B3 {type:"layers"}). 줌 7 구독이라 ships_snapshot/ships_diff 를 받는다. 기본 0 — 이전 측정과 비교 가능하게.
+const SHIPS = __ENV.SHIPS === "1";
 const lag = new Trend("ws_diff_lag_ms", true);
+const shipLag = new Trend("ws_ships_lag_ms", true);
+const shipMsgs = new Counter("ws_ship_messages");
 const msgs = new Counter("ws_messages");
 const diffs = new Counter("ws_diffs");
 const snaps = new Counter("ws_snapshots");
@@ -32,8 +36,14 @@ export default function () {
   ws.onmessage = (e) => {
     msgs.add(1);
     const m = JSON.parse(e.data);
-    if (m.type === "welcome") ws.send(JSON.stringify({ type: "subscribe", bbox: [124, 33, 132, 39], zoom: 7, detail: "lite" }));
-    else if (m.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+    if (m.type === "welcome") {
+      ws.send(JSON.stringify({ type: "subscribe", bbox: [124, 33, 132, 39], zoom: 7, detail: "lite" }));
+      if (SHIPS) ws.send(JSON.stringify({ type: "layers", aircraft: true, ships: true }));
+    } else if (m.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+    else if (m.type === "ships_snapshot" || m.type === "ships_diff" || m.type === "ships_grid") {
+      shipMsgs.add(1);
+      if (m.ts) shipLag.add(Date.now() - Date.parse(m.ts));
+    }
     else if (m.type === "diff" || m.type === "snapshot") {
       lag.add(Date.now() - Date.parse(m.ts));
       if (m.type === "diff") diffs.add(1); else snaps.add(1);
@@ -46,7 +56,9 @@ export function handleSummary(data) {
   const m = data.metrics;
   const l = m.ws_diff_lag_ms ? m.ws_diff_lag_ms.values : {};
   const v = (k) => (m[k] ? m[k].values.count : 0);
+  const sl = m.ws_ships_lag_ms ? m.ws_ships_lag_ms.values : null;
   const line = `\nWS: max VUs=${m.vus_max ? m.vus_max.values.max : "?"} messages=${v("ws_messages")} snapshots=${v("ws_snapshots")} diffs=${v("ws_diffs")} errors=${v("ws_errors")}\n` +
-    ` lag (server ts → client recv) p50=${(l.med || 0).toFixed(0)}ms p95=${(l["p(95)"] || 0).toFixed(0)}ms p99=${(l["p(99)"] || 0).toFixed(0)}ms max=${(l.max || 0).toFixed(0)}ms\n`;
+    ` lag (server ts → client recv) p50=${(l.med || 0).toFixed(0)}ms p95=${(l["p(95)"] || 0).toFixed(0)}ms p99=${(l["p(99)"] || 0).toFixed(0)}ms max=${(l.max || 0).toFixed(0)}ms\n` +
+    (SHIPS ? ` ships: messages=${v("ws_ship_messages")} lag p50=${sl ? sl.med.toFixed(0) : "—"}ms p95=${sl ? sl["p(95)"].toFixed(0) : "—"}ms max=${sl ? sl.max.toFixed(0) : "—"}ms\n` : "");
   return { "results/ws-summary.json": JSON.stringify(data, null, 2), stdout: line };
 }

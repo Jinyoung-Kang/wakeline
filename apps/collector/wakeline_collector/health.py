@@ -1,6 +1,8 @@
 """컨테이너 헬스체크(계약 §8): `python -m wakeline_collector.health` → 종료 코드 0(정상) / 1(비정상).
 
-정상 = Redis 해시 wakeline:collector 의 region_at(관심 지역 작업의 마지막 heartbeat)이 최근 90 s 안.
+정상 = Redis 해시 wakeline:collector 의 region_at(관심 지역 작업의 마지막 heartbeat)이 기준 시간 안.
+기준 = max(90 s, 2.5 × region_poll_s + 10 s) — region_poll_s 는 수집기가 heartbeat 에 함께 쓰는 실제 주기(운영 설정 5–120 s).
+주기를 120 s 로 늘려도 수집 1회 실패(간격 2배)까지는 정상으로 본다(COL-5). 값이 없거나 이상하면 90 s.
 fixture 모드도 같은 기준이다(fixture 도 region 작업이 heartbeat 를 쓴다). 비밀값은 출력하지 않는다.
 무거운 모듈(수집 작업·HTTP·DB)은 불러오지 않는다 — 설정과 동기 Redis 클라이언트만 쓴다.
 """
@@ -10,7 +12,9 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 
-MAX_AGE_S = 90.0
+MAX_AGE_S = 90.0  # 최소 기준(기본 주기 10 s)
+POLL_FACTOR, POLL_MARGIN_S = 2.5, 10.0
+POLL_S_RANGE = (1, 120)  # RuntimeSettings.region_poll_s 가 5–120 으로 자른다
 FUTURE_SKEW_S = 30.0
 KEY = "wakeline:collector"
 
@@ -27,9 +31,21 @@ def region_age_s(h: dict[str, str], now: datetime) -> float | None:
     return (now - at).total_seconds()
 
 
+def max_age_s(h: dict[str, str]) -> float:
+    """heartbeat 에 실린 region_poll_s 로 정한 기준(초)."""
+    v = (h or {}).get("region_poll_s") or ""
+    try:
+        poll = int(v)
+    except ValueError:
+        return MAX_AGE_S
+    if not POLL_S_RANGE[0] <= poll <= POLL_S_RANGE[1]:
+        return MAX_AGE_S
+    return max(MAX_AGE_S, POLL_FACTOR * poll + POLL_MARGIN_S)
+
+
 def is_healthy(h: dict[str, str], now: datetime | None = None) -> bool:
     age = region_age_s(h, now or datetime.now(UTC))
-    return age is not None and -FUTURE_SKEW_S <= age <= MAX_AGE_S
+    return age is not None and -FUTURE_SKEW_S <= age <= max_age_s(h)
 
 
 def main() -> int:
@@ -62,7 +78,8 @@ def main() -> int:
         print(f"ok: region heartbeat {age:.0f} s ago (fixture={h.get('fixture', '?')})")
         return 0
     print(
-        f"unhealthy: region heartbeat {'missing' if age is None else f'{age:.0f} s ago'} (> {MAX_AGE_S:.0f} s)", file=sys.stderr
+        f"unhealthy: region heartbeat {'missing' if age is None else f'{age:.0f} s ago'} (> {max_age_s(h):.0f} s)",
+        file=sys.stderr,
     )
     return 1
 

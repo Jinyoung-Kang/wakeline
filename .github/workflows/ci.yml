@@ -20,8 +20,8 @@ jobs:
     timeout-minutes: 20
     defaults: { run: { working-directory: apps/collector } }
     env:
-      # NFR-14 목표는 80 %. 바닥값은 측정값(2026-09-27 작업 트리 78 %) 아래로 떨어지지 않게 막는 래칫이다 — 80 % 에 닿으면 80 으로 올린다.
-      COLLECTOR_COV_MIN: "75"
+      # NFR-14 설계 목표 80 % 를 그대로 바닥값으로 쓴다(GAP-7). ais(선박 수신) 모듈의 시험도 같은 pytest 실행·같은 기준에 들어간다.
+      COLLECTOR_COV_MIN: "80"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -29,9 +29,8 @@ jobs:
       - run: uv sync --locked
       - name: lint (ruff)
         run: uv run ruff check . && uv run ruff format --check .
-      - name: type check (mypy) — 기존 오류를 정리할 때까지 보고만 한다
+      - name: type check (mypy, 차단)
         run: uv run mypy wakeline_collector
-        continue-on-error: true
       - name: unit tests + coverage floor
         run: uv run pytest -q --cov=wakeline_collector --cov-report=term-missing --cov-report=xml --cov-fail-under="$COLLECTOR_COV_MIN"
       - name: dependency audit (pip-audit — uv.lock 의 런타임 의존성, 해시 고정)
@@ -56,6 +55,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: tests + JaCoCo report + coverage verification (NFR-14)
         run: ./gradlew --no-daemon test jacocoTestReport jacocoTestCoverageVerification
+      # GAP-24: 통합 테스트(RestSamplesIT)가 남긴 실제 REST 응답을 웹·도구가 읽는 필드 계약(JSON Schema)으로 검사한다 — 한쪽만 바뀌면 여기서 깨진다.
+      # 검사기는 collector 의 uv 환경(jsonschema, uv.lock 고정)에서 돈다. `make contract-rest` 와 같은 명령.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: REST contract (Java 응답 기록 → JSON Schema)
+        working-directory: apps/collector
+        run: |
+          uv sync --locked
+          uv run python ../../tools/rest_contract_check.py --dir ../api/build/rest-samples
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -63,6 +70,7 @@ jobs:
           path: |
             apps/api/build/reports/tests
             apps/api/build/reports/jacoco
+            apps/api/build/rest-samples
           if-no-files-found: ignore
 
   web:
@@ -85,9 +93,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - name: "policy tests (.env 생성 · compose 해석 — 권한 축소 · Redis ACL 사용자 · Origin 목록 · 다이제스트 고정)"
+      - name: "policy tests (.env 생성 · compose 해석(개발·격리) — 권한 축소 · Redis ACL 사용자 · 비밀값 분리 · 다이제스트 고정 · CI 스캔 범위)"
         run: make -s test-infra
-      - name: container tests (edge Host 허용 목록·비root · Redis ACL · db 권한 축소)
+      - name: container tests (edge Host 허용 목록·비root · Redis ACL(api·collector·ais) · db 권한 축소·슈퍼유저 로컬 소켓 전용)
         run: make -s infra-docker-test
 
   e2e:
@@ -123,9 +131,10 @@ jobs:
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
       - id: build
-        name: build own images (compose 가 붙이는 실제 태그 wakeline-*:local)
+        name: build own images (compose 가 붙이는 실제 태그 wakeline-*:local — ais 는 collector 와 같은 이미지)
         run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web
       # 우리가 빌드하는 이미지: 고칠 수 있는 HIGH/CRITICAL 이 있으면 실패(NFR-10). 앞 단계가 실패해도 세 이미지 모두 결과를 보인다.
+      # compose 의 모든 이미지가 여기(자체)나 third-party-images(제3자)에서 스캔되는지는 infra/tests/test_ci_policy.py 가 확인한다.
       - name: trivy wakeline-api:local
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -139,7 +148,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: { image-ref: "wakeline-web:local", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
 
-  # 우리가 쓰는 제3자 이미지(compose 에 다이제스트로 고정된 값 그대로 + make bench 의 k6).
+  # 우리가 쓰는 제3자 이미지(compose 에 다이제스트로 고정된 값 그대로 + make bench 의 k6). 목록이 compose 와 어긋나면 infra 정책 시험이 실패한다.
   # 상류가 관리 중인 런타임 이미지(edge·redis)는 차단, 교체 결정이 필요한 이미지(db)·배포되지 않는 도구(k6)는 보고만 한다 — 결과는 job 요약에 남는다.
   third-party-images:
     runs-on: ubuntu-latest

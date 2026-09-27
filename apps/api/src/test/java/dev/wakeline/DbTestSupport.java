@@ -177,7 +177,7 @@ public final class DbTestSupport {
         start();
         exec("wakeline", """
                 TRUNCATE alert_event, sigmet, aircraft, track_point, track_point_1m, stats_daily, metar_obs, radar_frame, airport,
-                         audit_log, ops_user, ingest_run, quality_event, quality_rule_count RESTART IDENTITY CASCADE;
+                         audit_log, ops_user, ingest_run, quality_event, quality_rule_count, ship, ship_position, ingest_gap RESTART IDENTITY CASCADE;
                 UPDATE app_setting SET version = 1, updated_by = NULL, value = CASE key
                   WHEN 'region_poll_s' THEN '10' WHEN 'global_poll_s' THEN '120' WHEN 'sigmet_poll_s' THEN '300' WHEN 'radar_poll_s' THEN '60'
                   WHEN 'metar_poll_s' THEN '600' WHEN 'aircraft_providers' THEN '"adsb_lol,adsb_fi,opensky"' WHEN 'region_center' THEN '"36.5,127.8"'

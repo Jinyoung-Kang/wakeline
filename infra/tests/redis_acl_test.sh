@@ -1,35 +1,40 @@
 #!/usr/bin/env bash
-# Redis ACL 회귀 시험 (SEC-5 · 계약 §6).
+# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C).
 # compose 와 같은 방식(redis 사용자 999·read-only 루트 FS·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
-# 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector 가 필요한 명령·키만 쓸 수 있는지 확인한다.
+# 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector / wakeline_ais 가 필요한 명령·키만 쓸 수 있는지 확인한다.
+# 마지막으로 REDIS_AIS_PASSWORD 없이 한 번 더 띄워 wakeline_ais 가 빈 비밀번호로 열리지 않는지 본다.
 # 개발·E2E 스택은 건드리지 않는다. 사용: bash infra/tests/redis_acl_test.sh   (docker 필요)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # compose 에 고정된 것과 같은 이미지로 시험한다
 IMAGE="${REDIS_IMAGE:-$(awk '/^  redis:/{f=1} f && $1=="image:"{print $2; exit}' "$ROOT/infra/compose.yml")}"
-C="wakeline-acltest-$$"
-ADMIN_PW="adm-$(openssl rand -hex 12)"; API_PW="api-$(openssl rand -hex 12)"; COL_PW="col-$(openssl rand -hex 12)"
+C="wakeline-acltest-$$"; C2="wakeline-acltest-noais-$$"
+ADMIN_PW="adm-$(openssl rand -hex 12)"; API_PW="api-$(openssl rand -hex 12)"; COL_PW="col-$(openssl rand -hex 12)"; AIS_PW="ais-$(openssl rand -hex 12)"
 fails=0; passes=0
 
-cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$C" "$C2" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-docker run -d --name "$C" \
-  --user 999:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
-  -v /data \
-  -v "$ROOT/infra/redis/redis.conf:/etc/redis/redis.conf:ro" \
-  -v "$ROOT/infra/redis/start.sh:/etc/redis/start.sh:ro" \
-  -e REDIS_PASSWORD="$ADMIN_PW" -e REDIS_API_PASSWORD="$API_PW" -e REDIS_COLLECTOR_PASSWORD="$COL_PW" \
-  --entrypoint sh "$IMAGE" /etc/redis/start.sh >/dev/null
-
-for _ in $(seq 1 50); do
-  docker exec -e REDISCLI_AUTH="$ADMIN_PW" "$C" redis-cli --no-auth-warning ping 2>/dev/null | grep -q PONG && break
-  sleep 0.2
-done
+start_redis() { # start_redis <컨테이너 이름> <추가 docker run 인자...>
+  local name=$1; shift
+  docker run -d --name "$name" \
+    --user 999:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+    -v /data \
+    -v "$ROOT/infra/redis/redis.conf:/etc/redis/redis.conf:ro" \
+    -v "$ROOT/infra/redis/start.sh:/etc/redis/start.sh:ro" \
+    -e REDIS_PASSWORD="$ADMIN_PW" -e REDIS_API_PASSWORD="$API_PW" -e REDIS_COLLECTOR_PASSWORD="$COL_PW" "$@" \
+    --entrypoint sh "$IMAGE" /etc/redis/start.sh >/dev/null
+  for _ in $(seq 1 50); do
+    docker exec -e REDISCLI_AUTH="$ADMIN_PW" "$name" redis-cli --no-auth-warning ping 2>/dev/null | grep -q PONG && return 0
+    sleep 0.2
+  done
+  echo "redis $name did not start:"; docker logs "$name" 2>&1 | tail -20; return 1
+}
+start_redis "$C" -e REDIS_AIS_PASSWORD="$AIS_PW"
 
 cli() { # cli <user> <password> <redis args...>
   local u=$1 p=$2; shift 2
-  docker exec -e REDISCLI_AUTH="$p" "$C" redis-cli --no-auth-warning --user "$u" "$@" 2>&1 || true
+  docker exec -e REDISCLI_AUTH="$p" "${TARGET:-$C}" redis-cli --no-auth-warning --user "$u" "$@" 2>&1 || true
 }
 ok() { # ok <설명> <기대 문자열(정규식)> <user> <pw> <args...>
   local what=$1 want=$2; shift 2
@@ -44,7 +49,8 @@ denied() { # denied <설명> <user> <pw> <args...>  — NOPERM(ACL) 또는 이�
   else fails=$((fails+1)); echo "  FAIL  not denied: $what → $out"; fi
 }
 
-A=(wakeline_api "$API_PW"); K=(wakeline_collector "$COL_PW"); D=(default "$ADMIN_PW")
+A=(wakeline_api "$API_PW"); K=(wakeline_collector "$COL_PW"); S=(wakeline_ais "$AIS_PW"); D=(default "$ADMIN_PW")
+NOW_MS="$(($(date +%s) * 1000))"
 BUDGET_LUA="local used = tonumber(redis.call('HGET', KEYS[1], 'used') or '0') redis.call('HINCRBY', KEYS[1], 'used', 1) redis.call('EXPIRE', KEYS[1], 60) return used"
 RL_LUA="local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return {n, redis.call('TTL', KEYS[1])}"
 
@@ -76,6 +82,15 @@ ok "XADD wakeline:dlq"            "^[0-9]+-[0-9]+$" "${A[@]}" xadd wakeline:dlq 
 ok "EVAL(요청 제한 Lua) rl:*"   "^1$"          "${A[@]}" eval "$RL_LUA" 1 rl:public:1.2.3.4:1 60
 ok "SCRIPT LOAD + EVALSHA"     "^[0-9a-f]{40}$" "${A[@]}" script load "$RL_LUA"
 ok "HGETALL wakeline:provider:*"  ""             "${A[@]}" hgetall wakeline:provider:adsb_lol
+# 계약 v2 §A1: 수요 임대의 유일한 작성자 · §B3: 선박 스트림 소비자
+ok "ZADD wakeline:demand:hot(임대)"     "^[01]$"   "${A[@]}" zadd wakeline:demand:hot "$((NOW_MS + 60000))" 35.5:139.5:150
+ok "HSET wakeline:demand:hot:meta"      "^[01]$"   "${A[@]}" hset wakeline:demand:hot:meta 35.5:139.5:150 '{"lat":35.5,"lon":139.5,"radius_nm":150,"sessions":1}'
+ok "ZADD wakeline:demand:focus(임대)"   "^[01]$"   "${A[@]}" zadd wakeline:demand:focus "$((NOW_MS + 60000))" 71c011
+ok "HSET wakeline:demand:focus:meta"    "^[01]$"   "${A[@]}" hset wakeline:demand:focus:meta 71c011 '{"sessions":1}'
+ok "ZREMRANGEBYSCORE 만료 임대"          "^[0-9]+$" "${A[@]}" zremrangebyscore wakeline:demand:focus -inf "$((NOW_MS - 1))"
+ok "HGETALL wakeline:demand:status(읽기)" ""       "${A[@]}" hgetall wakeline:demand:status
+ok "XGROUP CREATE wakeline:ships"       OK         "${A[@]}" xgroup create wakeline:ships api '$' mkstream
+ok "HGETALL wakeline:ais:status(읽기)"  ""         "${A[@]}" hgetall wakeline:ais:status
 
 echo "[wakeline_api — 거부]"
 denied "FLUSHALL"             "${A[@]}" flushall
@@ -124,6 +139,14 @@ ok "예산 Lua budget:*"          "^[0-9]+$"     "${K[@]}" eval "$BUDGET_LUA" 1 
 ok "SCRIPT LOAD(예산)"          "^[0-9a-f]{40}$" "${K[@]}" script load "$BUDGET_LUA"
 ok "HINCRBY budget:*"          "^-?[0-9]+$"   "${K[@]}" hincrby budget:adsb_lol:20260101 used -1
 ok "HGETALL budget:*"          "used"         "${K[@]}" hgetall budget:adsb_lol:20260101
+# 계약 v2 §A2 · §C: 임대는 읽기(1 s 폴링), 조회 상태는 쓰기
+ok "ZRANGEBYSCORE wakeline:demand:hot"   "35.5:139.5:150" "${K[@]}" zrangebyscore wakeline:demand:hot "$NOW_MS" +inf withscores
+ok "ZRANGEBYSCORE wakeline:demand:focus" "71c011"   "${K[@]}" zrangebyscore wakeline:demand:focus "$NOW_MS" +inf
+ok "HGETALL wakeline:demand:hot:meta"    "radius_nm" "${K[@]}" hgetall wakeline:demand:hot:meta
+ok "HMGET wakeline:demand:focus:meta"    "sessions" "${K[@]}" hmget wakeline:demand:focus:meta 71c011
+ok "HSET wakeline:demand:status"         "^[01]$"   "${K[@]}" hset wakeline:demand:status focus:71c011 '{"state":"active","interval_s":5}'
+ok "HGETALL wakeline:demand:status"      "active"   "${K[@]}" hgetall wakeline:demand:status
+ok "HDEL wakeline:demand:status(임대 끝)" "^[01]$"  "${K[@]}" hdel wakeline:demand:status hot:gone
 
 echo "[wakeline_collector — 거부]"
 denied "세션 읽기 wakeline:session:*"   "${K[@]}" hgetall wakeline:session:sessions:t
@@ -150,6 +173,59 @@ denied "REPLICAOF"                   "${K[@]}" replicaof 203.0.113.1 6379
 denied "MONITOR"                     "${K[@]}" monitor
 denied "ACL SETUSER"                 "${K[@]}" acl setuser wakeline_collector '~*'
 denied "SUBSCRIBE"                   "${K[@]}" subscribe ch
+# 수요 임대는 api 만 쓴다 — 수집기가 뚫려도 임의 지역·항공기 조회를 스스로 만들 수 없다(호출 상한 우회 방지)
+denied "ZADD wakeline:demand:hot"          "${K[@]}" zadd wakeline:demand:hot 9999999999999 0.0:0.0:250
+denied "ZADD wakeline:demand:focus"        "${K[@]}" zadd wakeline:demand:focus 9999999999999 abcdef
+denied "ZREMRANGEBYSCORE 임대 삭제"          "${K[@]}" zremrangebyscore wakeline:demand:focus -inf +inf
+denied "HSET wakeline:demand:hot:meta"     "${K[@]}" hset wakeline:demand:hot:meta x y
+denied "HDEL wakeline:demand:focus:meta"   "${K[@]}" hdel wakeline:demand:focus:meta 71c011
+denied "DEL wakeline:demand:hot"           "${K[@]}" del wakeline:demand:hot
+denied "허용 목록 밖 wakeline:demand:*"      "${K[@]}" hgetall wakeline:demand:other
+denied "선박 스트림 wakeline:ships"          "${K[@]}" xadd wakeline:ships '*' payload x
+denied "AIS 상태 wakeline:ais:status"       "${K[@]}" hset wakeline:ais:status connected 1
+
+echo "[wakeline_ais — 허용]"
+ok "PING"                                PONG           "${S[@]}" ping
+ok "INFO"                                redis_version  "${S[@]}" info server
+ok "CLIENT SETINFO(redis-py)"            OK             "${S[@]}" client setinfo lib-name redis-py
+ok "XADD wakeline:ships MAXLEN ~ 200"    "^[0-9]+-[0-9]+$" "${S[@]}" xadd wakeline:ships maxlen '~' 200 '*' kind ships payload x
+ok "XADD wakeline:ships(ais_gap)"        "^[0-9]+-[0-9]+$" "${S[@]}" xadd wakeline:ships maxlen '~' 200 '*' kind ais_gap payload x
+ok "HSET wakeline:ais:status"            "^[0-9]+$"     "${S[@]}" hset wakeline:ais:status connected 1 last_msg_at 2026-01-01T00:00:00Z gap_open_since ''
+ok "HGETALL wakeline:ais:status(health)" "last_msg_at"  "${S[@]}" hgetall wakeline:ais:status
+ok "HSET wakeline:ais:*(다른 필드)"       "^[0-9]+$"     "${S[@]}" hset wakeline:ais:stats msgs 1
+ok "HGET wakeline:settings ais_bboxes(읽기)" ""         "${S[@]}" hget wakeline:settings ais_bboxes
+ok "HGETALL wakeline:settings(읽기)"     "region_poll_s" "${S[@]}" hgetall wakeline:settings
+
+echo "[wakeline_ais — 거부]"
+denied "설정 쓰기 wakeline:settings ais_bboxes" "${S[@]}" hset wakeline:settings ais_bboxes '-90,-180,90,180'
+denied "설정 삭제 wakeline:settings"     "${S[@]}" del wakeline:settings
+denied "항공기 스트림 wakeline:aircraft"   "${S[@]}" xadd wakeline:aircraft '*' payload x
+denied "SIGMET 스트림 wakeline:sigmet"     "${S[@]}" xadd wakeline:sigmet '*' payload x
+denied "수집기 heartbeat wakeline:collector" "${S[@]}" hset wakeline:collector region_at x
+denied "공급자 상태 wakeline:provider:*"    "${S[@]}" hset wakeline:provider:adsb_fi disabled 1
+denied "예산 budget:*"                    "${S[@]}" hgetall budget:adsb_lol:20260101
+denied "수요 임대 읽기 wakeline:demand:hot"  "${S[@]}" zrangebyscore wakeline:demand:hot 0 +inf
+denied "수요 상태 wakeline:demand:status"   "${S[@]}" hset wakeline:demand:status x y
+denied "세션 읽기 wakeline:session:*"       "${S[@]}" hgetall wakeline:session:sessions:t
+denied "세션 위조 wakeline:session:*"       "${S[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
+denied "요청 제한 rl:*"                    "${S[@]}" del rl:public:1.2.3.4:1
+denied "DLQ wakeline:dlq"                  "${S[@]}" xadd wakeline:dlq '*' x y
+denied "XREADGROUP wakeline:ships"          "${S[@]}" xreadgroup group api c9 count 1 streams wakeline:ships '>'
+denied "XACK wakeline:ships"                "${S[@]}" xack wakeline:ships api 0-1
+denied "XGROUP DESTROY wakeline:ships"      "${S[@]}" xgroup destroy wakeline:ships api
+denied "XAUTOCLAIM wakeline:ships"          "${S[@]}" xautoclaim wakeline:ships api c9 0 0-0
+denied "스크립트로 세션 접근"                "${S[@]}" eval "return redis.call('HGETALL', 'wakeline:session:sessions:t')" 0
+denied "스크립트로 선언한 남의 키"           "${S[@]}" eval "return redis.call('XADD', KEYS[1], '*', 'x', 'y')" 1 wakeline:aircraft
+denied "KEYS *"                           "${S[@]}" keys '*'
+denied "SCAN"                             "${S[@]}" scan 0
+denied "RANDOMKEY"                        "${S[@]}" randomkey
+denied "FLUSHALL"                         "${S[@]}" flushall
+denied "CONFIG SET"                       "${S[@]}" config set maxmemory 0
+denied "MONITOR"                          "${S[@]}" monitor
+denied "CLIENT LIST"                      "${S[@]}" client list
+denied "ACL SETUSER"                      "${S[@]}" acl setuser wakeline_ais '~*'
+denied "SUBSCRIBE"                        "${S[@]}" subscribe ch
+denied "다른 키"                           "${S[@]}" set other:key x
 
 echo "[컨테이너 권한]"
 uid="$(docker exec "$C" sh -c 'awk "/^Uid:/{print \$2}" /proc/1/status')"
@@ -162,6 +238,18 @@ else fails=$((fails+1)); echo "  FAIL  uid=$uid CapEff=$caps NoNewPrivs=$nnp mod
 out="$(docker exec "$C" sh -c 'touch /etc/x 2>&1; echo rc=$?')"
 if grep -q "Read-only" <<<"$out"; then passes=$((passes+1)); echo "  ok    root FS read-only"; else fails=$((fails+1)); echo "  FAIL  root FS writable: $out"; fi
 ok "AOF 기록(/data 볼륨 쓰기)" "aof_enabled:1" "${D[@]}" info persistence
+
+echo "[REDIS_AIS_PASSWORD 없음 — wakeline_ais 를 만들지 않는다(빈 비밀번호로 열리지 않음)]"
+start_redis "$C2"
+out="$(docker exec "$C2" redis-cli --no-auth-warning --user wakeline_ais --pass '' ping 2>&1 || true)"
+if grep -Eq "WRONGPASS|invalid" <<<"$out"; then passes=$((passes+1)); echo "  ok    빈 비밀번호로 wakeline_ais 로그인 거부"; else fails=$((fails+1)); echo "  FAIL  wakeline_ais 빈 비밀번호 → $out"; fi
+out="$(docker exec -e REDISCLI_AUTH="$ADMIN_PW" "$C2" redis-cli --no-auth-warning acl getuser wakeline_ais 2>&1 || true)"
+if [ -z "$(tr -d '[:space:]' <<<"$out")" ] || grep -q "nil" <<<"$out"; then passes=$((passes+1)); echo "  ok    ACL 에 wakeline_ais 없음"; else fails=$((fails+1)); echo "  FAIL  wakeline_ais 가 만들어짐 → $out"; fi
+if docker logs "$C2" 2>&1 | grep -q "REDIS_AIS_PASSWORD 가 비어"; then passes=$((passes+1)); echo "  ok    기동 로그에 사유 표시"; else fails=$((fails+1)); echo "  FAIL  기동 로그에 사유 없음"; fi
+TARGET="$C2"
+ok "나머지 사용자는 그대로(wakeline_api)"       PONG wakeline_api "$API_PW" ping
+ok "나머지 사용자는 그대로(wakeline_collector)" PONG wakeline_collector "$COL_PW" ping
+unset TARGET
 
 echo "redis ACL test: $passes passed, $fails failed"
 [ "$fails" -eq 0 ]

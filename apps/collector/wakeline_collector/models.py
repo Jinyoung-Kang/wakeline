@@ -46,7 +46,7 @@ class Sigmet(BaseModel):
     # 고도대 출처(계약 §4). assumed_surface = 하한 미발표(판정은 SFC 가정), unknown = 상한 미발표(판정은 무제한 가정)
     base_source: Literal["json", "assumed_surface"] = "json"
     top_ft: int | None = None
-    top_source: Literal["json", "raw_text", "unknown"] = "unknown"
+    top_source: Literal["json", "raw_text", "raw_text_lower_bound", "unknown"] = "unknown"
     valid_from: datetime
     valid_to: datetime
     geometry: dict[str, Any] | None = None

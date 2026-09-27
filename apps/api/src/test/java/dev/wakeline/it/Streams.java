@@ -27,6 +27,7 @@ final class Streams {
     static final String SIGMET = "wakeline:sigmet";
     static final String RADAR = "wakeline:radar";
     static final String DLQ = "wakeline:dlq";
+    static final String SHIPS = "wakeline:ships";
     static final ObjectMapper JSON = JsonMapper.builder().build();
     private static final AtomicLong clock = new AtomicLong();
 
@@ -117,6 +118,71 @@ final class Streams {
         p.put("generated", generated);
         p.put("past", List.of(Map.of("time", generated - 600, "path", "/v2/radar/" + (generated - 600)), Map.of("time", generated, "path", "/v2/radar/" + generated)));
         return envelope("radar", "-", "fixture", fetchedAt, p, 2);
+    }
+
+    /** 선박 위치 1건(스키마 ship_state.v1 — 모든 키가 있고 모르는 값은 null). */
+    static Map<String, Object> shipState(String mmsi, double lat, double lon, Instant seenAt) {
+        Map<String, Object> s = new LinkedHashMap<>();
+        s.put("mmsi", mmsi);
+        s.put("lat", lat);
+        s.put("lon", lon);
+        s.put("sog_kn", 11.2);
+        s.put("cog_deg", 181.5);
+        s.put("heading_deg", 180);
+        s.put("nav_status", 0);
+        s.put("rot", null);
+        s.put("position_source", "gnss");
+        s.put("seen_at", seenAt.toString());
+        s.put("provider", "fixture");
+        s.put("msg_type", "PositionReport");
+        s.put("class", "A");
+        return s;
+    }
+
+    /** 선박 정적 정보 1건(스키마 ship_static.v1). */
+    static Map<String, Object> shipStatic(String mmsi, String name, int shipType, Instant updatedAt) {
+        Map<String, Object> s = new LinkedHashMap<>();
+        s.put("mmsi", mmsi);
+        s.put("name", name);
+        s.put("call_sign", "D7AB");
+        s.put("imo", 9321483);
+        s.put("ship_type", shipType);
+        s.put("dim_a", 150);
+        s.put("dim_b", 30);
+        s.put("dim_c", 14);
+        s.put("dim_d", 16);
+        s.put("draught_m", 9.8);
+        s.put("destination", "KR PUS");
+        s.put("eta_month", 9);
+        s.put("eta_day", 29);
+        s.put("eta_hour", 6);
+        s.put("eta_minute", 30);
+        s.put("updated_at", updatedAt.toString());
+        s.put("provider", "fixture");
+        return s;
+    }
+
+    static Map<String, String> ships(Instant fetchedAt, List<Map<String, Object>> states, List<Map<String, Object>> statics) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("ships", states);
+        p.put("static", statics);
+        p.put("stats", Map.of("msgs", 10, "msgs_per_s", 1.0, "dropped", 0, "quarantined", 0, "connected", true));
+        p.put("part", 1);
+        p.put("parts", 1);
+        Map<String, String> env = envelope("ships", "ships", "fixture", fetchedAt, p, states.size());
+        env.put("raw_ref", "-");
+        return env;
+    }
+
+    static Map<String, String> aisGap(Instant fetchedAt, Instant started, Instant ended, String reason) {
+        return envelope("ais_gap", "ships", "fixture", fetchedAt, Map.of("started_at", started.toString(), "ended_at", ended.toString(), "reason", reason), 1);
+    }
+
+    /** ais 수집기 ACL 사용자로 XADD(wakeline:ships 만 쓸 수 있다). */
+    static String xaddAis(Map<String, String> fields) {
+        RecordId id = ItStack.ais().opsForStream().add(MapRecord.create(SHIPS, new HashMap<>(fields)));
+        if (id == null) throw new IllegalStateException("XADD returned null");
+        return id.getValue();
     }
 
     /** 수집기 ACL 사용자로 XADD. @return 엔트리 id */

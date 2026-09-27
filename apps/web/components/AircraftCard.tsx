@@ -3,11 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
-import { useNow } from "@/lib/clock";
+import { useNow, useServerNow } from "@/lib/clock";
+import { focusChip } from "@/lib/demand";
+import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
 import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
-import { fmtAlt, fmtBool, fmtDuration, fmtIso, fmtNum, fmtTime } from "@/lib/format";
+import { fmtAltGnd, fmtBool, fmtDuration, fmtIso, fmtNum, fmtTime } from "@/lib/format";
 import { EvidenceCard } from "./EvidenceCard";
+import { DemandBadge } from "./MapChips";
 
 interface Detail {
   hex: string;
@@ -40,7 +43,10 @@ function qualityLabel(q: number | null | undefined) {
   return String(q);
 }
 
-/** 항공기 상세(FR-05): 호출부호·등록·기종·고도·속도·수직속도·squawk·출처·수신 시각. 값이 없으면 "—"(기본값으로 채우지 않는다). */
+/**
+ * 항공기 상세(FR-05): 호출부호·등록·기종·고도·속도·수직속도·squawk·출처·수신 시각. 값이 없으면 "—"(기본값으로 채우지 않는다).
+ * 경과·stale·외삽은 서버 기준 시각으로 — 지도(워커)·툴팁과 같은 기준(WS-3 · DH-1). 지상이면 고도 대신 GND(DH-3).
+ */
 export function AircraftCard({ hex }: { hex: string }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<{ hex: string; msg: string } | null>(null);
@@ -48,7 +54,11 @@ export function AircraftCard({ hex }: { hex: string }) {
   const select = useUi((s) => s.select);
   const selected = useServerData((x) => (x.selected && x.selected.hex === hex ? x.selected : null));
   const alertsMap = useServerData((x) => x.alerts);
-  const now = useNow(1000);
+  const now = useServerNow(1000);
+  const wall = useNow(1000);
+  const demand = useServerData((x) => x.demand);
+  const conn = useServerData((x) => x.conn);
+  const lastRxAt = useServerData((x) => x.lastRxAt);
   useEffect(() => {
     const t = setInterval(() => setRefresh((n) => n + 1), DETAIL_REFRESH_MS);
     return () => clearInterval(t);
@@ -73,13 +83,16 @@ export function AircraftCard({ hex }: { hex: string }) {
   const emergency = s?.squawk != null ? EMERGENCY_SQUAWKS.has(s.squawk) : d?.emergency === true;
   const activeAlerts = useMemo(() => [...alertsMap.values()].filter((a) => a.hex === hex), [alertsMap, hex]);
   const pred = selected?.prediction ?? null;
+  // 집중 추적(ADR-013): 서버가 이 hex 에 대해 보고한 상태·주기만. 연결이 실시간이 아니면 상태를 말하지 않는다.
+  const live = isRxFresh(conn, lastRxAt, wall);
+  const chip = live ? focusChip(demand, hex, now) : null;
   const rows: [string, React.ReactNode][] = [
     ["Callsign", <span key="cs" className="mono">{s?.callsign ?? "—"}</span>],
     ["ICAO24", <span key="hex" className="mono">{hex}</span>],
     ["등록번호", <span key="reg" className="mono">{d?.static?.registration ?? s?.registration ?? "—"}</span>],
     ["기종 코드", <span key="type" className="mono">{d?.static?.type_code ?? s?.type_code ?? "—"}</span>],
     ["카테고리", d?.static?.category ?? s?.category ?? "—"],
-    ["고도", <span key="alt" className="mono">{fmtAlt(s?.alt_ft)}</span>],
+    ["고도", <span key="alt" className="mono">{fmtAltGnd(s?.alt_ft, s?.on_ground)}</span>],
     ["지상속도", <span key="gs" className="mono">{fmtNum(s?.gs_kt, " kt")}</span>],
     ["방위", <span key="trk" className="mono">{fmtNum(s?.track_deg, "°")}</span>],
     ["수직속도", <span key="vr" className="mono">{fmtNum(s?.vrate_fpm, " ft/min")}</span>],
@@ -102,6 +115,11 @@ export function AircraftCard({ hex }: { hex: string }) {
           <button className="btn" onClick={() => select(null)}>닫기</button>
         </div>
       </div>
+      <div className="flex items-center gap-2 border-b border-line px-2 py-1 text-[11px]" data-testid="demand-row">
+        <span className="text-fg-3">갱신</span>
+        {chip ? <DemandBadge chip={chip} testId="demand-chip" />
+          : <span className="text-fg-3" data-testid="demand-chip-none">{live ? "집중 추적 상태 수신 전" : "연결이 실시간이 아님 — 집중 추적 상태 모름"}</span>}
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err})</div> : null}
         {d?.meta?.db_unavailable ? <div className="text-[11px] text-warn">등록 정보 DB 일시 사용 불가 — 등록번호·기종은 “—”</div> : null}
@@ -114,7 +132,7 @@ export function AircraftCard({ hex }: { hex: string }) {
             {activeAlerts.map((a) => <EvidenceCard key={a.id} a={a} />)}
           </div>
         ) : <div className="mt-2 text-[11px] text-fg-3">활성 알림 없음</div>}
-        <div className="mt-2 text-[10px] text-fg-3">항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것이고, 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>
+        <div className="mt-2 text-[10px] text-fg-3">항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것입니다. 선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적) 위 칩에 보이는 서버 보고 주기로 점이 촘촘해집니다. 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>
       </div>
     </div>
   );

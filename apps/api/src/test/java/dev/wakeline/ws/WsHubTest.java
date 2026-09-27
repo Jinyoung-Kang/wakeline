@@ -279,6 +279,24 @@ class WsHubTest {
             assertThat(full.path("version").asLong()).isEqualTo(2);
             assertThat(full.path("alerts").size()).isZero(); // 끝난 알림은 목록에 없다
             assertThat(ofType(f, "sigmets").get(0).path("v").asLong()).isEqualTo(st.version());
+            // WS-5: 시각 의존 값(active·expiring_soon)의 기준 시각을 밝힌다
+            Instant computedAt = Instant.parse(ofType(f, "sigmets").get(0).path("computed_at").asString());
+            assertThat(computedAt).isBetween(now.minusSeconds(1), Instant.now().plusSeconds(1));
+        }
+    }
+
+    /** DH-6: 경보 종료(SIGMET_ENDED) 이벤트는 그 이름 그대로 알림 배치에 실린다(LEFT 로 바뀌지 않는다). */
+    @Test void sigmetEndedEvent_isSentWithItsOwnName() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant now = Instant.now();
+            FakeWsSession f = k.subscribed("s", "1.1.1.1");
+            f.clear();
+            Alert a = alert(1, "OBSERVED", "aaa001", now, null);
+            k.hub.onAlerts(changed(AlertStateMachine.EventType.SIGMET_ENDED, a.closed(now, Alert.CLOSE_SIGMET_ENDED, Map.of("end_cause", "expired"))));
+            JsonNode item = ofType(f, "alerts_batch").get(0).path("items").get(0);
+            assertThat(item.path("event").asString()).isEqualTo("SIGMET_ENDED");
+            assertThat(item.path("alert").path("close_reason").asString()).isEqualTo("sigmet_ended");
+            assertThat(item.path("alert").path("evidence").path("end_cause").asString()).isEqualTo("expired");
         }
     }
 
@@ -398,6 +416,71 @@ class WsHubTest {
             k.msg(f, "{\"type\":\"select\",\"hex\":null}");
             k.publish("global", now.plusSeconds(40), moved);
             assertThat(ofType(f, "selected")).hasSize(3);
+        }
+    }
+
+    // ---------------------------------------------------------------- 수요 스코프(hot·focus, 계약 v2 §A3)
+
+    @Test void hotSnapshot_fansOutOnlyToSessionsWhoseBboxOverlapsTheChange() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant now = Instant.now();
+            FakeWsSession korea = k.subscribed("korea", "1.1.1.1");
+            FakeWsSession tokyo = k.connect("tokyo", "1.1.1.2");
+            k.msg(tokyo, "{\"type\":\"hello\",\"proto\":1}");
+            k.msg(tokyo, "{\"type\":\"subscribe\",\"bbox\":[138,34,142,37],\"zoom\":8}");
+            korea.clear();
+            tokyo.clear();
+            k.publishHot("35.5:139.5:150", now, ac("ccc001", 35.6, 139.7, 30000, now, "adsb_fi"));
+            assertThat(ofType(tokyo, "diff")).singleElement().satisfies(d ->
+                    assertThat(d.path("upsert").get(0).path("hex").asString()).isEqualTo("ccc001"));
+            assertThat(korea.sent).isEmpty(); // 범위 밖 세션은 팬아웃하지 않는다
+            // 셀에서 사라짐(이전 위치가 범위에 있다) → remove
+            k.publishHot("35.5:139.5:150", now.plusSeconds(30));
+            assertThat(ofType(tokyo, "diff").getLast().path("remove").get(0).asString()).isEqualTo("ccc001");
+            assertThat(WsHub.envelope(List.of(), List.of())).isNull();
+        }
+    }
+
+    @Test void focusUpdate_sendsSelectedEveryObservation_evenOutsideBbox_noDuplicates() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant now = Instant.now();
+            FakeWsSession far = k.subscribed("far", "1.1.1.1");       // 한국 화면, 대서양 항공기 선택
+            FakeWsSession near = k.connect("near", "1.1.1.2");       // 그 항공기가 화면 안
+            k.msg(near, "{\"type\":\"hello\",\"proto\":1}");
+            k.msg(near, "{\"type\":\"subscribe\",\"bbox\":[-45,35,-35,45],\"zoom\":8}");
+            k.msg(far, "{\"type\":\"select\",\"hex\":\"ddd001\"}");
+            k.msg(near, "{\"type\":\"select\",\"hex\":\"ddd001\"}");
+            assertThat(ofType(far, "selected")).hasSize(1); // 즉시 응답(아직 상태 없음)
+            for (int i = 1; i <= 3; i++) {
+                Instant t = now.plusSeconds(5L * i);
+                k.publishFocus(t, ac("ddd001", 40, -40 + i * 0.01, 36000, t, "adsb_fi"));
+            }
+            List<JsonNode> sel = ofType(far, "selected");
+            assertThat(sel).hasSize(4); // 즉시 1 + focus 관측마다 1
+            assertThat(sel.getLast().path("state").path("provider").asString()).isEqualTo("adsb_fi");
+            assertThat(ofType(far, "diff")).isEmpty(); // 화면 밖이라 항공기 diff 는 없다
+            assertThat(ofType(near, "selected")).hasSize(4); // 팬아웃과 selected 작업이 같은 관측을 두 번 보내지 않는다
+            assertThat(ofType(near, "diff")).hasSize(3);
+            // 같은 관측(새 fetched_at 이지만 seen_at 같음) — 새 상태 객체라 selected 는 다시 간다(집중 추적 갱신마다)
+            Instant t3 = now.plusSeconds(15);
+            k.publishFocus(now.plusSeconds(20), ac("ddd001", 40, -39.97, 36000, t3, "adsb_fi"));
+            assertThat(ofType(far, "selected")).hasSize(5);
+        }
+    }
+
+    @Test void demandListener_firesOnSubscribeSelectPauseResumeAndClose() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+            k.hub.setDemandListener(n::incrementAndGet);
+            FakeWsSession f = k.subscribed("s", "1.1.1.1");              // subscribe
+            k.msg(f, "{\"type\":\"select\",\"hex\":\"abc123\"}"); // select
+            k.msg(f, "{\"type\":\"pause\"}");
+            k.msg(f, "{\"type\":\"resume\"}");
+            k.msg(f, "{\"type\":\"resume\"}");                        // 일시정지가 아니었다 → 변화 없음
+            k.handler.afterConnectionClosed(f, CloseStatus.NORMAL);         // 창 닫기
+            assertThat(n.get()).isEqualTo(5);
+            k.hub.setDemandListener(null);
+            k.hub.demandChanged(); // 리스너 없음 — 아무 일도 없다
         }
     }
 

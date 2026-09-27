@@ -67,8 +67,13 @@ public class RegionSettings {
         return current;
     }
 
-    /** 즉시 다시 읽는다(설정 변경·기동 미러 직후). 실패하면 마지막 값을 유지한다. */
-    public Region refreshNow() {
+    /**
+     * 즉시 다시 읽는다(설정 변경·기동 미러 직후). 실패하면 마지막 값을 유지한다.
+     * 읽기와 반영을 한 락 안에서 한다(API-CONC-7): 이전에는 TTL 만료로 시작된 백그라운드 갱신이 옛 값을 읽은 뒤, 설정 변경 직후의
+     * 갱신(새 값)보다 늦게 반영해 30~60 s 동안 옛 관심 지역을 썼다. 설정 변경 쪽 갱신은 미러가 끝난 뒤에 시작하므로, 직렬화하면 마지막
+     * 반영은 항상 미러 이후에 읽은 값이다. 조회(current)는 이 락을 잡지 않는다 — 요청 스레드는 기다리지 않는다.
+     */
+    public synchronized Region refreshNow() {
         Map<String, String> raw = null;
         try {
             List<Object> v = redis.opsForHash().multiGet(SettingsService.REDIS_KEY, List.of(K_CENTER, K_RADIUS));

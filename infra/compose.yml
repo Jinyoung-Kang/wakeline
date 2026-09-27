@@ -1,4 +1,4 @@
-# Wakeline 로컬 스택 — 6 컨테이너. 공개 포트는 edge(127.0.0.1:${WAKELINE_PORT:-8700}) 하나뿐이다.
+# Wakeline 로컬 스택 — 상시 7 컨테이너(edge·web·api·collector·ais·redis·db) + 일회성 migrate. 공개 포트는 edge(127.0.0.1:${WAKELINE_PORT:-8700}) 하나뿐이다.
 # 같은 파일로 격리된 E2E·데모 스택도 띄운다: -p wakeline-e2e, WAKELINE_PORT=8701, WAKELINE_NET_PREFIX=10.78.0 (Makefile e2e/demo).
 # 프로젝트가 다르면 컨테이너·볼륨·네트워크가 분리되어 개발 DB 에 fixture 데이터가 섞이지 않는다.
 #
@@ -6,14 +6,27 @@
 #   db 만 엔트리포인트가 데이터 디렉터리 소유권을 맞춘 뒤 postgres(999)로 내려가므로 그 5개 권한(CHOWN·DAC_OVERRIDE·FOWNER·SETGID·SETUID)을 남긴다
 #   — postgres 프로세스 자체는 권한 0 으로 돈다(infra/tests/db_hardening_test.sh).
 # 제3자 이미지는 태그+다이제스트로 고정한다(Dependabot docker-compose 가 매주 갱신 PR).
-# Redis 는 서비스별 ACL 사용자(계약 §6, infra/redis/start.sh)로 접속한다 — api·collector 는 관리용 default 비밀번호를 모른다.
+# Redis 는 서비스별 ACL 사용자(계약 §6 · v2 §C, infra/redis/start.sh)로 접속한다 — api·collector·ais 는 관리용 default 비밀번호를 모른다.
+# 외부 키는 그것을 쓰는 컨테이너에만 들어간다: OpenSky·기상청 → collector, aisstream.io(.env 의 aisstream_key) → ais.
+# 격리 스택(Makefile ISO_ENV)은 외부 키를 빈 값으로 덮어써 fixture 재생만 한다.
 name: wakeline
+
+# 컨테이너 로그 상한(json-file 회전). Docker 기본값은 무제한이라 AIS 처럼 오래 도는 수신기가 디스크를 채울 수 있다.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
 
 x-hardened: &hardened
   read_only: true
   cap_drop: ["ALL"]
   security_opt: ["no-new-privileges:true"]
   restart: unless-stopped
+  logging: *logging
+
+# collector 와 ais 가 같은 이미지를 쓴다(진입점만 다름, ADR-014). 빌드 정의는 한 곳에.
+x-collector-build: &collector_build
+  context: ..
+  dockerfile: apps/collector/Dockerfile
 
 services:
   edge:
@@ -68,6 +81,8 @@ services:
 
   migrate:
     # Flyway 를 한 번 실행하고 끝난다. DDL 권한 비밀번호(DB_MIGRATOR_PASSWORD)는 이 컨테이너에만 주입한다.
+    # --migrate 는 Spring 없이 Flyway 만 돌리고 DB_HOST·DB_PORT·DB_NAME·DB_MIGRATOR_USER·DB_MIGRATOR_PASSWORD 만 읽는다
+    # (WakelineApplication.migrate) — api DB 비밀번호·Redis 자격증명은 주지 않고 Redis 를 기다리지도 않는다(SEC-R2).
     image: wakeline-api:local
     build: ../apps/api
     <<: *hardened
@@ -78,15 +93,9 @@ services:
       TZ: UTC
       DB_HOST: db
       DB_NAME: wakeline
-      DB_API_PASSWORD: ${DB_API_PASSWORD}
-      DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
-      REDIS_HOST: redis
-      # api 와 같은 ACL 사용자(관리용 default 비밀번호는 주지 않는다)
-      REDIS_USERNAME: wakeline_api
-      REDIS_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
+      DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD:?DB_MIGRATOR_PASSWORD 가 .env 에 없습니다 — make init}
     depends_on:
       db: { condition: service_healthy }
-      redis: { condition: service_healthy }
     networks:
       wakeline: {}
 
@@ -136,9 +145,7 @@ services:
 
   collector:
     image: wakeline-collector:local
-    build:
-      context: ..
-      dockerfile: apps/collector/Dockerfile
+    build: *collector_build
     <<: *hardened
     tmpfs: ["/tmp"]
     # 최소 권한: .env 전체(env_file)를 넘기지 않고 collector 가 쓰는 값만 명시한다.
@@ -188,6 +195,47 @@ services:
       start_period: 60s
       start_interval: 5s
 
+  ais:
+    # 선박 AIS 수신(ADR-014): aisstream.io WebSocket 하나를 계속 열어 두고 받은 메시지를 10 s 마다 wakeline:ships 로 XADD 한다.
+    # 항공기 폴링(collector)과 이벤트 루프·메모리를 나누는 격벽이다 — 푸시 폭주·재연결이 항공기 수집을 굶기지 않는다.
+    # 최소 권한: DB 비밀번호 없음(DB 에 쓰지 않는다), Redis 는 wakeline_ais(wakeline:ships · wakeline:ais:* 쓰기, 설정 읽기 전용),
+    #   외부 키는 aisstream 키 하나. 이미지는 collector 와 같고 진입점만 다르다(이미지 ENTRYPOINT 를 바꾼다 — command 로는 인자만 붙는다).
+    image: wakeline-collector:local
+    build: *collector_build
+    <<: *hardened
+    init: true                                   # PID 1 = tini: SIGTERM 전달·좀비 회수
+    entrypoint: ["python", "-m", "wakeline_collector.ais"]
+    tmpfs: ["/tmp:size=16m"]
+    environment:
+      TZ: UTC
+      REDIS_HOST: redis
+      REDIS_USERNAME: wakeline_ais                 # 계약 v2 §C
+      REDIS_PASSWORD: ${REDIS_AIS_PASSWORD:?REDIS_AIS_PASSWORD 가 .env 에 없습니다 — make init}
+      # 사용자가 .env 에 저장한 이름(aisstream_key)을 그대로 읽어 이 컨테이너에서만 AISSTREAM_API_KEY 로 넘긴다. 없으면 빈 값(수신 안 함).
+      AISSTREAM_API_KEY: ${aisstream_key:-}
+      AIS_BBOXES: ${AIS_BBOXES:-18,105,46,150}     # lat1,lon1,lat2,lon2; ';' 로 여러 상자. 런타임에는 wakeline:settings.ais_bboxes 가 덮어쓴다
+      HTTP_USER_AGENT: ${HTTP_USER_AGENT:-wakeline-dev/0.2}
+      FIXTURES_DIR: /app/fixtures
+      SCHEMAS_DIR: /app/schemas
+      WAKELINE_FIXTURE_MODE: ${WAKELINE_FIXTURE_MODE:-0}
+    depends_on:
+      redis: { condition: service_healthy }
+      # api 가 wakeline:ships 소비자 그룹을 만든 뒤에 발행을 시작한다(첫 정적 정보 묶음을 놓치지 않게). 재시작 때는 적용되지 않는다.
+      api: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { memory: 256m, pids: 128 }
+    networks:
+      wakeline: {}
+    healthcheck:
+      # 계약 v2 §B1: 마지막 메시지 120 s 안, 또는 공백(gap)이 열린 채 재연결 중이면 정상(끊김은 화면이 공백으로 보인다)
+      test: ["CMD", "python", "-m", "wakeline_collector.ais.health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+
   redis:
     image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     <<: *hardened
@@ -197,6 +245,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}                 # default(관리) — 헬스체크·운영 redis-cli 전용
       REDIS_API_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
       REDIS_COLLECTOR_PASSWORD: ${REDIS_COLLECTOR_PASSWORD:?REDIS_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
+      REDIS_AIS_PASSWORD: ${REDIS_AIS_PASSWORD:?REDIS_AIS_PASSWORD 가 .env 에 없습니다 — make init}
     volumes:
       - ./redis/redis.conf:/etc/redis/redis.conf:ro
       - ./redis/start.sh:/etc/redis/start.sh:ro
@@ -221,11 +270,15 @@ services:
     # 엔트리포인트(root)가 데이터 디렉터리 소유권·권한을 맞추고 gosu 로 postgres(999)가 되는 데 필요한 것만
     cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
     security_opt: ["no-new-privileges:true"]
+    logging: *logging
     environment:
       POSTGRES_PASSWORD: ${DB_ROOT_PASSWORD}
       DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
       DB_API_PASSWORD: ${DB_API_PASSWORD}
       DB_COLLECTOR_PASSWORD: ${DB_COLLECTOR_PASSWORD}
+      # SEC-R3: 슈퍼유저는 로컬 소켓 전용(infra/db/init/02-superuser-local-only.sh). 새 데이터 디렉터리에만 적용된다 —
+      # 기존 볼륨은 tools/db-superuser-local-only.sh 로 한 번 적용한다. 헬스체크·운영 psql 은 로컬 소켓이라 영향 없음.
+      WAKELINE_PG_SUPERUSER_TCP: reject
     volumes:
       - db_data:/var/lib/postgresql
       - ./db/init:/docker-entrypoint-initdb.d:ro

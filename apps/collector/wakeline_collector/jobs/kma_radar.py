@@ -23,6 +23,7 @@ from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, render_mercator_png
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
+from wakeline_collector.ratelimit import Throttled
 
 log = logging.getLogger("job.kma_radar")
 KEY_META = "wakeline:radar_kr:meta"  # hash
@@ -168,7 +169,7 @@ class KmaRadarJob:
                 self._mark_bad(tm)
                 quality.append(("kma_radar_parse", None, {"tm": tm, "error": str(e)[:200]}))
                 log.warning("kma radar: tm=%s skipped — %s", tm, str(e)[:160])
-            except (ProviderHttpError, httpx.HTTPError, OSError) as e:
+            except (ProviderHttpError, httpx.HTTPError, OSError, Throttled) as e:  # Throttled: 속도 상한(429 쿨다운 등)
                 await self._fail(started, e)
                 return
         ctx.db.record_run(

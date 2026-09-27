@@ -1,0 +1,18 @@
+{
+  "_source": "docs/audit/change-contract-v2.md §B3 — USCG AIS Guide ship type table. Same table for api ShipCategory and web lib/ships.ts.",
+  "_rule": "codes not listed (1-99 and reserved 100-255) → default; null or missing ship_type → null_category",
+  "default": "other",
+  "null_category": "unknown",
+  "categories": {
+    "unknown": [0],
+    "fishing": [30],
+    "tug": [31, 32, 52],
+    "pleasure": [36, 37],
+    "hsc": [40, 41, 42, 43, 44, 45, 46, 47, 48, 49],
+    "special": [50, 51, 53, 54, 55, 58],
+    "military": [35],
+    "passenger": [60, 61, 62, 63, 64, 65, 66, 67, 68, 69],
+    "cargo": [70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
+    "tanker": [80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+  }
+}

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
-import { fmtTime } from "@/lib/format";
+import { fmtBudgetLimit, fmtTime } from "@/lib/format";
 
 type Any = Record<string, unknown>;
 interface Providers { providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[] }
@@ -85,7 +85,7 @@ function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: ()
               <td className="mono">{String(p.name)}{p.disabled === "1" ? <span className="badge bad ml-1">disabled</span> : null}</td>
               <td className="mono">{fmtTime(String(p.last_success_at ?? ""))}</td><td className="mono">{String(p.last_latency_ms ?? "—")} ms</td><td className="mono">{String(p.last_records ?? "—")}</td>
               <td className={`mono ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
-              <td className="mono">{String(p.budget_used ?? "—")} / {Number(p.budget_limit) > 0 ? String(p.budget_limit) : "∞"}</td><td className="mono">{String(p.budget_remaining ?? "—")}</td>
+              <td className="mono" title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className="mono">{String(p.budget_remaining ?? "—")}</td>
               <td className="max-w-[320px] truncate text-fg-3" title={String(p.last_error ?? "")}>{String(p.last_error ?? "")} {p.last_error_at ? fmtTime(String(p.last_error_at)) : ""}</td>
               <td>{p.disabled === "1" ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
             </tr>)}</tbody></table>

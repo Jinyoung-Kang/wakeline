@@ -1,7 +1,9 @@
 /* Wakeline 보간 워커(순수 JS, 번들러 무관). lib/interpolate.ts 와 같은 공식·규칙 — tests/worker-sync.test.ts 가 두 구현의 일치를 검사한다.
    - dead reckoning 으로 렌더 상태를 만들어 메인 스레드로 보낸다. 서버 값이 오면 500 ms 완화(easing).
    - 경과 시간으로 항공기를 지우지 않는다(FR-19). 삭제는 서버의 remove·스냅샷만. 외삽은 60 s(opensky 180 s) 상한에서 멈추고 stale.
-   - 바뀐 것이 없으면(데이터·뷰포트·위치·stale 수) postMessage 하지 않는다. 틱 간격은 줌에 따라 0.5 px 이동 시간(250 ms – 4 s). */
+   - 바뀐 것이 없으면(데이터·뷰포트·위치·stale 수) postMessage 하지 않는다. 틱 간격은 줌에 따라 0.5 px 이동 시간(250 ms – 4 s).
+   - 경과·stale·외삽은 서버 기준 시각(브라우저 시각 + 메인 스레드가 보낸 "clock" 오프셋)으로 계산한다 — 카드·툴팁·ETA 와 같은 기준(WS-3).
+     easing(화면 완화)은 브라우저 시각끼리의 차이라 오프셋과 무관하다. */
 (function () {
   "use strict";
   var R = 6371000, STALE_AFTER_S = 60, STALE_AFTER_OPENSKY_S = 300, EXTRAPOLATE_CAP_S = 60, EXTRAPOLATE_CAP_OPENSKY_S = 180;
@@ -62,16 +64,18 @@
   var timer = null, running = false, tickMs = 250, dirty = true, lastStaleN = -1;
   // 뷰포트 컬링: 메인 스레드가 보내는 [w, s, e, n] + 여백 안의 항공기만 렌더 상태로 만든다(전세계 7,000+ 대 대응).
   var view = null, zoom = null, midLat = null;
+  // 서버 − 브라우저 시계 오프셋(ms). 모르면 0(브라우저 시계 그대로).
+  var clockOffset = 0;
   function inView(lat, lon) {
     if (!view) return true;
     if (lat < view[1] || lat > view[3]) return false;
     return view[0] <= view[2] ? lon >= view[0] && lon <= view[2] : lon >= view[0] || lon <= view[2];
   }
   function tick() {
-    var now = Date.now(), out = [], changed = dirty, staleN = 0;
+    var now = Date.now(), serverNow = now + clockOffset, out = [], changed = dirty, staleN = 0;
     states.forEach(function (s) {
       if (!inView(s.lat, s.lon)) return;
-      var r = predict(s, now);
+      var r = predict(s, serverNow);
       var e = easing.get(s.hex);
       if (e) {
         var t = (now - e.at) / 500;
@@ -119,9 +123,11 @@
       kick();
     }
     else if (m.type === "invalidate") kick(); // 선택 변경 등 메인 스레드가 다시 그리기를 원할 때
+    else if (m.type === "clock") { if (typeof m.offsetMs === "number" && isFinite(m.offsetMs)) { clockOffset = m.offsetMs; kick(); } }
     else if (m.type === "start") { running = true; kick(); }
     else if (m.type === "stop") { running = false; schedule(); }
   };
   // 테스트에서 순수 함수·틱을 꺼내 쓸 수 있게 노출(브라우저 워커에서는 무해)
-  self.__wakeline = { deadReckon: deadReckon, predict: predict, ease: ease, wrap180: wrap180, seenAtMs: seenAtMs, thresholds: thresholds, tickIntervalMs: tickIntervalMs, tick: tick };
+  self.__wakeline = { deadReckon: deadReckon, predict: predict, ease: ease, wrap180: wrap180, seenAtMs: seenAtMs, thresholds: thresholds, tickIntervalMs: tickIntervalMs, tick: tick,
+    clockOffset: function () { return clockOffset; } };
 })();

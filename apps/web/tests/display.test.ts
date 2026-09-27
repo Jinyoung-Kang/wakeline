@@ -126,14 +126,16 @@ describe("10-min prediction line targets (GAP-20)", () => {
     expect(predictionTargets(null, [predAlert("p1", { left_at: "y" })], states)).toEqual([]);
   });
   it("feature is labelled 추정 and has 11 points; missing gs/track → none", () => {
-    const f = predictionFeature(st("x"))!;
+    const f = predictionFeature(st("x"), NOW)!;
     expect(f.properties).toMatchObject({ estimated: true, label: expect.stringContaining("추정") });
     expect(f.geometry.coordinates).toHaveLength(11);
-    expect(predictionFeature(st("x", { gs_kt: null }))).toBeNull();
-    expect(predictionFeature(st("x", { on_ground: true }))).toBeNull();
+    expect(predictionFeature(st("x", { gs_kt: null }), NOW)).toBeNull();
+    expect(predictionFeature(st("x", { on_ground: true }), NOW)).toBeNull();
   });
-  it("key changes only when inputs change", () => {
-    expect(predictionKey([st("a")])).toBe(predictionKey([st("a")]));
-    expect(predictionKey([st("a")])).not.toBe(predictionKey([st("a", { seen_at: "2026-09-27T05:10:10Z" })]));
+  it("key changes only when inputs change (and, with targets, each second because the line starts at now)", () => {
+    expect(predictionKey([st("a")], NOW)).toBe(predictionKey([st("a")], NOW + 999));
+    expect(predictionKey([st("a")], NOW)).not.toBe(predictionKey([st("a", { seen_at: "2026-09-27T05:10:10Z" })], NOW));
+    expect(predictionKey([st("a")], NOW)).not.toBe(predictionKey([st("a")], NOW + 1000));
+    expect(predictionKey([], NOW)).toBe(predictionKey([], NOW + 60_000));
   });
 });

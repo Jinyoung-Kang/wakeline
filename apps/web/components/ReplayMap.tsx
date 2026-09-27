@@ -75,7 +75,8 @@ export function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayF
         type: "FeatureCollection",
         features: frame.aircraft.map((a: ReplayAircraft) => ({
           type: "Feature", id: a.hex,
-          properties: { hex: a.hex, alt_ft: a.alt_ft ?? null, track_deg: a.track_deg ?? null, estimated: false, stale: false, callsign: a.callsign ?? null },
+          // 방위가 없으면(1분 요약 행 등) 방향 없는 기호, 지상이면 지상 색 — 상황판과 같은 규칙(maplayers)
+          properties: { hex: a.hex, alt_ft: a.alt_ft ?? null, track_deg: a.track_deg ?? null, on_ground: a.on_ground ?? null, estimated: false, stale: false, callsign: a.callsign ?? null },
           geometry: { type: "Point", coordinates: [a.lon, a.lat] },
         })),
       });

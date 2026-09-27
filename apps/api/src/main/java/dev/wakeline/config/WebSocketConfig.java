@@ -1,7 +1,7 @@
 package dev.wakeline.config;
 
 import dev.wakeline.ws.OriginAllowList;
-import dev.wakeline.ws.SkyWsHandler;
+import dev.wakeline.ws.WakelineWsHandler;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,10 +28,10 @@ import java.util.Map;
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
     private static final Logger log = LoggerFactory.getLogger(WebSocketConfig.class);
-    private final SkyWsHandler handler;
+    private final WakelineWsHandler handler;
     private final AppProperties props;
 
-    public WebSocketConfig(SkyWsHandler handler, AppProperties props) {
+    public WebSocketConfig(WakelineWsHandler handler, AppProperties props) {
         this.handler = handler;
         this.props = props;
     }
@@ -56,7 +56,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
         public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response, WebSocketHandler wsHandler, Map<String, Object> attributes) {
             if (request instanceof ServletServerHttpRequest s) {
                 HttpServletRequest req = s.getServletRequest();
-                attributes.put(SkyWsHandler.ATTR_IP, ClientIp.resolve(req, trustedProxy));
+                attributes.put(WakelineWsHandler.ATTR_IP, ClientIp.resolve(req, trustedProxy));
             }
             return true;
         }

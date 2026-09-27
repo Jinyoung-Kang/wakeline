@@ -39,10 +39,12 @@ public class TrackRepository {
     /**
      * 시각 at 의 항공기(3분 창). 원해상도(track_point)가 비어 있을 때만 1분 요약(track_point_1m)으로 내려간다.
      * source 는 요청 시각으로 짐작하지 않고, 행을 실제로 준 질의로 정한다.
+     * 행마다 averaged 를 단다(DH-11): false = 기록된 위치 그대로, true = 1분 동안의 위치·고도·속도 평균(요약 — 실제로 있던 한 점이
+     * 아니다, samples = 평균에 쓴 점 수). 요약에는 방위·지상 여부가 없으므로 null(0·false 로 채우지 않는다).
      */
     public Replay replay(Instant at, Bbox b) {
         List<Map<String, Object>> rows = db.sql("""
-                SELECT DISTINCT ON (hex) hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, on_ground, provider
+                SELECT DISTINCT ON (hex) hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, on_ground, provider, false averaged
                 FROM track_point
                 WHERE ts BETWEEN :t - interval '3 minutes' AND :t
                   AND geom && ST_MakeEnvelope(:lomin, :lamin, :lomax, :lamax, 4326)
@@ -53,7 +55,8 @@ public class TrackRepository {
         if (rows.isEmpty()) {
             // 1분 요약에는 방위·지상 여부가 없다 — 모르는 값은 null 로 둔다(false·0 으로 채우지 않는다)
             rows = db.sql("""
-                    SELECT DISTINCT ON (hex) hex, ts_minute ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, NULL::real track_deg, NULL::boolean on_ground, '1m_summary' provider
+                    SELECT DISTINCT ON (hex) hex, ts_minute ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, NULL::real track_deg, NULL::boolean on_ground,
+                           '1m_summary' provider, true averaged, n samples
                     FROM track_point_1m
                     WHERE ts_minute BETWEEN :t - interval '3 minutes' AND :t
                       AND geom && ST_MakeEnvelope(:lomin, :lamin, :lomax, :lamax, 4326)

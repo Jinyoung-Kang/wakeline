@@ -32,9 +32,19 @@ export const CAT_STALE_STROKE = "#8a929d";
 /** 항공기 아이콘·항적 고도 색 램프(ft → 색). 지도 식과 범례가 같은 값을 쓴다. 고도를 모르면 0 ft 색이 아니라 ALT_UNKNOWN_COLOR. */
 export const ALT_RAMP: [number, string][] = [[0, "#3ec98f"], [10000, "#4c90f0"], [25000, "#8fb8ff"], [40000, "#e5e7eb"]];
 export const ALT_UNKNOWN_COLOR = "#6b737e";
+/** 지상(on_ground=true — 공급자 값) 항공기 아이콘 색. 고도 램프(0 ft 녹색)와 구분 — 지상 고도를 0 ft 로 그리지 않는다(DH-3). */
+export const GND_COLOR = "#b5895a";
 
 export function fmtAlt(ft: number | null | undefined) {
   return ft == null ? "—" : ft >= 18000 ? `FL${Math.round(ft / 100)}` : `${ft.toLocaleString()} ft`;
+}
+/**
+ * 고도 표시(지상 포함, DH-3): 공급자가 지상(on_ground=true)이라고 하면 "GND". 수집기가 지상에 0 ft 를 채우던 시절 값(0)은 고도로 보이지 않는다.
+ * 지상인데 0 이 아닌 기압 고도를 보고했으면(OpenSky baro_altitude) 함께 보여 준다 — 보고값 그대로.
+ */
+export function fmtAltGnd(ft: number | null | undefined, onGround: boolean | null | undefined) {
+  if (onGround !== true) return fmtAlt(ft);
+  return ft == null || ft === 0 ? "GND" : `GND (${fmtAlt(ft)} 보고)`;
 }
 export function fmtNum(v: number | null | undefined, unit = "", digits = 0) {
   return v == null ? "—" : `${v.toFixed(digits)}${unit}`;
@@ -120,12 +130,25 @@ export function band(base: number | null | undefined, top: number | null | undef
   else lo = fmtAlt(base);
   let hi: string;
   if (top == null || src?.top_source === "unknown") hi = TOP_UNKNOWN_LABEL;
+  else if (src?.top_source === "raw_text_lower_bound") hi = `${fmtAlt(top)} 이상 (원문 ABV)`;
   else if (src?.top_source === "raw_text") hi = `${fmtAlt(top)}${src.top_above ? " 이상" : ""} (원문)`;
   else hi = fmtAlt(top);
   return `${lo} – ${hi}`;
 }
 
 // ---- METAR(공항) ----
+
+/**
+ * 시정(DH-7): AWC METAR JSON 의 visib 는 법정마일(SM) — 원문 9999(10 km 이상)가 "6+"(6.2 SM 이상)로 온다(2026-09-28 RKSI·RKPC 실응답 대조).
+ * "N+" 는 "N SM 이상"(하한). 숫자·분수 형식이 아니면 원문 그대로(단위를 붙이지 않는다). 없으면 "—".
+ */
+export function fmtVisSm(raw: string | number | null | undefined) {
+  if (raw == null || raw === "") return "—";
+  const v = String(raw).trim();
+  const m = /^(\d+(?:\.\d+)?|\d+\/\d+|\d+ \d+\/\d+)(\+)?$/.exec(v);
+  if (!m) return v;
+  return m[2] ? `${m[1]} SM 이상` : `${m[1]} SM`;
+}
 
 /** METAR 가 이보다 오래되면 "오래됨"(계약서 §2 stale: obs_age_s > 7200) */
 export const METAR_STALE_S = 7200;
@@ -163,4 +186,32 @@ export function isMetarStale(p: { obs_time?: unknown; obs_age_s?: unknown; stale
   const age = metarAgeS(p, nowMs);
   if (age != null) return age > METAR_STALE_S;
   return p?.stale === true;
+}
+
+// ---- 레이더(기상청) ----
+
+/** 기상청 레이더 수집이 이보다 오래되면 STALE — 서버 meta.stale 과 같은 기준(WeatherController: Meta.of(…, 900)). */
+export const KR_RADAR_STALE_S = 900;
+/**
+ * 기상청 레이더 STALE(REL-19): 서버 판정(meta.stale) 또는 (서버 기준) 현재 시각에서 본 수집 경과 > 900 s.
+ * REST 폴링이 실패해 마지막 응답이 남아 있는 경우도 경과로 드러난다.
+ */
+export function isKrRadarStale(kr: { meta?: { stale?: boolean | null; fetched_at?: string | null } | null } | null | undefined, nowMs: number): boolean {
+  if (!kr?.meta) return false;
+  if (kr.meta.stale === true) return true;
+  const age = ageS(kr.meta.fetched_at ?? null, nowMs);
+  return age != null && age > KR_RADAR_STALE_S;
+}
+
+// ---- 운영 ----
+
+/**
+ * 공급자 일일 예산 한도(DH-14). 0 은 설정상 "한도 없음"(budget.py: limit > 0 일 때만 검사) → "∞".
+ * 값이 없으면(아직 성공한 적 없는 공급자는 status 에 한도를 쓰지 않는다) "—" — 모르는 한도를 무제한으로 보이게 하지 않는다.
+ */
+export function fmtBudgetLimit(v: unknown) {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  return n > 0 ? String(n) : "∞";
 }

@@ -168,6 +168,139 @@ class RolePrivilegesDbTest {
         }
     }
 
+    /**
+     * 선박 표(V5) 최소 권한: ship 은 upsert(INSERT·UPDATE)·조회만, ship_position 은 부모로 INSERT·SELECT 만(파티션 직접 접근·삭제 불가 —
+     * 보존은 함수로만), ingest_gap 은 영구 이력(INSERT·SELECT 만). 수집기 역할(DB 를 쓰지 않는 ais 는 DB 계정 자체가 없다)은 아무것도 못 한다.
+     */
+    @Test
+    void shipTablesAreLeastPrivilege() throws SQLException {
+        String part = "ship_position_" + LocalDate.now(ZoneOffset.UTC).format(DateTimeFormatter.BASIC_ISO_DATE);
+        try (Connection c = api()) {
+            assertThat(state(c, "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440000777', now(), "
+                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'role_test') ON CONFLICT DO NOTHING")).isNull();
+            assertThat(state(c, "SELECT count(*) FROM ship_position")).isNull();
+            assertThat(state(c, "INSERT INTO ship (mmsi, first_seen, last_seen, provider) VALUES ('440000777', now(), now(), 'role_test') "
+                    + "ON CONFLICT (mmsi) DO UPDATE SET last_seen = EXCLUDED.last_seen")).isNull();
+            assertThat(state(c, "INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider) VALUES ('role_test', now(), now() + interval '1 minute', 'r', 'x') "
+                    + "ON CONFLICT DO NOTHING")).isNull();
+            for (String sql : new String[]{
+                    "DELETE FROM ship_position",
+                    "UPDATE ship_position SET provider = 'x'",
+                    "DELETE FROM " + part,
+                    "SELECT count(*) FROM " + part,
+                    "DROP TABLE " + part,
+                    "DELETE FROM ship",
+                    "UPDATE ingest_gap SET reason = 'forged'",
+                    "DELETE FROM ingest_gap",
+                    "TRUNCATE ingest_gap",
+                    "ALTER FUNCTION ship_position_drop_old(int) SECURITY INVOKER",
+            }) {
+                assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
+            }
+            assertThat(((Number) scalar(c, "SELECT ship_position_ensure_partitions(3)")).intValue()).isGreaterThanOrEqualTo(0);
+            assertThat(((Number) scalar(c, "SELECT ship_position_drop_old(72)")).intValue()).isGreaterThanOrEqualTo(0);
+            for (String bad : new String[]{"SELECT ship_position_ensure_partitions(15)", "SELECT ship_position_drop_old(23)"})
+                assertThat(state(c, bad)).as(bad).isEqualTo(RAISED);
+        }
+        try (Connection c = collector()) {
+            for (String sql : new String[]{
+                    "SELECT count(*) FROM ship", "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440000778', now(), "
+                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'x')", "SELECT count(*) FROM ingest_gap", "SELECT ship_position_ensure_partitions(3)"}) {
+                assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
+            }
+        }
+        try (Connection m = migrator()) {
+            for (String fn : new String[]{"ship_position_ensure_partitions", "ship_position_drop_old"}) {
+                assertThat(scalar(m, "SELECT prosecdef FROM pg_proc WHERE proname = '" + fn + "'")).as(fn).isEqualTo(true);
+                assertThat(String.valueOf(scalar(m, "SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE proname = '" + fn + "'")))
+                        .contains("search_path=public, pg_temp");
+            }
+            state(m, "DELETE FROM ship WHERE provider = 'role_test'");
+            state(m, "DELETE FROM ingest_gap WHERE source = 'role_test'");
+            state(m, "DELETE FROM ship_position WHERE provider = 'role_test'");
+        }
+    }
+
+    static String shipPartition(int daysFromToday) {
+        return "ship_position_" + LocalDate.now(ZoneOffset.UTC).plusDays(daysFromToday).format(DateTimeFormatter.BASIC_ISO_DATE);
+    }
+
+    /**
+     * 선박 파티션 함수(V5)를 api 역할로: 소유자(wakeline_migrator) 권한으로 만들고/지운다(SECURITY DEFINER). 함수가 만든 새 파티션에는 api 의
+     * 직접 권한이 하나도 없다(기본 권한이 준 DML 을 함수가 회수) — 부모 표를 거친 INSERT 만 된다. 인자 상한 밖은 모두 예외(DoS·이력 삭제 방지).
+     */
+    @Test
+    void shipPartitionFunctionsRunAsOwnerForTheApiRole_newPartitionsGrantTheApiNothing_andArgumentsAreBounded() throws SQLException {
+        String future = shipPartition(3);
+        String old = shipPartition(-10);
+        try (Connection m = migrator()) {
+            assertThat(state(m, "DROP TABLE IF EXISTS " + future)).isNull();
+            LocalDate d = LocalDate.now(ZoneOffset.UTC).minusDays(10);
+            assertThat(state(m, "CREATE TABLE IF NOT EXISTS " + old + " PARTITION OF ship_position FOR VALUES FROM ('" + d + "') TO ('" + d.plusDays(1) + "')")).isNull();
+        }
+        try (Connection c = api()) {
+            assertThat(((Number) scalar(c, "SELECT ship_position_ensure_partitions(3)")).intValue()).isGreaterThanOrEqualTo(1);
+            assertThat(scalar(c, "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = '" + future + "'")).isEqualTo("wakeline_migrator");
+            for (String priv : new String[]{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"})
+                assertThat(scalar(c, "SELECT has_table_privilege('wakeline_api', '" + future + "', '" + priv + "')")).as(future + " " + priv).isEqualTo(false);
+            // 부모를 거친 쓰기는 된다(자정 뒤에도 위치 저장이 이어진다) — 파티션을 직접 고치거나 지우지는 못한다
+            assertThat(state(c, "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440000779', now() + interval '3 days', "
+                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'role_test') ON CONFLICT DO NOTHING")).isNull();
+            assertThat(state(c, "DELETE FROM " + future)).isEqualTo(INSUFFICIENT_PRIVILEGE);
+            assertThat(state(c, "DROP TABLE " + future)).isEqualTo(INSUFFICIENT_PRIVILEGE);
+
+            assertThat(((Number) scalar(c, "SELECT ship_position_drop_old(72)")).intValue()).isGreaterThanOrEqualTo(1);
+            assertThat(scalar(c, "SELECT count(*) FROM pg_class WHERE relname = '" + old + "'")).isEqualTo(0L);
+            assertThat(scalar(c, "SELECT count(*) FROM pg_class WHERE relname = '" + shipPartition(0) + "'")).as("today's partition kept").isEqualTo(1L);
+            assertThat(scalar(c, "SELECT count(*) FROM pg_class WHERE relname = '" + shipPartition(-1) + "'")).as("yesterday's partition kept").isEqualTo(1L);
+
+            for (String bad : new String[]{"SELECT ship_position_ensure_partitions(0)", "SELECT ship_position_ensure_partitions(-1)",
+                    "SELECT ship_position_ensure_partitions(15)", "SELECT ship_position_drop_old(23)", "SELECT ship_position_drop_old(0)",
+                    "SELECT ship_position_drop_old(-72)", "SELECT ship_position_drop_old(721)"}) {
+                assertThat(state(c, bad)).as(bad).isEqualTo(RAISED);
+            }
+        }
+        try (Connection m = migrator()) {
+            for (String fn : new String[]{"ship_position_ensure_partitions", "ship_position_drop_old"})
+                assertThat(scalar(m, "SELECT has_function_privilege('wakeline_collector', '" + fn + "(int)', 'EXECUTE')")).as(fn).isEqualTo(false);
+            state(m, "DELETE FROM ship_position WHERE provider = 'role_test'");
+        }
+    }
+
+    /** V5 표·시퀀스·함수는 api 가 구조를 바꿀 수 없다(DDL·소유권·시퀀스 조작·권한 전달 모두 불가). */
+    @Test
+    void apiRoleCannotChangeTheShipSchema() throws SQLException {
+        try (Connection c = api()) {
+            for (String ddl : new String[]{
+                    "ALTER TABLE ship ADD COLUMN evil int",
+                    "ALTER TABLE ship DISABLE TRIGGER ALL",
+                    "ALTER TABLE ship OWNER TO wakeline_api",
+                    "COMMENT ON TABLE ship IS 'x'",
+                    "TRUNCATE ship",
+                    "TRUNCATE ship_position",
+                    "CREATE INDEX evil ON ship_position (provider)",
+                    "ALTER TABLE ship_position DETACH PARTITION " + shipPartition(0),
+                    "CREATE TABLE ship_position_29991231 PARTITION OF ship_position FOR VALUES FROM ('2999-12-31') TO ('3000-01-01')",
+                    "ALTER TABLE ingest_gap DROP CONSTRAINT ingest_gap_order",
+                    "DROP TABLE ingest_gap",
+                    "ALTER SEQUENCE ingest_gap_id_seq RESTART",
+                    "SELECT setval('ingest_gap_id_seq', 1)",
+                    "CREATE OR REPLACE FUNCTION ship_position_drop_old(retention_hours int) RETURNS int LANGUAGE sql AS 'SELECT 0'",
+                    "DROP FUNCTION ship_position_drop_old(int)",
+                    "ALTER FUNCTION ship_position_ensure_partitions(int) OWNER TO wakeline_api",
+            }) {
+                assertThat(state(c, ddl)).as(ddl).isEqualTo(INSUFFICIENT_PRIVILEGE);
+            }
+            // GRANT 는 grant option 이 없으면 경고만 — 결과로 확인
+            state(c, "GRANT SELECT ON ship TO wakeline_collector");
+            state(c, "GRANT INSERT ON ingest_gap TO wakeline_collector");
+            assertThat(scalar(c, "SELECT has_table_privilege('wakeline_collector', 'ship', 'SELECT')")).isEqualTo(false);
+            assertThat(scalar(c, "SELECT has_table_privilege('wakeline_collector', 'ingest_gap', 'INSERT')")).isEqualTo(false);
+            // 대조군: 공백 기록에 필요한 시퀀스 사용은 된다
+            assertThat(state(c, "SELECT nextval('ingest_gap_id_seq')")).isNull();
+        }
+    }
+
     @Test
     void testDatabasesAreInitialisedFromTheRealRolesScript() {
         // 두 번째 블록(확장·권한·시간대)을 스크립트에서 읽는다 — 형식이 바뀌면 여기서 먼저 깨진다

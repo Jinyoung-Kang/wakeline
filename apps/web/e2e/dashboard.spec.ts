@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const SOURCES = ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenFreeMap", "OpenMapTiles", "OpenStreetMap"];
+const SOURCES = ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "aisstream.io", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenFreeMap", "OpenMapTiles", "OpenStreetMap"];
 
 // fixture 모드 스택 대상(FR-12): 외부 호출 없이 전 화면 동작.
 test("dashboard loads with attribution, lag badge and aircraft", async ({ page }) => {
@@ -17,7 +17,7 @@ test("dashboard loads with attribution, lag badge and aircraft", async ({ page }
   // 지도 위 크레딧에도 데이터 출처 전부(OpenSky·기상청 포함)
   const mapCredit = page.locator(".maplibregl-ctrl-attrib");
   await expect(mapCredit).toBeInViewport({ timeout: 20_000 });
-  for (const src of ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenStreetMap"]) await expect(mapCredit).toContainText(src);
+  for (const src of ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "aisstream.io", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenStreetMap"]) await expect(mapCredit).toContainText(src);
   await expect(page.getByTestId("fixture-badge")).toBeVisible({ timeout: 20_000 });
   // 배지만이 아니라 실제 수집 출처가 fixture 인지(외부 호출 없음) 확인
   await expect(page.getByTestId("statusbar")).toContainText("fixture", { timeout: 20_000 });
@@ -97,7 +97,7 @@ test("status reports fixture collector and no external providers", async ({ requ
 
 test("forged X-Forwarded-For does not bypass rate limiting (3 paths)", async ({ request }) => {
   // edge 가 XFF 를 덮어쓰므로 위조 값은 api 에 닿지 않는다. 같은 IP 로 계산돼야 한다.
-  const headers = [{ "X-Forwarded-For": "1.2.3.4" }, { "X-Forwarded-For": "5.6.7.8, 9.9.9.9" }, { "X-Real-IP": "10.0.0.1", Forwarded: "for=8.8.8.8" }];
+  const headers: Record<string, string>[] = [{ "X-Forwarded-For": "1.2.3.4" }, { "X-Forwarded-For": "5.6.7.8, 9.9.9.9" }, { "X-Real-IP": "10.0.0.1", Forwarded: "for=8.8.8.8" }];
   const remaining: number[] = [];
   for (const h of headers) {
     const r = await request.get("/api/v1/status", { headers: h });
