@@ -66,5 +66,8 @@ async def test_rate_limited_backoff_grows_and_resets():
     assert chain.record_rate_limited("a") == 240
     assert chain.record_rate_limited("a") == 300
     assert (await chain.pick(["a", "b"])).name == "b"  # 쉬는 동안 2순위
+    chain.record_success("a")  # 최근 429 직후의 성공은 단계를 초기화하지 않는다(플래핑 방지)
+    assert chain.record_rate_limited("a") == 300
+    chain._last_429["a"] = 0.0  # 15분 넘게 조용했던 것으로 간주
     chain.record_success("a")
     assert chain.record_rate_limited("a") == 60

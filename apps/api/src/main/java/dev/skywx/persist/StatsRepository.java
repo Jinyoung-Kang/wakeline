@@ -19,8 +19,9 @@ public class StatsRepository {
                 .param("m", "sigmet_by_" + group).param("f", from).param("t", to).query().listOfRows();
     }
 
+    /** dim = 시(00~23). 'hour' 는 SQL 예약어라 별칭을 쓰지 않는다. */
     public List<Map<String, Object>> traffic(LocalDate day) {
-        return db.sql("SELECT day, dim hour, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = :d ORDER BY dim")
+        return db.sql("SELECT day, dim, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = :d ORDER BY dim")
                 .param("d", day).query().listOfRows();
     }
 

@@ -7,6 +7,8 @@ from typing import Any
 
 from skywx_collector.status import ProviderStatus
 
+RATE_LIMIT_RESET_S = 900.0  # 마지막 429 로부터 이만큼 조용하면 백오프 단계를 초기화
+
 
 class ProviderChain:
     def __init__(
@@ -19,7 +21,8 @@ class ProviderChain:
         self._cooldown = cooldown_s
         self._fails: dict[str, int] = {}
         self._down_until: dict[str, float] = {}
-        self._rate_limited: dict[str, int] = {}  # 연속 429 횟수
+        self._rate_limited: dict[str, int] = {}  # 429 단계(최근 15분 내)
+        self._last_429: dict[str, float] = {}
         self._current: str | None = None
 
     def mark_down(self, name: str, seconds: float) -> None:
@@ -53,12 +56,15 @@ class ProviderChain:
 
     def record_success(self, name: str) -> None:
         self._fails[name] = 0
-        self._rate_limited[name] = 0
+        # 성공 한 번으로 단계를 초기화하면 60 s 마다 429 ↔ 복귀가 반복된다(실측). 15분 조용해야 초기화.
+        if time.monotonic() - self._last_429.get(name, 0.0) > RATE_LIMIT_RESET_S:
+            self._rate_limited[name] = 0
 
     def record_rate_limited(self, name: str) -> float:
         """429: 지수 백오프(60 → 120 → 240 → 300 s)로 쉬게 한다. 반환값은 쉬는 시간(초)."""
         n = self._rate_limited.get(name, 0)
         self._rate_limited[name] = n + 1
+        self._last_429[name] = time.monotonic()
         wait = min(300.0, 60.0 * (2**n))
         self.mark_down(name, wait)
         return wait

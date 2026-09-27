@@ -67,3 +67,8 @@
 | web 단위 | Vitest | 13 (워커 일치 3 포함) |
 | 언어 간 계약 | tools/contract_check.py | 4 payload 검사 |
 | E2E | Playwright(fixture 모드) | 4 시나리오(`apps/web/e2e`) |
+
+## #12 통계 화면 `/stats/traffic` 500
+- **원인** `SELECT dim hour` — `hour` 는 PostgreSQL 예약어.
+- **수정** 별칭 제거(화면은 `dim` 을 읽음). 운영 API `POST /ops/stats/aggregate?day=` 를 추가해 집계를 즉시 재실행(멱등·감사 기록)할 수 있게 했다.
+- **회귀** 집계 후 `/stats/*` 3종 200, 화면에 FIR·hazard·시간대 막대 표시.

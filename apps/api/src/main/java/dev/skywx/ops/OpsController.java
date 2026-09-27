@@ -36,13 +36,24 @@ public class OpsController {
     private final StringRedisTemplate redis;
     private final SettingsService settings;
     private final AuditService audit;
+    private final dev.skywx.persist.MaintenanceJobs jobs;
 
-    public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit) {
+    public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit, dev.skywx.persist.MaintenanceJobs jobs) {
         this.status = status;
         this.db = db;
         this.redis = redis;
         this.settings = settings;
         this.audit = audit;
+        this.jobs = jobs;
+    }
+
+    /** 통계 재집계(멱등). 기본은 어제(UTC). 감사 기록. */
+    @PostMapping("/stats/aggregate")
+    public ResponseEntity<Map<String, Object>> aggregate(@RequestParam(required = false) java.time.LocalDate day, HttpServletRequest req, Authentication auth) {
+        java.time.LocalDate d = day == null ? java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1) : day;
+        jobs.aggregate(d);
+        audit.record(req, userId(auth), "STATS_AGGREGATE", d.toString(), null, null);
+        return ResponseEntity.ok(Map.of("day", d.toString()));
     }
 
     @GetMapping("/providers")
