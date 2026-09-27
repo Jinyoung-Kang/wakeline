@@ -30,6 +30,11 @@ except Exception: print('ERR')" "$1"; }
 redis() { docker exec "$(cid redis)" sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" exec redis-cli --no-auth-warning "$@"' sh "$@"; }
 psqlq() { docker exec -u postgres "$(cid db)" psql -X -U postgres -d wakeline -Atc "$1"; }
 wait_until() { local deadline=$(( $(date +%s) + $1 )); shift; while [ "$(date +%s)" -lt "$deadline" ]; do if eval "$@" >/dev/null 2>&1; then return 0; fi; sleep 1; done; return 1; }
+# crash <서비스> — 앱 프로세스를 SIGKILL(실제 비정상 종료와 같다). `docker kill` 은 도커가 '수동 정지' 로 보고 재시작 정책을 건너뛰므로 쓰지 않는다
+# (Docker 29 실측: api·collector·redis 가 Exited(137) 로 남음). PID 1 은 docker-init(compose init: true)이라, 그 밖의 모든 프로세스를 죽이면
+# init 이 137 로 끝나고 unless-stopped 정책이 컨테이너를 다시 띄운다.
+crash() { docker exec "$(cid "$1")" sh -c 'kill -9 -1' >/dev/null 2>&1 || true; }
+restarts() { docker inspect -f '{{.RestartCount}}' "$(cid "$1")" 2>/dev/null; }
 health() { docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>/dev/null; }
 # ts_after <값> <ISO> — 값(ISO-8601 또는 epoch 초/밀리초)이 ISO 시각보다 뒤인가. 해석할 수 없으면 거짓.
 ts_after() { python3 -c "import sys
@@ -61,7 +66,7 @@ echo "=== baseline (project $PROJECT)"; status | field region.aircraft; redis XP
 if wants api; then
 echo; echo "=== 1. kill -9 api (NFR-08: recover ≤ 60 s, PEL reprocessed, no duplicate track rows)"
 tp0=$(psqlq "SELECT count(*) FROM track_point"); dup0=$(psqlq "SELECT count(*) - count(DISTINCT (hex, ts)) FROM track_point")
-t0=$(now); docker kill -s KILL "$(cid api)" >/dev/null
+t0=$(now); crash api
 wait_until 120 '[ "$(status | field region.aircraft)" -gt 0 ]' && t1=$(now) || t1=FAIL
 echo "api back with aircraft after: $(elapsed "$t0" "$t1") s"
 echo "pending after recovery: $(redis XPENDING wakeline:aircraft api | head -1)"
@@ -72,14 +77,14 @@ fi
 
 if wants collector; then
 echo; echo "=== 2. kill -9 collector (restart ≤ 60 s, fresh data resumes)"
-v0=$(status | field snapshot_version); t0=$(now); docker kill -s KILL "$(cid collector)" >/dev/null
+v0=$(status | field snapshot_version); t0=$(now); crash collector
 wait_until 120 '[ "$(status | field snapshot_version)" -gt '"$v0"' ] && [ "$(status | field region.lag_s)" != "None" ]' && t1=$(now) || t1=FAIL
 echo "new snapshot after: $(elapsed "$t0" "$t1") s"
 fi
 
 if wants redis; then
 echo; echo "=== 3. kill -9 redis (AOF; api keeps serving last state; recovers)"
-t0=$(now); docker kill -s KILL "$(cid redis)" >/dev/null; sleep 3
+t0=$(now); crash redis; sleep 3
 echo "during redis outage /api/v1/aircraft: $(curl -s -o /dev/null -w '%{http_code}' "$B/api/v1/aircraft?bbox=124,33,132,39")"
 v0=$(status | field snapshot_version)
 wait_until 120 '[ "$(status | field snapshot_version)" != "ERR" ] && [ "$(status | field snapshot_version)" -gt '"${v0/ERR/0}"' ]' && t1=$(now) || t1=FAIL

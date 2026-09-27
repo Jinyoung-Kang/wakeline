@@ -14,6 +14,13 @@ const page = await ctx.newPage();
 const errors = [];
 page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
 
+// 해시만 다른 주소로 goto 하면 같은 문서 안 이동이라 선택 상태가 남는다 — 빈 페이지를 거쳐 새로 연다
+async function openMap(hash) {
+  await page.goto("about:blank");
+  await page.goto(BASE + "/" + hash);
+  await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 });
+}
+
 async function shot(name, fn) {
   if (fn) await fn();
   await page.screenshot({ path: `${OUT}/${name}.png` });
@@ -53,14 +60,41 @@ await shot("03c-search-selected");
 
 // 4. 동아시아 확장(전세계 스냅샷 병합) — 넓은 지도를 보이려고 범례를 접는다(이 브라우저 컨텍스트에만 기억)
 if ((await page.getByTestId("legend-toggle").getAttribute("aria-expanded")) === "true") await page.getByTestId("legend-toggle").click();
-await page.goto(BASE + "/#4.2/33/125"); // MapLibre hash: #zoom/lat/lon (공유 가능한 지도 위치)
-await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 });
+await openMap("#4.2/33/125");
 await wait(6000);
 await shot("04-east-asia");
 
+// 4b. 선택 항공기 집중 추적 — 관심 지역 밖(도쿄) 확대 → 핫 리전 → 검색으로 한 대 선택 → 5 s 관측 누적
+await openMap("#8.2/35.55/139.9");
+await wait(40_000); // 핫 리전 첫 조회(30 s 주기)
+await shot("04b-hot-region-tokyo");
+await page.locator("body").press("/");
+await page.keyboard.type(process.env.WAKELINE_FOCUS_SEARCH ?? "JAL");
+await page.getByTestId("aircraft-search-item").first().waitFor({ timeout: 10_000 }).catch(() => {});
+await page.keyboard.press("Enter");
+await wait(65_000); // 집중 추적 5 s × 약 12회
+await shot("04c-focus-tracking");
+
+// 4d. 선박 — 부산항 확대(선종 색·선수방위 회전) → 목록에서 한 척 선택(카드·항적)
+await openMap("#10.3/35.08/129.06");
+if ((await page.getByTestId("layer-ships").getAttribute("aria-pressed")) !== "true") await page.getByTestId("layer-ships").click();
+await wait(15_000);
+await shot("04d-ships-busan");
+const shipItem = page.getByTestId("ship-list-item").first();
+if (await shipItem.count()) {
+  await shipItem.click();
+  await wait(5000);
+  await shot("04e-ship-card");
+}
+
+// 4f. 선박 격자(축소) + 수신 범위 경계(운영 설정)
+await openMap("#1.7/20/150");
+await wait(12_000);
+await shot("04f-ships-grid-coverage");
+if ((await page.getByTestId("layer-ships").getAttribute("aria-pressed")) === "true") await page.getByTestId("layer-ships").click();
+
 // 5. 전세계
-await page.goto(BASE + "/#1.6/30/60");
-await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 });
+await openMap("#1.6/30/60");
 await wait(7000);
 await shot("05-world");
 
