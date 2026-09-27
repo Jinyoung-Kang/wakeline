@@ -1,54 +1,70 @@
 # 성능 측정 (PERF.md)
 
-측정일 2026-09-27 · M1 계열 Mac(arm64) · Docker Desktop 29.8 · 실공급자 데이터(관심 지역 항공기 105~136대, SIGMET 125~126건 활성) · 컨테이너 메모리 한도 api 1 GB.
-도구: `perf/quick_rest.py`(httpx, 100 rps 고정 도착률) · `perf/quick_ws.py`(websockets, 200 연결 1분 램프업 + 90 s) — k6 스크립트(`perf/rest.js`, `perf/ws.js`)와 같은 시나리오. 측정 중에는 IP당 제한을 잠시 올렸다(`PUBLIC_RATE_LIMIT_PER_MIN`, `WS_MAX_CONN_PER_IP`), edge(nginx)는 우회하고 api 에 직접 붙었다(api 층 측정). 원자료: `perf/results/`.
+이 기계: Apple Silicon Mac(arm64) · macOS 26.6 · Docker Desktop 29.8 · 컨테이너 메모리 한도 api 1 GiB(힙 최대 616 MiB = 60 %) · ais 256 MiB · redis 512 MiB.
+모든 값은 **측정값**이다. 계산으로 늘린 값은 "추정" 이라고 적었다. 원자료는 `perf/results/`(k6 로그·AIS 측정 로그).
 
-## k6 측정 (`make bench`, 2026-09-27 11:12–11:19 UTC)
+## 1. 부하 시험 — k6 (`make bench SHIPS=1`, 2026-09-27 22:02–22:09 UTC = 한국 09-28 07:02)
+grafana/k6 2.3.0 컨테이너를 같은 도커 네트워크에서 api(10.77.0.30:8000)에 직접 붙였다(edge 우회 = api 층 측정). 측정 동안만 IP당 제한·WS 연결 상한을 올리고,
+끝나면(중단돼도) `.env` 값으로 되돌린다. 측정 중 실데이터: 관심 지역 항공기 약 70–190대, 전세계(OpenSky) 약 10,400–10,900대, SIGMET 139건, 선박 약 3만 척 기록.
 
-grafana/k6 v2.3.0 컨테이너를 Docker 네트워크 안에서 api(10.77.0.30:8000)에 직접 붙였다(edge 우회 = api 층 측정). 측정 동안만 IP당 제한·WS 연결 상한을 올렸고 끝난 뒤 `.env` 값(분당 120 · IP당 5 · 전체 200)으로 원복됨을 확인했다. 당시 관심 지역 항공기 ≈ 120대, 전세계(OpenSky) ≈ 7,200대 수집 중. 원자료: `perf/results/rest-summary.json`, `ws-summary.json`, `k6-*.log`.
-
-| 시나리오 | 결과 | 임계치 |
+| 시나리오 | 결과 | 목표 |
 |---|---|---|
-| REST 100 rps × 3분(도착률 고정, 18,000건: aircraft 60% · sigmets 25% · status 15%) | 실패 0 %, 검사 36,000/36,000 | 통과 |
-| `/aircraft?bbox` | p50 2.4 ms · **p95 4.6 ms** · p99 15.0 ms · max 415 ms | p95 < 300 ms 통과 |
-| `/sigmets?active=true` | p50 3.0 ms · **p95 5.7 ms** · p99 16.3 ms · max 383 ms | 통과 |
-| `/status` | p50 4.8 ms · **p95 9.5 ms** · p99 31.4 ms · max 556 ms | 통과 |
-| WS 200 연결(1분 램프업 · 3분 유지, 세션 228) | 메시지 11,966(스냅샷 1,359 · diff 2,649), 오류 0, 접속 p95 5.7 ms | — |
-| WS 수신 지연(서버 ts → 클라이언트 수신) | p50 16 ms · **p95 68 ms** · p99 91 ms · max 134 ms | p95 < 500 ms 통과 |
-| api 컨테이너(15 s 표본) | RSS 435 → 최대 722 MiB / 한도 1 GiB, CPU 최대 132 %(REST 중 순간) | OOM 없음 |
+| REST 100 rps × 3분(도착률 고정, 18,001건) | 실패 0 % | — |
+| `/aircraft?bbox` | p50 2.5 ms · **p95 8.6 ms** · p99 42.0 ms · 최대 254 ms | p95 ≤ 300 ms |
+| `/sigmets?active=true` | p50 3.1 ms · **p95 12.0 ms** · p99 58.8 ms · 최대 273 ms | p95 ≤ 300 ms |
+| `/status` | p50 2.9 ms · **p95 11.0 ms** · p99 53.2 ms · 최대 314 ms | p95 ≤ 300 ms |
+| WS 200 연결(램프업 → 유지, 선박 레이어 켬) | 메시지 20,060(스냅샷 1,495 · diff 3,058) · 오류 0 | — |
+| WS 항공기 지연(서버 ts → 클라이언트 수신) | p50 29 ms · **p95 286 ms** · p99 786 ms · 최대 1,027 ms | p95 ≤ 500 ms |
+| WS 선박 메시지 지연 | 4,424건 · p50 7 ms · p95 34 ms · 최대 81 ms | — |
+| api 힙(10 s 표본 41개, 관리 포트 9000 내부 스크레이프) | 사용 70–220 MiB / 최대 616 MiB · 커밋 213–271 MiB · 측정 구간 GC 일시정지 합계 약 1.2 s | OOM 없음 |
 
-- 앞의 Python 간이 측정(p99 190~340 ms)과 k6(p99 15~31 ms)의 차이는 **클라이언트 측 큐잉**이었다(아래 관찰 2 확인): 단일 이벤트 루프 httpx 가 100 rps 를 만들며 스스로 지연을 더했다. 서버 지연은 k6 값이 맞다.
-- RSS 는 힙(최대 616 MiB = 1 GiB × 60 %) + 메타스페이스·스레드·버퍼다. WS 종료 후에도 RSS 가 ~720 MiB 로 유지된 것은 JVM 이 확보한 힙을 OS 에 바로 돌려주지 않기 때문이며, 힙 사용량 자체는 이번 측정에서 따로 기록하지 않았다(다음 측정 때 `jvm_memory_used_bytes` 스크레이프 추가).
-- k6 로그의 `setTimeout … was stopped` 경고는 램프다운이 유지 중인 연결을 끊을 때 나오는 정상 메시지다(Makefile 이 로그에서 거른다).
-- 참고: 벤치 직후 재기동한 api 의 짧은 구간에서 엔진 1주기 p95 는 109 ms 였다(전세계 7,200대 포함 · 예산 ≤ 300 ms). 관심 지역만일 때의 13.9 ms 와 구분해서 본다.
+- 2026-09-27 측정(선박 없음, 전세계 약 7,200대)에서 WS p95 는 68 ms 였다. 이번에는 전세계 항공기가 약 1.5배, 세션마다 선박 diff 까지 만들면서 꼬리가 길어졌다.
+  GC 일시정지 합계는 작아서(약 1.2 s / 7분) 원인이 아니다. 목표(p95 ≤ 500 ms)는 지키지만 p99 786 ms 는 개선 후보다(§5).
+- REST 는 전날(p95 4.6–9.5 ms)과 같은 수준이다.
 
-## 예산 대비 결과 (Python 간이 측정, 11:00 이전)
+## 2. 수요 기반 정밀 추적(ADR-013) — 실공급자, 개발 스택
+| 항목 | 측정 |
+|---|---|
+| 핫 리전(도쿄, 관심 지역 밖, 줌 8) | 임대 `35.5:139.5:100` 이 30 s 주기로 adsb.fi 조회, 상태 `active` |
+| 집중 추적(비행 중 항공기, 60 s) | 관측 13건 · 간격 중앙값 **5.05 s**(4–6 s 교대 — 공급자 갱신 시각과 5 s 주기의 위상 차) · 저장 항적 1 s 미만 중복 0 |
+| 선택 → 핫 리전 해제 | 선택 즉시 hot 임대 사라짐(선택 중에는 핫 리전 수요를 내지 않음) |
+| 창 닫기 → 임대 소멸 | 6 s 뒤 hot·focus 임대 0(임대 만료 60 s 보다 빠름 — api 가 1 s debounce 로 지움) |
+| adsb.fi 호출률(수요 없음 상태) | 0.033 req/s(1분 평균, `/status` demand) |
 
-| 경로 | 예산(설계서 7.1) | 실측 | 판정 |
-|---|---|---|---|
-| REST `/aircraft?bbox` (캐시 없음, 113~121대 GeoJSON) 100 rps × 60 s | p95 ≤ 80 ms(적중) / ≤ 300 ms(미스) | **p50 5.1 ms · p95 37.8 ms · p99 190.6 ms** · 3,630건 전부 200 | 통과 |
-| REST `/sigmets?active=true` (125 폴리곤 GeoJSON) | ≤ 300 ms | p50 5.6 ms · **p95 44.8 ms** · p99 202.7 ms | 통과 |
-| REST `/status` | ≤ 300 ms | p50 6.1 ms · **p95 52.9 ms** · p99 341.1 ms | p95 통과, p99 는 Redis 해시 조회 6회가 원인(개선 후보) |
-| WS 팬아웃 200 연결(관심 지역 bbox 구독) | diff 지연 p95 ≤ 500 ms | 서버 ts → 클라이언트 수신 **p50 12 ms · p95 45 ms · p99 72 ms · max 85 ms**, 1,745 메시지, 오류 0, 드롭 0 | 통과 |
-| api 힙/메모리 | ≤ 512 MB 힙 | 컨테이너 RSS 492 MB(힙 상한 = 1 GB × 60%) 부하 중 | 통과 |
-| 엔진 1주기(스냅샷 갱신 + 판정 + 예측 + FSM), 121대 × 126 폴리곤 | ≤ 50 ms | Micrometer `wakeline_engine_cycle_seconds` **p50 8.7 ms · p95 13.9 ms** | 통과 |
-| 스트림 처리(검증 + 디코드 + 교체 + 엔진 + 이벤트) | — | `wakeline_stream_process_seconds` p50 52 ms · p95 109 ms(스키마 검증 포함) | 기록 |
-| 10,000대 × 200 SIGMET 교차 판정(JUnit, 합성) | ≤ 50 ms(NFR-05) | 단위 테스트 상한 500 ms 안에서 통과(정확한 값은 JMH 미측정 — 다음 단계) | 미확정 |
-| 수집 수신 → 브라우저 반영(NFR-01) | p95 ≤ 1.5 s | 상태 바 lag 배지 3~6 s 는 **공급자 관측 시각 기준**(adsb.lol 응답 1.2 s + 10 s 주기 포함). WS 팬아웃 자체는 위 45 ms | 측정 방식 분리 필요 |
-| 브라우저 3,000대 30 fps(NFR-04) | — | 관심 지역은 ~130대라 미측정. 전세계 뷰(OpenSky)는 자격증명 후 측정 | 미측정 |
+## 3. AIS 선박 수신(ADR-014 부록 A)
+| 구독 | msg/s | 공급자 지연(수신 − time_utc) | 끊김 | 우리 쪽 자원 |
+|---|---|---|---|---|
+| 동아시아(2분) | 평균 5.3 | 약 2 s | 0 | ais CPU 평균 0.5 % · 38 MiB |
+| 전세계 1연결(10분) | 평균 72.3 · 최대 140 | 13 → 22 s 로 커지다 끊김 반복 | 11회 · 공백 합계 87 s | ais CPU 평균 1.9 % · 43 → 70 MiB · api +108 MiB |
+| **0~45°E 제외 전 해역(운영 설정, 10분)** | 평균 61.1 · 22–96 | p50 7.9 s · p90 17.9 s · 최대 23.1 s(스스로 회복) | 1회(약 2 s) | ais CPU 평균 4.5 % · 41–67 MiB · api 637–675 MiB · Redis 38–42 MiB |
 
-## 관찰과 개선 후보
-1. `/status` p99 가 다른 경로보다 높다: Redis 해시 6개를 매 요청 읽는다. 5 s 로컬 캐시(Caffeine 없이 AtomicReference + 타임스탬프)로 p99 를 낮출 수 있다.
-2. ~~REST p99(190~340 ms)는 클라이언트 측 큐잉이 섞여 있다~~ → k6 재측정으로 확인: 서버 p99 15~31 ms.
-3. `/aircraft` 는 매 요청 GeoJSON 을 새로 직렬화한다. 스냅샷 버전별 직렬화 결과 캐시(ETag 와 같은 키)로 CPU 를 아낄 수 있다.
-4. 항적 배치 저장: 큐 드롭 0, 2,000행 배치 — 5분 기동에 2,710행(관심 지역만). 전세계 수집(10k대/120 s)을 켜면 ~1,150만 행/일 예상(설계 7.2)이라 파티션·BRIN 만으로 충분한지 그때 측정한다.
+- 대기열 드롭 0, api 소비 지연 0, Redis 선박 스트림 최대 2.5 MiB(MAXLEN 200 · maxmemory 256 MiB 중).
+- 저장: `ship_position` 분당 1,773–2,769행(MMSI 별 60 s 에 1점). 72 h 보존이면 약 930만 행 · 약 1.9 GB(**추정** — 측정한 분당 행 수와 행당 약 200 B 로 계산).
+- 끊김은 우리 쪽 keepalive(ping 20 s) 시간 초과였다. 컨테이너 소켓 수신 대기열은 계속 0 — 공급자 쪽 연결별 전달이 뒤처진 것이다(VERIFICATION #17).
+
+## 4. 장애 주입(`tools/chaos.sh`, VERIFICATION #22)
+| 시나리오 | 결과 |
+|---|---|
+| api SIGKILL | 6.2 s 뒤 응답 · PEL 재처리 · 항적 중복 0 |
+| collector SIGKILL | 3.4 s 뒤 새 스냅샷 |
+| redis SIGKILL | 중단 중에도 `/aircraft` 200 · 6.6 s 뒤 수집 재개 |
+| db 40 s 정지 | 실시간 200 · 이력 503 + Retry-After · 복구 뒤 대기열 항적 20,236행 기록 |
+| 관심 지역 공급자 전부 끔 | 마지막 스냅샷 유지 · 60 s 뒤 stale · 다시 켜고 4 s 뒤 fresh |
+| ais 네트워크 60 s 단절 | 공백 1건 기록 · 복구 12.7 s 뒤 수신 · 드롭 0 |
+
+## 5. 관찰과 개선 후보
+1. **WS 꼬리 지연**(p99 786 ms): 세션마다 bbox 필터 + 선박 diff 를 만든다. 같은 bbox 격자 칸을 보는 세션끼리 직렬화 결과를 나눠 쓰면(칸 단위 캐시) CPU·지연을 줄일 수 있다.
+2. **AIS 범위**: 0~45°E 까지 받으려면 키당 3연결 안에서 구역을 나눠야 한다. 구역별 공백 기록이 필요해 ADR-014 후속 과제로 남겼다.
+3. **`/aircraft` 직렬화**: 매 요청 GeoJSON 을 새로 만든다. 스냅샷 버전별 직렬화 캐시(ETag 와 같은 키)로 CPU 를 아낄 수 있다.
+4. **저장 용량**: 선박 위치가 72 h 에 약 1.9 GB(추정)다. 로컬 디스크가 빠듯하면 보존을 24 h 로 줄이거나 60 s → 120 s 로 솎는다(운영 설정 후보).
+
+## 6. 이전 측정(2026-09-27 11:12 UTC, 선박·수요 추적 없음)
+k6: `/aircraft` p95 4.6 ms · `/sigmets` p95 5.7 ms · `/status` p95 9.5 ms · WS 200 연결 지연 p95 68 ms · api RSS 435 → 722 MiB.
+엔진 1주기(스냅샷 갱신 + 교차 판정 + 10분 예측 + FSM, 121대 × 126 폴리곤) p50 8.7 ms · p95 13.9 ms. 전세계 7,200대 포함 시 p95 109 ms(예산 ≤ 300 ms).
 
 ## 재현
 ```bash
-# 제한 상향(측정 전용) → api 재기동
-sed -i '' 's/^PUBLIC_RATE_LIMIT_PER_MIN=.*/PUBLIC_RATE_LIMIT_PER_MIN=1000000/; s/^WS_MAX_CONN_PER_IP=.*/WS_MAX_CONN_PER_IP=500/' .env
-docker compose -f infra/compose.yml --env-file .env up -d api
-docker run --rm --network wakeline_wakeline -v "$PWD/perf:/perf:ro" python:3.13-slim sh -c \
-  "pip install -q httpx websockets && python /perf/quick_rest.py http://10.77.0.30:8000 100 60 && python /perf/quick_ws.py ws://10.77.0.30:8000/ws/v1 200 90"
-# 또는 k6: make bench (BASE_URL=http://localhost:8700)
+make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
+make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 전용)
+bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
 ```
