@@ -13,6 +13,10 @@ apps/collector/.venv/
 apps/collector/.pytest_cache/
 apps/collector/.ruff_cache/
 apps/collector/.mypy_cache/
+apps/collector/.coverage
+apps/collector/coverage.xml
+apps/collector/htmlcov/
+apps/web/coverage/
 **/__pycache__/
 # data
 data/
