@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C).
+# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D).
 # compose 와 같은 방식(redis 사용자 999·read-only 루트 FS·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
 # 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector / wakeline_ais 가 필요한 명령·키만 쓸 수 있는지 확인한다.
 # 마지막으로 REDIS_AIS_PASSWORD 없이 한 번 더 띄워 wakeline_ais 가 빈 비밀번호로 열리지 않는지 본다.
@@ -114,6 +114,10 @@ denied "budget:* (수집기 전용)" "${A[@]}" hgetall budget:adsb_lol:20260101
 denied "스크립트로 다른 키 접근" "${A[@]}" eval "return redis.call('GET', KEYS[1])" 1 other:key
 denied "스크립트로 선언 안 한 키 접근" "${A[@]}" eval "return redis.call('GET', 'other:key')" 0
 denied "PUBLISH"              "${A[@]}" publish ch x
+# 계약 v3 §D: BCAST 무효화는 키 권한과 무관하게 바뀐 키 이름(세션 ID)을 보낸다 — 모든 서비스 사용자에서 금지
+denied "CLIENT TRACKING BCAST"      "${A[@]}" client tracking on bcast
+denied "CLIENT TRACKING(RESP3)"     "${A[@]}" -3 client tracking on bcast
+denied "CLIENT CACHING"             "${A[@]}" client caching yes
 
 echo "[wakeline_collector — 허용]"
 ok "PING"                      PONG           "${K[@]}" ping
@@ -173,6 +177,9 @@ denied "REPLICAOF"                   "${K[@]}" replicaof 203.0.113.1 6379
 denied "MONITOR"                     "${K[@]}" monitor
 denied "ACL SETUSER"                 "${K[@]}" acl setuser wakeline_collector '~*'
 denied "SUBSCRIBE"                   "${K[@]}" subscribe ch
+denied "CLIENT TRACKING BCAST(키 이름 = 세션 ID 열람)" "${K[@]}" client tracking on bcast
+denied "CLIENT TRACKING(RESP3)"      "${K[@]}" -3 client tracking on bcast
+denied "CLIENT CACHING"              "${K[@]}" client caching yes
 # 수요 임대는 api 만 쓴다 — 수집기가 뚫려도 임의 지역·항공기 조회를 스스로 만들 수 없다(호출 상한 우회 방지)
 denied "ZADD wakeline:demand:hot"          "${K[@]}" zadd wakeline:demand:hot 9999999999999 0.0:0.0:250
 denied "ZADD wakeline:demand:focus"        "${K[@]}" zadd wakeline:demand:focus 9999999999999 abcdef
@@ -225,6 +232,10 @@ denied "MONITOR"                          "${S[@]}" monitor
 denied "CLIENT LIST"                      "${S[@]}" client list
 denied "ACL SETUSER"                      "${S[@]}" acl setuser wakeline_ais '~*'
 denied "SUBSCRIBE"                        "${S[@]}" subscribe ch
+denied "CLIENT TRACKING BCAST(키 이름 = 세션 ID 열람)" "${S[@]}" client tracking on bcast
+denied "CLIENT TRACKING(RESP3)"           "${S[@]}" -3 client tracking on bcast
+denied "CLIENT TRACKING OPTIN"            "${S[@]}" client tracking on optin
+denied "CLIENT CACHING"                   "${S[@]}" client caching yes
 denied "다른 키"                           "${S[@]}" set other:key x
 
 echo "[컨테이너 권한]"
@@ -245,7 +256,9 @@ out="$(docker exec "$C2" redis-cli --no-auth-warning --user wakeline_ais --pass 
 if grep -Eq "WRONGPASS|invalid" <<<"$out"; then passes=$((passes+1)); echo "  ok    빈 비밀번호로 wakeline_ais 로그인 거부"; else fails=$((fails+1)); echo "  FAIL  wakeline_ais 빈 비밀번호 → $out"; fi
 out="$(docker exec -e REDISCLI_AUTH="$ADMIN_PW" "$C2" redis-cli --no-auth-warning acl getuser wakeline_ais 2>&1 || true)"
 if [ -z "$(tr -d '[:space:]' <<<"$out")" ] || grep -q "nil" <<<"$out"; then passes=$((passes+1)); echo "  ok    ACL 에 wakeline_ais 없음"; else fails=$((fails+1)); echo "  FAIL  wakeline_ais 가 만들어짐 → $out"; fi
-if docker logs "$C2" 2>&1 | grep -q "REDIS_AIS_PASSWORD 가 비어"; then passes=$((passes+1)); echo "  ok    기동 로그에 사유 표시"; else fails=$((fails+1)); echo "  FAIL  기동 로그에 사유 없음"; fi
+# 로그를 먼저 받아 둔다 — `docker logs | grep -q` 는 grep 이 먼저 끝나면 SIGPIPE 로 파이프 전체가 실패한다(pipefail)
+logs2="$(docker logs "$C2" 2>&1 || true)"
+if grep -q "REDIS_AIS_PASSWORD 가 비어" <<<"$logs2"; then passes=$((passes+1)); echo "  ok    기동 로그에 사유 표시"; else fails=$((fails+1)); echo "  FAIL  기동 로그에 사유 없음"; fi
 TARGET="$C2"
 ok "나머지 사용자는 그대로(wakeline_api)"       PONG wakeline_api "$API_PW" ping
 ok "나머지 사용자는 그대로(wakeline_collector)" PONG wakeline_collector "$COL_PW" ping

@@ -4,8 +4,9 @@ import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
 import { fmtDuration, fmtIso, fmtTime } from "@/lib/format";
 import {
-  fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, isMmsi, navStatusLabel, parseShipState, parseShipStatic, POSITION_SOURCE_LABEL, positionBadge,
-  ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_STALE_S, shipAgeS, shipCategory, shipList, shipRotation, type ShipState, type ShipStatic,
+  fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel, parseShipState,
+  parseShipStatic, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_STALE_S, shipAgeS, shipCategory, shipList, shipRotation,
+  type ShipState, type ShipStatic,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
@@ -63,13 +64,17 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   const stale = age != null && age > SHIP_STALE_S;
   const pb = positionBadge(s?.position_source);
   const rot = s ? shipRotation(s) : null;
+  // 공백 요약: 기록 조회에 성공했거나(0회도 근거 있음) 선택 뒤 받은 공백이 있을 때만
+  const gaps = track && ((track.loaded && !track.error) || track.gaps.length) ? gapSummary(track.gaps) : null;
   const code = st?.ship_type ?? s?.ship_type ?? null;
   const name = st?.name ?? s?.name ?? null;
-  const rows: [string, React.ReactNode, string?][] = [
+  const imo = imoField(st?.imo);
+  // [표시 이름, 값, 설명(title), 시험용 필드 이름(없으면 표시 이름)]
+  const rows: [string, React.ReactNode, string?, string?][] = [
     ["선박명", name ?? "—"],
     ["MMSI", <span key="m" className="mono">{mmsi}</span>],
     ["호출부호", <span key="cs" className="mono">{st?.call_sign ?? "—"}</span>],
-    ["IMO", <span key="imo" className="mono">{st?.imo ?? "—"}</span>],
+    [imo.label, <span key="imo" className="mono">{imo.value}</span>, "AIS 정적 보고의 IMO 칸: 1,000,000–9,999,999 = IMO 번호, 10,000,000 이상 = 기국 공식 번호(USCG NAVCEN)", "IMO"],
     ["선종", fmtShipType(code), `분류 코드 ${SHIP_CATEGORY_CODES[shipCategory(code)]} (USCG AIS Guide)`],
     ["크기", fmtShipSize(st), "길이 A+B × 폭 C+D — 안테나 기준 보고값"],
     ["흘수", fmtDraught(st?.draught_m)],
@@ -77,7 +82,7 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
     ["ETA", fmtShipEta(st)],
     ["속력/침로/선수방위", <span key="mo" className="mono">{fmtMotion(s)}</span>],
     ["항해 상태", navStatusLabel(s?.nav_status)],
-    ["위치 출처", s?.position_source ? POSITION_SOURCE_LABEL[s.position_source] : "—"],
+    ["위치 출처", positionSourceLabel(s?.position_source), "보고의 Timestamp 필드 — 0–59 전자 위치 장치(종류는 모름) · 61 수동 · 62 추측항법 · 63 장치 비작동 · 60(값 없음)은 —"],
     ["AIS 등급", s?.class ? `Class ${s.class}` : "—"],
     ["관측 시각", <span key="seen" className="mono" title={fmtIso(s?.seen_at)}>{fmtTime(s?.seen_at)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
     ["출처", s?.provider ?? st?.provider ?? "—"],
@@ -97,8 +102,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         {err ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err})</div> : null}
         {d?.db_unavailable ? <div className="text-[11px] text-warn">선박 정보 DB 일시 사용 불가 — 정적 정보는 “—”일 수 있음</div> : null}
-        {rows.map(([k, val, title]) => (
-          <div key={k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="ship-row" data-field={k}>
+        {rows.map(([k, val, title, field]) => (
+          <div key={field ?? k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="ship-row" data-field={field ?? k}>
             <span className="shrink-0 text-fg-3" title={title}>{k}</span><span className="text-right">{val}</span>
           </div>
         ))}
@@ -107,11 +112,25 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
           {track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
             : track.error ? <div className="text-[11px] text-warn">기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error})</div>
             : <div className="text-[11px] text-fg-2">기록 구간 {track.segments}개 · 60 s 에 1점(저장 기준) + 실시간 관측</div>}
+          {gaps ? (
+            <div className="mt-1 text-[11px]" data-testid="ship-gap-summary">
+              <div className={gaps.count ? "text-warn" : "text-fg-2"}>
+                최근 6 h 수신 공백 {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
+                {gaps.openSinceMs != null ? ` · 진행 중 1회(지금까지 ${now ? fmtDuration((now - gaps.openSinceMs) / 1000) : "—"})` : ""}
+              </div>
+              <div className="text-fg-3">{GAP_BREAK_MIN_MS / 1000} s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)</div>
+            </div>
+          ) : null}
           {track?.gaps.length ? (
             <ul className="mt-1 space-y-0.5 text-[11px] text-warn" data-testid="ship-gaps">
-              {track.gaps.slice(-5).map((g) => (
-                <li key={`${g.started_at}-${g.ended_at ?? "open"}`} className="mono">AIS 공백 {fmtTime(g.started_at)} – {g.ended_at ? fmtTime(g.ended_at) : "진행 중"}{g.reason ? ` · ${g.reason}` : ""}</li>
-              ))}
+              {track.gaps.slice(-5).map((g) => {
+                const dur = gapDurationS(g);
+                return (
+                  <li key={`${g.started_at}-${g.ended_at ?? "open"}`} className="mono">
+                    수신 공백 {fmtTime(g.started_at)} – {g.ended_at ? fmtTime(g.ended_at) : "진행 중"}{dur != null ? ` · ${dur} s` : ""}{g.reason ? ` · ${g.reason}` : ""}
+                  </li>
+                );
+              })}
             </ul>
           ) : null}
         </div>
@@ -147,12 +166,14 @@ export function ShipPanelView({ selected, shipsOn }: { selected: string | null; 
 
 function ShipList() {
   const view = useServerData((x) => x.ships);
+  const aisOff = useServerData((x) => x.ais?.state === "disabled");
   const selectShip = useUi((s) => s.selectShip);
   const [q, setQ] = useState("");
   if (view.mode !== "points") {
     return (
       <div className="p-3 text-[11px] text-fg-3" data-testid="ship-list-empty">
-        {view.mode === "grid" ? "지금은 격자(선박 수)로 표시 중입니다 — 줌 7 이상으로 확대하면 개별 선박을 고를 수 있습니다." : "선박 수신 대기 중…"}
+        {view.mode === "grid" ? "지금은 격자(선박 수)로 표시 중입니다 — 줌 7 이상으로 확대하면 개별 선박을 고를 수 있습니다."
+          : aisOff ? "AIS 수집이 꺼져 있습니다(aisstream.io 키 없음 — 운영 설정). 선박 데이터가 오지 않습니다." : "선박 수신 대기 중…"}
       </div>
     );
   }

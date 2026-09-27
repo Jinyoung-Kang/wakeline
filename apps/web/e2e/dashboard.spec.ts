@@ -40,6 +40,20 @@ test("alert panel shows aircraft inside the synthetic fixture SIGMET with eviden
   await expect(page.getByTestId("aircraft-card")).toBeVisible();
 });
 
+test("aircraft layer off: the status bar count becomes unknown ('—') instead of a frozen number, and comes back when on", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("conn")).toContainText("open", { timeout: 20_000 });
+  const count = page.getByTestId("aircraft-count");
+  await expect(count).toContainText(/aircraft\s*[1-9]\d*/, { timeout: 30_000 });
+  const btn = page.getByTestId("layer-aircraft");
+  await btn.click();
+  await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(count).toContainText("—");
+  await btn.click();
+  await expect(btn).toHaveAttribute("aria-pressed", "true");
+  await expect(count).toContainText(/aircraft\s*[1-9]\d*/, { timeout: 30_000 });
+});
+
 test("attribution footer stays fully visible at a narrow width", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("/");

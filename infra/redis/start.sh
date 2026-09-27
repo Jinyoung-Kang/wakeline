@@ -14,6 +14,8 @@
 # 공통 명령 권한: +@all -@dangerous (KEYS·FLUSHALL·CONFIG·MONITOR·REPLICAOF·MIGRATE·RESTORE·DEBUG·SHUTDOWN·ACL 변경·CLIENT KILL 등 제외)
 #   + 클라이언트가 접속·상태 확인에 쓰는 것만 다시 허용: INFO(Spring 헬스 인디케이터), PING, CLIENT SETINFO/SETNAME/ID(Lettuce·redis-py 접속 시).
 #   pub/sub 채널 권한 없음(resetchannels) — 서비스 클라이언트(api·collector·ais) 모두 pub/sub 를 쓰지 않는다.
+#   CLIENT TRACKING·CACHING 금지(계약 v3 §D): 출시된 Redis 8.x 의 BCAST 무효화 알림은 키 권한을 보지 않고 바뀐 키 *이름*을 보낸다 —
+#   세션 키 이름이 곧 세션 ID 라서 SCAN·RANDOMKEY 와 같은 이유로 막는다. 서비스 클라이언트는 클라이언트 측 캐시를 쓰지 않는다.
 #
 # 비밀번호는 compose 파일·명령행(docker inspect 의 Cmd)에 쓰지 않고 이 컨테이너의 환경변수로만 받는다.
 # redis-server 는 기동 직후 프로세스 제목을 바꿔(set-proc-title) argv 가 ps 에 남지 않는다.
@@ -26,7 +28,7 @@ set -f   # 키 패턴의 * 가 셸 글롭으로 펼쳐지지 않게
 : "${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 비어 있습니다 — make init}"
 : "${REDIS_COLLECTOR_PASSWORD:?REDIS_COLLECTOR_PASSWORD 가 비어 있습니다 — make init}"
 
-COMMON='resetchannels +@all -@dangerous +info +ping +client|setinfo +client|setname +client|id'
+COMMON='resetchannels +@all -@dangerous +info +ping +client|setinfo +client|setname +client|id -client|tracking -client|caching'
 
 API_KEYS='~wakeline:* ~rl:*'
 COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:radar ~wakeline:events ~wakeline:collector ~wakeline:active ~wakeline:provider:* ~wakeline:radar_kr:* %R~wakeline:settings ~budget:*'

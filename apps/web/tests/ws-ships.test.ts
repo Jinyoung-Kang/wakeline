@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WakelineWsClient, type SocketLike } from "@/lib/ws";
-import { getData, resetData, shipStates } from "@/lib/store";
+import { aircraftStates, getData, resetData, shipStates } from "@/lib/store";
 import { MAX_SHIPS } from "@/lib/ships";
 
 class FakeSocket implements SocketLike {
@@ -169,6 +169,45 @@ describe("demand and AIS status", () => {
     const t = setup();
     welcomed(t);
     t.ws().recv({ type: "status", status: { server_time: TS, region: {}, sources: { ais: { connected: true, lag_s: 2, msgs_per_s: 5.4, gap_open_since: null, last_gap: null } } } });
-    expect(getData().ais).toMatchObject({ connected: true, lag_s: 2, msgs_per_s: 5.4 });
+    expect(getData().ais).toMatchObject({ connected: true, lag_s: 2, msgs_per_s: 5.4, state: null, coverage: null });
+    t.ws().recv({ type: "status", status: { server_time: TS, region: {}, sources: { ais: { connected: true, state: "receiving", coverage: [[46, 150, 18, 105]] } } } });
+    expect(getData().ais).toMatchObject({ state: "receiving", coverage: [{ s: 18, w: 105, n: 46, e: 150 }] });
+  });
+});
+
+describe("aircraft layer off (review 2026-09-28b #17)", () => {
+  const ac = (hex: string) => ({ hex, lat: 35, lon: 129, seen_at: TS });
+  function setupWithWorker() {
+    const posted: Record<string, unknown>[] = [];
+    const sockets: FakeSocket[] = [];
+    const client = new WakelineWsClient({ postMessage: (m) => posted.push(m as Record<string, unknown>) }, {
+      url: "ws://test/ws/v1", isHidden: () => false, createSocket: () => { const s = new FakeSocket(); sockets.push(s); return s; },
+    });
+    return { client, posted, ws: () => sockets[sockets.length - 1] };
+  }
+  it("clears the aircraft copy, posts an empty snapshot to the worker and makes the count unknown; late aircraft messages are ignored", () => {
+    const t = setupWithWorker();
+    t.client.subscribe(BBOX, 8);
+    welcomed(t);
+    t.ws().recv({ type: "snapshot", seq: 1, v: 1, ts: TS, aircraft: [ac("71c001"), ac("71c002")] });
+    expect(getData().aircraftCount).toBe(2);
+    expect(aircraftStates.size).toBe(2);
+    t.client.setLayers(false, false);
+    expect(aircraftStates.size).toBe(0);
+    expect(getData().aircraftCount).toBeNull();
+    expect(t.posted.at(-1)).toEqual({ type: "snapshot", aircraft: [] });
+    expect(t.ws().sent.at(-1)).toEqual({ type: "layers", aircraft: false, ships: false });
+    // 끄기 전에 보낸 메시지가 늦게 와도 되살리지 않는다(resync 도 요청하지 않는다)
+    t.ws().recv({ type: "diff", seq: 2, v: 2, ts: TS, upsert: [ac("71c003")], remove: [] });
+    t.ws().recv({ type: "snapshot", seq: 1, v: 2, ts: TS, aircraft: [ac("71c009")] });
+    expect(aircraftStates.size).toBe(0);
+    expect(getData().aircraftCount).toBeNull();
+    expect(t.ws().types()).not.toContain("resync");
+    // 다시 켜면 서버의 seq 1 스냅샷부터
+    t.client.setLayers(true, false);
+    t.ws().recv({ type: "snapshot", seq: 1, v: 3, ts: TS, aircraft: [ac("71c004")] });
+    expect(getData().aircraftCount).toBe(1);
+    t.ws().recv({ type: "diff", seq: 2, v: 4, ts: TS, upsert: [ac("71c005")], remove: [] });
+    expect(getData().aircraftCount).toBe(2);
   });
 });

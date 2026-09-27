@@ -46,6 +46,12 @@ try:
 except Exception:
     sys.exit(1)" "$1" "$2"; }
 
+# 끊거나 멈춘 동안 스크립트가 끝나면(Ctrl-C·TERM·오류) 원상 복구한다: 복구 명령을 EXIT 트랩에 걸고, INT/TERM 은 exit 로 EXIT 트랩을 부른다.
+# 정상 복구 뒤에는 트랩을 지운다(untrap). hold 는 sleep 을 백그라운드로 두고 wait 한다 — TERM 트랩이 sleep 이 끝나기를 기다리지 않는다.
+trap_restore() { trap "$1" EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; }
+untrap() { trap - EXIT INT TERM; }
+hold() { sleep "$1" & wait "$!"; }
+
 for s in api redis db; do [ -n "$(cid "$s")" ] || { echo "no '$s' container in compose project '$PROJECT' — is the stack up?" >&2; exit 2; }; done
 SCENARIOS=("$@"); [ ${#SCENARIOS[@]} -gt 0 ] || SCENARIOS=(api collector redis db providers ais)
 wants() { local x; for x in "${SCENARIOS[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
@@ -83,10 +89,14 @@ fi
 
 if wants db; then
 echo; echo "=== 4. stop db 40 s (live path continues; DB endpoints 503; track queue flushes after)"
-docker stop "$(cid db)" >/dev/null 2>&1; sleep 5
+DB="$(cid db)"
+db_restore() { echo "chaos: restarting db ($DB)" >&2; docker start "$DB" >/dev/null 2>&1 || true; }
+trap_restore db_restore
+docker stop "$DB" >/dev/null 2>&1; hold 5
 echo "live /aircraft: $(curl -s -o /dev/null -w '%{http_code}' "$B/api/v1/aircraft?bbox=124,33,132,39")  history /alerts/history: $(curl -s -o /dev/null -w '%{http_code}' "$B/api/v1/alerts/history")  retry-after: $(curl -s -D - -o /dev/null "$B/api/v1/alerts/history" | grep -i retry-after | tr -d '\r')"
 echo "aircraft during db outage: $(status | field region.aircraft)"
-sleep 35; docker start "$(cid db)" >/dev/null 2>&1
+hold 35; docker start "$DB" >/dev/null 2>&1
+untrap
 wait_until 90 '[ "$(psqlq "SELECT count(*) FROM track_point WHERE ts > now() - interval '"'"'30 seconds'"'"'")" -gt 0 ]' && echo "track writes resumed" || echo "track writes NOT resumed"
 echo "rows written for the outage window: $(psqlq "SELECT count(*) FROM track_point WHERE fetched_at > now() - interval '3 minutes'")"
 fi
@@ -106,11 +116,15 @@ if [ -z "$A" ]; then echo "no ais container — skipped"; else
   echo "before: connected=$(st connected) last_msg_at=$(st last_msg_at) msgs_per_s=$(st msgs_per_s) gap_open_since='$(st gap_open_since)' health=$(health "$A") restarts=$(docker inspect -f '{{.RestartCount}}' "$A")"
   gaps0=$(psqlq "SELECT count(*) FROM ingest_gap" 2>/dev/null || echo "?")
   t0=$(now); since_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # 끊긴 채로 끝나면 ais 는 docker restart 로도 다시 붙지 않는다 — 중단되면 다시 붙이고 끝낸다
+  ais_restore() { echo "chaos: reconnecting ais ($A) to $NET" >&2; docker network connect --alias ais "$NET" "$A" >/dev/null 2>&1 || true; }
+  trap_restore ais_restore
   docker network disconnect "$NET" "$A" || { echo "disconnect failed"; exit 1; }
   echo "disconnected from $NET at $since_iso; holding ${AIS_CUT_S} s …"
-  sleep "$AIS_CUT_S"
+  hold "$AIS_CUT_S"
   echo "health while cut: $(health "$A") (redis is also unreachable from ais during the cut)"
   docker network connect --alias ais "$NET" "$A" || { echo "reconnect failed — run: docker network connect $NET $A"; exit 1; }
+  untrap
   t1=$(now)
   # 복귀 = 다시 연결되어(connected=1) 공백이 닫히고(gap_open_since 비어 있음) 끊은 뒤의 메시지를 받음
   ais_ok() { local c; c="$(st connected)"; { [ "$c" = 1 ] || [ "$c" = true ]; } && [ -z "$(st gap_open_since)" ] && ts_after "$(st last_msg_at)" "$since_iso"; }

@@ -8,7 +8,8 @@ import {
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
 import {
-  appendShipTrack, gridFeatures, isMmsi, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest, type AisGap, type ShipTrack,
+  aisCoverageFeatures, appendShipTrack, gridFeatures, isMmsi, mergeStatusGaps, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest,
+  type ShipTrack,
 } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
 import { WakelineWsClient } from "@/lib/ws";
@@ -37,16 +38,11 @@ const SHIP_PENDING_MAX = 500;
 type ShipTrackRef = { mmsi: string | null; track: ShipTrack; pending: { ts: number; lon: number; lat: number }[]; loaded: boolean; anchor: number | null; sinceMs: number };
 const emptyShipTrack = (mmsi: string | null, anchor: number | null = null, sinceMs = 0): ShipTrackRef => ({ mmsi, track: { segs: [], gaps: [] }, pending: [], loaded: false, anchor, sinceMs });
 
-/** 현재 AIS 공백(열린 것·마지막 것)을 항적의 공백 목록에 더한다 — 선택 중에 생긴 공백도 선을 끊도록. 항적 창(sinceMs) 전에 끝난 공백은 넣지 않는다. */
-function mergeAisGaps(gaps: AisGap[], sinceMs: number) {
-  const ais = getData().ais;
-  const add = (g: AisGap | null) => {
-    if (!g || (g.ended_at && Date.parse(g.ended_at) < sinceMs)) return;
-    if (!gaps.some((x) => x.started_at === g.started_at && x.ended_at === g.ended_at)) gaps.push(g);
-  };
-  if (ais?.gap_open_since) add({ started_at: ais.gap_open_since, ended_at: null, reason: null });
-  add(ais?.last_gap ?? null);
-  if (gaps.length > 200) gaps.splice(0, gaps.length - 200);
+/** 선택 선박 항적 요약(카드의 공백 목록·구간 수)을 스토어에 — 같은 선박일 때만, 불러오기 상태·오류는 그대로 */
+function publishShipTrack(ref: ShipTrackRef) {
+  const cur = getData().shipTrack;
+  if (!cur || cur.mmsi !== ref.mmsi) return;
+  setData({ shipTrack: { ...cur, gaps: ref.track.gaps.slice(), gapsTruncated: ref.track.gapsTruncated === true, segments: ref.track.segs.length } });
 }
 
 type Frame = { id: string; add: (map: maplibregl.Map) => void };
@@ -92,6 +88,7 @@ export function MapView() {
   const selectedInfo = useServerData((d) => d.selected);
   const ships = useServerData((d) => d.ships);
   const shipSelected = useServerData((d) => d.shipSelected);
+  const ais = useServerData((d) => d.ais);
   const radarSource = useUi((s) => s.radarSource);
   const krFrameIndex = useUi((s) => s.krFrameIndex);
   const krLayers = useRef<string[]>([]);
@@ -492,7 +489,7 @@ export function MapView() {
     const to = serverNowMs(Date.now());
     const from = to - SHIP_TRACK_WINDOW_MS;
     shipTrack.current = emptyShipTrack(selectedShip, Number.isNaN(anchor) ? null : anchor, from);
-    setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], segments: 0 } : null });
+    setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], gapsTruncated: false, segments: 0 } : null });
     const map = mapRef.current;
     if (!map) return;
     onReady(map, () => geo(map, "ship-track")?.setData(EMPTY_FC));
@@ -501,10 +498,10 @@ export function MapView() {
     const finish = (track: ShipTrack, error: string | null) => {
       const ref = shipTrack.current;
       if (cancelled || ref.mmsi !== selectedShip) return;
-      mergeAisGaps(track.gaps, ref.sinceMs);
+      mergeStatusGaps(track, getData().ais, ref.sinceMs);
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
       shipTrack.current = { ...ref, track, pending: [], loaded: true };
-      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), segments: track.segs.length } });
+      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length } });
       onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(track)));
     };
     const q = `from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
@@ -523,9 +520,34 @@ export function MapView() {
     if (Number.isNaN(ts)) return;
     const p = { ts, lon: st.lon, lat: st.lat };
     if (!ref.loaded) { if (ref.pending.length < SHIP_PENDING_MAX) ref.pending.push(p); return; }
-    mergeAisGaps(ref.track.gaps, ref.sinceMs);
-    if (appendShipTrack(ref.track, p, ref.anchor)) onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
+    const segs = ref.track.segs.length;
+    const merged = mergeStatusGaps(ref.track, getData().ais, ref.sinceMs);
+    const appended = appendShipTrack(ref.track, p, ref.anchor);
+    if (merged || appended) onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
+    if (merged || ref.track.segs.length !== segs) publishShipTrack(ref);
   }, [shipSelected]);
+
+  // ---- AIS 상태가 바뀌면(공백 열림·닫힘) 선택 선박 항적의 공백 목록도 바로 고친다 — 닫힌 공백을 "진행 중"으로 남기지 않는다 ----
+  useEffect(() => {
+    const map = mapRef.current;
+    const ref = shipTrack.current;
+    if (!map || !ref.mmsi || !ref.loaded || !mergeStatusGaps(ref.track, ais, ref.sinceMs)) return;
+    onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
+    publishShipTrack(ref);
+  }, [ais]);
+
+  // ---- 선박 수신 범위(계약 v3 §A): 선박 레이어가 켜져 있고 status 가 범위를 줄 때만 경계 점선. 모르면 그리지 않는다 ----
+  const coverageKey = useRef("");
+  const coverage = ais?.coverage ?? null;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const fc = layers.ships ? aisCoverageFeatures(coverage) : EMPTY_FC;
+    const key = JSON.stringify(fc.features.map((f) => f.geometry));
+    if (key === coverageKey.current) return;
+    coverageKey.current = key;
+    onReady(map, () => geo(map, "ship-coverage")?.setData(fc));
+  }, [coverage, layers.ships]);
 
   // ---- 선택 항공기: WS select + 항적(REST 한 번, 이후 selected 로 연장) ----
   useEffect(() => {

@@ -274,4 +274,19 @@ describe("rendered panels (server-side render, no DOM)", () => {
     setData({ radarKr: { ...kr, meta: { ...kr.meta, stale: false, fetched_at: new Date().toISOString() } } });
     expect(renderToStaticMarkup(createElement(StatusBar))).not.toContain("KMA STALE");
   });
+  it("status bar: aircraft count is '—' while unknown (aircraft layer off / before the first snapshot), never a frozen number (review #17)", () => {
+    const count = () => /data-testid="aircraft-count"[^>]*>.*?<\/span>(.*?)<\/span>/.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
+    setData({ conn: "open", lastRxAt: Date.now(), aircraftCount: 42 });
+    expect(count()).toBe("42");
+    setData({ aircraftCount: null });
+    expect(count()).toBe("—");
+    resetData();
+    expect(count()).toBe("—"); // 첫 스냅샷 전
+  });
+  it("status bar AIS badge: no key → neutral 'AIS 꺼짐 · 키 없음', not a red outage (review #15)", () => {
+    setData({ conn: "open", lastRxAt: Date.now(), ais: { connected: false, lag_s: null, msgs_per_s: null, gap_open_since: null, last_gap: null, state: "disabled", coverage: null, received_at: Date.now() } });
+    const html = renderToStaticMarkup(createElement(StatusBar));
+    expect(html).toMatch(/class="badge normal-case! " data-testid="ais-badge" data-tone="muted"[^>]*>AIS 꺼짐 · 키 없음</);
+    expect(html).not.toContain("재연결");
+  });
 });

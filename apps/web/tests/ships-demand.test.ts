@@ -8,9 +8,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  aisBadge, aisGapBadge, appendShipTrack, fmtCount, fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, gridFeatures, navStatusLabel,
-  parseAisStatus, parseCategory, parseGridCells, parseShipLite, parseShipState, parseShipStatic, positionBadge, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR,
-  shipCategory, shipFeatures, shipList, shipRotation, shipTrackFeatures, shipTrackFromRest, type ShipLite, type ShipTrack,
+  aisBadge, aisCoverageFeatures, aisGapBadge, appendShipTrack, fmtCount, fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
+  gridFeatures, imoField, mergeStatusGaps, navStatusLabel, normalizeGaps, parseAisCoverage, parseAisStatus, parseCategory, parseGridCells, parseShipLite,
+  parseShipState, parseShipStatic, positionBadge, positionSourceLabel, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, shipCategory, shipFeatures, shipList,
+  shipRotation, shipTrackFeatures, shipTrackFromRest, type AisBox, type AisGap, type AisStatus, type ShipLite, type ShipTrack,
 } from "@/lib/ships";
 import {
   addShipLayers, SHIP_COLOR_EXPR, SHIP_GRID_RADIUS_EXPR, SHIP_ICON_EXPR, SHIP_IMAGES, SHIP_LAYERS, SHIP_OPACITY_EXPR, SHIP_ROTATE_EXPR,
@@ -23,6 +24,8 @@ import { appendTrackPoint, trackFeatureCollection, type TrackPt } from "@/lib/tr
 import { resetData, setData, shipStates } from "@/lib/store";
 import { ShipCard, ShipPanelView } from "@/components/ShipCard";
 import { MapChipsView } from "@/components/MapChips";
+import { MapLegendView } from "@/components/MapLegend";
+import { useUi } from "@/lib/ui-store";
 import { AircraftCard } from "@/components/AircraftCard";
 
 const NOW = Date.parse("2026-09-28T03:00:00Z");
@@ -139,7 +142,30 @@ describe("ship card formatting (contract v2 §B4)", () => {
     expect(fmtMotion({ sog_kn: 11, cog_deg: null, heading_deg: 33 })).toBe("11.0 kn / — / 33°");
     expect(positionBadge("estimated")).toEqual({ text: "추정 위치", tone: "est" });
     expect(positionBadge("manual")).toEqual({ text: "수동 위치", tone: "est" });
-    expect(positionBadge("gnss")).toBeNull();
+    expect(positionBadge("epfs")).toBeNull();
+    expect(positionBadge(null)).toBeNull();
+  });
+  it("position source (contract v3 §B): epfs is an electronic fixing device report; null and legacy 'gnss' are unknown (—)", () => {
+    expect(positionSourceLabel("epfs")).toBe("전자 위치 장치(EPFS) · 선박 보고");
+    expect(positionSourceLabel(null)).toBe("—");
+    // 옛 값 gnss(0–60·누락이 섞임)는 받자마자 모름으로
+    expect(parseShipLite({ mmsi: "431011305", lat: 1, lon: 1, position_source: "gnss" })!.position_source).toBeNull();
+    expect(positionSourceLabel(parseShipLite({ mmsi: "431011305", lat: 1, lon: 1, position_source: "gnss" })!.position_source)).toBe("—");
+    expect(parseShipLite({ mmsi: "431011305", lat: 1, lon: 1, position_source: "epfs" })!.position_source).toBe("epfs");
+    expect(parseShipLite({ mmsi: "431011305", lat: 1, lon: 1, position_source: null })!.position_source).toBeNull();
+    for (const k of ["estimated", "manual", "inoperative"] as const) expect(positionSourceLabel(k)).not.toBe("—");
+  });
+  it("IMO field: 1,000,000–9,999,999 is an IMO number, 10,000,000 and above is a flag-state official number (USCG NAVCEN)", () => {
+    expect(imoField(9_123_456)).toEqual({ label: "IMO", value: "9123456" });
+    expect(imoField(1_000_000)).toEqual({ label: "IMO", value: "1000000" });
+    expect(imoField(9_999_999).label).toBe("IMO");
+    expect(imoField(10_000_000)).toEqual({ label: "기국 공식 번호", value: "10000000" });
+    expect(imoField(12_345_678).label).toBe("기국 공식 번호");
+    expect(imoField(null)).toEqual({ label: "IMO", value: "—" });
+    // 스키마 범위(1,000,000–1,073,741,823) 밖은 모름
+    expect(parseShipStatic({ mmsi: "440123456", imo: 999_999 })!.imo).toBeNull();
+    expect(parseShipStatic({ mmsi: "440123456", imo: 1_073_741_823 })!.imo).toBe(1_073_741_823);
+    expect(parseShipStatic({ mmsi: "440123456", imo: 1_073_741_824 })!.imo).toBeNull();
   });
 });
 
@@ -147,7 +173,7 @@ describe("ship card formatting (contract v2 §B4)", () => {
 
 const lite = (over: Partial<ShipLite> = {}): ShipLite => ({
   mmsi: "538004068", lat: 25.1, lon: 120.7, sog_kn: 11, cog_deg: 36, heading_deg: 33, ship_type: 70, name: "TONY SMITH",
-  seen_at: iso(NOW - 30_000), position_source: "gnss", nav_status: 0, ...over,
+  seen_at: iso(NOW - 30_000), position_source: "epfs", nav_status: 0, ...over,
 });
 
 describe("ship symbol: heading → cog → none (never drawn as north when unknown)", () => {
@@ -234,12 +260,28 @@ describe("selected ship track: REST MultiLineString + live appends, gaps drawn a
     expect(fc.features.map((f) => f.properties!.kind)).toEqual(["track", "gap", "track"]);
     expect(fc.features[1].properties!.label).toBe("AIS 공백 00:10–01:00");
   });
-  it("points with ts are split at > 15 min jumps and at AIS gaps", () => {
-    const pts = [0, 60, 120, 1200, 1260, 1320].map((s, i) => ({ ts: iso(T0 + s * 1000), lon: 129 + i * 0.01, lat: 35 }));
-    const t = shipTrackFromRest({ points: pts, gaps: [{ started_at: iso(T0 + 1270_000), ended_at: iso(T0 + 1300_000) }] });
-    expect(t.segs.map((s) => s.pts.length)).toEqual([3, 2, 1]);
+  it("points with ts are split at > 15 min jumps and at AIS gaps of 60 s or more (contract v3 §D)", () => {
+    const pts = [0, 60, 120, 1200, 1260, 1400].map((s, i) => ({ ts: iso(T0 + s * 1000), lon: 129 + i * 0.01, lat: 35 }));
+    const t = shipTrackFromRest({
+      points: pts,
+      gaps: [{ started_at: iso(T0 + 70_000), ended_at: iso(T0 + 100_000) }, { started_at: iso(T0 + 1280_000), ended_at: iso(T0 + 1380_000) }],
+    });
+    expect(t.segs.map((s) => s.pts.length)).toEqual([3, 2, 1]); // 30 s 공백은 끊지 않는다
     const labels = shipTrackFeatures(t).features.filter((f) => f.properties!.kind === "gap").map((f) => f.properties!.label);
-    expect(labels).toEqual(["기록 없음 00:02–00:20", "AIS 공백 00:21–00:22"]);
+    expect(labels).toEqual(["기록 없음 00:02–00:20", "AIS 공백 00:21–00:23"]);
+  });
+  it("a closed gap shorter than 60 s neither breaks the line nor is labelled 'AIS 공백'; 60 s and open gaps do", () => {
+    const pts = [0, 60].map((s, i) => ({ ts: iso(T0 + s * 1000), lon: 129 + i * 0.01, lat: 35 }));
+    const split = (gap: AisGap) => shipTrackFromRest({ points: pts, gaps: [gap] }).segs.length;
+    expect(split({ started_at: iso(T0 + 1_000), ended_at: iso(T0 + 60_000), reason: null })).toBe(1); // 59 s
+    expect(split({ started_at: iso(T0), ended_at: iso(T0 + 60_000), reason: null })).toBe(2); // 60 s
+    expect(split({ started_at: iso(T0 + 30_000), ended_at: null, reason: null })).toBe(2); // 열린 공백
+    // 구간 사이 라벨도 같은 규칙: 짧은 공백만 있으면 "기록 없음"
+    const t: ShipTrack = {
+      segs: [{ pts: [[129, 35]], startMs: T0, endMs: T0 }, { pts: [[129.1, 35]], startMs: T0 + 20 * 60_000, endMs: T0 + 20 * 60_000 }],
+      gaps: [{ started_at: iso(T0 + 60_000), ended_at: iso(T0 + 90_000), reason: null }],
+    };
+    expect(shipTrackFeatures(t).features.find((f) => f.properties!.kind === "gap")!.properties!.label).toBe("기록 없음 00:00–00:20");
   });
   it("live points join the last segment, or start a new one after > 15 min / an AIS gap; stale and duplicate points are skipped", () => {
     const t: ShipTrack = { segs: [{ pts: [[129, 35]], startMs: T0, endMs: T0 }], gaps: [] };
@@ -248,7 +290,10 @@ describe("selected ship track: REST MultiLineString + live appends, gaps drawn a
     expect(t.segs).toHaveLength(1);
     expect(appendShipTrack(t, { ts: T0 + 20 * 60_000, lon: 129.2, lat: 35 })).toBe(true);
     expect(t.segs).toHaveLength(2);
-    t.gaps.push({ started_at: iso(T0 + 21 * 60_000), ended_at: iso(T0 + 21.5 * 60_000), reason: null });
+    t.gaps.push({ started_at: iso(T0 + 20.5 * 60_000), ended_at: iso(T0 + 21 * 60_000), reason: null }); // 30 s — 끊지 않는다
+    expect(appendShipTrack(t, { ts: T0 + 21 * 60_000, lon: 129.205, lat: 35 })).toBe(true);
+    expect(t.segs).toHaveLength(2);
+    t.gaps.push({ started_at: iso(T0 + 21 * 60_000), ended_at: iso(T0 + 22 * 60_000), reason: null }); // 60 s
     expect(appendShipTrack(t, { ts: T0 + 22 * 60_000, lon: 129.21, lat: 35 })).toBe(true);
     expect(t.segs).toHaveLength(3);
   });
@@ -268,6 +313,67 @@ describe("selected ship track: REST MultiLineString + live appends, gaps drawn a
   it("garbage responses give an empty track", () => {
     expect(shipTrackFromRest(null)).toEqual({ segs: [], gaps: [] });
     expect(shipTrackFromRest({ type: "Feature", geometry: { type: "Point", coordinates: [1, 2] } }).segs).toEqual([]);
+  });
+});
+
+describe("track gaps follow the AIS status: an open gap is a placeholder (review 2026-09-28b #14)", () => {
+  const X = Date.parse("2026-09-28T01:00:00Z");
+  const Y = X + 5 * 60_000;
+  const status = (open: number | null, last: [number, number] | null): Pick<AisStatus, "gap_open_since" | "last_gap"> => ({
+    gap_open_since: open == null ? null : iso(open),
+    last_gap: last ? { started_at: iso(last[0]), ended_at: iso(last[1]), reason: "disconnect" } : null,
+  });
+  it("the closed gap replaces the open one with the same started_at; later live points form one segment with no false 'AIS 공백' labels", () => {
+    const t: ShipTrack = { segs: [{ pts: [[129, 35]], startMs: X - 60_000, endMs: X - 60_000 }], gaps: [] };
+    expect(mergeStatusGaps(t, status(X, null), 0)).toBe(true);
+    expect(t.gaps).toEqual([{ started_at: iso(X), ended_at: null, reason: null }]);
+    expect(mergeStatusGaps(t, status(X, null), 0)).toBe(false); // 같은 상태를 다시 받아도(ship_selected 재전송) 그대로
+    expect(mergeStatusGaps(t, status(null, [X, Y]), 0)).toBe(true);
+    expect(t.gaps).toEqual([{ started_at: iso(X), ended_at: iso(Y), reason: "disconnect" }]);
+    for (let i = 1; i <= 5; i++) appendShipTrack(t, { ts: Y + i * 60_000, lon: 129 + i * 0.01, lat: 35 });
+    expect(t.segs).toHaveLength(2);
+    const labels = shipTrackFeatures(t).features.filter((f) => f.properties!.kind === "gap").map((f) => f.properties!.label);
+    expect(labels).toEqual(["AIS 공백 00:59–01:06"]);
+  });
+  it("an open gap the status no longer reports is dropped (its end is unknown); a different open gap replaces it", () => {
+    const t: ShipTrack = { segs: [], gaps: [{ started_at: iso(X), ended_at: null, reason: null }] };
+    expect(mergeStatusGaps(t, status(null, null), 0)).toBe(true);
+    expect(t.gaps).toEqual([]);
+    t.gaps = [{ started_at: iso(X), ended_at: null, reason: null }];
+    mergeStatusGaps(t, status(Y, null), 0);
+    expect(t.gaps).toEqual([{ started_at: iso(Y), ended_at: null, reason: null }]);
+    // 같은 시각을 다른 표기로 받아도 같은 공백
+    t.gaps = [{ started_at: new Date(Y).toISOString().replace(".000Z", "Z"), ended_at: null, reason: null }];
+    expect(mergeStatusGaps(t, status(Y, null), 0)).toBe(false);
+  });
+  it("unknown status leaves the list alone; a last gap that ended before the track window is not added", () => {
+    const t: ShipTrack = { segs: [], gaps: [{ started_at: iso(X), ended_at: null, reason: null }] };
+    expect(mergeStatusGaps(t, null, 0)).toBe(false);
+    expect(t.gaps).toHaveLength(1);
+    const u: ShipTrack = { segs: [], gaps: [] };
+    expect(mergeStatusGaps(u, status(null, [X, Y]), Y + 1)).toBe(false);
+    expect(u.gaps).toEqual([]);
+  });
+  it("REST gaps: the newest 200 are kept (not the oldest), open+closed with the same start collapse to the closed one", () => {
+    const raw = Array.from({ length: 250 }, (_, i) => ({ started_at: iso(X + i * 600_000), ended_at: iso(X + i * 600_000 + 90_000) }));
+    const t = shipTrackFromRest({ type: "Feature", geometry: { type: "LineString", coordinates: [[129, 35], [129.1, 35]] }, gaps: raw });
+    expect(t.gaps).toHaveLength(200);
+    expect(t.gaps[0].started_at).toBe(iso(X + 50 * 600_000));
+    expect(t.gaps.at(-1)!.started_at).toBe(iso(X + 249 * 600_000));
+    expect(t.gapsTruncated).toBe(true);
+    const dup = shipTrackFromRest({ gaps: [{ started_at: iso(X), ended_at: null }, { started_at: iso(X), ended_at: iso(Y) }] });
+    expect(dup.gaps).toEqual([{ started_at: iso(X), ended_at: iso(Y), reason: null }]);
+    expect(dup.gapsTruncated).toBeUndefined();
+    expect(shipTrackFromRest({ gaps: [], properties: {}, type: "Feature", geometry: null }).gapsTruncated).toBeUndefined();
+    expect(shipTrackFromRest({ type: "Feature", geometry: null, properties: { gaps: [], gaps_truncated: true } }).gapsTruncated).toBe(true);
+  });
+  it("normalizeGaps sorts oldest first and reports drops; gapSummary counts all gaps and sums closed durations", () => {
+    const g = (s: number, e: number | null): AisGap => ({ started_at: iso(s), ended_at: e == null ? null : iso(e), reason: null });
+    const r = normalizeGaps([g(X + 2000, X + 3000), g(X, X + 30_000), g(X + 1000, null)], 2);
+    expect(r.gaps.map((x) => x.started_at)).toEqual([iso(X + 1000), iso(X + 2000)]);
+    expect(r.dropped).toBe(true);
+    expect(gapSummary([g(X, X + 30_000), g(X + 60_000, X + 150_000), g(Y, null)])).toEqual({ count: 3, closedS: 120, openSinceMs: Y });
+    expect(gapSummary([])).toEqual({ count: 0, closedS: 0, openSinceMs: null });
   });
 });
 
@@ -296,8 +402,61 @@ describe("AIS status badges (status.sources.ais)", () => {
     expect(aisBadge({ ...a, connected: false }, 1_010_000, true)).toMatchObject({ text: "AIS 끊김", tone: "bad" });
     expect(aisBadge(null, 0, true)).toBeNull();
   });
+  it("collector state (contract v3 §A): no key → neutral 'AIS 꺼짐 · 키 없음'; reconnecting is claimed only for connecting/backoff (review #15)", () => {
+    const a = (state: unknown, connected: boolean | null = false) => parseAisStatus({ sources: { ais: { connected, state, lag_s: null, msgs_per_s: null } } }, 1_000_000)!;
+    expect(a("disabled").state).toBe("disabled");
+    expect(a("bogus").state).toBeNull();
+    expect(a(undefined).state).toBeNull();
+    const off = aisBadge(a("disabled"), 1_010_000, true)!;
+    expect(off).toMatchObject({ text: "AIS 꺼짐 · 키 없음", tone: "muted" });
+    expect(off.title).not.toContain("재연결");
+    for (const st of ["connecting", "backoff"]) {
+      expect(aisBadge(a(st), 1_010_000, true)).toMatchObject({ text: "AIS 끊김", tone: "bad", title: expect.stringContaining("재연결 중(지수 백오프)") });
+    }
+    for (const st of [null, "starting", "stopped"]) {
+      const b = aisBadge(a(st), 1_010_000, true)!;
+      expect(b).toMatchObject({ text: "AIS 끊김", tone: "bad" });
+      expect(b.title).not.toContain("재연결");
+    }
+  });
+  it("coverage boxes: either corner order, all-or-nothing validation, 1–16 boxes", () => {
+    expect(parseAisCoverage([[46, 150, 18, 105]])).toEqual([{ s: 18, w: 105, n: 46, e: 150 }]);
+    expect(parseAisCoverage([[18, 105, 46, 150]])).toEqual([{ s: 18, w: 105, n: 46, e: 150 }]);
+    expect(parseAisCoverage([[-90, -180, 90, 0], [-90, 45, 90, 180]])).toHaveLength(2);
+    expect(parseAisCoverage(null)).toBeNull();
+    expect(parseAisCoverage([])).toBeNull();
+    expect(parseAisCoverage([[18, 105, 46]])).toBeNull();
+    expect(parseAisCoverage([[18, 105, 46, 150], [91, 0, 10, 10]])).toBeNull(); // 하나라도 틀리면 전체를 모름으로
+    expect(parseAisCoverage([[18, 105, 18, 150]])).toBeNull(); // 넓이 0
+    expect(parseAisCoverage([["18", 105, 46, 150]])).toBeNull();
+    expect(parseAisCoverage(Array.from({ length: 17 }, () => [0, 0, 1, 1]))).toBeNull();
+    expect(parseAisCoverage(Array.from({ length: 16 }, () => [0, 0, 1, 1]))).toHaveLength(16);
+    expect(parseAisStatus({ sources: { ais: { connected: true, coverage: [[46, 150, 18, 105]] } } }, 0)!.coverage).toEqual([{ s: 18, w: 105, n: 46, e: 150 }]);
+    expect(parseAisStatus({ sources: { ais: { connected: true, coverage: null } } }, 0)!.coverage).toBeNull();
+  });
+  it("coverage outline: one box is a rectangle; the operational setting draws only the 0°E and 45°E meridians (antimeridian and poles are not edges)", () => {
+    const segs = (boxes: AisBox[] | null) => aisCoverageFeatures(boxes).features.map((f) => f.geometry.coordinates);
+    const rect = segs(parseAisCoverage([[46, 150, 18, 105]]));
+    expect(rect).toHaveLength(4);
+    expect(rect).toEqual(expect.arrayContaining([[[105, 18], [105, 46]], [[150, 18], [150, 46]], [[105, 18], [150, 18]], [[105, 46], [150, 46]]]));
+    const ops = segs(parseAisCoverage([[-90, -180, 90, 0], [-90, 45, 90, 180]]));
+    expect(ops).toEqual([[[0, -85.0511], [0, 85.0511]], [[45, -85.0511], [45, 85.0511]]]);
+    expect(segs(null)).toEqual([]);
+  });
+  it("coverage outline of overlapping boxes is the union boundary (no line inside the covered area)", () => {
+    const boxes = parseAisCoverage([[0, 0, 10, 10], [5, 5, 15, 15], [0, 0, 10, 10]])!;
+    const inside = (lat: number, lon: number) => boxes.some((b) => lat >= b.s && lat <= b.n && lon >= b.w && lon <= b.e);
+    const fs = aisCoverageFeatures(boxes).features;
+    expect(fs).toHaveLength(8); // L 자 두 개가 겹친 모양의 바깥 둘레: 변 8개(같은 상자 두 번은 한 번만)
+    for (const f of fs) {
+      const [[x1, y1], [x2, y2]] = f.geometry.coordinates;
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, d = 1e-3;
+      const sides = x1 === x2 ? [inside(my, mx - d), inside(my, mx + d)] : [inside(my - d, mx), inside(my + d, mx)];
+      expect(sides[0] !== sides[1]).toBe(true); // 한쪽만 범위 안 = 진짜 경계
+    }
+  });
   it("gap badge: open gap, or a gap that ended within 30 min", () => {
-    const base = { connected: true, lag_s: 1, msgs_per_s: 1, received_at: 0 };
+    const base = { connected: true, lag_s: 1, msgs_per_s: 1, received_at: 0, state: null, coverage: null };
     expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 02:50– UTC · 진행 중", open: true });
     const ended = { started_at: "2026-09-28T02:40:00Z", ended_at: "2026-09-28T02:45:00Z", reason: null };
     expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 02:40–02:45 UTC", open: false });
@@ -411,6 +570,57 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
     expect(field("선박명")).toBe("KIMITSU MARU");
     expect(html).toContain("수동 위치");
     expect(html).toContain("방향 모름");
+  });
+  it("ship card: flag-state official numbers are not labelled IMO; position source epfs / unknown (review #6, #16)", () => {
+    const state = (src: ShipLite["position_source"]) => ({ ...lite({ mmsi: "431011305", position_source: src }), rot: null, provider: "fixture", msg_type: "PositionReport", class: "A" as const });
+    const stat = (imo: number | null) => parseShipStatic({ mmsi: "431011305", imo })!;
+    const field = (html: string, k: string) => new RegExp(`data-field="${k}"[^>]*><span[^>]*>(.*?)</span><span class="text-right">(.*?)</span></div>`).exec(html);
+    setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: stat(12_345_678), state: state("epfs") } });
+    let html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    expect(field(html, "IMO")?.[1]).toBe("기국 공식 번호");
+    expect(field(html, "IMO")?.[2]).toContain("12345678");
+    expect(field(html, "위치 출처")?.[2]).toBe("전자 위치 장치(EPFS) · 선박 보고");
+    expect(html).not.toContain("GNSS");
+    setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: stat(9_123_456), state: state(null) } });
+    html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    expect(field(html, "IMO")?.[1]).toBe("IMO");
+    expect(field(html, "IMO")?.[2]).toContain("9123456");
+    expect(field(html, "위치 출처")?.[2]).toBe("—");
+    expect(html).not.toContain('data-testid="ship-pos-badge"');
+  });
+  it("ship card: gap summary (count · total seconds), the 60 s line-break rule, then the latest 5 gaps", () => {
+    const T = Date.parse("2026-09-28T01:00:00Z");
+    const gaps: AisGap[] = Array.from({ length: 7 }, (_, i) => ({ started_at: iso(T + i * 600_000), ended_at: iso(T + i * 600_000 + (i + 1) * 10_000), reason: null }));
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps, gapsTruncated: false, segments: 2 } });
+    const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    expect(html).toContain("최근 6 h 수신 공백 7회 · 합계 280 s");
+    expect(html).toContain("60 s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)");
+    expect(html.match(/수신 공백 \d\d-\d\d/g)).toHaveLength(5);
+    expect(html).toContain("· 70 s"); // 가장 최근 공백의 길이
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: gaps.slice(0, 1), gapsTruncated: true, segments: 1 } });
+    expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).toContain("수신 공백 1회 이상(최신 목록만)");
+    // 기록 조회에 실패했고 받은 공백도 없으면 "0회"라고 하지 않는다
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: "HTTP 503", gaps: [], gapsTruncated: false, segments: 0 } });
+    expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).not.toContain("ship-gap-summary");
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: [], gapsTruncated: false, segments: 1 } });
+    expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).toContain("최근 6 h 수신 공백 0회 · 합계 0 s");
+  });
+  it("AIS disabled (no key): the ship list and chip say so instead of waiting forever (review #15)", () => {
+    setData({ ships: { mode: "waiting", version: 1, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] } });
+    const panel = () => renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true }));
+    const chip = () => renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: true }));
+    expect(panel()).toContain("선박 수신 대기");
+    setData({ ais: parseAisStatus({ sources: { ais: { connected: false, state: "disabled" } } }, 0) });
+    expect(panel()).toContain("AIS 수집이 꺼져 있습니다");
+    expect(chip()).toContain("AIS 꺼짐(키 없음)");
+  });
+  it("legend: 'ship coverage' entry only while the ships layer is on and the status carries a coverage", () => {
+    const base = useUi.getState().layers;
+    const legend = (ships: boolean) => renderToStaticMarkup(createElement(MapLegendView, { id: "lg", layers: { ...base, ships }, radarSource: "rainviewer" }));
+    expect(legend(true)).not.toContain("선박 수신 범위");
+    setData({ ais: parseAisStatus({ sources: { ais: { connected: true, coverage: [[-90, -180, 90, 0], [-90, 45, 90, 180]] } } }, 0) });
+    expect(legend(true)).toContain("선박 수신 범위(운영 설정)");
+    expect(legend(false)).not.toContain("선박 수신 범위");
   });
   it("ship card: WS says the ship left the live set → no stale values presented as current", () => {
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: null } });

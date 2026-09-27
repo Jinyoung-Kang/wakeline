@@ -233,11 +233,21 @@ export class WakelineWsClient {
 
   /**
    * 켜진 레이어를 서버에 알린다(선박은 켠 세션에만 보낸다). 선박을 끄면 받은 선박을 모두 지우고, 켜면 첫 메시지를 기다린다("waiting").
+   * 항공기를 끄면 서버가 항공기 목록을 보내지 않으므로 받은 항공기를 지우고(워커에는 빈 스냅샷) 수를 모름(null)으로 — 멈춘 수를 지금 값처럼 보이지 않는다.
+   * 다시 켜면 서버가 seq 1 스냅샷부터 보낸다.
    */
   setLayers(aircraft: boolean, ships: boolean) {
     if (aircraft === this.layers.aircraft && ships === this.layers.ships) return;
     const shipsChanged = ships !== this.layers.ships;
+    const aircraftOff = !aircraft && this.layers.aircraft;
     this.layers = { aircraft, ships };
+    if (aircraftOff) {
+      aircraftStates.clear();
+      this.lastSeq = null;
+      this.resyncGate.clear();
+      this.worker.postMessage({ type: "snapshot", aircraft: [] });
+      setData({ aircraftCount: null });
+    }
     if (shipsChanged) {
       shipStates.clear();
       this.lastSseq = null;
@@ -356,6 +366,7 @@ export class WakelineWsClient {
         break;
       }
       case "snapshot": {
+        if (!this.layers.aircraft) break; // 끈 뒤 늦게 온 메시지
         const aircraft = (Array.isArray(m.aircraft) ? m.aircraft : []) as AircraftState[];
         aircraftStates.clear();
         for (const a of aircraft) aircraftStates.set(a.hex, a);
@@ -375,6 +386,7 @@ export class WakelineWsClient {
         break;
       }
       case "diff": {
+        if (!this.layers.aircraft) break;
         if (needsResync(this.lastSeq, m.seq)) { this.requestResync(); return; }
         this.lastSeq = m.seq as number;
         const upsert = (Array.isArray(m.upsert) ? m.upsert : []) as AircraftState[];

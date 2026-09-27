@@ -1,11 +1,11 @@
 "use client";
 import { useServerData } from "@/lib/store";
-import { useUi } from "@/lib/ui-store";
+import { useUi, type Layers } from "@/lib/ui-store";
 import {
   ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
-import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_NODIR_PATH } from "@/lib/ship-layers";
+import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_NODIR_PATH } from "@/lib/ship-layers";
 import { SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
@@ -56,8 +56,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function MapLegend({ id }: { id: string }) {
   const layers = useUi((s) => s.layers);
   const radarSource = useUi((s) => s.radarSource);
+  return <MapLegendView id={id} layers={layers} radarSource={radarSource} />;
+}
+
+/** 표시 부분(레이어·레이더 출처를 인자로 — 서버 렌더 시험용) */
+export function MapLegendView({ id, layers, radarSource }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma" }) {
   const kr = useServerData((d) => d.radarKr);
   const hasRv = useServerData((d) => (d.radar?.past.length ?? 0) > 0);
+  const hasCoverage = useServerData((d) => (d.ais?.coverage?.length ?? 0) > 0);
   const grad = `linear-gradient(90deg, ${ALT_RAMP.map(([ft, c]) => `${c} ${(ft / ALT_MAX) * 100}%`).join(", ")})`;
   return (
     <div id={id} className="panel max-h-full w-[264px] overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
@@ -95,6 +101,11 @@ export function MapLegend({ id }: { id: string }) {
           <Row swatch={<Hull color="#ffffff" />}>선택한 선박</Row>
           <Row swatch={<Hull color="#c7ccd4" opacity={0.35} />}>STALE — {SHIP_STALE_S / 60}분 넘게 새 위치 없음(35%)</Row>
           <Row swatch={<span className="inline-block h-3 w-3 rounded-full!" style={{ background: "rgba(92,184,92,0.45)", border: "1px solid #5cb85c" }} />}>줌 7 미만: 격자 칸 선박 수(원 크기 = 수, 색 = 가장 많은 선종)</Row>
+          {hasCoverage ? (
+            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: SHIP_COVERAGE_COLOR }} />}>
+              <span data-testid="legend-ship-coverage" title="AIS 수집기가 구독하는 영역(운영 설정 ais_bboxes) — 점선 밖의 선박은 받지 않습니다">선박 수신 범위(운영 설정)</span>
+            </Row>
+          ) : null}
           {layers.tracks ? <>
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간)</Row>
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#8a929d" }} />}>공백 — AIS 끊김·15분 넘는 기록 없음(그 사이 위치 모름)</Row>

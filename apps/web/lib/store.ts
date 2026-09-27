@@ -34,8 +34,8 @@ export interface ShipSelectedInfo {
   received_at: number;
 }
 
-/** 선택 선박 항적 요약(지도는 MapView 가 그리고, 카드는 공백 목록을 보여 준다) */
-export interface ShipTrackInfo { mmsi: string; loaded: boolean; error: string | null; gaps: AisGap[]; segments: number }
+/** 선택 선박 항적 요약(지도는 MapView 가 그리고, 카드는 공백 목록을 보여 준다). gapsTruncated = 공백 목록이 잘림(개수는 하한) */
+export interface ShipTrackInfo { mmsi: string; loaded: boolean; error: string | null; gaps: AisGap[]; gapsTruncated: boolean; segments: number }
 
 export interface ServerData {
   conn: ConnState;
@@ -46,7 +46,8 @@ export interface ServerData {
   snapshotAt: string | null;
   /** 지역·전세계 피드의 공급자·수집 시각·지연(스냅샷 sources 와 status 중 최근 것). global=null 이면 전세계 피드 없음 */
   feeds: { region: FeedInfo | null; global: FeedInfo | null };
-  aircraftCount: number;
+  /** 구독 bbox 안 항공기 수(마지막 snapshot/diff). null = 모름(첫 스냅샷 전 · 항공기 레이어 꺼짐) */
+  aircraftCount: number | null;
   sigmets: SigmetCollection | null;
   sigmetsVersion: number;
   sigmetsFetchedAt: string | null;
@@ -77,7 +78,7 @@ const initial: ServerData = {
   snapshotVersion: 0,
   snapshotAt: null,
   feeds: { region: null, global: null },
-  aircraftCount: 0,
+  aircraftCount: null,
   sigmets: null,
   sigmetsVersion: 0,
   sigmetsFetchedAt: null,

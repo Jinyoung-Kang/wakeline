@@ -4,6 +4,7 @@
  * - 색: 선종 분류(ships.ts SHIP_CATEGORY_COLOR — 범례와 같은 표). 선택 = 흰색. STALE(> 15분) 반투명.
  * - 격자(줌 < 7 · 상한 초과): 칸 선박 수에 따라 커지는 원 + 수 라벨, 색 = 가장 많은 선종.
  * - 항적: 실선(기록 구간) · 회색 점선 + 라벨(AIS 공백·기록 없음 — 그 사이 위치는 모름).
+ * - 수신 범위(계약 v3 §A): 운영 설정 수신 범위의 바깥 경계만 옅은 점선. 범위 밖을 가리지 않는다. status 에 범위가 없으면 그리지 않는다.
  */
 import type * as maplibregl from "maplibre-gl";
 import { sdfImage } from "./maplayers";
@@ -58,7 +59,11 @@ export const SHIP_GRID_RADIUS_EXPR = [
   "interpolate", ["linear"], ["sqrt", ["get", "count"]], 1, 7, 10, 14, 30, 22, 100, 34,
 ] as unknown as maplibregl.ExpressionSpecification;
 
-export const SHIP_LAYERS = ["ship-track-line", "ship-track-gap", "ship-track-gap-label", "ship-grid-circle", "ship-grid-label", "ship-symbol"] as const;
+/** 수신 범위 경계선 — 범례 견본과 같은 값 */
+export const SHIP_COVERAGE_COLOR = "#7f93a8";
+export const SHIP_COVERAGE_DASH: [number, number] = [4, 3];
+
+export const SHIP_LAYERS = ["ship-coverage-line", "ship-track-line", "ship-track-gap", "ship-track-gap-label", "ship-grid-circle", "ship-grid-label", "ship-symbol"] as const;
 export const SHIP_IMAGES = ["ship-hull", "ship-hull-cog", "ship-nodir"] as const;
 
 /** 선박 소스·레이어를 beforeId(항공기 기호) 아래에 더한다. 모두 visibility none 으로 시작(선박 레이어를 켜야 보인다). */
@@ -68,6 +73,12 @@ export function addShipLayers(map: maplibregl.Map, beforeId = "aircraft-symbol")
   map.addImage("ship-nodir", sdfImage(SHIP_NODIR_PATH), { sdf: true });
   const hidden = { visibility: "none" as const };
   const before = map.getLayer?.(beforeId) ? beforeId : undefined;
+
+  map.addSource("ship-coverage", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: "ship-coverage-line", type: "line", source: "ship-coverage", layout: hidden,
+    paint: { "line-color": SHIP_COVERAGE_COLOR, "line-width": 1, "line-opacity": 0.6, "line-dasharray": SHIP_COVERAGE_DASH },
+  }, before);
 
   map.addSource("ship-track", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({

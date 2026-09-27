@@ -31,6 +31,7 @@ export function MapChipsView({ hex, shipsOn }: { hex: string | null; shipsOn: bo
   const lastRxAt = useServerData((d) => d.lastRxAt);
   const ships = useServerData((d) => d.ships);
   const gapOpen = useServerData((d) => d.ais?.gap_open_since ?? null);
+  const aisOff = useServerData((d) => d.ais?.state === "disabled");
   const now = useServerNow(1000);
   const wall = useNow(1000);
   // 끊김·일시정지·수신 없음이면 서버 임대가 곧 만료된다 — 마지막 상태를 "진행 중"처럼 보이지 않는다
@@ -38,7 +39,7 @@ export function MapChipsView({ hex, shipsOn }: { hex: string | null; shipsOn: bo
   const shipText = !shipsOn ? null
     : ships.mode === "points" ? `선박 ${ships.count.toLocaleString("en-US")}척 · 화면 안 · AIS`
     : ships.mode === "grid" ? `선박 ${fmtCount(ships.total)}척 · ${ships.cell_deg ?? "—"}° 격자 ${ships.count}칸으로 묶음${ships.capped ? " · 전송 상한 초과" : " · 줌 7 이상에서 개별 표시"}`
-    : "선박 수신 대기";
+    : aisOff ? "선박 없음 · AIS 꺼짐(키 없음)" : "선박 수신 대기";
   if (!chip && !shipText) return null;
   return (
     <div className="pointer-events-none absolute top-3 left-12 z-10 flex max-w-[60%] flex-col items-start gap-1" aria-live="polite">

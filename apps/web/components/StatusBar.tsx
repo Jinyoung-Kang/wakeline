@@ -33,8 +33,9 @@ export function StatusBar() {
         WS {s.conn}{silent ? " · 수신 없음" : ""}{s.conn !== "open" && s.reconnectAttempt > 0 ? ` · retry ${s.reconnectAttempt}` : ""}
       </span>
       {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
-      <span className="mono" title="현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다">
-        <span className="label mr-1">aircraft</span>{s.aircraftCount}
+      <span className="mono" data-testid="aircraft-count"
+        title={s.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다"}>
+        <span className="label mr-1">aircraft</span>{s.aircraftCount ?? "—"}
       </span>
       <span className="mono" data-testid="region-source"><span className="label mr-1">region</span>{s.feeds.region?.provider ?? "—"} · <span title={fmtIso(s.feeds.region?.fetched_at)}>{fmtClock(s.feeds.region?.fetched_at)}</span></span>
       <span className={`badge ${region.stale ? "bad" : "ok"}`} data-testid="lag-badge" title={`지역 피드 지연(경고 > ${REGION_STALE_S} s)`}>
@@ -44,7 +45,7 @@ export function StatusBar() {
       <span className={`badge ${world == null ? "" : world.stale ? "bad" : "ok"}`} data-testid="global-lag-badge" title={world == null ? "전세계 피드 없음" : `전세계 피드 지연(경고 > ${GLOBAL_STALE_S} s)`}>
         {world == null ? "—" : world.lag == null ? "NO DATA" : `lag ${Math.round(world.lag)}s`}{world?.lag != null && world.stale ? " · STALE" : ""}
       </span>
-      {ais ? <span className={`badge normal-case! ${ais.tone}`} data-testid="ais-badge" title={ais.title}>{ais.text}</span> : null}
+      {ais ? <span className={`badge normal-case! ${ais.tone === "muted" ? "" : ais.tone}`} data-testid="ais-badge" data-tone={ais.tone} title={ais.title}>{ais.text}</span> : null}
       {gap ? <span className={`badge normal-case! ${gap.open ? "bad" : "warn"}`} data-testid="ais-gap-badge" title={gap.title}>{gap.text}</span> : null}
       <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet.active ?? "—"} active · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
       <span className="mono text-fg-2"><span className="label mr-1">radar</span>{s.radar?.past.length ?? "—"} frames · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
