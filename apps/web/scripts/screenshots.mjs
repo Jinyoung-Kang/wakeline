@@ -12,7 +12,13 @@ const browser = await chromium.launch({ args: ["--use-angle=metal", "--enable-gp
 const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2, colorScheme: "dark", locale: "ko-KR" });
 const page = await ctx.newPage();
 const errors = [];
-page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+// 로그인 전 운영 화면의 세션 확인은 설계상 404(비인가 = 없는 자원) — 그 밖의 4xx/5xx 만 오류로 센다
+const EXPECTED = (status, path) => status === 404 && path === "/api/v1/ops/session";
+page.on("response", (r) => {
+  const path = r.url().replace(BASE, "");
+  if (r.status() >= 400 && !EXPECTED(r.status(), path)) errors.push(`${r.status()} ${path}`);
+});
+page.on("console", (m) => { if (m.type() === "error" && !/status of 404/.test(m.text())) errors.push(m.text()); });
 
 // 해시만 다른 주소로 goto 하면 같은 문서 안 이동이라 선택 상태가 남는다 — 빈 페이지를 거쳐 새로 연다
 async function openMap(hash) {
@@ -68,18 +74,26 @@ await shot("04-east-asia");
 await openMap("#8.2/35.55/139.9");
 await wait(40_000); // 핫 리전 첫 조회(30 s 주기)
 await shot("04b-hot-region-tokyo");
+// 핫 리전이 adsb.fi 로 본 비행 중 항공기 하나를 고른다(OpenSky 로만 보이는 항공기는 adsb.fi 가 '찾지 못함' 일 수 있다)
+const ac = await (await page.request.get(BASE + "/api/v1/aircraft?bbox=139.2,35.1,140.6,36.1")).json();
+const target = (ac.features ?? []).map((f) => f.properties)
+  .filter((p) => p.provider === "adsb_fi" && !p.on_ground && (p.alt_ft ?? 0) > 6000 && p.callsign)
+  .sort((a, b) => (b.alt_ft ?? 0) - (a.alt_ft ?? 0))[0];
+console.log("focus target", target ? `${target.callsign} ${target.hex} FL${Math.round((target.alt_ft ?? 0) / 100)}` : "none");
 await page.locator("body").press("/");
-await page.keyboard.type(process.env.WAKELINE_FOCUS_SEARCH ?? "JAL");
+await page.keyboard.type(process.env.WAKELINE_FOCUS_SEARCH ?? target?.hex ?? "JAL");
 await page.getByTestId("aircraft-search-item").first().waitFor({ timeout: 10_000 }).catch(() => {});
 await page.keyboard.press("Enter");
 await wait(65_000); // 집중 추적 5 s × 약 12회
 await shot("04c-focus-tracking");
 
-// 4d. 선박 — 부산항 확대(선종 색·선수방위 회전) → 목록에서 한 척 선택(카드·항적)
-await openMap("#10.3/35.08/129.06");
+// 4d. 선박 — 도쿄만 확대(선종 색·선수방위 회전) → 선박 탭 목록에서 한 척 선택(카드·항적)
+await openMap("#10.6/35.45/139.78");
 if ((await page.getByTestId("layer-ships").getAttribute("aria-pressed")) !== "true") await page.getByTestId("layer-ships").click();
 await wait(15_000);
-await shot("04d-ships-busan");
+await shot("04d-ships-tokyo-bay");
+await page.getByTestId("tab-ship").click();
+await page.getByTestId("ship-list-item").first().waitFor({ timeout: 15_000 }).catch(() => {});
 const shipItem = page.getByTestId("ship-list-item").first();
 if (await shipItem.count()) {
   await shipItem.click();

@@ -5,6 +5,7 @@ import {
   addBaseLayers, COVERAGE_PAINT, coverageTileUrl, frameDisplay, MAPLIBRE_WORKER_URL, predictionFeature, predictionKey, predictionTargets,
   RADAR_SLOT, radarTileUrl, STYLE_URL, type FrameRole,
 } from "@/lib/maplayers";
+import { subscriptionBbox } from "@/lib/viewport";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
 import {
@@ -178,9 +179,7 @@ export function MapView() {
 
     const subscribeViewport = () => {
       const b = map.getBounds();
-      const bbox: [number, number, number, number] = [
-        Math.max(-180, b.getWest()), Math.max(-90, b.getSouth()), Math.min(180, b.getEast()), Math.min(90, b.getNorth()),
-      ];
+      const bbox = subscriptionBbox(b.getWest(), b.getSouth(), b.getEast(), b.getNorth(), map.getZoom(), map.getCenter().lng); // 날짜변경선(lib/viewport)
       client.subscribe(bbox, Math.floor(map.getZoom()));
       worker.postMessage({ type: "viewport", bbox, zoom: map.getZoom() });
     };
