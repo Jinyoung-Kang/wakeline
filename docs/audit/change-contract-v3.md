@@ -31,10 +31,12 @@ v2(`change-contract-v2.md`)는 그대로 유효하다. 아래 항목만 v2 를 �
 
 ## C. 수요 추적 남용 방지(v2 §A 추가)
 - api(문지기): 세션마다 **새로 등장하는** 집중 추적 hex 는 60 s 창에 6개까지, 새 핫 셀은 60 s 창에 6개까지만 임대에 반영한다. 넘으면 그 세션의
-  직전 임대 집합을 유지하고(새 키 무시) `demand` 메시지의 해당 항목에 `state:"limited"` 를 싣는다. 제한은 세션 단위이며 연결을 끊지 않는다.
+  같은 종류 직전 임대를 유지하고(새 키 무시) `demand` 메시지의 해당 항목에 `state:"limited"` 를 싣는다. 종류가 바뀌는 변화(선택·선택 해제)가
+  막히면 직전 키는 빼고 새 키만 막는다. 제한은 세션 단위이며 연결을 끊지 않는다.
 - collector(방어 심층): 새 hex 의 빠른 첫 조회(fast path)는 5 s 에 1회까지, 새 핫 셀의 즉시 조회는 30 s 에 2개까지. 나머지는 정규 일정.
-- collector 는 운영자가 끈 공급자(`wakeline:provider:adsb_fi` disabled=1)에 수요 조회를 하지 않는다. 상태 해시에는 state `throttled`,
-  last_error `"provider disabled by operator"`.
+- collector 는 운영자가 끈 공급자(`wakeline:provider:adsb_fi` disabled=1)에 수요 조회를 하지 않는다. 이미 속도 상한 대기열에 들어간 조회도 취소한다.
+  상태 해시에는 state **`disabled`**(호출 상한 `throttled` 와 구분 — 화면이 원인을 잘못 말하지 않게), interval_s null,
+  last_error `"provider disabled by operator"`. api 는 `disabled` 를 그대로 전하고, 웹은 "공급자 꺼짐(운영자)" 로 보인다. (리뷰 후속으로 개정)
 
 ## D. 기타 계약 영향
 - `/api/v1/ships/{mmsi}/track`: 선을 끊는 공백은 **60 s 이상 끝난 공백 또는 열린 공백**만(저장 간격이 60 s 라 더 짧은 수신 공백은 저장점을 없애지
