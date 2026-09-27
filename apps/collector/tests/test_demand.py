@@ -155,7 +155,13 @@ async def test_status_put_and_prune_including_leftovers():
     await st.prune({"hot:1.0:2.0:50"})
     assert set(r.kv[STATUS_KEY]) == {"hot:1.0:2.0:50"}
     await st.put({})
+    await st.put({"focus:abcdef": {"state": "throttled"}})
+    await st.delete(["focus:abcdef"])
+    await st.delete([])
+    assert set(r.kv[STATUS_KEY]) == {"hot:1.0:2.0:50"}
     r.down = True
     await st.put({"focus:abcdef": {"state": "active"}})
     await st.prune(set())
-    assert st.errors == 2  # Redis 오류는 삼킨다
+    await st.delete(["hot:1.0:2.0:50"])
+    assert st.errors == 3  # Redis 오류는 삼킨다
+    assert status_value("throttled", None, None, "provider disabled by operator", "adsb_fi")["interval_s"] is None

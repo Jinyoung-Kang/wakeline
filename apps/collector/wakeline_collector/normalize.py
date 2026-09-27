@@ -13,6 +13,9 @@
 
 from __future__ import annotations
 
+import logging
+import math
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,6 +23,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from wakeline_collector.models import AircraftState
+
+log = logging.getLogger("normalize")
 
 M_TO_FT = 3.28084
 MS_TO_KT = 1.94384
@@ -75,21 +80,53 @@ def _hex(v: Any) -> str | None:
     return h if len(h) == 6 and all(c in "0123456789abcdef" for c in h) else None
 
 
-SOURCE_CLOCK_TOLERANCE_S = 120.0
+# 공급자 `now` 를 믿는 창(수신 시각 기준). `now` 는 응답을 만든 시각이라 수신 시각보다 이르다(전송 지연만큼) —
+# 10 s 까지 받는다. 늦은 쪽은 시계 오차뿐이라 2 s 까지. 품질 게이트의 미래 허용(30 s)·api focus TTL(60 s)보다 훨씬 좁아야
+# 시계가 어긋났을 때 모든 레코드가 격리·만료되지 않고 수신 시각으로 되돌아간다.
+SOURCE_CLOCK_BEHIND_S = 10.0
+SOURCE_CLOCK_AHEAD_S = 2.0
+CLOCK_FALLBACK_LOG_S = 600.0  # 되돌림 경고는 10분에 한 번(프로세스 전체)
+
+clock_fallbacks = 0  # 공급자 `now` 가 있었지만 쓰지 않은 횟수(시험·진단용)
+_clock_fallback_logged = -math.inf
+
+
+def _clock_fallback(offset_s: float | None) -> None:
+    global clock_fallbacks, _clock_fallback_logged
+    clock_fallbacks += 1
+    mono = time.monotonic()
+    if mono - _clock_fallback_logged >= CLOCK_FALLBACK_LOG_S:
+        _clock_fallback_logged = mono
+        log.warning(
+            "readsb provider clock offset %s (allowed -%.0f..+%.0f s) — seen_at uses receive time "
+            "(%d fallbacks so far, logged at most every %.0f s)",
+            "unreadable" if offset_s is None else f"{offset_s:+.1f} s",
+            SOURCE_CLOCK_BEHIND_S,
+            SOURCE_CLOCK_AHEAD_S,
+            clock_fallbacks,
+            CLOCK_FALLBACK_LOG_S,
+        )
 
 
 def readsb_reference_time(payload: dict[str, Any] | None, fetched_at: datetime) -> datetime:
-    """seen_pos 를 뺄 기준 시각. readsb 응답의 `now`(공급자 서버 시각, ms)가 수신 시각과 ±120 s 안이면 그것을 쓴다.
+    """seen_pos 를 뺄 기준 시각. readsb 응답의 `now`(공급자 서버 시각, ms)가 수신 시각 −10 s ~ +2 s 안이면 그것을 쓴다.
     같은 관측을 다른 시각에 두 번 받아도(관심 지역·핫 리전·집중 추적) seen_at 이 정확히 같아진다 — 수신 시각 기준이면
-    0.1 s 씩 어긋나 같은 관측이 서로 다른 점으로 저장·표시된다(실측 2026-09-28). 이상하면 수신 시각으로 되돌린다."""
+    0.1 s 씩 어긋나 같은 관측이 서로 다른 점으로 저장·표시된다(실측 2026-09-28). 창 밖·읽을 수 없으면 수신 시각으로 되돌린다."""
     now = _num((payload or {}).get("now"))
     if now is None:
+        if (payload or {}).get("now") is not None:
+            _clock_fallback(None)
         return fetched_at
     try:
         ref = datetime.fromtimestamp(now / 1000.0, UTC)
     except (OverflowError, OSError, ValueError):
+        _clock_fallback(None)
         return fetched_at
-    return ref if abs((ref - fetched_at).total_seconds()) <= SOURCE_CLOCK_TOLERANCE_S else fetched_at
+    offset = (ref - fetched_at).total_seconds()
+    if -SOURCE_CLOCK_BEHIND_S <= offset <= SOURCE_CLOCK_AHEAD_S:
+        return ref
+    _clock_fallback(offset)
+    return fetched_at
 
 
 def normalize_readsb(

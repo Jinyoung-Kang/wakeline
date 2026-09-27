@@ -1,5 +1,11 @@
+import logging
+import math
+import time
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from wakeline_collector import normalize
 from wakeline_collector.normalize import (
     Rejected,
     from_opensky,
@@ -8,6 +14,7 @@ from wakeline_collector.normalize import (
     normalize_readsb,
     readsb_reference_time,
 )
+from wakeline_collector.quality import AircraftGate
 
 NOW = datetime(2026, 9, 27, 5, 10, 5, tzinfo=UTC)
 
@@ -172,7 +179,57 @@ def test_reference_time_falls_back_to_fetch_time_when_source_clock_is_off_or_mis
     assert readsb_reference_time({"now": "x"}, fetched) == fetched
     assert readsb_reference_time({"now": True}, fetched) == fetched
     assert readsb_reference_time({"now": 1e30}, fetched) == fetched  # 범위 밖
-    off = (fetched.timestamp() + 121) * 1000  # 공급자 시계가 2 분 넘게 어긋나면 믿지 않는다
+    off = (fetched.timestamp() + 121) * 1000  # 창(−10 ~ +2 s) 밖이면 믿지 않는다
     assert readsb_reference_time({"now": off}, fetched) == fetched
     near = (fetched.timestamp() + 1.5) * 1000
     assert readsb_reference_time({"now": near}, fetched) == fetched + timedelta(seconds=1.5)
+
+
+@pytest.fixture
+def fresh_clock_fallback(monkeypatch):
+    monkeypatch.setattr(normalize, "clock_fallbacks", 0)
+    monkeypatch.setattr(normalize, "_clock_fallback_logged", -math.inf)
+
+
+def _at(fetched: datetime, offset_s: float) -> dict:
+    return {"now": (fetched.timestamp() + offset_s) * 1000}
+
+
+def test_reference_time_window_is_10_s_behind_to_2_s_ahead(fresh_clock_fallback, caplog):
+    """리뷰 2026-09-28b #1: 창이 품질 게이트 미래 허용(30 s)·api focus TTL(60 s)보다 넓으면 시계가 어긋났을 때
+    모든 readsb 레코드가 격리·만료된다. 공급자 `now` 는 수신 시각 −10 s ~ +2 s 안에서만 쓴다."""
+    fetched = datetime(2026, 9, 28, 1, 0, 0, tzinfo=UTC)
+    assert readsb_reference_time(_at(fetched, -10), fetched) == fetched - timedelta(seconds=10)
+    assert readsb_reference_time(_at(fetched, 2), fetched) == fetched + timedelta(seconds=2)
+    assert normalize.clock_fallbacks == 0
+    with caplog.at_level(logging.WARNING, logger="normalize"):
+        for off in (2.5, 45, 90, 119, -10.5, -45, -90):
+            assert readsb_reference_time(_at(fetched, off), fetched) == fetched
+        assert readsb_reference_time({"now": "x"}, fetched) == fetched  # 값은 있는데 읽을 수 없음
+        assert readsb_reference_time({}, fetched) == fetched  # 없음은 되돌림으로 세지 않는다
+    assert normalize.clock_fallbacks == 8
+    logged = [r for r in caplog.records if "provider clock offset" in r.getMessage()]
+    assert len(logged) == 1 and "+2.5 s" in logged[0].getMessage()  # 10분에 한 번만
+
+
+def test_reference_time_fallback_is_logged_again_after_10_minutes(fresh_clock_fallback, caplog, monkeypatch):
+    fetched = datetime(2026, 9, 28, 1, 0, 0, tzinfo=UTC)
+    with caplog.at_level(logging.WARNING, logger="normalize"):
+        readsb_reference_time(_at(fetched, 60), fetched)
+        monkeypatch.setattr(normalize, "_clock_fallback_logged", time.monotonic() - normalize.CLOCK_FALLBACK_LOG_S)
+        readsb_reference_time(_at(fetched, -60), fetched)
+    logged = [r.getMessage() for r in caplog.records if "provider clock offset" in r.getMessage()]
+    assert len(logged) == 2 and "-60.0 s" in logged[1] and "2 fallbacks" in logged[1]
+
+
+@pytest.mark.parametrize("skew_s", [45.0, 90.0, 119.0])
+def test_skewed_provider_clock_does_not_quarantine_every_record(skew_s):
+    """공급자 시계가 30~120 s 앞서도 seen_at 이 미래로 가지 않는다(전에는 전부 seen_in_future 로 격리)."""
+    fetched = datetime.now(UTC)
+    ref = readsb_reference_time(_at(fetched, skew_s), fetched)
+    ac = {"hex": "71c123", "lat": 35.5, "lon": 139.8, "alt_baro": 12000, "gs": 300, "track": 90, "seen_pos": 1.2}
+    s = normalize_readsb(ac, "adsb_fi", fetched, ref)
+    assert not isinstance(s, Rejected)
+    g = AircraftGate().apply([s], 0, fetched)
+    assert [x.hex for x in g.kept] == ["71c123"] and g.quarantined == []
+    assert s.seen_at == fetched - timedelta(seconds=1.2)

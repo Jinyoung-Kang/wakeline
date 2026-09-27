@@ -219,8 +219,9 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def status_value(
-    state: str, interval_s: int, last_success_at: datetime | None, last_error: str | None, provider: str
+    state: str, interval_s: int | None, last_success_at: datetime | None, last_error: str | None, provider: str
 ) -> dict[str, Any]:
+    """interval_s None = 조회가 돌지 않아 주기가 없다(예: 운영자가 공급자를 끔)."""
     return {
         "state": state,
         "interval_s": interval_s,
@@ -255,6 +256,15 @@ class DemandStatus:
             self._fields.update(values)
         except Exception as e:  # noqa: BLE001
             self._warn("hset", e)
+
+    async def delete(self, fields: list[str]) -> None:
+        if not fields:
+            return
+        try:
+            await self._r.hdel(STATUS_KEY, *fields)
+            self._fields.difference_update(fields)
+        except Exception as e:  # noqa: BLE001
+            self._warn("hdel", e)
 
     async def prune(self, active: set[str]) -> None:
         """임대가 사라진 필드를 지운다. 처음 한 번은 이전 프로세스가 남긴 필드까지(HKEYS)."""

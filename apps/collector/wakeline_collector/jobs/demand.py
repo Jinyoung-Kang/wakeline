@@ -2,10 +2,12 @@
 
 1 s 틱: 임대 읽기(DemandPoller) → focus 차례면 조회 태스크 → hot 셀마다 차례면 조회 태스크 → 상태 정리.
 - focus: 활성 hex 전부를 5 s 마다 adsb.fi 묶음 요청(≤ 50 hex/요청, 넘으면 여러 요청이 속도 상한을 차례로 지난다).
-  주기는 시작 시각 기준(고정 주기)이고, 새 hex 가 생기면 최소 간격(2 s)만 지키고 바로 조회한다. 이전 조회가 끝나지 않았으면
-  겹쳐 보내지 않는다.
+  주기는 시작 시각 기준(고정 주기)이고, 새 hex 가 생기면 최소 간격(2 s)만 지키고 바로 조회한다(fast path — 수집기 전체에서
+  5 s 에 1회까지, 계약 v3 §C). 이전 조회가 끝나지 않았으면 겹쳐 보내지 않는다.
 - hot: 셀마다 30 s. 용량 계획(adsb.fi 상한 × 0.8 − 관심 지역 폴백 − focus)이 모자라면 30 → 60 → 120 s 로 늘리고,
   그래도 모자라면 순위(세션 수) 밖의 셀은 건너뛴다(state throttled). 실제로 허가를 못 받은 셀은 그 셀만 한 단계 물러난다.
+  새 셀의 즉시 첫 조회는 30 s 에 2개까지, 나머지는 한 주기 뒤 첫 조회(계약 v3 §C).
+- 운영자가 공급자를 끄면(wakeline:provider:{name} disabled=1) 틱마다 확인해 호출하지 않고 state throttled 로 알린다.
 - 우선순위 region > focus > hot: 속도 상한 대기열 우선순위(0 > 1 > 2) + 하루 예산 여유분(focus 는 관심 지역 몫을,
   hot 은 거기에 focus 몫까지 남기고 멈춘다).
 - 발행: wakeline:aircraft 에 scope focus(requested·missing) / hot(cell·region). 품질 게이트는 관심 지역과 같은 규칙.
@@ -19,6 +21,7 @@ import asyncio
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -42,10 +45,14 @@ log = logging.getLogger("job.demand")
 TICK_S = 1.0
 FOCUS_INTERVAL_S = 5
 FOCUS_MIN_GAP_S = 2.0
+FOCUS_FAST_EVERY_S = 5.0  # 새 hex 의 빠른 첫 조회(fast path)는 수집기 전체에서 이 간격에 1회까지
 FOCUS_BATCH = 50
 FOCUS_WAIT_S = 4.0  # 한 묶음이 속도 상한을 기다리는 최대 시간(주기 5 s 안에서)
 HOT_LEVELS_S = (30, 60, 120)
 HOT_WAIT_MAX_S = 15.0
+HOT_NEW_BURST = 2  # 새 셀의 즉시 첫 조회는 HOT_NEW_WINDOW_S 에 이만큼까지(나머지는 정규 일정)
+HOT_NEW_WINDOW_S = 30.0
+DISABLED_MSG = "provider disabled by operator"
 PLAN_UTILIZATION = 0.8  # 계획은 호스트 상한의 80 %까지만 채운다(지터·재시도 여유)
 SHUTDOWN_WAIT_S = 5.0
 
@@ -105,6 +112,7 @@ class _Cell:
     interval_s: int = HOT_LEVELS_S[0]  # 적용 주기 = max(계획, 물러난 단계)
     started: float = 0.0
     task: asyncio.Task[None] | None = None
+    fresh: bool = True  # 아직 한 번도 조회 차례가 오지 않은 셀
 
     def apply_level(self) -> None:
         self.interval_s = max(self.plan_s, HOT_LEVELS_S[self.level])
@@ -134,11 +142,13 @@ class DemandTracker:
         self._focus_task: asyncio.Task[None] | None = None
         self._focus_due = 0.0
         self._focus_started = -math.inf
+        self._focus_fast_at = -math.inf
         self._focus_asked: set[str] = set()
+        self._hot_new_at: deque[float] = deque()  # 새 셀 즉시 조회 시각(최근 HOT_NEW_WINDOW_S)
         self._cells: dict[str, _Cell] = {}
         self._served: set[str] = set()  # 직전 계획에서 조회 대상이 된 셀(용량 밖 셀은 깨어날 이유가 없다)
         self._last_ok: dict[str, datetime] = {}
-        self._written: dict[str, tuple[str, int, str | None]] = {}
+        self._written: dict[str, tuple[str, int | None, str | None]] = {}
         self.counts = {"focus_requests": 0, "hot_requests": 0, "throttled": 0, "errors": 0, "published": 0}
 
     # ---- 루프 --------------------------------------------------------------------------------------------------------
@@ -169,11 +179,16 @@ class DemandTracker:
     async def tick(self) -> float:
         demand = await self.poller.poll()
         now = self._clock()
-        self._schedule_focus(demand, now)
-        await self.status.put(self._schedule_hot(demand, now))
+        disabled = bool(demand.fields) and await self.ctx.status.is_disabled(self.provider.name)  # 운영자 스위치는 틱마다
+        if disabled:
+            await self.status.put(self._disabled(demand))
+        else:
+            await self._lift_disabled()
+            self._schedule_focus(demand, now)
+            await self.status.put(self._schedule_hot(demand, now))
         await self.status.prune(demand.fields)
         self._forget(demand)
-        return self._next_delay(demand, now)
+        return TICK_S if disabled else self._next_delay(demand, now)
 
     def _next_delay(self, demand: Demand, now: float) -> float:
         cands = [TICK_S]
@@ -209,8 +224,14 @@ class DemandTracker:
         if not hexes or (self._focus_task is not None and not self._focus_task.done()):
             return
         fresh = bool(set(hexes) - self._focus_asked)
-        if not (now >= self._focus_due or (fresh and now - self._focus_started >= FOCUS_MIN_GAP_S)):
+        due = now >= self._focus_due
+        fast = (
+            not due and fresh and now - self._focus_started >= FOCUS_MIN_GAP_S and now - self._focus_fast_at >= FOCUS_FAST_EVERY_S
+        )
+        if not (due or fast):
             return
+        if fast:
+            self._focus_fast_at = now
         self._focus_asked = set(hexes)
         self._focus_started = now
         self._focus_due = now + FOCUS_INTERVAL_S
@@ -236,11 +257,43 @@ class DemandTracker:
             if not st.busy and now >= st.next_due:
                 st.started = now
                 st.apply_level()
+                if st.fresh:
+                    st.fresh = False
+                    if not self._allow_new_hot(now):
+                        continue  # 즉시 조회 몫 초과 → 정규 일정(한 주기 뒤 첫 조회), 그때까지 상태는 쓰지 않는다(대기)
                 st.task = asyncio.create_task(self._run_hot(cell, st), name=f"demand-hot-{cell.key}")
         return updates
 
+    def _allow_new_hot(self, now: float) -> bool:
+        q = self._hot_new_at
+        while q and now - q[0] >= HOT_NEW_WINDOW_S:
+            q.popleft()
+        if len(q) >= HOT_NEW_BURST:
+            return False
+        q.append(now)
+        return True
+
+    async def _lift_disabled(self) -> None:
+        """다시 켜지면 '꺼짐' 상태를 지운다(다음 조회 결과가 쓰일 때까지 대기) — 지난 사유를 남겨 두지 않는다."""
+        lifted = [f for f, w in self._written.items() if w[2] == DISABLED_MSG]
+        for f in lifted:
+            del self._written[f]
+        await self.status.delete(lifted)
+
+    def _disabled(self, demand: Demand) -> dict[str, dict[str, Any]]:
+        """운영자가 끈 공급자: 조회하지 않고 모든 필드를 throttled 로(주기 없음 — 조회가 돌지 않는다)."""
+        self._served = set()
+        updates: dict[str, dict[str, Any]] = {}
+        for f in demand.focus:
+            self._status_if_changed(updates, f.field, "throttled", None, DISABLED_MSG)
+        for c in demand.hot:
+            self._status_if_changed(updates, c.field, "throttled", None, DISABLED_MSG)
+        return updates
+
     # ---- 상태 --------------------------------------------------------------------------------------------------------
-    def _status_if_changed(self, out: dict[str, dict[str, Any]], field: str, state: str, interval: int, err: str | None) -> None:
+    def _status_if_changed(
+        self, out: dict[str, dict[str, Any]], field: str, state: str, interval: int | None, err: str | None
+    ) -> None:
         sig = (state, interval, err)
         if self._written.get(field) == sig:
             return

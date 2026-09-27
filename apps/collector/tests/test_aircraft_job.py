@@ -6,17 +6,25 @@ import asyncio
 import base64
 import gzip
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import httpx
 import orjson
+import pytest
+import respx
 from fakes import FakeRedis, make_ctx
 
+from wakeline_collector import fallback
 from wakeline_collector.config import Settings
 from wakeline_collector.fallback import ProviderChain
+from wakeline_collector.http import HttpClient
 from wakeline_collector.jobs.aircraft import AircraftJob, next_utc_midnight
 from wakeline_collector.main import build_limits
 from wakeline_collector.models import BudgetInfo, ProviderResult
 from wakeline_collector.providers.opensky import OpenSkyProvider
+from wakeline_collector.providers.readsb import adsb_fi, adsb_lol
 from wakeline_collector.publisher import STREAM_AIRCRAFT
+from wakeline_collector.ratelimit import RateLimiter
 
 
 class FakeReadsb:
@@ -225,13 +233,78 @@ class ThrottledReadsb(FakeReadsb):
         raise Throttled("opendata.adsb.fi", "cooling down 60 s after HTTP 429")
 
 
-async def test_throttled_call_releases_budget():
+def _spy_runs(ctx) -> list[dict]:
+    recorded: list[dict] = []
+    real = ctx.db.record_run
+
+    def spy(*a, **kw):
+        recorded.append({"job": a[0], "provider": a[1], **kw})
+        real(*a, **kw)
+
+    ctx.db.record_run = spy
+    return recorded
+
+
+async def test_throttled_call_releases_budget_and_is_not_a_failure():
     r = FakeRedis()
     ctx = make_ctx(r, limits={"adsb_fi": 100})
-    job = AircraftJob("region", ProviderChain("region", {"adsb_fi": ThrottledReadsb("adsb_fi")}, ctx.status), ctx)
-    await job.run_once()
+    runs = _spy_runs(ctx)
+    chain = ProviderChain("region", {"adsb_fi": ThrottledReadsb("adsb_fi")}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    for _ in range(3):
+        await job.run_once()
     assert (await ctx.budget.usage("adsb_fi"))[0] == 0  # 보내지 않은 호출은 예산에서 되돌린다
-    assert "throttled" in (await r.hgetall("wakeline:provider:adsb_fi"))["last_error"]
+    h = await r.hgetall("wakeline:provider:adsb_fi")
+    assert "last_error" not in h and "consecutive_failures" not in h  # 공급자 실패로 보이지 않는다
+    assert chain._fails.get("adsb_fi", 0) == 0 and "adsb_fi" not in chain._down_until  # 쿨다운 정보 없음 → 건너뛰지 않는다
+    assert [x["status"] for x in runs] == ["throttled"] * 3
+
+
+async def test_limiter_cooldown_from_another_call_does_not_take_region_offline(monkeypatch):
+    """리뷰 2026-09-28b #0: focus·hot 이 받은 429 로 제한기가 막은 관심 지역 호출은 보내지 않은 것이다.
+    3회 규칙(10분 쿨다운)·공급자 실패 기록에 넣지 않고, 제한기 쿨다운이 남은 동안만 그 공급자를 건너뛴다."""
+    clk = [1000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_lol": 0, "adsb_fi": 100})
+    runs = _spy_runs(ctx)
+    http = HttpClient(RateLimiter(2.0, 2, {"opendata.adsb.fi": (0.8, 1)}, clock=lambda: clk[0]))
+    chain = ProviderChain("region", {"adsb_lol": adsb_lol(http), "adsb_fi": adsb_fi(http)}, ctx.status)
+    chain.mark_down("adsb_lol", 600)  # 1순위가 쉬는 중 → 관심 지역이 adsb.fi 폴백에 기댄다
+    job = AircraftJob("region", chain, ctx)
+    assert http.limiter.penalize("opendata.adsb.fi") == 30.0  # 다른 작업의 429
+    with respx.mock:  # 모의 경로 없음 → 실제로 보내면 실패
+        for dt in (1, 11, 21):
+            clk[0] = 1000 + dt
+            await job.run_once()
+    assert chain._down_until["adsb_fi"] == pytest.approx(1030.0)  # 제한기 쿨다운 끝까지만(전: 600 s)
+    assert chain._fails.get("adsb_fi", 0) == 0
+    h = await r.hgetall("wakeline:provider:adsb_fi")
+    assert "consecutive_failures" not in h and "last_error" not in h
+    assert (await ctx.budget.usage("adsb_fi"))[0] == 0
+    assert [x["status"] for x in runs] == ["throttled"]  # 건너뛴 주기는 호출도 기록도 없다
+
+    clk[0] = 1031.0  # 쿨다운이 끝나면 바로 돌아온다
+    body = {"now": datetime.now(UTC).timestamp() * 1000, "ac": [{"hex": "71c0a1", "lat": 37.0, "lon": 127.0, "seen_pos": 1}]}
+    with respx.mock:
+        route = respx.get(url__startswith="https://opendata.adsb.fi/api/v3/lat/").mock(
+            return_value=httpx.Response(200, json=body)
+        )
+        await job.run_once()
+    assert route.call_count == 1 and len(r.streams[STREAM_AIRCRAFT]) == 1
+    assert (await r.hgetall("wakeline:provider:adsb_fi"))["consecutive_failures"] == "0"
+    await http.aclose()
+
+
+async def test_real_provider_errors_keep_three_strike_rule():
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    chain = ProviderChain("region", {"adsb_lol": FakeReadsb("adsb_lol", fail=True)}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    for _ in range(3):
+        await job.run_once()
+    assert "adsb_lol" in chain._down_until  # 3회 연속 실패 → 쿨다운
+    assert (await r.hgetall("wakeline:provider:adsb_lol"))["consecutive_failures"] == "3"
 
 
 async def test_region_429_backs_off():

@@ -4,6 +4,7 @@
   burst 1 — 공식 초당 1회의 80 %) 함께 통과해야 한다. HttpClient 가 호출 직전에 받으므로 새 코드도 우회할 수 없다.
 - 기다리는 호출은 우선순위(0 고정 관심 지역·기타 주기 작업 > 1 focus > 2 hot) · 도착 순으로 줄 선다.
   앞선 대기자가 막혀 있는 버킷은 뒤 대기자도 쓰지 않는다 → 낮은 우선순위가 높은 우선순위의 토큰을 가로채지 못한다.
+  단 429 쿨다운 중인 대기자는 자기 호스트만 막는다(공용 버킷을 잡아 두지 않는다 — 다른 호스트 호출이 그 뒤에 서지 않게).
 - 대기 상한(wait_s) 안에 토큰을 못 받으면 Throttled. 호출하지 않았으므로 공급자 쪽 사용량도 없다(예산은 호출자가 되돌린다).
 - 429 를 받으면 그 호스트를 잠시 막는다(penalize: Retry-After 우선, 없으면 30 → 60 → 120 → 300 s). 모든 호출자에 공통.
 - 대기열은 상한(MAX_WAITERS)이 있다. 넘치면 기다리지 않고 Throttled.
@@ -35,10 +36,11 @@ PENALTY_MAX_S = 600.0  # Retry-After 가 이상하게 길어도 이 이상 막�
 class Throttled(RuntimeError):
     """대기 상한 안에 호출 허가를 받지 못함(호출하지 않았다)."""
 
-    def __init__(self, host: str, reason: str):
+    def __init__(self, host: str, reason: str, *, cooldown_s: float = 0.0):
         super().__init__(f"throttled {host}: {reason}")
         self.host = host
         self.reason = reason
+        self.cooldown_s = cooldown_s  # 429 쿨다운 때문이면 남은 초(그 밖은 0)
 
 
 class TokenBucket:
@@ -144,7 +146,7 @@ class RateLimiter:
         blocked = self.cooldown_remaining(host)
         if blocked > wait_s:
             self.throttled += 1
-            raise Throttled(host, f"cooling down {blocked:.0f} s after HTTP 429")
+            raise Throttled(host, f"cooling down {blocked:.0f} s after HTTP 429", cooldown_s=blocked)
         if len(self._waiters) >= MAX_WAITERS:
             self.throttled += 1
             raise Throttled(host, f"{len(self._waiters)} calls already waiting")
@@ -194,10 +196,15 @@ class RateLimiter:
             if w.host in blocked_hosts or any(id(b) in blocked for b in buckets):
                 keep.append(w)
                 continue
-            waits = [b.wait_s(now) for b in buckets]
             cool = self._blocked_until.get(w.host, 0.0) - now
-            need = max([*waits, cool])
-            if need <= 0:
+            if cool > 0:  # 429 쿨다운: 그 호스트만 막는다. 공용 버킷은 잡아 두지 않는다(쿨다운이 끝나면 다시 줄 선다).
+                blocked_hosts.add(w.host)
+                next_wake = min(next_wake, cool)
+                keep.append(w)
+                continue
+            waits = [b.wait_s(now) for b in buckets]
+            short = [s for s in waits if s > 0]
+            if not short:
                 for b in buckets:
                     b.take(now)
                 self._record(w.host, now)
@@ -206,9 +213,8 @@ class RateLimiter:
             for b, s in zip(buckets, waits, strict=True):
                 if s > 0:
                     blocked.add(id(b))
-            if cool > 0:
-                blocked_hosts.add(w.host)
-            next_wake = min(next_wake, need)
+            # 가장 먼저 차는 버킷 시각에 다시 본다 — 그 버킷을 기다리던 뒤 대기자가 토큰이 돌아오는 즉시 풀린다
+            next_wake = min(next_wake, min(short))
             keep.append(w)
         self._waiters = keep
         if keep and next_wake < math.inf:

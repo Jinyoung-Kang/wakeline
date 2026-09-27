@@ -153,3 +153,32 @@ async def test_cancelled_high_priority_waiter_unblocks_lower_priority():
     await asyncio.gather(hi, return_exceptions=True)
     assert await asyncio.wait_for(lo, 1) >= 0
     assert lim.granted == 2
+
+
+async def test_cooldown_waiter_blocks_only_its_host_not_the_shared_bucket():
+    """리뷰 2026-09-28b #3: 429 쿨다운 중인 대기자가 전체 버킷을 잡아 두면, 토큰이 있어도 다른 호스트 호출이
+    그 쿨다운 끝까지 막혀 Throttled 된다. 쿨다운 대기자는 자기 호스트만 막는다."""
+    lim = RateLimiter(10.0, 2, {"h": (100.0, 1)})  # 전체 버킷은 0.1 s 마다 1개
+    await lim.acquire("a")
+    await lim.acquire("b")  # 전체 버킷을 비운다
+    lim._blocked_until["h"] = time.monotonic() + 0.6  # h 는 429 쿨다운(대기 상한 안)
+    head = asyncio.create_task(lim.acquire("h", priority=PRIORITY_FIXED, wait_s=2))
+    await asyncio.sleep(0)
+    t0 = time.monotonic()
+    await lim.acquire("other", priority=PRIORITY_FIXED, wait_s=0.4)  # 전: h 쿨다운 끝(0.6 s)까지 막혀 Throttled
+    assert time.monotonic() - t0 < 0.35
+    assert await asyncio.wait_for(head, 2) >= 0.5  # 쿨다운은 그대로 지킨다
+    assert lim.granted == 4 and lim.throttled == 0
+
+
+async def test_waiters_behind_are_rechecked_when_a_shared_bucket_refills():
+    """앞 대기자가 호스트 버킷(1 s)을 기다리는 동안 전체 버킷(0.1 s)이 차면 뒤 대기자를 바로 다시 본다."""
+    lim = RateLimiter(10.0, 1, {"h": (1.0, 1)})
+    await lim.acquire("h")  # 두 버킷 모두 비운다
+    head = asyncio.create_task(lim.acquire("h", priority=PRIORITY_FIXED, wait_s=2))
+    await asyncio.sleep(0)
+    t0 = time.monotonic()
+    await lim.acquire("other", priority=PRIORITY_HOT, wait_s=0.5)  # 전: 깨우는 시각이 h 버킷(1 s)이라 Throttled
+    assert time.monotonic() - t0 < 0.45
+    waited = await asyncio.wait_for(head, 2)
+    assert 0.8 <= waited < 1.5  # 앞 대기자는 늦어지지 않는다(호스트 버킷이 찰 때 전체 버킷도 다시 차 있다)

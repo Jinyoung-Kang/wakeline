@@ -362,6 +362,103 @@ async def test_result_for_a_lease_that_vanished_mid_flight_is_not_written():
     assert "focus:abcdef" not in _status(r)
 
 
+# ---- 남용 방지(계약 v3 §C) ---------------------------------------------------------------------------------------------
+async def test_focus_fast_path_is_at_most_once_per_5s():
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    t, _ctx, clk = _tracker(r, prov)
+
+    async def at(sec: float, new_hex: str | None = None) -> int:
+        clk[0] = sec
+        if new_hex:
+            await r.zadd(FOCUS_KEY, {new_hex: _now_ms() + 60_000})
+        await t.tick()
+        await _drain(t)
+        return len(prov.calls)
+
+    assert await at(0.0) == 1  # 정규(첫 조회), 다음 차례 5.0
+    assert await at(2.0, "71c0a1") == 2  # 새 hex → fast path, 다음 차례 7.0
+    assert await at(4.5, "a1b2c3") == 2  # 새 hex 지만 fast path 는 5 s 에 1회(전: 2 s 간격이면 바로)
+    assert await at(6.9) == 2
+    assert await at(7.0) == 3 and prov.calls[-1][1] == ["71c0a1", "a1b2c3", "abcdef"]  # 정규 차례에 함께
+    assert await at(9.0, "b00001") == 4  # 앞 fast path(2.0)로부터 5 s 가 지났다
+
+
+async def test_new_hot_cells_immediate_fetch_is_at_most_2_per_30s():
+    r = FakeRedis()
+    keys = await _hot_leases(r, 4)
+    prov = FakeDemandProvider()
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    assert [c[1] for c in prov.calls] == [(10.0, 120.0, 100), (11.0, 120.0, 100)]  # 순위 앞 2개만 즉시
+    st = _status(r)
+    assert {k for k in keys if f"hot:{k}" in st} == set(keys[:2])  # 나머지는 상태를 쓰지 않는다(대기)
+    assert t._cells[keys[2]].next_due == 30 and t._cells[keys[3]].next_due == 30  # 정규 일정: 한 주기 뒤 첫 조회
+    late = "20.0:120.0:100"
+    await r.zadd(HOT_KEY, {late: _now_ms() + 60_000})
+    clk[0] = 10.0
+    await t.tick()
+    await _drain(t)
+    assert len(prov.calls) == 2 and t._cells[late].next_due == 40  # 30 s 창에 즉시 조회 2개를 이미 썼다
+    clk[0] = 30.0
+    await t.tick()
+    await _drain(t)
+    assert sorted(c[1][0] for c in prov.calls[2:]) == [10.0, 11.0, 12.0, 13.0]
+    clk[0] = 40.0
+    await t.tick()
+    await _drain(t)
+    assert prov.calls[-1][1] == (20.0, 120.0, 100) and len(prov.calls) == 7
+
+
+async def test_operator_disabled_provider_gets_no_demand_calls():
+    """리뷰 2026-09-28b #2: 운영자가 adsb_fi 를 끄면(wakeline:provider:adsb_fi disabled=1) focus·hot 도 부르지 않는다."""
+    r = FakeRedis()
+    (key,) = await _hot_leases(r, 1)
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    prov.ac = [_ac("abcdef")]
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    assert len(prov.calls) == 2 and _status(r)["focus:abcdef"]["state"] == "active"
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    for sec in (5.0, 30.0, 60.0):  # focus·hot 차례가 와도 부르지 않는다
+        clk[0] = sec
+        assert await t.tick() == dj.TICK_S
+        await _drain(t)
+    assert len(prov.calls) == 2
+    st = _status(r)
+    for f in ("focus:abcdef", f"hot:{key}"):
+        assert st[f]["state"] == "throttled" and st[f]["last_error"] == "provider disabled by operator"
+        assert st[f]["interval_s"] is None and st[f]["last_success_at"]  # 주기는 없고, 직전 성공 시각은 그대로
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "0")
+    clk[0] = 61.0
+    await t.tick()
+    await _drain(t)
+    assert [c[0] for c in prov.calls[2:]] == ["icao", "point"]  # 다시 켜면 곧바로 돈다
+    st = _status(r)
+    assert st["focus:abcdef"]["state"] == "active" and st[f"hot:{key}"]["state"] == "active"
+
+
+async def test_disabled_status_is_cleared_when_re_enabled_before_next_turn():
+    r = FakeRedis()
+    (key,) = await _hot_leases(r, 1)
+    prov = FakeDemandProvider()
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    clk[0] = 5.0
+    await t.tick()
+    assert _status(r)[f"hot:{key}"]["last_error"] == "provider disabled by operator"
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "0")
+    clk[0] = 10.0
+    await t.tick()  # 셀 차례(30 s)는 아직 → 호출 없음. 지난 '꺼짐' 사유는 남기지 않는다(다음 결과까지 대기)
+    assert len(prov.calls) == 1 and f"hot:{key}" not in _status(r)
+
+
 # ---- fixture 모드 · 루프 ------------------------------------------------------------------------------------------------
 async def test_fixture_mode_focus_and_hot_without_external_calls(fixtures_dir):
     base = FixtureAircraftProvider()
