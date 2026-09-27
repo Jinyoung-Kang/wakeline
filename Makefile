@@ -29,9 +29,12 @@ logs: ## 로그 (예: make logs s=api)
 build: ## 이미지만 빌드
 	$(COMPOSE) build
 
-ops-user: ## 운영자 계정 생성/갱신 (make ops-user u=admin) — 비밀번호는 프롬프트
-	@read -s -p "password for $(or $(u),admin): " pw; echo; \
-	$(COMPOSE) exec -e SKYWX_OPS_USER=$(or $(u),admin) -e SKYWX_OPS_PASSWORD="$$pw" api java -jar /app/app.jar --create-ops-user
+ops-user: ## 운영자 계정 생성/갱신 (make ops-user u=admin) — 비밀번호는 프롬프트(12자 이상, 화면에 표시 안 됨)
+	@read -s -p "password for $(or $(u),admin) (12자 이상): " pw; echo; \
+	if [ $${#pw} -lt 12 ]; then echo "비밀번호는 12자 이상이어야 합니다 (입력: $${#pw}자)"; exit 2; fi; \
+	read -s -p "confirm: " pw2; echo; \
+	if [ "$$pw" != "$$pw2" ]; then echo "두 입력이 다릅니다"; exit 2; fi; \
+	$(COMPOSE) exec -T -e SKYWX_OPS_USER=$(or $(u),admin) -e SKYWX_OPS_PASSWORD="$$pw" api java -jar /app/app.jar --create-ops-user 2>&1 | grep -E "ops user|must be" || true
 
 test: test-collector test-api test-web ## 전체 테스트
 
