@@ -6,8 +6,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${EDGE_IMAGE:-$(awk '/^  edge:/{f=1} f && $1=="image:"{print $2; exit}' "$ROOT/infra/compose.yml")}"
-ID="skywx-edgetest-$$"; NET="$ID-net"; STUB="$ID-stub"; EDGE="$ID-edge"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/skywx-edgetest.XXXXXX")"
+ID="wakeline-edgetest-$$"; NET="$ID-net"; STUB="$ID-stub"; EDGE="$ID-edge"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/wakeline-edgetest.XXXXXX")"
 fails=0; passes=0
 
 cleanup() { docker rm -f "$EDGE" "$STUB" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$TMP"; }

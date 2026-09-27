@@ -9,9 +9,9 @@ import orjson
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from skywx_collector.normalize import from_readsb
-from skywx_collector.publisher import Publisher, encode_payload
-from skywx_collector.sigmet_parse import parse_isigmet
+from wakeline_collector.normalize import from_readsb
+from wakeline_collector.publisher import Publisher, encode_payload
+from wakeline_collector.sigmet_parse import parse_isigmet
 
 NOW = datetime.now(UTC)
 

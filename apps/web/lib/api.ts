@@ -14,7 +14,7 @@ export class ApiError extends Error {
 }
 
 export function csrfToken(): string | null {
-  const m = document.cookie.match(/(?:^|;\s*)SKYWX_CSRF=([^;]+)/);
+  const m = document.cookie.match(/(?:^|;\s*)WAKELINE_CSRF=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 

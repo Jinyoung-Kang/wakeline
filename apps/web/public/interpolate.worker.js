@@ -1,4 +1,4 @@
-/* SkyWx 보간 워커(순수 JS, 번들러 무관). lib/interpolate.ts 와 같은 공식·규칙 — tests/worker-sync.test.ts 가 두 구현의 일치를 검사한다.
+/* Wakeline 보간 워커(순수 JS, 번들러 무관). lib/interpolate.ts 와 같은 공식·규칙 — tests/worker-sync.test.ts 가 두 구현의 일치를 검사한다.
    - dead reckoning 으로 렌더 상태를 만들어 메인 스레드로 보낸다. 서버 값이 오면 500 ms 완화(easing).
    - 경과 시간으로 항공기를 지우지 않는다(FR-19). 삭제는 서버의 remove·스냅샷만. 외삽은 60 s(opensky 180 s) 상한에서 멈추고 stale.
    - 바뀐 것이 없으면(데이터·뷰포트·위치·stale 수) postMessage 하지 않는다. 틱 간격은 줌에 따라 0.5 px 이동 시간(250 ms – 4 s). */
@@ -123,5 +123,5 @@
     else if (m.type === "stop") { running = false; schedule(); }
   };
   // 테스트에서 순수 함수·틱을 꺼내 쓸 수 있게 노출(브라우저 워커에서는 무해)
-  self.__skywx = { deadReckon: deadReckon, predict: predict, ease: ease, wrap180: wrap180, seenAtMs: seenAtMs, thresholds: thresholds, tickIntervalMs: tickIntervalMs, tick: tick };
+  self.__wakeline = { deadReckon: deadReckon, predict: predict, ease: ease, wrap180: wrap180, seenAtMs: seenAtMs, thresholds: thresholds, tickIntervalMs: tickIntervalMs, tick: tick };
 })();

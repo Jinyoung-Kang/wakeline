@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 from shapely.geometry import shape
 
-from skywx_collector.sigmet_parse import build_geometry, parse_airsigmet, parse_isigmet
+from wakeline_collector.sigmet_parse import build_geometry, parse_airsigmet, parse_isigmet
 
 NOW = datetime(2026, 9, 27, 7, 0, tzinfo=UTC)
 

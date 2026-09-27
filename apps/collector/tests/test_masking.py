@@ -1,6 +1,6 @@
 import pytest
 
-from skywx_collector.masking import mask
+from wakeline_collector.masking import mask
 
 
 @pytest.mark.parametrize(

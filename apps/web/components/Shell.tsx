@@ -19,7 +19,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-line bg-bg-1 px-3">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold tracking-[0.2em]">SKYWX</span>
+            <span className="text-sm font-semibold tracking-[0.2em]">WAKELINE</span>
             <span className="label hidden sm:inline">Aircraft · Hazardous Weather</span>
           </Link>
           <nav className="flex gap-1" aria-label="주 메뉴">

@@ -1,15 +1,15 @@
-# SkyWx — 로컬 운영 명령 (macOS · Apple Silicon · Docker Desktop)
+# Wakeline — 로컬 운영 명령 (macOS · Apple Silicon · Docker Desktop)
 SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose.yml --env-file .env
 # 격리 스택(E2E·데모): 프로젝트·포트·서브넷·볼륨이 개발 스택과 분리된다. fixture 모드라 외부 호출이 없다.
-ISO_ENV := SKYWX_FIXTURE_MODE=1 SKYWX_PORT=8701 SKYWX_NET_PREFIX=10.78.0
-ISO := $(ISO_ENV) docker compose -p skywx-e2e -f infra/compose.yml --env-file .env
+ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0
+ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file .env
 # 부하 시험 도구 — 버전+다이제스트 고정(latest 가 바뀌어 내부망에 붙는 도구가 조용히 달라지지 않게). Dependabot 대상 아님: 올릴 때 여기서 함께 바꾼다.
 K6_IMAGE := grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34
-# 개발 스택의 api 주소·네트워크(compose 의 고정 IP) 와 WS Origin(api 의 허용 목록 SKYWX_ALLOWED_ORIGINS 에 있는 값)
-NET_PREFIX := $(or $(SKYWX_NET_PREFIX),10.77.0)
+# 개발 스택의 api 주소·네트워크(compose 의 고정 IP) 와 WS Origin(api 의 허용 목록 WAKELINE_ALLOWED_ORIGINS 에 있는 값)
+NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
-BENCH_ORIGIN ?= http://localhost:$(or $(SKYWX_PORT),8700)
+BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
 .PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test contract e2e demo demo-down bench bench-edge fixtures clean
 
@@ -21,7 +21,7 @@ init: ## .env 생성(소유자 전용 600) + 빠진 내부 비밀값만 생성 (
 
 up: init ## 전체 스택 기동 (6 컨테이너) → http://localhost:8700
 	$(COMPOSE) up -d --build
-	@echo "SkyWx → http://localhost:8700   (ops: http://localhost:8700/ops)"
+	@echo "Wakeline → http://localhost:8700   (ops: http://localhost:8700/ops)"
 
 down: init ## 중지 (데이터 보존)
 	$(COMPOSE) down
@@ -47,7 +47,7 @@ ops-user: init ## 운영자 계정 생성/갱신 (make ops-user u=admin) — 비
 	if [ $${#pw} -lt 12 ]; then echo "비밀번호는 12자 이상이어야 합니다 (입력: $${#pw}자)"; exit 2; fi; \
 	IFS= read -rs -p "confirm: " pw2; echo; \
 	if [ "$$pw" != "$$pw2" ]; then echo "두 입력이 다릅니다"; exit 2; fi; \
-	out=$$(printf '%s\n' "$$pw" | $(COMPOSE) exec -T -e SKYWX_OPS_USER="$$u" api java -jar /app/app.jar --create-ops-user --password-stdin 2>&1); rc=$$?; \
+	out=$$(printf '%s\n' "$$pw" | $(COMPOSE) exec -T -e WAKELINE_OPS_USER="$$u" api java -jar /app/app.jar --create-ops-user --password-stdin 2>&1); rc=$$?; \
 	unset pw pw2; \
 	grep -E "ops user|must be|password" <<<"$$out" || true; \
 	if [ $$rc -ne 0 ]; then echo "실패(exit $$rc) — 마지막 로그:"; tail -n 15 <<<"$$out"; fi; \
@@ -101,15 +101,15 @@ bench: init ## k6 부하 시험 — api 층 직접 측정(측정 동안만 IP �
 	restore() { echo "restoring rate limits (.env values)…"; $(COMPOSE) up -d --wait api >/dev/null 2>&1 || echo "경고: api 원복 실패 — 'make up' 으로 다시 만드세요" >&2; }; \
 	trap restore EXIT; trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	PUBLIC_RATE_LIMIT_PER_MIN=1000000 WS_MAX_CONN_PER_IP=1000 WS_MAX_CONN=1000 $(COMPOSE) up -d --wait api || exit 1; \
-	docker run --rm --network skywx_skywx -v "$(CURDIR)/perf:/perf" -w /perf -e BASE_URL=$(BENCH_API) $(K6_IMAGE) run rest.js 2>&1 | tee perf/results/k6-rest-$$ts.log; rc=$${PIPESTATUS[0]}; \
-	docker run --rm --network skywx_skywx -v "$(CURDIR)/perf:/perf" -w /perf -e BASE_URL=$(BENCH_API) -e ORIGIN=$(BENCH_ORIGIN) $(K6_IMAGE) run ws.js 2>&1 | grep --line-buffered -v "VU iteration was interrupted" | tee perf/results/k6-ws-$$ts.log; rc2=$${PIPESTATUS[0]}; \
+	docker run --rm --network wakeline_wakeline -v "$(CURDIR)/perf:/perf" -w /perf -e BASE_URL=$(BENCH_API) $(K6_IMAGE) run rest.js 2>&1 | tee perf/results/k6-rest-$$ts.log; rc=$${PIPESTATUS[0]}; \
+	docker run --rm --network wakeline_wakeline -v "$(CURDIR)/perf:/perf" -w /perf -e BASE_URL=$(BENCH_API) -e ORIGIN=$(BENCH_ORIGIN) $(K6_IMAGE) run ws.js 2>&1 | grep --line-buffered -v "VU iteration was interrupted" | tee perf/results/k6-ws-$$ts.log; rc2=$${PIPESTATUS[0]}; \
 	echo "k6 exit: rest=$$rc ws=$$rc2 (99 = threshold crossed)"; [ $$rc -eq 0 ] && [ $$rc2 -eq 0 ]
 
 bench-edge: ## 로컬 k6 로 edge(8700) 경유 측정 — 요청 제한(IP당 10 r/s·분당 120)이 그대로 걸려 429 가 정상이다(제한 동작 확인용)
 	RPS=8 DURATION=1m k6 run perf/rest.js || true
 
 fixtures: ## 실응답 스냅샷 갱신 (외부 한도 소모 주의)
-	cd apps/collector && uv run python -m skywx_collector.tools.snapshot
+	cd apps/collector && uv run python -m wakeline_collector.tools.snapshot
 
 print-%: ## 변수 값 출력 (CI 용, 예: make -s print-K6_IMAGE)
 	@echo '$($*)'

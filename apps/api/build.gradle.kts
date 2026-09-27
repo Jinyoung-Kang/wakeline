@@ -4,7 +4,7 @@ plugins {
     id("org.springframework.boot") version "4.1.1"
 }
 
-group = "dev.skywx"
+group = "dev.wakeline"
 version = "0.2.0"
 
 java {
@@ -62,7 +62,7 @@ tasks.withType<Test>().configureEach {
 
 tasks.test {
     // -PupdateOpenApi: OpenApiSnapshotIT 가 비교 대신 스냅샷을 다시 쓴다
-    systemProperty("skywx.openapi.update", providers.gradleProperty("updateOpenApi").map { it != "false" }.getOrElse(false).toString())
+    systemProperty("wakeline.openapi.update", providers.gradleProperty("updateOpenApi").map { it != "false" }.getOrElse(false).toString())
     finalizedBy(tasks.jacocoTestReport)
 }
 
@@ -72,8 +72,8 @@ tasks.register<Test>("updateOpenApi") {
     group = "verification"
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
-    filter { includeTestsMatching("dev.skywx.it.OpenApiSnapshotIT") }
-    systemProperty("skywx.openapi.update", "true")
+    filter { includeTestsMatching("dev.wakeline.it.OpenApiSnapshotIT") }
+    systemProperty("wakeline.openapi.update", "true")
     outputs.upToDateWhen { false }
 }
 
@@ -100,5 +100,5 @@ tasks.jacocoTestCoverageVerification {
 
 tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }
 
-tasks.bootJar { archiveFileName = "skywx-api.jar" }
+tasks.bootJar { archiveFileName = "wakeline-api.jar" }
 tasks.jar { enabled = false }

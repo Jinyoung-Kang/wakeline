@@ -7,7 +7,7 @@ const ITEMS: { k: keyof Layers; label: string }[] = [
   { k: "radar", label: "레이더" }, { k: "sigmet", label: "SIGMET" }, { k: "aircraft", label: "항공기" },
   { k: "airports", label: "공항" }, { k: "tracks", label: "항적" }, { k: "prediction", label: "예측(추정)" },
 ];
-const LEGEND_KEY = "skywx.legend";
+const LEGEND_KEY = "wakeline.legend";
 const LEGEND_ID = "map-legend";
 
 /** 레이어 토글 + 접을 수 있는 범례(GAP-13). 범례 열림 여부는 이 브라우저에만 기억한다(localStorage, 실패해도 동작). */

@@ -11,4 +11,4 @@
 - 단일 파일 bind mount 는 파일을 새로 쓰면(inode 변경) 컨테이너에서 사라진다. 설정 변경 후에는 `docker compose up -d edge` 로 재생성한다.
 
 ## 포트
-8080 은 같은 Mac 의 SmartCollab 이 쓴다. SkyWx 는 8700 을 쓰고 127.0.0.1 에만 바인딩한다.
+8080 은 같은 Mac 의 SmartCollab 이 쓴다. Wakeline 는 8700 을 쓰고 127.0.0.1 에만 바인딩한다.

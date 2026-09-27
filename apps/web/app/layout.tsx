@@ -4,7 +4,7 @@ import "./globals.css";
 import { Shell } from "@/components/Shell";
 
 export const metadata: Metadata = {
-  title: "SkyWx — 실시간 항공기 · 위험기상 상황판",
+  title: "Wakeline — 실시간 항공기 · 위험기상 상황판",
   description: "ADS-B 항공기 위치, 기상 레이더, SIGMET 을 한 지도에 겹치고 교차·진입 예측을 근거와 함께 보여 주는 상황판",
 };
 

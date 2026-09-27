@@ -45,7 +45,7 @@ class ComposePolicyTest(unittest.TestCase):
         init_env.ensure_env(cls.env_file, ROOT / ".env.example", out=io.StringIO())
         cls.secrets = dict(re.findall(r"^([A-Z0-9_]+)=(.*)$", cls.env_file.read_text(), re.M))
         cls.dev = cls._config({})
-        cls.iso = cls._config({"SKYWX_FIXTURE_MODE": "1", "SKYWX_PORT": "8701", "SKYWX_NET_PREFIX": "10.78.0"}, project="skywx-e2e")
+        cls.iso = cls._config({"WAKELINE_FIXTURE_MODE": "1", "WAKELINE_PORT": "8701", "WAKELINE_NET_PREFIX": "10.78.0"}, project="wakeline-e2e")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -53,7 +53,7 @@ class ComposePolicyTest(unittest.TestCase):
 
     @classmethod
     def _config(cls, extra: dict[str, str], project: str | None = None) -> dict:
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("SKYWX_", "REDIS_", "DB_", "COMPOSE_"))}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("WAKELINE_", "REDIS_", "DB_", "COMPOSE_"))}
         env.update(extra)
         cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(cls.env_file), "config", "--format", "json"]
         r = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -111,7 +111,7 @@ class ComposePolicyTest(unittest.TestCase):
     def test_third_party_images_pinned_by_digest(self):
         for name, s in self.dev["services"].items():
             with self.subTest(service=name):
-                if s["image"].startswith("skywx-"):
+                if s["image"].startswith("wakeline-"):
                     self.assertTrue(s["image"].endswith(":local"))
                 else:
                     self.assertRegex(s["image"], r"^[^@]+:[^@]+@sha256:[0-9a-f]{64}$")
@@ -119,8 +119,8 @@ class ComposePolicyTest(unittest.TestCase):
     # --- SEC-5: Redis ACL 사용자 ---
     def test_services_use_their_own_redis_user(self):
         admin = self.secrets["REDIS_PASSWORD"]
-        expect = {"api": ("skywx_api", "REDIS_API_PASSWORD"), "migrate": ("skywx_api", "REDIS_API_PASSWORD"),
-                  "collector": ("skywx_collector", "REDIS_COLLECTOR_PASSWORD")}
+        expect = {"api": ("wakeline_api", "REDIS_API_PASSWORD"), "migrate": ("wakeline_api", "REDIS_API_PASSWORD"),
+                  "collector": ("wakeline_collector", "REDIS_COLLECTOR_PASSWORD")}
         for name, (user, pw_key) in expect.items():
             with self.subTest(service=name):
                 env = self.svc(name)["environment"]
@@ -150,13 +150,13 @@ class ComposePolicyTest(unittest.TestCase):
 
     # --- SEC-7: WS Origin 허용 목록 ---
     def test_api_allowed_origins_follow_published_port(self):
-        self.assertEqual(self.svc("api")["environment"]["SKYWX_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")
-        self.assertEqual(self.svc("api", self.iso)["environment"]["SKYWX_ALLOWED_ORIGINS"], "http://localhost:8701,http://127.0.0.1:8701")
+        self.assertEqual(self.svc("api")["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")
+        self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8701,http://127.0.0.1:8701")
 
     # --- REL-20 · 계약 §8: collector 헬스체크 ---
     def test_collector_healthcheck(self):
         hc = self.svc("collector")["healthcheck"]
-        self.assertEqual(hc["test"], ["CMD", "python", "-m", "skywx_collector.health"])
+        self.assertEqual(hc["test"], ["CMD", "python", "-m", "wakeline_collector.health"])
         self.assertIn("start_period", hc)
 
     def test_every_long_running_service_has_healthcheck(self):
@@ -165,10 +165,10 @@ class ComposePolicyTest(unittest.TestCase):
                 self.assertTrue(self.svc(name).get("healthcheck", {}).get("test"))
 
     def test_isolated_stack_is_separate(self):
-        self.assertEqual(self.iso["name"], "skywx-e2e")
-        self.assertEqual(self.svc("api", self.iso)["environment"]["SKYWX_FIXTURE_MODE"], "1")
-        self.assertEqual(self.svc("collector", self.iso)["environment"]["SKYWX_FIXTURE_MODE"], "1")
-        self.assertEqual(self.svc("api", self.iso)["environment"]["SKYWX_TRUSTED_PROXY"], "10.78.0.10")
+        self.assertEqual(self.iso["name"], "wakeline-e2e")
+        self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_FIXTURE_MODE"], "1")
+        self.assertEqual(self.svc("collector", self.iso)["environment"]["WAKELINE_FIXTURE_MODE"], "1")
+        self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_TRUSTED_PROXY"], "10.78.0.10")
 
     def test_api_has_shutdown_grace(self):
         self.assertIn("stop_grace_period", self.svc("api"))

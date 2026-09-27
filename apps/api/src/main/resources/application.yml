@@ -1,29 +1,29 @@
 spring:
-  application.name: skywx-api
+  application.name: wakeline-api
   threads.virtual.enabled: true
   main.banner-mode: off
   jackson:
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:skywx}
-    username: skywx_api
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:wakeline}
+    username: wakeline_api
     password: ${DB_API_PASSWORD:}
     hikari:
       maximum-pool-size: 12
       connection-timeout: 5000
       data-source-properties:
-        ApplicationName: skywx-api
+        ApplicationName: wakeline-api
         reWriteBatchedInserts: true      # 항적 배치(2,000행)를 다중 VALUES INSERT 로 — 왕복 수를 줄인다
   flyway:
-    # 스키마 변경은 compose 의 migrate 서비스(--migrate)만 한다 — 그 프로세스가 DB_MIGRATOR_PASSWORD 를 직접 읽는다(SkyWxApplication).
-    # api 는 DML 전용 계정(skywx_api)만 가지며 DDL 비밀번호를 받지도, 참조하지도 않는다(최소 권한, SEC-3).
+    # 스키마 변경은 compose 의 migrate 서비스(--migrate)만 한다 — 그 프로세스가 DB_MIGRATOR_PASSWORD 를 직접 읽는다(WakelineApplication).
+    # api 는 DML 전용 계정(wakeline_api)만 가지며 DDL 비밀번호를 받지도, 참조하지도 않는다(최소 권한, SEC-3).
     enabled: false
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
-      username: ${REDIS_USERNAME:}         # 계약 §6: ACL 사용자 skywx_api (비어 있으면 default 사용자)
+      username: ${REDIS_USERNAME:}         # 계약 §6: ACL 사용자 wakeline_api (비어 있으면 default 사용자)
       password: ${REDIS_PASSWORD:}
       timeout: 3s
   web.error:                            # Boot 4: server.error.* → spring.web.error.* (예전 키는 바인딩되지 않는다)
@@ -34,9 +34,9 @@ spring:
     timeout-per-shutdown-phase: 10s
   session:
     # Boot 4 에서 spring.session.redis.* 는 더 이상 바인딩되지 않는다(→ spring.session.data.redis.*). 예전 키로는 세션이 기본
-    # 이름공간 spring:session:* 에 저장되어 Redis ACL(skywx_api: ~skywx:* ~rl:*)이 거부했다(NOPERM → 로그인 500).
-    data.redis.namespace: skywx:session
-    timeout: ${SKYWX_OPS_SESSION_TTL_H:8}h
+    # 이름공간 spring:session:* 에 저장되어 Redis ACL(wakeline_api: ~wakeline:* ~rl:*)이 거부했다(NOPERM → 로그인 500).
+    data.redis.namespace: wakeline:session
+    timeout: ${WAKELINE_OPS_SESSION_TTL_H:8}h
 
 server:
   port: 8000
@@ -57,27 +57,27 @@ springdoc:
   api-docs.path: /api/v1/openapi
   swagger-ui.enabled: false
 
-skywx:
-  trusted-proxy: ${SKYWX_TRUSTED_PROXY:}
-  # 관심 지역의 기본값(.env). 실제로 쓰는 값은 런타임 설정(app_setting → Redis skywx:settings, collector 와 같은 값)이다.
+wakeline:
+  trusted-proxy: ${WAKELINE_TRUSTED_PROXY:}
+  # 관심 지역의 기본값(.env). 실제로 쓰는 값은 런타임 설정(app_setting → Redis wakeline:settings, collector 와 같은 값)이다.
   # 운영자가 /ops 에서 바꾼 적이 없으면 기동 시 이 값으로 런타임 설정을 맞춘다(COR-12).
-  region-center: ${SKYWX_REGION_CENTER:36.5,127.8}
-  region-radius-nm: ${SKYWX_REGION_RADIUS_NM:250}
-  public-rate-limit-per-min: ${SKYWX_PUBLIC_RATE_LIMIT_PER_MIN:120}
-  ws-max-conn: ${SKYWX_WS_MAX_CONN:200}
-  ws-max-conn-per-ip: ${SKYWX_WS_MAX_CONN_PER_IP:5}
+  region-center: ${WAKELINE_REGION_CENTER:36.5,127.8}
+  region-radius-nm: ${WAKELINE_REGION_RADIUS_NM:250}
+  public-rate-limit-per-min: ${WAKELINE_PUBLIC_RATE_LIMIT_PER_MIN:120}
+  ws-max-conn: ${WAKELINE_WS_MAX_CONN:200}
+  ws-max-conn-per-ip: ${WAKELINE_WS_MAX_CONN_PER_IP:5}
   ws-diff-interval-s: 10
   ws-resync-interval-s: 30
   ws-resync-world-interval-s: 120        # 줌 ≤ 5(전세계) 세션의 주기 전체 스냅샷(계약 §1)
-  allowed-origins: ${SKYWX_ALLOWED_ORIGINS:http://localhost:8700,http://127.0.0.1:8700}   # WS Origin 명시 허용 목록(쉼표 구분)
+  allowed-origins: ${WAKELINE_ALLOWED_ORIGINS:http://localhost:8700,http://127.0.0.1:8700}   # WS Origin 명시 허용 목록(쉼표 구분)
   max-bbox-area-sqdeg: 2500
-  fixture-mode: ${SKYWX_FIXTURE_MODE:0}
-  schemas-dir: ${SKYWX_SCHEMAS_DIR:classpath:schemas}
+  fixture-mode: ${WAKELINE_FIXTURE_MODE:0}
+  schemas-dir: ${WAKELINE_SCHEMAS_DIR:classpath:schemas}
   track-retention-hours: 72
   summary-retention-days: 30
 
 logging:
   level:
     root: INFO
-    dev.skywx: INFO
+    dev.wakeline: INFO
     org.springframework.security: WARN

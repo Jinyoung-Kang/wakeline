@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skywx.dev/schemas/stream_envelope.v1.json",
+  "$id": "https://wakeline.invalid/schemas/stream_envelope.v1.json",
   "title": "StreamEnvelope",
   "description": "Redis Streams 엔트리의 필드. 값은 모두 문자열. payload 는 gzip 후 base64 한 JSON.",
   "type": "object",

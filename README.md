@@ -1,4 +1,4 @@
-# SkyWx — 실시간 항공기 · 위험기상 상황판
+# Wakeline — 실시간 항공기 · 위험기상 상황판
 
 전세계 항공기 위치(ADS-B), 기상 레이더, 항공 위험기상 경보(SIGMET), 공항 기상(METAR/TAF)을 한 지도에 겹치고,
 **"지금 SIGMET 안에 있는 항공기"** 와 **"N분 뒤 진입할 항공기"** 를 근거 카드와 함께 실시간으로 찾아 주는 웹 서비스입니다.
@@ -59,9 +59,9 @@ flowchart LR
 ## 3. 빠른 시작 (macOS Apple Silicon · Docker Desktop)
 
 ```bash
-git clone <this repo> skywx && cd skywx
+git clone <this repo> wakeline && cd wakeline
 make up          # .env 생성(내부 비밀값 자동) + 6 컨테이너 빌드·기동 → http://localhost:8700
-make ops-user    # 운영자 계정(프롬프트). 초기 검증용 admin 비밀번호는 .env 의 SKYWX_OPS_BOOTSTRAP_PASSWORD
+make ops-user    # 운영자 계정(프롬프트). 초기 검증용 admin 비밀번호는 .env 의 WAKELINE_OPS_BOOTSTRAP_PASSWORD
 ```
 
 외부 키는 **없어도 동작**합니다(adsb.lol·adsb.fi·AWC·RainViewer 는 무인증). 전세계 뷰는 OpenSky 자격증명(`OPENSKY_CLIENT_ID/SECRET`), 한국 고해상도 레이더는 기상청 API허브 키(`KMA_APIHUB_KEY`, 레이더 합성자료 API 활용신청 승인 필요)가 있으면 켜집니다. 모두 collector 컨테이너에만 주입됩니다.
@@ -80,7 +80,7 @@ nginx 설정을 고친 뒤에는 `docker compose -f infra/compose.yml --env-file
 
 ## 4. 저장소 구조
 ```
-apps/api         Spring Boot — dev.skywx.{ingest,engine,ws,rest,persist,ops,config} · Flyway V1 · JUnit
+apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,rest,persist,ops,config} · Flyway V1 · JUnit
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · publisher · jobs · pytest
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·about) · lib(ws·store·interpolate) · public/interpolate.worker.js
 schemas/         aircraft_state.v1.json · sigmet.v1.json · stream_envelope.v1.json (계약의 단일 원천)

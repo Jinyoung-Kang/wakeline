@@ -11,6 +11,6 @@
 | 보간 워커 | lib/interpolate.worker.ts | public/interpolate.worker.js + 일치 테스트 | Turbopack 워커 제약(ADR-002) |
 | 공개 포트 | 8080 | 8700 | 8080 은 SmartCollab 사용 |
 | 통계 차트 | Recharts | 의존성 없는 SVG 막대 | 번들 크기·의존성 최소화 |
-| CSRF 헤더 | X-CSRF-Token | X-CSRF-Token(쿠키 SKYWX_CSRF) | Spring Security `csrf.spa()` 에 이름만 지정 |
+| CSRF 헤더 | X-CSRF-Token | X-CSRF-Token(쿠키 WAKELINE_CSRF) | Spring Security `csrf.spa()` 에 이름만 지정 |
 | 429 처리 | 지수 백오프 2→300 s | 60→120→240→300 s 후 폴백, 성공 시 초기화 | adsb.lol 이 10 s 주기에서 실제로 429 를 돌려줌(실측) |
 | 부하 도구 | k6 | k6 스크립트 + `perf/quick_*.py`(k6 미설치 시) | 로컬에 k6 가 없어 같은 시나리오를 Python 으로도 제공 |

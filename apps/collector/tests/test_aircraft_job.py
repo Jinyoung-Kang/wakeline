@@ -10,13 +10,13 @@ from datetime import UTC, datetime, timedelta
 import orjson
 from fakes import FakeRedis, make_ctx
 
-from skywx_collector.config import Settings
-from skywx_collector.fallback import ProviderChain
-from skywx_collector.jobs.aircraft import AircraftJob, next_utc_midnight
-from skywx_collector.main import build_limits
-from skywx_collector.models import BudgetInfo, ProviderResult
-from skywx_collector.providers.opensky import OpenSkyProvider
-from skywx_collector.publisher import STREAM_AIRCRAFT
+from wakeline_collector.config import Settings
+from wakeline_collector.fallback import ProviderChain
+from wakeline_collector.jobs.aircraft import AircraftJob, next_utc_midnight
+from wakeline_collector.main import build_limits
+from wakeline_collector.models import BudgetInfo, ProviderResult
+from wakeline_collector.providers.opensky import OpenSkyProvider
+from wakeline_collector.publisher import STREAM_AIRCRAFT
 
 
 class FakeReadsb:
@@ -137,7 +137,7 @@ async def test_publish_happens_while_database_is_down():
     assert _decode(r.streams[STREAM_AIRCRAFT][0][1])["states"][0]["hex"] == "71c0a1"
     await asyncio.sleep(0.05)
     assert attempts >= 1 and ctx.db.pending == 2 and not ctx.db.available  # 쓰기는 큐에서 재연결을 기다린다
-    hb = await r.hgetall("skywx:collector")
+    hb = await r.hgetall("wakeline:collector")
     assert hb["region_at"]
     await ctx.db.close(drain_s=0.2)
 
@@ -157,7 +157,7 @@ async def test_redis_status_errors_do_not_fail_the_job_and_publish_is_queued():
 async def test_disabled_flag_uses_last_known_value_when_redis_errors():
     r = FakeRedis()
     ctx = make_ctx(r)
-    await r.hset("skywx:provider:adsb_lol", "disabled", "1")
+    await r.hset("wakeline:provider:adsb_lol", "disabled", "1")
     chain = ProviderChain("region", {"adsb_lol": FakeReadsb("adsb_lol"), "adsb_fi": FakeReadsb("adsb_fi")}, ctx.status)
     assert (await chain.pick(["adsb_lol", "adsb_fi"])).name == "adsb_fi"
     r.down = True

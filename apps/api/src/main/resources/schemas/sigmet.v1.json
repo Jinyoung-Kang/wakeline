@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skywx.dev/schemas/sigmet.v1.json",
+  "$id": "https://wakeline.invalid/schemas/sigmet.v1.json",
   "title": "Sigmet",
   "description": "구조화된 SIGMET 1건. geometry 가 null 이면 판정에서 제외(excluded_reason 에 사유: no_coordinates, line_or_point_geometry, invalid_polygon, area_too_large, too_many_points, too_many_rings). 링은 자르지 않는다.",
   "type": "object",

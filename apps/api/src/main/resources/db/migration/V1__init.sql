@@ -1,4 +1,4 @@
--- SkyWx 스키마 V1 (8장). 마이그레이터(skywx_migrator)가 소유하고, 역할별 최소 권한을 부여한다.
+-- Wakeline 스키마 V1 (8장). 마이그레이터(wakeline_migrator)가 소유하고, 역할별 최소 권한을 부여한다.
 
 CREATE TABLE aircraft (
   hex           char(6) PRIMARY KEY,
@@ -157,15 +157,15 @@ CREATE TABLE stats_daily (
 );
 
 -- ---- 권한: api 는 DML 만, collector 는 ingest 테이블만, audit_log 는 INSERT 만 ----
-GRANT SELECT, INSERT, UPDATE, DELETE ON aircraft, track_point, track_point_1m, sigmet, alert_event, app_setting, stats_daily TO skywx_api;
-GRANT SELECT ON airport, metar_obs, radar_frame, ingest_run, quality_event, quality_rule_count, provider_budget_day TO skywx_api;
-GRANT SELECT, INSERT, UPDATE ON ops_user TO skywx_api;
-GRANT INSERT, SELECT ON audit_log TO skywx_api;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO skywx_api;
-GRANT EXECUTE ON FUNCTION track_point_ensure_partitions(int), track_point_drop_old(int) TO skywx_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON aircraft, track_point, track_point_1m, sigmet, alert_event, app_setting, stats_daily TO wakeline_api;
+GRANT SELECT ON airport, metar_obs, radar_frame, ingest_run, quality_event, quality_rule_count, provider_budget_day TO wakeline_api;
+GRANT SELECT, INSERT, UPDATE ON ops_user TO wakeline_api;
+GRANT INSERT, SELECT ON audit_log TO wakeline_api;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO wakeline_api;
+GRANT EXECUTE ON FUNCTION track_point_ensure_partitions(int), track_point_drop_old(int) TO wakeline_api;
 
-GRANT SELECT, INSERT, UPDATE ON ingest_run, quality_event, quality_rule_count, airport, metar_obs, radar_frame, provider_budget_day TO skywx_collector;
-GRANT USAGE, SELECT ON SEQUENCE ingest_run_id_seq, quality_event_id_seq TO skywx_collector;
+GRANT SELECT, INSERT, UPDATE ON ingest_run, quality_event, quality_rule_count, airport, metar_obs, radar_frame, provider_budget_day TO wakeline_collector;
+GRANT USAGE, SELECT ON SEQUENCE ingest_run_id_seq, quality_event_id_seq TO wakeline_collector;
 
 -- 새 파티션(테이블)에도 같은 권한이 적용되도록 기본 권한 설정
-ALTER DEFAULT PRIVILEGES FOR ROLE skywx_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO skywx_api;
+ALTER DEFAULT PRIVILEGES FOR ROLE wakeline_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wakeline_api;

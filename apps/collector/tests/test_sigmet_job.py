@@ -10,9 +10,9 @@ from datetime import UTC, datetime, timedelta
 import orjson
 from fakes import FakeRedis, make_ctx
 
-from skywx_collector.jobs.weather import SigmetJob
-from skywx_collector.models import ProviderResult
-from skywx_collector.publisher import STREAM_SIGMET
+from wakeline_collector.jobs.weather import SigmetJob
+from wakeline_collector.models import ProviderResult
+from wakeline_collector.publisher import STREAM_SIGMET
 
 
 def _decode(fields):
@@ -62,12 +62,12 @@ async def test_us_failure_republishes_last_good_us_set_with_original_fetched_at(
     assert len(second) == len(first)  # 세트가 줄지 않는다
     us_second = {s["id"]: s["fetched_at"] for s in second if s["provider"] == "awc_airsigmet"}
     assert us_second == us_first  # 원래 fetched_at 유지
-    st = await r.hgetall("skywx:provider:awc")
+    st = await r.hgetall("wakeline:provider:awc")
     assert st["sigmet_partial"] == "airsigmet" and st["last_error"].startswith("airsigmet failed")
 
     awc.fail_us = False
     await job.run_once()
-    assert (await r.hgetall("skywx:provider:awc"))["sigmet_partial"] == ""
+    assert (await r.hgetall("wakeline:provider:awc"))["sigmet_partial"] == ""
 
 
 async def test_expired_carried_us_records_are_not_republished(fixtures_dir):

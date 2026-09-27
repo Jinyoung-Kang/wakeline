@@ -9,11 +9,11 @@ from typing import Any
 
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from skywx_collector.budget import Budget
-from skywx_collector.db import Db
-from skywx_collector.jobs.context import JobContext
-from skywx_collector.publisher import Publisher
-from skywx_collector.status import ProviderStatus
+from wakeline_collector.budget import Budget
+from wakeline_collector.db import Db
+from wakeline_collector.jobs.context import JobContext
+from wakeline_collector.publisher import Publisher
+from wakeline_collector.status import ProviderStatus
 
 
 class FakeRedis:

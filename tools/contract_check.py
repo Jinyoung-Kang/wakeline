@@ -20,10 +20,10 @@ from typing import get_args  # noqa: E402
 from jsonschema import Draft202012Validator, FormatChecker  # noqa: E402
 from referencing import Registry, Resource  # noqa: E402
 
-from skywx_collector.models import Sigmet  # noqa: E402
-from skywx_collector.normalize import from_readsb  # noqa: E402
-from skywx_collector.publisher import Publisher  # noqa: E402
-from skywx_collector.sigmet_parse import parse_airsigmet, parse_isigmet  # noqa: E402
+from wakeline_collector.models import Sigmet  # noqa: E402
+from wakeline_collector.normalize import from_readsb  # noqa: E402
+from wakeline_collector.publisher import Publisher  # noqa: E402
+from wakeline_collector.sigmet_parse import parse_airsigmet, parse_isigmet  # noqa: E402
 
 SCHEMAS = ROOT / "schemas"
 FIXTURES = ROOT / "fixtures"

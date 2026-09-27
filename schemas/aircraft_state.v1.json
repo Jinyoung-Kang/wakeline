@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skywx.dev/schemas/aircraft_state.v1.json",
+  "$id": "https://wakeline.invalid/schemas/aircraft_state.v1.json",
   "title": "AircraftState",
   "description": "정규화된 항공기 상태 1건. collector(Python)가 만들고 api(Java)가 검증한다. 단위: ft, kt, ft/min. 시각은 UTC ISO-8601.",
   "type": "object",

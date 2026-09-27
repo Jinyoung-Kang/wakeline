@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from skywx_collector.health import is_healthy, region_age_s
+from wakeline_collector.health import is_healthy, region_age_s
 
 NOW = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
 
@@ -28,8 +28,8 @@ def test_age():
 
 
 def test_health_main_returns_1_when_redis_unreachable(monkeypatch, capsys):
-    from skywx_collector import health
-    from skywx_collector.config import settings
+    from wakeline_collector import health
+    from wakeline_collector.config import settings
 
     monkeypatch.setattr(settings, "redis_host", "127.0.0.1")
     monkeypatch.setattr(settings, "redis_port", 1)  # 닫힌 포트

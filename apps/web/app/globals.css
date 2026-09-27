@@ -62,8 +62,8 @@ td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-alig
 .maplibregl-popup-content { background: var(--color-bg-1) !important; color: var(--color-fg) !important; border: 1px solid var(--color-line-2); padding: 8px 10px !important; font-size: 12px; box-shadow: none !important; }
 .maplibregl-popup-tip { border-top-color: var(--color-line-2) !important; border-bottom-color: var(--color-line-2) !important; }
 /* 호버 툴팁 — 포인터 이벤트를 받지 않아 지도 조작을 막지 않는다 */
-.skywx-tip { pointer-events: none; z-index: 30; } /* 범례(z-10) 위에 */
-.skywx-tip .maplibregl-popup-content { padding: 6px 8px !important; min-width: 180px; }
+.wakeline-tip { pointer-events: none; z-index: 30; } /* 범례(z-10) 위에 */
+.wakeline-tip .maplibregl-popup-content { padding: 6px 8px !important; min-width: 180px; }
 .tip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
 .tip-title { font-weight: 600; font-size: 12px; }
 .tip-sub { font-size: 10px; color: var(--color-fg-3); }

@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from skywx_collector.flight_category import assess_ceiling, ceiling_from_clouds, flight_category, parse_visibility_sm
-from skywx_collector.jobs.weather import metar_row
+from wakeline_collector.flight_category import assess_ceiling, ceiling_from_clouds, flight_category, parse_visibility_sm
+from wakeline_collector.jobs.weather import metar_row
 
 
 @pytest.mark.parametrize(

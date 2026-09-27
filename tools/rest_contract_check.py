@@ -263,7 +263,7 @@ PROBLEM: Schema = {  # RFC 9457 + 확장(code, request_id)
     "type": "object",
     "required": ["type", "title", "status", "detail", "instance", "code", "request_id"],
     "properties": {
-        "type": {"type": "string", "pattern": "^https://skywx\\.dev/problems/[a-z0-9-]+$"},
+        "type": {"type": "string", "pattern": "^https://wakeline\\.dev/problems/[a-z0-9-]+$"},
         "title": {"type": "string", "minLength": 1},
         "status": {"type": "integer", "minimum": 400, "maximum": 599},
         "detail": STR,
@@ -558,7 +558,7 @@ class Response:
 
 def fetch(base: str, path: str) -> Response:
     # base 는 main() 에서 http/https 만 허용한다(file: 등 다른 스킴 차단)
-    req = urllib.request.Request(base.rstrip("/") + path, headers={"Accept": "*/*", "User-Agent": "skywx-rest-contract-check"})  # noqa: S310
+    req = urllib.request.Request(base.rstrip("/") + path, headers={"Accept": "*/*", "User-Agent": "wakeline-rest-contract-check"})  # noqa: S310
     try:
         with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 — 사용자가 지정한 스택 URL
             status, headers, raw = r.status, r.headers, r.read()

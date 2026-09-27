@@ -1,10 +1,10 @@
--- VERIFICATION #16: 파티션 함수가 SECURITY INVOKER 라 skywx_api(스키마 CREATE 권한 없음)가 호출하면 실패했다.
--- 소유자(skywx_migrator) 권한으로 실행하도록 SECURITY DEFINER 로 바꾸고, search_path 를 고정해 함수 하이재킹을 막는다.
+-- VERIFICATION #16: 파티션 함수가 SECURITY INVOKER 라 wakeline_api(스키마 CREATE 권한 없음)가 호출하면 실패했다.
+-- 소유자(wakeline_migrator) 권한으로 실행하도록 SECURITY DEFINER 로 바꾸고, search_path 를 고정해 함수 하이재킹을 막는다.
 -- 실행 권한은 api 역할에만 준다(PUBLIC 기본 EXECUTE 회수).
 ALTER FUNCTION track_point_ensure_partitions(int) SECURITY DEFINER SET search_path = public, pg_temp;
 ALTER FUNCTION track_point_drop_old(int) SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE EXECUTE ON FUNCTION track_point_ensure_partitions(int), track_point_drop_old(int) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION track_point_ensure_partitions(int), track_point_drop_old(int) TO skywx_api;
+GRANT EXECUTE ON FUNCTION track_point_ensure_partitions(int), track_point_drop_old(int) TO wakeline_api;
 
 -- 인자 상한: 호출자가 큰 값을 넘겨 파티션을 대량 생성하거나(DoS) 보존 기간을 0 으로 만들어 이력을 지우지 못하게 한다.
 CREATE OR REPLACE FUNCTION track_point_ensure_partitions(days_ahead int) RETURNS int LANGUAGE plpgsql

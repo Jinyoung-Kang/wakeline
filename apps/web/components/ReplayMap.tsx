@@ -27,7 +27,7 @@ export function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayF
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
     const emit = () => { const b = map.getBounds(); onBbox(`${b.getWest().toFixed(3)},${b.getSouth().toFixed(3)},${b.getEast().toFixed(3)},${b.getNorth().toFixed(3)}`); };
-    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "skywx-tip", offset: 14, maxWidth: "320px" });
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
     let raf = 0;
     let last: maplibregl.MapMouseEvent | null = null;
     const pickAt = (pt: maplibregl.PointLike) => {

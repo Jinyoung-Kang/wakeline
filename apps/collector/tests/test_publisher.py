@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 
 from fakes import FakeRedis
 
-from skywx_collector import publisher as pubmod
-from skywx_collector.publisher import Publisher, decode_payload
+from wakeline_collector import publisher as pubmod
+from wakeline_collector.publisher import Publisher, decode_payload
 
 
 async def test_queue_caps_by_count_and_bytes(monkeypatch):

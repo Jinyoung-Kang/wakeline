@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# SkyWx web — Next.js 16 standalone. 브라우저 번들에 비밀값 없음(NEXT_PUBLIC_ 금지).
+# Wakeline web — Next.js 16 standalone. 브라우저 번들에 비밀값 없음(NEXT_PUBLIC_ 금지).
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./

@@ -7,7 +7,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${DB_IMAGE:-$(awk '/^  db:/{f=1} f && $1=="image:"{print $2; exit}' "$ROOT/infra/compose.yml")}"
-ID="skywx-dbtest-$$"; VOL="$ID-data"
+ID="wakeline-dbtest-$$"; VOL="$ID-data"
 fails=0; passes=0
 cleanup() { docker rm -f "$ID" >/dev/null 2>&1 || true; docker volume rm "$VOL" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -22,26 +22,26 @@ run_db() {
 }
 wait_ready() { # 초기화 중의 임시 서버가 아니라 최종 서버(프로세스 1)가 준비될 때까지
   for _ in $(seq 1 120); do
-    if docker exec "$ID" sh -c 'pg_isready -q -U postgres -d skywx && [ "$(cat /proc/1/comm)" = postgres ]' 2>/dev/null; then return 0; fi
+    if docker exec "$ID" sh -c 'pg_isready -q -U postgres -d wakeline && [ "$(cat /proc/1/comm)" = postgres ]' 2>/dev/null; then return 0; fi
     sleep 0.5
   done
   docker logs "$ID" 2>&1 | tail -30; return 1
 }
-psql_as() { docker exec -e PGPASSWORD="$2" "$ID" psql -h 127.0.0.1 -U "$1" -d skywx -tAc "$3" 2>&1 || true; }
+psql_as() { docker exec -e PGPASSWORD="$2" "$ID" psql -h 127.0.0.1 -U "$1" -d wakeline -tAc "$3" 2>&1 || true; }
 
 echo "image: $IMAGE"
 echo "[첫 기동: initdb + infra/db/init]"
 docker volume create "$VOL" >/dev/null
 run_db
 wait_ready; check "첫 기동(초기화) 후 준비" $? "not ready"
-out="$(psql_as skywx_api api-test-pw "select current_user")"; [ "$out" = skywx_api ]; check "skywx_api 로그인" $? "$out"
-out="$(psql_as skywx_migrator mig-test-pw "select extname from pg_extension where extname='postgis'")"; [ "$out" = postgis ]; check "PostGIS 확장" $? "$out"
+out="$(psql_as wakeline_api api-test-pw "select current_user")"; [ "$out" = wakeline_api ]; check "wakeline_api 로그인" $? "$out"
+out="$(psql_as wakeline_migrator mig-test-pw "select extname from pg_extension where extname='postgis'")"; [ "$out" = postgis ]; check "PostGIS 확장" $? "$out"
 docker rm -f "$ID" >/dev/null
 
 echo "[재기동: 기존 볼륨]"
 run_db
 wait_ready; check "재기동 후 준비" $? "not ready"
-out="$(psql_as skywx_collector col-test-pw "select 1")"; [ "$out" = 1 ]; check "skywx_collector 로그인" $? "$out"
+out="$(psql_as wakeline_collector col-test-pw "select 1")"; [ "$out" = 1 ]; check "wakeline_collector 로그인" $? "$out"
 
 echo "[컨테이너 권한]"
 # docker exec 로 들어간 sh 자신(root·엔트리포인트용 권한)은 빼고 postgres 프로세스만 본다

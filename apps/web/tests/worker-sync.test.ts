@@ -21,7 +21,7 @@ function loadWorker(startMs = Date.parse("2026-09-27T05:10:00Z")): Loaded {
   const self: Record<string, unknown> = { postMessage: (m: Loaded["posted"][number]) => posted.push(m) };
   vm.runInNewContext(src, { self, Map, Set, Math, Date: fakeDate, ...timers });
   const onmessage = self.onmessage as (ev: { data: unknown }) => void;
-  return { api: self.__skywx as WorkerApi, posted, send: (m) => onmessage({ data: m }), clock };
+  return { api: self.__wakeline as WorkerApi, posted, send: (m) => onmessage({ data: m }), clock };
 }
 
 const T0 = Date.parse("2026-09-27T05:10:00Z");

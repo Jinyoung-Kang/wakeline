@@ -1,4 +1,4 @@
--- SkyWx 스키마 V3 (계약 §3). V1·V2 는 고치지 않는다. 마이그레이션은 compose 의 migrate 서비스(--migrate)만 실행한다.
+-- Wakeline 스키마 V3 (계약 §3). V1·V2 는 고치지 않는다. 마이그레이션은 compose 의 migrate 서비스(--migrate)만 실행한다.
 -- 기존 행에는 결정적으로 알 수 있는 값만 채운다. 알 수 없는 값을 추정해 채우지 않는다(데이터 정직성).
 
 -- ---- alert_event: 닫힌 이유 ----
@@ -50,4 +50,4 @@ ALTER TABLE metar_obs ADD CONSTRAINT metar_obs_flight_cat_source_check CHECK (fl
 ALTER TABLE metar_obs ADD CONSTRAINT metar_obs_flight_cat_needs_source CHECK ((flight_cat IS NULL) = (flight_cat_source IS NULL));
 
 -- ---- 보존(retention) 삭제 권한: api 의 야간 작업이 수집 테이블의 오래된 행을 지운다(REL-11) ----
-GRANT DELETE ON metar_obs, radar_frame, ingest_run, quality_event, quality_rule_count TO skywx_api;
+GRANT DELETE ON metar_obs, radar_frame, ingest_run, quality_event, quality_rule_count TO wakeline_api;

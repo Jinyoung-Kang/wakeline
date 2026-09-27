@@ -5,7 +5,7 @@ import { Trend, Counter } from "k6/metrics";
 
 const HTTP_BASE = __ENV.BASE_URL || "http://localhost:8700";
 const BASE = HTTP_BASE.replace(/^http/, "ws");
-// api 는 WS Origin 을 명시 허용 목록(SKYWX_ALLOWED_ORIGINS, 기본 http://localhost:8700 · http://127.0.0.1:8700)으로만 받는다.
+// api 는 WS Origin 을 명시 허용 목록(WAKELINE_ALLOWED_ORIGINS, 기본 http://localhost:8700 · http://127.0.0.1:8700)으로만 받는다.
 // api 에 직접 붙을 때(BASE_URL=http://10.77.0.30:8000)도 Origin 은 브라우저가 보내는 값과 같아야 한다 → ORIGIN 으로 지정.
 const ORIGIN = __ENV.ORIGIN || "http://localhost:8700";
 const HOLD_MS = Number(__ENV.HOLD_S || 240) * 1000;

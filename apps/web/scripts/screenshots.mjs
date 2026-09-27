@@ -1,5 +1,5 @@
 // 포트폴리오 스크린샷: node scripts/screenshots.mjs [baseUrl] [outDir]
-// 실데이터 스택(기본 http://localhost:8700)에서 화면별로 찍는다. 운영 화면은 SKYWX_OPS_USER/SKYWX_OPS_PASSWORD 가 있을 때만.
+// 실데이터 스택(기본 http://localhost:8700)에서 화면별로 찍는다. 운영 화면은 WAKELINE_OPS_USER/WAKELINE_OPS_PASSWORD 가 있을 때만.
 import { chromium } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
@@ -43,7 +43,7 @@ await shot("03-aircraft-detail");
 
 // 3b. 상단 검색(키보드: "/" → 입력 → 결과 목록) — 첫 결과를 Enter 로 선택하면 지도가 그 항공기로 이동
 await page.locator("body").press("/");
-await page.keyboard.type(process.env.SKYWX_SEARCH ?? "KAL");
+await page.keyboard.type(process.env.WAKELINE_SEARCH ?? "KAL");
 await page.getByTestId("aircraft-search-item").first().waitFor({ timeout: 10_000 }).catch(() => {});
 await wait(800);
 await shot("03b-search");
@@ -80,10 +80,10 @@ await wait(3000);
 await shot("08-airport-rksi");
 
 // 9. 운영 화면
-if (process.env.SKYWX_OPS_USER && process.env.SKYWX_OPS_PASSWORD) {
+if (process.env.WAKELINE_OPS_USER && process.env.WAKELINE_OPS_PASSWORD) {
   await page.goto(BASE + "/ops");
-  await page.locator('[data-testid="ops-login"] input').first().fill(process.env.SKYWX_OPS_USER);
-  await page.locator('[data-testid="ops-login"] input[type="password"]').fill(process.env.SKYWX_OPS_PASSWORD);
+  await page.locator('[data-testid="ops-login"] input').first().fill(process.env.WAKELINE_OPS_USER);
+  await page.locator('[data-testid="ops-login"] input[type="password"]').fill(process.env.WAKELINE_OPS_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByTestId("ops-dashboard").waitFor();
   await wait(2500);

@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from skywx_collector.kma_grid import HEADER_BYTES, NULL_OUTSIDE, parse_header, read_echo, render_mercator_png
-from skywx_collector.providers.kma_radar import kst_now, parse_file_list
+from wakeline_collector.kma_grid import HEADER_BYTES, NULL_OUTSIDE, parse_header, read_echo, render_mercator_png
+from wakeline_collector.providers.kma_radar import kst_now, parse_file_list
 
 FIX = Path(__file__).resolve().parents[3] / "fixtures" / "kma_rdr_cmp_head.bin"
 
@@ -80,8 +80,8 @@ def _gzip_zeros(total: int, chunk: int = 1 << 20) -> bytes:
 
 
 def test_decompression_bomb_rejected_at_default_cap():
-    from skywx_collector.gz import DecompressedTooLarge, gunzip_bounded
-    from skywx_collector.kma_grid import MAX_RAW_BYTES
+    from wakeline_collector.gz import DecompressedTooLarge, gunzip_bounded
+    from wakeline_collector.kma_grid import MAX_RAW_BYTES
 
     bomb = _gzip_zeros(MAX_RAW_BYTES + (8 << 20))  # 72 MB 로 부풀고 압축본은 수십 KB
     assert len(bomb) < 1 << 20
@@ -92,7 +92,7 @@ def test_decompression_bomb_rejected_at_default_cap():
 
 
 def test_small_cap_and_truncated_stream_rejected():
-    from skywx_collector.gz import DecompressedTooLarge, gunzip_bounded
+    from wakeline_collector.gz import DecompressedTooLarge, gunzip_bounded
 
     header = FIX.read_bytes()
     raw, _ = _synthetic(header)
@@ -119,7 +119,7 @@ def test_grid_size_out_of_range_rejected():
 
 
 def test_pixel_map_cached_between_frames():
-    from skywx_collector.kma_grid import _pixel_map
+    from wakeline_collector.kma_grid import _pixel_map
 
     header = FIX.read_bytes()
     raw, _ = _synthetic(header)
@@ -133,7 +133,7 @@ def test_pixel_map_cached_between_frames():
 
 # ---- COR-13 / PERF-13: 후보 선택 ---------------------------------------------------------------------------------
 def test_candidates_only_newer_than_newest_stored():
-    from skywx_collector.jobs.kma_radar import select_candidates
+    from wakeline_collector.jobs.kma_radar import select_candidates
 
     day = [f"20260927{h:02d}{m:02d}" for h in range(0, 24) for m in range(0, 60, 5)]
     listing = [t for t in day if t <= "202609272100"]
@@ -167,12 +167,12 @@ class FakeKma:
         self.binaries: list[str] = []
 
     async def file_list(self, day):
-        from skywx_collector.models import ProviderResult
+        from wakeline_collector.models import ProviderResult
 
         return ProviderResult(self.name, b"", datetime.now(UTC), 200, 5, data=list(self.listing))
 
     async def binary(self, tm):
-        from skywx_collector.models import ProviderResult
+        from wakeline_collector.models import ProviderResult
 
         self.binaries.append(tm)
         return ProviderResult(self.name, tm.encode(), datetime.now(UTC), 200, 7, data={"tm": tm})
@@ -200,7 +200,7 @@ def _fake_decode(raw: bytes):
 def kma_env(monkeypatch):
     from fakes import FakeRedis, make_ctx
 
-    from skywx_collector.jobs import kma_radar as mod
+    from wakeline_collector.jobs import kma_radar as mod
 
     monkeypatch.setattr(mod, "_decode", _fake_decode)
     clock = {"now": "202609272000"}
@@ -239,7 +239,7 @@ async def test_job_steady_state_downloads_one_frame_per_cycle_and_keeps_list_con
     assert len(frames) == mod.KEEP_FRAMES and frames[-1]["tm"] == clock["now"]
     assert all("expires_at" in f for f in frames)
     # 목록에서 빠진 이미지는 지워졌고, 목록의 이미지는 모두 있다
-    image_keys = {k for k in r.kv if k.startswith("skywx:radar_kr:frame:")}
+    image_keys = {k for k in r.kv if k.startswith("wakeline:radar_kr:frame:")}
     assert image_keys == {mod.KEY_FRAME.format(tm=f["tm"]) for f in frames}
     assert mod.KEY_FRAMES in r.ttl  # 목록 키도 TTL 을 갖는다
     # 예산이 연결되어 있다: 목록 12회 + 바이너리 4 + 11
@@ -273,7 +273,7 @@ async def test_job_skips_bad_frame_and_does_not_retry_it(kma_env):
     job = mod.KmaRadarJob(prov, ctx)
     await job.run_once()
     assert len(prov.binaries) == 4 and listing[-2] in job._bad
-    stored = {k.rsplit(":", 1)[1] for k in r.kv if k.startswith("skywx:radar_kr:frame:")}
+    stored = {k.rsplit(":", 1)[1] for k in r.kv if k.startswith("wakeline:radar_kr:frame:")}
     assert listing[-2] not in stored and listing[-1] in stored
 
 
@@ -290,8 +290,8 @@ async def test_job_respects_budget_limit(kma_env):
 
 
 def test_main_limits_include_kma_radar():
-    from skywx_collector.config import Settings
-    from skywx_collector.main import build_limits
+    from wakeline_collector.config import Settings
+    from wakeline_collector.main import build_limits
 
     limits = build_limits(Settings(budget_kma_radar=777))
     assert limits["kma_radar"] == 777 and limits["opensky"] == 2880

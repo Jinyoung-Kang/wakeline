@@ -1037,7 +1037,7 @@ wheels = [
 ]
 
 [[package]]
-name = "skywx-collector"
+name = "wakeline-collector"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [

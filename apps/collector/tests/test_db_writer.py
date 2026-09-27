@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from skywx_collector import db as dbmod
-from skywx_collector.db import Db, quality_rows
+from wakeline_collector import db as dbmod
+from wakeline_collector.db import Db, quality_rows
 
 
 class FakeConn:

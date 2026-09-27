@@ -1,7 +1,7 @@
 """간이 WS 팬아웃 시험: N 연결이 구독하고 diff/snapshot 의 서버 ts → 수신 시각 지연을 잰다.
 사용: ORIGIN=http://localhost:8700 python quick_ws.py ws://10.77.0.30:8000/ws/v1 200 90
 
-api 는 WS Origin 을 명시 허용 목록(SKYWX_ALLOWED_ORIGINS, 기본 http://localhost:8700 · http://127.0.0.1:8700)으로만 받는다.
+api 는 WS Origin 을 명시 허용 목록(WAKELINE_ALLOWED_ORIGINS, 기본 http://localhost:8700 · http://127.0.0.1:8700)으로만 받는다.
 접속 주소(api 직접 10.77.0.30:8000 등)와 무관하게 Origin 은 허용 목록의 값을 보낸다 — ORIGIN 환경변수, 기본 http://localhost:8700."""
 import asyncio, json, os, statistics, sys, time
 from datetime import datetime, timezone

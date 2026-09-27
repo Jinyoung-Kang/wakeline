@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from skywx_collector.normalize import from_opensky, from_readsb
+from wakeline_collector.normalize import from_opensky, from_readsb
 
 NOW = datetime(2026, 9, 27, 5, 10, 5, tzinfo=UTC)
 

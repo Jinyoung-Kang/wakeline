@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from skywx_collector.models import AircraftState
-from skywx_collector.quality import AircraftGate
+from wakeline_collector.models import AircraftState
+from wakeline_collector.quality import AircraftGate
 
 NOW = datetime(2026, 9, 27, 5, 10, 5, tzinfo=UTC)
 

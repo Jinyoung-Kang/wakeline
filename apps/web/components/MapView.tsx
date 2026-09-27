@@ -179,7 +179,7 @@ export function MapView() {
     };
 
     // ---- 호버 툴팁(GAP-26): 항공기 > 공항 > SIGMET. rAF 로 묶어 이동당 한 번만 조회. 내용은 텍스트 노드로만. ----
-    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "skywx-tip", offset: 14, maxWidth: "320px" });
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
     let hoverKey = "";
     let hoverAt = 0;
     let hoverRaf = 0;

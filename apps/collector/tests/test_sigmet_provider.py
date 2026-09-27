@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from skywx_collector.sigmet_parse import parse_isigmet
+from wakeline_collector.sigmet_parse import parse_isigmet
 
 ITEM = {
     "icaoId": "RKSI",

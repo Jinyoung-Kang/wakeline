@@ -1,6 +1,6 @@
 import pytest
 
-from skywx_collector.fallback import ProviderChain
+from wakeline_collector.fallback import ProviderChain
 
 
 class FakeStatus:

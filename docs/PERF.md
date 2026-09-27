@@ -31,8 +31,8 @@ grafana/k6 v2.3.0 컨테이너를 Docker 네트워크 안에서 api(10.77.0.30:8
 | REST `/status` | ≤ 300 ms | p50 6.1 ms · **p95 52.9 ms** · p99 341.1 ms | p95 통과, p99 는 Redis 해시 조회 6회가 원인(개선 후보) |
 | WS 팬아웃 200 연결(관심 지역 bbox 구독) | diff 지연 p95 ≤ 500 ms | 서버 ts → 클라이언트 수신 **p50 12 ms · p95 45 ms · p99 72 ms · max 85 ms**, 1,745 메시지, 오류 0, 드롭 0 | 통과 |
 | api 힙/메모리 | ≤ 512 MB 힙 | 컨테이너 RSS 492 MB(힙 상한 = 1 GB × 60%) 부하 중 | 통과 |
-| 엔진 1주기(스냅샷 갱신 + 판정 + 예측 + FSM), 121대 × 126 폴리곤 | ≤ 50 ms | Micrometer `skywx_engine_cycle_seconds` **p50 8.7 ms · p95 13.9 ms** | 통과 |
-| 스트림 처리(검증 + 디코드 + 교체 + 엔진 + 이벤트) | — | `skywx_stream_process_seconds` p50 52 ms · p95 109 ms(스키마 검증 포함) | 기록 |
+| 엔진 1주기(스냅샷 갱신 + 판정 + 예측 + FSM), 121대 × 126 폴리곤 | ≤ 50 ms | Micrometer `wakeline_engine_cycle_seconds` **p50 8.7 ms · p95 13.9 ms** | 통과 |
+| 스트림 처리(검증 + 디코드 + 교체 + 엔진 + 이벤트) | — | `wakeline_stream_process_seconds` p50 52 ms · p95 109 ms(스키마 검증 포함) | 기록 |
 | 10,000대 × 200 SIGMET 교차 판정(JUnit, 합성) | ≤ 50 ms(NFR-05) | 단위 테스트 상한 500 ms 안에서 통과(정확한 값은 JMH 미측정 — 다음 단계) | 미확정 |
 | 수집 수신 → 브라우저 반영(NFR-01) | p95 ≤ 1.5 s | 상태 바 lag 배지 3~6 s 는 **공급자 관측 시각 기준**(adsb.lol 응답 1.2 s + 10 s 주기 포함). WS 팬아웃 자체는 위 45 ms | 측정 방식 분리 필요 |
 | 브라우저 3,000대 30 fps(NFR-04) | — | 관심 지역은 ~130대라 미측정. 전세계 뷰(OpenSky)는 자격증명 후 측정 | 미측정 |
@@ -48,7 +48,7 @@ grafana/k6 v2.3.0 컨테이너를 Docker 네트워크 안에서 api(10.77.0.30:8
 # 제한 상향(측정 전용) → api 재기동
 sed -i '' 's/^PUBLIC_RATE_LIMIT_PER_MIN=.*/PUBLIC_RATE_LIMIT_PER_MIN=1000000/; s/^WS_MAX_CONN_PER_IP=.*/WS_MAX_CONN_PER_IP=500/' .env
 docker compose -f infra/compose.yml --env-file .env up -d api
-docker run --rm --network skywx_skywx -v "$PWD/perf:/perf:ro" python:3.13-slim sh -c \
+docker run --rm --network wakeline_wakeline -v "$PWD/perf:/perf:ro" python:3.13-slim sh -c \
   "pip install -q httpx websockets && python /perf/quick_rest.py http://10.77.0.30:8000 100 60 && python /perf/quick_ws.py ws://10.77.0.30:8000/ws/v1 200 90"
 # 또는 k6: make bench (BASE_URL=http://localhost:8700)
 ```

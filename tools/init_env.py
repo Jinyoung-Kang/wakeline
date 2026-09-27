@@ -24,8 +24,8 @@ INTERNAL = [
     "DB_API_PASSWORD",
     "DB_COLLECTOR_PASSWORD",
     "REDIS_PASSWORD",            # Redis default(관리) 사용자 — 헬스체크·운영 전용
-    "REDIS_API_PASSWORD",        # Redis ACL 사용자 skywx_api (계약 §6)
-    "REDIS_COLLECTOR_PASSWORD",  # Redis ACL 사용자 skywx_collector (계약 §6)
+    "REDIS_API_PASSWORD",        # Redis ACL 사용자 wakeline_api (계약 §6)
+    "REDIS_COLLECTOR_PASSWORD",  # Redis ACL 사용자 wakeline_collector (계약 §6)
 ]
 OWNER_ONLY = 0o600
 
