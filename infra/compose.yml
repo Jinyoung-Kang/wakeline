@@ -147,6 +147,8 @@ services:
     image: wakeline-collector:local
     build: *collector_build
     <<: *hardened
+    # SIGTERM 뒤 진행 중 작업 18 s + DB 큐 비우기·풀 닫기 각 4 s ≈ 26 s(main.py) — 기본 10 s 면 SIGKILL 로 잘린다(COL-4)
+    stop_grace_period: 30s
     tmpfs: ["/tmp"]
     # 최소 권한: .env 전체(env_file)를 넘기지 않고 collector 가 쓰는 값만 명시한다.
     # DB root·마이그레이터 비밀번호, 운영자 초기 비밀번호는 이 컨테이너에 들어오지 않는다. 외부 키는 이 컨테이너에만 들어간다.
@@ -204,6 +206,8 @@ services:
     build: *collector_build
     <<: *hardened
     init: true                                   # PID 1 = tini: SIGTERM 전달·좀비 회수
+    # SIGTERM 뒤 연결 닫기 4 s + 큐 정리 + 발행 루프 1 s + 마지막 발행 3 s ≈ 8 s 넘음(ais/main.py) — 기본 10 s 는 여유가 없다
+    stop_grace_period: 20s
     entrypoint: ["python", "-m", "wakeline_collector.ais"]
     tmpfs: ["/tmp:size=16m"]
     environment:

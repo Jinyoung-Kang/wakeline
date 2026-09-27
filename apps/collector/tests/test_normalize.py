@@ -1,6 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-from wakeline_collector.normalize import Rejected, from_opensky, from_readsb, normalize_opensky, normalize_readsb
+from wakeline_collector.normalize import (
+    Rejected,
+    from_opensky,
+    from_readsb,
+    normalize_opensky,
+    normalize_readsb,
+    readsb_reference_time,
+)
 
 NOW = datetime(2026, 9, 27, 5, 10, 5, tzinfo=UTC)
 
@@ -143,3 +150,29 @@ def test_rejection_reasons():
 def test_readsb_nan_and_bool_values_are_unknown():
     s = from_readsb({"hex": "abcdef", "lat": 1, "lon": 1, "seen_pos": 1, "gs": float("nan"), "track": True}, "adsb_lol", NOW)
     assert s is not None and s.gs_kt is None and s.track_deg is None and s.quality == 1
+
+
+def test_same_observation_fetched_twice_has_identical_seen_at():
+    """관심 지역·핫 리전·집중 추적이 같은 관측을 다른 시각에 받아도 seen_at 은 같아야 한다(중복 점 방지).
+    실측 응답(2026-09-28): hot now=…170004 seen_pos 2.394, focus now=…186004 seen_pos 18.394 → 둘 다 …167.610."""
+    base = {"hex": "71c123", "lat": 35.5, "lon": 139.8, "alt_baro": 12000, "gs": 300, "track": 90}
+    fetched_a = datetime.fromtimestamp(1790538170.104, UTC)  # 수신 시각은 서버 시각과 0.1 s 씩 다르다
+    fetched_b = datetime.fromtimestamp(1790538186.011, UTC)
+    a = from_readsb({**base, "seen_pos": 2.394}, "adsb_fi", fetched_a, readsb_reference_time({"now": 1790538170004}, fetched_a))
+    b = from_readsb({**base, "seen_pos": 18.394}, "adsb_fi", fetched_b, readsb_reference_time({"now": 1790538186004}, fetched_b))
+    assert a is not None and b is not None
+    assert a.seen_at == b.seen_at == datetime.fromtimestamp(1790538167.610, UTC)
+    assert a.fetched_at == fetched_a  # 수신 시각은 그대로 기록한다
+
+
+def test_reference_time_falls_back_to_fetch_time_when_source_clock_is_off_or_missing():
+    fetched = datetime(2026, 9, 28, 1, 0, 0, tzinfo=UTC)
+    assert readsb_reference_time({}, fetched) == fetched
+    assert readsb_reference_time(None, fetched) == fetched
+    assert readsb_reference_time({"now": "x"}, fetched) == fetched
+    assert readsb_reference_time({"now": True}, fetched) == fetched
+    assert readsb_reference_time({"now": 1e30}, fetched) == fetched  # 범위 밖
+    off = (fetched.timestamp() + 121) * 1000  # 공급자 시계가 2 분 넘게 어긋나면 믿지 않는다
+    assert readsb_reference_time({"now": off}, fetched) == fetched
+    near = (fetched.timestamp() + 1.5) * 1000
+    assert readsb_reference_time({"now": near}, fetched) == fetched + timedelta(seconds=1.5)

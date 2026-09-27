@@ -75,8 +75,27 @@ def _hex(v: Any) -> str | None:
     return h if len(h) == 6 and all(c in "0123456789abcdef" for c in h) else None
 
 
-def normalize_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) -> AircraftState | Rejected:
-    """readsb v2 aircraft 1건 → AircraftState, 또는 격리 사유."""
+SOURCE_CLOCK_TOLERANCE_S = 120.0
+
+
+def readsb_reference_time(payload: dict[str, Any] | None, fetched_at: datetime) -> datetime:
+    """seen_pos 를 뺄 기준 시각. readsb 응답의 `now`(공급자 서버 시각, ms)가 수신 시각과 ±120 s 안이면 그것을 쓴다.
+    같은 관측을 다른 시각에 두 번 받아도(관심 지역·핫 리전·집중 추적) seen_at 이 정확히 같아진다 — 수신 시각 기준이면
+    0.1 s 씩 어긋나 같은 관측이 서로 다른 점으로 저장·표시된다(실측 2026-09-28). 이상하면 수신 시각으로 되돌린다."""
+    now = _num((payload or {}).get("now"))
+    if now is None:
+        return fetched_at
+    try:
+        ref = datetime.fromtimestamp(now / 1000.0, UTC)
+    except (OverflowError, OSError, ValueError):
+        return fetched_at
+    return ref if abs((ref - fetched_at).total_seconds()) <= SOURCE_CLOCK_TOLERANCE_S else fetched_at
+
+
+def normalize_readsb(
+    ac: dict[str, Any], provider: str, fetched_at: datetime, reference: datetime | None = None
+) -> AircraftState | Rejected:
+    """readsb v2 aircraft 1건 → AircraftState, 또는 격리 사유. reference: seen_pos 기준 시각(readsb_reference_time), 없으면 fetched_at."""
     raw_hex = ac.get("hex")
     hex_ = _hex(raw_hex)
     lat, lon = _num(ac.get("lat")), _num(ac.get("lon"))
@@ -88,7 +107,7 @@ def normalize_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) ->
     if seen_pos is None:
         return Rejected("no_position_time", hex_, {"provider": provider})
     try:
-        seen_at = fetched_at - timedelta(seconds=seen_pos)
+        seen_at = (reference or fetched_at) - timedelta(seconds=seen_pos)
     except OverflowError:
         return Rejected("invalid_record", hex_, {"field": "seen_pos"})
     alt_raw = ac.get("alt_baro")
@@ -133,9 +152,11 @@ def _fields(e: ValidationError) -> list[str]:
     return sorted({".".join(str(p) for p in err["loc"]) for err in e.errors()})[:8]
 
 
-def from_readsb(ac: dict[str, Any], provider: str, fetched_at: datetime) -> AircraftState | None:
+def from_readsb(
+    ac: dict[str, Any], provider: str, fetched_at: datetime, reference: datetime | None = None
+) -> AircraftState | None:
     """normalize_readsb 의 편의형: 격리 사유 없이 상태 또는 None."""
-    r = normalize_readsb(ac, provider, fetched_at)
+    r = normalize_readsb(ac, provider, fetched_at, reference)
     return r if isinstance(r, AircraftState) else None
 
 

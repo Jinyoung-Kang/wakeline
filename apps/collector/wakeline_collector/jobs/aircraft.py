@@ -18,7 +18,7 @@ from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import AircraftState
-from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb
+from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb, readsb_reference_time
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import Throttled
@@ -85,7 +85,10 @@ class AircraftJob:
         if prov.name == "opensky":
             results = [normalize_opensky(v, fetched_at) for v in result.data.get("states") or []]
         else:
-            results = [normalize_readsb(ac, prov.name, fetched_at) for ac in result.data.get("ac") or [] if isinstance(ac, dict)]
+            ref = readsb_reference_time(result.data, fetched_at)
+            results = [
+                normalize_readsb(ac, prov.name, fetched_at, ref) for ac in result.data.get("ac") or [] if isinstance(ac, dict)
+            ]
         states = [r for r in results if isinstance(r, AircraftState)]
         pre = [Quarantine(r.rule, r.hex, r.detail) for r in results if isinstance(r, Rejected)]
         gate = self.gate.apply(states, 0, datetime.now(UTC), pre=pre)

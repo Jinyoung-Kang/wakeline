@@ -32,7 +32,7 @@ from wakeline_collector.demand import Demand, DemandPoller, DemandStatus, HotCel
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import AircraftState, ProviderResult
-from wakeline_collector.normalize import Rejected, normalize_readsb
+from wakeline_collector.normalize import Rejected, normalize_readsb, readsb_reference_time
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
@@ -306,6 +306,7 @@ class DemandTracker:
         states: list[AircraftState] = []
         pre: list[Quarantine] = []
         seen: set[str] = set()
+        ref = readsb_reference_time(res.data, res.fetched_at)  # 같은 관측은 어느 작업이 받아도 같은 seen_at
         for ac in res.data.get("ac") or []:
             if not isinstance(ac, dict):
                 continue
@@ -315,7 +316,7 @@ class DemandTracker:
                 continue
             if h:
                 seen.add(h)
-            r = normalize_readsb(ac, self.provider.name, res.fetched_at)
+            r = normalize_readsb(ac, self.provider.name, res.fetched_at, ref)
             if isinstance(r, Rejected):
                 pre.append(Quarantine(r.rule, r.hex, r.detail))
             else:
