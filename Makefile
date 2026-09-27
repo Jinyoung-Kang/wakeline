@@ -64,13 +64,13 @@ demo: init ## 외부 호출 없는 fixture 데모 스택 → http://localhost:87
 demo-down: ## 데모 스택·볼륨 삭제
 	$(ISO) down -v --remove-orphans
 
-bench: ## k6 부하 시험 — api 층 직접 측정(IP당 제한 잠시 상향, grafana/k6 컨테이너). 결과: perf/results/
-	PUBLIC_RATE_LIMIT_PER_MIN=1000000 WS_MAX_CONN_PER_IP=500 $(COMPOSE) up -d api
-	@echo "waiting for api…"; sleep 30
-	docker run --rm --network skywx_skywx -v "$(PWD)/perf:/perf" -w /perf -e BASE_URL=http://10.77.0.30:8000 grafana/k6:latest run rest.js
-	docker run --rm --network skywx_skywx -v "$(PWD)/perf:/perf" -w /perf -e BASE_URL=http://10.77.0.30:8000 grafana/k6:latest run ws.js
-	$(COMPOSE) up -d api   # 제한 원복
-	@echo "restored rate limits (.env values)"
+bench: ## k6 부하 시험 — api 층 직접 측정(측정 동안만 IP 제한·연결 상한 상향, grafana/k6 컨테이너). 결과: perf/results/
+	PUBLIC_RATE_LIMIT_PER_MIN=1000000 WS_MAX_CONN_PER_IP=1000 WS_MAX_CONN=1000 $(COMPOSE) up -d --wait api
+	@ts=$$(date -u +%Y%m%dT%H%M%SZ); rc=0; \
+	docker run --rm --network skywx_skywx -v "$(PWD)/perf:/perf" -w /perf -e BASE_URL=http://10.77.0.30:8000 grafana/k6:latest run rest.js 2>&1 | tee perf/results/k6-rest-$$ts.log; rc=$${PIPESTATUS[0]}; \
+	docker run --rm --network skywx_skywx -v "$(PWD)/perf:/perf" -w /perf -e BASE_URL=http://10.77.0.30:8000 grafana/k6:latest run ws.js 2>&1 | grep --line-buffered -v "VU iteration was interrupted" | tee perf/results/k6-ws-$$ts.log; rc2=$${PIPESTATUS[0]}; \
+	echo "restoring rate limits (.env values)…"; $(COMPOSE) up -d --wait api >/dev/null 2>&1; \
+	echo "k6 exit: rest=$$rc ws=$$rc2 (99 = threshold crossed)"; [ $$rc -eq 0 ] && [ $$rc2 -eq 0 ]
 
 bench-edge: ## 로컬 k6 로 edge(8700) 경유 측정 — 요청 제한(IP당 10 r/s·분당 120)이 그대로 걸려 429 가 정상이다(제한 동작 확인용)
 	RPS=8 DURATION=1m k6 run perf/rest.js || true
