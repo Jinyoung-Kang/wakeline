@@ -96,6 +96,56 @@ class ShipPersistDbTest {
         assertThat(repo.find("999999999")).isNull();
     }
 
+    /**
+     * 리뷰 #9: 한 배치에 같은 MMSI 의 정적 정보가 둘(class B 24A·24B 가 다른 flush 로 옴 — reWriteBatchedInserts 로 한 VALUES 문장이 된다).
+     * 합치지 않으면 SQLState 21000(ON CONFLICT DO UPDATE 가 같은 행을 두 번)으로 배치 전체가 실패하고 저장기가 멈췄다.
+     */
+    @Test void statics_sameMmsiTwiceInOneBatch_collapseToNewest_seenRangeWidens() {
+        repo.upsertStatics(List.of(
+                new ShipRepository.StaticRow(stat("440000005", "PART A", W.plusSeconds(10)), W.plusSeconds(20)),
+                new ShipRepository.StaticRow(stat("440000006", "OTHER", W), W.plusSeconds(5)),
+                new ShipRepository.StaticRow(stat("440000005", "PART B", W.plusSeconds(40)), W.plusSeconds(50)),
+                new ShipRepository.StaticRow(stat("440000005", "STALE", W), W.plusSeconds(90))));   // 오래된 내용이 늦게 도착
+        ShipRepository.StoredShip s = repo.find("440000005");
+        assertThat(s.stat().name()).isEqualTo("PART B");
+        assertThat(s.stat().updatedAt()).isEqualTo(W.plusSeconds(40));
+        assertThat(s.firstSeen()).isEqualTo(W.plusSeconds(20));
+        assertThat(s.lastSeen()).isEqualTo(W.plusSeconds(90));
+        assertThat(repo.find("440000006").stat().name()).isEqualTo("OTHER");
+        // 같은 updated_at 이면 뒤의 것(SQL 의 >= 와 같은 규칙)
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(stat("440000007", "FIRST", W), W),
+                new ShipRepository.StaticRow(stat("440000007", "SECOND", W), W)));
+        assertThat(repo.find("440000007").stat().name()).isEqualTo("SECOND");
+
+        // 합치지 않은 같은 키 두 행이 한 다중 VALUES 문장이 되면: 드라이버·Spring 이 감싼 실제 예외도 영구 오류로 분류된다(저장기가 멈추지 않는다)
+        Object ts = Sql.ts(W);
+        RuntimeException raw = org.assertj.core.api.Assertions.catchRuntimeException(() -> DbTestSupport.apiJdbc().batchUpdate(
+                "INSERT INTO ship AS s (mmsi, first_seen, last_seen, provider) VALUES (?, ?, ?, ?) ON CONFLICT (mmsi) DO UPDATE SET last_seen = EXCLUDED.last_seen",
+                List.of(new Object[]{"440000009", ts, ts, "x"}, new Object[]{"440000009", ts, ts, "x"})));
+        assertThat(raw).hasStackTraceContaining("cannot affect row a second time");
+        assertThat(TrackWriter.isPermanent(raw)).isTrue();
+    }
+
+    /** V7(계약 v3 §B): 위치 출처를 모르면 NULL 로 저장되고 NULL 로 읽힌다. */
+    @Test void positions_unknownPositionSourceIsStoredAsNull() {
+        ShipState p = pos("440000008", W.plusSeconds(5), 35.1);
+        repo.writePositions(List.of(new ShipState(p.mmsi(), p.lat(), p.lon(), p.sogKn(), p.cogDeg(), p.headingDeg(), p.navStatus(), p.rot(),
+                null, p.seenAt(), p.provider(), p.msgType(), p.shipClass())));
+        assertThat(repo.track("440000008", W, W.plusSeconds(60), 10)).singleElement()
+                .extracting(ShipRepository.TrackPoint::positionSource).isNull();
+    }
+
+    /** 계약 v3 §D: 목록은 최신 N 개(오래된 것부터), 선 끊기용은 길이 ≥ minS 만 — 둘은 따로 묻는다. */
+    @Test void gaps_newestFirstLimit_andLongGapsQueriedSeparately() {
+        repo.insertGap(new AisGap(W, W.plusSeconds(90), "long", "aisstream"));
+        for (int i = 0; i < 5; i++) repo.insertGap(new AisGap(W.plusSeconds(200 + 60L * i), W.plusSeconds(210 + 60L * i), "short " + i, "aisstream"));
+        repo.insertGap(new AisGap(W.plusSeconds(600), W.plusSeconds(660), "exactly 60 s", "aisstream"));
+        assertThat(repo.gaps(W, W.plusSeconds(1_000), 3)).extracting(AisGap::reason).containsExactly("short 3", "short 4", "exactly 60 s");
+        assertThat(repo.gapsAtLeast(W, W.plusSeconds(1_000), 60, 100)).extracting(AisGap::reason).containsExactly("long", "exactly 60 s");
+        assertThat(repo.gapsAtLeast(W.plusSeconds(100), W.plusSeconds(500), 60, 100)).isEmpty();
+        assertThat(repo.gapsAtLeast(W, W.plusSeconds(1_000), 60, 1)).extracting(AisGap::reason).containsExactly("long");
+    }
+
     @Test void gaps_dedupedAndQueriedByOverlap() {
         AisGap g = new AisGap(W, W.plusSeconds(120), "server closed (1006)", "aisstream");
         assertThat(repo.insertGap(g)).isTrue();
@@ -104,7 +154,8 @@ class ShipPersistDbTest {
         assertThat(repo.gaps(W.plusSeconds(60), W.plusSeconds(650), 10)).extracting(AisGap::reason)
                 .containsExactly("server closed (1006)", "idle 120 s — no messages");
         assertThat(repo.gaps(W.plusSeconds(200), W.plusSeconds(500), 10)).isEmpty();
-        assertThat(repo.gaps(W.minusSeconds(10), W.plusSeconds(10_000), 1)).hasSize(1);
+        assertThat(repo.gaps(W.minusSeconds(10), W.plusSeconds(10_000), 1)).extracting(AisGap::reason)
+                .as("the newest one").containsExactly("idle 120 s — no messages");
         AisGap back = repo.gaps(W.minusSeconds(10), W.plusSeconds(10), 10).getFirst();
         assertThat(back.startedAt()).isEqualTo(W);
         assertThat(back.endedAt()).isEqualTo(W.plusSeconds(120));

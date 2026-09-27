@@ -1,6 +1,7 @@
 package dev.wakeline.ops;
 
 import dev.wakeline.config.Problem;
+import dev.wakeline.domain.AisBboxes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -30,10 +31,6 @@ public class SettingsService {
             "aircraft_providers", "region_center", "region_radius_nm", "global_enabled", "ais_bboxes");
     /** "lat,lon" — 숫자 형식만 여기서 보고, 범위는 숫자로 검사한다(정규식만으로는 lat 99 · lon 999 가 통과했다, COR-12). */
     private static final Pattern LAT_LON = Pattern.compile("^\\s*-?\\d{1,3}(\\.\\d{1,8})?\\s*,\\s*-?\\d{1,3}(\\.\\d{1,8})?\\s*$");
-    /** AIS 구독 상자의 숫자 하나(ais/bbox.py 는 float() 로 더 넓게 받는다 — 여기서 더 엄격하면 api 를 통과한 값은 수집기도 받는다). */
-    private static final Pattern BBOX_NUM = Pattern.compile("^-?\\d{1,3}(\\.\\d{1,6})?$");
-    /** ais/bbox.py MAX_BOXES · MAX_TEXT 와 같다. */
-    static final int MAX_AIS_BOXES = 16, MAX_AIS_TEXT = 1024;
     /** 관심 지역 위도 한계: 웹 메르카토르 표시 범위이자 bbox 경도 보정(cos 위도)이 발산하지 않는 범위. */
     static final double MAX_ABS_LAT = 85.0;
     /** 기동 시 .env 값으로 맞출 때 기록하는 updated_by. 운영자가 /ops 에서 바꾼 뒤에는(updated_by = 사용자명) 더 이상 덮어쓰지 않는다. */
@@ -184,32 +181,18 @@ public class SettingsService {
 
     /**
      * AIS 구독 영역(ADR-014 §7): "lat1,lon1,lat2,lon2" 상자를 ';' 로 이어 쓴 문자열, 1~16 개, 1,024 자 이하, |lat| ≤ 90, |lon| ≤ 180,
-     * 넓이 0 인 상자 금지 — ais/bbox.py parse_bboxes 와 같은 규칙. 빈 문자열은 ".env AIS_BBOXES 를 쓴다"는 뜻이라 허용한다.
+     * 넓이 0 인 상자 금지 — ais/bbox.py parse_bboxes 와 같은 규칙({@link AisBboxes}). 빈 문자열은 ".env AIS_BBOXES 를 쓴다"는 뜻이라 허용한다.
      * 수집기도 다시 검사하고, 틀린 값이면 현재 구독을 유지한다(여기서 막는 것은 운영자에게 바로 알려 주기 위해서다).
      */
     static void aisBboxes(JsonNode v) {
         if (!v.isString()) throw Problem.badRequest("BAD_VALUE", "string \"lat1,lon1,lat2,lon2[;...]\" required (empty = .env AIS_BBOXES)");
         String s = v.asString();
-        if (s.length() > MAX_AIS_TEXT) throw Problem.badRequest("BAD_VALUE", "at most " + MAX_AIS_TEXT + " characters");
-        if (s.isBlank()) return;
-        int boxes = 0;
-        for (String raw : s.split(";", -1)) {
-            String part = raw.strip();
-            if (part.isEmpty()) continue;
-            String[] p = part.split(",", -1);
-            if (p.length != 4) throw Problem.badRequest("BAD_VALUE", "each box needs 4 numbers lat1,lon1,lat2,lon2");
-            double[] d = new double[4];
-            for (int i = 0; i < 4; i++) {
-                String t = p[i].strip();
-                if (!BBOX_NUM.matcher(t).matches()) throw Problem.badRequest("BAD_VALUE", "box values must be decimal numbers");
-                d[i] = Double.parseDouble(t);
-            }
-            if (Math.abs(d[0]) > 90 || Math.abs(d[2]) > 90) throw Problem.badRequest("BAD_VALUE", "latitude must be within ±90");
-            if (Math.abs(d[1]) > 180 || Math.abs(d[3]) > 180) throw Problem.badRequest("BAD_VALUE", "longitude must be within ±180");
-            if (d[0] == d[2] || d[1] == d[3]) throw Problem.badRequest("BAD_VALUE", "box has zero area");
-            if (++boxes > MAX_AIS_BOXES) throw Problem.badRequest("BAD_VALUE", "at most " + MAX_AIS_BOXES + " boxes");
+        if (s.length() <= AisBboxes.MAX_TEXT && s.isBlank()) return;
+        try {
+            AisBboxes.parse(s);
+        } catch (IllegalArgumentException e) {
+            throw Problem.badRequest("BAD_VALUE", e.getMessage());
         }
-        if (boxes == 0) throw Problem.badRequest("BAD_VALUE", "no bounding box");
     }
 
     private static void intRange(JsonNode v, int min, int max) {

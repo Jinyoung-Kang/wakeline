@@ -17,8 +17,19 @@ public final class ShipCodec {
     public static ShipState state(JsonNode n) {
         return new ShipState(n.path("mmsi").asString(), n.path("lat").asDouble(), n.path("lon").asDouble(),
                 Codec.dbl(n, "sog_kn"), Codec.dbl(n, "cog_deg"), Codec.integer(n, "heading_deg"), Codec.integer(n, "nav_status"),
-                Codec.integer(n, "rot"), n.path("position_source").asString(), Instant.parse(n.path("seen_at").asString()),
+                Codec.integer(n, "rot"), positionSource(Codec.text(n, "position_source")), Instant.parse(n.path("seen_at").asString()),
                 n.path("provider").asString(), Codec.text(n, "msg_type"), Codec.text(n, "class"));
+    }
+
+    /** 레거시 값: 예전 수집기가 Timestamp 0~60·누락을 묶어 낸 값 — 어느 쪽인지 모른다(계약 v3 §B). */
+    static final String LEGACY_GNSS = "gnss";
+
+    /**
+     * 위치 출처(계약 v3 §B): epfs · manual · estimated · inoperative 는 그대로, null(모름)은 null. 배포 전환 중 스트림에 남은 옛 "gnss" 는
+     * 받자마자 null 로 바꾼다 — 0~60 과 누락이 섞인 값이라 'epfs' 로 추정하지 않는다(DB V7 도 'gnss' 를 받지 않는다).
+     */
+    static String positionSource(String v) {
+        return v == null || LEGACY_GNSS.equals(v) ? null : v;
     }
 
     public static ShipStatic stat(JsonNode n) {

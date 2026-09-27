@@ -100,6 +100,13 @@ public final class WsSession {
     /** 수요 스레드 전용: 마지막으로 전송을 예약한 demand JSON 과 그 시각(바뀌었거나 30 s 가 지나면 다시 보낸다). */
     String demandQueuedJson;
     long demandQueuedAtMs;
+    /** 수요 스레드 전용: 이 세션이 지금 임대에 올린 수요(직전 임대, 없으면 null) — 새 키가 세션 제한에 걸리면 이것을 유지한다(계약 v3 §C). */
+    DemandService.Held demandHeld;
+    /** 수요 스레드 전용: 새로 올린 집중 추적 hex · 핫 셀(각각 60 s 창에 6개까지). */
+    final SlidingWindowLimiter newFocusKeys = new SlidingWindowLimiter(DemandService.SESSION_NEW_KEYS_MAX,
+            TimeUnit.MILLISECONDS.toNanos(DemandService.SESSION_NEW_KEYS_WINDOW_MS));
+    final SlidingWindowLimiter newHotKeys = new SlidingWindowLimiter(DemandService.SESSION_NEW_KEYS_MAX,
+            TimeUnit.MILLISECONDS.toNanos(DemandService.SESSION_NEW_KEYS_WINDOW_MS));
 
     // ---- 전송 쪽(우편함 안에서만) ----
     /** 이 세션에 마지막으로 보낸 상태(hex → state). diff 기준. */

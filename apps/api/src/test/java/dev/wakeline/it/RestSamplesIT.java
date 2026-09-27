@@ -153,8 +153,10 @@ class RestSamplesIT extends IntegrationTest {
         // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.
         // 수집기 heartbeat 는 다른 테스트(수집기 없음 → adsb_fi_rps_1m 모름)에 남지 않게 기록 뒤 지운다.
         Instant hb = Instant.now();
+        // state · bbox(계약 v3 §A) → status.sources.ais.state · coverage
         ItStack.ais().opsForHash().putAll("wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "4.20",
-                "last_msg_at", hb.toString(), "updated_at", hb.toString(), "gap_open_since", ""));
+                "last_msg_at", hb.toString(), "updated_at", hb.toString(), "gap_open_since", "", "state", "receiving",
+                "bbox", "-90,-180,90,0;-90,45,90,180"));
         try {
             ItStack.collector().opsForHash().putAll("wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
             await("status sources.ais and demand rate", WAIT, () -> {
@@ -206,6 +208,13 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(noStatic.path("category").asString()).isEqualTo("unknown");
         JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
         assertThat(st.path("sources").path("ais").path("msgs_per_s").asDouble()).isEqualTo(4.2);
+        assertThat(st.path("sources").path("ais").path("state").asString()).isEqualTo("receiving");
+        assertThat(st.path("sources").path("ais").path("coverage").toString()).isEqualTo("[[-90.0,-180.0,90.0,0.0],[-90.0,45.0,90.0,180.0]]");
+        // 스트림의 레거시 "gnss" 는 받자마자 모름(계약 v3 §B) — REST 는 키를 뺀다
+        assertThat(shipFc.path("features").get(0).path("properties").has("position_source")).isFalse();
+        assertThat(shipTrack.path("points").get(0).has("position_source")).isFalse();
+        assertThat(shipTrack.path("properties").path("gap_break_min_s").asInt()).isEqualTo(60);
+        assertThat(shipTrack.path("properties").path("gaps_truncated").asBoolean(true)).isFalse();
         assertThat(st.path("demand").path("adsb_fi_rps_1m").asDouble()).isEqualTo(0.417); // 수집기 값(0.4167)을 api 가 소수 셋째 자리로
         JsonNode dbItem = Streams.JSON.readTree(Files.readString(OUT.resolve("aircraft_search_db.json"))).path("body").path("items").get(0);
         assertThat(dbItem.path("hex").asString()).isEqualTo("a1d0db");

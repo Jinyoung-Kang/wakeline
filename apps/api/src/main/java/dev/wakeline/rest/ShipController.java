@@ -47,6 +47,16 @@ public class ShipController {
     static final int TRACK_MAX_POINTS = 5_000;
     /** 이보다 긴 시간 틈은 선을 끊는다(계약 v2 §B3). */
     static final Duration TRACK_BREAK = Duration.ofMinutes(15);
+    /**
+     * 선을 끊는 끝난 공백의 최소 길이(계약 v3 §D): 저장 간격이 60 s 창이라 더 짧은 수신 공백은 저장점을 없애지 못한다. 열린 공백은 길이와 무관하게 끊는다.
+     */
+    static final long GAP_BREAK_MIN_S = 60;
+    /** 항적 응답의 gaps: 창과 겹치는 공백 중 최신 200개(열린 공백 포함). */
+    static final int TRACK_GAPS_LIMIT = 200;
+    /**
+     * 선 끊기용 긴 공백 조회 상한(메모리 보호) — 60 s 이상 공백은 서로 겹치지 않으면 24 h 창에 1,442개를 넘을 수 없어 닿지 않는다.
+     */
+    static final int TRACK_BREAK_GAPS_MAX = 5_000;
     static final Duration GAPS_MAX_RANGE = Duration.ofDays(31);
     static final int GAPS_LIMIT = 500;
     /** 선박 목록 stale 기준: 수집기는 10 s 마다 발행한다. */
@@ -65,14 +75,16 @@ public class ShipController {
     }
 
     /**
-     * bbox(≤ 2,500 sq°) 안의 실시간 선박(ShipLite FeatureCollection). ETag = 선박 목록 버전. 5,000 척을 넘으면 앞의 5,000 척만 싣고
-     * meta.capped = true · meta.total_in_bbox 로 밝힌다(격자는 WS ships_grid).
+     * bbox(≤ 2,500 sq°) 안의 실시간 선박(ShipLite FeatureCollection). ETag = 선박 목록 버전 + 본문 meta 의 시간·수신 상태({@link #etag}).
+     * 5,000 척을 넘으면 앞의 5,000 척만 싣고 meta.capped = true · meta.total_in_bbox 로 밝힌다(격자는 WS ships_grid).
      */
     @GetMapping(value = "/ships", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> shipList(@RequestParam String bbox, HttpServletRequest req) {
         Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
         ShipStore.View v = store.view();
-        String etag = "\"s" + v.version() + "\"";
+        Map<String, Object> meta = Meta.of(req, v.provider(), v.fetchedAt(), SHIPS_STALE_S);
+        Map<String, Object> aisView = ais.publicView(System.currentTimeMillis());
+        String etag = etag(v.version(), meta, aisView);
         CacheControl cc = CacheControl.maxAge(10, TimeUnit.SECONDS).cachePublic();
         if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         List<Map<String, Object>> features = new ArrayList<>();
@@ -84,14 +96,32 @@ public class ShipController {
         Map<String, Object> fc = new LinkedHashMap<>();
         fc.put("type", "FeatureCollection");
         fc.put("features", features);
-        Map<String, Object> meta = Meta.of(req, v.provider(), v.fetchedAt(), SHIPS_STALE_S);
         meta.put("count", features.size());
         meta.put("total_in_bbox", total[0]);
         meta.put("capped", total[0] > features.size());
-        meta.put("ais", ais.publicView(System.currentTimeMillis()));
+        meta.put("ais", aisView);
         fc.put("meta", meta);
         return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(fc);
     }
+
+    /**
+     * /ships ETag(리뷰 2026-09-28b #11): 선박 목록 버전만으로는 수신이 멈췄을 때(버전이 그대로) 304 가 예전 '신선·연결됨' meta 를 계속 보여 준다.
+     * 그래서 본문 meta 중 시간·수신 상태로 바뀌는 값을 넣는다 — stale · ais connected · heartbeat_stale · gap_open_since · state · coverage.
+     * lag_s·msgs_per_s 처럼 요청마다 달라지는 수치는 넣지 않는다(max-age 10 s 안의 차이).
+     */
+    static String etag(long version, Map<String, Object> meta, Map<String, Object> aisView) {
+        StringBuilder b = new StringBuilder("\"s").append(version).append('-').append(flag(meta.get("stale")));
+        if (aisView != null) {
+            b.append('-').append(flag(aisView.get("connected"))).append(flag(aisView.get("heartbeat_stale")));
+            b.append('-').append(aisView.get("gap_open_since") instanceof Instant g ? Long.toString(g.toEpochMilli(), 36) : "n");
+            if (aisView.get("state") instanceof String st) b.append('-').append(st);
+            if (aisView.get("coverage") instanceof List<?> cov) b.append('-').append(Integer.toHexString(cov.hashCode()));
+        }
+        return b.append('"').toString();
+    }
+
+    /** true → 1, false → 0, 모름(null) → u. */
+    private static char flag(Object o) { return o == null ? 'u' : Boolean.TRUE.equals(o) ? '1' : '0'; }
 
     /**
      * 상세: 실시간 위치(state — 목록에 있을 때만) + 정적 정보(static — 메모리, 없으면 DB) + 선종 분류(category — 코드의 결정적 변환)
@@ -132,9 +162,10 @@ public class ShipController {
     }
 
     /**
-     * 저장된 항적(≤ 24 h, 기본 최근 6 h): MMSI 별 60 s 창의 첫 보고. GeoJSON MultiLineString — AIS 수신 공백을 사이에 둔 두 점, 15분 넘게 떨어진 두 점에서
-     * 끊는다(2점 이상인 구간만 선이 된다 — 모든 점은 points 에 있다). properties.segments[i] 는 geometry 의 i 번째 선. gaps = 창과 겹치는 공백
-     * (열린 공백은 ended_at 없음).
+     * 저장된 항적(≤ 24 h, 기본 최근 6 h): MMSI 별 60 s 창의 첫 보고. GeoJSON MultiLineString — 60 s 이상 끝난 AIS 수신 공백 또는 열린 공백을 사이에 둔
+     * 두 점, 15분 넘게 떨어진 두 점에서 끊는다(계약 v3 §D, properties.gap_break_min_s — 2점 이상인 구간만 선이 된다, 모든 점은 points 에 있다).
+     * 끊기용 긴 공백은 따로 조회한다(짧은 공백이 많아 gaps 목록이 잘려도 선 끊기는 영향이 없다). properties.segments[i] 는 geometry 의 i 번째 선.
+     * gaps = 창과 겹치는 공백 중 최신 200개(오래된 것부터, 열린 공백은 ended_at 없음) — 더 있으면 properties.gaps_truncated = true.
      */
     @GetMapping(value = "/ships/{mmsi}/track", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> shipTrack(@PathVariable String mmsi, @RequestParam(required = false) Instant from,
@@ -145,9 +176,15 @@ public class ShipController {
         if (!start.isBefore(end) || Duration.between(start, end).compareTo(TRACK_MAX_RANGE) > 0)
             throw Problem.badRequest("BAD_RANGE", "range must be within 24 h and from < to");
         List<ShipRepository.TrackPoint> pts = repo.track(m, start, end, TRACK_MAX_POINTS);
-        List<AisGap> gaps = gapsWithOpen(start, end);
+        AisGap open = openGap(end);
+        List<AisGap> breaks = new ArrayList<>(repo.gapsAtLeast(start, end, GAP_BREAK_MIN_S, TRACK_BREAK_GAPS_MAX));
+        if (open != null) breaks.add(open);
+        int room = TRACK_GAPS_LIMIT - (open == null ? 0 : 1);
+        Newest listed = newest(repo.gaps(start, end, room + 1), room);
+        List<AisGap> gaps = new ArrayList<>(listed.items());
+        if (open != null) gaps.add(open);
 
-        List<List<ShipRepository.TrackPoint>> segs = split(pts, gaps);
+        List<List<ShipRepository.TrackPoint>> segs = split(pts, breaks);
         List<List<double[]>> lines = new ArrayList<>();
         List<Map<String, Object>> segMeta = new ArrayList<>();
         for (List<ShipRepository.TrackPoint> seg : segs) {
@@ -167,6 +204,8 @@ public class ShipController {
         properties.put("points", pts.size());
         properties.put("truncated", pts.size() >= TRACK_MAX_POINTS);
         properties.put("sampling", "first_fix_per_60s");
+        properties.put("gap_break_min_s", GAP_BREAK_MIN_S);
+        properties.put("gaps_truncated", listed.truncated());
         properties.put("segments", segMeta);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("type", "Feature");
@@ -178,7 +217,10 @@ public class ShipController {
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic()).body(out);
     }
 
-    /** AIS 수신 공백(≤ 31일, 기본 최근 24 h). items = 끝난 공백(오래된 것부터, 최대 500), open = 지금 열린 공백(없으면 null). */
+    /**
+     * AIS 수신 공백(≤ 31일, 기본 최근 24 h). items = 끝난 공백 중 최신 500개(오래된 것부터 정렬 — 더 있으면 truncated = true),
+     * open = 지금 열린 공백(없으면 null).
+     */
     @GetMapping("/ais/gaps")
     public ResponseEntity<Map<String, Object>> aisGaps(@RequestParam(required = false) Instant from, @RequestParam(required = false) Instant to,
                                                     HttpServletRequest req) {
@@ -186,12 +228,12 @@ public class ShipController {
         Instant start = from == null ? end.minus(Duration.ofHours(24)) : from;
         if (!start.isBefore(end) || Duration.between(start, end).compareTo(GAPS_MAX_RANGE) > 0)
             throw Problem.badRequest("BAD_RANGE", "range must be within 31 days and from < to");
-        List<AisGap> closed = repo.gaps(start, end, GAPS_LIMIT);
+        Newest closed = newest(repo.gaps(start, end, GAPS_LIMIT + 1), GAPS_LIMIT);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("from", start);
         out.put("to", end);
-        out.put("items", gapsJson(closed));
-        out.put("truncated", closed.size() >= GAPS_LIMIT);
+        out.put("items", gapsJson(closed.items()));
+        out.put("truncated", closed.truncated());
         AisStatus.Feed f = ais.current();
         Map<String, Object> open = null;
         if (f.gapOpenSince() != null) {
@@ -207,15 +249,22 @@ public class ShipController {
 
     // ---- 도우미 ----
 
-    /** DB 의 끝난 공백 + (창과 겹치면) 지금 열린 공백. */
-    private List<AisGap> gapsWithOpen(Instant start, Instant end) {
-        List<AisGap> gaps = new ArrayList<>(repo.gaps(start, end, GAPS_LIMIT));
+    /** 창의 끝(end) 전에 시작한 지금 열린 공백(없으면 null). */
+    private AisGap openGap(Instant end) {
         AisStatus.Feed f = ais.current();
-        if (f.gapOpenSince() != null && f.gapOpenSince().isBefore(end)) gaps.add(new AisGap(f.gapOpenSince(), null, f.gapReason(), f.provider()));
-        return gaps;
+        return f.gapOpenSince() != null && f.gapOpenSince().isBefore(end) ? new AisGap(f.gapOpenSince(), null, f.gapReason(), f.provider()) : null;
     }
 
-    /** 시간순 점을 구간으로: 앞 점과 15분 넘게 떨어졌거나 그 사이에 공백이 걸쳐 있으면 새 구간. */
+    /** 최신 limit 건과 잘림 여부. */
+    record Newest(List<AisGap> items, boolean truncated) {}
+
+    /** 저장소가 준 최신 limit + 1 건(오래된 것부터)에서: 넘치면 가장 오래된 것을 빼고 truncated. */
+    static Newest newest(List<AisGap> upToLimitPlusOne, int limit) {
+        if (upToLimitPlusOne.size() <= limit) return new Newest(upToLimitPlusOne, false);
+        return new Newest(upToLimitPlusOne.subList(upToLimitPlusOne.size() - limit, upToLimitPlusOne.size()), true);
+    }
+
+    /** 시간순 점을 구간으로: 앞 점과 15분 넘게 떨어졌거나 그 사이에 선을 끊는 공백(breaks)이 걸쳐 있으면 새 구간. */
     static List<List<ShipRepository.TrackPoint>> split(List<ShipRepository.TrackPoint> pts, List<AisGap> gaps) {
         List<List<ShipRepository.TrackPoint>> out = new ArrayList<>();
         List<ShipRepository.TrackPoint> cur = null;
@@ -255,7 +304,7 @@ public class ShipController {
         if (p.cogDeg() != null) m.put("cog_deg", p.cogDeg());
         if (p.headingDeg() != null) m.put("heading_deg", p.headingDeg());
         if (p.navStatus() != null) m.put("nav_status", p.navStatus());
-        m.put("position_source", p.positionSource());
+        if (p.positionSource() != null) m.put("position_source", p.positionSource()); // 모름(V7 NULL)은 키 없음
         return m;
     }
 

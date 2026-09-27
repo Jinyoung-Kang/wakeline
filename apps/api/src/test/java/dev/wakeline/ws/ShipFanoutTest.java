@@ -31,7 +31,7 @@ class ShipFanoutTest {
     static final String BUSAN = "{\"type\":\"subscribe\",\"bbox\":[128,34,130,36],\"zoom\":7}";
 
     static ShipState pos(String mmsi, double lat, double lon, Instant seen) {
-        return new ShipState(mmsi, lat, lon, 12.0, 45.0, 44, 0, 3, "gnss", seen, "aisstream", "PositionReport", "A");
+        return new ShipState(mmsi, lat, lon, 12.0, 45.0, 44, 0, 3, "epfs", seen, "aisstream", "PositionReport", "A");
     }
 
     static ShipStatic stat(String mmsi, String name, Integer type) {
@@ -81,7 +81,7 @@ class ShipFanoutTest {
             assertThat(named.path("name").asString()).isEqualTo("HANJIN BUSAN");
             assertThat(named.path("ship_type").asInt()).isEqualTo(70);
             assertThat(named.path("heading_deg").asInt()).isEqualTo(44);
-            assertThat(named.path("position_source").asString()).isEqualTo("gnss");
+            assertThat(named.path("position_source").asString()).isEqualTo("epfs");
             assertThat(named.has("rot")).as("ShipLite has no rot").isFalse();
             assertThat(bare.has("name")).as("no static → no name key (unknown, not empty)").isFalse();
             assertThat(bare.has("ship_type")).isFalse();
@@ -314,7 +314,7 @@ class ShipFanoutTest {
         assertThat(ShipFanout.changed(a, a)).isFalse();
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(pos("440000001", 35.00005, 129, T.plusSeconds(10)), null))).as("GNSS jitter").isFalse();
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(pos("440000001", 35.001, 129, T.plusSeconds(10)), null))).isTrue();
-        ShipState noSpeed = new ShipState("440000001", 35, 129, null, 45.0, 44, 0, 3, "gnss", T.plusSeconds(5), "aisstream", "PositionReport", "A");
+        ShipState noSpeed = new ShipState("440000001", 35, 129, null, 45.0, 44, 0, 3, "epfs", T.plusSeconds(5), "aisstream", "PositionReport", "A");
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(noSpeed, null))).as("speed became unknown").isTrue();
         ShipState manual = new ShipState("440000001", 35, 129, 12.0, 45.0, 44, 0, 3, "manual", T.plusSeconds(5), "aisstream", "PositionReport", "A");
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(manual, null))).isTrue();

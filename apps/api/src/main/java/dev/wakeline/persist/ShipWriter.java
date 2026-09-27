@@ -27,7 +27,7 @@ import java.util.Map;
  *       창마다 하나). 걸러 낸 보고는 wakeline_ship_rows_total{result=downsampled}. ship.last_seen 은 위치로는 10분에 한 번만 넓힌다(쓰기 증폭 방지).</li>
  *   <li>정적 정보: updated_at 이 이미 쓴 것보다 새 것만(수집기는 같은 내용을 30분마다 다시 보낸다 — 같은 것은 다시 쓰지 않는다).</li>
  *   <li>큐 상한 100,000 행 — 넘치면 오래된 것부터 버리고 result=dropped 로 센다. 실패는 TrackWriter 와 같다: 일시 장애는 같은 배치를 백오프(2 s → 30 s)로
- *       재시도, 영구 오류(SQLState 22·23·42)는 3회 뒤 버리고 result=failed.</li>
+ *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
  *   <li>종료: 스트림 소비·WS 뒤(phase) 남은 행을 최대 6 s 동안 쓰고, 못 쓴 행의 메시지는 ACK 하지 않는다(다음 기동에서 다시 처리 — 쓰기는 멱등).</li>
  * </ul>

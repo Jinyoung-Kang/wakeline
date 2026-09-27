@@ -287,11 +287,15 @@ MMSI: Schema = {"type": "string", "pattern": "^[0-9]{9}$"}
 SHIP_CATEGORY: Schema = {  # api ShipCategory · web lib/ships.ts 한 표(USCG AIS 표에서 결정적으로)
     "enum": ["cargo", "tanker", "passenger", "fishing", "tug", "pleasure", "hsc", "special", "military", "other", "unknown"]
 }
-POSITION_SOURCE: Schema = {"enum": ["gnss", "manual", "estimated", "inoperative"]}
+# 계약 v3 §B: Timestamp 0~59 = epfs, 61·62·63 = manual·estimated·inoperative, 그 밖(60·누락)은 모름 → 키 없음.
+# 레거시 "gnss" 는 api 가 받자마자 모름으로 바꾸므로 REST 에 나오면 안 된다.
+POSITION_SOURCE: Schema = {"enum": ["epfs", "manual", "estimated", "inoperative"]}
 SHIP_PROVIDER: Schema = {"enum": ["aisstream", "fixture"]}
+LAT_NUM: Schema = {"type": "number", "minimum": -90, "maximum": 90}
+LON_NUM: Schema = {"type": "number", "minimum": -180, "maximum": 180}
 SHIP_KINEMATICS: dict[str, Any] = {
-    "lat": {"type": "number", "minimum": -90, "maximum": 90},
-    "lon": {"type": "number", "minimum": -180, "maximum": 180},
+    "lat": LAT_NUM,
+    "lon": LON_NUM,
     "sog_kn": {"type": "number", "minimum": 0, "maximum": 102.2},  # 102.3 = 값 없음 → 키 없음
     "cog_deg": {"type": "number", "minimum": 0, "exclusiveMaximum": 360},  # 360 = 값 없음
     "heading_deg": {"type": "integer", "minimum": 0, "maximum": 359},  # 511 = 값 없음
@@ -299,9 +303,9 @@ SHIP_KINEMATICS: dict[str, Any] = {
     "position_source": POSITION_SOURCE,
     "seen_at": TS,
 }
-SHIP_LITE: Schema = {  # ShipLite(목록·WS 점) — 나열된 키만
+SHIP_LITE: Schema = {  # ShipLite(목록·WS 점) — 나열된 키만. position_source 는 모르면 키 없음(계약 v3 §B)
     "type": "object",
-    "required": ["mmsi", "lat", "lon", "seen_at", "position_source"],
+    "required": ["mmsi", "lat", "lon", "seen_at"],
     "additionalProperties": False,
     "properties": {
         "mmsi": MMSI,
@@ -312,7 +316,7 @@ SHIP_LITE: Schema = {  # ShipLite(목록·WS 점) — 나열된 키만
 }
 SHIP_STATE: Schema = {  # ship_state.v1 그대로(null 키는 빠진다)
     "type": "object",
-    "required": ["mmsi", "lat", "lon", "position_source", "seen_at", "provider", "msg_type", "class"],
+    "required": ["mmsi", "lat", "lon", "seen_at", "provider", "msg_type", "class"],
     "additionalProperties": False,
     "properties": {
         "mmsi": MMSI,
@@ -367,11 +371,34 @@ AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 hea
         "provider": SHIP_PROVIDER,
         "last_msg_at": TS,
         "ships": {"type": "integer", "minimum": 0},
+        # 계약 v3 §A: 수집기 상태 이름(그 밖이면 키 없음) · 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...](1~16개)
+        "state": {"enum": ["starting", "connecting", "subscribed", "receiving", "backoff", "replaying", "disabled", "stopped"]},
+        "coverage": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "prefixItems": [LAT_NUM, LON_NUM, LAT_NUM, LON_NUM],
+                "items": False,
+            },
+        },
         "heartbeat_stale": BOOL,
     },
-    # 오래된 heartbeat 로 '연결됨' 이나 수신량을 말하지 않는다
+    # 오래된 heartbeat 로 '연결됨'·수신량·상태·수신 범위를 말하지 않는다
     "if": {"properties": {"heartbeat_stale": {"const": True}}, "required": ["heartbeat_stale"]},
-    "then": {"not": {"anyOf": [{"required": ["connected"]}, {"required": ["msgs_per_s"]}]}},
+    "then": {
+        "not": {
+            "anyOf": [
+                {"required": ["connected"]},
+                {"required": ["msgs_per_s"]},
+                {"required": ["state"]},
+                {"required": ["coverage"]},
+            ]
+        }
+    },
 }
 DEMAND_COUNTS: Schema = {  # /status demand — 수만(hex·셀 키를 공개하지 않는다)
     "type": "object",
@@ -744,7 +771,17 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "properties": {
                 "type": "object",
-                "required": ["mmsi", "from", "to", "points", "truncated", "sampling", "segments"],
+                "required": [
+                    "mmsi",
+                    "from",
+                    "to",
+                    "points",
+                    "truncated",
+                    "sampling",
+                    "gap_break_min_s",
+                    "gaps_truncated",
+                    "segments",
+                ],
                 "properties": {
                     "mmsi": MMSI,
                     "from": TS,
@@ -752,6 +789,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "points": {"type": "integer", "minimum": 0, "maximum": 5000},
                     "truncated": BOOL,
                     "sampling": {"const": "first_fix_per_60s"},  # 저장은 60 s 창의 첫 보고 — 화면이 '표본' 임을 밝힌다
+                    # 계약 v3 §D: 60 s 이상 끝난 공백·열린 공백만 선을 끊는다 · gaps 는 최신 200개(더 있으면 gaps_truncated)
+                    "gap_break_min_s": {"const": 60},
+                    "gaps_truncated": BOOL,
                     "segments": {
                         "type": "array",
                         "items": {
@@ -766,7 +806,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["ts", "lat", "lon", "position_source"],
+                    "required": ["ts", "lat", "lon"],
                     "additionalProperties": False,
                     "properties": {
                         "ts": TS,
@@ -774,7 +814,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     },
                 },
             },
-            "gaps": {"type": "array", "items": GAP},
+            "gaps": {"type": "array", "maxItems": 200, "items": GAP},
             "meta": META,
         },
     },
@@ -997,6 +1037,9 @@ def _ship_track(body: dict[str, Any]) -> list[str]:
         errs.append("points are not in time order")
     if ts and not (_ts(props["from"]) <= ts[0] and ts[-1] <= _ts(props["to"])):
         errs.append("points outside [from, to]")
+    starts = [_ts(g["started_at"]) for g in body.get("gaps") or []]
+    if starts != sorted(starts):
+        errs.append("gaps are not oldest first (the newest 200 are listed in time order)")
     return errs
 
 

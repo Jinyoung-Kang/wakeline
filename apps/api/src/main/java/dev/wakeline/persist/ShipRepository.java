@@ -110,9 +110,25 @@ public class ShipRepository {
     /** 정적 정보 한 건과 그것을 받은 시각(first/last_seen 후보). */
     public record StaticRow(ShipStatic stat, Instant receivedAt) {}
 
+    /** MMSI 하나로 합친 정적 정보: 가장 새 내용 + 받은 시각 범위. */
+    private record MergedStatic(ShipStatic stat, Instant firstSeen, Instant lastSeen) {}
+
+    /**
+     * 정적 정보 배치. 같은 MMSI 는 먼저 한 행으로 합친다(updated_at 이 가장 새 내용 — 같으면 뒤의 것, first_seen = 받은 시각의 최솟값,
+     * last_seen = 최댓값): reWriteBatchedInserts 가 배치를 다중 VALUES INSERT 로 묶으면 한 문장 안의 같은 키는
+     * "ON CONFLICT DO UPDATE command cannot affect row a second time"(SQLState 21000)으로 배치 전체를 실패시킨다(리뷰 2026-09-28b #9).
+     */
     public void upsertStatics(List<StaticRow> rows) {
         if (rows.isEmpty()) return;
-        jdbc.batchUpdate(STATIC_SQL, rows, rows.size(), (ps, r) -> {
+        Map<String, MergedStatic> byMmsi = new LinkedHashMap<>();
+        for (StaticRow r : rows) {
+            byMmsi.merge(r.stat().mmsi(), new MergedStatic(r.stat(), r.receivedAt(), r.receivedAt()), (a, b) -> new MergedStatic(
+                    b.stat().updatedAt().isBefore(a.stat().updatedAt()) ? a.stat() : b.stat(),
+                    b.firstSeen().isBefore(a.firstSeen()) ? b.firstSeen() : a.firstSeen(),
+                    b.lastSeen().isAfter(a.lastSeen()) ? b.lastSeen() : a.lastSeen()));
+        }
+        List<MergedStatic> merged = new ArrayList<>(byMmsi.values());
+        jdbc.batchUpdate(STATIC_SQL, merged, merged.size(), (ps, r) -> {
             ShipStatic s = r.stat();
             ps.setString(1, s.mmsi());
             ps.setString(2, s.name());
@@ -129,8 +145,8 @@ public class ShipRepository {
             setShort(ps, 13, s.etaDay());
             setShort(ps, 14, s.etaHour());
             setShort(ps, 15, s.etaMinute());
-            ps.setObject(16, Sql.ts(r.receivedAt()));
-            ps.setObject(17, Sql.ts(r.receivedAt()));
+            ps.setObject(16, Sql.ts(r.firstSeen()));
+            ps.setObject(17, Sql.ts(r.lastSeen()));
             ps.setObject(18, Sql.ts(s.updatedAt()));
             ps.setString(19, s.provider());
         });
@@ -145,16 +161,37 @@ public class ShipRepository {
                 .param("r", g.reason()).param("p", g.provider() == null ? "unknown" : g.provider()).update() > 0;
     }
 
-    /** [from, to] 와 겹치는 끝난 공백(오래된 것부터, 최대 limit 건). */
+    /**
+     * [from, to] 와 겹치는 끝난 공백 중 <b>최신</b> limit 건(오래된 것부터 정렬). 잘렸는지는 호출자가 limit + 1 로 물어 판단한다
+     * (계약 v3 §D — 예전에는 오래된 것부터 잘라 최근 공백이 빠졌다).
+     */
     public List<AisGap> gaps(Instant from, Instant to, int limit) {
         return db.sql("""
-                SELECT started_at, ended_at, reason, provider FROM ingest_gap
-                WHERE source = :src AND started_at < :to AND ended_at > :from
-                ORDER BY started_at LIMIT :lim""")
+                SELECT started_at, ended_at, reason, provider FROM (
+                  SELECT started_at, ended_at, reason, provider FROM ingest_gap
+                  WHERE source = :src AND started_at < :to AND ended_at > :from
+                  ORDER BY started_at DESC LIMIT :lim) g
+                ORDER BY started_at""")
                 .param("src", GAP_SOURCE).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)
-                .query((rs, i) -> new AisGap(rs.getObject(1, java.time.OffsetDateTime.class).toInstant(),
-                        rs.getObject(2, java.time.OffsetDateTime.class).toInstant(), rs.getString(3), rs.getString(4)))
-                .list();
+                .query(ShipRepository::gapRow).list();
+    }
+
+    /**
+     * 선 끊기용: [from, to] 와 겹치고 길이가 minS 초 이상인 끝난 공백(오래된 것부터, 최대 limit 건). 응답용 목록({@link #gaps})과 따로 물어
+     * 짧은 공백이 많아 그 목록이 잘려도 끊기 판정은 영향을 받지 않는다(계약 v3 §D).
+     */
+    public List<AisGap> gapsAtLeast(Instant from, Instant to, long minS, int limit) {
+        return db.sql("""
+                SELECT started_at, ended_at, reason, provider FROM ingest_gap
+                WHERE source = :src AND started_at < :to AND ended_at > :from AND extract(epoch FROM ended_at - started_at) >= :min
+                ORDER BY started_at LIMIT :lim""")
+                .param("src", GAP_SOURCE).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("min", minS).param("lim", limit)
+                .query(ShipRepository::gapRow).list();
+    }
+
+    private static AisGap gapRow(java.sql.ResultSet rs, int i) throws SQLException {
+        return new AisGap(rs.getObject(1, java.time.OffsetDateTime.class).toInstant(),
+                rs.getObject(2, java.time.OffsetDateTime.class).toInstant(), rs.getString(3), rs.getString(4));
     }
 
     /** 저장된 정적 정보 + first/last_seen(없으면 null). 정적 정보를 받은 적 없는 행은 static 필드가 모두 null 이다. */

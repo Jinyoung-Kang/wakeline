@@ -30,7 +30,7 @@ class MigrationDbTest {
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(6);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(7);
     }
 
     @Test
@@ -161,12 +161,13 @@ class MigrationDbTest {
 
         stage.sql("""
                 INSERT INTO ship_position (mmsi, ts, geom, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider)
-                VALUES ('440123456', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), NULL, NULL, NULL, NULL, 'gnss', 'aisstream')""").update();
+                VALUES ('440123456', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), NULL, NULL, NULL, NULL, 'epfs', 'aisstream')""").update();
+        // 위치 출처 값은 V7 기준(epfs · manual · estimated · inoperative · NULL) — 아래 행은 각각 다른 제약 하나만 어긴다
         for (String bad : new String[]{
-                "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('44012345', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'x')",
+                "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('44012345', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'x')",
                 "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440123456', now() + interval '1 s', ST_SetSRID(ST_MakePoint(129, 35), 4326), 'dead_reckoning', 'x')",
-                "INSERT INTO ship_position (mmsi, ts, geom, sog_kn, position_source, provider) VALUES ('440123456', now() + interval '2 s', ST_SetSRID(ST_MakePoint(129, 35), 4326), 102.3, 'gnss', 'x')",
-                "INSERT INTO ship_position (mmsi, ts, geom, heading_deg, position_source, provider) VALUES ('440123456', now() + interval '3 s', ST_SetSRID(ST_MakePoint(129, 35), 4326), 511, 'gnss', 'x')",
+                "INSERT INTO ship_position (mmsi, ts, geom, sog_kn, position_source, provider) VALUES ('440123456', now() + interval '2 s', ST_SetSRID(ST_MakePoint(129, 35), 4326), 102.3, 'epfs', 'x')",
+                "INSERT INTO ship_position (mmsi, ts, geom, heading_deg, position_source, provider) VALUES ('440123456', now() + interval '3 s', ST_SetSRID(ST_MakePoint(129, 35), 4326), 511, 'epfs', 'x')",
                 "INSERT INTO ship (mmsi, ship_type, first_seen, last_seen, provider) VALUES ('440123456', 0, now(), now(), 'x')",
                 "INSERT INTO ship (mmsi, eta_hour, first_seen, last_seen, provider) VALUES ('440123456', 24, now(), now(), 'x')",
                 "INSERT INTO ship (mmsi, first_seen, last_seen, provider) VALUES ('440123456', now(), now() - interval '1 s', 'x')",
@@ -174,6 +175,48 @@ class MigrationDbTest {
                 "INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider) VALUES ('ais', now(), now() + interval '1 s', '', 'x')"}) {
             assertThatThrownBy(() -> stage.sql(bad).update()).as(bad).hasMessageContaining("violates");
         }
+    }
+
+    /**
+     * V7(계약 v3 §B): position_source 는 NULL(모름) 허용 · 'epfs' 추가 · 예전 'gnss' 행은 NULL(0~60·누락이 섞여 있어 모른다 — 'epfs' 로
+     * 추정하지 않는다), 다른 값은 그대로. 'gnss' 는 더 이상 받지 않는다 — 파티션 함수가 V7 뒤에 만든 파티션도 같은 제약을 물려받는다.
+     */
+    @Test
+    void v7MakesPositionSourceNullableAndClearsLegacyGnss() {
+        DbTestSupport.start();
+        String db = "wakeline_stage_seven";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target("6").load().migrate();
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        stage.sql("""
+                INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES
+                  ('440123456', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'aisstream'),
+                  ('440123456', now() - interval '1 minute', ST_SetSRID(ST_MakePoint(129, 35), 4326), 'manual', 'aisstream'),
+                  ('440123457', now() - interval '1 day', ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'aisstream'),
+                  ('440123457', now() - interval '1 day' + interval '1 minute', ST_SetSRID(ST_MakePoint(129, 35), 4326), 'estimated', 'aisstream')""").update();
+        assertThatThrownBy(() -> stage.sql("INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES "
+                + "('440123458', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), NULL, 'x')").update()).as("V6: NOT NULL").hasMessageContaining("violates");
+
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+
+        Map<String, Long> bySource = new HashMap<>();
+        for (var r : stage.sql("SELECT coalesce(position_source, '<null>') src, count(*) n FROM ship_position GROUP BY 1").query().listOfRows())
+            bySource.put((String) r.get("src"), ((Number) r.get("n")).longValue());
+        assertThat(bySource).containsExactlyInAnyOrderEntriesOf(Map.of("<null>", 2L, "manual", 1L, "estimated", 1L));
+
+        stage.sql("INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES "
+                + "('440123458', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'x'), "
+                + "('440123458', now() + interval '1 minute', ST_SetSRID(ST_MakePoint(129, 35), 4326), NULL, 'x')").update();
+        assertThatThrownBy(() -> stage.sql("INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES "
+                + "('440123459', now(), ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'x')").update()).hasMessageContaining("ship_position_source_check");
+        // V7 뒤에 파티션 함수가 만든 파티션(오늘 + 5일)도 같은 CHECK
+        assertThat(stage.sql("SELECT ship_position_ensure_partitions(5)").query(Integer.class).single()).isGreaterThanOrEqualTo(1);
+        assertThatThrownBy(() -> stage.sql("INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES "
+                + "('440123459', now() + interval '5 days', ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'x')").update())
+                .hasMessageContaining("ship_position_source_check");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '7' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
     }
 
     /**

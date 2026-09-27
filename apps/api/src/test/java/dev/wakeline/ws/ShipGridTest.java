@@ -20,7 +20,7 @@ class ShipGridTest {
     static final Instant T = Instant.now();
 
     static ShipState pos(String mmsi, double lat, double lon) {
-        return new ShipState(mmsi, lat, lon, 5.0, 10.0, null, null, null, "gnss", T, "aisstream", "PositionReport", "A");
+        return new ShipState(mmsi, lat, lon, 5.0, 10.0, null, null, null, "epfs", T, "aisstream", "PositionReport", "A");
     }
 
     static ShipStatic stat(String mmsi, Integer type) {

@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,8 @@ import java.util.function.Supplier;
  *       원 안이면 covered_by_region(임대 없음). 같은 hex·셀은 세션끼리 임대 하나를 나눈다.</li>
  *   <li>한 세션이 같은 hex 를 30분 넘게 연속 선택하면(비용 상한) 수요를 내지 않고 expired_session_cap 을 알린다. 다시 선택하면 새로 시작.</li>
  *   <li>상한: hot 6 셀 · focus 50 hex(세션 수 많은 순 → 먼저 요청된 순). 상한 밖 세션에는 throttled.</li>
+ *   <li>세션 제한(계약 v3 §C — 남용 방지): 한 세션이 새로 올리는 hex·셀은 60 s 창에 각각 6개까지만 임대에 반영한다. 넘으면 그 세션의 직전
+ *       임대를 그대로 두고(새 키 무시) 그 항목에 limited 를 알린다. 연결은 끊지 않는다. 키를 빼는 변화(선택 해제·줌 아웃)는 언제나 반영한다.</li>
  *   <li>주기: 10 s 마다 + 구독·선택·일시정지·종료 뒤 1 s 로 모아(debounce) 다시 계산한다. 임대 만료는 60 s — api 가 멈춰도 수집기 호출은
  *       60 s 안에 멈춘다. 수요가 없어진 임대는 다음 계산(≤ 1 s)에서 바로 지운다(선택 해제·창 닫기).</li>
  *   <li>상태: 수집기가 쓴 wakeline:demand:status 를 읽어 세션마다 {type:"demand"} 를 바뀌었을 때와 30 s 마다 보낸다. 수집기가 보고하지
@@ -67,12 +70,18 @@ public class DemandService implements SmartLifecycle {
     public static final int HOT_MIN_ZOOM = 7;
     public static final int MAX_HOT_CELLS = 6;
     public static final int MAX_FOCUS_HEXES = 50;
+    /** 세션 제한(계약 v3 §C): 새 hex·새 셀은 각각 이 창(60 s)에 이 수(6)까지. */
+    public static final int SESSION_NEW_KEYS_MAX = 6;
+    public static final long SESSION_NEW_KEYS_WINDOW_MS = 60_000;
     static final long STOP_WAIT_MS = 2_000;
 
     enum Kind { NONE, HOT, COVERED, FOCUS, FOCUS_CAPPED }
 
     /** 세션 하나의 수요. key = 셀 키(HOT) 또는 hex(FOCUS·FOCUS_CAPPED). */
     record Want(WsSession session, Kind kind, String key, HotCell cell, long sinceMs) {}
+
+    /** 세션이 지금 임대에 올린 수요(HOT 또는 FOCUS) — 세션 제한에 걸리면 이것을 유지한다. */
+    record Held(Kind kind, String key, HotCell cell) {}
 
     private final WsHub hub;
     private final Supplier<RegionSettings.Region> region;
@@ -195,22 +204,30 @@ public class DemandService implements SmartLifecycle {
         for (WsSession s : hub.sessionsView()) {
             if (s.subscribed()) {
                 wants.add(want(s, reg, nowMs));
-            } else if (s.demandJson != null) {
-                // 일시정지(보지 않음) — 수요를 내지 않으므로 마지막 상태를 버린다: 다시 볼 때(resume) 초기 세트가 지난 'active' 를
-                // 되풀이하지 않고, 다음 계산의 새 상태를 바로 보낸다
-                s.demandJson = null;
-                s.demandQueuedJson = null;
+            } else {
+                s.demandHeld = null; // 보지 않는 세션은 임대에 아무것도 올리지 않는다(다시 보면 새 키로 센다)
+                if (s.demandJson != null) {
+                    // 일시정지(보지 않음) — 수요를 내지 않으므로 마지막 상태를 버린다: 다시 볼 때(resume) 초기 세트가 지난 'active' 를
+                    // 되풀이하지 않고, 다음 계산의 새 상태를 바로 보낸다
+                    s.demandJson = null;
+                    s.demandQueuedJson = null;
+                }
             }
         }
 
+        // 임대에 올리는 것은 세션 제한을 거친 수요(demandHeld) — 제한에 걸린 세션은 직전 임대를 유지한다
         Map<String, Integer> hotCount = new LinkedHashMap<>(), focusCount = new LinkedHashMap<>();
         Map<String, HotCell> cells = new HashMap<>();
+        Set<WsSession> limited = new HashSet<>();
         for (Want w : wants) {
-            if (w.kind() == Kind.HOT) {
-                hotCount.merge(w.key(), 1, Integer::sum);
-                cells.putIfAbsent(w.key(), w.cell());
-            } else if (w.kind() == Kind.FOCUS) {
-                focusCount.merge(w.key(), 1, Integer::sum);
+            if (!admit(w, nowMs)) limited.add(w.session());
+            Held h = w.session().demandHeld;
+            if (h == null) continue;
+            if (h.kind() == Kind.HOT) {
+                hotCount.merge(h.key(), 1, Integer::sum);
+                cells.putIfAbsent(h.key(), h.cell());
+            } else {
+                focusCount.merge(h.key(), 1, Integer::sum);
             }
         }
         List<String> hot = choose(hotCount, hotFirstAt, MAX_HOT_CELLS, nowMs);
@@ -236,7 +253,7 @@ public class DemandService implements SmartLifecycle {
 
         for (Want w : wants) {
             WsSession s = w.session();
-            String j = hub.toJson(message(w, hotSet, focusSet, st, nowMs));
+            String j = hub.toJson(message(w, limited.contains(s), hotSet, focusSet, st, nowMs));
             s.demandJson = j;
             if (!j.equals(s.demandQueuedJson) || nowMs - s.demandQueuedAtMs >= PUSH_EVERY_MS) {
                 s.demandQueuedJson = j;
@@ -265,6 +282,28 @@ public class DemandService implements SmartLifecycle {
         HotCell cell = HotCell.forViewport(b);
         if (cell == null) return new Want(s, Kind.NONE, null, null, 0);
         return new Want(s, Kind.HOT, cell.key(), cell, 0);
+    }
+
+    /**
+     * 세션 제한(계약 v3 §C): 수요를 세션의 임대(demandHeld)에 반영하고 true. 직전 임대에 없던 키(새 hex·새 셀)는 종류별 60 s 창에
+     * 6개까지만 — 넘으면 직전 임대를 그대로 두고 false(limited). 같은 키 유지·키 빼기(NONE·COVERED·30분 상한)는 언제나 반영한다.
+     * 거절한 시도는 창에 기록하지 않는다 — 창이 비면 다음 계산(≤ 10 s)에 반영된다.
+     */
+    static boolean admit(Want w, long nowMs) {
+        WsSession s = w.session();
+        Held next = switch (w.kind()) {
+            case HOT -> new Held(Kind.HOT, w.key(), w.cell());
+            case FOCUS -> new Held(Kind.FOCUS, w.key(), null);
+            case NONE, COVERED, FOCUS_CAPPED -> null;
+        };
+        Held prev = s.demandHeld;
+        boolean fresh = next != null && (prev == null || prev.kind() != next.kind() || !prev.key().equals(next.key()));
+        if (fresh) {
+            SlidingWindowLimiter newKeys = next.kind() == Kind.HOT ? s.newHotKeys : s.newFocusKeys;
+            if (!newKeys.tryAcquire(TimeUnit.MILLISECONDS.toNanos(nowMs))) return false;
+        }
+        s.demandHeld = next;
+        return true;
     }
 
     /**
@@ -321,13 +360,17 @@ public class DemandService implements SmartLifecycle {
     /**
      * 세션 하나의 demand 메시지. 수집기 상태 → 화면 상태: active(최근 성공) · throttled · not_found · error 는 그대로, 오래된 active 나
      * 보고 없음은 pending(주기 없음). 임대 상한 밖은 throttled(주기 없음). 핫 리전의 not_found 는 수집기가 쓰지 않는 값 — pending.
+     * 세션 제한에 걸린 새 키(limited)는 임대에 올리지 않았으므로 limited(주기 없음).
      */
-    static WsMessages.DemandMsg message(Want w, Set<String> hotLeased, Set<String> focusLeased, Map<String, CollectorDemandStatus> st, long nowMs) {
+    static WsMessages.DemandMsg message(Want w, boolean limited, Set<String> hotLeased, Set<String> focusLeased,
+                                        Map<String, CollectorDemandStatus> st, long nowMs) {
         return switch (w.kind()) {
             case NONE -> new WsMessages.DemandMsg("demand", null, null);
             case COVERED -> new WsMessages.DemandMsg("demand", new WsMessages.HotDemand(null, null, "covered_by_region", null, null), null);
             case HOT -> {
                 HotCell c = w.cell();
+                if (limited)
+                    yield new WsMessages.DemandMsg("demand", new WsMessages.HotDemand(w.key(), c.radiusNm(), "limited", null, null), null);
                 if (!hotLeased.contains(w.key()))
                     yield new WsMessages.DemandMsg("demand", new WsMessages.HotDemand(w.key(), c.radiusNm(), "throttled", null, null), null);
                 CollectorDemandStatus cs = st.get("hot:" + w.key());
@@ -338,6 +381,8 @@ public class DemandService implements SmartLifecycle {
             }
             case FOCUS -> {
                 Instant since = Instant.ofEpochMilli(w.sinceMs());
+                if (limited)
+                    yield new WsMessages.DemandMsg("demand", null, new WsMessages.FocusDemand(w.key(), "limited", null, since, null));
                 if (!focusLeased.contains(w.key()))
                     yield new WsMessages.DemandMsg("demand", null, new WsMessages.FocusDemand(w.key(), "throttled", null, since, null));
                 CollectorDemandStatus cs = st.get("focus:" + w.key());

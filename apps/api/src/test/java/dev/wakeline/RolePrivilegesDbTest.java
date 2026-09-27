@@ -177,7 +177,7 @@ class RolePrivilegesDbTest {
         String part = "ship_position_" + LocalDate.now(ZoneOffset.UTC).format(DateTimeFormatter.BASIC_ISO_DATE);
         try (Connection c = api()) {
             assertThat(state(c, "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440000777', now(), "
-                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'role_test') ON CONFLICT DO NOTHING")).isNull();
+                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'role_test') ON CONFLICT DO NOTHING")).isNull();
             assertThat(state(c, "SELECT count(*) FROM ship_position")).isNull();
             assertThat(state(c, "INSERT INTO ship (mmsi, first_seen, last_seen, provider) VALUES ('440000777', now(), now(), 'role_test') "
                     + "ON CONFLICT (mmsi) DO UPDATE SET last_seen = EXCLUDED.last_seen")).isNull();
@@ -205,7 +205,7 @@ class RolePrivilegesDbTest {
         try (Connection c = collector()) {
             for (String sql : new String[]{
                     "SELECT count(*) FROM ship", "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440000778', now(), "
-                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'x')", "SELECT count(*) FROM ingest_gap", "SELECT ship_position_ensure_partitions(3)"}) {
+                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'x')", "SELECT count(*) FROM ingest_gap", "SELECT ship_position_ensure_partitions(3)"}) {
                 assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
             }
         }
@@ -245,7 +245,7 @@ class RolePrivilegesDbTest {
                 assertThat(scalar(c, "SELECT has_table_privilege('wakeline_api', '" + future + "', '" + priv + "')")).as(future + " " + priv).isEqualTo(false);
             // 부모를 거친 쓰기는 된다(자정 뒤에도 위치 저장이 이어진다) — 파티션을 직접 고치거나 지우지는 못한다
             assertThat(state(c, "INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES ('440000779', now() + interval '3 days', "
-                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'gnss', 'role_test') ON CONFLICT DO NOTHING")).isNull();
+                    + "ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'role_test') ON CONFLICT DO NOTHING")).isNull();
             assertThat(state(c, "DELETE FROM " + future)).isEqualTo(INSUFFICIENT_PRIVILEGE);
             assertThat(state(c, "DROP TABLE " + future)).isEqualTo(INSUFFICIENT_PRIVILEGE);
 

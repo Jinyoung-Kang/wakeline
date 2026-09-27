@@ -31,7 +31,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * <ul>
  *   <li>큐 상한 50,000행 — 넘치면 오래된 것부터 버리고 wakeline_track_rows_total{result="dropped"} 로 센다(5.1절 DB 느림).</li>
  *   <li>배치 실패(REL-10): 버리지 않는다. 일시 장애(연결·풀 대기·타임아웃)는 같은 배치를 백오프(2 s → 30 s)로 재시도하고, 그동안
- *       새 행은 큐에 쌓인다(넘치면 위 규칙). 영구 오류(데이터·제약·권한, SQLState 22·23·42)는 3회 시도 뒤 버리고 result="failed" 로 센다.</li>
+ *       새 행은 큐에 쌓인다(넘치면 위 규칙). 영구 오류(카디널리티·데이터·제약·권한, SQLState 21·22·23·42)는 3회 시도 뒤 버리고 result="failed" 로 센다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지마다 그 메시지의 마지막 행 번호(seq)에 표식(영수증)을 단다. 행은 들어온 순서대로 큐를 떠나고
  *       (배치 또는 넘침으로 버림), 배치는 한 번에 하나씩 끝나므로 "여기까지의 행은 모두 끝났다"(resolvedUpTo)를 셀 수 있다. 표식의 seq 가
  *       그 안에 들면 영수증을 놓는다 → 스트림 메시지 ACK. 커밋 전에 프로세스가 죽으면 ACK 되지 않은 메시지가 PEL 에 남아 재처리된다.
@@ -389,15 +389,15 @@ public class TrackWriter implements SmartLifecycle {
     }
 
     /**
-     * 재시도해도 같은 결과인 오류: SQLState 22(데이터)·23(제약 — 파티션 없음 포함)·42(문법·권한). 파티션 없음은 3회 재시도 사이에
-     * ensurePartitions 가 만들 수 있어 바로 버리지 않는다. 연결·자원 오류는 일시 장애로 본다.
+     * 재시도해도 같은 결과인 오류: SQLState 21(카디널리티 — 한 문장이 같은 행을 두 번 upsert)·22(데이터)·23(제약 — 파티션 없음 포함)·
+     * 42(문법·권한). 파티션 없음은 3회 재시도 사이에 ensurePartitions 가 만들 수 있어 바로 버리지 않는다. 연결·자원 오류는 일시 장애로 본다.
      */
     static boolean isPermanent(Throwable e) {
         if (OrderedWriter.isTransient(e)) return false;
         for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
             if (c instanceof SQLException s && s.getSQLState() != null) {
                 String st = s.getSQLState();
-                return st.startsWith("22") || st.startsWith("23") || st.startsWith("42");
+                return st.startsWith("21") || st.startsWith("22") || st.startsWith("23") || st.startsWith("42");
             }
         }
         return false;

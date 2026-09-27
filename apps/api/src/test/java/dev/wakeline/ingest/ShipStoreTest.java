@@ -22,7 +22,7 @@ class ShipStoreTest {
     static final long NOW = T.toEpochMilli();
 
     static ShipState pos(String mmsi, double lat, double lon, Instant seen) {
-        return new ShipState(mmsi, lat, lon, 12.3, 45.6, 44, 0, null, "gnss", seen, "aisstream", "PositionReport", "A");
+        return new ShipState(mmsi, lat, lon, 12.3, 45.6, 44, 0, null, "epfs", seen, "aisstream", "PositionReport", "A");
     }
 
     static ShipStatic stat(String mmsi, String name, Integer type, Instant updated) {

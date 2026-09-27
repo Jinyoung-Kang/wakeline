@@ -77,6 +77,7 @@ class OrderedWriterTest {
         assertThat(OrderedWriter.isTransient(new RuntimeException(new SQLException("deadlock", "40P01")))).isTrue();
         assertThat(OrderedWriter.isTransient(new DataIntegrityViolationException("fk", new SQLException("fk", "23503")))).isFalse();
         assertThat(TrackWriter.isPermanent(new RuntimeException(new SQLException("no partition", "23514")))).isTrue();
+        assertThat(TrackWriter.isPermanent(new RuntimeException(new SQLException("cannot affect row a second time", "21000")))).isTrue();
         assertThat(TrackWriter.isPermanent(new CannotGetJdbcConnectionException("x"))).isFalse();
     }
 }

@@ -58,9 +58,19 @@ class ShipControllerTest {
             return points.stream().filter(p -> !p.ts().isBefore(from) && !p.ts().isAfter(to)).limit(limit).toList();
         }
 
+        /** 실제 저장소와 같은 규칙: 겹치는 것 중 최신 limit 건, 오래된 것부터. */
         @Override public List<AisGap> gaps(Instant from, Instant to, int limit) {
             if (down) throw new CannotGetJdbcConnectionException("down");
-            return gaps.stream().filter(g -> g.startedAt().isBefore(to) && g.endedAt().isAfter(from)).limit(limit).toList();
+            List<AisGap> all = gaps.stream().filter(g -> g.startedAt().isBefore(to) && g.endedAt().isAfter(from))
+                    .sorted(java.util.Comparator.comparing(AisGap::startedAt)).toList();
+            return all.subList(Math.max(0, all.size() - limit), all.size());
+        }
+
+        @Override public List<AisGap> gapsAtLeast(Instant from, Instant to, long minS, int limit) {
+            if (down) throw new CannotGetJdbcConnectionException("down");
+            return gaps.stream().filter(g -> g.startedAt().isBefore(to) && g.endedAt().isAfter(from))
+                    .filter(g -> java.time.Duration.between(g.startedAt(), g.endedAt()).getSeconds() >= minS)
+                    .sorted(java.util.Comparator.comparing(AisGap::startedAt)).limit(limit).toList();
         }
     }
 
@@ -73,7 +83,24 @@ class ShipControllerTest {
     }
 
     static ShipRepository.TrackPoint tp(Instant ts, double lon) {
-        return new ShipRepository.TrackPoint(ts, lon, 35.0, 10.0, null, null, null, "gnss", "aisstream");
+        return new ShipRepository.TrackPoint(ts, lon, 35.0, 10.0, null, null, null, "epfs", "aisstream");
+    }
+
+    /** AIS 수집기 상태 해시를 넣는다(update 는 패키지 전용 — 반사로). */
+    void aisHash(java.util.Map<Object, Object> h) throws Exception {
+        java.lang.reflect.Method update = AisStatus.class.getDeclaredMethod("update", java.util.Map.class);
+        update.setAccessible(true);
+        update.invoke(ais, h);
+    }
+
+    static java.util.Map<Object, Object> aisHealthy(Instant updatedAt) {
+        java.util.Map<Object, Object> h = new java.util.HashMap<>();
+        h.put("provider", "aisstream");
+        h.put("state", "receiving");
+        h.put("connected", "1");
+        h.put("updated_at", updatedAt.toString());
+        h.put("bbox", "18,105,46,150");
+        return h;
     }
 
     final ShipStore store = new ShipStore();
@@ -169,7 +196,9 @@ class ShipControllerTest {
                 .andExpect(jsonPath("$.properties.points").value(8))
                 .andExpect(jsonPath("$.properties.sampling").value("first_fix_per_60s"))
                 .andExpect(jsonPath("$.points.length()").value(8))
-                .andExpect(jsonPath("$.points[0].position_source").value("gnss"))
+                .andExpect(jsonPath("$.points[0].position_source").value("epfs"))
+                .andExpect(jsonPath("$.properties.gap_break_min_s").value(60))
+                .andExpect(jsonPath("$.properties.gaps_truncated").value(false))
                 .andExpect(jsonPath("$.gaps.length()").value(1))
                 .andExpect(jsonPath("$.gaps[0].reason").value("server closed (1006)"));
         // 기간 검증
@@ -199,9 +228,7 @@ class ShipControllerTest {
         h.put("updated_at", T.toString());
         h.put("gap_open_since", T.minusSeconds(30).toString());
         h.put("gap_reason", "server closed (1006)");
-        java.lang.reflect.Method update = AisStatus.class.getDeclaredMethod("update", java.util.Map.class);
-        update.setAccessible(true);
-        update.invoke(ais, h);
+        aisHash(h);
         mvc.perform(get("/api/v1/ais/gaps")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.items[0].reason").value("idle 120 s — no messages"))
@@ -214,5 +241,142 @@ class ShipControllerTest {
         // 항적의 gaps 에도 열린 공백(끝 없음)이 들어간다
         mvc.perform(get("/api/v1/ships/440000001/track")).andExpect(jsonPath("$.gaps.length()").value(2))
                 .andExpect(jsonPath("$.gaps[1].ended_at").doesNotExist());
+    }
+
+    /** 계약 v3 §D: 60 s 보다 짧은 끝난 공백은 선을 끊지 않는다(저장 간격이 60 s 창이라 저장점을 없애지 못한다) — 60 s 이상·열린 공백만. */
+    @Test void track_shortClosedGapsDoNotBreakTheLine() throws Exception {
+        Instant t0 = T.minusSeconds(3600);
+        for (long s : new long[]{0, 60, 120, 180, 300, 360}) repo.points.add(tp(t0.plusSeconds(s), 129 + s / 10_000.0));
+        repo.gaps.add(new AisGap(t0.plusSeconds(70), t0.plusSeconds(110), "short 40 s", "aisstream"));  // 60–120 사이 → 끊지 않음
+        repo.gaps.add(new AisGap(t0.plusSeconds(190), t0.plusSeconds(250), "exactly 60 s", "aisstream")); // 180–300 사이 → 끊음
+        java.util.Map<Object, Object> h = aisHealthy(Instant.now());
+        h.put("gap_open_since", t0.plusSeconds(400).toString()); // 마지막 점 뒤의 열린 공백 — 선에는 영향 없음, 목록 끝
+        aisHash(h);
+        mvc.perform(get("/api/v1/ships/440000001/track").param("from", t0.minusSeconds(1).toString()).param("to", T.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.geometry.coordinates.length()").value(2))
+                .andExpect(jsonPath("$.properties.segments[0].points").value(4))
+                .andExpect(jsonPath("$.properties.segments[1].points").value(2))
+                .andExpect(jsonPath("$.properties.gap_break_min_s").value(60))
+                .andExpect(jsonPath("$.gaps.length()").value(3))
+                .andExpect(jsonPath("$.gaps[0].reason").value("short 40 s"))  // 목록에는 짧은 공백도 있다
+                .andExpect(jsonPath("$.gaps[2].ended_at").doesNotExist());
+    }
+
+    /**
+     * 계약 v3 §D(리뷰 #12): 응답 gaps 는 창과 겹치는 공백 중 최신 200개(오래된 것부터, 열린 공백 포함) + gaps_truncated. 선 끊기용 긴 공백은
+     * 따로 물으므로 목록에서 잘린 오래된 긴 공백에서도 선이 끊긴다.
+     */
+    @Test void track_gapsAreTheNewest200_truncationDoesNotAffectLineBreaks() throws Exception {
+        Instant t0 = T.minusSeconds(20 * 3600);
+        repo.points.add(tp(t0, 129.00));
+        repo.points.add(tp(t0.plusSeconds(60), 129.01));
+        repo.gaps.add(new AisGap(t0.plusSeconds(70), t0.plusSeconds(160), "oldest long", "aisstream"));
+        repo.points.add(tp(t0.plusSeconds(180), 129.02));
+        repo.points.add(tp(t0.plusSeconds(240), 129.03));
+        for (int i = 0; i < 250; i++) {
+            Instant s = t0.plusSeconds(1_000 + 120L * i);
+            repo.gaps.add(new AisGap(s, s.plusSeconds(10), "short " + i, "aisstream"));
+        }
+        String path = "/api/v1/ships/440000001/track";
+        mvc.perform(get(path).param("from", t0.minusSeconds(1).toString()).param("to", T.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gaps.length()").value(ShipController.TRACK_GAPS_LIMIT))
+                .andExpect(jsonPath("$.gaps[0].reason").value("short 50"))
+                .andExpect(jsonPath("$.gaps[199].reason").value("short 249"))
+                .andExpect(jsonPath("$.properties.gaps_truncated").value(true))
+                .andExpect(jsonPath("$.geometry.coordinates.length()").value(2));
+        // 열린 공백도 200개 안에 든다(가장 최신)
+        java.util.Map<Object, Object> h = aisHealthy(Instant.now());
+        h.put("gap_open_since", T.minusSeconds(10).toString());
+        aisHash(h);
+        mvc.perform(get(path).param("from", t0.minusSeconds(1).toString()).param("to", T.toString()))
+                .andExpect(jsonPath("$.gaps.length()").value(ShipController.TRACK_GAPS_LIMIT))
+                .andExpect(jsonPath("$.gaps[0].reason").value("short 51"))
+                .andExpect(jsonPath("$.gaps[198].reason").value("short 249"))
+                .andExpect(jsonPath("$.gaps[199].ended_at").doesNotExist())
+                .andExpect(jsonPath("$.properties.gaps_truncated").value(true));
+        // 잘리지 않으면 false
+        mvc.perform(get(path).param("from", t0.plusSeconds(20_000).toString()).param("to", T.toString()))
+                .andExpect(jsonPath("$.properties.gaps_truncated").value(false));
+    }
+
+    /** 계약 v3 §D: /ais/gaps 는 최신 500개(오래된 것부터) — 정확히 500개면 잘리지 않았다. */
+    @Test void aisGaps_areTheNewest500_truncatedOnlyWhenMore() throws Exception {
+        Instant t0 = T.minusSeconds(20 * 3600);
+        for (int i = 0; i < ShipController.GAPS_LIMIT; i++) {
+            Instant s = t0.plusSeconds(100L * i);
+            repo.gaps.add(new AisGap(s, s.plusSeconds(30), "g" + i, "aisstream"));
+        }
+        mvc.perform(get("/api/v1/ais/gaps")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(ShipController.GAPS_LIMIT))
+                .andExpect(jsonPath("$.items[0].reason").value("g0"))
+                .andExpect(jsonPath("$.truncated").value(false));
+        Instant s = t0.plusSeconds(100L * ShipController.GAPS_LIMIT);
+        repo.gaps.add(new AisGap(s, s.plusSeconds(30), "newest", "aisstream"));
+        mvc.perform(get("/api/v1/ais/gaps")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(ShipController.GAPS_LIMIT))
+                .andExpect(jsonPath("$.items[0].reason").value("g1"))
+                .andExpect(jsonPath("$.items[499].reason").value("newest"))
+                .andExpect(jsonPath("$.truncated").value(true));
+    }
+
+    /** 리뷰 #11: 선박 목록 버전이 그대로여도(수신 멈춤) AIS 수신 상태가 바뀌면 ETag 가 바뀐다 — 304 로 예전 '연결됨' 을 계속 보여 주지 않는다. */
+    @Test void list_etagChangesWithAisStatusWhileTheShipListIsFrozen() throws Exception {
+        aisHash(aisHealthy(Instant.now()));
+        MvcResult r = mvc.perform(get("/api/v1/ships").param("bbox", "128,34,130,36")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.meta.ais.connected").value(true))
+                .andExpect(jsonPath("$.meta.ais.state").value("receiving"))
+                .andExpect(jsonPath("$.meta.ais.coverage[0][1]").value(105.0))
+                .andReturn();
+        String healthy = r.getResponse().getHeader("ETag");
+        mvc.perform(get("/api/v1/ships").param("bbox", "128,34,130,36").header("If-None-Match", healthy)).andExpect(status().isNotModified());
+
+        java.util.Map<Object, Object> down = aisHealthy(Instant.now());
+        down.put("connected", "0");
+        down.put("state", "backoff");
+        down.put("gap_open_since", Instant.now().minusSeconds(5).toString());
+        aisHash(down); // ships 메시지는 오지 않는다 — 목록 버전 그대로
+        MvcResult r2 = mvc.perform(get("/api/v1/ships").param("bbox", "128,34,130,36").header("If-None-Match", healthy))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.meta.ais.connected").value(false))
+                .andExpect(jsonPath("$.meta.ais.gap_open_since").exists())
+                .andReturn();
+        assertThat(r2.getResponse().getHeader("ETag")).isNotEqualTo(healthy);
+
+        aisHash(aisHealthy(Instant.now().minusSeconds(120))); // 수집기 heartbeat 가 오래됨(죽음)
+        mvc.perform(get("/api/v1/ships").param("bbox", "128,34,130,36").header("If-None-Match", healthy))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.meta.ais.heartbeat_stale").value(true))
+                .andExpect(jsonPath("$.meta.ais.state").doesNotExist());
+    }
+
+    @Test void etag_encodesEveryTimeOrStatusDependentMetaValue() {
+        java.util.Map<String, Object> fresh = java.util.Map.of("stale", false), stale = java.util.Map.of("stale", true);
+        java.util.function.Function<java.util.Map<String, Object>, java.util.Map<String, Object>> ais = over -> {
+            java.util.Map<String, Object> m = new java.util.HashMap<>();
+            m.put("connected", true);
+            m.put("heartbeat_stale", false);
+            m.put("state", "receiving");
+            m.put("coverage", List.of(List.of(18.0, 105.0, 46.0, 150.0)));
+            m.putAll(over);
+            return m;
+        };
+        java.util.Map<String, Object> noConn = new java.util.HashMap<>(ais.apply(java.util.Map.of()));
+        noConn.put("connected", null);
+        List<String> tags = List.of(
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of())),
+                ShipController.etag(8, fresh, ais.apply(java.util.Map.of())),
+                ShipController.etag(7, stale, ais.apply(java.util.Map.of())),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("connected", false))),
+                ShipController.etag(7, fresh, noConn),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("heartbeat_stale", true))),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("gap_open_since", T))),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("state", "backoff"))),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("coverage", List.of(List.of(-90.0, -180.0, 90.0, 0.0))))),
+                ShipController.etag(7, fresh, null));
+        assertThat(new java.util.HashSet<>(tags)).hasSize(tags.size());
+        assertThat(tags.getFirst()).startsWith("\"s7-0-").endsWith("\"");
+        assertThat(ShipController.etag(7, fresh, ais.apply(java.util.Map.of()))).isEqualTo(tags.getFirst()); // 같은 상태 → 같은 ETag
     }
 }

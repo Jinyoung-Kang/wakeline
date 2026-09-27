@@ -85,6 +85,21 @@ class StreamConsumerShipsTest {
         assertThat(again.states()).hasSize(2);
     }
 
+    /** 계약 v3 §B: 레거시 "gnss"(Timestamp 0~60·누락이 섞인 값)는 받자마자 null(모름) — 'epfs' 로 추정하지 않는다. 새 값과 null 은 그대로. */
+    @Test void legacyGnssPositionSource_becomesUnknownAtIngest() throws Exception {
+        consumer.handle(ships(T, shipsPayload(List.of(state("440123456", 35.1, 129.05, T.minusSeconds(3))), List.of())));
+        assertThat(ships.view().get("440123456").state().positionSource()).isNull();
+        IngestEvents.ShipsUpdated e = (IngestEvents.ShipsUpdated) events.getFirst();
+        assertThat(e.states().getFirst().positionSource()).as("what the writer stores (V7 rejects 'gnss')").isNull();
+
+        JsonMapper m = JsonMapper.builder().build();
+        String s = state("440123456", 35.1, 129.05, T);
+        for (String v : new String[]{"epfs", "manual", "estimated", "inoperative"})
+            assertThat(ShipCodec.state(m.readTree(s.replace("\"gnss\"", "\"" + v + "\""))).positionSource()).isEqualTo(v);
+        assertThat(ShipCodec.state(m.readTree(s.replace("\"gnss\"", "null"))).positionSource()).isNull();
+        assertThat(ShipCodec.state(m.readTree(s.replace(",\"position_source\":\"gnss\"", ""))).positionSource()).isNull();
+    }
+
     @Test void gapMessage_isRememberedAndPublished() throws Exception {
         consumer.handle(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, gap(T.minusSeconds(300), T.minusSeconds(60)), 0));
         assertThat(ships.gaps()).hasSize(1);

@@ -252,6 +252,103 @@ class DemandServiceTest {
         }
     }
 
+    static String select(String hex) { return "{\"type\":\"select\",\"hex\":\"" + hex + "\"}"; }
+
+    static String hex(int i) { return "%06x".formatted(0xc00000 + i); }
+
+    static List<String> focusLeased(Rig r) { return r.leases.last().focus().stream().map(DemandLeases.Lease::member).toList(); }
+
+    /**
+     * 계약 v3 §C(리뷰 #10): 한 세션이 새 hex 를 60 s 창에 6개 넘게 올리면 직전 임대를 유지하고(새 키 무시) 그 세션에 limited — 선택을 번갈아
+     * 바꿔 수집기의 새 hex 빠른 조회를 반복시키지 못한다. 연결은 끊지 않고, 다른 세션은 영향이 없으며, 창이 비면 다음 계산에 반영된다.
+     */
+    @Test void sessionLimit_newFocusHexes_sixPerMinute_thenKeepsThePreviousLease() throws Exception {
+        try (Rig r = new Rig()) {
+            FakeWsSession f = r.session("s", TOKYO);
+            long start = r.now();
+            for (int i = 0; i < DemandService.SESSION_NEW_KEYS_MAX; i++) {
+                r.k.msg(f, select(hex(i)));
+                r.refresh();
+                assertThat(focusLeased(r)).containsExactly(hex(i));
+                r.clock.addAndGet(1_000);
+            }
+            r.k.msg(f, select(hex(6)));
+            r.refresh();
+            assertThat(focusLeased(r)).as("previous lease kept").containsExactly(hex(5));
+            JsonNode d = lastDemand(f).path("focus");
+            assertThat(d.path("hex").asString()).isEqualTo(hex(6));
+            assertThat(d.path("state").asString()).isEqualTo("limited");
+            assertThat(d.has("interval_s")).isFalse();
+            assertThat(f.isOpen()).as("the session is not disconnected").isTrue();
+
+            FakeWsSession other = r.session("o", TOKYO); // 제한은 세션 단위
+            r.k.msg(other, select("bbbbbb"));
+            r.refresh();
+            assertThat(focusLeased(r)).containsExactlyInAnyOrder(hex(5), "bbbbbb");
+            assertThat(lastDemand(other).path("focus").path("state").asString()).isEqualTo("pending");
+
+            r.k.msg(f, select(hex(5))); // 직전 임대의 키로 돌아가는 것은 새 키가 아니다
+            r.refresh();
+            assertThat(lastDemand(f).path("focus").path("state").asString()).isEqualTo("pending");
+            r.k.msg(f, select(hex(7)));
+            r.refresh();
+            assertThat(lastDemand(f).path("focus").path("state").asString()).isEqualTo("limited");
+            assertThat(focusLeased(r)).containsExactlyInAnyOrder(hex(5), "bbbbbb");
+
+            r.clock.set(start + DemandService.SESSION_NEW_KEYS_WINDOW_MS); // 첫 새 키가 창 밖으로
+            r.refresh();
+            assertThat(focusLeased(r)).containsExactlyInAnyOrder(hex(7), "bbbbbb");
+            assertThat(lastDemand(f).path("focus").path("state").asString()).isEqualTo("pending");
+        }
+    }
+
+    /** 계약 v3 §C: 새 핫 셀도 세션마다 60 s 에 6개 — 넘으면 직전 셀 임대 유지 · limited. 키를 빼는 변화(줌 아웃)는 언제나 바로 반영한다. */
+    @Test void sessionLimit_newHotCells_sixPerMinute_removalAlwaysApplies() throws Exception {
+        try (Rig r = new Rig()) {
+            String sub = "{\"type\":\"subscribe\",\"bbox\":[%d.2,0.2,%d.8,0.8],\"zoom\":%d}";
+            FakeWsSession f = r.session("s", sub.formatted(150, 150, 9));
+            for (int i = 0; i <= DemandService.SESSION_NEW_KEYS_MAX; i++) {
+                r.k.msg(f, sub.formatted(150 + 2 * i, 150 + 2 * i, 9));
+                r.refresh();
+                r.clock.addAndGet(1_000);
+            }
+            assertThat(r.leases.last().hot()).singleElement().extracting(DemandLeases.Lease::member).asString().startsWith("0.5:160.5:");
+            JsonNode h = lastDemand(f).path("hot");
+            assertThat(h.path("cell").asString()).startsWith("0.5:162.5:");
+            assertThat(h.path("state").asString()).isEqualTo("limited");
+            assertThat(h.path("radius_nm").asInt()).isPositive();
+            assertThat(h.has("interval_s")).isFalse();
+
+            r.k.msg(f, sub.formatted(162, 162, 5));
+            r.refresh();
+            assertThat(r.leases.last().hot()).isEmpty();
+            assertThat(lastDemand(f).get("hot").isNull()).isTrue();
+            // 선택(집중 추적)은 별도 한도 — 핫 셀 한도가 찼어도 반영된다
+            r.k.msg(f, select("abc123"));
+            r.refresh();
+            assertThat(focusLeased(r)).containsExactly("abc123");
+        }
+    }
+
+    /** 일시정지한 세션은 임대에 아무것도 올리지 않는다 — 다시 보면 같은 키도 새로 센다(일시정지·재개로 한도를 우회하지 못한다). */
+    @Test void sessionLimit_pauseResumeCountsAsANewKey() throws Exception {
+        try (Rig r = new Rig()) {
+            FakeWsSession f = r.session("s", TOKYO);
+            r.k.msg(f, select("abc123"));
+            for (int i = 0; i < DemandService.SESSION_NEW_KEYS_MAX; i++) {
+                r.refresh();
+                assertThat(focusLeased(r)).containsExactly("abc123");
+                r.k.msg(f, "{\"type\":\"pause\"}");
+                r.refresh();
+                assertThat(focusLeased(r)).isEmpty();
+                r.k.msg(f, "{\"type\":\"resume\"}");
+            }
+            r.refresh();
+            assertThat(focusLeased(r)).isEmpty();
+            assertThat(lastDemand(f).path("focus").path("state").asString()).isEqualTo("limited");
+        }
+    }
+
     @Test void choose_isDeterministic_andForgetsVanishedKeys() {
         Map<String, Long> first = new HashMap<>(Map.of("gone", 1L, "b", 5L));
         List<String> out = DemandService.choose(new java.util.LinkedHashMap<>(Map.of("a", 1, "b", 1, "c", 3)), first, 2, 10);

@@ -43,7 +43,8 @@ class AisStatusTest {
         assertThat(f.msgsPerS()).as("negative").isNull();
         assertThat(f.gapOpenSince()).as("no time zone").isNull();
         assertThat(f.lastGap()).as("end before start").isNull();
-        assertThat(f.state()).hasSize(AisStatus.TEXT_MAX);
+        assertThat(f.state()).as("not a known collector state").isNull();
+        assertThat(f.coverage()).as("no bbox").isNull();
         assertThat(AisStatus.parse(Map.of()).present()).isFalse();
         assertThat(AisStatus.parse(null).present()).isFalse();
         assertThat(AisStatus.parse(hash("msgs_per_s", "NaN")).msgsPerS()).isNull();
@@ -114,6 +115,47 @@ class AisStatusTest {
         assertThat(stale.get("connected")).isNull();
         assertThat(stale.get("msgs_per_s")).isNull();
         assertThat(stale).containsEntry("heartbeat_stale", true).containsEntry("lag_s", 132.0);
+    }
+
+    /** 계약 v3 §A: state 는 알려진 수집기 상태만, coverage 는 상태 해시의 bbox 를 운영 설정과 같은 규칙으로 — 아니면 null(모름). */
+    @Test void parse_stateIsValidated_coverageFollowsTheSettingRules() {
+        for (String s : new String[]{"starting", "connecting", "subscribed", "receiving", "backoff", "replaying", "disabled", "stopped"})
+            assertThat(AisStatus.parse(hash("state", s)).state()).isEqualTo(s);
+        assertThat(AisStatus.parse(hash("state", "RECEIVING")).state()).isNull();
+        assertThat(AisStatus.parse(hash("state", "")).state()).isNull();
+
+        assertThat(AisStatus.parse(hash("bbox", "-90,-180,90,0;-90,45,90,180")).coverage())
+                .containsExactly(List.of(-90.0, -180.0, 90.0, 0.0), List.of(-90.0, 45.0, 90.0, 180.0));
+        assertThat(AisStatus.parse(hash("bbox", " 18,105,46,150; ")).coverage()).containsExactly(List.of(18.0, 105.0, 46.0, 150.0));
+        StringBuilder sixteen = new StringBuilder();
+        for (int i = 0; i < 16; i++) sixteen.append(i == 0 ? "" : ";").append(i).append(".123456,100.123456,").append(i + 1).append(".5,101.654321");
+        assertThat(sixteen.length()).isGreaterThan(AisStatus.TEXT_MAX);
+        assertThat(AisStatus.parse(hash("bbox", sixteen.toString())).coverage()).hasSize(16) // 다른 문자열 필드의 200자 상한과 별개(1,024자까지)
+                .first().isEqualTo(List.of(0.123456, 100.123456, 1.5, 101.654321));
+        for (String bad : new String[]{"", ";", "18,105,46", "18,105,46,x", "91,0,10,10", "0,181,10,10", "0,0,0,10", "1e1,0,20,10",
+                sixteen + ";20,0,21,1", "0,0,1,1;".repeat(200)})
+            assertThat(AisStatus.parse(hash("provider", "aisstream", "bbox", bad)).coverage()).as(bad).isNull();
+    }
+
+    /** 계약 v3 §A: state·coverage 는 connected 처럼 heartbeat 가 30 s 안일 때만(죽은 수집기의 마지막 값을 지금 값으로 말하지 않는다). */
+    @Test void publicView_stateAndCoverage_onlyWhileTheHeartbeatIsFresh() {
+        ShipStore ships = new ShipStore();
+        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        Map<Object, Object> h = healthy(NOW.minusSeconds(3));
+        h.put("bbox", "18,105,46,150");
+        st.update(h);
+        Map<String, Object> v = st.publicView(NOW_MS);
+        assertThat(v).containsEntry("state", "receiving").containsEntry("coverage", List.of(List.of(18.0, 105.0, 46.0, 150.0)));
+        Map<String, Object> stale = st.publicView(NOW_MS + 60_000);
+        assertThat(stale.get("state")).isNull();
+        assertThat(stale.get("coverage")).isNull();
+        // aisstream 키가 없어 꺼진 수집기(리뷰 #15): state disabled 를 그대로 알리고, 구독이 없으니 coverage 는 null
+        Map<Object, Object> disabled = healthy(NOW.minusSeconds(3));
+        disabled.put("state", "disabled");
+        disabled.put("connected", "0");
+        disabled.put("bbox", "");
+        st.update(disabled);
+        assertThat(st.publicView(NOW_MS)).containsEntry("state", "disabled").containsEntry("connected", false).containsEntry("coverage", null);
     }
 
     @Test void sweeperFreezesWhileDownAndPublishesRemovals() {

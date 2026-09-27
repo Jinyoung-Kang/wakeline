@@ -22,7 +22,7 @@ class ShipWriterTest {
     static final Instant T = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.HOURS).minusSeconds(3600); // 창 경계(:00), 저장 범위 안
 
     static ShipState pos(String mmsi, Instant seen) {
-        return new ShipState(mmsi, 35, 129, 10.0, 90.0, 90, 0, null, "gnss", seen, "aisstream", "PositionReport", "A");
+        return new ShipState(mmsi, 35, 129, 10.0, 90.0, 90, 0, null, "epfs", seen, "aisstream", "PositionReport", "A");
     }
 
     static ShipStatic stat(String mmsi, Instant updated) {
@@ -114,22 +114,31 @@ class ShipWriterTest {
         assertThat(w.queued()).isZero();
     }
 
+    /**
+     * 영구 오류는 3회 뒤 버리고 ACK — 23(파티션 없음) · 21000(한 문장이 같은 행을 두 번 upsert, 리뷰 #9: 예전에는 일시 장애로 보고 같은 배치를
+     * 끝없이 다시 시도해 선박 저장 전체가 멈췄다). pgjdbc 는 BatchUpdateException 에 SQLState 를 싣고 Spring 이 그것을 감싼다.
+     */
     @Test void permanentFailure_dropsTheBatchAfterThreeAttempts_andAcks() throws Exception {
-        FakeRepo repo = new FakeRepo();
-        ShipWriter w = new ShipWriter(repo, null, new SimpleMeterRegistry(), 1, 2);
-        repo.fail = new org.springframework.dao.DataIntegrityViolationException("x", new java.sql.SQLException("no partition", "23514"));
-        w.start();
-        try {
-            AtomicInteger acked = new AtomicInteger();
-            Receipt r = new Receipt(acked::incrementAndGet);
-            w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), true)), r);
-            r.release();
-            long end = System.currentTimeMillis() + 5_000;
-            while (acked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5);
-            assertThat(acked.get()).isEqualTo(1);
-            assertThat(repo.attempts.get()).isEqualTo(ShipWriter.PERMANENT_ATTEMPTS);
-        } finally {
-            w.stop();
+        for (RuntimeException failure : List.of(
+                new org.springframework.dao.DataIntegrityViolationException("x", new java.sql.SQLException("no partition", "23514")),
+                new org.springframework.jdbc.BadSqlGrammarException("batch", "INSERT INTO ship ...", new java.sql.BatchUpdateException(
+                        "ON CONFLICT DO UPDATE command cannot affect row a second time", "21000", 0, new int[0])))) {
+            FakeRepo repo = new FakeRepo();
+            ShipWriter w = new ShipWriter(repo, null, new SimpleMeterRegistry(), 1, 2);
+            repo.fail = failure;
+            w.start();
+            try {
+                AtomicInteger acked = new AtomicInteger();
+                Receipt r = new Receipt(acked::incrementAndGet);
+                w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), true)), r);
+                r.release();
+                long end = System.currentTimeMillis() + 5_000;
+                while (acked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5);
+                assertThat(acked.get()).as(failure.toString()).isEqualTo(1);
+                assertThat(repo.attempts.get()).isEqualTo(ShipWriter.PERMANENT_ATTEMPTS);
+            } finally {
+                w.stop();
+            }
         }
     }
 
