@@ -96,3 +96,21 @@ export interface SigmetProps {
   chng?: string | null;
   inside?: boolean;
 }
+
+export interface KrRadar {
+  available: boolean;
+  status?: string | null;
+  note?: string | null;
+  product?: string | null;
+  latest_tm?: string | null;
+  georeferenced: boolean;
+  coordinates: [number, number][] | null; // TL, TR, BR, BL (lon, lat)
+  projection?: string | null;
+  grid?: { nx: number; ny: number; res_m: number; ref: number[] } | null;
+  legend: [number, number[]][] | null;
+  min_dbz?: string | null;
+  stations?: string | null;
+  frames: { tm: string; obs_tm: string; fetched_at: string; echo_cells: number; url: string }[];
+  attribution: string;
+  meta: { fetched_at: string | null; stale: boolean };
+}

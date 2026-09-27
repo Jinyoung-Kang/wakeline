@@ -20,11 +20,11 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증 (수집기 · API/WS/공간 엔진 · 화면 · 인프라) |
 | **스택** | nginx edge · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1 (Java 25, 가상 스레드, JTS) · Python 3.13 (asyncio, httpx, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose 6 컨테이너 |
-| **데이터** | adsb.lol / adsb.fi (readsb v2) · OpenSky (선택) · AviationWeather.gov (SIGMET·METAR·TAF) · RainViewer · OpenFreeMap |
+| **데이터** | adsb.lol / adsb.fi (readsb v2) · OpenSky (선택) · AviationWeather.gov (SIGMET·METAR·TAF) · RainViewer · 기상청 API허브 레이더 합성(HSR 500 m, LCC→Mercator 서버 재투영) · OpenFreeMap |
 | **핵심** | 수집 → Redis Streams(at-least-once) → 불변 스냅샷 → STRtree 교차·10분 예측 → 히스테리시스 FSM → bbox diff 팬아웃(가상 스레드) → PostGIS 이력·재생 |
 | **보안** | 단일 진입점·XFF 덮어쓰기·IP 제한 2단·세션+CSRF 이중 제출·비인가 404·DB 역할 3개·비root/read-only 컨테이너·CSP nonce·비밀값 마스킹 |
 | **검증** | 자동 테스트 98개 + 언어 간 계약 검사 + E2E 4건 · 실데이터로 찾은 문제 11건 기록([docs/VERIFICATION.md](docs/VERIFICATION.md)) · 성능 실측([docs/PERF.md](docs/PERF.md)) |
-| **문서** | 설계서 v0.2([docs/](docs/)) · ADR 11건([docs/adr](docs/adr)) |
+| **문서** | 설계서 v0.2([docs/](docs/)) · ADR 12건([docs/adr](docs/adr)) |
 
 ## 1. 풀려는 문제
 1. 항공기 추적 서비스는 위치만, 기상 앱은 레이더만 보여 준다. "이 비행이 지금 뇌우 구역을 지나는가" 는 사람이 두 화면을 겹쳐 짐작해야 한다.
@@ -64,7 +64,7 @@ make up          # .env 생성(내부 비밀값 자동) + 6 컨테이너 빌드�
 make ops-user    # 운영자 계정(프롬프트). 초기 검증용 admin 비밀번호는 .env 의 SKYWX_OPS_BOOTSTRAP_PASSWORD
 ```
 
-외부 키는 **없어도 동작**합니다(adsb.lol·adsb.fi·AWC·RainViewer 는 무인증). 전세계 뷰만 OpenSky 자격증명이 필요합니다(`.env` 의 `OPENSKY_CLIENT_ID/SECRET`, collector 컨테이너에만 주입).
+외부 키는 **없어도 동작**합니다(adsb.lol·adsb.fi·AWC·RainViewer 는 무인증). 전세계 뷰는 OpenSky 자격증명(`OPENSKY_CLIENT_ID/SECRET`), 한국 고해상도 레이더는 기상청 API허브 키(`KMA_APIHUB_KEY`, 레이더 합성자료 API 활용신청 승인 필요)가 있으면 켜집니다. 모두 collector 컨테이너에만 주입됩니다.
 외부 호출 없이 데모하려면 `.env` 에 `SKYWX_FIXTURE_MODE=1` 을 두고 `make up` — 실응답 스냅샷(fixtures/)을 재생하며 한반도 위 합성 SIGMET 으로 알림이 뜹니다(화면에 FIXTURE 배지).
 
 | 명령 | 내용 |
@@ -93,7 +93,7 @@ tools/           init_env.py · contract_check.py
 
 ## 5. API 요약 (REST v1, 모든 응답에 `meta`)
 `GET /aircraft?bbox=&detail=` (ETag · 5 s) · `/aircraft/{hex}` · `/aircraft/{hex}/track?from&to&step_s` · `/aircraft/search?q=` ·
-`/sigmets?active&bbox&hazard` · `/sigmets/{id}` · `/alerts?kind=` · `/alerts/history?cursor` · `/radar/frames` · `/airports?bbox&watched` · `/airports/{icao}/wx` ·
+`/sigmets?active&bbox&hazard` · `/sigmets/{id}` · `/alerts?kind=` · `/alerts/history?cursor` · `/radar/frames` · `/radar/kr` · `/radar/kr/{tm}.png` · `/airports?bbox&watched` · `/airports/{icao}/wx` ·
 `/replay?at&bbox` · `/stats/sigmet|traffic|alerts` · `/status` · `/healthz`(edge)
 운영(세션+CSRF+ROLE_OPS, 비인가 404): `POST/GET/DELETE /ops/session` · `/ops/providers` · `POST /ops/providers/{name}/enable|disable` · `/ops/runs` · `/ops/quality` · `/ops/dlq` · `/ops/settings` · `PUT /ops/settings/{key}`(If-Match) · `/ops/audit`.
 오류는 RFC 9457 `application/problem+json` + `code` + `request_id`. 요청 제한 429 + `Retry-After`.
@@ -106,4 +106,4 @@ tools/           init_env.py · contract_check.py
 - 품질 게이트가 거른 레코드는 화면에 나오지 않지만 원천에 남고 운영 화면에 규칙별 건수로 보인다.
 
 ## 7. 데이터 출처·약관
-adsb.lol(ODbL 1.0) · adsb.fi(비상업, 초당 1회) · OpenSky(연구·비상업, 크레딧) · AviationWeather.gov(미 정부 공개, 분당 20회 자체 상한) · RainViewer(개인·교육, 줌 ≤ 7) · OpenFreeMap/OpenMapTiles/OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기.
+adsb.lol(ODbL 1.0) · adsb.fi(비상업, 초당 1회) · OpenSky(연구·비상업, 크레딧) · AviationWeather.gov(미 정부 공개, 분당 20회 자체 상한) · RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(본인 사용, 활용신청; 투영·격자 정의는 기상기후데이터위키) · OpenFreeMap/OpenMapTiles/OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기.

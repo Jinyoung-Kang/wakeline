@@ -5,6 +5,7 @@ export default function AboutPage() {
     ["항공기 (전세계)", "OpenSky Network (OAuth2)", "연구·비상업 · 하루 4,000 크레딧 · 계정 없으면 비활성"],
     ["SIGMET · METAR · TAF", "AviationWeather.gov Data API", "미국 정부 공개 데이터 · 분당 20회 자체 상한 · 커스텀 UA"],
     ["레이더 타일", "RainViewer", "개인·교육 전용 · 과거 2 h · 줌 ≤ 7 · 링크 출처"],
+    ["한국 레이더 합성", "기상청 API허브 (HSR 500 m · 5분)", "본인 사용 · 활용신청 · LCC(30/60, N38 E126) 정의는 기상기후데이터위키 · 서버 재투영"],
     ["배경지도", "OpenFreeMap + MapLibre GL JS", "OpenMapTiles · OpenStreetMap contributors · BSD-3"],
   ];
   return (

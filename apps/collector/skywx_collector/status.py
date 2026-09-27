@@ -21,6 +21,9 @@ class ProviderStatus:
     def redis(self) -> Redis:
         return self._r
 
+    async def hset_meta(self, key: str, fields: dict[str, str]) -> None:
+        await self._r.hset(key, mapping=fields)
+
     def key(self, name: str) -> str:
         return f"skywx:provider:{name}"
 

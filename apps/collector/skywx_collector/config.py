@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     opensky_client_secret: str = ""
     aircraft_providers: str = "adsb_lol,adsb_fi,opensky"
     kma_apihub_key: str = ""  # 기상청 API허브(레이더 합성자료 활용신청 필요)
-    kma_radar_poll_s: int = 600
+    kma_radar_poll_s: int = 300
     kma_radar_cmp: str = "HSR"
 
     # 관심 지역·주기 (운영 설정이 덮어씀)

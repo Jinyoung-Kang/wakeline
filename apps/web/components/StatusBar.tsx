@@ -26,7 +26,7 @@ export function StatusBar() {
         {regionLag == null ? "NO DATA" : `lag ${Math.round(regionLag)}s`}{d.stale && regionLag != null ? " · STALE" : ""}
       </span>
       <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{d.sigProv} · {d.status?.sigmet.active ?? "—"} active · {fmtAgo(d.sigAt, now)}</span>
-      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{d.radar?.past.length ?? 0} frames · {fmtAgo(d.radar?.fetched_at, now)}</span>
+      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{d.radar?.past.length ?? 0} frames · {fmtAgo(d.radar?.fetched_at, now)}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
       <span className="mono text-fg-3"><span className="label mr-1">engine</span>{d.status?.engine.index_polygons ?? "—"} polys · {d.status?.engine.last_cycle_ms ?? "—"} ms</span>
       <span className="mono text-fg-3">v{d.v}</span>
       <span className="ml-auto text-fg-3" data-testid="attribution">

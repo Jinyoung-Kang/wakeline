@@ -17,6 +17,10 @@ interface UiState {
   setRadarFrame: (i: number | null) => void;
   radarPlaying: boolean;
   setRadarPlaying: (b: boolean) => void;
+  radarSource: "rainviewer" | "kma";
+  setRadarSource: (s: "rainviewer" | "kma") => void;
+  krFrameIndex: number | null;
+  setKrFrame: (i: number | null) => void;
   selectedHex: string | null;
   select: (hex: string | null) => void;
   selectedSigmet: string | null;
@@ -35,6 +39,10 @@ export const useUi = create<UiState>((set) => ({
   setRadarFrame: (i) => set({ radarFrameIndex: i }),
   radarPlaying: false,
   setRadarPlaying: (b) => set({ radarPlaying: b }),
+  radarSource: "rainviewer",
+  setRadarSource: (s) => set({ radarSource: s, radarPlaying: false }),
+  krFrameIndex: null,
+  setKrFrame: (i) => set({ krFrameIndex: i }),
   selectedHex: null,
   select: (hex) => set({ selectedHex: hex, panel: hex ? "aircraft" : "alerts" }),
   selectedSigmet: null,

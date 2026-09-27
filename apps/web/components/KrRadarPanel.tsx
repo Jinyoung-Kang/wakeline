@@ -1,24 +1,26 @@
 "use client";
-import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { useServerData } from "@/lib/store";
 import { fmtTime } from "@/lib/format";
 
-interface KrRadar { available: boolean; tm_kst?: string | null; cmp?: string | null; status?: string | null; note?: string | null; image_url?: string | null; attribution: string; georeferenced: boolean; meta: { fetched_at: string | null } }
-
-/** 기상청 레이더 합성 영상(FR-31). 격자·투영을 실응답으로 확인하기 전까지는 지도에 겹치지 않고 영상 그대로 보여 준다(정직성). */
+/** 기상청 레이더 합성(FR-31) 범례·정합 정보. 좌표 정의는 서버가 문서 값(LCC 30/60·N38 E126·기준 격자점)으로 계산한다. */
 export function KrRadarPanel({ onClose }: { onClose: () => void }) {
-  const [d, setD] = useState<KrRadar | null>(null);
-  const [tick, setTick] = useState(0);
-  useEffect(() => { apiGet<KrRadar>("/api/v1/radar/kr").then(setD).catch(() => setD(null)); const t = setInterval(() => setTick((x) => x + 1), 60_000); return () => clearInterval(t); }, [tick]);
+  const d = useServerData((s) => s.radarKr);
+  const latest = d?.frames[d.frames.length - 1];
   return (
-    <div className="panel absolute bottom-12 left-3 z-10 w-[360px] text-[11px]" data-testid="kr-radar-panel">
-      <div className="row"><span className="label">기상청 레이더 합성(HSR)</span><button className="btn" onClick={onClose}>닫기</button></div>
+    <div className="panel absolute bottom-12 left-3 z-10 w-[380px] text-[11px]" data-testid="kr-radar-panel">
+      <div className="row"><span className="label">기상청 레이더 합성(HSR) · 범례·정합</span><button className="btn" onClick={onClose}>닫기</button></div>
       <div className="p-2">
         {!d ? <div className="text-fg-3">…</div> : d.available ? <>
-          {/* eslint-disable-next-line @next/next/no-img-element -- 외부 최적화 없이 서버 영상 그대로 */}
-          <img src={`${d.image_url}?t=${tick}`} alt="기상청 레이더 합성 영상" className="w-full border border-line" />
-          <div className="mt-1 flex justify-between text-fg-2"><span className="mono">tm {d.tm_kst} KST · {d.cmp}</span><span className="mono">fetched {fmtTime(d.meta.fetched_at)}</span></div>
-          <div className="mt-1 text-fg-3">지도 정합(격자·LCC 투영) 확인 전이라 오버레이하지 않고 영상 그대로 표시합니다.</div>
+          <div className="flex flex-wrap gap-1">
+            {(d.legend ?? []).map(([lo, c]) => <span key={lo} className="mono px-1" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: "#000" }}>{lo}</span>)}
+            <span className="text-fg-3">dBZ 이상 (표시 최소 {d.min_dbz} dBZ · 색 구간은 표시용 선택)</span>
+          </div>
+          {[["최신 tm(KST)", d.latest_tm ?? "—"], ["수신", fmtTime(latest?.fetched_at)], ["에코 셀", latest ? latest.echo_cells.toLocaleString() : "—"],
+            ["격자", d.grid ? `${d.grid.nx}×${d.grid.ny} · ${d.grid.res_m} m · 기준점 (${d.grid.ref.join(", ")})` : "—"],
+            ["투영", d.projection ?? "—"], ["레이더", d.stations ?? "—"]].map(([k, v]) => (
+            <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="text-fg-3 shrink-0">{k}</span><span className="mono break-all text-right">{v}</span></div>
+          ))}
+          <div className="mt-1 text-fg-3">관측 반경 안은 연한 회색, 밖은 투명. LCC 격자를 서버에서 웹 메르카토르로 최근접 재투영한 영상(≤ 250 m 격자 관습 오차).</div>
         </> : <div className="text-warn">사용 불가 — {d.note || "아직 수집되지 않음"}{d.status ? ` (HTTP ${d.status})` : ""}</div>}
         <div className="mt-1 text-fg-3">{d?.attribution ?? "기상청 API허브"}</div>
       </div>

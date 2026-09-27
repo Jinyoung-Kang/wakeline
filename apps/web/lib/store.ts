@@ -1,6 +1,6 @@
 /** 서버 데이터 스토어 — useSyncExternalStore 기반(리렌더 최소화). UI 상태는 ui-store(zustand). */
 import { useSyncExternalStore } from "react";
-import type { AircraftState, Alert, PublicStatus, RadarFrames, SigmetCollection } from "./types";
+import type { AircraftState, Alert, KrRadar, PublicStatus, RadarFrames, SigmetCollection } from "./types";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
 
@@ -19,6 +19,7 @@ export interface ServerData {
   sigmetsFetchedAt: string | null;
   sigmetsProvider: string;
   radar: RadarFrames | null;
+  radarKr: KrRadar | null;
   alerts: Map<number, Alert>;
   status: PublicStatus | null;
   lastEvent: { type: string; alert: Alert; at: number } | null;
@@ -39,6 +40,7 @@ let data: ServerData = {
   sigmetsFetchedAt: null,
   sigmetsProvider: "-",
   radar: null,
+  radarKr: null,
   alerts: new Map(),
   status: null,
   lastEvent: null,

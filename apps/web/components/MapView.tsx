@@ -6,7 +6,7 @@ import { aircraftStates, getData, setData, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { SkyWsClient } from "@/lib/ws";
 import { apiGet } from "@/lib/api";
-import type { RenderState } from "@/lib/types";
+import type { KrRadar, RenderState } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
 
@@ -22,6 +22,10 @@ export function MapView() {
   const sigmets = useServerData((d) => d.sigmets);
   const alerts = useServerData((d) => d.alerts);
   const radar = useServerData((d) => d.radar);
+  const radarKr = useServerData((d) => d.radarKr);
+  const radarSource = useUi((s) => s.radarSource);
+  const krFrameIndex = useUi((s) => s.krFrameIndex);
+  const krLayers = useRef<string[]>([]);
   const layers = useUi((s) => s.layers);
   const radarFrameIndex = useUi((s) => s.radarFrameIndex);
   const radarOpacity = useUi((s) => s.radarOpacity);
@@ -87,6 +91,10 @@ export function MapView() {
       worker.postMessage({ type: "start" });
       client.connect();
       subscribeViewport();
+      const pollKr = () => apiGet<KrRadar>("/api/v1/radar/kr").then((d) => setData({ radarKr: d })).catch(() => {});
+      pollKr();
+      const krTimer = setInterval(pollKr, 60_000);
+      map.once("remove", () => clearInterval(krTimer));
       apiGet<GeoJSON.FeatureCollection>("/api/v1/airports?watched=true").then((fc) => {
         (map.getSource("airports") as maplibregl.GeoJSONSource | undefined)?.setData(fc);
       }).catch(() => {});
@@ -162,9 +170,41 @@ export function MapView() {
     const idx = radarFrameIndex ?? radar.past.length - 1;
     radar.past.forEach((f, i) => {
       const id = `radar-${f.time}`;
-      if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", layers.radar && i === idx ? radarOpacity : 0);
+      if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", layers.radar && radarSource === "rainviewer" && i === idx ? radarOpacity : 0);
     });
-  }, [radar, radarFrameIndex, radarOpacity, layers.radar]);
+  }, [radar, radarFrameIndex, radarOpacity, layers.radar, radarSource]);
+
+  // ---- 기상청 레이더(FR-31): 재투영된 PNG 를 image source 로. 좌표는 서버가 문서 기반 LCC 정의로 계산한 웹 메르카토르 경계 ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !radarKr?.available || !radarKr.coordinates || radarKr.coordinates.length !== 4) return;
+    const c = radarKr.coordinates;
+    const coords: [[number, number], [number, number], [number, number], [number, number]] = [c[0], c[1], c[2], c[3]];
+    const apply = () => {
+      const wanted = radarKr.frames.map((f) => `kmar-${f.tm}`);
+      for (const id of krLayers.current) if (!wanted.includes(id)) { if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }
+      const beforeId = map.getLayer("sigmet-fill") ? "sigmet-fill" : undefined;
+      for (const f of radarKr.frames) {
+        const id = `kmar-${f.tm}`;
+        if (!map.getSource(id)) {
+          map.addSource(id, { type: "image", url: f.url, coordinates: coords });
+          map.addLayer({ id, type: "raster", source: id, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 150 }, "raster-resampling": "nearest" } }, beforeId);
+        }
+      }
+      krLayers.current = wanted;
+    };
+    if (map.isStyleLoaded()) apply(); else map.once("load", apply);
+  }, [radarKr]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !radarKr?.frames) return;
+    const idx = krFrameIndex ?? radarKr.frames.length - 1;
+    radarKr.frames.forEach((f, i) => {
+      const id = `kmar-${f.tm}`;
+      if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", layers.radar && radarSource === "kma" && i === idx ? Math.min(1, radarOpacity + 0.25) : 0);
+    });
+  }, [radarKr, krFrameIndex, radarSource, radarOpacity, layers.radar]);
 
   // ---- 레이어 토글 ----
   useEffect(() => {
