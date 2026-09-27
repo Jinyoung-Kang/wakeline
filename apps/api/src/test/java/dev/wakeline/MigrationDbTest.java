@@ -30,7 +30,7 @@ class MigrationDbTest {
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(5);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(6);
     }
 
     @Test

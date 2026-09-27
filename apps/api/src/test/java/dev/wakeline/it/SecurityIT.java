@@ -222,6 +222,16 @@ class SecurityIT extends IntegrationTest {
                 400, "BAD_VALUE", "/api/v1/ops/settings/region_center");
         assertProblem(b.send("PUT", "/api/v1/ops/settings/no_such_key", "{\"value\":1}", b.withCsrf("If-Match", "1")),
                 404, "NOT_FOUND", "/api/v1/ops/settings/no_such_key");
+        // AIS 구독 영역: 틀린 값은 거절, 맞는 값은 감사 기록과 함께 저장되고 wakeline:settings 에 미러된다(ais 가 30 s 마다 읽는다)
+        String av = null;
+        for (JsonNode it : list.json().path("items")) if ("ais_bboxes".equals(it.path("key").asString())) av = it.path("version").asString();
+        assertThat(av).isNotNull();
+        assertProblem(b.send("PUT", "/api/v1/ops/settings/ais_bboxes", "{\"value\":\"0,0,0,5\"}", b.withCsrf("If-Match", av)),
+                400, "BAD_VALUE", "/api/v1/ops/settings/ais_bboxes");
+        Res ais = b.send("PUT", "/api/v1/ops/settings/ais_bboxes", "{\"value\":\"-90,-180,90,180\"}", b.withCsrf("If-Match", av));
+        assertThat(ais.status()).isEqualTo(200);
+        assertThat(ItStack.admin().opsForHash().get("wakeline:settings", "ais_bboxes")).isEqualTo("-90,-180,90,180");
+        assertThat(audit("SETTING_UPDATE", "ais_bboxes")).isEqualTo(1);
     }
 
     // ---------- 잠금 ----------

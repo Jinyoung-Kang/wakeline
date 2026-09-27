@@ -181,6 +181,7 @@ public final class DbTestSupport {
                 UPDATE app_setting SET version = 1, updated_by = NULL, value = CASE key
                   WHEN 'region_poll_s' THEN '10' WHEN 'global_poll_s' THEN '120' WHEN 'sigmet_poll_s' THEN '300' WHEN 'radar_poll_s' THEN '60'
                   WHEN 'metar_poll_s' THEN '600' WHEN 'aircraft_providers' THEN '"adsb_lol,adsb_fi,opensky"' WHEN 'region_center' THEN '"36.5,127.8"'
-                  WHEN 'region_radius_nm' THEN '250' WHEN 'global_enabled' THEN 'true' END::jsonb;""");
+                  WHEN 'region_radius_nm' THEN '250' WHEN 'global_enabled' THEN 'true'
+                  WHEN 'ais_bboxes' THEN '""' END::jsonb;""");
     }
 }

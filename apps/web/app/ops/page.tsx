@@ -131,6 +131,7 @@ function SettingsForm({ items, onSaved }: { items: Settings["items"]; onSaved: (
   return (
     <div>
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다.</div>
+      <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       {msg ? <div className="mb-2 text-[11px] text-accent">{msg}</div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated</th><th></th></tr></thead>
         <tbody>{items.map((s) => <tr key={s.key}><td className="mono">{s.key}</td>

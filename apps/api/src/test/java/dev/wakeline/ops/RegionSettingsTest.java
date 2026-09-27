@@ -57,6 +57,17 @@ class RegionSettingsTest {
         assertThatThrownBy(() -> SettingsService.validate("region_center", JsonNodeFactory.instance.numberNode(36))).isInstanceOf(Problem.class);
     }
 
+    @Test
+    void aisBboxesFollowTheCollectorRules() {
+        for (String ok : new String[]{"", "  ", "18,105,46,150", "-90,-180,90,180", "18,105,46,150; 30,-10,60,40;", " 1.5 , 2.25 ,3,4 "})
+            assertThatCode(() -> SettingsService.validate("ais_bboxes", JsonNodeFactory.instance.stringNode(ok))).as(ok).doesNotThrowAnyException();
+        String seventeen = String.join(";", java.util.Collections.nCopies(17, "0,0,1,1"));
+        for (String bad : new String[]{"18,105,46", "18,105,46,150,1", "91,0,1,1", "0,181,1,1", "10,0,10,5", "0,5,1,5", "a,b,c,d",
+                "1e1,0,1,1", "NaN,0,1,1", "Infinity,0,1,1", "0x10,0,1,1", "1d,0,1,1", ";", seventeen, "1".repeat(1025)})
+            assertThatThrownBy(() -> SettingsService.validate("ais_bboxes", JsonNodeFactory.instance.stringNode(bad))).as(bad).isInstanceOf(Problem.class);
+        assertThatThrownBy(() -> SettingsService.validate("ais_bboxes", JsonNodeFactory.instance.numberNode(1))).isInstanceOf(Problem.class);
+    }
+
     /**
      * API-CONC-7: TTL 만료로 시작된 백그라운드 갱신이 옛 값을 읽고 있는 동안 설정이 바뀌어 요청 스레드가 refreshNow 를 불러도,
      * 마지막으로 반영되는 값은 새 값이어야 한다(이전에는 늦게 끝난 백그라운드 갱신이 옛 값으로 덮어썼다).

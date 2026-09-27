@@ -61,7 +61,7 @@ flowchart LR
 ```bash
 git clone <this repo> wakeline && cd wakeline
 make up          # .env 생성(내부 비밀값 자동) + 6 컨테이너 빌드·기동 → http://localhost:8700
-make ops-user    # 운영자 계정(프롬프트). 초기 검증용 admin 비밀번호는 .env 의 WAKELINE_OPS_BOOTSTRAP_PASSWORD
+make ops-user u=admin   # 운영자 계정 생성·비밀번호 변경(프롬프트, 12자 이상, 화면·파일에 남지 않음 — .env 에 두지 않는다)
 ```
 
 외부 키는 **없어도 동작**합니다(adsb.lol·adsb.fi·AWC·RainViewer 는 무인증). 전세계 뷰는 OpenSky 자격증명(`OPENSKY_CLIENT_ID/SECRET`), 한국 고해상도 레이더는 기상청 API허브 키(`KMA_APIHUB_KEY`, 레이더 합성자료 API 활용신청 승인 필요)가 있으면 켜집니다. 모두 collector 컨테이너에만 주입됩니다.
