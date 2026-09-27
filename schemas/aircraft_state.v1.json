@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skywx.dev/schemas/aircraft_state.v1.json",
+  "title": "AircraftState",
+  "description": "정규화된 항공기 상태 1건. collector(Python)가 만들고 api(Java)가 검증한다. 단위: ft, kt, ft/min. 시각은 UTC ISO-8601.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hex", "lat", "lon", "on_ground", "seen_at", "provider", "fetched_at", "quality", "estimated"],
+  "properties": {
+    "hex": { "type": "string", "pattern": "^[0-9a-f]{6}$", "description": "ICAO24 트랜스폰더 주소(소문자)" },
+    "callsign": { "type": ["string", "null"], "maxLength": 8 },
+    "registration": { "type": ["string", "null"], "maxLength": 16 },
+    "type_code": { "type": ["string", "null"], "maxLength": 8 },
+    "category": { "type": ["string", "null"], "maxLength": 4 },
+    "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+    "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+    "alt_ft": { "type": ["integer", "null"], "minimum": -2000, "maximum": 100000 },
+    "gs_kt": { "type": ["number", "null"], "minimum": 0 },
+    "track_deg": { "type": ["number", "null"], "minimum": 0, "maximum": 360 },
+    "vrate_fpm": { "type": ["number", "null"] },
+    "on_ground": { "type": "boolean" },
+    "squawk": { "type": ["string", "null"], "pattern": "^[0-7]{4}$" },
+    "seen_at": { "type": "string", "format": "date-time", "description": "공급자 기준 마지막 위치 관측 시각" },
+    "provider": { "type": "string", "enum": ["adsb_lol", "adsb_fi", "opensky", "fixture"] },
+    "fetched_at": { "type": "string", "format": "date-time", "description": "collector 가 응답을 받은 서버 시각" },
+    "quality": { "type": "integer", "enum": [0, 1], "description": "0 통과 · 1 경고(보간 어려움). 2(격리)는 스트림에 싣지 않는다" },
+    "estimated": { "type": "boolean", "const": false, "description": "서버 값은 항상 false. 브라우저 보간 결과만 true" }
+  }
+}

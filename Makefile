@@ -1,0 +1,57 @@
+# SkyWx — 로컬 운영 명령 (macOS · Apple Silicon · Docker Desktop)
+SHELL := /bin/bash
+COMPOSE := docker compose -f infra/compose.yml --env-file .env
+
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web contract e2e bench fixtures clean
+
+help: ## 명령 목록
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+
+init: ## .env 생성 + 내부 비밀값 자동 생성 (외부 키는 직접 입력)
+	@python3 tools/init_env.py
+
+up: init ## 전체 스택 기동 (6 컨테이너) → http://localhost:8700
+	$(COMPOSE) up -d --build
+	@echo "SkyWx → http://localhost:8700   (ops: http://localhost:8700/ops)"
+
+down: ## 중지 (데이터 보존)
+	$(COMPOSE) down
+
+clean: ## 중지 + 볼륨 삭제 (데이터 초기화!)
+	$(COMPOSE) down -v
+
+ps: ## 컨테이너 상태
+	$(COMPOSE) ps
+
+logs: ## 로그 (예: make logs s=api)
+	$(COMPOSE) logs -f --tail=200 $(s)
+
+build: ## 이미지만 빌드
+	$(COMPOSE) build
+
+ops-user: ## 운영자 계정 생성/갱신 (make ops-user u=admin) — 비밀번호는 프롬프트
+	@read -s -p "password for $(or $(u),admin): " pw; echo; \
+	$(COMPOSE) exec -e SKYWX_OPS_USER=$(or $(u),admin) -e SKYWX_OPS_PASSWORD="$$pw" api java -jar /app/app.jar --create-ops-user
+
+test: test-collector test-api test-web ## 전체 테스트
+
+test-api: ## Java 단위·통합 테스트 (로컬 JDK 25 + Docker 필요)
+	cd apps/api && ./gradlew test
+
+test-collector: ## Python 단위 테스트
+	cd apps/collector && uv run pytest -q
+
+test-web: ## 프론트 단위 테스트
+	cd apps/web && npm test
+
+contract: ## Python↔Java 스키마 계약 검사
+	cd apps/collector && uv run python ../../tools/contract_check.py
+
+e2e: ## fixture 모드 E2E (Playwright)
+	SKYWX_FIXTURE_MODE=1 $(COMPOSE) up -d --build && cd apps/web && npx playwright test
+
+bench: ## k6 부하 시험 (brew install k6)
+	k6 run perf/rest.js && k6 run perf/ws.js
+
+fixtures: ## 실응답 스냅샷 갱신 (외부 한도 소모 주의)
+	cd apps/collector && uv run python -m skywx_collector.tools.snapshot

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skywx.dev/schemas/stream_envelope.v1.json",
+  "title": "StreamEnvelope",
+  "description": "Redis Streams 엔트리의 필드. 값은 모두 문자열. payload 는 gzip 후 base64 한 JSON.",
+  "type": "object",
+  "required": ["schema_version", "kind", "scope", "provider", "fetched_at", "raw_ref", "encoding", "count", "payload"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "const": "1" },
+    "kind": { "enum": ["aircraft", "sigmet", "radar", "metar"] },
+    "scope": { "enum": ["region", "global", "-"] },
+    "provider": { "type": "string" },
+    "fetched_at": { "type": "string", "format": "date-time" },
+    "raw_ref": { "type": "string", "description": "raw/{provider}/{yyyymmdd}/{hhmmss}.json.gz 또는 fixture 경로" },
+    "encoding": { "const": "gzip+base64" },
+    "count": { "type": "string", "pattern": "^[0-9]+$" },
+    "run_id": { "type": "string" },
+    "payload": { "type": "string" }
+  },
+  "$defs": {
+    "aircraft_payload": {
+      "type": "object",
+      "required": ["states"],
+      "properties": {
+        "region": { "type": ["object", "null"], "properties": { "lat": {"type": "number"}, "lon": {"type": "number"}, "radius_nm": {"type": "number"} } },
+        "states": { "type": "array", "items": { "$ref": "aircraft_state.v1.json" } }
+      }
+    },
+    "sigmet_payload": {
+      "type": "object",
+      "required": ["sigmets"],
+      "properties": { "sigmets": { "type": "array", "items": { "$ref": "sigmet.v1.json" } } }
+    },
+    "radar_payload": {
+      "type": "object",
+      "required": ["host", "past", "generated"],
+      "properties": {
+        "host": { "type": "string" },
+        "generated": { "type": "integer" },
+        "past": { "type": "array", "items": { "type": "object", "required": ["time", "path"], "properties": { "time": {"type": "integer"}, "path": {"type": "string"} } } }
+      }
+    }
+  }
+}

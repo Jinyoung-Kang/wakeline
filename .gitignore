@@ -1,0 +1,23 @@
+# secrets
+.env
+*.env.local
+# build
+apps/api/build/
+apps/api/.gradle/
+apps/web/.next/
+apps/web/node_modules/
+apps/web/out/
+apps/web/playwright-report/
+apps/web/test-results/
+apps/collector/.venv/
+apps/collector/.pytest_cache/
+apps/collector/.ruff_cache/
+apps/collector/.mypy_cache/
+**/__pycache__/
+# data
+data/
+raw/
+# misc
+.DS_Store
+*.log
+perf/results/

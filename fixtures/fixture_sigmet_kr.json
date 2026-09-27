@@ -1,0 +1,18 @@
+[
+  {
+    "icaoId": "FIXTURE", "firId": "RKRR", "firName": "RKRR INCHEON (SYNTHETIC FIXTURE)",
+    "receiptTime": "2026-09-27T00:00:00.000Z", "validTimeFrom": 1790467200, "validTimeTo": 1790481600,
+    "seriesId": "FX1", "hazard": "TS", "qualifier": "EMBD", "base": null, "top": 40000, "geom": "AREA",
+    "coords": [{"lon": 126.0, "lat": 35.6}, {"lon": 129.2, "lat": 35.6}, {"lon": 129.2, "lat": 37.9}, {"lon": 126.0, "lat": 37.9}, {"lon": 126.0, "lat": 35.6}],
+    "dir": "E", "spd": "10", "chng": "NC",
+    "rawSigmet": "SYNTHETIC FIXTURE — NOT A REAL SIGMET. RKRR SIGMET FX1 VALID (fixture) EMBD TS WI N3536 E12600 - N3536 E12912 - N3754 E12912 - N3754 E12600 TOP FL400 MOV E 10KT NC="
+  },
+  {
+    "icaoId": "FIXTURE", "firId": "RKRR", "firName": "RKRR INCHEON (SYNTHETIC FIXTURE)",
+    "receiptTime": "2026-09-27T00:00:00.000Z", "validTimeFrom": 1790467200, "validTimeTo": 1790481600,
+    "seriesId": "FX2", "hazard": "ICE", "qualifier": "SEV", "base": 14000, "top": 21000, "geom": "AREA",
+    "coords": [{"lon": 124.5, "lat": 33.0}, {"lon": 126.5, "lat": 33.0}, {"lon": 126.5, "lat": 35.0}, {"lon": 124.5, "lat": 35.0}],
+    "dir": "NE", "spd": "15", "chng": "WKN",
+    "rawSigmet": "SYNTHETIC FIXTURE — NOT A REAL SIGMET. RKRR SIGMET FX2 VALID (fixture) SEV ICE FL140/210 WI N3300 E12430 - N3300 E12630 - N3500 E12630 - N3500 E12430 MOV NE 15KT WKN="
+  }
+]

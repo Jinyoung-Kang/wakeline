@@ -1,0 +1,46 @@
+import { create } from "zustand";
+
+export interface Layers {
+  radar: boolean;
+  sigmet: boolean;
+  aircraft: boolean;
+  airports: boolean;
+  tracks: boolean;
+  prediction: boolean;
+}
+
+interface UiState {
+  layers: Layers;
+  toggleLayer: (k: keyof Layers) => void;
+  radarOpacity: number;
+  radarFrameIndex: number | null; // null = 최신
+  setRadarFrame: (i: number | null) => void;
+  radarPlaying: boolean;
+  setRadarPlaying: (b: boolean) => void;
+  selectedHex: string | null;
+  select: (hex: string | null) => void;
+  selectedSigmet: string | null;
+  selectSigmet: (id: string | null) => void;
+  selectedAirport: string | null;
+  selectAirport: (icao: string | null) => void;
+  panel: "alerts" | "aircraft" | "sigmet" | "airport";
+  setPanel: (p: UiState["panel"]) => void;
+}
+
+export const useUi = create<UiState>((set) => ({
+  layers: { radar: true, sigmet: true, aircraft: true, airports: true, tracks: true, prediction: true },
+  toggleLayer: (k) => set((s) => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
+  radarOpacity: 0.6,
+  radarFrameIndex: null,
+  setRadarFrame: (i) => set({ radarFrameIndex: i }),
+  radarPlaying: false,
+  setRadarPlaying: (b) => set({ radarPlaying: b }),
+  selectedHex: null,
+  select: (hex) => set({ selectedHex: hex, panel: hex ? "aircraft" : "alerts" }),
+  selectedSigmet: null,
+  selectSigmet: (id) => set({ selectedSigmet: id, panel: id ? "sigmet" : "alerts" }),
+  selectedAirport: null,
+  selectAirport: (icao) => set({ selectedAirport: icao, panel: icao ? "airport" : "alerts" }),
+  panel: "alerts",
+  setPanel: (p) => set({ panel: p }),
+}));

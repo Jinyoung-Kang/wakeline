@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+/* Palantir 계열 톤: 거의 검은 배경 · 1px 경계 · 낮은 채도 · 모노스페이스 수치 · 대문자 소형 라벨. 모서리 없음. */
+@theme {
+  --color-bg: #0b0d10;
+  --color-bg-1: #111418;
+  --color-bg-2: #171b20;
+  --color-line: #262b32;
+  --color-line-2: #333a43;
+  --color-fg: #e6e8eb;
+  --color-fg-2: #a3aab4;
+  --color-fg-3: #6b737e;
+  --color-accent: #4c90f0;
+  --color-ok: #3ec98f;
+  --color-warn: #f2b33d;
+  --color-bad: #e5484d;
+  --color-est: #b18cf5;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", sans-serif;
+}
+
+html, body { height: 100%; background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 13px; }
+* { border-radius: 0 !important; }
+a { color: inherit; }
+::selection { background: #2a4a7a; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #2d333b; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-fg-3); font-weight: 600; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.panel { background: var(--color-bg-1); border: 1px solid var(--color-line); }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--color-line); }
+.btn { border: 1px solid var(--color-line-2); background: var(--color-bg-2); color: var(--color-fg); padding: 4px 10px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+.btn:hover { border-color: var(--color-accent); }
+.btn[aria-pressed="true"], .btn.active { background: #1c2a3f; border-color: var(--color-accent); color: #cfe0ff; }
+.badge { display: inline-block; padding: 1px 6px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--color-line-2); color: var(--color-fg-2); }
+.badge.ok { border-color: #1f6b48; color: var(--color-ok); }
+.badge.warn { border-color: #7a5a1a; color: var(--color-warn); }
+.badge.bad { border-color: #7a2a2d; color: var(--color-bad); }
+.badge.est { border-color: #5a3f8c; color: var(--color-est); border-style: dashed; }
+input, select { background: var(--color-bg); border: 1px solid var(--color-line-2); color: var(--color-fg); padding: 4px 8px; font-size: 12px; }
+input:focus, select:focus { outline: 1px solid var(--color-accent); }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+th { text-align: left; font-weight: 600; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-fg-3); padding: 6px 8px; border-bottom: 1px solid var(--color-line-2); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-align: top; }
+.grid-bg { background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px); background-size: 24px 24px; }
+.maplibregl-ctrl-attrib { background: rgba(11,13,16,0.85) !important; color: var(--color-fg-3) !important; font-size: 10px !important; font-family: var(--font-mono); }
+.maplibregl-ctrl-attrib a { color: var(--color-fg-2) !important; }
+.maplibregl-ctrl-group { background: var(--color-bg-1) !important; border: 1px solid var(--color-line-2) !important; box-shadow: none !important; }
+.maplibregl-ctrl-group button { background: transparent !important; filter: invert(0.85); }
+.maplibregl-popup-content { background: var(--color-bg-1) !important; color: var(--color-fg) !important; border: 1px solid var(--color-line-2); padding: 8px 10px !important; font-size: 12px; }
+.maplibregl-popup-tip { border-top-color: var(--color-line-2) !important; }
+@keyframes flash { 0% { background: #3a2a1a; } 100% { background: transparent; } }
+.flash { animation: flash 1.2s ease-out; }
