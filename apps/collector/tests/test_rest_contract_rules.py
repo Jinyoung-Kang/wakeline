@@ -95,6 +95,17 @@ def test_stats_days_are_utc_date_strings_with_an_aggregated_flag():
     assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-27", "dim": "10", "value": 1}]})
 
 
+def test_status_radar_kr_carries_only_validated_fields():
+    """R-72: /status 의 radar_kr 는 허용 목록(available·status·latest_tm·fetched_at·checked_at)만."""
+    v = Draft202012Validator(rcc.SCHEMAS["status"]["properties"]["radar_kr"], format_checker=rcc.FORMATS)
+    ok = {"available": True, "status": "200", "latest_tm": "202609281210", "fetched_at": "2026-09-28T03:10:00Z"}
+    assert not list(v.iter_errors(ok))
+    assert not list(v.iter_errors({}))  # 수집기가 쓴 적 없음 — 모두 모름
+    assert list(v.iter_errors({**ok, "grid": '{"nx":1}'}))  # 원본 해시 필드
+    assert list(v.iter_errors({**ok, "available": "1"}))  # 문자열 그대로
+    assert list(v.iter_errors({**ok, "latest_tm": "12:10"}))
+
+
 def test_aircraft_track_is_capped_and_says_so():
     """R-52: 점 수 상한 5,000 · truncated 필수 · 점 수와 좌표 수가 같다."""
     v = Draft202012Validator(rcc.SCHEMAS["aircraft_track"], format_checker=rcc.FORMATS)

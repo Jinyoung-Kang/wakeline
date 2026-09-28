@@ -99,7 +99,7 @@ public class StatusService {
                 "lag_s", round(lag(ss.fetchedAt(), now)), "stale", lag(ss.fetchedAt(), now) > 900 || ss.fetchedAt().equals(Instant.EPOCH)));
         var rf = radar.frames();
         m.put("radar", kv("provider", rf.provider(), "frames", rf.past().size(), "fetched_at", rf.fetchedAt(), "stale", lag(rf.fetchedAt(), now) > 600));
-        m.put("radar_kr", safeHash("wakeline:radar_kr:meta"));
+        m.put("radar_kr", radarKr(safeHash("wakeline:radar_kr:meta")));
         m.put("engine", kv("index_polygons", engine.indexSize(), "last_cycle_ms", engine.lastCycleMs()));
         m.put("active_providers", safeHash("wakeline:active"));
         // 수요 기반 추적(계약 v2 §A3): 수만(hex·셀은 내보내지 않는다). adsb.fi 호출률은 수집기가 실제로 보낸 최근 60 s 호출 수 / 60.
@@ -136,6 +136,37 @@ public class StatusService {
         }
         if (newest == null || now.toEpochMilli() - newest.toEpochMilli() > HEARTBEAT_MAX_AGE_S * 1000) return null;
         return Math.round(v * 1000) / 1000.0;
+    }
+
+    /**
+     * 공개 radar_kr(R-72 · ADR-017 §1): 수집기 해시 wakeline:radar_kr:meta 에서 검증한 필드만 — available(참·거짓, 수집기가 쓸 수 있다고 표시했는가),
+     * status(세 자리 HTTP 상태), latest_tm(YYYYMMDDHHMM, KST), fetched_at·checked_at(시간대 있는 ISO 시각). 틀리거나 없는 값은 키가 없다(모름).
+     * 해시의 다른 필드(격자·범례·오류 문구 등)는 싣지 않는다 — 수집기가 필드를 더해도 공개 응답에 저절로 나가지 않는다.
+     */
+    static Map<String, Object> radarKr(Map<String, Object> h) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        Object a = h.get("available");
+        if ("1".equals(a)) m.put("available", true);
+        else if ("0".equals(a)) m.put("available", false);
+        String st = h.get("status") == null ? null : String.valueOf(h.get("status"));
+        if (st != null && st.matches("^[1-5][0-9]{2}$")) m.put("status", st);
+        String tm = h.get("latest_tm") == null ? null : String.valueOf(h.get("latest_tm"));
+        if (tm != null && tm.matches("^[0-9]{12}$")) m.put("latest_tm", tm);
+        for (String k : List.of("fetched_at", "checked_at")) {
+            Instant t = isoInstant(h.get(k));
+            if (t != null) m.put(k, t);
+        }
+        return m;
+    }
+
+    /** 시간대가 있는 ISO 시각만. 아니면 null. */
+    static Instant isoInstant(Object v) {
+        if (v == null) return null;
+        try {
+            return java.time.OffsetDateTime.parse(String.valueOf(v).trim()).toInstant();
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     public List<Map<String, Object>> providerStatuses() {

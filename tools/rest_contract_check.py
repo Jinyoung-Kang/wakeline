@@ -636,6 +636,18 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "demand": DEMAND_COUNTS,
             "sources": {"type": "object", "additionalProperties": False, "properties": {"ais": AIS_SOURCE}},
+            # R-72: 수집기 해시를 통째로 내보내지 않는다 — 검증한 필드만(모르면 키 없음)
+            "radar_kr": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "available": BOOL,
+                    "status": {"type": "string", "pattern": "^[1-5][0-9]{2}$"},
+                    "latest_tm": {"type": "string", "pattern": "^[0-9]{12}$"},
+                    "fetched_at": TS,
+                    "checked_at": TS,
+                },
+            },
             "meta": META,
         },
     },

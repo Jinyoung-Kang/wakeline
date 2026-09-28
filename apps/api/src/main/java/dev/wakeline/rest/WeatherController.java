@@ -39,10 +39,14 @@ public class WeatherController {
     private final AppProperties props;
     private final org.springframework.data.redis.core.StringRedisTemplate redis;
     private final tools.jackson.databind.ObjectMapper json;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props, org.springframework.data.redis.core.StringRedisTemplate redis, tools.jackson.databind.ObjectMapper json) {
+    public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props,
+                             org.springframework.data.redis.core.StringRedisTemplate redis, tools.jackson.databind.ObjectMapper json,
+                             io.micrometer.core.instrument.MeterRegistry meters) {
         this.redis = redis;
         this.json = json;
+        this.meters = meters;
         this.sigmets = sigmets;
         this.engine = engine;
         this.radar = radar;
@@ -136,9 +140,10 @@ public class WeatherController {
         try { h = redis.opsForHash().entries("wakeline:radar_kr:meta"); framesJson = redis.opsForValue().get("wakeline:radar_kr:frames"); }
         catch (RuntimeException e) { h = Map.of(); framesJson = null; }
         List<Map<String, Object>> frames = new ArrayList<>();
-        if (framesJson != null) {
+        tools.jackson.databind.JsonNode listedNode = framesJson == null ? null : parseJson("frames", framesJson);
+        if (listedNode != null && listedNode.isArray()) {
             List<Map<String, Object>> listed = new ArrayList<>();
-            for (var f : json.readTree(framesJson)) {
+            for (var f : listedNode) {
                 String tm = f.path("tm").asString();
                 if (!tm.matches("^\\d{12}$")) continue;
                 Map<String, Object> fr = new LinkedHashMap<>();
@@ -152,9 +157,13 @@ public class WeatherController {
             List<Boolean> exists = framesExist(listed.stream().map(fr -> (String) fr.get("tm")).toList());
             for (int i = 0; i < listed.size(); i++) if (i < exists.size() && Boolean.TRUE.equals(exists.get(i))) frames.add(listed.get(i));
         }
-        boolean available = "1".equals(h.get("available")) && !frames.isEmpty();
+        // 수집기가 쓴 값을 믿지 않는다(R-72): 형식이 틀린 필드는 null(모름)로 두고 센다 — 500 이 되지 않는다.
+        // 좌표·이미지 크기를 모르면 지도에 놓을 수 없으므로 '쓸 수 없음'이다.
+        tools.jackson.databind.JsonNode coordinates = h.get("coordinates") == null ? null : parseJson("coordinates", String.valueOf(h.get("coordinates")));
+        int[] imageSize = imageSize(h.get("width"), h.get("height"));
+        boolean available = "1".equals(h.get("available")) && !frames.isEmpty() && coordinates != null && imageSize != null;
         String etag = "\"k" + Integer.toHexString(java.util.Objects.hash(h.get("fetched_at"), h.get("latest_tm"), h.get("available"), h.get("status"),
-                frames.stream().map(fr -> fr.get("tm")).toList())) + "\"";
+                h.get("coordinates"), h.get("width"), h.get("height"), frames.stream().map(fr -> fr.get("tm")).toList())) + "\"";
         CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
         if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
@@ -165,19 +174,47 @@ public class WeatherController {
         m.put("cmp", h.get("cmp"));
         m.put("latest_tm", h.get("latest_tm"));
         m.put("georeferenced", available);
-        m.put("coordinates", h.get("coordinates") == null ? null : json.readTree(String.valueOf(h.get("coordinates"))));
+        m.put("coordinates", coordinates);
         m.put("projection", h.get("projection"));
-        m.put("grid", h.get("grid") == null ? null : json.readTree(String.valueOf(h.get("grid"))));
-        m.put("legend", h.get("legend") == null ? null : json.readTree(String.valueOf(h.get("legend"))));
+        m.put("grid", h.get("grid") == null ? null : parseJson("grid", String.valueOf(h.get("grid"))));
+        m.put("legend", h.get("legend") == null ? null : parseJson("legend", String.valueOf(h.get("legend"))));
         m.put("min_dbz", h.get("min_dbz"));
         m.put("stations", h.get("stations"));
-        m.put("image_size", h.get("width") == null ? null : new int[]{Integer.parseInt(String.valueOf(h.get("width"))), Integer.parseInt(String.valueOf(h.get("height")))});
+        m.put("image_size", imageSize);
         m.put("frames", frames);
         m.put("time_zone", "KST(UTC+9) for tm; fetched_at is UTC");
         m.put("attribution", "기상청 API허브 레이더 합성자료(HSR) · 투영·격자 정의: 기상기후데이터위키");
-        Instant fetched = h.get("fetched_at") == null ? null : Instant.parse(String.valueOf(h.get("fetched_at")));
+        Instant fetched = h.get("fetched_at") == null ? null : StatusService.isoInstant(h.get("fetched_at"));
+        if (h.get("fetched_at") != null && fetched == null) radarParseError("fetched_at");
         m.put("meta", Meta.of(req, "kma_apihub", fetched, 900));
         return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(m);
+    }
+
+    /** 수집기 값 하나를 JSON 으로. 틀리면 null + 셈(R-72). */
+    private tools.jackson.databind.JsonNode parseJson(String field, String text) {
+        try {
+            return json.readTree(text);
+        } catch (RuntimeException e) {
+            radarParseError(field);
+            return null;
+        }
+    }
+
+    /** 이미지 크기 [width, height] — 둘 다 양의 정수일 때만. 값이 있는데 틀리면 셈. */
+    private int[] imageSize(Object width, Object height) {
+        if (width == null && height == null) return null;
+        try {
+            int w = Integer.parseInt(String.valueOf(width).trim()), hgt = Integer.parseInt(String.valueOf(height).trim());
+            if (w > 0 && hgt > 0) return new int[]{w, hgt};
+        } catch (NumberFormatException e) {
+            // 아래에서 센다
+        }
+        radarParseError("image_size");
+        return null;
+    }
+
+    private void radarParseError(String field) {
+        meters.counter("wakeline_radar_kr_parse_errors_total", "field", field).increment();
     }
 
     /** 프레임 PNG 키가 남아 있는지 한 번의 파이프라인(EXISTS × n)으로 확인한다. Redis 오류면 빈 목록(없다고 본다). */
