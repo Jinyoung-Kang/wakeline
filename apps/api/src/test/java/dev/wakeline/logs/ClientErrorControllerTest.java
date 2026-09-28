@@ -96,7 +96,7 @@ class ClientErrorControllerTest {
         LogMasker.registerSecrets("session-secret-xyz");
         try {
             mvc.perform(report(body("TypeError: x is undefined ?apikey=ABC", "at f (app.js:1:2)\nsession-secret-xyz", "/logs?rid=abc#frag",
-                    "MapView", "2026-09-29T03:04:00.123Z"), "203.0.113.7")).andExpect(status().isNoContent());
+                    "MapView token=abc123", "2026-09-29T03:04:00.123Z"), "203.0.113.7")).andExpect(status().isNoContent());
         } finally {
             LogMasker.clearSecrets();
         }
@@ -106,10 +106,11 @@ class ClientErrorControllerTest {
         assertThat(e.path("level").asString()).isEqualTo("ERROR");
         assertThat(e.path("untrusted").asBoolean()).isTrue();
         assertThat(e.path("ts").asString()).as("server receive time").isEqualTo("2026-09-29T03:04:05.678Z");
-        assertThat(e.path("logger").asString()).isEqualTo("MapView");
+        assertThat(e.path("logger").asString()).as("component is masked too").isEqualTo("MapView token=***");
         assertThat(e.path("message").asString()).isEqualTo("TypeError: x is undefined ?apikey=***");
         assertThat(e.path("exception").path("stack").asString()).isEqualTo("at f (app.js:1:2)\n***");
-        assertThat(e.path("exception").path("type").asString()).isEqualTo("web-client");
+        // 예외 종류는 브라우저가 보내지 않는다 — 모르는 값은 빈 글(출처는 service · untrusted 가 이미 말한다)
+        assertThat(e.path("exception").path("type").asString()).isEmpty();
         assertThat(e.path("request_id").isNull()).isTrue();
         JsonNode ctx = e.path("context");
         assertThat(ctx.path("path").asString()).as("query and fragment removed").isEqualTo("/logs");
@@ -140,12 +141,16 @@ class ClientErrorControllerTest {
     }
 
     @Test
-    void bodyOver8KiBIs413_andNonJsonContentTypeIs415() throws Exception {
+    void bodyOver8KiBIs413_andNonJsonContentTypeIs400() throws Exception {
         String big = body("m".repeat(2000), "s".repeat(8000), "/", null, "2026-09-29T03:04:00Z"); // 필드 상한 안이지만 합쳐 8 KiB 초과
         assertThat(big.length()).isGreaterThan(8 * 1024);
         mvc.perform(report(big, "203.0.113.10")).andExpect(status().is(413))
                 .andExpect(jsonPath("$.code").value("TOO_LARGE"));
-        mvc.perform(post("/api/v1/client-errors").contentType("text/plain").content("x")).andExpect(status().isUnsupportedMediaType());
+        // 계약 §C6: 형식 오류는 400(Content-Type 이 JSON 이 아닌 것도)
+        for (String type : List.of("text/plain", "application/x-www-form-urlencoded"))
+            mvc.perform(post("/api/v1/client-errors").contentType(type).content("x")).andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("BAD_CLIENT_ERROR"));
+        mvc.perform(post("/api/v1/client-errors").content(body("m", null, "/", null, "2026-09-29T03:04:00Z"))).andExpect(status().isBadRequest());
         assertThat(sink.queued()).isZero();
     }
 

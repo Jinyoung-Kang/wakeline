@@ -32,15 +32,15 @@ import java.util.function.Supplier;
  * 브라우저 오류 공개 수집(계약 v5 §C6): 웹 화면의 오류(window.onerror · unhandledrejection · 오류 경계)를 받아 로그 스트림에 싣는다.
  * <ul>
  *   <li>본문 {message ≤ 2000, stack ≤ 8000 | null, path ≤ 300(경로만 — '?' · '#' 뒤는 버린다), component ≤ 200 | null, ts ISO} — 글자 수는 코드 포인트.
- *       본문 8 KiB 초과 413, Content-Type 이 JSON 이 아니면 415, 형식 오류 400, 성공 204(같은 오류가 10 s 안에 되풀이되어 억제돼도 204).</li>
+ *       본문 8 KiB 초과 413, 형식 오류 400(Content-Type 이 JSON 이 아닌 것 포함), 성공 204(같은 오류가 10 s 안에 되풀이되어 억제돼도 204).</li>
  *   <li>요청 제한: IP당 분당 {@value #PER_IP_PER_MIN} · 전체 분당 {@value #GLOBAL_PER_MIN}(Redis 제한기, 키 rl:cerr:{ip}|all:{분}) — 429 + Retry-After.
  *       IP 가 막힌 요청은 전체 한도를 쓰지 않는다. 제한기가 Redis 에 닿지 않으면 받지 않는다(503) — Redis 장애 중에는 대기열이 서버 오류를
  *       붙잡아 두는 자리라서, 누구나 보낼 수 있는 브라우저 오류로 그 자리를 밀어내지 못하게 한다. /api/** 공통 제한(IP당 분당 120)도 그대로 적용된다.</li>
  *   <li>항목: service "web-client" · level ERROR · untrusted true(브라우저가 보낸 내용 — 사실로 믿지 말 것). ts 는 api 가 받은 시각이고
- *       브라우저가 보낸 시각은 context.client_ts. logger = component(없으면 "browser"), 스택이 있으면 exception {type:"web-client"(출처 표시 —
- *       오류 종류가 아니다), message:null, stack}. request_id 는 null(이 수집 요청은 오류의 원인이 아니다 — 받은 요청의 id 는
+ *       브라우저가 보낸 시각은 context.client_ts. logger = component(가린 뒤, 없으면 "browser"), 스택이 있으면 exception {type:""(모름 — 브라우저는 오류
+ *       종류를 따로 보내지 않는다, 출처는 service · untrusted 가 말한다), message:null, stack}. request_id 는 null(이 수집 요청은 오류의 원인이 아니다 — 받은 요청의 id 는
  *       context.receive_request_id). User-Agent 앞 200자는 context.user_agent. 클라이언트 IP 는 싣지 않는다.</li>
- *   <li>메시지·스택·경로·User-Agent 는 가림(LogMasker)을 거친다. 쿠키 인증이 없으므로 CSRF 대상이 아니다(SecurityConfig: 공개 경로).</li>
+ *   <li>메시지·스택·경로·component·User-Agent 는 가림(LogMasker)을 거친다. 쿠키 인증이 없으므로 CSRF 대상이 아니다(SecurityConfig: 공개 경로).</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -57,6 +57,8 @@ public class ClientErrorController {
     static final int GLOBAL_PER_MIN = 120;
     static final String BUCKET = "cerr";
     static final String SERVICE = "web-client";
+    /** 예외 종류를 모른다(스키마: 빈 글 허용). 출처 이름("web-client")을 종류 자리에 넣지 않는다 — 운영 화면이 '예외 종류' 로 보인다. */
+    static final String UNKNOWN_TYPE = "";
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
@@ -94,8 +96,7 @@ public class ClientErrorController {
         if (!sink.enabled())
             throw new Problem(HttpStatus.SERVICE_UNAVAILABLE, "LOG_SINK_DISABLED", "service unavailable", "log collection is turned off on this server");
         rateLimit(ClientIp.resolve(req, props.trustedProxy()));
-        if (!isJson(req.getContentType()))
-            throw new Problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE", "unsupported media type", "Content-Type must be application/json");
+        if (!isJson(req.getContentType())) throw bad("Content-Type must be application/json"); // 계약 §C6: 형식 오류는 400
         JsonNode root = parse(readBody(req));
 
         String message = text(root, "message", MESSAGE_MAX, true);
@@ -109,9 +110,9 @@ public class ClientErrorController {
         String cleanPath = path;
         int cut = indexOfAny(cleanPath, '?', '#');
         if (cut >= 0) cleanPath = cleanPath.substring(0, cut);
-        String logger = component == null || component.isBlank() ? "browser" : component;
+        String logger = component == null || component.isBlank() ? "browser" : LogMasker.maskAll(component);
         String maskedMessage = LogMasker.maskAll(message);
-        LogEvents.Ex ex = stack == null || stack.isEmpty() ? null : new LogEvents.Ex(SERVICE, null, LogMasker.maskAll(stack));
+        LogEvents.Ex ex = stack == null || stack.isEmpty() ? null : new LogEvents.Ex(UNKNOWN_TYPE, null, LogMasker.maskAll(stack));
 
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("path", LogMasker.maskAll(cleanPath));
