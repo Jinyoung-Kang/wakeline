@@ -6,6 +6,7 @@ import {
   classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, pipelineLossCount, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict, settingIfMatch, signOut, type SettingEdit,
 } from "@/lib/ops";
 import { OpsPipeline } from "@/components/OpsPipeline";
+import { statsDay } from "@/lib/stats";
 
 type Any = Record<string, unknown>;
 interface Providers { providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[] }
@@ -118,7 +119,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="label mt-4 mb-1">Provider switches</div>
           <table><thead><tr><th>at</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><td className="mono">{fmtTime(String(s.at))}</td><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>
           <div className="label mt-4 mb-1">Daily budget snapshot</div>
-          <table><thead><tr><th>day</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono">{String(b.day).slice(0, 10)}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
+          <table><thead><tr><th>day</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono">{statsDay(b.day) ?? "—"}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "runs" && runs ? <>
           <div className="label mb-1">Last 24 h</div>
@@ -129,7 +130,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         </> : null}
         {tab === "quality" && quality ? <>
           <div className="label mb-1">Quarantine counts by rule (7d)</div>
-          <table className="mb-4"><thead><tr><th>day</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{String(r.day).slice(0, 10)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
+          <table className="mb-4"><thead><tr><th>day</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{statsDay(r.day) ?? "—"}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
           <table><thead><tr><th>at</th><th>run</th><th>rule</th><th>hex</th><th>detail</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><td className="mono">{fmtTime(String(r.created_at))}</td><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}

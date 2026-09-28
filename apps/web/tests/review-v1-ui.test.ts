@@ -383,3 +383,51 @@ describe("R-31 legend and status bar on common laptop screens", () => {
     expect(html.indexOf('data-testid="kr-radar-stale"')).toBeLessThan(html.indexOf('data-testid="aircraft-count"'));
   });
 });
+
+describe("R-32 / R-45 statistics readable: labels, units, honest empty states, date-only days", () => {
+  it("day values: 'YYYY-MM-DD' as is; a UTC-midnight timestamp is read as that date; anything else is unknown (—), never shifted", async () => {
+    const stats = await import("@/lib/stats");
+    expect(stats.statsDay("2026-09-27")).toBe("2026-09-27");
+    expect(stats.statsDay("2026-09-27T00:00:00.000Z")).toBe("2026-09-27"); // 옛 응답(UTC JVM)
+    expect(stats.statsDay("2026-09-26T15:00:00.000Z")).toBeNull(); // KST JVM 이 만든 자정 — 날짜를 단정하지 않는다
+    expect(stats.statsDay(null)).toBeNull();
+    expect(stats.statsDay("2026-02-30")).toBeNull();
+  });
+  it("alert stats become one row per day and kind with Korean labels and units instead of raw metric keys", async () => {
+    const stats = await import("@/lib/stats");
+    const rows = stats.alertStatsRows([
+      { day: "2026-09-27", metric: "alerts_by_kind", dim: "OBSERVED", value: 19546 },
+      { day: "2026-09-27", metric: "alert_dwell_avg_s", dim: "OBSERVED", value: 784.55 },
+      { day: "2026-09-27", metric: "alerts_by_kind", dim: "PREDICTED", value: 120 },
+      { day: "2026-09-28", metric: "alerts_by_kind", dim: "OBSERVED", value: 10 },
+    ]);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ day: "2026-09-27", kind: "관측(경보 안)", count: "19,546건", dwell: "13m 05s", preFix: true });
+    expect(rows[1]).toMatchObject({ kind: "예측(추정)", count: "120건", dwell: "—", preFix: false });
+    expect(rows[2]).toMatchObject({ day: "2026-09-28", dwell: "—", preFix: false });
+    const { AlertStatsTable } = await import("@/components/AlertStatsTable");
+    const html = renderToStaticMarkup(createElement(AlertStatsTable, { rows }));
+    expect(html).not.toMatch(/alert_dwell_avg_s|alerts_by_kind/);
+    expect(html).toContain("평균 체류");
+    expect(html).toContain("날짜(UTC)");
+  });
+  it("empty states say whether the day was not aggregated yet, never aggregated, or aggregated with no data", async () => {
+    const stats = await import("@/lib/stats");
+    const today = "2026-09-28";
+    expect(stats.statsEmptyText(false, "2026-09-27", today)).toContain("다음 03:30 UTC");
+    expect(stats.statsEmptyText(false, "2020-01-01", today)).not.toContain("다음 03:30");
+    expect(stats.statsEmptyText(false, "2020-01-01", today)).toContain("집계되지 않은 날짜");
+    expect(stats.statsEmptyText(true, "2026-09-20", today)).toContain("자료가 없습니다");
+    expect(stats.statsEmptyText(undefined, "2026-09-20", today)).toContain("구분할 수 없");
+    expect(stats.aggregatedFlag({ aggregated: false })).toBe(false);
+    expect(stats.aggregatedFlag({ aggregated: "no" })).toBeUndefined();
+    expect(stats.yesterdayUtc(Date.parse("2026-09-28T01:00:00Z"))).toBe("2026-09-27");
+  });
+  it("bar labels are not cut to four characters: long labels are rotated and the full text is in a tooltip", async () => {
+    const { BarChart } = await import("@/components/BarChart");
+    const html = renderToStaticMarkup(createElement(BarChart, { id: "c", title: "t", rows: [{ label: "TURB", value: 3 }, { label: "SBAOYMMMWAAF", value: 1 }] }));
+    expect(html).not.toContain("SBAO…");
+    expect(html).toMatch(/<title>SBAOYMMMWAAF<\/title>/);
+    expect(html).toMatch(/transform="rotate\(-45/);
+  });
+});
