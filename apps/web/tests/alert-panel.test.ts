@@ -133,4 +133,21 @@ describe("alert list freshness follows the status bar's receive rule (R-58)", ()
     expect(live).not.toContain('data-testid="alerts-stale"');
     expect(text(live)).not.toContain("추정 ETA —");
   });
+  it("the frozen ETA's tooltip names the state: silent is 'open but nothing received', not 'connection lost'", () => {
+    const etaTitle = () => /<span class="badge est ml-auto" title="([^"]*)" data-testid="alert-eta"/.exec(html())?.[1];
+    setData({ conn: "open", alertsVersion: 3, alerts: new Map([[9, pred]]), status: STATUS, lastRxAt: Date.now() - (RX_FRESH_MS + 5_000) });
+    const silent = etaTitle();
+    // 수정 전: 모든 멈춤 상태에서 "연결이 끊겨 갱신되지 않음" — 연결은 열려 있다(상태 바·목록 안내와 모순)
+    expect(silent).not.toContain("끊겨");
+    expect(silent).toContain("수신 없음(연결은 열림)");
+    expect(silent).toContain("갱신되지 않음");
+    setData({ conn: "closed" });
+    expect(etaTitle()).toContain("연결이 끊겨 갱신되지 않음");
+    setData({ conn: "paused" });
+    expect(etaTitle()).toContain("일시정지(탭 숨김)");
+    setData({ conn: "open", alertsVersion: null });
+    expect(etaTitle()).toContain("알림 수신 대기");
+    setData({ conn: "open", alertsVersion: 4, lastRxAt: Date.now() });
+    expect(etaTitle()).toContain("직선 외삽"); // 실시간이면 판정 시각·방법
+  });
 });

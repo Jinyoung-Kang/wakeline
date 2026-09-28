@@ -6,7 +6,7 @@ import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
 import { fmtAlt, fmtClock, fmtEta, fmtTime, hazardColor } from "@/lib/format";
-import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible } from "@/lib/alerts";
+import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 
 /**
@@ -90,7 +90,7 @@ export function AlertPanel() {
                 {a.kind === "PREDICTED"
                   ? <span className="mono est-val w-14 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span>{fmtAlt(a.alt_ft)}</span>
                   : <span className="mono w-14 shrink-0 text-[11px]" title="관측 고도">{fmtAlt(a.alt_ft)}</span>}<span className="sr-only">, </span>
-                {a.kind === "PREDICTED" ? <EtaBadge a={a} frozen={listState !== "live"} /> : <span className="badge bad ml-auto">INSIDE<span className="sr-only"> — 경보 안</span></span>}
+                {a.kind === "PREDICTED" ? <EtaBadge a={a} state={listState} /> : <span className="badge bad ml-auto">INSIDE<span className="sr-only"> — 경보 안</span></span>}
               </button>
               {open === a.id ? (
                 <div id={`evidence-${a.id}`} className="px-2 pb-2">
@@ -123,12 +123,21 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
   );
 }
 
-/** 예측 ETA(추정) — 이 배지만 1 s 마다 다시 그린다. 목록이 갱신되지 않는 동안(frozen)은 카운트다운하지 않는다. */
-function EtaBadge({ a, frozen }: { a: Alert; frozen: boolean }) {
+/** 멈춘 ETA 의 툴팁 — 목록 위 안내(alerts-stale)와 같은 상태 이름으로(R-58: 연결이 열린 'silent' 를 "끊김"이라고 하지 않는다) */
+const ETA_FROZEN_TITLE: Record<Exclude<AlertListState, "live">, string> = {
+  silent: "수신 없음(연결은 열림) — 갱신되지 않음 · 이미 해제됐을 수 있습니다",
+  paused: "일시정지(탭 숨김) — 갱신되지 않음 · 이미 해제됐을 수 있습니다",
+  waiting: "알림 수신 대기 — 이전 연결의 목록이라 갱신되지 않음 · 이미 해제됐을 수 있습니다",
+  disconnected: "연결이 끊겨 갱신되지 않음 — 이미 해제됐을 수 있습니다",
+};
+
+/** 예측 ETA(추정) — 이 배지만 1 s 마다 다시 그린다. 목록이 갱신되지 않는 동안(live 가 아님)은 카운트다운하지 않는다. */
+function EtaBadge({ a, state }: { a: Alert; state: AlertListState }) {
   const now = useServerNow(1000);
   const judged = typeof a.evidence?.judged_at === "string" ? a.evidence.judged_at : null;
+  const frozen = state !== "live";
   return (
-    <span className="badge est ml-auto" title={frozen ? "연결이 끊겨 갱신되지 않음 — 이미 해제됐을 수 있습니다" : `판정 ${fmtTime(judged)} · 현재 속도·방위 직선 외삽`} data-testid="alert-eta">
+    <span className="badge est ml-auto" title={state === "live" ? `판정 ${fmtTime(judged)} · 현재 속도·방위 직선 외삽` : ETA_FROZEN_TITLE[state]} data-testid="alert-eta">
       추정 ETA {frozen ? "—" : fmtEta(now ? etaRemainingS(a, now) : a.eta_s)}
     </span>
   );
