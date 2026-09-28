@@ -3,7 +3,7 @@ import { serverNowMs, useServerData } from "@/lib/store";
 import { useNow } from "@/lib/clock";
 import { fmtAgo, fmtClock, fmtIso, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
 import { aisBadge, aisGapBadge } from "@/lib/ships";
-import { feedLag, GLOBAL_STALE_S, isRxFresh, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
+import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
 
 /**
  * 상단 상태 바(FR-11): 연결 상태·지역/전세계 피드별 출처·수집 시각·지연 배지(지역 > 60 s, 전세계 > 300 s 면 경고)·SIGMET·레이더.
@@ -29,7 +29,7 @@ export function StatusBar() {
   const gap = aisGapBadge(s.ais, srvNow);
   return (
     <div className="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-b border-line bg-bg-1 px-3 text-[11px] whitespace-nowrap" data-testid="statusbar" role="group" aria-label="수집·연결 상태">
-      <span className={`badge ${s.conn === "open" && !silent ? "ok" : s.conn === "paused" || silent ? "warn" : "bad"}`} data-testid="conn"
+      <span className={`badge ${connTone(s.conn, silent, s.reconnectAttempt)}`} data-testid="conn"
         title={silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — 75 s 가 되면 다시 연결` : undefined}>
         WS {s.conn}{silent ? " · 수신 없음" : ""}{s.conn !== "open" && s.reconnectAttempt > 0 ? ` · retry ${s.reconnectAttempt}` : ""}
       </span>

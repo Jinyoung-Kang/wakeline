@@ -25,8 +25,11 @@ export function AlertPanel() {
   const [scope, setScope] = useState<"region" | "world">("region");
   const status = useServerData((d) => d.status);
   const all = useMemo(() => [...alerts.values()], [alerts]);
+  // 관심 지역 설정(status.region)을 아직 받지 못했으면 범위를 모른다 — 전세계 목록을 '관심 지역'으로 보이지 않고 기다린다(R-09)
+  const regionPending = scope === "region" && status == null;
   // 관심 지역 = 서버 설정의 중심·반경(설정값이 없으면 전체). 항공기 위치는 evidence.position([lat, lon]) 또는 없음 → 전세계 뷰에서만 표시
   const list = useMemo(() => {
+    if (scope === "region" && status == null) return [];
     const center = status?.region.center, radius = status?.region.radius_nm;
     const inRegion = (a: (typeof all)[number]) => {
       if (!center || !radius) return true;
@@ -39,6 +42,8 @@ export function AlertPanel() {
       .sort((a, b) => (a.kind === b.kind ? b.entered_at.localeCompare(a.entered_at) : a.kind === "OBSERVED" ? -1 : 1));
   }, [all, scope, status]);
   const observed = list.filter((a) => a.kind === "OBSERVED").length;
+  // 목록을 받기 전·관심 지역을 모를 때 수는 모름("—") — 0 이라고 하지 않는다(R-09)
+  const countsKnown = alertsVersion != null && !regionPending;
   const regionText = "관심 지역(중심 " + (status?.region.center?.join(", ") ?? "—") + ", 반경 " + (status?.region.radius_nm ?? "—") + " NM)에서 ";
   return (
     <div className="flex h-full flex-col" data-testid="alert-panel">
@@ -46,14 +51,14 @@ export function AlertPanel() {
         <span className="label">Alerts</span>
         <div className="flex items-center gap-2">
           <button className="btn" aria-pressed={scope === "region"} onClick={() => setScope("region")} data-testid="alerts-scope-region">관심 지역</button>
-          <button className="btn" aria-pressed={scope === "world"} onClick={() => setScope("world")} data-testid="alerts-scope-world">전세계 {all.length}</button>
-          <span className="mono text-[11px]"><span className="text-bad">{observed}</span> inside · <span className="text-est">{list.length - observed}</span> predicted</span>
+          <button className="btn" aria-pressed={scope === "world"} onClick={() => setScope("world")} data-testid="alerts-scope-world">전세계 {alertsVersion != null ? all.length : "—"}</button>
+          <span className="mono text-[11px]"><span className="text-bad">{countsKnown ? observed : "—"}</span> inside · <span className="text-est">{countsKnown ? list.length - observed : "—"}</span> predicted</span>
         </div>
       </div>
-      {/* 새 이벤트를 스크린리더에 알린다(영역은 항상 있어야 변경이 읽힌다) */}
-      <div role="status" aria-live="polite" aria-atomic="true">
+      {/* 새 이벤트를 스크린리더에 알린다(영역은 항상 있어야 변경이 읽힌다). 높이를 고정해 배너가 나타나거나 사라져도 목록이 밀리지 않는다(R-09) */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="h-[26px] shrink-0 overflow-hidden border-b border-line">
         {lastEvent ? (
-          <div key={lastEvent.at} className="flash border-b border-line px-2 py-1 text-[11px] text-fg-2" data-testid="alert-banner" data-event={lastEvent.type}>
+          <div key={lastEvent.at} className="flash truncate px-2 py-1 text-[11px] text-fg-2" data-testid="alert-banner" data-event={lastEvent.type}>
             <span className="label mr-1">{lastEvent.type}</span>
             <span className={lastEvent.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[lastEvent.type] ?? lastEvent.type}</span>
             {" · "}<span className="mono">{lastEvent.alert.callsign ?? lastEvent.alert.hex}</span> · {lastEvent.alert.hazard} {lastEvent.alert.fir_id}
@@ -68,7 +73,10 @@ export function AlertPanel() {
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {list.length === 0 && alertsVersion != null ? (
+        {regionPending && alertsVersion != null ? (
+          <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-region-waiting">관심 지역 설정(중심·반경) 수신 대기 — 전세계 목록은 &lsquo;전세계&rsquo;에서 볼 수 있습니다.</div>
+        ) : null}
+        {list.length === 0 && alertsVersion != null && !regionPending ? (
           <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-empty">
             {listState === "live" ? "" : "마지막으로 받은 목록 기준: "}{scope === "region" ? regionText : ""}현재 SIGMET 안에 있거나 10분 내 진입이 예상되는 항공기가 없습니다.
           </div>

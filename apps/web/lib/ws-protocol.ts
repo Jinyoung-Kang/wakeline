@@ -31,6 +31,17 @@ export function attemptAfterClose(attempt: number, code: unknown): number {
   return typeof code === "number" && LONG_BACKOFF_CODES.has(code) ? Math.max(attempt, LONG_BACKOFF_ATTEMPT) : attempt;
 }
 
+/**
+ * 연결 배지 색(R-09): 열림·수신 중 = ok. 일시정지·수신 없음·첫 연결 중(재시도 전) = warn — 아직 실패가 아니다.
+ * 끊김·재시도 중 = bad. silent = 연결은 열려 있지만 RX_FRESH_MS 넘게 아무것도 받지 못함.
+ */
+export function connTone(conn: string, silent: boolean, reconnectAttempt: number): "ok" | "warn" | "bad" {
+  if (conn === "open") return silent ? "warn" : "ok";
+  if (conn === "paused") return "warn";
+  if (conn === "connecting" && reconnectAttempt === 0) return "warn";
+  return "bad";
+}
+
 /** 연결이 열려 있고 최근(RX_FRESH_MS 안)에 무엇이든 받았는가 — ping 은 30 s 마다 오므로 조용한 정상 연결도 참이다. */
 export function isRxFresh(conn: string, lastRxAt: number | null | undefined, nowMs: number): boolean {
   return conn === "open" && lastRxAt != null && nowMs - lastRxAt < RX_FRESH_MS;

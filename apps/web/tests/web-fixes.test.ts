@@ -21,7 +21,7 @@ import { isSummaryRow, replayAircraftTip, replayRecLabel } from "@/lib/replay";
 import { resetData, setData } from "@/lib/store";
 import { AlertPanel } from "@/components/AlertPanel";
 import { StatusBar } from "@/components/StatusBar";
-import type { AircraftState, Alert, KrRadar, SigmetCollection, SigmetProps } from "@/lib/types";
+import type { AircraftState, Alert, KrRadar, PublicStatus, SigmetCollection, SigmetProps } from "@/lib/types";
 
 const NOW = Date.parse("2026-09-28T01:00:00Z");
 
@@ -240,13 +240,15 @@ describe("small honesty fixes", () => {
 describe("rendered panels (server-side render, no DOM)", () => {
   const pred: Alert = {
     id: 7, kind: "PREDICTED", hex: "71c081", callsign: "KAL081", sigmet_id: "S", fir_id: "RKRR", hazard: "TS", entered_at: "2026-09-28T00:59:00Z",
-    eta_s: 240, eta_at: "2026-09-28T01:04:00Z", alt_ft: 35000, evidence: { judged_at: "2026-09-28T01:00:00Z" }, estimated: true,
+    eta_s: 240, eta_at: "2026-09-28T01:04:00Z", alt_ft: 35000, evidence: { judged_at: "2026-09-28T01:00:00Z", position: [36.5, 127.8] }, estimated: true,
   };
+  // 관심 지역 설정(status.region) — 받기 전에는 '관심 지역' 목록이 수신 대기다(R-09)
+  const status = { region: { center: [36.5, 127.8], radius_nm: 300 } } as unknown as PublicStatus;
   beforeEach(() => resetData());
   afterEach(() => resetData());
 
   it("before the first alerts message the panel says it is waiting, never 'no aircraft' (DH-9)", () => {
-    setData({ conn: "open", alertsVersion: null });
+    setData({ conn: "open", alertsVersion: null, status });
     const html = renderToStaticMarkup(createElement(AlertPanel));
     expect(html).toContain("알림 목록 수신 대기");
     expect(html).not.toContain("항공기가 없습니다");
@@ -254,7 +256,7 @@ describe("rendered panels (server-side render, no DOM)", () => {
     expect(renderToStaticMarkup(createElement(AlertPanel))).toContain("항공기가 없습니다");
   });
   it("after a disconnect the last list is marked stale and the ETA stops (DH-9); predicted altitude is marked 추정 (DH-15)", () => {
-    setData({ conn: "open", alertsVersion: 3, alerts: new Map([[7, pred]]) });
+    setData({ conn: "open", alertsVersion: 3, alerts: new Map([[7, pred]]), status });
     const live = renderToStaticMarkup(createElement(AlertPanel));
     expect(live).toContain('data-testid="alert-alt-est"');
     expect(live).toMatch(/class="mono est-val[^"]*"[^>]*title="진입 시 고도 — 추정/);
