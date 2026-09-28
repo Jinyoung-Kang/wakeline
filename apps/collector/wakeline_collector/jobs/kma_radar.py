@@ -28,6 +28,7 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, render_mercator_png
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
+from wakeline_collector.raw_store import archive
 
 log = logging.getLogger("job.kma_radar")
 KEY_META = "wakeline:radar_kr:meta"  # hash
@@ -229,7 +230,7 @@ class KmaRadarJob:
 
     async def _store(self, tm: str, res) -> None:
         ctx = self.ctx
-        raw_ref = ctx.raw.save("kma_radar", res.raw, res.fetched_at)
+        raw_ref = await archive(ctx.raw, "kma_radar", res.raw, res.fetched_at)  # 이미 gzip → 그대로 .bin.gz(R-21)
         try:
             header, png, meta = await asyncio.to_thread(_decode, res.raw)
         except Exception as e:  # noqa: BLE001 — 해석 실패는 격리(원천은 남는다)

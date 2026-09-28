@@ -7,8 +7,10 @@ DB 기록(ingest_run·품질)은 발행 뒤 큐에 넣기만 하고(비동기 wr
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 
@@ -22,6 +24,7 @@ from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import Throttled
+from wakeline_collector.raw_store import archive
 from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.aircraft")
@@ -81,31 +84,10 @@ class AircraftJob:
             await self._on_fetch_error(prov.name, cost, started, e)
             return
 
-        raw_ref = result.extra.get("raw_ref") or ctx.raw.save(prov.name, result.raw, result.fetched_at)
+        raw_ref = result.extra.get("raw_ref") or await archive(ctx.raw, prov.name, result.raw, result.fetched_at)
         fetched_at = result.fetched_at
-        if prov.name == "opensky":
-            results = [normalize_opensky(v, fetched_at) for v in result.data.get("states") or []]
-        else:
-            ref = readsb_reference_time(result.data, fetched_at)
-            results = [
-                normalize_readsb(ac, prov.name, fetched_at, ref) for ac in result.data.get("ac") or [] if isinstance(ac, dict)
-            ]
-        states = [r for r in results if isinstance(r, AircraftState)]
-        pre = [Quarantine(r.rule, r.hex, r.detail) for r in results if isinstance(r, Rejected)]
-        gate = self.gate.apply(states, 0, datetime.now(UTC), pre=pre)
-        payload = {
-            "region": None if need_global else {"lat": lat, "lon": lon, "radius_nm": radius},
-            "states": [s.model_dump(mode="json") for s in gate.kept],
-        }
-        fields = ctx.publisher.envelope(
-            kind="aircraft",
-            scope=self.scope,
-            provider=prov.name,
-            fetched_at=fetched_at,
-            raw_ref=raw_ref,
-            count=len(gate.kept),
-            payload=payload,
-        )
+        # 정규화·게이트·gzip 인코딩은 CPU 작업(전세계 약 6,600대 ≈ 100 ms) — 스레드에서(R-21). self.gate 는 이 작업만 쓴다.
+        results, gate, fields = await asyncio.to_thread(self._process, prov.name, result, raw_ref, (lat, lon, radius))
         await ctx.publisher.publish(STREAM_AIRCRAFT, fields)
 
         # ---- 이하 부가 기록(실패해도 다음 주기에 영향 없음) ----
@@ -155,6 +137,37 @@ class AircraftJob:
             len(gate.quarantined),
             result.latency_ms,
         )
+
+    def _process(
+        self, provider: str, result: Any, raw_ref: str, region: tuple[float, float, int]
+    ) -> tuple[list, Any, dict[str, str]]:
+        """응답 → (정규화 결과, 게이트 결과, 발행 필드). 이벤트 루프 밖(스레드)에서 돈다."""
+        fetched_at = result.fetched_at
+        if provider == "opensky":
+            results = [normalize_opensky(v, fetched_at) for v in result.data.get("states") or []]
+        else:
+            ref = readsb_reference_time(result.data, fetched_at)
+            results = [
+                normalize_readsb(ac, provider, fetched_at, ref) for ac in result.data.get("ac") or [] if isinstance(ac, dict)
+            ]
+        states = [r for r in results if isinstance(r, AircraftState)]
+        pre = [Quarantine(r.rule, r.hex, r.detail) for r in results if isinstance(r, Rejected)]
+        gate = self.gate.apply(states, 0, datetime.now(UTC), pre=pre)
+        lat, lon, radius = region
+        payload = {
+            "region": None if self.scope == "global" else {"lat": lat, "lon": lon, "radius_nm": radius},
+            "states": [s.model_dump(mode="json") for s in gate.kept],
+        }
+        fields = self.ctx.publisher.envelope(
+            kind="aircraft",
+            scope=self.scope,
+            provider=provider,
+            fetched_at=fetched_at,
+            raw_ref=raw_ref,
+            count=len(gate.kept),
+            payload=payload,
+        )
+        return results, gate, fields
 
     def _hb_extra(self) -> dict[str, str] | None:
         """관심 지역 heartbeat 에 실제 주기를 함께 싣는다 — 헬스체크 기준이 주기를 따른다(COL-5)."""

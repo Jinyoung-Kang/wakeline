@@ -44,6 +44,7 @@ from wakeline_collector.normalize import Rejected, normalize_readsb, readsb_refe
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
+from wakeline_collector.raw_store import archive
 from wakeline_collector.route import normalize_callsign
 from wakeline_collector.status import newest_age_s
 
@@ -435,7 +436,7 @@ class DemandTracker:
         ref = res.extra.get("raw_ref")
         if ref:
             return str(ref)
-        return await asyncio.to_thread(self.ctx.raw.save, f"{self.provider.name}_{kind}", res.raw, res.fetched_at)
+        return await archive(self.ctx.raw, f"{self.provider.name}_{kind}", res.raw, res.fetched_at)
 
     async def _publish(self, scope: str, res: ProviderResult, raw_ref: str, count: int, payload: dict[str, Any]) -> None:
         fields = self.ctx.publisher.envelope(

@@ -17,6 +17,7 @@ from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import Sigmet
 from wakeline_collector.publisher import STREAM_RADAR, STREAM_SIGMET, decode_payload
+from wakeline_collector.raw_store import archive
 from wakeline_collector.sigmet_parse import parse_airsigmet, parse_isigmet
 
 log = logging.getLogger("job.weather")
@@ -149,9 +150,9 @@ class SigmetJob:
             return  # 국제 호출 실패 → 발행하지 않는다
         intl, us, us_error = res
         fetched_at = intl.fetched_at
-        raw_ref = intl.extra.get("raw_ref") or ctx.raw.save("awc_isigmet", intl.raw, fetched_at)
+        raw_ref = intl.extra.get("raw_ref") or await archive(ctx.raw, "awc_isigmet", intl.raw, fetched_at)
         if us is not None and not us.extra.get("raw_ref"):
-            ctx.raw.save("awc_airsigmet", us.raw, us.fetched_at)
+            await archive(ctx.raw, "awc_airsigmet", us.raw, us.fetched_at)
         fx = self.awc.name == "fixture"  # 재생 자료는 출처를 fixture 로 남긴다(실 AWC 자료로 오인되지 않게)
         intl_list, us_list, parse_errors = await asyncio.to_thread(
             _parse_all, intl.data, fetched_at, us.data if us is not None else None, us.fetched_at if us else None, fx
@@ -231,7 +232,7 @@ class RadarJob:
         started, res = await _guard(ctx, "radar", self.rv.name, 1, self.rv.frames)
         if res is None:
             return
-        raw_ref = res.extra.get("raw_ref") or ctx.raw.save("rainviewer", res.raw, res.fetched_at)
+        raw_ref = res.extra.get("raw_ref") or await archive(ctx.raw, "rainviewer", res.raw, res.fetched_at)
         host = str(res.data["host"])
         past = [
             {"time": int(f["time"]), "path": str(f["path"])}
@@ -314,7 +315,7 @@ class MetarJob:
         started, res = await _guard(ctx, "metar", self.awc.name, 1, lambda: self.awc.metar_bbox(lamin, lomin, lamax, lomax))
         if res is None:
             return
-        raw_ref = res.extra.get("raw_ref") or ctx.raw.save("awc_metar", res.raw, res.fetched_at)
+        raw_ref = res.extra.get("raw_ref") or await archive(ctx.raw, "awc_metar", res.raw, res.fetched_at)
         airports: list[dict[str, Any]] = []
         obs: list[dict[str, Any]] = []
         bad: list[tuple[str, str | None, dict[str, Any]]] = []

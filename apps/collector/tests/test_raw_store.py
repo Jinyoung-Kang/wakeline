@@ -23,6 +23,16 @@ def test_save_and_purge(tmp_path):
     assert rs.purge(72) == 1 and not p.exists() and (tmp_path / fresh).exists()
 
 
+def test_r21_already_gzipped_body_is_stored_as_is(tmp_path):
+    """리뷰 R-21: KMA 본문은 이미 gzip 인데 한 번 더 압축했다(1.09 MB → 1.08 MB, 수십 ms). 그대로 .bin.gz 로 쓴다."""
+    rs = RawStore(str(tmp_path))
+    body = gzip.compress(b"\x00RDR" * 1000)
+    at = datetime(2026, 9, 28, 1, 2, 3, 456000, tzinfo=UTC)
+    ref = rs.save("kma_radar", body, at)
+    assert ref == "kma_radar/20260928/010203_456000.bin.gz"
+    assert (tmp_path / ref).read_bytes() == body  # 두 번 압축하지 않았다 — gunzip 한 번이면 원본 바이너리
+
+
 def test_purge_missing_root_and_save_failure(tmp_path):
     assert RawStore(str(tmp_path / "none")).purge() == 0
     blocker = tmp_path / "file"
