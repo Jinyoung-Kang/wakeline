@@ -15,11 +15,11 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
-| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V7) |
+| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V9) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
-| **검증** | 자동 시험 1,288건(pytest 453 · JUnit 395 · Vitest 209 · Playwright E2E 16 · 인프라 정책 44 · Redis ACL 171) · 적대적 리뷰 2회(97건 · 19건 수정) · 장애 주입 6종 · 실측 문제 기록 23건([VERIFICATION](docs/VERIFICATION.md)) |
-| **성능(실측)** | REST 100 rps p95 8.6–12 ms · WS 200 연결 p95 286 ms(목표 500) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 15건([docs/adr](docs/adr)) · 변경 계약 v1–v3([docs/audit](docs/audit)) |
+| **검증** | 자동 시험 2,149건(pytest 746 · JUnit 534 · Vitest 378 · Playwright E2E 16 · 인프라 정책 110 · 버리는 컨테이너 시험 365) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 30건([VERIFICATION](docs/VERIFICATION.md)) |
+| **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(같은 기계에 다른 부하가 없을 때) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 없을 때 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577 MiB 이상) · 첫 화면 JS 497.7 KiB · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
+| **설계 기록** | ADR 17건([docs/adr](docs/adr)) · 변경 계약 v1–v4([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -72,10 +72,11 @@ flowchart LR
 | 컨테이너 PID 1 = docker-init | `docker kill` 은 수동 정지로 기록돼 재시작 정책이 동작하지 않았다(장애 주입에서 발견) |
 
 ## 3. 보안
-- **단일 진입점**: 127.0.0.1:8700 의 nginx 만 공개. Host 허용 목록(그 밖은 421), X-Forwarded-For 덮어쓰기(위조 헤더로 IP 제한 우회 불가 — E2E 로 확인), IP당 요청·연결 제한 2단(edge + api).
+- **단일 진입점**: 127.0.0.1:8700 의 nginx 만 공개. Host 허용 목록(그 밖은 421), X-Forwarded-For · X-Request-Id 덮어쓰기(위조 헤더로 IP 제한 우회·로그 상관 id 선택 불가 — E2E·edge 시험으로 확인), IP당 요청·연결 제한 2단(edge + api).
 - **비밀값**: `.env`(권한 600)에만, 필요한 컨테이너에만 주입. aisstream 키는 ais 컨테이너에만 있고 브라우저·로그·Redis 에 나가지 않는다(구독 본문에만 — 시험으로 확인). 비밀번호는 명령행이 아니라 환경변수·stdin 으로.
-- **최소 권한**: DB 역할 3개(migrator · api · collector), 파티션은 SECURITY DEFINER 함수로만, 슈퍼유저는 로컬 소켓 전용. Redis ACL 사용자 3개(키 패턴·명령 제한, `SCAN`·`CLIENT TRACKING` 금지 — 세션 키 이름 유출 경로 차단).
-- **운영 API**: 세션 + CSRF 이중 제출 + If-Match 낙관적 잠금, 비인가는 404, 로그인 실패 잠금·감사 기록(변경과 감사가 한 트랜잭션).
+- **최소 권한**: DB 역할 3개(migrator · api · collector), 파티션은 SECURITY DEFINER 함수로만, 슈퍼유저는 로컬 소켓 전용. Redis ACL 사용자 3개(키 패턴 제한 · collector·ais 는 실제로 쓰는 명령만 허용 목록 — 스트림 삭제·이름 변경 불가, `SCAN`·`CLIENT TRACKING` 금지 — 세션 키 이름 유출 경로 차단).
+- **망 분리**: web · api · db · redis 는 인터넷에 닿지 않는 internal 망에만 있고, 외부 호출은 collector · ais 만(egress 망). edge 는 게시 포트 때문에 일반 bridge 에 있어 설정(upstream api·web 뿐, resolver 없음 — 정책 시험)으로 외부 호출을 막는다.
+- **운영 API**: 세션 + CSRF 이중 제출 + If-Match 낙관적 잠금, 비인가는 404, 로그인 실패 잠금·감사 기록(변경과 감사가 한 트랜잭션). 세션은 로그인부터 8 h 절대 수명이고, 로그인 때 확인한 비밀번호에 묶여 비밀번호를 바꾸면 다음 요청에서 끝난다. 경로 판단은 인가 규칙과 같은 매처(인코딩한 경로로 우회 불가 — 시험으로 고정).
 - **컨테이너**: 비root · read-only 루트 · `cap_drop: ALL` · no-new-privileges · 메모리·PID 상한 · 이미지 다이제스트 고정. 화면은 CSP nonce.
 
 ## 4. 정직성(구현에 박힌 규칙)
@@ -141,7 +142,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,config} · Flyway V1–V7 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,config} · Flyway V1–V9 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·about) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope (계약의 단일 원천)

@@ -196,3 +196,25 @@ class PortableShellTest(unittest.TestCase):
                 if re.search(r"\bstat\s+-f\b", line.split("#", 1)[0]):
                     offenders.append(f"{p.relative_to(ROOT)}:{n}")
         self.assertEqual(offenders, [])
+
+
+class ReadmeFactsTest(unittest.TestCase):
+    """R-50: README 의 수치가 저장소와 어긋나지 않게 — 마이그레이션 최대 버전 · ADR 수 · 변경 계약 범위(싼 문서 검사)."""
+
+    def setUp(self):
+        self.readme = (ROOT / "README.md").read_text()
+
+    def test_flyway_range_matches_the_latest_migration(self):
+        versions = [int(re.match(r"V(\d+)__", p.name).group(1)) for p in (ROOT / "apps/api/src/main/resources/db/migration").glob("V*__*.sql")]
+        stated = {int(v) for v in re.findall(r"Flyway V1–V(\d+)", self.readme)}
+        self.assertTrue(stated, "README 에 'Flyway V1–Vn' 표기")
+        self.assertEqual(stated, {max(versions)})
+
+    def test_adr_count_matches_the_files(self):
+        n = len(list((ROOT / "docs/adr").glob("ADR-*.md")))
+        self.assertIn(f"ADR {n}건", self.readme)
+
+    def test_contract_range_matches_the_files(self):
+        audit = ROOT / "docs/audit"
+        latest = max([1] + [int(m.group(1)) for p in audit.glob("change-contract-v*.md") if (m := re.match(r"change-contract-v(\d+)\.md", p.name))])
+        self.assertIn(f"변경 계약 v1–v{latest}", self.readme)

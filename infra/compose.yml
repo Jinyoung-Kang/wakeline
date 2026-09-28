@@ -67,7 +67,7 @@ services:
       NODE_ENV: production
       HOSTNAME: 0.0.0.0
       PORT: "3000"
-      API_INTERNAL_URL: http://api:8000       # 서버 컴포넌트 전용. NEXT_PUBLIC_ 변수는 없다.
+      API_INTERNAL_URL: http://api:8000       # `next dev` 의 rewrite 에서만 쓴다(next.config.ts) — 운영 빌드는 edge 가 /api 를 api 로 보낸다. NEXT_PUBLIC_ 변수는 없다(R-50).
     expose: ["3000"]
     deploy:
       resources:
@@ -206,7 +206,7 @@ services:
       start_interval: 5s
 
   ais:
-    # 선박 AIS 수신(ADR-014): aisstream.io WebSocket 하나를 계속 열어 두고 받은 메시지를 10 s 마다 wakeline:ships 로 XADD 한다.
+    # 선박 AIS 수신(ADR-014): aisstream.io 에 구역마다 WebSocket 하나(최대 3, 부록 B — 운영값 2개)를 계속 열어 두고 받은 메시지를 10 s 마다 wakeline:ships 로 XADD 한다.
     # 항공기 폴링(collector)과 이벤트 루프·메모리를 나누는 격벽이다 — 푸시 폭주·재연결이 항공기 수집을 굶기지 않는다.
     # 최소 권한: DB 비밀번호 없음(DB 에 쓰지 않는다), Redis 는 wakeline_ais(wakeline:ships · wakeline:ais:* 쓰기, 설정 읽기 전용),
     #   외부 키는 aisstream 키 하나. 이미지는 collector 와 같고 진입점만 다르다(이미지 ENTRYPOINT 를 바꾼다 — command 로는 인자만 붙는다).

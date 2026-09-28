@@ -12,3 +12,8 @@
 
 ## 포트
 8080 은 같은 Mac 의 SmartCollab 이 쓴다. Wakeline 는 8700 을 쓰고 127.0.0.1 에만 바인딩한다.
+
+## 이후 변경(R-50, 리뷰 v1 — 현재 값)
+- 요청 제한 구역이 둘이다: `perip`(IP당 10 r/s — `/api/` burst 30 · 화면 `/` burst 60)과 WebSocket 핸드셰이크 전용 `perip_ws`(5 r/s · burst 10, IP당 동시 연결 10).
+- 버전이 붙은 불변 정적 파일 `/_next/static/` · `/maplibre/<버전>/` 은 제한 밖(1년 immutable) — MapLibre 가 제한 안에 있으면 같은 IP 의 여러 창이 첫 화면에서 429 를 받았다(R-02 후속, VERIFICATION #29).
+- edge 는 `X-Request-Id` 도 자기 `$request_id` 로 덮어쓰고 접근 로그에 남긴다(R-49). 망은 public · internal · egress 로 나뉘었다(R-64 · R-77, ADR-017 §4) — 내부 서비스의 고정 IP 는 internal 망에 있다.
