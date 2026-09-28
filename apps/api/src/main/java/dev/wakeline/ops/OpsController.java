@@ -89,7 +89,8 @@ public class OpsController {
 
     /**
      * 공급자 켜고 끄기(R-94, 계약 v5 §D1): 원본은 DB provider_switch — 감사 행과 한 트랜잭션으로 갱신하고, 커밋 뒤 collector 가 읽는
-     * Redis wakeline:provider:{name}.disabled 로 미러한다. 미러가 실패해도 변경은 확정이고(mirrored=false) 주기 미러가 60 s 안에 맞춘다.
+     * Redis wakeline:provider:{name}.disabled 로 미러한다. 미러가 실패해도 변경은 확정이고(mirrored=false) 주기 미러가 60 s 안에 맞춘다 —
+     * 그동안 collector 는 이전 값을 따르므로 운영 화면은 mirrored=false 를 경고로 보이고, /ops/providers 의 provider_switch 로 원본과 미러를 나란히 보인다.
      * 이전에는 Redis 에만 있어서 Redis 볼륨을 잃으면 조용히 '켜짐'으로 돌아갔고, 같은 해시에 쓰는 collector 가 감사 없이 바꿀 수 있었다.
      * @return {provider, disabled, version, updated_at, mirrored}
      */
