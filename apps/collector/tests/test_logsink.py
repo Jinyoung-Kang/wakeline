@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import logging
 import os
@@ -310,6 +311,62 @@ def test_real_huge_traceback_fits_and_validates():
     ((js, n),) = sink.pending()
     assert n == len(js.encode()) <= ls.ENTRY_MAX_BYTES
     assert not list(VALIDATOR.iter_errors(orjson.loads(js)))
+
+
+def _whole(text: str) -> int:
+    """잘린 칸이 말하는 원문 길이 = 남긴 글자 + 잘림 표시의 N."""
+    kept, cut = _kept_and_cut(text)
+    return len(kept) + cut
+
+
+@pytest.mark.xfail(strict=True, reason="v5-C1: 고치기 전 — 가림이 LOG_LIMIT 에서 조용히 잘라 N 이 줄어든다")
+@pytest.mark.parametrize("masked_by", ["sink", "root-handler-filter", "sink-filter"])
+def test_cut_marker_counts_the_whole_text_even_beyond_the_mask_limit(masked_by):
+    """계약 v5 §C1 '…(잘림 N자)': 메시지·예외 메시지·스택이 가림 상한(LOG_LIMIT 100,000자)보다 길어도 남긴 글자 + N = 가린 원문 전체.
+    main 처럼 표준 출력 핸들러의 MaskFilter 가 먼저 레코드를 가린 경우(root-handler-filter), 싱크 자신의 MaskFilter(sink-filter),
+    필터 없이 싱크가 스스로 가린 경우(sink) 모두."""
+    sink = ls.LogSink("collector", FakeRedis(), clock=Clock())
+    lg = logger_for(sink)
+    if masked_by == "root-handler-filter":
+        out = logging.StreamHandler(io.StringIO())
+        masking.install_log_masking(out)
+        lg.handlers[:] = [out, sink]
+    elif masked_by == "sink-filter":
+        masking.install_log_masking(sink)
+    big = masking.LOG_LIMIT + 50_000
+    exc = raise_and_catch(RuntimeError("e" * big))
+    stack_len = len(logging.Formatter().formatException((RuntimeError, exc, exc.__traceback__)))
+    lg.error("m" * big, exc_info=exc)
+    ((js, n),) = sink.pending()
+    e = orjson.loads(js)
+    assert n <= ls.ENTRY_MAX_BYTES and not list(VALIDATOR.iter_errors(e))
+    assert _whole(e["message"]) == big
+    assert _whole(e["exception"]["message"]) == big
+    assert _whole(e["exception"]["stack"]) == stack_len > masking.LOG_LIMIT
+
+
+@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 핸들러마다 붙은 MaskFilter 와 싱크가 같은 레코드를 세 번 가린다")
+def test_a_record_is_masked_once_however_many_handlers_carry_the_filter(monkeypatch):
+    """가림은 긴 글에서 비싸다(정규식 여러 개 × 글자 수) — 표준 출력 핸들러의 MaskFilter · 싱크의 MaskFilter · 싱크의 _build 가
+    같은 레코드를 따로 가리면 emit 을 부른 스레드(이벤트 루프)가 세 배로 멈춘다. 한 레코드는 한 번만 가린다."""
+    calls: list[int] = []
+    real = masking.mask
+
+    def counting(text, limit=4000):
+        if text is not None and len(text) > 1000:
+            calls.append(len(text))
+        return real(text, limit)
+
+    monkeypatch.setattr(masking, "mask", counting)
+    monkeypatch.setattr(ls, "mask", counting)
+    sink = ls.LogSink("collector", FakeRedis(), clock=Clock())
+    out = logging.StreamHandler(io.StringIO())
+    masking.install_log_masking(out, sink)
+    lg = logger_for(sink)
+    lg.handlers[:] = [out, sink]
+    lg.warning("x" * 5000)
+    assert calls == [5000]
+    assert orjson.loads(sink.pending()[0][0])["message"].startswith("x" * 3000)
 
 
 # ── 전송 · 깨우기 · 백오프 ──────────────────────────────────────
