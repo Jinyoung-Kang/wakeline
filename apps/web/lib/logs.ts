@@ -93,7 +93,7 @@ export interface LogPage {
   nextCursor: string | null;
   /** 이 요청이 훑은 스트림 항목 수(§C4) — 없으면 null */
   scanned: number | null;
-  /** 훑기 상한(3,000)에 걸려 필터 결과가 불완전할 수 있음 — 없으면 null */
+  /** 훑기 상한(LOG_SCAN_MAX — 두 스트림 합 4,000)에 걸려 필터 결과가 불완전할 수 있음 — 없으면 null */
   scanTruncated: boolean | null;
   /** 화면이 형식 오류로 버린 항목 수 */
   invalid: number;

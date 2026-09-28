@@ -326,7 +326,7 @@ public class LogReader {
 
     /**
      * 가림은 글자 수에 비례하는 시간이고(LogMasker), 칸 길이는 앞의 스키마 검증이 이미 묶는다 — message ≤ 4000 · 예외 메시지 ≤ 2000 ·
-     * stack ≤ 12000 · 이름 칸과 context 값 ≤ 200(코드 포인트). 그래서 누구나 보낼 수 있는 web-client 항목으로도 한 번 훑기(3,000건)의 가림
+     * stack ≤ 12000 · 이름 칸과 context 값 ≤ 200(코드 포인트). 그래서 누구나 보낼 수 있는 web-client 항목으로도 한 번 훑기(두 스트림 합 {@value #SCAN_MAX}건)의 가림
      * 비용이 커지지 않는다(LogReaderTest).
      */
     static void remask(ObjectNode o) {
