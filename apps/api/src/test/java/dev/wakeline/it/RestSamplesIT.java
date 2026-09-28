@@ -170,7 +170,7 @@ class RestSamplesIT extends IntegrationTest {
         record("ais_gaps", "/api/v1/ais/gaps", 200);
         record("problem_bad_mmsi", "/api/v1/ships/12345", 400);
         record("ship_detail_nostatic", "/api/v1/ships/440700101", 200); // 정적 정보 없음 → 분류 unknown(추정하지 않는다)
-        // 선박 검색(계약 v5 §B1): 실시간(선명 앞부분) · DB 에만 있는 선박(live=false, 위치 null, 마지막 저장 시각) · 형식 오류
+        // 선박 검색(계약 v5 §B1): 실시간(선명 앞부분) · DB 에만 있는 선박(live=false, 위치 null, 마지막 저장 시각 · 마지막 수신 기록 §G4) · 형식 오류
         record("ship_search", "/api/v1/ships/search?q=IT%20SAMPLE", 200);
         db.sql("""
                 INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider)
@@ -181,6 +181,7 @@ class RestSamplesIT extends IntegrationTest {
                 VALUES ('440700199', date_trunc('second', now()) - interval '2 hours', ST_SetSRID(ST_MakePoint(129.1, 35.05), 4326), 'epfs', 'fixture')
                 ON CONFLICT DO NOTHING""").update();
         record("ship_search_db", "/api/v1/ships/search?q=it%20stored", 200);
+        record("ship_detail_stored", "/api/v1/ships/440700199", 200); // 실시간 아님 — 마지막 수신 기록 last_seen_at(계약 v5 §G4)
         record("problem_bad_ship_query", "/api/v1/ships/search?q=a", 400);
 
         // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.

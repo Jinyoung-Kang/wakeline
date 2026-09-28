@@ -191,15 +191,22 @@ async def test_v5_log_sink_pipeline_xadd_on_real_redis(admin):
 
 
 async def test_v5_log_sink_backs_off_on_noperm_and_keeps_entries(admin):
-    """스트림 키 권한이 없는 사용자(계약 v5 §C3 의 ACL 이 아직 없을 때와 같은 상황): NOPERM 이면 항목을 버리지 않고 백오프한다.
-    권한이 생기면(C3) 다음 시도에 보낸다."""
+    """수집기 사용자를 infra/redis/start.sh 의 규칙 그대로(acl_rules 가 읽은 것 — 손으로 권한을 적지 않는다, R-41) 만든다.
+    먼저 로그 스트림 규칙(%W~wakeline:logs — 계약 v5 §C3 · §G1)만 뺀 규칙: NOPERM 이면 항목을 버리지 않고 백오프한다.
+    그다음 start.sh 규칙 전체로 바꾸면 다음 시도에 보낸다 — 실제 수집기 규칙이 싱크의 파이프라인 XADD MAXLEN ~ 을 허용하는지까지.
+    쓰기 전용이라 같은 사용자로 스트림을 읽지는 못한다(§G1)."""
     import asyncio
     import logging
 
+    from redis.exceptions import NoPermissionError
+
     from wakeline_collector.logsink import STREAM_LOGS, LogSink
 
+    log_rules = [rule for rule in COLLECTOR_RULES if "wakeline:logs" in rule]
+    assert log_rules == [f"%W~{STREAM_LOGS}"], "start.sh 의 수집기 로그 스트림 규칙은 쓰기 전용 하나(계약 v5 §G1)"
+    before_c3 = [rule for rule in COLLECTOR_RULES if rule not in log_rules]
     user, pw = f"itest_logs_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
-    await admin.execute_command("ACL", "SETUSER", user, "reset", "on", f">{pw}", "~itest:*", "+xadd", "+ping")
+    await admin.execute_command("ACL", "SETUSER", user, "reset", f">{pw}", *before_c3)
     kw = admin.connection_pool.connection_kwargs
     r = Redis(host=kw["host"], port=kw["port"], username=user, password=pw, decode_responses=True)
     await admin.delete(STREAM_LOGS)
@@ -214,12 +221,15 @@ async def test_v5_log_sink_backs_off_on_noperm_and_keeps_entries(admin):
                 break
             await asyncio.sleep(0.01)
         assert sink.failures >= 2 and len(sink.pending()) == 1 and sink.dropped == 0 and sink.sent == 0
-        await admin.execute_command("ACL", "SETUSER", user, f"~{STREAM_LOGS}")  # C3: ~wakeline:logs 를 더한다
+        # start.sh 의 수집기 규칙 그대로(비밀번호는 시험의 것) — 이미 붙은 연결에도 곧바로 적용된다
+        await admin.execute_command("ACL", "SETUSER", user, "reset", f">{pw}", *COLLECTOR_RULES)
         for _ in range(200):
             if sink.sent == 1:
                 break
             await asyncio.sleep(0.01)
         assert sink.sent == 1 and len(await admin.xrange(STREAM_LOGS)) == 1
+        with pytest.raises(NoPermissionError):
+            await r.xrevrange(STREAM_LOGS, count=1)  # 쓰기 전용(%W~) — 다른 서비스의 로그를 읽지 못한다
     finally:
         lg.handlers.clear()
         await sink.aclose(drain_s=0.2)

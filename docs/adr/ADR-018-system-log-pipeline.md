@@ -20,3 +20,23 @@
 - Redis 메모리: 최악 약 24 MiB(3,000 × 8 KiB). maxmemory 256 MiB · noeviction 안.
 - edge(nginx) 오류 로그는 범위 밖(에이전트 없음). 화면에 그렇게 적는다.
 - 되돌리기: 싱크 등록을 끄는 설정(`wakeline.logs.sink-enabled=false` · `LOG_SINK_ENABLED=0`) 또는 커밋 되돌리기. `DEL wakeline:logs`.
+
+## 개정(2026-09-29 · 계약 v5 §G2 · §G3)
+- 브라우저 오류는 **별도 스트림** `wakeline:logs:client`(`MAXLEN ~ 1000`)에 싣는다. 한 스트림이던 때는 누구나 보낼 수 있는 브라우저 오류가 서버 오류를
+  밀어냈다(전체 한도 분당 120건이면 약 25분에 3,000건이 모두 바뀐다). 이제 브라우저 오류 1,100건이 실려도 서버 로그는 한 건도 밀려나지 않는다(LogsIT).
+  api 싱크는 한 대기열 · 한 순서로 보내되 항목마다 제 스트림으로 싣는다(`LogStream`). collector · ais 의 `%W~wakeline:logs` 는 정확한 이름이라
+  새 스트림에는 쓰지도 읽지도 못한다 — api 만(`~wakeline:*`).
+- 조회(`/api/v1/ops/logs*`)는 두 스트림을 스트림 id 순으로 합쳐 최신 순으로 보이고 항목마다 `stream`(`server` | `client`)을 싣는다. 두 스트림은 id 를
+  따로 매기므로 같은 id 가 둘 다에 있을 수 있다 — 같은 id 는 server 가 앞이고, `next_cursor` 는 `"<stream>:<id>"`(스트림 id 만 있는 옛 커서는 server)
+  라서 쪽이 그 둘 사이에서 끊겨도 빠지거나 겹치는 항목이 없다. 첫 쪽(cursor 없음)과 묶음은 두 스트림의 한 시점 모습 — Redis `TIME` 을 먼저 읽고
+  그 앞 밀리초까지만 보인다. 두 스트림은 따로 읽으므로(XREVRANGE 두 번) '+' 에서 읽으면 그 사이에 실린 서버 항목이 그보다 새 브라우저 오류 뒤에 숨어
+  웹의 "새 항목"(맨 위보다 새 것)에도 cursor 아래에도 없었다. Redis 는 TIME 뒤에 실린 항목에 그 시각 이상의 id 를 주므로 이제 그 뒤의 항목은 모두 첫 쪽
+  맨 위보다 새 것이다(같은 밀리초 항목은 다음 새로 고침에). 스트림 id 가 Redis 시계보다 60 s 넘게 앞서면(시계가 뒤로 감 · id 지정 XADD) 새 오류를
+  숨기지 않도록 자르지 않는다(WARN 로그). 한 요청이 훑는 항목 상한은 스트림마다 MAXLEN 에 Redis 내부 노드 하나(stream-node-max-entries 기본 100)를
+  더한 합 (3,000 + 100) + (1,000 + 100) = 4,200 — 근사 트림(MAXLEN ~)은 노드 통째로만 잘라 한 스트림에 MAXLEN + 99 건까지 남으므로(실측 3,300 · 1,150 건
+  → 3,000 · 1,050) 두 MAXLEN 의 합(4,000)이면 두 스트림이 트림 끝일 때 가장 오래된 서버 항목이 빠졌다. 이제 한 번 훑기가 두 스트림 전체를 보고, 브라우저
+  오류 스트림(api 만 싣는다 — 1,099건 이하)이 가득이어도 서버 로그의 몫을 쓰지 못한다(§C4 의 3,000 에서 늘었다 — 계약 v5 §G6). 최악 비용: 누구나
+  보낼 수 있는 가장 비싼 항목 4,200건을 묶음 + 목록으로 두 번 훑어 약 2.5–4 s(LogReaderTest — 웹 /logs 는 15 s 마다 새로 읽는다). 묶음(fp)도 두 스트림(`last_stream`), `GET /ops/logs/{id}` 는 server → client 순(`?stream=` 으로 한쪽만).
+- `POST /api/v1/client-errors` 의 JSON 이 아닌 Content-Type(없는 것 포함)은 415 `UNSUPPORTED_MEDIA_TYPE`(로그인과 같은 관례, 요청 제한 수를 쓰지 않는다),
+  본문 형식 오류는 400 `BAD_CLIENT_ERROR`.
+- Redis 메모리 최악: 약 24 MiB + 8 MiB(1,000 × 8 KiB). 되돌리기에 `DEL wakeline:logs:client` 를 더한다.

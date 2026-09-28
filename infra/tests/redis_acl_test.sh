@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D · 계약 v5 §C3).
+# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D · 계약 v5 §C3 · §G2).
 # compose 와 같은 방식(redis 사용자 999·read-only 루트 FS·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
 # 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector / wakeline_ais 가 필요한 명령·키만 쓸 수 있는지 확인한다.
 # 마지막으로 REDIS_AIS_PASSWORD 없이 한 번 더 띄워 wakeline_ais 가 빈 비밀번호로 열리지 않는지 본다.
@@ -99,6 +99,8 @@ ok "HGETALL wakeline:ais:status(읽기)"  ""         "${A[@]}" hgetall wakeline:
 ok "GET wakeline:route:*(읽기, 없음)"    ""         "${A[@]}" get wakeline:route:ZZX000
 # 계약 v5 §C: api 는 자기 로그 · 브라우저 오류(client-errors)를 싣고 운영 조회로 읽는다(읽기 확인은 ais 절 뒤에)
 ok "XADD wakeline:logs MAXLEN ~ 3000(api 로그)" "^[0-9]+-[0-9]+$" "${A[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event api)"
+# 계약 v5 §G2: 브라우저 오류는 따로 자르는 스트림 — api 만 싣는다
+ok "XADD wakeline:logs:client MAXLEN ~ 1000(브라우저 오류)" "^[0-9]+-[0-9]+$" "${A[@]}" xadd wakeline:logs:client maxlen '~' 1000 '*' e "$(log_event web-client)"
 
 echo "[wakeline_api — 거부]"
 denied "FLUSHALL"             "${A[@]}" flushall
@@ -225,6 +227,8 @@ denied "EVALSHA 안 XTRIM wakeline:logs(선언 안 한 키 — 스크립트 안 
 denied "EVALSHA 안 DEL wakeline:logs(선언 안 한 키 — 스크립트 안 검사)"       "${K[@]}" evalsha "$LOGS_DEL_SHA" 0
 ok "로그 스트림은 그대로(관리자로 확인)" "^[1-9][0-9]*$" "${D[@]}" xlen wakeline:logs
 denied "비슷한 이름 wakeline:logs:x"            "${K[@]}" xadd wakeline:logs:x '*' e x
+denied "브라우저 오류 스트림 XADD(api 전용, §G2)"  "${K[@]}" xadd wakeline:logs:client maxlen '~' 1000 '*' e x
+denied "브라우저 오류 스트림 XREVRANGE(§G2)"       "${K[@]}" xrevrange wakeline:logs:client + - count 1
 denied "비슷한 이름 wakeline:logsx"             "${K[@]}" xadd wakeline:logsx '*' e x
 denied "DLQ 읽기 wakeline:dlq(XREVRANGE)"       "${K[@]}" xrevrange wakeline:dlq + - count 1
 denied "세션 읽기 wakeline:session:*"   "${K[@]}" hgetall wakeline:session:sessions:t
@@ -319,6 +323,7 @@ denied "XDEL wakeline:logs"                  "${S[@]}" xdel wakeline:logs 0-1
 denied "SET 으로 wakeline:logs 덮어쓰기"       "${S[@]}" set wakeline:logs x
 denied "EXPIRE wakeline:logs"                "${S[@]}" expire wakeline:logs 1
 denied "비슷한 이름 wakeline:logs:x"          "${S[@]}" xadd wakeline:logs:x '*' e x
+denied "브라우저 오류 스트림 XADD(api 전용, §G2)" "${S[@]}" xadd wakeline:logs:client '*' e x
 denied "XREADGROUP wakeline:ships"          "${S[@]}" xreadgroup group api c9 count 1 streams wakeline:ships '>'
 denied "XACK wakeline:ships"                "${S[@]}" xack wakeline:ships api 0-1
 denied "XGROUP DESTROY wakeline:ships"      "${S[@]}" xgroup destroy wakeline:ships api
@@ -345,6 +350,8 @@ for svc in api collector ais; do
   ok "XREVRANGE wakeline:logs 에 $svc 항목" "\"service\":\"$svc\"" "${A[@]}" xrevrange wakeline:logs + - count 50
 done
 ok "로그 스트림 항목 수(관리자로 확인)" "^[3-9]$|^[1-9][0-9]+$" "${D[@]}" xlen wakeline:logs
+ok "XREVRANGE wakeline:logs:client 에 web-client 항목(§G2)" '"service":"web-client"' "${A[@]}" xrevrange wakeline:logs:client + - count 5
+ok "브라우저 오류 스트림 항목 수 1(수집기 · ais 는 못 실었다)" "^1$" "${D[@]}" xlen wakeline:logs:client
 
 echo "[컨테이너 권한]"
 uid="$(docker exec "$C" sh -c 'awk "/^Uid:/{print \$2}" /proc/1/status')"

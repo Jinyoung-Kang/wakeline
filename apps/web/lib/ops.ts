@@ -74,8 +74,8 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["api", "ship_rows_failed", "선박 저장 거절", "loss", "DB 가 영구 오류로 거절해 재시도 없이 버린 선박 위치 행 — 누적"],
   ["api", "stream_apply_errors", "메시지 처리 오류", "loss", "처리 중 예외로 건너뛴 스트림 메시지(검증은 통과) — 누적"],
   ["api", "listener_errors", "이벤트 리스너 오류", "loss", "알림 저장·팬아웃 등 이벤트 리스너가 실패한 횟수 — 누적"],
-  ["api", "log_sent", "시스템 로그 전송", "count", "wakeline_log_events_total{result=sent} — 시스템 로그 스트림에 실은 WARN·ERROR 항목(브라우저 보고 포함) — 누적"],
-  ["api", "log_dropped", "시스템 로그 버림", "loss", "wakeline_log_events_total{result=dropped} — wakeline:logs 에 싣지 못하고 버린 항목: 대기열 상한(500건 · 2 MiB) 초과 · 종료 때 보내지 못한 항목 — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
+  ["api", "log_sent", "시스템 로그 전송", "count", "wakeline_log_events_total{result=sent} — 시스템 로그 스트림에 실은 WARN·ERROR 항목(브라우저 보고 포함 — 브라우저 오류는 wakeline:logs:client, 계약 v5 §G2) — 누적"],
+  ["api", "log_dropped", "시스템 로그 버림", "loss", "wakeline_log_events_total{result=dropped} — wakeline:logs · wakeline:logs:client 에 싣지 못하고 버린 항목: 대기열 상한(500건 · 2 MiB) 초과 · 종료 때 보내지 못한 항목 — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["api", "log_suppressed", "시스템 로그 억제", "count", "wakeline_log_events_total{result=suppressed} — 같은 지문 10 s 1건 규칙으로 보내지 않은 항목. 손실 아님: 건수는 다음 항목의 suppressed 에 — 누적"],
 ];
 

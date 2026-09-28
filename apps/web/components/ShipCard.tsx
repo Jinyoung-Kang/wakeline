@@ -4,7 +4,7 @@ import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
 import { ageS, fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
 import {
-  fmtDraught, fmtShipEta, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
+  fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
   SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
   type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic,
@@ -14,14 +14,15 @@ import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
 import { ShipTable } from "./ShipTable";
+import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
 
 /**
  * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
- * (보존 72 h 안 — 없으면 null). 계약 v5 §B3 카드 행.
+ * (보존 72 h 안 — 없으면 null), last_seen_at = 실시간이 아닐 때의 마지막 수신 기록(계약 v5 §G4 — 없으면 null). 계약 v5 §B3 카드 행.
  */
 export interface ShipDetail {
   mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null; db_unavailable: boolean;
-  first_recorded_at: string | null; last_position_at: string | null;
+  first_recorded_at: string | null; last_position_at: string | null; last_seen_at: string | null;
 }
 
 const isoOrNull = (v: unknown) => (typeof v === "string" && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? v : null);
@@ -35,7 +36,7 @@ export function parseShipDetail(mmsi: string, r: unknown): ShipDetail {
   return {
     mmsi, state: st?.mmsi === mmsi ? st : null, static: sx?.mmsi === mmsi ? sx : null,
     destination_info: parseDestinationInfo(o.destination_info), db_unavailable: meta.db_unavailable === true,
-    first_recorded_at: isoOrNull(o.first_recorded_at), last_position_at: isoOrNull(o.last_position_at),
+    first_recorded_at: isoOrNull(o.first_recorded_at), last_position_at: isoOrNull(o.last_position_at), last_seen_at: isoOrNull(o.last_seen_at),
   };
 }
 
@@ -53,7 +54,8 @@ function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
  */
 export function ShipCard({ mmsi }: { mmsi: string }) {
   const [detail, setDetail] = useState<ShipDetail | null>(null);
-  const [error, setError] = useState<{ mmsi: string; msg: string } | null>(null);
+  /** 상세 조회 실패 — 오류 그대로(ApiError 면 요청 id 를 문구에, 계약 v5 §G5) */
+  const [error, setError] = useState<{ mmsi: string; error: unknown } | null>(null);
   const loaded = useRef<ShipDetail | null>(null);
   const now = useServerNow(1000);
   // WS 가 "실시간 목록에 없음(state null)"이라고 하면 상세를 다시 받는다 — 카드를 연 뒤 목록에서 빠진 선박의 '마지막 저장 위치'가
@@ -65,16 +67,19 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
     let alive = true;
     apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
       .then((r) => { if (alive) { const p = parseShipDetail(mmsi, r); loaded.current = p; setDetail(p); setError(null); } })
-      .catch((e: Error) => { if (alive) setError({ mmsi, msg: String(e.message) }); });
+      .catch((e: unknown) => { if (alive) setError({ mmsi, error: e }); });
     return () => { alive = false; };
   }, [mmsi, gone]);
   const d = detail && detail.mmsi === mmsi ? detail : null;
-  const err = error && error.mmsi === mmsi ? error.msg : null;
+  const err = error && error.mmsi === mmsi ? error.error : null;
   return <ShipCardView mmsi={mmsi} detail={d} error={err} now={now} />;
 }
 
-/** 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용) */
-export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: string | null; now: number }) {
+/**
+ * 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용). error = 상세 조회 실패(문자열 또는 오류 — ApiError 면 요청 id 를 복사할 수 있게,
+ * 계약 v5 §G5), 없으면 null.
+ */
+export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: unknown; now: number }) {
   const selectShip = useUi((s) => s.selectShip);
   const live = useServerData((x) => (x.shipSelected && x.shipSelected.mmsi === mmsi ? x.shipSelected : null));
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
@@ -98,7 +103,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   // 문구의 기간은 받은 항적의 창(선택 버튼은 다음에 받을 창)
   const hours = track?.hours ?? SHIP_TRACK_WINDOW_MS / 3600_000;
   const savedAge = ageS(d?.last_position_at, now);
-  // 실시간 상태가 없고 상세(REST)도 실시간이 아니라고 했으면 "실시간 아님 · 마지막 저장 hh:mm"(계약 v5 §B3) — 위치를 지어내지 않는다.
+  const heardAge = ageS(d?.last_seen_at, now);
+  // 실시간 상태가 없고 상세(REST)도 실시간이 아니라고 했으면 "실시간 아님 · 마지막 수신 hh:mm · 마지막 저장 hh:mm"(계약 v5 §B3 · §G4) — 위치를 지어내지 않는다.
   // 검색에서 실시간이 아닌 선박을 고르면 서버가 곧바로 ship_selected{state:null} 로 답하므로 gone 이어도 같은 문구.
   // 상세가 아직 없거나 상세를 받은 뒤 목록에서 빠졌으면(상세의 저장 시각이 옛 값일 수 있다 — ShipCard 가 다시 받는다) gone 배지만
   const notLive = s == null && d != null && d.state == null;
@@ -139,6 +145,9 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
       "이 서비스(Wakeline)가 이 MMSI 를 처음 기록한 시각 — 선박의 건조·취항 시각이 아님"],
     ["마지막 저장 위치", <span key="last" className="mono" title={fmtIso(d?.last_position_at)}>{fmtTime(d?.last_position_at)}{savedAge != null ? ` (${fmtDuration(savedAge)} 전)` : ""}</span>,
       "DB 에 저장된 마지막 위치의 시각(60 s 에 1점, 보존 72 h — 그보다 오래됐거나 없으면 —). 카드를 열 때(실시간 목록에서 빠지면 그때 다시) 받은 값 — 실시간 선박은 그 뒤에도 계속 저장됩니다"],
+    // 계약 v5 §G4: 실시간 상태가 없을 때만 — 실시간이면 '관측 시각'이 마지막 수신이다
+    ...(s == null ? [["마지막 수신", <span key="heard" className="mono" title={fmtIso(d?.last_seen_at)}>{fmtTime(d?.last_seen_at)}{heardAge != null ? ` (${fmtDuration(heardAge)} 전)` : ""}</span>,
+      `${LAST_SEEN_TITLE}. 위치 보존(72 h)이 지나도 남습니다`] as [string, React.ReactNode, string]] : []),
     ["출처", s?.provider ?? st?.provider ?? "—"],
   ];
   return (
@@ -147,7 +156,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         <span className="label">Ship</span>
         <div className="flex flex-wrap items-center justify-end gap-1">
           {gone && !notLive ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
-          {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 저장 위치 시각 ${fmtIso(d?.last_position_at)}`}>{notLiveText(d?.last_position_at, now)}</span> : null}
+          {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 수신 기록 ${fmtIso(d?.last_seen_at)} · 마지막 저장 위치 시각 ${fmtIso(d?.last_position_at)}`}>
+            {notLiveText({ lastSeenAt: d?.last_seen_at, lastPositionAt: d?.last_position_at }, now)}</span> : null}
           {stale ? <span className="badge warn" data-testid="ship-stale">STALE · 15분 넘게 위치 없음</span> : null}
           {pb ? <span className={`badge ${pb.tone === "est" ? "est" : "warn"}`} data-testid="ship-pos-badge">{pb.text}</span> : null}
           {rot && rot.mode !== "heading" ? <span className="badge">{ROT_LABEL[rot.mode]}</span> : null}
@@ -155,7 +165,9 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
-        {err ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err})</div> : null}
+        {err != null ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">
+          상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err instanceof Error ? err.message : String(err)}<RequestIdOf error={err} />)
+        </div> : null}
         {d?.db_unavailable ? <div className="text-[11px] text-warn">선박 정보 DB 일시 사용 불가 — 정적 정보는 “—”일 수 있음</div> : null}
         {rows.map(([k, val, title, field]) => (
           <div key={field ?? k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="ship-row" data-field={field ?? k}>
@@ -173,7 +185,9 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
             </span>
           </div>
           {track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
-            : track.error ? <div className="text-[11px] text-warn">기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error})</div>
+            : track.error ? <div className="text-[11px] text-warn" data-testid="ship-track-error">
+                기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error}{track.requestId ? <RequestIdCopy id={track.requestId} /> : null})
+              </div>
             : <div className="text-[11px] text-fg-2">기록 구간 {track.segments}개 · 60 s 에 1점(저장 기준) + 실시간 관측</div>}
           <div className="text-[10px] text-fg-3">항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태(보고값, 없으면 —)</div>
           {gaps ? (

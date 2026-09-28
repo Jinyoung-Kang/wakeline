@@ -144,10 +144,12 @@ public class ShipController {
      *   <li>실시간(ShipStore — 위치 + 메모리 정적 정보)에서 먼저: 정확 일치 → 최근 보고 → MMSI 순.</li>
      *   <li>모자라면 DB ship 표(정확 일치 → last_seen 최신 → MMSI 순)에서 실시간 결과에 없는 선박. 그 선박이 실시간 목록에 있는데 메모리에 정적 정보가 없으면
      *       (상세와 같은 DB 폴백) 실시간 위치와 함께 live=true. 메모리 정적 정보가 있는데 일치하지 않았다면 옛 보고로만 찾힌 것이라 싣지 않는다.</li>
-     *   <li>last_position_at = DB 의 마지막 저장 위치 시각(ship_position — 보존 72 h 안, 그보다 오래된 선박은 null). ship.last_seen 은 위치로는
-     *       10분 단위로만 넓히므로 내보내지 않는다(상세와 같다 — DB 순서에만 쓴다). 실시간이지만 메모리에 정적 정보가 없는 선박은 DB 의 저장 정적 정보로 채운다.</li>
+     *   <li>last_position_at = DB 의 마지막 저장 위치 시각(ship_position — 보존 72 h 안, 그보다 오래된 선박은 null). 실시간이지만 메모리에 정적 정보가
+     *       없는 선박은 DB 의 저장 정적 정보로 채운다.</li>
+     *   <li>last_seen_at(계약 v5 §G4) = 저장만 된 선박(live=false)의 마지막 수신 기록 — ship.last_seen(위치 · 정적 정보 어떤 AIS 메시지든 받은 시각),
+     *       저장된 마지막 위치가 더 늦으면 그 시각({@link #lastSeenAt}). 위치 보존(72 h)이 지나도 남는다. 실시간 선박은 null(seen_at 이 마지막 수신).</li>
      * </ol>
-     * 항목은 계약의 12개 키를 늘 싣는다 — 모르는 값은 JSON null(실시간이 아니면 lat · lon · sog_kn · seen_at 이 null, 위치를 지어내지 않는다).
+     * 항목은 계약의 13개 키를 늘 싣는다 — 모르는 값은 JSON null(실시간이 아니면 lat · lon · sog_kn · seen_at 이 null, 위치를 지어내지 않는다).
      * 분류(category)는 선종 코드의 결정적 변환(없으면 unknown). DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true.
      */
     @GetMapping("/ships/search")
@@ -181,7 +183,7 @@ public class ShipController {
         List<Hit> hits = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (ShipStore.Ship s : live) {
-            hits.add(new Hit(s.mmsi(), s, s.stat()));
+            hits.add(new Hit(s.mmsi(), s, s.stat(), null));
             seen.add(s.mmsi());
         }
         boolean dbUnavailable = false;
@@ -199,8 +201,8 @@ public class ShipController {
                     for (ShipRepository.SearchRow r : rows) {
                         if (seen.contains(r.mmsi())) continue; // ship 표의 MMSI 는 기본 키 — 한 번씩만 온다
                         ShipStore.Ship s = v.get(r.mmsi());
-                        if (s == null) dbOnly.add(new Hit(r.mmsi(), null, r.stat()));
-                        else if (s.stat() == null) dbLive.add(new Hit(r.mmsi(), s, r.stat()));
+                        if (s == null) dbOnly.add(new Hit(r.mmsi(), null, r.stat(), r.lastSeen()));
+                        else if (s.stat() == null) dbLive.add(new Hit(r.mmsi(), s, r.stat(), r.lastSeen()));
                         // 그 밖(메모리 정적 정보가 있는데 실시간 일치에 없음)은 옛 저장 정적 정보로만 찾힌 행 — 싣지 않는다
                     }
                     int got = dbLive.size() + dbOnly.size();
@@ -234,8 +236,8 @@ public class ShipController {
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(out);
     }
 
-    /** 검색 결과 하나: 실시간 선박(없으면 null)과 이 결과를 낸 정적 정보(메모리 또는 DB, 없으면 null). */
-    private record Hit(String mmsi, ShipStore.Ship live, ShipStatic stat) {}
+    /** 검색 결과 하나: 실시간 선박(없으면 null)과 이 결과를 낸 정적 정보(메모리 또는 DB, 없으면 null), DB 행의 ship.last_seen(DB 에서 찾은 것만). */
+    private record Hit(String mmsi, ShipStore.Ship live, ShipStatic stat, Instant storedLastSeen) {}
 
     /** 계약 v5 §B1 항목. 전역 non_null 설정이 Java null 을 빼 버리므로 모르는 값은 JSON null 노드로 넣는다(키를 남긴다 — SigmetGeoJson 과 같은 방법). */
     private static Map<String, Object> searchItem(Hit h, ShipRepository.Known known) {
@@ -254,7 +256,20 @@ public class ShipController {
         m.put("sog_kn", orNull(s == null ? null : s.sogKn()));
         m.put("seen_at", orNull(s == null ? null : s.seenAt()));
         m.put("last_position_at", orNull(known == null ? null : known.lastPositionAt()));
+        // §G4: 실시간이 아닐 때만 — 실시간이면 seen_at 이 마지막 수신이다(10분 단위 DB 값을 겹쳐 싣지 않는다)
+        m.put("last_seen_at", orNull(s != null ? null : lastSeenAt(h.storedLastSeen(), known == null ? null : known.lastPositionAt())));
         return m;
+    }
+
+    /**
+     * 마지막 수신 기록(계약 v5 §G4): ship.last_seen 과 저장된 마지막 위치 시각 중 늦은 것(둘 다 받은 AIS 보고의 시각 — 추정이 아니다).
+     * ship.last_seen 은 위치로는 10분에 한 번만 넓히므로(ShipWriter — 쓰기 증폭 방지) 그 사이 60 s 창마다 저장된 위치가 더 늦을 수 있다.
+     * 실제 마지막 수신은 이보다 늦을 수 있다(위치는 60 s 에 하나만 저장, 보존 72 h 가 지나면 ship.last_seen 의 10분 단위만 남는다). 둘 다 없으면 null.
+     */
+    static Instant lastSeenAt(Instant shipLastSeen, Instant lastPosition) {
+        if (shipLastSeen == null) return lastPosition;
+        if (lastPosition == null) return shipLastSeen;
+        return lastPosition.isAfter(shipLastSeen) ? lastPosition : shipLastSeen;
     }
 
     private static Object orNull(Object v) { return v == null ? tools.jackson.databind.node.NullNode.getInstance() : v; }
@@ -262,6 +277,7 @@ public class ShipController {
     /**
      * 상세: 실시간 위치(state — 목록에 있을 때만) + 정적 정보(static — 메모리, 없으면 DB) + 선종 분류(category — 코드의 결정적 변환)
      * + first_recorded_at(이 서비스가 이 MMSI 를 처음 기록한 시각) · last_position_at(저장된 마지막 위치 시각, 보존 72 h 안 — 없으면 키 없음)
+     * + last_seen_at(실시간 목록에 없을 때만 — 마지막 수신 기록, {@link #lastSeenAt}, 계약 v5 §G4 — 검색과 같은 값. 실시간이면 state.seen_at)
      * + destination_info(static 의 보고 목적지를 결정적 규칙으로 푼 것, 계약 v4 §B — 목적지를 모르면 키 없음).
      * DB 가 없어도 실시간 위치가 있으면 200(static = 메모리 값 또는 null, meta.db_unavailable = true). 둘 다 없으면 404, 실시간도 없고
      * DB 도 없으면 있는지 알 수 없으므로 503.
@@ -290,9 +306,11 @@ public class ShipController {
         out.put("static", stat == null ? null : WsMessages.encodeShipStatic(stat));
         out.put("destination_info", stat == null ? null : destinations.parse(stat.destination()));
         out.put("category", ShipCategory.of(stat == null ? null : stat.shipType()).key());
-        // ship.last_seen 은 쓰기 증폭을 줄이려 10분 단위로만 넓히므로 내보내지 않는다 — 정확한 마지막 위치 시각은 ship_position 에서
+        // ship.last_seen 은 쓰기 증폭을 줄이려 10분 단위로만 넓히므로 그대로 내보내지 않는다 — 정확한 마지막 위치 시각은 ship_position 에서.
+        // 실시간이 아닐 때의 '마지막 수신'(§G4)은 둘 중 늦은 것
         if (stored != null) out.put("first_recorded_at", stored.firstSeen());
         if (lastPosition != null) out.put("last_position_at", lastPosition);
+        if (live == null && stored != null) out.put("last_seen_at", lastSeenAt(stored.lastSeen(), lastPosition));
         Map<String, Object> meta = Meta.of(req, live == null ? "db" : live.state().provider(), live == null ? null : v.fetchedAt(), SHIPS_STALE_S);
         if (dbUnavailable) meta.put("db_unavailable", true);
         out.put("meta", meta);

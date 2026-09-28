@@ -73,7 +73,7 @@ afterEach(async () => { if (root) { const r = root; root = null; await React.act
 
 describe("ship card re-reads the detail when the WS says the ship left the live list (contract v5 §B3)", () => {
   const MMSI = "431011305";
-  const detail = (over: Record<string, unknown>) => ({ state: null, static: { name: "SYN BRAVO", ship_type: 70 }, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", meta: {}, ...over });
+  const detail = (over: Record<string, unknown>) => ({ state: null, static: { name: "SYN BRAVO", ship_type: 70 }, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", last_seen_at: "2026-09-28T01:05:00Z", meta: {}, ...over });
 
   it("picked while not live: one detail request; the server's ship_selected{state:null} does not re-read it, and the card says not live with the stored time", async () => {
     rec.reply = () => Promise.resolve(detail({}));
@@ -82,7 +82,7 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     await React.act(async () => setData({ shipSelected: { mmsi: MMSI, received_at: 0, static: null, state: null } }));
     await settle();
     expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`]);
-    expect(byTestId("ship-not-live")?.textContent).toMatch(/^실시간 아님 · 마지막 저장 (09-28 )?01:00 UTC$/);
+    expect(byTestId("ship-not-live")?.textContent).toMatch(/^실시간 아님 · 마지막 수신 (09-28 )?01:05 UTC · 마지막 저장 (09-28 )?01:00 UTC$/);
     expect(byTestId("ship-gone")).toBeNull();
   });
 
@@ -91,11 +91,11 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     await mount(React.createElement(ShipCard, { mmsi: MMSI }));
     await settle();
     expect(byTestId("ship-not-live")).toBeNull();
-    rec.reply = () => Promise.resolve(detail({ last_position_at: "2026-09-28T02:40:00Z" }));
+    rec.reply = () => Promise.resolve(detail({ last_position_at: "2026-09-28T02:40:00Z", last_seen_at: "2026-09-28T02:41:00Z" }));
     await React.act(async () => setData({ shipSelected: { mmsi: MMSI, received_at: 0, static: null, state: null } }));
     await settle();
     expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`, `/api/v1/ships/${MMSI}`]);
-    expect(byTestId("ship-not-live")?.textContent).toMatch(/마지막 저장 (09-28 )?02:40 UTC$/);
+    expect(byTestId("ship-not-live")?.textContent).toMatch(/마지막 수신 (09-28 )?02:41 UTC · 마지막 저장 (09-28 )?02:40 UTC$/);
     expect(byTestId("ship-gone")).toBeNull();
   });
 });
@@ -111,9 +111,9 @@ describe("unified search wiring (contract v5 §B1/§B3)", () => {
   const paths = () => rec.calls.map((c) => c.path);
   const AIRCRAFT = { items: [{ hex: "71c081", callsign: "SYN081", alt_ft: 34000, lat: 36, lon: 127 }] };
   const SHIPS = { items: [
-    // api-ships 레인의 응답 모양(항목마다 계약의 12 키 — 모르는 값은 null)
-    { mmsi: "440123456", name: "SYN ALPHA", call_sign: "D7AA", imo: 9811000, ship_type: 70, category: "cargo", live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3, seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:58:00Z" },
-    { mmsi: "440999999", name: "SYN BRAVO", call_sign: null, imo: null, ship_type: 80, category: "tanker", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T01:00:00Z" },
+    // api-ships 레인의 응답 모양(항목마다 계약의 13 키 — §G4 last_seen_at 포함, 모르는 값은 null)
+    { mmsi: "440123456", name: "SYN ALPHA", call_sign: "D7AA", imo: 9811000, ship_type: 70, category: "cargo", live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3, seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:58:00Z", last_seen_at: null },
+    { mmsi: "440999999", name: "SYN BRAVO", call_sign: null, imo: null, ship_type: 80, category: "tanker", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T01:00:00Z", last_seen_at: "2026-09-28T01:05:00Z" },
   ], meta: { q: "SYN", count: 2 } };
 
   beforeEach(() => { useUi.setState({ layers: { ...initialUi.layers, ships: false } }); });
@@ -224,6 +224,6 @@ describe("unified search wiring (contract v5 §B1/§B3)", () => {
     expect(ui.selectedShip).toBe("440999999");
     expect(ui.flyTo).toBeNull();
     const status = find((e) => e.getAttribute("aria-live") === "polite")!;
-    expect(status.textContent).toMatch(/^SYN BRAVO 선택 — 실시간 아님 · 마지막 저장 (09-28 )?01:00 UTC · 카드만/);
+    expect(status.textContent).toMatch(/^SYN BRAVO 선택 — 실시간 아님 · 마지막 수신 (09-28 )?01:05 UTC · 마지막 저장 (09-28 )?01:00 UTC · 카드만/);
   });
 });

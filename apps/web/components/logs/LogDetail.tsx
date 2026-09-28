@@ -3,8 +3,8 @@ import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { fmtTime } from "@/lib/format";
 import {
-  DEFAULT_LOG_FILTER, firstLine, fmtLogTime, logGroupsUrl, logJson, LOG_PERIOD_LABEL, logsUrl, logText, parseLogGroups, parseLogPage,
-  type LogEntry, type LogGroup, type LogPeriod,
+  DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, logGroupsUrl, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY,
+  LOG_STREAM_LABEL, logsUrl, logText, parseLogGroups, parseLogPage, type LogEntry, type LogGroup, type LogPeriod,
 } from "@/lib/logs";
 import { isAuthMiss } from "@/lib/ops";
 import { ErrorNote, RequestIdCopy } from "./ErrorNote";
@@ -33,7 +33,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
     const failTo = (set: (e: unknown) => void) => (e: unknown) => { if (!live) return; set(e); if (isAuthMiss(e)) onAuthMiss(e); };
     if (entry.request_id) {
       apiGet<unknown>(logsUrl({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid: entry.request_id }, now, { limit: RELATED_LIMIT }))
-        .then((v) => { if (!live) return; const p = parseLogPage(v); setRelated({ items: p.items.filter((x) => x.id !== entry.id), more: p.nextCursor != null || p.scanTruncated === true }); })
+        .then((v) => { if (!live) return; const p = parseLogPage(v); setRelated({ items: p.items.filter((x) => entryKey(x) !== entryKey(entry)), more: p.nextCursor != null || p.scanTruncated === true }); })
         .catch(failTo(setRelatedErr));
     }
     if (entry.fp) {
@@ -43,7 +43,8 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
     }
     return () => { live = false; };
   }, [entry, period, onAuthMiss]);
-  const link = () => `${typeof window !== "undefined" ? window.location?.origin ?? "" : ""}/logs#id=${encodeURIComponent(entry.id)}`;
+  const link = () => `${typeof window !== "undefined" ? window.location?.origin ?? "" : ""}/logs${logLinkHash(entry)}`;
+  const keep = entry.stream ? LOG_STREAM_KEEP[entry.stream] : LOG_STREAM_KEEP.server;
   const row = (label: string, value: React.ReactNode) => <tr><th scope="row" className="w-28 align-top">{label}</th><td>{value}</td></tr>;
   const ex = entry.exception;
   return (
@@ -55,7 +56,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
         <span className="ml-auto flex flex-wrap gap-1">
           <button type="button" className="btn" onClick={() => onCopy("항목 텍스트", logText(entry))}>텍스트 복사</button>
           <button type="button" className="btn" onClick={() => onCopy("항목 JSON", logJson(entry))}>JSON 복사</button>
-          <button type="button" className="btn" onClick={() => onCopy("항목 링크", link())} title="운영 로그인 필요 — 스트림에서 잘리면(최근 약 3,000건만 보관) 열리지 않음">링크 복사</button>
+          <button type="button" className="btn" onClick={() => onCopy("항목 링크", link())} title={`운영 로그인 필요 — 스트림에서 잘리면(이 스트림은 최근 약 ${keep.toLocaleString("en-US")}건만 보관) 열리지 않음`}>링크 복사</button>
           <button type="button" className="btn" onClick={onClose}>닫기</button>
         </span>
       </div>
@@ -64,6 +65,9 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
         <tbody>
           {row("시각(UTC)", <span className="mono">{new Date(entry.ts).toISOString()}</span>)}
           {row("서비스", <span className="mono">{entry.service}</span>)}
+          {row("스트림", entry.stream
+            ? <span><span className="mono">{LOG_STREAM_KEY[entry.stream]}</span> <span className="text-fg-3">— {LOG_STREAM_LABEL[entry.stream]}(최근 약 {LOG_STREAM_KEEP[entry.stream].toLocaleString("en-US")}건 보관)</span></span>
+            : <span className="text-fg-3">— (api 가 주지 않음)</span>)}
           {row("인스턴스", <span className="mono">{entry.instance ?? "—"}</span>)}
           {row("스레드", <span className="mono">{entry.thread ?? "—"}</span>)}
           {row("로거", <span className="mono break-all">{entry.logger ?? "—"}</span>)}
@@ -75,7 +79,9 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
       <div className="label mb-1">메시지</div>
       <pre className="mono mb-3 whitespace-pre-wrap break-words border border-line bg-bg p-2 text-[11px]">{entry.message || "—"}</pre>
       <div className="label mb-1">예외</div>
-      <div className="mono mb-3 break-words text-[11px]">{ex ? <><span className="text-bad">{ex.type}</span>{ex.message != null ? `: ${ex.message}` : ""}</> : <span className="text-fg-3">없음(예외 없는 {entry.level})</span>}</div>
+      <div className="mono mb-3 break-words text-[11px]">{ex ? <>
+        <span className="text-bad" data-testid="log-exception" title={ex.type.trim() ? undefined : "예외 종류 모름 — 브라우저 오류는 종류를 보내지 않음(빈 값)"}>{exceptionTypeText(ex.type)}</span>{ex.message != null ? `: ${ex.message}` : ""}
+      </> : <span className="text-fg-3">없음(예외 없는 {entry.level})</span>}</div>
       {ex ? <>
         <div className="mb-1 flex items-center gap-2">
           <span className="label">스택</span>
@@ -104,7 +110,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
         : !related ? <div className="text-fg-3">불러오는 중…</div>
         : !related.items.length ? <div className="text-fg-3">없음</div>
         : <table><tbody>{related.items.map((r) => (
-            <tr key={r.id} data-testid="log-related" className="cursor-pointer hover:bg-bg-2" onClick={() => onOpen(r)}>
+            <tr key={entryKey(r)} data-testid="log-related" className="cursor-pointer hover:bg-bg-2" onClick={() => onOpen(r)}>
               <td className="mono whitespace-nowrap">{fmtLogTime(r.ts)}</td><td><span className={LEVEL_BADGE[r.level]}>{r.level}</span></td>
               <td className="mono">{r.service}</td><td className="mono max-w-[200px] truncate" title={r.logger ?? ""}>{r.logger ?? "—"}</td><td className="max-w-[320px] truncate" title={firstLine(r.message)}>{firstLine(r.message)}</td>
             </tr>))}</tbody></table>}

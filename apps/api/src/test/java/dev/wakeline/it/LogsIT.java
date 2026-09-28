@@ -9,6 +9,9 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.RecordId;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import tools.jackson.databind.JsonNode;
@@ -21,6 +24,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -33,7 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>§C2: 앱의 WARN(요청 MDC 포함)이 logback 싱크를 거쳐 wakeline:logs 에 실리고(설정 비밀값 가림), 자기 지표가 pipeline 에 보인다.
  *       @Scheduled 작업 안의 WARN 은 context.job 에 작업 이름이 있다. XADD 는 MAXLEN ~ 3000.</li>
  *   <li>§C4: 운영 조회 — 익명 404, 목록 · 필터 · fp 묶음 · 항목 하나 · 스키마에 맞지 않는 항목은 invalid.</li>
- *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429.</li>
+ *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429, JSON 이 아니면 415(§G3).</li>
+ *   <li>§G2: 브라우저 오류는 wakeline:logs:client(MAXLEN ~ 1000)에 — 1,100건이 실려도 서버 로그(wakeline:logs)는 한 건도 밀려나지 않고,
+ *       조회는 두 스트림을 합쳐(stream 표시) 보이며 항목 하나는 server → client 순으로 찾는다.</li>
  * </ul>
  * 수집기 모양의 항목은 관리 사용자로 XADD 한다 — 수집기 ACL 에 ~wakeline:logs 를 더하는 것은 infra 레인(§C3)이다.
  */
@@ -63,7 +69,23 @@ class LogsIT extends IntegrationTest {
     }
 
     static String xadd(String e) {
-        return ItStack.admin().opsForStream().add(MapRecord.create(LogSink.STREAM, Map.of("e", e))).getValue();
+        String id = ItStack.admin().opsForStream().add(MapRecord.create(LogSink.STREAM, Map.of("e", e))).getValue();
+        nextRedisMillisecond();
+        return id;
+    }
+
+    static long redisNowMs() {
+        return ItStack.admin().execute((RedisCallback<Long>) c -> c.serverCommands().time(TimeUnit.MILLISECONDS));
+    }
+
+    /**
+     * 조회의 첫 쪽은 Redis TIME 앞 밀리초까지다(§G2 — 두 스트림의 한 시점, LogReader.snapshotLanes). 방금 실은 항목이 같은 밀리초의 조회에서
+     * 빠지지 않게(다음 새로 고침에 보이는 것이 정상 동작) Redis 시계가 지금 밀리초를 지날 때까지 기다린다 — 1 ms 안팎.
+     */
+    static void nextRedisMillisecond() {
+        long t = redisNowMs();
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        while (redisNowMs() <= t) assertThat(System.nanoTime()).as("redis clock stuck at " + t).isLessThan(deadline);
     }
 
     @Test
@@ -227,6 +249,12 @@ class LogsIT extends IntegrationTest {
         });
         JsonNode e = found.get();
         assertThat(e.path("untrusted").asBoolean()).isTrue();
+        assertThat(e.path("stream").asString()).as("§G2 browser error stream").isEqualTo("client");
+        String cid = e.path("id").asString();
+        assertThat(ItStack.admin().opsForStream().range(LogSink.CLIENT_STREAM, org.springframework.data.domain.Range.closed(cid, cid))).hasSize(1);
+        assertThat(ItStack.admin().opsForStream().range(LogSink.STREAM, org.springframework.data.domain.Range.closed(cid, cid)))
+                .as("not in the server log stream").isEmpty();
+        assertThat(ops.get("/api/v1/ops/logs/" + cid).json().path("message").asString()).contains(marker);
         assertThat(e.path("level").asString()).isEqualTo("ERROR");
         assertThat(e.path("logger").asString()).isEqualTo("MapView");
         assertThat(e.path("context").path("path").asString()).isEqualTo("/map");
@@ -238,7 +266,11 @@ class LogsIT extends IntegrationTest {
                 400, "BAD_CLIENT_ERROR", "/api/v1/client-errors");
         String big = "{\"message\":\"" + "m".repeat(9000) + "\",\"path\":\"/\",\"ts\":\"2026-09-29T03:04:00Z\"}";
         assertProblem(send("POST", "/api/v1/client-errors", big, headers("Content-Type", "application/json")), 413, "TOO_LARGE", "/api/v1/client-errors");
-        // 지금까지 3건 — 10건까지는 받고 11번째는 429
+        // §G3: JSON 이 아닌 Content-Type 은 415(로그인과 같은 관례) — 처리기 앞에서 거절하므로 요청 제한 수를 쓰지 않는다
+        Res notJson = send("POST", "/api/v1/client-errors", body, headers("Content-Type", "text/plain"));
+        assertProblem(notJson, 415, "UNSUPPORTED_MEDIA_TYPE", "/api/v1/client-errors");
+        assertThat(notJson.header("Accept")).contains("application/json");
+        // 지금까지 3건(415 는 세지 않는다) — 10건까지는 받고 11번째는 429
         for (int i = 3; i < 10; i++)
             assertThat(send("POST", "/api/v1/client-errors", body, headers("Content-Type", "application/json")).status()).isEqualTo(204);
         Res limited = send("POST", "/api/v1/client-errors", body, headers("Content-Type", "application/json"));
@@ -246,17 +278,138 @@ class LogsIT extends IntegrationTest {
         assertThat(limited.header("Retry-After")).isNotBlank();
     }
 
+    /**
+     * 계약 v5 §G2 의 목적: 누구나 보낼 수 있는 브라우저 오류가 1,100건 실려도(한 IP 는 분당 10 · 전체 분당 120 — 전체 한도로 약 9분) 서버 로그는
+     * 한 건도 밀려나지 않는다. 한 스트림(MAXLEN ~ 3000)이던 때는 같은 양이 서버 오류를 그만큼 밀어냈다. 브라우저 오류 스트림은 1,000 근처로 잘린다.
+     * api 와 같은 ACL 사용자 · 같은 XADD 옵션(LogSink.redisWriter)으로 싣는다 — api 의 ~wakeline:* 가 새 스트림도 덮는지까지.
+     */
+    @Test
+    void a1100EntryBrowserFloodDoesNotEvictServerEntries() {
+        OpsBrowser b = login();
+        var writer = LogSink.redisWriter(ItStack.apiUser());
+        String fp = randomFp();
+        List<String> serverIds = new java.util.ArrayList<>();
+        for (int i = 0; i < 30; i++) serverIds.add(xadd(collectorEntry(fp, "server error before the flood " + i, 0)));
+        long serverLen = ItStack.admin().opsForStream().size(LogSink.STREAM);
+        String flood = LogEvents.serialize(new LogEvents.Draft(Instant.now(), "web-client", "api-it:1", "ERROR", "browser", null,
+                "TypeError: flood", null, null, Map.of("path", "/"), true), randomFp(), 0);
+        try {
+            for (int i = 0; i < 1_100; i++) writer.xadd(dev.wakeline.logs.LogStream.CLIENT, flood);
+            nextRedisMillisecond();
+            Long clientLen = ItStack.admin().opsForStream().size(LogSink.CLIENT_STREAM);
+            // MAXLEN ~ 1000: 근사 트림은 내부 노드(기본 100 항목) 단위 — 1000 이상, 1000 + 노드 하나 이하
+            assertThat(clientLen).isBetween(1_000L, 1_100L);
+            assertThat(ItStack.admin().opsForStream().size(LogSink.STREAM)).as("the server stream did not move").isEqualTo(serverLen);
+            for (String id : serverIds)
+                assertThat(ItStack.admin().opsForStream().range(LogSink.STREAM, org.springframework.data.domain.Range.closed(id, id))).as(id).hasSize(1);
+            // 조회: 가장 최근은 브라우저 오류(stream client), 서버 항목은 한 번 훑기로 모두(훑기 상한 = 스트림마다 MAXLEN + 노드 하나의 합)
+            JsonNode top = b.get("/api/v1/ops/logs?limit=1").json();
+            assertThat(top.path("items").get(0).path("stream").asString()).isEqualTo("client");
+            assertThat(top.path("next_cursor").asString()).startsWith("client:");
+            JsonNode mine = b.get("/api/v1/ops/logs?fp=" + fp + "&limit=200").json();
+            assertThat(mine.path("items")).hasSize(30);
+            assertThat(mine.path("scan_truncated").asBoolean()).isFalse();
+            for (JsonNode it : mine.path("items")) assertThat(it.path("stream").asString()).isEqualTo("server");
+            assertThat(mine.path("items").get(0).path("id").asString()).isEqualTo(serverIds.getLast());
+            // 이어 읽기: 브라우저 오류 쪽에서 끊긴 커서로도 서버 항목에 닿는다
+            JsonNode next = b.get("/api/v1/ops/logs?limit=200&cursor=" + enc(top.path("next_cursor").asString())).json();
+            assertThat(next.path("items")).hasSize(200);
+            // 묶음도 두 스트림: 서버 fp 묶음 30건 · 브라우저 오류 묶음(1,000 근처)
+            JsonNode groups = b.get("/api/v1/ops/logs/groups").json();
+            JsonNode g = null, web = null;
+            for (JsonNode x : groups.path("groups")) {
+                if (fp.equals(x.path("fp").asString())) g = x;
+                if ("web-client".equals(x.path("service").asString()) && "TypeError: flood".equals(x.path("sample_message").asString())) web = x;
+            }
+            assertThat(g).isNotNull();
+            assertThat(g.path("count").asLong()).isEqualTo(30);
+            assertThat(g.path("last_stream").asString()).isEqualTo("server");
+            assertThat(web).isNotNull();
+            assertThat(web.path("count").asLong()).isEqualTo(clientLen);
+            assertThat(web.path("last_stream").asString()).isEqualTo("client");
+            // 항목 하나: 서버 스트림에 없는 id 는 브라우저 오류 스트림에서
+            String clientId = top.path("items").get(0).path("id").asString();
+            assertThat(b.get("/api/v1/ops/logs/" + clientId).json().path("stream").asString()).isEqualTo("client");
+            assertProblem(b.get("/api/v1/ops/logs/" + clientId + "?stream=server"), 404, "NOT_FOUND", "/api/v1/ops/logs/" + clientId);
+        } finally {
+            ItStack.admin().delete(LogSink.CLIENT_STREAM); // 다른 조회 시험의 훑기 상한에 걸리지 않게
+        }
+    }
+
+    /**
+     * §G2 첫 쪽은 두 스트림의 한 시점 — Redis TIME 앞 밀리초까지(LogReader.snapshotLanes, api ACL 사용자가 TIME 을 부른다). 전제인 실제 Redis 의
+     * id 규칙까지: id 를 지정해 시계보다 앞선 항목을 실으면 뒤이은 자동 id 도 그 ms 를 이어 쓴다. 여유(60 s) 안이면 시계가 지날 때까지 첫 쪽에서
+     * 빠졌다가 보이고, 그보다 앞서면 자르지 않고 곧바로 보인다 — 시계가 뒤로 간 동안 새 오류를 숨기지 않는다.
+     */
+    @Test
+    void theFirstPageIsCutAtTheRedisClockUnlessStreamIdsRunFarAhead() {
+        OpsBrowser b = login();
+        String fp = randomFp();
+        String q = "/api/v1/ops/logs?fp=" + fp;
+        try {
+            String near = (redisNowMs() + 2_000) + "-0";
+            ItStack.admin().opsForStream().add(StreamRecords.newRecord().in(LogSink.STREAM).withId(RecordId.of(near))
+                    .ofMap(Map.of("e", collectorEntry(fp, "two seconds ahead of the redis clock", 0))));
+            assertThat(b.get(q).json().path("items")).as("cut at the redis time until the clock passes it").isEmpty();
+            await("the entry once the redis clock passes it", Duration.ofSeconds(15), () -> b.get(q).json().path("items").size() == 1);
+
+            String far = (redisNowMs() + 3_600_000) + "-0";
+            ItStack.admin().opsForStream().add(StreamRecords.newRecord().in(LogSink.STREAM).withId(RecordId.of(far))
+                    .ofMap(Map.of("e", collectorEntry(fp, "an hour ahead of the redis clock", 0))));
+            String after = xadd(collectorEntry(fp, "auto id after it", 0));
+            assertThat(after).as("redis keeps the last id's ms while the clock is behind").isEqualTo(far.substring(0, far.indexOf('-')) + "-1");
+            JsonNode page = b.get(q).json();
+            assertThat(page.path("items")).extracting(n -> n.path("id").asString()).containsExactly(after, far, near);
+            JsonNode groups = b.get("/api/v1/ops/logs/groups?service=collector").json();
+            JsonNode g = null;
+            for (JsonNode x : groups.path("groups")) if (fp.equals(x.path("fp").asString())) g = x;
+            assertThat(g).isNotNull();
+            assertThat(g.path("count").asLong()).isEqualTo(3);
+        } finally {
+            ItStack.admin().delete(LogSink.STREAM); // 앞선 마지막 id 를 지운다 — 뒤 시험의 자동 id 가 시계를 따르게
+        }
+    }
+
+    /**
+     * §G2: 한 번 훑기는 두 스트림 전체를 본다 — 근사 트림(MAXLEN ~)이 남기는 만큼까지. 작은 항목이면 Redis 내부 노드가 100 항목으로 차서 한 스트림이
+     * MAXLEN + 99 건까지 남는다(여기서 3,300 · 1,150 건을 실으면 약 3,000 · 1,050 — 합이 4,000 을 넘는다). 항목은 스키마에 맞지 않는 짧은 값이라
+     * invalid 로 세지만 훑은 수에는 든다. 실제 로그 항목(수백 바이트 이상)은 노드가 4 KiB(stream-node-max-bytes)에서 닫혀 넘치는 수가 더 적다.
+     */
+    @Test
+    void bothStreamsAtTheirApproximateTrimLimitFitInOneScan() {
+        OpsBrowser b = login();
+        var writer = LogSink.redisWriter(ItStack.apiUser());
+        try {
+            ItStack.admin().delete(List.of(LogSink.STREAM, LogSink.CLIENT_STREAM));
+            for (int i = 0; i < 3_300; i++) writer.xadd(dev.wakeline.logs.LogStream.SERVER, "x");
+            for (int i = 0; i < 1_150; i++) writer.xadd(dev.wakeline.logs.LogStream.CLIENT, "x");
+            nextRedisMillisecond();
+            long serverLen = ItStack.admin().opsForStream().size(LogSink.STREAM), clientLen = ItStack.admin().opsForStream().size(LogSink.CLIENT_STREAM);
+            assertThat(serverLen).isBetween(3_000L, 3_099L);
+            assertThat(clientLen).isBetween(1_000L, 1_099L);
+            assertThat(serverLen + clientLen).as("both streams past their MAXLEN at once").isGreaterThan(4_000L);
+            JsonNode groups = b.get("/api/v1/ops/logs/groups").json();
+            assertThat(groups.path("scan_truncated").asBoolean()).isFalse();
+            assertThat(groups.path("scanned").asLong()).isGreaterThanOrEqualTo(serverLen + clientLen); // 그사이 앱 경고가 실렸으면 그만큼 더
+            JsonNode list = b.get("/api/v1/ops/logs?service=ais").json(); // 아무것도 맞지 않는다 — 끝까지 훑는다
+            assertThat(list.path("scan_truncated").asBoolean()).isFalse();
+            assertThat(list.path("next_cursor").isNull()).isTrue();
+        } finally {
+            ItStack.admin().delete(List.of(LogSink.STREAM, LogSink.CLIENT_STREAM));
+        }
+    }
+
     @Test
     void xaddTrimsTheStreamToAbout3000Entries() {
         var writer = LogSink.redisWriter(ItStack.apiUser()); // api 와 같은 ACL 사용자 · 같은 XADD 옵션
         String e = collectorEntry(randomFp(), "trim probe", 0);
         try {
-            for (int i = 0; i < 3_300; i++) writer.xadd(e);
+            for (int i = 0; i < 3_300; i++) writer.xadd(dev.wakeline.logs.LogStream.SERVER, e);
             Long len = ItStack.admin().opsForStream().size(LogSink.STREAM);
             // MAXLEN ~ 3000: 근사 트림은 내부 노드(기본 100 항목) 단위로 자른다 — 3000 이상, 3000 + 노드 하나 이하
             assertThat(len).isBetween(3_000L, 3_100L);
         } finally {
-            ItStack.admin().delete(LogSink.STREAM); // 다른 조회 시험이 3,000건 훑기 상한에 걸리지 않게
+            ItStack.admin().delete(LogSink.STREAM); // 다른 조회 시험이 훑기 상한에 걸리지 않게
         }
     }
 }

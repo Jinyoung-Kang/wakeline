@@ -5,6 +5,15 @@
 import { seenAtMs, STALE_AFTER_S, thresholds } from "./interpolate";
 import type { AircraftState } from "./types";
 
+/**
+ * 항적 조회 실패(계약 v5 §G5) → 화면 문구와 요청 id. 요청 id 는 ApiError 가 problem+json(또는 X-Request-Id)에서 이미 형식을 확인해 둔 값만 —
+ * 없으면 null(지어내지 않는다). api 모듈을 부르지 않는다(모양으로 읽는다 — 시험이 api 모듈을 바꿔 끼워도 같게).
+ */
+export function trackError(e: unknown): { error: string; requestId: string | null } {
+  const rid = e instanceof Error ? (e as Error & { requestId?: unknown }).requestId : null;
+  return { error: e instanceof Error ? e.message : String(e), requestId: typeof rid === "string" && rid ? rid : null };
+}
+
 /** provider: 그 점을 준 공급자(track_point.provider · WS 상태) — 수신 공백 기준에 쓴다. 모르면 null/없음 */
 export interface TrackPt { ts: number; lon: number; lat: number; alt_ft: number | null; provider?: string | null }
 

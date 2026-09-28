@@ -15,12 +15,13 @@ import { useUi } from "@/lib/ui-store";
 import type { AircraftState } from "@/lib/types";
 import { ShipTable } from "./ShipTable";
 import { AltStack } from "./UnitStack";
+import { RequestIdOf } from "./logs/ErrorNote";
 
 const DEBOUNCE_MS = 250;
 
 type GroupState = "idle" | "loading" | "done" | "error";
-/** note = 결과와 함께 보일 알림(예: 선박 DB 사용 불가 — 결과가 실시간 목록뿐) */
-export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string }
+/** note = 결과와 함께 보일 알림(예: 선박 DB 사용 불가 — 결과가 실시간 목록뿐). error = 실패의 오류 그대로(ApiError 면 요청 id 를 문구에 — 계약 v5 §G5) */
+export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string; error?: unknown }
 const IDLE = { hits: [], state: "idle" as const, msg: "" };
 
 /** 검색 실패 문구(묶음마다) — 404 는 서버가 아직 그 검색을 지원하지 않는 경우(구 api) */
@@ -41,7 +42,7 @@ function shipRows(hits: ShipHit[], sort: ShipSort | null, now: number) {
  * 상단 통합 검색(GAP-12 · 계약 v5 §B3): 항공기(호출부호·hex·등록번호 접두사 2–10자)와 선박(선명·호출부호 앞부분 · MMSI · IMO, 2–40자)을 함께 찾는다.
  * "/" 로 초점, ↑↓ 이동(항공기 → 선박), Enter 선택, Esc 닫기. 결과는 두 묶음(묶음 제목·출처) — 한 묶음이 실패해도 다른 묶음은 그대로.
  * 항공기: 카드를 열고 위치(검색 결과 → 지도 스냅샷 사본 → REST 상세)로 지도를 옮긴다.
- * 선박: 선박 레이어를 켜고(꺼져 있으면) 카드 + 항적. 실시간이고 위치를 알면 지도를 옮기고, 실시간이 아니면 "실시간 아님 · 마지막 저장 hh:mm" 과 함께 카드만
+ * 선박: 선박 레이어를 켜고(꺼져 있으면) 카드 + 항적. 실시간이고 위치를 알면 지도를 옮기고, 실시간이 아니면 "실시간 아님 · 마지막 수신 hh:mm · 마지막 저장 hh:mm" 과 함께 카드만
  * — 위치를 지어내지 않는다.
  */
 export function AircraftSearch() {
@@ -83,7 +84,7 @@ export function AircraftSearch() {
         setAircraft((g) => ({ ...g, state: "loading" }));
         apiGet<unknown>(`/api/v1/aircraft/search?q=${encodeURIComponent(qa)}`, { signal: ctl.signal })
           .then((body) => { const h = parseSearchResponse(body); setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e) }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e), error: e }); });
       } else setAircraft(IDLE);
       if (qs) {
         setShips((g) => ({ ...g, state: "loading" }));
@@ -92,7 +93,7 @@ export function AircraftSearch() {
             const h = parseShipSearchResponse(body);
             setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: shipSearchDbUnavailable(body) ? SHIP_SEARCH_DB_NOTE : undefined });
           })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e) }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e), error: e }); });
       } else setShips(IDLE);
     }, DEBOUNCE_MS);
     return () => { clearTimeout(t); ctl.abort(); };
@@ -238,7 +239,9 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
   return (
     <div className="max-h-[60vh] overflow-y-auto">
       <GroupHead id={headId(uid, "aircraft")} title="항공기" count={aircraft.state === "done" ? `${nA}건` : "—"} source="출처: 실시간 스냅샷(live) · DB 과거 기록(db)" testId="search-group-aircraft" />
-      {aMsg ? <div className={`px-2 py-1.5 ${aircraft.state === "error" ? "text-warn" : "text-fg-3"}`}>{aMsg}</div> : null}
+      {aMsg ? <div className={`px-2 py-1.5 ${aircraft.state === "error" ? "text-warn" : "text-fg-3"}`} data-testid={aircraft.state === "error" ? "search-error-aircraft" : undefined}>
+        {aMsg}{aircraft.state === "error" ? <RequestIdOf error={aircraft.error} /> : null}
+      </div> : null}
       <ul role="listbox" id={lists.aircraft} aria-labelledby={headId(uid, "aircraft")}>
         {aircraft.hits.map((h, i) => (
           <li
@@ -261,13 +264,15 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
       </ul>
       <GroupHead id={headId(uid, "ships")} title="선박" count={ships.state === "done" ? `${rows.length}건` : "—"} source="출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)" testId="search-group-ships" />
       {ships.note && ships.state === "done" ? <div className="px-2 py-1 text-[11px] text-warn" data-testid="ship-search-db-note">{ships.note}</div> : null}
-      {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`}>{sMsg}</div> : null}
+      {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`} data-testid={ships.state === "error" ? "search-error-ships" : undefined}>
+        {sMsg}{ships.state === "error" ? <RequestIdOf error={ships.error} /> : null}
+      </div> : null}
       {rows.length ? (
         <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" wide
           listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}
-      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 저장 시각은 UTC).</div> : null}
+      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 수신·저장 시각은 UTC · 마지막 수신 = 이 서비스가 그 선박의 AIS 메시지를 마지막으로 받은 기록).</div> : null}
     </div>
   );
 }

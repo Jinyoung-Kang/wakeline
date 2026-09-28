@@ -29,6 +29,8 @@ class LogSinkTest {
     final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     final AtomicLong now = new AtomicLong(1_000_000);
     final List<String> written = Collections.synchronizedList(new ArrayList<>());
+    /** XADD 한 스트림(written 과 같은 순서). */
+    final List<LogStream> streams = Collections.synchronizedList(new ArrayList<>());
     final AtomicInteger failuresLeft = new AtomicInteger();
     final LoggerContext logback = new LoggerContext();
     LogSink sink;
@@ -36,8 +38,9 @@ class LogSinkTest {
     { logback.setMDCAdapter(new ch.qos.logback.classic.util.LogbackMDCAdapter()); }
 
     /** 가짜 XADD: failuresLeft 가 남아 있으면 실패(Redis 장애 흉내). */
-    void xadd(String json) {
+    void xadd(LogStream stream, String json) {
         if (failuresLeft.get() > 0 && failuresLeft.getAndDecrement() > 0) throw new IllegalStateException("redis down");
+        streams.add(stream);
         written.add(json);
     }
 
@@ -229,6 +232,37 @@ class LogSinkTest {
         assertThat(trim.getTrimStrategy()).isInstanceOfSatisfying(RedisStreamCommands.MaxLenTrimStrategy.class,
                 m -> assertThat(m.threshold()).isEqualTo(3_000));
         assertThat(trim.getTrimOperator()).isEqualTo(RedisStreamCommands.TrimOperator.APPROXIMATE);
+        assertThat(LogStream.SERVER.xaddOptions()).isSameAs(LogSink.XADD_OPTIONS);
+        assertThat(LogStream.SERVER.key()).isEqualTo("wakeline:logs");
+    }
+
+    /** 계약 v5 §G2: 브라우저 오류 스트림은 wakeline:logs:client MAXLEN ~ 1000 — 서버 로그 스트림(3,000)과 따로 자른다. */
+    @Test
+    void clientStreamTrimsToMaxlen1000Approximately() {
+        assertThat(LogStream.CLIENT.key()).isEqualTo("wakeline:logs:client");
+        var trim = LogStream.CLIENT.xaddOptions().getTrimOptions();
+        assertThat(trim.getTrimStrategy()).isInstanceOfSatisfying(RedisStreamCommands.MaxLenTrimStrategy.class,
+                m -> assertThat(m.threshold()).isEqualTo(1_000));
+        assertThat(trim.getTrimOperator()).isEqualTo(RedisStreamCommands.TrimOperator.APPROXIMATE);
+        assertThat(LogStream.values()).extracting(LogStream::label).containsExactly("server", "client");
+    }
+
+    /**
+     * 계약 v5 §G2: 한 대기열 · 한 순서로 보내되 항목마다 제 스트림으로 — 브라우저 오류(CLIENT)는 wakeline:logs:client, 서버 로그는 wakeline:logs.
+     * 실패하면 스트림을 기억한 채 되돌려 다시 보낸다.
+     */
+    @Test
+    void eachEntryIsWrittenToItsOwnStream_alsoAfterARetry() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        assertThat(s.submit(LogStream.SERVER, "api", "dev.wakeline.A", null, "server one", (fp, n) -> entry(1))).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit(LogStream.CLIENT, "web-client", "browser", "", "client one", (fp, n) -> entry(2))).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "dev.wakeline.B", null, "server two", (fp, n) -> entry(3))).as("default = server stream").isEqualTo(LogSink.Offer.QUEUED);
+        failuresLeft.set(1);
+        assertThat(s.flushOnce()).isFalse();
+        assertThat(s.queued()).isEqualTo(3);
+        assertThat(s.flushOnce()).isTrue();
+        assertThat(written).containsExactly(entry(1), entry(2), entry(3));
+        assertThat(streams).containsExactly(LogStream.SERVER, LogStream.CLIENT, LogStream.SERVER);
     }
 
     @Test

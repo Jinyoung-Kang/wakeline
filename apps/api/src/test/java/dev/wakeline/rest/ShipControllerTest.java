@@ -182,12 +182,15 @@ class ShipControllerTest {
                 .andExpect(jsonPath("$.static.name").value("FROM DB"))
                 .andExpect(jsonPath("$.category").value("tanker"))
                 .andExpect(jsonPath("$.first_recorded_at").exists())
-                .andExpect(jsonPath("$.last_seen").doesNotExist());
+                .andExpect(jsonPath("$.last_seen").doesNotExist())
+                .andExpect(jsonPath("$.last_seen_at").doesNotExist()); // 실시간 — 마지막 수신은 state.seen_at
         // 지금은 없고 DB 에만 있는 선박
         repo.stored = new ShipRepository.StoredShip(stat("440000099", "HISTORY", 30), T.minusSeconds(86_400), T.minusSeconds(86_000));
         repo.points.add(tp(T.minusSeconds(86_000), 129));
         mvc.perform(get("/api/v1/ships/440000099")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.last_position_at").exists())
+                // §G4: 실시간이 아니면 마지막 수신(ship.last_seen — 저장 위치가 더 늦으면 그 시각)
+                .andExpect(jsonPath("$.last_seen_at").value(T.minusSeconds(86_000).toString()))
                 .andExpect(jsonPath("$.state").value(nullValue()))
                 .andExpect(jsonPath("$.static.name").value("HISTORY"))
                 .andExpect(jsonPath("$.meta.provider").value("db"));
@@ -518,7 +521,7 @@ class ShipControllerTest {
     }
 
     static final java.util.Set<String> ITEM_KEYS = java.util.Set.of("mmsi", "name", "call_sign", "imo", "ship_type", "category", "live", "lat", "lon",
-            "sog_kn", "seen_at", "last_position_at");
+            "sog_kn", "seen_at", "last_position_at", "last_seen_at");
 
     tools.jackson.databind.JsonNode search(String q, String limit) throws Exception {
         var b = get("/api/v1/ships/search");
@@ -526,7 +529,7 @@ class ShipControllerTest {
         if (limit != null) b = b.param("limit", limit);
         MvcResult r = mvc.perform(b).andExpect(status().isOk()).andExpect(header().string("Cache-Control", containsString("public"))).andReturn();
         tools.jackson.databind.JsonNode body = tools.jackson.databind.json.JsonMapper.builder().build().readTree(r.getResponse().getContentAsString());
-        // 계약의 항목 모양: 12개 키가 늘 있다(모르는 값은 null — 키를 빼지 않는다)
+        // 계약의 항목 모양: 13개 키(§B1 12개 + §G4 last_seen_at)가 늘 있다(모르는 값은 null — 키를 빼지 않는다)
         for (tools.jackson.databind.JsonNode it : body.path("items")) {
             java.util.Set<String> keys = new java.util.HashSet<>();
             it.propertyNames().forEach(keys::add);
@@ -569,7 +572,37 @@ class ShipControllerTest {
         assertThat(it.path("sog_kn").asDouble()).isEqualTo(12.0);
         assertThat(Instant.parse(it.path("seen_at").asString())).isEqualTo(T.minusSeconds(5));
         assertThat(Instant.parse(it.path("last_position_at").asString())).isEqualTo(T.minusSeconds(40));
+        assertThat(it.path("last_seen_at").isNull()).as("§G4: live — seen_at is the last reception").isTrue();
         assertThat(body.path("meta").has("db_unavailable")).isFalse();
+    }
+
+    /**
+     * 계약 v5 §G4: 저장만 된 선박(실시간 아님)은 last_seen_at = 이 선박의 AIS 메시지를 마지막으로 받은 기록 시각 — ship.last_seen, 저장된 마지막 위치가
+     * 더 늦으면 그 시각(ship.last_seen 은 위치로는 10분에 한 번만 넓히므로 그 사이 저장된 위치가 더 늦을 수 있다 — 둘 다 받은 보고의 시각).
+     * 보존(72 h)이 지나 위치가 없어도 last_seen_at 은 있다. 실시간 선박은 null(seen_at 이 마지막 수신).
+     */
+    @Test void search_storedOnlyCarriesLastSeenAt() throws Exception {
+        repo.rows.add(new ShipRepository.SearchRow("440000071", full("440000071", "HANJIN A", null, null, 70), T.minusSeconds(3_600)));
+        repo.rows.add(new ShipRepository.SearchRow("440000072", full("440000072", "HANJIN B", null, null, 70), T.minusSeconds(4_000)));
+        repo.rows.add(new ShipRepository.SearchRow("440000073", full("440000073", "HANJIN C", null, null, 70), T.minusSeconds(5 * 86_400)));
+        repo.lastPositions.put("440000071", T.minusSeconds(7_200));  // 저장 위치가 더 이르다 → ship.last_seen
+        repo.lastPositions.put("440000072", T.minusSeconds(3_700));  // 10분 창 안의 뒤 보고가 저장 위치로만 남음 → 그 시각
+        var items = search("HANJIN", null).path("items");
+        java.util.Map<String, tools.jackson.databind.JsonNode> by = new java.util.HashMap<>();
+        for (var it : items) by.put(it.path("mmsi").asString(), it);
+        assertThat(by.get("440000001").path("live").asBoolean()).isTrue();
+        assertThat(by.get("440000001").path("last_seen_at").isNull()).isTrue();
+        assertThat(Instant.parse(by.get("440000071").path("last_seen_at").asString())).isEqualTo(T.minusSeconds(3_600));
+        assertThat(Instant.parse(by.get("440000072").path("last_seen_at").asString())).isEqualTo(T.minusSeconds(3_700));
+        assertThat(Instant.parse(by.get("440000072").path("last_position_at").asString())).isEqualTo(T.minusSeconds(3_700));
+        // 보존 72 h 밖: 위치는 없지만(null) 마지막 수신은 사실로 보인다
+        assertThat(by.get("440000073").path("last_position_at").isNull()).isTrue();
+        assertThat(Instant.parse(by.get("440000073").path("last_seen_at").asString())).isEqualTo(T.minusSeconds(5 * 86_400));
+        // lookup 이 끊겨도 검색 행의 ship.last_seen 은 안다(저장 위치로 넓히지 못할 뿐)
+        repo.lookupDown = true;
+        var down = search("HANJIN C", null).path("items").get(0);
+        assertThat(Instant.parse(down.path("last_seen_at").asString())).isEqualTo(T.minusSeconds(5 * 86_400));
+        assertThat(down.path("last_position_at").isNull()).isTrue();
     }
 
     /** DB 에만 있는 선박: live=false, 위치·속력·보고 시각 null(지어내지 않는다), 마지막 저장 시각은 DB. 실시간 결과가 먼저, 중복 없음. */

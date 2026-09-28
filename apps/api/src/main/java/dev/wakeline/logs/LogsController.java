@@ -18,11 +18,14 @@ import java.util.regex.Pattern;
 /**
  * 시스템 로그 조회(계약 v5 §C4) — 운영 전용: /api/v1/ops/** 규칙(운영 세션 필요, 익명은 404 로 존재를 숨긴다, GET 은 CSRF 헤더 없이).
  * 공개 OpenAPI 문서에는 나오지 않는다(springdoc paths-to-exclude). 로그에는 내부 경로·구성이 담긴다(ADR-018).
+ * 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 합쳐 보인다 — 항목마다 stream = "server" | "client"(계약 v5 §G2, {@link LogReader}).
  * <ul>
  *   <li>GET /api/v1/ops/logs — 최신 순 목록. service(여러 개: 쉼표 또는 되풀이) · level(ERROR | WARN, 여러 개) · q(글자, 200자 이하) · fp · rid ·
- *       since · until(ISO 시각, ts 기준) · cursor(이전 쪽의 next_cursor) · limit(1–200, 기본 100 — 범위 밖은 끝값).</li>
- *   <li>GET /api/v1/ops/logs/groups — fp 묶음(since · service · level).</li>
- *   <li>GET /api/v1/ops/logs/{id} — 항목 하나(트림돼 없거나 스키마에 맞지 않으면 404).</li>
+ *       since · until(ISO 시각, ts 기준) · cursor(이전 쪽의 next_cursor — "server:{id}" | "client:{id}", §G2 전의 "{id}" 는 server) ·
+ *       limit(1–200, 기본 100 — 범위 밖은 끝값).</li>
+ *   <li>GET /api/v1/ops/logs/groups — fp 묶음(since · service · level), 두 스트림 모두.</li>
+ *   <li>GET /api/v1/ops/logs/{id} — 항목 하나: server → client 순으로 찾는다. stream=server|client 면 그 스트림에서만(두 스트림은 id 를 따로
+ *       매기므로 같은 id 가 둘 다에 있을 수 있다). 트림돼 없거나 스키마에 맞지 않으면 404.</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -34,7 +37,6 @@ public class LogsController {
     static final int LIMIT_MAX = 200;
     static final int Q_MAX = 200;
     static final Pattern FP = Pattern.compile("[0-9a-f]{16}");
-    static final Pattern STREAM_ID = Pattern.compile("\\d{1,20}-\\d{1,20}");
 
     private final LogReader reader;
 
@@ -48,8 +50,8 @@ public class LogsController {
                                @RequestParam(required = false) String rid, @RequestParam(required = false) Instant since,
                                @RequestParam(required = false) Instant until, @RequestParam(required = false) String cursor,
                                @RequestParam(defaultValue = "100") int limit) {
-        if (cursor != null && !cursor.isBlank() && !(STREAM_ID.matcher(cursor).matches() && LogReader.parseId(cursor) != null))
-            throw Problem.badRequest("BAD_CURSOR", "cursor must be a stream id (next_cursor of the previous page)");
+        if (cursor != null && !cursor.isBlank() && LogReader.parseCursor(cursor) == null)
+            throw Problem.badRequest("BAD_CURSOR", "cursor must be the next_cursor of the previous page (server:<stream id> or client:<stream id>)");
         var f = filter(service, level, q, fp, rid, since, until);
         return reader.list(f, cursor == null || cursor.isBlank() ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)));
     }
@@ -61,8 +63,12 @@ public class LogsController {
     }
 
     @GetMapping("/{id:\\d{1,20}-\\d{1,20}}")
-    public JsonNode one(@PathVariable String id) {
-        JsonNode n = LogReader.parseId(id) == null ? null : reader.get(id); // 64비트를 넘는 id 는 스트림에 있을 수 없다
+    public JsonNode one(@PathVariable String id, @RequestParam(required = false) String stream) {
+        LogStream only = null;
+        if (stream != null && !stream.isBlank() && (only = LogStream.ofLabel(stream.trim())) == null)
+            throw Problem.badRequest("BAD_STREAM", "stream must be server or client");
+        JsonNode n = LogReader.parseId(id) == null ? null // 64비트를 넘는 id 는 스트림에 있을 수 없다
+                : only == null ? reader.get(id) : reader.get(id, only);
         if (n == null) throw Problem.notFound("no such log entry (trimmed from the stream, or it failed schema validation)");
         return n;
     }

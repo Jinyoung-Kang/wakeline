@@ -236,7 +236,10 @@ public class ShipRepository {
                 shortObj(rs.getObject("eta_minute")), upd.toInstant(), rs.getString("provider"));
     }
 
-    /** 검색 결과 한 행: 저장된 정적 정보(받은 적 없으면 null) + last_seen(순서용 — 10분 단위로만 넓혀지는 값이라 내보내지 않는다). */
+    /**
+     * 검색 결과 한 행: 저장된 정적 정보(받은 적 없으면 null) + ship.last_seen. last_seen 은 순서에 쓰고, 저장만 된 선박(실시간 아님)의
+     * last_seen_at 으로도 나간다 — 위치로는 10분 단위로만 넓혀지므로 저장된 마지막 위치 시각과 둘 중 늦은 것(계약 v5 §G4, ShipController.lastSeenAt).
+     */
     public record SearchRow(String mmsi, ShipStatic stat, Instant lastSeen) {}
 
     /**

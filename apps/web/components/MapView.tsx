@@ -22,7 +22,7 @@ import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { isMetarStale } from "@/lib/format";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
-import { appendTrackPoint, mergeTrack, pointFromState, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
+import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
@@ -606,20 +606,21 @@ export function MapView() {
     onReady(map, "ship-track", () => drawShipTrack(map, { segs: [], gaps: [] }));
     if (!selectedShip) return;
     let cancelled = false;
-    const finish = (track: ShipTrack, error: string | null) => {
+    const finish = (track: ShipTrack, error: string | null, requestId: string | null = null) => {
       const ref = shipTrack.current;
       if (cancelled || ref.mmsi !== selectedShip) return;
       // REST 공백(scope 포함)과 상태 공백을 이 선박 위치로 가른다 — 다른 구역의 공백은 이 선박 카드·연결선에 넣지 않는다(계약 v4 §G)
       mergeStatusGaps(track, getData().ais, ref.sinceMs, shipPos(selectedShip));
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
       shipTrack.current = { ...ref, track, pending: [], loaded: true };
-      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from, hours: shipTrackHours } });
+      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, requestId, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from, hours: shipTrackHours } });
       onReady(map, "ship-track", () => drawShipTrack(map, track));
     };
     const q = `from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
     apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(selectedShip)}/track?${q}`)
       .then((r) => finish(shipTrackFromRest(r), null))
-      .catch((e: Error) => finish({ segs: [], gaps: [] }, String(e.message))); // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다
+      // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다. 요청 id 는 카드의 문구에(계약 v5 §G5)
+      .catch((e: unknown) => { const t = trackError(e); finish({ segs: [], gaps: [] }, t.error, t.requestId); });
     return () => { cancelled = true; };
   }, [selectedShip, shipTrackHours]);
 
