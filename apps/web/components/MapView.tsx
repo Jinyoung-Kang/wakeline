@@ -375,7 +375,6 @@ export function MapView() {
         if (id === "aircraft-symbol") { select(String(f!.properties?.hex)); return; }
         if (id === "ship-symbol") { const m = String(f!.properties?.mmsi); if (isMmsi(m)) selectShip(m); return; }
         if (id === "ship-selected-icon" || id === "ship-track-point") return; // 이미 선택된 선박·그 항적
-
         if (id === "ship-grid-circle" && f!.geometry.type === "Point") {
           // 격자 칸을 누르면 그 칸으로 확대 — 줌 7 이상에서 서버가 개별 선박을 보낸다(화면 안 5,000척 이하일 때 — 계약 v4 §C)
           const [lon, lat] = f!.geometry.coordinates as [number, number];
