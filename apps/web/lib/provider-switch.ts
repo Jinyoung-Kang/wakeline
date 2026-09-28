@@ -30,14 +30,28 @@ export const MIRROR_PERIOD_S = 60;
 
 const onOff = (disabled: boolean) => (disabled ? "꺼짐" : "켜짐");
 
-/** 토글 결과 문구. ok=false(미러 실패)는 경고(role=alert)로 보인다. */
-export function toggleNote(r: ToggleResult): { ok: boolean; text: string } {
+/** 토글 결과 문구. ok=false(미러 실패)는 경고(role=alert)로 보인다. provider · version 은 {@link liveNote} 가 지금 상태와 맞춰 보는 데 쓴다. */
+export interface SwitchNote { ok: boolean; text: string; provider: string; version: number }
+
+export function toggleNote(r: ToggleResult): SwitchNote {
   const head = `${r.provider} ${r.disabled ? "끔" : "켬"} — DB 원본 반영(v${r.version} · ${fmtTime(r.updated_at)})`;
-  if (r.mirrored) return { ok: true, text: `${head} · Redis 미러 반영 — 수집기는 다음 호출부터 따른다` };
+  if (r.mirrored) return { ok: true, text: `${head} · Redis 미러 반영 — 수집기는 다음 호출부터 따른다`, provider: r.provider, version: r.version };
   return {
     ok: false,
     text: `${head} · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. Redis 가 돌아오면 api 가 ${MIRROR_PERIOD_S} s 주기로 다시 미러한다`,
+    provider: r.provider, version: r.version,
   };
+}
+
+/**
+ * 미러 실패 경고는 '지금' 사실일 때만 경고로 둔다: 새로고침한 provider_switch 에서 그 공급자가 같은(또는 더 새) 버전으로 미러와 같아졌으면
+ * (주기 미러가 맞췄다) 상태 줄로 바꾼다. 모르면(Redis 를 읽지 못함 · 다름) 경고 그대로.
+ */
+export function liveNote(note: SwitchNote | null, list: SwitchState[] | undefined): SwitchNote | null {
+  if (!note || note.ok) return note;
+  const s = list?.find((x) => x.provider === note.provider);
+  if (!s || s.disabled == null || s.mirror_differs !== false || (s.version ?? 0) < note.version) return note;
+  return { ...note, ok: true, text: `${s.provider} v${s.version} — 이제 Redis 미러 반영(api 주기 미러) · 수집기가 원본(${onOff(s.disabled)})을 따른다` };
 }
 
 /** 표 칸: 원본 값(on/off vN)과 미러 상태 배지 + 설명(title) */

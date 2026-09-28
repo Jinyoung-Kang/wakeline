@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { fmtBudgetLimit, fmtClock, fmtTime } from "@/lib/format";
-import { mirrorDiffers, switchCell, toggleNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
+import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict, settingIfMatch, settingSpec,
   signOut, type SettingEdit,
@@ -84,10 +84,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
   const losses = pipelineLossCount(pipeline);
   /** 마지막 토글 결과(R-94): DB 원본에 커밋됐어도 Redis 미러에 실패했으면(mirrored=false) 수집기는 아직 이전 값을 따른다 — 경고로 보인다 */
-  const [switchMsg, setSwitchMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [switchNote, setSwitchNote] = useState<SwitchNote | null>(null);
   const toggle = async (name: string, action: "enable" | "disable") => {
-    try { setSwitchMsg(toggleNote(await apiSend<ToggleResult>("POST", `/api/v1/ops/providers/${name}/${action}`))); refresh(); } catch (e) { fail(e); }
+    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", `/api/v1/ops/providers/${name}/${action}`))); refresh(); } catch (e) { fail(e); }
   };
+  const switchMsg = liveNote(switchNote, prov?.provider_switch); // 주기 미러가 맞췄으면 경고를 내린다
   const differs = mirrorDiffers(prov?.provider_switch);
   return (
     <div className="flex h-full flex-col" data-testid="ops-dashboard">

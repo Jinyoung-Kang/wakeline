@@ -179,6 +179,15 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
     expect(differs?.getAttribute("role")).toBe("alert");
     expect(differs?.textContent).toContain("adsbdb(원본 꺼짐 · 수집기 켜짐)");
     expect(byTestId("provider-switch")!.textContent).toContain("미러 다름");
+    expect(byTestId("switch-unmirrored")).not.toBeNull();
+
+    // 주기 미러가 맞췄다: 경고는 '지금' 사실이 아니므로 내린다 — 미러됐다고 상태 줄로 바꾼다
+    sw = { ...sw, redis_disabled: "1", mirror_differs: false };
+    await click(find((e) => e.tagName === "BUTTON" && e.textContent === "refresh")!);
+    expect(byTestId("switch-unmirrored")).toBeNull();
+    expect(byTestId("switch-mirror-differs")).toBeNull();
+    expect(byTestId("switch-ok")?.textContent).toContain("adsbdb v2 — 이제 Redis 미러 반영(api 주기 미러) · 수집기가 원본(꺼짐)을 따른다");
+    expect(byTestId("provider-switch")!.textContent).toContain("미러 같음");
   });
 
   it("a mirrored toggle is a status line, not an alert", async () => {
