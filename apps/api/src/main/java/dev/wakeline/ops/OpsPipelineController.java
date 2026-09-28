@@ -24,7 +24,8 @@ import java.util.function.Supplier;
  *       마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
  *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total. updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
  *   <li>api: 이 api 프로세스 기동 뒤 누계 — 메모리 큐 넘침으로 버린 항적·선박 행, 강제로 놓은 영수증, DLQ 로 보낸 메시지, 스트림 보존 창 손실
- *       (R-14) 수와 마지막 손실 구간(없으면 null).</li>
+ *       (R-14) 수와 마지막 손실 구간(없으면 null). 영구 손실도 같이: DB 가 거절해(영구 오류) 재시도하지 않고 버린 항적·선박 행, 처리 중 예외로
+ *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등).</li>
  * </ul>
  * null = 모름(해시·필드가 없거나 형식이 틀림 · heartbeat 가 오래됨 · Redis 를 읽지 못함). 0 으로 채우지 않는다. 해시는 읽기만 한다.
  */
@@ -67,7 +68,8 @@ public class OpsPipelineController {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record ApiSignals(long trackQueueDropped, long shipQueueDropped, long receiptsForceReleased, long dlq, long streamTrimLossEvents,
-                             TrimLossWindow lastStreamTrimLoss) {}
+                             TrimLossWindow lastStreamTrimLoss, long trackRowsFailed, long shipRowsFailed, long streamApplyErrors,
+                             long listenerErrors) {}
 
     /** 마지막 보존 창 손실: stream, from(모르면 null), to. */
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -114,7 +116,11 @@ public class OpsPipelineController {
                 counter("wakeline_track_receipts_forced_total") + counter("wakeline_ship_receipts_forced_total"),
                 counter("wakeline_stream_messages_total", "result", "rejected"),
                 events,
-                last == null ? null : new TrimLossWindow(last.stream(), last.from(), last.to()));
+                last == null ? null : new TrimLossWindow(last.stream(), last.from(), last.to()),
+                counter("wakeline_track_rows_total", "result", "failed"),
+                counter("wakeline_ship_rows_total", "result", "failed"),
+                counter("wakeline_stream_messages_total", "result", "apply_error"),
+                counter("wakeline_event_listener_errors_total"));
     }
 
     private long counter(String name, String... tags) {

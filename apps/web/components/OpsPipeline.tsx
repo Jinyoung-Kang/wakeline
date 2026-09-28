@@ -28,7 +28,7 @@ export function OpsPipeline({ data }: { data: unknown }) {
       </table>
       <div className="mt-3 text-[11px]" data-testid="ops-pipeline-trim">
         <span className="label mr-2">마지막 트림 손실</span>
-        {trim ? <span className="mono text-bad">{trim.stream} · {fmtTime(trim.from)} – {fmtTime(trim.to)}</span> : <span className="text-fg-3">기록 없음</span>}
+        {trim ? <span className="mono text-bad">{trim.stream} · {trim.from ? fmtTime(trim.from) : "시작 모름"} – {fmtTime(trim.to)}</span> : <span className="text-fg-3">기록 없음</span>}
       </div>
     </div>
   );

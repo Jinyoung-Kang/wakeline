@@ -100,6 +100,20 @@ class OpsPipelineIT extends IntegrationTest {
             long dropped = fresh.path("api").path("track_queue_dropped").asLong();
             meters.counter("wakeline_track_rows_total", "result", "dropped").increment(5);
             assertThat(b.get("/api/v1/ops/pipeline").json().path("api").path("track_queue_dropped").asLong()).isEqualTo(dropped + 5);
+
+            // 영구 손실(재시도하지 않고 버린 행 · 처리 중 예외로 건너뛴 메시지 · 리스너 오류)도 같은 화면에서 보인다(R-18 후속)
+            JsonNode before = b.get("/api/v1/ops/pipeline").json().path("api");
+            for (String f : new String[]{"track_rows_failed", "ship_rows_failed", "stream_apply_errors", "listener_errors"})
+                assertThat(before.path(f).isIntegralNumber()).as("api." + f).isTrue();
+            meters.counter("wakeline_track_rows_total", "result", "failed").increment(2);
+            meters.counter("wakeline_ship_rows_total", "result", "failed").increment(3);
+            meters.counter("wakeline_stream_messages_total", "result", "apply_error").increment(4);
+            meters.counter("wakeline_event_listener_errors_total", "event", "it", "listener", "it").increment(6);
+            JsonNode after = b.get("/api/v1/ops/pipeline").json().path("api");
+            assertThat(after.path("track_rows_failed").asLong()).isEqualTo(before.path("track_rows_failed").asLong() + 2);
+            assertThat(after.path("ship_rows_failed").asLong()).isEqualTo(before.path("ship_rows_failed").asLong() + 3);
+            assertThat(after.path("stream_apply_errors").asLong()).isEqualTo(before.path("stream_apply_errors").asLong() + 4);
+            assertThat(after.path("listener_errors").asLong()).isEqualTo(before.path("listener_errors").asLong() + 6);
         } finally {
             restore(COLLECTOR, collectorBefore);
             restore(AIS, aisBefore);

@@ -58,6 +58,10 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["api", "receipts_force_released", "영수증 강제 해제", "loss", "DB 저장 확인 전에 ACK 한 스트림 메시지(표식 상한) — 저장되지 않았을 수 있음"],
   ["api", "dlq", "DLQ", "loss", "스키마 검증 실패로 저장하지 않은 메시지"],
   ["api", "stream_trim_loss_events", "스트림 트림 손실", "loss", "읽기 전에 스트림에서 잘려 나간 구간을 감지한 횟수"],
+  ["api", "track_rows_failed", "항적 저장 거절", "loss", "DB 가 영구 오류로 거절해 재시도 없이 버린 항적 행 — 누적"],
+  ["api", "ship_rows_failed", "선박 저장 거절", "loss", "DB 가 영구 오류로 거절해 재시도 없이 버린 선박 위치 행 — 누적"],
+  ["api", "stream_apply_errors", "메시지 처리 오류", "loss", "처리 중 예외로 건너뛴 스트림 메시지(검증은 통과) — 누적"],
+  ["api", "listener_errors", "이벤트 리스너 오류", "loss", "알림 저장·팬아웃 등 이벤트 리스너가 실패한 횟수 — 누적"],
 ];
 
 export interface PipelineRow { group: PipelineGroup; key: string; label: string; title: string; value: number | null; text: string; tone: "bad" | "ok" | "muted" }
@@ -83,10 +87,11 @@ export function pipelineLossCount(resp: unknown): number | null {
   return pipelineRows(resp).filter((x) => x.tone === "bad").length;
 }
 
-/** 마지막으로 감지한 스트림 트림 손실 구간. 없거나 형식이 틀리면 null */
-export function lastTrimLoss(resp: unknown): { stream: string; from: string; to: string } | null {
+/** 마지막으로 감지한 스트림 트림 손실 구간. from 은 모르면 null(api 가 null 로 보낸다 — 손실 자체는 보인다). 없거나 형식이 틀리면 null */
+export function lastTrimLoss(resp: unknown): { stream: string; from: string | null; to: string } | null {
   const t = obj(obj(obj(resp).api).last_stream_trim_loss);
-  return typeof t.stream === "string" && typeof t.from === "string" && typeof t.to === "string" ? { stream: t.stream, from: t.from, to: t.to } : null;
+  const fromOk = typeof t.from === "string" || t.from === null;
+  return typeof t.stream === "string" && fromOk && typeof t.to === "string" ? { stream: t.stream, from: (t.from as string | null), to: t.to } : null;
 }
 
 // ---- 설정 편집의 낙관적 잠금(R-35) ----

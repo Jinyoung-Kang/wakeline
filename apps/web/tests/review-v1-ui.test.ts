@@ -205,6 +205,25 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toContain("wakeline:aircraft");
     expect(html).toContain("09-28 01:00:00Z");
   });
+  it("permanent losses (rejected rows, apply errors, listener errors) are loss rows too", () => {
+    const rows = opsLib.pipelineRows({ ...resp, api: { ...resp.api, track_rows_failed: 2, ship_rows_failed: 0, stream_apply_errors: 1, listener_errors: 0 } });
+    const by = (k: string) => rows.find((r) => r.group === "api" && r.key === k)!;
+    expect(by("track_rows_failed")).toMatchObject({ value: 2, tone: "bad" });
+    expect(by("ship_rows_failed")).toMatchObject({ value: 0, tone: "ok" });
+    expect(by("stream_apply_errors")).toMatchObject({ value: 1, tone: "bad" });
+    expect(by("listener_errors")).toMatchObject({ value: 0, tone: "ok" });
+    // 예전 api(필드 없음)면 모름
+    expect(opsLib.pipelineRows(resp).find((r) => r.key === "track_rows_failed")!.text).toBe("—");
+  });
+  it("a trimmed range whose start is unknown (from=null) is still shown, with the start marked unknown", () => {
+    const unknownStart = { ...resp, api: { ...resp.api, last_stream_trim_loss: { stream: "wakeline:ships", from: null, to: "2026-09-28T01:02:00Z" } } };
+    expect(opsLib.lastTrimLoss(unknownStart)).toEqual({ stream: "wakeline:ships", from: null, to: "2026-09-28T01:02:00Z" });
+    const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: unknownStart }));
+    expect(html).toContain("wakeline:ships");
+    expect(html).toContain("시작 모름");
+    expect(html).toContain("09-28 01:02:00Z");
+    expect(opsLib.lastTrimLoss({ api: { last_stream_trim_loss: { stream: "wakeline:ships", from: 5, to: "x" } } })).toBeNull();
+  });
 });
 
 describe("R-35 settings: the version is taken when editing starts, so a refresh cannot defeat If-Match", () => {
