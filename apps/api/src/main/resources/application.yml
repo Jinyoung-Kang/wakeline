@@ -59,6 +59,8 @@ management:
 springdoc:
   api-docs.path: /api/v1/openapi
   swagger-ui.enabled: false
+  # 공개 문서에서 운영 API 를 뺀다(R-89, ADR-017 §1) — 익명 /api/v1/ops/** 는 404 로 존재를 숨긴다
+  paths-to-exclude: /api/v1/ops/**
 
 wakeline:
   trusted-proxy: ${WAKELINE_TRUSTED_PROXY:}

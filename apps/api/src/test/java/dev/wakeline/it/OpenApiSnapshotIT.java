@@ -93,6 +93,19 @@ class OpenApiSnapshotIT extends IntegrationTest {
         }
     }
 
+    /**
+     * R-89(ADR-017 §1): 공개 OpenAPI 문서에 운영 API(/api/v1/ops/**)와 그 요청 스키마가 없다 — 익명 요청에 404 로 존재를 숨기는 설계와 맞춘다.
+     */
+    @Test
+    void publicSpecDoesNotDescribeOpsEndpoints() {
+        JsonNode spec = get("/api/v1/openapi").json();
+        List<String> ops = new ArrayList<>();
+        for (Map.Entry<String, JsonNode> p : spec.path("paths").properties()) if (p.getKey().startsWith("/api/v1/ops")) ops.add(p.getKey());
+        assertThat(ops).as("ops paths in the public spec").isEmpty();
+        assertThat(spec.path("components").path("schemas").has("Login")).as("ops login schema").isFalse();
+        assertThat(spec.path("paths").has("/api/v1/status")).isTrue();
+    }
+
     static String firstDifference(String a, String b) {
         String[] x = a.split("\n", -1), y = b.split("\n", -1);
         for (int i = 0; i < Math.min(x.length, y.length); i++)
