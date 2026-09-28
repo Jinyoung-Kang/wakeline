@@ -6,7 +6,8 @@
   창 안의 빈 프레임(늦게 생긴 프레임·일시 오류로 놓친 프레임)은 채우고, 창보다 오래된 프레임은 받지 않는다.
 - 목록에 있으나 바이너리가 아직 없는 tm("file not exist" 등 gzip 아닌 응답)은 일시 상태다. tm 마다 MAX_NOT_READY_TRIES 번까지
   다음 주기에 다시 받고, 그래도 없으면 품질 이벤트(kma_radar_missing)를 남기고 건너뛴다. 해석 불가(_BadFrame·크기 초과)만 바로 제외한다.
-- KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다).
+- KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다). 덧붙이는 목록이라 예산이 없거나
+  실패하면 오늘 목록만으로 주기를 계속한다.
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
   목록 키도 이미지와 같은 TTL 을 갖는다(수집기가 멈추면 함께 만료). 각 항목에 expires_at 을 둔다.
 - 해석(gzip 해제·재투영·PNG)은 CPU 작업이라 스레드에서 돈다(이벤트 루프를 막지 않게).
@@ -158,13 +159,26 @@ class KmaRadarJob:
             self._not_ready.pop(next(iter(self._not_ready)))
         return n
 
-    async def _listing(self, started: datetime):
-        """오늘(KST) 목록. 자정 직후에는 전날 목록도 합친다(예산이 없으면 오늘 것만). 첫 결과(오늘)를 돌려준다."""
+    async def _listing(self):
+        """오늘(KST) 목록. 자정 직후에는 전날 목록도 합친다. 첫 결과(오늘)를 돌려준다.
+        전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다)."""
         now_kst = kst_now()
         today = await self.p.file_list(now_kst.strftime("%Y%m%d"))
-        if now_kst.hour == 0 and now_kst.minute < PREV_DAY_LIST_MIN and await self._reserve(started):
+        if now_kst.hour != 0 or now_kst.minute >= PREV_DAY_LIST_MIN:
+            return today
+        ok, used = await self.ctx.budget.reserve(self.p.name, 1)
+        if not ok:
+            log.info(
+                "kma radar: previous-day listing skipped — budget %s",
+                "unavailable" if used == UNKNOWN else f"exhausted (used={used})",
+            )
+            return today
+        try:
             prev = await self.p.file_list((now_kst - timedelta(days=1)).strftime("%Y%m%d"))
-            today.data = sorted({*prev.data, *today.data})
+        except Exception as e:  # noqa: BLE001
+            log.warning("kma radar: previous-day listing failed — using today's only: %s", (mask(repr(e)) or "")[:160])
+            return today
+        today.data = sorted({*prev.data, *today.data})
         return today
 
     async def run_once(self) -> None:
@@ -179,7 +193,7 @@ class KmaRadarJob:
         if not await self._reserve(started):
             return
         try:
-            listing = await self._listing(started)
+            listing = await self._listing()
         except Exception as e:  # noqa: BLE001
             await self._fail(started, e)
             return

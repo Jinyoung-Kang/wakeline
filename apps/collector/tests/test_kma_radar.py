@@ -459,3 +459,58 @@ async def test_r03_backfilling_an_older_hole_keeps_meta_on_the_latest_frame(kma_
     assert (meta["stations"], meta["observed_cells"]) == ("S2000", "2000")  # 최신 프레임의 헤더 값 그대로
     assert meta["fetched_at"] == frames[-1]["fetched_at"] == first["fetched_at"]  # 옛 프레임을 받은 시각이 아니다
     assert meta["checked_at"] >= first["checked_at"] and meta["available"] == "1"
+
+
+def _prev_day_error_cases():
+    from wakeline_collector.http import ProviderHttpError, RequestTimedOut
+
+    return [
+        RequestTimedOut("total 40 s exceeded"),
+        ValueError('unexpected list response: {"result": "error"}'),  # 목록이 아닌 JSON 응답
+        ProviderHttpError(502, "bad gateway"),
+    ]
+
+
+@pytest.mark.parametrize("error", _prev_day_error_cases(), ids=lambda e: type(e).__name__)
+async def test_r03_previous_day_listing_failure_keeps_todays_cycle(kma_env, error):
+    """리뷰 R-03 후속: KST 00:00–00:14 에만 더하는 전날 목록 호출이 실패하면 예외가 _listing 밖으로 나가 주기 전체를 실패로
+    기록했다(_fail) — 오늘 목록은 이미 받았는데 오늘 프레임도 저장하지 못했다. 전날 목록 실패는 로그만 남기고 오늘 목록으로 계속한다."""
+    import orjson
+
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+
+    class PrevDayFails(NotYetKma):
+        async def file_list(self, day):
+            if day == "20260927":
+                self.days.append(day)
+                raise error
+            return await super().file_list(day)
+
+    prov = PrevDayFails([], {}, by_day={"20260928": ["202609280000"]})
+    clock["now"] = "202609280002"
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.days == ["20260928", "20260927"]  # 전날 목록을 부르긴 했다
+    assert prov.binaries == ["202609280000"]
+    assert [f["tm"] for f in orjson.loads(await r.get(mod.KEY_FRAMES))] == ["202609280000"]
+    assert [run["status"] for run in runs] == ["ok"]
+    assert "last_error" not in await r.hgetall("wakeline:provider:kma_radar")
+
+
+async def test_r03_previous_day_listing_without_budget_records_no_run_of_its_own(kma_env):
+    """리뷰 R-03 후속: 전날 목록용 추가 예약이 예산 부족이면 _reserve 가 따로 'budget_exhausted' 실행을 남기고, 같은 주기가 다시
+    'ok' 를 남겨 한 주기에 실행 기록이 둘이었다. 추가 예약은 실행 기록 없이 확인만 하고, 안 되면 오늘 목록만 쓴다."""
+    from fakes import FakeRedis, make_ctx
+
+    mod, _r, _ctx, clock = kma_env
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"kma_radar": 1})  # 오늘 목록 1회분만
+    runs = _recording_runs(ctx)
+    prov = NotYetKma([], {}, by_day={"20260927": ["202609272355"], "20260928": ["202609280000"]})
+    job = mod.KmaRadarJob(prov, ctx)
+    await r.set(mod.KEY_FRAME.format(tm="202609280000"), "png", ex=mod.FRAME_TTL_S)  # 오늘 프레임은 이미 있다(바이너리 예약 없음)
+    await job._save_frames([{"tm": "202609280000"}])
+    clock["now"] = "202609280002"
+    await job.run_once()
+    assert prov.days == ["20260928"]  # 예산이 없으면 전날 목록은 부르지 않는다
+    assert [run["status"] for run in runs] == ["ok"]  # 한 주기 = 실행 기록 하나
