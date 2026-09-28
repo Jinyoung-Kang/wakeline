@@ -139,5 +139,46 @@ class ScannerIsolationTest(unittest.TestCase):
         self.assertIn("https://semgrep.dev/c/", t, "규칙은 미리 파일로 받고 semgrep 은 네트워크 없이 돈다")
 
 
+OPS_SCRIPTS = sorted([*(ROOT / "tools").glob("*.sh"), *(ROOT / "perf").glob("*.sh")])
+# docker run 옵션 중 값을 따로 받는 것(이미지 이름을 찾을 때 건너뛴다)
+_VALUE_OPTS = {"-v", "--volume", "-e", "--env", "-w", "--workdir", "--network", "--name", "--entrypoint", "-p", "--publish", "--label",
+               "-u", "--user", "--tmpfs", "--security-opt", "--cap-drop", "--cap-add", "--mount", "--memory", "--shm-size", "--network-alias"}
+
+
+def run_image(cmd: str) -> str | None:
+    """`docker run …` 한 줄에서 이미지 자리(옵션 다음 첫 인자)."""
+    toks = cmd.split()
+    i = toks.index("run") + 1
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-"):
+            i += 2 if (t in _VALUE_OPTS and "=" not in t) else 1
+            continue
+        return t.strip('"')
+    return None
+
+
+class SecretsNotOnArgvTest(unittest.TestCase):
+    """R-87: 운영 스크립트는 비밀값을 docker CLI argv(-e NAME=값)로 넘기지 않고, 쓰는 도구 이미지는 다이제스트로 고정한다."""
+
+    def test_no_secret_values_in_docker_argv(self):
+        for p in OPS_SCRIPTS + [ROOT / "Makefile"]:
+            for n, line in enumerate(p.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                with self.subTest(file=p.name, line=n):
+                    self.assertNotRegex(line, r"-e\s+[A-Za-z_]*(PASSWORD|SECRET|TOKEN|AUTH)[A-Za-z_]*=",
+                                        "값은 환경으로(-e NAME) 또는 컨테이너 안 변수로 넘긴다 — argv 는 ps 로 보인다")
+
+    def test_tool_images_in_scripts_are_pinned(self):
+        for p in OPS_SCRIPTS:
+            for cmd in docker_runs(p.read_text()):
+                img = run_image(cmd)
+                if img is None or img.startswith("$") or img.startswith("\"$") or img.endswith(":local"):
+                    continue  # 변수(정의에서 고정) · 자체 이미지
+                with self.subTest(file=p.name, image=img):
+                    self.assertRegex(img, r"^[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$")
+
+
 if __name__ == "__main__":
     unittest.main()
