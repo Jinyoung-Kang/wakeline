@@ -28,6 +28,18 @@ describe("v5-C2 pipeline tab: log sink rows (sent · dropped · suppressed)", ()
     expect(by("api", "log_suppressed")!.title).toMatch(/suppressed/);
     expect(opsLib.pipelineLossCount(resp)).toBe(1);
   });
+  it("log_dropped tooltips name every cause the senders count, not only the queue cap", () => {
+    // collector·ais(logsink.py): 대기열 상한 초과 · 항목을 만들지 못함(예외 · 8 KiB 에 맞추지 못함). api(LogSink): 대기열 상한 초과 · 종료 때 남은 항목
+    for (const g of ["collector", "ais"]) {
+      const t = by(g, "log_dropped")!.title;
+      expect(t).toContain("대기열 상한(500건 · 2 MiB)");
+      expect(t).toContain("항목을 만들지 못함");
+      expect(t).not.toMatch(/^로그 대기열 상한\(500건 · 2 MiB\)으로 버린/);
+    }
+    const api = by("api", "log_dropped")!.title;
+    expect(api).toContain("대기열 상한(500건 · 2 MiB)");
+    expect(api).toContain("종료 때 보내지 못한 항목");
+  });
   it("an api / heartbeat without the fields (older lane, stale heartbeat → null) shows —, never 0", () => {
     const old = opsLib.pipelineRows({ collector: {}, ais: { log_dropped: null }, api: {} });
     for (const [g, k] of [["collector", "log_sent"], ["collector", "log_dropped"], ["ais", "log_dropped"], ["api", "log_suppressed"]]) {
