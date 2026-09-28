@@ -59,7 +59,9 @@ export function RadarTimeline() {
       <span className="label">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
       <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : radarKr?.note ?? "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
-      <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
+      {/* '재생' 은 상단 메뉴(이력 재생 화면)의 이름이다 — 레이더 애니메이션은 다른 말로(R-60) */}
+      <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing} data-testid="radar-play"
+        aria-label={playing ? "레이더 애니메이션 정지" : "레이더 애니메이션 재생"}>{playing ? "정지" : "애니메이션 ▶"}</button>
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
       <span className="mono text-[11px]" data-testid="radar-frame-time">{label}</span>

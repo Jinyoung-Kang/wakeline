@@ -256,6 +256,16 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     expect(dom.container.textContent).not.toContain("0 frames · 5 min");
   });
 
+  it("the radar animation button does not reuse the menu word '재생' (R-60: '재생' already means the replay page)", async () => {
+    useUi.setState({ radarSource: "rainviewer" });
+    setData({ radarKr: null });
+    await mountTimeline();
+    const btn = byTestId("radar-play");
+    expect(btn?.textContent).toBe("애니메이션 ▶");
+    expect(btn?.getAttribute("aria-label")).toBe("레이더 애니메이션 재생");
+    expect(dom.container.textContent).not.toMatch(/(^|[^이])재생/);
+  });
+
   it("without a note or a collection time nothing is invented; RainViewer and a usable KMA feed keep the frame text", async () => {
     useUi.setState({ radarSource: "kma" });
     setData({ radarKr: unavailable({ note: "", status: null, meta: { fetched_at: null, stale: true } }) as never });
