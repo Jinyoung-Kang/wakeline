@@ -1,11 +1,13 @@
 # 매주 의존성 갱신 PR (NFR-10 · SEC-8). 보안 업데이트는 Dependabot security updates 가 주기와 무관하게 연다.
 # 부 버전·패치는 생태계별로 한 PR 에 묶어 소음을 줄이고, 주 버전은 따로 연다(깨지는 변경을 개별 검토).
+# cooldown: 버전 갱신은 공개 뒤 7일을 기다린다(공급망 — 막 올라온 악성·깨진 릴리스를 바로 들이지 않게). 보안 갱신에는 걸리지 않는다(GitHub 문서).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /apps/web
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
     groups:
       web-minor-patch: { update-types: [minor, patch] }
 
@@ -13,6 +15,7 @@ updates:
     directory: /apps/collector
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
     groups:
       collector-minor-patch: { update-types: [minor, patch] }
 
@@ -20,6 +23,7 @@ updates:
     directory: /apps/api
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
     groups:
       api-minor-patch: { update-types: [minor, patch] }
 
@@ -28,17 +32,20 @@ updates:
     directories: [/apps/api, /apps/web, /apps/collector]
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
 
   # infra/compose.yml 의 제3자 이미지(태그@다이제스트 고정 — 같은 태그의 새 다이제스트도 PR 로 온다)
   - package-ecosystem: docker-compose
     directory: /infra
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
 
   # 워크플로의 액션(커밋 SHA 고정 + 버전 주석을 함께 갱신)
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
+    cooldown: { default-days: 7 }
     groups:
       actions: { patterns: ["*"] }

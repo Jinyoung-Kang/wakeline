@@ -199,3 +199,15 @@ class DependabotPolicyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DependabotCooldownTest(unittest.TestCase):
+    """버전 갱신은 공개 뒤 7일을 기다린다(공급망 — 막 올라온 악성 릴리스를 바로 들이지 않게, Semgrep dependabot-missing-cooldown).
+    GitHub 문서: cooldown 은 버전 갱신에만 걸리고 보안 갱신에는 걸리지 않는다."""
+
+    def test_every_update_block_has_a_cooldown(self):
+        text = (Path(__file__).resolve().parents[2] / ".github" / "dependabot.yml").read_text()
+        blocks = re.split(r"(?m)^  - package-ecosystem:", text)[1:]
+        self.assertEqual(len(blocks), 6)
+        for b in blocks:
+            with self.subTest(ecosystem=b.split()[0]):
+                self.assertRegex(b, r"(?m)^    cooldown: \{ default-days: 7 \}")
