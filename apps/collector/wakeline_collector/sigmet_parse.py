@@ -2,7 +2,7 @@
 
 1. AREA = 링 1개, AREAS = 링 여러 개. lon/lat 이 null 인 점 제거, 점 < 3 이면 링 폐기.
    점이 2,000 개를 넘는 링·링 50 개 초과·전체 점 10,000 개 초과는 자르지 않고 판정 제외(too_many_points/too_many_rings).
-2. 닫히지 않은 링은 닫고, 자기교차는 make_valid 로 정리. 경도 ±180 을 걸치면 두 조각으로 분할.
+2. 닫히지 않은 링은 닫고, 자기교차는 make_valid 로 정리. 경도 ±180 을 걸치면(점프든 180 을 넘는 이어진 경도든) [-180, 180] 조각으로 분할.
 3. 고도대(ft)와 그 출처(계약 §4):
    - base: JSON 값이 있으면 base_source="json". null 이면 base_ft=0 + base_source="assumed_surface"(발표 없음, 판정은 SFC 가정).
    - top : JSON 값이 있으면 top_source="json". null(또는 base 보다 낮은 잘못된 값)이면 원문(raw text)이
@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -66,22 +67,34 @@ def _rings(item: dict[str, Any]) -> list[list[tuple[float, float]]]:
 
 
 def _split_antimeridian(pts: list[tuple[float, float]]) -> list[Polygon]:
-    """경도 점프가 180 을 넘는 링은 +360 으로 펴서 폴리곤을 만들고 [-180,180]·[180,540] 로 잘라 되돌린다."""
-    crosses = any(abs(pts[i][0] - pts[i - 1][0]) > 180 for i in range(1, len(pts)))
-    if not crosses:
-        return [Polygon(pts)]
-    shifted = [(lon + 360 if lon < 0 else lon, lat) for lon, lat in pts]
-    poly = make_valid(Polygon(shifted))
-    west = poly.intersection(box(180, -90, 540, 90))
-    east = poly.intersection(box(-180, -90, 180, 90))
+    """경도를 [-180, 180] 조각으로. 링을 먼저 이어진 경도로 편다(점 사이 점프가 180 을 넘으면 ∓360) — 공급자가 날짜변경선을
+    점프(175 → -175)로 주든 이어진 경도(179 → 184, 실수신 UHMM 2026-09-29)로 주든 같은 폴리곤이 된다. 그다음 360° 폭 창
+    [-180 + 360k, 180 + 360k] 마다 잘라 k·360 만큼 되돌린다. 모든 좌표가 이미 [-180, 180] 안이고 점프가 없으면 그대로."""
+    unwrapped: list[tuple[float, float]] = []
+    for lon, lat in pts:
+        if unwrapped:
+            prev = unwrapped[-1][0]
+            while lon - prev > 180:
+                lon -= 360
+            while lon - prev < -180:
+                lon += 360
+        unwrapped.append((lon, lat))
+    lons = [x for x, _ in unwrapped]
+    if min(lons) >= -180 and max(lons) <= 180:
+        return [Polygon(unwrapped)]
+    poly = make_valid(Polygon(unwrapped))
     out: list[Polygon] = []
-    for part in (west, east):
+    for k in range(math.floor((min(lons) + 180) / 360), math.floor((max(lons) + 180) / 360) + 1):
+        part = poly.intersection(box(-180 + 360 * k, -90, 180 + 360 * k, 90))
         geoms = list(part.geoms) if hasattr(part, "geoms") else [part]
         for g in geoms:
             if isinstance(g, Polygon) and not g.is_empty:
-                if g.bounds[0] >= 180:
-                    g = Polygon([(x - 360, y) for x, y in g.exterior.coords])
-                out.append(g)
+                out.append(
+                    Polygon(
+                        [(x - 360 * k, y) for x, y in g.exterior.coords],
+                        [[(x - 360 * k, y) for x, y in r.coords] for r in g.interiors],
+                    )
+                )
     return out
 
 

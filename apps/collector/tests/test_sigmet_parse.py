@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 
-from shapely.geometry import shape
+from shapely.geometry import Point, shape
 
 from wakeline_collector.sigmet_parse import build_geometry, parse_airsigmet, parse_isigmet
 
@@ -63,6 +63,44 @@ def test_antimeridian_split_into_two_parts():
     g = shape(geom)
     assert g.bounds[0] >= -180 and g.bounds[2] <= 180 and len(geom["coordinates"]) == 2
     assert abs(g.area - 100.0) < 1e-6
+
+
+def _all_lons(geom):
+    return [x for poly in geom["coordinates"] for ring in poly for x, _ in ring]
+
+
+def test_ring_already_unwrapped_past_180_is_normalized_and_split():
+    # 실수신(2026-09-29, UHMM Magadan FIR): AWC 가 날짜변경선을 넘는 링을 이어진 경도(179 → 184 → 191)로 보냈다.
+    # 점 사이 점프가 180 을 넘지 않아 전에는 분할되지 않고 경도 > 180 그대로 나갔다 — api 판정(경도 −180..180 의 항공기)에서
+    # 180° 동쪽 부분이 빠지고, 웹 WS 검증기가 이 경보를 통째로 버렸다.
+    ring = [{"lon": 176, "lat": 60}, {"lon": 191, "lat": 60}, {"lon": 191, "lat": 66}, {"lon": 176, "lat": 66}]
+    geom, reason = build_geometry({"geom": "AREA", "coords": ring})
+    assert reason is None
+    lons = _all_lons(geom)
+    assert min(lons) >= -180 and max(lons) <= 180
+    g = shape(geom)
+    assert len(geom["coordinates"]) == 2 and abs(g.area - 90.0) < 1e-6
+    assert g.contains(Point(-175, 63)) and g.contains(Point(178, 63))
+
+
+def test_ring_entirely_past_180_or_below_minus_180_is_shifted_back():
+    east, reason = build_geometry(
+        {
+            "geom": "AREA",
+            "coords": [{"lon": 185, "lat": 10}, {"lon": 190, "lat": 10}, {"lon": 190, "lat": 20}, {"lon": 185, "lat": 20}],
+        }
+    )
+    assert reason is None and shape(east).bounds == (-175.0, 10.0, -170.0, 20.0)
+    west, reason = build_geometry(
+        {
+            "geom": "AREA",
+            "coords": [{"lon": -185, "lat": 10}, {"lon": -175, "lat": 10}, {"lon": -175, "lat": 20}, {"lon": -185, "lat": 20}],
+        }
+    )
+    assert reason is None
+    lons = _all_lons(west)
+    assert min(lons) >= -180 and max(lons) <= 180 and len(west["coordinates"]) == 2
+    assert abs(shape(west).area - 100.0) < 1e-6 and shape(west).contains(Point(178, 15))
 
 
 def test_base_null_is_assumed_surface_and_top_null_is_unknown():
