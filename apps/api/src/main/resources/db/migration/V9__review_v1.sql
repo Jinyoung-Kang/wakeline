@@ -1,6 +1,8 @@
 -- Wakeline 스키마 V9 — 리뷰 v1 의 DB 변경(ADR-017 §2). V1~V8 은 고치지 않는다. 적용은 운영과 같은 --migrate(wakeline_migrator)만.
 --
 -- ==== 되돌리기(rollback) SQL — wakeline_migrator 로 위에서부터 순서대로 실행한 뒤 이력 행을 지운다 ====
+-- -- R-15: 알림 이력 hex 인덱스
+-- DROP INDEX IF EXISTS alert_event_hex_id;
 -- -- R-06: 파티션 삭제 경계를 V2·V5 의 규칙(하루 더 남김, `- 1`)으로 되돌린다
 -- CREATE OR REPLACE FUNCTION track_point_drop_old(retention_hours int) RETURNS int LANGUAGE plpgsql
 -- SECURITY DEFINER SET search_path = public, pg_temp AS $$
@@ -72,3 +74,8 @@ BEGIN
   END LOOP;
   RETURN n;
 END $$;
+
+-- ---- R-15: 알림 이력 hex 필터 ----
+-- /alerts/history?hex= 는 hex 로 거른 뒤 id 역순으로 한 쪽(≤ 201행)을 자른다. (hex, id DESC) 이면 그 hex 의 행만 id 순서대로 읽고 멈춘다
+-- (기존 alert_event_hex (hex, entered_at DESC) 는 id 순서를 주지 않는다). 질의는 hex 를 char(6) 끼리 비교한다(AlertRepository.history).
+CREATE INDEX alert_event_hex_id ON alert_event (hex, id DESC);

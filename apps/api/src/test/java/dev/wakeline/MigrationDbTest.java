@@ -327,11 +327,15 @@ class MigrationDbTest {
         JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
         assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'track_point_drop_old'").query(String.class).single()).contains("boundary");
+        java.util.function.Function<String, Long> index = name -> stage.sql("SELECT count(*) FROM pg_indexes WHERE indexname = :n").param("n", name)
+                .query(Long.class).single();
+        assertThat(index.apply("alert_event_hex_id")).as("R-15 index").isEqualTo(1);
 
         try (Connection c = DriverManager.getConnection(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW); Statement st = c.createStatement()) {
             st.execute(v9RollbackSql());
         }
         assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(8);
+        assertThat(index.apply("alert_event_hex_id")).isZero();
         for (String fn : new String[]{"track_point_drop_old", "ship_position_drop_old"}) {
             assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = :f").param("f", fn).query(String.class).single()).as(fn).contains("::date - 1");
             assertThat(stage.sql("SELECT prosecdef FROM pg_proc WHERE proname = :f").param("f", fn).query(Boolean.class).single()).as(fn).isTrue();
@@ -342,6 +346,7 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '9' AND success").query(String.class).single())
                 .isEqualTo("wakeline_migrator");
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'ship_position_drop_old'").query(String.class).single()).contains("boundary");
+        assertThat(index.apply("alert_event_hex_id")).isEqualTo(1);
     }
 
     /**

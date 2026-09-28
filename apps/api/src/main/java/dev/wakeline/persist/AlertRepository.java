@@ -117,6 +117,8 @@ public class AlertRepository {
     /**
      * 이력(커서 페이지). close_reason 포함(계약 §2). eta_at 은 새 형식 PREDICTED(근거에 entry·judged_at 이 있는 행)만
      * judged_at + eta_s 로 계산한다 — 이전 엔진은 eta 를 관측 시각에서 쟀으므로 그 행에는 만들지 않는다.
+     * hex 가 있으면 hex 조건을 문장에 직접 둔다(R-15): 한 문장이 (hex IS NULL OR e.hex = hex) 로 두 경우를 모두 받으면, 몇 번 실행된 뒤
+     * 쓰이는 일반 계획이 hex 인덱스를 쓰지 못해 기간 안의 행을 모두 훑는다. hex 비교는 char(6) 끼리(인덱스 alert_event_hex_id (hex, id DESC)).
      */
     public Page history(Instant from, Instant to, String hex, Long cursor, int limit) {
         var q = db.sql("""
@@ -125,9 +127,10 @@ public class AlertRepository {
                             THEN (e.evidence->>'judged_at')::timestamptz + make_interval(secs => e.eta_s) END eta_at,
                        e.alt_ft_at_entry, e.evidence::text evidence
                 FROM alert_event e JOIN sigmet s ON s.id = e.sigmet_id
-                WHERE e.entered_at BETWEEN :from AND :to AND (:hex::text IS NULL OR e.hex = :hex) AND (:cursor::bigint IS NULL OR e.id < :cursor)
-                ORDER BY e.id DESC LIMIT :n""")
-                .param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("hex", hex).param("cursor", cursor).param("n", limit + 1);
+                WHERE e.entered_at BETWEEN :from AND :to%s AND (:cursor::bigint IS NULL OR e.id < :cursor)
+                ORDER BY e.id DESC LIMIT :n""".formatted(hex == null ? "" : " AND e.hex = :hex::bpchar"))
+                .param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("cursor", cursor).param("n", limit + 1);
+        if (hex != null) q = q.param("hex", hex);
         List<Map<String, Object>> rows = q.query().listOfRows().stream().map(r -> {
             var m = new java.util.LinkedHashMap<>(r);
             Object ev = m.get("evidence");
