@@ -56,6 +56,7 @@ put "tsc" "$( [ -s "$OUT/tsc.txt" ] && echo "$(grep -c 'error TS' "$OUT/tsc.txt"
 put "javac -Xlint:all 경고" "$(grep -c 'warning:' "$OUT/javac.txt")"
 # semgrep: 규칙 묶음을 먼저 파일로 받고(호스트 curl — CLI 의 p/<이름> 과 같은 주소 https://semgrep.dev/c/p/<이름>),
 # 스캔은 네트워크 없는 컨테이너에서 git 추적 파일 사본만 읽는다. 받은 규칙은 결과 폴더에 남겨 같은 규칙으로 다시 돌릴 수 있게 한다.
+# docs/ 는 실행되지 않는 문서라 뺀다(ADR 본문의 nginx 예시 문장이 설정으로 잡혔다 — 리뷰 4단계).
 SRC="$WORK/src"; repo_copy "$SRC" || SRC=""
 RULES="$OUT/semgrep-rules"; mkdir -p "$RULES"
 if [ "${SCAN_OFFLINE:-0}" != 1 ]; then
@@ -67,7 +68,7 @@ cfg=(); for f in "$RULES"/*.yml; do [ -e "$f" ] && cfg+=(--config "/rules/$(base
 "${SCAN_RUN[@]}" "$SEMGREP_IMAGE" semgrep --version > "$OUT/semgrep.version" 2>&1
 if [ -n "$SRC" ] && [ ${#cfg[@]} -gt 0 ]; then
   "${SCAN_RUN[@]}" -v "$SRC:/src:ro" -v "$PWD/$RULES:/rules:ro" -w /src "$SEMGREP_IMAGE" semgrep scan --metrics=off --disable-version-check --quiet --json \
-    "${cfg[@]}" --exclude perf/results --exclude fixtures . > "$OUT/semgrep.json" 2> "$OUT/semgrep.err"
+    "${cfg[@]}" --exclude perf/results --exclude fixtures --exclude docs . > "$OUT/semgrep.json" 2> "$OUT/semgrep.err"
   put "semgrep" "$(python3 -c "
 import json,collections
 d=json.load(open('$OUT/semgrep.json')); c=collections.Counter(r['extra']['severity'] for r in d.get('results',[]))
