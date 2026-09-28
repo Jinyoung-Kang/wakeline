@@ -203,3 +203,12 @@ describe("v5-C7 lib/logs: AIS reception gaps table rows", () => {
     expect(L.aisGapRows(null)).toMatchObject({ rows: [], truncated: null });
   });
 });
+
+describe("v5-C7 /logs page title (R-30: every route has its own title)", () => {
+  it("the logs layout names the page and the name differs from the other routes", async () => {
+    const title = (await import("@/app/logs/layout")).metadata.title;
+    expect(title).toBe("시스템 로그");
+    const others = await Promise.all(["replay", "stats", "ops"].map(async (r) => (await import(`@/app/${r}/layout.tsx`)).metadata.title as string));
+    expect(others).not.toContain(title);
+  });
+});
