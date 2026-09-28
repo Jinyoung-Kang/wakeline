@@ -90,3 +90,10 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 | web-units-ships | apps/web lib/format.ts · lib/ships.ts · lib/ship-layers.ts · lib/tooltip.ts · components(AircraftCard · ShipCard · AlertPanel · EvidenceCard · SigmetCard · AircraftSearch · MapLegend · LayerPanel · MapView) · app/replay/** · 시험 |
 | api-ships | apps/api rest/ShipController(search) · ws/ShipGrid(B2) · persist(검색 질의) · V10 · 시험 · rest_contract_check 표본 |
 | reliability | apps/api ops/OpsController · StartupMirror · V11 · V12 · apps/collector db.py · 시험 |
+
+## G. 1차 구현 뒤 개정(2026-09-29)
+- G1(§C3): collector · ais 키 권한은 `%W~wakeline:logs`(쓰기 전용) — 읽기(`XREVRANGE`)도 막는다(infra-logs 레인, 더 엄격). 남는 위험(ACL 로 막을 수 없음): 탈취된 collector·ais 는 `XADD … MAXLEN 0` 로 스트림을 비우거나 service 를 속일 수 있다 — start.sh 머리에 기록.
+- G2(§C6): 브라우저 오류는 **별도 스트림** `wakeline:logs:client`(`MAXLEN ~ 1000`)에 싣는다. 익명 입력이 서버 오류(`wakeline:logs`)를 밀어내지 못하게(분당 120건이면 약 25분에 3,000건이 모두 바뀌었다). 조회 API 는 두 스트림을 id 순으로 합쳐 보여 주고 항목마다 `stream`(`server`|`client`)을 싣는다. `GET /ops/logs/{id}` 는 server → client 순으로 찾는다.
+- G3(§C6): JSON 이 아닌 Content-Type 은 415(로그인과 같은 관례), 본문 형식 오류는 400 `BAD_CLIENT_ERROR`.
+- G4(§B1): 저장만 된 선박(실시간 아님)에 `last_seen_at`(= `ship.last_seen`, 마지막으로 어떤 AIS 메시지든 받은 시각)을 싣는다 — 72 h 가 지나 위치가 없어도 "마지막 수신" 시각은 사실로 보일 수 있다.
+- G5(§C8): 선박 카드 · 통합 검색 · 선박 항적 오류 문구에도 요청 id(복사 가능). 예외 종류가 빈 글이면 `—`.
