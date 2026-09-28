@@ -180,7 +180,12 @@ public class OpsController {
                 FROM audit_log a LEFT JOIN ops_user u ON u.id = a.user_id WHERE (:cursor::bigint IS NULL OR a.id < :cursor) ORDER BY a.id DESC LIMIT :n""")
                 .param("cursor", cursor).param("n", n + 1).query().listOfRows();
         Long next = rows.size() > n ? ((Number) rows.get(n - 1).get("id")).longValue() : null;
-        return Map.of("items", rows.size() > n ? rows.subList(0, n) : rows, "next_cursor", next == null ? "" : next, "generated_at", Instant.now());
+        // 다음 쪽이 없으면 null — 키가 빠진다(R-74: /alerts/history · /ops/runs 와 같은 계약, 이전에는 빈 문자열)
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("items", rows.size() > n ? rows.subList(0, n) : rows);
+        m.put("next_cursor", next);
+        m.put("generated_at", Instant.now());
+        return m;
     }
 
     @SuppressWarnings("unchecked")

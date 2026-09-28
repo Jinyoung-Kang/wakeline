@@ -106,6 +106,17 @@ def test_status_radar_kr_carries_only_validated_fields():
     assert list(v.iter_errors({**ok, "latest_tm": "12:10"}))
 
 
+def test_cursor_is_a_number_or_absent():
+    """R-74: 다음 쪽이 없으면 next_cursor 는 없음(또는 null) — 빈 문자열은 안 된다."""
+    v = Draft202012Validator(rcc.SCHEMAS["alerts_history"], format_checker=rcc.FORMATS)
+    base = {"items": [], "meta": META}
+    assert not list(v.iter_errors(base))
+    assert not list(v.iter_errors({**base, "next_cursor": 1790577316107000}))
+    assert not list(v.iter_errors({**base, "next_cursor": None}))
+    assert list(v.iter_errors({**base, "next_cursor": ""}))
+    assert list(v.iter_errors({**base, "next_cursor": "1790577316107000"}))
+
+
 def test_aircraft_track_is_capped_and_says_so():
     """R-52: 점 수 상한 5,000 · truncated 필수 · 점 수와 좌표 수가 같다."""
     v = Draft202012Validator(rcc.SCHEMAS["aircraft_track"], format_checker=rcc.FORMATS)

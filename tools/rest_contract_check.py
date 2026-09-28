@@ -754,7 +754,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "alerts_history": {
         "type": "object",
         "required": ["items", "meta"],
-        "properties": {"items": {"type": "array", "items": HISTORY_ALERT}, "next_cursor": INT, "meta": META},
+        # R-74: 커서 페이지의 next_cursor 는 숫자(다음 쪽 있음) 또는 없음/null — 빈 문자열 등 다른 형은 안 된다
+        "properties": {
+            "items": {"type": "array", "items": HISTORY_ALERT},
+            "next_cursor": {"type": ["integer", "null"], "minimum": 1},
+            "meta": META,
+        },
     },
     "radar_frames": {
         "type": "object",
