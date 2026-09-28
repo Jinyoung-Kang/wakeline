@@ -441,6 +441,9 @@ class MigrationDbTest {
         assertThat(indexes.get()).as("re-applied").hasSize(3);
         assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '10' AND success").query(String.class).single())
                 .isEqualTo("wakeline_migrator");
+    }
+
+    /**
      * V11(계약 v5 §D1 · R-94 · ADR-019): provider_switch — 공급자 스위치의 원본(Redis wakeline:provider:{name}.disabled 는 미러).
      * 열·제약은 계약 그대로, api 는 SELECT · INSERT · UPDATE 만(V9 이후 기본 권한이 없으므로 명시 GRANT), collector 는 아무 권한 없음(스위치는 Redis 로만 본다).
      * updated_by 는 ops_user FK(NULL = 시스템 — Redis 값 이관). 머리 주석의 되돌리기 SQL 로 표와 이력 행이 사라지고, 다시 적용된다.
