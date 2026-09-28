@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -323,4 +324,100 @@ async def test_quality_count_booked_to_run_day_even_if_flushed_after_midnight():
     await _settle(db)
     rule_rows = [rows for t, rows in pool.log if t == "quality_rule_count"][0]
     assert rule_rows == [(datetime(2026, 9, 27).date(), "position_jump", 1)]
+    await db.close()
+
+
+# ---- R-91(계약 v5 §D2): 결과가 모호한 실패(커밋 뒤 시간 초과) 뒤 재시도해도 실행 기록은 한 번만 ------------------------------------
+class LedgerConn:
+    """트랜잭션 단위로 커밋하는 가짜 연결. 쓰기는 트랜잭션 안에 쌓였다가 정상 종료 때만 원장(pool.committed)에 들어간다.
+    ingest_run 의 run_key UNIQUE + ON CONFLICT (run_key) DO NOTHING 을 흉내 낸다(같은 키가 이미 있으면 RETURNING 결과 없음).
+    ingest_run 항목은 ("ingest_run", {"id", "key", "args"}) — key 는 키를 쓰는 문장일 때만 $1, 아니면 None."""
+
+    def __init__(self, pool: LedgerPool):
+        self.pool = pool
+        self.staged: list[tuple[str, Any]] = []
+
+    @asynccontextmanager
+    async def transaction(self):
+        self.staged = []
+        yield
+        self.pool.committed.extend(self.staged)  # COMMIT 이 서버에 반영됐다
+        if self.pool.timeouts_after_commit > 0:
+            self.pool.timeouts_after_commit -= 1
+            raise TimeoutError  # …그런데 COMMIT 응답을 받기 전에 시간 초과(모호한 실패)
+
+    def _runs(self) -> list[dict[str, Any]]:
+        return [p for t, p in self.pool.committed + self.staged if t == "ingest_run"]
+
+    async def fetchval(self, sql, *args):
+        if sql.strip() == "SELECT 1":
+            return 1
+        if "INSERT INTO ingest_run" in sql:
+            key = args[0] if "ON CONFLICT (run_key) DO NOTHING" in sql else None
+            if key is not None and any(r["key"] == key for r in self._runs()):
+                return None
+            self.pool.next_id += 1
+            self.staged.append(("ingest_run", {"id": self.pool.next_id, "key": key, "args": args}))
+            return self.pool.next_id
+        if "SELECT id FROM ingest_run WHERE run_key" in sql:
+            return next((r["id"] for r in self._runs() if r["key"] == args[0]), None)
+        raise AssertionError(sql)
+
+    async def executemany(self, sql, rows):
+        self.staged.append((sql.split()[2], list(rows)))
+
+
+class LedgerPool(FakePool):
+    def __init__(self):
+        super().__init__()
+        self.committed: list[tuple[str, object]] = []
+        self.timeouts_after_commit = 0
+
+    @asynccontextmanager
+    async def acquire(self):
+        yield LedgerConn(self)
+
+
+async def test_run_committed_then_timed_out_is_recorded_once_on_retry():
+    """COMMIT 이 서버에 반영된 뒤 응답 전에 시간 초과가 나면 writer 는 일시 오류로 보고 같은 작업을 다시 실행한다(DB 는 응답한다).
+    실행 키(run_key) 가 없으면 ingest_run 이 두 행이 되고 품질 사례·규칙별 건수가 두 배로 집계됐다(R-91)."""
+    pool = LedgerPool()
+    pool.timeouts_after_commit = 1
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    now = datetime.now(UTC)
+    db.record_run("region", "adsb_lol", now, status="ok", records_in=7, quality=[("no_position", None, {})] * 25)
+    await _settle(db)
+    runs = [r for t, r in pool.committed if t == "ingest_run"]
+    events = [r for t, rows in pool.committed if t == "quality_event" for r in rows]
+    counts = [r for t, rows in pool.committed if t == "quality_rule_count" for r in rows]
+    assert len(runs) == 1, runs  # 재시도해도 실행 기록은 하나
+    assert len(events) == 20 and all(e[0] == 1 for e in events)  # 대표 사례 20건, 첫 커밋의 run id 에 붙는다
+    assert counts == [(now.date(), "no_position", 25)]  # 규칙별 건수도 한 번만(두 배 집계 없음)
+    assert db.failures == 1 and db.written == 1 and db.dropped == 0 and db.pending == 0
+    await db.close()
+
+
+async def test_each_run_gets_its_own_run_key():
+    """실행마다 새 uuid — 서로 다른 실행이 같은 키로 합쳐지지 않는다. 같은 실행의 재시도만 같은 키를 쓴다."""
+    import uuid
+
+    pool = LedgerPool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    now = datetime.now(UTC)
+    db.record_run("region", "adsb_lol", now, status="ok")
+    db.record_run("region", "adsb_lol", now, status="ok")
+    await _settle(db)
+    keys = [r["key"] for t, r in pool.committed if t == "ingest_run"]
+    assert len(keys) == 2 and keys[0] != keys[1]
+    assert all(isinstance(k, uuid.UUID) and k.version == 4 for k in keys)
     await db.close()

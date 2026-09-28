@@ -226,12 +226,23 @@ class SecurityIT extends IntegrationTest {
         for (JsonNode a : auditPage.path("items")) if ("LOGIN".equals(a.path("action").asString()) && "it-ops2".equals(a.path("username").asString())) sawLogin = true;
         assertThat(sawLogin).isTrue();
 
-        // 공급자 토글: CSRF 필요, 감사 + Redis 플래그(수집기가 읽는다)
+        // 공급자 토글(R-94, 계약 v5 §D1): CSRF 필요, 원본은 DB(감사 행과 한 트랜잭션) → 커밋 뒤 Redis 플래그로 미러(수집기가 읽는다)
         long before = audit("PROVIDER_DISABLE", "opensky");
-        assertThat(b.send("POST", "/api/v1/ops/providers/opensky/disable", null, b.withCsrf()).status()).isEqualTo(204);
+        Res off = b.send("POST", "/api/v1/ops/providers/opensky/disable", null, b.withCsrf());
+        assertThat(off.status()).isEqualTo(200);
+        assertThat(off.json().path("provider").asString()).isEqualTo("opensky");
+        assertThat(off.json().path("disabled").asBoolean()).isTrue();
+        assertThat(off.json().path("mirrored").asBoolean()).isTrue();
+        assertThat(db.sql("SELECT disabled FROM provider_switch WHERE provider = 'opensky'").query(Boolean.class).single()).isTrue();
         assertThat(ItStack.admin().opsForHash().get("wakeline:provider:opensky", "disabled")).isEqualTo("1");
         assertThat(audit("PROVIDER_DISABLE", "opensky")).isEqualTo(before + 1);
-        assertThat(b.send("POST", "/api/v1/ops/providers/opensky/enable", null, b.withCsrf()).status()).isEqualTo(204);
+        // 수집기 계정은 같은 해시에 상태 필드를 쓰므로 disabled 도 바꿀 수 있다(ACL 그대로) — 주기 미러(60 s)가 DB 값으로 되돌린다
+        ItStack.hset(ItStack.collector(), "wakeline:provider:opensky", Map.of("disabled", "0"));
+        ctx.getBean(dev.wakeline.ops.StartupMirror.class).periodicMirror();
+        assertThat(ItStack.admin().opsForHash().get("wakeline:provider:opensky", "disabled")).as("reverted to the database value").isEqualTo("1");
+        Res on = b.send("POST", "/api/v1/ops/providers/opensky/enable", null, b.withCsrf());
+        assertThat(on.status()).isEqualTo(200);
+        assertThat(on.json().path("disabled").asBoolean()).isFalse();
         assertThat(ItStack.admin().opsForHash().get("wakeline:provider:opensky", "disabled")).isEqualTo("0");
         assertProblem(b.send("POST", "/api/v1/ops/providers/nope/disable", null, b.withCsrf()), 404, "NOT_FOUND", "/api/v1/ops/providers/nope/disable");
         assertProblem(b.send("POST", "/api/v1/ops/providers/opensky/explode", null, b.withCsrf()), 404, "NOT_FOUND", "/api/v1/ops/providers/opensky/explode");
@@ -306,6 +317,19 @@ class SecurityIT extends IntegrationTest {
         assertThat(ItStack.admin().hasKey(key)).as("expired session removed from Redis").isFalse();
     }
 
+    /**
+     * R-94 이관(계약 v5 §D1): 기동 시(StartupMirror) 행이 없는 공급자는 그때의 Redis 값을 한 번 DB 로 옮겨 담는다 — 모든 공급자에 행이 있고,
+     * 각 이관은 시스템 감사 행(user 없음)으로 남는다(기동 전에 토글된 공급자는 이관하지 않는다).
+     */
+    @Test
+    void everyProviderHasADatabaseSwitchAfterStartup() {
+        for (String p : dev.wakeline.rest.StatusService.PROVIDERS) {
+            assertThat(db.sql("SELECT count(*) FROM provider_switch WHERE provider = :p").param("p", p).query(Long.class).single()).as(p).isEqualTo(1);
+            assertThat(count("SELECT count(*) FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = ? AND user_id IS NULL", p)).as(p).isLessThanOrEqualTo(1);
+        }
+        assertThat(count("SELECT count(*) FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT'")).isPositive();
+    }
+
     @Test
     void anonymousPercentEncodedOpsPathIs404() {
         for (String path : List.of("/api/v1/%6Fps/providers", "/api/v1/o%70s/settings", "/api/v%31/ops/audit", "/api/v1/%6F%70%73/pipeline"))
@@ -319,7 +343,7 @@ class SecurityIT extends IntegrationTest {
         assertThat(b.login("it-csrf-enc", PW).status()).isEqualTo(200);
         long auditBefore = audit("PROVIDER_DISABLE", "opensky");
         Res r = b.send("POST", "/api/v1/%6Fps/providers/opensky/disable", null, Map.of());
-        if (r.status() == 204) b.send("POST", "/api/v1/ops/providers/opensky/enable", null, b.withCsrf()); // 우회됐다면 다른 테스트를 위해 되돌린다
+        if (r.status() == 200) b.send("POST", "/api/v1/ops/providers/opensky/enable", null, b.withCsrf()); // 우회됐다면 다른 테스트를 위해 되돌린다
         assertThat(r.status()).as("cookie-only change on an encoded ops path").isEqualTo(403);
         assertThat(audit("PROVIDER_DISABLE", "opensky")).isEqualTo(auditBefore);
     }

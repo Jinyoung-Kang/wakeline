@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { fmtBudgetLimit, fmtClock, fmtTime } from "@/lib/format";
+import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict, settingIfMatch, settingSpec,
   signOut, type SettingEdit,
@@ -11,7 +12,8 @@ import { OpsPipeline } from "@/components/OpsPipeline";
 import { statsDay } from "@/lib/stats";
 
 type Any = Record<string, unknown>;
-interface Providers { providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[] }
+/** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
+interface Providers { providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; provider_switch?: SwitchState[] }
 interface Runs { items: Any[]; summary_24h: Any[] }
 interface Quality { rule_counts: Any[]; recent: Any[] }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
@@ -81,7 +83,13 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   useEffect(() => { const first = setTimeout(refresh, 0); const t = setInterval(refresh, 15_000); return () => { clearTimeout(first); clearInterval(t); }; }, [refresh]);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
   const losses = pipelineLossCount(pipeline);
-  const toggle = async (name: string, action: "enable" | "disable") => { try { await apiSend("POST", `/api/v1/ops/providers/${name}/${action}`); refresh(); } catch (e) { fail(e); } };
+  /** 마지막 토글 결과(R-94): DB 원본에 커밋됐어도 Redis 미러에 실패했으면(mirrored=false) 수집기는 아직 이전 값을 따른다 — 경고로 보인다 */
+  const [switchNote, setSwitchNote] = useState<SwitchNote | null>(null);
+  const toggle = async (name: string, action: "enable" | "disable") => {
+    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", `/api/v1/ops/providers/${name}/${action}`))); refresh(); } catch (e) { fail(e); }
+  };
+  const switchMsg = liveNote(switchNote, prov?.provider_switch); // 주기 미러가 맞췄으면 경고를 내린다
+  const differs = mirrorDiffers(prov?.provider_switch);
   return (
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
@@ -106,16 +114,24 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             {Object.entries(prov.collector ?? {}).filter(([k]) => k.endsWith("_at")).map(([k, v]) => <span key={k} className="mono text-fg-3">{k.replace("_at", "")} {fmtTime(String(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>
-          <table><thead><tr><th>provider</th><th>last success</th><th>latency</th><th>records</th><th>fails</th><th>budget used / limit</th><th>remaining (hdr)</th><th>last error</th><th>manual</th></tr></thead>
-            <tbody>{prov.providers.map((p) => <tr key={String(p.name)}>
-              <td className="mono">{String(p.name)}{p.disabled === "1" ? <span className="badge bad ml-1">disabled</span> : null}</td>
+          <div role="status" aria-live="polite">{switchMsg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="switch-ok">{switchMsg.text}</div> : null}</div>
+          {switchMsg && !switchMsg.ok ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-unmirrored">{switchMsg.text}</div> : null}
+          {differs.length ? (
+            <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-mirror-differs">
+              Redis 미러가 DB 원본과 다름 — 수집기는 Redis 값을 따른다: {differs.join(", ")} · api 가 60 s 주기로 원본을 다시 미러한다
+            </div>
+          ) : null}
+          <table><thead><tr><th>provider</th><th>last success</th><th>latency</th><th>records</th><th>fails</th><th>budget used / limit</th><th>remaining (hdr)</th><th>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
+            <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1"; return <tr key={String(p.name)}>
+              <td className="mono">{String(p.name)}{off ? <span className="badge bad ml-1" title={sw?.disabled != null ? "원본(DB) 기준" : "Redis 미러 기준(원본 행 없음)"}>disabled</span> : null}</td>
               <td className="mono">{fmtTime(String(p.last_success_at ?? ""))}</td><td className="mono">{String(p.last_latency_ms ?? "—")} ms</td><td className="mono">{String(p.last_records ?? "—")}</td>
               <td className={`mono ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
               <td className="mono" title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className="mono">{String(p.budget_remaining ?? "—")}</td>
               <td className="max-w-[320px] truncate text-fg-3" title={String(p.last_error ?? "")}>{String(p.last_error ?? "")} {p.last_error_at ? fmtTime(String(p.last_error_at)) : ""}</td>
-              <td>{p.disabled === "1" ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
-            </tr>)}</tbody></table>
-          <div className="label mt-4 mb-1">Provider switches</div>
+              <td className="whitespace-nowrap" title={cell.title} data-testid="provider-switch"><span className="mono">{cell.source}</span> <span className={`badge ${cell.tone}`}>{cell.mirror}</span>{" "}
+                {off ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
+            </tr>; })}</tbody></table>
+          <div className="label mt-4 mb-1" title="수집기가 스스로 한 공급자 전환(wakeline:events) — 위 표의 수동 켜고 끄기와 다르다">Provider switches (collector 자동 전환)</div>
           <table><thead><tr><th>at</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><td className="mono">{fmtTime(String(s.at))}</td><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>
           <div className="label mt-4 mb-1">Daily budget snapshot</div>
           <table><thead><tr><th>day</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono">{statsDay(b.day) ?? "—"}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
