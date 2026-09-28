@@ -258,13 +258,17 @@ class KmaRadarJob:
         await self._save_frames(frames)
         if dropped:
             await r.delete(*[KEY_FRAME.format(tm=f["tm"]) for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
-        await r.hset(
-            KEY_META,
-            mapping={
-                "available": "1",
-                "status": "200",
-                "note": "",
-                "latest_tm": frames[-1]["tm"],
+        mapping: dict[str, str] = {
+            "available": "1",
+            "status": "200",
+            "note": "",
+            "latest_tm": frames[-1]["tm"],
+            "checked_at": _iso(now),
+        }
+        # 헤더 값·fetched_at 은 latest_tm 프레임을 설명한다. 보관 창 안의 오래된 빈 곳을 채운 경우(R-03)에는 그대로 둔다 —
+        # 옛 프레임 값으로 덮으면 meta 가 latest_tm 과 다른 프레임을 설명하고, fetched_at 이 새로 보여 STALE 이 가려진다.
+        if frames[-1]["tm"] == tm:
+            mapping |= {
                 "product": header.product,
                 "cmp": self.p.cmp,
                 "coordinates": orjson.dumps(meta["coordinates"]).decode(),
@@ -277,9 +281,8 @@ class KmaRadarJob:
                 "stations": ",".join(header.stations),
                 "observed_cells": str(meta["observed_cells"]),
                 "fetched_at": _iso(res.fetched_at),
-                "checked_at": _iso(now),
-            },
-        )
+            }
+        await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
         log.info(
             "kma radar: tm=%s %s echo cells=%d png=%d B (%d frames)",
             tm,

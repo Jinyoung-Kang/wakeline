@@ -426,3 +426,36 @@ async def test_r03_just_after_kst_midnight_previous_day_listing_is_consulted(kma
     prov.days.clear()
     await job.run_once()
     assert prov.days == ["20260928"]
+
+
+async def test_r03_backfilling_an_older_hole_keeps_meta_on_the_latest_frame(kma_env, monkeypatch):
+    """리뷰 R-03 후속: 보관 창 안의 빈 프레임(저장된 최신보다 오래된 tm)만 채운 주기가 meta 의 헤더 값(stations·observed_cells)과
+    fetched_at 을 그 옛 프레임 것으로 덮었다. latest_tm 은 최신 프레임인데 fetched_at 은 방금 받은 옛 프레임 시각이라, 새 프레임이
+    오지 않아도 웹의 STALE 표시(meta.fetched_at 기준)가 가려졌다. meta 는 latest_tm 프레임을 설명해야 한다."""
+    import orjson
+
+    mod, r, ctx, clock = kma_env
+
+    def decode(raw: bytes):
+        header, png, meta = _fake_decode(raw)
+        hhmm = raw.decode()[8:12]
+        header.stations = [f"S{hhmm}"]  # 프레임마다 다른 헤더 값
+        return header, png, {**meta, "observed_cells": int(hhmm)}
+
+    monkeypatch.setattr(mod, "_decode", decode)
+    listing = _tms("202609272000")
+    hole = "202609271955"  # 첫 주기에는 목록에 있으나 아직 받을 수 없음
+    prov = NotYetKma(listing, {hole: 1})
+    job = mod.KmaRadarJob(prov, ctx)
+    await job.run_once()
+    first = await r.hgetall(mod.KEY_META)
+    assert (first["latest_tm"], first["stations"], first["observed_cells"]) == ("202609272000", "S2000", "2000")
+    prov.binaries.clear()
+    await job.run_once()  # 목록이 아직 그대로인 다음 주기: 창 안의 오래된 빈 곳만 채운다
+    assert prov.binaries == ["202609271930", "202609271935", "202609271940", hole]
+    meta = await r.hgetall(mod.KEY_META)
+    frames = orjson.loads(await r.get(mod.KEY_FRAMES))
+    assert frames[-1]["tm"] == meta["latest_tm"] == "202609272000"
+    assert (meta["stations"], meta["observed_cells"]) == ("S2000", "2000")  # 최신 프레임의 헤더 값 그대로
+    assert meta["fetched_at"] == frames[-1]["fetched_at"] == first["fetched_at"]  # 옛 프레임을 받은 시각이 아니다
+    assert meta["checked_at"] >= first["checked_at"] and meta["available"] == "1"
