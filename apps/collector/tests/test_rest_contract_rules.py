@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -135,3 +136,10 @@ def test_aircraft_track_is_capped_and_says_so():
     assert rcc._aircraft_track({**body, "properties": {**props, "truncated": True}})  # 상한보다 적은데 잘렸다고 함
     assert rcc._aircraft_track({**body, "points": pts[:2]})  # 점 수 불일치
     assert rcc._aircraft_track({**body, "points": list(reversed(pts))})  # 시간순 아님
+
+
+def test_ship_category_enum_follows_the_shared_order_vector():
+    """계약 v5 §B2: 선종 분류 이름·순서의 원본은 schemas/vectors/ship-categories.v1.json(api ShipCategory · web SHIP_CATEGORIES 와 같은 파일)."""
+    vector = json.loads((ROOT / "schemas" / "vectors" / "ship-categories.v1.json").read_text())
+    assert vector["version"] == 1
+    assert rcc.SHIP_CATEGORY["enum"] == vector["order"]

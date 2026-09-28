@@ -46,6 +46,20 @@ class ShipCategoryTest {
         assertThat(ShipCategory.at(0)).isEqualTo(ShipCategory.CARGO);
     }
 
+    /**
+     * 계약 v5 §B2: 격자 칸의 선종별 수 배열([n0..n10])은 이 순서를 따른다 — 순서의 원본은 저장소의 schemas/vectors/ship-categories.v1.json 하나
+     * (web SHIP_CATEGORIES 도 같은 파일로 시험한다). 열거 선언 순서가 바뀌면 여기서 깨진다.
+     */
+    @Test void declarationOrderMatchesTheSharedVector() throws Exception {
+        Path f = DbTestSupport.repoFile("schemas/vectors/ship-categories.v1.json");
+        JsonNode v = JsonMapper.builder().build().readTree(Files.readString(f));
+        assertThat(v.path("version").asInt()).isEqualTo(1);
+        List<String> order = new java.util.ArrayList<>();
+        for (JsonNode k : v.path("order")) order.add(k.asString());
+        assertThat(java.util.Arrays.stream(ShipCategory.values()).map(ShipCategory::key).toList()).isEqualTo(order);
+        for (int i = 0; i < order.size(); i++) assertThat(ShipCategory.at(i).key()).isEqualTo(order.get(i));
+    }
+
     /** 공유 표 파일: 목록에 있는 코드는 그 분류, 1–255 의 나머지는 default, null 은 null_category. */
     @Test void sharedFixtureTable() throws Exception {
         Path f = DbTestSupport.repoFile("apps/web/tests/fixtures/ship-category-uscg.json");
