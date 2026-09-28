@@ -12,6 +12,7 @@
 #   시스템 로그(ADR-018, 계약 v5 §C3): collector·ais 는 wakeline:logs 에 XADD(MAXLEN ~ 3000)만 한다 — 키 규칙은 쓰기 전용 %W~.
 #                    ~(읽기·쓰기)로 주면 수집기의 XREVRANGE(루트 규칙이라 모든 키에 적용)로 api · web-client 로그를 읽을 수 있다 — 조회는 운영 세션 전용.
 #                    DEL·XTRIM·RENAME·EXPIRE 는 허용 목록에 없어 이 키에도 닿지 않는다. api 는 wakeline:* 로 싣고 읽는다.
+#                    여러 건을 한 번에 보낼 때는 pipeline(transaction=False) — MULTI·EXEC 는 허용 목록에 없다(demand · kma_radar 와 같다).
 #                    남는 위험(ACL 은 명령 인자를 보지 않는다): XADD … MAXLEN 0 / MINID 로 스트림을 비울 수 있고(api 가 실은 항목 포함),
 #                    service 를 다른 이름으로 적어 실을 수 있다 — 읽는 쪽(api)은 스키마 검증·가림만 하고 출처를 증명하지 못한다.
 #                    다른 생산자 스트림(wakeline:aircraft · wakeline:ships …)의 XADD 트리밍도 같은 한계다.
