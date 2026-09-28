@@ -1,6 +1,8 @@
 /**
  * 시스템 로그 화면 보조(계약 v5 §C7) — 순수 함수. 항목 형식은 schemas/log_event.v1.json, 조회 API 는 §C4(`/api/v1/ops/logs*`, 운영 세션 전용).
  * 모르는 값은 null/"—"(0·빈 값으로 채우지 않는다). 형식이 틀린 항목은 보이지 않고 수만 센다. 시각은 UTC.
+ * §G2: api 는 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 합쳐 준다 — 항목마다 stream. 두 스트림은 id 를 따로 매기므로
+ * 같은 id 가 둘 다에 있을 수 있어 화면은 항목을 stream + id(entryKey)로 가른다(같은 id 는 server 가 앞 — api 순서).
  */
 import { REQUEST_ID_RE } from "./api";
 
@@ -17,11 +19,23 @@ export const LOGS_PAGE = 100;
 export const LOGS_PAGE_MAX = 200;
 /** 스트림 id(XADD 가 준 "ms-seq") */
 const STREAM_ID_RE = /^\d{1,16}-\d{1,10}$/;
+/** 다음 쪽 커서(§G2): "server:<id>" | "client:<id>" — 스트림 id 만 있는 것은 §G2 전 api(서버 스트림) */
+const CURSOR_RE = /^(?:(?:server|client):)?\d{1,16}-\d{1,10}$/;
+/** 로그 스트림 두 개(§G2) — 항목의 stream 값과 Redis 키, 보관 수(근사 MAXLEN) */
+export const LOG_STREAMS = ["server", "client"] as const;
+export type LogStreamName = (typeof LOG_STREAMS)[number];
+export const LOG_STREAM_KEY: Record<LogStreamName, string> = { server: "wakeline:logs", client: "wakeline:logs:client" };
+export const LOG_STREAM_LABEL: Record<LogStreamName, string> = { server: "서버 로그", client: "브라우저 오류" };
+export const LOG_STREAM_KEEP: Record<LogStreamName, number> = { server: 3_000, client: 1_000 };
+/** 요청 하나가 훑는 항목 상한(api LogReader.SCAN_MAX = 두 스트림 보관 수의 합) */
+export const LOG_SCAN_MAX = LOG_STREAM_KEEP.server + LOG_STREAM_KEEP.client;
 const FP_RE = /^[0-9a-f]{16}$/;
 
 export interface LogException { type: string; message: string | null; stack: string }
 export interface LogEntry {
   id: string;
+  /** 어느 스트림의 항목인가(§G2) — api 가 주지 않았으면(§G2 전) null = 서버 스트림 하나뿐이던 때 */
+  stream: LogStreamName | null;
   ts: string;
   service: string;
   instance: string | null;
@@ -47,6 +61,8 @@ const nonNeg = (v: unknown): number | null => (typeof v === "number" && Number.i
 const bool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
 const isTime = (v: unknown): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v));
 export const validStreamId = (v: unknown): v is string => typeof v === "string" && STREAM_ID_RE.test(v);
+export const validCursor = (v: unknown): v is string => typeof v === "string" && CURSOR_RE.test(v);
+const streamName = (v: unknown): LogStreamName | null => (v === "server" || v === "client" ? v : null);
 export const validRid = (v: unknown): v is string => typeof v === "string" && REQUEST_ID_RE.test(v);
 export const validFp = (v: unknown): v is string => typeof v === "string" && FP_RE.test(v);
 
@@ -66,7 +82,7 @@ export function parseLogEntry(v: unknown): LogEntry | null {
     }
   }
   return {
-    id: v.id, ts: v.ts, service: v.service, instance: str(v.instance), level: v.level, logger: str(v.logger), thread: str(v.thread),
+    id: v.id, stream: streamName(v.stream), ts: v.ts, service: v.service, instance: str(v.instance), level: v.level, logger: str(v.logger), thread: str(v.thread),
     message: v.message, exception, fp: validFp(v.fp) ? v.fp : null, request_id: validRid(v.request_id) ? v.request_id : null,
     context, suppressed: nonNeg(v.suppressed), untrusted: v.untrusted === true, raw: v,
   };
@@ -93,7 +109,7 @@ export function parseLogPage(v: unknown): LogPage {
   const items: LogEntry[] = [];
   for (const x of raw) { const e = parseLogEntry(x); if (e) items.push(e); }
   return {
-    items, nextCursor: validStreamId(r.next_cursor) ? r.next_cursor : null, scanned: nonNeg(r.scanned), scanTruncated: bool(r.scan_truncated),
+    items, nextCursor: validCursor(r.next_cursor) ? r.next_cursor : null, scanned: nonNeg(r.scanned), scanTruncated: bool(r.scan_truncated),
     invalid: raw.length - items.length, serverInvalid: nonNeg(r.invalid), pages: 1,
   };
 }
@@ -103,9 +119,9 @@ export function parseLogPage(v: unknown): LogPage {
  * 건너뜀 수는 두 가지 모두 불러온 쪽들의 합 — 같은 범위끼리 나란히 보인다. api 값을 모르는 쪽이 있으면 합도 모른다(null — 아는 쪽만 더해 전체처럼 보이지 않는다).
  */
 export function appendLogPage(prev: LogPage, next: LogPage): LogPage {
-  const seen = new Set(prev.items.map((e) => e.id));
+  const seen = new Set(prev.items.map(entryKey));
   return {
-    items: [...prev.items, ...next.items.filter((e) => !seen.has(e.id))],
+    items: [...prev.items, ...next.items.filter((e) => !seen.has(entryKey(e)))],
     nextCursor: next.nextCursor, scanned: next.scanned, scanTruncated: next.scanTruncated,
     invalid: prev.invalid + next.invalid,
     serverInvalid: prev.serverInvalid == null || next.serverInvalid == null ? null : prev.serverInvalid + next.serverInvalid,
@@ -161,7 +177,7 @@ export function logsUrl(f: LogFilter, nowMs: number, opts: { cursor?: string | n
   if (q) p.set("q", q);
   if (validRid(f.rid.trim())) p.set("rid", f.rid.trim());
   if (validFp(f.fp)) p.set("fp", f.fp);
-  if (opts.cursor && validStreamId(opts.cursor)) p.set("cursor", opts.cursor);
+  if (opts.cursor && validCursor(opts.cursor)) p.set("cursor", opts.cursor);
   p.set("limit", String(Math.min(LOGS_PAGE_MAX, Math.max(1, Math.floor(opts.limit ?? LOGS_PAGE)))));
   return `${LOGS_PATH}?${p}`;
 }
@@ -175,18 +191,25 @@ export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period">
   return `${LOGS_PATH}/groups?${p}`;
 }
 
-export const logItemUrl = (id: string) => `${LOGS_PATH}/${encodeURIComponent(id)}`;
+/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2) */
+export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${encodeURIComponent(id)}${stream ? `?stream=${stream}` : ""}`;
 
-/** /logs#rid=… · #id=… · #fp=… (오류 문구의 "로그 보기" · 항목 링크). 형식이 틀린 값은 버린다 */
-export function parseLogsHash(hash: string): { rid?: string; id?: string; fp?: string } {
+/** /logs#rid=… · #id=…(&stream=…) · #fp=… (오류 문구의 "로그 보기" · 항목 링크). 형식이 틀린 값은 버린다 */
+export function parseLogsHash(hash: string): { rid?: string; id?: string; stream?: LogStreamName; fp?: string } {
   const p = new URLSearchParams(hash.replace(/^#/, ""));
-  const out: { rid?: string; id?: string; fp?: string } = {};
-  const rid = p.get("rid"), id = p.get("id"), fp = p.get("fp");
+  const out: { rid?: string; id?: string; stream?: LogStreamName; fp?: string } = {};
+  const rid = p.get("rid"), id = p.get("id"), fp = p.get("fp"), stream = streamName(p.get("stream"));
   if (validRid(rid)) out.rid = rid;
-  if (validStreamId(id)) out.id = id;
+  if (validStreamId(id)) { out.id = id; if (stream) out.stream = stream; }
   if (validFp(fp)) out.fp = fp;
   return out;
 }
+
+/** 항목 링크의 해시: #id=…(스트림을 알면 &stream=… — 같은 id 가 다른 스트림에도 있을 수 있다) */
+export const logLinkHash = (e: Pick<LogEntry, "id" | "stream">) => `#id=${encodeURIComponent(e.id)}${e.stream ? `&stream=${e.stream}` : ""}`;
+
+/** 화면에서 항목을 가르는 값(React key · 선택 · 겹침 검사): "stream:id" — stream 을 모르면(§G2 전 api) 서버 스트림 */
+export const entryKey = (e: Pick<LogEntry, "id" | "stream">) => `${e.stream ?? "server"}:${e.id}`;
 
 // ---- 새 항목(자동 새로 고침 — 보던 줄이 움직이지 않게) ----
 
@@ -196,19 +219,28 @@ export function streamIdCmp(a: string, b: string): number {
   return am !== bm ? Math.sign(am - bm) : Math.sign(as - bs);
 }
 
+/** api 목록 순서의 비교(§G2): 스트림 id, 같으면 server 가 앞(더 새 것으로 친다). 양수 = a 가 더 새 것 */
+export function entryCmp(a: Pick<LogEntry, "id" | "stream">, b: Pick<LogEntry, "id" | "stream">): number {
+  const c = streamIdCmp(a.id, b.id);
+  if (c !== 0) return c;
+  const rank = (e: Pick<LogEntry, "stream">) => (e.stream === "client" ? 0 : 1);
+  return Math.sign(rank(a) - rank(b));
+}
+
 /**
- * 새로 받은 첫 쪽에서 지금 목록의 맨 위보다 새 항목만. 받은 쪽이 가득 찼고 모두 새 항목이면 그 뒤(더 오래된 쪽)에도 새 항목이 있을 수 있다(more).
+ * 새로 받은 첫 쪽에서 지금 목록의 맨 위보다 새 항목만(api 순서 — entryCmp). 받은 쪽이 가득 찼고 모두 새 항목이면 그 뒤(더 오래된 쪽)에도
+ * 새 항목이 있을 수 있다(more).
  */
 export function pendingEntries(shown: readonly LogEntry[], fresh: readonly LogEntry[], limit: number): { items: LogEntry[]; more: boolean } {
-  const top = shown[0]?.id ?? null;
-  const items = top == null ? [...fresh] : fresh.filter((e) => streamIdCmp(e.id, top) > 0);
+  const top = shown[0] ?? null;
+  const items = top == null ? [...fresh] : fresh.filter((e) => entryCmp(e, top) > 0);
   return { items, more: top != null && fresh.length >= limit && items.length === fresh.length };
 }
 
-/** 새 항목을 위에 붙인다(같은 id 는 한 번만) */
+/** 새 항목을 위에 붙인다(같은 항목 — stream + id — 은 한 번만) */
 export function applyPending(shown: readonly LogEntry[], pending: readonly LogEntry[]): LogEntry[] {
-  const seen = new Set(pending.map((e) => e.id));
-  return [...pending, ...shown.filter((e) => !seen.has(e.id))];
+  const seen = new Set(pending.map(entryKey));
+  return [...pending, ...shown.filter((e) => !seen.has(entryKey(e)))];
 }
 
 // ---- 표시 · 복사 형식 ----
@@ -232,16 +264,20 @@ export function logHeaderLine(ts: string, level: string, service: string, logger
   return `[${ts} ${level} ${service}/${logger}] rid=${rid ?? "—"}`;
 }
 
+/** 예외 종류 표시(§G5): 빈 글(브라우저 오류 — 종류를 보내지 않는다)과 모름은 "—" */
+export const exceptionTypeText = (t: string | null | undefined): string => (t && t.trim() ? t : "—");
+
 /**
- * 항목 텍스트(사람이 읽고 붙여 넣기 좋게): 첫 줄 머리, 메시지, 예외, 스택, 그리고 사실 한 줄(id · fp · instance · thread · 억제 · 신뢰 여부), context.
+ * 항목 텍스트(사람이 읽고 붙여 넣기 좋게): 첫 줄 머리, 메시지, 예외, 스택, 그리고 사실 한 줄(id · 스트림(알 때) · fp · instance · thread · 억제 · 신뢰 여부), context.
  */
 export function logText(e: LogEntry): string {
   const lines = [logHeaderLine(iso(e.ts), e.level, e.service, e.logger ?? "—", e.request_id), e.message];
   if (e.exception) {
-    lines.push(`예외 ${e.exception.type}${e.exception.message != null ? `: ${e.exception.message}` : ""}`);
+    lines.push(`예외 ${exceptionTypeText(e.exception.type)}${e.exception.message != null ? `: ${e.exception.message}` : ""}`);
     if (e.exception.stack) lines.push(e.exception.stack);
   }
-  const facts = [`id=${e.id}`, `fp=${e.fp ?? "—"}`, `instance=${e.instance ?? "—"}`, `thread=${e.thread ?? "—"}`, `억제 ${e.suppressed ?? "—"}`];
+  const facts = [`id=${e.id}`, ...(e.stream ? [`stream=${e.stream}(${LOG_STREAM_KEY[e.stream]})`] : []), `fp=${e.fp ?? "—"}`, `instance=${e.instance ?? "—"}`,
+    `thread=${e.thread ?? "—"}`, `억제 ${e.suppressed ?? "—"}`];
   if (e.untrusted) facts.push("브라우저가 보낸 내용(검증 안 됨)");
   lines.push(facts.join(" · "));
   const ctx = Object.entries(e.context);
@@ -266,7 +302,7 @@ export function logsFileName(ext: "txt" | "ndjson", nowMs: number): string {
 /** 묶음 전체 텍스트: 묶음 머리(건수 · 억제 합 · 처음 · 마지막) + 붙인 항목이 묶음의 전부인지 + 항목들 */
 export function groupText(g: LogGroup, items: readonly LogEntry[], meta: { truncated: boolean }): string {
   const head = `[묶음 fp=${g.fp} ${g.level ?? "—"} ${g.service ?? "—"}/${g.logger ?? "—"}] 항목 ${g.count ?? "—"}건 · 억제 합 ${g.suppressed ?? "—"} · 처음 ${iso(g.first_at)} · 마지막 ${iso(g.last_at)}`;
-  const lines = [head, `예외 종류 ${g.exception_type ?? "—"}`, `표본 메시지 ${g.sample_message ?? "—"}`,
+  const lines = [head, `예외 종류 ${exceptionTypeText(g.exception_type)}`, `표본 메시지 ${g.sample_message ?? "—"}`,
     `아래 항목 ${items.length}건${meta.truncated ? " — 묶음의 일부만(목록 상한 또는 스캔 잘림)" : ""}`];
   return [lines.join("\n"), ...items.map(logText)].join("\n\n");
 }

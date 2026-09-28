@@ -5,9 +5,10 @@ import { apiGet, apiSend } from "@/lib/api";
 import { copyText, downloadText } from "@/lib/copy";
 import { fmtClock, fmtTime } from "@/lib/format";
 import {
-  appendLogPage, applyPending, DEFAULT_LOG_FILTER, firstLine, fmtLogTime, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SERVICES, logGroupsUrl,
-  logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX, parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash,
-  pendingEntries, validRid, type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod,
+  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
+  LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
+  parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash, pendingEntries, validRid,
+  type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
 } from "@/lib/logs";
 import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
 import { AisGapsTable } from "./AisGapsTable";
@@ -23,16 +24,19 @@ const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };
 const NO_PENDING = { items: [] as LogEntry[], more: false };
 const n = (v: number) => v.toLocaleString("en-US");
-/** 목록 줄의 DOM id — 표(grid)의 aria-activedescendant 가 가리킨다(스트림 id 는 숫자와 - 뿐) */
-const rowDomId = (id: string) => `log-row-${id}`;
+/** 목록 줄의 DOM id — 표(grid)의 aria-activedescendant 가 가리킨다. 항목 키(stream:id — 같은 id 가 두 스트림에 있을 수 있다, §G2)에서 ':' 만 바꾼다 */
+const rowDomId = (key: string) => `log-row-${key.replace(":", "-")}`;
+const n0 = (v: number) => v.toLocaleString("en-US");
+/** 두 스트림의 보관 안내(§G2) */
+const KEEP_TEXT = `서버 로그 ${LOG_STREAM_KEY.server} 는 최근 약 ${n0(LOG_STREAM_KEEP.server)}건 · 브라우저 오류 ${LOG_STREAM_KEY.client} 는 최근 약 ${n0(LOG_STREAM_KEEP.client)}건만 보관`;
 /** 묶음 목록이 바뀌었는지(지문 · 건수 · 마지막 항목) */
 const groupsSig = (g: Groups | null) => (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}`).join("|") : "");
 
-/** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=… 는 그 항목의 상세를 연다 */
-function initialState(): { filter: LogFilter; openId: string | null } {
+/** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=…(&stream=…) 는 그 항목의 상세를 연다 */
+function initialState(): { filter: LogFilter; openId: string | null; openStream: LogStreamName | null } {
   const h = parseLogsHash(typeof window !== "undefined" ? window.location?.hash ?? "" : "");
   const filter: LogFilter = { ...DEFAULT_LOG_FILTER, ...(h.rid ? { rid: h.rid, period: "7d" as const } : {}), ...(h.fp ? { fp: h.fp } : {}) };
-  return { filter, openId: h.id ?? null };
+  return { filter, openId: h.id ?? null, openStream: h.stream ?? null };
 }
 
 /**
@@ -54,6 +58,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const [pending, setPending] = useState(NO_PENDING);
   const [groups, setGroups] = useState<Groups | null>(null);
   const [freshGroups, setFreshGroups] = useState<Groups | null>(null);
+  /** 고른 줄의 항목 키(entryKey — stream:id) */
   const [selId, setSelId] = useState<string | null>(null);
   const [detail, setDetail] = useState<LogEntry | null>(null);
   const [detailMiss, setDetailMiss] = useState<{ id: string; error: unknown } | null>(null);
@@ -86,7 +91,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         if (my !== loadSeq.current) return;
         setPage({ ...p, at });
         setPending(NO_PENDING);
-        setSelId((s) => (s && p.items.some((e) => e.id === s) ? s : null));
+        setSelId((s) => (s && p.items.some((e) => entryKey(e) === s) ? s : null));
       } else {
         const g = parseLogGroups(await apiGet<unknown>(logGroupsUrl(f, at)));
         if (my !== loadSeq.current) return;
@@ -140,10 +145,10 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     return () => clearInterval(t);
   }, [tab, poll]);
 
-  const openById = useCallback(async (id: string) => {
+  const openById = useCallback(async (id: string, stream: LogStreamName | null = null) => {
     setDetailMiss(null);
     try {
-      const v = await apiGet<unknown>(logItemUrl(id));
+      const v = await apiGet<unknown>(logItemUrl(id, stream));
       const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
       const e = parseLogEntry(raw);
       if (e) setDetail(e);
@@ -153,12 +158,12 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       if (isAuthMiss(e)) authMiss(e);
     }
   }, [authMiss]);
-  // #id=… 로 열었으면 그 항목(GET /api/v1/ops/logs/{id})
+  // #id=…(&stream=…) 로 열었으면 그 항목(GET /api/v1/ops/logs/{id}?stream=…)
   useEffect(() => {
     if (!init.openId) return;
-    const t = setTimeout(() => void openById(init.openId!), 0);
+    const t = setTimeout(() => void openById(init.openId!, init.openStream), 0);
     return () => clearTimeout(t);
-  }, [init.openId, openById]);
+  }, [init.openId, init.openStream, openById]);
   // 같은 화면에서 #rid= · #fp= · #id= 링크를 눌렀을 때(오류 문구 · 상세의 요청 id 링크)
   useEffect(() => {
     const onHash = () => {
@@ -168,7 +173,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         setFilter((f) => ({ ...f, ...(h.rid ? { rid: h.rid, period: "7d" as const } : {}), ...(h.fp ? { fp: h.fp } : {}) }));
         if (h.rid) { setDraftRid(h.rid); setRidError(null); }
       }
-      if (h.id) void openById(h.id);
+      if (h.id) void openById(h.id, h.stream ?? null);
     };
     window.addEventListener?.("hashchange", onHash);
     return () => window.removeEventListener?.("hashchange", onHash);
@@ -178,7 +183,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   useEffect(() => { if (selId) rowEls.current.get(selId)?.scrollIntoView?.({ block: "nearest" }); }, [selId]);
 
   const items = page?.items ?? [];
-  const selIdx = items.findIndex((e) => e.id === selId);
+  const selIdx = items.findIndex((e) => entryKey(e) === selId);
 
   const copy = useCallback(async (label: string, text: string | (() => Promise<string>)) => {
     try {
@@ -224,7 +229,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const i = selIdx < 0 ? 0 : Math.min(items.length - 1, Math.max(0, selIdx + (e.key === "ArrowDown" ? 1 : -1)));
-      setSelId(items[i].id);
+      setSelId(entryKey(items[i]));
     } else if (e.key === "Enter" && selIdx >= 0) {
       e.preventDefault();
       setDetail(items[selIdx]);
@@ -315,8 +320,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1 text-[11px]" data-testid="logs-status">
           {view === "list" ? <>
             <span>{page ? `${n(items.length)}건 표시(최신 순)` : loading ? "불러오는 중…" : "—"}</span>
-            {page?.scanned != null ? <span className="text-fg-3" title="마지막 요청이 훑은 스트림 항목 수(요청당 상한 3,000)">훑은 항목 <span className="mono">{n(page.scanned)}</span></span> : null}
-            {page?.scanTruncated ? <span className="text-warn">스캔 상한(3,000)에서 잘림 — 조건에 맞는 더 오래된 항목이 있을 수 있음</span> : null}
+            {page?.scanned != null ? <span className="text-fg-3" title={`마지막 요청이 훑은 스트림 항목 수 — 두 스트림(${LOG_STREAM_KEY.server} · ${LOG_STREAM_KEY.client})을 합쳐 요청당 상한 ${n(LOG_SCAN_MAX)}`}>훑은 항목 <span className="mono">{n(page.scanned)}</span></span> : null}
+            {page?.scanTruncated ? <span className="text-warn">스캔 상한({n(LOG_SCAN_MAX)}건 — 두 스트림 합)에서 잘림 — 조건에 맞는 더 오래된 항목이 있을 수 있음</span> : null}
             {page && (page.invalid > 0 || (page.serverInvalid ?? 0) > 0) ? (
               <span className="text-warn" data-testid="logs-skipped" title="api = 서버가 읽을 때 스키마 검증에 실패해 건너뛴 항목 · 화면 = 이 화면이 형식 오류로 버린 항목 — 둘 다 불러온 쪽들의 합(— = api 가 값을 주지 않음)">
                 형식 오류로 건너뜀({page.pages > 1 ? `불러온 ${page.pages}쪽 합계` : "불러온 1쪽"}): api {page.serverInvalid ?? "—"} · 화면 {page.invalid}
@@ -335,7 +340,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           </> : <>
             <span>{groups ? `묶음 ${n(groups.groups.length)}개(최근 ${LOG_PERIOD_LABEL[filter.period]})` : loading ? "불러오는 중…" : "—"}</span>
             {groups?.scanned != null ? <span className="text-fg-3">훑은 항목 <span className="mono">{n(groups.scanned)}</span></span> : null}
-            {groups?.scanTruncated ? <span className="text-warn">스캔 상한(3,000)에서 잘림 — 묶음·건수가 기간의 일부만</span> : null}
+            {groups?.scanTruncated ? <span className="text-warn">스캔 상한({n(LOG_SCAN_MAX)}건 — 두 스트림 합)에서 잘림 — 묶음·건수가 기간의 일부만</span> : null}
             {groups?.invalid ? <span className="text-warn">형식 오류 묶음 {groups.invalid}개 건너뜀</span> : null}
             {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={() => { setGroups(freshGroups); setFreshGroups(null); }}>묶음에 새 항목 — 반영</button> : null}
             <span className="text-fg-3">묶음 보기는 서비스·수준·기간만 적용(글자 검색·요청 id·지문 제외)</span>
@@ -343,7 +348,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           <span role="status" aria-live="polite" data-testid="logs-note" className={note?.ok === false ? "text-bad" : "text-ok"}>{note?.text ?? ""}</span>
         </div>
         <div className="shrink-0 border-b border-line px-3 py-1 text-[10px] text-fg-3">
-          수집: api · collector · ais 의 WARN·ERROR(비밀값 가림) + 브라우저 오류(web-client — 브라우저가 보낸 내용, 검증 안 됨) · 스트림 wakeline:logs 는 최근 약 3,000건만 보관 ·
+          수집: api · collector · ais 의 WARN·ERROR(비밀값 가림) + 브라우저 오류(web-client — 브라우저가 보낸 내용, 검증 안 됨, 따로 보관) · {KEEP_TEXT} · 목록은 두 스트림을 시각(스트림 id) 순으로 합침 ·
           edge(nginx) 로그는 컨테이너 표준 출력에만(수집 에이전트 없음) · 키보드(목록): ↑/↓ 이동 · Enter 상세 · c 텍스트 복사
         </div>
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -352,25 +357,29 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
               {items.length ? (
                 // 키보드: 표(grid)에 초점을 두고 고른 줄은 aria-activedescendant 로 알린다(화면 읽기 프로그램이 그 줄을 읽는다)
                 <table role="grid" aria-readonly="true" tabIndex={0} onKeyDown={onKey} aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사"
-                  aria-activedescendant={selIdx >= 0 ? rowDomId(items[selIdx].id) : undefined} data-testid="log-grid">
+                  aria-activedescendant={selIdx >= 0 ? rowDomId(entryKey(items[selIdx])) : undefined} data-testid="log-grid">
                   <thead className="sticky top-0 bg-bg-1"><tr>
                     <th scope="col">시각(UTC)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
                     <th scope="col" title="직전 전송 뒤 같은 지문으로 보내지 않은 건수 — — = 필드 없음">억제</th><th scope="col">요청 id</th>
                   </tr></thead>
-                  <tbody>{items.map((e) => (
-                    <tr key={e.id} id={rowDomId(e.id)} data-testid="log-row" data-id={e.id} aria-selected={e.id === selId}
-                      ref={(el) => { if (el) rowEls.current.set(e.id, el); else rowEls.current.delete(e.id); }}
-                      onClick={() => { setSelId(e.id); openEntry(e); }}
-                      className={`cursor-pointer ${e.id === selId ? "bg-[#1c2a3f]" : "hover:bg-bg-2"} ${detail?.id === e.id ? "outline outline-1 -outline-offset-1 outline-accent" : ""}`}>
+                  <tbody>{items.map((e) => {
+                    const k = entryKey(e);
+                    return (
+                    <tr key={k} id={rowDomId(k)} data-testid="log-row" data-id={e.id} data-stream={e.stream ?? undefined} aria-selected={k === selId}
+                      ref={(el) => { if (el) rowEls.current.set(k, el); else rowEls.current.delete(k); }}
+                      onClick={() => { setSelId(k); openEntry(e); }}
+                      className={`cursor-pointer ${k === selId ? "bg-[#1c2a3f]" : "hover:bg-bg-2"} ${detail && entryKey(detail) === k ? "outline outline-1 -outline-offset-1 outline-accent" : ""}`}>
                       <td className="mono whitespace-nowrap">{fmtLogTime(e.ts)}</td>
                       <td><span className={LEVEL_BADGE[e.level]}>{e.level}</span></td>
-                      <td className="mono whitespace-nowrap">{e.service}{e.untrusted ? <span className="badge ml-1 normal-case!" title="브라우저가 보낸 내용 — 검증 안 됨">untrusted</span> : null}</td>
+                      <td className="mono whitespace-nowrap">{e.service}{e.untrusted ? <span className="badge ml-1 normal-case!" title="브라우저가 보낸 내용 — 검증 안 됨">untrusted</span> : null}
+                        {e.stream === "client" ? <span className="badge ml-1 normal-case!" title={`${LOG_STREAM_KEY.client} — 브라우저 오류 스트림(따로 보관 · 최근 약 ${n(LOG_STREAM_KEEP.client)}건)`}>client</span> : null}</td>
                       <td className="mono max-w-[240px] truncate text-fg-2" title={e.logger ?? ""}>{e.logger ?? "—"}</td>
                       <td className="max-w-[560px] truncate" title={firstLine(e.message)}>{firstLine(e.message)}</td>
                       <td className="mono text-right">{e.suppressed ?? "—"}</td>
                       <td className="mono whitespace-nowrap text-fg-3">{e.request_id ?? "—"}</td>
                     </tr>
-                  ))}</tbody>
+                    );
+                  })}</tbody>
                 </table>
               ) : page ? (
                 <div className="p-3 text-fg-3" data-testid="logs-empty">
@@ -392,7 +401,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                       <td className="mono">{g.fp}</td>
                       <td>{g.level ? <span className={LEVEL_BADGE[g.level] ?? "badge"}>{g.level}</span> : "—"}</td>
                       <td className="mono">{g.service ?? "—"}</td>
-                      <td className="max-w-[280px]"><div className="mono truncate" title={g.logger ?? ""}>{g.logger ?? "—"}</div><div className="mono truncate text-fg-3">{g.exception_type ?? "—"}</div></td>
+                      <td className="max-w-[280px]"><div className="mono truncate" title={g.logger ?? ""}>{g.logger ?? "—"}</div><div className="mono truncate text-fg-3" title={g.exception_type === "" ? "예외 종류 모름(브라우저 오류는 종류를 보내지 않음)" : undefined}>{exceptionTypeText(g.exception_type)}</div></td>
                       <td className="max-w-[420px] truncate" title={g.sample_message ?? ""}>{g.sample_message ? firstLine(g.sample_message) : "—"}</td>
                       <td className="mono text-right">{g.count ?? "—"}</td>
                       <td className="mono text-right">{g.suppressed ?? "—"}</td>
@@ -412,12 +421,12 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           {view === "list" && (detail || detailMiss) ? (
             <aside className="max-h-[50%] min-h-0 overflow-auto border-t border-line bg-bg-1 lg:max-h-none lg:w-[46%] lg:border-t-0 lg:border-l" aria-label="항목 상세">
               {detail ? (
-                <LogDetail key={detail.id} entry={detail} period={filter.period} onClose={closeDetail} onOpen={openEntry} onFilterFp={filterFp} onFilterRid={filterRid} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} />
+                <LogDetail key={entryKey(detail)} entry={detail} period={filter.period} onClose={closeDetail} onOpen={openEntry} onFilterFp={filterFp} onFilterRid={filterRid} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} />
               ) : detailMiss ? (
                 <div className="p-3 text-[12px]" data-testid="log-detail-miss">
                   <div className="mb-1"><span className="label mr-2">항목</span><span className="mono">{detailMiss.id}</span></div>
                   <div className="text-bad">
-                    항목을 열지 못함 — 스트림에서 잘렸거나(최근 약 3,000건만 보관) id 가 틀림 · <ErrorNote error={detailMiss.error} onFilterRid={filterRid} />
+                    항목을 열지 못함 — 스트림에서 잘렸거나({KEEP_TEXT}) id 가 틀림 · <ErrorNote error={detailMiss.error} onFilterRid={filterRid} />
                   </div>
                   <button type="button" className="btn mt-2" onClick={closeDetail}>닫기</button>
                 </div>
