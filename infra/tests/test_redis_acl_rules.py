@@ -150,6 +150,21 @@ class RedisAclRulesTest(unittest.TestCase):
         removed = {r[1:] for r in rules if r.startswith("-")}
         self.assertFalse(removed & {"xadd", "xrevrange", "xrange", "@stream", "@read", "@write"}, "XADD · XREVRANGE 를 빼지 않는다")
 
+    # --- 계약 v5 §G2: 브라우저 오류 스트림 wakeline:logs:client(MAXLEN ~ 1000) — api 만 싣고 읽는다 ---
+    def test_browser_error_stream_is_api_only(self):
+        import fnmatch
+
+        def covers(user: str, key: str) -> list[str]:
+            # ~p · %R~p · %W~p · %RW~p — 키 패턴(glob) 부분만 비교한다
+            return [r for r in self.keys(user) if fnmatch.fnmatchcase(key, r.split("~", 1)[1])]
+
+        self.assertEqual(covers("wakeline_api", "wakeline:logs:client"), ["~wakeline:*"], "api 가 client-errors 를 싣고 /ops/logs 로 읽는다")
+        for user in ("wakeline_collector", "wakeline_ais"):
+            with self.subTest(user=user):
+                # %W~wakeline:logs 는 정확한 이름 — 뚫린 수집기가 익명 입력 스트림을 채우거나 읽지 못한다
+                self.assertEqual(covers(user, "wakeline:logs:client"), [])
+                self.assertEqual(covers(user, "wakeline:logs"), ["%W~wakeline:logs"])
+
     def test_api_rules_unchanged(self):
         self.assertIn("+@all", self.users["wakeline_api"])
         self.assertIn("-@dangerous", self.users["wakeline_api"])
