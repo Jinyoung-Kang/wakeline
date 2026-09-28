@@ -12,7 +12,15 @@ const KNOWN = new Set([
   "minItems", "maxItems", "prefixItems", "items", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
   "pattern", "minLength", "maxLength", "minProperties", "format",
 ]);
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-](\d{2}):(\d{2}))$/;
+/** RFC 3339 date-time + 달력에 있는 날짜 · 시각(Python datetime.fromisoformat 과 같게 — 2월 30일 · 24시 · 60초는 틀림). Date.parse 는 2월 30일을 받는다 */
+function isDateTime(v: string): boolean {
+  const m = RFC3339.exec(v);
+  if (!m) return false;
+  const [y, mo, d, h, mi, se] = m.slice(1, 7).map(Number);
+  const days = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return mo >= 1 && mo <= 12 && d >= 1 && d <= days && h <= 23 && mi <= 59 && se <= 59 && (m[9] === undefined || (Number(m[9]) <= 23 && Number(m[10]) <= 59));
+}
 
 function typeOf(v: unknown): string {
   if (v === null) return "null";
@@ -68,7 +76,7 @@ export function validate(root: Record<string, unknown>, value: unknown, schema: 
     if (typeof s.minLength === "number" && len < s.minLength) errs.push(`${at}: shorter than ${s.minLength}`);
     if (typeof s.maxLength === "number" && len > s.maxLength) errs.push(`${at}: longer than ${s.maxLength}`);
     if (typeof s.pattern === "string" && !new RegExp(s.pattern, "u").test(value)) errs.push(`${at}: does not match ${s.pattern}`);
-    if (s.format === "date-time" && (!RFC3339.test(value) || Number.isNaN(Date.parse(value)))) errs.push(`${at}: not an RFC 3339 date-time`);
+    if (s.format === "date-time" && !isDateTime(value)) errs.push(`${at}: not an RFC 3339 date-time`);
   }
   if (Array.isArray(value)) {
     if (typeof s.minItems === "number" && value.length < s.minItems) errs.push(`${at}: fewer than ${s.minItems} items`);
