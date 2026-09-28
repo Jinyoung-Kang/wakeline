@@ -8,7 +8,7 @@ import {
 } from "@/lib/ops";
 import { OpsLogin } from "@/components/OpsLogin";
 import { OpsPipeline } from "@/components/OpsPipeline";
-import { ErrorNote } from "@/components/logs/ErrorNote";
+import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
 
 type Any = Record<string, unknown>;
@@ -151,8 +151,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
 function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]; onSaved: () => void; onAuthMiss: (e: unknown) => void }) {
   // 편집 값과 편집을 시작할 때 본 version(R-35): 15 s 새로고침이 version 을 바꿔도 저장은 처음 본 version 으로 If-Match 한다
   const [edit, setEdit] = useState<Record<string, SettingEdit>>({});
-  // 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다
+  const [msg, setMsg] = useState<{ ok: boolean; text: string; error?: unknown } | null>(null);
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
   const drop = (k: string) => setEdit((e) => { const c = { ...e }; delete c[k]; return c; });
   const save = async (k: string) => {
@@ -169,7 +169,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
       const text = conflict ? "편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요"
         : e instanceof ApiError && e.status === 400 ? `서버가 값을 거절했습니다(${e.message})`
         : e instanceof ApiError ? `저장 실패(HTTP ${e.status})` : "서버에 연결할 수 없습니다(네트워크)";
-      setMsg({ ok: false, text: `${k}: ${text}` });
+      setMsg({ ok: false, text: `${k}: ${text}`, error: e });
       if (conflict) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
     }
   };
@@ -178,7 +178,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
-      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}</div> : null}
+      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} /></div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated</th><th></th></tr></thead>
         <tbody>{items.map((s) => {
           const ed = edit[s.key];

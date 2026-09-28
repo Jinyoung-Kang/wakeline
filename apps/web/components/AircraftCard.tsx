@@ -15,6 +15,7 @@ import {
 } from "@/lib/route";
 import { EvidenceCard } from "./EvidenceCard";
 import { DemandBadge } from "./MapChips";
+import { RequestIdOf } from "./logs/ErrorNote";
 
 interface Detail {
   hex: string;
@@ -107,7 +108,7 @@ export function RouteSection({ route, pos, callsign }: { route: RouteInfo | null
  */
 export function AircraftCard({ hex }: { hex: string }) {
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [error, setError] = useState<{ hex: string; msg: string } | null>(null);
+  const [error, setError] = useState<{ hex: string; msg: string; error?: unknown } | null>(null);
   const [refresh, setRefresh] = useState(0);
   const select = useUi((s) => s.select);
   const selected = useServerData((x) => (x.selected && x.selected.hex === hex ? x.selected : null));
@@ -125,7 +126,7 @@ export function AircraftCard({ hex }: { hex: string }) {
     let live = true;
     apiGet<Detail>(`/api/v1/aircraft/${encodeURIComponent(hex)}`)
       .then((x) => { if (live) { setDetail(x); setError(null); } })
-      .catch((e: Error) => { if (live) setError({ hex, msg: String(e.message) }); });
+      .catch((e: Error) => { if (live) setError({ hex, msg: String(e.message), error: e }); });
     return () => { live = false; };
   }, [hex, refresh]);
   // 다른 항공기로 바뀐 직후 이전 응답을 보여주지 않는다
@@ -182,7 +183,7 @@ export function AircraftCard({ hex }: { hex: string }) {
           : <span className="text-fg-3" data-testid="demand-chip-none">{live ? "집중 추적 상태 수신 전" : "연결이 실시간이 아님 — 집중 추적 상태 모름"}</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
-        {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err})</div> : null}
+        {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err}<RequestIdOf error={error?.error} />)</div> : null}
         {d?.meta?.db_unavailable ? <div className="text-[11px] text-warn">등록 정보 DB 일시 사용 불가 — 등록번호·기종은 “—”</div> : null}
         {rows.map(([k, val]) => (
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{val}</span></div>

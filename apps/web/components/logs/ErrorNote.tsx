@@ -21,6 +21,14 @@ export function ErrorNote({ error, prefix, className, onFilterRid }: { error: un
 }
 
 /**
+ * 한국어 안내 문구 옆에 붙이는 요청 id(계약 v5 §C8) — 문구는 화면이 정하고(서버 영문 detail 을 그대로 보이지 않는 곳), 여기는 id 만.
+ * ApiError 이고 서버가 요청 id 를 줬을 때만 그린다(없으면 아무것도 — 지어내지 않는다).
+ */
+export function RequestIdOf({ error, onFilter }: { error: unknown; onFilter?: (rid: string) => void }) {
+  return error instanceof ApiError && error.requestId ? <RequestIdCopy id={error.requestId} onFilter={onFilter} /> : null;
+}
+
+/**
  * 요청 id 한 개: 라벨 · mono 값(선택하기 쉽게 select-all) · 복사 단추(결과를 글자로) · /logs 에서 이 요청 id 로 거른 목록.
  * onFilter 가 있으면(/logs 화면 안) 링크 대신 필터를 바로 바꾼다 — Next 링크의 같은 경로 해시 이동은 hashchange 를 내지 않는다.
  */

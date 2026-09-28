@@ -165,6 +165,76 @@ describe("v5-C8 screens show the request id of a failed call", () => {
     expect(alert.textContent).toContain("a1b2c3d4e5f60718");
     expect(find((e) => e.getAttribute?.("aria-label") === "요청 id a1b2c3d4e5f60718 복사", alert)).not.toBeNull();
   });
+  const problemFetch = (status: number, body: Record<string, unknown>) => async () =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/problem+json" } });
+  const copyButtonFor = (rid: string, from: MiniElement) => find((e) => e.getAttribute?.("aria-label") === `요청 id ${rid} 복사`, from);
+  it("ops login: a failed sign-in keeps the Korean explanation and adds the request id with a copy button", async () => {
+    vi.stubGlobal("fetch", problemFetch(401, { detail: "bad credentials", code: "BAD_CREDENTIALS", request_id: "0badc0de0badc0de" }));
+    (dom.document as unknown as { cookie: string }).cookie = "";
+    (MiniElement.prototype as unknown as { focus: () => void }).focus = () => {};
+    const { OpsLogin } = await import("@/components/OpsLogin");
+    await mount(createElement(OpsLogin, { onLogin: () => {}, notice: null }));
+    const [user, pass] = [0, 1].map((i) => { const all: MiniElement[] = []; const walk = (n: MiniElement) => { if (n.tagName === "INPUT") all.push(n); n.childNodes.forEach((c) => c instanceof MiniElement && walk(c)); }; walk(dom.container); return all[i]; });
+    await React.act(async () => { propsOf(user).onChange({ target: { value: "op" } }); propsOf(pass).onChange({ target: { value: "password123" } }); });
+    await React.act(async () => { await propsOf(byTestId("ops-login")!).onSubmit({ preventDefault() {} }); });
+    await settle();
+    const err = byTestId("ops-login-error")!;
+    expect(err.textContent).toContain("아이디 또는 비밀번호가 올바르지 않습니다");
+    expect(err.textContent).toContain("0badc0de0badc0de");
+    expect(copyButtonFor("0badc0de0badc0de", err)).not.toBeNull();
+    delete (MiniElement.prototype as unknown as { focus?: () => void }).focus;
+  });
+  it("ops settings: a failed save keeps '저장 실패(HTTP 500)' and adds the request id with a copy button", async () => {
+    (dom.document as unknown as { cookie: string }).cookie = "WAKELINE_CSRF=t0k";
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (init?.method === "PUT") return json(500, { detail: "internal error", code: "INTERNAL", request_id: "5e7715e75e7715e7" });
+      if (url === "/api/v1/ops/providers") return json(200, { providers: [], active: {}, collector: {}, switches: [], budget_days: [] });
+      if (url === "/api/v1/ops/settings") return json(200, { items: [{ key: "region_poll_s", value: 10, version: 3 }] });
+      return url in OK ? json(200, OK[url]) : json(404, { detail: "no such resource" });
+    });
+    const OpsPage = (await import("@/app/ops/page")).default;
+    await mount(createElement(OpsPage));
+    await settle();
+    await React.act(async () => { propsOf(byTestId("ops-tab-settings")!).onClick({}); });
+    const input = find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!;
+    await React.act(async () => { propsOf(input).onChange({ target: { value: "12" } }); });
+    const save = find((e) => e.tagName === "BUTTON" && e.textContent === "save")!;
+    await React.act(async () => { await propsOf(save).onClick({}); });
+    await settle();
+    const e = byTestId("settings-error")!;
+    expect(e.textContent).toContain("region_poll_s: 저장 실패(HTTP 500)");
+    expect(e.textContent).toContain("5e7715e75e7715e7");
+    expect(copyButtonFor("5e7715e75e7715e7", e)).not.toBeNull();
+  });
+  it("airport history page: the Korean explanation stays and the request id is added with a copy button", async () => {
+    vi.stubGlobal("fetch", problemFetch(503, { detail: "wx unavailable", code: "STORE_UNAVAILABLE", request_id: "a1a1a1a1b2b2b2b2" }));
+    const AirportPage = (await import("@/app/airports/[icao]/page")).default;
+    await mount(createElement(AirportPage, { params: Promise.resolve({ icao: "rksi" }) }));
+    await settle();
+    const alert = find((e) => e.getAttribute?.("role") === "alert")!;
+    expect(alert.textContent).toContain("기상 이력을 불러오지 못했습니다(HTTP 503)");
+    expect(alert.textContent).toContain("a1a1a1a1b2b2b2b2");
+    expect(copyButtonFor("a1a1a1a1b2b2b2b2", alert)).not.toBeNull();
+  });
+  it("aircraft card: the REST detail failure shows the request id next to the server detail", async () => {
+    vi.stubGlobal("fetch", problemFetch(503, { detail: "aircraft store unavailable", request_id: "ac1dac1dac1dac1d" }));
+    const { AircraftCard } = await import("@/components/AircraftCard");
+    await mount(createElement(AircraftCard, { hex: "abc123" }));
+    await settle();
+    const e = byTestId("aircraft-detail-error")!;
+    expect(e.textContent).toContain("aircraft store unavailable");
+    expect(e.textContent).toContain("ac1dac1dac1dac1d");
+    expect(copyButtonFor("ac1dac1dac1dac1d", e)).not.toBeNull();
+  });
+  it("replay: a failed request keeps its request id for the copy button (null when unknown or after a load)", async () => {
+    const { replayReduce } = await import("@/lib/replay");
+    const failed = replayReduce({ frame: null, err: null, latencyMs: null }, { type: "failed", error: new ApiError(500, "internal error", null, "INTERNAL", "0123abcd0123abcd") });
+    expect(failed.err).toContain("HTTP 500");
+    expect(failed.rid).toBe("0123abcd0123abcd");
+    expect(replayReduce(failed, { type: "failed", error: new TypeError("Failed to fetch") }).rid).toBeNull();
+    expect(replayReduce(failed, { type: "loaded", frame: { at: "2026-09-29T00:00:00Z", aircraft: [], sigmets: [], source: "track_point" }, latencyMs: 5 }).rid).toBeNull();
+  });
   it("stats and airport card render the error through ErrorNote (request id visible)", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ detail: "stats unavailable", code: "STORE_UNAVAILABLE", request_id: "feedface0000beef" }), { status: 503, headers: { "Content-Type": "application/problem+json" } }));
     const StatsPage = (await import("@/app/stats/page")).default;
