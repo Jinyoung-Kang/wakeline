@@ -5,7 +5,7 @@
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
  */
 import { ApiError } from "./api";
-import { band, fmtAltGnd, fmtDuration, fmtNum, fmtTime } from "./format";
+import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtTime } from "./format";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
 
@@ -84,14 +84,29 @@ export function replayRecLabel(a: Pick<ReplayAircraft, "ts" | "provider">, at: s
   return `${fmtTime(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
 }
 
+/** 재생 상세(inspector) 행 — 고도·지상속도는 두 단위(계약 v5 §A2). 요약 행은 "1분 평균"이라고 이름에 밝힌다(DH-11) */
+export function replayAircraftRows(a: ReplayAircraft, at: string): [string, string][] {
+  const summary = isSummaryRow(a);
+  return [
+    ["ICAO24", a.hex],
+    ["Callsign", a.callsign ?? "—"],
+    [summary ? "고도(1분 평균)" : "고도", fmtAltGndDual(a.alt_ft, a.on_ground)],
+    [summary ? "지상속도(1분 평균)" : "지상속도", fmtGsDual(a.gs_kt)],
+    ["방위", fmtNum(a.track_deg, "°")],
+    ["지상", fmtBool(a.on_ground)],
+    [summary ? "기록 구간" : "기록 시각", summary ? replayRecLabel(a, at) : fmtTime(a.ts)],
+    ["출처", summary ? "1분 요약(track_point_1m)" : a.provider ?? "—"],
+  ];
+}
+
 export function replayAircraftTip(a: ReplayAircraft, at: string): Tip {
   const summary = isSummaryRow(a);
   return {
     title: a.callsign ?? a.hex,
     subtitle: a.callsign ? a.hex : undefined,
     rows: [
-      ["ALT", fmtAltGnd(a.alt_ft, a.on_ground)],
-      ["GS", fmtNum(a.gs_kt, " kt")],
+      ["ALT", fmtAltGndDual(a.alt_ft, a.on_ground)],
+      ["GS", fmtGsDual(a.gs_kt)],
       ["TRK", fmtNum(a.track_deg, "°")],
       ["REC", replayRecLabel(a, at)],
       ["SRC", summary ? "1분 요약" : a.provider ?? "—"],
@@ -114,8 +129,9 @@ export function replaySigmetTip(s: ReplaySigmet, at: string): Tip {
   };
 }
 
+/** 재생 상세(카드)의 고도대 — 숫자 경계에 m 를 괄호로(계약 v5 §A3). 툴팁은 replaySigmetTip(그대로) */
 export function replaySigmetBand(s: ReplaySigmet): string {
-  return band(s.base_ft, s.top_ft, bandSrc(s));
+  return band(s.base_ft, s.top_ft, bandSrc(s), { metric: true });
 }
 
 // ---- 요청 영역·오류(R-05) ----

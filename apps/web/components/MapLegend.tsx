@@ -1,15 +1,19 @@
 "use client";
 import { useServerData } from "@/lib/store";
+import { saveShipCats } from "@/lib/prefs";
 import { useUi, type Layers } from "@/lib/ui-store";
 import {
-  ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
+  ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
-import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH } from "@/lib/ship-layers";
-import { aisCoverageFeatures, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
+import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH, SHIP_SELECTED_STYLE, SHIP_TRACK_POINT_STYLE } from "@/lib/ship-layers";
+import { aisCoverageFeatures, type ShipCategory, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
-const ALT_TICKS: [number, string][] = [[0, "0"], [10000, "10k ft"], [25000, "FL250"], [40000, "FL400+"]];
+/** 고도 램프 눈금(계약 v5 §A3): ft(FL) 과 m. 마지막 눈금은 "그 이상" */
+export const ALT_TICKS: { at: number; ft: string; m: string }[] = [
+  { at: 0, ft: "0 ft", m: altM(0) }, { at: 10000, ft: "10k ft", m: altM(10000) }, { at: 25000, ft: "FL250", m: altM(25000) }, { at: 40000, ft: "FL400+", m: `${altM(40000)}+` },
+];
 
 /** 지도 아이콘과 같은 모양의 작은 비행기(nodir = 방위 모름 마름모) */
 function Plane({ color, opacity = 1, halo, title, nodir }: { color: string; opacity?: number; halo?: string; title?: string; nodir?: boolean }) {
@@ -36,6 +40,41 @@ function Hull({ color, mode = "heading", opacity = 1, title }: { color: string; 
   );
 }
 
+/**
+ * 선종 필터(계약 v5 §B3): 범례의 선종 항목이 곧 켜고 끄는 단추다(aria-pressed). 켜진 수를 늘 적는다("선종 필터 9/11").
+ * 점 모드는 지도 filter, 격자 모드는 칸의 선종별 수로 다시 센다(MapView). 설정은 이 브라우저에만(lib/prefs).
+ */
+function ShipCategoryToggles({ cats }: { cats: readonly ShipCategory[] }) {
+  const toggle = useUi((s) => s.toggleShipCat);
+  const setCats = useUi((s) => s.setShipCats);
+  const on = new Set(cats);
+  const save = () => saveShipCats(useUi.getState().shipCats);
+  return (
+    <li className="pb-1">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className={`mono text-[10px] ${on.size < SHIP_CATEGORIES.length ? "text-warn" : "text-fg-2"}`} data-testid="ship-cat-count">선종 필터 {on.size}/{SHIP_CATEGORIES.length}</span>
+        <span className="text-[9px] text-fg-3">누르면 지도에서 켜고 끔</span>
+        {on.size < SHIP_CATEGORIES.length ? (
+          <button type="button" className="btn px-1.5 py-0 text-[9px]" onClick={() => { setCats(SHIP_CATEGORIES); save(); }} data-testid="ship-cats-all">모두 켜기</button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-2 gap-x-1 gap-y-[2px]" role="group" aria-label="선종 필터">
+        {SHIP_CATEGORIES.map((c) => {
+          const pressed = on.has(c);
+          return (
+            <button key={c} type="button" aria-pressed={pressed} title={`코드 ${SHIP_CATEGORY_CODES[c]} — ${pressed ? "누르면 숨김" : "숨김 · 누르면 표시"}`}
+              className={`flex items-center gap-1.5 border px-1 py-[1px] text-left ${pressed ? "border-transparent hover:border-line-2" : "border-line text-fg-3 hover:border-line-2"}`}
+              onClick={() => { toggle(c); save(); }} data-testid={`ship-cat-${c}`}>
+              <Hull color={SHIP_CATEGORY_COLOR[c]} opacity={pressed ? 1 : 0.3} />
+              <span className={`text-[10px] ${pressed ? "" : "line-through"}`}>{SHIP_CATEGORY_LABEL[c]}</span>
+            </button>
+          );
+        })}
+      </div>
+    </li>
+  );
+}
+
 function Row({ swatch, children, wide }: { swatch: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
   return <li className="flex items-center gap-2 py-[1px]"><span className={`flex shrink-0 justify-center whitespace-nowrap ${wide ? "min-w-6" : "w-6"}`}>{swatch}</span><span>{children}</span></li>;
 }
@@ -56,11 +95,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function MapLegend({ id }: { id: string }) {
   const layers = useUi((s) => s.layers);
   const radarSource = useUi((s) => s.radarSource);
-  return <MapLegendView id={id} layers={layers} radarSource={radarSource} />;
+  const shipCats = useUi((s) => s.shipCats);
+  return <MapLegendView id={id} layers={layers} radarSource={radarSource} shipCats={shipCats} />;
 }
 
-/** 표시 부분(레이어·레이더 출처를 인자로 — 서버 렌더 시험용) */
-export function MapLegendView({ id, layers, radarSource }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma" }) {
+/** 표시 부분(레이어·레이더 출처·선종 필터를 인자로 — 서버 렌더 시험용) */
+export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGORIES }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma"; shipCats?: readonly ShipCategory[] }) {
   const kr = useServerData((d) => d.radarKr);
   const hasRv = useServerData((d) => (d.radar?.past.length ?? 0) > 0);
   // 경계선이 실제로 그려질 때만(전 해역 구독이면 그릴 경계가 없다)
@@ -71,10 +111,15 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
       {layers.aircraft ? (
         <Section title="항공기 · 고도(아이콘 색)">
           <li className="pb-1">
-            <div className="h-2 w-full" style={{ background: grad }} role="img" aria-label="고도 색 램프: 0 ft 녹색, 10,000 ft 파랑, FL250 하늘색, FL400 이상 흰색" />
-            <div className="relative mt-0.5 h-3 text-[9px] text-fg-3 mono">
-              {ALT_TICKS.map(([ft, l], i) => (
-                <span key={l} className="absolute" style={i === 0 ? { left: 0 } : i === ALT_TICKS.length - 1 ? { right: 0 } : { left: `${(ft / ALT_MAX) * 100}%`, transform: "translateX(-50%)" }}>{l}</span>
+            <div className="h-2 w-full" style={{ background: grad }} role="img"
+              aria-label={`고도 색 램프: 0 ft(0 m) 녹색, 10,000 ft(${altM(10000)}) 파랑, FL250(${altM(25000)}) 하늘색, FL400(${altM(40000)}) 이상 흰색`} />
+            {/* 눈금 두 줄: ft(FL) 아래 m — 한 줄로 쓰면 이웃 눈금과 겹친다 */}
+            <div className="relative mt-0.5 h-6 text-[9px] text-fg-3 mono" data-testid="legend-alt-ticks">
+              {ALT_TICKS.map((t, i) => (
+                <span key={t.ft} title={`${t.ft} · ${t.m}`} className={`absolute flex flex-col leading-tight ${i === 0 ? "items-start" : i === ALT_TICKS.length - 1 ? "items-end" : "items-center"}`}
+                  style={i === 0 ? { left: 0 } : i === ALT_TICKS.length - 1 ? { right: 0 } : { left: `${(t.at / ALT_MAX) * 100}%`, transform: "translateX(-50%)" }}>
+                  <span>{t.ft}</span><span className="text-fg-3/80">{t.m}</span>
+                </span>
               ))}
             </div>
           </li>
@@ -91,18 +136,16 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
       ) : null}
       {layers.ships ? (
         <Section title="선박 · 선종(아이콘 색, AIS)">
-          <li className="grid grid-cols-2 gap-x-2 gap-y-[2px] pb-1">
-            {SHIP_CATEGORIES.map((c) => (
-              <span key={c} className="flex items-center gap-1.5" title={`코드 ${SHIP_CATEGORY_CODES[c]}`}><Hull color={SHIP_CATEGORY_COLOR[c]} /><span className="text-[10px]">{SHIP_CATEGORY_LABEL[c]}</span></span>
-            ))}
-          </li>
+          <ShipCategoryToggles cats={shipCats} />
           <Row swatch={<Hull color="#c7ccd4" />}>선수방위(heading) 방향</Row>
           <Row swatch={<Hull color="#c7ccd4" mode="cog" />}>침로 기준 — 선수방위 없음(점선 외곽)</Row>
           <Row swatch={<Hull color="#c7ccd4" mode="none" />}>방향 모름 — 회전하지 않는 원</Row>
-          <Row swatch={<Hull color="#ffffff" />}>선택한 선박</Row>
+          <Row swatch={<span className="relative inline-flex h-4 w-4 items-center justify-center rounded-full!" style={{ border: `${SHIP_SELECTED_STYLE.ringWidth}px solid ${SHIP_SELECTED_STYLE.ringColor}` }}><Hull color="#ffffff" /></span>}>
+            <span data-testid="legend-ship-selected">선택한 선박 — 흰 고리 + 이름(모르면 MMSI), 격자·선종 필터와 상관없이 표시</span>
+          </Row>
           <Row swatch={<Hull color="#c7ccd4" opacity={0.35} />}>STALE — {SHIP_STALE_S / 60}분 넘게 새 위치 없음(35%)</Row>
           <Row swatch={<span className="inline-block h-3 w-3 rounded-full!" style={{ background: SHIP_CATEGORY_COLOR.cargo, opacity: SHIP_GRID_STYLE.opacity, border: `${SHIP_GRID_STYLE.strokeWidth}px solid ${SHIP_GRID_STYLE.stroke}` }} />}>
-            <span title={SHIPS_RULE_TEXT}>격자(줌 {SHIPS_RULE.lowZoom} 미만 · 화면 안 선박이 많을 때): 칸 선박 수 — 원 크기 = 수, 색 = 가장 많은 선종</span>
+            <span title={SHIPS_RULE_TEXT}>격자(줌 {SHIPS_RULE.lowZoom} 미만 · 화면 안 선박이 많을 때): 칸 선박 수 — 원 크기 = 수, 색 = 가장 많은 선종(선종 필터가 있으면 켜진 선종만 셈)</span>
           </Row>
           {hasCoverage ? (
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: SHIP_COVERAGE_COLOR }} />}>
@@ -110,7 +153,10 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
             </Row>
           ) : null}
           {layers.tracks ? <>
-            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간)</Row>
+            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간) · 기간 6/12/24 h(선박 카드)</Row>
+            <Row swatch={<span className="inline-block rounded-full!" style={{ width: SHIP_TRACK_POINT_STYLE.radius * 2, height: SHIP_TRACK_POINT_STYLE.radius * 2, background: SHIP_TRACK_POINT_STYLE.color }} />}>
+              항적 점 — 마우스를 올리면 시각(UTC)·속력·침로·항해 상태
+            </Row>
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#8a929d" }} />}>공백 — AIS 끊김·15분 넘는 기록 없음(그 사이 위치 모름)</Row>
           </> : null}
         </Section>

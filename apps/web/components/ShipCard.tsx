@@ -1,23 +1,33 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { fmtDuration, fmtIso, fmtTime } from "@/lib/format";
+import { ageS, fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
 import {
-  fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
+  fmtDraught, fmtShipEta, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
-  SHIP_STALE_S, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
-  type DestinationInfo, type ShipState, type ShipStatic,
+  SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
+  type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
+import { ShipTable } from "./ShipTable";
 
-interface Detail { mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null; db_unavailable: boolean }
+/**
+ * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
+ * (보존 72 h 안 — 없으면 null). 계약 v5 §B3 카드 행.
+ */
+export interface ShipDetail {
+  mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null; db_unavailable: boolean;
+  first_recorded_at: string | null; last_position_at: string | null;
+}
+
+const isoOrNull = (v: unknown) => (typeof v === "string" && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? v : null);
 
 /** REST /ships/{mmsi} 응답 검증(모양이 다르면 null — 모르는 값을 채우지 않는다) */
-function parseDetail(mmsi: string, r: unknown): Detail {
+export function parseShipDetail(mmsi: string, r: unknown): ShipDetail {
   const o = typeof r === "object" && r !== null ? (r as Record<string, unknown>) : {};
   const st = parseShipState(typeof o.state === "object" && o.state !== null ? { mmsi, ...(o.state as object) } : null);
   const sx = parseShipStatic(typeof o.static === "object" && o.static !== null ? { mmsi, ...(o.static as object) } : null);
@@ -25,6 +35,7 @@ function parseDetail(mmsi: string, r: unknown): Detail {
   return {
     mmsi, state: st?.mmsi === mmsi ? st : null, static: sx?.mmsi === mmsi ? sx : null,
     destination_info: parseDestinationInfo(o.destination_info), db_unavailable: meta.db_unavailable === true,
+    first_recorded_at: isoOrNull(o.first_recorded_at), last_position_at: isoOrNull(o.last_position_at),
   };
 }
 
@@ -37,26 +48,39 @@ function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
 
 /**
  * 선박 상세(계약 v2 §B4 · v4 §B): 선박명·MMSI·호출부호·IMO·선종(코드+분류)·크기(A+B × C+D, 보고값)·흘수·출발지(보고)·목적지(보고, 원문 + UN/LOCODE 풀이)·ETA(선원 입력값, 연도 없음)·
- * 속력/침로/선수방위·항해 상태·위치 출처·관측 시각(경과). 값이 없으면 "—". 정적 정보는 선원이 입력한 보고값이다(검증하지 않은 값).
+ * 속력(kn · km/h, 계약 v5 §A)/침로/선수방위·항해 상태·위치 출처·관측 시각(경과). 값이 없으면 "—". 정적 정보는 선원이 입력한 보고값이다(검증하지 않은 값).
  * 상태: WS ship_selected(바뀔 때마다) → 없으면 REST 상세 → 없으면 지도 목록 사본 중 관측이 가장 새로운 것. 경과는 서버 기준 시각.
  */
 export function ShipCard({ mmsi }: { mmsi: string }) {
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<ShipDetail | null>(null);
   const [error, setError] = useState<{ mmsi: string; msg: string } | null>(null);
+  const loaded = useRef<ShipDetail | null>(null);
+  const now = useServerNow(1000);
+  // WS 가 "실시간 목록에 없음(state null)"이라고 하면 상세를 다시 받는다 — 카드를 연 뒤 목록에서 빠진 선박의 '마지막 저장 위치'가
+  // 연 때의 값에 머물지 않게(계약 v5 §B3). 이미 받은 상세도 실시간이 아니라고 했으면 같은 사실이라 다시 받지 않는다
+  const gone = useServerData((x) => x.shipSelected != null && x.shipSelected.mmsi === mmsi && x.shipSelected.state == null);
+  useEffect(() => {
+    const have = loaded.current;
+    if (gone && have?.mmsi === mmsi && have.state == null) return;
+    let alive = true;
+    apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
+      .then((r) => { if (alive) { const p = parseShipDetail(mmsi, r); loaded.current = p; setDetail(p); setError(null); } })
+      .catch((e: Error) => { if (alive) setError({ mmsi, msg: String(e.message) }); });
+    return () => { alive = false; };
+  }, [mmsi, gone]);
+  const d = detail && detail.mmsi === mmsi ? detail : null;
+  const err = error && error.mmsi === mmsi ? error.msg : null;
+  return <ShipCardView mmsi={mmsi} detail={d} error={err} now={now} />;
+}
+
+/** 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용) */
+export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: string | null; now: number }) {
   const selectShip = useUi((s) => s.selectShip);
   const live = useServerData((x) => (x.shipSelected && x.shipSelected.mmsi === mmsi ? x.shipSelected : null));
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
   useServerData((x) => x.ships.version); // 지도 목록 사본이 바뀌면 다시 그린다
-  const now = useServerNow(1000);
-  useEffect(() => {
-    let alive = true;
-    apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
-      .then((r) => { if (alive) { setDetail(parseDetail(mmsi, r)); setError(null); } })
-      .catch((e: Error) => { if (alive) setError({ mmsi, msg: String(e.message) }); });
-    return () => { alive = false; };
-  }, [mmsi]);
-  const d = detail && detail.mmsi === mmsi ? detail : null;
-  const err = error && error.mmsi === mmsi ? error.msg : null;
+  const trackHours = useUi((s) => s.shipTrackHours);
+  const setTrackHours = useUi((s) => s.setShipTrackHours);
   const lite = shipStates.get(mmsi) ?? null;
   // WS 가 "목록에 없음(state null)"이라고 했으면 그것이 가장 최신 판단
   const gone = live != null && live.state == null;
@@ -71,6 +95,13 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   const rot = s ? shipRotation(s) : null;
   // 공백 요약: 기록 조회에 성공했거나(0회도 근거 있음) 선택 뒤 받은 공백이 있을 때만
   const gaps = track && ((track.loaded && !track.error) || track.gaps.length) ? gapSummary(track.gaps, track.fromMs ?? -Infinity, now > 0 ? now : Infinity) : null;
+  // 문구의 기간은 받은 항적의 창(선택 버튼은 다음에 받을 창)
+  const hours = track?.hours ?? SHIP_TRACK_WINDOW_MS / 3600_000;
+  const savedAge = ageS(d?.last_position_at, now);
+  // 실시간 상태가 없고 상세(REST)도 실시간이 아니라고 했으면 "실시간 아님 · 마지막 저장 hh:mm"(계약 v5 §B3) — 위치를 지어내지 않는다.
+  // 검색에서 실시간이 아닌 선박을 고르면 서버가 곧바로 ship_selected{state:null} 로 답하므로 gone 이어도 같은 문구.
+  // 상세가 아직 없거나 상세를 받은 뒤 목록에서 빠졌으면(상세의 저장 시각이 옛 값일 수 있다 — ShipCard 가 다시 받는다) gone 배지만
+  const notLive = s == null && d != null && d.state == null;
   const code = st?.ship_type ?? s?.ship_type ?? null;
   const name = st?.name ?? s?.name ?? null;
   const imo = imoField(st?.imo);
@@ -94,11 +125,20 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
       </span>
     ), "선원이 입력한 목적지 원문(검증하지 않은 보고값)과 UN/LOCODE 풀이 — 항구(1)·내륙항(8) 항목만, 규칙으로만 읽고 추정하지 않음"],
     ["ETA", fmtShipEta(st)],
-    ["속력/침로/선수방위", <span key="mo" className="mono">{fmtMotion(s)}</span>],
+    ["속력/침로/선수방위", (
+      <span key="mo" className="flex flex-col items-end">
+        <span className="mono" data-testid="ship-sog">{fmtSogDual(s?.sog_kn)}</span>
+        <span className="mono text-[11px] text-fg-2">침로 {s?.cog_deg == null ? "—" : `${s.cog_deg.toFixed(1)}°`} · 선수방위 {s?.heading_deg == null ? "—" : `${s.heading_deg.toFixed(0)}°`}</span>
+      </span>
+    ), "대지속력(SOG, kn · km/h) / 대지침로(COG) / 선수방위(HDG) — 선박 보고값. km/h 는 1 kn = 1.852 km/h 로 바꾼 값"],
     ["항해 상태", navStatusLabel(s?.nav_status)],
     ["위치 출처", positionSourceLabel(s?.position_source), "보고의 Timestamp 필드 — 0–59 전자 위치 장치(종류는 모름) · 61 수동 · 62 추측항법 · 63 장치 비작동 · 60(값 없음)은 —"],
     ["AIS 등급", s?.class ? `Class ${s.class}` : "—"],
     ["관측 시각", <span key="seen" className="mono" title={fmtIso(s?.seen_at)}>{fmtTime(s?.seen_at)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
+    ["처음 기록", <span key="first" className="mono" title={fmtIso(d?.first_recorded_at)}>{fmtTime(d?.first_recorded_at)}</span>,
+      "이 서비스(Wakeline)가 이 MMSI 를 처음 기록한 시각 — 선박의 건조·취항 시각이 아님"],
+    ["마지막 저장 위치", <span key="last" className="mono" title={fmtIso(d?.last_position_at)}>{fmtTime(d?.last_position_at)}{savedAge != null ? ` (${fmtDuration(savedAge)} 전)` : ""}</span>,
+      "DB 에 저장된 마지막 위치의 시각(60 s 에 1점, 보존 72 h — 그보다 오래됐거나 없으면 —). 카드를 열 때(실시간 목록에서 빠지면 그때 다시) 받은 값 — 실시간 선박은 그 뒤에도 계속 저장됩니다"],
     ["출처", s?.provider ?? st?.provider ?? "—"],
   ];
   return (
@@ -106,7 +146,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
       <div className="row">
         <span className="label">Ship</span>
         <div className="flex flex-wrap items-center justify-end gap-1">
-          {gone ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
+          {gone && !notLive ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
+          {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 저장 위치 시각 ${fmtIso(d?.last_position_at)}`}>{notLiveText(d?.last_position_at, now)}</span> : null}
           {stale ? <span className="badge warn" data-testid="ship-stale">STALE · 15분 넘게 위치 없음</span> : null}
           {pb ? <span className={`badge ${pb.tone === "est" ? "est" : "warn"}`} data-testid="ship-pos-badge">{pb.text}</span> : null}
           {rot && rot.mode !== "heading" ? <span className="badge">{ROT_LABEL[rot.mode]}</span> : null}
@@ -122,15 +163,24 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
           </div>
         ))}
         <div className="mt-2" data-testid="ship-track-info">
-          <div className="label mb-0.5">항적 · 최근 6 h</div>
+          <div className="mb-0.5 flex items-center justify-between gap-2">
+            <span className="label normal-case!">항적 · 최근 {hours} h</span>
+            {/* 기간(계약 v5 §B3): 바꾸면 지도가 그 창으로 다시 받는다(REST ≤ 24 h) */}
+            <span className="flex gap-1" role="group" aria-label="항적 기간">
+              {SHIP_TRACK_HOURS.map((h) => (
+                <button key={h} type="button" className="btn px-1.5 py-0 text-[10px] normal-case!" aria-pressed={trackHours === h} onClick={() => setTrackHours(h)} data-testid={`ship-track-hours-${h}`}>{h} h</button>
+              ))}
+            </span>
+          </div>
           {track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
             : track.error ? <div className="text-[11px] text-warn">기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error})</div>
             : <div className="text-[11px] text-fg-2">기록 구간 {track.segments}개 · 60 s 에 1점(저장 기준) + 실시간 관측</div>}
+          <div className="text-[10px] text-fg-3">항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태(보고값, 없으면 —)</div>
           {gaps ? (
             <div className="mt-1 text-[11px]" data-testid="ship-gap-summary">
               <div className={gaps.count ? "text-warn" : "text-fg-2"}>
-                {track?.error ? "선택 뒤 받은 수신 공백" : "최근 6 h 수신 공백"} {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
-                {track?.error ? " (기록 조회 실패 — 6 h 전체가 아님)" : ""}
+                {track?.error ? "선택 뒤 받은 수신 공백" : `최근 ${hours} h 수신 공백`} {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
+                {track?.error ? ` (기록 조회 실패 — ${hours} h 전체가 아님)` : ""}
                 {gaps.openSinceMs != null ? ` · 진행 중 1회(지금까지 ${now ? fmtDuration((now - gaps.openSinceMs) / 1000) : "—"})` : ""}
               </div>
               <div className="text-fg-3">{GAP_BREAK_MIN_MS / 1000} s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)</div>
@@ -163,11 +213,12 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
 export function ShipPanel() {
   const selected = useUi((s) => s.selectedShip);
   const shipsOn = useUi((s) => s.layers.ships);
-  return <ShipPanelView selected={selected} shipsOn={shipsOn} />;
+  const shipCats = useUi((s) => s.shipCats);
+  return <ShipPanelView selected={selected} shipsOn={shipsOn} shipCats={shipCats} />;
 }
 
-/** 표시 부분(선택·레이어를 인자로 — 서버 렌더 시험용) */
-export function ShipPanelView({ selected, shipsOn }: { selected: string | null; shipsOn: boolean }) {
+/** 표시 부분(선택·레이어·선종 필터를 인자로 — 서버 렌더 시험용) */
+export function ShipPanelView({ selected, shipsOn, shipCats = SHIP_CATEGORIES }: { selected: string | null; shipsOn: boolean; shipCats?: readonly ShipCategory[] }) {
   const toggle = useUi((s) => s.toggleLayer);
   if (selected && isMmsi(selected)) return <ShipCard mmsi={selected} />;
   if (!shipsOn) {
@@ -177,21 +228,30 @@ export function ShipPanelView({ selected, shipsOn }: { selected: string | null; 
       </div>
     );
   }
-  return <ShipList />;
+  return <ShipList shipCats={shipCats} />;
 }
 
-function ShipList() {
+/** 화면 안 선박 표에 한 번에 보이는 줄 수 — 정렬한 뒤 앞에서부터 */
+const SHIP_LIST_MAX = 50;
+
+/**
+ * 화면 안 선박(계약 v5 §B3): 정렬 가능한 표(선종 색 · 선명 · MMSI · 속력 kn/km/h · 항해 상태 · 경과) — 검색 결과와 같은 표(ShipTable).
+ * 선종 필터는 지도와 같게 적용하고 숨긴 수를 적는다.
+ */
+function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const view = useServerData((x) => x.ships);
   const ais = useServerData((x) => x.ais);
   const viewport = useServerData((x) => x.viewport);
   const aisOff = ais?.state === "disabled";
   const selectShip = useUi((s) => s.selectShip);
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<ShipSort>(SHIP_SORT_DEFAULT);
+  const now = useServerNow(1000);
   if (view.mode !== "points") {
     return (
       <div className="p-3 text-[11px] text-fg-3" data-testid="ship-list-empty">
         {view.mode === "grid" ? <>
-          지금은 격자(선박 수)로 표시 중입니다 — 확대해서 개별 표시가 되면 선박을 고를 수 있습니다.
+          지금은 격자(선박 수)로 표시 중입니다 — 확대해서 개별 표시가 되면 선박을 고를 수 있습니다. 이름·MMSI 로 찾으려면 상단 검색(/ 키)을 쓰세요.
           <div className="mt-1">{SHIPS_RULE_TEXT}</div>
         </> : aisOff ? "AIS 수집이 꺼져 있습니다(aisstream.io 키 없음 — 운영 설정). 선박 데이터가 오지 않습니다." : "선박 수신 대기 중…"}
       </div>
@@ -200,24 +260,23 @@ function ShipList() {
   // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐 · 연결 안 됨 · 상태 모름)
   const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais });
   // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
-  const { items: shown, total } = shipList(shipStates.values(), q);
+  const filtered = shipCats.length < SHIP_CATEGORIES.length;
+  const { items, total, hidden } = shipList(shipStates.values(), q, Infinity, filtered ? new Set(shipCats) : null);
+  const rows = sortShipRows(items.map(shipRowFromLite), sort, now).slice(0, SHIP_LIST_MAX);
+  const onSort = (k: ShipSortKey) => setSort((cur) => (cur.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
   return (
     <div className="flex h-full flex-col" data-testid="ship-list">
       <div className="row">
-        <span className="label">화면 안 선박 {view.count}</span>
+        <span className="label">화면 안 선박 {view.count}{filtered ? <span className="text-warn normal-case" data-testid="ship-list-cat-filter"> · 선종 필터 {shipCats.length}/{SHIP_CATEGORIES.length} · {hidden}척 숨김</span> : null}</span>
         <input value={q} onChange={(e) => setQ(e.target.value.slice(0, 32))} placeholder="이름·MMSI" aria-label="선박 이름 또는 MMSI 로 거르기" className="w-40" data-testid="ship-list-filter" />
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto text-[12px]">
-        {shown.map((s) => (
-          <li key={s.mmsi} className="border-b border-line">
-            <button className="flex w-full justify-between gap-2 px-2 py-1 text-left hover:bg-bg-2" onClick={() => { selectShip(s.mmsi); panIfOutside(shipPos(s.mmsi)); }} data-testid="ship-list-item" data-mmsi={s.mmsi}>
-              <span>{s.name ?? "—"}</span><span className="mono text-fg-3">{s.mmsi}</span>
-            </button>
-          </li>
-        ))}
-        {total > shown.length ? <li className="px-2 py-1 text-[11px] text-fg-3">외 {total - shown.length}척 — 이름·MMSI 로 거르세요</li> : null}
-        {total === 0 ? <li className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-none">{shipStates.size ? "조건에 맞는 선박 없음" : zero?.text ?? "화면 안에 선박 없음"}</li> : null}
-      </ul>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {rows.length ? (
+          <ShipTable rows={rows} now={now} sort={sort} onSort={onSort} testId="ship-list" onPick={(r) => { selectShip(r.mmsi); panIfOutside(shipPos(r.mmsi)); }} />
+        ) : null}
+        {total > rows.length ? <div className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-more">정렬 앞 {rows.length}척만 표시 · 외 {total - rows.length}척 — 이름·MMSI 로 거르세요</div> : null}
+        {total === 0 ? <div className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-none">{shipStates.size ? "조건에 맞는 선박 없음" : zero?.text ?? "화면 안에 선박 없음"}</div> : null}
+      </div>
     </div>
   );
 }

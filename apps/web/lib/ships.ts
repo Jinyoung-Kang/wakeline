@@ -115,7 +115,11 @@ export interface ShipStatic {
   provider: string | null;
 }
 
-export interface ShipGridCell { lat: number; lon: number; count: number; category: ShipCategory }
+/**
+ * ships_grid 칸. counts = 선종별 수(계약 v5 §B2 다섯째 원소, 순서 = SHIP_CATEGORIES = Java ShipCategory 선언 순서).
+ * 구 서버(네 원소 칸)이거나 모양·합이 맞지 않으면 null — 선종 필터를 적용할 수 없다(지어내지 않는다).
+ */
+export interface ShipGridCell { lat: number; lon: number; count: number; category: ShipCategory; counts: number[] | null }
 
 export const MMSI_RE = /^[0-9]{9}$/;
 /** 정적 보고의 IMO 칸(schemas/ship_static.v1.json · USCG NAVCEN): 1,000,000–9,999,999 = IMO 번호, 10,000,000 이상 = 기국 공식 번호, 그 밖은 null */
@@ -195,7 +199,21 @@ export function parseShipStatic(o: unknown): ShipStatic | null {
   };
 }
 
-/** ships_grid.cells: [[lat, lon, count, dominant_category], ...]. 형식이 틀린 칸·0척 칸은 버린다. */
+/** 칸의 선종별 수: 원소 11개(SHIP_CATEGORIES 순서)의 0 이상 정수이고 합이 칸 선박 수와 같을 때만. 아니면 null */
+function parseCatCounts(v: unknown, count: number): number[] | null {
+  if (!Array.isArray(v) || v.length !== SHIP_CATEGORIES.length) return null;
+  let sum = 0;
+  for (const n of v) {
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+    sum += n;
+  }
+  return sum === count ? (v as number[]).slice() : null;
+}
+
+/**
+ * ships_grid.cells: [[lat, lon, count, dominant_category, [n0..n10]?], ...]. 형식이 틀린 칸·0척 칸은 버린다.
+ * 다섯째 원소(선종별 수, 계약 v5 §B2)가 없는 네 원소 칸(구 서버)도 받는다 — counts null.
+ */
 export function parseGridCells(v: unknown): ShipGridCell[] {
   if (!Array.isArray(v)) return [];
   const out: ShipGridCell[] = [];
@@ -204,7 +222,7 @@ export function parseGridCells(v: unknown): ShipGridCell[] {
     if (!Array.isArray(c) || c.length < 3) continue;
     const lat = num(c[0], -90, 90), lon = num(c[1], -180, 180), count = int(c[2], 1, 10_000_000);
     if (lat == null || lon == null || count == null) continue;
-    out.push({ lat, lon, count, category: parseCategory(c[3]) });
+    out.push({ lat, lon, count, category: parseCategory(c[3]), counts: parseCatCounts(c[4], count) });
   }
   return out;
 }
@@ -259,6 +277,43 @@ export function shipFeatures(ships: Iterable<ShipLite>, selected: string | null,
   return { type: "FeatureCollection", features };
 }
 
+/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것 */
+function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
+  if (!a || !b) return a ?? b;
+  const ta = a.seen_at ? Date.parse(a.seen_at) : NaN, tb = b.seen_at ? Date.parse(b.seen_at) : NaN;
+  return !Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta) ? b : a;
+}
+
+/**
+ * 선택 선박 표시(계약 v5 §B3 — 지도 source "ship-selected"): 격자 모드에서도 항상 그리고 선택 고리 + 라벨(이름, 모르면 MMSI)을 줌과 무관하게 단다.
+ * - symbolDraws(점 모드에서 선박 기호가 이미 그림 — 목록 사본에 있고 선종 필터로 숨지 않음): 그 위치에 고리·라벨만(icon false — 기호와 어긋나지 않게).
+ * - 그 밖: ship_selected 상태와 목록 사본 중 관측이 가장 새로운 위치에 아이콘까지(icon true).
+ * 위치를 모르면(실시간 아님) 아무것도 그리지 않는다 — 마지막 저장 위치를 지금 위치처럼 그리지 않는다.
+ */
+export function selectedShipFeatures(
+  mmsi: string | null, live: ShipLite | null, listed: ShipLite | null, symbolDraws: boolean, nowMs: number, staticName: string | null = null,
+): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  const empty: GeoJSON.FeatureCollection<GeoJSON.Point> = { type: "FeatureCollection", features: [] };
+  if (!mmsi) return empty;
+  const l = listed?.mmsi === mmsi ? listed : null, v = live?.mmsi === mmsi ? live : null;
+  const icon = !(symbolDraws && l);
+  const pos = icon ? newerLite(v, l) : l;
+  if (!pos) return empty;
+  const r = shipRotation(pos);
+  const age = shipAgeS(pos.seen_at, nowMs);
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature", id: mmsi,
+      properties: {
+        mmsi, label: pos.name ?? staticName ?? mmsi, cat: shipCategory(pos.ship_type), rot_mode: r.mode, rot: r.deg, icon,
+        stale: age != null && age > SHIP_STALE_S, age_unknown: age == null, selected: true,
+      },
+      geometry: { type: "Point", coordinates: [pos.lon, pos.lat] },
+    }],
+  };
+}
+
 /** 격자 칸 수 라벨(1 234 → "1.2k") */
 export function fmtCount(n: number): string {
   if (!Number.isFinite(n)) return "—";
@@ -267,12 +322,57 @@ export function fmtCount(n: number): string {
   return `${Math.round(n / 1000)}k`;
 }
 
-export function gridFeatures(cells: readonly ShipGridCell[]): GeoJSON.FeatureCollection<GeoJSON.Point> {
+// ---- 선종 필터(계약 v5 §B3) ----
+
+/** 선종 필터를 적용한 칸: count = 보이는 선종의 수, all = 서버가 보낸 칸 전체 수, unfiltered = 선종별 수가 없어 필터를 적용하지 못함 */
+export interface FilteredGridCell extends ShipGridCell { all: number; unfiltered: boolean; hidden: ReadonlySet<ShipCategory> }
+
+/**
+ * 격자 칸을 선종 필터로 다시 센다(계약 v5 §B3): 선종별 수(B2)가 있으면 켜진 선종의 합, 0 이면 칸을 그리지 않고,
+ * 색(가장 많은 선종)도 켜진 선종 중에서 다시 고른다(같으면 SHIP_CATEGORIES 순서의 앞 — 서버와 같은 규칙).
+ * 선종별 수가 없는 칸(구 서버)은 셀 수 없으므로 그대로 두고 unfiltered 로 밝힌다(추정해서 줄이지 않는다). 모두 켜져 있으면 서버 값 그대로.
+ * total = 그리는 칸 수의 합, allTotal = 필터 전 합, active = 꺼진 선종이 있음.
+ */
+export function filterGridCells(cells: readonly ShipGridCell[], enabled: ReadonlySet<ShipCategory>): {
+  cells: FilteredGridCell[]; total: number; allTotal: number; unfilteredCells: number; active: boolean;
+} {
+  const hidden = new Set(SHIP_CATEGORIES.filter((c) => !enabled.has(c)));
+  const active = hidden.size > 0;
+  const out: FilteredGridCell[] = [];
+  let total = 0, allTotal = 0, unfilteredCells = 0;
+  for (const c of cells) {
+    allTotal += c.count;
+    if (!active) { out.push({ ...c, all: c.count, unfiltered: false, hidden }); total += c.count; continue; }
+    if (!c.counts) { out.push({ ...c, all: c.count, unfiltered: true, hidden }); total += c.count; unfilteredCells++; continue; }
+    let n = 0, best = -1;
+    SHIP_CATEGORIES.forEach((cat, i) => {
+      if (!enabled.has(cat)) return;
+      n += c.counts![i];
+      if (c.counts![i] > 0 && (best < 0 || c.counts![i] > c.counts![best])) best = i;
+    });
+    if (n === 0) continue;
+    out.push({ ...c, count: n, category: SHIP_CATEGORIES[best], all: c.count, unfiltered: false, hidden });
+    total += n;
+  }
+  return { cells: out, total, allTotal, unfilteredCells, active };
+}
+
+/** 칸 툴팁의 선종별 수 "화물선 3(숨김) · 유조선·탱커 1" — 0 인 선종은 빼고, 꺼진 선종은 (숨김). 선종별 수가 없으면 "" */
+function gridBreakdown(c: ShipGridCell & { hidden?: ReadonlySet<ShipCategory> }): string {
+  if (!c.counts) return "";
+  return SHIP_CATEGORIES.map((cat, i) => [cat, c.counts![i]] as const).filter(([, n]) => n > 0)
+    .map(([cat, n]) => `${SHIP_CATEGORY_LABEL[cat]} ${n.toLocaleString("en-US")}${c.hidden?.has(cat) ? "(숨김)" : ""}`).join(" · ");
+}
+
+export function gridFeatures(cells: readonly (ShipGridCell | FilteredGridCell)[]): GeoJSON.FeatureCollection<GeoJSON.Point> {
   return {
     type: "FeatureCollection",
     features: cells.map((c) => ({
       type: "Feature",
-      properties: { count: c.count, label: fmtCount(c.count), cat: c.category },
+      properties: {
+        count: c.count, label: fmtCount(c.count), cat: c.category,
+        all: "all" in c ? c.all : c.count, unfiltered: "unfiltered" in c ? c.unfiltered : false, breakdown: gridBreakdown(c),
+      },
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
     })),
   };
@@ -316,6 +416,16 @@ export function navStatusLabel(v: number | null | undefined): string {
   return v === 15 ? "— (15 · 미정의, 선박 미입력)" : `${NAV_STATUS_LABEL[v]} (${v})`;
 }
 
+/** 좁은 표 칸용 줄임(같은 USCG 0–15 표 — 코드와 전체 이름은 title 로 navStatusLabel) */
+export const NAV_STATUS_SHORT: readonly string[] = [
+  "기관 항해", "묘박", "조종 불능", "조종 제한", "흘수 제약", "계류", "좌초", "어로 중",
+  "범주 항해", "예약(HSC)", "예약(WIG)", "선미 예인", "밀어 예인", "예약", "SART·MOB·EPIRB", "미정의",
+];
+export function navStatusShort(v: number | null | undefined): string {
+  if (v == null || !Number.isInteger(v) || v < 0 || v > 15) return "—";
+  return NAV_STATUS_SHORT[v];
+}
+
 export const POSITION_SOURCE_LABEL: Record<PositionSource, string> = {
   epfs: "전자 위치 장치(EPFS) · 선박 보고",
   estimated: "선박 추측항법 — 선박이 보고한 추정 위치",
@@ -345,10 +455,10 @@ export function fmtShipType(code: number | null | undefined): string {
   return `${code} · ${SHIP_CATEGORY_LABEL[c]}`;
 }
 
-/** 속력/침로/선수방위 — 각 값이 없으면 "—" */
-export function fmtMotion(s: { sog_kn?: number | null; cog_deg?: number | null; heading_deg?: number | null } | null | undefined): string {
-  const f = (v: number | null | undefined, unit: string, d = 0) => (v == null ? "—" : `${v.toFixed(d)}${unit}`);
-  return `${f(s?.sog_kn, " kn", 1)} / ${f(s?.cog_deg, "°", 1)} / ${f(s?.heading_deg, "°")}`;
+/** 침로/선수방위 "123.4° / 120°" — 각 값이 없으면 "—". 속력은 두 단위로 따로(format.ts fmtSogDual, 계약 v5 §A1) */
+export function fmtCourse(s: { cog_deg?: number | null; heading_deg?: number | null } | null | undefined): string {
+  const f = (v: number | null | undefined, d: number) => (v == null ? "—" : `${v.toFixed(d)}°`);
+  return `${f(s?.cog_deg, 1)} / ${f(s?.heading_deg, 0)}`;
 }
 
 // ---- 출발지·목적지(보고) 풀이(계약 v4 §B) ----
@@ -708,16 +818,30 @@ export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: strin
 
 /** 이보다 긴 시간 틈은 선을 끊는다(계약 v2 §B3 track: time jumps > 15 min) */
 export const TRACK_BREAK_MS = 15 * 60_000;
-/** 선택 선박 항적 창 — REST ≤ 24 h(계약). 선박은 느려 6 h 면 충분하고 60 s 에 1점이라 ≤ 360 점. */
+/** 선택 선박 항적 창 기본값 — REST ≤ 24 h(계약). 선박은 느려 6 h 면 대개 충분하고 60 s 에 1점이라 ≤ 360 점. */
 export const SHIP_TRACK_WINDOW_MS = 6 * 3600_000;
+/** 항적 기간 선택(계약 v5 §B3): 6 · 12 · 24 h — REST 상한 24 h(24 × 60 = 1,440 점) */
+export const SHIP_TRACK_HOURS = [6, 12, 24] as const;
+export type ShipTrackHours = (typeof SHIP_TRACK_HOURS)[number];
 export const MAX_SHIP_TRACK_POINTS = 5000;
 
 export interface ShipTrackSeg { pts: [number, number][]; startMs: number | null; endMs: number | null }
-/** gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한. */
+/**
+ * 항적 점 하나(계약 v5 §B3 호버): REST points[] 의 값 그대로(속력·침로·선수방위·항해 상태 — 키가 없거나 범위 밖이면 null).
+ * src: rest = 저장 기록(60 s 창의 첫 보고) · live = 선택한 뒤 WS 로 받은 관측.
+ */
+export interface ShipTrackPoint { ts: number; lon: number; lat: number; sog_kn: number | null; cog_deg: number | null; heading_deg: number | null; nav_status: number | null; src: "rest" | "live" }
+/** gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한. points: 호버용 점(있을 때만). */
 export interface ShipTrack {
   segs: ShipTrackSeg[];
   gaps: AisGap[];
   gapsTruncated?: boolean;
+  points?: ShipTrackPoint[];
+}
+
+/** 점의 부가 값(속력 0–102.2 kn · 침로/선수방위 0–359.9999° · 항해 상태 0–15) — 범위 밖·형식 오류는 null */
+function trackPointDetail(p: Obj): Pick<ShipTrackPoint, "sog_kn" | "cog_deg" | "heading_deg" | "nav_status"> {
+  return { sog_kn: num(p.sog_kn, 0, 102.2), cog_deg: num(p.cog_deg, 0, 359.9999), heading_deg: num(p.heading_deg, 0, 359.9999), nav_status: int(p.nav_status, 0, 15) };
 }
 
 /**
@@ -877,6 +1001,7 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
     // 서버가 구간을 알려 주면(properties.segments) 그 경계를 따른다 — 서버는 잘리지 않은 긴 공백 목록으로 끊었고,
     // 여기 공백 목록(out.gaps)은 최신 200개로 잘렸을 수 있다(계약 v3 §D). 구간에 속하지 않는 점(앞뒤가 끊긴 한 점)은 따로 둔다.
     const bounds = serverSegments(props.segments);
+    const points: ShipTrackPoint[] = [];
     let seg: ShipTrackSeg | null = null;
     let segIdx = -2;
     let j = 0;
@@ -902,8 +1027,10 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
       }
       seg.pts.push(c);
       seg.endMs = t;
+      points.push({ ts: t, lon: c[0], lat: c[1], ...trackPointDetail(p), src: "rest" });
       budget--;
     }
+    out.points = points;
     return out;
   }
 
@@ -926,8 +1053,13 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
 /**
  * 실시간 관측(ship_selected)을 항적 끝에 붙인다. 마지막 구간의 끝 시각을 모르면 anchorMs(REST 를 받을 때 알던 선박 관측 시각)를 쓴다.
  * 15분 넘는 틈이거나 그 사이에 선을 끊는 AIS 공백(60 s 이상·열린 공백)이 있으면 새 구간(점선 연결)으로 시작한다. 같은 시각·이전 시각·같은 위치는 붙이지 않는다. 붙였으면 true.
+ * 붙인 관측은 호버용 점(src live — 계약 v5 §B3)으로도 남긴다(속력·침로·상태는 받은 값, 없으면 null).
  */
-export function appendShipTrack(track: ShipTrack, p: { ts: number; lon: number; lat: number }, anchorMs: number | null = null): boolean {
+export function appendShipTrack(
+  track: ShipTrack,
+  p: { ts: number; lon: number; lat: number; sog_kn?: number | null; cog_deg?: number | null; heading_deg?: number | null; nav_status?: number | null },
+  anchorMs: number | null = null,
+): boolean {
   if (!Number.isFinite(p.ts) || coord([p.lon, p.lat]) == null) return false;
   const last = track.segs[track.segs.length - 1];
   const lastEnd = last ? last.endMs ?? anchorMs : null;
@@ -940,6 +1072,8 @@ export function appendShipTrack(track: ShipTrack, p: { ts: number; lon: number; 
     last.pts.push([p.lon, p.lat]);
     last.endMs = p.ts;
   }
+  (track.points ??= []).push({ ts: p.ts, lon: p.lon, lat: p.lat, ...trackPointDetail(p as Obj), src: "live" });
+  if (track.points.length > MAX_SHIP_TRACK_POINTS) track.points.splice(0, track.points.length - MAX_SHIP_TRACK_POINTS);
   // 점 상한 — 오래된 구간부터 버린다
   let total = track.segs.reduce((n, s) => n + s.pts.length, 0);
   while (total > MAX_SHIP_TRACK_POINTS && track.segs.length > 0) {
@@ -973,6 +1107,18 @@ export function shipTrackFeatures(track: ShipTrack): GeoJSON.FeatureCollection {
     features.push({ type: "Feature", properties: { kind: "gap", label }, geometry: { type: "LineString", coordinates: [s.pts[s.pts.length - 1], next.pts[0]] } });
   });
   return { type: "FeatureCollection", features };
+}
+
+/** 항적 점 → 지도 source "ship-track-points"(호버 툴팁 자료 — 계약 v5 §B3). 모르는 값은 null 그대로 */
+export function shipTrackPointFeatures(track: ShipTrack): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: "FeatureCollection",
+    features: (track.points ?? []).map((p) => ({
+      type: "Feature",
+      properties: { ts: new Date(p.ts).toISOString(), sog: p.sog_kn, cog: p.cog_deg, hdg: p.heading_deg, nav: p.nav_status, src: p.src },
+      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+    })),
+  };
 }
 
 // ---- 지도 선박 칩(계약 v4 §C) ----
@@ -1046,11 +1192,28 @@ export interface ShipsChipInput {
 }
 
 /**
+ * 칩이 보는 선종 필터(계약 v5 §B3): on/of = 켜진 선종 수/전체, shown = 필터 뒤 그리는 선박 수(점 모드는 화면 안 선박, 격자는 다시 센 합),
+ * shownCells = 격자에서 그리는 칸 수, unfilteredCells = 선종별 수가 없어(구 서버) 필터를 적용하지 못한 칸 수.
+ */
+export interface ShipsChipFilter { on: number; of: number; shown: number; shownCells?: number; unfilteredCells?: number }
+
+/** 켜진 선종의 선박 수(점 모드 칩·목록) */
+export function countShipsIn(ships: Iterable<ShipLite>, enabled: ReadonlySet<ShipCategory>): number {
+  let n = 0;
+  for (const s of ships) if (enabled.has(shipCategory(s.ship_type))) n++;
+  return n;
+}
+
+/**
  * 지도 왼쪽 위 선박 칩: 지금 지도가 무엇을 그리는지 + 규칙. zoom·bbox 는 마지막으로 구독한 화면(모르면 null — 그때는 규칙 전체를 적는다).
  * 0척이면 zeroShipsReason(AIS 꺼짐 · 범위 밖 · 수신국 없는 해역 · 연결 안 됨 · 상태 모름 · 범위 모름).
  * 경고 색은 줌 ≥ 7 에서 전송 상한(5,000척)을 넘었을 때만 — 줌 4–6 격자는 정상 동작이다(§G C-1, api 는 이때도 capped:true 를 보낸다).
+ * 선종 필터가 켜져 있으면(일부 선종 숨김) 보이는 수와 전체 수를 함께 적는다 — 숨긴 선박을 "없다"고 말하지 않는다.
  */
-export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis }): { text: string; title: string; warn: boolean } | null {
+export function shipsChip(
+  v: ShipsChipInput,
+  ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis; filter?: ShipsChipFilter | null },
+): { text: string; title: string; warn: boolean } | null {
   if (v.mode === "off") return null;
   const aisOff = ctx.ais?.state === "disabled";
   const aisOffText = "선박 없음 · AIS 꺼짐(키 없음)";
@@ -1061,8 +1224,15 @@ export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: r
     if (why === "off") return { text: aisOffText, title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정)", warn: false };
     return { ...ZERO_SHIPS[why], warn: false };
   }
+  const f = ctx.filter && ctx.filter.on < ctx.filter.of ? ctx.filter : null;
+  const fText = f ? `선종 필터 ${f.on}/${f.of}` : "";
+  const fTitle = f ? " 선종 필터: 범례의 선종 항목으로 켜고 끕니다(이 브라우저에만 저장)." : "";
+  if (f && f.shown === 0) {
+    return { text: `선박 0척 표시 — ${fText} 로 ${v.mode === "points" ? "화면 안" : "격자"} ${v.mode === "points" ? n0(inView) : fmtCount(inView)}척 모두 숨김`, title: `${SHIPS_RULE_TEXT}.${fTitle}`, warn: false };
+  }
   if (v.mode === "points") {
-    return { text: `선박 ${n0(v.count)}척 · 화면 안 · AIS`, title: `AIS 로 받은 선박 위치(보간 없음) — ${SHIPS_RULE_TEXT}`, warn: false };
+    const text = f ? `선박 ${n0(f.shown)}척 · 화면 안 ${n0(v.count)}척 중 · ${fText} · AIS` : `선박 ${n0(v.count)}척 · 화면 안 · AIS`;
+    return { text, title: `AIS 로 받은 선박 위치(보간 없음) — ${SHIPS_RULE_TEXT}.${fTitle}`, warn: false };
   }
   const z = ctx.zoom;
   const overCap = v.capped && z != null && z >= SHIPS_RULE.highZoom;
@@ -1070,9 +1240,12 @@ export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: r
     : z < SHIPS_RULE.lowZoom ? `줌 ${SHIPS_RULE.lowZoom} 이상에서 개별 표시`
     : z < SHIPS_RULE.highZoom ? `줌 ${SHIPS_RULE.lowZoom}–${SHIPS_RULE.highZoom - 1} 은 ${n0(SHIPS_RULE.lowMax)}척 넘으면 격자 · ${n0(SHIPS_RULE.lowBack)}척 이하에서 개별`
     : overCap ? `화면 안 ${n0(SHIPS_RULE.highMax)}척 초과 · 전송 상한` : "확대하면 개별 표시";
+  const head = f ? `선박 ${fmtCount(f.shown)}척 · ${fText}(전체 ${fmtCount(v.total)}척)` : `선박 ${fmtCount(v.total)}척`;
+  const cells = f?.shownCells ?? v.count;
+  const unf = f?.unfilteredCells ? ` · ${f.unfilteredCells}칸은 선종별 수 없음(구 서버 — 필터 미적용)` : "";
   return {
-    text: `선박 ${fmtCount(v.total)}척 · ${v.cell_deg ?? "—"}° 격자 ${v.count}칸으로 묶음 · ${why}`,
-    title: `서버가 격자별 선박 수만 보냅니다(원 크기 = 수, 색 = 가장 많은 선종). 원을 누르면 확대합니다. ${SHIPS_RULE_TEXT}`,
+    text: `${head} · ${v.cell_deg ?? "—"}° 격자 ${cells}칸으로 묶음 · ${why}${unf}`,
+    title: `서버가 격자별 선박 수만 보냅니다(원 크기 = 수, 색 = 가장 많은 선종). 원을 누르면 확대합니다. ${SHIPS_RULE_TEXT}.${fTitle}`,
     warn: overCap,
   };
 }
@@ -1085,18 +1258,89 @@ export function shipsGapSuffix(ais: Pick<AisStatus, "gap_open_since" | "shards">
   return ais.gap_open_since || (sg && sg.open.length > 0) ? " · AIS 공백 중(위치 멈춤)" : "";
 }
 
+/**
+ * 실시간이 아닌 선박(계약 v5 §B3 — 검색 결과·카드): "실시간 아님 · 마지막 저장 hh:mm UTC". 지금과 UTC 날짜가 다르면 날짜도(보존 72 h — 어제 시각이
+ * 오늘처럼 보이지 않게). 저장된 위치 시각을 모르면 "—".
+ */
+export function notLiveText(lastPositionAt: string | null | undefined, nowMs: number): string {
+  return `실시간 아님 · 마지막 저장 ${fmtSavedAt(lastPositionAt, nowMs)}`;
+}
+/** 저장 시각 "hh:mm UTC"(지금과 UTC 날짜가 다르면 "MM-DD hh:mm UTC"). 모르면 "—" */
+export function fmtSavedAt(v: string | null | undefined, nowMs: number): string {
+  const t = v ? Date.parse(v) : NaN;
+  if (Number.isNaN(t)) return "—";
+  const d = new Date(t).toISOString();
+  const sameDay = nowMs > 0 && new Date(nowMs).toISOString().slice(0, 10) === d.slice(0, 10);
+  return `${sameDay ? "" : `${d.slice(5, 10)} `}${d.slice(11, 16)} UTC`;
+}
+
+// ---- 선박 표(계약 v5 §B3 — 화면 안 목록 · 검색 결과가 같은 표) ----
+
+/**
+ * 표의 한 줄. live = 실시간 목록(AIS)에 있음 — 경과는 관측 시각(seen_at)부터. 실시간이 아니면 마지막 저장 위치 시각(last_position_at)부터.
+ * 값은 받은 그대로(모르면 null → "—").
+ */
+export interface ShipRow {
+  mmsi: string; name: string | null; category: ShipCategory; sog_kn: number | null; nav_status: number | null;
+  live: boolean; seen_at: string | null; last_position_at: string | null;
+}
+export type ShipSortKey = "cat" | "name" | "mmsi" | "sog" | "nav" | "age";
+export interface ShipSort { key: ShipSortKey; dir: "asc" | "desc" }
+export const SHIP_SORT_DEFAULT: ShipSort = { key: "name", dir: "asc" };
+
+export function shipRowFromLite(s: ShipLite): ShipRow {
+  return { mmsi: s.mmsi, name: s.name, category: shipCategory(s.ship_type), sog_kn: s.sog_kn, nav_status: s.nav_status, live: true, seen_at: s.seen_at, last_position_at: null };
+}
+
+/** 줄의 경과(초): 실시간이면 관측 시각, 아니면 마지막 저장 시각부터. 모르면 null */
+export function shipRowAgeS(r: ShipRow, nowMs: number): number | null {
+  return shipAgeS(r.live ? r.seen_at : r.last_position_at, nowMs);
+}
+
+const CAT_INDEX: ReadonlyMap<ShipCategory, number> = new Map(SHIP_CATEGORIES.map((c, i) => [c, i]));
+
+/**
+ * 표 정렬: 선종(SHIP_CATEGORIES 순서) · 선명(대소문자 무시) · MMSI · 속력 · 항해 상태(코드) · 경과. 모르는 값은 방향과 상관없이 끝에,
+ * 같으면 MMSI 오름차순(결정적).
+ */
+export function sortShipRows(rows: readonly ShipRow[], sort: ShipSort, nowMs: number): ShipRow[] {
+  const val = (r: ShipRow): number | string | null => {
+    switch (sort.key) {
+      case "cat": return CAT_INDEX.get(r.category) ?? null;
+      case "name": return r.name ? r.name.toUpperCase() : null;
+      case "mmsi": return r.mmsi;
+      case "sog": return r.sog_kn;
+      case "nav": return r.nav_status;
+      case "age": return shipRowAgeS(r, nowMs);
+    }
+  };
+  const sign = sort.dir === "asc" ? 1 : -1;
+  return rows.map((r) => ({ r, v: val(r) })).sort((a, b) => {
+    if (a.v == null || b.v == null) return a.v == null && b.v == null ? a.r.mmsi.localeCompare(b.r.mmsi) : a.v == null ? 1 : -1;
+    const c = typeof a.v === "number" && typeof b.v === "number" ? a.v - b.v : String(a.v).localeCompare(String(b.v));
+    return c !== 0 ? c * sign : a.r.mmsi.localeCompare(b.r.mmsi);
+  }).map((x) => x.r);
+}
+
 // ---- 선박 목록(지도 없이 고르기 — 키보드·스크린리더) ----
 
-/** 화면 안 선박 목록: 이름 → MMSI 순, 필터(이름·MMSI 부분 일치, 대소문자 무시), 상한 */
-export function shipList(ships: Iterable<ShipLite>, filter: string, max = 50): { items: ShipLite[]; total: number } {
+/**
+ * 화면 안 선박 목록: 이름 → MMSI 순, 필터(이름·MMSI 부분 일치, 대소문자 무시), 상한.
+ * enabled(선종 필터, 계약 v5 §B3)가 있으면 꺼진 선종은 빼고 그 수를 hidden 으로 센다(지도와 같은 필터).
+ */
+export function shipList(ships: Iterable<ShipLite>, filter: string, max = 50, enabled?: ReadonlySet<ShipCategory> | null): { items: ShipLite[]; total: number; hidden: number } {
   const q = filter.trim().toUpperCase().slice(0, 32);
   const all: ShipLite[] = [];
-  for (const s of ships) if (!q || s.mmsi.includes(q) || (s.name ?? "").toUpperCase().includes(q)) all.push(s);
+  let hidden = 0;
+  for (const s of ships) {
+    if (enabled && !enabled.has(shipCategory(s.ship_type))) { hidden++; continue; }
+    if (!q || s.mmsi.includes(q) || (s.name ?? "").toUpperCase().includes(q)) all.push(s);
+  }
   all.sort((a, b) => {
     if (a.name && !b.name) return -1;
     if (!a.name && b.name) return 1;
     const n = (a.name ?? "").localeCompare(b.name ?? "");
     return n !== 0 ? n : a.mmsi.localeCompare(b.mmsi);
   });
-  return { items: all.slice(0, max), total: all.length };
+  return { items: all.slice(0, max), total: all.length, hidden };
 }

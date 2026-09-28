@@ -1,11 +1,12 @@
 /**
  * 지도 호버 툴팁 내용(GAP-26) — 순수 함수. 항공기(호출부호·고도·속도·수신 경과), SIGMET(유형·고도대·유효), 공항(ICAO·카테고리·METAR 경과).
  * 값은 받은 데이터 그대로, 없으면 "—". DOM 은 textContent 로만 만든다(원문·호출부호 등 외부 문자열을 HTML 로 해석하지 않는다).
+ * 고도·속도는 두 단위(계약 v5 §A — ft·kt 와 m·km/h, 정의된 상수로 바꾼 계산값).
  */
-import { band, catSourceLabel, ceilingLabel, fmtAltGnd, fmtDuration, fmtNum, fmtTime, isMetarStale, metarAgeS } from "./format";
+import { band, catSourceLabel, ceilingLabel, fmtAltGndDual, fmtDuration, fmtGsDual, fmtNum, fmtSogDual, fmtTime, fmtVrateDual, isMetarStale, metarAgeS } from "./format";
 import { seenAtMs, thresholds } from "./interpolate";
 import { isExpired, isPending, sigmetBandSource } from "./sigmet";
-import { fmtMotion, navStatusLabel, positionBadge, ROT_LABEL, SHIP_CATEGORY_LABEL, SHIP_STALE_S, shipAgeS, shipCategory, shipRotation, SHIPS_RULE, type ShipLite } from "./ships";
+import { fmtCourse, navStatusLabel, positionBadge, ROT_LABEL, SHIP_CATEGORY_LABEL, SHIP_STALE_S, shipAgeS, shipCategory, shipRotation, SHIPS_RULE, type ShipLite } from "./ships";
 import type { AircraftState, SigmetProps } from "./types";
 
 export type Tone = "warn" | "bad" | "est" | "ok" | "muted";
@@ -18,6 +19,7 @@ export interface Tip {
 
 /**
  * 지도에 그려진 항공기(렌더 속성) + 메인 스레드의 원본 상태(있으면). 고도·속도는 관측값을 보여 준다.
+ * 원본 상태가 없어 렌더 속성의 고도를 쓸 때, 렌더가 dead reckoning(estimated)이면 그 고도는 수직속도로 외삽했을 수 있어 "(추정)"을 붙인다.
  * nowMs 는 서버 기준 시각(serverNowMs) — 워커의 stale 판정과 같은 기준(WS-3).
  */
 export function aircraftTip(
@@ -39,14 +41,21 @@ export function aircraftTip(
     title: state?.callsign ?? render.callsign ?? "—",
     subtitle: render.hex,
     rows: [
-      ["ALT", state ? fmtAltGnd(state.alt_ft, state.on_ground) : fmtAltGnd(render.alt_ft, render.on_ground)],
-      ["GS", fmtNum(state?.gs_kt, " kt")],
+      ["ALT", state ? fmtAltGndDual(state.alt_ft, state.on_ground) : renderAlt(render)],
+      ["GS", fmtGsDual(state?.gs_kt)],
+      ["VS", fmtVrateDual(state?.vrate_fpm)],
       ["TRK", fmtNum(state?.track_deg, "°")],
       ["AGE", age == null ? "—" : fmtDuration(age)],
       ["SRC", provider ?? "—"],
     ],
     flags,
   };
+}
+
+/** 렌더 속성의 고도(원본 상태가 없을 때): 외삽 위치(estimated)면 추정 표기 */
+function renderAlt(r: { alt_ft?: number | null; on_ground?: boolean | null; estimated?: boolean }): string {
+  const v = fmtAltGndDual(r.alt_ft, r.on_ground);
+  return r.estimated && r.alt_ft != null && r.on_ground !== true ? `${v} (추정)` : v;
 }
 
 /** nowMs 는 서버 기준 시각. 발효 전(DH-8)이면 "발효 전 · 시각"과 발효까지 남은 시간을 보여 준다(판정 대상 아님). */
@@ -125,7 +134,8 @@ export function shipTip(s: ShipLite, nowMs: number): Tip {
     subtitle: `MMSI ${s.mmsi}`,
     rows: [
       ["TYPE", s.ship_type == null ? `— · ${SHIP_CATEGORY_LABEL[cat]}` : `${s.ship_type} · ${SHIP_CATEGORY_LABEL[cat]}`],
-      ["SOG/COG/HDG", fmtMotion(s)],
+      ["SOG", fmtSogDual(s.sog_kn)],
+      ["COG/HDG", fmtCourse(s)],
       ["STATUS", navStatusLabel(s.nav_status)],
       ["AGE", age == null ? "—" : fmtDuration(age)],
     ],
@@ -133,15 +143,42 @@ export function shipTip(s: ShipLite, nowMs: number): Tip {
   };
 }
 
-/** 격자 칸 툴팁 — 서버가 보낸 칸 중심·수·가장 많은 선종 그대로 */
-export function shipGridTip(p: { count?: unknown; cat?: unknown }, cellDeg: number | null): Tip {
+/**
+ * 격자 칸 툴팁 — 서버가 보낸 칸 중심·수·가장 많은 선종(선종 필터가 켜져 있으면 선종별 수로 다시 센 값, 계약 v5 §B3).
+ * BY TYPE = 서버가 보낸 선종별 수(B2) 그대로 — 없으면(구 서버) 없다고 적는다.
+ */
+export function shipGridTip(p: { count?: unknown; cat?: unknown; all?: unknown; unfiltered?: unknown; breakdown?: unknown }, cellDeg: number | null): Tip {
   const count = typeof p.count === "number" ? p.count : null;
+  const all = typeof p.all === "number" ? p.all : count;
   const cat = typeof p.cat === "string" && p.cat in SHIP_CATEGORY_LABEL ? (p.cat as keyof typeof SHIP_CATEGORY_LABEL) : "unknown";
+  const n = (v: number) => v.toLocaleString("en-US");
+  const flags: Tip["flags"] = [{ text: `클릭하면 줌 ${SHIPS_RULE.highZoom} 이상으로 확대 — 화면 안 ${n(SHIPS_RULE.highMax)}척 이하면 개별 선박`, tone: "muted" }];
+  if (p.unfiltered === true) flags.push({ text: "선종별 수 없음(구 서버) — 선종 필터를 적용하지 못한 전체 수", tone: "warn" });
   return {
-    title: count == null ? "—" : `선박 ${count.toLocaleString("en-US")}척`,
+    title: count == null ? "—" : `선박 ${n(count)}척${all != null && all !== count ? ` · 선종 필터 적용(칸 전체 ${n(all)}척)` : ""}`,
     subtitle: cellDeg ? `${cellDeg}° 격자` : "격자",
-    rows: [["MOST", SHIP_CATEGORY_LABEL[cat]]],
-    flags: [{ text: `클릭하면 줌 ${SHIPS_RULE.highZoom} 이상으로 확대 — 화면 안 ${SHIPS_RULE.highMax.toLocaleString("en-US")}척 이하면 개별 선박`, tone: "muted" }],
+    rows: [["MOST", SHIP_CATEGORY_LABEL[cat]], ["BY TYPE", typeof p.breakdown === "string" && p.breakdown ? p.breakdown : "— (서버가 선종별 수를 보내지 않음)"]],
+    flags,
+  };
+}
+
+/**
+ * 항적 점 툴팁(계약 v5 §B3): 시각(UTC) · 속력(kn · km/h) · 침로 · 항해 상태 — API points[] 값 그대로(없으면 —).
+ * shipLabel = 선박 이름(모르면 MMSI) — 외부 문자열이라 renderTip 이 텍스트 노드로만 넣는다.
+ */
+export function shipTrackPointTip(p: { ts?: unknown; sog?: unknown; cog?: unknown; hdg?: unknown; nav?: unknown; src?: unknown }, shipLabel: string | null): Tip {
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const cog = n(p.cog);
+  return {
+    title: "항적 점",
+    subtitle: shipLabel ?? undefined,
+    rows: [
+      ["TIME UTC", fmtTime(typeof p.ts === "string" ? p.ts : null)],
+      ["SOG", fmtSogDual(n(p.sog))],
+      ["COG", cog == null ? "—" : `${cog.toFixed(1)}°`],
+      ["STATUS", navStatusLabel(n(p.nav))],
+    ],
+    flags: [{ text: p.src === "live" ? "실시간 관측 · 선택한 뒤 받은 값" : "저장 기록 · 60 s 창의 첫 보고", tone: "muted" }],
   };
 }
 

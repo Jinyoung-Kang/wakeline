@@ -8,7 +8,7 @@ import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
 import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
-import { fmtAltGnd, fmtBool, fmtDuration, fmtIso, fmtNum, fmtTime } from "@/lib/format";
+import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtIso, fmtNum, fmtTime, fmtVrateDual } from "@/lib/format";
 import {
   EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
   ROUTE_STATUS_TEXT, ROUTE_TITLE, routeCallsignMismatch, routeDistanceKm, type RouteAirport, type RouteInfo,
@@ -103,6 +103,7 @@ export function RouteSection({ route, pos, callsign }: { route: RouteInfo | null
 
 /**
  * 항공기 상세(FR-05): 호출부호·등록·기종·고도·속도·수직속도·squawk·출처·수신 시각. 값이 없으면 "—"(기본값으로 채우지 않는다).
+ * 고도·지상속도·수직속도는 두 단위(계약 v5 §A — ft·kt·ft/min 과 m·km/h·m/s).
  * 경과·stale·외삽은 서버 기준 시각으로 — 지도(워커)·툴팁과 같은 기준(WS-3 · DH-1). 지상이면 고도 대신 GND(DH-3).
  */
 export function AircraftCard({ hex }: { hex: string }) {
@@ -153,10 +154,10 @@ export function AircraftCard({ hex }: { hex: string }) {
     ["등록번호", <span key="reg" className="mono">{d?.static?.registration ?? s?.registration ?? "—"}</span>],
     ["기종 코드", <span key="type" className="mono">{d?.static?.type_code ?? s?.type_code ?? "—"}</span>],
     ["카테고리", d?.static?.category ?? s?.category ?? "—"],
-    ["고도", <span key="alt" className="mono">{fmtAltGnd(s?.alt_ft, s?.on_ground)}</span>],
-    ["지상속도", <span key="gs" className="mono">{fmtNum(s?.gs_kt, " kt")}</span>],
+    ["고도", <span key="alt" className="mono">{fmtAltGndDual(s?.alt_ft, s?.on_ground)}</span>],
+    ["지상속도", <span key="gs" className="mono">{fmtGsDual(s?.gs_kt)}</span>],
     ["방위", <span key="trk" className="mono">{fmtNum(s?.track_deg, "°")}</span>],
-    ["수직속도", <span key="vr" className="mono">{fmtNum(s?.vrate_fpm, " ft/min")}</span>],
+    ["수직속도", <span key="vr" className="mono">{fmtVrateDual(s?.vrate_fpm)}</span>],
     ["Squawk", <span key="sq" className={`mono ${emergency ? "text-bad" : ""}`}>{s?.squawk ?? "—"}{emergency ? " EMERGENCY" : ""}</span>],
     ["지상", fmtBool(s?.on_ground)],
     ["출처", s?.provider ?? "—"],

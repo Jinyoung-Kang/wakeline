@@ -166,7 +166,7 @@ describe("hover tooltips (GAP-26)", () => {
   it("aircraft: observed values, age from seen_at, unknowns as —", () => {
     const t = aircraftTip({ hex: "71c081", callsign: "KAL081", stale: false, estimated: true }, { hex: "71c081", callsign: "KAL081", lat: 1, lon: 1, alt_ft: 34000, gs_kt: 460, seen_at: "2026-09-27T08:59:48Z", provider: "adsb_fi" }, NOW);
     expect(t.title).toBe("KAL081");
-    expect(Object.fromEntries(t.rows)).toMatchObject({ ALT: "FL340", GS: "460 kt", TRK: "—", AGE: "12s", SRC: "adsb_fi" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ ALT: "FL340 · 10,363 m", GS: "460 kt · 852 km/h", TRK: "—", AGE: "12s", SRC: "adsb_fi" });
     expect(t.flags.map((f) => f.text)).toContain("위치 추정(dead reckoning)");
     const u = aircraftTip({ hex: "abc123", stale: true }, { hex: "abc123", lat: 1, lon: 1, seen_at: "2026-09-27T08:57:00Z" }, NOW);
     expect(u.title).toBe("—");

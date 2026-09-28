@@ -4,12 +4,13 @@
  * - 색: 선종 분류(ships.ts SHIP_CATEGORY_COLOR — 범례와 같은 표). 선택 = 흰색. STALE(> 15분) 반투명.
  * - 격자(계약 v4 §C — 줌 < 4 · 화면 안 선박이 상한 초과): 칸 선박 수에 따라 커지는 원(최소 반지름 8 px) + 수 라벨(halo), 색 = 가장 많은 선종,
  *   흰 테두리 1.5 px · 불투명도 0.85 — 어두운 육지·바다 어디서나 보인다. 항공기 기호보다 아래 층.
- * - 항적: 실선(기록 구간) · 회색 점선 + 라벨(AIS 공백·기록 없음 — 그 사이 위치는 모름).
+ * - 항적: 실선(기록 구간) · 회색 점선 + 라벨(AIS 공백·기록 없음 — 그 사이 위치는 모름) · 기록 점(호버하면 시각·속력·침로·항해 상태 — 계약 v5 §B3).
+ * - 선택 선박(계약 v5 §B3): 격자 모드에서도 흰 고리 + 이름(모르면 MMSI) 라벨 — 줌과 무관. 선박 기호가 그리지 않을 때(격자·선종 필터)는 아이콘도.
  * - 수신 범위(계약 v3 §A): 운영 설정 수신 범위의 바깥 경계만 옅은 점선. 범위 밖을 가리지 않는다. status 에 범위가 없으면 그리지 않는다.
  */
 import type * as maplibregl from "maplibre-gl";
 import { sdfImage } from "./maplayers";
-import { SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, SHIP_SELECTED_COLOR } from "./ships";
+import { SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, SHIP_SELECTED_COLOR, type ShipCategory } from "./ships";
 
 /** 선체(48×48, 선수 위쪽) — 지도 아이콘과 범례가 같은 경로를 쓴다 */
 export const HULL_PATH = "M24 4 C29 10 32 16 32 24 L32 42 Q32 45 29 45 L19 45 Q16 45 16 42 L16 24 C16 16 19 10 24 4 Z";
@@ -51,6 +52,13 @@ export const SHIP_COLOR_EXPR = [
   "case", ["boolean", ["get", "selected"], false], SHIP_SELECTED_COLOR, CATEGORY_MATCH,
 ] as unknown as maplibregl.ExpressionSpecification;
 export const SHIP_GRID_COLOR_EXPR = CATEGORY_MATCH as unknown as maplibregl.ExpressionSpecification;
+/**
+ * 선박 기호 라벨: 줌 10 부터 이름(모르면 없음). 선택한 선박은 비운다 — ship-selected-label 이 줌과 무관하게 이름(모르면 MMSI)을 그리므로
+ * 같은 이름이 두 번(약 4 px 어긋나) 겹쳐 그려지지 않게(계약 v5 §B3 — 선택 선박 라벨은 하나)
+ */
+export const SHIP_SYMBOL_TEXT_EXPR = [
+  "step", ["zoom"], "", 10, ["case", ["boolean", ["get", "selected"], false], "", ["coalesce", ["get", "name"], ""]],
+] as unknown as maplibregl.ExpressionSpecification;
 /** STALE(> 15분) 35% · 수신 경과 모름 70% */
 export const SHIP_OPACITY_EXPR = [
   "case", ["boolean", ["get", "stale"], false], 0.35, ["boolean", ["get", "age_unknown"], false], 0.7, 1,
@@ -62,11 +70,27 @@ export const SHIP_GRID_RADIUS_EXPR = [
   "interpolate", ["linear"], ["sqrt", ["get", "count"]], 1, SHIP_GRID_STYLE.minRadius, 10, 14, 30, 22, 100, 34,
 ] as unknown as maplibregl.ExpressionSpecification;
 
+/**
+ * 선종 필터(계약 v5 §B3) — 점 모드 "ship-symbol" 의 MapLibre filter. 모두 켜져 있으면 null(필터 없음).
+ * 분류가 없으면 unknown 으로 본다(색 식 CATEGORY_MATCH 와 같은 규칙).
+ */
+export function shipCategoryFilter(enabled: ReadonlySet<ShipCategory>): maplibregl.FilterSpecification | null {
+  if (SHIP_CATEGORIES.every((c) => enabled.has(c))) return null;
+  return ["in", ["coalesce", ["get", "cat"], "unknown"], ["literal", SHIP_CATEGORIES.filter((c) => enabled.has(c))]] as unknown as maplibregl.FilterSpecification;
+}
+
 /** 수신 범위 경계선 — 범례 견본과 같은 값 */
 export const SHIP_COVERAGE_COLOR = "#7f93a8";
 export const SHIP_COVERAGE_DASH: [number, number] = [4, 3];
 
-export const SHIP_LAYERS = ["ship-coverage-line", "ship-track-line", "ship-track-gap", "ship-track-gap-label", "ship-grid-circle", "ship-grid-label", "ship-symbol"] as const;
+export const SHIP_LAYERS = [
+  "ship-coverage-line", "ship-track-line", "ship-track-gap", "ship-track-gap-label", "ship-track-point", "ship-grid-circle", "ship-grid-label", "ship-symbol",
+  "ship-selected-ring", "ship-selected-icon", "ship-selected-label",
+] as const;
+/** 항적 점(계약 v5 §B3) — 범례 견본과 같은 값. hitPad = 호버 질의용 투명 테두리 폭(px) */
+export const SHIP_TRACK_POINT_STYLE = { radius: 2.5, color: "#dbe4ee", hitPad: 4 } as const;
+/** 선택 선박 고리·라벨(계약 v5 §B3) — 범례 견본과 같은 값 */
+export const SHIP_SELECTED_STYLE = { ringRadius: 14, ringColor: "#ffffff", ringWidth: 2, labelColor: "#ffffff", labelHalo: "#0b0d10", labelHaloWidth: 1.5 } as const;
 export const SHIP_IMAGES = ["ship-hull", "ship-hull-cog", "ship-nodir"] as const;
 
 /** 선박 소스·레이어를 beforeId(항공기 기호) 아래에 더한다. 모두 visibility none 으로 시작(선박 레이어를 켜야 보인다). */
@@ -98,6 +122,16 @@ export function addShipLayers(map: maplibregl.Map, beforeId = "aircraft-symbol")
     paint: { "text-color": "#a3aab4", "text-halo-color": "#0b0d10", "text-halo-width": 1 },
   }, before);
 
+  // 항적 점(계약 v5 §B3): 호버하면 시각·속력·침로·항해 상태. 투명한 테두리로 잡기 쉬운 크기(질의는 반지름 + 테두리 폭)
+  map.addSource("ship-track-points", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: "ship-track-point", type: "circle", source: "ship-track-points", layout: hidden,
+    paint: {
+      "circle-radius": SHIP_TRACK_POINT_STYLE.radius, "circle-color": SHIP_TRACK_POINT_STYLE.color, "circle-opacity": 0.9,
+      "circle-stroke-width": SHIP_TRACK_POINT_STYLE.hitPad, "circle-stroke-color": "#000000", "circle-stroke-opacity": 0,
+    },
+  }, before);
+
   map.addSource("ship-grid", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({
     id: "ship-grid-circle", type: "circle", source: "ship-grid", layout: hidden,
@@ -123,10 +157,36 @@ export function addShipLayers(map: maplibregl.Map, beforeId = "aircraft-symbol")
       "icon-rotation-alignment": "map",
       "icon-allow-overlap": true,
       "icon-ignore-placement": true,
-      "text-field": ["step", ["zoom"], "", 10, ["coalesce", ["get", "name"], ""]],
+      "text-field": SHIP_SYMBOL_TEXT_EXPR,
       "text-font": ["Noto Sans Regular"],
       "text-size": 10, "text-offset": [0, 1.3], "text-anchor": "top", "text-optional": true,
     },
     paint: { "icon-color": SHIP_COLOR_EXPR, "icon-opacity": SHIP_OPACITY_EXPR, "text-color": "#9fb3c8", "text-halo-color": "#0b0d10", "text-halo-width": 1 },
+  }, before);
+
+  // 선택 선박(계약 v5 §B3): 격자 모드·선종 필터와 상관없이 항상 — 고리 + (선박 기호가 그리지 않으면) 아이콘 + 라벨(줌과 무관). 선박 기호 위, 항공기 아래
+  map.addSource("ship-selected", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: "ship-selected-ring", type: "circle", source: "ship-selected", layout: hidden,
+    paint: {
+      "circle-radius": SHIP_SELECTED_STYLE.ringRadius, "circle-color": SHIP_SELECTED_STYLE.ringColor, "circle-opacity": 0,
+      "circle-stroke-color": SHIP_SELECTED_STYLE.ringColor, "circle-stroke-width": SHIP_SELECTED_STYLE.ringWidth,
+    },
+  }, before);
+  map.addLayer({
+    id: "ship-selected-icon", type: "symbol", source: "ship-selected", filter: ["==", ["get", "icon"], true],
+    layout: {
+      ...hidden, "icon-image": SHIP_ICON_EXPR, "icon-size": 0.5, "icon-rotate": SHIP_ROTATE_EXPR, "icon-rotation-alignment": "map",
+      "icon-allow-overlap": true, "icon-ignore-placement": true,
+    },
+    paint: { "icon-color": SHIP_SELECTED_COLOR, "icon-opacity": SHIP_OPACITY_EXPR },
+  }, before);
+  map.addLayer({
+    id: "ship-selected-label", type: "symbol", source: "ship-selected",
+    layout: {
+      ...hidden, "text-field": ["get", "label"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 1.7], "text-anchor": "top",
+      "text-allow-overlap": true, "text-ignore-placement": true,
+    },
+    paint: { "text-color": SHIP_SELECTED_STYLE.labelColor, "text-halo-color": SHIP_SELECTED_STYLE.labelHalo, "text-halo-width": SHIP_SELECTED_STYLE.labelHaloWidth },
   }, before);
 }

@@ -37,7 +37,13 @@ export interface ShipSelectedInfo {
 }
 
 /** 선택 선박 항적 요약(지도는 MapView 가 그리고, 카드는 공백 목록을 보여 준다). gapsTruncated = 공백 목록이 잘림(개수는 하한) */
-export interface ShipTrackInfo { mmsi: string; loaded: boolean; error: string | null; gaps: AisGap[]; gapsTruncated: boolean; segments: number; /** 항적 창 시작(ms) — 공백 요약을 이 창으로 자른다 */ fromMs: number | null }
+export interface ShipTrackInfo {
+  mmsi: string; loaded: boolean; error: string | null; gaps: AisGap[]; gapsTruncated: boolean; segments: number;
+  /** 항적 창 시작(ms) — 공백 요약을 이 창으로 자른다 */
+  fromMs: number | null;
+  /** 항적 창 길이(h, 계약 v5 §B3 — 6 · 12 · 24). 없으면 기본 6 h */
+  hours?: number;
+}
 
 export interface ServerData {
   conn: ConnState;

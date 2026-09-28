@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { SHIP_CATEGORIES, type ShipCategory, type ShipTrackHours } from "./ships";
 
 export interface Layers {
   radar: boolean;
@@ -43,6 +44,13 @@ interface UiState {
   requestFlyTo: (lon: number, lat: number, zoom?: number) => void;
   legendOpen: boolean;
   setLegendOpen: (b: boolean) => void;
+  /** 선종 필터(계약 v5 §B3): 켜진 선종(SHIP_CATEGORIES 순서). 저장은 lib/prefs.ts(브라우저에만) */
+  shipCats: ShipCategory[];
+  toggleShipCat: (c: ShipCategory) => void;
+  setShipCats: (cats: readonly ShipCategory[]) => void;
+  /** 선택 선박 항적 기간(계약 v5 §B3 — 6 · 12 · 24 h). 바꾸면 MapView 가 그 창으로 다시 받는다 */
+  shipTrackHours: ShipTrackHours;
+  setShipTrackHours: (h: ShipTrackHours) => void;
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -74,4 +82,13 @@ export const useUi = create<UiState>((set) => ({
   requestFlyTo: (lon, lat, zoom = 8) => set((s) => ({ flyTo: { lon, lat, zoom, id: (s.flyTo?.id ?? 0) + 1 } })),
   legendOpen: false, // 처음 값은 LayerPanel 이 저장된 선택 또는 화면 폭으로 정한다(lib/prefs legendDefaultOpen)
   setLegendOpen: (b) => set({ legendOpen: b }),
+  shipCats: [...SHIP_CATEGORIES],
+  toggleShipCat: (c) => set((s) => {
+    const on = new Set(s.shipCats);
+    if (on.has(c)) on.delete(c); else on.add(c);
+    return { shipCats: SHIP_CATEGORIES.filter((x) => on.has(x)) };
+  }),
+  setShipCats: (cats) => set({ shipCats: SHIP_CATEGORIES.filter((x) => cats.includes(x)) }),
+  shipTrackHours: 6,
+  setShipTrackHours: (h) => set({ shipTrackHours: h }),
 }));

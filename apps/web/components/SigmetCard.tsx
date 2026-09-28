@@ -4,12 +4,14 @@ import { apiGet } from "@/lib/api";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
-import { band, fmtAlt, fmtAltGnd, fmtDuration, fmtTime, hazardColor } from "@/lib/format";
+import { band, fmtAltDual, fmtAltGndDual, fmtDuration, fmtTime, hazardColor } from "@/lib/format";
 import { isExpired, isPending, sigmetBandSource } from "@/lib/sigmet";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
+import { AltStack } from "./UnitStack";
 
 /**
  * SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—".
+ * 숫자 경계에는 m 를 괄호로(계약 v5 §A3 — 카드에서만).
  * 발효 전(valid_from > 지금)이면 "발효 전"과 남은 시간 — 엔진은 발효 전 경보로 판정하지 않는다(DH-8).
  */
 export function SigmetCard({ id }: { id: string }) {
@@ -32,7 +34,7 @@ export function SigmetCard({ id }: { id: string }) {
   const startsIn = pending ? (Date.parse(p.valid_from) - now) / 1000 : null;
   const rows: [string, React.ReactNode][] = [
     ["FIR", p.fir_name ?? p.fir_id ?? "—"],
-    ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p))],
+    ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p), { metric: true })],
     ["유효", <span key="v" className="mono">{fmtTime(p.valid_from)} – {fmtTime(p.valid_to)}</span>],
     ["이동", p.move_dir || p.move_spd ? `${p.move_dir ?? "—"}${p.move_spd ? ` ${p.move_spd}` : ""}` : "—"],
     ["변화", p.chng ?? "—"],
@@ -76,7 +78,7 @@ export function InsideAircraftList({ sigmetId, hexes }: { sigmetId: string; hexe
         const a = byHex.get(h);
         const st = aircraftStates.get(h);
         const callsign = a?.callsign ?? st?.callsign ?? null;
-        const alt = a ? fmtAlt(a.alt_ft) : st ? fmtAltGnd(st.alt_ft, st.on_ground) : "—";
+        const alt = a ? fmtAltDual(a.alt_ft) : st ? fmtAltGndDual(st.alt_ft, st.on_ground) : "—";
         const src = a ? "관측 알림" : st ? "실시간" : null;
         return (
           <li key={h} className="border-b border-line">
@@ -86,7 +88,7 @@ export function InsideAircraftList({ sigmetId, hexes }: { sigmetId: string; hexe
               onClick={() => { select(h); panIfOutside(aircraftPos(h, a)); }}>
               <span className="mono w-20 shrink-0">{callsign ?? "—"}</span>
               <span className="mono w-16 shrink-0 text-fg-3">{h}</span>
-              <span className="mono w-16 shrink-0">{alt}</span>
+              <span className="w-24 shrink-0">{a ? <AltStack ft={a.alt_ft} align="start" /> : st ? <AltStack ft={st.alt_ft} onGround={st.on_ground} align="start" /> : <span className="mono">—</span>}</span>
               <span className="text-[10px] text-fg-3">{src ?? ""}</span>
             </button>
           </li>

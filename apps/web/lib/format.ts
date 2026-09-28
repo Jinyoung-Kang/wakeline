@@ -40,7 +40,7 @@ export const ALT_UNKNOWN_COLOR = "#7a828d";
 export const GND_COLOR = "#b5895a";
 
 export function fmtAlt(ft: number | null | undefined) {
-  return ft == null ? "—" : ft >= 18000 ? `FL${Math.round(ft / 100)}` : `${ft.toLocaleString()} ft`;
+  return ft == null ? "—" : ft >= 18000 ? `FL${Math.round(ft / 100)}` : `${ft.toLocaleString("en-US")} ft`;
 }
 /**
  * 고도 표시(지상 포함, DH-3): 공급자가 지상(on_ground=true)이라고 하면 "GND". 수집기가 지상에 0 ft 를 채우던 시절 값(0)은 고도로 보이지 않는다.
@@ -50,6 +50,81 @@ export function fmtAltGnd(ft: number | null | undefined, onGround: boolean | nul
   if (onGround !== true) return fmtAlt(ft);
   return ft == null || ft === 0 ? "GND" : `GND (${fmtAlt(ft)} 보고)`;
 }
+
+// ---- 단위(계약 v5 §A) ----
+// 항공은 ft·kt·ft/min, 해상은 kn 이 원 단위다. m·km/h·m/s 는 정의된 상수로만 바꾼 계산값이다(추정이 아니다 — 원 값이 추정이면 표시도 추정).
+
+/** 1 ft = 0.3048 m(국제 피트 정의) */
+export const M_PER_FT = 0.3048;
+/** 1 kt = 1 kn = 1.852 km/h(국제 해리 1,852 m 정의) */
+export const KMH_PER_KT = 1.852;
+const finiteOrNull = (v: number | null | undefined): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** ft → m. 모르면 null */
+export function ftToM(ft: number | null | undefined): number | null {
+  const v = finiteOrNull(ft);
+  return v == null ? null : v * M_PER_FT;
+}
+/** kt(kn) → km/h. 모르면 null */
+export function ktToKmh(kt: number | null | undefined): number | null {
+  const v = finiteOrNull(kt);
+  return v == null ? null : v * KMH_PER_KT;
+}
+/** ft/min → m/s. 모르면 null */
+export function fpmToMs(fpm: number | null | undefined): number | null {
+  const v = finiteOrNull(fpm);
+  return v == null ? null : (v * M_PER_FT) / 60;
+}
+/** 정수 반올림 + en-US 천 단위 구분. 음의 0("-0")은 0 */
+const int0 = (v: number) => (Math.round(v) || 0).toLocaleString("en-US");
+
+/** 고도의 m 부분만(좁은 표 칸의 둘째 줄): "10,363 m". 모르면 "—" */
+export function altM(ft: number | null | undefined): string {
+  const m = ftToM(ft);
+  return m == null ? "—" : `${int0(m)} m`;
+}
+/** 고도 두 단위: "FL340 · 10,363 m" / "12,000 ft · 3,658 m". m 는 보고 ft 값에서 바로 계산한다(FL 반올림 값이 아니다). 모르면 "—" */
+export function fmtAltDual(ft: number | null | undefined): string {
+  return finiteOrNull(ft) == null ? "—" : `${fmtAlt(ft)} · ${altM(ft)}`;
+}
+/** 지상 포함 고도 두 단위(DH-3 규칙 그대로): "GND" / "GND (1,200 ft · 366 m 보고)" / 공중이면 fmtAltDual */
+export function fmtAltGndDual(ft: number | null | undefined, onGround: boolean | null | undefined): string {
+  if (onGround !== true) return fmtAltDual(ft);
+  return ft == null || ft === 0 ? "GND" : `GND (${fmtAlt(ft)} · ${altM(ft)} 보고)`;
+}
+/** 지상속도의 km/h 부분만: "852 km/h". 모르면 "—" */
+export function gsKmh(kt: number | null | undefined): string {
+  const v = ktToKmh(kt);
+  return v == null ? "—" : `${int0(v)} km/h`;
+}
+/** 지상속도 두 단위(둘 다 정수): "460 kt · 852 km/h". 모르면 "—" */
+export function fmtGsDual(kt: number | null | undefined): string {
+  const v = finiteOrNull(kt);
+  return v == null ? "—" : `${int0(v)} kt · ${gsKmh(v)}`;
+}
+/** 부호 붙인 수(표시값이 0 이면 부호 없음) */
+function signed(text: string, rounded: number) {
+  return rounded > 0 ? `+${text}` : rounded < 0 ? `-${text}` : text;
+}
+/** 수직속도 두 단위: "+1,216 ft/min · +6.2 m/s"(m/s 소수 1자리). 각 부분은 표시값이 0 이면 부호 없음. 모르면 "—" */
+export function fmtVrateDual(fpm: number | null | undefined): string {
+  const v = finiteOrNull(fpm);
+  if (v == null) return "—";
+  const f = Math.round(v) || 0;
+  const ms = fpmToMs(v)!;
+  const m1 = Math.round(ms * 10) / 10 || 0;
+  return `${signed(Math.abs(f).toLocaleString("en-US"), f)} ft/min · ${signed(Math.abs(m1).toFixed(1), m1)} m/s`;
+}
+/** 선박 대지속력의 km/h 부분만(소수 1자리): "22.8 km/h". 모르면 "—" */
+export function sogKmh(kn: number | null | undefined): string {
+  const v = ktToKmh(kn);
+  return v == null ? "—" : `${v.toFixed(1)} km/h`;
+}
+/** 선박 대지속력 두 단위(둘 다 소수 1자리): "12.3 kn · 22.8 km/h". 모르면 "—"(AIS 102.3 = 값 없음은 수집·검증에서 이미 null) */
+export function fmtSogDual(kn: number | null | undefined): string {
+  const v = finiteOrNull(kn);
+  return v == null ? "—" : `${v.toFixed(1)} kn · ${sogKmh(v)}`;
+}
+
 export function fmtNum(v: number | null | undefined, unit = "", digits = 0) {
   return v == null ? "—" : `${v.toFixed(digits)}${unit}`;
 }
@@ -125,18 +200,20 @@ export const TOP_UNKNOWN_LABEL = "상한 미발표(무제한 가정)";
  * - 하한: base_source=assumed_surface → "하한 미발표(SFC 가정)", 0 → "SFC", 없음 → "—"
  * - 상한: null → "상한 미발표(무제한 가정)"(판정이 무제한으로 가정하므로), raw_text → "FL380 (원문)" / ABV → "FL380 이상 (원문)"
  * - 하한 출처를 모르는 0(구 알림 근거 등)은 "SFC(출처 미확인)" 로 가정일 수 있음을 드러낸다.
+ * - opts.metric(계약 v5 §A3): 카드에서만 숫자 경계에 m 를 괄호로 덧붙인다("FL380 (11,582 m)"). 고도대는 항공기 고도가 아니므로 툴팁·목록은 그대로.
  */
-export function band(base: number | null | undefined, top: number | null | undefined, src?: BandSource | null) {
+export function band(base: number | null | undefined, top: number | null | undefined, src?: BandSource | null, opts?: { metric?: boolean }) {
+  const alt = (ft: number) => (opts?.metric ? `${fmtAlt(ft)} (${altM(ft)})` : fmtAlt(ft));
   let lo: string;
   if (src?.base_source === "assumed_surface") lo = BASE_ASSUMED_LABEL;
   else if (base == null) lo = "—";
   else if (base === 0) lo = src?.base_source === "json" ? "SFC" : "SFC(출처 미확인)";
-  else lo = fmtAlt(base);
+  else lo = alt(base);
   let hi: string;
   if (top == null || src?.top_source === "unknown") hi = TOP_UNKNOWN_LABEL;
-  else if (src?.top_source === "raw_text_lower_bound") hi = `${fmtAlt(top)} 이상 (원문 ABV)`;
-  else if (src?.top_source === "raw_text") hi = `${fmtAlt(top)}${src.top_above ? " 이상" : ""} (원문)`;
-  else hi = fmtAlt(top);
+  else if (src?.top_source === "raw_text_lower_bound") hi = `${alt(top)} 이상 (원문 ABV)`;
+  else if (src?.top_source === "raw_text") hi = `${alt(top)}${src.top_above ? " 이상" : ""} (원문)`;
+  else hi = alt(top);
   return `${lo} – ${hi}`;
 }
 

@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  aisBadge, aisCoverageFeatures, aisGapBadge, appendShipTrack, fmtCount, fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
+  aisBadge, aisCoverageFeatures, aisGapBadge, appendShipTrack, fmtCount, fmtCourse, fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
   gridFeatures, imoField, mergeStatusGaps, navStatusLabel, normalizeGaps, parseAisCoverage, parseAisStatus, parseCategory, parseGridCells, parseShipLite,
   parseShipState, parseShipStatic, positionBadge, positionSourceLabel, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, shipCategory, shipFeatures, shipList,
   shipRotation, shipTrackFeatures, shipTrackFromRest, type AisBox, type AisGap, type AisStatus, type ShipLite, type ShipTrack,
@@ -106,7 +106,8 @@ describe("ship message validation (untrusted input → null, never defaults)", (
   });
   it("grid cells: malformed and empty cells are dropped", () => {
     const cells = parseGridCells([[35, 129.5, 12, "cargo"], [95, 0, 1, "x"], [10, 10, 0, "cargo"], "junk", [20, 120, 3, 84], [20, 121, 2.5, "cargo"]]);
-    expect(cells).toEqual([{ lat: 35, lon: 129.5, count: 12, category: "cargo" }, { lat: 20, lon: 120, count: 3, category: "tanker" }]);
+    // 네 원소 칸(선종별 수 없음 — 계약 v5 §B2 이전 서버)은 counts null
+    expect(cells).toEqual([{ lat: 35, lon: 129.5, count: 12, category: "cargo", counts: null }, { lat: 20, lon: 120, count: 3, category: "tanker", counts: null }]);
     expect(gridFeatures(cells).features[0].properties).toMatchObject({ count: 12, label: "12", cat: "cargo" });
     expect([fmtCount(999), fmtCount(1234), fmtCount(45_600)]).toEqual(["999", "1.2k", "46k"]);
   });
@@ -139,7 +140,7 @@ describe("ship card formatting (contract v2 §B4)", () => {
   it("type = code + class; motion shows — per missing value; position source badges", () => {
     expect(fmtShipType(84)).toBe("84 · 유조선·탱커");
     expect(fmtShipType(null)).toBe("— (미보고)");
-    expect(fmtMotion({ sog_kn: 11, cog_deg: null, heading_deg: 33 })).toBe("11.0 kn / — / 33°");
+    expect(fmtCourse({ cog_deg: null, heading_deg: 33 })).toBe("— / 33°"); // 속력은 두 단위로 따로(계약 v5 §A — tests/units-v5)
     expect(positionBadge("estimated")).toEqual({ text: "추정 위치", tone: "est" });
     expect(positionBadge("manual")).toEqual({ text: "수동 위치", tone: "est" });
     expect(positionBadge("epfs")).toBeNull();

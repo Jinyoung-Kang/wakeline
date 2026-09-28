@@ -16,6 +16,8 @@ export class FakeMap {
   sources = new Map<string, FakeSource>();
   layers = new Map<string, { id: string; type: string; source?: string; layout: Record<string, unknown>; paint: Record<string, unknown>; before?: string }>();
   images: string[] = [];
+  /** setFilter 로 받은 레이어 필터(null = 필터 없음) */
+  filters = new Map<string, unknown>();
   controls: unknown[] = [];
   styleSet: unknown[] = [];
   removed = false;
@@ -42,6 +44,7 @@ export class FakeMap {
   setLayoutProperty(id: string, k: string, v: unknown) { const l = this.layers.get(id); if (l) l.layout[k] = v; }
   getLayoutProperty(id: string, k: string) { return this.layers.get(id)?.layout[k]; }
   setPaintProperty(id: string, k: string, v: unknown) { const l = this.layers.get(id); if (l) l.paint[k] = v; }
+  setFilter(id: string, f: unknown) { this.filters.set(id, f ?? null); }
   getStyle() { return { version: 8, sources: {}, layers: [...this.layers.values()].map((l) => ({ id: l.id, type: l.type })) }; }
   setStyle(s: unknown) { this.styleSet.push(s); return this; }
   queryRenderedFeatures() { return []; }

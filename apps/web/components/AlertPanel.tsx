@@ -5,16 +5,17 @@ import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { fmtAlt, fmtClock, fmtEta, fmtTime, hazardColor } from "@/lib/format";
+import { fmtClock, fmtEta, fmtTime, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
+import { AltStack } from "./UnitStack";
 
 /**
  * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 행을 누르면 목록 안에서 근거 카드를 펼치고(선택하지 않음),
  * 펼친 영역의 "항공기 카드·지도" 버튼이 항공기를 선택하고 알려진 위치가 화면 밖이면 지도를 옮긴다(R-08).
  * 예측 ETA 는 eta_at 에서 1 s 마다 줄어든다(추정). 배너는 진입·이탈·신호 끊김·진입 예상만(예측 갱신/해제는 목록에만 반영).
  * 목록을 아직 받지 못했으면 "없음"이라고 하지 않고 "수신 대기", 연결이 끊겼으면 마지막 목록임을 밝히고 ETA 를 멈춘다(DH-9).
- * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15).
+ * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15). 고도 칸 둘째 줄은 m(계약 v5 §A2).
  */
 export function AlertPanel() {
   const alerts = useServerData((d) => d.alerts);
@@ -88,8 +89,8 @@ export function AlertPanel() {
                 <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`}>{a.hazard}{a.qualifier ? ` ${a.qualifier}` : ""}</span><span className="sr-only">, </span>
                 <span className="mono w-12 shrink-0 text-[11px] text-fg-3">{a.fir_id}</span><span className="sr-only">, </span>
                 {a.kind === "PREDICTED"
-                  ? <span className="mono est-val w-14 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span>{fmtAlt(a.alt_ft)}</span>
-                  : <span className="mono w-14 shrink-0 text-[11px]" title="관측 고도">{fmtAlt(a.alt_ft)}</span>}<span className="sr-only">, </span>
+                  ? <span className="mono est-val w-16 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span><AltStack ft={a.alt_ft} est align="start" nowrap /></span>
+                  : <span className="mono w-16 shrink-0 text-[11px]" title="관측 고도"><AltStack ft={a.alt_ft} align="start" nowrap /></span>}<span className="sr-only">, </span>
                 {a.kind === "PREDICTED" ? <EtaBadge a={a} state={listState} /> : <span className="badge bad ml-auto">INSIDE<span className="sr-only"> — 경보 안</span></span>}
               </button>
               {open === a.id ? (
