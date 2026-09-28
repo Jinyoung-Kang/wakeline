@@ -10,7 +10,10 @@ COPY apps/collector/wakeline_collector ./wakeline_collector
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-dev
 
 FROM python:3.13-slim
-RUN groupadd -r app && useradd -r -g app -d /app app && mkdir -p /data/raw && chown app:app /data/raw
+# 앱은 .venv(빌드 단계에서 uv 가 만든다)만 쓴다. 기반 이미지의 시스템 pip 는 지운다 — 쓰이지 않으면서
+# pip 가 품은 패키지(msgpack·setuptools)가 이미지의 고칠 수 있는 HIGH 취약점 전부였다(R-29).
+RUN python -m pip uninstall -y pip \
+ && groupadd -r app && useradd -r -g app -d /app app && mkdir -p /data/raw && chown app:app /data/raw
 WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 COPY --chown=app:app schemas /app/schemas

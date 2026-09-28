@@ -136,6 +136,10 @@ jobs:
         name: build own images (compose 가 붙이는 실제 태그 wakeline-*:local — ais 는 collector 와 같은 이미지)
         if: ${{ !cancelled() }}
         run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web
+      # 빌드한 실행 이미지 안: 패키지 관리자 없음(web·collector) · api 힙 상한 40 % · 비root (R-25 · R-29)
+      - name: image checks (throwaway containers, --network none)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: bash infra/tests/image_test.sh
       # 우리가 빌드하는 이미지: 고칠 수 있는 HIGH/CRITICAL 이 있으면 실패(NFR-10). 앞 단계가 실패해도 세 이미지 모두 결과를 보인다.
       # compose 의 모든 이미지가 여기(자체)나 third-party-images(제3자)에서 스캔되는지는 infra/tests/test_ci_policy.py 가 확인한다.
       - name: trivy wakeline-api:local

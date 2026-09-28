@@ -42,5 +42,23 @@ class ApiHeapTest(unittest.TestCase):
         self.assertLessEqual(heap, 512, f"힙 상한 {heap:.0f} MiB 는 NFR-03 예산(512 MB) 안")
 
 
+class RuntimeToolsTest(unittest.TestCase):
+    """R-29: 실행 이미지에 쓰지 않는 패키지 관리자를 남기지 않는다(web·collector 의 HIGH 취약점 전부의 출처). 빌드한 이미지는 image_test.sh 가 본다."""
+
+    def test_web_runtime_drops_npm_corepack_yarn(self):
+        runtime = stages(DOCKERFILES["web"].read_text())[-1]
+        rm = " ".join(re.findall(r"(?m)^RUN\s+(.*)$", re.sub(r"\\\n", " ", runtime)))  # 줄 이음(\)을 합친 RUN 명령들
+        for path in ("/usr/local/lib/node_modules/npm", "/usr/local/lib/node_modules/corepack", "/usr/local/bin/npm",
+                     "/usr/local/bin/npx", "/usr/local/bin/corepack", "/usr/local/bin/yarn", "/usr/local/bin/yarnpkg", "/opt/yarn-"):
+            with self.subTest(path=path):
+                self.assertIn(path, rm)
+        self.assertNotRegex(runtime, r"(?m)^(RUN|CMD|ENTRYPOINT)[^\n]*\b(npm|npx|yarn|corepack)\s+(run|start|exec)\b", "실행 단계는 node 만 쓴다")
+
+    def test_collector_runtime_drops_pip(self):
+        runtime = stages(DOCKERFILES["collector"].read_text())[-1]
+        self.assertRegex(runtime, r"(?m)^RUN\s[^\n]*python -m pip uninstall -y pip")
+        self.assertLess(runtime.index("pip uninstall"), runtime.index("USER app"), "root 로 지운 뒤 비root 로 내려간다")
+
+
 if __name__ == "__main__":
     unittest.main()
