@@ -16,6 +16,7 @@ from wakeline_collector.models import ProviderResult
 LIST_URL = "https://apihub.kma.go.kr/api/typ01/url/rdr_cmp_file_list.php"
 FILE_URL = "https://apihub.kma.go.kr/api/typ04/url/rdr_cmp_file.php"
 KST = timedelta(hours=9)
+KMA_TOTAL_S = 40.0  # 요청 전체 상한(R-67) — 바이너리(약 1 MB) 실측 최대 25 s
 _LINE = re.compile(r"RDR_CMP_([A-Z]+)_[A-Z]+_(\d{12})\.bin\.gz")
 
 
@@ -40,7 +41,7 @@ class KmaRadarProvider:
         return bool(self._key)
 
     async def file_list(self, day_kst: str) -> ProviderResult:
-        resp = await self._http.get(LIST_URL, params={"cmp": self.cmp, "tm": day_kst, "authKey": self._key})
+        resp = await self._http.get(LIST_URL, params={"cmp": self.cmp, "tm": day_kst, "authKey": self._key}, total_s=KMA_TOTAL_S)
         text = resp.body.decode("euc-kr", "replace")
         if text.lstrip().startswith("{"):
             raise ValueError(f"unexpected list response: {text[:120]}")
@@ -49,7 +50,9 @@ class KmaRadarProvider:
         )
 
     async def binary(self, tm: str) -> ProviderResult:
-        resp = await self._http.get(FILE_URL, params={"tm": tm, "data": "bin", "cmp": self.cmp, "authKey": self._key})
+        resp = await self._http.get(
+            FILE_URL, params={"tm": tm, "data": "bin", "cmp": self.cmp, "authKey": self._key}, total_s=KMA_TOTAL_S
+        )
         if not resp.body.startswith(b"\x1f\x8b"):
             raise ValueError(f"not gzip: {resp.body[:80].decode('euc-kr', 'replace')!r}")
         return ProviderResult(

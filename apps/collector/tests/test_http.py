@@ -91,6 +91,42 @@ async def test_response_size_cap(monkeypatch):
     await c.aclose()
 
 
+class _Trickle(httpx.AsyncByteStream):
+    """8 s 읽기 시간 초과에 걸리지 않을 만큼 조금씩 끝없이 보내는 응답(리뷰 R-67 조건)."""
+
+    async def __aiter__(self):
+        import asyncio
+
+        while True:
+            yield b"x"
+            await asyncio.sleep(0.05)
+
+
+async def test_r67_whole_request_has_a_total_time_limit_and_counts_as_sent():
+    """리뷰 R-67: httpx 시간 초과는 읽기 한 번마다라서, 조금씩 계속 보내는 공급자에 호출 하나가 몇 분씩 걸릴 수 있었다."""
+    import asyncio
+    import time
+
+    c = _client()
+    with respx.mock:
+        respx.get("https://api.rainviewer.com/public/weather-maps.json").mock(return_value=httpx.Response(200, stream=_Trickle()))
+        t0 = time.monotonic()
+        with pytest.raises(httpmod.RequestTimedOut) as e:
+            await asyncio.wait_for(c.get("https://api.rainviewer.com/public/weather-maps.json", total_s=0.5), 5)
+    assert time.monotonic() - t0 < 2.0
+    assert not isinstance(e.value, httpmod.NOT_SENT_ERRORS)  # 보낸 호출로 센다(예산을 되돌리지 않는다)
+    assert isinstance(e.value, httpx.TimeoutException)  # 기존 오류 처리(httpx.HTTPError)를 그대로 탄다
+    assert c.limiter.granted == 1
+    await c.aclose()
+
+
+async def test_r67_callers_get_their_own_total_limits():
+    from wakeline_collector.providers import kma_radar, readsb
+
+    assert httpmod.DEFAULT_TOTAL_S >= httpmod.settings.http_timeout_s
+    assert readsb.REGION_TOTAL_S <= 15 and kma_radar.KMA_TOTAL_S >= 25  # 관심 지역 15 s · KMA 실측 최대 25 s
+
+
 async def test_post_form_is_limited_too():
     c = _client()
     with respx.mock:

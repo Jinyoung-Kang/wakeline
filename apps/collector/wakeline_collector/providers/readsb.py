@@ -21,6 +21,7 @@ from wakeline_collector.models import ProviderResult
 from wakeline_collector.ratelimit import PRIORITY_FIXED, PRIORITY_FOCUS, PRIORITY_HOT
 
 REGION_WAIT_S = 5.0  # 관심 지역(10 s 주기) 호출이 속도 상한을 기다리는 최대 시간
+REGION_TOTAL_S = 15.0  # 관심 지역 요청 전체 상한(R-67) — 넘으면 실패로 세고 폴백이 맡는다
 FOCUS_BATCH_MAX = 50
 HOT_RADIUS_MAX_NM = 250
 _HEX_RE = re.compile(r"^[0-9a-f]{6}$")
@@ -62,7 +63,7 @@ class ReadsbProvider:
 
     async def fetch_region(self, lat: float, lon: float, radius_nm: int) -> ProviderResult:
         url = self._tpl.format(lat=f"{lat:.4f}", lon=f"{lon:.4f}", radius=int(radius_nm))
-        resp = await self._http.get(url, priority=PRIORITY_FIXED, wait_s=REGION_WAIT_S)
+        resp = await self._http.get(url, priority=PRIORITY_FIXED, wait_s=REGION_WAIT_S, total_s=REGION_TOTAL_S)
         return _result(self.name, resp)
 
     async def fetch_global(self) -> ProviderResult:

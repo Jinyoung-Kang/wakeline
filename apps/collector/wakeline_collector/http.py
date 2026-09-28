@@ -3,10 +3,14 @@
 모든 외부 호출은 여기를 지나며, 호출 직전에 RateLimiter 허가(수집기 전체 + 호스트별 버킷, 우선순위)를 받는다.
 허가를 받은 뒤 보내기 직전에 호출자의 확인(before_send, 예: 운영자가 공급자를 껐는지)을 한 번 더 거친다 — 아니면 보내지 않는다(SendCancelled).
 429 응답은 그 호스트를 잠시 막는다(모든 호출자 공통) — Retry-After 가 있으면 따른다.
+시간 상한: httpx Timeout(읽기 8 s · 연결 4 s)은 단계마다라서, 조금씩 계속 보내는 응답은 끝나지 않을 수 있다. 그래서 보내기부터
+본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
+속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -18,6 +22,7 @@ from wakeline_collector.config import settings
 from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
+DEFAULT_TOTAL_S = 30.0  # 요청 전체(보내기 ~ 본문 끝) 기본 상한. 관심 지역·KMA 는 호출자가 따로 준다(R-67).
 
 ALLOWED_HOSTS = frozenset(
     {
@@ -43,6 +48,10 @@ class ResponseTooLarge(RuntimeError):
 
 class SendCancelled(RuntimeError):
     """보내기 직전 확인(before_send)이 거절했다 — 요청을 보내지 않았다."""
+
+
+class RequestTimedOut(httpx.TimeoutException):
+    """요청 전체 시간 상한(total_s)을 넘었다. 보낸 뒤일 수 있으므로 보낸 호출로 센다(NOT_SENT_ERRORS 에 넣지 않는다)."""
 
 
 class ProviderHttpError(RuntimeError):
@@ -105,16 +114,27 @@ class HttpClient:
         priority: int = PRIORITY_FIXED,
         wait_s: float = DEFAULT_WAIT_S,
         before_send: BeforeSend | None = None,
+        total_s: float = DEFAULT_TOTAL_S,
     ) -> FetchResponse:
         return await self._request(
-            "GET", url, priority=priority, wait_s=wait_s, before_send=before_send, headers=headers, params=params
+            "GET", url, priority=priority, wait_s=wait_s, before_send=before_send, total_s=total_s, headers=headers, params=params
         )
 
     async def post_form(self, url: str, data: dict[str, str]) -> FetchResponse:
-        return await self._request("POST", url, priority=PRIORITY_FIXED, wait_s=DEFAULT_WAIT_S, data=data)
+        return await self._request(
+            "POST", url, priority=PRIORITY_FIXED, wait_s=DEFAULT_WAIT_S, total_s=DEFAULT_TOTAL_S, data=data
+        )
 
     async def _request(
-        self, method: str, url: str, *, priority: int, wait_s: float, before_send: BeforeSend | None = None, **kw
+        self,
+        method: str,
+        url: str,
+        *,
+        priority: int,
+        wait_s: float,
+        total_s: float,
+        before_send: BeforeSend | None = None,
+        **kw,
     ) -> FetchResponse:
         host = urlparse(url).hostname or ""
         if host not in ALLOWED_HOSTS:
@@ -125,6 +145,19 @@ class HttpClient:
         if before_send is not None and not await before_send():  # 기다리는 사이 사정이 바뀌었으면 보내지 않는다
             raise SendCancelled(host)
         t0 = time.perf_counter()
+        try:
+            async with asyncio.timeout(total_s):
+                body, status, headers = await self._send(method, url, **kw)
+        except TimeoutError:
+            raise RequestTimedOut(f"{host}: no complete response within {total_s:.0f} s") from None
+        latency = int((time.perf_counter() - t0) * 1000)
+        if status == 429:
+            self.limiter.penalize(host, _retry_after_s(headers))
+        if status >= 400:
+            raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency)
+        return FetchResponse(body, status, headers, datetime.now(UTC), latency)
+
+    async def _send(self, method: str, url: str, **kw) -> tuple[bytes, int, dict[str, str]]:
         async with self._client.stream(method, url, **kw) as resp:
             chunks: list[bytes] = []
             size = 0
@@ -133,11 +166,4 @@ class HttpClient:
                 if size > settings.http_max_bytes:
                     raise ResponseTooLarge(f"{size} bytes > {settings.http_max_bytes}")
                 chunks.append(chunk)
-            body = b"".join(chunks)
-            latency = int((time.perf_counter() - t0) * 1000)
-            headers = {k.lower(): v for k, v in resp.headers.items()}
-            if resp.status_code == 429:
-                self.limiter.penalize(host, _retry_after_s(headers))
-            if resp.status_code >= 400:
-                raise ProviderHttpError(resp.status_code, body[:200].decode("utf-8", "replace"), headers, latency)
-            return FetchResponse(body, resp.status_code, headers, datetime.now(UTC), latency)
+            return b"".join(chunks), resp.status_code, {k.lower(): v for k, v in resp.headers.items()}
