@@ -43,7 +43,7 @@ from wakeline_collector.providers.readsb import ADSB_FI_HOST, AdsbFiDemandProvid
 from wakeline_collector.publisher import STREAM_AIRCRAFT, Publisher
 from wakeline_collector.ratelimit import default_limiter
 from wakeline_collector.raw_store import RawStore
-from wakeline_collector.redis_retry import short_retry
+from wakeline_collector.redis_retry import REDIS_SOCKET_TIMEOUT_S, short_retry
 from wakeline_collector.runtime_settings import RuntimeSettings
 from wakeline_collector.scheduler import run_periodic
 from wakeline_collector.status import ProviderStatus
@@ -92,10 +92,10 @@ def make_redis(s: Settings) -> Redis:
         username=s.redis_username or None,
         password=s.redis_password or None,
         decode_responses=True,
-        socket_timeout=5,
-        socket_connect_timeout=5,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_S,
+        socket_connect_timeout=REDIS_SOCKET_TIMEOUT_S,
         health_check_interval=30,
-        retry=short_retry(),  # R-43: 기본 10회 재시도 대신 2회
+        retry=short_retry(),  # R-43: 연결 오류만 2회 재시도(응답 없음은 socket_timeout 한 번으로 포기)
     )
 
 

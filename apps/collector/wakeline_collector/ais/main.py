@@ -39,13 +39,13 @@ from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.sink import AisSink
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.masking import install_log_masking, register_secrets
-from wakeline_collector.redis_retry import short_retry
+from wakeline_collector.redis_retry import REDIS_SOCKET_TIMEOUT_S, short_retry
 
 log = logging.getLogger("ais.main")
 
 SOURCE_STOP_S = 4.0  # 수신 연결 닫기(client close_timeout 3 s) 상한
 SINK_STOP_S = 1.0  # 발행 루프가 stop 을 보고 빠져나오는 상한(틱 ≤ 1 s)
-FINAL_S = 3.0  # 마지막 발행·상태 쓰기 상한(Redis socket_timeout 5 s 보다 짧게 끊는다)
+FINAL_S = 3.0  # 마지막 발행·상태 쓰기 상한(Redis 가 답하지 않으면 명령마다 socket_timeout 2 s — 합계를 여기서 끊는다)
 DRAIN_LIMIT = 200_000
 
 
@@ -56,10 +56,10 @@ def make_redis(s: AisSettings) -> Redis:
         username=s.redis_username or None,
         password=s.redis_password.get_secret_value() or None,
         decode_responses=True,
-        socket_timeout=5,
-        socket_connect_timeout=5,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_S,
+        socket_connect_timeout=REDIS_SOCKET_TIMEOUT_S,
         health_check_interval=30,
-        retry=short_retry(),  # R-43: 기본 10회 재시도 대신 2회
+        retry=short_retry(),  # R-43: 연결 오류만 2회 재시도(응답 없음은 socket_timeout 한 번으로 포기)
     )
 
 

@@ -38,6 +38,84 @@ async def test_r43_redis_clients_use_a_short_explicit_retry():
         assert time.monotonic() - t0 < 1.5  # 연결 거부(로컬 닫힌 포트)는 1 s 안팎에 포기한다
 
 
+async def _silent_redis():
+    """연결은 받지만 한 바이트도 답하지 않는 서버(멈춘 Redis). 반환: (server, port)."""
+    import asyncio
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while await reader.read(65536):
+                pass
+        except (ConnectionError, asyncio.CancelledError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1]
+
+
+async def test_r43_calls_give_up_within_seconds_when_redis_accepts_but_never_answers():
+    """리뷰 R-43 후속: 연결은 받지만 답하지 않는 Redis 에 발행 1회가 46 s 걸렸다 — redis-py 가 재시도를 두 겹(연결 핸드셰이크 3회 ×
+    명령 3회)으로 걸고 매번 socket_timeout 5 s 를 기다렸다. 발행은 그동안 락을 쥐어 모든 작업이 뒤에 줄을 섰다.
+    발행(로컬 큐로)·임대 읽기(마지막 임대로)·예산 예약(fail open, 사용량 모름)·ais 발행과 상태 쓰기가 몇 초 안에 포기해야 한다."""
+    import asyncio
+    import time
+
+    from redis.exceptions import RedisError
+
+    from wakeline_collector.ais.book import ShipBook
+    from wakeline_collector.ais.config import AisSettings
+    from wakeline_collector.ais.main import make_redis as make_ais_redis
+    from wakeline_collector.ais.queue import RawQueue
+    from wakeline_collector.ais.shards import ShardSet
+    from wakeline_collector.ais.sink import AisSink
+    from wakeline_collector.ais.worker import Worker
+    from wakeline_collector.budget import UNKNOWN, Budget
+    from wakeline_collector.demand import Demand, DemandPoller
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, Publisher
+
+    server, port = await _silent_redis()
+    r = make_redis(Settings(redis_host="127.0.0.1", redis_port=port))
+    ais_r = make_ais_redis(AisSettings(redis_host="127.0.0.1", redis_port=port))  # type: ignore[call-arg]
+    q, book, shards = RawQueue(10), ShipBook("aisstream"), ShardSet("aisstream")
+    shards.add(None)
+    sink = AisSink(ais_r, book=book, shards=shards, worker=Worker(q, book), queue=q, provider="aisstream", raw_ref="-")
+    publisher = Publisher(r)
+
+    async def timed(coro):
+        t0 = time.monotonic()
+        try:
+            res = await asyncio.wait_for(coro, 15)
+        except Exception as e:  # noqa: BLE001
+            res = e
+        return res, time.monotonic() - t0
+
+    try:
+        results = await asyncio.gather(
+            timed(publisher.publish(STREAM_AIRCRAFT, {"a": "1"})),
+            timed(DemandPoller(r).poll()),
+            timed(Budget(r, {"adsb_lol": 0}).reserve("adsb_lol")),
+            timed(sink.write_status()),
+            timed(sink._xadd({"a": "1"})),
+        )
+    finally:
+        await r.aclose()
+        await ais_r.aclose()
+        server.close()
+    took = {
+        name: round(t, 1)
+        for name, (_res, t) in zip(["publish", "poll", "reserve", "ais_status", "ais_xadd"], results, strict=True)
+    }
+    (sid, _), (demand, _), (reserved, _), (status_ok, _), (xadd_err, _) = results
+    assert max(took.values()) < 5, took
+    assert sid is None and publisher.queued == 1  # 로컬 큐에 보관
+    assert demand == Demand()  # 마지막 임대(없음)
+    assert reserved == (True, UNKNOWN)  # fail open, 사용량 모름
+    assert status_ok is False and sink.status_errors == 1
+    assert isinstance(xadd_err, RedisError)  # flush 가 발행 실패로 처리하는 오류
+
+
 def test_every_budgeted_provider_is_snapshotted():
     limits = build_limits(Settings())
     assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb"} <= set(limits)
