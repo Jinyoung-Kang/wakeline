@@ -224,15 +224,24 @@
 - **증상** `status.radar.stale = false` 인데 `fetched_at` 이 자리표시 1970-01-01(ws-contract 레인이 fixture 에서 발견).
 - **원인** 지연 계산이 자리표시에 −1 을 돌려주고, SIGMET 에만 있던 "받은 적 없음 = 오래됨" 조건이 레이더에는 없었다. **수정** 같은 규칙. **회귀** `StatusServiceTest.radarNeverFetchedIsStale`(수정 전 실패) · WS 표본 다시 만듦.
 
-## 자동 검사 현황(2026-09-28, 리뷰 v1 뒤)
+## #35 같은 오류가 두 번 났는데 로그에는 1번 — 억제 수가 다음 항목을 영영 기다림
+- **증상** 격리 스택에서 같은 브라우저 오류를 10 s 안에 두 번 보냈더니 `/logs` 묶음이 "항목 1 · 억제 합 0". 운영 pipeline 의 `log_suppressed` 합계에만 보였다.
+- **원인** 두 로그 싱크(api Java · collector/ais Python)는 같은 지문을 10 s 에 1건만 싣고, 그사이 억제한 수를 그 지문의 **다음** 항목에 싣는다. 다음 항목이 오지 않으면 그 수는 프로세스 메모리에만 남았다.
+- **수정**(계약 v5 §G9 · ADR-018 개정) 창이 닫힐 때 억제한 것이 k 건이면 마지막 억제 발생을 suppressed = k − 1 로 싣는다(기존 1 s 전송 주기에서, 새 스레드 없음). 종료 때도 남은 것을 먼저 싣는다.
+  지문 표가 가득 차 억제 수를 가진 지문을 잊어야 하면 그 수를 dropped 로 센다(조용히 잃지 않음). api 는 logback 이 나중에 읽는 스레드 이름·MDC(요청 id)를 앱 스레드에서 고정한다.
+- **회귀** 두 언어가 같은 파일 `schemas/vectors/log-suppression.v1.json`(11 사례 · 87 단계)을 재생하고, 무작위 300 가지 순서에서 "항목 수 + 억제 합 = 발생 수"를 확인. `LogsIT`(같은 경고 두 번 → 수정 전 "Expected size: 2 but was: 1").
+  레인 리뷰가 찾은 5건(전송 스레드의 Error 로 묶음을 잃음 · 같은 주기의 순서가 언어마다 다름 · 예외 문구를 늦게 읽음 · 벽시계 사용 · 계약 검사가 형식 오류에 멈춤)도 시험 먼저 고쳤다.
+
+## 자동 검사 현황(2026-09-29 KST, 계약 v5 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 746 통과(6 건너뜀 — 실 Redis 시험, CI 가 버리는 Redis 로 실행) · 커버리지 97 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 534 · JaCoCo LINE 95.9 % · BRANCH 83.6 %(하한 95 / 80) |
-| web 단위 | Vitest | 378 · 커버리지(소스 전체) Lines 78.4 % · Branches 65.7 % |
-| 언어 간 스키마 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture 검사 |
-| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 27종 |
-| 인프라 정책 | infra/tests(unittest) | 113 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 | 35 · 219 · 36 · 48 · 27 |
+| collector · ais 단위·통합 | pytest | 902 통과(10 건너뜀 — 실 Redis · 실 PostgreSQL 시험, CI 가 버리는 컨테이너로 실행) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 685 · JaCoCo LINE 96.3 % · BRANCH 84.6 %(하한 95 / 80) |
+| web 단위 | Vitest | 678 · 커버리지(소스 전체) Lines 87.4 % · Branches 75.2 % |
+| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 27 · 클라이언트 15) + 가림 · 억제 벡터 |
+| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 31종 |
+| 인프라 정책 | infra/tests(unittest) | 117 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 259 · 36 · 48 · 27 · 8 |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
 | 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 243건 · 14종 통과(#32) |
