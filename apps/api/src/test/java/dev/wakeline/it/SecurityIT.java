@@ -326,6 +326,29 @@ class SecurityIT extends IntegrationTest {
                 .query(String.class).single()).isEqualTo("locked");
     }
 
+    /**
+     * R-55: 아이디 칸에 비밀번호를 잘못 치는 흔한 실수 — 지울 수 없는 감사 로그(INSERT·SELECT 권한만)에 그 원문이 남으면 안 된다.
+     * 없는 계정의 실패는 'unknown account' 로만 기록하고(사유는 남긴다), 있는 계정은 이름을 그대로 남긴다.
+     */
+    @Test
+    void failedLoginForAnUnknownAccountDoesNotStoreWhatWasTyped() {
+        String typed = "Pw-typed-into-username-" + System.nanoTime();
+        Res r = new Browser().login(typed, "whatever-password");
+        assertProblem(r, 401, "BAD_CREDENTIALS", "/api/v1/ops/session");
+        assertThat(count("SELECT count(*) FROM audit_log WHERE target LIKE ? OR before::text LIKE ? OR after::text LIKE ?",
+                "%" + typed + "%", "%" + typed + "%", "%" + typed + "%")).as("typed name stored anywhere in audit_log").isZero();
+        var row = db.sql("SELECT target, after->>'reason' AS reason FROM audit_log WHERE action = 'LOGIN_FAILED' AND request_id = :rid")
+                .param("rid", r.header("X-Request-Id")).query().singleRow();
+        assertThat(row.get("target")).isEqualTo("unknown account");
+        assertThat(row.get("reason")).isEqualTo("unknown_user");
+
+        users.upsert("it-known", PW);
+        Res known = new Browser().login("it-known", "wrong-password-1");
+        assertThat(known.status()).isEqualTo(401);
+        assertThat(db.sql("SELECT target FROM audit_log WHERE action = 'LOGIN_FAILED' AND request_id = :rid")
+                .param("rid", known.header("X-Request-Id")).query(String.class).single()).isEqualTo("it-known");
+    }
+
     @Test
     void parallelWrongPasswordsCannotBypassTheLockout() throws Exception {
         users.upsert("it-par", PW);

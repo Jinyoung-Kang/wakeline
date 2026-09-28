@@ -81,6 +81,18 @@ class OpsSessionControllerTest {
         assertThat(audited).containsExactly("LOGIN_FAILED:admin", "ACCOUNT_LOCKED:admin");
     }
 
+    /** R-55: 없는 계정이면 입력한 아이디 원문 대신 'unknown account'. 잠긴 계정은 있는 계정이라 이름을 남긴다. */
+    @Test
+    void unknownAccountFailureDoesNotRecordTheTypedName() throws Exception {
+        mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.fail(OpsUserService.Failure.UNKNOWN_USER, false))
+                .perform(post("/api/v1/ops/session").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isUnauthorized());
+        mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.fail(OpsUserService.Failure.LOCKED, false))
+                .perform(post("/api/v1/ops/session").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isUnauthorized());
+        assertThat(audited).containsExactly("LOGIN_FAILED:unknown account", "LOGIN_FAILED:admin");
+    }
+
     @Test
     void successfulLoginIsAudited() throws Exception {
         mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(1, "admin", "OPS")))

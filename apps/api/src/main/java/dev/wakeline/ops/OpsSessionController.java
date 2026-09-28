@@ -61,6 +61,8 @@ public class OpsSessionController {
 
     /** IP당 분당 로그인 시도 상한. */
     static final int LOGIN_LIMIT_PER_MIN = 10;
+    /** 없는 계정으로 실패한 로그인의 감사 target(R-55, ADR-017 §3 — 입력 원문은 저장하지 않는다). */
+    static final String UNKNOWN_ACCOUNT = "unknown account";
 
     public record Login(@NotBlank @Size(max = 64) String username, @NotBlank @Size(min = 8, max = 256) String password) {}
 
@@ -80,7 +82,10 @@ public class OpsSessionController {
         if (hit[0] > LOGIN_LIMIT_PER_MIN) throw Problem.tooManyRequests("too many login attempts", hit[1]);
         var result = users.authenticate(body.username(), body.password());
         if (result.user().isEmpty()) {
-            audit.record(req, null, "LOGIN_FAILED", body.username(), null, Map.of("reason", result.failure().name().toLowerCase(java.util.Locale.ROOT)));
+            // 없는 계정이면 입력한 이름을 남기지 않는다(R-55): 아이디 칸에 잘못 친 비밀번호가 지울 수 없는 감사 로그에 남는다.
+            // 있는 계정(틀린 비밀번호·잠김)은 계정 이름이 곧 입력값이다(정확히 일치해야 찾는다).
+            String target = result.failure() == OpsUserService.Failure.UNKNOWN_USER ? UNKNOWN_ACCOUNT : body.username();
+            audit.record(req, null, "LOGIN_FAILED", target, null, Map.of("reason", result.failure().name().toLowerCase(java.util.Locale.ROOT)));
             if (result.lockedNow())
                 audit.record(req, null, "ACCOUNT_LOCKED", body.username(), null, Map.of("minutes", OpsUserService.LOCK_MINUTES, "after_failures", OpsUserService.MAX_FAILED));
             throw new Problem(HttpStatus.UNAUTHORIZED, "BAD_CREDENTIALS", "unauthorized", "invalid credentials");
