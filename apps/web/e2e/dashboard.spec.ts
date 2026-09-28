@@ -92,8 +92,12 @@ test("aircraft search: '/' focuses, Enter selects and opens the card (keyboard o
 test("legend is collapsible and describes the map encodings", async ({ page }) => {
   await page.goto("/");
   const toggle = page.getByTestId("legend-toggle");
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   const legend = page.getByTestId("map-legend");
+  // 1600 px 보다 좁은 화면에서는 처음에 접혀 있다(R-31) — 이 시험의 기본 창은 그보다 좁다
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(legend).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   for (const t of ["FL250", "30분 안에 만료", "LIFR", "METAR 오래됨", "추정"]) await expect(legend).toContainText(t);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");

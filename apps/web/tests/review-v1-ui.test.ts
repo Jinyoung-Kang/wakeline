@@ -18,7 +18,8 @@ import { LayerPanel } from "@/components/LayerPanel";
 import * as prefs from "@/lib/prefs";
 import { addBaseLayers } from "@/lib/maplayers";
 import * as sigmetLib from "@/lib/sigmet";
-import type { SigmetCollection } from "@/lib/types";
+import type { KrRadar, SigmetCollection } from "@/lib/types";
+import { StatusBar } from "@/components/StatusBar";
 import * as replayLib from "@/lib/replay";
 import * as opsLib from "@/lib/ops";
 import * as pipelineView from "@/components/OpsPipeline";
@@ -357,5 +358,28 @@ describe("R-30 structure for assistive technology", () => {
     const html = renderToStaticMarkup(createElement(SidePanelView, { panel: "alerts", hex: null, sigmet: null, airport: null }));
     const row = html.slice(html.indexOf('data-testid="alert-toggle"'), html.indexOf("</button>", html.indexOf('data-testid="alert-toggle"')));
     expect(row.match(/<span class="sr-only">, <\/span>/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("R-31 legend and status bar on common laptop screens", () => {
+  it("the legend starts closed below 1600 px (1280x720 and 1440x900 lost 23-27 % of the map to it)", () => {
+    expect(prefs.legendDefaultOpen(1280)).toBe(false);
+    expect(prefs.legendDefaultOpen(1440)).toBe(false);
+    expect(prefs.legendDefaultOpen(1600)).toBe(true);
+  });
+  it("an opened legend stops above the on-map credit line instead of covering it", () => {
+    const html = renderToStaticMarkup(createElement(LayerPanel));
+    expect(html).toMatch(/class="pointer-events-none absolute[^"]*bottom-16/);
+    expect(html).not.toMatch(/class="pointer-events-none absolute[^"]*bottom-3[ "]/);
+  });
+  it("the KMA STALE badge sits at the front of the status bar, not past the scroll edge", () => {
+    const kr: KrRadar = {
+      available: true, latest_tm: "202609280130", georeferenced: true, coordinates: null, legend: null, frames: [{ tm: "202609280130", obs_tm: "202609280130", fetched_at: "x", echo_cells: 1, url: "/u" }],
+      attribution: "기상청", meta: { fetched_at: "2026-09-27T16:33:40Z", stale: true },
+    };
+    setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr });
+    const html = renderToStaticMarkup(createElement(StatusBar));
+    expect(html.indexOf('data-testid="kr-radar-stale"')).toBeGreaterThan(-1);
+    expect(html.indexOf('data-testid="kr-radar-stale"')).toBeLessThan(html.indexOf('data-testid="aircraft-count"'));
   });
 });

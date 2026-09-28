@@ -27,8 +27,11 @@ export function loadLayers(kv: KV | null = storage()): Partial<Layers> | null {
   } catch { return null; }
 }
 
-/** 범례를 처음(저장된 선택이 없을 때) 펼칠 최소 화면 폭(px). 좁은 화면에서는 범례가 지도 대부분을 덮는다(R-39) */
-export const LEGEND_OPEN_MIN_WIDTH = 900;
+/**
+ * 범례를 처음(저장된 선택이 없을 때) 펼칠 최소 화면 폭(px). 좁은 화면에서는 범례가 지도 대부분을 덮고(R-39),
+ * 1280×720·1440×900 노트북에서도 지도의 23–27 % 를 가린다(R-31) — 그보다 넓을 때만 처음부터 펼친다.
+ */
+export const LEGEND_OPEN_MIN_WIDTH = 1600;
 export function legendDefaultOpen(viewportWidth: number): boolean {
   return Number.isFinite(viewportWidth) && viewportWidth >= LEGEND_OPEN_MIN_WIDTH;
 }

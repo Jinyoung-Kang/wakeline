@@ -12,6 +12,7 @@ import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, REGION_STALE_S, RX_FRESH_
  * SIGMET·레이더 경과는 서버 시각끼리의 차이라 서버 기준 현재 시각으로 계산한다(WS-3).
  * AIS 구역이 여럿이면(계약 v4 §D) 일부 구역만 끊기거나 공백일 때 "n/m 구역"으로 말한다(전체 끊김처럼 보이지 않게).
  * 출처 표기는 가로 스크롤되는 이 줄이 아니라 모든 화면 하단의 고정 줄(AttributionFooter)에 있다(FR-20).
+ * KMA STALE 처럼 따로 붙는 경고 배지는 연결 상태 바로 뒤에 둔다(R-31) — 1280 px 에서도 이 줄은 가로로 스크롤된다.
  */
 export function StatusBar() {
   // useSyncExternalStore 의 getSnapshot 은 안정된 참조를 돌려줘야 한다 — 객체를 새로 만들지 않고 스토어 객체 자체를 선택한다.
@@ -34,6 +35,8 @@ export function StatusBar() {
         WS {s.conn}{silent ? " · 수신 없음" : ""}{s.conn !== "open" && s.reconnectAttempt > 0 ? ` · retry ${s.reconnectAttempt}` : ""}
       </span>
       {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
+      {/* 경고 배지는 앞쪽에 — 가로 스크롤 끝으로 밀려 보이지 않게 두지 않는다(R-31) */}
+      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더 수집이 ${KR_RADAR_STALE_S / 60}분 넘게 갱신되지 않음(마지막 수집 ${fmtIso(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
       <span className="mono" data-testid="aircraft-count"
         title={s.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다"}>
         <span className="label mr-1">aircraft</span>{s.aircraftCount ?? "—"}
@@ -50,7 +53,6 @@ export function StatusBar() {
       {gap ? <span className={`badge normal-case! ${gap.open && !gap.partial ? "bad" : "warn"}`} data-testid="ais-gap-badge" data-partial={gap.partial ? "true" : undefined} title={gap.title}>{gap.text}</span> : null}
       <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet.active ?? "—"} active · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
       <span className="mono text-fg-2"><span className="label mr-1">radar</span>{s.radar?.past.length ?? "—"} frames · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
-      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더 수집이 ${KR_RADAR_STALE_S / 60}분 넘게 갱신되지 않음(마지막 수집 ${fmtIso(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
       <span className="mono text-fg-3"><span className="label mr-1">engine</span>{s.status?.engine.index_polygons ?? "—"} polys · {s.status?.engine.last_cycle_ms ?? "—"} ms</span>
       <span className="mono text-fg-3">v{s.snapshotVersion}</span>
     </div>

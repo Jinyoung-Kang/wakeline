@@ -45,6 +45,9 @@ test("ships layer: fixture ships at zoom ≥ 7, a count grid at low zoom, and th
   const chip = page.getByTestId("ships-chip");
   await expect(chip).toHaveAttribute("data-mode", "points", { timeout: 30_000 });
   await expect(chip).toContainText(/선박 [1-9][\d,]*척 · 화면 안/);
+  // 범례는 1600 px 보다 좁은 창에서 처음에 접혀 있다(R-31) — 펼쳐서 확인
+  const legendToggle = page.getByTestId("legend-toggle");
+  if ((await legendToggle.getAttribute("aria-expanded")) !== "true") await legendToggle.click();
   await expect(page.getByTestId("map-legend")).toContainText("선박 · 선종");
   // 줌 4 미만으로 축소하면 서버가 격자(칸별 선박 수)로 바꿔 보낸다(계약 v4 §C — 줌 4–6 은 화면 안 1,500척 이하면 개별)
   await page.evaluate(() => { location.hash = "#3/32/128"; });

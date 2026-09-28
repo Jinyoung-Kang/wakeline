@@ -39,7 +39,8 @@ export function LayerPanel() {
     try { window.localStorage.setItem(LEGEND_KEY, next ? "1" : "0"); } catch { /* 저장소 없음 */ }
   };
   return (
-    <div className="pointer-events-none absolute top-3 right-3 bottom-3 left-12 z-10 flex flex-col items-end gap-1">
+    // bottom-16: 펼친 범례가 지도 오른쪽 아래 출처 표기(AttributionControl)를 가리지 않게(R-31)
+    <div className="pointer-events-none absolute top-3 right-3 bottom-16 left-12 z-10 flex flex-col items-end gap-1">
       <div className="pointer-events-auto flex flex-wrap justify-end gap-1" data-testid="layer-panel" role="group" aria-label="지도 레이어">
         {ITEMS.map((i) => (
           <button key={i.k} className="btn" aria-pressed={layers[i.k]} onClick={() => toggle(i.k)} data-testid={`layer-${i.k}`}>{i.label}</button>
