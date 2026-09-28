@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
-import shlex
 import uuid
 
 import pytest
+from acl_rules import service_acl_rules
 from redis.asyncio import Redis
 from redis.exceptions import NoPermissionError
 from test_ais_helpers import ROOT, decode, validator
@@ -28,15 +27,8 @@ pytestmark = pytest.mark.skipif(not URL, reason="WAKELINE_TEST_REDIS_URL not set
 
 
 def ais_rules() -> list[str]:
-    """infra/redis/start.sh 에서 wakeline_ais 규칙(AIS_KEYS · COMMON · AIS_DENY=COLLECTOR_DENY)을 그대로 읽는다."""
-    text = (ROOT / "infra" / "redis" / "start.sh").read_text()
-
-    def var(name: str) -> str:
-        m = re.search(rf"^{name}=['\"]([^'\"]*)['\"]", text, re.M)
-        assert m, name
-        return m.group(1)
-
-    return shlex.split(var("AIS_KEYS")) + shlex.split(var("COMMON")) + shlex.split(var("COLLECTOR_DENY"))
+    """infra/redis/start.sh 가 wakeline_ais 에게 주는 규칙 그대로(변수를 흉내 내지 않고 스크립트를 실행해 읽는다 — R-41)."""
+    return service_acl_rules("wakeline_ais")
 
 
 @pytest.fixture

@@ -161,6 +161,20 @@ class CiPolicyTest(unittest.TestCase):
         self.assertIn(("edge", "1"), rows)
         self.assertIn(("redis", "1"), rows)
 
+    # --- R-41: 수집기의 실제 Redis 대조 시험(예산 Lua·ACL)이 CI 에서 건너뛰어지지 않는다 ---
+    def test_collector_job_runs_real_redis_checks(self):
+        st = steps(self.jobs["collector"])
+        unit = next(i for i, s in enumerate(st) if "pytest" in s and "--cov-fail-under" in s)
+        real = [i for i, s in enumerate(st) if "bash infra/tests/collector_redis_test.sh" in s]
+        self.assertEqual(len(real), 1, "collector job 이 실제 Redis 대조 시험을 돌린다")
+        self.assertGreater(real[0], unit)
+        self.assertIn("working-directory: .", st[real[0]])
+        self.assertNotIn("continue-on-error", st[real[0]])
+        script = (ROOT / "infra" / "tests" / "collector_redis_test.sh").read_text()
+        self.assertIn("infra/compose.yml", script, "compose 에 고정된 redis 이미지로")
+        self.assertIn("tests/test_redis_integration.py tests/test_ais_redis_integration.py", script)
+        self.assertRegex(script, r"grep -q[^\n]*skipped", "건너뛴 시험이 있으면 실패")
+
     def test_e2e_runs_the_isolated_stack(self):
         self.assertIn("make e2e", self.jobs["e2e"])
         self.assertRegex(self.jobs["e2e"], r"needs:\s*\[[^\]]*infra[^\]]*\]")

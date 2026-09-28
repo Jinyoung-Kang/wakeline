@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 import orjson
 import pytest
+from acl_rules import service_acl_rules
 from redis.asyncio import Redis
 from redis.exceptions import NoPermissionError
 
@@ -28,23 +29,8 @@ from wakeline_collector.status import ProviderStatus
 URL = os.environ.get("WAKELINE_TEST_REDIS_URL", "")
 pytestmark = pytest.mark.skipif(not URL, reason="WAKELINE_TEST_REDIS_URL not set (opt-in real Redis check)")
 
-# infra/redis/start.sh 의 수집기 규칙 중 이 테스트가 쓰는 부분(수요 임대 읽기 전용 + 상태 쓰기 + 예산)
-COLLECTOR_RULES = [
-    "on",
-    "resetchannels",
-    "+@all",
-    "-@dangerous",
-    "%R~wakeline:demand:hot",
-    "%R~wakeline:demand:focus",
-    "%R~wakeline:demand:hot:meta",
-    "%R~wakeline:demand:focus:meta",
-    "~wakeline:demand:status",
-    "~wakeline:route:*",
-    "~wakeline:provider:*",
-    "~budget:*",
-    "-scan",
-    "-randomkey",
-]
+# infra/redis/start.sh 가 wakeline_collector 에게 주는 규칙 그대로(복사하지 않는다 — R-41)
+COLLECTOR_RULES = ["on", *service_acl_rules("wakeline_collector")]
 
 
 @pytest.fixture
@@ -70,13 +56,14 @@ async def collector(admin):
     await admin.execute_command("ACL", "DELUSER", user)
 
 
-async def test_budget_lua_headroom_on_real_redis(collector):
+async def test_budget_lua_headroom_on_real_redis(admin, collector):
     b = Budget(collector, {"itest": 5})
     got = [await b.reserve("itest", headroom=3) for _ in range(3)]
     assert got == [(True, 1), (True, 2), (False, 2)]
     assert await b.reserve("itest") == (True, 3)
     assert await b.usage("itest") == (3, 5)
-    assert 0 < await collector.ttl(day_key("itest")) <= 48 * 3600
+    # Lua 가 수집기 권한으로 EXPIRE 를 걸었는지(TTL 조회는 수집기가 쓰지 않는 명령이라 관리자로 본다)
+    assert 0 < await admin.ttl(day_key("itest")) <= 48 * 3600
 
 
 async def test_poller_reads_leases_and_collector_cannot_write_them(admin, collector):

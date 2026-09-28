@@ -33,6 +33,11 @@ jobs:
         run: uv run mypy wakeline_collector
       - name: unit tests + coverage floor
         run: uv run pytest -q --cov=wakeline_collector --cov-report=term-missing --cov-report=xml --cov-fail-under="$COLLECTOR_COV_MIN"
+      # R-41: 위 실행에서 건너뛴 실제 Redis 대조 5건(예산 Lua · 임대 읽기 · 노선 캐시 · start.sh ACL 아래 ais 프로세스)을
+      # compose 에 고정된 redis 이미지의 버리는 컨테이너로 돌린다 — 건너뛰면 실패.
+      - name: real Redis checks (budget Lua · leases · route cache · start.sh ACL — must not skip)
+        working-directory: .
+        run: bash infra/tests/collector_redis_test.sh
       - name: dependency audit (pip-audit — uv.lock 의 런타임 의존성, 해시 고정)
         run: |
           uv export --locked --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
