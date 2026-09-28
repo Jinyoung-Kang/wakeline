@@ -138,7 +138,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     }
 
     /** api 기본 Redis 연결(끊겨 있으면 곧바로 실패, 명령 한도 3 s — RedisConfig)로 XADD MAXLEN ~ 3000. */
-    static Writer redisWriter(StringRedisTemplate redis) {
+    public static Writer redisWriter(StringRedisTemplate redis) {
         XAddOptions opts = XAddOptions.maxlen(MAXLEN).approximateTrimming(true);
         return json -> redis.opsForStream().add(MapRecord.create(STREAM, Map.of("e", json)), opts);
     }
