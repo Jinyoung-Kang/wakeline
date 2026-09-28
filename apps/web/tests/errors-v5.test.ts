@@ -122,6 +122,8 @@ describe("v5-C7/C8 copy and download helpers", () => {
 
 describe("v5-C8 client error reporter", () => {
   const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
+  /** "앞부분…(잘림 N자)" → { kept: 남긴 글자 수(코드 포인트), n: N } · 표시가 없으면 null */
+  const cutParts = (s: string) => { const m = /…\(잘림 (\d+)자\)$/.exec(s); return m ? { kept: Array.from(s.slice(0, m.index)).length, n: Number(m[1]) } : null; };
   type Sent = { url: string; init: RequestInit & { keepalive?: boolean }; body: Record<string, unknown> };
   async function reporter(nowRef: { t: number }, fetchImpl?: (url: string, init: RequestInit) => Promise<Response>) {
     const { createReporter } = await import("@/lib/errorReport");
@@ -151,6 +153,72 @@ describe("v5-C8 client error reporter", () => {
     expect(k.component).toBeNull();
     expect(buildClientErrorBody({ message: "", stack: undefined }, "/" + "p".repeat(400), 0)).toMatchObject({ message: "(no message)", stack: "" });
     expect(buildClientErrorBody({ message: "x" }, "/" + "p".repeat(400), 0).path.length).toBeLessThanOrEqual(L.path);
+  });
+
+  it("8 KiB is counted in UTF-8 bytes: a multibyte stack keeps as much as fits (never dropped silently), N = characters removed from the original", async () => {
+    const { buildClientErrorBody } = await import("@/lib/errorReport");
+    // 메시지 2000자(6000 B) + 스택 8000자(24000 B) — 스택을 남는 만큼 남기고 표시를 단다(예전: 스택을 통째로 비우고 표시도 없었다)
+    const k = buildClientErrorBody({ message: "오류".repeat(1000), stack: "스택".repeat(4000), component: null }, "/", 0);
+    expect(bytes(k)).toBeLessThanOrEqual(8192);
+    expect(bytes(k)).toBeGreaterThan(8192 - 3); // 한 글자(3 B) 더 넣으면 넘친다 — 예산을 거의 다 쓴다
+    expect(k.message).toBe("오류".repeat(1000));
+    const p = cutParts(k.stack)!;
+    expect(p).not.toBeNull();
+    expect(p.kept).toBeGreaterThan(600);
+    expect(p.kept + p.n).toBe(8000);
+    // 한글 5000자 스택 + 짧은 메시지: 약 2,700자가 들어간다
+    const g = buildClientErrorBody({ message: "TypeError: x", stack: "가".repeat(5000) }, "/", 0);
+    const q = cutParts(g.stack)!;
+    expect(bytes(g)).toBeLessThanOrEqual(8192);
+    expect(q.kept).toBeGreaterThan(2600);
+    expect(q.kept + q.n).toBe(5000);
+  });
+
+  it("a field cut twice (field limit, then bytes) is cut once from the original: the marker counts every removed character", async () => {
+    const { buildClientErrorBody } = await import("@/lib/errorReport");
+    const b = buildClientErrorBody({ message: "m".repeat(2000), stack: "s".repeat(20_000) }, "/", 0);
+    expect(bytes(b)).toBeLessThanOrEqual(8192);
+    expect(b.message).toBe("m".repeat(2000));
+    const p = cutParts(b.stack)!;
+    expect(p.kept + p.n).toBe(20_000); // 예전: '…(잘림 1929자)' — 실제로는 13,929자를 뺐다
+    expect(p.kept).toBeGreaterThan(5000);
+  });
+
+  it("the message is never emptied (the api answers an empty message with 400): control characters (6 B each in JSON) are cut with a marker", async () => {
+    const { buildClientErrorBody, MESSAGE_MIN_KEEP } = await import("@/lib/errorReport");
+    const b = buildClientErrorBody({ message: "\u0001".repeat(2000), stack: "at x (y.js:1:2)" }, "/", 0);
+    expect(bytes(b)).toBeLessThanOrEqual(8192);
+    const p = cutParts(b.message)!;
+    expect(p).not.toBeNull();
+    expect(p.kept).toBeGreaterThanOrEqual(MESSAGE_MIN_KEEP);
+    expect(p.kept + p.n).toBe(2000);
+    expect(b.stack).toBe("at x (y.js:1:2)"); // 표시보다 짧은 스택은 잘라도 줄지 않는다 — 그대로 둔다
+    // 모든 칸이 상한 · 최악 바이트(제어 문자)여도 8 KiB 안이고, 메시지는 MESSAGE_MIN_KEEP 글자 이상
+    const worst = buildClientErrorBody({ message: "\u0001".repeat(3000), stack: "\u0002".repeat(9000), component: "\u0003".repeat(300) }, "/" + "\u0004".repeat(400), 0);
+    expect(bytes(worst)).toBeLessThanOrEqual(8192);
+    expect(cutParts(worst.message)!.kept).toBeGreaterThanOrEqual(MESSAGE_MIN_KEEP);
+    expect(cutParts(worst.message)!.kept + cutParts(worst.message)!.n).toBe(3000);
+    expect(cutParts(worst.stack)).toMatchObject({ n: 9000 - cutParts(worst.stack)!.kept });
+  });
+
+  it("characters are code points (the api counts code points): no lone surrogate is left, limits hold in code points", async () => {
+    const { buildClientErrorBody, cutText, CLIENT_ERROR_LIMITS: L } = await import("@/lib/errorReport");
+    const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+    const e = buildClientErrorBody({ message: "😀".repeat(2500), stack: "🚢".repeat(3000) }, "/", 0);
+    expect(bytes(e)).toBeLessThanOrEqual(8192);
+    for (const [f, n] of [["message", 2500], ["stack", 3000]] as const) {
+      expect(lone.test(e[f])).toBe(false);
+      const p = cutParts(e[f])!;
+      expect(p.kept + p.n).toBe(n);
+    }
+    expect(Array.from(e.message).length).toBeLessThanOrEqual(L.message);
+    const c = cutText("😀".repeat(10), 9);
+    expect(lone.test(c)).toBe(false);
+    expect(Array.from(c).length).toBeLessThanOrEqual(9);
+    expect(cutParts(c)).toEqual({ kept: 1, n: 9 });
+    // 상한이 표시보다 짧으면 표시만 — 말없이 잘라 버리지 않는다(이 파일의 상한 ≥ 200 에서는 일어나지 않음)
+    expect(cutText("x".repeat(50), 5)).toBe("…(잘림 50자)");
+    expect(cutText("abc", 5)).toBe("abc");
   });
 
   it("POSTs JSON with keepalive and no cookies; the same message is sent once per 60 s", async () => {
