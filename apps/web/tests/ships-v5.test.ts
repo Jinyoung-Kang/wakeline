@@ -18,6 +18,8 @@ import { useUi } from "@/lib/ui-store";
 import { MapLegendView } from "@/components/MapLegend";
 import { LayerPanelView } from "@/components/LayerPanel";
 import { ShipTable } from "@/components/ShipTable";
+import { SearchResultsView } from "@/components/AircraftSearch";
+import { normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, shipChoice } from "@/lib/search";
 import { MapChipsView } from "@/components/MapChips";
 import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
 
@@ -350,5 +352,82 @@ describe("sortable ship table (contract v5 §B3)", () => {
     expect(text(html)).toContain("3.2 kn5.9 km/h");
     expect(text(html)).toContain("어로 중 (7)");
     resetData();
+  });
+});
+
+// ---------------------------------------------------------------- §B3 통합 검색(항공기 · 선박)
+
+describe("unified search (contract v5 §B1/§B3)", () => {
+  const NOW = Date.parse("2026-09-28T03:00:00Z");
+  it("ship query: trim + upper case, 2–40 of [A-Z0-9 .-/] (same rule as the API, else no request)", () => {
+    expect(normalizeShipQuery("  ever given ")).toBe("EVER GIVEN");
+    expect(normalizeShipQuery("440123456")).toBe("440123456");
+    expect(normalizeShipQuery("imo9811000")).toBe("IMO9811000");
+    expect(normalizeShipQuery("A/B-C.D")).toBe("A/B-C.D");
+    expect(normalizeShipQuery("x")).toBeNull();
+    expect(normalizeShipQuery("A".repeat(41))).toBeNull();
+    expect(normalizeShipQuery("MV #1")).toBeNull();
+    expect(normalizeShipQuery("한글")).toBeNull();
+  });
+
+  it("parses /ships/search items: MMSI must be 9 digits, duplicates dropped, a ship that is not live never carries a position or speed", () => {
+    const hits = parseShipSearchResponse({
+      items: [
+        { mmsi: "440123456", name: "SYN ALPHA", call_sign: "D7AA", imo: 9811000, ship_type: 70, category: "cargo", live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3, seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:59:00Z" },
+        { mmsi: "440123456", name: "DUPLICATE" },
+        { mmsi: "12345", name: "BAD MMSI" },
+        { mmsi: "440999999", name: "SYN BRAVO", ship_type: null, category: "tanker", live: false, lat: 1, lon: 2, sog_kn: 5, last_position_at: "2026-09-28T01:00:00Z" },
+        { mmsi: "440888888", live: true, lat: 95, lon: 0 }, // 실시간이라는데 위치가 틀림 → 위치 모름
+      ],
+      meta: { q: "SYN", count: 3 },
+    });
+    expect(hits.map((h) => h.mmsi)).toEqual(["440123456", "440999999", "440888888"]);
+    expect(hits[0]).toEqual({
+      mmsi: "440123456", name: "SYN ALPHA", call_sign: "D7AA", imo: 9811000, ship_type: 70, category: "cargo", live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3,
+      seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:59:00Z",
+    });
+    expect(hits[1]).toMatchObject({ live: false, lat: null, lon: null, sog_kn: null, category: "tanker", seen_at: null });
+    expect(hits[2]).toMatchObject({ live: true, lat: null, lon: null });
+    expect(parseShipSearchResponse(null)).toEqual([]);
+  });
+
+  it("choosing a ship: live with a position → move the map; not live → card only, with the last stored time (no invented position)", () => {
+    const [live, stored] = parseShipSearchResponse({ items: [
+      { mmsi: "440123456", name: "SYN ALPHA", live: true, lat: 35.1, lon: 129.1, seen_at: "2026-09-28T02:59:00Z" },
+      { mmsi: "440999999", name: null, live: false, last_position_at: "2026-09-28T01:00:00Z" },
+    ] });
+    expect(shipChoice(live, null, NOW)).toEqual({ fly: [129.1, 35.1], message: "SYN ALPHA 선택 — 지도 이동" });
+    expect(shipChoice(stored, null, NOW)).toEqual({ fly: null, message: "MMSI 440999999 선택 — 실시간 아님 · 마지막 저장 01:00 UTC · 카드만(지도에 위치를 그리지 않음)" });
+    // 실시간 항목의 위치가 없으면 지도 목록 사본의 위치
+    expect(shipChoice({ ...live, lat: null, lon: null }, { lat: 34, lon: 128 }, NOW).fly).toEqual([128, 34]);
+    expect(shipChoice({ ...live, lat: null, lon: null }, null, NOW)).toEqual({ fly: null, message: "SYN ALPHA 선택 — 현재 위치 모름(지도 이동 안 함)" });
+  });
+
+  it("results view: two groups with titles and sources — aircraft list and the ship table; each group reports its own state", () => {
+    const aircraft = { hits: parseSearchResponse({ items: [{ hex: "71c081", callsign: "KAL081", alt_ft: 34000, lat: 36, lon: 127 }] }), state: "done" as const, msg: "1건" };
+    const ships = {
+      hits: parseShipSearchResponse({ items: [
+        { mmsi: "440123456", name: "SYN ALPHA", ship_type: 70, live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3, seen_at: "2026-09-28T02:59:00Z" },
+        { mmsi: "440999999", name: "SYN BRAVO", ship_type: 80, live: false, last_position_at: "2026-09-28T01:00:00Z" },
+      ] }),
+      state: "done" as const, msg: "2건",
+    };
+    const props = { uid: "s", aircraft, ships, active: 1, now: NOW, shipSort: null, onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {} };
+    const html = renderToStaticMarkup(createElement(SearchResultsView, props));
+    const t = text(html);
+    expect(t).toContain("항공기 1건");
+    expect(t).toContain("출처: 실시간 스냅샷(live) · DB 과거 기록(db)");
+    expect(t).toContain("선박 2건");
+    expect(t).toContain("출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)");
+    expect(html).toContain('data-testid="aircraft-search-item"');
+    expect(html.match(/data-testid="ship-search-item"/g)).toHaveLength(2);
+    expect(html).toMatch(/data-mmsi="440123456"[^>]*>.*?12\.3 kn/);
+    expect(t).toContain("실시간 아님");
+    expect(html).toMatch(/class="[^"]*bg-\[#1c2a3f\][^"]*"[^>]*data-testid="ship-search-item" data-mmsi="440123456"/); // 키보드 활성(항공기 1건 다음)
+    const failed = renderToStaticMarkup(createElement(SearchResultsView, { ...props, ships: { hits: [], state: "error" as const, msg: "선박 검색 실패 (HTTP 404)" } }));
+    expect(text(failed)).toContain("선박 검색 실패 (HTTP 404)");
+    expect(failed).toContain('data-testid="aircraft-search-item"'); // 항공기 결과는 그대로
+    const skipped = renderToStaticMarkup(createElement(SearchResultsView, { ...props, aircraft: { hits: [], state: "idle" as const, msg: "" } }));
+    expect(text(skipped)).toContain("항공기 검색 안 함 — 호출부호·hex·등록번호는 영문·숫자 2–10자");
   });
 });

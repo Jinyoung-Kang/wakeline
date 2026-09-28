@@ -19,8 +19,13 @@ const COLS: { key: ShipSortKey; label: string; title: string; className?: string
  * 줄을 누르면(또는 선명 단추에서 Enter) onPick. 실시간이 아닌 선박은 경과 칸에 "실시간 아님"과 마지막 저장 시각을 적는다.
  * 선명 등은 외부 문자열 — React 텍스트로만 넣는다.
  */
-export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi }: {
-  rows: readonly ShipRow[]; now: number; sort: ShipSort; onSort: (k: ShipSortKey) => void; onPick: (r: ShipRow) => void; testId: string; activeMmsi?: string | null;
+export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi, rowId, onHover }: {
+  rows: readonly ShipRow[]; now: number; sort: ShipSort | null; onSort: (k: ShipSortKey) => void; onPick: (r: ShipRow) => void; testId: string;
+  /** 키보드 활성 줄(검색 결과) */
+  activeMmsi?: string | null;
+  /** 줄 id(검색 입력의 aria-activedescendant) */
+  rowId?: (mmsi: string) => string;
+  onHover?: (mmsi: string) => void;
 }) {
   return (
     <table className="table-fixed text-[11px]" data-testid={`${testId}-table`}>
@@ -30,11 +35,11 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi 
       <thead>
         <tr>
           {COLS.map((c) => {
-            const on = sort.key === c.key;
+            const on = sort?.key === c.key;
             return (
-              <th key={c.key} scope="col" aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={`px-1! py-1! ${c.className ?? ""}`} title={c.title}>
+              <th key={c.key} scope="col" aria-sort={on ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"} className={`px-1! py-1! ${c.className ?? ""}`} title={c.title}>
                 <button type="button" className={`label w-full cursor-pointer text-[9px] ${c.className ?? "text-left"} ${on ? "text-fg!" : ""}`} onClick={() => onSort(c.key)} data-testid={`${testId}-sort-${c.key}`}>
-                  {c.label}{on ? (sort.dir === "asc" ? " ▲" : " ▼") : ""}
+                  {c.label}{on ? (sort!.dir === "asc" ? " ▲" : " ▼") : ""}
                 </button>
               </th>
             );
@@ -45,7 +50,9 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi 
         {rows.map((r) => {
           const age = shipRowAgeS(r, now);
           return (
-            <tr key={r.mmsi} className={`cursor-pointer hover:bg-bg-2 ${activeMmsi === r.mmsi ? "bg-[#1c2a3f]" : ""}`} onClick={() => onPick(r)} data-testid={`${testId}-item`} data-mmsi={r.mmsi}>
+            <tr key={r.mmsi} id={rowId?.(r.mmsi)} aria-selected={activeMmsi != null ? activeMmsi === r.mmsi : undefined}
+              className={`cursor-pointer ${activeMmsi === r.mmsi ? "bg-[#1c2a3f]" : "hover:bg-bg-2"}`}
+              onClick={() => onPick(r)} onMouseEnter={onHover ? () => onHover(r.mmsi) : undefined} data-testid={`${testId}-item`} data-mmsi={r.mmsi}>
               <td className="px-1! py-0.5!" title={`${SHIP_CATEGORY_LABEL[r.category]} · 코드 ${SHIP_CATEGORY_CODES[r.category]}`}>
                 <span className="flex items-center gap-1">
                   <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: SHIP_CATEGORY_COLOR[r.category] }} aria-hidden />
