@@ -45,7 +45,7 @@ def _num(v: Any) -> float | None:
         f = float(v)
     except (TypeError, ValueError):
         return None
-    return f if f == f else None  # NaN 제거
+    return f if math.isfinite(f) else None  # NaN·±inf('inf'·'Infinity' 문자열 포함) 제거 — R-33, ais/parse.py 와 같은 규칙
 
 
 def _squawk(v: Any) -> str | None:
@@ -129,10 +129,25 @@ def readsb_reference_time(payload: dict[str, Any] | None, fetched_at: datetime) 
     return fetched_at
 
 
+def _unexpected(hex_: str | None, e: Exception) -> Rejected:
+    """레코드 하나의 예상 밖 예외(단위 변환 뒤 넘침 등)는 그 레코드만 격리한다 — 묶음 전체가 실패하지 않게(R-33)."""
+    log.debug("normalize: record isolated (%s)", type(e).__name__)
+    return Rejected("invalid_record", hex_, {"error": type(e).__name__})
+
+
 def normalize_readsb(
     ac: dict[str, Any], provider: str, fetched_at: datetime, reference: datetime | None = None
 ) -> AircraftState | Rejected:
     """readsb v2 aircraft 1건 → AircraftState, 또는 격리 사유. reference: seen_pos 기준 시각(readsb_reference_time), 없으면 fetched_at."""
+    try:
+        return _normalize_readsb(ac, provider, fetched_at, reference)
+    except Exception as e:  # noqa: BLE001
+        return _unexpected(_hex(ac.get("hex")) if isinstance(ac, dict) else None, e)
+
+
+def _normalize_readsb(
+    ac: dict[str, Any], provider: str, fetched_at: datetime, reference: datetime | None
+) -> AircraftState | Rejected:
     raw_hex = ac.get("hex")
     hex_ = _hex(raw_hex)
     lat, lon = _num(ac.get("lat")), _num(ac.get("lon"))
@@ -205,6 +220,13 @@ _OS_SQUAWK, _OS_CATEGORY = 14, 17
 
 def normalize_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | Rejected:
     """OpenSky state vector 1건 → AircraftState, 또는 격리 사유."""
+    try:
+        return _normalize_opensky(vec, fetched_at)
+    except Exception as e:  # noqa: BLE001
+        return _unexpected(_hex(vec[_OS_ICAO24]) if isinstance(vec, list) and vec else None, e)
+
+
+def _normalize_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | Rejected:
     if not isinstance(vec, list) or len(vec) < 12:
         return Rejected("invalid_record", None, {"field": "vector", "len": len(vec) if isinstance(vec, list) else None})
     hex_ = _hex(vec[_OS_ICAO24])

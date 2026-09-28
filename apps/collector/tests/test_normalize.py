@@ -233,3 +233,38 @@ def test_skewed_provider_clock_does_not_quarantine_every_record(skew_s):
     g = AircraftGate().apply([s], 0, fetched)
     assert [x.hex for x in g.kept] == ["71c123"] and g.quarantined == []
     assert s.seen_at == fetched - timedelta(seconds=1.2)
+
+
+# ---- R-33: 문자열 'inf'·'Infinity' 와 넘치는 값은 레코드 하나만 격리한다 ---------------------------------------------------
+@pytest.mark.parametrize("bad", ["inf", "-inf", "Infinity", "-Infinity", float("inf")])
+def test_r33_readsb_non_finite_numbers_are_unknown_not_crash(bad):
+    base = {"hex": "abcdef", "lat": 1, "lon": 1, "seen_pos": 1, "gs": 300, "track": 90}
+    s = normalize_readsb({**base, "alt_baro": bad}, "adsb_lol", NOW)
+    assert not isinstance(s, Rejected) and s.alt_ft is None
+    s = normalize_readsb({**base, "gs": bad, "baro_rate": bad}, "adsb_lol", NOW)
+    assert not isinstance(s, Rejected) and s.gs_kt is None and s.vrate_fpm is None and s.quality == 1
+    r = normalize_readsb({**base, "lat": bad}, "adsb_lol", NOW)
+    assert isinstance(r, Rejected) and r.rule == "no_position"
+    r = normalize_readsb({**base, "seen_pos": bad}, "adsb_lol", NOW)
+    assert isinstance(r, Rejected) and r.rule == "no_position_time"
+
+
+@pytest.mark.parametrize("bad", ["inf", "-Infinity"])
+def test_r33_opensky_non_finite_numbers_are_unknown_not_crash(bad):
+    s = normalize_opensky(_os_vec(baro=bad), NOW)
+    assert not isinstance(s, Rejected) and s.alt_ft is None
+    v = _os_vec()
+    v[9], v[11] = bad, bad  # velocity, vertical_rate
+    s = normalize_opensky(v, NOW)
+    assert not isinstance(s, Rejected) and s.gs_kt is None and s.vrate_fpm is None
+    r = normalize_opensky(_os_vec(time_pos=bad), NOW)
+    assert isinstance(r, Rejected) and r.rule == "no_position_time"
+
+
+def test_r33_finite_value_that_overflows_after_unit_conversion_is_isolated():
+    r = normalize_opensky(_os_vec(baro=1e308), NOW)  # 1e308 m × 3.28 → inf ft
+    assert isinstance(r, Rejected) and r.rule == "invalid_record" and r.hex == "71c0a1"
+    v = _os_vec()
+    v[9] = 1e308  # 1e308 m/s × 1.94 → inf kt
+    r = normalize_opensky(v, NOW)
+    assert isinstance(r, Rejected) and r.rule == "invalid_record"

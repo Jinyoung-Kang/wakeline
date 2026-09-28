@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class AircraftState(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)  # R-33: 단위 변환 뒤 넘친 ±inf 는 격리
 
     hex: str = Field(pattern=r"^[0-9a-f]{6}$")
     callsign: str | None = Field(default=None, max_length=8)

@@ -319,3 +319,29 @@ async def test_region_429_backs_off():
     chain = ProviderChain("region", {"adsb_lol": RL("adsb_lol")}, ctx.status)
     await AircraftJob("region", chain, ctx).run_once()
     assert chain._down_until["adsb_lol"] > 0 and ctx.db.names == ["ingest_run(region)"]  # type: ignore[attr-defined]
+
+
+async def test_r33_one_inf_record_does_not_sink_the_region_batch():
+    """리뷰 R-33: 정상 50대 + alt_baro='inf' 1대 → 전에는 OverflowError 로 발행 0건. 이제 51대 모두 발행(그 1대는 고도 모름)."""
+
+    class InfReadsb(FakeReadsb):
+        async def fetch_region(self, lat, lon, radius):
+            now = datetime.now(UTC)
+            ac = [
+                {"hex": f"71c{i:03x}", "lat": 37.0, "lon": 127.0, "alt_baro": 30000, "gs": 400, "track": 90, "seen_pos": 1}
+                for i in range(50)
+            ]
+            ac.append(
+                {"hex": "71cfff", "lat": 37.1, "lon": 127.1, "alt_baro": "inf", "gs": "Infinity", "track": 90, "seen_pos": 1}
+            )
+            data = {"ac": ac}
+            return ProviderResult(self.name, orjson.dumps(data), now, 200, 12, data=data)
+
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    chain = ProviderChain("region", {"adsb_lol": InfReadsb("adsb_lol")}, ctx.status)
+    await AircraftJob("region", chain, ctx).run_once()
+    ((_sid, fields),) = r.streams[STREAM_AIRCRAFT]
+    states = {s["hex"]: s for s in _decode(fields)["states"]}
+    assert len(states) == 51 and states["71cfff"]["alt_ft"] is None and states["71cfff"]["gs_kt"] is None
+    assert (await r.hgetall("wakeline:collector"))["region_at"]

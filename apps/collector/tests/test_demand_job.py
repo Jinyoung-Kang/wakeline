@@ -782,3 +782,18 @@ async def test_fixture_mode_writes_disabled_route_for_the_selected_aircraft():
     await _settle(routes)
     v = orjson.loads(r.kv["wakeline:route:ZZY999"])
     assert v["status"] == "disabled" and v["origin"] is None and (await ctx.budget.usage("adsbdb"))[0] == 0
+
+
+async def test_r33_focus_survives_inf_numbers_in_one_record():
+    """리뷰 R-33: 'inf' 문자열 하나가 focus 태스크를 조용히 끝내 상태를 갱신하지 않던 문제."""
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000, "71c0a1": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    prov.ac = [_ac("abcdef", alt_baro="inf", baro_rate="-Infinity"), _ac("71c0a1")]
+    t, _ctx, _clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    ((_sid, fields),) = r.streams[STREAM_AIRCRAFT]
+    states = {s["hex"]: s for s in _decode(fields)["states"]}
+    assert set(states) == {"abcdef", "71c0a1"} and states["abcdef"]["alt_ft"] is None
+    assert _status(r)["focus:abcdef"]["state"] == "active"
