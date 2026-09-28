@@ -108,3 +108,33 @@ def test_r83_collector_and_ais_logging_install_the_mask_filter(monkeypatch):
     finally:
         root.handlers[:] = before
         masking._SECRETS.clear()
+
+
+# ---- 계약 v5 §C5: 언어 간 시험 벡터(Java LogMasker 와 글자 하나까지 같은 결과) -----------------------------------------------
+def _vectors() -> dict:
+    import json
+
+    from conftest import ROOT
+
+    return json.loads((ROOT / "schemas" / "vectors" / "masking-cases.v1.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", _vectors()["cases"], ids=lambda c: c["input"][:40])
+def test_v5_c5_masking_vectors_match_exactly(case):
+    assert mask(case["input"], _vectors()["limit"]) == case["expected"]
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("https://h.test/p?key=ABCDEFGH12345", "https://h.test/p?key=***"),
+        ("https://h.test/p?a=1&KEY=abc&b=2", "https://h.test/p?a=1&KEY=***&b=2"),
+        ("https://h.test/p?access_key=AKIA123 then", "https://h.test/p?access_key=*** then"),
+        ("https://h.test/p?apikey=z9", "https://h.test/p?apikey=***"),
+        # 쿼리 파라미터가 아닌 'key=' 는 새 규칙 밖이다(다른 뜻의 낱말까지 가리지 않게)
+        ("cache key=region:36.5 hit", "cache key=region:36.5 hit"),
+        ("monkey=1&x=2", "monkey=1&x=2"),
+    ],
+)
+def test_v5_c5_query_key_rule(text, expected):
+    assert mask(text) == expected

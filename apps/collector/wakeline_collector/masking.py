@@ -1,6 +1,7 @@
 """오류 원문에서 비밀값을 가리는 규칙. 운영 화면·DB 에 저장되는 모든 오류 텍스트와 로그(R-83)가 이 함수를 거친다.
 
 - 모양으로 가리기: key=value · JSON("authKey": "…") · Bearer · Authorization 헤더 · URL userinfo · JWT.
+  규칙은 api LogMasker 와 같다 — 언어 간 시험 벡터 schemas/vectors/masking-cases.v1.json(계약 v5 §C5)으로 고정한다.
 - 값으로 가리기(R-83): 기동 때 register_secrets 로 넘긴 설정 비밀값(KMA 키 · OpenSky client secret · aisstream 키 · Redis/DB 비밀번호)
   자체를 어디에 나오든 가린다 — 공급자가 키를 응답 본문에 되돌려 주는 경우처럼 모양 규칙이 못 잡는 경우를 막는다.
 - 로그: install_log_masking 이 핸들러에 MaskFilter 를 붙여 메시지·인자·트레이스백(log.exception)을 모두 가린다.
@@ -20,6 +21,8 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(serviceKey=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(authKey=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(api[_-]?key=)[^&\s]+"), r"\1***"),
+    # 계약 v5 §C5: 쿼리 파라미터 key · apikey · access_key(?/& 뒤만 — 'cache key=' 같은 낱말은 두지 않는다). Java LogMasker 와 같은 규칙
+    (re.compile(r"(?i)([?&](?:key|apikey|access_key)=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(password=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(token=)[^&\s]+"), r"\1***"),
     (re.compile(r"(?i)(secret=)[^&\s]+"), r"\1***"),
