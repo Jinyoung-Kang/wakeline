@@ -277,6 +277,43 @@ export function shipFeatures(ships: Iterable<ShipLite>, selected: string | null,
   return { type: "FeatureCollection", features };
 }
 
+/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것 */
+function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
+  if (!a || !b) return a ?? b;
+  const ta = a.seen_at ? Date.parse(a.seen_at) : NaN, tb = b.seen_at ? Date.parse(b.seen_at) : NaN;
+  return !Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta) ? b : a;
+}
+
+/**
+ * 선택 선박 표시(계약 v5 §B3 — 지도 source "ship-selected"): 격자 모드에서도 항상 그리고 선택 고리 + 라벨(이름, 모르면 MMSI)을 줌과 무관하게 단다.
+ * - symbolDraws(점 모드에서 선박 기호가 이미 그림 — 목록 사본에 있고 선종 필터로 숨지 않음): 그 위치에 고리·라벨만(icon false — 기호와 어긋나지 않게).
+ * - 그 밖: ship_selected 상태와 목록 사본 중 관측이 가장 새로운 위치에 아이콘까지(icon true).
+ * 위치를 모르면(실시간 아님) 아무것도 그리지 않는다 — 마지막 저장 위치를 지금 위치처럼 그리지 않는다.
+ */
+export function selectedShipFeatures(
+  mmsi: string | null, live: ShipLite | null, listed: ShipLite | null, symbolDraws: boolean, nowMs: number, staticName: string | null = null,
+): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  const empty: GeoJSON.FeatureCollection<GeoJSON.Point> = { type: "FeatureCollection", features: [] };
+  if (!mmsi) return empty;
+  const l = listed?.mmsi === mmsi ? listed : null, v = live?.mmsi === mmsi ? live : null;
+  const icon = !(symbolDraws && l);
+  const pos = icon ? newerLite(v, l) : l;
+  if (!pos) return empty;
+  const r = shipRotation(pos);
+  const age = shipAgeS(pos.seen_at, nowMs);
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature", id: mmsi,
+      properties: {
+        mmsi, label: pos.name ?? staticName ?? mmsi, cat: shipCategory(pos.ship_type), rot_mode: r.mode, rot: r.deg, icon,
+        stale: age != null && age > SHIP_STALE_S, age_unknown: age == null, selected: true,
+      },
+      geometry: { type: "Point", coordinates: [pos.lon, pos.lat] },
+    }],
+  };
+}
+
 /** 격자 칸 수 라벨(1 234 → "1.2k") */
 export function fmtCount(n: number): string {
   if (!Number.isFinite(n)) return "—";

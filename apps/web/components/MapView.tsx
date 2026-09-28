@@ -11,7 +11,7 @@ import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layers";
 import {
-  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, isMmsi, mergeStatusGaps, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest,
+  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, isMmsi, selectedShipFeatures, shipCategory, mergeStatusGaps, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest,
   type ShipTrack,
 } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
@@ -31,8 +31,8 @@ const SIGMET_EXPIRY_CHECK_MS = 30_000;
 /** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다. */
 const AIRPORTS_REFRESH_MS = 300_000;
 const AIRPORTS_RECHECK_MS = 60_000;
-/** 호버·클릭 우선순위: 항공기 > 선박 > 선박 격자 > 공항 > SIGMET */
-const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-grid-circle", "airport-circle", "sigmet-fill"] as const;
+/** 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선박 격자 > 공항 > SIGMET */
+const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-grid-circle", "airport-circle", "sigmet-fill"] as const;
 /** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
 const SHIP_STALE_CHECK_MS = 30_000;
 /** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
@@ -301,6 +301,11 @@ export function MapView() {
         } else if (f.layer.id === "ship-symbol") {
           const st = shipStates.get(String(p.mmsi));
           if (st) tip = shipTip(st, now);
+        } else if (f.layer.id === "ship-selected-icon") {
+          const m = String(p.mmsi);
+          const sel = getData().shipSelected;
+          const st = (sel && sel.mmsi === m ? sel.state : null) ?? shipStates.get(m);
+          if (st) tip = shipTip(st, now);
         } else if (f.layer.id === "ship-grid-circle") {
           tip = shipGridTip(p, getData().ships.cell_deg);
         } else if (f.layer.id === "airport-circle") {
@@ -350,6 +355,8 @@ export function MapView() {
         const id = f?.layer.id;
         if (id === "aircraft-symbol") { select(String(f!.properties?.hex)); return; }
         if (id === "ship-symbol") { const m = String(f!.properties?.mmsi); if (isMmsi(m)) selectShip(m); return; }
+        if (id === "ship-selected-icon") return; // 이미 선택된 선박
+
         if (id === "ship-grid-circle" && f!.geometry.type === "Point") {
           // 격자 칸을 누르면 그 칸으로 확대 — 줌 7 이상에서 서버가 개별 선박을 보낸다(화면 안 5,000척 이하일 때 — 계약 v4 §C)
           const [lon, lat] = f!.geometry.coordinates as [number, number];
@@ -543,6 +550,18 @@ export function MapView() {
       geo(map, "ship-grid")?.setData(ships.mode === "grid" ? gridFeatures(filterGridCells(ships.grid, enabled).cells) : EMPTY_FC);
     });
   }, [ships, selectedShip, shipClock, shipCats]);
+
+  // ---- 선택 선박(계약 v5 §B3): 격자 모드·선종 필터와 상관없이 고리 + 라벨(선박 기호가 그리지 않으면 아이콘도). 위치를 모르면 그리지 않는다 ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const listed = selectedShip ? shipStates.get(selectedShip) ?? null : null;
+    const live = shipSelected && shipSelected.mmsi === selectedShip ? shipSelected.state : null;
+    const symbolDraws = ships.mode === "points" && listed != null && shipCats.includes(shipCategory(listed.ship_type));
+    const staticName = shipSelected && shipSelected.mmsi === selectedShip ? shipSelected.static?.name ?? null : null;
+    const fc = selectedShipFeatures(selectedShip, live, listed, symbolDraws, serverNowMs(Date.now()), staticName);
+    onReady(map, "ship-selected", () => geo(map, "ship-selected")?.setData(fc));
+  }, [ships, selectedShip, shipSelected, shipClock, shipCats]);
 
   // ---- 선종 필터(계약 v5 §B3): 점 모드는 MapLibre filter(모두 켜져 있으면 없음) ----
   useEffect(() => {

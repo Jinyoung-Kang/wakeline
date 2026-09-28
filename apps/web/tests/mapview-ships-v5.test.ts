@@ -97,3 +97,55 @@ describe("category filter on the map (contract v5 §B3)", () => {
     expect(fc(map, "ship-grid").features.map((f) => [f.properties.count, f.properties.cat, f.properties.all])).toEqual([[2, "tanker", 5]]);
   });
 });
+
+describe("selected ship is always drawn with a ring and a label (contract v5 §B3)", () => {
+  const selState = (mmsi: string, over: Partial<ShipLite> = {}) => ({ ...lite(mmsi, over), rot: null, provider: "fixture", msg_type: "PositionReport", class: "A" as const });
+
+  it("layers: ring + icon + label above the ship symbols, label not tied to zoom, toggled with the ships layer", async () => {
+    const map = await mountLoaded();
+    for (const id of ["ship-selected-ring", "ship-selected-icon", "ship-selected-label"]) expect(map.getLayer(id)).toBeDefined();
+    expect(map.getLayer("ship-selected-label")!.layout["text-field"]).toEqual(["get", "label"]);
+    expect(map.getLayer("ship-selected-label")!.layout["text-allow-overlap"]).toBe(true);
+    expect(map.getLayer("ship-selected-ring")!.layout.visibility).toBe("visible");
+    await act(() => useUi.getState().toggleLayer("ships"));
+    expect(map.getLayer("ship-selected-ring")!.layout.visibility).toBe("none");
+  });
+
+  it("grid mode: the selected ship is drawn (icon + ring + name) at its latest reported position", async () => {
+    const map = await mountLoaded();
+    const grid = parseGridCells([[35.25, 129.25, 5, "cargo"]]);
+    await act(() => setData({ ships: { mode: "grid", version: 1, count: 1, total: 5, ts: null, cell_deg: 0.5, capped: false, grid } }));
+    await act(() => useUi.getState().selectShip("200000001"));
+    await act(() => setData({ shipSelected: { mmsi: "200000001", received_at: 0, static: null, state: selState("200000001", { lat: 35.1, lon: 129.2, name: "SYN ALPHA" }) } }));
+    const f = fc(map, "ship-selected").features;
+    expect(f).toHaveLength(1);
+    expect(f[0].geometry.coordinates).toEqual([129.2, 35.1]);
+    expect(f[0].properties).toMatchObject({ mmsi: "200000001", label: "SYN ALPHA", icon: true, cat: "cargo", rot_mode: "heading" });
+  });
+
+  it("points mode: the symbol layer already draws it — ring and label only, at the symbol's position; hidden by the category filter → icon too", async () => {
+    const map = await mountLoaded();
+    shipStates.set("200000002", lite("200000002", { name: null, lat: 34, lon: 128 }));
+    await act(() => setData({ ships: { mode: "points", version: 1, count: 1, total: 1, ts: null, cell_deg: null, capped: false, grid: [] } }));
+    await act(() => useUi.getState().selectShip("200000002"));
+    let f = fc(map, "ship-selected").features;
+    expect(f[0].properties).toMatchObject({ label: "200000002", icon: false }); // 이름을 모르면 MMSI
+    expect(f[0].geometry.coordinates).toEqual([128, 34]);
+    await act(() => useUi.getState().toggleShipCat("cargo"));
+    f = fc(map, "ship-selected").features;
+    expect(f[0].properties.icon).toBe(true);
+  });
+
+  it("no known position (not live) → nothing drawn; deselect clears", async () => {
+    const map = await mountLoaded();
+    await act(() => useUi.getState().selectShip("200000003"));
+    await act(() => setData({ shipSelected: { mmsi: "200000003", received_at: 0, static: null, state: null } }));
+    expect(fc(map, "ship-selected").features).toHaveLength(0);
+    shipStates.set("200000004", lite("200000004"));
+    await act(() => setData({ ships: { mode: "points", version: 2, count: 1, total: 1, ts: null, cell_deg: null, capped: false, grid: [] } }));
+    await act(() => useUi.getState().selectShip("200000004"));
+    expect(fc(map, "ship-selected").features).toHaveLength(1);
+    await act(() => useUi.getState().selectShip(null));
+    expect(fc(map, "ship-selected").features).toHaveLength(0);
+  });
+});

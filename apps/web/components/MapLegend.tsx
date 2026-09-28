@@ -6,7 +6,7 @@ import {
   ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
-import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH } from "@/lib/ship-layers";
+import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH, SHIP_SELECTED_STYLE } from "@/lib/ship-layers";
 import { aisCoverageFeatures, type ShipCategory, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
@@ -140,7 +140,9 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           <Row swatch={<Hull color="#c7ccd4" />}>선수방위(heading) 방향</Row>
           <Row swatch={<Hull color="#c7ccd4" mode="cog" />}>침로 기준 — 선수방위 없음(점선 외곽)</Row>
           <Row swatch={<Hull color="#c7ccd4" mode="none" />}>방향 모름 — 회전하지 않는 원</Row>
-          <Row swatch={<Hull color="#ffffff" />}>선택한 선박</Row>
+          <Row swatch={<span className="relative inline-flex h-4 w-4 items-center justify-center rounded-full!" style={{ border: `${SHIP_SELECTED_STYLE.ringWidth}px solid ${SHIP_SELECTED_STYLE.ringColor}` }}><Hull color="#ffffff" /></span>}>
+            <span data-testid="legend-ship-selected">선택한 선박 — 흰 고리 + 이름(모르면 MMSI), 격자·선종 필터와 상관없이 표시</span>
+          </Row>
           <Row swatch={<Hull color="#c7ccd4" opacity={0.35} />}>STALE — {SHIP_STALE_S / 60}분 넘게 새 위치 없음(35%)</Row>
           <Row swatch={<span className="inline-block h-3 w-3 rounded-full!" style={{ background: SHIP_CATEGORY_COLOR.cargo, opacity: SHIP_GRID_STYLE.opacity, border: `${SHIP_GRID_STYLE.strokeWidth}px solid ${SHIP_GRID_STYLE.stroke}` }} />}>
             <span title={SHIPS_RULE_TEXT}>격자(줌 {SHIPS_RULE.lowZoom} 미만 · 화면 안 선박이 많을 때): 칸 선박 수 — 원 크기 = 수, 색 = 가장 많은 선종(선종 필터가 있으면 켜진 선종만 셈)</span>
