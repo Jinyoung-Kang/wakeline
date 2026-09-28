@@ -174,3 +174,44 @@ export function replayFrameAtLabel(frame: Pick<ReplayFrame, "at"> | null, wantAt
   if (Number.isNaN(t)) return { text: "—", behind: false };
   return { text: `${new Date(t).toISOString().replace("T", " ").slice(0, 19)}Z`, behind: Math.abs(t - wantAtMs) >= 1000 };
 }
+
+// ---- 재생 시각 고르기(R-10) ----
+
+/** 원해상도(track_point) 보관 — 그 이전은 1분 요약(track_point_1m) */
+export const REPLAY_FULL_RES_MS = 72 * 3600_000;
+/** 1분 요약 보관(ADR-007, 30일). api 는 31일까지 받지만 30일보다 오래된 요약은 지워져 있다 */
+export const REPLAY_SUMMARY_MS = 30 * 86400_000;
+
+export interface ReplayRange { min: number; max: number; fullResFrom: number }
+
+/** 고를 수 있는 구간: 30일 전 ~ 1분 전(서버 기준 지금). fullResFrom 이후만 원해상도 */
+export function replayRange(nowMs: number): ReplayRange {
+  return { min: nowMs - REPLAY_SUMMARY_MS, max: nowMs - 60_000, fullResFrom: nowMs - REPLAY_FULL_RES_MS };
+}
+
+/** 그 시각의 기록 종류(서버가 실제로 준 테이블은 응답 source 로 따로 보인다) */
+export function replayZone(at: number, r: ReplayRange): "full" | "summary" {
+  return at >= r.fullResFrom ? "full" : "summary";
+}
+
+export function stepAt(at: number, deltaMs: number, r: Pick<ReplayRange, "min" | "max">): number {
+  return Math.min(r.max, Math.max(r.min, at + deltaMs));
+}
+
+/** datetime-local 값(UTC 로 해석) "YYYY-MM-DDTHH:MM" */
+export function toUtcInput(ms: number): string {
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 16) : "";
+}
+
+/** "YYYY-MM-DDTHH:MM[:SS]" 를 UTC 로 읽는다. 없는 날짜(2월 30일 등)·형식 오류는 null */
+export function fromUtcInput(v: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(v);
+  if (!m) return null;
+  const [y, mo, d, h, mi, se] = m.slice(1).map((x) => (x == null ? 0 : Number(x)));
+  const t = Date.UTC(y, mo - 1, d, h, mi, se);
+  const back = new Date(t);
+  return back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d && back.getUTCHours() === h && back.getUTCMinutes() === mi ? t : null;
+}
+
+/** 시각 이동 버튼 [ms, 라벨] */
+export const REPLAY_STEPS: [number, string][] = [[-3600_000, "−1h"], [-600_000, "−10m"], [-60_000, "−1m"], [60_000, "+1m"], [600_000, "+10m"], [3600_000, "+1h"]];

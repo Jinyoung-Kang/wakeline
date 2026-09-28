@@ -10,6 +10,8 @@ import { aircraftStates, resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { panIfOutside } from "@/lib/focus";
 import { SidePanelView } from "@/components/SidePanel";
+import ReplayPage from "@/app/replay/page";
+import * as replayLib from "@/lib/replay";
 import type { Alert } from "@/lib/types";
 import { subscriptionBbox } from "@/lib/viewport";
 import { fmtReplayBbox, REPLAY_MAX_AREA_SQDEG, replayQueryBbox, replayReduce, type ReplayFrame } from "@/lib/replay";
@@ -88,5 +90,33 @@ describe("R-08 alert row: expand stays, selection moves the map", () => {
     aircraftStates.set("780f47", { hex: "780f47", lat: 31.9, lon: 122.4 });
     expect(aircraftPos("780f47", alert())).toEqual([122.4, 31.9]);
     expect(aircraftPos("000000", null)).toBeNull();
+  });
+});
+
+describe("R-10 replay time can be picked precisely across the 30-day summary window", () => {
+  it("the toolbar has a UTC date-time input and ±1 min / ±10 min / ±1 h steps besides the slider", () => {
+    const html = renderToStaticMarkup(createElement(ReplayPage));
+    expect(html).toMatch(/<input[^>]*type="datetime-local"[^>]*aria-label="재생 시각\(UTC\)"|<input[^>]*aria-label="재생 시각\(UTC\)"[^>]*type="datetime-local"/);
+    for (const t of ["−1h", "−10m", "−1m", "+1m", "+10m", "+1h"]) expect(html).toContain(`>${t}</button>`);
+    expect(html).toContain('role="group" aria-label="재생 시각 이동"');
+  });
+  it("the range reaches back 30 days (1-minute summary) and marks the 72 h full-resolution boundary", () => {
+    const now = Date.parse("2026-09-28T06:00:00Z");
+    const r = replayLib.replayRange(now);
+    expect(r.max).toBe(now - 60_000);
+    expect(r.min).toBe(now - 30 * 86400_000);
+    expect(r.fullResFrom).toBe(now - 72 * 3600_000);
+    expect(replayLib.replayZone(now - 3600_000, r)).toBe("full");
+    expect(replayLib.replayZone(now - 4 * 86400_000, r)).toBe("summary");
+  });
+  it("UTC input round-trips and steps are clamped to the range", () => {
+    const r = replayLib.replayRange(Date.parse("2026-09-28T06:00:00Z"));
+    expect(replayLib.toUtcInput(Date.parse("2026-09-28T03:05:40Z"))).toBe("2026-09-28T03:05");
+    expect(replayLib.fromUtcInput("2026-09-28T03:05")).toBe(Date.parse("2026-09-28T03:05:00Z"));
+    expect(replayLib.fromUtcInput("")).toBeNull();
+    expect(replayLib.fromUtcInput("2026-02-30T03:05")).toBeNull();
+    expect(replayLib.stepAt(r.max - 30_000, 3600_000, r)).toBe(r.max);
+    expect(replayLib.stepAt(r.min + 1000, -600_000, r)).toBe(r.min);
+    expect(replayLib.stepAt(Date.parse("2026-09-28T03:05:00Z"), 60_000, r)).toBe(Date.parse("2026-09-28T03:06:00Z"));
   });
 });
