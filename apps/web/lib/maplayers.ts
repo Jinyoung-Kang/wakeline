@@ -5,6 +5,16 @@ import { deadReckon, seenAtMs, thresholds } from "./interpolate";
 import type { AircraftState, Alert, SelectedInfo } from "./types";
 
 export const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
+/**
+ * 배경지도 스타일(STYLE_URL, 외부)을 받지 못했을 때 바꿔 끼우는 로컬 최소 스타일(R-01). 외부 요청이 없다(소스·스프라이트·글꼴 URL 없음 —
+ * 글자는 MapLibre 가 로컬 글꼴로 그린다). 배경은 앱 바탕색 한 가지로, 육지·바다를 칠하지 않는다(모르는 지형을 그리지 않는다).
+ * 우리 데이터 레이어(addBaseLayers·addShipLayers)는 이 위에 그대로 그려진다.
+ */
+export const FALLBACK_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {},
+  layers: [{ id: "wakeline-no-basemap", type: "background", paint: { "background-color": "#0b0d10" } }],
+};
 /** MapLibre 워커 경로 — scripts/copy-maplibre-worker.mjs 가 public/maplibre/ 에 복사한다. 지도를 만들기 전에 한 번 호출. */
 export const MAPLIBRE_WORKER_URL = "/maplibre/maplibre-gl-worker.mjs";
 export const RADAR_COLOR_SCHEME = 2;

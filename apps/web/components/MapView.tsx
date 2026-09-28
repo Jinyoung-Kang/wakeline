@@ -2,7 +2,7 @@
 import * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import {
-  addBaseLayers, COVERAGE_PAINT, coverageTileUrl, frameDisplay, MAPLIBRE_WORKER_URL, predictionFeature, predictionKey, predictionTargets,
+  addBaseLayers, COVERAGE_PAINT, coverageTileUrl, FALLBACK_STYLE, frameDisplay, MAPLIBRE_WORKER_URL, predictionFeature, predictionKey, predictionTargets,
   RADAR_SLOT, radarTileUrl, STYLE_URL, type FrameRole,
 } from "@/lib/maplayers";
 import { subscriptionBbox } from "@/lib/viewport";
@@ -73,9 +73,23 @@ function syncFrames(map: maplibregl.Map, prev: string[], frames: Frame[], displa
   return wanted;
 }
 
-/** 기본 레이어(addBaseLayers)가 준비됐으면 바로, 아니면 load 뒤에 실행. isStyleLoaded() 는 타일을 받는 동안 false 라 갱신을 잃는다. */
-function onReady(map: maplibregl.Map, fn: () => void) {
-  if (map.getSource("aircraft")) fn(); else map.once("load", fn);
+/** load 전에 요청된 그리기 — 키마다 마지막 것만 둔다(데이터는 스타일과 무관하게 오므로(R-01) 스타일이 늦거나 오지 않아도 쌓이지 않는다) */
+const deferredDraws = new WeakMap<maplibregl.Map, Map<string, () => void>>();
+/**
+ * 기본 레이어(addBaseLayers)가 준비됐으면 바로, 아니면 load 뒤에 실행(같은 key 는 마지막 요청만 — 각 그리기는 그 레이어의 전체 상태를 쓴다).
+ * isStyleLoaded() 는 타일을 받는 동안 false 라 갱신을 잃는다. 대기열의 load 처리기는 지도 생성 effect 의 load 처리기(기본 레이어 추가) 뒤에 등록된다.
+ */
+function onReady(map: maplibregl.Map, key: string, fn: () => void) {
+  if (map.getSource("aircraft")) { fn(); return; }
+  let queue = deferredDraws.get(map);
+  if (!queue) {
+    const q = new Map<string, () => void>();
+    deferredDraws.set(map, q);
+    map.once("load", () => { deferredDraws.delete(map); for (const f of q.values()) f(); });
+    queue = q;
+  }
+  queue.delete(key);
+  queue.set(key, fn);
 }
 function geo(map: maplibregl.Map, id: string) {
   return map.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -126,6 +140,8 @@ export function MapView() {
   /** 선택 선박 항적: REST 한 번 + WS ship_selected 로 연장(AIS 공백·15분 틈은 점선) */
   const shipTrack = useRef<ShipTrackRef>(emptyShipTrack(null));
   const [shipClock, setShipClock] = useState(0);
+  /** 배경지도 스타일(외부)을 받지 못해 로컬 최소 스타일로 그리는 중(R-01) */
+  const [basemapFailed, setBasemapFailed] = useState(false);
 
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
@@ -138,8 +154,20 @@ export function MapView() {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
-    // 배경지도 시인성(계약 v4 §E): 스타일을 받을 때마다 알려진 층의 색만 바꾼다
-    map.on("style.load", () => applyBasemap(map));
+    let styleLoaded = false;
+    let noBasemap = false;
+    // 배경지도 시인성(계약 v4 §E): 스타일을 받을 때마다 알려진 층의 색만 바꾼다(대체 스타일에는 칠할 지형이 없다)
+    map.on("style.load", () => { styleLoaded = true; if (!noBasemap) applyBasemap(map); });
+    // R-01: 배경지도 스타일(외부 호스트)을 받지 못하면 load 가 오지 않아 우리 레이어도 그려지지 않는다 → 로컬 최소 스타일로 바꾸고 화면에 알린다.
+    // 스타일이 오기 전의 sourceId 없는 오류만 스타일 실패다(타일·소스 오류는 sourceId 가 있고, 스프라이트·글꼴 오류는 style.load 뒤에 온다).
+    // 처리기를 달면 MapLibre 가 오류를 콘솔에 찍지 않으므로 그대로 찍는다.
+    map.on("error", (e: { error?: unknown; sourceId?: string }) => {
+      console.error(e?.error ?? e);
+      if (styleLoaded || noBasemap || e?.sourceId) return;
+      noBasemap = true;
+      setBasemapFailed(true);
+      map.setStyle(FALLBACK_STYLE, { diff: false });
+    });
     map.getCanvas().setAttribute("aria-label", "실시간 항공기·위험기상 지도. 화살표 키로 이동, +/- 로 확대. 항공기는 상단 검색(/)으로 선택할 수 있습니다.");
 
     // 번들러(Turbopack)가 .ts 워커를 자산으로 취급하므로 순수 JS 워커를 public 에 둔다(tests/worker-sync 가 TS 구현과 일치를 검사).
@@ -279,26 +307,29 @@ export function MapView() {
       if (!popup.isOpen()) popup.addTo(map);
     };
 
-    let krTimer: ReturnType<typeof setInterval> | null = null;
-    let apTimer: ReturnType<typeof setInterval> | null = null;
+    // ---- 실시간 데이터(R-01): 지도 스타일(외부 호스트)을 기다리지 않고 바로 시작한다. 구독 bbox 는 지도 생성 직후부터 알 수 있다.
+    // 받은 값은 스토어·워커에 쌓이고, 지도에 그리는 일(applyRender·applyAirports·onReady)만 load 뒤에 한다.
+    worker.postMessage({ type: "start" });
+    client.connect();
+    subscribeViewport();
+    const pollKr = () => apiGet<KrRadar>("/api/v1/radar/kr").then((d) => setData({ radarKr: d })).catch(() => {});
+    pollKr();
+    const krTimer = setInterval(() => { if (!document.hidden) pollKr(); }, 60_000); // 숨긴 탭에서는 받지 않는다
+    pollAirports();
+    const apTimer = setInterval(() => {
+      if (document.hidden) return;
+      if (Date.now() - airportsFetchedAt >= AIRPORTS_REFRESH_MS) pollAirports(); else applyAirports();
+    }, AIRPORTS_RECHECK_MS);
+
     map.on("load", () => {
       addBaseLayers(map);
       addShipLayers(map);
-      // 출처(FR-20): 스타일이 배경지도 크레딧을 이미 붙였으면 중복하지 않는다. 데이터 출처는 항상 전부(OpenSky·기상청 포함).
+      // 출처(FR-20): 스타일이 배경지도 크레딧을 이미 붙였으면 중복하지 않는다. 배경지도를 못 받았으면(대체 스타일) 배경지도 크레딧을 붙이지 않는다.
+      // 데이터 출처는 항상 전부(OpenSky·기상청 포함).
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
-      map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ includeMap: !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
+      map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
       applyRender();
-      worker.postMessage({ type: "start" });
-      client.connect();
-      subscribeViewport();
-      const pollKr = () => apiGet<KrRadar>("/api/v1/radar/kr").then((d) => setData({ radarKr: d })).catch(() => {});
-      pollKr();
-      krTimer = setInterval(() => { if (!document.hidden) pollKr(); }, 60_000); // 숨긴 탭에서는 받지 않는다
-      pollAirports();
-      apTimer = setInterval(() => {
-        if (document.hidden) return;
-        if (Date.now() - airportsFetchedAt >= AIRPORTS_REFRESH_MS) pollAirports(); else applyAirports();
-      }, AIRPORTS_RECHECK_MS);
+      applyAirports();
       map.on("mousemove", (e: maplibregl.MapMouseEvent) => { hoverEvt = e; if (!hoverRaf) hoverRaf = requestAnimationFrame(doHover); });
       map.on("mouseout", hideTip);
       map.on("dragstart", hideTip);
@@ -332,8 +363,8 @@ export function MapView() {
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       if (moveTimer) clearTimeout(moveTimer);
-      if (krTimer) clearInterval(krTimer);
-      if (apTimer) clearInterval(apTimer);
+      clearInterval(krTimer);
+      clearInterval(apTimer);
       if (hoverRaf) cancelAnimationFrame(hoverRaf);
       popup.remove();
       client.close();
@@ -373,7 +404,7 @@ export function MapView() {
       // 발효 전 경보는 엔진이 판정하지 않으므로 "안에 항공기" 강조도 하지 않는다
       features: active.map((f) => ({ ...f, properties: { ...f.properties, inside: !f.properties.pending && inside.has(f.properties.id) } })) as GeoJSON.Feature[],
     };
-    onReady(map, () => geo(map, "sigmets")?.setData(fc));
+    onReady(map, "sigmets", () => geo(map, "sigmets")?.setData(fc));
   }, [sigmets, alerts, sigClock]);
 
   // ---- 예측선: 알림(PREDICTED 추가·해제)이 바뀌면 다시 계산 ----
@@ -392,7 +423,7 @@ export function MapView() {
         m.addLayer({ id, type: "raster", source: id, layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 150 } } }, "sigmet-fill");
       },
     }));
-    onReady(map, () => { radarLayers.current = syncFrames(map, radarLayers.current, frames, display, radarOpacity); });
+    onReady(map, "radar", () => { radarLayers.current = syncFrames(map, radarLayers.current, frames, display, radarOpacity); });
   }, [radar, radarFrameIndex, radarOpacity, layers.radar, radarSource, radarPlaying]);
 
   // ---- RainViewer 커버리지 마스크(GAP-15): 레이더가 RainViewer 일 때만. 커버리지 밖 = 회색 베일, 안 · 에코 없음 = 투명 ----
@@ -402,7 +433,7 @@ export function MapView() {
     if (!map) return;
     const host = radar?.host ?? null;
     const show = layers.radar && radarSource === "rainviewer" && !!host && (radar?.past.length ?? 0) > 0;
-    onReady(map, () => {
+    onReady(map, "rv-coverage", () => {
       if (coverageHost.current && coverageHost.current !== host && map.getSource("rv-coverage")) {
         map.removeLayer("rv-coverage"); map.removeSource("rv-coverage"); coverageHost.current = null;
       }
@@ -433,7 +464,7 @@ export function MapView() {
       },
     }));
     const key = JSON.stringify(coords);
-    onReady(map, () => {
+    onReady(map, "kma", () => {
       if (krCoordsKey.current && krCoordsKey.current !== key) {
         for (const id of krLayers.current) { if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }
         krLayers.current = [];
@@ -450,14 +481,14 @@ export function MapView() {
     flyHandled.current = flyTo.id;
     const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const opts = { center: [flyTo.lon, flyTo.lat] as [number, number], zoom: Math.max(map.getZoom(), flyTo.zoom) };
-    onReady(map, () => (reduce ? map.jumpTo(opts) : map.flyTo({ ...opts, duration: 1200, essential: true })));
+    onReady(map, "fly", () => (reduce ? map.jumpTo(opts) : map.flyTo({ ...opts, duration: 1200, essential: true })));
   }, [flyTo]);
 
   // ---- 레이어 토글 ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    onReady(map, () => {
+    onReady(map, "layers", () => {
       const vis = (ids: string[], on: boolean) => ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on ? "visible" : "none"));
       vis(["sigmet-fill", "sigmet-line"], layers.sigmet);
       vis(["aircraft-symbol"], layers.aircraft);
@@ -484,7 +515,7 @@ export function MapView() {
     const map = mapRef.current;
     if (!map) return;
     const now = serverNowMs(Date.now());
-    onReady(map, () => {
+    onReady(map, "ships", () => {
       geo(map, "ships")?.setData(ships.mode === "points" ? shipFeatures(shipStates.values(), selectedShip, now) : EMPTY_FC);
       geo(map, "ship-grid")?.setData(ships.mode === "grid" ? gridFeatures(ships.grid) : EMPTY_FC);
     });
@@ -502,7 +533,7 @@ export function MapView() {
     setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], gapsTruncated: false, segments: 0, fromMs: from } : null });
     const map = mapRef.current;
     if (!map) return;
-    onReady(map, () => geo(map, "ship-track")?.setData(EMPTY_FC));
+    onReady(map, "ship-track", () => geo(map, "ship-track")?.setData(EMPTY_FC));
     if (!selectedShip) return;
     let cancelled = false;
     const finish = (track: ShipTrack, error: string | null) => {
@@ -513,7 +544,7 @@ export function MapView() {
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
       shipTrack.current = { ...ref, track, pending: [], loaded: true };
       setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from } });
-      onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(track)));
+      onReady(map, "ship-track", () => geo(map, "ship-track")?.setData(shipTrackFeatures(track)));
     };
     const q = `from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
     apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(selectedShip)}/track?${q}`)
@@ -534,7 +565,7 @@ export function MapView() {
     const segs = ref.track.segs.length;
     const merged = mergeStatusGaps(ref.track, getData().ais, ref.sinceMs, { lat: st.lat, lon: st.lon });
     const appended = appendShipTrack(ref.track, p, ref.anchor);
-    if (merged || appended) onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
+    if (merged || appended) onReady(map, "ship-track", () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
     if (merged || ref.track.segs.length !== segs) publishShipTrack(ref);
   }, [shipSelected]);
 
@@ -543,7 +574,7 @@ export function MapView() {
     const map = mapRef.current;
     const ref = shipTrack.current;
     if (!map || !ref.mmsi || !ref.loaded || !mergeStatusGaps(ref.track, ais, ref.sinceMs, shipPos(ref.mmsi))) return;
-    onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
+    onReady(map, "ship-track", () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
     publishShipTrack(ref);
   }, [ais]);
 
@@ -557,7 +588,7 @@ export function MapView() {
     const key = JSON.stringify(fc.features.map((f) => f.geometry));
     if (key === coverageKey.current) return;
     coverageKey.current = key;
-    onReady(map, () => geo(map, "ship-coverage")?.setData(fc));
+    onReady(map, "ship-coverage", () => geo(map, "ship-coverage")?.setData(fc));
   }, [coverage, layers.ships]);
 
   // ---- 선택 항공기: WS select + 항적(REST 한 번, 이후 selected 로 연장) ----
@@ -567,14 +598,14 @@ export function MapView() {
     track.current = { hex: selectedHex, pts: [], pending: [], loaded: false };
     const map = mapRef.current;
     if (!map) return;
-    onReady(map, () => { geo(map, "tracks")?.setData(EMPTY_FC); refreshPrediction.current(); });
+    onReady(map, "tracks", () => { geo(map, "tracks")?.setData(EMPTY_FC); refreshPrediction.current(); });
     if (!selectedHex) return;
     let cancelled = false;
     const finish = (rest: TrackPt[]) => {
       if (cancelled || track.current.hex !== selectedHex) return;
       const pts = mergeTrack(rest, track.current.pending);
       track.current = { hex: selectedHex, pts, pending: [], loaded: true };
-      onReady(map, () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
+      onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
     };
     apiGet<{ points: { ts?: string | null; lon: number; lat: number; alt_ft?: number | null }[] }>(`/api/v1/aircraft/${encodeURIComponent(selectedHex)}/track`)
       .then((t) => finish(trackFromRest(t.points)))
@@ -590,8 +621,17 @@ export function MapView() {
     const p = pointFromState(selectedInfo.state);
     if (!p) return;
     if (!t.loaded) { appendTrackPoint(t.pending, p); return; }
-    if (appendTrackPoint(t.pts, p)) onReady(map, () => geo(map, "tracks")?.setData(trackFeatureCollection(t.pts)));
+    if (appendTrackPoint(t.pts, p)) onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(t.pts)));
   }, [selectedInfo]);
 
-  return <div ref={el} className="h-full w-full" data-testid="map" />;
+  return (
+    <>
+      <div ref={el} className="h-full w-full" data-testid="map" />
+      {basemapFailed ? (
+        <div className="pointer-events-none absolute bottom-10 left-3 z-10 border border-line-2 bg-bg-1/90 px-2 py-1 text-[11px] text-warn" role="status" data-testid="basemap-failed">
+          배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)
+        </div>
+      ) : null}
+    </>
+  );
 }
