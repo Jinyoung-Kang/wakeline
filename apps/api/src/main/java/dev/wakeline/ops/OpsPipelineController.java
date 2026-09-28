@@ -29,9 +29,10 @@ import java.util.function.Supplier;
  *       (R-14) 수와 마지막 손실 구간(없으면 null). 영구 손실도 같이: DB 가 거절해(영구 오류) 재시도하지 않고 버린 항적·선박 행, 처리 중 예외로
  *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등).</li>
  *   <li>시스템 로그 싱크(계약 v5 §C2): 세 프로세스 모두 log_sent(wakeline:logs 에 실은 항목 — api 는 wakeline:logs:client 에 실은 브라우저 오류 포함, §G2) ·
- *       log_dropped(대기열 상한·종료로 버린 항목),
+ *       log_dropped(대기열 상한·종료로 버린 항목 · 억제 중에 지문 표에서 잊히거나 항목을 만들지 못한 발생 — §G9),
  *       기동 뒤 누계. collector·ais 는 위 해시의 같은 이름 필드(같은 신선도 규칙), api 는 wakeline_log_events_total{result} 에 log_suppressed
- *       (같은 지문 10 s 억제로 싣지 않은 수 — 손실이 아니라 묶음 요약)까지.</li>
+ *       (같은 지문 10 s 억제로 따로 싣지 않고 다른 항목의 suppressed 에 실은 수 — 손실이 아니라 묶음 요약. 다음 항목이 오지 않으면 창이 닫힐 때
+ *       마지막 억제 발생이 항목이 된다 — §G9)까지.</li>
  * </ul>
  * null = 모름(해시·필드가 없거나 형식이 틀림 · heartbeat 가 오래됨 · Redis 를 읽지 못함). 0 으로 채우지 않는다. 해시는 읽기만 한다.
  */

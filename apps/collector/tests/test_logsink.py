@@ -1,7 +1,8 @@
 """계약 v5 §C2 · ADR-018 — 로그 싱크: WARN·ERROR 를 가려서(C5) Redis 스트림 wakeline:logs 로.
 
-LogEvent 스키마(schemas/log_event.v1.json) · 지문 · 10 s 억제 · 대기열 상한(500건 · 2 MiB) · 8 KiB 자르기 순서 ·
-50건/1 s 전송 · Redis 장애 백오프(1 → 30 s) · 작업 스레드에서 부른 emit · 재귀 금지 · 설치/해제.
+LogEvent 스키마(schemas/log_event.v1.json) · 지문 · 10 s 억제 · 뒤늦게 싣기(§G9 — 언어 간 벡터 schemas/vectors/log-suppression.v1.json,
+api LogSinkTest 도 같은 파일) · 대기열 상한(500건 · 2 MiB) · 8 KiB 자르기 순서 · 50건/1 s 전송 · Redis 장애 백오프(1 → 30 s) ·
+작업 스레드에서 부른 emit · 재귀 금지 · 설치/해제.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import io
 import json
 import logging
 import os
+import random
 import re
 import socket
 import threading
@@ -27,6 +29,7 @@ from wakeline_collector import logsink as ls
 from wakeline_collector import masking
 
 SCHEMA = json.loads((ROOT / "schemas" / "log_event.v1.json").read_text(encoding="utf-8"))
+SUPPRESSION_VECTORS = json.loads((ROOT / "schemas" / "vectors" / "log-suppression.v1.json").read_text(encoding="utf-8"))
 VALIDATOR = Draft202012Validator(SCHEMA, format_checker=FormatChecker())
 TS_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$")
 
@@ -221,21 +224,22 @@ def test_same_fingerprint_is_sent_once_per_10s_and_the_next_entry_carries_the_su
     assert sink.suppressed == 4 and ls.DEDUP_WINDOW_S == 10.0
 
 
-async def test_burst_then_silence_still_reports_the_suppressed_count(caplog):
-    """ADR-018 '억제 수는 남긴다': 같은 오류가 10 s 안에 20번 나고 끊기면 스트림에는 1건(suppressed 0)뿐이다 — 나머지 19건은
-    자기 지표 log_suppressed(기동 뒤 누계)에 남고, 종료 때 다음 항목에 실리지 못한 억제 수를 표준 출력에 적는다."""
+async def test_burst_then_silence_sends_the_last_occurrence_at_close():
+    """ADR-018 '억제 수는 남긴다'(§G9): 같은 오류가 10 s 안에 20번 나고 끊긴 채 종료하면 스트림에 2건 — 첫 발생(suppressed 0)과
+    마지막 발생(suppressed 18, 그사이 억제한 수). 전에는 1건뿐이고 19건은 지표에만 남았다. 지표도 항목과 같다(보냄 2 · 억제 18)."""
     r = FakeRedis()
     sink = ls.LogSink("collector", r, clock=Clock())
     lg = logger_for(sink)
     for i in range(20):
         lg.error("upstream 503 after %d ms", i)
-    caplog.set_level(logging.INFO, logger="logsink")
+    assert sink.metrics() == {"log_sent": "0", "log_dropped": "0", "log_suppressed": "0"}  # 억제 중인 발생은 실릴 때 센다
     await sink.aclose()
-    assert [(e["message"], e["suppressed"]) for e in entries(r)] == [("upstream 503 after 0 ms", 0)]
-    assert sink.metrics() == {"log_sent": "1", "log_dropped": "0", "log_suppressed": "19"}
+    assert [(e["message"], e["suppressed"]) for e in entries(r)] == [
+        ("upstream 503 after 0 ms", 0),
+        ("upstream 503 after 19 ms", 18),
+    ]
+    assert sink.metrics() == {"log_sent": "2", "log_dropped": "0", "log_suppressed": "18"}
     assert ls.sink_metrics(sink) == sink.metrics()
-    notes = [rec.getMessage() for rec in caplog.records if rec.name == "logsink"]
-    assert any("19 suppressed" in m and "1 fingerprint" in m for m in notes), notes
 
 
 @pytest.mark.parametrize("failure", ["too-big", "raises"])
@@ -262,6 +266,225 @@ def test_an_entry_that_is_not_queued_gives_its_suppressed_count_back(monkeypatch
     got = [orjson.loads(js) for js, _n in sink.pending()]
     assert [(e["message"], e["suppressed"]) for e in got] == [("x 0", 0), ("x 5", 3)]
     assert (sink.dropped, sink.suppressed) == (1, 3)
+
+
+# ── 뒤늦게 싣기(§G9) ────────────────────────────────────────────
+
+
+async def _run_suppression_case(case: dict) -> None:
+    """벡터 사례 하나를 새 싱크로: 단계마다 대기열에 넣은 항목([발생 번호, suppressed]) · 누계 · 억제 지표가 벡터와 같다."""
+    r = FakeRedis()
+    clock = Clock()
+    base = clock.t
+    sink = ls.LogSink("collector", r, clock=clock)
+    lg = logger_for(sink, "vector")
+    occurrences = n_entries = suppressed = 0
+    for step in case["steps"]:
+        clock.t = base + step["at_ms"] / 1000
+        before = len(sink.pending())
+        if step["do"] == "occur":
+            # 숫자는 메시지 틀에서 # — 같은 라벨은 같은 지문, 항목의 메시지는 그 발생의 번호
+            lg.warning("vector %s occurrence %d", step.get("fp", "a"), occurrences)
+            occurrences += 1
+            made = [orjson.loads(js) for js, _n in sink.pending()[before:]]
+        elif step["do"] == "tick":
+            sink.flush_trailing()
+            made = [orjson.loads(js) for js, _n in sink.pending()[before:]]
+        else:
+            await sink.aclose()
+            made = entries(r)[before:]
+        got = [[int(e["message"].rsplit(" ", 1)[1]), e["suppressed"]] for e in made]
+        where = f"{case['name']} @{step['at_ms']} {step['do']}"
+        assert got == step["emit"], where
+        n_entries += len(got)
+        suppressed += sum(n for _i, n in got)
+        assert (n_entries, suppressed) == (step["entries"], step["suppressed"]), where
+        assert sink.suppressed == suppressed, where  # 억제 지표 = 만든 항목들의 suppressed 합
+    assert n_entries + suppressed == occurrences, case["name"]
+    assert (sink.sent, sink.dropped) == (n_entries, 0), case["name"]
+
+
+async def test_cross_language_suppression_vectors():
+    """계약 v5 §G9: 언어 간 억제 벡터 — api(LogSinkTest)와 같은 항목을 만든다."""
+    assert SUPPRESSION_VECTORS["version"] == 1 and SUPPRESSION_VECTORS["window_ms"] == ls.DEDUP_WINDOW_S * 1000
+    assert len(SUPPRESSION_VECTORS["cases"]) >= 8
+    for case in SUPPRESSION_VECTORS["cases"]:
+        await _run_suppression_case(case)
+
+
+def test_entries_plus_suppressed_equals_occurrences_for_random_sequences():
+    """불변식: 한 지문의 어떤 발생 순서든, 모든 창이 닫힌 뒤 항목 수 + suppressed 합 = 발생 수. 항목은 발생 순서대로이고
+    마지막 발생은 늘 제 항목으로 실린다(묶음의 last_at 이 마지막 발생의 시각)."""
+    rnd = random.Random(20260929)
+    for run in range(300):
+        clock = Clock()
+        sink = ls.LogSink("collector", FakeRedis(), clock=clock)
+        lg = logger_for(sink, "prop")
+        occurrences = 1 + rnd.randrange(60)
+        t, tick = clock.t, clock.t + rnd.randrange(1000) / 1000
+        for i in range(occurrences):
+            t += rnd.randrange(1500 if rnd.random() < 0.5 else 14_000) / 1000
+            while tick <= t:
+                clock.t = tick
+                sink.flush_trailing()
+                tick += ls.FLUSH_EVERY_S
+            clock.t = t
+            lg.warning("flaky upstream %d", i)
+        while tick <= t + ls.DEDUP_WINDOW_S + ls.FLUSH_EVERY_S:  # 마지막 창이 닫힌 뒤의 주기까지
+            clock.t = tick
+            sink.flush_trailing()
+            tick += ls.FLUSH_EVERY_S
+        got = [orjson.loads(js) for js, _n in sink.pending()]
+        order = [int(e["message"].rsplit(" ", 1)[1]) for e in got]
+        total = sum(e["suppressed"] for e in got)
+        assert order == sorted(set(order)), f"run {run}: entries in occurrence order"
+        assert len(got) + total == occurrences, f"run {run}"
+        assert order[-1] == occurrences - 1, f"run {run}: the last occurrence is an entry"
+        assert sink.suppressed == total and sink.dropped == 0
+
+
+def test_the_trailing_entry_is_the_last_suppressed_occurrence_with_its_own_fields():
+    """뒤늦게 실은 항목은 마지막 억제 발생 그 자체다 — 메시지 · 예외 · 스레드 · ts 는 그 발생이 났을 때의 것(보낼 때의 것이 아니다)."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock)
+    seen: list[logging.LogRecord] = []
+
+    class Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(record)
+
+    lg = logger_for(sink, "wakeline.test.trailing")
+    lg.handlers.append(Keep())
+
+    def fail(n: int, ms: int) -> None:
+        lg.error("upstream 503 after %d ms", ms, exc_info=raise_and_catch(ValueError(f"cause {n}")))
+
+    for n, ms in ((1, 120), (2, 250)):
+        th = threading.Thread(target=fail, args=(n, ms), name=f"worker-{n}")
+        th.start()
+        th.join()
+    assert len(sink.pending()) == 1
+    clock.t += ls.DEDUP_WINDOW_S
+    assert sink.flush_trailing() == 1
+    first, last = (orjson.loads(js) for js, _n in sink.pending())
+    assert last["fp"] == first["fp"] and last["suppressed"] == 0
+    assert (first["message"], first["thread"]) == ("upstream 503 after 120 ms", "worker-1")
+    assert (last["message"], last["thread"]) == ("upstream 503 after 250 ms", "worker-2")
+    assert last["exception"]["message"] == "cause 2" and "ValueError: cause 2" in last["exception"]["stack"]
+    assert last["ts"] == ls._iso_ms(seen[1].created)
+    assert not list(VALIDATOR.iter_errors(last))
+
+
+class _StateError(Exception):
+    pass
+
+
+@pytest.mark.parametrize("with_filter", [True, False])
+def test_a_held_occurrence_keeps_its_exception_text_from_when_it_happened(with_filter):
+    """뒤늦게 실은 항목의 예외 메시지 · 스택은 그 발생 때의 것 — 창이 닫힐 때(약 10 s 뒤, 이벤트 루프에서) 예외의 __str__ 을 다시 부르지 않는다.
+    그사이 예외 객체가 바뀌어도 메시지와 스택이 서로 맞는다. MaskFilter 가 발생 때 스택을 정한 경우(운영 — start 가 붙인다) · 필터 없이 부른 emit 모두."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock)
+    if with_filter:
+        masking.install_log_masking(sink)
+    lg = logger_for(sink, "wakeline.test.held_exc")
+    errors = [raise_and_catch(_StateError(f"state {k}")) for k in range(2)]
+    for e in errors:
+        lg.error("step failed", exc_info=e)
+    errors[-1].args = ("mutated after logging",)  # 발생 뒤에 바뀐 예외 객체(상태를 들고 다니는 예외 · 다시 던지며 고친 메시지)
+    clock.t += ls.DEDUP_WINDOW_S
+    assert sink.flush_trailing() == 1
+    last = orjson.loads(sink.pending()[-1][0])
+    assert last["exception"]["message"] == "state 1"
+    assert last["exception"]["stack"].splitlines()[-1].endswith("_StateError: state 1")
+    assert not list(VALIDATOR.iter_errors(last))
+
+
+async def test_the_flusher_sends_a_pending_occurrence_on_its_own_tick():
+    """전송 루프가 제 주기(1 s)에 창이 닫혔는지 본다 — 새 태스크 없이."""
+    r = FakeRedis()
+    clock = Clock()
+    sink = ls.LogSink("collector", r, clock=clock, flush_every_s=0.02)
+    lg = logger_for(sink)
+    sink.start(attach=False)
+    try:
+        lg.warning("retry %d failed", 1)
+        lg.warning("retry %d failed", 2)
+        await _wait(lambda: len(entries(r)) == 1, 1.0)
+        await asyncio.sleep(0.15)  # 주기가 여러 번 돌아도 창(10 s) 안에서는 싣지 않는다
+        assert len(entries(r)) == 1
+        clock.t += ls.DEDUP_WINDOW_S
+        await _wait(lambda: len(entries(r)) == 2, 1.0)
+    finally:
+        await sink.aclose()
+    assert [(e["message"], e["suppressed"]) for e in entries(r)] == [("retry 1 failed", 0), ("retry 2 failed", 0)]
+
+
+def test_pending_occurrences_past_the_close_deadline_are_counted_as_dropped():
+    """종료 마감(CLOSE_S)을 넘기면 억제 중인 발생은 만들지 않고 버린 것으로 센다(싣던 억제 수까지)."""
+    sink = ls.LogSink("collector", FakeRedis(), clock=Clock())
+    lg = logger_for(sink)
+    for i in range(3):
+        lg.warning("late %d", i)
+    assert sink.flush_trailing(everything=True, deadline=time.monotonic() - 1) == 0
+    assert (len(sink.pending()), sink.dropped, sink.suppressed) == (1, 2, 0)
+
+
+@pytest.mark.parametrize("failure", ["too-big", "raises"])
+def test_a_trailing_entry_that_cannot_be_built_is_counted_as_dropped(monkeypatch, capsys, failure):
+    """뒤늦게 실을 항목을 만들지 못하면(8 KiB 에 못 맞춤 · 예외) 그 발생과 싣던 억제 수를 버린 것으로 센다 — 조용히 잃지 않는다."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock)
+    lg = logger_for(sink)
+    for i in range(3):
+        lg.warning("x %d", i)
+
+    def broken(ev, lost=None):
+        if failure == "raises":
+            raise RuntimeError("boom")
+        return None
+
+    monkeypatch.setattr(ls, "fit_event", broken)
+    clock.t += ls.DEDUP_WINDOW_S
+    assert sink.flush_trailing() == 0
+    assert (len(sink.pending()), sink.dropped, sink.suppressed) == (1, 2, 0)
+    if failure == "raises":
+        assert "logsink" in capsys.readouterr().err
+
+
+def test_the_dedup_table_forgets_fingerprints_without_pending_occurrences_first():
+    """지문 표 상한(DEDUP_MAX_FPS): 억제 중인 발생이 없는 지문부터 잊는다 — 창 안이어도(그 지문의 다음 발생이 조금 일찍 실릴 뿐
+    잃는 것은 없다). 억제 중인 발생이 있는 지문은 그대로 두었다가 창이 닫히면 싣는다."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock, queue_max=10_000, queue_max_bytes=1 << 30)
+    lg = logger_for(sink)
+    lg.warning("kept")
+    lg.warning("kept")
+    for i in range(ls.DEDUP_MAX_FPS):  # 모두 창 안, 억제 중인 발생 없음
+        clock.t += 0.001
+        lg.warning("other %s", chr(0x4E00 + i))
+    assert len(sink._recent) <= ls.DEDUP_MAX_FPS and sink.dropped == 0
+    clock.t += ls.DEDUP_WINDOW_S
+    assert sink.flush_trailing() == 1
+    kept = [(e["message"], e["suppressed"]) for e in (orjson.loads(js) for js, _n in sink.pending()) if e["message"] == "kept"]
+    assert kept == [("kept", 0), ("kept", 0)]
+
+
+def test_forgetting_a_fingerprint_with_pending_occurrences_counts_them_as_dropped():
+    """모든 지문에 억제 중인 발생이 있을 때만 가장 오래전에 실은 지문을 잊는다 — 그 억제 중인 수는 버린 것으로 센다."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock, queue_max=10_000, queue_max_bytes=1 << 30)
+    lg = logger_for(sink)
+    lg.warning("evicted soon")
+    lg.warning("evicted soon")
+    for i in range(ls.DEDUP_MAX_FPS):  # 다른 지문도 모두 창 안에서 한 번씩 억제 중
+        clock.t += 0.001
+        lg.warning("other %s", chr(0x4E00 + i))
+        lg.warning("other %s", chr(0x4E00 + i))
+    assert sink.dropped == 1
+    lg.warning("evicted soon")  # 잊힌 지문은 처음 보는 것처럼 — 버린 것으로 센 억제 수를 다시 싣지 않는다
+    last = orjson.loads(sink.pending()[-1][0])
+    assert (last["message"], last["suppressed"]) == ("evicted soon", 0)
 
 
 def test_dedup_table_stays_bounded():

@@ -9,22 +9,30 @@ import org.springframework.data.redis.connection.RedisStreamCommands;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 계약 v5 §C2(api 보내는 쪽): WARN·ERROR 만, 싱크 자신의 로그는 싣지 않음(재귀 금지), 같은 fp 는 10 s 에 1건(억제 수는 다음 항목에),
  * 대기열 500건·2 MiB(넘으면 오래된 것부터 버리고 센다), 50건 또는 1 s 마다 XADD, Redis 실패 시 대기열에 남기고 1 → 30 s 지수 백오프,
  * 자기 지표 wakeline_log_events_total{result=sent|dropped|suppressed}.
+ * §G9: 뒤에 같은 fp 가 오지 않아도 창이 닫히면 마지막 억제 발생을 항목으로(suppressed = 나머지) — 언어 간 벡터
+ * schemas/vectors/log-suppression.v1.json(pytest 도 같은 파일을 읽는다), 종료 때도, 지문 표에서 밀려난 억제 수는 dropped 로.
  */
 class LogSinkTest {
+    static final Path SUPPRESSION_VECTORS = Path.of("../../schemas/vectors/log-suppression.v1.json");
     static final JsonMapper M = JsonMapper.builder().build();
     final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     final AtomicLong now = new AtomicLong(1_000_000);
@@ -32,14 +40,17 @@ class LogSinkTest {
     /** XADD 한 스트림(written 과 같은 순서). */
     final List<LogStream> streams = Collections.synchronizedList(new ArrayList<>());
     final AtomicInteger failuresLeft = new AtomicInteger();
+    /** 남아 있으면 XADD 가 Error 를 던진다(드라이버 버그 · 스택 넘침 흉내). */
+    final AtomicInteger errorsLeft = new AtomicInteger();
     final LoggerContext logback = new LoggerContext();
     LogSink sink;
 
     { logback.setMDCAdapter(new ch.qos.logback.classic.util.LogbackMDCAdapter()); }
 
-    /** 가짜 XADD: failuresLeft 가 남아 있으면 실패(Redis 장애 흉내). */
+    /** 가짜 XADD: failuresLeft 가 남아 있으면 실패(Redis 장애 흉내), errorsLeft 가 남아 있으면 Error. */
     void xadd(LogStream stream, String json) {
         if (failuresLeft.get() > 0 && failuresLeft.getAndDecrement() > 0) throw new IllegalStateException("redis down");
+        if (errorsLeft.get() > 0 && errorsLeft.getAndDecrement() > 0) throw new StackOverflowError("simulated in XADD");
         streams.add(stream);
         written.add(json);
     }
@@ -102,6 +113,297 @@ class LogSinkTest {
         assertThat(s.queued()).isEqualTo(3);
     }
 
+    // ---------------------------------------------------------------- §G9 뒤늦게 싣기
+
+    /** 벡터 사례 하나를 새 싱크로: 단계마다 대기열에 넣은 항목([발생 번호, suppressed]) · 누계 · 억제 지표가 벡터와 같다. */
+    void runSuppressionCase(JsonNode c) {
+        SimpleMeterRegistry reg = new SimpleMeterRegistry();
+        List<String> out = new ArrayList<>();
+        AtomicLong clock = new AtomicLong(1_000_000);
+        LogSink s = new LogSink((stream, json) -> out.add(json), reg, true, clock::get, logback, 60_000, 60_000, 60_000);
+        String name = c.path("name").asString();
+        long base = clock.get();
+        int occurrences = 0, entries = 0;
+        long suppressedSum = 0;
+        for (JsonNode step : c.path("steps")) {
+            long at = step.path("at_ms").asLong();
+            String what = step.path("do").asString();
+            clock.set(base + at);
+            int before = out.size();
+            switch (what) {
+                case "occur" -> {
+                    int i = occurrences++;
+                    String label = step.has("fp") ? step.get("fp").asString() : "a";
+                    // 숫자는 메시지 틀에서 # — 같은 라벨은 같은 지문, 항목 본문은 그 발생의 번호
+                    s.submit("api", "vector", null, "vector " + label + " occurrence " + i, (fp, n) -> "{\"i\":" + i + ",\"n\":" + n + "}");
+                    assertThat(s.flushOnce()).isTrue();
+                }
+                case "tick" -> {
+                    s.flushTrailing();
+                    assertThat(s.flushOnce()).isTrue();
+                }
+                case "close" -> s.stop();
+                default -> throw new AssertionError("unknown step " + what);
+            }
+            List<List<Integer>> got = new ArrayList<>();
+            for (String j : out.subList(before, out.size())) {
+                JsonNode n = M.readTree(j);
+                got.add(List.of(n.path("i").asInt(), n.path("n").asInt()));
+            }
+            List<List<Integer>> want = new ArrayList<>();
+            for (JsonNode e : step.path("emit")) want.add(List.of(e.get(0).asInt(), e.get(1).asInt()));
+            String where = name + " @" + at + " " + what;
+            assertThat(got).as(where).isEqualTo(want);
+            for (List<Integer> e : got) { entries++; suppressedSum += e.get(1); }
+            assertThat(entries).as(where + " entries").isEqualTo(step.path("entries").asInt());
+            assertThat(suppressedSum).as(where + " suppressed").isEqualTo(step.path("suppressed").asLong());
+            // 억제 지표 = 만든 항목들의 suppressed 합(억제 중인 발생은 창이 닫혀 어느 항목에 실릴 때 센다)
+            assertThat(reg.counter("wakeline_log_events_total", "result", "suppressed").count()).as(where + " counter").isEqualTo(suppressedSum);
+        }
+        assertThat(entries + suppressedSum).as(name + ": entries + suppressed == occurrences").isEqualTo(occurrences);
+        assertThat(reg.counter("wakeline_log_events_total", "result", "sent").count()).as(name + " sent").isEqualTo(entries);
+        assertThat(reg.counter("wakeline_log_events_total", "result", "dropped").count()).as(name + " dropped").isZero();
+    }
+
+    /** 계약 v5 §G9: 언어 간 억제 벡터 — collector·ais(logsink.py, pytest)와 같은 항목을 만든다. */
+    @Test
+    void crossLanguageSuppressionVectors() throws Exception {
+        JsonNode doc = M.readTree(Files.readString(SUPPRESSION_VECTORS));
+        assertThat(doc.path("version").asInt()).isEqualTo(1);
+        assertThat(doc.path("window_ms").asLong()).isEqualTo(LogSink.SUPPRESS_WINDOW_MS);
+        int n = 0;
+        for (JsonNode c : doc.path("cases")) {
+            n++;
+            runSuppressionCase(c);
+        }
+        assertThat(n).as("vector cases").isGreaterThanOrEqualTo(8);
+    }
+
+    /**
+     * 불변식: 한 지문의 어떤 발생 순서든, 모든 창이 닫히고 대기열을 보낸 뒤 항목 수 + suppressed 합 = 발생 수.
+     * 항목은 발생 순서대로이고, 마지막 발생은 늘 제 항목으로 실린다(묶음의 last_at 이 마지막 발생의 시각).
+     */
+    @Test
+    void entriesPlusSuppressedEqualsOccurrences_forRandomSequences() {
+        Random rnd = new Random(20260929);
+        for (int run = 0; run < 300; run++) {
+            SimpleMeterRegistry reg = new SimpleMeterRegistry();
+            List<String> out = new ArrayList<>();
+            AtomicLong clock = new AtomicLong(1_000_000);
+            LogSink s = new LogSink((stream, json) -> out.add(json), reg, true, clock::get, logback, 60_000, 60_000, 60_000);
+            int occurrences = 1 + rnd.nextInt(60);
+            long t = clock.get(), nextTick = t + rnd.nextInt(1000);
+            for (int i = 0; i < occurrences; i++) {
+                t += rnd.nextInt(rnd.nextBoolean() ? 1_500 : 14_000);
+                for (; nextTick <= t; nextTick += LogSink.FLUSH_INTERVAL_MS) { clock.set(nextTick); s.flushTrailing(); }
+                clock.set(t);
+                int k = i;
+                s.submit("api", "prop", null, "flaky upstream " + i, (fp, n) -> "{\"i\":" + k + ",\"n\":" + n + "}");
+                assertThat(s.flushOnce()).isTrue();
+            }
+            // 마지막 창(마지막 발생 이전에 시작)이 닫힌 뒤의 주기까지
+            for (long end = t + LogSink.SUPPRESS_WINDOW_MS + LogSink.FLUSH_INTERVAL_MS; nextTick <= end; nextTick += LogSink.FLUSH_INTERVAL_MS) {
+                clock.set(nextTick);
+                s.flushTrailing();
+            }
+            assertThat(s.flushOnce()).isTrue();
+            long sum = 0;
+            int prev = -1;
+            for (String j : out) {
+                JsonNode n = M.readTree(j);
+                assertThat(n.path("i").asInt()).as("run " + run + ": entries in occurrence order").isGreaterThan(prev);
+                prev = n.path("i").asInt();
+                assertThat(n.path("n").asInt()).isNotNegative();
+                sum += n.path("n").asInt();
+            }
+            assertThat(out.size() + sum).as("run " + run + ": entries + suppressed == occurrences").isEqualTo(occurrences);
+            assertThat(prev).as("run " + run + ": the last occurrence is an entry").isEqualTo(occurrences - 1);
+            assertThat(reg.counter("wakeline_log_events_total", "result", "suppressed").count()).isEqualTo(sum);
+        }
+    }
+
+    /**
+     * 뒤늦게 실은 항목은 마지막 억제 발생 그 자체다 — 보내는 스레드(다른 스레드)에서 만들어도 ts · 메시지 · 예외 · 스레드 · 요청 id(MDC)는
+     * 그 발생이 났을 때의 것(logback 은 스레드 이름 · MDC 를 처음 물을 때 읽는다 — 나중에 다른 스레드에서 물으면 그 스레드의 것이 된다).
+     */
+    @Test
+    void theTrailingEntryIsTheLastSuppressedOccurrence_withItsOwnTimeThreadAndRequestId() throws Exception {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        s.attach();
+        Logger app = logback.getLogger("dev.wakeline.ingest.StreamConsumer");
+        var mdc = logback.getMDCAdapter();
+        mdc.put("request_id", "rid-first-000001");
+        app.warn("upstream 503 after {} ms", 120, new IllegalStateException("first cause"));
+        mdc.put("request_id", "rid-second-000002");
+        long before = System.currentTimeMillis();
+        app.warn("upstream 503 after {} ms", 250, new IllegalStateException("second cause"));
+        long after = System.currentTimeMillis();
+        mdc.remove("request_id");
+        assertThat(s.queued()).isEqualTo(1);
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        Thread other = Thread.ofPlatform().name("not-the-app-thread").start(s::flushTrailing);
+        other.join();
+        assertThat(s.flushOnce()).isTrue();
+        assertThat(written).hasSize(2);
+        JsonNode first = M.readTree(written.get(0)), last = M.readTree(written.get(1));
+        assertThat(first.path("message").asString()).isEqualTo("upstream 503 after 120 ms");
+        assertThat(last.path("fp").asString()).isEqualTo(first.path("fp").asString());
+        assertThat(last.path("message").asString()).isEqualTo("upstream 503 after 250 ms");
+        assertThat(last.path("exception").path("message").asString()).isEqualTo("second cause");
+        assertThat(last.path("suppressed").asInt()).isZero();
+        assertThat(last.path("request_id").asString()).isEqualTo("rid-second-000002");
+        assertThat(last.path("thread").asString()).isEqualTo(Thread.currentThread().getName());
+        assertThat(Instant.parse(last.path("ts").asString()).toEpochMilli()).isBetween(before, after);
+    }
+
+    /** 보내는 스레드가 제 주기(1 s)에 창이 닫혔는지 본다 — 새 스레드 없이. */
+    @Test
+    void theFlusherSendsAPendingOccurrenceOnItsOwnTickOnceTheWindowCloses() {
+        LogSink s = sink(true, 20, 1000, 30_000);
+        s.start();
+        assertThat(s.submit("api", "L", null, "retry 1 failed", (fp, n) -> "{\"i\":1,\"n\":" + n + "}")).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "L", null, "retry 2 failed", (fp, n) -> "{\"i\":2,\"n\":" + n + "}")).isEqualTo(LogSink.Offer.SUPPRESSED);
+        await("the first entry", () -> written.size() == 1);
+        sleep(150); // 주기가 여러 번 돌아도 창(10 s) 안에서는 싣지 않는다
+        assertThat(written).hasSize(1);
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        await("the trailing entry", () -> written.size() == 2);
+        assertThat(written.get(1)).isEqualTo("{\"i\":2,\"n\":0}");
+    }
+
+    @Test
+    void stopSendsPendingOccurrencesBeforeTheFinalDrain() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        s.start();
+        for (int i = 1; i <= 3; i++) {
+            int k = i;
+            s.submit("api", "L", null, "shutdown race " + i, (fp, n) -> "{\"i\":" + k + ",\"n\":" + n + "}");
+        }
+        s.stop();
+        assertThat(written).containsExactly("{\"i\":1,\"n\":0}", "{\"i\":3,\"n\":1}");
+        assertThat(counter("sent")).isEqualTo(2);
+        assertThat(counter("suppressed")).isEqualTo(1);
+        assertThat(counter("dropped")).isZero();
+    }
+
+    /** 종료 마감(STOP_FLUSH_MS)을 넘기면 남은 억제 발생은 만들지 않고 버린 것으로 센다(억제한 수까지). */
+    @Test
+    void pendingOccurrencesPastTheShutdownDeadlineAreCountedAsDropped() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        for (int i = 0; i < 3; i++) s.submit("api", "L", null, "late " + i, (fp, n) -> entry(n));
+        s.flushTrailing(true, System.nanoTime() - 1);
+        assertThat(s.queued()).isEqualTo(1);
+        assertThat(counter("dropped")).isEqualTo(2);
+        assertThat(counter("suppressed")).isZero();
+    }
+
+    /** 뒤늦게 실을 항목을 만들지 못하면(직렬화 예외) 그 발생과 그것이 싣던 억제 수를 버린 것으로 센다 — 조용히 잃지 않는다. */
+    @Test
+    void aTrailingEntryThatCannotBeBuiltIsCountedAsDroppedWithWhatItCarried() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        LogSink.Body broken = (fp, n) -> { throw new IllegalStateException("cannot serialize"); };
+        assertThat(s.submit("api", "L", null, "x 0", (fp, n) -> entry(0))).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "L", null, "x 1", broken)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.submit("api", "L", null, "x 2", broken)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        s.flushTrailing();
+        assertThat(s.queued()).isEqualTo(1);
+        assertThat(counter("dropped")).isEqualTo(2);
+    }
+
+    /**
+     * 뒤늦게 실을 항목의 body 가 Error(StackOverflowError · OutOfMemoryError 등)를 던져도 예외와 같다 — 그 발생과 싣던 억제 수를 dropped 로 세고,
+     * 같은 주기에 창이 닫힌 다른 지문은 그대로 싣는다(submit 이 Error 도 잡는 것과 같은 이유 — body 는 이제 보내는 스레드 · 종료 스레드에서도 돈다).
+     */
+    @Test
+    void anErrorWhileBuildingATrailingEntryIsCountedAsDropped_andTheOtherFingerprintsDueOnThatTickAreStillQueued() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        LogSink.Body overflow = (fp, n) -> { throw new StackOverflowError("simulated"); };
+        assertThat(s.submit("api", "L", null, "deep 0", (fp, n) -> entry(0))).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "L", null, "deep 1", overflow)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.submit("api", "L", null, "deep 2", overflow)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.submit("api", "M", null, "other 0", (fp, n) -> "{\"m\":0}")).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "M", null, "other 1", (fp, n) -> "{\"m\":1,\"n\":" + n + "}")).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.flushOnce()).isTrue();
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        assertThat(s.flushTrailing()).isEqualTo(1);
+        assertThat(s.flushOnce()).isTrue();
+        assertThat(written).containsExactly(entry(0), "{\"m\":0}", "{\"m\":1,\"n\":0}");
+        assertThat(counter("dropped")).isEqualTo(2);
+        assertThat(counter("sent")).isEqualTo(3);
+    }
+
+    /** 보내는 스레드는 뒤늦게 실을 body 의 Error 에 죽지 않는다 — 그 발생을 dropped 로 센 뒤에도 다음 주기에 새 항목을 보낸다(isRunning 인데 아무것도 보내지 않는 일이 없다). */
+    @Test
+    void theFlusherKeepsSendingAfterAnErrorInATrailingBody() {
+        LogSink s = sink(true, 20, 20, 20);
+        s.start();
+        s.submit("api", "L", null, "deep 0", (fp, n) -> entry(0));
+        s.submit("api", "L", null, "deep 1", (fp, n) -> { throw new StackOverflowError("simulated"); });
+        await("the first entry", () -> written.size() == 1);
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        await("the failed trailing entry counted as dropped", () -> counter("dropped") == 1);
+        s.submit("api", "N", null, "after the error", (fp, n) -> entry(9));
+        await("an entry sent after the error", () -> written.size() == 2);
+        assertThat(written).containsExactly(entry(0), entry(9));
+    }
+
+    /** 창을 연 항목을 만들지 못하면(직렬화 예외) 보낸 것이 없으니 창을 닫고, 싣던 억제 수는 다음 항목이 싣는다(collector·ais 와 같다). */
+    @Test
+    void anEntryThatCannotBeBuiltGivesItsSuppressedCountBack() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        List<Integer> carried = new ArrayList<>();
+        LogSink.Body body = (fp, n) -> { carried.add(n); return entry(n); };
+        for (int i = 0; i < 4; i++) s.submit("api", "L", null, "x " + i, body); // 첫 건만 — 3건 억제
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        assertThatThrownBy(() -> s.submit("api", "L", null, "x 4", (fp, n) -> { throw new IllegalStateException("cannot serialize"); }))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(counter("dropped")).isEqualTo(1);
+        assertThat(s.submit("api", "L", null, "x 5", body)).as("the window stays closed").isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(carried).containsExactly(0, 3);
+        assertThat(counter("suppressed")).isEqualTo(3);
+    }
+
+    /**
+     * 지문 표 상한(SUPPRESS_TRACK_MAX): 억제 중인 발생이 없는 지문부터 잊는다 — 창 안이어도(그 지문의 다음 발생이 조금 일찍 실릴 뿐 잃는 것은 없다).
+     * 억제 중인 발생이 있는 지문은 그대로 두었다가 창이 닫히면 싣는다.
+     */
+    @Test
+    void theFingerprintTableForgetsFingerprintsWithoutPendingOccurrencesFirst() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        assertThat(s.submit("api", "L", null, "kept", (fp, n) -> "{\"m\":\"kept\",\"n\":" + n + "}")).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "L", null, "kept", (fp, n) -> "{\"m\":\"kept\",\"n\":" + n + "}")).isEqualTo(LogSink.Offer.SUPPRESSED);
+        for (int i = 0; i < LogSink.SUPPRESS_TRACK_MAX; i++) { // 모두 창 안, 억제 중인 발생 없음
+            now.incrementAndGet();
+            assertThat(s.submit("api", "other.L" + i, null, "other", (fp, n) -> "{}")).isEqualTo(LogSink.Offer.QUEUED);
+            if (s.queued() >= 400) assertThat(s.flushOnce()).isTrue();
+        }
+        assertThat(counter("dropped")).isZero();
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        assertThat(s.flushTrailing()).isEqualTo(1);
+        assertThat(s.flushOnce()).isTrue();
+        assertThat(written).filteredOn(j -> j.contains("kept")).containsExactly("{\"m\":\"kept\",\"n\":0}", "{\"m\":\"kept\",\"n\":0}");
+    }
+
+    /** 모든 지문에 억제 중인 발생이 있을 때만 가장 오래전에 실은 지문을 잊는다 — 그 억제 중인 수는 버린 것으로 센다(조용히 잃지 않는다). */
+    @Test
+    void forgettingAFingerprintWithPendingOccurrencesCountsThemAsDropped() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        List<Integer> carried = new ArrayList<>();
+        LogSink.Body body = (fp, n) -> { carried.add(n); return entry(n); };
+        assertThat(s.submit("api", "L", null, "evicted soon", body)).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "L", null, "evicted soon", body)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        for (int i = 0; i < LogSink.SUPPRESS_TRACK_MAX; i++) { // 다른 지문도 모두 창 안에서 한 번씩 억제 중
+            now.incrementAndGet();
+            for (int k = 0; k < 2; k++) s.submit("api", "other.L" + i, null, "other", (fp, n) -> "{}");
+            if (s.queued() >= 400) assertThat(s.flushOnce()).isTrue();
+        }
+        assertThat(counter("dropped")).isEqualTo(1);
+        // 잊힌 지문은 처음 보는 것처럼 — 버린 것으로 센 억제 수를 다시 싣지 않는다
+        assertThat(s.submit("api", "L", null, "evicted soon", body)).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(carried).containsExactly(0, 0);
+    }
+
     @Test
     void flushesAsSoonAs50EntriesAreWaiting_withoutWaitingForTheInterval() {
         LogSink s = sink(true, 60_000, 1000, 30_000); // 주기를 길게 — 50건 조건만으로 보내는지 본다
@@ -133,6 +435,19 @@ class LogSinkTest {
         assertThat(written).containsExactly(entry(0), entry(1), entry(2), entry(3), entry(4));
         assertThat(counter("dropped")).isZero();
         assertThat(counter("sent")).isEqualTo(5);
+    }
+
+    /** XADD 가 Error 를 던져도(드라이버 버그 · 스택 넘침) 다른 실패와 같다 — 묶음을 순서대로 대기열에 되돌리고 백오프 뒤 다시 보낸다(잃지 않는다). 보내는 스레드는 산다. */
+    @Test
+    void anErrorFromXaddKeepsTheBatchQueuedAndTheFlusherAlive() {
+        LogSink s = sink(true, 20, 20, 200);
+        errorsLeft.set(1);
+        s.start();
+        for (int i = 0; i < 3; i++) s.enqueue(entry(i));
+        await("all written after the error", () -> written.size() == 3);
+        assertThat(written).containsExactly(entry(0), entry(1), entry(2));
+        assertThat(counter("dropped")).isZero();
+        assertThat(counter("sent")).isEqualTo(3);
     }
 
     @Test
@@ -263,6 +578,15 @@ class LogSinkTest {
         assertThat(s.flushOnce()).isTrue();
         assertThat(written).containsExactly(entry(1), entry(2), entry(3));
         assertThat(streams).containsExactly(LogStream.SERVER, LogStream.CLIENT, LogStream.SERVER);
+    }
+
+    /** 억제 창의 시계는 단조 시계(System.nanoTime) — 벽시계가 뒤로 가도(NTP 보정 등) 창이 그만큼 길어지지 않는다(collector·ais 의 time.monotonic 과 같다). */
+    @Test
+    void theSuppressionWindowRunsOnAMonotonicClock() {
+        long before = System.nanoTime() / 1_000_000;
+        long t = LogSink.WINDOW_CLOCK.getAsLong();
+        long after = System.nanoTime() / 1_000_000;
+        assertThat(t).isBetween(before, after);
     }
 
     @Test

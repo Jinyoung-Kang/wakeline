@@ -67,7 +67,7 @@ class ClientErrorControllerTest {
 
     void build(boolean enabled) {
         LoggerContext ctx = new LoggerContext();
-        sink = new LogSink((stream, json) -> { streams.add(stream); written.add(json); }, new SimpleMeterRegistry(), enabled, System::currentTimeMillis, ctx,
+        sink = new LogSink((stream, json) -> { streams.add(stream); written.add(json); }, new SimpleMeterRegistry(), enabled, LogSink.WINDOW_CLOCK, ctx,
                 60_000, 1000, 30_000);
         mvc = MockMvcBuilders.standaloneSetup(new ClientErrorController(sink, limiter, PROPS, () -> NOW))
                 .setControllerAdvice(new ProblemAdvice()).build();

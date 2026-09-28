@@ -40,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429, JSON 이 아니면 415(§G3).</li>
  *   <li>§G2: 브라우저 오류는 wakeline:logs:client(MAXLEN ~ 1000)에 — 1,100건이 실려도 서버 로그(wakeline:logs)는 한 건도 밀려나지 않고,
  *       조회는 두 스트림을 합쳐(stream 표시) 보이며 항목 하나는 server → client 순으로 찾는다.</li>
+ *   <li>§G9: 같은 경고가 10 s 안에 두 번 나고 끊겨도 두 번째는 창이 닫힐 때 실린다 — 묶음은 항목 2 · 억제 합 0.</li>
  * </ul>
  * 수집기 모양의 항목은 관리 사용자로 XADD 한다 — 수집기 ACL 에 ~wakeline:logs 를 더하는 것은 infra 레인(§C3)이다.
  */
@@ -184,6 +185,69 @@ class LogsIT extends IntegrationTest {
             return true;
         });
         assertThat(plain.get().path("context").has("job")).isFalse();
+    }
+
+    /** 지문의 메시지 틀이 바꾸지 않는 표식(16진 · 숫자 없이 g–z 글자만) — 이 시험만의 지문이 된다. */
+    static String letters(int n) {
+        StringBuilder b = new StringBuilder(n);
+        for (int i = 0; i < n; i++) b.append((char) ('g' + ThreadLocalRandom.current().nextInt(20)));
+        return b.toString();
+    }
+
+    /**
+     * 계약 v5 §G9(문제 재현): 같은 경고가 10 s 창 안에 두 번 나고 다시 오지 않으면, 전에는 두 번째가 프로세스 메모리의 억제 수로만 남아
+     * /logs 묶음이 "항목 1 · 억제 합 0" 이었다. 이제 창이 닫힌 뒤 보내는 스레드의 주기에 두 번째 발생이 제 항목으로 실린다
+     * (그 발생의 메시지 · 요청 id · ts, suppressed 0) — 항목 수 + 억제 합 = 발생 수.
+     */
+    @Test
+    void aWarningRepeatedInsideTheWindowIsSentWhenTheWindowCloses() throws InterruptedException {
+        OpsBrowser b = login();
+        String marker = letters(16);
+        org.slf4j.Logger lg = LoggerFactory.getLogger(LogsIT.class);
+        Instant before = Instant.now();
+        MDC.put("request_id", "itfirst" + letters(12));
+        try {
+            lg.warn("trailing probe {} attempt {}", marker, 1);
+            MDC.put("request_id", "itsecond" + letters(12));
+            lg.warn("trailing probe {} attempt {}", marker, 2); // 숫자는 메시지 틀에서 # — 같은 지문, 창 안이라 억제
+        } finally {
+            MDC.remove("request_id");
+        }
+        String q = "/api/v1/ops/logs?service=api&q=" + enc(marker);
+        AtomicReference<JsonNode> seen = new AtomicReference<>();
+        await("the first occurrence", Duration.ofSeconds(15), () -> {
+            seen.set(b.get(q).json().path("items"));
+            return !seen.get().isEmpty();
+        });
+        if (Duration.between(before, Instant.now()).toSeconds() < 9)
+            assertThat(seen.get()).as("the second occurrence is held back while the window is open").hasSize(1);
+        // 창(10 s)이 닫히고 다음 주기(1 s)까지 — 천천히 묻는다
+        JsonNode items = null;
+        long end = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < end) {
+            items = b.get(q).json().path("items");
+            if (items.size() >= 2) break;
+            Thread.sleep(500);
+        }
+        assertThat(items).as("both occurrences in /ops/logs").hasSize(2);
+        JsonNode second = items.get(0), first = items.get(1);
+        assertThat(first.path("message").asString()).isEqualTo("trailing probe " + marker + " attempt 1");
+        assertThat(second.path("message").asString()).isEqualTo("trailing probe " + marker + " attempt 2");
+        assertThat(second.path("request_id").asString()).startsWith("itsecond");
+        assertThat(second.path("fp").asString()).isEqualTo(first.path("fp").asString());
+        assertThat(first.path("suppressed").asLong()).isZero();
+        assertThat(second.path("suppressed").asLong()).isZero();
+        Instant t1 = Instant.parse(first.path("ts").asString()), t2 = Instant.parse(second.path("ts").asString());
+        assertThat(t1).isAfterOrEqualTo(before.truncatedTo(java.time.temporal.ChronoUnit.MILLIS));
+        assertThat(t2).isAfterOrEqualTo(t1).isBefore(t1.plusSeconds(10)); // 발생 때의 시각(실린 시각이 아니다)
+
+        JsonNode g = null;
+        for (JsonNode x : b.get("/api/v1/ops/logs/groups?service=api").json().path("groups"))
+            if (first.path("fp").asString().equals(x.path("fp").asString())) g = x;
+        assertThat(g).as("group of the probe").isNotNull();
+        assertThat(g.path("count").asLong()).isEqualTo(2);
+        assertThat(g.path("suppressed").asLong()).isZero();
+        assertThat(g.path("last_at").asString()).isEqualTo(second.path("ts").asString());
     }
 
     @Test
