@@ -28,7 +28,9 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(secret=)[^&\s]+"), r"\1***"),
     # JSON·파이썬 repr 형태: "authKey": "…" / 'access_token': '…' (R-83 — '=' 가 없어 위 규칙이 못 잡는다)
     (re.compile(rf"""(?i)(["']{_KEYS}["']\s*:\s*["'])[^"']*(["'])"""), r"\1***\2"),
-    (re.compile(r"(\w+://[^:/\s]+:)[^@\s]+(@)"), r"\1***\2"),  # scheme://user:pass@host
+    # scheme://user:pass@host. (?<!\w): 낱말 처음에서만 시작한다 — 긴 낱말 글자열에서 자리마다 \w+ 를 다시 훑는 제곱 시간을 막는다
+    # (결과는 같다: 낱말 안에서 시작하는 일치는 그 낱말 처음에서도 일치하고, 왼쪽 것이 먼저 잡힌다)
+    (re.compile(r"(?<!\w)(\w+://[^:/\s]+:)[^@\s]+(@)"), r"\1***\2"),
     (re.compile(r"eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}"), "***jwt***"),
 ]
 MIN_SECRET_LEN = 6  # 이보다 짧은 값은 값으로 가리지 않는다(흔한 글자열을 모두 가려 로그를 망치지 않게)

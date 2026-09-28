@@ -138,3 +138,18 @@ def test_v5_c5_masking_vectors_match_exactly(case):
 )
 def test_v5_c5_query_key_rule(text, expected):
     assert mask(text) == expected
+
+
+def test_v5_masking_is_linear_on_long_word_runs():
+    """URL userinfo 규칙이 긴 낱말 글자열(base64·16진 덤프 등)에서 되짚기로 제곱 시간이 되지 않는다 — 로그 한 줄(LOG_LIMIT)을 가리는
+    동안 이벤트 루프가 멈추면 안 된다(계약 v5 §C2). 결과는 그대로다: 낱말 안에서 시작하는 일치는 그 낱말 처음에서도 일치한다."""
+    import time
+
+    from wakeline_collector import masking
+
+    blob = "A" * masking.LOG_LIMIT
+    t0 = time.perf_counter()
+    assert mask(blob, masking.LOG_LIMIT) == blob
+    assert mask("x" + "가" * 50_000 + " redis://u:pw9@h", masking.LOG_LIMIT).endswith(" redis://u:***@h")
+    assert time.perf_counter() - t0 < 1.0
+    assert mask("jdbc:postgresql://u:p@db/x") == "jdbc:postgresql://u:***@db/x"
