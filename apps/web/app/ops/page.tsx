@@ -8,6 +8,7 @@ import {
 } from "@/lib/ops";
 import { OpsLogin } from "@/components/OpsLogin";
 import { OpsPipeline } from "@/components/OpsPipeline";
+import { ErrorNote } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
 
 type Any = Record<string, unknown>;
@@ -48,15 +49,15 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const [audit, setAudit] = useState<{ items: Any[] } | null>(null);
   const [dlq, setDlq] = useState<{ items: Any[] } | null>(null);
   const [pipeline, setPipeline] = useState<unknown>(null);
-  const [err, setErr] = useState<string | null>(null);
-  /** 탭(엔드포인트)마다 마지막 성공 시각과 마지막 요청의 실패 문구(성공하면 지운다) — 한 탭만 계속 실패해도 드러난다(R-12) */
+  /** 마지막 오류(문구 + ApiError 면 요청 id — 계약 v5 §C8) */
+  const [err, setErr] = useState<unknown>(null);
+  /** 탭(엔드포인트)마다 마지막 성공 시각과 마지막 요청의 실패(성공하면 지운다) — 한 탭만 계속 실패해도 드러난다(R-12) */
   const [lastOk, setLastOk] = useState<Partial<Record<Tab, number>>>({});
-  const [tabErr, setTabErr] = useState<Partial<Record<Tab, string>>>({});
+  const [tabErr, setTabErr] = useState<Partial<Record<Tab, unknown>>>({});
   /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
   const fail = useCallback((e: unknown) => {
-    const msg = (e as Error).message;
-    if (!isAuthMiss(e)) { setErr(msg); return; }
-    void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => (k === "expired" ? onLeave(SESSION_EXPIRED_NOTE) : setErr(msg)));
+    if (!isAuthMiss(e)) { setErr(e); return; }
+    void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => (k === "expired" ? onLeave(SESSION_EXPIRED_NOTE) : setErr(e)));
   }, [onLeave]);
   const refresh = useCallback(() => {
     setErr(null);
@@ -65,7 +66,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
       (v) => { set(v); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
       (e: unknown) => {
         // 이 탭의 값은 마지막 성공 시각 기준으로 남는다 — 실패를 탭에 붙인다. 세션 만료면 로그인으로(확인은 한 번만)
-        setTabErr((m) => ({ ...m, [t]: (e as Error).message }));
+        setTabErr((m) => ({ ...m, [t]: e }));
         if (!isAuthMiss(e) || authMiss) return;
         authMiss = true;
         void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
@@ -95,7 +96,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         <button className="btn" onClick={refresh}>refresh</button>
         <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${TAB_PATH[tab]})의 마지막 성공 응답 시각 — 15 s 마다 다시 요청`} data-testid="ops-last-ok">갱신 {fmtClock(lastOk[tab])}</span>
         {err || TABS.some((t) => tabErr[t]) ? (
-          <span className="text-[11px] text-bad" role="alert">{[...TABS.filter((t) => tabErr[t]).map((t) => `${t}: ${tabErr[t]}`), ...(err ? [err] : [])].join(" · ")}</span>
+          <span className="text-[11px] text-bad" role="alert">
+            {TABS.filter((t) => tabErr[t]).map((t, i) => <span key={t}>{i ? " · " : ""}<ErrorNote prefix={`${t}: `} error={tabErr[t]} /></span>)}
+            {err ? <>{TABS.some((t) => tabErr[t]) ? " · " : ""}<ErrorNote error={err} /></> : null}
+          </span>
         ) : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
       </div>

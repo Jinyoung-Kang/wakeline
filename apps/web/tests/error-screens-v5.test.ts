@@ -139,3 +139,43 @@ describe("v5-C7/C8 shell: top menu '로그' and the global error listeners", () 
     expect(removed).toEqual(expect.arrayContaining(["error", "unhandledrejection"]));
   });
 });
+
+describe("v5-C8 screens show the request id of a failed call", () => {
+  const OK: Record<string, unknown> = {
+    "/api/v1/ops/session": { username: "op" },
+    "/api/v1/ops/runs?limit=50": { items: [], summary_24h: [] },
+    "/api/v1/ops/quality": { rule_counts: [], recent: [] },
+    "/api/v1/ops/settings": { items: [] },
+    "/api/v1/ops/audit": { items: [] },
+    "/api/v1/ops/dlq": { items: [] },
+    "/api/v1/ops/pipeline": { collector: {}, api: {} },
+  };
+  it("ops: the failing tab's error names the tab, keeps the server detail and shows the request id with a copy button", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/ops/providers") return json(500, { detail: "provider status unavailable", code: "INTERNAL", request_id: "a1b2c3d4e5f60718" });
+      return url in OK ? json(200, OK[url]) : json(404, { detail: "no such resource" });
+    });
+    const OpsPage = (await import("@/app/ops/page")).default;
+    await mount(createElement(OpsPage));
+    await settle();
+    const alert = find((e) => e.getAttribute?.("role") === "alert")!;
+    expect(alert.textContent).toContain("providers");
+    expect(alert.textContent).toContain("provider status unavailable");
+    expect(alert.textContent).toContain("a1b2c3d4e5f60718");
+    expect(find((e) => e.getAttribute?.("aria-label") === "요청 id a1b2c3d4e5f60718 복사", alert)).not.toBeNull();
+  });
+  it("stats and airport card render the error through ErrorNote (request id visible)", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ detail: "stats unavailable", code: "STORE_UNAVAILABLE", request_id: "feedface0000beef" }), { status: 503, headers: { "Content-Type": "application/problem+json" } }));
+    const StatsPage = (await import("@/app/stats/page")).default;
+    await mount(createElement(StatsPage));
+    await settle();
+    expect(byTestId("error-note")?.textContent).toContain("feedface0000beef");
+    const r = root!; root = null;
+    await React.act(async () => { r.unmount(); });
+    const { AirportCard } = await import("@/components/AirportCard");
+    await mount(createElement(AirportCard, { icao: "RKSI" }));
+    await settle();
+    expect(byTestId("error-note")?.textContent).toContain("feedface0000beef");
+  });
+});
