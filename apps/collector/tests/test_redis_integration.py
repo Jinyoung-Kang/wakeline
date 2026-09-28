@@ -165,3 +165,64 @@ async def test_r14_publisher_time_trim_on_real_redis_under_collector_acl(admin):
         await admin.delete(STREAM_AIRCRAFT)
         await col.aclose()
         await admin.execute_command("ACL", "DELUSER", user)
+
+
+# ---- 계약 v5 §C2: 로그 싱크의 파이프라인 XADD(MAXLEN ~) · 권한 거부 때의 백오프 ------------------------------------------------
+async def test_v5_log_sink_pipeline_xadd_on_real_redis(admin):
+    """실 redis.asyncio 파이프라인으로 XADD wakeline:logs MAXLEN ~ 3000 * e <json> — 가짜 Redis 가 흉내 내지 못하는 명령 모양 확인."""
+    import logging
+
+    from wakeline_collector.logsink import STREAM_LOGS, LogSink
+
+    await admin.delete(STREAM_LOGS)
+    sink = LogSink("collector", admin)
+    lg = logging.getLogger("itest.logsink")
+    lg.handlers[:], lg.propagate = [sink], False
+    try:
+        for i in range(120):
+            lg.warning("itest %s", chr(0x4E00 + i))  # 지문이 모두 달라 억제되지 않는다
+        assert await sink.send_pending() == 120
+        rows = await admin.xrange(STREAM_LOGS)
+        assert len(rows) == 120 and all(list(f) == ["e"] for _id, f in rows)
+        assert [orjson.loads(f["e"])["message"] for _id, f in rows][:2] == ["itest 一", "itest 丁"]
+    finally:
+        lg.handlers.clear()
+        await admin.delete(STREAM_LOGS)
+
+
+async def test_v5_log_sink_backs_off_on_noperm_and_keeps_entries(admin):
+    """스트림 키 권한이 없는 사용자(계약 v5 §C3 의 ACL 이 아직 없을 때와 같은 상황): NOPERM 이면 항목을 버리지 않고 백오프한다.
+    권한이 생기면(C3) 다음 시도에 보낸다."""
+    import asyncio
+    import logging
+
+    from wakeline_collector.logsink import STREAM_LOGS, LogSink
+
+    user, pw = f"itest_logs_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
+    await admin.execute_command("ACL", "SETUSER", user, "reset", "on", f">{pw}", "~itest:*", "+xadd", "+ping")
+    kw = admin.connection_pool.connection_kwargs
+    r = Redis(host=kw["host"], port=kw["port"], username=user, password=pw, decode_responses=True)
+    await admin.delete(STREAM_LOGS)
+    sink = LogSink("ais", r, flush_every_s=0.02, backoff=(0.05, 0.05))
+    lg = logging.getLogger("itest.logsink.noperm")
+    lg.handlers[:], lg.propagate = [sink], False
+    sink.start(attach=False)
+    try:
+        lg.error("cannot reach upstream")
+        for _ in range(200):
+            if sink.failures >= 2:
+                break
+            await asyncio.sleep(0.01)
+        assert sink.failures >= 2 and len(sink.pending()) == 1 and sink.dropped == 0 and sink.sent == 0
+        await admin.execute_command("ACL", "SETUSER", user, f"~{STREAM_LOGS}")  # C3: ~wakeline:logs 를 더한다
+        for _ in range(200):
+            if sink.sent == 1:
+                break
+            await asyncio.sleep(0.01)
+        assert sink.sent == 1 and len(await admin.xrange(STREAM_LOGS)) == 1
+    finally:
+        lg.handlers.clear()
+        await sink.aclose(drain_s=0.2)
+        await r.aclose()
+        await admin.execute_command("ACL", "DELUSER", user)
+        await admin.delete(STREAM_LOGS)
