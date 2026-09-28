@@ -81,6 +81,16 @@ k6: `/aircraft` p95 4.6 ms · `/sigmets` p95 5.7 ms · `/status` p95 9.5 ms · W
 - GC 는 경합 없을 때 지연의 원인이 아니었다: 7분 부하 중 일시정지 합계 약 1.4–1.8 s · 최대 68–89 ms(GC 표본이 있는 10:45 · 11:21 실행). 경합이 있으면 최대 344 ms(13:54) · 939 ms(14:05)로 늘고, 힙 커밋이 241 → 298 · 217 → 316 MiB 로 커져(k6 없이 큰 경합 속 381 MiB) api RSS 가 함께 오른다(RSS ≈ 힙 커밋 + 약 280 MiB).
 - **collector 메모리**: 재기동 뒤 40분에 99 → 289–298 MiB 로 계단식으로 늘었다 — 기상청 레이더 해석(수십 MB numpy)이 공용 스레드 풀의 아무 스레드에서 돌아 스레드마다 malloc 아레나가 최고점을 따로 쥠(해석은 기준선부터 풀에서 돌았고, R-21 이 풀 사용을 늘린 것으로 추정). 전용 해석 스레드 + `MALLOC_ARENA_MAX=2` 뒤 같은 40분에 173–217 MiB 로 평탄.
 
+## 8. 계약 v5 뒤(2026-09-28 21:5x UTC = 한국 09-29 06:5x, 개발 스택 · Lighthouse 12.8.2 데스크톱 · headless SwiftShader · 3회)
+| 항목 | 리뷰 v1 뒤 | 계약 v5 뒤 |
+|---|---|---|
+| 첫 화면 JS(`/`, Lighthouse 전송량 — 스크립트) | 497.7 KiB(16개) | **526.3 KiB**(17개, 3회 모두 526.2–526.3) |
+| Lighthouse `/` 성능 · LCP · TBT | 5회 중앙값 53 · 2.39 s · 698 ms | 44–55 · 1.99–2.69 s · 1,239–2,367 ms(3회 — 호스트 1분 부하 5.9, 경합 속 값이라 비교하지 않는다) |
+
+- 늘어난 28.6 KiB 는 앱 청크다(MapLibre 두 파일은 같은 148.2 · 145.8 KiB). 새 청크 하나(12.1 KiB)는 상단 통합 검색(선박 검색 · 목록 표 · 정렬)과 브라우저 오류 보고,
+  나머지는 기존 청크가 조금씩 커진 것(선박 필터 · 이중 단위 · WS 검증기와 오류 배지). NFR-04(400 KB)는 리뷰 v1 때부터 미충족이며 목표를 다시 정할지는 사용자 결정으로 남아 있다.
+- 재현: `CHROME_PATH=<playwright chromium> lighthouse http://localhost:8700/ --preset=desktop --only-categories=performance --chrome-flags="--headless=new --use-angle=swiftshader"` 의 `network-requests` 에서 resourceType Script 의 transferSize 합.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
