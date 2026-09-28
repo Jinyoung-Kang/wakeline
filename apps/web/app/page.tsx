@@ -10,8 +10,12 @@ import { RadarTimeline } from "@/components/RadarTimeline";
 import { SigmetCard } from "@/components/SigmetCard";
 import { StatusBar } from "@/components/StatusBar";
 import { useUi } from "@/lib/ui-store";
+import { loadMaplibre } from "@/lib/maplibre";
 
-const MapView = dynamic(() => import("@/components/MapView").then((m) => m.MapView), { ssr: false, loading: () => <div className="grid-bg h-full w-full" /> });
+// 지도 컴포넌트 청크와 MapLibre(public 배포본 — 지도 워커와 공용 청크를 한 번만 받는다, R-02)를 함께 받는다
+const MapView = dynamic(() => Promise.all([import("@/components/MapView"), loadMaplibre()]).then(([m]) => m.MapView), {
+  ssr: false, loading: () => <div className="grid-bg h-full w-full" />,
+});
 
 export default function Dashboard() {
   const panel = useUi((s) => s.panel);

@@ -10,7 +10,10 @@ import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 
 const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[] }));
 
-vi.mock("maplibre-gl", async () => (await import("./helpers/fake-maplibre")).fakeMaplibreModule);
+vi.mock("@/lib/maplibre", async (orig) => {
+  const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
+  return { ...(await orig<typeof import("@/lib/maplibre")>()), maplibre: () => fake, loadMaplibre: async () => fake };
+});
 vi.mock("@/lib/api", () => ({ apiGet: (p: string) => { rec.api.push(p); return new Promise(() => {}); } }));
 vi.mock("@/lib/ws", () => ({
   WakelineWsClient: class {

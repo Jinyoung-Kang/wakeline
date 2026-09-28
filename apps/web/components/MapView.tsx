@@ -1,11 +1,12 @@
 "use client";
-import * as maplibregl from "maplibre-gl";
+import type * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import {
-  addBaseLayers, COVERAGE_PAINT, coverageTileUrl, FALLBACK_STYLE, frameDisplay, MAPLIBRE_WORKER_URL, predictionFeature, predictionKey, predictionTargets,
+  addBaseLayers, COVERAGE_PAINT, coverageTileUrl, FALLBACK_STYLE, frameDisplay, predictionFeature, predictionKey, predictionTargets,
   RADAR_SLOT, radarTileUrl, STYLE_URL, type FrameRole,
 } from "@/lib/maplayers";
 import { subscriptionBbox } from "@/lib/viewport";
+import { maplibre } from "@/lib/maplibre";
 import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
@@ -146,13 +147,14 @@ export function MapView() {
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
     if (!el.current) return;
-    maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL);
-    const map = new maplibregl.Map({
+    // MapLibre 는 public 배포본(워커와 공용 청크를 나눠 쓴다 — R-02). 상황판은 이 컴포넌트를 불러올 때 loadMaplibre() 를 함께 기다린다(app/page.tsx).
+    const ml = maplibre();
+    const map = new ml.Map({
       container: el.current, style: STYLE_URL, center: REGION_CENTER, zoom: 6, minZoom: 1, maxZoom: 12,
       hash: true, // #zoom/lat/lon — 지도 위치를 링크로 공유
       attributionControl: false, canvasContextAttributes: { antialias: false },
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+    map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
     let styleLoaded = false;
     let noBasemap = false;
@@ -259,7 +261,7 @@ export function MapView() {
     };
 
     // ---- 호버 툴팁(GAP-26): 항공기 > 선박 > 선박 격자 > 공항 > SIGMET. rAF 로 묶어 이동당 한 번만 조회. 내용은 텍스트 노드로만. ----
-    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
+    const popup = new ml.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
     let hoverKey = "";
     let hoverAt = 0;
     let hoverRaf = 0;
@@ -327,7 +329,7 @@ export function MapView() {
       // 출처(FR-20): 스타일이 배경지도 크레딧을 이미 붙였으면 중복하지 않는다. 배경지도를 못 받았으면(대체 스타일) 배경지도 크레딧을 붙이지 않는다.
       // 데이터 출처는 항상 전부(OpenSky·기상청 포함).
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
-      map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
+      map.addControl(new ml.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
       applyRender();
       applyAirports();
       map.on("mousemove", (e: maplibregl.MapMouseEvent) => { hoverEvt = e; if (!hoverRaf) hoverRaf = requestAnimationFrame(doHover); });

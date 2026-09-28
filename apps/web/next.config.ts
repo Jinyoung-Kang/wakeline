@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   images: { unoptimized: true },
+  // MapLibre 배포본은 버전 폴더에 있다(scripts/copy-maplibre-worker.mjs · lib/maplibre.ts, R-02) — 내용이 바뀌면 경로가 바뀌므로 오래 캐시한다.
+  // 지도 메인과 워커가 같은 공용 청크를 캐시에서 나눠 쓰고, 재방문 때 재검증 요청도 없다.
+  async headers() {
+    return [{ source: "/maplibre/:version/:file*", headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] }];
+  },
   // API·WS 는 edge(nginx)가 api 로 직접 보내므로 여기서는 프록시하지 않는다.
   // 로컬 `next dev` 로 화면만 띄울 때만 아래 rewrite 를 쓴다(스택은 compose 로 떠 있어야 함).
   async rewrites() {

@@ -15,8 +15,8 @@ export const FALLBACK_STYLE: maplibregl.StyleSpecification = {
   sources: {},
   layers: [{ id: "wakeline-no-basemap", type: "background", paint: { "background-color": "#0b0d10" } }],
 };
-/** MapLibre 워커 경로 — scripts/copy-maplibre-worker.mjs 가 public/maplibre/ 에 복사한다. 지도를 만들기 전에 한 번 호출. */
-export const MAPLIBRE_WORKER_URL = "/maplibre/maplibre-gl-worker.mjs";
+/** MapLibre 워커 경로(버전 폴더) — scripts/copy-maplibre-worker.mjs 가 public/maplibre/<버전>/ 에 복사한다. 지도를 만들기 전에 한 번 지정. */
+export { MAPLIBRE_WORKER_URL } from "./maplibre";
 export const RADAR_COLOR_SCHEME = 2;
 
 /** 위험 유형 색 식 — format.ts HAZARD_COLORS(범례·카드와 같은 표)에서 만든다 */
