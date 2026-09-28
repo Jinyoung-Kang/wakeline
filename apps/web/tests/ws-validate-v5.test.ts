@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatusBar } from "@/components/StatusBar";
+import { wsInvalidText } from "@/components/WsInvalidBadge";
 import { aircraftStates, clockOffsetMs, getData, resetData, shipStates } from "@/lib/store";
 import { isDateTime, validateServerMessage } from "@/lib/ws-validate";
 import { ac, BBOX, diff, resyncs, setup, snap, TS, welcomed } from "./helpers/fake-ws";
@@ -321,20 +322,41 @@ describe("status UI shows the count (store wsInvalid → StatusBar)", () => {
   it("no badge while nothing was dropped", () => {
     expect(html()).not.toContain('data-testid="ws-invalid"');
   });
-  it("a badge with the total and a tooltip that names elements · messages · exceptions and the last reason; the connection badge tooltip says the same", () => {
+  it("a keyboard/touch-reachable badge that names each unit (elements · messages · exceptions — never one mixed sum) and opens a detail box with the last reason, the real recovery paths and a copy button", () => {
     const t = setup();
     welcomed(t);
     t.ws().recv(snap([ac("aaa001"), { hex: "XYZ", lat: 1, lon: 1 }]));
     t.ws().recv({ type: "diff", seq: 2, upsert: 5, remove: [] });
     const out = html();
-    const badge = /<span class="badge warn"[^>]*data-testid="ws-invalid"[^>]*title="([^"]*)"[^>]*>([^<]*)</.exec(out);
-    expect(badge).not.toBeNull();
-    expect(badge![2]).toContain("2");
-    expect(badge![1]).toContain("원소 1");
-    expect(badge![1]).toContain("메시지 1");
-    expect(badge![1]).toContain("예외 0");
-    expect(badge![1]).toContain("diff");
-    expect(/data-testid="conn"[^>]*title="([^"]*)"/.exec(out)?.[1] ?? /title="([^"]*)"[^>]*data-testid="conn"/.exec(out)?.[1]).toMatch(/형식 오류/);
+    const badge = /<button type="button"[^>]*data-testid="ws-invalid"[^>]*>(.*?)<\/button>/.exec(out);
+    expect(badge, "the badge is a button (focusable, tappable)").not.toBeNull();
+    const text = badge![1].replace(/<[^>]+>/g, "");
+    expect(text).toContain("원소 1");
+    expect(text).toContain("메시지 1");
+    expect(text).not.toContain("예외"); // 0 인 단위는 쓰지 않는다
+    expect(text).not.toMatch(/오류 2\b/); // 단위가 다른 수를 더하지 않는다
+    const target = /popovertarget="([^"]+)"/i.exec(badge![0])?.[1]; // HTML 속성은 대소문자를 가리지 않는다(React 는 popoverTarget 으로 쓴다)
+    expect(target).toBeTruthy();
+    const box = /<div[^>]*popover="auto"[^>]*>/.exec(out)?.[0] ?? "";
+    expect(box, "the detail box is a popover (top layer — not clipped by the scrolling status bar)").toContain(`id="${target}"`);
+    const detail = out.slice(out.indexOf(`id="${target}"`)).replace(/<[^>]+>/g, " ");
+    expect(detail).toContain("버린 원소·값 1");
+    expect(detail).toContain("버린 메시지 1");
+    expect(detail).toContain("처리 예외 0");
+    expect(detail).toMatch(/마지막: diff: /);
+    expect(detail).toContain("알림 · SIGMET · 레이더는 그 목록 전체를 다시 요청");
+    expect(detail).not.toContain("다음 갱신 때 바로잡힌다");
+    expect(detail).toContain("복사");
+  });
+
+  it("the detail text (what is copied) states the counts, the recovery paths and the last reason", () => {
+    const txt = wsInvalidText({ elements: 3, messages: 1, errors: 2, last: "alerts_batch: items is not an array", at: Date.parse(TS) });
+    expect(txt.split("\n")[0]).toMatch(/^WS 수신 형식 오류/);
+    expect(txt).toContain("버린 원소·값 3");
+    expect(txt).toContain("버린 메시지 1");
+    expect(txt).toContain("처리 예외 2");
+    expect(txt).toContain("마지막: alerts_batch: items is not an array");
+    expect(txt).toContain("status 는 30 s 안의 다음 heartbeat");
   });
 });
 
