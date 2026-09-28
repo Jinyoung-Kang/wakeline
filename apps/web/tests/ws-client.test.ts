@@ -324,6 +324,32 @@ describe("receive watchdog (WS-2)", () => {
     expect(t.sockets).toHaveLength(1);
     expect(getData().conn).toBe("closed");
   });
+
+  it("a late onclose from a closed client does not overwrite the next client's connection state (R-75)", () => {
+    // '/'를 떠났다 돌아올 때: 이전 클라이언트 A 를 닫았지만 닫기 핸드셰이크가 늦게 끝난다(반쯤 열린 연결)
+    const a = setup();
+    a.client.connect();
+    a.ws().open();
+    a.ws().recv({ type: "welcome" });
+    const sockA = a.ws();
+    sockA.hang = true;
+    a.client.close();
+    expect(getData().conn).toBe("closed"); // 닫은 즉시 한 번만 기록
+    // 새 클라이언트 B 가 연결되고 수요 상태를 받는다
+    const b = setup();
+    b.client.select("71c123");
+    b.client.connect();
+    b.ws().open();
+    b.ws().recv({ type: "welcome" });
+    b.ws().recv({ type: "demand", hot: null, focus: { hex: "71c123", state: "active", interval_s: 5, since: "2026-09-27T05:10:00Z" } });
+    expect(getData().conn).toBe("open");
+    // A 의 닫기가 이제서야 끝난다 — B 의 상태를 'closed'·수요 없음으로 덮으면 안 된다
+    sockA.onclose?.({ code: 1000 });
+    expect(getData().conn).toBe("open");
+    expect(getData().demand?.focus).toMatchObject({ hex: "71c123", state: "active" });
+    vi.advanceTimersByTime(60_000);
+    expect(a.sockets).toHaveLength(1); // A 는 다시 연결하지 않는다
+  });
 });
 
 describe("server clock (WS-3 / DH-1)", () => {

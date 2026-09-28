@@ -147,13 +147,26 @@ export class WakelineWsClient {
     ws.onerror = () => { /* onclose 가 이어서 처리 */ };
   }
 
+  /**
+   * 사용자가 닫음(화면을 떠남). 소켓의 처리기를 떼고 참조를 버린 뒤 닫는다 — 닫기 핸드셰이크가 늦게 끝나도(반쯤 열린 연결)
+   * 그 onclose 가 같은 스토어를 쓰는 다음 클라이언트의 상태를 'closed'·수요 없음으로 덮지 않는다(R-75). 스토어는 여기서 한 번만 쓴다.
+   */
   close() {
     this.closedByUser = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.stopConnTimers();
     this.clearPending();
-    this.ws?.close(1000);
+    const ws = this.ws;
+    this.ws = null;
+    this.welcomed = false;
+    if (!ws) return;
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    try { ws.close(1000); } catch { /* 이미 닫힘 */ }
+    setData({ conn: "closed", demand: null });
   }
 
   /**
