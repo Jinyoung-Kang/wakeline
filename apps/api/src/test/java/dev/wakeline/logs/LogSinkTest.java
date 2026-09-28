@@ -40,14 +40,17 @@ class LogSinkTest {
     /** XADD 한 스트림(written 과 같은 순서). */
     final List<LogStream> streams = Collections.synchronizedList(new ArrayList<>());
     final AtomicInteger failuresLeft = new AtomicInteger();
+    /** 남아 있으면 XADD 가 Error 를 던진다(드라이버 버그 · 스택 넘침 흉내). */
+    final AtomicInteger errorsLeft = new AtomicInteger();
     final LoggerContext logback = new LoggerContext();
     LogSink sink;
 
     { logback.setMDCAdapter(new ch.qos.logback.classic.util.LogbackMDCAdapter()); }
 
-    /** 가짜 XADD: failuresLeft 가 남아 있으면 실패(Redis 장애 흉내). */
+    /** 가짜 XADD: failuresLeft 가 남아 있으면 실패(Redis 장애 흉내), errorsLeft 가 남아 있으면 Error. */
     void xadd(LogStream stream, String json) {
         if (failuresLeft.get() > 0 && failuresLeft.getAndDecrement() > 0) throw new IllegalStateException("redis down");
+        if (errorsLeft.get() > 0 && errorsLeft.getAndDecrement() > 0) throw new StackOverflowError("simulated in XADD");
         streams.add(stream);
         written.add(json);
     }
@@ -308,6 +311,43 @@ class LogSinkTest {
         assertThat(counter("dropped")).isEqualTo(2);
     }
 
+    /**
+     * 뒤늦게 실을 항목의 body 가 Error(StackOverflowError · OutOfMemoryError 등)를 던져도 예외와 같다 — 그 발생과 싣던 억제 수를 dropped 로 세고,
+     * 같은 주기에 창이 닫힌 다른 지문은 그대로 싣는다(submit 이 Error 도 잡는 것과 같은 이유 — body 는 이제 보내는 스레드 · 종료 스레드에서도 돈다).
+     */
+    @Test
+    void anErrorWhileBuildingATrailingEntryIsCountedAsDropped_andTheOtherFingerprintsDueOnThatTickAreStillQueued() {
+        LogSink s = sink(true, 60_000, 60_000, 60_000);
+        LogSink.Body overflow = (fp, n) -> { throw new StackOverflowError("simulated"); };
+        assertThat(s.submit("api", "L", null, "deep 0", (fp, n) -> entry(0))).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "L", null, "deep 1", overflow)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.submit("api", "L", null, "deep 2", overflow)).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.submit("api", "M", null, "other 0", (fp, n) -> "{\"m\":0}")).isEqualTo(LogSink.Offer.QUEUED);
+        assertThat(s.submit("api", "M", null, "other 1", (fp, n) -> "{\"m\":1,\"n\":" + n + "}")).isEqualTo(LogSink.Offer.SUPPRESSED);
+        assertThat(s.flushOnce()).isTrue();
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        assertThat(s.flushTrailing()).isEqualTo(1);
+        assertThat(s.flushOnce()).isTrue();
+        assertThat(written).containsExactly(entry(0), "{\"m\":0}", "{\"m\":1,\"n\":0}");
+        assertThat(counter("dropped")).isEqualTo(2);
+        assertThat(counter("sent")).isEqualTo(3);
+    }
+
+    /** 보내는 스레드는 뒤늦게 실을 body 의 Error 에 죽지 않는다 — 그 발생을 dropped 로 센 뒤에도 다음 주기에 새 항목을 보낸다(isRunning 인데 아무것도 보내지 않는 일이 없다). */
+    @Test
+    void theFlusherKeepsSendingAfterAnErrorInATrailingBody() {
+        LogSink s = sink(true, 20, 20, 20);
+        s.start();
+        s.submit("api", "L", null, "deep 0", (fp, n) -> entry(0));
+        s.submit("api", "L", null, "deep 1", (fp, n) -> { throw new StackOverflowError("simulated"); });
+        await("the first entry", () -> written.size() == 1);
+        now.addAndGet(LogSink.SUPPRESS_WINDOW_MS);
+        await("the failed trailing entry counted as dropped", () -> counter("dropped") == 1);
+        s.submit("api", "N", null, "after the error", (fp, n) -> entry(9));
+        await("an entry sent after the error", () -> written.size() == 2);
+        assertThat(written).containsExactly(entry(0), entry(9));
+    }
+
     /** 창을 연 항목을 만들지 못하면(직렬화 예외) 보낸 것이 없으니 창을 닫고, 싣던 억제 수는 다음 항목이 싣는다(collector·ais 와 같다). */
     @Test
     void anEntryThatCannotBeBuiltGivesItsSuppressedCountBack() {
@@ -395,6 +435,19 @@ class LogSinkTest {
         assertThat(written).containsExactly(entry(0), entry(1), entry(2), entry(3), entry(4));
         assertThat(counter("dropped")).isZero();
         assertThat(counter("sent")).isEqualTo(5);
+    }
+
+    /** XADD 가 Error 를 던져도(드라이버 버그 · 스택 넘침) 다른 실패와 같다 — 묶음을 순서대로 대기열에 되돌리고 백오프 뒤 다시 보낸다(잃지 않는다). 보내는 스레드는 산다. */
+    @Test
+    void anErrorFromXaddKeepsTheBatchQueuedAndTheFlusherAlive() {
+        LogSink s = sink(true, 20, 20, 200);
+        errorsLeft.set(1);
+        s.start();
+        for (int i = 0; i < 3; i++) s.enqueue(entry(i));
+        await("all written after the error", () -> written.size() == 3);
+        assertThat(written).containsExactly(entry(0), entry(1), entry(2));
+        assertThat(counter("dropped")).isZero();
+        assertThat(counter("sent")).isEqualTo(3);
     }
 
     @Test

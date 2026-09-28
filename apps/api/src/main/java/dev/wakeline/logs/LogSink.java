@@ -314,7 +314,8 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     /**
      * 계약 v5 §G9 뒤늦게 싣기: 억제 중인 발생(k건)이 있고 창이 닫힌(all 이면 창과 무관하게 — 종료 때) 지문마다 마지막 억제 발생 하나를
      * 그 body 로 항목을 만들어(ts · 메시지 · 예외 · context 는 그 발생의 것) suppressed = k − 1 로 대기열에 넣는다. 그 지문의 창은 지금
-     * 다시 시작한다(억제 수 0). 항목을 만들지 못하거나(예외) deadlineNanos(System.nanoTime 기준)를 넘기면 그 k건을 dropped 로 센다.
+     * 다시 시작한다(억제 수 0). 항목을 만들지 못하거나(예외 · Error) deadlineNanos(System.nanoTime 기준)를 넘기면 그 k건을 dropped 로 센다 —
+     * 한 발생의 body 때문에 같은 주기의 다른 지문 · 보내는 스레드 · 종료가 멈추지 않는다.
      * @return 대기열에 넣은 항목 수
      */
     int flushTrailing(boolean all, long deadlineNanos) {
@@ -341,7 +342,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
             String json;
             try {
                 json = d.last().body().json(d.fp(), n);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) { // submit 과 같다 — body 는 이제 보내는 스레드 · 종료 스레드에서도 돈다(StackOverflowError 등)
                 lost += d.count();
                 System.err.println("log sink: could not build a trailing log entry (counted as dropped): " + e); // 재귀 금지 — 표준 오류에만
                 continue;
@@ -494,7 +495,8 @@ public class LogSink implements SmartLifecycle, DisposableBean {
                 }
             } catch (InterruptedException e) {
                 if (!running) return;
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
+                // 한 번의 실패로 보내는 스레드가 죽으면 isRunning 인 채 아무것도 보내지 않는다(종료 때까지 조용히 쌓인다) — 표준 오류에 남기고 다음 주기로
                 System.err.println("log sink loop error: " + e); // 재귀 금지 — 표준 오류에만
             }
         }
@@ -540,7 +542,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
                     writer.xadd(e.stream(), e.json());
                     sent.increment();
                     it.remove();
-                } catch (RuntimeException ex) {
+                } catch (RuntimeException | Error ex) { // Error(드라이버 버그 · 스택 넘침)도 같은 실패 — 꺼낸 묶음을 잃지 않게 먼저 되돌린다
                     requeue(batch);
                     if (!failing) {
                         failing = true;
