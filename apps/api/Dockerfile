@@ -18,7 +18,7 @@ COPY --from=build /src/src/main/resources/schemas /app/schemas
 # 힙 = 컨테이너 한도의 40 %(R-25 · ADR-017 §4: compose 한도 1g → 약 410 MiB, NFR-03 512 MB 안. GC 뒤 살아 있는 데이터는 약 75 MiB, 부하 중 힙 최대 약 220 MiB).
 # 나머지는 메타스페이스·코드 캐시·스레드·직접 버퍼. G1 명시, 힙 소진 시 종료 → restart 정책.
 # MALLOC_ARENA_MAX=2(R-25 후속): 힙 비율만으로는 RSS 가 610–628 MiB 였다. NMT 가 센 JVM 메모리는 427 MiB(힙 213 · 메타스페이스 73 · GC 46 · 코드 36 …)이고
-# 나머지 약 150 MiB 는 glibc 가 스레드별 malloc 아레나에 쥐고 있던 메모리였다. 아레나를 2개로 묶으면 같은 조건에서 약 501 MiB(실측, docs/review/VERIFICATION.md).
+# 나머지 약 160 MiB 는 glibc 가 스레드별 malloc 아레나에 쥐고 있던 메모리였다. 아레나를 2개로 묶으면 경합 기록이 없는 k6 실행에서 497–501 MiB(실측, docs/review/VERIFICATION.md).
 ENV JAVA_TOOL_OPTIONS="-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError" MALLOC_ARENA_MAX=2 TZ=UTC
 USER app
 EXPOSE 8000 9000

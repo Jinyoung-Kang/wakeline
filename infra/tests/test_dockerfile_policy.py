@@ -44,7 +44,7 @@ class ApiHeapTest(unittest.TestCase):
 
 class ApiNativeMemoryTest(unittest.TestCase):
     """R-25 후속: 힙 비율만으로는 NFR-03(≤ 512 MB)에 닿지 않았다 — 실측 RSS 610–628 MiB 중 JVM NMT 가 센 것은 427 MiB,
-    나머지 약 150 MiB 는 glibc malloc 아레나가 쥐고 있던 메모리였다. MALLOC_ARENA_MAX=2 로 같은 부하 없는 상태 501 MiB(실측)."""
+    나머지 약 160 MiB 는 glibc malloc 아레나가 쥐고 있던 메모리였다. MALLOC_ARENA_MAX=2 로 경합 기록이 없는 k6 실행에서 497–501 MiB(실측)."""
 
     def test_malloc_arena_cap_in_runtime_stage(self):
         runtime = stages(DOCKERFILES["api"].read_text())[-1]
@@ -53,7 +53,7 @@ class ApiNativeMemoryTest(unittest.TestCase):
 
 class CollectorNativeMemoryTest(unittest.TestCase):
     """리뷰 4단계: collector 도 작업 스레드(asyncio.to_thread 기본 풀, 최대 8)마다 glibc 아레나를 따로 쥐어 RSS 가 계단식으로 늘었다
-    (기본 설정 40분에 99 → 297 MiB, 최고 376 MB). api(R-25 후속)와 같이 아레나를 2개로 묶는다 — ais 도 같은 이미지다."""
+    (기본 설정 재기동 뒤 40분에 RssAnon 99 → 289–298 MiB). api(R-25 후속)와 같이 아레나를 2개로 묶는다 — ais 도 같은 이미지다."""
 
     def test_malloc_arena_cap_in_runtime_stage(self):
         runtime = stages(DOCKERFILES["collector"].read_text())[-1]
