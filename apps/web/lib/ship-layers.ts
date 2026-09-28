@@ -9,7 +9,7 @@
  */
 import type * as maplibregl from "maplibre-gl";
 import { sdfImage } from "./maplayers";
-import { SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, SHIP_SELECTED_COLOR } from "./ships";
+import { SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, SHIP_SELECTED_COLOR, type ShipCategory } from "./ships";
 
 /** 선체(48×48, 선수 위쪽) — 지도 아이콘과 범례가 같은 경로를 쓴다 */
 export const HULL_PATH = "M24 4 C29 10 32 16 32 24 L32 42 Q32 45 29 45 L19 45 Q16 45 16 42 L16 24 C16 16 19 10 24 4 Z";
@@ -61,6 +61,15 @@ export const SHIP_GRID_STYLE = { minRadius: 8, opacity: 0.85, stroke: "#ffffff",
 export const SHIP_GRID_RADIUS_EXPR = [
   "interpolate", ["linear"], ["sqrt", ["get", "count"]], 1, SHIP_GRID_STYLE.minRadius, 10, 14, 30, 22, 100, 34,
 ] as unknown as maplibregl.ExpressionSpecification;
+
+/**
+ * 선종 필터(계약 v5 §B3) — 점 모드 "ship-symbol" 의 MapLibre filter. 모두 켜져 있으면 null(필터 없음).
+ * 분류가 없으면 unknown 으로 본다(색 식 CATEGORY_MATCH 와 같은 규칙).
+ */
+export function shipCategoryFilter(enabled: ReadonlySet<ShipCategory>): maplibregl.FilterSpecification | null {
+  if (SHIP_CATEGORIES.every((c) => enabled.has(c))) return null;
+  return ["in", ["coalesce", ["get", "cat"], "unknown"], ["literal", SHIP_CATEGORIES.filter((c) => enabled.has(c))]] as unknown as maplibregl.FilterSpecification;
+}
 
 /** 수신 범위 경계선 — 범례 견본과 같은 값 */
 export const SHIP_COVERAGE_COLOR = "#7f93a8";

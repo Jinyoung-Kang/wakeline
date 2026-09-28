@@ -9,9 +9,9 @@ import { subscriptionBbox } from "@/lib/viewport";
 import { maplibre } from "@/lib/maplibre";
 import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
-import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
+import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layers";
 import {
-  aisCoverageFeatures, appendShipTrack, gridFeatures, isMmsi, mergeStatusGaps, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest,
+  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, isMmsi, mergeStatusGaps, SHIP_TRACK_WINDOW_MS, shipFeatures, shipTrackFeatures, shipTrackFromRest,
   type ShipTrack,
 } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
@@ -126,6 +126,7 @@ export function MapView() {
   const selectAirport = useUi((s) => s.selectAirport);
   const selectedShip = useUi((s) => s.selectedShip);
   const selectShip = useUi((s) => s.selectShip);
+  const shipCats = useUi((s) => s.shipCats);
   const radarPlaying = useUi((s) => s.radarPlaying);
   const flyTo = useUi((s) => s.flyTo);
   /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
@@ -531,15 +532,25 @@ export function MapView() {
     const t = setInterval(() => setShipClock(Date.now()), SHIP_STALE_CHECK_MS);
     return () => clearInterval(t);
   }, []);
+  // 격자는 선종 필터(계약 v5 §B3)로 칸 수를 다시 센다 — 선종별 수가 없는 칸(구 서버)은 그대로(칸 툴팁·칩이 밝힌다)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     const now = serverNowMs(Date.now());
+    const enabled = new Set(shipCats);
     onReady(map, "ships", () => {
       geo(map, "ships")?.setData(ships.mode === "points" ? shipFeatures(shipStates.values(), selectedShip, now) : EMPTY_FC);
-      geo(map, "ship-grid")?.setData(ships.mode === "grid" ? gridFeatures(ships.grid) : EMPTY_FC);
+      geo(map, "ship-grid")?.setData(ships.mode === "grid" ? gridFeatures(filterGridCells(ships.grid, enabled).cells) : EMPTY_FC);
     });
-  }, [ships, selectedShip, shipClock]);
+  }, [ships, selectedShip, shipClock, shipCats]);
+
+  // ---- 선종 필터(계약 v5 §B3): 점 모드는 MapLibre filter(모두 켜져 있으면 없음) ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const filter = shipCategoryFilter(new Set(shipCats));
+    onReady(map, "ship-filter", () => { if (map.getLayer("ship-symbol")) map.setFilter("ship-symbol", filter); });
+  }, [shipCats]);
 
   // ---- 선택 선박: WS select_ship + 항적(REST 한 번, 이후 ship_selected 로 연장) ----
   useEffect(() => {

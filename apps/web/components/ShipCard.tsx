@@ -6,8 +6,8 @@ import { fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
 import {
   fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
-  SHIP_STALE_S, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
-  type DestinationInfo, type ShipState, type ShipStatic,
+  SHIP_CATEGORIES, SHIP_STALE_S, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
+  type DestinationInfo, type ShipCategory, type ShipState, type ShipStatic,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
@@ -168,11 +168,12 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
 export function ShipPanel() {
   const selected = useUi((s) => s.selectedShip);
   const shipsOn = useUi((s) => s.layers.ships);
-  return <ShipPanelView selected={selected} shipsOn={shipsOn} />;
+  const shipCats = useUi((s) => s.shipCats);
+  return <ShipPanelView selected={selected} shipsOn={shipsOn} shipCats={shipCats} />;
 }
 
-/** 표시 부분(선택·레이어를 인자로 — 서버 렌더 시험용) */
-export function ShipPanelView({ selected, shipsOn }: { selected: string | null; shipsOn: boolean }) {
+/** 표시 부분(선택·레이어·선종 필터를 인자로 — 서버 렌더 시험용) */
+export function ShipPanelView({ selected, shipsOn, shipCats = SHIP_CATEGORIES }: { selected: string | null; shipsOn: boolean; shipCats?: readonly ShipCategory[] }) {
   const toggle = useUi((s) => s.toggleLayer);
   if (selected && isMmsi(selected)) return <ShipCard mmsi={selected} />;
   if (!shipsOn) {
@@ -182,10 +183,10 @@ export function ShipPanelView({ selected, shipsOn }: { selected: string | null; 
       </div>
     );
   }
-  return <ShipList />;
+  return <ShipList shipCats={shipCats} />;
 }
 
-function ShipList() {
+function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const view = useServerData((x) => x.ships);
   const ais = useServerData((x) => x.ais);
   const viewport = useServerData((x) => x.viewport);
@@ -205,11 +206,12 @@ function ShipList() {
   // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐 · 연결 안 됨 · 상태 모름)
   const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais });
   // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
-  const { items: shown, total } = shipList(shipStates.values(), q);
+  const filtered = shipCats.length < SHIP_CATEGORIES.length;
+  const { items: shown, total, hidden } = shipList(shipStates.values(), q, 50, filtered ? new Set(shipCats) : null);
   return (
     <div className="flex h-full flex-col" data-testid="ship-list">
       <div className="row">
-        <span className="label">화면 안 선박 {view.count}</span>
+        <span className="label">화면 안 선박 {view.count}{filtered ? <span className="text-warn normal-case" data-testid="ship-list-cat-filter"> · 선종 필터 {shipCats.length}/{SHIP_CATEGORIES.length} · {hidden}척 숨김</span> : null}</span>
         <input value={q} onChange={(e) => setQ(e.target.value.slice(0, 32))} placeholder="이름·MMSI" aria-label="선박 이름 또는 MMSI 로 거르기" className="w-40" data-testid="ship-list-filter" />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto text-[12px]">

@@ -1,8 +1,8 @@
 "use client";
 import { useNow, useServerNow } from "@/lib/clock";
 import { mapDemandChip, type Chip } from "@/lib/demand";
-import { shipsChip, shipsGapSuffix } from "@/lib/ships";
-import { useServerData } from "@/lib/store";
+import { countShipsIn, filterGridCells, SHIP_CATEGORIES, shipsChip, shipsGapSuffix, type ShipCategory, type ShipsChipFilter } from "@/lib/ships";
+import { shipStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { isRxFresh } from "@/lib/ws-protocol";
 
@@ -21,11 +21,23 @@ export function DemandBadge({ chip, testId }: { chip: Chip; testId: string }) {
 export function MapChips() {
   const hex = useUi((s) => s.selectedHex);
   const shipsOn = useUi((s) => s.layers.ships);
-  return <MapChipsView hex={hex} shipsOn={shipsOn} />;
+  const shipCats = useUi((s) => s.shipCats);
+  return <MapChipsView hex={hex} shipsOn={shipsOn} shipCats={shipCats} />;
 }
 
-/** 표시 부분(선택 hex·선박 레이어를 인자로 — 서버 렌더 시험용) */
-export function MapChipsView({ hex, shipsOn }: { hex: string | null; shipsOn: boolean }) {
+/** 선종 필터 칩 입력(계약 v5 §B3): 점 모드는 화면 안 선박 중 켜진 선종 수, 격자는 선종별 수로 다시 센 합. 모두 켜져 있으면 null */
+function chipFilter(ships: { mode: string; grid: Parameters<typeof filterGridCells>[0] }, cats: readonly ShipCategory[]): ShipsChipFilter | null {
+  if (cats.length >= SHIP_CATEGORIES.length) return null;
+  const on = new Set(cats);
+  if (ships.mode === "grid") {
+    const g = filterGridCells(ships.grid, on);
+    return { on: cats.length, of: SHIP_CATEGORIES.length, shown: g.total, shownCells: g.cells.length, unfilteredCells: g.unfilteredCells };
+  }
+  return { on: cats.length, of: SHIP_CATEGORIES.length, shown: countShipsIn(shipStates.values(), on) };
+}
+
+/** 표시 부분(선택 hex·선박 레이어·선종 필터를 인자로 — 서버 렌더 시험용) */
+export function MapChipsView({ hex, shipsOn, shipCats = SHIP_CATEGORIES }: { hex: string | null; shipsOn: boolean; shipCats?: readonly ShipCategory[] }) {
   const demand = useServerData((d) => d.demand);
   const conn = useServerData((d) => d.conn);
   const lastRxAt = useServerData((d) => d.lastRxAt);
@@ -37,7 +49,9 @@ export function MapChipsView({ hex, shipsOn }: { hex: string | null; shipsOn: bo
   // 끊김·일시정지·수신 없음이면 서버 임대가 곧 만료된다 — 마지막 상태를 "진행 중"처럼 보이지 않는다
   const chip = isRxFresh(conn, lastRxAt, wall) ? mapDemandChip(demand, hex, now) : null;
   // 레이어를 켰는데 아직 서버에 알리기 전(mode off)이면 수신 대기로 본다
-  const ship = shipsOn ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais }) : null;
+  const ship = shipsOn
+    ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, filter: chipFilter(ships, shipCats) })
+    : null;
   if (!chip && !ship) return null;
   return (
     <div className="pointer-events-none absolute top-3 left-12 z-10 flex max-w-[60%] flex-col items-start gap-1" aria-live="polite">

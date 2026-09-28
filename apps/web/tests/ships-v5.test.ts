@@ -3,9 +3,22 @@
  * MMSI·선명은 합성(SYNTHETIC) 값이다.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { filterGridCells, gridFeatures, parseGridCells, SHIP_CATEGORIES, type ShipCategory } from "@/lib/ships";
+import { shipCategoryFilter } from "@/lib/ship-layers";
 import { shipGridTip } from "@/lib/tooltip";
+import { loadShipCats, saveShipCats, SHIP_CATS_KEY, type KV } from "@/lib/prefs";
+import { resetData, setData, shipStates } from "@/lib/store";
+import { useUi } from "@/lib/ui-store";
+import { MapLegendView } from "@/components/MapLegend";
+import { LayerPanelView } from "@/components/LayerPanel";
+import { MapChipsView } from "@/components/MapChips";
+import { ShipPanelView } from "@/components/ShipCard";
+
+const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
 
 /** 계약 v5 §B2 의 순서(웹 SHIP_CATEGORIES = Java ShipCategory 선언 순서) */
 const CONTRACT_ORDER = ["cargo", "tanker", "passenger", "fishing", "tug", "pleasure", "hsc", "special", "military", "other", "unknown"];
@@ -85,5 +98,98 @@ describe("category filter on the grid (contract v5 §B3)", () => {
     expect(old.title).toBe("선박 7척");
     expect(Object.fromEntries(old.rows)["BY TYPE"]).toBe("— (서버가 선종별 수를 보내지 않음)");
     expect(old.flags.map((x) => x.text)).toContain("선종별 수 없음(구 서버) — 선종 필터를 적용하지 못한 전체 수");
+  });
+});
+
+// ---------------------------------------------------------------- §B3 선종 필터(토글 · 저장 · 지도 식 · 칩 · 목록)
+
+describe("category filter UI (contract v5 §B3)", () => {
+  beforeEach(() => { resetData(); useUi.setState({ shipCats: [...SHIP_CATEGORIES], layers: { ...useUi.getState().layers, ships: true } }); });
+  afterEach(() => { resetData(); useUi.setState({ shipCats: [...SHIP_CATEGORIES] }); });
+
+  it("stored only in this browser: hidden categories round-trip; unknown names and garbage are ignored", () => {
+    const mem = new Map<string, string>();
+    const kv: KV = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => { mem.set(k, v); } };
+    expect(loadShipCats(kv)).toBeNull();
+    saveShipCats(["cargo", "tanker", "passenger", "tug", "pleasure", "hsc", "special", "military", "other"], kv);
+    expect(JSON.parse(mem.get(SHIP_CATS_KEY)!)).toEqual({ hidden: ["fishing", "unknown"] });
+    expect(loadShipCats(kv)).toEqual(["cargo", "tanker", "passenger", "tug", "pleasure", "hsc", "special", "military", "other"]);
+    mem.set(SHIP_CATS_KEY, JSON.stringify({ hidden: ["cargo", "submarine", 3] }));
+    expect(loadShipCats(kv)).toEqual(SHIP_CATEGORIES.filter((c) => c !== "cargo"));
+    for (const junk of ["{", "[]", '"x"', JSON.stringify({ hidden: "cargo" })]) { mem.set(SHIP_CATS_KEY, junk); expect(loadShipCats(kv)).toBeNull(); }
+    const broken: KV = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+    expect(loadShipCats(broken)).toBeNull();
+    expect(() => saveShipCats([], broken)).not.toThrow();
+  });
+
+  it("toggle keeps SHIP_CATEGORIES order", () => {
+    useUi.getState().toggleShipCat("fishing");
+    expect(useUi.getState().shipCats).not.toContain("fishing");
+    useUi.getState().toggleShipCat("fishing");
+    expect(useUi.getState().shipCats).toEqual([...SHIP_CATEGORIES]);
+  });
+
+  it("points mode: a MapLibre filter on the category (none when everything is on)", () => {
+    expect(shipCategoryFilter(new Set(SHIP_CATEGORIES))).toBeNull();
+    const f = shipCategoryFilter(new Set(SHIP_CATEGORIES.filter((c) => c !== "cargo" && c !== "unknown")))!;
+    const ff = featureFilter(f as never, "filter");
+    const pass = (cat: unknown) => ff.filter({ zoom: 8 } as never, { type: 1, properties: cat === undefined ? {} : { cat } } as never);
+    expect(pass("tanker")).toBe(true);
+    expect(pass("cargo")).toBe(false);
+    expect(pass(undefined)).toBe(false); // 분류가 없으면 unknown 으로 본다(지도 색과 같은 규칙)
+    expect(featureFilter(shipCategoryFilter(new Set())! as never, "filter").filter({ zoom: 8 } as never, { type: 1, properties: { cat: "tanker" } } as never)).toBe(false);
+  });
+
+  it("legend: every category is a toggle with its state and the count shown (선종 필터 n/11)", () => {
+    // 서버 렌더에서 zustand 훅은 초기 상태를 읽는다 — 표시 부분(View)에 지금 상태를 인자로
+    const legend = () => renderToStaticMarkup(createElement(MapLegendView, { id: "lg", layers: useUi.getState().layers, radarSource: "rainviewer", shipCats: useUi.getState().shipCats }));
+    let html = legend();
+    expect(html).toContain("선종 필터 11/11");
+    for (const c of SHIP_CATEGORIES) expect(html).toMatch(new RegExp(`aria-pressed="true"[^>]*data-testid="ship-cat-${c}"`));
+    expect(html).not.toContain('data-testid="ship-cats-all"');
+    useUi.getState().toggleShipCat("cargo");
+    useUi.getState().toggleShipCat("fishing");
+    html = legend();
+    expect(html).toContain("선종 필터 9/11");
+    expect(html).toMatch(/aria-pressed="false"[^>]*data-testid="ship-cat-cargo"/);
+    expect(html).toContain('data-testid="ship-cats-all"');
+  });
+
+  it("layer panel shows the filter count next to the ships toggle", () => {
+    useUi.getState().toggleShipCat("tug");
+    const panel = () => renderToStaticMarkup(createElement(LayerPanelView, { layers: useUi.getState().layers, shipCats: useUi.getState().shipCats, legendOpen: false }));
+    expect(panel()).toMatch(/data-testid="ship-cat-filter-chip"[^>]*>선종 필터 10\/11</);
+    useUi.setState({ layers: { ...useUi.getState().layers, ships: false } });
+    expect(panel()).not.toContain("ship-cat-filter-chip");
+  });
+
+  it("map chip: points and grid say how many are shown under the filter; unfiltered old cells are called out", () => {
+    const lite = (mmsi: string, ship_type: number | null) => ({ mmsi, lat: 35, lon: 129, sog_kn: null, cog_deg: null, heading_deg: null, ship_type, name: null, seen_at: null, position_source: null, nav_status: null });
+    shipStates.set("100000001", lite("100000001", 70));
+    shipStates.set("100000002", lite("100000002", 70));
+    shipStates.set("100000003", lite("100000003", 30));
+    setData({ ships: { mode: "points", version: 1, count: 3, total: 3, ts: null, cell_deg: null, capped: false, grid: [] }, viewport: { bbox: [120, 30, 135, 40], zoom: 8 } });
+    const chip = () => text(renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: true, shipCats: useUi.getState().shipCats })));
+    expect(chip()).toContain("선박 3척 · 화면 안 · AIS");
+    useUi.getState().toggleShipCat("cargo");
+    expect(chip()).toContain("선박 1척 · 화면 안 3척 중 · 선종 필터 10/11 · AIS");
+    useUi.getState().toggleShipCat("fishing");
+    expect(chip()).toContain("선박 0척 표시 — 선종 필터 9/11 로 화면 안 3척 모두 숨김");
+    const grid = parseGridCells([[35.25, 129.25, 5, "cargo", counts({ cargo: 3, tanker: 2 })], [30.25, 122.25, 7, "cargo"]]);
+    setData({ ships: { mode: "grid", version: 2, count: 2, total: 12, ts: null, cell_deg: 0.5, capped: false, grid }, viewport: { bbox: [120, 30, 135, 40], zoom: 5 } });
+    expect(chip()).toContain("선박 9척 · 선종 필터 9/11(전체 12척) · 0.5° 격자 2칸으로 묶음");
+    expect(chip()).toContain("1칸은 선종별 수 없음(구 서버 — 필터 미적용)");
+  });
+
+  it("ship list in view follows the same filter and says so", () => {
+    const lite = (mmsi: string, name: string, ship_type: number | null) => ({ mmsi, lat: 35, lon: 129, sog_kn: null, cog_deg: null, heading_deg: null, ship_type, name, seen_at: null, position_source: null, nav_status: null });
+    shipStates.set("100000001", lite("100000001", "ALPHA", 70));
+    shipStates.set("100000002", lite("100000002", "BRAVO", 30));
+    setData({ ships: { mode: "points", version: 1, count: 2, total: 2, ts: null, cell_deg: null, capped: false, grid: [] } });
+    useUi.getState().toggleShipCat("fishing");
+    const html = renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true, shipCats: useUi.getState().shipCats }));
+    expect(html).toContain('data-mmsi="100000001"');
+    expect(html).not.toContain('data-mmsi="100000002"');
+    expect(text(html)).toContain("선종 필터 10/11 · 1척 숨김");
   });
 });

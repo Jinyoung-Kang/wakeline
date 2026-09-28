@@ -1109,11 +1109,28 @@ export interface ShipsChipInput {
 }
 
 /**
+ * 칩이 보는 선종 필터(계약 v5 §B3): on/of = 켜진 선종 수/전체, shown = 필터 뒤 그리는 선박 수(점 모드는 화면 안 선박, 격자는 다시 센 합),
+ * shownCells = 격자에서 그리는 칸 수, unfilteredCells = 선종별 수가 없어(구 서버) 필터를 적용하지 못한 칸 수.
+ */
+export interface ShipsChipFilter { on: number; of: number; shown: number; shownCells?: number; unfilteredCells?: number }
+
+/** 켜진 선종의 선박 수(점 모드 칩·목록) */
+export function countShipsIn(ships: Iterable<ShipLite>, enabled: ReadonlySet<ShipCategory>): number {
+  let n = 0;
+  for (const s of ships) if (enabled.has(shipCategory(s.ship_type))) n++;
+  return n;
+}
+
+/**
  * 지도 왼쪽 위 선박 칩: 지금 지도가 무엇을 그리는지 + 규칙. zoom·bbox 는 마지막으로 구독한 화면(모르면 null — 그때는 규칙 전체를 적는다).
  * 0척이면 zeroShipsReason(AIS 꺼짐 · 범위 밖 · 수신국 없는 해역 · 연결 안 됨 · 상태 모름 · 범위 모름).
  * 경고 색은 줌 ≥ 7 에서 전송 상한(5,000척)을 넘었을 때만 — 줌 4–6 격자는 정상 동작이다(§G C-1, api 는 이때도 capped:true 를 보낸다).
+ * 선종 필터가 켜져 있으면(일부 선종 숨김) 보이는 수와 전체 수를 함께 적는다 — 숨긴 선박을 "없다"고 말하지 않는다.
  */
-export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis }): { text: string; title: string; warn: boolean } | null {
+export function shipsChip(
+  v: ShipsChipInput,
+  ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis; filter?: ShipsChipFilter | null },
+): { text: string; title: string; warn: boolean } | null {
   if (v.mode === "off") return null;
   const aisOff = ctx.ais?.state === "disabled";
   const aisOffText = "선박 없음 · AIS 꺼짐(키 없음)";
@@ -1124,8 +1141,15 @@ export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: r
     if (why === "off") return { text: aisOffText, title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정)", warn: false };
     return { ...ZERO_SHIPS[why], warn: false };
   }
+  const f = ctx.filter && ctx.filter.on < ctx.filter.of ? ctx.filter : null;
+  const fText = f ? `선종 필터 ${f.on}/${f.of}` : "";
+  const fTitle = f ? " 선종 필터: 범례의 선종 항목으로 켜고 끕니다(이 브라우저에만 저장)." : "";
+  if (f && f.shown === 0) {
+    return { text: `선박 0척 표시 — ${fText} 로 ${v.mode === "points" ? "화면 안" : "격자"} ${v.mode === "points" ? n0(inView) : fmtCount(inView)}척 모두 숨김`, title: `${SHIPS_RULE_TEXT}.${fTitle}`, warn: false };
+  }
   if (v.mode === "points") {
-    return { text: `선박 ${n0(v.count)}척 · 화면 안 · AIS`, title: `AIS 로 받은 선박 위치(보간 없음) — ${SHIPS_RULE_TEXT}`, warn: false };
+    const text = f ? `선박 ${n0(f.shown)}척 · 화면 안 ${n0(v.count)}척 중 · ${fText} · AIS` : `선박 ${n0(v.count)}척 · 화면 안 · AIS`;
+    return { text, title: `AIS 로 받은 선박 위치(보간 없음) — ${SHIPS_RULE_TEXT}.${fTitle}`, warn: false };
   }
   const z = ctx.zoom;
   const overCap = v.capped && z != null && z >= SHIPS_RULE.highZoom;
@@ -1133,9 +1157,12 @@ export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: r
     : z < SHIPS_RULE.lowZoom ? `줌 ${SHIPS_RULE.lowZoom} 이상에서 개별 표시`
     : z < SHIPS_RULE.highZoom ? `줌 ${SHIPS_RULE.lowZoom}–${SHIPS_RULE.highZoom - 1} 은 ${n0(SHIPS_RULE.lowMax)}척 넘으면 격자 · ${n0(SHIPS_RULE.lowBack)}척 이하에서 개별`
     : overCap ? `화면 안 ${n0(SHIPS_RULE.highMax)}척 초과 · 전송 상한` : "확대하면 개별 표시";
+  const head = f ? `선박 ${fmtCount(f.shown)}척 · ${fText}(전체 ${fmtCount(v.total)}척)` : `선박 ${fmtCount(v.total)}척`;
+  const cells = f?.shownCells ?? v.count;
+  const unf = f?.unfilteredCells ? ` · ${f.unfilteredCells}칸은 선종별 수 없음(구 서버 — 필터 미적용)` : "";
   return {
-    text: `선박 ${fmtCount(v.total)}척 · ${v.cell_deg ?? "—"}° 격자 ${v.count}칸으로 묶음 · ${why}`,
-    title: `서버가 격자별 선박 수만 보냅니다(원 크기 = 수, 색 = 가장 많은 선종). 원을 누르면 확대합니다. ${SHIPS_RULE_TEXT}`,
+    text: `${head} · ${v.cell_deg ?? "—"}° 격자 ${cells}칸으로 묶음 · ${why}${unf}`,
+    title: `서버가 격자별 선박 수만 보냅니다(원 크기 = 수, 색 = 가장 많은 선종). 원을 누르면 확대합니다. ${SHIPS_RULE_TEXT}.${fTitle}`,
     warn: overCap,
   };
 }
@@ -1150,16 +1177,23 @@ export function shipsGapSuffix(ais: Pick<AisStatus, "gap_open_since" | "shards">
 
 // ---- 선박 목록(지도 없이 고르기 — 키보드·스크린리더) ----
 
-/** 화면 안 선박 목록: 이름 → MMSI 순, 필터(이름·MMSI 부분 일치, 대소문자 무시), 상한 */
-export function shipList(ships: Iterable<ShipLite>, filter: string, max = 50): { items: ShipLite[]; total: number } {
+/**
+ * 화면 안 선박 목록: 이름 → MMSI 순, 필터(이름·MMSI 부분 일치, 대소문자 무시), 상한.
+ * enabled(선종 필터, 계약 v5 §B3)가 있으면 꺼진 선종은 빼고 그 수를 hidden 으로 센다(지도와 같은 필터).
+ */
+export function shipList(ships: Iterable<ShipLite>, filter: string, max = 50, enabled?: ReadonlySet<ShipCategory> | null): { items: ShipLite[]; total: number; hidden: number } {
   const q = filter.trim().toUpperCase().slice(0, 32);
   const all: ShipLite[] = [];
-  for (const s of ships) if (!q || s.mmsi.includes(q) || (s.name ?? "").toUpperCase().includes(q)) all.push(s);
+  let hidden = 0;
+  for (const s of ships) {
+    if (enabled && !enabled.has(shipCategory(s.ship_type))) { hidden++; continue; }
+    if (!q || s.mmsi.includes(q) || (s.name ?? "").toUpperCase().includes(q)) all.push(s);
+  }
   all.sort((a, b) => {
     if (a.name && !b.name) return -1;
     if (!a.name && b.name) return 1;
     const n = (a.name ?? "").localeCompare(b.name ?? "");
     return n !== 0 ? n : a.mmsi.localeCompare(b.mmsi);
   });
-  return { items: all.slice(0, max), total: all.length };
+  return { items: all.slice(0, max), total: all.length, hidden };
 }

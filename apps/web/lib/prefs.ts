@@ -3,6 +3,7 @@
  * 값이 깨져 있어도 화면은 기본값으로 동작한다 — 읽기·쓰기를 모두 try/catch 로 감싸고, 알려진 키의 boolean 만 받는다.
  */
 import type { Layers } from "./ui-store";
+import { SHIP_CATEGORIES, type ShipCategory } from "./ships";
 
 export const LAYERS_KEY = "wakeline.layers";
 const LAYER_KEYS: readonly (keyof Layers)[] = ["radar", "sigmet", "aircraft", "ships", "airports", "tracks", "prediction"];
@@ -41,4 +42,33 @@ export function saveLayers(l: Layers, kv: KV | null = storage()): void {
   const o: Partial<Layers> = {};
   for (const k of LAYER_KEYS) o[k] = l[k] === true;
   try { kv.setItem(LAYERS_KEY, JSON.stringify(o)); } catch { /* 저장소 가득 참·차단 — 기억하지 못할 뿐 */ }
+}
+
+// ---- 선종 필터(계약 v5 §B3 — 설정은 브라우저에만) ----
+
+export const SHIP_CATS_KEY = "wakeline.shipCats";
+const CAT_SET: ReadonlySet<string> = new Set(SHIP_CATEGORIES);
+
+/**
+ * 저장된 선종 필터 → 켜진 선종(SHIP_CATEGORIES 순서). 저장은 꺼진 선종 목록({hidden: [...]}) — 나중에 선종이 늘어도 새 선종은 켜진 채로 보인다.
+ * 모르는 이름은 버린다. 없거나 깨졌으면 null(모두 켬).
+ */
+export function loadShipCats(kv: KV | null = storage()): ShipCategory[] | null {
+  if (!kv) return null;
+  try {
+    const raw = kv.getItem(SHIP_CATS_KEY);
+    if (!raw || raw.length > 1024) return null;
+    const o: unknown = JSON.parse(raw);
+    if (typeof o !== "object" || o === null || Array.isArray(o)) return null;
+    const hidden = (o as { hidden?: unknown }).hidden;
+    if (!Array.isArray(hidden)) return null;
+    const off = new Set(hidden.filter((h): h is string => typeof h === "string" && CAT_SET.has(h)));
+    return SHIP_CATEGORIES.filter((c) => !off.has(c));
+  } catch { return null; }
+}
+
+export function saveShipCats(enabled: readonly ShipCategory[], kv: KV | null = storage()): void {
+  if (!kv) return;
+  const on = new Set(enabled);
+  try { kv.setItem(SHIP_CATS_KEY, JSON.stringify({ hidden: SHIP_CATEGORIES.filter((c) => !on.has(c)) })); } catch { /* 저장소 가득 참·차단 — 기억하지 못할 뿐 */ }
 }

@@ -1,12 +1,13 @@
 "use client";
 import { useServerData } from "@/lib/store";
+import { saveShipCats } from "@/lib/prefs";
 import { useUi, type Layers } from "@/lib/ui-store";
 import {
   ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
 import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH } from "@/lib/ship-layers";
-import { aisCoverageFeatures, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
+import { aisCoverageFeatures, type ShipCategory, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
 /** 고도 램프 눈금(계약 v5 §A3): ft(FL) 과 m. 마지막 눈금은 "그 이상" */
@@ -39,6 +40,41 @@ function Hull({ color, mode = "heading", opacity = 1, title }: { color: string; 
   );
 }
 
+/**
+ * 선종 필터(계약 v5 §B3): 범례의 선종 항목이 곧 켜고 끄는 단추다(aria-pressed). 켜진 수를 늘 적는다("선종 필터 9/11").
+ * 점 모드는 지도 filter, 격자 모드는 칸의 선종별 수로 다시 센다(MapView). 설정은 이 브라우저에만(lib/prefs).
+ */
+function ShipCategoryToggles({ cats }: { cats: readonly ShipCategory[] }) {
+  const toggle = useUi((s) => s.toggleShipCat);
+  const setCats = useUi((s) => s.setShipCats);
+  const on = new Set(cats);
+  const save = () => saveShipCats(useUi.getState().shipCats);
+  return (
+    <li className="pb-1">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className={`mono text-[10px] ${on.size < SHIP_CATEGORIES.length ? "text-warn" : "text-fg-2"}`} data-testid="ship-cat-count">선종 필터 {on.size}/{SHIP_CATEGORIES.length}</span>
+        <span className="text-[9px] text-fg-3">누르면 지도에서 켜고 끔</span>
+        {on.size < SHIP_CATEGORIES.length ? (
+          <button type="button" className="btn px-1.5 py-0 text-[9px]" onClick={() => { setCats(SHIP_CATEGORIES); save(); }} data-testid="ship-cats-all">모두 켜기</button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-2 gap-x-1 gap-y-[2px]" role="group" aria-label="선종 필터">
+        {SHIP_CATEGORIES.map((c) => {
+          const pressed = on.has(c);
+          return (
+            <button key={c} type="button" aria-pressed={pressed} title={`코드 ${SHIP_CATEGORY_CODES[c]} — ${pressed ? "누르면 숨김" : "숨김 · 누르면 표시"}`}
+              className={`flex items-center gap-1.5 border px-1 py-[1px] text-left ${pressed ? "border-transparent hover:border-line-2" : "border-line text-fg-3 hover:border-line-2"}`}
+              onClick={() => { toggle(c); save(); }} data-testid={`ship-cat-${c}`}>
+              <Hull color={SHIP_CATEGORY_COLOR[c]} opacity={pressed ? 1 : 0.3} />
+              <span className={`text-[10px] ${pressed ? "" : "line-through"}`}>{SHIP_CATEGORY_LABEL[c]}</span>
+            </button>
+          );
+        })}
+      </div>
+    </li>
+  );
+}
+
 function Row({ swatch, children, wide }: { swatch: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
   return <li className="flex items-center gap-2 py-[1px]"><span className={`flex shrink-0 justify-center whitespace-nowrap ${wide ? "min-w-6" : "w-6"}`}>{swatch}</span><span>{children}</span></li>;
 }
@@ -59,11 +95,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function MapLegend({ id }: { id: string }) {
   const layers = useUi((s) => s.layers);
   const radarSource = useUi((s) => s.radarSource);
-  return <MapLegendView id={id} layers={layers} radarSource={radarSource} />;
+  const shipCats = useUi((s) => s.shipCats);
+  return <MapLegendView id={id} layers={layers} radarSource={radarSource} shipCats={shipCats} />;
 }
 
-/** 표시 부분(레이어·레이더 출처를 인자로 — 서버 렌더 시험용) */
-export function MapLegendView({ id, layers, radarSource }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma" }) {
+/** 표시 부분(레이어·레이더 출처·선종 필터를 인자로 — 서버 렌더 시험용) */
+export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGORIES }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma"; shipCats?: readonly ShipCategory[] }) {
   const kr = useServerData((d) => d.radarKr);
   const hasRv = useServerData((d) => (d.radar?.past.length ?? 0) > 0);
   // 경계선이 실제로 그려질 때만(전 해역 구독이면 그릴 경계가 없다)
@@ -99,18 +136,14 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
       ) : null}
       {layers.ships ? (
         <Section title="선박 · 선종(아이콘 색, AIS)">
-          <li className="grid grid-cols-2 gap-x-2 gap-y-[2px] pb-1">
-            {SHIP_CATEGORIES.map((c) => (
-              <span key={c} className="flex items-center gap-1.5" title={`코드 ${SHIP_CATEGORY_CODES[c]}`}><Hull color={SHIP_CATEGORY_COLOR[c]} /><span className="text-[10px]">{SHIP_CATEGORY_LABEL[c]}</span></span>
-            ))}
-          </li>
+          <ShipCategoryToggles cats={shipCats} />
           <Row swatch={<Hull color="#c7ccd4" />}>선수방위(heading) 방향</Row>
           <Row swatch={<Hull color="#c7ccd4" mode="cog" />}>침로 기준 — 선수방위 없음(점선 외곽)</Row>
           <Row swatch={<Hull color="#c7ccd4" mode="none" />}>방향 모름 — 회전하지 않는 원</Row>
           <Row swatch={<Hull color="#ffffff" />}>선택한 선박</Row>
           <Row swatch={<Hull color="#c7ccd4" opacity={0.35} />}>STALE — {SHIP_STALE_S / 60}분 넘게 새 위치 없음(35%)</Row>
           <Row swatch={<span className="inline-block h-3 w-3 rounded-full!" style={{ background: SHIP_CATEGORY_COLOR.cargo, opacity: SHIP_GRID_STYLE.opacity, border: `${SHIP_GRID_STYLE.strokeWidth}px solid ${SHIP_GRID_STYLE.stroke}` }} />}>
-            <span title={SHIPS_RULE_TEXT}>격자(줌 {SHIPS_RULE.lowZoom} 미만 · 화면 안 선박이 많을 때): 칸 선박 수 — 원 크기 = 수, 색 = 가장 많은 선종</span>
+            <span title={SHIPS_RULE_TEXT}>격자(줌 {SHIPS_RULE.lowZoom} 미만 · 화면 안 선박이 많을 때): 칸 선박 수 — 원 크기 = 수, 색 = 가장 많은 선종(선종 필터가 있으면 켜진 선종만 셈)</span>
           </Row>
           {hasCoverage ? (
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: SHIP_COVERAGE_COLOR }} />}>
