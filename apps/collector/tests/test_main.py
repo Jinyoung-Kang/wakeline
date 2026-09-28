@@ -13,6 +13,31 @@ def test_redis_without_username_uses_default_user():
     assert kw.get("username") is None and kw.get("password") is None
 
 
+async def test_r43_redis_clients_use_a_short_explicit_retry():
+    """리뷰 R-43: redis-py 8 기본 재시도(지터 백오프 최대 1 s × 10회)로 닫힌 포트에 XADD 1회가 3.2 s 걸렸다."""
+    import time
+
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    from wakeline_collector.ais.config import AisSettings
+    from wakeline_collector.ais.main import make_redis as make_ais_redis
+
+    clients = [
+        make_redis(Settings(redis_host="127.0.0.1", redis_port=1)),
+        make_ais_redis(AisSettings(redis_host="127.0.0.1", redis_port=1)),  # type: ignore[call-arg]
+    ]
+    for r in clients:
+        assert r.get_retry()._retries <= 2
+        t0 = time.monotonic()
+        try:
+            await r.xadd("wakeline:aircraft", {"a": "1"})
+        except RedisConnectionError:
+            pass
+        finally:
+            await r.aclose()
+        assert time.monotonic() - t0 < 1.5  # 연결 거부(로컬 닫힌 포트)는 1 s 안팎에 포기한다
+
+
 def test_every_budgeted_provider_is_snapshotted():
     limits = build_limits(Settings())
     assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb"} <= set(limits)

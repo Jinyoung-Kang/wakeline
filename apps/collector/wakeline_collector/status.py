@@ -1,11 +1,13 @@
 """공급자 상태를 Redis 해시(wakeline:provider:{name})로 노출한다. api 의 /status · /ops/providers 가 읽는다.
 
 상태 기록은 부가 기능이다 — Redis 오류가 수집·발행 경로를 멈추지 않도록 모든 메서드가 예외를 삼키고(경고 로그는 분당 1회),
-is_disabled 는 마지막으로 읽은 값을 쓴다.
+is_disabled 는 마지막으로 읽은 값을 쓴다. Redis 가 응답하지 않을 때 호출 하나가 socket_timeout × 재시도만큼 붙잡지 않도록
+각 호출을 AUX_TIMEOUT_S 로 끊는다(R-43 — 수요 상태 쓰기도 같은 상한).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable, Iterable
@@ -17,6 +19,7 @@ from wakeline_collector.masking import mask
 
 log = logging.getLogger("status")
 KEY_COLLECTOR = "wakeline:collector"
+AUX_TIMEOUT_S = 1.5  # 부가 경로(상태·heartbeat·전환 이벤트·수요 상태) Redis 호출 하나의 상한
 
 
 def _iso(dt: datetime | None) -> str:
@@ -52,7 +55,8 @@ class ProviderStatus:
 
     async def hset_meta(self, key: str, fields: dict[str, str]) -> None:
         try:
-            await self._r.hset(key, mapping=fields)  # type: ignore[arg-type]
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                await self._r.hset(key, mapping=fields)  # type: ignore[arg-type]
         except Exception as e:  # noqa: BLE001
             self._warn("hset", e)
 
@@ -89,16 +93,17 @@ class ProviderStatus:
     async def failure(self, name: str, *, at: datetime, error: str, http_status: int | None) -> int:
         k = self.key(name)
         try:
-            n = await self._r.hincrby(k, "consecutive_failures", 1)
-            await self._r.hset(
-                k,
-                mapping={
-                    "name": name,
-                    "last_error_at": _iso(at),
-                    "last_error": (mask(error) or "")[:500],
-                    "last_http_status": str(http_status or ""),
-                },
-            )
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                n = await self._r.hincrby(k, "consecutive_failures", 1)
+                await self._r.hset(
+                    k,
+                    mapping={
+                        "name": name,
+                        "last_error_at": _iso(at),
+                        "last_error": (mask(error) or "")[:500],
+                        "last_http_status": str(http_status or ""),
+                    },
+                )
             return int(n)
         except Exception as e:  # noqa: BLE001
             self._warn("failure", e)
@@ -109,26 +114,28 @@ class ProviderStatus:
 
     async def switch_event(self, job: str, frm: str, to: str, reason: str) -> None:
         try:
-            await self._r.xadd(
-                "wakeline:events",
-                {
-                    "type": "provider_switch",
-                    "job": job,
-                    "from": frm,
-                    "to": to,
-                    "reason": mask(reason) or "",
-                    "at": _iso(datetime.now(UTC)),
-                },
-                maxlen=500,
-                approximate=True,
-            )
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                await self._r.xadd(
+                    "wakeline:events",
+                    {
+                        "type": "provider_switch",
+                        "job": job,
+                        "from": frm,
+                        "to": to,
+                        "reason": mask(reason) or "",
+                        "at": _iso(datetime.now(UTC)),
+                    },
+                    maxlen=500,
+                    approximate=True,
+                )
         except Exception as e:  # noqa: BLE001
             self._warn("switch_event", e)
 
     async def is_disabled(self, name: str) -> bool:
         """운영자가 끈 공급자인가. Redis 오류면 마지막으로 읽은 값(없으면 False)."""
         try:
-            v = await self._r.hget(self.key(name), "disabled")
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                v = await self._r.hget(self.key(name), "disabled")
         except Exception as e:  # noqa: BLE001
             self._warn("is_disabled", e)
             return self._disabled.get(name, False)

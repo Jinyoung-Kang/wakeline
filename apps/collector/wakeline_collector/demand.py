@@ -17,6 +17,7 @@ JSON {state, interval_s, last_success_at, last_error, provider}. 임대가 사�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -31,6 +32,7 @@ from redis.asyncio import Redis
 
 from wakeline_collector.masking import mask
 from wakeline_collector.route import normalize_callsign
+from wakeline_collector.status import AUX_TIMEOUT_S
 
 log = logging.getLogger("demand")
 
@@ -273,7 +275,8 @@ class DemandStatus:
         if not values:
             return
         try:
-            await self._r.hset(STATUS_KEY, mapping={k: orjson.dumps(v).decode() for k, v in values.items()})
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                await self._r.hset(STATUS_KEY, mapping={k: orjson.dumps(v).decode() for k, v in values.items()})
             self._fields.update(values)
         except Exception as e:  # noqa: BLE001
             self._warn("hset", e)
@@ -282,7 +285,8 @@ class DemandStatus:
         if not fields:
             return
         try:
-            await self._r.hdel(STATUS_KEY, *fields)
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                await self._r.hdel(STATUS_KEY, *fields)
             self._fields.difference_update(fields)
         except Exception as e:  # noqa: BLE001
             self._warn("hdel", e)
@@ -290,13 +294,14 @@ class DemandStatus:
     async def prune(self, active: set[str]) -> None:
         """임대가 사라진 필드를 지운다. 처음 한 번은 이전 프로세스가 남긴 필드까지(HKEYS)."""
         try:
-            if not self._synced:
-                keys = await self._r.hkeys(STATUS_KEY)
-                self._fields.update(k if isinstance(k, str) else k.decode() for k in keys)
-                self._synced = True
-            stale = self._fields - active
-            if stale:
-                await self._r.hdel(STATUS_KEY, *sorted(stale))
-                self._fields -= stale
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                if not self._synced:
+                    keys = await self._r.hkeys(STATUS_KEY)
+                    self._fields.update(k if isinstance(k, str) else k.decode() for k in keys)
+                    self._synced = True
+                stale = self._fields - active
+                if stale:
+                    await self._r.hdel(STATUS_KEY, *sorted(stale))
+                    self._fields -= stale
         except Exception as e:  # noqa: BLE001
             self._warn("prune", e)

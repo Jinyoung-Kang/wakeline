@@ -37,6 +37,7 @@ from wakeline_collector.ais.runtime import BboxWatcher
 from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.sink import AisSink
 from wakeline_collector.ais.worker import Worker
+from wakeline_collector.redis_retry import short_retry
 
 log = logging.getLogger("ais.main")
 
@@ -56,6 +57,7 @@ def make_redis(s: AisSettings) -> Redis:
         socket_timeout=5,
         socket_connect_timeout=5,
         health_check_interval=30,
+        retry=short_retry(),  # R-43: 기본 10회 재시도 대신 2회
     )
 
 
