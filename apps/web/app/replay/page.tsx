@@ -1,9 +1,9 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { fmtAltGnd, fmtBool, fmtNum, fmtTime } from "@/lib/format";
-import { isSummaryRow, replayRadarLabel, replayRecLabel, replaySigmetBand, SUMMARY_FLAG, type ReplayFrame } from "@/lib/replay";
+import { isSummaryRow, REPLAY_MAX_AREA_SQDEG, replayFrameAtLabel, replayRadarLabel, replayRecLabel, replayReduce, replaySigmetBand, SUMMARY_FLAG, type ReplayFrame } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
 
@@ -18,9 +18,8 @@ export default function ReplayPage() {
   const [speed, setSpeed] = useState(10);
   const [playing, setPlaying] = useState(false);
   const [bbox, setBbox] = useState("124,33,132,39");
-  const [frame, setFrame] = useState<ReplayFrame | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [latency, setLatency] = useState<number | null>(null);
+  const [clamped, setClamped] = useState(false);
+  const [{ frame, err, latencyMs: latency }, dispatch] = useReducer(replayReduce, { frame: null, err: null, latencyMs: null });
   const [pick, setPick] = useState<ReplayPick>(null);
   const [showRadar, setShowRadar] = useState(true);
   const inflight = useRef(false);
@@ -34,8 +33,8 @@ export default function ReplayPage() {
     const t0 = performance.now();
     try {
       const f = await apiGet<ReplayFrame>(`/api/v1/replay?at=${encodeURIComponent(new Date(t).toISOString())}&bbox=${encodeURIComponent(b)}`);
-      setFrame(f); setErr(null); setLatency(Math.round(performance.now() - t0));
-    } catch (e) { setErr((e as Error).message); } finally { inflight.current = false; }
+      dispatch({ type: "loaded", frame: f, latencyMs: Math.round(performance.now() - t0) });
+    } catch (e) { dispatch({ type: "failed", error: e }); } finally { inflight.current = false; }
   }, []);
 
   useEffect(() => { if (!at) return; const h = setTimeout(() => load(at, bbox), 150); return () => clearTimeout(h); }, [at, bbox, load]);
@@ -45,6 +44,8 @@ export default function ReplayPage() {
     return () => clearInterval(tick);
   }, [playing, speed, max]);
 
+  const onBbox = useCallback((b: string, c: boolean) => { setBbox(b); setClamped(c); }, []);
+  const shown = replayFrameAtLabel(frame, at);
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
@@ -58,14 +59,16 @@ export default function ReplayPage() {
         <input type="range" min={min} max={max} step={10_000} value={Math.min(max, Math.max(min, at))} onChange={(e) => { setPlaying(false); setAt(Number(e.target.value)); }} className="w-80"
           aria-label="재생 시각" aria-valuetext={at ? new Date(at).toISOString() : "—"} />
         <span className="mono" data-testid="replay-at">{at ? `${new Date(at).toISOString().replace("T", " ").slice(0, 19)}Z` : "—"}</span>
+        <span className={`mono ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title="지도에 그린 기록의 시각(응답 at)">지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
         <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${latency ?? "—"} ms` : "—"}</span>
         <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
         <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar">{replayRadarLabel(frame)}</span>
-        {err ? <span className="text-bad">{err}</span> : null}
+        {err ? <span className="text-bad" role="alert" data-testid="replay-error">{err}</span> : null}
+        {clamped ? <span className="text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
         <span className="ml-auto text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음</span>
       </div>
       <div className="relative min-h-0 flex-1">
-        <ReplayMap frame={frame} onBbox={setBbox} onPick={setPick} showRadar={showRadar} />
+        <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />
         {pick ? (
           <div className="panel absolute top-3 right-3 z-10 w-[320px] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
             <div className="row">
