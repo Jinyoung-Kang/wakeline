@@ -13,8 +13,17 @@ java {
 
 repositories { mavenCentral() }
 
+// R-37: Boot 4.1.1 BOM 의 Tomcat 11.0.24 에 CRITICAL CVE 3건(CVE-2026-65182 · 65905 · 68525, 11.0.25 에서 수정)이 있다.
+// 이 빌드는 platform(BOM) 방식이라(io.spring.dependency-management 없음) extra["tomcat.version"] 이 먹지 않는다 — 제약으로 올린다.
+// Boot 패치가 11.0.25 이상을 가져오면 이 블록을 지운다(TomcatVersionTest 가 하한을 지킨다).
+val tomcatVersion = "11.0.26"
+
 dependencies {
     implementation(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
+    constraints {
+        for (m in listOf("tomcat-embed-core", "tomcat-embed-el", "tomcat-embed-websocket"))
+            implementation("org.apache.tomcat.embed:$m:$tomcatVersion") { because("R-37: CVE-2026-65182/65905/68525 fixed in 11.0.25") }
+    }
 
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-websocket")
