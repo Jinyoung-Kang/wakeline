@@ -10,6 +10,7 @@ import {
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
 import { ReplayList } from "@/components/ReplayList";
+import { RequestIdCopy } from "@/components/logs/ErrorNote";
 
 const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
 const SPEEDS = [1, 5, 10, 30, 60];
@@ -26,7 +27,7 @@ export default function ReplayPage() {
   const [playing, setPlaying] = useState(false);
   const [bbox, setBbox] = useState("124,33,132,39");
   const [clamped, setClamped] = useState(false);
-  const [{ frame, err, latencyMs: latency }, dispatch] = useReducer(replayReduce, { frame: null, err: null, latencyMs: null });
+  const [{ frame, err, rid, latencyMs: latency }, dispatch] = useReducer(replayReduce, { frame: null, err: null, latencyMs: null, rid: null });
   const [pick, setPick] = useState<ReplayPick>(null);
   const [showRadar, setShowRadar] = useState(true);
   const [showList, setShowList] = useState(false);
@@ -81,7 +82,7 @@ export default function ReplayPage() {
         <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
         <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
         <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar">{replayRadarLabel(frame)}</span>
-        {err ? <span className="whitespace-normal text-bad" role="alert" data-testid="replay-error">{err}</span> : null}
+        {err ? <span className="whitespace-normal text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
         {clamped ? <span className="whitespace-normal text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
         <span className="whitespace-normal text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
       </div>

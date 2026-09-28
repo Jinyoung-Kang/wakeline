@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { installErrorReporter } from "@/lib/errorReport";
 import { AircraftSearch } from "./AircraftSearch";
 import { AttributionFooter } from "./AttributionFooter";
 
@@ -9,11 +11,14 @@ const NAV = [
   { href: "/replay", label: "재생" },
   { href: "/stats", label: "통계" },
   { href: "/ops", label: "운영" },
+  { href: "/logs", label: "로그" },
   { href: "/about", label: "출처·한계" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname() ?? "";
+  // 처리되지 않은 브라우저 오류를 시스템 로그로(계약 v5 §C8) — 모든 화면이 이 셸 안에 있다
+  useEffect(() => installErrorReporter(), []);
   // 건너뛰기 링크(R-30): Tab 첫 정지점. 상황판은 지도 조작·출처 링크를 건너 알림 패널로 바로 갈 수 있다.
   return (
     <div className="flex h-full flex-col">

@@ -161,14 +161,14 @@ export function fmtReplayBbox(b: Bbox): string {
   return [up(b[0]), up(b[1]), down(b[2]), down(b[3])].map((v) => v.toFixed(3)).join(",");
 }
 
-/** 재생 화면 상태: 지도에 그리는 프레임 · 오류 문구 · 마지막 응답 시간 */
-export interface ReplayView { frame: ReplayFrame | null; err: string | null; latencyMs: number | null }
+/** 재생 화면 상태: 지도에 그리는 프레임 · 오류 문구 · 마지막 응답 시간 · 실패한 요청의 요청 id(계약 v5 §C8 — 서버가 준 것만, 없으면 null) */
+export interface ReplayView { frame: ReplayFrame | null; err: string | null; latencyMs: number | null; rid?: string | null }
 export type ReplayEvent = { type: "loaded"; frame: ReplayFrame; latencyMs: number } | { type: "failed"; error: unknown };
 
 /** 요청이 실패하면 이전 프레임을 지운다 — 새 시각 라벨 아래 이전 시각·영역의 항공기를 남기지 않는다(R-05). */
 export function replayReduce(_s: ReplayView, e: ReplayEvent): ReplayView {
-  if (e.type === "loaded") return { frame: e.frame, err: null, latencyMs: e.latencyMs };
-  return { frame: null, err: replayErrorText(e.error), latencyMs: null };
+  if (e.type === "loaded") return { frame: e.frame, err: null, latencyMs: e.latencyMs, rid: null };
+  return { frame: null, err: replayErrorText(e.error), latencyMs: null, rid: e.error instanceof ApiError ? e.error.requestId : null };
 }
 
 /**

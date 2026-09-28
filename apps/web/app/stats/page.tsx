@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
+import { ErrorNote } from "@/components/logs/ErrorNote";
 import { HYSTERESIS_FIX_AT, hourlyRows, trafficScopeLabel, type TrafficRegion } from "@/lib/chart";
 import { fmtTime } from "@/lib/format";
 import { aggregatedFlag, alertStatsRows, statsEmptyText, TRAFFIC_SOURCE, yesterdayUtc } from "@/lib/stats";
@@ -32,7 +33,8 @@ export default function StatsPage() {
   const [openedAt] = useState(() => serverNowMs(Date.now()));
   // 오늘은 아직 집계되지 않는다(매일 03:30 UTC 에 전날을 집계) — 기본·최대는 어제(UTC)
   const [day, setDay] = useState(() => yesterdayUtc(openedAt));
-  const [err, setErr] = useState<string | null>(null);
+  /** 마지막 오류 — ApiError 면 요청 id 까지 보인다(계약 v5 §C8) */
+  const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
     let live = true; // 날짜를 빨리 바꾸면 늦게 온 이전 날짜 응답이 새 날짜 제목 아래 그려지지 않게
     Promise.all([
@@ -42,7 +44,7 @@ export default function StatsPage() {
       if (!live) return;
       setFir(f.items); setHaz(h.items); setTraffic(t.items); setTrafficScope({ scope: t.scope ?? null, region: t.region ?? null }); setAlerts(a.items); setErr(null);
       setAgg({ fir: aggregatedFlag(f), haz: aggregatedFlag(h), traffic: aggregatedFlag(t), alerts: aggregatedFlag(a) });
-    }).catch((e) => { if (live) setErr(e.message); });
+    }).catch((e: unknown) => { if (live) setErr(e); });
     return () => { live = false; };
   }, [day]);
   const top = (rows: Row[]) => { const m = new Map<string, number>(); for (const r of rows) m.set(r.dim, (m.get(r.dim) ?? 0) + Number(r.value)); return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 24); };
@@ -54,7 +56,7 @@ export default function StatsPage() {
   const maxDay = yesterdayUtc(openedAt);
   return (
     <div className="h-full overflow-y-auto p-4">
-      <div className="mb-3 flex items-center gap-3"><h1 className="label">Statistics</h1><span className="text-[11px] text-fg-3">일 1회(03:30 UTC) 전날 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span>{err ? <span className="text-bad text-[11px]">{err}</span> : null}</div>
+      <div className="mb-3 flex items-center gap-3"><h1 className="label">Statistics</h1><span className="text-[11px] text-fg-3">일 1회(03:30 UTC) 전날 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span>{err ? <ErrorNote className="text-bad text-[11px]" error={err} /> : null}</div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <section className="panel p-3"><h2 className="label mb-2">SIGMET by FIR (7d, top 24)</h2>{fir.length ? <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={top(fir)} /> : <Empty text={statsEmptyText(agg.fir, null, today)} />}</section>
         <section className="panel p-3"><h2 className="label mb-2">SIGMET by hazard (7d)</h2>{haz.length ? <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={top(haz)} color="#f59e0b" /> : <Empty text={statsEmptyText(agg.haz, null, today)} />}</section>

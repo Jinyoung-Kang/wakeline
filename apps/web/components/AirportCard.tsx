@@ -6,6 +6,7 @@ import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
 import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, fmtVisSm, isMetarStale, metarAgeS } from "@/lib/format";
+import { ErrorNote } from "./logs/ErrorNote";
 
 interface Wx {
   airport: { icao: string; name?: string; country?: string; elev_ft?: number };
@@ -24,12 +25,13 @@ interface Wx {
  */
 export function AirportCard({ icao }: { icao: string }) {
   const [wx, setWx] = useState<Wx | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  /** 마지막 오류 — ApiError 면 요청 id 까지(계약 v5 §C8) */
+  const [err, setErr] = useState<unknown>(null);
   const selectAirport = useUi((s) => s.selectAirport);
   const now = useNow(30_000);
   useEffect(() => {
     let live = true;
-    apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(icao)}/wx`).then((x) => { if (live) { setWx(x); setErr(null); } }).catch((e) => { if (live) setErr(e.message); });
+    apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(icao)}/wx`).then((x) => { if (live) { setWx(x); setErr(null); } }).catch((e: unknown) => { if (live) setErr(e); });
     return () => { live = false; };
   }, [icao]);
   const w = wx && wx.airport.icao === icao ? wx : null;
@@ -42,7 +44,7 @@ export function AirportCard({ icao }: { icao: string }) {
     <div className="flex h-full flex-col" data-testid="airport-card">
       <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1"><Link href={`/airports/${icao}`} className="btn">이력</Link><button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
-        {err ? <div className="text-bad">{err}</div> : null}
+        {err ? <div className="text-bad"><ErrorNote error={err} /></div> : null}
         {w ? <>
           <div className="font-semibold">{w.airport.name ?? icao}</div>
           {m ? <>

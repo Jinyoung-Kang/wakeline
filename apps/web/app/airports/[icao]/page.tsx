@@ -4,6 +4,7 @@ import { apiGet } from "@/lib/api";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
 import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, isMetarStale, metarAgeS } from "@/lib/format";
+import { RequestIdOf } from "@/components/logs/ErrorNote";
 
 interface Latest {
   obs_time: string; raw: string; provider?: string; flight_cat?: string | null; flight_cat_source?: string | null; taf_raw?: string | null;
@@ -15,14 +16,17 @@ interface Wx {
   history: { obs_time: string; flight_cat?: string | null; wind_dir?: number | null; wind_kt?: number | null; vis_sm?: number | null; vis_raw?: string | null; ceiling_ft?: number | null; temp_c?: number | null }[];
 }
 
-/** 공항 기상 이력(FR-22). 시각은 날짜 포함(UTC). 시정은 원문(vis_raw, 예 "6+")을 우선 — 파싱한 숫자(6)는 "6 이상"을 잃는다. */
+/**
+ * 공항 기상 이력(FR-22). 시각은 날짜 포함(UTC). 시정은 원문(vis_raw, 예 "6+")을 우선 — 파싱한 숫자(6)는 "6 이상"을 잃는다.
+ * 조회 실패는 한국어 안내 + 요청 id(복사 — 계약 v5 §C8).
+ */
 export default function AirportPage({ params }: { params: Promise<{ icao: string }> }) {
   const { icao } = use(params);
   const code = icao.toUpperCase();
   const [wx, setWx] = useState<Wx | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<{ text: string; error: unknown } | null>(null);
   const now = useNow(30_000);
-  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e) => setErr(airportErrorText(e, code))); }, [code]);
+  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e: unknown) => setErr({ text: airportErrorText(e, code), error: e })); }, [code]);
   const m = wx?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
@@ -31,7 +35,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   return (
     <div className="h-full overflow-y-auto p-4">
       <h1 className="label mb-2">Airport weather · {code}</h1>
-      {err ? <div className="text-bad" role="alert">{err}</div> : null}
+      {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
       {wx ? <>
         <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
