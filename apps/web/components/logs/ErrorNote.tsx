@@ -29,7 +29,8 @@ export function RequestIdOf({ error, onFilter }: { error: unknown; onFilter?: (r
 }
 
 /**
- * 요청 id 한 개: 라벨 · mono 값(선택하기 쉽게 select-all) · 복사 단추(결과를 글자로) · /logs 에서 이 요청 id 로 거른 목록.
+ * 요청 id 한 개: 라벨 · mono 값(선택하기 쉽게 select-all) · 복사 단추(결과를 글자로 — 단추 이름은 고정이라 화면 읽기 프로그램에는 role=status 로 따로) ·
+ * /logs 에서 이 요청 id 로 거른 목록.
  * onFilter 가 있으면(/logs 화면 안) 링크 대신 필터를 바로 바꾼다 — Next 링크의 같은 경로 해시 이동은 hashchange 를 내지 않는다.
  */
 export function RequestIdCopy({ id, onFilter }: { id: string; onFilter?: (rid: string) => void }) {
@@ -42,6 +43,7 @@ export function RequestIdCopy({ id, onFilter }: { id: string; onFilter?: (rid: s
         onClick={async () => setState((await copyText(id)) ? "ok" : "fail")}>
         {state === "ok" ? "복사됨" : state === "fail" ? "복사 실패" : "복사"}
       </button>
+      <span role="status" className="sr-only">{state === "ok" ? `요청 id ${id} 복사됨` : state === "fail" ? `요청 id ${id} 복사 실패 — 값을 직접 선택해 복사하세요` : ""}</span>
       {onFilter ? (
         <button type="button" className="btn px-1.5! py-0! normal-case!" onClick={() => onFilter(id)}>이 요청 id 로 거르기</button>
       ) : (

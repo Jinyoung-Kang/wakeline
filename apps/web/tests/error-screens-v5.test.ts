@@ -69,6 +69,8 @@ describe("v5-C8 request id in error text is visible and copyable", () => {
     await React.act(async () => { await propsOf(btn).onClick({}); });
     expect(written).toEqual(["req-0001-abcd"]);
     expect(btn.textContent).toBe("복사됨");
+    // 단추 이름(aria-label)은 고정이라 결과는 따로 알린다(화면 읽기 프로그램 — role=status)
+    expect(find((e) => e.getAttribute?.("role") === "status")?.textContent).toBe("요청 id req-0001-abcd 복사됨");
   });
 });
 

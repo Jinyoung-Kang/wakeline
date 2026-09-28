@@ -23,6 +23,8 @@ const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };
 const NO_PENDING = { items: [] as LogEntry[], more: false };
 const n = (v: number) => v.toLocaleString("en-US");
+/** 목록 줄의 DOM id — 표(grid)의 aria-activedescendant 가 가리킨다(스트림 id 는 숫자와 - 뿐) */
+const rowDomId = (id: string) => `log-row-${id}`;
 /** 묶음 목록이 바뀌었는지(지문 · 건수 · 마지막 항목) */
 const groupsSig = (g: Groups | null) => (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}`).join("|") : "");
 
@@ -220,7 +222,9 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       fail(e);
     }
   };
+  /** 목록 표(grid)에 초점이 있을 때만 — 다른 요소(단추 · 입력)에서 올라온 키는 그 요소의 것이다 */
   const onKey = (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget) return;
     if (e.altKey || e.ctrlKey || e.metaKey || view !== "list" || !items.length) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
@@ -344,16 +348,18 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           edge(nginx) 로그는 컨테이너 표준 출력에만(수집 에이전트 없음) · 키보드(목록): ↑/↓ 이동 · Enter 상세 · c 텍스트 복사
         </div>
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <div className="min-h-0 flex-1 overflow-auto" tabIndex={0} onKeyDown={onKey} role="region" aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사" data-testid="log-list">
+          <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="로그 목록" data-testid="log-list">
             {view === "list" ? <>
               {items.length ? (
-                <table>
+                // 키보드: 표(grid)에 초점을 두고 고른 줄은 aria-activedescendant 로 알린다(화면 읽기 프로그램이 그 줄을 읽는다)
+                <table role="grid" aria-readonly="true" tabIndex={0} onKeyDown={onKey} aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사"
+                  aria-activedescendant={selIdx >= 0 ? rowDomId(items[selIdx].id) : undefined} data-testid="log-grid">
                   <thead className="sticky top-0 bg-bg-1"><tr>
                     <th scope="col">시각(UTC)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
                     <th scope="col" title="직전 전송 뒤 같은 지문으로 보내지 않은 건수 — — = 필드 없음">억제</th><th scope="col">요청 id</th>
                   </tr></thead>
                   <tbody>{items.map((e) => (
-                    <tr key={e.id} data-testid="log-row" data-id={e.id} aria-selected={e.id === selId}
+                    <tr key={e.id} id={rowDomId(e.id)} data-testid="log-row" data-id={e.id} aria-selected={e.id === selId}
                       ref={(el) => { if (el) rowEls.current.set(e.id, el); else rowEls.current.delete(e.id); }}
                       onClick={() => { setSelId(e.id); openEntry(e); }}
                       className={`cursor-pointer ${e.id === selId ? "bg-[#1c2a3f]" : "hover:bg-bg-2"} ${detail?.id === e.id ? "outline outline-1 -outline-offset-1 outline-accent" : ""}`}>

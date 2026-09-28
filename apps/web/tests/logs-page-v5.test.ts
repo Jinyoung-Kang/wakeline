@@ -66,7 +66,8 @@ const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> =
   return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
 };
 const click = async (e: MiniElement | null) => { expect(e).not.toBeNull(); await React.act(async () => { await propsOf(e!).onClick?.({ preventDefault() {}, stopPropagation() {} }); }); await settle(); };
-const key = async (e: MiniElement, k: string) => { await React.act(async () => { await propsOf(e).onKeyDown({ key: k, preventDefault() {}, altKey: false, ctrlKey: false, metaKey: false, target: e }); }); await settle(); };
+/** 키 입력: target = 초점이 있는 요소(기본은 처리기를 단 요소 자신) — 최소 DOM 에는 전파가 없으므로 처리기를 직접 부른다 */
+const key = async (e: MiniElement, k: string, target: MiniElement = e) => { await React.act(async () => { await propsOf(e).onKeyDown({ key: k, preventDefault() {}, altKey: false, ctrlKey: false, metaKey: false, target, currentTarget: e }); }); await settle(); };
 async function open(hash = "") {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: NOW });
   vi.stubGlobal("self", globalThis);
@@ -142,7 +143,7 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
       return undefined;
     });
     await open();
-    const list = byTestId("log-list")!;
+    const list = byTestId("log-grid")!;
     await key(list, "ArrowDown");
     expect(allByTestId("log-row")[0].getAttribute("aria-selected")).toBe("true");
     await key(list, "ArrowDown");
@@ -174,6 +175,29 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     const last = new URL(calls.filter((c) => c.startsWith("GET /api/v1/ops/logs?")).at(-1)!.slice(4), "http://x").searchParams;
     expect(last.get("rid")).toBe("5f2c9a0e1b7d4c3a");
     expect((find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "요청 id") as unknown as { value: string }).value).toBe("5f2c9a0e1b7d4c3a");
+  });
+  it("the keyboard list is a focusable grid: the selected row is its active descendant (read by screen readers); keys from other controls are not taken over", async () => {
+    stubFetch((url) => (url.startsWith("/api/v1/ops/logs?") ? { status: 200, body: FIRST } : undefined));
+    await open();
+    const grid = byTestId("log-grid")!;
+    expect(grid.tagName).toBe("TABLE");
+    expect(grid.getAttribute("role")).toBe("grid");
+    expect(grid.getAttribute("tabindex")).toBe("0");
+    expect(grid.getAttribute("aria-label")).toContain("↑/↓");
+    expect(grid.getAttribute("aria-activedescendant")).toBeNull();
+    await key(grid, "ArrowDown");
+    const rows = allByTestId("log-row");
+    expect(rows[0].getAttribute("aria-selected")).toBe("true");
+    expect(rows[0].getAttribute("id")).toBeTruthy();
+    expect(grid.getAttribute("aria-activedescendant")).toBe(rows[0].getAttribute("id"));
+    // '이전 항목 더 보기' 는 표(grid) 밖 — 그 단추의 Enter 는 단추가 받는다
+    const more = button("이전 항목 더 보기")!;
+    expect(find((e) => e === more, grid)).toBeNull();
+    // 표 안의 다른 요소에서 올라온 키는 가로채지 않는다(상세를 열지 않는다)
+    await key(grid, "Enter", rows[1]);
+    expect(byTestId("log-detail")).toBeNull();
+    await key(grid, "Enter");
+    expect(byTestId("log-detail")).not.toBeNull();
   });
   it("copy visible list (text) and download .txt / .ndjson are built in the browser from the shown rows", async () => {
     const written: string[] = [];
