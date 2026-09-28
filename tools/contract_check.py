@@ -9,6 +9,7 @@ import asyncio
 import base64
 import filecmp
 import gzip
+import io
 import json
 import logging
 import re
@@ -42,7 +43,7 @@ from wakeline_collector.ais.worker import Worker  # noqa: E402
 from wakeline_collector.demand import HotCell, parse_cell_key  # noqa: E402
 from wakeline_collector.jobs.demand import focus_payload, hot_payload  # noqa: E402
 from wakeline_collector.logsink import ENTRY_MAX_BYTES, LogSink  # noqa: E402
-from wakeline_collector.masking import _SECRETS, mask, register_secrets  # noqa: E402
+from wakeline_collector.masking import _SECRETS, LOG_LIMIT, install_log_masking, mask, register_secrets  # noqa: E402
 from wakeline_collector.models import Sigmet  # noqa: E402
 from wakeline_collector.normalize import from_readsb  # noqa: E402
 from wakeline_collector.publisher import Publisher  # noqa: E402
@@ -284,6 +285,7 @@ def check_logs() -> int:
         f"XADD wakeline:logs MAXLEN ~ 3000 {kw_ok}"
     )
     failures += bool(bad)
+    failures += check_log_cut_marker(log_v)
     vectors = json.loads((SCHEMAS / "vectors" / "masking-cases.v1.json").read_text(encoding="utf-8"))
     wrong = [c["input"] for c in vectors["cases"] if mask(c["input"], vectors["limit"]) != c["expected"]]
     print(
@@ -293,6 +295,47 @@ def check_logs() -> int:
         print("     ", w[:120])
     failures += bool(wrong)
     return failures
+
+
+CUT_RE = re.compile(r"(.*)…\(잘림 (\d+)자\)", flags=re.S)
+
+
+def check_log_cut_marker(log_v: Draft202012Validator) -> int:
+    """계약 v5 §C1: 가림 상한(LOG_LIMIT)보다 긴 메시지 · 예외 메시지 · 스택도 '…(잘림 N자)' 의 N 이 정확한지(남긴 글자 + N = 가린 원문 전체).
+    main 처럼 표준 출력 핸들러의 MaskFilter 가 먼저 레코드를 가리고 LOG_LIMIT 에서 자르는 경로로 본다."""
+    cap = _CaptureRedis()
+    sink = LogSink("collector", cap)
+    out = logging.StreamHandler(io.StringIO())
+    install_log_masking(out, sink)
+    lg = logging.getLogger("contract.logs.cut")
+    lg.handlers[:], lg.propagate = [out, sink], False
+    lg.setLevel(logging.DEBUG)
+    big = LOG_LIMIT + 50_000
+    try:
+        raise RuntimeError("e" * big)
+    except RuntimeError as e:
+        stack_len = len(logging.Formatter().formatException((RuntimeError, e, e.__traceback__)))
+        lg.error("m" * big, exc_info=e)
+    asyncio.run(sink.send_pending())
+    lg.handlers.clear()
+    ev = json.loads(cap.entries[0]["e"])
+    exc = ev.get("exception") or {}
+    fields = [
+        ("message", ev.get("message"), big),
+        ("exception.message", exc.get("message"), big),
+        ("stack", exc.get("stack"), stack_len),
+    ]
+    exact = 0
+    for _name, text, whole in fields:
+        m = CUT_RE.fullmatch(text or "")
+        exact += bool(m and len(m.group(1)) + int(m.group(2)) == whole)
+    errs = list(log_v.iter_errors(ev))
+    bad = exact != len(fields) or bool(errs) or len(cap.entries) != 1
+    print(
+        f"{'FAIL' if bad else 'ok  '} log cut marker beyond LOG_LIMIT ({LOG_LIMIT} chars): kept + N == whole masked length "
+        f"{exact}/{len(fields)} (message · exception.message · stack), {len(errs)} schema errors"
+    )
+    return int(bad)
 
 
 def _decode(fields: dict[str, str]) -> object:
