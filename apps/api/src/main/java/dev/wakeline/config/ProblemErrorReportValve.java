@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 앱이 이미 본문을 쓴 오류(ProblemAdvice · 보안 필터 · /error)는 건드리지 않는다(내용이 이미 있으면 아무것도 하지 않는다).
  * 요청 id 는 앱 필터가 붙였으면 그 값, 아니면 여기서 만든다(X-Request-Id 로도 돌려준다).
  */
-public class ProblemErrorReportValve extends ErrorReportValve {
+public final class ProblemErrorReportValve extends ErrorReportValve {
     /** edge 주소 — edge 가 보낸 요청 id 를 여기서도 쓴다(R-49, {@link RequestIdFilter#resolve}). */
     private final String trustedProxy;
 

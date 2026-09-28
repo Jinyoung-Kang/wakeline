@@ -38,7 +38,7 @@ import java.util.UUID;
  */
 @Profile("!cli & !migrate")
 @Component
-public class SingleInstanceGuard implements SmartLifecycle {
+public final class SingleInstanceGuard implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(SingleInstanceGuard.class);
     public static final String KEY = "wakeline:api:instance";
     /** 1 = 내 임대 연장, 2 = 비어 있어 새로 잡음, 0 = 다른 인스턴스가 쥐고 있음. */

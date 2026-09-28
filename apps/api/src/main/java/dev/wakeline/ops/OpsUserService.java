@@ -31,6 +31,8 @@ public class OpsUserService {
 
     /** 비밀번호는 바뀌었지만 기존 세션을 지우지 못했다(Redis 장애) — CLI 가 알리고 실패 코드로 끝낸다. 다시 실행하면 다시 지운다. */
     public static final class SessionsNotRevoked extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
         public SessionsNotRevoked(String username, Throwable cause) {
             super("password for '" + username + "' was updated, but existing sessions could not be revoked: " + cause, cause);
         }
