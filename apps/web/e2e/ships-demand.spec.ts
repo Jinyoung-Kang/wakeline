@@ -184,7 +184,7 @@ test("no CSP violations or uncaught errors across pages (ships layer on)", async
   await shipsOn(page);
   await expect(page.getByTestId("ships-chip")).toBeVisible({ timeout: 30_000 });
   errors.push(...(await cspOf()).map((x) => `csp: ${x}`));
-  const pages: [string, string][] = [["/replay", "replay-summary"], ["/stats", "attribution"], ["/about", "attribution"], ["/airports/RKSI", "attribution"], ["/ops", "ops-login"]];
+  const pages: [string, string][] = [["/replay", "replay-summary"], ["/stats", "attribution"], ["/about", "attribution"], ["/airports/RKSI", "attribution"], ["/ops", "ops-login"], ["/logs", "ops-login"]];
   for (const [path, ready] of pages) {
     await page.goto(path);
     await expect(page.getByTestId(ready)).toBeVisible({ timeout: 20_000 });
