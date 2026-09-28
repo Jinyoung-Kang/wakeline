@@ -33,7 +33,7 @@ from typing import Any
 
 import orjson
 
-from wakeline_collector.ais.bbox import MAX_SHARDS, MAX_TEXT, SHARD_SEP, BboxState, format_bboxes
+from wakeline_collector.ais.bbox import MAX_SHARDS, MAX_TEXT, SCOPE_RE, SHARD_SEP, BboxState, format_bboxes
 from wakeline_collector.ais.feed import PENDING_MAX, FeedState, GapTracker, parse_iso
 from wakeline_collector.ais.parse import iso_ms
 
@@ -131,6 +131,9 @@ class ShardSet:
         self.retired_subscribe_updates = 0
         self.retired_last_gap: dict[str, str] | None = None
         self.restored_last_gap: dict[str, str] | None = None  # 이전 실행의 '마지막 닫힌 공백'(합계)
+        # 재시작 때 같은 구역이 없어 이어받은 구역 없는(모든 선박에 적용) 공백 — 어느 구역에도 붙이지 않고,
+        # 어느 구역이든 첫 데이터 메시지를 받으면 그 시각에 닫는다('어디서도 받지 못했다' 는 그때까지만 사실이다)
+        self.leftover = GapTracker()
         self._prev: dict[str, str] = {}
         self._prev_shards: list[dict[str, Any]] | None = None
 
@@ -146,10 +149,14 @@ class ShardSet:
         if a is not None and b is not None:
             reason = (prev.get("last_gap_reason") or "unknown")[:200]
             self.restored_last_gap = {"started_at": iso_ms(a), "ended_at": iso_ms(b), "reason": reason}
+            scope = prev.get("last_gap_scope") or ""
+            if SCOPE_RE.fullmatch(scope):  # 구역이 있던 공백이면 그 구역을 그대로(형식이 틀리면 구역 없음)
+                self.restored_last_gap["scope"] = scope
 
     def add(self, scope: str | None, *, restore: bool = True) -> Shard:
         """구역 하나를 만든다. restore = 이전 실행의 같은 구역 기록을 잇는다(기동 때 만든 구역만)."""
         feed = FeedState(self.provider, scope=scope, changed=self.changed, wall=self._wall, mono=self._mono)
+        feed.on_first_data = self._any_data
         shard = Shard(self._next_id, len(self.active), feed, window=(self._mono(), 0))
         self._next_id += 1
         if restore:
@@ -214,14 +221,18 @@ class ShardSet:
 
     def restore_leftover(self) -> None:
         """기동 때 첫 구역들을 만든 뒤 한 번(계약 v4 G D-3): 같은 구역이 없어 잇지 못한 이전 실행의 열린 공백(없으면 마지막 메시지
-        시각부터 — 재시작 공백)을 구역 없는(scope 없음 = 모든 선박에 적용) 공백 하나로 잇는다. 여럿이면 가장 이른 시작.
-        열린 공백이 없는 첫 구역에 둔다. 모든 구역이 이미 공백을 이어받았으면 첫 구역의 공백을 구역 없는 공백으로 넓힌다.
-        이 뒤로 만드는 구역은 이전 실행의 기록을 잇지 않는다(설정 변경으로 늘린 구역)."""
+        시각부터 — 재시작 공백)과, 이전 실행이 닫지 못한 구역 없는 공백(상태 해시의 합계 gap_open_since 가 어느 구역의 것도 아닐 때)을
+        구역 없는 공백 하나로 잇는다(가장 이른 시작). 이 공백은 구역에 붙이지 않고 모음(self.leftover)이 들고 있다가,
+        어느 구역이든 첫 데이터 메시지를 받으면 닫는다. 이 뒤로 만드는 구역은 이전 실행의 기록을 잇지 않는다."""
         prev, rows = self._prev, self._prev_shards
         self._prev, self._prev_shards = {}, None
         keys = ("gap_open_since", "gap_reason", "last_msg_at")
         if rows is not None:
             sources = [{k: _text(e.get(k)) for k in keys} for e in rows]
+            top = prev.get("gap_open_since", "") if prev else ""
+            row_gaps = {_text(e.get("gap_open_since")) for e in (previous_shards(prev.get("shards")) or [])} if prev else set()
+            if top and top not in row_gaps:
+                sources.append({"gap_open_since": top, "gap_reason": prev.get("gap_reason", ""), "last_msg_at": ""})
         elif prev:
             sources = [{k: prev.get(k, "") for k in keys}]
         else:
@@ -232,17 +243,18 @@ class ShardSet:
             g.restore({"provider": self.provider, **src}, self.provider, now)
             if g.open_since is not None:
                 opened.append((g.open_since, g.reason))
-        if not opened or not self.active:
+        if not opened:
             return
         since, reason = min(opened)
-        target = next((s for s in self.active if s.feed.gaps.open_since is None), None)
-        if target is not None:
-            target.feed.gaps.open(since, reason, None)
-        else:
-            target = self.active[0]
-            target.feed.gaps.widen(since, reason)
-        log.info("carrying over an open AIS gap with no matching shard as unscoped (%s, %s)", reason, target.label)
+        self.leftover.open(since, reason, None)
+        log.info("carrying over an open AIS gap with no matching shard as unscoped until the first message (%s)", reason)
         self.changed.set()
+
+    def _any_data(self, now: float) -> None:
+        """어느 구역이든 연결의 첫 데이터 메시지: 이어받은 구역 없는 공백을 닫는다."""
+        if self.leftover.open_since is not None:
+            self.leftover.close(now)
+            self.changed.set()
 
     def find(self, shard_id: int) -> Shard | None:
         return next((s for s in (*self.active, *self.closing) if s.id == shard_id), None)
@@ -279,7 +291,7 @@ class ShardSet:
 
     def pending_queues(self) -> list[deque[dict[str, str]]]:
         """보낼 닫힌 공백 대기열들(구역마다 순서대로). 없앤 구역 것이 먼저(더 오래됐다)."""
-        return [self.retired_pending, *(s.feed.gaps.pending for s in self._all())]
+        return [self.retired_pending, self.leftover.pending, *(s.feed.gaps.pending for s in self._all())]
 
     @property
     def gaps_pending(self) -> int:
@@ -309,14 +321,14 @@ class ShardSet:
     def gap_open(self) -> tuple[float, str] | None:
         """열린 공백 중 가장 이른 것 (시작, 원인)."""
         best: tuple[float, str] | None = None
-        for f in self.feeds():
-            t = f.gaps.open_since
+        for g in (self.leftover, *(f.gaps for f in self.feeds())):
+            t = g.open_since
             if t is not None and (best is None or t < best[0]):
-                best = (t, f.gaps.reason)
+                best = (t, g.reason)
         return best
 
     def last_gap(self) -> dict[str, str] | None:
-        out = _later(self.restored_last_gap, self.retired_last_gap)
+        out = _later(_later(self.restored_last_gap, self.retired_last_gap), self.leftover.last)
         for s in self._all():
             out = _later(out, s.feed.gaps.last)
         return out

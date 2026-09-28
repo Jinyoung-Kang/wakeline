@@ -109,11 +109,21 @@ public class AisStatus {
     /** 읽은 해시로 바꾼다(빈 해시 = 수집기 상태 없음). */
     void update(Map<Object, Object> hash) { feed = parse(hash); }
 
+    /** 상태 해시의 last_gap_scope: 형식이 맞는 구역 하나면 그 구역, 비었거나 틀리면 구역 없음(모든 선박에 적용 — 추정해 좁히지 않는다). */
+    static AisScope gapScope(String text) {
+        if (text == null || text.isBlank()) return null;
+        try {
+            return AisScope.parse(text);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     static Feed parse(Map<Object, Object> h) {
         if (h == null || h.isEmpty()) return Feed.ABSENT;
         Instant ls = time(h, "last_gap_started_at"), le = time(h, "last_gap_ended_at");
         String provider = text(h, "provider");
-        AisGap last = ls != null && le != null && le.isAfter(ls) ? new AisGap(ls, le, text(h, "last_gap_reason"), provider) : null;
+        AisGap last = ls != null && le != null && le.isAfter(ls) ? new AisGap(ls, le, text(h, "last_gap_reason"), provider, gapScope(text(h, "last_gap_scope"))) : null;
         String c = text(h, "connected");
         Boolean connected = "1".equals(c) ? Boolean.TRUE : "0".equals(c) ? Boolean.FALSE : null;
         List<Shard> shards = shards(h.get("shards"));
@@ -269,6 +279,7 @@ public class AisStatus {
             g.put("started_at", lg.startedAt());
             g.put("ended_at", lg.endedAt());
             g.put("reason", lg.reason());
+            if (lg.scopeText() != null) g.put("scope", lg.scopeText()); // 계약 v4 G: 구역 공백이면 그 구역(없으면 모든 선박에 적용)
             m.put("last_gap", g);
         }
         m.put("provider", f.provider() != null ? f.provider() : v.provider());

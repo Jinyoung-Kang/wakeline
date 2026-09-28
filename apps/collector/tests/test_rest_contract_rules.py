@@ -1,0 +1,66 @@
+"""tools/rest_contract_check.py 의 계약 v4 교차 검사 규칙이 틀린 응답을 실제로 잡는지(리뷰 후속 — 규칙이 나중에 느슨해지지 않게).
+합성 본문만 쓴다(네트워크 없음)."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+from jsonschema import Draft202012Validator
+
+ROOT = Path(__file__).resolve().parents[3]
+_spec = importlib.util.spec_from_file_location("rest_contract_check", ROOT / "tools" / "rest_contract_check.py")
+assert _spec and _spec.loader
+rcc = importlib.util.module_from_spec(_spec)
+sys.modules["rest_contract_check"] = rcc
+_spec.loader.exec_module(rcc)
+
+
+def place(**over):
+    return {"text": "KR PUS", "locode": "KRPUS", "name": "Busan", "country": "KR", "ambiguous": False, **over}
+
+
+def test_place_rules():
+    assert rcc._place_errors(place()) == []
+    assert rcc._place_errors(place(text="KRPUS", ambiguous=True)) == []  # 붙임형만 모호할 수 있다
+    assert rcc._place_errors({"text": "ROTTERDAM", "ambiguous": False}) == []  # 풀이 없음
+    assert any("country" in e for e in rcc._place_errors(place(country="JP")))
+    assert any("yields" in e for e in rcc._place_errors(place(locode="NLRTM", country="NL")))  # 다른 항구를 붙임
+    assert any("compact" in e for e in rcc._place_errors(place(ambiguous=True)))  # 공백형인데 모호
+    # 스키마: 풀이가 없는데 subdivision 만 있으면 안 된다
+    v = Draft202012Validator(rcc.PLACE)
+    assert not list(v.iter_errors({"text": "X", "ambiguous": False}))
+    assert list(v.iter_errors({"text": "X", "ambiguous": False, "subdivision": "11"}))
+
+
+def state(callsign):
+    return {"hex": "abc123", "callsign": callsign}
+
+
+@pytest.mark.parametrize(
+    ("callsign", "route", "ok"),
+    [
+        ("KAL017 ", {"status": "found", "callsign": "KAL017"}, True),
+        ("KAL017", {"status": "no_callsign"}, False),  # 읽을 수 있는 콜사인을 '없음' 이라 하면 안 된다
+        ("ıab12ſ", {"status": "no_callsign"}, True),  # ASCII 가 아니면 콜사인 없음
+        ("ıab12ſ", {"status": "pending", "callsign": "IAB12S"}, False),
+        ("KAL017", {"status": "found", "callsign": "KAL018"}, False),  # 다른 콜사인의 노선
+        ("KAL017", {"status": "disabled", "callsign": "KAL017"}, True),
+    ],
+)
+def test_aircraft_detail_route_follows_the_live_callsign(callsign, route, ok):
+    errs = rcc._aircraft_detail({"state": state(callsign), "route": {"source": "adsbdb", **route}})
+    assert (errs == []) is ok, errs
+
+
+def test_recorded_status_needs_the_union_of_every_shard_but_live_status_may_be_a_subset():
+    a, b = [[-90.0, -180.0, 90.0, 0.0]], [[-90.0, 45.0, 90.0, 180.0]]
+    shards = [{"coverage": a, "connected": True}, {"coverage": b, "connected": False}]
+    full = {"sources": {"ais": {"shards": shards, "coverage": a + b}}}
+    part = {"sources": {"ais": {"shards": shards, "coverage": a}}}
+    assert rcc._status_ais_recorded(full) == []
+    assert rcc._status_ais_recorded(part)  # 기록된 표본은 모든 구역을 구독했다 — 빠뜨리면 실패
+    assert rcc._status(part) == []  # 실서버는 구독 상태가 보이지 않으므로 부분 합 허용
+    assert rcc._status({"sources": {"ais": {"shards": shards, "coverage": [[1.0, 1.0, 2.0, 2.0]]}}})  # 어떤 구역의 합도 아님

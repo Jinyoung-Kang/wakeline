@@ -911,7 +911,10 @@ async def test_main_first_status_write_after_restart_keeps_the_carried_gap(runti
     first = r.status_writes[0]
     assert first["gap_open_since"] == since and first["gap_reason"] == "ais process stopped"
     (entry,) = json.loads(first["shards"])
-    assert entry["scope"] == scope and entry["gap_open_since"] == since
+    if scope is not None:  # 같은 구역: 그 구역이 공백을 잇는다
+        assert entry["scope"] == scope and entry["gap_open_since"] == since
+    else:  # 설정이 바뀜: 구역 없는 공백은 모음이 들고 있다(구역 항목에는 없고, 합계 gap_open_since 에 있다)
+        assert entry["scope"] == ASIA and entry["gap_open_since"] is None
     assert all(w["gap_open_since"] == since for w in r.status_writes)  # 받은 것이 없으니 끝까지 열려 있다
 
 

@@ -449,7 +449,8 @@ export function shipDestinationLines(info: DestinationInfo | null, rawDestinatio
 
 // ---- AIS 상태(status.sources.ais) ----
 
-export interface AisGap { started_at: string; ended_at: string | null; reason: string | null }
+/** scope: 구역 공백이면 그 구역의 상자(계약 v4 §D · §G) — 없으면 모든 선박에 적용 */
+export interface AisGap { started_at: string; ended_at: string | null; reason: string | null; scope?: AisBox[] }
 /** ais 수집기 상태(계약 v3 §A, 상태 해시 state). 그 밖의 값·heartbeat 가 오래된 경우는 null(모름). */
 export const AIS_STATES = ["starting", "connecting", "subscribed", "receiving", "backoff", "replaying", "disabled", "stopped"] as const;
 export type AisState = (typeof AIS_STATES)[number];
@@ -502,7 +503,23 @@ export function parseAisGap(v: unknown): AisGap | null {
   if (!isObj(v)) return null;
   const started = iso(v.started_at);
   if (!started) return null;
-  return { started_at: started, ended_at: iso(v.ended_at), reason: str(v.reason, 64) };
+  const g: AisGap = { started_at: started, ended_at: iso(v.ended_at), reason: str(v.reason, 64) };
+  const scope = parseScopeText(v.scope);
+  if (scope) g.scope = scope; // 형식이 틀리면 구역 없음(모든 선박에 적용 — 좁혀 추정하지 않는다)
+  return g;
+}
+
+/** 구역 하나의 상자 문자열 "lat1,lon1,lat2,lon2;…"(계약 v4 §D, '|' 없음) → 상자. 틀리면 null */
+export function parseScopeText(v: unknown): AisBox[] | null {
+  if (typeof v !== "string" || !v || v.length > 1024 || v.includes("|")) return null;
+  const boxes = v.split(";").map((b) => b.trim()).filter(Boolean).map((b) => b.split(",").map((x) => (/^-?\d{1,3}(\.\d{1,6})?$/.test(x.trim()) ? Number(x) : NaN)));
+  return parseAisCoverage(boxes);
+}
+
+/** 이 공백이 이 위치의 선박에 해당하는가: 구역 공백은 그 구역 상자 안일 때만, 구역 없는 공백·위치 모름은 해당한다 */
+export function gapAppliesTo(g: AisGap, pos: { lat: number; lon: number } | null | undefined): boolean {
+  if (!g.scope || !pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) return true;
+  return inCoverage(g.scope, pos.lat, pos.lon);
 }
 
 /** status 객체에서 AIS 상태(계약 v2 §B3: status 에 sources.ais). 없으면 null(ais 수집기 없음/구버전 api). */
@@ -696,18 +713,11 @@ export const SHIP_TRACK_WINDOW_MS = 6 * 3600_000;
 export const MAX_SHIP_TRACK_POINTS = 5000;
 
 export interface ShipTrackSeg { pts: [number, number][]; startMs: number | null; endMs: number | null }
-/**
- * gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한.
- * restToMs · shardOkAt: 구역으로 가를 때(계약 v4 §D) 상태의 끝난 공백(구역 없음)이 이 선박의 것인지 가르는 근거(mergeStatusGaps).
- */
+/** gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한. */
 export interface ShipTrack {
   segs: ShipTrackSeg[];
   gaps: AisGap[];
   gapsTruncated?: boolean;
-  /** REST 항적 창의 끝(서버 ms). 이보다 먼저 끝난 공백은 REST 응답(구역별로 끊은 segments · gaps)이 이미 말했다 */
-  restToMs?: number | null;
-  /** 이 선박을 덮는 구역이 모두 연결·공백 없음이라고 관측한 상태의 서버 시각(ms, 오래된 것부터) */
-  shardOkAt?: number[];
 }
 
 /**
@@ -769,60 +779,22 @@ export function statusOpenGapFor(ais: Pick<AisStatus, "gap_open_since" | "shards
   return { openSince: best, scoped: true };
 }
 
-/** 구역으로 가를 때 끝난 공백(last_gap, 상태에 구역 없음)을 이 선박의 자리표시와 같은 공백으로 보는 시작 시각 차 */
-const GAP_MATCH_MS = 1000;
-/**
- * 구역 관측의 시각 여유: 상태의 구역 값은 수집기 heartbeat 만큼(api 가 믿는 한도 30 s) 늦을 수 있어, 공백 시작 뒤 30 s 가 지난 관측부터
- * "공백 중에 연결돼 있었다"는 근거로 쓴다. 끝 쪽은 관측이 늦을 뿐 앞서지 않으므로 작은 여유만 둔다.
- */
-const SHARD_OBS_START_MARGIN_MS = 30_000;
-const SHARD_OBS_END_MARGIN_MS = 2_000;
-/** 들고 있는 구역 관측 수 상한(상태는 수 초마다 — 항적 창 6 h 를 넉넉히 덮는다) */
-export const MAX_SHARD_OBS = 8_000;
-
-/** 상태 하나를 관측으로 적는다: 이 위치를 덮는 구역이 모두 connected === true 이고 열린 공백이 없을 때만(모르면 적지 않는다) */
-function noteShardObservation(track: ShipTrack, ais: Pick<AisStatus, "shards" | "server_ms">, pos: { lat: number; lon: number }, sinceMs: number): void {
-  const t = ais.server_ms;
-  if (t == null || !Number.isFinite(t)) return;
-  const covering = (ais.shards ?? []).filter((sh) => sh.coverage?.length && inCoverage(sh.coverage, pos.lat, pos.lon));
-  if (!covering.length || !covering.every((sh) => sh.connected === true && sh.gap_open_since == null)) return;
-  const obs = track.shardOkAt ?? (track.shardOkAt = []);
-  if (obs.length && obs[obs.length - 1] >= t) return; // 같은 상태를 다시 받음(ship_selected 재전송 등)
-  obs.push(t);
-  let drop = 0;
-  while (drop < obs.length && obs[drop] < sinceMs) drop++;
-  drop = Math.max(drop, obs.length - MAX_SHARD_OBS);
-  if (drop > 0) obs.splice(0, drop);
-}
-
-/** 공백 [s, e] 사이에 이 선박 구역이 연결돼 있었다고 관측했는가 — 그렇다면 그 공백은 다른 구역의 것이다 */
-function shardSeenOkDuring(track: ShipTrack, s: number, e: number): boolean {
-  return (track.shardOkAt ?? []).some((t) => t > s + SHARD_OBS_START_MARGIN_MS && t < e - SHARD_OBS_END_MARGIN_MS);
-}
-
 /**
  * status.sources.ais 의 공백을 항적 공백 목록에 반영한다(선택 중에 생기거나 닫힌 공백). 바뀌었으면 true.
  * - 열린 공백(gap_open_since)은 자리표시: 같은 started_at 의 끝난 공백(last_gap)이 오면 대체되고,
- *   status 가 더 이상 그 공백이 열려 있다고 하지 않으면(gap_open_since null·다른 값) 뺀다 — 끝을 모르는 공백을 영원히 열어 두지 않는다.
+ *   status 가 더 이상 그 공백이 열려 있다고 하지 않으면 뺀다 — 끝을 모르는 공백을 영원히 열어 두지 않는다.
+ * - 구역이 여럿이면(계약 v4 §D) pos(선박 위치)를 덮는 구역의 열린 공백만 자리표시로 넣는다.
+ * - 끝난 공백(REST 항적의 gaps · 상태의 last_gap)은 그 공백의 scope(구역 상자)가 이 선박 위치를 덮을 때만 — 구역 없는 공백은 모두에(계약 v4 §G).
+ *   추정하지 않는다: 공백이 어느 구역의 것인지는 서버가 준 scope 로만 가른다.
  * - 항적 창(sinceMs) 전에 끝난 공백은 넣지 않는다. status 를 모르면(null) 그대로 둔다.
- * - 구역이 여럿이면(계약 v4 §D) pos(선박 위치)를 덮는 구역의 공백만 자리표시로 넣는다. 상태의 last_gap 에는 구역이 없으므로 끝난 공백은
- *   ① 이 선박의 자리표시를 닫는 것(시작 1 s 안)이면 받고, ② REST 항적 창 끝(restToMs) 전에 끝났으면 받지 않고(REST 응답이 이미 말했다),
- *   ③ 그 밖(재연결·숨긴 탭 등으로 열린 상태를 못 본 경우)은 공백 중에 이 선박 구역이 연결돼 있었다고 관측한 적이 없을 때만 받는다
- *   — 관측이 있으면 다른 구역의 공백이다. 모르면 선을 끊는 쪽(끊긴 줄 모르는 구간을 실선으로 잇지 않는다).
  */
-export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open_since" | "last_gap" | "shards" | "server_ms"> | null, sinceMs: number, pos?: { lat: number; lon: number } | null): boolean {
+export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open_since" | "last_gap" | "shards"> | null, sinceMs: number, pos?: { lat: number; lon: number } | null): boolean {
   if (!ais) return false;
-  const { openSince, scoped } = statusOpenGapFor(ais, pos);
-  if (scoped) noteShardObservation(track, ais, pos!, sinceMs);
+  const { openSince } = statusOpenGapFor(ais, pos);
   const openMs = openSince ? Date.parse(openSince) : NaN;
-  const placeholders = track.gaps.filter((g) => g.ended_at == null).map((g) => Date.parse(g.started_at));
-  const next: AisGap[] = track.gaps.filter((g) => g.ended_at != null || Date.parse(g.started_at) === openMs);
+  const next: AisGap[] = track.gaps.filter((g) => (g.ended_at != null ? gapAppliesTo(g, pos) : Date.parse(g.started_at) === openMs));
   const lg = ais.last_gap;
-  const lgStart = lg ? Date.parse(lg.started_at) : NaN;
-  const lgEnd = lg?.ended_at ? Date.parse(lg.ended_at) : NaN;
-  const lgOurs = !scoped || placeholders.some((t) => Math.abs(t - lgStart) <= GAP_MATCH_MS)
-    || (!(lgEnd <= (track.restToMs ?? -Infinity)) && !shardSeenOkDuring(track, lgStart, lgEnd));
-  if (lg && lg.ended_at && !(Date.parse(lg.ended_at) < sinceMs) && lgOurs) next.push(lg);
+  if (lg && lg.ended_at && !(Date.parse(lg.ended_at) < sinceMs) && gapAppliesTo(lg, pos)) next.push(lg);
   if (openSince) next.push({ started_at: openSince, ended_at: null, reason: null });
   const r = normalizeGaps(next);
   const key = (gs: readonly AisGap[]) => gs.map((g) => `${Date.parse(g.started_at)}/${g.ended_at == null ? "open" : Date.parse(g.ended_at)}`).join(",");
@@ -1046,9 +1018,10 @@ export type ZeroShipsReason = "off" | "outside" | "receivers" | "down" | "unknow
 export function zeroShipsReason(ais: ShipsChipAis, bbox: readonly [number, number, number, number] | null): ZeroShipsReason {
   if (!ais) return "unknown";
   if (ais.state === "disabled") return "off";
-  const cov = ais.coverage?.length ? ais.coverage : null;
-  if (bbox && cov && !bboxTouchesCoverage(bbox, cov)) return "outside";
   const shards = ais.shards?.length && ais.shards.every((sh) => sh.coverage?.length) ? ais.shards : null;
+  // '범위 밖' 은 구역별 범위(운영 설정)의 합으로 가른다 — 합계 coverage 는 실제로 구독한 구역만이라(§G D-2) 구독 전·끊긴 구역이 빠진다
+  const cov = shards ? shards.flatMap((sh) => sh.coverage!) : ais.coverage?.length ? ais.coverage : null;
+  if (bbox && cov && !bboxTouchesCoverage(bbox, cov)) return "outside";
   const conns = shards && bbox
     ? shards.filter((sh) => bboxTouchesCoverage(bbox, sh.coverage!)).map((sh) => sh.connected)
     : [ais.connected, ...(ais.shards ?? []).map((sh) => sh.connected)];

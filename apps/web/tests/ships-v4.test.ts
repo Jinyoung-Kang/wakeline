@@ -6,9 +6,8 @@ import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-sp
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import {
-  AMBIGUOUS_TEXT, aisBadge, aisGapBadge, bboxTouchesCoverage, fmtDestPlace, MAX_SHARD_OBS, mergeStatusGaps, NO_ORIGIN_TEXT, normalizeDestination, parseAisStatus,
+  AMBIGUOUS_TEXT, aisBadge, aisGapBadge, bboxTouchesCoverage, fmtDestPlace, gapAppliesTo, mergeStatusGaps, NO_ORIGIN_TEXT, parseScopeText, normalizeDestination, parseAisStatus,
   parseDestinationInfo, pickDestinationInfo, shipDestinationLines, shipOriginText, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE, SHIPS_ZERO_AIS_DOWN_TEXT,
   SHIPS_ZERO_AIS_UNKNOWN_TEXT, SHIPS_ZERO_RANGE_UNKNOWN_TEXT, SHIPS_ZERO_TEXT, shipsChip, shipsGapSuffix, statusOpenGapFor, zeroShipsReason, type AisStatus,
   type ShipsChipInput, type ShipTrack,
@@ -170,6 +169,10 @@ describe("ships chip wording follows the contract v4 §C rule", () => {
     expect(zeroShipsReason(asiaDown, KOREA)).toBe("down");
     expect(shipsChip(view({ count: 0 }), ctx({ ais: asiaDown, bbox: KOREA }))!.text).toBe(SHIPS_ZERO_AIS_DOWN_TEXT);
     expect(shipsChip(view({ count: 0 }), ctx({ ais: asiaDown, bbox: GULF_OF_MEXICO }))!.text).toBe(SHIPS_ZERO_TEXT);
+    // 계약 v4 §G D-2: 합계 coverage 는 구독한 구역만(아시아는 구독 전·백오프) — 그래도 한국 화면은 '범위 밖' 이 아니라 '연결 안 됨'
+    const asiaNeverSubscribed = aisOf({ connected: false, coverage: [TWO_ZONES[0]], shards: [sh([TWO_ZONES[0]], true), sh([TWO_ZONES[1]], false)] });
+    expect(zeroShipsReason(asiaNeverSubscribed, KOREA)).toBe("down");
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: asiaNeverSubscribed, bbox: KOREA }))!.text).toBe(SHIPS_ZERO_AIS_DOWN_TEXT);
     // 구역 범위를 하나라도 모르면 구역으로 가르지 않는다 — 한 구역이라도 연결이면 연결
     const unknownScope = aisOf({ connected: false, coverage: TWO_ZONES, shards: [sh(null, true), sh([TWO_ZONES[1]], false)] });
     expect(zeroShipsReason(unknownScope, KOREA)).toBe("receivers");
@@ -374,8 +377,6 @@ describe("live ship track: a shard's gap only breaks lines of ships inside that 
   const AMERICA_SHIP = { lat: 30, lon: -120 };
   const START = "2026-09-28T02:50:00Z";
   const END = "2026-09-28T02:55:00Z";
-  /** status 에 서버 시각(status.server_time)을 붙인다 — 구역 관측 시각 */
-  const at = (serverIso: string, st: AisStatus): AisStatus => ({ ...st, server_ms: Date.parse(serverIso) });
   const openAmericas = (over: Record<string, unknown> = {}) =>
     status([shard(AMERICAS, { gap_open_since: START, connected: false }), shard(ASIA)], { gap_open_since: START, ...over }) as AisStatus;
   const closed = (startIso = START) => status([shard(AMERICAS), shard(ASIA)], { gap_open_since: null, last_gap: { started_at: startIso, ended_at: END, reason: null } }) as AisStatus;
@@ -394,61 +395,46 @@ describe("live ship track: a shard's gap only breaks lines of ships inside that 
     expect(parseAisStatus({ server_time: "later", sources: { ais: { connected: true } } }, NOW)!.server_ms).toBeNull();
     expect(status(null).server_ms).toBeNull();
   });
-  it("a ship in Asia gets neither the Americas placeholder nor its closed gap (its shard was seen connected during the gap)", () => {
+  const scopedClosed = (scope: string | undefined) =>
+    status([shard(AMERICAS), shard(ASIA)], { gap_open_since: null, last_gap: { started_at: START, ended_at: END, reason: null, ...(scope ? { scope } : {}) } }) as AisStatus;
+  it("the closed gap's scope (from the status) decides — a ship outside that shard never gets it, even after a reconnect", () => {
     const tr: ShipTrack = { segs: [], gaps: [] };
-    expect(mergeStatusGaps(tr, at("2026-09-28T02:52:00Z", openAmericas()), since, ASIA_SHIP)).toBe(false);
-    expect(mergeStatusGaps(tr, at("2026-09-28T02:55:05Z", closed()), since, ASIA_SHIP)).toBe(false);
+    expect(mergeStatusGaps(tr, openAmericas(), since, ASIA_SHIP)).toBe(false); // 아메리카 자리표시는 아시아 선박에 없다
+    expect(mergeStatusGaps(tr, scopedClosed("-90,-180,90,0"), since, ASIA_SHIP)).toBe(false);
     expect(tr.gaps).toEqual([]);
+    // 재연결·숨긴 탭으로 열린 상태를 못 봤어도, 자기 구역의 끝난 공백은 받는다(선을 모르는 구간을 실선으로 잇지 않는다)
+    const own: ShipTrack = { segs: [], gaps: [] };
+    expect(mergeStatusGaps(own, scopedClosed("-90,45,90,180"), since, ASIA_SHIP)).toBe(true);
+    expect(own.gaps).toHaveLength(1);
+    expect(own.gaps[0]).toMatchObject({ started_at: START, ended_at: END });
+    // 다른 구역의 짧은 공백도 이 선박에는 넣지 않는다(관측 시각으로 추정하지 않는다)
+    const other: ShipTrack = { segs: [], gaps: [] };
+    expect(mergeStatusGaps(other, scopedClosed("-90,45,90,180"), since, AMERICA_SHIP)).toBe(false);
   });
-  it("after a reconnect or a hidden tab spanning the whole gap, the ship's own-shard gap is kept (not drawn as a solid, known segment)", () => {
-    // 열린 공백을 한 번도 보지 못했고, 공백 동안 이 선박 구역이 연결돼 있었다는 관측도 없다 — 이 선박의 공백일 수 있다
-    const tr: ShipTrack = { segs: [], gaps: [] };
-    expect(mergeStatusGaps(tr, closed(), 0, ASIA_SHIP)).toBe(true);
-    expect(tr.gaps).toEqual([{ started_at: START, ended_at: END, reason: null }]);
-    // 이전 관측이 공백 전·후뿐이어도 같다(공백 중 관측이 아니다)
-    const tr2: ShipTrack = { segs: [], gaps: [] };
-    mergeStatusGaps(tr2, at("2026-09-28T02:49:00Z", status([shard(AMERICAS), shard(ASIA)])), since, AMERICA_SHIP);
-    expect(mergeStatusGaps(tr2, at("2026-09-28T02:56:00Z", closed()), since, AMERICA_SHIP)).toBe(true);
-    expect(tr2.gaps).toHaveLength(1);
-    // 공백 시작 직후(30 s 안)의 "연결" 관측은 heartbeat 가 늦었을 수 있어 근거로 쓰지 않는다
-    const tr3: ShipTrack = { segs: [], gaps: [] };
-    mergeStatusGaps(tr3, at("2026-09-28T02:50:10Z", status([shard(AMERICAS), shard(ASIA)])), since, AMERICA_SHIP);
-    expect(mergeStatusGaps(tr3, closed(), since, AMERICA_SHIP)).toBe(true);
+  it("a gap without scope (legacy · fixture · whole-process restart) applies to every ship", () => {
+    for (const ship of [ASIA_SHIP, AMERICA_SHIP]) {
+      const tr: ShipTrack = { segs: [], gaps: [] };
+      expect(mergeStatusGaps(tr, closed(), since, ship)).toBe(true);
+      expect(tr.gaps).toEqual([{ started_at: START, ended_at: END, reason: null }]);
+    }
   });
-  it("the ship's shard seen connected during the gap (even without the open placeholder) means the gap was another shard's", () => {
-    // 아시아 구역 공백 중(자리표시는 아시아 선박에만) 아메리카 선박 구역이 연결·공백 없음으로 관측됨
-    const tr: ShipTrack = { segs: [], gaps: [] };
-    const asiaOpen = status([shard(AMERICAS), shard(ASIA, { gap_open_since: START, connected: false })], { gap_open_since: START, connected: false });
-    expect(mergeStatusGaps(tr, at("2026-09-28T02:53:00Z", asiaOpen), since, AMERICA_SHIP)).toBe(false);
-    expect(tr.shardOkAt).toEqual([Date.parse("2026-09-28T02:53:00Z")]);
-    expect(mergeStatusGaps(tr, closed(), since, AMERICA_SHIP)).toBe(false);
-    expect(tr.gaps).toEqual([]);
-    // 관측은 구역이 연결·공백 없음일 때만 적는다(모름·끊김은 근거가 아니다)
-    const tr2: ShipTrack = { segs: [], gaps: [] };
-    mergeStatusGaps(tr2, at("2026-09-28T02:53:00Z", status([shard(AMERICAS, { connected: null }), shard(ASIA)])), since, AMERICA_SHIP);
-    expect(tr2.shardOkAt ?? []).toEqual([]);
-    expect(mergeStatusGaps(tr2, closed(), since, AMERICA_SHIP)).toBe(true);
+  it("REST track gaps with scope are filtered to the selected ship's shard", () => {
+    const tr: ShipTrack = {
+      segs: [],
+      gaps: [
+        { started_at: "2026-09-28T01:00:00Z", ended_at: "2026-09-28T01:05:00Z", reason: null, scope: parseScopeText("-90,-180,90,0")! },
+        { started_at: "2026-09-28T01:10:00Z", ended_at: "2026-09-28T01:12:00Z", reason: null, scope: parseScopeText("-90,45,90,180")! },
+        { started_at: "2026-09-28T01:20:00Z", ended_at: "2026-09-28T01:21:00Z", reason: null },
+      ],
+    };
+    expect(mergeStatusGaps(tr, status([shard(AMERICAS), shard(ASIA)]), since, ASIA_SHIP)).toBe(true);
+    expect(tr.gaps.map((g) => g.started_at)).toEqual(["2026-09-28T01:10:00Z", "2026-09-28T01:20:00Z"]);
   });
-  it("a gap that had already closed when the REST track was fetched is left to the REST answer", () => {
-    const tr: ShipTrack = { segs: [], gaps: [], restToMs: Date.parse("2026-09-28T02:56:00Z") };
-    expect(mergeStatusGaps(tr, closed(), since, ASIA_SHIP)).toBe(false);
-    expect(tr.gaps).toEqual([]);
-    const later: ShipTrack = { segs: [], gaps: [], restToMs: Date.parse("2026-09-28T02:54:00Z") };
-    expect(mergeStatusGaps(later, closed(), since, ASIA_SHIP)).toBe(true); // 받은 뒤에 끝난 공백
-    // 대시보드는 REST 창 끝을 항적에 적는다
-    const src = readFileSync(new URL("../components/MapView.tsx", import.meta.url), "utf8");
-    expect(src).toMatch(/track\.restToMs = to;\s*\n\s*mergeStatusGaps\(track, getData\(\)\.ais/);
-  });
-  it("observations are kept once per status, inside the track window, and capped", () => {
-    const tr: ShipTrack = { segs: [], gaps: [] };
-    const ok = status([shard(AMERICAS), shard(ASIA)]);
-    mergeStatusGaps(tr, at("2026-09-28T02:53:00Z", ok), since, ASIA_SHIP);
-    mergeStatusGaps(tr, at("2026-09-28T02:53:00Z", ok), since, ASIA_SHIP); // ship_selected 재전송 — 같은 상태
-    expect(tr.shardOkAt).toHaveLength(1);
-    mergeStatusGaps(tr, at("2026-09-28T02:54:00Z", ok), Date.parse("2026-09-28T02:53:30Z"), ASIA_SHIP);
-    expect(tr.shardOkAt).toEqual([Date.parse("2026-09-28T02:54:00Z")]); // 창 밖 관측은 버린다
-    for (let i = 1; i <= MAX_SHARD_OBS + 10; i++) mergeStatusGaps(tr, at(new Date(Date.parse("2026-09-28T02:54:00Z") + i * 1000).toISOString(), ok), since, ASIA_SHIP);
-    expect(tr.shardOkAt).toHaveLength(MAX_SHARD_OBS);
+  it("scope text parsing: valid one-shard strings only; anything else is 'no scope' (applies to all)", () => {
+    expect(parseScopeText("-90,45,90,180;10,10,20,20")).toEqual([{ s: -90, w: 45, n: 90, e: 180 }, { s: 10, w: 10, n: 20, e: 20 }]);
+    for (const bad of ["a|b", "1,2,3", "1e1,0,1,1", "", 7, null, "91,0,1,1"]) expect(parseScopeText(bad)).toBeNull();
+    expect(gapAppliesTo({ started_at: START, ended_at: END, reason: null }, ASIA_SHIP)).toBe(true);
+    expect(gapAppliesTo({ started_at: START, ended_at: END, reason: null, scope: parseScopeText("-90,-180,90,0")! }, null)).toBe(true); // 위치 모름
   });
   it("a ship in the Americas: placeholder, then the closed gap replaces it (start within 1 s)", () => {
     const tr: ShipTrack = { segs: [], gaps: [] };

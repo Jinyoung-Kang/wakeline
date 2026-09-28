@@ -523,7 +523,8 @@ AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 hea
             "type": "object",
             "required": ["started_at", "ended_at"],
             "additionalProperties": False,
-            "properties": {"started_at": TS, "ended_at": TS, "reason": STR},
+            # 계약 v4 G: 구역 공백이면 scope(구역 하나의 상자 문자열), 구역 없는 공백은 키 없음
+            "properties": {"started_at": TS, "ended_at": TS, "reason": STR, "scope": AIS_SCOPE},
         },
         "provider": SHIP_PROVIDER,
         "last_msg_at": TS,
@@ -1289,6 +1290,18 @@ def _ais_source_errors(where: str, ais: Any) -> list[str]:
     return []
 
 
+def _status_ais_recorded(body: dict[str, Any]) -> list[str]:
+    """기록된 status_ais 표본: 통합 시험(RestSamplesIT)은 모든 구역을 구독한 상태 해시를 쓰므로 coverage 는 모든 구역의 합이어야 한다
+    (부분 합 허용은 구독 상태가 보이지 않는 실서버·다른 표본에만 — 구독한 구역을 빠뜨리는 회귀를 여기서 잡는다)."""
+    errors = _status(body)
+    ais = ((body.get("sources") or {}).get("ais")) if isinstance(body, dict) else None
+    if isinstance(ais, dict) and isinstance(ais.get("shards"), list) and ais.get("coverage") is not None:
+        full = [box for sh in ais["shards"] for box in sh.get("coverage", [])]
+        if ais["coverage"] != full:
+            errors.append("status_ais.coverage is not the union of every shard (the recorded hash subscribes all shards)")
+    return errors
+
+
 def _status(body: dict[str, Any]) -> list[str]:
     return _ais_source_errors("sources.ais", (body.get("sources") or {}).get("ais"))
 
@@ -1345,7 +1358,7 @@ SCHEMAS["status_ais"] = {
 
 CROSS_CHECKS = {
     "status": _status,
-    "status_ais": _status,
+    "status_ais": _status_ais_recorded,
     "ships": _ships,
     "ship_detail": _ship_detail,
     "ship_track": _ship_track,

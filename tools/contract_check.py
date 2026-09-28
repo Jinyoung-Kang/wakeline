@@ -2,6 +2,7 @@
 """언어 간 계약 검사(14.1): Python 수집기가 fixture 실응답으로 만든 메시지가 schemas/*.json 을 만족하고,
 Java 가 참조하는 클래스패스 복사본(apps/api/src/main/resources/schemas)이 루트와 동일한지 확인한다.
 CI 와 `make contract` 에서 실행. apps/collector 의 uv 환경에서 실행한다."""
+
 from __future__ import annotations
 
 import asyncio
@@ -84,8 +85,19 @@ def main() -> int:
         data = json.loads((FIXTURES / name).read_text())
         states = [s for s in (from_readsb(ac, provider, now) for ac in data["ac"]) if s is not None]
         payload = {"region": {"lat": 36.5, "lon": 127.8, "radius_nm": 250}, "states": [s.model_dump(mode="json") for s in states]}
-        env = pub.envelope(kind="aircraft", scope="region", provider=provider, fetched_at=now, raw_ref="fixture", count=len(states), run_id="0", payload=payload)
-        errs = list(env_v.iter_errors(env)) + list(ac_v.iter_errors(json.loads(gzip.decompress(base64.b64decode(env["payload"])))))
+        env = pub.envelope(
+            kind="aircraft",
+            scope="region",
+            provider=provider,
+            fetched_at=now,
+            raw_ref="fixture",
+            count=len(states),
+            run_id="0",
+            payload=payload,
+        )
+        errs = list(env_v.iter_errors(env)) + list(
+            ac_v.iter_errors(json.loads(gzip.decompress(base64.b64decode(env["payload"]))))
+        )
         print(f"{'FAIL' if errs else 'ok  '} aircraft payload from {name}: {len(states)} states, {len(errs)} schema errors")
         for e in errs[:3]:
             print("     ", e.json_path, e.message[:120])
@@ -93,7 +105,9 @@ def main() -> int:
     # 2-1. 지상 고도 정직성(COL-2): readsb 지상 레코드는 alt_ft 를 0 으로 만들지 않는다(null)
     grounded = [s for s in states if s.on_ground]
     fabricated = [s.hex for s in grounded if s.alt_ft is not None]
-    print(f"{'FAIL' if fabricated else 'ok  '} ground altitude honesty: {len(grounded)} on_ground states, {len(fabricated)} with alt_ft")
+    print(
+        f"{'FAIL' if fabricated else 'ok  '} ground altitude honesty: {len(grounded)} on_ground states, {len(fabricated)} with alt_ft"
+    )
     failures += bool(fabricated)
     # 2-2. 수요 기반 추적(계약 v2 §A2·§B2): focus(requested·missing) · hot(cell·region) payload 와 봉투 scope
     fi = json.loads((FIXTURES / "adsb_fi_region.json").read_text())
@@ -105,18 +119,35 @@ def main() -> int:
     lat, lon, radius = parse_cell_key(cell_key)  # type: ignore[misc]
     cell = HotCell(cell_key, lat, lon, radius, expires_ms=0.0)
     for scope, payload in (("focus", focus_payload(requested, kept, missing)), ("hot", hot_payload(cell, fi_states))):
-        env = pub.envelope(kind="aircraft", scope=scope, provider="adsb_fi", fetched_at=now, raw_ref="fixture", count=len(payload["states"]), payload=payload)
-        errs = list(env_v.iter_errors(env)) + list(ac_v.iter_errors(json.loads(gzip.decompress(base64.b64decode(env["payload"])))))
-        print(f"{'FAIL' if errs else 'ok  '} aircraft {scope} payload: {len(payload['states'])} states, {len(errs)} schema errors")
+        env = pub.envelope(
+            kind="aircraft",
+            scope=scope,
+            provider="adsb_fi",
+            fetched_at=now,
+            raw_ref="fixture",
+            count=len(payload["states"]),
+            payload=payload,
+        )
+        errs = list(env_v.iter_errors(env)) + list(
+            ac_v.iter_errors(json.loads(gzip.decompress(base64.b64decode(env["payload"]))))
+        )
+        print(
+            f"{'FAIL' if errs else 'ok  '} aircraft {scope} payload: {len(payload['states'])} states, {len(errs)} schema errors"
+        )
         for e in errs[:3]:
             print("     ", e.json_path, e.message[:120])
         failures += bool(errs)
-    bad_cell = list(ac_v.iter_errors({"states": [], "cell": "35.3:139.5:150"})) and list(ac_v.iter_errors({"states": [], "requested": ["ABCDEF"]}))
+    bad_cell = list(ac_v.iter_errors({"states": [], "cell": "35.3:139.5:150"})) and list(
+        ac_v.iter_errors({"states": [], "requested": ["ABCDEF"]})
+    )
     print(f"{'ok  ' if bad_cell else 'FAIL'} aircraft payload rejects malformed cell / hex")
     failures += not bad_cell
     # 2-3. 봉투 열거값(계약 v2 §B2)
     props = json.loads((SCHEMAS / "stream_envelope.v1.json").read_text())["properties"]
-    need_kind, need_scope = {"aircraft", "sigmet", "radar", "ships", "ais_gap"}, {"region", "global", "hot", "focus", "ships", "-"}
+    need_kind, need_scope = (
+        {"aircraft", "sigmet", "radar", "ships", "ais_gap"},
+        {"region", "global", "hot", "focus", "ships", "-"},
+    )
     enum_bad = (need_kind - set(props["kind"]["enum"])) | (need_scope - set(props["scope"]["enum"]))
     print(f"{'FAIL' if enum_bad else 'ok  '} envelope kind/scope enums" + (f": missing {sorted(enum_bad)}" if enum_bad else ""))
     failures += bool(enum_bad)
@@ -207,7 +238,9 @@ def check_ships(env_v: Draft202012Validator) -> int:
         # fixture 재생(구역 하나, 구독 영역 없음): 공백에 scope 가 없다
         fcap, fshards, fbook, fq = _CaptureRedis(), ShardSet("fixture"), ShipBook("fixture"), RawQueue()
         fx = fshards.add(None)
-        fsink = AisSink(fcap, book=fbook, shards=fshards, worker=Worker(fq, fbook), queue=fq, provider="fixture", raw_ref="fixture")  # type: ignore[arg-type]
+        fsink = AisSink(
+            fcap, book=fbook, shards=fshards, worker=Worker(fq, fbook), queue=fq, provider="fixture", raw_ref="fixture"
+        )  # type: ignore[arg-type]
         fx.feed.on_subscribed("fixture:ais_east_asia_90s.jsonl", deflate=None, state="replaying")
         fx.feed.on_message(now - 30)
         fx.feed.on_disconnected("ais process restart")
@@ -216,7 +249,11 @@ def check_ships(env_v: Draft202012Validator) -> int:
         return cap.entries, w, status, fcap.entries
 
     entries, w, status, fixture_entries = asyncio.run(run())
-    rejected = {k: v for k, v in w.counts.items() if k in ("json", "shape", "type", "invalid_flag", "mmsi", "time", "position_range", "part")}
+    rejected = {
+        k: v
+        for k, v in w.counts.items()
+        if k in ("json", "shape", "type", "invalid_flag", "mmsi", "time", "position_range", "part")
+    }
     print(f"{'FAIL' if rejected else 'ok  '} ais fixture parse: {w.processed} messages, rejected {rejected or 0}")
     failures += bool(rejected)
     for f in entries:
@@ -240,7 +277,7 @@ def check_ships(env_v: Draft202012Validator) -> int:
     ok_scopes: list[object] = [None, "", "|".join(scopes), "fixture:ais_east_asia_90s.jsonl", "x" * 1024]
     accepted = [sc for sc in bad_scopes if not list(gap_v.iter_errors({**base, "scope": sc}))]
     rejected = [sc for sc in ok_scopes if list(gap_v.iter_errors({**base, "scope": sc}))]
-    off_grammar = [g["scope"] for g in gaps if not SCOPE_RE.fullmatch(g.get("scope") or "")]
+    off_grammar = [g.get("scope") for g in gaps if not SCOPE_RE.fullmatch(g.get("scope") or "")]
     scope_bad = (
         [g.get("scope") for g in gaps] != [scopes[1]]
         or off_grammar
@@ -278,7 +315,10 @@ def check_ships(env_v: Draft202012Validator) -> int:
             bad_status.append("last_msg_at != max")
         if status["bbox"] != "|".join(scopes):
             bad_status.append("bbox")
-    print(f"{'FAIL' if bad_status else 'ok  '} ais status shards/aggregates" + (f": {bad_status}" if bad_status else f": {len(view or [])} shards"))
+    print(
+        f"{'FAIL' if bad_status else 'ok  '} ais status shards/aggregates"
+        + (f": {bad_status}" if bad_status else f": {len(view or [])} shards")
+    )
     failures += bool(bad_status)
     # 정직성: '값 없음' 표기가 null 로 바뀌었다(fixture 의 heading 511 · cog 360 · rot -128 · ETA/IMO/선종/흘수 0)
     ships = [s for f in entries if f["kind"] == "ships" for s in _decode(f)["ships"]]  # type: ignore[index]
@@ -286,7 +326,9 @@ def check_ships(env_v: Draft202012Validator) -> int:
     nulls = {k: sum(1 for s in ships if s[k] is None) for k in ("heading_deg", "cog_deg", "rot")}
     snulls = {k: sum(1 for s in statics if s[k] is None) for k in ("imo", "ship_type", "draught_m", "eta_month")}
     sentinel = [s["mmsi"] for s in ships if s["heading_deg"] == 511 or (s["cog_deg"] or 0) >= 360 or s["rot"] == -128]
-    print(f"{'FAIL' if sentinel else 'ok  '} ais sentinel honesty: nulls {nulls} · static nulls {snulls}, {len(sentinel)} sentinel values leaked")
+    print(
+        f"{'FAIL' if sentinel else 'ok  '} ais sentinel honesty: nulls {nulls} · static nulls {snulls}, {len(sentinel)} sentinel values leaked"
+    )
     failures += bool(sentinel)
     # 위치 출처(계약 v3 §B): Timestamp 0–59 → epfs, 60(값 없음)·없음 → null. "gnss" 는 더 이상 만들지 않는다
     wrong = []
@@ -299,7 +341,9 @@ def check_ships(env_v: Draft202012Validator) -> int:
                 wrong.append((ts, src))
     ts60 = sum(1 for d in lines if d["MessageType"] in POSITION_CLASS and d["Message"][d["MessageType"]].get("Timestamp") == 60)
     gnss = sum(1 for s in ships if s["position_source"] == "gnss")
-    print(f"{'FAIL' if wrong or gnss else 'ok  '} ais position_source honesty: {ts60} Timestamp-60 reports → null, {len(wrong)} mismatches, {gnss} 'gnss' published")
+    print(
+        f"{'FAIL' if wrong or gnss else 'ok  '} ais position_source honesty: {ts60} Timestamp-60 reports → null, {len(wrong)} mismatches, {gnss} 'gnss' published"
+    )
     failures += bool(wrong) or bool(gnss)
     # 스키마 열거값 = 코드 상수
     st = json.loads((SCHEMAS / "ship_state.v1.json").read_text())
@@ -311,7 +355,9 @@ def check_ships(env_v: Draft202012Validator) -> int:
     ps = st["properties"]["position_source"]
     if ps.get("type") != ["string", "null"] or ps["enum"] != [POSITION_SOURCE_EPFS, *POSITION_SOURCE.values(), "gnss", None]:
         bad.append("position_source enum")
-    if set(st["properties"]["msg_type"]["enum"]) != set(POSITION_CLASS) or set(st["properties"]["class"]["enum"]) != set(POSITION_CLASS.values()):
+    if set(st["properties"]["msg_type"]["enum"]) != set(POSITION_CLASS) or set(st["properties"]["class"]["enum"]) != set(
+        POSITION_CLASS.values()
+    ):
         bad.append("msg_type/class enum")
     if set(ss["required"]) != {"mmsi", *STATIC_FIELDS, "updated_at", "provider"}:
         bad.append("ship_static required != parse.STATIC_FIELDS")

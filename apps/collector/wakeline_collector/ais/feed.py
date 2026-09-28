@@ -139,6 +139,7 @@ class FeedState:
         self.provider_error_at: float | None = None
         self.deflate: bool | None = None
         self.bbox = ""
+        self.on_first_data: Callable[[float], None] | None = None  # 연결마다 첫 데이터 메시지(ShardSet 이 건다)
         self.backoff_s: float | None = None
         self.subscribe_updates = 0
         self.gaps = GapTracker()
@@ -180,6 +181,8 @@ class FeedState:
             if self.state == "subscribed":
                 self.state = "receiving"
             self.gaps.close(now)
+            if self.on_first_data is not None:
+                self.on_first_data(now)  # 구역 모음이 재시작 때 이어받은 구역 없는 공백을 닫는다(ShardSet)
             self._mark()
 
     def on_disconnected(self, reason: str) -> float | None:

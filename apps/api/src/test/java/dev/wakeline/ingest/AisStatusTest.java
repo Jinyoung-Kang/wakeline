@@ -103,7 +103,20 @@ class AisStatusTest {
                 .containsEntry("gap_open_since", null).containsEntry("provider", "aisstream").containsEntry("ships", 1)
                 .containsEntry("heartbeat_stale", false);
         @SuppressWarnings("unchecked") Map<String, Object> lg = (Map<String, Object>) v.get("last_gap");
-        assertThat(lg).containsEntry("started_at", Instant.parse("2026-09-28T01:00:00Z")).containsEntry("reason", "server closed (1006)");
+        assertThat(lg).containsEntry("started_at", Instant.parse("2026-09-28T01:00:00Z")).containsEntry("reason", "server closed (1006)")
+                .doesNotContainKey("scope"); // 구역 없는 공백
+
+        // 계약 v4 G: 상태 해시의 last_gap_scope 가 맞는 구역이면 last_gap.scope 로, 틀리면 구역 없음
+        Map<Object, Object> scoped = new java.util.HashMap<>(healthy(NOW.minusSeconds(3)));
+        scoped.put("last_gap_scope", "-90,45,90,180");
+        st.update(scoped);
+        @SuppressWarnings("unchecked") Map<String, Object> lgs = (Map<String, Object>) st.publicView(NOW_MS).get("last_gap");
+        assertThat(lgs).containsEntry("scope", "-90,45,90,180");
+        scoped.put("last_gap_scope", "a|b");
+        st.update(scoped);
+        @SuppressWarnings("unchecked") Map<String, Object> lgBad = (Map<String, Object>) st.publicView(NOW_MS).get("last_gap");
+        assertThat(lgBad).doesNotContainKey("scope");
+        st.update(healthy(NOW.minusSeconds(3)));
 
         // api 가 받은 공백이 더 늦게 끝났으면 그것
         ships.addGap(new AisGap(Instant.parse("2026-09-28T02:00:00Z"), Instant.parse("2026-09-28T02:03:00Z"), "idle 120 s", "aisstream"));

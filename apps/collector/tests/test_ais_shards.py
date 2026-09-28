@@ -11,6 +11,7 @@ from wakeline_collector.ais.parse import iso_ms
 from wakeline_collector.ais.shards import SHARD_FIELDS, STATE_RANK, ShardSet, previous_shards
 
 A, B, C = "-90,-180,90,0", "-90,45,90,180", "18,105,46,150"
+D = "7,7,8,8"
 T0_EPOCH = float(int(_T0))  # 상태 해시는 ms 까지 — 되읽은 시각과 바로 비교하려고 초 단위로
 
 
@@ -291,45 +292,77 @@ def test_removal_reason_stays_within_the_schema_limit():
 
 
 def test_restore_carries_unmatched_gaps_over_as_one_unscoped_gap():
-    """계약 v4 G D-3: 같은 구역이 없는 이전 실행의 공백은 구역 없는 공백(모든 선박에 적용)으로 잇는다 — 가장 이른 시작, 빈 구역에."""
+    """계약 v4 G D-3: 같은 구역이 없는 이전 실행의 공백은 구역 없는 공백 하나(가장 이른 시작)로 잇는다 — 어느 구역에도 붙이지 않고
+    모음이 들고 있다가, 어느 구역이든 첫 데이터 메시지에 닫는다(그 뒤로 '어디서도 받지 못했다' 는 사실이 아니다)."""
     ss, _, _ = _set()
     ss.load_previous(_prev_v4())  # A(열린 공백 T-60) · B(마지막 메시지 T-30) · 1,1,2,2(열린 공백 T-90, 원인 x)
     a, c = ss.add(A), ss.add(C)
     ss.restore_leftover()
     assert (a.feed.gaps.open_since, a.feed.gaps.scope) == (T0_EPOCH - 60, A)  # 같은 구역은 그대로
-    assert (c.feed.gaps.open_since, c.feed.gaps.reason, c.feed.gaps.scope) == (T0_EPOCH - 90, "x", None)
-    view = {v["gap_open_since"]: v for v in ss.shards_view()}
-    assert view[iso_ms(T0_EPOCH - 90)]["scope"] is None  # 상태의 scope 도 공백과 같게(구역 없음)
+    assert c.feed.gaps.open_since is None  # 구역에 붙이지 않는다
+    assert (ss.leftover.open_since, ss.leftover.reason, ss.leftover.scope) == (T0_EPOCH - 90, "x", None)
+    assert all(v["scope"] is not None for v in ss.shards_view())  # 상태의 구역 목록에 구역 없는 항목이 생기지 않는다
     assert ss.gap_open() == (T0_EPOCH - 90, "x")
     c.feed.on_subscribed(C, deflate=True)
-    c.feed.on_message(T0_EPOCH + 5)
-    ev = c.feed.gaps.last
-    assert ev == {"started_at": iso_ms(T0_EPOCH - 90), "ended_at": iso_ms(T0_EPOCH + 5), "reason": "x"}  # scope 없음
+    c.feed.on_message(T0_EPOCH + 5)  # C 가 먼저 받는다 — 구역 없는 공백은 여기서 끝난다
+    assert ss.leftover.open_since is None
+    assert ss.leftover.last == {
+        "started_at": iso_ms(T0_EPOCH - 90),
+        "ended_at": iso_ms(T0_EPOCH + 5),
+        "reason": "x",
+    }  # scope 없음
+    assert list(ss.leftover.pending) == [ss.leftover.last] and ss.leftover.pending in ss.pending_queues()
+    assert ss.gap_open() == (T0_EPOCH - 60, a.feed.gaps.reason)  # A 자기 공백은 A 가 받을 때까지
+    assert ss.last_gap() == ss.leftover.last
     assert ss.add(B).feed.gaps.open_since is None  # 이어받기는 기동 때 한 번뿐
 
 
-def test_restore_widens_a_shard_gap_when_every_shard_already_carries_one():
+def test_leftover_closes_on_the_first_message_of_any_shard_while_another_stays_silent():
+    """리뷰 후속: 새 설정으로 재시작(C|D), D 만 받고 C 는 조용해도 구역 없는 공백은 D 의 첫 메시지에 닫히고 전체 멈춤이 남지 않는다."""
     ss, _, _ = _set()
-    ss.load_previous(_prev_v4())
-    a = ss.add(A)  # T-60(자기 구역) — B(T-30)·1,1,2,2(T-90)는 같은 구역이 없다
+    ss.load_previous({"provider": "aisstream", "shards": json.dumps([{"scope": A, "gap_open_since": iso_ms(T0_EPOCH - 60)}])})
+    c, d = ss.add(C), ss.add(D)
     ss.restore_leftover()
-    assert (a.feed.gaps.open_since, a.feed.gaps.reason, a.feed.gaps.scope) == (T0_EPOCH - 90, "x", None)
-    ss2, _, _ = _set()
-    ss2.load_previous(
+    c.feed.on_subscribed(C, deflate=True)
+    d.feed.on_subscribed(D, deflate=True)
+    d.feed.on_message(T0_EPOCH + 3)
+    assert ss.leftover.open_since is None and ss.gap_open() is None
+    assert [v["scope"] for v in ss.shards_view()] == [C, D] and all(v["gap_open_since"] is None for v in ss.shards_view())
+    (ev,) = ss.leftover.pending
+    assert ev["started_at"] == iso_ms(T0_EPOCH - 60) and ev["ended_at"] == iso_ms(T0_EPOCH + 3) and "scope" not in ev
+
+
+def test_leftover_survives_a_stop_through_the_aggregate_gap_open_since():
+    """구역 없는 공백이 열린 채 멈추면 상태 해시의 합계 gap_open_since(어느 구역 것도 아님)로 다음 실행이 잇는다."""
+    ss, _, _ = _set()
+    ss.load_previous(
         {
             "provider": "aisstream",
-            "shards": json.dumps(
-                [{"scope": A, "gap_open_since": iso_ms(T0_EPOCH - 60)}, {"scope": B, "last_msg_at": iso_ms(T0_EPOCH - 10)}]
-            ),
+            "shards": json.dumps([{"scope": A, "last_msg_at": iso_ms(T0_EPOCH - 5)}]),
+            "gap_open_since": iso_ms(T0_EPOCH - 100),
+            "gap_reason": "x",
         }
     )
-    a2 = ss2.add(A)
-    ss2.restore_leftover()  # 남은 공백이 더 늦게 시작하면 시작은 그대로, 구역만 넓힌다
-    assert (a2.feed.gaps.open_since, a2.feed.gaps.reason, a2.feed.gaps.scope) == (T0_EPOCH - 60, "ais process restart", None)
+    a = ss.add(A)
+    ss.restore_leftover()
+    assert (a.feed.gaps.open_since, a.feed.gaps.reason) == (T0_EPOCH - 5, "ais process restart")
+    assert (ss.leftover.open_since, ss.leftover.reason) == (T0_EPOCH - 100, "x")
+    # 합계가 어느 구역의 열린 공백과 같으면(그 구역 것) 구역 없는 공백을 만들지 않는다
+    s2, _, _ = _set()
+    s2.load_previous(
+        {
+            "provider": "aisstream",
+            "shards": json.dumps([{"scope": A, "gap_open_since": iso_ms(T0_EPOCH - 60)}]),
+            "gap_open_since": iso_ms(T0_EPOCH - 60),
+        }
+    )
+    s2.add(A)
+    s2.restore_leftover()
+    assert s2.leftover.open_since is None
 
 
 def test_restore_when_the_setting_changed_while_down():
-    """이전 실행과 설정이 달라도(내려가 있던 동안 바뀜 · 기동 때 설정을 못 읽음) 재시작 공백을 잃지 않는다."""
+    """이전 실행과 설정이 달라도(내려가 있던 동안 바뀜 · 기동 때 설정을 못 읽음) 재시작 공백을 잃지 않는다(구역 없는 공백으로)."""
     ss, _, _ = _set()
     ss.load_previous(
         {
@@ -338,22 +371,23 @@ def test_restore_when_the_setting_changed_while_down():
         }
     )
     b = ss.add(B)
-    assert b.feed.gaps.open_since is None
     ss.restore_leftover()
-    assert (b.feed.gaps.open_since, b.feed.gaps.reason, b.feed.gaps.scope) == (T0_EPOCH - 60, "ais process stopped", None)
+    assert b.feed.gaps.open_since is None
+    assert (ss.leftover.open_since, ss.leftover.reason) == (T0_EPOCH - 60, "ais process stopped")
     # v4 이전 해시(bbox 가 다름)도 같다
     legacy, _, _ = _set()
     legacy.load_previous({"provider": "aisstream", "bbox": f"{A};{B}", "last_msg_at": iso_ms(T0_EPOCH - 45)})
     one = legacy.add(C)
     legacy.restore_leftover()
-    assert (one.feed.gaps.open_since, one.feed.gaps.reason, one.feed.gaps.scope) == (T0_EPOCH - 45, "ais process restart", None)
+    assert one.feed.gaps.open_since is None
+    assert (legacy.leftover.open_since, legacy.leftover.reason) == (T0_EPOCH - 45, "ais process restart")
     # 이어받을 것이 없으면(깨진 기록 · 공급자가 다름 · 이전 실행 없음) 아무것도 열지 않는다
     for prev in ({**_prev_v4(), "shards": "{broken"}, {**_prev_v4(), "provider": "fixture"}, {}):
         s2, _, _ = _set()
         s2.load_previous(prev)
         x = s2.add(C)
         s2.restore_leftover()
-        assert x.feed.gaps.open_since is None, prev
+        assert x.feed.gaps.open_since is None and s2.leftover.open_since is None, prev
 
 
 def test_status_scope_follows_the_open_gap_until_it_closes():
@@ -371,7 +405,10 @@ def test_status_scope_follows_the_open_gap_until_it_closes():
     nxt.load_previous({"provider": "aisstream", "shards": json.dumps(ss.shards_view())})
     b = nxt.add(B)
     nxt.restore_leftover()
-    assert (b.feed.gaps.open_since, b.feed.gaps.scope) == (T0_EPOCH + 1, None)  # 같은 구역이 없으므로 구역 없는 공백
+    assert b.feed.gaps.open_since is None and (nxt.leftover.open_since, nxt.leftover.scope) == (
+        T0_EPOCH + 1,
+        None,
+    )  # 구역 없는 공백
     s.feed.on_message(T0_EPOCH + 9)
     assert ss.shards_view()[0]["scope"] == B and ss.shards_view()[0]["gap_open_since"] is None
 
@@ -410,3 +447,19 @@ def test_on_stopped_opens_a_gap_per_shard_with_its_scope():
     ss.on_stopped()
     assert ss.state == "stopped" and ss.gap_open() == (T0_EPOCH + 1, "ais process stopped")
     assert [(s.feed.gaps.open_since, s.feed.gaps.scope) for s in ss.active] == [(T0_EPOCH + 1, A), (T0_EPOCH + 2, B)]
+
+
+def test_restored_last_gap_keeps_its_scope():
+    """상태 해시의 last_gap_scope 는 재시작 뒤에도 그대로(웹이 선택 선박의 구역 공백인지 데이터로 가른다). 형식이 틀리면 구역 없음."""
+    base = {"provider": "aisstream", "last_gap_started_at": iso_ms(T0_EPOCH - 50), "last_gap_ended_at": iso_ms(T0_EPOCH - 40)}
+    ss, _, _ = _set()
+    ss.load_previous({**base, "last_gap_scope": B})
+    assert ss.last_gap() == {
+        "started_at": iso_ms(T0_EPOCH - 50),
+        "ended_at": iso_ms(T0_EPOCH - 40),
+        "reason": "unknown",
+        "scope": B,
+    }
+    bad, _, _ = _set()
+    bad.load_previous({**base, "last_gap_scope": "a|b"})
+    assert "scope" not in (bad.last_gap() or {})

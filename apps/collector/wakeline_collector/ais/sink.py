@@ -222,6 +222,7 @@ class AisSink:
             "last_gap_started_at": last.get("started_at", ""),
             "last_gap_ended_at": last.get("ended_at", ""),
             "last_gap_reason": last.get("reason", ""),
+            "last_gap_scope": last.get("scope", ""),  # 계약 v4 G: 마지막 닫힌 공백의 구역("" = 구역 없음 — 모든 선박에 적용)
             "gaps_pending": str(sh.gaps_pending),
             "bbox": sh.bbox,
             "deflate": "" if deflate is None else ("1" if deflate else "0"),
