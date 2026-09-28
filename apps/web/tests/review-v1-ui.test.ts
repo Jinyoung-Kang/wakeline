@@ -557,3 +557,18 @@ describe("R-57 KMA radar legend numbers meet WCAG AA contrast", () => {
     }
   });
 });
+
+describe("R-59 SIGMET card names the aircraft inside", () => {
+  it("each hex shows the callsign and altitude from the live alert (or the live aircraft state); unknown stays —; hex is lowercase", async () => {
+    setData({ alerts: new Map([[7, alert({ sigmet_id: "S1", hex: "780f47", callsign: "CCA402", alt_ft: 27600 })], [8, alert({ id: 8, sigmet_id: "S9", hex: "7823a9", callsign: "OTHER" })]]) });
+    aircraftStates.set("7823a9", { hex: "7823a9", lat: 31, lon: 121, callsign: "CES501", alt_ft: 31000 });
+    const { InsideAircraftList } = await import("@/components/SigmetCard");
+    const html = renderToStaticMarkup(createElement(InsideAircraftList, { sigmetId: "S1", hexes: ["780f47", "7823a9", "abcdef"] }));
+    expect(html).toMatch(/data-hex="780f47"[^>]*>.*CCA402.*FL276/);
+    expect(html).toMatch(/data-hex="7823a9"[^>]*>.*CES501.*FL310/); // 이 SIGMET 알림은 없고 실시간 상태만 있음
+    expect(html).not.toContain("OTHER"); // 다른 SIGMET 의 알림 콜사인을 붙이지 않는다
+    expect(html).toMatch(/data-hex="abcdef"[^>]*>.*—/);
+    expect(html).toMatch(/class="[^"]*normal-case![^"]*"[^>]*data-hex="780f47"/);
+    expect(html).toMatch(/aria-label="CCA402[^"]*780f47/);
+  });
+});

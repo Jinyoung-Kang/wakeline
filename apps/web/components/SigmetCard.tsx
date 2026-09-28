@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { useServerData } from "@/lib/store";
+import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
-import { band, fmtDuration, fmtTime, hazardColor } from "@/lib/format";
+import { band, fmtAlt, fmtAltGnd, fmtDuration, fmtTime, hazardColor } from "@/lib/format";
 import { isExpired, isPending, sigmetBandSource } from "@/lib/sigmet";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 
@@ -16,8 +16,6 @@ export function SigmetCard({ id }: { id: string }) {
   const f = useServerData((d) => d.sigmets?.features.find((x) => x.properties.id === id) ?? null);
   const [inside, setInside] = useState<{ id: string; hexes: string[] | null } | null>(null);
   const selectSigmet = useUi((s) => s.selectSigmet);
-  const select = useUi((s) => s.select);
-  const alerts = useServerData((d) => d.alerts);
   const now = useServerNow(30_000);
   useEffect(() => {
     let live = true;
@@ -56,10 +54,44 @@ export function SigmetCard({ id }: { id: string }) {
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>
         ))}
         <div className="mt-2 label">Aircraft inside ({hexes == null ? "—" : hexes.length})</div>
-        <div className="flex flex-wrap gap-1 py-1">{(hexes ?? []).map((h) => <button key={h} className="btn mono" onClick={() => { select(h); panIfOutside(aircraftPos(h, [...alerts.values()].find((a) => a.hex === h && a.sigmet_id === id))); }}>{h}</button>)}</div>
+        {hexes ? <InsideAircraftList sigmetId={id} hexes={hexes} /> : null}
         <div className="mt-2 label">Raw</div>
         <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px] text-fg-2">{p.raw_text}</pre>
       </div>
     </div>
+  );
+}
+
+/**
+ * SIGMET 안 항공기(R-59): 서버가 준 hex 마다 이 SIGMET 의 관측 알림(콜사인·관측 고도) → 없으면 실시간 항공기 사본 → 없으면 "—".
+ * 다른 SIGMET 알림의 값이나 예측(추정) 고도는 쓰지 않는다. hex 는 소문자 그대로. 누르면 선택(집중 추적 시작)하고 화면 밖이면 지도를 옮긴다.
+ */
+export function InsideAircraftList({ sigmetId, hexes }: { sigmetId: string; hexes: string[] }) {
+  const alerts = useServerData((d) => d.alerts);
+  const select = useUi((s) => s.select);
+  const byHex = new Map([...alerts.values()].filter((a) => a.sigmet_id === sigmetId && a.kind === "OBSERVED").map((a) => [a.hex, a]));
+  return (
+    <ul className="py-1 text-[12px]" data-testid="sigmet-inside">
+      {hexes.map((h) => {
+        const a = byHex.get(h);
+        const st = aircraftStates.get(h);
+        const callsign = a?.callsign ?? st?.callsign ?? null;
+        const alt = a ? fmtAlt(a.alt_ft) : st ? fmtAltGnd(st.alt_ft, st.on_ground) : "—";
+        const src = a ? "관측 알림" : st ? "실시간" : null;
+        return (
+          <li key={h} className="border-b border-line">
+            <button className="btn flex w-full items-center gap-2 border-0 bg-transparent px-1 py-0.5 text-left normal-case!" data-hex={h}
+              title="선택하면 집중 추적(외부 공급자 조회)이 시작됩니다"
+              aria-label={`${callsign ?? "호출부호 모름"}, ${h}, 고도 ${alt}${src ? `, ${src}` : ""}`}
+              onClick={() => { select(h); panIfOutside(aircraftPos(h, a)); }}>
+              <span className="mono w-20 shrink-0">{callsign ?? "—"}</span>
+              <span className="mono w-16 shrink-0 text-fg-3">{h}</span>
+              <span className="mono w-16 shrink-0">{alt}</span>
+              <span className="text-[10px] text-fg-3">{src ?? ""}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
