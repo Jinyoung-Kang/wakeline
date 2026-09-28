@@ -215,3 +215,52 @@ export function fromUtcInput(v: string): number | null {
 
 /** 시각 이동 버튼 [ms, 라벨] */
 export const REPLAY_STEPS: [number, string][] = [[-3600_000, "−1h"], [-600_000, "−10m"], [-60_000, "−1m"], [60_000, "+1m"], [600_000, "+10m"], [3600_000, "+1h"]];
+
+// ---- 요청 순서(R-47) ----
+
+export interface ReplayReq { at: number; bbox: string }
+
+/**
+ * 재생 요청을 한 번에 하나만 보내되, 보내는 중에 들어온 요청을 버리지 않는다(R-47): 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀)
+ * 응답이 오면 바로 보낸다 — 결국 마지막으로 원한 (at, bbox) 가 그려진다. 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이
+ * "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다).
+ */
+export class ReplayLoader {
+  private inflight: ReplayReq | null = null;
+  private queued: ReplayReq | null = null;
+  private disposed = false;
+
+  constructor(
+    private readonly fetchFrame: (r: ReplayReq) => Promise<ReplayFrame>,
+    private readonly onEvent: (e: ReplayEvent, r: ReplayReq) => void,
+    private readonly clock: () => number = () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
+  ) {}
+
+  request(r: ReplayReq): void {
+    if (this.disposed) return;
+    if (this.inflight) { this.queued = r; return; }
+    void this.run(r);
+  }
+
+  /** 화면을 떠나면 더 보내지도 반영하지도 않는다 */
+  dispose(): void {
+    this.disposed = true;
+    this.queued = null;
+  }
+
+  private async run(r: ReplayReq): Promise<void> {
+    this.inflight = r;
+    const t0 = this.clock();
+    try {
+      const frame = await this.fetchFrame(r);
+      if (!this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
+    } catch (error) {
+      if (!this.disposed && !this.queued) this.onEvent({ type: "failed", error }, r);
+    } finally {
+      this.inflight = null;
+      const next = this.queued;
+      this.queued = null;
+      if (next && !this.disposed && !(next.at === r.at && next.bbox === r.bbox)) void this.run(next);
+    }
+  }
+}

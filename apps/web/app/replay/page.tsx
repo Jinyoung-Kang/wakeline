@@ -5,7 +5,7 @@ import { apiGet } from "@/lib/api";
 import { fmtAltGnd, fmtBool, fmtNum, fmtTime } from "@/lib/format";
 import {
   fromUtcInput, isSummaryRow, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayFrameAtLabel, replayRadarLabel, replayRange, replayRecLabel, replayReduce, replaySigmetBand,
-  replayZone, stepAt, SUMMARY_FLAG, toUtcInput, type ReplayFrame, type ReplayRange,
+  ReplayLoader, replayZone, stepAt, SUMMARY_FLAG, toUtcInput, type ReplayFrame, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
@@ -30,22 +30,22 @@ export default function ReplayPage() {
   const [pick, setPick] = useState<ReplayPick>(null);
   const [showRadar, setShowRadar] = useState(true);
   const [showList, setShowList] = useState(false);
-  const inflight = useRef(false);
   const { min, max } = range;
   // 기록 시각은 서버 시계 — 상황판에서 추정한 오프셋이 있으면 쓴다(없으면 브라우저 시계)
   useEffect(() => { const h = setTimeout(() => { const now = serverNowMs(Date.now()); setRange(replayRange(now)); setAt(now - 10 * 60_000); }, 0); return () => clearTimeout(h); }, []);
 
-  const load = useCallback(async (t: number, b: string) => {
-    if (inflight.current) return;
-    inflight.current = true;
-    const t0 = performance.now();
-    try {
-      const f = await apiGet<ReplayFrame>(`/api/v1/replay?at=${encodeURIComponent(new Date(t).toISOString())}&bbox=${encodeURIComponent(b)}`);
-      dispatch({ type: "loaded", frame: f, latencyMs: Math.round(performance.now() - t0) });
-    } catch (e) { dispatch({ type: "failed", error: e }); } finally { inflight.current = false; }
+  // 요청은 한 번에 하나, 보내는 중에 바뀐 시각·영역은 끝나면 바로 보낸다(R-47 — 예전에는 버려져 라벨과 지도가 어긋난 채 멈췄다)
+  // 마운트마다 새 로더(개발 모드 StrictMode 의 두 번 실행에도 폐기된 로더를 쓰지 않게)
+  const loader = useRef<ReplayLoader | null>(null);
+  useEffect(() => {
+    const l = new ReplayLoader(
+      (r) => apiGet<ReplayFrame>(`/api/v1/replay?at=${encodeURIComponent(new Date(r.at).toISOString())}&bbox=${encodeURIComponent(r.bbox)}`),
+      (e) => dispatch(e),
+    );
+    loader.current = l;
+    return () => { l.dispose(); if (loader.current === l) loader.current = null; };
   }, []);
-
-  useEffect(() => { if (!at) return; const h = setTimeout(() => load(at, bbox), 150); return () => clearTimeout(h); }, [at, bbox, load]);
+  useEffect(() => { if (!at) return; const h = setTimeout(() => loader.current?.request({ at, bbox }), 150); return () => clearTimeout(h); }, [at, bbox]);
   useEffect(() => {
     if (!playing) return;
     const tick = setInterval(() => setAt((t) => Math.min(max, t + speed * 1000)), 1000);

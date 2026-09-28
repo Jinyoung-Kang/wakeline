@@ -431,3 +431,49 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
     expect(html).toMatch(/transform="rotate\(-45/);
   });
 });
+
+describe("R-47 replay: a request made while one is in flight is sent when it finishes (latest wins)", () => {
+  type Req = { at: number; bbox: string };
+  function harness() {
+    const calls: Req[] = [];
+    const pending: { resolve: (f: ReplayFrame) => void; reject: (e: unknown) => void }[] = [];
+    const events: { type: string; at?: string }[] = [];
+    const loader = new replayLib.ReplayLoader(
+      (r) => { calls.push(r); return new Promise<ReplayFrame>((resolve, reject) => pending.push({ resolve, reject })); },
+      (e) => events.push(e.type === "loaded" ? { type: e.type, at: e.frame.at } : { type: e.type }),
+    );
+    const frame = (at: number): ReplayFrame => ({ at: new Date(at).toISOString(), aircraft: [], sigmets: [], source: "track_point" });
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    return { calls, pending, events, loader, frame, tick };
+  }
+  it("the last (at, bbox) asked during a slow request is fetched afterwards; intermediate ones are skipped", async () => {
+    const h = harness();
+    h.loader.request({ at: 1000, bbox: "a" });
+    h.loader.request({ at: 2000, bbox: "a" }); // 수정 전: inflight 이면 return — 이 요청과
+    h.loader.request({ at: 3000, bbox: "b" }); // 이 요청이 사라지고 라벨만 3000 으로 남았다
+    expect(h.calls).toEqual([{ at: 1000, bbox: "a" }]);
+    h.pending[0].resolve(h.frame(1000));
+    await h.tick();
+    expect(h.calls).toEqual([{ at: 1000, bbox: "a" }, { at: 3000, bbox: "b" }]);
+    h.pending[1].resolve(h.frame(3000));
+    await h.tick();
+    expect(h.events.at(-1)).toEqual({ type: "loaded", at: new Date(3000).toISOString() });
+  });
+  it("a failure that is already superseded does not clear the map; a same request is not sent twice", async () => {
+    const h = harness();
+    h.loader.request({ at: 1000, bbox: "a" });
+    h.loader.request({ at: 2000, bbox: "a" });
+    h.pending[0].reject(new ApiError(500, "x"));
+    await h.tick();
+    expect(h.events.some((e) => e.type === "failed")).toBe(false);
+    h.pending[1].resolve(h.frame(2000));
+    await h.tick();
+    h.loader.request({ at: 2000, bbox: "a" });
+    h.loader.request({ at: 5000, bbox: "a" });
+    h.loader.request({ at: 2000, bbox: "a" }); // 대기 요청이 방금 보낸 것과 같아지면 다시 보내지 않는다
+    h.pending[2].resolve(h.frame(2000));
+    await h.tick();
+    expect(h.calls.length).toBe(3);
+    h.loader.dispose();
+  });
+});
