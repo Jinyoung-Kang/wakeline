@@ -40,3 +40,8 @@
 - `POST /api/v1/client-errors` 의 JSON 이 아닌 Content-Type(없는 것 포함)은 415 `UNSUPPORTED_MEDIA_TYPE`(로그인과 같은 관례, 요청 제한 수를 쓰지 않는다),
   본문 형식 오류는 400 `BAD_CLIENT_ERROR`.
 - Redis 메모리 최악: 약 24 MiB + 8 MiB(1,000 × 8 KiB). 되돌리기에 `DEL wakeline:logs:client` 를 더한다.
+
+## 개정(2026-09-29 · 계약 v5 §G9)
+- 억제 수를 남기는 방법을 지표에서 스트림으로: 같은 지문이 창(10 s) 안에서 억제되고 다시 오지 않으면 창이 닫힌 뒤 보내는 쪽의 주기에 마지막 억제 발생을 제 항목으로
+  싣는다(`suppressed` = 나머지, 종료 때는 창과 무관하게). 억제 중인 발생은 지문마다 하나만 붙잡고(지문 표 상한 그대로), 잊거나 만들지 못하면 버림으로 센다.
+  억제 지표는 항목에 실린 수를 센다. 언어 간 벡터 `schemas/vectors/log-suppression.v1.json`.
