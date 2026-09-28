@@ -128,6 +128,13 @@ export function parseShipSearchResponse(body: unknown, max = 20): ShipHit[] {
   return out;
 }
 
+/** 선박 검색이 DB 없이 답했다(api meta.db_unavailable) — 실시간 목록에서만 찾았고 실시간이 아닌 선박·마지막 저장 시각은 빠졌다 */
+export function shipSearchDbUnavailable(body: unknown): boolean {
+  const meta = body && typeof body === "object" ? (body as { meta?: unknown }).meta : null;
+  return !!meta && typeof meta === "object" && (meta as { db_unavailable?: unknown }).db_unavailable === true;
+}
+export const SHIP_SEARCH_DB_NOTE = "선박 DB 일시 사용 불가 — 실시간 목록에서만 찾았습니다(실시간이 아닌 선박·마지막 저장 시각은 빠짐)";
+
 /** 검색 결과 → 표 한 줄(항해 상태는 검색 응답에 없다 — 지도 목록 사본에 있으면 그 값, 없으면 모름) */
 export function shipRowFromHit(h: ShipHit, listed: Pick<ShipLite, "nav_status"> | null | undefined): ShipRow {
   return { mmsi: h.mmsi, name: h.name, category: h.category, sog_kn: h.sog_kn, nav_status: h.live ? listed?.nav_status ?? null : null, live: h.live, seen_at: h.seen_at, last_position_at: h.last_position_at };

@@ -5,7 +5,8 @@ import { useServerNow } from "@/lib/clock";
 import { fmtTime } from "@/lib/format";
 import { saveLayers } from "@/lib/prefs";
 import {
-  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
+  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
+  shipSearchDbUnavailable,
   type SearchHit, type ShipHit,
 } from "@/lib/search";
 import { sortShipRows, type ShipSort, type ShipSortKey } from "@/lib/ships";
@@ -18,7 +19,8 @@ import { AltStack } from "./UnitStack";
 const DEBOUNCE_MS = 250;
 
 type GroupState = "idle" | "loading" | "done" | "error";
-export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string }
+/** note = 결과와 함께 보일 알림(예: 선박 DB 사용 불가 — 결과가 실시간 목록뿐) */
+export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string }
 const IDLE = { hits: [], state: "idle" as const, msg: "" };
 
 /** 검색 실패 문구(묶음마다) — 404 는 서버가 아직 그 검색을 지원하지 않는 경우(구 api) */
@@ -86,7 +88,10 @@ export function AircraftSearch() {
       if (qs) {
         setShips((g) => ({ ...g, state: "loading" }));
         apiGet<unknown>(`/api/v1/ships/search?q=${encodeURIComponent(qs)}&limit=${SHIP_SEARCH_LIMIT}`, { signal: ctl.signal })
-          .then((body) => { const h = parseShipSearchResponse(body); setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음" }); })
+          .then((body) => {
+            const h = parseShipSearchResponse(body);
+            setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: shipSearchDbUnavailable(body) ? SHIP_SEARCH_DB_NOTE : undefined });
+          })
           .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e) }); });
       } else setShips(IDLE);
     }, DEBOUNCE_MS);
@@ -255,6 +260,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
         ))}
       </ul>
       <GroupHead id={headId(uid, "ships")} title="선박" count={ships.state === "done" ? `${rows.length}건` : "—"} source="출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)" testId="search-group-ships" />
+      {ships.note && ships.state === "done" ? <div className="px-2 py-1 text-[11px] text-warn" data-testid="ship-search-db-note">{ships.note}</div> : null}
       {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`}>{sMsg}</div> : null}
       {rows.length ? (
         <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" wide

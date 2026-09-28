@@ -142,6 +142,18 @@ describe("unified search wiring (contract v5 §B1/§B3)", () => {
     expect(findAll((e) => e.getAttribute("data-testid") === "aircraft-search-item")).toHaveLength(1);
   });
 
+  it("the ship search answered without the DB (meta.db_unavailable): the group says the results come from the live list only", async () => {
+    rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? { items: [{ ...SHIPS.items[0], last_position_at: null }], meta: { q: "SYN", count: 1, db_unavailable: true } } : AIRCRAFT);
+    await mount(React.createElement(AircraftSearch));
+    await typeText("SYN");
+    await settle(300);
+    expect(byTestId("ship-search-db-note")?.textContent).toBe("선박 DB 일시 사용 불가 — 실시간 목록에서만 찾았습니다(실시간이 아닌 선박·마지막 저장 시각은 빠짐)");
+    rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? SHIPS : AIRCRAFT);
+    await typeText("SYNA");
+    await settle(300);
+    expect(byTestId("ship-search-db-note")).toBeNull();
+  });
+
   it("↑/↓ moves across both groups (aircraft → ships); the combobox controls both listboxes and points at the active option", async () => {
     rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? SHIPS : AIRCRAFT);
     await mount(React.createElement(AircraftSearch));
