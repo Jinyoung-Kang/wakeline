@@ -116,19 +116,20 @@ echo; echo "=== 6. AIS network cut ${AIS_CUT_S} s (docker network disconnect/con
 A="$(cid ais)"
 if [ -z "$A" ]; then echo "no ais container — skipped"; else
   # 끊으면 ais 컨테이너는 aisstream.io 와 redis 둘 다 못 본다: 공백 기록(ais_gap)은 다시 붙은 뒤에 발행된다(계약 v2 §B1).
-  NET="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' "$A" | head -1)"
+  # ais 는 wakeline(내부 — redis) · egress(인터넷 — aisstream.io) 두 망에 있다(R-64) — 모두 끊어야 둘 다 못 본다.
+  NETS="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' "$A" | sed '/^$/d' | tr '\n' ' ')"
   st() { redis HGET wakeline:ais:status "$1" 2>/dev/null | tr -d '\r'; }
   echo "before: connected=$(st connected) last_msg_at=$(st last_msg_at) msgs_per_s=$(st msgs_per_s) gap_open_since='$(st gap_open_since)' health=$(health "$A") restarts=$(docker inspect -f '{{.RestartCount}}' "$A")"
   gaps0=$(psqlq "SELECT count(*) FROM ingest_gap" 2>/dev/null || echo "?")
   t0=$(now); since_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   # 끊긴 채로 끝나면 ais 는 docker restart 로도 다시 붙지 않는다 — 중단되면 다시 붙이고 끝낸다
-  ais_restore() { echo "chaos: reconnecting ais ($A) to $NET" >&2; docker network connect --alias ais "$NET" "$A" >/dev/null 2>&1 || true; }
+  ais_restore() { echo "chaos: reconnecting ais ($A) to $NETS" >&2; for n in $NETS; do docker network connect --alias ais "$n" "$A" >/dev/null 2>&1 || true; done; }
   trap_restore ais_restore
-  docker network disconnect "$NET" "$A" || { echo "disconnect failed"; exit 1; }
-  echo "disconnected from $NET at $since_iso; holding ${AIS_CUT_S} s …"
+  for n in $NETS; do docker network disconnect "$n" "$A" || { echo "disconnect failed ($n)"; exit 1; }; done
+  echo "disconnected from $NETS at $since_iso; holding ${AIS_CUT_S} s …"
   hold "$AIS_CUT_S"
   echo "health while cut: $(health "$A") (redis is also unreachable from ais during the cut)"
-  docker network connect --alias ais "$NET" "$A" || { echo "reconnect failed — run: docker network connect $NET $A"; exit 1; }
+  for n in $NETS; do docker network connect --alias ais "$n" "$A" || { echo "reconnect failed — run: docker network connect $n $A"; exit 1; }; done
   untrap
   t1=$(now)
   # 복귀 = 다시 연결되어(connected=1) 공백이 닫히고(gap_open_since 비어 있음) 끊은 뒤의 메시지를 받음

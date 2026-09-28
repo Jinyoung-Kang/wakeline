@@ -49,6 +49,7 @@ services:
       resources:
         limits: { memory: 256m, pids: 256 }
     networks:
+      public: {}                                   # 게시 포트(127.0.0.1) 경로 — edge 만 붙는다
       wakeline: { ipv4_address: "${WAKELINE_NET_PREFIX:-10.77.0}.10" }
     healthcheck:
       # Host 허용 목록(nginx.conf)에 127.0.0.1 이 있으므로 421 이 아니라 api 의 /healthz 까지 간다
@@ -190,6 +191,7 @@ services:
         limits: { memory: 512m, pids: 256 }
     networks:
       wakeline: { ipv4_address: "${WAKELINE_NET_PREFIX:-10.77.0}.40" }
+      egress: {}                                   # 외부 공급자 호출(OpenSky·adsb.lol·AWC·기상청 …)
     healthcheck:
       # 계약 §8: 관심 지역 작업의 heartbeat(wakeline:collector.region_at)가 90 s 안이면 정상 — 프로세스는 살아 있지만 수집이 멈춘 상태를 잡는다(REL-20)
       test: ["CMD", "python", "-m", "wakeline_collector.health"]
@@ -233,6 +235,7 @@ services:
         limits: { memory: 256m, pids: 128 }
     networks:
       wakeline: {}
+      egress: {}                                   # aisstream.io WebSocket
     healthcheck:
       # 계약 v2 §B1: 마지막 메시지 120 s 안, 또는 공백(gap)이 열린 채 재연결 중이면 정상(끊김은 화면이 공백으로 보인다)
       test: ["CMD", "python", "-m", "wakeline_collector.ais.health"]
@@ -302,12 +305,23 @@ services:
       timeout: 3s
       retries: 20
 
+# 네트워크 분리(R-64 · R-77 · ADR-017 §4) — '외부 호출은 collector·ais 만'을 망이 강제한다(infra/tests/test_compose_policy.py).
+#   public   edge 만. 게시 포트(127.0.0.1:${WAKELINE_PORT}) 경로.
+#   wakeline ADR 의 internal 망: internal: true(게이트웨이·NAT 없음 — 인터넷에 닿지 않는다). 모든 서비스가 서로 닿는 유일한 망이고 고정 IP 는 여기 있다
+#            (edge .10 = api 의 WAKELINE_TRUSTED_PROXY, api .30 = make bench). web·api·migrate·db·redis 는 이 망에만 있다.
+#            이름을 예전 단일 망과 같게 둬서 실행 중인 스택도 `make up` 한 번으로 제자리에서 바뀌고(compose 가 망을 다시 만든다), 되돌리기도 같다.
+#   egress   collector·ais 만. 인터넷(외부 공급자) 경로.
 networks:
+  public:
+    driver: bridge
   wakeline:
     driver: bridge
+    internal: true
     ipam:
       config:
         - subnet: ${WAKELINE_NET_PREFIX:-10.77.0}.0/24
+  egress:
+    driver: bridge
 
 volumes:
   raw: {}

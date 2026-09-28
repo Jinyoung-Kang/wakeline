@@ -38,6 +38,13 @@ FAKE_EXTERNAL = {
 # migrate(--migrate)가 실제로 읽는 환경변수(WakelineApplication.migrate) — 이 밖의 값은 주지 않는다(SEC-R2)
 MIGRATE_ENV_ALLOWED = {"TZ", "DB_HOST", "DB_NAME", "DB_PORT", "DB_MIGRATOR_USER", "DB_MIGRATOR_PASSWORD"}
 # ais 컨테이너(계약 v2 §B1)가 받는 값 — DB 비밀번호·다른 외부 키는 없다
+# R-64 · R-77 · ADR-017 §4: 서비스 → 붙는 망. public(게시 포트) · wakeline(= internal 망, internal: true) · egress(인터넷, collector·ais 만)
+INTERNAL_NET = "wakeline"
+SERVICE_NETWORKS = {
+    "edge": {"public", INTERNAL_NET},
+    "web": {INTERNAL_NET}, "api": {INTERNAL_NET}, "migrate": {INTERNAL_NET}, "db": {INTERNAL_NET}, "redis": {INTERNAL_NET},
+    "collector": {INTERNAL_NET, "egress"}, "ais": {INTERNAL_NET, "egress"},
+}
 AIS_ENV_ALLOWED = {
     "TZ", "REDIS_HOST", "REDIS_USERNAME", "REDIS_PASSWORD", "AISSTREAM_API_KEY", "AIS_BBOXES",
     "HTTP_USER_AGENT", "FIXTURES_DIR", "SCHEMAS_DIR", "WAKELINE_FIXTURE_MODE",
@@ -300,6 +307,45 @@ class ComposePolicyTest(unittest.TestCase):
                 self.assertEqual(db["healthcheck"]["test"][0], "CMD-SHELL")
                 self.assertNotRegex(db["healthcheck"]["test"][1], r"\s-h\s", "헬스체크는 로컬 소켓(-h 없음)")
         self.assertTrue((ROOT / "infra/db/init/02-superuser-local-only.sh").stat().st_mode & 0o111, "실행 가능해야 initdb 가 실행한다")
+
+    # --- R-64 · R-77 · ADR-017 §4: 네트워크 분리 — 외부 호출은 collector·ais 만(망이 강제) ---
+    # wakeline = ADR 의 internal 망(internal: true, 게이트웨이 없음). 이름을 유지해 기존 스택이 `make up` 한 번으로 제자리 전환되고 되돌리기도 같다.
+    def test_every_service_is_on_exactly_its_networks(self):
+        for cfg in (self.dev, self.iso):
+            for name, s in cfg["services"].items():
+                with self.subTest(project=cfg["name"], service=name):
+                    self.assertIn(name, SERVICE_NETWORKS, "새 서비스는 어느 망에 둘지 여기서 정한다")
+                    self.assertEqual(set(s.get("networks") or {}), SERVICE_NETWORKS[name])
+            self.assertEqual(set(cfg["services"]), set(SERVICE_NETWORKS), "목록에만 있고 compose 에 없는 서비스")
+
+    def test_internal_network_has_no_internet(self):
+        for cfg in (self.dev, self.iso):
+            nets = cfg["networks"]
+            with self.subTest(project=cfg["name"]):
+                self.assertEqual(set(nets), {"public", INTERNAL_NET, "egress"})
+                self.assertIs(nets[INTERNAL_NET].get("internal"), True, "internal: true — 게이트웨이·NAT 없음")
+                self.assertFalse(nets["egress"].get("internal"), "collector·ais 의 외부 호출 경로")
+                self.assertFalse(nets["public"].get("internal"), "edge 의 게시 포트 경로")
+
+    def test_only_collector_and_ais_reach_the_internet_and_only_edge_is_public(self):
+        for cfg in (self.dev, self.iso):
+            outside = {n for n, v in cfg["networks"].items() if not v.get("internal")}
+            by_service = {name: set(s.get("networks") or {}) & outside for name, s in cfg["services"].items()}
+            with self.subTest(project=cfg["name"]):
+                self.assertEqual({n for n, v in by_service.items() if "egress" in v}, {"collector", "ais"})
+                self.assertEqual({n for n, v in by_service.items() if "public" in v}, {"edge"})
+                for name in ("web", "api", "migrate", "db", "redis"):
+                    self.assertEqual(by_service[name], set(), f"{name} 는 인터넷에 닿는 망에 없다")
+
+    def test_fixed_ips_and_trusted_proxy_stay_on_the_internal_network(self):
+        for cfg, prefix in ((self.dev, "10.77.0"), (self.iso, "10.78.0")):
+            with self.subTest(project=cfg["name"]):
+                self.assertEqual(cfg["networks"][INTERNAL_NET]["ipam"]["config"][0]["subnet"], f"{prefix}.0/24")
+                edge_ip = self.svc("edge", cfg)["networks"][INTERNAL_NET]["ipv4_address"]
+                self.assertEqual(edge_ip, f"{prefix}.10")
+                self.assertEqual(self.svc("api", cfg)["environment"]["WAKELINE_TRUSTED_PROXY"], edge_ip,
+                                 "api 가 보는 edge 주소는 internal 망의 주소")
+                self.assertEqual(self.svc("api", cfg)["networks"][INTERNAL_NET]["ipv4_address"], f"{prefix}.30", "make bench 의 BENCH_API")
 
     # --- 로그 회전(디스크 고갈 방지) ---
     def test_every_service_rotates_logs(self):

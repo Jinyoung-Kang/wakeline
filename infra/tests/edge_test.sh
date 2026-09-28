@@ -6,11 +6,11 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${EDGE_IMAGE:-$(awk '/^  edge:/{f=1} f && $1=="image:"{print $2; exit}' "$ROOT/infra/compose.yml")}"
-ID="wakeline-edgetest-$$"; NET="$ID-net"; STUB="$ID-stub"; EDGE="$ID-edge"
+ID="wakeline-edgetest-$$"; NET="$ID-net"; PUB="$ID-pub"; STUB="$ID-stub"; EDGE="$ID-edge"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/wakeline-edgetest.XXXXXX")"
 fails=0; passes=0
 
-cleanup() { docker rm -f "$EDGE" "$STUB" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+cleanup() { docker rm -f "$EDGE" "$STUB" >/dev/null 2>&1 || true; docker network rm "$NET" "$PUB" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 check() { # check <설명> <조건 결과(0/1)> <실제 값>
   if [ "$2" = 0 ]; then passes=$((passes+1)); echo "  ok    $1"; else fails=$((fails+1)); echo "  FAIL  $1 → $3"; fi
@@ -28,7 +28,9 @@ http {
 CONF
 chmod 644 "$TMP/stub.conf"
 
-docker network create "$NET" >/dev/null
+# compose 와 같은 망 구성(R-64 · ADR-017 §4): 상류(api·web)는 internal 망에만, edge 는 public(게시 포트) + internal
+docker network create --internal "$NET" >/dev/null
+docker network create "$PUB" >/dev/null
 docker run -d --name "$STUB" --network "$NET" --network-alias api --network-alias web \
   --read-only --tmpfs /tmp -v "$TMP/stub.conf:/etc/nginx/nginx.conf:ro" "$IMAGE" >/dev/null
 
@@ -43,7 +45,9 @@ echo "[nginx -t (비root·read-only)]"
 out="$(docker run --rm --network "$NET" "${HARDEN[@]}" "$IMAGE" nginx -t 2>&1 || true)"
 grep -q "test is successful" <<<"$out"; check "nginx -t" $? "$out"
 
-docker run -d --name "$EDGE" --network "$NET" -p 127.0.0.1::8700 "${HARDEN[@]}" "$IMAGE" >/dev/null
+docker create --name "$EDGE" --network "$PUB" -p 127.0.0.1::8700 "${HARDEN[@]}" "$IMAGE" >/dev/null
+docker network connect "$NET" "$EDGE"
+docker start "$EDGE" >/dev/null
 PORT="$(docker port "$EDGE" 8700/tcp | head -1 | awk -F: '{print $NF}')"
 for _ in $(seq 1 50); do curl -fsS -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$PORT/healthz" 2>/dev/null && break; sleep 0.2; done
 
@@ -74,6 +78,11 @@ echo "[WS 핸드셰이크 제한]"
 n429=0
 for _ in $(seq 1 30); do c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/ws/v1")"; [ "$c" = 429 ] && n429=$((n429+1)); done
 [ "$n429" -gt 0 ]; check "WS 핸드셰이크 폭주 → 429 (30회 중 $n429)" $? "$n429"
+
+echo "[망 분리 — internal 망만 있는 상류는 기본 경로(인터넷)가 없고, 게시 포트는 public 망으로 닿는다]"
+route="$(docker exec "$STUB" awk '$2=="00000000"{print $1}' /proc/net/route)"
+[ -z "$route" ]; check "internal 망의 상류: 기본 경로 없음" $? "$route"
+c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status")"; [ "$c" = 200 ]; check "게시 포트(public) → edge → internal 망의 api" $? "$c"
 
 echo "[컨테이너 권한]"
 st="$(docker exec "$EDGE" sh -c 'for p in $(pgrep nginx); do awk "/^(Uid|CapEff|NoNewPrivs):/{printf \"%s \", \$2}" /proc/$p/status; echo; done')"
