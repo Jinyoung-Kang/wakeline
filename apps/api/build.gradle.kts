@@ -62,8 +62,8 @@ val itInputs = files("../../infra/db/init/01-roles.sh", "../../infra/redis/start
 val wsContractInputs = files("../../schemas/ws/server.v1.json", "../../schemas/ws/client.v1.json", "../../schemas/aircraft_state.v1.json",
     "../../schemas/ship_state.v1.json", "../../schemas/ship_static.v1.json", "../../schemas/vectors/ship-categories.v1.json",
     "../web/tests/fixtures/ws-samples.v1.json")
-// 로그 억제의 언어 간 시험 벡터(계약 v5 §G9): LogSinkTest 가 저장소 루트의 파일을 읽는다(pytest 도 같은 파일)
-val logVectorInputs = files("../../schemas/vectors/log-suppression.v1.json")
+// 로그의 언어 간 시험 벡터: 억제(계약 v5 §G9, LogSinkTest) · 가림(§C5, LogMaskerTest) — 저장소 루트의 파일을 읽는다(pytest 도 같은 파일)
+val logVectorInputs = files("../../schemas/vectors/log-suppression.v1.json", "../../schemas/vectors/masking-cases.v1.json")
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
