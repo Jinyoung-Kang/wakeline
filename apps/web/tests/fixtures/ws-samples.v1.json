@@ -1,0 +1,735 @@
+{
+  "$comment" : "계약 v5 §E1 · ADR-020: api 시험 WsSchemaContractTest 가 실제 빌더로 만들어 schemas/ws/server.v1.json · client.v1.json 으로 검증한 표본. 손으로 고치지 않는다 — 다시 만들기: cd apps/api && ./gradlew test --tests 'dev.wakeline.ws.WsSchemaContractTest' -PupdateWsSamples (또는 make ws-samples). 웹 lib/ws-validate.ts 는 모든 server 표본을 받아야 한다.",
+  "schema_server" : "schemas/ws/server.v1.json",
+  "schema_client" : "schemas/ws/client.v1.json",
+  "server" : [ {
+    "name" : "welcome",
+    "message" : {
+      "type" : "welcome",
+      "session_id" : "s-points",
+      "server_time" : "2026-09-28T19:53:43.281193Z",
+      "snapshot_version" : 4,
+      "limits" : {
+        "max_bbox_area" : 2500.0,
+        "diff_interval_s" : 10,
+        "resync_interval_s" : 30,
+        "resync_world_interval_s" : 120,
+        "max_client_messages" : 20,
+        "client_message_window_s" : 10,
+        "hello_timeout_s" : 5
+      }
+    }
+  }, {
+    "name" : "snapshot.lite",
+    "message" : {
+      "type" : "snapshot",
+      "seq" : 1,
+      "v" : 4,
+      "ts" : "2026-09-28T19:53:43.310256Z",
+      "sources" : {
+        "region" : {
+          "provider" : "adsb_lol",
+          "fetched_at" : "2026-09-28T19:53:41Z",
+          "lag_s" : 2.3,
+          "stale" : false
+        },
+        "global" : {
+          "provider" : "opensky",
+          "fetched_at" : "2026-09-28T19:53:33Z",
+          "lag_s" : 10.3,
+          "stale" : false
+        }
+      },
+      "sigmets_version" : 1,
+      "aircraft" : [ {
+        "hex" : "71c0a1",
+        "callsign" : "SYN081",
+        "lat" : 37.4602,
+        "lon" : 126.4407,
+        "alt_ft" : 35000,
+        "gs_kt" : 470.0,
+        "track_deg" : 82.5,
+        "vrate_fpm" : -640.0,
+        "on_ground" : false,
+        "squawk" : "1234",
+        "seen_at" : "2026-09-28T19:53:40Z",
+        "provider" : "adsb_lol",
+        "quality" : 0
+      }, {
+        "hex" : "71c0a2",
+        "lat" : 37.4581,
+        "lon" : 126.4452,
+        "on_ground" : true,
+        "seen_at" : "2026-09-28T19:53:38Z",
+        "provider" : "adsb_lol",
+        "quality" : 1
+      } ]
+    }
+  }, {
+    "name" : "snapshot.world",
+    "message" : {
+      "type" : "snapshot",
+      "seq" : 1,
+      "v" : 6,
+      "ts" : "2026-09-28T19:53:43.370956Z",
+      "sources" : {
+        "region" : {
+          "provider" : "adsb_lol",
+          "fetched_at" : "2026-09-28T19:53:42Z",
+          "lag_s" : 1.4,
+          "stale" : false
+        },
+        "global" : {
+          "provider" : "opensky",
+          "fetched_at" : "2026-09-28T19:53:33Z",
+          "lag_s" : 10.4,
+          "stale" : false
+        }
+      },
+      "sigmets_version" : 1,
+      "aircraft" : [ {
+        "hex" : "71c0a1",
+        "callsign" : "SYN081",
+        "lat" : 37.51,
+        "lon" : 126.541,
+        "alt_ft" : 35100,
+        "gs_kt" : 471.0,
+        "track_deg" : 83.0,
+        "on_ground" : false,
+        "squawk" : "1234",
+        "seen_at" : "2026-09-28T19:53:42Z",
+        "provider" : "adsb_lol"
+      }, {
+        "hex" : "a0b1c2",
+        "callsign" : "SYN736",
+        "lat" : 50.123,
+        "lon" : 8.765,
+        "alt_ft" : 36000,
+        "gs_kt" : 451.3,
+        "track_deg" : 270.4,
+        "on_ground" : false,
+        "seen_at" : "2026-09-28T19:53:23Z",
+        "provider" : "opensky"
+      } ]
+    }
+  }, {
+    "name" : "diff",
+    "message" : {
+      "type" : "diff",
+      "seq" : 2,
+      "v" : 6,
+      "ts" : "2026-09-28T19:53:43.354508Z",
+      "upsert" : [ {
+        "hex" : "71c0a1",
+        "callsign" : "SYN081",
+        "lat" : 37.5102,
+        "lon" : 126.5407,
+        "alt_ft" : 35100,
+        "gs_kt" : 471.0,
+        "track_deg" : 83.0,
+        "vrate_fpm" : -512.0,
+        "on_ground" : false,
+        "squawk" : "1234",
+        "seen_at" : "2026-09-28T19:53:42Z",
+        "provider" : "adsb_lol",
+        "quality" : 0
+      } ],
+      "remove" : [ "71c0a2" ]
+    }
+  }, {
+    "name" : "alerts",
+    "message" : {
+      "type" : "alerts",
+      "version" : 0,
+      "alerts" : [ {
+        "id" : 1,
+        "kind" : "OBSERVED",
+        "hex" : "71c0a1",
+        "callsign" : "SYN081",
+        "sigmet_id" : "RKRR:SYN-A1",
+        "fir_id" : "RKRR",
+        "hazard" : "TS",
+        "qualifier" : "EMBD",
+        "entered_at" : "2026-09-28T19:51:43Z",
+        "alt_ft" : 35000,
+        "evidence" : {
+          "judged_at" : "2026-09-28T19:51:43Z",
+          "rule" : "observed_inside"
+        },
+        "estimated" : false
+      }, {
+        "id" : 2,
+        "kind" : "PREDICTED",
+        "hex" : "71c0a2",
+        "sigmet_id" : "RKRR:SYN-A1",
+        "fir_id" : "RKRR",
+        "hazard" : "TS",
+        "qualifier" : "EMBD",
+        "entered_at" : "2026-09-28T19:53:13Z",
+        "eta_s" : 300,
+        "eta_at" : "2026-09-28T19:58:13Z",
+        "evidence" : {
+          "judged_at" : "2026-09-28T19:53:13Z"
+        },
+        "estimated" : true
+      } ]
+    }
+  }, {
+    "name" : "alerts_batch",
+    "message" : {
+      "type" : "alerts_batch",
+      "version" : 1,
+      "items" : [ {
+        "event" : "PREDICTION_UPDATED",
+        "alert" : {
+          "id" : 2,
+          "kind" : "PREDICTED",
+          "hex" : "71c0a2",
+          "sigmet_id" : "RKRR:SYN-A1",
+          "fir_id" : "RKRR",
+          "hazard" : "TS",
+          "qualifier" : "EMBD",
+          "entered_at" : "2026-09-28T19:53:13Z",
+          "eta_s" : 300,
+          "eta_at" : "2026-09-28T19:58:13Z",
+          "evidence" : {
+            "judged_at" : "2026-09-28T19:53:13Z"
+          },
+          "estimated" : true
+        }
+      }, {
+        "event" : "SIGMET_ENDED",
+        "alert" : {
+          "id" : 1,
+          "kind" : "OBSERVED",
+          "hex" : "71c0a1",
+          "callsign" : "SYN081",
+          "sigmet_id" : "RKRR:SYN-A1",
+          "fir_id" : "RKRR",
+          "hazard" : "TS",
+          "qualifier" : "EMBD",
+          "entered_at" : "2026-09-28T19:51:43Z",
+          "left_at" : "2026-09-28T19:53:43Z",
+          "close_reason" : "sigmet_ended",
+          "alt_ft" : 35000,
+          "evidence" : {
+            "judged_at" : "2026-09-28T19:51:43Z",
+            "rule" : "observed_inside",
+            "end_cause" : "expired"
+          },
+          "estimated" : false
+        }
+      } ]
+    }
+  }, {
+    "name" : "selected.route_found",
+    "message" : {
+      "type" : "selected",
+      "hex" : "71c0a1",
+      "state" : {
+        "hex" : "71c0a1",
+        "callsign" : "SYN081",
+        "lat" : 37.4602,
+        "lon" : 126.4407,
+        "alt_ft" : 35000,
+        "gs_kt" : 470.0,
+        "track_deg" : 82.5,
+        "vrate_fpm" : -640.0,
+        "on_ground" : false,
+        "squawk" : "1234",
+        "seen_at" : "2026-09-28T19:53:40Z",
+        "provider" : "adsb_lol",
+        "quality" : 0,
+        "registration" : "HL0001",
+        "type_code" : "B77W",
+        "category" : "A5",
+        "fetched_at" : "2026-09-28T19:53:42Z"
+      },
+      "prediction" : {
+        "available" : true
+      },
+      "route" : {
+        "status" : "found",
+        "callsign" : "SYN081",
+        "airline" : {
+          "name" : "Synthetic Air",
+          "icao" : "SYN",
+          "iata" : "S9"
+        },
+        "origin" : {
+          "icao" : "ZZAA",
+          "iata" : "ZAA",
+          "name" : "Alpha Test Airport",
+          "city" : "Testville",
+          "country" : "Testland",
+          "country_iso" : "ZZ",
+          "lat" : 37.5,
+          "lon" : 126.8
+        },
+        "destination" : {
+          "icao" : "ZZBB",
+          "name" : "Bravo Test Airport",
+          "city" : "Testville",
+          "country" : "Testland",
+          "country_iso" : "ZZ",
+          "lat" : 34.4,
+          "lon" : 135.2
+        },
+        "fetched_at" : "2026-09-28T03:21:00Z",
+        "source" : "adsbdb"
+      }
+    }
+  }, {
+    "name" : "selected.gone",
+    "message" : {
+      "type" : "selected",
+      "hex" : "71c0a2",
+      "state" : null,
+      "prediction" : {
+        "available" : false
+      },
+      "route" : null
+    }
+  }, {
+    "name" : "error.bad_bbox",
+    "message" : {
+      "type" : "error",
+      "code" : "BAD_BBOX",
+      "title" : "bad bbox",
+      "detail" : "bbox must be [lomin,lamin,lomax,lamax] within range"
+    }
+  }, {
+    "name" : "demand.none",
+    "message" : {
+      "type" : "demand",
+      "hot" : null,
+      "focus" : null
+    }
+  }, {
+    "name" : "demand.hot_active",
+    "message" : {
+      "type" : "demand",
+      "hot" : {
+        "cell" : "36.0:128.0:250",
+        "radius_nm" : 250,
+        "state" : "active",
+        "interval_s" : 5,
+        "last_success_at" : "2026-09-28T19:53:41.365Z"
+      },
+      "focus" : null
+    }
+  }, {
+    "name" : "demand.hot_limited",
+    "message" : {
+      "type" : "demand",
+      "hot" : {
+        "cell" : "36.0:128.0:250",
+        "radius_nm" : 250,
+        "state" : "limited"
+      },
+      "focus" : null
+    }
+  }, {
+    "name" : "demand.covered_by_region",
+    "message" : {
+      "type" : "demand",
+      "hot" : {
+        "state" : "covered_by_region"
+      },
+      "focus" : null
+    }
+  }, {
+    "name" : "demand.focus_active",
+    "message" : {
+      "type" : "demand",
+      "hot" : null,
+      "focus" : {
+        "hex" : "71c0a1",
+        "state" : "active",
+        "interval_s" : 5,
+        "since" : "2026-09-28T19:52:13.365Z",
+        "last_success_at" : "2026-09-28T19:53:42.365Z"
+      }
+    }
+  }, {
+    "name" : "demand.focus_capped",
+    "message" : {
+      "type" : "demand",
+      "hot" : null,
+      "focus" : {
+        "hex" : "71c0a1",
+        "state" : "expired_session_cap",
+        "since" : "2026-09-28T19:23:43.365Z"
+      }
+    }
+  }, {
+    "name" : "sigmets",
+    "message" : {
+      "type" : "sigmets",
+      "v" : 1,
+      "fetched_at" : "2026-09-28T19:52:43Z",
+      "provider" : "awc_isigmet",
+      "computed_at" : "2026-09-28T19:53:43.325Z",
+      "collection" : {
+        "type" : "FeatureCollection",
+        "features" : [ {
+          "type" : "Feature",
+          "id" : "RKRR:SYN-A1",
+          "geometry" : {
+            "type" : "MultiPolygon",
+            "coordinates" : [ [ [ [ 126.0, 35.0 ], [ 128.0, 35.0 ], [ 128.0, 37.25 ], [ 126.0, 37.25 ], [ 126.0, 35.0 ] ] ] ]
+          },
+          "properties" : {
+            "id" : "RKRR:SYN-A1",
+            "fir_id" : "RKRR",
+            "fir_name" : "INCHEON FIR",
+            "issuer" : "RKSI",
+            "series_id" : "A1",
+            "hazard" : "TS",
+            "qualifier" : "EMBD",
+            "base_ft" : 0,
+            "top_ft" : 38000,
+            "base_source" : "json",
+            "top_source" : "json",
+            "valid_from" : "2026-09-28T19:43:43Z",
+            "valid_to" : "2026-09-28T21:53:43Z",
+            "active" : true,
+            "expiring_soon" : false,
+            "move_dir" : "NE",
+            "move_spd" : "20KT",
+            "chng" : "NC",
+            "raw_text" : "RKRR SIGMET A1 VALID (synthetic)",
+            "provider" : "awc_isigmet",
+            "fetched_at" : "2026-09-28T19:52:43Z"
+          }
+        }, {
+          "type" : "Feature",
+          "id" : "RKRR:SYN-A2",
+          "geometry" : null,
+          "properties" : {
+            "id" : "RKRR:SYN-A2",
+            "fir_id" : "RKRR",
+            "series_id" : "A2",
+            "hazard" : "TURB",
+            "base_ft" : 0,
+            "base_source" : "assumed_surface",
+            "top_source" : "unknown",
+            "valid_from" : "2026-09-28T19:43:43Z",
+            "valid_to" : "2026-09-28T21:53:43Z",
+            "active" : true,
+            "expiring_soon" : false,
+            "excluded_reason" : "no_coordinates",
+            "raw_text" : "RAW (synthetic)",
+            "provider" : "awc_isigmet",
+            "fetched_at" : "2026-09-28T19:52:43Z"
+          }
+        } ]
+      }
+    }
+  }, {
+    "name" : "radar",
+    "message" : {
+      "type" : "radar",
+      "host" : "https://tilecache.rainviewer.com",
+      "generated" : 1790000000,
+      "past" : [ {
+        "time" : 1789999400,
+        "path" : "/v2/radar/1789999400"
+      }, {
+        "time" : 1790000000,
+        "path" : "/v2/radar/1790000000"
+      } ],
+      "fetched_at" : "2026-09-28T19:53:13Z",
+      "provider" : "rainviewer"
+    }
+  }, {
+    "name" : "status",
+    "message" : {
+      "type" : "status",
+      "status" : {
+        "server_time" : "2026-09-28T19:53:43.254663Z",
+        "snapshot_version" : 4,
+        "fixture_mode" : false,
+        "collector_mode_known" : false,
+        "region" : {
+          "center" : [ 36.5, 127.8 ],
+          "radius_nm" : 250,
+          "provider" : "adsb_lol",
+          "aircraft" : 2,
+          "lag_s" : 2.3,
+          "stale" : false,
+          "fetched_at" : "2026-09-28T19:53:41Z"
+        },
+        "global" : {
+          "provider" : "opensky",
+          "aircraft" : 1,
+          "lag_s" : 10.3,
+          "stale" : false,
+          "fetched_at" : "2026-09-28T19:53:33Z"
+        },
+        "sigmet" : {
+          "provider" : "awc_isigmet",
+          "count" : 2,
+          "active" : 2,
+          "fetched_at" : "2026-09-28T19:52:43Z",
+          "lag_s" : 60.3,
+          "stale" : false
+        },
+        "radar" : {
+          "provider" : "rainviewer",
+          "frames" : 2,
+          "fetched_at" : "2026-09-28T19:53:13Z",
+          "stale" : false
+        },
+        "radar_kr" : { },
+        "engine" : {
+          "index_polygons" : 0,
+          "last_cycle_ms" : 0
+        },
+        "active_providers" : {
+          "error" : "redis unavailable"
+        },
+        "demand" : {
+          "hot_active" : 0,
+          "focus_active" : 0
+        },
+        "sources" : { }
+      }
+    }
+  }, {
+    "name" : "ping",
+    "message" : {
+      "type" : "ping"
+    }
+  }, {
+    "name" : "pong",
+    "message" : {
+      "type" : "pong"
+    }
+  }, {
+    "name" : "ships_snapshot",
+    "message" : {
+      "type" : "ships_snapshot",
+      "sseq" : 1,
+      "ts" : "2026-09-28T19:53:43.082Z",
+      "ships" : [ {
+        "mmsi" : "440000001",
+        "lat" : 35.1,
+        "lon" : 129.1,
+        "sog_kn" : 12.3,
+        "cog_deg" : 45.2,
+        "heading_deg" : 44,
+        "ship_type" : 70,
+        "name" : "SYNTH ONE",
+        "seen_at" : "2026-09-28T19:53:35Z",
+        "position_source" : "epfs",
+        "nav_status" : 0
+      }, {
+        "mmsi" : "440000002",
+        "lat" : 35.25,
+        "lon" : 129.35,
+        "seen_at" : "2026-09-28T19:53:23Z"
+      } ]
+    }
+  }, {
+    "name" : "ships_diff",
+    "message" : {
+      "type" : "ships_diff",
+      "sseq" : 2,
+      "ts" : "2026-09-28T19:53:43.082Z",
+      "upsert" : [ {
+        "mmsi" : "440000001",
+        "lat" : 35.13,
+        "lon" : 129.12,
+        "sog_kn" : 12.1,
+        "cog_deg" : 44.8,
+        "heading_deg" : 44,
+        "ship_type" : 70,
+        "name" : "SYNTH ONE",
+        "seen_at" : "2026-09-28T19:53:41Z",
+        "position_source" : "epfs",
+        "nav_status" : 0
+      } ],
+      "remove" : [ "440000002" ]
+    }
+  }, {
+    "name" : "ships_grid",
+    "message" : {
+      "type" : "ships_grid",
+      "ts" : "2026-09-28T19:53:43.082Z",
+      "cell_deg" : 2.0,
+      "cells" : [ [ 35.0, 129.0, 1, "cargo", [ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ] ], [ 41.0, 129.0, 1, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 ] ] ]
+    }
+  }, {
+    "name" : "ship_selected",
+    "message" : {
+      "type" : "ship_selected",
+      "mmsi" : "440000001",
+      "state" : {
+        "mmsi" : "440000001",
+        "lat" : 35.1,
+        "lon" : 129.1,
+        "sog_kn" : 12.3,
+        "cog_deg" : 45.2,
+        "heading_deg" : 44,
+        "nav_status" : 0,
+        "rot" : 3,
+        "position_source" : "epfs",
+        "seen_at" : "2026-09-28T19:53:35Z",
+        "provider" : "aisstream",
+        "msg_type" : "PositionReport",
+        "class" : "A"
+      },
+      "static" : {
+        "mmsi" : "440000001",
+        "name" : "SYNTH ONE",
+        "call_sign" : "D7AB",
+        "imo" : 9321483,
+        "ship_type" : 70,
+        "dim_a" : 150,
+        "dim_b" : 30,
+        "dim_c" : 14,
+        "dim_d" : 16,
+        "draught_m" : 9.8,
+        "destination" : "KRPUS>JPTYO",
+        "eta_month" : 9,
+        "eta_day" : 29,
+        "eta_hour" : 6,
+        "eta_minute" : 30,
+        "updated_at" : "2026-09-28T19:43:43Z",
+        "provider" : "aisstream"
+      },
+      "destination_info" : {
+        "raw" : "KRPUS>JPTYO",
+        "kind" : "from_to",
+        "from" : {
+          "text" : "KRPUS",
+          "locode" : "KRPUS",
+          "name" : "Busan",
+          "country" : "KR",
+          "subdivision" : "26",
+          "ambiguous" : false
+        },
+        "to" : {
+          "text" : "JPTYO",
+          "locode" : "JPTYO",
+          "name" : "Tokyo",
+          "country" : "JP",
+          "subdivision" : "13",
+          "ambiguous" : false
+        },
+        "places" : [ {
+          "text" : "KRPUS",
+          "locode" : "KRPUS",
+          "name" : "Busan",
+          "country" : "KR",
+          "subdivision" : "26",
+          "ambiguous" : false
+        }, {
+          "text" : "JPTYO",
+          "locode" : "JPTYO",
+          "name" : "Tokyo",
+          "country" : "JP",
+          "subdivision" : "13",
+          "ambiguous" : false
+        } ]
+      }
+    }
+  }, {
+    "name" : "ship_selected.static_only",
+    "message" : {
+      "type" : "ship_selected",
+      "mmsi" : "440000003",
+      "state" : null,
+      "static" : {
+        "mmsi" : "440000003",
+        "name" : "ONLY STATIC",
+        "ship_type" : 30,
+        "updated_at" : "2026-09-28T19:38:43Z",
+        "provider" : "aisstream"
+      },
+      "destination_info" : null
+    }
+  }, {
+    "name" : "ships_grid.capped",
+    "message" : {
+      "type" : "ships_grid",
+      "ts" : "2026-09-28T19:53:43.399Z",
+      "cell_deg" : 0.5,
+      "cells" : [ [ 34.25, 128.25, 625, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 625 ] ], [ 34.25, 128.75, 321, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 321 ] ], [ 34.75, 128.25, 375, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 375 ] ], [ 34.75, 128.75, 180, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 180 ] ] ],
+      "capped" : true
+    }
+  } ],
+  "client" : [ {
+    "name" : "hello",
+    "message" : {
+      "type" : "hello",
+      "proto" : 1,
+      "client" : "web/0.4"
+    }
+  }, {
+    "name" : "layers",
+    "message" : {
+      "type" : "layers",
+      "aircraft" : true,
+      "ships" : true
+    }
+  }, {
+    "name" : "subscribe",
+    "message" : {
+      "type" : "subscribe",
+      "bbox" : [ 124.5, 33.25, 131.75, 38.9 ],
+      "zoom" : 7,
+      "detail" : "lite"
+    }
+  }, {
+    "name" : "select",
+    "message" : {
+      "type" : "select",
+      "hex" : "71c0a1"
+    }
+  }, {
+    "name" : "select.clear",
+    "message" : {
+      "type" : "select",
+      "hex" : null
+    }
+  }, {
+    "name" : "select_ship",
+    "message" : {
+      "type" : "select_ship",
+      "mmsi" : "440000001"
+    }
+  }, {
+    "name" : "select_ship.clear",
+    "message" : {
+      "type" : "select_ship",
+      "mmsi" : null
+    }
+  }, {
+    "name" : "pause",
+    "message" : {
+      "type" : "pause"
+    }
+  }, {
+    "name" : "resume",
+    "message" : {
+      "type" : "resume"
+    }
+  }, {
+    "name" : "resync",
+    "message" : {
+      "type" : "resync"
+    }
+  }, {
+    "name" : "ping",
+    "message" : {
+      "type" : "ping"
+    }
+  }, {
+    "name" : "pong",
+    "message" : {
+      "type" : "pong"
+    }
+  } ]
+}

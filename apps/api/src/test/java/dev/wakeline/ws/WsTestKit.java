@@ -55,12 +55,17 @@ final class WsTestKit implements AutoCloseable {
 
     WsTestKit() { this(Runnable::run, 5_000, 200, 5); }
 
-    WsTestKit(Executor pool, long helloTimeoutMs, int maxConn, int maxPerIp) {
+    /** 다른 직렬화 설정으로(WS 스키마 계약 시험은 운영과 같은 매퍼 — null 인 맵 값도 뺀다 — 를 넣는다). */
+    WsTestKit(ObjectMapper json) { this(Runnable::run, 5_000, 200, 5, json); }
+
+    WsTestKit(Executor pool, long helloTimeoutMs, int maxConn, int maxPerIp) { this(pool, helloTimeoutMs, maxConn, maxPerIp, JSON); }
+
+    WsTestKit(Executor pool, long helloTimeoutMs, int maxConn, int maxPerIp, ObjectMapper json) {
         props = props(maxConn, maxPerIp);
-        hub = new WsHub(JSON, props, snapshots, sigmets, radar, status::get, alerts::get, a -> prediction.apply(a),
+        hub = new WsHub(json, props, snapshots, sigmets, radar, status::get, alerts::get, a -> prediction.apply(a),
                 meters, pool, timer, helloTimeoutMs);
         shipFanout = new ShipFanout(hub, ships, meters, null, shipClock::get); // timer 없음: 이벤트마다 바로 팬아웃
-        handler = new WakelineWsHandler(hub, props, JSON, snapshots, shipFanout);
+        handler = new WakelineWsHandler(hub, props, json, snapshots, shipFanout);
     }
 
     static AppProperties props(int maxConn, int maxPerIp) {
