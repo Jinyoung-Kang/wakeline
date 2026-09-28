@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from wakeline_collector.masking import mask
@@ -153,3 +155,49 @@ def test_v5_masking_is_linear_on_long_word_runs():
     assert mask("x" + "가" * 50_000 + " redis://u:pw9@h", masking.LOG_LIMIT).endswith(" redis://u:***@h")
     assert time.perf_counter() - t0 < 1.0
     assert mask("jdbc:postgresql://u:p@db/x") == "jdbc:postgresql://u:***@db/x"
+
+
+@pytest.mark.xfail(strict=True, reason="v5-C5: 고치기 전 — userinfo · JWT 규칙이 구분자로 나뉜 글에서 제곱 시간")
+def test_v5_masking_is_linear_on_separator_delimited_urls_and_jwt_runs():
+    """공백 없는 긴 글(압축 JSON 의 포트 달린 URL 목록 · 'a://x:' 반복 · 'eyJ' 반복)에서 userinfo · JWT 규칙이 시작점마다 줄 끝까지
+    다시 훑으면 제곱 시간이다 — 로그 한 건을 가리는 동안 이벤트 루프가 몇 초씩 멈춘다(계약 v5 §C2). 결과는 그대로여야 한다."""
+    import time
+
+    tiles = '{"tiles":[' + ",".join(f'"https://m{i}.tiles.test:8443/z/{i}.png"' for i in range(1500)) + "]}"
+    cases = ["a://x:" * 5000, "eyJ" * 10_000, tiles]
+    t0 = time.perf_counter()
+    for text in cases:
+        assert mask(text, None) == text  # '@' · 점 세 칸이 없다 — 가릴 것 없음
+    assert time.perf_counter() - t0 < 0.5
+    assert mask("a://x:" * 3 + "pw@h") == "a://x:***@h"
+    assert mask("eyJ" * 3 + "a" * 10 + ".b" + "b" * 10 + ".c" + "c" * 10) == "***jwt***"
+
+
+# 바꾸기 전의 두 규칙(되짚기 정규식) — 새 규칙이 글자 하나까지 같은 결과를 내는지 무작위 글로 견준다(Java LogMasker 와 같은 규칙 유지)
+_OLD_USERINFO = re.compile(r"(?<!\w)(\w+://[^:/\s]+:)[^@\s]+(@)")
+_OLD_JWT = re.compile(r"eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}")
+
+
+def _old_mask(text: str) -> str:
+    from wakeline_collector import masking
+
+    out = text
+    for pat, repl in masking._PATTERNS[:-2]:
+        out = pat.sub(repl, out)
+    out = _OLD_USERINFO.sub(r"\1***\2", out)
+    return _OLD_JWT.sub("***jwt***", out)
+
+
+def test_v5_linear_userinfo_and_jwt_rules_give_the_same_output_as_the_backtracking_ones():
+    import random
+
+    rnd = random.Random(20260929)
+    parts = [
+        " ",
+        "\n",
+        *"a|b9|x|_|-|가|é|:|//|://|/|@|.|=|&|eyJ|abcdefghij|0123456789|redis://|https://|u:|pw@|h:6379".split("|"),
+    ]
+    parts += ["eyJhbGciOiJIUzI1NiJ9.", "eyJ0eXAiOiJKV1Qi", "sig_-012345678.", "password=", "?key="]
+    for _ in range(20_000):
+        text = "".join(rnd.choice(parts) for _ in range(rnd.randint(0, 40)))
+        assert mask(text, None) == _old_mask(text), repr(text)
