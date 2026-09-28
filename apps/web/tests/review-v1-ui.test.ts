@@ -530,6 +530,18 @@ describe("R-47 replay: a request made while one is in flight is sent when it fin
     expect(h.calls.length).toBe(3);
     h.loader.dispose();
   });
+  it("a failure is reported when the request queued behind it asks for the same (at, bbox) again (T1 → T2 → T1, T1 fails)", async () => {
+    const h = harness();
+    h.loader.request({ at: 1000, bbox: "a" }); // T1 보내는 중(느림)
+    h.loader.request({ at: 2000, bbox: "a" }); // +1m → T2 대기
+    h.loader.request({ at: 1000, bbox: "a" }); // −1m → 다시 T1 대기(보내는 중인 것과 같다)
+    h.pending[0].reject(new ApiError(500, "x"));
+    await h.tick();
+    // 수정 전: 대기 요청이 있어 실패를 알리지 않았고, finally 가 같은 요청이라 대기 요청도 버렸다 — events=[] · calls=1 → "불러오는 중"이 끝나지 않았다
+    expect(h.events).toEqual([{ type: "failed" }]);
+    expect(h.calls).toEqual([{ at: 1000, bbox: "a" }]); // 같은 요청을 곧바로 다시 보내지는 않는다
+    h.loader.dispose();
+  });
 });
 
 describe("R-56 ops forms: client validation, Korean status messages, distinct success/failure", () => {

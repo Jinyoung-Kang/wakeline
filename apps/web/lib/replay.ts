@@ -233,7 +233,8 @@ export interface ReplayReq { at: number; bbox: string }
 /**
  * 재생 요청을 한 번에 하나만 보내되, 보내는 중에 들어온 요청을 버리지 않는다(R-47): 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀)
  * 응답이 오면 바로 보낸다 — 결국 마지막으로 원한 (at, bbox) 가 그려진다. 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이
- * "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다).
+ * "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다). 기다리는 요청이 실패한 것과
+ * 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로.
  */
 export class ReplayLoader {
   private inflight: ReplayReq | null = null;
@@ -265,12 +266,15 @@ export class ReplayLoader {
       const frame = await this.fetchFrame(r);
       if (!this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
     } catch (error) {
-      if (!this.disposed && !this.queued) this.onEvent({ type: "failed", error }, r);
+      // 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
+      if (!this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
     } finally {
       this.inflight = null;
       const next = this.queued;
       this.queued = null;
-      if (next && !this.disposed && !(next.at === r.at && next.bbox === r.bbox)) void this.run(next);
+      if (next && !this.disposed && !sameReq(next, r)) void this.run(next);
     }
   }
 }
+
+const sameReq = (a: ReplayReq, b: ReplayReq) => a.at === b.at && a.bbox === b.bbox;
