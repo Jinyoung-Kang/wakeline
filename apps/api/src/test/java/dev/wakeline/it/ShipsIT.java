@@ -168,7 +168,8 @@ class ShipsIT extends IntegrationTest {
             for (JsonNode s : snap.path("ships")) if (m.equals(s.path("mmsi").asString())) has = true;
             assertThat(has).isTrue();
             Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(m, 34.6, 128.5, seen.plusSeconds(10))), List.of()));
-            JsonNode diff = c.next("ships_diff", Duration.ofSeconds(20)); // 팬아웃은 10 s 에 한 번으로 모은다
+            // 팬아웃은 10 s 에 한 번으로 모은다 — 창을 세 주기로(20 s = 두 주기는 호스트 부하 때 한 번 모자랐다: 리뷰 4단계 최종 측정, 조용할 때 3/3 통과)
+            JsonNode diff = c.next("ships_diff", Duration.ofSeconds(30));
             assertThat(diff.path("sseq").asInt()).isEqualTo(2);
             assertThat(diff.path("upsert").get(0).path("lat").asDouble()).isEqualTo(34.6);
             c.send("{\"type\":\"select_ship\",\"mmsi\":\"" + m + "\"}");
