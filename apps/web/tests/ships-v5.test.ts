@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  appendShipTrack, filterGridCells, gridFeatures, parseGridCells, SHIP_CATEGORIES, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
+  appendShipTrack, filterGridCells, gridFeatures, notLiveText, parseGridCells, SHIP_CATEGORIES, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
 } from "@/lib/ships";
 import { shipCategoryFilter } from "@/lib/ship-layers";
 import { shipGridTip, shipTrackPointTip } from "@/lib/tooltip";
@@ -18,7 +18,7 @@ import { useUi } from "@/lib/ui-store";
 import { MapLegendView } from "@/components/MapLegend";
 import { LayerPanelView } from "@/components/LayerPanel";
 import { MapChipsView } from "@/components/MapChips";
-import { ShipCard, ShipPanelView } from "@/components/ShipCard";
+import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
 
@@ -254,5 +254,42 @@ describe("ship track points and period (contract v5 §B3)", () => {
     expect(text(html)).toContain("최근 12 h 수신 공백 0회");
     expect(text(html)).toContain("항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태");
     resetData();
+  });
+});
+
+// ---------------------------------------------------------------- §B3 카드: 처음 기록 · 마지막 저장 위치 · 실시간 아님
+
+describe("ship card: first recorded / last stored position and the not-live state (contract v5 §B3)", () => {
+  beforeEach(() => resetData());
+  afterEach(() => resetData());
+  const NOW = Date.parse("2026-09-28T03:00:00Z");
+
+  it("REST detail: first_recorded_at and last_position_at are read (bad or missing → null)", () => {
+    const d = parseShipDetail("431011305", { state: null, static: null, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T02:59:00Z", meta: {} });
+    expect(d).toMatchObject({ first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T02:59:00Z", db_unavailable: false });
+    const e = parseShipDetail("431011305", { first_recorded_at: "yesterday", last_position_at: 5 });
+    expect(e).toMatchObject({ first_recorded_at: null, last_position_at: null });
+  });
+
+  it("not-live text: hh:mm UTC on the same UTC day, the date otherwise, — when nothing is stored", () => {
+    expect(notLiveText("2026-09-28T02:59:00Z", NOW)).toBe("실시간 아님 · 마지막 저장 02:59 UTC");
+    expect(notLiveText("2026-09-27T23:10:00Z", NOW)).toBe("실시간 아님 · 마지막 저장 09-27 23:10 UTC");
+    expect(notLiveText(null, NOW)).toBe("실시간 아님 · 마지막 저장 —");
+  });
+
+  it("card rows show both times with the elapsed time; a ship without a live state says it is not live", () => {
+    const detail = parseShipDetail("431011305", { state: null, static: { name: "SYN BRAVO", ship_type: 70 }, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", meta: {} });
+    const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
+    const t = text(html);
+    expect(t).toContain("처음 기록09-20 01:02:03Z");
+    expect(t).toContain("마지막 저장 위치09-28 01:00:00Z (2h 00m 전)");
+    expect(html).toContain('data-testid="ship-not-live"');
+    expect(t).toContain("실시간 아님 · 마지막 저장 01:00 UTC");
+    const none = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: parseShipDetail("431011305", { state: null, static: null }), error: null, now: NOW }));
+    expect(text(none)).toContain("처음 기록—");
+    expect(text(none)).toContain("마지막 저장 위치—");
+    // 실시간 상태가 있으면 "실시간 아님" 이 아니다
+    setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: { mmsi: "431011305", lat: 35, lon: 129, sog_kn: 1, cog_deg: null, heading_deg: null, ship_type: 70, name: "SYN BRAVO", seen_at: "2026-09-28T02:59:00Z", position_source: null, nav_status: null, rot: null, provider: "fixture", msg_type: null, class: "A" } } });
+    expect(renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }))).not.toContain("ship-not-live");
   });
 });

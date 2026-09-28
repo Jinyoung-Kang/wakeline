@@ -1248,6 +1248,18 @@ export function shipsGapSuffix(ais: Pick<AisStatus, "gap_open_since" | "shards">
   return ais.gap_open_since || (sg && sg.open.length > 0) ? " · AIS 공백 중(위치 멈춤)" : "";
 }
 
+/**
+ * 실시간이 아닌 선박(계약 v5 §B3 — 검색 결과·카드): "실시간 아님 · 마지막 저장 hh:mm UTC". 지금과 UTC 날짜가 다르면 날짜도(보존 72 h — 어제 시각이
+ * 오늘처럼 보이지 않게). 저장된 위치 시각을 모르면 "—".
+ */
+export function notLiveText(lastPositionAt: string | null | undefined, nowMs: number): string {
+  const t = lastPositionAt ? Date.parse(lastPositionAt) : NaN;
+  if (Number.isNaN(t)) return "실시간 아님 · 마지막 저장 —";
+  const d = new Date(t).toISOString();
+  const sameDay = nowMs > 0 && new Date(nowMs).toISOString().slice(0, 10) === d.slice(0, 10);
+  return `실시간 아님 · 마지막 저장 ${sameDay ? "" : `${d.slice(5, 10)} `}${d.slice(11, 16)} UTC`;
+}
+
 // ---- 선박 목록(지도 없이 고르기 — 키보드·스크린리더) ----
 
 /**
