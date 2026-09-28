@@ -115,6 +115,52 @@ class CiPolicyTest(unittest.TestCase):
         self.assertLessEqual(third, targets, f"제3자 이미지 서비스가 스캔 행렬에 없음: {third - targets}")
         self.assertIn("k6", targets, "make bench 의 k6 도 스캔")
 
+    # --- R-07: gitleaks 가 실패해도 이미지 스캔은 돈다 · 게이트는 보고만이 아니다 ---
+    def test_image_build_runs_even_if_gitleaks_fails(self):
+        st = steps(self.jobs["security"])
+        gl = next(i for i, s in enumerate(st) if "gitleaks/gitleaks-action@" in s)
+        build = next(i for i, s in enumerate(st) if s.startswith("id: build"))
+        self.assertGreater(build, gl)
+        self.assertRegex(st[build], r"(?m)^\s+if:\s*\$\{\{\s*!cancelled\(\)\s*\}\}\s*$",
+                         "build 에 if 가 없으면 gitleaks 실패 시 skipped 가 되고 trivy 3단계도 모두 건너뛴다")
+        trivy = [s for s in st if "aquasecurity/trivy-action@" in s]
+        self.assertEqual(len(trivy), 3)
+        for s in trivy:
+            with self.subTest(step=s.splitlines()[0]):
+                self.assertIn("steps.build.outcome == 'success'", s)
+                self.assertRegex(s, r'exit-code:\s*"1"', "자체 이미지는 차단(보고만 아님)")
+                self.assertRegex(s, r"ignore-unfixed:\s*true")
+                self.assertRegex(s, r'severity:\s*"HIGH,CRITICAL"')
+
+    def test_gitleaks_allowlist_is_exact_fingerprints_only(self):
+        """허용 목록은 시험용 가짜 값 2건의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
+        ignore = ROOT / ".gitleaksignore"
+        self.assertTrue(ignore.exists(), ".gitleaksignore 없음 — gitleaks 가 시험용 가짜 값 2건에서 실패한다")
+        entries = [ln.strip() for ln in ignore.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        for e in entries:
+            with self.subTest(entry=e):
+                self.assertRegex(e, r"^[0-9a-f]{40}:[^:*?\[\]]+:[a-z0-9-]+:\d+$", "커밋:파일:규칙:줄 지문만(와일드카드 금지)")
+        self.assertEqual(set(entries), {
+            "5251859bac52838e622a55edd431727500aebb18:apps/collector/tests/test_ais_server.py:generic-api-key:35",
+            "94ae84e2f28cfdc00835410d58b0780bccd791bd:apps/collector/tests/test_masking.py:jwt:12",
+        })
+        self.assertFalse((ROOT / ".gitleaks.toml").exists(), "넓은 허용 규칙 파일을 두지 않는다")
+
+    def test_local_security_gate_uses_ci_matrix(self):
+        """원격이 없어 CI 가 돈 적이 없다 — make security 가 같은 기준(차단 여부는 ci.yml 행렬)을 로컬에서 돌린다."""
+        mk = (ROOT / "Makefile").read_text()
+        self.assertRegex(mk, r"(?m)^security:.*\n\tbash tools/security_gate\.sh")
+        gate = (ROOT / "tools" / "security_gate.sh").read_text()
+        self.assertIn(".github/workflows/ci.yml", gate)
+        self.assertIn("--ignore-unfixed --exit-code 1", gate)
+        pattern = re.search(r"sed -nE '([^']+)' \.github/workflows/ci\.yml", gate)
+        self.assertIsNotNone(pattern, "게이트가 ci.yml 행렬을 읽는다")
+        sed_re = pattern.group(1).split("/")[1]  # s/<ERE>/\1 \2/p — 이 ERE 는 파이썬 re 로도 같게 읽힌다
+        rows = [m.groups() for ln in self.jobs["third-party-images"].splitlines() if (m := re.search(sed_re, ln))]
+        self.assertEqual({t for t, _ in rows}, set(re.findall(r"\{\s*target:\s*([\w-]+)\s*,", self.jobs["third-party-images"])))
+        self.assertIn(("edge", "1"), rows)
+        self.assertIn(("redis", "1"), rows)
+
     def test_e2e_runs_the_isolated_stack(self):
         self.assertIn("make e2e", self.jobs["e2e"])
         self.assertRegex(self.jobs["e2e"], r"needs:\s*\[[^\]]*infra[^\]]*\]")

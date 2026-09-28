@@ -130,8 +130,11 @@ jobs:
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      # gitleaks 가 실패해도 이미지는 빌드·스캔한다(R-07) — 이 if 가 없으면 build 가 skipped 가 되어 trivy 3단계도 모두 건너뛴다.
+      # 같은 기준을 원격 없이 돌리는 로컬 게이트: make security(tools/security_gate.sh).
       - id: build
         name: build own images (compose 가 붙이는 실제 태그 wakeline-*:local — ais 는 collector 와 같은 이미지)
+        if: ${{ !cancelled() }}
         run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web
       # 우리가 빌드하는 이미지: 고칠 수 있는 HIGH/CRITICAL 이 있으면 실패(NFR-10). 앞 단계가 실패해도 세 이미지 모두 결과를 보인다.
       # compose 의 모든 이미지가 여기(자체)나 third-party-images(제3자)에서 스캔되는지는 infra/tests/test_ci_policy.py 가 확인한다.

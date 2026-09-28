@@ -31,7 +31,7 @@ x-collector-build: &collector_build
 services:
   edge:
     # 비root nginx(uid 101). 1.27 계열은 2025-06 이후 재빌드가 없어 현재 stable(1.30) 을 쓴다.
-    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:4714e0b1b2577eaa1a6131d07c958b67f0eb68e6d0521e90c6e5287db8cf0bc5
+    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:ed04ec1ff34502c339ee5c3ae3f855442398edc1d05591e2b98981dcbbd20b1e
     <<: *hardened
     user: "101:101"
     tmpfs: ["/tmp:size=64m"]                        # pid · 프록시 임시 파일(nginx.conf)

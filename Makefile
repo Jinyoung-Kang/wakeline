@@ -12,7 +12,7 @@ NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test contract contract-rest e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only fixtures clean
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -73,6 +73,10 @@ infra-docker-test: ## 버리는 컨테이너로 edge(Host 허용 목록·비root
 	bash infra/tests/edge_test.sh
 	bash infra/tests/redis_acl_test.sh
 	bash infra/tests/db_hardening_test.sh
+
+# 원격 CI 가 없어도 ci.yml 의 security·third-party-images 와 같은 기준으로 막는다(R-07). 스캐너는 다이제스트 고정·네트워크 없음·docker.sock 없음(tools/scan_lib.sh).
+security: ## 보안 게이트: gitleaks(git 이력) + trivy(자체 이미지 차단 · 제3자는 ci.yml 행렬대로) — 이미지는 먼저 make build · SCAN_OFFLINE=1 이면 DB 캐시만
+	bash tools/security_gate.sh
 
 contract: ## Python↔Java 스키마 계약 검사 (+ api 테스트가 남긴 REST 응답 기록이 있으면 REST 계약도)
 	cd apps/collector && uv run python ../../tools/contract_check.py
