@@ -230,7 +230,8 @@ TS_MS_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 def check_logs() -> int:
     """계약 v5 §C1 · §C2 · §C5: collector · ais 의 로그 싱크(실제 LogSink 코드)가 만든 항목이 log_event.v1.json 을 만족하고,
     직렬화 8 KiB 안이며(넘는 스택은 잘림 표시), 비밀값(모양 · 등록한 값)이 없고, XADD 가 wakeline:logs MAXLEN ~ 3000 * e 인지.
-    그리고 언어 간 가림 벡터(schemas/vectors/masking-cases.v1.json)를 Python 가림이 글자 하나까지 맞추는지."""
+    그리고 언어 간 가림 벡터(schemas/vectors/masking-cases.v1.json)를 Python 가림이 글자 하나까지 맞추는지,
+    언어 간 억제 벡터(schemas/vectors/log-suppression.v1.json, §G9)가 있고 모양이 맞는지."""
     failures = 0
     log_v = validator("log_event.v1.json")
     secret = "Zq9-contract-registered-secret"  # noqa: S105 — 가짜 값(등록한 비밀값이 가려지는지 보는 표본)
@@ -296,7 +297,129 @@ def check_logs() -> int:
     for w in wrong[:3]:
         print("     ", w[:120])
     failures += bool(wrong)
+    failures += check_log_suppression_vectors()
     return failures
+
+
+LOG_SUPPRESSION_VECTORS = SCHEMAS / "vectors" / "log-suppression.v1.json"
+_STEP_KEYS = {"at_ms", "do", "fp", "emit", "entries", "suppressed"}
+
+
+def _int(v: object) -> bool:
+    """정수(불리언 제외)."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _nat(v: object) -> bool:
+    """0 이상의 정수(불리언 제외)."""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def log_suppression_vector_problems(doc: object) -> list[str]:
+    """계약 v5 §G9: 언어 간 억제 벡터의 모양 — 단계 동작 · 시각 순서 · emit 의 발생 번호 · 누계 · 마지막 close · 불변식
+    (close 뒤 항목 수 + suppressed 합 = 발생 수). 문제 목록(없으면 빈 목록). 벡터 파일은 스키마가 아니라 $id 가 없다."""
+    if not isinstance(doc, dict):
+        return ["top level: not an object"]
+    out: list[str] = []
+    if doc.get("version") != 1:
+        out.append(f"version: {doc.get('version')!r} (want 1)")
+    if not (_nat(doc.get("window_ms")) and doc["window_ms"] > 0):
+        out.append(f"window_ms: {doc.get('window_ms')!r} (want a positive integer)")
+    cases = doc.get("cases")
+    if not isinstance(cases, list) or not cases:
+        return [*out, "cases: missing or empty"]
+    names: set[str] = set()
+    for ci, case in enumerate(cases):
+        where = f"cases[{ci}]"
+        if not isinstance(case, dict) or not isinstance(case.get("name"), str) or not case["name"].strip():
+            out.append(f"{where}: needs a name")
+            continue
+        where = f"case {case['name']!r}"
+        if case["name"] in names:
+            out.append(f"{where}: duplicate name")
+        names.add(case["name"])
+        steps = case.get("steps")
+        if not isinstance(steps, list) or not steps:
+            out.append(f"{where}: steps missing or empty")
+            continue
+        occurrences = entries = suppressed = 0
+        last_at = -1
+        emitted: set[int] = set()
+        for si, step in enumerate(steps):
+            at = f"{where} step {si}"
+            if not isinstance(step, dict):
+                out.append(f"{at}: not an object")
+                continue
+            extra = set(step) - _STEP_KEYS
+            if extra:
+                out.append(f"{at}: unknown key(s) {sorted(extra)}")
+            do = step.get("do")
+            if do not in ("occur", "tick", "close"):
+                out.append(f"{at}: do {do!r} (want occur | tick | close)")
+            if not _nat(step.get("at_ms")) or step["at_ms"] < last_at:
+                out.append(f"{at}: at_ms {step.get('at_ms')!r} goes back or is not a non-negative integer")
+            else:
+                last_at = step["at_ms"]
+            if "fp" in step and (do != "occur" or not isinstance(step["fp"], str) or not step["fp"]):
+                out.append(f"{at}: fp only names the fingerprint of an occur step")
+            if do == "close" and si != len(steps) - 1:
+                out.append(f"{at}: close must be the last step")
+            if do == "occur":
+                occurrences += 1
+            emit = step.get("emit")
+            if not isinstance(emit, list):
+                out.append(f"{at}: emit must be a list")
+                emit = []
+            for e in emit:
+                if not (isinstance(e, list) and len(e) == 2 and _nat(e[0]) and _int(e[1])):
+                    out.append(f"{at}: emit item {e!r} is not [occurrence, suppressed]")
+                    continue
+                i, n = e
+                if n < 0:
+                    out.append(f"{at}: emit {e!r} has negative suppressed")
+                if i >= occurrences:
+                    out.append(f"{at}: emit {e!r} names occurrence {i}, only {occurrences} so far")
+                elif do == "occur" and i != occurrences - 1:
+                    out.append(f"{at}: an occur step can only emit its own occurrence ({occurrences - 1}), not {i}")
+                if i in emitted:
+                    out.append(f"{at}: occurrence {i} emitted twice")
+                emitted.add(i)
+                entries += 1
+                suppressed += n
+            if do == "occur" and len(emit) > 1:
+                out.append(f"{at}: an occur step emits at most one entry")
+            if step.get("entries") != entries:
+                out.append(f"{at}: entries {step.get('entries')!r}, running total of emit is {entries}")
+            if step.get("suppressed") != suppressed:
+                out.append(f"{at}: suppressed {step.get('suppressed')!r}, running total of emit is {suppressed}")
+        if not isinstance(steps[-1], dict) or steps[-1].get("do") != "close":
+            out.append(f"{where}: the last step must be close")
+        elif entries + suppressed != occurrences:
+            out.append(f"{where}: invariant — entries {entries} + suppressed {suppressed} != occurrences {occurrences}")
+    return out
+
+
+def check_log_suppression_vectors() -> int:
+    """계약 v5 §G9: schemas/vectors/log-suppression.v1.json 이 있고 모양이 맞는지(api LogSinkTest · collector test_logsink 가 같은 파일을 읽는다)."""
+    if not LOG_SUPPRESSION_VECTORS.exists():
+        print(f"FAIL log suppression vectors: {LOG_SUPPRESSION_VECTORS.relative_to(ROOT)} is missing")
+        return 1
+    try:
+        doc = json.loads(LOG_SUPPRESSION_VECTORS.read_text(encoding="utf-8"))
+    except ValueError as e:
+        print(f"FAIL log suppression vectors: not JSON ({e})")
+        return 1
+    problems = log_suppression_vector_problems(doc)
+    cases = doc.get("cases") if isinstance(doc, dict) else None
+    n_cases = len(cases) if isinstance(cases, list) else 0
+    n_steps = sum(len(c.get("steps") or []) for c in cases or [] if isinstance(c, dict))
+    print(
+        f"{'FAIL' if problems else 'ok  '} log suppression vectors (v{doc.get('version') if isinstance(doc, dict) else '?'}): "
+        f"{n_cases} cases, {n_steps} steps, {len(problems)} problems — entries + suppressed = occurrences after close"
+    )
+    for p in problems[:5]:
+        print("     ", p[:160])
+    return int(bool(problems))
 
 
 CUT_RE = re.compile(r"(.*)…\(잘림 (\d+)자\)", flags=re.S)
