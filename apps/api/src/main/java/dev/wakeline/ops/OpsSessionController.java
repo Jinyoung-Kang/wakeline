@@ -105,7 +105,9 @@ public class OpsSessionController {
         ctx.setAuthentication(auth);
         SecurityContextHolder.setContext(ctx);
         contextRepository.saveContext(ctx, req, res);
-        req.getSession().setAttribute("ops_user_id", user.id());
+        req.getSession().setAttribute(OpsSessionLifetimeFilter.USER_ID, user.id());
+        // 이 세션을 로그인 때 확인한 비밀번호에 묶는다(R-95 후속) — 교체되면 다음 운영 요청에서 끝난다(목록 삭제와 경합해도)
+        req.getSession().setAttribute(OpsSessionLifetimeFilter.CREDENTIAL, result.credential());
         // 절대 수명(R-54)의 기준 — 유휴 연장과 무관하게 로그인 시각부터 센다. 다시 로그인하면 새로 시작한다.
         req.getSession().setAttribute(OpsSessionLifetimeFilter.AUTH_AT, System.currentTimeMillis());
         return ResponseEntity.ok(Map.of("username", user.username(), "role", user.role()));

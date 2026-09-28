@@ -38,10 +38,12 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain api(HttpSecurity http, SecurityContextRepository contextRepository, CookieCsrfTokenRepository csrfRepository,
-                            @Value("${wakeline.ops-session-max-age:8h}") Duration opsSessionMaxAge) throws Exception {
+                            @Value("${wakeline.ops-session-max-age:8h}") Duration opsSessionMaxAge,
+                            dev.wakeline.ops.OpsUserService opsUsers) throws Exception {
         http
                 // 절대 수명(R-54): 보안 컨텍스트를 세션에서 읽기 전에 오래된 운영 세션을 끝낸다 → 익명 → 404
-                .addFilterBefore(new OpsSessionLifetimeFilter(opsSessionMaxAge, Clock.systemUTC()), SecurityContextHolderFilter.class)
+                // 자격 확인(R-95 후속): 비밀번호가 바뀐 뒤의 세션도 같은 자리에서 끝낸다
+                .addFilterBefore(new OpsSessionLifetimeFilter(opsSessionMaxAge, Clock.systemUTC(), opsUsers::currentCredentialTag), SecurityContextHolderFilter.class)
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(ApiPaths.OPS_LOGIN).permitAll()
                         .requestMatchers(ApiPaths.OPS).hasRole("OPS")

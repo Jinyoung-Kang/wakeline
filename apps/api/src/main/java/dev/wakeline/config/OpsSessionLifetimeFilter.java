@@ -10,6 +10,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Optional;
+import java.util.function.IntFunction;
 
 /**
  * 운영 세션의 절대 수명(R-54, ADR-017 §3). Spring Session 의 timeout 은 유휴 기준이라 요청마다 연장된다 — /ops 탭의 15 s 폴링이 세션을
@@ -18,18 +20,33 @@ import java.time.Duration;
  * 보안 필터 체인에서 SecurityContextHolderFilter 앞에 둔다: 세션을 먼저 무효화하므로(Redis 에서 삭제) 그 요청은 보안 컨텍스트 없이
  * 익명으로 처리되고 /api/v1/ops/** 는 404(존재 비공개)가 된다. 로그인(POST /api/v1/ops/session)도 같다 — 만료된 세션은 지우고 새로 로그인한다.
  * 컴포넌트로 등록하지 않는다(서블릿 필터로 한 번 더 걸리지 않게) — {@link SecurityConfig} 가 만든다.
+ * <p>
+ * 자격 확인(R-95 후속): 세션은 로그인 때 확인한 비밀번호 해시의 표식({@link #CREDENTIAL})에 묶인다. 운영 요청마다 사용자의 지금 표식과 비교해
+ * 다르거나(비밀번호 교체) 사용자가 없거나 표식이 없는 세션은 끝낸다. 교체 때의 세션 목록 삭제(OpsSessionRegistry.revokeAll)는 로그인과
+ * 경합하면 방금 만든 세션을 놓칠 수 있다 — 이 비교는 순서와 무관하다. DB 를 읽지 못하면 세션은 두고 503(모름 — 끝내지도, 통과시키지도 않는다).
  */
 public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
     /** 로그인 시각(epoch ms, Long) 세션 속성. 세션 역직렬화 허용 목록(java.lang.Long)에 이미 있다. */
     public static final String AUTH_AT = "ops_auth_at";
+    /** 로그인한 운영자 id(Integer). */
+    public static final String USER_ID = "ops_user_id";
+    /** 로그인 때 확인한 자격 표식(String, OpsUserService.credentialTag). */
+    public static final String CREDENTIAL = "ops_credential";
 
     private final long maxAgeMs;
     private final Clock clock;
+    /** 운영자 id → 지금 자격 표식(없으면 empty). null 이면 자격 확인을 하지 않는다(수명만 보는 단위 시험). */
+    private final IntFunction<Optional<String>> currentCredential;
 
-    public OpsSessionLifetimeFilter(Duration maxAge, Clock clock) {
+    public OpsSessionLifetimeFilter(Duration maxAge, Clock clock, IntFunction<Optional<String>> currentCredential) {
         if (maxAge.isNegative() || maxAge.isZero()) throw new IllegalArgumentException("ops session max age must be positive: " + maxAge);
         this.maxAgeMs = maxAge.toMillis();
         this.clock = clock;
+        this.currentCredential = currentCredential;
+    }
+
+    OpsSessionLifetimeFilter(Duration maxAge, Clock clock) {
+        this(maxAge, clock, null);
     }
 
     @Override
@@ -41,6 +58,16 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain) throws ServletException, IOException {
         HttpSession s = req.getSession(false);
         if (s != null && expired(s, clock.millis())) s.invalidate();
+        else if (s != null && currentCredential != null && s.getAttribute(USER_ID) instanceof Integer uid) {
+            Optional<String> now;
+            try {
+                now = currentCredential.apply(uid);
+            } catch (RuntimeException e) {
+                ProblemJson.write(res, req, 503, "UNAVAILABLE", "service unavailable", "ops temporarily unavailable");
+                return;
+            }
+            if (now.isEmpty() || !now.get().equals(s.getAttribute(CREDENTIAL))) s.invalidate();
+        }
         chain.doFilter(req, res);
     }
 

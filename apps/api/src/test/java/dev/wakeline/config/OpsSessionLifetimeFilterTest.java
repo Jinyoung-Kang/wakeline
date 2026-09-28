@@ -81,6 +81,37 @@ class OpsSessionLifetimeFilterTest {
         }
     }
 
+    /** R-95 후속: 자격 표식이 지금 값과 다르거나 없거나 사용자가 없으면 끝낸다. DB 를 읽지 못하면 세션은 두고 503. */
+    @Test
+    void sessionIsBoundToTheCredentialItWasCreatedWith() throws Exception {
+        java.util.Map<Integer, String> current = new java.util.HashMap<>(java.util.Map.of(7, "tag-new"));
+        OpsSessionLifetimeFilter f = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
+                uid -> java.util.Optional.ofNullable(current.get(uid)));
+        java.util.function.BiFunction<Integer, String, MockHttpSession> session = (uid, tag) -> {
+            MockHttpSession s = sessionLoggedInAgo(Duration.ofMinutes(5));
+            s.setAttribute(OpsSessionLifetimeFilter.USER_ID, uid);
+            if (tag != null) s.setAttribute(OpsSessionLifetimeFilter.CREDENTIAL, tag);
+            return s;
+        };
+        MockHttpSession same = session.apply(7, "tag-new"), changed = session.apply(7, "tag-old"), none = session.apply(7, null), gone = session.apply(8, "tag-x");
+        for (MockHttpSession s : new MockHttpSession[] {same, changed, none, gone})
+            f.doFilter(request("/api/v1/ops/providers", s), new MockHttpServletResponse(), new MockFilterChain());
+        assertThat(same.isInvalid()).isFalse();
+        assertThat(changed.isInvalid()).as("password changed").isTrue();
+        assertThat(none.isInvalid()).as("session without a credential tag").isTrue();
+        assertThat(gone.isInvalid()).as("user deleted").isTrue();
+
+        OpsSessionLifetimeFilter down = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
+                uid -> { throw new IllegalStateException("db down"); });
+        MockHttpSession kept = session.apply(7, "tag-new");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        down.doFilter(request("/api/v1/ops/providers", kept), res, chain);
+        assertThat(res.getStatus()).isEqualTo(503);
+        assertThat(chain.getRequest()).as("not passed on unverified").isNull();
+        assertThat(kept.isInvalid()).as("unknown is not a logout").isFalse();
+    }
+
     @Test
     void maxAgeMustBePositive() {
         assertThatThrownBy(() -> new OpsSessionLifetimeFilter(Duration.ZERO, Clock.systemUTC())).isInstanceOf(IllegalArgumentException.class);

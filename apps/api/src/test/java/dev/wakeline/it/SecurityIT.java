@@ -370,6 +370,30 @@ class SecurityIT extends IntegrationTest {
         assertThat(fresh.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
     }
 
+    /**
+     * R-95 후속(TOCTOU): 로그인은 읽어 둔 해시로 비밀번호를 확인한 뒤 세션을 목록에 올리고, 세션 해시는 요청 끝에 저장된다. 그 사이에 비밀번호
+     * 교체(upsert → revokeAll)가 끼면 옛 비밀번호로 만든 세션이 목록 삭제를 피해 살아남는다. 목록 순서와 무관하게 막으려면 세션이 로그인 때 확인한
+     * 자격(비밀번호 해시)에 묶여 있어야 한다 — 여기서는 경합에서 진 결과(해시는 바뀌었고 세션은 지워지지 않음)를 직접 만든다.
+     */
+    @Test
+    void sessionFromBeforeAPasswordChangeEndsEvenIfRevocationMissedIt() {
+        users.upsert("it-race", PW);
+        users.upsert("it-race-bystander", PW);
+        Browser b = new Browser(), bystander = new Browser();
+        assertThat(b.login("it-race", PW).status()).isEqualTo(200);
+        assertThat(bystander.login("it-race-bystander", PW).status()).isEqualTo(200);
+        assertThat(b.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
+        String key = sessionKey(b);
+        // 교체가 세션 목록 등록보다 먼저 끝난 경우: 해시만 바뀌고 이 세션은 목록에 없어 지워지지 않았다
+        String newHash = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode("rotated-" + PW);
+        db.sql("UPDATE ops_user SET password_hash = :h WHERE username = 'it-race'").param("h", newHash).update();
+        assertThat(ItStack.admin().hasKey(key)).as("revocation missed this session").isTrue();
+
+        assertProblem(b.send("GET", "/api/v1/ops/providers", null, Map.of()), 404, "NOT_FOUND", "/api/v1/ops/providers");
+        assertThat(ItStack.admin().hasKey(key)).as("stale-credential session removed").isFalse();
+        assertThat(bystander.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).as("other operator unaffected").isEqualTo(200);
+    }
+
     // ---------- 잠금 ----------
 
     @Test

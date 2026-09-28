@@ -47,9 +47,28 @@ public class OpsUserService {
      * @param failure  실패 사유(성공이면 null)
      * @param lockedNow 이번 실패로 계정이 잠겼다(ACCOUNT_LOCKED 감사 기록용)
      */
-    public record AuthResult(Optional<User> user, Failure failure, boolean lockedNow) {
-        static AuthResult ok(User u) { return new AuthResult(Optional.of(u), null, false); }
-        static AuthResult fail(Failure f, boolean lockedNow) { return new AuthResult(Optional.empty(), f, lockedNow); }
+    public record AuthResult(Optional<User> user, Failure failure, boolean lockedNow, String credential) {
+        static AuthResult ok(User u, String credential) { return new AuthResult(Optional.of(u), null, false, credential); }
+        static AuthResult fail(Failure f, boolean lockedNow) { return new AuthResult(Optional.empty(), f, lockedNow, null); }
+    }
+
+    /**
+     * 자격 표식(R-95 후속): 로그인 때 확인한 비밀번호 해시의 지문. BCrypt 해시는 교체마다 새 솔트로 바뀌므로 비밀번호 버전으로 쓸 수 있다.
+     * 세션에 이 값을 두고 운영 요청마다 지금 값과 비교한다({@code OpsSessionLifetimeFilter}) — 로그인과 교체가 겹쳐 세션 목록 삭제(revokeAll)를
+     * 피한 세션도 다음 요청에서 끝난다. 해시 자체는 세션에 두지 않는다(SHA-256 앞 16바이트, 16진).
+     */
+    public static String credentialTag(String passwordHash) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(passwordHash.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(d, 0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** 지금 자격 표식. 사용자가 없으면 empty. DB 오류는 그대로 올린다(호출자가 실패 시 닫힘으로 처리). */
+    public Optional<String> currentCredentialTag(int userId) {
+        return db.sql("SELECT password_hash FROM ops_user WHERE id = :id").param("id", userId).query(String.class).optional().map(OpsUserService::credentialTag);
     }
 
     /**
@@ -91,7 +110,8 @@ public class OpsUserService {
         int n = db.sql("UPDATE ops_user SET failed_count = 0, locked_until = NULL WHERE id = :id AND (locked_until IS NULL OR locked_until <= now())")
                 .param("id", id).update();
         if (n == 0) return AuthResult.fail(Failure.LOCKED, false);
-        return AuthResult.ok(new User(id, String.valueOf(r.get("username")), String.valueOf(r.get("role"))));
+        // 표식은 방금 비교한 그 해시로 만든다(같은 행) — 비교 뒤 바뀐 비밀번호로 만든 표식이면 경합을 놓친다
+        return AuthResult.ok(new User(id, String.valueOf(r.get("username")), String.valueOf(r.get("role"))), credentialTag(String.valueOf(r.get("password_hash"))));
     }
 
     /**

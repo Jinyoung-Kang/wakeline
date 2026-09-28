@@ -106,7 +106,7 @@ class OpsSessionControllerTest {
 
     @Test
     void successfulLoginIsAudited() throws Exception {
-        mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(1, "admin", "OPS")))
+        mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(1, "admin", "OPS"), "tag-1"))
                 .perform(post("/api/v1/ops/session").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isOk());
         assertThat(audited).containsExactly("LOGIN:admin");
@@ -117,7 +117,7 @@ class OpsSessionControllerTest {
     @Test
     void loginAuditFailureCreatesNoSession() throws Exception {
         auditDown = true;
-        MvcResult r = mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(1, "admin", "OPS")))
+        MvcResult r = mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(1, "admin", "OPS"), "tag-1"))
                 .perform(post("/api/v1/ops/session").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isServiceUnavailable()).andReturn();
         assertThat(r.getRequest().getSession(false)).as("no session on audit failure").isNull();
@@ -126,12 +126,14 @@ class OpsSessionControllerTest {
 
     @Test
     void successfulLoginCreatesTheSessionAfterTheAuditRow() throws Exception {
-        MvcResult r = mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(7, "admin", "OPS")))
+        MvcResult r = mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.ok(new OpsUserService.User(7, "admin", "OPS"), "tag-7"))
                 .perform(post("/api/v1/ops/session").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isOk()).andReturn();
         assertThat(audited).containsExactly("LOGIN:admin");
         assertThat(r.getRequest().getSession(false)).isNotNull();
-        assertThat(r.getRequest().getSession(false).getAttribute("ops_user_id")).isEqualTo(7);
+        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.config.OpsSessionLifetimeFilter.USER_ID)).isEqualTo(7);
+        // R-95 후속: 세션은 로그인 때 확인한 자격 표식에 묶인다
+        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.config.OpsSessionLifetimeFilter.CREDENTIAL)).isEqualTo("tag-7");
         // R-95: 최종 세션 id(교체 뒤)를 사용자 목록에 올린다
         assertThat(registered).containsExactly("7:" + r.getRequest().getSession(false).getId());
     }
