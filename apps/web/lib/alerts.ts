@@ -67,11 +67,13 @@ export function evidenceBandSource(ev: Record<string, unknown>, sigmet: Pick<Sig
  * 알림 목록의 신뢰 상태(DH-9). "live" 일 때만 목록이 현재이고 ETA 가 카운트다운한다.
  * - waiting: 이 연결에서 아직 alerts 메시지를 받지 못함(페이지 첫 로드·재연결 직후) — 빈 목록을 "없음"으로 말하지 않는다.
  * - disconnected: 받은 적은 있으나 연결이 끊김/재연결 중 — 마지막 목록(갱신 안 됨).
+ * - silent: 연결은 열려 있지만 RX_FRESH_MS 넘게 아무것도 받지 못함(반쯤 열린 연결) — 상태 바·지도 칩과 같은 규칙(isRxFresh, R-58).
  * - paused: 탭 숨김으로 서버가 보내지 않는 중.
+ * rxFresh = isRxFresh(conn, lastRxAt, now) — 화면은 useRxFresh() 로 얻는다.
  */
-export type AlertListState = "live" | "waiting" | "disconnected" | "paused";
-export function alertListState(conn: string, alertsVersion: number | null | undefined): AlertListState {
+export type AlertListState = "live" | "waiting" | "disconnected" | "silent" | "paused";
+export function alertListState(conn: string, alertsVersion: number | null | undefined, rxFresh = true): AlertListState {
   if (conn === "paused") return "paused";
-  if (conn === "open") return alertsVersion != null ? "live" : "waiting";
+  if (conn === "open") return alertsVersion == null ? "waiting" : rxFresh ? "live" : "silent";
   return alertsVersion != null ? "disconnected" : "waiting";
 }

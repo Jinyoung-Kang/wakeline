@@ -4,7 +4,8 @@
  * subscribe/getSnapshot 은 주기별로 한 번 만든 함수를 재사용한다(렌더마다 재구독하지 않도록 참조가 안정적).
  */
 import { useSyncExternalStore } from "react";
-import { serverNowMs } from "./store";
+import { getData, serverNowMs, subscribeData } from "./store";
+import { isRxFresh } from "./ws-protocol";
 
 interface Clock {
   now: number;
@@ -53,4 +54,20 @@ export function useNow(periodMs = 1000): number {
 export function useServerNow(periodMs = 1000): number {
   const now = useNow(periodMs);
   return now ? serverNowMs(now) : 0;
+}
+
+// ---- 수신 신선도(R-58): 상태 바·지도 칩과 같은 규칙(isRxFresh)을 알림 목록·근거 카드도 쓴다 ----
+// 값(참/거짓)이 바뀔 때만 다시 그린다 — 1 s 시계와 스토어 둘 다 구독하지만 useSyncExternalStore 는 같은 값이면 렌더하지 않는다.
+function subscribeRx(listener: () => void) {
+  const offClock = clockFor(1000).subscribe(listener);
+  const offData = subscribeData(listener);
+  return () => { offClock(); offData(); };
+}
+function readRx(): boolean {
+  const d = getData();
+  return isRxFresh(d.conn, d.lastRxAt, clockFor(1000).now || Date.now());
+}
+/** 연결이 열려 있고 RX_FRESH_MS 안에 무엇이든(ping 포함) 받았는가 */
+export function useRxFresh(): boolean {
+  return useSyncExternalStore(subscribeRx, readRx, readRx);
 }

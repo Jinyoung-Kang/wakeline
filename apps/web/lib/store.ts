@@ -125,8 +125,10 @@ export function resetData() {
 }
 function subscribe(l: () => void) {
   listeners.add(l);
-  return () => listeners.delete(l);
+  return () => { listeners.delete(l); };
 }
+/** 스토어 변경 구독(useSyncExternalStore 로 파생 값을 만드는 훅용 — lib/clock.ts useRxFresh) */
+export const subscribeData = subscribe;
 export function useServerData<T>(selector: (d: ServerData) => T): T {
   return useSyncExternalStore(subscribe, () => selector(data), () => selector(data));
 }

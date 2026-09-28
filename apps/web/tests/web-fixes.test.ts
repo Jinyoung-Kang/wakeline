@@ -252,11 +252,11 @@ describe("rendered panels (server-side render, no DOM)", () => {
     const html = renderToStaticMarkup(createElement(AlertPanel));
     expect(html).toContain("알림 목록 수신 대기");
     expect(html).not.toContain("항공기가 없습니다");
-    setData({ conn: "open", alertsVersion: 3 });
+    setData({ conn: "open", lastRxAt: Date.now(), alertsVersion: 3 });
     expect(renderToStaticMarkup(createElement(AlertPanel))).toContain("항공기가 없습니다");
   });
   it("after a disconnect the last list is marked stale and the ETA stops (DH-9); predicted altitude is marked 추정 (DH-15)", () => {
-    setData({ conn: "open", alertsVersion: 3, alerts: new Map([[7, pred]]), status });
+    setData({ conn: "open", lastRxAt: Date.now(), alertsVersion: 3, alerts: new Map([[7, pred]]), status }); // 열림 + 최근 수신 = 실시간(R-58)
     const live = renderToStaticMarkup(createElement(AlertPanel));
     expect(live).toContain('data-testid="alert-alt-est"');
     expect(live).toMatch(/class="mono est-val[^"]*"[^>]*title="진입 시 고도 — 추정/);

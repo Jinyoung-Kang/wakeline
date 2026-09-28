@@ -3,7 +3,7 @@ import type { Alert } from "@/lib/types";
 import { band, fmtAlt, fmtEta, fmtNum, fmtTime, hazardColor } from "@/lib/format";
 import { alertListState, closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
 import { useServerData } from "@/lib/store";
-import { useServerNow } from "@/lib/clock";
+import { useRxFresh, useServerNow } from "@/lib/clock";
 
 const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : null);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -15,7 +15,8 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
  */
 export function EvidenceCard({ a }: { a: Alert }) {
   const now = useServerNow(1000);
-  const live = useServerData((d) => alertListState(d.conn, d.alertsVersion) === "live");
+  const rxFresh = useRxFresh();
+  const live = useServerData((d) => alertListState(d.conn, d.alertsVersion, rxFresh) === "live");
   const ev = (a.evidence ?? {}) as Record<string, unknown>;
   const sigmet = useServerData((d) => d.sigmets?.features.find((f) => f.properties.id === a.sigmet_id)?.properties ?? null);
   const bandFt = evidenceBand(ev);

@@ -7,7 +7,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getData, resetData, setData } from "@/lib/store";
-import { EVENT_BANNER_TTL_MS, eventBannerVisible } from "@/lib/alerts";
+import { alertListState, EVENT_BANNER_TTL_MS, eventBannerVisible } from "@/lib/alerts";
+import { RX_FRESH_MS } from "@/lib/ws-protocol";
+import { EvidenceCard } from "@/components/EvidenceCard";
 import { WakelineWsClient, type SocketLike } from "@/lib/ws";
 import { AlertPanel } from "@/components/AlertPanel";
 import { StatusBar } from "@/components/StatusBar";
@@ -108,5 +110,27 @@ describe("last-event banner (R-23)", () => {
     sock!.recv({ type: "welcome" });
     expect(getData().lastEvent).toBeNull();
     client.close();
+  });
+});
+
+describe("alert list freshness follows the status bar's receive rule (R-58)", () => {
+  const pred = { ...alert(9, [36.5, 127.8], "PREDICTED"), eta_at: new Date(Date.now() + 600_000).toISOString() } as Alert;
+  it("an open connection that has received nothing for RX_FRESH_MS is not 'live'", () => {
+    expect(alertListState("open", 3, true)).toBe("live");
+    expect(alertListState("open", 3, false)).toBe("silent");
+    expect(alertListState("open", null, false)).toBe("waiting");
+    expect(alertListState("closed", 3, false)).toBe("disconnected");
+  });
+  it("half-open connection (45–75 s without messages): the list is marked stale and the ETA stops, like the status bar's STALE", () => {
+    setData({ conn: "open", alertsVersion: 3, alerts: new Map([[9, pred]]), status: STATUS, lastRxAt: Date.now() - (RX_FRESH_MS + 5_000) });
+    const h = html();
+    expect(h).toContain('data-testid="alerts-stale"');
+    expect(h).toContain('data-state="silent"');
+    expect(text(h)).toContain("추정 ETA —");
+    expect(renderToStaticMarkup(createElement(EvidenceCard, { a: pred }))).toMatch(/ETA\(추정\)<\/span><span class="text-right"><span class="mono">—</);
+    setData({ lastRxAt: Date.now() });
+    const live = html();
+    expect(live).not.toContain('data-testid="alerts-stale"');
+    expect(text(live)).not.toContain("추정 ETA —");
   });
 });

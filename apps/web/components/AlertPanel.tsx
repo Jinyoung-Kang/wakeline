@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { serverNowMs, useServerData, type ServerData } from "@/lib/store";
-import { useNow, useServerNow } from "@/lib/clock";
+import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
@@ -19,7 +19,7 @@ export function AlertPanel() {
   const lastEvent = useServerData((d) => d.lastEvent);
   const conn = useServerData((d) => d.conn);
   const alertsVersion = useServerData((d) => d.alertsVersion);
-  const listState = alertListState(conn, alertsVersion);
+  const listState = alertListState(conn, alertsVersion, useRxFresh());
   const select = useUi((s) => s.select);
   const [open, setOpen] = useState<number | null>(null);
   const [scope, setScope] = useState<"region" | "world">("region");
@@ -63,6 +63,7 @@ export function AlertPanel() {
         <div className="border-b border-line bg-bg-2 px-2 py-1 text-[11px] text-warn" role="note" data-testid="alerts-stale" data-state={listState}>
           {listState === "waiting" ? "알림 수신 대기 — 아래는 이전 연결의 목록(갱신 안 됨 · ETA 멈춤)"
             : listState === "paused" ? "일시정지(탭 숨김) — 마지막으로 받은 목록 · 갱신 안 됨"
+            : listState === "silent" ? "수신 없음(연결은 열림) — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"
             : "연결 끊김 — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"}
         </div>
       ) : null}
