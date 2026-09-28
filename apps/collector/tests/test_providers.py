@@ -102,6 +102,29 @@ async def test_opensky_token_cached_and_credits_header(http):
             await p.fetch_global()
 
 
+async def test_r66_opensky_401_drops_the_cached_token_so_the_next_run_refreshes_it(http):
+    """리뷰 R-66: 401 뒤에도 캐시한 토큰을 만료(최대 약 29분)까지 다시 써서 전세계 수집이 계속 실패할 수 있었다."""
+    from wakeline_collector.http import ProviderHttpError
+
+    p = OpenSkyProvider(http, "id", "secret")
+    with respx.mock:
+        tok = respx.post(TOKEN_URL).mock(
+            side_effect=[
+                httpx.Response(200, json={"access_token": "old", "expires_in": 1800}),
+                httpx.Response(200, json={"access_token": "new", "expires_in": 1800}),
+            ]
+        )
+        st = respx.get(STATES_URL).mock(
+            side_effect=[httpx.Response(401, text="token revoked"), httpx.Response(200, json={"time": 1, "states": []})]
+        )
+        with pytest.raises(ProviderHttpError) as e:
+            await p.fetch_global()
+        assert e.value.status == 401
+        await p.fetch_global()
+    assert tok.call_count == 2  # 401 뒤 다음 실행은 새 토큰을 받는다
+    assert [c.request.headers["Authorization"] for c in st.calls] == ["Bearer old", "Bearer new"]
+
+
 async def test_awc_endpoints(http):
     p = AwcProvider(http)
     with respx.mock:

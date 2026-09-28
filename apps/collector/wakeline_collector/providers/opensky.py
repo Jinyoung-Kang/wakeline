@@ -11,7 +11,7 @@ from datetime import datetime
 
 import orjson
 
-from wakeline_collector.http import HttpClient
+from wakeline_collector.http import HttpClient, ProviderHttpError
 from wakeline_collector.models import BudgetInfo, ProviderResult
 
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"  # noqa: S105 — URL, not a secret
@@ -50,7 +50,12 @@ class OpenSkyProvider:
 
     async def _states(self, params: dict | None) -> ProviderResult:
         token = await self._bearer()
-        resp = await self._http.get(STATES_URL, headers={"Authorization": f"Bearer {token}"}, params=params)
+        try:
+            resp = await self._http.get(STATES_URL, headers={"Authorization": f"Bearer {token}"}, params=params)
+        except ProviderHttpError as e:
+            if e.status == 401:  # 토큰이 폐기·교체됨 — 만료까지 기다리지 않고 다음 실행에서 새로 받는다(R-66)
+                self._token, self._token_exp = None, 0.0
+            raise
         data = orjson.loads(resp.body)
         if not isinstance(data, dict) or "states" not in data:
             raise ValueError("unexpected opensky response shape")
