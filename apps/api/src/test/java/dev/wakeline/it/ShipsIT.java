@@ -211,14 +211,30 @@ class ShipsIT extends IntegrationTest {
             }
             throw new AssertionError("no '" + type + "' within " + timeout);
         }
+
+        /**
+         * 이 칸 크기의 ships_grid. 구독을 바꾼 직후에는 앞 구독의 격자가 이미 우편함에 있을 수 있다(레이어 켜기와 구독이 각각 전체 전송을 예약 —
+         * 늦게 돈 작업은 그때의 구독으로 보낸다). 그런 앞 구독의 칸 크기 격자는 건너뛴다.
+         */
+        JsonNode nextGrid(double cellDeg, Duration timeout) throws InterruptedException {
+            long end = System.nanoTime() + timeout.toNanos();
+            while (true) {
+                JsonNode g = next("ships_grid", Duration.ofNanos(Math.max(1, end - System.nanoTime())));
+                if (g.path("cell_deg").asDouble() == cellDeg) return g;
+            }
+        }
     }
 
-    /** ships_grid 칸 → {"lat,lon": "count,category"}. */
+    /** ships_grid 칸 → {"lat,lon": "count,category,[선종별 수]"}(계약 v5 §B2 — 선종별 수의 합은 척수). */
     static Map<String, String> cells(JsonNode grid) {
         Map<String, String> out = new HashMap<>();
         for (JsonNode cell : grid.path("cells")) {
-            assertThat(cell.size()).as("cell = [lat, lon, count, category]").isEqualTo(4);
-            out.put(cell.get(0).asDouble() + "," + cell.get(1).asDouble(), cell.get(2).asInt() + "," + cell.get(3).asString());
+            assertThat(cell.size()).as("cell = [lat, lon, count, category, per-category counts]").isEqualTo(5);
+            assertThat(cell.get(4).size()).isEqualTo(dev.wakeline.domain.ShipCategory.count());
+            int sum = 0;
+            for (JsonNode n : cell.get(4)) sum += n.asInt();
+            assertThat(sum).as("per-category counts add up to the cell count").isEqualTo(cell.get(2).asInt());
+            out.put(cell.get(0).asDouble() + "," + cell.get(1).asDouble(), cell.get(2).asInt() + "," + cell.get(3).asString() + "," + cell.get(4));
         }
         return out;
     }
@@ -260,12 +276,13 @@ class ShipsIT extends IntegrationTest {
             JsonNode g2 = feed.next("ships_grid", Duration.ofSeconds(10));
             assertThat(g2.path("cell_deg").asDouble()).isEqualTo(2.0);
             assertThat(g2.has("capped")).as("capped only when the ship count forces the grid (zoom ≥ 4)").isFalse();
-            assertThat(cells(g2)).isEqualTo(Map.of("13.0,63.0", "3,cargo", "17.0,61.0", "1,passenger"));
+            // 선종별 수: cargo, tanker, passenger, … 순서(schemas/vectors/ship-categories.v1.json)
+            assertThat(cells(g2)).isEqualTo(Map.of("13.0,63.0", "3,cargo,[2,1,0,0,0,0,0,0,0,0,0]", "17.0,61.0", "1,passenger,[0,0,1,0,0,0,0,0,0,0,0]"));
 
             c.send("{\"type\":\"subscribe\",\"bbox\":[55,5,70,25],\"zoom\":2}");
-            JsonNode g5 = feed.next("ships_grid", Duration.ofSeconds(10));
+            JsonNode g5 = feed.nextGrid(5.0, Duration.ofSeconds(10));
             assertThat(g5.path("cell_deg").asDouble()).isEqualTo(5.0);
-            assertThat(cells(g5)).isEqualTo(Map.of("12.5,62.5", "3,cargo", "17.5,62.5", "1,passenger"));
+            assertThat(cells(g5)).isEqualTo(Map.of("12.5,62.5", "3,cargo,[2,1,0,0,0,0,0,0,0,0,0]", "17.5,62.5", "1,passenger,[0,0,1,0,0,0,0,0,0,0,0]"));
 
             c.send("{\"type\":\"subscribe\",\"bbox\":[61.5,11.5,63.5,13.5],\"zoom\":8}");
             JsonNode snap = feed.next("ships_snapshot", Duration.ofSeconds(10));

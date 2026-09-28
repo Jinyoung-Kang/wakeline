@@ -12,12 +12,14 @@ import java.util.Map;
  * 세션마다 다시 세지 않는다: 세션은 만들어진 칸 목록에서 자기 bbox 와 겹치는 칸만 골라 미리 직렬화한 조각을 이어 붙인다.
  * 칸은 에포크처럼 고정된 격자(남서 모서리 −90°/−180° 기준)이고 좌표는 칸 중심이다. 대표 분류는 칸 안에서 가장 많은 {@link ShipCategory}
  * (동률이면 열거 순서의 앞 — 결정적, web 과 같은 순서). 칸 수는 선박이 있는 칸뿐이다(0척 칸 없음).
+ * 계약 v5 §B2: 칸의 다섯 번째 원소는 선종별 수 [n0..n10] — 순서는 ShipCategory 선언 순서 = schemas/vectors/ship-categories.v1.json
+ * (web 이 선종 필터로 칸 수를 다시 센다). 같은 순회에서 이미 세던 배열을 그대로 싣는다(추가 순회 없음).
  */
 final class ShipGrid {
     /** 줌 → 칸 크기(계약: z<3 5°, z<5 2°, z<7 0.5°). 상한 초과(capped)는 가장 촘촘한 0.5°. */
     static final double[] LEVELS = {5.0, 2.0, 0.5};
 
-    /** 칸 하나: 남서 모서리·크기(bbox 겹침 판단)와 미리 직렬화한 [lat, lon, count, "category"]. */
+    /** 칸 하나: 남서 모서리·크기(bbox 겹침 판단)와 미리 직렬화한 [lat, lon, count, "category", [선종별 수]]. */
     record Cell(double minLat, double minLon, double deg, int count, ShipCategory dominant, String json) {
         boolean intersects(Bbox b) {
             return minLon <= b.lomax() && minLon + deg >= b.lomin() && minLat <= b.lamax() && minLat + deg >= b.lamin();
@@ -64,8 +66,13 @@ final class ShipGrid {
                 }
                 double minLat = -90 + (keys[j] / cols) * deg, minLon = -180 + (keys[j] % cols) * deg;
                 ShipCategory dom = ShipCategory.at(best);
-                String json = "[" + (minLat + deg / 2) + "," + (minLon + deg / 2) + "," + total + ",\"" + dom.key() + "\"]";
-                cells[j] = new Cell(minLat, minLon, deg, total, dom, json);
+                StringBuilder json = new StringBuilder(48 + 3 * c.length).append('[').append(minLat + deg / 2).append(',').append(minLon + deg / 2)
+                        .append(',').append(total).append(",\"").append(dom.key()).append("\",[");
+                for (int k = 0; k < c.length; k++) {
+                    if (k > 0) json.append(',');
+                    json.append(c[k]);
+                }
+                cells[j] = new Cell(minLat, minLon, deg, total, dom, json.append("]]").toString());
             }
             levels[i] = cells;
         }

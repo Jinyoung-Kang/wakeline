@@ -15,7 +15,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** 선박 격자: 줌별 칸 크기, 칸 중심·수·대표 분류(동률은 열거 순서), bbox 겹침 필터, 고정 격자 경계. */
+/** 선박 격자: 줌별 칸 크기, 칸 중심·수·대표 분류(동률은 열거 순서)·선종별 수(계약 v5 §B2), bbox 겹침 필터, 고정 격자 경계. */
 class ShipGridTest {
     static final Instant T = Instant.now();
 
@@ -64,8 +64,12 @@ class ShipGridTest {
         assertThat(j.get(1).asDouble()).isEqualTo(129.25);
         assertThat(j.get(2).asInt()).isEqualTo(5);
         assertThat(j.get(3).asString()).isEqualTo("cargo");
+        // 계약 v5 §B2: 다섯 번째 원소 = 선종별 수(ShipCategory 선언 순서 = schemas/vectors/ship-categories.v1.json) — 화물 2 · 유조 2 · 미상 1
+        assertThat(j.size()).isEqualTo(5);
+        assertThat(counts(j.get(4))).containsExactly(2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1);
         ShipGrid.Cell pole = java.util.Arrays.stream(fine).filter(c -> c.minLat() == 89.5 && c.minLon() == 179.5).findFirst().orElseThrow();
         assertThat(pole.dominant()).isEqualTo(ShipCategory.UNKNOWN);
+        assertThat(counts(WsTestKit.parse(pole.json()).get(4))).containsExactly(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
 
         ShipGrid.Cell[] coarse = g.cells(5.0);
         assertThat(java.util.Arrays.stream(coarse).mapToInt(ShipGrid.Cell::count).sum()).isEqualTo(7);
@@ -73,6 +77,25 @@ class ShipGridTest {
         assertThat(south.minLon()).isEqualTo(-35.0);
         assertThat(south.dominant()).isEqualTo(ShipCategory.FISHING);
         assertThatThrownBy(() -> g.cells(1.0)).isInstanceOf(IllegalArgumentException.class);
+        // 모든 단계·모든 칸: 선종별 수의 합 = 칸의 척수, 대표 분류 = 가장 많은 선종(동률은 앞)
+        for (double deg : ShipGrid.LEVELS) for (ShipGrid.Cell c : g.cells(deg)) {
+            int[] n = counts(WsTestKit.parse(c.json()).get(4));
+            assertThat(n).hasSize(ShipCategory.count());
+            assertThat(java.util.Arrays.stream(n).sum()).as("cell %s at %s°", c.json(), deg).isEqualTo(c.count());
+            int best = 0;
+            for (int k = 1; k < n.length; k++) if (n[k] > n[best]) best = k;
+            assertThat(c.dominant().ordinal()).isEqualTo(best);
+        }
+    }
+
+    static int[] counts(JsonNode arr) {
+        assertThat(arr.isArray()).as("per-category counts is an array: %s", arr).isTrue();
+        int[] out = new int[arr.size()];
+        for (int i = 0; i < out.length; i++) {
+            assertThat(arr.get(i).isInt()).as("count %d is an integer", i).isTrue();
+            out[i] = arr.get(i).asInt();
+        }
+        return out;
     }
 
     @Test void cellsJsonFiltersByBboxOverlap() {
@@ -115,5 +138,63 @@ class ShipGridTest {
                 + "z>=7 bbox scan %.3f ms%n", ShipStore.MAX_SHIPS, buildMs, filterMs, g.cells(0.5).length, bboxMs);
         assertThat(n).isPositive();
         assertThat(buildMs).isLessThan(5_000);
+    }
+
+    /**
+     * 측정(계약 v5 §B2 — 성능 주장은 측정값만): 칸마다 선종별 수 배열을 붙인 ships_grid 메시지 크기를 붙이기 전(네 원소 칸)과 비교한다.
+     * 선박 60,000 척(메모리 상한), 위도 ±70° · 경도 전체에 고르게, 선종 11종에 고르게(합성 — 실제 분포는 해안에 몰려 칸이 더 적고 0 이 더 많다).
+     * 네 원소 칸은 실제 칸 JSON 에서 다섯 번째 원소를 떼어 만든다. deflate 크기는 브라우저가 쓰는 permessage-deflate 의 근사
+     * (java.util.zip.Deflater 기본 수준 · nowrap — 창 크기·문맥 이월은 다를 수 있다). 결과는 표준 출력에 남긴다.
+     */
+    @Test void measure_gridMessageSizeWithAndWithoutCategoryCounts() {
+        ShipStore s = new ShipStore();
+        java.util.Random r = new java.util.Random(7);
+        int[] codes = {70, 80, 60, 30, 31, 36, 40, 50, 35, 90, 0}; // 선언 순서대로 한 코드씩(0 = 미상)
+        List<ShipState> st = new ArrayList<>();
+        List<ShipStatic> sc = new ArrayList<>();
+        for (int i = 0; i < ShipStore.MAX_SHIPS; i++) {
+            String m = String.format("%09d", 200_000_000 + i);
+            st.add(pos(m, -70 + r.nextDouble() * 140, -180 + r.nextDouble() * 360));
+            int code = codes[r.nextInt(codes.length)];
+            if (code != 0) sc.add(stat(m, code));
+        }
+        s.apply(st, sc, T, "aisstream", System.currentTimeMillis());
+        ShipGrid g = ShipGrid.build(s.view());
+        record Case(String name, double deg, Bbox bbox) {}
+        List<Case> cases = List.of(new Case("z<3 world 5deg", 5.0, Bbox.world()), new Case("z3-4 E.Asia 2deg", 2.0, new Bbox(100, 0, 160, 50)),
+                new Case("capped 0.5deg", 0.5, new Bbox(120, 20, 150, 45)));
+        for (Case c : cases) {
+            String cells = g.cellsJson(c.deg(), c.bbox());
+            JsonNode parsed = WsTestKit.parse(cells);
+            StringBuilder legacy = new StringBuilder("[");
+            for (JsonNode cell : parsed) {
+                assertThat(cell.size()).isEqualTo(5);
+                if (legacy.length() > 1) legacy.append(',');
+                legacy.append('[').append(cell.get(0)).append(',').append(cell.get(1)).append(',').append(cell.get(2)).append(',').append(cell.get(3)).append(']');
+            }
+            legacy.append(']');
+            String after = message(c.deg(), cells), before = message(c.deg(), legacy.toString());
+            assertThat(WsTestKit.parse(before).path("cells").get(0).size()).isEqualTo(4);
+            System.out.printf("MEASURE ships_grid %s: %d cells -> before %,d B (deflate %,d B) / after %,d B (deflate %,d B) = +%.0f%% raw, +%.0f%% deflate%n",
+                    c.name(), parsed.size(), before.length(), deflated(before), after.length(), deflated(after),
+                    100.0 * (after.length() - before.length()) / before.length(), 100.0 * (deflated(after) - deflated(before)) / deflated(before));
+            // 칸 하나에 11개 정수 배열(최소 "[0,0,0,0,0,0,0,0,0,0,0]" 23자 + 쉼표)이 붙는다 — 칸마다 그 이상, 척수 자릿수만큼 더
+            assertThat(after.length() - before.length()).isGreaterThanOrEqualTo(parsed.size() * 24);
+        }
+    }
+
+    static String message(double deg, String cells) {
+        return WsTestKit.JSON.writeValueAsString(new WsMessages.ShipsGridMsg("ships_grid", T, deg, cells, null));
+    }
+
+    static int deflated(String s) {
+        java.util.zip.Deflater d = new java.util.zip.Deflater(java.util.zip.Deflater.DEFAULT_COMPRESSION, true);
+        d.setInput(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        d.finish();
+        byte[] buf = new byte[64 * 1024];
+        int n = 0;
+        while (!d.finished()) n += d.deflate(buf);
+        d.end();
+        return n;
     }
 }
