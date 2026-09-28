@@ -91,7 +91,7 @@ public final class LogEvents {
 
     /** logback 이벤트 → 가린 항목(서비스 api). 메시지는 여기서 가린다. */
     public static Draft fromLogback(ILoggingEvent e, String instance) {
-        return fromLogback(e, instance, LogMasker.mask(e.getFormattedMessage(), LogMasker.LOG_LIMIT));
+        return fromLogback(e, instance, LogMasker.maskAll(e.getFormattedMessage()));
     }
 
     /**
@@ -107,7 +107,7 @@ public final class LogEvents {
             // 순서가 매번 같게 키 이름순. 값도 가린다(MDC 에 무엇이 들어올지 이 코드가 정하지 않는다)
             for (var m : new TreeMap<>(mdc).entrySet()) {
                 if (MDC_REQUEST_ID.equals(m.getKey()) || m.getKey() == null) continue;
-                ctx.put(m.getKey(), LogMasker.mask(m.getValue(), LogMasker.LOG_LIMIT));
+                ctx.put(m.getKey(), LogMasker.maskAll(m.getValue()));
             }
         }
         Instant ts = e.getInstant() != null ? e.getInstant() : Instant.ofEpochMilli(e.getTimeStamp());
@@ -119,7 +119,7 @@ public final class LogEvents {
     static Ex exception(IThrowableProxy tp) {
         if (tp == null) return null;
         String stack = ThrowableProxyUtil.asString(tp);
-        return new Ex(tp.getClassName(), LogMasker.mask(tp.getMessage(), LogMasker.LOG_LIMIT), LogMasker.mask(stack, LogMasker.LOG_LIMIT));
+        return new Ex(tp.getClassName(), LogMasker.maskAll(tp.getMessage()), LogMasker.maskAll(stack));
     }
 
     // ---------------------------------------------------------------- 상한 · 직렬화

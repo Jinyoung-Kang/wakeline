@@ -24,8 +24,6 @@ import java.util.regex.Pattern;
 public final class LogMasker {
     /** 메시지 한 줄 기본 한계(Python mask 의 기본값과 같다). */
     public static final int DEFAULT_LIMIT = 4000;
-    /** 로그 한 건(스택 포함) 가림 상한 — 넘는 부분은 잘린다(Python LOG_LIMIT 과 같다). */
-    public static final int LOG_LIMIT = 100_000;
     /** 이보다 짧은 값은 값으로 가리지 않는다(흔한 글자열을 모두 가려 로그를 망치지 않게). */
     public static final int MIN_SECRET_LEN = 6;
 
@@ -98,6 +96,12 @@ public final class LogMasker {
 
     /** {@link #DEFAULT_LIMIT} 코드 포인트까지. */
     public static String mask(String text) { return mask(text, DEFAULT_LIMIT); }
+
+    /**
+     * 자르지 않고 모두 가린다(masking.py 의 mask(text, None)). 로그 항목의 칸은 LogEvents 가 스키마 상한에서 잘림 표시와 함께 자른다 —
+     * 표시의 N(잘라 낸 글자 수)이 정확하도록 여기서 먼저 자르지 않는다(계약 §C1). 모든 규칙이 글자 수에 비례하는 시간이다.
+     */
+    public static String maskAll(String text) { return mask(text, Integer.MAX_VALUE); }
 
     /** 모양 규칙 → 등록 값 치환 → 앞에서 limit 코드 포인트. null → null. */
     public static String mask(String text, int limit) {

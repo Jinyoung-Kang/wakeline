@@ -258,7 +258,7 @@ public class LogReader {
 
     private static void maskField(ObjectNode o, String key) {
         JsonNode v = o.get(key);
-        if (v != null && v.isString()) o.put(key, LogMasker.mask(v.asString(), LogMasker.LOG_LIMIT));
+        if (v != null && v.isString()) o.put(key, LogMasker.maskAll(v.asString()));
     }
 
     private static boolean matches(Filter f, String q, Parsed p) {

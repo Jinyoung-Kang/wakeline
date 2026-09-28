@@ -77,7 +77,7 @@ class LogMaskerTest {
      */
     @Test
     void userinfoAndJwtRulesTakeLinearTimeOnAdversarialText() {
-        int n = LogMasker.LOG_LIMIT;
+        int n = 100_000; // masking.py 의 LOG_LIMIT(로그 한 건)
         StringBuilder tiles = new StringBuilder("{\"tiles\":[");
         for (int i = 0; tiles.length() < n; i++) tiles.append(i == 0 ? "" : ",").append("\"https://m").append(i).append(".tiles.test:8443/z/").append(i).append(".png\"");
         List<String> cases = List.of(

@@ -110,14 +110,14 @@ public class ClientErrorController {
         int cut = indexOfAny(cleanPath, '?', '#');
         if (cut >= 0) cleanPath = cleanPath.substring(0, cut);
         String logger = component == null || component.isBlank() ? "browser" : component;
-        String maskedMessage = LogMasker.mask(message, LogMasker.LOG_LIMIT);
-        LogEvents.Ex ex = stack == null || stack.isEmpty() ? null : new LogEvents.Ex(SERVICE, null, LogMasker.mask(stack, LogMasker.LOG_LIMIT));
+        String maskedMessage = LogMasker.maskAll(message);
+        LogEvents.Ex ex = stack == null || stack.isEmpty() ? null : new LogEvents.Ex(SERVICE, null, LogMasker.maskAll(stack));
 
         Map<String, Object> ctx = new LinkedHashMap<>();
-        ctx.put("path", LogMasker.mask(cleanPath, LogMasker.LOG_LIMIT));
+        ctx.put("path", LogMasker.maskAll(cleanPath));
         ctx.put("client_ts", TS.format(clientTs));
         String ua = req.getHeader("User-Agent");
-        if (ua != null && !ua.isBlank()) ctx.put("user_agent", LogMasker.cut(LogMasker.mask(ua, LogMasker.LOG_LIMIT), USER_AGENT_MAX));
+        if (ua != null && !ua.isBlank()) ctx.put("user_agent", LogMasker.cut(LogMasker.maskAll(ua), USER_AGENT_MAX));
         String rid = RequestIdFilter.current(req);
         if (LogEvents.REQUEST_ID.matcher(rid).matches()) ctx.put("receive_request_id", rid);
 

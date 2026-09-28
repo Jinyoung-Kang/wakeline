@@ -3,6 +3,7 @@ package dev.wakeline.logs;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.LoggingEvent;
+import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -184,6 +185,27 @@ class LogEventsTest {
         w.setInstant(T);
         w.setMDCPropertyMap(Map.of());
         assertThat(LogEvents.fromLogback(w, "api-host:1").exception()).isNull();
+    }
+
+    /**
+     * 계약 v5 §C1: 잘림 표시의 N 은 잘라 낸 글자 수 그대로다 — 가림이 따로 자르지 않는다. 예전에는 가린 뒤 100,000자에서 먼저 잘라
+     * 그보다 긴 메시지·스택(깊은 재귀의 StackOverflowError 스택은 1,024줄 ≈ 100,000자)의 N 이 실제보다 작았다.
+     */
+    @Test
+    void cutMarkerCountsEveryCutCharacter_evenForTextLongerThan100000() {
+        var logger = new LoggerContext().getLogger("dev.wakeline.X");
+        var top = new IllegalStateException("e".repeat(150_000));
+        var e = new LoggingEvent("fqcn", logger, Level.ERROR, "m".repeat(150_000), top, null);
+        e.setInstant(T);
+        e.setMDCPropertyMap(Map.of("job", "j".repeat(150_000)));
+        LogEvents.Draft d = LogEvents.fromLogback(e, "api-host:1");
+        int stack = cp(ThrowableProxyUtil.asString(e.getThrowableProxy()));
+        assertThat(stack).isGreaterThan(150_000);
+        JsonNode n = json(LogEvents.serialize(d, "0123456789abcdef", 0));
+        assertCut(n.path("message").asString(), 150_000);
+        assertCut(n.path("exception").path("message").asString(), 150_000);
+        assertCut(n.path("exception").path("stack").asString(), stack);
+        assertCut(n.path("context").path("job").asString(), 150_000);
     }
 
     static void assertCut(String s, int originalLen) {

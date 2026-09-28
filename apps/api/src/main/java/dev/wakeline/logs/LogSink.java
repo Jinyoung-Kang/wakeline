@@ -165,7 +165,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
 
     /** logback 이벤트(WARN 이상 — {@link SinkAppender} 가 거른 뒤). */
     void accept(ILoggingEvent e) {
-        String msg = LogMasker.mask(e.getFormattedMessage(), LogMasker.LOG_LIMIT);
+        String msg = LogMasker.maskAll(e.getFormattedMessage());
         IThrowableProxy tp = e.getThrowableProxy();
         submit("api", e.getLoggerName(), tp == null ? null : tp.getClassName(), msg,
                 (fp, n) -> LogEvents.serialize(LogEvents.fromLogback(e, instance, msg), fp, n));
