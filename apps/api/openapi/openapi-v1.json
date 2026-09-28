@@ -1,5 +1,38 @@
 {
-  "components" : { },
+  "components" : {
+    "schemas" : {
+      "ClientErrorReport" : {
+        "description" : "브라우저 오류 한 건(계약 v5 §C6). 본문 전체 8 KiB 이하.",
+        "properties" : {
+          "component" : {
+            "maxLength" : 200,
+            "type" : [ "string", "null" ]
+          },
+          "message" : {
+            "maxLength" : 2000,
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "path" : {
+            "description" : "경로만('/' 로 시작). '?' · '#' 뒤는 버린다",
+            "maxLength" : 300,
+            "type" : "string"
+          },
+          "stack" : {
+            "maxLength" : 8000,
+            "type" : [ "string", "null" ]
+          },
+          "ts" : {
+            "description" : "브라우저 시각(ISO 8601)",
+            "format" : "date-time",
+            "type" : "string"
+          }
+        },
+        "required" : [ "message", "path", "ts" ],
+        "type" : "object"
+      }
+    }
+  },
   "info" : {
     "title" : "OpenAPI definition",
     "version" : "v0"
@@ -330,6 +363,27 @@
           }
         },
         "tags" : [ "weather-controller" ]
+      }
+    },
+    "/api/v1/client-errors" : {
+      "post" : {
+        "operationId" : "report",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ClientErrorReport"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        },
+        "tags" : [ "client-error-controller" ]
       }
     },
     "/api/v1/radar/frames" : {
