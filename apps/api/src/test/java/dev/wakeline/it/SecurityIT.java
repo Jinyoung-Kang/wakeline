@@ -81,6 +81,31 @@ class SecurityIT extends IntegrationTest {
         return count("SELECT count(*) FROM audit_log WHERE action = ? AND target = ?", action, target);
     }
 
+    /** 이 브라우저의 세션이 저장된 Redis 해시 키(쿠키 값 = base64(세션 id)). */
+    static String sessionKey(Browser b) {
+        String cookie = b.cookies.get("WAKELINE_SESSION");
+        assertThat(cookie).as("session cookie").isNotNull();
+        return "wakeline:session:sessions:" + new String(java.util.Base64.getDecoder().decode(cookie), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** 세션 해시 필드를 Spring Session 과 같은 형식(JDK 직렬화)으로 덮어쓴다 — 시간이 흐른 세션을 흉내 낸다. */
+    static void setSessionField(String key, String field, Object value) {
+        byte[] bytes;
+        try (var bos = new java.io.ByteArrayOutputStream(); var out = new java.io.ObjectOutputStream(bos)) {
+            out.writeObject(value);
+            out.flush();
+            bytes = bos.toByteArray();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        ItStack.admin().execute((org.springframework.data.redis.core.RedisCallback<Object>) c ->
+                c.hashCommands().hSet(key.getBytes(java.nio.charset.StandardCharsets.UTF_8), field.getBytes(java.nio.charset.StandardCharsets.UTF_8), bytes));
+    }
+
+    static void deleteSessionField(String key, String field) {
+        ItStack.admin().opsForHash().delete(key, field);
+    }
+
     // ---------- 익명 → 404 ----------
 
     @Test
@@ -233,6 +258,47 @@ class SecurityIT extends IntegrationTest {
         assertThat(ais.status()).isEqualTo(200);
         assertThat(ItStack.admin().opsForHash().get("wakeline:settings", "ais_bboxes")).isEqualTo("-90,-180,90,180");
         assertThat(audit("SETTING_UPDATE", "ais_bboxes")).isEqualTo(1);
+    }
+
+    // ---------- 세션 절대 수명(R-54) ----------
+
+    /**
+     * 유휴 한도(8 h)는 요청마다 연장된다 — /ops 탭의 15 s 폴링이 세션을 무기한 살려 두었다. 로그인 시각부터 8 h 가 지나면 요청이 계속 와도
+     * 세션을 끝낸다(ADR-017 §3): 그 요청은 익명(404)이 되고 Redis 의 세션도 지워진다.
+     */
+    @Test
+    void opsSessionEndsAtItsAbsoluteLifetimeEvenWhenKeptBusy() {
+        users.upsert("it-abs", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-abs", PW).status()).isEqualTo(200);
+        for (int i = 0; i < 3; i++) assertThat(b.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200); // 폴링
+        String key = sessionKey(b);
+        long loggedIn = System.currentTimeMillis() - java.time.Duration.ofHours(8).plusMinutes(1).toMillis();
+        setSessionField(key, "sessionAttr:ops_auth_at", loggedIn);
+        setSessionField(key, "creationTime", loggedIn);
+
+        assertProblem(b.send("GET", "/api/v1/ops/providers", null, Map.of()), 404, "NOT_FOUND", "/api/v1/ops/providers");
+        assertThat(ItStack.admin().hasKey(key)).as("expired session removed from Redis").isFalse();
+        assertProblem(b.send("GET", "/api/v1/ops/session", null, Map.of()), 404, "NOT_FOUND", "/api/v1/ops/session");
+        // 다시 로그인하면 새 8 h
+        assertThat(b.login("it-abs", PW, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(b.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
+    }
+
+    /** 로그인 시각 속성이 없는 세션(이 규칙 전에 만들어진 세션)은 세션 생성 시각으로 판단한다. 7 h 59 분이면 아직 유효하다. */
+    @Test
+    void sessionWithoutLoginTimeFallsBackToItsCreationTime() {
+        users.upsert("it-abs2", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-abs2", PW).status()).isEqualTo(200);
+        String key = sessionKey(b);
+        deleteSessionField(key, "sessionAttr:ops_auth_at");
+        setSessionField(key, "creationTime", System.currentTimeMillis() - java.time.Duration.ofHours(8).minusMinutes(1).toMillis());
+        assertThat(b.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
+
+        setSessionField(key, "creationTime", System.currentTimeMillis() - java.time.Duration.ofHours(8).plusMinutes(1).toMillis());
+        assertProblem(b.send("GET", "/api/v1/ops/providers", null, Map.of()), 404, "NOT_FOUND", "/api/v1/ops/providers");
+        assertThat(ItStack.admin().hasKey(key)).isFalse();
     }
 
     // ---------- 잠금 ----------

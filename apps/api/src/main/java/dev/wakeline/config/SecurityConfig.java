@@ -1,6 +1,7 @@
 package dev.wakeline.config;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -9,6 +10,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.DelegatingSecurityContextRepository;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfException;
@@ -18,10 +20,13 @@ import org.springframework.session.web.http.CookieSerializer;
 import org.springframework.session.web.http.DefaultCookieSerializer;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
 
 /**
  * 보안(6.2절 api 층). 공개 경로 허용, /api/v1/ops/** 는 ROLE_OPS + 세션 + CSRF(쿠키 WAKELINE_CSRF → 헤더 X-CSRF-Token).
  * 비인가는 404(존재 여부 비공개), CSRF 실패는 403. 세션 쿠키 WAKELINE_SESSION: HttpOnly · SameSite=Strict.
+ * 운영 세션은 유휴 한도와 별개로 로그인부터 절대 수명(wakeline.ops-session-max-age, 8 h)이 지나면 끝난다({@link OpsSessionLifetimeFilter}).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Configuration
@@ -31,8 +36,11 @@ public class SecurityConfig {
     public static final String CSRF_HEADER = "X-CSRF-Token";
 
     @Bean
-    SecurityFilterChain api(HttpSecurity http, SecurityContextRepository contextRepository, CookieCsrfTokenRepository csrfRepository) throws Exception {
+    SecurityFilterChain api(HttpSecurity http, SecurityContextRepository contextRepository, CookieCsrfTokenRepository csrfRepository,
+                            @Value("${wakeline.ops-session-max-age:8h}") Duration opsSessionMaxAge) throws Exception {
         http
+                // 절대 수명(R-54): 보안 컨텍스트를 세션에서 읽기 전에 오래된 운영 세션을 끝낸다 → 익명 → 404
+                .addFilterBefore(new OpsSessionLifetimeFilter(opsSessionMaxAge, Clock.systemUTC()), SecurityContextHolderFilter.class)
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(HttpMethod.POST, "/api/v1/ops/session").permitAll()
                         .requestMatchers("/api/v1/ops/**").hasRole("OPS")

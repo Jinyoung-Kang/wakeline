@@ -2,6 +2,7 @@ package dev.wakeline.ops;
 
 import dev.wakeline.config.AppProperties;
 import dev.wakeline.config.ClientIp;
+import dev.wakeline.config.OpsSessionLifetimeFilter;
 import dev.wakeline.config.Problem;
 import dev.wakeline.config.RateLimiter;
 import io.micrometer.core.instrument.Counter;
@@ -31,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 운영자 로그인(6.3절): BCrypt 검증 → LOGIN 감사 기록 → 세션 ID 교체 → Redis 세션(TTL 8 h) → HttpOnly·SameSite=Strict 쿠키 + CSRF 쿠키.
+ * 운영자 로그인(6.3절): BCrypt 검증 → LOGIN 감사 기록 → 세션 ID 교체 → Redis 세션(유휴 8 h, 로그인부터 절대 8 h — R-54) → HttpOnly·SameSite=Strict 쿠키 + CSRF 쿠키.
  * 감사 기록이 세션보다 먼저다(API-CONC-6): 기록이 실패하면(DB 장애) 세션을 만들지 않고 503 — 감사 기록 없는 인증 세션은 생기지 않는다.
  * 로그아웃은 반대로 세션 종료가 우선이다: 감사 기록 실패와 무관하게 세션을 무효화한다(권한을 줄이는 쪽은 실패하지 않게).
  */
@@ -95,6 +96,8 @@ public class OpsSessionController {
         SecurityContextHolder.setContext(ctx);
         contextRepository.saveContext(ctx, req, res);
         req.getSession().setAttribute("ops_user_id", user.id());
+        // 절대 수명(R-54)의 기준 — 유휴 연장과 무관하게 로그인 시각부터 센다. 다시 로그인하면 새로 시작한다.
+        req.getSession().setAttribute(OpsSessionLifetimeFilter.AUTH_AT, System.currentTimeMillis());
         return ResponseEntity.ok(Map.of("username", user.username(), "role", user.role()));
     }
 
