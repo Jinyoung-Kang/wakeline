@@ -32,13 +32,12 @@ export function MapChipsView({ hex, shipsOn }: { hex: string | null; shipsOn: bo
   const ships = useServerData((d) => d.ships);
   const ais = useServerData((d) => d.ais);
   const viewport = useServerData((d) => d.viewport);
-  const aisOff = ais?.state === "disabled";
   const now = useServerNow(1000);
   const wall = useNow(1000);
   // 끊김·일시정지·수신 없음이면 서버 임대가 곧 만료된다 — 마지막 상태를 "진행 중"처럼 보이지 않는다
   const chip = isRxFresh(conn, lastRxAt, wall) ? mapDemandChip(demand, hex, now) : null;
   // 레이어를 켰는데 아직 서버에 알리기 전(mode off)이면 수신 대기로 본다
-  const ship = shipsOn ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, aisOff, coverage: ais?.coverage ?? null }) : null;
+  const ship = shipsOn ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais }) : null;
   if (!chip && !ship) return null;
   return (
     <div className="pointer-events-none absolute top-3 left-12 z-10 flex max-w-[60%] flex-col items-start gap-1" aria-live="polite">

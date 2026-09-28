@@ -1,12 +1,14 @@
 /**
  * 항공기 출발지·도착지(계약 v4 §A · ADR-016) — 순수 함수(테스트 가능).
  * - 자료: collector 가 선택한 항공기의 콜사인으로 adsbdb 에 물은 "콜사인에 등록된 정기 노선". 실제 운항 경로와 다를 수 있다 — 화면이 그렇게 적는다.
- * - 검증: 서버 값도 믿지 않는다. 형식이 틀린 공항은 null, 모르는 상태는 노선 전체를 null(표시하지 않음). 문자열은 제어문자 제거·길이 절단.
+ * - 검증: 서버 값도 믿지 않는다. 형식이 틀린 공항은 null, 모르는 상태는 노선 전체를 null(표시하지 않음).
+ *   문자열은 api(RouteInfo.text)와 같게 제어·서식 문자(\p{Cc}·\p{Cf} — 방향 바꾸기 U+202E·폭 없는 문자 포함) 제거·코드포인트 길이 절단.
+ * - disabled(계약 v4 §G A-2): fixture 모드이거나 운영자가 adsbdb 공급자를 끈 경우 — 조회 실패가 아니라 운영 설정이다.
  * - 거리: 현재(마지막 관측) 위치와 출발→(경유)→도착 대권 경로 사이 가장 가까운 거리. 구면 지구 계산값이며 추정이 아니라 계산이라고 적는다.
  *   "노선이 맞다/틀리다"를 판정해 붙이지 않는다.
  */
 
-export const ROUTE_STATUSES = ["found", "not_found", "pending", "unavailable", "no_callsign"] as const;
+export const ROUTE_STATUSES = ["found", "not_found", "pending", "unavailable", "no_callsign", "disabled"] as const;
 export type RouteStatus = (typeof ROUTE_STATUSES)[number];
 const STATUS_SET: ReadonlySet<string> = new Set(ROUTE_STATUSES);
 
@@ -39,6 +41,7 @@ export const ROUTE_STATUS_TEXT: Record<Exclude<RouteStatus, "found">, string> = 
   not_found: "이 콜사인의 등록 노선 없음",
   no_callsign: "콜사인 없음 — 노선을 찾을 수 없음",
   unavailable: "노선 조회 실패",
+  disabled: "노선 조회 꺼짐(운영 설정)",
 };
 export const ROUTE_CAVEAT = "콜사인에 등록된 정기 노선입니다 — 실제 운항 경로와 다를 수 있습니다";
 /** 출처 표기: "adsbdb.com" + 뒤 문구(카드는 앞부분을 링크로) */
@@ -48,13 +51,16 @@ export const ROUTE_SOURCE_URL = "https://www.adsbdb.com";
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+/** 제어(Cc)·서식(Cf) 문자 — 방향 바꾸기(U+202A–202E·2066–2069)·폭 없는 문자(U+200B–200F)·BOM 포함 */
+const CONTROL_FORMAT_RE = /[\p{Cc}\p{Cf}]/gu;
 
-/** 문자열: 제어문자 제거·앞뒤 공백 제거·길이 절단. 빈 값·문자열이 아니면 null */
+/** 문자열: 제어·서식 문자 제거 → 앞뒤 공백 제거 → max 글자(코드포인트)로 절단(api RouteInfo.text 와 같은 규칙). 빈 값·문자열이 아니면 null */
 function text(v: unknown, max: number): string | null {
   if (typeof v !== "string") return null;
-  const t = v.replace(CONTROL_RE, "").trim();
-  return t.length ? t.slice(0, max) : null;
+  let t = v.replace(CONTROL_FORMAT_RE, "").trim();
+  const cps = Array.from(t);
+  if (cps.length > max) t = cps.slice(0, max).join("").trim();
+  return t.length ? t : null;
 }
 function code(v: unknown, re: RegExp): string | null {
   return typeof v === "string" && re.test(v) ? v : null;

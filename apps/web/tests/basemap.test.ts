@@ -6,11 +6,12 @@ import { readFileSync } from "node:fs";
 import { createPropertyExpression, latest, validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 import {
-  applyBasemap, BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST, BASEMAP_HALO, BASEMAP_LABEL, BASEMAP_LAND, BASEMAP_ROAD, BASEMAP_WATER,
+  applyBasemap, BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST, BASEMAP_HALO, BASEMAP_LABEL, BASEMAP_LAND, BASEMAP_LAND_DETAIL, BASEMAP_ROAD, BASEMAP_WATER,
   BASEMAP_WATER_LABEL, basemapOverrides, BOUNDARY_COLOR_EXPR, contrastRatio, relativeLuminance, type StyleLayerLike,
 } from "@/lib/basemap";
 import { ALT_RAMP, ALT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR } from "@/lib/format";
 import { AIRCRAFT_COLOR_EXPR, COVERAGE_PAINT } from "@/lib/maplayers";
+import { SHIP_CATEGORIES, SHIP_CATEGORY_COLOR } from "@/lib/ships";
 
 function evalExpr(expr: unknown, spec: string, properties: Record<string, unknown>, zoom = 8): unknown {
   const [group, prop] = spec.split(".");
@@ -32,6 +33,8 @@ function over(base: string, top: string, alpha: number): string {
 }
 
 const GROUNDS: [string, string][] = [["land", BASEMAP_LAND], ["water", BASEMAP_WATER]];
+/** 기호(항공기·SIGMET·선박)가 놓이는 모든 바탕 — 건물·공항 구역 채움 포함 */
+const SYMBOL_GROUNDS: [string, string][] = [...GROUNDS, ["building/aeroway", BASEMAP_LAND_DETAIL]];
 
 describe("WCAG contrast helpers", () => {
   it("match the WCAG 2.x definition", () => {
@@ -85,12 +88,24 @@ describe("basemap colours (contract v4 §E)", () => {
       colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, { selected: true })),
       colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, {})),
     ];
-    for (const c of colours) for (const [name, ground] of GROUNDS) expect(contrastRatio(c, ground), `${c} on ${name}`).toBeGreaterThanOrEqual(3);
+    for (const c of colours) for (const [name, ground] of SYMBOL_GROUNDS) expect(contrastRatio(c, ground), `${c} on ${name}`).toBeGreaterThanOrEqual(3);
   });
   it("every SIGMET hazard line colour stays ≥ 3:1 on land and water", () => {
     for (const c of [...Object.values(HAZARD_COLORS), HAZARD_DEFAULT_COLOR]) {
-      for (const [name, ground] of GROUNDS) expect(contrastRatio(c, ground), `${c} on ${name}`).toBeGreaterThanOrEqual(3);
+      for (const [name, ground] of SYMBOL_GROUNDS) expect(contrastRatio(c, ground), `${c} on ${name}`).toBeGreaterThanOrEqual(3);
     }
+  });
+  it("every ship category colour (icons, grid circles, legend — 'unknown' included) stays ≥ 3:1 on land and water", () => {
+    for (const cat of SHIP_CATEGORIES) {
+      const c = SHIP_CATEGORY_COLOR[cat];
+      for (const [name, ground] of SYMBOL_GROUNDS) expect(contrastRatio(c, ground), `${cat} ${c} on ${name}`).toBeGreaterThanOrEqual(3);
+    }
+    expect(SHIP_CATEGORY_COLOR.unknown).toBe(ALT_UNKNOWN_COLOR); // 항공기 "고도 모름"과 같은 회색
+  });
+  it("building and airport-area fills are a shade of land: never darker than land, still far from the water", () => {
+    expect(relativeLuminance(BASEMAP_LAND_DETAIL)).toBeGreaterThanOrEqual(relativeLuminance(BASEMAP_LAND));
+    expect(contrastRatio(BASEMAP_LAND_DETAIL, BASEMAP_LAND)).toBeLessThan(1.1); // 은은하게
+    expect(contrastRatio(BASEMAP_LAND_DETAIL, BASEMAP_WATER)).toBeGreaterThanOrEqual(1.5);
   });
   it("the RainViewer 'outside coverage' veil stays as distinct as it was on the old basemap (≥ 1.4:1 on land and water)", () => {
     const veil = (min: number) => hex(min * 255, min * 255, min * 255); // 검정(커버리지 밖) → brightness-min 회색
@@ -112,7 +127,8 @@ const SYNTHETIC_LAYERS = [
   { id: "landuse_residential", type: "fill", source: "openmaptiles", "source-layer": "landuse", paint: { "fill-color": "#0e0e0e" } },
   { id: "park", type: "fill", source: "openmaptiles", "source-layer": "park", paint: { "fill-color": "#101010" } },
   { id: "waterway", type: "line", source: "openmaptiles", "source-layer": "waterway", paint: { "line-color": "rgb(27,27,29)" } },
-  { id: "building", type: "fill", source: "openmaptiles", "source-layer": "building", paint: { "fill-color": "#0a0a0a" } },
+  { id: "building", type: "fill", source: "openmaptiles", "source-layer": "building", paint: { "fill-color": "#0a0a0a", "fill-outline-color": "#050505" } },
+  { id: "aeroway_area", type: "fill", source: "openmaptiles", "source-layer": "aeroway", paint: { "fill-color": "rgb(8,8,8)", "fill-opacity": 0.9 } },
   { id: "highway_major", type: "line", source: "openmaptiles", "source-layer": "transportation", paint: { "line-color": "#222" } },
   { id: "boundary_state", type: "line", source: "openmaptiles", "source-layer": "boundary", paint: { "line-color": "#333", "line-opacity": 0.5 } },
   { id: "boundary_country", type: "line", source: "openmaptiles", "source-layer": "boundary", paint: { "line-color": "#444" } },
@@ -126,11 +142,24 @@ const SYNTHETIC_LAYERS = [
 describe("basemap overrides on the style (by layer type + OpenMapTiles source-layer)", () => {
   const overrides = basemapOverrides(SYNTHETIC_LAYERS as unknown as StyleLayerLike[]);
   const touched = new Set(overrides.map((o) => o.id));
-  it("touches only the known basemap layers; buildings, road labels and our own layers are left alone", () => {
+  it("touches only the known basemap layers; road labels and our own layers are left alone", () => {
     expect([...touched].sort()).toEqual([
-      "background", "boundary_country", "boundary_state", "highway_major", "landcover_ice", "landuse_residential", "park", "place_city", "water", "water_name", "waterway",
+      "aeroway_area", "background", "boundary_country", "boundary_state", "building", "highway_major", "landcover_ice", "landuse_residential", "park", "place_city",
+      "water", "water_name", "waterway",
     ]);
-    for (const id of ["building", "road_label", "sigmet-fill", "airport-label"]) expect(touched.has(id), id).toBe(false);
+    for (const id of ["road_label", "sigmet-fill", "airport-label"]) expect(touched.has(id), id).toBe(false);
+  });
+  it("no opaque non-water basemap fill is left darker than land (the old near-black building/aeroway fills looked like water)", () => {
+    const fills = SYNTHETIC_LAYERS.filter((l) => l.type === "fill" && "source-layer" in l && l["source-layer"] !== "water");
+    expect(fills.map((l) => l.id)).toContain("building");
+    expect(fills.map((l) => l.id)).toContain("aeroway_area");
+    for (const l of fills) {
+      const c = overrides.find((o) => o.id === l.id && o.prop === "fill-color")?.value;
+      expect(typeof c, `${l.id} repainted`).toBe("string");
+      expect(relativeLuminance(c as string), l.id).toBeGreaterThanOrEqual(relativeLuminance(BASEMAP_LAND));
+      const outline = overrides.find((o) => o.id === l.id && o.prop === "fill-outline-color")?.value;
+      if (outline !== undefined) expect(relativeLuminance(outline as string), `${l.id} outline`).toBeGreaterThanOrEqual(relativeLuminance(BASEMAP_LAND));
+    }
   });
   it("missing layers are skipped (an empty or partial style gives only what exists)", () => {
     expect(basemapOverrides([])).toEqual([]);
@@ -144,6 +173,7 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
     expect(v("water", "fill-outline-color")).toBe(BASEMAP_COAST);
     expect(v("water", "fill-antialias")).toBe(true);
     for (const id of ["landcover_ice", "landuse_residential", "park"]) expect(v(id, "fill-color")).toBe(BASEMAP_LAND);
+    for (const id of ["building", "aeroway_area"]) expect(v(id, "fill-color")).toBe(BASEMAP_LAND_DETAIL);
     expect(v("waterway", "line-color")).toBe(BASEMAP_WATER);
     expect(v("highway_major", "line-color")).toBe(BASEMAP_ROAD);
     expect(v("place_city", "text-color")).toBe(BASEMAP_LABEL);

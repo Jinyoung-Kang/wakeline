@@ -6,10 +6,12 @@ import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-sp
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
-  AMBIGUOUS_TEXT, aisBadge, aisGapBadge, bboxTouchesCoverage, fmtDestPlace, mergeStatusGaps, NO_ORIGIN_TEXT, normalizeDestination, parseAisStatus,
-  parseDestinationInfo, pickDestinationInfo, shipDestinationLines, shipOriginText, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE, SHIPS_ZERO_TEXT, shipsChip,
-  shipsGapSuffix, statusOpenGapFor, type AisStatus, type ShipsChipInput, type ShipTrack,
+  AMBIGUOUS_TEXT, aisBadge, aisGapBadge, bboxTouchesCoverage, fmtDestPlace, MAX_SHARD_OBS, mergeStatusGaps, NO_ORIGIN_TEXT, normalizeDestination, parseAisStatus,
+  parseDestinationInfo, pickDestinationInfo, shipDestinationLines, shipOriginText, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE, SHIPS_ZERO_AIS_DOWN_TEXT,
+  SHIPS_ZERO_AIS_UNKNOWN_TEXT, SHIPS_ZERO_RANGE_UNKNOWN_TEXT, SHIPS_ZERO_TEXT, shipsChip, shipsGapSuffix, statusOpenGapFor, zeroShipsReason, type AisStatus,
+  type ShipsChipInput, type ShipTrack,
 } from "@/lib/ships";
 import { addShipLayers, SHIP_GRID_RADIUS_EXPR, SHIP_GRID_STYLE } from "@/lib/ship-layers";
 import { shipGridTip } from "@/lib/tooltip";
@@ -116,7 +118,12 @@ describe("ship card rows 출발지(보고) / 목적지(보고) (server render)",
 // ---------------------------------------------------------------- §C 표시 규칙·칩·격자 원
 
 const view = (over: Partial<ShipsChipInput> = {}): ShipsChipInput => ({ mode: "points", count: 12, total: 12, cell_deg: null, capped: false, ...over });
-const ctx = (over: Partial<Parameters<typeof shipsChip>[1]> = {}) => ({ zoom: 8, bbox: [128, 34, 131, 36] as [number, number, number, number], aisOff: false, coverage: null, ...over });
+/** 운영 권장 두 구역(아메리카 · 아시아·태평양) — 0–45°E 는 구독하지 않는다 */
+const TWO_ZONES = [[-90, -180, 90, 0], [-90, 45, 90, 180]];
+/** 합성 AIS 상태(status.sources.ais) */
+const aisOf = (ais: Record<string, unknown>) => parseAisStatus({ sources: { ais } }, 0);
+const AIS_UP = aisOf({ connected: true, state: "receiving", coverage: TWO_ZONES });
+const ctx = (over: Partial<Parameters<typeof shipsChip>[1]> = {}) => ({ zoom: 8, bbox: [128, 34, 131, 36] as [number, number, number, number], ais: AIS_UP, ...over });
 
 describe("ships chip wording follows the contract v4 §C rule", () => {
   it("the rule constants are the contract's", () => {
@@ -126,25 +133,72 @@ describe("ships chip wording follows the contract v4 §C rule", () => {
     expect(shipsChip(view({ count: 1234 }), ctx())!.text).toBe("선박 1,234척 · 화면 안 · AIS");
     expect(shipsChip(view({ count: 40 }), ctx({ zoom: 5 }))!.text).toBe("선박 40척 · 화면 안 · AIS"); // 줌 4–6 에서도 개별
   });
-  it("zero ships: the contract sentence; outside the operational coverage says so instead; AIS off says so", () => {
+  it("zero ships while AIS is connected: the contract sentence; outside the operational coverage says so instead; AIS off says so", () => {
     expect(SHIPS_ZERO_TEXT).toBe("화면 안 선박 0척 — aisstream 은 육상 수신국 기반이라 수신국이 없는 해역은 비어 있습니다");
     expect(shipsChip(view({ count: 0 }), ctx())!.text).toBe(SHIPS_ZERO_TEXT);
-    expect(shipsChip(view({ mode: "grid", count: 0, total: 0, cell_deg: 5 }), ctx({ zoom: 2 }))!.text).toBe(SHIPS_ZERO_TEXT);
-    const coverage = parseAisStatus({ sources: { ais: { coverage: [[-90, -180, 90, 0], [-90, 45, 90, 180]] } } }, 0)!.coverage;
-    expect(shipsChip(view({ count: 0 }), ctx({ bbox: [10, 40, 20, 50], coverage }))!.text).toBe(SHIPS_OUT_OF_COVERAGE_TEXT); // 0–45°E
-    expect(shipsChip(view({ count: 0 }), ctx({ bbox: [40, 10, 50, 20], coverage }))!.text).toBe(SHIPS_ZERO_TEXT); // 45°E 에 걸침
-    expect(shipsChip(view({ count: 0 }), ctx({ aisOff: true }))!.text).toBe("선박 없음 · AIS 꺼짐(키 없음)");
+    expect(shipsChip(view({ mode: "grid", count: 0, total: 0, cell_deg: 5 }), ctx({ zoom: 2, bbox: [-180, -80, 180, 80] }))!.text).toBe(SHIPS_ZERO_TEXT);
+    expect(shipsChip(view({ count: 0 }), ctx({ bbox: [10, 40, 20, 50] }))!.text).toBe(SHIPS_OUT_OF_COVERAGE_TEXT); // 0–45°E
+    expect(shipsChip(view({ count: 0 }), ctx({ bbox: [40, 10, 50, 20] }))!.text).toBe(SHIPS_ZERO_TEXT); // 45°E 에 걸침
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: aisOf({ state: "disabled", connected: false }) }))!.text).toBe("선박 없음 · AIS 꺼짐(키 없음)");
+    expect(shipsChip(view({ count: 0 }), ctx())!.warn).toBe(false);
+  });
+  it("zero ships while AIS is not connected or its state is unknown: says only that — never blames receiver stations (contract v4 §G C-1)", () => {
+    expect(SHIPS_ZERO_AIS_DOWN_TEXT).toBe("화면 안 선박 0척 — AIS 연결 안 됨");
+    expect(SHIPS_ZERO_AIS_UNKNOWN_TEXT).toBe("화면 안 선박 0척 — AIS 연결 상태 모름");
+    const zero = (ais: AisStatus | null, over: Partial<Parameters<typeof shipsChip>[1]> = {}) => shipsChip(view({ count: 0 }), ctx({ ais, ...over }))!;
+    // 끊김(재연결 중·백오프·시작 중·멈춤) — 수집기가 connected:false 를 보고
+    for (const state of ["connecting", "backoff", "starting", "stopped"]) {
+      const c = zero(aisOf({ connected: false, state, coverage: TWO_ZONES }));
+      expect(c.text, state).toBe(SHIPS_ZERO_AIS_DOWN_TEXT);
+      expect(c.title, state).not.toContain("수신국");
+    }
+    // heartbeat 가 오래됨: api 는 connected 를 모름(null)으로, coverage·shards 는 빼고 보낸다
+    expect(zero(aisOf({ connected: null, heartbeat_stale: true })).text).toBe(SHIPS_ZERO_AIS_UNKNOWN_TEXT);
+    // ais 수집기 상태가 아예 없음
+    expect(zero(null).text).toBe(SHIPS_ZERO_AIS_UNKNOWN_TEXT);
+    expect(zero(null).title).not.toContain("수신국");
+    // 연결은 됐지만 수신 범위를 모름(옛 api) · 화면을 모름 — 수신국 탓인지 말할 수 없다
+    expect(zero(aisOf({ connected: true, state: "receiving" })).text).toBe(SHIPS_ZERO_RANGE_UNKNOWN_TEXT);
+    expect(zero(AIS_UP, { bbox: null }).text).toBe(SHIPS_ZERO_RANGE_UNKNOWN_TEXT);
+  });
+  it("zero ships with AIS shards: the receiver sentence only when a connected shard covers the view", () => {
+    const sh = (coverage: number[][] | null, connected: boolean | null) => ({ coverage, state: connected ? "receiving" : "backoff", connected, gap_open_since: null });
+    // 아메리카 연결 · 아시아 끊김: 합계 connected=false(모든 구역 연결이 아님)
+    const asiaDown = aisOf({ connected: false, coverage: TWO_ZONES, shards: [sh([TWO_ZONES[0]], true), sh([TWO_ZONES[1]], false)] });
+    const KOREA: [number, number, number, number] = [128, 34, 131, 36];
+    const GULF_OF_MEXICO: [number, number, number, number] = [-95, 20, -85, 28];
+    expect(zeroShipsReason(asiaDown, KOREA)).toBe("down");
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: asiaDown, bbox: KOREA }))!.text).toBe(SHIPS_ZERO_AIS_DOWN_TEXT);
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: asiaDown, bbox: GULF_OF_MEXICO }))!.text).toBe(SHIPS_ZERO_TEXT);
+    // 구역 범위를 하나라도 모르면 구역으로 가르지 않는다 — 한 구역이라도 연결이면 연결
+    const unknownScope = aisOf({ connected: false, coverage: TWO_ZONES, shards: [sh(null, true), sh([TWO_ZONES[1]], false)] });
+    expect(zeroShipsReason(unknownScope, KOREA)).toBe("receivers");
+    // 모든 구역 연결 모름
+    const allUnknown = aisOf({ connected: null, coverage: TWO_ZONES, shards: [sh([TWO_ZONES[0]], null), sh([TWO_ZONES[1]], null)] });
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: allUnknown }))!.text).toBe(SHIPS_ZERO_AIS_UNKNOWN_TEXT);
   });
   it("grid: says it is aggregated and why, by zoom band — never claims '1,500 exceeded' (hysteresis keeps grid down to 1,200)", () => {
-    const g = (zoom: number | null, over: Partial<ShipsChipInput> = {}) => shipsChip(view({ mode: "grid", count: 3, total: 1300, cell_deg: 2, ...over }), ctx({ zoom }))!;
+    // api(ShipFanout)는 수 기준으로 격자로 바꾼 모든 경우에 capped:true 를 보낸다 — 줌 4–6 격자 포함
+    const g = (zoom: number | null, over: Partial<ShipsChipInput> = {}) => shipsChip(view({ mode: "grid", count: 3, total: 1300, cell_deg: 2, capped: true, ...over }), ctx({ zoom }))!;
     expect(g(3).text).toBe("선박 1.3k척 · 2° 격자 3칸으로 묶음 · 줌 4 이상에서 개별 표시");
     expect(g(5).text).toBe("선박 1.3k척 · 2° 격자 3칸으로 묶음 · 줌 4–6 은 1,500척 넘으면 격자 · 1,200척 이하에서 개별");
     expect(g(5).text).not.toContain("초과");
-    const capped = g(9, { total: 6200, cell_deg: 0.5, capped: true });
+    const capped = g(9, { total: 6200, cell_deg: 0.5 });
     expect(capped.text).toBe("선박 6.2k척 · 0.5° 격자 3칸으로 묶음 · 화면 안 5,000척 초과 · 전송 상한");
     expect(capped.warn).toBe(true);
     expect(g(null).text).toContain("확대하면 개별 표시");
     expect(g(5).title).toContain("1,200척 이하");
+  });
+  it("warn tone only for the zoom ≥ 7 transfer cap — the zoom 4–6 band grid (capped:true from the api) is normal (contract v4 §G C-1)", () => {
+    const g = (zoom: number | null, capped: boolean, total = 1600) => shipsChip(view({ mode: "grid", count: 3, total, cell_deg: 2, capped }), ctx({ zoom }))!;
+    for (const z of [4, 5, 6]) {
+      expect(g(z, true).warn, `zoom ${z}`).toBe(false);
+      expect(g(z, true).text, `zoom ${z}`).not.toContain("전송 상한");
+    }
+    expect(g(2, true).warn).toBe(false);
+    expect(g(null, true).warn).toBe(false); // 줌을 모르면 상한이라고 말하지 않는다
+    expect(g(7, true, 5200).warn).toBe(true);
+    expect(g(7, false, 5200).warn).toBe(false);
   });
   it("waiting and off", () => {
     expect(shipsChip(view({ mode: "waiting" }), ctx())!.text).toBe("선박 수신 대기");
@@ -162,18 +216,30 @@ describe("ships chip / list / legend / tooltip (server render)", () => {
   beforeEach(() => resetData());
   afterEach(() => resetData());
   it("map chip uses the last subscribed viewport for the rule and the zero-ship reason", () => {
-    setData({ ships: { mode: "grid", version: 2, count: 3, total: 1300, ts: null, cell_deg: 2, capped: false, grid: [] }, viewport: { bbox: [120, 30, 135, 40], zoom: 5 } });
+    setData({ ships: { mode: "grid", version: 2, count: 3, total: 1600, ts: null, cell_deg: 2, capped: true, grid: [] }, viewport: { bbox: [120, 30, 135, 40], zoom: 5 }, ais: AIS_UP });
     const chip = () => renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: true }));
     expect(chip()).toContain("줌 4–6 은 1,500척 넘으면 격자 · 1,200척 이하에서 개별");
+    expect(chip()).toContain('class="badge normal-case! " data-testid="ships-chip"'); // 줌 5 격자는 경고 색이 아니다
     setData({ ships: { mode: "points", version: 3, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] } });
     expect(chip()).toContain(SHIPS_ZERO_TEXT);
+    setData({ ais: aisOf({ connected: false, state: "backoff", coverage: TWO_ZONES }) });
+    expect(chip()).toContain(SHIPS_ZERO_AIS_DOWN_TEXT);
+    expect(chip()).not.toContain("수신국");
+    setData({ ais: null });
+    expect(chip()).toContain(SHIPS_ZERO_AIS_UNKNOWN_TEXT);
     // 레이어를 켰는데 서버에 아직 알리기 전(off) — 수신 대기
     setData({ ships: { mode: "off", version: 4, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] } });
     expect(chip()).toContain("선박 수신 대기");
   });
   it("ship list: zero ships in view gives the same reason; grid explains the rule", () => {
-    setData({ ships: { mode: "points", version: 1, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] }, viewport: { bbox: [120, 30, 135, 40], zoom: 8 } });
-    expect(renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true }))).toContain(SHIPS_ZERO_TEXT);
+    setData({ ships: { mode: "points", version: 1, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] }, viewport: { bbox: [120, 30, 135, 40], zoom: 8 }, ais: AIS_UP });
+    const list = () => renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true }));
+    expect(list()).toContain(SHIPS_ZERO_TEXT);
+    setData({ ais: aisOf({ connected: false, state: "connecting", coverage: TWO_ZONES }) });
+    expect(list()).toContain(SHIPS_ZERO_AIS_DOWN_TEXT);
+    expect(list()).not.toContain("수신국");
+    setData({ ais: null });
+    expect(list()).toContain(SHIPS_ZERO_AIS_UNKNOWN_TEXT);
     setData({ ships: { mode: "grid", version: 2, count: 3, total: 40, ts: null, cell_deg: 5, capped: false, grid: [] } });
     const html = renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true }));
     expect(html).toContain("줌 4–6 은 1,500척 이하");
@@ -257,6 +323,24 @@ describe("AIS shards (contract v4 §D)", () => {
     expect(b.title).toContain("02:50 UTC");
     expect(shipsGapSuffix(s)).toBe(" · AIS 공백 1/2 구역(그 구역 위치 멈춤)");
   });
+  it("gap badge tooltip lists the other shards' reported connection, never 'receiving' by assumption", () => {
+    // 아메리카는 공백 중, 아시아는 끊겼지만 아직 공백 기록 전(backoff)
+    const s = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:50:00Z", connected: false }), shard(ASIA, { connected: false, state: "backoff" })],
+      { gap_open_since: "2026-09-28T02:50:00Z", connected: false });
+    const b = aisGapBadge(s, NOW)!;
+    expect(b.text).toBe("AIS 공백 1/2 구역");
+    expect(b.title).not.toContain("수신 중");
+    expect(b.title).toContain("구역 2 -90,45,90,180 — 공백 없음 · 끊김(재연결 중)");
+    expect(b.title).toContain("구역 1 -90,-180,90,0 — 공백 2026-09-28T02:50:00Z 부터(02:50 UTC)");
+    // 같은 순간 연결 배지도 끊김이라 말한다 — 두 배지가 서로 어긋나지 않는다
+    expect(aisBadge(s, NOW, true)!.text).toBe("AIS 끊김");
+    // 연결을 모르는 구역은 모른다고
+    const unk = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:50:00Z", connected: false }), shard(ASIA, { connected: null, state: null })]);
+    expect(aisGapBadge(unk, NOW)!.title).toContain("구역 2 -90,45,90,180 — 공백 없음 · 연결 모름");
+    // 연결된 구역은 연결이라고
+    const ok = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:50:00Z", connected: false }), shard(ASIA)]);
+    expect(aisGapBadge(ok, NOW)!.title).toMatch(/구역 2 -90,45,90,180 — 공백 없음 · 연결$/m);
+  });
   it("all shards in a gap, or a single connection: the existing wording", () => {
     const all = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:40:00Z" }), shard(ASIA, { gap_open_since: "2026-09-28T02:50:00Z" })], { gap_open_since: "2026-09-28T02:40:00Z" });
     expect(aisGapBadge(all, NOW)!.text).toBe("AIS 공백 02:40– UTC · 진행 중");
@@ -289,9 +373,12 @@ describe("live ship track: a shard's gap only breaks lines of ships inside that 
   const ASIA_SHIP = { lat: 35, lon: 129 };
   const AMERICA_SHIP = { lat: 30, lon: -120 };
   const START = "2026-09-28T02:50:00Z";
+  const END = "2026-09-28T02:55:00Z";
+  /** status 에 서버 시각(status.server_time)을 붙인다 — 구역 관측 시각 */
+  const at = (serverIso: string, st: AisStatus): AisStatus => ({ ...st, server_ms: Date.parse(serverIso) });
   const openAmericas = (over: Record<string, unknown> = {}) =>
     status([shard(AMERICAS, { gap_open_since: START, connected: false }), shard(ASIA)], { gap_open_since: START, ...over }) as AisStatus;
-  const closed = (startIso = START) => status([shard(AMERICAS), shard(ASIA)], { gap_open_since: null, last_gap: { started_at: startIso, ended_at: "2026-09-28T02:55:00Z", reason: null } }) as AisStatus;
+  const closed = (startIso = START) => status([shard(AMERICAS), shard(ASIA)], { gap_open_since: null, last_gap: { started_at: startIso, ended_at: END, reason: null } }) as AisStatus;
   const since = NOW - 6 * 3600_000;
 
   it("the open gap of the shard that covers the ship; none for a ship in another shard; unknown position or scope → aggregate", () => {
@@ -301,11 +388,67 @@ describe("live ship track: a shard's gap only breaks lines of ships inside that 
     const noScope = status([shard(null, { gap_open_since: START }), shard(ASIA)], { gap_open_since: START });
     expect(statusOpenGapFor(noScope, ASIA_SHIP)).toEqual({ openSince: START, scoped: false });
   });
-  it("a ship in Asia gets neither the Americas placeholder nor its closed gap", () => {
+  it("status.server_time is the observation time of the shard states", () => {
+    const st = parseAisStatus({ server_time: "2026-09-28T02:52:00Z", sources: { ais: { connected: true, shards: [shard(AMERICAS), shard(ASIA)] } } }, NOW)!;
+    expect(st.server_ms).toBe(Date.parse("2026-09-28T02:52:00Z"));
+    expect(parseAisStatus({ server_time: "later", sources: { ais: { connected: true } } }, NOW)!.server_ms).toBeNull();
+    expect(status(null).server_ms).toBeNull();
+  });
+  it("a ship in Asia gets neither the Americas placeholder nor its closed gap (its shard was seen connected during the gap)", () => {
     const tr: ShipTrack = { segs: [], gaps: [] };
-    expect(mergeStatusGaps(tr, openAmericas(), since, ASIA_SHIP)).toBe(false);
+    expect(mergeStatusGaps(tr, at("2026-09-28T02:52:00Z", openAmericas()), since, ASIA_SHIP)).toBe(false);
+    expect(mergeStatusGaps(tr, at("2026-09-28T02:55:05Z", closed()), since, ASIA_SHIP)).toBe(false);
+    expect(tr.gaps).toEqual([]);
+  });
+  it("after a reconnect or a hidden tab spanning the whole gap, the ship's own-shard gap is kept (not drawn as a solid, known segment)", () => {
+    // 열린 공백을 한 번도 보지 못했고, 공백 동안 이 선박 구역이 연결돼 있었다는 관측도 없다 — 이 선박의 공백일 수 있다
+    const tr: ShipTrack = { segs: [], gaps: [] };
+    expect(mergeStatusGaps(tr, closed(), 0, ASIA_SHIP)).toBe(true);
+    expect(tr.gaps).toEqual([{ started_at: START, ended_at: END, reason: null }]);
+    // 이전 관측이 공백 전·후뿐이어도 같다(공백 중 관측이 아니다)
+    const tr2: ShipTrack = { segs: [], gaps: [] };
+    mergeStatusGaps(tr2, at("2026-09-28T02:49:00Z", status([shard(AMERICAS), shard(ASIA)])), since, AMERICA_SHIP);
+    expect(mergeStatusGaps(tr2, at("2026-09-28T02:56:00Z", closed()), since, AMERICA_SHIP)).toBe(true);
+    expect(tr2.gaps).toHaveLength(1);
+    // 공백 시작 직후(30 s 안)의 "연결" 관측은 heartbeat 가 늦었을 수 있어 근거로 쓰지 않는다
+    const tr3: ShipTrack = { segs: [], gaps: [] };
+    mergeStatusGaps(tr3, at("2026-09-28T02:50:10Z", status([shard(AMERICAS), shard(ASIA)])), since, AMERICA_SHIP);
+    expect(mergeStatusGaps(tr3, closed(), since, AMERICA_SHIP)).toBe(true);
+  });
+  it("the ship's shard seen connected during the gap (even without the open placeholder) means the gap was another shard's", () => {
+    // 아시아 구역 공백 중(자리표시는 아시아 선박에만) 아메리카 선박 구역이 연결·공백 없음으로 관측됨
+    const tr: ShipTrack = { segs: [], gaps: [] };
+    const asiaOpen = status([shard(AMERICAS), shard(ASIA, { gap_open_since: START, connected: false })], { gap_open_since: START, connected: false });
+    expect(mergeStatusGaps(tr, at("2026-09-28T02:53:00Z", asiaOpen), since, AMERICA_SHIP)).toBe(false);
+    expect(tr.shardOkAt).toEqual([Date.parse("2026-09-28T02:53:00Z")]);
+    expect(mergeStatusGaps(tr, closed(), since, AMERICA_SHIP)).toBe(false);
+    expect(tr.gaps).toEqual([]);
+    // 관측은 구역이 연결·공백 없음일 때만 적는다(모름·끊김은 근거가 아니다)
+    const tr2: ShipTrack = { segs: [], gaps: [] };
+    mergeStatusGaps(tr2, at("2026-09-28T02:53:00Z", status([shard(AMERICAS, { connected: null }), shard(ASIA)])), since, AMERICA_SHIP);
+    expect(tr2.shardOkAt ?? []).toEqual([]);
+    expect(mergeStatusGaps(tr2, closed(), since, AMERICA_SHIP)).toBe(true);
+  });
+  it("a gap that had already closed when the REST track was fetched is left to the REST answer", () => {
+    const tr: ShipTrack = { segs: [], gaps: [], restToMs: Date.parse("2026-09-28T02:56:00Z") };
     expect(mergeStatusGaps(tr, closed(), since, ASIA_SHIP)).toBe(false);
     expect(tr.gaps).toEqual([]);
+    const later: ShipTrack = { segs: [], gaps: [], restToMs: Date.parse("2026-09-28T02:54:00Z") };
+    expect(mergeStatusGaps(later, closed(), since, ASIA_SHIP)).toBe(true); // 받은 뒤에 끝난 공백
+    // 대시보드는 REST 창 끝을 항적에 적는다
+    const src = readFileSync(new URL("../components/MapView.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/track\.restToMs = to;\s*\n\s*mergeStatusGaps\(track, getData\(\)\.ais/);
+  });
+  it("observations are kept once per status, inside the track window, and capped", () => {
+    const tr: ShipTrack = { segs: [], gaps: [] };
+    const ok = status([shard(AMERICAS), shard(ASIA)]);
+    mergeStatusGaps(tr, at("2026-09-28T02:53:00Z", ok), since, ASIA_SHIP);
+    mergeStatusGaps(tr, at("2026-09-28T02:53:00Z", ok), since, ASIA_SHIP); // ship_selected 재전송 — 같은 상태
+    expect(tr.shardOkAt).toHaveLength(1);
+    mergeStatusGaps(tr, at("2026-09-28T02:54:00Z", ok), Date.parse("2026-09-28T02:53:30Z"), ASIA_SHIP);
+    expect(tr.shardOkAt).toEqual([Date.parse("2026-09-28T02:54:00Z")]); // 창 밖 관측은 버린다
+    for (let i = 1; i <= MAX_SHARD_OBS + 10; i++) mergeStatusGaps(tr, at(new Date(Date.parse("2026-09-28T02:54:00Z") + i * 1000).toISOString(), ok), since, ASIA_SHIP);
+    expect(tr.shardOkAt).toHaveLength(MAX_SHARD_OBS);
   });
   it("a ship in the Americas: placeholder, then the closed gap replaces it (start within 1 s)", () => {
     const tr: ShipTrack = { segs: [], gaps: [] };

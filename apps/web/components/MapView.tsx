@@ -508,6 +508,8 @@ export function MapView() {
     const finish = (track: ShipTrack, error: string | null) => {
       const ref = shipTrack.current;
       if (cancelled || ref.mmsi !== selectedShip) return;
+      // 이 시각 전에 끝난 공백은 REST 응답(구역별로 끊은 segments · gaps)이 이미 말했다 — 상태의 끝난 공백(구역 없음)으로 다시 가르지 않는다(계약 v4 §D)
+      track.restToMs = to;
       mergeStatusGaps(track, getData().ais, ref.sinceMs, shipPos(selectedShip));
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
       shipTrack.current = { ...ref, track, pending: [], loaded: true };

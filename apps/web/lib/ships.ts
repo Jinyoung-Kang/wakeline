@@ -52,10 +52,13 @@ export const SHIP_CATEGORY_CODES: Record<ShipCategory, string> = {
   cargo: "70–79", tanker: "80–89", passenger: "60–69", fishing: "30", tug: "31·32·52", pleasure: "36·37", hsc: "40–49",
   special: "50·51·53·54·55·58 (도선·수색구조·항만·방제·법집행·의료)", military: "35", other: "그 밖의 코드", unknown: "0 또는 미보고",
 };
-/** 아이콘·격자·범례가 같은 색표를 쓴다. 미상은 어두운 회색(항공기 "고도 모름" 회색과 같은 계열). */
+/**
+ * 아이콘·격자·범례가 같은 색표를 쓴다. 미상은 회색(항공기 "고도 모름" 회색 ALT_UNKNOWN_COLOR 와 같은 값).
+ * 모든 색이 배경지도 육지·바다에서 ≥ 3:1(WCAG 1.4.11, tests/basemap.test.ts) — 계약 v4 §E.
+ */
 export const SHIP_CATEGORY_COLOR: Record<ShipCategory, string> = {
   cargo: "#5cb85c", tanker: "#e5534b", passenger: "#4f8ff7", fishing: "#f0a35e", tug: "#2ec4b6", pleasure: "#d16ad8",
-  hsc: "#f2d64b", special: "#8f9bff", military: "#9aa55a", other: "#c7ccd4", unknown: "#6b737e",
+  hsc: "#f2d64b", special: "#8f9bff", military: "#9aa55a", other: "#c7ccd4", unknown: "#7a828d",
 };
 export const SHIP_SELECTED_COLOR = "#ffffff";
 
@@ -464,6 +467,8 @@ export interface AisStatus {
   coverage: AisBox[] | null;
   /** 구역별 연결(계약 v4 §D, status.sources.ais.shards). 없거나 형식이 틀리면 null — 합계 필드만 쓴다 */
   shards?: AisShard[] | null;
+  /** 이 상태를 만든 서버 시각(status.server_time, ms). 모르면 null — 구역 관측 시각(항적 공백 가르기)에 쓴다 */
+  server_ms?: number | null;
   received_at: number;
 }
 
@@ -505,6 +510,7 @@ export function parseAisStatus(status: unknown, receivedAt: number): AisStatus |
   if (!isObj(status)) return null;
   const src = isObj(status.sources) ? status.sources.ais : status.ais;
   if (!isObj(src)) return null;
+  const serverTime = iso(status.server_time);
   return {
     connected: typeof src.connected === "boolean" ? src.connected : null,
     lag_s: num(src.lag_s, 0, 1e9),
@@ -514,6 +520,7 @@ export function parseAisStatus(status: unknown, receivedAt: number): AisStatus |
     state: typeof src.state === "string" && AIS_STATE_SET.has(src.state) ? (src.state as AisState) : null,
     coverage: parseAisCoverage(src.coverage),
     shards: parseAisShards(src.shards),
+    server_ms: serverTime == null ? null : Date.parse(serverTime),
     received_at: receivedAt,
   };
 }
@@ -599,6 +606,13 @@ export const AIS_GAP_SHOW_MS = 30 * 60_000;
 /** AIS 지연 경고 기준 — ais 컨테이너 health 기준(마지막 메시지 120 s, 계약 v2 §B1)과 같게 */
 export const AIS_LAG_WARN_S = 120;
 
+/** 구역 하나의 연결 상태 문구(툴팁): 연결 · 끊김(재연결 중) · 연결 모름 — 수집기가 보고한 값만 */
+function shardConnText(sh: AisShard): string {
+  if (sh.connected === true) return "연결";
+  if (sh.connected === false) return `끊김${sh.state === "connecting" || sh.state === "backoff" ? "(재연결 중)" : ""}`;
+  return "연결 모름";
+}
+
 /**
  * 상태 바 AIS 배지: "AIS · 5.4 msg/s · lag 3s". 지연은 서버 보고값 — 연결이 실시간(live)이 아니거나 받은 지 45 s 가 넘으면
  * 받은 뒤 경과를 더한다(화면 데이터가 그 뒤로 새로워졌다는 근거가 없으므로). AIS 상태를 받은 적이 없으면 null.
@@ -628,7 +642,7 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
     return {
       text: `AIS 일부 끊김 ${down}/${shards!.length} 구역 · ${rate} · ${lagText}`,
       tone: "warn",
-      title: `${title}\n${shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${sh.connected === true ? "연결" : sh.connected === false ? `끊김${sh.state === "connecting" || sh.state === "backoff" ? "(재연결 중)" : ""}` : "연결 모름"}`).join("\n")}`,
+      title: `${title}\n${shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${shardConnText(sh)}`).join("\n")}`,
     };
   }
   const tone = ais.connected == null || lag == null || lag > AIS_LAG_WARN_S ? "warn" : "ok";
@@ -646,16 +660,18 @@ export function openGapShards(ais: Pick<AisStatus, "shards"> | null): { open: Ai
 
 /**
  * 상태 바 공백 배지: 열린 공백 → "AIS 공백 hh:mm– UTC · 진행 중", 30분 안에 끝난 공백 → "AIS 공백 hh:mm–hh:mm UTC". 그 밖은 null.
- * 구역이 여럿이고 일부만 공백이면(계약 v4 §D) "AIS 공백 n/m 구역" — 툴팁에 구역·시작 시각.
+ * 구역이 여럿이고 일부만 공백이면(계약 v4 §D) "AIS 공백 n/m 구역" — 툴팁에 공백 구역·시작 시각, 나머지 구역은 보고된 연결 상태 그대로
+ * (연결·끊김·연결 모름 — 공백이 없다고 "수신 중"이라고 말하지 않는다).
  */
 export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: string; open: boolean; partial?: boolean; title: string } | null {
   if (!ais) return null;
   const sg = openGapShards(ais);
   if (sg && sg.open.length > 0 && sg.open.length < sg.total) {
-    const lines = sg.open.map((sh) => `구역 ${fmtShardScope(sh)} — ${sh.gap_open_since} 부터(${hhmm(sh.gap_open_since!)} UTC) 끊김`);
+    const lines = ais.shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${
+      sh.gap_open_since ? `공백 ${sh.gap_open_since} 부터(${hhmm(sh.gap_open_since)} UTC)` : `공백 없음 · ${shardConnText(sh)}`}`);
     return {
       text: `AIS 공백 ${sg.open.length}/${sg.total} 구역`, open: true, partial: true,
-      title: `${lines.join("\n")}\n다른 구역은 수신 중 — 끊긴 구역 안 선박 위치만 멈춰 있고, 재전송이 없어 이 구간은 비어 있게 됩니다`,
+      title: `${lines.join("\n")}\n공백 구역 안 선박 위치는 멈춰 있고, 재전송이 없어 그 구간은 비어 있게 됩니다`,
     };
   }
   if (ais.gap_open_since) {
@@ -680,8 +696,19 @@ export const SHIP_TRACK_WINDOW_MS = 6 * 3600_000;
 export const MAX_SHIP_TRACK_POINTS = 5000;
 
 export interface ShipTrackSeg { pts: [number, number][]; startMs: number | null; endMs: number | null }
-/** gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한 */
-export interface ShipTrack { segs: ShipTrackSeg[]; gaps: AisGap[]; gapsTruncated?: boolean }
+/**
+ * gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한.
+ * restToMs · shardOkAt: 구역으로 가를 때(계약 v4 §D) 상태의 끝난 공백(구역 없음)이 이 선박의 것인지 가르는 근거(mergeStatusGaps).
+ */
+export interface ShipTrack {
+  segs: ShipTrackSeg[];
+  gaps: AisGap[];
+  gapsTruncated?: boolean;
+  /** REST 항적 창의 끝(서버 ms). 이보다 먼저 끝난 공백은 REST 응답(구역별로 끊은 segments · gaps)이 이미 말했다 */
+  restToMs?: number | null;
+  /** 이 선박을 덮는 구역이 모두 연결·공백 없음이라고 관측한 상태의 서버 시각(ms, 오래된 것부터) */
+  shardOkAt?: number[];
+}
 
 /**
  * 선을 끊는 공백의 최소 길이(계약 v3 §D, api properties.gap_break_min_s = 60): 저장 간격이 60 s 라 더 짧은 수신 공백은
@@ -744,24 +771,57 @@ export function statusOpenGapFor(ais: Pick<AisStatus, "gap_open_since" | "shards
 
 /** 구역으로 가를 때 끝난 공백(last_gap, 상태에 구역 없음)을 이 선박의 자리표시와 같은 공백으로 보는 시작 시각 차 */
 const GAP_MATCH_MS = 1000;
+/**
+ * 구역 관측의 시각 여유: 상태의 구역 값은 수집기 heartbeat 만큼(api 가 믿는 한도 30 s) 늦을 수 있어, 공백 시작 뒤 30 s 가 지난 관측부터
+ * "공백 중에 연결돼 있었다"는 근거로 쓴다. 끝 쪽은 관측이 늦을 뿐 앞서지 않으므로 작은 여유만 둔다.
+ */
+const SHARD_OBS_START_MARGIN_MS = 30_000;
+const SHARD_OBS_END_MARGIN_MS = 2_000;
+/** 들고 있는 구역 관측 수 상한(상태는 수 초마다 — 항적 창 6 h 를 넉넉히 덮는다) */
+export const MAX_SHARD_OBS = 8_000;
+
+/** 상태 하나를 관측으로 적는다: 이 위치를 덮는 구역이 모두 connected === true 이고 열린 공백이 없을 때만(모르면 적지 않는다) */
+function noteShardObservation(track: ShipTrack, ais: Pick<AisStatus, "shards" | "server_ms">, pos: { lat: number; lon: number }, sinceMs: number): void {
+  const t = ais.server_ms;
+  if (t == null || !Number.isFinite(t)) return;
+  const covering = (ais.shards ?? []).filter((sh) => sh.coverage?.length && inCoverage(sh.coverage, pos.lat, pos.lon));
+  if (!covering.length || !covering.every((sh) => sh.connected === true && sh.gap_open_since == null)) return;
+  const obs = track.shardOkAt ?? (track.shardOkAt = []);
+  if (obs.length && obs[obs.length - 1] >= t) return; // 같은 상태를 다시 받음(ship_selected 재전송 등)
+  obs.push(t);
+  let drop = 0;
+  while (drop < obs.length && obs[drop] < sinceMs) drop++;
+  drop = Math.max(drop, obs.length - MAX_SHARD_OBS);
+  if (drop > 0) obs.splice(0, drop);
+}
+
+/** 공백 [s, e] 사이에 이 선박 구역이 연결돼 있었다고 관측했는가 — 그렇다면 그 공백은 다른 구역의 것이다 */
+function shardSeenOkDuring(track: ShipTrack, s: number, e: number): boolean {
+  return (track.shardOkAt ?? []).some((t) => t > s + SHARD_OBS_START_MARGIN_MS && t < e - SHARD_OBS_END_MARGIN_MS);
+}
 
 /**
  * status.sources.ais 의 공백을 항적 공백 목록에 반영한다(선택 중에 생기거나 닫힌 공백). 바뀌었으면 true.
  * - 열린 공백(gap_open_since)은 자리표시: 같은 started_at 의 끝난 공백(last_gap)이 오면 대체되고,
  *   status 가 더 이상 그 공백이 열려 있다고 하지 않으면(gap_open_since null·다른 값) 뺀다 — 끝을 모르는 공백을 영원히 열어 두지 않는다.
  * - 항적 창(sinceMs) 전에 끝난 공백은 넣지 않는다. status 를 모르면(null) 그대로 둔다.
- * - 구역이 여럿이면(계약 v4 §D) pos(선박 위치)를 덮는 구역의 공백만 자리표시로 넣고, 끝난 공백은 이 선박의 자리표시를 닫는 것일 때만 받는다
- *   (상태의 last_gap 에는 구역이 없다 — 다른 구역의 공백을 이 선박 항적에 그리지 않는다. 처음부터 끝난 공백은 REST 항적이 구역별로 준다).
+ * - 구역이 여럿이면(계약 v4 §D) pos(선박 위치)를 덮는 구역의 공백만 자리표시로 넣는다. 상태의 last_gap 에는 구역이 없으므로 끝난 공백은
+ *   ① 이 선박의 자리표시를 닫는 것(시작 1 s 안)이면 받고, ② REST 항적 창 끝(restToMs) 전에 끝났으면 받지 않고(REST 응답이 이미 말했다),
+ *   ③ 그 밖(재연결·숨긴 탭 등으로 열린 상태를 못 본 경우)은 공백 중에 이 선박 구역이 연결돼 있었다고 관측한 적이 없을 때만 받는다
+ *   — 관측이 있으면 다른 구역의 공백이다. 모르면 선을 끊는 쪽(끊긴 줄 모르는 구간을 실선으로 잇지 않는다).
  */
-export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open_since" | "last_gap" | "shards"> | null, sinceMs: number, pos?: { lat: number; lon: number } | null): boolean {
+export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open_since" | "last_gap" | "shards" | "server_ms"> | null, sinceMs: number, pos?: { lat: number; lon: number } | null): boolean {
   if (!ais) return false;
   const { openSince, scoped } = statusOpenGapFor(ais, pos);
+  if (scoped) noteShardObservation(track, ais, pos!, sinceMs);
   const openMs = openSince ? Date.parse(openSince) : NaN;
   const placeholders = track.gaps.filter((g) => g.ended_at == null).map((g) => Date.parse(g.started_at));
   const next: AisGap[] = track.gaps.filter((g) => g.ended_at != null || Date.parse(g.started_at) === openMs);
   const lg = ais.last_gap;
   const lgStart = lg ? Date.parse(lg.started_at) : NaN;
-  const lgOurs = !scoped || placeholders.some((t) => Math.abs(t - lgStart) <= GAP_MATCH_MS);
+  const lgEnd = lg?.ended_at ? Date.parse(lg.ended_at) : NaN;
+  const lgOurs = !scoped || placeholders.some((t) => Math.abs(t - lgStart) <= GAP_MATCH_MS)
+    || (!(lgEnd <= (track.restToMs ?? -Infinity)) && !shardSeenOkDuring(track, lgStart, lgEnd));
   if (lg && lg.ended_at && !(Date.parse(lg.ended_at) < sinceMs) && lgOurs) next.push(lg);
   if (openSince) next.push({ started_at: openSince, ended_at: null, reason: null });
   const r = normalizeGaps(next);
@@ -955,16 +1015,54 @@ const n0 = (n: number) => n.toLocaleString("en-US");
 export const SHIPS_RULE_TEXT =
   `개별 표시: 줌 ${SHIPS_RULE.highZoom} 이상은 화면 안 ${n0(SHIPS_RULE.highMax)}척 이하, 줌 ${SHIPS_RULE.lowZoom}–${SHIPS_RULE.highZoom - 1} 은 ${n0(SHIPS_RULE.lowMax)}척 이하` +
   `(격자가 된 뒤에는 ${n0(SHIPS_RULE.lowBack)}척 이하로 줄어야 돌아옴), 줌 ${SHIPS_RULE.lowZoom} 미만은 항상 격자`;
-/** 화면 안 선박이 0척일 때(계약 v4 §C 문구 그대로) */
+/** 화면 안 선박이 0척일 때(계약 v4 §C 문구 그대로) — AIS 가 연결돼 있고 화면이 수신 범위에 걸칠 때만(§G C-1) */
 export const SHIPS_ZERO_TEXT = "화면 안 선박 0척 — aisstream 은 육상 수신국 기반이라 수신국이 없는 해역은 비어 있습니다";
 /** 화면이 수신 범위(운영 설정) 밖일 때 — 이때는 수신국 탓이 아니다 */
 export const SHIPS_OUT_OF_COVERAGE_TEXT = "화면 안 선박 0척 — 수신 범위(운영 설정) 밖입니다";
+/** 화면을 덮는 구역(구역을 모르면 전체)이 aisstream 에 연결돼 있지 않을 때 — 비어 있는 이유를 수신국 탓으로 돌리지 않는다(§G C-1) */
+export const SHIPS_ZERO_AIS_DOWN_TEXT = "화면 안 선박 0척 — AIS 연결 안 됨";
+/** AIS 연결 상태를 모를 때(ais 상태 없음 · heartbeat 가 오래돼 connected 모름) */
+export const SHIPS_ZERO_AIS_UNKNOWN_TEXT = "화면 안 선박 0척 — AIS 연결 상태 모름";
+/** 연결은 됐지만 수신 범위(coverage)나 화면 범위를 몰라 수신국 탓인지 말할 수 없을 때 */
+export const SHIPS_ZERO_RANGE_UNKNOWN_TEXT = "화면 안 선박 0척 — 수신 범위 모름";
 
 /** 구독 영역 [west, south, east, north](경도 −180~180)가 수신 범위 상자와 겹치는가 */
 export function bboxTouchesCoverage(bbox: readonly [number, number, number, number], boxes: readonly AisBox[]): boolean {
   const [w, s, e, n] = bbox;
   return boxes.some((b) => w <= b.e && e >= b.w && s <= b.n && n >= b.s);
 }
+
+/** 칩이 보는 AIS 상태(status.sources.ais) 부분 — null = 상태 없음(모름) */
+export type ShipsChipAis = Pick<AisStatus, "state" | "connected" | "coverage" | "shards"> | null;
+
+export type ZeroShipsReason = "off" | "outside" | "receivers" | "down" | "unknown" | "range";
+
+/**
+ * 화면 안 0척의 이유(계약 v4 §C · §G C-1) — 상태가 말하는 것만:
+ * off = AIS 꺼짐(키 없음) · outside = 화면이 수신 범위와 겹치지 않음 · receivers = 화면에 걸친 구역 중 하나라도 연결(수신국 없는 해역 문구) ·
+ * down = 화면에 걸친 구역이 모두 끊김 · unknown = 연결 상태 모름 · range = 연결은 됐지만 수신 범위나 화면을 모름.
+ * 구역이 있고 모든 구역의 범위를 알면 화면에 걸친 구역만 본다(다른 구역이 연결돼 있다고 이 화면의 빈 바다를 수신국 탓으로 돌리지 않는다).
+ */
+export function zeroShipsReason(ais: ShipsChipAis, bbox: readonly [number, number, number, number] | null): ZeroShipsReason {
+  if (!ais) return "unknown";
+  if (ais.state === "disabled") return "off";
+  const cov = ais.coverage?.length ? ais.coverage : null;
+  if (bbox && cov && !bboxTouchesCoverage(bbox, cov)) return "outside";
+  const shards = ais.shards?.length && ais.shards.every((sh) => sh.coverage?.length) ? ais.shards : null;
+  const conns = shards && bbox
+    ? shards.filter((sh) => bboxTouchesCoverage(bbox, sh.coverage!)).map((sh) => sh.connected)
+    : [ais.connected, ...(ais.shards ?? []).map((sh) => sh.connected)];
+  if (conns.some((c) => c === true)) return bbox && cov ? "receivers" : "range";
+  return conns.some((c) => c === false) ? "down" : "unknown";
+}
+
+const ZERO_SHIPS: Record<Exclude<ZeroShipsReason, "off">, { text: string; title: string }> = {
+  outside: { text: SHIPS_OUT_OF_COVERAGE_TEXT, title: "AIS 수집기가 구독하지 않는 영역입니다(운영 설정 ais_bboxes — 지도의 점선 경계)" },
+  receivers: { text: SHIPS_ZERO_TEXT, title: "aisstream.io 는 육상 AIS 수신국이 받은 것만 보냅니다. 우리 쪽에서 거른 것이 아닙니다." },
+  down: { text: SHIPS_ZERO_AIS_DOWN_TEXT, title: "이 화면을 덮는 AIS 수집 연결이 aisstream.io 에 연결되어 있지 않습니다 — 선박이 없는지 알 수 없습니다" },
+  unknown: { text: SHIPS_ZERO_AIS_UNKNOWN_TEXT, title: "AIS 수집기의 연결 상태를 모릅니다(상태 보고 없음 또는 오래됨) — 비어 있는 이유를 말할 수 없습니다" },
+  range: { text: SHIPS_ZERO_RANGE_UNKNOWN_TEXT, title: "AIS 는 연결돼 있지만 수신 범위(운영 설정)나 화면 범위를 몰라 비어 있는 이유를 말할 수 없습니다" },
+};
 
 export interface ShipsChipInput {
   mode: "off" | "waiting" | "points" | "grid";
@@ -976,34 +1074,33 @@ export interface ShipsChipInput {
 
 /**
  * 지도 왼쪽 위 선박 칩: 지금 지도가 무엇을 그리는지 + 규칙. zoom·bbox 는 마지막으로 구독한 화면(모르면 null — 그때는 규칙 전체를 적는다).
- * 0척이면: AIS 꺼짐 → 그 사실, 화면이 수신 범위와 전혀 겹치지 않으면 → 범위 밖, 그 밖은 계약 문구(수신국 없는 해역).
+ * 0척이면 zeroShipsReason(AIS 꺼짐 · 범위 밖 · 수신국 없는 해역 · 연결 안 됨 · 상태 모름 · 범위 모름).
+ * 경고 색은 줌 ≥ 7 에서 전송 상한(5,000척)을 넘었을 때만 — 줌 4–6 격자는 정상 동작이다(§G C-1, api 는 이때도 capped:true 를 보낸다).
  */
-export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; aisOff: boolean; coverage: AisBox[] | null }): { text: string; title: string; warn: boolean } | null {
+export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis }): { text: string; title: string; warn: boolean } | null {
   if (v.mode === "off") return null;
+  const aisOff = ctx.ais?.state === "disabled";
   const aisOffText = "선박 없음 · AIS 꺼짐(키 없음)";
-  if (v.mode === "waiting") return { text: ctx.aisOff ? aisOffText : "선박 수신 대기", title: SHIPS_RULE_TEXT, warn: false };
+  if (v.mode === "waiting") return { text: aisOff ? aisOffText : "선박 수신 대기", title: SHIPS_RULE_TEXT, warn: false };
   const inView = v.mode === "points" ? v.count : v.total;
   if (inView === 0) {
-    if (ctx.aisOff) return { text: aisOffText, title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정)", warn: false };
-    const outside = ctx.bbox != null && ctx.coverage != null && ctx.coverage.length > 0 && !bboxTouchesCoverage(ctx.bbox, ctx.coverage);
-    return {
-      text: outside ? SHIPS_OUT_OF_COVERAGE_TEXT : SHIPS_ZERO_TEXT,
-      title: outside ? "AIS 수집기가 구독하지 않는 영역입니다(운영 설정 ais_bboxes — 지도의 점선 경계)" : "aisstream.io 는 육상 AIS 수신국이 받은 것만 보냅니다. 우리 쪽에서 거른 것이 아닙니다.",
-      warn: false,
-    };
+    const why = zeroShipsReason(ctx.ais, ctx.bbox);
+    if (why === "off") return { text: aisOffText, title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정)", warn: false };
+    return { ...ZERO_SHIPS[why], warn: false };
   }
   if (v.mode === "points") {
     return { text: `선박 ${n0(v.count)}척 · 화면 안 · AIS`, title: `AIS 로 받은 선박 위치(보간 없음) — ${SHIPS_RULE_TEXT}`, warn: false };
   }
   const z = ctx.zoom;
+  const overCap = v.capped && z != null && z >= SHIPS_RULE.highZoom;
   const why = z == null ? "확대하면 개별 표시"
     : z < SHIPS_RULE.lowZoom ? `줌 ${SHIPS_RULE.lowZoom} 이상에서 개별 표시`
     : z < SHIPS_RULE.highZoom ? `줌 ${SHIPS_RULE.lowZoom}–${SHIPS_RULE.highZoom - 1} 은 ${n0(SHIPS_RULE.lowMax)}척 넘으면 격자 · ${n0(SHIPS_RULE.lowBack)}척 이하에서 개별`
-    : v.capped ? `화면 안 ${n0(SHIPS_RULE.highMax)}척 초과 · 전송 상한` : "확대하면 개별 표시";
+    : overCap ? `화면 안 ${n0(SHIPS_RULE.highMax)}척 초과 · 전송 상한` : "확대하면 개별 표시";
   return {
     text: `선박 ${fmtCount(v.total)}척 · ${v.cell_deg ?? "—"}° 격자 ${v.count}칸으로 묶음 · ${why}`,
     title: `서버가 격자별 선박 수만 보냅니다(원 크기 = 수, 색 = 가장 많은 선종). 원을 누르면 확대합니다. ${SHIPS_RULE_TEXT}`,
-    warn: v.capped,
+    warn: overCap,
   };
 }
 

@@ -196,8 +196,8 @@ function ShipList() {
       </div>
     );
   }
-  // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐)
-  const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, aisOff, coverage: ais?.coverage ?? null });
+  // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐 · 연결 안 됨 · 상태 모름)
+  const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais });
   // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
   const { items: shown, total } = shipList(shipStates.values(), q);
   return (

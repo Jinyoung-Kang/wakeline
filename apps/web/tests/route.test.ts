@@ -57,6 +57,21 @@ describe("route validation (server values are not trusted)", () => {
     expect(r.origin).toBeNull();
     expect(r.airline).toBeNull();
   });
+  it("strings drop Unicode format characters too (bidi overrides, zero-width) and are cut by code points, like the api", () => {
+    // U+202E(오른쪽→왼쪽 덮어쓰기)로 이웃 글자를 뒤집어 보이게 하는 이름
+    const a = parseRouteAirport(AP({ name: "A\u202Eevil\u202C Field", city: "Zero\u200Bwidth\u2066City\u2069", country: "\uFEFFTestland" }))!;
+    expect(a.name).toBe("Aevil Field");
+    expect(a.city).toBe("ZerowidthCity");
+    expect(a.country).toBe("Testland");
+    expect(/[\p{Cc}\p{Cf}]/u.test(a.name + a.city + a.country)).toBe(false);
+    const r = parseRoute({ ...FOUND, airline: { name: "Synth\u202EAir", icao: "TST", iata: "TS" } })!;
+    expect(r.airline?.name).toBe("SynthAir");
+    // 코드포인트 기준 절단: 아스트랄 문자(서러게이트 쌍)를 반으로 자르지 않는다
+    const city = parseRouteAirport(AP({ city: "\u{1F6EB}".repeat(100) }))!.city!;
+    expect(Array.from(city)).toHaveLength(80);
+    expect(city).toBe("\u{1F6EB}".repeat(80));
+    expect(parseRouteAirport(AP({ name: "\u202E\u200B" }))).toBeNull(); // 서식 문자뿐이면 이름 없음
+  });
   it("non-found statuses carry no airports even if the payload has some; bad callsign / fetched_at are null", () => {
     const r = parseRoute({ ...FOUND, status: "pending", callsign: "tst 1", fetched_at: "yesterday" })!;
     expect(r).toMatchObject({ status: "pending", callsign: null, fetched_at: null, origin: null, destination: null });
@@ -153,7 +168,7 @@ describe("aircraft card route section (server render)", () => {
     expect(/data-field="경로와의 거리"[^>]*>.*?<span class="text-right"[^>]*>—<\/span>/.test(html)).toBe(true);
   });
   it("every other status has its contract wording and no route values", () => {
-    for (const status of ["pending", "not_found", "no_callsign", "unavailable"] as const) {
+    for (const status of ["pending", "not_found", "no_callsign", "unavailable", "disabled"] as const) {
       const html = section(parseRoute({ status, callsign: status === "no_callsign" ? null : "TST123", source: "adsbdb" }));
       expect(html, status).toContain(ROUTE_STATUS_TEXT[status]);
       expect(html, status).toContain(`data-status="${status}"`);
@@ -161,8 +176,18 @@ describe("aircraft card route section (server render)", () => {
     }
     expect(ROUTE_STATUS_TEXT).toEqual({
       pending: "노선 조회 중", not_found: "이 콜사인의 등록 노선 없음", no_callsign: "콜사인 없음 — 노선을 찾을 수 없음", unavailable: "노선 조회 실패",
+      disabled: "노선 조회 꺼짐(운영 설정)",
     });
     expect(section(null)).toContain('data-status="unknown"');
+  });
+  it("disabled (fixture mode or the operator turned adsbdb off) is an operational setting, not a failure", () => {
+    const r = parseRoute({ status: "disabled", callsign: "TST123", source: "adsbdb", origin: AP() })!;
+    expect(r).toMatchObject({ status: "disabled", callsign: "TST123", origin: null, destination: null });
+    const html = section(r);
+    expect(html).toContain("노선 조회 꺼짐(운영 설정)");
+    expect(html).toContain('data-status="disabled"');
+    expect(html).not.toContain("text-warn");
+    expect(html).not.toContain("노선 조회 실패");
   });
   it("a different current callsign is pointed out", () => {
     expect(section(parseRoute(FOUND), { lat: 0, lon: 5 }, "TST999")).toContain("지금 콜사인 TST999 과 다름");
