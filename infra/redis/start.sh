@@ -15,6 +15,8 @@
 #                    여러 건을 한 번에 보낼 때는 pipeline(transaction=False) — MULTI·EXEC 는 허용 목록에 없다(demand · kma_radar 와 같다).
 #                    남는 위험(ACL 은 명령 인자를 보지 않는다): XADD … MAXLEN 0 / MINID 로 스트림을 비울 수 있고(api 가 실은 항목 포함),
 #                    service 를 다른 이름으로 적어 실을 수 있다 — 읽는 쪽(api)은 스키마 검증·가림만 하고 출처를 증명하지 못한다.
+#                    항목 크기 상한 8 KiB(계약 v5 §C1)도 생산자 코드만 지킨다 — ACL 은 값 크기를 보지 않아 1 MiB 항목도 들어간다(8.10.2 확인).
+#                    서버 전역 상한 proto-max-bulk-len 은 1 MiB 아래로 내릴 수 없다 — 큰 항목은 읽는 쪽(api)이 따로 걸러야 한다.
 #                    다른 생산자 스트림(wakeline:aircraft · wakeline:ships …)의 XADD 트리밍도 같은 한계다.
 #                    REDIS_AIS_PASSWORD 가 비어 있으면 이 사용자를 만들지 않는다(빈 비밀번호로 열린 사용자를 만들지 않기 위해).
 #                    compose 는 ${REDIS_AIS_PASSWORD:?} 로 값이 없으면 기동을 거부한다 — 비어 있는 경우는 이 스크립트를 쓰는 api 통합 테스트(ItStack)뿐이다.
