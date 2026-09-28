@@ -114,7 +114,7 @@ services:
       MANAGEMENT_SERVER_PORT: "9000"
       DB_HOST: db
       DB_NAME: wakeline
-      DB_API_PASSWORD: ${DB_API_PASSWORD}
+      DB_API_PASSWORD: ${DB_API_PASSWORD:?DB_API_PASSWORD 가 .env 에 없습니다 — make init}
       REDIS_HOST: redis
       REDIS_USERNAME: wakeline_api                 # 계약 §6: 키 wakeline:* · rl:* 만, 위험 명령 없음
       REDIS_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
@@ -159,7 +159,7 @@ services:
       TZ: UTC
       DB_HOST: db
       DB_NAME: wakeline
-      DB_COLLECTOR_PASSWORD: ${DB_COLLECTOR_PASSWORD}
+      DB_COLLECTOR_PASSWORD: ${DB_COLLECTOR_PASSWORD:?DB_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
       REDIS_HOST: redis
       REDIS_USERNAME: wakeline_collector           # 계약 §6: 수집기 키만, 세션·요청 제한·DLQ 접근 불가, 설정은 읽기 전용
       REDIS_PASSWORD: ${REDIS_COLLECTOR_PASSWORD:?REDIS_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
@@ -252,7 +252,7 @@ services:
     user: "999:1000"                           # 이미지의 redis 사용자. 처음부터 비root 라 엔트리포인트의 권한 강하가 필요 없다
     entrypoint: ["sh", "/etc/redis/start.sh"]  # ACL 사용자 생성 후 redis-server 실행(비밀번호는 명령행이 아니라 환경변수로)
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}                 # default(관리) — 헬스체크·운영 redis-cli 전용
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 가 .env 에 없습니다 — make init}   # default(관리) — 헬스체크·운영 redis-cli 전용
       REDIS_API_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}
       REDIS_COLLECTOR_PASSWORD: ${REDIS_COLLECTOR_PASSWORD:?REDIS_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
       REDIS_AIS_PASSWORD: ${REDIS_AIS_PASSWORD:?REDIS_AIS_PASSWORD 가 .env 에 없습니다 — make init}
@@ -285,10 +285,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
     environment:
-      POSTGRES_PASSWORD: ${DB_ROOT_PASSWORD}
-      DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD}
-      DB_API_PASSWORD: ${DB_API_PASSWORD}
-      DB_COLLECTOR_PASSWORD: ${DB_COLLECTOR_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD 가 .env 에 없습니다 — make init}
+      DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD:?DB_MIGRATOR_PASSWORD 가 .env 에 없습니다 — make init}
+      DB_API_PASSWORD: ${DB_API_PASSWORD:?DB_API_PASSWORD 가 .env 에 없습니다 — make init}
+      DB_COLLECTOR_PASSWORD: ${DB_COLLECTOR_PASSWORD:?DB_COLLECTOR_PASSWORD 가 .env 에 없습니다 — make init}
       # SEC-R3: 슈퍼유저는 로컬 소켓 전용(infra/db/init/02-superuser-local-only.sh). 새 데이터 디렉터리에만 적용된다 —
       # 기존 볼륨은 tools/db-superuser-local-only.sh 로 한 번 적용한다. 헬스체크·운영 psql 은 로컬 소켓이라 영향 없음.
       WAKELINE_PG_SUPERUSER_TCP: reject

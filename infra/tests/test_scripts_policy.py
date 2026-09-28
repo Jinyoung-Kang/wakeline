@@ -58,6 +58,29 @@ class BackupRestoreTest(unittest.TestCase):
         self.assertIn("bash infra/tests/db_backup_test.sh", recipe("infra-docker-test"))
 
 
+class PasswordRotationTest(unittest.TestCase):
+    """R-80: DB 서비스 계정 비밀번호를 DB 와 .env 에 함께 바꾸는 절차(값만 바꾸면 인증이 조용히 실패한다)."""
+
+    def test_make_target_and_container_test(self):
+        r = recipe("rotate-db-passwords")
+        self.assertIn("tools/db_rotate_passwords.py", r)
+        self.assertIn("--sync", r, "어긋난 값 복구(sync=1)")
+        self.assertIn("bash infra/tests/db_rotate_test.sh", recipe("infra-docker-test"))
+
+    def test_tool_sends_only_scram_verifiers_and_never_plaintext_on_argv(self):
+        t = (ROOT / "tools" / "db_rotate_passwords.py").read_text()
+        self.assertIn("SCRAM-SHA-256$", t)
+        self.assertIn("input=sql", t, "SQL 은 stdin 으로")
+        self.assertRegex(t, r'"-e", "PGPASSWORD", cid', "로그인 확인은 -e 이름만(값은 환경)")
+        self.assertNotRegex(t, r'"-e", f?"PGPASSWORD=', "값을 argv 에 두지 않는다")
+        self.assertIn("init_env.write_private", t, ".env 는 0600 원자적 교체")
+
+    def test_readme_and_env_example_explain_rotation(self):
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("make rotate-db-passwords", readme)
+        self.assertIn("make rotate-db-passwords", (ROOT / ".env.example").read_text())
+
+
 SCANNER_SCRIPTS = [ROOT / "perf" / "review_measure.sh", ROOT / "tools" / "scan_lib.sh", ROOT / "tools" / "security_gate.sh"]
 
 

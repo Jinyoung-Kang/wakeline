@@ -359,6 +359,29 @@ class ComposePolicyTest(unittest.TestCase):
                 self.assertEqual([a for a in cmd[1::2]], ["-c"] * len(settings), "postgres -c k=v -c k=v …")
                 self.assertEqual(settings, DB_SETTINGS)
 
+    # --- R-80: 비밀값이 빠지면 조용히 빈 값으로 뜨지 않고 기동을 거부한다 ---
+    def test_missing_secret_is_refused_by_name(self):
+        text = self.env_file.read_text()
+        for key in init_env.INTERNAL:
+            with self.subTest(secret=key):
+                broken = Path(self._tmp.name) / f"missing-{key}.env"
+                broken.write_text(re.sub(rf"^{re.escape(key)}=.*\n", "", text, flags=re.M))
+                drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream")
+                env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
+                r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "--env-file", str(broken), "config", "--quiet"],
+                                   capture_output=True, text=True, env=env)
+                self.assertNotEqual(r.returncode, 0, f"{key} 가 없는데 compose 가 빈 값으로 해석했다")
+                self.assertIn(key, r.stderr, "오류가 빠진 변수 이름을 알려 준다")
+
+    def test_every_secret_interpolation_is_guarded(self):
+        text = COMPOSE.read_text()
+        for key in init_env.INTERNAL:
+            with self.subTest(secret=key):
+                uses = re.findall(rf"\$\{{{re.escape(key)}(\}}|[^}}]*\}})", text)
+                self.assertTrue(uses, f"{key} 를 쓰는 곳이 없다")
+                for u in uses:
+                    self.assertTrue(u.startswith(":?"), f"${{{key}{u} — ':?' 가드가 없다")
+
     # --- 로그 회전(디스크 고갈 방지) ---
     def test_every_service_rotates_logs(self):
         for name, s in self.dev["services"].items():
