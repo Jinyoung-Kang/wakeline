@@ -303,3 +303,38 @@ async def test_r68_metar_job_queries_both_sides_of_the_antimeridian():
     assert (await ctx.budget.usage("awc"))[0] == 2  # 조회 두 번 = 예산 2
     (run,) = runs  # 한 실행으로 기록한다
     assert run["status"] == "ok" and run["records_in"] == len(items)  # 두 응답에 같은 관측이 있으면 한 번만
+
+
+@pytest.mark.parametrize("second_box", ["provider_error", "budget_exhausted"])
+async def test_r68_one_antimeridian_box_failing_is_not_reported_as_success(second_box):
+    """리뷰 R-68 후속: 날짜변경선 양쪽 상자 중 하나가 실패(공급자 오류 · 두 번째 조회의 예산 없음)해도 다른 상자로 _ok 와 metar
+    heartbeat 를 써서 consecutive_failures 가 0 으로 돌아가고 실행이 'ok' 로 남았다 — 관심 지역 절반의 METAR 가 멈췄는데 운영 화면은
+    metar 를 정상으로 보였다. 실패는 _guard 가 이미 기록했으므로 성공(상태·heartbeat·ok 실행)을 쓰지 않는다. 받은 상자의 관측은 저장한다."""
+    from wakeline_collector.http import ProviderHttpError
+    from wakeline_collector.jobs.weather import MetarJob
+
+    items = orjson.loads((FIX / "awc_metar_region.json").read_bytes())
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"awc": 1 if second_box == "budget_exhausted" else 1000})
+    ctx.rt.region = (52.0, 178.0, 250)  # type: ignore[misc]
+
+    class SecondBoxFails(FakeAwcMetar):
+        async def metar_bbox(self, lamin, lomin, lamax, lomax) -> ProviderResult:
+            if self.bboxes:
+                self.bboxes.append((lamin, lomin, lamax, lomax))
+                raise ProviderHttpError(502, "bad gateway")
+            return await super().metar_bbox(lamin, lomin, lamax, lomax)
+
+    awc = SecondBoxFails(items)
+    runs: list[dict] = []
+    real = ctx.db.record_run
+    ctx.db.record_run = lambda job, prov, started, **kw: (runs.append(kw), real(job, prov, started, **kw))  # type: ignore[method-assign]
+    await r.hset("wakeline:provider:awc", mapping={"consecutive_failures": "3"})  # 직전 주기까지의 실패
+    await r.hset("wakeline:collector", mapping={"metar_at": "2026-09-28T00:00:00Z"})  # 직전 heartbeat
+    await MetarJob(awc, ctx).run_once()
+    st = await r.hgetall("wakeline:provider:awc")
+    assert st["consecutive_failures"] == ("4" if second_box == "provider_error" else "3")  # 0 으로 되돌리지 않는다
+    assert "last_success_at" not in st
+    assert (await r.hgetall("wakeline:collector"))["metar_at"] == "2026-09-28T00:00:00Z"  # heartbeat 를 새로 쓰지 않는다
+    assert [run["status"] for run in runs] == ["error" if second_box == "provider_error" else "budget_exhausted"]
+    assert {"airport", "metar_obs"} <= set(ctx.db.names)  # type: ignore[attr-defined]  # 받은 상자의 관측(실자료)은 저장

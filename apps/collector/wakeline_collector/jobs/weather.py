@@ -313,7 +313,8 @@ class MetarJob:
         lat, lon, radius = ctx.rt.region
         # 날짜변경선을 넘는 관심 지역은 상자 두 개로 나눠 묻는다(lomin > lomax 상자를 보내지 않는다, R-68). 조회마다 예산 1.
         got: list[tuple[datetime, Any]] = []
-        for lamin, lomin, lamax, lomax in boxes_around(lat, lon, radius):
+        boxes = boxes_around(lat, lon, radius)
+        for lamin, lomin, lamax, lomax in boxes:
             started_i, res_i = await _guard(
                 ctx, "metar", self.awc.name, 1, lambda b=(lamin, lomin, lamax, lomax): self.awc.metar_bbox(*b)
             )
@@ -344,6 +345,16 @@ class MetarJob:
         # METAR 의 출력은 DB 뿐이다 — 쓰기는 writer 가 순서대로(airport → metar_obs, FK) 처리한다
         ctx.db.upsert_airports(airports)
         ctx.db.upsert_metar(obs)
+        if len(got) < len(boxes):
+            # 상자 하나가 실패했다(실패·예산 없음은 _guard 가 이미 기록). 받은 쪽 관측은 실자료라 저장하지만, 관심 지역 일부가
+            # 갱신되지 않았으므로 성공(ok 실행 · 공급자 상태 success · heartbeat)을 쓰지 않는다 — 운영 화면이 정상으로 보이지 않게.
+            log.warning(
+                "metar: %d of %d boxes failed — %d stations stored, not reported as success",
+                len(boxes) - len(got),
+                len(boxes),
+                len(obs),
+            )
+            return
         await _ok(ctx, "metar", started, self.awc.name, res, records=len(obs), quarantined=len(bad), raw_ref=raw_ref, quality=bad)
         await ctx.status.heartbeat("metar", lag_s=None, fixture=ctx.fixture)  # 자료 나이를 재지 않는다 — 0 이 아니라 모름(R-20)
         log.info("metar: %d stations", len(obs))
