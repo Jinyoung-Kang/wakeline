@@ -21,7 +21,9 @@ class SecurityCookieConfigTest {
             // SpringApplication 처럼 Boot 변환기(예: "8h" → Duration)를 건다
             .withInitializer(ctx -> ctx.getBeanFactory().setConversionService(new org.springframework.boot.convert.ApplicationConversionService()))
             .withConfiguration(AutoConfigurations.of(SecurityAutoConfiguration.class, ServletWebSecurityAutoConfiguration.class))
-            .withUserConfiguration(SecurityConfig.class);
+            .withUserConfiguration(SecurityConfig.class)
+            // 필터 체인이 운영 세션 자격 확인(R-95)에 쓰는 서비스 — 쿠키 시험에서는 호출되지 않는다
+            .withBean(dev.wakeline.ops.OpsUserService.class, () -> org.mockito.Mockito.mock(dev.wakeline.ops.OpsUserService.class));
 
     /** [세션 쿠키 Set-Cookie, CSRF 쿠키 Set-Cookie] */
     static String[] setCookies(ApplicationContext ctx) {
