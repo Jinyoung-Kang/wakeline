@@ -170,6 +170,18 @@ class RestSamplesIT extends IntegrationTest {
         record("ais_gaps", "/api/v1/ais/gaps", 200);
         record("problem_bad_mmsi", "/api/v1/ships/12345", 400);
         record("ship_detail_nostatic", "/api/v1/ships/440700101", 200); // 정적 정보 없음 → 분류 unknown(추정하지 않는다)
+        // 선박 검색(계약 v5 §B1): 실시간(선명 앞부분) · DB 에만 있는 선박(live=false, 위치 null, 마지막 저장 시각) · 형식 오류
+        record("ship_search", "/api/v1/ships/search?q=IT%20SAMPLE", 200);
+        db.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider)
+                VALUES ('440700199', 'IT STORED ONLY', NULL, NULL, 52, now() - interval '3 days', now() - interval '2 days', now() - interval '2 days', 'fixture')
+                ON CONFLICT (mmsi) DO NOTHING""").update();
+        db.sql("""
+                INSERT INTO ship_position (mmsi, ts, geom, position_source, provider)
+                VALUES ('440700199', date_trunc('second', now()) - interval '2 hours', ST_SetSRID(ST_MakePoint(129.1, 35.05), 4326), 'epfs', 'fixture')
+                ON CONFLICT DO NOTHING""").update();
+        record("ship_search_db", "/api/v1/ships/search?q=it%20stored", 200);
+        record("problem_bad_ship_query", "/api/v1/ships/search?q=a", 400);
 
         // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.
         // 수집기 heartbeat 는 다른 테스트(수집기 없음 → adsb_fi_rps_1m 모름)에 남지 않게 기록 뒤 지운다.
@@ -259,6 +271,14 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(shipTrack.path("properties").path("gap_break_min_s").asInt()).isEqualTo(60);
         assertThat(shipTrack.path("properties").path("gaps_truncated").asBoolean(true)).isFalse();
         assertThat(st.path("demand").path("adsb_fi_rps_1m").asDouble()).isEqualTo(0.417); // 수집기 값(0.4167)을 api 가 소수 셋째 자리로
+        JsonNode shipHit = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_search.json"))).path("body").path("items").get(0);
+        assertThat(shipHit.path("mmsi").asString()).isEqualTo(mmsi);
+        assertThat(shipHit.path("live").asBoolean()).isTrue();
+        JsonNode storedHit = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_search_db.json"))).path("body").path("items").get(0);
+        assertThat(storedHit.path("mmsi").asString()).isEqualTo("440700199");
+        assertThat(storedHit.path("live").asBoolean()).isFalse();
+        assertThat(storedHit.path("lat").isNull()).as("no current position for a stored-only ship — explicit null").isTrue();
+        assertThat(storedHit.path("last_position_at").isString()).isTrue();
         JsonNode dbItem = Streams.JSON.readTree(Files.readString(OUT.resolve("aircraft_search_db.json"))).path("body").path("items").get(0);
         assertThat(dbItem.path("hex").asString()).isEqualTo("a1d0db");
         assertThat(dbItem.path("live").asBoolean()).isFalse();

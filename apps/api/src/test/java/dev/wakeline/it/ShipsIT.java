@@ -181,6 +181,65 @@ class ShipsIT extends IntegrationTest {
         }
     }
 
+    // ---------- 선박 검색(계약 v5 §B1) ----------
+
+    /**
+     * 스트림 → ShipStore(실시간) + DB 에만 있는 선박 → GET /ships/search: 실시간이 먼저(위치·속력·보고 시각은 메모리 값), DB 에만 있는 선박은 live=false 와
+     * lat · lon · sog_kn · seen_at = JSON null(운영 JSON 설정 non_null 에서도 키가 남는다), last_position_at = DB 의 마지막 저장 시각. 형식 오류는 problem+json.
+     */
+    @Test
+    void searchFindsLiveShipsFirstThenStoredOnes() {
+        Instant seen = Instant.now().truncatedTo(ChronoUnit.MILLIS).minusSeconds(3);
+        String live = "440799901", stored = "440799902";
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(live, 33.5, 126.5, seen)),
+                List.of(Streams.shipStatic(live, "IT SEARCH ALPHA", 70, seen.minusSeconds(60)))));
+        await("live ship with static", WAIT, () -> ships.view().get(live) != null && ships.view().get(live).stat() != null);
+        await("live ship position stored", WAIT, () -> count("SELECT count(*) FROM ship_position WHERE mmsi = ?", live) == 1);
+        // 지금은 없고 DB 에만 남은 선박(이틀 전 정적 정보 · 3시간 전 저장 위치) — api 계정으로(앱이 쓰는 것과 같은 권한)
+        OffsetDateTime lastPos = OffsetDateTime.ofInstant(Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(3, ChronoUnit.HOURS), ZoneOffset.UTC);
+        db.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider)
+                VALUES (?, 'IT SEARCH BRAVO', 'D9IT', 9899999, 30, now() - interval '3 days', now() - interval '2 days', now() - interval '2 days', 'fixture')
+                ON CONFLICT (mmsi) DO NOTHING""").param(stored).update();
+        db.sql("""
+                INSERT INTO ship_position (mmsi, ts, geom, position_source, provider) VALUES (?, ?, ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'fixture')
+                ON CONFLICT DO NOTHING""").param(stored).param(lastPos).update();
+
+        Res r = get("/api/v1/ships/search?q=it%20search&limit=5");
+        assertThat(r.status()).isEqualTo(200);
+        assertThat(r.header("Cache-Control")).contains("public");
+        JsonNode body = r.json();
+        assertThat(body.path("meta").path("q").asString()).isEqualTo("IT SEARCH");
+        assertThat(body.path("meta").path("count").asInt()).isEqualTo(2);
+        assertThat(body.path("meta").has("db_unavailable")).isFalse();
+        JsonNode first = body.path("items").get(0), second = body.path("items").get(1);
+        assertThat(first.path("mmsi").asString()).isEqualTo(live);
+        assertThat(first.path("live").asBoolean()).isTrue();
+        assertThat(first.path("name").asString()).isEqualTo("IT SEARCH ALPHA");
+        assertThat(first.path("category").asString()).isEqualTo("cargo");
+        assertThat(first.path("lat").asDouble()).isEqualTo(33.5);
+        assertThat(first.path("sog_kn").asDouble()).isEqualTo(11.2);
+        assertThat(Instant.parse(first.path("seen_at").asString())).isEqualTo(seen);
+        assertThat(Instant.parse(first.path("last_position_at").asString())).isEqualTo(seen);
+        assertThat(second.path("mmsi").asString()).isEqualTo(stored);
+        assertThat(second.path("live").asBoolean()).isFalse();
+        assertThat(second.path("name").asString()).isEqualTo("IT SEARCH BRAVO");
+        assertThat(second.path("category").asString()).isEqualTo("fishing");
+        for (String k : new String[]{"lat", "lon", "sog_kn", "seen_at"})
+            assertThat(second.has(k) && second.get(k).isNull()).as("%s is an explicit null for a stored-only ship", k).isTrue();
+        assertThat(Instant.parse(second.path("last_position_at").asString())).isEqualTo(lastPos.toInstant());
+
+        // MMSI · 호출부호 · IMO 로도(각 규칙) — DB 에만 있는 선박
+        assertThat(get("/api/v1/ships/search?q=" + stored).json().path("items").get(0).path("name").asString()).isEqualTo("IT SEARCH BRAVO");
+        assertThat(get("/api/v1/ships/search?q=D9IT").json().path("items").get(0).path("mmsi").asString()).isEqualTo(stored);
+        assertThat(get("/api/v1/ships/search?q=IMO%209899999").json().path("items").get(0).path("mmsi").asString()).isEqualTo(stored);
+        assertThat(get("/api/v1/ships/search?q=it%20search&limit=1").json().path("items").size()).isEqualTo(1);
+
+        assertProblem(get("/api/v1/ships/search?q=a"), 400, "BAD_QUERY", "/api/v1/ships/search");
+        assertProblem(get("/api/v1/ships/search?q=it%25"), 400, "BAD_QUERY", "/api/v1/ships/search");
+        assertProblem(get("/api/v1/ships/search?q=it%20search&limit=21"), 400, "BAD_LIMIT", "/api/v1/ships/search");
+    }
+
     // ---------- WS 격자 → 점(계약 v2 §B3) ----------
 
     /** 한 세션의 선박 메시지 기록: ships_snapshot 은 sseq 1, ships_diff 는 직전 sseq + 1(틈 없음)을 받는 즉시 확인한다. */

@@ -66,6 +66,32 @@ class ShipControllerTest {
             return all.subList(Math.max(0, all.size() - limit), all.size());
         }
 
+        /** ship 표 행(검색 대상). 실제 저장소와 같은 규칙(ShipQuery.matches)으로 거르고, 정확 일치 → last_seen 최신 → MMSI 순. */
+        final List<SearchRow> rows = new ArrayList<>();
+        final java.util.Map<String, Instant> lastPositions = new java.util.HashMap<>();
+        int searchCalls, lookupCalls, lastSearchLimit;
+
+        @Override public List<SearchRow> search(dev.wakeline.domain.ShipQuery q, int limit) {
+            searchCalls++;
+            lastSearchLimit = limit;
+            if (down) throw new CannotGetJdbcConnectionException("down");
+            return rows.stream().filter(r -> q.matches(r.mmsi(), r.stat()))
+                    .sorted(java.util.Comparator.comparing((SearchRow r) -> !q.exact(r.mmsi(), r.stat()))
+                            .thenComparing(SearchRow::lastSeen, java.util.Comparator.reverseOrder()).thenComparing(SearchRow::mmsi))
+                    .limit(limit).toList();
+        }
+
+        @Override public java.util.Map<String, Known> lookup(java.util.Collection<String> mmsis) {
+            lookupCalls++;
+            if (down) throw new CannotGetJdbcConnectionException("down");
+            java.util.Map<String, Known> out = new java.util.HashMap<>();
+            for (String m : mmsis) {
+                ShipStatic st = rows.stream().filter(r -> r.mmsi().equals(m)).map(SearchRow::stat).filter(java.util.Objects::nonNull).findFirst().orElse(null);
+                if (st != null || lastPositions.containsKey(m)) out.put(m, new Known(st, lastPositions.get(m)));
+            }
+            return out;
+        }
+
         @Override public List<AisGap> gapsAtLeast(Instant from, Instant to, long minS, int limit) {
             if (down) throw new CannotGetJdbcConnectionException("down");
             return gaps.stream().filter(g -> g.startedAt().isBefore(to) && g.endedAt().isAfter(from))
@@ -481,5 +507,156 @@ class ShipControllerTest {
                 .andExpect(jsonPath("$.meta.ais.shards[1].coverage[0][1]").value(45.0))
                 .andExpect(jsonPath("$.meta.ais.shards[1].connected").value(false))
                 .andExpect(jsonPath("$.meta.ais.coverage.length()").value(2));
+    }
+
+    // ---- 선박 검색(계약 v5 §B1) ----
+
+    static ShipStatic full(String mmsi, String name, String callSign, Integer imo, Integer type) {
+        return new ShipStatic(mmsi, name, callSign, imo, type, null, null, null, null, null, null, null, null, null, null, T.minusSeconds(60), "aisstream");
+    }
+
+    static final java.util.Set<String> ITEM_KEYS = java.util.Set.of("mmsi", "name", "call_sign", "imo", "ship_type", "category", "live", "lat", "lon",
+            "sog_kn", "seen_at", "last_position_at");
+
+    tools.jackson.databind.JsonNode search(String q, String limit) throws Exception {
+        var b = get("/api/v1/ships/search");
+        if (q != null) b = b.param("q", q);
+        if (limit != null) b = b.param("limit", limit);
+        MvcResult r = mvc.perform(b).andExpect(status().isOk()).andExpect(header().string("Cache-Control", containsString("public"))).andReturn();
+        tools.jackson.databind.JsonNode body = tools.jackson.databind.json.JsonMapper.builder().build().readTree(r.getResponse().getContentAsString());
+        // 계약의 항목 모양: 12개 키가 늘 있다(모르는 값은 null — 키를 빼지 않는다)
+        for (tools.jackson.databind.JsonNode it : body.path("items")) {
+            java.util.Set<String> keys = new java.util.HashSet<>();
+            it.propertyNames().forEach(keys::add);
+            assertThat(keys).isEqualTo(ITEM_KEYS);
+        }
+        assertThat(body.path("meta").path("count").asInt()).isEqualTo(body.path("items").size());
+        return body;
+    }
+
+    @Test void search_validatesQueryAndLimit() throws Exception {
+        for (String bad : new String[]{"a", " b ", "HAN%", "HAN_JIN", "선박", "A".repeat(41)})
+            mvc.perform(get("/api/v1/ships/search").param("q", bad)).andExpect(status().isBadRequest())
+                    .andExpect(header().string("Content-Type", containsString("application/problem+json")))
+                    .andExpect(jsonPath("$.code").value("BAD_QUERY"));
+        mvc.perform(get("/api/v1/ships/search")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("BAD_QUERY"));
+        for (String bad : new String[]{"0", "21", "-1"})
+            mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN").param("limit", bad)).andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("BAD_LIMIT"));
+        mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN").param("limit", "x")).andExpect(status().isBadRequest());
+        assertThat(repo.searchCalls).isZero();
+    }
+
+    /** 실시간(메모리) 결과: 위치·속력·보고 시각은 메모리 값, last_position_at 은 DB 의 마지막 저장 시각, 분류는 선종 코드의 결정적 변환. */
+    @Test void search_liveByNamePrefix() throws Exception {
+        repo.lastPositions.put("440000001", T.minusSeconds(40));
+        var body = search("  hanjin ", null);
+        assertThat(body.path("meta").path("q").asString()).isEqualTo("HANJIN");
+        assertThat(body.path("meta").path("provider").asString()).isEqualTo("aisstream");
+        assertThat(body.path("items").size()).isEqualTo(1);
+        var it = body.path("items").get(0);
+        assertThat(it.path("mmsi").asString()).isEqualTo("440000001");
+        assertThat(it.path("name").asString()).isEqualTo("HANJIN BUSAN");
+        assertThat(it.path("call_sign").isNull()).isTrue();
+        assertThat(it.path("imo").isNull()).isTrue();
+        assertThat(it.path("ship_type").asInt()).isEqualTo(70);
+        assertThat(it.path("category").asString()).isEqualTo("cargo");
+        assertThat(it.path("live").asBoolean()).isTrue();
+        assertThat(it.path("lat").asDouble()).isEqualTo(35.1);
+        assertThat(it.path("lon").asDouble()).isEqualTo(129.1);
+        assertThat(it.path("sog_kn").asDouble()).isEqualTo(12.0);
+        assertThat(Instant.parse(it.path("seen_at").asString())).isEqualTo(T.minusSeconds(5));
+        assertThat(Instant.parse(it.path("last_position_at").asString())).isEqualTo(T.minusSeconds(40));
+        assertThat(body.path("meta").has("db_unavailable")).isFalse();
+    }
+
+    /** DB 에만 있는 선박: live=false, 위치·속력·보고 시각 null(지어내지 않는다), 마지막 저장 시각은 DB. 실시간 결과가 먼저, 중복 없음. */
+    @Test void search_fillsFromDbAfterLive_withoutDuplicates() throws Exception {
+        repo.rows.add(new ShipRepository.SearchRow("440000001", full("440000001", "HANJIN BUSAN", null, null, 70), T.minusSeconds(10)));
+        repo.rows.add(new ShipRepository.SearchRow("440000077", full("440000077", "HANJIN OLD", "D7OLD", 9100007, 80), T.minusSeconds(86_400)));
+        repo.rows.add(new ShipRepository.SearchRow("440000078", null, T.minusSeconds(3600))); // 정적 정보 없음 — 선명으로는 안 찾힌다
+        repo.lastPositions.put("440000077", T.minusSeconds(86_000));
+        var items = search("HANJIN", "10").path("items");
+        assertThat(items.size()).isEqualTo(2);
+        assertThat(items.get(0).path("mmsi").asString()).isEqualTo("440000001");
+        assertThat(items.get(0).path("live").asBoolean()).isTrue();
+        var old = items.get(1);
+        assertThat(old.path("mmsi").asString()).isEqualTo("440000077");
+        assertThat(old.path("live").asBoolean()).isFalse();
+        for (String k : new String[]{"lat", "lon", "sog_kn", "seen_at"}) assertThat(old.path(k).isNull()).as(k).isTrue();
+        assertThat(old.path("call_sign").asString()).isEqualTo("D7OLD");
+        assertThat(old.path("imo").asInt()).isEqualTo(9100007);
+        assertThat(old.path("category").asString()).isEqualTo("tanker");
+        assertThat(Instant.parse(old.path("last_position_at").asString())).isEqualTo(T.minusSeconds(86_000));
+        assertThat(repo.lastSearchLimit).as("room for duplicates of the live results").isEqualTo(10 + 1);
+    }
+
+    /**
+     * 실시간인데 메모리에 정적 정보가 없는 선박(440000002)이 DB 의 선명으로 찾히면 실시간 위치와 함께 live=true(상세와 같은 DB 폴백).
+     * 메모리 정적 정보가 있는데 일치하지 않는 선박(옛 선명으로만 찾힘)은 싣지 않는다 — 지금 보고와 맞지 않는 결과를 내지 않는다.
+     */
+    @Test void search_dbMatchOfALiveShip() throws Exception {
+        repo.rows.add(new ShipRepository.SearchRow("440000002", full("440000002", "PAN OCEAN", null, null, 80), T.minusSeconds(60)));
+        repo.rows.add(new ShipRepository.SearchRow("440000001", full("440000001", "PAN OLD NAME", null, null, 70), T.minusSeconds(60)));
+        var items = search("PAN", null).path("items");
+        assertThat(items.size()).isEqualTo(1);
+        var it = items.get(0);
+        assertThat(it.path("mmsi").asString()).isEqualTo("440000002");
+        assertThat(it.path("live").asBoolean()).isTrue();
+        assertThat(it.path("name").asString()).isEqualTo("PAN OCEAN");
+        assertThat(it.path("category").asString()).isEqualTo("tanker");
+        assertThat(it.path("lat").asDouble()).isEqualTo(35.2);
+        // MMSI 로 찾힌 실시간 선박(메모리 정적 정보 없음)도 DB 의 저장 정적 정보로 채운다
+        var byMmsi = search("440000002", null).path("items").get(0);
+        assertThat(byMmsi.path("name").asString()).isEqualTo("PAN OCEAN");
+        assertThat(byMmsi.path("live").asBoolean()).isTrue();
+    }
+
+    /** 숫자 규칙: 9자리 MMSI 정확 · 3–8자리 MMSI 앞부분 · 7자리 IMO 정확(+ MMSI 앞부분) · IMO 접두. 정확 일치가 먼저, 그다음 최근 보고 순. */
+    @Test void search_numericRulesAndRanking() throws Exception {
+        store.apply(List.of(pos("440000003", 35.3, 129.3, T.minusSeconds(1)), pos("563000004", 1.2, 103.8, T.minusSeconds(2))),
+                List.of(full("440000003", "KOREA STAR", "DSAB", null, 60), full("563000004", "SG STAR", "9VAB", 4400000, 70)), T, "aisstream",
+                System.currentTimeMillis());
+        assertThat(search("440000003", null).path("items").get(0).path("name").asString()).isEqualTo("KOREA STAR");
+        assertThat(search("440000009", null).path("items").size()).isZero();
+        var prefix = search("440", null).path("items");
+        assertThat(prefix.size()).isEqualTo(3);
+        assertThat(prefix.get(0).path("mmsi").asString()).as("most recent report first").isEqualTo("440000003");
+        // 7자리: IMO 4400000(정확 — 먼저) + MMSI 440000x 앞부분
+        var seven = search("4400000", null).path("items");
+        assertThat(seven.get(0).path("mmsi").asString()).isEqualTo("563000004");
+        assertThat(seven.size()).isEqualTo(4);
+        assertThat(search("IMO 4400000", null).path("items").size()).isEqualTo(1);
+        assertThat(search("imo4400000", null).path("meta").path("q").asString()).isEqualTo("IMO4400000");
+        // 선명·호출부호: 정확 일치가 먼저
+        var star = search("SG STAR", null).path("items");
+        assertThat(star.size()).isEqualTo(1);
+        assertThat(search("9VAB", null).path("items").get(0).path("mmsi").asString()).isEqualTo("563000004");
+    }
+
+    @Test void search_limitStopsBeforeTheDb() throws Exception {
+        List<ShipState> many = new ArrayList<>();
+        List<ShipStatic> st = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            String m = String.format("%09d", 441_000_000 + i);
+            many.add(pos(m, 34.0, 128.0 + i * 0.01, T.minusSeconds(i)));
+            st.add(full(m, "FLEET " + i, null, null, 30));
+        }
+        store.apply(many, st, T, "aisstream", System.currentTimeMillis());
+        var items = search("FLEET", "20").path("items");
+        assertThat(items.size()).isEqualTo(20);
+        assertThat(items.get(0).path("name").asString()).isEqualTo("FLEET 0");
+        assertThat(search("FLEET", null).path("items").size()).as("default limit").isEqualTo(10);
+        assertThat(repo.searchCalls).as("limit reached from memory — no DB search").isZero();
+    }
+
+    /** DB 장애: 실시간 결과는 그대로 200, meta.db_unavailable = true, 마지막 저장 시각은 모름(null). */
+    @Test void search_dbOutageKeepsLiveResults() throws Exception {
+        repo.down = true;
+        var body = search("HANJIN", null);
+        assertThat(body.path("items").size()).isEqualTo(1);
+        assertThat(body.path("items").get(0).path("last_position_at").isNull()).isTrue();
+        assertThat(body.path("meta").path("db_unavailable").asBoolean()).isTrue();
+        assertThat(search("NOTHING HERE", null).path("items").size()).isZero();
     }
 }
