@@ -590,9 +590,11 @@ export function MapView() {
     onReady(map, "ship-filter", () => { if (map.getLayer("ship-symbol")) map.setFilter("ship-symbol", filter); });
   }, [shipCats]);
 
-  // ---- 선택 선박: WS select_ship + 항적(REST 한 번, 이후 ship_selected 로 연장) ----
+  // ---- 선택 선박: WS select_ship(선택이 바뀔 때만) ----
+  useEffect(() => { clientRef.current?.selectShip(selectedShip); }, [selectedShip]);
+
+  // ---- 선택 선박 항적: REST 한 번(기간 6·12·24 h — 바꾸면 다시), 이후 ship_selected 로 연장 ----
   useEffect(() => {
-    clientRef.current?.selectShip(selectedShip);
     // 이어 붙일 기준: 선택한 순간 알던 선박의 마지막 관측 시각(REST 구간 끝 시각을 서버가 주지 않을 때만 쓴다)
     const lite = selectedShip ? shipStates.get(selectedShip) : undefined;
     const anchor = lite?.seen_at ? Date.parse(lite.seen_at) : NaN;

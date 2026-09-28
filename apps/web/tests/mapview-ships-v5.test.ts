@@ -167,6 +167,8 @@ describe("selected ship track: period and hover points (contract v5 §B3)", () =
     expect(windowH(trackCalls()[1])).toBe(24);
     const { getData } = await import("@/lib/store");
     expect(getData().shipTrack).toMatchObject({ mmsi: "200000001", hours: 24, loaded: false });
+    // 기간만 바꾸면 항적만 다시 받는다 — WS select_ship 을 다시 보내지 않는다
+    expect(rec.selectShip.filter((m) => m === "200000001")).toHaveLength(1);
   });
 
   it("track points become a hoverable point layer (shown with ships + tracks); live observations are added", async () => {
