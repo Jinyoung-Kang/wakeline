@@ -162,11 +162,12 @@ def search_item(**over):
         "sog_kn": 12.3,
         "seen_at": "2026-09-29T00:00:10Z",
         "last_position_at": "2026-09-29T00:00:00Z",
+        "last_seen_at": None,  # 계약 v5 §G4: 실시간이면 null(seen_at 이 마지막 수신)
     }
     return {**base, **over}
 
 
-STORED = {  # DB 에만 있는 선박: 위치·속력·보고 시각은 null, 마지막 저장 시각만
+STORED = {  # DB 에만 있는 선박: 위치·속력·보고 시각은 null, 마지막 저장 시각과 마지막 수신 기록(§G4)
     "mmsi": "440123457",
     "name": "HANJIN OLD",
     "live": False,
@@ -175,6 +176,7 @@ STORED = {  # DB 에만 있는 선박: 위치·속력·보고 시각은 null, �
     "sog_kn": None,
     "seen_at": None,
     "last_position_at": "2026-09-28T00:00:00Z",
+    "last_seen_at": "2026-09-28T00:05:00Z",
 }
 
 
@@ -210,6 +212,39 @@ def test_ship_search_cross_rules():
     # 마지막 저장 위치가 지금 보고보다 새로울 수 없다(저장은 같은 보고의 60 s 창 첫 점)
     assert rcc._ship_search(ship_search("HANJIN", search_item(last_position_at="2026-09-29T00:00:20Z")))
     assert rcc._ship_search(ship_search("HANJIN", search_item(last_position_at=None))) == []  # 저장 전·보존 밖은 모름
+
+
+def test_v5_g4_stored_only_items_carry_last_seen_at():
+    """계약 v5 §G4: 저장만 된 선박은 last_seen_at(마지막 수신 기록 — ship.last_seen, 저장 위치가 더 늦으면 그 시각)이 늘 있고,
+    실시간 선박은 null. 위치 보존(72 h)이 지나 last_position_at 이 null 이어도 last_seen_at 은 있다. 저장 위치보다 이를 수 없다."""
+    v = Draft202012Validator(rcc.SCHEMAS["ship_search"], format_checker=rcc.FORMATS)
+    beyond = search_item(**{**STORED, "last_position_at": None, "last_seen_at": "2026-09-24T00:00:00Z"})
+    assert not list(v.iter_errors(ship_search("HANJIN", search_item(), search_item(**STORED), beyond)))
+    assert rcc._ship_search(ship_search("HANJIN", search_item(), beyond)) == []
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(**{**STORED, "last_seen_at": None}))))  # 저장 행이 있으면 안다
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(last_seen_at="2026-09-29T00:00:00Z"))))  # 실시간이면 null
+    no_key = search_item(**STORED)
+    del no_key["last_seen_at"]
+    assert list(v.iter_errors(ship_search("HANJIN", no_key)))  # 키는 늘 있다
+    early = search_item(**{**STORED, "last_seen_at": "2026-09-27T23:59:00Z"})  # 저장 위치(00:00)보다 이르다 — 넓히지 않은 값
+    assert rcc._ship_search(ship_search("HANJIN", early))
+
+
+def ship_detail(**over):
+    base = {"mmsi": "440123457", "category": "unknown", "meta": META, "first_recorded_at": "2026-09-20T00:00:00Z"}
+    return {**base, **over}
+
+
+def test_v5_g4_ship_detail_last_seen_at_only_when_not_live():
+    """상세도 같은 값: 실시간 목록에 없고 저장 기록이 있을 때만 last_seen_at(저장 위치보다 이르지 않다). 실시간이면 state.seen_at 이 마지막 수신."""
+    v = Draft202012Validator(rcc.SCHEMAS["ship_detail"], format_checker=rcc.FORMATS)
+    stored = ship_detail(last_position_at="2026-09-28T00:00:00Z", last_seen_at="2026-09-28T00:05:00Z")
+    assert not list(v.iter_errors(stored)) and rcc._ship_detail(stored) == []
+    assert rcc._ship_detail(ship_detail(last_position_at="2026-09-28T00:00:00Z", last_seen_at="2026-09-27T00:00:00Z"))
+    no_record = {k: val for k, val in stored.items() if k != "first_recorded_at"}
+    assert rcc._ship_detail(no_record)  # 저장 기록(ship 행)이 없으면 마지막 수신 기록도 없다
+    live = ship_detail(state={"mmsi": "440123457", "lat": 35.0, "lon": 129.0, "seen_at": "2026-09-29T00:00:00Z"}, last_seen_at="2026-09-28T00:05:00Z")
+    assert rcc._ship_detail(live)  # 실시간이면 싣지 않는다
 
 
 @pytest.mark.parametrize(

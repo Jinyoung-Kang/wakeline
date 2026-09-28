@@ -185,7 +185,8 @@ class ShipsIT extends IntegrationTest {
 
     /**
      * 스트림 → ShipStore(실시간) + DB 에만 있는 선박 → GET /ships/search: 실시간이 먼저(위치·속력·보고 시각은 메모리 값), DB 에만 있는 선박은 live=false 와
-     * lat · lon · sog_kn · seen_at = JSON null(운영 JSON 설정 non_null 에서도 키가 남는다), last_position_at = DB 의 마지막 저장 시각. 형식 오류는 problem+json.
+     * lat · lon · sog_kn · seen_at = JSON null(운영 JSON 설정 non_null 에서도 키가 남는다), last_position_at = DB 의 마지막 저장 시각,
+     * last_seen_at = 마지막 수신 기록(§G4 — ship.last_seen, 저장 위치가 더 늦으면 그 시각; 실시간이면 null). 형식 오류는 problem+json.
      */
     @Test
     void searchFindsLiveShipsFirstThenStoredOnes() {
@@ -228,6 +229,23 @@ class ShipsIT extends IntegrationTest {
         for (String k : new String[]{"lat", "lon", "sog_kn", "seen_at"})
             assertThat(second.has(k) && second.get(k).isNull()).as("%s is an explicit null for a stored-only ship", k).isTrue();
         assertThat(Instant.parse(second.path("last_position_at").asString())).isEqualTo(lastPos.toInstant());
+        // 계약 v5 §G4: 마지막 수신 기록 — 저장만 된 선박은 ship.last_seen(이틀 전)을 저장 위치(3시간 전)로 넓힌 값, 실시간 선박은 null
+        assertThat(Instant.parse(second.path("last_seen_at").asString())).isEqualTo(lastPos.toInstant());
+        assertThat(first.has("last_seen_at") && first.get("last_seen_at").isNull()).as("live: explicit null").isTrue();
+        assertThat(Instant.parse(get("/api/v1/ships/" + stored).json().path("last_seen_at").asString())).as("detail: same value").isEqualTo(lastPos.toInstant());
+        assertThat(get("/api/v1/ships/" + live).json().has("last_seen_at")).as("detail of a live ship: state.seen_at").isFalse();
+        // 위치 보존(72 h)이 지난 선박: 위치는 없지만(null) 마지막 수신 기록(ship.last_seen)은 사실로 남는다
+        String old = "440799903";
+        OffsetDateTime lastSeen = OffsetDateTime.ofInstant(Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(5, ChronoUnit.DAYS), ZoneOffset.UTC);
+        db.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider)
+                VALUES (?, 'IT LASTSEEN CHARLIE', NULL, NULL, 52, ? - interval '1 day', ?, ?, 'fixture')
+                ON CONFLICT (mmsi) DO NOTHING""").param(old).param(lastSeen).param(lastSeen).param(lastSeen).update();
+        JsonNode charlie = get("/api/v1/ships/search?q=it%20lastseen").json().path("items").get(0);
+        assertThat(charlie.path("mmsi").asString()).isEqualTo(old);
+        assertThat(charlie.path("live").asBoolean()).isFalse();
+        assertThat(charlie.path("last_position_at").isNull()).isTrue();
+        assertThat(Instant.parse(charlie.path("last_seen_at").asString())).isEqualTo(lastSeen.toInstant());
 
         // MMSI · 호출부호 · IMO 로도(각 규칙) — DB 에만 있는 선박
         assertThat(get("/api/v1/ships/search?q=" + stored).json().path("items").get(0).path("name").asString()).isEqualTo("IT SEARCH BRAVO");

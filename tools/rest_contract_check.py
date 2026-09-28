@@ -593,7 +593,8 @@ FEED: Schema = {
 }
 
 
-# 계약 v5 §B1 선박 검색 — 다른 선박 응답과 달리 항목의 키 12개가 늘 있고 모르는 값은 null(실시간이 아니면 위치·속력·보고 시각이 null)
+# 계약 v5 §B1 선박 검색 — 다른 선박 응답과 달리 항목의 키 13개(§B1 12개 + §G4 last_seen_at)가 늘 있고 모르는 값은 null
+# (실시간이 아니면 위치·속력·보고 시각이 null, 실시간이면 last_seen_at 이 null — seen_at 이 마지막 수신)
 def nullable(schema: Schema) -> Schema:
     return {"anyOf": [{"type": "null"}, schema]}
 
@@ -613,6 +614,7 @@ SHIP_SEARCH_ITEM: Schema = {
         "sog_kn",
         "seen_at",
         "last_position_at",
+        "last_seen_at",
     ],
     "additionalProperties": False,
     "properties": {
@@ -625,13 +627,16 @@ SHIP_SEARCH_ITEM: Schema = {
         "sog_kn": nullable(SHIP_KINEMATICS["sog_kn"]),
         "seen_at": nullable(TS),
         "last_position_at": nullable(TS),  # DB 의 마지막 저장 위치 시각(보존 72 h 안) — 없으면 null
+        # §G4: 저장만 된 선박의 마지막 수신 기록 — ship.last_seen(어떤 AIS 메시지든), 저장 위치가 더 늦으면 그 시각. 보존 밖이어도 있다
+        "last_seen_at": nullable(TS),
     },
     "allOf": [
-        # 실시간이 아니면 위치를 지어내지 않는다(null), 실시간이면 위치와 보고 시각이 있다
+        # 실시간이 아니면 위치를 지어내지 않는다(null) — 마지막 수신 기록은 저장 행(ship.last_seen NOT NULL)에서 늘 안다.
+        # 실시간이면 위치와 보고 시각이 있고 last_seen_at 은 null(10분 단위 DB 값을 seen_at 과 겹쳐 싣지 않는다)
         {
             "if": {"properties": {"live": {"const": False}}},
-            "then": {"properties": {k: {"type": "null"} for k in ("lat", "lon", "sog_kn", "seen_at")}},
-            "else": {"properties": {"lat": LAT_NUM, "lon": LON_NUM, "seen_at": TS}},
+            "then": {"properties": {**{k: {"type": "null"} for k in ("lat", "lon", "sog_kn", "seen_at")}, "last_seen_at": TS}},
+            "else": {"properties": {"lat": LAT_NUM, "lon": LON_NUM, "seen_at": TS, "last_seen_at": {"type": "null"}}},
         },
         # 분류는 선종 코드의 결정적 변환 — 코드가 없으면 unknown, 코드(1–99)가 있으면 unknown 이 아니다
         {
@@ -1017,6 +1022,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "category": SHIP_CATEGORY,
             "first_recorded_at": TS,
             "last_position_at": TS,
+            "last_seen_at": TS,  # 계약 v5 §G4 — 실시간 목록에 없을 때만(검색과 같은 값)
             "meta": META,
         },
         # 분류는 정적 정보의 선종에서만 나온다 — 정적 정보가 없으면 unknown(추정하지 않는다). 목적지 풀이도 정적 정보에서만.
@@ -1166,6 +1172,7 @@ CHECKS = [
     # 선박 검색(계약 v5 §B1): 실행 중 스택은 목록의 첫 선박 MMSI 로, 기록은 선명 앞부분(실시간) · DB 에만 있는 선박(live=false)
     Check("ship_search", "ship_search", 200, "application/json", True),
     Check("ship_search_db", "ship_search", 200, "application/json", True, recorded_only=True),
+    Check("ship_detail_stored", "ship_detail", 200, "application/json", True, recorded_only=True),  # 실시간 아님 — last_seen_at(§G4)
     Check("problem_bad_ship_query", "problem", 400, "application/problem+json", False),
     Check("status_ais", "status_ais", 200, "application/json", True, recorded_only=True),
 ]
@@ -1310,6 +1317,12 @@ def _ship_detail(body: dict[str, Any]) -> list[str]:
             errs.append(f"{part}.mmsi != mmsi")
     if "state" not in body and "static" not in body and "first_recorded_at" not in body:
         errs.append("a ship with no live state, no static info and no stored record must be a 404")
+    # 계약 v5 §G4: 마지막 수신 기록은 실시간 목록에 없고 저장 기록(ship 행)이 있을 때만
+    if "last_seen_at" in body and "state" in body:
+        errs.append("last_seen_at on a live ship (state.seen_at is the last reception)")
+    if "last_seen_at" in body and "first_recorded_at" not in body:
+        errs.append("last_seen_at without a stored record (first_recorded_at)")
+    errs.extend(_last_seen_errors(body))
     dest = body.get("destination_info")
     reported = (body.get("static") or {}).get("destination")
     if dest is not None and dest.get("raw") != reported:
@@ -1556,7 +1569,16 @@ def _ship_search(body: dict[str, Any]) -> list[str]:
         # 저장 위치는 같은 보고 흐름의 60 s 창 첫 점 — 지금 보고(seen_at)보다 새로울 수 없다
         if it.get("seen_at") and it.get("last_position_at") and _ts(it["last_position_at"]) > _ts(it["seen_at"]):
             errs.append(f"items[{i}].last_position_at is later than its live seen_at")
+        errs.extend(f"items[{i}].{e}" for e in _last_seen_errors(it))
     return errs
+
+
+def _last_seen_errors(body: dict[str, Any]) -> list[str]:
+    """계약 v5 §G4: 마지막 수신 기록은 ship.last_seen 과 저장 위치 중 늦은 것 — 저장 위치보다 이를 수 없다."""
+    seen, pos = body.get("last_seen_at"), body.get("last_position_at")
+    if seen and pos and _ts(seen) < _ts(pos):
+        return ["last_seen_at is earlier than last_position_at (it must be widened by the stored position)"]
+    return []
 
 
 def _stats_traffic(body: dict[str, Any]) -> list[str]:
