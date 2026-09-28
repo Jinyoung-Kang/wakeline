@@ -18,7 +18,7 @@ import { useUi } from "@/lib/ui-store";
 import { MapLegendView } from "@/components/MapLegend";
 import { LayerPanelView } from "@/components/LayerPanel";
 import { ShipTable } from "@/components/ShipTable";
-import { SearchResultsView } from "@/components/AircraftSearch";
+import { SearchResultsView, searchListIds } from "@/components/AircraftSearch";
 import { normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, shipChoice } from "@/lib/search";
 import { MapChipsView } from "@/components/MapChips";
 import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
@@ -454,5 +454,51 @@ describe("unified search (contract v5 §B1/§B3)", () => {
     expect(failed).toContain('data-testid="aircraft-search-item"'); // 항공기 결과는 그대로
     const skipped = renderToStaticMarkup(createElement(SearchResultsView, { ...props, aircraft: { hits: [], state: "idle" as const, msg: "" } }));
     expect(text(skipped)).toContain("항공기 검색 안 함 — 호출부호·hex·등록번호는 영문·숫자 2–10자");
+  });
+
+  it("results view accessibility: each group is a listbox labelled by its group title; ship rows are options (aria-selected = keyboard position) with no controls inside; the sort buttons sit outside the listbox and say the sort state", () => {
+    const aircraft = { hits: parseSearchResponse({ items: [{ hex: "71c081", callsign: "KAL081", alt_ft: 34000, lat: 36, lon: 127 }] }), state: "done" as const, msg: "1건" };
+    const ships = {
+      hits: parseShipSearchResponse({ items: [
+        { mmsi: "440123456", name: "SYN ALPHA", ship_type: 70, live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3, seen_at: "2026-09-28T02:59:00Z" },
+        { mmsi: "440999999", name: "SYN BRAVO", ship_type: 80, live: false, last_position_at: "2026-09-28T01:00:00Z" },
+      ] }),
+      state: "done" as const, msg: "2건",
+    };
+    const props = { uid: "s", aircraft, ships, active: 1, now: NOW, shipSort: { key: "name" as const, dir: "asc" as const }, onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {} };
+    const html = renderToStaticMarkup(createElement(SearchResultsView, props));
+    // 항공기 묶음
+    const aList = /<ul[^>]*role="listbox"[^>]*>.*?<\/ul>/.exec(html)![0];
+    expect(aList).toContain(`id="${searchListIds("s").aircraft}"`);
+    expect(aList).toMatch(/aria-labelledby="s-head-aircraft"/);
+    expect(html).toMatch(/id="s-head-aircraft"[^>]*>항공기 1건</);
+    expect(aList).toMatch(/<li[^>]*id="s-opt-a-71c081"[^>]*role="option"[^>]*aria-selected="false"/);
+    // 선박 묶음: tbody = listbox, 줄 = option
+    const sList = /<tbody[^>]*role="listbox"[^>]*>.*?<\/tbody>/.exec(html)![0];
+    expect(sList).toContain(`id="${searchListIds("s").ships}"`);
+    expect(sList).toMatch(/aria-labelledby="s-head-ships"/);
+    expect(html).toMatch(/id="s-head-ships"[^>]*>선박 2건</);
+    expect(sList).toMatch(/<tr[^>]*id="s-opt-s-440123456"[^>]*role="option"[^>]*aria-selected="true"/);
+    expect(sList).toMatch(/<tr[^>]*id="s-opt-s-440999999"[^>]*role="option"[^>]*aria-selected="false"/);
+    expect(sList).not.toContain("<button"); // option 안에는 조작 요소가 없다(선택은 콤보박스 ↑↓ Enter)
+    expect(html).toMatch(/<table[^>]*role="presentation"/);
+    expect(html).not.toMatch(/aria-sort=/); // 표 역할이 없으니 aria-sort 대신 단추 이름에 정렬 상태
+    expect(html).toMatch(/<button[^>]*aria-label="선명 기준 정렬 — 지금 오름차순"/);
+    expect(html).toMatch(/<button[^>]*aria-label="MMSI 기준 정렬"/);
+    // 화면 안 선박 목록(검색 아님)은 그대로 표 — 머리글 aria-sort, 줄에는 option·aria-selected 없음
+    const plain = renderToStaticMarkup(createElement(ShipTable, { rows: [], now: NOW, sort: { key: "name", dir: "asc" }, onSort: () => {}, onPick: () => {}, testId: "ship-list" }));
+    expect(plain).toMatch(/<th[^>]*aria-sort="ascending"/);
+    expect(plain).not.toContain('role="option"');
+    expect(plain).not.toContain('role="presentation"');
+  });
+
+  it("the search ship table keeps the name column readable at phone width: it scrolls sideways inside the dropdown instead of squeezing 선명", () => {
+    const hits = parseShipSearchResponse({ items: [{ mmsi: "440999999", name: "SYN BRAVO", live: false, last_position_at: "2026-09-28T01:00:00Z" }] });
+    const html = renderToStaticMarkup(createElement(SearchResultsView, {
+      uid: "s", aircraft: { hits: [], state: "idle" as const, msg: "" }, ships: { hits, state: "done" as const, msg: "1건" }, active: -1, now: NOW, shipSort: null,
+      onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
+    }));
+    // 고정 칸 합 336 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 118) + 선명 ≥ 104 px
+    expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table[^>]*class="[^"]*min-w-\[440px\]/);
   });
 });

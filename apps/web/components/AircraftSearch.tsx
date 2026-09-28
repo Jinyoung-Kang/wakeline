@@ -148,9 +148,13 @@ export function AircraftSearch() {
   const onShipSort = (k: ShipSortKey) => setShipSort((cur) => (cur?.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
   const showList = open && (qa != null || qs != null);
   const activeId = showList && active >= 0 && active < total ? optionId(uid, active < aircraft.hits.length ? `a-${aircraft.hits[active].hex}` : `s-${rows[active - aircraft.hits.length].mmsi}`) : undefined;
+  // 팝업 = 두 listbox(항공기 · 선박 — 묶음 제목이 이름). 선박 listbox 는 결과가 있을 때만 그린다(없는 id 를 가리키지 않게)
+  const lists = searchListIds(uid);
+  const controls = rows.length ? `${lists.aircraft} ${lists.ships}` : lists.aircraft;
   const hint = text.trim().length > 0 && !qa && !qs ? "영문·숫자 2자 이상(선박은 공백 . - / 포함 40자까지)" : "";
   return (
-    <div className="relative" data-testid="aircraft-search">
+    // 초점이 검색 영역(입력 · 결과의 정렬 단추) 밖으로 나갈 때만 닫는다 — Tab 으로 선박 표 머리글(정렬)에 갈 수 있게
+    <div className="relative" data-testid="aircraft-search" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}>
       <label htmlFor={`${uid}-input`} className="sr-only">통합 검색 — 항공기(호출부호·hex·등록번호) · 선박(선명·MMSI·IMO·호출부호)</label>
       <div className="flex items-center">
         <input
@@ -160,7 +164,7 @@ export function AircraftSearch() {
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={showList}
-          aria-controls={`${uid}-results`}
+          aria-controls={controls}
           aria-activedescendant={activeId}
           aria-describedby={`${uid}-status`}
           autoComplete="off"
@@ -176,7 +180,6 @@ export function AircraftSearch() {
             if (!normalizeQuery(e.target.value) && !normalizeShipQuery(e.target.value)) setMsg("");
           }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
           onKeyDown={onKeyDown}
           data-testid="aircraft-search-input"
         />
@@ -184,11 +187,12 @@ export function AircraftSearch() {
       </div>
       <div id={`${uid}-status`} className="sr-only" aria-live="polite">{hint || msg || [aircraft.msg && `항공기 ${aircraft.msg}`, ships.msg && `선박 ${ships.msg}`].filter(Boolean).join(" · ")}</div>
       {showList ? (
-        // 목록 안을 눌러도 입력의 blur 로 닫히지 않게(정렬 머리글·줄)
-        <div className="panel absolute right-0 top-[calc(100%+6px)] z-50 w-[580px] max-w-[calc(100vw-1.5rem)] text-[12px]" id={`${uid}-results`} data-testid="aircraft-search-results" onMouseDown={(e) => e.preventDefault()}>
+        // 마우스로 목록 안을 눌러도 초점은 입력에 둔다(정렬 머리글·줄). Esc(정렬 단추에서) = 닫고 입력으로
+        <div className="panel absolute right-0 top-[calc(100%+6px)] z-50 w-[580px] max-w-[calc(100vw-1.5rem)] text-[12px]" data-testid="aircraft-search-results"
+          onMouseDown={(e) => e.preventDefault()} onKeyDown={(e) => { if (e.key === "Escape") { inputRef.current?.focus(); setOpen(false); } }}>
           <SearchResultsView uid={uid} aircraft={aircraft} ships={ships} active={active} now={now} shipSort={shipSort} onShipSort={onShipSort}
             onChooseAircraft={(h) => void chooseAircraft(h)} onChooseShip={chooseShip} onHover={setActive} />
-          <div className="border-t border-line px-2 py-1 text-[10px] text-fg-3">↑↓ 이동 · Enter 선택 · Esc 닫기 · live = 실시간 · db = 과거 기록(위치 없음) · 선박 머리글을 누르면 정렬</div>
+          <div className="border-t border-line px-2 py-1 text-[10px] text-fg-3">↑↓ 이동 · Enter 선택 · Esc 닫기 · live = 실시간 · db = 과거 기록(위치 없음) · 선박 머리글을 누르면 정렬(키보드: Tab)</div>
         </div>
       ) : null}
     </div>
@@ -196,11 +200,14 @@ export function AircraftSearch() {
 }
 
 const optionId = (uid: string, key: string) => `${uid}-opt-${key}`;
+/** 검색 팝업의 두 listbox id(콤보박스 aria-controls) */
+export const searchListIds = (uid: string) => ({ aircraft: `${uid}-list-aircraft`, ships: `${uid}-list-ships` });
+const headId = (uid: string, group: "aircraft" | "ships") => `${uid}-head-${group}`;
 
-function GroupHead({ title, count, source, testId }: { title: string; count: string; source: string; testId: string }) {
+function GroupHead({ id, title, count, source, testId }: { id: string; title: string; count: string; source: string; testId: string }) {
   return (
     <div className="flex items-baseline justify-between gap-2 border-b border-line bg-bg-2 px-2 py-1" data-testid={testId}>
-      <span className="label text-fg-2">{title} {count}</span>
+      <span className="label text-fg-2" id={id}>{title} {count}</span>
       <span className="text-[10px] text-fg-3">{source}</span>
     </div>
   );
@@ -209,6 +216,7 @@ function GroupHead({ title, count, source, testId }: { title: string; count: str
 /**
  * 검색 결과 표시 부분(서버 렌더 시험용): 항공기 묶음(목록) → 선박 묶음(정렬 가능한 선박 표 — 화면 안 선박 목록과 같은 표).
  * active = 키보드 활성 위치(항공기 먼저, 이어서 선박 표의 보이는 순서). 묶음마다 상태(검색 안 함·검색 중·실패·없음)를 따로 적는다.
+ * 접근성: 묶음마다 listbox(이름 = 묶음 제목), 줄은 option — 입력(콤보박스)의 aria-activedescendant 가 가리킨다. 선박 정렬 단추는 listbox 밖(표 머리글).
  */
 export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort, onShipSort, onChooseAircraft, onChooseShip, onHover }: {
   uid: string; aircraft: SearchGroup<SearchHit>; ships: SearchGroup<ShipHit>; active: number; now: number;
@@ -221,11 +229,12 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
   const aMsg = groupMsg(aircraft, "항공기 검색 안 함 — 호출부호·hex·등록번호는 영문·숫자 2–10자", "일치하는 항공기 없음");
   const sMsg = groupMsg(ships, "선박 검색 안 함 — 선명·호출부호·MMSI·IMO 는 2–40자(영문·숫자·공백 . - /)", "일치하는 선박 없음");
   const activeShip = active >= nA ? rows[active - nA]?.mmsi ?? null : null;
+  const lists = searchListIds(uid);
   return (
     <div className="max-h-[60vh] overflow-y-auto">
-      <GroupHead title="항공기" count={aircraft.state === "done" ? `${nA}건` : "—"} source="출처: 실시간 스냅샷(live) · DB 과거 기록(db)" testId="search-group-aircraft" />
+      <GroupHead id={headId(uid, "aircraft")} title="항공기" count={aircraft.state === "done" ? `${nA}건` : "—"} source="출처: 실시간 스냅샷(live) · DB 과거 기록(db)" testId="search-group-aircraft" />
       {aMsg ? <div className={`px-2 py-1.5 ${aircraft.state === "error" ? "text-warn" : "text-fg-3"}`}>{aMsg}</div> : null}
-      <ul role="listbox" aria-label="항공기 검색 결과">
+      <ul role="listbox" id={lists.aircraft} aria-labelledby={headId(uid, "aircraft")}>
         {aircraft.hits.map((h, i) => (
           <li
             key={h.hex}
@@ -245,11 +254,11 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
           </li>
         ))}
       </ul>
-      <GroupHead title="선박" count={ships.state === "done" ? `${rows.length}건` : "—"} source="출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)" testId="search-group-ships" />
+      <GroupHead id={headId(uid, "ships")} title="선박" count={ships.state === "done" ? `${rows.length}건` : "—"} source="출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)" testId="search-group-ships" />
       {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`}>{sMsg}</div> : null}
       {rows.length ? (
-        <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" activeMmsi={activeShip} wide rowId={(m) => optionId(uid, `s-${m}`)}
-          onHover={(m) => onHover(nA + rows.findIndex((r) => r.mmsi === m))}
+        <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" wide
+          listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}
       {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 저장 시각은 UTC).</div> : null}

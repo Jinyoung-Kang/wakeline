@@ -19,6 +19,8 @@ vi.mock("@/lib/api", async (orig) => ({
 }));
 
 const dom = installMiniDom();
+// react-dom 은 불러올 때 'oninput' in document 로 input 이벤트 지원을 본다 — 없으면 옛 IE 대체 경로(활성 요소 추적)를 써서 최소 DOM 에서 깨진다
+(dom.document as unknown as Record<string, unknown>).oninput = null;
 const g = globalThis as Record<string, unknown>;
 const winListeners = new Map<string, Set<(e: unknown) => void>>();
 g.addEventListener = (t: string, l: (e: unknown) => void) => { if (!winListeners.has(t)) winListeners.set(t, new Set()); winListeners.get(t)!.add(l); };
@@ -27,12 +29,16 @@ type Root = import("react-dom/client").Root;
 let React: typeof import("react");
 let createRoot: typeof import("react-dom/client").createRoot;
 let ShipCard: typeof import("@/components/ShipCard").ShipCard;
+let AircraftSearch: typeof import("@/components/AircraftSearch").AircraftSearch;
+let ApiError: typeof import("@/lib/api").ApiError;
 const initialUi = useUi.getState();
 
 beforeAll(async () => {
   React = await import("react");
   ({ createRoot } = await import("react-dom/client"));
   ({ ShipCard } = await import("@/components/ShipCard"));
+  ({ AircraftSearch } = await import("@/components/AircraftSearch"));
+  ({ ApiError } = await import("@/lib/api"));
 });
 afterAll(() => { dom.restore(); delete g.addEventListener; delete g.removeEventListener; });
 
@@ -48,6 +54,14 @@ const find = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.contain
   return null;
 };
 const byTestId = (id: string) => find((e) => e.getAttribute("data-testid") === id);
+const findAll = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+  if (pred(from)) out.push(from);
+  for (const c of from.childNodes) if (c instanceof MiniElement) findAll(pred, c, out);
+  return out;
+};
+/** React 는 루트 컨테이너에서 이벤트를 받는다 — 대상 요소를 target 으로 한 원시 이벤트를 컨테이너에 보낸다 */
+const fire = (type: string, target: MiniElement, extra: Record<string, unknown> = {}) =>
+  React.act(async () => { dom.container.dispatch(type, { type, target, bubbles: true, preventDefault() {}, stopPropagation() {}, ...extra }); });
 
 beforeEach(() => {
   rec.calls.length = 0;
@@ -83,5 +97,121 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`, `/api/v1/ships/${MMSI}`]);
     expect(byTestId("ship-not-live")?.textContent).toMatch(/마지막 저장 (09-28 )?02:40 UTC$/);
     expect(byTestId("ship-gone")).toBeNull();
+  });
+});
+
+describe("unified search wiring (contract v5 §B1/§B3)", () => {
+  const input = () => byTestId("aircraft-search-input")!;
+  async function typeText(v: string) {
+    const el = input();
+    (el as unknown as { value: string }).value = v;
+    await fire("input", el);
+  }
+  const key = (k: string) => fire("keydown", input(), { key: k });
+  const paths = () => rec.calls.map((c) => c.path);
+  const AIRCRAFT = { items: [{ hex: "71c081", callsign: "SYN081", alt_ft: 34000, lat: 36, lon: 127 }] };
+  const SHIPS = { items: [
+    // api-ships 레인의 응답 모양(항목마다 계약의 12 키 — 모르는 값은 null)
+    { mmsi: "440123456", name: "SYN ALPHA", call_sign: "D7AA", imo: 9811000, ship_type: 70, category: "cargo", live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3, seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:58:00Z" },
+    { mmsi: "440999999", name: "SYN BRAVO", call_sign: null, imo: null, ship_type: 80, category: "tanker", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T01:00:00Z" },
+  ], meta: { q: "SYN", count: 2 } };
+
+  beforeEach(() => { useUi.setState({ layers: { ...initialUi.layers, ships: false } }); });
+
+  it("one query → both searches in parallel (ships with limit=10); a new query aborts the pending ones", async () => {
+    await mount(React.createElement(AircraftSearch));
+    await typeText("sy");
+    await settle(300); // 디바운스 250 ms
+    expect(paths()).toEqual(["/api/v1/aircraft/search?q=SY", "/api/v1/ships/search?q=SY&limit=10"]);
+    const first = rec.calls.map((c) => c.signal);
+    await typeText("syn a");
+    await settle(300);
+    expect(first.every((sig) => sig?.aborted)).toBe(true);
+    // 공백이 든 검색어: 항공기 규칙(공백 제거)과 선박 규칙(공백 유지)이 따로
+    expect(paths().slice(2)).toEqual(["/api/v1/aircraft/search?q=SYNA", "/api/v1/ships/search?q=SYN%20A&limit=10"]);
+    expect(rec.calls.slice(2).every((c) => !c.signal?.aborted)).toBe(true);
+  });
+
+  it("a group that fails says why (404 = server without ship search) while the other group keeps its results", async () => {
+    rec.reply = (p) => (p.startsWith("/api/v1/ships/") ? Promise.reject(new ApiError(404, "Not Found")) : Promise.resolve(AIRCRAFT));
+    await mount(React.createElement(AircraftSearch));
+    await typeText("SYN");
+    await settle(300);
+    const results = byTestId("aircraft-search-results")!;
+    expect(results.textContent).toContain("선박 검색을 쓸 수 없음(HTTP 404 — 서버가 지원하지 않음)");
+    expect(findAll((e) => e.getAttribute("data-testid") === "aircraft-search-item")).toHaveLength(1);
+  });
+
+  it("↑/↓ moves across both groups (aircraft → ships); the combobox controls both listboxes and points at the active option", async () => {
+    rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? SHIPS : AIRCRAFT);
+    await mount(React.createElement(AircraftSearch));
+    await typeText("SYN");
+    await settle(300);
+    const [aList, sList] = input().getAttribute("aria-controls")!.split(" ");
+    expect(find((e) => e.getAttribute("id") === aList)?.getAttribute("role")).toBe("listbox");
+    expect(find((e) => e.getAttribute("id") === sList)?.getAttribute("role")).toBe("listbox");
+    await key("ArrowDown");
+    const a = input().getAttribute("aria-activedescendant")!;
+    expect(find((e) => e.getAttribute("id") === a)?.getAttribute("role")).toBe("option");
+    expect(find((e) => e.getAttribute("id") === a)?.getAttribute("data-testid")).toBe("aircraft-search-item");
+    await key("ArrowDown");
+    const s1 = find((e) => e.getAttribute("id") === input().getAttribute("aria-activedescendant"))!;
+    expect(s1.getAttribute("role")).toBe("option");
+    expect(s1.getAttribute("data-mmsi")).toBe("440123456");
+    expect(s1.getAttribute("aria-selected")).toBe("true");
+    expect(find((e) => e.getAttribute("id") === sList)!.contains(s1)).toBe(true);
+    await key("ArrowDown");
+    await key("ArrowDown"); // 끝에서 처음으로
+    expect(input().getAttribute("aria-activedescendant")).toBe(a);
+  });
+
+  it("keyboard users can reach the ship sort headers: Tab into the results keeps them open, leaving the search closes them, Esc returns to the input", async () => {
+    rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? SHIPS : AIRCRAFT);
+    await mount(React.createElement(AircraftSearch));
+    await typeText("SYN");
+    await settle(300);
+    const sortBtn = byTestId("ship-search-sort-sog")!;
+    await fire("focusout", input(), { relatedTarget: sortBtn }); // Tab: 입력 → 정렬 단추
+    expect(byTestId("aircraft-search-results")).not.toBeNull();
+    await fire("click", sortBtn);
+    expect(byTestId("ship-search-sort-sog")!.getAttribute("aria-label")).toBe("속력 기준 정렬 — 지금 내림차순");
+    let focused = 0;
+    (input() as unknown as { focus: () => void }).focus = () => { focused++; };
+    await fire("keydown", byTestId("ship-search-sort-sog")!, { key: "Escape" });
+    expect(focused).toBe(1);
+    expect(byTestId("aircraft-search-results")).toBeNull();
+    await fire("focusin", input());
+    expect(byTestId("aircraft-search-results")).not.toBeNull();
+    await fire("focusout", input(), { relatedTarget: null }); // 검색 밖으로
+    expect(byTestId("aircraft-search-results")).toBeNull();
+  });
+
+  it("choosing a live ship: turns the ships layer on, selects it and flies to zoom 9", async () => {
+    rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? SHIPS : { items: [] });
+    await mount(React.createElement(AircraftSearch));
+    await typeText("SYN");
+    await settle(300);
+    await key("ArrowDown");
+    await key("Enter");
+    const ui = useUi.getState();
+    expect(ui.layers.ships).toBe(true);
+    expect(ui.selectedShip).toBe("440123456");
+    expect(ui.flyTo).toMatchObject({ lon: 129.1, lat: 35.1, zoom: 9 });
+    expect(byTestId("aircraft-search-results")).toBeNull(); // 고르면 닫힌다
+  });
+
+  it("choosing a ship that is not live: card only — selected, no map move, the not-live text with the stored time", async () => {
+    rec.reply = (p) => Promise.resolve(p.startsWith("/api/v1/ships/") ? SHIPS : { items: [] });
+    await mount(React.createElement(AircraftSearch));
+    await typeText("SYN");
+    await settle(300);
+    await key("ArrowDown");
+    await key("ArrowDown");
+    await key("Enter");
+    const ui = useUi.getState();
+    expect(ui.selectedShip).toBe("440999999");
+    expect(ui.flyTo).toBeNull();
+    const status = find((e) => e.getAttribute("aria-live") === "polite")!;
+    expect(status.textContent).toMatch(/^SYN BRAVO 선택 — 실시간 아님 · 마지막 저장 (09-28 )?01:00 UTC · 카드만/);
   });
 });
