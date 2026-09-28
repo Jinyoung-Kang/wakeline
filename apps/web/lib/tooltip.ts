@@ -143,15 +143,22 @@ export function shipTip(s: ShipLite, nowMs: number): Tip {
   };
 }
 
-/** 격자 칸 툴팁 — 서버가 보낸 칸 중심·수·가장 많은 선종 그대로 */
-export function shipGridTip(p: { count?: unknown; cat?: unknown }, cellDeg: number | null): Tip {
+/**
+ * 격자 칸 툴팁 — 서버가 보낸 칸 중심·수·가장 많은 선종(선종 필터가 켜져 있으면 선종별 수로 다시 센 값, 계약 v5 §B3).
+ * BY TYPE = 서버가 보낸 선종별 수(B2) 그대로 — 없으면(구 서버) 없다고 적는다.
+ */
+export function shipGridTip(p: { count?: unknown; cat?: unknown; all?: unknown; unfiltered?: unknown; breakdown?: unknown }, cellDeg: number | null): Tip {
   const count = typeof p.count === "number" ? p.count : null;
+  const all = typeof p.all === "number" ? p.all : count;
   const cat = typeof p.cat === "string" && p.cat in SHIP_CATEGORY_LABEL ? (p.cat as keyof typeof SHIP_CATEGORY_LABEL) : "unknown";
+  const n = (v: number) => v.toLocaleString("en-US");
+  const flags: Tip["flags"] = [{ text: `클릭하면 줌 ${SHIPS_RULE.highZoom} 이상으로 확대 — 화면 안 ${n(SHIPS_RULE.highMax)}척 이하면 개별 선박`, tone: "muted" }];
+  if (p.unfiltered === true) flags.push({ text: "선종별 수 없음(구 서버) — 선종 필터를 적용하지 못한 전체 수", tone: "warn" });
   return {
-    title: count == null ? "—" : `선박 ${count.toLocaleString("en-US")}척`,
+    title: count == null ? "—" : `선박 ${n(count)}척${all != null && all !== count ? ` · 선종 필터 적용(칸 전체 ${n(all)}척)` : ""}`,
     subtitle: cellDeg ? `${cellDeg}° 격자` : "격자",
-    rows: [["MOST", SHIP_CATEGORY_LABEL[cat]]],
-    flags: [{ text: `클릭하면 줌 ${SHIPS_RULE.highZoom} 이상으로 확대 — 화면 안 ${SHIPS_RULE.highMax.toLocaleString("en-US")}척 이하면 개별 선박`, tone: "muted" }],
+    rows: [["MOST", SHIP_CATEGORY_LABEL[cat]], ["BY TYPE", typeof p.breakdown === "string" && p.breakdown ? p.breakdown : "— (서버가 선종별 수를 보내지 않음)"]],
+    flags,
   };
 }
 

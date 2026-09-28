@@ -106,7 +106,8 @@ describe("ship message validation (untrusted input → null, never defaults)", (
   });
   it("grid cells: malformed and empty cells are dropped", () => {
     const cells = parseGridCells([[35, 129.5, 12, "cargo"], [95, 0, 1, "x"], [10, 10, 0, "cargo"], "junk", [20, 120, 3, 84], [20, 121, 2.5, "cargo"]]);
-    expect(cells).toEqual([{ lat: 35, lon: 129.5, count: 12, category: "cargo" }, { lat: 20, lon: 120, count: 3, category: "tanker" }]);
+    // 네 원소 칸(선종별 수 없음 — 계약 v5 §B2 이전 서버)은 counts null
+    expect(cells).toEqual([{ lat: 35, lon: 129.5, count: 12, category: "cargo", counts: null }, { lat: 20, lon: 120, count: 3, category: "tanker", counts: null }]);
     expect(gridFeatures(cells).features[0].properties).toMatchObject({ count: 12, label: "12", cat: "cargo" });
     expect([fmtCount(999), fmtCount(1234), fmtCount(45_600)]).toEqual(["999", "1.2k", "46k"]);
   });

@@ -115,7 +115,11 @@ export interface ShipStatic {
   provider: string | null;
 }
 
-export interface ShipGridCell { lat: number; lon: number; count: number; category: ShipCategory }
+/**
+ * ships_grid 칸. counts = 선종별 수(계약 v5 §B2 다섯째 원소, 순서 = SHIP_CATEGORIES = Java ShipCategory 선언 순서).
+ * 구 서버(네 원소 칸)이거나 모양·합이 맞지 않으면 null — 선종 필터를 적용할 수 없다(지어내지 않는다).
+ */
+export interface ShipGridCell { lat: number; lon: number; count: number; category: ShipCategory; counts: number[] | null }
 
 export const MMSI_RE = /^[0-9]{9}$/;
 /** 정적 보고의 IMO 칸(schemas/ship_static.v1.json · USCG NAVCEN): 1,000,000–9,999,999 = IMO 번호, 10,000,000 이상 = 기국 공식 번호, 그 밖은 null */
@@ -195,7 +199,21 @@ export function parseShipStatic(o: unknown): ShipStatic | null {
   };
 }
 
-/** ships_grid.cells: [[lat, lon, count, dominant_category], ...]. 형식이 틀린 칸·0척 칸은 버린다. */
+/** 칸의 선종별 수: 원소 11개(SHIP_CATEGORIES 순서)의 0 이상 정수이고 합이 칸 선박 수와 같을 때만. 아니면 null */
+function parseCatCounts(v: unknown, count: number): number[] | null {
+  if (!Array.isArray(v) || v.length !== SHIP_CATEGORIES.length) return null;
+  let sum = 0;
+  for (const n of v) {
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+    sum += n;
+  }
+  return sum === count ? (v as number[]).slice() : null;
+}
+
+/**
+ * ships_grid.cells: [[lat, lon, count, dominant_category, [n0..n10]?], ...]. 형식이 틀린 칸·0척 칸은 버린다.
+ * 다섯째 원소(선종별 수, 계약 v5 §B2)가 없는 네 원소 칸(구 서버)도 받는다 — counts null.
+ */
 export function parseGridCells(v: unknown): ShipGridCell[] {
   if (!Array.isArray(v)) return [];
   const out: ShipGridCell[] = [];
@@ -204,7 +222,7 @@ export function parseGridCells(v: unknown): ShipGridCell[] {
     if (!Array.isArray(c) || c.length < 3) continue;
     const lat = num(c[0], -90, 90), lon = num(c[1], -180, 180), count = int(c[2], 1, 10_000_000);
     if (lat == null || lon == null || count == null) continue;
-    out.push({ lat, lon, count, category: parseCategory(c[3]) });
+    out.push({ lat, lon, count, category: parseCategory(c[3]), counts: parseCatCounts(c[4], count) });
   }
   return out;
 }
@@ -267,12 +285,57 @@ export function fmtCount(n: number): string {
   return `${Math.round(n / 1000)}k`;
 }
 
-export function gridFeatures(cells: readonly ShipGridCell[]): GeoJSON.FeatureCollection<GeoJSON.Point> {
+// ---- 선종 필터(계약 v5 §B3) ----
+
+/** 선종 필터를 적용한 칸: count = 보이는 선종의 수, all = 서버가 보낸 칸 전체 수, unfiltered = 선종별 수가 없어 필터를 적용하지 못함 */
+export interface FilteredGridCell extends ShipGridCell { all: number; unfiltered: boolean; hidden: ReadonlySet<ShipCategory> }
+
+/**
+ * 격자 칸을 선종 필터로 다시 센다(계약 v5 §B3): 선종별 수(B2)가 있으면 켜진 선종의 합, 0 이면 칸을 그리지 않고,
+ * 색(가장 많은 선종)도 켜진 선종 중에서 다시 고른다(같으면 SHIP_CATEGORIES 순서의 앞 — 서버와 같은 규칙).
+ * 선종별 수가 없는 칸(구 서버)은 셀 수 없으므로 그대로 두고 unfiltered 로 밝힌다(추정해서 줄이지 않는다). 모두 켜져 있으면 서버 값 그대로.
+ * total = 그리는 칸 수의 합, allTotal = 필터 전 합, active = 꺼진 선종이 있음.
+ */
+export function filterGridCells(cells: readonly ShipGridCell[], enabled: ReadonlySet<ShipCategory>): {
+  cells: FilteredGridCell[]; total: number; allTotal: number; unfilteredCells: number; active: boolean;
+} {
+  const hidden = new Set(SHIP_CATEGORIES.filter((c) => !enabled.has(c)));
+  const active = hidden.size > 0;
+  const out: FilteredGridCell[] = [];
+  let total = 0, allTotal = 0, unfilteredCells = 0;
+  for (const c of cells) {
+    allTotal += c.count;
+    if (!active) { out.push({ ...c, all: c.count, unfiltered: false, hidden }); total += c.count; continue; }
+    if (!c.counts) { out.push({ ...c, all: c.count, unfiltered: true, hidden }); total += c.count; unfilteredCells++; continue; }
+    let n = 0, best = -1;
+    SHIP_CATEGORIES.forEach((cat, i) => {
+      if (!enabled.has(cat)) return;
+      n += c.counts![i];
+      if (c.counts![i] > 0 && (best < 0 || c.counts![i] > c.counts![best])) best = i;
+    });
+    if (n === 0) continue;
+    out.push({ ...c, count: n, category: SHIP_CATEGORIES[best], all: c.count, unfiltered: false, hidden });
+    total += n;
+  }
+  return { cells: out, total, allTotal, unfilteredCells, active };
+}
+
+/** 칸 툴팁의 선종별 수 "화물선 3(숨김) · 유조선·탱커 1" — 0 인 선종은 빼고, 꺼진 선종은 (숨김). 선종별 수가 없으면 "" */
+function gridBreakdown(c: ShipGridCell & { hidden?: ReadonlySet<ShipCategory> }): string {
+  if (!c.counts) return "";
+  return SHIP_CATEGORIES.map((cat, i) => [cat, c.counts![i]] as const).filter(([, n]) => n > 0)
+    .map(([cat, n]) => `${SHIP_CATEGORY_LABEL[cat]} ${n.toLocaleString("en-US")}${c.hidden?.has(cat) ? "(숨김)" : ""}`).join(" · ");
+}
+
+export function gridFeatures(cells: readonly (ShipGridCell | FilteredGridCell)[]): GeoJSON.FeatureCollection<GeoJSON.Point> {
   return {
     type: "FeatureCollection",
     features: cells.map((c) => ({
       type: "Feature",
-      properties: { count: c.count, label: fmtCount(c.count), cat: c.category },
+      properties: {
+        count: c.count, label: fmtCount(c.count), cat: c.category,
+        all: "all" in c ? c.all : c.count, unfiltered: "unfiltered" in c ? c.unfiltered : false, breakdown: gridBreakdown(c),
+      },
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
     })),
   };
