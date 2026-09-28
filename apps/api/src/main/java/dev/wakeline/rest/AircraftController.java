@@ -160,6 +160,8 @@ public class AircraftController {
 
     /** 항적 한 번의 점 수 상한(R-52 — 선박 항적과 같다). 넘으면 앞에서부터(시간순) 이만큼만 싣고 properties.truncated = true. */
     static final int TRACK_MAX_POINTS = 5_000;
+    /** 항적 범위 상한(선박 항적과 같다). */
+    static final Duration TRACK_MAX_RANGE = Duration.ofHours(24);
 
     @GetMapping(value = "/{hex}/track", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> track(@PathVariable String hex, @RequestParam(required = false) Instant from,
@@ -168,7 +170,8 @@ public class AircraftController {
         String h = normalizeHex(hex);
         Instant end = to == null ? Instant.now() : to;
         Instant start = from == null ? end.minus(Duration.ofHours(2)) : from;
-        if (Duration.between(start, end).toHours() > 24 || !start.isBefore(end)) throw Problem.badRequest("BAD_RANGE", "range must be within 24 h");
+        // 정확히 비교한다(R-71 — toHours() 절삭은 24 h 59 m 을 통과시켰다)
+        if (Duration.between(start, end).compareTo(TRACK_MAX_RANGE) > 0 || !start.isBefore(end)) throw Problem.badRequest("BAD_RANGE", "range must be within 24 h");
         List<Map<String, Object>> rows = tracks.track(h, start, end, Math.max(0, Math.min(stepS, 3600)), TRACK_MAX_POINTS + 1);
         boolean truncated = rows.size() > TRACK_MAX_POINTS;
         List<Map<String, Object>> pts = truncated ? rows.subList(0, TRACK_MAX_POINTS) : rows;

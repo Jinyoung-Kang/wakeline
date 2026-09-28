@@ -56,4 +56,16 @@ class ReplayIT extends IntegrationTest {
         String recent = Instant.now().minusSeconds(60).truncatedTo(ChronoUnit.SECONDS).toString();
         assertThat(get("/api/v1/replay?at=" + recent + bbox).header("Cache-Control")).contains("max-age=30");
     }
+
+    /** R-71: 재생 시각 한도 31일을 절삭(toDays) 없이 비교한다 — 31일 23시간이 통과했다. */
+    @Test
+    void replayRangeLimitIsExact() {
+        String bbox = "&bbox=124,33,132,39";
+        Instant now = Instant.now();
+        assertProblem(get("/api/v1/replay?at=" + now.minus(31, ChronoUnit.DAYS).minus(23, ChronoUnit.HOURS).truncatedTo(ChronoUnit.SECONDS) + bbox),
+                400, "BAD_AT", "/api/v1/replay");
+        assertProblem(get("/api/v1/replay?at=" + now.minus(31, ChronoUnit.DAYS).minusSeconds(60).truncatedTo(ChronoUnit.SECONDS) + bbox),
+                400, "BAD_AT", "/api/v1/replay");
+        assertThat(get("/api/v1/replay?at=" + now.minus(31, ChronoUnit.DAYS).plusSeconds(60).truncatedTo(ChronoUnit.SECONDS) + bbox).status()).isEqualTo(200);
+    }
 }

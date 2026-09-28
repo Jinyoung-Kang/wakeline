@@ -44,4 +44,14 @@ class AircraftTrackIT extends IntegrationTest {
         assertThat(small.path("properties").has("truncated")).isTrue();
         assertThat(small.path("properties").path("truncated").asBoolean(true)).isFalse();
     }
+
+    /** R-71: 범위 한도 24 h 를 절삭(toHours) 없이 비교한다 — 24 h 59 m 이 통과했다(선박 항적은 정확히 거절). 정확히 24 h 는 허용. */
+    @Test
+    void rangeLimitIsExact() {
+        Instant to = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        String path = "/api/v1/aircraft/a1f0c3/track";
+        assertProblem(get(path + "?from=" + to.minusSeconds(24 * 3600 + 59 * 60) + "&to=" + to), 400, "BAD_RANGE", path);
+        assertProblem(get(path + "?from=" + to.minusSeconds(24 * 3600 + 1) + "&to=" + to), 400, "BAD_RANGE", path);
+        assertThat(get(path + "?from=" + to.minusSeconds(24 * 3600) + "&to=" + to).status()).isEqualTo(200);
+    }
 }

@@ -27,6 +27,8 @@ import java.util.concurrent.TimeUnit;
 @RestController
 @RequestMapping("/api/v1")
 public class HistoryController {
+    /** 재생 시각의 한도(지금 기준). */
+    static final Duration REPLAY_MAX_AGE = Duration.ofDays(31);
     private final TrackRepository tracks;
     private final SigmetRepository sigmetRepo;
     private final StatsRepository stats;
@@ -51,7 +53,8 @@ public class HistoryController {
     public ResponseEntity<Map<String, Object>> replay(@RequestParam Instant at, @RequestParam String bbox, HttpServletRequest req) {
         Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
         Instant now = Instant.now();
-        if (at.isAfter(now.plusSeconds(60)) || Duration.between(at, now).toDays() > 31) throw Problem.badRequest("BAD_AT", "at must be within the last 31 days");
+        // 정확히 비교한다(R-71 — toDays() 절삭은 31일 23시간을 통과시켰다)
+        if (at.isAfter(now.plusSeconds(60)) || Duration.between(at, now).compareTo(REPLAY_MAX_AGE) > 0) throw Problem.badRequest("BAD_AT", "at must be within the last 31 days");
         TrackRepository.Replay r = tracks.replay(at, b);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("at", at);
