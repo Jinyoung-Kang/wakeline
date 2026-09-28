@@ -30,7 +30,7 @@ class MigrationDbTest {
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(11);
     }
 
     @Test
@@ -295,22 +295,35 @@ class MigrationDbTest {
     }
 
     /** V9 머리 주석의 되돌리기 SQL(주석 표시 '-- ' 를 뗀 본문). 블록 경계가 바뀌면 여기서 먼저 깨진다. */
-    static String v9RollbackSql() throws java.io.IOException {
-        String v9;
-        try (var in = MigrationDbTest.class.getResourceAsStream("/db/migration/V9__review_v1.sql")) {
-            assertThat(in).as("V9 on the classpath").isNotNull();
-            v9 = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    static String v9RollbackSql() throws java.io.IOException { return rollbackSql("V9__review_v1.sql"); }
+
+    /** 마이그레이션 머리 주석의 되돌리기 SQL 블록(V9 부터 같은 표시) — 주석 표시 '-- ' 를 뗀 본문. */
+    static String rollbackSql(String file) throws java.io.IOException {
+        String text;
+        try (var in = MigrationDbTest.class.getResourceAsStream("/db/migration/" + file)) {
+            assertThat(in).as(file + " on the classpath").isNotNull();
+            text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         }
         String start = "-- ==== 되돌리기(rollback) SQL", end = "-- ==== 되돌리기 끝 ====";
-        int s = v9.indexOf(start), e = v9.indexOf(end);
+        int s = text.indexOf(start), e = text.indexOf(end);
         assertThat(s).as("rollback block start").isNotNegative();
         assertThat(e).as("rollback block end").isGreaterThan(s);
         StringBuilder sql = new StringBuilder();
-        for (String line : v9.substring(v9.indexOf('\n', s) + 1, e).split("\n")) {
+        for (String line : text.substring(text.indexOf('\n', s) + 1, e).split("\n")) {
             assertThat(line).as("every rollback line is a comment").startsWith("--");
             sql.append(line.startsWith("-- ") ? line.substring(3) : line.substring(2)).append('\n');
         }
         return sql.toString();
+    }
+
+    static void migrateTo(String url, String target) {
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target(target).load().migrate();
+    }
+
+    static void runAsMigrator(String url, String sql) throws SQLException {
+        try (Connection c = DriverManager.getConnection(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW); Statement st = c.createStatement()) {
+            st.execute(sql);
+        }
     }
 
     /**
@@ -323,7 +336,8 @@ class MigrationDbTest {
         String db = "wakeline_stage_nine";
         DbTestSupport.createDatabase(db);
         String url = DbTestSupport.jdbcUrl(db);
-        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        // V9 까지만(V10 이후가 적용된 채로 V9 만 되돌릴 수는 없다 — 되돌리기는 최신부터 역순. 같은 migrator · 같은 위치)
+        migrateTo(url, "9");
         JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
         assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'track_point_drop_old'").query(String.class).single()).contains("boundary");
@@ -352,7 +366,7 @@ class MigrationDbTest {
             assertThat(stage.sql("SELECT has_function_privilege('wakeline_api', :f || '(int)', 'EXECUTE')").param("f", fn).query(Boolean.class).single()).isTrue();
         }
 
-        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        migrateTo(url, "9");
         assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '9' AND success").query(String.class).single())
                 .isEqualTo("wakeline_migrator");
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'ship_position_drop_old'").query(String.class).single()).contains("boundary");
@@ -360,6 +374,57 @@ class MigrationDbTest {
             assertThat(index.apply(ix)).as("re-applied " + ix).isEqualTo(1);
         assertThat(apiDefaultGrants.get()).isZero();
         assertThat(ensureBody.get()).contains("REVOKE ALL");
+    }
+
+    /**
+     * V11(계약 v5 §D1 · R-94 · ADR-019): provider_switch — 공급자 스위치의 원본(Redis wakeline:provider:{name}.disabled 는 미러).
+     * 열·제약은 계약 그대로, api 는 SELECT · INSERT · UPDATE 만(V9 이후 기본 권한이 없으므로 명시 GRANT), collector 는 아무 권한 없음(스위치는 Redis 로만 본다).
+     * updated_by 는 ops_user FK(NULL = 시스템 — Redis 값 이관). 머리 주석의 되돌리기 SQL 로 표와 이력 행이 사라지고, 다시 적용된다.
+     */
+    @Test
+    void v11CreatesTheProviderSwitchTableWithExplicitApiGrantsOnly() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_eleven";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "11");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '11' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'provider_switch'").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        Map<String, String> cols = new java.util.TreeMap<>();
+        for (var r : stage.sql("SELECT column_name, data_type || ':' || is_nullable t FROM information_schema.columns WHERE table_name = 'provider_switch'")
+                .query().listOfRows()) cols.put(String.valueOf(r.get("column_name")), String.valueOf(r.get("t")));
+        assertThat(cols).isEqualTo(new java.util.TreeMap<>(Map.of("provider", "text:NO", "disabled", "boolean:NO", "version", "integer:NO",
+                "updated_at", "timestamp with time zone:NO", "updated_by", "integer:YES")));
+        assertThat(stage.sql("""
+                SELECT string_agg(pg_get_constraintdef(oid), ' | ' ORDER BY contype) FROM pg_constraint WHERE conrelid = 'provider_switch'::regclass AND contype IN ('p', 'f', 'u', 'c')""")
+                .query(String.class).single()).isEqualTo("FOREIGN KEY (updated_by) REFERENCES ops_user(id) | PRIMARY KEY (provider)");
+
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            assertThat(sqlState(c, "INSERT INTO provider_switch (provider, disabled, version, updated_at) VALUES ('adsbdb', true, 1, now())")).isNull();
+            assertThat(sqlState(c, "UPDATE provider_switch SET disabled = false, version = version + 1 WHERE provider = 'adsbdb'")).isNull();
+            assertThat(sqlState(c, "SELECT * FROM provider_switch")).isNull();
+            assertThat(sqlState(c, "DELETE FROM provider_switch")).isEqualTo("42501");
+            assertThat(sqlState(c, "TRUNCATE provider_switch")).isEqualTo("42501");
+            assertThat(sqlState(c, "INSERT INTO provider_switch (provider, disabled, version, updated_at, updated_by) VALUES ('x', true, 1, now(), 999)"))
+                    .as("updated_by must be an operator").isEqualTo("23503");
+            assertThat(sqlState(c, "INSERT INTO provider_switch (provider, disabled, version, updated_at) VALUES ('y', NULL, 1, now())")).isEqualTo("23502");
+        }
+        try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW)) {
+            for (String sql : new String[]{"SELECT * FROM provider_switch", "UPDATE provider_switch SET disabled = false",
+                    "INSERT INTO provider_switch (provider, disabled, version, updated_at) VALUES ('opensky', false, 1, now())"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+        }
+
+        // 되돌리기(머리 주석): 표 삭제 + 이력 행 삭제 → Redis 값만 남아 이전 코드가 그대로 동작한다. 그 뒤 다시 앞으로
+        runAsMigrator(url, rollbackSql("V11__provider_switch.sql"));
+        assertThat(stage.sql("SELECT to_regclass('provider_switch') IS NULL").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '11'").query(Long.class).single()).isZero();
+        migrateTo(url, "11");
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'provider_switch', 'UPDATE')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'provider_switch', 'DELETE')").query(Boolean.class).single()).isFalse();
     }
 
     /**
