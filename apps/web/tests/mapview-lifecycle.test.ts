@@ -150,6 +150,21 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     });
   });
 
+  it("the fallback banner sits at the top left under the zoom control, clear of the bottom-right credit line (R-01)", async () => {
+    const map = await mount();
+    await act(() => map.fire("error", { type: "error", error: new Error("AJAXError: Failed to fetch (0)") }));
+    const find = (n: MiniElement): MiniElement | null => {
+      if (n.getAttribute?.("data-testid") === "basemap-failed") return n;
+      for (const c of n.childNodes) { const f = c instanceof MiniElement ? find(c) : null; if (f) return f; }
+      return null;
+    };
+    const cls = find(dom.container)?.getAttribute("class")?.split(/\s+/) ?? [];
+    // 수정 전: absolute bottom-10 left-3 — 1440x900 에서 줄바꿈된 출처 표기(AttributionControl, 오른쪽 아래 · 최대 760 px)의 왼쪽을 가렸다
+    expect(cls.filter((c) => /^bottom-/.test(c))).toEqual([]);
+    // 줌 버튼(위 10 px + 29 px × 2 ≈ 70 px) 아래 · 지도 폭의 절반까지만(오른쪽 위 레이어 버튼·범례와 겹치지 않게 줄바꿈)
+    expect(cls).toEqual(expect.arrayContaining(["absolute", "top-20", "left-3", "max-w-[50%]"]));
+  });
+
   it("tile/source errors after the style loaded do not replace the style", async () => {
     const map = await mount();
     await act(() => { map.fire("style.load"); map.fire("load"); });

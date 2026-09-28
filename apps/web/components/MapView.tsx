@@ -647,8 +647,9 @@ export function MapView() {
   return (
     <>
       <div ref={el} className="h-full w-full" data-testid="map" />
+      {/* 왼쪽 위 줌 버튼 아래(top-20 = 80 px, 버튼 끝 ≈ 70 px) — 오른쪽 아래 출처 표기(줄바꿈되면 왼쪽으로 넓어진다)를 가리지 않게(R-01) */}
       {basemapFailed ? (
-        <div className="pointer-events-none absolute bottom-10 left-3 z-10 border border-line-2 bg-bg-1/90 px-2 py-1 text-[11px] text-warn" role="status" data-testid="basemap-failed">
+        <div className="pointer-events-none absolute top-20 left-3 z-10 max-w-[50%] border border-line-2 bg-bg-1/90 px-2 py-1 text-[11px] text-warn" role="status" data-testid="basemap-failed">
           배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)
         </div>
       ) : null}
