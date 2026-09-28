@@ -14,12 +14,12 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfException;
-import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
-import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.security.web.firewall.RequestRejectedHandler;
 import org.springframework.session.web.http.CookieSerializer;
 import org.springframework.session.web.http.DefaultCookieSerializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 
@@ -31,6 +31,7 @@ import java.time.Duration;
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Configuration
 public class SecurityConfig {
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
     public static final String SESSION_COOKIE = "WAKELINE_SESSION";
     public static final String CSRF_COOKIE = "WAKELINE_CSRF";
     public static final String CSRF_HEADER = "X-CSRF-Token";
@@ -60,11 +61,32 @@ public class SecurityConfig {
                             if (ex instanceof CsrfException) problem(res, req, 403, "CSRF_INVALID", "forbidden", "missing or invalid CSRF token");
                             else problem(res, req, 404, "NOT_FOUND", "not found", "no such resource");
                         }))
+                // 보안 헤더는 한 계층에서만(R-84): X-Content-Type-Options · X-Frame-Options · Referrer-Policy · Permissions-Policy 는 edge
+                // (infra/edge/security_headers.conf)가 모든 응답 — 웹·api·421·방화벽 거절까지 — 에 붙인다. 여기서도 붙이면 두 번 나가고 한쪽만
+                // 바꾸면 값이 충돌한다. api 는 JSON 응답에만 의미 있는 CSP 와 Spring 기본 캐시 헤더만 둔다.
                 .headers(h -> h
-                        .referrerPolicy(r -> r.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
-                        .addHeaderWriter(new StaticHeadersWriter("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
+                        .contentTypeOptions(c -> c.disable())
+                        .frameOptions(f -> f.disable())
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'")));
         return http.build();
+    }
+
+    /**
+     * Spring 방화벽(StrictHttpFirewall)이 거절한 요청(//·;·/./·인코딩된 . 등)도 RFC 9457 로(R-84). 기본은 예외를 컨테이너로 올려 Boot 기본
+     * JSON 오류 본문이 나갔다. 거절 자체는 그대로다(우회 없음). WebSecurity 가 이 빈을 FilterChainProxy 에 건다.
+     */
+    /** Tomcat 이 앱에 닿기 전에 거절한 요청(예: %2F)의 본문도 problem+json(R-84) — {@link ProblemErrorReportValve}. */
+    @Bean
+    static ProblemErrorReportValve.Customizer problemErrorReportValveCustomizer() {
+        return new ProblemErrorReportValve.Customizer();
+    }
+
+    @Bean
+    RequestRejectedHandler requestRejectedHandler() {
+        return (req, res, ex) -> {
+            log.debug("request rejected by the firewall request_id={}: {}", RequestIdFilter.current(req), ex.getMessage());
+            problem(res, req, 400, "BAD_REQUEST", "bad request", "request rejected");
+        };
     }
 
     private static boolean isLogin(HttpServletRequest req) {
@@ -79,12 +101,7 @@ public class SecurityConfig {
     }
 
     private static void problem(jakarta.servlet.http.HttpServletResponse res, HttpServletRequest req, int status, String code, String title, String detail) throws java.io.IOException {
-        res.setStatus(status);
-        res.setContentType("application/problem+json");
-        String body = """
-                {"type":"https://wakeline.invalid/problems/%s","title":"%s","status":%d,"detail":"%s","instance":"%s","code":"%s","request_id":"%s"}"""
-                .formatted(code.toLowerCase().replace('_', '-'), title, status, detail, req.getRequestURI(), code, RequestIdFilter.current(req));
-        res.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
+        ProblemJson.write(res, req, status, code, title, detail);
     }
 
     @Bean

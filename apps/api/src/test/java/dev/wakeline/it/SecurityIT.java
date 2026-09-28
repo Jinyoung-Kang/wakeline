@@ -440,15 +440,34 @@ class SecurityIT extends IntegrationTest {
         assertThat(post.header("Allow")).contains("GET");
     }
 
+    /**
+     * R-84: 거절된 경로도 RFC 9457 — Spring 방화벽(//·;·/./ → 이전에는 Boot 기본 JSON)과 Tomcat 자체 거절(%2F → 이전에는 Tomcat HTML 페이지)
+     * 모두 application/problem+json · code · request_id(= X-Request-Id). 거절은 그대로(우회 없음).
+     */
+    @Test
+    void rejectedPathsAreProblemDetailsToo() {
+        for (String p : List.of("/api/v1//ops/providers", "/api/v1/ops;x=1/providers", "/api/v1/./ops/providers", "/api/v1/ops%2Fproviders")) {
+            Res r = get(p);
+            JsonNode problem = assertProblem(r, 400, "BAD_REQUEST", p);
+            assertThat(problem.path("title").asString()).isEqualTo("bad request");
+            assertThat(r.body()).doesNotContain("<html").doesNotContain("Tomcat");
+        }
+    }
+
+    /**
+     * R-84: X-Content-Type-Options · X-Frame-Options · Referrer-Policy · Permissions-Policy 는 edge(security_headers.conf)가 모든 응답에 붙인다 —
+     * api 도 붙이면 같은 헤더가 두 번 나가고, 한쪽만 바꾸면 값이 충돌한다. api 는 자기 응답에만 의미 있는 CSP 와 캐시 헤더만 둔다.
+     */
     @Test
     void responsesCarrySecurityHeadersAndNoCorsGrant() {
         Res r = get("/api/v1/status", headers("Origin", "https://evil.example"));
         assertThat(r.status()).isEqualTo(200);
         assertThat(r.header("Content-Security-Policy")).isEqualTo("default-src 'none'; frame-ancestors 'none'");
-        assertThat(r.header("X-Content-Type-Options")).isEqualTo("nosniff");
-        assertThat(r.header("X-Frame-Options")).isEqualTo("DENY");
-        assertThat(r.header("Referrer-Policy")).isEqualTo("strict-origin-when-cross-origin");
-        assertThat(r.header("Permissions-Policy")).contains("geolocation=()");
+        Res opsDenied = get("/api/v1/ops/providers");
+        for (Res x : List.of(r, opsDenied))
+            for (String edgeOwned : List.of("X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy", "Permissions-Policy"))
+                assertThat(x.headers(edgeOwned)).as("%s is added by the edge only", edgeOwned).isEmpty();
+        assertThat(opsDenied.header("Content-Security-Policy")).isEqualTo("default-src 'none'; frame-ancestors 'none'");
         assertThat(r.header("Access-Control-Allow-Origin")).isNull();
         assertThat(r.header("X-Request-Id")).matches("^[0-9a-f]{20,}$");
         // 클라이언트가 보낸 요청 id 는 믿지 않는다

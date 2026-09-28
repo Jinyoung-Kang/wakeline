@@ -26,9 +26,7 @@ public class RequestIdFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
-        byte[] b = new byte[8];
-        RND.nextBytes(b);
-        String id = Long.toHexString(System.currentTimeMillis()) + HexFormat.of().formatHex(b);
+        String id = newId();
         req.setAttribute(ATTR, id);
         res.setHeader(HEADER, id);
         MDC.put("request_id", id);
@@ -37,6 +35,13 @@ public class RequestIdFilter extends OncePerRequestFilter {
         } finally {
             MDC.remove("request_id");
         }
+    }
+
+    /** 새 요청 id: 시각(ms, 16진) + 난수 8바이트(16진). */
+    public static String newId() {
+        byte[] b = new byte[8];
+        RND.nextBytes(b);
+        return Long.toHexString(System.currentTimeMillis()) + HexFormat.of().formatHex(b);
     }
 
     public static String current(HttpServletRequest req) {
