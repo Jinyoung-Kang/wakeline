@@ -51,6 +51,15 @@ class ApiNativeMemoryTest(unittest.TestCase):
         self.assertRegex(runtime, r"(?m)^ENV\b.*\bMALLOC_ARENA_MAX=2\b", "실행 단계 ENV 에 MALLOC_ARENA_MAX=2")
 
 
+class CollectorNativeMemoryTest(unittest.TestCase):
+    """리뷰 4단계: collector 도 작업 스레드(asyncio.to_thread 기본 풀, 최대 8)마다 glibc 아레나를 따로 쥐어 RSS 가 계단식으로 늘었다
+    (기본 설정 40분에 99 → 297 MiB, 최고 376 MB). api(R-25 후속)와 같이 아레나를 2개로 묶는다 — ais 도 같은 이미지다."""
+
+    def test_malloc_arena_cap_in_runtime_stage(self):
+        runtime = stages(DOCKERFILES["collector"].read_text())[-1]
+        self.assertRegex(runtime, r"(?m)^ENV\b.*\bMALLOC_ARENA_MAX=2\b")
+
+
 class RuntimeToolsTest(unittest.TestCase):
     """R-29: 실행 이미지에 쓰지 않는 패키지 관리자를 남기지 않는다(web·collector 의 HIGH 취약점 전부의 출처). 빌드한 이미지는 image_test.sh 가 본다."""
 

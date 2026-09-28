@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -56,6 +57,11 @@ def select_candidates(
     window = sorted({tm for tm in listing if tm <= now_tm})[-KEEP_FRAMES:]
     have = set(stored)
     return [tm for tm in window if tm not in have and tm not in bad][-MAX_PER_CYCLE:]
+
+
+# 격자 해석(수십 MB numpy 버퍼)은 전용 스레드 하나에서만 — 공용 기본 풀(asyncio.to_thread, 최대 8)의 아무 스레드에서 돌면 스레드마다
+# glibc malloc 아레나가 최고점을 따로 쥐어 RSS 가 계단식으로 늘었다(리뷰 4단계 측정). 해석은 원래 한 번에 하나씩이라 처리량 차이는 없다.
+_DECODE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="kma-decode")
 
 
 def _decode(raw: bytes):
@@ -249,7 +255,7 @@ class KmaRadarJob:
         ctx = self.ctx
         raw_ref = await archive(ctx.raw, "kma_radar", res.raw, res.fetched_at)  # 이미 gzip → 그대로 .bin.gz(R-21)
         try:
-            header, png, meta = await asyncio.to_thread(_decode, res.raw)
+            header, png, meta = await asyncio.get_running_loop().run_in_executor(_DECODE_POOL, _decode, res.raw)
         except Exception as e:  # noqa: BLE001 — 해석 실패는 격리(원천은 남는다)
             raise _BadFrame(f"{type(e).__name__}: {e} (raw={raw_ref})") from e
         r = ctx.status.redis

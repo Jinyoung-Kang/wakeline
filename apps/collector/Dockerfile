@@ -19,7 +19,9 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 COPY --chown=app:app schemas /app/schemas
 COPY --chown=app:app fixtures /app/fixtures
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 TZ=UTC
+# MALLOC_ARENA_MAX=2: 작업 스레드(asyncio.to_thread 기본 풀)마다 glibc 아레나가 최고점을 따로 쥐어 RSS 가 계단식으로 늘었다(리뷰 4단계,
+# api 와 같은 조치). ais 도 이 이미지를 쓴다.
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 TZ=UTC MALLOC_ARENA_MAX=2
 USER app
 # 계약 §8: 관심 지역 heartbeat(wakeline:collector.region_at)가 90 s 안이면 정상. compose 의 healthcheck 가 있으면 그쪽이 우선한다.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD ["python", "-m", "wakeline_collector.health"]

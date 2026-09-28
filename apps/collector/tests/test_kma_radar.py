@@ -250,6 +250,26 @@ async def test_job_steady_state_downloads_one_frame_per_cycle_and_keeps_list_con
     assert (used, limit) == (12 + total, 1000)
 
 
+async def test_decode_runs_on_one_dedicated_thread_not_the_shared_pool(kma_env, monkeypatch):
+    """큰 격자 해석(수십 MB numpy 버퍼)은 전용 스레드 하나에서만 — 공용 기본 풀의 아무 스레드에서 돌면 스레드마다 malloc 아레나가
+    최고점을 따로 쥐어 RSS 가 계단식으로 늘었다(리뷰 4단계 측정: 기본 설정 40분에 99 → 297 MiB)."""
+    import threading
+
+    mod, r, ctx, clock = kma_env
+    names: list[str] = []
+
+    def recording_decode(raw: bytes):
+        names.append(threading.current_thread().name)
+        return _fake_decode(raw)
+
+    monkeypatch.setattr(mod, "_decode", recording_decode)
+    prov = FakeKma(_tms("202609272000"))
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert len(names) == 4
+    assert all(n.startswith("kma-decode") for n in names), names
+    assert len(set(names)) == 1, "한 스레드에서만"
+
+
 async def test_job_prunes_entries_whose_image_expired(kma_env):
     import orjson
 
