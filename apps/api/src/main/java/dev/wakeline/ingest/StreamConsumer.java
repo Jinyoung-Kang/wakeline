@@ -80,6 +80,10 @@ import java.util.zip.GZIPInputStream;
 public class StreamConsumer implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(StreamConsumer.class);
     public static final String GROUP = "api";
+    /**
+     * 소비자 이름이 상수다 — api 는 단일 인스턴스로만 돈다(R-79). 두 번째 인스턴스는 {@link SingleInstanceGuard} 가 기동을 막고,
+     * 그룹에 다른 이름의 소비자가 활동하면 경고한다.
+     */
     public static final String CONSUMER = "api-1";
     public static final String S_AIRCRAFT = "wakeline:aircraft";
     public static final String S_SIGMET = "wakeline:sigmet";
