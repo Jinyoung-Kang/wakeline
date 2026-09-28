@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { fmtDuration, fmtIso, fmtTime } from "@/lib/format";
+import { fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
 import {
-  fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
+  fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
   SHIP_STALE_S, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
   type DestinationInfo, type ShipState, type ShipStatic,
@@ -37,7 +37,7 @@ function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
 
 /**
  * 선박 상세(계약 v2 §B4 · v4 §B): 선박명·MMSI·호출부호·IMO·선종(코드+분류)·크기(A+B × C+D, 보고값)·흘수·출발지(보고)·목적지(보고, 원문 + UN/LOCODE 풀이)·ETA(선원 입력값, 연도 없음)·
- * 속력/침로/선수방위·항해 상태·위치 출처·관측 시각(경과). 값이 없으면 "—". 정적 정보는 선원이 입력한 보고값이다(검증하지 않은 값).
+ * 속력(kn · km/h, 계약 v5 §A)/침로/선수방위·항해 상태·위치 출처·관측 시각(경과). 값이 없으면 "—". 정적 정보는 선원이 입력한 보고값이다(검증하지 않은 값).
  * 상태: WS ship_selected(바뀔 때마다) → 없으면 REST 상세 → 없으면 지도 목록 사본 중 관측이 가장 새로운 것. 경과는 서버 기준 시각.
  */
 export function ShipCard({ mmsi }: { mmsi: string }) {
@@ -94,7 +94,12 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
       </span>
     ), "선원이 입력한 목적지 원문(검증하지 않은 보고값)과 UN/LOCODE 풀이 — 항구(1)·내륙항(8) 항목만, 규칙으로만 읽고 추정하지 않음"],
     ["ETA", fmtShipEta(st)],
-    ["속력/침로/선수방위", <span key="mo" className="mono">{fmtMotion(s)}</span>],
+    ["속력/침로/선수방위", (
+      <span key="mo" className="flex flex-col items-end">
+        <span className="mono">{fmtSogDual(s?.sog_kn)}</span>
+        <span className="mono text-[11px] text-fg-2">침로 {s?.cog_deg == null ? "—" : `${s.cog_deg.toFixed(1)}°`} · 선수방위 {s?.heading_deg == null ? "—" : `${s.heading_deg.toFixed(0)}°`}</span>
+      </span>
+    ), "대지속력(SOG, kn · km/h) / 대지침로(COG) / 선수방위(HDG) — 선박 보고값. km/h 는 1 kn = 1.852 km/h 로 바꾼 값"],
     ["항해 상태", navStatusLabel(s?.nav_status)],
     ["위치 출처", positionSourceLabel(s?.position_source), "보고의 Timestamp 필드 — 0–59 전자 위치 장치(종류는 모름) · 61 수동 · 62 추측항법 · 63 장치 비작동 · 60(값 없음)은 —"],
     ["AIS 등급", s?.class ? `Class ${s.class}` : "—"],

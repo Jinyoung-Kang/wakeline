@@ -345,10 +345,10 @@ export function fmtShipType(code: number | null | undefined): string {
   return `${code} · ${SHIP_CATEGORY_LABEL[c]}`;
 }
 
-/** 속력/침로/선수방위 — 각 값이 없으면 "—" */
-export function fmtMotion(s: { sog_kn?: number | null; cog_deg?: number | null; heading_deg?: number | null } | null | undefined): string {
-  const f = (v: number | null | undefined, unit: string, d = 0) => (v == null ? "—" : `${v.toFixed(d)}${unit}`);
-  return `${f(s?.sog_kn, " kn", 1)} / ${f(s?.cog_deg, "°", 1)} / ${f(s?.heading_deg, "°")}`;
+/** 침로/선수방위 "123.4° / 120°" — 각 값이 없으면 "—". 속력은 두 단위로 따로(format.ts fmtSogDual, 계약 v5 §A1) */
+export function fmtCourse(s: { cog_deg?: number | null; heading_deg?: number | null } | null | undefined): string {
+  const f = (v: number | null | undefined, d: number) => (v == null ? "—" : `${v.toFixed(d)}°`);
+  return `${f(s?.cog_deg, 1)} / ${f(s?.heading_deg, 0)}`;
 }
 
 // ---- 출발지·목적지(보고) 풀이(계약 v4 §B) ----

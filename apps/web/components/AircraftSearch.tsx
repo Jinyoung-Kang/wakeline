@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api";
-import { fmtAlt, fmtTime } from "@/lib/format";
+import { fmtTime } from "@/lib/format";
 import { isTypingTarget, moveActive, normalizeQuery, parseSearchResponse, type SearchHit } from "@/lib/search";
 import { aircraftStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import type { AircraftState } from "@/lib/types";
+import { AltStack } from "./UnitStack";
 
 const DEBOUNCE_MS = 250;
 
@@ -142,7 +143,7 @@ export function AircraftSearch() {
                 <span className="mono w-[76px] shrink-0 font-semibold">{h.callsign ?? "—"}</span>
                 <span className="mono w-[54px] shrink-0 text-fg-2">{h.hex}</span>
                 <span className="mono w-[64px] shrink-0 text-fg-2" title="등록번호">{h.registration ?? "—"}</span>
-                <span className="mono w-[62px] shrink-0 text-right">{h.on_ground === true ? "GND" : fmtAlt(h.alt_ft)}</span>
+                <span className="w-[62px] shrink-0 text-right">{h.on_ground === true ? <span className="mono">GND</span> : <AltStack ft={h.alt_ft} />}</span>
                 {h.live ? <span className="badge ok ml-auto">live</span> : <span className="badge ml-auto" title={h.last_seen ? `마지막 수신 ${fmtTime(h.last_seen)}` : "마지막 수신 시각 모름"}>db</span>}
               </li>
             ))}

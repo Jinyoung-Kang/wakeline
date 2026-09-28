@@ -1,6 +1,6 @@
 "use client";
 import type { Alert } from "@/lib/types";
-import { band, fmtAlt, fmtEta, fmtNum, fmtTime, hazardColor } from "@/lib/format";
+import { band, fmtAltDual, fmtEta, fmtGsDual, fmtNum, fmtTime, hazardColor } from "@/lib/format";
 import { alertListState, closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
 import { useServerData } from "@/lib/store";
 import { useRxFresh, useServerNow } from "@/lib/clock";
@@ -29,7 +29,7 @@ export function EvidenceCard({ a }: { a: Alert }) {
     ["경보", `${a.fir_id} · ${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`],
     ["SIGMET id", <span key="id" className="mono text-fg-2">{a.sigmet_id}</span>],
     ["고도대", bandFt ? band(bandFt.base, bandFt.top, src) : "—"],
-    [a.kind === "PREDICTED" ? "진입 시 고도(추정)" : "항공기 고도", <span key="alt" className="mono">{fmtAlt(a.alt_ft)}</span>],
+    [a.kind === "PREDICTED" ? "진입 시 고도(추정)" : "항공기 고도", <span key="alt" className="mono">{fmtAltDual(a.alt_ft)}</span>],
     ["유효시간", <span key="v" className="mono">{fmtTime(str(ev.valid_from))} – {fmtTime(str(ev.valid_to))}</span>],
     ["판정 시각", <span key="j" className="mono">{fmtTime(str(ev.judged_at))}</span>],
     ["방법", str(ev.method) ?? "—"],
@@ -37,7 +37,7 @@ export function EvidenceCard({ a }: { a: Alert }) {
   if (a.kind === "PREDICTED") {
     rows.push(["ETA(추정)", <span key="eta" className="mono">{fmtEta(eta)}</span>]);
     rows.push(["거리", distance == null ? "—" : `${fmtNum(distance, "", 1)} NM`]);
-    rows.push(["판정 입력", `${fmtNum(num(ev.gs_kt), " kt")} · ${fmtNum(num(ev.track_deg), "°")}`]);
+    rows.push(["판정 입력", `${fmtGsDual(num(ev.gs_kt))} · ${fmtNum(num(ev.track_deg), "°")}`]);
     if (ev.vrate_assumed_zero === true) rows.push(["가정", "수직속도 미상 → 0 ft/min 가정"]);
   } else {
     rows.push(["연속 확인", confirmations == null ? "—" : `${confirmations}회`]);
