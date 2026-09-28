@@ -123,7 +123,7 @@ class RetentionDbTest {
                   (:d, 'alerts_by_kind', 'OBSERVED', 120), (:d, 'alert_dwell_avg_s', 'OBSERVED', 640)""").param("d", old).update();
         jobs().aggregateDay(old); // 그날의 알림 행은 보존으로 이미 지워졌다 — 다시 세면 0 이 된다
 
-        assertThat(admin.sql("SELECT metric || ':' || value::int FROM stats_daily WHERE day = :d ORDER BY metric").param("d", old).query(String.class).list())
+        assertThat(admin.sql("SELECT metric || ':' || value::int FROM stats_daily WHERE day = :d AND metric <> 'aggregated_at' ORDER BY metric").param("d", old).query(String.class).list())
                 .containsExactly("alert_dwell_avg_s:640", "alerts_by_kind:120");
     }
 }

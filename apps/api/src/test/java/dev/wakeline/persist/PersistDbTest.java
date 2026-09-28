@@ -432,10 +432,12 @@ class PersistDbTest {
         assertThat(jobs.catchUpSummaries(now)).isEmpty(); // 멱등
 
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        admin.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d, 'alerts_by_kind', 'OBSERVED', 1)").param("d", today.minusDays(2)).update();
+        // 이미 집계를 마친 날(R-46: 계열마다 완료 표식) — 따라잡기가 다시 세지 않는다
+        admin.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d, 'alerts_by_kind', 'OBSERVED', 1), "
+                + "(:d, 'aggregated_at', 'sigmet', 1), (:d, 'aggregated_at', 'traffic', 1), (:d, 'aggregated_at', 'alerts', 1)").param("d", today.minusDays(2)).update();
         List<LocalDate> done = jobs.catchUpStats(today);
         assertThat(done).hasSize(MaintenanceJobs.CATCH_UP_DAYS - 1).doesNotContain(today.minusDays(2)).contains(today.minusDays(1), today.minusDays(7));
-        assertThat(admin.sql("SELECT value FROM stats_daily WHERE day = :d").param("d", today.minusDays(2)).query(Long.class).single()).isEqualTo(1L);
+        assertThat(admin.sql("SELECT value FROM stats_daily WHERE day = :d AND metric = 'alerts_by_kind'").param("d", today.minusDays(2)).query(Long.class).single()).isEqualTo(1L);
     }
 
     @Test

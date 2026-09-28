@@ -16,6 +16,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 파티션 생성, 만료 파티션 삭제(매시 :02 UTC), 보존 삭제(매일 03:00 UTC), 1분 요약(매시 :05, 관심 지역만 · 30일), 통계 집계(03:30). 기동 시 파티션 보장.
@@ -24,7 +25,7 @@ import java.util.List;
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
- * 최근 7일 중 통계가 없는 날을 채운다(둘 다 멱등).
+ * 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
@@ -194,18 +195,44 @@ public class MaintenanceJobs {
         return done;
     }
 
-    /** 어제부터 7일 전까지 통계 행이 하나도 없는 날을 집계한다(이미 있는 날은 건드리지 않는다). @return 집계한 날 */
+    /**
+     * 어제부터 7일 전까지, 원본이 남아 있는 계열 중 완료 표식이 없는 계열이 하나라도 있는 날을 집계한다(R-46: 행이 있는지로 판단하면 자료가
+     * 없는 날은 3시간마다 영원히 다시 돌고, 부분 행이 있는 날은 건너뛰었다). @return 집계한 날
+     */
     List<LocalDate> catchUpStats(LocalDate today) {
         List<LocalDate> done = new ArrayList<>();
         for (int i = CATCH_UP_DAYS; i >= 1; i--) {
             LocalDate d = today.minusDays(i);
-            Boolean has = db.sql("SELECT EXISTS (SELECT 1 FROM stats_daily WHERE day = :d)").param("d", d).query(Boolean.class).single();
-            if (!Boolean.TRUE.equals(has)) {
+            List<String> marked = db.sql("SELECT dim FROM stats_daily WHERE day = :d AND metric = :m").param("d", d).param("m", MARKER)
+                    .query(String.class).list();
+            if (!marked.containsAll(families(d))) {
                 aggregateDay(d);
                 done.add(d);
             }
         }
         return done;
+    }
+
+    /** 일 통계 계열의 완료 표식(R-46): stats_daily (day, 'aggregated_at', 계열) = 집계 시각(유닉스 초). 조회 API 는 metric 으로 거르므로 보이지 않는다. */
+    public static final String MARKER = "aggregated_at";
+    public static final String FAMILY_SIGMET = "sigmet";
+    public static final String FAMILY_TRAFFIC = "traffic";
+    public static final String FAMILY_ALERTS = "alerts";
+    private static final Map<String, List<String>> FAMILY_METRICS = Map.of(
+            FAMILY_SIGMET, List.of("sigmet_by_fir", "sigmet_by_hazard"),
+            FAMILY_TRAFFIC, List.of("traffic_by_hour", "traffic_region"),
+            FAMILY_ALERTS, List.of("alerts_by_kind", "alert_dwell_avg_s"));
+
+    /**
+     * 그날 원본이 아직 모두 남아 있어 다시 셀 수 있는 계열: SIGMET 은 영구, 교통량은 그날의 원해상도 항적 파티션이 보존 안일 때(끝이 now − 72 h
+     * 보다 뒤), 알림은 보존 삭제가 닿기 전. 원본이 사라진 계열은 재집계가 건드리지 않는다(0·빈 값으로 덮지 않는다).
+     */
+    List<String> families(LocalDate day) {
+        List<String> f = new ArrayList<>(List.of(FAMILY_SIGMET));
+        Instant dayEnd = day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        if (dayEnd.isAfter(Instant.now().minus(props.trackRetentionHours(), ChronoUnit.HOURS))) f.add(FAMILY_TRAFFIC);
+        if (alertsRetained(day)) f.add(FAMILY_ALERTS);
+        return f;
     }
 
     @Scheduled(cron = "0 30 3 * * *", zone = "UTC")
@@ -232,21 +259,36 @@ public class MaintenanceJobs {
      *       경보 종료(sigmet_ended — 항공기는 나가지 않았다), 그리고 경보 만료 뒤에 닫힌 옛 'left' 행(evidence.sigmet_expired —
      *       바깥 관측이 만료 때문이었을 수 있어 이탈 시각을 믿을 수 없다). 해당 알림이 없으면 행을 만들지 않는다(0 을 지어내지 않는다, COR-16).</li>
      * </ul>
+     * 계열마다({@link #families}) 원본이 남아 있을 때만 다시 만든다 — 보존으로 원본이 사라진 계열은 행과 표식을 그대로 둔다(R-06·R-46).
+     * 끝난 날(오늘 UTC 이전)이면 다시 만든 계열마다 완료 표식({@link #MARKER})을 남긴다 — 오늘(부분)의 집계는 완료로 남기지 않는다.
      */
     public void aggregateDay(LocalDate day) {
         Instant start = day.atStartOfDay(ZoneOffset.UTC).toInstant();
         Instant end = start.plus(1, ChronoUnit.DAYS);
         RegionSettings.Region r = region.current();
         Bbox b = r.bbox();
-        boolean alerts = alertsRetained(day);
+        List<String> families = families(day);
+        boolean finished = day.isBefore(LocalDate.now(ZoneOffset.UTC));
+        List<String> metrics = families.stream().flatMap(f -> FAMILY_METRICS.get(f).stream()).toList();
         tx.executeWithoutResult(status -> {
             // traffic_by_hour 는 하루치 관심 지역 점을 (시, hex) 로 정렬한다 — 기본 work_mem(4 MB)으로는 디스크로 넘쳤다(external merge, R-27).
             // 이 트랜잭션에만 넉넉히 준다. 읽는 양(하루 파티션 순차 스캔)은 그대로다: 관심 지역 점은 전세계 점과 같은 페이지에 섞여 있어
             // 공간 인덱스로도 거의 모든 페이지를 읽게 된다(하루 1회 배치 — 요청 경로 아님).
             db.sql("SET LOCAL work_mem = '64MB'").update();
-            // 보존 삭제가 닿은 날은 알림 통계를 그대로 둔다 — 다시 셀 원본이 없다(R-06)
-            db.sql("DELETE FROM stats_daily WHERE day = :d" + (alerts ? "" : " AND metric NOT IN ('alerts_by_kind', 'alert_dwell_avg_s')"))
-                    .param("d", day).update();
+            // 다시 만드는 계열의 행·표식만 지운다 — 원본이 사라진 계열은 그대로(다시 셀 수 없다)
+            db.sql("DELETE FROM stats_daily WHERE day = :d AND (metric IN (:metrics) OR (metric = :marker AND dim IN (:families)))")
+                    .param("d", day).param("metrics", metrics).param("marker", MARKER).param("families", families).update();
+            if (finished) {
+                db.sql("INSERT INTO stats_daily (day, metric, dim, value) SELECT :d, :marker, f, extract(epoch FROM now())::bigint FROM unnest(:families::text[]) f")
+                        .param("d", day).param("marker", MARKER).param("families", families.toArray(String[]::new)).update();
+            }
+            aggregateFamilies(day, families, start, end, r, b);
+        });
+        log.info("daily stats aggregated for {}: {} (region {},{} r={} NM){}", day, families, r.lat(), r.lon(), r.radiusNm(), finished ? "" : " — partial day, not marked complete");
+    }
+
+    private void aggregateFamilies(LocalDate day, List<String> families, Instant start, Instant end, RegionSettings.Region r, Bbox b) {
+        if (families.contains(FAMILY_SIGMET)) {
             db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'sigmet_by_fir', fir_id, count(*) FROM sigmet WHERE valid_from >= :s AND valid_from < :e GROUP BY fir_id""")
@@ -255,6 +297,8 @@ public class MaintenanceJobs {
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'sigmet_by_hazard', hazard, count(*) FROM sigmet WHERE valid_from >= :s AND valid_from < :e GROUP BY hazard""")
                     .param("d", day).param("s", Sql.ts(start)).param("e", Sql.ts(end)).update();
+        }
+        if (families.contains(FAMILY_TRAFFIC)) {
             int traffic = db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'traffic_by_hour', lpad(extract(hour FROM ts AT TIME ZONE 'UTC')::int::text, 2, '0'), count(DISTINCT hex)
@@ -269,7 +313,8 @@ public class MaintenanceJobs {
                           (:d, 'traffic_region', 'center_lat', :lat), (:d, 'traffic_region', 'center_lon', :lon), (:d, 'traffic_region', 'radius_nm', :r)""")
                         .param("d", day).param("lat", r.lat()).param("lon", r.lon()).param("r", r.radiusNm()).update();
             }
-            if (!alerts) return;
+        }
+        if (families.contains(FAMILY_ALERTS)) {
             db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'alerts_by_kind', kind, count(*) FROM alert_event WHERE entered_at >= :s AND entered_at < :e GROUP BY kind""")
@@ -282,7 +327,6 @@ public class MaintenanceJobs {
                       AND (%s)
                     HAVING count(*) > 0""".formatted(CONFIRMED_EXIT))
                     .param("d", day).param("s", Sql.ts(start)).param("e", Sql.ts(end)).update();
-        });
-        log.info("daily stats aggregated for {} (region {},{} r={} NM)", day, r.lat(), r.lon(), r.radiusNm());
+        }
     }
 }

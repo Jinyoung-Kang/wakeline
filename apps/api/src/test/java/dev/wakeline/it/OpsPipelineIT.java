@@ -10,7 +10,6 @@ import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,35 +28,8 @@ class OpsPipelineIT extends IntegrationTest {
     @Autowired OpsUserService users;
     @Autowired MeterRegistry meters;
 
-    /** 로그인한 운영자 브라우저(쿠키만 — GET 에는 CSRF 헤더가 필요 없다). */
-    final class Ops {
-        final Map<String, String> cookies = new LinkedHashMap<>();
-
-        Res send(String method, String path, String body) {
-            Map<String, String> h = new LinkedHashMap<>();
-            if (!cookies.isEmpty()) {
-                StringBuilder sb = new StringBuilder();
-                cookies.forEach((k, v) -> sb.append(sb.isEmpty() ? "" : "; ").append(k).append('=').append(v));
-                h.put("Cookie", sb.toString());
-            }
-            if (body != null) h.put("Content-Type", "application/json");
-            Res r = OpsPipelineIT.this.send(method, path, body, h);
-            for (String sc : r.headers("Set-Cookie")) {
-                String nv = sc.split(";", 2)[0];
-                int eq = nv.indexOf('=');
-                String name = nv.substring(0, eq).trim(), value = nv.substring(eq + 1).trim();
-                if (sc.toLowerCase(Locale.ROOT).contains("max-age=0") || value.isEmpty()) cookies.remove(name); else cookies.put(name, value);
-            }
-            return r;
-        }
-    }
-
-    Ops login() {
-        users.upsert("it-pipeline", PW);
-        Ops b = new Ops();
-        assertThat(b.send("POST", "/api/v1/ops/session", "{\"username\":\"it-pipeline\",\"password\":\"" + PW + "\"}").status()).isEqualTo(200);
-        return b;
-    }
+    /** 로그인한 운영자(쿠키만 — GET 에는 CSRF 헤더가 필요 없다). */
+    OpsBrowser login() { return OpsBrowser.login(this, users, "it-pipeline", PW); }
 
     static Map<Object, Object> snapshot(String key) { return new LinkedHashMap<>(ItStack.admin().opsForHash().entries(key)); }
 
@@ -73,14 +45,14 @@ class OpsPipelineIT extends IntegrationTest {
 
     @Test
     void reportsCollectorAisAndApiLossSignalsWithNullForUnknown() {
-        Ops b = login();
+        OpsBrowser b = login();
         Map<Object, Object> collectorBefore = snapshot(COLLECTOR), aisBefore = snapshot(AIS);
         StringRedisTemplate col = ItStack.collector(), ais = ItStack.ais();
         try {
             // 수집기·ais 가 아무것도 쓰지 않았다 → 모두 모름(null) — 0 으로 채우지 않는다
             ItStack.admin().delete(COLLECTOR);
             ItStack.admin().delete(AIS);
-            JsonNode none = b.send("GET", "/api/v1/ops/pipeline", null).json();
+            JsonNode none = b.get("/api/v1/ops/pipeline").json();
             for (String f : new String[]{"publish_dropped", "db_dropped", "db_pending", "heartbeat_age_s"})
                 assertThat(none.path("collector").has(f) && none.path("collector").get(f).isNull()).as("collector." + f).isTrue();
             for (String f : new String[]{"dropped_total", "quarantined_total"})
@@ -98,7 +70,7 @@ class OpsPipelineIT extends IntegrationTest {
             col.opsForHash().putAll(COLLECTOR, Map.of("region_at", now.toString(), "publish_dropped", "3", "db_dropped", "2", "db_pending", "7",
                     "db_failures", "1"));
             ais.opsForHash().putAll(AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1"));
-            JsonNode fresh = b.send("GET", "/api/v1/ops/pipeline", null).json();
+            JsonNode fresh = b.get("/api/v1/ops/pipeline").json();
             assertThat(fresh.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
             assertThat(fresh.path("collector").path("db_dropped").asLong()).isEqualTo(2);
             assertThat(fresh.path("collector").path("db_pending").asLong()).isEqualTo(7);
@@ -109,7 +81,7 @@ class OpsPipelineIT extends IntegrationTest {
             // 형식이 틀린 값은 모름
             col.opsForHash().put(COLLECTOR, "db_pending", "-1");
             col.opsForHash().put(COLLECTOR, "db_dropped", "many");
-            JsonNode bad = b.send("GET", "/api/v1/ops/pipeline", null).json();
+            JsonNode bad = b.get("/api/v1/ops/pipeline").json();
             assertThat(bad.path("collector").get("db_pending").isNull()).isTrue();
             assertThat(bad.path("collector").get("db_dropped").isNull()).isTrue();
             assertThat(bad.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
@@ -118,7 +90,7 @@ class OpsPipelineIT extends IntegrationTest {
             Instant old = now.minusSeconds(600);
             col.opsForHash().put(COLLECTOR, "region_at", old.toString());
             ais.opsForHash().put(AIS, "updated_at", old.toString());
-            JsonNode stale = b.send("GET", "/api/v1/ops/pipeline", null).json();
+            JsonNode stale = b.get("/api/v1/ops/pipeline").json();
             assertThat(stale.path("collector").get("publish_dropped").isNull()).isTrue();
             assertThat(stale.path("collector").path("heartbeat_age_s").asDouble()).isBetween(590.0, 660.0);
             assertThat(stale.path("ais").get("dropped_total").isNull()).isTrue();
@@ -127,7 +99,7 @@ class OpsPipelineIT extends IntegrationTest {
             // api 자신의 지표(이 프로세스 기동 뒤 누계)
             long dropped = fresh.path("api").path("track_queue_dropped").asLong();
             meters.counter("wakeline_track_rows_total", "result", "dropped").increment(5);
-            assertThat(b.send("GET", "/api/v1/ops/pipeline", null).json().path("api").path("track_queue_dropped").asLong()).isEqualTo(dropped + 5);
+            assertThat(b.get("/api/v1/ops/pipeline").json().path("api").path("track_queue_dropped").asLong()).isEqualTo(dropped + 5);
         } finally {
             restore(COLLECTOR, collectorBefore);
             restore(AIS, aisBefore);

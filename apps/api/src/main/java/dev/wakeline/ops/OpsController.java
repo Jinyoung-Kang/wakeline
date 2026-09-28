@@ -56,10 +56,15 @@ public class OpsController {
         this.tx = tx;
     }
 
-    /** 통계 재집계(멱등). 기본은 어제(UTC). 그 날의 재집계와 감사 기록이 한 트랜잭션 — 실패하면 둘 다 없다. */
+    /**
+     * 통계 재집계(멱등). 기본은 어제(UTC). 그 날의 재집계와 감사 기록이 한 트랜잭션 — 실패하면 둘 다 없다.
+     * 끝난 날(오늘 UTC 이전)만 받는다(R-46) — 부분 집계가 완성된 통계처럼 남지 않게. 원본이 보존으로 사라진 계열은 다시 세지 않는다(MaintenanceJobs).
+     */
     @PostMapping("/stats/aggregate")
     public ResponseEntity<Map<String, Object>> aggregate(@RequestParam(required = false) java.time.LocalDate day, HttpServletRequest req, Authentication auth) {
-        java.time.LocalDate d = day == null ? java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1) : day;
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        java.time.LocalDate d = day == null ? today.minusDays(1) : day;
+        if (!d.isBefore(today)) throw Problem.badRequest("BAD_DAY", "day must be before today (UTC) — a day is aggregated once it has ended");
         tx.executeWithoutResult(st -> {
             jobs.aggregateDay(d);
             audit.record(req, userId(auth), "STATS_AGGREGATE", d.toString(), null, null);
