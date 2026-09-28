@@ -61,20 +61,23 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 /**
  * stats_daily 의 alerts_by_kind(건수)·alert_dwell_avg_s(평균 체류, 초)를 날짜·종류마다 한 행으로. 단위가 다른 값을 한 열에 섞지 않는다.
  * 없는 값은 "—". 수정 전 히스테리시스 행(chart.preFixHysteresis)은 preFix.
+ * 날짜를 읽을 수 없는 행(statsDay → null)은 날짜 "—"로 보이되 서로 묶지 않는다 — 원문 날짜 문자열이 같을 때만 한 행(같은 날의 다른 지표),
+ * 문자열이 아니면 행마다 따로(R-32). 다른 날의 값이 한 칸에서 서로 덮어쓰지 않게.
  */
 export function alertStatsRows(items: AlertStatsInput[]): AlertStatsRow[] {
   const by = new Map<string, { day: string; dim: string; count: number | null; dwell: number | null; preFix: boolean }>();
-  for (const r of items) {
+  items.forEach((r, i) => {
     const dim = typeof r.dim === "string" ? r.dim : "";
-    const day = statsDay(r.day) ?? "—";
-    const k = `${day}|${dim}`;
+    const known = statsDay(r.day);
+    const day = known ?? "—";
+    const k = `${known ?? (typeof r.day === "string" ? `?s:${r.day}` : `?i:${i}`)}|${dim}`;
     const cur = by.get(k) ?? { day, dim, count: null, dwell: null, preFix: false };
     if (r.metric === "alerts_by_kind") cur.count = num(r.value);
     else if (r.metric === "alert_dwell_avg_s") cur.dwell = num(r.value);
-    else continue;
-    cur.preFix ||= preFixHysteresis({ day: statsDay(r.day) ?? undefined, metric: r.metric, dim });
+    else return;
+    cur.preFix ||= preFixHysteresis({ day: known ?? undefined, metric: r.metric, dim });
     by.set(k, cur);
-  }
+  });
   return [...by.entries()]
     .sort(([, a], [, b]) => a.day.localeCompare(b.day) || a.dim.localeCompare(b.dim))
     .map(([key, x]) => ({

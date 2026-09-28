@@ -465,6 +465,19 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
     expect(html).toContain("평균 체류");
     expect(html).toContain("날짜(UTC)");
   });
+  it("rows whose day cannot be read stay separate ('—' each) instead of one row where one day's value overwrites another's", async () => {
+    const stats = await import("@/lib/stats");
+    const rows = stats.alertStatsRows([
+      { day: "2026-09-25T15:00:00.000Z", metric: "alerts_by_kind", dim: "OBSERVED", value: 100 }, // KST JVM 자정 — 날짜를 모른다(R-45)
+      { day: "2026-09-25T15:00:00.000Z", metric: "alert_dwell_avg_s", dim: "OBSERVED", value: 600 }, // 같은 원문 날짜 = 같은 날의 다른 지표
+      { day: "2026-09-26T15:00:00.000Z", metric: "alerts_by_kind", dim: "OBSERVED", value: 5 },
+      { day: null, metric: "alerts_by_kind", dim: "OBSERVED", value: 7 },
+      { day: undefined, metric: "alerts_by_kind", dim: "OBSERVED", value: 9 },
+    ]);
+    // 수정 전: 모두 "—|OBSERVED" 한 행으로 묶여 마지막 값(9건)만 남았다
+    expect(rows.map((r) => [r.day, r.count, r.dwell])).toEqual([["—", "100건", "10m 00s"], ["—", "5건", "—"], ["—", "7건", "—"], ["—", "9건", "—"]]);
+    expect(new Set(rows.map((r) => r.key)).size).toBe(rows.length); // 표의 React key 가 겹치지 않는다
+  });
   it("empty states say whether the day was not aggregated yet, never aggregated, or aggregated with no data", async () => {
     const stats = await import("@/lib/stats");
     const today = "2026-09-28";
