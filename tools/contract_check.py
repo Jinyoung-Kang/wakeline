@@ -10,6 +10,8 @@ import base64
 import filecmp
 import gzip
 import json
+import logging
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +41,8 @@ from wakeline_collector.ais.sink import AisSink  # noqa: E402
 from wakeline_collector.ais.worker import Worker  # noqa: E402
 from wakeline_collector.demand import HotCell, parse_cell_key  # noqa: E402
 from wakeline_collector.jobs.demand import focus_payload, hot_payload  # noqa: E402
+from wakeline_collector.logsink import ENTRY_MAX_BYTES, LogSink  # noqa: E402
+from wakeline_collector.masking import _SECRETS, mask, register_secrets  # noqa: E402
 from wakeline_collector.models import Sigmet  # noqa: E402
 from wakeline_collector.normalize import from_readsb  # noqa: E402
 from wakeline_collector.publisher import Publisher  # noqa: E402
@@ -182,19 +186,113 @@ def main() -> int:
     failures += bool(errs)
     # 5. 선박(AIS, 계약 v2 §B1·§B2): 실수신 fixture 484건 → 실제 발행 경로(worker → ShipBook → AisSink.flush) → 스키마
     failures += check_ships(env_v)
+    # 6. 시스템 로그(계약 v5 §C): 로그 싱크가 만든 LogEvent · 언어 간 가림 벡터
+    failures += check_logs()
     print("contract check:", "FAILED" if failures else "PASSED")
     return 1 if failures else 0
 
 
 class _CaptureRedis:
-    """AisSink 가 보내는 XADD 를 모은다(Redis 없이 실제 발행 코드를 태운다)."""
+    """AisSink · LogSink 가 보내는 XADD 를 모은다(Redis 없이 실제 발행 코드를 태운다). LogSink 는 파이프라인으로 보낸다."""
 
     def __init__(self) -> None:
         self.entries: list[dict[str, str]] = []
+        self.xadd_kw: list[dict[str, object]] = []
 
-    async def xadd(self, stream: str, fields: dict[str, str], **_kw: object) -> str:
+    async def xadd(self, stream: str, fields: dict[str, str], **kw: object) -> str:
         self.entries.append(fields)
+        self.xadd_kw.append({"stream": stream, **kw})
         return f"{len(self.entries)}-0"
+
+    def pipeline(self, transaction: bool = False) -> _CapturePipeline:
+        return _CapturePipeline(self)
+
+
+class _CapturePipeline:
+    def __init__(self, r: _CaptureRedis) -> None:
+        self._r, self._ops = r, []  # type: list[tuple[str, dict[str, str], dict[str, object]]]
+
+    def xadd(self, stream: str, fields: dict[str, str], **kw: object) -> _CapturePipeline:
+        self._ops.append((stream, fields, kw))
+        return self
+
+    async def execute(self) -> list[str]:
+        return [await self._r.xadd(stream, fields, **kw) for stream, fields, kw in self._ops]
+
+
+# LogEvent.ts(UTC, 밀리초). FormatChecker 는 date-time 을 보지 않는다(rfc3339 검사기가 설치돼 있지 않다) — 직접 본다
+TS_MS_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+
+
+def check_logs() -> int:
+    """계약 v5 §C1 · §C2 · §C5: collector · ais 의 로그 싱크(실제 LogSink 코드)가 만든 항목이 log_event.v1.json 을 만족하고,
+    직렬화 8 KiB 안이며(넘는 스택은 잘림 표시), 비밀값(모양 · 등록한 값)이 없고, XADD 가 wakeline:logs MAXLEN ~ 3000 * e 인지.
+    그리고 언어 간 가림 벡터(schemas/vectors/masking-cases.v1.json)를 Python 가림이 글자 하나까지 맞추는지."""
+    failures = 0
+    log_v = validator("log_event.v1.json")
+    secret = "Zq9-contract-registered-secret"  # noqa: S105 — 가짜 값(등록한 비밀값이 가려지는지 보는 표본)
+    register_secrets(secret)
+    cap = _CaptureRedis()
+
+    def deep(n: int, what: str) -> None:
+        if n == 0:
+            raise RuntimeError(f"upstream echoed {what} and token=tok_contract_2 " + "z" * 3000)
+        deep(n - 1, what)
+
+    try:
+        for service in ("collector", "ais"):
+            sink = LogSink(service, cap)
+            lg = logging.getLogger(f"contract.logs.{service}")
+            lg.handlers[:], lg.propagate = [sink], False
+            lg.setLevel(logging.DEBUG)
+            lg.info("not shipped (INFO)")
+            lg.warning("region poll slow: %d ms (token=%s)", 1234, "tok_contract_1")
+            try:
+                deep(150, secret)
+            except RuntimeError as e:
+                lg.error("kma radar failed %s", "q" * 6000, exc_info=e)
+            asyncio.run(sink.send_pending())
+            lg.handlers.clear()
+    finally:
+        _SECRETS.discard(secret)
+    events = []
+    for f in cap.entries:
+        raw = f.get("e", "")
+        ev = json.loads(raw)
+        events.append(ev)
+        errs = list(log_v.iter_errors(ev))
+        size = len(raw.encode("utf-8"))
+        leaked = [x for x in (secret, "tok_contract_1", "tok_contract_2") if x in raw]
+        bad = errs or size > ENTRY_MAX_BYTES or leaked or list(f) != ["e"] or not TS_MS_UTC.match(ev.get("ts", ""))
+        print(
+            f"{'FAIL' if bad else 'ok  '} log event {ev.get('service')}/{ev.get('level')} "
+            f"(exception {'yes' if ev.get('exception') else 'null'}): {size} bytes, {len(errs)} schema errors, leaked {leaked}"
+        )
+        for e in errs[:3]:
+            print("     ", e.json_path, e.message[:120])
+        failures += bool(bad)
+    shape = [(e.get("service"), e.get("level")) for e in events]
+    stack_cut = [e for e in events if e.get("exception") and "…(잘림 " in e["exception"]["stack"]]
+    kw_ok = all(k == {"stream": "wakeline:logs", "maxlen": 3000, "approximate": True} for k in cap.xadd_kw)
+    bad = (
+        shape != [("collector", "WARN"), ("collector", "ERROR"), ("ais", "WARN"), ("ais", "ERROR")]
+        or len(stack_cut) != 2
+        or not kw_ok
+    )
+    print(
+        f"{'FAIL' if bad else 'ok  '} log sink: entries {shape}, oversized stacks cut with marker {len(stack_cut)}/2, "
+        f"XADD wakeline:logs MAXLEN ~ 3000 {kw_ok}"
+    )
+    failures += bool(bad)
+    vectors = json.loads((SCHEMAS / "vectors" / "masking-cases.v1.json").read_text(encoding="utf-8"))
+    wrong = [c["input"] for c in vectors["cases"] if mask(c["input"], vectors["limit"]) != c["expected"]]
+    print(
+        f"{'FAIL' if wrong else 'ok  '} masking vectors (v{vectors['version']}): {len(vectors['cases'])} cases, {len(wrong)} mismatches"
+    )
+    for w in wrong[:3]:
+        print("     ", w[:120])
+    failures += bool(wrong)
+    return failures
 
 
 def _decode(fields: dict[str, str]) -> object:
