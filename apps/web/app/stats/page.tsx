@@ -5,7 +5,7 @@ import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
 import { HYSTERESIS_FIX_AT, hourlyRows, trafficScopeLabel, type TrafficRegion } from "@/lib/chart";
 import { fmtTime } from "@/lib/format";
-import { aggregatedFlag, alertStatsRows, statsEmptyText, yesterdayUtc } from "@/lib/stats";
+import { aggregatedFlag, alertStatsRows, statsEmptyText, TRAFFIC_SOURCE, yesterdayUtc } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
 
 type Row = { day: string; dim: string; value: number; metric?: string; hour?: string };
@@ -61,7 +61,7 @@ export default function StatsPage() {
         <section className="panel p-3">
           <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (UTC)</h2><input type="date" value={day} max={maxDay} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} aria-label="집계 날짜(UTC)" /></div>
           {traffic.length ? <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid="traffic-scope">범위: {scope.text}</div> : null}
-          {traffic.length ? <BarChart id="chart-traffic" title={`${day} UTC 시간대별 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" /> : <Empty text={statsEmptyText(agg.traffic, day, today)} />}
+          {traffic.length ? <BarChart id="chart-traffic" title={`${day} UTC 시간대별 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" /> : <Empty text={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })} />}
           {traffic.length ? <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div> : null}
         </section>
         <section className="panel p-3"><h2 className="label mb-2">Alerts by kind (7d) · avg dwell</h2>

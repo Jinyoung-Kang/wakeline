@@ -490,6 +490,29 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
     expect(stats.aggregatedFlag({ aggregated: "no" })).toBeUndefined();
     expect(stats.yesterdayUtc(Date.parse("2026-09-28T01:00:00Z"))).toBe("2026-09-27");
   });
+  it("traffic: a fill is promised only while the raw tracks (72 h) are still kept at the next aggregation attempt", async () => {
+    const stats = await import("@/lib/stats");
+    // api: track-retention-hours 72 · MaintenanceJobs.families 는 그날 끝 > now − 72 h 일 때만 교통량을 다시 센다 · 따라잡기 3 h 마다
+    const src = (iso: string) => ({ name: "원본 항적", retentionH: 72, nowMs: Date.parse(iso) });
+    const today = "2026-09-28";
+    // 5일 전(09-23): 그날 끝(09-24 00Z) + 72 h = 09-27 00Z < 지금 → 원본이 없다. 수정 전: "다음 03:30 UTC 집계 뒤 채워집니다"
+    const gone = stats.statsEmptyText(false, "2026-09-23", today, src("2026-09-28T01:00:00Z"));
+    expect(gone).not.toContain("다음 03:30");
+    expect(gone).not.toMatch(/채워집니다/);
+    expect(gone).toContain("채워지지 않습니다");
+    expect(gone).toContain("72 h");
+    // 3일 전(09-25): 원본은 09-29 00Z 까지 — 01Z 에는 약속, 22Z 에는 다음 따라잡기(≤ 3 h) 전에 지워질 수 있어 약속하지 않는다
+    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T01:00:00Z"))).toContain("다음 03:30 UTC");
+    const soon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T22:00:00Z"));
+    expect(soon).not.toMatch(/채워집니다/);
+    expect(soon).toContain("채워지지 않을 수 있습니다");
+    // 어제는 그대로 약속한다 · 원본 보존을 모르는(넘기지 않은) 계열은 기존 규칙(따라잡기 7일)
+    expect(stats.statsEmptyText(false, "2026-09-27", today, src("2026-09-28T23:59:00Z"))).toContain("다음 03:30 UTC");
+    expect(stats.statsEmptyText(false, "2026-09-23", today)).toContain("다음 03:30 UTC");
+    // 교통량 차트가 이 원본 보존 규칙으로 빈 상태를 말한다
+    expect(stats.TRAFFIC_SOURCE).toEqual({ name: "원본 항적", retentionH: 72 });
+    expect(readFileSync(new URL("../app/stats/page.tsx", import.meta.url), "utf8")).toMatch(/statsEmptyText\(agg\.traffic, day, today, \{ \.\.\.TRAFFIC_SOURCE, nowMs: /);
+  });
   it("bar labels are not cut to four characters: long labels are rotated and the full text is in a tooltip", async () => {
     const { BarChart } = await import("@/components/BarChart");
     const html = renderToStaticMarkup(createElement(BarChart, { id: "c", title: "t", rows: [{ label: "TURB", value: 3 }, { label: "SBAOYMMMWAAF", value: 1 }] }));

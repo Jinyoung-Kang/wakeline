@@ -9,6 +9,13 @@ import { fmtDuration } from "./format";
 
 /** api MaintenanceJobs.CATCH_UP_DAYS — 놓친 날의 집계를 3시간마다 다시 시도하는 범위(최근 n일) */
 export const STATS_CATCH_UP_DAYS = 7;
+/** api MaintenanceJobs.catchUp 주기(fixedDelay 3 h) — 놓친 날의 다음 집계 시도는 늦어도 이만큼 뒤(api 가 돌고 있을 때) */
+export const STATS_CATCH_UP_EVERY_H = 3;
+/**
+ * 교통량(traffic_by_hour)의 원본: 원해상도 항적(track_point) — api application.yml wakeline.track-retention-hours(72).
+ * 재집계는 그날 끝이 now − 72 h 보다 뒤일 때만 교통량을 다시 센다(MaintenanceJobs.families, R-46). 그 뒤로는 채워지지 않는다.
+ */
+export const TRAFFIC_SOURCE = { name: "원본 항적", retentionH: 72 } as const;
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 function validDate(d: string): boolean {
@@ -39,12 +46,21 @@ export function yesterdayUtc(nowMs: number): string {
 /**
  * 빈 상태 문구. day = 조회한 날짜(최근 7일 묶음이면 null), today = 오늘(UTC 날짜).
  * 집계 전이면 채워질 때를 말하되, 따라잡기 범위 밖의 지난 날짜에는 "다음 집계"를 약속하지 않는다.
+ * source = 그 계열의 원본 보존(예: TRAFFIC_SOURCE)과 지금 시각 — 주면 원본이 다음 집계 시도(늦어도 STATS_CATCH_UP_EVERY_H 뒤)까지
+ * 남아 있을 때만 채워진다고 말한다(R-32). 원본이 이미 지워졌으면 채워지지 않는다고, 그 사이면 채워지지 않을 수 있다고 말한다.
  */
-export function statsEmptyText(aggregated: boolean | undefined, day: string | null, today: string): string {
+export function statsEmptyText(aggregated: boolean | undefined, day: string | null, today: string, source?: { name: string; retentionH: number; nowMs: number }): string {
   if (aggregated === true) return day ? "이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음)." : "최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음).";
   if (aggregated === false) {
     const oldest = new Date(Date.parse(`${today}T00:00:00Z`) - STATS_CATCH_UP_DAYS * 86_400_000).toISOString().slice(0, 10);
     if (day != null && day < oldest) return `집계되지 않은 날짜입니다 — 따라잡기 범위(최근 ${STATS_CATCH_UP_DAYS}일) 밖이라 채워지지 않습니다(서비스 기록 전이거나 집계가 빠진 날).`;
+    const dayStart = day != null ? Date.parse(`${day}T00:00:00Z`) : NaN;
+    if (source && Number.isFinite(dayStart)) {
+      // 재집계가 그날을 다시 세는 마지막 시각 = 그날 끝 + 원본 보존
+      const keptUntil = dayStart + 86_400_000 + source.retentionH * 3600_000;
+      if (keptUntil <= source.nowMs) return `집계되지 않은 날짜입니다 — ${source.name} 보존(${source.retentionH} h)이 지나 다시 셀 수 없어 채워지지 않습니다(서비스 기록 전이거나 집계가 빠진 날).`;
+      if (keptUntil <= source.nowMs + STATS_CATCH_UP_EVERY_H * 3600_000) return `아직 집계되지 않았습니다 — ${source.name} 보존(${source.retentionH} h)이 곧 끝나 다음 집계 전에 지워지면 채워지지 않을 수 있습니다.`;
+    }
     return `아직 집계되지 않았습니다 — 다음 03:30 UTC 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기).`;
   }
   return "자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 매일 03:30 UTC).";
