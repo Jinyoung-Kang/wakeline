@@ -1,6 +1,9 @@
 -- Wakeline 스키마 V9 — 리뷰 v1 의 DB 변경(ADR-017 §2). V1~V8 은 고치지 않는다. 적용은 운영과 같은 --migrate(wakeline_migrator)만.
 --
 -- ==== 되돌리기(rollback) SQL — wakeline_migrator 로 위에서부터 순서대로 실행한 뒤 이력 행을 지운다 ====
+-- -- R-51: 항공기 검색 앞부분 인덱스
+-- DROP INDEX IF EXISTS aircraft_registration_prefix;
+-- DROP INDEX IF EXISTS aircraft_hex_prefix;
 -- -- R-15: 알림 이력 hex 인덱스
 -- DROP INDEX IF EXISTS alert_event_hex_id;
 -- -- R-06: 파티션 삭제 경계를 V2·V5 의 규칙(하루 더 남김, `- 1`)으로 되돌린다
@@ -79,3 +82,9 @@ END $$;
 -- /alerts/history?hex= 는 hex 로 거른 뒤 id 역순으로 한 쪽(≤ 201행)을 자른다. (hex, id DESC) 이면 그 hex 의 행만 id 순서대로 읽고 멈춘다
 -- (기존 alert_event_hex (hex, entered_at DESC) 는 id 순서를 주지 않는다). 질의는 hex 를 char(6) 끼리 비교한다(AlertRepository.history).
 CREATE INDEX alert_event_hex_id ON alert_event (hex, id DESC);
+
+-- ---- R-51: 항공기 검색(hex·등록부호 앞부분 일치) ----
+-- aircraft 는 보존 없이 커지는데 검색이 표 전체를 순차 스캔했다. 앞부분 일치는 바이트 순서 범위(~>=~ · ~<~)로 묻는다(AircraftRepository.search) —
+-- text_pattern_ops 인덱스는 그 연산자를 파라미터 그대로(일반 계획에서도) 쓴다. 두 인덱스를 BitmapOr 로 합친다.
+CREATE INDEX aircraft_hex_prefix ON aircraft (upper(hex) text_pattern_ops);
+CREATE INDEX aircraft_registration_prefix ON aircraft (upper(registration) text_pattern_ops);

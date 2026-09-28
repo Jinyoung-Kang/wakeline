@@ -77,6 +77,35 @@ class QueryPlanDbTest {
     }
 
     /**
+     * R-51: 항공기 검색(hex·등록부호 앞부분 일치)이 aircraft 표 전체를 순차 스캔했다(표는 보존 없이 커진다). 앞부분 인덱스로 찾는다 —
+     * 같은 연결에서 여러 번 실행된 뒤의 일반 계획에서도(LIKE 파라미터는 일반 계획에서 인덱스를 못 쓴다).
+     */
+    @Test
+    void aircraftSearchUsesPrefixIndexesAlsoInTheGenericPlan() {
+        admin.sql("""
+                INSERT INTO aircraft (hex, registration, type_code, source, first_seen, last_seen)
+                SELECT lpad(to_hex(g), 6, '0'), 'N' || g, 'B738', 'fixture', now() - interval '2 days', now() - (g * interval '1 second')
+                FROM generate_series(1, 20000) g""").update();
+        admin.sql("""
+                INSERT INTO aircraft (hex, registration, type_code, source, first_seen, last_seen) VALUES
+                  ('71c001', 'HL8001', 'B77W', 'fixture', now(), now()), ('71c002', 'HL8002', 'A333', 'fixture', now(), now() - interval '1 minute'),
+                  ('a1b2c3', 'HL7777', 'A321', 'fixture', now(), now()), ('71d000', NULL, NULL, 'fixture', now(), now())""").update();
+        admin.sql("ANALYZE aircraft").update();
+        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM aircraft", PlanCapture.Mode.GENERIC);
+        AircraftRepository repo = new AircraftRepository(JdbcClient.create(plans.dataSource()), DbTestSupport.JSON);
+
+        var hl8 = repo.search("HL8", 20);
+        String plan = plans.last();
+        assertThat(plan).as("search plan: %s", plan).doesNotContain("\"Node Type\": \"Seq Scan\"");
+        assertThat(plan).contains("\"Index Name\": \"aircraft_registration_prefix\"").contains("\"Index Name\": \"aircraft_hex_prefix\"");
+        assertThat(hl8).extracting(r -> r.get("registration")).containsExactly("HL8001", "HL8002"); // last_seen 최신순
+        assertThat(repo.search("71C", 20)).extracting(r -> String.valueOf(r.get("hex")).trim()).containsExactlyInAnyOrder("71c001", "71c002");
+        assertThat(repo.search("71", 20)).extracting(r -> String.valueOf(r.get("hex")).trim()).contains("71c001", "71c002", "71d000");
+        assertThat(repo.search("ZZZZ", 20)).isEmpty();
+        assertThat(repo.search("N1999", 20)).extracting(r -> r.get("registration")).contains("N1999", "N19990", "N19999").doesNotContain("N2000");
+    }
+
+    /**
      * R-27: 일 통계 traffic_by_hour(시간대별 서로 다른 항공기 수)의 정렬이 디스크로 넘쳤다(external merge, 임시 파일). 집계 트랜잭션이 스스로
      * work_mem 을 넉넉히 잡으므로 연결의 기본값(여기서는 일부러 최소 64 kB)과 상관없이 메모리에서 끝난다. 실제 문장을 EXPLAIN ANALYZE 로 본다.
      */

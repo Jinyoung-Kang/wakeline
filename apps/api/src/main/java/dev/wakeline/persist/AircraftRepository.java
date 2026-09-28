@@ -109,11 +109,19 @@ public class AircraftRepository {
                 }).orElse(null);
     }
 
+    /**
+     * hex·등록부호 앞부분 일치(대문자, 호출자가 [A-Z0-9-] 로 검사한 값). 앞부분 일치를 바이트 순서 범위 [p, p 의 마지막 글자 + 1) 로 쓴다 —
+     * text_pattern_ops 인덱스(V9 aircraft_hex_prefix · aircraft_registration_prefix)를 파라미터로도 쓸 수 있다(LIKE :p 는 일반 계획에서
+     * 인덱스를 못 써 표 전체를 훑었다, R-51).
+     */
     public List<Map<String, Object>> search(String prefix, int limit) {
+        if (prefix == null || prefix.isEmpty()) return List.of();
+        String hi = prefix.substring(0, prefix.length() - 1) + (char) (prefix.charAt(prefix.length() - 1) + 1);
         return Sql.publicRead(db, """
                 SELECT hex, registration, type_code, last_seen FROM aircraft
-                WHERE upper(hex) LIKE :p OR upper(registration) LIKE :p ORDER BY last_seen DESC LIMIT :n""")
-                .param("p", prefix + "%").param("n", limit).query().listOfRows().stream().map(m -> {
+                WHERE (upper(hex) ~>=~ :lo AND upper(hex) ~<~ :hi) OR (upper(registration) ~>=~ :lo AND upper(registration) ~<~ :hi)
+                ORDER BY last_seen DESC LIMIT :n""")
+                .param("lo", prefix).param("hi", hi).param("n", limit).query().listOfRows().stream().map(m -> {
                     var out = new LinkedHashMap<String, Object>(m);
                     out.put("last_seen", TrackRepository.toInstant(m.get("last_seen")));
                     return (Map<String, Object>) out;
