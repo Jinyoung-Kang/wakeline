@@ -9,6 +9,7 @@ import { FakeMap } from "./helpers/fake-maplibre";
 import { resetData, setData, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { parseGridCells, SHIP_CATEGORIES, type ShipCategory, type ShipLite } from "@/lib/ships";
+import { SHIP_SYMBOL_TEXT_EXPR } from "@/lib/ship-layers";
 
 const rec = vi.hoisted(() => ({ api: [] as string[], responses: new Map<string, unknown>(), selectShip: [] as (string | null)[] }));
 
@@ -106,6 +107,7 @@ describe("selected ship is always drawn with a ring and a label (contract v5 §B
     for (const id of ["ship-selected-ring", "ship-selected-icon", "ship-selected-label"]) expect(map.getLayer(id)).toBeDefined();
     expect(map.getLayer("ship-selected-label")!.layout["text-field"]).toEqual(["get", "label"]);
     expect(map.getLayer("ship-selected-label")!.layout["text-allow-overlap"]).toBe(true);
+    expect(map.getLayer("ship-symbol")!.layout["text-field"]).toEqual(SHIP_SYMBOL_TEXT_EXPR); // 선택 선박 이름은 선택 라벨만
     expect(map.getLayer("ship-selected-ring")!.layout.visibility).toBe("visible");
     await act(() => useUi.getState().toggleLayer("ships"));
     expect(map.getLayer("ship-selected-ring")!.layout.visibility).toBe("none");

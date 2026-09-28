@@ -3,14 +3,14 @@
  * MMSI·선명은 합성(SYNTHETIC) 값이다.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
+import { createPropertyExpression, featureFilter, latest } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendShipTrack, filterGridCells, gridFeatures, notLiveText, parseGridCells, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, sortShipRows, type ShipRow, type ShipSortKey, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
 } from "@/lib/ships";
-import { shipCategoryFilter } from "@/lib/ship-layers";
+import { SHIP_SYMBOL_TEXT_EXPR, shipCategoryFilter } from "@/lib/ship-layers";
 import { shipGridTip, shipTrackPointTip } from "@/lib/tooltip";
 import { loadShipCats, saveShipCats, SHIP_CATS_KEY, type KV } from "@/lib/prefs";
 import { resetData, setData, shipStates } from "@/lib/store";
@@ -196,6 +196,23 @@ describe("category filter UI (contract v5 §B3)", () => {
     expect(html).toContain('data-mmsi="100000001"');
     expect(html).not.toContain('data-mmsi="100000002"');
     expect(text(html)).toContain("선종 필터 10/11 · 1척 숨김");
+  });
+});
+
+// ---------------------------------------------------------------- §B3 선택 선박 라벨(한 번만)
+
+describe("selected ship label is drawn once (contract v5 §B3)", () => {
+  /** 선박 기호 층 text-field 를 명세대로 컴파일해 평가한다 */
+  const symbolText = (properties: Record<string, unknown>, zoom: number) => {
+    const r = createPropertyExpression(SHIP_SYMBOL_TEXT_EXPR, "layers[0].layout.text-field", (latest as unknown as Record<string, Record<string, unknown>>).layout_symbol["text-field"] as never);
+    if (r.result !== "success") throw new Error(r.value.map((e) => e.message).join("; "));
+    return String(r.value.evaluate({ zoom } as never, { type: "Point", properties } as never));
+  };
+  it("the symbol layer names ships from zoom 10 but not the selected one — ship-selected-label names it at every zoom", () => {
+    expect(symbolText({ name: "SYN", selected: false }, 9)).toBe("");
+    expect(symbolText({ name: "SYN", selected: false }, 10)).toBe("SYN");
+    expect(symbolText({ name: "SYN", selected: true }, 12)).toBe(""); // 수정 전: 두 라벨이 약 4 px 겹쳐 그려졌다
+    expect(symbolText({ name: null, selected: false }, 12)).toBe("");
   });
 });
 

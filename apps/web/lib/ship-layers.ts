@@ -52,6 +52,13 @@ export const SHIP_COLOR_EXPR = [
   "case", ["boolean", ["get", "selected"], false], SHIP_SELECTED_COLOR, CATEGORY_MATCH,
 ] as unknown as maplibregl.ExpressionSpecification;
 export const SHIP_GRID_COLOR_EXPR = CATEGORY_MATCH as unknown as maplibregl.ExpressionSpecification;
+/**
+ * 선박 기호 라벨: 줌 10 부터 이름(모르면 없음). 선택한 선박은 비운다 — ship-selected-label 이 줌과 무관하게 이름(모르면 MMSI)을 그리므로
+ * 같은 이름이 두 번(약 4 px 어긋나) 겹쳐 그려지지 않게(계약 v5 §B3 — 선택 선박 라벨은 하나)
+ */
+export const SHIP_SYMBOL_TEXT_EXPR = [
+  "step", ["zoom"], "", 10, ["case", ["boolean", ["get", "selected"], false], "", ["coalesce", ["get", "name"], ""]],
+] as unknown as maplibregl.ExpressionSpecification;
 /** STALE(> 15분) 35% · 수신 경과 모름 70% */
 export const SHIP_OPACITY_EXPR = [
   "case", ["boolean", ["get", "stale"], false], 0.35, ["boolean", ["get", "age_unknown"], false], 0.7, 1,
@@ -150,7 +157,7 @@ export function addShipLayers(map: maplibregl.Map, beforeId = "aircraft-symbol")
       "icon-rotation-alignment": "map",
       "icon-allow-overlap": true,
       "icon-ignore-placement": true,
-      "text-field": ["step", ["zoom"], "", 10, ["coalesce", ["get", "name"], ""]],
+      "text-field": SHIP_SYMBOL_TEXT_EXPR,
       "text-font": ["Noto Sans Regular"],
       "text-size": 10, "text-offset": [0, 1.3], "text-anchor": "top", "text-optional": true,
     },
