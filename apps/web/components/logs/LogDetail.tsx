@@ -67,7 +67,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onCopy, 
           {row("인스턴스", <span className="mono">{entry.instance ?? "—"}</span>)}
           {row("스레드", <span className="mono">{entry.thread ?? "—"}</span>)}
           {row("로거", <span className="mono break-all">{entry.logger ?? "—"}</span>)}
-          {row("요청 id", entry.request_id ? <RequestIdCopy id={entry.request_id} /> : <span className="text-fg-3">— (요청 밖의 로그)</span>)}
+          {row("요청 id", entry.request_id ? <RequestIdCopy id={entry.request_id} /> : <span className="text-fg-3">— (필드 없음)</span>)}
           {row("지문(fp)", entry.fp ? <span className="flex flex-wrap items-center gap-1"><span className="mono select-all">{entry.fp}</span><button type="button" className="btn px-1.5! py-0! normal-case!" onClick={() => onFilterFp(entry.fp!)}>이 묶음만 목록</button></span> : "—")}
           {row("억제", entry.suppressed == null ? <span className="text-fg-3">— (필드 없음)</span> : <span><span className="mono">{entry.suppressed}</span>건 <span className="text-fg-3">— 직전 전송 뒤 같은 지문이라 보내지 않은 수</span></span>)}
         </tbody>
@@ -106,7 +106,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onCopy, 
         : <table><tbody>{related.items.map((r) => (
             <tr key={r.id} data-testid="log-related" className="cursor-pointer hover:bg-bg-2" onClick={() => onOpen(r)}>
               <td className="mono whitespace-nowrap">{fmtLogTime(r.ts)}</td><td><span className={LEVEL_BADGE[r.level]}>{r.level}</span></td>
-              <td className="mono">{r.service}</td><td className="mono max-w-[200px] truncate" title={r.logger ?? ""}>{r.logger ?? "—"}</td><td>{firstLine(r.message)}</td>
+              <td className="mono">{r.service}</td><td className="mono max-w-[200px] truncate" title={r.logger ?? ""}>{r.logger ?? "—"}</td><td className="max-w-[320px] truncate" title={firstLine(r.message)}>{firstLine(r.message)}</td>
             </tr>))}</tbody></table>}
       {related?.more ? <div className="mt-1 text-[11px] text-warn">더 있을 수 있음(목록 상한 {RELATED_LIMIT}건 또는 스캔 잘림)</div> : null}
     </div>

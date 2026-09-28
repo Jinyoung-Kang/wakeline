@@ -31,7 +31,7 @@ export function RequestIdCopy({ id }: { id: string }) {
         onClick={async () => setState((await copyText(id)) ? "ok" : "fail")}>
         {state === "ok" ? "복사됨" : state === "fail" ? "복사 실패" : "복사"}
       </button>
-      <Link href={`/logs#rid=${encodeURIComponent(id)}`} className="text-[11px] text-accent underline" title="운영 로그인 필요 — 이 요청 id 의 서버 로그">로그 보기</Link>
+      <Link href={`/logs#rid=${encodeURIComponent(id)}`} className="text-[11px] text-accent! underline" title="운영 로그인 필요 — 이 요청 id 의 서버 로그">로그 보기</Link>
     </span>
   );
 }

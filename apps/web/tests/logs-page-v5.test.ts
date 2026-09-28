@@ -231,8 +231,11 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
       return undefined;
     });
     await open();
+    await click(allByTestId("log-row")[0]);
+    expect(byTestId("log-detail")).not.toBeNull();
     await click(button("묶음(fp)"));
     expect(calls.some((c) => c.startsWith("GET /api/v1/ops/logs/groups?"))).toBe(true);
+    expect(byTestId("log-detail")).toBeNull(); // 상세는 목록의 항목 — 묶음 보기에서는 접는다
     const g = allByTestId("log-group");
     expect(g).toHaveLength(1);
     const text = g[0].textContent;

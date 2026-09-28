@@ -315,7 +315,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             {page?.scanTruncated ? <span className="text-warn">스캔 상한(3,000)에서 잘림 — 조건에 맞는 더 오래된 항목이 있을 수 있음</span> : null}
             {page && (page.invalid > 0 || (page.serverInvalid ?? 0) > 0) ? <span className="text-warn">형식 오류로 건너뜀: api {page.serverInvalid ?? "—"} · 화면 {page.invalid}</span> : null}
             {pending.items.length ? (
-              <button type="button" className="btn border-accent! text-accent" data-testid="logs-new" onClick={showPending}>
+              <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={showPending}>
                 {pending.more ? `새 항목 ${n(pending.items.length)}건 이상 — 다시 불러오기` : `새 항목 ${n(pending.items.length)}건`}
               </button>
             ) : null}
@@ -329,7 +329,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             {groups?.scanned != null ? <span className="text-fg-3">훑은 항목 <span className="mono">{n(groups.scanned)}</span></span> : null}
             {groups?.scanTruncated ? <span className="text-warn">스캔 상한(3,000)에서 잘림 — 묶음·건수가 기간의 일부만</span> : null}
             {groups?.invalid ? <span className="text-warn">형식 오류 묶음 {groups.invalid}개 건너뜀</span> : null}
-            {freshGroups ? <button type="button" className="btn border-accent! text-accent" data-testid="logs-new" onClick={() => { setGroups(freshGroups); setFreshGroups(null); }}>묶음에 새 항목 — 반영</button> : null}
+            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={() => { setGroups(freshGroups); setFreshGroups(null); }}>묶음에 새 항목 — 반영</button> : null}
             <span className="text-fg-3">묶음 보기는 서비스·수준·기간만 적용(글자 검색·요청 id·지문 제외)</span>
           </>}
           <span role="status" aria-live="polite" data-testid="logs-note" className={note?.ok === false ? "text-bad" : "text-ok"}>{note?.text ?? ""}</span>
@@ -398,7 +398,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
               ) : <div className="p-3 text-fg-3" data-testid="logs-empty">조건에 맞는 묶음 없음(최근 {LOG_PERIOD_LABEL[filter.period]})</div>
             ) : null}
           </div>
-          {detail || detailMiss ? (
+          {/* 상세는 목록의 항목 — 묶음 보기에서는 접어 둔다(상태는 남는다) */}
+          {view === "list" && (detail || detailMiss) ? (
             <aside className="max-h-[50%] min-h-0 overflow-auto border-t border-line bg-bg-1 lg:max-h-none lg:w-[46%] lg:border-t-0 lg:border-l" aria-label="항목 상세">
               {detail ? (
                 <LogDetail key={detail.id} entry={detail} period={filter.period} onClose={closeDetail} onOpen={openEntry} onFilterFp={filterFp} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} />
