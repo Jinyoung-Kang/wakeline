@@ -3,7 +3,7 @@
 
     python3 tools/db_rotate_passwords.py                      # 새 난수로 교체: DB 역할 → 로그인 확인 → .env 갱신 (make rotate-db-passwords)
     python3 tools/db_rotate_passwords.py --sync               # .env 의 지금 값을 DB 역할에 다시 맞춘다(값이 어긋나 인증이 실패할 때)
-    WAKELINE_PROJECT=wakeline-e2e python3 tools/db_rotate_passwords.py
+    WAKELINE_PROJECT=wakeline-e2e python3 tools/db_rotate_passwords.py --sync   # 격리 스택은 --sync 만(아래 "공유 .env")
     python3 tools/db_rotate_passwords.py --container NAME --env-file PATH   # infra/tests/db_rotate_test.sh
 
 왜: 역할 비밀번호는 새 볼륨의 initdb(infra/db/init/01-roles.sh)에서 한 번만 정해진다. .env 값만 바꾸거나 잃으면(make init 이 새로 채운다)
@@ -13,6 +13,9 @@
 순서: 옛 검증값 저장 → 한 트랜잭션으로 ALTER ROLE → 새 값으로 TCP 로그인 확인 → .env 원자적 교체(0600).
     확인이 실패하면 옛 검증값으로 되돌리고 .env 는 그대로 둔다. 슈퍼유저(postgres)는 로컬 소켓 전용이라(SEC-R3) 대상이 아니다.
 다음: make up — api·collector·migrate(와 환경이 바뀐 db 컨테이너)가 새 값으로 다시 만들어진다.
+공유 .env: 개발 스택(wakeline)과 격리 스택(wakeline-e2e)은 같은 .env 의 DB 비밀번호를 읽는다. 그래서 새 값은 개발 스택에서만 만들고,
+    격리 스택은 --sync(= make rotate-db-passwords P=wakeline-e2e sync=1)로 그 값에 맞춘다. 격리 스택에서 새 값을 만들면 .env 가 바뀌어
+    개발 DB 가 옛 값으로 남는다(R-80 후속). 교체 뒤 같은 .env 를 읽는 다른 프로젝트의 DB 볼륨이 있으면 맞추는 명령을 알려 준다.
 """
 
 from __future__ import annotations
@@ -64,6 +67,18 @@ def set_env_value(text: str, key: str, value: str) -> str:
     return re.sub(rf"^{re.escape(key)}=.*$", lambda _: f"{key}={value}", text, count=1, flags=re.M)
 
 
+DEV_PROJECT = "wakeline"
+
+
+def other_projects_with_db(project: str) -> list[str]:
+    """같은 .env 를 읽는(= 이 저장소의 compose) 다른 프로젝트 중 DB 볼륨이 남아 있는 것 — 그 DB 에는 옛 비밀번호가 있다."""
+    r = subprocess.run(["docker", "volume", "ls", "--filter", "label=com.docker.compose.volume=db_data", "--format", '{{.Label "com.docker.compose.project"}}'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return []
+    return sorted({p.strip() for p in r.stdout.split() if p.strip() and p.strip() != project})
+
+
 def container_id(project: str) -> str:
     out = subprocess.run(
         ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=db"],
@@ -112,7 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     env_path = Path(a.env_file)
     text = env_path.read_text()
-    cid = a.container or container_id(os.environ.get("WAKELINE_PROJECT", "wakeline"))
+    project = os.environ.get("WAKELINE_PROJECT", DEV_PROJECT)
+    if not a.container and not a.sync and project != DEV_PROJECT:
+        # 공유 .env: 여기서 새 값을 쓰면 개발 DB 가 옛 값으로 남아 api·collector 인증이 조용히 실패한다
+        raise SystemExit(f"rotate: '{project}' 는 개발 스택과 같은 .env 를 읽습니다 — 새 값은 개발 스택에서 만들고(make rotate-db-passwords), "
+                         f"이 스택은 make rotate-db-passwords P={project} sync=1 로 맞추세요. 아무것도 바꾸지 않았습니다")
+    cid = a.container or container_id(project)
     ip = container_ip(cid)
 
     current = {role: env_value(text, key) for role, key in ROLES.items()}
@@ -141,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
     what = "DB 역할을 .env 의 지금 값에 맞췄습니다" if a.sync else f"{env_path.name} 와 DB 역할의 비밀번호를 새 값으로 바꿨습니다"
     print(f"rotate: {what} ({', '.join(ROLES)} — 로그인 확인됨, 값은 출력하지 않음)")
     print("next: make up   (api·collector·migrate 가 새 값으로 다시 만들어진다)")
+    if not a.sync and not a.container:
+        for other in other_projects_with_db(project):
+            print(f"note: '{other}' 의 DB 볼륨은 옛 비밀번호입니다 — 그 스택을 쓰려면: make rotate-db-passwords P={other} sync=1 (또는 make demo-down 으로 삭제)")
     return 0
 
 

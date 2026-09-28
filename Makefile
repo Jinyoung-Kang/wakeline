@@ -141,7 +141,7 @@ restore: ## 백업 복원: make restore f=backups/<파일>.dump confirm=wakeline
 
 # R-80: 역할 비밀번호는 새 볼륨의 initdb 에서 한 번만 정해진다 — .env 값만 바꾸거나 잃으면 api·collector·migrate 의 DB 인증이 조용히 실패한다.
 # DB 에는 SCRAM 검증값만 stdin 으로 보내고, 새 값으로 로그인을 확인한 뒤에만 .env(0600)를 바꾼다. 적용: 이어서 make up.
-rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비밀번호 교체(DB·.env 함께) → 이어서 make up · sync=1 이면 .env 의 지금 값을 DB 에 맞춤(어긋남 복구) · 격리 스택: P=wakeline-e2e
+rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비밀번호 교체(DB·.env 함께) → 이어서 make up · sync=1 이면 .env 의 지금 값을 DB 에 맞춤(어긋남 복구) · 격리 스택은 같은 .env 를 읽으므로 P=wakeline-e2e sync=1 만
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' python3 tools/db_rotate_passwords.py $(if $(filter 1,$(sync)),--sync,)
 
 print-%: ## 변수 값 출력 (CI 용, 예: make -s print-K6_IMAGE)
