@@ -67,6 +67,11 @@ public class ShipController {
     /** 검색 결과 수(계약 v5 §B1: limit 1–20, 기본 10). */
     static final int SEARCH_MAX_LIMIT = 20;
     static final int SEARCH_DEFAULT_LIMIT = 10;
+    /**
+     * 검색 한 번의 DB 검색 문장 상한. 다시 묻는 것은 실시간 선박의 메모리 정적 정보와 저장 정적 정보가 어긋난 동안(개명 직후 저장 전 등)뿐이다 —
+     * 그래도 모자라면 있는 만큼만 준다.
+     */
+    static final int SEARCH_DB_ATTEMPTS = 3;
 
     private final ShipStore store;
     private final ShipRepository repo;
@@ -185,11 +190,23 @@ public class ShipController {
         if (!complete) {
             try {
                 List<Hit> dbLive = new ArrayList<>(), dbOnly = new ArrayList<>();
-                for (ShipRepository.SearchRow r : repo.search(query, limit + hits.size())) { // 실시간 결과와 겹칠 몫까지
-                    if (!seen.add(r.mmsi())) continue;
-                    ShipStore.Ship s = v.get(r.mmsi());
-                    if (s == null) dbOnly.add(new Hit(r.mmsi(), null, r.stat()));
-                    else if (s.stat() == null) dbLive.add(new Hit(r.mmsi(), s, r.stat()));
+                int want = limit - hits.size();
+                int n = limit + hits.size(); // 실시간 결과와 겹칠 몫까지
+                for (int attempt = 1; ; attempt++) {
+                    dbLive.clear();
+                    dbOnly.clear();
+                    List<ShipRepository.SearchRow> rows = repo.search(query, n);
+                    for (ShipRepository.SearchRow r : rows) {
+                        if (seen.contains(r.mmsi())) continue; // ship 표의 MMSI 는 기본 키 — 한 번씩만 온다
+                        ShipStore.Ship s = v.get(r.mmsi());
+                        if (s == null) dbOnly.add(new Hit(r.mmsi(), null, r.stat()));
+                        else if (s.stat() == null) dbLive.add(new Hit(r.mmsi(), s, r.stat()));
+                        // 그 밖(메모리 정적 정보가 있는데 실시간 일치에 없음)은 옛 저장 정적 정보로만 찾힌 행 — 싣지 않는다
+                    }
+                    int got = dbLive.size() + dbOnly.size();
+                    // 걸러진 행 때문에 모자라고 DB 에 더 있을 수 있으면(행이 n 개 꽉 참) 모자란 만큼 더 물어 처음부터 다시 — 같은 순서라 앞 행은 같다
+                    if (got >= want || rows.size() < n || attempt == SEARCH_DB_ATTEMPTS) break;
+                    n += want - got;
                 }
                 for (Hit h : dbLive) if (hits.size() < limit) hits.add(h); // 실시간 먼저
                 for (Hit h : dbOnly) if (hits.size() < limit) hits.add(h);

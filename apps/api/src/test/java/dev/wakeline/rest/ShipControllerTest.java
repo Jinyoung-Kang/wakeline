@@ -744,4 +744,35 @@ class ShipControllerTest {
         assertThat(search("440000077", null).path("items").get(0).path("live").asBoolean()).isFalse();
         assertThat(repo.searchCalls).isEqualTo(1);
     }
+
+    /**
+     * 실시간 선박의 옛 저장 정적 정보로만 찾힌 DB 행은 걸러진다 — 그 몫이 limit 을 깎지 않도록 DB 에 더 있으면 모자란 만큼 다시 묻는다.
+     * 두 실시간 선박(메모리 선명은 새 이름)이 옛 선명 "OLDNAME" 으로 DB 의 가장 최근 행이어도 limit 2 는 저장만 된 두 척으로 찬다.
+     */
+    @Test void search_refillsWhenLiveShipsDropStoredRows() throws Exception {
+        store.apply(List.of(pos("440000003", 35.3, 129.3, T.minusSeconds(1))), List.of(full("440000003", "NEW NAME", null, null, 70)), T, "aisstream",
+                System.currentTimeMillis());
+        repo.rows.add(new ShipRepository.SearchRow("440000001", full("440000001", "OLDNAME A", null, null, 70), T.minusSeconds(10)));
+        repo.rows.add(new ShipRepository.SearchRow("440000003", full("440000003", "OLDNAME B", null, null, 70), T.minusSeconds(20)));
+        repo.rows.add(new ShipRepository.SearchRow("440000081", full("440000081", "OLDNAME C", null, null, 70), T.minusSeconds(100)));
+        repo.rows.add(new ShipRepository.SearchRow("440000082", full("440000082", "OLDNAME D", null, null, 70), T.minusSeconds(200)));
+        repo.rows.add(new ShipRepository.SearchRow("440000083", full("440000083", "OLDNAME E", null, null, 70), T.minusSeconds(300)));
+        var items = search("OLDNAME", "2").path("items");
+        assertThat(items.size()).isEqualTo(2);
+        assertThat(items.get(0).path("mmsi").asString()).isEqualTo("440000081");
+        assertThat(items.get(1).path("mmsi").asString()).isEqualTo("440000082");
+        assertThat(repo.searchCalls).isEqualTo(2);
+        // DB 에 더 없으면(행이 모자람) 다시 묻지 않는다 — 있는 만큼만
+        repo.searchCalls = 0;
+        assertThat(search("OLDNAME", "20").path("items").size()).isEqualTo(3);
+        assertThat(repo.searchCalls).isEqualTo(1);
+        // 어긋남이 많아도 검색 한 번의 DB 문장은 상한(3)까지 — 넘으면 있는 만큼만(여기서는 0척)
+        store.apply(List.of(pos("440000004", 35.4, 129.4, T.minusSeconds(1)), pos("440000005", 35.5, 129.5, T.minusSeconds(1))),
+                List.of(full("440000004", "NEW 4", null, null, 70), full("440000005", "NEW 5", null, null, 70)), T, "aisstream", System.currentTimeMillis());
+        repo.rows.add(new ShipRepository.SearchRow("440000004", full("440000004", "OLDNAME F", null, null, 70), T.minusSeconds(11)));
+        repo.rows.add(new ShipRepository.SearchRow("440000005", full("440000005", "OLDNAME G", null, null, 70), T.minusSeconds(12)));
+        repo.searchCalls = 0;
+        assertThat(search("OLDNAME", "1").path("items").size()).isZero();
+        assertThat(repo.searchCalls).isEqualTo(ShipController.SEARCH_DB_ATTEMPTS);
+    }
 }
