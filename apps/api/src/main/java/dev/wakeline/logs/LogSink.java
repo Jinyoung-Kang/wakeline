@@ -68,6 +68,11 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     static final long BACKOFF_START_MS = 1_000;
     static final long BACKOFF_MAX_MS = 30_000;
     static final long SUPPRESS_WINDOW_MS = 10_000;
+    /**
+     * 억제 창 · 뒤늦게 싣기의 시계(ms): 단조 시계 — 벽시계가 뒤로 가면(NTP 보정 등) 창이 그만큼 길어져 억제 중인 발생이 늦게 실린다
+     * (collector·ais 는 time.monotonic). 항목의 ts 는 logback 이벤트의 시각이라 이 시계와 무관하다.
+     */
+    static final LongSupplier WINDOW_CLOCK = () -> System.nanoTime() / 1_000_000;
     /** 억제 상태를 기억하는 지문 수 상한(넘으면 억제 중인 발생이 없는 것부터 잊는다). */
     static final int SUPPRESS_TRACK_MAX = 2_000;
     /** 종료 때 마지막 보내기 마감. */
@@ -151,7 +156,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
                    @Value("${wakeline.logs.sink-enabled:true}") boolean enabled,
                    @Value("${spring.datasource.password:}") String dbPassword,
                    @Value("${spring.data.redis.password:}") String redisPassword) {
-        this(redisWriter(redis), meters, enabled, System::currentTimeMillis, (LoggerContext) LoggerFactory.getILoggerFactory(),
+        this(redisWriter(redis), meters, enabled, WINDOW_CLOCK, (LoggerContext) LoggerFactory.getILoggerFactory(),
                 FLUSH_INTERVAL_MS, BACKOFF_START_MS, BACKOFF_MAX_MS);
         // §C5: 설정 비밀값은 값으로도 가린다(모양 규칙이 못 잡는 곳 — 예: 드라이버가 비밀번호를 메시지에 되돌려 줄 때). 6자 미만은 무시된다
         LogMasker.registerSecrets(dbPassword, redisPassword);

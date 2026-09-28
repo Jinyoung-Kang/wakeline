@@ -580,6 +580,15 @@ class LogSinkTest {
         assertThat(streams).containsExactly(LogStream.SERVER, LogStream.CLIENT, LogStream.SERVER);
     }
 
+    /** 억제 창의 시계는 단조 시계(System.nanoTime) — 벽시계가 뒤로 가도(NTP 보정 등) 창이 그만큼 길어지지 않는다(collector·ais 의 time.monotonic 과 같다). */
+    @Test
+    void theSuppressionWindowRunsOnAMonotonicClock() {
+        long before = System.nanoTime() / 1_000_000;
+        long t = LogSink.WINDOW_CLOCK.getAsLong();
+        long after = System.nanoTime() / 1_000_000;
+        assertThat(t).isBetween(before, after);
+    }
+
     @Test
     void instanceIsHostAndPidWithinTheSchemaLimit() {
         LogSink s = sink(true, 1000, 1000, 30_000);
