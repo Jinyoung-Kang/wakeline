@@ -216,6 +216,31 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     expect(last().get("rid")).toBe("5f2c9a0e1b7d4c3a");
     expect(byTestId("logs-empty")!.textContent).toContain("조건에 맞는 항목 없음");
   });
+  it("request ids in every error on /logs filter in place (a same-path #rid= link would change the URL but not the list)", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/v1/ops/logs/groups?")) return { status: 503, body: { detail: "store unavailable", code: "STORE_UNAVAILABLE", request_id: "9999aaaa9999aaaa" } };
+      if (url.startsWith("/api/v1/ais/gaps?")) return { status: 503, body: { detail: "store unavailable", code: "STORE_UNAVAILABLE", request_id: "7777bbbb7777bbbb" } };
+      if (url.startsWith("/api/v1/ops/logs?")) return { status: 200, body: FIRST };
+      return undefined;
+    });
+    await open();
+    const lastRid = () => new URL(calls.filter((c) => c.startsWith("GET /api/v1/ops/logs?")).at(-1)!.slice(4), "http://x").searchParams.get("rid");
+    // 상세의 '같은 지문 묶음' 조회 실패
+    await click(allByTestId("log-row")[0]);
+    const fp = byTestId("log-fp-stats")!;
+    expect(fp.textContent).toContain("9999aaaa9999aaaa");
+    expect(find((e) => e.tagName === "A", fp)?.getAttribute("href") ?? null).toBeNull(); // 같은 경로 해시 링크가 아니다
+    await click(button("이 요청 id 로 거르기", fp));
+    expect(lastRid()).toBe("9999aaaa9999aaaa");
+    // AIS 수신 공백 탭의 조회 실패 → 로그 탭으로 돌아가 그 요청 id 로 거른다
+    await click(button("AIS 수신 공백"));
+    const gaps = byTestId("ais-gaps")!;
+    expect(gaps.textContent).toContain("7777bbbb7777bbbb");
+    expect(find((e) => e.tagName === "A", gaps)?.getAttribute("href") ?? null).toBeNull(); // 같은 경로 해시 링크가 아니다
+    await click(button("이 요청 id 로 거르기", gaps));
+    expect(byTestId("ais-gaps")).toBeNull();
+    expect(lastRid()).toBe("7777bbbb7777bbbb");
+  });
   it("a #rid= link (from an error message) opens the list filtered by that request id over 7 d", async () => {
     stubFetch((url) => (url.startsWith("/api/v1/ops/logs?") ? { status: 200, body: FIRST } : undefined));
     await open("#rid=5f2c9a0e1b7d4c3a");

@@ -90,7 +90,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
       <div className="label mb-1">같은 지문 묶음(최근 {LOG_PERIOD_LABEL[period]} · {entry.service} · {entry.level})</div>
       <div className="mb-3" data-testid="log-fp-stats">
         {!entry.fp ? <span className="text-fg-3">지문 없음</span>
-          : fpErr ? <span className="text-bad"><ErrorNote error={fpErr} /></span>
+          : fpErr ? <span className="text-bad"><ErrorNote error={fpErr} onFilterRid={onFilterRid} /></span>
           : !fpStats ? <span className="text-fg-3">불러오는 중…</span>
           : !fpStats.g ? <span className="text-fg-3">이 기간의 묶음에 없음{fpStats.scanTruncated ? "(스캔 상한에서 잘림)" : ""}</span>
           : <span className="mono">

@@ -10,8 +10,9 @@ const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 /**
  * "AIS 수신 공백" 탭(계약 v5 §C7): 이미 있는 공개 `GET /api/v1/ais/gaps` 를 표로 — 구역 · 시작 · 끝 · 길이 · 사유(+ 공급자).
  * 길이는 끝 − 시작(정확한 계산), 열린 공백은 응답 시각(to)까지. 구역이 없는 끝난 공백은 옛 기록(모든 구역에 적용). 값은 api 가 준 그대로.
+ * onFilterRid = 조회 실패의 요청 id 로 로그 탭을 거른다(같은 화면 — /logs#rid= 링크는 hashchange 를 내지 않는다).
  */
-export function AisGapsTable({ initialPeriod }: { initialPeriod: LogPeriod }) {
+export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: LogPeriod; onFilterRid?: (rid: string) => void }) {
   const [period, setPeriod] = useState<LogPeriod>(initialPeriod);
   const [data, setData] = useState<ReturnType<typeof aisGapRows> | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -40,7 +41,7 @@ export function AisGapsTable({ initialPeriod }: { initialPeriod: LogPeriod }) {
             {data.invalid ? <span className="ml-1 text-warn">· 형식 오류 {data.invalid}건 건너뜀</span> : null}
           </span>
         ) : null}
-        {err ? <span className="text-bad" role="alert"><ErrorNote error={err} /></span> : null}
+        {err ? <span className="text-bad" role="alert"><ErrorNote error={err} onFilterRid={onFilterRid} /></span> : null}
       </div>
       <div className="mb-2 text-[11px] text-fg-3">
         수신 공백 = ais 수집기가 AIS 메시지를 받지 못한 구간(이 동안 그 구역의 선박 위치 없음) · 출처 <span className="mono">GET /api/v1/ais/gaps</span> · 길이 = 끝 − 시작, 진행 중은 응답 시각까지

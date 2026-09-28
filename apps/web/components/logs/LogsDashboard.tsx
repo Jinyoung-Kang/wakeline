@@ -275,7 +275,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         <Link className="btn" href="/ops">운영</Link>
         <button type="button" className="btn" onClick={logout}>sign out</button>
       </div>
-      {tab === "gaps" ? <AisGapsTable initialPeriod={filter.period} /> : <>
+      {tab === "gaps" ? <AisGapsTable initialPeriod={filter.period} onFilterRid={filterRid} /> : <>
         <form className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-bg-1 px-3 py-1.5 text-[11px]" onSubmit={applyText} data-testid="logs-filter-form">
           <div className="flex flex-wrap items-center gap-1" role="group" aria-label="서비스(여러 개 — 선택 없음 = 전체)">
             <span className="label mr-1">서비스</span>
