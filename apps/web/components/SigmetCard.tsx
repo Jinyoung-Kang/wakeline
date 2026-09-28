@@ -6,6 +6,7 @@ import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
 import { band, fmtDuration, fmtTime, hazardColor } from "@/lib/format";
 import { isExpired, isPending, sigmetBandSource } from "@/lib/sigmet";
+import { aircraftPos, panIfOutside } from "@/lib/focus";
 
 /**
  * SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—".
@@ -16,6 +17,7 @@ export function SigmetCard({ id }: { id: string }) {
   const [inside, setInside] = useState<{ id: string; hexes: string[] | null } | null>(null);
   const selectSigmet = useUi((s) => s.selectSigmet);
   const select = useUi((s) => s.select);
+  const alerts = useServerData((d) => d.alerts);
   const now = useServerNow(30_000);
   useEffect(() => {
     let live = true;
@@ -54,7 +56,7 @@ export function SigmetCard({ id }: { id: string }) {
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>
         ))}
         <div className="mt-2 label">Aircraft inside ({hexes == null ? "—" : hexes.length})</div>
-        <div className="flex flex-wrap gap-1 py-1">{(hexes ?? []).map((h) => <button key={h} className="btn mono" onClick={() => select(h)}>{h}</button>)}</div>
+        <div className="flex flex-wrap gap-1 py-1">{(hexes ?? []).map((h) => <button key={h} className="btn mono" onClick={() => { select(h); panIfOutside(aircraftPos(h, [...alerts.values()].find((a) => a.hex === h && a.sigmet_id === id))); }}>{h}</button>)}</div>
         <div className="mt-2 label">Raw</div>
         <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px] text-fg-2">{p.raw_text}</pre>
       </div>

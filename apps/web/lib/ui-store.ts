@@ -11,6 +11,8 @@ export interface Layers {
   prediction: boolean;
 }
 
+export type UiPanel = "alerts" | "aircraft" | "ship" | "sigmet" | "airport";
+
 interface UiState {
   layers: Layers;
   toggleLayer: (k: keyof Layers) => void;
@@ -34,8 +36,8 @@ interface UiState {
   /** 선택 선박 MMSI(9자리) */
   selectedShip: string | null;
   selectShip: (mmsi: string | null) => void;
-  panel: "alerts" | "aircraft" | "ship" | "sigmet" | "airport";
-  setPanel: (p: UiState["panel"]) => void;
+  panel: UiPanel;
+  setPanel: (p: UiPanel) => void;
   /** 지도 이동 요청(검색 결과 선택 등). id 가 바뀔 때마다 MapView 가 한 번 이동한다. */
   flyTo: { lon: number; lat: number; zoom: number; id: number } | null;
   requestFlyTo: (lon: number, lat: number, zoom?: number) => void;

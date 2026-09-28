@@ -34,10 +34,16 @@ test("alert panel shows aircraft inside the synthetic fixture SIGMET with eviden
   expect(await items.count()).toBeGreaterThanOrEqual(3);
   // 합성 SIGMET(RKRR FX1 TS, 한반도 중부) 안의 항공기가 관측 알림으로 잡혀야 한다
   await expect(page.locator('[data-testid="alert-item"][data-kind="OBSERVED"]', { hasText: "RKRR" }).first()).toBeVisible();
-  await items.first().locator("button").click();
-  await expect(page.getByTestId("evidence").first()).toBeVisible();
-  await expect(page.getByTestId("evidence").first()).toContainText("고도대");
+  // 행을 누르면 목록 안에서 근거가 펼쳐지고(선택하지 않음), 펼친 영역의 버튼이 항공기 카드를 연다(R-08)
+  await items.first().getByTestId("alert-toggle").click();
+  await expect(items.first().getByTestId("alert-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect(items.first().getByTestId("evidence")).toBeVisible();
+  await expect(items.first().getByTestId("evidence")).toContainText("고도대");
+  await items.first().getByTestId("alert-open-aircraft").click();
   await expect(page.getByTestId("aircraft-card")).toBeVisible();
+  // 알림 탭으로 돌아오면 펼친 근거가 그대로 있다
+  await page.getByTestId("tab-alerts").click();
+  await expect(items.first().getByTestId("evidence")).toBeVisible();
 });
 
 test("aircraft layer off: the status bar count becomes unknown ('—') instead of a frozen number, and comes back when on", async ({ page }) => {

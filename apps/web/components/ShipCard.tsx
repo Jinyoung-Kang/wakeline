@@ -11,6 +11,7 @@ import {
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
+import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
 
 interface Detail { mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null; db_unavailable: boolean }
@@ -209,7 +210,7 @@ function ShipList() {
       <ul className="min-h-0 flex-1 overflow-y-auto text-[12px]">
         {shown.map((s) => (
           <li key={s.mmsi} className="border-b border-line">
-            <button className="flex w-full justify-between gap-2 px-2 py-1 text-left hover:bg-bg-2" onClick={() => selectShip(s.mmsi)} data-testid="ship-list-item" data-mmsi={s.mmsi}>
+            <button className="flex w-full justify-between gap-2 px-2 py-1 text-left hover:bg-bg-2" onClick={() => { selectShip(s.mmsi); panIfOutside(shipPos(s.mmsi)); }} data-testid="ship-list-item" data-mmsi={s.mmsi}>
               <span>{s.name ?? "—"}</span><span className="mono text-fg-3">{s.mmsi}</span>
             </button>
           </li>

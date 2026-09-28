@@ -7,9 +7,11 @@ import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
 import { fmtAlt, fmtClock, fmtEta, fmtTime, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible } from "@/lib/alerts";
+import { aircraftPos, panIfOutside } from "@/lib/focus";
 
 /**
- * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 펼치면 근거 카드.
+ * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 행을 누르면 목록 안에서 근거 카드를 펼치고(선택하지 않음),
+ * 펼친 영역의 "항공기 카드·지도" 버튼이 항공기를 선택하고 알려진 위치가 화면 밖이면 지도를 옮긴다(R-08).
  * 예측 ETA 는 eta_at 에서 1 s 마다 줄어든다(추정). 배너는 진입·이탈·신호 끊김·진입 예상만(예측 갱신/해제는 목록에만 반영).
  * 목록을 아직 받지 못했으면 "없음"이라고 하지 않고 "수신 대기", 연결이 끊겼으면 마지막 목록임을 밝히고 ETA 를 멈춘다(DH-9).
  * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15).
@@ -79,8 +81,8 @@ export function AlertPanel() {
         {list.length === 0 && alertsVersion == null ? <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-waiting">알림 목록 수신 대기 중 — 아직 “없음”을 뜻하지 않습니다.</div> : null}
         {list.map((a) => (
             <div key={a.id} className="border-b border-line" data-testid="alert-item" data-kind={a.kind}>
-              <button className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-bg-2" aria-expanded={open === a.id} aria-controls={`evidence-${a.id}`}
-                onClick={() => { setOpen(open === a.id ? null : a.id); select(a.hex); }}>
+              <button className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-bg-2" aria-expanded={open === a.id} aria-controls={open === a.id ? `evidence-${a.id}` : undefined}
+                onClick={() => setOpen(open === a.id ? null : a.id)} data-testid="alert-toggle">
                 <span className="inline-block h-2 w-2 shrink-0" style={{ background: hazardColor(a.hazard) }} />
                 <span className="mono w-16 shrink-0 text-[12px]">{a.callsign ?? a.hex}</span>
                 <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`}>{a.hazard}{a.qualifier ? ` ${a.qualifier}` : ""}</span>
@@ -90,7 +92,12 @@ export function AlertPanel() {
                   : <span className="mono w-14 shrink-0 text-[11px]" title="관측 고도">{fmtAlt(a.alt_ft)}</span>}
                 {a.kind === "PREDICTED" ? <EtaBadge a={a} frozen={listState !== "live"} /> : <span className="badge bad ml-auto">INSIDE</span>}
               </button>
-              {open === a.id ? <div id={`evidence-${a.id}`} className="px-2 pb-2"><EvidenceCard a={a} /></div> : null}
+              {open === a.id ? (
+                <div id={`evidence-${a.id}`} className="px-2 pb-2">
+                  <EvidenceCard a={a} />
+                  <button className="btn mt-1" onClick={() => { select(a.hex); panIfOutside(aircraftPos(a.hex, a)); }} data-testid="alert-open-aircraft">항공기 카드 · 지도에서 보기</button>
+                </div>
+              ) : null}
             </div>
         ))}
         {list.some((a) => a.kind === "PREDICTED") ? <div className="px-2 py-1 text-[10px] text-fg-3">예측 행의 고도(<span className="est-val">보라 점선</span>) = 진입 시 고도 추정값 · ETA 도 추정</div> : null}

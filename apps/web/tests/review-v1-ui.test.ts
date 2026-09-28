@@ -2,8 +2,15 @@
  * 리뷰 v1(docs/review/REVIEW-v1.md) 웹 UI 갈래 회귀 시험. 각 describe 는 한 발견 사항(R-xx)이다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(커밋 메시지·검증 기록 참고).
  */
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api";
+import { aircraftStates, resetData, setData } from "@/lib/store";
+import { useUi } from "@/lib/ui-store";
+import { panIfOutside } from "@/lib/focus";
+import { SidePanelView } from "@/components/SidePanel";
+import type { Alert } from "@/lib/types";
 import { subscriptionBbox } from "@/lib/viewport";
 import { fmtReplayBbox, REPLAY_MAX_AREA_SQDEG, replayQueryBbox, replayReduce, type ReplayFrame } from "@/lib/replay";
 
@@ -44,5 +51,42 @@ describe("R-05 replay request area and stale frame", () => {
     expect(failed.err).toContain("확대");
     expect(failed.err).not.toContain("exceeds");
     expect(replayReduce(loaded, { type: "failed", error: new TypeError("Failed to fetch") }).err).toContain("연결");
+  });
+});
+
+const UI0 = useUi.getState();
+afterEach(() => { resetData(); useUi.setState(UI0, true); });
+
+const alert = (o: Partial<Alert> = {}): Alert => ({
+  id: 7, kind: "OBSERVED", hex: "780f47", callsign: "CCA402", sigmet_id: "S1", fir_id: "ZSHA", hazard: "TURB", qualifier: "SEV",
+  entered_at: "2026-09-28T01:00:00Z", alt_ft: 27600, evidence: { position: [31.2, 121.5] }, estimated: false, ...o,
+});
+
+describe("R-08 alert row: expand stays, selection moves the map", () => {
+  it("the alert list stays mounted (hidden) while another panel shows, so its expanded rows and scroll survive a selection", () => {
+    setData({ alerts: new Map([[7, alert()]]), alertsVersion: 1, conn: "open" });
+    // 수정 전 app/page.tsx 는 panel === "alerts" 일 때만 AlertPanel 을 렌더했다(선택하면 언마운트 → 펼침·스크롤 소실)
+    const html = renderToStaticMarkup(createElement(SidePanelView, { panel: "aircraft", hex: "780f47", sigmet: null, airport: null }));
+    expect(html).toContain('data-testid="aircraft-card"');
+    expect(html).toMatch(/<div[^>]*hidden=""[^>]*><div class="flex h-full flex-col" data-testid="alert-panel"/);
+    const alertsTab = renderToStaticMarkup(createElement(SidePanelView, { panel: "alerts", hex: null, sigmet: null, airport: null }));
+    expect(alertsTab).not.toMatch(/hidden=""[^>]*><div class="flex h-full flex-col" data-testid="alert-panel"/);
+    expect(alertsTab).toContain('data-testid="alert-toggle"');
+    expect(alertsTab).not.toContain('aria-expanded="true"'); // 펼치지 않은 행은 근거 영역도 없다
+  });
+  it("selecting from a list pans to a known position outside the current view, keeping the zoom; inside the view it does not move", () => {
+    setData({ viewport: { bbox: [124, 33, 132, 39], zoom: 6 } });
+    expect(panIfOutside([127.5, 36.1])).toBe(false);
+    expect(useUi.getState().flyTo).toBeNull();
+    expect(panIfOutside([121.5, 31.2])).toBe(true);
+    expect(useUi.getState().flyTo).toMatchObject({ lon: 121.5, lat: 31.2, zoom: 6 });
+    expect(panIfOutside(null)).toBe(false); // 위치 모름 — 움직이지 않는다
+  });
+  it("the aircraft position comes from the live state first, then the alert's evidence position ([lat, lon])", async () => {
+    const { aircraftPos } = await import("@/lib/focus");
+    expect(aircraftPos("780f47", alert())).toEqual([121.5, 31.2]);
+    aircraftStates.set("780f47", { hex: "780f47", lat: 31.9, lon: 122.4 });
+    expect(aircraftPos("780f47", alert())).toEqual([122.4, 31.9]);
+    expect(aircraftPos("000000", null)).toBeNull();
   });
 });
