@@ -66,6 +66,8 @@ wakeline:
   trusted-proxy: ${WAKELINE_TRUSTED_PROXY:}
   # 운영 세션 절대 수명(R-54, ADR-017 §3): 로그인 시각부터 — 폴링이 유휴 한도를 계속 연장해도 이 시간이 지나면 다시 로그인한다
   ops-session-max-age: 8h
+  # 세션·CSRF 쿠키 Secure(R-90). 기본 false(127.0.0.1 평문 HTTP). HTTPS 로 노출할 때만 true — edge 에 TLS·HSTS 가 먼저 있어야 한다
+  cookie-secure: ${WAKELINE_COOKIE_SECURE:false}
   # 관심 지역의 기본값(.env). 실제로 쓰는 값은 런타임 설정(app_setting → Redis wakeline:settings, collector 와 같은 값)이다.
   # 운영자가 /ops 에서 바꾼 적이 없으면 기동 시 이 값으로 런타임 설정을 맞춘다(COR-12).
   region-center: ${WAKELINE_REGION_CENTER:36.5,127.8}

@@ -105,23 +105,27 @@ public class SecurityConfig {
     }
 
     @Bean
-    CookieCsrfTokenRepository csrfTokenRepository() {
+    CookieCsrfTokenRepository csrfTokenRepository(@Value("${wakeline.cookie-secure:false}") boolean secure) {
         CookieCsrfTokenRepository repo = CookieCsrfTokenRepository.withHttpOnlyFalse(); // 화면 스크립트가 읽어 헤더로 되돌려 보낸다
         repo.setCookieName(CSRF_COOKIE);
         repo.setHeaderName(CSRF_HEADER);
         repo.setCookiePath("/");
-        repo.setCookieCustomizer(c -> c.sameSite("Strict").secure(false)); // 로컬 HTTP. 배포 시 secure(true)
+        repo.setCookieCustomizer(c -> c.sameSite("Strict").secure(secure));
         return repo;
     }
 
+    /**
+     * 세션 쿠키. Secure 는 설정으로(R-90): 기본 false — edge 가 127.0.0.1 의 평문 HTTP 로만 받는다. HTTPS(TLS 종단 edge·터널)로 노출하면
+     * WAKELINE_COOKIE_SECURE=true 로 세션·CSRF 쿠키 모두 Secure 가 된다(그때는 edge 에 TLS·HSTS 가 있어야 한다 — 없으면 브라우저가 쿠키를 보내지 않는다).
+     */
     @Bean
-    CookieSerializer cookieSerializer() {
+    CookieSerializer cookieSerializer(@Value("${wakeline.cookie-secure:false}") boolean secure) {
         var c = new DefaultCookieSerializer();
         c.setCookieName(SESSION_COOKIE);
         c.setCookiePath("/");
         c.setUseHttpOnlyCookie(true);
         c.setSameSite("Strict");
-        c.setUseSecureCookie(false); // 로컬 HTTP. 배포(HTTPS) 시 true
+        c.setUseSecureCookie(secure);
         return c;
     }
 
