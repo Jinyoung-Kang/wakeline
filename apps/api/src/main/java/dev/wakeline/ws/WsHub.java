@@ -16,6 +16,8 @@ import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.rest.SigmetGeoJson;
 import dev.wakeline.rest.StatusService;
+import dev.wakeline.route.RouteInfo;
+import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -60,6 +62,8 @@ import java.util.function.Supplier;
  *   <li>seq: 스냅샷마다 1, 실제로 보낸 diff 마다 +1(빈 diff 는 보내지 않는다) — 틈이 없다(PERF-2/COR-6).</li>
  *   <li>항공기 JSON 조각·SIGMET·알림·레이더·status 페이로드는 버전마다 한 번만 직렬화해 모든 세션이 같은 String 을 쓴다(PERF-8/PERF-9/SEC-2).</li>
  *   <li>알림은 버전(배치마다 +1)을 달고, 세션마다 반영한 버전을 기억해 빠진 배치를 순서대로(없으면 전체 목록) 보낸다 — 일시정지·백프레셔 뒤에도 어긋나지 않는다(COR-7/GAP-3).</li>
+ *   <li>selected 에는 선택 항공기의 등록 노선(route, 계약 v4 §A)을 싣는다 — 콜사인별 5 s 캐시({@link RouteReader})라 팬아웃·focus 관측마다
+ *       다시 읽어도 Redis 조회는 콜사인당 5 s 에 한 번이다. 노선 상태가 바뀌면(조회 중 → 찾음) 상태가 그대로여도 다시 보낸다.</li>
  *   <li>수요 스코프(hot·focus, 계약 v2 §A3) 메시지는 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 세션에만 팬아웃한다 — 전체 팬아웃은
  *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측을 두 번 보내지 않는다).</li>
  *   <li>수요(demand) 메시지는 DemandService 가 계산해 {@link #pushDemand} 로 예약한다. 구독·선택·일시정지·연결 종료는 {@link #demandChanged} 로 알린다.</li>
@@ -124,10 +128,11 @@ public class WsHub implements SmartLifecycle {
 
     @Autowired
     public WsHub(ObjectMapper json, AppProperties props, SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar,
-                 StatusService status, EngineService engine, MeterRegistry meters) {
+                 StatusService status, EngineService engine, MeterRegistry meters, RouteReader routes) {
         this(json, props, snapshots, sigmets, radar, status::publicStatus, () -> engine.activeAlerts(null), engine::predictionAvailability,
                 meters, Executors.newVirtualThreadPerTaskExecutor(),
                 Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ws-timer").factory()), HELLO_TIMEOUT_MS);
+        setRouteSource(routes::forAircraft);
     }
 
     /** 테스트용: 실행기·타이머·데이터 출처를 주입한다. */
@@ -214,6 +219,15 @@ public class WsHub implements SmartLifecycle {
     void demandChanged() { demandListener.run(); }
 
     void setDemandListener(Runnable r) { demandListener = r == null ? () -> { } : r; }
+
+    // ---- 등록 노선(RouteReader) ----
+    private volatile Function<AircraftState, RouteInfo> routeSource = a -> null;
+
+    /** selected 의 route 출처(운영: RouteReader). 테스트는 가짜를 넣는다 — 없으면 route 는 null. */
+    void setRouteSource(Function<AircraftState, RouteInfo> f) { routeSource = f == null ? a -> null : f; }
+
+    /** 상태의 노선(상태가 없으면 null — 콜사인을 모른다). */
+    private RouteInfo route(AircraftState a) { return a == null ? null : routeSource.apply(a); }
 
     // ---- 선박(ShipFanout) ----
     private volatile java.util.function.Consumer<WsSession> shipsHook = s -> { };
@@ -511,7 +525,8 @@ public class WsHub implements SmartLifecycle {
         if (hex == null) return;
         AircraftState a = snapshots.merged().get(hex);
         WsSession.SelectedSent prev = s.selectedSent;
-        if (prev != null && hex.equals(prev.hex()) && prev.state() == a && a != null && Objects.equals(prev.prediction(), prediction.apply(a))) return;
+        if (prev != null && hex.equals(prev.hex()) && prev.state() == a && a != null && Objects.equals(prev.prediction(), prediction.apply(a))
+                && Objects.equals(prev.route(), route(a))) return;
         sendSelected(s, snapshots.merged(), true);
     }
 
@@ -572,16 +587,18 @@ public class WsHub implements SmartLifecycle {
         return true;
     }
 
-    /** "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부. force 가 아니면 바뀐 경우에만. */
+    /** "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부 + 등록 노선. force 가 아니면 바뀐 경우에만. */
     private void sendSelected(WsSession s, Map<String, AircraftState> states, boolean force) {
         String hex = s.selectedHex;
         if (hex == null) { s.selectedSent = null; return; }
         AircraftState a = states.get(hex);
         PredictionAvailability p = prediction.apply(a);
+        RouteInfo r = route(a);
         WsSession.SelectedSent prev = s.selectedSent;
-        if (!force && prev != null && hex.equals(prev.hex()) && sameSelected(prev.state(), a) && Objects.equals(prev.prediction(), p)) return;
+        if (!force && prev != null && hex.equals(prev.hex()) && sameSelected(prev.state(), a) && Objects.equals(prev.prediction(), p)
+                && Objects.equals(prev.route(), r)) return;
         String state = a == null ? null : fragments.get(a, WsMessages.Encoding.FULL);
-        if (send(s, toJson(new WsMessages.SelectedMsg("selected", hex, state, p)))) s.selectedSent = new WsSession.SelectedSent(hex, a, p);
+        if (send(s, toJson(new WsMessages.SelectedMsg("selected", hex, state, p, r)))) s.selectedSent = new WsSession.SelectedSent(hex, a, p, r);
     }
 
     /** 새 보고(seen_at)나 표시 값 변화가 없으면 같은 것으로 본다. */

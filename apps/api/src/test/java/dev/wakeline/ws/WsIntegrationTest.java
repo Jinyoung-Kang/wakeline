@@ -66,6 +66,8 @@ class WsIntegrationTest {
         @Bean StatusService statusService(SnapshotStore s, SigmetStore g, RadarStore r, EngineService e, AppProperties props) {
             return new StatusService(s, g, r, e, new StringRedisTemplate(), props);
         }
+        /** 노선 캐시(계약 v4 §A)도 연결 없는 템플릿 — 읽기 실패는 route.status unavailable. */
+        @Bean dev.wakeline.route.RouteReader routeReader(ObjectMapper json) { return new dev.wakeline.route.RouteReader(new StringRedisTemplate(), json); }
     }
 
     @BeforeAll

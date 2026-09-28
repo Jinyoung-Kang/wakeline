@@ -4,6 +4,7 @@ import dev.wakeline.config.AppProperties;
 import dev.wakeline.config.Problem;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.Bbox;
+import dev.wakeline.domain.DestinationParser;
 import dev.wakeline.domain.ShipCategory;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.AisStatus;
@@ -66,6 +67,8 @@ public class ShipController {
     private final ShipRepository repo;
     private final AisStatus ais;
     private final AppProperties props;
+    /** 보고 목적지 풀이(계약 v4 §B) — 항구 표는 JVM 에서 한 번 읽는다(이 빈이 기동할 때). */
+    private final DestinationParser destinations = DestinationParser.bundled();
 
     public ShipController(ShipStore store, ShipRepository repo, AisStatus ais, AppProperties props) {
         this.store = store;
@@ -125,7 +128,8 @@ public class ShipController {
 
     /**
      * 상세: 실시간 위치(state — 목록에 있을 때만) + 정적 정보(static — 메모리, 없으면 DB) + 선종 분류(category — 코드의 결정적 변환)
-     * + first_recorded_at(이 서비스가 이 MMSI 를 처음 기록한 시각) · last_position_at(저장된 마지막 위치 시각, 보존 72 h 안 — 없으면 키 없음).
+     * + first_recorded_at(이 서비스가 이 MMSI 를 처음 기록한 시각) · last_position_at(저장된 마지막 위치 시각, 보존 72 h 안 — 없으면 키 없음)
+     * + destination_info(static 의 보고 목적지를 결정적 규칙으로 푼 것, 계약 v4 §B — 목적지를 모르면 키 없음).
      * DB 가 없어도 실시간 위치가 있으면 200(static = 메모리 값 또는 null, meta.db_unavailable = true). 둘 다 없으면 404, 실시간도 없고
      * DB 도 없으면 있는지 알 수 없으므로 503.
      */
@@ -151,6 +155,7 @@ public class ShipController {
         out.put("mmsi", m);
         out.put("state", live == null ? null : WsMessages.encodeShipState(live.state()));
         out.put("static", stat == null ? null : WsMessages.encodeShipStatic(stat));
+        out.put("destination_info", stat == null ? null : destinations.parse(stat.destination()));
         out.put("category", ShipCategory.of(stat == null ? null : stat.shipType()).key());
         // ship.last_seen 은 쓰기 증폭을 줄이려 10분 단위로만 넓히므로 내보내지 않는다 — 정확한 마지막 위치 시각은 ship_position 에서
         if (stored != null) out.put("first_recorded_at", stored.firstSeen());

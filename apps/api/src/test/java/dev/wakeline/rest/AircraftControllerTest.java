@@ -9,6 +9,8 @@ import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.persist.AircraftRepository;
 import dev.wakeline.persist.TrackRepository;
+import dev.wakeline.route.RouteInfoTest;
+import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,8 @@ class AircraftControllerTest {
     }
 
     final SnapshotStore snapshots = new SnapshotStore();
+    /** 가짜 Redis(노선 캐시 키 → 값, 합성). */
+    final Map<String, String> routeCache = new java.util.HashMap<>();
     MockMvc mvc;
 
     static AircraftState ac(String hex, String callsign, double lat, double lon, Instant seen, String provider) {
@@ -58,9 +62,12 @@ class AircraftControllerTest {
                 Map.of("a1b2c3", ac("a1b2c3", "UAL1  ", 40, -100, now.minusSeconds(20), "opensky"),
                         "b00001", ac("b00001", "UAL2", 41, -101, now.minusSeconds(900), "opensky"))));
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-",
-                Map.of("71be01", ac("71be01", "KAL081", 37.4, 126.5, now.minusSeconds(3), "adsb_lol"))));
+                Map.of("71be01", ac("71be01", "KAL081", 37.4, 126.5, now.minusSeconds(3), "adsb_lol"),
+                        "71be02", ac("71be02", " syn736 ", 50.0, 10.0, now.minusSeconds(3), "adsb_lol"),
+                        "71be03", ac("71be03", null, 50.1, 10.1, now.minusSeconds(3), "adsb_lol"))));
         EngineService engine = new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry());
-        var controller = new AircraftController(snapshots, engine, new DbDown(), new TrackRepository(null), PROPS);
+        RouteReader routes = new RouteReader(routeCache::get, RouteInfoTest.JSON, System::currentTimeMillis);
+        var controller = new AircraftController(snapshots, engine, new DbDown(), new TrackRepository(null), PROPS, routes);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ProblemAdvice()).build();
     }
 
@@ -73,6 +80,25 @@ class AircraftControllerTest {
                 .andExpect(header().string("Cache-Control", containsString("public")));
         // 실시간 상태도 없고 DB 도 없으면 있는지 모른다 → 503(404 로 단정하지 않는다)
         mvc.perform(get("/api/v1/aircraft/ffffff")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
+    }
+
+    /** 계약 v4 §A: 상세의 route — 상태의 콜사인(trim·대문자)으로 Redis 캐시를 읽는다. 없으면 pending, 콜사인이 없으면 no_callsign. */
+    @Test
+    void detailCarriesTheRegisteredRouteOfTheLiveCallsign() throws Exception {
+        routeCache.put("wakeline:route:SYN736", RouteInfoTest.found("SYN736").toString());
+        mvc.perform(get("/api/v1/aircraft/71be02")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.route.status").value("found"))
+                .andExpect(jsonPath("$.route.callsign").value("SYN736"))
+                .andExpect(jsonPath("$.route.source").value("adsbdb"))
+                .andExpect(jsonPath("$.route.origin.icao").value("ZZAA"))
+                .andExpect(jsonPath("$.route.origin.country_iso").value("ZZ"))
+                .andExpect(jsonPath("$.route.destination.icao").value("ZZBB"))
+                .andExpect(jsonPath("$.route.airline.iata").value("S9"))
+                .andExpect(jsonPath("$.route.fetched_at").value("2026-09-28T03:21:00Z"));
+        mvc.perform(get("/api/v1/aircraft/71be01")).andExpect(jsonPath("$.route.status").value("pending"))
+                .andExpect(jsonPath("$.route.callsign").value("KAL081"));
+        mvc.perform(get("/api/v1/aircraft/71be03")).andExpect(jsonPath("$.route.status").value("no_callsign"))
+                .andExpect(jsonPath("$.route.callsign").doesNotExist());
     }
 
     @Test

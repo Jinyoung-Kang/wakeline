@@ -42,6 +42,7 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired RadarStore radar;
     @Autowired EngineService engine;
     @Autowired dev.wakeline.rest.StatusService status;
+    @Autowired dev.wakeline.route.RouteReader routes;
 
     final Map<String, String> index = new LinkedHashMap<>();
 
@@ -112,7 +113,16 @@ class RestSamplesIT extends IntegrationTest {
         record("status", "/api/v1/status", 200);
         record("aircraft", "/api/v1/aircraft?bbox=" + bbox, 200);
         record("aircraft_full", "/api/v1/aircraft?bbox=" + bbox + "&detail=full", 200);
-        record("aircraft_detail", "/api/v1/aircraft/" + inside, 200);
+        // 등록 노선(계약 v4 §A): 수집기가 쓰는 캐시 키에 합성 노선(가상 공항) — api 는 wakeline_api 로 읽기만 한다
+        String callsign = "IT" + inside.substring(2).toUpperCase();
+        String routeKey = "wakeline:route:" + callsign;
+        ItStack.admin().opsForValue().set(routeKey, dev.wakeline.route.RouteInfoTest.found(callsign).toString(), Duration.ofMinutes(5));
+        try {
+            await("route cache", WAIT, () -> "found".equals(routes.forCallsign(callsign).status())); // api 의 5 s 메모리 캐시가 지나기를
+            record("aircraft_detail", "/api/v1/aircraft/" + inside, 200);
+        } finally {
+            ItStack.admin().delete(routeKey);
+        }
         record("aircraft_search", "/api/v1/aircraft/search?q=ITD0", 200);
         // 지금은 없고 DB 에만 남은 항공기(과거 정적 정보, live=false · last_seen)
         db.sql("INSERT INTO aircraft (hex, registration, type_code, source, first_seen, last_seen) VALUES ('a1d0db', 'HLDB01', 'B738', 'fixture', "
@@ -203,8 +213,16 @@ class RestSamplesIT extends IntegrationTest {
         JsonNode wx = Streams.JSON.readTree(Files.readString(OUT.resolve("airport_wx.json"))).path("body");
         assertThat(wx.path("latest").path("vis_raw").asString()).isEqualTo("6+");
         assertThat(wx.path("history").get(0).path("vis_raw").asString()).isEqualTo("6+");
+        JsonNode route = Streams.JSON.readTree(Files.readString(OUT.resolve("aircraft_detail.json"))).path("body").path("route");
+        assertThat(route.path("status").asString()).isEqualTo("found");
+        assertThat(route.path("callsign").asString()).isEqualTo("ITD001");
+        assertThat(route.path("origin").path("icao").asString()).isEqualTo("ZZAA");
+        JsonNode dest = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_detail.json"))).path("body").path("destination_info");
+        assertThat(dest.path("raw").asString()).isEqualTo("KR PUS");
+        assertThat(dest.path("to").path("locode").asString()).isEqualTo("KRPUS");
         JsonNode noStatic = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_detail_nostatic.json"))).path("body");
         assertThat(noStatic.has("static")).isFalse();
+        assertThat(noStatic.has("destination_info")).isFalse();
         assertThat(noStatic.path("category").asString()).isEqualTo("unknown");
         JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
         assertThat(st.path("sources").path("ais").path("msgs_per_s").asDouble()).isEqualTo(4.2);

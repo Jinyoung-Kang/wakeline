@@ -1,6 +1,8 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.domain.Bbox;
+import dev.wakeline.domain.DestinationInfo;
+import dev.wakeline.domain.DestinationParser;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
@@ -38,7 +40,8 @@ import java.util.function.LongSupplier;
  *       60 s 마다·구독·resync·resume·백프레셔 때 스냅샷. 뷰포트 안 선박이 5,000 척을 넘으면 0.5° 격자(capped:true)를 대신 보낸다.</li>
  *   <li>줌 &lt; 7: ships_grid(칸 크기 5° z&lt;3 · 2° z&lt;5 · 0.5° z&lt;7). 격자는 ShipStore 버전마다 한 번(O(선박 수)) 만들어 모든 세션이 같이 쓰고,
  *       세션은 자기 bbox 와 겹치는 칸만 고른다. 같은 버전·bbox 의 격자는 다시 보내지 않는다.</li>
- *   <li>select_ship → ship_selected(즉시, 그리고 그 선박이 바뀌거나 목록에서 빠질 때마다). state 는 실시간 목록에 있을 때만, static 은 알고 있으면.</li>
+ *   <li>select_ship → ship_selected(즉시, 그리고 그 선박이 바뀌거나 목록에서 빠질 때마다). state 는 실시간 목록에 있을 때만, static 은 알고 있으면.
+ *       destination_info 는 static 의 보고 목적지를 결정적으로 푼 것(계약 v4 §B — 항구 표는 JVM 에서 한 번 읽는다).</li>
  *   <li>빈도: ships 메시지(수집기 10 s)가 올 때 모든 선박 세션에 한 번 — 연달아 와도(분할 발행·만료) 10 s 에 한 번으로 모은다. 전송은 세션 우편함
  *       (항공기와 같은 단일 비행)이 하므로 느린 세션이 다른 세션·스트림 소비를 막지 않는다.</li>
  * </ul>
@@ -59,6 +62,7 @@ public class ShipFanout implements SmartLifecycle {
 
     private final WsHub hub;
     private final ShipStore store;
+    private final DestinationParser destinations = DestinationParser.bundled();
     private final ScheduledExecutorService timer;
     private final LongSupplier clock;
     private final Map<String, CachedJson> liteJson = new ConcurrentHashMap<>();
@@ -286,7 +290,8 @@ public class ShipFanout implements SmartLifecycle {
         if (!force && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && prev.stat() == stat) return;
         String state = ship == null ? null : hub.toJson(WsMessages.encodeShipState(ship.state()));
         String st = stat == null ? null : hub.toJson(WsMessages.encodeShipStatic(stat));
-        if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st))))
+        DestinationInfo dest = stat == null ? null : destinations.parse(stat.destination());
+        if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st, dest))))
             s.shipSelectedSent = new WsSession.ShipSelectedSent(mmsi, ship, stat);
     }
 

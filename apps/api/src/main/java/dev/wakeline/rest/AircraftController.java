@@ -9,6 +9,7 @@ import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.persist.AircraftRepository;
 import dev.wakeline.persist.TrackRepository;
+import dev.wakeline.route.RouteReader;
 import dev.wakeline.ws.WsHub;
 import dev.wakeline.ws.WsMessages;
 import org.springframework.dao.DataAccessException;
@@ -39,14 +40,17 @@ public class AircraftController {
     private final AircraftRepository aircraft;
     private final TrackRepository tracks;
     private final AppProperties props;
+    private final RouteReader routes;
     static final int SEARCH_LIMIT = 20;
 
-    public AircraftController(SnapshotStore snapshots, EngineService engine, AircraftRepository aircraft, TrackRepository tracks, AppProperties props) {
+    public AircraftController(SnapshotStore snapshots, EngineService engine, AircraftRepository aircraft, TrackRepository tracks, AppProperties props,
+                              RouteReader routes) {
         this.snapshots = snapshots;
         this.engine = engine;
         this.aircraft = aircraft;
         this.tracks = tracks;
         this.props = props;
+        this.routes = routes;
     }
 
     /**
@@ -123,6 +127,8 @@ public class AircraftController {
     /**
      * 상세: 실시간 상태는 메모리에서, 정적 정보는 DB 에서. DB 가 없어도 실시간 상태가 있으면 200 — static = null, meta.db_unavailable = true
      * (계약 §2: 실시간 경로는 DB 에 의존하지 않는다). 실시간 상태도 없고 DB 도 없으면 있는지 알 수 없으므로 503.
+     * route(계약 v4 §A): 실시간 상태의 콜사인으로 읽은 등록 노선(Redis 캐시 — 조회는 수집기가 선택된 항공기에 대해서만 한다).
+     * 실시간 상태가 없으면 콜사인을 모르므로 키 없음.
      */
     @GetMapping("/{hex}")
     public ResponseEntity<Map<String, Object>> detail(@PathVariable String hex, HttpServletRequest req) {
@@ -141,6 +147,7 @@ public class AircraftController {
         m.put("hex", h);
         m.put("state", a == null ? null : WsMessages.encode(a, "full", false));
         m.put("static", stat);
+        m.put("route", routes.forAircraft(a));
         List<Alert> alerts = engine.activeAlerts(null).stream().filter(x -> x.hex().equals(h)).toList();
         m.put("active_alerts", alerts);
         m.put("inside_sigmets", engine.insideSigmets(h));

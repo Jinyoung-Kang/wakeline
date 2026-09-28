@@ -5,6 +5,7 @@ import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.engine.PredictionAvailability;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.route.RouteInfo;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -48,8 +49,8 @@ public final class WsSession {
         WsMessages.Encoding encoding() { return WsMessages.encodingFor(detail, world()); }
     }
 
-    /** 마지막으로 보낸 "selected" — 바뀐 경우에만 다시 보낸다. */
-    record SelectedSent(String hex, AircraftState state, PredictionAvailability prediction) {}
+    /** 마지막으로 보낸 "selected" — 바뀐 경우에만 다시 보낸다(노선 상태가 바뀌어도 — 예: 조회 중 → 찾음). */
+    record SelectedSent(String hex, AircraftState state, PredictionAvailability prediction, RouteInfo route) {}
 
     final String id;
     final String ip;

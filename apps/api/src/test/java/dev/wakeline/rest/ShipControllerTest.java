@@ -174,6 +174,34 @@ class ShipControllerTest {
         mvc.perform(get("/api/v1/ships/440000098")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
     }
 
+    /** 계약 v4 §B: 보고 목적지의 결정적 풀이(실린 UN/LOCODE 항구 표). 목적지를 모르면 키 없음. */
+    @Test void detail_destinationInfo() throws Exception {
+        mvc.perform(get("/api/v1/ships/440000001")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.destination_info.raw").value("KR PUS"))
+                .andExpect(jsonPath("$.destination_info.kind").value("text"))
+                .andExpect(jsonPath("$.destination_info.to.locode").value("KRPUS"))
+                .andExpect(jsonPath("$.destination_info.to.name").value("Busan"))
+                .andExpect(jsonPath("$.destination_info.to.country").value("KR"))
+                .andExpect(jsonPath("$.destination_info.to.ambiguous").value(false))
+                .andExpect(jsonPath("$.destination_info.from").doesNotExist())
+                .andExpect(jsonPath("$.destination_info.places.length()").value(1));
+        ShipStatic route = new ShipStatic("440000003", "ROUTE", null, null, 70, null, null, null, null, null, "KRPUS>CAVAN", null, null, null, null,
+                T.minusSeconds(60), "aisstream");
+        ShipStatic none = new ShipStatic("440000004", "NO DEST", null, null, 70, null, null, null, null, null, null, null, null, null, null,
+                T.minusSeconds(60), "aisstream");
+        store.apply(List.of(pos("440000003", 35.3, 129.3, T), pos("440000004", 35.4, 129.4, T)), List.of(route, none), T, "aisstream",
+                System.currentTimeMillis());
+        mvc.perform(get("/api/v1/ships/440000003")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.destination_info.kind").value("from_to"))
+                .andExpect(jsonPath("$.destination_info.from.name").value("Busan"))
+                .andExpect(jsonPath("$.destination_info.to.locode").value("CAVAN"))
+                .andExpect(jsonPath("$.destination_info.to.ambiguous").value(true));
+        mvc.perform(get("/api/v1/ships/440000004")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.destination_info").value(nullValue()));
+        mvc.perform(get("/api/v1/ships/440000002")).andExpect(status().isOk()) // 정적 정보 없음
+                .andExpect(jsonPath("$.destination_info").value(nullValue()));
+    }
+
     @Test void track_splitsAtAisGapsAndAtFifteenMinuteJumps() throws Exception {
         Instant t0 = T.minusSeconds(3 * 3600);
         repo.points.add(tp(t0, 129.00));

@@ -118,6 +118,75 @@ AIRCRAFT_FULL: Schema = {
     "properties": {**LITE_PROPS, "registration": STR, "type_code": STR, "category": STR, "fetched_at": TS},
 }
 
+# 계약 v4 §A 등록 노선(adsbdb, 콜사인 기준) — 값이 없으면 키가 없다. 공항은 icao·name·좌표가 반드시 있다.
+ROUTE_AIRPORT: Schema = {
+    "type": "object",
+    "required": ["icao", "name", "lat", "lon"],
+    "additionalProperties": False,
+    "properties": {
+        "icao": {"type": "string", "pattern": "^[A-Z0-9]{4}$"},
+        "iata": {"type": "string", "pattern": "^[A-Z0-9]{3}$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "city": {"type": "string", "minLength": 1, "maxLength": 80},
+        "country": {"type": "string", "minLength": 1, "maxLength": 80},
+        "country_iso": {"type": "string", "pattern": "^[A-Z]{2}$"},
+        "lat": {"type": "number", "minimum": -90, "maximum": 90},
+        "lon": {"type": "number", "minimum": -180, "maximum": 180},
+    },
+}
+ROUTE: Schema = {
+    "type": "object",
+    "required": ["status", "source"],
+    "additionalProperties": False,
+    "properties": {
+        "status": {"enum": ["found", "not_found", "pending", "unavailable", "no_callsign"]},
+        "callsign": {"type": "string", "pattern": "^[A-Z0-9]{3,8}$"},
+        "airline": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": False,
+            "properties": {
+                "name": {"type": "string", "minLength": 1, "maxLength": 120},
+                "icao": {"type": "string", "pattern": "^[A-Z0-9]{3}$"},
+                "iata": {"type": "string", "pattern": "^[A-Z0-9]{2}$"},
+            },
+        },
+        "origin": ROUTE_AIRPORT,
+        "destination": ROUTE_AIRPORT,
+        "midpoint": ROUTE_AIRPORT,
+        "fetched_at": TS,
+        "source": {"const": "adsbdb"},
+    },
+    "allOf": [
+        # 콜사인이 없으면 조회하지 않는다 — 그 밖의 상태는 어느 콜사인의 결과인지 밝힌다
+        {
+            "if": {"properties": {"status": {"const": "no_callsign"}}},
+            "then": {"not": {"required": ["callsign"]}},
+            "else": {"required": ["callsign"]},
+        },
+        # 찾음은 출발·도착 중 하나 이상, 그 밖에는 노선 내용이 없다(추정해 채우지 않는다)
+        {
+            "if": {"properties": {"status": {"const": "found"}}},
+            "then": {"anyOf": [{"required": ["origin"]}, {"required": ["destination"]}]},
+            "else": {
+                "not": {
+                    "anyOf": [
+                        {"required": ["airline"]},
+                        {"required": ["origin"]},
+                        {"required": ["destination"]},
+                        {"required": ["midpoint"]},
+                    ]
+                }
+            },
+        },
+        # 조회 시각은 조회 결과(찾음·없음)에만
+        {
+            "if": {"properties": {"status": {"enum": ["pending", "unavailable", "no_callsign"]}}},
+            "then": {"not": {"required": ["fetched_at"]}},
+        },
+    ],
+}
+
 
 def feature_collection(feature: dict[str, Any], media_meta: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -348,6 +417,59 @@ SHIP_STATIC: Schema = {  # ship_static.v1 그대로(선원 입력값 — ETA 는
         "provider": SHIP_PROVIDER,
     },
 }
+# 계약 v4 §B: 보고 목적지의 결정적 풀이 — 항구 표(UN/LOCODE)에서 찾은 조각만 locode·name·country 가 있다
+PLACE: Schema = {
+    "type": "object",
+    "required": ["text", "ambiguous"],
+    "additionalProperties": False,
+    "properties": {
+        "text": {"type": "string", "minLength": 1, "maxLength": 20},
+        "locode": {"type": "string", "pattern": "^[A-Z]{2}[A-Z0-9]{3}$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "country": {"type": "string", "pattern": "^[A-Z]{2}$"},
+        "subdivision": {"type": "string", "pattern": "^[A-Z0-9]{1,3}$"},
+        "ambiguous": BOOL,
+    },
+    "allOf": [
+        {"if": {"required": ["locode"]}, "then": {"required": ["name", "country"]}},
+        {
+            "if": {"not": {"required": ["locode"]}},
+            "then": {"not": {"anyOf": [{"required": ["name"]}, {"required": ["country"]}]}},
+        },
+        # 코드로도 지명으로도 읽히는 것은 코드로 푼 경우뿐
+        {"if": {"properties": {"ambiguous": {"const": True}}}, "then": {"required": ["locode"]}},
+    ],
+}
+DESTINATION_INFO: Schema = {
+    "type": "object",
+    "required": ["raw", "kind", "places"],
+    "additionalProperties": False,
+    "properties": {
+        "raw": {"type": "string", "minLength": 1, "maxLength": 20},
+        "kind": {"enum": ["between", "from_to", "to", "text"]},
+        "from": PLACE,
+        "to": PLACE,
+        "places": {"type": "array", "minItems": 1, "maxItems": 2, "items": PLACE},
+    },
+    "allOf": [
+        # AIS 에는 출발지 항목이 없다 — 출발(보고)은 'A>B' 의 A 뿐
+        {
+            "if": {"properties": {"kind": {"const": "from_to"}}},
+            "then": {"required": ["from", "to"]},
+            "else": {"not": {"required": ["from"]}},
+        },
+        {
+            "if": {"properties": {"kind": {"const": "between"}}},
+            "then": {"not": {"required": ["to"]}},
+            "else": {"required": ["to"]},
+        },
+        {
+            "if": {"properties": {"kind": {"enum": ["between", "from_to"]}}},
+            "then": {"properties": {"places": {"minItems": 2}}},
+            "else": {"properties": {"places": {"maxItems": 1}}},
+        },
+    ],
+}
 GAP: Schema = {  # AIS 수신 공백(끝난 공백은 ended_at, 열린 공백은 키 없음)
     "type": "object",
     "required": ["started_at", "reason"],
@@ -483,14 +605,18 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "required": ["hex"],
                 "properties": {"hex": HEX, "registration": STR, "type_code": STR, "first_seen": TS, "last_seen": TS},
             },
+            "route": ROUTE,
             "active_alerts": {"type": "array", "items": ALERT},
             "inside_sigmets": {"type": "array", "items": STR},
             "emergency": BOOL,
             "meta": META,
         },
-        # DB 가 없으면 static 이 없고 meta 가 그렇다고 말한다(계약 §2)
-        "if": {"not": {"required": ["static"]}},
-        "then": {"properties": {"meta": {"required": ["db_unavailable"]}}},
+        "allOf": [
+            # DB 가 없으면 static 이 없고 meta 가 그렇다고 말한다(계약 §2)
+            {"if": {"not": {"required": ["static"]}}, "then": {"properties": {"meta": {"required": ["db_unavailable"]}}}},
+            # 노선은 실시간 상태의 콜사인에서만 나온다(계약 v4 §A) — 상태가 없으면 route 도 없다
+            {"if": {"not": {"required": ["state"]}}, "then": {"not": {"required": ["route"]}}},
+        ],
     },
     "aircraft_search": {
         "type": "object",
@@ -740,14 +866,15 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "mmsi": MMSI,
             "state": SHIP_STATE,
             "static": SHIP_STATIC,
+            "destination_info": DESTINATION_INFO,
             "category": SHIP_CATEGORY,
             "first_recorded_at": TS,
             "last_position_at": TS,
             "meta": META,
         },
-        # 분류는 정적 정보의 선종에서만 나온다 — 정적 정보가 없으면 unknown(추정하지 않는다)
+        # 분류는 정적 정보의 선종에서만 나온다 — 정적 정보가 없으면 unknown(추정하지 않는다). 목적지 풀이도 정적 정보에서만.
         "if": {"not": {"required": ["static"]}},
-        "then": {"properties": {"category": {"const": "unknown"}}},
+        "then": {"properties": {"category": {"const": "unknown"}}, "not": {"required": ["destination_info"]}},
     },
     "ship_track": {
         "type": "object",
@@ -1012,6 +1139,29 @@ def _ship_detail(body: dict[str, Any]) -> list[str]:
             errs.append(f"{part}.mmsi != mmsi")
     if "state" not in body and "static" not in body and "first_recorded_at" not in body:
         errs.append("a ship with no live state, no static info and no stored record must be a 404")
+    dest = body.get("destination_info")
+    reported = (body.get("static") or {}).get("destination")
+    if dest is not None and dest.get("raw") != reported:
+        errs.append("destination_info.raw is not the reported static.destination")
+    if dest is None and reported is not None and reported.strip():
+        errs.append("static.destination is reported but destination_info is missing")
+    if dest is not None:
+        places = dest.get("places") or []
+        for key, idx in (("from", 0), ("to", -1)):
+            if key in dest and places and dest[key] != places[idx]:
+                errs.append(f"destination_info.{key} is not places[{idx}]")
+    return errs
+
+
+def _aircraft_detail(body: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    route = body.get("route")
+    if route is None:
+        return errs
+    # 노선은 실시간 상태의 콜사인(trim·대문자)에서만 — 다른 콜사인의 노선을 붙이지 않는다
+    cs = ((body.get("state") or {}).get("callsign") or "").strip().upper()
+    if route.get("status") != "no_callsign" and route.get("callsign") != cs:
+        errs.append(f"route.callsign {route.get('callsign')!r} is not the live callsign {cs!r}")
     return errs
 
 
@@ -1065,7 +1215,13 @@ SCHEMAS["status_ais"] = {
     ],
 }
 
-CROSS_CHECKS = {"ships": _ships, "ship_detail": _ship_detail, "ship_track": _ship_track, "ais_gaps": _ais_gaps}
+CROSS_CHECKS = {
+    "ships": _ships,
+    "ship_detail": _ship_detail,
+    "ship_track": _ship_track,
+    "ais_gaps": _ais_gaps,
+    "aircraft_detail": _aircraft_detail,
+}
 
 
 def main(argv: list[str] | None = None) -> int:

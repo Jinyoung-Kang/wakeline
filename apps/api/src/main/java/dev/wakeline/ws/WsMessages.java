@@ -5,9 +5,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonRawValue;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
+import dev.wakeline.domain.DestinationInfo;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.engine.PredictionAvailability;
+import dev.wakeline.route.RouteInfo;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -60,9 +62,12 @@ public final class WsMessages {
 
     public record AlertsBatchMsg(String type, long version, List<AlertItem> items) {}
 
-    /** state: FULL 인코딩(이미 직렬화된 JSON) 또는 null(스냅샷에 더 이상 없음 — 키는 남긴다). */
+    /**
+     * state: FULL 인코딩(이미 직렬화된 JSON) 또는 null(스냅샷에 더 이상 없음 — 키는 남긴다).
+     * route(계약 v4 §A): 그 상태의 콜사인으로 읽은 등록 노선 — 상태가 없으면 null(콜사인을 모른다, 키는 남긴다).
+     */
     public record SelectedMsg(String type, String hex, @JsonInclude(JsonInclude.Include.ALWAYS) @JsonRawValue String state,
-                              PredictionAvailability prediction) {}
+                              PredictionAvailability prediction, @JsonInclude(JsonInclude.Include.ALWAYS) RouteInfo route) {}
 
     public record ErrorMsg(String type, String code, String title, String detail) {}
 
@@ -101,10 +106,14 @@ public final class WsMessages {
      */
     public record ShipsGridMsg(String type, Instant ts, double cellDeg, @JsonRawValue String cells, Boolean capped) {}
 
-    /** 선택 선박: state(ShipState 전체)·static(ShipStatic 전체) — 각각 없으면 null(키는 남긴다). 이미 직렬화된 JSON. */
+    /**
+     * 선택 선박: state(ShipState 전체)·static(ShipStatic 전체) — 각각 없으면 null(키는 남긴다). 이미 직렬화된 JSON.
+     * destination_info(계약 v4 §B): 보고된 목적지의 결정적 풀이 — 목적지를 모르면 null(키는 남긴다).
+     */
     public record ShipSelectedMsg(String type, String mmsi,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonRawValue String state,
-                                  @JsonInclude(JsonInclude.Include.ALWAYS) @JsonRawValue @JsonProperty("static") String stat) {}
+                                  @JsonInclude(JsonInclude.Include.ALWAYS) @JsonRawValue @JsonProperty("static") String stat,
+                                  @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("destination_info") DestinationInfo destinationInfo) {}
 
     /**
      * ShipLite(계약 v2 §B3): mmsi, lat, lon, sog_kn, cog_deg, heading_deg, ship_type, name, seen_at, position_source, nav_status.

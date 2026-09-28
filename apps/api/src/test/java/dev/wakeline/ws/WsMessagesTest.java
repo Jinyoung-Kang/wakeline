@@ -112,13 +112,13 @@ class WsMessagesTest {
     }
 
     @Test void selectedMessage_nullStateIsExplicit_reasonOmittedWhenNull() {
-        JsonNode gone = JSON.readTree(JSON.writeValueAsString(new WsMessages.SelectedMsg("selected", "71c123", null, new PredictionAvailability(false, null))));
+        JsonNode gone = JSON.readTree(JSON.writeValueAsString(new WsMessages.SelectedMsg("selected", "71c123", null, new PredictionAvailability(false, null), null)));
         assertThat(gone.has("state")).isTrue();
         assertThat(gone.get("state").isNull()).isTrue();
         assertThat(gone.path("prediction").path("available").asBoolean()).isFalse();
         assertThat(gone.path("prediction").has("reason")).isFalse();
         JsonNode turning = JSON.readTree(JSON.writeValueAsString(new WsMessages.SelectedMsg("selected", "71c123", "{\"hex\":\"71c123\"}",
-                PredictionAvailability.unavailable(PredictionAvailability.TURNING))));
+                PredictionAvailability.unavailable(PredictionAvailability.TURNING), null)));
         assertThat(turning.path("state").path("hex").asString()).isEqualTo("71c123");
         assertThat(turning.path("prediction").path("reason").asString()).isEqualTo("turning");
     }
