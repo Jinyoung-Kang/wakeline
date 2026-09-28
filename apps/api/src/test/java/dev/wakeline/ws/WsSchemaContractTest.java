@@ -497,8 +497,11 @@ class WsSchemaContractTest {
     // ---------------------------------------------------------------- 웹 fixture
 
     static final Pattern ISO = Pattern.compile("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$");
-    /** 순서가 뜻이 없는 목록(맵 순회 순서가 JVM 실행마다 다를 수 있다) — 비교·기록 전에 정렬한다. */
-    static final Set<String> UNORDERED = Set.of("aircraft", "upsert", "remove", "ships", "features", "alerts", "items", "active_providers");
+    /**
+     * 순서가 뜻이 없고 맵 순회에서 나오는 목록(Map.copyOf 등의 순회 순서는 JVM 실행마다 다르다) — 비교·기록 전에 정렬한다.
+     * 알림 목록 · 배치 항목은 목록 순서 그대로라 정렬하지 않는다(배치는 순서가 뜻이 있다).
+     */
+    static final Set<String> UNORDERED = Set.of("aircraft", "upsert", "remove", "ships", "features");
 
     /** 정렬만(기록용): 순서 없는 목록을 원소의 JSON 문자열 순으로. */
     static JsonNode canonical(JsonNode n, boolean mask) {
