@@ -15,7 +15,24 @@ def test_redis_without_username_uses_default_user():
 
 def test_every_budgeted_provider_is_snapshotted():
     limits = build_limits(Settings())
-    assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar"} <= set(limits)
+    assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb"} <= set(limits)
+    assert limits["adsbdb"] == 2000  # 계약 v4 §A: 노선 조회 하루 2,000회
+
+
+def test_adsbdb_settings_defaults_and_validation():
+    import pytest
+    from pydantic import ValidationError
+
+    s = Settings()
+    assert (s.adsbdb_base_url, s.adsbdb_rps, s.budget_adsbdb) == ("https://api.adsbdb.com", 0.5, 2000)
+    for bad in (
+        {"adsbdb_base_url": "http://api.adsbdb.com"},
+        {"adsbdb_base_url": "https://x/y?z"},
+        {"adsbdb_rps": 0},
+        {"adsbdb_rps": 2},
+    ):
+        with pytest.raises(ValidationError):
+            Settings(**bad)
 
 
 # ---- COL-4: 종료 시 진행 중 작업은 grace 동안 끝내게 두고, 남은 것은 취소 ------------------------------------------------------
@@ -106,4 +123,7 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     assert closed == [mainmod.DB_DRAIN_S]
     hb = r.kv["wakeline:collector"]
     assert hb["fixture"] == "1" and hb["region_poll_s"] == "10" and "adsb_fi_rps_1m" in hb and hb["demand_focus"] == "1"
+    # 계약 v4 §A: fixture 모드는 외부 호출이 없으므로 노선 조회도 없다(캐시 키를 만들지 않는다)
+    assert hb["adsbdb_rps_1m"] == "0.000" and "route_lookups" not in hb
+    assert not any(k.startswith("wakeline:route:") for k in r.kv)
     assert mainmod.SHUTDOWN_GRACE_S + 2 * mainmod.DB_DRAIN_S < 30  # compose stop_grace_period 30 s 안

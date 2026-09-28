@@ -1,5 +1,5 @@
 """collector 진입점 — 주기 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)과 수요 기반 추적(focus·hot,
-ADR-013)을 하나의 이벤트 루프에서 돌린다.
+ADR-013)·선택 항공기 노선 조회(계약 v4 §A)를 하나의 이벤트 루프에서 돌린다.
 
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
 외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
@@ -28,8 +28,10 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.demand import DemandProvider, DemandTracker
 from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
+from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
 from wakeline_collector.providers import fixture as fx
+from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
 from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
@@ -61,6 +63,7 @@ def build_limits(s: Settings) -> dict[str, int]:
         "awc": s.budget_awc,
         "rainviewer": s.budget_rainviewer,
         "kma_radar": s.budget_kma_radar,
+        "adsbdb": s.budget_adsbdb,
         "fixture": 0,
     }
 
@@ -86,7 +89,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     redis = redis if redis is not None else make_redis(settings)
     db = db or Db()
     db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
-    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps)
+    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps)
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
@@ -99,6 +102,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "publish_dropped": str(publisher.dropped),
             # api /status 의 demand.adsb_fi_rps_1m 원천: 최근 60 s 동안 실제로 보낸 adsb.fi 호출 수 / 60
             "adsb_fi_rps_1m": f"{limiter.rate_1m(ADSB_FI_HOST):.3f}",
+            "adsbdb_rps_1m": f"{limiter.rate_1m(ADSBDB_HOST):.3f}",
             "http_rps_1m": f"{limiter.rate_1m():.3f}",
             "http_throttled": str(limiter.throttled),
         }
@@ -143,8 +147,10 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     maint = MaintenanceJob(list(limits), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
     if settings.demand_enabled:
+        # 노선(계약 v4 §A): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 조회하지 않는다.
+        routes = None if fixture else RouteLookup(redis, AdsbdbProvider(http), ctx.budget, ctx.status)
         tracker = DemandTracker(
-            ctx, DemandPoller(redis), DemandStatus(redis), demand_provider, limiter=None if fixture else limiter
+            ctx, DemandPoller(redis), DemandStatus(redis), demand_provider, limiter=None if fixture else limiter, routes=routes
         )
 
     if stop is None:

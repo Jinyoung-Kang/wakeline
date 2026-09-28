@@ -17,10 +17,13 @@ from wakeline_collector.demand import FOCUS_KEY, HOT_KEY, HOT_META_KEY, STATUS_K
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs import demand as dj
 from wakeline_collector.jobs.demand import DemandTracker, focus_payload, hot_payload, plan_hot
+from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.models import ProviderResult
+from wakeline_collector.providers.adsbdb import RouteFetch
 from wakeline_collector.providers.fixture import FixtureAircraftProvider, FixtureDemandProvider
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.ratelimit import RateLimiter, Throttled
+from wakeline_collector.route import not_found as route_not_found
 
 
 def _ac(hex_: str, lat: float = 35.0, lon: float = 139.0, **kw) -> dict:
@@ -571,3 +574,96 @@ async def test_tick_error_does_not_kill_loop(monkeypatch):
     stop.set()
     await asyncio.wait_for(task, 1)
     assert calls >= 2
+
+
+# ---- 노선 조회(계약 v4 §A) -------------------------------------------------------------------------------------------
+class GatedRouteProvider:
+    """adsbdb 대역 — gate 가 열릴 때까지 응답하지 않는다(느린 공급자)."""
+
+    name, cost, host = "adsbdb", 1, "api.adsbdb.com"
+
+    def __init__(self) -> None:
+        self.gate = asyncio.Event()
+        self.calls: list[str] = []
+
+    async def lookup(self, callsign, *, wait_s):
+        self.calls.append(callsign)
+        await self.gate.wait()
+        return RouteFetch(route_not_found(callsign, datetime.now(UTC)), 404, 20)
+
+
+def _routed_tracker(r: FakeRedis, prov, clk=None):
+    ctx = make_ctx(r, limits={"adsb_fi": 0, "adsbdb": 2000})
+    rprov = GatedRouteProvider()
+    routes = RouteLookup(r, rprov, ctx.budget, ctx.status)  # type: ignore[arg-type]
+    clk = clk or [0.0]
+    t = DemandTracker(ctx, DemandPoller(r), DemandStatus(r), prov, routes=routes, clock=lambda: clk[0])  # type: ignore[arg-type]
+    return t, routes, rprov, clk
+
+
+async def _settle(routes: RouteLookup) -> None:
+    for _ in range(50):
+        if not routes.inflight:
+            return
+        await asyncio.sleep(0)
+
+
+async def test_focus_results_request_route_lookups_without_delaying_publish():
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000, "71c0a1": _now_ms() + 60_000, "a1b2c3": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    prov.ac = [
+        _ac("abcdef", flight="ZZX123  "),
+        _ac("71c0a1", flight="ZZX777", seen_pos=None),  # 격리된 항공기의 콜사인은 묻지 않는다
+        _ac("a1b2c3"),  # 콜사인 없음
+    ]
+    t, routes, rprov, _clk = _routed_tracker(r, prov)
+    await t.tick()
+    await _drain(t)  # focus 조회·발행은 노선 조회(아직 응답 없음)를 기다리지 않고 끝난다
+    assert len(r.streams[STREAM_AIRCRAFT]) == 1 and _status(r)["focus:abcdef"]["state"] == "active"
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert rprov.calls == ["ZZX123"] and routes.inflight == 1 and t.metrics()["route_inflight"] == "1"
+    rprov.gate.set()
+    await _settle(routes)
+    assert orjson.loads(r.kv["wakeline:route:ZZX123"])["status"] == "not_found"
+    routes.request(["ZZX123"])  # 다음 focus 결과에 같은 콜사인 — 캐시에 있으므로 다시 묻지 않는다
+    await _settle(routes)
+    assert rprov.calls == ["ZZX123"]
+
+
+async def test_shutdown_cancels_pending_route_lookups():
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    prov.ac = [_ac("abcdef", flight="ZZX123")]
+    t, routes, rprov, _clk = _routed_tracker(r, prov)
+    stop = asyncio.Event()
+    task = asyncio.create_task(t.run(stop))
+    for _ in range(100):
+        if rprov.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert rprov.calls == ["ZZX123"] and routes.inflight == 1
+    stop.set()
+    await asyncio.wait_for(task, 2)
+    assert routes.inflight == 0 and "wakeline:route:ZZX123" not in r.kv
+
+
+async def test_adsb_fi_kill_switch_does_not_cancel_route_lookups():
+    """adsb_fi 를 끄면 focus 는 멈추지만, 이미 시작한 노선 조회(다른 공급자)는 취소하지 않는다."""
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    prov.ac = [_ac("abcdef", flight="ZZX123")]
+    t, routes, rprov, clk = _routed_tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    await asyncio.sleep(0)
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    clk[0] = 5.0
+    await t.tick()
+    assert routes.inflight == 1
+    rprov.gate.set()
+    await _settle(routes)
+    assert "wakeline:route:ZZX123" in r.kv

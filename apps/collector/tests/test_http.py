@@ -27,6 +27,21 @@ async def test_disallowed_host_and_plain_http_are_refused_before_any_call():
     await c.aclose()
 
 
+async def test_adsbdb_is_an_allowed_host_with_its_own_bucket():
+    """계약 v4 §A: 노선 조회 호스트. 기본 속도 상한(HttpClient 기본 limiter)에 호스트 버킷이 있다."""
+    assert "api.adsbdb.com" in httpmod.ALLOWED_HOSTS
+    c = HttpClient()
+    assert c.limiter.host_rps("api.adsbdb.com") == 0.5
+    with respx.mock:
+        respx.get("https://api.adsbdb.com/v0/callsign/ZZX123").mock(
+            return_value=httpx.Response(404, json={"response": "unknown callsign"})
+        )
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get("https://api.adsbdb.com/v0/callsign/ZZX123")
+    assert ei.value.status == 404 and ei.value.body_head == '{"response":"unknown callsign"}' and ei.value.latency_ms is not None
+    await c.aclose()
+
+
 async def test_success_goes_through_limiter():
     c = _client()
     with respx.mock:

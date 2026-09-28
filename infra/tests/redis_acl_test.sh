@@ -91,6 +91,8 @@ ok "ZREMRANGEBYSCORE 만료 임대"          "^[0-9]+$" "${A[@]}" zremrangebysco
 ok "HGETALL wakeline:demand:status(읽기)" ""       "${A[@]}" hgetall wakeline:demand:status
 ok "XGROUP CREATE wakeline:ships"       OK         "${A[@]}" xgroup create wakeline:ships api '$' mkstream
 ok "HGETALL wakeline:ais:status(읽기)"  ""         "${A[@]}" hgetall wakeline:ais:status
+# 계약 v4 §A: 노선 캐시는 수집기가 쓰고 api 가 읽는다(값 확인은 수집기 절에서)
+ok "GET wakeline:route:*(읽기, 없음)"    ""         "${A[@]}" get wakeline:route:ZZX000
 
 echo "[wakeline_api — 거부]"
 denied "FLUSHALL"             "${A[@]}" flushall
@@ -151,6 +153,14 @@ ok "HMGET wakeline:demand:focus:meta"    "sessions" "${K[@]}" hmget wakeline:dem
 ok "HSET wakeline:demand:status"         "^[01]$"   "${K[@]}" hset wakeline:demand:status focus:71c011 '{"state":"active","interval_s":5}'
 ok "HGETALL wakeline:demand:status"      "active"   "${K[@]}" hgetall wakeline:demand:status
 ok "HDEL wakeline:demand:status(임대 끝)" "^[01]$"  "${K[@]}" hdel wakeline:demand:status hot:gone
+# 계약 v4 §A: 노선 캐시 — EXISTS 로 확인하고 SET EX 로 쓴다(found·not_found 1,800 s · error 120 s). 값은 합성 자료.
+ok "EXISTS wakeline:route:*(없음)"       "^0$"      "${K[@]}" exists wakeline:route:ZZX123
+ok "SET wakeline:route:* EX 1800"        OK         "${K[@]}" set wakeline:route:ZZX123 '{"v":1,"status":"not_found","callsign":"ZZX123"}' ex 1800
+ok "SET wakeline:route:* EX 120"         OK         "${K[@]}" set wakeline:route:ZZX124 '{"v":1,"status":"error","callsign":"ZZX124"}' ex 120
+ok "EXISTS wakeline:route:*"             "^1$"      "${K[@]}" exists wakeline:route:ZZX123
+ok "GET wakeline:route:*"                "not_found" "${K[@]}" get wakeline:route:ZZX123
+ok "TTL wakeline:route:*"                "^(1[0-7][0-9]{2}|1800)$" "${K[@]}" ttl wakeline:route:ZZX123
+ok "api GET wakeline:route:*(수집기가 쓴 값)" "not_found" "${A[@]}" get wakeline:route:ZZX123
 
 echo "[wakeline_collector — 거부]"
 denied "세션 읽기 wakeline:session:*"   "${K[@]}" hgetall wakeline:session:sessions:t
@@ -190,6 +200,7 @@ denied "DEL wakeline:demand:hot"           "${K[@]}" del wakeline:demand:hot
 denied "허용 목록 밖 wakeline:demand:*"      "${K[@]}" hgetall wakeline:demand:other
 denied "선박 스트림 wakeline:ships"          "${K[@]}" xadd wakeline:ships '*' payload x
 denied "AIS 상태 wakeline:ais:status"       "${K[@]}" hset wakeline:ais:status connected 1
+denied "노선 캐시와 비슷한 이름 wakeline:routes" "${K[@]}" set wakeline:routes x
 
 echo "[wakeline_ais — 허용]"
 ok "PING"                                PONG           "${S[@]}" ping
@@ -213,6 +224,9 @@ denied "공급자 상태 wakeline:provider:*"    "${S[@]}" hset wakeline:provide
 denied "예산 budget:*"                    "${S[@]}" hgetall budget:adsb_lol:20260101
 denied "수요 임대 읽기 wakeline:demand:hot"  "${S[@]}" zrangebyscore wakeline:demand:hot 0 +inf
 denied "수요 상태 wakeline:demand:status"   "${S[@]}" hset wakeline:demand:status x y
+denied "노선 캐시 쓰기 wakeline:route:*"      "${S[@]}" set wakeline:route:ZZX123 x ex 1800
+denied "노선 캐시 읽기 wakeline:route:*"      "${S[@]}" get wakeline:route:ZZX123
+denied "노선 캐시 확인 EXISTS"               "${S[@]}" exists wakeline:route:ZZX123
 denied "세션 읽기 wakeline:session:*"       "${S[@]}" hgetall wakeline:session:sessions:t
 denied "세션 위조 wakeline:session:*"       "${S[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
 denied "요청 제한 rl:*"                    "${S[@]}" del rl:public:1.2.3.4:1

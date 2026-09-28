@@ -12,6 +12,7 @@
   hot 은 거기에 focus 몫까지 남기고 멈춘다).
 - 발행: wakeline:aircraft 에 scope focus(requested·missing) / hot(cell·region). 품질 게이트는 관심 지역과 같은 규칙.
 - 상태: wakeline:demand:status 에 실제 결과를 그대로 쓴다 — 약속한 주기를 못 지키면 throttled, 공급자가 모르면 not_found.
+- 노선(계약 v4 §A): focus 결과를 발행한 뒤 통과한 항공기의 콜사인을 RouteLookup 에 넘긴다 — 조회는 별도 태스크라 발행을 늦추지 않는다.
 외부 호출은 HttpClient(허용 호스트·속도 상한·크기 상한)만 거친다. fixture 모드는 외부 호출이 없다(provider "fixture").
 """
 
@@ -34,6 +35,7 @@ from wakeline_collector.config import settings
 from wakeline_collector.demand import Demand, DemandPoller, DemandStatus, HotCell, status_value
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
+from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.models import AircraftState, ProviderResult
 from wakeline_collector.normalize import Rejected, normalize_readsb, readsb_reference_time
 from wakeline_collector.publisher import STREAM_AIRCRAFT
@@ -133,9 +135,11 @@ class DemandTracker:
         *,
         limiter: RateLimiter | None = None,
         clock: Callable[[], float] = time.monotonic,
+        routes: RouteLookup | None = None,
     ):
         self.ctx, self.poller, self.status, self.provider = ctx, poller, status, provider
         self._limiter = limiter
+        self.routes = routes  # None = 노선 조회 없음(fixture 모드 — 외부 호출 없음)
         self._clock = clock
         self.focus_gate = AircraftGate()
         self.hot_gate = AircraftGate()
@@ -165,6 +169,8 @@ class DemandTracker:
             except TimeoutError:
                 pass
         await self.aclose()
+        if self.routes is not None:
+            await self.routes.aclose()
 
     async def aclose(self, wait_s: float = SHUTDOWN_WAIT_S) -> None:
         """진행 중 조회를 wait_s 안에서 끝내고, 남으면 취소한다."""
@@ -435,6 +441,8 @@ class DemandTracker:
         missing = [h for h in chunk if h not in kept_hex]
         ref = await self._raw_ref(res, "focus")
         await self._publish("focus", res, ref, len(kept), focus_payload(chunk, kept, missing))
+        if self.routes is not None:  # 기다리지 않는다 — 캐시에 없는 콜사인만 별도 태스크로 조회
+            self.routes.request(s.callsign for s in kept)
         why_by_hex = {q.hex: q.rule for q in quarantined if q.hex}
         items: dict[str, tuple[str, int, str | None]] = {}
         for h in chunk:
@@ -480,10 +488,13 @@ class DemandTracker:
     # ---- 지표 --------------------------------------------------------------------------------------------------------
     def metrics(self) -> dict[str, str]:
         d = self.poller.current
-        return {
+        m = {
             "demand_focus": str(len(d.focus)),
             "demand_hot": str(len(d.hot)),
             "demand_ignored": str(d.ignored_focus + d.ignored_hot),
             "demand_throttled": str(self.counts["throttled"]),
             "demand_errors": str(self.counts["errors"]),
         }
+        if self.routes is not None:
+            m.update(self.routes.metrics())
+        return m

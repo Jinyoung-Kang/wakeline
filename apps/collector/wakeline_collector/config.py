@@ -45,11 +45,15 @@ class Settings(BaseSettings):
     budget_awc: int = 2000
     budget_rainviewer: int = 2000
     budget_kma_radar: int = 1000
+    budget_adsbdb: int = 2000  # 계약 v4 §A: 노선 조회(선택한 항공기의 콜사인만)
     opensky_reserve_credits: int = 400  # OpenSky 가 알려 준 남은 크레딧이 이 아래면 UTC 자정까지 OpenSky 호출 중단
 
     # 호출 속도 상한(계약 v2 §A2, 프로세스 안 토큰 버킷). adsb.fi 공개 한도 초당 1회의 80 %.
     http_global_rps: float = Field(default=2.0, gt=0, le=20)
     adsb_fi_rps: float = Field(default=0.8, gt=0, le=1.0)
+    # 항공기 노선(계약 v4 §A · ADR-016): adsbdb 는 한도를 문서에 적지 않았다 — 호스트 0.5 req/s(burst 2)로 보수적으로.
+    adsbdb_rps: float = Field(default=0.5, gt=0, le=1.0)
+    adsbdb_base_url: str = Field(default="https://api.adsbdb.com", pattern=r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$")
 
     # 수요 기반 정밀 추적(ADR-013). 임대(lease)는 api 가 쓰고 수집기는 읽기만 한다.
     demand_enabled: bool = True

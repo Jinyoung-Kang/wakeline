@@ -26,6 +26,7 @@ ALLOWED_HOSTS = frozenset(
         "aviationweather.gov",
         "api.rainviewer.com",
         "apihub.kma.go.kr",
+        "api.adsbdb.com",  # 노선 조회(계약 v4 §A) — 선택한 항공기의 콜사인만
     }
 )
 
@@ -39,10 +40,12 @@ class ResponseTooLarge(RuntimeError):
 
 
 class ProviderHttpError(RuntimeError):
-    def __init__(self, status: int, body_head: str, headers: dict[str, str] | None = None):
+    def __init__(self, status: int, body_head: str, headers: dict[str, str] | None = None, latency_ms: int | None = None):
         super().__init__(f"HTTP {status}: {body_head[:200]}")
         self.status = status
+        self.body_head = body_head[:200]  # 오류 응답의 모양 판별용(예: adsbdb 404 "unknown callsign")
         self.headers = headers or {}
+        self.latency_ms = latency_ms
 
 
 class FetchResponse:
@@ -60,7 +63,7 @@ def _retry_after_s(headers: dict[str, str]) -> float | None:
 
 class HttpClient:
     def __init__(self, limiter: RateLimiter | None = None) -> None:
-        self.limiter = limiter or default_limiter(settings.http_global_rps, settings.adsb_fi_rps)
+        self.limiter = limiter or default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=4.0),
             follow_redirects=False,
@@ -108,5 +111,5 @@ class HttpClient:
             if resp.status_code == 429:
                 self.limiter.penalize(host, _retry_after_s(headers))
             if resp.status_code >= 400:
-                raise ProviderHttpError(resp.status_code, body[:200].decode("utf-8", "replace"), headers)
+                raise ProviderHttpError(resp.status_code, body[:200].decode("utf-8", "replace"), headers, latency)
             return FetchResponse(body, resp.status_code, headers, datetime.now(UTC), latency)

@@ -6,6 +6,7 @@
 #   wakeline_collector  비밀번호 REDIS_COLLECTOR_PASSWORD.  수집기가 실제로 쓰는 키만 — 세션(wakeline:session:*)·요청 제한(rl:*)·DLQ 는 못 건드린다.
 #                    wakeline:settings 는 읽기 전용(%R~), 소비자 그룹 명령(XGROUP·XACK 등)·키 이름 열람(SCAN·RANDOMKEY)은 없음. 수집기가 뚫려도 운영 세션 위조·설정 변경·제한 초기화가 불가능하다.
 #                    수요 임대(ADR-013, 계약 v2 §A1·§C): wakeline:demand:{hot,focus}(+:meta)는 읽기 전용 — 임대는 api 만 만든다. 상태 wakeline:demand:status 만 쓴다.
+#                    노선 캐시(ADR-016, 계약 v4 §A): wakeline:route:{CALLSIGN} 을 SET EX 로 쓰고 EXISTS 로 확인한다(api 는 wakeline:* 로 읽는다). ais 에는 주지 않는다.
 #   wakeline_ais        비밀번호 REDIS_AIS_PASSWORD(ADR-014, 계약 v2 §C). 선박 스트림 wakeline:ships 와 wakeline:ais:* 만 쓰고 wakeline:settings 는 읽기 전용.
 #                    항공기 스트림·예산·수요 임대·세션에는 접근하지 못한다. 소비자 그룹 명령·키 이름 열람 금지는 수집기와 같다.
 #                    REDIS_AIS_PASSWORD 가 비어 있으면 이 사용자를 만들지 않는다(빈 비밀번호로 열린 사용자를 만들지 않기 위해).
@@ -34,6 +35,8 @@ API_KEYS='~wakeline:* ~rl:*'
 COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:radar ~wakeline:events ~wakeline:collector ~wakeline:active ~wakeline:provider:* ~wakeline:radar_kr:* %R~wakeline:settings ~budget:*'
 # 수요 임대는 읽기만(api 가 유일한 작성자), 조회 상태는 쓰기 — 계약 v2 §C 의 목록 그대로(와일드카드로 넓히지 않는다)
 COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:hot %R~wakeline:demand:focus %R~wakeline:demand:hot:meta %R~wakeline:demand:focus:meta ~wakeline:demand:status"
+# 노선 캐시(계약 v4 §A): 수집기가 유일한 작성자(adsbdb 조회 결과, TTL 만 — 약관상 다른 곳에 저장하지 않는다)
+COLLECTOR_KEYS="$COLLECTOR_KEYS ~wakeline:route:*"
 # 수집기는 스트림 생산자다 — api 의 소비자 그룹을 지우거나 대기 목록(PEL)을 조작하는 명령은 필요 없다.
 # SCAN·RANDOMKEY 는 키 권한과 무관하게 키 *이름*을 돌려준다: 세션 키 이름이 곧 세션 ID(쿠키 값)라서 수집기에서는 막는다.
 COLLECTOR_DENY='-xgroup -xreadgroup -xack -xclaim -xautoclaim -xsetid -scan -randomkey'

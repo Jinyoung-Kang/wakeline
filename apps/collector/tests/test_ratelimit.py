@@ -12,6 +12,7 @@ from wakeline_collector.ratelimit import (
     PRIORITY_FIXED,
     PRIORITY_FOCUS,
     PRIORITY_HOT,
+    PRIORITY_ROUTE,
     RateLimiter,
     Throttled,
     TokenBucket,
@@ -40,6 +41,25 @@ def test_bucket_math_with_fake_clock():
 def test_default_limiter_matches_contract():
     lim = default_limiter(2.0, 0.8)
     assert lim.global_rps == 2.0 and lim.host_rps("opendata.adsb.fi") == 0.8 and lim.host_rps("api.adsb.lol") is None
+    # 계약 v4 §A: api.adsbdb.com 0.5 req/s · burst 2(수집기 전체 버킷도 함께 통과)
+    assert lim.host_rps("api.adsbdb.com") == 0.5 and lim._hosts["api.adsbdb.com"].burst == 2
+    assert default_limiter(2.0, 0.8, 0.25).host_rps("api.adsbdb.com") == 0.25
+
+
+async def test_route_lookup_waits_behind_hot_on_the_shared_global_bucket():
+    """계약 v4 §A: 노선 조회는 핫 리전보다 낮은 우선순위로 수집기 전체 버킷을 같이 쓴다."""
+    assert PRIORITY_ROUTE > PRIORITY_HOT
+    lim = RateLimiter(20, 1, {"api.adsbdb.com": (100.0, 2)})
+    await lim.acquire("api.adsbdb.com")  # 전체 버킷 비움(호스트 버킷은 남아 있다)
+    order: list[str] = []
+
+    async def call(name: str, host: str, prio: int, delay: float) -> None:
+        await asyncio.sleep(delay)
+        await lim.acquire(host, priority=prio, wait_s=2)
+        order.append(name)
+
+    await asyncio.gather(call("route", "api.adsbdb.com", PRIORITY_ROUTE, 0), call("hot", "opendata.adsb.fi", PRIORITY_HOT, 0.001))
+    assert order == ["hot", "route"] and lim.rate_1m("api.adsbdb.com") == pytest.approx(2 / 60)
 
 
 async def test_host_bucket_spaces_calls():
