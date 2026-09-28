@@ -2,7 +2,11 @@
 활용신청 전(403)에는 사유만 상태에 남긴다. 격자·투영은 문서 값(kma_grid.py 참조)만 쓴다.
 
 - 예산: budget:kma_radar(한도 settings.budget_kma_radar)로 목록·바이너리 호출을 모두 예약한다. Redis 가 안 되면 호출하지 않는다.
-- 후보: 저장된 가장 새 프레임보다 새 것만(보관 창보다 오래된 프레임을 다시 받지 않는다). 첫 기동은 최신 4개.
+- 후보: 보관 창(현재 이하 목록의 최신 12개) 안에서 아직 저장되지 않은 tm 중 최신 4개(R-03). 저장된 최신보다 오래됐어도
+  창 안의 빈 프레임(늦게 생긴 프레임·일시 오류로 놓친 프레임)은 채우고, 창보다 오래된 프레임은 받지 않는다.
+- 목록에 있으나 바이너리가 아직 없는 tm("file not exist" 등 gzip 아닌 응답)은 일시 상태다. tm 마다 MAX_NOT_READY_TRIES 번까지
+  다음 주기에 다시 받고, 그래도 없으면 품질 이벤트(kma_radar_missing)를 남기고 건너뛴다. 해석 불가(_BadFrame·크기 초과)만 바로 제외한다.
+- KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다).
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
   목록 키도 이미지와 같은 TTL 을 갖는다(수집기가 멈추면 함께 만료). 각 항목에 expires_at 을 둔다.
 - 해석(gzip 해제·재투영·PNG)은 CPU 작업이라 스레드에서 돈다(이벤트 루프를 막지 않게).
@@ -33,6 +37,8 @@ KEEP_FRAMES = 12
 MAX_PER_CYCLE = 4
 FRAME_TTL_S = 3 * 3600
 MAX_BAD = 64  # 해석 불가로 건너뛴 tm 기억 상한
+MAX_NOT_READY_TRIES = 3  # 목록에 있으나 아직 받을 수 없는 tm 을 다시 시도하는 횟수(주기마다 1번 ≈ 15분)
+PREV_DAY_LIST_MIN = 15  # KST 00:00 부터 이 분 동안은 전날 목록도 조회
 
 
 def _iso(dt: datetime) -> str:
@@ -42,9 +48,11 @@ def _iso(dt: datetime) -> str:
 def select_candidates(
     listing: list[str], stored: list[str], now_tm: str, bad: set[str] | frozenset[str] = frozenset()
 ) -> list[str]:
-    """저장된 최신 프레임보다 새롭고 현재 시각 이하인 tm 중 최신 MAX_PER_CYCLE 개(오름차순)."""
-    latest = max(stored, default="")
-    return [tm for tm in listing if latest < tm <= now_tm and tm not in bad][-MAX_PER_CYCLE:]
+    """보관 창(현재 시각 이하 목록의 최신 KEEP_FRAMES 개) 안에서 아직 저장되지 않은 tm 중 최신 MAX_PER_CYCLE 개(오름차순).
+    창보다 오래된 tm 은 받아도 곧바로 밀려나므로 고르지 않는다."""
+    window = sorted({tm for tm in listing if tm <= now_tm})[-KEEP_FRAMES:]
+    have = set(stored)
+    return [tm for tm in window if tm not in have and tm not in bad][-MAX_PER_CYCLE:]
 
 
 def _decode(raw: bytes):
@@ -64,6 +72,7 @@ class KmaRadarJob:
         self.p, self.ctx = provider, ctx
         self._warned = False
         self._bad: dict[str, None] = {}  # 삽입 순서 유지(오래된 것부터 버림)
+        self._not_ready: dict[str, int] = {}  # tm → '아직 없음' 응답 횟수(R-03)
 
     async def _frames(self) -> list[dict]:
         raw = await self.ctx.status.redis.get(KEY_FRAMES)
@@ -132,9 +141,27 @@ class KmaRadarJob:
         return ok
 
     def _mark_bad(self, tm: str) -> None:
+        self._not_ready.pop(tm, None)
         self._bad[tm] = None
         while len(self._bad) > MAX_BAD:
             self._bad.pop(next(iter(self._bad)))
+
+    def _not_ready_again(self, tm: str) -> int:
+        """'아직 없음' 횟수를 1 늘려 돌려준다(기억 상한 MAX_BAD, 오래된 것부터 버림)."""
+        n = self._not_ready.pop(tm, 0) + 1
+        self._not_ready[tm] = n
+        while len(self._not_ready) > MAX_BAD:
+            self._not_ready.pop(next(iter(self._not_ready)))
+        return n
+
+    async def _listing(self, started: datetime):
+        """오늘(KST) 목록. 자정 직후에는 전날 목록도 합친다(예산이 없으면 오늘 것만). 첫 결과(오늘)를 돌려준다."""
+        now_kst = kst_now()
+        today = await self.p.file_list(now_kst.strftime("%Y%m%d"))
+        if now_kst.hour == 0 and now_kst.minute < PREV_DAY_LIST_MIN and await self._reserve(started):
+            prev = await self.p.file_list((now_kst - timedelta(days=1)).strftime("%Y%m%d"))
+            today.data = sorted({*prev.data, *today.data})
+        return today
 
     async def run_once(self) -> None:
         ctx = self.ctx
@@ -148,7 +175,7 @@ class KmaRadarJob:
         if not await self._reserve(started):
             return
         try:
-            listing = await self.p.file_list(kst_now().strftime("%Y%m%d"))
+            listing = await self._listing(started)
         except Exception as e:  # noqa: BLE001
             await self._fail(started, e)
             return
@@ -162,13 +189,22 @@ class KmaRadarJob:
             try:
                 res = await self.p.binary(tm)
                 await self._store(tm, res)
+                self._not_ready.pop(tm, None)
                 stored_n += 1
-            except (_BadFrame, ValueError, ResponseTooLarge) as e:
-                # 이 tm 의 자료 자체가 문제(gzip 아님·"file not exist"·폭탄·형식 오류) — 건너뛰고 다음 후보로.
-                # 다시 받아도 같으므로 기억해 두고 재시도하지 않는다(가장 오래된 후보에서 막혀 진행이 멈추지 않게).
+            except (_BadFrame, ResponseTooLarge) as e:
+                # 이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류) — 다시 받아도 같으므로 기억해 두고 건너뛴다.
                 self._mark_bad(tm)
                 quality.append(("kma_radar_parse", None, {"tm": tm, "error": str(e)[:200]}))
                 log.warning("kma radar: tm=%s skipped — %s", tm, str(e)[:160])
+            except ValueError as e:
+                # gzip 아닌 응답("file not exist" 등): 목록에는 있으나 바이너리가 아직 없다 — 다음 주기에 다시 받는다.
+                tries = self._not_ready_again(tm)
+                if tries < MAX_NOT_READY_TRIES:
+                    log.info("kma radar: tm=%s not available yet (try %d/%d)", tm, tries, MAX_NOT_READY_TRIES)
+                    continue
+                self._mark_bad(tm)
+                quality.append(("kma_radar_missing", None, {"tm": tm, "tries": tries, "error": str(e)[:200]}))
+                log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, str(e)[:160])
             except (ProviderHttpError, httpx.HTTPError, OSError, Throttled) as e:  # Throttled: 속도 상한(429 쿨다운 등)
                 await self._fail(started, e)
                 return

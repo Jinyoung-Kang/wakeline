@@ -203,13 +203,8 @@ def kma_env(monkeypatch):
     from wakeline_collector.jobs import kma_radar as mod
 
     monkeypatch.setattr(mod, "_decode", _fake_decode)
-    clock = {"now": "202609272000"}
-
-    class _Now:
-        def strftime(self, fmt):
-            return clock["now"] if fmt == "%Y%m%d%H%M" else clock["now"][:8]
-
-    monkeypatch.setattr(mod, "kst_now", lambda: _Now())
+    clock = {"now": "202609272000"}  # KST 벽시계(YYYYMMDDHHMM)
+    monkeypatch.setattr(mod, "kst_now", lambda: datetime.strptime(clock["now"], "%Y%m%d%H%M"))
     r = FakeRedis()
     ctx = make_ctx(r, limits={"kma_radar": 1000})
     return mod, r, ctx, clock
@@ -227,14 +222,22 @@ async def test_job_steady_state_downloads_one_frame_per_cycle_and_keeps_list_con
     prov = FakeKma(_tms("202609272000"))
     job = mod.KmaRadarJob(prov, ctx)
     await job.run_once()
-    assert prov.binaries == _tms("202609272000")[-4:]  # 첫 기동 백필 4개
+    assert prov.binaries == _tms("202609272000")[-4:]  # 첫 기동: 최신 4개
+    fetched = set(prov.binaries)
+    total = len(prov.binaries)
     for i in range(1, 12):  # 5분마다 새 프레임 1개
         t = _tms("202609272359")[_tms("202609272359").index("202609272000") + i]
         clock["now"] = t
         prov.listing = _tms(t)
         prov.binaries.clear()
         await job.run_once()
-        assert prov.binaries == [t]  # 오래된 프레임을 다시 받지 않는다
+        assert prov.binaries[-1] == t  # 새 프레임을 가장 먼저 챙긴다(최신 4개 안)
+        assert not fetched & set(prov.binaries)  # 이미 받은 프레임을 다시 받지 않는다
+        assert set(prov.binaries) <= set(_tms(t)[-mod.KEEP_FRAMES :])  # 보관 창보다 오래된 프레임은 받지 않는다
+        if i >= 3:
+            assert prov.binaries == [t]  # 보관 창을 채운 뒤에는 주기마다 1개(R-03: 처음 몇 주기는 창 안 빈 곳을 채운다)
+        fetched |= set(prov.binaries)
+        total += len(prov.binaries)
     frames = orjson.loads(await r.get(mod.KEY_FRAMES))
     assert len(frames) == mod.KEEP_FRAMES and frames[-1]["tm"] == clock["now"]
     assert all("expires_at" in f for f in frames)
@@ -242,9 +245,9 @@ async def test_job_steady_state_downloads_one_frame_per_cycle_and_keeps_list_con
     image_keys = {k for k in r.kv if k.startswith("wakeline:radar_kr:frame:")}
     assert image_keys == {mod.KEY_FRAME.format(tm=f["tm"]) for f in frames}
     assert mod.KEY_FRAMES in r.ttl  # 목록 키도 TTL 을 갖는다
-    # 예산이 연결되어 있다: 목록 12회 + 바이너리 4 + 11
+    # 예산이 연결되어 있다: 목록 12회 + 받은 바이너리 전부
     used, limit = await ctx.budget.usage("kma_radar")
-    assert (used, limit) == (12 + 4 + 11, 1000)
+    assert (used, limit) == (12 + total, 1000)
 
 
 async def test_job_prunes_entries_whose_image_expired(kma_env):
@@ -312,3 +315,107 @@ async def test_job_stops_cycle_when_rate_limited(kma_env):
     await mod.KmaRadarJob(prov, ctx).run_once()
     assert len(prov.binaries) == 1
     assert "throttled" in (await r.hgetall("wakeline:provider:kma_radar"))["last_error"]
+
+
+# ---- R-03: 목록에 있으나 아직 받을 수 없는 프레임(file not exist)은 일시 상태 -------------------------------------------
+class NotYetKma(FakeKma):
+    """tm 별로 처음 n 번은 'file not exist'(gzip 아님, 200) — 목록에 올라왔지만 바이너리가 아직 없는 상태."""
+
+    def __init__(self, listing, not_ready: dict[str, int], by_day: dict[str, list[str]] | None = None):
+        super().__init__(listing)
+        self.not_ready = dict(not_ready)
+        self.by_day = by_day
+        self.days: list[str] = []
+
+    async def file_list(self, day):
+        from wakeline_collector.models import ProviderResult
+
+        self.days.append(day)
+        data = self.by_day.get(day, []) if self.by_day is not None else list(self.listing)
+        return ProviderResult(self.name, b"", datetime.now(UTC), 200, 5, data=list(data))
+
+    async def binary(self, tm):
+        if self.not_ready.get(tm, 0) > 0:
+            self.not_ready[tm] -= 1
+            self.binaries.append(tm)
+            raise ValueError(f"not gzip: '# file not exist (RDR_CMP_HSR_PUB_{tm}.bin.gz)'")
+        return await super().binary(tm)
+
+
+def _recording_runs(ctx):
+    runs: list[dict] = []
+    real = ctx.db.record_run
+
+    def rec(job, provider, started_at, **kw):
+        runs.append(kw)
+        real(job, provider, started_at, **kw)
+
+    ctx.db.record_run = rec
+    return runs
+
+
+async def test_r03_frame_not_yet_available_is_retried_next_cycle(kma_env):
+    mod, r, ctx, clock = kma_env
+    listing = _tms("202609272000")
+    late = listing[-2]  # 목록에는 있으나 첫 요청 때 바이너리가 아직 없음
+    prov = NotYetKma(listing, {late: 1})
+    job = mod.KmaRadarJob(prov, ctx)
+    await job.run_once()
+    assert late not in job._bad  # 일시 상태 — 영구 제외하지 않는다
+    clock["now"] = "202609272005"
+    prov.listing = _tms("202609272005")
+    prov.binaries.clear()
+    await job.run_once()
+    assert late in prov.binaries  # 다음 주기에 다시 받는다
+    stored = {k.rsplit(":", 1)[1] for k in r.kv if k.startswith("wakeline:radar_kr:frame:")}
+    assert late in stored and "202609272005" in stored
+
+
+async def test_r03_missing_frame_gives_up_after_bounded_tries(kma_env):
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    listing = _tms("202609272000")
+    gone = listing[-1]
+    prov = NotYetKma(listing, {gone: 99})  # 끝내 생기지 않는 프레임
+    job = mod.KmaRadarJob(prov, ctx)
+    for _ in range(mod.MAX_NOT_READY_TRIES + 2):
+        await job.run_once()
+    assert prov.binaries.count(gone) == mod.MAX_NOT_READY_TRIES  # 예산을 무한히 쓰지 않는다
+    assert gone in job._bad
+    rules = [q[0] for run in runs for q in (run.get("quality") or [])]
+    assert rules.count("kma_radar_missing") == 1 and "kma_radar_parse" not in rules
+
+
+def test_r03_candidates_backfill_holes_inside_storage_window():
+    from wakeline_collector.jobs.kma_radar import KEEP_FRAMES, select_candidates
+
+    listing = _tms("202609272000")
+    window = listing[-KEEP_FRAMES:]
+    hole = window[5]
+    stored = [t for t in window if t != hole]
+    # 저장된 최신보다 오래됐어도 보관 창 안의 빈 프레임은 다시 채운다
+    assert select_candidates(listing, stored, "202609272002") == [hole]
+    # 보관 창보다 오래된 프레임은 받지 않는다(받아도 곧바로 밀려난다)
+    assert select_candidates(listing, window, "202609272002") == []
+    # 새 프레임과 빈 프레임이 함께 있으면 둘 다(오름차순), 해석 불가 tm 은 제외
+    nxt = _tms("202609272005")
+    assert select_candidates(nxt, stored, "202609272007") == [hole, "202609272005"]
+    assert select_candidates(nxt, stored, "202609272007", bad={hole}) == ["202609272005"]
+
+
+async def test_r03_just_after_kst_midnight_previous_day_listing_is_consulted(kma_env):
+    mod, r, ctx, clock = kma_env
+    prev = [f"20260927{h:02d}{m:02d}" for h in range(23, 24) for m in range(0, 60, 5)]
+    stored_prev = prev[:-1]  # 23:55 는 23:57 실행 때 아직 목록에 없어서 받지 못했다
+    prov = NotYetKma([], {}, by_day={"20260927": prev, "20260928": []})
+    job = mod.KmaRadarJob(prov, ctx)
+    for tm in stored_prev:
+        await r.set(mod.KEY_FRAME.format(tm=tm), "png", ex=mod.FRAME_TTL_S)
+    await job._save_frames([{"tm": tm} for tm in stored_prev])
+    clock["now"] = "202609280002"
+    await job.run_once()
+    assert "20260927" in prov.days and "202609272355" in prov.binaries
+    clock["now"] = "202609280020"  # 자정 직후 창이 지나면 전날 목록은 부르지 않는다
+    prov.days.clear()
+    await job.run_once()
+    assert prov.days == ["20260928"]
