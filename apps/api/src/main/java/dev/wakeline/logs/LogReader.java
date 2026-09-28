@@ -27,7 +27,7 @@ import java.util.Set;
  * 한 요청이 훑는 항목은 {@value #SCAN_MAX}건 이하(스트림 MAXLEN ~ 3000 과 같은 크기 — 보통은 스트림 전체).
  * <ul>
  *   <li>항목마다 스키마 검증(log_event.v1) — 맞지 않거나 필드 e 가 없는 항목은 건너뛰고 invalid 로 센다.</li>
- *   <li>한 번 더 가림(방어적): 메시지 · 예외 메시지·스택 · context 문자열 값. 글자 검색은 가린 뒤의 글자로만 한다
+ *   <li>한 번 더 가림(방어적): 메시지 · 로거 · 스레드 · 예외 종류·메시지·스택 · context 문자열 값. 글자 검색은 가린 뒤의 글자로만 한다
  *       (비밀값으로 검색해 그 값이 로그에 있는지 알아내지 못하게).</li>
  *   <li>기간(since · until)은 항목의 ts 로 거른다. 항목의 ts 는 실린 시각(스트림 id)보다 늦을 수 없으므로(같은 호스트 시계) since 보다
  *       {@value #SKEW_MS} ms 앞의 id 에서 읽기를 멈춘다(여유는 시계 차이 대비).</li>
@@ -249,7 +249,10 @@ public class LogReader {
 
     static void remask(ObjectNode o) {
         maskField(o, "message");
+        maskField(o, "logger"); // web-client 는 브라우저가 보낸 component
+        maskField(o, "thread");
         if (o.get("exception") instanceof ObjectNode ex) {
+            maskField(ex, "type");
             maskField(ex, "message");
             maskField(ex, "stack");
         }

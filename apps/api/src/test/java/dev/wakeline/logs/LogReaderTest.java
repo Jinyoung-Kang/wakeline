@@ -157,7 +157,16 @@ class LogReaderTest {
             // 가리지 않고 실은 생산자(버그)라도 읽을 때 가린다
             stream.add(ts.toEpochMilli(), 0, event(ts, "collector", "ERROR", "L", "GET /x?serviceKey=SK123 auth redis-pass-value", FP_A, null,
                     "Traceback: password=hunter2", 0));
-            JsonNode n = reader.list(all(), null, 10).items().getFirst();
+            Instant t2 = T0.plusSeconds(2);
+            // 브라우저가 보낸 component(로거) · 이름 칸도 다시 가린다
+            var d = new LogEvents.Draft(t2, "web-client", "h:1", "ERROR", "MapView token=abc123", "t secret=s3", "m",
+                    new LogEvents.Ex("E password=pw9", null, "s"), null, Map.of(), true);
+            stream.add(t2.toEpochMilli(), 0, LogEvents.serialize(d, FP_B, 0));
+            JsonNode w = reader.list(all(), null, 10).items().getFirst();
+            assertThat(w.path("logger").asString()).isEqualTo("MapView token=***");
+            assertThat(w.path("thread").asString()).isEqualTo("t secret=***");
+            assertThat(w.path("exception").path("type").asString()).isEqualTo("E password=***");
+            JsonNode n = reader.list(all(), null, 10).items().get(1);
             assertThat(n.path("message").asString()).isEqualTo("GET /x?serviceKey=*** auth ***");
             assertThat(n.path("exception").path("stack").asString()).isEqualTo("Traceback: password=***");
             // 가린 글자로만 찾는다(비밀값으로 검색해 존재를 알아내지 못하게)
