@@ -12,6 +12,7 @@ import { panIfOutside } from "@/lib/focus";
 import { SidePanelView } from "@/components/SidePanel";
 import ReplayPage from "@/app/replay/page";
 import * as replayLib from "@/lib/replay";
+import * as opsLib from "@/lib/ops";
 import type { Alert } from "@/lib/types";
 import { subscriptionBbox } from "@/lib/viewport";
 import { fmtReplayBbox, REPLAY_MAX_AREA_SQDEG, replayQueryBbox, replayReduce, type ReplayFrame } from "@/lib/replay";
@@ -118,5 +119,32 @@ describe("R-10 replay time can be picked precisely across the 30-day summary win
     expect(replayLib.stepAt(r.max - 30_000, 3600_000, r)).toBe(r.max);
     expect(replayLib.stepAt(r.min + 1000, -600_000, r)).toBe(r.min);
     expect(replayLib.stepAt(Date.parse("2026-09-28T03:05:00Z"), 60_000, r)).toBe(Date.parse("2026-09-28T03:06:00Z"));
+  });
+});
+
+describe("R-12 ops: an expired session goes back to sign-in, sign-out always leaves", () => {
+  it("a 401/404 from an ops call is an expiry only when the session probe also fails with 401/404", async () => {
+    const gone = () => Promise.reject(new ApiError(404, "no such resource"));
+    const alive = () => Promise.resolve({ username: "op" });
+    const down = () => Promise.reject(new TypeError("Failed to fetch"));
+    expect(await opsLib.classifyOpsError(new ApiError(404, "no such resource"), gone)).toBe("expired");
+    expect(await opsLib.classifyOpsError(new ApiError(401, "unauthorized"), gone)).toBe("expired");
+    // 세션은 살아 있음 → 그 엔드포인트만 문제(예: 아직 없는 경로) — 로그아웃시키지 않는다
+    expect(await opsLib.classifyOpsError(new ApiError(404, "no such resource"), alive)).toBe("error");
+    // 확인할 수 없음(네트워크) → 로그아웃시키지 않는다
+    expect(await opsLib.classifyOpsError(new ApiError(404, "no such resource"), down)).toBe("error");
+    expect(await opsLib.classifyOpsError(new ApiError(500, "boom"), gone)).toBe("error");
+  });
+  it("sign-out returns to the login screen even when the server call fails (no unhandled rejection)", async () => {
+    let left = 0;
+    const expired = await opsLib.signOut(() => Promise.reject(new ApiError(404, "no such resource")), () => { left++; });
+    expect(left).toBe(1);
+    expect(expired).toEqual({ ok: true, note: null }); // 이미 만료 — 서버에 남은 세션 없음
+    const net = await opsLib.signOut(() => Promise.reject(new TypeError("Failed to fetch")), () => { left++; });
+    expect(left).toBe(2);
+    expect(net.ok).toBe(false);
+    expect(net.note).toContain("서버 세션");
+    expect(await opsLib.signOut(() => Promise.resolve(undefined), () => { left++; })).toEqual({ ok: true, note: null });
+    expect(left).toBe(3);
   });
 });

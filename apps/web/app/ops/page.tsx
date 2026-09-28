@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
-import { fmtBudgetLimit, fmtTime } from "@/lib/format";
+import { fmtBudgetLimit, fmtClock, fmtTime } from "@/lib/format";
+import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
 
 type Any = Record<string, unknown>;
 interface Providers { providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[] }
@@ -11,17 +12,21 @@ interface Settings { items: { key: string; value: unknown; version: number; upda
 
 /**
  * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ. 비로그인은 404 → 로그인 폼.
+ * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
  * 시각은 모두 날짜 포함(MM-DD HH:MM:SSZ) — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다. 모르는 값은 "—"(0 으로 채우지 않는다).
  */
 export default function OpsPage() {
   const [me, setMe] = useState<{ username: string } | null>(null);
   const [checked, setChecked] = useState(false);
-  useEffect(() => { apiGet<{ username: string }>("/api/v1/ops/session").then(setMe).catch(() => setMe(null)).finally(() => setChecked(true)); }, []);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => { apiGet<{ username: string }>(OPS_SESSION_PATH).then(setMe).catch(() => setMe(null)).finally(() => setChecked(true)); }, []);
+  const leave = useCallback((note: string | null) => { setNotice(note); setMe(null); }, []);
+  const login = useCallback((u: { username: string }) => { setNotice(null); setMe(u); }, []);
   if (!checked) return <div className="p-4 text-fg-3">…</div>;
-  return me ? <OpsDashboard me={me} onLogout={() => setMe(null)} /> : <Login onLogin={setMe} />;
+  return me ? <OpsDashboard me={me} onLeave={leave} /> : <Login onLogin={login} notice={notice} />;
 }
 
-function Login({ onLogin }: { onLogin: (u: { username: string }) => void }) {
+function Login({ onLogin, notice }: { onLogin: (u: { username: string }) => void; notice: string | null }) {
   const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState<string | null>(null);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(null);
@@ -32,6 +37,7 @@ function Login({ onLogin }: { onLogin: (u: { username: string }) => void }) {
     <div className="grid-bg flex h-full items-center justify-center">
       <form onSubmit={submit} className="panel w-80 p-4" data-testid="ops-login">
         <div className="label mb-3">Operator sign-in</div>
+        {notice ? <div className="mb-2 text-[11px] text-warn" role="status" data-testid="ops-login-notice">{notice}</div> : null}
         <label className="label block" htmlFor="ops-user">username</label><input id="ops-user" className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" />
         <label className="label block" htmlFor="ops-pass">password</label><input id="ops-pass" className="mb-3 w-full" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" />
         {err ? <div className="mb-2 text-[11px] text-bad" role="alert">{err}</div> : null}
@@ -42,7 +48,7 @@ function Login({ onLogin }: { onLogin: (u: { username: string }) => void }) {
   );
 }
 
-function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: () => void }) {
+function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
   const [tab, setTab] = useState<"providers" | "runs" | "quality" | "settings" | "audit" | "dlq">("providers");
   const [prov, setProv] = useState<Providers | null>(null);
   const [runs, setRuns] = useState<Runs | null>(null);
@@ -51,26 +57,36 @@ function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: ()
   const [audit, setAudit] = useState<{ items: Any[] } | null>(null);
   const [dlq, setDlq] = useState<{ items: Any[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [lastOk, setLastOk] = useState<number | null>(null);
+  /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
+  const fail = useCallback((e: unknown) => {
+    const msg = (e as Error).message;
+    if (!isAuthMiss(e)) { setErr(msg); return; }
+    void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => (k === "expired" ? onLeave(SESSION_EXPIRED_NOTE) : setErr(msg)));
+  }, [onLeave]);
   const refresh = useCallback(() => {
     setErr(null);
-    const h = (e: Error) => setErr(e.message);
-    apiGet<Providers>("/api/v1/ops/providers").then(setProv).catch(h);
-    apiGet<Runs>("/api/v1/ops/runs?limit=50").then(setRuns).catch(h);
-    apiGet<Quality>("/api/v1/ops/quality").then(setQuality).catch(h);
-    apiGet<Settings>("/api/v1/ops/settings").then(setSettings).catch(h);
-    apiGet<{ items: Any[] }>("/api/v1/ops/audit").then(setAudit).catch(h);
-    apiGet<{ items: Any[] }>("/api/v1/ops/dlq").then(setDlq).catch(h);
-  }, []);
+    let authMiss = false; // 한 번의 새로고침에서 세션 확인은 한 번만
+    const h = (e: unknown) => { if (isAuthMiss(e)) { if (authMiss) return; authMiss = true; } fail(e); };
+    const ok = <T,>(set: (v: T) => void) => (v: T) => { set(v); setLastOk(Date.now()); };
+    apiGet<Providers>("/api/v1/ops/providers").then(ok(setProv)).catch(h);
+    apiGet<Runs>("/api/v1/ops/runs?limit=50").then(ok(setRuns)).catch(h);
+    apiGet<Quality>("/api/v1/ops/quality").then(ok(setQuality)).catch(h);
+    apiGet<Settings>("/api/v1/ops/settings").then(ok(setSettings)).catch(h);
+    apiGet<{ items: Any[] }>("/api/v1/ops/audit").then(ok(setAudit)).catch(h);
+    apiGet<{ items: Any[] }>("/api/v1/ops/dlq").then(ok(setDlq)).catch(h);
+  }, [fail]);
   useEffect(() => { const first = setTimeout(refresh, 0); const t = setInterval(refresh, 15_000); return () => { clearTimeout(first); clearInterval(t); }; }, [refresh]);
-  const logout = async () => { await apiSend("DELETE", "/api/v1/ops/session"); onLogout(); };
-  const toggle = async (name: string, action: "enable" | "disable") => { try { await apiSend("POST", `/api/v1/ops/providers/${name}/${action}`); refresh(); } catch (e) { setErr((e as Error).message); } };
+  const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
+  const toggle = async (name: string, action: "enable" | "disable") => { try { await apiSend("POST", `/api/v1/ops/providers/${name}/${action}`); refresh(); } catch (e) { fail(e); } };
   return (
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-3">
         <span className="label mr-2">Operations</span>
         <div className="flex gap-1" role="group" aria-label="운영 탭">{(["providers", "runs", "quality", "settings", "audit", "dlq"] as const).map((t) => <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>)}</div>
         <button className="btn" onClick={refresh}>refresh</button>
-        {err ? <span className="text-[11px] text-bad">{err}</span> : null}
+        <span className="mono text-[11px] text-fg-3" title="마지막으로 응답을 받은 시각(15 s 마다 갱신)" data-testid="ops-last-ok">갱신 {fmtClock(lastOk)}</span>
+        {err ? <span className="text-[11px] text-bad" role="alert">{err}</span> : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]">
@@ -107,7 +123,7 @@ function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: ()
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
           <table><thead><tr><th>at</th><th>run</th><th>rule</th><th>hex</th><th>detail</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><td className="mono">{fmtTime(String(r.created_at))}</td><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}
-        {tab === "settings" && settings ? <SettingsForm items={settings.items} onSaved={refresh} /> : null}
+        {tab === "settings" && settings ? <SettingsForm items={settings.items} onSaved={refresh} onAuthMiss={fail} /> : null}
         {tab === "audit" && audit ? <table><thead><tr><th>at</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
           <tbody>{audit.items.map((a) => <tr key={String(a.id)}><td className="mono">{fmtTime(String(a.at))}</td><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
         {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at</th><th>stream</th><th>kind</th><th>reason</th><th>payload head</th></tr></thead>
@@ -117,7 +133,7 @@ function OpsDashboard({ me, onLogout }: { me: { username: string }; onLogout: ()
   );
 }
 
-function SettingsForm({ items, onSaved }: { items: Settings["items"]; onSaved: () => void }) {
+function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]; onSaved: () => void; onAuthMiss: (e: unknown) => void }) {
   const [edit, setEdit] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const save = async (k: string, version: number) => {
@@ -126,7 +142,7 @@ function SettingsForm({ items, onSaved }: { items: Settings["items"]; onSaved: (
     let value: unknown = raw;
     if (/^-?\d+$/.test(raw)) value = Number(raw); else if (raw === "true" || raw === "false") value = raw === "true";
     try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value }, { "If-Match": String(version) }); setMsg(`${k} 저장됨 — 다음 주기부터 적용`); setEdit((e) => { const c = { ...e }; delete c[k]; return c; }); onSaved(); }
-    catch (e) { setMsg(`${k}: ${(e as Error).message}`); }
+    catch (e) { if (isAuthMiss(e)) onAuthMiss(e); setMsg(`${k}: ${(e as Error).message}`); }
   };
   return (
     <div>
