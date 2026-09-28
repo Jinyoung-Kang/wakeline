@@ -2,7 +2,7 @@
  * MapView 생명주기(실제 react-dom 으로 마운트 — 최소 DOM + MapLibre 대역). 서버 렌더 시험이 닿지 못하는 useEffect·정리 함수를 실행한다.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { installMiniDom } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { FakeMap } from "./helpers/fake-maplibre";
 import { getData, resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
@@ -147,5 +147,50 @@ describe("MapView KMA radar layers (R-11)", () => {
     await act(() => { map.fire("style.load"); map.fire("load"); });
     await act(() => setData({ radarKr: kr(false) }));
     expect(map.layerIds("kmar-")).toEqual([]);
+  });
+});
+
+describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
+  /** 타임라인만 마운트(클라이언트 렌더 — 서버 렌더는 zustand 초기 상태를 읽어 radarSource 를 바꿀 수 없다) */
+  async function mountTimeline() {
+    const { RadarTimeline } = await import("@/components/RadarTimeline");
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(RadarTimeline)); });
+  }
+  const byTestId = (id: string) => {
+    const walk = (n: MiniElement): MiniElement | null => {
+      if (n.getAttribute?.("data-testid") === id) return n;
+      for (const c of n.childNodes) { const f = c instanceof MiniElement ? walk(c) : null; if (f) return f; }
+      return null;
+    };
+    return walk(dom.container);
+  };
+  const unavailable = (o: Record<string, unknown> = {}) => ({
+    available: false, status: "403", note: "활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기)", latest_tm: "202609280130", georeferenced: false, coordinates: null, legend: null,
+    frames: [], attribution: "기상청", meta: { fetched_at: "2026-09-28T01:31:00Z", stale: true }, ...o,
+  });
+
+  it("with source 'kma' and no usable frames the timeline shows '기상청 레이더 없음' with the server note and the last collection time", async () => {
+    useUi.setState({ radarSource: "kma" });
+    setData({ radarKr: unavailable() as never });
+    await mountTimeline();
+    // 수정 전: "—"와 "0 frames · 5 min · 기상청 HSR 500 m…"만 — 이유는 비활성 버튼의 title 에만 있었다
+    const why = byTestId("radar-kr-unavailable");
+    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 01:31:00Z");
+    expect(dom.container.textContent).not.toContain("0 frames · 5 min");
+  });
+
+  it("without a note or a collection time nothing is invented; RainViewer and a usable KMA feed keep the frame text", async () => {
+    useUi.setState({ radarSource: "kma" });
+    setData({ radarKr: unavailable({ note: "", status: null, meta: { fetched_at: null, stale: true } }) as never });
+    await mountTimeline();
+    expect(byTestId("radar-kr-unavailable")?.textContent).toBe("기상청 레이더 없음");
+    await act(() => setData({ radarKr: null }));
+    expect(byTestId("radar-kr-unavailable")?.textContent).toBe("기상청 레이더 없음 — 상태 수신 전");
+    await act(() => useUi.setState({ radarSource: "rainviewer" }));
+    expect(byTestId("radar-kr-unavailable")).toBeNull();
+    await act(() => { useUi.setState({ radarSource: "kma" }); setData({ radarKr: { ...unavailable(), available: true, georeferenced: true, frames: [{ tm: "202609280130", obs_tm: "202609280130", fetched_at: "x", echo_cells: 1, url: "/u" }] } as never }); });
+    expect(byTestId("radar-kr-unavailable")).toBeNull();
+    expect(dom.container.textContent).toContain("1 frames · 5 min");
   });
 });

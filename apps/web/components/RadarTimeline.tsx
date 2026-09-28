@@ -1,8 +1,20 @@
 "use client";
 import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
+import { fmtTime } from "@/lib/format";
 import { useServerData } from "@/lib/store";
+import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
+
+/**
+ * 기상청을 골랐는데 쓸 수 있는 프레임이 없을 때(R-11) — 지도에 레이더가 없는 이유를 타임라인에 쓴다.
+ * 서버가 준 note 와 마지막 수집 시각(meta.fetched_at)만 붙인다(모르면 붙이지 않는다).
+ */
+function krUnavailableText(d: KrRadar | null): string {
+  if (!d) return "기상청 레이더 없음 — 상태 수신 전";
+  const last = fmtTime(d.meta?.fetched_at);
+  return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
+}
 
 /**
  * 레이더 타임라인(FR-06): 과거 2 h · 10분 간격 프레임. 지도는 현재 프레임만 받아 그리고(PERF-12), 재생 중에만 다음 프레임을 미리 받는다.
@@ -51,7 +63,9 @@ export function RadarTimeline() {
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
       <span className="mono text-[11px]" data-testid="radar-frame-time">{label}</span>
-      <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>
+      {kma && !krAvailable
+        ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr)}</span>
+        : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}
       <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로">latest</button>
       <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
     </div>
