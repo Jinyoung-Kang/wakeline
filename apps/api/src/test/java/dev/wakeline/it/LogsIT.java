@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>§C2: 앱의 WARN(요청 MDC 포함)이 logback 싱크를 거쳐 wakeline:logs 에 실리고(설정 비밀값 가림), 자기 지표가 pipeline 에 보인다.
  *       @Scheduled 작업 안의 WARN 은 context.job 에 작업 이름이 있다. XADD 는 MAXLEN ~ 3000.</li>
  *   <li>§C4: 운영 조회 — 익명 404, 목록 · 필터 · fp 묶음 · 항목 하나 · 스키마에 맞지 않는 항목은 invalid.</li>
- *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429.</li>
+ *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429, JSON 이 아니면 415(§G3).</li>
  * </ul>
  * 수집기 모양의 항목은 관리 사용자로 XADD 한다 — 수집기 ACL 에 ~wakeline:logs 를 더하는 것은 infra 레인(§C3)이다.
  */
@@ -238,7 +238,11 @@ class LogsIT extends IntegrationTest {
                 400, "BAD_CLIENT_ERROR", "/api/v1/client-errors");
         String big = "{\"message\":\"" + "m".repeat(9000) + "\",\"path\":\"/\",\"ts\":\"2026-09-29T03:04:00Z\"}";
         assertProblem(send("POST", "/api/v1/client-errors", big, headers("Content-Type", "application/json")), 413, "TOO_LARGE", "/api/v1/client-errors");
-        // 지금까지 3건 — 10건까지는 받고 11번째는 429
+        // §G3: JSON 이 아닌 Content-Type 은 415(로그인과 같은 관례) — 처리기 앞에서 거절하므로 요청 제한 수를 쓰지 않는다
+        Res notJson = send("POST", "/api/v1/client-errors", body, headers("Content-Type", "text/plain"));
+        assertProblem(notJson, 415, "UNSUPPORTED_MEDIA_TYPE", "/api/v1/client-errors");
+        assertThat(notJson.header("Accept")).contains("application/json");
+        // 지금까지 3건(415 는 세지 않는다) — 10건까지는 받고 11번째는 429
         for (int i = 3; i < 10; i++)
             assertThat(send("POST", "/api/v1/client-errors", body, headers("Content-Type", "application/json")).status()).isEqualTo(204);
         Res limited = send("POST", "/api/v1/client-errors", body, headers("Content-Type", "application/json"));

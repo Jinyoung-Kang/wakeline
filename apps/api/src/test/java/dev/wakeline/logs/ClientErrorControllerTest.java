@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 계약 v5 §C6: 브라우저 오류 공개 수집 POST /api/v1/client-errors — 본문 {message ≤ 2000, stack ≤ 8000, path ≤ 300(쿼리 제거), component ≤ 200 | null, ts ISO},
- * IP당 분당 10 · 전체 분당 120(rl:cerr:*), 8 KiB 넘으면 413, 형식 오류 400, 성공 204. 항목은 service "web-client" · level ERROR · untrusted,
+ * IP당 분당 10 · 전체 분당 120(rl:cerr:*), 8 KiB 넘으면 413, 형식 오류 400(JSON 이 아닌 Content-Type 은 415 — §G3), 성공 204. 항목은 service "web-client" · level ERROR · untrusted,
  * User-Agent 앞 200자는 context. 가림을 거친 뒤 싣는다.
  */
 class ClientErrorControllerTest {
@@ -141,17 +141,35 @@ class ClientErrorControllerTest {
     }
 
     @Test
-    void bodyOver8KiBIs413_andNonJsonContentTypeIs400() throws Exception {
+    void bodyOver8KiBIs413() throws Exception {
         String big = body("m".repeat(2000), "s".repeat(8000), "/", null, "2026-09-29T03:04:00Z"); // 필드 상한 안이지만 합쳐 8 KiB 초과
         assertThat(big.length()).isGreaterThan(8 * 1024);
         mvc.perform(report(big, "203.0.113.10")).andExpect(status().is(413))
                 .andExpect(jsonPath("$.code").value("TOO_LARGE"));
-        // 계약 §C6: 형식 오류는 400(Content-Type 이 JSON 이 아닌 것도)
-        for (String type : List.of("text/plain", "application/x-www-form-urlencoded"))
-            mvc.perform(post("/api/v1/client-errors").contentType(type).content("x")).andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.code").value("BAD_CLIENT_ERROR"));
-        mvc.perform(post("/api/v1/client-errors").content(body("m", null, "/", null, "2026-09-29T03:04:00Z"))).andExpect(status().isBadRequest());
         assertThat(sink.queued()).isZero();
+    }
+
+    /**
+     * 계약 v5 §G3: JSON 이 아닌 Content-Type(없는 것 포함)은 415 — 로그인(@RequestBody)과 같은 관례: code UNSUPPORTED_MEDIA_TYPE,
+     * Accept 헤더로 받는 형식을 알린다. 본문 형식 오류는 그대로 400 BAD_CLIENT_ERROR(malformedBodiesAre400). 요청 제한 수도 쓰지 않는다.
+     */
+    @Test
+    void nonJsonContentTypeIs415LikeTheLogin_malformedJsonStays400() throws Exception {
+        String ok = body("m", null, "/", null, "2026-09-29T03:04:00Z");
+        for (String type : List.of("text/plain", "application/x-www-form-urlencoded", "application/xml", "multipart/form-data; boundary=x"))
+            mvc.perform(post("/api/v1/client-errors").contentType(type).content(ok)).andExpect(status().isUnsupportedMediaType())
+                    .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                    .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"))
+                    .andExpect(header().string("Accept", org.hamcrest.Matchers.containsString("application/json")));
+        mvc.perform(post("/api/v1/client-errors").content(ok)).andExpect(status().isUnsupportedMediaType()); // Content-Type 없음
+        assertThat(limiter.counts).as("415 before the rate limiter").isEmpty();
+        // JSON 이면(문자 집합 인자 포함) 본문을 읽는다 — 형식 오류는 400
+        mvc.perform(post("/api/v1/client-errors").contentType("application/json; charset=utf-8").content("not json")
+                .with(r -> { r.setRemoteAddr("203.0.113.11"); return r; })).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_CLIENT_ERROR"));
+        mvc.perform(post("/api/v1/client-errors").contentType("application/json; charset=utf-8").content(ok)
+                .with(r -> { r.setRemoteAddr("203.0.113.11"); return r; })).andExpect(status().isNoContent());
+        assertThat(sink.queued()).isEqualTo(1);
     }
 
     @Test
