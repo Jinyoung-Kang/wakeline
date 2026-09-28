@@ -1,0 +1,989 @@
+# 진단 보고서(REVIEW-v1) — 리뷰 2단계
+
+대상: 커밋 `fcb2c52`(기준선과 같은 코드) · 근거 측정: `docs/review/BASELINE.md` · 원자료: `perf/results/review-baseline/`.
+
+## 방법
+- 5개 영역을 8개 갈래로 나눠 검토했다: 코드(collector · api · web), 아키텍처, 성능, 보안(애플리케이션 · 비밀값/의존성/인프라), UI/UX.
+- 각 갈래의 발견 사항은 **독립 검증자가 반박을 시도**했다(코드·줄을 다시 열고, 읽기 전용 명령·GET 요청을 다시 실행). 반박되면 버리고, 심각도는 기준표로 다시 매겼다.
+- 제약: 개발 스택(:8700)에는 GET·WS 구독만 낮은 빈도로 보냈다(쓰기·로그인·부하·장애 주입 없음). 쓰기가 필요한 보안 시험은 격리 스택(:8701)만. 외부 공급자는 부르지 않았다.
+- 스택 해석: 트랜잭션 경계 = Spring `TransactionTemplate` + `JdbcClient`(`@Transactional` 사용 0), 동시성 = 가상 스레드·asyncio·React effect·Web Worker.
+
+## 요약
+- 제기 106건 → 반박 2건 제외 → **104건 검증**(CONFIRMED 99 · PLAUSIBLE 5) → 중복 7건 병합 → **고유 97건**.
+- 심각도: **Critical 0 · High 2 · Medium 28 · Low 67**. 영역: 코드 33 · 아키텍처 14 · 성능 13 · 보안 22 · UI/UX 15.
+- 반박된 것: "aircraft.last_seen 을 1분마다 갱신해 쓰기가 항적보다 많다"(성능) · "공개 OpenAPI 가 운영 API 를 공개"(보안-앱 갈래) — 다만 후자는 보안-인프라 갈래가 따로 확인했고,
+  재현해 보니 공개 문서에 운영 경로 10개가 실제로 있다(익명 요청은 404) → R 목록에 Low 로 남겼다.
+- 정렬: 우선순위 = 영향(Critical 8 · High 4 · Medium 2 · Low 1) × 가능성(high 3 · medium 2 · low 1) ÷ 작업량(S 1 · M 2 · L 3), 같으면 심각도 순.
+
+## 승인 기록
+원래 절차는 "보고서를 쓴 뒤 멈추고 승인을 기다린다" 이다. 사용자가 이번 작업에서 **"작업을 중간에 멈추지 말고 계속 진행 · 권장 방안으로 진행 ·
+중요한 선택이 있을 때만 묻기"** 를 지시했으므로, 아래 기준으로 **스스로 승인**하고 3단계로 넘어간다(표의 '승인' 열).
+- 승인: High·Medium 전부(구조 변경(L)·설계가 먼저 필요한 것 제외), Low 중 작업량 S 이면서 결함·보안·데이터 정직성·운영 위험을 줄이는 것.
+- 보류(13건): 동작 결함이 아닌 리팩터, 새 계약·설계가 먼저 필요한 구조 작업, 발생 가능성이 낮고 작업이 큰 것 — 각 항목에 이유를 적었다.
+- 공개 API·DB 스키마·인증 방식·외부 계약을 바꾸는 항목은 ADR-017 초안을 먼저 쓰고 진행한다(사용자 지시에 따라 확인을 기다리지 않고, 최종 보고에서 알린다).
+
+## 발견 사항 목록(우선순위 순)
+| ID | 영역 | 심각도 | 제목 | 작업량 | 확신도 | 우선순위(영향×가능성÷작업량) | 승인 |
+|---|---|---|---|---|---|---|---|
+| R-01 | 코드 | High | WS 연결·워커·폴링이 외부 지도 스타일(openfreemap)이 로드된 뒤에야 시작된다. 타일 호스트가 막히면 상황판 전체가 멈춘다 | S | 확인됨(CONFIRMED) | 8.0 | 승인 |
+| R-02 | 성능 | High | 상황판(/) 첫 화면 JS 약 612 KiB(gzip)로 NFR-04 400 KB 초과 — MapLibre 공용 모듈 145 KiB 를 두 번 받는다 | M | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-03 | 코드 | Medium | KMA 레이더: 목록에 있으나 아직 받을 수 없는 프레임을 영구 제외해 프레임이 빠짐 (KST 09-28 기준 7.7%) | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-04 | 코드 | Medium | 선택 항공기 항적이 수신 공백(최대 950 s·288 km)을 실선으로 이어 관측한 경로처럼 그린다 | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-05 | 코드 | Medium | 재생 지도를 줌 약 3.7 이하로 축소하면 422 BBOX_TOO_LARGE가 난다. 그 뒤 이전 프레임이 새 시각 라벨 아래 남는다 | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-06 | 성능 | Medium | 보존 삭제가 72 h 가 아니라 99–123 h 를 남기고 알림은 하루 약 50 MB 씩 영구 누적 — NFR-09(DB ≤ 10 GB) 초과 경로 | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-07 | 보안 | Medium | CI 보안 게이트가 한 번도 실행되지 않았다. 실행되면 gitleaks 오탐 2건에 먼저 걸려 이미지 스캔까지 건너뛰고, 현재 이미지로는 게이트가 모두 실패한다 | S | 추정(CONFIRMED) | 6.0 | 승인 |
+| R-08 | UI/UX | Medium | 알림 행 클릭 시 '펼치기'는 곧바로 사라지고 지도도 그 항공기로 이동하지 않는다(선박 목록·SIGMET 칩도 동일) | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-09 | UI/UX | Medium | 첫 로드 때 모르는 알림 수를 0으로 보이고, '관심 지역' 범위에 전세계 목록이 잠깐 떴다가 줄어들며 CLS를 만든다 | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-10 | UI/UX | Medium | 재생 시각을 고를 방법이 147 px 슬라이더뿐이고(1 px ≈ 29분), 표시된 '1분 요약 30일' 구간에는 UI로 갈 수 없다 | S | 확인됨(CONFIRMED) | 6.0 | 승인 |
+| R-11 | 코드 | Medium | 기상청 레이더가 unavailable로 바뀌어도 마지막 KMA 에코가 지도에 남는다. 레이더를 끄거나 소스를 바꿔도 숨겨지지 않는다 | S | 확인됨(CONFIRMED) | 4.0 | 승인 |
+| R-12 | UI/UX | Medium | 운영 화면: 세션이 만료돼도 이전 표를 계속 보이고 로그인으로 돌아가지 않는다. 로그아웃은 처리되지 않은 거부를 던진다 | S | 확인됨(CONFIRMED) | 4.0 | 승인 |
+| R-13 | 아키텍처 | Medium | PostgreSQL 백업·복원 절차가 전혀 없음. '영구' 보존 데이터가 볼륨 하나에만 있음 | S | 확인됨(CONFIRMED) | 4.0 | 승인 |
+| R-14 | 아키텍처 | Medium | 스트림 MAXLEN≈200 창보다 api가 오래 멈추면 항적·선박 위치가 영구 손실됨. ADR-001의 'PEL 재처리' 주장은 과장 | S | 확인됨(CONFIRMED) | 4.0 | 승인 |
+| R-15 | 성능 | Medium | 알림 이력 hex 필터가 인덱스를 쓰지 못해 표 전체를 역순으로 훑는다(alert_event_hex idx_scan 0) | S | 확인됨(CONFIRMED) | 4.0 | 승인 |
+| R-16 | 보안 | Medium | REST bbox에 NaN을 넣으면 범위·면적 검사를 모두 통과함 → /api/v1/replay 면적 상한(2500 sq°)이 우회되어 전세계 조회 | S | 확인됨(CONFIRMED) | 4.0 | 승인 |
+| R-17 | 코드 | Medium | 관심 지역 adsb_lol 429가 수렴하지 않고 약 7분마다 반복됨 (3일 217회), 공급자 전환 이벤트 423건/21.6 h | M | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-18 | 아키텍처 | Medium | 데이터 손실 신호(드롭·트림·저장 실패)를 아무도 수집·표시·경보하지 않음 | M | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-19 | 코드 | Low | 예산 일별 스냅샷이 매일 마지막 최대 1시간 호출을 빠뜨려 /ops의 일별 calls가 작게 나옴 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-20 | 코드 | Low | heartbeat의 lag_s가 실제 값이 아님: 기상 작업은 0.0 고정, 항공기는 자료 나이가 아니라 처리 시간 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-21 | 성능 | Low | 원천 보관 gzip과 대용량 정규화가 이벤트 루프에서 동기로 실행되고, KMA 본문은 gzip을 한 번 더 함 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-22 | 코드 | Low | 쓰지 않는 코드와 설명이 실제 동작과 어긋남 (demand 상태 상수·disabled 설명·AircraftProvider) | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-23 | UI/UX | Low | 알림 배너(lastEvent)가 시각 없이 무기한 남아 오래된 진입 이벤트가 방금 일어난 일처럼 보인다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-24 | 성능 | Low | DB 가 기본 설정(checkpoint 5분·WAL 압축 없음·shared_buffers 128 MB)이라 WAL 의 86 % 가 전체 페이지 이미지 — WAL 약 16 GB/일, 디스크 쓰기 약 47 GB/일 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-25 | 성능 | Low | api 프로세스 메모리 약 700 MiB 로 NFR-03(≤ 512 MB) 초과, 힙 상한 616 MiB 도 예산 밖(GC 뒤 살아 있는 데이터는 약 75 MiB) | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-26 | 성능 | Low | 재생 응답의 72 % 가 bbox 와 무관한 전세계 SIGMET 인데 재생 중 초당 1회씩 다시 보낸다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-27 | 성능 | Low | 일 통계 traffic_by_hour 가 하루치 파티션 전체를 순차 스캔하고 정렬이 디스크로 넘친다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-28 | 보안 | Low | api 기동 로그에 Spring Boot 가 자동 생성한 보안 비밀번호가 매번 찍힌다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-29 | 보안 | Low | 런타임 이미지에 쓰지 않는 패키지 관리자가 남아 web·collector 의 HIGH 취약점 전부를 만든다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-30 | UI/UX | Low | 보조기술용 구조가 약하다: 모든 화면 제목이 같고, 알림 행 이름이 붙어서 읽히며, 첫 알림까지 Tab 40번(지도 출처 링크가 중복으로 13개) | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-31 | UI/UX | Low | 기본으로 열린 범례가 흔한 노트북 화면에서 지도의 23–27%와 지도 출처 표기를 가리고, 한국어 버튼이 단어 중간에서 줄바꿈된다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-32 | UI/UX | Low | 통계 화면의 알림 표가 내부 컬럼명·지표 키를 그대로 보이고 평균 체류 값에 단위가 없다. 지난 날짜의 빈 상태 문구도 틀리다 | S | 확인됨(CONFIRMED) | 3.0 | 승인 |
+| R-33 | 코드 | Medium | 정규화가 문자열 'inf'를 걸러내지 않아, 레코드 하나가 관심 지역·전세계·focus·hot 묶음 전체를 실패시킴 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-34 | 코드 | Medium | 웹 커버리지 92.1 %는 테스트가 불러온 파일만 센 값이다. 전체 소스 기준은 61.3 %이고 이펙트 코드(MapView 596줄 등)는 0 %다 | M | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-35 | 코드 | Medium | 운영 설정 폼: 15 s 자동 새로고침이 If-Match 낙관적 잠금을 무력화한다(동시 변경이 조용히 덮어쓰임) | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-36 | 아키텍처 | Medium | 스키마 밖의 두 번째 언어 간 계약(공유 DB 테이블·Redis 해시)을 검사하지 않음 | M | 확인됨(CONFIRMED) | 2.0 | 보류 |
+| R-37 | 보안 | Medium | api 가 Tomcat 11.0.24 로 실행 중이다(CRITICAL CVE 3건, 11.0.25 에서 수정) | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-38 | 보안 | Medium | 리뷰 측정 스크립트가 떠다니는 :latest 도구 이미지에 docker.sock 과 저장소(.env 포함)를 넘긴다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-39 | UI/UX | Medium | 390 px 폭에서 상황판 지도 폭이 10 px로 줄고 레이어 버튼·메뉴가 화면 밖으로 나간다(768 px도 지도 대부분을 범례가 덮음) | M | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-40 | UI/UX | Medium | SIGMET·공항·재생 항목은 지도 클릭으로만 열리고(키보드 경로 없음), 공항 비행 카테고리는 지도에서 색으로만 구분된다 | M | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-41 | 코드 | Low | CI가 실제 Redis 시험을 건너뛰어 예산 Lua·ACL 규칙이 Python 재구현(fake)으로만 검증됨 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-42 | 코드 | Low | MetarJob·RadarJob.run_once와 DB 쓰기 인자 조립에 단위 시험이 없음 (weather.py 커버리지 75%) | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-43 | 코드 | Low | redis-py 8 기본 재시도(10회)를 그대로 써서, 오류를 삼키는 Redis 호출 하나가 3.3 s(연결 거부)에서 약 60 s(응답 없음)까지 걸림 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-44 | 코드 | Low | fixedDelay 작업 전부가 단일 스케줄러 스레드에서 직렬 실행 — 유지보수 catch-up·Redis 지연이 SIGMET 만료·WS heartbeat·AIS 상태 갱신을 막는다 | S | 추정(CONFIRMED) | 2.0 | 승인 |
+| R-45 | 코드 | Low | 통계 응답의 day 가 날짜가 아니라 'UTC 자정 시각' 문자열이고(JVM 시간대 의존), 집계 전 날짜와 '자료 없음'을 구분하지 못한다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-46 | 코드 | Low | catch-up 의 '행이 하나라도 있으면 집계 완료' 규칙: 자료 없는 날은 3시간마다 영원히 재집계되고, 운영자가 오늘을 부분 집계하면 그 값이 굳을 수 있다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-47 | 코드 | Low | 재생 요청 중(inflight)에 들어온 최신 시각·영역 요청을 버린다. 라벨과 지도 데이터가 어긋난 채 멈춘다 | S | 확인됨(PLAUSIBLE) | 2.0 | 승인 |
+| R-48 | 코드 | Low | 서버 값 검증 헬퍼가 4개 모듈에 복제돼 있고 규칙이 서로 다르다. 죽은 코드와 1,100줄 ships.ts도 있다 | S | 확인됨(CONFIRMED) | 2.0 | 보류 |
+| R-49 | 아키텍처 | Low | edge→api 요청 상관관계가 끊기고 로그가 비구조화 텍스트임 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-50 | 아키텍처 | Low | ADR·README·compose 주석이 계약 v1~v4와 구현보다 뒤처짐(판단: 구현·계약이 맞음) | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-51 | 성능 | Low | 항공기 검색이 aircraft 표 전체를 순차 스캔한다(표는 계속 커진다) | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-52 | 성능 | Low | /aircraft/{hex}/track 에 점 수 상한이 없고 좌표를 두 번 싣는다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-53 | 성능 | Low | 캐시는 여럿 있지만 적중률 지표가 없고 REST /status 는 요청마다 Redis 를 여러 번 읽는다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-54 | 보안 | Low | /ops 탭을 열어 두면 운영 세션이 만료되지 않음 (유휴 기준 8 h만 있고, 15초 폴링이 계속 연장하며, 절대 수명이 없음) | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-55 | 보안 | Low | 로그인 실패 감사가 입력한 아이디 원문을 저장함 (없는 계정 포함) → 아이디 칸에 잘못 친 비밀번호가 지울 수 없는 감사 로그에 남음 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-56 | UI/UX | Low | 운영 로그인·설정 폼: 클라이언트 검증 없이 서버 영문 원문 오류를 그대로 보이고, 설정 저장 실패와 성공이 같은 파란색이며 알림 역할도 없다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-57 | UI/UX | Low | 기상청 레이더 범례에서 45/50/55 dBZ 칸의 검은 글자 명암비가 AA 기준에 못 미친다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-58 | UI/UX | Low | 수신이 끊긴 반쯤 열린 연결(45–75 s) 동안 상태 바는 STALE인데 알림 목록은 실시간처럼 ETA를 계속 센다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-59 | UI/UX | Low | SIGMET 카드의 'Aircraft inside'가 hex 코드만 보여 어떤 항공기인지 알 수 없다 | S | 확인됨(CONFIRMED) | 2.0 | 승인 |
+| R-60 | UI/UX | Low | 한국어와 영어가 섞인 용어, 같은 화면의 '재생' 두 가지 뜻, 내부 코드가 그대로 노출된다 | M | 확인됨(CONFIRMED) | 1.5 | 보류 |
+| R-61 | 성능 | Medium | 지역 10 s 갱신마다 병합 뷰 전체(전세계 약 1만 대)를 스트림 소비 스레드에서 다시 판정한다 | L | 확인됨(CONFIRMED) | 1.3 | 보류 |
+| R-62 | 아키텍처 | Medium | DB 느림에 대한 격벽 없음: 공개 조회와 수집 기록기가 한 풀(12)을 쓰고 statement/lock timeout이 없음 | M | 추정(PLAUSIBLE) | 1.0 | 승인 |
+| R-63 | 보안 | Medium | db 이미지가 7개월째 재빌드되지 않았다: 고칠 수 있는 고유 CVE CRITICAL 9·HIGH 76, CI 는 보고만 한다 | M | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-64 | 보안 | Medium | 단일 평면 네트워크(internal 아님)라 모든 컨테이너가 서로의 모든 포트와 인터넷에 닿는다 | M | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-65 | 아키텍처 | Low | '보내지 않은 호출' 판정과 Throttled 처리가 작업마다 제각각 (예산 되돌림·실패 집계 불일치) | M | 확인됨(CONFIRMED) | 1.0 | 보류 |
+| R-66 | 코드 | Low | OpenSky 토큰을 401 뒤에도 무효화하지 않아, 만료(최대 약 29분)까지 전세계 수집이 계속 실패할 수 있음 | S | 추정(CONFIRMED) | 1.0 | 승인 |
+| R-67 | 코드 | Low | HTTP 요청 전체에 걸린 시간 상한이 없음 (httpx 시간 초과는 읽기 단계마다) | S | 추정(CONFIRMED) | 1.0 | 승인 |
+| R-68 | 코드 | Low | METAR 조회 상자가 날짜변경선 근처에서 lomin > lomax가 됨 | S | 추정(CONFIRMED) | 1.0 | 승인 |
+| R-69 | 코드 | Low | AlertStateMachine 의 '이전 시그니처' 분기(scopes == null)는 운영에서 도달 불가인데 FSM 단위 테스트 24개 중 21개가 그 분기만 검증 — 그 밖의 테스트 전용 운영 API 다수 | M | 확인됨(CONFIRMED) | 1.0 | 보류 |
+| R-70 | 코드 | Low | 재생(/replay) 응답이 1시간 공개 캐시되는데 radar 프레임은 '지금 기준 2시간'에만 유효 — 캐시된 응답이 이미 제공되지 않는 타일을 가리킨다 | S | 추정(CONFIRMED) | 1.0 | 승인 |
+| R-71 | 코드 | Low | 기간 검증이 절삭(toHours/toDays)이라 한도를 넘는 요청을 받는다 — 선박 항적은 정확히 거절해 두 엔드포인트가 다르게 동작 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-72 | 코드 | Low | radar_kr Redis 해시: 공개 /status 는 원본 해시를 통째로 내보내고, /radar/kr 는 같은 값을 방어 없이 파싱해 500 이 된다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-73 | 코드 | Low | WS 우편함(SerialOutbox)이 작업 예외를 DEBUG 로만 삼킨다 — diff 계산이 sent 를 먼저 바꾸므로 예외 시 세션 상태가 조용히 어긋난다 | S | 추정(CONFIRMED) | 1.0 | 승인 |
+| R-74 | 코드 | Low | 커서 페이지 응답의 next_cursor 형식이 엔드포인트마다 다르다(/ops/audit 은 빈 문자열) | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-75 | 코드 | Low | 이전 WS 클라이언트의 늦은 onclose가 새 연결의 상태를 'closed'와 demand null로 덮어쓴다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-76 | 아키텍처 | Low | WebSocket 프로토콜(16종 메시지)에 기계 검사되는 언어 간 계약이 없음 | M | 확인됨(CONFIRMED) | 1.0 | 보류 |
+| R-77 | 아키텍처 | Low | '외부 호출은 collector/ais만' 규칙을 네트워크가 강제하지 않음(api·web·db·redis도 인터넷 송신 가능) | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-78 | 아키텍처 | Low | 기동 순서가 수집 계층을 api 건강에 묶고, 소비자 그룹을 '$'로 만들어 선행 엔트리를 버림 | S | 확인됨(PLAUSIBLE) | 1.0 | 승인 |
+| R-79 | 아키텍처 | Low | api가 암묵적 단일 인스턴스인데 ADR·가드에 없음 | S | 확인됨(PLAUSIBLE) | 1.0 | 승인 |
+| R-80 | 아키텍처 | Low | 환경 설정: 비밀값 가드 불일치, 비밀번호 교체 절차 없음, '공개 배포' 프로필 없음 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-81 | 성능 | Low | 전세계 뷰 WS 스냅샷 1.2 MB(원본 JSON) — 설계의 저해상 형식(소수 2자리·필드 6개)보다 크다 | M | 확인됨(CONFIRMED) | 1.0 | 보류 |
+| R-82 | 보안 | Low | 아무 코드도 읽지 않는 csp-nonce meta 태그가 요청별 nonce를 DOM에 노출함 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-83 | 보안 | Low | 수집기 비밀값 가림이 패턴 기반(key=value)뿐이고, 일부 로그 경로는 mask를 거치지 않음 | S | 추정(CONFIRMED) | 1.0 | 승인 |
+| R-84 | 보안 | Low | API 오류·보안 헤더가 일관되지 않음: 방화벽 거절은 RFC 9457이 아니고(Tomcat HTML 페이지 포함), 보안 헤더는 중복 전송됨 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-85 | 보안 | Low | 앱 Dockerfile 의 기반 이미지와 uv 바이너리가 태그로만 고정돼 있다(다이제스트 없음) | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-86 | 보안 | Low | Redis ACL 이 거부 목록 방식(+@all -@dangerous)이라 collector·ais 가 스트림을 DEL 해 api 소비자 그룹을 지울 수 있다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-87 | 보안 | Low | 이름 변경 이관 스크립트가 Redis 관리 비밀번호와 DDL 비밀번호를 docker CLI argv 로 넘긴다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-88 | 보안 | Low | 기본 권한이 새 표마다 api 에 DML 전체를 연다(fail-open). track_point 파티션만 직접 쓰기가 열려 있다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-89 | 보안 | Low | 공개 OpenAPI 가 ops 엔드포인트와 스키마를 공개해 '비인가는 404로 존재 비공개' 설계와 어긋난다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-90 | 보안 | Low | 세션·CSRF 쿠키의 Secure 가 코드에 false 로 박혀 있어 HTTPS 로 전환할 스위치가 없다 | S | 확인됨(CONFIRMED) | 1.0 | 승인 |
+| R-91 | 코드 | Low | DB writer가 결과가 모호한 실패(커밋 뒤 시간 초과)에도 record_run을 다시 실행해 중복 기록·이중 집계가 생길 수 있음 | M | 추정(PLAUSIBLE) | 0.5 | 보류 |
+| R-92 | 코드 | Low | TrackWriter 가 ReceiptBatchQueue(일반화 버전)와 같은 영수증 알고리즘·쓰기 루프를 손으로 다시 구현 — 이미 ShipWriter 와 방어 로직이 어긋났다 | M | 확인됨(CONFIRMED) | 0.5 | 보류 |
+| R-93 | 코드 | Low | 항공기·알림·selected·radar·sigmets 메시지를 검증 없이 캐스팅한다. 원소 하나가 잘못되면 부분 적용 뒤 지도(워커)와 카드가 갈라진다 | M | 확인됨(CONFIRMED) | 0.5 | 보류 |
+| R-94 | 아키텍처 | Low | 운영자 공급자 스위치가 Redis에만 있고, collector가 쓸 수 있는 키를 공유함 | M | 확인됨(CONFIRMED) | 0.5 | 보류 |
+| R-95 | 보안 | Low | 비밀번호를 바꿔도 기존 운영 세션이 무효화되지 않고, 계정 비활성화·세션 강제 종료 수단도 없음 | M | 확인됨(CONFIRMED) | 0.5 | 승인 |
+| R-96 | 보안 | Low | IP 단위 제한이 호스트 전체 한도가 되고, 계정 단위 잠금과 겹쳐 로컬 프로세스가 운영자를 계속 잠글 수 있음 | M | 확인됨(CONFIRMED) | 0.5 | 보류 |
+| R-97 | 보안 | Low | 세션·CSRF 쿠키가 host-only 'localhost', Path=/라서 다른 localhost 포트(SmartCollab 8080/8081 등)와 Next 서버에도 전송됨 | M | 추정(CONFIRMED) | 0.5 | 승인 |
+
+## 유지해야 할 설계(5)
+1. **외부 호출은 한 경로**: collector 의 HttpClient 가 허용 호스트·https 전용·리다이렉트 금지·응답 크기 상한·우선순위 토큰 버킷·보내기 직전 재확인·429 벌점을 한곳에서 처리하고, api 는 외부 호출이 0 이다
+   (근거: `apps/collector/wakeline_collector/http.py:22-33·116-143`, `ratelimit.py:144-222`; api 에 HTTP 클라이언트 0건).
+2. **영수증 기반 at-least-once**: DB 커밋 뒤에만 XACK 하고 자연키로 멱등 저장, 넘침·영구 오류·PEL 트림을 지표로 센다. 종료 순서도 고정(근거: api persist/`ReceiptBatchQueue`·`TrackWriter`, 장애 주입 결과 VERIFICATION #22).
+3. **WS 팬아웃의 공유 직렬화와 세션별 직렬 우편함**: 항공기마다 한 번만 직렬화해 세션별 snapshot·diff 는 조각을 잇기만 하고, 느린 클라이언트가 소비·엔진·다른 세션을 막지 않는다(근거: k6 WS 200 연결 p95 151 ms, 오류 0).
+4. **최소 권한과 컨테이너 강화**: 비밀값은 쓰는 컨테이너에만, read-only 루트·cap_drop ALL·no-new-privileges·비root, 공개 포트는 127.0.0.1:8700 하나, Redis 서비스별 ACL·DB 역할 3개·슈퍼유저 로컬 소켓 전용 — 정책 시험으로 고정(근거: `infra/tests`, Redis ACL 시험 183건).
+5. **데이터 정직성**: 모르면 null·"—", 추정·계산값은 표시, 공백·지연·오래됨을 숨기지 않음(근거: normalize·ais/parse·route 파서, 웹 파서, 알림 "수신 대기 중 — 아직 없음을 뜻하지 않습니다").
+
+## 해당 없음·측정하지 못한 것(검토자 기록)
+- [code-collector] Spring 트랜잭션 경계(TransactionTemplate/@Transactional + JdbcClient) — 해당 없음: 수집기는 Python/asyncpg이고, 여러 문장을 묶는 트랜잭션은 db.py:312 record_run 하나뿐이다. 나머지는 단일 execute/executemany다. 재시도 멱등성은 위 finding에서 다뤘다
+- [code-collector] React effects·렌더링 — 해당 없음: collector/ais에는 UI가 없다
+- [code-collector] 인바운드 인증·인가·CSRF·세션 — 해당 없음: collector/ais는 HTTP 서버나 수신 포트가 없고 외부로만 호출한다. Redis·DB 권한은 ACL과 전용 역할로 나뉘어 있다
+- [code-collector] SQL 주입 — 해당 없음: db.py의 모든 SQL은 $n 바인딩 고정 문장이고 동적 SQL이 없다
+- [code-collector] 부하·p95 지연 목표 대비 검증 — 해당 없음: 부하 시험 금지 제약이 있고, 기준선 summary.tsv에 collector 지연 지표가 없다. 단일 실행 CPU 시간만 따로 측정했다
+- [code-collector] 좌표 정밀도 — 결함 없음: 제공 URL은 .4f(약 11 m), AIS는 소수 6자리 반올림이며, 스트림에는 float을 그대로 싣는다
+- [code-api] JPA/ORM 지연 로딩·N+1: 해당 없음 — JPA 미사용(build.gradle.kts 에 data-jpa 없음), 모든 접근이 JdbcClient/JdbcTemplate 명시 SQL.
+- [code-api] @Transactional 프록시 경계(자기 호출·private 메서드 무시): 해당 없음 — @Transactional 사용 0건. 트랜잭션은 TransactionTemplate 3곳(SettingsService.update/seedFromEnv, OpsController.aggregate/toggleProvider, MaintenanceJobs.aggregateDay)에서 명시적으로만 연다(모두 확인, 감사 행과 같은 트랜잭션).
+- [code-api] 오프셋 페이지네이션의 깊은 페이지 비용·중복: 해당 없음 — OFFSET 사용 0건, 목록은 id 커서(/alerts/history·/ops/runs·/ops/audit) 또는 고정 상한.
+- [code-api] 가상 스레드 pinning(synchronized 안 블로킹 I/O): 해당 없음 — Java 25(JEP 491 이후 synchronized 가 캐리어를 고정하지 않음). SettingsService.mirror·RegionSettings.refreshNow·WsHub.statusJson 의 synchronized 안 I/O 도 pinning 대상 아님.
+- [code-api] Mock 위주 테스트: 대체로 해당 없음 — Mockito 는 1개 파일(RegionSettingsTest, 호출 2회)뿐, 나머지는 가짜 구현·Testcontainers(PostgreSQL/Redis) 동작 검증. 단 FSM 테스트가 운영에서 도달 불가한 분기를 검증하는 문제는 finding 으로 보고.
+- [code-api] api 기동 시 Flyway 경합·DDL 권한: 해당 없음 — api 는 spring.flyway.enabled=false, 스키마 변경은 --migrate 1회성 프로세스(WakelineApplication.migrate)만 한다.
+- [code-api] api 의 외부 공급자 호출 타임아웃·재시도: 해당 없음 — api 는 외부 호출이 없다(ADR-006, WakelineApplication 주석). 외부 호출은 collector/ais 소관.
+- [code-web] 트랜잭션 경계(Spring TransactionTemplate/@Transactional + JdbcClient): 해당 없음. apps/web은 DB에 직접 접근하지 않고 같은 출처 REST(lib/api.ts:2-10)와 WS(lib/ws.ts:65-67)만 호출한다.
+- [code-web] Python asyncio task/lock: 해당 없음. web은 TypeScript다. 대신 동시성을 Web Worker 메시지, React effect, WS 재연결 경합으로 바꿔 점검했다(F6, F10).
+- [code-web] 타이머·워커·WebSocket·지도 리스너 누수: 점검했으나 누수 없음. MapView.tsx:332-347이 visibilitychange, moveTimer, krTimer, apTimer, rAF, popup, ws, worker, map을 모두 정리한다. ReplayMap.tsx:72, clock.ts:31-34(마지막 구독자가 빠지면 interval 해제), 요청 취소는 AircraftSearch.tsx:61, ShipCard.tsx:55, MapView.tsx:522·582에 있다.
+- [code-web] 무한 증가 배열/맵: 점검했으나 결함 없음. track.ts:11(5,000), ships.ts:126(MAX_SHIPS 10,000)·713(항적 5,000)·729(공백 200), MapView.tsx:38(보류 500), ws-protocol.ts:70-86(≤16), server-clock.ts:17(표본 8)로 모두 상한이 있다.
+- [code-web] HTML 주입 싱크: 해당 없음. dangerouslySetInnerHTML, innerHTML, eval 검색 결과 0건이다. 툴팁은 createElement와 textContent로 만들고(tooltip.ts:150-161), attribution HTML은 고정 목록에 esc를 적용한다(attribution.ts:52-55).
+- [code-web] 브라우저의 비밀값·외부 공급자 호출: 해당 없음. next.config.ts:4-6이 NEXT_PUBLIC_* 변수가 있으면 빌드를 거부한다. 브라우저가 부르는 외부 호스트는 CSP 허용 목록(proxy.ts:13-14)의 지도·레이더 타일뿐이다. 다만 지도 스타일 의존성은 F1에 적었다.
+- [architecture] 서비스 간 동기 RPC의 타임아웃·서킷브레이커(api↔collector): 해당 없음. 두 프로세스는 Redis Streams·해시로만 비동기 통신하고 api에 HTTP 클라이언트가 0건입니다(apps/api/src/main에서 RestClient/WebClient/HttpClient를 grep한 결과 없음). 외부 공급자 호출의 타임아웃·백오프·폴백은 collector에 있고 VERIFICATION #10·#22로 검증됐습니다.
+- [architecture] 분산 트랜잭션·사가: 해당 없음. DB가 하나이고 교차 저장소 쓰기는 운영 스위치 하나뿐입니다(감사 행 먼저 → Redis 쓰기 실패 시 롤백·되돌리기, OpsController.java:92-104). 그 스위치의 원천 문제는 findings에 따로 적었습니다.
+- [architecture] Redis 볼륨 백업: 대체로 해당 없음. Redis 내용은 파생·일시 상태(MAXLEN 스트림, TTL 캐시, 세션, 일일 예산 카운터, 60 s마다 DB에서 다시 미러되는 설정 — StartupMirror.java:39-44)라 DB 백업만으로 복원됩니다. 예외는 Redis에만 있는 공급자 스위치(findings 참조)입니다.
+- [architecture] 서버 측 캐시 무효화(리버스 프록시·CDN 캐시): 해당 없음. edge nginx에 proxy_cache가 없고(nginx.conf) Cache-Control/ETag는 브라우저 캐시용입니다. 앱 내부 캐시(노선 5 s 메모리 + Redis TTL 30분, 스냅샷 버전 ETag)는 TTL·버전 키로 스스로 무효화됩니다.
+- [architecture] 다중 리전·고가용성 복제·블루/그린 배포: 해당 없음. 단일 Mac의 로컬 스택이고(README '로컬 실행', compose 127.0.0.1 바인딩) 운영 배포가 없습니다(BASELINE.md §3). 스키마 되돌리기는 ADR-014 부록 B(V8 SQL)에 있습니다.
+- [architecture] chaos 재실행: 과제 제약상 실행하지 않았습니다. 장애 격리 판단은 VERIFICATION #22·PERF §4의 기존 결과와 코드 경로 추적에 근거합니다.
+- [performance] N+1 질의: 해당 없음 — 목록 응답은 모두 단일 질의다(airports 는 LATERAL 1문장·22행, alerts/history 는 JOIN 1문장, ships 는 메모리). 상세는 고정 2–3 질의(ship 상세 find + lastPositionAt 0.73 ms, ship 항적 track + gap 2개 48 ms/1.3 ms). 반복문 안 질의는 없다. AlertRepository.persist 는 이벤트마다 1문장이지만 비동기 순서 큐라 요청 경로가 아니다(wakeline_persist_queue 0).
+- [performance] ORM 지연 로딩·엔티티 그래프: 해당 없음 — JPA 를 쓰지 않고 JdbcClient·JdbcTemplate 으로 SQL 을 직접 쓴다.
+- [performance] 웹 폰트·이미지 최적화: 해당 없음 — 시스템 폰트만 쓴다(globals.css:20-21, 폰트 요청 0). next/image 를 쓰지 않는다(images.unoptimized). 이미지는 외부 타일과 api 레이더 PNG(max-age 3600)뿐이다.
+- [performance] 정적 자산 압축·HTML TTFB: 문제 없음 — edge gzip 이 geo+json·JS 에 적용된다(nginx.conf:38-40), _next/static 은 immutable 1년, HTML TTFB 10–52 ms.
+- [performance] REST 지연(스냅샷·SIGMET·상태): 목표 충족이라 새 발견 없음 — BASELINE k6 p95 9.4/10.9/13.7 ms(목표 ≤ 80/300 ms). 규칙상 부하 시험은 다시 돌리지 않았다.
+- [performance] 재생 질의 계획: 목표 충족 — EXPLAIN 에서 파티션 프루닝 + BRIN(ts) 비트맵, 20 ms(데워짐)/90 ms(식음). 목표 p95 ≤ 300 ms. BRIN 이 손실 범위라 2,491 블록을 읽지만 예산 안이다.
+- [performance] Redis 캐시·스트림 메모리 세부: 측정하지 않음 — redis-cli 로 보려면 ACL 비밀번호를 argv 로 넘겨야 해서(비밀값 규칙) 조회하지 않았다. 컨테이너 메모리 34 MiB/512 MiB, api 지표 stream_lag 0·unread_trimmed 0 만 확인했다.
+- [performance] NFR-04 지도 조작 ≥ 30 fps: 측정 불가 — headless 는 SwiftShader 소프트웨어 GL 이다(프로파일에서 MapLibre _setupPainter 1.9 s). 실제 GPU 브라우저에서 따로 재야 한다.
+- [performance] 외부 공급자 지연·한도: 해당 없음(규칙상 호출 금지) — PERF.md §2–3 의 기존 측정값만 참고했다. Playwright 측정 때 외부 요청(RainViewer 타일 26건, OpenFreeMap 스타일)은 차단하고 기록만 했다.
+- [performance] 보안 능동 시험(격리 스택 8701): 성능 영역이라 하지 않았다 — 개발 스택에는 GET·WS 구독만 낮은 빈도로 보냈다.
+- [security-app] HSTS·Secure 쿠키: edge가 127.0.0.1:8700에만 바인딩된 로컬 HTTP 전용이라 해당 없음. 다만 HTTPS로 배포하면 SecurityConfig.java:88,99의 secure(false) 하드코딩을 설정값으로 바꿔야 함
+- [security-app] 수평 권한 상승: 사용자별 리소스가 없고 역할이 OPS 하나라 해당 없음. 수직 권한은 확인함: /api/v1/ops/** 익명 GET·POST가 404/403이고, //·;·/./·%2F·대소문자 변형도 모두 400/404(재현)
+- [security-app] WS 메시지별 인가: WS는 공개 읽기 전용이라 권한이 필요한 메시지가 없음. 대신 입력 검증을 확인함: hex/mmsi 정규식, bbox isFinite, 메시지 4 KB 초과 → 1009, hello 5 s 없음 → 1002, 20건/10 s, 세션당 새 수요 키 6개/60 s(DemandService)
+- [security-app] SQL 인젝션: 검사했으나 발견 없음. 모든 쿼리가 JdbcClient 명명 파라미터를 쓰고, 동적 식별자는 상수 배열뿐(MaintenanceJobs.java:53). 검색 LIKE 입력은 ^[A-Z0-9-]+$로 제한됨
+- [security-app] 명령 인젝션: ProcessBuilder·Runtime.exec·subprocess·child_process 사용 0건(api·collector·web)
+- [security-app] 경로 조작: api는 파일을 서빙하지 않고, 수집기 raw_store 경로는 내부 상수·시각으로만 만듦. Tomcat/Spring 방화벽이 ..·//·; 경로를 거절함(400 재현)
+- [security-app] SSRF(Next 이미지 최적화): images.unoptimized라 /_next/image 경로 없음 → 404(재현)
+- [security-app] 파일 업로드·XML(XXE)·사용자 입력 역직렬화: 해당 기능 없음. 세션 역직렬화는 허용 목록 필터로 제한됨
+- [security-app] 브라우저 비밀값: NEXT_PUBLIC_ 사용을 빌드에서 금지(next.config.ts:4-6)하고, web 컨테이너 env에 비밀값이 없으며, 정적 번들 grep도 0건
+- [security-app] 기준선 gitleaks 2건·trivy secret 3건: 모두 테스트 픽스처(test_ais_server.py, test_masking.py)나 결과 파일 자체라 오탐
+- [security-infra] TLS 인증서·HSTS 운영: 해당 없음. edge 가 127.0.0.1:8700 에만 바인딩되고 Host 허용 목록(localhost·127.0.0.1·[::1], 그 밖은 421)이 있는 로컬 전용 스택이라 평문이 호스트 밖으로 나가지 않는다(쿠키 Secure 스위치만 Low 로 기록)
+- [security-infra] 앱 의존성 트리(npm audit·pip-audit): 조치할 것 없음. baseline 에서 npm audit 0건, pip-audit 0건/26 패키지이며, 이미지 스캔의 npm·pip 계열 취약점은 앱이 아닌 기반 이미지의 도구에서 나왔다
+- [security-infra] 이미지 서명·SBOM 증명·레지스트리 푸시: 해당 없음. 이미지를 로컬(:local 태그)에서만 빌드·실행하고 레지스트리로 배포하지 않는다
+- [security-infra] 비밀값 관리 서비스(KMS·Vault)와 자동 로테이션: 해당 없음. 1인 로컬 스택에서 .env 0600 과 컨테이너별 주입으로 관리하며, 이력·로그·번들·이미지 노출 0건을 확인했다
+- [security-infra] 오류 응답의 내부 정보 노출: 확인했으나 문제 없음. 404·400·비인가 ops 요청이 모두 problem+json 일반 문구를 돌려주고(include-message·stacktrace never), 500 도 'unexpected error' 만 준다(ProblemAdvice.java:84). nginx 는 server_tokens off 이고, 서빙 JS 에 소스맵이 없다
+- [security-infra] 호스트의 *:3000·*:8080 수신 소켓: Wakeline 이 아니다(local-macro-dashboard-v2 컨테이너)라서 이 영역의 범위 밖이다
+- [uiux] 라이트/다크 테마 간 일관성 — 해당 없음: 단일 다크 테마로 설계됐고(globals.css:4-22) 테마 전환이 없다
+- [uiux] 다국어(로케일) 전환 — 해당 없음: html lang=ko 단일 로케일이고 전환 UI가 없다(용어 혼용 문제는 finding으로 따로 다룸)
+- [uiux] 운영 화면 실데이터 렌더링·실제 설정 저장·로그아웃 — :8700 로그인·쓰기 금지 제약 때문에 미검증. 로그인·설정 폼은 서버 응답 모양(ProblemAdvice/Problem)을 흉내 낸 Playwright mock으로만 확인했고 서버로는 보내지 않음(가드가 막은 쓰기 요청 1건도 전송 전에 abort)
+- [uiux] 예측(PREDICTED) 알림의 근거 카드·10분 예측선 흐름 — 부분 검증: 항공기 선택은 집중 추적(외부 공급자 조회)을 일으키므로 선택을 3회로 제한했고, 관측 알림 근거만 열어 봄. 예측 행 표시(보라 점선 ETA)는 목록 캡처로만 확인
+- [uiux] 모바일 Lighthouse·실제 GPU 성능 수치 — 해당 없음(이 영역은 캡처·DOM 측정). 성능 수치는 기준선 perf/results/review-baseline/lh_root.json(데스크톱 프리셋)만 인용
+- [uiux] isolated demo 스택(:8701) — 사용하지 않음: 읽기 전용 GET·WS 구독과 mock으로 충분해 기동·정리 없음(docker ps 기준 wakeline-e2e 미기동 상태 유지)
+
+## 발견 사항 상세
+### R-01 · 코드 · High — WS 연결·워커·폴링이 외부 지도 스타일(openfreemap)이 로드된 뒤에야 시작된다. 타일 호스트가 막히면 상황판 전체가 멈춘다
+
+- **근거** apps/web/components/MapView.tsx:284-301: client.connect(), worker.postMessage({type:'start'}), subscribeViewport(), pollKr(), pollAirports()가 모두 map.on('load') 안에 있다. lib/maplayers.ts:7 STYLE_URL='https://tiles.openfreemap.org/styles/dark'. MapLibre는 Map.loaded()가 참일 때만 'load'를 낸다. Map.loaded()는 style, source TileJSON, sprite가 모두 로드돼야 참이다(node_modules/maplibre-gl/dist/maplibre-gl-dev.mjs:27491, 15131, 27585-27587). 재현: Playwright로 http://127.0.0.1:8700/ 을 열고 localhost가 아닌 요청만 abort했다. 20 s 뒤 결과: websockets_opened=[], conn 배지 'WS CONNECTING', aircraft '—', lag 'NO DATA', 알림 패널 '알림 목록 수신 대기 중', console 'AJAXError: Failed to fetch (0): https://tiles.openfreemap.org/styles/dark'. 배경지도 실패를 알리는 UI는 없다.
+- **검증(반박 시도)** CONFIRMED — 코드: MapView.tsx:283-301 에서 worker.postMessage({type:'start'}), client.connect(), subscribeViewport(), pollKr, pollAirports 가 모두 map.on('load') 안에 있다. MapView/ReplayMap 어디에도 map.on('error') 가 없다(grep 0건). maplibre-gl 6.11.2 dist/maplibre-gl-dev.mjs:27585-27587 은 this.loaded() 가 참일 때만 'load' 를 내고, :27491 loaded() 는 style.loaded() 를 요구한다. 재현(Playwright, 스크래치 f0.mjs·f0c.mjs, GET 과 WS 만 사용): 127.0.0.1 밖의 요청을 모두 abort 하고 15 s 기다리면 websockets=[], 'WS CONNECTING', AIRCRAFT —, NO DATA, '알림 목록 수신 대기 중', console 'AJAXError: Failed to fetch (0): https://tiles.openfreemap.org/styles/dark'. 대조군: 같은 차단에서 스타일 URL 하나만 로컬 최소 스타일(background 레이어)로 채우면 ws://127.0.0.1:8700/ws/v1 이 열리고 'WS OPEN · AIRCRAFT 177 · SIGMET 116 active' 가 나온다. 외부 스타일 호스트 하나 때문에 상황판 데이터가 전부 멈춘다는 인과가 확인됐다. 외부 장애가 있어야 나타나는 조건부 문제라 Critical 이 아니라 High 로 둔다.
+- **같은 문제의 다른 관찰(병합)** [uiux] 외부 배경지도(OpenFreeMap) 스타일을 못 받으면 WS가 아예 연결되지 않아 상황판 전체가 'WS CONNECTING' 상태로 멈춘다 — apps/web/components/MapView.tsx:284-292: client.connect()와 subscribeViewport()가 map.on("load") 안에서만 호출된다. 재현(review-v1/s5_nobasemap.mjs): tiles.openfreemap.org 요청만 Playwright에서 막고 :8700/ 을 열면 20 s 뒤에도 websocket 이벤트가 0건이고, 상태 바는 'WS CONNECTING'·'NO DATA', 알림 패널은 '0 inside · 0 predicted · 알림 목록 수신 대기 중'이다. 콘솔에는 'AJAXError: Failed to fetch (0): https://tiles.openfreemap.org/styles/dark'만 찍히고 화면에는 원인이 나오지 않는다. 스크린샷: /private/tmp/claude-501/-Users-jinyoung-Projects/75437490-c65b-4783-9ac0-e224c92a9bab/scratchpad/review-v1/ui/06-basemap-blocked-20s.png. 정상일 때도 WS는 탐색 후 2,098 ms가 지나 스타일이 로드된 뒤에야 열린다(
+- **문제와 영향** 제3자 배경지도 호스트가 막히거나 느리면 우리 서버가 정상이어도 알림, 항공기, 상태 바, SIGMET 목록이 하나도 오지 않고 '연결 중'에 머문다. 위험기상 알림 기능이 정지된다. 정상일 때도 첫 데이터 수신이 외부 style·TileJSON·sprite 다운로드 뒤로 밀린다.
+- **개선안** 워커 생성, client.connect(), subscribeViewport(), pollKr, pollAirports를 effect 본문으로 옮긴다. subscribeViewport에 필요한 map.getBounds()는 지도 생성 직후부터 쓸 수 있다. 지도에 그리는 작업만 기존 onReady 큐에 남긴다. map.on('error')로 스타일 실패를 잡아 '배경지도를 불러오지 못함 — 데이터는 계속 수신' 배너를 띄운다. 가능하면 배경만 있는 로컬 최소 스타일로 setStyle해서 addBaseLayers 레이어가 계속 그려지게 한다. 이 수정으로 재연결이 빨라지면 F10(늦은 onclose 경합) 창이 넓어지므로 함께 고친다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-02 · 성능 · High — 상황판(/) 첫 화면 JS 약 612 KiB(gzip)로 NFR-04 400 KB 초과 — MapLibre 공용 모듈 145 KiB 를 두 번 받는다
+
+- **근거** Playwright 측정(1440×900, SwiftShader, 외부 타일 차단·스타일 스텁): HTML 청크 10개 179 KiB + 40za85f3ponsx.js 9 KiB + 2v5dqe5g89ze4.js 273 KiB(원본 1,028 KB = maplibre-gl.mjs+shared 번들) + /maplibre/maplibre-gl-shared.mjs 145 KiB(원본 516 KB) + 워커 약 6 KiB. shared.mjs 의 긴 식별자 573개 중 552개(96 %)가 2v5dqe5g89ze4.js 안에 있다 → 같은 코드를 두 번 받는다. scripts/copy-maplibre-worker.mjs 가 public/ 로 복사하고 lib/maplayers.ts:9 가 워커 URL 로 쓴다. /maplibre/* 는 `Cache-Control: public, max-age=0`(_next/static 은 immutable). LCP 2,812 / 3,044 ms(LCP 요소 = DIV.maplibregl-ctrl-attrib-inner), Lighthouse 3.1 s, CLS 0.133(LH: aside … div.min-h-0 알림 목록)·실측 0.048–0.187. CPU 프로파일: MapLibre _setupPainter 1,924 ms + gy 1,373 ms(SwiftShader 셰이더 컴파일), 앱 청크 224 ms. Lighthouse unused-javascript 163 KiB.
+- **검증(반박 시도)** CONFIRMED — 확인됨. review-baseline/lh_root.json network-requests 의 Script transferSize 합계는 628,302 B(613.6 KiB)다. 이 가운데 2v5dqe5g89ze4.js 279,899 B와 /maplibre/maplibre-gl-shared.mjs 149,252 B가 있다. GET으로 직접 받아 봐도 2v5dqe5g89ze4.js 원본 1,028,073 B / gzip 278,972 B, shared.mjs 원본 515,924 B / gzip 148,023 B다. 중복도 확인됐다. maplibre-gl.mjs 가 ./maplibre-gl-shared.mjs 를 import 하고 Turbopack이 이를 메인 청크에 함께 묶는다. 고유 문자열('Unimplemented type' 1/1, 'unknown property' 7/7, 'Expected value to be of type' 2/2)이 양쪽에 같은 횟수로 있다. 워커(maplibre-gl-worker.mjs)는 public 경로의 shared.mjs 를 따로 import 한다. /maplibre/* 는 `Cache-Control: public, max-age=0`, _next/static 은 immutable이다. LH 기준 LCP 3.1 s(요소 div.maplibregl-ctrl-attrib-inner), CLS 0.133(aside div.min-h-0 알림 목록), unused-javascript 163 KiB. 워커와 shared를 빼도 약 465 KiB라 NFR-04 '첫 화면 JS ≤ 400 KB gzip' 을 넘는다. 성능 목표를 크게 놓친 경우라 High를 유지한다. 단 TBT와 LCP는 SwiftShader 영향이 커서 실제 GPU 브라우저에서 다시 재야 한다.
+- **문제와 영향** 첫 방문 전송량과 파싱 비용이 예산의 1.5배다. 공용 모듈이 메인 번들과 워커에 한 번씩 따로 내려와 캐시를 나눠 쓰지 못한다. public 경로라 방문할 때마다 재검증 요청이 나간다. 알림 목록이 늦게 채워지며 레이아웃이 밀린다(CLS > 0.1). TBT·LCP 대부분은 headless 소프트웨어 GL 때문에 커진 값이라 실제 GPU 브라우저 값은 따로 재야 한다.
+- **개선안** (1) 메인 스레드도 같은 public ESM 을 쓴다: `import(/* turbopackIgnore: true */ '/maplibre/6.11.2/maplibre-gl.mjs')` → 워커가 캐시된 shared.mjs 를 재사용해 약 −145 KiB(612 → 약 466 KiB, 추정 — 번들러 지원 확인 필요). (2) 버전을 넣은 경로(/maplibre/6.11.2/…)로 복사하고 edge 에서 `max-age=31536000, immutable` 로 준다. (3) 알림 목록·상태 표시줄에 최소 높이나 자리표시를 둬 CLS 를 0.1 아래로 낮춘다. (4) MapLibre 만으로 gzip 273 KiB 이므로 NFR-04 를 근거와 함께 480 KiB 로 다시 잡거나, 첫 화면에 안 보이는 카드(AircraftCard·ShipCard·EvidenceCard·KrRadarPanel)를 동적 import 로 나눈다. LCP 는 실제 GPU Chrome 에서 5회 중앙값으로 잰다(NFR-04 측정 방법).
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-03 · 코드 · Medium — KMA 레이더: 목록에 있으나 아직 받을 수 없는 프레임을 영구 제외해 프레임이 빠짐 (KST 09-28 기준 7.7%)
+
+- **근거** apps/collector/wakeline_collector/jobs/kma_radar.py:166-171 (ValueError 'not gzip/file not exist' → _mark_bad(tm), 재시도하지 않음), :42-47 select_candidates (저장된 최신 tm보다 새 것만 고르므로 빠진 프레임을 다시 채우지 않음), :151 (그날 KST 목록만 조회), providers/kma_radar.py:19 (정규식 RDR_CMP_([A-Z]+)_[A-Z]+_ 이 목록의 변형 이름을 가리지 않음). 실측(읽기 전용): quality_event에 'file not exist (RDR_CMP_HSR_PUB_202609280115.bin.gz)' 등 14건. 원천 보관본 헤더를 풀어 보면 09-28 00:00–15:05 KST 동안 받은 프레임은 168개로, 5분 간격 기대치 182개보다 14개 적음. 빠진 tm(01:15·01:20·01:35·01:45·09:35·09:45·09:50·10:05·10:15·10:25·10:30·10:40·10:45)이 quality_event와 겹침. 자정 경계: 00:02 KST 실행은 records_in=0(00:00 프레임이 아직 없음), 00:07에 1건. 보관본에서 09-27 23:50 다음이 09-28 00:00이라 23:55 KST 프레임이 없음
+- **검증(반박 시도)** CONFIRMED — 코드 추적: kma_radar.py:166-171에서 ValueError('not gzip: # file not exist ...')를 _mark_bad로 처리하고, select_candidates(:42-47)는 latest < tm인 것만 고르고 [-MAX_PER_CYCLE:]로 자름. DB 조회(읽기 전용): quality_event rule='kma_radar_parse' 14건, 모두 'file not exist (RDR_CMP_HSR_PUB_...)'(01:15,01:20,01:35,01:45,06:50,09:35,09:45,09:50,10:05,10:15,10:25,10:30,10:40,10:45 KST). collector 컨테이너 안에서 원천 보관본 헤더를 풀어 봄: 09-28 00:00–15:05 KST에 받은 프레임 168개, 기대 182개. 빠진 tm은 01:15,01:20,01:35,01:45,06:30,09:35,09:45,09:50,10:05,10:15,10:25,10:30,10:40,10:45. 제보자 목록에는 06:30이 빠져 있음. 06:30은 오류(ReadTimeout) 뒤 06:53 실행이 06:35–06:50 4개만 고르면서 [-4:]에 잘려 영구히 빠짐(:47). '다시 받지 않음'을 뒷받침하는 추가 증거. 일시 오류라는 직접 증거: 06:50은 06:53:2x KST에 file not exist를 받았는데, 보관본에 fetched 21:55:13Z(=06:55:13 KST) 파일로 있음. 06:55 실행은 재기동 직후로 보이며 _bad가 비어 있어 다시 받을 수 있었음. 자정: 23:50 프레임은 23:57:33 KST에 받았고 다음은 00:00(00:07 실행)이며 23:55가 없음. radar_kr 실행 00:02는 records_in=0이었음. 목록 픽스처는 HSR_EXT 이름을 씀(tests/test_kma_radar.py:62). 레이더 애니메이션의 일부가 빠지는 문제이므로 Medium이 맞음
+- **문제와 영향** 한국 레이더 애니메이션에 구멍이 반복해서 생긴다. 목록에는 올라왔지만 바이너리(PUB)가 아직 없는 시각을 요청하면 'file not exist'를 받는데, 이것을 '다시 받아도 같다'고 보고 제외한다. 게다가 최신보다 오래된 프레임은 후보에서 빠지므로 다시 받을 길이 없다. 실패한 요청마다 kma_radar 예산도 1씩 쓴다. KST 자정 직전 프레임(23:55)은 다음 실행이 새 날짜 목록만 보므로 매일 빠질 수 있다(자정 부분은 추정)
+- **개선안** 'file not exist'는 목록에 있는 tm이면 일시 상태로 본다. 예: tm마다 N회(또는 15분)까지만 재시도하고 _bad는 해석 실패(_BadFrame·ResponseTooLarge)에만 쓴다. 후보를 '저장 창(최근 12프레임) 안에서 아직 없는 tm'으로 넓혀 뒤늦게 생긴 프레임도 채운다. KST 00:00–00:15에는 전날 목록도 함께 조회한다. 이 일시 오류에 대한 단위 시험을 추가한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-04 · 코드 · Medium — 선택 항공기 항적이 수신 공백(최대 950 s·288 km)을 실선으로 이어 관측한 경로처럼 그린다
+
+- **근거** apps/web/lib/track.ts:32-58: appendTrackPoint, mergeTrack, trackFeatureCollection은 시간 간격과 관계없이 연속한 두 점을 실선 선분 하나로 만든다. 이 선분은 MapView.tsx:577,593을 거쳐 maplayers.ts:98-101의 track-line(끝점 고도색 실선)으로 그려진다. 선박 항적은 15분 틈과 AIS 공백에서 선을 끊고 회색 점선과 '기록 없음 hh:mm–hh:mm' 라벨을 붙인다(ships.ts:710, 897, 937-939, 961-975). 측정: GET /api/v1/aircraft/06a10a/track에서 05:48:37Z→06:04:27Z 사이 950 s 공백, 두 점 거리 288 km. 780524는 732 s, 125 km, 고도 25075→12800 ft. 표본 12개 중 2개에 10분 넘는 공백이 있었다.
+- **검증(반박 시도)** CONFIRMED — lib/track.ts:49-58 trackFeatureCollection 은 시간과 관계없이 연속한 모든 점 쌍으로 선분을 만든다. appendTrackPoint(:32-39)에도 시간 틈 검사가 없다. 이 선분은 maplayers.ts:97-101 track-line 에 고도색 실선(line-dasharray 없음)으로 그려진다. 선박은 ships.ts:710 TRACK_BREAK_MS=15분, :937-939 appendShipTrack, :961-975 shipTrackFeatures 가 kind 'gap' 과 '기록 없음 hh:mm–hh:mm' 라벨로 선을 끊는다. 직접 GET 한 결과: /api/v1/aircraft/06a10a/track 은 115점이고, 2026-09-28T05:48:37Z→06:04:27Z 사이 950 s 공백의 두 점 거리가 288 km(39100→39100 ft)였다. 780524 는 05:27:08Z→05:39:20Z 사이 732 s, 125 km, 25075→12800 ft. api 응답도 분할 없는 LineString 하나다(geometry LineString 115좌표, properties 에 gap 정보 없음).
+- **문제와 영향** 관측하지 않은 수백 km 구간이 고도색 실선으로 그려져 실제 비행 경로처럼 읽힌다. 소유자 규칙(모르는 값을 데이터처럼 보이지 않기) 위반이다. 같은 지도에서 선박과 항공기 항적의 표시 규칙도 다르다.
+- **개선안** 항공기 항적도 구간으로 나눈다. 시간 간격이 임계값을 넘으면 새 구간을 시작한다. 임계값은 수집 주기에 근거한 문서화된 상수로 두거나, api가 track properties로 주게 한다. 구간 사이는 선박과 같은 회색 점선에 '수신 없음 hh:mm–hh:mm' 라벨을 붙인다. shipTrackFeatures의 구간·연결 생성 로직을 공용 함수로 뽑아 두 곳에서 쓴다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-05 · 코드 · Medium — 재생 지도를 줌 약 3.7 이하로 축소하면 422 BBOX_TOO_LARGE가 난다. 그 뒤 이전 프레임이 새 시각 라벨 아래 남는다
+
+- **근거** apps/web/components/ReplayMap.tsx:28 minZoom 2, :34는 화면 전체 bbox를 보낸다. api 면적 상한은 2500 sq°다(application.yml:75, domain/Bbox.java:21-23). 재현: GET /api/v1/replay?at=2026-09-28T05:54:11Z&bbox=90.000,10.000,170.000,60.000 → 422 {code:'BBOX_TOO_LARGE', detail:'bbox area 4000 sq° exceeds 2500'}. 1400×900 화면 계산으로는 약 줌 3.7 이하에서 상한을 넘는다. 오류가 나면 page.tsx:37-38은 frame을 그대로 두고, :60은 새 at을, :61은 이전 프레임 대수를 보인다. 사용자가 보는 안내는 서버 detail 원문뿐이다.
+- **검증(반박 시도)** CONFIRMED — ReplayMap.tsx:28 minZoom 2, :34 emit 는 subscriptionBbox(..., Infinity, ...) 를 면적 제한 없이 보낸다(lib/viewport.ts:15-24 에 면적 절단 없음). 주석(:33)도 상한을 넘을 수 있다고 인정한다. application.yml:75 max-bbox-area-sqdeg 2500, Bbox.java:21-23. 재현: GET /api/v1/replay?at=<30분 전>&bbox=90.000,10.000,170.000,60.000 → HTTP 422 {"detail":"bbox area 4000 sq° exceeds 2500","code":"BBOX_TOO_LARGE"}. 1400×820 화면, 중심 위도 36.5 에서 계산하면 줌 3.7 에서 2681 sq°, 3.8 에서 2336 sq° 이므로 약 3.75 아래에서 상한을 넘는다. 오류 경로 page.tsx:38 은 setErr 만 하고 frame 을 유지한다. :60 은 슬라이더 at, :61 은 이전 frame 의 대수를 보인다. 서버 detail 은 빨간 글씨로 표시된다(:64).
+- **문제와 영향** minZoom 2까지 축소할 수 있지만 줌 약 3.7 이하에서는 프레임이 더 오지 않는다. 지도에는 이전 영역·이전 시각의 항공기가 새 시각 라벨 아래 남아 시각과 데이터가 어긋난다.
+- **개선안** 요청 bbox를 화면 중심 기준으로 최대 면적 이하로 잘라 보내거나, minZoom을 한도에 맞춘다. 오류나 미로딩 상태에서는 frame을 비우거나 흐리게 하고 '요청 영역이 너무 넓음 — 확대하세요'처럼 안내한다. 헤더에는 응답의 frame.at도 함께 표시한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-06 · 성능 · Medium — 보존 삭제가 72 h 가 아니라 99–123 h 를 남기고 알림은 하루 약 50 MB 씩 영구 누적 — NFR-09(DB ≤ 10 GB) 초과 경로
+
+- **근거** V2__partition_functions_security_definer.sql:31 · V5__ships.sql:67 `cutoff := ((now() AT TIME ZONE 'UTC') - make_interval(hours => retention_hours))::date - 1` + `< cutoff` 이면 DROP, MaintenanceJobs.java:62-66 는 03:00 UTC 에 하루 1회. 같은 식을 psql 로 계산: 2026-10-02 03:00 실행 → cutoff 2026-09-28, 남는 가장 오래된 행의 나이 4 d 03 h(99 h), 다음 실행 직전 123 h — 일 파티션 5개(+당일) 유지. 실측 증가율: track_point_20260928 237 MB/6.36 h(≈0.9 GB/일), track_point_20260927 751 MB/약 15.6 h(≈1.15 GB/일), ship_position_20260928 176 MB/6.36 h(≈0.66 GB/일), alert_event 46 MB·47,630행/21.9 h(≈48k행·50 MB/일, ADR-007 로 영구), track_point_1m ≈17 MB/일×30일. 현재 DB 1,346 MB. PERF.md §3 은 선박만 72 h 1.9 GB 로 추정하고 track_point 용량은 없다. 원천 보관 /data/raw 519 MB/22 h 도 별도 디스크.
+- **검증(반박 시도)** CONFIRMED — 확인됨. V2__partition_functions_security_definer.sql:31, V5__ships.sql:67 둘 다 `cutoff := (...- make_interval(hours => retention_hours))::date - 1` 이고 `< cutoff` 인 파티션만 DROP한다. MaintenanceJobs.java:62-66 은 하루 한 번 03:00 UTC에만 돈다. psql로 확인: 2026-10-02 03:00 실행이면 `-1` 이 있을 때 cutoff=2026-09-28, 없을 때 09-29. 그래서 가장 오래된 행은 99 h, 다음 실행 직전에는 123 h 가 된다. ADR-007과 설계서 NFR-09는 72 h 다. 실측(06:29 UTC): DB 1354 MB, track_point_20260927 752 MB(07:19–24:00), track_point_20260928 242 MB/6.5 h, ship_position_20260928 180 MB/6.5 h, alert_event 47 MB·48,547행/22 h(ADR-007에 따라 영구 보존). 설계서 7.2는 '72 h ≈ 4.5 GB', NFR-09는 'DB ≤ 10 GB(로컬)', PERF.md §3은 선박만 1.9 GB로 추정한다. 수치는 모두 재현됐다. 다만 10 GB 초과는 현재 수집률을 이어 붙인 예측이고, 초과 보존은 데이터 손실이나 장애가 아니다. 문서화된 보존 정책과 다르고 용량 여유를 깎는 문제라 High가 아니라 Medium으로 내린다. `-1` 을 빼도 알림이 영구 보존이라 장기적으로는 10 GB에 닿는다. 알림 보존 기간은 제품 결정이 필요하다는 제안 방향은 맞다.
+- **문제와 영향** 최대 보유량 ≈ 5.1일 × (1.0 + 0.66) GB ≈ 8.5 GB + 1분 요약 0.5 GB + 알림 누적(월 1.5 GB) → 수집을 계속하면 몇 주 안에 NFR-09 의 10 GB 를 넘는다(추정 — 측정한 일 증가율로 계산). 설계서 7.2 는 72 h ≈ 4.5 GB 로 잡았는데 실제 보존 창이 1.4–1.7배다.
+- **개선안** V9 마이그레이션으로 두 drop 함수의 `- 1` 을 없앤다(하루 전체가 보존 기간보다 오래된 파티션만 DROP → 보존 75–99 h, 최대 보유량 약 −1.66 GB). drop 을 ensurePartitions 처럼 6시간마다 돌려 창을 좁힌다. 알림 보존은 제품 결정이 필요하다(ADR-007 은 '영구'): 예) alert_event 월 파티션 + 30일 지난 evidence(평균 579 B, 26 MB/46 MB) 요약·압축. PERF.md 에 표별 일 증가율과 NFR-09 대비 여유를 측정값으로 적는다. 기대 효과: 최대 DB 약 7 GB(추정), 10 GB 도달 시점이 몇 달 뒤로 밀린다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-07 · 보안 · Medium — CI 보안 게이트가 한 번도 실행되지 않았다. 실행되면 gitleaks 오탐 2건에 먼저 걸려 이미지 스캔까지 건너뛰고, 현재 이미지로는 게이트가 모두 실패한다
+
+- **근거** `git remote -v` 출력이 비어 있다(원격이 없어 .github/workflows/ci.yml 이 실행된 적 없음). ci.yml:131-132 gitleaks-action 은 허용 목록 없이 돌고, 저장소에 .gitleaksignore·.gitleaks.toml 이 없다. baseline gitleaks.json 은 2건(apps/collector/tests/test_ais_server.py:35 generic-api-key, apps/collector/tests/test_masking.py:12 jwt)으로 둘 다 시험용 가짜 값이다. ci.yml:133-135 의 build 단계에는 if 가 없어 gitleaks 가 실패하면 skipped 가 되고, 138-149 의 trivy 3단계는 `steps.build.outcome == 'success'` 조건이라 모두 건너뛴다. 게이트(ignore-unfixed, exit-code 1)에 걸릴 현재 수치: api CRITICAL 3(수정판 있음), web HIGH 4, collector python HIGH 2(msgpack·setuptools). edge 는 blocking=1(ci.yml:160)인데 본 리뷰의 오프라인 trivy(--network none, DB 2026-09-28)에서 libexpat CVE-2026-93990(2.8.4→2.8.5) HIGH 1건이 나왔다
+- **검증(반박 시도)** CONFIRMED — `git remote -v` 출력이 비어 있다. 저장소 전체에 .gitleaksignore·.gitleaks.toml 이 없다(find 결과 0건). baseline gitleaks.json 은 2건이고 fingerprint 는 finding 과 같다. 두 커밋 모두 main 이력에 있으며 94ae84e 는 루트 커밋이다. 값은 test_ais_server.py:35 `KEY = "test-ais-key-…"  # 가짜 키`, test_masking.py:12 의 예시 JWT 로 시험용 가짜 값이다. ci.yml:133-135 build 단계에는 if 가 없고, 139/143/147 은 `!cancelled() && steps.build.outcome == 'success'` 조건이다. 따라서 gitleaks 가 실패하면 build 는 skipped, trivy 3단계도 건너뛴다. 이는 :136 주석('앞 단계가 실패해도 세 이미지 모두 결과를 보인다')과 어긋난다. baseline 에서 수정판이 있는 HIGH/CRITICAL 은 api CRITICAL 3(tomcat), web HIGH 4(npm 내부), collector HIGH 2(msgpack·setuptools)다. edge 는 docker save tar 를 오프라인 trivy(--network none, DB UpdatedAt 2026-09-28)로 재현했고 alpine 3.24.2 에서 `HIGH CVE-2026-93990 libexpat 2.8.4-r0 -> 2.8.5-r0` 가 나왔다. ci.yml:160 에서 edge 는 blocking "1" 이다. 단서: gitleaks 가 옛 커밋 때문에 실패하는 것은 전체 이력을 스캔할 때(workflow_dispatch, 첫 푸시)뿐이다. 이후 push·PR 은 새 커밋 범위만 스캔하므로 trivy 가 건너뛰어지는 상태가 영구적이지는 않다. gitleaks-action v3 의 스캔 범위는 외부에서 확인하지 않았다.
+- **문제와 영향** NFR-10(고칠 수 있는 HIGH/CRITICAL 0건)이 문서로만 있고 실제로 막는 곳이 없다. 첫 푸시에서 security 와 third-party(edge) job 이 실패한다. gitleaks 가 먼저 실패하면 이미지 취약점 결과가 아예 나오지 않아 원인 파악이 늦어진다
+- **개선안** (1) .gitleaksignore 에 fingerprint 2개를 추가한다: `5251859bac52838e622a55edd431727500aebb18:apps/collector/tests/test_ais_server.py:generic-api-key:35`, `94ae84e2f28cfdc00835410d58b0780bccd791bd:apps/collector/tests/test_masking.py:jwt:12`. (2) build 단계에 `if: ${{ !cancelled() }}` 를 단다. (3) 원격이 생기기 전까지 쓸 로컬 게이트 `make security`(gitleaks 실패 시 중단, trivy --ignore-unfixed --exit-code 1)를 만든다. (4) 아래 Tomcat·런타임 도구 제거·edge 다이제스트 갱신 항목을 처리해 게이트를 통과시킨다
+- **작업량** S · **확신도** 추정 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-08 · UI/UX · Medium — 알림 행 클릭 시 '펼치기'는 곧바로 사라지고 지도도 그 항공기로 이동하지 않는다(선박 목록·SIGMET 칩도 동일)
+
+- **근거** AlertPanel.tsx:79-80 onClick은 setOpen(id)와 select(hex)를 부른다. ui-store.ts:60의 select는 panel을 'aircraft'로 바꾸고, app/page.tsx:38의 AlertPanel은 조건부 렌더라 언마운트된다. 재현(s7_flowA.mjs): CCA402 행 클릭 뒤 {panel:'aircraft', alertPanelMounted:false}였고, alerts 탭으로 돌아오니 {expanded:0, evidenceInAlerts:0}이었다(펼친 상태·스크롤 위치 소실, aria-expanded/aria-controls가 가리키는 영역이 끝내 보이지 않음). 스크린샷 .../review-v1/ui/08-flowA-after-alert-click.png, 09-flowA-back-to-alerts.png. AlertPanel에는 requestFlyTo가 없어 검색(AircraftSearch.tsx:76)과 다르다. 선박 목록 ShipCard.tsx:212, SIGMET 카드 hex 칩 SigmetCard.tsx:57도 선택만 한다. s10: 선박 441827000을 고른 뒤에도 URL 해시가 #6/36.5/127.8 그대로였다. '전세계' 범위 목록에는 LFRR·YMMM·LTAA 행이 있다(ui/02-first-1_5s.png).
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다. AlertPanel.tsx:80의 onClick은 setOpen과 select(hex)를 함께 부르고, ui-store.ts:60 select가 panel을 'aircraft'로 바꾼다. app/page.tsx:38은 panel==='alerts'일 때만 AlertPanel을 렌더하므로 컴포넌트가 언마운트되고, useState(open)와 스크롤 위치가 사라진다. 그래서 aria-expanded/aria-controls가 가리키는 영역은 끝내 보이지 않는다. requestFlyTo를 부르는 곳은 AircraftSearch.tsx:76 하나뿐이다(grep). ShipCard.tsx:212, SigmetCard.tsx:57, 그리고 MapView의 selectedHex 효과 어디에도 easeTo/flyTo가 없다. 다만 impact는 부풀려졌다. AircraftCard.tsx:142,193-194가 그 항공기의 활성 알림을 EvidenceCard로 보여 주므로 '근거 보기' 자체는 된다. 실제 문제는 목록 안 펼치기가 죽은 코드라는 점과, 화면 밖 행(전세계 범위)을 골라도 지도가 움직이지 않는다는 점이다. 서버에 select를 보내게 되므로 클릭 재현은 하지 않았다.
+- **문제와 영향** 핵심 흐름인 '알림 → 근거 보기'에서 여러 알림을 비교하려면 매번 탭을 되돌아가 목록에서 행을 다시 찾아야 한다. 화면 밖(전세계 범위, 다른 FIR) 항공기나 선박을 고르면 카드만 바뀌고 지도에서는 위치를 찾을 수 없다.
+- **개선안** 목록에서 선택하면 알려진 위치(aircraftStates·shipStates·REST 상세)가 현재 뷰 밖일 때 requestFlyTo를 호출한다. AlertPanel의 open·스크롤 상태를 ui-store로 올리거나 패널을 숨김(hidden) 처리해 유지한다. 행 클릭을 '근거 펼치기'와 '항공기 카드 열기' 두 동작으로 나누고 aria-expanded를 실제 표시와 맞춘다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-09 · UI/UX · Medium — 첫 로드 때 모르는 알림 수를 0으로 보이고, '관심 지역' 범위에 전세계 목록이 잠깐 떴다가 줄어들며 CLS를 만든다
+
+- **근거** AlertPanel.tsx:49-50은 alertsVersion==null(미수신)일 때도 '전세계 {all.length}'와 '{observed} inside · {n} predicted'를 그린다. ui/01-first-paint-immediate.png에서는 '전세계 0 · 0 inside · 0 predicted' 바로 옆에 '아직 “없음”을 뜻하지 않습니다'가 함께 보인다. 기반지도 장애(F1) 동안에는 이 상태가 계속된다(ui/06). AlertPanel.tsx:30-31은 status.region이 오기 전 inRegion이 모두 true라서, '관심 지역'이 눌린 채 '299 inside · 73 predicted'와 LFRR·YMMM·LTAA 행이 보인 뒤 '10 inside · 1 predicted'로 줄어든다(ui/02-first-1_5s.png → ui/04-first-15s.png). s4_load: alerts 2303 ms, status 2484 ms. 측정 CLS(s1_first.mjs, 15 s)는 0.1786이고 최대 이동은 t=2.63 s에 alert-item에서 난 0.126이다. 기준선 lighthouse / CLS 0.133의 이동 요소도 같은 알림 목록이다(perf/results/review-baseline/lh_root.json layout-shifts). 처음 2 s 동안은 정상적인 연결 중인데도 'WS CONNECTING'·'NO DATA'가 오류색(bad)으로 표시된다(StatusBar.tsx:32, ui/01).
+- **검증(반박 시도)** CONFIRMED — 확인됨. 재현(k2b.mjs, MutationObserver): t=177 ms에 '전세계 0 · 0 inside · 0 predicted'가 대기 문구와 함께 보인다(AlertPanel.tsx:49-50은 alertsVersion==null이어도 숫자를 그림 → 모르는 값을 0으로 표시해 소유자 규칙 위반). t=1,899 ms에는 '관심 지역'이 눌린 상태에서 '308 inside · 60 predicted', 368행이 뜨고 LTAA·LFFF·YMMM 행이 섞여 있다. t=2,035 ms에 '10 inside · 3 predicted', 13행으로 줄어든다. WS 프레임 순서는 alerts(3,843 ms) → status(4,069 ms)였다(k2.mjs). 원인은 AlertPanel.tsx:32 `if (!center || !radius) return true`. 측정 CLS는 0.1882이고 가장 큰 이동 0.16은 alert-item에서 났다. 기준선 lh_root.json의 CLS 0.133도 같은 알림 목록 컨테이너가 원인이다. StatusBar.tsx:32는 'connecting'을 bad로 그린다. 보정할 점: 잘못된 목록이 떠 있는 시간은 약 0.14–0.2 s로 짧다.
+- **문제와 영향** 소유자 규칙(모르면 '—')을 어긴다. 알림이 매번 로드될 때 관심 지역 통계가 전세계 값으로 잠깐 잘못 보이고 목록이 튀어서, 첫 2–3 s에 클릭하면 엉뚱한 행을 누를 수 있다.
+- **개선안** alertsVersion==null이면 수치를 '—'로 둔다. region 범위는 status.region이 올 때까지 '관심 지역 설정 수신 대기'를 보이고 전체로 폴백하지 않는다. 배너 자리를 고정 높이로 예약한다. 'connecting'은 중립·경고색으로 그리고 bad는 closed/retry에만 쓴다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-10 · UI/UX · Medium — 재생 시각을 고를 방법이 147 px 슬라이더뿐이고(1 px ≈ 29분), 표시된 '1분 요약 30일' 구간에는 UI로 갈 수 없다
+
+- **근거** app/replay/page.tsx:29는 range를 now−72 h … now−1 min으로 고정한다. :58의 유일한 입력은 range(step 10 s)다. s11_replay.mjs 측정(1440×900): 슬라이더 실제 폭 147 px(w-80 지정이지만 툴바가 줄임), px당 29.4분, 25,914 스텝, ArrowLeft 10 s, PageDown 431.8분, Home은 71.8 h 전이다. 날짜·시각 입력은 페이지에 없다(inputs: ['range:재생 시각']). :65 캡션은 '1분 요약 30일'이라고 하지만 HistoryController.java:49-54 /replay는 at 제한 없이 TrackRepository.java:40-66에서 track_point_1m으로 내려가므로 서버는 72 h 이전 요약을 줄 수 있다. 스크린샷 .../review-v1/ui/16-replay-initial.png(툴바 오른쪽 캡션 잘림), 17-replay-72h.png.
+- **검증(반박 시도)** CONFIRMED — 확인됨. replay/page.tsx:29는 min을 now−72 h로 고정하고, :58의 range(step 10 s)가 유일한 입력이다. k3.mjs(1440×900): 슬라이더 폭 147 px, px당 29.4분, 25,914 스텝, 입력은 ['range:재생 시각'] 하나뿐이다. ADR-007/MaintenanceJobs.java:21-22에 따르면 1분 요약은 30일 보존되고, TrackRepository.java:55-66이 track_point_1m으로 내려간다. 보정할 점: '/replay는 at 제한 없이'는 틀렸다. HistoryController.java:53이 31일로 제한한다. 그래도 UI는 72 h를 넘는 1분 요약 구간(서버 허용 31일)에 갈 수 없다. 현재 dev DB에는 24 h를 넘는 기록이 없어서(GET /replay: 12 h track_point 31, 24 h 이후 none), 지금 당장 체감되지는 않는다.
+- **같은 문제의 다른 관찰(병합)** [code-web] 재생 슬라이더가 최근 72 h로 묶여 있어 30일 1분 요약 구간을 요청할 수 없다. 화면 문구는 30일을 약속한다 — apps/web/app/replay/page.tsx:29 range.min = now − 72*3600_000. 같은 파일 :14는 '그 이전은 1분 요약', :65는 '1분 요약 30일', lib/replay.ts:4도 같은 내용이다. api는 31일 전까지 받고(apps/api/.../rest/HistoryController.java:53), 1분 요약 보존 기간은 30일이다(ADR-007 3행, MaintenanceJobs.java:66). 그래서 SUMMARY_FLAG·isSummaryRow 표시 경로(page.tsx:77-82, replay.ts:69-83)는 정상 사용에서 도달할 수 없다. 개발 스택은 72 h보다 젊어서 75 h·90 h 조회가 source:none이었다. 요약 행 자체는 데이터로 확인하지 못했다.
+- **문제와 영향** '특정 과거 시각 재생' 흐름에서 예컨대 '3시간 전 13:05'를 맞추려면 마우스로는 30분 단위로만 움직이고, 키보드로는 화살표 1,000회 이상이 필요하다. 설계(FR-23) 기능인 72 h 이전 1분 요약 재생은 화면에서 쓸 수 없다.
+- **개선안** UTC datetime-local 입력과 ±1분·±10분·±1 h 이동 버튼을 추가하고, 슬라이더에 min-width를 준다(툴바 줄바꿈). 범위를 30일로 넓히고 72 h 경계를 슬라이더에 표시해 '원해상도/1분 요약' 전환을 보여 준다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-11 · 코드 · Medium — 기상청 레이더가 unavailable로 바뀌어도 마지막 KMA 에코가 지도에 남는다. 레이더를 끄거나 소스를 바꿔도 숨겨지지 않는다
+
+- **근거** apps/web/components/MapView.tsx:421-444: :423의 `if (!map || !radarKr?.available || !radarKr.coordinates || ...) return;` 때문에 이미 추가된 kmar-* 레이어를 숨기거나 지우지 않는다. 레이어 토글 effect(:457-470)와 RainViewer 전환도 kmar-* 레이어를 다루지 않는다. StatusBar.tsx:23은 available일 때만 KMA STALE 배지를 계산하고, RadarTimeline.tsx:23은 0 frames를 보인다. api는 프레임 목록이 비면 available=false를 준다(WeatherController.java:155). 목록이 비는 경우: 수집기 kma_radar.py:77-81에서 이미지 TTL 3 h가 만료될 때(예: 예산 소진), 또는 Redis 오류로 framesExist가 빈 목록을 돌려줄 때. 브라우저 재현은 하지 않았고 코드로 추적했다.
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다(브라우저 재현은 하지 않음). MapView.tsx:423 `if (!map || !radarKr?.available || !radarKr.coordinates || ...) return;` 은 syncFrames 에 닿기 전에 반환한다. 그래서 이미 visible 인 kmar-* 레이어는 layers.radar·radarSource 가 바뀌어 effect 가 다시 실행돼도(deps :444) 숨겨지지 않는다. 레이어 토글 effect(:458-470) 목록에 kmar-* 는 없다. RadarTimeline.tsx:40 은 RainViewer 버튼을 계속 누를 수 있게 두므로 전환해도 KMA 에코가 남는다. StatusBar.tsx:23 은 available 일 때만 krStale 을 계산한다. api WeatherController: available = meta '1' && frames 비어 있지 않음. 목록은 PNG 키가 남은 프레임만 싣는다. 수집기 jobs/kma_radar.py:77-81 은 목록이 비면 키를 지우고 available=0 으로 둔다. 수집이 3 h(이미지 TTL) 넘게 멈추면 이 경로에 들어간다.
+- **문제와 영향** KMA 수집이 3 h 넘게 멈추면 몇 시간 전의 강수 에코가 현재 레이더처럼 계속 그려진다. 오래됨 배지도 없고, 사용자가 레이더 레이어를 꺼도 사라지지 않는다. 위험기상 상황판의 데이터 정직성 문제다.
+- **개선안** early return 대신, available=false이거나 좌표가 없으면 syncFrames(map, krLayers.current, [], new Map(), 0)로 kmar-* 레이어를 제거한다. radarSource가 'kma'면 rainviewer로 되돌리거나, 타임라인에 '기상청 레이더 없음(마지막 수집 hh:mm)'을 표시한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-12 · UI/UX · Medium — 운영 화면: 세션이 만료돼도 이전 표를 계속 보이고 로그인으로 돌아가지 않는다. 로그아웃은 처리되지 않은 거부를 던진다
+
+- **근거** apps/web/app/ops/page.tsx:54-64: 15 s마다 GET 6개를 보내고, 실패하면 setErr만 한다. 401/404가 와도 로그인 화면으로 전환하지 않고 prov·runs 등 이전 상태를 그대로 그린다. :65 logout은 try 없이 await한다. 세션이 만료된 상태면 거부된 promise가 처리되지 않고 onLogout이 호출되지 않는다. 재현: 익명 GET /api/v1/ops/providers → 404 {detail:'no such resource'}. 세션 8 h(:39)가 지난 뒤 운영자가 보게 되는 오류 문구가 이것이다.
+- **검증(반박 시도)** CONFIRMED — app/ops/page.tsx:54-63 refresh 는 오류에서 setErr 만 하고 prov/runs/quality/settings/audit/dlq 상태를 비우지 않는다. me 를 null 로 돌리는 경로도 없다. :65 `const logout = async () => { await apiSend("DELETE", ...); onLogout(); }` 에는 try 가 없다. SecurityConfig.java:37-38 은 POST /ops/session 만 permitAll 이고 DELETE 는 hasRole(OPS)다. 인증 없음은 entry point 에서 404 'no such resource'(:49)가 된다. 그래서 세션이 만료되면 DELETE 가 ApiError 로 거부되고 onLogout 이 호출되지 않는다(처리되지 않은 rejection). 재현: 익명 GET http://127.0.0.1:8700/api/v1/ops/providers → HTTP 404 {"detail":"no such resource","code":"NOT_FOUND"}. DELETE 는 쓰기 금지라 보내지 않았다.
+- **같은 문제의 다른 관찰(병합)** [security-app] 운영 화면이 세션 만료를 처리하지 않음: 만료 후에도 대시보드와 이전 값이 남고, 로그아웃이 실패함 — apps/web/app/ops/page.tsx:56-62 refresh의 오류 처리 h는 setErr(message)만 함 → 세션이 만료되어 404(SecurityConfig.java:38,49)가 와도 로그인 폼으로 가지 않고 이전 prov/settings를 계속 보여 줌. page.tsx:65 `const logout = async () => { await apiSend("DELETE", ...); onLogout(); }` → 이미 만료된 세션이면 DELETE가 404 → ApiError가 던져져 onLogout이 호출되지 않음(처리되지 않은 rejection). 결과적으로 sign out 버튼이 아무 반응이 없음.
+- **문제와 영향** 세션 만료 후에도 공급자, 실행 이력, 예산 표가 마지막 값으로 남아 현재 상태처럼 보인다. enable/disable, 설정 저장, 로그아웃이 모두 'no such resource'로 실패하고, 로그인으로 돌아가려면 새로고침해야 한다.
+- **개선안** ops 호출에서 ApiError 401/404를 받으면 OpsPage의 setMe(null)을 불러 로그인 화면으로 바꾸고 대시보드 상태를 비운다. logout은 try/finally로 onLogout을 보장한다. 표마다 마지막 성공 시각을 표시한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-13 · 아키텍처 · Medium — PostgreSQL 백업·복원 절차가 전혀 없음. '영구' 보존 데이터가 볼륨 하나에만 있음
+
+- **근거** 저장소 전체에서 pg_dump·pg_restore·backup을 검색하면 절차 0건입니다. 걸리는 것은 VERIFICATION.md:76의 일회성 '백업 후 삭제' 문장과 02-superuser-local-only.sh의 주석뿐입니다. ADR-007:3은 'SIGMET·알림·통계·감사 영구'라고 적었습니다. Makefile:30-31 `clean: $(COMPOSE) down -v`는 확인 없이 db_data를 삭제합니다. `docker system df -v` 기준 wakeline_db_data는 1.613GB이고, `docker volume ls`에는 wakeline_* 3개만 있습니다(skywx_* 원본도 이미 없어 사본이 하나도 없음). compose.yml:312-315 볼륨은 로컬 드라이버입니다.
+- **검증(반박 시도)** CONFIRMED — `git grep -i 'pg_dump|pg_restore|backup'`(json 제외) 결과는 0건입니다. 백업이라는 단어가 나오는 곳은 VERIFICATION.md:76의 일회성 문장과 infra/db/init/02-superuser-local-only.sh:4의 주석뿐입니다. ADR-007:5에 'SIGMET·알림·통계·감사 영구'라고 적혀 있습니다. Makefile:30-31 `clean: $(COMPOSE) down -v`에는 확인 절차가 없고, compose.yml:312-315는 로컬 볼륨입니다. `docker system df -v` 결과 wakeline_db_data는 1.635GB이고 skywx_* 볼륨은 없어 사본이 없습니다. 심각도를 낮춘 이유는 세 가지입니다. make clean은 도움말에 '데이터 초기화!'라고 명시된 운영자의 의도적 명령입니다. db 이미지가 digest로 고정돼 있어(compose.yml:273) 18→19 메이저 업그레이드가 자동으로 일어나지 않습니다. 손실은 운영 실수나 디스크·볼륨 사고가 있어야만 생기는 조건부 위험입니다. 그래서 High가 아니라 Medium으로 봅니다.
+- **문제와 영향** `make clean`, Docker Desktop 'Clean/Purge data', 볼륨 손상, PostgreSQL 메이저 업그레이드(18→19는 dump/upgrade가 필요한데 절차가 없음) 중 하나만 일어나도 감사 로그(audit_log), 알림·SIGMET 이력, 일 통계, 운영자 계정, app_setting이 되돌릴 수 없게 사라집니다. ADR-007의 '영구' 약속과 실제 내구성이 다릅니다.
+- **개선안** `make backup`을 추가합니다. db 컨테이너의 로컬 소켓(슈퍼유저 로컬 전용 규칙과 맞음)으로 `pg_dump -Fc`를 받고, 72h 원해상도 파티션(track_point_*, ship_position_*)은 `--exclude-table-data`로 빼서 영구 테이블만 작게 백업합니다. 파일은 gitignore된 backups/에 권한 600으로 N개 회전합니다. `make restore f=`는 새 볼륨에 01-roles.sh 적용 → pg_restore → migrate 순서로 동작하게 하고, 복원 연습을 VERIFICATION에 기록합니다. `make clean`은 최근 백업이 없으면 확인을 받게 합니다. Redis는 파생·일시 상태라 백업 대상에서 제외합니다(아래 공급자 스위치 항목은 예외).
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-14 · 아키텍처 · Medium — 스트림 MAXLEN≈200 창보다 api가 오래 멈추면 항적·선박 위치가 영구 손실됨. ADR-001의 'PEL 재처리' 주장은 과장
+
+- **근거** publisher.py:31 `MAXLEN = 200`, :130 `xadd(..., maxlen=MAXLEN, approximate=True)`, ais/sink.py:139·188도 같은 상한입니다. StreamConsumer.java:57-58은 '스트림 MAXLEN으로 이미 잘려 다시 읽을 수 없는 PEL 엔트리는 되살리지 못한다'고 코드에서 인정합니다. 반면 ADR-001:18은 'api가 죽어도 PEL로 재처리된다'고만 적었습니다. 측정: 개발 스택 collector 로그 20분 동안 region 105건 + global 9건 발행(분당 5.7) → 200엔트리 ≈ 35분입니다. 집중 추적(5s)이 켜지면 분당 +12건 → 약 11분입니다. 선박 스트림은 10s 배치라 최대 약 33분입니다. VERIFICATION #22 chaos는 6.2s 정지만 시험했습니다.
+- **검증(반박 시도)** CONFIRMED — publisher.py:31 `MAXLEN = 200`과 :130 xadd(maxlen=MAXLEN, approximate=True), ais/sink.py:139·188이 같은 상한을 씁니다. StreamConsumer.java:57-58은 잘린 PEL 엔트리를 되살릴 수 없다고 인정하지만, ADR-001:18은 'api 가 죽어도 PEL 로 재처리된다'고만 적었습니다. 관리 사용자로 XINFO STREAM을 읽기 전용 실측한 결과는 다음과 같습니다. wakeline:aircraft는 200엔트리, 첫 ID 1790574330252부터 마지막 1790576407965까지로 약 34.6분입니다. wakeline:ships는 200엔트리, 약 33.2분입니다. 따라서 api가 약 35분 넘게 소비하지 못하면 그 구간의 항적·선박 위치는 읽히기 전에 지워집니다. 원천 gz를 재생하는 도구도 tools/에 없습니다. 다만 wakeline:sigmet의 보존 창은 약 16.5시간(1790516546146부터 1790576112730까지)이라, 'SIGMET 세트도 11~35분 정지로 손실'된다는 부분은 과장입니다.
+- **문제와 영향** api 크래시 루프, 실패한 Flyway 마이그레이션, 긴 디버깅 정지처럼 api가 11~35분 넘게 소비하지 못하면 그 구간의 track_point·ship_position·SIGMET 세트가 읽히기 전에 지워집니다. 재생·항적에 영구 구멍이 생깁니다. 탐지는 /healthz의 unread_trimmed 이유(IngestHealthIndicator.java:68)뿐인데, 아래 항목처럼 이를 보는 사람이 없습니다.
+- **개선안** (1) 항공기·선박 스트림 트리밍을 개수가 아니라 시간 기준(XADD MINID ~ now−2h)으로 바꾸거나, 스트림별 MAXLEN을 목표 정지 창(예: 2h)으로 키웁니다. global 엔트리가 약 430KB라(ADR-011) 2h면 약 26MB로 추정되며, maxmemory 256MB 안인지 실측한 뒤 적용합니다. (2) ADR-001에 '재처리 가능 창 = 스트림 보존 시간'을 수치로 명시합니다. (3) chaos에 'api 정지 > 보존 창' 시나리오를 격리 스택에서 추가합니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-15 · 성능 · Medium — 알림 이력 hex 필터가 인덱스를 쓰지 못해 표 전체를 역순으로 훑는다(alert_event_hex idx_scan 0)
+
+- **근거** AlertRepository.java:128 `(:hex::text IS NULL OR e.hex = :hex)` + `ORDER BY e.id DESC`. EXPLAIN(ANALYZE,BUFFERS)(30일, hex=885225, LIMIT 51): Index Scan Backward using alert_event_pkey, Filter `((hex)::text = '885225'::text)`, Rows Removed by Filter 47,695, 527 ms(캐시 식음, 4,772 블록 읽기) → 99 ms → 31 ms(데워짐). 같은 질의를 bpchar 파라미터로 바꾸면 Index Scan using alert_event_hex 0.10 ms. pg_stat_user_indexes: alert_event_hex idx_scan 0(2 MB). 과거 1시간 창(09-27 09:00) 질의는 45,832행을 걸러 30 ms. API: GET /api/v1/alerts/history?…&hex=885225 는 10–33 ms(데워짐). 알림 증가율 약 48k행/일.
+- **검증(반박 시도)** CONFIRMED — 확인됨. AlertRepository.java:128 `(:hex::text IS NULL OR e.hex = :hex)`. V1__init.sql:71 에서 hex 는 char(6)이므로 비교가 `(hex)::text = text` 로 바뀌어 인덱스를 못 쓴다. 같은 질의를 prepared 문으로 EXPLAIN (ANALYZE,BUFFERS) 했다(30일, hex=885225, LIMIT 51). text 파라미터일 때: Index Scan Backward using alert_event_pkey, Rows Removed by Filter 48,685, read=4,762, 231 ms. 파라미터만 bpchar로 바꾸면 Index Scan using alert_event_hex, 1.9 ms. pg_stat_user_indexes 의 alert_event_hex idx_scan 은 5다. WeatherController.java:93-101 은 범위를 30일까지 허용한다. id 역순으로 훑기 때문에 과거 구간 조회도 표 크기에 비례해 느려진다. 알림은 하루 약 5만 행씩 쌓인다. GET 1회는 27 ms(데워진 상태). 조건부 성능 결함이라 Medium이 맞다.
+- **문제와 영향** hex 필터 조회와 과거 구간 조회의 비용이 표 크기에 비례해 는다. 30일(약 1.4M행)이면 약 30배(추정)가 된다. 공개 GET 이라 IP 당 분당 120회로도 DB 를 반복해서 전체 스캔시킬 수 있다. 웹 UI 는 이 경로를 호출하지 않는다.
+- **개선안** hex 를 `:hex::bpchar` 로 바인딩하거나 hex 유무에 따라 SQL 두 벌로 나눈다. 정렬·커서를 (entered_at DESC, id DESC) 키셋으로 바꾸고 인덱스를 (hex, entered_at DESC, id DESC)·(entered_at DESC, id DESC) 로 둔다. 기대 효과: 표 크기와 무관하게 0.1–1 ms(bpchar 로 실측 0.10 ms).
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-16 · 보안 · Medium — REST bbox에 NaN을 넣으면 범위·면적 검사를 모두 통과함 → /api/v1/replay 면적 상한(2500 sq°)이 우회되어 전세계 조회
+
+- **근거** domain/Bbox.java:14 Double.parseDouble이 "NaN"을 받고, :19-21 비교가 NaN이면 모두 false라 범위·면적 검사를 통과함. WS는 WakelineWsHandler.java:153에서 isFinite를 검사하지만 REST는 하지 않음. 재현(:8700, GET): /api/v1/replay?at=2026-09-28T05:03:23Z&bbox=-180,-90,180,90 → 422 "bbox area 64800 sq° exceeds 2500". 같은 at에 bbox=-180,NaN,180,NaN → 200, 1,109,441 B, aircraft 5857, source track_point(TrackRepository.java:50의 ST_MakeEnvelope(NaN)이 전 행과 일치). 합법 최대 면적 bbox=100,0,150,50 → 239,484 B, aircraft 872. aircraft·ships·airports에 NaN bbox를 주면 400이 아니라 200 빈 목록을 돌려줌.
+- **검증(반박 시도)** CONFIRMED — 재현함(:8700, GET). Bbox.java:14 parseDouble은 'NaN'을 받아들이고, :19와 :21의 비교는 NaN이면 모두 false라 검사를 통과함. WS 쪽은 WakelineWsHandler.java:153에서 isFinite로 거름. at=현재-10분일 때 결과: bbox=-180,-90,180,90 → 422 'bbox area 64800 sq° exceeds 2500'. bbox=-180,NaN,180,NaN → 200, 1,142,957 B, aircraft 6068, source track_point, 0.154 s. 합법적인 최대 면적 100,0,150,50 → 200, 238,404 B, aircraft 884, 0.060 s. aircraft·ships에 NaN bbox를 주면 200과 features 0이 옴(틀린 빈 결과를 조용히 돌려줌). Infinity를 주면 400으로 정상 거절됨. 주장과 한 곳이 다름: airports에 NaN을 주면 빈 목록이 아니라 features 22가 옴(합법 bbox 120,30,130,40은 14). 요청 하나의 비용은 0.15 s·1.1 MB이고 IP당 분당 120회 제한이 있으므로 High가 아니라 Medium을 유지함.
+- **같은 문제의 다른 관찰(병합)** [code-api] REST Bbox.parse 가 NaN 을 통과시킨다(WS 는 거절) — 400 대신 200 빈 결과, 재생은 NaN 봉투로 DB 질의까지 실행 — 재현: GET /api/v1/aircraft?bbox=NaN,NaN,NaN,NaN → 200 features [] ; /api/v1/ships?bbox=NaN,... → 200 ; /api/v1/replay?at=…&bbox=NaN,... → 200(track_point 질의 실행). Bbox.java:13-20: Double.parseDouble("NaN") 후 범위 비교가 모두 false 라 통과, area()=NaN 도 상한 비교 통과. WakelineWsHandler.java:153 은 Double.isFinite 로 거절 — 같은 도메인 규칙이 두 입구에서 다르다.
+- **문제와 영향** 익명 요청 하나로 공개 API의 DB·응답 크기 보호 상한이 무력화됨(합법 최대의 6.7배). IP당 120회/분이면 초당 약 2.2 MB의 전세계 스캔이 가능함. 다른 엔드포인트는 오류 대신 '0건'이라는 틀린 결과를 조용히 돌려줌.
+- **개선안** Bbox.parse에서 네 값 중 하나라도 !Double.isFinite면 400 BAD_BBOX로 거절함. WS parseBbox와 같은 검증 함수를 공유하고, NaN·Infinity 회귀 테스트를 추가함.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-17 · 코드 · Medium — 관심 지역 adsb_lol 429가 수렴하지 않고 약 7분마다 반복됨 (3일 217회), 공급자 전환 이벤트 423건/21.6 h
+
+- **근거** ingest_run(읽기 전용): region/adsb_lol HTTP 429가 3일 동안 217회, 시간당 8–11회. 09-28 03:00–03:40 UTC 순서: adsb_lol ok ×4–14 → 429 → adsb_fi ×27(300 s) → adsb_lol …이 6회 반복. 한 시간 동안 region 실행의 약 70%가 adsb_fi. wakeline:events: region adsb_lol→adsb_fi 217건 + adsb_fi→adsb_lol 206건(09-27 08:27 ~ 09-28 06:05). 로그: 'adsb_lol rate limited (429) — backing off 300 s'. 코드: fallback.py:76-83 (최대 300 s 쉰 뒤 같은 10 s 주기로 복귀), ratelimit.py:240-243 (api.adsb.lol 호스트 버킷 없음), status.py:102-118 (전환마다 XADD), OpsController.java:75 (최근 20건만 보여 줘 약 1시간 이력). ADR-011:15는 10 s 주기의 429를 인지함
+- **검증(반박 시도)** CONFIRMED — ingest_run(읽기 전용): region/adsb_lol http 429가 220건(2026-09-27 08:26Z부터 09-28 06:20Z까지)이라 '3일'이 아니라 약 22시간 동안임. 09-28 시간당 429는 8–11건, region 실행 약 325회/h 가운데 adsb_fi가 약 223–239회(약 70%). wakeline:events XLEN 427, 모두 job=region이며 adsb_lol→adsb_fi 220건, adsb_fi→adsb_lol 209건. 최근 예: 06:13 lol→fi, 06:18 fi→lol, 06:20 lol→fi. fallback.py:76-83은 최대 300 s 백오프 뒤 같은 주기로 복귀하고, 15분 동안 조용해야 초기화됨(:72-74). 429가 약 7분마다 오므로 계속 반복됨. ratelimit.py default_limiter에는 adsb.fi·adsbdb 호스트 버킷만 있음. 429 때 penalize(:128-141)가 호스트를 잠깐 막지만 속도 자체는 줄이지 않음. OpsController.java:75는 최근 20건만 보여 줘 약 1시간 이력임. ADR-011은 10 s 주기의 429를 인지함. 폴백으로 자료는 계속 들어옴
+- **문제와 영향** 백오프가 끝나면 같은 속도로 돌아가므로 공급자 한도를 하루 200회 넘게 계속 넘는다. IP 차단 위험이 있고, 관심 지역 자료가 몇 분마다 공급자를 바꿔 가며 들어온다. 운영 화면의 전환 이력도 이 반복으로 채워져 다른 전환이 묻힌다
+- **개선안** api.adsb.lol에 호스트 버킷을 두고 429를 받으면 속도를 줄인다(AIMD: 429에 rate 절반, 15분 조용하면 천천히 올림, 하한·상한은 설정). 또는 관심 지역 체인에 이력(hysteresis)을 넣어, 429가 PENALTY_RESET_S 안에 반복되면 복귀를 늦추고 복귀 뒤에는 느린 주기로 호출한다. 공급자 한도 수치는 문서 확인 없이 단정하지 않는다. provider_switch는 같은 쌍의 반복을 합쳐(횟수 필드) 기록한다
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-18 · 아키텍처 · Medium — 데이터 손실 신호(드롭·트림·저장 실패)를 아무도 수집·표시·경보하지 않음
+
+- **근거** application.yml:48-54 지표·ingest 헬스 그룹은 내부 포트 9000에만 있습니다. 이를 긁는 것은 perf/actuator_probe.py:5 하나뿐이고 compose에 Prometheus·경보가 없습니다. 운영 화면 apps/web/app/ops/page.tsx:80은 collector heartbeat에서 `_at` 키만 보여 줍니다. 그래서 collector가 쓰는 publish_dropped·db_failures·db_dropped·http_throttled(main.py:98-108, db.py:172-178)가 화면에 나오지 않습니다. 웹 코드에는 healthz·ingest를 읽는 곳이 0건입니다(grep). api 쪽 wakeline_track_rows_total{result=dropped}·wakeline_stream_unread_trimmed·wakeline_event_listener_errors_total은 `docker exec … curl :9000/actuator/prometheus`로만 보입니다(실제로 조회해 존재 확인).
+- **검증(반박 시도)** CONFIRMED — collector heartbeat 해시를 HGETALL wakeline:collector로 읽기 전용 조회하면 db_ok, db_failures, db_dropped, publish_dropped, http_throttled, route_errors 등이 실제로 들어 있습니다. 그러나 apps/web/app/ops/page.tsx:80은 `k.endsWith("_at")` 키만 표시합니다. 웹 app·lib·components에서 db_ok, db_failures, publish_dropped, healthz를 읽는 곳을 grep하면 0건입니다(fixture 배지만 있음). compose와 Makefile에 Prometheus나 경보가 없고, 9000 포트를 긁는 것은 perf/actuator_probe.py:5와 healthcheck뿐입니다. 공개 /healthz(HealthController)는 reasons(unread_trimmed 등)를 내보내지만 현재 응답은 `{"status":"ok",...}`이고, 이를 소비하는 화면이나 경보가 없습니다.
+- **문제와 영향** 스트림 트림, 메모리 큐 넘침(TrackWriter 50,000행 상한), 영구 오류 드롭, 리스너 예외가 일어나도 소유자가 알 수 없습니다. '공백·지연은 숨기지 않는다'는 정직성 원칙이 사용자 화면에는 적용되는데 운영자에게는 적용되지 않습니다.
+- **개선안** 기존 /api/v1/ops/providers 응답에 pipeline 객체를 덧붙입니다(IngestHealthIndicator verdict + 손실 카운터 누계·최근 1h 증가분 + collector heartbeat의 *_dropped/*_failures). 운영 화면에 '파이프라인' 패널을 두고 0이 아니면 경고 배지를 띄웁니다. 선택 사항으로 `--profile observability`(Prometheus + 경보 규칙: unread_trimmed>0, dropped 증가, consumer_stalled)를 둡니다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-19 · 코드 · Low — 예산 일별 스냅샷이 매일 마지막 최대 1시간 호출을 빠뜨려 /ops의 일별 calls가 작게 나옴
+
+- **근거** apps/collector/wakeline_collector/jobs/maintenance.py:22-28 (now 기준 '오늘' 키만 스냅샷), main.py:170 (3600 s 주기, 기동 30 s 뒤 시작 → 자정 전 마지막 스냅샷은 최대 59분 전), budget.py:63 (키 TTL 48 h라 어제 키는 자정 뒤에도 읽을 수 있는데 읽지 않음). 실측(읽기 전용) 2026-09-27 provider_budget_day와 Redis budget:*:20260927 used 비교: adsb_fi 3549/3559, adsb_lol 1504/1509, opensky 1660/1668, kma_radar 441/444, rainviewer 894/897. 표시 경로: apps/api/.../ops/OpsController.java:78 → web/app/ops/page.tsx:95 (day·calls 표). main.py:67 build_limits에 'fixture': 0이 있어 실시간 모드에서도 'fixture|0|0' 행이 쌓임
+- **검증(반박 시도)** CONFIRMED — 재현(읽기 전용): provider_budget_day 2026-09-27과 Redis budget:*:20260927 used 비교 결과 adsb_fi 3549/3559, adsb_lol 1504/1509, opensky 1660/1668, kma_radar 441/444, rainviewer 894/897로 제보와 같음(awc 489/489). 어제 키 TTL은 약 149,700 s로 아직 남아 있음. maintenance.py:22-28은 now 기준 키만 보고, main.py:170은 3600 s 주기로 돔. 실시간 모드에서도 'fixture|0|0' 행이 매일 생김(build_limits main.py:67). 다만 설계상 의도된 매시 스냅샷이고(ADR-005: '매시 provider_budget_day 로 스냅샷'), 화면 제목도 'Daily budget snapshot'(ops/page.tsx:94)이라 확정값이라고 주장하지 않음. 오차는 0.2–0.6%이고 오늘 값은 provider 표에 실시간으로 보임. 따라서 데이터 정직성 위반인 Medium이 아니라 Low
+- **문제와 영향** 운영 화면이 지난 날짜의 '하루 호출 수'를 확정값처럼 보여 주지만, 실제로는 자정 전 스냅샷 값이라 매일 과소 집계된다. 추정 표시 없이 부정확한 값을 데이터로 보여 주므로 소유자의 데이터 정직성 규칙에 어긋난다. 실시간 모드에도 fixture 행이 나와 운영자가 헷갈릴 수 있다
+- **개선안** 유지보수 작업이 UTC 자정 뒤 첫 실행에서 어제 키(day_key(p, now-1d))도 한 번 더 스냅샷하게 한다. 키가 남아 있는 48 h 동안 확정한다. 또는 자정 직후(예: 00:05 UTC)에 맞춘 추가 실행을 둔다. 확정 전 값은 API/화면에서 '집계 중'으로 구분한다. 실시간 모드에서는 build_limits의 'fixture'를 스냅샷 대상에서 뺀다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-20 · 코드 · Low — heartbeat의 lag_s가 실제 값이 아님: 기상 작업은 0.0 고정, 항공기는 자료 나이가 아니라 처리 시간
+
+- **근거** weather.py:205 (sigmet lag_s=0.0), :254 (radar), :334 (metar), jobs/kma_radar.py:192 (radar_kr)가 상수 0.0. aircraft.py:136은 now − fetched_at인데 fetched_at은 응답을 받은 시각(http.py:143)이라 처리 시간일 뿐. 실측(읽기 전용) HGETALL wakeline:collector: sigmet_lag_s 0.0 · radar_lag_s 0.0 · metar_lag_s 0.0 · radar_kr_lag_s 0.0 · region_lag_s 0.0 · global_lag_s 0.2. 노출: OpsController.java:79가 이 해시를 /ops/providers 응답 'collector'로 그대로 돌려줌(web/app/ops/page.tsx:80은 *_at만 그림)
+- **검증(반박 시도)** CONFIRMED — HGETALL wakeline:collector(읽기 전용): sigmet_lag_s 0.0, radar_lag_s 0.0, metar_lag_s 0.0, radar_kr_lag_s 0.0, region_lag_s 0.0, global_lag_s 0.2, hot/focus_lag_s 0.0. 상수 0.0을 쓰는 곳은 weather.py:205·254·334, kma_radar.py:192. aircraft.py:136은 now−fetched_at이고 fetched_at은 응답을 받은 시각(http.py:143)임. OpsController.java:79가 해시를 그대로 돌려주고, 화면(ops/page.tsx:80)은 *_at만 그림. 관리자 API에만 나오고 소비자가 없어 Low
+- **문제와 영향** '지연'이라는 이름의 수치가 모를 때도 0.0으로 채워져 API 응답에 실린다. 소유자 규칙('모르면 null', '추정값을 자료로 보이지 않기')에 어긋나고, 이 필드를 쓰는 도구나 화면이 늘면 기상 자료가 늘 실시간인 것처럼 보이게 된다
+- **개선안** 기상 작업은 lag_s=None(빈 값)으로 쓴다. 항공기는 필드 이름을 processing_s로 바꾸거나, 자료 나이가 필요하면 발행한 상태들의 seen_at 최댓값으로 now − max(seen_at)을 계산한다. 계약 문서에 필드 의미를 적는다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-21 · 성능 · Low — 원천 보관 gzip과 대용량 정규화가 이벤트 루프에서 동기로 실행되고, KMA 본문은 gzip을 한 번 더 함
+
+- **근거** aircraft.py:83, weather.py:152-154 · 234 · 317, jobs/kma_radar.py:196이 RawStore.save를 동기 호출(jobs/demand.py:437만 asyncio.to_thread). 측정(스크래치, 실제 보관본): OpenSky 본문 854,990 B의 gzip6에 25–26 ms, 이미 gzip인 KMA 1,078,339 B를 다시 압축하는 데 33–41 ms(주기당 최대 4프레임, 보관 파일 크기는 거의 같음 1,069,058 B). OpenSky 6,604대 기준 정규화+게이트+dump+encode 약 100 ms
+- **검증(반박 시도)** CONFIRMED — RawStore.save(raw_store.py:18-28)는 동기 gzip. 동기 호출 위치: aircraft.py:83, weather.py:152-154·234·317, kma_radar.py:196. demand.py _raw_ref만 asyncio.to_thread를 씀. 컨테이너 안 측정(읽기 전용): OpenSky 원천 851,174 B의 gzip6 25.2 ms. KMA 본문 1,090,169 B는 이미 gzip(\x1f\x8b)인데 다시 압축해 28.7 ms, 출력 1,081,039 B로 거의 줄지 않음. 루프를 수십 ms 막는 수준이라 Low
+- **문제와 영향** 전세계 실행마다 약 125 ms, KMA 주기마다 최대 약 160 ms 동안 루프가 멈춰, 1 s demand 틱과 속도 상한 타이머가 그만큼 밀린다. 영향은 작지만 작업 간 방식이 달라 유지보수 때 실수를 부른다
+- **개선안** RawStore.save 호출을 모두 asyncio.to_thread로 통일한다. 이미 gzip인 본문(\x1f\x8b로 시작)은 .bin.gz로 그대로 쓴다. 전세계 정규화·encode_payload도 to_thread로 옮기는 것을 검토한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-22 · 코드 · Low — 쓰지 않는 코드와 설명이 실제 동작과 어긋남 (demand 상태 상수·disabled 설명·AircraftProvider)
+
+- **근거** demand.py:54-55 STATES_FOCUS/STATES_HOT는 정의 외 참조 0건이고, api가 받는 'disabled'(apps/api/.../CollectorDemandStatus.java:17)가 빠져 있음. jobs/demand.py:337 docstring은 'throttled 로'라고 하지만 :341-343은 'disabled'를 씀. providers/base.py:10-19 AircraftProvider Protocol은 커버리지 0%이고 main.py:123은 dict[str, Any]를 씀
+- **검증(반박 시도)** CONFIRMED — grep 결과: STATES_FOCUS/STATES_HOT(demand.py:54-55)는 정의 외 참조 0건이고 'disabled'가 없음. api CollectorDemandStatus.STATES는 active·throttled·not_found·error·disabled. jobs/demand.py:337 _disabled docstring은 'throttled 로'라고 쓰지만 :341-343은 'disabled'를 씀. AircraftProvider(providers/base.py:10)는 참조 0건이고 커버리지 0%, main.py:123은 dict[str, Any]를 씀
+- **문제와 영향** 상태 값의 기준처럼 보이는 상수가 실제 계약과 달라, 다음 변경 때 잘못된 기준으로 검증 코드를 짤 위험이 있다
+- **개선안** STATES_*를 api 집합과 맞추고 status_value에서 검증에 쓰거나, 쓰지 않으면 지운다. docstring을 고친다. AircraftProvider를 main의 타입 힌트로 쓰거나 지운다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-23 · UI/UX · Low — 알림 배너(lastEvent)가 시각 없이 무기한 남아 오래된 진입 이벤트가 방금 일어난 일처럼 보인다
+
+- **근거** lastEvent를 쓰는 곳은 apps/web/lib/ws.ts:427뿐이고 지우는 곳이 없다. 재접속·welcome에서도 유지된다(grep 결과). components/AlertPanel.tsx:55-60은 이벤트 유형, 콜사인, 위험 유형, FIR만 보이고 시각은 보이지 않는다(lastEvent.at도, alert 시각도 없음).
+- **검증(반박 시도)** CONFIRMED — lastEvent 를 쓰는 곳은 lib/ws.ts:427(alerts_batch) 하나뿐이다. 지우는 곳은 store.ts:95 초기값과 :120 resetData 뿐이고, resetData 는 lib/components/app 어디서도 부르지 않는다(grep 결과 정의만 있음). welcome(:354-369)이나 connectionDown(:163-176)에서도 지우지 않는다. AlertPanel.tsx:55-60 배너는 type, 라벨, callsign/hex, hazard, fir_id 만 보이고 lastEvent.at 이나 alert 시각은 렌더하지 않는다.
+- **문제와 영향** 몇 시간 전의 'ENTERED · 콜사인 · TS FIR'이 알림 패널 맨 위에 강조 표시로 계속 떠 있어 현재 이벤트로 읽힌다.
+- **개선안** 배너에 이벤트 시각을 붙인다(서버 시각 기준 'n분 전'). 일정 시간(예: 5분)이 지나면 흐리게 하거나 숨긴다. 연결이 바뀌면(welcome) 지운다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-24 · 성능 · Low — DB 가 기본 설정(checkpoint 5분·WAL 압축 없음·shared_buffers 128 MB)이라 WAL 의 86 % 가 전체 페이지 이미지 — WAL 약 16 GB/일, 디스크 쓰기 약 47 GB/일
+
+- **근거** pg_stat_wal: wal_bytes 15 GB / 21 h 49 m(198 kB/s ≈ 16.5 GB/일), wal_fpi 2,066,115 / records 42.8M. 최근 WAL 세그먼트 3개(3/C2–3/C4)를 pg_waldump --stats 로 읽음: FPI 42.8 MB / 전체 49.9 MB = 85.7 %, 그중 Btree FPI 34.8 MB = 전체 WAL 의 72.8 %((hex, ts)·(mmsi, ts) PK 에 무작위 순서로 삽입). docker stats db BlockIO 쓰기 15.9 GB / 컨테이너 가동 약 8 h. SHOW: checkpoint_timeout 5min · max_wal_size 1GB · wal_compression off · shared_buffers 128MB · work_mem 4MB. pg_stat_checkpointer num_timed 254(5분마다). track_point_20260927 heap 적중률 89.8 %(1.26M 블록 읽기). infra/compose.yml:272-300 db 서비스에 `command:` 조정이 없다(메모리 한도 1 GiB 중 376 MiB 사용).
+- **검증(반박 시도)** CONFIRMED — 확인됨. pg_stat_wal: 16,152,873,207 B / 22 h 04 m(203 kB/s ≈ 17.5 GB/일), wal_fpi 2,099,871, records 43.3M. 세그먼트 3/CB–3/CD(50.0 MB)에 pg_waldump --stats를 돌리면 FPI가 45.2 MB로 90.4 %, Btree FPI가 39.0 MB로 전체의 78 %(INSERT_LEAF가 대부분)다. 설정은 pg_settings 기준 checkpoint_timeout 300 s(default), max_wal_size 1024 MB, wal_compression off, shared_buffers 16384×8 kB = 128 MB, work_mem 4 MB. pg_stat_checkpointer num_timed 260. docker stats db BlockIO 쓰기는 16.4 GB로, 가동 8.5 h 기준 약 46 GB/일이다. infra/compose.yml db 서비스에 `command:` 가 없다. 사실관계는 모두 맞다. 그러나 이 WAL 양 때문에 어긋나는 NFR이나 예산이 없고, 재생·REST 지연은 예산 안이다. 로컬 개발 기계의 쓰기 증폭이라는 효율 문제라서 Medium이 아니라 Low로 둔다. 제안한 설정 변경은 싸고 안전하다.
+- **문제와 영향** 순증가 약 1.7 GB/일의 데이터를 위해 WAL 16 GB/일과 수십 GB/일의 디스크 쓰기를 한다. 개발용 Mac SSD 가 닳고 I/O 경합이 생긴다. 재생 질의는 캐시가 식었을 때 90 ms, 데워졌을 때 20 ms 로 차이가 크다.
+- **개선안** compose db 에 `command: [postgres, -c, checkpoint_timeout=15min, -c, max_wal_size=4GB, -c, wal_compression=zstd, -c, shared_buffers=256MB, -c, checkpoint_completion_target=0.9]` 를 넣는다. 기대 효과(추정): 체크포인트가 시간당 12회에서 4회로 줄어 FPI 수가 약 1/3, 압축으로 FPI 크기가 1/2–1/3 → WAL 16 GB/일이 약 3–5 GB/일, 체크포인트 쓰기도 비슷하게 준다. 대가: 비정상 종료 뒤 복구 재생량이 최대 15분 분량이 된다(SSD 에서 수 초). 같은 pg_stat_wal·pg_waldump 명령으로 전후를 비교한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-25 · 성능 · Low — api 프로세스 메모리 약 700 MiB 로 NFR-03(≤ 512 MB) 초과, 힙 상한 616 MiB 도 예산 밖(GC 뒤 살아 있는 데이터는 약 75 MiB)
+
+- **근거** /proc/7/status VmRSS 720,468 → 729,384 kB(RssAnon 695–704 MB, 가동 17→25분). docker stats 695–698 MiB / 1 GiB. Prometheus(관리 포트 9000): 힙 사용 146–197 MiB · 커밋 262–267 MiB · 최대 616 MiB, non-heap 120–134 MiB, jvm_gc_live_data_size 73–75 MiB, 스레드 44. apps/api/Dockerfile:18 `-XX:MaxRAMPercentage=60`. 설계서 NFR-03 '메모리 ≤ 512 MB(api)', 7.1 'api 힙 ≤ 512 MB'. BASELINE 611 MiB, PERF.md api 637–675 MiB. 약 330 MiB 의 네이티브 메모리가 어디에 쓰였는지 나오지 않는다(NMT 꺼짐).
+- **검증(반박 시도)** CONFIRMED — 수치는 재현됐다. /proc/7/status: VmRSS 711,136 kB, RssAnon 694 MB, VmHWM 734 MB. Prometheus: 힙 used 약 210 MB, committed 280 MB, G1 Old max 645.9 MB(616 MiB), jvm_gc_live_data_size 71 MB, threads 44. Dockerfile:18 은 `MaxRAMPercentage=60` 이다. 해석에는 반론이 있다. 설계서 NFR-03 은 '메모리 ≤ 512 MB(api)' 라고 적었지만, 같은 예산을 풀어 쓴 7.1 표는 'api 힙 ≤ 512 MB · 측정 k6 websockets, JFR' 이고 7.2도 'api 힙 … 상한 512 MB' 다. 즉 측정 대상이 힙이다. PERF.md §1 의 200 연결 부하에서 힙 사용은 70–220 MiB로 이 예산을 지킨다. RSS 약 700 MiB는 PERF.md(RSS 722 MiB)에 이미 기록돼 있고 OOM도 없다(1 GiB 한도). 실제로 어긋나는 것은 설정된 힙 상한 616 MiB가 512 MB 예산보다 크다는 점과, 네이티브 메모리를 추적하지 않는다는 점뿐이다. 그래서 Low로 둔다.
+- **문제와 영향** 측정한 모든 시점에서 메모리 예산을 36–42 % 넘는다. 힙 상한이 GC 뒤 살아 있는 데이터의 8배라 힙이 필요 이상 커질 수 있다. 네이티브 메모리를 계측하지 않아서 늘어나도 원인을 추적할 수 없다.
+- **개선안** JAVA_TOOL_OPTIONS 에 `-Xmx384m -XX:MaxDirectMemorySize=64m -XX:ReservedCodeCacheSize=64m -XX:NativeMemoryTracking=summary` 를, 환경 변수로 `MALLOC_ARENA_MAX=2` 를 넣는다. `make bench SHIPS=1` 을 도는 동안 `jcmd <pid> VM.native_memory summary` 로 네이티브 사용처(Netty/Lettuce 직접 버퍼, WS permessage-deflate zlib 등)를 확인한다. 기대 효과(추정): RSS 450–520 MiB. 부하 중 힙 최대 220 MiB 에 비해 384 MiB 는 1.7배 여유다. k6 200 연결로 GC 멈춤·OOM 이 없는지 확인한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-26 · 성능 · Low — 재생 응답의 72 % 가 bbox 와 무관한 전세계 SIGMET 인데 재생 중 초당 1회씩 다시 보낸다
+
+- **근거** GET /api/v1/replay?at=2026-09-28T05:00:20Z&bbox=119.9,32.3,135.7,40.5 → 원본 123 KiB(gzip 30 KiB, 63–81 ms), aircraft 231 · sigmets 119 = 88 KiB. SigmetRepository.java:198-202 validAt 에 공간 조건이 없다. HistoryController.java:58. web app/replay/page.tsx:44 재생 중 setInterval 1 s. sigmet_geom_gist idx_scan 2(GIST 가 있는데 쓰이지 않는다).
+- **검증(반박 시도)** CONFIRMED — 확인됨. SigmetRepository.java:198-202 validAt(at) 에는 공간 조건이 없다. HistoryController.java:58 은 bbox 를 받고도 SIGMET에는 넘기지 않는다. replay/page.tsx:44 는 재생 중 setInterval 1 s 로 at 을 바꾸고, 41행이 150 ms 디바운스 뒤 다시 요청한다. GET /api/v1/replay?at=2026-09-28T05:00:20Z&bbox=119.9,32.3,135.7,40.5 → 200, 131 ms, gzip 30,770 B, 원본 126,731 B. 응답에는 aircraft 231, sigmets 119(65개 FIR: CZEG, KKCI, LFFF 등)가 들어 있고 sigmets JSON이 85 KB로 약 67 %다. sigmet_geom_gist idx_scan 2. 지연 예산은 지키므로 전송·파싱 효율 문제로서 Low가 맞다.
+- **문제와 영향** 재생하는 동안 매초 약 88 KiB(원본)의 폴리곤을 다시 받고 파싱한다. 지연 목표(p95 ≤ 300 ms)는 지키지만 전송량과 클라이언트 파싱의 대부분이 화면 밖 데이터다.
+- **개선안** validAt 에 bbox 를 넘겨 `AND (geom IS NULL OR geom && ST_MakeEnvelope(:lomin,:lamin,:lomax,:lamax,4326))`(GIST 사용)를 더한다. 또는 SIGMET 을 id 목록으로만 주고 도형은 클라이언트가 id 별로 캐시한다. 기대 효과: 응답 약 −70 %(123 → 약 35 KiB 원본). 화면 요약의 'SIGMET n' 은 '보이는 범위의 수' 로 문구를 바꾼다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-27 · 성능 · Low — 일 통계 traffic_by_hour 가 하루치 파티션 전체를 순차 스캔하고 정렬이 디스크로 넘친다
+
+- **근거** MaintenanceJobs.java:198-205. EXPLAIN(2026-09-27): Parallel Seq Scan on track_point_20260927(Rows Removed by Filter 1,405,499 × 3), 71,623 블록(약 560 MB) 읽기, Sort external merge Disk 2.8+2.0+2.2 MB, 3,509 ms(계획 123 ms). pg_stat_database temp_files 11 · 997 MB(이 잡이 원인의 일부로 보인다 — 추정). 같은 bbox 로 이미 요약한 track_point_1m 은 전체 117,780행이다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. MaintenanceJobs.java:198-205 traffic_by_hour 를 EXPLAIN 하면 Parallel Seq Scan on track_point_20260927 이 나온다. 이 파티션은 71,623 블록(560 MB)이다. track_point 파티션에는 PK (hex, ts) 와 BRIN(ts) 만 있고 geom 인덱스가 없으니, 하루 전체를 도는 집계라면 이 계획이 필연이다. pg_stat_database 는 temp_files 17 · 1011 MB 다. 다만 이 잡의 몫인지는 따로 확인하지 못했다(추정). 하루 1회(+통계가 없는 날에 한해 따라잡기) 몇 초 도는 배치이고 요청 경로가 아니다. 읽기라서 'WAL 경합을 키운다'는 주장은 근거가 약하다. Low가 맞고 우선순위도 낮다.
+- **문제와 영향** 하루 한 번(+따라잡기 3시간마다, 통계가 없는 날) 약 560 MB 를 읽고 임시 파일을 쓴다. 요청 경로는 아니지만 위 WAL·I/O 경합을 키운다.
+- **개선안** 그날 24시간 요약이 모두 있고 요약 때의 지역이 집계 지역과 같으면(요약 행에 지역을 기록해 결정적으로 확인) track_point_1m 에서 count(DISTINCT hex) 를 센다. 아니면 지금처럼 원본에서 세되 `SET LOCAL work_mem = '64MB'` 로 디스크 정렬을 피한다. 기대 효과: 읽는 양 약 1/40(추정), 임시 파일 0.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-28 · 보안 · Low — api 기동 로그에 Spring Boot 가 자동 생성한 보안 비밀번호가 매번 찍힌다
+
+- **근거** `docker logs wakeline-api-1` 12-16행: `WARN … UserDetailsServiceAutoConfiguration :` / `Using generated security password: <값 가림>`. apps/api/src/main 에 UserDetailsService·AuthenticationManager·InMemoryUserDetails·exclude 는 grep 0건이다
+- **검증(반박 시도)** CONFIRMED — `docker logs wakeline-api-1` 12행은 `WARN … .s.a.UserDetailsServiceAutoConfiguration :`, 14행은 `Using generated security password: <가림>` 이다. apps/api/src/main 에서 UserDetailsService·AuthenticationManager·InMemoryUserDetails 를 grep 하면 0건이다. application.yml 에도 spring.autoconfigure.exclude 가 없다. SecurityConfig.java:45-46 에서 formLogin·httpBasic 이 꺼져 있어 지금은 이 계정으로 들어갈 경로가 없다. 로그에 비밀값이 남는다는 규칙 위반만 해당하므로 Low 다.
+- **문제와 영향** '비밀값은 로그에 없어야 한다'는 소유자 규칙에 어긋난다. 지금은 formLogin·httpBasic 이 꺼져 있고(SecurityConfig.java:45-46) 로그인은 OpsUserService(BCrypt)만 써서 이 계정으로 들어갈 경로는 없다. 하지만 나중에 httpBasic 을 켜면(예: actuator 보호용) 로그에 찍힌 in-memory 'user' 계정이 바로 살아난다. 로그 비밀값 검사에서도 오탐의 원인이 된다
+- **개선안** UserDetailsServiceAutoConfiguration 을 exclude 하거나, 항상 UsernameNotFoundException 을 던지는 UserDetailsService 빈을 선언한다. OutputCapture 로 기동 로그에 'generated security password' 가 0건인지 확인하는 테스트를 추가한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-29 · 보안 · Low — 런타임 이미지에 쓰지 않는 패키지 관리자가 남아 web·collector 의 HIGH 취약점 전부를 만든다
+
+- **근거** 일회용 컨테이너(--network none)로 확인: wakeline-web:local 에 /usr/local/lib/node_modules/{npm,corepack}, /usr/local/bin/{npm,npx,yarn,yarnpkg,corepack}, /opt/yarn-v1.22.22 가 있다. baseline trivy web 의 HIGH 4·MEDIUM 5 는 전부 usr/local/lib/node_modules/npm/node_modules/* (brace-expansion 5.0.7, ip-address 10.2.0, tar 7.5.19, undici 6.27.0)이다. collector 의 msgpack HIGH(GHSA-6v7p-g79w-8964)는 /usr/local/lib/python3.13/site-packages/pip/_vendor/msgpack 에 있고, 앱 .venv 에는 pip 가 없다(`No module named pip`). api 는 헬스체크용으로 curl 을 apt 로 설치한다(apps/api/Dockerfile:13)
+- **검증(반박 시도)** CONFIRMED — wakeline-web:local 을 일회용 컨테이너(--network none)로 열어 보니 /usr/local/lib/node_modules/{npm,corepack}, /usr/local/bin/{npm,npx,yarn,yarnpkg,corepack}, /opt/yarn-v1.22.22 가 있고 npm 의 tar 는 7.5.19 다. baseline web 취약점 9건(HIGH 4·MEDIUM 5)은 모두 usr/local/lib/node_modules/npm/… 경로다. collector 는 /usr/local/lib/python3.13/site-packages 에 pip 26.2.1 만 있고, pip/_vendor/vendor.txt 에 `msgpack==1.1.2`·`setuptools==70.3.0` 이 있다. 즉 baseline 의 HIGH 2건(msgpack, setuptools CVE-2025-47273)이 모두 pip 가 품은 패키지라서 pip 를 지우면 둘 다 사라진다. finding 은 msgpack 만 적었다. /app/.venv/bin/python -c 'import pip' 의 결과는 ModuleNotFoundError 다. 참고로 api 의 curl(Dockerfile:13)은 헬스체크에 실제로 쓰이므로 '쓰지 않는 도구'가 아니다.
+- **문제와 영향** 실행 중에는 쓰이지 않아 직접 악용 가능성은 낮다. 그러나 CI 게이트가 web·collector 에서 실패하는 유일한 원인이고, 침해됐을 때 공격자에게 설치·다운로드 도구를 주게 된다
+- **개선안** web 최종 단계에서 `rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*` 를 실행한다. collector 최종 단계에서는 `python -m pip uninstall -y pip` 를 실행한다. 재스캔해서 fixable HIGH 0건을 확인한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-30 · UI/UX · Low — 보조기술용 구조가 약하다: 모든 화면 제목이 같고, 알림 행 이름이 붙어서 읽히며, 첫 알림까지 Tab 40번(지도 출처 링크가 중복으로 13개)
+
+- **근거** layout.tsx:6-9 metadata title 하나를 모든 경로가 공유한다(s20: /, /replay, /stats, /ops, /about 모두 'Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판'). h1은 /, /replay, /ops에 없다. s6_keyboard.mjs: 알림 행 버튼의 접근 가능한 이름이 'CCA402TURB SEVZSHAFL276INSIDE'처럼 구분 없이 이어진다(AlertPanel.tsx:81-88 span 나열). 라이브 배너 텍스트도 'PREDICTED진입 예상(추정) · …'이다(s17). Tab 순서에서 지도 출처 링크 13개(#11-23)가 하단 푸터 링크(#54-66)와 중복되고, 첫 알림 행은 40번째다. 건너뛰기 링크는 없다.
+- **검증(반박 시도)** CONFIRMED — 대부분 확인됨. layout.tsx:6-9 metadata title 하나를 모든 경로가 쓴다(/와 /replay의 document.title이 같음, 각 page는 'use client'라 metadata export 없음). h1은 about·stats·airports에만 있고 /, /replay에는 없다(k3·k5 h1=0). k5.mjs(1280×720): Tab 41번째에 첫 알림 행에 닿고, 그 사이 maplibregl-ctrl-attrib 링크가 13개다. 반박할 점: 알림 행의 '접근 가능한 이름이 이어져 읽힌다'는 틀렸다. textContent를 이름으로 오인했다. CDP Accessibility.getFullAXTree와 ariaSnapshot 모두 'CXA8044 TURB SEV ZSHA FL311 INSIDE'처럼 공백으로 구분된 이름을 돌려준다(flex 아이템이 블록화되기 때문).
+- **문제와 영향** 스크린리더 사용자는 탭·브라우저 기록에서 화면을 구분하지 못하고, 알림 행을 'FL276INSIDE'처럼 뭉개진 소리로 듣는다. 키보드 사용자는 알림 목록에 닿기까지 불필요한 정지점을 26개 지난다.
+- **개선안** 경로별 title(각 page를 서버 컴포넌트로 감싸 metadata 지정)과 화면별 sr-only h1을 둔다. 알림 행에 aria-label('CCA402, TURB SEV, ZSHA, FL276, 경보 안')을 붙인다. 지도 AttributionControl 링크에는 tabindex=-1을 주거나 푸터와 합치고, '알림 목록으로 건너뛰기' 링크를 추가한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-31 · UI/UX · Low — 기본으로 열린 범례가 흔한 노트북 화면에서 지도의 23–27%와 지도 출처 표기를 가리고, 한국어 버튼이 단어 중간에서 줄바꿈된다
+
+- **근거** ui-store.ts:72 legendOpen:true. s19_legend.mjs 측정: 1280×720에서 범례 264×546 px가 지도 900×595의 26.9%를 덮고, 1440×900에서는 23.3%다. 두 크기 모두 .maplibregl-ctrl-attrib와 8,910 px² 겹친다(지도 위 출처 일부 가림). 스크린샷 .../review-v1/ui/27-legend-1280x720.png(동해 쪽 항공기 가림). AlertPanel.tsx:48 '관심 지역' 버튼이 1280·1440 px에서 '관심 지/역'으로 끊긴다(ui/04, ui/27). 상태 바는 1280 px에서 'ENGINE 120 p…'로 잘려 가로 스크롤해야 한다(StatusBar.tsx:31 overflow-x-auto, 768 px scrollWidth 1420).
+- **검증(반박 시도)** CONFIRMED — 확인됨. ui-store.ts:72 legendOpen:true. k5.mjs 1280×720: legend 264×546이 canvas 900×595를 덮어 26.9%다. k6.mjs 1440×900: 23.3%이고 .maplibregl-ctrl-attrib와 8,910 px² 겹친다. '관심 지역' 버튼 높이는 43 px로 두 줄로 꺾인다(ui/02 스크린샷에 '관심 지/역'). statusbar scrollWidth는 1427/1280이다(StatusBar.tsx:31 overflow-x-auto).
+- **문제와 영향** 첫 방문 때 한반도 동쪽·동해 교통과 SIGMET 일부가 가려진다. 상태 바 오른쪽에 붙는 STALE 배지(KMA STALE 등)가 보이지 않는 영역으로 밀릴 수 있다.
+- **개선안** 범례를 첫 방문에는 접힌 상태로 두거나 폭 1600 px 이상에서만 펼친다. 범례를 지도 출처 위로 올리거나 max-height를 출처 높이만큼 줄인다. 버튼·배지에 whitespace-nowrap과 word-break:keep-all을 적용하고, STALE류 배지는 상태 바 앞쪽에 고정한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-32 · UI/UX · Low — 통계 화면의 알림 표가 내부 컬럼명·지표 키를 그대로 보이고 평균 체류 값에 단위가 없다. 지난 날짜의 빈 상태 문구도 틀리다
+
+- **근거** app/stats/page.tsx:53-56: 헤더가 'day · metric · dim · value'이고 행은 'alert_dwell_avg_s · OBSERVED · 785', 'alerts_by_kind · OBSERVED · 19546 †'이다(단위가 다른 값이 한 열에 섞임). 스크린샷 .../review-v1/ui/18-stats.png. 막대 차트 라벨이 9 px, 28 px 칸이라 'SBAOYMMMWAAF', 'TURBCONV…'처럼 겹치거나 잘린다(BarChart.tsx:31). s12: 날짜를 2020-01-01로 바꿔도 :68 Empty가 '첫 집계는 다음 03:30 UTC'라고 해서 다음 집계 때 채워질 것처럼 안내한다. date 입력에는 min/max가 없다(:47).
+- **검증(반박 시도)** CONFIRMED — 확인됨. stats/page.tsx:53-56은 헤더를 day/metric/dim/value로 두고 r.metric을 그대로 출력한다. GET /api/v1/stats/alerts 결과는 {'metric':'alert_dwell_avg_s','value':784.55}와 {'metric':'alerts_by_kind','value':19546}이 같은 열에 단위 없이 섞여 있다. :68 Empty는 항상 '첫 집계는 다음 03:30 UTC'라서 지난 날짜에도 같은 문구가 나오고, :47 date 입력에는 min/max가 없다. BarChart.tsx:3 SLOT=28, :31 fontSize 9, 5자를 넘는 라벨은 4자+… 로 잘린다.
+- **문제와 영향** '통계 읽기' 흐름에서 785가 초인지 분인지, 어떤 지표인지 도메인 코드를 알아야 해석할 수 있다. 서비스 시작 전 날짜에 대해 잘못된 기대를 준다.
+- **개선안** metric을 한국어 라벨(평균 체류(초), 알림 건수)과 단위로 매핑하고, 지표별로 표를 나누거나 kind를 열로 둔다. 빈 상태를 '이 날짜 자료 없음'과 '집계 전(다음 03:30 UTC)'으로 나누고, date에 min(첫 집계일)·max(어제)를 준다. 긴 라벨은 회전하거나 title로 표시한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+
+### R-33 · 코드 · Medium — 정규화가 문자열 'inf'를 걸러내지 않아, 레코드 하나가 관심 지역·전세계·focus·hot 묶음 전체를 실패시킴
+
+- **근거** normalize.py:41-48 _num은 NaN만 거르고 float('inf')는 통과. :153-155 int(round(a)), :224-225 int(round(alt_m*M_TO_FT))에서 OverflowError가 나는데 잡지 않음. 재현(스크래치): 정상 50대 + alt_baro='inf' 1대로 AircraftJob('region').run_once() → OverflowError, 발행 0건, 예산 used=1, wakeline:collector에 region_at 없음. 같은 입력으로 normalize_opensky도 OverflowError. aircraft.py:86-91은 목록 전체를 try 없이 처리. scheduler.py:34-38은 실패마다 간격을 2배로(최대 300 s) 늘림. health.py:15 기준 90 s를 넘으면 unhealthy. jobs/demand.py:416-431 _normalize의 예외는 focus·hot 태스크를 조용히 끝내 상태를 갱신하지 않음
+- **검증(반박 시도)** CONFIRMED — 재현(.venv, 스크래치): normalize_readsb({... 'alt_baro':'inf'})와 normalize_opensky(vec[7]='inf') 모두 'OverflowError: cannot convert float infinity to integer'. _num(normalize.py:41-48)은 NaN만 거름. 참고로 gs='inf'는 거부되지 않고 gs_kt=inf인 상태로 통과함. orjson은 Infinity·1e400 리터럴을 거부하므로 문자열 'inf'/'Infinity'가 올 때만 일어남. aircraft.py:86-91은 목록 전체를 try 없이 처리하므로 예외가 run_once 밖으로 나감. 발행·record_run·heartbeat가 모두 생략되고 chain.record_failure도 불리지 않아 폴백이 없음. scheduler.py:34-38은 간격을 2배로 늘림(최대 300 s). ais/parse.py:146-150은 math.isfinite를 씀. 공급자가 그런 값을 보내야 하는 조건부 버그라 Medium 유지
+- **문제와 영향** 공급자가 수치 필드에 'inf'/'Infinity' 문자열을 한 번이라도 보내면 그 주기의 관심 지역 전체가 발행되지 않는다. 같은 레코드가 계속 오면 주기가 10→20→…→300 s로 늘고 헬스체크가 실패한다. focus·hot은 태스크 예외가 회수되지 않아 원인이 로그에 늦게 드러난다
+- **개선안** _num에서 math.isfinite가 아니면 None을 돌려준다(ais/parse.py:146-150과 같은 규칙). normalize_readsb·normalize_opensky 호출을 레코드 단위로 감싸 예상 밖 예외는 Rejected('invalid_record')로 격리한다. 'inf'·'-inf'·'Infinity' 입력 시험을 추가한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-34 · 코드 · Medium — 웹 커버리지 92.1 %는 테스트가 불러온 파일만 센 값이다. 전체 소스 기준은 61.3 %이고 이펙트 코드(MapView 596줄 등)는 0 %다
+
+- **근거** perf/results/review-baseline/summary.tsv: 'Lines : 92.1% (1680/1824)'. 같은 테스트를 coverage.include=lib/**,components/**,app/**,public/*.js로 다시 쟀다(출력은 스크래치 디렉터리). 결과 Lines 61.31 % (1680/2740). MapView.tsx 0 %(1-596), ReplayMap.tsx 0 %, app/replay/page.tsx 0 %, app/ops/page.tsx 0 %, lib/api.ts 0 %, ui-store.ts 7 %. vitest.config.ts:4는 environment 'node'이고, 컴포넌트 시험은 서버 렌더다(tests/web-fixes.test.ts:240 'server-side render, no DOM'). 그래서 useEffect와 정리 함수가 단위 시험에서 한 번도 실행되지 않는다. 이번 결함 F1, F4, F5, F6, F8, F10이 모두 이 미검증 이펙트·페이지 코드에 있다.
+- **검증(반박 시도)** CONFIRMED — vitest.config.ts:4 는 environment 'node' 이고 coverage.include 가 없다. 그래서 기준선 summary.tsv 'Lines : 92.1% ( 1680/1824 )' 는 테스트가 불러온 파일만 센 값이다. 같은 테스트를 --coverage.include=lib/**,components/**,app/**,public/*.js 로 다시 돌렸다(리포트는 스크래치 cov/, 저장소 변경 없음). 결과: Tests 286 passed, Lines 61.31% (1680/2740), Statements 56.84%. MapView.tsx 0%(1-596), ReplayMap.tsx 0%, page.tsx 5개 0%, api.ts 0%, ui-store.ts Lines 7.14%. MapView 는 597줄에 useEffect 19개가 있고, 생명주기 effect 는 :131-349(219줄)이다. 보정할 점: e2e/dashboard.spec.ts·ships-demand.spec.ts 가 실제 브라우저에서 상황판·레이더 타임라인·재생의 정상 경로 일부를 덮는다. 따라서 '전혀 검증되지 않는다'가 아니라 단위 시험 기준 0% 이다.
+- **문제와 영향** WS·워커·지도·타이머 생명주기의 회귀를 단위 시험이 잡지 못하고, 기준선 수치가 실제보다 높게 보고된다. MapView 한 파일에 이펙트 20개와 220줄짜리 생명주기 이펙트가 모여 있어 변경 영향을 파악하기 어렵다.
+- **개선안** vitest coverage.include를 소스 전체로 고정한다. jsdom 또는 happy-dom과 maplibre 스텁으로 MapView 생명주기 시험을 추가한다: 연결이 load와 독립적인지, 언마운트 때 ws·worker·timer가 정리되는지, KMA 레이어가 숨겨지는지. MapView 이펙트를 useWsClient, useRadarLayers, useSelectedTrack 같은 훅으로 나눠 따로 시험한다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-35 · 코드 · Medium — 운영 설정 폼: 15 s 자동 새로고침이 If-Match 낙관적 잠금을 무력화한다(동시 변경이 조용히 덮어쓰임)
+
+- **근거** apps/web/app/ops/page.tsx:64의 15 s 새로고침이 settings.items를 새 version으로 바꾸는 동안 SettingsForm의 edit 상태(:121)는 그대로 유지된다. 입력칸은 edit 값을 먼저 보이므로(:138 `edit[s.key] ?? String(s.value)`) 바뀐 서버 값이 가려진다. save는 새로고침된 s.version을 If-Match로 보낸다(:140 → :128). api의 잠금은 `WHERE key = :k AND version = :ver`(SettingsService.java:85)뿐이라 이 요청이 통과한다. 결과적으로 다른 운영자나 다른 탭의 변경을 경고 없이 덮어쓴다.
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다. ops/page.tsx:64 가 15 s 마다 refresh 해 settings 를 새 객체로 바꾼다. :110 SettingsForm 은 key 없이 같은 인스턴스로 다시 렌더돼 :121 edit 상태가 유지된다. :138 입력칸은 edit[s.key] 를 먼저 보여 새 서버 값을 가린다. :140 save(s.key, s.version) 는 새로고침된 version 을 넘기고, :128 이 그 값을 If-Match 로 보낸다. SettingsService.java:85 `WHERE key = :k AND version = :ver` 는 이 요청을 통과시키므로 VERSION_MISMATCH(:87)가 나지 않는다. 다른 탭이나 운영자가 먼저 바꾼 값을 경고 없이 덮어쓴다. 쓰기 금지라 실제 PUT 재현은 하지 않았다.
+- **문제와 영향** ais_bboxes, region_* 같은 런타임 설정의 동시 변경이 조용히 유실된다. 감사 로그에는 둘 다 남지만 운영자는 충돌이 있었는지 모른다.
+- **개선안** 편집을 시작할 때 version을 함께 저장하고(edit[k] = {value, version}) 저장할 때 그 version을 보낸다. 새로고침된 version이 다르면 '서버 값이 바뀜 — 새 값 보기/덮어쓰기'를 표시한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-36 · 아키텍처 · Medium — 스키마 밖의 두 번째 언어 간 계약(공유 DB 테이블·Redis 해시)을 검사하지 않음
+
+- **근거** ADR-001:11은 '두 언어는 schemas/*.json 하나로 계약한다'고 합니다. 그러나 collector가 직접 쓰는 SQL(db.py:76,314,331,336,350,424,434, 대상 metar_obs·ingest_run·quality_*·airport·radar_frame·provider_budget_day)은 FakePool(tests/test_db_writer.py:15-62)로만 시험합니다. api 쪽 JobsAndRadarIT.java:60-66은 직접 쓴 다른 INSERT를 collector 역할로 실행할 뿐입니다. Redis 해시 계약은 실제로 어긋난 적이 있습니다: VERIFICATION.md:106 #19(ais가 읽는 wakeline:settings.ais_bboxes를 api가 만들지 않음). StatusService.java:102,104는 collector가 쓴 wakeline:radar_kr:meta·wakeline:active 해시를 공개 /api/v1/status에 그대로 싣습니다. 실측 응답에서 radar_kr.grid는 JSON 문자열, available은 "1", observed_cells는 문자열이었고, rest_contract_check.py:576-620의 status 스키마는 이 필드를 제약하지 않습니다.
+- **검증(반박 시도)** CONFIRMED — db.py의 실제 INSERT 문(metar_obs, ingest_run, quality_event, quality_rule_count, airport, radar_frame, provider_budget_day)은 tests/test_db_writer.py의 FakePool과 FakeConn으로만 시험합니다. collector 테스트와 pyproject에서 testcontainers나 실DB 연결은 0건입니다. JobsAndRadarIT.java:60-66은 collector 역할로 다른, 직접 쓴 INSERT를 실행합니다. E2E, 스크립트, Makefile에서 ingest_run, metar, db_failures를 검사하는 곳도 0건입니다. GET /api/v1/status 실측에서 radar_kr.grid는 JSON 문자열, available은 "1", observed_cells는 "2635635"라는 문자열이었습니다. StatusService.java:102,104는 safeHash로 해시를 그대로 싣고, rest_contract_check.py:576-620의 status 스키마에는 radar_kr와 active_providers 제약이 없습니다. VERIFICATION #19(ais가 읽는 ais_bboxes를 api 설정에 두지 않음)도 문서와 일치합니다.
+- **문제와 영향** api의 Flyway V9가 수집 테이블 열을 바꾸면 collector의 DB 쓰기가 런타임에만 실패합니다(best-effort라 카운터만 오르고, 위 항목처럼 화면에 보이지 않음). collector가 해시 필드를 바꾸면 검토 없이 공개 API 모양이 바뀝니다.
+- **개선안** (1) collector pytest에 testcontainers PostGIS + apps/api/.../db/migration/*.sql 적용을 추가하고, db.py의 실제 문장을 collector 역할로 실행합니다. (2) api가 radar_kr·active_providers를 명시한 필드·타입으로 변환해 내보내고(숫자·불리언 파싱, 모르면 null) rest_contract_check에 스키마를 추가합니다. (3) ADR-001에 '계약 표면 = 스트림 스키마 + DB 수집 테이블 + Redis 키/필드 목록 + WS'를 적고, Redis 키/필드 목록을 한 파일로 두어 양쪽 시험이 읽게 합니다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+- **보류 이유** DB·Redis 해시 계약 검사 도입은 구조 작업 — 이번에는 가장 위험한 route·ais 상태 해시만 시험으로 보강
+
+### R-37 · 보안 · Medium — api 가 Tomcat 11.0.24 로 실행 중이다(CRITICAL CVE 3건, 11.0.25 에서 수정)
+
+- **근거** baseline trivy-wakeline-api.json: CVE-2026-65182(보안 제약 우회), CVE-2026-65905(DIGEST 인증 우회), CVE-2026-68525(FORM 인증), tomcat-embed-core 11.0.24→11.0.25. 실행 중인 wakeline-api-1(이미지 4832941a…)에서 docker cp 한 /app/app.jar 에도 BOOT-INF/lib/tomcat-embed-core-11.0.24.jar 가 있다. 버전은 apps/api/build.gradle.kts:4(Boot 4.1.1)와 :17 platform(BOM)이 정한다
+- **검증(반박 시도)** CONFIRMED — 실행 중인 wakeline-api-1 의 이미지는 sha256:4832941a… 로 baseline trivy ImageID 와 같다. docker cp 한 /app/app.jar 를 unzip -l 하면 BOOT-INF/lib/tomcat-embed-core-11.0.24.jar, tomcat-embed-websocket-11.0.24.jar, tomcat-embed-el-11.0.24.jar, spring-boot-4.1.1.jar 가 나온다. baseline 의 CVE 3건(65182·65905·68525)은 모두 11.0.24 → 11.0.25 이다. build.gradle.kts:4 는 Boot 4.1.1, :17 은 platform(BOM)이다. io.spring.dependency-management 플러그인이 없으므로 `extra["tomcat.version"]` 이 안 먹는다는 제안의 설명이 맞다. SecurityConfig.java:45-46 에서 formLogin·httpBasic 이 비활성이고 web.xml 은 없다. 그래서 DIGEST·FORM 경로의 악용 가능성은 좁고 Medium(조건부)이 맞다. CVE 상세는 확인하지 않았다.
+- **같은 문제의 다른 관찰(병합)** [security-app] 런타임 이미지에 알려진 취약 구성요소가 있음: tomcat-embed-core 11.0.24(CRITICAL 3건, 현재 경로로는 악용 불가)와 web 이미지에 남은 npm — perf/results/review-baseline/summary.tsv "trivy wakeline-api:local CRITICAL 3": CVE-2026-65182(security-constraint 순서 우회), CVE-2026-65905(DIGEST 재전송), CVE-2026-68525(FORM 인증 우회), 모두 11.0.25에서 수정됨. Wakeline은 web.xml security-constraint·DIGEST·FORM 인증을 쓰지 않고 Spring Security 필터만 씀(SecurityConfig.java:36-39, formLogin/httpBasic disable :46-47). web 이미지 HIGH 4건(brace-expansion·ip-address·tar)은 모두 usr/local/lib/node_modules/npm/... 경로로, 런타임에 쓰지 않는 npm 번들임.
+- **문제와 영향** 앱은 Tomcat 의 security-constraint·DIGEST·FORM 인증을 쓰지 않는다(web.xml 없음, SecurityConfig.java:45-46 에서 formLogin·httpBasic 비활성). 그래서 CVE 제목상 직접 악용 경로는 좁다고 판단한다(추정, CVE 상세는 외부 확인하지 않음). 다만 edge 는 localhost:8700 으로 열려 있어, 사용자가 방문한 외부 페이지도 Host 허용 목록을 통과하는 요청을 보낼 수 있다. 또한 CI 게이트를 막는 유일한 CRITICAL 이다
+- **개선안** Boot 패치 릴리스가 11.0.25 를 포함하면 build.gradle.kts:4 를 올린다. 아니면 이 빌드는 platform(BOM) 방식이라 `extra["tomcat.version"]` 이 적용되지 않으므로, dependencies 에 `constraints { implementation("org.apache.tomcat.embed:tomcat-embed-core:11.0.25") }` 를 추가하고 tomcat-embed-websocket 등 tomcat-embed-* 도 같은 버전으로 맞춘다. 재빌드 후 trivy 로 0건을 확인한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-38 · 보안 · Medium — 리뷰 측정 스크립트가 떠다니는 :latest 도구 이미지에 docker.sock 과 저장소(.env 포함)를 넘긴다
+
+- **근거** perf/review_measure.sh:66 `docker run -v /var/run/docker.sock:/var/run/docker.sock … aquasec/trivy:latest image`, :75 `-v "$PWD:/src:ro" … aquasec/trivy:latest fs`(--skip-files .env 는 스캔 대상에서만 뺄 뿐 컨테이너는 .env 를 읽을 수 있다), :50-51 `semgrep/semgrep:latest` 에 저장소 마운트. 셋 다 네트워크 제한이 없다. 로컬 aquasec/trivy:latest 는 62b1e65e8869(6주 전)이다. ci.yml:14 는 '2026-03 trivy-action 태그 변조 사건'을 이유로 SHA 고정을 하고, Makefile:9 K6_IMAGE 도 다이제스트로 고정돼 있어 이 스크립트만 정책과 어긋난다
+- **검증(반박 시도)** CONFIRMED — perf/review_measure.sh 에서 확인했다. :66 `-v /var/run/docker.sock:/var/run/docker.sock … aquasec/trivy:latest image`, :75 `-v "$PWD:/src:ro" … aquasec/trivy:latest fs … --skip-files .env`(스캔 대상에서만 빠질 뿐 컨테이너 안에서는 /src/.env 를 읽을 수 있다), :50-51 `semgrep/semgrep:latest` 에 $PWD 마운트, :73 gitleaks 도 태그만(v8.30.1). 어느 줄에도 --network 제한이 없다. 로컬 aquasec/trivy:latest 는 62b1e65e8869(2026-08-14 생성)다. Makefile:9 K6_IMAGE 는 tag@sha256 이고 ci.yml:14 는 SHA 고정 정책을 명시하므로 이 스크립트만 정책과 어긋난다. 제안 보완: semgrep 의 `--config p/...` 는 규칙을 내려받으므로 --network none 으로 돌리려면 규칙을 미리 받아 두어야 한다. 로컬에 이미지가 있으면 :latest 를 다시 받지 않으므로 노출은 새 환경에서 받을 때로 한정된다. 그래도 docker.sock 과 .env 가 넘어가는 조건부 피해가 커서 Medium 을 유지한다.
+- **문제와 영향** 태그가 오염되면 docker.sock 으로 모든 컨테이너·볼륨(개발 DB·Redis)과 docker inspect 의 비밀번호 전부를 장악하고, .env 를 읽어 외부로 보낼 수 있다(호스트 루트급 권한)
+- **개선안** 세 도구 이미지를 K6_IMAGE 처럼 `tag@sha256:` 변수로 고정한다. trivy image 는 docker.sock 대신 `docker save` 한 tar 를 `--input` 으로 스캔한다(본 리뷰에서 `--network none --skip-db-update --offline-scan` 으로 동작 확인). trivy fs·semgrep 은 `--network none` 으로 돌리고, .env 를 뺀 경로만 마운트한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-39 · UI/UX · Medium — 390 px 폭에서 상황판 지도 폭이 10 px로 줄고 레이어 버튼·메뉴가 화면 밖으로 나간다(768 px도 지도 대부분을 범례가 덮음)
+
+- **근거** app/page.tsx:31 aside가 w-[380px] shrink-0으로 고정이다. s3_resp.mjs 390×844 측정: maplibregl-canvas 폭 10 px, aside 380 px, layer-panel x=-320(레이어 8개 버튼 포함 상호작용 요소 21개가 뷰포트 밖), nav y=-30·h=93(메뉴 글자가 헤더 위로 잘림), statusbar scrollWidth 1407/390. 스크린샷 .../review-v1/ui/m390-dashboard.png. 같은 상태가 저장소 docs/review/ui/after-mobile-korea.png에도 이미 찍혀 있다. 768×1024에서는 지도 388 px에 범례가 대부분을 덮고, 레이어 버튼·메뉴가 음절 단위로 줄바꿈된다('레/이/더', '상황/판')(ui/t768-dashboard.png). docs/review/BASELINE.md:91은 '데스크톱 전용 상황판'이라고 하지만 화면에는 그런 안내가 없다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. app/page.tsx:31 aside는 w-[380px] shrink-0이다. k5.mjs 390×844: canvas [0,59,10,659](폭 10 px), legend x=-264, layer-panel x=-320, 뷰포트 밖 상호작용 요소 21개, statusbar scrollWidth 1414/390. docs/review/ui/after-mobile-korea.png에도 같은 모습이 이미 찍혀 있다. 반응형·모바일 요구사항은 docs 어디에도 없고, BASELINE.md:90은 '데스크톱 전용 상황판'이라고 적었다. 대상 플랫폼에서의 기능 고장이 아니라 비대상 폭에서의 사용성 문제라서 Medium으로 낮춘다(화면에 데스크톱 전용 안내가 없는 점은 유효).
+- **문제와 영향** 포트폴리오 링크를 휴대폰으로 연 사람은 핵심 기능(지도·레이어)을 쓸 수 없고, 깨진 화면을 첫인상으로 받는다. 태블릿에서도 지도가 거의 가려진다.
+- **개선안** 900 px 미만에서는 지도와 목록을 탭·하단 시트로 전환하고, 레이어 패널을 메뉴로 접으며, 범례는 기본 닫힘으로 한다. 최소 조치로는 좁은 화면에 '데스크톱용 — 목록 보기로 전환' 안내와 목록 전용 모드를 둔다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-40 · UI/UX · Medium — SIGMET·공항·재생 항목은 지도 클릭으로만 열리고(키보드 경로 없음), 공항 비행 카테고리는 지도에서 색으로만 구분된다
+
+- **근거** selectSigmet·selectAirport를 부르는 곳은 MapView.tsx:318-319의 캔버스 클릭 처리뿐이다(grep). app/page.tsx:41-42는 '지도에서 SIGMET 폴리곤을 클릭하세요'·'공항을 클릭하세요(줌 6 이상)'만 안내한다. 캔버스 aria-label(MapView.tsx:143)은 이동·확대만 설명한다. s6_keyboard.mjs로 Tab 75회를 돌아도 SIGMET·공항에는 닿지 않는다. 재생 상세(replay/page.tsx:69)도 ReplayMap 클릭 전용이다. 비교: 선박은 목록(ShipCard.tsx:212), 항공기는 검색이 있다. 색 전용: format.ts:30의 VFR #22c55e 대 IFR #ef4444는 제2색각(deuteranopia) 시뮬레이션 ΔE 12.7, MVFR #3b82f6 대 LIFR #d946ef는 제1색각(protanopia) ΔE 8.3이다(Machado 행렬). 지도 원에는 글자·모양 구분이 없고, 텍스트 대안은 마우스 hover 툴팁뿐이다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. selectSigmet/selectAirport를 non-null로 부르는 곳은 MapView.tsx:318-319 캔버스 클릭뿐이다(grep, 나머지는 카드의 닫기 null 호출). 대시보드에는 SIGMET·공항 목록이 없고 page.tsx:41-42는 '지도에서 … 클릭'만 안내한다. 공항 원은 색(maplayers.ts:114-120 AIRPORT_FILL_EXPR)으로만 구분되고, 줌 7 이상 라벨은 ICAO 코드뿐이다(:123). Machado 행렬과 CIE76로 다시 계산해 보니 deut VFR/IFR ΔE 12.7, prot MVFR/LIFR ΔE 8.3으로 주장 수치와 같다. /airports/[icao] 페이지는 URL로만 갈 수 있다.
+- **문제와 영향** 키보드·스크린리더 사용자는 'SIGMET 안의 항공기 찾기'를 SIGMET 쪽에서 시작할 수 없고 공항 기상도 열 수 없다(WCAG 2.1.1). 색각 이상 사용자는 지도에서 VFR/IFR·MVFR/LIFR 공항을 구분하기 어렵다(WCAG 1.4.1).
+- **개선안** sigmet 탭에 SIGMET 목록(관심 지역 우선, 위험 유형·FIR·안의 항공기 수, 키보드 선택 시 flyTo)을, airport 탭에 감시 공항 목록을 추가한다. 재생 화면에도 항공기·SIGMET 목록을 둔다. 공항 원에 V/M/I/L 글자나 모양을 줌 7 이상에서 겹쳐 그린다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-41 · 코드 · Low — CI가 실제 Redis 시험을 건너뛰어 예산 Lua·ACL 규칙이 Python 재구현(fake)으로만 검증됨
+
+- **근거** .github/workflows/ci.yml:17-35 (collector job에 redis service와 WAKELINE_TEST_REDIS_URL이 없음), tests/test_redis_integration.py:73,82,110 · tests/test_ais_redis_integration.py:64,84가 skip. 기준선 summary.tsv 'collector pytest 682 passed, 5 skipped', 재실행에서도 같은 5건 skip 확인. tests/fakes.py:143-155 evalsha가 RESERVE_LUA 의미를 흉내 내지만 EXPIRE(48 h TTL)는 모델링하지 않음. docs/audit/impl-reports-2026-09-28.json에는 수동으로 한 번 실행한 기록만 있음
+- **검증(반박 시도)** CONFIRMED — 일부만 맞음. 맞는 부분: ci.yml collector job(:17-44)에 redis service와 WAKELINE_TEST_REDIS_URL이 없음. 재실행 결과 682 passed, 5 skipped. tests/fakes.py:146-155 evalsha는 EXPIRE를 모델링하지 않음. 그래서 실제 RESERVE_LUA(headroom·TTL)는 CI에서 실제 Redis로 돌지 않음. fixture 공급자는 cost 0이고 _guard는 fixture에서 예약을 건너뛰어 E2E에서도 안 돎. 틀린 부분: 'infra/redis/start.sh ACL이 바뀌어도 CI가 못 잡는다'는 사실이 아님. ci.yml infra job이 `make -s infra-docker-test`를 실행하고, 이것이 infra/tests/redis_acl_test.sh로 실제 start.sh를 써서 컨테이너를 띄운 뒤 wakeline_collector·api·ais 허용·거부 명령을 검사함(:124-147에 budget Lua EVAL·HINCRBY·HGETALL 포함, 다만 단순화한 BUDGET_LUA). 건너뛰는 opt-in 시험도 start.sh가 아니라 복사한 COLLECTOR_RULES(test_redis_integration.py:32)를 씀. 남는 결함은 예산 Lua의 의미 검증 공백 하나뿐이라 Low
+- **문제와 영향** OpenSky 크레딧 보호(엄격 공급자는 예약 실패 시 호출하지 않음)와 headroom 우선순위를 책임지는 Lua 스크립트, 그리고 infra/redis/start.sh의 ACL이 바뀌어도 CI가 잡지 못한다. fake와 실제 동작이 어긋나도 모든 시험이 통과한다
+- **개선안** collector job에 `services: redis: image: redis:8-alpine`(다이제스트 고정)과 WAKELINE_TEST_REDIS_URL을 추가해 opt-in 시험 5건을 항상 돌린다. fake evalsha에는 TTL 설정을 기록해 TTL도 확인하게 한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-42 · 코드 · Low — MetarJob·RadarJob.run_once와 DB 쓰기 인자 조립에 단위 시험이 없음 (weather.py 커버리지 75%)
+
+- **근거** 스크래치에서 pytest --cov 재실행: jobs/weather.py 75%, 빠진 줄 230-254(RadarJob.run_once 전체) · 311-335(MetarJob.run_once 전체) · 34-42(_guard 예산 소진 분기). db.py 345 · 362 · 418-429(upsert_airports·upsert_metar 인자 조립, insert_radar_frames) 미실행
+- **검증(반박 시도)** CONFIRMED — 스크래치 COVERAGE_FILE로 pytest --cov 재실행: jobs/weather.py 75%, 빠진 줄 34-42·88-90·125·140-141·230-254·261·311-335. db.py 91%, 빠진 줄에 345·362·418-429 포함. MetarJob.run_once·RadarJob.run_once 전체가 실행되지 않음. E2E(apps/web/e2e/dashboard.spec.ts:91)는 범례 문구 'LIFR'·'METAR 오래됨'만 확인해 METAR→DB 경로를 검증하지 않음
+- **문제와 영향** METAR는 출력이 DB뿐이다(airport → metar_obs FK 순서, 행 단위 거부 대체). 그런데 run_once 경로와 인자 튜플 순서(17개 컬럼)를 검사하는 시험이 없어 순서가 어긋나거나 FK 순서가 바뀌어도 CI가 통과한다. 레이더 프레임 발행·기록 경로도 마찬가지다
+- **개선안** FakeRedis와 기록용 가짜 Db로 MetarJob/RadarJob.run_once 시험을 추가한다: airports→metar 순서, 발행 envelope, 예산 소진 분기, 이상 항목 격리(metar_parse_error). upsert_metar 인자는 컬럼 이름과 1:1로 대조한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-43 · 코드 · Low — redis-py 8 기본 재시도(10회)를 그대로 써서, 오류를 삼키는 Redis 호출 하나가 3.3 s(연결 거부)에서 약 60 s(응답 없음)까지 걸림
+
+- **근거** 설치본 redis 8.1.0의 기본 Retry(ExponentialWithJitterBackoff(base=0.01, cap=1), retries=10)는 ConnectionError/TimeoutError에 적용됨. 스크래치 측정: 닫힌 포트로 XADD 1회에 3.27 s 뒤 ConnectionError. main.py:71-82와 ais/main.py:49-59는 retry를 지정하지 않고 socket_timeout=5를 씀(응답 없는 Redis면 최대 11×5 s + 백오프). publisher.py:107-127은 이 호출 동안 asyncio.Lock을 쥐고 있음. 대조: health.py:66과 ais/health.py:111은 Retry(NoBackoff(), 0)을 명시
+- **검증(반박 시도)** CONFIRMED — 설치본 redis 8.1.0 asyncio 기본값: Retry(ExponentialWithJitterBackoff(base=0.01, cap=1), retries=10), supported_errors=(ConnectionError, TimeoutError). 스크래치 측정: 127.0.0.1:1로 XADD 1회에 3.18 s 뒤 ConnectionError. make_redis(main.py:71-82)는 retry를 지정하지 않고 socket_timeout=5를 씀. health.py:66은 Retry(NoBackoff(),0)을 명시함. publisher.py:107-127은 _lock을 쥔 채 _xadd를 기다림. 응답 없는 Redis에서 약 60 s는 계산값이며 측정하지 않음. Redis 장애 중에만 나타나 Low
+- **문제와 영향** 상태·heartbeat·is_disabled·임대 읽기처럼 '실패해도 넘어가는' 호출도 장애 중에는 호출마다 수 초에서 1분씩 걸린다. demand 틱 한 번(Redis 5회 이상)이 1 s가 아니라 16 s 이상이 되고, 모든 작업의 발행이 Publisher 락 뒤에 줄 선다. 복구 뒤 반영과 종료(SIGTERM)도 늦어진다
+- **개선안** 수집기·ais의 비동기 클라이언트에 짧은 재시도를 명시한다(예: Retry(ExponentialBackoff(cap=0.5), 2)). 부가 경로(status·heartbeat·demand status)는 asyncio.timeout(1–2 s)으로 감싼다. 발행 경로는 지금처럼 로컬 큐로 넘긴다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-44 · 코드 · Low — fixedDelay 작업 전부가 단일 스케줄러 스레드에서 직렬 실행 — 유지보수 catch-up·Redis 지연이 SIGMET 만료·WS heartbeat·AIS 상태 갱신을 막는다
+
+- **근거** application.yml:3 `threads.virtual.enabled: true` → Boot 4.1.1 DefaultTaskSchedulerConfiguration.taskSchedulerVirtualThreads 가 SimpleAsyncTaskScheduler 를 만든다. spring-context 7.0.9 javap: SimpleAsyncTaskScheduler.scheduleWithFixedDelay → taskOnSchedulerThread(오류 처리 래퍼만) → ScheduledThreadPoolExecutor(1).scheduleWithFixedDelay — 즉 fixedDelay 는 모두 스레드 하나. 같은 스레드를 쓰는 작업: EngineService.java:118 rebuildForExpiry(30 s), WsHub.java:390 heartbeat(30 s), ShipSweeper.java:37 refreshStatus(5 s)·40 sweep(30 s), StreamMetrics.java:59(Redis 8회), StartupMirror.java:39, MaintenanceJobs.java:49 ensurePartitions·111 catchUp. 측정(dev DB, 읽기 전용 EXPLAIN ANALYZE): aggregateDay 의 traffic SELECT 1일분(부분일 480만 행) 1,785 ms, summarizeHour SELECT 221 ms(+계획 303 ms). 장애 복구 뒤 catchUp 은 최대 24시간×요약 + 7일×집계 ≈ 25–30 s 동안 이 스레드를 점유. Redis 명령 한도 3 s(application.yml timeout: 3s) × StreamMetrics.refresh 8회 = 최대 24 s 점유도 같다.
+- **검증(반박 시도)** CONFIRMED — 구조는 재확인됨: application.yml:3 threads.virtual.enabled=true, Boot 4.1.1 DefaultTaskSchedulerConfiguration(javap)에 taskSchedulerVirtualThreads→SimpleAsyncTaskScheduler. spring-context 7.0.9 javap: 생성자가 createFixedDelayExecutor()로 SimpleAsyncTaskScheduler$2(ScheduledThreadPoolExecutor, iconst_1 = 코어 1)를 만들고, scheduleWithFixedDelay는 taskOnSchedulerThread(DelegatingErrorHandlingRunnable 래퍼만) 후 fixedDelayExecutor.scheduleWithFixedDelay. fixedDelay 작업 전부가 스레드 하나를 공유한다: EngineService:118, WsHub:390, ShipSweeper:37·40, StreamMetrics:59(STREAMS 4개 × info+groups = Redis 8회, timeout 3s), StartupMirror:39, MaintenanceJobs:49·111. 플랫폼 스레드 경로의 ThreadPoolTaskScheduler도 기본 pool 1이므로 어느 쪽이든 같다. 다만 cron 작업(summarize1m·aggregateDaily·dropOldPartitions)은 triggerExecutor→scheduledTask로 별도 스레드에서 돈다(로그에서 cron은 scheduling-3, catch-up은 scheduling-2). 영향 추정은 과장됨: 이번 재기동의 catchUp은 05:59:20.8~05:59:21.028, 약 0.2 s(6일 집계 포함, api 로그). track_point 보존이 72 h(application.yml:78)이고 catch-up은 요약/행이 빠진 시간·날만 처리하므로 '24시간×요약+7일×집계 ≈25–30 s'는 현실적인 최악값이 아니다. 실제 영향은 Redis 행(최대 24 s)이나 DB 지연 중에 인메모리 점검·ping이 수십 초 밀리는 정도다. 웹은 45 s 동안 수신이 없어야 '실시간 아님'으로 표시하는데(ws-protocol.ts), 그런 상황이면 피드 자체도 멈춘 상태다. 결합 구조는 맞지만 영향이 작아 Low로 낮춘다.
+- **문제와 영향** catch-up(재기동 60 s 뒤·3시간마다)이나 Redis 지연 중에는 만료된 SIGMET 을 걷어내는 점검(REL-13 대책), WS ping, AIS 수신 상태·선박 만료, 스트림 지표 갱신이 수십 초 밀린다. 서로 무관한 인메모리 작업이 DB/Redis I/O 작업 뒤에 줄을 서는 구조라 장애 상황일수록 지연이 커진다.
+- **개선안** MaintenanceJobs(ensurePartitions·catchUp·cron 3종)를 전용 스케줄러로 분리: `@Bean ThreadPoolTaskScheduler maintenanceScheduler`(pool 1~2) 후 `@Scheduled(..., scheduler = "maintenanceScheduler")`. 또는 catchUp 본문을 가상 스레드로 넘기고 AtomicBoolean 으로 중복 실행만 막는다. StreamMetrics·AisStatus 의 Redis 호출도 기본 스케줄러 밖(자체 가상 스레드)으로 옮겨 SIGMET 만료 점검·heartbeat 가 I/O 에 막히지 않게 한다.
+- **작업량** S · **확신도** 추정 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-45 · 코드 · Low — 통계 응답의 day 가 날짜가 아니라 'UTC 자정 시각' 문자열이고(JVM 시간대 의존), 집계 전 날짜와 '자료 없음'을 구분하지 못한다
+
+- **근거** 재현: GET /api/v1/stats/sigmet?group=hazard → items[].day = "2026-09-27T00:00:00.000Z", GET /api/v1/stats/traffic?day=2026-09-27 → 최상위 "day":"2026-09-27" 인데 items[].day 는 "2026-09-27T00:00:00.000Z". 원인: StatsRepository.java:19-20·32-33·51-52 가 listOfRows() 의 java.sql.Date(= JVM 기본 시간대 자정)를 그대로 직렬화. UTC 로 맞는 것은 Dockerfile:18·21 의 TZ=UTC·-Duser.timezone=UTC 덕분(build.gradle.kts 는 Test 태스크에만 UTC, bootRun 없음) — KST JVM 이면 "2026-09-26T15:00:00.000Z" 가 되고 웹은 String(r.day).slice(0,10)(apps/web/app/stats/page.tsx:55)로 전날을 표시. OpsController 의 /quality rule_counts.day·/providers budget_days.day 도 같은 경로. 또 HistoryController.java:83 기본 day = 오늘(UTC)인데 집계는 전날만(MaintenanceJobs.java:158-159) → GET /api/v1/stats/traffic 은 항상 items [] (재현)이고 '아직 집계 안 됨'과 '트래픽 없음'이 같은 응답.
+- **검증(반박 시도)** CONFIRMED — 재현: GET /api/v1/stats/sigmet?group=hazard의 items[].day가 "2026-09-27T00:00:00.000Z"다. GET /api/v1/stats/traffic?day=2026-09-27은 최상위 "day":"2026-09-27"인데 items[].day는 "2026-09-27T00:00:00.000Z"다. GET /api/v1/stats/traffic(day 생략)은 {"day":"2026-09-28","items":[]}이다. StatsRepository.java:19-20·32-33·51-52가 listOfRows()를 그대로 반환하고, HistoryController.java:83의 기본값은 LocalDate.now(UTC)다. UTC가 맞는 이유는 Dockerfile의 TZ=UTC, -Duser.timezone=UTC이고 build.gradle.kts:55는 테스트 jvmArgs뿐이다. 영향 한정: 웹 stats/page.tsx:23은 기본 날짜를 어제로 잡고, '집계 전 — 0 대와 구분 불가' 문구(:50)가 있어 화면 영향은 작다. Low 유지.
+- **문제와 영향** 날짜 필드의 타입이 응답 안에서 섞여 계약이 흐리고, 실행 환경 시간대가 바뀌면 통계 날짜가 하루 밀린다. 집계되지 않은 날을 빈 목록으로 내보내 '데이터 없음'처럼 보인다(데이터 정직성).
+- **개선안** SQL 에서 day::text AS day 로 내보내거나 행 매핑에서 LocalDate 로 변환한다(세 저장소·OpsController 공통 헬퍼). traffic/sigmet/alerts 응답에 aggregated(bool) 또는 aggregated_at 을 붙이고, 기본 day 를 '어제(UTC)'로 바꾸거나 집계 전이면 aggregated=false 로 밝힌다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 예
+
+### R-46 · 코드 · Low — catch-up 의 '행이 하나라도 있으면 집계 완료' 규칙: 자료 없는 날은 3시간마다 영원히 재집계되고, 운영자가 오늘을 부분 집계하면 그 값이 굳을 수 있다
+
+- **근거** MaintenanceJobs.java:145-156 catchUpStats 는 stats_daily 에 행이 없는 날을 '미집계'로 본다. 그런데 aggregateDay 는 자료가 없으면 의도적으로 행을 만들지 않는다(173-181 문서, 206 traffic>0, 222 HAVING count(*)>0). api 로그 2026-09-28T05:59:21Z "catch-up: summarized hours [], aggregated days [2026-09-21 … 2026-09-26]" — 첫 track_point 행은 2026-09-26 06:48(읽기 전용 쿼리)이라 이 날들은 매 catch-up 마다 DELETE+INSERT 5문장 트랜잭션을 다시 돈다. 반대로 OpsController.java:60-68 POST /ops/stats/aggregate 는 day 제한이 없어 오늘(부분일)을 집계할 수 있고, 다음 날 03:30 cron 이 놓치면(재기동 등) catch-up 은 행이 있으니 건너뛰어 부분 집계가 영구 통계로 남는다.
+- **검증(반박 시도)** CONFIRMED — 메커니즘은 확인됨: MaintenanceJobs.java:145-156 catchUpStats는 stats_daily에 행이 있는지만(EXISTS) 본다. OpsController.java:60-68 POST /ops/stats/aggregate는 day 제한이 없다. 읽기 전용 DB 조회 결과 stats_daily에는 2026-09-27 한 날(131행)뿐이고, 09-26의 track_point는 1행(06:48:37)이라 09-21~26은 행 없이 남는다. 그래서 다음 catch-up에서도 다시 집계된다. 과장된 부분: '영원히'가 아니다. 창이 7일(CATCH_UP_DAYS)이라 빈 날은 최대 1주일만 반복되고, 1회 비용은 로그상 날마다 약 6~8 ms다(05:59:20.988→21.026). 평상시에는 전세계 SIGMET이 매일 있어 sigmet_by_* 행이 생기므로 빈 날이 생기지 않는다. 부분 집계가 굳는 경로는 운영자가 로그인 후 API를 직접 호출해 오늘을 집계하고(웹 UI에는 호출 경로가 없음) 다음 날 03:30 cron까지 놓쳐야 생긴다. 이중 조건이라 Low.
+- **문제와 영향** 평상시엔 불필요한 DB 작업(단일 스케줄러 스레드 점유 — 위 항목과 결합), 드물게는 불완전한 일 통계가 완성본처럼 남는다.
+- **개선안** 집계 완료 표식을 따로 남긴다(예: stats_daily 에 metric='aggregated_at' 행 — 조회 API 는 metric 으로 거르므로 보이지 않음). 표식은 그날이 완전히 지난 뒤(day < 오늘 UTC) 집계했을 때만 쓰고, catch-up 은 표식 유무로 판단한다. /ops/stats/aggregate 는 day < 오늘(UTC)만 허용한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-47 · 코드 · Low — 재생 요청 중(inflight)에 들어온 최신 시각·영역 요청을 버린다. 라벨과 지도 데이터가 어긋난 채 멈춘다
+
+- **근거** apps/web/app/replay/page.tsx:31-33은 inflight.current가 참이면 return한다. 요청을 대기열에 넣지 않고 버린다. :41 디바운스는 150 ms다. 측정: 2,000 sq° bbox 재생 GET 3회가 0.200–0.255 s(기본 48 sq°는 0.053 s). 요청이 나간 뒤 약 100 ms 안에 슬라이더를 더 움직이거나 지도를 옮기면 마지막 at/bbox 요청이 사라지고, 다음 변경 전까지 다시 요청하지 않는다. :60은 슬라이더 값(at)을 보이고 응답의 frame.at은 보이지 않는다.
+- **검증(반박 시도)** PLAUSIBLE — 코드는 주장과 같다. replay/page.tsx:31-33 은 inflight 면 대기열 없이 return 하고, 끝난 뒤 다시 요청하지 않는다. 디바운스는 :41 의 150 ms 다. 하지만 요청이 버려지려면 응답 시간 d 가 150 ms + (두 번째 변경까지 걸린 시간) 보다 길어야 한다. load(at2) 는 마지막 변경 150 ms 뒤에야 불리기 때문이다. 주장한 측정값 0.200–0.255 s 는 재현되지 않았다. 직접 GET 한 결과: 2000 sq° bbox(100,10,150,50) 0.031–0.070 s, 미국 2000 sq° 0.054–0.100 s(~200 KB), 최대 2500 sq° 미국 0.048–0.087 s·유럽 0.051–0.062 s(~600 KB), 기본 48 sq° 0.031–0.041 s. 측정한 조건에서는 경합 창이 사실상 0 이다. 부하가 있거나 응답이 150 ms 를 넘을 때만 생기는 조건부 결함이라 Low 로 낮춘다.
+- **문제와 영향** 재생 시각 라벨은 새 값인데 지도는 이전 시각·영역의 항공기를 보이거나, 새로 옮긴 영역이 비어 있다. 사용자가 다시 조작할 때까지 그대로다.
+- **개선안** 마지막으로 원한 (at, bbox)를 ref에 두고, 요청이 끝났을 때 값이 다르면 한 번 더 요청한다. 또는 AbortController로 이전 요청을 취소하고 항상 최신 요청만 보낸다. 헤더에 응답의 frame.at을 함께 표시한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-48 · 코드 · Low — 서버 값 검증 헬퍼가 4개 모듈에 복제돼 있고 규칙이 서로 다르다. 죽은 코드와 1,100줄 ships.ts도 있다
+
+- **근거** isObj: lib/ws.ts:68, ships.ts:131, demand.ts:19, route.ts:53. num/int: ships.ts:132-137, route.ts:68-70. 문자열 정리 규칙이 다르다: ships.ts:139-143 str은 끝 '@' 제거, trim, UTF-16 slice만 한다. route.ts:58-64 text는 \p{Cc}\p{Cf}를 지우고 코드포인트 단위로 자른다. 선박 이름·목적지·호출부호(ShipCard.tsx:81-95)는 제어·서식 문자 제거를 거치지 않고, slice가 서로게이트 쌍을 자를 수 있다. 죽은 코드: 워커의 'clear' 메시지(public/interpolate.worker.js:116, 보내는 곳 없음), PING_INTERVAL_MS(ws-protocol.ts:10, 쓰는 곳 없음). lib/ships.ts 1,102줄에 검증, 표시 문구, 기하 계산, 칩 규칙, 항적이 함께 들어 있다.
+- **검증(반박 시도)** CONFIRMED — isObj 가 lib/demand.ts:19, route.ts:53, ws.ts:68, ships.ts:131 에 복제돼 있다. num/int 는 ships.ts:132-137, route.ts:68-70 에 있다. 규칙이 서로 다르다: ships.ts:139-143 str 은 끝 '@' 제거, trim, UTF-16 slice 만 한다. route.ts:55-64 text 는 [\p{Cc}\p{Cf}] 를 지우고 코드포인트 단위로 자른다. 죽은 코드: public/interpolate.worker.js:116 'clear' 분기는 보내는 곳이 없다(lib/components/app/tests/e2e grep 0건). ws-protocol.ts:10 PING_INTERVAL_MS 도 참조가 0건이다. wc -l 기준 lib/ships.ts 는 1102줄이다. React 텍스트 노드라 XSS 는 아니고, 표시 위조 위험도 낮다.
+- **문제와 영향** '서버 값도 믿지 않는다'는 같은 원칙이 모듈마다 다르게 구현돼 한쪽만 고쳐지는 회귀가 생기기 쉽다. 실제 AIS 문자열은 6비트 ASCII라 지금 당장의 위험은 낮다.
+- **개선안** lib/parse.ts에 isObj, num, int, text(제어·서식 문자 제거 + 코드포인트 절단), iso를 모아 ships, route, demand, ws가 함께 쓴다. ships.ts를 검증·표시·항적 모듈로 나눈다. 죽은 코드를 지운다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+- **보류 이유** 검증 헬퍼 통합 리팩터(동작 결함 아님)
+
+### R-49 · 아키텍처 · Low — edge→api 요청 상관관계가 끊기고 로그가 비구조화 텍스트임
+
+- **근거** nginx.conf:13 `access_log /dev/stdout;`은 기본 combined 형식이라 request_id와 upstream 시간이 없습니다(실제 edge 로그: `"GET /ws/v1 HTTP/1.1" 502 552 …`). proxy_headers.conf에는 X-Request-Id 전달이 없습니다. RequestIdFilter.java:29-34는 매번 새 ID를 만들고 MDC에 넣지만, application.yml에 logging.pattern·structured 설정이 없어 api 로그 줄에 request_id가 없습니다(docker logs에서 request_id 0건). ID는 ProblemAdvice의 오류 경로에서만 명시적으로 찍힙니다. collector·ais는 basicConfig 평문입니다(main.py:47, ais/main.py:63). 응답 헤더 X-Request-Id: 1a0e69b6903ad6a50255bf43868는 클라이언트에만 보이고 edge 로그에는 없습니다.
+- **검증(반박 시도)** CONFIRMED — nginx.conf:13은 `access_log /dev/stdout;`(combined)이고 log_format 정의가 없습니다. 실제 edge 로그 줄은 `10.77.0.1 - - [28/Sep/2026:06:22:47 +0000] "GET /stats?... HTTP/1.1" 200 768 ...` 형식으로 request_id와 upstream 시간이 없습니다. proxy_headers.conf에는 X-Request-Id가 없습니다. RequestIdFilter.java:29-34는 매번 새로 생성해 MDC에 넣지만, application.yml:81-85의 logging 절에는 pattern이나 structured 설정이 없습니다. `docker logs --since 8h wakeline-api-1 | grep -c request_id`는 0입니다. GET /healthz 응답 헤더에는 X-Request-Id: 1a0e6ac761a7eea0479cfe4ddac가 있지만 edge 로그에는 이 값이 없습니다.
+- **문제와 영향** edge의 502/504나 느린 요청을 api 로그와 시간 외에는 이어 볼 수 없습니다. 로그를 기계로 필터·집계하기도 어렵습니다(예: 경고만, 특정 스트림 ID만).
+- **개선안** nginx에서 `proxy_set_header X-Request-Id $request_id`를 설정하고, log_format에 $request_id·$upstream_status·$upstream_response_time·$request_time을 넣습니다. api는 신뢰 프록시(edge IP)가 보낸 X-Request-Id만 채택하고 그 밖에는 생성합니다. Spring Boot `logging.structured.format.console=ecs`로 MDC request_id를 포함하고, Python은 JSON 포매터에 stream 이름·raw_ref·run_id를 넣습니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-50 · 아키텍처 · Low — ADR·README·compose 주석이 계약 v1~v4와 구현보다 뒤처짐(판단: 구현·계약이 맞음)
+
+- **근거** ADR-005:5 일일 한도 'adsb.fi 10,000 · OpenSky 4,000' ↔ collector config.py:43-44 40,000 · 2,880(계약 v2 §A2, FR-02 72%). ADR-008:1,3 '단조 증가 버전 v · 30 s마다 전체 스냅샷' ↔ 계약 v1 §1 세션별 seq · 줌≤5는 120 s(application.yml ws-resync-world-interval-s: 120). ADR-001:18 PEL 재처리에 MAXLEN 한계가 없음. ADR-003:6에 WS 전용 5r/s 구역(nginx.conf:33)이 없음. README.md:18,107 'Flyway V1–V7' ↔ V8__ingest_gap_scope.sql. README:22 'ADR 15건 · 변경 계약 v1–v3' ↔ ADR 16건·v4. README:20 시험 수(pytest 453 · JUnit 395 · Vitest 209) ↔ 기준선 682 · 457 · 286. README:45와 compose.yml:203 'WebSocket 1개/하나' ↔ 계약 v4 §D 구역별 연결(현재 2개). compose.yml:69 API_INTERNAL_URL '서버 컴포넌트 전용'이라지만 실제로는 next.config.ts:16-18에서 development에만 씁니다.
+- **검증(반박 시도)** CONFIRMED — 문서와 구현이 어긋나는 곳을 하나씩 확인했습니다. ADR-005:5는 자체 상한을 'adsb.fi 10,000 · OpenSky 4,000'으로 적었지만 config.py:43-44는 40000과 2880입니다. ADR-008:3은 '30 s 마다 전체 스냅샷'이지만 application.yml:73은 world 120 s입니다. ADR-003:6에는 10 r/s만 있고 perip_ws 5r/s(nginx.conf:33)는 없습니다. ADR-001에는 MAXLEN에 대한 언급이 없습니다. README:18,107은 'Flyway V1–V7'이지만 migration 폴더에는 V8__ingest_gap_scope.sql이 있습니다. README:22는 'ADR 15건 · v1–v3'이지만 docs/adr에는 16개, change-contract-v4.md가 있습니다. README:20의 시험 수 pytest 453, JUnit 395, Vitest 209는 summary.tsv의 682, 457, 286과 다릅니다. README:45와 compose.yml:203은 'WebSocket 하나'이지만, wakeline:ais:status의 bbox는 `-90,-180,90,0|-90,45,90,180`으로 구역 2개(연결 2개)입니다. API_INTERNAL_URL은 compose.yml:69 외에 next.config.ts:17(development에서만)에서만 쓰입니다.
+- **문제와 영향** 설계 결정을 ADR로 추적하는 구조인데, ADR만 읽으면 잘못된 예산·WS 규칙·장애 복구 범위를 믿게 됩니다. 포트폴리오 README의 수치가 실측과 다릅니다.
+- **개선안** 대체된 ADR 조항에 'Superseded by 계약 vX §Y' 한 줄과 현재 값을 적습니다(ADR-001·003·005·008). README 수치는 summary.tsv에서 생성하거나 수치를 빼고 링크만 둡니다. compose의 API_INTERNAL_URL은 지우거나 'next dev 전용'으로 고칩니다. CI에 'migration 최대 버전 == README 표기'처럼 싼 문서 검사를 추가합니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-51 · 성능 · Low — 항공기 검색이 aircraft 표 전체를 순차 스캔한다(표는 계속 커진다)
+
+- **근거** AircraftRepository.java:115 `WHERE upper(hex) LIKE :p OR upper(registration) LIKE :p ORDER BY last_seen DESC`. EXPLAIN: Seq Scan on aircraft, Rows Removed 54,407–54,707, 24.7–32.7 ms. aircraft 는 영구 보존이고 시간당 410–2,239개의 새 hex 가 는다(first_seen 시간별 집계). UI 는 디바운스와 이전 요청 취소를 한다(AircraftSearch.tsx:43-58).
+- **검증(반박 시도)** CONFIRMED — 확인됨. AircraftRepository.java:112-115 에서 `upper(hex) LIKE :p OR upper(registration) LIKE :p ORDER BY last_seen DESC`. EXPLAIN ANALYZE('HL8%')는 Seq Scan on aircraft, Rows Removed 54,732, 527 버퍼, 22.6 ms다. 인덱스는 aircraft_pkey(hex) 하나뿐이다. AircraftController.java:110 은 실시간 결과가 20건 미만일 때만 이 조회를 한다. 표가 늘어나는 속도는 줄고 있다(first_seen 시간별 23시 1,069 → 06시 364). 전세계 hex 수는 포화되므로 무한정 커지지는 않는다. 지금은 예산 안이라 Low가 맞다.
+- **같은 문제의 다른 관찰(병합)** [code-api] 항공기 검색이 upper(hex)/upper(registration) LIKE 로 aircraft 표를 순차 스캔(PERF-16 미해결) — 표는 보존 없이 계속 커진다 — AircraftRepository.java:112-121. 읽기 전용 EXPLAIN ANALYZE(q='HL'): Seq Scan on aircraft, Rows Removed by Filter 54,296, 50.9 ms / 'ZZ' 25.8 ms (54,725행, 인덱스는 PK 뿐 — V1__init.sql:3-7). 표는 약 22시간 운영으로 54,725행(보존 정책 없음, ADR-007). GET /api/v1/aircraft/search 33–105 ms 측정. hex 는 이미 소문자로 저장·검증된다(AircraftController.normalizeHex, 스키마 ^[0-9a-f]{6}$)인데 upper(hex) 때문에 PK 를 못 쓴다. audit-2026-09-27 PERF-16 과 같은 원인.
+- **문제와 영향** 검색어마다(실시간 결과가 20건 미만이면) 표를 전부 읽는다. 지금은 예산 안이지만 표 크기에 비례해 느려진다.
+- **개선안** `CREATE INDEX aircraft_reg_prefix ON aircraft (upper(registration) text_pattern_ops)` 를 만들고, hex 는 소문자 PK 범위(`hex >= :p AND hex < :p || 'g'`)로 찾아 두 결과를 UNION 한 뒤 last_seen 순으로 20건을 자른다. 기대 효과: 1 ms 미만, 표 크기와 무관.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-52 · 성능 · Low — /aircraft/{hex}/track 에 점 수 상한이 없고 좌표를 두 번 싣는다
+
+- **근거** TrackRepository.java:18-25(LIMIT 없음), AircraftController.java:161-178(범위 ≤ 24 h, geometry.coordinates 와 points 에 같은 점). GET /api/v1/aircraft/71c396/track 24 h → 1,344점, 원본 230,909 B(gzip 51,870 B), 109 ms(캐시 식음)/30 ms. 인덱스 스캔이 행마다 힙 페이지 하나를 읽는다(209행에 206 버퍼). 선박 항적은 TRACK_MAX_POINTS 5,000 으로 막혀 있다(ShipController.java:48). FR-18 목표 p95 ≤ 100 ms(캐시 미스).
+- **검증(반박 시도)** CONFIRMED — 확인됨. TrackRepository.java:18-25 에는 LIMIT 가 없다. AircraftController.java:161-178 은 범위를 24 h 까지 허용하고, geometry.coordinates 와 points 에 같은 점을 싣는다. GET /api/v1/aircraft/71c396/track 을 24 h 로 요청하면 1,347점, 231,326 B, 323 ms(첫 요청)였다. 중복된 coordinates 는 약 33 KB로 페이로드의 약 14 %에 그친다. ShipController.java:48 은 TRACK_MAX_POINTS 5,000 이다. 웹(MapView.tsx:579)은 기본 2 h 로만 호출한다: 59,365 B, 23 ms. 설계 FR-18 도 '최대 2 h' 다. 그래서 24 h 경로는 API를 직접 부르는 경우에만 해당하고, 24 h 상한이 크기를 어느 정도 묶는다. Low가 맞다.
+- **문제와 영향** 관심 지역에 24 h 머문 기체(10 s 주기)는 약 8,640점, 약 1.5 MB 가 된다(추정). 캐시가 식었을 때 FR-18 예산을 넘을 수 있다.
+- **개선안** 선박과 같이 상한(예: 5,000점)을 두고 properties.truncated 를 추가한다. 2 h 를 넘는 범위에서 stepS 가 없으면 기본 간격(예: 60 s)을 쓰고 응답에 밝힌다. 기대 효과: 응답 크기와 캐시가 식었을 때의 지연에 상한이 생긴다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-53 · 성능 · Low — 캐시는 여럿 있지만 적중률 지표가 없고 REST /status 는 요청마다 Redis 를 여러 번 읽는다
+
+- **근거** 관리 포트 Prometheus 출력 664줄에 cache 관련 지표가 0개다(grep). 캐시: AircraftJsonCache(ws/AircraftJsonCache.java:29-36), RouteReader TTL 5 s(route/RouteReader.java:32), WsHub STATUS_TTL_MS 3 s, SIGMET·레이더 페이로드 캐시. REST /status → StatusService.publicStatus(StatusService.java:78) 가 safeHash 로 Redis 해시를 여러 번 읽는다(102·104·144행). WS 쪽은 3 s 캐시를 쓰지만 REST 는 쓰지 않는다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. 컨테이너 안에서 관리 포트 9000 /actuator/prometheus(690줄)를 받아 보니 'cache' 가 들어간 줄이 0개다. StatusService.java:78-110 publicStatus 는 요청마다 safeHash(Redis HGETALL)를 부른다: collectorHeartbeat 87행, radar_kr 102행, active 104행. WsHub.java:81 은 STATUS_TTL_MS 3 s 캐시를 쓰지만 REST /status(HistoryController.java:99-103)는 쓰지 않는다. k6-rest-20260928T055027Z.log 에 status p99=130.0 ms 가 있다. 다만 aircraft·sigmets 도 p99 86–94 ms 라서 꼬리 지연이 Redis 때문이라는 근거는 없다. 웹은 /api/v1/status 를 부르지 않는다(grep 0건). 관측성 개선 항목으로 Low가 맞다.
+- **문제와 영향** 캐시가 효과가 있는지(예: 전세계 스냅샷 조각 재사용률) 확인할 수 없어 PERF.md §5 의 개선 후보를 수치로 판단하지 못한다. /status 는 100 rps 에서 요청마다 Redis 를 왕복한다(k6 p99 130 ms).
+- **개선안** AircraftJsonCache.get·RouteReader 에 Micrometer hit/miss 카운터를 붙이고, REST /status 도 WsHub 의 3 s status 캐시를 함께 쓰게 한다. 기대 효과: 적중률이 보이고 /status 의 Redis 호출이 최대 1회/3 s 로 준다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-54 · 보안 · Low — /ops 탭을 열어 두면 운영 세션이 만료되지 않음 (유휴 기준 8 h만 있고, 15초 폴링이 계속 연장하며, 절대 수명이 없음)
+
+- **근거** apps/api/src/main/resources/application.yml:39 `spring.session.timeout: 8h` → Spring Session maxInactiveInterval(유휴 기준, 요청마다 lastAccessedTime·Redis TTL 연장). apps/web/app/ops/page.tsx:64 `setInterval(refresh, 15_000)`로 ops GET 6개를 호출하고 document.hidden 검사가 없음(MapView.tsx의 pollKr는 `if (!document.hidden)`로 검사함). SecurityConfig.java·OpsSessionController.java 어디에도 세션 생성 시각 기준 절대 수명 검사가 없음. 화면 문구 page.tsx:39 "세션 8 h". 추적 경로: 각 GET → HttpSessionSecurityContextRepository가 세션 조회 → lastAccessedTime 갱신 → TTL 재설정.
+- **검증(반박 시도)** CONFIRMED — 추적함. application.yml:39 `timeout: ${WAKELINE_OPS_SESSION_TTL_H:8}h`는 Spring Session의 maxInactiveInterval(유휴 기준)임. SecurityConfig.java:105의 HttpSessionSecurityContextRepository가 /api/v1/ops/** 요청마다 getSession(false)를 호출함 → SessionRepositoryFilter가 lastAccessedTime을 갱신함 → 저장할 때 Redis 만료 시각이 다시 잡힘. ops/page.tsx:64 `setInterval(refresh, 15_000)`에는 document.hidden 검사가 없음. 반면 MapView.tsx:296은 `if (!document.hidden)`로 검사함. api/main 전체를 grep한 결과 creationTime·auth_at 기준의 절대 수명 검사는 없음. page.tsx:39 문구는 '세션 8 h'임. 숨긴 탭의 타이머가 분당 1회로 제한되더라도 8 h보다 훨씬 짧아서 세션은 계속 연장됨. 심각도를 Low로 낮춘 이유: edge가 127.0.0.1에만 바인딩되어 있음. 따라서 이 문제를 악용하려면 운영자의 잠기지 않은 브라우저나 PC에 접근해야 하는데, 그런 상황이면 8 h 안에도 같은 권한을 쓸 수 있음. 절대 수명이 없어서 늘어나는 위험은 작은 편이고 심층 방어 수준의 문제임.
+- **문제와 영향** 탭을 켜 둔 채 자리를 비우거나 브라우저가 세션을 복원하면, 공급자 끄기·설정 변경·통계 재집계 권한이 무기한 유효함. 화면에는 '세션 8 h'라고 적혀 있지만 실제 동작과 다름(표시 정직성 문제).
+- **개선안** 로그인 시각(auth_at)을 세션 속성으로 저장하고, /api/v1/ops/**용 OncePerRequestFilter에서 절대 수명(예: 8 h)을 넘으면 invalidate 후 404를 줌. 유휴 한도는 따로 짧게 둠(예: 30분). ops 폴링은 document.hidden일 때 건너뜀. 문구는 '유휴 30분 · 최대 8 h'처럼 실제 규칙으로 고침.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-55 · 보안 · Low — 로그인 실패 감사가 입력한 아이디 원문을 저장함 (없는 계정 포함) → 아이디 칸에 잘못 친 비밀번호가 지울 수 없는 감사 로그에 남음
+
+- **근거** OpsSessionController.java:82 audit.record(..., "LOGIN_FAILED", body.username(), ...)는 UNKNOWN_USER일 때도 호출됨. AuditService.java:43이 128자까지 저장함. V1__init.sql:163에서 api 권한은 audit_log INSERT·SELECT뿐이라 삭제 불가. /ops 감사 탭이 target을 그대로 표시함(page.tsx:112). 재현(데모 :8701): username "nosuchuser"로 POST 12회 → audit_log 8~10행 `LOGIN_FAILED|nosuchuser|{"reason": "unknown_user"}|10.78.0.1`.
+- **검증(반박 시도)** CONFIRMED — 코드로 추적함(데모 재현은 하지 않음. 쓰기 요청이 필요해서). OpsSessionController.java:82는 실패 사유(UNKNOWN_USER 포함)와 관계없이 `audit.record(req, null, "LOGIN_FAILED", body.username(), ...)`를 호출함. OpsUserService.java:56을 보면 UNKNOWN_USER에서도 username이 그대로 전달됨. AuditService.java:43은 128자로 자르고, Login 레코드 제약상 username은 최대 64자임(:64). V1__init.sql:163은 wakeline_api에 audit_log INSERT·SELECT만 부여하고, V2~V8에는 audit_log 관련 변경이 없음. page.tsx:112는 target을 그대로 표시함. 보이는 범위가 인증된 운영자와 DB 관리자뿐이고, 운영자가 한 명인 로컬 환경이라 Low가 맞음.
+- **문제와 영향** 운영자가 비밀번호를 아이디 칸에 입력하는 흔한 실수를 하면 평문 비밀번호가 DB·백업·운영 화면에 영구히 남음(소유자 규칙: 비밀값 로그 금지). 존재하지 않는 계정명 시도 기록도 원문으로 쌓임.
+- **개선안** reason이 unknown_user면 target을 NULL로 두거나 HMAC(username) 앞 8자만 저장함. 원문 username은 존재하는 계정일 때만 기록함.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-56 · UI/UX · Low — 운영 로그인·설정 폼: 클라이언트 검증 없이 서버 영문 원문 오류를 그대로 보이고, 설정 저장 실패와 성공이 같은 파란색이며 알림 역할도 없다
+
+- **근거** ops/page.tsx:35-36 input에는 required·minLength가 없다(s13: {required:false, minLength:-1}). :29는 401만 한국어로 옮기고 나머지는 서버 detail을 그대로 보인다. 서버 Login 레코드(OpsSessionController.java:62)는 password @Size(min=8)지만 ProblemAdvice.java:52-57은 'invalid request'만 돌려준다. 재현(s13_ops.mjs, 서버 응답을 흉내 낸 mock이라 서버로는 보내지 않음): 빈 값 제출 시 POST {"username":"","password":""}가 나가고 'invalid request'가 표시된다. 7자 비밀번호도 'invalid request', 429는 'too many login attempts'(Retry-After 42가 있어도 대기 시간 안내 없음), 네트워크 실패는 'Failed to fetch'이고 초점은 버튼에 남는다(ui/20-ops-login-empty-submit.png, ui/21-ops-login-errors.png). 설정(s14_settings.mjs, mock): ops/page.tsx:128,135에서 성공 '…저장됨'과 실패 'region_radius_nm: invalid request'가 모두 text-accent rgb(76,144,240)이고 role·aria-live가 없다(ui/23 vs ui/24). :138은 정수·불리언 키도 type=text라서 'abc'가 문자열로 PUT된다. 같은 패턴으로 /airports/ZZZZ에서는 'airport not watched: ZZZZ'가 원문 그대로 나온다(ui/28).
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다. ops/page.tsx:35-36 input에는 required·minLength가 없고, :29는 401만 한국어로 옮긴다. 서버 Login 레코드는 @NotBlank @Size(min=8)(OpsSessionController.java:62)이고, 검증 실패는 ProblemAdvice.java:51-57을 거쳐 'invalid request'가 되며, api.ts:6이 detail을 그대로 보여 준다. 429는 'too many login attempts'(:79)로 나가고 Retry-After 안내가 없다. SettingsForm :135는 성공과 실패 모두 text-accent 한 줄에 role·aria-live가 없고, :138은 모든 키가 type=text다. 보정할 점: 설정 실패 예시 'region_radius_nm: invalid request'는 mock이 만든 값이다. 실제 SettingsService.java:160-200은 'integer in [50,500] required'처럼 구체적인 문구를 돌려주고, 성공 메시지('…저장됨')와 글로도 구별된다. 사용자가 계정 생성 규칙을 아는 운영자 한 명뿐이라 Low로 낮춘다.
+- **문제와 영향** 운영자는 무엇을 고쳐야 하는지 알 수 없다(8자 규칙 미안내, 잠금·제한 대기 시간 미안내). 설정 저장 실패를 성공으로 오인해 수집 설정이 바뀐 줄 알 수 있고, 스크린리더는 실패를 알리지 않는다.
+- **개선안** username·password에 required와 minLength=8, 한국어 인라인 메시지를 넣는다. 상태코드별 한국어 문구(400 입력 형식, 401, 429 + Retry-After 초, 503, 네트워크)를 매핑한다. 설정 메시지를 성공(ok)과 실패(bad, role=alert)로 나누고, 키별 입력 타입(number min/max, checkbox, bbox 패턴)을 서버 검증 규칙(SettingsService.java:165-200)과 맞춘다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-57 · UI/UX · Low — 기상청 레이더 범례에서 45/50/55 dBZ 칸의 검은 글자 명암비가 AA 기준에 못 미친다
+
+- **근거** KrRadarPanel.tsx:21은 모든 범례 칸 글자색을 '#000'으로 고정한다. GET /api/v1/radar/kr legend 값으로 계산하면 45 dBZ rgb(200,0,60) 3.52:1, 50 dBZ rgb(160,0,160) 3.00:1, 55 dBZ rgb(120,60,220) 3.48:1로, 11 px 글자 기준 4.5:1에 미달한다. 다른 칸은 5.56–21:1이다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. KrRadarPanel.tsx:21은 color:'#000'을 고정한다. GET /api/v1/radar/kr legend는 45:[200,0,60], 50:[160,0,160], 55:[120,60,220]이고, WCAG 명암비를 다시 계산하면 3.52, 3.00, 3.48:1로 4.5:1에 못 미친다.
+- **문제와 영향** 강한 에코(위험 구간)를 뜻하는 숫자가 가장 읽기 어렵다(WCAG 1.4.3).
+- **개선안** 칸 배경 휘도에 따라 글자색을 흑/백으로 고르거나(대비 큰 쪽), 숫자를 칸 밖에 표기한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-58 · UI/UX · Low — 수신이 끊긴 반쯤 열린 연결(45–75 s) 동안 상태 바는 STALE인데 알림 목록은 실시간처럼 ETA를 계속 센다
+
+- **근거** AlertPanel.tsx:22와 EvidenceCard.tsx:18은 alertListState(conn, alertsVersion)만 본다(alerts.ts:66-70, conn==='open'이면 'live'). StatusBar.tsx:21과 MapChips.tsx:38은 isRxFresh를 쓴다. 재현(s16_offline.mjs, 브라우저 오프라인): +50 s에 상태 바는 'WS open · 수신 없음'·'lag 62s · STALE'인데 alerts-stale 안내가 없고 ETA는 '추정 ETA 8m 56s'로 계속 줄었다. +80 s(closed)가 되어서야 '연결 끊김 — … ETA 멈춤'이 나온다.
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다. alerts.ts alertListState는 conn==='open'이고 alertsVersion이 있으면 'live'를 돌려주며 lastRxAt을 보지 않는다. AlertPanel.tsx:22와 EvidenceCard.tsx:18이 이 함수만 쓴다. 반면 StatusBar.tsx:21, MapChips.tsx:38, AircraftCard.tsx:148은 isRxFresh(RX_FRESH_MS=45 s, ws-protocol.ts:14,35)를 쓰고, ws.ts:11,183은 75 s가 지나야 다시 연결한다. 따라서 45–75 s 동안 상태 바는 '수신 없음'을 보이는데 ETA는 계속 줄어든다. 오프라인 재현은 다시 하지 않았고, 논리 추적으로 충분하다.
+- **문제와 영향** 약 30 s 동안 화면 두 부분이 서로 다른 신선도를 말한다. 이미 해제됐을 수 있는 예측 ETA가 실시간 값처럼 보인다.
+- **개선안** alertListState에 isRxFresh(conn, lastRxAt, now)를 넣어 수신 없음도 'waiting/stale'로 취급한다(상태 바·지도 칩과 같은 규칙).
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-59 · UI/UX · Low — SIGMET 카드의 'Aircraft inside'가 hex 코드만 보여 어떤 항공기인지 알 수 없다
+
+- **근거** SigmetCard.tsx:57은 hex 버튼만 그린다. .btn의 uppercase 때문에 '780F47'로 보이는데, 다른 곳은 소문자 '7823a9'다. s15_sigmet.mjs: ICE SEV ZSHA 4 카드에 hex 10개가 나오고 콜사인·고도·관측 여부는 없다(스크린샷 .../review-v1/ui/25-sigmet-card.png). 버튼 하나를 누를 때마다 select가 불려 집중 추적(외부 공급자 조회)이 시작된다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. SigmetCard.tsx:57은 aircraft_inside hex 문자열만 버튼으로 그리고, 데이터 출처는 /api/v1/sigmets/{id}의 aircraft_inside(string[], :22)다. globals.css:37 .btn text-transform:uppercase 때문에 hex가 대문자로 보인다. 스토어의 alerts(sigmet_id 일치)로 콜사인을 보여 줄 수 있지만 쓰지 않는다. 버튼을 누르면 select(h)가 불리고, AircraftCard 설명대로 집중 추적이 시작된다.
+- **문제와 영향** 'SIGMET 안 항공기 찾기'에서 후보를 식별하려면 hex를 하나씩 눌러 카드를 열어야 한다. 누를 때마다 서버 호출 예산도 쓴다.
+- **개선안** 스토어에 이미 있는 alerts(sigmet_id 일치)로 콜사인·고도·INSIDE 여부를 함께 표시하고, 버튼에 aria-label과 소문자 mono 표기를 쓴다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+
+### R-60 · UI/UX · Low — 한국어와 영어가 섞인 용어, 같은 화면의 '재생' 두 가지 뜻, 내부 코드가 그대로 노출된다
+
+- **근거** Shell.tsx:9 메뉴 '재생'(재생 화면 이동)과 RadarTimeline.tsx:50 '재생'(레이더 애니메이션)이 같은 상황판에 함께 보인다(ui/04). 패널 탭은 영문 id 소문자(app/page.tsx:33-34 alerts/aircraft/ship/sigmet/airport), 레이어 버튼은 한국어(LayerPanel.tsx:8-9)다. 항공기 카드는 'Callsign/ICAO24/Squawk'와 '등록번호/기종 코드'가 섞여 있다(AircraftCard.tsx:151-166). 운영 화면은 전부 영어다('Operator sign-in', 'sign out', 'refresh' — ops/page.tsx:34-38,71-74). 내부 코드 노출: EvidenceCard.tsx:34 '방법 observed_point_in_polygon', ShipCard.tsx:144 공백 사유 'client closed (1011 keepalive ping timeout)'·'ais process stopped'(s10). .badge/.label의 uppercase 때문에 시간이 '추정 ETA 9M 46S', '38M 07S 전'으로 보인다.
+- **검증(반박 시도)** CONFIRMED — 확인됨. Shell.tsx:9 NAV '재생'(/replay)과 RadarTimeline.tsx:50 '재생'(레이더 애니메이션)이 같은 화면에 있다. page.tsx:34 탭은 영문 id, EvidenceCard.tsx:34는 ev.method 원문을 보이고, ShipCard.tsx:144는 g.reason 원문을 보인다. fmtEta(format.ts:104)는 '8m 58s'를 만들지만 .badge uppercase(globals.css:40) 때문에 '8M 58S'로 보인다(docs/review/ui/after-mobile-korea.png '추정 ETA 8M 58S').
+- **문제와 영향** 처음 보는 사용자는 같은 개념을 두 언어로 읽고, '재생'을 누르고 기대와 다른 동작을 만나며, 근거 카드의 판정 방법을 해석할 수 없다. 'M'이 분인지 모호하다.
+- **개선안** 용어집을 만들어 UI 라벨을 한국어 우선(영문 코드는 보조 mono)으로 통일한다. 레이더 버튼은 '레이더 애니메이션 ▶'으로 바꾼다. method·gap reason 코드를 한국어로 매핑한다. 시간 값은 normal-case로 둔다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** high · **계약 변경 필요** 아니오
+- **보류 이유** 화면 용어 전면 정리(M) — 이번에는 새로 생긴 혼동(재생 두 뜻)만 고침
+
+### R-61 · 성능 · Medium — 지역 10 s 갱신마다 병합 뷰 전체(전세계 약 1만 대)를 스트림 소비 스레드에서 다시 판정한다
+
+- **근거** EngineService.java:110-112 onSnapshot → run(), 156-157행에서 전체 병합 뷰에 observe·predict. wakeline_engine_cycle_seconds p50 21 ms · p95 35–60 ms · 최대 151 ms(999 s 에 100주기). wakeline_stream_process_seconds p95 96 ms · 최대 313 ms. 설계서 7.1 엔진 1주기 ≤ 50 ms(관심 지역 500대). 전세계 기체는 120 s 에 한 번 바뀌는데 그 사이 약 12번 다시 판정된다.
+- **검증(반박 시도)** CONFIRMED — 확인됨, 실측은 주장보다 나쁘다. EngineService.java:109-112 onSnapshot 은 SnapshotUpdated 마다 run() 을 부르고, 151-157행에서 병합 뷰 전체(view.states())에 observe·predict 를 돌린다. StreamConsumer.java:654 가 이 이벤트를 발행하는데, PipelineEventMulticaster(SimpleApplicationEventMulticaster, executor 없음)라서 스트림 소비 스레드에서 동기로 실행된다. 관리 포트에서 약 70초 동안 8번 채취했다. wakeline_engine_cycle_seconds p50 15–52 ms, p95 56–268 ms, max 262 ms, 평균 약 40 ms(sum 10.14 s / 256회). wakeline_stream_process_seconds p95 84–537 ms. 설계서 7.1 의 '엔진 1주기 ≤ 50 ms(관심 지역 500대)' 를 p95 에서 여러 번 넘었고, 전세계 예산 300 ms 에도 근접했다(268 ms). 같은 스레드의 스트림 소비와 뒤따르는 리스너도 그만큼 늦어진다. 이는 조건부 지연 문제이므로 Low에서 Medium으로 올린다.
+- **문제와 영향** 지역 주기가 전세계 규모 비용을 치러 p95 가 지역 예산(50 ms)을 넘을 때가 있고, 이 시간만큼 스트림 소비가 늦어진다. 전세계 예산(300 ms)은 지킨다.
+- **개선안** 이전 주기와 상태 객체가 같은(identity) 기체는 observe 결과를 재사용하고, 바뀐 스코프나 hex 만 교차·예측을 다시 계산한다. FSM 의 시간 기반 전이(LOST·만료)는 가벼운 따로 된 패스로 돌린다. 기대 효과: 지역 주기 10 ms 미만(추정). FSM 확정 규칙(서로 다른 seen_at 기준)이 그대로인지 기존 테스트로 확인해야 해서 공수가 크다.
+- **작업량** L · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+- **보류 이유** 엔진 증분 판정은 구조 변경(L) — 측정상 목표 안(p95 109 ms ≤ 300)이라 다음 단계
+
+### R-62 · 아키텍처 · Medium — DB 느림에 대한 격벽 없음: 공개 조회와 수집 기록기가 한 풀(12)을 쓰고 statement/lock timeout이 없음
+
+- **근거** application.yml:12-14는 Hikari 단일 풀(최대 12, 대기 5 s)입니다. 이 풀을 REST 이력(HistoryController·ShipController), TrackWriter, ShipWriter, OrderedWriter, MaintenanceJobs가 함께 씁니다. 저장소 전체에서 statement_timeout·lock_timeout·queryTimeout 설정은 0건입니다(grep). TrackWriter.java:48 QUEUE_MAX 50,000은 넘치면 오래된 것부터 버립니다. 측정 유입 ≈ global 6,500/120 s + region 약 130/11.4 s ≈ 65행/s이므로 기록기가 약 13분 막히면 드롭이 시작됩니다. 파티션 DROP(V2__…sql:26-40)은 lock_timeout 없이 부모 테이블 잠금을 기다립니다. chaos #22는 DB '정지'(빠른 실패)만 시험했고 '느림'은 시험하지 않았습니다.
+- **검증(반박 시도)** PLAUSIBLE — application.yml:12-14에서 Hikari 단일 풀(12, connection-timeout 5000)을 확인했습니다. 저장소 전체에서 statement_timeout, lock_timeout, queryTimeout, setQueryTimeout을 grep하면 0건입니다. TrackWriter.java:48 QUEUE_MAX=50_000이고, :153-156은 넘치면 가장 오래된 행을 버립니다. V2의 track_point_drop_old는 lock_timeout 없이 `EXECUTE format('DROP TABLE %I')`를 실행합니다. 파티션 DROP은 부모 잠금 대기와 뒤따르는 INSERT 대기열을 만들 수 있다는 것이 알려진 PG 동작입니다. 유입량은 /api/v1/status 기준 global 6,553대/120 s와 region 135대/10 s로 약 68행/s이며, 이 경우 큐 50,000행은 약 12~13분에 해당합니다. 다만 HistoryController와 TrackRepository의 조회는 ±3분, 31일 범위 등으로 제한돼 있고, 기준선과 PERF.md에 이력 조회 지연 측정이 없습니다. 풀 고갈 → 기록기 드롭 연쇄는 재현하지 못했습니다.
+- **문제와 영향** DB가 느려지면(대형 ship_position autovacuum, 긴 조회, 디스크 압박) 인증 없는 공개 이력 조회가 커넥션을 잡고 있어 기록기가 풀 대기 → 백오프 → 큐 넘침으로 항적을 잃을 수 있습니다. 긴 조회 하나가 03:00 파티션 DROP을 세우고, 그 뒤 INSERT가 줄줄이 막히는 연쇄도 가능합니다.
+- **개선안** 기록기 전용 DataSource(예: 풀 4)와 조회용 풀을 분리합니다. 조회 경로에는 `SET LOCAL statement_timeout`(예: 3 s)을, 유지보수 DROP에는 `SET lock_timeout`(예: 5 s)과 재시도를 둡니다. `log_min_duration_statement`를 켜서 느린 쿼리를 기록합니다. chaos에 'DB 지연 주입(pg_sleep 잠금 보유)' 시나리오를 격리 스택에서 추가합니다.
+- **작업량** M · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-63 · 보안 · Medium — db 이미지가 7개월째 재빌드되지 않았다: 고칠 수 있는 고유 CVE CRITICAL 9·HIGH 76, CI 는 보고만 한다
+
+- **근거** 본 리뷰의 오프라인 trivy(캐시 DB 2026-09-28, --network none, docker save tar 입력)로 imresamu/postgis:18-3.6@sha256:b5766e…(created 2026-02-09, Debian 13.3, `postgres --version` = 18.1)를 스캔했다. 수정판이 있는 고유 CVE 는 CRITICAL 9·HIGH 76 이다(예: openssl CVE-2026-31789, gnutls CVE-2026-42010, perl CVE-2026-13221, gosu 의 Go stdlib CVE-2025-68121, libmariadb3 CVE-2026-32710). ci.yml:162 는 db 를 blocking "0" 으로 두어 보고만 한다. db 는 root 엔트리포인트에 CHOWN·DAC_OVERRIDE·FOWNER·SETGID·SETUID 권한을 가진다(docker inspect)
+- **검증(반박 시도)** CONFIRMED — compose.yml:273 에 고정된 imresamu/postgis:18-3.6@sha256:b5766ee7… 를 docker save tar 로 떠서 오프라인 trivy(--network none, --skip-db-update, --offline-scan, 캐시 DB 2026-09-28, --ignore-unfixed, HIGH·CRITICAL)로 스캔했다. debian 13.3 에서 고유 CVE 가 CRITICAL 9·HIGH 76 으로 finding 과 일치한다. CVE-2026-31789, CVE-2026-42010, CVE-2026-13221, CVE-2025-68121, CVE-2026-32710 은 모두 CRITICAL 로 나왔다. 이미지 생성일은 2026-02-09 이고 `postgres --version` 은 18.1 (Debian 18.1-1.pgdg13+2) 이다. ci.yml:162 의 db 는 blocking "0" 이다. docker inspect 결과: CapAdd=[CHOWN DAC_OVERRIDE FOWNER SETGID SETUID], CapDrop=ALL, PortBindings 없음. 알려진 위험(ci.yml:162 주석)이지만 교체 결정이 나지 않았다. 포트를 공개하지 않아 당장의 악용 경로는 좁다. Medium 이 맞다.
+- **문제와 영향** 데이터 전부와 슈퍼유저가 있는 컨테이너가 유지되지 않는 이미지 위에 있다. 포트를 공개하지 않고 TLS 도 쓰지 않아 대부분의 라이브러리 CVE 는 당장 악용할 경로가 좁다(추정). 하지만 PostgreSQL 마이너 보안 수정을 받을 방법이 없다. 18.1 이후 마이너 릴리스의 보안 수정 여부는 이 리뷰에서 외부로 확인하지 않았다
+- **개선안** ADR-004 를 다시 결정한다. 공식 postgres 18 이미지의 arm64 지원을 확인한 뒤, 다이제스트를 고정하고 `apt-get install postgresql-18-postgis-3` 하는 얇은 Dockerfile 을 infra/db 에 두어 Dependabot docker 대상에 넣는다. 교체 전까지는 CRITICAL 만이라도 blocking 으로 바꾼다
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-64 · 보안 · Medium — 단일 평면 네트워크(internal 아님)라 모든 컨테이너가 서로의 모든 포트와 인터넷에 닿는다
+
+- **근거** infra/compose.yml:305-310 의 bridge 네트워크 하나뿐이다. `docker network inspect wakeline_wakeline` 결과 internal=false 이다. api·db·redis 의 /proc/net/route 에 기본 경로(gw 10.77.0.1)가 있다. web 컨테이너에서 TCP 연결을 시험하니 redis:6379, db:5432, api:9000(actuator, 인증 없음), api:8000 이 모두 연결됐다. web 은 서버 측 fetch 가 없고(lib/api.ts 는 브라우저 상대경로 호출), API_INTERNAL_URL(compose.yml:69)은 next.config.ts 의 dev rewrite 에서만 쓰인다. api main 에도 외부 HTTP 클라이언트가 없다(grep 0건). docs/audit/impl-reports-2026-09-28.json 에 'Security follow-up, not done' 으로 남아 있다
+- **검증(반박 시도)** CONFIRMED — infra/compose.yml:305-310 에는 bridge 네트워크 `wakeline` 하나뿐이다. `docker network inspect wakeline_wakeline` 결과는 internal=false, subnet 10.77.0.0/24, gw 10.77.0.1 이다. web 컨테이너에서 node net.connect 로 시험하니 redis:6379, db:5432, api:9000, api:8000 이 모두 connected 였다. api·db·redis·web 의 /proc/net/route 에 기본 경로(01004D0A = 10.77.0.1)가 있다. next.config.ts 에서 API_INTERNAL_URL 은 NODE_ENV=development 일 때의 rewrite 에서만 쓰인다. impl-reports-2026-09-28.json 에 'Security follow-up, not done — internal: true network …' 가 남아 있어 아직 처리되지 않았다. redis·db 로 옮겨 가려면 비밀번호가 필요하므로 심층 방어 수준의 결함이다. 소유자 규칙(외부 호출은 collector/ais 만, 최소 권한)을 강제하는 장치가 없으므로 Medium 을 유지한다.
+- **문제와 영향** '외부 호출은 collector/ais 만'이라는 규칙이 코드 관례로만 지켜지고 네트워크로 강제되지 않는다. web(Node SSR)이나 api 가 뚫리면 곧바로 redis·db 로 이동할 수 있고(비밀번호는 필요) 외부로 데이터를 보낼 수 있다. db·redis 는 필요도 없는 egress 를 가진다
+- **개선안** 네트워크를 넷으로 나눈다. edge_pub(edge 만, 포트 공개), app(internal: true — edge·web·api), data(internal: true — api·collector·ais·redis·db·migrate), egress(collector·ais 만). WAKELINE_TRUSTED_PROXY 는 app 네트워크의 edge 고정 IP 로 바꾼다. 네트워크 재생성(down/up)이 필요하다. test_compose_policy 에 'egress 는 collector·ais 만' 시험을 추가한다
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-65 · 아키텍처 · Low — '보내지 않은 호출' 판정과 Throttled 처리가 작업마다 제각각 (예산 되돌림·실패 집계 불일치)
+
+- **근거** http.py:57-67에 NOT_SENT_ERRORS(PoolTimeout·SendCancelled·HostNotAllowed 등)가 정의됨. 이를 쓰는 곳은 jobs/route.py:169-186뿐. aircraft.py:168-169와 jobs/demand.py:395-402는 ConnectError·ConnectTimeout만 되돌림. weather.py:43-50 _guard는 Throttled도 status.failure(consecutive_failures 증가)·ingest_run status='error'로 기록하고 예산을 되돌리지 않음. kma_radar.py:172-174도 Throttled를 _fail로 처리. opensky.py:52 토큰 요청 실패(401/5xx) 때도 이미 예약한 4크레딧을 되돌리지 않음
+- **검증(반박 시도)** CONFIRMED — 코드 추적: NOT_SENT_ERRORS(http.py:58-67)를 쓰는 곳은 jobs/route.py:182뿐. aircraft.py:168과 demand.py:398은 ConnectError|ConnectTimeout만 release하고 PoolTimeout·SendCancelled·HostNotAllowed는 되돌리지 않음. weather.py _guard(:43-50)는 Throttled도 일반 Exception으로 잡아 status.failure와 record_run status='error'로 기록하고 release하지 않음. aircraft._on_throttled(:180-188)는 'throttled' 기록과 release를 함. kma_radar.py:172-174는 Throttled를 _fail로 처리. opensky.py:51-53은 _bearer 실패 때 이미 예약한 4크레딧이 호출자 쪽에서 되돌려지지 않음. 실측 http_throttled=0이라 빈도가 낮음
+- **문제와 영향** 같은 사건(속도 상한 대기 초과·풀 대기 초과·보내기 전 취소)이 작업에 따라 '공급자 실패'로 세어지기도 하고 아니기도 하다. 운영 화면의 연속 실패 수·last_error와 ingest_run 상태가 원인을 잘못 말하고, 예산 과대 집계가 작업마다 다르게 쌓인다
+- **개선안** http 모듈에 한 가지 헬퍼를 둔다. 예: classify_send(e) → ('not_sent'|'throttled'|'sent'). aircraft·demand·weather·kma가 모두 이것으로 예산 되돌림·ingest_run 상태(throttled vs error)·status.failure 여부를 정한다. 작업별 분기를 지우고 공통 시험을 둔다
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+- **보류 이유** 작업마다 흩어진 '보내지 않은 호출' 처리를 한 곳으로 모으는 리팩터 — 동작 결함은 개별 수정으로 막았고 구조 변경은 다음 단계
+
+### R-66 · 코드 · Low — OpenSky 토큰을 401 뒤에도 무효화하지 않아, 만료(최대 약 29분)까지 전세계 수집이 계속 실패할 수 있음
+
+- **근거** providers/opensky.py:40-49 _bearer는 time < _token_exp−60이면 캐시한 토큰을 돌려줌. :51-53 states 호출이 ProviderHttpError(401)여도 _token을 지우지 않음. aircraft.py:175-176은 3회 실패 뒤 600 s 쿨다운했다가 같은 토큰으로 다시 시도함
+- **검증(반박 시도)** CONFIRMED — 코드 추적: opensky.py:40-49 _bearer는 time < _token_exp−60이면 캐시한 토큰을 돌려주고, _states(:51-59)는 ProviderHttpError(401)에서 _token을 지우지 않음. 전세계를 지원하는 공급자는 opensky뿐(readsb supports_global=False)이라 폴백이 없음. aircraft.py:175의 3회 실패 뒤 600 s 쿨다운이 지나도 같은 토큰으로 다시 시도함. 서버 쪽 폐기처럼 401이 나는 조건은 확인하지 않음
+- **문제와 영향** 인증 서버 쪽에서 토큰이 폐기되거나 키가 바뀌면 전세계 화면이 토큰 만료까지 멈춘다. 실패할 때마다 로컬 예산 4크레딧도 쓴다
+- **개선안** _states에서 ProviderHttpError.status == 401이면 _token=None, _token_exp=0으로 지우고 예외를 올린다. 다음 실행은 새 토큰으로 시도한다. 시험을 추가한다
+- **작업량** S · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-67 · 코드 · Low — HTTP 요청 전체에 걸린 시간 상한이 없음 (httpx 시간 초과는 읽기 단계마다)
+
+- **근거** http.py:88-94 httpx.Timeout(8.0, connect=4.0)은 청크 사이 읽기 시간 초과일 뿐이고, :128-136 stream 전체를 감싸는 asyncio.timeout이 없음(최대 http_max_bytes 20 MB). scheduler.py:31-33도 run_once에 시간 상한이 없음. main.py:53의 주석대로 KMA는 실측 최대 25 s
+- **검증(반박 시도)** CONFIRMED — http.py:88-94 httpx.Timeout(8.0, connect=4.0)(config http_timeout_s=8.0)은 읽기 한 번마다의 상한임. :128-136 stream/aiter_bytes 전체를 감싸는 asyncio.timeout이 없고, 수집기 전체를 grep해도 HTTP 경로에 wait_for나 timeout이 없음(db·ratelimit·scheduler 대기만 있음). scheduler.py:31-33 run_once에도 상한이 없음. 공급자가 천천히 계속 보내는 상황은 가정이며 재현하지 않음
+- **문제와 영향** 공급자가 8 s보다 짧은 간격으로 조금씩 계속 보내면 한 호출이 몇 분씩 걸릴 수 있다. 관심 지역 작업이 그동안 멈추면 heartbeat가 90 s를 넘어 unhealthy가 되고 폴백도 일어나지 않는다
+- **개선안** _request를 asyncio.timeout(호출자별 총 상한, 예: 관심 지역 15 s · KMA 40 s)으로 감싸고, 초과하면 '보낸 호출'로 분류한다
+- **작업량** S · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-68 · 코드 · Low — METAR 조회 상자가 날짜변경선 근처에서 lomin > lomax가 됨
+
+- **근거** geo.py:32-36 bbox_around가 경도 양 끝을 따로 wrap180함. 계산: bbox_around(52,178,250) = (47.83, 171.23, 56.17, -175.23) → weather.py:313-314가 AWC bbox '47.83,171.23,56.17,-175.23'로 보냄. api는 관심 지역 중심 lon ±180을 허용함(SettingsService.java:33-35)
+- **검증(반박 시도)** CONFIRMED — 재현: bbox_around(52,178,250) = (47.83, 171.23, 56.17, -175.23)으로 lomin > lomax. awc.metar_bbox(awc.py:32-34)가 이 값을 그대로 bbox 문자열로 보냄. SettingsService.java:174는 |lon|≤180만 검사함(제보한 줄 번호 33-35는 부정확). AWC가 이 상자를 어떻게 처리하는지는 확인하지 않음. 기본 관심 지역은 한국이라 조건부
+- **문제와 영향** 관심 지역을 태평양·알래스카 등 ±180 근처로 옮기면 METAR 조회 범위가 잘못된다. AWC가 이 상자를 어떻게 처리하는지는 확인하지 않음 — 공항이 비거나 범위가 틀릴 수 있음
+- **개선안** lomin > lomax면 상자를 두 개([lomin,180], [-180,lomax])로 나눠 두 번 조회하거나, 날짜변경선을 넘는 중심은 설정 단계에서 거부한다. 경계 시험을 추가한다
+- **작업량** S · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-69 · 코드 · Low — AlertStateMachine 의 '이전 시그니처' 분기(scopes == null)는 운영에서 도달 불가인데 FSM 단위 테스트 24개 중 21개가 그 분기만 검증 — 그 밖의 테스트 전용 운영 API 다수
+
+- **근거** AlertStateMachine.java:92-101 레거시 Cycle 생성자("이전 시그니처 호환"), 103-109 scopeOf 의 regionHexes 대체 경로, 136-147 absenceMarker 의 regionFeedStale/globalFeedStale 경로. 운영 호출자는 EngineService.java:158-160 하나뿐이고 항상 ViewScopes 를 넘긴다 → 레거시 분기 실행 0. 테스트: engine/TestData.java:55-56·AlertStateMachineTest.java:210-211 이 레거시 Cycle 을 만들고, @Test 24개 중 FakeScopes(cyc(sc)) 를 쓰는 것은 3개뿐(awk 집계). 기타 테스트 전용 운영 코드(grep main=0): SnapshotStore.java:230-239 replace()(fetched_at 단조 가드 REL-8 를 우회하는 무조건 교체, 테스트 17회), StreamConsumer.java:603-606 process(r, live)(live 미사용, javadoc 은 '부트스트랩용'이지만 부트스트랩은 apply 를 직접 부름), StreamConsumer.java:140-144 8인자 생성자, SigmetRepository.java:133 upsert(SigmetRecord), SnapshotStore.java:163 mergedValues(), SerialOutbox.java:70 isClosed(), EngineService.java:239-241 predictionAvailability(String).
+- **검증(반박 시도)** CONFIRMED — AlertStateMachine.java:92-101의 레거시 Cycle 생성자 2개는 운영 코드에서 호출되지 않는다(main의 new Cycle은 EngineService.java:158 하나, 7인자 + new ViewScopes). AlertStateMachineTest는 @Test 24개 중 cyc(FakeScopes)를 쓰는 것이 3개(398·425·448)이고, 나머지는 TestData.cycle(5인자, TestData:55-56) 또는 cycleWith(6인자, :210-211)를 쓴다. absenceMarker의 regionFeedStale 경로(136-147)는 운영에서 도달하지 않는다. scopeOf의 regionHexes 대체는 a가 병합 뷰에 있을 때만 불리므로(:219-220) 사실상 도달하지 않는다. 테스트 전용 운영 API도 확인했다. replace()는 main 호출이 없고 운영은 replaceIfNewer/replaceHotIfNewer(StreamConsumer:649·660)를 쓴다. process(r, live)는 live를 쓰지 않고 main 호출이 없다. 8인자 생성자(StreamConsumer:140-144, 주석 '테스트·이전 호출자'), predictionAvailability(String)는 main 호출 0이다. mergedValues()·isClosed()는 테스트에서도 쓰이지 않는 사실상 죽은 코드다. 다만 '운영 경로 회귀가 잡히지 않는다'는 과장이다. EngineServiceTest(7개, 예: dh2_frozenRegion·focusObservations)가 실제 SnapshotStore와 ViewScopes 경로를 통과한다. 레거시 분기는 코드 몇 줄 수준이라 '심각한 유지보수 저해'로 보기 어려워 Low로 낮춘다.
+- **문제와 영향** 히스테리시스·신호 소실(LOST) 계수를 바꾸는 운영 경로(ViewScopes.feedStale·version) 회귀는 21개 테스트를 그대로 통과한다 — 커버리지 수치(LINE 95.7 %)가 운영 동작 검증을 과대 표시한다. 같은 규칙이 두 벌이라 수정 때 둘을 맞춰야 하고, replace() 처럼 불변식을 우회하는 API 가 운영 클래스에 남아 잘못 쓰일 수 있다.
+- **개선안** FSM 테스트를 FakeScopes(또는 SnapshotStore.View 기반 ViewScopes)로 옮기고 레거시 Cycle 생성자·scopes==null 분기를 삭제한다. replace()·process(r, live)·8인자 생성자 등은 테스트 소스의 헬퍼(같은 패키지 test fixture)로 옮기거나 삭제한다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+- **보류 이유** FSM 테스트를 새 시그니처로 옮기는 리팩터(동작 결함 아님)
+
+### R-70 · 코드 · Low — 재생(/replay) 응답이 1시간 공개 캐시되는데 radar 프레임은 '지금 기준 2시간'에만 유효 — 캐시된 응답이 이미 제공되지 않는 타일을 가리킨다
+
+- **근거** HistoryController.java:60-64: at 이 15분 넘게 지났으면 Cache-Control: public, max-age=3600. TrackRepository.java:71-81: radarFrameNear 는 at 이 now−2 h 안일 때만 프레임을 붙인다(주석: RainViewer 는 과거 프레임을 2시간만 제공). 예: at = now−100분 응답은 radar 를 싣고 60분 캐시되지만 20분 뒤부터 그 프레임은 창 밖(코드 스스로의 판단으로 null 이어야 하는 값).
+- **검증(반박 시도)** CONFIRMED — 재현: GET /api/v1/replay?at=(now-100분)&bbox=124,33,132,39의 응답은 Cache-Control: max-age=3600, public이고 radar={host: tilecache.rainviewer.com, path: /v2/radar/4af32979ade5, time: 1790571000}이다. HistoryController.java:61-62(15분 이상 지났으면 3600 s), TrackRepository.java:71-81(RADAR_REPLAY_WINDOW 2 h 밖이면 null). 20분이 지나면 코드 자신의 규칙으로는 null이어야 할 값이 캐시에 남는다. 영향 한정: edge nginx에는 proxy_cache가 없어 브라우저 캐시만 해당한다. 웹은 at을 슬라이더 ms 값으로 보내므로(replay/page.tsx:36) 같은 URL이 다시 쓰이는 경우는 드물다. Low 유지.
+- **문제와 영향** 같은 브라우저·공유 캐시에서 재생을 다시 열면 레이더 레이어가 빈 타일(404)로 보이거나, 응답이 '레이더 있음'이라고 말하지만 실제로는 없음 — 코드가 지키려던 GAP-19 규칙이 캐시로 무너진다.
+- **개선안** radar 가 붙은 응답의 max-age 를 min(3600, (at + RADAR_REPLAY_WINDOW − now) 초)로 줄이거나, radar 를 별도 짧은 캐시 엔드포인트로 분리한다.
+- **작업량** S · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-71 · 코드 · Low — 기간 검증이 절삭(toHours/toDays)이라 한도를 넘는 요청을 받는다 — 선박 항적은 정확히 거절해 두 엔드포인트가 다르게 동작
+
+- **근거** 재현: GET /api/v1/aircraft/4cad49/track?from=now−24h59m&to=now → 200, from=now−25h → 400, 같은 창의 /api/v1/ships/{mmsi}/track → 400. AircraftController.java:168 `Duration.between(start, end).toHours() > 24`(24 h 59 m 59 s 통과), HistoryController.java:53 `toDays() > 31`(31일 23시간 통과 — 게다가 1분 요약 보존은 30일, application.yml summary-retention-days: 30). ShipController.java:184 는 compareTo(TRACK_MAX_RANGE) 로 정확.
+- **검증(반박 시도)** CONFIRMED — 재현(GET): /api/v1/aircraft/4cad49/track?from=now-24h59m&to=now → 200. from=now-25h → 400. 같은 창의 /api/v1/ships/440123456/track → 400. 원인: AircraftController.java:168 Duration.toHours() > 24(절삭), HistoryController.java:53 toDays() > 31(절삭). 반면 ShipController.java:184는 compareTo(TRACK_MAX_RANGE) > 0으로 정확히 거절한다. 요약 보존은 30일이다(application.yml:79).
+- **문제와 영향** 문서화된 한도(24 h·31일)와 실제 한도가 다르고, 같은 종류의 API 가 서로 다르게 거절한다. 조회 비용 상한도 계약보다 약 4 %(항적)·3 %(재생) 크다.
+- **개선안** Duration.compareTo(Duration.ofHours(24)) > 0 / compareTo(Duration.ofDays(31)) 로 바꾸고, 재생 하한은 요약 보존(30일)과 맞춘다. 경계값 테스트(24 h 정확히 허용, +1 s 거절)를 추가한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-72 · 코드 · Low — radar_kr Redis 해시: 공개 /status 는 원본 해시를 통째로 내보내고, /radar/kr 는 같은 값을 방어 없이 파싱해 500 이 된다
+
+- **근거** StatusService.java:102·104 safeHash("wakeline:radar_kr:meta")·safeHash("wakeline:active") 를 그대로 공개 응답에 싣는다 — 재현 GET /api/v1/status: radar_kr 에 checked_at·observed_cells·status "200"(문자열)·grid/legend/coordinates(JSON 문자열) 등 내부 필드가 그대로 노출. 허용 목록이 없어 collector 가 필드를 추가하면(오류 문구 등) 자동으로 공개된다(현재 note 는 예외 타입명만 — kma_radar.py:110). 반대로 WeatherController.java:141(json.readTree(framesJson))·168·170·171(readTree)·174(Integer.parseInt width/height)·178(Instant.parse fetched_at)은 형식이 틀린 값에 RuntimeException → ProblemAdvice.java:80-84 에서 500 + ERROR 스택. Redis 읽기 실패만 136-137 에서 처리한다. AisStatus·RouteInfo·StatusService.adsbFiRps 는 같은 종류의 값을 null 로 격하한다.
+- **검증(반박 시도)** CONFIRMED — 재현: GET /api/v1/status(비로그인)의 radar_kr에 해시 원본 17개 필드(available·checked_at·cmp·coordinates·fetched_at·grid·height·latest_tm·legend·min_dbz·note·observed_cells·product·projection·stations·status·width)가 문자열 그대로 담긴다. 예: status '200', grid·legend는 JSON 문자열. StatusService.java:102·104의 safeHash(:155-156)는 허용 목록 없이 전체를 반환한다. WeatherController.java:141·168·170·171(readTree), 174(Integer.parseInt), 178(Instant.parse)에는 방어가 없고, 실패하면 ProblemAdvice.java:80-84가 500과 ERROR 스택을 남긴다. Redis 예외만 :136-137에서 처리한다. 현재 collector가 쓰는 값은 무해하다(kma_radar.py:110 note는 예외 타입명이나 고정 문구, :116·191·226). 같은 값을 /radar/kr가 이미 공개하므로 현재 노출 피해는 없고 잠재 위험만 있다. Low 유지.
+- **문제와 영향** 공개 응답 계약이 collector 내부 형식에 묶이고, 향후 민감 필드가 추가되면 브라우저까지 흘러갈 수 있다(비밀값 브라우저 금지 원칙의 잠재 위험). collector 값 하나가 깨지면 기상청 레이더 엔드포인트 전체가 500 이 된다.
+- **개선안** status.radar_kr 는 available·status·latest_tm·fetched_at 정도의 허용 목록 DTO 로 바꾸고, /radar/kr 파싱은 필드별 try/catch 로 null(모름) 처리 + 카운터(wakeline_radar_kr_parse_errors_total)로 센다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 예
+
+### R-73 · 코드 · Low — WS 우편함(SerialOutbox)이 작업 예외를 DEBUG 로만 삼킨다 — diff 계산이 sent 를 먼저 바꾸므로 예외 시 세션 상태가 조용히 어긋난다
+
+- **근거** SerialOutbox.java:52-56: catch (RuntimeException) → log.debug, 지표 없음. DiffCalculator.java:41-44 는 계산 중 s.sent 를 갱신하고, 직렬화·전송은 그 뒤(WsHub.java:471-476). 그 사이 예외(직렬화·예측·노선 조회 등)면 sent 는 앞서 있고 클라이언트는 그 변경을 받지 못한다 — 복구는 주기 스냅샷(ws-resync-interval-s 30 / 전세계 120, application.yml)까지. 대조: PipelineEventMulticaster.java:51-67 은 리스너 예외를 wakeline_event_listener_errors_total 로 세고 1분에 한 번 ERROR.
+- **검증(반박 시도)** CONFIRMED — SerialOutbox.java:52-56은 RuntimeException을 log.debug로만 남기고 지표가 없다. WsSession.schedule(:161-166)에도 예외 처리가 없다. DiffCalculator.compute(:37-50)는 계산 중에 sent를 put/remove한다. 그 뒤 WsHub.java:474의 toJson/jsonArray에서 예외가 나면 finally(:481)는 타이머 기록만 하고 needsResync를 세우지 않는다. send 실패(:475-476)만 needsResync=true로 되돌린다. 복구는 주기 스냅샷(wsResyncIntervalS/WorldIntervalS)에 맡겨진다. 대조군인 PipelineEventMulticaster는 오류를 계수한다. 직렬화 대상이 고정 레코드라 발생 가능성은 낮다. Low 유지.
+- **문제와 영향** 팬아웃 버그가 생겨도 로그(INFO 레벨 운영)·지표 어디에도 나타나지 않아, 일부 세션만 최대 30~120 s 동안 틀린 화면을 보는 현상을 추적할 수 없다.
+- **개선안** catch 에서 Counter(wakeline_ws_task_errors_total{job})를 올리고 rate-limit 된 WARN 을 남긴다. 작업 래퍼(WsSession.schedule)에서 예외 시 s.needsResync = true(또는 stateResync) 로 다음 팬아웃을 스냅샷으로 되돌린다.
+- **작업량** S · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-74 · 코드 · Low — 커서 페이지 응답의 next_cursor 형식이 엔드포인트마다 다르다(/ops/audit 은 빈 문자열)
+
+- **근거** OpsController.java:177 `"next_cursor", next == null ? "" : next` — Map.of 가 null 을 거부해서 문자열 "" 을 넣는다(다음 페이지가 있으면 숫자). 같은 파일 125-133 /ops/runs 와 WeatherController.java:102-104 /alerts/history 는 LinkedHashMap 에 null → non_null 설정으로 키 생략. 커서 경로(next_cursor)는 테스트에서 한 번도 검증되지 않는다(grep next_cursor = 0, PersistDbTest.java:203 은 첫 페이지만).
+- **검증(반박 시도)** CONFIRMED — OpsController.java:177은 Map.of(..., "next_cursor", next == null ? "" : next, ...)로 다음 페이지가 있으면 Long, 없으면 ""를 넣는다. /ops/runs(:125-133)는 LinkedHashMap에 null을 넣어 non_null 설정으로 키가 빠진다(같은 동작을 /stats/traffic 응답에서 null인 scope·region이 생략되는 것으로 확인). /alerts/history는 재현 결과 next_cursor가 숫자(1790577316107000)다. 웹은 /ops/audit의 next_cursor를 쓰지 않는다(ops/page.tsx:61). Java 테스트의 grep next_cursor 결과는 0이다. 다만 tools/rest_contract_check.py:718이 alerts_history.next_cursor의 타입(INT)은 검사하므로 '한 번도 검증되지 않는다'는 과장이다. 2페이지를 따라가는 테스트가 없다는 점은 맞다.
+- **문제와 영향** 같은 커서 계약이 숫자/빈 문자열/키 없음 세 가지로 나와 클라이언트가 형별 분기를 해야 한다. 두 번째 페이지 동작은 회귀 테스트가 없다.
+- **개선안** LinkedHashMap 으로 바꿔 null(생략)로 통일하고, 세 엔드포인트에 '2페이지를 따라가면 중복·누락 없이 끝난다' 통합 테스트를 추가한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 예
+
+### R-75 · 코드 · Low — 이전 WS 클라이언트의 늦은 onclose가 새 연결의 상태를 'closed'와 demand null로 덮어쓴다
+
+- **근거** apps/web/lib/ws.ts:150-157의 close()는 핸들러를 떼지 않고 this.ws도 그대로 둔다. 닫기 핸드셰이크가 끝나면 :143-146 onclose가 connectionDown(:163-176)을 불러 전역 스토어에 conn:'closed', demand:null을 쓴다. MapView.tsx:339는 언마운트 때 close()를 부르고, 다시 마운트하면 새 클라이언트가 같은 스토어를 쓴다. 재현(스크래치 vitest, 가짜 소켓): A.close()의 핸드셰이크를 보류한 채 B가 connect, welcome, demand(active)를 받는다. 그다음 A의 onclose를 발생시키면 getData().conn='closed', demand=null이 된다. 20 s 뒤에도 'closed'인데 B.isOpen=true다.
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다. ws.ts:150-157 close() 는 closedByUser=true 로 두고 this.ws?.close(1000) 만 한다. this.ws 를 비우지 않고 핸들러도 떼지 않는다. 그래서 늦게 온 onclose 의 가드 `if (this.ws !== ws) return`(:144)을 통과한다. 이어 connectionDown(:163-176)이 전역 스토어에 setData({conn:'closed', demand:null})(:170)을 쓰고, closedByUser 라 재접속 없이 반환한다. 새 클라이언트 B 는 conn 'open' 을 welcome(:359)이나 resume(:278)에서만 다시 쓴다. 따라서 B 가 다시 welcome 을 받기 전까지 'closed' 가 남는다. 정상적으로는 닫기 핸드셰이크가 새 연결의 welcome 보다 빨리 끝나므로 창이 좁다. Low 가 맞다.
+- **문제와 영향** '/'를 떠났다 돌아올 때 이전 소켓의 닫기가 늦으면(반쯤 열린 연결), 데이터가 흐르는데도 다음 재접속까지 상태가 틀리게 남는다: 상태 바는 WS closed(빨강), 알림 패널은 '연결 끊김 — ETA 멈춤'(lib/alerts.ts:66-70), 수요 칩은 숨겨진다.
+- **개선안** close()에서 ws.onopen, onmessage, onclose를 null로 떼고 this.ws=null로 만든 뒤, 스토어 갱신을 동기적으로 한 번만 한다. 또는 스토어 쓰기에 클라이언트 세대 토큰을 둬서 현재 클라이언트만 conn·demand를 쓰게 한다. F1을 고치면 재연결이 빨라져 이 경합 창이 넓어지므로 함께 적용한다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-76 · 아키텍처 · Low — WebSocket 프로토콜(16종 메시지)에 기계 검사되는 언어 간 계약이 없음
+
+- **근거** REST는 tools/rest_contract_check.py(api 통합시험 응답 → JSON Schema)로 검사하지만 WS는 스키마·샘플이 0건입니다(grep ws-samples/ws_contract 결과 없음). api WsMessages.java:57,69,98,101,107은 @JsonRawValue 문자열로 본문을 조립합니다. web lib/ws.ts:354-514는 welcome~ship_selected 16종을 직접 쓴 타입으로 처리합니다. 웹 시험 tests/ws-client.test.ts는 FakeSocket에 직접 쓴 메시지를 넣습니다. 계약은 v1→v4 동안 seq·sseq·demand·ships_grid.capped·shards·route·destination_info로 계속 바뀌었습니다.
+- **검증(반박 시도)** CONFIRMED — schemas/에는 스트림용 파일 5개만 있고 WS 스키마는 없습니다. ws-samples와 ws_contract로 grep하면 0건입니다. WsMessages.java:57,69,98,101,107에서 @JsonRawValue를 확인했습니다. lib/ws.ts:354-514의 case는 welcome부터 error까지 16종입니다. 사실관계는 맞습니다. 다만 심각도는 낮춥니다. api 쪽에는 WsMessagesTest가 계약 §1 키 목록과 순서를 containsExactly로 고정해 두었습니다. WsIT, ShipsIT, DemandIT가 실제 메시지 타입을 검사합니다. 실스택(fixture) Playwright E2E 17건이 api에서 web으로 가는 실제 WS 경로를 거칩니다. 따라서 '조용히 깨진다'는 위험은 부분적으로 덮여 있어 '유지보수를 심각하게 해치는 구조'까지는 아니라고 봅니다.
+- **문제와 영향** api에서 필드 이름·null 생략 규칙을 바꿔도 JUnit·Vitest가 모두 통과할 수 있습니다. 그러면 실시간 화면(주 경로)이 조용히 깨지거나 값을 '—'로 잘못 표시합니다. 이를 잡는 곳은 fixture E2E 일부뿐입니다.
+- **개선안** WsIT·ShipsIT·DemandIT가 실제 송신 메시지를 build/ws-samples/*.json으로 기록하게 합니다(RestSamplesIT와 같은 방식). schemas/ws/*.json(Draft 2020-12)으로 CI에서 검증하고, 웹 Vitest도 같은 샘플을 ws.ts에 넣어 파싱합니다. 필드는 계약서 §1·v2 §A3/B3·v4 §A/D를 그대로 옮깁니다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 아니오
+- **보류 이유** WS 16종 메시지의 기계 검사 계약은 스키마 설계가 필요한 구조 작업
+
+### R-77 · 아키텍처 · Low — '외부 호출은 collector/ais만' 규칙을 네트워크가 강제하지 않음(api·web·db·redis도 인터넷 송신 가능)
+
+- **근거** compose.yml:305-310은 단일 bridge 네트워크 `wakeline`이고 internal 설정이 없습니다. `docker network inspect wakeline_wakeline` → internal=false, 컨테이너 7개입니다. 규칙은 코드 관례로만 지켜집니다(ADR-006, apps/api/src/main에 HTTP 클라이언트 0건 — grep). infra/tests/test_compose_policy.py에는 송신 차단 검사가 없습니다(:250은 서브넷만 확인).
+- **검증(반박 시도)** CONFIRMED — `docker network inspect wakeline_wakeline`의 결과는 Internal=false, 컨테이너 7개입니다. compose.yml:305-310은 단일 bridge이고 internal 설정이 없습니다. test_compose_policy.py에서 internal과 egress를 grep하면 0건입니다(:250은 서브넷만 확인). apps/api/src/main에서 HttpClient, RestClient, WebClient, RestTemplate을 grep하면 0건입니다. 즉 현재 규칙 위반은 없고, 부족한 것은 심층 방어 한 겹입니다. edge는 127.0.0.1:8700에만 바인딩돼 외부에 노출되지 않습니다. 따라서 조건부 버그나 권한 문제가 아닌 강화 항목으로 보아 Low로 낮춥니다. 외부 호출 규칙상 실제 송신 시험은 하지 않았습니다.
+- **문제와 영향** 앞으로 api나 web 의존성이 외부로 요청하거나(텔레메트리·폰트·잘못 넣은 클라이언트), 인터넷에 노출된 web/api가 뚫렸을 때 데이터 유출·외부 호출을 막을 두 번째 방어선이 없습니다. 소유자 규칙 위반이 시험에 걸리지 않습니다.
+- **개선안** 네트워크를 둘로 나눕니다. `backend`(internal: true — web·api·db·redis·collector·ais·edge)와 `egress`(collector·ais, 그리고 포트 공개가 필요한 edge)입니다. edge의 고정 IP(신뢰 프록시)는 backend에 유지합니다. test_compose_policy에 'egress 네트워크에는 collector·ais·edge만'이라는 단언을 추가합니다. 격리 스택(10.78.0)에도 같게 적용합니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-78 · 아키텍처 · Low — 기동 순서가 수집 계층을 api 건강에 묶고, 소비자 그룹을 '$'로 만들어 선행 엔트리를 버림
+
+- **근거** compose.yml:187 collector와 :230 ais가 `depends_on api: service_healthy`입니다(주석의 목적 'Flyway 테이블 생성'은 migrate: service_completed_successfully로 이미 충족됩니다). StreamConsumer.java:241 `xGroupCreate(..., ReadOffset.latest(), true)`는 그룹이 생기기 전에 XADD된 엔트리를 그룹에 전달하지 않습니다. Redis 데이터가 사라진 채 collector가 계속 발행하면 NOGROUP → 3 s 재시도 사이의 엔트리도 건너뜁니다.
+- **검증(반박 시도)** PLAUSIBLE — compose.yml:187의 collector와 :230의 ais는 `api: service_healthy`입니다. 따라서 api가 unhealthy이면 compose up이나 재생성이 막히는 것은 설정상 사실입니다(데몬 restart 정책은 영향 없음). StreamConsumer.java:241의 `ReadOffset.latest()`도 사실입니다. 그러나 두 가지가 틀렸습니다. 첫째, compose.yml:228 주석은 ais의 api 의존이 바로 '소비자 그룹을 만든 뒤에 발행을 시작한다(첫 정적 정보 묶음을 놓치지 않게)'를 위한 것이라고 밝힙니다. 이 의존이 '$' 그룹 생성을 보완하므로 '첫 기동에서 첫 몇 초 항적이 빠진다'는 주장은 틀립니다. 둘째, loop()(:217-221)가 매 반복 ensureGroups(MKSTREAM)를 호출하므로 Redis 초기화 때 손실은 3 s 재시도 창 안으로 한정됩니다. 또 인용한 ADR 문구 '서로 독립적으로 죽고 산다'는 docs/adr에 없습니다(grep 0건).
+- **문제와 영향** api가 크래시 루프일 때 collector·ais를 재생성하거나 기동할 수 없습니다(`up`이 의존성 실패). 수집기의 자체 DB 기록·원천 보관까지 멈춥니다. 첫 기동이나 Redis 초기화 뒤 첫 몇 초의 항적이 빠집니다. ADR-001의 '서로 독립적으로 죽고 산다'는 격리와 어긋납니다.
+- **개선안** collector·ais의 의존성을 redis·db healthy + migrate completed로 바꿉니다. 그룹은 '0'(또는 스트림 첫 ID)으로 만듭니다(항적 (hex,ts)·SIGMET 자연키 멱등과 fetched_at 단조 가드가 재전달을 흡수). ais 첫 정적 정보는 api 부트스트랩(최근 35분 재생)이 이미 복원합니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-79 · 아키텍처 · Low — api가 암묵적 단일 인스턴스인데 ADR·가드에 없음
+
+- **근거** StreamConsumer.java:83 소비자 이름이 상수 "api-1"입니다. RedisDemandLeases.java:22-23 Lua가 임대 키 4개를 DEL한 뒤 '이 프로세스의' 수요만 다시 씁니다. AlertIds는 프로세스 안에서만 단조 증가합니다. 스냅샷·WS 세션은 메모리에 있습니다. 문서에는 collector 단일 인스턴스만 명시돼 있고(계약 v2 §A2) api 단일성을 적은 곳은 0건입니다(grep). compose에 복제 방지 장치가 없습니다.
+- **검증(반박 시도)** PLAUSIBLE — StreamConsumer.java:83 `CONSUMER = "api-1"`, RedisDemandLeases.java의 Lua가 키 4개를 DEL한 뒤 이 프로세스의 임대만 다시 쓰는 구조, AlertIds의 프로세스 내 단조 증가, 이 셋은 확인했습니다. 문서에는 collector 단일 인스턴스(change-contract-v2.md:26)만 있고 api 단일성은 적혀 있지 않습니다. 그러나 'compose에 복제 방지 장치가 없다'는 주장은 틀립니다. compose.yml:139에서 api는 고정 `ipv4_address: 10.77.0.30`이고, actuator_probe와 신뢰 프록시 설계도 이 고정 IP에 의존합니다. 그래서 `--scale api=2`는 주소 충돌로 시끄럽게 실패하며, 조용히 두 인스턴스가 도는 경로는 compose 밖뿐입니다. 남는 것은 문서 공백 수준입니다.
+- **문제와 영향** 누가 api를 2개로 늘리면(부하 대응·무중단 교체 실험) 같은 소비자 이름으로 PEL이 뒤섞이고, 수요 임대가 10 s마다 서로 덮여 집중 추적이 켜졌다 꺼졌다 합니다. 알림 id 충돌 위험도 생기는데, 오류 없이 조용히 틀어집니다.
+- **개선안** ADR-001에 'api는 단일 인스턴스(스트림 소비자·수요 임대 작성자·알림 id 발급자)'를 명시합니다. 기동 시 Redis `SET wakeline:api:leader <id> NX PX 30000` + 갱신으로 두 번째 인스턴스는 준비 실패(readiness DOWN)하게 하는 가드를 둡니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-80 · 아키텍처 · Low — 환경 설정: 비밀값 가드 불일치, 비밀번호 교체 절차 없음, '공개 배포' 프로필 없음
+
+- **근거** compose.yml:116,161,252,282-285의 `${DB_API_PASSWORD}` 등은 가드가 없습니다(REDIS_*_PASSWORD는 `:?`로 거부). 01-roles.sh:5-7은 역할 비밀번호를 첫 initdb 때만 설정하고 tools/에 교체 도구가 없습니다. db 컨테이너는 initdb에만 필요한 서비스 비밀번호 3개를 상시 환경변수로 들고 있습니다(compose.yml:283-285). ADR-009('공개 배포 시 OpenSky 기본 OFF')·ADR-016('배포 전 adsbdb 끄기')을 위한 설정 경로가 없습니다: AIRCRAFT_PROVIDERS 기본값에 opensky 포함(compose.yml:169), Host 허용 목록은 nginx.conf:60 하드코딩, 쿠키에 Secure 설정 없음.
+- **검증(반박 시도)** CONFIRMED — compose.yml:116 `DB_API_PASSWORD: ${DB_API_PASSWORD}`, :161, :252, :282-285에는 `:?` 가드가 없습니다. REDIS_*_PASSWORD(:119,164,219,253-255)와 DB_MIGRATOR(:96)에는 가드가 있습니다. 01-roles.sh:5-7은 initdb 때만 역할 비밀번호를 설정하고, tools/에 교체 도구가 없습니다. readiness에 db가 포함되지 않습니다(application.yml:48-56에 readiness 그룹 설정 없음). AIRCRAFT_PROVIDERS 기본값에 opensky가 있고(:169), Host 허용 목록은 nginx.conf:60에 하드코딩돼 있습니다. GET /healthz 응답의 `Set-Cookie: WAKELINE_CSRF=...; Path=/; SameSite=Strict`에는 Secure가 없습니다. 한 가지 짚을 점이 있습니다. `make up`은 항상 init(tools/init_env.py:22-29 fill_secrets)을 먼저 실행해 빠진 값을 새 난수로 채웁니다. 그래서 `:?` 가드는 make 경로에서는 발동하지 않고, 실제 위험은 '재생성된 값과 기존 DB 역할 비밀번호의 불일치'입니다. 제안의 핵심은 가드보다 교체 도구 쪽입니다. 공개 배포는 현재 대상이 아닙니다(127.0.0.1 바인딩).
+- **문제와 영향** .env 값을 바꾸거나 빠뜨리면 api·collector의 DB 인증이 조용히 실패합니다. readiness에 DB가 없어 컨테이너는 'healthy'이고 이력만 503이며 항적은 큐에서 드롭됩니다. 배포 전 필수 전환은 사람이 기억해야만 적용됩니다.
+- **개선안** 모든 비밀값에 `:?` 가드를 적용합니다(test_compose_policy에 단언 추가). `make rotate-db-passwords`(ALTER ROLE … PASSWORD를 로컬 소켓·stdin으로 실행 + .env 갱신 + 재기동)를 추가합니다. db에는 initdb 뒤 서비스 비밀번호를 주지 않는 방식(초기화 전용 일회성 서비스)을 검토합니다. 배포 가능성을 남긴다면 `WAKELINE_PUBLIC=1` 한 스위치로 opensky·adsbdb OFF, Secure 쿠키, Host/Origin 목록 env 주입을 강제하고, 아니면 ADR에 '공개 배포 비대상'을 명시합니다.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-81 · 성능 · Low — 전세계 뷰 WS 스냅샷 1.2 MB(원본 JSON) — 설계의 저해상 형식(소수 2자리·필드 6개)보다 크다
+
+- **근거** WS 측정(bbox 전세계, zoom 2, 65 s): snapshot 1개 6,535대 1,216.7 KiB 원본(deflate 약 216 KiB), 대당 약 190 B. alerts 전체 256 KiB. 재동기 120 s(application.yml:73). WsMessages.java:190-205 WORLD 형식은 callsign·alt·gs·track·on_ground·squawk·seen_at(ISO 문자열)·provider 를 싣는다. 설계서 7.3 '전세계 뷰는 소수점 2자리, 필드 6개'.
+- **검증(반박 시도)** CONFIRMED — 확인됨. WS 로 전세계 bbox(zoom 2, lite)를 구독했더니 snapshot 1,235,132 B에 6,471대, 대당 191 B, deflate 추정 220 KB였다. 전세계 갱신 때 diff 한 건도 1,157,429 B로 스냅샷 크기에 가까웠다. WsMessages.java:186-205 WORLD 인코딩은 좌표를 소수 3자리(round3)로 두고 hex·callsign·lat·lon·alt_ft·gs_kt·track_deg·on_ground·squawk·seen_at(ISO)·provider 를 싣는다. 설계서 7.3 은 '소수점 2자리, 필드 6개' 이고, ADR-008·ADR-011 에 이 차이를 기록한 곳이 없다. application.yml:73 ws-resync-world-interval-s 120. 다만 설계서 7.2 의 용량 추정(10k대 1.6 MB, gzip 320 KB) 안이고 localhost 전송이라 영향이 작다. Low가 맞다.
+- **문제와 영향** 전세계 뷰에 연결하거나 120 s 마다 재동기할 때, 서버는 세션마다 1.2 MB 를 deflate 하고 브라우저는 파싱과 워커 postMessage(구조화 복제 6.5k 객체)를 한다. 세션이 200개면 서버 압축 비용이 세션 수에 비례한다.
+- **개선안** WORLD 형식에서 seen_at 을 스냅샷 기준 초 오프셋(정수)으로 보내고, provider 는 스냅샷 sources 와 같으면 뺀다. 가능하면 배열(컬럼) 형식을 쓴다 — 계약 변경이다. 기대 효과: 약 40–50 % 축소(추정).
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** medium · **계약 변경 필요** 예
+- **보류 이유** 전세계 저해상 인코딩 개편은 WS 프로토콜 변경(M) — 다음 단계
+
+### R-82 · 보안 · Low — 아무 코드도 읽지 않는 csp-nonce meta 태그가 요청별 nonce를 DOM에 노출함
+
+- **근거** apps/web/app/layout.tsx:15 `<meta property="csp-nonce" content={nonce} />`. 저장소 전체 grep에서 이 태그를 읽는 코드가 없음(layout.tsx 1곳뿐). CSP의 style-src가 'unsafe-inline'임(proxy.ts:12).
+- **검증(반박 시도)** CONFIRMED — layout.tsx:15에 `<meta property="csp-nonce" content={nonce} />`가 있음. 저장소와 실행 중인 web 컨테이너 빌드(.next/server·static)를 grep한 결과 csp-nonce는 layout 자신(_1pq63ml._.js)에서만 나옴. GET :8700/about 응답 HTML에 meta가 실제로 있음. proxy.ts:12의 style-src는 'unsafe-inline'임. 브라우저는 script의 nonce 속성을 CSS에서 숨기지만 meta content는 숨기지 않으므로, 불필요한 노출이라는 지적은 맞음. 다만 악용하려면 HTML·CSS 주입이 먼저 있어야 하고, img-src 허용 목록 때문에 외부로 빼낼 경로도 좁아서 실제 위험은 매우 낮음.
+- **문제와 영향** nonce가 CSS 속성 선택자로 읽을 수 있는 속성에 복제됨. 스크립트 없는 HTML/CSS 주입이 생기면 같은 응답 안에서 nonce를 알아내 스크립트 실행으로 이어질 여지가 커짐(현재 img-src 제한으로 외부 유출 경로는 좁음). 필요 없는 노출임.
+- **개선안** meta 태그를 제거함. Next는 요청 헤더의 CSP에서 nonce를 읽어 자체 스크립트에 적용하므로 영향 없음.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-83 · 보안 · Low — 수집기 비밀값 가림이 패턴 기반(key=value)뿐이고, 일부 로그 경로는 mask를 거치지 않음
+
+- **근거** collector masking.py:7-20은 'authKey=' 같은 key=value·Bearer·JWT 형태만 가리고 실제 키 값 치환은 하지 않음. 반면 ais/client.py:54-57 make_redactor는 실제 키 값을 치환함. mask를 거치지 않는 로그: jobs/kma_radar.py:118 `log.warning("kma radar: %s", repr(e)[:160])`(repr(e)에는 providers/kma_radar.py:46,54의 응답 본문 앞부분이 들어감), scheduler.py:36 log.exception(트레이스백 전체), ais/main.py:158 `%r`로 찍는 예외. 참고: 최근 24 h 컨테이너 로그에서 authKey=·client_secret=·Bearer 패턴은 0건(현재 유출은 확인되지 않음).
+- **검증(반박 시도)** CONFIRMED — 구조는 추적함. masking.py:7-20은 key=value·Bearer·JWT·URL userinfo 패턴만 가리고 실제 키 값으로 치환하지는 않음. JSON 형태 `"authKey":"…"`는 잡지 못함. DB·status 경로는 mask를 거침(db.py:309, status.py:90). 반면 로그는 jobs/kma_radar.py:118 `log.warning("kma radar: %s", ... repr(e)[:160])`, scheduler.py:36 log.exception, ais/main.py:158 `%r`로 mask를 거치지 않음. 수집기에는 루트 logging.Filter가 없음(main.py:47은 basicConfig만 씀). repr(e)에 들어가는 것은 요청 URL이 아니라 응답 본문 앞부분임(providers/kma_radar.py:46,54, http.py:142). httpx·httpcore 로거는 WARNING으로 설정되어 있음(main.py:49-50). 컨테이너 로그 350줄(최근 24 h)에서 authKey=·client_secret=·Bearer·serviceKey= 패턴은 0건임. 따라서 실제 유출은 공급자가 키를 응답에 되돌려 줄 때만 생기는 가정이고, 심층 방어 차원의 Low임.
+- **같은 문제의 다른 관찰(병합)** [security-infra] collector 로그 경로 하나가 mask() 를 거치지 않는다(상태·DB 경로는 거친다) — apps/collector/wakeline_collector/jobs/kma_radar.py:118 `log.warning("kma radar: %s", note if http_status == 403 else repr(e)[:160])`. 같은 함수에서 상태(:112→status.py:90)와 DB(:114→db.py:309) 경로는 mask() 를 거친다. ProviderHttpError 메시지에는 응답 본문 앞 200자가 들어간다(http.py:50). main.py:47·ais/main.py:63 의 basicConfig 에는 마스킹 필터가 없어 scheduler.py:36 같은 log.exception 트레이스백도 마스킹 밖이다. 현재 docker logs 에서 실제 키는 0건이다
+- **문제와 영향** 공급자가 오류 본문을 JSON(`"authKey":"…"`처럼 '=' 없는 형태)으로 되돌려 주거나, 라이브러리 예외 메시지에 URL이 실리면 키가 로그에 평문으로 남을 수 있음(소유자 규칙: 비밀값 로그 금지).
+- **개선안** masking.mask에 설정된 비밀값(KMA_APIHUB_KEY·OPENSKY_CLIENT_SECRET·aisstream_key) 값 치환을 추가함. 루트 logging.Filter로 모든 레코드의 msg·args·exc_text에 mask를 적용함.
+- **작업량** S · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-84 · 보안 · Low — API 오류·보안 헤더가 일관되지 않음: 방화벽 거절은 RFC 9457이 아니고(Tomcat HTML 페이지 포함), 보안 헤더는 중복 전송됨
+
+- **근거** GET :8700 재현: /api/v1//ops/providers, /api/v1/ops;x=1/providers, /api/v1/./ops/providers → 400, 본문이 Spring 기본 JSON `{"timestamp":…,"error":"Bad Request","path":…}`임. /api/v1/ops%2Fproviders → 400 text/html Tomcat 기본 오류 페이지. 이는 ProblemAdvice.java:33의 '모든 오류를 application/problem+json으로' 약속과 다름. `curl -D - /api/v1/ops/session` 응답에서 X-Content-Type-Options·X-Frame-Options·Referrer-Policy·Permissions-Policy가 두 번씩 나옴(edge security_headers.conf:3-6과 SecurityConfig.java:56-58 양쪽에서 추가).
+- **검증(반박 시도)** CONFIRMED — 재현함(GET --path-as-is). /api/v1//ops/providers, /api/v1/ops;x=1/providers, /api/v1/./ops/providers는 모두 400에 application/json `{"timestamp":…,"status":400,"error":"Bad Request","path":…}`을 줌. /api/v1/ops%2Fproviders는 400에 text/html Tomcat 'HTTP Status 400 – Bad Request' 페이지를 줌(버전 노출은 없음). ProblemAdvice.java:33의 '모든 오류를 application/problem+json으로'와 다름. GET /api/v1/ops/session 응답에서 X-Content-Type-Options·X-Frame-Options·Referrer-Policy·Permissions-Policy가 두 번씩 나옴. 출처는 edge security_headers.conf:3-6과 Spring 기본 헤더 + SecurityConfig.java:56-57임. 지금은 값이 같아서(Permissions-Policy는 항목 순서만 다름) 기능상 영향이 없음.
+- **문제와 영향** 우회는 없음(모두 거절됨). 다만 클라이언트의 오류 처리 경로가 둘로 갈리고 Tomcat 페이지가 노출됨. 헤더를 한쪽만 바꾸면 서로 다른 값이 공존해 브라우저가 무시할 위험이 있음(예: X-Frame-Options 충돌).
+- **개선안** 보안 헤더는 한 계층에서만 추가함(edge 또는 Spring). RequestRejectedHandler 빈과 Tomcat ErrorReportValve(showReport=false) 또는 ErrorPage 설정으로 오류 본문을 problem+json으로 통일함.
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-85 · 보안 · Low — 앱 Dockerfile 의 기반 이미지와 uv 바이너리가 태그로만 고정돼 있다(다이제스트 없음)
+
+- **근거** apps/collector/Dockerfile:3,12 `python:3.13-slim`, :4 `COPY --from=ghcr.io/astral-sh/uv:0.8`; apps/api/Dockerfile:3 `eclipse-temurin:25-jdk`, :11 `eclipse-temurin:25-jre`; apps/web/Dockerfile:3,8,15 `node:24-alpine`. compose.yml:8 주석은 '제3자 이미지는 태그+다이제스트로 고정'이라고 하지만, infra/tests/test_compose_policy.py:145-151 은 compose 의 image 만 검사하고 Dockerfile FROM 은 검사하지 않는다. CI 도 같은 태그로 빌드한다(ci.yml:135)
+- **검증(반박 시도)** CONFIRMED — 태그만 쓰는 곳을 확인했다: apps/collector/Dockerfile:3,12 `python:3.13-slim`, :4 `ghcr.io/astral-sh/uv:0.8`, apps/api/Dockerfile:3 `eclipse-temurin:25-jdk`, :11 `eclipse-temurin:25-jre`, apps/web/Dockerfile:3,8,15 `node:24-alpine`. test_compose_policy.py 의 test_third_party_images_pinned_by_digest 는 compose 의 services[].image 만 검사한다. 다만 compose.yml:8 주석은 바로 다음 문구('Dependabot docker-compose 가 매주 갱신')로 보아 compose 이미지에 대한 정책이다. Dockerfile 기반 이미지는 Dependabot docker(.github/dependabot.yml)가 따로 본다. impl-reports-2026-09-28.json 에도 이미 알려진 항목으로 기록돼 있다. 공식 이미지를 떠다니는 태그로 쓰는 것은 재현성·일관성 문제다. 오염은 조건부이고 실행 컨테이너는 cap_drop ALL·read-only·비root이므로 Low 로 낮춘다.
+- **문제와 영향** 같은 커밋이라도 빌드할 때마다 기반이 달라져 재현할 수 없다. 태그가 오염되면 빌드 단계(uv 가 .venv 를 만든다)에서 섞인 코드가 런타임 이미지로 복사된다
+- **개선안** 모든 FROM 과 COPY --from 을 `tag@sha256:` 로 바꾼다. Dependabot docker 는 이미 이 디렉터리들을 보고 있으므로(.github/dependabot.yml) 다이제스트 갱신 PR 이 온다. test_ci_policy 에 Dockerfile FROM 다이제스트 검사를 추가한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-86 · 보안 · Low — Redis ACL 이 거부 목록 방식(+@all -@dangerous)이라 collector·ais 가 스트림을 DEL 해 api 소비자 그룹을 지울 수 있다
+
+- **근거** ACL DRYRUN(명령은 실행하지 않고 권한만 판정): wakeline_collector 는 `DEL wakeline:aircraft` OK, `XTRIM wakeline:aircraft MAXLEN 0` OK, `XGROUP DESTROY` 거부, `FUNCTION FLUSH` OK, `SCRIPT FLUSH` OK, `SELECT 1` OK. wakeline_ais 는 `DEL wakeline:ships` OK. infra/redis/start.sh:32 COMMON='+@all -@dangerous …'이고, :40-42 는 'api 의 소비자 그룹을 지우거나 PEL 을 조작하는 명령은 필요 없다'며 XGROUP 계열만 막는다
+- **검증(반박 시도)** CONFIRMED — compose 에 고정된 redis:8-alpine@sha256:38117873… 이미지로 일회용 컨테이너(--network none, 가짜 비밀번호)를 띄워 같은 infra/redis/start.sh·redis.conf 를 적용하고 ACL DRYRUN 을 돌렸다. wakeline_collector 는 `DEL wakeline:aircraft` OK, `UNLINK` OK, `XTRIM … MAXLEN 0` OK, `XGROUP DESTROY` 거부, `FUNCTION FLUSH` OK, `SCRIPT FLUSH` OK, `SELECT 1` OK 다. wakeline_ais 는 `DEL wakeline:ships` OK 다. start.sh:32 COMMON='… +@all -@dangerous …', :40-42 는 XGROUP 계열만 막는다. StreamConsumer.ensureGroups(StreamConsumer.java:237-249)는 xGroupCreate(ReadOffset.latest(), mkstream) 로 그룹을 다시 만든다. 오류 뒤 3 s 재시도(:231)이므로 그 사이 엔트리와 PEL 은 잃는다. 생산자가 침해됐다는 전제가 필요하고 피해는 가용성 수준이므로 Low 다.
+- **문제와 영향** 수집기나 ais 가 침해되면 DEL 로 스트림을 지워 api 소비자 그룹과 PEL 을 한 번에 없앨 수 있어, 주석이 의도한 보호가 우회된다. StreamConsumer.ensureGroups 가 3 s 뒤 그룹을 다시 만들지만 처리되지 않은 엔트리는 잃는다. 생산자는 원래 가짜 데이터를 넣을 수 있으므로 추가 피해는 가용성과 유실 수준이다
+- **개선안** collector·ais 를 허용 목록 방식으로 바꾼다: `-@all` 에 실제 쓰는 명령(xadd, set, get, exists, expire, hset, hmget, hkeys, hdel, zrangebyscore 등)만 더하고, 목록은 redis_acl_test.sh 로 확정한다. 최소한 `-del -unlink -xtrim -rename -function -script|flush -select` 를 추가하고 redis_acl_test.sh 에 거부 시험을 넣는다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-87 · 보안 · Low — 이름 변경 이관 스크립트가 Redis 관리 비밀번호와 DDL 비밀번호를 docker CLI argv 로 넘긴다
+
+- **근거** tools/migrate-from-skywx.sh:28 `docker compose … exec -T -e REDISCLI_AUTH="$RP" redis redis-cli …`(키마다 반복 호출), :36 `docker run … -e FLYWAY_PASSWORD="$MP" … flyway/flyway:11-alpine`(비밀번호를 다이제스트 없는 태그 이미지에 전달), :13 `alpine:3.22`(태그만). 다른 도구는 올바르게 처리한다: perf/measure_ais.py:54 는 컨테이너 안 환경변수, Makefile:51 은 stdin
+- **검증(반박 시도)** CONFIRMED — tools/migrate-from-skywx.sh:28 `rc() { docker compose … exec -T -e REDISCLI_AUTH="$RP" redis redis-cli …; }` 를 :30-31 에서 키마다 부른다. :36 `docker run … -e FLYWAY_PASSWORD="$MP" … flyway/flyway:11-alpine`, :13 `alpine:3.22` 는 모두 태그만이다. -e KEY=값 형태라 docker CLI 프로세스의 argv 에 비밀번호가 들어간다. 대조로 Makefile:51 은 stdin 으로 넘긴다. 커밋 d728088(ADR-015 이름 변경)에서만 추가된 일회성 스크립트다.
+- **문제와 영향** 실행 중에는 같은 호스트의 다른 프로세스가 `ps` 로 비밀번호를 볼 수 있어, 비밀값을 argv 에 두지 않는다는 소유자 규칙에 어긋난다. ADR-015 이름 변경 때 한 번 쓴 스크립트라 다시 실행될 가능성은 낮다
+- **개선안** 이관이 끝났으면 스크립트를 지운다. 남긴다면 `export FLYWAY_PASSWORD; docker run -e FLYWAY_PASSWORD …`(값 없는 -e 는 호출자 환경에서 읽는다)와 `exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli …'`(컨테이너 안 변수)로 바꾸고 이미지를 다이제스트로 고정한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-88 · 보안 · Low — 기본 권한이 새 표마다 api 에 DML 전체를 연다(fail-open). track_point 파티션만 직접 쓰기가 열려 있다
+
+- **근거** pg_default_acl: `wakeline_migrator | r | wakeline_api=arwd/wakeline_migrator` (V1__init.sql:171). SECURITY DEFINER 파티션 함수가 만든 track_point_20261001 의 relacl 은 `wakeline_api=arwd` 인데, track_point_20260926~30 은 기본값이다. ship_position_* 파티션은 V5 함수가 권한을 회수한다(V5__ships.sql:55). V5__ships.sql:96-100 과 V8__ingest_gap_scope.sql:14 는 이 기본 권한을 되돌리려고 REVOKE 를 따로 써야 했다
+- **검증(반박 시도)** CONFIRMED — 읽기 전용 카탈로그 조회(PGOPTIONS default_transaction_read_only=on)로 확인했다. pg_default_acl 은 `wakeline_migrator|r|{wakeline_api=arwd/wakeline_migrator}` 다(V1__init.sql:171). track_point_20261001 의 relacl 은 {wakeline_migrator=arwdDxtm/…,wakeline_api=arwd/wakeline_migrator} 이고, track_point_20260926~30 은 relacl 이 비어 있어(기본값) 같은 부모의 파티션끼리 권한이 다르다. ship_position_* 파티션은 {wakeline_migrator=arwdDxtm} 만 있다(V5__ships.sql:55 가 REVOKE). V5:96-100 과 V8:14 는 이 기본 권한을 되돌리려고 REVOKE 를 따로 쓴다. 부모 track_point 에 api DML 이 이미 있어(V1:160) 지금 실제 피해는 없다.
+- **문제와 영향** 마이그레이션 작성자가 REVOKE 를 잊으면 새 표(예: audit_log 같은 INSERT 전용 표)를 api 가 수정·삭제할 수 있게 된다. 지금은 부모 표 권한과 같아 실제 피해는 없다
+- **개선안** 다음 마이그레이션에서 `ALTER DEFAULT PRIVILEGES FOR ROLE wakeline_migrator IN SCHEMA public REVOKE ALL ON TABLES FROM wakeline_api` 를 실행하고 표마다 필요한 권한만 GRANT 한다. track_point_ensure_partitions 에도 ship 과 같은 `REVOKE ALL ON %I FROM wakeline_api` 를 넣는다. db_hardening_test 에 api 권한 표 목록 스냅샷 시험을 추가한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-89 · 보안 · Low — 공개 OpenAPI 가 ops 엔드포인트와 스키마를 공개해 '비인가는 404로 존재 비공개' 설계와 어긋난다
+
+- **근거** `GET http://localhost:8700/api/v1/openapi` → 200. paths 33개 중 ops 10개가 요청 스키마와 함께 나온다(/api/v1/ops/settings/{key} PUT, /ops/providers/{name}/{action}, /ops/stats/aggregate 등). SecurityConfig.java:23-24,50 은 비인가 ops 요청에 404 를 준다. api 기동 WARN 'SpringDoc /api/v1/openapi endpoint is enabled by default', application.yml:58-59. ops 경로 9개는 이미 .next/static 번들에도 있다
+- **검증(반박 시도)** CONFIRMED — `GET http://localhost:8700/api/v1/openapi` 는 200(12879 B)을 돌려준다. paths 33개 중 /ops 가 10개다: settings/{key} PUT, stats/aggregate POST, session GET·POST·DELETE, providers/{name}/{action} POST, settings·runs·quality·providers·dlq·audit GET. 비인가로 `GET /api/v1/ops/stats/aggregate` 를 보내면 404 다(SecurityConfig.java:50). 기동 로그 28행은 'SpringDoc /api/v1/openapi endpoint is enabled by default' 이고 application.yml:58-59 는 path 만 바꾼다. .next/static 번들에서 /ops/{audit,dlq,providers,quality,runs,session,settings} 9개 경로가 grep 된다. 추가로 드러나는 것은 stats/aggregate 와 스키마 정도라 Low 가 맞다.
+- **문제와 영향** 404 은닉이 사실상 무의미해진다. 번들로 이미 드러난 경로를 빼면 추가로 노출되는 것은 /ops/stats/aggregate 와 파라미터 스키마 정도라 영향은 작다
+- **개선안** 공개 스펙에서 ops 를 빼거나(`springdoc.paths-to-exclude: /api/v1/ops/**`) api-docs 를 관리 포트(9000)로 옮긴다. OpenApiSnapshotIT 가 쓰는 스냅샷은 테스트 프로파일에서만 켠다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 예
+
+### R-90 · 보안 · Low — 세션·CSRF 쿠키의 Secure 가 코드에 false 로 박혀 있어 HTTPS 로 전환할 스위치가 없다
+
+- **근거** SecurityConfig.java:88 `.secure(false)`, :99 `setUseSecureCookie(false)`(주석 '배포 시 true'). edge 는 HTTP 로만 수신한다(nginx.conf `listen 8700`, TLS 없음). 공개 포트는 127.0.0.1 전용이다(compose.yml:38, docker inspect HostIp 127.0.0.1)
+- **검증(반박 시도)** CONFIRMED — SecurityConfig.java:88 `c.sameSite("Strict").secure(false)`(주석 '배포 시 secure(true)'), :99 `setUseSecureCookie(false)` 는 값이 코드에 박혀 있고 이를 바꿀 속성이 없다. docker inspect 결과 edge 의 PortBindings 는 {"8700/tcp":[{"HostIp":"127.0.0.1","HostPort":"8700"}]} 이다(compose.yml:38). 루프백 전용 설계라 현재 영향은 없다. 설정 스위치가 없다는 점만 문제이므로 Low 다.
+- **문제와 영향** 루프백 전용 로컬 사용에서는 평문 구간이 호스트 밖으로 나가지 않으므로 받아들일 수 있다. 다만 터널이나 리버스 프록시로 노출하면 세션 쿠키가 Secure 없이 나가고, 코드를 고쳐야만 바꿀 수 있다
+- **개선안** `wakeline.cookie-secure`(기본 false) 속성으로 분리하고 true 일 때 edge TLS·HSTS 가 필요하다고 README 에 적는다. 기본값을 확인하는 단위 테스트를 추가한다
+- **작업량** S · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+
+### R-91 · 코드 · Low — DB writer가 결과가 모호한 실패(커밋 뒤 시간 초과)에도 record_run을 다시 실행해 중복 기록·이중 집계가 생길 수 있음
+
+- **근거** db.py:252 asyncio.wait_for(op.fn(pool), 10 s), :263-275 TimeoutError·연결 오류를 일시 오류로 보고 같은 작업을 최대 5회 재실행. :311-339 record_run은 ingest_run INSERT(키 없음)와 quality_rule_count 'count = count + EXCLUDED.count'라 멱등이 아님
+- **검증(반박 시도)** PLAUSIBLE — 코드 추적: db.py:252 asyncio.wait_for(op.fn(pool), OP_TIMEOUT_S). 예외가 permanent가 아니면 DB가 응답하는 동안 같은 op를 MAX_ATTEMPTS까지 재시도하고(:263-275), DB가 응답하지 않으면 큐에 남겨 나중에 다시 실행함. record_run(:311-339)은 키 없는 ingest_run INSERT와 quality_rule_count 'count + EXCLUDED.count'라 멱등이 아님. COMMIT이 서버에서 적용된 뒤 응답을 받기 전에 시간 초과나 연결 끊김이 나는 모호한 창은 재현하지 않음. 작은 INSERT에 10 s 상한이라 확률이 낮음
+- **문제와 영향** COMMIT 응답을 기다리다 시간 초과나 연결 끊김이 나면, 이미 커밋된 실행이 다시 들어가 ingest_run 행이 중복되고 규칙별 건수가 두 배로 집계될 수 있다(운영 품질 화면). 발생 확률은 낮다
+- **개선안** 스키마를 바꾸지 않는 방법: record_run 작업은 COMMIT 단계의 시간 초과·연결 오류 뒤 재시도하지 않는다(모호하면 버리고 집계). 스키마를 바꿀 수 있다면 수집기가 만든 run UUID에 UNIQUE를 걸고 ON CONFLICT DO NOTHING으로 멱등을 보장한다
+- **작업량** M · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 아니오
+- **보류 이유** 커밋 뒤 시간 초과의 모호한 실패 — 멱등 키(ingest_run 자연키) 설계가 필요해 다음 단계
+
+### R-92 · 코드 · Low — TrackWriter 가 ReceiptBatchQueue(일반화 버전)와 같은 영수증 알고리즘·쓰기 루프를 손으로 다시 구현 — 이미 ShipWriter 와 방어 로직이 어긋났다
+
+- **근거** ReceiptBatchQueue.java:14 "TrackWriter 와 같은 규칙을 일반화했다" — 그런데 TrackWriter.java:79-189(queue·marks·left·outstandingFrom·takeResolvedMarks·nextBatch), 213-223, 250-286(loop), 306-370(flush·drainForFlush·releaseUpTo)는 여전히 자체 구현이고 ShipWriter.java:196-231·255-284 와 루프·flush 가 거의 한 줄씩 같다. 어긋난 예: ShipWriter.java:49-54·139-142 는 파티션 창 밖 seen_at(지금−24 h ~ +5분)을 미리 걸러 out_of_range 로 센다("한 건 때문에 멀쩡한 행 2,000개를 잃지 않게"). track_point 도 같은 일 파티션(V1__init.sql:15·19-31, 어제~+3일)인데 TrackWriter.enqueue(142-178)에는 이 가드가 없어, 범위 밖 한 행이면 23514(SQLState 23 → isPermanent, TrackWriter.java:395-404) → 3회 뒤 2,000행 배치 전체 버림(270-278).
+- **검증(반박 시도)** CONFIRMED — 중복은 확인됨: ReceiptBatchQueue.java:14 주석이 'TrackWriter 와 같은 규칙을 일반화'라고 하지만 사용처는 ShipWriter(:67)뿐이다. TrackWriter는 queue/marks/left/takeResolvedMarks를 따로 구현한다(enqueue 142-178). 쓰기 루프도 ShipWriter:196-231과 TrackWriter:250-286이 사실상 같다(백오프, PERMANENT_ATTEMPTS 3, 영구 실패 시 배치 버림). ShipWriter:49-54·139-142의 seen_at 범위 가드가 TrackWriter에 없는 것도 맞다(grep KEEP_PAST/out_of_range 결과 0). 그러나 '어긋난 방어 로직'의 실제 위험은 과장됐다. track_point 파티션은 생성 창(-1..+3일, V1:22)만이 아니라 보존 삭제 기준(cutoff=(now-72h)::date-1, V1:36)까지 남아 약 오늘-4일~+3일에 걸쳐 있다. 범위 밖 행은 collector 품질 게이트의 stale_position/seen_in_future(quality.py:86-90)를 먼저 통과해야 하므로 사실상 도달하지 않는다. 범위 가드는 공용 큐가 아니라 writer 단계의 필터라서 중복 때문에 생긴 불일치도 아니다. 유지보수 부채는 맞지만 '심각'하지 않아 Low.
+- **문제와 영향** at-least-once 의 핵심(ACK 시점)을 두 곳에서 따로 고쳐야 하고, 한쪽 수정(범위 가드 등)이 다른 쪽에 반영되지 않는다. 범위 밖 seen_at 은 collector 품질 게이트(quality.py:86-90)가 먼저 거르므로 실제 발생 가능성은 낮지만, 발생하면 정상 행 2,000개가 함께 사라진다.
+- **개선안** TrackWriter 를 ReceiptBatchQueue<AircraftState> 위로 다시 짓고, 백오프·영구 오류·종료 flush 루프를 공용 BatchWriterLoop 로 추출해 ShipWriter 와 공유한다. 같은 seen_at 창 필터와 wakeline_track_rows_total{result="out_of_range"} 를 추가한다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+- **보류 이유** TrackWriter 를 ReceiptBatchQueue 로 합치는 리팩터(동작 결함 아님, 위험 대비 이득 작음)
+
+### R-93 · 코드 · Low — 항공기·알림·selected·radar·sigmets 메시지를 검증 없이 캐스팅한다. 원소 하나가 잘못되면 부분 적용 뒤 지도(워커)와 카드가 갈라진다
+
+- **근거** apps/web/lib/ws.ts:373-375(snapshot: clear한 뒤 a.hex로 set), :395-398(diff), :409·416(sigmets·radar를 as로 캐스팅), :420·426(alerts), :438(selected.state), public/interpolate.worker.js:109-113. 선박 경로는 parseShipLite로 검증한다(ships.ts:152-218). 재현(스크래치 vitest): snapshot aircraft=[{bbbbbb}, null, {cccccc}]를 보내면 TypeError 'Cannot read properties of null (reading 'hex')'가 onmessage 밖으로 던져진다. 이때 aircraftStates=[bbbbbb]인데 워커는 이전 스냅샷(aaaaaa)을 그대로 그린다. 이어서 온 diff seq 2는 lastSeq=1이라 적용되고, resync 없이 불일치가 이어진다.
+- **검증(반박 시도)** CONFIRMED — 코드로 추적했다. ws.ts snapshot 분기(:370-375)는 aircraftStates.clear() 뒤 `for (const a of aircraft) aircraftStates.set(a.hex, a)` 를 돌고, 워커 postMessage(:375)는 그 다음에 있다. 원소가 null 이면 TypeError 가 나서 부분 적용된 Map 만 남고 워커는 이전 스냅샷을 유지한다. lastSeq 도 갱신되지 않는다. onmessage(:142)와 onMessage 에는 try/catch 가 없다. diff(:395-398), sigmets(:409 `m.collection as SigmetCollection`), radar(:416), alerts(:420·426)는 as 캐스팅뿐이다. 워커 interpolate.worker.js:109-113 도 a.hex 를 검증 없이 쓴다. 선박 경로는 parseShipLite 로 검증한다. 서버가 타입 있는 DTO 라 발생 가능성은 낮다.
+- **문제와 영향** 서버가 비정상 값을 한 번이라도 보내면, 다음 주기 스냅샷까지 지도·카드·검색이 서로 다른 항공기 집합을 보이고 스스로 복구하지 않는다. 지금은 타입 있는 Java DTO라 가능성은 낮다.
+- **개선안** parseAircraftState(hex 정규식, 유한하고 범위 안인 위경도, 모르는 값은 null)로 걸러 새 Map을 만든 뒤 한 번에 교체한다(원자적 적용). 워커에는 검증된 배열만 보낸다. onMessage를 try/catch로 감싸 실패하면 requestResync한다. alerts, radar, sigmets도 최소한의 모양 검사를 한다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+- **보류 이유** 메시지 전체 검증 도입은 프로토콜 계약(R-·WS 스키마)과 함께 설계해야 함
+
+### R-94 · 아키텍처 · Low — 운영자 공급자 스위치가 Redis에만 있고, collector가 쓸 수 있는 키를 공유함
+
+- **근거** OpsController.java:83-105는 `disabled`를 Redis 해시 wakeline:provider:{name}에만 씁니다(DB에는 감사 행만 남음). collector status.py:54-128이 같은 해시에 상태 필드를 씁니다. start.sh:35는 collector에 `~wakeline:provider:*` 쓰기를 허용합니다. infra/tests/redis_acl_test.sh:131은 collector가 `HSET wakeline:provider:adsb_fi disabled 0` 할 수 있음을 '허용'으로 단언합니다. 이는 start.sh:7의 '수집기가 뚫려도 … 설정 변경 불가'와 모순됩니다. 반면 런타임 설정은 DB app_setting을 원천으로 두고 60 s마다 다시 미러합니다(StartupMirror.java:11-14,39-44).
+- **검증(반박 시도)** CONFIRMED — OpsController.java:83-105는 `disabled`를 Redis 해시 wakeline:provider:{name}에만 쓰고, DB에는 감사 행만 남깁니다. git grep 결과 DB에서 스위치를 다시 적용하는 경로는 0건입니다. start.sh:35의 COLLECTOR_KEYS에 `~wakeline:provider:*`가 있고, redis_acl_test.sh:131은 K=wakeline_collector(:52)의 `hset ... disabled 0`을 허용으로 단언합니다. 반면 설정은 StartupMirror가 60 s마다 DB에서 미러합니다. 사실관계는 맞지만 영향은 과장됐습니다. (1) 외부 호출을 하는 주체가 collector 자신이라, 뚫린 collector는 플래그를 바꿀 필요 없이 그냥 호출할 수 있습니다. 권한 경계 논거는 약합니다. (2) redis.conf는 noeviction, appendonly yes, everysec이라 키가 퇴출되지 않습니다. 스위치가 되돌아가려면 DB는 남고 Redis 볼륨만 사라져야 하는데, make clean은 둘 다 지웁니다. 드문 조건이라 Low로 봅니다.
+- **문제와 영향** (1) 내구성: Redis 볼륨 손실이나 AOF 복구 때 스위치가 조용히 '켜짐'으로 돌아갑니다. ADR-016이 약관 대응으로 끄라고 한 adsbdb나 예산이 걸린 공급자가 감사 기록과 반대 상태로 호출됩니다. (2) 권한 경계: 외부 JSON을 파싱하는 collector가 감사 없이 운영자 결정을 뒤집을 수 있습니다.
+- **개선안** 스위치를 app_setting(또는 provider_switch 테이블, If-Match·감사 재사용)으로 옮기고, 기존 미러 경로(wakeline:settings, collector는 %R~ 읽기 전용)로 내보냅니다. collector는 상태만 wakeline:provider:{name}에 씁니다. ACL 시험 :131을 '거부'로 바꾸고, 스위치 키 쓰기 거부 시험을 추가합니다.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 예
+- **보류 이유** 공급자 스위치 저장소 이전(DB)은 운영 계약 변경 — 다음 단계
+
+### R-95 · 보안 · Low — 비밀번호를 바꿔도 기존 운영 세션이 무효화되지 않고, 계정 비활성화·세션 강제 종료 수단도 없음
+
+- **근거** OpsUserService.java:44-49 upsert(make ops-user로 비밀번호 교체)는 ops_user만 갱신하고 세션은 건드리지 않음. OpsSessionController.java:92-97은 세션에 사용자 스냅샷 OpsAuthentication(User id,username,role)만 저장함. SecurityConfig.java:38은 hasRole만 보고 요청마다 DB 재확인을 하지 않음. application.yml:35-39는 기본(비색인) Redis 세션 저장소라 사용자별 세션 조회·삭제가 불가함. ops_user에 비활성화 컬럼이 없고(V1__init.sql:133-137), audit_log FK 때문에 행 삭제도 불가함.
+- **검증(반박 시도)** CONFIRMED — 추적함. OpsUserService.java:44-49 upsert는 password_hash·failed_count·locked_until만 바꿈. OpsSessionController.java:92-97은 세션에 OpsAuthentication(User 스냅샷)만 저장함. 요청마다 DB를 다시 확인하는 필터는 없음(api 전체 grep 결과 OncePerRequestFilter는 RequestId·RateLimit 두 개뿐). EnableRedisIndexed나 repository-type 설정이 없으므로 기본 비색인 RedisSessionRepository이고, 사용자별로 세션을 찾아 폐기할 수 없음. ops_user에는 disabled 컬럼이 없음(V1:133-137). 심각도를 Low로 낮춘 이유: 127.0.0.1에만 바인딩되어 있고 HttpOnly 쿠키라서, 먼저 쿠키를 탈취해야 문제가 됨(#11과 연결될 때만 현실적임). Redis의 wakeline:session:* 키를 지우면 대응할 수 있음(문서화는 되어 있지 않음).
+- **문제와 영향** 세션 쿠키 유출·운영자 교체·공유 PC 상황에서 비밀번호를 바꿔도 기존 세션이 유휴 8 h 동안 유효함(위 폴링 문제와 결합하면 무기한). 대응 수단은 Redis에서 wakeline:session:*를 수동 삭제하는 것뿐이고 문서화되어 있지 않음.
+- **개선안** ops_user에 session_epoch(또는 password_changed_at)를 추가함. 로그인 시 세션에 저장하고, /api/v1/ops/** 필터에서 요청마다 비교(짧은 캐시 허용)해 다르면 invalidate 후 404를 줌. upsert할 때 epoch를 +1 함. disabled 컬럼과 `make ops-user` 잠금 해제·폐기 옵션을 추가함.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 예
+
+### R-96 · 보안 · Low — IP 단위 제한이 호스트 전체 한도가 되고, 계정 단위 잠금과 겹쳐 로컬 프로세스가 운영자를 계속 잠글 수 있음
+
+- **근거** 호스트에서 온 요청은 모두 Docker 게이트웨이 IP로 보임(데모 감사 행 ip=10.78.0.1, 내 curl 요청). edge의 limit_req·limit_conn도 $binary_remote_addr 기준(nginx.conf:31-34). 재현(데모 :8701): 로그인 10회/분(OpsSessionController.java:62,75-79) → 11번째부터 429. WS 5개/IP(application.yml:70) → 6번째 연결이 1013 "connection limit"으로 닫힘. 계정 잠금은 IP와 무관하게 계정 단위로 5회 실패 시 15분(OpsUserService.java:19-20,80-89)이고, 기본 계정명은 admin(Makefile:45).
+- **검증(반박 시도)** CONFIRMED — 추적함. edge 로그 최근 300줄의 클라이언트 IP가 모두 10.77.0.1(Docker 게이트웨이)이라, 호스트 전체가 IP 하나로 집계됨. nginx.conf:31-34는 $binary_remote_addr 기준이고, WakelineWsHandler.java:57·65-67은 ConnectionLimiter(wsMaxConnPerIp=5)를 넘으면 1013 'connection limit'으로 닫음. 지도 탭 하나가 WS 하나를 연다(MapView.tsx:148). 계정 잠금은 IP와 무관하게 계정 단위로 5회 실패 시 15분임(OpsUserService.java:19-20, 80-89). 보정할 점 두 가지: `make ops-user` upsert가 이미 failed_count=0, locked_until=NULL로 잠금을 풂(OpsUserService.java:47). WS 상한은 .env WS_MAX_CONN_PER_IP로 조정할 수 있음(.env.example:38). '로컬 프로세스'를 공격자로 보는 위협 모델도 약함.
+- **문제와 영향** 로컬의 아무 프로세스나 잘못 짠 스크립트가 15분마다 admin에 틀린 비밀번호를 5번 보내면 운영자를 무기한 잠글 수 있음(응답이 같아 원인도 알기 어려움). WS 5개를 붙잡아 두면 운영자의 새 지도 탭이 실시간 자료를 받지 못함. 정상 사용에서도 호스트 전체 기준으로 6번째 탭부터 거절됨.
+- **개선안** 잠금을 (계정, IP) 조합 기준이나 지수 지연 방식으로 바꾸고, CLI 잠금 해제를 추가함. WS·REST 상한은 '호스트 = 한 IP'라는 로컬 전제에 맞게 조정(예: WS IP당 20)하고 README에 명시함.
+- **작업량** M · **확신도** 확인됨 · **발생 가능성** low · **계약 변경 필요** 아니오
+- **보류 이유** IP·계정 제한 재설계(M) — 로컬 단일 사용자 환경에서 발생 가능성 낮음
+
+### R-97 · 보안 · Low — 세션·CSRF 쿠키가 host-only 'localhost', Path=/라서 다른 localhost 포트(SmartCollab 8080/8081 등)와 Next 서버에도 전송됨
+
+- **근거** SecurityConfig.java:87,96 쿠키 Path=/, Domain 없음. 실제 응답 `Set-Cookie: WAKELINE_CSRF=…; Path=/; SameSite=Strict`. RFC 6265 §8.5: 쿠키는 포트로 격리되지 않음. docker ps에서 SmartCollab이 127.0.0.1:8081, 메모상 8080 사용 확인. SameSite=Strict도 포트를 구분하지 않음(같은 site). WAKELINE_CSRF는 HttpOnly가 아니어서 다른 포트의 스크립트가 읽고 덮어쓸 수 있고, 현재 CSRF 방어는 커스텀 헤더 + CORS 부재에만 의존함(OPTIONS 404 재현). 세션 쿠키는 Path=/라 web(Next) 요청에도 매번 실림.
+- **검증(반박 시도)** CONFIRMED — 추적함. SecurityConfig.java:87과 :96에서 쿠키 Path=/이고 Domain이 없음. 실제 응답은 `Set-Cookie: WAKELINE_CSRF=…; Path=/; SameSite=Strict`이고 HttpOnly가 아님. 쿠키는 포트로 격리되지 않으므로(RFC 6265 §8.5), 같은 호스트명(localhost 또는 127.0.0.1)의 다른 포트에서 도는 서버(docker ps 결과 127.0.0.1:8081 SmartCollab, 0.0.0.0:3000·8080 macro-dashboard)로도 WAKELINE_SESSION이 전송됨. 교차 출처 OPTIONS 프리플라이트(Origin localhost:3000, X-CSRF-Token)는 404이고 ACAO가 없어서 지금은 CSRF가 막힘. 따라서 현재 영향은 사용자가 띄운 다른 로컬 서버가 세션 쿠키를 받을 수 있다는 가정 수준이라 Low임.
+- **문제와 영향** 같은 브라우저로 다른 로컬 앱이나 악성 dev 서버를 열면, 그 서버가 Wakeline 운영 세션 토큰을 받게 됨 → 세션 탈취(무효화 수단 부재와 결합). 나중에 CORS를 localhost:*로 열면 즉시 CSRF가 가능해짐.
+- **개선안** 전용 호스트명(예: wakeline.localhost, 브라우저가 루프백으로 해석)을 쓰고 edge server_name·WAKELINE_ALLOWED_ORIGINS에 추가함. 세션 쿠키 Path를 /api/v1/ops로 축소함. 가능하면 __Host- 접두사와 Secure를 사용함.
+- **작업량** M · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 예
+
