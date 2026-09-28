@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { aircraftStates, resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
@@ -475,5 +475,57 @@ describe("R-47 replay: a request made while one is in flight is sent when it fin
     await h.tick();
     expect(h.calls.length).toBe(3);
     h.loader.dispose();
+  });
+});
+
+describe("R-56 ops forms: client validation, Korean status messages, distinct success/failure", () => {
+  it("the login form requires both fields and an 8+ character password before sending, with Korean inline messages", async () => {
+    const { OpsLogin } = await import("@/components/OpsLogin");
+    const html = renderToStaticMarkup(createElement(OpsLogin, { onLogin: () => {}, notice: null }));
+    expect(html).toMatch(/<input[^>]*id="ops-user"[^>]*required=""/);
+    expect(html).toMatch(/<input[^>]*id="ops-pass"[^>]*minLength="8"[^>]*required=""|<input[^>]*id="ops-pass"[^>]*required=""[^>]*minLength="8"/i);
+    expect(opsLib.validateLogin("", "")).toEqual({ field: "user", text: "아이디를 입력하세요." });
+    expect(opsLib.validateLogin("op", "short7!")).toEqual({ field: "pass", text: "비밀번호는 8자 이상입니다." });
+    expect(opsLib.validateLogin("op", "long-enough")).toBeNull();
+  });
+  it("login errors are mapped per status (429 with the wait from Retry-After, network), never the raw English detail", () => {
+    expect(opsLib.loginErrorText(new ApiError(401, "bad credentials"))).toContain("올바르지 않습니다");
+    expect(opsLib.loginErrorText(new ApiError(400, "invalid request"))).toContain("8자 이상");
+    expect(opsLib.loginErrorText(new ApiError(429, "too many login attempts", 42))).toContain("42초");
+    expect(opsLib.loginErrorText(new ApiError(429, "too many login attempts"))).toContain("잠시 뒤");
+    expect(opsLib.loginErrorText(new ApiError(503, "unavailable"))).toContain("일시적으로");
+    expect(opsLib.loginErrorText(new TypeError("Failed to fetch"))).toContain("연결할 수 없습니다");
+    for (const e of [new ApiError(400, "invalid request"), new ApiError(429, "too many login attempts")]) expect(opsLib.loginErrorText(e)).not.toMatch(/invalid request|too many/);
+  });
+  it("ApiError carries Retry-After seconds from the response", async () => {
+    const g = globalThis as Record<string, unknown>;
+    const saved = g.document;
+    g.document = { cookie: "" };
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ detail: "too many login attempts" }), { status: 429, headers: { "Retry-After": "42", "Content-Type": "application/json" } }));
+    try {
+      const { apiSend } = await import("@/lib/api");
+      const e = await apiSend("POST", "/api/v1/ops/session", {}).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as ApiError).retryAfterS).toBe(42);
+    } finally { vi.unstubAllGlobals(); g.document = saved; }
+  });
+  it("settings inputs follow the server rules per key (number range, checkbox, pattern) and are checked before PUT", () => {
+    expect(opsLib.settingSpec("region_radius_nm")).toMatchObject({ kind: "int", min: 50, max: 500 });
+    expect(opsLib.settingSpec("global_enabled")).toMatchObject({ kind: "bool" });
+    expect(opsLib.parseSetting("region_radius_nm", "300")).toEqual({ ok: true, value: 300 });
+    expect(opsLib.parseSetting("region_radius_nm", "abc")).toMatchObject({ ok: false });
+    expect(opsLib.parseSetting("region_radius_nm", "600")).toMatchObject({ ok: false, error: expect.stringContaining("50–500") });
+    expect(opsLib.parseSetting("global_enabled", "true")).toEqual({ ok: true, value: true });
+    expect(opsLib.parseSetting("aircraft_providers", "adsb_lol,opensky")).toEqual({ ok: true, value: "adsb_lol,opensky" });
+    expect(opsLib.parseSetting("aircraft_providers", "adsb_lol,foo")).toMatchObject({ ok: false });
+    expect(opsLib.parseSetting("region_center", "37.5,127")).toEqual({ ok: true, value: "37.5,127" });
+    expect(opsLib.parseSetting("region_center", "99,127")).toMatchObject({ ok: false });
+    expect(opsLib.parseSetting("ais_bboxes", "")).toEqual({ ok: true, value: "" }); // 빈 값 = .env 사용(서버 규칙)
+    expect(opsLib.parseSetting("ais_bboxes", "123")).toEqual({ ok: true, value: "123" }); // 수정 전: 숫자처럼 보이면 숫자로 보냈다
+  });
+  it("an unwatched airport page says so in Korean instead of 'airport not watched: ZZZZ'", async () => {
+    const { airportErrorText } = await import("@/lib/format");
+    expect(airportErrorText(new ApiError(404, "airport not watched: ZZZZ"), "ZZZZ")).toBe("감시 공항 목록에 없는 코드입니다: ZZZZ — 감시 공항만 기상 이력을 보관합니다.");
+    expect(airportErrorText(new TypeError("Failed to fetch"), "RKSI")).toContain("연결할 수 없습니다");
   });
 });

@@ -3,8 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { fmtBudgetLimit, fmtClock, fmtTime } from "@/lib/format";
 import {
-  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, pipelineLossCount, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict, settingIfMatch, signOut, type SettingEdit,
+  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict, settingIfMatch, settingSpec,
+  signOut, type SettingEdit,
 } from "@/lib/ops";
+import { OpsLogin } from "@/components/OpsLogin";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { statsDay } from "@/lib/stats";
 
@@ -27,29 +29,7 @@ export default function OpsPage() {
   const leave = useCallback((note: string | null) => { setNotice(note); setMe(null); }, []);
   const login = useCallback((u: { username: string }) => { setNotice(null); setMe(u); }, []);
   if (!checked) return <div className="p-4 text-fg-3"><h1 className="sr-only">운영</h1>…</div>;
-  return <><h1 className="sr-only">운영{me ? "" : " — 로그인"}</h1>{me ? <OpsDashboard me={me} onLeave={leave} /> : <Login onLogin={login} notice={notice} />}</>;
-}
-
-function Login({ onLogin, notice }: { onLogin: (u: { username: string }) => void; notice: string | null }) {
-  const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState<string | null>(null);
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); setErr(null);
-    try { onLogin(await apiSend<{ username: string }>("POST", "/api/v1/ops/session", { username: u, password: p })); }
-    catch (x) { setErr(x instanceof ApiError && x.status === 401 ? "아이디 또는 비밀번호가 올바르지 않습니다(5회 실패 시 15분 잠금)." : (x as Error).message); }
-  };
-  return (
-    <div className="grid-bg flex h-full items-center justify-center">
-      <form onSubmit={submit} className="panel w-80 p-4" data-testid="ops-login">
-        <div className="label mb-3">Operator sign-in</div>
-        {notice ? <div className="mb-2 text-[11px] text-warn" role="status" data-testid="ops-login-notice">{notice}</div> : null}
-        <label className="label block" htmlFor="ops-user">username</label><input id="ops-user" className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" />
-        <label className="label block" htmlFor="ops-pass">password</label><input id="ops-pass" className="mb-3 w-full" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" />
-        {err ? <div className="mb-2 text-[11px] text-bad" role="alert">{err}</div> : null}
-        <button className="btn w-full" type="submit">Sign in</button>
-        <div className="mt-3 text-[10px] text-fg-3">계정은 `make ops-user` 로만 만듭니다. 세션 8 h · HttpOnly · SameSite=Strict · CSRF 이중 제출.</div>
-      </form>
-    </div>
-  );
+  return <><h1 className="sr-only">운영{me ? "" : " — 로그인"}</h1>{me ? <OpsDashboard me={me} onLeave={leave} /> : <OpsLogin onLogin={login} notice={notice} />}</>;
 }
 
 function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
@@ -148,33 +128,41 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
 function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]; onSaved: () => void; onAuthMiss: (e: unknown) => void }) {
   // 편집 값과 편집을 시작할 때 본 version(R-35): 15 s 새로고침이 version 을 바꿔도 저장은 처음 본 version 으로 If-Match 한다
   const [edit, setEdit] = useState<Record<string, SettingEdit>>({});
-  const [msg, setMsg] = useState<string | null>(null);
+  // 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
   const drop = (k: string) => setEdit((e) => { const c = { ...e }; delete c[k]; return c; });
   const save = async (k: string) => {
     const ed = edit[k];
     if (ed === undefined) return;
-    const raw = ed.value;
-    let value: unknown = raw;
-    if (/^-?\d+$/.test(raw)) value = Number(raw); else if (raw === "true" || raw === "false") value = raw === "true";
-    try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value }, { "If-Match": settingIfMatch(ed) }); setMsg(`${k} 저장됨 — 다음 주기부터 적용`); drop(k); onSaved(); }
+    // 서버 검증 규칙(SettingsService.validate)을 보내기 전에 — 규칙을 모르는 키는 서버가 검사
+    const parsed = parseSetting(k, ed.value);
+    if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ ok: false, text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
+    setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
+    try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value: parsed.value }, { "If-Match": settingIfMatch(ed) }); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);
-      setMsg(e instanceof ApiError && e.status === 409 ? `${k}: 편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요` : `${k}: ${(e as Error).message}`);
-      if (e instanceof ApiError && e.status === 409) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
+      const conflict = e instanceof ApiError && e.status === 409;
+      const text = conflict ? "편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요"
+        : e instanceof ApiError && e.status === 400 ? `서버가 값을 거절했습니다(${e.message})`
+        : e instanceof ApiError ? `저장 실패(HTTP ${e.status})` : "서버에 연결할 수 없습니다(네트워크)";
+      setMsg({ ok: false, text: `${k}: ${text}` });
+      if (conflict) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
     }
   };
   return (
     <div>
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
-      {msg ? <div className="mb-2 text-[11px] text-accent">{msg}</div> : null}
+      <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
+      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}</div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated</th><th></th></tr></thead>
         <tbody>{items.map((s) => {
           const ed = edit[s.key];
           const conflict = settingConflict(ed, s);
           return <tr key={s.key} data-testid="setting-row" data-conflict={conflict ? "true" : undefined}><td className="mono">{s.key}</td>
             <td>
-              <input className="mono w-72" aria-label={`${s.key} 값`} value={ed?.value ?? String(s.value)} onChange={(e) => setEdit({ ...edit, [s.key]: editSetting(ed, s, e.target.value) })} />
+              <SettingInput k={s.key} value={ed?.value ?? String(s.value)} error={fieldErr[s.key] ?? null} onChange={(v) => setEdit({ ...edit, [s.key]: editSetting(ed, s, v) })} />
               {conflict && ed ? (
                 <div className="mt-1 text-[11px] text-warn" role="alert" data-testid="setting-conflict">
                   편집하는 동안 서버 값이 바뀜(v{ed.version} → v{s.version}: <span className="mono">{String(s.value)}</span>)
@@ -186,6 +174,26 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
             <td className="mono">{s.version}</td><td className="mono text-fg-3">{s.updated_by ?? "—"} {fmtTime(s.updated_at)}</td>
             <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict} title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
         })}</tbody></table>
+    </div>
+  );
+}
+
+/** 키별 입력(R-56): 정수 → number(min/max), 켜기/끄기 → checkbox, 형식이 정해진 문자열 → text + 형식 안내. 값은 문자열로 편집한다(R-35 편집 상태). */
+function SettingInput({ k, value, error, onChange }: { k: string; value: string; error: string | null; onChange: (v: string) => void }) {
+  const spec = settingSpec(k);
+  const describedBy = error ? `setting-err-${k}` : spec && spec.kind !== "bool" ? `setting-hint-${k}` : undefined;
+  const common = { "aria-label": `${k} 값`, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy };
+  return (
+    <div>
+      {spec?.kind === "bool" ? (
+        <label className="flex items-center gap-2"><input type="checkbox" {...common} checked={value === "true"} onChange={(e) => onChange(e.target.checked ? "true" : "false")} /><span className="mono">{value === "true" ? "켜짐" : "꺼짐"}</span></label>
+      ) : spec?.kind === "int" ? (
+        <input type="number" className="mono w-40" {...common} min={spec.min} max={spec.max} step={1} value={value} onChange={(e) => onChange(e.target.value)} />
+      ) : (
+        <input className="mono w-72 max-w-full" {...common} value={value} onChange={(e) => onChange(e.target.value)} />
+      )}
+      {spec && spec.kind !== "bool" && !error ? <div id={`setting-hint-${k}`} className="text-[10px] text-fg-3">{spec.kind === "int" ? `정수 ${spec.min}–${spec.max} ${spec.unit}` : spec.hint}</div> : null}
+      {error ? <div id={`setting-err-${k}`} className="text-[11px] text-bad">{error}</div> : null}
     </div>
   );
 }

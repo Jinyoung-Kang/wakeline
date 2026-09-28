@@ -3,7 +3,7 @@ import { use, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, isMetarStale, metarAgeS } from "@/lib/format";
+import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, isMetarStale, metarAgeS } from "@/lib/format";
 
 interface Latest {
   obs_time: string; raw: string; provider?: string; flight_cat?: string | null; flight_cat_source?: string | null; taf_raw?: string | null;
@@ -22,7 +22,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   const [wx, setWx] = useState<Wx | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const now = useNow(30_000);
-  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e) => setErr(e.message)); }, [code]);
+  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e) => setErr(airportErrorText(e, code))); }, [code]);
   const m = wx?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
@@ -31,7 +31,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   return (
     <div className="h-full overflow-y-auto p-4">
       <h1 className="label mb-2">Airport weather · {code}</h1>
-      {err ? <div className="text-bad">{err}</div> : null}
+      {err ? <div className="text-bad" role="alert">{err}</div> : null}
       {wx ? <>
         <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

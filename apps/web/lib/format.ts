@@ -219,3 +219,12 @@ export function fmtBudgetLimit(v: unknown) {
   if (!Number.isFinite(n) || n < 0) return "—";
   return n > 0 ? String(n) : "∞";
 }
+
+/** 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다) */
+export function airportErrorText(e: unknown, icao: string): string {
+  const status = typeof e === "object" && e !== null && typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : null;
+  if (status == null) return "서버에 연결할 수 없습니다(네트워크) — 기상 이력을 불러오지 못했습니다.";
+  if (status === 404) return `감시 공항 목록에 없는 코드입니다: ${icao} — 감시 공항만 기상 이력을 보관합니다.`;
+  if (status === 400) return `공항 코드 형식이 올바르지 않습니다: ${icao}`;
+  return `기상 이력을 불러오지 못했습니다(HTTP ${status}).`;
+}

@@ -113,3 +113,70 @@ export function settingConflict(edit: SettingEdit | undefined, item: { version: 
 export function rebaseSetting(edit: SettingEdit, item: { version: number }): SettingEdit {
   return { value: edit.value, version: item.version };
 }
+
+// ---- 로그인·설정 폼(R-56) ----
+
+/** 서버 Login 레코드(@NotBlank username · @NotBlank @Size(min=8) password)와 같은 규칙. 문제가 없으면 null */
+export function validateLogin(user: string, pass: string): { field: "user" | "pass"; text: string } | null {
+  if (!user.trim()) return { field: "user", text: "아이디를 입력하세요." };
+  if (!pass) return { field: "pass", text: "비밀번호를 입력하세요." };
+  if (pass.length < 8) return { field: "pass", text: "비밀번호는 8자 이상입니다." };
+  return null;
+}
+
+/** 로그인 실패 → 한국어 안내(서버 영문 detail 을 그대로 보이지 않는다) */
+export function loginErrorText(e: unknown): string {
+  if (!(e instanceof ApiError)) return "서버에 연결할 수 없습니다(네트워크) — 연결을 확인한 뒤 다시 시도하세요.";
+  switch (e.status) {
+    case 400: return "입력 형식이 올바르지 않습니다 — 아이디를 입력하고 비밀번호는 8자 이상이어야 합니다.";
+    case 401: return "아이디 또는 비밀번호가 올바르지 않습니다(5회 실패 시 15분 잠금).";
+    case 403: return "요청이 거부되었습니다(보안 토큰) — 페이지를 새로 고친 뒤 다시 시도하세요.";
+    case 429: return e.retryAfterS != null ? `로그인 시도가 너무 많습니다 — ${e.retryAfterS}초 뒤 다시 시도하세요.` : "로그인 시도가 너무 많습니다 — 잠시 뒤 다시 시도하세요.";
+    case 503: return "서버를 일시적으로 사용할 수 없습니다 — 잠시 뒤 다시 시도하세요.";
+    default: return e.status >= 500 ? `서버 오류(HTTP ${e.status}) — 잠시 뒤 다시 시도하세요.` : `로그인하지 못했습니다(HTTP ${e.status}).`;
+  }
+}
+
+/** 설정 키별 입력 규칙 — api SettingsService.validate 와 같게(서버가 다시 검사한다) */
+export type SettingSpec =
+  | { kind: "int"; min: number; max: number; unit: string }
+  | { kind: "bool" }
+  | { kind: "text"; pattern?: RegExp; hint: string; check?: (v: string) => string | null };
+
+const PROVIDERS = /^(adsb_lol|adsb_fi|opensky)(,(adsb_lol|adsb_fi|opensky))*$/;
+const LAT_LON = /^\s*-?\d{1,3}(\.\d{1,8})?\s*,\s*-?\d{1,3}(\.\d{1,8})?\s*$/;
+const SETTING_SPECS: Record<string, SettingSpec> = {
+  region_poll_s: { kind: "int", min: 5, max: 120, unit: "초" },
+  global_poll_s: { kind: "int", min: 60, max: 3600, unit: "초" },
+  sigmet_poll_s: { kind: "int", min: 60, max: 3600, unit: "초" },
+  radar_poll_s: { kind: "int", min: 30, max: 3600, unit: "초" },
+  metar_poll_s: { kind: "int", min: 300, max: 7200, unit: "초" },
+  region_radius_nm: { kind: "int", min: 50, max: 500, unit: "NM" },
+  global_enabled: { kind: "bool" },
+  aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_lol · adsb_fi · opensky 를 쉼표로(예: adsb_lol,adsb_fi)" },
+  region_center: {
+    kind: "text", pattern: LAT_LON, hint: "위도,경도(예: 36.5,127.8) · |위도| ≤ 85",
+    check: (v) => { const [la, lo] = v.split(",").map((x) => Number(x.trim())); return Math.abs(la) > 85 || Math.abs(lo) > 180 ? "위도는 ±85, 경도는 ±180 안이어야 합니다." : null; },
+  },
+  ais_bboxes: { kind: "text", hint: "lat1,lon1,lat2,lon2(여러 상자 ;, 구역 |) · 비우면 .env AIS_BBOXES — 서버가 검사" },
+};
+
+export function settingSpec(key: string): SettingSpec | null {
+  return SETTING_SPECS[key] ?? null;
+}
+
+/** 입력 문자열 → 보낼 값. 규칙을 모르는 키는 문자열 그대로(서버가 검사) */
+export function parseSetting(key: string, raw: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const spec = settingSpec(key);
+  if (!spec) return { ok: true, value: raw };
+  if (spec.kind === "bool") return raw === "true" || raw === "false" ? { ok: true, value: raw === "true" } : { ok: false, error: "켜기/끄기만 가능합니다." };
+  if (spec.kind === "int") {
+    const t = raw.trim();
+    if (!/^-?\d+$/.test(t)) return { ok: false, error: `정수를 입력하세요(${spec.min}–${spec.max} ${spec.unit}).` };
+    const n = Number(t);
+    return n < spec.min || n > spec.max ? { ok: false, error: `${spec.min}–${spec.max} ${spec.unit} 사이여야 합니다.` } : { ok: true, value: n };
+  }
+  if (spec.pattern && !spec.pattern.test(raw)) return { ok: false, error: `형식: ${spec.hint}` };
+  const bad = spec.check?.(raw) ?? null;
+  return bad ? { ok: false, error: bad } : { ok: true, value: raw };
+}
