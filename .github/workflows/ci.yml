@@ -171,7 +171,11 @@ jobs:
         include:
           - { target: edge, blocking: "1" }
           - { target: redis, blocking: "1" }
-          - { target: db, blocking: "0" }    # imresamu/postgis 는 2026-02 이후 Debian 판 재빌드가 없다 — 이미지 교체 결정 전까지 보고만
+          # imresamu/postgis 는 2026-02 이후 Debian 판 재빌드가 없다 — 이미지 교체 결정 전까지 보고만.
+          # R-63 후속: 리뷰의 임시안 'CRITICAL 만이라도 차단'은 채택하지 않는다 — 지금 고칠 수 있는 CRITICAL 이 약 20건이고 새 다이제스트가 없어
+          # 모든 CI 가 빨간불이 된다(게이트를 무시하는 습관만 남는다). 교체안(사용자 결정): postgres:18 공식 이미지 + Debian postgis 패키지로
+          # 직접 빌드, 또는 Alpine 판(정렬 규칙이 바뀌어 인덱스 재구축 필요). 교체하면 이 줄을 blocking "1" 로 바꾼다.
+          - { target: db, blocking: "0" }
           - { target: k6, blocking: "0" }    # 부하 시험 도구(make bench), 스택에 배포되지 않는다
     name: trivy third-party (${{ matrix.target }})
     steps:
