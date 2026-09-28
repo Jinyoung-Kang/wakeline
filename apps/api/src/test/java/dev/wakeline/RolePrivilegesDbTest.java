@@ -136,11 +136,14 @@ class RolePrivilegesDbTest {
         try (Connection c = api()) {
             assertThat(((Number) scalar(c, "SELECT track_point_ensure_partitions(3)")).intValue()).isGreaterThanOrEqualTo(1);
             assertThat(scalar(c, "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = '" + future + "'")).isEqualTo("wakeline_migrator");
-            // 새 파티션에도 api 의 DML 권한이 있다(기본 권한) — 항적 쓰기가 자정 이후에도 이어진다
+            // 부모를 거친 쓰기는 된다 — 항적 쓰기가 자정 이후에도 이어진다(파티션 권한은 검사하지 않는다)
             assertThat(state(c, "INSERT INTO track_point (hex, ts, geom, provider, fetched_at) VALUES ('abc123', now() + interval '3 days', "
                     + "ST_SetSRID(ST_MakePoint(127, 37), 4326), 'fixture', now()) ON CONFLICT DO NOTHING")).isNull();
-            assertThat(state(c, "DELETE FROM " + future)).isNull();
-            // 그래도 테이블 자체는 못 지운다(함수를 거쳐야 한다)
+            // R-88: 새 파티션에 api 의 직접 권한은 없다(선박 파티션과 같다) — 파티션을 직접 고치거나 지우지 못한다
+            for (String priv : new String[]{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"})
+                assertThat(scalar(c, "SELECT has_table_privilege('wakeline_api', '" + future + "', '" + priv + "')")).as(future + " " + priv).isEqualTo(false);
+            assertThat(state(c, "DELETE FROM " + future)).isEqualTo(INSUFFICIENT_PRIVILEGE);
+            // 테이블 자체도 못 지운다(함수를 거쳐야 한다)
             assertThat(state(c, "DROP TABLE " + future)).isEqualTo(INSUFFICIENT_PRIVILEGE);
 
             assertThat(((Number) scalar(c, "SELECT track_point_drop_old(72)")).intValue()).isGreaterThanOrEqualTo(1);
@@ -298,6 +301,61 @@ class RolePrivilegesDbTest {
             assertThat(scalar(c, "SELECT has_table_privilege('wakeline_collector', 'ingest_gap', 'INSERT')")).isEqualTo(false);
             // 대조군: 공백 기록에 필요한 시퀀스 사용은 된다
             assertThat(state(c, "SELECT nextval('ingest_gap_id_seq')")).isNull();
+        }
+    }
+
+    /**
+     * R-88: 기본 권한(ALTER DEFAULT PRIVILEGES)이 migrator 가 만드는 새 표마다 api 에 DML 전체를 열었다(fail-open — 마이그레이션이 REVOKE 를
+     * 잊으면 INSERT 전용이어야 할 표도 고치고 지울 수 있었다). 기본 권한은 없고, api 권한은 표마다 명시한 것뿐이다(아래 스냅샷 — 바꾸면 여기도).
+     * 기존 track_point 파티션에도 직접 권한이 없다(부모를 거쳐서만 쓴다).
+     */
+    @Test
+    void apiPrivilegesAreExplicitPerTableWithNoDefaultGrants() throws SQLException {
+        try (Connection m = migrator()) {
+            assertThat(scalar(m, """
+                    SELECT count(*) FROM pg_default_acl d, aclexplode(d.defaclacl) a
+                    WHERE a.grantee = 'wakeline_api'::regrole""")).as("no default privilege grants anything to the api role").isEqualTo(0L);
+            // 모든 표(파티션 제외)의 api 권한 스냅샷
+            java.util.Map<String, String> actual = new java.util.TreeMap<>();
+            try (Statement s = m.createStatement(); ResultSet rs = s.executeQuery("""
+                    SELECT c.relname,
+                           concat_ws(',', CASE WHEN has_table_privilege('wakeline_api', c.oid, 'SELECT') THEN 'SELECT' END,
+                                          CASE WHEN has_table_privilege('wakeline_api', c.oid, 'INSERT') THEN 'INSERT' END,
+                                          CASE WHEN has_table_privilege('wakeline_api', c.oid, 'UPDATE') THEN 'UPDATE' END,
+                                          CASE WHEN has_table_privilege('wakeline_api', c.oid, 'DELETE') THEN 'DELETE' END,
+                                          CASE WHEN has_table_privilege('wakeline_api', c.oid, 'TRUNCATE') THEN 'TRUNCATE' END) privs
+                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+                      AND c.relname NOT IN ('spatial_ref_sys', 'flyway_schema_history')""")) {
+                while (rs.next()) actual.put(rs.getString(1), rs.getString(2));
+            }
+            java.util.Map<String, String> expected = new java.util.TreeMap<>(java.util.Map.ofEntries(
+                    java.util.Map.entry("aircraft", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("track_point", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("track_point_1m", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("sigmet", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("alert_event", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("app_setting", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("stats_daily", "SELECT,INSERT,UPDATE,DELETE"),
+                    java.util.Map.entry("airport", "SELECT"),
+                    java.util.Map.entry("metar_obs", "SELECT,DELETE"),
+                    java.util.Map.entry("radar_frame", "SELECT,DELETE"),
+                    java.util.Map.entry("ingest_run", "SELECT,DELETE"),
+                    java.util.Map.entry("quality_event", "SELECT,DELETE"),
+                    java.util.Map.entry("quality_rule_count", "SELECT,DELETE"),
+                    java.util.Map.entry("provider_budget_day", "SELECT"),
+                    java.util.Map.entry("ops_user", "SELECT,INSERT,UPDATE"),
+                    java.util.Map.entry("audit_log", "SELECT,INSERT"),
+                    java.util.Map.entry("ship", "SELECT,INSERT,UPDATE"),
+                    java.util.Map.entry("ship_position", "SELECT,INSERT"),
+                    java.util.Map.entry("ingest_gap", "SELECT,INSERT")));
+            assertThat(actual).isEqualTo(expected);
+            // 기존 track_point 파티션(V9 전 기본 권한으로 직접 권한을 받았던 것 포함)도 api 직접 권한 없음
+            assertThat(scalar(m, """
+                    SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+                    WHERE p.relname IN ('track_point', 'ship_position')
+                      AND (has_table_privilege('wakeline_api', c.oid, 'SELECT') OR has_table_privilege('wakeline_api', c.oid, 'INSERT')
+                           OR has_table_privilege('wakeline_api', c.oid, 'UPDATE') OR has_table_privilege('wakeline_api', c.oid, 'DELETE'))""")).isEqualTo(0L);
         }
     }
 

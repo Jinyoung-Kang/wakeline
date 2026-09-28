@@ -331,6 +331,12 @@ class MigrationDbTest {
                 .query(Long.class).single();
         for (String ix : new String[]{"alert_event_hex_id", "aircraft_hex_prefix", "aircraft_registration_prefix"})
             assertThat(index.apply(ix)).as("V9 index " + ix).isEqualTo(1);
+        java.util.function.Supplier<Long> apiDefaultGrants = () -> stage.sql("""
+                SELECT count(*) FROM pg_default_acl d, aclexplode(d.defaclacl) a WHERE a.grantee = 'wakeline_api'::regrole""").query(Long.class).single();
+        java.util.function.Supplier<String> ensureBody = () -> stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'track_point_ensure_partitions'")
+                .query(String.class).single();
+        assertThat(apiDefaultGrants.get()).as("R-88: no default grants").isZero();
+        assertThat(ensureBody.get()).contains("REVOKE ALL");
 
         try (Connection c = DriverManager.getConnection(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW); Statement st = c.createStatement()) {
             st.execute(v9RollbackSql());
@@ -338,6 +344,8 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(8);
         for (String ix : new String[]{"alert_event_hex_id", "aircraft_hex_prefix", "aircraft_registration_prefix"})
             assertThat(index.apply(ix)).as("rolled back " + ix).isZero();
+        assertThat(apiDefaultGrants.get()).as("V1 default grants restored (SELECT, INSERT, UPDATE, DELETE)").isEqualTo(4L);
+        assertThat(ensureBody.get()).doesNotContain("REVOKE");
         for (String fn : new String[]{"track_point_drop_old", "ship_position_drop_old"}) {
             assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = :f").param("f", fn).query(String.class).single()).as(fn).contains("::date - 1");
             assertThat(stage.sql("SELECT prosecdef FROM pg_proc WHERE proname = :f").param("f", fn).query(Boolean.class).single()).as(fn).isTrue();
@@ -350,6 +358,8 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'ship_position_drop_old'").query(String.class).single()).contains("boundary");
         for (String ix : new String[]{"alert_event_hex_id", "aircraft_hex_prefix", "aircraft_registration_prefix"})
             assertThat(index.apply(ix)).as("re-applied " + ix).isEqualTo(1);
+        assertThat(apiDefaultGrants.get()).isZero();
+        assertThat(ensureBody.get()).contains("REVOKE ALL");
     }
 
     /**
