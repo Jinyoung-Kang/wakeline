@@ -375,6 +375,31 @@ def test_the_trailing_entry_is_the_last_suppressed_occurrence_with_its_own_field
     assert not list(VALIDATOR.iter_errors(last))
 
 
+class _StateError(Exception):
+    pass
+
+
+@pytest.mark.parametrize("with_filter", [True, False])
+def test_a_held_occurrence_keeps_its_exception_text_from_when_it_happened(with_filter):
+    """뒤늦게 실은 항목의 예외 메시지 · 스택은 그 발생 때의 것 — 창이 닫힐 때(약 10 s 뒤, 이벤트 루프에서) 예외의 __str__ 을 다시 부르지 않는다.
+    그사이 예외 객체가 바뀌어도 메시지와 스택이 서로 맞는다. MaskFilter 가 발생 때 스택을 정한 경우(운영 — start 가 붙인다) · 필터 없이 부른 emit 모두."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock)
+    if with_filter:
+        masking.install_log_masking(sink)
+    lg = logger_for(sink, "wakeline.test.held_exc")
+    errors = [raise_and_catch(_StateError(f"state {k}")) for k in range(2)]
+    for e in errors:
+        lg.error("step failed", exc_info=e)
+    errors[-1].args = ("mutated after logging",)  # 발생 뒤에 바뀐 예외 객체(상태를 들고 다니는 예외 · 다시 던지며 고친 메시지)
+    clock.t += ls.DEDUP_WINDOW_S
+    assert sink.flush_trailing() == 1
+    last = orjson.loads(sink.pending()[-1][0])
+    assert last["exception"]["message"] == "state 1"
+    assert last["exception"]["stack"].splitlines()[-1].endswith("_StateError: state 1")
+    assert not list(VALIDATOR.iter_errors(last))
+
+
 async def test_the_flusher_sends_a_pending_occurrence_on_its_own_tick():
     """전송 루프가 제 주기(1 s)에 창이 닫혔는지 본다 — 새 태스크 없이."""
     r = FakeRedis()

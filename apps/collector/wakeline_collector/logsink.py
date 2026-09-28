@@ -8,7 +8,8 @@
   같은 fp 는 10 s 에 1건만 — 억제한 수는 그 fp 의 다음 항목 suppressed 에(항목을 만들지 못하면 창을 닫고 수를 되돌린다).
   다음 항목이 창 안에 오지 않으면 창이 닫힌 뒤 전송 루프의 주기에 마지막 억제 발생을 항목으로 싣는다(뒤늦게 싣기 — 계약 v5 §G9:
   그 발생의 ts · 메시지 · 예외 · context, suppressed = 억제 수 − 1, 창은 그때 다시 시작). 억제 중인 발생은 지문마다 하나(마지막)만
-  붙잡는다(레코드의 얕은 복사 — 예외가 있으면 트레이스백도 창이 닫힐 때까지, 약 11 s). 언어 간 벡터 schemas/vectors/log-suppression.v1.json.
+  붙잡는다(레코드의 얕은 복사 — 예외가 있으면 트레이스백도 창이 닫힐 때까지, 약 11 s. 예외 메시지 · 트레이스백 글은 붙잡을 때 정한다).
+  같은 주기에 여러 지문이면 창을 시작한 순서로 싣는다. 언어 간 벡터 schemas/vectors/log-suppression.v1.json.
 - 항목 ≤ 8 KiB(직렬화 바이트, C1): 스키마 글자 상한을 먼저 맞추고, 그래도 넘으면 stack → exception.message → message 순으로 잘라
   '…(잘림 N자)' 를 붙인다(N = 가린 원문에서 뺀 글자 수 — MaskFilter 가 LOG_LIMIT 에서 먼저 자른 부분도 센다).
 - 대기열 500건 · 2 MiB(보내는 중인 묶음까지 센다 — 넘으면 대기열의 오래된 것부터 버리고 센다). 전송은 이벤트 루프의 태스크 하나: 1 s 마다 또는 50건이 모이면(작업 스레드는
@@ -188,6 +189,18 @@ def _was_masked(text: str, whole: dict[str, int], field: str) -> tuple[str, int]
     return text, max(0, int(whole.get(field, len(text))) - len(text))
 
 
+def _exc_of(record: logging.LogRecord) -> BaseException | None:
+    return record.exc_info[1] if record.exc_info and record.exc_info[1] is not None else None
+
+
+def _exc_str(exc: BaseException) -> str:
+    """예외 메시지(str). 예외의 __str__ 이 실패하면 빈 값."""
+    try:
+        return str(exc)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _stderr(text: str) -> None:
     try:
         sys.stderr.write(text + "\n")
@@ -208,10 +221,26 @@ class _Occurrence:
     message: str
     logger: str
     exc_type: str
+    exc_str: str | None = None  # 붙잡을 때 정한 예외 메시지(가리기 전) — None 이면 항목을 만들 때(곧 발생 때) str(exc)
 
     def held(self) -> _Occurrence:
-        """억제해 붙잡아 둘 때: 레코드를 얕게 복사한다 — 뒤 핸들러(표준 출력 형식기 등)가 레코드를 고쳐도 발생 때의 값으로 만든다."""
-        return _Occurrence(copy.copy(self.record), self.whole, dict(self.lost), self.message, self.logger, self.exc_type)
+        """억제해 붙잡아 둘 때: 레코드를 얕게 복사한다 — 뒤 핸들러(표준 출력 형식기 등)가 레코드를 고쳐도 발생 때의 값으로 만든다.
+        예외 메시지 · 트레이스백 글도 지금 정한다(§G9 — 발생 때의 값): 항목은 약 10 s 뒤 전송 루프에서 만들어지는데, 그사이 예외 객체가
+        바뀌면(args 고침 등) 메시지가 제 스택과 어긋나고, 예외의 __str__ 이 이벤트 루프에서 돈다. 트레이스백은 MaskFilter 가 이미 글로
+        만들었으면(운영 — start 가 붙인다) 그대로, 필터 없이 부른 emit 이면 여기서 만든다(가림은 전처럼 싣기로 정한 뒤)."""
+        record = copy.copy(self.record)
+        exc = _exc_of(record)
+        if exc is not None and record.exc_text is None and record.exc_info:
+            record.exc_text = _FMT.formatException(record.exc_info)
+        return _Occurrence(
+            record,
+            self.whole,
+            dict(self.lost),
+            self.message,
+            self.logger,
+            self.exc_type,
+            _exc_str(exc) if exc is not None else None,
+        )
 
 
 @dataclass(slots=True)
@@ -292,7 +321,7 @@ class LogSink(logging.Handler):
         except Exception:  # noqa: BLE001 — 형식이 틀린 로그도 원문 형식 문자열로 싣는다
             text = str(record.msg)
         message, lost["message"] = _was_masked(text, whole, "msg") if whole is not None else _masked_capped(text)
-        exc = record.exc_info[1] if record.exc_info and record.exc_info[1] is not None else None
+        exc = _exc_of(record)
         exc_type = _limit(printable(_type_name(exc)), MAX_EXC_TYPE)[0] if exc is not None else ""
         logger = _limit(printable(record.name), MAX_LOGGER)[0]
         fp = fingerprint(self.service, logger, exc_type, message)
@@ -319,13 +348,10 @@ class LogSink(logging.Handler):
     def _event(self, occ: _Occurrence, fp: str, carried: int) -> bytes | None:
         """LogEvent 직렬화 바이트(8 KiB 안). 맞출 수 없으면 None."""
         record, whole, lost = occ.record, occ.whole, occ.lost
-        exc = record.exc_info[1] if record.exc_info and record.exc_info[1] is not None else None
+        exc = _exc_of(record)
         exception: dict[str, Any] | None = None
         if exc is not None and record.exc_info:
-            try:
-                exc_msg = str(exc)
-            except Exception:  # noqa: BLE001
-                exc_msg = ""
+            exc_msg = occ.exc_str if occ.exc_str is not None else _exc_str(exc)  # 붙잡은 발생은 붙잡을 때 정한 것
             if whole is not None and record.exc_text is not None:
                 stack, lost["exception.stack"] = _was_masked(record.exc_text, whole, "exc_text")
             else:
