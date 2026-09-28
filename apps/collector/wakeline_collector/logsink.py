@@ -2,11 +2,12 @@
 
 - 루트 로거에 붙는 logging.Handler. emit 은 어느 스레드에서든(asyncio.to_thread 작업 스레드 포함) 불린다 — 가림·지문·직렬화만 하고
   잠금 안에서 대기열(deque)에 넣는다. Redis 를 기다리지 않는다(앱 스레드·이벤트 루프를 막지 않음).
-- 가림(C5): 메시지·예외 메시지·스택·context 를 masking.mask 로. 루트 핸들러의 MaskFilter 가 먼저 돌았는지와 상관없이 여기서 다시 가린다.
+- 가림(C5): 메시지·예외 메시지·스택·context 를 masking.mask 로. 한 레코드는 한 번만 가린다 — MaskFilter(루트 핸들러 · 싱크 자신)가
+  이미 가린 레코드(MASKED_ATTR 표시)는 그 결과를 쓰고, 표시가 없으면(필터 없이 부른 emit) 여기서 가린다.
 - 지문 fp = SHA-256(서비스 \\n 로거 \\n 예외 종류 \\n 메시지 틀) 앞 16자리. 틀 = 따옴표 안 → '…', 16진 8자 이상 → #, 숫자열 → #.
   같은 fp 는 10 s 에 1건만 — 억제한 수는 그 fp 의 다음 항목 suppressed 에.
 - 항목 ≤ 8 KiB(직렬화 바이트, C1): 스키마 글자 상한을 먼저 맞추고, 그래도 넘으면 stack → exception.message → message 순으로 잘라
-  '…(잘림 N자)' 를 붙인다(N = 가린 원문에서 뺀 글자 수).
+  '…(잘림 N자)' 를 붙인다(N = 가린 원문에서 뺀 글자 수 — MaskFilter 가 LOG_LIMIT 에서 먼저 자른 부분도 센다).
 - 대기열 500건 · 2 MiB(넘으면 오래된 것부터 버리고 센다). 전송은 이벤트 루프의 태스크 하나: 1 s 마다 또는 50건이 모이면(작업 스레드는
   call_soon_threadsafe 로 깨운다) 50건씩 파이프라인으로 XADD wakeline:logs MAXLEN ~ 3000 * e <json>. 명령은 R-43 클라이언트의 짧은
   상한 + SEND_TIMEOUT_S. Redis 오류면 그 묶음을 대기열 앞에 되돌리고 1 → 30 s 지수 백오프(그동안은 50건이 모여도 보내지 않는다).
@@ -35,7 +36,7 @@ from typing import Any
 
 import orjson
 
-from wakeline_collector.masking import LOG_LIMIT, install_log_masking, mask
+from wakeline_collector.masking import LOG_LIMIT, MASKED_ATTR, install_log_masking, mask
 
 log = logging.getLogger("logsink")
 
@@ -88,52 +89,57 @@ def _marker(cut: int) -> str:
     return f"…(잘림 {cut}자)"
 
 
-def _cut(text: str, keep: int) -> str:
-    """앞 keep 글자 + 잘림 표시(원문에서 뺀 글자 수). keep 이 원문 길이 이상이면 원문 그대로."""
-    if keep >= len(text):
+def _cut(text: str, keep: int, lost: int = 0) -> str:
+    """앞 keep 글자 + 잘림 표시. lost = text 에 이미 없는(가림 단계에서 먼저 잘린) 뒤쪽 글자 수 — N 에 더한다.
+    keep 이 text 길이 이상이고 먼저 잘린 것도 없으면 text 그대로."""
+    if keep >= len(text) and not lost:
         return text
-    return text[:keep] + _marker(len(text) - keep)
+    keep = min(keep, len(text))
+    return text[:keep] + _marker(len(text) - keep + lost)
 
 
-def _limit(text: str, max_chars: int) -> tuple[str, int]:
+def _limit(text: str, max_chars: int, lost: int = 0) -> tuple[str, int]:
     """글자 상한(잘림 표시 포함)에 맞춘 문자열과 남긴 원문 글자 수."""
-    if len(text) <= max_chars:
+    if len(text) <= max_chars and not lost:
         return text, len(text)
-    keep = max(0, max_chars - len(_marker(len(text))))  # 표시의 자릿수를 가장 크게 잡는다 — 결과는 늘 상한 안
-    return _cut(text, keep), keep
+    keep = min(len(text), max(0, max_chars - len(_marker(len(text) + lost))))  # 표시의 자릿수를 가장 크게 잡는다 — 늘 상한 안
+    return _cut(text, keep, lost), keep
 
 
-def fit_event(ev: dict[str, Any]) -> bytes | None:
+def fit_event(ev: dict[str, Any], lost: dict[str, int] | None = None) -> bytes | None:
     """ev(가린 원문이 든 항목)를 스키마 글자 상한 → 8 KiB 순으로 맞춘 직렬화 바이트. ev 를 고친다. 맞출 수 없으면 None.
 
-    8 KiB 를 넘으면 stack → exception.message → message 순으로, 각 칸은 필요한 만큼만(이분 탐색) 자른다."""
+    8 KiB 를 넘으면 stack → exception.message → message 순으로, 각 칸은 필요한 만큼만(이분 탐색) 자른다.
+    lost: 칸('message' · 'exception.message' · 'exception.stack')마다 ev 에 넣기 전에 이미 잘린 글자 수(MaskFilter 의 LOG_LIMIT) —
+    잘림 표시의 N 이 가린 원문 전체를 기준으로 하게 더한다."""
+    lost = lost or {}
     exc = ev.get("exception")
-    plan: list[tuple[dict[str, Any], str, int]] = []
+    plan: list[tuple[dict[str, Any], str, int, int]] = []
     if exc:
-        plan.append((exc, "stack", MAX_STACK))
+        plan.append((exc, "stack", MAX_STACK, lost.get("exception.stack", 0)))
         if exc.get("message") is not None:
-            plan.append((exc, "message", MAX_EXC_MESSAGE))
-    plan.append((ev, "message", MAX_MESSAGE))
-    originals = [obj[key] for obj, key, _mx in plan]
+            plan.append((exc, "message", MAX_EXC_MESSAGE, lost.get("exception.message", 0)))
+    plan.append((ev, "message", MAX_MESSAGE, lost.get("message", 0)))
+    originals = [obj[key] for obj, key, _mx, _lo in plan]
     kept: list[int] = []
-    for (obj, key, mx), orig in zip(plan, originals, strict=True):
-        obj[key], k = _limit(orig, mx)
+    for (obj, key, mx, gone), orig in zip(plan, originals, strict=True):
+        obj[key], k = _limit(orig, mx, gone)
         kept.append(k)
     raw = orjson.dumps(ev)
-    for (obj, key, _mx), orig, k in zip(plan, originals, kept, strict=True):
+    for (obj, key, _mx, gone), orig, k in zip(plan, originals, kept, strict=True):
         if len(raw) <= ENTRY_MAX_BYTES:
             return raw
-        obj[key] = _cut(orig, 0)
+        obj[key] = _cut(orig, 0, gone)
         if len(orjson.dumps(ev)) <= ENTRY_MAX_BYTES:
             lo, hi = 0, k  # lo 는 늘 맞는 값이다(표시 자릿수 때문에 크기가 1바이트씩 들쭉날쭉해도 결과는 상한 안)
             while lo < hi:
                 mid = (lo + hi + 1) // 2
-                obj[key] = _cut(orig, mid)
+                obj[key] = _cut(orig, mid, gone)
                 if len(orjson.dumps(ev)) <= ENTRY_MAX_BYTES:
                     lo = mid
                 else:
                     hi = mid - 1
-            obj[key] = _cut(orig, lo)
+            obj[key] = _cut(orig, lo, gone)
         raw = orjson.dumps(ev)
     if len(raw) > ENTRY_MAX_BYTES and ev.get("context"):
         ev["context"] = {}  # 세 칸을 다 비워도 넘는 경우(여기까지 오지 않는다 — 다른 칸은 모두 짧은 상한) 보조 정보를 뺀다
@@ -158,7 +164,18 @@ def _type_name(exc: BaseException) -> str:
 
 
 def _masked(text: str) -> str:
-    return mask(text, LOG_LIMIT) or ""
+    return mask(text, None) or ""
+
+
+def _masked_capped(text: str) -> tuple[str, int]:
+    """가린 글의 앞 LOG_LIMIT 글자와 그 뒤로 잘린 글자 수 — MaskFilter 와 같은 모양(어느 쪽이 가렸든 지문 · 잘림 표시가 같게)."""
+    out = _masked(text)
+    return out[:LOG_LIMIT], max(0, len(out) - LOG_LIMIT)
+
+
+def _was_masked(text: str, whole: dict[str, int], field: str) -> tuple[str, int]:
+    """MaskFilter 가 가리고 LOG_LIMIT 에서 자른 칸과 그 뒤로 잘린 글자 수(표시가 말하는 자르기 전 길이 − 남은 길이)."""
+    return text, max(0, int(whole.get(field, len(text))) - len(text))
 
 
 def _stderr(text: str) -> None:
@@ -227,11 +244,15 @@ class LogSink(logging.Handler):
 
     def _build(self, record: logging.LogRecord) -> tuple[str, int] | None:
         """(JSON, 바이트 수). 억제했으면 None."""
+        # MaskFilter 가 이미 가린 레코드: 칸은 LOG_LIMIT 에서 잘렸고 자르기 전 길이가 whole 에 있다(다시 가리지 않는다)
+        whole = getattr(record, MASKED_ATTR, None)
+        whole = whole if isinstance(whole, dict) else None
+        lost: dict[str, int] = {}
         try:
             text = record.getMessage()
         except Exception:  # noqa: BLE001 — 형식이 틀린 로그도 원문 형식 문자열로 싣는다
             text = str(record.msg)
-        message = _masked(text)
+        message, lost["message"] = _was_masked(text, whole, "msg") if whole is not None else _masked_capped(text)
         exc = record.exc_info[1] if record.exc_info and record.exc_info[1] is not None else None
         exc_type = _limit(_type_name(exc), MAX_EXC_TYPE)[0] if exc is not None else ""
         logger = _limit(record.name, MAX_LOGGER)[0]
@@ -245,8 +266,12 @@ class LogSink(logging.Handler):
                 exc_msg = str(exc)
             except Exception:  # noqa: BLE001
                 exc_msg = ""
-            stack = record.exc_text or _FMT.formatException(record.exc_info)
-            exception = {"type": exc_type, "message": _masked(exc_msg) or None, "stack": _masked(stack)}
+            if whole is not None and record.exc_text is not None:
+                stack, lost["exception.stack"] = _was_masked(record.exc_text, whole, "exc_text")
+            else:
+                stack, lost["exception.stack"] = _masked_capped(record.exc_text or _FMT.formatException(record.exc_info))
+            exc_message, lost["exception.message"] = _masked_capped(exc_msg)  # 예외 메시지는 MaskFilter 가 따로 가리지 않는다
+            exception = {"type": exc_type, "message": exc_message or None, "stack": stack}
         ev: dict[str, Any] = {
             "v": 1,
             "ts": _iso_ms(record.created),
@@ -262,7 +287,7 @@ class LogSink(logging.Handler):
             "context": _context(record),
             "suppressed": carried,
         }
-        raw = fit_event(ev)
+        raw = fit_event(ev, lost)
         if raw is None:
             with self._mu:
                 self.dropped += 1
@@ -412,7 +437,8 @@ class LogSink(logging.Handler):
             for h in list(root.handlers):  # 한 프로세스에 싱크는 하나(시험에서 main 을 여러 번 돌려도 쌓이지 않게)
                 if isinstance(h, LogSink) and h is not self:
                     root.removeHandler(h)
-            install_log_masking(self)  # 레코드 자체도 가린다(방어적 — _build 가 어차피 다시 가린다)
+            # 레코드를 가리고 표시를 단다 — 표준 출력 핸들러의 필터가 먼저 가렸으면 그대로 둔다(한 레코드에 한 번)
+            install_log_masking(self)
             root.addHandler(self)
             self._attached = True
         self._task = asyncio.create_task(self.run(), name="logsink")

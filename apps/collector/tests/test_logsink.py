@@ -319,7 +319,6 @@ def _whole(text: str) -> int:
     return len(kept) + cut
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C1: 고치기 전 — 가림이 LOG_LIMIT 에서 조용히 잘라 N 이 줄어든다")
 @pytest.mark.parametrize("masked_by", ["sink", "root-handler-filter", "sink-filter"])
 def test_cut_marker_counts_the_whole_text_even_beyond_the_mask_limit(masked_by):
     """계약 v5 §C1 '…(잘림 N자)': 메시지·예외 메시지·스택이 가림 상한(LOG_LIMIT 100,000자)보다 길어도 남긴 글자 + N = 가린 원문 전체.
@@ -345,7 +344,6 @@ def test_cut_marker_counts_the_whole_text_even_beyond_the_mask_limit(masked_by):
     assert _whole(e["exception"]["stack"]) == stack_len > masking.LOG_LIMIT
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 핸들러마다 붙은 MaskFilter 와 싱크가 같은 레코드를 세 번 가린다")
 def test_a_record_is_masked_once_however_many_handlers_carry_the_filter(monkeypatch):
     """가림은 긴 글에서 비싸다(정규식 여러 개 × 글자 수) — 표준 출력 핸들러의 MaskFilter · 싱크의 MaskFilter · 싱크의 _build 가
     같은 레코드를 따로 가리면 emit 을 부른 스레드(이벤트 루프)가 세 배로 멈춘다. 한 레코드는 한 번만 가린다."""
