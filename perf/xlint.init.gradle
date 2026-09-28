@@ -1,0 +1,6 @@
+// 리뷰 측정 전용(빌드 설정은 바꾸지 않는다): ./gradlew -I ../../perf/xlint.init.gradle compileJava --rerun-tasks
+allprojects {
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs += ['-Xlint:all', '-Xmaxwarns', '100000']
+    }
+}
