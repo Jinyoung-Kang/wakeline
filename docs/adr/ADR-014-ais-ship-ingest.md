@@ -58,5 +58,5 @@ ais CPU 평균 4.5 %(순간 45 %) · 메모리 41–67 MiB, api 637–675 MiB, R
 같은 범위를 두 연결(아메리카 `-90,-180,90,0` / 아시아·태평양 `-90,45,90,180`)로 동시에 10분 받으니 지연 p50 1.9 s · 1.8 s, p90 6.0 s · 4.6 s, 최대 10.1 s, 끊김 0.
 **결정.** `ais_bboxes` 에 `|` 로 구역을 나눠 구역마다 연결 하나(최대 3 — 키당 연결 수). 공백은 구역(scope)별로 기록하고, 항적 끊기·만료 멈춤은 그 구역 안 선박에만 적용한다.
 운영값은 위 두 구역. 세 번째 연결은 비워 둔다(측정·탐침용 여유).
-**되돌리기(V8).** `DROP INDEX ingest_gap_source_scope_started_uq; ALTER TABLE ingest_gap ADD CONSTRAINT ingest_gap_source_started_at_key UNIQUE (source, started_at); ALTER TABLE ingest_gap DROP COLUMN scope;`
+**되돌리기(V8).** `DROP INDEX ingest_gap_source_scope_started_uq; ALTER TABLE ingest_gap ADD CONSTRAINT ingest_gap_source_started UNIQUE (source, started_at); ALTER TABLE ingest_gap DROP COLUMN scope; DELETE FROM flyway_schema_history WHERE version = '8';`
 (scope 가 다른 같은 시각 공백이 있으면 먼저 하나만 남긴다.) 설정값에서 `|` 를 `;` 로 바꾸면 한 연결로 돌아간다.
