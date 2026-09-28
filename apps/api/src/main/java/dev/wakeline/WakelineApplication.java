@@ -109,7 +109,10 @@ public class WakelineApplication {
         }
         var app = new SpringApplication(WakelineApplication.class);
         app.setAdditionalProfiles("cli");
-        try (ConfigurableApplicationContext ctx = app.run("--spring.main.web-application-type=none", "--spring.flyway.enabled=false")) {
+        // 헬스 그룹 ingest 가 가리키는 ingestPipeline 기여자는 cli 프로필에서 빠진다(수집 경로가 없다). 이 일회성 컨텍스트는 헬스 엔드포인트를
+        // 내보내지 않으므로 그룹 구성원 검사를 끈다 — 켜 두면 컨텍스트가 뜨지 못한다(CreateOpsUserCliIT · VERIFICATION #33).
+        try (ConfigurableApplicationContext ctx = app.run("--spring.main.web-application-type=none", "--spring.flyway.enabled=false",
+                "--management.endpoint.health.validate-group-membership=false")) {
             return applyOpsUser(ctx.getBean(OpsUserService.class), user, password, System.out, System.err);
         }
     }
