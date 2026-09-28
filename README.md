@@ -128,7 +128,9 @@ DB 역할 비밀번호는 새 볼륨을 처음 초기화할 때 한 번만 `.env
 ```bash
 make rotate-db-passwords && make up          # DB 서비스 계정(wakeline_migrator·api·collector) 새 난수 → DB 와 .env 에 함께 적용 → 새 값으로 다시 기동
 make rotate-db-passwords sync=1 && make up   # .env 를 잃었거나 값이 어긋나 인증이 실패할 때: .env 의 지금 값을 DB 역할에 맞춘다(.env 는 그대로)
+make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의 DB 를 개발 스택이 바꾼 .env 값에 맞춘다
 ```
+- 개발 스택과 격리 스택은 같은 `.env` 의 DB 비밀번호를 읽습니다. 그래서 새 값은 개발 스택에서만 만들고(격리 스택에서 새 값을 요청하면 아무것도 바꾸지 않고 멈춤), 교체 뒤 DB 볼륨이 남은 다른 스택이 있으면 도구가 맞추는 명령을 알려 줍니다.
 - 도구(`tools/db_rotate_passwords.py`)는 DB 에 SCRAM 검증값만 stdin 으로 보내고(평문은 명령행·로그·화면에 없음), 새 값으로 로그인을 확인한 뒤에만 `.env`(0600)를 바꿉니다. 확인이 실패하면 DB 를 옛 값으로 되돌리고 `.env` 는 그대로 둡니다. `infra/tests/db_rotate_test.sh` 가 버리는 컨테이너로 확인합니다.
 - Redis(default·api·collector·ais): redis 는 시작할 때마다 `.env` 값으로 ACL 사용자를 만듭니다. `.env` 에서 바꿀 값을 지우고 `make up` 하면 `make init` 이 새 난수를 채우고 redis·api·collector·ais 가 새 값으로 다시 만들어집니다.
 - `DB_ROOT_PASSWORD`(postgres 슈퍼유저)는 TCP 접속이 막혀 있어(로컬 소켓 전용) 새 볼륨 초기화 때만 쓰입니다. 외부 키(OpenSky·기상청·aisstream)는 `.env` 를 고친 뒤 `make up`.
