@@ -42,6 +42,16 @@ class SecurityCookieConfigTest {
         });
     }
 
+    /** R-97: 세션 쿠키는 /api 에만, CSRF 쿠키는 화면 JS 가 읽으므로 / . */
+    @Test
+    void sessionCookieIsScopedToTheApiPath() {
+        runner.run(ctx -> {
+            String[] c = setCookies(ctx);
+            assertThat(c[0]).containsPattern("; Path=/api(;|$)");
+            assertThat(c[1]).containsPattern("; Path=/(;|$)");
+        });
+    }
+
     @Test
     void secureCanBeSwitchedOnForHttpsDeployments() {
         runner.withPropertyValues("wakeline.cookie-secure=true").run(ctx -> {

@@ -144,10 +144,12 @@ class SecurityIT extends IntegrationTest {
         String session = b.setCookie("WAKELINE_SESSION");
         assertThat(session).as("session cookie").isNotNull();
         String attrs = session.toLowerCase(Locale.ROOT);
-        assertThat(attrs).contains("; httponly").contains("; samesite=strict").contains("; path=/");
+        assertThat(attrs).contains("; httponly").contains("; samesite=strict");
+        // R-97: 세션 쿠키는 api 경로에만 — 웹(Next) 요청에는 실리지 않는다. CSRF 쿠키는 화면 스크립트가 읽어야 해서 / 그대로
+        assertThat(attrs).contains("; path=/api;").doesNotContain("; path=/;");
         String csrf = b.setCookie("WAKELINE_CSRF");
         assertThat(csrf).as("CSRF cookie (double submit)").isNotNull();
-        assertThat(csrf.toLowerCase(Locale.ROOT)).contains("samesite=strict").doesNotContain("httponly"); // 화면 스크립트가 읽어 헤더로 보낸다
+        assertThat(csrf.toLowerCase(Locale.ROOT)).contains("samesite=strict").contains("; path=/;").doesNotContain("httponly"); // 화면 스크립트가 읽어 헤더로 보낸다
 
         // 세션은 Redis ACL 이 허용한 이름공간에만(Boot 4 키 이름 변경 회귀 방지 — 예전 키로는 spring:session:* 에 써서 NOPERM)
         assertThat(ItStack.admin().keys("wakeline:session:*")).isNotEmpty();

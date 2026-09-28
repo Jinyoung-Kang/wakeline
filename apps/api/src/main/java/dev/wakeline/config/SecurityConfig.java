@@ -33,6 +33,7 @@ import java.time.Duration;
 public class SecurityConfig {
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
     public static final String SESSION_COOKIE = "WAKELINE_SESSION";
+    public static final String SESSION_COOKIE_PATH = "/api";
     public static final String CSRF_COOKIE = "WAKELINE_CSRF";
     public static final String CSRF_HEADER = "X-CSRF-Token";
 
@@ -122,7 +123,9 @@ public class SecurityConfig {
     CookieSerializer cookieSerializer(@Value("${wakeline.cookie-secure:false}") boolean secure) {
         var c = new DefaultCookieSerializer();
         c.setCookieName(SESSION_COOKIE);
-        c.setCookiePath("/");
+        // R-97(ADR-017 §3): 세션은 api 경로에서만 쓴다 — Path=/ 이면 같은 호스트의 웹(Next) 요청마다 실렸다. CSRF 쿠키는 화면 JS 가 읽어야 해서 / 그대로.
+        // 같은 호스트명의 다른 포트로 가는 것은 쿠키 규칙(RFC 6265 — 포트 구분 없음)이라 여기서 막을 수 없다.
+        c.setCookiePath(SESSION_COOKIE_PATH);
         c.setUseHttpOnlyCookie(true);
         c.setSameSite("Strict");
         c.setUseSecureCookie(secure);
