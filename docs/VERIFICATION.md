@@ -212,7 +212,7 @@
   경도 > 180 인 폴리곤이 그대로 나갔다. api 는 경도 −180..180 의 항공기로 판정하므로 이 경보의 180° 동쪽 부분(서경 약 169–180°)에 있는 항공기는 **경보 안으로 잡히지 않았다**. 웹은 스키마(경도 ±180)에 맞지 않아 이 경보를 지도에서 뺐다.
 - **수정** 링을 먼저 이어진 경도로 편 뒤 360° 폭 창마다 잘라 되돌린다(점프 · 이어진 경도 두 형식 모두). **회귀** 시험 2건(수정 전 실패) · 실수신 UHMM 폴리곤을 다시 풀면 2조각 · 면적 99.825 제곱도 그대로 · 서경 175° 점이 안에 든다.
   배포 뒤 `/api/v1/sigmets` 160건 모두 경도 ±180 안.
-- **스키마 전수 확인** 배포한 스택의 실제 WS 메시지를 150 s 동안 세 세션(전세계 · 도쿄만 · 밴쿠버, 선박 켬 · 선박 선택)으로 받아 `schemas/ws/server.v1.json` 으로 검증: 최종 빌드에서 230건 · 14종, 형식 오류 0건([perf/results/v5-ws-live-check.txt](../perf/results/v5-ws-live-check.txt) — 스크립트 포함).
+- **스키마 전수 확인** 배포한 스택의 실제 WS 메시지를 150 s 동안 세 세션(전세계 · 도쿄만 · 밴쿠버, 선박 켬 · 선박 선택)으로 받아 `schemas/ws/server.v1.json` 으로 검증: 최종 빌드에서 230건 · 14종, 형식 오류 0건([review/evidence/v5-ws-live-check.txt](review/evidence/v5-ws-live-check.txt) — 스크립트 포함).
 - **교훈** 스키마를 코드와 fixture 로만 만들면 실제 공급자 값의 모양을 놓친다 — 배포 뒤 실메시지를 한 번 검증한다(위 절차).
 
 ## #33 `make ops-user` 가 뜨지 못함(2026-09-28 부터) — 운영자 계정을 만들 수 없었음
@@ -245,4 +245,4 @@
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 259 · 36 · 48 · 27 · 8 |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
 | 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 230건 · 14종, 형식 오류 0건(#32 · perf/results/v5-ws-live-check.txt) |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 230건 · 14종, 형식 오류 0건(#32 · docs/review/evidence/v5-ws-live-check.txt) |

@@ -1,0 +1,50 @@
+# 배포한 개발 스택(localhost:8700)의 실제 WS 메시지를 schemas/ws/server.v1.json 으로 검증 — 계약 v5 뒤 최종 빌드(HEAD b9ebfb4)
+# 시작(UTC) 2026-09-28T23:27:13Z · 150 s · 세션 3개: world(줌 2, 선박 켬) · tokyo(줌 9, 선박 켬) · vancouver(줌 9, 선박 켬, select_ship 316005717) — 스크립트: 아래
+messages by type: {'alerts': 3, 'alerts_batch': 66, 'demand': 17, 'diff': 30, 'ping': 15, 'radar': 9, 'ship_selected': 2, 'ships_diff': 24, 'ships_grid': 15, 'ships_snapshot': 7, 'sigmets': 9, 'snapshot': 12, 'status': 18, 'welcome': 3}
+invalid by type: {}
+# 틀린 메시지 표본(최대 12): []
+# ---- 스크립트 ----
+import asyncio, json, sys, time, collections
+import websockets, jsonschema
+S = sys.argv[1]; DUR = float(sys.argv[2])
+schema = json.load(open('../../schemas/ws/server.v1.json'))
+V = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER)
+SESS = {
+  "world": ([-180, -85, 180, 85], 2, [], {"aircraft": True, "ships": True}),
+  "tokyo": ([139.5, 35.2, 140.2, 35.7], 9, [], {"aircraft": True, "ships": True}),
+  "vancouver": ([-123.6, 49.0, -122.8, 49.4], 9, [{"type": "select_ship", "mmsi": "316005717"}], {"aircraft": True, "ships": True}),
+}
+counts = collections.Counter(); errs = collections.defaultdict(list); raw_bad = []
+async def run(name, bbox, zoom, extra, layers):
+    async with websockets.connect("ws://localhost:8700/ws/v1", additional_headers={"Origin": "http://localhost:8700"}, max_size=64 * 1024 * 1024) as ws:
+        await ws.send(json.dumps({"type": "hello", "proto": 1, "client": "schema-capture"}))
+        await ws.send(json.dumps({"type": "layers", **layers}))
+        await ws.send(json.dumps({"type": "subscribe", "bbox": bbox, "zoom": zoom, "detail": "lite"}))
+        for m in extra: await ws.send(json.dumps(m))
+        await ws.send(json.dumps({"type": "resync", "scope": "sigmets"}))
+        end = time.time() + DUR
+        while time.time() < end:
+            try: raw = await asyncio.wait_for(ws.recv(), timeout=max(0.1, end - time.time()))
+            except asyncio.TimeoutError: break
+            msg = json.loads(raw); t = msg.get("type"); counts[(name, t)] += 1
+            if t == "ping": await ws.send(json.dumps({"type": "pong"}))
+            e = sorted(V.iter_errors(msg), key=lambda e: len(list(e.absolute_path)))
+            if e:
+                # oneOf 오류는 가장 구체적인 하위 오류로
+                best = jsonschema.exceptions.best_match(e)
+                errs[t].append(("/".join(map(str, best.absolute_path)), best.message[:300]))
+                if len(raw_bad) < 12: raw_bad.append({"session": name, "type": t, "path": list(best.absolute_path), "msg": best.message[:300]})
+async def safe(n, a):
+    try: await run(n, *a)
+    except Exception as e: print("session", n, "ended:", type(e).__name__, str(e)[:120])
+async def main():
+    await asyncio.gather(*(safe(n, a) for n, a in SESS.items()))
+asyncio.run(main())
+by_type = collections.Counter()
+for (n, t), c in counts.items(): by_type[t] += c
+print("messages by type:", dict(sorted(by_type.items())))
+print("invalid by type:", {t: len(v) for t, v in errs.items()})
+for t, v in errs.items():
+    agg = collections.Counter((p.split('/')[0] + '/…/' + p.split('/')[-1] if '/' in p else p, m[:160]) for p, m in v)
+    for (p, m), c in agg.most_common(6): print(f"  {t} x{c} @{p}: {m}")
+json.dump(raw_bad, open(f"{S}/ws-bad.json", "w"), ensure_ascii=False, indent=1)
