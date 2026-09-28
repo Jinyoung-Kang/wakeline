@@ -457,6 +457,9 @@ async def test_single_shard_status_keeps_the_pre_v4_fields():
     (only,) = json.loads(h["shards"])
     assert only["scope"] == "18,105,46,150" and only["sessions_ended"] == 0
     assert float(h["msgs_per_s"]) == pytest.approx(only["msgs_per_s"], abs=0.01)
+    # R-18: 선박 쪽 손실 신호는 wakeline:ais:status 에 남는다(대기열 버림·격리·발행 실패·예산 트리밍)
+    for k in ("dropped_total", "quarantined_total", "invalid_total", "publish_errors", "gaps_pending", "stream_budget_trims"):
+        assert h[k].isdigit(), k
 
 
 # ---- R-14: 선박 스트림도 개수(200 ≈ 33분)가 아니라 시간으로 자른다 ------------------------------------------------------
