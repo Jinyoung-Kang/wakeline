@@ -4,7 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { fmtAltGnd, fmtBool, fmtNum, fmtTime } from "@/lib/format";
 import {
-  fromUtcInput, isSummaryRow, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayFrameAtLabel, replayRadarLabel, replayRange, replayRecLabel, replayReduce, replaySigmetBand,
+  fromUtcInput, isSummaryRow, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRange, replayRecLabel, replayReduce, replaySigmetBand,
   ReplayLoader, replayZone, stepAt, SUMMARY_FLAG, toUtcInput, type ReplayFrame, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
@@ -108,12 +108,12 @@ export default function ReplayPage() {
                   ["방위", fmtNum(ac.track_deg, "°")], ["지상", fmtBool(ac.on_ground)], [isSummaryRow(ac) ? "기록 구간" : "기록 시각", isSummaryRow(ac) ? replayRecLabel(ac, frame!.at) : fmtTime(ac.ts)],
                   ["출처", isSummaryRow(ac) ? "1분 요약(track_point_1m)" : ac.provider ?? "—"],
                 ] as [string, string][]).map(([k, v]) => <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right">{v}</span></div>)}
-              </> : <div className="py-2 text-fg-3">{pick.hex} — 이 시각(−3분 창)·이 영역에 기록 없음</div>)
+              </> : <div className="py-2 text-fg-3" data-testid="replay-inspector-miss">{replayInspectorMiss(pick, frame, err)}</div>)
                 : sg ? <>
                   {([["유형", `${sg.hazard}${sg.qualifier ? ` ${sg.qualifier}` : ""}`], ["FIR", sg.fir_name ?? sg.fir_id], ["고도대", replaySigmetBand(sg)], ["유효", `${fmtTime(sg.valid_from)} – ${fmtTime(sg.valid_to)}`], ["판정", sg.excluded_reason ? `제외 (${sg.excluded_reason})` : "폴리곤·고도대·유효시간 검사"]] as [string, string][])
                     .map(([k, v]) => <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>)}
                   <pre className="mono mt-2 whitespace-pre-wrap border border-line bg-bg p-2 text-[10px] text-fg-2">{sg.raw_text}</pre>
-                </> : <div className="py-2 text-fg-3">이 시각에 유효하지 않은 SIGMET</div>}
+                </> : <div className="py-2 text-fg-3" data-testid="replay-inspector-miss">{replayInspectorMiss(pick, frame, err)}</div>}
             </div>
           </div>
         ) : null}

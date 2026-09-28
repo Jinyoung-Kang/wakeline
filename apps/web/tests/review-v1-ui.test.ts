@@ -68,6 +68,20 @@ describe("R-05 replay request area and stale frame", () => {
     expect(failed.err).not.toContain("exceeds");
     expect(replayReduce(loaded, { type: "failed", error: new TypeError("Failed to fetch") }).err).toContain("연결");
   });
+  it("with no frame (failed or not loaded yet) the inspector says the record is unknown, never 'no record' / 'not valid'", () => {
+    const frame: ReplayFrame = { at: "2026-09-28T05:00:00Z", aircraft: [{ hex: "abc123", lat: 36, lon: 127 }], sigmets: [], source: "track_point" };
+    // 프레임이 있으면 그 프레임에 없는 것 = 기록 없음 · 유효하지 않음(응답이 말해 준 사실)
+    expect(replayLib.replayInspectorMiss({ kind: "aircraft", hex: "def456" }, frame, null)).toContain("기록 없음");
+    expect(replayLib.replayInspectorMiss({ kind: "sigmet", id: "S9" }, frame, null)).toContain("유효하지 않은");
+    // 실패했으면 모른다 — "없음"이라고 말하지 않는다
+    const failed = replayLib.replayInspectorMiss({ kind: "aircraft", hex: "abc123" }, null, "요청 영역이 너무 넓음 — 지도를 확대하세요");
+    expect(failed).toContain("불러오지 못해");
+    expect(failed).not.toContain("기록 없음");
+    const sgFailed = replayLib.replayInspectorMiss({ kind: "sigmet", id: "S1" }, null, "서버 오류(HTTP 503) — 기록을 불러오지 못함");
+    expect(sgFailed).not.toContain("유효하지 않은");
+    // 아직 응답 전
+    expect(replayLib.replayInspectorMiss({ kind: "aircraft", hex: "abc123" }, null, null)).toContain("불러오는 중");
+  });
 });
 
 const UI0 = useUi.getState();

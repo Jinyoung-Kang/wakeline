@@ -155,6 +155,16 @@ export function replayReduce(_s: ReplayView, e: ReplayEvent): ReplayView {
   return { frame: null, err: replayErrorText(e.error), latencyMs: null };
 }
 
+/**
+ * 상세(inspector)에서 고른 항목이 지금 프레임에 없을 때의 문구(R-05 후속). "기록 없음 · 유효하지 않음"은 응답이 말해 준 사실일 때만 —
+ * 프레임이 없으면(요청 실패·아직 응답 전) 그 시각의 기록을 모른다. 실패 뒤에 "기록 없음"이라고 쓰면 사실이 아닌 값을 보이는 것이다.
+ */
+export function replayInspectorMiss(pick: { kind: "aircraft"; hex: string } | { kind: "sigmet"; id: string }, frame: ReplayFrame | null, err: string | null): string {
+  const who = pick.kind === "aircraft" ? pick.hex : "이 SIGMET";
+  if (!frame) return err ? `${who} — 이 시각 기록을 불러오지 못해 알 수 없음(${err})` : `${who} — 이 시각 기록을 불러오는 중`;
+  return pick.kind === "aircraft" ? `${pick.hex} — 이 시각(−3분 창)·이 영역에 기록 없음` : "이 시각에 유효하지 않은 SIGMET";
+}
+
 /** 재생 요청 오류 → 한국어 안내(서버 영문 detail 을 그대로 보이지 않는다) */
 export function replayErrorText(e: unknown): string {
   if (e instanceof ApiError) {
