@@ -24,6 +24,7 @@ class AisSettings(BaseSettings):
     http_user_agent: str = "wakeline-dev/0.2"
     fixtures_dir: str = "/app/fixtures"
     wakeline_fixture_mode: int = 0
+    log_sink_enabled: bool = True  # LOG_SINK_ENABLED(계약 v5 §C2 · ADR-018) — 0 이면 WARN·ERROR 를 wakeline:logs 로 보내지 않는다
 
     ais_queue_max: int = Field(default=20_000, ge=100, le=200_000)
     ais_flush_s: float = Field(default=10.0, ge=1.0, le=60.0)

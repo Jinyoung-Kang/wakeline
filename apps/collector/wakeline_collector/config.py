@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     raw_retention_h: int = 72
 
     wakeline_fixture_mode: int = Field(default=0)
+    # 시스템 로그 싱크(계약 v5 §C2 · ADR-018): WARN·ERROR 를 가려서 wakeline:logs 로. LOG_SINK_ENABLED=0 이면 끈다(compose 에는 넣지 않는다 — 기본 켬)
+    log_sink_enabled: bool = True
     http_timeout_s: float = 8.0
     http_max_bytes: int = 20 * 1024 * 1024
 
