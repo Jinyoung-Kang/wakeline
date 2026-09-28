@@ -349,11 +349,15 @@ class ComposePolicyTest(unittest.TestCase):
                 self.assertFalse(nets["egress"].get("internal"), "collector·ais 의 외부 호출 경로")
                 self.assertFalse(nets["public"].get("internal"), "edge 의 게시 포트 경로")
 
-    def test_only_collector_and_ais_reach_the_internet_and_only_edge_is_public(self):
+    def test_only_collector_ais_and_edge_sit_on_networks_that_reach_the_internet(self):
+        # R-77 후속: 'public' 도 일반 bridge(NAT)라 edge 는 망 차원에서는 인터넷에 나갈 수 있다 — 게시 포트는 internal 망에 둘 수 없고,
+        # Docker Desktop 은 bridge 의 enable_ip_masquerade=false 로도 막지 않았다(실측). edge 의 외부 호출 금지는 설정(nginx upstream 이
+        # api·web 뿐 · resolver 없음 — test_edge_policy.NoOutboundCalls)으로 지킨다. 망이 막는 것은 web·api·migrate·db·redis 다.
         for cfg in (self.dev, self.iso):
             outside = {n for n, v in cfg["networks"].items() if not v.get("internal")}
             by_service = {name: set(s.get("networks") or {}) & outside for name, s in cfg["services"].items()}
             with self.subTest(project=cfg["name"]):
+                self.assertEqual({n for n, v in by_service.items() if v}, {"collector", "ais", "edge"})
                 self.assertEqual({n for n, v in by_service.items() if "egress" in v}, {"collector", "ais"})
                 self.assertEqual({n for n, v in by_service.items() if "public" in v}, {"edge"})
                 for name in ("web", "api", "migrate", "db", "redis"):

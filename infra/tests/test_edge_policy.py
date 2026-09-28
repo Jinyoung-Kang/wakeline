@@ -33,5 +33,25 @@ class AccessLog(unittest.TestCase):
         self.assertRegex(conf, rf"access_log\s+/dev/stdout\s+{fmt.group(1)}\s*;")
 
 
+class NoOutboundCalls(unittest.TestCase):
+    """edge 는 인터넷에 닿는 bridge(public)에 있다(게시 포트) — 외부로 나가지 않는 것은 설정이 지킨다(R-77 후속)."""
+
+    def setUp(self):
+        self.lines = directives((EDGE / "nginx.conf").read_text(encoding="utf-8"))
+
+    def test_upstreams_are_only_the_internal_services(self):
+        servers = [ln for ln in self.lines if ln.startswith("upstream ")]
+        self.assertEqual(sorted(re.findall(r"server\s+([\w.-]+:\d+)", " ".join(servers))), ["api:8000", "web:3000"])
+        targets = [re.search(r"proxy_pass\s+(\S+);", ln).group(1) for ln in self.lines if ln.startswith("proxy_pass")]
+        self.assertTrue(targets)
+        for t in targets:
+            self.assertRegex(t, r"^http://(api|web)(/|$)", "proxy_pass 는 upstream 이름만(주소·변수 금지)")
+
+    def test_no_resolver_and_no_variable_upstreams(self):
+        joined = "\n".join(self.lines)
+        self.assertNotRegex(joined, r"(?m)^resolver\b", "resolver 가 있으면 변수 proxy_pass 로 외부 이름을 풀 수 있다")
+        self.assertNotRegex(joined, r"proxy_pass\s+\S*\$", "변수 proxy_pass 금지")
+
+
 if __name__ == "__main__":
     unittest.main()

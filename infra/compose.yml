@@ -315,11 +315,14 @@ services:
       timeout: 3s
       retries: 20
 
-# 네트워크 분리(R-64 · R-77 · ADR-017 §4) — '외부 호출은 collector·ais 만'을 망이 강제한다(infra/tests/test_compose_policy.py).
+# 네트워크 분리(R-64 · R-77 · ADR-017 §4) — web·api·migrate·db·redis 는 망이 인터넷을 막는다(internal). '외부 호출은 collector·ais 만'에서
+# edge 는 예외다: 게시 포트는 internal 망에 둘 수 없어 public 이 일반 bridge(NAT)이고, Docker Desktop 은 bridge 의 masquerade 끄기로도
+# 막지 않았다(실측) — edge 는 설정(upstream api·web 뿐, resolver 없음)으로 외부에 나가지 않는다(infra/tests/test_edge_policy.py).
 #   public   edge 만. 게시 포트(127.0.0.1:${WAKELINE_PORT}) 경로.
 #   wakeline ADR 의 internal 망: internal: true(게이트웨이·NAT 없음 — 인터넷에 닿지 않는다). 모든 서비스가 서로 닿는 유일한 망이고 고정 IP 는 여기 있다
 #            (edge .10 = api 의 WAKELINE_TRUSTED_PROXY, api .30 = make bench). web·api·migrate·db·redis 는 이 망에만 있다.
-#            이름을 예전 단일 망과 같게 둬서 실행 중인 스택도 `make up` 한 번으로 제자리에서 바뀌고(compose 가 망을 다시 만든다), 되돌리기도 같다.
+#            망 구성(internal 여부 등)이 바뀌는 배포는 `make down` 뒤 `make up` 으로 전부 다시 만든다(R-64 후속): compose 가 망만 다시 만들면
+#            다시 만들지 않은 컨테이너는 고정 IP(ipv4_address) 없이 동적 주소로 다시 붙고, 뒤의 `up -d` 도 고치지 않는다(실측).
 #   egress   collector·ais 만. 인터넷(외부 공급자) 경로.
 networks:
   public:
