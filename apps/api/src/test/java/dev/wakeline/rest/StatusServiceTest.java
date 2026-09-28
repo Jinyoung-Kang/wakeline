@@ -50,6 +50,20 @@ class StatusServiceTest {
         assertThat(r.get("radius_nm")).isEqualTo(300);
     }
 
+    /** 레이더를 한 번도 받지 않았으면(fetched_at 자리표시 EPOCH) "오래됨" — SIGMET 과 같은 규칙. 전에는 lag -1 이라 false 였다. */
+    @Test
+    void radarNeverFetchedIsStale() {
+        SnapshotStore snapshots = new SnapshotStore();
+        var status = new StatusService(snapshots, new SigmetStore(), new RadarStore(),
+                new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry()), new StringRedisTemplate(),
+                () -> new RegionSettings.Region(36.5, 127.8, 250));
+        Map<?, ?> radar = (Map<?, ?>) status.publicStatus().get("radar");
+        assertThat(radar.get("frames")).isEqualTo(0);
+        assertThat(radar.get("stale")).isEqualTo(true);
+        Map<?, ?> sigmet = (Map<?, ?>) status.publicStatus().get("sigmet");
+        assertThat(sigmet.get("stale")).isEqualTo(true); // 같은 규칙의 기준
+    }
+
     /** 계약 v2 §A3: /status demand = {hot_active, focus_active, adsb_fi_rps_1m} — 수만, hex·셀 없음. */
     @Test
     void demandBlock_countsOnly_andRpsNullWithoutCollector() {

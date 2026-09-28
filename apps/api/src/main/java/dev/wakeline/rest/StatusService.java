@@ -98,7 +98,8 @@ public class StatusService {
         m.put("sigmet", kv("provider", ss.provider(), "count", ss.byId().size(), "active", sigmets.activeAt(now).size(), "fetched_at", ss.fetchedAt(),
                 "lag_s", round(lag(ss.fetchedAt(), now)), "stale", lag(ss.fetchedAt(), now) > 900 || ss.fetchedAt().equals(Instant.EPOCH)));
         var rf = radar.frames();
-        m.put("radar", kv("provider", rf.provider(), "frames", rf.past().size(), "fetched_at", rf.fetchedAt(), "stale", lag(rf.fetchedAt(), now) > 600));
+        m.put("radar", kv("provider", rf.provider(), "frames", rf.past().size(), "fetched_at", rf.fetchedAt(),
+                "stale", lag(rf.fetchedAt(), now) > 600 || rf.fetchedAt().equals(Instant.EPOCH))); // 받은 적 없음 = 오래됨(SIGMET 과 같은 규칙)
         m.put("radar_kr", radarKr(safeHash("wakeline:radar_kr:meta")));
         m.put("engine", kv("index_polygons", engine.indexSize(), "last_cycle_ms", engine.lastCycleMs()));
         m.put("active_providers", safeHash("wakeline:active"));
