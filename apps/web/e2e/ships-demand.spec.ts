@@ -82,9 +82,11 @@ test("ship card: every field is listed and values the ship did not report are '�
   const card = page.getByTestId("ship-card");
   await expect(card).toBeVisible();
   await expect(card).toContainText(mmsi);
-  for (const f of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "출발지(보고)", "목적지(보고)", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각"]) {
+  for (const f of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "출발지(보고)", "목적지(보고)", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각", "처음 기록", "마지막 저장 위치"]) {
     await expect(card.locator(`[data-field="${f}"]`)).toHaveCount(1);
   }
+  // 속력은 kn 과 km/h 를 함께(계약 v5 §A) — 값이 없으면 "—"
+  await expect(card.locator('[data-field="속력/침로/선수방위"]')).toContainText(/\d+\.\d kn · \d+\.\d km\/h|—/);
   await expect(card.locator('[data-field="IMO"]')).toContainText("—");
   // 출발지(보고): A>B 로 적힌 목적지의 풀이이거나, AIS 에 출발지 항목이 없다는 설명 또는 모름(—) — 지어낸 항구가 아니다
   await expect(card.locator('[data-field="출발지(보고)"]')).toContainText(/UN\/LOCODE|AIS 에는 출발지 항목이 없습니다|—/);
