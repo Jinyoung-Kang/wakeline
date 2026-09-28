@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { validateServerMessage } from "@/lib/ws-validate";
+import { validateServerMessage, type Validated } from "@/lib/ws-validate";
 import { validate } from "./helpers/mini-schema";
 import { getAt, mutated, sweep, type Mutation, type Path } from "./helpers/schema-sweep";
 
@@ -25,9 +25,13 @@ const label = (type: string, m: Mutation) => `${type}.${shape(m.path)} ${m.rule}
 const LENIENT: { why: string; match: (type: string, m: Mutation) => boolean }[] = [
   { why: "네 원소 격자 칸(구 서버 — 선종별 수 없음)", match: (t, m) => t === "ships_grid" && m.path[0] === "cells" && m.path.length === 2 && m.rule === "minItems" },
 ];
-/** 웹이 스키마보다 엄격한 곳 — ADR-020 에 적은 것만 */
-const STRICTER: { why: string; match: (type: string, m: Mutation) => boolean }[] = [
-  { why: "격자 칸 선종별 수의 합 = 칸 선박 수(교차 규칙 — 틀리면 선종별 수만 버리고 센다)", match: (t, m) => t === "ships_grid" && m.path[0] === "cells" && m.path[2] === 4 },
+/** 웹이 스키마보다 엄격한 곳 — ADR-020 에 적은 것만. 결과까지 본다(그 엄격함만큼만 버렸는가) */
+const STRICTER: { why: string; allows: (type: string, m: Mutation, r: Validated) => boolean }[] = [
+  {
+    why: "격자 칸 선종별 수의 합 = 칸 선박 수(교차 규칙 — 칸 선박 수나 선종별 수 하나만 바꾸면 합이 틀린다: 칸은 두고 선종별 수만 버리고 센다)",
+    allows: (t, m, r) => t === "ships_grid" && m.path[0] === "cells" && (m.path[2] === 2 || m.path[2] === 4)
+      && r.kind === "ok" && r.msg.type === "ships_grid" && r.dropped === 1 && r.msg.cells[m.path[1] as number]?.counts === null,
+  },
 ];
 
 function unique(kind: "violations" | "boundaries"): { type: string; message: Json; m: Mutation }[] {
@@ -70,10 +74,10 @@ describe("the web validator agrees with schemas/ws/server.v1.json constraint by 
     expect(cases.length).toBeGreaterThan(300);
     const rejected: string[] = [];
     for (const { type, message, m } of cases) {
-      if (STRICTER.some((x) => x.match(type, m))) continue;
       const ok = mutated(message, m);
       expect(validate(schema, ok), label(type, m)).toEqual([]);
       const r = validateServerMessage(ok);
+      if (STRICTER.some((x) => x.allows(type, m, r))) continue;
       if (r.kind !== "ok") rejected.push(`${label(type, m)} → ${r.kind}${r.kind === "invalid" ? ` (${r.reason})` : ""}`);
       else if (r.dropped > 0) rejected.push(`${label(type, m)} → dropped ${r.dropped} at ${r.where}`);
     }

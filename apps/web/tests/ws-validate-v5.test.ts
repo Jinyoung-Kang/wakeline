@@ -11,8 +11,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StatusBar } from "@/components/StatusBar";
-import { aircraftStates, getData, resetData, shipStates } from "@/lib/store";
-import { validateServerMessage } from "@/lib/ws-validate";
+import { aircraftStates, clockOffsetMs, getData, resetData, shipStates } from "@/lib/store";
+import { isDateTime, validateServerMessage } from "@/lib/ws-validate";
 import { ac, BBOX, diff, resyncs, setup, snap, TS, welcomed } from "./helpers/fake-ws";
 import { validate } from "./helpers/mini-schema";
 
@@ -70,7 +70,8 @@ const MUTATIONS: Mutation[] = [
   ["snapshot seq as string", "snapshot.lite", (m) => { m.seq = "1"; }, "invalid"],
   ["snapshot without seq", "snapshot.lite", (m) => { delete m.seq; }, "invalid"],
   ["snapshot aircraft not an array", "snapshot.lite", (m) => { m.aircraft = { hex: "71c0a1" }; }, "invalid"],
-  ["snapshot sources.region a string", "snapshot.lite", (m) => { at(m, "sources").region = "adsb_lol"; }, "invalid"],
+  ["snapshot sources.region a string (that feed becomes unknown)", "snapshot.lite", (m) => { at(m, "sources").region = "adsb_lol"; }, { dropped: 1 }],
+  ["snapshot seq 2 (a snapshot always starts at 1)", "snapshot.lite", (m) => { m.seq = 2; }, "invalid"],
   ["snapshot aircraft element with a bad hex", "snapshot.lite", (m) => { at(m, "aircraft", 0).hex = "XYZ123"; }, { dropped: 1 }],
   ["snapshot aircraft element with lat 91", "snapshot.lite", (m) => { at(m, "aircraft", 0).lat = 91; }, { dropped: 1 }],
   ["snapshot aircraft element with alt_ft as a string", "snapshot.lite", (m) => { at(m, "aircraft", 0).alt_ft = "35000"; }, { dropped: 1 }],
@@ -78,7 +79,14 @@ const MUTATIONS: Mutation[] = [
   ["diff without seq", "diff", (m) => { delete m.seq; }, "invalid"],
   ["diff upsert not an array", "diff", (m) => { m.upsert = "71c0a1"; }, "invalid"],
   ["diff remove not an array", "diff", (m) => { m.remove = "71c0a2"; }, "invalid"],
-  ["diff ts not a time", "diff", (m) => { m.ts = 1790000000; }, "invalid"],
+  ["diff ts not a time (ts unknown — not a clock sample)", "diff", (m) => { m.ts = 1790000000; }, { dropped: 1 }],
+  ["diff ts '2' (Date.parse reads it; RFC 3339 does not)", "diff", (m) => { m.ts = "2"; }, { dropped: 1 }],
+  ["diff seq 1 (diffs start at 2)", "diff", (m) => { m.seq = 1; }, "invalid"],
+  ["diff upsert element with provider 'made_up'", "diff", (m) => { at(m, "upsert", 0).provider = "made_up"; }, { dropped: 1 }],
+  ["diff upsert element with quality 2", "diff", (m) => { at(m, "upsert", 0).quality = 2; }, { dropped: 1 }],
+  ["diff upsert element with alt_ft 35000.7", "diff", (m) => { at(m, "upsert", 0).alt_ft = 35000.7; }, { dropped: 1 }],
+  ["diff upsert element with a 12-char callsign", "diff", (m) => { at(m, "upsert", 0).callsign = "ABCDEFGHIJKL"; }, { dropped: 1 }],
+  ["diff upsert element with seen_at '1'", "diff", (m) => { at(m, "upsert", 0).seen_at = "1"; }, { dropped: 1 }],
   ["diff upsert element with a bad squawk", "diff", (m) => { at(m, "upsert", 0).squawk = "9999"; }, { dropped: 1 }],
   ["diff remove element not a hex", "diff", (m) => { (m.remove as unknown[]).push(42); }, { dropped: 1 }],
   ["alerts not an array", "alerts", (m) => { m.alerts = {}; }, "invalid"],
@@ -87,11 +95,15 @@ const MUTATIONS: Mutation[] = [
   ["alerts element with an unknown kind", "alerts", (m) => { at(m, "alerts", 1).kind = "GUESSED"; }, { dropped: 1 }],
   ["alerts_batch item with an unknown event", "alerts_batch", (m) => { at(m, "items", 0).event = "MAYBE"; }, { dropped: 1 }],
   ["alerts_batch item alert without id", "alerts_batch", (m) => { delete at(m, "items", 1, "alert").id; }, { dropped: 1 }],
+  ["alerts_batch item alert with close_reason 'made_up'", "alerts_batch", (m) => { at(m, "items", 1, "alert").close_reason = "made_up"; }, { dropped: 1 }],
+  ["alerts_batch item alert with eta_s 1.5", "alerts_batch", (m) => { at(m, "items", 0, "alert").eta_s = 1.5; }, { dropped: 1 }],
+  ["alerts_batch version 0 (batches start at 1)", "alerts_batch", (m) => { m.version = 0; }, "invalid"],
   ["selected hex not a hex", "selected.route_found", (m) => { m.hex = "zz"; }, "invalid"],
   ["selected prediction not an object", "selected.route_found", (m) => { m.prediction = "yes"; }, "invalid"],
   ["selected state with a bad lat (state dropped)", "selected.route_found", (m) => { at(m, "state").lat = "north"; }, { dropped: 1 }],
   ["selected route with an unknown status (route dropped)", "selected.route_found", (m) => { at(m, "route").status = "guessed"; }, { dropped: 1 }],
   ["error code not a string", "error.bad_bbox", (m) => { m.code = 42; }, "invalid"],
+  ["error code 'lower'", "error.bad_bbox", (m) => { m.code = "lower"; }, "invalid"],
   ["demand hot with an unknown state", "demand.hot_active", (m) => { at(m, "hot").state = "guessing"; }, { dropped: 1 }],
   ["demand focus not an object", "demand.focus_active", (m) => { m.focus = "71c0a1"; }, { dropped: 1 }],
   ["sigmets without collection", "sigmets", (m) => { delete m.collection; }, "invalid"],
@@ -99,28 +111,38 @@ const MUTATIONS: Mutation[] = [
   ["sigmets feature with a Polygon geometry", "sigmets", (m) => { at(m, "collection", "features", 0, "geometry").type = "Polygon"; }, { dropped: 1 }],
   ["sigmets feature with a bad coordinate", "sigmets", (m) => { (at(m, "collection", "features", 0, "geometry", "coordinates", 0, 0) as unknown as unknown[][])[1] = ["x", 35]; }, { dropped: 1 }],
   ["sigmets feature valid_to not a time", "sigmets", (m) => { at(m, "collection", "features", 1, "properties").valid_to = 42; }, { dropped: 1 }],
+  ["sigmets feature provider 'evil'", "sigmets", (m) => { at(m, "collection", "features", 0, "properties").provider = "evil"; }, { dropped: 1 }],
+  ["sigmets feature base_ft -100", "sigmets", (m) => { at(m, "collection", "features", 0, "properties").base_ft = -100; }, { dropped: 1 }],
   ["radar past not an array", "radar", (m) => { m.past = "none"; }, "invalid"],
   ["radar host not a string", "radar", (m) => { m.host = 42; }, "invalid"],
   ["radar frame without path", "radar", (m) => { delete at(m, "past", 0).path; }, { dropped: 1 }],
+  ["radar generated -1", "radar", (m) => { m.generated = -1; }, "invalid"],
   ["status not an object", "status", (m) => { m.status = "ok"; }, "invalid"],
   ["status sigmet.active as string", "status", (m) => { at(m, "status", "sigmet").active = "two"; }, "invalid"],
   ["status engine not an object", "status", (m) => { at(m, "status").engine = 5; }, "invalid"],
   ["status region.center as a string", "status", (m) => { at(m, "status", "region").center = "36.5,127.8"; }, "invalid"],
+  ["status engine.last_cycle_ms -3", "status", (m) => { at(m, "status", "engine").last_cycle_ms = -3; }, "invalid"],
+  ["status (populated) sources.ais not an object", "status.populated", (m) => { at(m, "status", "sources").ais = "up"; }, "invalid"],
+  ["status (populated) radar_kr.status '2000'", "status.populated", (m) => { at(m, "status", "radar_kr").status = "2000"; }, "invalid"],
+  ["status (populated) active_providers value not a string", "status.populated", (m) => { at(m, "status", "active_providers").region = 1; }, "invalid"],
   ["ships_snapshot sseq 0", "ships_snapshot", (m) => { m.sseq = 0; }, "invalid"],
   ["ships_snapshot ships not an array", "ships_snapshot", (m) => { m.ships = null; }, "invalid"],
   ["ships_snapshot ship with a short mmsi", "ships_snapshot", (m) => { at(m, "ships", 0).mmsi = "12345"; }, { dropped: 1 }],
   ["ships_diff remove element not a mmsi", "ships_diff", (m) => { (m.remove as unknown[]).push("12345"); }, { dropped: 1 }],
   ["ships_diff upsert ship with lat 200", "ships_diff", (m) => { at(m, "upsert", 0).lat = 200; }, { dropped: 1 }],
   ["ships_grid cells not an array", "ships_grid", (m) => { m.cells = "x"; }, "invalid"],
-  ["ships_grid cell_deg negative", "ships_grid", (m) => { m.cell_deg = -2; }, "invalid"],
+  ["ships_grid cell_deg negative (cell size unknown)", "ships_grid", (m) => { m.cell_deg = -2; }, { dropped: 1 }],
+  ["ships_grid cell_deg 3 (not a grid step)", "ships_grid", (m) => { m.cell_deg = 3; }, { dropped: 1 }],
+  ["ships_grid cell category 'barge'", "ships_grid", (m) => { (at(m, "cells") as unknown as unknown[][])[0][3] = "barge"; }, { dropped: 1 }],
   ["ships_grid cell with a bad latitude", "ships_grid", (m) => { (at(m, "cells") as unknown as unknown[][])[0][0] = "35"; }, { dropped: 1 }],
   ["ships_grid cell with count 0", "ships_grid", (m) => { (at(m, "cells") as unknown as unknown[][])[1][2] = 0; }, { dropped: 1 }],
   ["ships_grid cell with 10 category counts (breakdown dropped, cell kept)", "ships_grid", (m) => { ((at(m, "cells") as unknown as unknown[][])[0][4] as number[]).pop(); }, { dropped: 1 }],
   ["ship_selected mmsi not 9 digits", "ship_selected", (m) => { m.mmsi = "1"; }, "invalid"],
   ["ship_selected state with lat 999 (state dropped)", "ship_selected", (m) => { at(m, "state").lat = 999; }, { dropped: 1 }],
   ["ship_selected destination_info with an unknown kind", "ship_selected", (m) => { at(m, "destination_info").kind = "guess"; }, { dropped: 1 }],
-  ["welcome server_time not a time", "welcome", (m) => { m.server_time = 42; }, "invalid"],
-  ["welcome limits not an object", "welcome", (m) => { m.limits = "none"; }, "invalid"],
+  ["welcome server_time not a time (counted — the handshake stands)", "welcome", (m) => { m.server_time = 42; }, { dropped: 1 }],
+  ["welcome limits not an object (counted — the web does not use limits)", "welcome", (m) => { m.limits = "none"; }, { dropped: 1 }],
+  ["welcome session_id empty (counted)", "welcome", (m) => { m.session_id = ""; }, { dropped: 1 }],
   ["no type", "ping", (m) => { delete m.type; }, "invalid"],
 ];
 
@@ -153,6 +175,25 @@ describe("malformed messages (each mutation is first confirmed to violate schema
     expect(validateServerMessage(null).kind).toBe("invalid");
   });
 
+  it("date-time is RFC 3339 on the calendar (like Python jsonschema), not whatever Date.parse reads", () => {
+    for (const ok of ["2026-09-29T03:00:00Z", "2026-09-29T03:00:00.123456789+09:00", "2028-02-29T00:00:00Z", "2026-12-31T23:59:59-03:30"]) expect(isDateTime(ok), ok).toBe(true);
+    for (const bad of ["9999", "1", "2026-09-29 03:00:00Z", "2026-09-29T03:00:00", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", "2026-13-01T00:00:00Z",
+      "2026-09-29T24:00:00Z", "2026-09-29T23:60:00Z", "2026-09-29T23:59:60Z", "2026-09-29T03:00:00+24:00", "2026-09-29t03:00:00z", 42, null]) {
+      expect(isDateTime(bad), String(bad)).toBe(false);
+    }
+  });
+
+  it("string lengths count code points like the schema (maxLength 8 callsign: 8 emoji pass, 9 do not)", () => {
+    const m = sample("diff");
+    at(m, "upsert", 0).callsign = "✈️".repeat(4); // U+2708 U+FE0F × 4 = 8 코드포인트
+    expect(validateServerMessage(m)).toMatchObject({ kind: "ok", dropped: 0 });
+    at(m, "upsert", 0).callsign = "😀".repeat(8); // 8 코드포인트 = 16 UTF-16 단위
+    expect(validateServerMessage(m)).toMatchObject({ kind: "ok", dropped: 0 });
+    at(m, "upsert", 0).callsign = "😀".repeat(9);
+    expect(validateServerMessage(m)).toMatchObject({ kind: "ok", dropped: 1 });
+  });
+
+  // 스키마의 모든 잎 제약에 대한 확인은 tests/ws-schema-sweep-v5.test.ts — 여기는 "모름" 쪽 예
   it("is more lenient than the schema only where the value is unknown, never wrong: missing optional keys, null values, unknown keys, 4-element grid cells", () => {
     expect(validateServerMessage({ type: "welcome" }).kind).toBe("ok");
     expect(validateServerMessage({ type: "diff", seq: 2, upsert: [{ hex: "abc123", lat: 1, lon: 2, alt_ft: null }], remove: [] })).toMatchObject({ kind: "ok", dropped: 0 });
@@ -233,18 +274,29 @@ describe("malformed input in lib/ws.ts", () => {
     expect(resyncs(t)).toBe(0);
   });
 
-  it("a malformed welcome closes the connection and reconnects with backoff (no subscription on a broken handshake)", () => {
+  it("a welcome with malformed values is still a handshake: the values are counted, not used (no clock sample), and the client subscribes (review 2 — no reconnect loop)", () => {
     const t = setup();
     t.client.subscribe(BBOX, 7);
     t.client.connect();
     t.ws().open();
-    t.ws().recv({ type: "welcome", server_time: 42 });
-    expect(t.ws().types()).toEqual(["hello"]);
-    expect(t.ws().closedWith).toBeGreaterThanOrEqual(4000);
-    expect(getData().conn).toBe("closed");
-    expect(getData().wsInvalid.messages).toBe(1);
-    vi.advanceTimersByTime(31_000);
-    expect(t.sockets).toHaveLength(2);
+    t.ws().recv({ type: "welcome", session_id: "s".repeat(65), server_time: "9999", snapshot_version: 1, limits: { hello_timeout_s: 0 } });
+    expect(t.ws().types()).toEqual(["hello", "subscribe"]);
+    expect(t.ws().closedWith).toBeUndefined();
+    expect(getData().conn).toBe("open");
+    expect(getData().wsInvalid).toMatchObject({ elements: 2, messages: 0 }); // server_time · limits(65자 session_id 는 스키마가 허용한다)
+    expect(clockOffsetMs()).toBeNull();
+  });
+
+  it("timestamps Date.parse would read but RFC 3339 does not ('9999') never reach the server clock or snapshotAt", () => {
+    const t = setup();
+    welcomed(t);
+    const before = clockOffsetMs();
+    t.ws().recv({ ...snap([ac("aaa001")]), ts: "9999" });
+    t.ws().recv({ ...diff(2, [ac("aaa002")]), ts: "2" });
+    expect(clockOffsetMs()).toBe(before);
+    expect(getData().snapshotAt).toBeNull();
+    expect([...aircraftStates.keys()].sort()).toEqual(["aaa001", "aaa002"]); // 시각만 모름 — 항공기는 적용
+    expect(getData().wsInvalid.elements).toBe(2);
   });
 
   it("an exception in any handler is caught: counted, reported with the message type, and followed by a resync", () => {

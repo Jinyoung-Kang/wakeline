@@ -33,7 +33,8 @@ export function setAt(o: unknown, path: Path, value: unknown): void {
 function resolve(root: Json, s: Json): Json {
   if (typeof s.$ref === "string") {
     const def = (root.$defs as Record<string, Json>)[s.$ref.slice("#/$defs/".length)];
-    const { $ref: _ignored, ...rest } = s;
+    const rest: Json = { ...s };
+    delete rest.$ref;
     return { ...resolve(root, def), ...rest };
   }
   return s;

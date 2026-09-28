@@ -144,8 +144,12 @@ describe("select_ship / ship_selected", () => {
     expect(t.ws().sent).toContainEqual({ type: "select_ship", mmsi: "431011305" });
     t.ws().recv({ type: "ship_selected", mmsi: "999999999", state: ship("999999999"), static: null });
     expect(getData().shipSelected).toBeNull();
-    t.ws().recv({ type: "ship_selected", mmsi: "431011305", state: { lat: 35.4, lon: 139.8, seen_at: TS, class: "A" }, static: { name: "KIMITSU MARU", eta_month: 0 } });
+    t.ws().recv({ type: "ship_selected", mmsi: "431011305", state: { lat: 35.4, lon: 139.8, seen_at: TS, class: "A" }, static: { name: "KIMITSU MARU" } });
     expect(getData().shipSelected).toMatchObject({ mmsi: "431011305", state: { mmsi: "431011305", class: "A" }, static: { name: "KIMITSU MARU", eta_month: null } });
+    // 스키마 밖의 값(eta_month 0 — 1–12 만)이 있으면 그 정적 정보를 버리고 센다(계약 v5 §E2 — 틀린 값을 모름으로 바꿔 보이지 않는다)
+    t.ws().recv({ type: "ship_selected", mmsi: "431011305", state: null, static: { name: "KIMITSU MARU", eta_month: 0 } });
+    expect(getData().shipSelected?.static).toBeNull();
+    expect(getData().wsInvalid.elements).toBe(1);
     // 상태 안의 MMSI 가 다르면 버린다
     t.ws().recv({ type: "ship_selected", mmsi: "431011305", state: { mmsi: "111111111", lat: 1, lon: 1 }, static: null });
     expect(getData().shipSelected?.state).toBeNull();

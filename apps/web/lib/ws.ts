@@ -67,7 +67,7 @@ const CLOCK_SAMPLE_MAX_CHARS = 32_768;
 const CLOCK_POST_EPS_MS = 250;
 /** 감시가 죽은 연결을 닫을 때 쓰는 코드(애플리케이션 영역 4000–4999) */
 const CLOSE_RX_TIMEOUT = 4000;
-/** welcome 이 계약(schemas/ws/server.v1.json)에 맞지 않아 닫을 때 */
+/** welcome 처리 중 예외로 닫을 때(구독 상태를 알 수 없다 — 검증기는 welcome 을 버리지 않고 틀린 값만 센다) */
 const CLOSE_BAD_WELCOME = 4001;
 /** 항공기 흐름(seq)과 선박 흐름(sseq · 선박 재동기 게이트)의 메시지 — 버리거나 처리에 실패하면 그 흐름의 seq 를 버리고 resync */
 const AIRCRAFT_STREAM: ReadonlySet<string> = new Set(["snapshot", "diff"]);
@@ -601,7 +601,7 @@ export class WakelineWsClient {
         shipStates.clear();
         this.lastSseq = null;
         if (clockSample) this.observeClock(m.ts, now);
-        this.setShips({ mode: "grid", count: m.cells.length, total: m.cells.reduce((n, c) => n + c.count, 0), ts: m.ts, cell_deg: m.cell_deg, capped: m.capped, grid: m.cells });
+        this.setShips({ mode: "grid", count: m.cells.length, total: m.cells.reduce((n, c) => n + c.count, 0), ts: m.ts, cell_deg: m.cell_deg, capped: m.capped === true, grid: m.cells });
         break;
       }
       case "ship_selected":

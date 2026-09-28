@@ -229,7 +229,7 @@ export function parseGridCellsCounted(v: unknown): { cells: ShipGridCell[]; drop
   for (const c of v) {
     if (out.length >= MAX_GRID_CELLS) break;
     const lat = Array.isArray(c) ? num(c[0], -90, 90) : null, lon = Array.isArray(c) ? num(c[1], -180, 180) : null;
-    const count = Array.isArray(c) ? int(c[2], 1, 10_000_000) : null;
+    const count = Array.isArray(c) ? int(c[2], 1, Number.MAX_SAFE_INTEGER) : null;
     if (!Array.isArray(c) || lat == null || lon == null || count == null) { dropped++; continue; }
     const counts = parseCatCounts(c[4], count);
     if (counts == null && c[4] !== undefined) dropped++;
