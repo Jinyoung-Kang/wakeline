@@ -228,3 +228,14 @@ export function airportErrorText(e: unknown, icao: string): string {
   if (status === 400) return `공항 코드 형식이 올바르지 않습니다: ${icao}`;
   return `기상 이력을 불러오지 못했습니다(HTTP ${status}).`;
 }
+
+/**
+ * 색 칸 위 글자색(R-57): 검정·흰색 중 WCAG 명암비가 큰 쪽. 기상청 범례의 45/50/55 dBZ 칸은 검정이 3.0–3.5 : 1 이었다(흰색은 6–7 : 1).
+ * 반환은 6자리 hex. 입력이 이상하면 검정.
+ */
+export function legendTextColor(rgb: readonly number[] | null | undefined): "#000000" | "#ffffff" {
+  if (!rgb || rgb.length < 3 || !rgb.slice(0, 3).every((v) => Number.isFinite(v))) return "#000000";
+  const lin = (c: number) => { const v = Math.min(255, Math.max(0, c)) / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const l = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+  return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
+}

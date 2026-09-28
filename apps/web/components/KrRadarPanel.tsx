@@ -1,7 +1,7 @@
 "use client";
 import { useServerData } from "@/lib/store";
 import { useServerNow } from "@/lib/clock";
-import { fmtIso, fmtTime, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
+import { fmtIso, fmtTime, isKrRadarStale, KR_RADAR_STALE_S, legendTextColor } from "@/lib/format";
 
 /**
  * 기상청 레이더 합성(FR-31) 범례·정합 정보. 좌표 정의는 서버가 문서 값(LCC 30/60·N38 E126·기준 격자점)으로 계산한다.
@@ -18,7 +18,7 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
       <div className="p-2">
         {!d ? <div className="text-fg-3">…</div> : d.available ? <>
           <div className="flex flex-wrap gap-1">
-            {(d.legend ?? []).map(([lo, c]) => <span key={lo} className="mono px-1" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: "#000" }}>{lo}</span>)}
+            {(d.legend ?? []).map(([lo, c]) => <span key={lo} className="mono px-1" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: legendTextColor(c) }}>{lo}</span>)}
             <span className="text-fg-3">dBZ 이상 (표시 최소 {d.min_dbz} dBZ · 색 구간은 표시용 선택)</span>
           </div>
           {([["최신 tm(KST)", <>{d.latest_tm ?? "—"}{stale ? <span className="badge bad ml-1" data-testid="kr-panel-stale" title={`마지막 수집 ${fmtIso(d.meta?.fetched_at)} — ${KR_RADAR_STALE_S / 60}분 넘게 갱신 없음`}>STALE</span> : null}</>],

@@ -2,7 +2,7 @@
 import { useServerData } from "@/lib/store";
 import { useUi, type Layers } from "@/lib/ui-store";
 import {
-  ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, METAR_STALE_S,
+  ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
 import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH } from "@/lib/ship-layers";
@@ -151,7 +151,7 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
           {radarSource === "kma" ? (
             kr?.available && kr.legend?.length ? <>
               <li className="flex flex-wrap gap-[2px] pb-1" aria-label="반사도(dBZ) 색">
-                {kr.legend.map(([lo, c]) => <span key={lo} className="mono px-1 text-[10px]" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: "#000" }}>{lo}</span>)}
+                {kr.legend.map(([lo, c]) => <span key={lo} className="mono px-1 text-[10px]" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: legendTextColor(c) }}>{lo}</span>)}
                 <span className="text-[10px] text-fg-3">dBZ 이상</span>
               </li>
               <Row swatch={<span className="legend-sw" style={{ background: "rgba(90,90,90,0.5)" }} />}>관측 범위 안 · 에코 없음</Row>

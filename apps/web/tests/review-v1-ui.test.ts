@@ -20,6 +20,8 @@ import { addBaseLayers } from "@/lib/maplayers";
 import * as sigmetLib from "@/lib/sigmet";
 import type { KrRadar, SigmetCollection } from "@/lib/types";
 import { StatusBar } from "@/components/StatusBar";
+import { KrRadarPanel } from "@/components/KrRadarPanel";
+import { MapLegendView } from "@/components/MapLegend";
 import * as replayLib from "@/lib/replay";
 import * as opsLib from "@/lib/ops";
 import * as pipelineView from "@/components/OpsPipeline";
@@ -527,5 +529,31 @@ describe("R-56 ops forms: client validation, Korean status messages, distinct su
     const { airportErrorText } = await import("@/lib/format");
     expect(airportErrorText(new ApiError(404, "airport not watched: ZZZZ"), "ZZZZ")).toBe("감시 공항 목록에 없는 코드입니다: ZZZZ — 감시 공항만 기상 이력을 보관합니다.");
     expect(airportErrorText(new TypeError("Failed to fetch"), "RKSI")).toContain("연결할 수 없습니다");
+  });
+});
+
+describe("R-57 KMA radar legend numbers meet WCAG AA contrast", () => {
+  // GET /api/v1/radar/kr legend(리뷰에서 확인한 값) — 45/50/55 dBZ 칸이 검은 글자로 3.52 / 3.00 / 3.48 : 1 이었다
+  const legend: [number, number[]][] = [[10, [0, 200, 255]], [20, [0, 180, 0]], [30, [255, 255, 0]], [40, [255, 128, 0]], [45, [200, 0, 60]], [50, [160, 0, 160]], [55, [120, 60, 220]]];
+  const lin = (c: number) => { const v = c / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const lum = (rgb: number[]) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+  const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const hex = (h: string) => (h.length === 4 ? [1, 2, 3].map((i) => parseInt(h[i] + h[i], 16)) : [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)));
+  const cells = (html: string) => [...html.matchAll(/style="background:rgb\((\d+),(\d+),(\d+)\);color:(#[0-9a-f]{6}|#[0-9a-f]{3})"[^>]*>(\d+)</gi)]
+    .map((m) => ({ bg: [Number(m[1]), Number(m[2]), Number(m[3])], fg: hex(m[4]), lo: Number(m[5]) }));
+  const kr: KrRadar = {
+    available: true, latest_tm: "202609280130", georeferenced: true, coordinates: null, legend, min_dbz: "10",
+    frames: [{ tm: "202609280130", obs_tm: "202609280130", fetched_at: "2026-09-28T01:31:00Z", echo_cells: 1, url: "/u" }],
+    attribution: "기상청", meta: { fetched_at: "2026-09-28T01:31:00Z", stale: false },
+  };
+  it("the legend panel and the map legend pick black or white per cell so every number reaches 4.5:1", () => {
+    setData({ radarKr: kr });
+    const panel = cells(renderToStaticMarkup(createElement(KrRadarPanel, { onClose: () => {} })));
+    const layers = { radar: true, sigmet: false, aircraft: false, ships: false, airports: false, tracks: false, prediction: false };
+    const mapLegend = cells(renderToStaticMarkup(createElement(MapLegendView, { id: "l", layers, radarSource: "kma" })));
+    for (const list of [panel, mapLegend]) {
+      expect(list.map((c) => c.lo)).toEqual([10, 20, 30, 40, 45, 50, 55]);
+      for (const c of list) expect(ratio(c.bg, c.fg), `${c.lo} dBZ`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
