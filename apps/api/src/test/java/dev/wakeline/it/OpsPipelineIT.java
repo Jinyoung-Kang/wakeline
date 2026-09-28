@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * R-18(api 부분): 운영자용 데이터 손실 신호 GET /api/v1/ops/pipeline — 수집기 heartbeat(wakeline:collector)·ais 상태 해시(wakeline:ais:status)를
- * 읽기만 하고, api 자신의 드롭·강제 해제·DLQ·스트림 보존 창 손실 수를 싣는다. heartbeat 가 오래됐거나 필드가 없으면 null(모름) — 마지막 값을
+ * 읽기만 하고(두 해시의 스트림 바이트 예산 트림 수 stream_budget_trims 포함 — R-14), api 자신의 드롭·강제 해제·DLQ·스트림 보존 창 손실 수를 싣는다. heartbeat 가 오래됐거나 필드가 없으면 null(모름) — 마지막 값을
  * 지금 값처럼 보이지 않는다. 다른 운영 GET 과 같은 규칙: 익명은 404, 세션이 있으면 CSRF 헤더 없이 GET.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -53,9 +53,9 @@ class OpsPipelineIT extends IntegrationTest {
             ItStack.admin().delete(COLLECTOR);
             ItStack.admin().delete(AIS);
             JsonNode none = b.get("/api/v1/ops/pipeline").json();
-            for (String f : new String[]{"publish_dropped", "db_dropped", "db_pending", "heartbeat_age_s"})
+            for (String f : new String[]{"publish_dropped", "db_dropped", "db_pending", "stream_budget_trims", "heartbeat_age_s"})
                 assertThat(none.path("collector").has(f) && none.path("collector").get(f).isNull()).as("collector." + f).isTrue();
-            for (String f : new String[]{"dropped_total", "quarantined_total"})
+            for (String f : new String[]{"dropped_total", "quarantined_total", "stream_budget_trims"})
                 assertThat(none.path("ais").has(f) && none.path("ais").get(f).isNull()).as("ais." + f).isTrue();
             JsonNode api = none.path("api");
             for (String f : new String[]{"track_queue_dropped", "ship_queue_dropped", "receipts_force_released", "dlq", "stream_trim_loss_events"})
@@ -68,8 +68,8 @@ class OpsPipelineIT extends IntegrationTest {
             // 최근 heartbeat → 수집기가 센 값 그대로
             Instant now = Instant.now();
             ItStack.hset(col, COLLECTOR, Map.of("region_at", now.toString(), "publish_dropped", "3", "db_dropped", "2", "db_pending", "7",
-                    "db_failures", "1"));
-            ItStack.hset(ais, AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1"));
+                    "db_failures", "1", "stream_budget_trims", "5"));
+            ItStack.hset(ais, AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1", "stream_budget_trims", "2"));
             JsonNode fresh = b.get("/api/v1/ops/pipeline").json();
             assertThat(fresh.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
             assertThat(fresh.path("collector").path("db_dropped").asLong()).isEqualTo(2);
@@ -77,14 +77,23 @@ class OpsPipelineIT extends IntegrationTest {
             assertThat(fresh.path("collector").path("heartbeat_age_s").asDouble()).isBetween(0.0, 30.0);
             assertThat(fresh.path("ais").path("dropped_total").asLong()).isEqualTo(4);
             assertThat(fresh.path("ais").path("quarantined_total").asLong()).isEqualTo(1);
+            // R-14: 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수 — 수집기(항공기 스트림)·ais(선박 스트림)가 센 값 그대로
+            assertThat(fresh.path("collector").path("stream_budget_trims").asLong()).isEqualTo(5);
+            assertThat(fresh.path("ais").path("stream_budget_trims").asLong()).isEqualTo(2);
 
             // 형식이 틀린 값은 모름
             col.opsForHash().put(COLLECTOR, "db_pending", "-1");
             col.opsForHash().put(COLLECTOR, "db_dropped", "many");
+            col.opsForHash().put(COLLECTOR, "stream_budget_trims", "");
+            ais.opsForHash().put(AIS, "stream_budget_trims", "1.5");
             JsonNode bad = b.get("/api/v1/ops/pipeline").json();
             assertThat(bad.path("collector").get("db_pending").isNull()).isTrue();
             assertThat(bad.path("collector").get("db_dropped").isNull()).isTrue();
             assertThat(bad.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
+            assertThat(bad.path("collector").get("stream_budget_trims").isNull()).isTrue();
+            assertThat(bad.path("ais").get("stream_budget_trims").isNull()).isTrue();
+            assertThat(bad.path("ais").path("dropped_total").asLong()).isEqualTo(4);
+            ais.opsForHash().put(AIS, "stream_budget_trims", "2");
 
             // 오래된 heartbeat(수집기·ais 멈춤) → 마지막 값은 지금 값이 아니다(null), 나이는 그대로 보인다
             Instant old = now.minusSeconds(600);
@@ -95,6 +104,8 @@ class OpsPipelineIT extends IntegrationTest {
             assertThat(stale.path("collector").path("heartbeat_age_s").asDouble()).isBetween(590.0, 660.0);
             assertThat(stale.path("ais").get("dropped_total").isNull()).isTrue();
             assertThat(stale.path("ais").get("quarantined_total").isNull()).isTrue();
+            assertThat(stale.path("collector").get("stream_budget_trims").isNull()).isTrue();
+            assertThat(stale.path("ais").get("stream_budget_trims").isNull()).isTrue();
 
             // api 자신의 지표(이 프로세스 기동 뒤 누계)
             long dropped = fresh.path("api").path("track_queue_dropped").asLong();

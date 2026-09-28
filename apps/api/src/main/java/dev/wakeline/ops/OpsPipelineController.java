@@ -19,10 +19,12 @@ import java.util.function.Supplier;
  * 데이터 손실 신호(R-18 · ADR-017 §4): 운영자가 드롭·트림·저장 실패를 한곳에서 본다. 인증·인가는 다른 운영 GET 과 같다(/api/v1/ops/**:
  * 운영 세션 필요, 익명은 404, GET 은 CSRF 헤더 없이).
  * <ul>
- *   <li>collector: 수집기 heartbeat 해시(wakeline:collector)의 publish_dropped·db_dropped·db_pending(수집기 프로세스 기동 뒤 누계·현재 대기 수).
+ *   <li>collector: 수집기 heartbeat 해시(wakeline:collector)의 publish_dropped·db_dropped·db_pending(수집기 프로세스 기동 뒤 누계·현재 대기 수)
+ *       ·stream_budget_trims(R-14: 바이트 예산 때문에 항공기 스트림을 보존 창보다 일찍 자른 XADD 수, 기동 뒤 누계).
  *       heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다 오래됐으면 값은 null(수집기가 멈춰
  *       마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
- *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total. updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
+ *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total·stream_budget_trims(선박 스트림, R-14).
+ *       updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
  *   <li>api: 이 api 프로세스 기동 뒤 누계 — 메모리 큐 넘침으로 버린 항적·선박 행, 강제로 놓은 영수증, DLQ 로 보낸 메시지, 스트림 보존 창 손실
  *       (R-14) 수와 마지막 손실 구간(없으면 null). 영구 손실도 같이: DB 가 거절해(영구 오류) 재시도하지 않고 버린 항적·선박 행, 처리 중 예외로
  *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등).</li>
@@ -61,10 +63,10 @@ public class OpsPipelineController {
     public record Pipeline(CollectorSignals collector, AisSignals ais, ApiSignals api, Instant generatedAt) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record CollectorSignals(Long publishDropped, Long dbDropped, Long dbPending, Double heartbeatAgeS) {}
+    public record CollectorSignals(Long publishDropped, Long dbDropped, Long dbPending, Long streamBudgetTrims, Double heartbeatAgeS) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record AisSignals(Long droppedTotal, Long quarantinedTotal) {}
+    public record AisSignals(Long droppedTotal, Long quarantinedTotal, Long streamBudgetTrims) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record ApiSignals(long trackQueueDropped, long shipQueueDropped, long receiptsForceReleased, long dlq, long streamTrimLossEvents,
@@ -94,16 +96,17 @@ public class OpsPipelineController {
             double s = (now.toEpochMilli() - newest.toEpochMilli()) / 1000.0;
             if (s >= -MAX_FUTURE_S) age = Math.round(Math.max(0, s) * 10) / 10.0;
         }
-        if (age == null || age > COLLECTOR_MAX_AGE_S) return new CollectorSignals(null, null, null, age);
-        return new CollectorSignals(count(h.get("publish_dropped")), count(h.get("db_dropped")), count(h.get("db_pending")), age);
+        if (age == null || age > COLLECTOR_MAX_AGE_S) return new CollectorSignals(null, null, null, null, age);
+        return new CollectorSignals(count(h.get("publish_dropped")), count(h.get("db_dropped")), count(h.get("db_pending")),
+                count(h.get("stream_budget_trims")), age);
     }
 
     AisSignals ais(Instant now) {
         Map<Object, Object> h = hash("wakeline:ais:status");
         Instant hb = time(h.get("updated_at"));
         long ageS = hb == null ? Long.MAX_VALUE : (now.toEpochMilli() - hb.toEpochMilli()) / 1000;
-        if (hb == null || ageS > AIS_MAX_AGE_S || ageS < -MAX_FUTURE_S) return new AisSignals(null, null);
-        return new AisSignals(count(h.get("dropped_total")), count(h.get("quarantined_total")));
+        if (hb == null || ageS > AIS_MAX_AGE_S || ageS < -MAX_FUTURE_S) return new AisSignals(null, null, null);
+        return new AisSignals(count(h.get("dropped_total")), count(h.get("quarantined_total")), count(h.get("stream_budget_trims")));
     }
 
     ApiSignals api() {
