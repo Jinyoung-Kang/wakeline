@@ -104,3 +104,27 @@ async def test_default_client_uses_contract_limits():
     c = HttpClient()
     assert c.limiter.global_rps == 2.0 and c.limiter.host_rps("opendata.adsb.fi") == 0.8
     await c.aclose()
+
+
+async def test_before_send_runs_after_the_rate_limit_grant_and_can_stop_the_call():
+    """보내기 직전 확인(계약 v4 G A-2): 속도 상한 허가를 받은 뒤 부르고, False 면 보내지 않는다(SendCancelled — 보내지 않은 실패)."""
+    c = _client(api_adsbdb_com=(100, 2))
+    order: list[str] = []
+
+    async def no() -> bool:
+        order.append(f"check after {c.limiter.granted} grant(s)")
+        return False
+
+    async def yes() -> bool:
+        return True
+
+    with respx.mock:
+        route = respx.get("https://api.adsbdb.com/v0/callsign/ZZX123").mock(return_value=httpx.Response(200, json={}))
+        with pytest.raises(httpmod.SendCancelled):
+            await c.get("https://api.adsbdb.com/v0/callsign/ZZX123", before_send=no)
+        assert route.call_count == 0 and order == ["check after 1 grant(s)"]
+        assert (await c.get("https://api.adsbdb.com/v0/callsign/ZZX123", before_send=yes)).status == 200
+        assert route.call_count == 1
+    assert httpmod.SendCancelled in httpmod.NOT_SENT_ERRORS and httpmod.HostNotAllowed in httpmod.NOT_SENT_ERRORS
+    assert httpx.ReadTimeout not in httpmod.NOT_SENT_ERRORS  # 보낸 뒤의 실패는 보낸 것으로 센다
+    await c.aclose()

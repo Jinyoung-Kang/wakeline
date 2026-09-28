@@ -141,6 +141,8 @@ async def test_found_without_valid_airports_is_not_found():
         (httpx.Response(200, text="<html>Synthetic Field Alpha</html>"), "RouteParseError", "", 1),
         (httpx.ConnectError("Synthetic Field Alpha"), "ConnectError", "", 0),  # 보내지 못했다 → 예산 되돌림
         (httpx.ConnectTimeout("Synthetic Field Alpha"), "ConnectTimeout", "", 0),
+        (httpx.PoolTimeout("Synthetic Field Alpha"), "PoolTimeout", "", 0),  # 연결 풀을 기다리다 끝남 — 보내지 않았다
+        (httpx.ProxyError("Synthetic Field Alpha"), "ProxyError", "", 0),
         (httpx.ReadTimeout("Synthetic Field Alpha"), "ReadTimeout", "", 1),  # 보냈다 → 예산은 쓴 것으로
     ],
 )
@@ -188,6 +190,25 @@ async def test_429_penalizes_the_host_for_every_caller_and_writes_error():
     await http.aclose()
 
 
+async def test_host_not_allowed_is_not_sent_and_releases_the_budget(caplog):
+    """리뷰 v4: 허용 목록 밖 호스트는 HttpClient 가 보내기 전에 막는다 — 보낸 호출로 세지 않고 예산을 되돌린다."""
+    caplog.set_level(logging.INFO)
+    r = FakeRedis()
+    http = HttpClient(RateLimiter(100, 100, {ADSBDB_HOST: (100, 2)}))
+    rl, _http, budget = _lookup(r, provider=AdsbdbProvider(http, base_url="https://mirror.example.org"))
+    with respx.mock(assert_all_called=False) as m:
+        route = m.get(url__regex=r".*").mock(return_value=httpx.Response(200, json=flightroute()))
+        rl.request(["ZZX123"])
+        await _drain(rl)
+    assert route.call_count == 0 and (await budget.usage("adsbdb"))[0] == 0
+    assert _cached(r, "ZZX123")["status"] == "error" and _ttl(r, "ZZX123") <= 120
+    assert r.kv["wakeline:provider:adsbdb"]["last_error"] == "HostNotAllowed"
+    assert rl.metrics()["route_lookups"] == "0" and rl.metrics()["route_errors"] == "1"
+    assert "mirror.example.org" not in caplog.text
+    await http.aclose()
+    await _http.aclose()
+
+
 # ---- 부르지 않는 경우 ---------------------------------------------------------------------------------------------------
 async def test_operator_kill_switch_prevents_the_call(caplog):
     caplog.set_level(logging.INFO)
@@ -199,14 +220,75 @@ async def test_operator_kill_switch_prevents_the_call(caplog):
         rl.request(["ZZX123"])
         await _drain(rl)
         assert route.call_count == 0 and (await budget.usage("adsbdb"))[0] == 0
-        assert _cached(r, "ZZX123")["status"] == "error" and _ttl(r, "ZZX123") <= 120  # "조회 중" 으로 남지 않게
-        assert "provider disabled by operator" in caplog.text
+        # 계약 v4 G A-2: "조회 중" 으로 남지 않게 disabled(120 s) — 실패(error)가 아니다
+        assert _cached(r, "ZZX123")["status"] == "disabled" and _ttl(r, "ZZX123") <= 120
+        assert "consecutive_failures" not in r.kv["wakeline:provider:adsbdb"]
+        assert "route ZZX123: disabled (provider disabled by operator)" in caplog.text
         await r.hset("wakeline:provider:adsbdb", "disabled", "0")
         r.expire_now(KEY.format("ZZX123"))  # 2분 뒤(TTL) 다시 켜져 있으면 조회한다
         rl.request(["ZZX123"])
         await _drain(rl)
         assert route.call_count == 1 and _cached(r, "ZZX123")["status"] == "found"
     await http.aclose()
+
+
+async def test_disabling_while_queued_on_the_rate_limiter_sends_nothing():
+    """리뷰 v4 · G A-2: 운영자가 끈 뒤에는 속도 상한을 기다리던 조회도 보내지 않는다(허가 뒤 보내기 직전에 다시 확인) — 예산 되돌림."""
+    r = FakeRedis()
+    limiter = RateLimiter(100, 100, {ADSBDB_HOST: (4, 1)})  # 첫 호출 뒤 다음 허가까지 0.25 s
+    rl, http, budget = _lookup(r, limiter=limiter)
+    with respx.mock:
+        route = respx.get(url__regex=r"https://api\.adsbdb\.com/v0/callsign/.*").mock(
+            return_value=httpx.Response(200, json=flightroute())
+        )
+        rl.request(["ZZX001", "ZZX002"])
+        for _ in range(500):
+            if route.call_count:
+                break
+            await asyncio.sleep(0.001)
+        assert route.call_count == 1 and limiter.waiting == 1  # 둘째는 속도 상한 대기열에 있다
+        await r.hset("wakeline:provider:adsbdb", "disabled", "1")
+        await _drain(rl)
+    assert route.call_count == 1
+    assert sorted(_cached(r, cs)["status"] for cs in ("ZZX001", "ZZX002")) == ["disabled", "found"]
+    assert (await budget.usage("adsbdb"))[0] == 1 and rl.metrics()["route_lookups"] == "1"
+    await http.aclose()
+
+
+async def test_shutdown_releases_the_budget_of_lookups_not_sent():
+    """종료로 취소한 조회 중 보내지 않은 것(속도 상한 대기 중)의 예산은 되돌린다."""
+    r = FakeRedis()
+    limiter = RateLimiter(100, 100, {ADSBDB_HOST: (0.01, 1)})  # 첫 호출 뒤 100 s 동안 허가 없음
+    rl, http, budget = _lookup(r, limiter=limiter)
+    with respx.mock:
+        route = respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, json=flightroute()))
+        rl.request(["ZZX001", "ZZX002"])
+        for _ in range(500):
+            if route.call_count and limiter.waiting:
+                break
+            await asyncio.sleep(0.001)
+        await rl.aclose()
+    assert route.call_count == 1 and (await budget.usage("adsbdb"))[0] == 1 and rl.inflight == 0
+    assert limiter.waiting == 0
+    await http.aclose()
+
+
+async def test_fixture_mode_writes_disabled_without_any_call(caplog):
+    """계약 v4 G A-2: fixture 모드(공급자 없음)는 외부 호출 없이 요청된 콜사인에 disabled(120 s) — 예산·호출 수 0."""
+    caplog.set_level(logging.INFO)
+    r = FakeRedis()
+    budget = Budget(r, {"adsbdb": 2000})  # type: ignore[arg-type]
+    rl = RouteLookup(r, None, budget, ProviderStatus(r))  # type: ignore[arg-type]
+    with respx.mock(assert_all_called=False) as m:
+        route = m.get(url__regex=r".*").mock(return_value=httpx.Response(200, json=flightroute()))
+        assert rl.request(["zzx123", "ZZX124"]) == 2
+        await _drain(rl)
+    assert route.call_count == 0 and (await budget.usage("adsbdb"))[0] == 0
+    for cs in ("ZZX123", "ZZX124"):
+        assert _cached(r, cs)["status"] == "disabled" and 110 < _ttl(r, cs) <= 120
+    assert rl.metrics() == {"route_lookups": "0", "route_errors": "0", "route_inflight": "0"} and rl.counts["disabled"] == 2
+    assert "wakeline:provider:adsbdb" not in r.kv
+    assert "route ZZX123: disabled (fixture mode — no external calls)" in caplog.text
 
 
 async def test_daily_budget_exhausted_prevents_the_call():
@@ -298,7 +380,7 @@ class GatedProvider:
         self.active = 0
         self.max_active = 0
 
-    async def lookup(self, callsign: str, *, wait_s: float) -> RouteFetch:
+    async def lookup(self, callsign: str, *, wait_s: float, before_send=None) -> RouteFetch:
         self.calls.append(callsign)
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -377,13 +459,18 @@ async def test_provider_url_revalidates_callsign_and_uses_route_priority(monkeyp
             p.url(bad)
     seen: dict = {}
 
-    async def fake_get(url, *, priority, wait_s):
-        seen.update(url=url, priority=priority, wait_s=wait_s)
+    async def fake_get(url, *, priority, wait_s, before_send=None):
+        seen.update(url=url, priority=priority, wait_s=wait_s, before_send=before_send)
         raise httpx.ConnectError("x")
 
     monkeypatch.setattr(http, "get", fake_get)
     with pytest.raises(httpx.ConnectError):
         await p.lookup("ZZX123")
-    assert seen == {"url": "https://api.adsbdb.com/v0/callsign/ZZX123", "priority": PRIORITY_ROUTE, "wait_s": 10.0}
+    assert seen == {
+        "url": "https://api.adsbdb.com/v0/callsign/ZZX123",
+        "priority": PRIORITY_ROUTE,
+        "wait_s": 10.0,
+        "before_send": None,
+    }
     assert rj.CONCURRENCY == 2 and p.name == "adsbdb" and p.cost == 1
     await http.aclose()

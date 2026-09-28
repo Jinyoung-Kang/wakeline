@@ -5,7 +5,9 @@
   정리  worker: 파싱·검증·게이트 → ShipBook(MMSI 별 최신값, 바뀐 선박 표시)
   발행  sink: 10 s 마다 바뀐 선박 XADD wakeline:ships · 닫힌 공백 XADD · 상태 해시 wakeline:ais:status
   설정  BboxWatcher: wakeline:settings.ais_bboxes 30 s 마다(실시간 모드만) — 구역 수·상자가 바뀌면 pool 이 연결을 맞춘다
-키가 없으면(실시간 모드) 수신하지 않고 상태를 disabled 로 둔다 — 프로세스는 살아서 이유를 보여 준다.
+키가 없으면(실시간 모드) 수신하지 않고 상태를 disabled 로 둔다 — 프로세스는 살아서 이유를 보여 준다. 이때 구역은 구역 없는(scope null)
+항목 하나뿐이다: 구독하지 않은 영역을 수신 범위처럼 싣지 않는다(계약 v4 G D-2).
+구역(과 이전 실행에서 이어받은 공백)은 발행·정리 태스크보다 먼저 만든다 — 첫 상태 쓰기가 이어받은 공백을 지우지 않게(G D-3).
 
 종료(SIGTERM): 모든 구역의 연결을 함께 닫고(close_timeout 3 s) 대기열에 남은 원문을 정리한 뒤, 마지막 변경분·공백을 보내고 상태를
 stopped(구역마다 마지막 메시지 시각부터 공백 열림)로 쓴다. 상한 합계 4 + 1 + 3 s(+ 대기열 정리 < 0.5 s)는 compose 기본 stop 유예(10 s) 안이다.
@@ -24,7 +26,7 @@ from typing import Any
 from redis.asyncio import Redis
 
 from wakeline_collector.ais.backoff import Backoff
-from wakeline_collector.ais.bbox import ShardsState, format_bboxes, format_shards, parse_shards
+from wakeline_collector.ais.bbox import ShardsState, format_shards, parse_shards
 from wakeline_collector.ais.book import ShipBook
 from wakeline_collector.ais.client import make_redactor
 from wakeline_collector.ais.config import AisSettings
@@ -107,13 +109,14 @@ async def main(
     if fixture:
         log.info("ais starting in fixture mode (replay %s, no external calls)", FIXTURE_NAME)
         replay = shards.add(None)  # 재생은 구역 하나(구독 영역 없음)
+        shards.restore_leftover()
         sources.append(
             FixtureReplayer(Path(s.fixtures_dir) / FIXTURE_NAME, queue, replay.feed, speed=replay_speed, tag=replay.id).run(stop)
         )
     elif not key:
         log.warning("AISSTREAM_API_KEY is not set — ship layer disabled (process stays up and reports it)")
-        for boxes in default_shards:
-            shards.add(format_bboxes(boxes)).feed.on_disabled("AISSTREAM_API_KEY not set")
+        shards.add(None).feed.on_disabled("AISSTREAM_API_KEY not set")  # 구독하지 않으므로 구역(scope)도 없다
+        shards.restore_leftover()
     else:
         kw = dict(client_kw or {})
         backoff_factory = kw.pop("backoff_factory", Backoff)
@@ -138,6 +141,7 @@ async def main(
             s.ais_queue_max,
             s.ais_flush_s,
         )
+        pool.start()  # 발행 태스크보다 먼저 — 첫 상태 쓰기에 이어받은 공백이 있게
         sources += [pool.run(stop), watcher.run(stop)]
 
     worker_task = asyncio.create_task(worker.run(), name="ais-worker")

@@ -1,10 +1,15 @@
-"""선택한 항공기의 노선 조회(계약 v4 §A · ADR-016) — 집중 추적 결과의 콜사인을 adsbdb 에 묻고 Redis 에만 둔다.
+"""선택한 항공기의 노선 조회(계약 v4 §A · G · ADR-016) — 콜사인을 adsbdb 에 묻고 Redis 에만 둔다.
 
-- 계기: DemandTracker 가 focus 결과를 발행한 뒤 request(콜사인들)를 부른다. 조회는 별도 태스크라 focus·hot 발행을 기다리게 하지 않는다.
+- 계기: DemandTracker 가 request(콜사인들)를 부른다 — api 가 집중 추적 임대 메타에 적은 콜사인(G A-1), 없으면 집중 추적 응답의
+  콜사인(격리된 기록 포함). 조회는 별도 태스크라 focus·hot 발행을 기다리게 하지 않는다.
 - 콜사인마다 진행 중 조회는 하나(대기 포함). 캐시(wakeline:route:{CALLSIGN})가 있으면 묻지 않고, 캐시를 확인할 수 없으면(Redis 오류) 묻지 않는다.
 - 속도 상한 대기열에는 CONCURRENCY 개까지만 들어간다 — 우선순위가 가장 낮은 조회가 대기열 상한(MAX_WAITERS)을 채우지 않게.
-- 운영자 스위치(wakeline:provider:adsbdb disabled=1)와 하루 예산(adsbdb, 예약·해제는 다른 공급자와 같은 규칙)을 지킨다.
-- 결과는 SET EX: found·not_found 1,800 s, error 120 s. 부르지 못한 경우(꺼짐·예산·속도 상한)도 error 로 적는다 —
+- 조회가 꺼져 있으면(G A-2) status "disabled"(120 s)를 쓴다: fixture 모드(provider 없음 — 외부 호출 없음)이거나 운영자 스위치
+  (wakeline:provider:adsbdb disabled=1). 스위치는 대기 전에 한 번, 속도 상한 허가를 받은 뒤 보내기 직전에 다시 본다 —
+  기다리는 사이 꺼졌으면 보내지 않는다.
+- 하루 예산(adsbdb)은 보내기 전에 예약하고, **보내지 않은 호출은 모두 되돌린다**(속도 상한·스위치·허용 호스트·연결 전 실패·종료 취소).
+  route_lookups 는 실제로 보낸 호출만 센다.
+- 결과는 SET EX: found·not_found 1,800 s, error·disabled 120 s. 부르지 못한 경우(예산·속도 상한·연결 실패)는 error 로 적는다 —
   캐시가 없으면 화면은 계속 "노선 조회 중" 이라 사실과 달라진다(2분 뒤 다시 묻는다).
   캐시에 쓰지 못하면(예: Redis noeviction 메모리 초과 — EXISTS 는 되는데 SET 은 실패) 그 콜사인은 같은 TTL 동안
   이 프로세스 안에서 다시 묻지 않는다(focus 5 s 마다 공급자를 다시 부르지 않게).
@@ -21,12 +26,11 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Protocol
 
-import httpx
 from redis.asyncio import Redis
 
 from wakeline_collector import route
 from wakeline_collector.budget import UNKNOWN, Budget
-from wakeline_collector.http import ProviderHttpError
+from wakeline_collector.http import NOT_SENT_ERRORS, BeforeSend, ProviderHttpError, SendCancelled
 from wakeline_collector.providers.adsbdb import ROUTE_WAIT_S, RouteFetch
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.route import RouteValue, normalize_callsign, route_key
@@ -38,6 +42,7 @@ CONCURRENCY = 2  # 동시에 속도 상한을 기다리는 조회 수(= adsbdb �
 MAX_PENDING = 64  # 대기 중 조회 상한(focus 최대 50대). 넘친 콜사인은 다음 focus 주기에 다시 요청된다.
 HOLD_PRUNE_AT = 1024  # 캐시 쓰기 실패로 잠시 묻지 않는 콜사인 목록이 이만큼 쌓이면 만료분을 지운다
 DISABLED_MSG = "provider disabled by operator"
+FIXTURE_MSG = "fixture mode — no external calls"
 
 
 class RouteProvider(Protocol):
@@ -45,14 +50,14 @@ class RouteProvider(Protocol):
     cost: int
     host: str
 
-    async def lookup(self, callsign: str, *, wait_s: float) -> RouteFetch: ...
+    async def lookup(self, callsign: str, *, wait_s: float, before_send: BeforeSend | None = None) -> RouteFetch: ...
 
 
 class RouteLookup:
     def __init__(
         self,
         redis: Redis,
-        provider: RouteProvider,
+        provider: RouteProvider | None,
         budget: Budget,
         status: ProviderStatus,
         *,
@@ -61,7 +66,7 @@ class RouteLookup:
         wait_s: float = ROUTE_WAIT_S,
         clock: Callable[[], float] = time.monotonic,
     ):
-        self._r, self.provider, self._budget, self._status = redis, provider, budget, status
+        self._r, self.provider, self._budget, self._status = redis, provider, budget, status  # provider None = fixture 모드
         self._sem = asyncio.Semaphore(concurrency)
         self._max_pending = max_pending
         self._wait_s = wait_s
@@ -69,7 +74,7 @@ class RouteLookup:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._hold: dict[str, float] = {}  # 캐시에 쓰지 못한 콜사인 → 다시 물어도 되는 시각(monotonic)
         self._last_log = 0.0
-        self.counts = {"lookups": 0, "found": 0, "not_found": 0, "errors": 0, "dropped": 0}
+        self.counts = {"lookups": 0, "found": 0, "not_found": 0, "errors": 0, "disabled": 0, "dropped": 0}
 
     @property
     def inflight(self) -> int:
@@ -100,7 +105,7 @@ class RouteLookup:
             del self._tasks[cs]
 
     async def aclose(self) -> None:
-        """진행 중 조회를 취소한다(종료). 이미 보낸 호출의 예산은 쓴 것으로 둔다(과대 집계는 안전 쪽)."""
+        """진행 중 조회를 취소한다(종료). 보내지 않은 조회의 예산은 되돌리고, 이미 보낸 호출은 쓴 것으로 둔다(과대 집계는 안전 쪽)."""
         tasks = list(self._tasks.values())
         for t in tasks:
             t.cancel()
@@ -138,24 +143,43 @@ class RouteLookup:
             log.info("route %s: %s", cs, value.status)
 
     async def _resolve(self, cs: str) -> tuple[RouteValue, str | None]:
-        """(캐시 값, 오류 사유 | None). 사유는 고정 문구·HTTP 상태·예외 이름뿐이다(응답 내용 없음)."""
+        """(캐시 값, 사유 | None). 사유는 고정 문구·HTTP 상태·예외 이름뿐이다(응답 내용 없음)."""
         p = self.provider
+        if p is None:
+            return route.disabled(cs), FIXTURE_MSG
         if await self._status.is_disabled(p.name):
-            return route.error(cs), DISABLED_MSG
+            return route.disabled(cs), DISABLED_MSG
         ok, used = await self._budget.reserve(p.name, p.cost)
         if not ok:
             return route.error(cs), "budget store unavailable" if used == UNKNOWN else f"daily budget exhausted (used={used})"
         started = datetime.now(UTC)
         http_status: int | None = None
+        sent = False
+
+        async def before_send() -> bool:
+            """속도 상한 허가를 받은 뒤 보내기 직전: 기다리는 사이 운영자가 껐으면 보내지 않는다(계약 v4 G A-2)."""
+            nonlocal sent
+            if await self._status.is_disabled(p.name):
+                return False
+            sent = True
+            return True
+
         try:
-            got = await p.lookup(cs, wait_s=self._wait_s)
+            got = await p.lookup(cs, wait_s=self._wait_s, before_send=before_send)
+        except asyncio.CancelledError:  # 종료: 보내지 않았으면 예산을 되돌린다
+            if not sent:
+                await asyncio.shield(self._budget.release(p.name, p.cost))
+            raise
         except Throttled as e:  # 속도 상한 대기 초과·429 쿨다운 — 보내지 않았다
             await self._budget.release(p.name, p.cost)
             return route.error(cs), e.reason
+        except SendCancelled:  # 기다리는 사이 운영자가 껐다 — 보내지 않았다
+            await self._budget.release(p.name, p.cost)
+            return route.disabled(cs), DISABLED_MSG
         except ProviderHttpError as e:  # 429 는 HttpClient 가 이미 호스트 벌점을 줬다(모든 호출자 공통)
             self.counts["lookups"] += 1
             why, http_status = f"HTTP {e.status}", e.status
-        except (httpx.ConnectError, httpx.ConnectTimeout) as e:  # 연결 전 실패 — 보내지 않았다
+        except NOT_SENT_ERRORS as e:  # 허용 호스트 아님·연결 풀 대기 초과·연결 전 실패 — 보내지 않았다
             await self._budget.release(p.name, p.cost)
             why = type(e).__name__
         except Exception as e:  # noqa: BLE001 — 읽기 시간 초과·응답 모양 이상 등(보낸 것으로 센다)

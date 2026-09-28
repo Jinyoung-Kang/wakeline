@@ -3,7 +3,9 @@
 
 - 구역 = WebSocket 연결 하나. 최대 3개(aisstream 키당 연결 수). '|' 가 없으면 구역 하나(v4 이전과 같다).
 - 구역마다 상자 1–16개, 빈 조각(끝의 ';')은 건너뛴다. 빈 구역('a||b' · 끝의 '|')은 오류다(구역마다 상자 1개 이상).
-- 전체 1,024자 이하. 정규화한 문자열(상태 해시 bbox)도 1,024자를 넘지 않아야 한다(지수 표기 1e-6 같은 값은 정규화하면 길어진다).
+- 숫자는 api(AisBboxes)와 같은 문법: 앞뒤 공백을 지운 뒤 부호(-) · 정수 1–3자리 · 소수 0–6자리(NUM_RE — 지수·'_'·'.5'·'+1'·소수 7자리 이상은 오류).
+  그래서 정규화(소수 6자리)는 값을 바꾸지 않고, 넓이 0 검사는 정규화한 값으로 한 번 더 한다.
+- 전체 1,024자 이하. 정규화한 문자열(상태 해시 bbox)도 1,024자를 넘지 않아야 한다.
 aisstream.io 구독 형식은 상자마다 두 모서리 `[[lat, lon], [lat, lon]]`(문서 확인 2026-09-28). 값은 그대로 넘기고 모서리 순서를 바꾸지 않는다.
 검증 실패는 ValueError — 환경변수 값은 기동을 거부하고(설정 오류를 빨리 드러냄), 런타임 설정 값은 무시하고 현재 구독을 유지한다.
 """
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 
 BBox = tuple[float, float, float, float]  # lat1, lon1, lat2, lon2
 Shards = tuple[tuple[BBox, ...], ...]  # 구역마다 상자 튜플
@@ -22,6 +25,11 @@ MAX_BOXES = 16  # 구역 하나의 상자 수
 MAX_TEXT = 1024
 MAX_SHARDS = 3  # aisstream 키·IP 당 연결 수
 SHARD_SEP = "|"
+NUM_RE = re.compile(r"-?[0-9]{1,3}(\.[0-9]{1,6})?")  # api AisBboxes.NUM 과 같다(\d 는 유니코드 숫자까지 받으므로 [0-9])
+_NUM = r"-?[0-9]{1,3}(?:\.[0-9]{1,6})?"
+_BOX = rf"{_NUM}(?:,{_NUM}){{3}}"
+# 구역 하나의 정규화한 문자열(공백 scope · 상태 해시 shards[].scope)의 문법 — 상자 1–16개, '|' 없음. 수집기가 만드는 값은 늘 이 모양이다.
+SCOPE_RE = re.compile(rf"{_BOX}(?:;{_BOX}){{0,{MAX_BOXES - 1}}}")
 
 
 def parse_bboxes(text: str) -> tuple[BBox, ...]:
@@ -35,20 +43,20 @@ def parse_bboxes(text: str) -> tuple[BBox, ...]:
         part = raw.strip()
         if not part:
             continue
-        nums = part.split(",")
+        nums = [x.strip() for x in part.split(",")]
         if len(nums) != 4:
             raise ValueError(f"box needs 4 numbers lat1,lon1,lat2,lon2: {part[:40]!r}")
-        try:
-            lat1, lon1, lat2, lon2 = (float(x) for x in nums)
-        except ValueError as e:
-            raise ValueError(f"box has a non-number: {part[:40]!r}") from e
+        if not all(NUM_RE.fullmatch(x) for x in nums):
+            raise ValueError(f"box values must be decimal numbers (up to 6 decimals): {part[:40]!r}")
+        lat1, lon1, lat2, lon2 = (float(x) for x in nums)
         if not all(math.isfinite(v) for v in (lat1, lon1, lat2, lon2)):
             raise ValueError(f"box has a non-finite number: {part[:40]!r}")
         if not (-90.0 <= lat1 <= 90.0 and -90.0 <= lat2 <= 90.0):
             raise ValueError(f"latitude out of range [-90, 90]: {part[:40]!r}")
         if not (-180.0 <= lon1 <= 180.0 and -180.0 <= lon2 <= 180.0):
             raise ValueError(f"longitude out of range [-180, 180]: {part[:40]!r}")
-        if lat1 == lat2 or lon1 == lon2:
+        n = [_num(v) for v in (lat1, lon1, lat2, lon2)]  # 정규화한 값(scope)도 넓이가 있어야 한다
+        if lat1 == lat2 or lon1 == lon2 or n[0] == n[2] or n[1] == n[3]:
             raise ValueError(f"box has zero area: {part[:40]!r}")
         boxes.append((lat1, lon1, lat2, lon2))
     if not boxes:

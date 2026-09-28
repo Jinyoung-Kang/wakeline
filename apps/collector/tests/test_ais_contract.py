@@ -9,7 +9,7 @@ import random
 import pytest
 from test_ais_helpers import ROOT, SCHEMAS, validator
 
-from wakeline_collector.ais.bbox import MAX_BOXES, format_bboxes, parse_bboxes, parse_shards
+from wakeline_collector.ais.bbox import MAX_BOXES, SCOPE_RE, format_bboxes, parse_bboxes, parse_shards
 from wakeline_collector.ais.book import STATE_FIELDS
 from wakeline_collector.ais.parse import POSITION_CLASS, POSITION_SOURCE, POSITION_SOURCE_EPFS, STATIC_FIELDS
 
@@ -113,6 +113,32 @@ def test_gap_payload_schema():
     [
         ("-90,-180,90,0", True),
         ("-90,45,90,180;18,105,46,150", True),
+        (None, True),  # 구역 없음(api 는 null 도 받는다)
+        # 형식은 스키마가 아니라 api 가 검사한다(계약 v4 G D-1) — 틀린 scope 도 공백 자체는 버리지 않는다(구역 없음 + 카운터)
+        ("", True),
+        ("-90,-180,90,0|-90,45,90,180", True),
+        ("1e-6,1,2,2", True),
+        ("x" * 1024, True),
+        ("x" * 1025, False),  # 길이 상한만 스키마
+        (5, False),
+        (["1,1,2,2"], False),
+    ],
+)
+def test_gap_payload_scope_schema(scope, ok):
+    """계약 v4 G D-1: ais_gap_payload.scope = {"type": ["string", "null"], "maxLength": 1024}(선택 필드)."""
+    v = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
+    good = {"started_at": "2026-09-27T16:29:44.000Z", "ended_at": "2026-09-27T16:31:00.000Z", "reason": "server closed (1006)"}
+    assert (not list(v.iter_errors({**good, "scope": scope}))) is ok
+    s = _schema("stream_envelope.v1.json")["$defs"]["ais_gap_payload"]
+    assert "scope" not in s["required"]
+    assert {k: s["properties"]["scope"][k] for k in ("type", "maxLength")} == {"type": ["string", "null"], "maxLength": 1024}
+
+
+@pytest.mark.parametrize(
+    ("scope", "ok"),
+    [
+        ("-90,-180,90,0", True),
+        ("-90,45,90,180;18,105,46,150", True),
         ("0.000001,-179.999999,1.5,2", True),
         (";".join(["1,1,2,2"] * 16), True),
         (";".join(["1,1,2,2"] * 17), False),  # 구역 하나는 상자 16개까지
@@ -123,34 +149,39 @@ def test_gap_payload_schema():
         ("1.1234567,1,2,2", False),
         ("fixture:ais_east_asia_90s.jsonl", False),
         ("1,1,2,2 ", False),
-        (5, False),
+        ("\u0661,1,2,2", False),
     ],
 )
-def test_gap_payload_scope_schema(scope, ok):
-    """계약 v4 §D: scope 는 선택 필드 — 그 구역의 정규화한 상자 문자열(최대 1,024자)."""
-    v = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
-    good = {"started_at": "2026-09-27T16:29:44.000Z", "ended_at": "2026-09-27T16:31:00.000Z", "reason": "server closed (1006)"}
-    assert (not list(v.iter_errors({**good, "scope": scope}))) is ok
-    s = _schema("stream_envelope.v1.json")["$defs"]["ais_gap_payload"]
-    assert "scope" not in s["required"] and s["properties"]["scope"]["maxLength"] == 1024
+def test_one_shard_scope_grammar(scope, ok):
+    """수집기 자신의 약속: 공백 scope 는 늘 구역 하나의 정규화한 문자열(SCOPE_RE) — 스키마는 넓어졌어도(G D-1) 수집기는 좁게 만든다."""
+    assert bool(SCOPE_RE.fullmatch(scope)) is ok
 
 
-def test_every_normalized_shard_string_matches_the_scope_schema():
-    """수집기가 만드는 scope(format_bboxes)는 어떤 유효한 설정이든 스키마를 통과한다 — 통과 못 하면 api 가 공백을 버린다(DLQ)."""
+def test_every_normalized_shard_string_matches_the_one_shard_grammar():
+    """수집기가 만드는 scope(format_bboxes)는 어떤 유효한 설정이든 구역 하나의 문법(SCOPE_RE)·스키마를 통과하고 되읽으면 같다."""
     v = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
     base = {"started_at": "2026-09-27T16:29:44.000Z", "ended_at": "2026-09-27T16:31:00.000Z", "reason": "r"}
     rng = random.Random(20260928)
+
+    def num(lo: float, hi: float) -> str:
+        return f"{rng.uniform(lo, hi):.{rng.randint(0, 6)}f}"
+
+    checked = 0
     for _ in range(300):
         boxes = []
         for _ in range(rng.randint(1, MAX_BOXES)):
-            lat1, lat2 = sorted(rng.sample([rng.uniform(-90, 90) for _ in range(4)] + [-90.0, 90.0, -0.0], 2))
-            lon1, lon2 = sorted(rng.sample([rng.uniform(-180, 180) for _ in range(4)] + [-180.0, 180.0, 1e-7], 2))
-            if lat1 == lat2 or lon1 == lon2:
-                continue
-            boxes.append(f"{lat1!r},{lon1!r},{lat2!r},{lon2!r}")
-        if not boxes:
+            lats = [num(-90, 90) for _ in range(2)] + [rng.choice(["-90", "90", "-0", "0.000001"])]
+            lons = [num(-180, 180) for _ in range(2)] + [rng.choice(["-180", "180", "-0.000000", "1"])]
+            (lat1, lat2), (lon1, lon2) = rng.sample(lats, 2), rng.sample(lons, 2)
+            boxes.append(f" {lat1},{lon1} , {lat2},{lon2}")
+        try:
+            shards = parse_shards(";".join(boxes))
+        except ValueError:  # 넓이 0 인 상자가 나온 경우
             continue
-        for shard in parse_shards(";".join(boxes)):
+        for shard in shards:
             scope = format_bboxes(shard)
+            assert SCOPE_RE.fullmatch(scope), scope
             assert not list(v.iter_errors({**base, "scope": scope})), scope
-            assert parse_bboxes(scope) and len(scope) <= 767
+            assert parse_bboxes(scope) == shard and len(scope) <= 767
+            checked += 1
+    assert checked > 200

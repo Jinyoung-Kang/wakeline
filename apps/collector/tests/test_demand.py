@@ -19,6 +19,7 @@ from wakeline_collector.demand import (
     DemandPoller,
     DemandStatus,
     parse_cell_key,
+    parse_focus_meta,
     parse_meta,
     status_value,
 )
@@ -71,6 +72,24 @@ def test_parse_meta_is_defensive():
     assert parse_meta('{"sessions": 1, "first_at": "yesterday"}') == (1, math.inf)
     assert parse_meta('{"sessions": 1, "first_at": "2026-09-28T00:00:00"}') == (1, math.inf)  # 시간대 없음
     assert parse_meta('{"sessions": 1, "first_at": false}') == (1, math.inf)
+
+
+def test_parse_focus_meta_reads_the_api_callsign_with_the_same_rule():
+    """계약 v4 G A-1: focus meta 의 callsign(api 가 정규화한 값)을 같은 규칙으로 다시 검사한다 — 틀리면 None(순위는 그대로)."""
+    assert parse_focus_meta('{"sessions": 2, "first_at": 1790000000, "callsign": "ZZX123"}') == (2, 1_790_000_000_000, "ZZX123")
+    assert parse_focus_meta('{"sessions": 1, "callsign": " zzx123 "}')[2] == "ZZX123"
+    for bad in ('"zzx\u013112"', '"ZZ\u017f123"', '"ZZ"', '"ZZX-12"', '"ZZX1234567"', "123456", "null", '["ZZX123"]'):
+        assert parse_focus_meta(f'{{"sessions": 3, "callsign": {bad}}}') == (3, math.inf, None), bad
+    assert parse_focus_meta('{"sessions": 1}')[2] is None and parse_focus_meta("not json") == (0, math.inf, None)
+    assert parse_focus_meta(None) == (0, math.inf, None)
+
+
+async def test_poller_carries_the_meta_callsign_on_each_focus_lease():
+    r = FakeRedis()
+    await r.zadd(FOCUS_KEY, {"abcdef": NOW_MS + 60_000, "71c0a1": NOW_MS + 60_000})
+    await r.hset(FOCUS_META_KEY, mapping={"abcdef": '{"sessions": 1, "callsign": "zzx123"}', "71c0a1": '{"sessions": 2}'})
+    d = await DemandPoller(r, now_ms=lambda: NOW_MS).poll()  # type: ignore[arg-type]
+    assert [(f.hex, f.callsign) for f in d.focus] == [("71c0a1", None), ("abcdef", "ZZX123")]
 
 
 async def _seed(r: FakeRedis) -> None:

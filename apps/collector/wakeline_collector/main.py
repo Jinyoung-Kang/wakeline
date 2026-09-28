@@ -147,8 +147,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     maint = MaintenanceJob(list(limits), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
     if settings.demand_enabled:
-        # 노선(계약 v4 §A): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 조회하지 않는다.
-        routes = None if fixture else RouteLookup(redis, AdsbdbProvider(http), ctx.budget, ctx.status)
+        # 노선(계약 v4 §A · G A-2): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 묻지 않고
+        # 요청된 콜사인에 status "disabled" 를 쓴다(화면이 "노선 조회 중" 에 머물지 않게).
+        routes = RouteLookup(redis, None if fixture else AdsbdbProvider(http), ctx.budget, ctx.status)
         tracker = DemandTracker(
             ctx, DemandPoller(redis), DemandStatus(redis), demand_provider, limiter=None if fixture else limiter, routes=routes
         )

@@ -204,7 +204,8 @@ def test_previous_shards_parsing(raw, want):
     assert previous_shards(raw) == want
 
 
-def test_removed_shard_keeps_counts_and_unsent_gaps_but_drops_its_open_gap():
+def test_removed_shard_keeps_counts_and_unsent_gaps_and_closes_its_open_gap_at_removal():
+    """계약 v4 G D-3: 구역을 없애는 순간 열린 공백은 없앤 시각에 닫아 기록한다(원인 끝 ' · 구역 제거', scope 그대로)."""
     ss, wall, _ = _set()
     a, b = ss.add(A), ss.add(B)
     _receiving(a, A, T0_EPOCH + 1)
@@ -213,16 +214,192 @@ def test_removed_shard_keeps_counts_and_unsent_gaps_but_drops_its_open_gap():
     b.feed.on_subscribed(B, deflate=True)
     b.feed.on_message(T0_EPOCH + 9)  # 공백 닫힘(아직 발행 전)
     b.feed.on_disconnected("server closed (1011)")  # 다시 열림
+    b.feed.on_backoff(30.0)
     closed = b.feed.gaps.last
     assert closed is not None and closed["scope"] == B and len(b.feed.gaps.pending) == 1
+    wall.t = T0_EPOCH + 40
     ss.begin_closing(b)
+    removal = {
+        "started_at": iso_ms(T0_EPOCH + 9),
+        "ended_at": iso_ms(T0_EPOCH + 40),
+        "reason": "server closed (1011) · 구역 제거",
+        "scope": B,
+    }
     assert [s.feed for s in ss.active] == [a.feed] and ss.bbox == A and ss.connected  # 상태에서는 빠졌다
-    assert ss.msgs_total == 3 and ss.gaps_pending == 1  # 누적 수·보낼 공백은 남는다
-    assert ss.gap_open() is None  # 없애는 구역의 열린 공백은 합계에 넣지 않는다
+    assert ss.msgs_total == 3 and ss.gaps_pending == 2  # 누적 수·보낼 공백(없앤 시각에 닫은 것 포함)은 남는다
+    assert ss.gap_open() is None and b.feed.gaps.open_since is None
     ss.retire(b)
     assert not ss.closing and ss.msgs_total == 3 and ss.sessions_ended == 2
-    assert list(ss.retired_pending) == [closed] and ss.pending_queues()[0] is ss.retired_pending
-    assert ss.last_gap() == closed and not b.feed.gaps.pending
+    assert list(ss.retired_pending) == [closed, removal] and ss.pending_queues()[0] is ss.retired_pending
+    assert ss.last_gap() == removal and not b.feed.gaps.pending
+
+
+def test_gap_reopened_while_a_removed_shard_closes_ends_at_the_removal_time():
+    """없애는 동안(연결을 닫는 사이) 끊겨 다시 열린 공백은 없앤 시각까지만 — 없앤 뒤에 시작한 것은 기록하지 않는다."""
+    ss, wall, _ = _set()
+    a, b = ss.add(A), ss.add(B)
+    _receiving(a, A, T0_EPOCH + 1)
+    _receiving(b, B, T0_EPOCH + 20)
+    wall.t = T0_EPOCH + 30
+    ss.begin_closing(b)  # 받는 중이라 열린 공백 없음
+    assert ss.gaps_pending == 0
+    b.feed.on_disconnected("connection lost (no close frame)")  # 닫는 사이 끊김 → 마지막 메시지(T+20)부터 열림
+    wall.t = T0_EPOCH + 33
+    ss.retire(b)
+    assert list(ss.retired_pending) == [
+        {
+            "started_at": iso_ms(T0_EPOCH + 20),
+            "ended_at": iso_ms(T0_EPOCH + 30),
+            "reason": "connection lost (no close frame) · 구역 제거",
+            "scope": B,
+        }
+    ]
+    # 없앤 시각 뒤에 받은 메시지 다음에 끊겼으면(구독 범위 밖) 기록하지 않는다
+    c = ss.add(C)
+    _receiving(c, C, T0_EPOCH + 34)
+    wall.t = T0_EPOCH + 35
+    ss.begin_closing(c)
+    c.feed.on_message(T0_EPOCH + 36)
+    c.feed.on_disconnected("server closed (1000)")
+    ss.retire(c)
+    assert len(ss.retired_pending) == 1 and c.feed.gaps.open_since is None
+
+
+def test_removal_reason_stays_within_the_schema_limit():
+    ss, wall, _ = _set()
+    b = ss.add(B)
+    _receiving(b, B, T0_EPOCH + 1)
+    b.feed.on_disconnected("x" * 300)
+    wall.t = T0_EPOCH + 5
+    ss.begin_closing(b)
+    ss.retire(b)
+    (ev,) = ss.retired_pending
+    assert len(ev["reason"]) <= 200 and ev["reason"].endswith(" · 구역 제거") and ev["reason"].startswith("x" * 100)
+    # begin_closing 을 거치지 않고 없애도(방어) 그 시각에 닫는다
+    c = ss.add(C)
+    _receiving(c, C, T0_EPOCH + 6)
+    c.feed.on_disconnected("server closed (1006)")
+    wall.t = T0_EPOCH + 9
+    ss.active.remove(c)
+    ss.retire(c)
+    assert ss.retired_pending[-1] == {
+        "started_at": iso_ms(T0_EPOCH + 6),
+        "ended_at": iso_ms(T0_EPOCH + 9),
+        "reason": "server closed (1006) · 구역 제거",
+        "scope": C,
+    }
+
+
+def test_restore_carries_unmatched_gaps_over_as_one_unscoped_gap():
+    """계약 v4 G D-3: 같은 구역이 없는 이전 실행의 공백은 구역 없는 공백(모든 선박에 적용)으로 잇는다 — 가장 이른 시작, 빈 구역에."""
+    ss, _, _ = _set()
+    ss.load_previous(_prev_v4())  # A(열린 공백 T-60) · B(마지막 메시지 T-30) · 1,1,2,2(열린 공백 T-90, 원인 x)
+    a, c = ss.add(A), ss.add(C)
+    ss.restore_leftover()
+    assert (a.feed.gaps.open_since, a.feed.gaps.scope) == (T0_EPOCH - 60, A)  # 같은 구역은 그대로
+    assert (c.feed.gaps.open_since, c.feed.gaps.reason, c.feed.gaps.scope) == (T0_EPOCH - 90, "x", None)
+    view = {v["gap_open_since"]: v for v in ss.shards_view()}
+    assert view[iso_ms(T0_EPOCH - 90)]["scope"] is None  # 상태의 scope 도 공백과 같게(구역 없음)
+    assert ss.gap_open() == (T0_EPOCH - 90, "x")
+    c.feed.on_subscribed(C, deflate=True)
+    c.feed.on_message(T0_EPOCH + 5)
+    ev = c.feed.gaps.last
+    assert ev == {"started_at": iso_ms(T0_EPOCH - 90), "ended_at": iso_ms(T0_EPOCH + 5), "reason": "x"}  # scope 없음
+    assert ss.add(B).feed.gaps.open_since is None  # 이어받기는 기동 때 한 번뿐
+
+
+def test_restore_widens_a_shard_gap_when_every_shard_already_carries_one():
+    ss, _, _ = _set()
+    ss.load_previous(_prev_v4())
+    a = ss.add(A)  # T-60(자기 구역) — B(T-30)·1,1,2,2(T-90)는 같은 구역이 없다
+    ss.restore_leftover()
+    assert (a.feed.gaps.open_since, a.feed.gaps.reason, a.feed.gaps.scope) == (T0_EPOCH - 90, "x", None)
+    ss2, _, _ = _set()
+    ss2.load_previous(
+        {
+            "provider": "aisstream",
+            "shards": json.dumps(
+                [{"scope": A, "gap_open_since": iso_ms(T0_EPOCH - 60)}, {"scope": B, "last_msg_at": iso_ms(T0_EPOCH - 10)}]
+            ),
+        }
+    )
+    a2 = ss2.add(A)
+    ss2.restore_leftover()  # 남은 공백이 더 늦게 시작하면 시작은 그대로, 구역만 넓힌다
+    assert (a2.feed.gaps.open_since, a2.feed.gaps.reason, a2.feed.gaps.scope) == (T0_EPOCH - 60, "ais process restart", None)
+
+
+def test_restore_when_the_setting_changed_while_down():
+    """이전 실행과 설정이 달라도(내려가 있던 동안 바뀜 · 기동 때 설정을 못 읽음) 재시작 공백을 잃지 않는다."""
+    ss, _, _ = _set()
+    ss.load_previous(
+        {
+            "provider": "aisstream",
+            "shards": json.dumps([{"scope": A, "gap_open_since": iso_ms(T0_EPOCH - 60), "gap_reason": "ais process stopped"}]),
+        }
+    )
+    b = ss.add(B)
+    assert b.feed.gaps.open_since is None
+    ss.restore_leftover()
+    assert (b.feed.gaps.open_since, b.feed.gaps.reason, b.feed.gaps.scope) == (T0_EPOCH - 60, "ais process stopped", None)
+    # v4 이전 해시(bbox 가 다름)도 같다
+    legacy, _, _ = _set()
+    legacy.load_previous({"provider": "aisstream", "bbox": f"{A};{B}", "last_msg_at": iso_ms(T0_EPOCH - 45)})
+    one = legacy.add(C)
+    legacy.restore_leftover()
+    assert (one.feed.gaps.open_since, one.feed.gaps.reason, one.feed.gaps.scope) == (T0_EPOCH - 45, "ais process restart", None)
+    # 이어받을 것이 없으면(깨진 기록 · 공급자가 다름 · 이전 실행 없음) 아무것도 열지 않는다
+    for prev in ({**_prev_v4(), "shards": "{broken"}, {**_prev_v4(), "provider": "fixture"}, {}):
+        s2, _, _ = _set()
+        s2.load_previous(prev)
+        x = s2.add(C)
+        s2.restore_leftover()
+        assert x.feed.gaps.open_since is None, prev
+
+
+def test_status_scope_follows_the_open_gap_until_it_closes():
+    """끊긴 사이 상자가 바뀌면 shards[].scope 는 공백이 난 영역(공백의 scope)을 말한다 — 첫 메시지로 닫힌 뒤에 새 상자."""
+    ss, _, _ = _set()
+    s = ss.add(A)
+    _receiving(s, A, T0_EPOCH + 1)
+    s.feed.on_disconnected("server closed (1006)")
+    s.feed.on_subscribed(B, deflate=True)  # 새 상자로 다시 붙었지만 아직 받은 것이 없다
+    (v,) = ss.shards_view()
+    assert v["scope"] == A and v["gap_open_since"] == iso_ms(T0_EPOCH + 1) and ss.bbox == B
+    # 여기서 멈추면 다음 실행은 공백을 A 로 잇는다(B 구역에 A 의 공백을 붙이지 않는다)
+    ss.on_stopped()
+    nxt, _, _ = _set()
+    nxt.load_previous({"provider": "aisstream", "shards": json.dumps(ss.shards_view())})
+    b = nxt.add(B)
+    nxt.restore_leftover()
+    assert (b.feed.gaps.open_since, b.feed.gaps.scope) == (T0_EPOCH + 1, None)  # 같은 구역이 없으므로 구역 없는 공백
+    s.feed.on_message(T0_EPOCH + 9)
+    assert ss.shards_view()[0]["scope"] == B and ss.shards_view()[0]["gap_open_since"] is None
+
+
+def test_status_bbox_skips_stale_disconnected_shards_and_never_exceeds_the_limit():
+    from wakeline_collector.ais.bbox import MAX_TEXT, BboxState, format_bboxes, parse_bboxes
+
+    big = ";".join(f"-89.1234{i // 9 + 1}{i % 9 + 1},-179.123456,-89.654321,-179.654321" for i in range(16))
+    assert len(big) == 735 and format_bboxes(parse_bboxes(big)) == big  # 정규화한 구역 하나의 최대 길이(위도는 2자리)
+    ss, _, _ = _set()
+    old = ss.add(big)
+    old.bboxes = BboxState(parse_bboxes(big))
+    _receiving(old, big, T0_EPOCH + 1)
+    old.feed.on_disconnected("server closed (1006)")
+    old.bboxes.set(parse_bboxes("1,1,2,2"))  # 끊긴 사이 설정이 바뀜 — 옛 문자열은 구독 중도, 다시 보낼 것도 아니다
+    new = ss.add("3,3,4,4")
+    new.bboxes = BboxState(parse_bboxes("3,3,4,4"))
+    _receiving(new, "3,3,4,4", T0_EPOCH + 2)
+    assert ss.bbox == "3,3,4,4"
+    # 다시 붙어 새 상자를 구독하면 들어간다
+    _receiving(old, "1,1,2,2", T0_EPOCH + 3)
+    assert ss.bbox == "1,1,2,2|3,3,4,4"
+    # 재구독 제한(5 s) 사이 긴 문자열 둘이 겹쳐도 1,024자를 넘지 않는다(넘치게 하는 구역은 뺀다)
+    ss2, _, _ = _set()
+    x, y = ss2.add(big), ss2.add(big)
+    _receiving(x, big, T0_EPOCH + 1)
+    _receiving(y, big, T0_EPOCH + 1)
+    assert ss2.bbox == format_bboxes(parse_bboxes(big)) and len(ss2.bbox) <= MAX_TEXT
 
 
 def test_on_stopped_opens_a_gap_per_shard_with_its_scope():

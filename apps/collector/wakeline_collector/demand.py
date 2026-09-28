@@ -4,9 +4,11 @@
 - ZSET wakeline:demand:hot    member = cellKey "{lat:.1f}:{lon:.1f}:{radius}"   score = 만료 epoch ms
 - HASH wakeline:demand:hot:meta    field = cellKey → JSON {lat, lon, radius_nm, sessions, first_at}
 - ZSET wakeline:demand:focus  member = hex(6자리 소문자)                        score = 만료 epoch ms
-- HASH wakeline:demand:focus:meta  field = hex → JSON {sessions, first_at}
+- HASH wakeline:demand:focus:meta  field = hex → JSON {sessions, first_at, callsign?}
 임대 값은 믿지 않는다: 형식·범위를 다시 검증하고 상한(hot 6셀 · focus 50대)도 수집기에서 다시 건다. 셀 좌표·반경은
-meta 가 아니라 검증한 cellKey 에서 읽는다(meta 는 순위용 sessions·first_at 만 쓴다).
+meta 가 아니라 검증한 cellKey 에서 읽는다(meta 는 순위용 sessions·first_at 과 focus 의 callsign 만 쓴다).
+focus meta 의 callsign(계약 v4 G A-1) = api 가 화면에 보이는 콜사인을 정규화한 값 — 노선 조회에 쓴다. 같은 규칙
+(route.normalize_callsign)으로 다시 검사하고, 틀리면 없는 것으로 본다.
 Redis 를 못 읽으면 마지막으로 읽은 임대를 각자의 만료 시각까지만 쓴다(임대는 60 s 로 짧다 → 창을 닫으면 최대 60 s 안에 멈춘다).
 
 수요 상태(수집기만 씀): HASH wakeline:demand:status, field focus:{hex} / hot:{cellKey} →
@@ -28,6 +30,7 @@ import orjson
 from redis.asyncio import Redis
 
 from wakeline_collector.masking import mask
+from wakeline_collector.route import normalize_callsign
 
 log = logging.getLogger("demand")
 
@@ -82,19 +85,34 @@ def _epoch_ms(v: Any) -> float:
     return math.inf
 
 
-def parse_meta(raw: Any) -> tuple[int, float]:
-    """meta JSON → (sessions, first_at epoch ms). 이상하면 (0, +inf) — 순위에만 쓰므로 버리지 않는다."""
+def _meta_doc(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, str) or not raw or len(raw) > META_MAX_BYTES:
-        return 0, math.inf
+        return None
     try:
         d = orjson.loads(raw)
     except orjson.JSONDecodeError:
-        return 0, math.inf
-    if not isinstance(d, dict):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _rank_fields(d: dict[str, Any] | None) -> tuple[int, float]:
+    if d is None:
         return 0, math.inf
     s = d.get("sessions")
     sessions = s if isinstance(s, int) and not isinstance(s, bool) and 0 <= s <= 1_000_000 else 0
     return sessions, _epoch_ms(d.get("first_at"))
+
+
+def parse_meta(raw: Any) -> tuple[int, float]:
+    """meta JSON → (sessions, first_at epoch ms). 이상하면 (0, +inf) — 순위에만 쓰므로 버리지 않는다."""
+    return _rank_fields(_meta_doc(raw))
+
+
+def parse_focus_meta(raw: Any) -> tuple[int, float, str | None]:
+    """focus meta JSON → (sessions, first_at epoch ms, callsign | None). callsign 은 api 와 같은 규칙으로 다시 검사한다."""
+    d = _meta_doc(raw)
+    sessions, first_at = _rank_fields(d)
+    return sessions, first_at, normalize_callsign(d.get("callsign")) if d is not None else None
 
 
 @dataclass(frozen=True)
@@ -118,6 +136,7 @@ class FocusLease:
     expires_ms: float
     sessions: int = 0
     first_at_ms: float = math.inf
+    callsign: str | None = None  # api 가 meta 에 적은 콜사인(정규화·재검사한 값, 노선 조회용)
 
     @property
     def field(self) -> str:
@@ -202,8 +221,8 @@ class DemandPoller:
             cells.append(HotCell(key, lat, lon, radius, score, sessions, first_at))
         leases: list[FocusLease] = []
         for (hex_, score), raw in zip(focus_ok, focus_meta, strict=True):
-            sessions, first_at = parse_meta(raw)
-            leases.append(FocusLease(hex_, score, sessions, first_at))
+            sessions, first_at, callsign = parse_focus_meta(raw)
+            leases.append(FocusLease(hex_, score, sessions, first_at, callsign))
         cells, leases = _rank(cells, "key"), _rank(leases, "hex")
         self._current = Demand(
             hot=tuple(cells[:MAX_HOT_CELLS]),

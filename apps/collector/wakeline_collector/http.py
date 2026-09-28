@@ -1,12 +1,14 @@
 """외부 호출 전용 HTTP 클라이언트 — 허용 호스트 목록(SSRF 방지)·호출 속도 상한·타임아웃·리다이렉트 금지·응답 크기 상한.
 
 모든 외부 호출은 여기를 지나며, 호출 직전에 RateLimiter 허가(수집기 전체 + 호스트별 버킷, 우선순위)를 받는다.
+허가를 받은 뒤 보내기 직전에 호출자의 확인(before_send, 예: 운영자가 공급자를 껐는지)을 한 번 더 거친다 — 아니면 보내지 않는다(SendCancelled).
 429 응답은 그 호스트를 잠시 막는다(모든 호출자 공통) — Retry-After 가 있으면 따른다.
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
@@ -39,6 +41,10 @@ class ResponseTooLarge(RuntimeError):
     pass
 
 
+class SendCancelled(RuntimeError):
+    """보내기 직전 확인(before_send)이 거절했다 — 요청을 보내지 않았다."""
+
+
 class ProviderHttpError(RuntimeError):
     def __init__(self, status: int, body_head: str, headers: dict[str, str] | None = None, latency_ms: int | None = None):
         super().__init__(f"HTTP {status}: {body_head[:200]}")
@@ -46,6 +52,21 @@ class ProviderHttpError(RuntimeError):
         self.body_head = body_head[:200]  # 오류 응답의 모양 판별용(예: adsbdb 404 "unknown callsign")
         self.headers = headers or {}
         self.latency_ms = latency_ms
+
+
+# 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
+NOT_SENT_ERRORS: tuple[type[Exception], ...] = (
+    HostNotAllowed,
+    SendCancelled,
+    httpx.InvalidURL,
+    httpx.UnsupportedProtocol,
+    httpx.PoolTimeout,
+    httpx.ProxyError,
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+)
+
+BeforeSend = Callable[[], Awaitable[bool]]
 
 
 class FetchResponse:
@@ -83,19 +104,26 @@ class HttpClient:
         params: dict | None = None,
         priority: int = PRIORITY_FIXED,
         wait_s: float = DEFAULT_WAIT_S,
+        before_send: BeforeSend | None = None,
     ) -> FetchResponse:
-        return await self._request("GET", url, priority=priority, wait_s=wait_s, headers=headers, params=params)
+        return await self._request(
+            "GET", url, priority=priority, wait_s=wait_s, before_send=before_send, headers=headers, params=params
+        )
 
     async def post_form(self, url: str, data: dict[str, str]) -> FetchResponse:
         return await self._request("POST", url, priority=PRIORITY_FIXED, wait_s=DEFAULT_WAIT_S, data=data)
 
-    async def _request(self, method: str, url: str, *, priority: int, wait_s: float, **kw) -> FetchResponse:
+    async def _request(
+        self, method: str, url: str, *, priority: int, wait_s: float, before_send: BeforeSend | None = None, **kw
+    ) -> FetchResponse:
         host = urlparse(url).hostname or ""
         if host not in ALLOWED_HOSTS:
             raise HostNotAllowed(host)
         if not url.startswith("https://"):
             raise HostNotAllowed(f"insecure scheme for {host}")
         await self.limiter.acquire(host, priority=priority, wait_s=wait_s)  # Throttled 면 호출하지 않는다
+        if before_send is not None and not await before_send():  # 기다리는 사이 사정이 바뀌었으면 보내지 않는다
+            raise SendCancelled(host)
         t0 = time.perf_counter()
         async with self._client.stream(method, url, **kw) as resp:
             chunks: list[bytes] = []

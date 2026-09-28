@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     adsb_fi_rps: float = Field(default=0.8, gt=0, le=1.0)
     # 항공기 노선(계약 v4 §A · ADR-016): adsbdb 는 한도를 문서에 적지 않았다 — 호스트 0.5 req/s(burst 2)로 보수적으로.
     adsbdb_rps: float = Field(default=0.5, gt=0, le=1.0)
-    adsbdb_base_url: str = Field(default="https://api.adsbdb.com", pattern=r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$")
+    # 호스트는 api.adsbdb.com 만(HttpClient 허용 목록과 같다) — 다른 호스트는 보내지도 못하면서 예산·호출 수만 쓰게 된다
+    adsbdb_base_url: str = Field(default="https://api.adsbdb.com", pattern=r"^https://api\.adsbdb\.com(:443)?/?$")
 
     # 수요 기반 정밀 추적(ADR-013). 임대(lease)는 api 가 쓰고 수집기는 읽기만 한다.
     demand_enabled: bool = True

@@ -25,9 +25,14 @@ def test_adsbdb_settings_defaults_and_validation():
 
     s = Settings()
     assert (s.adsbdb_base_url, s.adsbdb_rps, s.budget_adsbdb) == ("https://api.adsbdb.com", 0.5, 2000)
+    assert Settings(adsbdb_base_url="https://api.adsbdb.com/").adsbdb_base_url == "https://api.adsbdb.com/"
     for bad in (
         {"adsbdb_base_url": "http://api.adsbdb.com"},
         {"adsbdb_base_url": "https://x/y?z"},
+        # 리뷰 v4: HttpClient 허용 목록 밖 호스트는 보내지도 못하면서 예산만 쓴다 — 설정에서 거절
+        {"adsbdb_base_url": "https://mirror.example.org"},
+        {"adsbdb_base_url": "https://api.adsbdb.com.example.org"},
+        {"adsbdb_base_url": "https://api.adsbdb.com:8443"},
         {"adsbdb_rps": 0},
         {"adsbdb_rps": 2},
     ):
@@ -89,14 +94,18 @@ async def test_main_fixture_mode_smoke(monkeypatch):
 
     from wakeline_collector import main as mainmod
     from wakeline_collector.db import Db
-    from wakeline_collector.demand import FOCUS_KEY
+    from wakeline_collector.demand import FOCUS_KEY, FOCUS_META_KEY
     from wakeline_collector.publisher import STREAM_AIRCRAFT
+    from wakeline_collector.route import normalize_callsign
 
     monkeypatch.setattr(mainmod.settings, "wakeline_fixture_mode", 1)
     r = FakeRedis()
     base = orjson.loads((Path(mainmod.settings.fixtures_dir) / "adsb_lol_region.json").read_bytes())
-    hex_ = next(a["hex"] for a in base["ac"] if a.get("lat") is not None)
-    await r.zadd(FOCUS_KEY, {hex_: time.time() * 1000 + 60_000})  # api 가 쓴 것처럼 집중 추적 임대 1건
+    ac = next(a for a in base["ac"] if a.get("lat") is not None and normalize_callsign(a.get("flight")))
+    hex_, callsign = ac["hex"], normalize_callsign(ac["flight"])
+    await r.zadd(FOCUS_KEY, {hex_: time.time() * 1000 + 60_000})  # api 가 쓴 것처럼 집중 추적 임대 2건
+    await r.zadd(FOCUS_KEY, {"abcdef": time.time() * 1000 + 60_000})
+    await r.hset(FOCUS_META_KEY, "abcdef", '{"sessions": 1, "callsign": "ZZY999"}')  # 메타 콜사인(계약 v4 G A-1)
 
     async def no_db():
         raise OSError("no db in tests")
@@ -112,9 +121,10 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     monkeypatch.setattr(db, "close", close)
     stop = asyncio.Event()
     task = asyncio.create_task(mainmod.main(stop=stop, redis=r, db=db))
+    routes = [f"wakeline:route:{callsign}", "wakeline:route:ZZY999"]
     for _ in range(300):
         scopes = {f["scope"] for _sid, f in r.streams.get(STREAM_AIRCRAFT, [])}
-        if {"region", "focus"} <= scopes:
+        if {"region", "focus"} <= scopes and all(k in r.kv for k in routes):
             break
         await asyncio.sleep(0.01)
     assert {"region", "focus"} <= scopes
@@ -122,8 +132,12 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     await asyncio.wait_for(task, 5)
     assert closed == [mainmod.DB_DRAIN_S]
     hb = r.kv["wakeline:collector"]
-    assert hb["fixture"] == "1" and hb["region_poll_s"] == "10" and "adsb_fi_rps_1m" in hb and hb["demand_focus"] == "1"
-    # 계약 v4 §A: fixture 모드는 외부 호출이 없으므로 노선 조회도 없다(캐시 키를 만들지 않는다)
-    assert hb["adsbdb_rps_1m"] == "0.000" and "route_lookups" not in hb
-    assert not any(k.startswith("wakeline:route:") for k in r.kv)
+    assert hb["fixture"] == "1" and hb["region_poll_s"] == "10" and "adsb_fi_rps_1m" in hb and hb["demand_focus"] == "2"
+    # 계약 v4 G A-2: fixture 모드는 외부 호출이 없다 — 노선을 묻지 않고, 선택한 항공기의 콜사인(응답의 콜사인 · 메타 콜사인)에
+    # disabled(120 s)를 써서 api 가 "노선 조회 중"(pending)으로 남기지 않게 한다
+    assert hb["adsbdb_rps_1m"] == "0.000" and hb["route_lookups"] == "0"
+    for key in routes:
+        v = orjson.loads(r.kv[key])
+        assert v["status"] == "disabled" and v["origin"] is None and v["destination"] is None and r.ttl[key] - time.time() <= 120
+    assert sorted(k for k in r.kv if k.startswith("wakeline:route:")) == sorted(routes)
     assert mainmod.SHUTDOWN_GRACE_S + 2 * mainmod.DB_DRAIN_S < 30  # compose stop_grace_period 30 s 안

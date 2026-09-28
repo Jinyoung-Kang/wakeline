@@ -54,11 +54,42 @@ def test_parse_multiple_boxes_whitespace_trailing_separator():
         "18,105,18,150",  # 넓이 0
         ";".join(["1,1,2,2"] * (MAX_BOXES + 1)),
         "1" * 2000,
+        # 숫자 문법은 api AisBboxes 와 같다(계약 v4 §D) — float() 가 받던 모양도 거절한다
+        "1_0,105,46,150",
+        "1e1,105,46,150",
+        ".5,105,46,150",
+        "5.,105,46,150",
+        "+18,105,46,150",
+        "12.3456789,105,46,150",  # 소수 7자리
+        "0,0,0.0000001,10",  # 소수 7자리(정규화하면 넓이 0 이 될 값)
+        "1000,105,46,150",
+        "\u0661\u0668,105,46,150",  # 유니코드 숫자(아랍-인도 숫자 18)
+        "0x1,105,46,150",
     ],
 )
 def test_parse_rejects(bad):
     with pytest.raises(ValueError):
         parse_bboxes(bad)
+
+
+def test_zero_area_is_checked_again_on_normalized_values(monkeypatch):
+    """문법을 통과한 값은 정규화(소수 6자리)해도 바뀌지 않지만, 넓이 0 검사는 정규화한 값(scope)으로 한 번 더 한다."""
+    import re
+
+    from wakeline_collector.ais import bbox
+
+    monkeypatch.setattr(bbox, "NUM_RE", re.compile(r".+"))  # 문법 검사를 끈 채로 정규화 뒤 검사만 본다
+    with pytest.raises(ValueError, match="zero area"):
+        parse_bboxes("0,0,0.0000001,10")
+    with pytest.raises(ValueError, match="zero area"):
+        parse_bboxes("10,20.0000004,11,20")
+    with pytest.raises(ValueError, match="non-finite"):
+        parse_bboxes("nan,1,2,2")
+
+
+def test_parse_accepts_api_number_forms():
+    assert parse_bboxes(" -0 , 1.5 ,2.000000, 179.999999 ") == ((0.0, 1.5, 2.0, 179.999999),)
+    assert format_bboxes(parse_bboxes("-0.000001,1,2,-180")) == "-0.000001,1,2,-180"
 
 
 def test_parse_rejects_non_string():
@@ -172,6 +203,8 @@ def test_parse_shards_allows_16_boxes_per_shard():
         "1,1,2,2|1,1,1,2",  # 넓이 0
         "1,1,2,2|x",
         "1,1,2,2|" + "1" * MAX_TEXT,  # 전체 1,024자 초과
+        "1,1,2,2|1e-6,1,2,2",  # 지수 표기(api 가 거절하는 값)
+        "1,1,2,2|0,0,0.0000001,10",
     ],
 )
 def test_parse_shards_rejects(bad):
@@ -186,17 +219,17 @@ def test_parse_shards_error_names_the_shard():
         parse_shards("1,1,2,2|3,3,4,4|5,5,6,6|7,7,8,8")
 
 
-def test_parse_shards_rejects_settings_whose_normalized_form_exceeds_the_limit():
-    # 1e-6 는 4자지만 정규화하면 0.000001(8자) — 상태 해시 bbox(1,024자 제한)가 넘치지 않게 설정 자체를 거부한다
+def test_normalized_setting_is_never_longer_than_the_input():
+    # 숫자 문법(소수 6자리까지, 지수 없음) 덕분에 정규화는 글자를 늘리지 않는다 → 상태 해시 bbox 도 1,024자 안
     box = "1e-6,1e-6,2e-6,2e-6"
-    text = "|".join([";".join([box] * MAX_BOXES)] * MAX_SHARDS)
-    assert len(text) <= MAX_TEXT
-    with pytest.raises(ValueError, match="normalized"):
-        parse_shards(text)
+    with pytest.raises(ValueError, match="decimal numbers"):
+        parse_shards("|".join([";".join([box] * MAX_BOXES)] * MAX_SHARDS))
+    padded = " 010.100000 , -0.000000 ,020.5,030 "
+    text = "|".join([";".join([padded] * 8)] * MAX_SHARDS)
+    assert len(text) <= MAX_TEXT and len(format_shards(parse_shards(text))) <= len(text)
     # 구역 하나의 정규화 문자열(공백 scope)은 가장 긴 숫자로 채워도 767자 — 스키마 상한 1,024 안
     widest = ";".join(["-89.123456,-179.123456,-89.654321,-179.654321"] * MAX_BOXES)
     assert len(format_bboxes(parse_bboxes(widest))) == 16 * 45 + 15 <= 767
-    assert len(format_bboxes(parse_bboxes(";".join([box] * MAX_BOXES)))) <= 767
 
 
 def test_parse_bboxes_rejects_a_pipe():

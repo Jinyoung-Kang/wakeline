@@ -2,8 +2,10 @@
 
 약관: adsbdb 노선 자료는 저장하지 않는다. 이 값은 Redis `wakeline:route:{CALLSIGN}` 에 TTL 로만 둔다
 (PostgreSQL·파일·원천 보관·로그에 쓰지 않는다 — 로그에는 콜사인·상태만).
-값: {"v":1,"status":"found"|"not_found"|"error","callsign","fetched_at","airline","origin","destination","midpoint"}.
+값: {"v":1,"status":"found"|"not_found"|"error"|"disabled","callsign","fetched_at","airline","origin","destination","midpoint"}.
+- disabled(계약 v4 G A-2) = 조회가 꺼져 있다(fixture 모드 — 외부 호출 없음, 또는 운영자가 adsbdb 를 끔). 노선 내용은 없다.
 - 검증을 통과하지 못한 공항은 null, 출발·도착 둘 다 없으면 not_found. 선택 항목(IATA·도시·국가 등)이 형식에 맞지 않으면 그 항목만 null.
+- 항공사는 이름이 없어도 ICAO(3자)·IATA(2자) 코드 중 하나가 유효하면 남긴다(이름 null, 계약 v4 G A-3).
 - 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다. 코드는 대문자로만 맞춘다. 추측해 채우지 않는다.
 - 예외 메시지에는 응답 내용을 싣지 않는다(로그로 새지 않게).
 """
@@ -21,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serial
 
 ROUTE_KEY_PREFIX = "wakeline:route:"
 TTL_FOUND_S = 1800  # found · not_found
-TTL_ERROR_S = 120
+TTL_ERROR_S = 120  # error · disabled
 
 CALLSIGN_RE = re.compile(r"^[A-Z0-9]{3,8}$")
 _ICAO_AIRPORT_RE = re.compile(r"^[A-Z0-9]{4}$")
@@ -33,7 +35,7 @@ NAME_MAX = 120
 PLACE_MAX = 80
 UNKNOWN_CALLSIGN = "unknown callsign"
 
-Status = Literal["found", "not_found", "error"]
+Status = Literal["found", "not_found", "error", "disabled"]
 
 
 class RouteParseError(ValueError):
@@ -41,7 +43,9 @@ class RouteParseError(ValueError):
 
 
 def normalize_callsign(raw: object) -> str | None:
-    """공급자 콜사인 → trim·대문자, `^[A-Z0-9]{3,8}$` 일 때만. ASCII 가 아니면 None(대문자 변환으로 모양이 바뀌지 않게)."""
+    """콜사인 정규화(계약 v4 G A-1): 앞뒤 공백 제거 · ASCII 가 아니면 None(대문자 변환으로 모양이 바뀌지 않게, 예: 'ı'→'I') ·
+    대문자 · `^[A-Z0-9]{3,8}$` 일 때만. ASCII 검사는 문자열 전체에 한다 — 앞뒤의 비 ASCII 공백(언어마다 trim 범위가 다르다)도
+    받지 않아, api 가 정규화해 임대 메타에 적은 값을 다시 검사할 때 결과가 같다."""
     if not isinstance(raw, str) or not raw.isascii():
         return None
     cs = raw.strip().upper()
@@ -94,7 +98,7 @@ class Airport(BaseModel):
 class Airline(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = Field(min_length=1, max_length=NAME_MAX)
+    name: str | None = Field(default=None, min_length=1, max_length=NAME_MAX)
     icao: str | None = Field(default=None, pattern=r"^[A-Z0-9]{3}$")
     iata: str | None = Field(default=None, pattern=r"^[A-Z0-9]{2}$")
 
@@ -120,7 +124,7 @@ class RouteValue(BaseModel):
 
     @property
     def ttl_s(self) -> int:
-        return TTL_ERROR_S if self.status == "error" else TTL_FOUND_S
+        return TTL_ERROR_S if self.status in ("error", "disabled") else TTL_FOUND_S
 
 
 def parse_airport(raw: object) -> Airport | None:
@@ -146,14 +150,16 @@ def parse_airport(raw: object) -> Airport | None:
 
 
 def parse_airline(raw: object) -> Airline | None:
-    """adsbdb 항공사 객체 → Airline. 이름이 없으면 None(코드만으로 이름을 채우지 않는다)."""
+    """adsbdb 항공사 객체 → Airline. 이름·ICAO·IATA 중 유효한 것만 남기고(나머지는 null), 셋 다 없으면 None.
+    이름이 없으면 null 로 둔다 — 코드로 이름을 지어 채우지 않는다(계약 v4 G A-3)."""
     if not isinstance(raw, dict):
         return None
     name = clean_text(raw.get("name"), NAME_MAX)
-    if name is None:
+    icao, iata = _code(raw.get("icao"), _ICAO_AIRLINE_RE), _code(raw.get("iata"), _IATA_AIRLINE_RE)
+    if name is None and icao is None and iata is None:
         return None
     try:
-        return Airline(name=name, icao=_code(raw.get("icao"), _ICAO_AIRLINE_RE), iata=_code(raw.get("iata"), _IATA_AIRLINE_RE))
+        return Airline(name=name, icao=icao, iata=iata)
     except ValidationError:
         return None
 
@@ -164,6 +170,11 @@ def not_found(callsign: str, fetched_at: datetime) -> RouteValue:
 
 def error(callsign: str, fetched_at: datetime | None = None) -> RouteValue:
     return RouteValue(status="error", callsign=callsign, fetched_at=fetched_at or datetime.now(UTC))
+
+
+def disabled(callsign: str, fetched_at: datetime | None = None) -> RouteValue:
+    """조회가 꺼져 있다(fixture 모드 또는 운영자가 adsbdb 를 끔). fetched_at = 그렇게 판단한 시각."""
+    return RouteValue(status="disabled", callsign=callsign, fetched_at=fetched_at or datetime.now(UTC))
 
 
 def is_unknown_callsign(doc: object) -> bool:

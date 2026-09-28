@@ -13,7 +13,7 @@ import orjson
 import pytest
 from fakes import FakeRedis, make_ctx
 
-from wakeline_collector.demand import FOCUS_KEY, HOT_KEY, HOT_META_KEY, STATUS_KEY, DemandPoller, DemandStatus
+from wakeline_collector.demand import FOCUS_KEY, FOCUS_META_KEY, HOT_KEY, HOT_META_KEY, STATUS_KEY, DemandPoller, DemandStatus
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs import demand as dj
 from wakeline_collector.jobs.demand import DemandTracker, focus_payload, hot_payload, plan_hot
@@ -586,7 +586,7 @@ class GatedRouteProvider:
         self.gate = asyncio.Event()
         self.calls: list[str] = []
 
-    async def lookup(self, callsign, *, wait_s):
+    async def lookup(self, callsign, *, wait_s, before_send=None):
         self.calls.append(callsign)
         await self.gate.wait()
         return RouteFetch(route_not_found(callsign, datetime.now(UTC)), 404, 20)
@@ -614,22 +614,23 @@ async def test_focus_results_request_route_lookups_without_delaying_publish():
     prov = FakeDemandProvider()
     prov.ac = [
         _ac("abcdef", flight="ZZX123  "),
-        _ac("71c0a1", flight="ZZX777", seen_pos=None),  # 격리된 항공기의 콜사인은 묻지 않는다
+        _ac("71c0a1", flight="ZZX777", seen_pos=None),  # 품질 게이트에서 격리된 기록의 콜사인도 묻는다(계약 v4 G A-1)
         _ac("a1b2c3"),  # 콜사인 없음
     ]
     t, routes, rprov, _clk = _routed_tracker(r, prov)
     await t.tick()
     await _drain(t)  # focus 조회·발행은 노선 조회(아직 응답 없음)를 기다리지 않고 끝난다
     assert len(r.streams[STREAM_AIRCRAFT]) == 1 and _status(r)["focus:abcdef"]["state"] == "active"
+    assert _status(r)["focus:71c0a1"]["state"] == "not_found"
     for _ in range(5):
         await asyncio.sleep(0)
-    assert rprov.calls == ["ZZX123"] and routes.inflight == 1 and t.metrics()["route_inflight"] == "1"
+    assert sorted(rprov.calls) == ["ZZX123", "ZZX777"] and routes.inflight == 2 and t.metrics()["route_inflight"] == "2"
     rprov.gate.set()
     await _settle(routes)
     assert orjson.loads(r.kv["wakeline:route:ZZX123"])["status"] == "not_found"
     routes.request(["ZZX123"])  # 다음 focus 결과에 같은 콜사인 — 캐시에 있으므로 다시 묻지 않는다
     await _settle(routes)
-    assert rprov.calls == ["ZZX123"]
+    assert sorted(rprov.calls) == ["ZZX123", "ZZX777"]
 
 
 async def test_shutdown_cancels_pending_route_lookups():
@@ -667,3 +668,117 @@ async def test_adsb_fi_kill_switch_does_not_cancel_route_lookups():
     rprov.gate.set()
     await _settle(routes)
     assert "wakeline:route:ZZX123" in r.kv
+
+
+async def _meta(r: FakeRedis, hex_: str, callsign) -> None:
+    """api 가 쓰는 집중 추적 임대 + 메타(계약 v4 G A-1: 메타에 화면의 콜사인)."""
+    await r.zadd(FOCUS_KEY, {hex_: _now_ms() + 60_000})
+    meta = {"sessions": 1, "first_at": "2026-09-28T00:00:00Z"}
+    if callsign is not None:
+        meta["callsign"] = callsign
+    await r.hset(FOCUS_META_KEY, hex_, orjson.dumps(meta).decode())
+
+
+async def test_meta_callsign_is_looked_up_even_when_adsb_fi_does_not_return_the_aircraft():
+    """계약 v4 G A-1: 조회 콜사인은 api 가 정한다 — adsb.fi 가 그 항공기를 돌려주지 않아도 "조회 중" 이 끝없이 남지 않게."""
+    r = FakeRedis()
+    await _meta(r, "abcdef", " zzy999 ")
+    prov = FakeDemandProvider()  # 응답에 그 항공기가 없다
+    t, routes, rprov, _clk = _routed_tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert rprov.calls == ["ZZY999"] and _status(r)["focus:abcdef"]["last_error"] == "not in provider response"
+    rprov.gate.set()
+    await _settle(routes)
+    assert orjson.loads(r.kv["wakeline:route:ZZY999"])["status"] == "not_found"
+
+
+async def test_meta_callsign_wins_over_the_provider_callsign():
+    r = FakeRedis()
+    await _meta(r, "abcdef", "ZZY999")
+    prov = FakeDemandProvider()
+    prov.ac = [_ac("abcdef", flight="ZZX123")]  # api 가 보는 콜사인과 다르다 — api 가 읽는 키를 채운다
+    t, _routes, rprov, _clk = _routed_tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert rprov.calls == ["ZZY999"]
+
+
+@pytest.mark.parametrize("bad", ["zzxı12", "ZZ", "ZZX-12", 12345, None])
+async def test_invalid_meta_callsign_falls_back_to_the_focus_result(bad):
+    """메타 콜사인은 같은 규칙으로 다시 검사한다(trim → ASCII → 대문자 → ^[A-Z0-9]{3,8}$). 틀리면 집중 추적 응답의 콜사인."""
+    r = FakeRedis()
+    await _meta(r, "abcdef", bad)
+    prov = FakeDemandProvider()
+    prov.ac = ["not a record", _ac("abcdef", flight="ZZX123")]
+    t, _routes, rprov, _clk = _routed_tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert rprov.calls == ["ZZX123"]
+
+
+async def test_meta_callsign_is_requested_once_per_focus_interval(monkeypatch):
+    r = FakeRedis()
+    await _meta(r, "abcdef", "ZZY999")
+    t, routes, _rprov, clk = _routed_tracker(r, FakeDemandProvider())
+    asked: list[list[str]] = []
+    real = routes.request
+
+    def spy(callsigns):
+        cs = list(callsigns)
+        asked.append(cs)
+        return real(cs)
+
+    monkeypatch.setattr(routes, "request", spy)
+    for now in (0.0, 1.0, 2.0, 4.9, 5.0, 6.0):
+        clk[0] = now
+        await t.tick()
+    assert [a for a in asked if "ZZY999" in a] == [["ZZY999"], ["ZZY999"]]  # t=0 · t=5 (캐시 확인을 틱마다 하지 않는다)
+    # 선택을 풀었다가(메타에서 빠짐) 다시 고르면 주기를 기다리지 않고 바로 넘긴다
+    await r.hset(FOCUS_META_KEY, "abcdef", '{"sessions": 1}')
+    clk[0] = 7.0
+    await t.tick()
+    await _meta(r, "abcdef", "ZZY999")
+    clk[0] = 8.0
+    await t.tick()
+    assert [a for a in asked if "ZZY999" in a] == [["ZZY999"], ["ZZY999"], ["ZZY999"]] and t._route_asked == {"ZZY999": 8.0}
+
+
+async def test_meta_callsign_route_is_requested_while_adsb_fi_is_disabled():
+    """adsb_fi(집중 추적 공급자)를 꺼도 노선 조회(다른 공급자 adsbdb)는 메타 콜사인으로 계속한다."""
+    r = FakeRedis()
+    await _meta(r, "abcdef", "ZZY999")
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    prov = FakeDemandProvider()
+    t, _routes, rprov, _clk = _routed_tracker(r, prov)
+    await t.tick()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert prov.calls == [] and rprov.calls == ["ZZY999"]
+
+
+async def test_fixture_mode_writes_disabled_route_for_the_selected_aircraft():
+    """계약 v4 G A-2: fixture 모드(외부 호출 없음)는 선택한 항공기의 콜사인에 disabled 를 쓴다 — "조회 중" 에 머물지 않게."""
+    r = FakeRedis()
+    await _meta(r, "abcdef", "ZZY999")
+    fx = FixtureAircraftProvider()
+    ctx = make_ctx(r, limits={"adsb_fi": 0, "adsbdb": 2000}, fixture=True)
+    routes = RouteLookup(r, None, ctx.budget, ctx.status)  # type: ignore[arg-type]
+    t = DemandTracker(
+        ctx,
+        DemandPoller(r),
+        DemandStatus(r),
+        FixtureDemandProvider(fx, lambda: (36.5, 127.8, 250)),
+        routes=routes,  # type: ignore[arg-type]
+    )
+    await t.tick()
+    await _drain(t)
+    await _settle(routes)
+    v = orjson.loads(r.kv["wakeline:route:ZZY999"])
+    assert v["status"] == "disabled" and v["origin"] is None and (await ctx.budget.usage("adsbdb"))[0] == 0

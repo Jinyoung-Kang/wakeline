@@ -38,7 +38,10 @@ AT = datetime(2026, 9, 28, 3, 21, 5, 123456, tzinfo=UTC)
         (None, None),
         (123456, None),
         ("zzxı12", None),  # ASCII 가 아니면 대문자 변환으로 모양이 바뀌지 않게 거절
+        (" zzxı12 ", None),
+        ("ZZſ123", None),  # 'ſ'.upper() == 'S' — api 와 같은 규칙(G A-1)
         ("ZZX12\n", "ZZX12"),  # 앞뒤 공백(개행 포함)은 trim
+        ("\tzzx123\r\n", "ZZX123"),  # trim → ASCII → 대문자 순서
     ],
 )
 def test_normalize_callsign(raw, want):
@@ -95,6 +98,22 @@ def test_cache_value_json_shape():
         "midpoint": None,
     }
     assert route.error("ZZX123").ttl_s == 120 and route.not_found("ZZX123", AT).ttl_s == 1800
+
+
+def test_disabled_value_has_no_route_content_and_a_short_ttl():
+    """계약 v4 G A-2: 조회가 꺼져 있으면(fixture 모드·운영자 스위치) status disabled — 노선 내용 없음, 120 s."""
+    d = route.disabled("ZZX123", AT)
+    assert orjson.loads(d.to_json()) == {
+        "v": 1,
+        "status": "disabled",
+        "callsign": "ZZX123",
+        "fetched_at": "2026-09-28T03:21:05.123Z",
+        "airline": None,
+        "origin": None,
+        "destination": None,
+        "midpoint": None,
+    }
+    assert d.ttl_s == 120
 
 
 @pytest.mark.parametrize("status", [200, 404])
@@ -159,11 +178,30 @@ def test_neither_origin_nor_destination_is_not_found():
 
 def test_airline_rules():
     assert parse_airline(None) is None and parse_airline("Synthetic Air") is None
-    assert parse_airline({"name": None, "icao": "ZZX", "iata": "Z9"}) is None  # 이름 없이 코드로 채우지 않는다
     a = parse_airline({"name": " Synthetic\u0007 Air ", "icao": "zzxx", "iata": "Z99"})
     assert a is not None and a.model_dump() == {"name": "Synthetic Air", "icao": None, "iata": None}
     v = from_adsbdb(200, body(flightroute(airline=None)), "ZZX123", AT)
     assert v.status == "found" and v.airline is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ({"name": None, "icao": "ZZX", "iata": "Z9"}, {"name": None, "icao": "ZZX", "iata": "Z9"}),
+        ({"name": "", "icao": " zzx ", "iata": None}, {"name": None, "icao": "ZZX", "iata": None}),
+        ({"iata": "z9"}, {"name": None, "icao": None, "iata": "Z9"}),
+        ({"name": "\x00", "icao": "ZZXX", "iata": "Z99"}, None),  # 이름도 유효한 코드도 없다
+        ({}, None),
+    ],
+)
+def test_airline_without_name_keeps_valid_codes(raw, want):
+    """계약 v4 G A-3: 이름이 없어도 유효한 ICAO(3)·IATA(2) 코드가 있으면 항공사를 남긴다(이름 null — 코드로 지어 채우지 않는다)."""
+    a = parse_airline(raw)
+    assert (a.model_dump() if a is not None else None) == want
+    v = from_adsbdb(200, body(flightroute(airline=raw)), "ZZX123", AT)
+    assert (v.airline.model_dump() if v.airline is not None else None) == want
+    if want is not None:
+        assert orjson.loads(v.to_json())["airline"] == want
 
 
 @pytest.mark.parametrize(

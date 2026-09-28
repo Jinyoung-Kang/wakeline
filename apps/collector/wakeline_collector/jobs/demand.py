@@ -12,7 +12,10 @@
   hot 은 거기에 focus 몫까지 남기고 멈춘다).
 - 발행: wakeline:aircraft 에 scope focus(requested·missing) / hot(cell·region). 품질 게이트는 관심 지역과 같은 규칙.
 - 상태: wakeline:demand:status 에 실제 결과를 그대로 쓴다 — 약속한 주기를 못 지키면 throttled, 공급자가 모르면 not_found.
-- 노선(계약 v4 §A): focus 결과를 발행한 뒤 통과한 항공기의 콜사인을 RouteLookup 에 넘긴다 — 조회는 별도 태스크라 발행을 늦추지 않는다.
+- 노선(계약 v4 §A · G A-1): 콜사인은 api 가 정한다 — 임대 메타의 callsign 을 틱마다 확인해(같은 콜사인은 focus 주기에 한 번)
+  RouteLookup 에 넘긴다. adsb.fi 가 그 항공기를 돌려주지 않거나 adsb_fi 가 꺼져 있어도 "조회 중" 이 끝없이 남지 않게.
+  메타에 콜사인이 없는 hex 는 focus 결과를 발행한 뒤 응답의 콜사인(품질 게이트를 통과한 상태, 없으면 격리된 기록의 원문)을 넘긴다.
+  조회는 별도 태스크라 발행을 늦추지 않는다.
 외부 호출은 HttpClient(허용 호스트·속도 상한·크기 상한)만 거친다. fixture 모드는 외부 호출이 없다(provider "fixture").
 """
 
@@ -41,6 +44,7 @@ from wakeline_collector.normalize import Rejected, normalize_readsb, readsb_refe
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
+from wakeline_collector.route import normalize_callsign
 
 log = logging.getLogger("job.demand")
 
@@ -139,7 +143,8 @@ class DemandTracker:
     ):
         self.ctx, self.poller, self.status, self.provider = ctx, poller, status, provider
         self._limiter = limiter
-        self.routes = routes  # None = 노선 조회 없음(fixture 모드 — 외부 호출 없음)
+        # None = 노선 조회 없음(수요 추적만 시험할 때). fixture 모드는 공급자 없는 RouteLookup(disabled 를 쓴다, 외부 호출 없음)
+        self.routes = routes
         self._clock = clock
         self.focus_gate = AircraftGate()
         self.hot_gate = AircraftGate()
@@ -153,6 +158,7 @@ class DemandTracker:
         self._served: set[str] = set()  # 직전 계획에서 조회 대상이 된 셀(용량 밖 셀은 깨어날 이유가 없다)
         self._last_ok: dict[str, datetime] = {}
         self._written: dict[str, tuple[str, int | None, str | None]] = {}
+        self._route_asked: dict[str, float] = {}  # 임대 메타 콜사인 → 마지막으로 노선 조회에 넘긴 시각
         self.counts = {"focus_requests": 0, "hot_requests": 0, "throttled": 0, "errors": 0, "published": 0}
 
     # ---- 루프 --------------------------------------------------------------------------------------------------------
@@ -185,6 +191,7 @@ class DemandTracker:
     async def tick(self) -> float:
         demand = await self.poller.poll()
         now = self._clock()
+        self._request_routes(demand, now)
         disabled = bool(demand.fields) and await self.ctx.status.is_disabled(self.provider.name)  # 운영자 스위치는 틱마다
         if disabled:
             # 이미 속도 상한 대기열에 들어간 조회도 보내지 않는다(리뷰 2026-09-28b #2 후속): 취소하면 대기열에서 빠진다.
@@ -198,6 +205,43 @@ class DemandTracker:
         await self.status.prune(demand.fields)
         self._forget(demand)
         return TICK_S if disabled else self._next_delay(demand, now)
+
+    def _request_routes(self, demand: Demand, now: float) -> None:
+        """api 가 임대 메타에 적은 콜사인을 노선 조회에 넘긴다(계약 v4 G A-1) — adsb.fi 결과·스위치와 상관없이.
+        같은 콜사인은 focus 주기에 한 번만(캐시 확인 EXISTS 를 틱마다 하지 않게). 진행 중 조회 하나·상한은 RouteLookup 이 지킨다."""
+        if self.routes is None:
+            return
+        wanted = {f.callsign for f in demand.focus if f.callsign}
+        for cs in [c for c in self._route_asked if c not in wanted]:
+            del self._route_asked[cs]
+        due = sorted(cs for cs in wanted if now - self._route_asked.get(cs, -math.inf) >= FOCUS_INTERVAL_S)
+        if due:
+            self.routes.request(due)
+            self._route_asked.update(dict.fromkeys(due, now))
+
+    def _fallback_callsigns(self, chunk: list[str], kept: list[AircraftState], res: ProviderResult) -> list[str]:
+        """임대 메타에 콜사인이 없는 hex 의 노선 조회 콜사인: 품질 게이트를 통과한 상태의 콜사인, 없으면 응답 원문(격리된 기록 포함)의
+        flight. api 와 같은 규칙으로 정규화하고, 틀리면 넘기지 않는다."""
+        meta = {f.hex: f.callsign for f in self.poller.current.focus}
+        need = [h for h in chunk if not meta.get(h)]
+        if not need:
+            return []
+        needed = set(need)
+        found: dict[str, str] = {}
+        for st in kept:
+            cs = normalize_callsign(st.callsign)
+            if cs and st.hex in needed:
+                found.setdefault(st.hex, cs)
+        for ac in res.data.get("ac") or []:
+            if not isinstance(ac, dict):
+                continue
+            raw_hex = ac.get("hex")
+            h = raw_hex.strip().lower() if isinstance(raw_hex, str) else None
+            if h in needed and h not in found:
+                cs = normalize_callsign(ac.get("flight"))
+                if cs:
+                    found[h] = cs
+        return [found[h] for h in need if h in found]
 
     def _next_delay(self, demand: Demand, now: float) -> float:
         cands = [TICK_S]
@@ -442,7 +486,7 @@ class DemandTracker:
         ref = await self._raw_ref(res, "focus")
         await self._publish("focus", res, ref, len(kept), focus_payload(chunk, kept, missing))
         if self.routes is not None:  # 기다리지 않는다 — 캐시에 없는 콜사인만 별도 태스크로 조회
-            self.routes.request(s.callsign for s in kept)
+            self.routes.request(self._fallback_callsigns(chunk, kept, res))
         why_by_hex = {q.hex: q.rule for q in quarantined if q.hex}
         items: dict[str, tuple[str, int, str | None]] = {}
         for h in chunk:

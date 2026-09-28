@@ -21,7 +21,7 @@ from typing import get_args  # noqa: E402
 from jsonschema import Draft202012Validator, FormatChecker  # noqa: E402
 from referencing import Registry, Resource  # noqa: E402
 
-from wakeline_collector.ais.bbox import format_bboxes, parse_shards  # noqa: E402
+from wakeline_collector.ais.bbox import SCOPE_RE, format_bboxes, parse_shards  # noqa: E402
 from wakeline_collector.ais.book import STATE_FIELDS, ShipBook  # noqa: E402
 from wakeline_collector.ais.parse import (  # noqa: E402
     POSITION_CLASS,
@@ -230,17 +230,29 @@ def check_ships(env_v: Draft202012Validator) -> int:
     if {f["kind"] for f in entries} != {"ships", "ais_gap"}:
         print("FAIL ais entries missing a kind:", [f["kind"] for f in entries])
         failures += 1
-    # 구역(계약 v4 §D): 공백 scope = 그 구역의 정규화한 상자 문자열, fixture 공백은 scope 없음, 스키마가 틀린 scope 를 거부
+    # 구역(계약 v4 §D · G D-1): 공백 scope = 그 구역의 정규화한 상자 문자열(수집기는 늘 구역 하나의 문법 SCOPE_RE 로 만든다),
+    # fixture 공백은 scope 없음. 스키마는 문자열·null · 1,024자까지만 본다(형식은 api 가 검사 — 틀려도 공백은 버리지 않는다)
     gaps = [_decode(f) for f in entries if f["kind"] == "ais_gap"]
     fx_gaps = [_decode(f) for f in fixture_entries]
     fx_errs = [e for g in fx_gaps for e in gap_v.iter_errors(g)]
     base = {"started_at": "2026-09-28T00:00:00.000Z", "ended_at": "2026-09-28T00:01:00.000Z", "reason": "r"}
-    bad_scopes = ["", "|".join(scopes), "x" * 1025, "fixture:ais_east_asia_90s.jsonl", ";".join(["1,1,2,2"] * 17)]
+    bad_scopes: list[object] = ["x" * 1025, 5, ["1,1,2,2"], {"scope": "1,1,2,2"}]
+    ok_scopes: list[object] = [None, "", "|".join(scopes), "fixture:ais_east_asia_90s.jsonl", "x" * 1024]
     accepted = [sc for sc in bad_scopes if not list(gap_v.iter_errors({**base, "scope": sc}))]
-    scope_bad = [g.get("scope") for g in gaps] != [scopes[1]] or [("scope" in g) for g in fx_gaps] != [False] or fx_errs or accepted
+    rejected = [sc for sc in ok_scopes if list(gap_v.iter_errors({**base, "scope": sc}))]
+    off_grammar = [g["scope"] for g in gaps if not SCOPE_RE.fullmatch(g.get("scope") or "")]
+    scope_bad = (
+        [g.get("scope") for g in gaps] != [scopes[1]]
+        or off_grammar
+        or [("scope" in g) for g in fx_gaps] != [False]
+        or fx_errs
+        or accepted
+        or rejected
+    )
     print(
-        f"{'FAIL' if scope_bad else 'ok  '} ais_gap scope: shard gaps {[g.get('scope') for g in gaps]}, fixture gaps unscoped "
-        f"{[('scope' not in g) for g in fx_gaps]}, bad scopes accepted {len(accepted)}"
+        f"{'FAIL' if scope_bad else 'ok  '} ais_gap scope: shard gaps {[g.get('scope') for g in gaps]} (off one-shard grammar "
+        f"{len(off_grammar)}), fixture gaps unscoped {[('scope' not in g) for g in fx_gaps]}, schema accepted bad {len(accepted)} "
+        f"· rejected valid {len(rejected)}"
     )
     failures += bool(scope_bad)
     # 상태 해시 shards(≤ 3, 계약 필드 그대로)와 합계의 의미

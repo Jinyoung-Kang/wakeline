@@ -6,6 +6,7 @@
   줄면 뒤쪽 구역의 연결을 닫는다(닫는 동안 기다리지 않는다 — 종료 요청이 오면 모두 함께 닫는다).
   닫는 중인 연결도 키당 연결 수(3)에 세므로, 줄인 직후 다시 늘리면 새 연결은 닫기가 끝난 뒤에 연다.
 - 연결 태스크가 예상 밖으로 끝나면(예외) 이 태스크도 끝난다 — 진입점이 나머지를 정리하고 1 로 끝낸다(compose 가 다시 띄운다).
+- 기동 때의 구역은 start() 가 만든다 — 진입점이 발행 태스크보다 먼저 불러, 첫 상태 쓰기부터 이어받은 공백이 보이게 한다.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ class AisStreamPool:
         self.queue, self.shards, self.desired = queue, shards, desired
         self._backoff_factory = backoff_factory
         self._client_kw = client_kw
+        self._version: int | None = None  # start() 가 맞춘 설정 버전(None = 아직)
 
     def _start(self, boxes: tuple[BBox, ...], *, restore: bool) -> Shard:
         shard = self.shards.add(format_bboxes(boxes), restore=restore)
@@ -93,10 +95,19 @@ class AisStreamPool:
         for s in list(self.shards.closing):
             self.shards.retire(s)
 
-    async def run(self, stop: asyncio.Event) -> None:
-        target, version = self.desired.snapshot()
+    def start(self) -> None:
+        """기동 때 한 번: 설정의 구역마다 연결을 띄우고 이전 실행의 공백을 잇는다(같은 구역 → 그 구역, 나머지 → 구역 없는 공백).
+        이벤트 루프 안에서 부른다(연결 태스크를 만든다). run 이 아직 부르지 않았으면 run 이 부른다."""
+        if self._version is not None:
+            return
+        target, self._version = self.desired.snapshot()
         for boxes in target:
             self._start(boxes, restore=True)  # 기동 때 만든 구역만 이전 실행의 공백을 잇는다
+        self.shards.restore_leftover()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        self.start()
+        version = self._version or 0
         try:
             while not stop.is_set():
                 change = asyncio.ensure_future(self.desired.wait_change(version))

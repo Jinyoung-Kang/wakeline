@@ -28,6 +28,7 @@ from wakeline_collector.ais.parse import iso_ms
 REASON_MAX = 200
 PENDING_MAX = 1000
 FUTURE_SKEW_S = 60.0
+REMOVED_SUFFIX = " · 구역 제거"  # 구역을 없앤 순간 닫은 공백의 원인 끝(계약 v4 G D-3)
 
 
 def parse_iso(v: str | None) -> float | None:
@@ -70,6 +71,22 @@ class GapTracker:
             self.last = ev
         self.open_since, self.reason, self.scope = None, "", None
         return ev
+
+    def close_removed(self, at: float) -> dict[str, str] | None:
+        """구역을 없앤 순간(at) 열린 공백을 닫는다 — 그때까지 받지 못했다는 사실만 남는다(그 뒤로 그 영역은 구독 범위 밖).
+        원인 끝에 ' · 구역 제거' 를 붙인다(원인 상한 안에서). at 이 시작보다 늦지 않으면 기록하지 않는다."""
+        if self.open_since is None:
+            return None
+        base = self.reason or "unknown"
+        if not base.endswith(REMOVED_SUFFIX):
+            self.reason = base[: REASON_MAX - len(REMOVED_SUFFIX)] + REMOVED_SUFFIX
+        return self.close(at)
+
+    def widen(self, since: float, reason: str) -> None:
+        """열린 공백을 구역 없는(모든 선박에 적용) 공백으로 넓힌다. since 가 더 이르면 그 시작·원인으로(재시작 이어받기, G D-3)."""
+        if self.open_since is None or since < self.open_since:
+            self.open_since, self.reason = since, reason[:REASON_MAX]
+        self.scope = None
 
     def restore(self, prev: dict[str, str], provider: str, now: float, scope: str | None = None) -> None:
         """이전 실행의 상태 해시에서 열린 공백(또는 마지막 메시지 시각)을 이어받는다. 공급자가 다르면(fixture ↔ 실시간) 잇지 않는다.

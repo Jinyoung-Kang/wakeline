@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from wakeline_collector.config import settings
-from wakeline_collector.http import HttpClient, ProviderHttpError
+from wakeline_collector.http import BeforeSend, HttpClient, ProviderHttpError
 from wakeline_collector.ratelimit import PRIORITY_ROUTE
 from wakeline_collector.route import CALLSIGN_RE, RouteValue, from_adsbdb, is_unknown_callsign_body, not_found
 
@@ -42,11 +42,12 @@ class AdsbdbProvider:
             raise ValueError("invalid callsign")
         return f"{self._base}/v0/callsign/{callsign}"
 
-    async def lookup(self, callsign: str, *, wait_s: float = ROUTE_WAIT_S) -> RouteFetch:
-        """found · not_found. 실패는 예외 그대로(Throttled · ProviderHttpError · httpx 오류 · RouteParseError)."""
+    async def lookup(self, callsign: str, *, wait_s: float = ROUTE_WAIT_S, before_send: BeforeSend | None = None) -> RouteFetch:
+        """found · not_found. 실패는 예외 그대로(Throttled · SendCancelled · ProviderHttpError · httpx 오류 · RouteParseError).
+        before_send: 속도 상한 허가를 받은 뒤 보내기 직전의 확인(예: 운영자 스위치) — False 면 보내지 않는다."""
         url = self.url(callsign)
         try:
-            resp = await self._http.get(url, priority=PRIORITY_ROUTE, wait_s=wait_s)
+            resp = await self._http.get(url, priority=PRIORITY_ROUTE, wait_s=wait_s, before_send=before_send)
         except ProviderHttpError as e:
             if e.status == 404 and is_unknown_callsign_body(e.body_head):
                 return RouteFetch(not_found(callsign, datetime.now(UTC)), 404, e.latency_ms)

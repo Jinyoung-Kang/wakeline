@@ -102,7 +102,7 @@ class _NotFoundProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def lookup(self, callsign: str, *, wait_s: float) -> RouteFetch:
+    async def lookup(self, callsign: str, *, wait_s: float, before_send=None) -> RouteFetch:
         self.calls.append(callsign)
         return RouteFetch(not_found(callsign, datetime.now(UTC)), 404, 10)
 

@@ -12,9 +12,13 @@
 - shards = JSON 배열(≤ 3) [{scope, state, connected, last_msg_at, msgs_per_s, lag_p50_s, gap_open_since, gap_reason, sessions_ended}].
   모르는 값은 null(추정하지 않는다).
 
-구역을 없애면(설정에서 빠짐) 연결을 닫고, 아직 발행하지 못한 닫힌 공백은 그대로 보낸다. 그 구역에 **열린** 공백은 기록하지 않는다 —
-끝(다시 받은 첫 메시지)이 오지 않고, 그 뒤로 그 영역은 구독 범위 밖이지 끊김이 아니다(로그로만 남긴다).
-재시작 이어받기: 이전 실행의 shards 배열에서 **같은 scope** 의 구역만 잇는다. v4 이전 해시(shards 없음)는 bbox 가 같은 구역(또는 fixture)에 한 번.
+- shards[].scope 는 열린 공백이 있으면 **그 공백의 scope**(공백이 열린 순간 구독하던 상자, 구역 없는 공백이면 null)다 — 끊긴 사이
+  상자가 바뀌어도 만료 멈춤·항적 끊기·재시작 이어받기가 공백이 난 영역을 따른다. 공백이 없으면 지금 구독 문자열.
+
+구역을 없애면(설정에서 빠짐) 연결을 닫고, 아직 발행하지 못한 닫힌 공백은 그대로 보낸다. 그 구역에 **열린** 공백은 없앤 시각에 닫아
+기록한다(원인 끝에 ' · 구역 제거', 계약 v4 G D-3) — 그 시각까지 받지 못한 것은 사실이고, 그 뒤로 그 영역은 구독 범위 밖이다.
+재시작 이어받기: 이전 실행의 shards 배열에서 **같은 scope** 의 구역은 그 구역에 잇는다. v4 이전 해시(shards 없음)는 bbox 가 같은 구역
+(또는 fixture)에 한 번. 같은 구역이 없어 잇지 못한 기록은 첫 구역들을 만든 뒤(restore_leftover) 구역 없는 공백 하나로 잇는다(G D-3).
 """
 
 from __future__ import annotations
@@ -29,8 +33,8 @@ from typing import Any
 
 import orjson
 
-from wakeline_collector.ais.bbox import MAX_SHARDS, BboxState
-from wakeline_collector.ais.feed import PENDING_MAX, FeedState, parse_iso
+from wakeline_collector.ais.bbox import MAX_SHARDS, MAX_TEXT, SHARD_SEP, BboxState, format_bboxes
+from wakeline_collector.ais.feed import PENDING_MAX, FeedState, GapTracker, parse_iso
 from wakeline_collector.ais.parse import iso_ms
 
 log = logging.getLogger("ais.shards")
@@ -104,6 +108,7 @@ class Shard:
     bboxes: BboxState | None = None
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
+    removed_at: float | None = None  # 설정에서 뺀 시각(wall) — 그때 열린 공백을 닫는다
 
     @property
     def label(self) -> str:
@@ -173,15 +178,31 @@ class ShardSet:
             log.info("carrying over an open AIS gap from the previous run (%s, %s)", feed.gaps.reason, shard.label)
 
     def begin_closing(self, shard: Shard) -> None:
-        """설정에서 빠진 구역: 상태·합계에서 빼고, 연결을 닫는 동안 누적 수·보낼 공백만 남긴다."""
+        """설정에서 빠진 구역: 상태·합계에서 빼고, 연결을 닫는 동안 누적 수·보낼 공백만 남긴다.
+        열린 공백은 지금(없앤 시각) 닫아 기록한다(계약 v4 G D-3)."""
         self.active.remove(shard)
         self.closing.append(shard)
+        shard.removed_at = self._wall()
+        self._close_removed(shard)
         self.changed.set()
 
+    def _close_removed(self, shard: Shard) -> None:
+        g = shard.feed.gaps
+        if g.open_since is None or shard.removed_at is None:
+            return
+        since = g.open_since
+        ev = g.close_removed(shard.removed_at)
+        if ev is not None:
+            log.info("ais %s removed with a gap open since %s — closed at removal", shard.label, iso_ms(since))
+
     def retire(self, shard: Shard) -> None:
-        """연결을 닫은 구역을 없앤다. 누적 수를 합계에 더하고, 보내지 못한 닫힌 공백은 계속 보낸다."""
+        """연결을 닫은 구역을 없앤다. 누적 수를 합계에 더하고, 보내지 못한 닫힌 공백은 계속 보낸다.
+        닫는 사이 연결이 끊겨 공백이 다시 열렸으면 없앤 시각에 닫는다(그 뒤에 열린 것이면 기록하지 않는다)."""
         if shard in self.closing:
             self.closing.remove(shard)
+        if shard.removed_at is None:  # begin_closing 을 거치지 않은 경우(방어)
+            shard.removed_at = self._wall()
+        self._close_removed(shard)
         f = shard.feed
         self.retired_msgs_total += f.msgs_total
         self.retired_sessions_ended += f.sessions_ended
@@ -189,12 +210,38 @@ class ShardSet:
         self.retired_last_gap = _later(self.retired_last_gap, f.gaps.last)
         self.retired_pending.extend(f.gaps.pending)
         f.gaps.pending.clear()
-        if f.gaps.open_since is not None:
-            log.info(
-                "ais %s removed with a gap open since %s — not recorded (no longer subscribed)",
-                shard.label,
-                iso_ms(f.gaps.open_since),
-            )
+        self.changed.set()
+
+    def restore_leftover(self) -> None:
+        """기동 때 첫 구역들을 만든 뒤 한 번(계약 v4 G D-3): 같은 구역이 없어 잇지 못한 이전 실행의 열린 공백(없으면 마지막 메시지
+        시각부터 — 재시작 공백)을 구역 없는(scope 없음 = 모든 선박에 적용) 공백 하나로 잇는다. 여럿이면 가장 이른 시작.
+        열린 공백이 없는 첫 구역에 둔다. 모든 구역이 이미 공백을 이어받았으면 첫 구역의 공백을 구역 없는 공백으로 넓힌다.
+        이 뒤로 만드는 구역은 이전 실행의 기록을 잇지 않는다(설정 변경으로 늘린 구역)."""
+        prev, rows = self._prev, self._prev_shards
+        self._prev, self._prev_shards = {}, None
+        keys = ("gap_open_since", "gap_reason", "last_msg_at")
+        if rows is not None:
+            sources = [{k: _text(e.get(k)) for k in keys} for e in rows]
+        elif prev:
+            sources = [{k: prev.get(k, "") for k in keys}]
+        else:
+            return
+        now, opened = self._wall(), []
+        for src in sources:
+            g = GapTracker()
+            g.restore({"provider": self.provider, **src}, self.provider, now)
+            if g.open_since is not None:
+                opened.append((g.open_since, g.reason))
+        if not opened or not self.active:
+            return
+        since, reason = min(opened)
+        target = next((s for s in self.active if s.feed.gaps.open_since is None), None)
+        if target is not None:
+            target.feed.gaps.open(since, reason, None)
+        else:
+            target = self.active[0]
+            target.feed.gaps.widen(since, reason)
+        log.info("carrying over an open AIS gap with no matching shard as unscoped (%s, %s)", reason, target.label)
         self.changed.set()
 
     def find(self, shard_id: int) -> Shard | None:
@@ -276,8 +323,22 @@ class ShardSet:
 
     @property
     def bbox(self) -> str:
-        """구독한 영역 전체(구역마다 마지막으로 보낸 문자열을 '|' 로). fixture 는 'fixture:<파일명>', 구독 전·비활성은 빈 값."""
-        return "|".join(f.bbox for f in self.feeds() if f.bbox)
+        """구독한 영역 전체(구역마다 마지막으로 보낸 문자열을 '|' 로, 1,024자 이하). fixture 는 'fixture:<파일명>', 구독 전·비활성은 빈 값.
+        - 끊긴 채 설정이 바뀐 구역의 옛 문자열은 넣지 않는다 — 지금 구독 중도 아니고 다시 보내지도 않는다.
+        - 합쳐 1,024자를 넘으면(구역을 바꾸는 동안 재구독 제한 5 s 사이) 넘치게 하는 구역은 뺀다 — 수신 범위를 넓게 말하지 않는다."""
+        parts: list[str] = []
+        size = -len(SHARD_SEP)
+        for s in self.active:
+            b = s.feed.bbox
+            if not b:
+                continue
+            if not s.feed.connected and s.bboxes is not None and b != format_bboxes(s.bboxes.snapshot()[0]):
+                continue
+            if size + len(SHARD_SEP) + len(b) > MAX_TEXT:
+                continue
+            parts.append(b)
+            size += len(SHARD_SEP) + len(b)
+        return SHARD_SEP.join(parts)
 
     @property
     def deflate(self) -> bool | None:
@@ -318,7 +379,7 @@ class ShardSet:
             f, g = s.feed, s.feed.gaps
             out.append(
                 {
-                    "scope": f.scope,
+                    "scope": g.scope if g.open_since is not None else f.scope,  # 열린 공백이 있으면 그 공백의 영역
                     "state": f.state,
                     "connected": f.connected,
                     "last_msg_at": _iso(f.last_msg_at),

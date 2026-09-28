@@ -839,14 +839,114 @@ async def test_main_fixture_mode_is_one_unscoped_shard():
     assert only["scope"] is None and only["state"] == "stopped" and r.kv[STATUS_KEY]["bbox"] == "fixture:ais_east_asia_90s.jsonl"
 
 
-async def test_main_without_key_lists_each_configured_shard_as_disabled():
+async def test_main_without_key_publishes_one_unscoped_disabled_entry():
+    """계약 v4 G D-2: 키가 없으면 아무 영역도 구독하지 않는다 — 구역 없는(scope null) 항목 하나, 설정의 상자는 상태에 싣지 않는다."""
     r = ClosableRedis()
+    await r.hset("wakeline:settings", "ais_bboxes", f"{AMERICAS}|{ASIA}")
     stop = asyncio.Event()
-    s = AisSettings(aisstream_api_key="", ais_bboxes=f"{AMERICAS}|{ASIA}")
+    s = AisSettings(aisstream_api_key="", ais_bboxes="18,105,46,150|-90,45,90,180")
     task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=s))
     await wait_until(lambda: r.kv.get(STATUS_KEY, {}).get("state") == "disabled")
-    view = json.loads(r.kv[STATUS_KEY]["shards"])
-    assert [(v["scope"], v["state"]) for v in view] == [(AMERICAS, "disabled"), (ASIA, "disabled")]
-    assert evaluate(r.kv[STATUS_KEY])[0]
+    h = r.kv[STATUS_KEY]
+    (only,) = json.loads(h["shards"])
+    assert only["scope"] is None and only["state"] == "disabled" and only["connected"] is False
+    assert h["bbox"] == "" and evaluate(h)[0]
+    blob = json.dumps(h)
+    assert all(box not in blob for box in (AMERICAS, ASIA, "18,105,46,150"))  # 구독하지 않은 영역이 상태로 새지 않는다
     stop.set()
     assert await asyncio.wait_for(task, 5) == 0
+
+
+class StatusLog(ClosableRedis):
+    """상태 해시에 쓴 값을 차례로 남긴다(첫 쓰기를 보려고)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.status_writes: list[dict[str, str]] = []
+
+    async def hset(self, key, field=None, value=None, mapping=None):
+        if key == STATUS_KEY and mapping:
+            self.status_writes.append(dict(mapping))
+        return await super().hset(key, field, value, mapping)
+
+
+@pytest.mark.parametrize(("runtime", "scope"), [(None, AMERICAS), (ASIA, None)])
+async def test_main_first_status_write_after_restart_keeps_the_carried_gap(runtime, scope):
+    """리뷰 v4 · G D-3: 구역은 발행 태스크보다 먼저 만들어 첫 상태 쓰기부터 이어받은 공백이 있다(지우면 재시작 공백을 잃는다).
+    내려가 있던 사이 설정이 바뀌었으면(같은 구역 없음) 구역 없는 공백으로 잇는다."""
+    from wakeline_collector.ais.parse import iso_ms
+
+    async def script(idx, ws, srv):
+        await ws.wait_closed()  # 구독만 받고 아무것도 보내지 않는다 — 공백은 열린 채
+
+    server, url = await start(FakeAis(script))
+    r = StatusLog()
+    since = iso_ms(time.time() - 120)
+    prev_entry = {"scope": AMERICAS, "state": "stopped", "connected": False, "last_msg_at": since, "msgs_per_s": None}
+    prev_entry |= {"lag_p50_s": None, "gap_open_since": since, "gap_reason": "ais process stopped", "sessions_ended": 0}
+    await r.hset(
+        STATUS_KEY,
+        mapping={
+            "provider": "aisstream",
+            "state": "stopped",
+            "bbox": AMERICAS,
+            "gap_open_since": since,
+            "gap_reason": "ais process stopped",
+            "last_msg_at": since,
+            "shards": json.dumps([prev_entry]),
+        },
+    )
+    if runtime:
+        await r.hset("wakeline:settings", "ais_bboxes", runtime)
+    r.status_writes.clear()
+    stop = asyncio.Event()
+    s = AisSettings(aisstream_api_key=KEY, ais_bboxes=AMERICAS)
+    task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=s, client_kw={"url": url}))
+    try:
+        await wait_until(lambda: len(r.status_writes) >= 1)
+    finally:
+        stop.set()
+        assert await asyncio.wait_for(task, 10) == 0
+        server.close()
+    first = r.status_writes[0]
+    assert first["gap_open_since"] == since and first["gap_reason"] == "ais process stopped"
+    (entry,) = json.loads(first["shards"])
+    assert entry["scope"] == scope and entry["gap_open_since"] == since
+    assert all(w["gap_open_since"] == since for w in r.status_writes)  # 받은 것이 없으니 끝까지 열려 있다
+
+
+async def test_pool_records_the_open_gap_of_a_shard_removed_during_backoff():
+    """리뷰 v4 · G D-3: 백오프 중(공백 열림)인 구역을 설정에서 빼면 그 공백을 없앤 시각에 닫아 기록한다 — 조용히 버리지 않는다."""
+    from wakeline_collector.ais.parse import iso_ms
+
+    async def script(idx, ws, srv):
+        asia = boxes_of(srv, idx) == ASIA_BOXES
+        for f in frames(3):
+            await ws.send(f)
+        if asia:
+            await asyncio.sleep(0.05)
+            await ws.close(1011, "try again later")
+            return
+        await ws.wait_closed()
+
+    server, url = await start(FakeAis(script))
+    pool, _q, shards, desired = make_pool(url, f"{AMERICAS}|{ASIA}")
+    pool._backoff_factory = lambda: Backoff(base_s=30.0, cap_s=30.0, rng=random.Random(1))  # 오래 쉬는 동안 뺀다
+    stop = asyncio.Event()
+    task = asyncio.create_task(pool.run(stop))
+    try:
+        await wait_until(lambda: len(shards.active) == 2 and shards.active[1].feed.state == "backoff")
+        asia = shards.active[1]
+        since = asia.feed.gaps.open_since
+        assert since is not None
+        t_remove = time.time()
+        desired.set(parse_shards(AMERICAS))
+        await wait_until(lambda: len(shards.active) == 1 and not shards.closing)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+    (ev,) = list(shards.retired_pending)
+    assert ev["scope"] == ASIA and ev["reason"] == "server closed (1011 try again later) · 구역 제거"
+    assert ev["started_at"] == iso_ms(since) and t_remove - 0.01 <= parse_iso(ev["ended_at"]) <= time.time()
+    assert shards.last_gap() == ev and shards.active[0].feed.gaps.open_since is None
