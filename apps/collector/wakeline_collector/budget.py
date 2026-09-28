@@ -84,11 +84,22 @@ class Budget:
         except Exception as e:  # noqa: BLE001
             self._warn("release", e)
 
-    async def usage(self, provider: str) -> tuple[int | None, int]:
-        """(사용량 | None=알 수 없음, 한도)."""
+    async def usage(self, provider: str, day: datetime | None = None) -> tuple[int | None, int]:
+        """(사용량 | None=알 수 없음, 한도). day: 그 UTC 날짜의 키(기본 오늘)."""
         try:
-            h = await self._r.hgetall(day_key(provider))
+            h = await self._r.hgetall(day_key(provider, day))
         except Exception as e:  # noqa: BLE001
             self._warn("usage", e)
             return None, self.limit(provider)
+        return int(h.get("used", 0) or 0), int(h.get("limit", self.limit(provider)) or 0)
+
+    async def recorded_usage(self, provider: str, day: datetime) -> tuple[int, int] | None:
+        """그 날짜 키가 남아 있으면(TTL 48 h) (사용량, 한도). 키가 없거나 Redis 장애면 None — 모르는 값을 0 으로 만들지 않는다."""
+        try:
+            h = await self._r.hgetall(day_key(provider, day))
+        except Exception as e:  # noqa: BLE001
+            self._warn("usage", e)
+            return None
+        if not h:
+            return None
         return int(h.get("used", 0) or 0), int(h.get("limit", self.limit(provider)) or 0)

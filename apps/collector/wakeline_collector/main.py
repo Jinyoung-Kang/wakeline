@@ -68,6 +68,11 @@ def build_limits(s: Settings) -> dict[str, int]:
     }
 
 
+def snapshot_providers(limits: dict[str, int], *, fixture: bool) -> list[str]:
+    """일별 예산 스냅샷 대상. 실시간 모드에서는 fixture 공급자를 빼 'fixture|0|0' 행이 쌓이지 않게 한다(R-19)."""
+    return [p for p in limits if fixture or p != "fixture"]
+
+
 def make_redis(s: Settings) -> Redis:
     """ACL 사용자(계약 §6: REDIS_USERNAME)를 지원한다. 비우면 default 사용자."""
     return Redis(
@@ -146,7 +151,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     region = AircraftJob("region", ProviderChain("region", aircraft_providers, ctx.status), ctx)
     global_ = AircraftJob("global", ProviderChain("global", aircraft_providers, ctx.status), ctx)
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
-    maint = MaintenanceJob(list(limits), ctx)
+    maint = MaintenanceJob(snapshot_providers(limits, fixture=fixture), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
     if settings.demand_enabled:
         # 노선(계약 v4 §A · G A-2): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 묻지 않고
