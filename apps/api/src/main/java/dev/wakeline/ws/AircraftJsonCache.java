@@ -1,6 +1,9 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.domain.AircraftState;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.EnumMap;
@@ -20,16 +23,27 @@ final class AircraftJsonCache {
 
     private final ObjectMapper json;
     private final Map<WsMessages.Encoding, ConcurrentHashMap<String, Entry>> maps = new EnumMap<>(WsMessages.Encoding.class);
+    /** 적중률(R-53): 조각을 다시 쓴 횟수(hit)와 새로 직렬화한 횟수(miss). */
+    private final Counter hit;
+    private final Counter miss;
 
-    AircraftJsonCache(ObjectMapper json) {
+    AircraftJsonCache(ObjectMapper json) { this(json, new SimpleMeterRegistry()); }
+
+    AircraftJsonCache(ObjectMapper json, MeterRegistry meters) {
         this.json = json;
         for (WsMessages.Encoding e : WsMessages.Encoding.values()) maps.put(e, new ConcurrentHashMap<>());
+        this.hit = Counter.builder("wakeline_cache_requests_total").tag("cache", "aircraft_json").tag("result", "hit").register(meters);
+        this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "aircraft_json").tag("result", "miss").register(meters);
     }
 
     String get(AircraftState a, WsMessages.Encoding enc) {
         ConcurrentHashMap<String, Entry> m = maps.get(enc);
         Entry e = m.get(a.hex());
-        if (e != null && (e.state == a || e.state.equals(a))) return e.json;
+        if (e != null && (e.state == a || e.state.equals(a))) {
+            hit.increment();
+            return e.json;
+        }
+        miss.increment();
         String s = json.writeValueAsString(WsMessages.encode(a, enc));
         m.put(a.hex(), new Entry(a, s));
         return s;

@@ -124,12 +124,14 @@ public class WsHub implements SmartLifecycle {
     // ---- SIGMET·레이더·status 공유 페이로드 ----
     record SigmetPayload(SigmetStore.State state, long version, String json, long validUntilMs) {}
     record RadarPayload(RadarStore.Frames frames, String json) {}
-    private record StatusPayload(long atMs, String json) {}
+    private record StatusPayload(long atMs, String json, Map<String, Object> status) {}
     private final Object sigmetsBuildLock = new Object();
     private final AtomicReference<SigmetPayload> sigmetsCache = new AtomicReference<>();
     private final AtomicReference<RadarPayload> radarCache = new AtomicReference<>();
     private final Object statusLock = new Object();
     private volatile StatusPayload statusCache;
+    private final Counter statusHit;
+    private final Counter statusMiss;
 
     @Autowired
     public WsHub(ObjectMapper json, AppProperties props, SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar,
@@ -156,8 +158,11 @@ public class WsHub implements SmartLifecycle {
         this.pool = pool;
         this.timer = timer;
         this.helloTimeoutMs = helloTimeoutMs;
-        this.fragments = new AircraftJsonCache(json);
+        this.fragments = new AircraftJsonCache(json, meters);
         this.meters = meters;
+        // 캐시 적중률(R-53): 공유 status 페이로드(REST /status 도 쓴다)
+        this.statusHit = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "hit").register(meters);
+        this.statusMiss = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "miss").register(meters);
         meters.gauge("wakeline_ws_sessions", sessions, Map::size);
         this.dropped = Counter.builder("wakeline_ws_dropped_total").description("열린 세션에 보내지 못한 메시지").register(meters);
         this.coalesced = Counter.builder("wakeline_ws_coalesced_total").description("이전 팬아웃이 대기 중이라 합친 요청").register(meters);
@@ -770,22 +775,45 @@ public class WsHub implements SmartLifecycle {
 
     /** status 페이로드(Redis 조회 3회) — STATUS_TTL_MS 동안 모든 세션이 공유한다. 조회 실패 시 이전 값(없으면 null). */
     String statusJson() {
+        StatusPayload c = statusPayload();
+        return c == null ? null : c.json();
+    }
+
+    /**
+     * 공개 상태(REST /api/v1/status 가 쓴다, R-53) — WS 와 같은 STATUS_TTL_MS 캐시. 요청마다 Redis 를 읽지 않는다. 조회 실패 시 이전 값,
+     * 이전 값도 없으면 예외를 그대로 올린다(REST 가 503 으로).
+     */
+    public Map<String, Object> status() {
+        StatusPayload c = statusPayload();
+        return c != null ? c.status() : statusSource.get();
+    }
+
+    private StatusPayload statusPayload() {
         long now = System.currentTimeMillis();
         StatusPayload c = statusCache;
-        if (c != null && now - c.atMs() < STATUS_TTL_MS) return c.json();
+        if (c != null && now - c.atMs() < STATUS_TTL_MS) {
+            statusHit.increment();
+            return c;
+        }
         synchronized (statusLock) {
             c = statusCache;
-            if (c != null && now - c.atMs() < STATUS_TTL_MS) return c.json();
+            if (c != null && now - c.atMs() < STATUS_TTL_MS) {
+                statusHit.increment();
+                return c;
+            }
+            statusMiss.increment();
             try {
+                Map<String, Object> st = statusSource.get();
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("type", "status");
-                m.put("status", statusSource.get());
+                m.put("status", st);
                 String j = toJson(m);
-                statusCache = new StatusPayload(System.currentTimeMillis(), j);
-                return j;
+                StatusPayload fresh = new StatusPayload(System.currentTimeMillis(), j, st);
+                statusCache = fresh;
+                return fresh;
             } catch (RuntimeException e) {
                 log.debug("ws status unavailable: {}", e.toString());
-                return c == null ? null : c.json();
+                return c;
             }
         }
     }

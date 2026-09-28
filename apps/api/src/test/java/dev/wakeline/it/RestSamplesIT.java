@@ -41,7 +41,8 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired SigmetStore sigmets;
     @Autowired RadarStore radar;
     @Autowired EngineService engine;
-    @Autowired dev.wakeline.rest.StatusService status;
+    /** REST /status 가 보는 값(WS 와 같은 3 s 캐시, R-53) — 기다릴 때도 같은 값을 본다. */
+    @Autowired dev.wakeline.ws.WsHub status;
     @Autowired dev.wakeline.route.RouteReader routes;
 
     final Map<String, String> index = new LinkedHashMap<>();
@@ -181,7 +182,7 @@ class RestSamplesIT extends IntegrationTest {
         try {
             ItStack.collector().opsForHash().putAll("wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
             await("status sources.ais and demand rate", WAIT, () -> {
-                Map<String, Object> st = status.publicStatus();
+                Map<String, Object> st = status.status();
                 return st.get("sources") instanceof Map<?, ?> src && src.get("ais") instanceof Map<?, ?> ais && Boolean.TRUE.equals(ais.get("connected"))
                         && st.get("demand") instanceof Map<?, ?> d && d.get("adsb_fi_rps_1m") != null;
             });

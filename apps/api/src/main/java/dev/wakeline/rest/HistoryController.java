@@ -30,14 +30,15 @@ public class HistoryController {
     private final TrackRepository tracks;
     private final SigmetRepository sigmetRepo;
     private final StatsRepository stats;
-    private final StatusService status;
+    /** 공개 상태 — WS 와 같은 3 s 캐시(R-53: 요청마다 Redis 해시를 여러 번 읽지 않는다). */
+    private final java.util.function.Supplier<Map<String, Object>> status;
     private final AppProperties props;
 
-    public HistoryController(TrackRepository tracks, SigmetRepository sigmetRepo, StatsRepository stats, StatusService status, AppProperties props) {
+    public HistoryController(TrackRepository tracks, SigmetRepository sigmetRepo, StatsRepository stats, dev.wakeline.ws.WsHub hub, AppProperties props) {
         this.tracks = tracks;
         this.sigmetRepo = sigmetRepo;
         this.stats = stats;
-        this.status = status;
+        this.status = hub::status;
         this.props = props;
     }
 
@@ -101,7 +102,7 @@ public class HistoryController {
 
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> status(HttpServletRequest req) {
-        Map<String, Object> m = new LinkedHashMap<>(status.publicStatus());
+        Map<String, Object> m = new LinkedHashMap<>(status.get());
         m.put("meta", Meta.of(req, "api", Instant.now(), 60));
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(m);
     }

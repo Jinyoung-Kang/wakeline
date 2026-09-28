@@ -1,6 +1,9 @@
 package dev.wakeline.route;
 
 import dev.wakeline.domain.AircraftState;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,17 +42,31 @@ public class RouteReader {
     private final ObjectMapper json;
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Entry> cache = new ConcurrentHashMap<>();
+    /** 5 s 메모리 캐시 적중률(R-53). */
+    private final Counter hit;
+    private final Counter miss;
 
     @Autowired
+    public RouteReader(StringRedisTemplate redis, ObjectMapper json, MeterRegistry meters) {
+        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, meters);
+    }
+
+    /** 지표 없이(테스트 컨텍스트). */
     public RouteReader(StringRedisTemplate redis, ObjectMapper json) {
-        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis);
+        this(redis, json, new SimpleMeterRegistry());
     }
 
     /** 테스트용(다른 패키지의 컨트롤러·WS 시험도 쓴다): Redis GET 과 시계를 주입한다. */
     public RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock) {
+        this(get, json, clock, new SimpleMeterRegistry());
+    }
+
+    RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock, MeterRegistry meters) {
         this.get = get;
         this.json = json;
         this.clock = clock;
+        this.hit = Counter.builder("wakeline_cache_requests_total").tag("cache", "route").tag("result", "hit").register(meters);
+        this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "route").tag("result", "miss").register(meters);
     }
 
     /** 이 항공기의 노선(상태가 없으면 null — 콜사인을 모른다). */
@@ -63,7 +80,11 @@ public class RouteReader {
         if (cs == null) return RouteInfo.noCallsign();
         long now = clock.getAsLong();
         Entry e = cache.get(cs);
-        if (e != null && now >= e.atMs() && now - e.atMs() < TTL_MS) return e.route();
+        if (e != null && now >= e.atMs() && now - e.atMs() < TTL_MS) {
+            hit.increment();
+            return e.route();
+        }
+        miss.increment();
         RouteInfo r = read(cs);
         if (cache.size() >= MAX_ENTRIES) prune(now);
         cache.put(cs, new Entry(r, now));
