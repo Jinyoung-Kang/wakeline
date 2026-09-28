@@ -122,7 +122,7 @@ type RejectionLike = Event & { reason?: unknown };
  * 스택이 없으면 파일:줄:열(쿼리 제외)만 — 그것도 없으면 빈 문자열.
  */
 export function installErrorReporter(target: EventTarget | null = typeof window === "undefined" ? null : window, reporter: Reporter | null = sharedReporter()): () => void {
-  if (!target || !reporter) return () => {};
+  if (!target || !reporter || typeof target.addEventListener !== "function") return () => {};
   const onError = (ev: Event) => {
     try {
       const e = ev as ErrorLike;
