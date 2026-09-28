@@ -6,6 +6,8 @@ import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.DestinationParser;
 import dev.wakeline.domain.ShipCategory;
+import dev.wakeline.domain.ShipQuery;
+import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.AisStatus;
 import dev.wakeline.ingest.ShipStore;
@@ -62,6 +64,14 @@ public class ShipController {
     static final int GAPS_LIMIT = 500;
     /** 선박 목록 stale 기준: 수집기는 10 s 마다 발행한다. */
     static final int SHIPS_STALE_S = 60;
+    /** 검색 결과 수(계약 v5 §B1: limit 1–20, 기본 10). */
+    static final int SEARCH_MAX_LIMIT = 20;
+    static final int SEARCH_DEFAULT_LIMIT = 10;
+    /**
+     * 검색 한 번의 DB 검색 문장 상한. 다시 묻는 것은 실시간 선박의 메모리 정적 정보와 저장 정적 정보가 어긋난 동안(개명 직후 저장 전 등)뿐이다 —
+     * 그래도 모자라면 있는 만큼만 준다.
+     */
+    static final int SEARCH_DB_ATTEMPTS = 3;
 
     private final ShipStore store;
     private final ShipRepository repo;
@@ -127,6 +137,127 @@ public class ShipController {
 
     /** true → 1, false → 0, 모름(null) → u. */
     private static char flag(Object o) { return o == null ? 'u' : Boolean.TRUE.equals(o) ? '1' : '0'; }
+
+    /**
+     * 선박 검색(계약 v5 §B1, 공개). 검색어 규칙은 {@link ShipQuery}(9자리 MMSI 정확 · 3–8자리 MMSI 앞부분 · IMO 접두/7자리 IMO 정확 · 그 밖 선명·호출부호 앞부분).
+     * <ol>
+     *   <li>실시간(ShipStore — 위치 + 메모리 정적 정보)에서 먼저: 정확 일치 → 최근 보고 → MMSI 순.</li>
+     *   <li>모자라면 DB ship 표(정확 일치 → last_seen 최신 → MMSI 순)에서 실시간 결과에 없는 선박. 그 선박이 실시간 목록에 있는데 메모리에 정적 정보가 없으면
+     *       (상세와 같은 DB 폴백) 실시간 위치와 함께 live=true. 메모리 정적 정보가 있는데 일치하지 않았다면 옛 보고로만 찾힌 것이라 싣지 않는다.</li>
+     *   <li>last_position_at = DB 의 마지막 저장 위치 시각(ship_position — 보존 72 h 안, 그보다 오래된 선박은 null). ship.last_seen 은 위치로는
+     *       10분 단위로만 넓히므로 내보내지 않는다(상세와 같다 — DB 순서에만 쓴다). 실시간이지만 메모리에 정적 정보가 없는 선박은 DB 의 저장 정적 정보로 채운다.</li>
+     * </ol>
+     * 항목은 계약의 12개 키를 늘 싣는다 — 모르는 값은 JSON null(실시간이 아니면 lat · lon · sog_kn · seen_at 이 null, 위치를 지어내지 않는다).
+     * 분류(category)는 선종 코드의 결정적 변환(없으면 unknown). DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true.
+     */
+    @GetMapping("/ships/search")
+    public ResponseEntity<Map<String, Object>> shipSearch(@RequestParam(required = false) String q,
+                                                      @RequestParam(defaultValue = "" + SEARCH_DEFAULT_LIMIT) int limit, HttpServletRequest req) {
+        ShipQuery query;
+        try {
+            query = ShipQuery.parse(q);
+        } catch (IllegalArgumentException e) {
+            throw Problem.badRequest("BAD_QUERY", e.getMessage());
+        }
+        if (limit < 1 || limit > SEARCH_MAX_LIMIT) throw Problem.badRequest("BAD_LIMIT", "limit must be 1.." + SEARCH_MAX_LIMIT);
+        ShipStore.View v = store.view();
+        java.util.Comparator<ShipStore.Ship> order = java.util.Comparator.comparing((ShipStore.Ship s) -> !query.exact(s.mmsi(), s.stat()))
+                .thenComparing((ShipStore.Ship s) -> s.state().seenAt(), java.util.Comparator.reverseOrder()).thenComparing(ShipStore.Ship::mmsi);
+        // 상위 limit 척만 남기며 고른다(짧은 MMSI 앞부분은 실시간 목록 전체가 일치할 수 있다 — 전부 정렬하지 않는다)
+        java.util.PriorityQueue<ShipStore.Ship> top = new java.util.PriorityQueue<>(limit + 1, order.reversed());
+        if (query.kind() == ShipQuery.Kind.MMSI) {
+            ShipStore.Ship s = v.get(query.text());
+            if (s != null) top.add(s);
+        } else {
+            for (ShipStore.Ship s : v.ships().values()) {
+                if (!query.matches(s.mmsi(), s.stat())) continue;
+                if (top.size() == limit && order.compare(s, top.peek()) >= 0) continue; // 지금 남긴 것 중 가장 뒤보다 앞서지 않는다
+                top.add(s);
+                if (top.size() > limit) top.poll();
+            }
+        }
+        List<ShipStore.Ship> live = new ArrayList<>(top);
+        live.sort(order);
+        List<Hit> hits = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (ShipStore.Ship s : live) {
+            hits.add(new Hit(s.mmsi(), s, s.stat()));
+            seen.add(s.mmsi());
+        }
+        boolean dbUnavailable = false;
+        // 9자리 MMSI 는 많아야 한 척 — 실시간에서 찾았으면 DB 검색은 같은 MMSI 만 돌려주므로 묻지 않는다(저장 정적 정보·마지막 저장 시각은 lookup)
+        boolean complete = hits.size() >= limit || (query.kind() == ShipQuery.Kind.MMSI && !hits.isEmpty());
+        if (!complete) {
+            try {
+                List<Hit> dbLive = new ArrayList<>(), dbOnly = new ArrayList<>();
+                int want = limit - hits.size();
+                int n = limit + hits.size(); // 실시간 결과와 겹칠 몫까지
+                for (int attempt = 1; ; attempt++) {
+                    dbLive.clear();
+                    dbOnly.clear();
+                    List<ShipRepository.SearchRow> rows = repo.search(query, n);
+                    for (ShipRepository.SearchRow r : rows) {
+                        if (seen.contains(r.mmsi())) continue; // ship 표의 MMSI 는 기본 키 — 한 번씩만 온다
+                        ShipStore.Ship s = v.get(r.mmsi());
+                        if (s == null) dbOnly.add(new Hit(r.mmsi(), null, r.stat()));
+                        else if (s.stat() == null) dbLive.add(new Hit(r.mmsi(), s, r.stat()));
+                        // 그 밖(메모리 정적 정보가 있는데 실시간 일치에 없음)은 옛 저장 정적 정보로만 찾힌 행 — 싣지 않는다
+                    }
+                    int got = dbLive.size() + dbOnly.size();
+                    // 걸러진 행 때문에 모자라고 DB 에 더 있을 수 있으면(행이 n 개 꽉 참) 모자란 만큼 더 물어 처음부터 다시 — 같은 순서라 앞 행은 같다
+                    if (got >= want || rows.size() < n || attempt == SEARCH_DB_ATTEMPTS) break;
+                    n += want - got;
+                }
+                for (Hit h : dbLive) if (hits.size() < limit) hits.add(h); // 실시간 먼저
+                for (Hit h : dbOnly) if (hits.size() < limit) hits.add(h);
+            } catch (DataAccessException e) {
+                dbUnavailable = true;
+            }
+        }
+        Map<String, ShipRepository.Known> known = Map.of();
+        if (!dbUnavailable && !hits.isEmpty()) {
+            try {
+                known = repo.lookup(hits.stream().map(Hit::mmsi).toList());
+            } catch (DataAccessException e) {
+                dbUnavailable = true;
+            }
+        }
+        List<Map<String, Object>> items = new ArrayList<>(hits.size());
+        for (Hit h : hits) items.add(searchItem(h, known.get(h.mmsi())));
+        Map<String, Object> meta = Meta.of(req, v.provider(), v.fetchedAt(), SHIPS_STALE_S);
+        meta.put("q", query.text());
+        meta.put("count", items.size());
+        if (dbUnavailable) meta.put("db_unavailable", true);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", items);
+        out.put("meta", meta);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(out);
+    }
+
+    /** 검색 결과 하나: 실시간 선박(없으면 null)과 이 결과를 낸 정적 정보(메모리 또는 DB, 없으면 null). */
+    private record Hit(String mmsi, ShipStore.Ship live, ShipStatic stat) {}
+
+    /** 계약 v5 §B1 항목. 전역 non_null 설정이 Java null 을 빼 버리므로 모르는 값은 JSON null 노드로 넣는다(키를 남긴다 — SigmetGeoJson 과 같은 방법). */
+    private static Map<String, Object> searchItem(Hit h, ShipRepository.Known known) {
+        ShipStatic st = h.stat() != null ? h.stat() : known == null ? null : known.stat();
+        ShipState s = h.live() == null ? null : h.live().state();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("mmsi", h.mmsi());
+        m.put("name", orNull(st == null ? null : st.name()));
+        m.put("call_sign", orNull(st == null ? null : st.callSign()));
+        m.put("imo", orNull(st == null ? null : st.imo()));
+        m.put("ship_type", orNull(st == null ? null : st.shipType()));
+        m.put("category", ShipCategory.of(st == null ? null : st.shipType()).key());
+        m.put("live", s != null);
+        m.put("lat", orNull(s == null ? null : s.lat()));
+        m.put("lon", orNull(s == null ? null : s.lon()));
+        m.put("sog_kn", orNull(s == null ? null : s.sogKn()));
+        m.put("seen_at", orNull(s == null ? null : s.seenAt()));
+        m.put("last_position_at", orNull(known == null ? null : known.lastPositionAt()));
+        return m;
+    }
+
+    private static Object orNull(Object v) { return v == null ? tools.jackson.databind.node.NullNode.getInstance() : v; }
 
     /**
      * 상세: 실시간 위치(state — 목록에 있을 때만) + 정적 정보(static — 메모리, 없으면 DB) + 선종 분류(category — 코드의 결정적 변환)

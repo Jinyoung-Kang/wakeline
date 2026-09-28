@@ -2,6 +2,7 @@ package dev.wakeline.persist;
 
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.AisScope;
+import dev.wakeline.domain.ShipQuery;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -212,21 +213,86 @@ public class ShipRepository {
     /** 저장된 정적 정보 + first/last_seen(없으면 null). 정적 정보를 받은 적 없는 행은 static 필드가 모두 null 이다. */
     public record StoredShip(ShipStatic stat, Instant firstSeen, Instant lastSeen) {}
 
+    /** ship 표의 정적 정보 열(조회 문장들이 같은 목록을 쓴다 — {@link #staticRow}). */
+    private static final String STATIC_COLUMNS = """
+            s.mmsi, s.name, s.call_sign, s.imo, s.ship_type, s.dim_a, s.dim_b, s.dim_c, s.dim_d, s.draught_m, s.destination,
+            s.eta_month, s.eta_day, s.eta_hour, s.eta_minute, s.updated_at, s.provider""";
+
     public StoredShip find(String mmsi) {
-        return Sql.publicRead(db, """
-                SELECT mmsi, name, call_sign, imo, ship_type, dim_a, dim_b, dim_c, dim_d, draught_m, destination,
-                       eta_month, eta_day, eta_hour, eta_minute, first_seen, last_seen, updated_at, provider
-                FROM ship WHERE mmsi = :m""").param("m", mmsi)
-                .query((rs, i) -> {
-                    java.time.OffsetDateTime upd = rs.getObject("updated_at", java.time.OffsetDateTime.class);
-                    ShipStatic st = upd == null ? null : new ShipStatic(rs.getString("mmsi").trim(), rs.getString("name"), rs.getString("call_sign"),
-                            (Integer) rs.getObject("imo"), shortObj(rs.getObject("ship_type")), shortObj(rs.getObject("dim_a")), shortObj(rs.getObject("dim_b")),
-                            shortObj(rs.getObject("dim_c")), shortObj(rs.getObject("dim_d")), realObj(rs.getObject("draught_m")), rs.getString("destination"),
-                            shortObj(rs.getObject("eta_month")), shortObj(rs.getObject("eta_day")), shortObj(rs.getObject("eta_hour")),
-                            shortObj(rs.getObject("eta_minute")), upd.toInstant(), rs.getString("provider"));
-                    return new StoredShip(st, rs.getObject("first_seen", java.time.OffsetDateTime.class).toInstant(),
-                            rs.getObject("last_seen", java.time.OffsetDateTime.class).toInstant());
-                }).optional().orElse(null);
+        return Sql.publicRead(db, "SELECT " + STATIC_COLUMNS + ", s.first_seen, s.last_seen FROM ship s WHERE s.mmsi = :m").param("m", mmsi)
+                .query((rs, i) -> new StoredShip(staticRow(rs), rs.getObject("first_seen", java.time.OffsetDateTime.class).toInstant(),
+                        rs.getObject("last_seen", java.time.OffsetDateTime.class).toInstant()))
+                .optional().orElse(null);
+    }
+
+    /** 정적 정보를 받은 적 없는 행(updated_at NULL — 위치로만 만든 행)은 null. */
+    private static ShipStatic staticRow(java.sql.ResultSet rs) throws SQLException {
+        java.time.OffsetDateTime upd = rs.getObject("updated_at", java.time.OffsetDateTime.class);
+        if (upd == null) return null;
+        return new ShipStatic(rs.getString("mmsi").trim(), rs.getString("name"), rs.getString("call_sign"),
+                (Integer) rs.getObject("imo"), shortObj(rs.getObject("ship_type")), shortObj(rs.getObject("dim_a")), shortObj(rs.getObject("dim_b")),
+                shortObj(rs.getObject("dim_c")), shortObj(rs.getObject("dim_d")), realObj(rs.getObject("draught_m")), rs.getString("destination"),
+                shortObj(rs.getObject("eta_month")), shortObj(rs.getObject("eta_day")), shortObj(rs.getObject("eta_hour")),
+                shortObj(rs.getObject("eta_minute")), upd.toInstant(), rs.getString("provider"));
+    }
+
+    /** 검색 결과 한 행: 저장된 정적 정보(받은 적 없으면 null) + last_seen(순서용 — 10분 단위로만 넓혀지는 값이라 내보내지 않는다). */
+    public record SearchRow(String mmsi, ShipStatic stat, Instant lastSeen) {}
+
+    /**
+     * 선박 검색(계약 v5 §B1 — 규칙은 {@link ShipQuery}): 정확 일치 → last_seen 최신 → MMSI 순으로 최대 limit 행. 조건마다 인덱스를 쓴다 —
+     * MMSI 는 기본 키(앞부분은 9자리 숫자열 범위 [000…, 999…]), IMO 는 ship_imo, 선명·호출부호 앞부분은 바이트 순서 범위(~>=~ · ~<~)로
+     * V10 ship_name_prefix · ship_call_sign_prefix(text_pattern_ops — 파라미터 그대로 일반 계획에서도 쓴다, AircraftRepository.search 와 같은 방식).
+     */
+    public List<SearchRow> search(ShipQuery q, int limit) {
+        String where = switch (q.kind()) {
+            case MMSI -> "s.mmsi = :q";
+            case MMSI_PREFIX -> "s.mmsi BETWEEN :lo AND :hi";
+            case MMSI_PREFIX_OR_IMO -> "(s.mmsi BETWEEN :lo AND :hi OR s.imo = :imo)";
+            case IMO -> "s.imo = :imo";
+            case NAME_OR_CALL_SIGN -> "((upper(s.name) ~>=~ :q AND upper(s.name) ~<~ :hi) OR (upper(s.call_sign) ~>=~ :q AND upper(s.call_sign) ~<~ :hi))";
+        };
+        // 정확 일치가 먼저(ShipQuery.exact 와 같은 뜻). MMSI 정확은 모두 정확, MMSI 앞부분은 정확 일치가 없다 — 순서 항을 두지 않는다(상수 ORDER BY 는 문법 오류)
+        String exact = switch (q.kind()) {
+            case MMSI, MMSI_PREFIX -> "";
+            case MMSI_PREFIX_OR_IMO, IMO -> "coalesce(s.imo = :imo, false) DESC, ";
+            case NAME_OR_CALL_SIGN -> "coalesce(upper(s.name) = :q OR upper(s.call_sign) = :q, false) DESC, ";
+        };
+        JdbcClient.StatementSpec st = Sql.publicRead(db, "SELECT " + STATIC_COLUMNS + ", s.last_seen FROM ship s WHERE " + where
+                + " ORDER BY " + exact + "s.last_seen DESC, s.mmsi LIMIT :n").param("n", limit);
+        switch (q.kind()) {
+            case MMSI -> st = st.param("q", q.text());
+            case MMSI_PREFIX -> st = st.param("lo", q.mmsiLow()).param("hi", q.mmsiHigh());
+            case MMSI_PREFIX_OR_IMO -> st = st.param("lo", q.mmsiLow()).param("hi", q.mmsiHigh()).param("imo", q.imo());
+            case IMO -> st = st.param("imo", q.imo());
+            case NAME_OR_CALL_SIGN -> st = st.param("q", q.text()).param("hi", q.textHigh());
+        }
+        return st.query((rs, i) -> new SearchRow(rs.getString("mmsi").trim(), staticRow(rs),
+                rs.getObject("last_seen", java.time.OffsetDateTime.class).toInstant())).list();
+    }
+
+    /** 저장된 정적 정보(받은 적 없거나 행이 없으면 null)와 마지막 저장 위치 시각(보존 72 h 안, 없으면 null). */
+    public record Known(ShipStatic stat, Instant lastPositionAt) {}
+
+    /**
+     * 검색 결과 MMSI 들(≤ 20)의 {@link Known} — 한 문장. 마지막 위치 시각은 MMSI 마다 {@link #lastPositionAt} 와 같은 역순 한 행
+     * ((mmsi, ts) 기본 키, 파티션마다). 저장된 것이 하나도 없는 MMSI 는 결과에 없다.
+     */
+    public Map<String, Known> lookup(Collection<String> mmsis) {
+        if (mmsis.isEmpty()) return Map.of();
+        Map<String, Known> out = new LinkedHashMap<>();
+        Sql.publicRead(db, """
+                SELECT u.m AS q_mmsi, s.mmsi, s.name, s.call_sign, s.imo, s.ship_type, s.dim_a, s.dim_b, s.dim_c, s.dim_d, s.draught_m, s.destination,
+                       s.eta_month, s.eta_day, s.eta_hour, s.eta_minute, s.updated_at, s.provider,
+                       (SELECT p.ts FROM ship_position p WHERE p.mmsi = u.m ORDER BY p.ts DESC LIMIT 1) AS last_position_at
+                FROM unnest(string_to_array(:ids, ',')::char(9)[]) AS u(m) LEFT JOIN ship s ON s.mmsi = u.m""")
+                .param("ids", String.join(",", mmsis))
+                .query((java.sql.ResultSet rs) -> {
+                    ShipStatic st = rs.getString("mmsi") == null ? null : staticRow(rs);
+                    java.time.OffsetDateTime last = rs.getObject("last_position_at", java.time.OffsetDateTime.class);
+                    if (st != null || last != null) out.put(rs.getString("q_mmsi").trim(), new Known(st, last == null ? null : last.toInstant()));
+                });
+        return out;
     }
 
     /** 저장된 마지막 위치의 시각(보존 72 h 안, 없으면 null) — (mmsi, ts) PK 색인을 파티션마다 거꾸로 한 번씩 본다. */

@@ -24,13 +24,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MigrationDbTest {
 
     @Test
-    void migrateIsIdempotentAndNeedsOnlyTheMigratorPassword() {
+    void migrateIsIdempotentAndNeedsOnlyTheMigratorPassword() throws Exception {
         DbTestSupport.start();
         assertThat(WakelineApplication.migrate(DbTestSupport.env("wakeline"))).isZero(); // 이미 적용됨 → 0건, 성공
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single())
+                .as("every migration on the classpath is applied").isEqualTo(latestMigrationVersion());
+    }
+
+    /** 클래스패스 db/migration 의 가장 높은 V 번호(새 마이그레이션이 늘어도 이 시험을 고치지 않게). */
+    static int latestMigrationVersion() throws Exception {
+        var dir = MigrationDbTest.class.getResource("/db/migration");
+        assertThat(dir).as("db/migration on the classpath").isNotNull();
+        try (var files = java.nio.file.Files.list(java.nio.file.Path.of(dir.toURI()))) {
+            return files.map(f -> f.getFileName().toString()).filter(n -> n.matches("^V[0-9]+__.*\\.sql$"))
+                    .mapToInt(n -> Integer.parseInt(n.substring(1, n.indexOf("__")))).max().orElseThrow();
+        }
     }
 
     @Test
@@ -295,18 +306,21 @@ class MigrationDbTest {
     }
 
     /** V9 머리 주석의 되돌리기 SQL(주석 표시 '-- ' 를 뗀 본문). 블록 경계가 바뀌면 여기서 먼저 깨진다. */
-    static String v9RollbackSql() throws java.io.IOException {
-        String v9;
-        try (var in = MigrationDbTest.class.getResourceAsStream("/db/migration/V9__review_v1.sql")) {
-            assertThat(in).as("V9 on the classpath").isNotNull();
-            v9 = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    static String v9RollbackSql() throws java.io.IOException { return rollbackSql("V9__review_v1.sql"); }
+
+    /** 마이그레이션 머리 주석의 되돌리기 SQL(주석 표시 '-- ' 를 뗀 본문 — V9 부터 같은 블록 형식). */
+    static String rollbackSql(String file) throws java.io.IOException {
+        String text;
+        try (var in = MigrationDbTest.class.getResourceAsStream("/db/migration/" + file)) {
+            assertThat(in).as(file + " on the classpath").isNotNull();
+            text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         }
         String start = "-- ==== 되돌리기(rollback) SQL", end = "-- ==== 되돌리기 끝 ====";
-        int s = v9.indexOf(start), e = v9.indexOf(end);
+        int s = text.indexOf(start), e = text.indexOf(end);
         assertThat(s).as("rollback block start").isNotNegative();
         assertThat(e).as("rollback block end").isGreaterThan(s);
         StringBuilder sql = new StringBuilder();
-        for (String line : v9.substring(v9.indexOf('\n', s) + 1, e).split("\n")) {
+        for (String line : text.substring(text.indexOf('\n', s) + 1, e).split("\n")) {
             assertThat(line).as("every rollback line is a comment").startsWith("--");
             sql.append(line.startsWith("-- ") ? line.substring(3) : line.substring(2)).append('\n');
         }
@@ -323,7 +337,8 @@ class MigrationDbTest {
         String db = "wakeline_stage_nine";
         DbTestSupport.createDatabase(db);
         String url = DbTestSupport.jdbcUrl(db);
-        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        // V9 까지만(V10 이후는 V9 되돌리기 시험의 대상이 아니다 — 같은 migrator · 같은 위치, 운영 --migrate 와 같은 Flyway 설정)
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target("9").load().migrate();
         JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
         assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'track_point_drop_old'").query(String.class).single()).contains("boundary");
@@ -352,7 +367,7 @@ class MigrationDbTest {
             assertThat(stage.sql("SELECT has_function_privilege('wakeline_api', :f || '(int)', 'EXECUTE')").param("f", fn).query(Boolean.class).single()).isTrue();
         }
 
-        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target("9").load().migrate();
         assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '9' AND success").query(String.class).single())
                 .isEqualTo("wakeline_migrator");
         assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'ship_position_drop_old'").query(String.class).single()).contains("boundary");
@@ -360,6 +375,62 @@ class MigrationDbTest {
             assertThat(index.apply(ix)).as("re-applied " + ix).isEqualTo(1);
         assertThat(apiDefaultGrants.get()).isZero();
         assertThat(ensureBody.get()).contains("REVOKE ALL");
+    }
+
+    /**
+     * V10(계약 v5 §B1): 선박 검색 인덱스 셋(선명·호출부호 upper(...) text_pattern_ops · imo) — migrator 소유, 새 표·권한 없음(api 권한 스냅샷은
+     * RolePrivilegesDbTest). 머리 주석의 되돌리기 SQL 을 migrator 로 실행하면 V9 상태(인덱스 없음 · 이력 행 없음)로 돌아가고, 다시 적용된다.
+     */
+    @Test
+    void v10AddsShipSearchIndexes_andItsHeaderRollbackRestoresV9() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_ten";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        java.util.function.Consumer<String> migrateTo = v -> Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW)
+                .locations("classpath:db/migration").target(v).load().migrate();
+        migrateTo.accept("9");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        stage.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider)
+                VALUES ('440123456', 'HANJIN BUSAN', 'D7HB', 9321483, 70, now(), now(), now(), 'aisstream')""").update();
+        java.util.function.Supplier<Map<String, String>> indexes = () -> {
+            Map<String, String> m = new HashMap<>();
+            for (var r : stage.sql("SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'ship' AND indexname IN "
+                    + "('ship_name_prefix', 'ship_call_sign_prefix', 'ship_imo')").query().listOfRows())
+                m.put((String) r.get("indexname"), (String) r.get("indexdef"));
+            return m;
+        };
+        java.util.function.Supplier<Long> relations = () -> stage.sql("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                + "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S', 'v', 'm')").query(Long.class).single();
+        assertThat(indexes.get()).isEmpty();
+        long relationsAtV9 = relations.get();
+
+        migrateTo.accept("10");
+        Map<String, String> ix = indexes.get();
+        assertThat(ix).containsOnlyKeys("ship_name_prefix", "ship_call_sign_prefix", "ship_imo");
+        assertThat(ix.get("ship_name_prefix")).contains("upper(name)").contains("text_pattern_ops");
+        assertThat(ix.get("ship_call_sign_prefix")).contains("upper(call_sign)").contains("text_pattern_ops");
+        assertThat(ix.get("ship_imo")).contains("(imo)");
+        assertThat(relations.get()).as("V10 creates no table, sequence or view — nothing that would need a GRANT").isEqualTo(relationsAtV9);
+        for (String name : ix.keySet())
+            assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = :n").param("n", name).query(String.class).single())
+                    .as(name + " owner").isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '10' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT count(*) FROM ship").query(Long.class).single()).as("data untouched").isEqualTo(1L);
+
+        try (Connection c = DriverManager.getConnection(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW); Statement st = c.createStatement()) {
+            st.execute(rollbackSql("V10__ship_search_indexes.sql"));
+        }
+        assertThat(indexes.get()).as("rolled back").isEmpty();
+        assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
+        assertThat(stage.sql("SELECT count(*) FROM ship").query(Long.class).single()).isEqualTo(1L);
+
+        migrateTo.accept("10");
+        assertThat(indexes.get()).as("re-applied").hasSize(3);
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '10' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
     }
 
     /**

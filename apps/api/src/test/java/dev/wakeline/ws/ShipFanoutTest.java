@@ -146,6 +146,8 @@ class ShipFanoutTest {
             assertThat(g3.has("capped")).as("zoom, not count").isFalse();
             assertThat(g3.path("cells").size()).as("bbox filter: the Tokyo ship is outside").isEqualTo(1);
             assertThat(g3.path("cells").get(0).get(3).asString()).isEqualTo("cargo");
+            // 계약 v5 §B2: 선종별 수(화물 70 · 71 → cargo 2)가 실제 메시지에 실린다
+            assertThat(g3.path("cells").get(0).get(4).toString()).isEqualTo("[2,0,0,0,0,0,0,0,0,0,0]");
             assertThat(k.meters.find("wakeline_ship_grid_build_seconds").timer().count()).as("one aggregation for all sessions").isEqualTo(1);
 
             // 버전이 그대로면 다시 보내지 않는다(같은 보고 재전달)

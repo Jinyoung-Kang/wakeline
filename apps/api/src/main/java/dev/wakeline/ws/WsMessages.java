@@ -101,8 +101,9 @@ public final class WsMessages {
     public record ShipsDiffMsg(String type, int sseq, Instant ts, @JsonRawValue String upsert, List<String> remove) {}
 
     /**
-     * 줌 < 4, 또는 뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘을 때(capped = true — 계약 v4 §C): 격자 칸별 선박 수. cells = [[칸 중심 lat, 칸 중심 lon, 수, 대표 분류], ...]
-     * (이미 직렬화된 배열). 대표 분류 = 칸에서 가장 많은 선종 분류(동률이면 web 과 같은 순서의 앞 — 결정적).
+     * 줌 < 4, 또는 뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘을 때(capped = true — 계약 v4 §C): 격자 칸별 선박 수. cells = [[칸 중심 lat, 칸 중심 lon, 수, 대표 분류, [선종별 수]], ...]
+     * (이미 직렬화된 배열). 대표 분류 = 칸에서 가장 많은 선종 분류(동률이면 web 과 같은 순서의 앞 — 결정적). 선종별 수(계약 v5 §B2) = 11개 정수
+     * [n0..n10], 순서는 schemas/vectors/ship-categories.v1.json(ShipCategory 선언 순서) — 합은 수와 같다.
      */
     public record ShipsGridMsg(String type, Instant ts, double cellDeg, @JsonRawValue String cells, Boolean capped) {}
 
