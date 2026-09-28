@@ -82,6 +82,17 @@ echo "[WS 핸드셰이크 제한]"
 n429=0
 for _ in $(seq 1 30); do c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/ws/v1")"; [ "$c" = 429 ] && n429=$((n429+1)); done
 [ "$n429" -gt 0 ]; check "WS 핸드셰이크 폭주 → 429 (30회 중 $n429)" $? "$n429"
+# /maplibre/<버전>/ 는 /_next/static 처럼 버전이 붙은 불변 정적 파일이다(R-02 이후 MapLibre 를 여기서 받는다) — IP당 제한에 넣지 않는다.
+# 넣으면 첫 화면마다 제한 양동이를 3–4칸 더 쓰고(페이지·RSC 미리 받기·API 와 같은 양동이), 같은 IP 의 여러 창이 동시에 열 때 지도 라이브러리가 429 로 빠진다.
+n429=0
+for _ in $(seq 1 120); do c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/")"; [ "$c" = 429 ] && n429=$((n429+1)); done
+[ "$n429" -gt 0 ]; check "화면 경로 폭주 → 429 (120회 중 $n429)" $? "$n429"
+n429=0
+for _ in $(seq 1 100); do c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/maplibre/5.0.0/maplibre-gl.mjs")"; [ "$c" = 429 ] && n429=$((n429+1)); done
+[ "$n429" = 0 ]; check "/maplibre 정적 파일은 양동이가 찬 뒤에도 429 없음 (100회 중 $n429)" $? "$n429"
+hdr="$(curl -s -D - -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$PORT/maplibre/5.0.0/maplibre-gl.mjs")"
+grep -qi "^cache-control: public, max-age=31536000, immutable" <<<"$hdr" && grep -qi "^x-frame-options: DENY" <<<"$hdr"; check "/maplibre 캐시 + 보안 헤더" $? "$hdr"
+sleep 7   # 화면 양동이(10 r/s · burst 60)가 비워진 뒤 다음 시험
 
 echo "[망 분리 — internal 망만 있는 상류는 기본 경로(인터넷)가 없고, 게시 포트는 public 망으로 닿는다]"
 route="$(docker exec "$STUB" awk '$2=="00000000"{print $1}' /proc/net/route)"

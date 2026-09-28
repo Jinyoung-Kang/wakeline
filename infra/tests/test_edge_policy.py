@@ -53,5 +53,19 @@ class NoOutboundCalls(unittest.TestCase):
         self.assertNotRegex(joined, r"proxy_pass\s+\S*\$", "변수 proxy_pass 금지")
 
 
+class StaticAssetsTest(unittest.TestCase):
+    """버전이 붙은 불변 정적 파일(/_next/static · /maplibre/<버전>)은 IP당 제한 밖이고 1년 immutable 캐시다."""
+
+    def test_versioned_static_locations_are_not_rate_limited(self):
+        conf = (EDGE / "nginx.conf").read_text(encoding="utf-8")
+        for loc in ("/_next/static/", "/maplibre/"):
+            with self.subTest(location=loc):
+                m = re.search(r"location \^~ " + re.escape(loc) + r" \{(.*?)\n        \}", conf, re.S)
+                self.assertIsNotNone(m, f"location ^~ {loc}")
+                self.assertNotIn("limit_req", m.group(1))
+                self.assertIn('add_header Cache-Control "public, max-age=31536000, immutable" always;', m.group(1))
+                self.assertIn("include /etc/nginx/security_headers.conf;", m.group(1), "add_header 상속 함정")
+
+
 if __name__ == "__main__":
     unittest.main()
