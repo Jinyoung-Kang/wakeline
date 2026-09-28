@@ -79,3 +79,24 @@ def test_malformed_vectors_are_caught(what, edit, needle):
     problems = _broken(edit)
     assert problems, what
     assert any(needle in p for p in problems), (what, problems)
+
+
+@pytest.mark.parametrize(
+    "what,edit",
+    [
+        ("steps is a number", lambda d: d["cases"][0].update(steps=5)),
+        ("steps is an object", lambda d: d["cases"][0].update(steps={"at_ms": 0})),
+        ("cases is a number", lambda d: d.update(cases=5)),
+        ("cases is an object", lambda d: d.update(cases={"name": "x"})),
+    ],
+)
+def test_the_checker_reports_a_wrongly_typed_vector_file_instead_of_crashing(tmp_path, monkeypatch, capsys, what, edit):
+    """계약 검사는 모양이 틀린 파일에 대해 트레이스백 대신 FAIL 줄과 문제를 찍고 1을 돌려준다(요약의 단계 수도 목록인 steps 만 센다)."""
+    doc = copy.deepcopy(committed())
+    edit(doc)
+    path = tmp_path / "log-suppression.v1.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    monkeypatch.setattr(cc, "LOG_SUPPRESSION_VECTORS", path)
+    assert cc.check_log_suppression_vectors() == 1, what
+    out = capsys.readouterr().out
+    assert out.startswith("FAIL log suppression vectors"), (what, out)

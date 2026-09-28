@@ -411,8 +411,9 @@ def check_log_suppression_vectors() -> int:
         return 1
     problems = log_suppression_vector_problems(doc)
     cases = doc.get("cases") if isinstance(doc, dict) else None
-    n_cases = len(cases) if isinstance(cases, list) else 0
-    n_steps = sum(len(c.get("steps") or []) for c in cases or [] if isinstance(c, dict))
+    cases = cases if isinstance(cases, list) else []  # 모양이 틀린 파일도 요약을 찍는다(문제는 위 목록이 말한다)
+    n_cases = len(cases)
+    n_steps = sum(len(c["steps"]) for c in cases if isinstance(c, dict) and isinstance(c.get("steps"), list))
     print(
         f"{'FAIL' if problems else 'ok  '} log suppression vectors (v{doc.get('version') if isinstance(doc, dict) else '?'}): "
         f"{n_cases} cases, {n_steps} steps, {len(problems)} problems — entries + suppressed = occurrences after close"
