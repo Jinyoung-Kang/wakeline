@@ -31,6 +31,7 @@ class SecurityIT extends IntegrationTest {
 
     @Autowired OpsUserService users;
     @Autowired MockMvc mvc;
+    @Autowired org.springframework.context.ApplicationContext ctx;
 
     /** 쿠키 저장(이름 → 값)과 받은 Set-Cookie 원문. */
     final class Browser {
@@ -320,6 +321,17 @@ class SecurityIT extends IntegrationTest {
                         .header("X-Forwarded-For", "198.51.100.7, 10.0.0.1"))
                 .andExpect(status().isOk());
         assertThat(ItStack.admin().keys("rl:api:198.51.100.7:*")).hasSize(1);
+    }
+
+    // ---------- 자동 생성 계정 없음(R-28) ----------
+
+    /**
+     * Spring Boot 의 UserDetailsServiceAutoConfiguration 은 다른 인증 수단이 없으면 in-memory 'user' 계정을 만들고 그 비밀번호를
+     * 기동 로그에 WARN 으로 찍는다(비밀값이 로그에). 운영자 인증은 OpsUserService(BCrypt)뿐이므로 그런 계정이 아예 없어야 한다.
+     */
+    @Test
+    void noGeneratedInMemoryUserAccountExists() {
+        assertThat(ctx.getBeanNamesForType(org.springframework.security.core.userdetails.UserDetailsService.class)).isEmpty();
     }
 
     // ---------- RFC 9457 · 보안 헤더 ----------

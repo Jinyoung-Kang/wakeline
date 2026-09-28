@@ -6,6 +6,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -19,8 +20,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-/** Wakeline api — 스트림 소비·인메모리 스냅샷·공간 판정·WebSocket 팬아웃·REST·운영 API. 외부 API 는 절대 직접 부르지 않는다(ADR-006). */
-@SpringBootApplication
+/**
+ * Wakeline api — 스트림 소비·인메모리 스냅샷·공간 판정·WebSocket 팬아웃·REST·운영 API. 외부 API 는 절대 직접 부르지 않는다(ADR-006).
+ * UserDetailsServiceAutoConfiguration 은 뺀다(R-28): 운영자 인증은 OpsUserService(BCrypt)뿐인데, 그대로 두면 Boot 가 in-memory 'user'
+ * 계정을 만들고 그 비밀번호를 기동 로그에 찍는다(비밀값이 로그에 남고, 나중에 httpBasic 을 켜면 그 계정이 바로 살아난다).
+ */
+@SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 @EnableScheduling
 @EnableConfigurationProperties(AppProperties.class)
 public class WakelineApplication {
