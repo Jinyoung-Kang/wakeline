@@ -34,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 운영 경로를 실제 PostGIS·Redis 로: 원자적 로그인 잠금(동시 실패), 설정 변경 + 감사 한 트랜잭션, Redis 전용 토글의 감사 원자성,
- * .env 관심 지역 반영 규칙, 관심 지역 캐시의 출처(Redis → DB).
+ * 운영 경로를 실제 PostGIS·Redis 로: 원자적 로그인 잠금(동시 실패), 설정 변경 + 감사 한 트랜잭션, 공급자 스위치(DB 원본 + 감사 한 트랜잭션,
+ * Redis 미러·이관·주기 미러), .env 관심 지역 반영 규칙, 관심 지역 캐시의 출처(Redis → DB).
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class OpsDbTest {
@@ -81,7 +81,9 @@ class OpsDbTest {
         admin = DbTestSupport.admin();
         redis = new StringRedisTemplate(redisFactory);
         deadRedis = new StringRedisTemplate(deadFactory);
-        redis.delete(List.of(SettingsService.REDIS_KEY, "wakeline:provider:opensky", "wakeline:provider:adsbdb"));
+        List<String> keys = new ArrayList<>(List.of(SettingsService.REDIS_KEY));
+        for (String p : dev.wakeline.rest.StatusService.PROVIDERS) keys.add(ProviderSwitchService.key(p));
+        redis.delete(keys);
         audit = new AuditService(api, DbTestSupport.JSON, PROPS);
     }
 
@@ -231,57 +233,172 @@ class OpsDbTest {
         assertThat(s.seedFromEnv("123,456", 200, audit)).isEmpty();
     }
 
-    // ---------- Redis 전용 토글 ----------
+    // ---------- 공급자 스위치(R-94, 계약 v5 §D1): 원본은 DB provider_switch, Redis 는 미러 ----------
+
+    ProviderSwitchService switches(StringRedisTemplate r) { return new ProviderSwitchService(api, r, DbTestSupport.apiTx(), audit); }
+
+    OpsController ops(StringRedisTemplate r, AuditService a) {
+        var status = new dev.wakeline.rest.StatusService(null, null, null, null, r, PROPS);
+        var jobs = new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx());
+        return new OpsController(status, api, r, settings(r), a, jobs, DbTestSupport.apiTx(), switches(r));
+    }
+
+    static final OpsAuthentication ALICE = new OpsAuthentication(new OpsUserService.User(1, "alice", "OPS"), List.of(new SimpleGrantedAuthority("ROLE_OPS")));
+
+    void alice() { admin.sql("INSERT INTO ops_user (id, username, password_hash) VALUES (1, 'alice', 'x')").update(); }
+
+    Map<String, Object> switchRow(String provider) {
+        return admin.sql("SELECT disabled, version, updated_by FROM provider_switch WHERE provider = :p").param("p", provider).query().singleRow();
+    }
+
+    long switchRows() { return admin.sql("SELECT count(*) FROM provider_switch").query(Long.class).single(); }
+
+    Object redisFlag(String provider) { return redis.opsForHash().get(ProviderSwitchService.key(provider), "disabled"); }
 
     /**
      * 계약 v4 §G A-2(리뷰 collector-route #5): 노선 조회 공급자 adsbdb 도 운영 화면에서 감사 기록과 함께 끄고 켠다 — 수집기가 읽는
-     * wakeline:provider:adsbdb disabled 를 쓴다. 공급자 목록(/ops/providers)에 수집기가 쓴 호출 상태가 보인다(노선 내용은 해시에 없다).
+     * wakeline:provider:adsbdb disabled 는 DB 원본의 미러다. 공급자 목록(/ops/providers)에 수집기가 쓴 호출 상태가 보인다(노선 내용은 해시에 없다).
      */
     @Test
     void adsbdbIsAnOpsProvider_toggledWithAudit_andListed() {
-        var status = new dev.wakeline.rest.StatusService(null, null, null, null, redis, PROPS);
-        var jobs = new MaintenanceJobs(api, PROPS, region(redis), DbTestSupport.apiTx());
-        var auth = new OpsAuthentication(new OpsUserService.User(1, "alice", "OPS"), List.of(new SimpleGrantedAuthority("ROLE_OPS")));
-        admin.sql("INSERT INTO ops_user (id, username, password_hash) VALUES (1, 'alice', 'x')").update();
-        var ops = new OpsController(status, api, redis, settings(redis), audit, jobs, DbTestSupport.apiTx());
-
-        assertThat(ops.toggleProvider("adsbdb", "disable", request(), auth).getStatusCode().value()).isEqualTo(204);
-        assertThat(redis.opsForHash().get("wakeline:provider:adsbdb", "disabled")).isEqualTo("1");
+        alice();
+        var ops = ops(redis, audit);
+        assertThat(ops.toggleProvider("adsbdb", "disable", request(), ALICE))
+                .containsEntry("provider", "adsbdb").containsEntry("disabled", true).containsEntry("version", 1).containsEntry("mirrored", true);
+        assertThat(redisFlag("adsbdb")).isEqualTo("1");
         assertThat(admin.sql("SELECT target FROM audit_log WHERE action = 'PROVIDER_DISABLE'").query(String.class).single()).isEqualTo("adsbdb");
-        ops.toggleProvider("adsbdb", "enable", request(), auth);
-        assertThat(redis.opsForHash().get("wakeline:provider:adsbdb", "disabled")).isEqualTo("0");
+        assertThat(ops.toggleProvider("adsbdb", "enable", request(), ALICE)).containsEntry("disabled", false).containsEntry("version", 2);
+        assertThat(redisFlag("adsbdb")).isEqualTo("0");
         assertThat(auditCount("PROVIDER_ENABLE")).isEqualTo(1);
+        assertThat(admin.sql("SELECT before::text || ' -> ' || after::text FROM audit_log WHERE action = 'PROVIDER_ENABLE'").query(String.class).single())
+                .isEqualTo("{\"version\": 1, \"disabled\": true} -> {\"version\": 2, \"disabled\": false}"); // jsonb 는 짧은 키부터
 
         redis.opsForHash().putAll("wakeline:provider:adsbdb", Map.of("last_error", "HTTP 503", "consecutive_failures", "2"));
+        var status = new dev.wakeline.rest.StatusService(null, null, null, null, redis, PROPS);
         assertThat(status.providerStatuses()).filteredOn(p -> "adsbdb".equals(p.get("name"))).singleElement()
                 .satisfies(p -> assertThat(p).containsEntry("disabled", "0").containsEntry("last_error", "HTTP 503"));
+        assertThatThrownBy(() -> ops.toggleProvider("nope", "disable", request(), ALICE)).isInstanceOf(Problem.class);
+        assertThatThrownBy(() -> ops.toggleProvider("opensky", "explode", request(), ALICE)).isInstanceOf(Problem.class);
+        assertThat(switchRows()).isEqualTo(1);
     }
 
+    /** 토글 = 감사 행 + DB 갱신 한 트랜잭션. 감사가 실패하면 DB 도 Redis 도 그대로다. updated_by 는 운영자 id. */
     @Test
-    void providerToggleIsAuditedAtomically() {
-        var status = new dev.wakeline.rest.StatusService(null, null, null, null, redis, PROPS);
-        var jobs = new MaintenanceJobs(api, PROPS, region(redis), DbTestSupport.apiTx());
-        var auth = new OpsAuthentication(new OpsUserService.User(1, "alice", "OPS"), List.of(new SimpleGrantedAuthority("ROLE_OPS")));
-        admin.sql("INSERT INTO ops_user (id, username, password_hash) VALUES (1, 'alice', 'x')").update();
-
-        var ok = new OpsController(status, api, redis, settings(redis), audit, jobs, DbTestSupport.apiTx());
-        ok.toggleProvider("opensky", "disable", request(), auth);
-        assertThat(redis.opsForHash().get("wakeline:provider:opensky", "disabled")).isEqualTo("1");
+    void providerToggleCommitsTheSwitchAndItsAuditRowTogetherOrNotAtAll() {
+        alice();
+        ops(redis, audit).toggleProvider("opensky", "disable", request(), ALICE);
+        assertThat(switchRow("opensky")).containsEntry("disabled", true).containsEntry("version", 1).containsEntry("updated_by", 1);
+        assertThat(redisFlag("opensky")).isEqualTo("1");
         assertThat(auditCount("PROVIDER_DISABLE")).isEqualTo(1);
 
-        // Redis 가 죽어 있으면: 변경도 감사 행도 없다(503 으로 번역되는 Redis 예외)
-        var down = new OpsController(status, api, deadRedis, settings(deadRedis), audit, jobs, DbTestSupport.apiTx());
-        assertThatThrownBy(() -> down.toggleProvider("opensky", "enable", request(), auth)).isInstanceOf(RedisConnectionFailureException.class);
-        assertThat(auditCount("PROVIDER_ENABLE")).isZero();
-
-        // 감사 INSERT 가 실패하면(DB 쪽 오류) Redis 값도 바뀌지 않는다
+        // 감사 INSERT 가 실패하면(DB 쪽 오류) 스위치도 Redis 값도 바뀌지 않는다
         var brokenAudit = new AuditService(api, DbTestSupport.JSON, PROPS) {
             @Override public void record(jakarta.servlet.http.HttpServletRequest req, Integer userId, String action, String target, Object before, Object after) {
                 throw new org.springframework.dao.DataAccessResourceFailureException("db down");
             }
         };
-        var noAudit = new OpsController(status, api, redis, settings(redis), brokenAudit, jobs, DbTestSupport.apiTx());
-        assertThatThrownBy(() -> noAudit.toggleProvider("opensky", "enable", request(), auth)).hasMessageContaining("db down");
-        assertThat(redis.opsForHash().get("wakeline:provider:opensky", "disabled")).isEqualTo("1");
+        assertThatThrownBy(() -> ops(redis, brokenAudit).toggleProvider("opensky", "enable", request(), ALICE)).hasMessageContaining("db down");
+        assertThat(switchRow("opensky")).containsEntry("disabled", true).containsEntry("version", 1);
+        assertThat(redisFlag("opensky")).isEqualTo("1");
+        assertThat(auditCount("PROVIDER_ENABLE")).isZero();
+    }
+
+    /**
+     * Redis 장애: 이전에는 Redis 가 원본이라 토글 자체가 503 이었다. 이제 원본(DB)과 감사는 커밋되고 응답이 mirrored=false 를 알린다 —
+     * Redis 가 돌아오면 주기 미러(StartupMirror → sync)가 맞춘다.
+     */
+    @Test
+    void redisOutageStillCommitsTheSwitchAndThePeriodicMirrorCatchesUp() {
+        alice();
+        ops(redis, audit).toggleProvider("opensky", "disable", request(), ALICE);
+        assertThat(ops(deadRedis, audit).toggleProvider("opensky", "enable", request(), ALICE))
+                .containsEntry("disabled", false).containsEntry("version", 2).containsEntry("mirrored", false);
+        assertThat(auditCount("PROVIDER_ENABLE")).isEqualTo(1);
+        assertThat(switchRow("opensky")).containsEntry("disabled", false);
+        assertThat(redisFlag("opensky")).as("not mirrored yet").isEqualTo("1");
+        assertThatThrownBy(() -> switches(deadRedis).sync()).isInstanceOf(RedisConnectionFailureException.class);
+
+        assertThat(switches(redis).sync().corrected()).containsExactly("opensky");
+        assertThat(redisFlag("opensky")).isEqualTo("0");
+    }
+
+    /**
+     * 주기 미러: collector 는 같은 해시에 상태 필드를 쓰므로(ACL ~wakeline:provider:*) disabled 도 바꿀 수 있다 — 다음 주기(60 s)에 DB 값으로
+     * 돌아온다. Redis 를 잃어도(볼륨 손실·AOF 복구) 꺼 둔 스위치가 조용히 '켜짐'으로 돌아가지 않는다. 켜진 스위치는 해시가 없으면 만들지 않는다
+     * (없음 = 켜짐, collector status.py 와 같은 뜻 — 운영 목록에 호출한 적 없는 공급자가 생기지 않게).
+     */
+    @Test
+    void periodicMirrorRevertsCollectorWritesAndRestoresALostRedis() {
+        alice();
+        var ops = ops(redis, audit);
+        ops.toggleProvider("adsbdb", "disable", request(), ALICE);
+        ops.toggleProvider("opensky", "disable", request(), ALICE);
+        ops.toggleProvider("opensky", "enable", request(), ALICE);
+        var s = switches(redis);
+        s.sync(); // 이관(행이 없는 공급자) — 아래 비교를 위해 먼저 끝낸다
+        assertThat(s.sync().corrected()).as("in sync").isEmpty();
+
+        // collector 계정이 운영자 결정을 뒤집는다
+        redis.opsForHash().put(ProviderSwitchService.key("adsbdb"), "disabled", "0");
+        redis.opsForHash().put(ProviderSwitchService.key("opensky"), "disabled", "1");
+        assertThat(s.sync().corrected()).containsExactlyInAnyOrder("adsbdb", "opensky");
+        assertThat(redisFlag("adsbdb")).isEqualTo("1");
+        assertThat(redisFlag("opensky")).isEqualTo("0");
+
+        // Redis 를 잃었다
+        redis.delete(List.of(ProviderSwitchService.key("adsbdb"), ProviderSwitchService.key("opensky")));
+        assertThat(s.sync().corrected()).containsExactly("adsbdb");
+        assertThat(redisFlag("adsbdb")).isEqualTo("1");
+        assertThat(redis.hasKey(ProviderSwitchService.key("opensky"))).as("enabled + no hash: nothing to write").isFalse();
+        assertThat(switchRows()).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
+    }
+
+    /**
+     * 이관: 행이 없는 공급자는 그때의 Redis 값을 한 번 옮겨 담는다("1" = 꺼짐, 그 밖·없음 = 켜짐 — collector 와 같은 뜻). 모든 공급자에 행을 만들므로
+     * 한 번뿐이다 — 이관 뒤 collector 가 쓴 값은 원본이 되지 않고 되돌려진다. 이관은 시스템 감사 행(user 없음)으로 남는다. Redis 장애면 행을 만들지 않는다
+     * (값을 모르는 채로 '켜짐'을 지어내지 않는다).
+     */
+    @Test
+    void rowlessProvidersImportTheCurrentRedisValueExactlyOnce() {
+        redis.opsForHash().put(ProviderSwitchService.key("adsbdb"), "disabled", "1");   // v5 전에 운영자가 끈 공급자
+        redis.opsForHash().put(ProviderSwitchService.key("opensky"), "disabled", "0");
+        redis.opsForHash().put(ProviderSwitchService.key("awc"), "last_ok_at", "2026-09-29T00:00:00Z"); // 상태만 있는 공급자
+        assertThatThrownBy(() -> switches(deadRedis).sync()).isInstanceOf(RedisConnectionFailureException.class);
+        assertThat(switchRows()).as("redis down: nothing imported").isZero();
+
+        var r = switches(redis).sync();
+        assertThat(r.imported()).containsExactlyInAnyOrderElementsOf(dev.wakeline.rest.StatusService.PROVIDERS);
+        assertThat(r.corrected()).isEmpty();
+        assertThat(switchRow("adsbdb")).containsEntry("disabled", true).containsEntry("version", 1).containsEntry("updated_by", null);
+        assertThat(switchRow("opensky")).containsEntry("disabled", false);
+        assertThat(switchRow("awc")).containsEntry("disabled", false);
+        assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
+        assertThat(admin.sql("SELECT coalesce(user_id::text, '-') || ' ' || before::text || ' -> ' || after::text FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = 'adsbdb'")
+                .query(String.class).single()).isEqualTo("- {\"redis_disabled\": \"1\"} -> {\"version\": 1, \"disabled\": true}");
+        assertThat(admin.sql("SELECT before::text FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = 'awc'").query(String.class).single())
+                .isEqualTo("{\"redis_disabled\": null}");
+
+        // 한 번뿐: 이관 뒤 collector 가 kma_radar 를 꺼도 원본이 되지 않는다
+        redis.opsForHash().put(ProviderSwitchService.key("kma_radar"), "disabled", "1");
+        var again = switches(redis).sync();
+        assertThat(again.imported()).isEmpty();
+        assertThat(again.corrected()).containsExactly("kma_radar");
+        assertThat(switchRow("kma_radar")).containsEntry("disabled", false);
+        assertThat(redisFlag("kma_radar")).isEqualTo("0");
+        assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
+    }
+
+    /** 이관 전에 운영자가 토글하면 그 결정이 원본이다 — 뒤이은 이관은 그 행을 건드리지 않는다. */
+    @Test
+    void anOperatorToggleBeforeTheImportWins() {
+        alice();
+        redis.opsForHash().put(ProviderSwitchService.key("adsbdb"), "disabled", "1");
+        ops(redis, audit).toggleProvider("adsbdb", "enable", request(), ALICE);
+        assertThat(admin.sql("SELECT before::text FROM audit_log WHERE action = 'PROVIDER_ENABLE'").query(String.class).single())
+                .as("no row yet: the database value is unknown").isEqualTo("{\"version\": null, \"disabled\": null}");
+        var r = switches(redis).sync();
+        assertThat(r.imported()).doesNotContain("adsbdb").hasSize(dev.wakeline.rest.StatusService.PROVIDERS.size() - 1);
+        assertThat(switchRow("adsbdb")).containsEntry("disabled", false).containsEntry("updated_by", 1);
+        assertThat(redisFlag("adsbdb")).isEqualTo("0");
     }
 }

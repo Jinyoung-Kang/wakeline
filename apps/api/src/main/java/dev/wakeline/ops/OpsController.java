@@ -26,12 +26,11 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 운영 API(인증 필요, 비인가 404). 공급자·실행 이력·품질 게이트·설정·감사·DLQ.
- * 모든 변경은 감사 기록과 원자적이다(SEC-11): DB 변경은 감사 행과 한 트랜잭션, Redis 전용 토글은 감사 행을 먼저 쓰고 Redis 쓰기가
- * 실패하면 감사 행을 롤백한다 — 감사 없이 적용된 변경도, 적용되지 않았는데 남은 감사 행도 없다.
+ * 모든 변경은 감사 기록과 원자적이다(SEC-11): 변경의 원본은 DB 이고 감사 행과 한 트랜잭션으로 커밋된다 — 감사 없이 적용된 변경도,
+ * 적용되지 않았는데 남은 감사 행도 없다. collector 가 읽는 Redis 값(설정·공급자 스위치)은 커밋 뒤 미러이고 60 s 마다 다시 맞춘다(StartupMirror).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
@@ -44,9 +43,10 @@ public class OpsController {
     private final AuditService audit;
     private final dev.wakeline.persist.MaintenanceJobs jobs;
     private final TransactionTemplate tx;
+    private final ProviderSwitchService switches;
 
     public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit,
-                         dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx) {
+                         dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches) {
         this.status = status;
         this.db = db;
         this.redis = redis;
@@ -54,6 +54,7 @@ public class OpsController {
         this.audit = audit;
         this.jobs = jobs;
         this.tx = tx;
+        this.switches = switches;
     }
 
     /**
@@ -85,38 +86,19 @@ public class OpsController {
                 "switches", switches, "budget_days", budgets);
     }
 
+    /**
+     * 공급자 켜고 끄기(R-94, 계약 v5 §D1): 원본은 DB provider_switch — 감사 행과 한 트랜잭션으로 갱신하고, 커밋 뒤 collector 가 읽는
+     * Redis wakeline:provider:{name}.disabled 로 미러한다. 미러가 실패해도 변경은 확정이고(mirrored=false) 주기 미러가 60 s 안에 맞춘다.
+     * 이전에는 Redis 에만 있어서 Redis 볼륨을 잃으면 조용히 '켜짐'으로 돌아갔고, 같은 해시에 쓰는 collector 가 감사 없이 바꿀 수 있었다.
+     * @return {provider, disabled, version, updated_at, mirrored}
+     */
     @PostMapping("/providers/{name}/{action}")
-    public ResponseEntity<Void> toggleProvider(@PathVariable String name, @PathVariable String action, HttpServletRequest req, Authentication auth) {
+    public Map<String, Object> toggleProvider(@PathVariable String name, @PathVariable String action, HttpServletRequest req, Authentication auth) {
         if (!StatusService.PROVIDERS.contains(name)) throw Problem.notFound("provider not found");
         boolean disable = switch (action) { case "disable" -> true; case "enable" -> false; default -> throw Problem.notFound("no such action"); };
-        String key = "wakeline:provider:" + name;
-        String after = disable ? "1" : "0";
-        Object before = redis.opsForHash().get(key, "disabled"); // Redis 장애면 여기서 503(아무것도 바뀌지 않음)
-        Map<String, Object> beforeJson = new LinkedHashMap<>();
-        beforeJson.put("disabled", before == null ? null : String.valueOf(before));
-        AtomicBoolean written = new AtomicBoolean();
-        try {
-            tx.executeWithoutResult(st -> {
-                // 감사 행을 먼저 쓴다(DB 장애면 변경 자체가 일어나지 않는다) → Redis 쓰기가 실패하면 예외로 감사 행이 롤백된다
-                audit.record(req, userId(auth), disable ? "PROVIDER_DISABLE" : "PROVIDER_ENABLE", name, beforeJson, Map.of("disabled", after));
-                redis.opsForHash().put(key, "disabled", after);
-                written.set(true);
-            });
-        } catch (RuntimeException e) {
-            // Redis 에는 반영됐는데 커밋이 실패한 드문 경우: 감사 없는 변경을 남기지 않도록 Redis 값을 되돌린다
-            if (written.get()) restoreProviderFlag(key, before);
-            throw e;
-        }
-        return ResponseEntity.noContent().build();
-    }
-
-    private void restoreProviderFlag(String key, Object before) {
-        try {
-            if (before == null) redis.opsForHash().delete(key, "disabled");
-            else redis.opsForHash().put(key, "disabled", String.valueOf(before));
-        } catch (RuntimeException e) {
-            org.slf4j.LoggerFactory.getLogger(OpsController.class).error("provider flag {} changed without audit and could not be restored: {}", key, e.toString());
-        }
+        Integer uid = userId(auth);
+        return switches.set(name, disable, uid,
+                (before, after) -> audit.record(req, uid, disable ? "PROVIDER_DISABLE" : "PROVIDER_ENABLE", name, before, after));
     }
 
     @GetMapping("/runs")
