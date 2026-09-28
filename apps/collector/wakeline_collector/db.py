@@ -8,6 +8,8 @@ DB 쓰기는 부가 경로다(설계 5.1 "실시간 경로는 DB에 의존하지
   DB 가 응답하는데도 같은 작업이 일시 오류로 MAX_ATTEMPTS 번 실패하면(독이 든 작업) 큐를 막지 않도록 버린다.
   DB 가 응답하지 않는 동안의 실패는 시도 횟수에 세지 않는다(장애 동안 보관한다는 약속).
 - 실패·버림은 건수로 집계해 heartbeat(wakeline:collector)로 노출하고, 경고 로그는 분당 1회로 제한한다.
+- 시간 초과는 COMMIT 이 서버에 반영된 뒤 응답을 받기 전에도 날 수 있다(결과가 모호한 실패). 그래서 재시도되는 쓰기는 멱등이어야 한다 —
+  upsert 는 원래 멱등이고, 실행 기록(record_run)은 실행마다 만든 run_key(uuid)로 한 번만 들어간다(R-91, 계약 v5 §D2 · ADR-019).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -302,18 +305,24 @@ class Db:
         quality: list[tuple[str, str | None, dict[str, Any]]] | None = None,
     ) -> None:
         """ingest_run 1행(+ 품질 사례·규칙별 건수)을 한 트랜잭션으로 기록한다.
-        규칙별 건수는 실행이 시작된 UTC 날짜에 싣는다(COL-6: 큐에서 자정을 넘겨 기록돼도 실행한 날로)."""
+        규칙별 건수는 실행이 시작된 UTC 날짜에 싣는다(COL-6: 큐에서 자정을 넘겨 기록돼도 실행한 날로).
+        멱등(R-91): 실행마다 run_key(uuid4)를 한 번 만들고 재시도는 같은 키를 쓴다. INSERT … ON CONFLICT (run_key) DO NOTHING 이
+        행을 돌려주지 않으면 앞선 시도가 이미 커밋된 것이다 — 품질 사례·규칙별 건수도 그 트랜잭션에 함께 커밋됐으므로 다시 넣지 않는다
+        (다시 넣으면 사례가 겹치고 건수가 두 배가 된다). 그 run id 는 run_key 로 되찾아 로그에 남긴다."""
         finished_at = datetime.now(UTC)
         day = started_at.astimezone(UTC).date()
         rows, per_rule = quality_rows(quality or [])
         err = mask(error_text)
+        run_key = uuid.uuid4()  # 실행 하나 = 키 하나(재시도는 이 클로저를 다시 부르므로 같은 키)
 
         async def fn(pool: Any) -> None:
             async with pool.acquire() as conn, conn.transaction():
                 run_id = await conn.fetchval(
-                    """INSERT INTO ingest_run (job, provider, started_at, finished_at, status, http_status, latency_ms,
+                    """INSERT INTO ingest_run (run_key, job, provider, started_at, finished_at, status, http_status, latency_ms,
                                               records_in, records_quarantined, raw_ref, error_text)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id""",
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                       ON CONFLICT (run_key) DO NOTHING RETURNING id""",
+                    run_key,
                     job,
                     provider,
                     started_at,
@@ -326,6 +335,15 @@ class Db:
                     raw_ref,
                     err,
                 )
+                if run_id is None:
+                    # 앞선 시도가 커밋된 뒤 응답을 받지 못했다(시간 초과·연결 끊김) — 이 실행은 이미 기록돼 있다
+                    existing = await conn.fetchval("SELECT id FROM ingest_run WHERE run_key = $1", run_key)
+                    log.info(
+                        "db: ingest_run(%s) already recorded as run id %s (retry after an ambiguous commit) — not duplicated",
+                        job,
+                        existing,
+                    )
+                    return
                 if rows:
                     await conn.executemany(
                         "INSERT INTO quality_event (run_id, rule, hex, detail) VALUES ($1,$2,$3,$4::jsonb)",

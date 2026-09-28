@@ -122,6 +122,13 @@ class RolePrivilegesDbTest {
             }
             // 대조군: 수집 테이블 쓰기는 된다
             assertThat(state(c, "INSERT INTO ingest_run (job, provider, started_at, status) VALUES ('role_test', 'x', now(), 'ok')")).isNull();
+            // V12(R-91): 실행 키로 한 번만 — ON CONFLICT (run_key) DO NOTHING 은 INSERT 권한만으로, run id 되찾기는 SELECT 로(새 열도 표 권한을 따른다)
+            String key = java.util.UUID.randomUUID().toString();
+            String once = "INSERT INTO ingest_run (run_key, job, provider, started_at, status) VALUES ('" + key + "', 'role_test', 'x', now(), 'ok') "
+                    + "ON CONFLICT (run_key) DO NOTHING";
+            assertThat(state(c, once)).isNull();
+            assertThat(state(c, once)).as("retry of the same run").isNull();
+            assertThat(scalar(c, "SELECT count(*) FROM ingest_run WHERE run_key = '" + key + "'")).isEqualTo(1L);
             assertThat(state(c, "UPDATE metar_obs SET raw = raw WHERE false")).isNull();
         }
     }

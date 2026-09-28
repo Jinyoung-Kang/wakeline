@@ -30,7 +30,7 @@ class MigrationDbTest {
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(11);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(12);
     }
 
     @Test
@@ -425,6 +425,63 @@ class MigrationDbTest {
         migrateTo(url, "11");
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'provider_switch', 'UPDATE')").query(Boolean.class).single()).isTrue();
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'provider_switch', 'DELETE')").query(Boolean.class).single()).isFalse();
+    }
+
+    /**
+     * V12(계약 v5 §D2 · R-91 · ADR-019): ingest_run.run_key uuid NULL UNIQUE. 옛 행은 NULL 로 남고(NULL 끼리는 겹치지 않는다), collector 계정으로
+     * 운영과 같은 문장(INSERT … ON CONFLICT (run_key) DO NOTHING RETURNING id)을 두 번 보내도 한 행 — 두 번째는 행을 돌려주지 않고, run_key 로
+     * run id 를 되찾을 수 있다. 새 열은 표 권한을 따른다(collector INSERT · api SELECT 만). 머리 주석의 되돌리기 SQL 로 V11 상태가 되고 다시 적용된다.
+     */
+    @Test
+    void v12AddsAUniqueRunKeySoARetriedRunIsRecordedOnce() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_twelve";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "11");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        stage.sql("INSERT INTO ingest_run (job, provider, started_at, status) VALUES ('legacy', 'x', now(), 'ok'), ('legacy', 'x', now(), 'ok')").update();
+
+        migrateTo(url, "12");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '12' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT count(*) FROM ingest_run WHERE run_key IS NULL").query(Long.class).single()).as("existing rows: no key").isEqualTo(2);
+        assertThat(stage.sql("SELECT data_type || ':' || is_nullable FROM information_schema.columns WHERE table_name = 'ingest_run' AND column_name = 'run_key'")
+                .query(String.class).single()).isEqualTo("uuid:YES");
+        assertThat(stage.sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ingest_run_run_key_key'").query(String.class).single())
+                .isEqualTo("UNIQUE (run_key)");
+
+        String key = java.util.UUID.randomUUID().toString();
+        String insert = """
+                INSERT INTO ingest_run (run_key, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text)
+                VALUES ('%s'::uuid, 'region', 'adsb_lol', now(), now(), 'ok', 200, 12, 7, 0, NULL, NULL)
+                ON CONFLICT (run_key) DO NOTHING RETURNING id""".formatted(key);
+        try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW); Statement st = c.createStatement()) {
+            long first;
+            try (var rs = st.executeQuery(insert)) { assertThat(rs.next()).isTrue(); first = rs.getLong(1); }
+            try (var rs = st.executeQuery(insert)) { assertThat(rs.next()).as("retry of a committed run: no row").isFalse(); }
+            try (var rs = st.executeQuery("SELECT id FROM ingest_run WHERE run_key = '" + key + "'::uuid")) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getLong(1)).as("run id recovered by run_key").isEqualTo(first);
+            }
+            assertThat(sqlState(c, "UPDATE ingest_run SET run_key = NULL WHERE false")).as("collector keeps its V1 table rights").isNull();
+        }
+        assertThat(stage.sql("SELECT count(*) FROM ingest_run WHERE job = 'region'").query(Long.class).single()).isEqualTo(1);
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            assertThat(sqlState(c, "SELECT run_key FROM ingest_run")).isNull();
+            assertThat(sqlState(c, "INSERT INTO ingest_run (run_key, job, provider, started_at, status) VALUES (gen_random_uuid(), 'j', 'p', now(), 'ok')"))
+                    .isEqualTo("42501");
+            assertThat(sqlState(c, "UPDATE ingest_run SET run_key = NULL")).isEqualTo("42501");
+        }
+
+        // 되돌리기(머리 주석): 열(과 UNIQUE 제약·인덱스)을 지우고 이력 행 삭제 → V11 과 같은 스키마, 다시 앞으로
+        runAsMigrator(url, rollbackSql("V12__ingest_run_run_key.sql"));
+        assertThat(stage.sql("SELECT count(*) FROM information_schema.columns WHERE table_name = 'ingest_run' AND column_name = 'run_key'")
+                .query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '12'").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT count(*) FROM ingest_run").query(Long.class).single()).as("rows kept").isEqualTo(3);
+        migrateTo(url, "12");
+        assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_run_run_key_key'").query(Long.class).single()).isEqualTo(1);
     }
 
     /**
