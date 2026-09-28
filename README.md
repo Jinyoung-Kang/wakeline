@@ -59,6 +59,7 @@ flowchart LR
 - **푸시 수신의 격벽**(ADR-014): AIS WebSocket 은 항공기 폴링과 다른 컨테이너·이벤트 루프에서 받는다. 수신 → 제한된 대기열(20,000건 + 32 MiB) → 정리 → 10 s 마다 바뀐 선박만 스트림으로.
   끊기면 1 → 60 s 지수 백오프 + 지터로 다시 붙고, 재전송이 없으므로 끊긴 구간을 공백으로 기록해 화면·항적에 보인다.
 - **스트림이 언어 경계**: 두 언어는 `schemas/*.json` 하나로 계약하고 양쪽에서 같은 파일로 검증한다(바이트 동일 사본 검사 포함).
+  WebSocket 메시지도 `schemas/ws/*.json`(ADR-020): api 시험이 실제 빌더의 출력을 검증해 표본을 웹 fixture 로 남기고, 웹은 번들에 스키마 검증기를 싣지 않는 대신 손으로 쓴 검증기(`lib/ws-validate.ts`)를 그 표본으로 묶는다.
 - **핫 상태는 메모리, 이력은 DB**: 불변 스냅샷 참조 교체(락 없음), STRtree 는 SIGMET 갱신 때만 재구축, 항적·선박 위치는 비동기 배치 저장(일 파티션 · 보존 정책).
 
 ### 결정과 그 근거(발췌)
@@ -101,7 +102,8 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 |---|---|
 | `make test` | pytest · JUnit(+Testcontainers) · Vitest · 인프라 정책 |
 | `make e2e` | 격리된 fixture 스택(8701)을 띄워 Playwright 16건 → 스택·볼륨 삭제(개발 스택은 건드리지 않음) |
-| `make contract` | Python 메시지 ↔ JSON Schema ↔ Java 사본 대조 + REST 응답 계약 |
+| `make contract` | Python 메시지 ↔ JSON Schema ↔ Java 사본 대조 + REST 응답 계약 + WS 메시지 표본(schemas/ws) |
+| `make ws-samples` | WS 메시지 표본 다시 만들기 — api 시험이 실제 빌더로 만든 17종을 `schemas/ws` 로 검증해 웹 fixture 로 쓴다(스키마·빌더를 바꿨을 때, 커밋) |
 | `make bench SHIPS=1` | k6 컨테이너로 api 층 직접 부하(측정 동안만 제한 상향, 끝나면 원복) |
 | `make measure-ais d=600 i=30` | AIS 처리량·지연·자원(읽기 전용) |
 | `bash tools/chaos.sh` | 장애 주입 6종(api·collector·redis 강제 종료, db 정지, 공급자 차단, ais 네트워크 단절) |
@@ -145,7 +147,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,config} · Flyway V1–V9 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·about) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
-schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope (계약의 단일 원천)
+schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) (계약의 단일 원천)
 infra/           compose.yml · edge(nginx) · redis(ACL) · db(역할·pg_hba) · tests
 docs/            adr/ · audit/(감사·리뷰·변경 계약) · PERF.md · VERIFICATION.md · images/
 perf/ tools/     k6 스크립트 · AIS 측정 · 장애 주입 · 계약 검사 · .env 생성
