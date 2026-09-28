@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """REST 계약 검사(설계 14.1 — Java → Python 방향): Java api 가 만든 REST 응답이 웹·도구가 읽는 필드 계약(계약서 §1·§2,
-계약 v2 §A3 수요·§B3 선박)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
+계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
 한쪽만 고치면 이 검사가 깨진다.
 
 두 가지 입력:
@@ -591,6 +591,58 @@ FEED: Schema = {
         "fetched_at": TS,
     },
 }
+
+
+# 계약 v5 §B1 선박 검색 — 다른 선박 응답과 달리 항목의 키 12개가 늘 있고 모르는 값은 null(실시간이 아니면 위치·속력·보고 시각이 null)
+def nullable(schema: Schema) -> Schema:
+    return {"anyOf": [{"type": "null"}, schema]}
+
+
+SHIP_SEARCH_ITEM: Schema = {
+    "type": "object",
+    "required": [
+        "mmsi",
+        "name",
+        "call_sign",
+        "imo",
+        "ship_type",
+        "category",
+        "live",
+        "lat",
+        "lon",
+        "sog_kn",
+        "seen_at",
+        "last_position_at",
+    ],
+    "additionalProperties": False,
+    "properties": {
+        "mmsi": MMSI,
+        **{k: nullable(SHIP_STATIC["properties"][k]) for k in ("name", "call_sign", "imo", "ship_type")},
+        "category": SHIP_CATEGORY,
+        "live": BOOL,
+        "lat": nullable(LAT_NUM),
+        "lon": nullable(LON_NUM),
+        "sog_kn": nullable(SHIP_KINEMATICS["sog_kn"]),
+        "seen_at": nullable(TS),
+        "last_position_at": nullable(TS),  # DB 의 마지막 저장 위치 시각(보존 72 h 안) — 없으면 null
+    },
+    "allOf": [
+        # 실시간이 아니면 위치를 지어내지 않는다(null), 실시간이면 위치와 보고 시각이 있다
+        {
+            "if": {"properties": {"live": {"const": False}}},
+            "then": {"properties": {k: {"type": "null"} for k in ("lat", "lon", "sog_kn", "seen_at")}},
+            "else": {"properties": {"lat": LAT_NUM, "lon": LON_NUM, "seen_at": TS}},
+        },
+        # 분류는 선종 코드의 결정적 변환 — 코드가 없으면 unknown, 코드(1–99)가 있으면 unknown 이 아니다
+        {
+            "if": {"properties": {"ship_type": {"type": "null"}}},
+            "then": {"properties": {"category": {"const": "unknown"}}},
+            "else": {"properties": {"category": {"not": {"const": "unknown"}}}},
+        },
+    ],
+}
+SHIP_SEARCH_Q: Schema = {"type": "string", "pattern": "^[A-Z0-9 .\\-/]{2,40}$"}  # 정규화(trim · 대문자)한 검색어
+
 SCHEMAS: dict[str, dict[str, Any]] = {
     "status": {
         "type": "object",
@@ -1052,6 +1104,23 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "meta": META,
         },
     },
+    "ship_search": {
+        "type": "object",
+        "required": ["items", "meta"],
+        "additionalProperties": False,
+        "properties": {
+            "items": {"type": "array", "maxItems": 20, "items": SHIP_SEARCH_ITEM},
+            "meta": {
+                **META,
+                "required": [*META["required"], "q", "count"],
+                "properties": {
+                    **META["properties"],
+                    "q": SHIP_SEARCH_Q,
+                    "count": {"type": "integer", "minimum": 0, "maximum": 20},
+                },
+            },
+        },
+    },
     "problem": PROBLEM,
 }
 
@@ -1094,6 +1163,10 @@ CHECKS = [
     Check("problem_bad_mmsi", "problem", 400, "application/problem+json", False),
     # 기록에만: 정적 정보 없는 선박(분류 unknown), 수집기 heartbeat 가 있는 /status(sources.ais · demand.adsb_fi_rps_1m)
     Check("ship_detail_nostatic", "ship_detail", 200, "application/json", True, recorded_only=True),
+    # 선박 검색(계약 v5 §B1): 실행 중 스택은 목록의 첫 선박 MMSI 로, 기록은 선명 앞부분(실시간) · DB 에만 있는 선박(live=false)
+    Check("ship_search", "ship_search", 200, "application/json", True),
+    Check("ship_search_db", "ship_search", 200, "application/json", True, recorded_only=True),
+    Check("problem_bad_ship_query", "problem", 400, "application/problem+json", False),
     Check("status_ais", "status_ais", 200, "application/json", True, recorded_only=True),
 ]
 
@@ -1167,6 +1240,8 @@ def live_paths(base: str) -> dict[str, str | None]:
     mmsi = sh[0]["id"] if sh else None
     paths["ship_detail"] = f"/api/v1/ships/{mmsi}" if mmsi else None
     paths["ship_track"] = f"/api/v1/ships/{mmsi}/track" if mmsi else None
+    paths["ship_search"] = f"/api/v1/ships/search?q={mmsi}" if mmsi else None
+    paths["problem_bad_ship_query"] = "/api/v1/ships/search?q=a"
     return paths
 
 
@@ -1443,6 +1518,47 @@ def _aircraft_track(body: dict[str, Any]) -> list[str]:
     return errs
 
 
+_DIGITS = re.compile(r"^[0-9]+$")
+_IMO_QUERY = re.compile(r"^IMO ?([0-9]{7})$")
+
+
+def ship_search_matches(q: str, item: dict[str, Any]) -> bool:
+    """계약 v5 §B1 일치 규칙(api ShipQuery 와 따로 쓴 같은 규칙): 9자리 MMSI 정확 · 7자리 MMSI 앞부분 또는 IMO 정확 · 3–8자리 MMSI 앞부분 ·
+    IMO 접두 + 7자리 IMO 정확 · 그 밖 선명 또는 호출부호 앞부분(대소문자 무시)."""
+    mmsi, imo = str(item.get("mmsi") or ""), item.get("imo")
+    if _DIGITS.match(q) and len(q) == 9:
+        return mmsi == q
+    if _DIGITS.match(q) and len(q) == 7:
+        return mmsi.startswith(q) or imo == int(q)
+    if _DIGITS.match(q) and 3 <= len(q) <= 8:
+        return mmsi.startswith(q)
+    if m := _IMO_QUERY.match(q):
+        return imo == int(m.group(1))
+    return any(isinstance(v, str) and v.upper().startswith(q) for v in (item.get("name"), item.get("call_sign")))
+
+
+def _ship_search(body: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    items = body.get("items") or []
+    meta = body.get("meta") or {}
+    q = str(meta.get("q") or "")
+    if meta.get("count") != len(items):
+        errs.append(f"meta.count {meta.get('count')} != {len(items)} items")
+    mmsis = [it.get("mmsi") for it in items]
+    if len(set(mmsis)) != len(mmsis):
+        errs.append("an MMSI appears more than once")
+    live = [bool(it.get("live")) for it in items]
+    if live != sorted(live, reverse=True):
+        errs.append("live results must come before stored-only ones")
+    for i, it in enumerate(items):
+        if not ship_search_matches(q, it):
+            errs.append(f"items[{i}] ({it.get('mmsi')}) does not match q={q!r} under the contract rules")
+        # 저장 위치는 같은 보고 흐름의 60 s 창 첫 점 — 지금 보고(seen_at)보다 새로울 수 없다
+        if it.get("seen_at") and it.get("last_position_at") and _ts(it["last_position_at"]) > _ts(it["seen_at"]):
+            errs.append(f"items[{i}].last_position_at is later than its live seen_at")
+    return errs
+
+
 def _stats_traffic(body: dict[str, Any]) -> list[str]:
     days = {row["day"] for row in body.get("items") or []}
     return [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
@@ -1464,6 +1580,7 @@ CROSS_CHECKS = {
     "ships": _ships,
     "ship_detail": _ship_detail,
     "ship_track": _ship_track,
+    "ship_search": _ship_search,
     "ais_gaps": _ais_gaps,
     "aircraft_detail": _aircraft_detail,
     "stats_sigmet": _stats_days,

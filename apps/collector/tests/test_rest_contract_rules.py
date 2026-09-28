@@ -143,3 +143,92 @@ def test_ship_category_enum_follows_the_shared_order_vector():
     vector = json.loads((ROOT / "schemas" / "vectors" / "ship-categories.v1.json").read_text())
     assert vector["version"] == 1
     assert rcc.SHIP_CATEGORY["enum"] == vector["order"]
+
+
+# ---- 선박 검색(계약 v5 §B1) ----
+
+
+def search_item(**over):
+    base = {
+        "mmsi": "440123456",
+        "name": "HANJIN BUSAN",
+        "call_sign": "D7AB",
+        "imo": 9321483,
+        "ship_type": 70,
+        "category": "cargo",
+        "live": True,
+        "lat": 35.1,
+        "lon": 129.1,
+        "sog_kn": 12.3,
+        "seen_at": "2026-09-29T00:00:10Z",
+        "last_position_at": "2026-09-29T00:00:00Z",
+    }
+    return {**base, **over}
+
+
+STORED = {  # DB 에만 있는 선박: 위치·속력·보고 시각은 null, 마지막 저장 시각만
+    "mmsi": "440123457",
+    "name": "HANJIN OLD",
+    "live": False,
+    "lat": None,
+    "lon": None,
+    "sog_kn": None,
+    "seen_at": None,
+    "last_position_at": "2026-09-28T00:00:00Z",
+}
+
+
+def ship_search(q, *items):
+    return {"items": list(items), "meta": {**META, "q": q, "count": len(items)}}
+
+
+def test_ship_search_shape_live_and_stored_items():
+    v = Draft202012Validator(rcc.SCHEMAS["ship_search"], format_checker=rcc.FORMATS)
+    ok = ship_search("HANJIN", search_item(), search_item(**STORED))
+    assert not list(v.iter_errors(ok))
+    assert rcc._ship_search(ok) == []
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(**{**STORED, "lat": 35.0}))))  # 실시간 아님인데 위치
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(**{**STORED, "seen_at": "2026-09-28T00:00:00Z"}))))
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(lat=None))))  # 실시간인데 위치 없음
+    no_key = search_item()
+    del no_key["call_sign"]
+    assert list(v.iter_errors(ship_search("HANJIN", no_key)))  # 키는 늘 있다(모르면 null)
+    # 분류는 선종 코드에서만: 코드가 없으면 unknown, 있으면 unknown 이 아니다
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(ship_type=None))))
+    assert not list(v.iter_errors(ship_search("HANJIN", search_item(ship_type=None, category="unknown"))))
+    assert list(v.iter_errors(ship_search("HANJIN", search_item(category="unknown"))))
+    assert list(v.iter_errors(ship_search("hanjin", search_item())))  # meta.q 는 정규화(대문자)한 값
+    assert list(v.iter_errors({**ok, "items": [search_item()] * 21}))  # limit 상한 20
+
+
+def test_ship_search_cross_rules():
+    ok = ship_search("HANJIN", search_item(), search_item(**STORED))
+    assert rcc._ship_search(ship_search("HANJIN", search_item(**STORED), search_item()))  # 실시간이 먼저
+    assert rcc._ship_search(ship_search("HANJIN", search_item(), search_item()))  # 같은 MMSI 두 번
+    assert rcc._ship_search({**ok, "meta": {**ok["meta"], "count": 5}})
+    assert rcc._ship_search(ship_search("BUSAN", search_item()))  # 앞부분이 아니라 중간 — 규칙 밖 결과
+    # 마지막 저장 위치가 지금 보고보다 새로울 수 없다(저장은 같은 보고의 60 s 창 첫 점)
+    assert rcc._ship_search(ship_search("HANJIN", search_item(last_position_at="2026-09-29T00:00:20Z")))
+    assert rcc._ship_search(ship_search("HANJIN", search_item(last_position_at=None))) == []  # 저장 전·보존 밖은 모름
+
+
+@pytest.mark.parametrize(
+    ("q", "over", "ok"),
+    [
+        ("440123456", {}, True),  # 9자리: MMSI 정확
+        ("440123457", {}, False),
+        ("4401", {}, True),  # 3–8자리: MMSI 앞부분
+        ("4402", {}, False),
+        ("9321483", {}, True),  # 7자리: IMO 정확
+        ("4401234", {}, True),  # 7자리: MMSI 앞부분이기도
+        ("9321484", {}, False),
+        ("IMO 9321483", {}, True),
+        ("IMO9321483", {"imo": None}, False),
+        ("D7", {}, True),  # 호출부호 앞부분
+        ("44", {}, False),  # 두 자리 숫자는 선명·호출부호 규칙
+        ("HANJIN BUSAN", {"name": "hanjin busan"}, True),  # 대소문자 무시
+        ("HANJIN", {"name": None, "call_sign": None}, False),
+    ],
+)
+def test_ship_search_match_rules(q, over, ok):
+    assert rcc.ship_search_matches(q, search_item(**over)) is ok
