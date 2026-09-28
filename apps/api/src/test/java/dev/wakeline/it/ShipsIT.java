@@ -137,7 +137,7 @@ class ShipsIT extends IntegrationTest {
     @Test
     void aisStatusHashBecomesStatusSourcesAis() {
         Instant now = Instant.now();
-        ItStack.ais().opsForHash().putAll("wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "5.40",
+        ItStack.hset(ItStack.ais(), "wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "5.40",
                 "last_msg_at", now.toString(), "updated_at", now.toString(), "gap_open_since", "",
                 "last_gap_started_at", now.minusSeconds(3600).toString(), "last_gap_ended_at", now.minusSeconds(3500).toString(), "last_gap_reason", "idle 120 s"));
         await("status refreshed", Duration.ofSeconds(12), () -> {

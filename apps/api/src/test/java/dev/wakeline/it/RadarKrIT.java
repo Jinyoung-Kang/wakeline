@@ -38,7 +38,7 @@ class RadarKrIT extends IntegrationTest {
     void publicStatusCarriesOnlyValidatedRadarFields() {
         String now = Instant.now().toString(), live = "202609281210";
         try {
-            ItStack.collector().opsForHash().putAll("wakeline:radar_kr:meta", meta(now, live));
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", meta(now, live));
             await("status cache refreshed", Duration.ofSeconds(10), () -> hub.status().get("radar_kr") instanceof Map<?, ?> m && live.equals(m.get("latest_tm")));
             JsonNode kr = get("/api/v1/status").json().path("radar_kr");
             List<String> keys = new ArrayList<>();
@@ -49,7 +49,7 @@ class RadarKrIT extends IntegrationTest {
             assertThat(kr.toString()).doesNotContain("should-not-leak").doesNotContain("internal note").doesNotContain("observed_cells");
 
             // 틀린 값은 모름(키 없음)
-            ItStack.collector().opsForHash().putAll("wakeline:radar_kr:meta", Map.of("available", "yes", "latest_tm", "12:10", "fetched_at", "yesterday", "status", "OK!"));
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", Map.of("available", "yes", "latest_tm", "12:10", "fetched_at", "yesterday", "status", "OK!"));
             await("status cache refreshed", Duration.ofSeconds(10), () -> hub.status().get("radar_kr") instanceof Map<?, ?> m && !m.containsKey("latest_tm"));
             JsonNode bad = get("/api/v1/status").json().path("radar_kr");
             assertThat(bad.has("available")).isFalse();
@@ -76,7 +76,7 @@ class RadarKrIT extends IntegrationTest {
             m.put("width", "six-hundred");         // Integer.parseInt 이 던졌다
             m.put("coordinates", "[[121.8,39.9],"); // readTree 가 던졌다
             m.put("fetched_at", "yesterday");       // Instant.parse 가 던졌다
-            ItStack.collector().opsForHash().putAll("wakeline:radar_kr:meta", m);
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", m);
             Res r = get("/api/v1/radar/kr");
             assertThat(r.status()).as(r.body()).isEqualTo(200);
             JsonNode body = r.json();

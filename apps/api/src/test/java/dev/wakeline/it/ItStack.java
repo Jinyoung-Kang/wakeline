@@ -92,11 +92,27 @@ public final class ItStack {
         return new StringRedisTemplate(f);
     }
 
-    /** ACL WHOAMI — 이 연결이 어떤 ACL 사용자로 인증됐는가. */
+    /**
+     * 이 연결이 어떤 ACL 사용자로 인증됐는가. ACL WHOAMI 가 허용된 사용자(관리·api)는 그 답을, 명령 허용 목록 사용자(collector·ais — R-86)는
+     * 거부 응답 "User &lt;이름&gt; has no permissions" 의 이름을 쓴다(수집기에 WHOAMI 를 열지 않고도 신원을 확인한다).
+     */
     public static String whoami(StringRedisTemplate t) {
-        return t.execute((org.springframework.data.redis.core.RedisCallback<String>) conn -> {
-            Object r = conn.execute("ACL", "WHOAMI".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return r instanceof byte[] b ? new String(b, java.nio.charset.StandardCharsets.UTF_8) : String.valueOf(r);
-        });
+        try {
+            return t.execute((org.springframework.data.redis.core.RedisCallback<String>) conn -> {
+                Object r = conn.execute("ACL", "WHOAMI".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                return r instanceof byte[] b ? new String(b, java.nio.charset.StandardCharsets.UTF_8) : String.valueOf(r);
+            });
+        } catch (RuntimeException e) {
+            for (Throwable c = e; c != null; c = c.getCause()) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("NOPERM User (\\S+) has no permissions").matcher(String.valueOf(c.getMessage()));
+                if (m.find()) return m.group(1);
+            }
+            throw e;
+        }
+    }
+
+    /** 해시에 여러 필드를 HSET 으로 쓴다(수집기·ais 가 실제로 쓰는 명령 — Spring 의 putAll 은 HMSET 이라 허용 목록 밖, R-86). */
+    public static void hset(StringRedisTemplate t, String key, java.util.Map<String, String> fields) {
+        fields.forEach((f, v) -> t.opsForHash().put(key, f, v));
     }
 }

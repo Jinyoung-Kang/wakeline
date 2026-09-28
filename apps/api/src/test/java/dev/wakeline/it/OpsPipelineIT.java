@@ -67,9 +67,9 @@ class OpsPipelineIT extends IntegrationTest {
 
             // 최근 heartbeat → 수집기가 센 값 그대로
             Instant now = Instant.now();
-            col.opsForHash().putAll(COLLECTOR, Map.of("region_at", now.toString(), "publish_dropped", "3", "db_dropped", "2", "db_pending", "7",
+            ItStack.hset(col, COLLECTOR, Map.of("region_at", now.toString(), "publish_dropped", "3", "db_dropped", "2", "db_pending", "7",
                     "db_failures", "1"));
-            ais.opsForHash().putAll(AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1"));
+            ItStack.hset(ais, AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1"));
             JsonNode fresh = b.get("/api/v1/ops/pipeline").json();
             assertThat(fresh.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
             assertThat(fresh.path("collector").path("db_dropped").asLong()).isEqualTo(2);

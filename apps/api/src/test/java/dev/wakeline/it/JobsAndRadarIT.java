@@ -117,7 +117,7 @@ class JobsAndRadarIT extends IntegrationTest {
             col.opsForValue().set("wakeline:radar_kr:frames", """
                     [{"tm":"%s","obs_tm":"%s","fetched_at":"%s","echo_cells":12},{"tm":"bad-tm"},{"tm":"%s","obs_tm":"%s","fetched_at":"%s","echo_cells":34}]"""
                     .formatted(expired, expired, now, live, live, now));
-            col.opsForHash().putAll("wakeline:radar_kr:meta", Map.ofEntries(
+            ItStack.hset(col, "wakeline:radar_kr:meta", Map.ofEntries(
                     Map.entry("available", "1"), Map.entry("status", "200"), Map.entry("note", ""), Map.entry("latest_tm", live),
                     Map.entry("product", "HSR"), Map.entry("cmp", "HSR"), Map.entry("coordinates", "[[121.8,39.9],[132.9,39.9],[132.9,31.6],[121.8,31.6]]"),
                     Map.entry("width", "640"), Map.entry("height", "480"), Map.entry("projection", "EPSG:3857"), Map.entry("grid", "{\"nx\":2305,\"ny\":2881}"),

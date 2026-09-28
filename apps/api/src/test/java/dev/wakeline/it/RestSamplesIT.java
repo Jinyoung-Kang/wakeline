@@ -176,11 +176,11 @@ class RestSamplesIT extends IntegrationTest {
         Instant hb = Instant.now();
         // state · bbox(계약 v3 §A) → status.sources.ais.state · coverage, shards(계약 v4 §D — 구역마다 연결 하나) → shards · coverage(구역 상자의 합)
         String shards = "[" + shard("-90,-180,90,0", hb) + "," + shard(ASIA_PACIFIC, hb) + "]";
-        ItStack.ais().opsForHash().putAll("wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "4.20",
+        ItStack.hset(ItStack.ais(), "wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "4.20",
                 "last_msg_at", hb.toString(), "updated_at", hb.toString(), "gap_open_since", "", "state", "receiving",
                 "bbox", "-90,-180,90,0|" + ASIA_PACIFIC, "shards", shards));
         try {
-            ItStack.collector().opsForHash().putAll("wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
+            ItStack.hset(ItStack.collector(), "wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
             await("status sources.ais and demand rate", WAIT, () -> {
                 Map<String, Object> st = status.status();
                 return st.get("sources") instanceof Map<?, ?> src && src.get("ais") instanceof Map<?, ?> ais && Boolean.TRUE.equals(ais.get("connected"))

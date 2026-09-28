@@ -415,8 +415,8 @@ class DemandIT extends IntegrationTest {
             await("both leases", Duration.ofSeconds(10), () -> leased(collector, DemandLeases.HOT).contains(cell) && leased(collector, DemandLeases.FOCUS).contains(hex));
 
             long now = System.currentTimeMillis();
-            Double hotScore = collector.opsForZSet().score(DemandLeases.HOT, cell);
-            Double focusScore = collector.opsForZSet().score(DemandLeases.FOCUS, hex);
+            Double hotScore = ItStack.admin().opsForZSet().score(DemandLeases.HOT, cell);
+            Double focusScore = ItStack.admin().opsForZSet().score(DemandLeases.FOCUS, hex);
             assertThat(hotScore).isNotNull();
             assertThat(focusScore).isNotNull();
             assertThat(hotScore.longValue() - now).as("hot lease expiry").isBetween(1L, 60_000L);
@@ -434,10 +434,10 @@ class DemandIT extends IntegrationTest {
 
             // 보는 동안은 주기 계산(10 s)이 만료를 연장한다 — 여전히 now + 60 s 이내
             await("lease renewed by the periodic refresh", Duration.ofSeconds(15), () -> {
-                Double s2 = collector.opsForZSet().score(DemandLeases.HOT, cell);
+                Double s2 = ItStack.admin().opsForZSet().score(DemandLeases.HOT, cell);
                 return s2 != null && s2 > hotScore;
             });
-            Set<ZSetOperations.TypedTuple<String>> all = collector.opsForZSet().rangeWithScores(DemandLeases.HOT, 0, -1);
+            Set<ZSetOperations.TypedTuple<String>> all = ItStack.admin().opsForZSet().rangeWithScores(DemandLeases.HOT, 0, -1);
             assertThat(all).allSatisfy(t -> assertThat(t.getScore().longValue() - System.currentTimeMillis()).isBetween(1L, 60_000L));
         } finally {
             h.ws.abort(); // 닫기 프레임 없이 끊는다(브라우저 종료·네트워크 단절)

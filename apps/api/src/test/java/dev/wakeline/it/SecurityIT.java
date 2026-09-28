@@ -213,7 +213,7 @@ class SecurityIT extends IntegrationTest {
         assertThat(b.login("it-ops2", PW).status()).isEqualTo(200);
 
         // FR-13 /ops/providers 계약 — 공급자 상태는 수집기가 wakeline:provider:{name} 에 쓴다(수집기 ACL 사용자로 흉내)
-        ItStack.collector().opsForHash().putAll("wakeline:provider:adsb_lol", Map.of("state", "ok", "last_ok_at", java.time.Instant.now().toString()));
+        ItStack.hset(ItStack.collector(), "wakeline:provider:adsb_lol", Map.of("state", "ok", "last_ok_at", java.time.Instant.now().toString()));
         JsonNode prov = b.send("GET", "/api/v1/ops/providers", null, Map.of()).json();
         assertThat(prov.has("providers") && prov.has("active") && prov.has("collector") && prov.has("switches") && prov.has("budget_days")).isTrue();
         List<String> names = new ArrayList<>();

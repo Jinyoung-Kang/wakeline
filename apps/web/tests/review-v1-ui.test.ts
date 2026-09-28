@@ -2,6 +2,7 @@
  * 리뷰 v1(docs/review/REVIEW-v1.md) 웹 UI 갈래 회귀 시험. 각 describe 는 한 발견 사항(R-xx)이다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(커밋 메시지·검증 기록 참고).
  */
+import type { PublicStatus } from "@/lib/types";
 import { readFileSync } from "node:fs";
 import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
@@ -72,6 +73,9 @@ describe("R-05 replay request area and stale frame", () => {
 const UI0 = useUi.getState();
 afterEach(() => { resetData(); useUi.setState(UI0, true); });
 
+/** 관심 지역 설정(R-09: 설정을 받기 전에는 관심 지역 목록을 보이지 않는다) — 아래 알림 위치(31.2, 121.5)를 덮는 지역 */
+const REGION_STATUS = { server_time: "2026-09-28T01:00:00Z", region: { center: [31.2, 121.5], radius_nm: 300, provider: "adsb_fi", aircraft: 1, lag_s: 1, stale: false, fetched_at: null } } as unknown as PublicStatus;
+
 const alert = (o: Partial<Alert> = {}): Alert => ({
   id: 7, kind: "OBSERVED", hex: "780f47", callsign: "CCA402", sigmet_id: "S1", fir_id: "ZSHA", hazard: "TURB", qualifier: "SEV",
   entered_at: "2026-09-28T01:00:00Z", alt_ft: 27600, evidence: { position: [31.2, 121.5] }, estimated: false, ...o,
@@ -79,7 +83,7 @@ const alert = (o: Partial<Alert> = {}): Alert => ({
 
 describe("R-08 alert row: expand stays, selection moves the map", () => {
   it("the alert list stays mounted (hidden) while another panel shows, so its expanded rows and scroll survive a selection", () => {
-    setData({ alerts: new Map([[7, alert()]]), alertsVersion: 1, conn: "open" });
+    setData({ alerts: new Map([[7, alert()]]), alertsVersion: 1, conn: "open", status: REGION_STATUS });
     // 수정 전 app/page.tsx 는 panel === "alerts" 일 때만 AlertPanel 을 렌더했다(선택하면 언마운트 → 펼침·스크롤 소실)
     const html = renderToStaticMarkup(createElement(SidePanelView, { panel: "aircraft", hex: "780f47", sigmet: null, airport: null }));
     expect(html).toContain('data-testid="aircraft-card"');
@@ -356,7 +360,7 @@ describe("R-30 structure for assistive technology", () => {
     expect(html.match(/<a [^>]*tabindex="-1"/g)?.length ?? 0).toBe(anchors);
   });
   it("alert rows are read with pauses between fields", () => {
-    setData({ alerts: new Map([[7, alert()]]), alertsVersion: 1, conn: "open" });
+    setData({ alerts: new Map([[7, alert()]]), alertsVersion: 1, conn: "open", status: REGION_STATUS });
     const html = renderToStaticMarkup(createElement(SidePanelView, { panel: "alerts", hex: null, sigmet: null, airport: null }));
     const row = html.slice(html.indexOf('data-testid="alert-toggle"'), html.indexOf("</button>", html.indexOf('data-testid="alert-toggle"')));
     expect(row.match(/<span class="sr-only">, <\/span>/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
