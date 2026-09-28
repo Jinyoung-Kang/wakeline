@@ -60,5 +60,33 @@ class RuntimeToolsTest(unittest.TestCase):
         self.assertLess(runtime.index("pip uninstall"), runtime.index("USER app"), "root 로 지운 뒤 비root 로 내려간다")
 
 
+PINNED = re.compile(r"^[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$")
+
+
+class BaseImagePinningTest(unittest.TestCase):
+    """R-85: 기반 이미지·빌드 도구 이미지(FROM · COPY --from=<이미지> · # syntax=)를 태그+다이제스트로 고정 — 같은 커밋이면 같은 기반."""
+
+    def test_every_external_image_reference_is_pinned(self):
+        for app, path in DOCKERFILES.items():
+            text = path.read_text()
+            names = set(re.findall(r"(?mi)^FROM\s+\S+\s+AS\s+(\S+)", text))
+            refs = re.findall(r"(?mi)^FROM\s+(\S+)", text) + re.findall(r"(?mi)^COPY\s+--from=(\S+)", text)
+            refs += re.findall(r"(?m)^#\s*syntax=(\S+)", text)
+            external = [r for r in refs if r not in names]
+            self.assertTrue(external)
+            for ref in external:
+                with self.subTest(app=app, ref=ref):
+                    self.assertRegex(ref, PINNED, "tag@sha256:<64 hex>")
+
+    def test_same_base_is_pinned_to_the_same_digest(self):
+        """한 파일 안에서 같은 태그는 같은 다이제스트(빌드·실행 단계가 어긋나지 않게)."""
+        for app, path in DOCKERFILES.items():
+            seen: dict[str, str] = {}
+            for ref in re.findall(r"(?mi)^FROM\s+(\S+@sha256:[0-9a-f]{64})", path.read_text()):
+                tag, digest = ref.split("@")
+                with self.subTest(app=app, tag=tag):
+                    self.assertEqual(seen.setdefault(tag, digest), digest)
+
+
 if __name__ == "__main__":
     unittest.main()
