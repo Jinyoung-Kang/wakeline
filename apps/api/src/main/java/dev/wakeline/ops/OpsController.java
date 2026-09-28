@@ -80,7 +80,7 @@ public class OpsController {
             List<MapRecord<String, Object, Object>> recs = redis.opsForStream().reverseRange("wakeline:events", Range.unbounded(), Limit.limit().count(20));
             if (recs != null) for (var r : recs) switches.add(new LinkedHashMap<>(castMap(r.getValue())));
         } catch (RuntimeException ignored) { }
-        var budgets = db.sql("SELECT provider, day, calls, limit_value FROM provider_budget_day WHERE day >= CURRENT_DATE - 7 ORDER BY day DESC, provider").query().listOfRows();
+        var budgets = db.sql("SELECT provider, to_char(day, 'YYYY-MM-DD') AS day, calls, limit_value FROM provider_budget_day WHERE day >= CURRENT_DATE - 7 ORDER BY 2 DESC, provider").query().listOfRows();
         return Map.of("providers", list, "active", status.publicStatus().get("active_providers"), "collector", status.collectorHeartbeat(),
                 "switches", switches, "budget_days", budgets);
     }
@@ -141,7 +141,8 @@ public class OpsController {
     @GetMapping("/quality")
     public Map<String, Object> quality(@RequestParam(defaultValue = "7") int days) {
         int d = Math.max(1, Math.min(days, 90));
-        var counts = db.sql("SELECT day, rule, count FROM quality_rule_count WHERE day >= CURRENT_DATE - :d ORDER BY day DESC, rule").param("d", d).query().listOfRows();
+        // day 는 UTC 날짜 "YYYY-MM-DD"(R-45 — JVM 시간대의 자정 시각이 아니다)
+        var counts = db.sql("SELECT to_char(day, 'YYYY-MM-DD') AS day, rule, count FROM quality_rule_count WHERE day >= CURRENT_DATE - :d ORDER BY 1 DESC, rule").param("d", d).query().listOfRows();
         var recent = db.sql("SELECT id, run_id, rule, hex, detail::text detail, created_at FROM quality_event ORDER BY id DESC LIMIT 50").query().listOfRows();
         return Map.of("rule_counts", counts, "recent", recent);
     }

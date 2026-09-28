@@ -69,21 +69,24 @@ public class HistoryController {
                                                            @RequestParam(defaultValue = "fir") String group, HttpServletRequest req) {
         var range = range(from, to);
         String g = "hazard".equals(group) ? "hazard" : "fir";
-        return ok(Map.of("group", g, "items", stats.sigmet(range[0], range[1], g)), req);
+        return ok(Map.of("group", g, "items", stats.sigmet(range[0], range[1], g),
+                "days", stats.days(range[0], range[1], dev.wakeline.persist.MaintenanceJobs.FAMILY_SIGMET)), req);
     }
 
     /**
      * 시간대별 트래픽(관심 지역 bbox 안의 서로 다른 항공기 수, 계약 §2). scope = "region", region = 그날 집계가 센 지역
      * {center, radius_nm, bbox — 집계가 실제로 쓴 사각형(DH-10)}.
      * 지역 기록이 없는 옛 집계(전세계 표본이 섞였을 수 있음)는 scope·region 이 null — 어느 범위인지 단정하지 않는다.
-     * 자료가 없는 시간은 items 에 없다(0 이 아니다).
+     * 자료가 없는 시간은 items 에 없다(0 이 아니다). aggregated = 그날 집계를 마쳤는가(R-45) — false 면 빈 items 는 '0 대' 가 아니라 '집계 전'
+     * (오늘은 끝나지 않아 항상 false). day 는 UTC 날짜 "YYYY-MM-DD".
      */
     @GetMapping("/stats/traffic")
     public ResponseEntity<Map<String, Object>> statsTraffic(@RequestParam(required = false) LocalDate day, HttpServletRequest req) {
         LocalDate d = day == null ? LocalDate.now(java.time.ZoneOffset.UTC) : day;
         StatsRepository.Traffic t = stats.traffic(d);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("day", d);
+        body.put("day", d.toString());
+        body.put("aggregated", t.aggregated());
         body.put("scope", t.region() == null ? null : "region");
         body.put("region", t.region());
         body.put("items", t.items());
@@ -93,7 +96,7 @@ public class HistoryController {
     @GetMapping("/stats/alerts")
     public ResponseEntity<Map<String, Object>> statsAlerts(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, HttpServletRequest req) {
         var range = range(from, to);
-        return ok(Map.of("items", stats.alerts(range[0], range[1])), req);
+        return ok(Map.of("items", stats.alerts(range[0], range[1]), "days", stats.days(range[0], range[1], dev.wakeline.persist.MaintenanceJobs.FAMILY_ALERTS)), req);
     }
 
     @GetMapping("/status")

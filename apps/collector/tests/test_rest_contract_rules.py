@@ -64,3 +64,32 @@ def test_recorded_status_needs_the_union_of_every_shard_but_live_status_may_be_a
     assert rcc._status_ais_recorded(part)  # 기록된 표본은 모든 구역을 구독했다 — 빠뜨리면 실패
     assert rcc._status(part) == []  # 실서버는 구독 상태가 보이지 않으므로 부분 합 허용
     assert rcc._status({"sources": {"ais": {"shards": shards, "coverage": [[1.0, 1.0, 2.0, 2.0]]}}})  # 어떤 구역의 합도 아님
+
+
+META = {"stale": False, "generated_at": "2026-09-28T00:00:00Z", "request_id": "abcdefgh"}
+
+
+def test_stats_days_are_utc_date_strings_with_an_aggregated_flag():
+    """R-45: 통계 day 는 "YYYY-MM-DD" 만, 범위 응답은 날마다 aggregated, 행의 날은 그 범위 안."""
+    v = Draft202012Validator(rcc.SCHEMAS["stats_sigmet"], format_checker=rcc.FORMATS)
+    ok = {
+        "group": "fir",
+        "items": [{"day": "2026-09-27", "dim": "RKRR", "value": 3}],
+        "days": [{"day": "2026-09-26", "aggregated": False}, {"day": "2026-09-27", "aggregated": True}],
+        "meta": META,
+    }
+    assert not list(v.iter_errors(ok))
+    assert rcc._stats_days(ok) == []
+    midnight = {**ok, "items": [{"day": "2026-09-27T00:00:00.000Z", "dim": "RKRR", "value": 3}]}
+    assert list(v.iter_errors(midnight))  # 자정 시각 문자열(JVM 시간대 의존)은 날짜가 아니다
+    assert list(v.iter_errors({**ok, "days": [{"day": "2026-09-27"}]}))  # aggregated 없음
+    unordered = [{"day": "2026-09-27", "aggregated": True}, {"day": "2026-09-26", "aggregated": True}]
+    assert rcc._stats_days({**ok, "days": unordered})
+    holes = [{"day": "2026-09-25", "aggregated": True}, {"day": "2026-09-27", "aggregated": True}]
+    assert rcc._stats_days({**ok, "days": holes})
+    assert rcc._stats_days({**ok, "days": [{"day": "2026-09-26", "aggregated": True}]})  # 행의 날이 범위 밖
+    t = Draft202012Validator(rcc.SCHEMAS["stats_traffic"], format_checker=rcc.FORMATS)
+    traffic = {"day": "2026-09-28", "aggregated": False, "items": [], "meta": META}
+    assert not list(t.iter_errors(traffic))
+    assert list(t.iter_errors({k: x for k, x in traffic.items() if k != "aggregated"}))  # 집계 전인지 알 수 없다
+    assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-27", "dim": "10", "value": 1}]})

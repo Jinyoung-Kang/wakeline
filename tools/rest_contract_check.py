@@ -561,6 +561,25 @@ DEMAND_COUNTS: Schema = {  # /status demand — 수만(hex·셀 키를 공개하
     },
 }
 
+# R-45: 통계의 날짜는 UTC 날짜 "YYYY-MM-DD" 만(자정 시각 문자열 "…T00:00:00.000Z" 는 JVM 시간대에 따라 하루 밀렸다)
+STATS_DAY: Schema = {"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+STATS_ROW: Schema = {
+    "type": "object",
+    "required": ["day", "dim", "value"],
+    "additionalProperties": False,
+    "properties": {"day": STATS_DAY, "dim": STR, "value": NUM},
+}
+# 범위의 날마다 집계를 마쳤는가 — 행이 없는 날이 '자료 없음'(true)인지 '집계 전'(false)인지
+STATS_DAYS: Schema = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": ["day", "aggregated"],
+        "additionalProperties": False,
+        "properties": {"day": STATS_DAY, "aggregated": BOOL},
+    },
+}
+
 FEED: Schema = {
     "type": "object",
     "required": ["stale"],
@@ -846,9 +865,11 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "stats_traffic": {
         "type": "object",
-        "required": ["day", "items", "meta"],
+        # R-45: aggregated = 그날 집계를 마쳤는가(false 면 빈 items 는 '0 대' 가 아니라 '집계 전')
+        "required": ["day", "aggregated", "items", "meta"],
         "properties": {
-            "day": {"type": "string", "format": "date"},
+            "day": STATS_DAY,
+            "aggregated": BOOL,
             "scope": {"const": "region"},
             "region": {  # DH-10: 그날 집계가 센 지역과 실제로 쓴 사각형 — 모르면(옛 집계) scope·region 모두 없음
                 "type": "object",
@@ -859,16 +880,36 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "bbox": {"type": "array", "items": NUM, "minItems": 4, "maxItems": 4},
                 },
             },
-            "items": {"type": "array"},
+            "items": {"type": "array", "items": STATS_ROW},
             "meta": META,
         },
         "dependentRequired": {"scope": ["region"], "region": ["scope"]},
     },
-    "stats_alerts": {"type": "object", "required": ["items", "meta"], "properties": {"items": {"type": "array"}, "meta": META}},
+    "stats_alerts": {
+        "type": "object",
+        "required": ["items", "days", "meta"],
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    **STATS_ROW,
+                    "required": [*STATS_ROW["required"], "metric"],
+                    "properties": {**STATS_ROW["properties"], "metric": {"enum": ["alerts_by_kind", "alert_dwell_avg_s"]}},
+                },
+            },
+            "days": STATS_DAYS,
+            "meta": META,
+        },
+    },
     "stats_sigmet": {
         "type": "object",
-        "required": ["items", "group", "meta"],
-        "properties": {"items": {"type": "array"}, "group": {"enum": ["fir", "hazard"]}, "meta": META},
+        "required": ["items", "group", "days", "meta"],
+        "properties": {
+            "items": {"type": "array", "items": STATS_ROW},
+            "group": {"enum": ["fir", "hazard"]},
+            "days": STATS_DAYS,
+            "meta": META,
+        },
     },
     "ships": feature_collection(
         {
@@ -1346,6 +1387,26 @@ def _ais_gaps(body: dict[str, Any]) -> list[str]:
     return errs
 
 
+def _stats_days(body: dict[str, Any]) -> list[str]:
+    """R-45: days 는 날짜순·중복 없는 연속 범위이고, 행이 있는 날은 모두 그 범위 안에 있다."""
+    errs: list[str] = []
+    days = [date.fromisoformat(d["day"]) for d in body.get("days") or []]
+    if days != sorted(set(days)):
+        errs.append("days are not in date order without duplicates")
+    if days and (days[-1] - days[0]).days + 1 != len(days):
+        errs.append("days do not cover every date of the range")
+    listed = set(days)
+    for i, row in enumerate(body.get("items") or []):
+        if date.fromisoformat(row["day"]) not in listed:
+            errs.append(f"items[{i}].day {row['day']} is outside days")
+    return errs
+
+
+def _stats_traffic(body: dict[str, Any]) -> list[str]:
+    days = {row["day"] for row in body.get("items") or []}
+    return [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
+
+
 SCHEMAS["status_ais"] = {
     **SCHEMAS["status"],
     "allOf": [
@@ -1364,6 +1425,9 @@ CROSS_CHECKS = {
     "ship_track": _ship_track,
     "ais_gaps": _ais_gaps,
     "aircraft_detail": _aircraft_detail,
+    "stats_sigmet": _stats_days,
+    "stats_alerts": _stats_days,
+    "stats_traffic": _stats_traffic,
 }
 
 
