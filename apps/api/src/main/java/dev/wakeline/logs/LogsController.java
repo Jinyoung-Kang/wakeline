@@ -34,7 +34,7 @@ public class LogsController {
     static final int LIMIT_MAX = 200;
     static final int Q_MAX = 200;
     static final Pattern FP = Pattern.compile("[0-9a-f]{16}");
-    static final Pattern STREAM_ID = Pattern.compile("\\d{1,19}-\\d{1,20}");
+    static final Pattern STREAM_ID = Pattern.compile("\\d{1,20}-\\d{1,20}");
 
     private final LogReader reader;
 
@@ -48,7 +48,7 @@ public class LogsController {
                                @RequestParam(required = false) String rid, @RequestParam(required = false) Instant since,
                                @RequestParam(required = false) Instant until, @RequestParam(required = false) String cursor,
                                @RequestParam(defaultValue = "100") int limit) {
-        if (cursor != null && !cursor.isBlank() && !STREAM_ID.matcher(cursor).matches())
+        if (cursor != null && !cursor.isBlank() && !(STREAM_ID.matcher(cursor).matches() && LogReader.parseId(cursor) != null))
             throw Problem.badRequest("BAD_CURSOR", "cursor must be a stream id (next_cursor of the previous page)");
         var f = filter(service, level, q, fp, rid, since, until);
         return reader.list(f, cursor == null || cursor.isBlank() ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)));
@@ -60,9 +60,9 @@ public class LogsController {
         return reader.groups(filter(service, level, null, null, null, since, null));
     }
 
-    @GetMapping("/{id:\\d{1,19}-\\d{1,20}}")
+    @GetMapping("/{id:\\d{1,20}-\\d{1,20}}")
     public JsonNode one(@PathVariable String id) {
-        JsonNode n = reader.get(id);
+        JsonNode n = LogReader.parseId(id) == null ? null : reader.get(id); // 64비트를 넘는 id 는 스트림에 있을 수 없다
         if (n == null) throw Problem.notFound("no such log entry (trimmed from the stream, or it failed schema validation)");
         return n;
     }

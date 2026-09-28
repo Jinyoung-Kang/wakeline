@@ -277,14 +277,23 @@ public class LogReader {
         return false;
     }
 
-    /** 바로 앞의 스트림 id(ms-seq, seq 는 부호 없는 64비트). 0-0 이면 null. 형식이 틀리면 IllegalArgumentException. */
+    /** 스트림 id(ms-seq — Redis 는 두 칸 모두 부호 없는 64비트) → {ms, seq}. 형식이 틀리거나 64비트를 넘으면 null. */
+    public static long[] parseId(String id) {
+        int dash = id == null ? -1 : id.indexOf('-');
+        if (dash <= 0) return null;
+        try {
+            return new long[]{Long.parseUnsignedLong(id.substring(0, dash)), Long.parseUnsignedLong(id.substring(dash + 1))};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 바로 앞의 스트림 id. 0-0 이면 null. 형식이 틀리면 IllegalArgumentException(컨트롤러가 {@link #parseId} 로 먼저 거른다). */
     static String previousId(String id) {
-        int dash = id.indexOf('-');
-        if (dash < 0) throw new IllegalArgumentException("stream id: " + id);
-        long ms = Long.parseLong(id.substring(0, dash));
-        long seq = Long.parseUnsignedLong(id.substring(dash + 1));
-        if (seq != 0) return ms + "-" + Long.toUnsignedString(seq - 1);
-        if (ms == 0) return null;
-        return (ms - 1) + "-" + Long.toUnsignedString(-1L);
+        long[] p = parseId(id);
+        if (p == null) throw new IllegalArgumentException("stream id: " + id);
+        if (p[1] != 0) return Long.toUnsignedString(p[0]) + "-" + Long.toUnsignedString(p[1] - 1);
+        if (p[0] == 0) return null;
+        return Long.toUnsignedString(p[0] - 1) + "-" + Long.toUnsignedString(-1L);
     }
 }

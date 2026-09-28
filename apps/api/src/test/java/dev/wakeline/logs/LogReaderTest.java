@@ -23,12 +23,12 @@ class LogReaderTest {
 
     /** 메모리 스트림: id(ms-seq) → 필드 e(없으면 null). XREVRANGE 와 같은 규칙(끝·시작 포함, 최신 순). */
     static final class MemStream implements LogReader.Source {
-        final NavigableMap<long[], String> entries = new TreeMap<>((a, b) -> a[0] != b[0] ? Long.compare(a[0], b[0]) : Long.compareUnsigned(a[1], b[1]));
+        final NavigableMap<long[], String> entries = new TreeMap<>((a, b) -> a[0] != b[0] ? Long.compareUnsigned(a[0], b[0]) : Long.compareUnsigned(a[1], b[1]));
         int calls;
 
         String add(long ms, long seq, String e) { entries.put(new long[]{ms, seq}, e); return ms + "-" + seq; }
 
-        static long[] id(String s) { String[] p = s.split("-"); return new long[]{Long.parseLong(p[0]), Long.parseUnsignedLong(p[1])}; }
+        static long[] id(String s) { String[] p = s.split("-"); return new long[]{Long.parseUnsignedLong(p[0]), Long.parseUnsignedLong(p[1])}; }
 
         @Override
         public List<LogReader.Raw> reverse(String endInclusive, String startInclusive, int count) {
@@ -39,7 +39,7 @@ class LogReaderTest {
                 long[] k = e.getKey();
                 if (endInclusive != null && entries.comparator().compare(k, id(endInclusive)) > 0) continue;
                 if (startInclusive != null && entries.comparator().compare(k, id(startInclusive)) < 0) break;
-                out.add(new LogReader.Raw(k[0] + "-" + Long.toUnsignedString(k[1]), e.getValue()));
+                out.add(new LogReader.Raw(Long.toUnsignedString(k[0]) + "-" + Long.toUnsignedString(k[1]), e.getValue()));
                 if (out.size() >= count) break;
             }
             return out;

@@ -66,6 +66,24 @@ class LogsControllerTest {
         mvc.perform(get("/api/v1/ops/logs").param("limit", "0")).andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1));
     }
 
+    /**
+     * 형식은 맞지만 부호 없는 64비트를 넘는 스트림 id(Redis 스트림 id 는 두 칸 모두 부호 없는 64비트): cursor 는 400 BAD_CURSOR, 항목 하나는 404.
+     * 예전에는 500 이었다(숫자 변환 예외 → ERROR 로그와 스택 — 그 로그가 다시 로그 스트림에 실린다).
+     */
+    @Test
+    void streamIdsBeyondUnsigned64BitsAre400Or404_not500() throws Exception {
+        add(1);
+        for (String c : new String[]{"99999999999999999999-0", "18446744073709551616-0", "1-18446744073709551616", "1-99999999999999999999"}) {
+            mvc.perform(get("/api/v1/ops/logs").param("cursor", c)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("BAD_CURSOR"));
+            mvc.perform(get("/api/v1/ops/logs/" + c)).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        }
+        // 가장 큰 id 는 받는다(그보다 앞의 항목을 읽는다)
+        mvc.perform(get("/api/v1/ops/logs").param("cursor", "18446744073709551615-18446744073709551615")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1));
+        mvc.perform(get("/api/v1/ops/logs").param("cursor", "9223372036854775808-0")).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/ops/logs/18446744073709551615-18446744073709551615")).andExpect(status().isNotFound());
+    }
+
     @Test
     void oneEntryOr404() throws Exception {
         add(1);
