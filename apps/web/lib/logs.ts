@@ -83,6 +83,8 @@ export interface LogPage {
   invalid: number;
   /** api 가 스키마 검증에 실패해 건너뛴 항목 수(§C4) — 없으면 null */
   serverInvalid: number | null;
+  /** 이 목록을 이룬 요청 수(첫 쪽 + '이전 항목 더 보기') — invalid · serverInvalid 는 이 쪽들의 합 */
+  pages: number;
 }
 
 export function parseLogPage(v: unknown): LogPage {
@@ -92,7 +94,22 @@ export function parseLogPage(v: unknown): LogPage {
   for (const x of raw) { const e = parseLogEntry(x); if (e) items.push(e); }
   return {
     items, nextCursor: validStreamId(r.next_cursor) ? r.next_cursor : null, scanned: nonNeg(r.scanned), scanTruncated: bool(r.scan_truncated),
-    invalid: raw.length - items.length, serverInvalid: nonNeg(r.invalid),
+    invalid: raw.length - items.length, serverInvalid: nonNeg(r.invalid), pages: 1,
+  };
+}
+
+/**
+ * '이전 항목 더 보기': 다음 쪽을 뒤에 붙인다(겹친 항목은 한 번). 커서 · 훑은 수 · 잘림은 마지막 요청의 값(다음 쪽을 말한다),
+ * 건너뜀 수는 두 가지 모두 불러온 쪽들의 합 — 같은 범위끼리 나란히 보인다. api 값을 모르는 쪽이 있으면 합도 모른다(null — 아는 쪽만 더해 전체처럼 보이지 않는다).
+ */
+export function appendLogPage(prev: LogPage, next: LogPage): LogPage {
+  const seen = new Set(prev.items.map((e) => e.id));
+  return {
+    items: [...prev.items, ...next.items.filter((e) => !seen.has(e.id))],
+    nextCursor: next.nextCursor, scanned: next.scanned, scanTruncated: next.scanTruncated,
+    invalid: prev.invalid + next.invalid,
+    serverInvalid: prev.serverInvalid == null || next.serverInvalid == null ? null : prev.serverInvalid + next.serverInvalid,
+    pages: prev.pages + next.pages,
   };
 }
 

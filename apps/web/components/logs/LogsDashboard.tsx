@@ -5,7 +5,7 @@ import { apiGet, apiSend } from "@/lib/api";
 import { copyText, downloadText } from "@/lib/copy";
 import { fmtClock, fmtTime } from "@/lib/format";
 import {
-  applyPending, DEFAULT_LOG_FILTER, firstLine, fmtLogTime, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SERVICES, logGroupsUrl,
+  appendLogPage, applyPending, DEFAULT_LOG_FILTER, firstLine, fmtLogTime, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SERVICES, logGroupsUrl,
   logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX, parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash,
   pendingEntries, validRid, type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod,
 } from "@/lib/logs";
@@ -212,12 +212,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     try {
       const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor: page.nextCursor })));
       if (my !== loadSeq.current) return;
-      setPage((prev) => {
-        if (!prev) return prev;
-        const seen = new Set(prev.items.map((e) => e.id));
-        return { ...prev, items: [...prev.items, ...p.items.filter((e) => !seen.has(e.id))], nextCursor: p.nextCursor, scanned: p.scanned, scanTruncated: p.scanTruncated,
-          invalid: prev.invalid + p.invalid, serverInvalid: p.serverInvalid };
-      });
+      setPage((prev) => (prev ? { ...appendLogPage(prev, p), at: prev.at } : prev));
     } catch (e) {
       fail(e);
     }
@@ -322,7 +317,11 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             <span>{page ? `${n(items.length)}건 표시(최신 순)` : loading ? "불러오는 중…" : "—"}</span>
             {page?.scanned != null ? <span className="text-fg-3" title="마지막 요청이 훑은 스트림 항목 수(요청당 상한 3,000)">훑은 항목 <span className="mono">{n(page.scanned)}</span></span> : null}
             {page?.scanTruncated ? <span className="text-warn">스캔 상한(3,000)에서 잘림 — 조건에 맞는 더 오래된 항목이 있을 수 있음</span> : null}
-            {page && (page.invalid > 0 || (page.serverInvalid ?? 0) > 0) ? <span className="text-warn">형식 오류로 건너뜀: api {page.serverInvalid ?? "—"} · 화면 {page.invalid}</span> : null}
+            {page && (page.invalid > 0 || (page.serverInvalid ?? 0) > 0) ? (
+              <span className="text-warn" data-testid="logs-skipped" title="api = 서버가 읽을 때 스키마 검증에 실패해 건너뛴 항목 · 화면 = 이 화면이 형식 오류로 버린 항목 — 둘 다 불러온 쪽들의 합(— = api 가 값을 주지 않음)">
+                형식 오류로 건너뜀({page.pages > 1 ? `불러온 ${page.pages}쪽 합계` : "불러온 1쪽"}): api {page.serverInvalid ?? "—"} · 화면 {page.invalid}
+              </span>
+            ) : null}
             {pending.items.length ? (
               <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={showPending}>
                 {pending.more ? `새 항목 ${n(pending.items.length)}건 이상 — 다시 불러오기` : `새 항목 ${n(pending.items.length)}건`}

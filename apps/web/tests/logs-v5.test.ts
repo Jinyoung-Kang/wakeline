@@ -72,6 +72,19 @@ describe("v5-C7 lib/logs: parsing (unknown stays null, malformed entries are cou
     expect(L.parseLogPage({ items: [] })).toMatchObject({ items: [], nextCursor: null, scanned: null, scanTruncated: null, serverInvalid: null });
     expect(L.parseLogPage(null).items).toEqual([]);
   });
+  it("'이전 항목 더 보기' appends a page: both skipped counts are summed over the loaded pages (same scope), cursor and scan facts are the last request's", async () => {
+    const L = await import("@/lib/logs");
+    const a = L.parseLogPage({ items: [entry(), "junk"], next_cursor: "1789999999999-0", scanned: 3000, scan_truncated: true, invalid: 2 });
+    const b = L.parseLogPage({ items: [entry(), entry({ id: "1789999999998-0" }), entry({ id: "bad" })], next_cursor: null, scanned: 40, scan_truncated: false, invalid: 5 });
+    expect(a.pages).toBe(1);
+    const m = L.appendLogPage(a, b);
+    expect(m.items.map((e) => e.id)).toEqual(["1790000000000-0", "1789999999998-0"]); // 겹친 항목은 한 번
+    expect([m.pages, m.invalid, m.serverInvalid]).toEqual([2, 2, 7]);
+    expect([m.nextCursor, m.scanned, m.scanTruncated]).toEqual([null, 40, false]);
+    // api 값을 모르는 쪽이 있으면 합도 모른다(아는 쪽만 더해 전체처럼 보이지 않는다)
+    expect(L.appendLogPage(a, L.parseLogPage({ items: [] })).serverInvalid).toBeNull();
+    expect(L.appendLogPage(L.parseLogPage({ items: [] }), a).serverInvalid).toBeNull();
+  });
   it("groups keep count / suppressed / first / last as given", async () => {
     const L = await import("@/lib/logs");
     const g = L.parseLogGroups({ groups: [{ fp: "0123456789abcdef", service: "api", level: "ERROR", logger: "x.Y", exception_type: null, sample_message: "boom", count: 12, suppressed: 30, first_at: "2026-09-29T00:00:00Z", last_at: "2026-09-29T01:00:00Z", last_id: "1790000000000-0" }, { nope: 1 }], scanned: 3000, scan_truncated: true });

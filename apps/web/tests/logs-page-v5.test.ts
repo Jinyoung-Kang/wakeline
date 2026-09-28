@@ -176,6 +176,15 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     expect(last.get("rid")).toBe("5f2c9a0e1b7d4c3a");
     expect((find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "요청 id") as unknown as { value: string }).value).toBe("5f2c9a0e1b7d4c3a");
   });
+  it("after '이전 항목 더 보기' the skipped counts say they are sums over the loaded pages (api and screen alike)", async () => {
+    const OLDER = { items: [entry(`${NOW - 600_000}-0`), { junk: true }], next_cursor: null, scanned: 90, scan_truncated: false, invalid: 4 };
+    stubFetch((url) => (url.includes("cursor=") ? { status: 200, body: OLDER } : url.startsWith("/api/v1/ops/logs?") ? { status: 200, body: { ...FIRST, invalid: 1 } } : undefined));
+    await open();
+    expect(byTestId("logs-skipped")!.textContent).toBe("형식 오류로 건너뜀(불러온 1쪽): api 1 · 화면 0");
+    await click(button("이전 항목 더 보기"));
+    expect(allByTestId("log-row")).toHaveLength(3);
+    expect(byTestId("logs-skipped")!.textContent).toBe("형식 오류로 건너뜀(불러온 2쪽 합계): api 5 · 화면 1");
+  });
   it("the keyboard list is a focusable grid: the selected row is its active descendant (read by screen readers); keys from other controls are not taken over", async () => {
     stubFetch((url) => (url.startsWith("/api/v1/ops/logs?") ? { status: 200, body: FIRST } : undefined));
     await open();
