@@ -15,6 +15,13 @@ interface Providers { providers: Any[]; active: Record<string, string>; collecto
 interface Runs { items: Any[]; summary_24h: Any[] }
 interface Quality { rule_counts: Any[]; recent: Any[] }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
+type Tab = "providers" | "runs" | "quality" | "settings" | "audit" | "dlq" | "pipeline";
+const TABS: readonly Tab[] = ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"];
+/** 탭마다 불러오는 엔드포인트 — 마지막 성공 시각·실패를 탭마다 따로 둔다(R-12) */
+const TAB_PATH: Record<Tab, string> = {
+  providers: "/api/v1/ops/providers", runs: "/api/v1/ops/runs?limit=50", quality: "/api/v1/ops/quality", settings: "/api/v1/ops/settings",
+  audit: "/api/v1/ops/audit", dlq: "/api/v1/ops/dlq", pipeline: "/api/v1/ops/pipeline",
+};
 
 /**
  * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ·파이프라인 손실 지표(R-18). 비로그인은 404 → 로그인 폼.
@@ -33,7 +40,7 @@ export default function OpsPage() {
 }
 
 function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
-  const [tab, setTab] = useState<"providers" | "runs" | "quality" | "settings" | "audit" | "dlq" | "pipeline">("providers");
+  const [tab, setTab] = useState<Tab>("providers");
   const [prov, setProv] = useState<Providers | null>(null);
   const [runs, setRuns] = useState<Runs | null>(null);
   const [quality, setQuality] = useState<Quality | null>(null);
@@ -42,7 +49,9 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const [dlq, setDlq] = useState<{ items: Any[] } | null>(null);
   const [pipeline, setPipeline] = useState<unknown>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [lastOk, setLastOk] = useState<number | null>(null);
+  /** 탭(엔드포인트)마다 마지막 성공 시각과 마지막 요청의 실패 문구(성공하면 지운다) — 한 탭만 계속 실패해도 드러난다(R-12) */
+  const [lastOk, setLastOk] = useState<Partial<Record<Tab, number>>>({});
+  const [tabErr, setTabErr] = useState<Partial<Record<Tab, string>>>({});
   /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
   const fail = useCallback((e: unknown) => {
     const msg = (e as Error).message;
@@ -52,16 +61,23 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const refresh = useCallback(() => {
     setErr(null);
     let authMiss = false; // 한 번의 새로고침에서 세션 확인은 한 번만
-    const h = (e: unknown) => { if (isAuthMiss(e)) { if (authMiss) return; authMiss = true; } fail(e); };
-    const ok = <T,>(set: (v: T) => void) => (v: T) => { set(v); setLastOk(Date.now()); };
-    apiGet<Providers>("/api/v1/ops/providers").then(ok(setProv)).catch(h);
-    apiGet<Runs>("/api/v1/ops/runs?limit=50").then(ok(setRuns)).catch(h);
-    apiGet<Quality>("/api/v1/ops/quality").then(ok(setQuality)).catch(h);
-    apiGet<Settings>("/api/v1/ops/settings").then(ok(setSettings)).catch(h);
-    apiGet<{ items: Any[] }>("/api/v1/ops/audit").then(ok(setAudit)).catch(h);
-    apiGet<{ items: Any[] }>("/api/v1/ops/dlq").then(ok(setDlq)).catch(h);
-    apiGet<unknown>("/api/v1/ops/pipeline").then(ok(setPipeline)).catch(h);
-  }, [fail]);
+    const load = <T,>(t: Tab, set: (v: T) => void) => apiGet<T>(TAB_PATH[t]).then(
+      (v) => { set(v); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
+      (e: unknown) => {
+        // 이 탭의 값은 마지막 성공 시각 기준으로 남는다 — 실패를 탭에 붙인다. 세션 만료면 로그인으로(확인은 한 번만)
+        setTabErr((m) => ({ ...m, [t]: (e as Error).message }));
+        if (!isAuthMiss(e) || authMiss) return;
+        authMiss = true;
+        void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
+      });
+    load<Providers>("providers", setProv);
+    load<Runs>("runs", setRuns);
+    load<Quality>("quality", setQuality);
+    load<Settings>("settings", setSettings);
+    load<{ items: Any[] }>("audit", setAudit);
+    load<{ items: Any[] }>("dlq", setDlq);
+    load<unknown>("pipeline", setPipeline);
+  }, [onLeave]);
   useEffect(() => { const first = setTimeout(refresh, 0); const t = setInterval(refresh, 15_000); return () => { clearTimeout(first); clearInterval(t); }; }, [refresh]);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
   const losses = pipelineLossCount(pipeline);
@@ -70,14 +86,17 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
         <span className="label mr-2">Operations</span>
-        <div className="flex gap-1" role="group" aria-label="운영 탭">{(["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"] as const).map((t) => (
+        <div className="flex gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
           <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>
             {t}{t === "pipeline" && losses ? <span className="ml-1 text-bad" title="0 이 아닌 손실 지표 수">● {losses}</span> : null}
+            {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
           </button>
         ))}</div>
         <button className="btn" onClick={refresh}>refresh</button>
-        <span className="mono text-[11px] text-fg-3" title="마지막으로 응답을 받은 시각(15 s 마다 갱신)" data-testid="ops-last-ok">갱신 {fmtClock(lastOk)}</span>
-        {err ? <span className="text-[11px] text-bad" role="alert">{err}</span> : null}
+        <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${TAB_PATH[tab]})의 마지막 성공 응답 시각 — 15 s 마다 다시 요청`} data-testid="ops-last-ok">갱신 {fmtClock(lastOk[tab])}</span>
+        {err || TABS.some((t) => tabErr[t]) ? (
+          <span className="text-[11px] text-bad" role="alert">{[...TABS.filter((t) => tabErr[t]).map((t) => `${t}: ${tabErr[t]}`), ...(err ? [err] : [])].join(" · ")}</span>
+        ) : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]">
