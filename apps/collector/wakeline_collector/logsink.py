@@ -8,7 +8,7 @@
   같은 fp 는 10 s 에 1건만 — 억제한 수는 그 fp 의 다음 항목 suppressed 에(항목을 만들지 못하면 창을 닫고 수를 되돌린다).
 - 항목 ≤ 8 KiB(직렬화 바이트, C1): 스키마 글자 상한을 먼저 맞추고, 그래도 넘으면 stack → exception.message → message 순으로 잘라
   '…(잘림 N자)' 를 붙인다(N = 가린 원문에서 뺀 글자 수 — MaskFilter 가 LOG_LIMIT 에서 먼저 자른 부분도 센다).
-- 대기열 500건 · 2 MiB(넘으면 오래된 것부터 버리고 센다). 전송은 이벤트 루프의 태스크 하나: 1 s 마다 또는 50건이 모이면(작업 스레드는
+- 대기열 500건 · 2 MiB(보내는 중인 묶음까지 센다 — 넘으면 대기열의 오래된 것부터 버리고 센다). 전송은 이벤트 루프의 태스크 하나: 1 s 마다 또는 50건이 모이면(작업 스레드는
   call_soon_threadsafe 로 깨운다) 50건씩 파이프라인으로 XADD wakeline:logs MAXLEN ~ 3000 * e <json>. 명령은 R-43 클라이언트의 짧은
   상한 + SEND_TIMEOUT_S. Redis 오류면 그 묶음을 대기열 앞에 되돌리고 1 → 30 s 지수 백오프(그동안은 50건이 모여도 보내지 않는다).
   파이프라인이 중간에 끊기면 같은 항목이 두 번 실릴 수 있다(적어도 한 번 — 잃는 것보다 낫다).
@@ -217,7 +217,8 @@ class LogSink(logging.Handler):
         self._mu = threading.Lock()  # 대기열·억제 표·지표(emit 은 어느 스레드에서든, 전송은 이벤트 루프에서)
         self._q: deque[tuple[str, int]] = deque()  # (JSON, 바이트 수)
         self._qbytes = 0
-        self._inflight: list[tuple[str, int]] = []
+        self._inflight: list[tuple[str, int]] = []  # 보내는 중인 묶음 — 대기열 상한에 함께 센다
+        self._inflight_bytes = 0
         self._recent: dict[str, list[float]] = {}  # fp → [마지막 전송 시각, 그 뒤 억제 수](삽입 순서 = 오래된 순)
         self._wake = asyncio.Event()
         self._wake_requested = False
@@ -360,7 +361,10 @@ class LogSink(logging.Handler):
             self._notify()
 
     def _trim_locked(self) -> None:
-        while self._q and (len(self._q) > self.queue_max or self._qbytes > self.queue_max_bytes):
+        """대기열 + 보내는 중인 묶음이 상한(건수 · 바이트) 안이 될 때까지 대기열의 오래된 것부터 버린다(보내는 중인 묶음은 두고)."""
+        while self._q and (
+            len(self._q) + len(self._inflight) > self.queue_max or self._qbytes + self._inflight_bytes > self.queue_max_bytes
+        ):
             _js, n = self._q.popleft()
             self._qbytes -= n
             self.dropped += 1
@@ -403,7 +407,7 @@ class LogSink(logging.Handler):
                     self._put_back(batch)
                     raise
                 with self._mu:
-                    self._inflight = []
+                    self._inflight, self._inflight_bytes = [], 0
                     self.sent += len(batch)
                 sent += len(batch)
             return sent
@@ -413,13 +417,14 @@ class LogSink(logging.Handler):
     def _take(self) -> list[tuple[str, int]]:
         with self._mu:
             batch = [self._q.popleft() for _ in range(min(self.batch, len(self._q)))]
-            self._qbytes -= sum(n for _js, n in batch)
-            self._inflight = batch
+            size = sum(n for _js, n in batch)
+            self._qbytes -= size
+            self._inflight, self._inflight_bytes = batch, size
             return batch
 
     def _put_back(self, batch: list[tuple[str, int]]) -> None:
         with self._mu:
-            self._inflight = []
+            self._inflight, self._inflight_bytes = [], 0
             self._q.extendleft(reversed(batch))
             self._qbytes += sum(n for _js, n in batch)
             self._trim_locked()  # 그사이 새 항목이 들어와 상한을 넘으면 오래된 것(되돌린 묶음)부터 버린다

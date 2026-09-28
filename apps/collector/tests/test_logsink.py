@@ -321,7 +321,6 @@ class GatedRedis(FakeRedis):
         return p
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 보내는 중인 묶음을 상한에 세지 않아 550건 · 2.4 MiB 까지 붙잡는다")
 @pytest.mark.parametrize("text,more", [("n=%d", 550), ("가" * 4000 + " %d", 300)])
 async def test_queue_cap_counts_the_batch_being_sent(text, more):
     """대기열 상한(500건 · 2 MiB)은 보내는 중인 묶음(≤ 50건)까지 센다 — Redis 가 느린 동안에도 프로세스가 붙잡는 항목은 상한 안.
