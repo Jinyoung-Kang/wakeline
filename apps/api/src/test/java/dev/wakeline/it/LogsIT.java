@@ -302,7 +302,7 @@ class LogsIT extends IntegrationTest {
             assertThat(ItStack.admin().opsForStream().size(LogSink.STREAM)).as("the server stream did not move").isEqualTo(serverLen);
             for (String id : serverIds)
                 assertThat(ItStack.admin().opsForStream().range(LogSink.STREAM, org.springframework.data.domain.Range.closed(id, id))).as(id).hasSize(1);
-            // 조회: 가장 최근은 브라우저 오류(stream client), 서버 항목은 한 번 훑기로 모두(훑기 상한 = 두 스트림 MAXLEN 의 합)
+            // 조회: 가장 최근은 브라우저 오류(stream client), 서버 항목은 한 번 훑기로 모두(훑기 상한 = 스트림마다 MAXLEN + 노드 하나의 합)
             JsonNode top = b.get("/api/v1/ops/logs?limit=1").json();
             assertThat(top.path("items").get(0).path("stream").asString()).isEqualTo("client");
             assertThat(top.path("next_cursor").asString()).startsWith("client:");
@@ -370,6 +370,35 @@ class LogsIT extends IntegrationTest {
         }
     }
 
+    /**
+     * §G2: 한 번 훑기는 두 스트림 전체를 본다 — 근사 트림(MAXLEN ~)이 남기는 만큼까지. 작은 항목이면 Redis 내부 노드가 100 항목으로 차서 한 스트림이
+     * MAXLEN + 99 건까지 남는다(여기서 3,300 · 1,150 건을 실으면 약 3,000 · 1,050 — 합이 4,000 을 넘는다). 항목은 스키마에 맞지 않는 짧은 값이라
+     * invalid 로 세지만 훑은 수에는 든다. 실제 로그 항목(수백 바이트 이상)은 노드가 4 KiB(stream-node-max-bytes)에서 닫혀 넘치는 수가 더 적다.
+     */
+    @Test
+    void bothStreamsAtTheirApproximateTrimLimitFitInOneScan() {
+        OpsBrowser b = login();
+        var writer = LogSink.redisWriter(ItStack.apiUser());
+        try {
+            ItStack.admin().delete(List.of(LogSink.STREAM, LogSink.CLIENT_STREAM));
+            for (int i = 0; i < 3_300; i++) writer.xadd(dev.wakeline.logs.LogStream.SERVER, "x");
+            for (int i = 0; i < 1_150; i++) writer.xadd(dev.wakeline.logs.LogStream.CLIENT, "x");
+            nextRedisMillisecond();
+            long serverLen = ItStack.admin().opsForStream().size(LogSink.STREAM), clientLen = ItStack.admin().opsForStream().size(LogSink.CLIENT_STREAM);
+            assertThat(serverLen).isBetween(3_000L, 3_099L);
+            assertThat(clientLen).isBetween(1_000L, 1_099L);
+            assertThat(serverLen + clientLen).as("both streams past their MAXLEN at once").isGreaterThan(4_000L);
+            JsonNode groups = b.get("/api/v1/ops/logs/groups").json();
+            assertThat(groups.path("scan_truncated").asBoolean()).isFalse();
+            assertThat(groups.path("scanned").asLong()).isGreaterThanOrEqualTo(serverLen + clientLen); // 그사이 앱 경고가 실렸으면 그만큼 더
+            JsonNode list = b.get("/api/v1/ops/logs?service=ais").json(); // 아무것도 맞지 않는다 — 끝까지 훑는다
+            assertThat(list.path("scan_truncated").asBoolean()).isFalse();
+            assertThat(list.path("next_cursor").isNull()).isTrue();
+        } finally {
+            ItStack.admin().delete(List.of(LogSink.STREAM, LogSink.CLIENT_STREAM));
+        }
+    }
+
     @Test
     void xaddTrimsTheStreamToAbout3000Entries() {
         var writer = LogSink.redisWriter(ItStack.apiUser()); // api 와 같은 ACL 사용자 · 같은 XADD 옵션
@@ -380,7 +409,7 @@ class LogsIT extends IntegrationTest {
             // MAXLEN ~ 3000: 근사 트림은 내부 노드(기본 100 항목) 단위로 자른다 — 3000 이상, 3000 + 노드 하나 이하
             assertThat(len).isBetween(3_000L, 3_100L);
         } finally {
-            ItStack.admin().delete(LogSink.STREAM); // 다른 조회 시험이 3,000건 훑기 상한에 걸리지 않게
+            ItStack.admin().delete(LogSink.STREAM); // 다른 조회 시험이 훑기 상한에 걸리지 않게
         }
     }
 }

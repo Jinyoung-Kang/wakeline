@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 한 요청이 훑는 항목 상한(넘으면 scan_truncated), 읽을 때 스키마 검증(맞지 않으면 건너뛰고 invalid 로 센다)과 한 번 더 가림,
  * fp 묶음(count · suppressed 합 · 처음/마지막 · 표본), 항목 하나.
  * §G2: 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 id 순으로 합쳐 최신 순 — 항목마다 stream, cursor 는 두 스트림을 함께 이어 가고
- * (같은 id 는 server 가 앞), 훑기 상한은 두 스트림 MAXLEN 의 합(4,000), 묶음도 두 스트림, 항목 하나는 server → client 순으로 찾는다.
+ * (같은 id 는 server 가 앞), 훑기 상한은 스트림마다 MAXLEN + 노드 하나의 합(4,200), 묶음도 두 스트림, 항목 하나는 server → client 순으로 찾는다.
  * 첫 쪽 · 묶음은 두 스트림의 한 시점(Redis TIME 앞 밀리초까지) — 두 스트림 읽기 사이에 실린 항목도 첫 쪽에 있거나 첫 쪽 맨 위보다 새 것이다.
  */
 class LogReaderTest {
@@ -194,16 +194,16 @@ class LogReaderTest {
 
     @Test
     void oneRequestScansAtMostTheSumOfBothStreamCaps() {
-        assertThat(LogReader.SCAN_MAX).as("wakeline:logs ~3000 + wakeline:logs:client ~1000").isEqualTo(4_000);
+        assertThat(LogReader.SCAN_MAX).as("wakeline:logs ~3000 + wakeline:logs:client ~1000, each plus one redis stream node").isEqualTo(4_200);
         for (int i = 1; i <= 4_500; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "WARN", "L", "m", FP_A, null, null, 0));
         var f = new LogReader.Filter(Set.of("ais"), Set.of(), null, null, null, null, null); // 아무것도 맞지 않는다
         LogReader.Page p = reader.list(f, null, 100);
         assertThat(p.items()).isEmpty();
-        assertThat(p.scanned()).isEqualTo(4_000);
+        assertThat(p.scanned()).isEqualTo(4_200);
         assertThat(p.scanTruncated()).isTrue();
-        assertThat(p.nextCursor()).as("continue where the scan stopped").isEqualTo("server:" + (T0.toEpochMilli() + 501) + "-0");
+        assertThat(p.nextCursor()).as("continue where the scan stopped").isEqualTo("server:" + (T0.toEpochMilli() + 301) + "-0");
         LogReader.Page rest = reader.list(f, p.nextCursor(), 100);
-        assertThat(rest.scanned()).isEqualTo(500);
+        assertThat(rest.scanned()).isEqualTo(300);
         assertThat(rest.scanTruncated()).isFalse();
         assertThat(rest.nextCursor()).isNull();
     }
@@ -403,21 +403,24 @@ class LogReaderTest {
     }
 
     /**
-     * §G2 의 목적: 누구나 보낼 수 있는 브라우저 오류가 가득(1,000건 — 모두 가장 최근)이어도 한 번 훑기가 서버 로그 3,000건을 모두 본다 —
-     * 훑기 상한이 두 스트림 MAXLEN 의 합이라 익명 입력이 서버 로그의 몫을 쓰지 못한다.
+     * §G2 의 목적: 누구나 보낼 수 있는 브라우저 오류가 가득(모두 가장 최근)이어도 한 번 훑기가 서버 로그를 모두 본다 — 익명 입력이 서버 로그의 몫을
+     * 쓰지 못한다. "가득"은 MAXLEN ~ 의 근사 트림 그대로: Redis 는 내부 노드(stream-node-max-entries 기본 100) 통째로만 자르므로 한 스트림이
+     * MAXLEN + 99 건까지 남는다(실제 Redis 에서 3,300 · 1,150 건을 실으면 3,000 · 1,050 — 리뷰 · LogsIT). 두 스트림 모두 그 끝(3,099 · 1,099)이어도.
      */
     @Test
     void aFullClientStreamDoesNotCrowdServerEntriesOutOfOneScan() {
-        for (int i = 1; i <= 3_000; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "ERROR", "L", "server " + i + ".", FP_A, null, null, 0));
-        for (int i = 1; i <= 1_000; i++) client.add(T0.toEpochMilli() + 10_000 + i, 0, event(T0, "web-client", "ERROR", "browser", "flood " + i, FP_B, null, null, 0));
+        int serverFull = 3_099, clientFull = 1_099; // MAXLEN ~ 3000 · ~ 1000 이 남길 수 있는 가장 많은 수
+        for (int i = 1; i <= serverFull; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "ERROR", "L", "server " + i + ".", FP_A, null, null, 0));
+        for (int i = 1; i <= clientFull; i++) client.add(T0.toEpochMilli() + 10_000 + i, 0, event(T0, "web-client", "ERROR", "browser", "flood " + i, FP_B, null, null, 0));
         LogReader.Groups g = reader.groups(new LogReader.Filter(Set.of("api"), Set.of(), null, null, null, null, null));
-        assertThat(g.scanned()).isEqualTo(4_000);
+        assertThat(g.scanned()).isEqualTo(serverFull + clientFull);
         assertThat(g.scanTruncated()).isFalse();
-        assertThat(g.groups()).singleElement().extracting(LogReader.Group::count).isEqualTo(3_000L);
-        // 가장 오래된 서버 항목까지 한 번에 찾는다(고치기 전: 3,000건 상한 안에서 브라우저 오류 1,000건이 먼저 훑여 서버 로그 2,000건만 보였다)
+        assertThat(g.groups()).singleElement().extracting(LogReader.Group::count).isEqualTo((long) serverFull);
+        // 가장 오래된 서버 항목까지 한 번에 찾는다(§G2 전: 3,000건 상한 안에서 브라우저 오류 1,000건이 먼저 훑여 서버 로그 2,000건만 보였다 ·
+        // 4,000건 상한이던 때는 두 스트림이 근사 트림 끝이면 가장 오래된 서버 항목 198건이 빠졌다)
         LogReader.Page p = reader.list(new LogReader.Filter(Set.of("api"), Set.of(), "server 1.", null, null, null, null), null, 200);
         assertThat(p.items()).extracting(n -> n.path("message").asString()).containsExactly("server 1.");
-        assertThat(p.scanned()).isEqualTo(4_000);
+        assertThat(p.scanned()).isEqualTo(serverFull + clientFull);
         assertThat(p.scanTruncated()).isFalse();
         assertThat(p.nextCursor()).isNull();
     }
@@ -461,12 +464,12 @@ class LogReaderTest {
 
     @Test
     void groupsScanAtMostTheSumOfBothStreamCaps() {
-        for (int i = 1; i <= 3_100; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "WARN", "L", "m", FP_A, null, null, 0));
+        for (int i = 1; i <= 3_300; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "WARN", "L", "m", FP_A, null, null, 0));
         for (int i = 1; i <= 1_000; i++) client.add(T0.toEpochMilli() + 5_000 + i, 0, event(T0, "web-client", "ERROR", "browser", "c", FP_B, null, null, 0));
         LogReader.Groups g = reader.groups(all());
-        assertThat(g.scanned()).isEqualTo(4_000);
+        assertThat(g.scanned()).isEqualTo(4_200);
         assertThat(g.scanTruncated()).isTrue();
-        assertThat(g.groups()).extracting(LogReader.Group::count).containsExactly(1_000L, 3_000L);
+        assertThat(g.groups()).extracting(LogReader.Group::count).containsExactly(1_000L, 3_200L);
     }
 
     /** §G2: 묶음은 두 스트림을 함께 — last_stream 이 last_id 가 어느 스트림의 id 인지 말한다. */

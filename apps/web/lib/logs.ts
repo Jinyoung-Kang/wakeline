@@ -27,8 +27,13 @@ export type LogStreamName = (typeof LOG_STREAMS)[number];
 export const LOG_STREAM_KEY: Record<LogStreamName, string> = { server: "wakeline:logs", client: "wakeline:logs:client" };
 export const LOG_STREAM_LABEL: Record<LogStreamName, string> = { server: "서버 로그", client: "브라우저 오류" };
 export const LOG_STREAM_KEEP: Record<LogStreamName, number> = { server: 3_000, client: 1_000 };
-/** 요청 하나가 훑는 항목 상한(api LogReader.SCAN_MAX = 두 스트림 보관 수의 합) */
-export const LOG_SCAN_MAX = LOG_STREAM_KEEP.server + LOG_STREAM_KEEP.client;
+/**
+ * Redis 스트림 내부 노드 하나의 항목 수(stream-node-max-entries 기본값). 근사 트림(MAXLEN ~)은 노드를 통째로만 잘라 한 스트림에 보관 수 + 99건까지
+ * 남을 수 있다.
+ */
+export const LOG_STREAM_NODE = 100;
+/** 요청 하나가 훑는 항목 상한(api LogReader.SCAN_MAX = 스트림마다 보관 수 + 노드 하나의 합 = 4,200 — 근사 트림이 남기는 두 스트림 전체) */
+export const LOG_SCAN_MAX = LOG_STREAM_KEEP.server + LOG_STREAM_NODE + LOG_STREAM_KEEP.client + LOG_STREAM_NODE;
 const FP_RE = /^[0-9a-f]{16}$/;
 
 export interface LogException { type: string; message: string | null; stack: string }
@@ -93,7 +98,7 @@ export interface LogPage {
   nextCursor: string | null;
   /** 이 요청이 훑은 스트림 항목 수(§C4) — 없으면 null */
   scanned: number | null;
-  /** 훑기 상한(LOG_SCAN_MAX — 두 스트림 합 4,000)에 걸려 필터 결과가 불완전할 수 있음 — 없으면 null */
+  /** 훑기 상한(LOG_SCAN_MAX — 두 스트림 합 4,200)에 걸려 필터 결과가 불완전할 수 있음 — 없으면 null */
   scanTruncated: boolean | null;
   /** 화면이 형식 오류로 버린 항목 수 */
   invalid: number;

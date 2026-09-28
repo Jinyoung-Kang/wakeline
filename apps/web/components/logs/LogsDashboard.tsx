@@ -6,7 +6,7 @@ import { copyText, downloadText } from "@/lib/copy";
 import { fmtClock, fmtTime } from "@/lib/format";
 import {
   appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
-  LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
+  LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
   parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash, pendingEntries, validRid,
   type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
 } from "@/lib/logs";
@@ -320,7 +320,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1 text-[11px]" data-testid="logs-status">
           {view === "list" ? <>
             <span>{page ? `${n(items.length)}건 표시(최신 순)` : loading ? "불러오는 중…" : "—"}</span>
-            {page?.scanned != null ? <span className="text-fg-3" title={`마지막 요청이 훑은 스트림 항목 수 — 두 스트림(${LOG_STREAM_KEY.server} · ${LOG_STREAM_KEY.client})을 합쳐 요청당 상한 ${n(LOG_SCAN_MAX)}`}>훑은 항목 <span className="mono">{n(page.scanned)}</span></span> : null}
+            {page?.scanned != null ? <span className="text-fg-3" title={`마지막 요청이 훑은 스트림 항목 수 — 두 스트림(${LOG_STREAM_KEY.server} · ${LOG_STREAM_KEY.client})을 합쳐 요청당 상한 ${n(LOG_SCAN_MAX)}(스트림마다 보관 수 + 근사 트림 여유 ${n(LOG_STREAM_NODE)}건)`}>훑은 항목 <span className="mono">{n(page.scanned)}</span></span> : null}
             {page?.scanTruncated ? <span className="text-warn">스캔 상한({n(LOG_SCAN_MAX)}건 — 두 스트림 합)에서 잘림 — 조건에 맞는 더 오래된 항목이 있을 수 있음</span> : null}
             {page && (page.invalid > 0 || (page.serverInvalid ?? 0) > 0) ? (
               <span className="text-warn" data-testid="logs-skipped" title="api = 서버가 읽을 때 스키마 검증에 실패해 건너뛴 항목 · 화면 = 이 화면이 형식 오류로 버린 항목 — 둘 다 불러온 쪽들의 합(— = api 가 값을 주지 않음)">

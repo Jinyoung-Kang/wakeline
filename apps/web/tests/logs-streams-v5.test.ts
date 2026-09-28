@@ -20,6 +20,13 @@ const browser = (o: Record<string, unknown> = {}) => entry({
   message: "TypeError: x is undefined", exception: { type: "", message: null, stack: "at f (app.js:1:2)" }, ...o,
 });
 
+describe("v5-G2 lib/logs: the scan cap mirrors the api", () => {
+  it("LOG_SCAN_MAX is api LogReader.SCAN_MAX: each stream's MAXLEN plus one Redis stream node (approximate trim keeps up to MAXLEN + 99)", () => {
+    expect(L.LOG_STREAM_NODE).toBe(100);
+    expect(L.LOG_SCAN_MAX).toBe((3_000 + 100) + (1_000 + 100)); // LogReaderTest.oneRequestScansAtMostTheSumOfBothStreamCaps 도 4,200
+  });
+});
+
 describe("v5-G2 lib/logs: entries are told apart by stream + id", () => {
   it("stream is read as given (server | client); anything else is unknown (null)", () => {
     const p = L.parseLogPage({ items: [entry({ stream: "server" }), browser(), entry({ id: "1790000000001-0", stream: "edge" }), entry({ id: "1790000000002-0" })] });
@@ -146,7 +153,7 @@ async function open(hash = "") {
   await settle();
 }
 
-const TWINS = { items: [entry({ stream: "server" }), browser()], next_cursor: "client:1790000000000-0", scanned: 4000, scan_truncated: true };
+const TWINS = { items: [entry({ stream: "server" }), browser()], next_cursor: "client:1790000000000-0", scanned: 4200, scan_truncated: true };
 
 describe("v5-G2 /logs: rows from both streams", () => {
   it("the same id in both streams gives two rows (stream shown), each opens its own detail; '이전 항목 더 보기' sends the stream cursor back", async () => {
@@ -157,7 +164,7 @@ describe("v5-G2 /logs: rows from both streams", () => {
     const rows = allByTestId("log-row");
     expect(rows.map((r) => [r.getAttribute("data-id"), r.getAttribute("data-stream")])).toEqual([["1790000000000-0", "server"], ["1790000000000-0", "client"]]);
     expect(new Set(rows.map((r) => r.getAttribute("id"))).size).toBe(2); // 표(grid)의 활성 줄 id 가 겹치지 않는다
-    expect(byTestId("logs-status")!.textContent).toContain("스캔 상한(4,000건 — 두 스트림 합)에서 잘림");
+    expect(byTestId("logs-status")!.textContent).toContain("스캔 상한(4,200건 — 두 스트림 합)에서 잘림");
     const badge = (r: MiniElement) => findAll((e) => e.tagName === "SPAN" && (e.getAttribute("class") ?? "").includes("badge"), r).map((b) => b.textContent);
     expect(badge(rows[0])).toEqual(["ERROR"]);
     expect(badge(rows[1])).toEqual(["ERROR", "untrusted", "client"]); // 브라우저 오류 스트림의 항목

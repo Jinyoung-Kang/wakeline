@@ -36,7 +36,7 @@ public final class LogMasker {
 
     /**
      * (?i) 규칙 하나: 식 · 바꿀 글 · 낱말(접은 글에 이 중 하나도 없으면 이 규칙은 일치할 수 없다 — 식을 돌리지 않는다).
-     * 규칙마다 글자마다 유니코드 대소문자 비교를 하면 흔한 스택 7,800자에 규칙 하나 50 µs · 모두 0.6 ms 가 들었다(읽을 때마다 최대 4,000건 — 두 스트림).
+     * 규칙마다 글자마다 유니코드 대소문자 비교를 하면 흔한 스택 7,800자에 규칙 하나 50 µs · 모두 0.6 ms 가 들었다(읽을 때마다 최대 4,200건 — 두 스트림).
      */
     record Rule(Pattern pattern, String replacement, List<String> words) {
         boolean mayMatch(String folded) {

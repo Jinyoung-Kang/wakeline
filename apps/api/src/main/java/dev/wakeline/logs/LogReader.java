@@ -30,8 +30,10 @@ import java.util.regex.Pattern;
 /**
  * 시스템 로그 스트림 읽기(계약 v5 §C4 · §G2). 서버 로그 {@value LogSink#STREAM} 와 브라우저 오류 {@value LogSink#CLIENT_STREAM} 를 스트림 id 순으로
  * 합쳐(같은 id 는 server 가 앞 — {@link LogStream} 선언 순서) 최신 순으로 읽으며 필터를 적용한다. 스트림마다 XREVRANGE 를 {@value #CHUNK}건씩
- * 끊어 읽고, 한 요청이 훑는(합친 순서로 본) 항목은 {@value #SCAN_MAX}건 이하 — 두 스트림 MAXLEN 의 합(3,000 + 1,000)이라 보통은 두 스트림 전체이고,
- * 브라우저 오류 스트림이 가득이어도 서버 로그의 몫을 쓰지 못한다(§G2 의 목적 — 한 스트림 3,000건 상한이면 브라우저 오류 1,000건이 먼저 훑였다).
+ * 끊어 읽고, 한 요청이 훑는(합친 순서로 본) 항목은 {@value #SCAN_MAX}건 이하 — 스트림마다 MAXLEN 에 Redis 내부 노드 하나(100)를 더한 합
+ * ((3,000 + 100) + (1,000 + 100))이라 근사 트림(MAXLEN ~ — 노드 통째로만 잘라 MAXLEN + 99 건까지 남는다)이 남기는 두 스트림 전체를 한 번에 본다.
+ * 브라우저 오류 스트림(api 만 싣는다 — 1,099건 이하)이 가득이어도 서버 로그의 몫을 쓰지 못한다(§G2 의 목적 — 한 스트림 3,000건 상한이면
+ * 브라우저 오류 1,000건이 먼저 훑였고, 4,000건 상한이면 두 스트림이 근사 트림 끝일 때 가장 오래된 서버 항목이 빠졌다).
  * <ul>
  *   <li>항목은 {id, stream, ...항목} — stream = "server" | "client". 두 스트림은 id 를 따로 매기므로 id 만으로는 어느 스트림의 항목인지 모른다.</li>
  *   <li>항목마다 스키마 검증(log_event.v1) — 맞지 않거나 필드 e 가 없는 항목은 건너뛰고 invalid 로 센다.</li>
@@ -52,8 +54,11 @@ import java.util.regex.Pattern;
 @Component
 public class LogReader {
     static final int CHUNK = 200;
-    /** 한 요청이 훑는 항목 상한 = 두 스트림 MAXLEN 의 합(계약 v5 §C4 의 3,000 에 §G2 의 브라우저 오류 스트림 1,000 을 더한다). */
-    public static final int SCAN_MAX = (int) (LogSink.MAXLEN + LogSink.CLIENT_MAXLEN);
+    /**
+     * 한 요청이 훑는 항목 상한 = 두 스트림 {@link LogStream#keepMax()} 의 합 (3,000 + 100) + (1,000 + 100) = 4,200 — 근사 트림(MAXLEN ~)이 남기는
+     * 두 스트림 전체(각 MAXLEN + 99 까지)를 한 번에 본다(계약 v5 §C4 의 3,000 → §G2 · §G6).
+     */
+    public static final int SCAN_MAX = (int) (LogStream.SERVER.keepMax() + LogStream.CLIENT.keepMax());
     static final long SKEW_MS = 60_000;
     static final int SAMPLE_MAX = 500;
     private static final JsonMapper JSON = JsonMapper.builder().build();

@@ -17,6 +17,12 @@ public enum LogStream {
     SERVER(LogSink.STREAM, LogSink.MAXLEN, "server"),
     CLIENT(LogSink.CLIENT_STREAM, LogSink.CLIENT_MAXLEN, "client");
 
+    /**
+     * Redis stream-node-max-entries(기본값 — infra/redis/redis.conf 는 바꾸지 않는다). MAXLEN ~ 는 내부 노드를 통째로만 자르므로 한 스트림은
+     * MAXLEN + 이 값 - 1 건까지 남는다(작은 항목일 때. 노드는 stream-node-max-bytes 4 KiB 에서도 닫히므로 수백 바이트 항목이면 더 적다).
+     */
+    public static final int NODE_MAX_ENTRIES = 100;
+
     private final String key;
     private final long maxlen;
     private final String label;
@@ -35,6 +41,9 @@ public enum LogStream {
 
     /** XADD MAXLEN ~ 의 길이. */
     public long maxlen() { return maxlen; }
+
+    /** 근사 트림 뒤에도 이 스트림에 남을 수 있는 수를 덮는 값: MAXLEN + 노드 하나({@value #NODE_MAX_ENTRIES}) — 실제 최대 MAXLEN + 99 이상. */
+    public long keepMax() { return maxlen + NODE_MAX_ENTRIES; }
 
     /** 조회 응답의 항목 필드 stream · cursor 의 머리 값("server" | "client"). */
     public String label() { return label; }
