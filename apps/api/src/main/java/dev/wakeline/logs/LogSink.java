@@ -35,15 +35,20 @@ import java.util.function.LongSupplier;
  * <ul>
  *   <li>등록: 기동 때 logback 루트 로거에 {@link SinkAppender} 를 붙인다(설정 파일 없이 코드로). 로그 싱크 자신의 로그
  *       (dev.wakeline.logs.*)와 싱크 스레드에서 난 로그는 싣지 않는다 — 재귀 금지, 표준 출력에만 남는다.</li>
- *   <li>억제: 같은 지문(fp)은 {@value #SUPPRESS_WINDOW_MS} ms 에 1건만 싣고, 그사이 억제한 수는 그 fp 의 다음 항목 suppressed 에 싣는다.</li>
+ *   <li>억제: 같은 지문(fp)은 {@value #SUPPRESS_WINDOW_MS} ms 에 1건만 싣고, 그사이 억제한 수는 그 fp 의 다음 항목 suppressed 에 싣는다.
+ *       다음 항목이 창 안에 오지 않으면 창이 닫힌 뒤 보내는 스레드의 주기에 마지막 억제 발생을 항목으로 싣는다(뒤늦게 싣기 — 계약 v5 §G9:
+ *       그 발생의 ts · 메시지 · 예외 · context, suppressed = 억제 수 − 1, 창은 그때 다시 시작). 억제 중인 발생은 지문마다 하나(마지막)만 붙잡는다.</li>
  *   <li>대기열: {@value #QUEUE_MAX}건 · 2 MiB 상한 — 넘으면 오래된 것부터 버리고 센다(result="dropped"). 앱 스레드는 대기열에 넣기만 한다
  *       (짧은 잠금 하나, Redis 를 기다리지 않는다). 두 스트림이 한 대기열을 쓴다 — Redis 장애 동안에는 브라우저 오류를 받지 않으므로
  *       (ClientErrorController: 제한기가 Redis 에 닿지 않으면 503) 익명 입력이 대기열의 서버 오류를 밀어내지 못한다.</li>
  *   <li>보내기: 가상 스레드 하나가 1 s 마다 또는 {@value #BATCH}건이 모이면 항목마다 제 스트림으로 {@code XADD wakeline:logs MAXLEN ~ 3000 * e <json>}
  *       · {@code XADD wakeline:logs:client MAXLEN ~ 1000 * e <json>}.
  *       Redis 가 안 되면 대기열에 남겨 두고 1 → 30 s 지수 백오프로 다시 보낸다(보내지 못한 항목은 대기열 맨 앞으로 — 순서 유지).</li>
- *   <li>지표: wakeline_log_events_total{result=sent|dropped|suppressed} · wakeline_log_queue(지금 대기 수) — 운영 pipeline 에도 싣는다.</li>
- *   <li>종료: 앱 구성 요소·웹 서버가 멈춘 뒤(낮은 phase) 한 번 더 보내 보고, 남은 것은 dropped 로 센다. Redis 연결은 그 뒤에 닫힌다.</li>
+ *   <li>지표: wakeline_log_events_total{result=sent|dropped|suppressed} · wakeline_log_queue(지금 대기 수) — 운영 pipeline 에도 싣는다.
+ *       suppressed 는 항목의 suppressed 로 실린 수(항목을 만들 때 센다 — 억제 중인 발생은 아직 세지 않는다). 억제 중인 발생이 있는 지문을
+ *       지문 표 상한에서 잊거나 뒤늦게 실을 항목을 만들지 못하면 그 발생과 싣던 억제 수를 dropped 로 센다 — 조용히 잃지 않는다.</li>
+ *   <li>종료: 앱 구성 요소·웹 서버가 멈춘 뒤(낮은 phase) 억제 중인 발생을 창과 무관하게 뒤늦게 싣고, 한 번 더 보내 보고(같은 마감 안),
+ *       남은 것은 dropped 로 센다. Redis 연결은 그 뒤에 닫힌다.</li>
  * </ul>
  * wakeline.logs.sink-enabled=false(되돌리기, ADR-018)면 등록·보내기를 하지 않는다 — 브라우저 오류 수집도 받지 않는다(503).
  */
@@ -63,7 +68,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     static final long BACKOFF_START_MS = 1_000;
     static final long BACKOFF_MAX_MS = 30_000;
     static final long SUPPRESS_WINDOW_MS = 10_000;
-    /** 억제 상태를 기억하는 지문 수 상한(넘으면 창이 지난 것부터 잊는다). */
+    /** 억제 상태를 기억하는 지문 수 상한(넘으면 억제 중인 발생이 없는 것부터 잊는다). */
     static final int SUPPRESS_TRACK_MAX = 2_000;
     /** 종료 때 마지막 보내기 마감. */
     static final long STOP_FLUSH_MS = 2_000;
@@ -77,9 +82,38 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     @FunctionalInterface
     public interface Writer { void xadd(LogStream stream, String json); }
 
-    /** 억제를 통과한 뒤에만 부른다 — 스택 가림·직렬화 같은 비싼 일은 여기서(억제된 로그 폭주에 CPU 를 쓰지 않게). */
+    /**
+     * 억제를 통과한 뒤에만 부른다 — 스택 가림·직렬화 같은 비싼 일은 여기서(억제된 로그 폭주에 CPU 를 쓰지 않게).
+     * 억제한 발생의 body 는 창이 닫힐 때 보내는 스레드(또는 종료 스레드)에서 부를 수 있다(§G9) — 값은 발생 때 정해져 있어야 한다.
+     */
     @FunctionalInterface
     public interface Body { String json(String fp, int suppressed); }
+
+    /** 억제한 발생 하나: 보낼 스트림과 항목을 만드는 body. */
+    private record Held(LogStream stream, Body body) {}
+
+    /** 창을 통과한 발생: 실을 억제 수와 그 수에 합친 마지막 억제 발생(항목을 만들지 못하면 둘 다 되돌린다). */
+    private record Admitted(int carried, Held held) {}
+
+    /** 창이 닫힌 지문의 뒤늦게 실을 발생: 억제 수(이 발생 포함)와 마지막 억제 발생. */
+    private record Due(String fp, long count, Held last) {}
+
+    /** 창이 없다(보낸 것이 없음). */
+    private static final long CLOSED = Long.MIN_VALUE;
+    /** 마감 없음(주기마다의 뒤늦게 싣기). */
+    static final long NO_DEADLINE = Long.MAX_VALUE;
+
+    /** 지문 하나의 억제 상태. fps 잠금으로 보호. */
+    private static final class Track {
+        /** 창의 시작 ms — 이 지문의 항목을 마지막으로 만든 시각(뒤늦게 실었으면 그 시각). {@link #CLOSED} 면 창이 없다. */
+        long sentAt = CLOSED;
+        /** 그 뒤 억제한 수 — 아직 어느 항목에도 실리지 않았다. */
+        long pending;
+        /** 마지막으로 억제한 발생(pending > 0 이면 늘 있다) — 지문마다 하나만 붙잡는다. */
+        Held last;
+
+        boolean open(long now) { return sentAt != CLOSED && now - sentAt < SUPPRESS_WINDOW_MS; }
+    }
 
     public enum Offer { QUEUED, SUPPRESSED, DISABLED }
 
@@ -103,8 +137,8 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     private final ArrayDeque<Entry> queue = new ArrayDeque<>();
     private long queuedBytes;
     // ----
-    /** fp → {마지막으로 실은 시각 ms, 그 뒤 억제한 수}. 자체 잠금. */
-    private final Map<String, long[]> fps = new HashMap<>();
+    /** fp → 억제 상태(창의 시작 · 억제 중인 수 · 마지막 억제 발생). 자체 잠금. */
+    private final Map<String, Track> fps = new HashMap<>();
     private volatile boolean running;
     private volatile Thread flusher;
     private volatile boolean failing;
@@ -137,9 +171,9 @@ public class LogSink implements SmartLifecycle, DisposableBean {
         sent = Counter.builder("wakeline_log_events_total").tag("result", "sent")
                 .description("시스템 로그 항목: wakeline:logs(서버) · wakeline:logs:client(브라우저 오류)에 실은 수").register(meters);
         dropped = Counter.builder("wakeline_log_events_total").tag("result", "dropped")
-                .description("시스템 로그 항목: 대기열 상한·종료로 버린 수").register(meters);
+                .description("시스템 로그 항목: 대기열 상한·종료로 버린 수 · 억제 중에 지문 표에서 잊히거나 항목을 만들지 못한 발생").register(meters);
         suppressed = Counter.builder("wakeline_log_events_total").tag("result", "suppressed")
-                .description("시스템 로그 항목: 같은 지문 10 s 억제로 싣지 않은 수").register(meters);
+                .description("시스템 로그 항목: 같은 지문 10 s 억제로 따로 싣지 않고 다른 항목의 suppressed 에 실은 수").register(meters);
         meters.gauge("wakeline_log_queue", this, LogSink::queued);
     }
 
@@ -173,6 +207,9 @@ public class LogSink implements SmartLifecycle, DisposableBean {
 
     /** logback 이벤트(WARN 이상 — {@link SinkAppender} 가 거른 뒤). */
     void accept(ILoggingEvent e) {
+        // 스레드 이름 · MDC(요청 id · 작업 이름)를 지금 정해 둔다 — logback 은 처음 물을 때 그 스레드에서 읽는다. 억제한 발생은 창이 닫힐 때
+        // 보내는 스레드에서 항목이 되므로(§G9) 그때 물으면 보내는 스레드의 것이 된다(AsyncAppender 와 같은 준비)
+        e.prepareForDeferredProcessing();
         String msg = LogMasker.maskAll(e.getFormattedMessage());
         IThrowableProxy tp = e.getThrowableProxy();
         submit("api", e.getLoggerName(), tp == null ? null : tp.getClassName(), msg,
@@ -185,46 +222,136 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     }
 
     /**
-     * 지문을 구해 억제 여부를 정하고, 통과하면 body 로 항목을 만들어 대기열에 넣는다(보낼 때 stream 으로).
+     * 지문을 구해 억제 여부를 정하고, 통과하면 body 로 항목을 만들어 대기열에 넣는다(보낼 때 stream 으로). 억제하면 이 발생을 그 지문의
+     * 마지막 억제 발생으로 붙잡아 둔다 — 다음 항목이 창 안에 오지 않으면 창이 닫힐 때 이것으로 항목을 만든다({@link #flushTrailing}).
+     * body 가 예외를 던지면 보낸 것이 없으므로 창을 닫고 싣던 억제 수를 되돌린 뒤(다음 항목 · 주기가 싣는다) 이 발생을 dropped 로 세고 다시 던진다.
      * @param maskedMessage 가린 메시지(지문의 메시지 틀 재료)
      */
     public Offer submit(LogStream stream, String service, String logger, String exceptionType, String maskedMessage, Body body) {
         if (!enabled) return Offer.DISABLED;
         String fp = LogEvents.fingerprint(service, logger, exceptionType, maskedMessage);
-        Integer n = admit(fp, clock.getAsLong());
-        if (n == null) {
-            suppressed.increment();
-            return Offer.SUPPRESSED;
+        Admitted a = admit(fp, clock.getAsLong(), new Held(stream, body));
+        if (a == null) return Offer.SUPPRESSED;
+        String json;
+        try {
+            json = body.json(fp, a.carried());
+        } catch (RuntimeException | Error e) {
+            giveBack(fp, a);
+            dropped.increment();
+            throw e;
         }
-        enqueue(stream, body.json(fp, n));
+        if (a.carried() > 0) suppressed.increment(a.carried());
+        enqueue(stream, json);
         return Offer.QUEUED;
     }
 
-    /** @return 실어도 되면 직전 전송 뒤 억제한 수, 억제해야 하면 null */
-    Integer admit(String fp, long now) {
+    /**
+     * @param occurrence 이 발생(억제하면 그 지문의 마지막 억제 발생이 된다)
+     * @return 실어도 되면 직전 항목 뒤 억제한 수(와 그 마지막 억제 발생), 억제해야 하면 null
+     */
+    private Admitted admit(String fp, long now, Held occurrence) {
+        long lost = 0;
+        Admitted a;
         synchronized (fps) {
-            long[] s = fps.get(fp);
-            if (s != null && now - s[0] < SUPPRESS_WINDOW_MS) {
-                s[1]++;
+            Track t = fps.get(fp);
+            if (t != null && t.open(now)) {
+                t.pending++;
+                t.last = occurrence;
                 return null;
             }
-            int n = s == null ? 0 : (int) Math.min(Integer.MAX_VALUE, s[1]);
-            if (s == null && fps.size() >= SUPPRESS_TRACK_MAX) forget(now);
-            fps.put(fp, new long[]{now, 0});
-            return n;
+            if (t == null) {
+                if (fps.size() >= SUPPRESS_TRACK_MAX) lost = forget(now);
+                t = new Track();
+                fps.put(fp, t);
+            }
+            a = new Admitted((int) Math.min(Integer.MAX_VALUE, t.pending), t.last);
+            t.sentAt = now;
+            t.pending = 0;
+            t.last = null;
         }
+        if (lost > 0) dropped.increment(lost);
+        return a;
     }
 
-    /** 창이 지난 지문을 잊는다 — 억제 수가 없는 것부터. 그래도 가득이면 가장 오래전에 실은 것 하나를 더 잊는다. */
-    private void forget(long now) {
-        fps.values().removeIf(s -> now - s[0] >= SUPPRESS_WINDOW_MS && s[1] == 0);
-        if (fps.size() < SUPPRESS_TRACK_MAX) return;
-        fps.values().removeIf(s -> now - s[0] >= SUPPRESS_WINDOW_MS);
-        if (fps.size() < SUPPRESS_TRACK_MAX) return;
-        String oldest = null;
-        long t = Long.MAX_VALUE;
-        for (var e : fps.entrySet()) if (e.getValue()[0] < t) { t = e.getValue()[0]; oldest = e.getKey(); }
-        fps.remove(oldest);
+    /** 창을 연 발생의 항목을 만들지 못했다: 창을 닫고, 싣던 억제 수와 그 마지막 억제 발생을 되돌린다(그사이 새로 억제한 발생이 있으면 그것이 마지막). */
+    private void giveBack(String fp, Admitted a) {
+        long lost = 0;
+        synchronized (fps) {
+            Track t = fps.get(fp);
+            if (t == null) {
+                lost = a.carried(); // 그사이 지문 표에서 잊혔다 — 되돌릴 곳이 없다
+            } else {
+                t.sentAt = CLOSED;
+                t.pending += a.carried();
+                if (t.last == null) t.last = a.held();
+            }
+        }
+        if (lost > 0) dropped.increment(lost);
+    }
+
+    /**
+     * fps 잠금 안에서, 지문 표가 가득일 때: 억제 중인 발생이 없는 지문부터 잊는다 — 창이 지난 것 모두, 그래도 가득이면 그중 가장 오래전에
+     * 실은 것 하나(창 안이면 그 지문의 다음 발생이 조금 일찍 실릴 뿐 잃는 발생은 없다). 모든 지문에 억제 중인 발생이 있을 때만 가장 오래전에
+     * 실은 지문을 잊고 그 억제 중인 수를 돌려준다(어느 항목에도 실리지 못한다 — 부른 쪽이 dropped 로 센다).
+     */
+    private long forget(long now) {
+        fps.values().removeIf(t -> t.pending == 0 && !t.open(now));
+        if (fps.size() < SUPPRESS_TRACK_MAX) return 0;
+        String oldest = null, oldestIdle = null;
+        long at = Long.MAX_VALUE, idleAt = Long.MAX_VALUE;
+        for (var e : fps.entrySet()) {
+            Track t = e.getValue();
+            if (t.sentAt < at) { at = t.sentAt; oldest = e.getKey(); }
+            if (t.pending == 0 && t.sentAt < idleAt) { idleAt = t.sentAt; oldestIdle = e.getKey(); }
+        }
+        Track gone = fps.remove(oldestIdle != null ? oldestIdle : oldest);
+        return gone == null ? 0 : gone.pending;
+    }
+
+    /** 주기마다(보내는 스레드): 창이 닫힌 지문의 억제 발생을 뒤늦게 싣는다. */
+    int flushTrailing() { return flushTrailing(false, NO_DEADLINE); }
+
+    /**
+     * 계약 v5 §G9 뒤늦게 싣기: 억제 중인 발생(k건)이 있고 창이 닫힌(all 이면 창과 무관하게 — 종료 때) 지문마다 마지막 억제 발생 하나를
+     * 그 body 로 항목을 만들어(ts · 메시지 · 예외 · context 는 그 발생의 것) suppressed = k − 1 로 대기열에 넣는다. 그 지문의 창은 지금
+     * 다시 시작한다(억제 수 0). 항목을 만들지 못하거나(예외) deadlineNanos(System.nanoTime 기준)를 넘기면 그 k건을 dropped 로 센다.
+     * @return 대기열에 넣은 항목 수
+     */
+    int flushTrailing(boolean all, long deadlineNanos) {
+        long now = clock.getAsLong();
+        List<Due> due = new ArrayList<>();
+        synchronized (fps) {
+            for (var e : fps.entrySet()) {
+                Track t = e.getValue();
+                if (t.pending == 0 || (!all && t.open(now))) continue;
+                due.add(new Due(e.getKey(), t.pending, t.last));
+                t.sentAt = now;
+                t.pending = 0;
+                t.last = null;
+            }
+        }
+        int queuedNow = 0;
+        long lost = 0;
+        for (Due d : due) {
+            if (deadlineNanos != NO_DEADLINE && System.nanoTime() - deadlineNanos > 0) {
+                lost += d.count();
+                continue;
+            }
+            int n = (int) Math.min(Integer.MAX_VALUE, d.count() - 1);
+            String json;
+            try {
+                json = d.last().body().json(d.fp(), n);
+            } catch (RuntimeException e) {
+                lost += d.count();
+                System.err.println("log sink: could not build a trailing log entry (counted as dropped): " + e); // 재귀 금지 — 표준 오류에만
+                continue;
+            }
+            if (n > 0) suppressed.increment(n);
+            enqueue(d.last().stream(), json);
+            queuedNow++;
+        }
+        if (lost > 0) dropped.increment(lost);
+        return queuedNow;
     }
 
     /** 서버 로그 스트림으로 {@link #enqueue(LogStream, String)}. */
@@ -318,8 +445,10 @@ public class LogSink implements SmartLifecycle, DisposableBean {
             try { t.join(STOP_FLUSH_MS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
         detach();
-        // 마지막으로 한 번 더(대기열이 크면 마감까지). 못 보낸 것은 버린 것으로 센다
+        // 억제 중인 발생을 창과 무관하게 뒤늦게 싣고(§G9 — 뒤에 올 주기가 없다), 마지막으로 한 번 더(대기열이 크면 마감까지).
+        // 둘 다 같은 마감 안 — 넘기면 만들지 못한 발생 · 못 보낸 것은 버린 것으로 센다
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STOP_FLUSH_MS);
+        flushTrailing(true, deadline);
         while (System.nanoTime() < deadline && flushOnce() && queued() > 0) { /* 다음 묶음 */ }
         int left;
         lock.lock();
@@ -356,6 +485,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
                 waitForWork();
                 if (!running) return;
                 attach(); // logback 재초기화로 떨어졌으면 다시 붙는다
+                flushTrailing(); // 창이 닫힌 지문의 억제 발생(§G9) — 이 주기에서, 새 스레드 없이
                 if (flushOnce()) {
                     backoff = backoffStartMs;
                 } else {
