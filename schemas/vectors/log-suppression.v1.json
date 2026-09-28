@@ -1,5 +1,5 @@
 {
- "$comment": "계약 v5 §C2 · §G9 — 같은 지문(fp) 10 s 억제와 뒤늦게 싣기(trailing flush)의 언어 간 시험 벡터. api LogSink(LogSinkTest)와 collector·ais logsink.py(test_logsink.py)가 같은 파일을 읽어 단계마다 같은 항목을 만들어야 한다. 단계 do: occur = 지문 fp(라벨 — 없으면 a, 라벨이 다르면 다른 지문)의 발생 하나를 at_ms 에 · tick = 보내는 쪽 주기(1 s 마다)의 확인을 at_ms 에 · close = 정상 종료(창과 무관하게 남은 억제 발생을 싣는다). emit = 그 단계가 대기열에 넣은 항목 [발생 번호(이 사례의 occur 단계 순서, 0부터) — 항목의 ts · 메시지 · 예외 · context 는 그 발생의 것, suppressed] 순서대로. entries · suppressed = 그 단계까지 만든 항목 수 · suppressed 합(누계). 마지막 단계는 close 이고, 그 뒤 entries + suppressed = occur 단계 수(tools/contract_check.py 가 이 파일의 모양과 그 불변식을 본다).",
+ "$comment": "계약 v5 §C2 · §G9 — 같은 지문(fp) 10 s 억제와 뒤늦게 싣기(trailing flush)의 언어 간 시험 벡터. api LogSink(LogSinkTest)와 collector·ais logsink.py(test_logsink.py)가 같은 파일을 읽어 단계마다 같은 항목을 만들어야 한다. 단계 do: occur = 지문 fp(라벨 — 없으면 a, 라벨이 다르면 다른 지문)의 발생 하나를 at_ms 에 · tick = 보내는 쪽 주기(1 s 마다)의 확인을 at_ms 에 · close = 정상 종료(창과 무관하게 남은 억제 발생을 싣는다). emit = 그 단계가 대기열에 넣은 항목 [발생 번호(이 사례의 occur 단계 순서, 0부터) — 항목의 ts · 메시지 · 예외 · context 는 그 발생의 것, suppressed] 순서대로(한 단계에 여러 지문이면 창을 시작한 순서 — 오래된 것부터, 항목 · 뒤늦게 싣기로 창이 다시 시작한 지문은 맨 뒤로). entries · suppressed = 그 단계까지 만든 항목 수 · suppressed 합(누계). 마지막 단계는 close 이고, 그 뒤 entries + suppressed = occur 단계 수(tools/contract_check.py 가 이 파일의 모양과 그 불변식을 본다).",
  "version": 1,
  "window_ms": 10000,
  "cases": [
@@ -111,6 +111,38 @@
     {"at_ms": 10000, "do": "tick", "emit": [[2, 0]], "entries": 3, "suppressed": 0},
     {"at_ms": 11000, "do": "tick", "emit": [[4, 1]], "entries": 4, "suppressed": 1},
     {"at_ms": 12000, "do": "close", "emit": [], "entries": 4, "suppressed": 1}
+   ]
+  },
+  {
+   "name": "fingerprints due on the same tick are sent in the order their windows started — an entry restarts the window",
+   "steps": [
+    {"at_ms": 0, "do": "occur", "fp": "a", "emit": [[0, 0]], "entries": 1, "suppressed": 0},
+    {"at_ms": 1000, "do": "occur", "fp": "b", "emit": [[1, 0]], "entries": 2, "suppressed": 0},
+    {"at_ms": 2000, "do": "occur", "fp": "c", "emit": [[2, 0]], "entries": 3, "suppressed": 0},
+    {"at_ms": 10500, "do": "occur", "fp": "a", "emit": [[3, 0]], "entries": 4, "suppressed": 0},
+    {"at_ms": 11000, "do": "occur", "fp": "c", "emit": [], "entries": 4, "suppressed": 0},
+    {"at_ms": 11200, "do": "occur", "fp": "c", "emit": [], "entries": 4, "suppressed": 0},
+    {"at_ms": 11500, "do": "occur", "fp": "a", "emit": [], "entries": 4, "suppressed": 0},
+    {"at_ms": 12000, "do": "occur", "fp": "b", "emit": [[7, 0]], "entries": 5, "suppressed": 0},
+    {"at_ms": 12500, "do": "occur", "fp": "b", "emit": [], "entries": 5, "suppressed": 0},
+    {"at_ms": 22500, "do": "tick", "emit": [[5, 1], [6, 0], [8, 0]], "entries": 8, "suppressed": 1},
+    {"at_ms": 23000, "do": "close", "emit": [], "entries": 8, "suppressed": 1}
+   ]
+  },
+  {
+   "name": "fingerprints due on the same tick are sent in the order their windows started — a trailing flush restarts the window",
+   "steps": [
+    {"at_ms": 0, "do": "occur", "fp": "a", "emit": [[0, 0]], "entries": 1, "suppressed": 0},
+    {"at_ms": 1000, "do": "occur", "fp": "b", "emit": [[1, 0]], "entries": 2, "suppressed": 0},
+    {"at_ms": 2000, "do": "occur", "fp": "c", "emit": [[2, 0]], "entries": 3, "suppressed": 0},
+    {"at_ms": 3000, "do": "occur", "fp": "a", "emit": [], "entries": 3, "suppressed": 0},
+    {"at_ms": 4000, "do": "occur", "fp": "b", "emit": [], "entries": 3, "suppressed": 0},
+    {"at_ms": 5000, "do": "occur", "fp": "c", "emit": [], "entries": 3, "suppressed": 0},
+    {"at_ms": 11500, "do": "tick", "emit": [[3, 0], [4, 0]], "entries": 5, "suppressed": 0},
+    {"at_ms": 13000, "do": "occur", "fp": "b", "emit": [], "entries": 5, "suppressed": 0},
+    {"at_ms": 14000, "do": "occur", "fp": "a", "emit": [], "entries": 5, "suppressed": 0},
+    {"at_ms": 22000, "do": "tick", "emit": [[5, 0], [7, 0], [6, 0]], "entries": 8, "suppressed": 0},
+    {"at_ms": 23000, "do": "close", "emit": [], "entries": 8, "suppressed": 0}
    ]
   }
  ]

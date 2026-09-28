@@ -20,8 +20,8 @@ import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -137,8 +137,11 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     private final ArrayDeque<Entry> queue = new ArrayDeque<>();
     private long queuedBytes;
     // ----
-    /** fp → 억제 상태(창의 시작 · 억제 중인 수 · 마지막 억제 발생). 자체 잠금. */
-    private final Map<String, Track> fps = new HashMap<>();
+    /**
+     * fp → 억제 상태(창의 시작 · 억제 중인 수 · 마지막 억제 발생). 자체 잠금. 삽입 순서 = 창을 시작한 순서(오래된 것부터) — 창이 다시 시작하면 끝으로
+     * 옮긴다. 같은 주기에 뒤늦게 실을 지문이 여럿이면 이 순서로 싣는다(collector·ais 의 _recent 와 같다 — 언어 간 벡터).
+     */
+    private final Map<String, Track> fps = new LinkedHashMap<>();
     private volatile boolean running;
     private volatile Thread flusher;
     private volatile boolean failing;
@@ -262,8 +265,10 @@ public class LogSink implements SmartLifecycle, DisposableBean {
             if (t == null) {
                 if (fps.size() >= SUPPRESS_TRACK_MAX) lost = forget(now);
                 t = new Track();
-                fps.put(fp, t);
+            } else {
+                fps.remove(fp);
             }
+            fps.put(fp, t); // 끝으로 — 삽입 순서 = 창을 시작한 순서
             a = new Admitted((int) Math.min(Integer.MAX_VALUE, t.pending), t.last);
             t.sentAt = now;
             t.pending = 0;
@@ -313,8 +318,8 @@ public class LogSink implements SmartLifecycle, DisposableBean {
 
     /**
      * 계약 v5 §G9 뒤늦게 싣기: 억제 중인 발생(k건)이 있고 창이 닫힌(all 이면 창과 무관하게 — 종료 때) 지문마다 마지막 억제 발생 하나를
-     * 그 body 로 항목을 만들어(ts · 메시지 · 예외 · context 는 그 발생의 것) suppressed = k − 1 로 대기열에 넣는다. 그 지문의 창은 지금
-     * 다시 시작한다(억제 수 0). 항목을 만들지 못하거나(예외 · Error) deadlineNanos(System.nanoTime 기준)를 넘기면 그 k건을 dropped 로 센다 —
+     * 그 body 로 항목을 만들어(ts · 메시지 · 예외 · context 는 그 발생의 것) suppressed = k − 1 로 대기열에 넣는다 — 창을 시작한 순서(오래된 것부터)로.
+     * 그 지문의 창은 지금 다시 시작한다(억제 수 0, 지문 표의 끝으로). 항목을 만들지 못하거나(예외 · Error) deadlineNanos(System.nanoTime 기준)를 넘기면 그 k건을 dropped 로 센다 —
      * 한 발생의 body 때문에 같은 주기의 다른 지문 · 보내는 스레드 · 종료가 멈추지 않는다.
      * @return 대기열에 넣은 항목 수
      */
@@ -326,9 +331,13 @@ public class LogSink implements SmartLifecycle, DisposableBean {
                 Track t = e.getValue();
                 if (t.pending == 0 || (!all && t.open(now))) continue;
                 due.add(new Due(e.getKey(), t.pending, t.last));
+            }
+            for (Due d : due) { // 창을 지금 다시 시작 — 싣는 순서대로 끝으로
+                Track t = fps.remove(d.fp());
                 t.sentAt = now;
                 t.pending = 0;
                 t.last = null;
+                fps.put(d.fp(), t);
             }
         }
         int queuedNow = 0;

@@ -33,6 +33,8 @@ def test_the_committed_vectors_are_well_formed():
     # 모든 동작(occur · tick · close)과 지문 둘인 사례가 있다
     assert {s["do"] for c in doc["cases"] for s in c["steps"]} == {"occur", "tick", "close"}
     assert any(s.get("fp") == "b" for c in doc["cases"] for s in c["steps"])
+    # 한 주기에 여러 지문이 싣는 사례 — 순서(창을 시작한 순서)까지 두 언어가 같아야 한다
+    assert any(s["do"] == "tick" and len(s["emit"]) >= 2 for c in doc["cases"] for s in c["steps"])
     assert cc.check_log_suppression_vectors() == 0
 
 
