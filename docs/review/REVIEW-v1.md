@@ -10,6 +10,7 @@
 
 ## 요약
 - 제기 106건 → 반박 2건 제외 → **104건 검증**(CONFIRMED 99 · PLAUSIBLE 5) → 중복 7건 병합 → **고유 97건**.
+- **3단계에서 1건 추가(R-98, Medium)**: R-54 수정을 검증하다 발견했다. 아래 심각도 집계(97건 기준)에는 넣지 않고 표·상세에만 추가했다.
 - 심각도: **Critical 0 · High 2 · Medium 28 · Low 67**. 영역: 코드 33 · 아키텍처 14 · 성능 13 · 보안 22 · UI/UX 15.
 - 반박된 것: "aircraft.last_seen 을 1분마다 갱신해 쓰기가 항적보다 많다"(성능) · "공개 OpenAPI 가 운영 API 를 공개"(보안-앱 갈래) — 다만 후자는 보안-인프라 갈래가 따로 확인했고,
   재현해 보니 공개 문서에 운영 경로 10개가 실제로 있다(익명 요청은 404) → R 목록에 Low 로 남겼다.
@@ -122,6 +123,7 @@
 | R-95 | 보안 | Low | 비밀번호를 바꿔도 기존 운영 세션이 무효화되지 않고, 계정 비활성화·세션 강제 종료 수단도 없음 | M | 확인됨(CONFIRMED) | 0.5 | 승인 |
 | R-96 | 보안 | Low | IP 단위 제한이 호스트 전체 한도가 되고, 계정 단위 잠금과 겹쳐 로컬 프로세스가 운영자를 계속 잠글 수 있음 | M | 확인됨(CONFIRMED) | 0.5 | 보류 |
 | R-97 | 보안 | Low | 세션·CSRF 쿠키가 host-only 'localhost', Path=/라서 다른 localhost 포트(SmartCollab 8080/8081 등)와 Next 서버에도 전송됨 | M | 추정(CONFIRMED) | 0.5 | 승인 |
+| R-98 | 보안 | Medium | (3단계 검증 중 추가) 경로 글자를 퍼센트 인코딩하면(/api/v1/%6Fps/…) 운영 세션 절대 수명·CSRF·공개 API 요청 제한을 건너뛴다 — 인가·컨트롤러는 디코딩한 경로로 같은 API 를 처리 | S | 확인됨(재현) | 4.0 | 승인 |
 
 ## 유지해야 할 설계(5)
 1. **외부 호출은 한 경로**: collector 의 HttpClient 가 허용 호스트·https 전용·리다이렉트 금지·응답 크기 상한·우선순위 토큰 버킷·보내기 직전 재확인·429 벌점을 한곳에서 처리하고, api 는 외부 호출이 0 이다
@@ -987,3 +989,10 @@
 - **개선안** 전용 호스트명(예: wakeline.localhost, 브라우저가 루프백으로 해석)을 쓰고 edge server_name·WAKELINE_ALLOWED_ORIGINS에 추가함. 세션 쿠키 Path를 /api/v1/ops로 축소함. 가능하면 __Host- 접두사와 Secure를 사용함.
 - **작업량** M · **확신도** 추정 · **발생 가능성** low · **계약 변경 필요** 예
 
+### R-98 · 보안 · Medium — 경로 글자를 퍼센트 인코딩하면 운영 세션 절대 수명·CSRF·공개 API 요청 제한을 건너뛴다(3단계 검증 중 추가)
+
+- **근거** 세 검사가 원문 `getRequestURI()` 앞부분으로 대상을 골랐다: `OpsSessionLifetimeFilter.shouldNotFilter`(`startsWith("/api/v1/ops/")`), `SecurityConfig` CSRF 면제(`!startsWith("/api/v1/ops/")`), `RateLimitFilter.shouldNotFilter`(`startsWith("/api/")`). 인가 규칙(`requestMatchers("/api/v1/ops/**")`)과 Spring MVC 는 PathPattern 으로 **디코딩한** 경로 조각을 맞추므로 `/api/v1/%6Fps/providers` 를 운영 API 로 처리한다. edge 는 `proxy_pass http://api;`(URI 없음)라 원문 URI 를 그대로 넘긴다(`location /api/` 는 정규화한 경로로 맞춤). StrictHttpFirewall 은 `%2F`·`%2E`·`%25`·`;` 만 막고 `%6F` 같은 일반 글자 인코딩은 통과시킨다.
+- **재현(실제 HTTP, 격리 테스트 스택)** 만료시킨 세션으로 `GET /api/v1/%6Fps/providers` → 200(기대 404). 로그인한 브라우저의 쿠키만으로(CSRF 헤더 없음) `POST /api/v1/%6Fps/providers/opensky/disable` → **204, 공급자가 실제로 꺼짐**(기대 403). 분당 한도를 넘긴 뒤 `GET /%61pi/v1/status` → 200(기대 429). 익명 `GET /api/v1/%6Fps/providers` 는 404 — 인가 자체는 디코딩해 맞춘다.
+- **문제와 영향** R-97 검증은 "현재 CSRF 방어는 커스텀 헤더 + CORS 부재에 의존" 이라 했는데, 인코딩한 경로는 헤더 없는 단순 POST(프리플라이트 없음)로 운영 변경을 통과시킨다. 같은 site(다른 localhost 포트)의 페이지가 로그인한 운영자의 브라우저로 설정·공급자 스위치를 바꿀 수 있다(SameSite=Strict 는 포트를 구분하지 않음). 절대 수명(R-54)도 같은 방법으로 무력화된다. 요청 제한 우회는 edge 1차 제한(10 r/s)이 남아 영향이 작다.
+- **개선안** 경로 판단을 인가와 같은 매처 하나로(`ApiPaths` — `PathPatternRequestMatcher`). 원문 URI 앞부분 비교를 없앤다.
+- **작업량** S · **확신도** 확인됨(재현) · **발생 가능성** medium · **계약 변경 필요** 아니오

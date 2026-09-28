@@ -68,6 +68,19 @@ class OpsSessionLifetimeFilterTest {
         assertThat(chain.getRequest()).isNotNull();
     }
 
+    /**
+     * 보안 규칙(/api/v1/ops/**)은 디코딩한 경로로 맞추므로 %6Fps(= ops) 는 운영 경로로 인가된다. 이 필터가 원문 URI 앞부분만 보면 같은 요청에서
+     * 수명 검사를 건너뛴다(R-54 후속) — 인가와 같은 규칙으로 판단해야 한다.
+     */
+    @Test
+    void percentEncodedOpsPathIsCheckedLikeTheAuthorizationRule() throws Exception {
+        for (String uri : new String[] {"/api/v1/%6Fps/providers", "/api/v1/o%70s/settings", "/api/v%31/ops/audit"}) {
+            MockHttpSession s = sessionLoggedInAgo(Duration.ofHours(9));
+            FILTER.doFilter(request(uri, s), new MockHttpServletResponse(), new MockFilterChain());
+            assertThat(s.isInvalid()).as(uri).isTrue();
+        }
+    }
+
     @Test
     void maxAgeMustBePositive() {
         assertThatThrownBy(() -> new OpsSessionLifetimeFilter(Duration.ZERO, Clock.systemUTC())).isInstanceOf(IllegalArgumentException.class);

@@ -26,7 +26,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !ApiPaths.API.matches(request); // 컨트롤러와 같은 규칙(디코딩한 경로) — 원문 앞부분이면 /%61pi/… 가 제한을 건너뛴다
     }
 
     @Override

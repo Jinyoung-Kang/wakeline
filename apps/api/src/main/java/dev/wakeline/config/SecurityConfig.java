@@ -4,7 +4,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.DelegatingSecurityContextRepository;
@@ -44,13 +43,14 @@ public class SecurityConfig {
                 // 절대 수명(R-54): 보안 컨텍스트를 세션에서 읽기 전에 오래된 운영 세션을 끝낸다 → 익명 → 404
                 .addFilterBefore(new OpsSessionLifetimeFilter(opsSessionMaxAge, Clock.systemUTC()), SecurityContextHolderFilter.class)
                 .authorizeHttpRequests(a -> a
-                        .requestMatchers(HttpMethod.POST, "/api/v1/ops/session").permitAll()
-                        .requestMatchers("/api/v1/ops/**").hasRole("OPS")
+                        .requestMatchers(ApiPaths.OPS_LOGIN).permitAll()
+                        .requestMatchers(ApiPaths.OPS).hasRole("OPS")
                         .anyRequest().permitAll())
                 // CSRF 는 세션 쿠키로 인증되는 ops 변경 요청에만 적용한다. 공개 API 는 쿠키 인증이 없으므로 대상이 아니다.
                 .csrf(c -> c.spa().csrfTokenRepository(csrfRepository)
-                        .ignoringRequestMatchers(req -> !req.getRequestURI().startsWith("/api/v1/ops/") || "GET".equals(req.getMethod())
-                                || (isLogin(req) && !hasCookie(req, SESSION_COOKIE))))
+                        // 경로는 인가와 같은 매처로 판단한다(ApiPaths) — 원문 URI 앞부분이면 /api/v1/%6Fps/… 가 CSRF 없이 운영 변경을 했다
+                        .ignoringRequestMatchers(req -> !ApiPaths.OPS.matches(req) || "GET".equals(req.getMethod())
+                                || (ApiPaths.OPS_LOGIN.matches(req) && !hasCookie(req, SESSION_COOKIE))))
                 .securityContext(s -> s.securityContextRepository(contextRepository))
                 .formLogin(f -> f.disable())
                 .httpBasic(b -> b.disable())
@@ -88,10 +88,6 @@ public class SecurityConfig {
             log.debug("request rejected by the firewall request_id={}: {}", RequestIdFilter.current(req), ex.getMessage());
             problem(res, req, 400, "BAD_REQUEST", "bad request", "request rejected");
         };
-    }
-
-    private static boolean isLogin(HttpServletRequest req) {
-        return "/api/v1/ops/session".equals(req.getRequestURI()) && "POST".equals(req.getMethod());
     }
 
     private static boolean hasCookie(HttpServletRequest req, String name) {

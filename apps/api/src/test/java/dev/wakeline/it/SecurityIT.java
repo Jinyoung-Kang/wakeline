@@ -287,6 +287,43 @@ class SecurityIT extends IntegrationTest {
         assertThat(b.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
     }
 
+    /**
+     * 경로의 글자를 퍼센트 인코딩해도(%6Fps = ops) Tomcat·Spring 은 디코딩한 경로로 운영 API 에 보내고 인가한다. 수명 검사와 CSRF 면제
+     * 판단이 원문 URI 앞부분만 보면 이 요청은 두 검사를 모두 건너뛴다(R-54 후속). 인가와 같은 규칙으로 판단해야 한다.
+     */
+    @Test
+    void percentEncodedOpsPathCannotSkipTheLifetimeCheck() {
+        users.upsert("it-abs-enc", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-abs-enc", PW).status()).isEqualTo(200);
+        assertThat(b.send("GET", "/api/v1/%6Fps/providers", null, Map.of()).status()).as("encoded path reaches the ops API").isEqualTo(200);
+        String key = sessionKey(b);
+        long loggedIn = System.currentTimeMillis() - java.time.Duration.ofHours(8).plusMinutes(1).toMillis();
+        setSessionField(key, "sessionAttr:ops_auth_at", loggedIn);
+        setSessionField(key, "creationTime", loggedIn);
+
+        assertThat(b.send("GET", "/api/v1/%6Fps/providers", null, Map.of()).status()).isEqualTo(404);
+        assertThat(ItStack.admin().hasKey(key)).as("expired session removed from Redis").isFalse();
+    }
+
+    @Test
+    void anonymousPercentEncodedOpsPathIs404() {
+        for (String path : List.of("/api/v1/%6Fps/providers", "/api/v1/o%70s/settings", "/api/v%31/ops/audit", "/api/v1/%6F%70%73/pipeline"))
+            assertThat(get(path).status()).as(path).isEqualTo(404);
+    }
+
+    @Test
+    void percentEncodedOpsPathStillNeedsCsrf() {
+        users.upsert("it-csrf-enc", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-csrf-enc", PW).status()).isEqualTo(200);
+        long auditBefore = audit("PROVIDER_DISABLE", "opensky");
+        Res r = b.send("POST", "/api/v1/%6Fps/providers/opensky/disable", null, Map.of());
+        if (r.status() == 204) b.send("POST", "/api/v1/ops/providers/opensky/enable", null, b.withCsrf()); // 우회됐다면 다른 테스트를 위해 되돌린다
+        assertThat(r.status()).as("cookie-only change on an encoded ops path").isEqualTo(403);
+        assertThat(audit("PROVIDER_DISABLE", "opensky")).isEqualTo(auditBefore);
+    }
+
     /** 로그인 시각 속성이 없는 세션(이 규칙 전에 만들어진 세션)은 세션 생성 시각으로 판단한다. 7 h 59 분이면 아직 유효하다. */
     @Test
     void sessionWithoutLoginTimeFallsBackToItsCreationTime() {
@@ -434,6 +471,8 @@ class SecurityIT extends IntegrationTest {
         var mine = ItStack.admin().keys("rl:api:127.0.0.1:*");
         assertThat(mine).hasSize(1);
         assertThat(ItStack.admin().opsForValue().get(mine.iterator().next())).isEqualTo("121");
+        // 경로 글자를 인코딩해도(%61pi = api) 같은 API 로 가므로 같은 제한을 받는다(원문 URI 앞부분만 보면 제한을 건너뛴다 — R-54 후속)
+        assertProblem(get("/%61pi/v1/status"), 429, "RATE_LIMITED", "/%61pi/v1/status");
         // /api 밖(헬스체크)은 제한 대상이 아니다
         assertThat(get("/healthz").status()).isEqualTo(200);
 

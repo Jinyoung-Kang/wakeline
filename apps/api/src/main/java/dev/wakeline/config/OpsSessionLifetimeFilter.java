@@ -22,7 +22,6 @@ import java.time.Duration;
 public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
     /** 로그인 시각(epoch ms, Long) 세션 속성. 세션 역직렬화 허용 목록(java.lang.Long)에 이미 있다. */
     public static final String AUTH_AT = "ops_auth_at";
-    static final String OPS_PREFIX = "/api/v1/ops/";
 
     private final long maxAgeMs;
     private final Clock clock;
@@ -35,7 +34,7 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith(OPS_PREFIX);
+        return !ApiPaths.OPS.matches(request); // 인가와 같은 규칙(디코딩한 경로) — 원문 앞부분이면 %6Fps 가 빠진다
     }
 
     @Override
