@@ -110,19 +110,24 @@ async def test_route_cache_set_ex_and_exists_with_collector_acl(admin, collector
     assert prov.calls == ["ZZX123"] and (await Budget(admin, {}).usage("adsbdb"))[0] == 1
 
 
-def _start_sh_rules(*names: str) -> list[str]:
-    """infra/redis/start.sh 의 규칙 변수를 그대로 읽는다(손으로 옮긴 목록이 어긋나지 않게)."""
+def _start_sh_value(name: str) -> str:
+    """infra/redis/start.sh 의 규칙 변수 값(손으로 옮긴 목록이 어긋나지 않게). `X="$X …"` 로 이어 붙인 줄도 순서대로 합친다."""
     import re
-    import shlex
     from pathlib import Path
 
     text = (Path(__file__).resolve().parents[3] / "infra" / "redis" / "start.sh").read_text()
-    out: list[str] = []
-    for name in names:
-        m = re.search(rf"^{name}=['\"]([^'\"]*)['\"]", text, re.M)
-        assert m, name
-        out += shlex.split(m.group(1))
-    return out
+    value: str | None = None
+    for m in re.finditer(rf"^{name}=(['\"])(.*)\1\s*$", text, re.M):
+        value = m.group(2).replace(f"${name}", value or "")
+    assert value is not None, name
+    return value
+
+
+def _start_sh_rules(*names: str) -> list[str]:
+    """단어로 나누는 규칙 변수(start.sh 가 따옴표 없이 펼치는 것)."""
+    import shlex
+
+    return [w for name in names for w in shlex.split(_start_sh_value(name))]
 
 
 async def test_r14_publisher_time_trim_on_real_redis_under_collector_acl(admin):
@@ -130,8 +135,17 @@ async def test_r14_publisher_time_trim_on_real_redis_under_collector_acl(admin):
     from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RETENTION_S, Publisher
 
     user, pw = f"itest_col_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
-    await admin.execute_command("ACL", "SETUSER", user, "reset", "on", f">{pw}", *_start_sh_rules("COLLECTOR_KEYS", "COMMON"))
-    await admin.execute_command("ACL", "SETUSER", user, *_start_sh_rules("COLLECTOR_DENY"))
+    # start.sh 의 wakeline_collector 와 같은 규칙: 키 + 명령 허용 목록(R-86) + 선택자(따옴표로 한 인자씩)
+    await admin.execute_command(
+        "ACL",
+        "SETUSER",
+        user,
+        "reset",
+        "on",
+        f">{pw}",
+        *_start_sh_rules("COLLECTOR_KEYS", "PRODUCER_BASE", "COLLECTOR_CMDS"),
+        *(_start_sh_value(v) for v in ("COLLECTOR_SEL_SET", "COLLECTOR_SEL_DEL", "COLLECTOR_SEL_EXPIRE")),
+    )
     kw = admin.connection_pool.connection_kwargs
     col = Redis(host=kw["host"], port=kw["port"], username=user, password=pw, decode_responses=True)
     await admin.delete(STREAM_AIRCRAFT)
