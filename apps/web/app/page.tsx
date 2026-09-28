@@ -16,13 +16,14 @@ export default function Dashboard() {
   return (
     <div className="flex h-full flex-col">
       <StatusBar />
-      <div className="flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1">
+      {/* 900 px 미만: 지도 위 · 패널 아래로 쌓는다(R-39) — 고정 380 px 열이 지도를 10 px 로 줄이지 않게 */}
+      <div className="flex min-h-0 flex-1 flex-col min-[900px]:flex-row">
+        <div className="relative min-h-0 min-w-0 flex-1">
           <MapView />
           <MapChips />
           <LayerPanel />
         </div>
-        <aside className="flex w-[380px] shrink-0 flex-col border-l border-line bg-bg-1">
+        <aside className="flex h-[42%] w-full shrink-0 flex-col border-t border-line bg-bg-1 min-[900px]:h-auto min-[900px]:w-[380px] min-[900px]:border-t-0 min-[900px]:border-l">
           <SidePanel />
         </aside>
       </div>

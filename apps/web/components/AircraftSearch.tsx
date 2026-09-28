@@ -124,7 +124,7 @@ export function AircraftSearch() {
       </div>
       <div id={`${uid}-status`} className="sr-only" aria-live="polite">{hint || msg}</div>
       {showList ? (
-        <div className="panel absolute right-0 top-[calc(100%+6px)] z-50 w-[400px] text-[12px]" data-testid="aircraft-search-results">
+        <div className="panel absolute right-0 top-[calc(100%+6px)] z-50 w-[400px] max-w-[calc(100vw-1.5rem)] text-[12px]" data-testid="aircraft-search-results">
           {hits.length === 0 ? <div className="px-2 py-1.5 text-fg-3">{state === "loading" ? "검색 중…" : msg || "일치하는 항공기 없음"}</div> : null}
           <ul id={listId} role="listbox" aria-label="항공기 검색 결과" className="max-h-[60vh] overflow-y-auto">
             {hits.map((h, i) => (

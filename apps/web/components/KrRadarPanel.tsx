@@ -13,7 +13,7 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
   const stale = d?.available ? isKrRadarStale(d, now) : false;
   const latest = d?.frames[d.frames.length - 1];
   return (
-    <div className="panel absolute bottom-12 left-3 z-10 w-[380px] text-[11px]" data-testid="kr-radar-panel">
+    <div className="panel absolute bottom-full left-3 z-10 mb-3 w-[380px] max-w-[calc(100vw-1.5rem)] text-[11px]" data-testid="kr-radar-panel">
       <div className="row"><span className="label">기상청 레이더 합성(HSR) · 범례·정합</span><button className="btn" onClick={onClose}>닫기</button></div>
       <div className="p-2">
         {!d ? <div className="text-fg-3">…</div> : d.available ? <>

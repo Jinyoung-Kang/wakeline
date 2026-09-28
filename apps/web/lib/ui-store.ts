@@ -71,6 +71,6 @@ export const useUi = create<UiState>((set) => ({
   setPanel: (p) => set({ panel: p }),
   flyTo: null,
   requestFlyTo: (lon, lat, zoom = 8) => set((s) => ({ flyTo: { lon, lat, zoom, id: (s.flyTo?.id ?? 0) + 1 } })),
-  legendOpen: true,
+  legendOpen: false, // 처음 값은 LayerPanel 이 저장된 선택 또는 화면 폭으로 정한다(lib/prefs legendDefaultOpen)
   setLegendOpen: (b) => set({ legendOpen: b }),
 }));

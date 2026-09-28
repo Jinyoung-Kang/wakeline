@@ -66,7 +66,7 @@ export default function ReplayPage() {
           onChange={(e) => { const t = fromUtcInput(e.target.value); if (t != null && max) { setPlaying(false); setAt(stepAt(t, 0, range)); } }}
           aria-label="재생 시각(UTC)" data-testid="replay-at-input" />
         <div className="flex gap-1" role="group" aria-label="재생 시각 이동">
-          {REPLAY_STEPS.map(([d, l]) => <button key={l} className="btn px-1.5" onClick={() => { setPlaying(false); setAt((t) => stepAt(t, d, range)); }} disabled={!at}>{l}</button>)}
+          {REPLAY_STEPS.map(([d, l]) => <button key={l} className="btn px-1.5 normal-case!" onClick={() => { setPlaying(false); setAt((t) => stepAt(t, d, range)); }} disabled={!at}>{l}</button>)}
         </div>
         <input type="range" min={min} max={max} step={10_000} value={Math.min(max, Math.max(min, at))} onChange={(e) => { setPlaying(false); setAt(Number(e.target.value)); }} className="min-w-[200px] flex-1"
           list="replay-marks" aria-label="재생 시각" aria-valuetext={at ? `${new Date(at).toISOString()} · ${replayZone(at, range) === "full" ? "원해상도" : "1분 요약"}` : "—"} />
@@ -77,14 +77,14 @@ export default function ReplayPage() {
         <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${latency ?? "—"} ms` : "—"}</span>
         <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
         <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar">{replayRadarLabel(frame)}</span>
-        {err ? <span className="text-bad" role="alert" data-testid="replay-error">{err}</span> : null}
-        {clamped ? <span className="text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
-        <span className="text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
+        {err ? <span className="whitespace-normal text-bad" role="alert" data-testid="replay-error">{err}</span> : null}
+        {clamped ? <span className="whitespace-normal text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
+        <span className="whitespace-normal text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
       </div>
       <div className="relative min-h-0 flex-1">
         <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />
         {pick ? (
-          <div className="panel absolute top-3 right-3 z-10 w-[320px] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
+          <div className="panel absolute top-3 right-3 z-10 w-[320px] max-w-[calc(100%-1.5rem)] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
             <div className="row">
               <span className="label">{pick.kind === "aircraft" ? "Aircraft · 기록" : "SIGMET · 그 시각"}</span>
               <button className="btn" onClick={() => setPick(null)}>닫기</button>

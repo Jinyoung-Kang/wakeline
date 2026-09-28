@@ -67,7 +67,7 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
   const hasCoverage = useServerData((d) => aisCoverageFeatures(d.ais?.coverage ?? null).features.length > 0);
   const grad = `linear-gradient(90deg, ${ALT_RAMP.map(([ft, c]) => `${c} ${(ft / ALT_MAX) * 100}%`).join(", ")})`;
   return (
-    <div id={id} className="panel max-h-full w-[264px] overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
+    <div id={id} className="panel max-h-full w-[264px] max-w-full overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
       {layers.aircraft ? (
         <Section title="항공기 · 고도(아이콘 색)">
           <li className="pb-1">

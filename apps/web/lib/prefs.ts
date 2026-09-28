@@ -27,6 +27,12 @@ export function loadLayers(kv: KV | null = storage()): Partial<Layers> | null {
   } catch { return null; }
 }
 
+/** 범례를 처음(저장된 선택이 없을 때) 펼칠 최소 화면 폭(px). 좁은 화면에서는 범례가 지도 대부분을 덮는다(R-39) */
+export const LEGEND_OPEN_MIN_WIDTH = 900;
+export function legendDefaultOpen(viewportWidth: number): boolean {
+  return Number.isFinite(viewportWidth) && viewportWidth >= LEGEND_OPEN_MIN_WIDTH;
+}
+
 export function saveLayers(l: Layers, kv: KV | null = storage()): void {
   if (!kv) return;
   const o: Partial<Layers> = {};

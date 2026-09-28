@@ -2,6 +2,7 @@
  * 리뷰 v1(docs/review/REVIEW-v1.md) 웹 UI 갈래 회귀 시험. 각 describe 는 한 발견 사항(R-xx)이다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(커밋 메시지·검증 기록 참고).
  */
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +12,9 @@ import { useUi } from "@/lib/ui-store";
 import { panIfOutside } from "@/lib/focus";
 import { SidePanelView } from "@/components/SidePanel";
 import ReplayPage from "@/app/replay/page";
+import Dashboard from "@/app/page";
+import { LayerPanel } from "@/components/LayerPanel";
+import * as prefs from "@/lib/prefs";
 import * as replayLib from "@/lib/replay";
 import * as opsLib from "@/lib/ops";
 import * as pipelineView from "@/components/OpsPipeline";
@@ -203,5 +207,24 @@ describe("R-35 settings: the version is taken when editing starts, so a refresh 
     expect(opsLib.settingConflict(undefined, v4)).toBe(false);
     // 운영자가 "덮어쓰기"를 고르면 그때 본 서버 version 으로 옮긴다
     expect(opsLib.rebaseSetting(e2, v4)).toEqual({ value: "310", version: 4 });
+  });
+});
+
+describe("R-39 narrow screens (390 px phone, 768 px tablet)", () => {
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  it("below 900 px the side panel stacks under the map at full width instead of a fixed 380 px column", () => {
+    const html = renderToStaticMarkup(createElement(Dashboard));
+    expect(html).toMatch(/class="[^"]*flex-col[^"]*min-\[900px\]:flex-row/);
+    expect(html).toMatch(/<aside[^>]*class="[^"]*w-full[^"]*min-\[900px\]:w-\[380px\]/);
+  });
+  it("the layer buttons wrap inside the map (bounded on the left) instead of running off screen", () => {
+    const html = renderToStaticMarkup(createElement(LayerPanel));
+    expect(html).toMatch(/class="[^"]*left-12[^"]*"/);
+    expect(html).toMatch(/class="[^"]*flex-wrap[^"]*"[^>]*data-testid="layer-panel"/);
+  });
+  it("buttons never break inside a Korean word; the legend starts closed on narrow screens", () => {
+    expect(css).toMatch(/\.btn \{[^}]*white-space: nowrap;[^}]*word-break: keep-all;/);
+    expect(prefs.legendDefaultOpen(390)).toBe(false);
+    expect(prefs.legendDefaultOpen(768)).toBe(false);
   });
 });

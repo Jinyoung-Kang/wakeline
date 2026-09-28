@@ -87,7 +87,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const toggle = async (name: string, action: "enable" | "disable") => { try { await apiSend("POST", `/api/v1/ops/providers/${name}/${action}`); refresh(); } catch (e) { fail(e); } };
   return (
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-3">
+      <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
         <span className="label mr-2">Operations</span>
         <div className="flex gap-1" role="group" aria-label="운영 탭">{(["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"] as const).map((t) => (
           <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>

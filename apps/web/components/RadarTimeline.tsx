@@ -42,13 +42,13 @@ export function RadarTimeline() {
     : time ? `${new Date(time * 1000).toISOString().slice(5, 16).replace("T", " ")}Z` : "—";
   const [kr, setKr] = useState(false);
   return (
-    <div className="relative flex h-9 shrink-0 items-center gap-3 border-t border-line bg-bg-1 px-3" data-testid="radar-timeline">
+    <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
       {kr ? <KrRadarPanel onClose={() => setKr(false)} /> : null}
       <span className="label">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
       <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : radarKr?.note ?? "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
       <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
-      <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-64" disabled={n === 0}
+      <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
       <span className="mono text-[11px]" data-testid="radar-frame-time">{label}</span>
       <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>
