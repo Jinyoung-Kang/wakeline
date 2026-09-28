@@ -62,7 +62,7 @@ export default function ReplayPage() {
         <div className="flex gap-1" role="group" aria-label="재생 속도">
           {SPEEDS.map((s) => <button key={s} className="btn" aria-pressed={speed === s} onClick={() => setSpeed(s)}>{s}×</button>)}
         </div>
-        <input type="datetime-local" step={60} min={max ? toUtcInput(min) : undefined} max={max ? toUtcInput(max) : undefined} value={at ? toUtcInput(at) : ""}
+        <span className="label" aria-hidden>UTC</span><input type="datetime-local" step={60} min={max ? toUtcInput(min) : undefined} max={max ? toUtcInput(max) : undefined} value={at ? toUtcInput(at) : ""}
           onChange={(e) => { const t = fromUtcInput(e.target.value); if (t != null && max) { setPlaying(false); setAt(stepAt(t, 0, range)); } }}
           aria-label="재생 시각(UTC)" data-testid="replay-at-input" />
         <div className="flex gap-1" role="group" aria-label="재생 시각 이동">

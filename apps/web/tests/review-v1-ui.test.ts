@@ -106,6 +106,10 @@ describe("R-10 replay time can be picked precisely across the 30-day summary win
     for (const t of ["−1h", "−10m", "−1m", "+1m", "+10m", "+1h"]) expect(html).toContain(`>${t}</button>`);
     expect(html).toContain('role="group" aria-label="재생 시각 이동"');
   });
+  it("the UTC basis is visible next to the date-time input (browsers render it in their own locale format)", () => {
+    const html = renderToStaticMarkup(createElement(ReplayPage));
+    expect(html).toMatch(/>UTC<\/span><input type="datetime-local"/);
+  });
   it("the range reaches back 30 days (1-minute summary) and marks the 72 h full-resolution boundary", () => {
     const now = Date.parse("2026-09-28T06:00:00Z");
     const r = replayLib.replayRange(now);
