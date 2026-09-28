@@ -19,12 +19,13 @@ from wakeline_collector.status import ProviderStatus
 class FakeRedis:
     """이 프로젝트가 쓰는 명령만 흉내 낸다. down=True 면 모든 명령이 ConnectionError."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock=None) -> None:
         self.kv: dict[str, Any] = {}
         self.ttl: dict[str, float] = {}
         self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
         self.down = False
         self._seq = 0
+        self.clock = clock  # 있으면 스트림 ID 를 Redis 처럼 '<ms>-<seq>' 로 만든다(MINID 트리밍 시험용)
 
     def _check(self) -> None:
         if self.down:
@@ -127,11 +128,27 @@ class FakeRedis:
         return rows if withscores else [m for m, _ in rows]
 
     # streams
-    async def xadd(self, stream: str, fields: dict[str, str], maxlen: int | None = None, approximate: bool = True) -> str:
+    async def xadd(
+        self,
+        stream: str,
+        fields: dict[str, str],
+        maxlen: int | None = None,
+        approximate: bool = True,
+        minid: int | str | None = None,
+    ) -> str:
+        """MAXLEN·MINID 트리밍을 정확히(~ 없이) 흉내 낸다 — 실제 Redis 는 ~ 이면 조금 더 남긴다."""
         self._check()
+        if maxlen is not None and minid is not None:
+            raise ValueError("Only one of maxlen or minid may be specified")  # redis-py 와 같은 제약
         self._seq += 1
-        sid = f"{self._seq}-0"
-        self.streams.setdefault(stream, []).append((sid, dict(fields)))
+        sid = f"{int(self.clock() * 1000)}-{self._seq}" if self.clock else f"{self._seq}-0"
+        entries = self.streams.setdefault(stream, [])
+        entries.append((sid, dict(fields)))
+        if maxlen is not None and len(entries) > maxlen:
+            del entries[: len(entries) - maxlen]
+        if minid is not None and self.clock:  # 시계가 없으면 ID 가 순번이라 MINID 를 비교할 수 없다(트리밍하지 않음)
+            floor = int(str(minid).split("-")[0])
+            entries[:] = [e for e in entries if int(e[0].split("-")[0]) >= floor]
         return sid
 
     async def xrevrange(self, stream: str, count: int | None = None):

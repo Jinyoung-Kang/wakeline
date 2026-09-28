@@ -37,7 +37,7 @@ from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
 from wakeline_collector.providers.readsb import ADSB_FI_HOST, AdsbFiDemandProvider, adsb_fi, adsb_lol
-from wakeline_collector.publisher import Publisher
+from wakeline_collector.publisher import STREAM_AIRCRAFT, Publisher
 from wakeline_collector.ratelimit import default_limiter
 from wakeline_collector.raw_store import RawStore
 from wakeline_collector.runtime_settings import RuntimeSettings
@@ -100,6 +100,8 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             **db.metrics(),
             "publish_queued": str(publisher.queued),
             "publish_dropped": str(publisher.dropped),
+            # R-14: 항공기 스트림을 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수(0 이 아니면 api 정지 시 손실 가능)
+            "stream_budget_trims": str(publisher.budget_trims.get(STREAM_AIRCRAFT, 0)),
             # api /status 의 demand.adsb_fi_rps_1m 원천: 최근 60 s 동안 실제로 보낸 adsb.fi 호출 수 / 60
             "adsb_fi_rps_1m": f"{limiter.rate_1m(ADSB_FI_HOST):.3f}",
             "adsbdb_rps_1m": f"{limiter.rate_1m(ADSBDB_HOST):.3f}",

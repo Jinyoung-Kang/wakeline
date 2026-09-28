@@ -30,7 +30,7 @@ from wakeline_collector.ais.queue import RawQueue
 from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.masking import mask
-from wakeline_collector.publisher import MAXLEN, STREAM_SHIPS, Publisher
+from wakeline_collector.publisher import STREAM_BUDGET_BYTES, STREAM_RETENTION_S, STREAM_SHIPS, Publisher, StreamTrim, _size
 
 log = logging.getLogger("ais.sink")
 
@@ -68,6 +68,8 @@ class AisSink:
         self._redact = redact or (lambda s: mask(s) or "")
         self._wall, self._mono = wall, mono
         self._env = Publisher(redis)  # envelope 형식(gzip+base64 JSON)만 빌려 쓴다 — 이 Publisher 의 로컬 큐는 쓰지 않는다
+        # 선박 스트림은 시간으로 자른다(R-14: 2.5 h, 바이트 예산 — publisher.py 설명). 이 프로세스가 유일한 발행자다.
+        self._trim = StreamTrim(STREAM_RETENTION_S, STREAM_BUDGET_BYTES[STREAM_SHIPS], clock=lambda: self._wall())
         self._last_warn = 0.0
         self._prev_flush = (mono(), 0, 0, 0, 0)  # 직전 창 끝: (mono, msgs, dropped, quarantined, invalid)
         self._last_status = float("-inf")
@@ -136,7 +138,7 @@ class AisSink:
                 payload=payload,
             )
             try:
-                await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
+                await self._xadd(env)
             except (RedisError, OSError) as e:
                 kept = self._keep_unsent(states, statics, i)
                 self.publish_errors += 1
@@ -150,6 +152,12 @@ class AisSink:
             self.published_ships += len(ships)
             self.last_publish_at = now
         return sent
+
+    async def _xadd(self, env: dict[str, str]) -> None:
+        size = _size(env)
+        args = self._trim.xadd_args(size)
+        await self._r.xadd(STREAM_SHIPS, env, **args)  # type: ignore[arg-type]
+        self._trim.record(size, args)
 
     def _keep_unsent(self, states: list[dict[str, Any]], statics: list[dict[str, Any]], part: int) -> int:
         """part 번째(0부터)부터 보내지 못한 선박을 다시 '바뀜' 으로 표시한다. 반환: 위치 건수."""
@@ -185,7 +193,7 @@ class AisSink:
                 payload=ev,
             )
             try:
-                await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
+                await self._xadd(env)
             except (RedisError, OSError) as e:
                 self.publish_errors += 1
                 self._warn("ais_gap xadd failed (%s) — %d gap event(s) pending", type(e).__name__, self.shards.gaps_pending)
@@ -241,6 +249,7 @@ class AisSink:
             "published_ships_total": str(self.published_ships),
             "last_publish_at": _iso(self.last_publish_at),
             "publish_errors": str(self.publish_errors),
+            "stream_budget_trims": str(self._trim.budget_trims),  # R-14: 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수
             "updated_at": iso_ms(self._wall()),
         }
 

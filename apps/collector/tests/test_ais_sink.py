@@ -151,12 +151,12 @@ class StallingRedis(FakeRedis):
         self.stalled = asyncio.Event()
         self.stall_next = True
 
-    async def xadd(self, stream, fields, maxlen=None, approximate=True):
+    async def xadd(self, stream, fields, **kw):
         if self.stall_next:
             self.stall_next = False
             self.stalled.set()
             await self.gate.wait()
-        return await super().xadd(stream, fields, maxlen=maxlen, approximate=approximate)
+        return await super().xadd(stream, fields, **kw)
 
 
 def _close_gaps(feed: FeedState, n: int, t0: float = 0.0) -> list[str]:
@@ -457,3 +457,26 @@ async def test_single_shard_status_keeps_the_pre_v4_fields():
     (only,) = json.loads(h["shards"])
     assert only["scope"] == "18,105,46,150" and only["sessions_ended"] == 0
     assert float(h["msgs_per_s"]) == pytest.approx(only["msgs_per_s"], abs=0.01)
+
+
+# ---- R-14: 선박 스트림도 개수(200 ≈ 33분)가 아니라 시간으로 자른다 ------------------------------------------------------
+async def test_r14_ships_stream_keeps_a_two_hour_api_outage_then_trims_by_time():
+    from wakeline_collector.publisher import STREAM_RETENTION_S
+
+    clk = [1_790_000_000.0]
+    r, _q, book, feed, w, sink = _setup(r=FakeRedis(clock=lambda: clk[0]), wall=lambda: clk[0])
+    feed.on_subscribed("18,105,46,150", deflate=True)
+    _load_fixture(w, feed)
+    assert await sink.flush() == 1
+    some = next(iter(book._ships))
+    for _ in range(2 * 360):  # 10 s 마다 바뀐 선박 1척 — 2 h
+        clk[0] += 10.0
+        book.mark_dirty([some], [])
+        assert await sink.flush() == 1
+    assert len(r.streams[STREAM_SHIPS]) == 1 + 2 * 360  # api 가 2 h 멈춰도 하나도 지우지 않았다
+    for _ in range(2 * 360):  # 2 h 더 → 보존 창보다 오래된 것은 지운다
+        clk[0] += 10.0
+        book.mark_dirty([some], [])
+        await sink.flush()
+    oldest_ms = min(int(sid.split("-")[0]) for sid, _ in r.streams[STREAM_SHIPS])
+    assert (clk[0] * 1000 - oldest_ms) / 1000 <= STREAM_RETENTION_S + 10

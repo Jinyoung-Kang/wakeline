@@ -108,3 +108,46 @@ async def test_route_cache_set_ex_and_exists_with_collector_acl(admin, collector
     for t in list(rl._tasks.values()):
         await t
     assert prov.calls == ["ZZX123"] and (await Budget(admin, {}).usage("adsbdb"))[0] == 1
+
+
+def _start_sh_rules(*names: str) -> list[str]:
+    """infra/redis/start.sh 의 규칙 변수를 그대로 읽는다(손으로 옮긴 목록이 어긋나지 않게)."""
+    import re
+    import shlex
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[3] / "infra" / "redis" / "start.sh").read_text()
+    out: list[str] = []
+    for name in names:
+        m = re.search(rf"^{name}=['\"]([^'\"]*)['\"]", text, re.M)
+        assert m, name
+        out += shlex.split(m.group(1))
+    return out
+
+
+async def test_r14_publisher_time_trim_on_real_redis_under_collector_acl(admin):
+    """R-14: 수집기 ACL 사용자로 XADD MINID ~ 가 허용되고, 보존 창보다 오래된 노드는 지워지며 창 안 항목은 남는다."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RETENTION_S, Publisher
+
+    user, pw = f"itest_col_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
+    await admin.execute_command("ACL", "SETUSER", user, "reset", "on", f">{pw}", *_start_sh_rules("COLLECTOR_KEYS", "COMMON"))
+    await admin.execute_command("ACL", "SETUSER", user, *_start_sh_rules("COLLECTOR_DENY"))
+    kw = admin.connection_pool.connection_kwargs
+    col = Redis(host=kw["host"], port=kw["port"], username=user, password=pw, decode_responses=True)
+    await admin.delete(STREAM_AIRCRAFT)
+    try:
+        now_ms = int(time.time() * 1000)
+        old_ms = now_ms - int((STREAM_RETENTION_S + 1800) * 1000)
+        recent_ms = now_ms - 3600 * 1000
+        for i in range(250):  # 노드(기본 100항목) 둘 이상을 채우는 오래된 항목
+            await admin.xadd(STREAM_AIRCRAFT, {"old": str(i)}, id=f"{old_ms}-{i + 1}")
+        for i in range(5):  # api 가 1 h 멈춘 동안의 항목
+            await admin.xadd(STREAM_AIRCRAFT, {"recent": str(i)}, id=f"{recent_ms}-{i + 1}")
+        assert await Publisher(col).publish(STREAM_AIRCRAFT, {"new": "1"})  # type: ignore[arg-type]
+        rows = [f for _sid, f in await admin.xrange(STREAM_AIRCRAFT)]
+        assert sum("recent" in f for f in rows) == 5 and sum("new" in f for f in rows) == 1  # 창 안은 모두 남는다
+        assert sum("old" in f for f in rows) <= 100  # ~(근사): 통째로 오래된 노드만 지운다 — 남은 오래된 항목은 한 노드 이하
+    finally:
+        await admin.delete(STREAM_AIRCRAFT)
+        await col.aclose()
+        await admin.execute_command("ACL", "DELUSER", user)

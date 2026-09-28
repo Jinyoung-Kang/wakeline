@@ -44,12 +44,12 @@ class SlowRedis(FakeRedis):
 
         self._rnd = random.Random(seed)
 
-    async def xadd(self, stream, fields, maxlen=None, approximate=True):
+    async def xadd(self, stream, fields, **kw):
         import asyncio
 
         self._check()
         await asyncio.sleep(self._rnd.uniform(0.001, 0.02))
-        return await super().xadd(stream, fields, maxlen, approximate)
+        return await super().xadd(stream, fields, **kw)
 
 
 async def test_concurrent_publish_after_recovery_sends_each_entry_once_in_order():
@@ -77,6 +77,75 @@ async def test_publish_returns_stream_id_or_none():
     assert await p.publish("s", {"a": "1"}) == "1-0"
     r.down = True
     assert await p.publish("s", {"a": "2"}) is None and p.queued == 1
+
+
+async def _outage(p: Publisher, clk: list[float], seconds: int, region_kb: int = 9, global_kb: int = 448) -> int:
+    """api 가 멈춘 동안의 항공기 스트림 발행을 흉내 낸다: 관심 지역 10 s · 전세계 120 s(수요 임대는 api 가 쓰므로 없다).
+    크기는 fixture 로 잰 값(관심 지역 127대 ≈ 9 KB, 전세계 6,604대 ≈ 448 KB)."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT
+
+    region, glob = "r" * (region_kb * 1024), "g" * (global_kb * 1024)
+    n = 0
+    for step in range(seconds // 10):
+        await p.publish(STREAM_AIRCRAFT, {"scope": "region", "payload": region})
+        n += 1
+        if step % 12 == 0:
+            await p.publish(STREAM_AIRCRAFT, {"scope": "global", "payload": glob})
+            n += 1
+        clk[0] += 10.0
+    return n
+
+
+async def test_r14_aircraft_stream_keeps_everything_published_during_a_two_hour_api_outage():
+    """리뷰 R-14: MAXLEN ~200 은 약 35분 — api 가 그보다 오래 멈추면 항적이 읽히기 전에 지워졌다."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT
+
+    clk = [1_790_000_000.0]
+    r = FakeRedis(clock=lambda: clk[0])
+    p = Publisher(r)  # type: ignore[arg-type]
+    p._clock = lambda: clk[0]
+    n = await _outage(p, clk, 2 * 3600)
+    assert len(r.streams[STREAM_AIRCRAFT]) == n  # 하나도 지우지 않았다
+
+
+async def test_r14_aircraft_stream_is_trimmed_by_time_after_the_retention_window():
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RETENTION_S
+
+    clk = [1_790_000_000.0]
+    r = FakeRedis(clock=lambda: clk[0])
+    p = Publisher(r)  # type: ignore[arg-type]
+    p._clock = lambda: clk[0]
+    await _outage(p, clk, 4 * 3600)
+    ids = [int(sid.split("-")[0]) for sid, _ in r.streams[STREAM_AIRCRAFT]]
+    oldest_age_s = (clk[0] * 1000 - min(ids)) / 1000
+    assert STREAM_RETENTION_S >= 2 * 3600 and oldest_age_s <= STREAM_RETENTION_S + 10  # 시간으로 잘린다(메모리 상한)
+
+
+async def test_r14_byte_budget_bounds_memory_when_the_rate_is_unexpectedly_high(monkeypatch):
+    from wakeline_collector.publisher import STREAM_AIRCRAFT
+
+    monkeypatch.setitem(pubmod.STREAM_BUDGET_BYTES, STREAM_AIRCRAFT, 1_000_000)
+    clk = [1_790_000_000.0]
+    r = FakeRedis(clock=lambda: clk[0])
+    p = Publisher(r)  # type: ignore[arg-type]
+    p._clock = lambda: clk[0]
+    for _ in range(500):  # 1 s 마다 100 KB — 보존 창 안에서 예산(1 MB)을 크게 넘는다
+        await p.publish(STREAM_AIRCRAFT, {"payload": "x" * 100_000})
+        clk[0] += 1.0
+    kept = sum(len(k) + len(v) for _sid, f in r.streams[STREAM_AIRCRAFT] for k, v in f.items())
+    assert kept <= 1_000_000 and len(r.streams[STREAM_AIRCRAFT]) >= 9  # 최신 항목부터 예산만큼
+    assert p.budget_trims[STREAM_AIRCRAFT] > 0  # 예산이 잘랐다는 사실을 셀 수 있다(heartbeat 로 노출)
+
+
+async def test_r14_other_streams_keep_count_trim():
+    """SIGMET(300 s)·레이더(60 s)는 200개로 이미 2 h 를 넘게 담는다 — 개수 트리밍 그대로."""
+    from wakeline_collector.publisher import MAXLEN, STREAM_RADAR
+
+    r = FakeRedis()
+    p = Publisher(r)  # type: ignore[arg-type]
+    for i in range(MAXLEN + 5):
+        await p.publish(STREAM_RADAR, {"i": str(i)})
+    assert len(r.streams[STREAM_RADAR]) == MAXLEN
 
 
 async def test_oversized_entry_is_counted_not_queued(monkeypatch):

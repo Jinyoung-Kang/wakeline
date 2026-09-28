@@ -133,6 +133,7 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     assert closed == [mainmod.DB_DRAIN_S]
     hb = r.kv["wakeline:collector"]
     assert hb["fixture"] == "1" and hb["region_poll_s"] == "10" and "adsb_fi_rps_1m" in hb and hb["demand_focus"] == "2"
+    assert hb["stream_budget_trims"] == "0"  # R-14: 바이트 예산 때문에 보존 창보다 일찍 자른 적 없음
     # 계약 v4 G A-2: fixture 모드는 외부 호출이 없다 — 노선을 묻지 않고, 선택한 항공기의 콜사인(응답의 콜사인 · 메타 콜사인)에
     # disabled(120 s)를 써서 api 가 "노선 조회 중"(pending)으로 남기지 않게 한다
     assert hb["adsbdb_rps_1m"] == "0.000" and hb["route_lookups"] == "0"
