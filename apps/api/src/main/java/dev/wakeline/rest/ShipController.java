@@ -139,7 +139,8 @@ public class ShipController {
      *   <li>실시간(ShipStore — 위치 + 메모리 정적 정보)에서 먼저: 정확 일치 → 최근 보고 → MMSI 순.</li>
      *   <li>모자라면 DB ship 표(정확 일치 → last_seen 최신 → MMSI 순)에서 실시간 결과에 없는 선박. 그 선박이 실시간 목록에 있는데 메모리에 정적 정보가 없으면
      *       (상세와 같은 DB 폴백) 실시간 위치와 함께 live=true. 메모리 정적 정보가 있는데 일치하지 않았다면 옛 보고로만 찾힌 것이라 싣지 않는다.</li>
-     *   <li>last_position_at = DB 의 마지막 저장 위치 시각(보존 72 h 안). 실시간이지만 메모리에 정적 정보가 없는 선박은 DB 의 저장 정적 정보로 채운다.</li>
+     *   <li>last_position_at = DB 의 마지막 저장 위치 시각(ship_position — 보존 72 h 안, 그보다 오래된 선박은 null). ship.last_seen 은 위치로는
+     *       10분 단위로만 넓히므로 내보내지 않는다(상세와 같다 — DB 순서에만 쓴다). 실시간이지만 메모리에 정적 정보가 없는 선박은 DB 의 저장 정적 정보로 채운다.</li>
      * </ol>
      * 항목은 계약의 12개 키를 늘 싣는다 — 모르는 값은 JSON null(실시간이 아니면 lat · lon · sog_kn · seen_at 이 null, 위치를 지어내지 않는다).
      * 분류(category)는 선종 코드의 결정적 변환(없으면 unknown). DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true.

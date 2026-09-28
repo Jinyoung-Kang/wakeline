@@ -37,6 +37,8 @@ class ShipControllerTest {
     /** 메모리에 든 가짜 저장소(없으면 DB 장애). */
     static final class FakeRepo extends ShipRepository {
         volatile boolean down;
+        /** lookup 만 실패(검색 문장은 성공한 뒤 DB 가 끊긴 경우). */
+        volatile boolean lookupDown;
         StoredShip stored;
         final List<TrackPoint> points = new ArrayList<>();
         final List<AisGap> gaps = new ArrayList<>();
@@ -83,7 +85,7 @@ class ShipControllerTest {
 
         @Override public java.util.Map<String, Known> lookup(java.util.Collection<String> mmsis) {
             lookupCalls++;
-            if (down) throw new CannotGetJdbcConnectionException("down");
+            if (down || lookupDown) throw new CannotGetJdbcConnectionException("down");
             java.util.Map<String, Known> out = new java.util.HashMap<>();
             for (String m : mmsis) {
                 ShipStatic st = rows.stream().filter(r -> r.mmsi().equals(m)).map(SearchRow::stat).filter(java.util.Objects::nonNull).findFirst().orElse(null);
@@ -687,5 +689,43 @@ class ShipControllerTest {
         assertThat(body.path("items").get(0).path("last_position_at").isNull()).isTrue();
         assertThat(body.path("meta").path("db_unavailable").asBoolean()).isTrue();
         assertThat(search("NOTHING HERE", null).path("items").size()).isZero();
+    }
+
+    /**
+     * 부분 장애: 검색 문장은 성공하고 lookup 에서 DB 가 끊기면 이미 찾은 결과(실시간 + 저장만)는 그대로 200, 저장만 된 선박도 live=false 로 남고
+     * 마지막 저장 시각은 모름(null), meta.db_unavailable = true.
+     */
+    @Test void search_lookupOutageAfterSearchKeepsStoredResults() throws Exception {
+        repo.rows.add(new ShipRepository.SearchRow("440000077", full("440000077", "HANJIN OLD", "D7OLD", 9100007, 80), T.minusSeconds(86_400)));
+        repo.lastPositions.put("440000001", T.minusSeconds(40));
+        repo.lastPositions.put("440000077", T.minusSeconds(86_000));
+        repo.lookupDown = true;
+        var body = search("HANJIN", null);
+        var items = body.path("items");
+        assertThat(repo.searchCalls).isEqualTo(1);
+        assertThat(repo.lookupCalls).isEqualTo(1);
+        assertThat(items.size()).isEqualTo(2);
+        assertThat(items.get(0).path("mmsi").asString()).isEqualTo("440000001");
+        assertThat(items.get(0).path("live").asBoolean()).isTrue();
+        var stored = items.get(1);
+        assertThat(stored.path("mmsi").asString()).isEqualTo("440000077");
+        assertThat(stored.path("live").asBoolean()).isFalse();
+        assertThat(stored.path("name").asString()).as("static from the search row").isEqualTo("HANJIN OLD");
+        for (String k : new String[]{"lat", "lon", "sog_kn", "seen_at"}) assertThat(stored.path(k).isNull()).as(k).isTrue();
+        for (var it : items) assertThat(it.path("last_position_at").isNull()).as("unknown while the DB is down").isTrue();
+        assertThat(body.path("meta").path("db_unavailable").asBoolean()).isTrue();
+    }
+
+    /**
+     * last_position_at 은 저장된 위치(ship_position, 보존 72 h)의 마지막 시각 — 보존 밖의 선박은 null(ship.last_seen 은 10분 단위라 대신 쓰지 않는다).
+     * DB 는 정상이므로 db_unavailable 은 없다.
+     */
+    @Test void search_storedOnlyShipBeyondPositionRetentionHasNullLastPosition() throws Exception {
+        repo.rows.add(new ShipRepository.SearchRow("440000077", full("440000077", "HANJIN OLD", null, null, 80), T.minusSeconds(10 * 86_400)));
+        var body = search("HANJIN OLD", null);
+        var it = body.path("items").get(0);
+        assertThat(it.path("live").asBoolean()).isFalse();
+        assertThat(it.path("last_position_at").isNull()).isTrue();
+        assertThat(body.path("meta").has("db_unavailable")).isFalse();
     }
 }
