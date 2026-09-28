@@ -101,6 +101,27 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | `make measure-ais d=600 i=30` | AIS 처리량·지연·자원(읽기 전용) |
 | `bash tools/chaos.sh` | 장애 주입 6종(api·collector·redis 강제 종료, db 정지, 공급자 차단, ais 네트워크 단절) |
 | `make logs s=api` · `make down` · `make clean` | 로그 · 중지(데이터 보존) · 볼륨 포함 초기화 |
+| `make backup` · `make restore f=… confirm=wakeline` | PostgreSQL 백업(backups/, 0600) · 빈 새 볼륨에 복원(아래) |
+
+### 백업·복원(PostgreSQL)
+영구 보존 자료(SIGMET·알림·통계·감사 로그·운영자·설정)는 db 볼륨 하나에만 있습니다. `make clean`, Docker Desktop 의 데이터 삭제, PostgreSQL 메이저 업그레이드 전에는 백업을 받으세요.
+```bash
+make backup            # → backups/wakeline-<UTC>.dump (pg_dump 사용자 지정 형식, 파일 0600·디렉터리 0700, git 제외)
+make backup full=1     # 72 h 원해상도 항적·선박 위치 행까지 담는다(기본은 이 파티션들의 구조만 — 파일이 작다)
+```
+- 스택을 멈추지 않아도 됩니다(pg_dump 는 한 스냅샷으로 읽고, db 컨테이너 안 로컬 소켓으로 접속해 비밀번호를 쓰지 않습니다).
+- 백업 파일은 지우지 않습니다 — 보관 개수는 직접 정하세요. 운영자 비밀번호 해시와 감사 로그가 들어 있으니 다른 곳에 둘 때도 소유자만 읽게 두세요.
+- Redis 는 파생·일시 상태(스트림·캐시·세션·일일 예산 카운터)라 백업하지 않습니다. 운영 세션은 복원 뒤 다시 로그인하고, 운영 화면의 공급자 켜기/끄기는 Redis 에만 있어 다시 설정해야 합니다.
+
+복원은 **새(빈) 볼륨에만** 합니다 — 기존 데이터를 덮어쓰지 않습니다.
+```bash
+make down
+docker volume rm wakeline_db_data             # 되돌릴 수 없습니다 — 복원할 백업 파일을 먼저 확인
+tools/dc up -d --wait db                      # db 만 새 볼륨으로: initdb 가 역할 3개(.env 의 비밀번호)·빈 wakeline DB·PostGIS 를 만든다
+make restore f=backups/wakeline-<UTC>.dump confirm=wakeline
+make up                                       # migrate 가 백업 이후 추가된 마이그레이션만 적용
+```
+`make restore` 는 확인 문구가 대상 프로젝트 이름과 다르거나, api·collector·ais·migrate 가 실행 중이거나, 대상 DB 에 표가 하나라도 있거나, 파일이 pg_dump 형식이 아니면 아무것도 바꾸지 않고 멈춥니다. 복원은 한 트랜잭션이라 도중에 실패하면 빈 DB 그대로 남습니다. 절차 전체는 `make infra-docker-test` 의 `infra/tests/db_backup_test.sh` 가 버리는 컨테이너로 확인합니다.
 
 ## 6. 저장소 구조
 ```

@@ -95,7 +95,7 @@ jobs:
         with: { persist-credentials: false }
       - name: "policy tests (.env 생성 · compose 해석(개발·격리) — 권한 축소 · Redis ACL 사용자 · 비밀값 분리 · 다이제스트 고정 · CI 스캔 범위)"
         run: make -s test-infra
-      - name: container tests (edge Host 허용 목록·비root · Redis ACL(api·collector·ais) · db 권한 축소·슈퍼유저 로컬 소켓 전용)
+      - name: container tests (edge Host 허용 목록·비root · Redis ACL(api·collector·ais) · db 권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원)
         run: make -s infra-docker-test
 
   e2e:

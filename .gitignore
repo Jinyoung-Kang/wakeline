@@ -27,3 +27,5 @@ raw/
 .DS_Store
 *.log
 perf/results/
+# 백업(make backup — pg_dump, 0600)
+backups/
