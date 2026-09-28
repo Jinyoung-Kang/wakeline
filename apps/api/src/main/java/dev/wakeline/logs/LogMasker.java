@@ -14,7 +14,10 @@ import java.util.regex.Pattern;
  *       그리고 v5 새 규칙 {@code [?&](key|apikey|access_key)=} 쿼리 파라미터.</li>
  *   <li>값으로 가리기: 기동 때 {@link #registerSecrets} 로 넘긴 설정 비밀값(DB · Redis 비밀번호) 자체를 어디에 나오든 가린다(6자 이상만).</li>
  * </ul>
- * Python 의 {@code re}(str 패턴)는 \w·\s 가 유니코드이고 (?i) 가 유니코드 대소문자다 — 같게 하려고 UNICODE_CHARACTER_CLASS · UNICODE_CASE 를 쓴다.
+ * Python 의 {@code re}(str 패턴)와 같은 글자 집합을 쓴다 — Java 의 {@code \s} · {@code \w}(UNICODE_CHARACTER_CLASS)는 Python 과 다르다
+ * (Java \s 에는 U+001C–U+001F 가 없고, Java \w 에는 결합 부호가 있고 '²' 같은 숫자(No)가 없다). 그래서 {@link #SP} · {@link #WD} 를 적어 두고,
+ * (?i) 는 CASE_INSENSITIVE · UNICODE_CASE(ſ · K(켈빈) · İ 도 s · k · i 와 같다 — Python 과 같다). 세 가지 모두 모든 코드 포인트를 Python 3.13 과
+ * 견줘 같다(\w 는 Python 의 유니코드 15.1 에 아직 없는 글자만 다르다 — JDK 25 는 유니코드 16.0).
  * 길이 한계는 코드 포인트로 센다(Python 문자열 자르기와 같다).
  */
 public final class LogMasker {
@@ -25,30 +28,33 @@ public final class LogMasker {
     /** 이보다 짧은 값은 값으로 가리지 않는다(흔한 글자열을 모두 가려 로그를 망치지 않게). */
     public static final int MIN_SECRET_LEN = 6;
 
-    private static final int U = Pattern.UNICODE_CHARACTER_CLASS;
-    private static final int CI = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | U;
+    private static final int CI = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+    /** Python \s(str.isspace): 탭·줄바꿈류 · U+001C–U+001F · 공백 · U+0085 · U+00A0 · U+1680 · U+2000–U+200A · U+2028 · U+2029 · U+202F · U+205F · U+3000. */
+    static final String SP = "\\t\\n\\x0B\\f\\r\\x1C-\\x1F \\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000";
+    /** Python \w(str.isalnum() 또는 '_'): 글자(L*) · 숫자(N*) · '_'. */
+    static final String WD = "\\p{L}\\p{N}_";
     private static final String KEYS = "(?:client_secret|client_id|serviceKey|authKey|api[_-]?key|password|access_token|refresh_token|token|secret)";
 
     private record Rule(Pattern pattern, String replacement) {}
 
-    /** 순서가 결과를 정한다 — masking.py 의 _PATTERNS 와 같은 순서(새 쿼리 키 규칙은 secret= 다음, JSON 앞). */
+    /** 순서가 결과를 정한다 — masking.py 의 _PATTERNS 와 같은 순서(새 쿼리 키 규칙은 api_key= 다음). */
     private static final List<Rule> RULES = List.of(
-            new Rule(Pattern.compile("(client_secret=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(client_id=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(bearer\\s+)[A-Za-z0-9\\-._~+/]+=*", CI), "$1***"),
-            new Rule(Pattern.compile("(authorization:\\s*)[^\\r\\n]+", CI), "$1***"),
-            new Rule(Pattern.compile("(serviceKey=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(authKey=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(api[_-]?key=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(password=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(token=)[^&\\s]+", CI), "$1***"),
-            new Rule(Pattern.compile("(secret=)[^&\\s]+", CI), "$1***"),
+            new Rule(Pattern.compile("(client_secret=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(client_id=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(bearer[" + SP + "]+)[A-Za-z0-9\\-._~+/]+=*", CI), "$1***"),
+            new Rule(Pattern.compile("(authorization:[" + SP + "]*)[^\\r\\n]+", CI), "$1***"),
+            new Rule(Pattern.compile("(serviceKey=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(authKey=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(api[_-]?key=)[^&" + SP + "]+", CI), "$1***"),
             // v5: ?key= · &apikey= · &access_key= (예: 선박 정보 공급자 URL). 앞이 '?'·'&' 일 때만 — 문장 속 "primary key=…" 는 그대로
-            new Rule(Pattern.compile("([?&](?:key|apikey|access_key)=)[^&\\s]+", CI), "$1***"),
+            new Rule(Pattern.compile("([?&](?:key|apikey|access_key)=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(password=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(token=)[^&" + SP + "]+", CI), "$1***"),
+            new Rule(Pattern.compile("(secret=)[^&" + SP + "]+", CI), "$1***"),
             // JSON·파이썬 repr 형태: "authKey": "…" / 'access_token': '…' ('=' 가 없어 위 규칙이 못 잡는다)
-            new Rule(Pattern.compile("([\"']" + KEYS + "[\"']\\s*:\\s*[\"'])[^\"']*([\"'])", CI), "$1***$2"),
-            new Rule(Pattern.compile("(\\w+://[^:/\\s]+:)[^@\\s]+(@)", U), "$1***$2"), // scheme://user:pass@host
-            new Rule(Pattern.compile("eyJ[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}", U), "***jwt***"));
+            new Rule(Pattern.compile("([\"']" + KEYS + "[\"'][" + SP + "]*:[" + SP + "]*[\"'])[^\"']*([\"'])", CI), "$1***$2"),
+            new Rule(Pattern.compile("([" + WD + "]+://[^:/" + SP + "]+:)[^@" + SP + "]+(@)"), "$1***$2"), // scheme://user:pass@host
+            new Rule(Pattern.compile("eyJ[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}"), "***jwt***"));
 
     /** 긴 값부터(다른 값을 품은 값이 먼저 가려지게). 쓰기는 기동 때 몇 번뿐이다. */
     private static final CopyOnWriteArrayList<String> SECRETS = new CopyOnWriteArrayList<>();

@@ -1,5 +1,5 @@
 {
- "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터.",
+ "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터. 가장자리 사례: Python re 의 \\s(U+001C–U+001F 포함) · \\w(글자·숫자 — '²' 같은 No 포함) · 유니코드 대소문자(U+017F · U+212A · U+0130 이 s · k · i 와 같다), 되짚기가 많은 모양(낱말 글자열 · 'eyJ' 반복 · ':' 로 이어진 URL).",
  "version": 1,
  "limit": 4000,
  "cases": [
@@ -82,6 +82,106 @@
   {
    "input": "no secrets here: took 123 ms for 42 aircraft",
    "expected": "no secrets here: took 123 ms for 42 aircraft"
+  },
+  {
+   "input": "GET /v?mmsi=440123456&access_key=AKIA123&y=1",
+   "expected": "GET /v?mmsi=440123456&access_key=***&y=1"
+  },
+  {
+   "input": "GET /v?ApiKey=ABC123",
+   "expected": "GET /v?ApiKey=***"
+  },
+  {
+   "input": "https://h.test/p?a=1&KEY=abc&b=2",
+   "expected": "https://h.test/p?a=1&KEY=***&b=2"
+  },
+  {
+   "input": "duplicate primary key=42 on insert",
+   "expected": "duplicate primary key=42 on insert"
+  },
+  {
+   "input": "cache key=region:36.5 hit; monkey=1&x=2",
+   "expected": "cache key=region:36.5 hit; monkey=1&x=2"
+  },
+  {
+   "input": "token=abc\u001fdef",
+   "expected": "token=***\u001fdef"
+  },
+  {
+   "input": "password=abc\u001cdef",
+   "expected": "password=***\u001cdef"
+  },
+  {
+   "input": "secret=abc\u00a0def",
+   "expected": "secret=***\u00a0def"
+  },
+  {
+   "input": "client_secret=abc\u2028next",
+   "expected": "client_secret=***\u2028next"
+  },
+  {
+   "input": "Bearer\u001cabcdefghij",
+   "expected": "Bearer\u001c***"
+  },
+  {
+   "input": "pa\u017f\u017fword=hunter2",
+   "expected": "pa\u017f\u017fword=***"
+  },
+  {
+   "input": "auth\u212aey=KMA_SECRET_1",
+   "expected": "auth\u212aey=***"
+  },
+  {
+   "input": "client_\u0130d=myid&x=1",
+   "expected": "client_\u0130d=***&x=1"
+  },
+  {
+   "input": "²://user:pa55@host",
+   "expected": "²://user:***@host"
+  },
+  {
+   "input": "𝐀𝐀http://u:pa55@h",
+   "expected": "𝐀𝐀http://u:***@h"
+  },
+  {
+   "input": "🚢http://u:pa55@h",
+   "expected": "🚢http://u:***@h"
+  },
+  {
+   "input": "postgresql+asyncpg://wakeline:pa55@db:5432/x",
+   "expected": "postgresql+asyncpg://wakeline:***@db:5432/x"
+  },
+  {
+   "input": "jdbc:postgresql://u:pa55@db/x",
+   "expected": "jdbc:postgresql://u:***@db/x"
+  },
+  {
+   "input": "a://x:a://x:a://x:pa55@h",
+   "expected": "a://x:***@h"
+  },
+  {
+   "input": "a://x:nopw b://u:pa55@h",
+   "expected": "a://x:nopw b://u:***@h"
+  },
+  {
+   "input": "eyJeyJeyJaaaaaaaaaa.bbbbbbbbbbb.ccccccccccc",
+   "expected": "***jwt***"
+  },
+  {
+   "input": "abceyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U tail",
+   "expected": "abc***jwt*** tail"
+  },
+  {
+   "input": "eyJshort.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+   "expected": "eyJshort.***jwt***"
+  },
+  {
+   "input": "eyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJ",
+   "expected": "eyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJeyJ"
+  },
+  {
+   "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA redis://u:pa55@h",
+   "expected": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA redis://u:***@h"
   }
  ]
 }
