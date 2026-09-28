@@ -10,6 +10,7 @@ import { feedLag, GLOBAL_STALE_S, isRxFresh, REGION_STALE_S, RX_FRESH_MS } from 
  * 지연은 서버가 보고한 값(스냅샷 sources·30 s status). "실시간"은 연결이 열려 있고 45 s 안에 무엇이든(ping 포함) 받은 경우만(WS-2) —
  * 끊김·일시정지·반쯤 열린 연결이면 받은 뒤 경과 시간을 더한다(화면 데이터가 멈췄으므로).
  * SIGMET·레이더 경과는 서버 시각끼리의 차이라 서버 기준 현재 시각으로 계산한다(WS-3).
+ * AIS 구역이 여럿이면(계약 v4 §D) 일부 구역만 끊기거나 공백일 때 "n/m 구역"으로 말한다(전체 끊김처럼 보이지 않게).
  * 출처 표기는 가로 스크롤되는 이 줄이 아니라 모든 화면 하단의 고정 줄(AttributionFooter)에 있다(FR-20).
  */
 export function StatusBar() {
@@ -46,7 +47,7 @@ export function StatusBar() {
         {world == null ? "—" : world.lag == null ? "NO DATA" : `lag ${Math.round(world.lag)}s`}{world?.lag != null && world.stale ? " · STALE" : ""}
       </span>
       {ais ? <span className={`badge normal-case! ${ais.tone === "muted" ? "" : ais.tone}`} data-testid="ais-badge" data-tone={ais.tone} title={ais.title}>{ais.text}</span> : null}
-      {gap ? <span className={`badge normal-case! ${gap.open ? "bad" : "warn"}`} data-testid="ais-gap-badge" title={gap.title}>{gap.text}</span> : null}
+      {gap ? <span className={`badge normal-case! ${gap.open && !gap.partial ? "bad" : "warn"}`} data-testid="ais-gap-badge" data-partial={gap.partial ? "true" : undefined} title={gap.title}>{gap.text}</span> : null}
       <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet.active ?? "—"} active · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
       <span className="mono text-fg-2"><span className="label mr-1">radar</span>{s.radar?.past.length ?? "—"} frames · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
       {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더 수집이 ${KR_RADAR_STALE_S / 60}분 넘게 갱신되지 않음(마지막 수집 ${fmtIso(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}

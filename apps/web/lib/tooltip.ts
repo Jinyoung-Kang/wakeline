@@ -5,7 +5,7 @@
 import { band, catSourceLabel, ceilingLabel, fmtAltGnd, fmtDuration, fmtNum, fmtTime, isMetarStale, metarAgeS } from "./format";
 import { seenAtMs, thresholds } from "./interpolate";
 import { isExpired, isPending, sigmetBandSource } from "./sigmet";
-import { fmtMotion, navStatusLabel, positionBadge, ROT_LABEL, SHIP_CATEGORY_LABEL, SHIP_STALE_S, shipAgeS, shipCategory, shipRotation, type ShipLite } from "./ships";
+import { fmtMotion, navStatusLabel, positionBadge, ROT_LABEL, SHIP_CATEGORY_LABEL, SHIP_STALE_S, shipAgeS, shipCategory, shipRotation, SHIPS_RULE, type ShipLite } from "./ships";
 import type { AircraftState, SigmetProps } from "./types";
 
 export type Tone = "warn" | "bad" | "est" | "ok" | "muted";
@@ -141,7 +141,7 @@ export function shipGridTip(p: { count?: unknown; cat?: unknown }, cellDeg: numb
     title: count == null ? "—" : `선박 ${count.toLocaleString("en-US")}척`,
     subtitle: cellDeg ? `${cellDeg}° 격자` : "격자",
     rows: [["MOST", SHIP_CATEGORY_LABEL[cat]]],
-    flags: [{ text: "클릭하면 확대 — 줌 7 이상에서 개별 선박", tone: "muted" }],
+    flags: [{ text: `클릭하면 줌 ${SHIPS_RULE.highZoom} 이상으로 확대 — 화면 안 ${SHIPS_RULE.highMax.toLocaleString("en-US")}척 이하면 개별 선박`, tone: "muted" }],
   };
 }
 

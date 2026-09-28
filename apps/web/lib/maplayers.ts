@@ -162,7 +162,8 @@ export function radarTileUrl(host: string, path: string) {
 export function coverageTileUrl(host: string) {
   return `${host}/v2/coverage/0/512/{z}/{x}/{y}/0/0_0.png`;
 }
-export const COVERAGE_PAINT = { "raster-opacity": 0.5, "raster-brightness-min": 0.32, "raster-saturation": -1 } as const;
+/** 회색 0.4 — 밝아진 배경지도 육지(lib/basemap.ts) 위에서도 옛 지도만큼 구분된다(tests/basemap.test.ts) */
+export const COVERAGE_PAINT = { "raster-opacity": 0.5, "raster-brightness-min": 0.4, "raster-saturation": -1 } as const;
 
 export type FrameRole = "current" | "preload";
 /**

@@ -46,10 +46,10 @@ test("ships layer: fixture ships at zoom ≥ 7, a count grid at low zoom, and th
   await expect(chip).toHaveAttribute("data-mode", "points", { timeout: 30_000 });
   await expect(chip).toContainText(/선박 [1-9][\d,]*척 · 화면 안/);
   await expect(page.getByTestId("map-legend")).toContainText("선박 · 선종");
-  // 축소하면 서버가 격자(칸별 선박 수)로 바꿔 보낸다
-  await page.evaluate(() => { location.hash = "#4/32/128"; });
+  // 줌 4 미만으로 축소하면 서버가 격자(칸별 선박 수)로 바꿔 보낸다(계약 v4 §C — 줌 4–6 은 화면 안 1,500척 이하면 개별)
+  await page.evaluate(() => { location.hash = "#3/32/128"; });
   await expect(chip).toHaveAttribute("data-mode", "grid", { timeout: 30_000 });
-  await expect(chip).toContainText(/격자 \d+칸으로 묶음/);
+  await expect(chip).toContainText(/격자 \d+칸으로 묶음 · 줌 4 이상에서 개별 표시/);
   // 뷰어별 기억(localStorage): 새로 고쳐도 선박 레이어가 켜져 있다
   await page.reload();
   await expect(page.getByTestId("layer-ships")).toHaveAttribute("aria-pressed", "true");
@@ -79,10 +79,12 @@ test("ship card: every field is listed and values the ship did not report are '�
   const card = page.getByTestId("ship-card");
   await expect(card).toBeVisible();
   await expect(card).toContainText(mmsi);
-  for (const f of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "목적지", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각"]) {
+  for (const f of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "출발지(보고)", "목적지(보고)", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각"]) {
     await expect(card.locator(`[data-field="${f}"]`)).toHaveCount(1);
   }
   await expect(card.locator('[data-field="IMO"]')).toContainText("—");
+  // 출발지(보고): A>B 로 적힌 목적지의 풀이이거나, AIS 에 출발지 항목이 없다는 설명 또는 모름(—) — 지어낸 항구가 아니다
+  await expect(card.locator('[data-field="출발지(보고)"]')).toContainText(/UN\/LOCODE|AIS 에는 출발지 항목이 없습니다|—/);
   // ETA 는 네 값이 모두 있을 때만 "선원 입력값, 연도 없음", 아니면 "—" — 연도를 지어내지 않는다
   await expect(card.locator('[data-field="ETA"]')).toContainText(/—|선원 입력값, 연도 없음/);
   await expect(card.getByTestId("ship-track-info")).toBeVisible();

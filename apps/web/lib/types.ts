@@ -1,3 +1,5 @@
+import type { RouteInfo } from "./route";
+
 /**
  * 서버 계약(schemas/aircraft_state.v1.json · WS 프로토콜 v1 개정 — 계약서 §1/§2)과 같은 필드명(snake_case).
  * 서버는 null 값을 가진 키를 생략한다(Jackson non_null). 없는 키 = 모름(null) — 0/false/"통과" 로 채우지 않는다.
@@ -108,12 +110,14 @@ export interface PublicStatus {
 
 export type PredictionReason = "turning" | "slow" | "on_ground" | "no_track" | "stale";
 
-/** WS "selected" 메시지(선택 항공기의 full 상태 + 예측 가능 여부) */
+/** WS "selected" 메시지(선택 항공기의 full 상태 + 예측 가능 여부 + 등록 노선) */
 export interface SelectedInfo {
   hex: string;
   /** null = 스냅샷에 더 이상 없음 */
   state: AircraftState | null;
   prediction: { available: boolean; reason?: PredictionReason | null } | null;
+  /** 계약 v4 §A route(lib/route.ts 로 검증). null = 서버가 보내지 않았거나 형식이 틀림(모름) */
+  route?: RouteInfo | null;
   received_at: number;
 }
 

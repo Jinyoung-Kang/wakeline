@@ -9,6 +9,10 @@ import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
 import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
 import { fmtAltGnd, fmtBool, fmtDuration, fmtIso, fmtNum, fmtTime } from "@/lib/format";
+import {
+  EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
+  ROUTE_STATUS_TEXT, ROUTE_TITLE, routeCallsignMismatch, routeDistanceKm, type RouteAirport, type RouteInfo,
+} from "@/lib/route";
 import { EvidenceCard } from "./EvidenceCard";
 import { DemandBadge } from "./MapChips";
 
@@ -20,6 +24,8 @@ interface Detail {
   inside_sigmets?: string[];
   emergency?: boolean;
   meta?: { provider?: string | null; fetched_at?: string | null; lag_s?: number | null; stale?: boolean; db_unavailable?: boolean };
+  /** 계약 v4 §A — 검증 전 값(parseRoute) */
+  route?: unknown;
 }
 
 /** 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다. */
@@ -41,6 +47,58 @@ function qualityLabel(q: number | null | undefined) {
   if (q === 0) return "0 · 통과";
   if (q === 1) return "1 · 경고(속도/방위 없음 → 보간 안 함)";
   return String(q);
+}
+
+function AirportLine({ a }: { a: RouteAirport }) {
+  return (
+    <span className="flex flex-col items-end">
+      <span className="mono">{fmtAirportCodes(a)}</span>
+      <span className="text-[11px] text-fg-2">{fmtAirportPlace(a)}</span>
+    </span>
+  );
+}
+
+/**
+ * 노선(계약 v4 §A · ADR-016): 콜사인에 등록된 정기 노선 — 실제 운항 경로와 다를 수 있다고 적고, 판단 근거로 현재 위치와 노선 대권 경로 사이 거리(계산값)를 함께 보인다.
+ * 상태별 문구는 계약 그대로. 노선이 맞다/틀리다를 판정해 붙이지 않는다. route 가 없으면(서버가 보내지 않음) "—".
+ */
+export function RouteSection({ route, pos, callsign }: { route: RouteInfo | null; pos: { lat: number; lon: number } | null; callsign: string | null }) {
+  const km = routeDistanceKm(route, pos);
+  const rows: [string, React.ReactNode, string?][] = route?.status === "found" ? [
+    ["출발", route.origin ? <AirportLine a={route.origin} /> : "—"],
+    ...(route.midpoint ? [["경유", <AirportLine key="mid" a={route.midpoint} />] as [string, React.ReactNode]] : []),
+    ["도착", route.destination ? <AirportLine a={route.destination} /> : "—"],
+    ["항공사", fmtAirline(route.airline)],
+    ["경로와의 거리", km == null ? "—" : <span key="km" className="mono">{fmtRouteKm(km)} · 계산값</span>,
+      `마지막 관측 위치에서 출발→${route.midpoint ? "경유→" : ""}도착 대권 경로까지 가장 가까운 거리 — 구면 지구(반지름 ${EARTH_RADIUS_KM.toLocaleString("en-US")} km) 계산값입니다. 실제 비행 경로와의 거리가 아닙니다.`],
+    ["조회 콜사인", <span key="cs" className="mono">{route.callsign ?? "—"}</span>],
+    ["조회 시각", <span key="at" className="mono" title={fmtIso(route.fetched_at)}>{fmtTime(route.fetched_at)}</span>],
+  ] : [];
+  const otherSource = route?.source != null && route.source !== "adsbdb";
+  return (
+    <div className="mt-2" data-testid="route-section" data-status={route?.status ?? "unknown"}>
+      <div className="label mb-0.5">{ROUTE_TITLE}</div>
+      {route == null ? <div className="text-[11px] text-fg-3" data-testid="route-status">—</div>
+        : route.status !== "found" ? (
+          <div className={`text-[11px] ${route.status === "unavailable" ? "text-warn" : "text-fg-3"}`} data-testid="route-status">
+            {ROUTE_STATUS_TEXT[route.status]}{route.callsign ? <span className="mono"> · {route.callsign}</span> : null}
+          </div>
+        ) : <>
+          {rows.map(([k, val, title]) => (
+            <div key={k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="route-row" data-field={k}>
+              <span className="shrink-0 text-fg-3" title={title}>{k}</span><span className="text-right" title={title}>{val}</span>
+            </div>
+          ))}
+          {routeCallsignMismatch(route, callsign) ? (
+            <div className="mt-1 text-[11px] text-warn" data-testid="route-callsign-mismatch">노선 조회 콜사인 {route.callsign} — 지금 콜사인 {callsign?.trim()} 과 다름</div>
+          ) : null}
+          <div className="mt-1 text-[11px] text-fg-2" data-testid="route-caveat">{ROUTE_CAVEAT}</div>
+          <div className="mt-0.5 text-[10px] text-fg-3" data-testid="route-attribution">
+            출처 {otherSource ? route.source : <><a href={ROUTE_SOURCE_URL} target="_blank" rel="noopener noreferrer" className="text-fg-2 hover:text-fg">adsbdb.com</a>{ROUTE_ATTRIBUTION_TAIL}</>}
+          </div>
+        </>}
+    </div>
+  );
 }
 
 /**
@@ -83,6 +141,9 @@ export function AircraftCard({ hex }: { hex: string }) {
   const emergency = s?.squawk != null ? EMERGENCY_SQUAWKS.has(s.squawk) : d?.emergency === true;
   const activeAlerts = useMemo(() => [...alertsMap.values()].filter((a) => a.hex === hex), [alertsMap, hex]);
   const pred = selected?.prediction ?? null;
+  // 노선: WS selected(변할 때마다) → 없으면 REST 상세(30 s 마다)
+  const restRoute = useMemo(() => parseRoute(d?.route), [d]);
+  const route = selected?.route ?? restRoute;
   // 집중 추적(ADR-013): 서버가 이 hex 에 대해 보고한 상태·주기만. 연결이 실시간이 아니면 상태를 말하지 않는다.
   const live = isRxFresh(conn, lastRxAt, wall);
   const chip = live ? focusChip(demand, hex, now) : null;
@@ -126,6 +187,7 @@ export function AircraftCard({ hex }: { hex: string }) {
         {rows.map(([k, val]) => (
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{val}</span></div>
         ))}
+        <RouteSection route={route} pos={s ? { lat: s.lat, lon: s.lon } : null} callsign={s?.callsign ?? null} />
         {activeAlerts.length ? (
           <div className="mt-2 space-y-1">
             <div className="label">Active alerts</div>

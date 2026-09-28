@@ -3,6 +3,7 @@ import * as maplibregl from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { subscriptionBbox } from "@/lib/viewport";
 import { addBaseLayers, MAPLIBRE_WORKER_URL, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
+import { applyBasemap } from "@/lib/basemap";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { renderTip } from "@/lib/tooltip";
 import { replayAircraftTip, replaySigmetTip, type ReplayAircraft, type ReplayFrame } from "@/lib/replay";
@@ -27,6 +28,8 @@ export function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayF
     const map = new maplibregl.Map({ container: el.current, style: STYLE_URL, center: [127.8, 36.5], zoom: 6, minZoom: 2, maxZoom: 12, attributionControl: false });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
+    // 배경지도 시인성(계약 v4 §E) — 상황판 지도와 같은 색
+    map.on("style.load", () => applyBasemap(map));
     // REST 는 −180~180 만 받는다: 날짜변경선을 넘으면 화면 중심 쪽만(재생은 minZoom 2 라 띠 전체는 요청 크기 상한을 넘을 수 있다)
     const emit = () => { const b = map.getBounds(); const q = subscriptionBbox(b.getWest(), b.getSouth(), b.getEast(), b.getNorth(), Infinity, map.getCenter().lng); onBbox(q.map((v) => v.toFixed(3)).join(",")); };
     const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });

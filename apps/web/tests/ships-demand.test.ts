@@ -556,15 +556,17 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
       },
     });
     const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
-    for (const k of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "목적지", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각"]) {
+    for (const k of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "출발지(보고)", "목적지(보고)", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각"]) {
       expect(html).toContain(`data-field="${k}"`);
     }
-    const field = (k: string) => new RegExp(`data-field="${k}"[^>]*>.*?<span class="text-right">(.*?)</span></div>`).exec(html)?.[1];
+    const esc = (k: string) => k.replace(/[()]/g, "\\$&");
+    const field = (k: string) => new RegExp(`data-field="${esc(k)}"[^>]*>.*?<span class="text-right">(.*?)</span></div>`).exec(html)?.[1];
     expect(field("호출부호")).toContain("—");
     expect(field("IMO")).toContain("—");
     expect(field("크기")).toBe("—");
     expect(field("흘수")).toBe("—");
-    expect(field("목적지")).toBe("—");
+    expect(field("목적지(보고)")).toBe("—");
+    expect(field("출발지(보고)")).toBe("— AIS 에는 출발지 항목이 없습니다");
     expect(field("ETA")).toBe("—");
     expect(field("항해 상태")).toBe("—");
     expect(field("선박명")).toBe("KIMITSU MARU");

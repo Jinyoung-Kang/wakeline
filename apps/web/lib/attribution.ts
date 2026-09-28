@@ -1,7 +1,7 @@
 /**
  * 데이터 출처 표기(FR-20 · NFR-15 "상시 노출") — 지도 위 크레딧과 하단 출처 줄이 이 한 목록을 쓴다.
  * 어느 화면 폭에서도 잘리지 않도록 하단 줄은 줄바꿈을 허용한다(가로 스크롤 영역에 두지 않는다).
- * 링크 주소는 collector 가 실제로 호출하는 서비스(providers/*.py)의 공개 홈페이지다.
+ * 링크 주소는 collector 가 실제로 호출하는 서비스(providers/*.py)의 공개 홈페이지다. UN/LOCODE 는 api 가 담아 쓰는 자료(tools/gen_unlocode.py)의 원천(UNECE)이다.
  */
 export interface Credit {
   /** 역할(무엇을 받는가) */
@@ -22,6 +22,9 @@ export const CREDITS: Credit[] = [
   { role: "Aircraft", label: "OpenSky Network", href: "https://opensky-network.org" },
   { role: "SIGMET · METAR · TAF", label: "AviationWeather.gov", href: "https://aviationweather.gov" },
   { role: "Ships", label: "aisstream.io", href: "https://aisstream.io", note: "AIS" },
+  // 계약 v4 §F: 노선(콜사인 기준 등록 노선 — 선택한 항공기만, 저장하지 않음) · 선박 목적지 풀이용 항구 코드
+  { role: "노선", label: "adsbdb.com", href: "https://www.adsbdb.com", note: "flight route data © David Taylor · Jim Mason" },
+  { role: "항구 코드", label: "UN/LOCODE", href: "https://unece.org/trade/uncefact/unlocode", note: "UNECE, datasets/un-locode ODC-PDDL" },
   { role: "Radar", label: "RainViewer", href: "https://www.rainviewer.com" },
   { role: "Radar (KR)", label: "기상청 API허브", href: "https://apihub.kma.go.kr" },
   { role: "Map", label: "OpenFreeMap", href: "https://openfreemap.org" },

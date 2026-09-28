@@ -4,15 +4,16 @@ import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
 import { fmtDuration, fmtIso, fmtTime } from "@/lib/format";
 import {
-  fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel, parseShipState,
-  parseShipStatic, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_STALE_S, shipAgeS, shipCategory, shipList, shipRotation,
-  type ShipState, type ShipStatic,
+  fmtDraught, fmtMotion, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
+  parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
+  SHIP_STALE_S, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
+  type DestinationInfo, type ShipState, type ShipStatic,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
 import { useUi } from "@/lib/ui-store";
 
-interface Detail { mmsi: string; state: ShipState | null; static: ShipStatic | null; db_unavailable: boolean }
+interface Detail { mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null; db_unavailable: boolean }
 
 /** REST /ships/{mmsi} 응답 검증(모양이 다르면 null — 모르는 값을 채우지 않는다) */
 function parseDetail(mmsi: string, r: unknown): Detail {
@@ -20,7 +21,10 @@ function parseDetail(mmsi: string, r: unknown): Detail {
   const st = parseShipState(typeof o.state === "object" && o.state !== null ? { mmsi, ...(o.state as object) } : null);
   const sx = parseShipStatic(typeof o.static === "object" && o.static !== null ? { mmsi, ...(o.static as object) } : null);
   const meta = typeof o.meta === "object" && o.meta !== null ? (o.meta as Record<string, unknown>) : {};
-  return { mmsi, state: st?.mmsi === mmsi ? st : null, static: sx?.mmsi === mmsi ? sx : null, db_unavailable: meta.db_unavailable === true };
+  return {
+    mmsi, state: st?.mmsi === mmsi ? st : null, static: sx?.mmsi === mmsi ? sx : null,
+    destination_info: parseDestinationInfo(o.destination_info), db_unavailable: meta.db_unavailable === true,
+  };
 }
 
 /** 관측 시각이 더 새로운 상태(같거나 비교할 수 없으면 앞의 것) */
@@ -31,7 +35,7 @@ function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
 }
 
 /**
- * 선박 상세(계약 v2 §B4): 선박명·MMSI·호출부호·IMO·선종(코드+분류)·크기(A+B × C+D, 보고값)·흘수·목적지·ETA(선원 입력값, 연도 없음)·
+ * 선박 상세(계약 v2 §B4 · v4 §B): 선박명·MMSI·호출부호·IMO·선종(코드+분류)·크기(A+B × C+D, 보고값)·흘수·출발지(보고)·목적지(보고, 원문 + UN/LOCODE 풀이)·ETA(선원 입력값, 연도 없음)·
  * 속력/침로/선수방위·항해 상태·위치 출처·관측 시각(경과). 값이 없으면 "—". 정적 정보는 선원이 입력한 보고값이다(검증하지 않은 값).
  * 상태: WS ship_selected(바뀔 때마다) → 없으면 REST 상세 → 없으면 지도 목록 사본 중 관측이 가장 새로운 것. 경과는 서버 기준 시각.
  */
@@ -69,6 +73,9 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   const code = st?.ship_type ?? s?.ship_type ?? null;
   const name = st?.name ?? s?.name ?? null;
   const imo = imoField(st?.imo);
+  // 목적지 풀이(api 결정적 규칙): 보이는 원문과 같은 원문을 풀이한 것만(WS → REST 순)
+  const destInfo = pickDestinationInfo(st?.destination, live?.destination_info, d?.destination_info);
+  const dest = shipDestinationLines(destInfo, st?.destination);
   // [표시 이름, 값, 설명(title), 시험용 필드 이름(없으면 표시 이름)]
   const rows: [string, React.ReactNode, string?, string?][] = [
     ["선박명", name ?? "—"],
@@ -78,7 +85,13 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
     ["선종", fmtShipType(code), `분류 코드 ${SHIP_CATEGORY_CODES[shipCategory(code)]} (USCG AIS Guide)`],
     ["크기", fmtShipSize(st), "길이 A+B × 폭 C+D — 안테나 기준 보고값"],
     ["흘수", fmtDraught(st?.draught_m)],
-    ["목적지", st?.destination ?? "—", "선원 입력값"],
+    ["출발지(보고)", shipOriginText(destInfo, st?.destination), "AIS 에는 출발지 항목이 없습니다. 선원이 목적지 칸에 'A>B' 로 적었을 때만 A 를 보고된 출발지로 읽습니다(api 결정적 규칙 — 추정하지 않음)"],
+    ["목적지(보고)", dest.raw == null ? "—" : (
+      <span key="dest" className="flex flex-col items-end" data-testid="ship-dest">
+        <span className="mono">“{dest.raw}”</span>
+        {dest.lines.map((l, i) => <span key={i} className="text-[11px] text-fg-2">{l}</span>)}
+      </span>
+    ), "선원이 입력한 목적지 원문(검증하지 않은 보고값)과 UN/LOCODE 풀이 — 항구(1)·내륙항(8) 항목만, 규칙으로만 읽고 추정하지 않음"],
     ["ETA", fmtShipEta(st)],
     ["속력/침로/선수방위", <span key="mo" className="mono">{fmtMotion(s)}</span>],
     ["항해 상태", navStatusLabel(s?.nav_status)],
@@ -137,6 +150,7 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
         </div>
         <div className="mt-2 text-[10px] text-fg-3">
           선박명·호출부호·크기·흘수·목적지·ETA 는 선박이 AIS 로 보낸 보고값(선원 입력)이며 검증하지 않았습니다. ETA 에는 연도가 없습니다.
+          출발지(보고)는 선원이 목적지 칸에 “A&gt;B” 로 적은 경우의 A 이고, 항구 이름·국가는 UN/LOCODE 코드 모양일 때만 풀이합니다.
           아이콘은 선수방위, 없으면 침로(점선 외곽), 둘 다 없으면 방향 없는 원입니다. 지도 위 선은 기록된 위치를 이은 것이고, 회색 점선은 그 사이 위치를 모르는 공백입니다.
         </div>
       </div>
@@ -167,17 +181,23 @@ export function ShipPanelView({ selected, shipsOn }: { selected: string | null; 
 
 function ShipList() {
   const view = useServerData((x) => x.ships);
-  const aisOff = useServerData((x) => x.ais?.state === "disabled");
+  const ais = useServerData((x) => x.ais);
+  const viewport = useServerData((x) => x.viewport);
+  const aisOff = ais?.state === "disabled";
   const selectShip = useUi((s) => s.selectShip);
   const [q, setQ] = useState("");
   if (view.mode !== "points") {
     return (
       <div className="p-3 text-[11px] text-fg-3" data-testid="ship-list-empty">
-        {view.mode === "grid" ? "지금은 격자(선박 수)로 표시 중입니다 — 줌 7 이상으로 확대하면 개별 선박을 고를 수 있습니다."
-          : aisOff ? "AIS 수집이 꺼져 있습니다(aisstream.io 키 없음 — 운영 설정). 선박 데이터가 오지 않습니다." : "선박 수신 대기 중…"}
+        {view.mode === "grid" ? <>
+          지금은 격자(선박 수)로 표시 중입니다 — 확대해서 개별 표시가 되면 선박을 고를 수 있습니다.
+          <div className="mt-1">{SHIPS_RULE_TEXT}</div>
+        </> : aisOff ? "AIS 수집이 꺼져 있습니다(aisstream.io 키 없음 — 운영 설정). 선박 데이터가 오지 않습니다." : "선박 수신 대기 중…"}
       </div>
     );
   }
+  // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐)
+  const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, aisOff, coverage: ais?.coverage ?? null });
   // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
   const { items: shown, total } = shipList(shipStates.values(), q);
   return (
@@ -195,7 +215,7 @@ function ShipList() {
           </li>
         ))}
         {total > shown.length ? <li className="px-2 py-1 text-[11px] text-fg-3">외 {total - shown.length}척 — 이름·MMSI 로 거르세요</li> : null}
-        {total === 0 ? <li className="px-2 py-1 text-[11px] text-fg-3">{shipStates.size ? "조건에 맞는 선박 없음" : "화면 안에 선박 없음"}</li> : null}
+        {total === 0 ? <li className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-none">{shipStates.size ? "조건에 맞는 선박 없음" : zero?.text ?? "화면 안에 선박 없음"}</li> : null}
       </ul>
     </div>
   );

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const SOURCES = ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "aisstream.io", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenFreeMap", "OpenMapTiles", "OpenStreetMap"];
+const SOURCES = ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "aisstream.io", "adsbdb.com", "UN/LOCODE", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenFreeMap", "OpenMapTiles", "OpenStreetMap"];
 
 // fixture 모드 스택 대상(FR-12): 외부 호출 없이 전 화면 동작.
 test("dashboard loads with attribution, lag badge and aircraft", async ({ page }) => {

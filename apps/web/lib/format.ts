@@ -3,10 +3,13 @@
  * 색은 지도 레이어(maplayers.ts)·범례(MapLegend)·카드가 이 한 곳을 공유한다.
  */
 
-/** SIGMET 위험 유형 색. TC(빨강)와 IFR(분홍)은 서로 다른 색(GAP-13). 목록에 없는 유형은 HAZARD_DEFAULT_COLOR. */
+/**
+ * SIGMET 위험 유형 색. TC(빨강)와 IFR(분홍)은 서로 다른 색(GAP-13). 목록에 없는 유형은 HAZARD_DEFAULT_COLOR.
+ * 배경지도 육지·바다(lib/basemap.ts) 모두에서 선 색이 ≥ 3:1 — MTW 계열·VA 는 계약 v4 §E 에서 밝게 고쳤다.
+ */
 export const HAZARD_COLORS: Record<string, string> = {
-  TS: "#f59e0b", CONVECTIVE: "#f59e0b", TURB: "#a855f7", ICE: "#38bdf8", MTW: "#64748b", VA: "#a16207", TC: "#ef4444",
-  IFR: "#f472b6", "MTN OBSCN": "#64748b", MTN: "#64748b", "MT OBSC": "#64748b", LLWS: "#22c55e",
+  TS: "#f59e0b", CONVECTIVE: "#f59e0b", TURB: "#a855f7", ICE: "#38bdf8", MTW: "#7b89a0", VA: "#b87818", TC: "#ef4444",
+  IFR: "#f472b6", "MTN OBSCN": "#7b89a0", MTN: "#7b89a0", "MT OBSC": "#7b89a0", LLWS: "#22c55e",
 };
 export const HAZARD_DEFAULT_COLOR = "#94a3b8";
 export const hazardColor = (h: string | null | undefined) => (h ? HAZARD_COLORS[h] : undefined) ?? HAZARD_DEFAULT_COLOR;
@@ -31,7 +34,8 @@ export const CAT_STALE_STROKE = "#8a929d";
 
 /** 항공기 아이콘·항적 고도 색 램프(ft → 색). 지도 식과 범례가 같은 값을 쓴다. 고도를 모르면 0 ft 색이 아니라 ALT_UNKNOWN_COLOR. */
 export const ALT_RAMP: [number, string][] = [[0, "#3ec98f"], [10000, "#4c90f0"], [25000, "#8fb8ff"], [40000, "#e5e7eb"]];
-export const ALT_UNKNOWN_COLOR = "#6b737e";
+/** 고도 모름 회색 — 배경지도 육지(lib/basemap.ts) 위에서도 ≥ 3:1 */
+export const ALT_UNKNOWN_COLOR = "#7a828d";
 /** 지상(on_ground=true — 공급자 값) 항공기 아이콘 색. 고도 램프(0 ft 녹색)와 구분 — 지상 고도를 0 ft 로 그리지 않는다(DH-3). */
 export const GND_COLOR = "#b5895a";
 

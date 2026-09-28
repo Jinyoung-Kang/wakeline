@@ -2,7 +2,8 @@
  * 선박 지도 레이어(계약 v2 §B4) — 상황판 지도(MapView)만 쓴다. 항공기 기호 아래, SIGMET·레이더 위.
  * - 아이콘: 선수방위가 있으면 선체(실루엣, 선수 방향 회전) · 침로만 있으면 점선 외곽 선체("침로 기준") · 둘 다 없으면 회전하지 않는 원("방향 모름").
  * - 색: 선종 분류(ships.ts SHIP_CATEGORY_COLOR — 범례와 같은 표). 선택 = 흰색. STALE(> 15분) 반투명.
- * - 격자(줌 < 7 · 상한 초과): 칸 선박 수에 따라 커지는 원 + 수 라벨, 색 = 가장 많은 선종.
+ * - 격자(계약 v4 §C — 줌 < 4 · 화면 안 선박이 상한 초과): 칸 선박 수에 따라 커지는 원(최소 반지름 8 px) + 수 라벨(halo), 색 = 가장 많은 선종,
+ *   흰 테두리 1.5 px · 불투명도 0.85 — 어두운 육지·바다 어디서나 보인다. 항공기 기호보다 아래 층.
  * - 항적: 실선(기록 구간) · 회색 점선 + 라벨(AIS 공백·기록 없음 — 그 사이 위치는 모름).
  * - 수신 범위(계약 v3 §A): 운영 설정 수신 범위의 바깥 경계만 옅은 점선. 범위 밖을 가리지 않는다. status 에 범위가 없으면 그리지 않는다.
  */
@@ -54,9 +55,11 @@ export const SHIP_GRID_COLOR_EXPR = CATEGORY_MATCH as unknown as maplibregl.Expr
 export const SHIP_OPACITY_EXPR = [
   "case", ["boolean", ["get", "stale"], false], 0.35, ["boolean", ["get", "age_unknown"], false], 0.7, 1,
 ] as unknown as maplibregl.ExpressionSpecification;
-/** 격자 원 반지름: 선박 수의 제곱근에 비례(면적 ∝ 수) */
+/** 격자 원 모양(계약 v4 §C) — 지도와 범례가 같은 값 */
+export const SHIP_GRID_STYLE = { minRadius: 8, opacity: 0.85, stroke: "#ffffff", strokeWidth: 1.5, labelColor: "#ffffff", labelHalo: "#0b0d10", labelHaloWidth: 1.5 } as const;
+/** 격자 원 반지름: 선박 수의 제곱근에 비례(면적 ∝ 수), 1척이어도 최소 반지름 */
 export const SHIP_GRID_RADIUS_EXPR = [
-  "interpolate", ["linear"], ["sqrt", ["get", "count"]], 1, 7, 10, 14, 30, 22, 100, 34,
+  "interpolate", ["linear"], ["sqrt", ["get", "count"]], 1, SHIP_GRID_STYLE.minRadius, 10, 14, 30, 22, 100, 34,
 ] as unknown as maplibregl.ExpressionSpecification;
 
 /** 수신 범위 경계선 — 범례 견본과 같은 값 */
@@ -98,12 +101,15 @@ export function addShipLayers(map: maplibregl.Map, beforeId = "aircraft-symbol")
   map.addSource("ship-grid", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({
     id: "ship-grid-circle", type: "circle", source: "ship-grid", layout: hidden,
-    paint: { "circle-radius": SHIP_GRID_RADIUS_EXPR, "circle-color": SHIP_GRID_COLOR_EXPR, "circle-opacity": 0.55, "circle-stroke-color": SHIP_GRID_COLOR_EXPR, "circle-stroke-width": 1 },
+    paint: {
+      "circle-radius": SHIP_GRID_RADIUS_EXPR, "circle-color": SHIP_GRID_COLOR_EXPR, "circle-opacity": SHIP_GRID_STYLE.opacity,
+      "circle-stroke-color": SHIP_GRID_STYLE.stroke, "circle-stroke-width": SHIP_GRID_STYLE.strokeWidth,
+    },
   }, before);
   map.addLayer({
     id: "ship-grid-label", type: "symbol", source: "ship-grid",
-    layout: { ...hidden, "text-field": ["get", "label"], "text-font": ["Noto Sans Regular"], "text-size": 10, "text-allow-overlap": true },
-    paint: { "text-color": "#e6e8eb", "text-halo-color": "#0b0d10", "text-halo-width": 1 },
+    layout: { ...hidden, "text-field": ["get", "label"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-allow-overlap": true },
+    paint: { "text-color": SHIP_GRID_STYLE.labelColor, "text-halo-color": SHIP_GRID_STYLE.labelHalo, "text-halo-width": SHIP_GRID_STYLE.labelHaloWidth },
   }, before);
 
   map.addSource("ships", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "mmsi" });

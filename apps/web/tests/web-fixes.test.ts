@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ServerClock } from "@/lib/server-clock";
-import { fmtAltGnd, fmtBudgetLimit, fmtVisSm, GND_COLOR, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
+import { ALT_UNKNOWN_COLOR, fmtAltGnd, fmtBudgetLimit, fmtVisSm, GND_COLOR, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
 import {
   addBaseLayers, AIRCRAFT_COLOR_EXPR, AIRCRAFT_ICON_EXPR, AIRCRAFT_ROTATE_EXPR, predictionFeature, SIGMET_FILL_OPACITY_EXPR, SIGMET_LINE_DASH_EXPR, SIGMET_LINE_WIDTH_EXPR,
 } from "@/lib/maplayers";
@@ -106,7 +106,7 @@ describe("on-ground altitude (DH-3)", () => {
     expect(colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, { on_ground: false, alt_ft: 0 }))).toBe("#3ec98f");
     expect(colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, { on_ground: true, emergency: true }))).toBe("#e5484d");
     expect(colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, { on_ground: true, selected: true }))).toBe("#ffffff");
-    expect(colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, {}))).toBe("#6b737e");
+    expect(colorHex(evalExpr(AIRCRAFT_COLOR_EXPR, spec, {}))).toBe(ALT_UNKNOWN_COLOR);
   });
 });
 

@@ -348,6 +348,102 @@ export function fmtMotion(s: { sog_kn?: number | null; cog_deg?: number | null; 
   return `${f(s?.sog_kn, " kn", 1)} / ${f(s?.cog_deg, "°", 1)} / ${f(s?.heading_deg, "°")}`;
 }
 
+// ---- 출발지·목적지(보고) 풀이(계약 v4 §B) ----
+// AIS 에는 출발지 항목이 없고, 목적지는 선원이 입력한 자유 문자열이다. api 가 결정적 규칙으로만 풀이한 destination_info 를 그대로 보인다
+// (A>B → 보고된 출발 A·도착 B, >B → 도착 B, A<>B·A<=>B → 왕복, 그 밖 → 원문). 웹은 다시 풀이하지 않는다.
+
+export const DEST_KINDS = ["from_to", "to", "text", "between"] as const;
+export type DestKind = (typeof DEST_KINDS)[number];
+const DEST_KIND_SET: ReadonlySet<string> = new Set(DEST_KINDS);
+/** 조각 하나(UN/LOCODE 로 풀었으면 locode·name·country) */
+export interface DestPlace { text: string; locode: string | null; name: string | null; country: string | null; subdivision: string | null; ambiguous: boolean }
+export interface DestinationInfo { raw: string; kind: DestKind; from: DestPlace | null; to: DestPlace | null; places: DestPlace[] }
+
+const LOCODE_RE = /^[A-Z]{2} ?[A-Z0-9]{3}$/;
+/** 조각 수 상한(api 는 A>B 에서 2개까지) */
+const DEST_PLACES_MAX = 4;
+export const NO_ORIGIN_TEXT = "— AIS 에는 출발지 항목이 없습니다";
+export const AMBIGUOUS_TEXT = "코드로 읽은 값 · 같은 글자의 지명도 있음";
+
+function parseDestPlace(v: unknown): DestPlace | null {
+  if (!isObj(v)) return null;
+  const text = str(v.text, 64);
+  if (!text) return null;
+  const locode = typeof v.locode === "string" && LOCODE_RE.test(v.locode) ? v.locode : null;
+  return {
+    text, locode,
+    // 풀이(이름·국가)는 UN/LOCODE 로 읽었을 때만 의미가 있다
+    name: locode ? str(v.name, 80) : null,
+    country: locode ? str(v.country, 80) : null,
+    subdivision: locode ? str(v.subdivision, 16) : null,
+    ambiguous: locode != null && v.ambiguous === true,
+  };
+}
+
+/** REST /ships/{mmsi} · WS ship_selected 의 destination_info. 모양이 틀리면 null(원문만 보인다). */
+export function parseDestinationInfo(v: unknown): DestinationInfo | null {
+  if (!isObj(v) || typeof v.kind !== "string" || !DEST_KIND_SET.has(v.kind)) return null;
+  const raw = str(v.raw, 64);
+  if (!raw) return null;
+  const places: DestPlace[] = [];
+  for (const p of Array.isArray(v.places) ? v.places.slice(0, DEST_PLACES_MAX) : []) { const q = parseDestPlace(p); if (q) places.push(q); }
+  return { raw, kind: v.kind as DestKind, from: parseDestPlace(v.from), to: parseDestPlace(v.to), places };
+}
+
+/** 비교용 정규화(api 규칙과 같게): 대문자 · 앞뒤 공백·AIS 채움 문자(@) 제거 · 연속 공백 하나로 */
+export function normalizeDestination(s: string | null | undefined): string | null {
+  if (typeof s !== "string") return null;
+  const t = s.replace(/@+$/g, "").trim().replace(/\s+/g, " ").toUpperCase();
+  return t.length ? t : null;
+}
+
+/**
+ * 보이는 목적지 원문(static.destination)과 같은 원문을 풀이한 destination_info 만 고른다(앞의 것 우선 — WS 가 REST 보다 새롭다).
+ * 원문이 다르면(정적 정보가 바뀐 직후 등) 풀이를 쓰지 않는다 — 다른 목적지의 풀이를 붙이지 않는다.
+ */
+export function pickDestinationInfo(rawDestination: string | null | undefined, ...candidates: (DestinationInfo | null | undefined)[]): DestinationInfo | null {
+  const want = normalizeDestination(rawDestination);
+  if (!want) return null;
+  return candidates.find((c): c is DestinationInfo => c != null && normalizeDestination(c.raw) === want) ?? null;
+}
+
+/** 조각 풀이: "이름 · 국가 · UN/LOCODE 코드"(+ 같은 글자의 지명이 있으면 그 사실). UN/LOCODE 로 못 읽었으면 원문 조각 그대로라고 적는다. */
+export function fmtDestPlace(p: DestPlace): string {
+  if (!p.locode) return `${p.text} · UN/LOCODE 풀이 없음(원문 그대로)`;
+  return `${p.name ?? "—"} · ${p.country ?? "—"} · UN/LOCODE ${p.locode}${p.ambiguous ? ` · ${AMBIGUOUS_TEXT}` : ""}`;
+}
+
+/** 카드 "출발지(보고)": A>B 일 때만 A 풀이. 원문을 모르면 "—", 그 밖은 AIS 에 출발지 항목이 없다고 적는다. */
+export function shipOriginText(info: DestinationInfo | null, rawDestination: string | null | undefined): string {
+  if (info?.kind === "from_to") {
+    const a = info.from ?? info.places[0] ?? null;
+    return a ? fmtDestPlace(a) : "—";
+  }
+  if (info) return NO_ORIGIN_TEXT;
+  // 풀이가 없으면 원문에 출발지가 적혀 있는지 모른다(원문이 없을 때만 확실히 없다)
+  return normalizeDestination(rawDestination) == null ? NO_ORIGIN_TEXT : "—";
+}
+
+/** 카드 "목적지(보고)": 원문 + 풀이 줄. 원문이 없으면 raw null. */
+export function shipDestinationLines(info: DestinationInfo | null, rawDestination: string | null | undefined): { raw: string | null; lines: string[] } {
+  const raw = str(rawDestination ?? null, 64);
+  if (!raw) return { raw: null, lines: [] };
+  if (!info) return { raw, lines: [] };
+  if (info.kind === "between") {
+    const a = info.places[0] ?? info.from, b = info.places[1] ?? info.to;
+    const label = (p: DestPlace) => (p.locode && p.name ? p.name : p.text);
+    const lines: string[] = [];
+    if (a && b) lines.push(`${label(a)} ↔ ${label(b)} 왕복(보고)`);
+    for (const p of [a, b]) if (p) lines.push(fmtDestPlace(p));
+    return { raw, lines };
+  }
+  const target = info.to ?? (info.kind === "text" ? info.places[0] ?? null : info.kind === "from_to" ? info.places[1] ?? null : info.places[0] ?? null);
+  if (!target) return { raw, lines: [] };
+  // 원문 전체가 풀리지 않은 한 조각이면 같은 글자를 다시 쓰지 않는다
+  if (!target.locode && normalizeDestination(target.text) === normalizeDestination(raw)) return { raw, lines: ["UN/LOCODE 풀이 없음 — 원문 그대로"] };
+  return { raw, lines: [fmtDestPlace(target)] };
+}
+
 // ---- AIS 상태(status.sources.ais) ----
 
 export interface AisGap { started_at: string; ended_at: string | null; reason: string | null }
@@ -366,7 +462,35 @@ export interface AisStatus {
   state: AisState | null;
   /** 운영 설정 수신 범위(status.sources.ais.coverage). 없거나 형식이 틀리면 null — 그리지 않는다 */
   coverage: AisBox[] | null;
+  /** 구역별 연결(계약 v4 §D, status.sources.ais.shards). 없거나 형식이 틀리면 null — 합계 필드만 쓴다 */
+  shards?: AisShard[] | null;
   received_at: number;
+}
+
+/** 수신 구역 하나(연결 하나). coverage 가 null 이면 그 구역의 범위를 모른다. */
+export interface AisShard { coverage: AisBox[] | null; state: AisState | null; connected: boolean | null; gap_open_since: string | null }
+/** 구역 수 상한(계약 v4 §D: 공급자의 키당 연결 수 3) */
+export const AIS_SHARDS_MAX = 3;
+
+/** status.sources.ais.shards → 구역 목록. 배열이 아니거나 0개·4개 이상이거나 객체가 아닌 원소가 있으면 null("n/m 구역"의 m 을 틀리게 말하지 않는다). */
+export function parseAisShards(v: unknown): AisShard[] | null {
+  if (!Array.isArray(v) || v.length < 1 || v.length > AIS_SHARDS_MAX) return null;
+  const out: AisShard[] = [];
+  for (const x of v) {
+    if (!isObj(x)) return null;
+    out.push({
+      coverage: parseAisCoverage(x.coverage),
+      state: typeof x.state === "string" && AIS_STATE_SET.has(x.state) ? (x.state as AisState) : null,
+      connected: typeof x.connected === "boolean" ? x.connected : null,
+      gap_open_since: iso(x.gap_open_since),
+    });
+  }
+  return out;
+}
+
+/** 구역 이름(툴팁): 상자들을 운영 설정 문법(lat1,lon1,lat2,lon2;…)으로. 모르면 "범위 모름" */
+export function fmtShardScope(sh: AisShard): string {
+  return sh.coverage?.length ? sh.coverage.map((b) => `${b.s},${b.w},${b.n},${b.e}`).join(";") : "범위 모름";
 }
 
 export function parseAisGap(v: unknown): AisGap | null {
@@ -389,6 +513,7 @@ export function parseAisStatus(status: unknown, receivedAt: number): AisStatus |
     last_gap: parseAisGap(src.last_gap),
     state: typeof src.state === "string" && AIS_STATE_SET.has(src.state) ? (src.state as AisState) : null,
     coverage: parseAisCoverage(src.coverage),
+    shards: parseAisShards(src.shards),
     received_at: receivedAt,
   };
 }
@@ -485,7 +610,11 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
   if (ais.state === "disabled") {
     return { text: "AIS 꺼짐 · 키 없음", tone: "muted", title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정 — 끊김이 아님)" };
   }
-  if (ais.connected === false) {
+  // 구역이 여럿이고 일부만 끊겼으면(계약 v4 §D: 합계 connected = 모든 구역 연결) 전체 끊김이라고 하지 않는다
+  const shards = ais.shards && ais.shards.length > 1 ? ais.shards : null;
+  const down = shards ? shards.filter((sh) => sh.connected === false).length : 0;
+  const partial = shards != null && down > 0 && shards.some((sh) => sh.connected === true);
+  if (ais.connected === false && !partial) {
     const retrying = ais.state === "connecting" || ais.state === "backoff";
     const why = retrying ? " — 재연결 중(지수 백오프)" : ` — 수집기 상태 ${ais.state ?? "모름"}`;
     return { text: "AIS 끊김", tone: "bad", title: `AIS 수집기가 aisstream.io 에 연결되어 있지 않음${why}` };
@@ -493,27 +622,53 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
   const elapsed = nowMs ? Math.max(0, (nowMs - ais.received_at) / 1000) : 0;
   const lag = ais.lag_s == null ? null : live && elapsed <= RX_FRESH_MS / 1000 ? ais.lag_s : ais.lag_s + elapsed;
   const rate = ais.msgs_per_s == null ? "— msg/s" : `${ais.msgs_per_s.toFixed(1)} msg/s`;
+  const lagText = lag == null ? "lag —" : `lag ${Math.round(lag)}s`;
+  const title = `AIS(aisstream.io) 수신 상태 — 지연 = 마지막 메시지 이후 경과(경고 > ${AIS_LAG_WARN_S} s)`;
+  if (partial) {
+    return {
+      text: `AIS 일부 끊김 ${down}/${shards!.length} 구역 · ${rate} · ${lagText}`,
+      tone: "warn",
+      title: `${title}\n${shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${sh.connected === true ? "연결" : sh.connected === false ? `끊김${sh.state === "connecting" || sh.state === "backoff" ? "(재연결 중)" : ""}` : "연결 모름"}`).join("\n")}`,
+    };
+  }
   const tone = ais.connected == null || lag == null || lag > AIS_LAG_WARN_S ? "warn" : "ok";
-  return {
-    text: `AIS${ais.connected == null ? " 연결 모름" : ""} · ${rate} · ${lag == null ? "lag —" : `lag ${Math.round(lag)}s`}`,
-    tone,
-    title: `AIS(aisstream.io) 수신 상태 — 지연 = 마지막 메시지 이후 경과(경고 > ${AIS_LAG_WARN_S} s)`,
-  };
+  return { text: `AIS${ais.connected == null ? " 연결 모름" : ""} · ${rate} · ${lagText}`, tone, title };
 }
 
 const hhmm = (isoStr: string) => { const d = new Date(isoStr); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
 
-/** 상태 바 공백 배지: 열린 공백 → "AIS 공백 hh:mm– UTC · 진행 중", 30분 안에 끝난 공백 → "AIS 공백 hh:mm–hh:mm UTC". 그 밖은 null. */
-export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: string; open: boolean; title: string } | null {
+/** 열린 공백이 있는 구역 수(구역이 둘 이상일 때만 — 하나면 합계와 같다) */
+export function openGapShards(ais: Pick<AisStatus, "shards"> | null): { open: AisShard[]; total: number } | null {
+  const shards = ais?.shards;
+  if (!shards || shards.length < 2) return null;
+  return { open: shards.filter((sh) => sh.gap_open_since != null), total: shards.length };
+}
+
+/**
+ * 상태 바 공백 배지: 열린 공백 → "AIS 공백 hh:mm– UTC · 진행 중", 30분 안에 끝난 공백 → "AIS 공백 hh:mm–hh:mm UTC". 그 밖은 null.
+ * 구역이 여럿이고 일부만 공백이면(계약 v4 §D) "AIS 공백 n/m 구역" — 툴팁에 구역·시작 시각.
+ */
+export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: string; open: boolean; partial?: boolean; title: string } | null {
   if (!ais) return null;
+  const sg = openGapShards(ais);
+  if (sg && sg.open.length > 0 && sg.open.length < sg.total) {
+    const lines = sg.open.map((sh) => `구역 ${fmtShardScope(sh)} — ${sh.gap_open_since} 부터(${hhmm(sh.gap_open_since!)} UTC) 끊김`);
+    return {
+      text: `AIS 공백 ${sg.open.length}/${sg.total} 구역`, open: true, partial: true,
+      title: `${lines.join("\n")}\n다른 구역은 수신 중 — 끊긴 구역 안 선박 위치만 멈춰 있고, 재전송이 없어 이 구간은 비어 있게 됩니다`,
+    };
+  }
   if (ais.gap_open_since) {
-    return { text: `AIS 공백 ${hhmm(ais.gap_open_since)}– UTC · 진행 중`, open: true, title: `AIS 수신이 ${ais.gap_open_since} 부터 끊겨 있음 — 재전송이 없어 이 구간 선박 위치는 비어 있게 됩니다` };
+    const all = sg && sg.open.length === sg.total ? ` · 모든 구역(${sg.total}개)` : "";
+    return { text: `AIS 공백 ${hhmm(ais.gap_open_since)}– UTC · 진행 중`, open: true, title: `AIS 수신이 ${ais.gap_open_since} 부터 끊겨 있음${all} — 재전송이 없어 이 구간 선박 위치는 비어 있게 됩니다` };
   }
   const g = ais.last_gap;
   if (!g || !g.ended_at || !nowMs) return null;
   const end = Date.parse(g.ended_at);
   if (Number.isNaN(end) || nowMs - end > AIS_GAP_SHOW_MS) return null;
-  return { text: `AIS 공백 ${hhmm(g.started_at)}–${hhmm(g.ended_at)} UTC`, open: false, title: `AIS 수신 공백 ${g.started_at} – ${g.ended_at}${g.reason ? ` (${g.reason})` : ""} — 이 구간 선박 위치 없음` };
+  // 끝난 공백은 상태에 구역이 없다 — 구역이 여럿이면 그렇다고 적는다(모든 구역이라고 말하지 않는다)
+  const scope = sg ? ` · 어느 구역의 공백인지는 상태에 없음(구역 ${sg.total}개)` : "";
+  return { text: `AIS 공백 ${hhmm(g.started_at)}–${hhmm(g.ended_at)} UTC`, open: false, title: `AIS 수신 공백 ${g.started_at} – ${g.ended_at}${g.reason ? ` (${g.reason})` : ""} — 이 구간 선박 위치 없음${scope}` };
 }
 
 // ---- 선택 선박 항적(REST + 실시간) ----
@@ -570,18 +725,45 @@ export function normalizeGaps(gaps: readonly AisGap[], max = MAX_TRACK_GAPS): { 
 }
 
 /**
+ * 이 위치의 선박에 해당하는 열린 공백(계약 v4 §D 항적 끊기: 구역 공백은 그 구역 상자 안 선박에만).
+ * 구역이 둘 이상이고 모든 구역의 범위를 알며 위치를 알 때만 구역으로 가른다(scoped) — 그 위치를 덮는 구역들의 열린 공백 중 가장 이른 것.
+ * 그 밖(구역 없음·범위 모름·위치 모름)은 합계 gap_open_since 그대로(기존 동작).
+ */
+export function statusOpenGapFor(ais: Pick<AisStatus, "gap_open_since" | "shards">, pos: { lat: number; lon: number } | null | undefined): { openSince: string | null; scoped: boolean } {
+  const shards = ais.shards;
+  if (!shards || shards.length < 2 || !pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon) || shards.some((sh) => !sh.coverage?.length)) {
+    return { openSince: ais.gap_open_since, scoped: false };
+  }
+  let best: string | null = null;
+  for (const sh of shards) {
+    if (!sh.gap_open_since || !inCoverage(sh.coverage!, pos.lat, pos.lon)) continue;
+    if (best == null || Date.parse(sh.gap_open_since) < Date.parse(best)) best = sh.gap_open_since;
+  }
+  return { openSince: best, scoped: true };
+}
+
+/** 구역으로 가를 때 끝난 공백(last_gap, 상태에 구역 없음)을 이 선박의 자리표시와 같은 공백으로 보는 시작 시각 차 */
+const GAP_MATCH_MS = 1000;
+
+/**
  * status.sources.ais 의 공백을 항적 공백 목록에 반영한다(선택 중에 생기거나 닫힌 공백). 바뀌었으면 true.
  * - 열린 공백(gap_open_since)은 자리표시: 같은 started_at 의 끝난 공백(last_gap)이 오면 대체되고,
  *   status 가 더 이상 그 공백이 열려 있다고 하지 않으면(gap_open_since null·다른 값) 뺀다 — 끝을 모르는 공백을 영원히 열어 두지 않는다.
  * - 항적 창(sinceMs) 전에 끝난 공백은 넣지 않는다. status 를 모르면(null) 그대로 둔다.
+ * - 구역이 여럿이면(계약 v4 §D) pos(선박 위치)를 덮는 구역의 공백만 자리표시로 넣고, 끝난 공백은 이 선박의 자리표시를 닫는 것일 때만 받는다
+ *   (상태의 last_gap 에는 구역이 없다 — 다른 구역의 공백을 이 선박 항적에 그리지 않는다. 처음부터 끝난 공백은 REST 항적이 구역별로 준다).
  */
-export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open_since" | "last_gap"> | null, sinceMs: number): boolean {
+export function mergeStatusGaps(track: ShipTrack, ais: Pick<AisStatus, "gap_open_since" | "last_gap" | "shards"> | null, sinceMs: number, pos?: { lat: number; lon: number } | null): boolean {
   if (!ais) return false;
-  const openMs = ais.gap_open_since ? Date.parse(ais.gap_open_since) : NaN;
+  const { openSince, scoped } = statusOpenGapFor(ais, pos);
+  const openMs = openSince ? Date.parse(openSince) : NaN;
+  const placeholders = track.gaps.filter((g) => g.ended_at == null).map((g) => Date.parse(g.started_at));
   const next: AisGap[] = track.gaps.filter((g) => g.ended_at != null || Date.parse(g.started_at) === openMs);
   const lg = ais.last_gap;
-  if (lg && lg.ended_at && !(Date.parse(lg.ended_at) < sinceMs)) next.push(lg);
-  if (ais.gap_open_since) next.push({ started_at: ais.gap_open_since, ended_at: null, reason: null });
+  const lgStart = lg ? Date.parse(lg.started_at) : NaN;
+  const lgOurs = !scoped || placeholders.some((t) => Math.abs(t - lgStart) <= GAP_MATCH_MS);
+  if (lg && lg.ended_at && !(Date.parse(lg.ended_at) < sinceMs) && lgOurs) next.push(lg);
+  if (openSince) next.push({ started_at: openSince, ended_at: null, reason: null });
   const r = normalizeGaps(next);
   const key = (gs: readonly AisGap[]) => gs.map((g) => `${Date.parse(g.started_at)}/${g.ended_at == null ? "open" : Date.parse(g.ended_at)}`).join(",");
   if (key(r.gaps) === key(track.gaps)) return false;
@@ -759,6 +941,78 @@ export function shipTrackFeatures(track: ShipTrack): GeoJSON.FeatureCollection {
     features.push({ type: "Feature", properties: { kind: "gap", label }, geometry: { type: "LineString", coordinates: [s.pts[s.pts.length - 1], next.pts[0]] } });
   });
   return { type: "FeatureCollection", features };
+}
+
+// ---- 지도 선박 칩(계약 v4 §C) ----
+
+/**
+ * 서버(api ShipFanout)의 표시 규칙 — 칩·목록·범례·툴팁 문구가 같은 값을 쓴다.
+ * 개별(points) = (줌 ≥ 7 이고 화면 안 ≤ 5,000척) 또는 (4 ≤ 줌 < 7 이고 ≤ 1,500척). 줌 4–6 에서 격자로 바꾸는 기준은 1,500 초과,
+ * 개별로 돌아오는 기준은 1,200 이하(되풀이 전환 방지). 그 밖은 격자.
+ */
+export const SHIPS_RULE = { lowZoom: 4, highZoom: 7, lowMax: 1500, lowBack: 1200, highMax: 5000 } as const;
+const n0 = (n: number) => n.toLocaleString("en-US");
+export const SHIPS_RULE_TEXT =
+  `개별 표시: 줌 ${SHIPS_RULE.highZoom} 이상은 화면 안 ${n0(SHIPS_RULE.highMax)}척 이하, 줌 ${SHIPS_RULE.lowZoom}–${SHIPS_RULE.highZoom - 1} 은 ${n0(SHIPS_RULE.lowMax)}척 이하` +
+  `(격자가 된 뒤에는 ${n0(SHIPS_RULE.lowBack)}척 이하로 줄어야 돌아옴), 줌 ${SHIPS_RULE.lowZoom} 미만은 항상 격자`;
+/** 화면 안 선박이 0척일 때(계약 v4 §C 문구 그대로) */
+export const SHIPS_ZERO_TEXT = "화면 안 선박 0척 — aisstream 은 육상 수신국 기반이라 수신국이 없는 해역은 비어 있습니다";
+/** 화면이 수신 범위(운영 설정) 밖일 때 — 이때는 수신국 탓이 아니다 */
+export const SHIPS_OUT_OF_COVERAGE_TEXT = "화면 안 선박 0척 — 수신 범위(운영 설정) 밖입니다";
+
+/** 구독 영역 [west, south, east, north](경도 −180~180)가 수신 범위 상자와 겹치는가 */
+export function bboxTouchesCoverage(bbox: readonly [number, number, number, number], boxes: readonly AisBox[]): boolean {
+  const [w, s, e, n] = bbox;
+  return boxes.some((b) => w <= b.e && e >= b.w && s <= b.n && n >= b.s);
+}
+
+export interface ShipsChipInput {
+  mode: "off" | "waiting" | "points" | "grid";
+  count: number;
+  total: number;
+  cell_deg: number | null;
+  capped: boolean;
+}
+
+/**
+ * 지도 왼쪽 위 선박 칩: 지금 지도가 무엇을 그리는지 + 규칙. zoom·bbox 는 마지막으로 구독한 화면(모르면 null — 그때는 규칙 전체를 적는다).
+ * 0척이면: AIS 꺼짐 → 그 사실, 화면이 수신 범위와 전혀 겹치지 않으면 → 범위 밖, 그 밖은 계약 문구(수신국 없는 해역).
+ */
+export function shipsChip(v: ShipsChipInput, ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; aisOff: boolean; coverage: AisBox[] | null }): { text: string; title: string; warn: boolean } | null {
+  if (v.mode === "off") return null;
+  const aisOffText = "선박 없음 · AIS 꺼짐(키 없음)";
+  if (v.mode === "waiting") return { text: ctx.aisOff ? aisOffText : "선박 수신 대기", title: SHIPS_RULE_TEXT, warn: false };
+  const inView = v.mode === "points" ? v.count : v.total;
+  if (inView === 0) {
+    if (ctx.aisOff) return { text: aisOffText, title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정)", warn: false };
+    const outside = ctx.bbox != null && ctx.coverage != null && ctx.coverage.length > 0 && !bboxTouchesCoverage(ctx.bbox, ctx.coverage);
+    return {
+      text: outside ? SHIPS_OUT_OF_COVERAGE_TEXT : SHIPS_ZERO_TEXT,
+      title: outside ? "AIS 수집기가 구독하지 않는 영역입니다(운영 설정 ais_bboxes — 지도의 점선 경계)" : "aisstream.io 는 육상 AIS 수신국이 받은 것만 보냅니다. 우리 쪽에서 거른 것이 아닙니다.",
+      warn: false,
+    };
+  }
+  if (v.mode === "points") {
+    return { text: `선박 ${n0(v.count)}척 · 화면 안 · AIS`, title: `AIS 로 받은 선박 위치(보간 없음) — ${SHIPS_RULE_TEXT}`, warn: false };
+  }
+  const z = ctx.zoom;
+  const why = z == null ? "확대하면 개별 표시"
+    : z < SHIPS_RULE.lowZoom ? `줌 ${SHIPS_RULE.lowZoom} 이상에서 개별 표시`
+    : z < SHIPS_RULE.highZoom ? `줌 ${SHIPS_RULE.lowZoom}–${SHIPS_RULE.highZoom - 1} 은 ${n0(SHIPS_RULE.lowMax)}척 넘으면 격자 · ${n0(SHIPS_RULE.lowBack)}척 이하에서 개별`
+    : v.capped ? `화면 안 ${n0(SHIPS_RULE.highMax)}척 초과 · 전송 상한` : "확대하면 개별 표시";
+  return {
+    text: `선박 ${fmtCount(v.total)}척 · ${v.cell_deg ?? "—"}° 격자 ${v.count}칸으로 묶음 · ${why}`,
+    title: `서버가 격자별 선박 수만 보냅니다(원 크기 = 수, 색 = 가장 많은 선종). 원을 누르면 확대합니다. ${SHIPS_RULE_TEXT}`,
+    warn: v.capped,
+  };
+}
+
+/** 칩 뒤에 붙이는 AIS 공백: 일부 구역만이면 "AIS 공백 n/m 구역(그 구역 위치 멈춤)", 전체면 "AIS 공백 중(위치 멈춤)" */
+export function shipsGapSuffix(ais: Pick<AisStatus, "gap_open_since" | "shards"> | null): string {
+  if (!ais) return "";
+  const sg = openGapShards(ais);
+  if (sg && sg.open.length > 0 && sg.open.length < sg.total) return ` · AIS 공백 ${sg.open.length}/${sg.total} 구역(그 구역 위치 멈춤)`;
+  return ais.gap_open_since || (sg && sg.open.length > 0) ? " · AIS 공백 중(위치 멈춤)" : "";
 }
 
 // ---- 선박 목록(지도 없이 고르기 — 키보드·스크린리더) ----

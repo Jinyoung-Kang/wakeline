@@ -6,6 +6,7 @@ import {
   RADAR_SLOT, radarTileUrl, STYLE_URL, type FrameRole,
 } from "@/lib/maplayers";
 import { subscriptionBbox } from "@/lib/viewport";
+import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
 import {
@@ -38,6 +39,14 @@ const SHIP_PENDING_MAX = 500;
 
 type ShipTrackRef = { mmsi: string | null; track: ShipTrack; pending: { ts: number; lon: number; lat: number }[]; loaded: boolean; anchor: number | null; sinceMs: number };
 const emptyShipTrack = (mmsi: string | null, anchor: number | null = null, sinceMs = 0): ShipTrackRef => ({ mmsi, track: { segs: [], gaps: [] }, pending: [], loaded: false, anchor, sinceMs });
+
+/** 선택 선박의 가장 최근 위치(WS ship_selected → 지도 목록 사본). 구역별 AIS 공백을 가를 때 쓴다(계약 v4 §D). 모르면 null */
+function shipPos(mmsi: string | null): { lat: number; lon: number } | null {
+  if (!mmsi) return null;
+  const sel = getData().shipSelected;
+  const p = (sel && sel.mmsi === mmsi ? sel.state : null) ?? shipStates.get(mmsi) ?? null;
+  return p ? { lat: p.lat, lon: p.lon } : null;
+}
 
 /** 선택 선박 항적 요약(카드의 공백 목록·구간 수)을 스토어에 — 같은 선박일 때만, 불러오기 상태·오류는 그대로 */
 function publishShipTrack(ref: ShipTrackRef) {
@@ -129,6 +138,8 @@ export function MapView() {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
+    // 배경지도 시인성(계약 v4 §E): 스타일을 받을 때마다 알려진 층의 색만 바꾼다
+    map.on("style.load", () => applyBasemap(map));
     map.getCanvas().setAttribute("aria-label", "실시간 항공기·위험기상 지도. 화살표 키로 이동, +/- 로 확대. 항공기는 상단 검색(/)으로 선택할 수 있습니다.");
 
     // 번들러(Turbopack)가 .ts 워커를 자산으로 취급하므로 순수 JS 워커를 public 에 둔다(tests/worker-sync 가 TS 구현과 일치를 검사).
@@ -297,7 +308,7 @@ export function MapView() {
         if (id === "aircraft-symbol") { select(String(f!.properties?.hex)); return; }
         if (id === "ship-symbol") { const m = String(f!.properties?.mmsi); if (isMmsi(m)) selectShip(m); return; }
         if (id === "ship-grid-circle" && f!.geometry.type === "Point") {
-          // 격자 칸을 누르면 그 칸으로 확대 — 줌 7 이상에서 서버가 개별 선박을 보낸다
+          // 격자 칸을 누르면 그 칸으로 확대 — 줌 7 이상에서 서버가 개별 선박을 보낸다(화면 안 5,000척 이하일 때 — 계약 v4 §C)
           const [lon, lat] = f!.geometry.coordinates as [number, number];
           const opts = { center: [lon, lat] as [number, number], zoom: Math.min(12, Math.max(7, map.getZoom() + 2)) };
           const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -497,7 +508,7 @@ export function MapView() {
     const finish = (track: ShipTrack, error: string | null) => {
       const ref = shipTrack.current;
       if (cancelled || ref.mmsi !== selectedShip) return;
-      mergeStatusGaps(track, getData().ais, ref.sinceMs);
+      mergeStatusGaps(track, getData().ais, ref.sinceMs, shipPos(selectedShip));
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
       shipTrack.current = { ...ref, track, pending: [], loaded: true };
       setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from } });
@@ -520,7 +531,7 @@ export function MapView() {
     const p = { ts, lon: st.lon, lat: st.lat };
     if (!ref.loaded) { if (ref.pending.length < SHIP_PENDING_MAX) ref.pending.push(p); return; }
     const segs = ref.track.segs.length;
-    const merged = mergeStatusGaps(ref.track, getData().ais, ref.sinceMs);
+    const merged = mergeStatusGaps(ref.track, getData().ais, ref.sinceMs, { lat: st.lat, lon: st.lon });
     const appended = appendShipTrack(ref.track, p, ref.anchor);
     if (merged || appended) onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
     if (merged || ref.track.segs.length !== segs) publishShipTrack(ref);
@@ -530,7 +541,7 @@ export function MapView() {
   useEffect(() => {
     const map = mapRef.current;
     const ref = shipTrack.current;
-    if (!map || !ref.mmsi || !ref.loaded || !mergeStatusGaps(ref.track, ais, ref.sinceMs)) return;
+    if (!map || !ref.mmsi || !ref.loaded || !mergeStatusGaps(ref.track, ais, ref.sinceMs, shipPos(ref.mmsi))) return;
     onReady(map, () => geo(map, "ship-track")?.setData(shipTrackFeatures(ref.track)));
     publishShipTrack(ref);
   }, [ais]);

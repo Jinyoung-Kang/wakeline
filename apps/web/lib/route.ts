@@ -1,0 +1,191 @@
+/**
+ * 항공기 출발지·도착지(계약 v4 §A · ADR-016) — 순수 함수(테스트 가능).
+ * - 자료: collector 가 선택한 항공기의 콜사인으로 adsbdb 에 물은 "콜사인에 등록된 정기 노선". 실제 운항 경로와 다를 수 있다 — 화면이 그렇게 적는다.
+ * - 검증: 서버 값도 믿지 않는다. 형식이 틀린 공항은 null, 모르는 상태는 노선 전체를 null(표시하지 않음). 문자열은 제어문자 제거·길이 절단.
+ * - 거리: 현재(마지막 관측) 위치와 출발→(경유)→도착 대권 경로 사이 가장 가까운 거리. 구면 지구 계산값이며 추정이 아니라 계산이라고 적는다.
+ *   "노선이 맞다/틀리다"를 판정해 붙이지 않는다.
+ */
+
+export const ROUTE_STATUSES = ["found", "not_found", "pending", "unavailable", "no_callsign"] as const;
+export type RouteStatus = (typeof ROUTE_STATUSES)[number];
+const STATUS_SET: ReadonlySet<string> = new Set(ROUTE_STATUSES);
+
+export interface RouteAirport {
+  icao: string;
+  iata: string | null;
+  name: string;
+  city: string | null;
+  country: string | null;
+  country_iso: string | null;
+  lat: number;
+  lon: number;
+}
+export interface RouteAirline { name: string | null; icao: string | null; iata: string | null }
+export interface RouteInfo {
+  status: RouteStatus;
+  callsign: string | null;
+  airline: RouteAirline | null;
+  origin: RouteAirport | null;
+  destination: RouteAirport | null;
+  midpoint: RouteAirport | null;
+  fetched_at: string | null;
+  source: string | null;
+}
+
+/** 카드 제목 · 상태별 문구 · 주의 · 출처(계약 v4 §A 문구 그대로) */
+export const ROUTE_TITLE = "노선(콜사인 기준 등록 노선)";
+export const ROUTE_STATUS_TEXT: Record<Exclude<RouteStatus, "found">, string> = {
+  pending: "노선 조회 중",
+  not_found: "이 콜사인의 등록 노선 없음",
+  no_callsign: "콜사인 없음 — 노선을 찾을 수 없음",
+  unavailable: "노선 조회 실패",
+};
+export const ROUTE_CAVEAT = "콜사인에 등록된 정기 노선입니다 — 실제 운항 경로와 다를 수 있습니다";
+/** 출처 표기: "adsbdb.com" + 뒤 문구(카드는 앞부분을 링크로) */
+export const ROUTE_ATTRIBUTION_TAIL = " · flight route data © David Taylor, Edinburgh & Jim Mason, Glasgow";
+export const ROUTE_ATTRIBUTION = `adsbdb.com${ROUTE_ATTRIBUTION_TAIL}`;
+export const ROUTE_SOURCE_URL = "https://www.adsbdb.com";
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/** 문자열: 제어문자 제거·앞뒤 공백 제거·길이 절단. 빈 값·문자열이 아니면 null */
+function text(v: unknown, max: number): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.replace(CONTROL_RE, "").trim();
+  return t.length ? t.slice(0, max) : null;
+}
+function code(v: unknown, re: RegExp): string | null {
+  return typeof v === "string" && re.test(v) ? v : null;
+}
+function num(v: unknown, lo: number, hi: number): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : null;
+}
+
+const ICAO_AIRPORT_RE = /^[A-Z0-9]{4}$/;
+const IATA_AIRPORT_RE = /^[A-Z0-9]{3}$/;
+const COUNTRY_ISO_RE = /^[A-Z]{2}$/;
+const CALLSIGN_RE = /^[A-Z0-9]{3,8}$/;
+const AIRLINE_CODE_RE = /^[A-Z0-9]{2,4}$/;
+
+/** 공항(계약 v4 §A Airport): icao·이름·좌표가 맞아야 한다. 선택 필드는 형식이 틀리면 null. */
+export function parseRouteAirport(v: unknown): RouteAirport | null {
+  if (!isObj(v)) return null;
+  const icao = code(v.icao, ICAO_AIRPORT_RE);
+  const name = text(v.name, 120);
+  const lat = num(v.lat, -90, 90), lon = num(v.lon, -180, 180);
+  if (!icao || !name || lat == null || lon == null) return null;
+  return {
+    icao, name, lat, lon,
+    iata: code(v.iata, IATA_AIRPORT_RE),
+    city: text(v.city, 80),
+    country: text(v.country, 80),
+    country_iso: code(v.country_iso, COUNTRY_ISO_RE),
+  };
+}
+
+function parseAirline(v: unknown): RouteAirline | null {
+  if (!isObj(v)) return null;
+  const a = { name: text(v.name, 120), icao: code(v.icao, AIRLINE_CODE_RE), iata: code(v.iata, AIRLINE_CODE_RE) };
+  return a.name || a.icao || a.iata ? a : null;
+}
+
+/**
+ * WS selected.route · REST /aircraft/{hex}.route → RouteInfo. 모르는 상태·객체가 아니면 null.
+ * found 인데 출발·도착이 둘 다 없으면(검증에서 빠진 경우 포함) not_found — 수집기와 같은 규칙.
+ */
+export function parseRoute(v: unknown): RouteInfo | null {
+  if (!isObj(v) || typeof v.status !== "string" || !STATUS_SET.has(v.status)) return null;
+  const fetched = typeof v.fetched_at === "string" && v.fetched_at.length <= 40 && !Number.isNaN(Date.parse(v.fetched_at)) ? v.fetched_at : null;
+  const r: RouteInfo = {
+    status: v.status as RouteStatus,
+    callsign: code(v.callsign, CALLSIGN_RE),
+    airline: null, origin: null, destination: null, midpoint: null,
+    fetched_at: fetched,
+    source: text(v.source, 32),
+  };
+  if (r.status !== "found") return r;
+  r.airline = parseAirline(v.airline);
+  r.origin = parseRouteAirport(v.origin);
+  r.destination = parseRouteAirport(v.destination);
+  r.midpoint = parseRouteAirport(v.midpoint);
+  if (!r.origin && !r.destination) return { ...r, status: "not_found", airline: null, midpoint: null };
+  return r;
+}
+
+// ---- 대권 경로와의 거리(계산값) ----
+
+/** 평균 지구 반지름(km) — 구면 근사 */
+export const EARTH_RADIUS_KM = 6371;
+type V3 = [number, number, number];
+const toVec = (lat: number, lon: number): V3 => {
+  const la = (lat * Math.PI) / 180, lo = (lon * Math.PI) / 180;
+  return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+};
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = (a: V3) => Math.sqrt(dot(a, a));
+/** 두 단위 벡터 사이 각(라디안) — 짧은 거리에서도 정확한 atan2 식 */
+const angle = (a: V3, b: V3) => Math.atan2(norm(cross(a, b)), dot(a, b));
+
+/** 점 p 와 대권 호 a→b(짧은 쪽) 사이 가장 가까운 각거리(라디안). a·b 가 같거나 정반대면 끝점까지의 거리. */
+function arcDistance(p: V3, a: V3, b: V3): number {
+  const n = cross(a, b);
+  const nl = norm(n);
+  const ends = Math.min(angle(p, a), angle(p, b));
+  if (nl < 1e-12) return ends;
+  const u: V3 = [n[0] / nl, n[1] / nl, n[2] / nl];
+  const s = dot(p, u);
+  // p 를 대권 평면에 내린 점 c 가 호 a→b 안에 있으면 수선 거리, 아니면 끝점까지
+  const c: V3 = [p[0] - s * u[0], p[1] - s * u[1], p[2] - s * u[2]];
+  if (norm(c) < 1e-12) return ends; // p 가 대권의 극 — 호 위 모든 점이 같은 거리
+  const inside = dot(cross(a, c), u) >= 0 && dot(cross(c, b), u) >= 0;
+  return inside ? Math.abs(Math.asin(Math.max(-1, Math.min(1, s)))) : ends;
+}
+
+/** 위치와 경로(점 목록을 대권 호로 이은 것) 사이 가장 가까운 거리(km). 점이 2개 미만이거나 값이 틀리면 null. */
+export function distanceToPathKm(path: readonly { lat: number; lon: number }[], pos: { lat: number; lon: number } | null | undefined): number | null {
+  if (!pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon) || Math.abs(pos.lat) > 90 || path.length < 2) return null;
+  if (path.some((q) => !Number.isFinite(q.lat) || !Number.isFinite(q.lon))) return null;
+  const p = toVec(pos.lat, pos.lon);
+  let best = Infinity;
+  for (let i = 0; i + 1 < path.length; i++) best = Math.min(best, arcDistance(p, toVec(path[i].lat, path[i].lon), toVec(path[i + 1].lat, path[i + 1].lon)));
+  return best * EARTH_RADIUS_KM;
+}
+
+/** 노선(출발 → 경유 → 도착)과 현재 위치 사이 거리(km, 계산값). 출발·도착 중 하나라도 모르면 null. */
+export function routeDistanceKm(route: RouteInfo | null, pos: { lat: number; lon: number } | null | undefined): number | null {
+  if (!route || route.status !== "found" || !route.origin || !route.destination) return null;
+  const path = [route.origin, ...(route.midpoint ? [route.midpoint] : []), route.destination];
+  return distanceToPathKm(path, pos);
+}
+
+// ---- 표시 ----
+
+/** "RKSS · GMP" — IATA 가 없으면 "RKSS · IATA —" */
+export function fmtAirportCodes(a: RouteAirport): string {
+  return `${a.icao} · ${a.iata ?? "IATA —"}`;
+}
+/** "이름 · 도시 · 국가" — 모르는 칸은 "—" */
+export function fmtAirportPlace(a: RouteAirport): string {
+  return `${a.name} · ${a.city ?? "—"} · ${a.country ?? "—"}${a.country_iso ? ` (${a.country_iso})` : ""}`;
+}
+/** 항공사: "이름 · ICAO · IATA"(아는 것만). 없으면 "—" */
+export function fmtAirline(a: RouteAirline | null): string {
+  if (!a) return "—";
+  const parts = [a.name, a.icao, a.iata].filter((x): x is string => x != null);
+  return parts.length ? parts.join(" · ") : "—";
+}
+/** 거리(km): 10 km 미만은 소수 한 자리, 그 밖은 정수(천 단위 쉼표). 모르면 "—" */
+export function fmtRouteKm(km: number | null): string {
+  if (km == null || !Number.isFinite(km)) return "—";
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km).toLocaleString("en-US")} km`;
+}
+
+/** 노선을 조회한 콜사인과 지금 콜사인이 다른가(둘 다 알 때만) — 다르면 카드가 그렇다고 적는다 */
+export function routeCallsignMismatch(route: RouteInfo | null, callsign: string | null | undefined): boolean {
+  if (!route?.callsign || !callsign) return false;
+  const now = callsign.trim().toUpperCase();
+  return now.length > 0 && now !== route.callsign;
+}

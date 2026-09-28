@@ -3,7 +3,7 @@
  * - 세션별 seq 연속성: diff 의 seq 가 lastSeq+1 이 아니면 적용하지 않고 resync 를 (스냅샷이 올 때까지 한 번만) 요청.
  * - 없는 키 = 모름. stale 은 항공기별 seen_at(워커)과 피드별 지연(sources/status)에서만 나온다(diff 가 덮어쓰지 않는다).
  * - 알림: alerts(전체, version) / alerts_batch(증분, version) — 오래된 버전은 무시. LOST·LEFT·PREDICTION_CLEARED 는 목록에서 뺀다.
- * - select → selected: 선택 항공기의 full 상태·예측 가능 여부를 스토어에 둔다.
+ * - select → selected: 선택 항공기의 full 상태·예측 가능 여부·등록 노선(계약 v4 §A route, lib/route.ts 로 검증)을 스토어에 둔다.
  * - 탭 숨김 pause/resume: 연결이 실제로 열려 있을 때만 상태를 바꾸고, 재접속 후에도 숨김 상태면 구독을 미룬다.
  * - 송신 예산 16 msg/10 s(서버 한도 20) — 넘치면 종류별 최신 1개만 남겨 뒤로 미룬다.
  * - 지수 백오프 재접속(1→30 s, WS-1): 시도 횟수는 연결이 건강함이 확인된 뒤에만(첫 스냅샷 또는 welcome 뒤 30 s) 0 으로 되돌린다.
@@ -11,7 +11,8 @@
  * - 수신 감시(WS-2): 75 s(ping 2.5 회) 동안 아무것도 오지 않으면 반쯤 열린 연결로 보고 닫고 다시 잇는다(onclose 를 기다리지 않는다).
  * - 서버 시계(WS-3): welcome·status·작은 diff/snapshot(≤ 32 KiB)의 시각으로 오프셋을 추정해(store) 워커에도 보낸다 — 경과·stale·외삽이 한 기준을 쓴다.
  * - 레이어(계약 v2 §B3): {type:"layers", aircraft, ships} — 서버 기본값(항공기 켬·선박 끔)과 다를 때만 welcome 에서, 바뀔 때마다 보낸다.
- *   선박: ships_snapshot/ships_diff(세션별 연속 sseq — 항공기 seq 와 같은 규칙, 틈이면 resync) · ships_grid(줌 < 7·상한 초과) · select_ship → ship_selected.
+ *   선박: ships_snapshot/ships_diff(세션별 연속 sseq — 항공기 seq 와 같은 규칙, 틈이면 resync) · ships_grid(계약 v4 §C 규칙 — 줌 < 4·상한 초과) ·
+ *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 구독한 화면(bbox·줌)은 스토어 viewport 에도 둔다(선박 칩 문구).
  *   받은 값은 lib/ships.ts 로 검증한다(MMSI·위치가 틀리면 버림, 필드는 모르면 null). 메인 스레드 선박 수 상한 MAX_SHIPS.
  * - 수요(계약 v2 §A3): {type:"demand"} 를 그대로 스토어에 — 연결이 끊기면 지운다(서버 임대는 60 s 안에 만료되므로 "추적 중"이라 말하지 않는다).
  */
@@ -21,7 +22,8 @@ import {
 import { applyDiff } from "./interpolate";
 import { aircraftStates, clockOffsetMs, getData, observeServerTime, setData, shipStates, SHIPS_OFF, type ShipsView } from "./store";
 import { parseDemand } from "./demand";
-import { isMmsi, MAX_SHIPS, parseAisStatus, parseGridCells, parseMmsiList, parseShipLite, parseShipState, parseShipStatic } from "./ships";
+import { parseRoute } from "./route";
+import { isMmsi, MAX_SHIPS, parseAisStatus, parseDestinationInfo, parseGridCells, parseMmsiList, parseShipLite, parseShipState, parseShipStatic } from "./ships";
 import type { AircraftState, Alert, PredictionReason, PublicStatus, RadarFrames, SigmetCollection, SourceInfo } from "./types";
 
 export type WorkerLike = { postMessage: (m: unknown) => void };
@@ -211,6 +213,7 @@ export class WakelineWsClient {
   subscribe(bbox: [number, number, number, number], zoom: number) {
     this.bbox = bbox;
     this.zoom = zoom;
+    setData({ viewport: { bbox, zoom } });
     if (!this.welcomed) return; // welcome 에서 보낸다
     if (this.paused) { this.subscribedOnConn = false; return; } // resume 때 subscribe 로 보낸다
     this.sendControlled("subscribe", { type: "subscribe", bbox, zoom, detail: "lite" });
@@ -434,6 +437,7 @@ export class WakelineWsClient {
             hex,
             state: isObj(m.state) ? (m.state as unknown as AircraftState) : null,
             prediction: p ? { available: p.available === true, reason } : null,
+            route: parseRoute(m.route),
             received_at: now,
           },
         });
@@ -501,7 +505,7 @@ export class WakelineWsClient {
         let stat = parseShipStatic(isObj(m.static) ? { mmsi, ...m.static } : null);
         if (state && state.mmsi !== mmsi) state = null;
         if (stat && stat.mmsi !== mmsi) stat = null;
-        setData({ shipSelected: { mmsi, state, static: stat, received_at: now } });
+        setData({ shipSelected: { mmsi, state, static: stat, destination_info: parseDestinationInfo(m.destination_info), received_at: now } });
         break;
       }
       case "ping":

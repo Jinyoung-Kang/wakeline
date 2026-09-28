@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from "react";
 import { ServerClock } from "./server-clock";
 import type { DemandInfo } from "./demand";
-import type { AisGap, AisStatus, ShipGridCell, ShipLite, ShipState, ShipStatic } from "./ships";
+import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipState, ShipStatic } from "./ships";
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
@@ -31,6 +31,8 @@ export interface ShipSelectedInfo {
   /** null = 실시간 목록에 없음(30분 넘게 수신 없음) */
   state: ShipState | null;
   static: ShipStatic | null;
+  /** 계약 v4 §B 목적지 풀이(api 결정적 규칙). 없거나 형식이 틀리면 null — 원문만 보인다 */
+  destination_info?: DestinationInfo | null;
   received_at: number;
 }
 
@@ -67,6 +69,8 @@ export interface ServerData {
   shipTrack: ShipTrackInfo | null;
   /** status.sources.ais — AIS 수신 상태(없으면 null) */
   ais: AisStatus | null;
+  /** 마지막으로 구독한 화면(WS subscribe 의 bbox [w,s,e,n]·정수 줌). 선박 칩이 규칙·수신 범위를 말할 때 쓴다. null = 아직 없음 */
+  viewport: { bbox: [number, number, number, number]; zoom: number } | null;
 }
 
 export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] };
@@ -95,6 +99,7 @@ const initial: ServerData = {
   shipSelected: null,
   shipTrack: null,
   ais: null,
+  viewport: null,
 };
 let data: ServerData = initial;
 
