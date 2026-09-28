@@ -15,16 +15,18 @@
  *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 구독한 화면(bbox·줌)은 스토어 viewport 에도 둔다(선박 칩 문구).
  *   받은 값은 lib/ships.ts 로 검증한다(MMSI·위치가 틀리면 버림, 필드는 모르면 null). 메인 스레드 선박 수 상한 MAX_SHIPS.
  * - 수요(계약 v2 §A3): {type:"demand"} 를 그대로 스토어에 — 연결이 끊기면 지운다(서버 임대는 60 s 안에 만료되므로 "추적 중"이라 말하지 않는다).
+ * - 수신 검증(계약 v5 §E2 · ADR-020): 모든 메시지를 lib/ws-validate 로 검사한다 — 틀린 원소는 버리고 세고, 봉투가 틀린 메시지는 버리고 resync.
+ *   워커에도 검증된 같은 목록을 보낸다(주 스레드와 갈라지지 않게). diff 의 lastSeq(선박 sseq)는 적용이 끝난 뒤에만 오르고(R-93), 처리 중 예외는
+ *   잡아서 세고 브라우저 오류로 보고(§C8)한 뒤 그 흐름을 다시 받는다. 수는 스토어 wsInvalid → 상태 바.
  */
 import {
   applyAlertsBatch, applyAlertsFull, attemptAfterClose, HEALTHY_AFTER_MS, needsResync, nextBackoffMs, ResyncGate, RX_DEAD_MS, SendBudget, toFeed,
 } from "./ws-protocol";
 import { applyDiff } from "./interpolate";
 import { aircraftStates, clockOffsetMs, getData, observeServerTime, setData, shipStates, SHIPS_OFF, type ShipsView } from "./store";
-import { parseDemand } from "./demand";
-import { parseRoute } from "./route";
-import { isMmsi, MAX_SHIPS, parseAisStatus, parseDestinationInfo, parseGridCells, parseMmsiList, parseShipLite, parseShipState, parseShipStatic } from "./ships";
-import type { AircraftState, Alert, PredictionReason, PublicStatus, RadarFrames, SigmetCollection, SourceInfo } from "./types";
+import { describeThrown, reportClientError, type ClientErrorInput } from "./errorReport";
+import { isMmsi, MAX_SHIPS, parseAisStatus } from "./ships";
+import { validateServerMessage, type ServerMsg } from "./ws-validate";
 
 export type WorkerLike = { postMessage: (m: unknown) => void };
 
@@ -47,6 +49,8 @@ export interface WsClientOptions {
   /** 단조 시계(기본 performance.now) — 브라우저 벽시계 변경 감지용 */
   mono?: () => number;
   createSocket?: (url: string) => SocketLike;
+  /** 형식 오류 · 처리 예외 보고(기본: 계약 v5 §C8 브라우저 오류 보고기 — 같은 문구 60 s 에 1번, 분당 5번 이하) */
+  report?: (e: ClientErrorInput) => void;
 }
 
 const WS_OPEN = 1;
@@ -60,13 +64,17 @@ const CLOCK_SAMPLE_MAX_CHARS = 32_768;
 const CLOCK_POST_EPS_MS = 250;
 /** 감시가 죽은 연결을 닫을 때 쓰는 코드(애플리케이션 영역 4000–4999) */
 const CLOSE_RX_TIMEOUT = 4000;
+/** welcome 이 계약(schemas/ws/server.v1.json)에 맞지 않아 닫을 때 */
+const CLOSE_BAD_WELCOME = 4001;
+/** 항공기 흐름(seq)과 선박 흐름(sseq · 선박 재동기 게이트)의 메시지 — 버리거나 처리에 실패하면 그 흐름의 seq 를 버린다 */
+const AIRCRAFT_STREAM: ReadonlySet<string> = new Set(["snapshot", "diff"]);
+const SHIP_STREAM: ReadonlySet<string> = new Set(["ships_snapshot", "ships_diff", "ships_grid"]);
 type Msg = Record<string, unknown>;
 
 function defaultUrl() {
   return typeof location === "undefined" ? "ws://localhost/ws/v1" : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/v1`;
 }
 const isObj = (v: unknown): v is Msg => typeof v === "object" && v !== null && !Array.isArray(v);
-const PREDICTION_REASONS: ReadonlySet<string> = new Set(["turning", "slow", "on_ground", "no_track", "stale"]);
 
 export class WakelineWsClient {
   private ws: SocketLike | null = null;
@@ -107,6 +115,7 @@ export class WakelineWsClient {
   private readonly now: () => number;
   private readonly mono: (() => number) | null;
   private readonly createSocket: (url: string) => SocketLike;
+  private readonly report: (e: ClientErrorInput) => void;
 
   constructor(private worker: WorkerLike, opts: WsClientOptions = {}) {
     this.url = opts.url ?? defaultUrl();
@@ -114,6 +123,7 @@ export class WakelineWsClient {
     this.now = opts.now ?? Date.now;
     this.mono = opts.mono ?? (typeof performance !== "undefined" ? () => performance.now() : null);
     this.createSocket = opts.createSocket ?? ((u) => new WebSocket(u) as unknown as SocketLike);
+    this.report = opts.report ?? ((e) => { reportClientError(e); });
     this.syncWorkerClock(); // 이전 화면에서 이미 추정한 오프셋이 있으면 새 워커에도
   }
 
@@ -173,12 +183,12 @@ export class WakelineWsClient {
    * 연결 하나가 끝났다(onclose 또는 수신 감시). 한 경로로 정리하고 재접속을 예약한다.
    * 감시가 끊는 경우 반쯤 열린 소켓의 닫기 핸드셰이크(최대 수십 초)를 기다리지 않는다 — 늦게 오는 이벤트는 `this.ws !== ws` 로 무시된다.
    */
-  private connectionDown(ws: SocketLike, code: number | null, closeSocket: boolean) {
+  private connectionDown(ws: SocketLike, code: number | null, closeSocket: boolean, closeCode = CLOSE_RX_TIMEOUT) {
     this.ws = null;
     this.welcomed = false;
     this.stopConnTimers();
     this.clearPending();
-    if (closeSocket) { try { ws.close(CLOSE_RX_TIMEOUT); } catch { /* 이미 닫힘 */ } }
+    if (closeSocket) { try { ws.close(closeCode); } catch { /* 이미 닫힘 */ } }
     // 수요 임대는 이 연결이 살아 있을 때만 갱신된다 — 끊긴 뒤에도 "집중 추적 중"이라고 말하지 않는다
     setData({ conn: "closed", demand: null });
     if (this.closedByUser) return;
@@ -356,13 +366,74 @@ export class WakelineWsClient {
   }
 
   // ---- 수신 ----
+
+  /**
+   * 메시지 하나(계약 v5 §E2): JSON → 형태 검사(lib/ws-validate) → 적용. 봉투가 틀리면 버리고 세고 보고하고 resync, 틀린 원소는 버리고 센다(상태 바).
+   * 적용 중 예외는 여기서 잡는다(onmessage 밖으로 새지 않는다) — 세고, 브라우저 오류로 보고하고(§C8), 그 흐름의 seq 를 버리고 resync.
+   */
   private onMessage(rawMsg: string) {
     const now = this.now();
     this.lastRxAt = now; // 해석할 수 없는 메시지라도 연결은 살아 있다
     if (now - this.lastRxStored >= RX_STORE_EVERY_MS) { this.lastRxStored = now; setData({ lastRxAt: now }); }
-    let m: Msg;
-    try { m = JSON.parse(rawMsg); } catch { return; }
-    if (!isObj(m)) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(rawMsg); } catch { this.rejectMessage("?", "not JSON"); return; }
+    let type = isObj(parsed) && typeof parsed.type === "string" ? parsed.type.slice(0, 40) : "?";
+    try {
+      const v = validateServerMessage(parsed);
+      if (v.kind === "unknown") return; // 새 서버가 더한 종류 — 무시(세지 않는다)
+      if (v.kind === "invalid") { this.rejectMessage(v.type, v.reason); return; }
+      type = v.msg.type;
+      if (v.dropped > 0) this.noteInvalid("elements", `${v.where ?? type}: 형식이 틀린 값을 버림`, v.dropped);
+      this.dispatch(v.msg, rawMsg, now);
+    } catch (e) {
+      this.dispatchFailed(type, e);
+    }
+  }
+
+  /** 상태 바 계수(페이지를 연 뒤 누적 — 재접속해도 지우지 않는다). last = 마지막 사유 */
+  private noteInvalid(kind: "elements" | "messages" | "errors", last: string, n = 1) {
+    const cur = getData().wsInvalid;
+    setData({ wsInvalid: { ...cur, [kind]: cur[kind] + n, last: last.slice(0, 200), at: this.now() } });
+  }
+
+  /** 봉투가 틀린 메시지: 버리고 세고 보고한다. welcome 이면 연결을 다시(핸드셰이크가 깨졌다), 그 밖은 resync. */
+  private rejectMessage(type: string, reason: string) {
+    this.noteInvalid("messages", `${type}: ${reason}`);
+    this.report({ message: `ws: malformed ${type} message dropped — ${reason}`, stack: null, component: "lib/ws.ts" });
+    this.recoverFrom(type);
+  }
+
+  /** 적용 중 예외(R-93): 반쯤 적용됐을 수 있다 — 세고 보고하고 그 흐름을 다시 받는다. */
+  private dispatchFailed(type: string, e: unknown) {
+    const d = describeThrown(e);
+    this.noteInvalid("errors", `${type}: ${d.message}`);
+    this.report({ message: `ws: ${type} handler failed — ${d.message}`, stack: d.stack, component: "lib/ws.ts" });
+    this.recoverFrom(type);
+  }
+
+  /**
+   * 버린 · 실패한 메시지 뒤: resync 를 한 번 요청한다(서버는 항공기 · 선박 스냅샷을 모두 다시 보낸다). 항공기 · 선박 흐름의 메시지였으면 그 seq 를
+   * 버려(null) 다음 스냅샷까지 diff 를 적용하지 않는다 — 종류를 모르면(JSON 이 아님) 두 흐름 모두. 알림 · SIGMET · 레이더 · status 는 resync 로
+   * 다시 오지 않는다 — 다음 갱신(status 30 s · 알림 배치 · 새 SIGMET 버전 · 새 레이더 프레임)에 바로잡힌다. welcome 이 틀리면 구독하지 않고 연결을 다시 맺는다.
+   */
+  private recoverFrom(type: string) {
+    if (type === "welcome") {
+      const ws = this.ws;
+      if (ws) this.connectionDown(ws, null, true, CLOSE_BAD_WELCOME);
+      return;
+    }
+    const ships = SHIP_STREAM.has(type), unknown = type === "?";
+    if (AIRCRAFT_STREAM.has(type) || unknown) this.lastSeq = null;
+    if (ships || unknown) this.lastSseq = null;
+    const now = this.now();
+    const a = !ships && this.resyncGate.request(now);
+    const s = (ships || unknown) && this.shipsResyncGate.request(now);
+    if (a || s) this.sendControlled("resync", { type: "resync" });
+  }
+
+  private dispatch(m: ServerMsg, rawMsg: string, now: number) {
+    // 큰 메시지의 ts 는 시계 표본으로 쓰지 않는다 — 전송 시간(수 초)만큼 오프셋을 낮춘다(WS-3)
+    const clockSample = rawMsg.length <= CLOCK_SAMPLE_MAX_CHARS;
     switch (m.type) {
       case "welcome": {
         this.welcomed = true;
@@ -384,146 +455,117 @@ export class WakelineWsClient {
       }
       case "snapshot": {
         if (!this.layers.aircraft) break; // 끈 뒤 늦게 온 메시지
-        const aircraft = (Array.isArray(m.aircraft) ? m.aircraft : []) as AircraftState[];
+        this.lastSeq = null; // 적용이 끝나야 이 스냅샷의 seq 를 쓴다(R-93)
         aircraftStates.clear();
-        for (const a of aircraft) aircraftStates.set(a.hex, a);
-        this.worker.postMessage({ type: "snapshot", aircraft });
-        this.lastSeq = typeof m.seq === "number" ? m.seq : null;
+        for (const a of m.aircraft) aircraftStates.set(a.hex, a);
+        this.worker.postMessage({ type: "snapshot", aircraft: m.aircraft }); // 워커도 검증된 같은 목록(주 스레드와 갈라지지 않게)
         this.resyncGate.clear();
         this.markHealthy();
-        // 큰 스냅샷의 ts 는 시계 표본으로 쓰지 않는다 — 전송 시간(수 초)만큼 오프셋을 낮춘다(WS-3)
-        if (rawMsg.length <= CLOCK_SAMPLE_MAX_CHARS) this.observeClock(m.ts, now);
-        const src = isObj(m.sources) ? (m.sources as { region?: SourceInfo | null; global?: SourceInfo | null }) : null;
+        if (clockSample) this.observeClock(m.ts, now);
+        const src = m.sources;
         setData({
-          snapshotVersion: typeof m.v === "number" ? m.v : getData().snapshotVersion,
-          snapshotAt: typeof m.ts === "string" ? m.ts : null,
+          snapshotVersion: m.v ?? getData().snapshotVersion,
+          snapshotAt: m.ts,
           feeds: src ? { region: toFeed(src.region, now, true), global: toFeed(src.global, now) } : getData().feeds,
           aircraftCount: aircraftStates.size,
         });
+        this.lastSeq = m.seq;
         break;
       }
       case "diff": {
         if (!this.layers.aircraft) break;
         if (needsResync(this.lastSeq, m.seq)) { this.requestResync(); return; }
-        this.lastSeq = m.seq as number;
-        const upsert = (Array.isArray(m.upsert) ? m.upsert : []) as AircraftState[];
-        const remove = (Array.isArray(m.remove) ? m.remove : []) as string[];
-        applyDiff(aircraftStates, upsert, remove);
-        this.worker.postMessage({ type: "diff", upsert, remove });
-        if (rawMsg.length <= CLOCK_SAMPLE_MAX_CHARS) this.observeClock(m.ts, now);
+        applyDiff(aircraftStates, m.upsert, m.remove);
+        this.worker.postMessage({ type: "diff", upsert: m.upsert, remove: m.remove });
+        if (clockSample) this.observeClock(m.ts, now);
         setData({
-          snapshotVersion: typeof m.v === "number" ? m.v : getData().snapshotVersion,
-          snapshotAt: typeof m.ts === "string" ? m.ts : getData().snapshotAt,
+          snapshotVersion: m.v ?? getData().snapshotVersion,
+          snapshotAt: m.ts ?? getData().snapshotAt,
           aircraftCount: aircraftStates.size,
         });
+        this.lastSeq = m.seq; // R-93: 주 스레드 · 워커 · 스토어에 모두 적용한 뒤에만
         break;
       }
       case "sigmets":
-        setData({
-          sigmets: m.collection as SigmetCollection,
-          sigmetsVersion: typeof m.v === "number" ? m.v : 0,
-          sigmetsFetchedAt: typeof m.fetched_at === "string" ? m.fetched_at : null,
-          sigmetsProvider: typeof m.provider === "string" ? m.provider : "—",
-        });
+        setData({ sigmets: m.collection, sigmetsVersion: m.v ?? 0, sigmetsFetchedAt: m.fetched_at, sigmetsProvider: m.provider ?? "—" });
         break;
       case "radar":
-        setData({ radar: { host: m.host as string, generated: m.generated as number, past: (m.past ?? []) as RadarFrames["past"], fetched_at: m.fetched_at as string, provider: m.provider as string } });
+        setData({ radar: m.frames });
         break;
       case "alerts": {
         const d = getData();
-        const r = applyAlertsFull({ alerts: d.alerts, version: d.alertsVersion }, m.version, (Array.isArray(m.alerts) ? m.alerts : []) as Alert[]);
+        const r = applyAlertsFull({ alerts: d.alerts, version: d.alertsVersion }, m.version, m.alerts);
         if (r) setData({ alerts: r.alerts, alertsVersion: r.version });
         break;
       }
       case "alerts_batch": {
         const d = getData();
-        const r = applyAlertsBatch({ alerts: d.alerts, version: d.alertsVersion }, m.version, (Array.isArray(m.items) ? m.items : []) as { event: string; alert: Alert }[]);
+        const r = applyAlertsBatch({ alerts: d.alerts, version: d.alertsVersion }, m.version, m.items);
         if (r) setData({ alerts: r.alerts, alertsVersion: r.version, ...(r.last ? { lastEvent: { ...r.last, at: now } } : {}) });
         break;
       }
-      case "selected": {
-        const hex = typeof m.hex === "string" ? m.hex : null;
-        if (!hex || hex !== this.selected) break; // 이전 선택에 대한 늦은 응답
-        const p = isObj(m.prediction) ? m.prediction : null;
-        const reason = p && typeof p.reason === "string" && PREDICTION_REASONS.has(p.reason) ? (p.reason as PredictionReason) : null;
-        setData({
-          selected: {
-            hex,
-            state: isObj(m.state) ? (m.state as unknown as AircraftState) : null,
-            prediction: p ? { available: p.available === true, reason } : null,
-            route: parseRoute(m.route),
-            received_at: now,
-          },
-        });
+      case "selected":
+        if (m.hex !== this.selected) break; // 이전 선택에 대한 늦은 응답
+        setData({ selected: { hex: m.hex, state: m.state, prediction: m.prediction, route: m.route, received_at: now } });
         break;
-      }
       case "status": {
-        if (!isObj(m.status)) break;
-        const st = m.status as unknown as PublicStatus;
+        const st = m.status;
         this.observeClock(st.server_time, now);
-        setData({ status: st, feeds: { region: toFeed(st.region, now, true), global: toFeed(st.global, now) }, ais: parseAisStatus(m.status, now) });
+        setData({ status: st, feeds: { region: toFeed(st.region, now, true), global: toFeed(st.global, now) }, ais: parseAisStatus(st, now) });
         break;
       }
       case "demand":
-        setData({ demand: parseDemand(m, now) });
+        setData({ demand: { hot: m.hot, focus: m.focus, received_at: now } });
         break;
       case "ships_snapshot": {
         if (!this.layers.ships) break; // 끈 뒤 늦게 온 메시지
+        this.lastSseq = null; // 적용이 끝나야 이 스냅샷의 sseq 를 쓴다(R-93)
         shipStates.clear();
         let overflow = false;
-        for (const o of Array.isArray(m.ships) ? m.ships : []) {
+        for (const s of m.ships) {
           if (shipStates.size >= MAX_SHIPS) { overflow = true; break; }
-          const s = parseShipLite(o);
-          if (s) shipStates.set(s.mmsi, s);
+          shipStates.set(s.mmsi, s);
         }
         if (overflow) this.warnShipsOverflow();
-        this.lastSseq = typeof m.sseq === "number" ? m.sseq : null;
         this.shipsResyncGate.clear();
-        if (rawMsg.length <= CLOCK_SAMPLE_MAX_CHARS) this.observeClock(m.ts, now);
-        this.setShips({ mode: "points", count: shipStates.size, total: shipStates.size, ts: typeof m.ts === "string" ? m.ts : null, cell_deg: null, capped: m.capped === true, grid: [] });
+        if (clockSample) this.observeClock(m.ts, now);
+        this.setShips({ mode: "points", count: shipStates.size, total: shipStates.size, ts: m.ts, cell_deg: null, capped: false, grid: [] });
+        this.lastSseq = m.sseq;
         break;
       }
       case "ships_diff": {
         if (!this.layers.ships) break;
         if (needsResync(this.lastSseq, m.sseq)) { this.requestShipsResync(); return; }
-        this.lastSseq = m.sseq as number;
-        for (const k of parseMmsiList(m.remove)) shipStates.delete(k);
+        for (const k of m.remove) shipStates.delete(k);
         let overflow = false;
-        for (const o of Array.isArray(m.upsert) ? m.upsert : []) {
-          const s = parseShipLite(o);
-          if (!s) continue;
+        for (const s of m.upsert) {
           if (!shipStates.has(s.mmsi) && shipStates.size >= MAX_SHIPS) { overflow = true; continue; }
           shipStates.set(s.mmsi, s);
         }
-        if (overflow) { this.warnShipsOverflow(); this.requestShipsResync(); }
-        if (rawMsg.length <= CLOCK_SAMPLE_MAX_CHARS) this.observeClock(m.ts, now);
+        if (clockSample) this.observeClock(m.ts, now);
         const cur = getData().ships;
-        this.setShips({ ...cur, mode: "points", count: shipStates.size, total: shipStates.size, ts: typeof m.ts === "string" ? m.ts : cur.ts, grid: [] });
+        this.setShips({ ...cur, mode: "points", count: shipStates.size, total: shipStates.size, ts: m.ts ?? cur.ts, grid: [] });
+        this.lastSseq = m.sseq; // R-93: 적용이 끝난 뒤에만
+        if (overflow) { this.warnShipsOverflow(); this.requestShipsResync(); }
         break;
       }
       case "ships_grid": {
         if (!this.layers.ships) break;
-        const grid = parseGridCells(m.cells);
         // 개별 선박은 더 이상 갱신되지 않는다 — 지우고, 다음 개별 표시는 새 ships_snapshot 부터
         shipStates.clear();
         this.lastSseq = null;
-        if (rawMsg.length <= CLOCK_SAMPLE_MAX_CHARS) this.observeClock(m.ts, now);
-        const cellDeg = typeof m.cell_deg === "number" && Number.isFinite(m.cell_deg) && m.cell_deg > 0 ? m.cell_deg : null;
-        this.setShips({ mode: "grid", count: grid.length, total: grid.reduce((n, c) => n + c.count, 0), ts: typeof m.ts === "string" ? m.ts : null, cell_deg: cellDeg, capped: m.capped === true, grid });
+        if (clockSample) this.observeClock(m.ts, now);
+        this.setShips({ mode: "grid", count: m.cells.length, total: m.cells.reduce((n, c) => n + c.count, 0), ts: m.ts, cell_deg: m.cell_deg, capped: m.capped, grid: m.cells });
         break;
       }
-      case "ship_selected": {
-        const mmsi = isMmsi(m.mmsi) ? m.mmsi : null;
-        if (!mmsi || mmsi !== this.selectedShip) break; // 이전 선택에 대한 늦은 응답
-        let state = parseShipState(isObj(m.state) ? { mmsi, ...m.state } : null);
-        let stat = parseShipStatic(isObj(m.static) ? { mmsi, ...m.static } : null);
-        if (state && state.mmsi !== mmsi) state = null;
-        if (stat && stat.mmsi !== mmsi) stat = null;
-        setData({ shipSelected: { mmsi, state, static: stat, destination_info: parseDestinationInfo(m.destination_info), received_at: now } });
+      case "ship_selected":
+        if (m.mmsi !== this.selectedShip) break; // 이전 선택에 대한 늦은 응답
+        setData({ shipSelected: { mmsi: m.mmsi, state: m.state, static: m.static, destination_info: m.destination_info, received_at: now } });
         break;
-      }
       case "ping":
         this.raw({ type: "pong" });
+        break;
+      case "pong":
         break;
       case "error":
         console.warn("ws error", m.code, m.detail);

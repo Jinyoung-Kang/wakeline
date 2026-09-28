@@ -33,7 +33,7 @@ export function AlertPanel() {
   // 관심 지역 = 서버 설정의 중심·반경(설정값이 없으면 전체). 항공기 위치는 evidence.position([lat, lon]) 또는 없음 → 전세계 뷰에서만 표시
   const list = useMemo(() => {
     if (scope === "region" && status == null) return [];
-    const center = status?.region.center, radius = status?.region.radius_nm;
+    const center = status?.region?.center, radius = status?.region?.radius_nm;
     const inRegion = (a: (typeof all)[number]) => {
       if (!center || !radius) return true;
       const pos = (a.evidence as { position?: number[] }).position;
@@ -47,7 +47,7 @@ export function AlertPanel() {
   const observed = list.filter((a) => a.kind === "OBSERVED").length;
   // 목록을 받기 전·관심 지역을 모를 때 수는 모름("—") — 0 이라고 하지 않는다(R-09)
   const countsKnown = alertsVersion != null && !regionPending;
-  const regionText = "관심 지역(중심 " + (status?.region.center?.join(", ") ?? "—") + ", 반경 " + (status?.region.radius_nm ?? "—") + " NM)에서 ";
+  const regionText = "관심 지역(중심 " + (status?.region?.center?.join(", ") ?? "—") + ", 반경 " + (status?.region?.radius_nm ?? "—") + " NM)에서 ";
   return (
     <div className="flex h-full flex-col" data-testid="alert-panel">
       <div className="row">

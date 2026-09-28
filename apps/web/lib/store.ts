@@ -82,7 +82,17 @@ export interface ServerData {
    * 구독 bbox(viewport)는 낮은 줌에서 날짜변경선을 넘으면 위도 띠 전체라 "화면 안" 판정에 쓸 수 없다(R-08). null = 지도 없음·아직 모름
    */
   mapBounds: [number, number, number, number] | null;
+  /** WS 수신 검증(계약 v5 §E2) — 페이지를 연 뒤 누적(재접속해도 지우지 않는다). 상태 바가 0 이 아닐 때만 보인다 */
+  wsInvalid: WsInvalid;
 }
+
+/**
+ * elements = 버린 원소(형식이 틀린 항공기 · 선박 · 알림 · SIGMET · 격자 칸 · 선택 상태 등 — 메시지의 나머지는 적용했다),
+ * messages = 버린 메시지(봉투가 틀림 · JSON 이 아님 — resync 요청), errors = 처리 중 예외(resync 요청 · 브라우저 오류로 보고).
+ * last = 마지막 사유("type: 사유"), at = 그때의 브라우저 시각(ms).
+ */
+export interface WsInvalid { elements: number; messages: number; errors: number; last: string | null; at: number | null }
+export const WS_INVALID_NONE: WsInvalid = { elements: 0, messages: 0, errors: 0, last: null, at: null };
 
 export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] };
 
@@ -112,6 +122,7 @@ const initial: ServerData = {
   ais: null,
   viewport: null,
   mapBounds: null,
+  wsInvalid: WS_INVALID_NONE,
 };
 let data: ServerData = initial;
 

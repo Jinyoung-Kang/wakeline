@@ -104,13 +104,16 @@
     timer = setTimeout(function () { timer = null; tick(); schedule(); }, easing.size > 0 ? Math.min(tickMs, 250) : tickMs);
   }
   function kick() { dirty = true; if (running) { tick(); schedule(); } }
+  // 메인 스레드(lib/ws.ts)가 검증한 목록만 보낸다(계약 v5 §E2) — 여기서는 hex 가 없는 원소·배열이 아닌 값을 건너뛰기만 한다(방어)
+  function list(v) { return Array.isArray(v) ? v : []; }
+  function isState(a) { return a != null && typeof a === "object" && typeof a.hex === "string"; }
   self.onmessage = function (ev) {
     var m = ev.data;
-    if (m.type === "snapshot") { states.clear(); easing.clear(); m.aircraft.forEach(function (a) { states.set(a.hex, a); }); kick(); }
+    if (m.type === "snapshot") { states.clear(); easing.clear(); list(m.aircraft).forEach(function (a) { if (isState(a)) states.set(a.hex, a); }); kick(); }
     else if (m.type === "diff") {
       var at = Date.now();
-      m.upsert.forEach(function (a) { var prev = posted.get(a.hex); if (prev) easing.set(a.hex, { from: prev, at: at }); states.set(a.hex, a); });
-      m.remove.forEach(function (h) { states.delete(h); easing.delete(h); });
+      list(m.upsert).forEach(function (a) { if (!isState(a)) return; var prev = posted.get(a.hex); if (prev) easing.set(a.hex, { from: prev, at: at }); states.set(a.hex, a); });
+      list(m.remove).forEach(function (h) { if (typeof h !== "string") return; states.delete(h); easing.delete(h); });
       kick();
     }
     else if (m.type === "clear") { states.clear(); easing.clear(); posted = new Map(); kick(); }
