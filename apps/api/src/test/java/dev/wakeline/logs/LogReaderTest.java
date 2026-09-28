@@ -15,8 +15,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 계약 v5 §C4(api 조회): 최신 순 · 필터(서비스 여러 개 · 수준 · 글자 · fp · 요청 id · 기간) · cursor(마지막 항목 스트림 id) · limit,
- * 한 요청이 훑는 항목 3,000 이하(넘으면 scan_truncated), 읽을 때 스키마 검증(맞지 않으면 건너뛰고 invalid 로 센다)과 한 번 더 가림,
+ * 한 요청이 훑는 항목 상한(넘으면 scan_truncated), 읽을 때 스키마 검증(맞지 않으면 건너뛰고 invalid 로 센다)과 한 번 더 가림,
  * fp 묶음(count · suppressed 합 · 처음/마지막 · 표본), 항목 하나.
+ * §G2: 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 id 순으로 합쳐 최신 순 — 항목마다 stream, cursor 는 두 스트림을 함께 이어 가고
+ * (같은 id 는 server 가 앞), 훑기 상한은 두 스트림 MAXLEN 의 합(4,000), 묶음도 두 스트림, 항목 하나는 server → client 순으로 찾는다.
  */
 class LogReaderTest {
     static final Instant T0 = Instant.parse("2026-09-29T00:00:00Z");
@@ -53,7 +55,9 @@ class LogReaderTest {
     }
 
     final MemStream stream = new MemStream();
-    final LogReader reader = new LogReader(stream);
+    /** 브라우저 오류 스트림(§G2). */
+    final MemStream client = new MemStream();
+    final LogReader reader = new LogReader(stream, client);
 
     static String event(Instant ts, String service, String level, String logger, String message, String fp, String rid, String stack, int suppressed) {
         var ex = stack == null ? null : new LogEvents.Ex("java.io.IOException", "io", stack);
@@ -73,13 +77,22 @@ class LogReaderTest {
 
     static List<String> ids(LogReader.Page p) { return p.items().stream().map(n -> n.path("id").asString()).toList(); }
 
+    /** "stream:id" — 두 스트림을 합친 목록의 항목 식별. */
+    static List<String> keys(LogReader.Page p) { return p.items().stream().map(n -> n.path("stream").asString() + ":" + n.path("id").asString()).toList(); }
+
+    /** 브라우저 오류 스트림에 i 번째(1부터) 항목: ms = T0 + i s. */
+    String addClient(int i, String message) {
+        Instant ts = T0.plusSeconds(i);
+        return client.add(ts.toEpochMilli(), 0, event(ts, "web-client", "ERROR", "browser", message, FP_B, null, null, 0));
+    }
+
     @Test
     void newestFirstWithCursorPaging() {
         List<String> ids = new ArrayList<>();
         for (int i = 1; i <= 5; i++) ids.add(addEvent(i, "api", "WARN", "m" + i, FP_A));
         LogReader.Page p1 = reader.list(all(), null, 2);
         assertThat(ids(p1)).containsExactly(ids.get(4), ids.get(3));
-        assertThat(p1.nextCursor()).isEqualTo(ids.get(3));
+        assertThat(p1.nextCursor()).isEqualTo("server:" + ids.get(3));
         assertThat(p1.scanTruncated()).isFalse();
         JsonNode first = p1.items().getFirst();
         assertThat(first.path("message").asString()).isEqualTo("m5");
@@ -91,7 +104,9 @@ class LogReaderTest {
         assertThat(ids(p3)).containsExactly(ids.get(0));
         assertThat(p3.nextCursor()).as("no more entries").isNull();
         // 마지막 항목에서 정확히 끝나면 다음 쪽이 없다(빈 쪽을 한 번 더 부르게 하지 않는다)
-        assertThat(reader.list(all(), ids.get(2), 2).nextCursor()).isNull();
+        assertThat(reader.list(all(), "server:" + ids.get(2), 2).nextCursor()).isNull();
+        // §G2 전의 커서(스트림 id 만)는 서버 스트림의 것 — 그대로 이어 읽는다
+        assertThat(ids(reader.list(all(), ids.get(3), 2))).containsExactly(ids.get(2), ids.get(1));
     }
 
     @Test
@@ -177,18 +192,111 @@ class LogReaderTest {
     }
 
     @Test
-    void oneRequestScansAtMost3000Entries() {
-        for (int i = 1; i <= 3_500; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "WARN", "L", "m", FP_A, null, null, 0));
+    void oneRequestScansAtMostTheSumOfBothStreamCaps() {
+        assertThat(LogReader.SCAN_MAX).as("wakeline:logs ~3000 + wakeline:logs:client ~1000").isEqualTo(4_000);
+        for (int i = 1; i <= 4_500; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "WARN", "L", "m", FP_A, null, null, 0));
         var f = new LogReader.Filter(Set.of("ais"), Set.of(), null, null, null, null, null); // 아무것도 맞지 않는다
         LogReader.Page p = reader.list(f, null, 100);
         assertThat(p.items()).isEmpty();
-        assertThat(p.scanned()).isEqualTo(3_000);
+        assertThat(p.scanned()).isEqualTo(4_000);
         assertThat(p.scanTruncated()).isTrue();
-        assertThat(p.nextCursor()).as("continue where the scan stopped").isEqualTo((T0.toEpochMilli() + 501) + "-0");
+        assertThat(p.nextCursor()).as("continue where the scan stopped").isEqualTo("server:" + (T0.toEpochMilli() + 501) + "-0");
         LogReader.Page rest = reader.list(f, p.nextCursor(), 100);
         assertThat(rest.scanned()).isEqualTo(500);
         assertThat(rest.scanTruncated()).isFalse();
         assertThat(rest.nextCursor()).isNull();
+    }
+
+    /** §G2: 두 스트림을 id 순으로 합쳐 최신 순 — 항목마다 stream(server | client). */
+    @Test
+    void mergesBothStreamsNewestFirstAndTagsEachEntryWithItsStream() {
+        String s1 = addEvent(1, "api", "WARN", "s1", FP_A);
+        String c2 = addClient(2, "c2");
+        String s3 = addEvent(3, "collector", "ERROR", "s3", FP_A);
+        String c4 = addClient(4, "c4");
+        String s5 = addEvent(5, "ais", "ERROR", "s5", FP_A);
+        LogReader.Page p = reader.list(all(), null, 100);
+        assertThat(keys(p)).containsExactly("server:" + s5, "client:" + c4, "server:" + s3, "client:" + c2, "server:" + s1);
+        assertThat(p.items().get(1).path("message").asString()).isEqualTo("c4");
+        assertThat(p.items().get(1).path("untrusted").asBoolean()).isTrue();
+        assertThat(p.scanned()).isEqualTo(5);
+        assertThat(p.nextCursor()).isNull();
+        // 필터는 두 스트림에 똑같이
+        assertThat(keys(reader.list(new LogReader.Filter(Set.of("web-client"), Set.of(), null, null, null, null, null), null, 100)))
+                .containsExactly("client:" + c4, "client:" + c2);
+        assertThat(keys(reader.list(new LogReader.Filter(Set.of(), Set.of(), null, null, null, T0.plusSeconds(3), T0.plusSeconds(4)), null, 100)))
+                .containsExactly("client:" + c4, "server:" + s3);
+        // 브라우저 오류가 없으면 서버 로그만(스트림이 없어도 된다)
+        assertThat(new LogReader(stream, new MemStream()).list(all(), null, 100).items()).hasSize(3);
+    }
+
+    /** §G2: cursor 는 두 스트림을 함께 이어 간다 — 쪽을 어디서 끊어도 빠지거나 겹치는 항목이 없다. */
+    @Test
+    void cursorContinuesAcrossBothStreamsWithoutGapsOrRepeats() {
+        List<String> all = new ArrayList<>();
+        for (int i = 1; i <= 11; i++) all.add(i % 3 == 0 ? "client:" + addClient(i, "c" + i) : "server:" + addEvent(i, "api", "WARN", "s" + i, FP_A));
+        List<String> newestFirst = new ArrayList<>(all.reversed());
+        for (int limit = 1; limit <= 4; limit++) {
+            List<String> got = new ArrayList<>();
+            String cursor = null;
+            int pages = 0;
+            do {
+                LogReader.Page p = reader.list(all(), cursor, limit);
+                got.addAll(keys(p));
+                cursor = p.nextCursor();
+                if (cursor != null) assertThat(cursor).as("cursor names the stream of the last entry").isEqualTo(keys(p).getLast());
+                assertThat(++pages).isLessThanOrEqualTo(11);
+            } while (cursor != null);
+            assertThat(got).as("limit " + limit).containsExactlyElementsOf(newestFirst);
+        }
+    }
+
+    /**
+     * §G2: 두 스트림은 id 를 따로 매기므로 같은 id 가 둘 다에 있을 수 있다(같은 밀리초 · 같은 순번). 같은 id 는 server 가 앞 —
+     * 쪽이 그 둘 사이에서 끊겨도(server 다음) 다음 쪽이 client 쪽을 빠뜨리지 않고, client 다음이면 server 쪽을 다시 싣지 않는다.
+     */
+    @Test
+    void theSameIdInBothStreamsIsServerFirstAndTheCursorSplitsThePairExactly() {
+        Instant t = T0.plusSeconds(10);
+        stream.add(t.toEpochMilli(), 0, event(t, "api", "ERROR", "L", "server twin", FP_A, null, null, 0));
+        client.add(t.toEpochMilli(), 0, event(t, "web-client", "ERROR", "browser", "client twin", FP_B, null, null, 0));
+        String older = addEvent(1, "api", "WARN", "older", FP_A);
+        String id = t.toEpochMilli() + "-0";
+        LogReader.Page p1 = reader.list(all(), null, 1);
+        assertThat(keys(p1)).containsExactly("server:" + id);
+        assertThat(p1.nextCursor()).isEqualTo("server:" + id);
+        LogReader.Page p2 = reader.list(all(), p1.nextCursor(), 1);
+        assertThat(keys(p2)).containsExactly("client:" + id);
+        assertThat(p2.nextCursor()).isEqualTo("client:" + id);
+        LogReader.Page p3 = reader.list(all(), p2.nextCursor(), 1);
+        assertThat(keys(p3)).containsExactly("server:" + older);
+        assertThat(p3.nextCursor()).isNull();
+        // 스트림 id 만 있는 옛 커서는 server 의 것 — client 쪽 쌍둥이부터
+        assertThat(keys(reader.list(all(), id, 10))).containsExactly("client:" + id, "server:" + older);
+        assertThat(LogReader.parseCursor("client:" + id)).isEqualTo(new LogReader.Cursor(LogStream.CLIENT, id));
+        assertThat(LogReader.parseCursor(id)).isEqualTo(new LogReader.Cursor(LogStream.SERVER, id));
+        for (String bad : new String[]{"edge:" + id, "client:", "client:x-1", ":" + id, "18446744073709551616-0", null})
+            assertThat(LogReader.parseCursor(bad)).as(String.valueOf(bad)).isNull();
+    }
+
+    /**
+     * §G2 의 목적: 누구나 보낼 수 있는 브라우저 오류가 가득(1,000건 — 모두 가장 최근)이어도 한 번 훑기가 서버 로그 3,000건을 모두 본다 —
+     * 훑기 상한이 두 스트림 MAXLEN 의 합이라 익명 입력이 서버 로그의 몫을 쓰지 못한다.
+     */
+    @Test
+    void aFullClientStreamDoesNotCrowdServerEntriesOutOfOneScan() {
+        for (int i = 1; i <= 3_000; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "ERROR", "L", "server " + i + ".", FP_A, null, null, 0));
+        for (int i = 1; i <= 1_000; i++) client.add(T0.toEpochMilli() + 10_000 + i, 0, event(T0, "web-client", "ERROR", "browser", "flood " + i, FP_B, null, null, 0));
+        LogReader.Groups g = reader.groups(new LogReader.Filter(Set.of("api"), Set.of(), null, null, null, null, null));
+        assertThat(g.scanned()).isEqualTo(4_000);
+        assertThat(g.scanTruncated()).isFalse();
+        assertThat(g.groups()).singleElement().extracting(LogReader.Group::count).isEqualTo(3_000L);
+        // 가장 오래된 서버 항목까지 한 번에 찾는다(고치기 전: 3,000건 상한 안에서 브라우저 오류 1,000건이 먼저 훑여 서버 로그 2,000건만 보였다)
+        LogReader.Page p = reader.list(new LogReader.Filter(Set.of("api"), Set.of(), "server 1.", null, null, null, null), null, 200);
+        assertThat(p.items()).extracting(n -> n.path("message").asString()).containsExactly("server 1.");
+        assertThat(p.scanned()).isEqualTo(4_000);
+        assertThat(p.scanTruncated()).isFalse();
+        assertThat(p.nextCursor()).isNull();
     }
 
     @Test
@@ -229,12 +337,34 @@ class LogReaderTest {
     }
 
     @Test
-    void groupsScanAtMost3000() {
+    void groupsScanAtMostTheSumOfBothStreamCaps() {
         for (int i = 1; i <= 3_100; i++) stream.add(T0.toEpochMilli() + i, 0, event(T0, "api", "WARN", "L", "m", FP_A, null, null, 0));
+        for (int i = 1; i <= 1_000; i++) client.add(T0.toEpochMilli() + 5_000 + i, 0, event(T0, "web-client", "ERROR", "browser", "c", FP_B, null, null, 0));
         LogReader.Groups g = reader.groups(all());
-        assertThat(g.scanned()).isEqualTo(3_000);
+        assertThat(g.scanned()).isEqualTo(4_000);
         assertThat(g.scanTruncated()).isTrue();
-        assertThat(g.groups().getFirst().count()).isEqualTo(3_000);
+        assertThat(g.groups()).extracting(LogReader.Group::count).containsExactly(1_000L, 3_000L);
+    }
+
+    /** §G2: 묶음은 두 스트림을 함께 — last_stream 이 last_id 가 어느 스트림의 id 인지 말한다. */
+    @Test
+    void groupsCoverBothStreams() {
+        addEvent(1, "api", "ERROR", "timeout 1", FP_A);
+        addClient(2, "TypeError: x");
+        String lastServer = addEvent(3, "api", "ERROR", "timeout 3", FP_A);
+        String lastClient = addClient(4, "TypeError: y");
+        LogReader.Groups g = reader.groups(all());
+        assertThat(g.scanned()).isEqualTo(4);
+        assertThat(g.groups()).extracting(LogReader.Group::service).containsExactly("web-client", "api");
+        LogReader.Group web = g.groups().getFirst();
+        assertThat(web.count()).isEqualTo(2);
+        assertThat(web.lastId()).isEqualTo(lastClient);
+        assertThat(web.lastStream()).isEqualTo("client");
+        assertThat(web.firstAt()).isEqualTo("2026-09-29T00:00:02.000Z");
+        LogReader.Group api = g.groups().get(1);
+        assertThat(api.count()).isEqualTo(2);
+        assertThat(api.lastId()).isEqualTo(lastServer);
+        assertThat(api.lastStream()).isEqualTo("server");
     }
 
     /**
@@ -252,19 +382,20 @@ class LogReaderTest {
             Instant ts = T0.plusMillis(i);
             var d = new LogEvents.Draft(ts, "web-client", "h:1", "ERROR", "browser", null, messages[i % 4], new LogEvents.Ex("", null, stacks[(i / 4) % 4]),
                     null, Map.of("path", "/" + "p".repeat(150), "user_agent", "U".repeat(200)), true);
-            stream.add(ts.toEpochMilli(), 0, LogEvents.serialize(d, FP_A, 0));
+            // 브라우저 오류 스트림은 가득(1,000), 나머지는 서버 스트림(§G2 전에 실린 web-client 항목 · 서비스를 속인 항목)
+            (i % 4 == 0 ? client : stream).add(ts.toEpochMilli(), 0, LogEvents.serialize(d, FP_A, 0));
         }
         long t0 = System.nanoTime();
         LogReader.Groups g = reader.groups(all());
         LogReader.Page p = reader.list(new LogReader.Filter(Set.of(), Set.of(), "no such text", null, null, null, null), null, 100);
         long ms = (System.nanoTime() - t0) / 1_000_000;
-        assertThat(g.scanned()).isEqualTo(3_000);
+        assertThat(g.scanned()).isEqualTo(LogReader.SCAN_MAX);
         assertThat(g.invalid()).isZero();
-        assertThat(g.groups()).singleElement().extracting(LogReader.Group::count).isEqualTo(3_000L);
-        assertThat(p.scanned()).isEqualTo(3_000);
+        assertThat(g.groups()).singleElement().extracting(LogReader.Group::count).isEqualTo((long) LogReader.SCAN_MAX);
+        assertThat(p.scanned()).isEqualTo(LogReader.SCAN_MAX);
         assertThat(p.items()).isEmpty();
-        // 선형이면 두 번 훑기(6,000건 · 검증 포함)가 1–2 s 다. 부하가 큰 기계에서도 흔들리지 않게 넉넉히 — 고치기 전에는 몇 분
-        assertThat(ms).as("groups + list over 3,000 adversarial entries took %d ms", ms).isLessThan(20_000);
+        // 선형이면 두 번 훑기(8,000건 · 검증 포함)가 몇 초다. 부하가 큰 기계에서도 흔들리지 않게 넉넉히 — 고치기 전에는 몇 분
+        assertThat(ms).as("groups + list over %d adversarial entries took %d ms", LogReader.SCAN_MAX, ms).isLessThan(20_000);
     }
 
     @Test
@@ -273,8 +404,29 @@ class LogReaderTest {
         String bad = stream.add(T0.plusSeconds(2).toEpochMilli(), 0, "{}");
         JsonNode n = reader.get(id);
         assertThat(n.path("id").asString()).isEqualTo(id);
+        assertThat(n.path("stream").asString()).isEqualTo("server");
         assertThat(n.path("message").asString()).isEqualTo("boom");
         assertThat(reader.get("1-0")).as("trimmed").isNull();
         assertThat(reader.get(bad)).as("schema-invalid").isNull();
+    }
+
+    /** §G2: 항목 하나는 server → client 순으로 찾는다. 스트림을 지정하면 그 스트림에서만(같은 id 가 둘 다에 있을 때 client 쪽을 여는 길). */
+    @Test
+    void oneEntryById_serverFirstThenClient() {
+        String onlyClient = addClient(3, "only in the browser stream");
+        JsonNode c = reader.get(onlyClient);
+        assertThat(c.path("stream").asString()).isEqualTo("client");
+        assertThat(c.path("message").asString()).isEqualTo("only in the browser stream");
+        assertThat(reader.get(onlyClient, LogStream.SERVER)).isNull();
+        Instant t = T0.plusSeconds(9);
+        String twin = stream.add(t.toEpochMilli(), 0, event(t, "api", "ERROR", "L", "server twin", FP_A, null, null, 0));
+        client.add(t.toEpochMilli(), 0, event(t, "web-client", "ERROR", "browser", "client twin", FP_B, null, null, 0));
+        assertThat(reader.get(twin).path("message").asString()).isEqualTo("server twin");
+        assertThat(reader.get(twin, LogStream.CLIENT).path("message").asString()).isEqualTo("client twin");
+        assertThat(reader.get(twin, LogStream.CLIENT).path("stream").asString()).isEqualTo("client");
+        // 서버 쪽이 스키마에 맞지 않으면 client 쪽을 본다(없는 것과 같다)
+        String badServer = stream.add(T0.plusSeconds(20).toEpochMilli(), 0, "{}");
+        client.add(T0.plusSeconds(20).toEpochMilli(), 0, event(T0.plusSeconds(20), "web-client", "ERROR", "browser", "valid twin", FP_B, null, null, 0));
+        assertThat(reader.get(badServer).path("stream").asString()).isEqualTo("client");
     }
 }
