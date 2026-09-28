@@ -76,14 +76,15 @@ public class OpsController {
     @GetMapping("/providers")
     public Map<String, Object> providers() {
         List<Map<String, Object>> list = status.providerStatuses();
-        List<Map<String, Object>> switches = new java.util.ArrayList<>();
+        List<Map<String, Object>> switchEvents = new java.util.ArrayList<>(); // collector 의 자동 전환(wakeline:events)
         try {
             List<MapRecord<String, Object, Object>> recs = redis.opsForStream().reverseRange("wakeline:events", Range.unbounded(), Limit.limit().count(20));
-            if (recs != null) for (var r : recs) switches.add(new LinkedHashMap<>(castMap(r.getValue())));
+            if (recs != null) for (var r : recs) switchEvents.add(new LinkedHashMap<>(castMap(r.getValue())));
         } catch (RuntimeException ignored) { }
         var budgets = db.sql("SELECT provider, to_char(day, 'YYYY-MM-DD') AS day, calls, limit_value FROM provider_budget_day WHERE day >= CURRENT_DATE - 7 ORDER BY 2 DESC, provider").query().listOfRows();
+        // provider_switch: 켜고 끄기의 원본(DB)과 collector 가 따르는 Redis 미러를 공급자마다 나란히(R-94) — providers 의 disabled 는 미러 값이다
         return Map.of("providers", list, "active", status.publicStatus().get("active_providers"), "collector", status.collectorHeartbeat(),
-                "switches", switches, "budget_days", budgets);
+                "switches", switchEvents, "budget_days", budgets, "provider_switch", switches.states());
     }
 
     /**

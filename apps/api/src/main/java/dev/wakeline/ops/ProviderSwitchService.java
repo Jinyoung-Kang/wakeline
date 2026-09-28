@@ -120,6 +120,51 @@ public class ProviderSwitchService {
         return corrected;
     }
 
+    /**
+     * 운영 목록(/ops/providers 의 provider_switch)용 — 공급자({@link StatusService#PROVIDERS} 순서)마다 원본(DB)과 collector 가 따르는 Redis 미러를 나란히:
+     * {provider, disabled, version, updated_at, updated_by(운영자 이름 — 이관 행은 null), redis_disabled(원문 ≤ 32자, 필드 없음 = null), redis_error, mirror_differs}.
+     * mirror_differs 는 collector 가 따르는 값("1" 이면 꺼짐, 그 밖·없음은 켜짐)이 원본과 다른가다. 행이 없거나(이관 전 — disabled 등도 null)
+     * Redis 를 읽지 못하면(redis_error) null — 모르는 것을 같다고도 다르다고도 하지 않는다. 읽기만 한다(미러는 {@link #sync}).
+     */
+    public List<Map<String, Object>> states() {
+        Map<String, Map<String, Object>> rows = new java.util.HashMap<>();
+        for (var r : db.sql("""
+                SELECT s.provider, s.disabled, s.version, s.updated_at, u.username
+                FROM provider_switch s LEFT JOIN ops_user u ON u.id = s.updated_by""").query((rs, n) -> {
+                    Map<String, Object> m = row(rs, n);
+                    m.put("updated_by", rs.getString("username"));
+                    return m;
+                }).list()) rows.put(String.valueOf(r.get("provider")), r);
+        Map<String, Object> mirrored = new java.util.HashMap<>();
+        String redisError = null;
+        try {
+            for (String p : StatusService.PROVIDERS) {
+                Object v = redis.opsForHash().get(key(p), FIELD);
+                if (v != null) mirrored.put(p, v);
+            }
+        } catch (RuntimeException e) {
+            redisError = "redis unavailable"; // StatusService.safeHash 와 같은 문구
+            mirrored.clear();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String p : StatusService.PROVIDERS) {
+            Map<String, Object> r = rows.get(p);
+            Boolean disabled = r == null ? null : (Boolean) r.get("disabled");
+            Object raw = mirrored.get(p);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("provider", p);
+            m.put("disabled", disabled);
+            m.put("version", r == null ? null : r.get("version"));
+            m.put("updated_at", r == null ? null : r.get("updated_at"));
+            m.put("updated_by", r == null ? null : r.get("updated_by"));
+            m.put("redis_disabled", raw == null ? null : truncate(String.valueOf(raw)));
+            m.put("redis_error", redisError);
+            m.put("mirror_differs", disabled == null || redisError != null ? null : "1".equals(raw) != disabled);
+            out.add(m);
+        }
+        return out;
+    }
+
     /** 행이 없는 공급자마다 지금 Redis 값을 한 행으로 옮겨 담는다(시스템 감사 행과 한 트랜잭션). 이미 행이 있으면(토글이 먼저 만든 경우 포함) 건드리지 않는다. */
     private List<String> importMissing() {
         Set<String> have = new HashSet<>(db.sql("SELECT provider FROM provider_switch").query(String.class).list());

@@ -388,6 +388,43 @@ class OpsDbTest {
         assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
     }
 
+    /**
+     * 운영 목록(/ops/providers 의 provider_switch): 공급자마다 원본(DB)과 collector 가 따르는 Redis 미러를 나란히 보인다 — 운영자가 Redis 장애 중에
+     * 끈 공급자를 collector 가 아직 부르고 있는지 화면에서 안다. mirror_differs 는 collector 가 따르는 값("1" 이면 꺼짐, 그 밖·없음은 켜짐)이
+     * 원본과 다른가. 행이 없거나(이관 전) Redis 를 읽지 못하면 null(모름) — 같다고도 다르다고도 하지 않는다.
+     */
+    @Test
+    void theProviderListShowsTheDatabaseSwitchNextToTheRedisMirror() {
+        alice();
+        var s = switches(redis);
+        assertThat(s.states()).extracting(m -> m.get("provider")).containsExactlyElementsOf(dev.wakeline.rest.StatusService.PROVIDERS);
+        assertThat(s.states()).allSatisfy(m -> assertThat(m).containsEntry("disabled", null).containsEntry("version", null)
+                .containsEntry("mirror_differs", null).containsEntry("redis_error", null));
+
+        ops(redis, audit).toggleProvider("adsbdb", "disable", request(), ALICE);
+        assertThat(state(s, "adsbdb")).containsEntry("disabled", true).containsEntry("version", 1).containsEntry("updated_by", "alice")
+                .containsEntry("redis_disabled", "1").containsEntry("mirror_differs", false).containsKey("updated_at");
+        assertThat(state(s, "adsbdb").get("updated_at")).isInstanceOf(java.time.Instant.class);
+
+        // collector 계정이 뒤집었다 → 다음 주기 미러까지 collector 는 켜진 것으로 따른다
+        redis.opsForHash().put(ProviderSwitchService.key("adsbdb"), "disabled", "0");
+        assertThat(state(s, "adsbdb")).containsEntry("redis_disabled", "0").containsEntry("mirror_differs", true);
+        // Redis 장애 중 토글: 원본은 바뀌었고, 미러는 모른다(null)
+        assertThat(ops(deadRedis, audit).toggleProvider("opensky", "disable", request(), ALICE)).containsEntry("mirrored", false);
+        assertThat(state(switches(deadRedis), "opensky")).containsEntry("disabled", true).containsEntry("version", 1)
+                .containsEntry("redis_disabled", null).containsEntry("redis_error", "redis unavailable").containsEntry("mirror_differs", null);
+        assertThat(state(s, "opensky")).as("redis back, not yet mirrored").containsEntry("redis_disabled", null).containsEntry("mirror_differs", true);
+
+        s.sync(); // 이관(행이 없던 공급자 — 시스템, updated_by 없음) + 미러
+        assertThat(s.states()).allSatisfy(m -> assertThat(m.get("mirror_differs")).as(String.valueOf(m.get("provider"))).isEqualTo(false));
+        assertThat(state(s, "awc")).containsEntry("disabled", false).containsEntry("updated_by", null).containsEntry("redis_disabled", null);
+        assertThat(state(s, "opensky")).containsEntry("redis_disabled", "1");
+    }
+
+    static Map<String, Object> state(ProviderSwitchService s, String provider) {
+        return s.states().stream().filter(m -> provider.equals(m.get("provider"))).findFirst().orElseThrow();
+    }
+
     /** 이관 전에 운영자가 토글하면 그 결정이 원본이다 — 뒤이은 이관은 그 행을 건드리지 않는다. */
     @Test
     void anOperatorToggleBeforeTheImportWins() {

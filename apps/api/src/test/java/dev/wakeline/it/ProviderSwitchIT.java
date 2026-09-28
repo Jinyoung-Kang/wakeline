@@ -5,8 +5,11 @@ import dev.wakeline.ops.StartupMirror;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
+import tools.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,5 +58,50 @@ class ProviderSwitchIT extends IntegrationTest {
             b.post("/api/v1/ops/providers/" + PROVIDER + "/enable");
             restore(before);
         }
+    }
+
+    /**
+     * 운영 목록 GET /ops/providers 의 provider_switch: 모든 공급자의 원본(DB)과 collector 가 따르는 Redis 미러, 그리고 둘이 다른가(mirror_differs).
+     * 토글 응답은 원본 행(version · updated_at)과 미러 여부(mirrored)를 돌려준다 — 화면은 이 둘로 "DB 반영 · 수집기 미반영"을 알린다.
+     */
+    @Test
+    void theProviderListCarriesTheDatabaseSwitchAndWhetherRedisMirrorsIt() {
+        OpsBrowser b = OpsBrowser.login(this, users, "it-switch-view", PW);
+        Map<Object, Object> before = new LinkedHashMap<>(ItStack.admin().opsForHash().entries(KEY));
+        try {
+            JsonNode all = b.get("/api/v1/ops/providers").json().path("provider_switch");
+            List<String> names = new ArrayList<>();
+            for (JsonNode s : all) names.add(s.path("provider").asString());
+            assertThat(names).containsExactlyElementsOf(dev.wakeline.rest.StatusService.PROVIDERS);
+            // null 인 필드는 응답에서 빠진다(앱 JSON 규칙 NON_NULL) — 기동 때 이관된 행은 운영자가 없다(updated_by 없음)
+            for (JsonNode s : all) assertThat(s.path("updated_by").isMissingNode() || s.path("updated_by").isString()).isTrue();
+
+            JsonNode off = b.post("/api/v1/ops/providers/" + PROVIDER + "/disable").json();
+            assertThat(off.path("mirrored").asBoolean()).isTrue();
+            JsonNode s = view(b);
+            assertThat(s.path("disabled").asBoolean()).isTrue();
+            assertThat(s.path("version").asInt()).isEqualTo(off.path("version").asInt());
+            assertThat(s.path("updated_by").asString()).isEqualTo("it-switch-view");
+            assertThat(s.path("redis_disabled").asString()).isEqualTo("1");
+            assertThat(s.path("mirror_differs").asBoolean()).isFalse();
+
+            // 수집기 계정이 뒤집으면 다음 주기 미러 전까지 '다름' — 주기 미러 뒤 다시 같다
+            ItStack.hset(ItStack.collector(), KEY, Map.of("disabled", "0"));
+            JsonNode flipped = view(b);
+            if (!"1".equals(String.valueOf(flag()))) { // 그 사이 60 s 주기 미러가 돌지 않았다면(대개)
+                assertThat(flipped.path("redis_disabled").asString()).isEqualTo("0");
+                assertThat(flipped.path("mirror_differs").asBoolean()).isTrue();
+            }
+            mirror.periodicMirror();
+            assertThat(view(b).path("mirror_differs").asBoolean()).isFalse();
+        } finally {
+            b.post("/api/v1/ops/providers/" + PROVIDER + "/enable");
+            restore(before);
+        }
+    }
+
+    JsonNode view(OpsBrowser b) {
+        for (JsonNode s : b.get("/api/v1/ops/providers").json().path("provider_switch")) if (PROVIDER.equals(s.path("provider").asString())) return s;
+        throw new AssertionError(PROVIDER + " missing from provider_switch");
     }
 }
