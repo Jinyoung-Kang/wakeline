@@ -34,11 +34,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 
 /**
- * 선박 WS 팬아웃(계약 v2 §B3). 선박은 레이어를 켠 세션({type:"layers", ships:true})에만 보낸다.
+ * 선박 WS 팬아웃(계약 v2 §B3 · 계약 v4 §C). 선박은 레이어를 켠 세션({type:"layers", ships:true})에만 보낸다.
  * <ul>
- *   <li>줌 ≥ 7: ships_snapshot(sseq 1) → ships_diff(바뀐 것만, sseq +1 — 항공기 seq 와 같은 규칙: 빈 diff 는 보내지 않아 틈이 없다).
- *       60 s 마다·구독·resync·resume·백프레셔 때 스냅샷. 뷰포트 안 선박이 5,000 척을 넘으면 0.5° 격자(capped:true)를 대신 보낸다.</li>
- *   <li>줌 &lt; 7: ships_grid(칸 크기 5° z&lt;3 · 2° z&lt;5 · 0.5° z&lt;7). 격자는 ShipStore 버전마다 한 번(O(선박 수)) 만들어 모든 세션이 같이 쓰고,
+ *   <li>개별 선박(points): 줌 ≥ 7 이고 뷰포트 안 ≤ 5,000 척, 또는 4 ≤ 줌 &lt; 7 이고 ≤ 1,500 척. ships_snapshot(sseq 1) → ships_diff(바뀐 것만,
+ *       sseq +1 — 항공기 seq 와 같은 규칙: 빈 diff 는 보내지 않아 틈이 없다). 60 s 마다·구독·resync·resume·백프레셔 때 스냅샷.</li>
+ *   <li>선박 수 때문에 격자로 바꾸면 capped:true(줌 ≥ 7 은 5,000 척 초과 → 0.5°, 줌 4~6 은 1,500 척 초과 → 그 줌의 칸 크기). 줌 4~6 에서 수 때문에
+ *       격자가 된 세션은 1,200 척 이하가 되어야 개별로 돌아온다(1,200~1,500 척 사이에서 되풀이 전환하지 않게).</li>
+ *   <li>줌 &lt; 4: 선박 수와 무관하게 ships_grid. 칸 크기는 줌으로(5° z&lt;3 · 2° z&lt;5 · 0.5° z&lt;7 — 줌 4~6 은 수 때문에 격자일 때만).
+ *       격자는 ShipStore 버전마다 한 번(O(선박 수)) 만들어 모든 세션이 같이 쓰고,
  *       세션은 자기 bbox 와 겹치는 칸만 고른다. 같은 버전·bbox 의 격자는 다시 보내지 않는다.</li>
  *   <li>select_ship → ship_selected(즉시, 그리고 그 선박이 바뀌거나 목록에서 빠질 때마다). state 는 실시간 목록에 있을 때만, static 은 알고 있으면.
  *       destination_info 는 static 의 보고 목적지를 결정적으로 푼 것(계약 v4 §B — 항구 표는 JVM 에서 한 번 읽는다).</li>
@@ -51,9 +54,15 @@ import java.util.function.LongSupplier;
 public class ShipFanout implements SmartLifecycle {
     public static final int POINTS_MIN_ZOOM = 7;
     public static final int MAX_SHIPS_PER_MESSAGE = 5_000;
+    /** 계약 v4 §C: 줌 4~6 에서도 뷰포트 안 선박이 적으면 개별로 보낸다. */
+    public static final int BAND_MIN_ZOOM = 4;
+    /** 줌 4~6 의 개별 표시 상한(넘으면 격자). */
+    public static final int BAND_MAX_SHIPS = 1_500;
+    /** 줌 4~6 에서 수 때문에 격자가 된 세션이 개별로 돌아오는 기준(되풀이 전환 방지). */
+    public static final int BAND_RESUME_SHIPS = 1_200;
     /** 선박 팬아웃 최소 간격(계약: 10 s 마다). */
     static final long MIN_INTERVAL_MS = 10_000;
-    /** 줌 ≥ 7 세션의 주기 전체 스냅샷. */
+    /** 개별 표시 세션의 주기 전체 스냅샷. */
     static final long RESYNC_MS = 60_000;
     /** 위치·표시 값이 그대로여도 seen_at 이 이만큼 앞으로 가면 다시 보낸다(화면의 나이·STALE 15분 계산이 맞게). */
     static final long SEEN_REFRESH_S = 60;
@@ -94,7 +103,8 @@ public class ShipFanout implements SmartLifecycle {
         this.snapshots = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_snapshot").register(meters);
         this.diffs = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_diff").register(meters);
         this.grids = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_grid").register(meters);
-        this.capped = Counter.builder("wakeline_ws_ship_capped_total").description("뷰포트 안 선박이 5,000 척을 넘어 격자로 대신 보낸 경우").register(meters);
+        this.capped = Counter.builder("wakeline_ws_ship_capped_total")
+                .description("뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘어 격자로 대신 보낸 경우").register(meters);
         this.gridBuild = Timer.builder("wakeline_ship_grid_build_seconds").description("선박 격자(세 단계) 한 번 만들기 — ShipStore 버전당 한 번").register(meters);
         hub.setShipsHook(this::onInitial);
     }
@@ -185,22 +195,35 @@ public class ShipFanout implements SmartLifecycle {
             s.sseq = 0;
             s.shipsGridKey = null;
             s.shipsSentVersion = -1;
+            s.shipsDense = false;
             return;
         }
         WsSession.Sub sub = s.sub;
         ShipStore.View v = store.view();
         long now = clock.getAsLong();
-        if (sub.zoom() >= POINTS_MIN_ZOOM) {
-            if (v.countIn(sub.bbox(), MAX_SHIPS_PER_MESSAGE + 1) > MAX_SHIPS_PER_MESSAGE) {
-                sendGrid(s, v, ShipGrid.LEVELS[ShipGrid.LEVELS.length - 1], sub.bbox(), true, force, now);
-                return;
-            }
-            boolean snapshot = force || s.shipsMode != WsSession.ShipsMode.POINTS || s.sseq == 0 || now - s.shipsLastFullMs >= RESYNC_MS;
-            if (snapshot) sendSnapshot(s, v, sub.bbox(), now);
-            else if (v.version() != s.shipsSentVersion) sendDiff(s, v, sub.bbox(), now);
-        } else {
-            sendGrid(s, v, ShipGrid.cellDegFor(sub.zoom()), sub.bbox(), false, force, now);
+        int zoom = sub.zoom();
+        if (zoom < BAND_MIN_ZOOM) { // 줌 때문에 격자
+            sendGrid(s, v, ShipGrid.cellDegFor(zoom), sub.bbox(), false, force, now);
+            return;
         }
+        int limit = pointsLimit(zoom, s.shipsMode == WsSession.ShipsMode.GRID && s.shipsDense);
+        if (v.countIn(sub.bbox(), limit + 1) > limit) { // 수 때문에 격자(capped)
+            double deg = zoom >= POINTS_MIN_ZOOM ? ShipGrid.LEVELS[ShipGrid.LEVELS.length - 1] : ShipGrid.cellDegFor(zoom);
+            sendGrid(s, v, deg, sub.bbox(), true, force, now);
+            return;
+        }
+        boolean snapshot = force || s.shipsMode != WsSession.ShipsMode.POINTS || s.sseq == 0 || now - s.shipsLastFullMs >= RESYNC_MS;
+        if (snapshot) sendSnapshot(s, v, sub.bbox(), now);
+        else if (v.version() != s.shipsSentVersion) sendDiff(s, v, sub.bbox(), now);
+    }
+
+    /**
+     * 이 줌에서 개별로 보낼 수 있는 뷰포트 안 선박 수의 상한(계약 v4 §C): 줌 ≥ 7 은 5,000, 줌 4~6 은 1,500 — 단 수 때문에 이미 격자인 세션(dense)은
+     * 1,200 이하가 되어야 돌아온다. 줌 &lt; 4 는 부르지 않는다(항상 격자).
+     */
+    static int pointsLimit(int zoom, boolean dense) {
+        if (zoom >= POINTS_MIN_ZOOM) return MAX_SHIPS_PER_MESSAGE;
+        return dense ? BAND_RESUME_SHIPS : BAND_MAX_SHIPS;
     }
 
     private void sendSnapshot(WsSession s, ShipStore.View v, Bbox bbox, long now) {
@@ -221,6 +244,7 @@ public class ShipFanout implements SmartLifecycle {
             s.shipsMode = WsSession.ShipsMode.POINTS;
             s.shipsSentVersion = v.version();
             s.shipsGridKey = null;
+            s.shipsDense = false;
             snapshots.increment();
         } else {
             s.sseq = 0; // 보내지 못했다(닫는 중) — 다음에는 스냅샷
@@ -271,6 +295,7 @@ public class ShipFanout implements SmartLifecycle {
         if (hub.send(s, msg)) {
             s.shipsMode = WsSession.ShipsMode.GRID;
             s.shipsGridKey = key;
+            s.shipsDense = isCapped;
             s.shipsSent.clear();
             s.sseq = 0;
             s.shipsSentVersion = -1;

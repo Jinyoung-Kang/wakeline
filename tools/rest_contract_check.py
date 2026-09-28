@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -470,10 +471,43 @@ DESTINATION_INFO: Schema = {
         },
     ],
 }
-GAP: Schema = {  # AIS 수신 공백(끝난 공백은 ended_at, 열린 공백은 키 없음)
+AIS_SCOPE: Schema = {  # 계약 v4 §D: 구역 하나의 상자 문자열('|' 없음) — 규칙 전체는 교차 검사(_scope_errors)
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 1024,
+    "pattern": "^[^|]+$",
+}
+GAP: Schema = {  # AIS 수신 공백(끝난 공백은 ended_at, 열린 공백은 키 없음, 구역 공백은 scope — 구역 없는 옛 기록은 키 없음)
     "type": "object",
     "required": ["started_at", "reason"],
-    "properties": {"started_at": TS, "ended_at": TS, "reason": {"type": "string", "minLength": 1}, "provider": STR},
+    "properties": {
+        "started_at": TS,
+        "ended_at": TS,
+        "reason": {"type": "string", "minLength": 1},
+        "provider": STR,
+        "scope": AIS_SCOPE,
+    },
+}
+AIS_BOX: Schema = {  # [lat1, lon1, lat2, lon2]
+    "type": "array",
+    "minItems": 4,
+    "maxItems": 4,
+    "prefixItems": [LAT_NUM, LON_NUM, LAT_NUM, LON_NUM],
+    "items": False,
+}
+AIS_STATES: Schema = {
+    "enum": ["starting", "connecting", "subscribed", "receiving", "backoff", "replaying", "disabled", "stopped"]
+}
+AIS_SHARD: Schema = {  # 계약 v4 §D status.sources.ais.shards[] — 구역 하나(연결 하나)의 범위·상태
+    "type": "object",
+    "required": ["coverage"],
+    "additionalProperties": False,
+    "properties": {
+        "coverage": {"type": "array", "minItems": 1, "maxItems": 16, "items": AIS_BOX},
+        "state": AIS_STATES,
+        "connected": BOOL,
+        "gap_open_since": TS,
+    },
 }
 AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 heartbeat 가 오래되면 connected·msgs_per_s 는 키 없음(모름)
     "type": "object",
@@ -493,23 +527,14 @@ AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 hea
         "provider": SHIP_PROVIDER,
         "last_msg_at": TS,
         "ships": {"type": "integer", "minimum": 0},
-        # 계약 v3 §A: 수집기 상태 이름(그 밖이면 키 없음) · 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...](1~16개)
-        "state": {"enum": ["starting", "connecting", "subscribed", "receiving", "backoff", "replaying", "disabled", "stopped"]},
-        "coverage": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 16,
-            "items": {
-                "type": "array",
-                "minItems": 4,
-                "maxItems": 4,
-                "prefixItems": [LAT_NUM, LON_NUM, LAT_NUM, LON_NUM],
-                "items": False,
-            },
-        },
+        # 계약 v3 §A: 수집기 상태 이름(그 밖이면 키 없음) · 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...]
+        # 계약 v4 §D: 구역(최대 3, 구역마다 상자 1~16)이 있으면 coverage 는 모든 구역 상자의 합 — 최대 48개
+        "state": AIS_STATES,
+        "coverage": {"type": "array", "minItems": 1, "maxItems": 48, "items": AIS_BOX},
+        "shards": {"type": "array", "minItems": 1, "maxItems": 3, "items": AIS_SHARD},
         "heartbeat_stale": BOOL,
     },
-    # 오래된 heartbeat 로 '연결됨'·수신량·상태·수신 범위를 말하지 않는다
+    # 오래된 heartbeat 로 '연결됨'·수신량·상태·수신 범위·구역 상태를 말하지 않는다
     "if": {"properties": {"heartbeat_stale": {"const": True}}, "required": ["heartbeat_stale"]},
     "then": {
         "not": {
@@ -518,6 +543,7 @@ AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 hea
                 {"required": ["msgs_per_s"]},
                 {"required": ["state"]},
                 {"required": ["coverage"]},
+                {"required": ["shards"]},
             ]
         }
     },
@@ -1123,6 +1149,7 @@ def _ships(body: dict[str, Any]) -> list[str]:
         errs.append("meta.total_in_bbox is smaller than the features returned")
     if meta.get("capped") != (total > len(feats)):
         errs.append("meta.capped must say exactly whether features were cut off")
+    errs.extend(_ais_source_errors("meta.ais", meta.get("ais")))
     for i, f in enumerate(feats):
         p = f.get("properties") or {}
         if f.get("id") != p.get("mmsi"):
@@ -1169,6 +1196,52 @@ def _ts(v: str) -> datetime:
     return datetime.fromisoformat(v.replace("Z", "+00:00"))
 
 
+_SCOPE_NUM = re.compile(r"^-?\d{1,3}(\.\d{1,6})?$")
+
+
+def _scope_errors(text: str) -> str | None:
+    """구역 하나(계약 v4 §D, api AisBboxes.parse 와 같은 규칙): 상자 1~16, 숫자 소수 6자리까지, |lat| ≤ 90, |lon| ≤ 180, 넓이 0 금지."""
+    boxes = 0
+    for raw in text.split(";"):
+        part = raw.strip()
+        if not part:
+            continue
+        nums = [t.strip() for t in part.split(",")]
+        if len(nums) != 4 or not all(_SCOPE_NUM.match(t) for t in nums):
+            return "each box needs 4 decimal numbers lat1,lon1,lat2,lon2"
+        lat1, lon1, lat2, lon2 = (float(t) for t in nums)
+        if abs(lat1) > 90 or abs(lat2) > 90 or abs(lon1) > 180 or abs(lon2) > 180:
+            return "box out of range"
+        if lat1 == lat2 or lon1 == lon2:
+            return "box has zero area"
+        boxes += 1
+    if not 1 <= boxes <= 16:
+        return f"{boxes} boxes (1 to 16 per shard)"
+    return None
+
+
+def _gap_scope_errors(where: str, gaps: list[Any]) -> list[str]:
+    errs: list[str] = []
+    for i, g in enumerate(gaps):
+        if isinstance(g, dict) and isinstance(g.get("scope"), str) and (e := _scope_errors(g["scope"])):
+            errs.append(f"{where}[{i}].scope: {e}")
+    return errs
+
+
+def _ais_source_errors(where: str, ais: Any) -> list[str]:
+    """계약 v4 §D: 구역 상태가 있으면 coverage 는 모든 구역 상자의 합(구역 순서 그대로)."""
+    if not isinstance(ais, dict) or "shards" not in ais:
+        return []
+    union = [box for sh in ais["shards"] for box in sh.get("coverage", [])]
+    if ais.get("coverage") != union:
+        return [f"{where}.coverage is not the union of shards[].coverage"]
+    return []
+
+
+def _status(body: dict[str, Any]) -> list[str]:
+    return _ais_source_errors("sources.ais", (body.get("sources") or {}).get("ais"))
+
+
 def _ship_track(body: dict[str, Any]) -> list[str]:
     errs: list[str] = []
     props = body.get("properties") or {}
@@ -1190,6 +1263,7 @@ def _ship_track(body: dict[str, Any]) -> list[str]:
     starts = [_ts(g["started_at"]) for g in body.get("gaps") or []]
     if starts != sorted(starts):
         errs.append("gaps are not oldest first (the newest 200 are listed in time order)")
+    errs.extend(_gap_scope_errors("gaps", body.get("gaps") or []))
     return errs
 
 
@@ -1202,6 +1276,7 @@ def _ais_gaps(body: dict[str, Any]) -> list[str]:
         starts.append(_ts(g["started_at"]))
     if starts != sorted(starts):
         errs.append("items are not oldest first")
+    errs.extend(_gap_scope_errors("items", body.get("items") or []))
     if (body.get("meta") or {}).get("stale"):
         errs.append("meta.stale on a DB listing (it is current as of the request)")
     return errs
@@ -1212,10 +1287,14 @@ SCHEMAS["status_ais"] = {
     "allOf": [
         {"required": ["sources", "demand"]},
         {"properties": {"sources": {"required": ["ais"]}, "demand": {"required": ["adsb_fi_rps_1m"]}}},
+        # 기록(RestSamplesIT)은 구역 둘로 나눈 수집기 상태(계약 v4 §D) — 구역 상태와 그 합의 수신 범위가 실려야 한다
+        {"properties": {"sources": {"properties": {"ais": {"required": ["shards", "coverage"]}}}}},
     ],
 }
 
 CROSS_CHECKS = {
+    "status": _status,
+    "status_ais": _status,
     "ships": _ships,
     "ship_detail": _ship_detail,
     "ship_track": _ship_track,

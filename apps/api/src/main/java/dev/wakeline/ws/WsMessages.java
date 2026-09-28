@@ -94,14 +94,14 @@ public final class WsMessages {
 
     // ---- 선박(계약 v2 §B3) ----
 
-    /** 줌 ≥ 7: 뷰포트 안 선박 전체(ShipLite, 이미 직렬화된 배열). sseq 는 항공기 seq 와 같은 규칙(스냅샷마다 1). */
+    /** 개별 표시(줌 ≥ 7, 또는 줌 4~6 에서 선박이 적을 때 — 계약 v4 §C): 뷰포트 안 선박 전체(ShipLite, 이미 직렬화된 배열). sseq 는 항공기 seq 와 같은 규칙(스냅샷마다 1). */
     public record ShipsSnapshotMsg(String type, int sseq, Instant ts, @JsonRawValue String ships) {}
 
-    /** 줌 ≥ 7: 마지막으로 보낸 상태와의 차이. 빈 diff 는 보내지 않는다(sseq 틈이 생기지 않게). */
+    /** 개별 표시: 마지막으로 보낸 상태와의 차이. 빈 diff 는 보내지 않는다(sseq 틈이 생기지 않게). */
     public record ShipsDiffMsg(String type, int sseq, Instant ts, @JsonRawValue String upsert, List<String> remove) {}
 
     /**
-     * 줌 < 7(또는 뷰포트 안 선박이 5,000 척을 넘을 때 capped = true): 격자 칸별 선박 수. cells = [[칸 중심 lat, 칸 중심 lon, 수, 대표 분류], ...]
+     * 줌 < 4, 또는 뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘을 때(capped = true — 계약 v4 §C): 격자 칸별 선박 수. cells = [[칸 중심 lat, 칸 중심 lon, 수, 대표 분류], ...]
      * (이미 직렬화된 배열). 대표 분류 = 칸에서 가장 많은 선종 분류(동률이면 web 과 같은 순서의 앞 — 결정적).
      */
     public record ShipsGridMsg(String type, Instant ts, double cellDeg, @JsonRawValue String cells, Boolean capped) {}

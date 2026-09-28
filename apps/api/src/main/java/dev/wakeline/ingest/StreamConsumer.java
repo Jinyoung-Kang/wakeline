@@ -63,7 +63,8 @@ import java.util.zip.GZIPInputStream;
  *       focus 의 requested 에 없는 hex 는 버린다(수집기가 묻지 않은 항공기를 실시간 상태에 넣지 않는다). hot 인데 셀 키가 없거나
  *       범위 밖이면 검증 실패(DLQ). 항공기 메시지의 scope 가 이 넷이 아니면 검증 실패.</li>
  *   <li>선박(계약 v2 §B3): wakeline:ships 의 ships(바뀐 선박만, 10 s) → ShipStore(MMSI 별 단조) → ShipsUpdated(저장·WS),
- *       ais_gap → ShipStore 공백 기록 → AisGapReceived(저장). 신뢰 경계(ADR-014): wakeline:ships 는 ais 컨테이너(외부 WebSocket 을 파싱하는
+ *       ais_gap → ShipStore 공백 기록 → AisGapReceived(저장). ais_gap 의 scope(계약 v4 §D, 구역)는 틀리면 null(모든 곳에 적용)로 받고 센다.
+ *       신뢰 경계(ADR-014): wakeline:ships 는 ais 컨테이너(외부 WebSocket 을 파싱하는
  *       별도 ACL 사용자)만 쓴다 — 그 스트림에서는 ships·ais_gap 만, ships·ais_gap 은 그 스트림에서만 받는다(다른 조합은 검증 실패 → DLQ).
  *       선박 부트스트랩은 한 엔트리가 아니라 최근 35분(실시간 목록 30분을 덮는 창)을 순서대로 읽어 메모리 상태만 되살린다(저장·ACK 없음) —
  *       항공기 소비를 막지 않게 별도 가상 스레드에서, 스트림 전용 연결(BLOCK)이 아닌 기본 연결로 읽는다.</li>
@@ -123,6 +124,7 @@ public class StreamConsumer implements SmartLifecycle {
     private final Counter focusUnrequested;
     private final Counter shipsRejectedCap;
     private final Counter shipsRejectedFuture;
+    private final Counter gapScopeInvalid;
     private final Timer processTimer;
     /** durable 해진 메시지 — 소비 스레드가 모아 XACK 한다. */
     private final ConcurrentLinkedQueue<Ack> acks = new ConcurrentLinkedQueue<>();
@@ -167,6 +169,8 @@ public class StreamConsumer implements SmartLifecycle {
                 .description("메모리 상한(선박·정적 정보)으로 받지 않은 새 MMSI").register(meters);
         this.shipsRejectedFuture = Counter.builder("wakeline_ships_rejected_total").tag("reason", "future")
                 .description("seen_at 이 5분 넘게 미래라 받지 않은 보고").register(meters);
+        this.gapScopeInvalid = Counter.builder("wakeline_ais_gap_scope_invalid_total")
+                .description("ais_gap 의 scope 가 구역 규칙(AisBboxes)에 맞지 않아 구역 없음(모든 곳에 적용)으로 받은 공백").register(meters);
         this.processTimer = Timer.builder("wakeline_stream_process_seconds").publishPercentiles(0.5, 0.95).register(meters);
         meters.gauge("wakeline_stream_unacked", inFlight, Set::size);
     }
@@ -577,7 +581,7 @@ public class StreamConsumer implements SmartLifecycle {
             }
             case "ais_gap" -> {
                 requireScope(f, "ships");
-                yield new Parsed(kind, f, fetchedAt, null, null, null, null, null, ShipCodec.gap(payload, f.get("provider")));
+                yield new Parsed(kind, f, fetchedAt, null, null, null, null, null, ShipCodec.gap(payload, f.get("provider"), gapScopeInvalid::increment));
             }
             case "radar" -> {
                 List<RadarStore.Frame> past = new java.util.ArrayList<>();

@@ -30,7 +30,7 @@ class MigrationDbTest {
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(7);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(8);
     }
 
     @Test
@@ -220,6 +220,64 @@ class MigrationDbTest {
     }
 
     /**
+     * V8(계약 v4 §D): ingest_gap.scope(NULL = 구역 나누기 전) · 고유성 (source, coalesce(scope,''), started_at) 식 인덱스로 UNIQUE(source, started_at) 대체.
+     * 기존 행은 그대로(scope NULL), 구역이 다르면 같은 시각 공백을 받고, 구역 없음끼리·같은 구역끼리는 막는다. api 권한은 그대로(INSERT·SELECT 만) —
+     * 운영 저장소 문장(ON CONFLICT 식 추론)이 api 계정으로 동작한다. ADR-014 부록 B 의 되돌리기 SQL 도 적용된다.
+     */
+    @Test
+    void v8ScopesIngestGapsWithAnExpressionUniqueIndex() throws SQLException {
+        DbTestSupport.start();
+        String db = "wakeline_stage_eight";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target("7").load().migrate();
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        stage.sql("""
+                INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider) VALUES
+                  ('ais', '2026-09-28T01:00:00Z', '2026-09-28T01:02:00Z', 'server closed (1006)', 'aisstream')""").update();
+
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+
+        assertThat(stage.sql("SELECT scope FROM ingest_gap").query(String.class).optional()).as("existing rows: no scope").isEmpty();
+        assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_gap_source_started'").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT indexdef FROM pg_indexes WHERE indexname = 'ingest_gap_source_scope_started_uq'").query(String.class).single())
+                .contains("UNIQUE").contains("COALESCE(scope, ''::text)");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '8' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        for (String priv : new String[]{"UPDATE", "DELETE", "TRUNCATE"})
+            assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'ingest_gap', :p)").param("p", priv).query(Boolean.class).single()).as(priv).isFalse();
+        for (String priv : new String[]{"SELECT", "INSERT"})
+            assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'ingest_gap', :p)").param("p", priv).query(Boolean.class).single()).as(priv).isTrue();
+
+        // api 계정으로 운영과 같은 문장(ShipRepository.insertGap)
+        JdbcClient api = JdbcClient.create(new DriverManagerDataSource(url, "wakeline_api", DbTestSupport.API_PW));
+        dev.wakeline.persist.ShipRepository repo = new dev.wakeline.persist.ShipRepository(new org.springframework.jdbc.core.JdbcTemplate(
+                new DriverManagerDataSource(url, "wakeline_api", DbTestSupport.API_PW)), api);
+        java.time.Instant s = java.time.Instant.parse("2026-09-28T01:00:00Z");
+        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
+        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "am", "aisstream",
+                dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isTrue();
+        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(90), "ap", "aisstream",
+                dev.wakeline.domain.AisScope.parse("-90,45,90,180")))).isTrue();
+        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(99), "am again", "aisstream",
+                dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isFalse();
+        assertThat(stage.sql("SELECT count(*) FROM ingest_gap").query(Long.class).single()).isEqualTo(3);
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            assertThat(sqlState(c, "UPDATE ingest_gap SET scope = 'x'")).isEqualTo("42501");
+            assertThat(sqlState(c, "DELETE FROM ingest_gap")).isEqualTo("42501");
+        }
+        assertThatThrownBy(() -> stage.sql("INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider, scope) "
+                + "VALUES ('ais', now(), now() + interval '1 s', 'r', 'x', '')").update()).hasMessageContaining("ingest_gap_scope_len");
+
+        // 되돌리기(ADR-014 부록 B): 같은 시각의 구역 공백을 하나만 남긴 뒤 인덱스 삭제 · 제약 복원 · 열 삭제
+        stage.sql("DELETE FROM ingest_gap WHERE scope IS NOT NULL").update();
+        stage.sql("DROP INDEX ingest_gap_source_scope_started_uq").update();
+        stage.sql("ALTER TABLE ingest_gap ADD CONSTRAINT ingest_gap_source_started_at_key UNIQUE (source, started_at)").update();
+        stage.sql("ALTER TABLE ingest_gap DROP COLUMN scope").update();
+        assertThat(stage.sql("SELECT count(*) FROM ingest_gap").query(Long.class).single()).isEqualTo(1);
+    }
+
+    /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다
      * (서비스 역할 소유 객체 없음). V5 파티션 함수는 SECURITY DEFINER 인데 PUBLIC 실행 권한이 없다.
      */
@@ -240,9 +298,9 @@ class MigrationDbTest {
         var owners = admin.sql("""
                 SELECT c.relname, pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname = 'public' AND (c.relname IN ('ship', 'ship_pkey', 'ship_position', 'ship_position_pkey', 'ship_position_ts_brin',
-                      'ingest_gap', 'ingest_gap_pkey', 'ingest_gap_id_seq', 'ingest_gap_source_started') OR c.relname ~ '^ship_position_[0-9]{8}$')""")
+                      'ingest_gap', 'ingest_gap_pkey', 'ingest_gap_id_seq', 'ingest_gap_source_scope_started_uq') OR c.relname ~ '^ship_position_[0-9]{8}$')""")
                 .query().listOfRows();
-        assertThat(owners.size()).as("V5 objects incl. partitions").isGreaterThanOrEqualTo(9 + 5);
+        assertThat(owners.size()).as("V5 objects (V8 unique index) incl. partitions").isGreaterThanOrEqualTo(9 + 5);
         for (var r : owners) assertThat(r.get("owner")).as(String.valueOf(r.get("relname"))).isEqualTo("wakeline_migrator");
         assertThat(admin.sql("""
                 SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

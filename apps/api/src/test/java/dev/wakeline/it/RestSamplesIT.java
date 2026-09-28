@@ -45,6 +45,13 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.route.RouteReader routes;
 
     final Map<String, String> index = new LinkedHashMap<>();
+    static final String ASIA_PACIFIC = "-90,45,90,180";
+
+    /** ais 상태 해시 shards 원소(계약 v4 §D 필드 그대로 — 합성 값). */
+    static String shard(String scope, Instant hb) {
+        return "{\"scope\":\"" + scope + "\",\"state\":\"receiving\",\"connected\":true,\"last_msg_at\":\"" + hb + "\",\"msgs_per_s\":2.1,"
+                + "\"lag_p50_s\":1.9,\"gap_open_since\":null,\"gap_reason\":null,\"sessions_ended\":0}";
+    }
 
     void record(String name, String path, int expectedStatus) throws IOException {
         Res r = get(path);
@@ -150,9 +157,12 @@ class RestSamplesIT extends IntegrationTest {
                 Streams.shipState("440700101", 35.2, 129.1, seenShip)), List.of(Streams.shipStatic(mmsi, "IT SAMPLE", 70, seenShip.minusSeconds(60)))));
         Instant gapStart = Instant.now().minusSeconds(1800).truncatedTo(ChronoUnit.MILLIS);
         Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), gapStart, gapStart.plusSeconds(95), "server closed (1006)"));
+        // 구역 공백(계약 v4 §D): 아시아·태평양 구역만 끊겼다 — 부산 선박의 항적·공백 목록에 scope 와 함께
+        Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), gapStart.plusSeconds(300), gapStart.plusSeconds(400), "idle 120 s — no messages", ASIA_PACIFIC));
         await("ship rows", WAIT, () -> count("SELECT count(*) FROM ship_position WHERE mmsi = ?", mmsi) == 1
                 && count("SELECT count(*) FROM ship WHERE mmsi = ?", mmsi) == 1);
         await("gap row", WAIT, () -> count("SELECT count(*) FROM ingest_gap WHERE reason = 'server closed (1006)'") >= 1);
+        await("scoped gap row", WAIT, () -> count("SELECT count(*) FROM ingest_gap WHERE scope = ?", ASIA_PACIFIC) >= 1);
         record("ships", "/api/v1/ships?bbox=128,34,130,36", 200);
         record("ship_detail", "/api/v1/ships/" + mmsi, 200);
         record("ship_track", "/api/v1/ships/" + mmsi + "/track", 200);
@@ -163,10 +173,11 @@ class RestSamplesIT extends IntegrationTest {
         // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.
         // 수집기 heartbeat 는 다른 테스트(수집기 없음 → adsb_fi_rps_1m 모름)에 남지 않게 기록 뒤 지운다.
         Instant hb = Instant.now();
-        // state · bbox(계약 v3 §A) → status.sources.ais.state · coverage
+        // state · bbox(계약 v3 §A) → status.sources.ais.state · coverage, shards(계약 v4 §D — 구역마다 연결 하나) → shards · coverage(구역 상자의 합)
+        String shards = "[" + shard("-90,-180,90,0", hb) + "," + shard(ASIA_PACIFIC, hb) + "]";
         ItStack.ais().opsForHash().putAll("wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "4.20",
                 "last_msg_at", hb.toString(), "updated_at", hb.toString(), "gap_open_since", "", "state", "receiving",
-                "bbox", "-90,-180,90,0;-90,45,90,180"));
+                "bbox", "-90,-180,90,0|" + ASIA_PACIFIC, "shards", shards));
         try {
             ItStack.collector().opsForHash().putAll("wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
             await("status sources.ais and demand rate", WAIT, () -> {
@@ -228,6 +239,19 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(st.path("sources").path("ais").path("msgs_per_s").asDouble()).isEqualTo(4.2);
         assertThat(st.path("sources").path("ais").path("state").asString()).isEqualTo("receiving");
         assertThat(st.path("sources").path("ais").path("coverage").toString()).isEqualTo("[[-90.0,-180.0,90.0,0.0],[-90.0,45.0,90.0,180.0]]");
+        JsonNode shardView = st.path("sources").path("ais").path("shards");
+        assertThat(shardView.size()).isEqualTo(2);
+        assertThat(shardView.get(1).path("coverage").toString()).isEqualTo("[[-90.0,45.0,90.0,180.0]]");
+        assertThat(shardView.get(1).path("state").asString()).isEqualTo("receiving");
+        assertThat(shardView.get(1).path("connected").asBoolean()).isTrue();
+        assertThat(shardView.get(1).has("gap_open_since")).isFalse();
+        // 구역 공백: 항적·공백 목록에 scope, 구역 없는 옛 형식은 키 없음
+        boolean scopedInTrack = false;
+        for (JsonNode g : shipTrack.path("gaps")) if (ASIA_PACIFIC.equals(g.path("scope").asString(""))) scopedInTrack = true;
+        assertThat(scopedInTrack).as("the Busan ship's track lists the Asia-Pacific gap with its scope").isTrue();
+        JsonNode aisGaps = Streams.JSON.readTree(Files.readString(OUT.resolve("ais_gaps.json"))).path("body").path("items");
+        assertThat(aisGaps).anySatisfy(g -> assertThat(g.path("scope").asString("")).isEqualTo(ASIA_PACIFIC));
+        assertThat(aisGaps).anySatisfy(g -> assertThat(g.has("scope")).isFalse());
         // 스트림의 레거시 "gnss" 는 받자마자 모름(계약 v3 §B) — REST 는 키를 뺀다
         assertThat(shipFc.path("features").get(0).path("properties").has("position_source")).isFalse();
         assertThat(shipTrack.path("points").get(0).has("position_source")).isFalse();

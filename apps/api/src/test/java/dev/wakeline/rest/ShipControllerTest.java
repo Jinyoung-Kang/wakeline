@@ -402,9 +402,84 @@ class ShipControllerTest {
                 ShipController.etag(7, fresh, ais.apply(java.util.Map.of("gap_open_since", T))),
                 ShipController.etag(7, fresh, ais.apply(java.util.Map.of("state", "backoff"))),
                 ShipController.etag(7, fresh, ais.apply(java.util.Map.of("coverage", List.of(List.of(-90.0, -180.0, 90.0, 0.0))))),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("shards", List.of(java.util.Map.of("connected", true))))),
+                ShipController.etag(7, fresh, ais.apply(java.util.Map.of("shards", List.of(java.util.Map.of("connected", false))))),
                 ShipController.etag(7, fresh, null));
         assertThat(new java.util.HashSet<>(tags)).hasSize(tags.size());
         assertThat(tags.getFirst()).startsWith("\"s7-0-").endsWith("\"");
         assertThat(ShipController.etag(7, fresh, ais.apply(java.util.Map.of()))).isEqualTo(tags.getFirst()); // 같은 상태 → 같은 ETag
+    }
+
+    static final String AMERICAS = "-90,-180,90,0", ASIA_PACIFIC = "-90,45,90,180";
+
+    static String shardJson(String scope, boolean connected, Instant gapOpenSince, String reason) {
+        return "{\"scope\":\"" + scope + "\",\"state\":\"" + (connected ? "receiving" : "backoff") + "\",\"connected\":" + connected
+                + ",\"gap_open_since\":" + (gapOpenSince == null ? "null" : "\"" + gapOpenSince + "\"") + ",\"gap_reason\":" + (reason == null ? "null" : "\"" + reason + "\"") + "}";
+    }
+
+    static ShipRepository.TrackPoint at(Instant ts, double lat, double lon) {
+        return new ShipRepository.TrackPoint(ts, lon, lat, 10.0, null, null, null, "epfs", "aisstream");
+    }
+
+    /** 계약 v4 §D: 구역이 있는 공백은 두 점 중 하나라도 그 구역 상자 안일 때만 선을 끊는다. 구역 없는 공백(옛 기록)은 모두에 적용. */
+    @Test void split_scopedGapsApplyOnlyWhenAnEndpointIsInsideTheScope() {
+        Instant t0 = T.minusSeconds(3600);
+        dev.wakeline.domain.AisScope americas = dev.wakeline.domain.AisScope.parse(AMERICAS);
+        AisGap scoped = new AisGap(t0.plusSeconds(90), t0.plusSeconds(200), "server closed (1006)", "aisstream", americas);
+        List<ShipRepository.TrackPoint> busan = List.of(at(t0, 35, 129), at(t0.plusSeconds(60), 35, 129.01), at(t0.plusSeconds(240), 35, 129.02));
+        assertThat(ShipController.split(busan, List.of(scoped))).as("Busan is not in the Americas shard").hasSize(1);
+        assertThat(ShipController.split(busan, List.of(new AisGap(t0.plusSeconds(90), t0.plusSeconds(200), "legacy", "aisstream")))).hasSize(2);
+        List<ShipRepository.TrackPoint> ny = List.of(at(t0, 40, -70), at(t0.plusSeconds(60), 40, -70.01), at(t0.plusSeconds(240), 40, -70.02));
+        assertThat(ShipController.split(ny, List.of(scoped))).hasSize(2);
+        // 구역 경계를 넘는 두 점: 한 점만 안이어도 끊는다
+        List<ShipRepository.TrackPoint> crossing = List.of(at(t0, 0, 1), at(t0.plusSeconds(60), 0, 0.5), at(t0.plusSeconds(240), 0, -0.5));
+        assertThat(ShipController.split(crossing, List.of(scoped))).hasSize(2);
+        List<ShipRepository.TrackPoint> leaving = List.of(at(t0, 0, -1), at(t0.plusSeconds(60), 0, -0.5), at(t0.plusSeconds(240), 0, 0.5));
+        assertThat(ShipController.split(leaving, List.of(scoped))).hasSize(2);
+    }
+
+    /**
+     * 계약 v4 §D: 항적의 열린 공백은 구역마다 하나(scope 포함)이고 그 구역 안 점에서만 선을 끊는다. 끝난 공백도 scope 를 싣는다(구역 없는 옛 기록은 키 없음).
+     * gaps 는 오래된 것부터(구역의 열린 공백이 끝난 공백보다 이를 수 있다).
+     */
+    @Test void track_openGapsPerShard_scopeInTheGapList() throws Exception {
+        Instant t0 = T.minusSeconds(3600);
+        for (long sec : new long[]{0, 60, 120, 180}) repo.points.add(tp(t0.plusSeconds(sec), 129 + sec / 10_000.0)); // 35N 129E — 아시아·태평양
+        repo.gaps.add(new AisGap(t0.plusSeconds(1000), t0.plusSeconds(1100), "idle 120 s", "aisstream", dev.wakeline.domain.AisScope.parse(ASIA_PACIFIC)));
+        repo.gaps.add(new AisGap(t0.plusSeconds(1200), t0.plusSeconds(1300), "legacy", "aisstream"));
+        java.util.Map<Object, Object> h = aisHealthy(Instant.now());
+        h.put("bbox", AMERICAS + "|" + ASIA_PACIFIC);
+        h.put("connected", "0");
+        h.put("gap_open_since", t0.plusSeconds(90).toString());
+        // 아메리카 구역은 60~120 s 사이(90 s)에 열렸다 — 부산 항적은 끊지 않는다(구역 없이 적용했다면 [0,60] [120] [180]).
+        // 아시아·태평양은 120~180 s 사이(150 s)에 열렸다 — 끊는다 → [0,60,120] 선 하나 + [180] 한 점
+        h.put("shards", "[" + shardJson(AMERICAS, false, t0.plusSeconds(90), "server closed (1006)") + ","
+                + shardJson(ASIA_PACIFIC, false, t0.plusSeconds(150), "idle 120 s — no messages") + "]");
+        aisHash(h);
+        mvc.perform(get("/api/v1/ships/440000001/track").param("from", t0.minusSeconds(1).toString()).param("to", T.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.geometry.coordinates.length()").value(1))
+                .andExpect(jsonPath("$.properties.segments[0].points").value(3))
+                .andExpect(jsonPath("$.points.length()").value(4))
+                .andExpect(jsonPath("$.gaps.length()").value(4))
+                .andExpect(jsonPath("$.gaps[0].scope").value(AMERICAS))
+                .andExpect(jsonPath("$.gaps[0].ended_at").doesNotExist())
+                .andExpect(jsonPath("$.gaps[1].scope").value(ASIA_PACIFIC))
+                .andExpect(jsonPath("$.gaps[1].ended_at").doesNotExist())
+                .andExpect(jsonPath("$.gaps[2].scope").value(ASIA_PACIFIC))
+                .andExpect(jsonPath("$.gaps[2].reason").value("idle 120 s"))
+                .andExpect(jsonPath("$.gaps[3].scope").doesNotExist());
+        // /ais/gaps: 끝난 공백의 scope, open 은 합계(가장 이른 열린 공백)
+        mvc.perform(get("/api/v1/ais/gaps").param("from", t0.toString()).param("to", T.toString())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].scope").value(ASIA_PACIFIC))
+                .andExpect(jsonPath("$.items[1].scope").doesNotExist())
+                .andExpect(jsonPath("$.open.started_at").exists());
+        // 목록 상태의 구역별 상태(계약 v4 §D) — meta.ais.shards
+        mvc.perform(get("/api/v1/ships").param("bbox", "128,34,130,36")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.meta.ais.shards.length()").value(2))
+                .andExpect(jsonPath("$.meta.ais.shards[1].coverage[0][1]").value(45.0))
+                .andExpect(jsonPath("$.meta.ais.shards[1].connected").value(false))
+                .andExpect(jsonPath("$.meta.ais.coverage.length()").value(2));
     }
 }

@@ -1,6 +1,7 @@
 package dev.wakeline.persist;
 
 import dev.wakeline.domain.AisGap;
+import dev.wakeline.domain.AisScope;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -152,13 +153,17 @@ public class ShipRepository {
         });
     }
 
-    /** 끝난 공백 하나(영구). 같은 (source, started_at) 는 무시(수집기 재발행·스트림 재처리). @return 새로 넣었으면 true */
+    /**
+     * 끝난 공백 하나(영구). 같은 (source, 구역, started_at) 는 무시(수집기 재발행·스트림 재처리 — V8 식 인덱스, 구역 없음은 '' 로 본다).
+     * @return 새로 넣었으면 true
+     */
     public boolean insertGap(AisGap g) {
         return db.sql("""
-                INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider) VALUES (:src, :s, :e, :r, :p)
-                ON CONFLICT (source, started_at) DO NOTHING""")
+                INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider, scope) VALUES (:src, :s, :e, :r, :p, :scope)
+                ON CONFLICT (source, (coalesce(scope, '')), started_at) DO NOTHING""")
                 .param("src", GAP_SOURCE).param("s", Sql.ts(g.startedAt())).param("e", Sql.ts(g.endedAt()))
-                .param("r", g.reason()).param("p", g.provider() == null ? "unknown" : g.provider()).update() > 0;
+                .param("r", g.reason()).param("p", g.provider() == null ? "unknown" : g.provider())
+                .param("scope", g.scopeText(), Types.VARCHAR).update() > 0;
     }
 
     /**
@@ -167,8 +172,8 @@ public class ShipRepository {
      */
     public List<AisGap> gaps(Instant from, Instant to, int limit) {
         return db.sql("""
-                SELECT started_at, ended_at, reason, provider FROM (
-                  SELECT started_at, ended_at, reason, provider FROM ingest_gap
+                SELECT started_at, ended_at, reason, provider, scope FROM (
+                  SELECT started_at, ended_at, reason, provider, scope FROM ingest_gap
                   WHERE source = :src AND started_at < :to AND ended_at > :from
                   ORDER BY started_at DESC LIMIT :lim) g
                 ORDER BY started_at""")
@@ -182,7 +187,7 @@ public class ShipRepository {
      */
     public List<AisGap> gapsAtLeast(Instant from, Instant to, long minS, int limit) {
         return db.sql("""
-                SELECT started_at, ended_at, reason, provider FROM ingest_gap
+                SELECT started_at, ended_at, reason, provider, scope FROM ingest_gap
                 WHERE source = :src AND started_at < :to AND ended_at > :from AND extract(epoch FROM ended_at - started_at) >= :min
                 ORDER BY started_at LIMIT :lim""")
                 .param("src", GAP_SOURCE).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("min", minS).param("lim", limit)
@@ -191,7 +196,17 @@ public class ShipRepository {
 
     private static AisGap gapRow(java.sql.ResultSet rs, int i) throws SQLException {
         return new AisGap(rs.getObject(1, java.time.OffsetDateTime.class).toInstant(),
-                rs.getObject(2, java.time.OffsetDateTime.class).toInstant(), rs.getString(3), rs.getString(4));
+                rs.getObject(2, java.time.OffsetDateTime.class).toInstant(), rs.getString(3), rs.getString(4), scope(rs.getString(5)));
+    }
+
+    /** 저장된 구역 문자열(넣을 때 검사한 값) → 구역. 없거나 읽을 수 없으면 null — 모든 곳에 적용(선을 덜 끊는 쪽으로 추정하지 않는다). */
+    static AisScope scope(String text) {
+        if (text == null || text.isBlank()) return null;
+        try {
+            return AisScope.parse(text);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /** 저장된 정적 정보 + first/last_seen(없으면 null). 정적 정보를 받은 적 없는 행은 static 필드가 모두 null 이다. */

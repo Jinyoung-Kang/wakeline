@@ -1,6 +1,7 @@
 package dev.wakeline.ingest;
 
 import dev.wakeline.domain.AisGap;
+import dev.wakeline.domain.AisScope;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.ShipCategory;
 import dev.wakeline.domain.ShipState;
@@ -164,6 +165,52 @@ class ShipStoreTest {
         assertThat(s.gaps()).hasSize(ShipStore.MAX_GAPS);
         s.expire(NOW + ShipStore.GAP_KEEP_MS + 7_200_000L, true);
         assertThat(s.gaps()).isEmpty();
+    }
+
+    static final AisScope AMERICAS = AisScope.parse("-90,-180,90,0"), ASIA_PACIFIC = AisScope.parse("-90,45,90,180");
+
+    /** 계약 v4 §D: 멈춤은 그 구역 상자 안의 선박만 — 다른 구역·구역 밖 선박은 평소처럼 만료한다. */
+    @Test void expire_freezesOnlyShipsInsideTheFrozenShards() {
+        ShipStore s = new ShipStore();
+        s.apply(List.of(pos("440000001", 35, 129, T), pos("366000001", 40, -70, T), pos("247000001", 45, 10, T)), List.of(), T, "aisstream", NOW);
+        long now = NOW + 31 * 60_000L;
+        ShipStore.Freeze asia = ShipStore.Freeze.of(List.of(ASIA_PACIFIC));
+        assertThat(asia.any()).isTrue();
+        assertThat(s.expire(now, asia).removed()).containsExactlyInAnyOrder("366000001", "247000001");
+        assertThat(s.view().size()).isEqualTo(1);
+        assertThat(s.expire(now, ShipStore.Freeze.ALL).isEmpty()).isTrue();
+        assertThat(s.expire(now, ShipStore.Freeze.NONE).removed()).containsExactly("440000001");
+        assertThat(ShipStore.Freeze.of(List.of())).isSameAs(ShipStore.Freeze.NONE);
+        assertThat(ShipStore.Freeze.NONE.any()).isFalse();
+        assertThat(ShipStore.Freeze.ALL.covers(0, 0)).isTrue();
+    }
+
+    /** 계약 v4 §D: 구역이 있는 끝난 공백은 그 구역 안 선박의 '보고 없음' 에서만 빼고, 구역 없는 공백(옛 기록)은 모두에서 뺀다. 겹치는 공백은 한 번만. */
+    @Test void expire_closedGapTimeIsDiscountedOnlyInsideItsShard() {
+        ShipStore s = new ShipStore();
+        s.apply(List.of(pos("440000001", 35, 129, T), pos("366000001", 40, -70, T)), List.of(), T, "aisstream", NOW);
+        s.addGap(new AisGap(T.plusSeconds(600), T.plusSeconds(600 + 25 * 60), "server closed (1006)", "aisstream", ASIA_PACIFIC));
+        assertThat(s.expire(NOW + 35 * 60_000L, false).removed()).as("the Americas ship had no gap").containsExactly("366000001");
+        assertThat(s.view().get("440000001")).isNotNull();
+
+        ShipStore o = new ShipStore();
+        o.apply(List.of(pos("440000001", 35, 129, T)), List.of(), T, "aisstream", NOW);
+        // 같은 10분(600~1200 s)을 구역 공백과 구역 없는 공백이 함께 덮는다 → 한 번만 뺀다
+        o.addGap(new AisGap(T.plusSeconds(600), T.plusSeconds(1200), "a", "aisstream", ASIA_PACIFIC));
+        o.addGap(new AisGap(T.plusSeconds(900), T.plusSeconds(1200), "b", "aisstream"));
+        assertThat(o.expire(NOW + 39 * 60_000L, false).isEmpty()).as("39 min − 10 min = 29 min").isTrue();
+        assertThat(o.expire(NOW + 41 * 60_000L, false).removed()).as("41 min − 10 min = 31 min (not 26)").containsExactly("440000001");
+        assertThat(ShipStore.downMs(List.of(), 0, 0, 0, 10)).isZero();
+    }
+
+    @Test void gaps_dedupedPerShard() {
+        ShipStore s = new ShipStore();
+        assertThat(s.addGap(new AisGap(T, T.plusSeconds(50), "am", "aisstream", AMERICAS))).isTrue();
+        assertThat(s.addGap(new AisGap(T, T.plusSeconds(60), "ap", "aisstream", ASIA_PACIFIC))).as("another shard, same start").isTrue();
+        assertThat(s.addGap(new AisGap(T, T.plusSeconds(70), "legacy", "aisstream"))).as("no scope is its own key").isTrue();
+        assertThat(s.addGap(new AisGap(T, T.plusSeconds(55), "dup", "aisstream", AisScope.parse("-90,-180,90,0")))).isFalse();
+        assertThat(s.addGap(new AisGap(T, T.plusSeconds(75), "dup", "aisstream"))).isFalse();
+        assertThat(s.gaps()).hasSize(3);
     }
 
     @Test void gapOverlapAndBetween() {

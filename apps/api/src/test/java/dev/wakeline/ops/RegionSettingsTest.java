@@ -68,6 +68,22 @@ class RegionSettingsTest {
         assertThatThrownBy(() -> SettingsService.validate("ais_bboxes", JsonNodeFactory.instance.numberNode(1))).isInstanceOf(Problem.class);
     }
 
+    /** 계약 v4 §D: '|' 로 구역을 나눈다(최대 3 — 구역마다 연결 하나). 구역마다 상자 1~16, 전체 1,024자 — ais/bbox.py 와 같은 규칙. */
+    @Test
+    void aisBboxesAcceptTheShardGrammar() {
+        String sixteen = String.join(";", java.util.Collections.nCopies(16, "0,0,1,1"));
+        for (String ok : new String[]{"-90,-180,90,0|-90,45,90,180", "-90,-180,90,0;-90,45,90,180", "0,0,1,1|2,2,3,3|4,4,5,5",
+                sixteen + "|" + sixteen + "|" + sixteen, " 0,0,1,1 ; | 2,2,3,3 "})
+            assertThatCode(() -> SettingsService.validate("ais_bboxes", JsonNodeFactory.instance.stringNode(ok))).as(ok).doesNotThrowAnyException();
+        String seventeen = String.join(";", java.util.Collections.nCopies(17, "0,0,1,1"));
+        String tenLong = String.join(";", java.util.Collections.nCopies(10, "0.123456,0.123456,1.123456,1.123456"));
+        for (String bad : new String[]{"0,0,1,1|2,2,3,3|4,4,5,5|6,6,7,7", "0,0,1,1|", "|0,0,1,1", "0,0,1,1||2,2,3,3", "0,0,1,1|" + seventeen,
+                "0,0,1,1|91,0,1,1", "|", tenLong + "|" + tenLong + "|" + tenLong}) {
+            assertThatThrownBy(() -> SettingsService.validate("ais_bboxes", JsonNodeFactory.instance.stringNode(bad))).as(bad)
+                    .isInstanceOf(Problem.class).hasMessageNotContaining("0,0,1,1"); // 입력값을 되풀이하지 않는다
+        }
+    }
+
     /**
      * API-CONC-7: TTL 만료로 시작된 백그라운드 갱신이 옛 값을 읽고 있는 동안 설정이 바뀌어 요청 스레드가 refreshNow 를 불러도,
      * 마지막으로 반영되는 값은 새 값이어야 한다(이전에는 늦게 끝난 백그라운드 갱신이 옛 값으로 덮어썼다).

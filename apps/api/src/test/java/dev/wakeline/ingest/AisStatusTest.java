@@ -158,6 +158,192 @@ class AisStatusTest {
         assertThat(st.publicView(NOW_MS)).containsEntry("state", "disabled").containsEntry("connected", false).containsEntry("coverage", null);
     }
 
+    static final String AMERICAS = "-90,-180,90,0", ASIA_PACIFIC = "-90,45,90,180";
+
+    /** 수집기의 구역별 상태(계약 v4 §D shards 원소 모양 그대로 — api 가 쓰지 않는 필드도 싣는다). */
+    static String shard(String scope, String state, Object connected, String gapOpenSince, String gapReason) {
+        return "{\"scope\":\"" + scope + "\",\"state\":\"" + state + "\",\"connected\":" + connected + ",\"last_msg_at\":\"2026-09-28T02:59:59Z\","
+                + "\"msgs_per_s\":40.5,\"lag_p50_s\":1.9,\"gap_open_since\":" + (gapOpenSince == null ? "null" : "\"" + gapOpenSince + "\"")
+                + ",\"gap_reason\":" + (gapReason == null ? "null" : "\"" + gapReason + "\"") + ",\"sessions_ended\":0}";
+    }
+
+    static Map<Object, Object> sharded(Instant updatedAt, String... shards) {
+        Map<Object, Object> h = healthy(updatedAt);
+        h.put("bbox", AMERICAS + "|" + ASIA_PACIFIC);
+        h.put("shards", "[" + String.join(",", shards) + "]");
+        return h;
+    }
+
+    /** 계약 v4 §D: shards 는 배열 ≤ 3, scope 는 구역 규칙 — 하나라도 틀리면 구역 정보 전체를 모름(null). 다른 필드는 값마다 검사. */
+    @Test void parse_shardsAreValidated() {
+        AisStatus.Feed f = AisStatus.parse(sharded(NOW, shard(AMERICAS, "receiving", true, null, null),
+                shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)")));
+        assertThat(f.shards()).hasSize(2);
+        AisStatus.Shard am = f.shards().get(0), ap = f.shards().get(1);
+        assertThat(am.scope().text()).isEqualTo(AMERICAS);
+        assertThat(am.state()).isEqualTo("receiving");
+        assertThat(am.connected()).isTrue();
+        assertThat(am.gapOpenSince()).isNull();
+        assertThat(ap.connected()).isFalse();
+        assertThat(ap.gapOpenSince()).isEqualTo(Instant.parse("2026-09-28T02:58:00Z"));
+        assertThat(ap.gapReason()).isEqualTo("server closed (1006)");
+        assertThat(f.coverage()).as("union of the shard boxes").containsExactly(List.of(-90.0, -180.0, 90.0, 0.0), List.of(-90.0, 45.0, 90.0, 180.0));
+
+        // 값마다: 모르는 상태 · 참거짓이 아닌 connected · 시간대 없는 시각 → 그 값만 null. "1"/"0" 은 해시 필드처럼 받는다
+        AisStatus.Shard odd = AisStatus.parse(sharded(NOW, shard(AMERICAS, "RECEIVING", "\"yes\"", "2026-09-28T02:58:00", null))).shards().getFirst();
+        assertThat(odd.state()).isNull();
+        assertThat(odd.connected()).isNull();
+        assertThat(odd.gapOpenSince()).isNull();
+        assertThat(AisStatus.parse(sharded(NOW, shard(AMERICAS, "receiving", "\"1\"", null, null))).shards().getFirst().connected()).isTrue();
+        assertThat(AisStatus.parse(sharded(NOW, shard(AMERICAS, "receiving", 0, null, null))).shards().getFirst().connected()).isFalse();
+        assertThat(AisStatus.parse(sharded(NOW, shard(AMERICAS, "receiving", "1.5", null, null))).shards().getFirst().connected()).isNull();
+        assertThat(AisStatus.parse(sharded(NOW, shard(AMERICAS, "receiving", "\"x\"", null, null))).shards().getFirst().connected()).isNull();
+        assertThat(AisStatus.parse(sharded(NOW, "{\"scope\":\"" + AMERICAS + "\",\"state\":5,\"gap_reason\":\"" + "r".repeat(500) + "\"}"))
+                .shards().getFirst()).satisfies(s -> {
+                    assertThat(s.state()).isNull();
+                    assertThat(s.gapReason()).hasSize(AisStatus.TEXT_MAX);
+                });
+
+        // 전체가 모름: 배열 아님 · 빈 배열 · 4개 · 원소가 객체 아님 · scope 없음/형식 오류/'|' 포함 · JSON 오류 · 너무 김
+        String ok = shard(AMERICAS, "receiving", true, null, null);
+        for (String bad : new String[]{"{}", "[]", "[" + String.join(",", java.util.Collections.nCopies(4, ok)) + "]", "[1]", "[\"x\"]",
+                "[{\"state\":\"receiving\"}]", "[{\"scope\":5}]", "[" + ok + "," + shard("91,0,1,1", "receiving", true, null, null) + "]",
+                "[" + shard(AMERICAS + "|" + ASIA_PACIFIC, "receiving", true, null, null) + "]", "[{", " ", "[" + ok + "," + " ".repeat(9000) + ok + "]"}) {
+            Map<Object, Object> h = healthy(NOW);
+            h.put("bbox", AMERICAS + "|" + ASIA_PACIFIC);
+            h.put("shards", bad);
+            AisStatus.Feed bf = AisStatus.parse(h);
+            assertThat(bf.shards()).as(bad).isNull();
+            assertThat(bf.coverage()).as("falls back to the bbox field (union of its shards)").hasSize(2);
+        }
+        assertThat(AisStatus.parse(healthy(NOW)).shards()).as("older collector: no shards field").isNull();
+    }
+
+    /** 계약 v4 §D: bbox 필드도 '|' 구역 문법 — coverage 는 모든 구역 상자의 합. */
+    @Test void coverageFromTheBboxField_isTheUnionOfItsShards() {
+        assertThat(AisStatus.parse(hash("bbox", AMERICAS + "|" + ASIA_PACIFIC + ";0,0,1,1")).coverage())
+                .containsExactly(List.of(-90.0, -180.0, 90.0, 0.0), List.of(-90.0, 45.0, 90.0, 180.0), List.of(0.0, 0.0, 1.0, 1.0));
+        assertThat(AisStatus.parse(hash("bbox", "0,0,1,1|")).coverage()).isNull();
+        assertThat(AisStatus.parse(hash("bbox", "0,0,1,1|2,2,3,3|4,4,5,5|6,6,7,7")).coverage()).isNull();
+    }
+
+    /** 계약 v4 §D: publicView.shards = [{coverage, state, connected, gap_open_since}] — heartbeat 가 30 s 안일 때만, 모르는 값은 키 없음. */
+    @Test void publicView_shards_onlyWhileTheHeartbeatIsFresh() {
+        ShipStore ships = new ShipStore();
+        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        st.update(sharded(NOW.minusSeconds(3), shard(AMERICAS, "receiving", true, null, null),
+                shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)")));
+        Map<String, Object> v = st.publicView(NOW_MS);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> shards = (List<Map<String, Object>>) v.get("shards");
+        assertThat(shards).hasSize(2);
+        assertThat(shards.get(0)).containsEntry("coverage", List.of(List.of(-90.0, -180.0, 90.0, 0.0))).containsEntry("state", "receiving")
+                .containsEntry("connected", true).containsEntry("gap_open_since", null);
+        assertThat(shards.get(1)).containsEntry("coverage", List.of(List.of(-90.0, 45.0, 90.0, 180.0))).containsEntry("state", "backoff")
+                .containsEntry("connected", false).containsEntry("gap_open_since", Instant.parse("2026-09-28T02:58:00Z"));
+        assertThat(shards.get(1)).as("the reason text is not part of the public shard view").doesNotContainKey("gap_reason");
+        assertThat(v.get("coverage")).isEqualTo(List.of(List.of(-90.0, -180.0, 90.0, 0.0), List.of(-90.0, 45.0, 90.0, 180.0)));
+        Map<String, Object> stale = st.publicView(NOW_MS + 60_000);
+        assertThat(stale.get("shards")).isNull();
+        assertThat(stale.get("coverage")).isNull();
+        st.update(healthy(NOW.minusSeconds(3)));
+        assertThat(st.publicView(NOW_MS).get("shards")).as("no shard info → key omitted").isNull();
+    }
+
+    static ShipStore liveStore(long appliedAtMs) {
+        ShipStore ships = new ShipStore();
+        ships.apply(List.of(ShipStoreTest.pos("440000001", 35, 129, NOW)), List.of(), NOW, "aisstream", appliedAtMs);
+        return ships;
+    }
+
+    /**
+     * 계약 v4 §D: 만료 멈춤은 열린 공백이 있거나 연결되지 않은(모름 포함) 구역의 상자 안만. 수집기 상태를 모르면(heartbeat 오래됨·소비 멈춤)·구역 정보가
+     * 없는데 합계가 끊김이면·합계와 구역이 어긋나면 전체.
+     */
+    @Test void freeze_onlyTheShardsThatAreDown() {
+        AisStatus st = new AisStatus(new StringRedisTemplate(), liveStore(NOW_MS - 5_000));
+        String amOk = shard(AMERICAS, "receiving", true, null, null);
+        String apGap = shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)");
+
+        Map<Object, Object> h = sharded(NOW.minusSeconds(3), amOk, apGap);
+        h.put("connected", "0");
+        h.put("gap_open_since", "2026-09-28T02:58:00Z");
+        st.update(h);
+        ShipStore.Freeze fz = st.freeze(NOW_MS);
+        assertThat(fz.all()).isFalse();
+        assertThat(fz.scopes()).extracting(s -> s.text()).containsExactly(ASIA_PACIFIC);
+        assertThat(fz.covers(35, 129)).as("Busan is in the Asia-Pacific shard").isTrue();
+        assertThat(fz.covers(40, -70)).as("New York is in the Americas shard").isFalse();
+        assertThat(fz.covers(50, 10)).as("outside every shard").isFalse();
+        assertThat(st.inputDown(NOW_MS)).isTrue();
+
+        // 모두 정상
+        st.update(sharded(NOW.minusSeconds(3), amOk, shard(ASIA_PACIFIC, "receiving", true, null, null)));
+        assertThat(st.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.NONE);
+        assertThat(st.inputDown(NOW_MS)).isFalse();
+        // 연결 상태를 모르는 구역은 멈춘다(열린 공백이 없어도)
+        st.update(sharded(NOW.minusSeconds(3), amOk, shard(ASIA_PACIFIC, "connecting", "null", null, null)));
+        assertThat(st.freeze(NOW_MS).scopes()).extracting(s -> s.text()).containsExactly(ASIA_PACIFIC);
+        // 합계는 공백인데 끊긴 구역이 없다(어긋남) → 전체
+        Map<Object, Object> mismatch = sharded(NOW.minusSeconds(3), amOk, shard(ASIA_PACIFIC, "receiving", true, null, null));
+        mismatch.put("gap_open_since", "2026-09-28T02:58:00Z");
+        st.update(mismatch);
+        assertThat(st.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.ALL);
+        // heartbeat 가 오래됨 → 전체(구역 정보가 있어도)
+        st.update(sharded(NOW.minusSeconds(60), amOk, apGap));
+        assertThat(st.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.ALL);
+        // 구역 정보 없는 수집기: 기존 규칙
+        Map<Object, Object> legacy = healthy(NOW.minusSeconds(3));
+        st.update(legacy);
+        assertThat(st.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.NONE);
+        legacy.put("gap_open_since", "2026-09-28T02:58:00Z");
+        st.update(legacy);
+        assertThat(st.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.ALL);
+
+        // api 가 ships 메시지를 2분 넘게 받지 못함 → 전체
+        AisStatus stalled = new AisStatus(new StringRedisTemplate(), liveStore(NOW_MS - AisStatus.STALL_MS - 1_000));
+        stalled.update(sharded(NOW.minusSeconds(3), amOk, apGap));
+        assertThat(stalled.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.ALL);
+    }
+
+    /** 계약 v4 §D: 열린 공백은 구역마다 하나(scope 포함). 구역 정보가 없으면 합계 하나(구역 없음), 합계만 열려 있으면(어긋남) 합계를 구역 없이. */
+    @Test void openGaps_perShardWithScope() {
+        String apGap = shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)");
+        String amGap = shard(AMERICAS, "backoff", false, "2026-09-28T02:50:00Z", "idle 120 s");
+        List<AisGap> two = AisStatus.parse(sharded(NOW, amGap, apGap)).openGaps();
+        assertThat(two).extracting(AisGap::scopeText).containsExactly(AMERICAS, ASIA_PACIFIC);
+        assertThat(two).extracting(AisGap::reason).containsExactly("idle 120 s", "server closed (1006)");
+        assertThat(two).allSatisfy(g -> {
+            assertThat(g.endedAt()).isNull();
+            assertThat(g.provider()).isEqualTo("aisstream");
+        });
+        assertThat(AisStatus.parse(sharded(NOW, shard(AMERICAS, "receiving", true, null, null))).openGaps()).isEmpty();
+        Map<Object, Object> legacy = healthy(NOW);
+        legacy.put("gap_open_since", "2026-09-28T02:58:00Z");
+        legacy.put("gap_reason", "server closed (1006)");
+        assertThat(AisStatus.parse(legacy).openGaps()).singleElement().satisfies(g -> {
+            assertThat(g.scope()).isNull();
+            assertThat(g.startedAt()).isEqualTo(Instant.parse("2026-09-28T02:58:00Z"));
+        });
+        Map<Object, Object> mismatch = sharded(NOW, shard(AMERICAS, "receiving", true, null, null));
+        mismatch.put("gap_open_since", "2026-09-28T02:58:00Z");
+        assertThat(AisStatus.parse(mismatch).openGaps()).singleElement().extracting(AisGap::scope).isNull();
+        assertThat(AisStatus.parse(Map.of()).openGaps()).isEmpty();
+    }
+
+    /** 계약 v4 §D: 스위퍼는 끊긴 구역의 선박만 남기고 다른 구역의 오래된 선박은 뺀다. */
+    @Test void sweeperExpiresShipsOutsideTheDownShards() {
+        ShipStore ships = new ShipStore();
+        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        List<Object> events = new java.util.ArrayList<>();
+        ShipSweeper sw = new ShipSweeper(ships, st, events::add, new SimpleMeterRegistry());
+        ships.apply(List.of(ShipStoreTest.pos("440000001", 35, 129, NOW.minusSeconds(40 * 60)), ShipStoreTest.pos("366000001", 40, -70, NOW.minusSeconds(40 * 60))),
+                List.of(), NOW, "aisstream", NOW_MS);
+        st.update(sharded(NOW.minusSeconds(2), shard(AMERICAS, "receiving", true, null, null),
+                shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)")));
+        assertThat(sw.sweep(NOW_MS).removed()).as("the Asia-Pacific ship is frozen, the Americas ship expires").containsExactly("366000001");
+        assertThat(ships.view().get("440000001")).isNotNull();
+    }
+
     @Test void sweeperFreezesWhileDownAndPublishesRemovals() {
         ShipStore ships = new ShipStore();
         AisStatus st = new AisStatus(new StringRedisTemplate(), ships);

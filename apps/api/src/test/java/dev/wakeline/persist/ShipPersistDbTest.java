@@ -162,6 +162,29 @@ class ShipPersistDbTest {
         assertThat(back.provider()).isEqualTo("aisstream");
     }
 
+    /** 계약 v4 §D(V8): 공백은 (source, 구역, started_at) 으로 중복 제거 — 구역이 다르면 같은 시각이어도 따로, 구역 없음끼리는 같은 것. scope 는 돌려받는다. */
+    @Test void gaps_dedupedPerScope_scopeRoundTrips() {
+        dev.wakeline.domain.AisScope americas = dev.wakeline.domain.AisScope.parse("-90,-180,90,0");
+        dev.wakeline.domain.AisScope asia = dev.wakeline.domain.AisScope.parse("-90,45,90,180");
+        assertThat(repo.insertGap(new AisGap(W, W.plusSeconds(120), "am", "aisstream", americas))).isTrue();
+        assertThat(repo.insertGap(new AisGap(W, W.plusSeconds(90), "ap", "aisstream", asia))).as("another shard, same start").isTrue();
+        assertThat(repo.insertGap(new AisGap(W, W.plusSeconds(60), "legacy", "aisstream"))).as("no scope is its own key").isTrue();
+        assertThat(repo.insertGap(new AisGap(W, W.plusSeconds(130), "retry", "aisstream", dev.wakeline.domain.AisScope.parse("-90,-180,90,0"))))
+                .as("same shard, same start (republished)").isFalse();
+        assertThat(repo.insertGap(new AisGap(W, W.plusSeconds(70), "retry", "aisstream"))).as("NULL scopes are the same key (coalesce)").isFalse();
+        List<AisGap> back = repo.gaps(W.minusSeconds(10), W.plusSeconds(300), 10);
+        assertThat(back).hasSize(3);
+        assertThat(back).extracting(AisGap::scopeText).containsExactlyInAnyOrder("-90,-180,90,0", "-90,45,90,180", null);
+        assertThat(back).filteredOn(g -> "am".equals(g.reason())).singleElement().satisfies(g -> assertThat(g.appliesAt(40, -70)).isTrue());
+        assertThat(repo.gapsAtLeast(W.minusSeconds(10), W.plusSeconds(300), 60, 10)).extracting(AisGap::scopeText)
+                .containsExactlyInAnyOrder("-90,-180,90,0", "-90,45,90,180", null);
+        assertThat(admin.sql("SELECT count(*) FROM ingest_gap WHERE scope IS NULL").query(Long.class).single()).isEqualTo(1);
+        // 저장소에 읽을 수 없는 구역이 있으면(수동 입력 등) 구역 없음 — 모든 곳에 적용
+        assertThat(ShipRepository.scope("not a box")).isNull();
+        assertThat(ShipRepository.scope(" ")).isNull();
+        assertThat(ShipRepository.scope(null)).isNull();
+    }
+
     @Test void writer_endToEnd_downsamplesAndAcksAfterCommit() throws Exception {
         ShipWriter w = new ShipWriter(repo, new OrderedWriter(new SimpleMeterRegistry(), 5, 10), new SimpleMeterRegistry(), 5, 20);
         w.start();

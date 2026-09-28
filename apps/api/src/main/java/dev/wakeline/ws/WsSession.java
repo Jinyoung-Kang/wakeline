@@ -36,7 +36,7 @@ public final class WsSession {
 
     enum Job { INITIAL, FANOUT, ALERTS, SIGMETS, RADAR, HEARTBEAT, SELECTED, DEMAND, SHIPS, SHIP_SELECTED }
 
-    /** 이 세션에 마지막으로 보낸 선박 표현: 없음 · 개별 선박(ships_snapshot/diff) · 격자(ships_grid). */
+    /** 이 세션에 마지막으로 보낸 선박 표현: 없음 · 개별 선박(ships_snapshot/diff) · 격자(ships_grid, 줌 또는 선박 수 때문). */
     enum ShipsMode { OFF, POINTS, GRID }
 
     /** 마지막으로 보낸 ship_selected(같은 객체면 다시 보내지 않는다). */
@@ -133,6 +133,8 @@ public final class WsSession {
     long shipsSentVersion = -1;
     /** 마지막으로 보낸 격자의 키(버전·칸 크기·bbox·capped) — 같으면 다시 보내지 않는다. */
     String shipsGridKey;
+    /** 마지막 격자가 선박 수 때문이었다(capped) — 줌 4~6 에서 1,200 척 이하가 되어야 개별로 돌아온다(계약 v4 §C). */
+    boolean shipsDense;
     ShipSelectedSent shipSelectedSent;
 
     WsSession(WebSocketSession raw, String ip, Executor executor) {

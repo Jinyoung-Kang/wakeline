@@ -22,8 +22,8 @@ import static dev.wakeline.ws.WsTestKit.types;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 선박 WS(계약 v2 §B3): 레이어, ships_snapshot/ships_diff 의 세션별 연속 sseq, 줌 &lt; 7 격자(칸 크기·재전송 억제·버전당 한 번 집계),
- * 5,000 척 상한 → capped 격자, select_ship → ship_selected, resync·resume, 항공기 레이어 끄기.
+ * 선박 WS(계약 v2 §B3 · v4 §C): 레이어, ships_snapshot/ships_diff 의 세션별 연속 sseq, 줌 &lt; 4 격자(칸 크기·재전송 억제·버전당 한 번 집계),
+ * 줌 4~6 개별/격자 전환(1,500 척 · 되풀이 방지 1,200 척), 5,000 척 상한 → capped 격자, select_ship → ship_selected, resync·resume, 항공기 레이어 끄기.
  */
 class ShipFanoutTest {
     static final Instant T = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
@@ -128,38 +128,140 @@ class ShipFanoutTest {
         }
     }
 
-    @Test void grid_cellSizeByZoom_notResentWithoutChange_builtOncePerVersion() throws Exception {
+    /** 줌 &lt; 4 는 선박 수와 무관하게 격자(계약 v4 §C) — 칸 크기는 줌으로, 같은 버전은 다시 보내지 않고, 집계는 버전당 한 번. */
+    @Test void grid_belowZoom4_cellSizeByZoom_notResentWithoutChange_builtOncePerVersion() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T), pos("431000001", 35.5, 139.8, T)),
                     List.of(stat("440000001", "A", 70), stat("440000002", "B", 71)));
             FakeWsSession z2 = session(k, "z2", "{\"type\":\"subscribe\",\"bbox\":[-180,-90,180,90],\"zoom\":2}", true);
-            FakeWsSession z4 = session(k, "z4", "{\"type\":\"subscribe\",\"bbox\":[100,0,160,60],\"zoom\":4}", true);
-            FakeWsSession z6 = session(k, "z6", "{\"type\":\"subscribe\",\"bbox\":[125,30,135,40],\"zoom\":6}", true);
+            FakeWsSession z3 = session(k, "z3", "{\"type\":\"subscribe\",\"bbox\":[125,30,135,40],\"zoom\":3}", true);
             JsonNode g2 = ofType(z2, "ships_grid").getFirst();
             assertThat(g2.path("cell_deg").asDouble()).isEqualTo(5.0);
             assertThat(g2.has("capped")).isFalse();
             int total = 0;
             for (JsonNode c : g2.path("cells")) total += c.get(2).asInt();
             assertThat(total).isEqualTo(3);
-            assertThat(ofType(z4, "ships_grid").getFirst().path("cell_deg").asDouble()).isEqualTo(2.0);
-            JsonNode g6 = ofType(z6, "ships_grid").getFirst();
-            assertThat(g6.path("cell_deg").asDouble()).isEqualTo(0.5);
-            assertThat(g6.path("cells").size()).as("bbox filter: the Tokyo ship is outside").isEqualTo(1);
-            assertThat(g6.path("cells").get(0).get(3).asString()).isEqualTo("cargo");
+            JsonNode g3 = ofType(z3, "ships_grid").getFirst();
+            assertThat(g3.path("cell_deg").asDouble()).isEqualTo(2.0);
+            assertThat(g3.has("capped")).as("zoom, not count").isFalse();
+            assertThat(g3.path("cells").size()).as("bbox filter: the Tokyo ship is outside").isEqualTo(1);
+            assertThat(g3.path("cells").get(0).get(3).asString()).isEqualTo("cargo");
             assertThat(k.meters.find("wakeline_ship_grid_build_seconds").timer().count()).as("one aggregation for all sessions").isEqualTo(1);
 
             // 버전이 그대로면 다시 보내지 않는다(같은 보고 재전달)
             publish(k, List.of(pos("440000001", 35.1, 129.1, T)), List.of());
-            assertThat(ofType(z6, "ships_grid")).hasSize(1);
+            assertThat(ofType(z3, "ships_grid")).hasSize(1);
             // 새 버전 → 다시(집계도 한 번 더)
             publish(k, List.of(pos("440000001", 35.3, 129.1, T.plusSeconds(10))), List.of());
-            assertThat(ofType(z6, "ships_grid")).hasSize(2);
+            assertThat(ofType(z3, "ships_grid")).hasSize(2);
             assertThat(ofType(z2, "ships_grid")).hasSize(2);
             assertThat(k.meters.find("wakeline_ship_grid_build_seconds").timer().count()).isEqualTo(2);
-            assertThat(types(z6)).doesNotContain("ships_snapshot");
-            // 줌 7 로 들어오면 개별 선박(스냅샷 sseq 1)
-            k.msg(z6, BUSAN);
-            assertThat(ofType(z6, "ships_snapshot").getFirst().path("sseq").asInt()).isEqualTo(1);
+            assertThat(types(z3)).doesNotContain("ships_snapshot");
+            assertThat(k.meters.find("wakeline_ws_ship_capped_total").counter().count()).isZero();
+            // 줌 4~6 이고 선박이 적으면 개별 선박(스냅샷 sseq 1) — 계약 v4 §C
+            k.msg(z3, "{\"type\":\"subscribe\",\"bbox\":[125,30,135,40],\"zoom\":5}");
+            JsonNode sn = ofType(z3, "ships_snapshot").getFirst();
+            assertThat(sn.path("sseq").asInt()).isEqualTo(1);
+            assertThat(sn.path("ships").size()).isEqualTo(2);
+            publish(k, List.of(pos("440000001", 35.4, 129.1, T.plusSeconds(20))), List.of());
+            assertThat(sseqs(z3)).containsExactly(1, 2);
+        }
+    }
+
+    /** 뷰포트 [120,30,135,40] 안에 n 척(seen 시각 지정). */
+    static List<ShipState> fleet(int from, int n, Instant seen) {
+        List<ShipState> out = new ArrayList<>(n);
+        for (int i = from; i < from + n; i++)
+            out.add(pos(String.format("%09d", 300_000_000 + i), 30.05 + (i % 100) * 0.09, 120.05 + (i / 100) * 0.9, seen));
+        return out;
+    }
+
+    static final String Z5 = "{\"type\":\"subscribe\",\"bbox\":[120,30,135,40],\"zoom\":5}";
+    static final String Z4 = "{\"type\":\"subscribe\",\"bbox\":[120,30,135,40],\"zoom\":4}";
+
+    /**
+     * 계약 v4 §C: 줌 4~6 은 뷰포트 안 1,500 척까지 개별, 넘으면 격자(capped — 그 줌의 칸 크기). 수 때문에 격자가 된 세션은 1,200 척 이하에서만
+     * 개별로 돌아온다(1,201~1,500 에서 되풀이 전환하지 않게). 처음 보는 세션은 1,500 이하면 개별.
+     */
+    @Test void band_zoom4to6_pointsUpTo1500_gridAbove_hysteresisBackAt1200() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant old = Instant.now().minusSeconds(40 * 60); // 만료로 뺄 선박(30분 넘게 보고 없음)
+            List<ShipState> first = new ArrayList<>(fleet(0, 1_200, T));
+            first.addAll(fleet(1_200, 300, old));
+            publish(k, first, List.of());
+            FakeWsSession f = session(k, "z5", Z5, true);
+            FakeWsSession z4 = session(k, "z4", Z4, true);
+            JsonNode sn = ofType(f, "ships_snapshot").getFirst();
+            assertThat(sn.path("ships").size()).as("exactly 1,500 → individual ships").isEqualTo(ShipFanout.BAND_MAX_SHIPS);
+            assertThat(types(z4)).contains("ships_snapshot");
+
+            // 1,501 척 → 격자(capped, 줌 5 는 0.5° · 줌 4 는 2°)
+            publish(k, fleet(1_500, 1, T), List.of());
+            JsonNode g = ofType(f, "ships_grid").getLast();
+            assertThat(g.path("capped").asBoolean()).isTrue();
+            assertThat(g.path("cell_deg").asDouble()).isEqualTo(0.5);
+            int total = 0;
+            for (JsonNode c : g.path("cells")) total += c.get(2).asInt();
+            assertThat(total).isEqualTo(1_501);
+            assertThat(ofType(z4, "ships_grid").getLast().path("cell_deg").asDouble()).isEqualTo(2.0);
+            assertThat(k.meters.find("wakeline_ws_ship_capped_total").counter().count()).isEqualTo(2);
+
+            // 만료로 1,201 척 — 1,500 이하지만 격자 세션은 1,200 이하가 되어야 돌아온다
+            ShipStore.Change c = k.ships.expire(System.currentTimeMillis(), false);
+            assertThat(c.removed()).hasSize(300);
+            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            int snaps = ofType(f, "ships_snapshot").size();
+            JsonNode g2 = ofType(f, "ships_grid").getLast();
+            assertThat(g2.path("capped").asBoolean()).isTrue();
+            total = 0;
+            for (JsonNode cell : g2.path("cells")) total += cell.get(2).asInt();
+            assertThat(total).isEqualTo(1_201);
+            // 처음 보는 세션은 같은 1,201 척이어도 개별(되풀이 방지는 이미 격자인 세션에만)
+            FakeWsSession fresh = session(k, "fresh", Z5, true);
+            assertThat(ofType(fresh, "ships_snapshot").getFirst().path("ships").size()).isEqualTo(1_201);
+            // 개별 세션은 1,201 척에서 개별 그대로(diff)
+            publish(k, List.of(pos("300000000", 30.06, 120.05, T.plusSeconds(10))), List.of());
+            assertThat(types(fresh)).contains("ships_diff");
+            assertThat(ofType(f, "ships_snapshot")).as("the grid session stays on the grid at 1,201").hasSize(snaps);
+
+            // 한 척이 뷰포트를 떠나 1,200 척 → 격자 세션도 개별로(스냅샷 sseq 1)
+            publish(k, List.of(pos("300001500", 45.0, 120.05, T.plusSeconds(20))), List.of());
+            JsonNode back = ofType(f, "ships_snapshot").getLast();
+            assertThat(ofType(f, "ships_snapshot")).hasSize(snaps + 1);
+            assertThat(back.path("sseq").asInt()).isEqualTo(1);
+            assertThat(back.path("ships").size()).isEqualTo(ShipFanout.BAND_RESUME_SHIPS);
+        }
+    }
+
+    @Test void pointsLimit_byZoomAndHysteresis() {
+        assertThat(ShipFanout.pointsLimit(7, false)).isEqualTo(ShipFanout.MAX_SHIPS_PER_MESSAGE);
+        assertThat(ShipFanout.pointsLimit(12, true)).as("no hysteresis at zoom ≥ 7").isEqualTo(ShipFanout.MAX_SHIPS_PER_MESSAGE);
+        assertThat(ShipFanout.pointsLimit(4, false)).isEqualTo(1_500);
+        assertThat(ShipFanout.pointsLimit(6, false)).isEqualTo(1_500);
+        assertThat(ShipFanout.pointsLimit(6, true)).isEqualTo(1_200);
+        assertThat(ShipFanout.pointsLimit(5, true)).isEqualTo(1_200);
+    }
+
+    /** 줌 ≥ 7 에서 5,000 척을 넘어 격자가 된 세션이 줌 4~6 으로 나오면 그 줌의 되풀이 방지 기준(1,200)을 따른다. */
+    @Test void cappedAtZoom7_thenZoomOutIntoTheBand_usesTheResumeThreshold() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            List<ShipState> many = new ArrayList<>();
+            for (int i = 0; i <= ShipFanout.MAX_SHIPS_PER_MESSAGE; i++)
+                many.add(pos(String.format("%09d", 300_000_000 + i), 34.001 + (i % 100) * 0.019, 128.001 + (i / 100) * 0.03, T));
+            publish(k, many, List.of());
+            FakeWsSession f = session(k, "dense", BUSAN, true);
+            assertThat(ofType(f, "ships_grid").getLast().path("capped").asBoolean()).isTrue();
+            // 경도 128.0~128.38 에는 13열 × 100 = 1,300 척 — 1,500 이하지만 1,200 초과
+            String narrow = "{\"type\":\"subscribe\",\"bbox\":[128,34,128.38,36],\"zoom\":5}";
+            k.msg(f, narrow);
+            assertThat(types(f)).doesNotContain("ships_snapshot");
+            JsonNode g = ofType(f, "ships_grid").getLast();
+            assertThat(g.path("capped").asBoolean()).isTrue();
+            int total = 0;
+            for (JsonNode c : g.path("cells")) total += c.get(2).asInt();
+            assertThat(total).isGreaterThanOrEqualTo(1_300); // 칸이 bbox 와 겹치면 칸 전체 수(격자 규칙)
+            FakeWsSession fresh = session(k, "fresh", narrow, true);
+            assertThat(ofType(fresh, "ships_snapshot").getFirst().path("ships").size()).isEqualTo(1_300);
         }
     }
 

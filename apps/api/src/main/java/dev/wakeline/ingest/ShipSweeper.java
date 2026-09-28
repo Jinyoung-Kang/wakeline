@@ -11,7 +11,8 @@ import java.util.Set;
 
 /**
  * 선박 상태의 주기 작업(ADR-014): 수집기 상태 해시 읽기(5 s) · 실시간 목록 만료(30 s). 둘 다 스케줄러 스레드 — 스트림 소비·WS 를 막지 않는다.
- * 만료로 빠진 선박은 ShipsUpdated(removed)로 알린다(WS 가 diff·격자에서 뺀다). 수신이 끊긴 동안은 빼지 않는다({@link AisStatus#inputDown}).
+ * 만료로 빠진 선박은 ShipsUpdated(removed)로 알린다(WS 가 diff·격자에서 뺀다). 수신이 끊긴 동안은 빼지 않는다({@link AisStatus#freeze} —
+ * 수신 상태를 모르면 전체, 구역 정보가 있으면 끊긴 구역의 상자 안만, 계약 v4 §D).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
@@ -30,7 +31,7 @@ public class ShipSweeper {
         Gauge.builder("wakeline_ships_live", store, s -> s.view().size()).description("실시간 목록의 선박 수").register(meters);
         Gauge.builder("wakeline_ship_statics", store, ShipStore::staticCount).description("메모리의 선박 정적 정보 수").register(meters);
         Gauge.builder("wakeline_ais_input_down", this, s -> s.inputDown ? 1 : 0)
-                .description("AIS 수신이 끊겼거나 확인할 수 없음(1) — 그동안 선박 만료를 멈춘다").register(meters);
+                .description("AIS 수신이 끊겼거나 확인할 수 없는 곳이 있음(1, 전체 또는 일부 구역) — 그곳 선박의 만료를 멈춘다").register(meters);
     }
 
     @Scheduled(initialDelay = 1_000, fixedDelay = 5_000)
@@ -40,9 +41,9 @@ public class ShipSweeper {
     public void sweep() { sweep(System.currentTimeMillis()); }
 
     ShipStore.Change sweep(long nowMs) {
-        boolean down = ais.inputDown(nowMs);
-        inputDown = down;
-        ShipStore.Change c = store.expire(nowMs, down);
+        ShipStore.Freeze freeze = ais.freeze(nowMs);
+        inputDown = freeze.any();
+        ShipStore.Change c = store.expire(nowMs, freeze);
         if (!c.removed().isEmpty()) {
             expired.increment(c.removed().size());
             events.publishEvent(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));

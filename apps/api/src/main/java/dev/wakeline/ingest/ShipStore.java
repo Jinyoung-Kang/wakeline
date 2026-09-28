@@ -1,6 +1,7 @@
 package dev.wakeline.ingest;
 
 import dev.wakeline.domain.AisGap;
+import dev.wakeline.domain.AisScope;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.ShipCategory;
 import dev.wakeline.domain.ShipState;
@@ -16,6 +17,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
@@ -29,7 +31,7 @@ import java.util.function.Consumer;
  *       updated_at 이 더 오래된 것은 무시한다.</li>
  *   <li>만료: 수신이 정상인 시간으로 30분 동안 보고가 없으면 뺀다. 수신이 끊긴 동안(열린 공백·수집기 상태 없음·소비 멈춤)은 빼지 않고 그대로
  *       둔다(얼려 두고 화면이 오래됨으로 표시). 끝난 공백과 겹친 시간은 '보고 없음' 으로 세지 않는다 — 공백이 끝난 직후 아직 다시 보고하지 않은
- *       선박이 한꺼번에 사라졌다 나타나지 않게.</li>
+ *       선박이 한꺼번에 사라졌다 나타나지 않게. 구역(계약 v4 §D)이 있는 공백·멈춤은 그 구역 상자 안(선박의 마지막 보고 위치)에만 적용한다.</li>
  *   <li>상한: 선박 {@value #MAX_SHIPS} · 정적 정보 {@value #MAX_STATICS}. 넘으면 새 MMSI 를 받지 않고 센다(기존 선박 갱신은 계속). 공백 기록은
  *       최근 48 h · {@value #MAX_GAPS} 건.</li>
  * </ul>
@@ -59,6 +61,27 @@ public class ShipStore {
     public record Change(Set<String> changed, Set<String> removed, int rejectedCap, int rejectedFuture) {
         static final Change NONE = new Change(Set.of(), Set.of(), 0, 0);
         public boolean isEmpty() { return changed.isEmpty() && removed.isEmpty(); }
+    }
+
+    /**
+     * 만료를 멈출 곳(계약 v4 §D): 전체(all — 수신 상태를 모름) 또는 이 구역들의 상자 안(scopes — 열린 공백·끊긴 구역). 둘 다 아니면 멈추지 않는다.
+     * 판단은 {@link AisStatus#freeze} 가 한다.
+     */
+    public record Freeze(boolean all, List<AisScope> scopes) {
+        public static final Freeze NONE = new Freeze(false, List.of());
+        public static final Freeze ALL = new Freeze(true, List.of());
+
+        public static Freeze of(List<AisScope> scopes) { return scopes.isEmpty() ? NONE : new Freeze(false, List.copyOf(scopes)); }
+
+        /** 멈추는 곳이 있는가. */
+        public boolean any() { return all || !scopes.isEmpty(); }
+
+        /** 이 위치의 선박을 멈추는가. */
+        public boolean covers(double lat, double lon) {
+            if (all) return true;
+            for (AisScope s : scopes) if (s.contains(lat, lon)) return true;
+            return false;
+        }
     }
 
     private record StaticEntry(ShipStatic stat, long receivedAtMs) {}
@@ -229,11 +252,11 @@ public class ShipStore {
         return new Change(changed, Set.of(), cap, future);
     }
 
-    /** 끝난 공백 하나를 기억한다(같은 시작 시각이면 무시). @return 새로 넣었으면 true */
+    /** 끝난 공백 하나를 기억한다(같은 구역·같은 시작 시각이면 무시 — 구역이 다르면 다른 공백). @return 새로 넣었으면 true */
     public boolean addGap(AisGap g) {
         if (g == null || g.endedAt() == null) return false;
         synchronized (lock) {
-            for (AisGap x : gaps) if (x.startedAt().equals(g.startedAt())) return false;
+            for (AisGap x : gaps) if (x.startedAt().equals(g.startedAt()) && Objects.equals(x.scope(), g.scope())) return false;
             gaps.add(g);
             gaps.sort(Comparator.comparing(AisGap::startedAt));
             while (gaps.size() > MAX_GAPS) gaps.removeFirst();
@@ -242,25 +265,29 @@ public class ShipStore {
         }
     }
 
+    /** 만료 점검(구역 없이): inputDown 이면 전체를 멈춘다. */
+    public Change expire(long nowMs, boolean inputDown) { return expire(nowMs, inputDown ? Freeze.ALL : Freeze.NONE); }
+
     /**
-     * 만료 점검. inputDown(수신이 끊겼거나 확인할 수 없음)이면 선박을 빼지 않는다(얼림). 아니면 '수신이 정상이던 시간' 으로 30분 넘게 보고가
-     * 없는 선박을 뺀다 — 보고 뒤 경과에서 끝난 공백과 겹친 시간을 뺀다. 오래된 공백·주인 없는 정적 정보도 여기서 정리한다.
+     * 만료 점검. freeze 가 덮는 선박(수신이 끊겼거나 확인할 수 없는 곳 — 전체 또는 끊긴 구역의 상자 안)은 빼지 않는다(얼림). 나머지는
+     * '수신이 정상이던 시간' 으로 30분 넘게 보고가 없으면 뺀다 — 보고 뒤 경과에서 그 선박에 적용되는 끝난 공백(구역 없음 또는 선박이 그 구역 안)과
+     * 겹친 시간을 뺀다(겹치는 공백끼리는 한 번만). 오래된 공백·주인 없는 정적 정보도 여기서 정리한다.
      */
-    public Change expire(long nowMs, boolean inputDown) {
+    public Change expire(long nowMs, Freeze freeze) {
         synchronized (lock) {
             if (gaps.removeIf(g -> nowMs - g.endedAt().toEpochMilli() > GAP_KEEP_MS)) gapsView = List.copyOf(gaps);
             View cur = view;
             statics.entrySet().removeIf(e -> !cur.ships.containsKey(e.getKey()) && nowMs - e.getValue().receivedAtMs() > STATIC_KEEP_MS);
-            if (inputDown) return Change.NONE;
+            if (freeze.all()) return Change.NONE;
             List<AisGap> gs = gapsView;
             Set<String> removed = new HashSet<>();
             for (Ship s : cur.ships.values()) {
                 long seen = s.state().seenAt().toEpochMilli();
                 long age = nowMs - seen;
                 if (age <= LIVE_MAX_AGE_MS) continue;
-                long down = 0;
-                for (AisGap g : gs) down += g.overlapMs(seen, nowMs);
-                if (age - down > LIVE_MAX_AGE_MS) removed.add(s.mmsi());
+                double lat = s.state().lat(), lon = s.state().lon();
+                if (freeze.covers(lat, lon)) continue;
+                if (age - downMs(gs, lat, lon, seen, nowMs) > LIVE_MAX_AGE_MS) removed.add(s.mmsi());
             }
             if (removed.isEmpty()) return Change.NONE;
             HashMap<String, Ship> next = new HashMap<>(cur.ships);
@@ -268,5 +295,25 @@ public class ShipStore {
             view = new View(cur.version + 1, Collections.unmodifiableMap(next), cur.fetchedAt, cur.provider, cur.newestSeenAt, cur.appliedAtMs);
             return new Change(Set.of(), removed, 0, 0);
         }
+    }
+
+    /** [from, to] 안에서 이 위치에 적용되는 공백(started_at 순)이 덮는 시간(ms) — 겹치는 공백은 합쳐 한 번만 센다. */
+    static long downMs(List<AisGap> sortedGaps, double lat, double lon, long fromMs, long toMs) {
+        long total = 0, curStart = -1, curEnd = -1;
+        for (AisGap g : sortedGaps) {
+            if (!g.appliesAt(lat, lon)) continue;
+            long s = Math.max(fromMs, g.startedAt().toEpochMilli());
+            long e = Math.min(toMs, g.endedAt() == null ? toMs : g.endedAt().toEpochMilli());
+            if (e <= s) continue;
+            if (s > curEnd) {
+                if (curEnd > curStart) total += curEnd - curStart;
+                curStart = s;
+                curEnd = e;
+            } else if (e > curEnd) {
+                curEnd = e;
+            }
+        }
+        if (curEnd > curStart) total += curEnd - curStart;
+        return total;
     }
 }

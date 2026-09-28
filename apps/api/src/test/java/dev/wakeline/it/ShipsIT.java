@@ -97,6 +97,27 @@ class ShipsIT extends IntegrationTest {
         assertThat(ships.gaps()).anyMatch(x -> x.startedAt().equals(s));
     }
 
+    /**
+     * 계약 v4 §D: 구역마다 따로 끊긴 공백 — 같은 시각에 시작해도 구역이 다르면 두 행, 같은 구역의 재발행은 한 번만. 구역 규칙에 맞지 않는 scope 는
+     * 공백을 버리지 않고 구역 없음으로 받는다(DLQ 아님). /ais/gaps 에 scope 가 실린다.
+     */
+    @Test
+    void scopedGapsArePersistedPerShard() {
+        Instant s = Instant.now().minusSeconds(1200).truncatedTo(ChronoUnit.MILLIS), e = s.plusSeconds(70);
+        java.time.OffsetDateTime at = java.time.OffsetDateTime.ofInstant(s, java.time.ZoneOffset.UTC);
+        Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), s, e, "it: scoped", "-90,-180,90,0"));
+        Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), s, e, "it: scoped", "-90,45,90,180"));
+        Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), s, e, "it: scoped", "-90,45,90,180")); // 재발행 — 한 번만
+        Streams.xaddAis(Streams.aisGap(Streams.nextFetchedAt(), s, e, "it: scoped", "91,0,1,1"));     // 틀린 구역 → 구역 없음
+        await("scoped gap rows", WAIT, () -> count("SELECT count(*) FROM ingest_gap WHERE started_at = ?", at) == 3);
+        await("acked", WAIT, () -> pendingShips() == 0);
+        assertThat(count("SELECT count(*) FROM ingest_gap WHERE started_at = ? AND scope IS NULL", at)).isEqualTo(1);
+        JsonNode g = get("/api/v1/ais/gaps").json();
+        Set<String> scopes = new HashSet<>();
+        for (JsonNode it : g.path("items")) if (it.path("reason").asString().equals("it: scoped")) scopes.add(it.path("scope").asString("<none>"));
+        assertThat(scopes).containsExactlyInAnyOrder("-90,-180,90,0", "-90,45,90,180", "<none>");
+    }
+
     /** 신뢰 경계(ADR-014): ais 사용자는 선박 스트림에만 쓸 수 있고, 선박 스트림의 다른 kind 는 DLQ 로 간다(반영하지 않는다). */
     @Test
     void aisUserIsConfinedToTheShipsStream_andForeignKindsAreDeadLettered() {
@@ -237,7 +258,7 @@ class ShipsIT extends IntegrationTest {
             c.send("{\"type\":\"subscribe\",\"bbox\":[55,5,70,25],\"zoom\":3}");
             JsonNode g2 = feed.next("ships_grid", Duration.ofSeconds(10));
             assertThat(g2.path("cell_deg").asDouble()).isEqualTo(2.0);
-            assertThat(g2.has("capped")).as("capped only on the zoom ≥ 7 fallback").isFalse();
+            assertThat(g2.has("capped")).as("capped only when the ship count forces the grid (zoom ≥ 4)").isFalse();
             assertThat(cells(g2)).isEqualTo(Map.of("13.0,63.0", "3,cargo", "17.0,61.0", "1,passenger"));
 
             c.send("{\"type\":\"subscribe\",\"bbox\":[55,5,70,25],\"zoom\":2}");

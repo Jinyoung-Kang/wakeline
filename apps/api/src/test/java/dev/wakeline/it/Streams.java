@@ -178,6 +178,12 @@ final class Streams {
         return envelope("ais_gap", "ships", "fixture", fetchedAt, Map.of("started_at", started.toString(), "ended_at", ended.toString(), "reason", reason), 1);
     }
 
+    /** 구역 공백(계약 v4 §D): payload 에 scope(그 구역의 정규화된 상자 문자열). */
+    static Map<String, String> aisGap(Instant fetchedAt, Instant started, Instant ended, String reason, String scope) {
+        return envelope("ais_gap", "ships", "fixture", fetchedAt,
+                Map.of("started_at", started.toString(), "ended_at", ended.toString(), "reason", reason, "scope", scope), 1);
+    }
+
     /** ais 수집기 ACL 사용자로 XADD(wakeline:ships 만 쓸 수 있다). */
     static String xaddAis(Map<String, String> fields) {
         RecordId id = ItStack.ais().opsForStream().add(MapRecord.create(SHIPS, new HashMap<>(fields)));

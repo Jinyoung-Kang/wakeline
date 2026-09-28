@@ -25,8 +25,9 @@ class StreamConsumerShipsTest {
 
     final ShipStore ships = new ShipStore();
     final List<Object> events = new ArrayList<>();
+    final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     final StreamConsumer consumer = new StreamConsumer(null, new SchemaValidator(), new SnapshotStore(), new SigmetStore(), new RadarStore(),
-            ships, null, events::add, JsonMapper.builder().build(), new SimpleMeterRegistry());
+            ships, null, events::add, JsonMapper.builder().build(), meters);
 
     static String state(String mmsi, double lat, double lon, Instant seen) {
         return """
@@ -107,6 +108,43 @@ class StreamConsumerShipsTest {
         assertThat(g.gap().startedAt()).isEqualTo(T.minusSeconds(300));
         assertThat(g.gap().provider()).isEqualTo("aisstream");
         assertThat(g.gap().reason()).isEqualTo("server closed (1006)");
+    }
+
+    static String scopedGap(Instant s, Instant e, String scopeJson) {
+        return "{\"started_at\":\"" + s + "\",\"ended_at\":\"" + e + "\",\"reason\":\"server closed (1006)\",\"scope\":" + scopeJson + "}";
+    }
+
+    /**
+     * 계약 v4 §D: ais_gap 의 scope(선택) — 구역 규칙을 통과하면 AisGap.scope, 없거나 null·빈 값이면 구역 없음, 틀리면 공백은 받되 구역 없음(모든 곳에
+     * 적용)으로 두고 센다(DLQ 로 보내지 않는다 — 공백 자체는 사실이다).
+     */
+    @Test void gapScope_parsedWhenValid_invalidBecomesNullAndIsCounted() throws Exception {
+        consumer.handle(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(300), T.minusSeconds(60), "\"-90,45,90,180\""), 0));
+        IngestEvents.AisGapReceived g = (IngestEvents.AisGapReceived) events.getLast();
+        assertThat(g.gap().scopeText()).isEqualTo("-90,45,90,180");
+        assertThat(g.gap().appliesAt(35, 129)).isTrue();
+        assertThat(g.gap().appliesAt(40, -70)).isFalse();
+        assertThat(ships.gaps()).singleElement().extracting(x -> x.scopeText()).isEqualTo("-90,45,90,180");
+
+        // 같은 시작 시각, 다른 구역 → 다른 공백
+        consumer.handle(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(300), T.minusSeconds(60), "\"-90,-180,90,0\""), 1));
+        assertThat(ships.gaps()).hasSize(2);
+
+        for (String none : new String[]{"null", "\"\"", "\"  \""}) {
+            assertThat(consumer.parse(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(9), T, none), 2)).gap().scope())
+                    .as(none).isNull();
+        }
+        assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).isZero();
+
+        for (String bad : new String[]{"\"91,0,1,1\"", "\"-90,-180,90,0|-90,45,90,180\"", "\"x\"", "\"" + "0,0,1,1;".repeat(17) + "\""}) {
+            StreamConsumer.Parsed p = consumer.parse(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(9), T, bad), 3));
+            assertThat(p.gap().scope()).as(bad).isNull();
+            assertThat(p.gap().reason()).isEqualTo("server closed (1006)");
+        }
+        assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).isEqualTo(4);
+        // 스키마: scope 는 문자열·null 만(다른 형은 검증 실패 → DLQ)
+        assertThatThrownBy(() -> consumer.parse(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(9), T, "5"), 4)))
+                .hasMessageContaining("payload");
     }
 
     /** 신뢰 경계(ADR-014): ais 사용자가 쓰는 스트림에서 온 항공기 메시지, 다른 스트림에서 온 선박 메시지는 받지 않는다(검증 실패 → DLQ). */

@@ -180,16 +180,17 @@ public class SettingsService {
     }
 
     /**
-     * AIS 구독 영역(ADR-014 §7): "lat1,lon1,lat2,lon2" 상자를 ';' 로 이어 쓴 문자열, 1~16 개, 1,024 자 이하, |lat| ≤ 90, |lon| ≤ 180,
-     * 넓이 0 인 상자 금지 — ais/bbox.py parse_bboxes 와 같은 규칙({@link AisBboxes}). 빈 문자열은 ".env AIS_BBOXES 를 쓴다"는 뜻이라 허용한다.
+     * AIS 구독 영역(ADR-014 §7 · 계약 v4 §D): "lat1,lon1,lat2,lon2" 상자를 ';' 로 이어 쓴 구역을 '|' 로 나눈 문자열 — 구역 1~3 개(구역마다 연결 하나),
+     * 구역마다 상자 1~16 개, 전체 1,024 자 이하, |lat| ≤ 90, |lon| ≤ 180, 넓이 0 인 상자 금지 — ais/bbox.py 와 같은 규칙({@link AisBboxes#parseShards}).
+     * '|' 가 없으면 구역 하나(기존 값 그대로 유효). 빈 문자열은 ".env AIS_BBOXES 를 쓴다"는 뜻이라 허용한다.
      * 수집기도 다시 검사하고, 틀린 값이면 현재 구독을 유지한다(여기서 막는 것은 운영자에게 바로 알려 주기 위해서다).
      */
     static void aisBboxes(JsonNode v) {
-        if (!v.isString()) throw Problem.badRequest("BAD_VALUE", "string \"lat1,lon1,lat2,lon2[;...]\" required (empty = .env AIS_BBOXES)");
+        if (!v.isString()) throw Problem.badRequest("BAD_VALUE", "string \"lat1,lon1,lat2,lon2[;...][|...]\" required (empty = .env AIS_BBOXES)");
         String s = v.asString();
         if (s.length() <= AisBboxes.MAX_TEXT && s.isBlank()) return;
         try {
-            AisBboxes.parse(s);
+            AisBboxes.parseShards(s);
         } catch (IllegalArgumentException e) {
             throw Problem.badRequest("BAD_VALUE", e.getMessage());
         }

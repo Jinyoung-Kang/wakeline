@@ -109,7 +109,8 @@ public class ShipController {
 
     /**
      * /ships ETag(리뷰 2026-09-28b #11): 선박 목록 버전만으로는 수신이 멈췄을 때(버전이 그대로) 304 가 예전 '신선·연결됨' meta 를 계속 보여 준다.
-     * 그래서 본문 meta 중 시간·수신 상태로 바뀌는 값을 넣는다 — stale · ais connected · heartbeat_stale · gap_open_since · state · coverage.
+     * 그래서 본문 meta 중 시간·수신 상태로 바뀌는 값을 넣는다 — stale · ais connected · heartbeat_stale · gap_open_since · state · coverage ·
+     * shards(구역별 상태, 계약 v4 §D).
      * lag_s·msgs_per_s 처럼 요청마다 달라지는 수치는 넣지 않는다(max-age 10 s 안의 차이).
      */
     static String etag(long version, Map<String, Object> meta, Map<String, Object> aisView) {
@@ -119,6 +120,7 @@ public class ShipController {
             b.append('-').append(aisView.get("gap_open_since") instanceof Instant g ? Long.toString(g.toEpochMilli(), 36) : "n");
             if (aisView.get("state") instanceof String st) b.append('-').append(st);
             if (aisView.get("coverage") instanceof List<?> cov) b.append('-').append(Integer.toHexString(cov.hashCode()));
+            if (aisView.get("shards") instanceof List<?> sh) b.append('-').append(Integer.toHexString(sh.hashCode()));
         }
         return b.append('"').toString();
     }
@@ -169,8 +171,9 @@ public class ShipController {
     /**
      * 저장된 항적(≤ 24 h, 기본 최근 6 h): MMSI 별 60 s 창의 첫 보고. GeoJSON MultiLineString — 60 s 이상 끝난 AIS 수신 공백 또는 열린 공백을 사이에 둔
      * 두 점, 15분 넘게 떨어진 두 점에서 끊는다(계약 v3 §D, properties.gap_break_min_s — 2점 이상인 구간만 선이 된다, 모든 점은 points 에 있다).
+     * 구역(scope)이 있는 공백은 두 점 중 하나라도 그 구역 상자 안일 때만 끊는다(계약 v4 §D). 열린 공백은 구역 정보가 있으면 구역마다 하나.
      * 끊기용 긴 공백은 따로 조회한다(짧은 공백이 많아 gaps 목록이 잘려도 선 끊기는 영향이 없다). properties.segments[i] 는 geometry 의 i 번째 선.
-     * gaps = 창과 겹치는 공백 중 최신 200개(오래된 것부터, 열린 공백은 ended_at 없음) — 더 있으면 properties.gaps_truncated = true.
+     * gaps = 창과 겹치는 공백 중 최신 200개(오래된 것부터, 열린 공백은 ended_at 없음, 구역이 있으면 scope) — 더 있으면 properties.gaps_truncated = true.
      */
     @GetMapping(value = "/ships/{mmsi}/track", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> shipTrack(@PathVariable String mmsi, @RequestParam(required = false) Instant from,
@@ -181,13 +184,14 @@ public class ShipController {
         if (!start.isBefore(end) || Duration.between(start, end).compareTo(TRACK_MAX_RANGE) > 0)
             throw Problem.badRequest("BAD_RANGE", "range must be within 24 h and from < to");
         List<ShipRepository.TrackPoint> pts = repo.track(m, start, end, TRACK_MAX_POINTS);
-        AisGap open = openGap(end);
+        List<AisGap> open = openGaps(end);
         List<AisGap> breaks = new ArrayList<>(repo.gapsAtLeast(start, end, GAP_BREAK_MIN_S, TRACK_BREAK_GAPS_MAX));
-        if (open != null) breaks.add(open);
-        int room = TRACK_GAPS_LIMIT - (open == null ? 0 : 1);
+        breaks.addAll(open);
+        int room = TRACK_GAPS_LIMIT - open.size();
         Newest listed = newest(repo.gaps(start, end, room + 1), room);
         List<AisGap> gaps = new ArrayList<>(listed.items());
-        if (open != null) gaps.add(open);
+        gaps.addAll(open);
+        gaps.sort(java.util.Comparator.comparing(AisGap::startedAt)); // 구역마다 열린 공백이 끝난 공백보다 이를 수 있다 — 오래된 것부터
 
         List<List<ShipRepository.TrackPoint>> segs = split(pts, breaks);
         List<List<double[]>> lines = new ArrayList<>();
@@ -223,8 +227,8 @@ public class ShipController {
     }
 
     /**
-     * AIS 수신 공백(≤ 31일, 기본 최근 24 h). items = 끝난 공백 중 최신 500개(오래된 것부터 정렬 — 더 있으면 truncated = true),
-     * open = 지금 열린 공백(없으면 null).
+     * AIS 수신 공백(≤ 31일, 기본 최근 24 h). items = 끝난 공백 중 최신 500개(오래된 것부터 정렬 — 더 있으면 truncated = true, 구역이 있으면 scope),
+     * open = 지금 열린 공백 중 가장 이른 것(상태 해시의 합계 gap_open_since — 구역별 상태는 status.sources.ais.shards, 없으면 null).
      */
     @GetMapping("/ais/gaps")
     public ResponseEntity<Map<String, Object>> aisGaps(@RequestParam(required = false) Instant from, @RequestParam(required = false) Instant to,
@@ -254,10 +258,11 @@ public class ShipController {
 
     // ---- 도우미 ----
 
-    /** 창의 끝(end) 전에 시작한 지금 열린 공백(없으면 null). */
-    private AisGap openGap(Instant end) {
-        AisStatus.Feed f = ais.current();
-        return f.gapOpenSince() != null && f.gapOpenSince().isBefore(end) ? new AisGap(f.gapOpenSince(), null, f.gapReason(), f.provider()) : null;
+    /** 창의 끝(end) 전에 시작한 지금 열린 공백들(구역 정보가 있으면 구역마다, 없으면 합계 하나 — {@link AisStatus.Feed#openGaps}). */
+    private List<AisGap> openGaps(Instant end) {
+        List<AisGap> out = new ArrayList<>();
+        for (AisGap g : ais.current().openGaps()) if (g.startedAt().isBefore(end)) out.add(g);
+        return out;
     }
 
     /** 최신 limit 건과 잘림 여부. */
@@ -269,14 +274,20 @@ public class ShipController {
         return new Newest(upToLimitPlusOne.subList(upToLimitPlusOne.size() - limit, upToLimitPlusOne.size()), true);
     }
 
-    /** 시간순 점을 구간으로: 앞 점과 15분 넘게 떨어졌거나 그 사이에 선을 끊는 공백(breaks)이 걸쳐 있으면 새 구간. */
+    /**
+     * 시간순 점을 구간으로: 앞 점과 15분 넘게 떨어졌거나 그 사이에 선을 끊는 공백(breaks)이 걸쳐 있으면 새 구간. 구역이 있는 공백은 두 점 중
+     * 하나라도 그 구역 상자 안일 때만 적용하고, 구역 없는 공백(옛 기록)은 모두에 적용한다(계약 v4 §D).
+     */
     static List<List<ShipRepository.TrackPoint>> split(List<ShipRepository.TrackPoint> pts, List<AisGap> gaps) {
         List<List<ShipRepository.TrackPoint>> out = new ArrayList<>();
         List<ShipRepository.TrackPoint> cur = null;
         ShipRepository.TrackPoint last = null;
         for (ShipRepository.TrackPoint p : pts) {
             boolean brk = last == null || Duration.between(last.ts(), p.ts()).compareTo(TRACK_BREAK) > 0;
-            if (!brk) for (AisGap g : gaps) if (g.between(last.ts(), p.ts())) { brk = true; break; }
+            if (!brk) for (AisGap g : gaps) if (g.between(last.ts(), p.ts()) && (g.appliesAt(last.lat(), last.lon()) || g.appliesAt(p.lat(), p.lon()))) {
+                brk = true;
+                break;
+            }
             if (brk) {
                 cur = new ArrayList<>();
                 out.add(cur);
@@ -295,6 +306,7 @@ public class ShipController {
             m.put("ended_at", g.endedAt());
             m.put("reason", g.reason());
             m.put("provider", g.provider());
+            m.put("scope", g.scopeText()); // 구역 없음(옛 기록 — 모든 곳에 적용)은 키 없음
             out.add(m);
         }
         return out;
