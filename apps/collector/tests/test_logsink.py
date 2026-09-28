@@ -302,6 +302,50 @@ def test_queue_keeps_at_most_2_MiB():
     assert sink.dropped == 300 - len(pend) > 0
 
 
+class GatedRedis(FakeRedis):
+    """파이프라인 실행이 gate 가 열릴 때까지 멈춘다(보내는 중인 묶음이 있는 동안을 만든다)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    def pipeline(self, transaction: bool = False):
+        p = super().pipeline(transaction)
+        orig = p.execute
+
+        async def execute():
+            await self.gate.wait()
+            return await orig()
+
+        p.execute = execute  # type: ignore[method-assign]
+        return p
+
+
+@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 보내는 중인 묶음을 상한에 세지 않아 550건 · 2.4 MiB 까지 붙잡는다")
+@pytest.mark.parametrize("text,more", [("n=%d", 550), ("가" * 4000 + " %d", 300)])
+async def test_queue_cap_counts_the_batch_being_sent(text, more):
+    """대기열 상한(500건 · 2 MiB)은 보내는 중인 묶음(≤ 50건)까지 센다 — Redis 가 느린 동안에도 프로세스가 붙잡는 항목은 상한 안.
+    넘으면 대기열의 오래된 것부터 버린다(보내는 중인 묶음은 건드리지 않는다)."""
+    r = GatedRedis()
+    clock = Clock()
+    sink = ls.LogSink("collector", r, clock=clock)
+    lg = logger_for(sink)
+    for i in range(ls.FLUSH_BATCH):
+        lg.warning(text, i)
+        clock.t += ls.DEDUP_WINDOW_S
+    send = asyncio.create_task(sink.send_pending())
+    await asyncio.sleep(0.01)  # 첫 묶음 50건이 보내는 중
+    for i in range(ls.FLUSH_BATCH, ls.FLUSH_BATCH + more):
+        lg.warning(text, i)
+        clock.t += ls.DEDUP_WINDOW_S
+    pend = sink.pending()
+    assert len(pend) <= ls.QUEUE_MAX and sum(n for _js, n in pend) <= ls.QUEUE_MAX_BYTES
+    assert sink.dropped == ls.FLUSH_BATCH + more - len(pend)
+    r.gate.set()
+    await send
+    assert len(entries(r)) == len(pend) and sink.sent + sink.dropped == ls.FLUSH_BATCH + more
+
+
 def _event(message: str, exc_message: str | None, stack: str) -> dict:
     return {
         "v": 1,
