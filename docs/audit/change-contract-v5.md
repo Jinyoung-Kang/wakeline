@@ -97,3 +97,6 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G3(§C6): JSON 이 아닌 Content-Type 은 415(로그인과 같은 관례), 본문 형식 오류는 400 `BAD_CLIENT_ERROR`.
 - G4(§B1): 저장만 된 선박(실시간 아님)에 `last_seen_at`(= `ship.last_seen`, 마지막으로 어떤 AIS 메시지든 받은 시각)을 싣는다 — 72 h 가 지나 위치가 없어도 "마지막 수신" 시각은 사실로 보일 수 있다.
 - G5(§C8): 선박 카드 · 통합 검색 · 선박 항적 오류 문구에도 요청 id(복사 가능). 예외 종류가 빈 글이면 `—`.
+- G6(§E2, ws-contract 2차 리뷰): 버린 메시지의 복구는 종류마다 — 항공기 · 선박 흐름은 `resync`, 알림 · SIGMET · 레이더는 클라이언트 메시지 `{type:"resync", scope:"alerts"|"sigmets"|"radar"}`
+  (client.v1.json 에 선택 키 scope 추가 · 서버는 그 목록만 버전과 무관하게 전체로 · 모르는 scope 는 BAD_RESYNC), status · selected · demand 는 다음 갱신. 알림 배치 버전 틈도 잃은 것으로 보고,
+  전체 목록을 받을 때까지 알림 수는 "—". 웹 검증기는 스키마의 잎 제약마다 시험한다(ADR-020).
