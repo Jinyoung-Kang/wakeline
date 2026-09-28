@@ -157,7 +157,6 @@ def test_v5_masking_is_linear_on_long_word_runs():
     assert mask("jdbc:postgresql://u:p@db/x") == "jdbc:postgresql://u:***@db/x"
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C5: 고치기 전 — userinfo · JWT 규칙이 구분자로 나뉜 글에서 제곱 시간")
 def test_v5_masking_is_linear_on_separator_delimited_urls_and_jwt_runs():
     """공백 없는 긴 글(압축 JSON 의 포트 달린 URL 목록 · 'a://x:' 반복 · 'eyJ' 반복)에서 userinfo · JWT 규칙이 시작점마다 줄 끝까지
     다시 훑으면 제곱 시간이다 — 로그 한 건을 가리는 동안 이벤트 루프가 몇 초씩 멈춘다(계약 v5 §C2). 결과는 그대로여야 한다."""
