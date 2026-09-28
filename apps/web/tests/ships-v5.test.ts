@@ -302,10 +302,10 @@ describe("ship card: first recorded / last stored position and the not-live stat
     expect(e).toMatchObject({ first_recorded_at: null, last_position_at: null });
   });
 
-  it("not-live text: hh:mm UTC on the same UTC day, the date otherwise, — when nothing is stored", () => {
-    expect(notLiveText("2026-09-28T02:59:00Z", NOW)).toBe("실시간 아님 · 마지막 저장 02:59 UTC");
-    expect(notLiveText("2026-09-27T23:10:00Z", NOW)).toBe("실시간 아님 · 마지막 저장 09-27 23:10 UTC");
-    expect(notLiveText(null, NOW)).toBe("실시간 아님 · 마지막 저장 —");
+  it("not-live text: hh:mm UTC on the same UTC day, the date otherwise, — when nothing is stored (§G4: the last reception comes first)", () => {
+    expect(notLiveText({ lastSeenAt: null, lastPositionAt: "2026-09-28T02:59:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 02:59 UTC");
+    expect(notLiveText({ lastSeenAt: "2026-09-27T23:15:00Z", lastPositionAt: "2026-09-27T23:10:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 09-27 23:15 UTC · 마지막 저장 09-27 23:10 UTC");
+    expect(notLiveText({ lastSeenAt: null, lastPositionAt: null }, NOW)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 —");
   });
 
   it("card rows show both times with the elapsed time; a ship without a live state says it is not live", () => {
@@ -315,7 +315,7 @@ describe("ship card: first recorded / last stored position and the not-live stat
     expect(t).toContain("처음 기록09-20 01:02:03Z");
     expect(t).toContain("마지막 저장 위치09-28 01:00:00Z (2h 00m 전)");
     expect(html).toContain('data-testid="ship-not-live"');
-    expect(t).toContain("실시간 아님 · 마지막 저장 01:00 UTC");
+    expect(t).toContain("실시간 아님 · 마지막 수신 — · 마지막 저장 01:00 UTC"); // 이 상세에는 last_seen_at 이 없다(§G4 전 api) — 모름
     const none = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: parseShipDetail("431011305", { state: null, static: null }), error: null, now: NOW }));
     expect(text(none)).toContain("처음 기록—");
     expect(text(none)).toContain("마지막 저장 위치—");
@@ -324,13 +324,13 @@ describe("ship card: first recorded / last stored position and the not-live stat
     expect(renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }))).not.toContain("ship-not-live");
   });
 
-  it("picked while not live: the server's ship_selected{state:null} reply still shows \"실시간 아님 · 마지막 저장 hh:mm\" (not the gone badge)", () => {
+  it("picked while not live: the server's ship_selected{state:null} reply still shows \"실시간 아님 · … 마지막 저장 hh:mm\" (not the gone badge)", () => {
     // 실제 흐름: select_ship 에 서버가 곧바로 ship_selected{state:null} 로 답한다(실시간 ShipStore 에 없는 MMSI)
     const detail = parseShipDetail("431011305", { state: null, static: { name: "SYN BRAVO", ship_type: 70 }, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", meta: {} });
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: null } });
     const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
     expect(html).toContain('data-testid="ship-not-live"');
-    expect(text(html)).toContain("실시간 아님 · 마지막 저장 01:00 UTC");
+    expect(text(html)).toContain("실시간 아님 · 마지막 수신 — · 마지막 저장 01:00 UTC");
     expect(html).not.toContain('data-testid="ship-gone"');
     // 상세(REST)가 아직 없으면 저장 시각을 모른다 — WS 판단(목록에 없음)만
     const pending = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: null, error: null, now: NOW }));
@@ -355,7 +355,7 @@ describe("ship card: first recorded / last stored position and the not-live stat
 describe("sortable ship table (contract v5 §B3)", () => {
   const NOW = Date.parse("2026-09-28T03:00:00Z");
   const row = (mmsi: string, over: Partial<ShipRow> = {}): ShipRow => ({
-    mmsi, name: null, category: "unknown", sog_kn: null, nav_status: null, live: true, seen_at: null, last_position_at: null, ...over,
+    mmsi, name: null, category: "unknown", sog_kn: null, nav_status: null, live: true, seen_at: null, last_position_at: null, last_seen_at: null, ...over,
   });
   const rows = [
     row("300000003", { name: "CHARLIE", category: "tanker", sog_kn: 14, nav_status: 0, seen_at: "2026-09-28T02:59:00Z" }),
@@ -437,7 +437,7 @@ describe("unified search (contract v5 §B1/§B3)", () => {
     expect(hits.map((h) => h.mmsi)).toEqual(["440123456", "440999999", "440888888"]);
     expect(hits[0]).toEqual({
       mmsi: "440123456", name: "SYN ALPHA", call_sign: "D7AA", imo: 9811000, ship_type: 70, category: "cargo", live: true, lat: 35.1, lon: 129.1, sog_kn: 12.3,
-      seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:59:00Z",
+      seen_at: "2026-09-28T02:59:00Z", last_position_at: "2026-09-28T02:59:00Z", last_seen_at: null,
     });
     expect(hits[1]).toMatchObject({ live: false, lat: null, lon: null, sog_kn: null, category: "tanker", seen_at: null });
     expect(hits[2]).toMatchObject({ live: true, lat: null, lon: null });
@@ -450,7 +450,7 @@ describe("unified search (contract v5 §B1/§B3)", () => {
       { mmsi: "440999999", name: null, live: false, last_position_at: "2026-09-28T01:00:00Z" },
     ] });
     expect(shipChoice(live, null, NOW)).toEqual({ fly: [129.1, 35.1], message: "SYN ALPHA 선택 — 지도 이동" });
-    expect(shipChoice(stored, null, NOW)).toEqual({ fly: null, message: "MMSI 440999999 선택 — 실시간 아님 · 마지막 저장 01:00 UTC · 카드만(지도에 위치를 그리지 않음)" });
+    expect(shipChoice(stored, null, NOW)).toEqual({ fly: null, message: "MMSI 440999999 선택 — 실시간 아님 · 마지막 수신 — · 마지막 저장 01:00 UTC · 카드만(지도에 위치를 그리지 않음)" });
     // 실시간 항목의 위치가 없으면 지도 목록 사본의 위치
     expect(shipChoice({ ...live, lat: null, lon: null }, { lat: 34, lon: 128 }, NOW).fly).toEqual([128, 34]);
     expect(shipChoice({ ...live, lat: null, lon: null }, null, NOW)).toEqual({ fly: null, message: "SYN ALPHA 선택 — 현재 위치 모름(지도 이동 안 함)" });
@@ -526,7 +526,7 @@ describe("unified search (contract v5 §B1/§B3)", () => {
       uid: "s", aircraft: { hits: [], state: "idle" as const, msg: "" }, ships: { hits, state: "done" as const, msg: "1건" }, active: -1, now: NOW, shipSort: null,
       onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
     }));
-    // 고정 칸 합 336 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 118) + 선명 ≥ 104 px
-    expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table[^>]*class="[^"]*min-w-\[440px\]/);
+    // 고정 칸 합 368 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 150 — §G4 "마지막 수신 MM-DD hh:mm UTC") + 선명 ≥ 104 px
+    expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table[^>]*class="[^"]*min-w-\[472px\]/);
   });
 });

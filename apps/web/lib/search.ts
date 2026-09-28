@@ -63,7 +63,10 @@ export function parseSearchResponse(body: unknown, max = 20): SearchHit[] {
 
 // ---- 선박 검색(계약 v5 §B1 — GET /api/v1/ships/search?q=&limit=) ----
 
-/** 선박 검색 한 건. 실시간(live)이 아니면 위치·속력·관측 시각은 null — last_position_at = DB 에 저장된 마지막 위치 시각 */
+/**
+ * 선박 검색 한 건. 실시간(live)이 아니면 위치·속력·관측 시각은 null — last_position_at = DB 에 저장된 마지막 위치 시각,
+ * last_seen_at = 마지막 수신 기록(계약 v5 §G4 — 실시간이 아닐 때만, 실시간이면 seen_at 이 마지막 수신)
+ */
 export interface ShipHit {
   mmsi: string;
   name: string | null;
@@ -77,6 +80,7 @@ export interface ShipHit {
   sog_kn: number | null;
   seen_at: string | null;
   last_position_at: string | null;
+  last_seen_at: string | null;
 }
 
 /** 선박 검색어 — api 와 같은 규칙: 앞뒤 공백 제거·대문자, 2–40자 [A-Z0-9 .-/]. 쓸 수 없으면 null(요청하지 않는다) */
@@ -122,6 +126,7 @@ export function parseShipSearchResponse(body: unknown, max = 20): ShipHit[] {
       sog_kn: sog != null && sog >= 0 && sog <= 102.2 ? sog : null,
       seen_at: live ? isoStr(r.seen_at) : null,
       last_position_at: isoStr(r.last_position_at),
+      last_seen_at: live ? null : isoStr(r.last_seen_at),
     });
     if (out.length >= max) break;
   }
@@ -137,16 +142,19 @@ export const SHIP_SEARCH_DB_NOTE = "선박 DB 일시 사용 불가 — 실시간
 
 /** 검색 결과 → 표 한 줄(항해 상태는 검색 응답에 없다 — 지도 목록 사본에 있으면 그 값, 없으면 모름) */
 export function shipRowFromHit(h: ShipHit, listed: Pick<ShipLite, "nav_status"> | null | undefined): ShipRow {
-  return { mmsi: h.mmsi, name: h.name, category: h.category, sog_kn: h.sog_kn, nav_status: h.live ? listed?.nav_status ?? null : null, live: h.live, seen_at: h.seen_at, last_position_at: h.last_position_at };
+  return {
+    mmsi: h.mmsi, name: h.name, category: h.category, sog_kn: h.sog_kn, nav_status: h.live ? listed?.nav_status ?? null : null, live: h.live, seen_at: h.seen_at,
+    last_position_at: h.last_position_at, last_seen_at: h.last_seen_at,
+  };
 }
 
 /**
  * 선박을 고른 뒤 할 일(계약 v5 §B3): 실시간이고 위치를 알면(검색 결과 → 지도 목록 사본) 지도를 옮긴다. 실시간이 아니면 카드만 —
- * "실시간 아님 · 마지막 저장 hh:mm" 을 알리고 옮기지 않는다(마지막 저장 위치를 지금 위치처럼 쓰지 않는다).
+ * "실시간 아님 · 마지막 수신 hh:mm · 마지막 저장 hh:mm"(§G4) 을 알리고 옮기지 않는다(마지막 저장 위치를 지금 위치처럼 쓰지 않는다).
  */
 export function shipChoice(h: ShipHit, listed: { lat: number; lon: number } | null | undefined, nowMs: number): { fly: [number, number] | null; message: string } {
   const name = h.name ?? `MMSI ${h.mmsi}`;
-  if (!h.live) return { fly: null, message: `${name} 선택 — ${notLiveText(h.last_position_at, nowMs)} · 카드만(지도에 위치를 그리지 않음)` };
+  if (!h.live) return { fly: null, message: `${name} 선택 — ${notLiveText({ lastSeenAt: h.last_seen_at, lastPositionAt: h.last_position_at }, nowMs)} · 카드만(지도에 위치를 그리지 않음)` };
   const pos: [number, number] | null = h.lat != null && h.lon != null ? [h.lon, h.lat] : listed ? [listed.lon, listed.lat] : null;
   return pos ? { fly: pos, message: `${name} 선택 — 지도 이동` } : { fly: null, message: `${name} 선택 — 현재 위치 모름(지도 이동 안 함)` };
 }

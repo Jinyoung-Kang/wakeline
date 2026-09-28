@@ -41,7 +41,7 @@ function shipRows(hits: ShipHit[], sort: ShipSort | null, now: number) {
  * 상단 통합 검색(GAP-12 · 계약 v5 §B3): 항공기(호출부호·hex·등록번호 접두사 2–10자)와 선박(선명·호출부호 앞부분 · MMSI · IMO, 2–40자)을 함께 찾는다.
  * "/" 로 초점, ↑↓ 이동(항공기 → 선박), Enter 선택, Esc 닫기. 결과는 두 묶음(묶음 제목·출처) — 한 묶음이 실패해도 다른 묶음은 그대로.
  * 항공기: 카드를 열고 위치(검색 결과 → 지도 스냅샷 사본 → REST 상세)로 지도를 옮긴다.
- * 선박: 선박 레이어를 켜고(꺼져 있으면) 카드 + 항적. 실시간이고 위치를 알면 지도를 옮기고, 실시간이 아니면 "실시간 아님 · 마지막 저장 hh:mm" 과 함께 카드만
+ * 선박: 선박 레이어를 켜고(꺼져 있으면) 카드 + 항적. 실시간이고 위치를 알면 지도를 옮기고, 실시간이 아니면 "실시간 아님 · 마지막 수신 hh:mm · 마지막 저장 hh:mm" 과 함께 카드만
  * — 위치를 지어내지 않는다.
  */
 export function AircraftSearch() {
@@ -267,7 +267,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
           listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}
-      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 저장 시각은 UTC).</div> : null}
+      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 수신·저장 시각은 UTC · 마지막 수신 = 이 서비스가 그 선박의 AIS 메시지를 마지막으로 받은 기록).</div> : null}
     </div>
   );
 }
