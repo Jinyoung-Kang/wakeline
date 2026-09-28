@@ -22,13 +22,19 @@ check() { if [ "$2" = 0 ]; then passes=$((passes+1)); echo "  ok    $1"; else fa
 is()  { if [ "$2" = "$3" ]; then check "$1" 0; else check "$1" 1 "$2"; fi; }          # is  <설명> <실제> <기대>
 has() { if grep -q -- "$3" <<<"$2"; then check "$1" 0; else check "$1" 1 "$2"; fi; }  # has <설명> <출력> <패턴>
 
+# compose 의 db command(R-24: 체크포인트·WAL·공유 버퍼 설정)를 그대로 쓴다 — compose.yml 에서 한 줄 JSON 배열로 읽는다
+DB_CMD=()
+cmd_json="$(awk '/^  db:/{f=1} f && $1=="command:"{sub(/^[^:]*command:[ ]*/, ""); sub(/[ ]+#.*$/, ""); print; exit}' "$ROOT/infra/compose.yml")"
+if [ -n "$cmd_json" ]; then
+  while IFS= read -r a; do DB_CMD+=("$a"); done < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.argv[1])))' "$cmd_json")
+fi
 run_db() { # run_db <볼륨> [추가 docker run 인자...]
   local vol=$1; shift
   docker run -d --name "$ID" --network "$NET" \
     --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
     --security-opt no-new-privileges:true --read-only --tmpfs /var/run/postgresql --tmpfs /tmp --shm-size 256m \
     -e POSTGRES_PASSWORD=root-test-pw -e DB_MIGRATOR_PASSWORD=mig-test-pw -e DB_API_PASSWORD=api-test-pw -e DB_COLLECTOR_PASSWORD=col-test-pw "$@" \
-    -v "$vol:/var/lib/postgresql" -v "$ROOT/infra/db/init:/docker-entrypoint-initdb.d:ro" "$IMAGE" >/dev/null
+    -v "$vol:/var/lib/postgresql" -v "$ROOT/infra/db/init:/docker-entrypoint-initdb.d:ro" "$IMAGE" ${DB_CMD[@]+"${DB_CMD[@]}"} >/dev/null
 }
 wait_ready() { # 초기화 중의 임시 서버가 아니라 최종 서버(프로세스 1)가 준비될 때까지
   for _ in $(seq 1 120); do
@@ -69,6 +75,12 @@ run_db "$VOL" -e WAKELINE_PG_SUPERUSER_TCP=reject
 wait_ready; check "재기동 후 준비" $? "not ready"
 out="$(psql_as wakeline_collector col-test-pw "select 1")"; [ "$out" = 1 ]; check "wakeline_collector 로그인" $? "$out"
 superuser_local_only "재기동"
+# R-24: compose command 의 서버 설정이 실제로 적용됐는지(wal_compression=on 은 pglz 로 보인다)
+is "checkpoint_timeout 15min" "$(sock_psql "SHOW checkpoint_timeout")" 15min
+is "max_wal_size 2GB"         "$(sock_psql "SHOW max_wal_size")" 2GB
+is "wal_compression on(pglz)" "$(sock_psql "SHOW wal_compression")" pglz
+is "shared_buffers 256MB"     "$(sock_psql "SHOW shared_buffers")" 256MB
+is "설정 출처는 명령행(compose command)" "$(sock_psql "SELECT string_agg(DISTINCT source, ',') FROM pg_settings WHERE name IN ('checkpoint_timeout','max_wal_size','wal_compression','shared_buffers')")" "command line"
 
 echo "[컨테이너 권한]"
 # docker exec 로 들어간 sh 자신(root·엔트리포인트용 권한)은 빼고 postgres 프로세스만 본다

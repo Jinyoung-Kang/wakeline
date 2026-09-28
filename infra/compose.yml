@@ -276,6 +276,9 @@ services:
     image: imresamu/postgis:18-3.6@sha256:b5766ee720aca09c61b9a868abefbf273348a4b90ad4cf146b4f8c9ac85d48e4   # 공식 postgis/postgis 18-3.6 은 amd64 뿐이라 arm64 네이티브 빌드를 쓴다 (ADR-004)
     read_only: true
     tmpfs: ["/var/run/postgresql", "/tmp"]
+    # R-24(ADR-017 §4): 기본값(체크포인트 5분·WAL 1GB·압축 없음)이면 WAL 의 약 86 % 가 전체 페이지 이미지였다(약 16 GB/일).
+    # 체크포인트 15분·WAL 상한 2GB·WAL 압축(pglz)·공유 버퍼 256MB(메모리 한도 1g). 대가: 비정상 종료 뒤 복구 재생이 최대 15분 분량. 되돌리기: 이 줄 삭제
+    command: ["postgres", "-c", "checkpoint_timeout=15min", "-c", "max_wal_size=2GB", "-c", "wal_compression=on", "-c", "shared_buffers=256MB"]
     cap_drop: ["ALL"]
     # 엔트리포인트(root)가 데이터 디렉터리 소유권·권한을 맞추고 gosu 로 postgres(999)가 되는 데 필요한 것만
     cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]

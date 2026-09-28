@@ -45,6 +45,8 @@ SERVICE_NETWORKS = {
     "web": {INTERNAL_NET}, "api": {INTERNAL_NET}, "migrate": {INTERNAL_NET}, "db": {INTERNAL_NET}, "redis": {INTERNAL_NET},
     "collector": {INTERNAL_NET, "egress"}, "ais": {INTERNAL_NET, "egress"},
 }
+# R-24 · ADR-017 §4: db 서버 설정(체크포인트 간격·WAL 상한·WAL 압축·공유 버퍼) — infra/tests/db_hardening_test.sh 가 실제 SHOW 값도 본다
+DB_SETTINGS = {"checkpoint_timeout": "15min", "max_wal_size": "2GB", "wal_compression": "on", "shared_buffers": "256MB"}
 AIS_ENV_ALLOWED = {
     "TZ", "REDIS_HOST", "REDIS_USERNAME", "REDIS_PASSWORD", "AISSTREAM_API_KEY", "AIS_BBOXES",
     "HTTP_USER_AGENT", "FIXTURES_DIR", "SCHEMAS_DIR", "WAKELINE_FIXTURE_MODE",
@@ -346,6 +348,16 @@ class ComposePolicyTest(unittest.TestCase):
                 self.assertEqual(self.svc("api", cfg)["environment"]["WAKELINE_TRUSTED_PROXY"], edge_ip,
                                  "api 가 보는 edge 주소는 internal 망의 주소")
                 self.assertEqual(self.svc("api", cfg)["networks"][INTERNAL_NET]["ipv4_address"], f"{prefix}.30", "make bench 의 BENCH_API")
+
+    # --- R-24 · ADR-017 §4: WAL 전체 페이지 이미지 줄이기 ---
+    def test_db_wal_and_memory_settings(self):
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                cmd = self.svc("db", cfg).get("command") or []
+                self.assertEqual(cmd[:1], ["postgres"], "공식 엔트리포인트가 postgres 로 인식해 초기화·권한 강하를 그대로 한다")
+                settings = dict(a.split("=", 1) for a in cmd[2::2]) if cmd[1:2] == ["-c"] else {}
+                self.assertEqual([a for a in cmd[1::2]], ["-c"] * len(settings), "postgres -c k=v -c k=v …")
+                self.assertEqual(settings, DB_SETTINGS)
 
     # --- 로그 회전(디스크 고갈 방지) ---
     def test_every_service_rotates_logs(self):
