@@ -88,6 +88,10 @@ wakeline:
   track-retention-hours: 72
   alert-retention-days: ${WAKELINE_ALERT_RETENTION_DAYS:30}   # 끝난 알림 보존(일, R-06 · ADR-017 §2). 0 = 지우지 않음
   summary-retention-days: 30
+  logs:
+    # 시스템 로그 싱크(계약 v5 §C2, ADR-018): 이 프로세스의 WARN·ERROR 와 브라우저 오류를 가려서 Redis 스트림 wakeline:logs 로.
+    # 되돌리기: false — logback 에 붙지 않고 스트림에 쓰지 않는다(브라우저 오류 수집은 503). 조회(/api/v1/ops/logs)는 그대로 남은 항목을 읽는다.
+    sink-enabled: ${WAKELINE_LOG_SINK_ENABLED:true}
 
 logging:
   level:
