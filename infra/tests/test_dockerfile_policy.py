@@ -42,6 +42,15 @@ class ApiHeapTest(unittest.TestCase):
         self.assertLessEqual(heap, 512, f"힙 상한 {heap:.0f} MiB 는 NFR-03 예산(512 MB) 안")
 
 
+class ApiNativeMemoryTest(unittest.TestCase):
+    """R-25 후속: 힙 비율만으로는 NFR-03(≤ 512 MB)에 닿지 않았다 — 실측 RSS 610–628 MiB 중 JVM NMT 가 센 것은 427 MiB,
+    나머지 약 150 MiB 는 glibc malloc 아레나가 쥐고 있던 메모리였다. MALLOC_ARENA_MAX=2 로 같은 부하 없는 상태 501 MiB(실측)."""
+
+    def test_malloc_arena_cap_in_runtime_stage(self):
+        runtime = stages(DOCKERFILES["api"].read_text())[-1]
+        self.assertRegex(runtime, r"(?m)^ENV\b.*\bMALLOC_ARENA_MAX=2\b", "실행 단계 ENV 에 MALLOC_ARENA_MAX=2")
+
+
 class RuntimeToolsTest(unittest.TestCase):
     """R-29: 실행 이미지에 쓰지 않는 패키지 관리자를 남기지 않는다(web·collector 의 HIGH 취약점 전부의 출처). 빌드한 이미지는 image_test.sh 가 본다."""
 
