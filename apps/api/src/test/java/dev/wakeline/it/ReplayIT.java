@@ -41,4 +41,19 @@ class ReplayIT extends IntegrationTest {
         assertThat(ids).containsExactlyInAnyOrder(tag + "-KR", tag + "-EDGE", tag + "-NOGEOM");
         admin().sql("DELETE FROM sigmet WHERE id LIKE :t").param("t", tag + "-%").update(); // 다른 통합 테스트의 재생 기록에 남지 않게
     }
+
+    /**
+     * R-70: 재생 응답은 1시간 공개 캐시였는데 레이더 프레임은 '지금 기준 2시간' 에만 유효하다 — 캐시된 응답이 더는 제공되지 않는 타일을
+     * 가리켰다. 지난 시각도 max-age=60(최근 15분은 30).
+     */
+    @Test
+    void replayIsCachedForAtMostOneMinute() {
+        String bbox = "&bbox=124,33,132,39";
+        String old = Instant.now().minusSeconds(100 * 60).truncatedTo(ChronoUnit.SECONDS).toString();
+        Res r = get("/api/v1/replay?at=" + old + bbox);
+        assertThat(r.status()).isEqualTo(200);
+        assertThat(r.header("Cache-Control")).contains("max-age=60").contains("public");
+        String recent = Instant.now().minusSeconds(60).truncatedTo(ChronoUnit.SECONDS).toString();
+        assertThat(get("/api/v1/replay?at=" + recent + bbox).header("Cache-Control")).contains("max-age=30");
+    }
 }

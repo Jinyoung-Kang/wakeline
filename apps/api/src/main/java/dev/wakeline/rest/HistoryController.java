@@ -60,8 +60,9 @@ public class HistoryController {
         m.put("source", r.source());
         m.put("radar", tracks.radarFrameNear(at, now));
         m.put("meta", Meta.of(req, "db", at, Integer.MAX_VALUE));
-        // 최근 시각은 행·프레임이 아직 들어오는 중이다 — 짧게만 캐시한다
-        long maxAge = Duration.between(at, now).toMinutes() < 15 ? 30 : 3600;
+        // 최근 시각은 행·프레임이 아직 들어오는 중이다 — 짧게만 캐시한다. 지난 시각도 1분(R-70): radar 는 '지금 기준 2시간' 에만 유효해
+        // 오래 캐시하면 더는 제공되지 않는 타일을 가리킨다(이전 1시간).
+        long maxAge = Duration.between(at, now).toMinutes() < 15 ? 30 : 60;
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(maxAge, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 
