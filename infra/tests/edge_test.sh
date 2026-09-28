@@ -22,7 +22,7 @@ pid /tmp/nginx.pid;
 events {}
 http {
   client_body_temp_path /tmp/c; proxy_temp_path /tmp/p; fastcgi_temp_path /tmp/f; uwsgi_temp_path /tmp/u; scgi_temp_path /tmp/s;
-  server { listen 8000; location / { default_type application/json; return 200 '{"host":"$http_host","xff":"$http_x_forwarded_for","xfh":"$http_x_forwarded_host","uri":"$request_uri"}'; } }
+  server { listen 8000; location / { default_type application/json; return 200 '{"host":"$http_host","xff":"$http_x_forwarded_for","xfh":"$http_x_forwarded_host","rid":"$http_x_request_id","uri":"$request_uri"}'; } }
   server { listen 3000; location / { default_type text/plain; return 200 'web'; } }
 }
 CONF
@@ -69,6 +69,10 @@ body="$(curl -s -H "Host: localhost:8700" -H "X-Forwarded-For: 1.2.3.4" -H "X-Fo
 grep -q '"host":"localhost:8700"' <<<"$body"; check "Host 전달(포트 포함)" $? "$body"
 ! grep -q '1.2.3.4' <<<"$body"; check "위조 X-Forwarded-For 덮어쓰기" $? "$body"
 grep -q '"xfh":""' <<<"$body"; check "X-Forwarded-Host 비움" $? "$body"
+# R-49: api 는 edge 가 보낸 X-Request-Id 를 믿는다 → edge 는 클라이언트 값을 버리고 자기 $request_id(32자 16진)로 덮어써야 한다
+body="$(curl -s -H "Host: localhost:8700" -H "X-Request-Id: forged-client-id-0001" "http://127.0.0.1:$PORT/api/v1/status")"
+! grep -q 'forged-client-id-0001' <<<"$body"; check "위조 X-Request-Id 덮어쓰기" $? "$body"
+grep -Eq '"rid":"[0-9a-f]{32}"' <<<"$body"; check "X-Request-Id = edge \$request_id" $? "$body"
 c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/actuator/health")"; [ "$c" = 404 ]; check "/actuator → 404" $? "$c"
 c="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT/")"; [ "$c" = 200 ]; check "/ → web" $? "$c"
 hdr="$(curl -s -D - -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$PORT/_next/static/x.js")"
