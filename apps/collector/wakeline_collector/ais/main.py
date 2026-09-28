@@ -130,7 +130,7 @@ async def _run(
         raw_ref=f"fixture/{FIXTURE_NAME}" if fixture else "-",  # 실시간 AIS 원문은 보관하지 않는다(재전송 없음·양 많음)
         flush_s=s.ais_flush_s,
         redact=redact,
-        log_metrics=lambda: sink_metrics(logsink),  # 계약 v5 §C2: 상태 해시의 log_sent · log_dropped
+        log_metrics=lambda: sink_metrics(logsink),  # 계약 v5 §C2: 상태 해시의 log_sent · log_dropped · log_suppressed
     )
     shards.load_previous(await sink.read_previous_status())
 

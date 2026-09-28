@@ -221,7 +221,6 @@ def test_same_fingerprint_is_sent_once_per_10s_and_the_next_entry_carries_the_su
     assert sink.suppressed == 4 and ls.DEDUP_WINDOW_S == 10.0
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 뒤에 같은 지문이 오지 않으면 억제 수가 어디에도 남지 않는다")
 async def test_burst_then_silence_still_reports_the_suppressed_count(caplog):
     """ADR-018 '억제 수는 남긴다': 같은 오류가 10 s 안에 20번 나고 끊기면 스트림에는 1건(suppressed 0)뿐이다 — 나머지 19건은
     자기 지표 log_suppressed(기동 뒤 누계)에 남고, 종료 때 다음 항목에 실리지 못한 억제 수를 표준 출력에 적는다."""
@@ -239,7 +238,6 @@ async def test_burst_then_silence_still_reports_the_suppressed_count(caplog):
     assert any("19 suppressed" in m and "1 fingerprint" in m for m in notes), notes
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 싣지 못한 항목의 억제 수가 사라지고 그 지문은 10 s 억제된다")
 @pytest.mark.parametrize("failure", ["too-big", "raises"])
 def test_an_entry_that_is_not_queued_gives_its_suppressed_count_back(monkeypatch, failure):
     """억제 창을 연 항목을 만들지 못하면(8 KiB 에 못 맞춤 · 만드는 중 예외) 그 항목이 실어 가던 억제 수는 다음 항목이 싣고,
@@ -462,7 +460,11 @@ async def test_flush_sends_everything_in_batches_of_50():
     assert await sink.send_pending() == 120
     assert r.batches == [50, 50, 20] and ls.FLUSH_BATCH == 50
     assert [e["message"] for e in entries(r)] == [f"n={i}" for i in range(120)]
-    assert sink.sent == 120 and sink.pending() == [] and sink.metrics() == {"log_sent": "120", "log_dropped": "0"}
+    assert (
+        sink.sent == 120
+        and sink.pending() == []
+        and sink.metrics() == {"log_sent": "120", "log_dropped": "0", "log_suppressed": "0"}
+    )
 
 
 async def test_flusher_sends_every_second_and_wakes_early_at_50():
@@ -649,7 +651,7 @@ async def test_disabled_sink_is_not_attached_and_reports_unknown_counts():
     before = list(root.handlers)
     assert ls.start_log_sink("collector", FakeRedis(), enabled=False) is None
     assert root.handlers == before
-    assert ls.sink_metrics(None) == {"log_sent": "", "log_dropped": ""}  # 재지 않은 값은 0 이 아니라 모름
+    assert ls.sink_metrics(None) == {"log_sent": "", "log_dropped": "", "log_suppressed": ""}  # 재지 않은 값은 0 이 아니라 모름
     await ls.close_log_sink(None)
 
 

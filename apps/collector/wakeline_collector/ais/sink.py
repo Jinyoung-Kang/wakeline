@@ -253,7 +253,7 @@ class AisSink:
             "last_publish_at": _iso(self.last_publish_at),
             "publish_errors": str(self.publish_errors),
             "stream_budget_trims": str(self._trim.budget_trims),  # R-14: 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수
-            **self._log_metrics(),  # 계약 v5 §C2: log_sent · log_dropped(로그 싱크, 기동 뒤 누계)
+            **self._log_metrics(),  # 계약 v5 §C2: log_sent · log_dropped · log_suppressed(로그 싱크, 기동 뒤 누계)
             "updated_at": iso_ms(self._wall()),
         }
 

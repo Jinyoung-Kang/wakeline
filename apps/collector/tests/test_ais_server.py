@@ -477,7 +477,7 @@ async def test_main_without_key_reports_disabled_and_stays_healthy():
     logs = [json.loads(f["e"]) for _sid, f in r.streams["wakeline:logs"]]
     warn = next(e for e in logs if "AISSTREAM_API_KEY is not set" in e["message"])
     assert warn["service"] == "ais" and warn["level"] == "WARN" and warn["logger"] == "ais.main" and warn["exception"] is None
-    assert r.kv[STATUS_KEY]["log_sent"].isdigit() and r.kv[STATUS_KEY]["log_dropped"].isdigit()
+    assert all(r.kv[STATUS_KEY][k].isdigit() for k in ("log_sent", "log_dropped", "log_suppressed"))
     stop.set()
     assert await asyncio.wait_for(task, 5) == 0
     assert not any(type(h).__name__ == "LogSink" for h in logging.getLogger().handlers)  # 끝나면 루트 로거에서 뗀다

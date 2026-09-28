@@ -485,12 +485,12 @@ async def test_r14_ships_stream_keeps_a_two_hour_api_outage_then_trims_by_time()
     assert (clk[0] * 1000 - oldest_ms) / 1000 <= STREAM_RETENTION_S + 10
 
 
-# ---- 계약 v5 §C2: 로그 싱크의 자기 지표(log_sent · log_dropped)가 상태 해시에 ---------------------------------------------
+# ---- 계약 v5 §C2: 로그 싱크의 자기 지표(log_sent · log_dropped · log_suppressed)가 상태 해시에 -----------------------------
 async def test_v5_status_carries_log_sink_counts_and_unknown_without_a_sink():
-    r, _q, _book, _feed, _w, sink = _setup(log_metrics=lambda: {"log_sent": "12", "log_dropped": "3"})
+    r, _q, _book, _feed, _w, sink = _setup(log_metrics=lambda: {"log_sent": "12", "log_dropped": "3", "log_suppressed": "40"})
     await sink.write_status()
     h = r.kv[STATUS_KEY]
-    assert (h["log_sent"], h["log_dropped"]) == ("12", "3")
+    assert (h["log_sent"], h["log_dropped"], h["log_suppressed"]) == ("12", "3", "40")
     r2, _q, _book, _feed, _w, plain = _setup()
     await plain.write_status()  # 싱크를 끈 경우(LOG_SINK_ENABLED=0): 빈 값 = 모름(0 이 아니다 — 지난 실행의 값도 덮는다)
-    assert (r2.kv[STATUS_KEY]["log_sent"], r2.kv[STATUS_KEY]["log_dropped"]) == ("", "")
+    assert [r2.kv[STATUS_KEY][k] for k in ("log_sent", "log_dropped", "log_suppressed")] == ["", "", ""]

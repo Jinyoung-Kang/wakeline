@@ -5,7 +5,7 @@
 - 가림(C5): 메시지·예외 메시지·스택·context 를 masking.mask 로. 한 레코드는 한 번만 가린다 — MaskFilter(루트 핸들러 · 싱크 자신)가
   이미 가린 레코드(MASKED_ATTR 표시)는 그 결과를 쓰고, 표시가 없으면(필터 없이 부른 emit) 여기서 가린다.
 - 지문 fp = SHA-256(서비스 \\n 로거 \\n 예외 종류 \\n 메시지 틀) 앞 16자리. 틀 = 따옴표 안 → '…', 16진 8자 이상 → #, 숫자열 → #.
-  같은 fp 는 10 s 에 1건만 — 억제한 수는 그 fp 의 다음 항목 suppressed 에.
+  같은 fp 는 10 s 에 1건만 — 억제한 수는 그 fp 의 다음 항목 suppressed 에(항목을 만들지 못하면 창을 닫고 수를 되돌린다).
 - 항목 ≤ 8 KiB(직렬화 바이트, C1): 스키마 글자 상한을 먼저 맞추고, 그래도 넘으면 stack → exception.message → message 순으로 잘라
   '…(잘림 N자)' 를 붙인다(N = 가린 원문에서 뺀 글자 수 — MaskFilter 가 LOG_LIMIT 에서 먼저 자른 부분도 센다).
 - 대기열 500건 · 2 MiB(넘으면 오래된 것부터 버리고 센다). 전송은 이벤트 루프의 태스크 하나: 1 s 마다 또는 50건이 모이면(작업 스레드는
@@ -14,6 +14,9 @@
   파이프라인이 중간에 끊기면 같은 항목이 두 번 실릴 수 있다(적어도 한 번 — 잃는 것보다 낫다).
 - 재귀 금지: 싱크 자신의 경고(로거 'logsink')와 보내는 동안 남은 로그(예: redis 라이브러리)는 싣지 않는다 — 표준 출력에만.
 - 자기 지표: collector heartbeat(wakeline:collector) · ais 상태 해시에 log_sent · log_dropped(싱크를 끄면 빈 값 = 모름).
+  log_suppressed(억제 누계)도 함께 — 같은 지문이 다시 오지 않으면(폭주 뒤 조용 · 종료 · 지문 표에서 밀려남 · 실어 가던 항목을 버림)
+  억제 수가 스트림 항목에 실리지 못하므로 ADR-018 '억제 수는 남긴다' 를 지표로 지킨다. 싣는 대상 레코드는 대기 중이 아니면
+  보냄 · 버림 · 억제 중 하나로 센다.
 - 끄기: LOG_SINK_ENABLED=0(기본 1 — ADR-018 되돌리기).
 """
 
@@ -261,6 +264,31 @@ class LogSink(logging.Handler):
         carried = self._admit(fp)
         if carried is None:
             return None
+        try:
+            raw = self._event(record, whole, lost, message, logger, exc_type, fp, carried)
+        except BaseException:
+            self._give_back(fp, carried)
+            raise
+        if raw is None:
+            self._give_back(fp, carried)
+            with self._mu:
+                self.dropped += 1
+            return None
+        return raw.decode("utf-8"), len(raw)
+
+    def _event(
+        self,
+        record: logging.LogRecord,
+        whole: dict[str, int] | None,
+        lost: dict[str, int],
+        message: str,
+        logger: str,
+        exc_type: str,
+        fp: str,
+        carried: int,
+    ) -> bytes | None:
+        """LogEvent 직렬화 바이트(8 KiB 안). 맞출 수 없으면 None."""
+        exc = record.exc_info[1] if record.exc_info and record.exc_info[1] is not None else None
         exception: dict[str, Any] | None = None
         if exc is not None and record.exc_info:
             try:
@@ -288,12 +316,7 @@ class LogSink(logging.Handler):
             "context": _context(record),
             "suppressed": carried,
         }
-        raw = fit_event(ev, lost)
-        if raw is None:
-            with self._mu:
-                self.dropped += 1
-            return None
-        return raw.decode("utf-8"), len(raw)
+        return fit_event(ev, lost)
 
     def _admit(self, fp: str) -> int | None:
         """같은 fp 를 DEDUP_WINDOW_S 안에 이미 보냈으면 억제(None). 아니면 보낼 항목에 실을 억제 수."""
@@ -310,6 +333,20 @@ class LogSink(logging.Handler):
             while len(self._recent) > DEDUP_MAX_FPS:
                 del self._recent[next(iter(self._recent))]
             return carried
+
+    def _give_back(self, fp: str, carried: int) -> None:
+        """_admit 이 창을 연 항목을 대기열에 넣지 못했다: 보낸 것이 없으니 창을 닫고, 실어 가던 억제 수는 다음 항목이 싣게 되돌린다."""
+        with self._mu:
+            seen = self._recent.get(fp)
+            if seen is not None:
+                seen[0] = float("-inf")
+                seen[1] += carried
+
+    def unreported_suppressed(self) -> tuple[int, int]:
+        """(억제했지만 아직 어느 항목에도 실리지 않은 수, 그런 지문 수) — 다음 항목이 오면 그 suppressed 에 실린다."""
+        with self._mu:
+            counts = [int(seen[1]) for seen in self._recent.values() if seen[1]]
+        return sum(counts), len(counts)
 
     def _enqueue(self, js: str, n: int) -> None:
         with self._mu:
@@ -346,7 +383,7 @@ class LogSink(logging.Handler):
 
     def metrics(self) -> dict[str, str]:
         with self._mu:
-            return {"log_sent": str(self.sent), "log_dropped": str(self.dropped)}
+            return {"log_sent": str(self.sent), "log_dropped": str(self.dropped), "log_suppressed": str(self.suppressed)}
 
     async def send_pending(self) -> int:
         """대기열을 FLUSH_BATCH 건씩 XADD 한다. 반환: 보낸 건수. 실패하면 그 묶음을 대기열 앞에 되돌리고 예외를 올린다."""
@@ -458,6 +495,11 @@ class LogSink(logging.Handler):
                 await self.send_pending()
         except Exception as e:  # noqa: BLE001 — 종료를 막지 않는다
             log.warning("log sink: %d entr(ies) not sent at shutdown (%s)", len(self.pending()), type(e).__name__)
+        n, fps = self.unreported_suppressed()
+        if n:  # 뒤에 같은 지문이 오지 않아 스트림에는 실리지 못한 억제 수(누계는 log_suppressed 에 있다) — 표준 출력에만
+            log.info(
+                "log sink: %d suppressed occurrence(s) of %d fingerprint(s) not carried by a later entry at shutdown", n, fps
+            )
 
 
 def _context(record: logging.LogRecord) -> dict[str, Any]:
@@ -491,5 +533,6 @@ async def close_log_sink(sink: LogSink | None, drain_s: float = CLOSE_S) -> None
 
 
 def sink_metrics(sink: LogSink | None) -> dict[str, str]:
-    """heartbeat · ais 상태 해시의 log_sent · log_dropped(프로세스 기동 뒤 누계). 싱크를 껐으면 빈 값(모름 — 0 으로 채우지 않는다)."""
-    return sink.metrics() if sink is not None else {"log_sent": "", "log_dropped": ""}
+    """heartbeat · ais 상태 해시의 log_sent · log_dropped · log_suppressed(프로세스 기동 뒤 누계).
+    싱크를 껐으면 빈 값(모름 — 0 으로 채우지 않는다)."""
+    return sink.metrics() if sink is not None else {"log_sent": "", "log_dropped": "", "log_suppressed": ""}

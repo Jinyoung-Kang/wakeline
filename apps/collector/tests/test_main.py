@@ -296,7 +296,7 @@ def _logs(r) -> list[dict]:
 
 async def test_v5_collector_main_ships_masked_warnings_to_the_log_stream(monkeypatch):
     """계약 v5 §C2: collector 의 WARN·ERROR 가 가려진 LogEvent 로 wakeline:logs 에(service collector), heartbeat 에 log_sent ·
-    log_dropped, 끝나면 루트 로거에서 뗀다. 작업 태스크에 이름이 있어 context.task 로 어느 작업인지 보인다."""
+    log_dropped · log_suppressed, 끝나면 루트 로거에서 뗀다. 작업 태스크에 이름이 있어 context.task 로 어느 작업인지 보인다."""
     import logging
 
     from wakeline_collector.logsink import LogSink
@@ -305,7 +305,7 @@ async def test_v5_collector_main_ships_masked_warnings_to_the_log_stream(monkeyp
     probe = next(e for e in _logs(r) if e["logger"] == "test.v5.collector")
     assert probe["service"] == "collector" and probe["level"] == "ERROR" and probe["message"] == "probe token=***"
     hb = r.kv["wakeline:collector"]
-    assert hb["log_sent"].isdigit() and hb["log_dropped"].isdigit()
+    assert hb["log_sent"].isdigit() and hb["log_dropped"].isdigit() and hb["log_suppressed"].isdigit()
     assert not any(isinstance(h, LogSink) for h in logging.getLogger().handlers)
     tasks = {t.get_name() for t in __import__("asyncio").all_tasks()}
     assert not any(n.startswith("job:") or n == "logsink" for n in tasks)  # 작업·전송 루프 모두 끝났다
@@ -330,8 +330,8 @@ async def test_v5_collector_job_tasks_are_named_for_the_log_context(monkeypatch)
 
 
 async def test_v5_collector_log_sink_can_be_switched_off(monkeypatch):
-    """LOG_SINK_ENABLED=0(ADR-018 되돌리기): 스트림에 싣지 않고 heartbeat 의 두 값은 빈 값(모름)."""
+    """LOG_SINK_ENABLED=0(ADR-018 되돌리기): 스트림에 싣지 않고 heartbeat 의 싱크 지표는 빈 값(모름)."""
     r = await _run_collector_until(monkeypatch, lambda r: False, enabled=False)
     assert _logs(r) == []
     hb = r.kv["wakeline:collector"]
-    assert (hb["log_sent"], hb["log_dropped"]) == ("", "")
+    assert (hb["log_sent"], hb["log_dropped"], hb["log_suppressed"]) == ("", "", "")
