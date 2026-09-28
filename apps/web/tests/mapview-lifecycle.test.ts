@@ -119,3 +119,33 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(getData().conn).toBe("closed");
   });
 });
+
+describe("MapView KMA radar layers (R-11)", () => {
+  const kr = (available: boolean) => ({
+    available, latest_tm: "202609281200", georeferenced: true, legend: null, attribution: "기상청", meta: { fetched_at: "2026-09-28T03:00:00Z", stale: false },
+    coordinates: available ? [[120, 40], [135, 40], [135, 30], [120, 30]] as [number, number][] : null,
+    frames: available ? [{ tm: "202609281150", obs_tm: "202609281150", fetched_at: "x", echo_cells: 10, url: "/api/v1/radar/kr/202609281150.png" }, { tm: "202609281200", obs_tm: "202609281200", fetched_at: "x", echo_cells: 12, url: "/api/v1/radar/kr/202609281200.png" }] : [],
+  });
+
+  it("removes the drawn KMA echo when the server reports the radar unavailable (no stale echo left on the map)", async () => {
+    const map = await mount();
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    await act(() => useUi.setState({ radarSource: "kma" }));
+    await act(() => setData({ radarKr: kr(true) }));
+    expect(map.layerIds("kmar-")).toEqual(["kmar-202609281200"]); // 보일 프레임(최신)만 지연 추가
+    expect(map.getLayer("kmar-202609281200")!.layout.visibility).toBe("visible");
+    await act(() => setData({ radarKr: kr(false) }));
+    expect(map.layerIds("kmar-")).toEqual([]);
+    expect([...map.sources.keys()].filter((id) => id.startsWith("kmar-"))).toEqual([]);
+    // 다시 available 이 되면 다시 그린다
+    await act(() => setData({ radarKr: kr(true) }));
+    expect(map.layerIds("kmar-")).toEqual(["kmar-202609281200"]);
+  });
+
+  it("an unavailable response before anything was drawn is a no-op", async () => {
+    const map = await mount();
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    await act(() => setData({ radarKr: kr(false) }));
+    expect(map.layerIds("kmar-")).toEqual([]);
+  });
+});

@@ -453,7 +453,15 @@ export function MapView() {
   const krCoordsKey = useRef("");
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !radarKr?.available || !radarKr.coordinates || radarKr.coordinates.length !== 4) return;
+    if (!map) return;
+    if (!radarKr?.available || !radarKr.coordinates || radarKr.coordinates.length !== 4) {
+      // 서버가 unavailable(프레임 없음·수집 멈춤)이라고 하면 이미 그린 에코를 지운다 — 몇 시간 전 에코를 지금처럼 남기지 않는다(R-11)
+      onReady(map, "kma", () => {
+        krLayers.current = syncFrames(map, krLayers.current, [], new Map(), 0);
+        krCoordsKey.current = "";
+      });
+      return;
+    }
     const c = radarKr.coordinates;
     const coords: [[number, number], [number, number], [number, number], [number, number]] = [c[0], c[1], c[2], c[3]];
     const display = frameDisplay(radarKr.frames.length, krFrameIndex, layers.radar && radarSource === "kma", radarPlaying);
