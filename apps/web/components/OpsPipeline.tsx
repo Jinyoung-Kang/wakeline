@@ -1,0 +1,35 @@
+import { fmtTime } from "@/lib/format";
+import { lastTrimLoss, pipelineRows, type PipelineGroup } from "@/lib/ops";
+
+const GROUP_LABEL: Record<PipelineGroup, string> = { collector: "collector(수집)", ais: "ais(선박 수신)", api: "api(저장·배포)" };
+const TONE: Record<string, string> = { bad: "text-bad font-semibold", ok: "text-ok", muted: "" };
+
+/**
+ * 운영 화면 "pipeline" 탭(R-18): 데이터 손실 신호(드롭·트림·저장 실패)를 한곳에. 0 이 아닌 손실 지표는 빨간색,
+ * 모르는 값(collector·ais heartbeat 가 오래됐거나 필드 없음)은 "—" — 0 으로 보이지 않는다.
+ */
+export function OpsPipeline({ data }: { data: unknown }) {
+  const rows = pipelineRows(data);
+  const trim = lastTrimLoss(data);
+  const at = (data as { generated_at?: unknown } | null)?.generated_at;
+  return (
+    <div data-testid="ops-pipeline">
+      <div className="mb-2 text-[11px] text-fg-3">
+        누적 값은 각 프로세스가 시작된 뒤의 합계입니다. 빨간 값 = 0 이 아닌 손실 지표 · “—” = 모름(heartbeat 오래됨·없음) · 생성 <span className="mono">{fmtTime(typeof at === "string" ? at : null)}</span>
+      </div>
+      <table>
+        <thead><tr><th scope="col">구성 요소</th><th scope="col">지표</th><th scope="col">값</th><th scope="col">뜻</th></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={`${r.group}.${r.key}`} data-key={r.key} data-tone={r.tone}>
+            <td>{GROUP_LABEL[r.group]}</td><td>{r.label} <span className="mono text-fg-3">{r.key}</span></td>
+            <td className={`mono ${TONE[r.tone]}`}>{r.text}</td><td className="text-fg-3">{r.title}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+      <div className="mt-3 text-[11px]" data-testid="ops-pipeline-trim">
+        <span className="label mr-2">마지막 트림 손실</span>
+        {trim ? <span className="mono text-bad">{trim.stream} · {fmtTime(trim.from)} – {fmtTime(trim.to)}</span> : <span className="text-fg-3">기록 없음</span>}
+      </div>
+    </div>
+  );
+}

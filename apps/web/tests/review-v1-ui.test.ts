@@ -13,6 +13,7 @@ import { SidePanelView } from "@/components/SidePanel";
 import ReplayPage from "@/app/replay/page";
 import * as replayLib from "@/lib/replay";
 import * as opsLib from "@/lib/ops";
+import * as pipelineView from "@/components/OpsPipeline";
 import type { Alert } from "@/lib/types";
 import { subscriptionBbox } from "@/lib/viewport";
 import { fmtReplayBbox, REPLAY_MAX_AREA_SQDEG, replayQueryBbox, replayReduce, type ReplayFrame } from "@/lib/replay";
@@ -146,5 +147,43 @@ describe("R-12 ops: an expired session goes back to sign-in, sign-out always lea
     expect(net.note).toContain("서버 세션");
     expect(await opsLib.signOut(() => Promise.resolve(undefined), () => { left++; })).toEqual({ ok: true, note: null });
     expect(left).toBe(3);
+  });
+});
+
+describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () => {
+  const resp = {
+    collector: { publish_dropped: 3, db_dropped: 0, db_pending: 12, heartbeat_age_s: 4.2 },
+    ais: { dropped_total: null, quarantined_total: 7 },
+    api: {
+      track_queue_dropped: 0, ship_queue_dropped: 2, receipts_force_released: 0, dlq: 1, stream_trim_loss_events: 1,
+      last_stream_trim_loss: { stream: "wakeline:aircraft", from: "2026-09-28T01:00:00Z", to: "2026-09-28T01:02:00Z" },
+    },
+    generated_at: "2026-09-28T01:05:00Z",
+  };
+  it("rows: non-zero loss counters are 'bad', zero is 'ok', null / malformed is '—' (never 0)", () => {
+    const rows = opsLib.pipelineRows(resp);
+    const by = (g: string, k: string) => rows.find((r) => r.group === g && r.key === k)!;
+    expect(by("collector", "publish_dropped")).toMatchObject({ value: 3, tone: "bad", text: "3" });
+    expect(by("collector", "db_dropped")).toMatchObject({ value: 0, tone: "ok", text: "0" });
+    expect(by("ais", "dropped_total")).toMatchObject({ value: null, text: "—" });
+    expect(by("api", "ship_queue_dropped").tone).toBe("bad");
+    expect(by("api", "dlq").tone).toBe("bad");
+    expect(by("api", "stream_trim_loss_events").tone).toBe("bad");
+    expect(by("collector", "db_pending").tone).toBe("muted"); // 대기열은 손실이 아니다
+    expect(by("collector", "heartbeat_age_s").text).toBe("4s");
+    const bad = opsLib.pipelineRows({ collector: { publish_dropped: -1, db_dropped: "5" }, api: {} });
+    expect(bad.find((r) => r.key === "publish_dropped")!.text).toBe("—");
+    expect(bad.find((r) => r.key === "db_dropped")!.text).toBe("—");
+    expect(bad.find((r) => r.key === "dlq")!.text).toBe("—");
+    expect(opsLib.pipelineLossCount(resp)).toBe(4);
+    expect(opsLib.pipelineLossCount(null)).toBeNull();
+  });
+  it("the tab renders every counter, highlights losses and names the last trimmed range", () => {
+    const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: resp }));
+    expect(html).toContain('data-testid="ops-pipeline"');
+    expect(html).toMatch(/data-key="publish_dropped" data-tone="bad"/);
+    expect(html).toMatch(/data-key="dropped_total" data-tone="muted"[^>]*>.*?—/);
+    expect(html).toContain("wakeline:aircraft");
+    expect(html).toContain("09-28 01:00:00Z");
   });
 });

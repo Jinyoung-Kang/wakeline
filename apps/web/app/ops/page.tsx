@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { fmtBudgetLimit, fmtClock, fmtTime } from "@/lib/format";
-import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
+import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, pipelineLossCount, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
+import { OpsPipeline } from "@/components/OpsPipeline";
 
 type Any = Record<string, unknown>;
 interface Providers { providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[] }
@@ -11,7 +12,7 @@ interface Quality { rule_counts: Any[]; recent: Any[] }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
 
 /**
- * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ. 비로그인은 404 → 로그인 폼.
+ * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ·파이프라인 손실 지표(R-18). 비로그인은 404 → 로그인 폼.
  * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
  * 시각은 모두 날짜 포함(MM-DD HH:MM:SSZ) — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다. 모르는 값은 "—"(0 으로 채우지 않는다).
  */
@@ -49,13 +50,14 @@ function Login({ onLogin, notice }: { onLogin: (u: { username: string }) => void
 }
 
 function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
-  const [tab, setTab] = useState<"providers" | "runs" | "quality" | "settings" | "audit" | "dlq">("providers");
+  const [tab, setTab] = useState<"providers" | "runs" | "quality" | "settings" | "audit" | "dlq" | "pipeline">("providers");
   const [prov, setProv] = useState<Providers | null>(null);
   const [runs, setRuns] = useState<Runs | null>(null);
   const [quality, setQuality] = useState<Quality | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [audit, setAudit] = useState<{ items: Any[] } | null>(null);
   const [dlq, setDlq] = useState<{ items: Any[] } | null>(null);
+  const [pipeline, setPipeline] = useState<unknown>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lastOk, setLastOk] = useState<number | null>(null);
   /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
@@ -75,15 +77,21 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     apiGet<Settings>("/api/v1/ops/settings").then(ok(setSettings)).catch(h);
     apiGet<{ items: Any[] }>("/api/v1/ops/audit").then(ok(setAudit)).catch(h);
     apiGet<{ items: Any[] }>("/api/v1/ops/dlq").then(ok(setDlq)).catch(h);
+    apiGet<unknown>("/api/v1/ops/pipeline").then(ok(setPipeline)).catch(h);
   }, [fail]);
   useEffect(() => { const first = setTimeout(refresh, 0); const t = setInterval(refresh, 15_000); return () => { clearTimeout(first); clearInterval(t); }; }, [refresh]);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
+  const losses = pipelineLossCount(pipeline);
   const toggle = async (name: string, action: "enable" | "disable") => { try { await apiSend("POST", `/api/v1/ops/providers/${name}/${action}`); refresh(); } catch (e) { fail(e); } };
   return (
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-3">
         <span className="label mr-2">Operations</span>
-        <div className="flex gap-1" role="group" aria-label="운영 탭">{(["providers", "runs", "quality", "settings", "audit", "dlq"] as const).map((t) => <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>)}</div>
+        <div className="flex gap-1" role="group" aria-label="운영 탭">{(["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"] as const).map((t) => (
+          <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>
+            {t}{t === "pipeline" && losses ? <span className="ml-1 text-bad" title="0 이 아닌 손실 지표 수">● {losses}</span> : null}
+          </button>
+        ))}</div>
         <button className="btn" onClick={refresh}>refresh</button>
         <span className="mono text-[11px] text-fg-3" title="마지막으로 응답을 받은 시각(15 s 마다 갱신)" data-testid="ops-last-ok">갱신 {fmtClock(lastOk)}</span>
         {err ? <span className="text-[11px] text-bad" role="alert">{err}</span> : null}
@@ -123,6 +131,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
           <table><thead><tr><th>at</th><th>run</th><th>rule</th><th>hex</th><th>detail</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><td className="mono">{fmtTime(String(r.created_at))}</td><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}
+        {tab === "pipeline" && pipeline ? <OpsPipeline data={pipeline} /> : null}
         {tab === "settings" && settings ? <SettingsForm items={settings.items} onSaved={refresh} onAuthMiss={fail} /> : null}
         {tab === "audit" && audit ? <table><thead><tr><th>at</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
           <tbody>{audit.items.map((a) => <tr key={String(a.id)}><td className="mono">{fmtTime(String(a.at))}</td><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
