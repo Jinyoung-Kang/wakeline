@@ -244,6 +244,15 @@ class ComposePolicyTest(unittest.TestCase):
         self.assertTrue(mounts["/etc/redis/redis.conf"]["read_only"])
         self.assertEqual(mounts["/data"]["type"], "volume")
 
+    # --- R-90 · R-06: api 설정값이 .env 에서 실제로 전달된다(application.yml 기본값만 있고 compose 가 넘기지 않으면 바꿀 방법이 없다) ---
+    def test_api_cookie_secure_and_alert_retention_pass_through(self):
+        env = self.svc("api")["environment"]
+        self.assertEqual(env["WAKELINE_COOKIE_SECURE"], "false", "로컬 http 기본")
+        self.assertEqual(env["WAKELINE_ALERT_RETENTION_DAYS"], "30")
+        custom = self._config({"COOKIE_SECURE": "true", "ALERT_RETENTION_DAYS": "45"})
+        self.assertEqual(custom["services"]["api"]["environment"]["WAKELINE_COOKIE_SECURE"], "true")
+        self.assertEqual(custom["services"]["api"]["environment"]["WAKELINE_ALERT_RETENTION_DAYS"], "45")
+
     # --- SEC-7: WS Origin 허용 목록 ---
     def test_api_allowed_origins_follow_published_port(self):
         self.assertEqual(self.svc("api")["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")
