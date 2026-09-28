@@ -33,4 +33,16 @@ describe("MapLibre is loaded once from public (R-02)", () => {
   it("the dashboard waits for the public MapLibre module together with the map component chunk", () => {
     expect(read("app/page.tsx")).toMatch(/loadMaplibre\(\)/);
   });
+
+  it("the CSP comment in proxy.ts states how MapLibre is loaded now (same origin /maplibre/<version>/, allowed through 'strict-dynamic')", () => {
+    const src = read("proxy.ts");
+    const doc = src.slice(0, src.indexOf("export function proxy"));
+    // 수정 전: "외부 스크립트 없음(MapLibre 는 번들)" — 상황판은 public 배포본을 import() 로 불러온다(R-02)
+    expect(doc).not.toMatch(/MapLibre 는 번들\)/);
+    expect(doc).toContain("/maplibre/<버전>/");
+    expect(doc).toContain("'strict-dynamic'");
+    // 주석이 기대는 정책 자체
+    expect(src).toMatch(/script-src 'self' 'nonce-\$\{nonce\}' 'strict-dynamic'/);
+    expect(src).toContain("worker-src 'self' blob:");
+  });
 });
