@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -66,6 +68,59 @@ class LogMaskerTest {
         String out = LogMasker.mask("jdbc said Zq9-db-real-password was wrong (ab) near Zq9-db");
         assertThat(out).isEqualTo("jdbc said *** was wrong (ab) near ***");
         assertThat(LogMasker.secretCount()).isEqualTo(2);
+    }
+
+    /**
+     * 계약 v5 §C2 · §C4 · §C6: userinfo · JWT 규칙이 되짚기로 글자 수의 제곱 시간이 들지 않는다 — 누구나 보낼 수 있는 브라우저 오류(§C6)에
+     * 이런 글을 넣으면 앱 스레드(싣기 전 가림)와 운영 조회(읽을 때 다시 가림)가 CPU 를 몇 분씩 썼다(고치기 전 낱말 글자열 100,000자 29 s).
+     * 모두 가릴 것이 없는 글이다 — 결과는 그대로여야 한다.
+     */
+    @Test
+    void userinfoAndJwtRulesTakeLinearTimeOnAdversarialText() {
+        int n = LogMasker.LOG_LIMIT;
+        StringBuilder tiles = new StringBuilder("{\"tiles\":[");
+        for (int i = 0; tiles.length() < n; i++) tiles.append(i == 0 ? "" : ",").append("\"https://m").append(i).append(".tiles.test:8443/z/").append(i).append(".png\"");
+        List<String> cases = List.of(
+                "A".repeat(n),                        // 낱말 글자열(base64 · 16진 덤프)
+                "\uD835\uDC00".repeat(n / 2),         // 𝐀 — 보조 평면 글자열(서로게이트 쌍)
+                "x" + "가".repeat(n / 2) + " done",
+                "a://x:".repeat(n / 6),               // ':' 로 이어진 URL 모양, '@' 없음
+                tiles.append("]}").toString(),        // 포트 달린 URL 목록(압축 JSON)
+                "eyJ".repeat(n / 3),                  // 'eyJ' 반복
+                "eyJ".repeat(n / 6) + "." + "b".repeat(n / 4) + ".c"); // 앞 두 칸은 맞고 셋째 칸이 짧다
+        long t0 = System.nanoTime();
+        for (String s : cases) assertThat(LogMasker.mask(s, n)).as(s.substring(0, 30)).isEqualTo(s.length() > n ? LogMasker.cut(s, n) : s);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        // 선형이면 모두 합쳐 수십 ms 다. 부하가 큰 기계에서도 흔들리지 않게 넉넉히 — 제곱이면 한 건만으로 수십 초
+        assertThat(ms).as("masking 7 adversarial texts of %d chars took %d ms", n, ms).isLessThan(2_000);
+        // 가려야 할 것은 여전히 가린다
+        assertThat(LogMasker.mask("a://x:".repeat(3) + "pw@h")).isEqualTo("a://x:***@h");
+        assertThat(LogMasker.mask("eyJ".repeat(3) + "a".repeat(10) + ".b" + "b".repeat(10) + ".c" + "c".repeat(10))).isEqualTo("***jwt***");
+        assertThat(LogMasker.mask("A".repeat(50_000) + " redis://u:pw9@h", n)).endsWith(" redis://u:***@h");
+    }
+
+    /** 바꾸기 전의 두 규칙(되짚기 정규식 — 같은 글자 집합). 새 규칙이 글자 하나까지 같은 결과를 내는지 무작위 글로 견준다(masking.py 의 시험과 같은 방식). */
+    static final Pattern OLD_USERINFO = Pattern.compile("([" + LogMasker.WD + "]+://[^:/" + LogMasker.SP + "]+:)[^@" + LogMasker.SP + "]+(@)");
+    static final Pattern OLD_JWT = Pattern.compile("eyJ[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}");
+
+    @Test
+    void linearUserinfoAndJwtRulesGiveTheSameOutputAsTheBacktrackingOnes() {
+        Random rnd = new Random(20260929);
+        String[] parts = {" ", "\n", "\u001c", "a", "b9", "x", "_", "-", "가", "é", "²", "\u0301", "\uD835\uDC00", "\uD83D\uDEA2", ":", "//", "://",
+                "/", "@", ".", "=", "&", "$1", "\\", "eyJ", "abcdefghij", "0123456789", "redis://", "https://", "u:", "pw@", "h:6379",
+                "eyJhbGciOiJIUzI1NiJ9.", "eyJ0eXAiOiJKV1Qi", "sig_-012345678.", "password=", "?key=", "redis://u:pw@h", "abcdefghijk.",
+                "eyJabcdefghijk.abcdefghijk.", "u:pw@"};
+        int masked = 0;
+        for (int i = 0; i < 20_000; i++) {
+            StringBuilder sb = new StringBuilder();
+            for (int k = rnd.nextInt(14); k > 0; k--) sb.append(parts[rnd.nextInt(parts.length)]);
+            String s = sb.toString();
+            String old = OLD_JWT.matcher(OLD_USERINFO.matcher(s).replaceAll("$1***$2")).replaceAll("***jwt***");
+            String now = LogMasker.maskJwt(LogMasker.maskUserinfo(s));
+            assertThat(now).as("input %s", s).isEqualTo(old);
+            if (!old.equals(s)) masked++;
+        }
+        assertThat(masked).as("cases where the rules masked something").isGreaterThan(1_000);
     }
 
     @Test

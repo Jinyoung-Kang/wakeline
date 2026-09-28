@@ -228,6 +228,36 @@ class LogReaderTest {
         assertThat(g.groups().getFirst().count()).isEqualTo(3_000);
     }
 
+    /**
+     * 계약 v5 §C4 · §C6: 읽을 때 한 번 더 가리는 비용이 항목 크기에 비례한다. 누구나 보낼 수 있는 브라우저 오류로 되짚기가 많은 글(낱말 글자열 ·
+     * 'eyJ' 반복 · ':' 로 이어진 URL · 보조 평면 글자)을 3,000건 심어도 한 번 훑기가 몇 초 안에 끝난다(고치기 전: 300건에 groups 48 s ·
+     * 'eyJ' 200건에 97 s — 웹 /logs 는 15 s 마다 새로 읽는다). 가리는 글의 길이는 스키마 검증(가리기 전)이 이미 묶는다:
+     * message ≤ 4000 · 예외 메시지 ≤ 2000 · stack ≤ 12000 · context 값 ≤ 200(코드 포인트).
+     */
+    @Test
+    void rescanningAdversarialBrowserReportsStaysFast() {
+        String astral = "\uD835\uDC00"; // 𝐀
+        String[] messages = {"eyJ".repeat(660), "B".repeat(1990), "a://x:".repeat(330), astral.repeat(900)};
+        String[] stacks = {"A".repeat(6000), "eyJ".repeat(2000), astral.repeat(1500), "a://x:".repeat(1000)};
+        for (int i = 0; i < LogReader.SCAN_MAX; i++) {
+            Instant ts = T0.plusMillis(i);
+            var d = new LogEvents.Draft(ts, "web-client", "h:1", "ERROR", "browser", null, messages[i % 4], new LogEvents.Ex("", null, stacks[(i / 4) % 4]),
+                    null, Map.of("path", "/" + "p".repeat(150), "user_agent", "U".repeat(200)), true);
+            stream.add(ts.toEpochMilli(), 0, LogEvents.serialize(d, FP_A, 0));
+        }
+        long t0 = System.nanoTime();
+        LogReader.Groups g = reader.groups(all());
+        LogReader.Page p = reader.list(new LogReader.Filter(Set.of(), Set.of(), "no such text", null, null, null, null), null, 100);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        assertThat(g.scanned()).isEqualTo(3_000);
+        assertThat(g.invalid()).isZero();
+        assertThat(g.groups()).singleElement().extracting(LogReader.Group::count).isEqualTo(3_000L);
+        assertThat(p.scanned()).isEqualTo(3_000);
+        assertThat(p.items()).isEmpty();
+        // 선형이면 두 번 훑기(6,000건 · 검증 포함)가 1–2 s 다. 부하가 큰 기계에서도 흔들리지 않게 넉넉히 — 고치기 전에는 몇 분
+        assertThat(ms).as("groups + list over 3,000 adversarial entries took %d ms", ms).isLessThan(20_000);
+    }
+
     @Test
     void oneEntryById() {
         String id = addEvent(1, "api", "ERROR", "boom", FP_A);

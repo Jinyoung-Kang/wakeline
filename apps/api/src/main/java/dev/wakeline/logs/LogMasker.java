@@ -11,7 +11,8 @@ import java.util.regex.Pattern;
  * 언어 간 시험 벡터 {@code schemas/vectors/masking-cases.v1.json} 의 결과가 두 언어에서 글자 하나까지 같아야 한다(LogMaskerTest · pytest).
  * <ul>
  *   <li>모양으로 가리기: key=value · JSON({@code "authKey": "…"}) · Bearer · Authorization 헤더 · URL userinfo · JWT,
- *       그리고 v5 새 규칙 {@code [?&](key|apikey|access_key)=} 쿼리 파라미터.</li>
+ *       그리고 v5 새 규칙 {@code [?&](key|apikey|access_key)=} 쿼리 파라미터. 모든 규칙이 글자 수에 비례하는 시간으로 끝난다 — 누구나 보낼 수
+ *       있는 브라우저 오류(§C6)도 이 함수를 거친다.</li>
  *   <li>값으로 가리기: 기동 때 {@link #registerSecrets} 로 넘긴 설정 비밀값(DB · Redis 비밀번호) 자체를 어디에 나오든 가린다(6자 이상만).</li>
  * </ul>
  * Python 의 {@code re}(str 패턴)와 같은 글자 집합을 쓴다 — Java 의 {@code \s} · {@code \w}(UNICODE_CHARACTER_CLASS)는 Python 과 다르다
@@ -52,9 +53,13 @@ public final class LogMasker {
             new Rule(Pattern.compile("(token=)[^&" + SP + "]+", CI), "$1***"),
             new Rule(Pattern.compile("(secret=)[^&" + SP + "]+", CI), "$1***"),
             // JSON·파이썬 repr 형태: "authKey": "…" / 'access_token': '…' ('=' 가 없어 위 규칙이 못 잡는다)
-            new Rule(Pattern.compile("([\"']" + KEYS + "[\"'][" + SP + "]*:[" + SP + "]*[\"'])[^\"']*([\"'])", CI), "$1***$2"),
-            new Rule(Pattern.compile("([" + WD + "]+://[^:/" + SP + "]+:)[^@" + SP + "]+(@)"), "$1***$2"), // scheme://user:pass@host
-            new Rule(Pattern.compile("eyJ[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}\\.[A-Za-z0-9\\-_]{10,}"), "***jwt***"));
+            new Rule(Pattern.compile("([\"']" + KEYS + "[\"'][" + SP + "]*:[" + SP + "]*[\"'])[^\"']*([\"'])", CI), "$1***$2"));
+    // 그다음 maskUserinfo · maskJwt(마지막 두 규칙 — 글자 수에 비례하는 시간으로 쓴 것)
+    /** 낱말 글자열 하나, 뒤에 '://호스트:비밀번호' 와 '@' 가 오면 그것까지. 그룹: 1 scheme · 2 ://호스트: · 3 '@'(없으면 가리지 않는다). */
+    private static final Pattern USERINFO = Pattern.compile("([" + WD + "]+)(?:(://[^:/" + SP + "]+:)[^@" + SP + "]+(@)?)?");
+    private static final String B64URL = "[A-Za-z0-9\\-_]";
+    /** 'eyJ' 와 JWT 세 칸(그룹 1) — 아니면 'eyJ' 와 그 뒤 base64url 글자열 전부(건너뛸 구간). */
+    private static final Pattern JWT = Pattern.compile("eyJ(?:(" + B64URL + "{10,}\\." + B64URL + "{10,}\\." + B64URL + "{10,})|" + B64URL + "*)");
 
     /** 긴 값부터(다른 값을 품은 값이 먼저 가려지게). 쓰기는 기동 때 몇 번뿐이다. */
     private static final CopyOnWriteArrayList<String> SECRETS = new CopyOnWriteArrayList<>();
@@ -89,8 +94,50 @@ public final class LogMasker {
             Matcher m = r.pattern().matcher(out);
             if (m.find()) out = m.replaceAll(r.replacement());
         }
+        out = maskJwt(maskUserinfo(out));
         for (String secret : SECRETS) if (out.contains(secret)) out = out.replace(secret, "***");
         return cut(out, limit);
+    }
+
+    /**
+     * scheme://user:pass@host → scheme://user:***@host. masking.py 의 {@code (?<!\w)(\w+://[^:/\s]+:)[^@\s]+(@)?} 와 글자 하나까지 같은
+     * 결과다(예전 {@code (\w+://[^:/\s]+:)[^@\s]+(@)} 와도 같다 — LogMaskerTest 가 무작위 글 20,000개로 견준다).
+     * 예전 식은 낱말 글자열 안의 시작점마다 글자열 끝까지 다시 훑어 글자 수의 제곱 시간이 들었다(낱말 글자열 100,000자 29 s). 여기서는
+     * 낱말 글자열을 통째로 한 번 읽는다 — 낱말 안에서 시작하는 일치는 그 낱말 처음에서도 일치하므로 결과가 같다. 뒤에 '://…:' 가 없거나
+     * '@' 없이 공백·끝에서 멈추면 그 구간을 그대로 두고 건너뛴다(구간 안의 다른 시작점도 같은 공백·끝에서 멈추므로 일치하지 않는다).
+     * Python 처럼 뒤보기 {@code (?<!\w)} 로 쓰지 않는 까닭: Java 의 뒤보기는 보조 평면 글자(𝐀 같은 서로게이트 쌍)를 한 글자로 보지 못해
+     * 그런 글자열에서 다시 제곱 시간이 된다(16,000자 0.33 s).
+     */
+    static String maskUserinfo(String s) {
+        if (!s.contains("://")) return s;
+        Matcher m = USERINFO.matcher(s);
+        StringBuilder out = null;
+        int last = 0;
+        while (m.find()) {
+            if (m.start(3) < 0) continue; // '@' 가 없다 — 그대로
+            if (out == null) out = new StringBuilder(s.length());
+            out.append(s, last, m.end(2)).append("***@");
+            last = m.end();
+        }
+        return out == null ? s : out.append(s, last, s.length()).toString();
+    }
+
+    /**
+     * JWT(eyJ….….…) → ***jwt***. 'eyJ' 에서 일치하지 않으면 그 base64url 글자열 끝까지 건너뛴다 — 같은 글자열 안의 뒤쪽 'eyJ' 는 같은 곳에서
+     * 끊기고(첫 칸이 더 짧다) 뒤의 칸도 같아서 역시 일치하지 않는다. 예전 식(되짚기)은 'eyJ' 반복 8,100자에 0.25 s 가 들었다. masking.py 와 같은 규칙.
+     */
+    static String maskJwt(String s) {
+        if (!s.contains("eyJ")) return s;
+        Matcher m = JWT.matcher(s);
+        StringBuilder out = null;
+        int last = 0;
+        while (m.find()) {
+            if (m.start(1) < 0) continue; // JWT 가 아니다 — 그대로
+            if (out == null) out = new StringBuilder(s.length());
+            out.append(s, last, m.start()).append("***jwt***");
+            last = m.end();
+        }
+        return out == null ? s : out.append(s, last, s.length()).toString();
     }
 
     /** 앞에서 n 코드 포인트(서로게이트 쌍을 가르지 않는다). */
