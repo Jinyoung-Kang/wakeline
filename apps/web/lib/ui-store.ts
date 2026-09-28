@@ -61,9 +61,10 @@ export const useUi = create<UiState>((set) => ({
   selectedHex: null,
   select: (hex) => set({ selectedHex: hex, panel: hex ? "aircraft" : "alerts" }),
   selectedSigmet: null,
-  selectSigmet: (id) => set({ selectedSigmet: id, panel: id ? "sigmet" : "alerts" }),
+  // 카드를 닫으면 같은 탭의 목록으로 돌아간다(R-40 — SIGMET·공항 탭에 목록이 있다)
+  selectSigmet: (id) => set((s) => ({ selectedSigmet: id, panel: id ? "sigmet" : s.panel })),
   selectedAirport: null,
-  selectAirport: (icao) => set({ selectedAirport: icao, panel: icao ? "airport" : "alerts" }),
+  selectAirport: (icao) => set((s) => ({ selectedAirport: icao, panel: icao ? "airport" : s.panel })),
   selectedShip: null,
   // 해제할 때 다른 패널을 보고 있었으면 그대로 둔다(선박 레이어를 끄면서 해제하는 경우 등)
   selectShip: (mmsi) => set((s) => ({ selectedShip: mmsi, panel: mmsi ? "ship" : s.panel === "ship" ? "alerts" : s.panel })),

@@ -9,6 +9,7 @@ import {
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
+import { ReplayList } from "@/components/ReplayList";
 
 const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
 const SPEEDS = [1, 5, 10, 30, 60];
@@ -28,6 +29,7 @@ export default function ReplayPage() {
   const [{ frame, err, latencyMs: latency }, dispatch] = useReducer(replayReduce, { frame: null, err: null, latencyMs: null });
   const [pick, setPick] = useState<ReplayPick>(null);
   const [showRadar, setShowRadar] = useState(true);
+  const [showList, setShowList] = useState(false);
   const inflight = useRef(false);
   const { min, max } = range;
   // 기록 시각은 서버 시계 — 상황판에서 추정한 오프셋이 있으면 쓴다(없으면 브라우저 시계)
@@ -76,6 +78,7 @@ export default function ReplayPage() {
         <span className={`mono ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title="지도에 그린 기록의 시각(응답 at)">지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
         <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${latency ?? "—"} ms` : "—"}</span>
         <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
+        <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
         <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar">{replayRadarLabel(frame)}</span>
         {err ? <span className="whitespace-normal text-bad" role="alert" data-testid="replay-error">{err}</span> : null}
         {clamped ? <span className="whitespace-normal text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
@@ -83,6 +86,12 @@ export default function ReplayPage() {
       </div>
       <div className="relative min-h-0 flex-1">
         <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />
+        {/* 키보드 경로(R-40): 지도 클릭 없이 그 시각의 SIGMET·항공기를 고른다 */}
+        {showList ? (
+          <div id="replay-list" className="panel absolute top-3 left-12 z-10 flex max-h-[calc(100%-1.5rem)] w-[260px] max-w-[calc(100%-4rem)] flex-col" role="region" aria-label="재생 항목 목록" data-testid="replay-list">
+            <ReplayList frame={frame} onPick={setPick} />
+          </div>
+        ) : null}
         {pick ? (
           <div className="panel absolute top-3 right-3 z-10 w-[320px] max-w-[calc(100%-1.5rem)] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
             <div className="row">

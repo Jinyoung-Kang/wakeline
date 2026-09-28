@@ -141,6 +141,7 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
               <span key={k} className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: c }} /><span className="mono text-[10px]">{k}</span></span>
             ))}
           </li>
+          <Row swatch={<span className="mono text-[9px] text-fg-2">ICAO</span>} wide>줌 7 이상: 라벨에 카테고리 글자(예: RKSI IFR)</Row>
           <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_UNKNOWN_COLOR }} />}>카테고리 판정 불가(—)</Row>
           <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_STALE_FILL, border: `1.5px solid ${CAT_STALE_STROKE}` }} />}>METAR 오래됨(&gt; {METAR_STALE_S / 3600} h) — 색 없음</Row>
         </Section>

@@ -3,6 +3,7 @@
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(커밋 메시지·검증 기록 참고).
  */
 import { readFileSync } from "node:fs";
+import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +16,9 @@ import ReplayPage from "@/app/replay/page";
 import Dashboard from "@/app/page";
 import { LayerPanel } from "@/components/LayerPanel";
 import * as prefs from "@/lib/prefs";
+import { addBaseLayers } from "@/lib/maplayers";
+import * as sigmetLib from "@/lib/sigmet";
+import type { SigmetCollection } from "@/lib/types";
 import * as replayLib from "@/lib/replay";
 import * as opsLib from "@/lib/ops";
 import * as pipelineView from "@/components/OpsPipeline";
@@ -230,5 +234,92 @@ describe("R-39 narrow screens (390 px phone, 768 px tablet)", () => {
     expect(css).toMatch(/\.btn \{[^}]*white-space: nowrap;[^}]*word-break: keep-all;/);
     expect(prefs.legendDefaultOpen(390)).toBe(false);
     expect(prefs.legendDefaultOpen(768)).toBe(false);
+  });
+});
+
+/** addBaseLayers 가 만든 레이어 정의(지도 없이) */
+type LayerDef = { id: string; layout?: Record<string, unknown>; paint?: Record<string, unknown> };
+function baseLayers(): Record<string, LayerDef> {
+  const g = globalThis as Record<string, unknown>;
+  const saved = { document: g.document, Path2D: g.Path2D };
+  const ctx = { fillStyle: "", fill: () => {}, beginPath: () => {}, getImageData: () => ({ width: 48, height: 48, data: new Uint8ClampedArray(48 * 48 * 4) }) };
+  g.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
+  g.Path2D = class { constructor(public d: string) {} };
+  const out: Record<string, LayerDef> = {};
+  try {
+    addBaseLayers({ addImage: () => {}, addSource: () => {}, addLayer: (l: LayerDef) => { out[l.id] = l; } } as never);
+  } finally { g.document = saved.document; g.Path2D = saved.Path2D; }
+  return out;
+}
+function evalLayout(expr: unknown, prop: string, properties: Record<string, unknown>): unknown {
+  const spec = (latest as unknown as Record<string, Record<string, unknown>>).layout_symbol[prop];
+  const r = createPropertyExpression(expr, `layers[0].layout.${prop}`, spec as never);
+  if (r.result !== "success") throw new Error(r.value.map((e) => e.message).join("; "));
+  return r.value.evaluate({ zoom: 8 } as never, { type: "Point", properties } as never);
+}
+
+describe("R-40 keyboard paths to SIGMETs, airports and replay items; airport category not by colour alone", () => {
+  it("airport labels (zoom >= 7) carry the flight category as text; stale or unknown METAR shows the code only", () => {
+    const tf = baseLayers()["airport-label"].layout!["text-field"];
+    const txt = (p: Record<string, unknown>) => String(evalLayout(tf, "text-field", p));
+    expect(txt({ icao: "RKSI", flight_cat: "IFR" })).toBe("RKSI IFR");
+    expect(txt({ icao: "RKSS", flight_cat: "LIFR" })).toBe("RKSS LIFR");
+    expect(txt({ icao: "RKPC", flight_cat: "IFR", stale: true })).toBe("RKPC");
+    expect(txt({ icao: "RKPK", flight_cat: null })).toBe("RKPK");
+  });
+  const fc: SigmetCollection = {
+    type: "FeatureCollection",
+    features: [
+      { type: "Feature", geometry: { type: "MultiPolygon", coordinates: [[[[120, 30], [124, 30], [124, 34], [120, 34], [120, 30]]]] },
+        properties: { id: "S1", fir_id: "ZSHA", fir_name: "SHANGHAI", series_id: "A1", hazard: "TURB", qualifier: "SEV", valid_from: "2026-09-28T00:00:00Z", valid_to: "2026-09-28T04:00:00Z", active: true, expiring_soon: false, raw_text: "", provider: "awc", fetched_at: "2026-09-28T00:00:00Z" } },
+      { type: "Feature", geometry: { type: "MultiPolygon", coordinates: [[[[170, 50], [-170, 50], [-170, 55], [170, 55], [170, 50]]]] },
+        properties: { id: "S2", fir_id: "PAZA", series_id: "B2", hazard: "ICE", valid_from: "2026-09-28T00:00:00Z", valid_to: "2026-09-28T04:00:00Z", active: true, expiring_soon: false, raw_text: "", provider: "awc", fetched_at: "2026-09-28T00:00:00Z" } },
+      { type: "Feature", geometry: { type: "MultiPolygon", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] },
+        properties: { id: "S3", fir_id: "EGTT", series_id: "C3", hazard: "TS", valid_from: "2026-09-27T00:00:00Z", valid_to: "2026-09-27T04:00:00Z", active: false, expiring_soon: false, raw_text: "", provider: "awc", fetched_at: "2026-09-28T00:00:00Z" } },
+    ],
+  };
+  it("the SIGMET list has the active warnings, aircraft-inside counts from the live alert list (— when unknown) and a pan target", () => {
+    const now = Date.parse("2026-09-28T01:00:00Z");
+    const items = sigmetLib.sigmetListItems(fc, [alert({ sigmet_id: "S2", hex: "a1" }), alert({ id: 8, sigmet_id: "S2", hex: "a2" }), alert({ id: 9, kind: "PREDICTED", sigmet_id: "S1", hex: "a3" })], now);
+    expect(items.map((i) => i.id)).toEqual(["S2", "S1"]); // 만료(S3) 제외 · 안 항공기 많은 순
+    expect(items[0]).toMatchObject({ inside: 2, predicted: 0 });
+    expect(items[1]).toMatchObject({ inside: 0, predicted: 1 });
+    expect(items[1].center).toEqual([122, 32]);
+    expect(items[0].center![0]).toBeCloseTo(180, 6); // 날짜변경선을 넘는 폴리곤의 가운데
+    const unknown = sigmetLib.sigmetListItems(fc, null, now);
+    expect(unknown[0].inside).toBeNull();
+  });
+  it("the sigmet and airport tabs list their items as buttons when nothing is selected (no map click needed)", async () => {
+    const { SigmetListView } = await import("@/components/SigmetList");
+    const now = Date.parse("2026-09-28T01:00:00Z");
+    const sl = renderToStaticMarkup(createElement(SigmetListView, { items: sigmetLib.sigmetListItems(fc, [], now) }));
+    expect(sl).toMatch(/<button[^>]*data-testid="sigmet-list-item"[^>]*>.*TURB SEV/);
+    expect(sl).toContain("ZSHA");
+    const { AirportListView } = await import("@/components/AirportList");
+    const al = renderToStaticMarkup(createElement(AirportListView, {
+      state: "done", now,
+      features: [
+        { type: "Feature", geometry: { type: "Point", coordinates: [126.45, 37.46] }, properties: { icao: "RKSI", name: "Incheon", flight_cat: "IFR", obs_time: "2026-09-28T00:30:00Z" } },
+        { type: "Feature", geometry: { type: "Point", coordinates: [126.79, 37.56] }, properties: { icao: "RKSS", name: "Gimpo", flight_cat: "VFR", obs_time: "2026-09-27T20:00:00Z" } },
+      ],
+    }));
+    expect(al).toMatch(/data-testid="airport-list-item"[^>]*>.*RKSI.*IFR/);
+    expect(al).toMatch(/RKSS.*METAR 오래됨/); // 2 h 넘은 METAR 는 카테고리를 현재처럼 보이지 않는다
+    expect(SidePanelView).toBeTypeOf("function");
+    const tab = renderToStaticMarkup(createElement(SidePanelView, { panel: "sigmet", hex: null, sigmet: null, airport: null }));
+    expect(tab).toContain('data-testid="sigmet-list"');
+  });
+  it("replay: the frame's SIGMETs and aircraft are listed as buttons that open the inspector", async () => {
+    const { ReplayListView } = await import("@/components/ReplayList");
+    const frame: ReplayFrame = {
+      at: "2026-09-28T05:00:00Z", source: "track_point",
+      aircraft: [{ hex: "abc123", lat: 36, lon: 127, callsign: "KAL123" }, { hex: "def456", lat: 35, lon: 128 }],
+      sigmets: [{ id: "S1", hazard: "TS", fir_id: "RKRR", valid_from: "2026-09-28T04:00:00Z", valid_to: "2026-09-28T08:00:00Z", raw_text: "", geometry: null }],
+    };
+    const html = renderToStaticMarkup(createElement(ReplayListView, { frame, q: "", onPick: () => {} }));
+    expect(html).toMatch(/data-testid="replay-list-sigmet"[^>]*>.*TS.*RKRR/);
+    expect(html).toMatch(/data-testid="replay-list-aircraft"[^>]*>.*KAL123/);
+    expect(html).toMatch(/data-testid="replay-list-aircraft"[^>]*>.*def456/);
+    expect(renderToStaticMarkup(createElement(ReplayListView, { frame, q: "kal", onPick: () => {} }))).not.toContain("def456");
   });
 });

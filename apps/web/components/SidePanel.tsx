@@ -2,8 +2,10 @@
 import { AlertPanel } from "./AlertPanel";
 import { AircraftCard } from "./AircraftCard";
 import { AirportCard } from "./AirportCard";
+import { AirportList } from "./AirportList";
 import { ShipPanel } from "./ShipCard";
 import { SigmetCard } from "./SigmetCard";
+import { SigmetList } from "./SigmetList";
 import { useUi, type UiPanel } from "@/lib/ui-store";
 
 /** 상황판 오른쪽 패널(탭 + 내용) */
@@ -30,10 +32,11 @@ export function SidePanelView({ panel, hex, sigmet, airport }: { panel: UiPanel;
       </div>
       <div className="min-h-0 flex-1">
         <div className="h-full" hidden={panel !== "alerts"}><AlertPanel /></div>
-        {panel === "aircraft" ? (hex ? <AircraftCard hex={hex} /> : <div className="p-3 text-[11px] text-fg-3">지도에서 항공기를 클릭하세요.</div>) : null}
+        {panel === "aircraft" ? (hex ? <AircraftCard hex={hex} /> : <div className="p-3 text-[11px] text-fg-3">지도에서 항공기를 클릭하거나, 상단 검색(/ 키)·알림 목록에서 고르세요.</div>) : null}
         {panel === "ship" ? <ShipPanel /> : null}
-        {panel === "sigmet" ? (sigmet ? <SigmetCard id={sigmet} /> : <div className="p-3 text-[11px] text-fg-3">지도에서 SIGMET 폴리곤을 클릭하세요.</div>) : null}
-        {panel === "airport" ? (airport ? <AirportCard icao={airport} /> : <div className="p-3 text-[11px] text-fg-3">지도에서 공항을 클릭하세요(줌 6 이상).</div>) : null}
+        {/* 선택이 없으면 목록 — 지도 클릭 없이 키보드로 고른다(R-40) */}
+        {panel === "sigmet" ? (sigmet ? <SigmetCard id={sigmet} /> : <SigmetList />) : null}
+        {panel === "airport" ? (airport ? <AirportCard icao={airport} /> : <AirportList />) : null}
       </div>
     </>
   );

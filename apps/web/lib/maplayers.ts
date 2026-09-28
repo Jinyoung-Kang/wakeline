@@ -87,6 +87,15 @@ export const SIGMET_LINE_WIDTH_EXPR = [
 /** 레이더 레이어 자리 표시(빈 소스·숨김). 커버리지 마스크는 이 아래, 레이더 프레임은 이 위·SIGMET 아래에 끼운다. */
 export const RADAR_SLOT = "radar-slot";
 
+/**
+ * 공항 라벨(줌 7+): ICAO 와 비행 카테고리 글자 — 색만으로 구분하지 않는다(R-40, WCAG 1.4.1). METAR 가 오래됐거나(stale) 카테고리를 모르면 ICAO 만
+ * (원 색도 같은 규칙으로 회색 — AIRPORT_FILL_EXPR).
+ */
+export const AIRPORT_LABEL_EXPR = [
+  "case", ["boolean", ["get", "stale"], false], ["get", "icao"],
+  ["match", ["coalesce", ["get", "flight_cat"], ""], Object.keys(CAT_COLORS), ["concat", ["get", "icao"], " ", ["get", "flight_cat"]], ["get", "icao"]],
+] as unknown as maplibregl.ExpressionSpecification;
+
 export function addBaseLayers(map: maplibregl.Map) {
   map.addImage("plane", planeImage(), { sdf: true });
   map.addImage("plane-nodir", sdfImage(NODIR_PATH), { sdf: true });
@@ -141,7 +150,7 @@ export function addBaseLayers(map: maplibregl.Map) {
   });
   map.addLayer({
     id: "airport-label", type: "symbol", source: "airports", minzoom: 7,
-    layout: { "text-field": ["get", "icao"], "text-font": ["Noto Sans Regular"], "text-size": 10, "text-offset": [0, 1.1], "text-anchor": "top" },
+    layout: { "text-field": AIRPORT_LABEL_EXPR, "text-font": ["Noto Sans Regular"], "text-size": 10, "text-offset": [0, 1.1], "text-anchor": "top" },
     paint: { "text-color": "#a3aab4", "text-halo-color": "#0b0d10", "text-halo-width": 1 },
   });
 
