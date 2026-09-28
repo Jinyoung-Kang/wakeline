@@ -76,6 +76,22 @@ describe("status bar connection badge (R-09)", () => {
     setData({ conn: "open", lastRxAt: Date.now(), reconnectAttempt: 0 });
     expect(conn()).toBe("ok");
   });
+  it("the region lag badge (NO DATA) is not the error colour during a normal first connection; real staleness and no data after a failed attempt stay red", () => {
+    const lag = () => /class="badge ([a-z]+)" data-testid="lag-badge"[^>]*>([^<]*)</.exec(renderToStaticMarkup(createElement(StatusBar))) ?? [];
+    setData({ conn: "connecting", reconnectAttempt: 0 });
+    // 수정 전: feedLag 가 피드 없음을 stale 로 돌려 첫 로드부터 빨간 NO DATA(연결 배지는 이미 warn)
+    expect(lag()[1]).toBe("warn");
+    expect(lag()[2]).toBe("NO DATA");
+    setData({ conn: "connecting", reconnectAttempt: 2 }); // 재시도 중 — 연결 배지처럼 오류색
+    expect(lag()[1]).toBe("bad");
+    setData({ conn: "closed", reconnectAttempt: 1 });
+    expect(lag()[1]).toBe("bad");
+    const now = Date.now();
+    setData({ conn: "open", lastRxAt: now, reconnectAttempt: 0, feeds: { region: { provider: "adsb_fi", fetched_at: null, lag_s: 120, stale: true, received_at: now }, global: null } });
+    expect(lag()[1]).toBe("bad"); // 실제로 오래된 피드
+    setData({ feeds: { region: { provider: "adsb_fi", fetched_at: null, lag_s: 2, stale: false, received_at: now }, global: null } });
+    expect(lag()[1]).toBe("ok");
+  });
 });
 
 describe("last-event banner (R-23)", () => {

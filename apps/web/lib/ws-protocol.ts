@@ -42,6 +42,15 @@ export function connTone(conn: string, silent: boolean, reconnectAttempt: number
   return "bad";
 }
 
+/**
+ * 피드 지연 배지 색(R-09). 값이 없고(NO DATA) 첫 연결을 시도하는 중(재시도 전)이면 정상적인 시작이다 — 연결 배지처럼 warn.
+ * 실제로 오래됐거나(stale), 재시도·끊김·연결된 뒤에도 값이 없으면 bad.
+ */
+export function lagTone(f: { lag: number | null; stale: boolean }, conn: string, reconnectAttempt: number): "ok" | "warn" | "bad" {
+  if (f.lag == null && conn === "connecting" && reconnectAttempt === 0) return "warn";
+  return f.stale ? "bad" : "ok";
+}
+
 /** 연결이 열려 있고 최근(RX_FRESH_MS 안)에 무엇이든 받았는가 — ping 은 30 s 마다 오므로 조용한 정상 연결도 참이다. */
 export function isRxFresh(conn: string, lastRxAt: number | null | undefined, nowMs: number): boolean {
   return conn === "open" && lastRxAt != null && nowMs - lastRxAt < RX_FRESH_MS;

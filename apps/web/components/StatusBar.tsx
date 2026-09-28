@@ -3,7 +3,7 @@ import { serverNowMs, useServerData } from "@/lib/store";
 import { useNow } from "@/lib/clock";
 import { fmtAgo, fmtClock, fmtIso, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
 import { aisBadge, aisGapBadge } from "@/lib/ships";
-import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
+import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
 
 /**
  * 상단 상태 바(FR-11): 연결 상태·지역/전세계 피드별 출처·수집 시각·지연 배지(지역 > 60 s, 전세계 > 300 s 면 경고)·SIGMET·레이더.
@@ -42,7 +42,7 @@ export function StatusBar() {
         <span className="label mr-1">aircraft</span>{s.aircraftCount ?? "—"}
       </span>
       <span className="mono" data-testid="region-source"><span className="label mr-1">region</span>{s.feeds.region?.provider ?? "—"} · <span title={fmtIso(s.feeds.region?.fetched_at)}>{fmtClock(s.feeds.region?.fetched_at)}</span></span>
-      <span className={`badge ${region.stale ? "bad" : "ok"}`} data-testid="lag-badge" title={`지역 피드 지연(경고 > ${REGION_STALE_S} s)`}>
+      <span className={`badge ${lagTone(region, s.conn, s.reconnectAttempt)}`} data-testid="lag-badge" title={`지역 피드 지연(경고 > ${REGION_STALE_S} s)`}>
         {region.lag == null ? "NO DATA" : `lag ${Math.round(region.lag)}s`}{region.lag != null && region.stale ? " · STALE" : ""}
       </span>
       <span className="mono" data-testid="global-source"><span className="label mr-1">world</span>{s.feeds.global?.provider ?? "—"}</span>
