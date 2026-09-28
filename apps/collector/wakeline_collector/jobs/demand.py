@@ -45,6 +45,7 @@ from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
 from wakeline_collector.route import normalize_callsign
+from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.demand")
 
@@ -500,8 +501,7 @@ class DemandTracker:
                 items[field] = ("not_found", FOCUS_INTERVAL_S, "not in provider response")
         await self._put_status(items)
         self._record_ok("focus", started, res, len(seen), quarantined, ref)
-        lag = (datetime.now(UTC) - res.fetched_at).total_seconds()
-        await ctx.status.heartbeat("focus", lag_s=lag, fixture=ctx.fixture)
+        await ctx.status.heartbeat("focus", lag_s=newest_age_s(st.seen_at for st in kept), fixture=ctx.fixture)  # R-20
 
     async def _run_hot(self, cell: HotCell, st: _Cell) -> None:
         ctx = self.ctx
@@ -526,8 +526,7 @@ class DemandTracker:
         self._last_ok[cell.field] = res.fetched_at
         await self._put_status({cell.field: ("active", st.interval_s, None)})
         self._record_ok("hot", started, res, len(res.data.get("ac") or []), quarantined, ref)
-        lag = (datetime.now(UTC) - res.fetched_at).total_seconds()
-        await ctx.status.heartbeat("hot", lag_s=lag, fixture=ctx.fixture)
+        await ctx.status.heartbeat("hot", lag_s=newest_age_s(s.seen_at for s in kept), fixture=ctx.fixture)  # R-20
 
     # ---- 지표 --------------------------------------------------------------------------------------------------------
     def metrics(self) -> dict[str, str]:

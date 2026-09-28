@@ -225,7 +225,7 @@ class KmaRadarJob:
         )
         if not stored_n:
             await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
-        await ctx.status.heartbeat(self.job_name, lag_s=0.0, fixture=ctx.fixture)
+        await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture)  # 재지 않은 값은 0 이 아니라 모름(R-20)
 
     async def _store(self, tm: str, res) -> None:
         ctx = self.ctx

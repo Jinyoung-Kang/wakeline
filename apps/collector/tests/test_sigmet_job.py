@@ -106,6 +106,14 @@ async def test_restart_restores_us_set_from_last_published_entry(fixtures_dir):
     assert us_after == us_before and len(us_after) == 4
 
 
+async def test_r20_sigmet_heartbeat_lag_is_unknown_not_zero(fixtures_dir):
+    """리뷰 R-20: 기상 작업의 lag_s 는 늘 0.0 이었다(재지 않은 값). 모르면 빈 값."""
+    r = FakeRedis()
+    await SigmetJob(FakeAwc(fixtures_dir), make_ctx(r)).run_once()
+    hb = await r.hgetall("wakeline:collector")
+    assert hb["sigmet_at"] and hb["sigmet_lag_s"] == ""
+
+
 async def test_payload_carries_band_sources(fixtures_dir):
     r = FakeRedis()
     await SigmetJob(FakeAwc(fixtures_dir), make_ctx(r)).run_once()

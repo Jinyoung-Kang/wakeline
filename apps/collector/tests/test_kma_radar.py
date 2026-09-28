@@ -354,6 +354,13 @@ def _recording_runs(ctx):
     return runs
 
 
+async def test_r20_radar_kr_heartbeat_lag_is_unknown_not_zero(kma_env):
+    mod, r, ctx, clock = kma_env
+    await mod.KmaRadarJob(FakeKma(_tms("202609272000")), ctx).run_once()
+    hb = await r.hgetall("wakeline:collector")
+    assert hb["radar_kr_at"] and hb["radar_kr_lag_s"] == ""
+
+
 async def test_r03_frame_not_yet_available_is_retried_next_cycle(kma_env):
     mod, r, ctx, clock = kma_env
     listing = _tms("202609272000")

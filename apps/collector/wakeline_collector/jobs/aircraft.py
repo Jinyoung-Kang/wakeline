@@ -22,6 +22,7 @@ from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import Throttled
+from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.aircraft")
 
@@ -132,8 +133,8 @@ class AircraftJob:
             remaining=remaining,
             scope=self.scope,
         )
-        await ctx.status.heartbeat(
-            self.job_name, lag_s=(datetime.now(UTC) - fetched_at).total_seconds(), fixture=ctx.fixture, extra=self._hb_extra()
+        await ctx.status.heartbeat(  # lag_s = 발행한 가장 새 관측의 나이(R-20, 처리 시간이 아니다)
+            self.job_name, lag_s=newest_age_s(st.seen_at for st in gate.kept), fixture=ctx.fixture, extra=self._hb_extra()
         )
         self.chain.record_success(prov.name)
         if remaining is not None and remaining < settings.opensky_reserve_credits and hasattr(prov, "paused_until"):

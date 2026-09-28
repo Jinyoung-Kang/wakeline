@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 
 from redis.asyncio import Redis
@@ -21,6 +21,14 @@ KEY_COLLECTOR = "wakeline:collector"
 
 def _iso(dt: datetime | None) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z") if dt else ""
+
+
+def newest_age_s(seen: Iterable[datetime], now: datetime | None = None) -> float | None:
+    """heartbeat {job}_lag_s: 발행한 관측 중 가장 새 것(seen_at 최댓값)의 나이(초). 발행한 관측이 없으면 None(모름, R-20)."""
+    newest = max(seen, default=None)
+    if newest is None:
+        return None
+    return max(0.0, ((now or datetime.now(UTC)) - newest).total_seconds())
 
 
 class ProviderStatus:
@@ -128,6 +136,7 @@ class ProviderStatus:
         return self._disabled[name]
 
     async def heartbeat(self, job: str, *, lag_s: float | None, fixture: bool, extra: dict[str, str] | None = None) -> None:
+        """{job}_at 과 {job}_lag_s(자료 나이 — 잴 수 없으면 None → 빈 값, 0 으로 채우지 않는다)."""
         fields = {
             f"{job}_at": _iso(datetime.now(UTC)),
             f"{job}_lag_s": "" if lag_s is None else f"{lag_s:.1f}",

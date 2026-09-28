@@ -321,6 +321,39 @@ async def test_region_429_backs_off():
     assert chain._down_until["adsb_lol"] > 0 and ctx.db.names == ["ingest_run(region)"]  # type: ignore[attr-defined]
 
 
+async def test_r20_region_lag_is_age_of_newest_published_observation():
+    """리뷰 R-20: lag_s 가 응답 처리 시간(now − fetched_at, 늘 0.x s)이었다. 이제 발행한 관측 중 가장 새 seen_at 의 나이."""
+
+    class Aged(FakeReadsb):
+        async def fetch_region(self, lat, lon, radius):
+            now = datetime.now(UTC)
+            data = {
+                "ac": [
+                    {"hex": "71c0a1", "lat": 37.0, "lon": 127.0, "alt_baro": 30000, "gs": 400, "track": 90, "seen_pos": 12.0},
+                    {"hex": "71c0a2", "lat": 37.1, "lon": 127.1, "alt_baro": 30000, "gs": 400, "track": 90, "seen_pos": 20.0},
+                ]
+            }
+            return ProviderResult(self.name, orjson.dumps(data), now, 200, 12, data=data)
+
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    await AircraftJob("region", ProviderChain("region", {"adsb_lol": Aged("adsb_lol")}, ctx.status), ctx).run_once()
+    lag = float((await r.hgetall("wakeline:collector"))["region_lag_s"])
+    assert 12.0 <= lag < 14.0  # 가장 새 관측(seen_pos 12 s)의 나이
+
+
+async def test_r20_region_lag_is_unknown_when_nothing_was_published():
+    class Empty(FakeReadsb):
+        async def fetch_region(self, lat, lon, radius):
+            data: dict = {"ac": []}
+            return ProviderResult(self.name, orjson.dumps(data), datetime.now(UTC), 200, 12, data=data)
+
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    await AircraftJob("region", ProviderChain("region", {"adsb_lol": Empty("adsb_lol")}, ctx.status), ctx).run_once()
+    assert (await r.hgetall("wakeline:collector"))["region_lag_s"] == ""
+
+
 async def test_r33_one_inf_record_does_not_sink_the_region_batch():
     """리뷰 R-33: 정상 50대 + alt_baro='inf' 1대 → 전에는 OverflowError 로 발행 0건. 이제 51대 모두 발행(그 1대는 고도 모름)."""
 

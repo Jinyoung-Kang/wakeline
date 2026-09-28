@@ -202,7 +202,7 @@ class SigmetJob:
                 "airsigmet_fetched_at": _iso(us_at) if us_at else "",
             },
         )
-        await ctx.status.heartbeat("sigmet", lag_s=0.0, fixture=ctx.fixture)
+        await ctx.status.heartbeat("sigmet", lag_s=None, fixture=ctx.fixture)  # 자료 나이를 재지 않는다 — 0 이 아니라 모름(R-20)
         log.info(
             "sigmet: %d (no polygon %d)%s",
             len(uniq),
@@ -251,7 +251,7 @@ class RadarJob:
         await ctx.publisher.publish(STREAM_RADAR, fields)
         ctx.db.insert_radar_frames(host, past, res.fetched_at)
         await _ok(ctx, "radar", started, self.rv.name, res, records=len(past), quarantined=0, raw_ref=raw_ref)
-        await ctx.status.heartbeat("radar", lag_s=0.0, fixture=ctx.fixture)
+        await ctx.status.heartbeat("radar", lag_s=None, fixture=ctx.fixture)  # 자료 나이를 재지 않는다 — 0 이 아니라 모름(R-20)
 
 
 def metar_row(it: dict[str, Any], provider: str, fetched_at: datetime) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -331,5 +331,5 @@ class MetarJob:
         ctx.db.upsert_airports(airports)
         ctx.db.upsert_metar(obs)
         await _ok(ctx, "metar", started, self.awc.name, res, records=len(obs), quarantined=len(bad), raw_ref=raw_ref, quality=bad)
-        await ctx.status.heartbeat("metar", lag_s=0.0, fixture=ctx.fixture)
+        await ctx.status.heartbeat("metar", lag_s=None, fixture=ctx.fixture)  # 자료 나이를 재지 않는다 — 0 이 아니라 모름(R-20)
         log.info("metar: %d stations", len(obs))
