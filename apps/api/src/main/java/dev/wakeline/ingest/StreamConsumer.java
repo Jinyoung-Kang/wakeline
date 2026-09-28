@@ -56,6 +56,10 @@ import java.util.zip.GZIPInputStream;
  *       다시 처리된다 — 항적 (hex, ts)·SIGMET 자연키 쓰기가 멱등이라 중복은 흡수된다.
  *       한계(지표로 센다): 메모리 큐가 넘쳐 버린 행(wakeline_track_rows_total{result=dropped})과 스트림 MAXLEN 으로 이미 잘려 다시 읽을 수
  *       없는 PEL 엔트리(wakeline_stream_messages_total{result=trimmed})는 되살리지 못한다.</li>
+ *   <li>보존 창 손실(R-14): api 가 스트림 보존 창보다 오래 멈추면 읽기 전에 지워진 엔트리는 재처리할 수 없다(재처리 가능 창 = 스트림 보존).
+ *       소비를 (다시) 시작할 때 — 첫 읽기 전에 — 그룹이 읽지 않은 엔트리 수(entries-added − entries-read)와 남은 엔트리 수를 비교해, 읽지 않은
+ *       엔트리가 지워졌으면 손실로 센다(wakeline_stream_trim_loss_events_total{stream, kind=unread}) · 구간(마지막으로 읽은 엔트리 시각 →
+ *       남은 첫 엔트리 시각)을 기억한다({@link #lastTrimLoss()}). 잘린 PEL 엔트리도 같은 방식으로 센다(kind=pending). 조용히 건너뛰지 않는다.</li>
  *   <li>DLQ 는 봉투·페이로드 검증(스키마·gzip·JSON·코덱) 실패만 받는다. 리스너 예외는 멀티캐스터가 리스너별로 가두고(PipelineEventMulticaster),
  *       소비자 자신의 반영 오류는 result=apply_error 로 센다 — 유효한 메시지를 DLQ 로 보내지 않는다(API-CONC-2).</li>
  *   <li>항공기 스코프(계약 v2 §A3): region·global 은 스코프 스냅샷을, hot 은 셀(payload.cell)별 스냅샷을, focus 는 hex 별 관측을
@@ -140,6 +144,19 @@ public class StreamConsumer implements SmartLifecycle {
     /** 부트스트랩은 프로세스 시작마다 한 번(재시도 루프마다 다시 하면 복원한 최신 상태 뒤로 밀린 엔트리가 이어진다). */
     private volatile boolean bootstrapped;
     private Thread worker;
+    private final MeterRegistry meters;
+    /** 보존 창 손실(R-14): 이 프로세스가 센 손실 수 · 마지막 손실 구간 · 스트림별로 이미 센 max-deleted-entry-id(같은 손실을 두 번 세지 않는다). */
+    private final java.util.concurrent.atomic.AtomicLong trimLossEvents = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicReference<TrimLoss> lastTrimLoss = new java.util.concurrent.atomic.AtomicReference<>();
+    private final Map<String, String> reportedUnreadTrim = new ConcurrentHashMap<>();
+
+    /**
+     * 스트림 보존 창을 넘어 잃은 구간(R-14). 잃은 엔트리는 from 과 to 사이에 있었다.
+     * kind = unread(읽기 전에 지워짐): from = api 가 마지막으로 전달받은 엔트리의 시각(그룹이 아무것도 읽은 적 없으면 null — 모른다),
+     * to = 스트림에 남은 첫 엔트리의 시각(남은 것이 없으면 마지막으로 발행된 엔트리의 시각).
+     * kind = pending(읽었지만 저장 전에 지워짐 — PEL): from·to = 잘린 PEL 엔트리 중 가장 오래된 것·가장 새 것의 시각.
+     */
+    public record TrimLoss(String stream, Instant from, Instant to, String kind) {}
 
     /** 선박 없이(테스트·이전 호출자): 빈 ShipStore, 선박 부트스트랩 없음. */
     public StreamConsumer(StringRedisTemplate redis, SchemaValidator validator, SnapshotStore snapshots,
@@ -160,6 +177,7 @@ public class StreamConsumer implements SmartLifecycle {
         this.bootstrapRedis = bootstrapRedis;
         this.events = events;
         this.mapper = mapper;
+        this.meters = meters;
         this.processed = Counter.builder("wakeline_stream_messages_total").tag("result", "ok").register(meters);
         this.rejected = Counter.builder("wakeline_stream_messages_total").tag("result", "rejected").register(meters);
         this.staleSkipped = Counter.builder("wakeline_stream_messages_total").tag("result", "stale_skipped").register(meters);
@@ -221,7 +239,8 @@ public class StreamConsumer implements SmartLifecycle {
     private void loop() {
         while (running) {
             try {
-                ensureGroups();
+                Set<String> existing = ensureGroups();
+                detectUnreadTrim(existing); // 첫 읽기 전에 — 읽고 나면 그룹 위치가 잘린 구간을 지나 손실이 보이지 않는다
                 if (!bootstrapped) {
                     bootstrapFromLastEntries();
                     bootstrapped = true;
@@ -238,7 +257,9 @@ public class StreamConsumer implements SmartLifecycle {
         flushAcksQuietly(); // 멈추기 전에 durable 해진 것까지 ACK(남은 것은 종료 뒤 StreamAckFinalizer 가 한 번 더)
     }
 
-    private void ensureGroups() {
+    /** @return 그룹이 이미 있던 스트림(이번에 만든 그룹은 이전 위치가 없어 손실을 판단하지 않는다) */
+    private Set<String> ensureGroups() {
+        Set<String> existing = new java.util.HashSet<>();
         for (String s : STREAMS) {
             try {
                 redis.execute((org.springframework.data.redis.core.RedisCallback<Object>) conn -> {
@@ -249,8 +270,63 @@ public class StreamConsumer implements SmartLifecycle {
             } catch (Exception e) {
                 if (!String.valueOf(e.getMessage()).contains("BUSYGROUP") && !String.valueOf(e.getCause()).contains("BUSYGROUP"))
                     throw e;
+                existing.add(s);
             }
         }
+        return existing;
+    }
+
+    /**
+     * 보존 창 손실 감지(R-14): 그룹 api 가 아직 읽지 않은 엔트리 수(entries-added − 그룹 entries-read)가 스트림에 남은 엔트리 수(length)보다
+     * 많으면, 그 차이만큼은 읽기 전에 지워졌다(MAXLEN 트림) — 다시 읽을 수 없으니 손실로 센다. 평상시 트림은 이미 읽은 엔트리만 지우므로 차이 ≤ 0.
+     * 구간 = 마지막으로 전달받은 엔트리(last-delivered-id)의 시각 → 스트림에 남은 첫 엔트리의 시각(잃은 엔트리는 그 사이에 있었다).
+     * Redis 가 그룹의 entries-read 를 셀 수 없으면(nil) 판단하지 않는다 — 소비는 막지 않는다. XINFO 는 트림 구간을 알려 주지 않는다
+     * (max-deleted-entry-id 는 XDEL 만 기록한다).
+     */
+    private void detectUnreadTrim(Set<String> streams) {
+        for (String s : streams) {
+            try {
+                StreamInfo.XInfoGroup group = null;
+                StreamInfo.XInfoGroups groups = ops().groups(s);
+                if (groups != null) for (StreamInfo.XInfoGroup g : groups) if (GROUP.equals(g.groupName())) group = g;
+                StreamInfo.XInfoStream info = ops().info(s);
+                if (group == null || info == null) continue;
+                double added = StreamMetrics.num(info.getRaw(), "entries-added"), length = StreamMetrics.num(info.getRaw(), "length");
+                double read = StreamMetrics.num(group.getRaw(), "entries-read");
+                if (Double.isNaN(added) || Double.isNaN(length) || Double.isNaN(read) || added - read - length <= 0) continue;
+                String first = length > 0 ? info.firstEntryId() : null;
+                String key = first == null ? "empty@" + (long) added : first;
+                if (key.equals(reportedUnreadTrim.put(s, key))) continue; // 이미 센 손실(읽기 전에 재시도됨)
+                String last = group.lastDeliveredId();
+                Instant to = first != null ? idTime(first) : idTime(rawIdOr(info.getRaw().get("last-generated-id"), "0-0"));
+                log.warn("stream {}: {} entries were trimmed before the api read them", s, (long) (added - read - length));
+                recordTrimLoss(new TrimLoss(s, last == null || "0-0".equals(last) ? null : idTime(last), to, "unread"));
+            } catch (RuntimeException e) {
+                log.warn("stream {}: could not check for entries trimmed before they were read: {}", s, e.toString());
+            }
+        }
+    }
+
+    private void recordTrimLoss(TrimLoss loss) {
+        trimLossEvents.incrementAndGet();
+        lastTrimLoss.set(loss);
+        meters.counter("wakeline_stream_trim_loss_events_total", "stream", loss.stream(), "kind", loss.kind()).increment();
+        log.warn("stream {}: entries were trimmed before the api could {} them — data loss window {} → {} (the stream retention is the re-processing window)",
+                loss.stream(), "unread".equals(loss.kind()) ? "read" : "persist", loss.from() == null ? "unknown" : loss.from(), loss.to());
+    }
+
+    /** 이 프로세스가 센 보존 창 손실 수(읽기 전 · PEL). */
+    public long trimLossEvents() { return trimLossEvents.get(); }
+
+    /** 마지막 보존 창 손실 구간. 없으면 null. */
+    public TrimLoss lastTrimLoss() { return lastTrimLoss.get(); }
+
+    static Instant idTime(String id) { return Instant.ofEpochMilli(Long.parseLong(id.split("-")[0])); }
+
+    private static String rawIdOr(Object v, String fallback) {
+        if (v == null) return fallback;
+        String s = v instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(v);
+        return s.matches("^\\d+-\\d+$") ? s : fallback;
     }
 
     /**
@@ -403,6 +479,7 @@ public class StreamConsumer implements SmartLifecycle {
     private void drainPending(String stream) {
         String after = null;
         int total = 0;
+        String firstTrimmed = null, lastTrimmed = null;
         for (int page = 0; page < PENDING_MAX_PAGES && running; page++) {
             Range<String> range = after == null ? Range.unbounded() : Range.of(Range.Bound.inclusive(after), Range.Bound.unbounded());
             PendingMessages pm = ops().pending(stream, Consumer.from(GROUP, CONSUMER), range, PENDING_PAGE);
@@ -419,6 +496,8 @@ public class StreamConsumer implements SmartLifecycle {
                     trimmed.increment();
                     log.warn("pending message {} on {} was trimmed from the stream before it could be re-processed — acknowledged", id, stream);
                     acks.add(new Ack(stream, id));
+                    if (firstTrimmed == null) firstTrimmed = id;
+                    lastTrimmed = id;
                     continue;
                 }
                 handle(rec.getFirst());
@@ -427,6 +506,8 @@ public class StreamConsumer implements SmartLifecycle {
             if (!progressed) break;
         }
         if (total > 0) log.info("re-processed {} pending messages on {}", total, stream);
+        // 읽었지만 저장 전에 잘린 엔트리(PEL)도 보존 창 손실이다 — 이번 재처리에서 만난 구간을 하나로 센다(R-14)
+        if (firstTrimmed != null) recordTrimLoss(new TrimLoss(stream, idTime(firstTrimmed), idTime(lastTrimmed), "pending"));
     }
 
     private void consume() {
