@@ -45,3 +45,173 @@ describe("v5-C8 ApiError keeps code and request_id", () => {
     expect(old.name).toBe("ApiError");
   });
 });
+
+// ---- 복사 · 내려받기(§C7 · §C8): clipboard → textarea + execCommand 대체 · Blob + object URL(쓰고 나서 해제) ----
+
+/** 대체 경로가 쓰는 만큼만 흉내 낸 document */
+function fakeDoc(copyOk = true) {
+  const log: string[] = [];
+  const els: Record<string, unknown>[] = [];
+  const doc = {
+    activeElement: { focus: () => log.push("refocus") },
+    body: {
+      appendChild: (e: Record<string, unknown>) => { log.push(`append ${String(e.tag)}`); return e; },
+      removeChild: (e: Record<string, unknown>) => { log.push(`remove ${String(e.tag)}`); return e; },
+    },
+    createElement: (tag: string) => {
+      const e: Record<string, unknown> = {
+        tag, style: {}, attrs: {} as Record<string, string>,
+        setAttribute(k: string, v: string) { (this.attrs as Record<string, string>)[k] = v; },
+        select() { log.push(`select ${String(this.value)}`); },
+        click() { log.push(`click ${String(this.download)} ${String(this.href)}`); },
+      };
+      els.push(e);
+      return e;
+    },
+    execCommand: (cmd: string) => { log.push(`exec ${cmd}`); return copyOk; },
+  };
+  return { doc, log, els };
+}
+
+describe("v5-C7/C8 copy and download helpers", () => {
+  it("copyText uses navigator.clipboard.writeText when it is there", async () => {
+    const { copyText } = await import("@/lib/copy");
+    const written: string[] = [];
+    const { doc, log } = fakeDoc();
+    expect(await copyText("rid=abc", { navigator: { clipboard: { writeText: async (t: string) => { written.push(t); } } }, document: doc as never })).toBe(true);
+    expect(written).toEqual(["rid=abc"]);
+    expect(log).toEqual([]); // 대체 경로를 쓰지 않았다
+  });
+  it("without clipboard (plain http on a LAN address) or when it is refused, a hidden textarea + execCommand('copy') is used and removed", async () => {
+    const { copyText } = await import("@/lib/copy");
+    const { doc, log, els } = fakeDoc();
+    expect(await copyText("line 1\nline 2", { navigator: {}, document: doc as never })).toBe(true);
+    expect(log).toEqual(["append textarea", "select line 1\nline 2", "exec copy", "remove textarea", "refocus"]);
+    expect((els[0].attrs as Record<string, string>).readonly).toBe("");
+    const refused = fakeDoc();
+    expect(await copyText("x", { navigator: { clipboard: { writeText: async () => { throw new Error("NotAllowedError"); } } }, document: refused.doc as never })).toBe(true);
+    expect(refused.log).toContain("exec copy");
+    const failing = fakeDoc(false);
+    expect(await copyText("x", { navigator: {}, document: failing.doc as never })).toBe(false);
+    expect(failing.log).toContain("remove textarea"); // 실패해도 치운다
+    expect(await copyText("x", { navigator: {}, document: undefined })).toBe(false);
+  });
+  it("downloadText makes a Blob, clicks a download link and revokes the object URL afterwards", async () => {
+    const { downloadText } = await import("@/lib/copy");
+    const { doc, log } = fakeDoc();
+    const blobs: Blob[] = [];
+    const revoked: string[] = [];
+    let later: (() => void) | null = null;
+    const env = {
+      document: doc as never,
+      URL: { createObjectURL: (b: Blob) => { blobs.push(b); return "blob:x/1"; }, revokeObjectURL: (u: string) => { revoked.push(u); } },
+      setTimeout: (f: () => void) => { later = f; return 0; },
+    };
+    expect(downloadText("wakeline-logs.ndjson", '{"a":1}\n', "application/x-ndjson", env)).toBe(true);
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0].type).toBe("application/x-ndjson;charset=utf-8");
+    expect(await blobs[0].text()).toBe('{"a":1}\n');
+    expect(log).toEqual(["append a", "click wakeline-logs.ndjson blob:x/1", "remove a"]);
+    expect(revoked).toEqual([]); // 클릭 직후가 아니라 조금 뒤에
+    later!();
+    expect(revoked).toEqual(["blob:x/1"]);
+  });
+});
+
+// ---- 브라우저 오류 보고(§C8 → §C6 POST /api/v1/client-errors) ----
+
+describe("v5-C8 client error reporter", () => {
+  const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
+  type Sent = { url: string; init: RequestInit & { keepalive?: boolean }; body: Record<string, unknown> };
+  async function reporter(nowRef: { t: number }, fetchImpl?: (url: string, init: RequestInit) => Promise<Response>) {
+    const { createReporter } = await import("@/lib/errorReport");
+    const sent: Sent[] = [];
+    const r = createReporter({
+      fetch: fetchImpl ?? (async (url: string, init: RequestInit) => { sent.push({ url, init, body: JSON.parse(String(init.body)) }); return new Response(null, { status: 204 }); }),
+      now: () => nowRef.t,
+      pathname: () => "/stats",
+    });
+    return { r, sent };
+  }
+
+  it("the body follows §C6: field limits with a cut marker, path only, ISO ts, and the whole JSON fits in 8 KiB", async () => {
+    const { buildClientErrorBody, CLIENT_ERROR_LIMITS: L } = await import("@/lib/errorReport");
+    const b = buildClientErrorBody({ message: "m".repeat(2500), stack: "s".repeat(9000), component: "c".repeat(300) }, "/replay?at=2026-09-29T00:00:00Z#x", Date.parse("2026-09-29T01:02:03.456Z"));
+    expect(b.message.length).toBeLessThanOrEqual(L.message);
+    expect(b.message).toMatch(/…\(잘림 \d+자\)$/);
+    expect(b.stack.length).toBeLessThanOrEqual(L.stack);
+    expect(b.component!.length).toBeLessThanOrEqual(L.component);
+    expect(b.path).toBe("/replay"); // 쿼리·조각 제거
+    expect(b.ts).toBe("2026-09-29T01:02:03.456Z");
+    expect(bytes(b)).toBeLessThanOrEqual(8192);
+    // 한글(UTF-8 3바이트)이 많아도 8 KiB 안 — 스택부터 줄인다
+    const k = buildClientErrorBody({ message: "오류".repeat(1000), stack: "스택".repeat(4000), component: null }, "/", 0);
+    expect(bytes(k)).toBeLessThanOrEqual(8192);
+    expect(k.message).toBe("오류".repeat(1000)); // 메시지는 필드 상한 안이면 그대로
+    expect(k.component).toBeNull();
+    expect(buildClientErrorBody({ message: "", stack: undefined }, "/" + "p".repeat(400), 0)).toMatchObject({ message: "(no message)", stack: "" });
+    expect(buildClientErrorBody({ message: "x" }, "/" + "p".repeat(400), 0).path.length).toBeLessThanOrEqual(L.path);
+  });
+
+  it("POSTs JSON with keepalive and no cookies; the same message is sent once per 60 s", async () => {
+    const now = { t: 1_000_000 };
+    const { r, sent } = await reporter(now);
+    expect(r.report({ message: "TypeError: x is undefined", stack: "at a (b.js:1:2)" })).toBe("sent");
+    expect(r.report({ message: "TypeError: x is undefined", stack: "at a (b.js:1:2)" })).toBe("duplicate");
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toBe("/api/v1/client-errors");
+    expect(sent[0].init).toMatchObject({ method: "POST", keepalive: true, credentials: "omit" });
+    expect((sent[0].init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    expect(sent[0].body).toEqual({ message: "TypeError: x is undefined", stack: "at a (b.js:1:2)", path: "/stats", component: null, ts: new Date(1_000_000).toISOString() });
+    now.t += 59_999;
+    expect(r.report({ message: "TypeError: x is undefined" })).toBe("duplicate");
+    now.t += 1;
+    expect(r.report({ message: "TypeError: x is undefined" })).toBe("sent");
+  });
+
+  it("at most 5 reports per minute per page, whatever the messages", async () => {
+    const now = { t: 5_000_000 };
+    const { r, sent } = await reporter(now);
+    const res = Array.from({ length: 7 }, (_, i) => r.report({ message: `e${i}` }));
+    expect(res).toEqual(["sent", "sent", "sent", "sent", "sent", "rate_limited", "rate_limited"]);
+    expect(sent).toHaveLength(5);
+    now.t += 60_000;
+    expect(r.report({ message: "e5" })).toBe("sent"); // 창이 지나면 다시
+  });
+
+  it("a failing or throwing fetch never throws into the page (the reporter must not create new errors)", async () => {
+    const now = { t: 0 };
+    const rejecting = await reporter(now, async () => { throw new TypeError("Failed to fetch"); });
+    expect(rejecting.r.report({ message: "a" })).toBe("sent");
+    const throwing = await reporter(now, () => { throw new Error("sync"); });
+    expect(throwing.r.report({ message: "b" })).toBe("unavailable");
+    await new Promise((res) => setTimeout(res, 5)); // 처리되지 않은 거부가 생기면 vitest 가 실패시킨다
+  });
+
+  it("installs error / unhandledrejection listeners that report (ApiError keeps HTTP · code · request id), skips browser-extension scripts, and uninstalls", async () => {
+    const { installErrorReporter, createReporter } = await import("@/lib/errorReport");
+    const { ApiError } = await import("@/lib/api");
+    const bodies: Record<string, unknown>[] = [];
+    const r = createReporter({ fetch: async (_u: string, init: RequestInit) => { bodies.push(JSON.parse(String(init.body))); return new Response(null, { status: 204 }); }, now: () => 0, pathname: () => "/" });
+    const target = new EventTarget();
+    const off = installErrorReporter(target, r);
+    const boom = new Error("boom");
+    target.dispatchEvent(Object.assign(new Event("error"), { message: "Uncaught Error: boom", error: boom, filename: "http://localhost:8700/_next/static/chunks/app.js", lineno: 1, colno: 2 }));
+    target.dispatchEvent(Object.assign(new Event("error"), { message: "ext", error: new Error("ext"), filename: "chrome-extension://abc/content.js" }));
+    target.dispatchEvent(Object.assign(new Event("unhandledrejection"), { reason: new ApiError(500, "internal error", null, "INTERNAL", "rid-0000-1111") }));
+    target.dispatchEvent(Object.assign(new Event("unhandledrejection"), { reason: "plain string" }));
+    target.dispatchEvent(Object.assign(new Event("error"), { message: "Script error.", error: null, filename: "", lineno: 0, colno: 0 }));
+    expect(bodies.map((b) => b.message)).toEqual([
+      "Uncaught Error: boom",
+      "Unhandled rejection: ApiError: internal error (HTTP 500 · INTERNAL · 요청 id rid-0000-1111)",
+      "Unhandled rejection: plain string",
+      "Script error.",
+    ]);
+    expect(bodies[0].stack).toBe(boom.stack);
+    expect(bodies[3].stack).toBe(""); // 스택 없음 — 지어내지 않는다
+    off();
+    target.dispatchEvent(Object.assign(new Event("error"), { message: "after", error: new Error("after") }));
+    expect(bodies).toHaveLength(4);
+  });
+});
