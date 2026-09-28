@@ -728,4 +728,20 @@ class ShipControllerTest {
         assertThat(it.path("last_position_at").isNull()).isTrue();
         assertThat(body.path("meta").has("db_unavailable")).isFalse();
     }
+
+    /** 9자리 MMSI 가 실시간에서 찾히면 DB 검색 문장을 내지 않는다(같은 MMSI 만 돌려준다) — 저장 정적 정보·마지막 저장 시각은 lookup 한 번. */
+    @Test void search_liveExactMmsiSkipsTheDbSearch() throws Exception {
+        repo.rows.add(new ShipRepository.SearchRow("440000002", full("440000002", "PAN OCEAN", null, null, 80), T.minusSeconds(60)));
+        repo.lastPositions.put("440000002", T.minusSeconds(30));
+        var it = search("440000002", null).path("items").get(0);
+        assertThat(repo.searchCalls).isZero();
+        assertThat(repo.lookupCalls).isEqualTo(1);
+        assertThat(it.path("live").asBoolean()).isTrue();
+        assertThat(it.path("name").asString()).as("stored static via lookup").isEqualTo("PAN OCEAN");
+        assertThat(Instant.parse(it.path("last_position_at").asString())).isEqualTo(T.minusSeconds(30));
+        // 실시간에 없는 MMSI 는 DB 에서 찾는다
+        repo.rows.add(new ShipRepository.SearchRow("440000077", full("440000077", "HANJIN OLD", null, null, 80), T.minusSeconds(86_400)));
+        assertThat(search("440000077", null).path("items").get(0).path("live").asBoolean()).isFalse();
+        assertThat(repo.searchCalls).isEqualTo(1);
+    }
 }

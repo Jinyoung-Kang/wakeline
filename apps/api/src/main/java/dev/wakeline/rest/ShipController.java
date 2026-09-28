@@ -180,7 +180,9 @@ public class ShipController {
             seen.add(s.mmsi());
         }
         boolean dbUnavailable = false;
-        if (hits.size() < limit) {
+        // 9자리 MMSI 는 많아야 한 척 — 실시간에서 찾았으면 DB 검색은 같은 MMSI 만 돌려주므로 묻지 않는다(저장 정적 정보·마지막 저장 시각은 lookup)
+        boolean complete = hits.size() >= limit || (query.kind() == ShipQuery.Kind.MMSI && !hits.isEmpty());
+        if (!complete) {
             try {
                 List<Hit> dbLive = new ArrayList<>(), dbOnly = new ArrayList<>();
                 for (ShipRepository.SearchRow r : repo.search(query, limit + hits.size())) { // 실시간 결과와 겹칠 몫까지
