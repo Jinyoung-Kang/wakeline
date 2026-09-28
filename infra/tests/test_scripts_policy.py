@@ -58,5 +58,63 @@ class BackupRestoreTest(unittest.TestCase):
         self.assertIn("bash infra/tests/db_backup_test.sh", recipe("infra-docker-test"))
 
 
+SCANNER_SCRIPTS = [ROOT / "perf" / "review_measure.sh", ROOT / "tools" / "scan_lib.sh", ROOT / "tools" / "security_gate.sh"]
+
+
+def docker_runs(text: str) -> list[str]:
+    """`docker run …` 명령(줄 이음 \\ 포함)을 하나의 문자열로. 배열 SCAN_RUN=(docker run …) 정의도 포함한다."""
+    joined = re.sub(r"\\\n\s*", " ", text)
+    return [ln.strip() for ln in joined.splitlines() if re.search(r"\bdocker run\b", ln) and not ln.lstrip().startswith("#")]
+
+
+class ScannerIsolationTest(unittest.TestCase):
+    """R-38: 스캐너 도구 이미지는 다이제스트 고정, docker.sock·작업 트리(.env 포함)를 넘기지 않고, 코드·이미지를 읽을 때는 네트워크가 없다."""
+
+    def test_no_docker_socket_and_no_latest(self):
+        for p in SCANNER_SCRIPTS:
+            t = "\n".join(ln for ln in p.read_text().splitlines() if not ln.lstrip().startswith("#"))  # 설명 주석은 빼고
+            with self.subTest(script=p.name):
+                self.assertNotIn("docker.sock", t)
+                self.assertNotRegex(t, r"[\w./-]+:latest\b", "떠다니는 :latest 금지")
+
+    def test_tool_images_are_pinned_by_digest(self):
+        lib = (ROOT / "tools" / "scan_lib.sh").read_text()
+        for var in ("TRIVY_IMAGE", "GITLEAKS_IMAGE", "SEMGREP_IMAGE"):
+            with self.subTest(var=var):
+                self.assertRegex(lib, rf'(?m)^{var}="[^"@\s]+:[^"@\s]+@sha256:[0-9a-f]{{64}}"$')
+        for p in SCANNER_SCRIPTS:
+            for cmd in docker_runs(p.read_text()):
+                with self.subTest(script=p.name, cmd=cmd[:90]):
+                    literal = re.findall(r"\b(?:aquasec/trivy|semgrep/semgrep|zricethezav/gitleaks|ghcr\.io/gitleaks/gitleaks)[^\s\"']*", cmd)
+                    self.assertFalse(literal, "도구 이미지는 scan_lib 의 고정 변수로만")
+
+    def test_repo_is_never_mounted_whole(self):
+        for p in SCANNER_SCRIPTS:
+            t = p.read_text()
+            with self.subTest(script=p.name):
+                self.assertNotRegex(t, r'-v\s+"?\$(PWD|\(pwd\)|ROOT)"?:', "작업 트리(.env 포함)를 통째로 마운트하지 않는다")
+
+    def test_scanners_that_read_code_or_images_have_no_network(self):
+        lib = (ROOT / "tools" / "scan_lib.sh").read_text()
+        self.assertRegex(lib, r"SCAN_RUN=\(docker run --rm --network none ")
+        for p in SCANNER_SCRIPTS:
+            for cmd in docker_runs(p.read_text()):
+                if "SCAN_RUN=(" in cmd:
+                    continue
+                with self.subTest(script=p.name, cmd=cmd[:100]):
+                    if re.search(r"\$(TRIVY|GITLEAKS|SEMGREP)_IMAGE", cmd):
+                        # 네트워크가 있는 유일한 경우: trivy DB 받기 — 캐시 디렉터리만 마운트한다
+                        self.assertRegex(cmd, r"--download-(java-)?db-only", "코드·이미지를 읽는 스캐너는 SCAN_RUN(--network none)으로")
+                        self.assertEqual(re.findall(r"-v\s+\"?([^:\"]+):", cmd), ["$TRIVY_CACHE"])
+
+    def test_review_measure_uses_the_hardened_helpers(self):
+        t = (ROOT / "perf" / "review_measure.sh").read_text()
+        self.assertIn(". tools/scan_lib.sh", t)
+        for fn in ("trivy_image", "repo_copy", "repo_clone", "trivy_db_update"):
+            self.assertRegex(t, rf"\b{fn}\b")
+        self.assertIn("--metrics=off", t)
+        self.assertIn("https://semgrep.dev/c/", t, "규칙은 미리 파일로 받고 semgrep 은 네트워크 없이 돈다")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,9 +3,16 @@
 #   bash perf/review_measure.sh <label>          # 예: baseline, after
 # 결과: perf/results/review-<label>/ (원자료) + summary.tsv(항목<TAB>값). 비밀값은 출력하지 않는다.
 # 개발 스택(8700)이 떠 있어야 하는 항목(Lighthouse · 런타임 지표)은 스택이 없으면 건너뛰고 그렇게 적는다.
-# 외부로 나가는 것: 도구 이미지·패키지 내려받기(없을 때 한 번), semgrep 규칙 내려받기(코드는 보내지 않음, --metrics=off).
+# 외부로 나가는 것: 도구 이미지·패키지 내려받기(없을 때 한 번), semgrep 규칙 파일(호스트 curl, 코드는 보내지 않음), trivy 취약점 DB(캐시만 마운트한 컨테이너).
+# 스캐너 격리(R-38, tools/scan_lib.sh): 도구 이미지는 태그+다이제스트 고정, docker.sock 을 넘기지 않고(docker save → --input),
+#   코드·이미지를 읽는 컨테이너는 --network none, 작업 트리 대신 git 추적 파일 사본(.env 등 무시된 파일 없음)만 마운트한다.
+# SCAN_OFFLINE=1 이면 semgrep 규칙·trivy DB 를 받지 않고 있는 것만 쓴다.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
+# shellcheck source=tools/scan_lib.sh
+. tools/scan_lib.sh
+WORK="$(scan_tmpdir)" || exit 2
+trap 'rm -rf "$WORK"' EXIT
 LABEL="${1:?label required}"
 OUT="perf/results/review-$LABEL"; mkdir -p "$OUT"
 SUM="$OUT/summary.tsv"; : > "$SUM"
@@ -47,34 +54,51 @@ put "tsc" "$( [ -s "$OUT/tsc.txt" ] && echo "$(grep -c 'error TS' "$OUT/tsc.txt"
 # Java: 정적 분석 도구가 구성돼 있지 않다 — javac -Xlint:all 경고 수를 센다(빌드 설정은 바꾸지 않고 명령행 인자로)
 (cd apps/api && ./gradlew -q -I ../../perf/xlint.init.gradle compileJava --rerun-tasks > "../../$OUT/javac.txt" 2>&1)
 put "javac -Xlint:all 경고" "$(grep -c 'warning:' "$OUT/javac.txt")"
-docker run --rm semgrep/semgrep:latest semgrep --version > "$OUT/semgrep.version" 2>&1
-docker run --rm -v "$PWD:/src:ro" -w /src semgrep/semgrep:latest semgrep scan --metrics=off --quiet --json \
-  --config p/owasp-top-ten --config p/java --config p/python --config p/typescript --config p/nginx --config p/dockerfile \
-  --exclude node_modules --exclude .venv --exclude build --exclude .next --exclude perf/results --exclude fixtures . > "$OUT/semgrep.json" 2> "$OUT/semgrep.err"
-put "semgrep" "$(python3 -c "
+# semgrep: 규칙 묶음을 먼저 파일로 받고(호스트 curl — CLI 의 p/<이름> 과 같은 주소 https://semgrep.dev/c/p/<이름>),
+# 스캔은 네트워크 없는 컨테이너에서 git 추적 파일 사본만 읽는다. 받은 규칙은 결과 폴더에 남겨 같은 규칙으로 다시 돌릴 수 있게 한다.
+SRC="$WORK/src"; repo_copy "$SRC" || SRC=""
+RULES="$OUT/semgrep-rules"; mkdir -p "$RULES"
+if [ "${SCAN_OFFLINE:-0}" != 1 ]; then
+  for p in owasp-top-ten java python typescript nginx dockerfile; do
+    curl -fsSL --max-time 60 "https://semgrep.dev/c/p/$p" -o "$RULES/$p.yml" || rm -f "$RULES/$p.yml"
+  done
+fi
+cfg=(); for f in "$RULES"/*.yml; do [ -e "$f" ] && cfg+=(--config "/rules/$(basename "$f")"); done
+"${SCAN_RUN[@]}" "$SEMGREP_IMAGE" semgrep --version > "$OUT/semgrep.version" 2>&1
+if [ -n "$SRC" ] && [ ${#cfg[@]} -gt 0 ]; then
+  "${SCAN_RUN[@]}" -v "$SRC:/src:ro" -v "$PWD/$RULES:/rules:ro" -w /src "$SEMGREP_IMAGE" semgrep scan --metrics=off --disable-version-check --quiet --json \
+    "${cfg[@]}" --exclude perf/results --exclude fixtures . > "$OUT/semgrep.json" 2> "$OUT/semgrep.err"
+  put "semgrep" "$(python3 -c "
 import json,collections
 d=json.load(open('$OUT/semgrep.json')); c=collections.Counter(r['extra']['severity'] for r in d.get('results',[]))
-print(len(d.get('results',[])),'findings',dict(c),'· errors',len(d.get('errors',[])))" 2>/dev/null || echo '측정 못 함')"
+print(len(d.get('results',[])),'findings',dict(c),'· errors',len(d.get('errors',[])),'· 규칙 묶음 $(ls "$RULES" | wc -l | tr -d ' ')개')" 2>/dev/null || echo '측정 못 함')"
+else put "semgrep" "측정 못 함(규칙 파일 또는 작업 트리 사본 없음)"; fi
 
 echo "== 3. 의존성 취약점·비밀값"
 (cd apps/web && npm audit --json > "../../$OUT/npm-audit.json" 2>/dev/null)
 put "npm audit" "$(python3 -c "import json;v=json.load(open('$OUT/npm-audit.json'))['metadata']['vulnerabilities'];print(', '.join(f'{k} {v[k]}' for k in ('critical','high','moderate','low')))")"
 (cd apps/collector && uv export --frozen --no-dev --no-emit-project --format requirements-txt > "../../$OUT/requirements.txt" 2>/dev/null && uvx pip-audit@2.10.1 --disable-pip --require-hashes -r "../../$OUT/requirements.txt" --progress-spinner off -f json > "../../$OUT/pip-audit.json" 2> "../../$OUT/pip-audit.err")
 put "pip-audit" "$(python3 -c "import json;d=json.load(open('$OUT/pip-audit.json'));print(sum(len(x['vulns']) for x in d['dependencies']),'vulns in',len(d['dependencies']),'packages')" 2>/dev/null || echo '측정 못 함')"
+trivy_db_update 2> "$OUT/trivy-db.err" || put "trivy DB" "갱신 실패 — 캐시로 진행($TRIVY_CACHE)"
 for img in wakeline-api:local wakeline-web:local wakeline-collector:local; do
   n="${img%%:*}"
-  docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy" aquasec/trivy:latest image --quiet --scanners vuln \
-    --severity CRITICAL,HIGH,MEDIUM,LOW --format json "$img" > "$OUT/trivy-$n.json" 2> "$OUT/trivy-$n.err"
+  trivy_image "$img" "$WORK" --severity CRITICAL,HIGH,MEDIUM,LOW --format json > "$OUT/trivy-$n.json" 2> "$OUT/trivy-$n.err"
   put "trivy $img" "$(python3 -c "
 import json,collections
 d=json.load(open('$OUT/trivy-$n.json')); c=collections.Counter(v['Severity'] for r in d.get('Results',[]) for v in (r.get('Vulnerabilities') or []))
 print(', '.join(f'{k} {c.get(k,0)}' for k in ('CRITICAL','HIGH','MEDIUM','LOW')))" 2>/dev/null || echo '측정 못 함')"
 done
-docker run --rm -v "$PWD:/repo:ro" -v "$PWD/$OUT:/out" zricethezav/gitleaks:v8.30.1 git /repo --no-banner --report-format json --report-path /out/gitleaks.json --exit-code 0 > "$OUT/gitleaks.log" 2>&1
-put "gitleaks(git 이력 전체)" "$(python3 -c "import json;d=json.load(open('$OUT/gitleaks.json'));print(len(d),'findings')" 2>/dev/null || echo '측정 못 함')"
-docker run --rm -v "$PWD:/src:ro" -v "$HOME/.cache/trivy:/root/.cache/trivy" aquasec/trivy:latest fs --quiet --scanners secret --skip-dirs node_modules --skip-dirs .venv \
-  --skip-files .env --format json /src > "$OUT/trivy-secret.json" 2> "$OUT/trivy-secret.err"
-put "trivy secret(작업 트리, .env 제외)" "$(python3 -c "import json;d=json.load(open('$OUT/trivy-secret.json'));print(sum(len(r.get('Secrets') or []) for r in d.get('Results',[])),'findings')" 2>/dev/null || echo '측정 못 함')"
+# gitleaks: 새 clone(이력만)을 네트워크 없이. .gitleaksignore(정확한 지문만)는 CI 와 같이 적용된다(-w /repo).
+if repo_clone "$WORK/repo"; then
+  "${SCAN_RUN[@]}" -v "$WORK/repo:/repo:ro" -w /repo "$GITLEAKS_IMAGE" git /repo --no-banner --report-format json --report-path - --exit-code 0 \
+    > "$OUT/gitleaks.json" 2> "$OUT/gitleaks.log"
+fi
+put "gitleaks(git 이력 전체, .gitleaksignore 적용)" "$(python3 -c "import json;d=json.load(open('$OUT/gitleaks.json'));print(len(d),'findings')" 2>/dev/null || echo '측정 못 함')"
+if [ -n "$SRC" ]; then
+  "${SCAN_RUN[@]}" -v "$SRC:/src:ro" "$TRIVY_IMAGE" fs --quiet --scanners secret --skip-db-update --offline-scan --cache-backend memory \
+    --format json /src > "$OUT/trivy-secret.json" 2> "$OUT/trivy-secret.err"
+fi
+put "trivy secret(git 추적 파일 사본 — .env 없음)" "$(python3 -c "import json;d=json.load(open('$OUT/trivy-secret.json'));print(sum(len(r.get('Secrets') or []) for r in d.get('Results',[])),'findings')" 2>/dev/null || echo '측정 못 함')"
 
 echo "== 4. 프론트엔드 번들"
 (cd apps/web && NEXT_TELEMETRY_DISABLED=1 npx next build > "../../$OUT/next-build.txt" 2>&1)
