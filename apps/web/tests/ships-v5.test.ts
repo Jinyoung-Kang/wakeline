@@ -7,16 +7,18 @@ import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { filterGridCells, gridFeatures, parseGridCells, SHIP_CATEGORIES, type ShipCategory } from "@/lib/ships";
+import {
+  appendShipTrack, filterGridCells, gridFeatures, parseGridCells, SHIP_CATEGORIES, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
+} from "@/lib/ships";
 import { shipCategoryFilter } from "@/lib/ship-layers";
-import { shipGridTip } from "@/lib/tooltip";
+import { shipGridTip, shipTrackPointTip } from "@/lib/tooltip";
 import { loadShipCats, saveShipCats, SHIP_CATS_KEY, type KV } from "@/lib/prefs";
 import { resetData, setData, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { MapLegendView } from "@/components/MapLegend";
 import { LayerPanelView } from "@/components/LayerPanel";
 import { MapChipsView } from "@/components/MapChips";
-import { ShipPanelView } from "@/components/ShipCard";
+import { ShipCard, ShipPanelView } from "@/components/ShipCard";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
 
@@ -191,5 +193,66 @@ describe("category filter UI (contract v5 §B3)", () => {
     expect(html).toContain('data-mmsi="100000001"');
     expect(html).not.toContain('data-mmsi="100000002"');
     expect(text(html)).toContain("선종 필터 10/11 · 1척 숨김");
+  });
+});
+
+// ---------------------------------------------------------------- §B3 항적 기간 · 항적 점(호버)
+
+describe("ship track points and period (contract v5 §B3)", () => {
+  const T = Date.parse("2026-09-28T01:00:00Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  it("REST points keep speed, course, heading and navigation status as the API gave them (missing or out of range → null)", () => {
+    const tr = shipTrackFromRest({
+      points: [
+        { ts: iso(T), lon: 129, lat: 35, sog_kn: 12.3, cog_deg: 123.4, heading_deg: 120, nav_status: 0 },
+        { ts: iso(T + 60_000), lon: 129.01, lat: 35 }, // 속력·상태 없음(키 없음 = 모름)
+        { ts: iso(T + 120_000), lon: 129.02, lat: 35, sog_kn: 102.3, cog_deg: 360, heading_deg: 511, nav_status: 16 }, // 범위 밖 → 모름
+      ],
+      gaps: [],
+    });
+    expect(tr.points).toEqual([
+      { ts: T, lon: 129, lat: 35, sog_kn: 12.3, cog_deg: 123.4, heading_deg: 120, nav_status: 0, src: "rest" },
+      { ts: T + 60_000, lon: 129.01, lat: 35, sog_kn: null, cog_deg: null, heading_deg: null, nav_status: null, src: "rest" },
+      { ts: T + 120_000, lon: 129.02, lat: 35, sog_kn: null, cog_deg: null, heading_deg: null, nav_status: null, src: "rest" },
+    ]);
+    const fc = shipTrackPointFeatures(tr);
+    expect(fc.features).toHaveLength(3);
+    expect(fc.features[0].properties).toEqual({ ts: iso(T), sog: 12.3, cog: 123.4, hdg: 120, nav: 0, src: "rest" });
+    expect(fc.features[0].geometry.coordinates).toEqual([129, 35]);
+  });
+  it("live observations appended after selection become hover points too (source marked live)", () => {
+    const tr = shipTrackFromRest({ points: [{ ts: iso(T), lon: 129, lat: 35, sog_kn: 10 }], gaps: [] });
+    expect(appendShipTrack(tr, { ts: T + 60_000, lon: 129.01, lat: 35, sog_kn: 11, cog_deg: 90, heading_deg: null, nav_status: 5 })).toBe(true);
+    expect(tr.points!.at(-1)).toEqual({ ts: T + 60_000, lon: 129.01, lat: 35, sog_kn: 11, cog_deg: 90, heading_deg: null, nav_status: 5, src: "live" });
+    expect(appendShipTrack(tr, { ts: T + 60_000, lon: 129.02, lat: 35 })).toBe(false); // 같은 시각 — 점도 늘지 않는다
+    expect(tr.points).toHaveLength(2);
+  });
+  it("hover tooltip: time (UTC), speed in kn · km/h, course and navigation status — '—' when the point has none", () => {
+    const t = shipTrackPointTip({ ts: iso(T), sog: 12.3, cog: 123.4, hdg: 120, nav: 0, src: "rest" }, "SYN ALPHA");
+    expect(t.title).toBe("항적 점");
+    expect(t.subtitle).toBe("SYN ALPHA");
+    expect(Object.fromEntries(t.rows)).toEqual({ "TIME UTC": "09-28 01:00:00Z", SOG: "12.3 kn · 22.8 km/h", COG: "123.4°", STATUS: "기관 사용 항해 중 (0)" });
+    expect(t.flags.map((f) => f.text)).toEqual(["저장 기록 · 60 s 창의 첫 보고"]);
+    const u = shipTrackPointTip({ ts: iso(T), src: "live" }, null);
+    expect(Object.fromEntries(u.rows)).toEqual({ "TIME UTC": "09-28 01:00:00Z", SOG: "—", COG: "—", STATUS: "—" });
+    expect(u.flags.map((f) => f.text)).toEqual(["실시간 관측 · 선택한 뒤 받은 값"]);
+  });
+  it("period options are 6 / 12 / 24 h (REST ≤ 24 h)", () => {
+    expect([...SHIP_TRACK_HOURS]).toEqual([6, 12, 24]);
+    expect(useUi.getState().shipTrackHours).toBe(6);
+    useUi.getState().setShipTrackHours(24);
+    expect(useUi.getState().shipTrackHours).toBe(24);
+    useUi.getState().setShipTrackHours(6);
+  });
+  it("ship card: period buttons and texts follow the loaded track window", () => {
+    resetData();
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: [], gapsTruncated: false, segments: 1, fromMs: null, hours: 12 } });
+    const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    for (const h of SHIP_TRACK_HOURS) expect(html).toMatch(new RegExp(`data-testid="ship-track-hours-${h}"`));
+    expect(html).toMatch(/aria-pressed="true"[^>]*data-testid="ship-track-hours-6"/); // 선택 상태는 ui-store(서버 렌더는 초기값)
+    expect(text(html)).toContain("항적 · 최근 12 h");
+    expect(text(html)).toContain("최근 12 h 수신 공백 0회");
+    expect(text(html)).toContain("항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태");
+    resetData();
   });
 });

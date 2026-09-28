@@ -6,7 +6,7 @@ import { fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
 import {
   fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
-  SHIP_CATEGORIES, SHIP_STALE_S, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
+  SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
   type DestinationInfo, type ShipCategory, type ShipState, type ShipStatic,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
@@ -48,6 +48,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
   useServerData((x) => x.ships.version); // 지도 목록 사본이 바뀌면 다시 그린다
   const now = useServerNow(1000);
+  const trackHours = useUi((s) => s.shipTrackHours);
+  const setTrackHours = useUi((s) => s.setShipTrackHours);
   useEffect(() => {
     let alive = true;
     apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
@@ -71,6 +73,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   const rot = s ? shipRotation(s) : null;
   // 공백 요약: 기록 조회에 성공했거나(0회도 근거 있음) 선택 뒤 받은 공백이 있을 때만
   const gaps = track && ((track.loaded && !track.error) || track.gaps.length) ? gapSummary(track.gaps, track.fromMs ?? -Infinity, now > 0 ? now : Infinity) : null;
+  // 문구의 기간은 받은 항적의 창(선택 버튼은 다음에 받을 창)
+  const hours = track?.hours ?? SHIP_TRACK_WINDOW_MS / 3600_000;
   const code = st?.ship_type ?? s?.ship_type ?? null;
   const name = st?.name ?? s?.name ?? null;
   const imo = imoField(st?.imo);
@@ -127,15 +131,24 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
           </div>
         ))}
         <div className="mt-2" data-testid="ship-track-info">
-          <div className="label mb-0.5">항적 · 최근 6 h</div>
+          <div className="mb-0.5 flex items-center justify-between gap-2">
+            <span className="label">항적 · 최근 {hours} h</span>
+            {/* 기간(계약 v5 §B3): 바꾸면 지도가 그 창으로 다시 받는다(REST ≤ 24 h) */}
+            <span className="flex gap-1" role="group" aria-label="항적 기간">
+              {SHIP_TRACK_HOURS.map((h) => (
+                <button key={h} type="button" className="btn px-1.5 py-0 text-[10px] normal-case!" aria-pressed={trackHours === h} onClick={() => setTrackHours(h)} data-testid={`ship-track-hours-${h}`}>{h} h</button>
+              ))}
+            </span>
+          </div>
           {track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
             : track.error ? <div className="text-[11px] text-warn">기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error})</div>
             : <div className="text-[11px] text-fg-2">기록 구간 {track.segments}개 · 60 s 에 1점(저장 기준) + 실시간 관측</div>}
+          <div className="text-[10px] text-fg-3">항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태(보고값, 없으면 —)</div>
           {gaps ? (
             <div className="mt-1 text-[11px]" data-testid="ship-gap-summary">
               <div className={gaps.count ? "text-warn" : "text-fg-2"}>
-                {track?.error ? "선택 뒤 받은 수신 공백" : "최근 6 h 수신 공백"} {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
-                {track?.error ? " (기록 조회 실패 — 6 h 전체가 아님)" : ""}
+                {track?.error ? "선택 뒤 받은 수신 공백" : `최근 ${hours} h 수신 공백`} {gaps.count}회{track?.gapsTruncated ? " 이상(최신 목록만)" : ""} · 합계 {gaps.closedS} s
+                {track?.error ? ` (기록 조회 실패 — ${hours} h 전체가 아님)` : ""}
                 {gaps.openSinceMs != null ? ` · 진행 중 1회(지금까지 ${now ? fmtDuration((now - gaps.openSinceMs) / 1000) : "—"})` : ""}
               </div>
               <div className="text-fg-3">{GAP_BREAK_MIN_MS / 1000} s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)</div>

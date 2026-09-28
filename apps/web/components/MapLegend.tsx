@@ -6,7 +6,7 @@ import {
   ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
-import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH, SHIP_SELECTED_STYLE } from "@/lib/ship-layers";
+import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH, SHIP_SELECTED_STYLE, SHIP_TRACK_POINT_STYLE } from "@/lib/ship-layers";
 import { aisCoverageFeatures, type ShipCategory, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
@@ -153,7 +153,10 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
             </Row>
           ) : null}
           {layers.tracks ? <>
-            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간)</Row>
+            <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간) · 기간 6/12/24 h(선박 카드)</Row>
+            <Row swatch={<span className="inline-block rounded-full!" style={{ width: SHIP_TRACK_POINT_STYLE.radius * 2, height: SHIP_TRACK_POINT_STYLE.radius * 2, background: SHIP_TRACK_POINT_STYLE.color }} />}>
+              항적 점 — 마우스를 올리면 시각(UTC)·속력·침로·항해 상태
+            </Row>
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#8a929d" }} />}>공백 — AIS 끊김·15분 넘는 기록 없음(그 사이 위치 모름)</Row>
           </> : null}
         </Section>

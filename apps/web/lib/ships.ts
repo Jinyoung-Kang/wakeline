@@ -808,16 +808,30 @@ export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: strin
 
 /** 이보다 긴 시간 틈은 선을 끊는다(계약 v2 §B3 track: time jumps > 15 min) */
 export const TRACK_BREAK_MS = 15 * 60_000;
-/** 선택 선박 항적 창 — REST ≤ 24 h(계약). 선박은 느려 6 h 면 충분하고 60 s 에 1점이라 ≤ 360 점. */
+/** 선택 선박 항적 창 기본값 — REST ≤ 24 h(계약). 선박은 느려 6 h 면 대개 충분하고 60 s 에 1점이라 ≤ 360 점. */
 export const SHIP_TRACK_WINDOW_MS = 6 * 3600_000;
+/** 항적 기간 선택(계약 v5 §B3): 6 · 12 · 24 h — REST 상한 24 h(24 × 60 = 1,440 점) */
+export const SHIP_TRACK_HOURS = [6, 12, 24] as const;
+export type ShipTrackHours = (typeof SHIP_TRACK_HOURS)[number];
 export const MAX_SHIP_TRACK_POINTS = 5000;
 
 export interface ShipTrackSeg { pts: [number, number][]; startMs: number | null; endMs: number | null }
-/** gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한. */
+/**
+ * 항적 점 하나(계약 v5 §B3 호버): REST points[] 의 값 그대로(속력·침로·선수방위·항해 상태 — 키가 없거나 범위 밖이면 null).
+ * src: rest = 저장 기록(60 s 창의 첫 보고) · live = 선택한 뒤 WS 로 받은 관측.
+ */
+export interface ShipTrackPoint { ts: number; lon: number; lat: number; sog_kn: number | null; cog_deg: number | null; heading_deg: number | null; nav_status: number | null; src: "rest" | "live" }
+/** gapsTruncated: 서버가 공백 목록을 잘랐거나(properties.gaps_truncated) 여기서 최신 MAX_TRACK_GAPS 개만 남겼음 — 개수는 하한. points: 호버용 점(있을 때만). */
 export interface ShipTrack {
   segs: ShipTrackSeg[];
   gaps: AisGap[];
   gapsTruncated?: boolean;
+  points?: ShipTrackPoint[];
+}
+
+/** 점의 부가 값(속력 0–102.2 kn · 침로/선수방위 0–359.9999° · 항해 상태 0–15) — 범위 밖·형식 오류는 null */
+function trackPointDetail(p: Obj): Pick<ShipTrackPoint, "sog_kn" | "cog_deg" | "heading_deg" | "nav_status"> {
+  return { sog_kn: num(p.sog_kn, 0, 102.2), cog_deg: num(p.cog_deg, 0, 359.9999), heading_deg: num(p.heading_deg, 0, 359.9999), nav_status: int(p.nav_status, 0, 15) };
 }
 
 /**
@@ -977,6 +991,7 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
     // 서버가 구간을 알려 주면(properties.segments) 그 경계를 따른다 — 서버는 잘리지 않은 긴 공백 목록으로 끊었고,
     // 여기 공백 목록(out.gaps)은 최신 200개로 잘렸을 수 있다(계약 v3 §D). 구간에 속하지 않는 점(앞뒤가 끊긴 한 점)은 따로 둔다.
     const bounds = serverSegments(props.segments);
+    const points: ShipTrackPoint[] = [];
     let seg: ShipTrackSeg | null = null;
     let segIdx = -2;
     let j = 0;
@@ -1002,8 +1017,10 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
       }
       seg.pts.push(c);
       seg.endMs = t;
+      points.push({ ts: t, lon: c[0], lat: c[1], ...trackPointDetail(p), src: "rest" });
       budget--;
     }
+    out.points = points;
     return out;
   }
 
@@ -1026,8 +1043,13 @@ export function shipTrackFromRest(resp: unknown): ShipTrack {
 /**
  * 실시간 관측(ship_selected)을 항적 끝에 붙인다. 마지막 구간의 끝 시각을 모르면 anchorMs(REST 를 받을 때 알던 선박 관측 시각)를 쓴다.
  * 15분 넘는 틈이거나 그 사이에 선을 끊는 AIS 공백(60 s 이상·열린 공백)이 있으면 새 구간(점선 연결)으로 시작한다. 같은 시각·이전 시각·같은 위치는 붙이지 않는다. 붙였으면 true.
+ * 붙인 관측은 호버용 점(src live — 계약 v5 §B3)으로도 남긴다(속력·침로·상태는 받은 값, 없으면 null).
  */
-export function appendShipTrack(track: ShipTrack, p: { ts: number; lon: number; lat: number }, anchorMs: number | null = null): boolean {
+export function appendShipTrack(
+  track: ShipTrack,
+  p: { ts: number; lon: number; lat: number; sog_kn?: number | null; cog_deg?: number | null; heading_deg?: number | null; nav_status?: number | null },
+  anchorMs: number | null = null,
+): boolean {
   if (!Number.isFinite(p.ts) || coord([p.lon, p.lat]) == null) return false;
   const last = track.segs[track.segs.length - 1];
   const lastEnd = last ? last.endMs ?? anchorMs : null;
@@ -1040,6 +1062,8 @@ export function appendShipTrack(track: ShipTrack, p: { ts: number; lon: number; 
     last.pts.push([p.lon, p.lat]);
     last.endMs = p.ts;
   }
+  (track.points ??= []).push({ ts: p.ts, lon: p.lon, lat: p.lat, ...trackPointDetail(p as Obj), src: "live" });
+  if (track.points.length > MAX_SHIP_TRACK_POINTS) track.points.splice(0, track.points.length - MAX_SHIP_TRACK_POINTS);
   // 점 상한 — 오래된 구간부터 버린다
   let total = track.segs.reduce((n, s) => n + s.pts.length, 0);
   while (total > MAX_SHIP_TRACK_POINTS && track.segs.length > 0) {
@@ -1073,6 +1097,18 @@ export function shipTrackFeatures(track: ShipTrack): GeoJSON.FeatureCollection {
     features.push({ type: "Feature", properties: { kind: "gap", label }, geometry: { type: "LineString", coordinates: [s.pts[s.pts.length - 1], next.pts[0]] } });
   });
   return { type: "FeatureCollection", features };
+}
+
+/** 항적 점 → 지도 source "ship-track-points"(호버 툴팁 자료 — 계약 v5 §B3). 모르는 값은 null 그대로 */
+export function shipTrackPointFeatures(track: ShipTrack): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: "FeatureCollection",
+    features: (track.points ?? []).map((p) => ({
+      type: "Feature",
+      properties: { ts: new Date(p.ts).toISOString(), sog: p.sog_kn, cog: p.cog_deg, hdg: p.heading_deg, nav: p.nav_status, src: p.src },
+      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+    })),
+  };
 }
 
 // ---- 지도 선박 칩(계약 v4 §C) ----

@@ -162,6 +162,26 @@ export function shipGridTip(p: { count?: unknown; cat?: unknown; all?: unknown; 
   };
 }
 
+/**
+ * 항적 점 툴팁(계약 v5 §B3): 시각(UTC) · 속력(kn · km/h) · 침로 · 항해 상태 — API points[] 값 그대로(없으면 —).
+ * shipLabel = 선박 이름(모르면 MMSI) — 외부 문자열이라 renderTip 이 텍스트 노드로만 넣는다.
+ */
+export function shipTrackPointTip(p: { ts?: unknown; sog?: unknown; cog?: unknown; hdg?: unknown; nav?: unknown; src?: unknown }, shipLabel: string | null): Tip {
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const cog = n(p.cog);
+  return {
+    title: "항적 점",
+    subtitle: shipLabel ?? undefined,
+    rows: [
+      ["TIME UTC", fmtTime(typeof p.ts === "string" ? p.ts : null)],
+      ["SOG", fmtSogDual(n(p.sog))],
+      ["COG", cog == null ? "—" : `${cog.toFixed(1)}°`],
+      ["STATUS", navStatusLabel(n(p.nav))],
+    ],
+    flags: [{ text: p.src === "live" ? "실시간 관측 · 선택한 뒤 받은 값" : "저장 기록 · 60 s 창의 첫 보고", tone: "muted" }],
+  };
+}
+
 /** Tip → DOM(텍스트 노드만). 브라우저에서만 호출한다. */
 export function renderTip(tip: Tip, doc: Document = document): HTMLElement {
   const root = doc.createElement("div");

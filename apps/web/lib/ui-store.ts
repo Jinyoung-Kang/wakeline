@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { SHIP_CATEGORIES, type ShipCategory } from "./ships";
+import { SHIP_CATEGORIES, type ShipCategory, type ShipTrackHours } from "./ships";
 
 export interface Layers {
   radar: boolean;
@@ -48,6 +48,9 @@ interface UiState {
   shipCats: ShipCategory[];
   toggleShipCat: (c: ShipCategory) => void;
   setShipCats: (cats: readonly ShipCategory[]) => void;
+  /** 선택 선박 항적 기간(계약 v5 §B3 — 6 · 12 · 24 h). 바꾸면 MapView 가 그 창으로 다시 받는다 */
+  shipTrackHours: ShipTrackHours;
+  setShipTrackHours: (h: ShipTrackHours) => void;
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -86,4 +89,6 @@ export const useUi = create<UiState>((set) => ({
     return { shipCats: SHIP_CATEGORIES.filter((x) => on.has(x)) };
   }),
   setShipCats: (cats) => set({ shipCats: SHIP_CATEGORIES.filter((x) => cats.includes(x)) }),
+  shipTrackHours: 6,
+  setShipTrackHours: (h) => set({ shipTrackHours: h }),
 }));

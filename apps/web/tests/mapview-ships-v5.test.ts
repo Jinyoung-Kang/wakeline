@@ -149,3 +149,43 @@ describe("selected ship is always drawn with a ring and a label (contract v5 §B
     expect(fc(map, "ship-selected").features).toHaveLength(0);
   });
 });
+
+describe("selected ship track: period and hover points (contract v5 §B3)", () => {
+  const trackCalls = () => rec.api.filter((p) => p.includes("/track?"));
+  const windowH = (p: string) => {
+    const q = new URLSearchParams(p.split("?")[1]);
+    return (Date.parse(q.get("to")!) - Date.parse(q.get("from")!)) / 3600_000;
+  };
+
+  it("requests the chosen window (6 h default, then 12 / 24 h) and records it for the card", async () => {
+    await mountLoaded();
+    await act(() => useUi.getState().selectShip("200000001"));
+    expect(trackCalls()).toHaveLength(1);
+    expect(windowH(trackCalls()[0])).toBe(6);
+    await act(() => useUi.getState().setShipTrackHours(24));
+    expect(trackCalls()).toHaveLength(2);
+    expect(windowH(trackCalls()[1])).toBe(24);
+    const { getData } = await import("@/lib/store");
+    expect(getData().shipTrack).toMatchObject({ mmsi: "200000001", hours: 24, loaded: false });
+  });
+
+  it("track points become a hoverable point layer (shown with ships + tracks); live observations are added", async () => {
+    const T = Date.parse("2026-09-28T02:00:00Z");
+    rec.responses.set("/api/v1/ships/200000001/track", {
+      type: "Feature", geometry: { type: "MultiLineString", coordinates: [] }, properties: {},
+      points: [{ ts: new Date(T).toISOString(), lon: 129, lat: 35, sog_kn: 12.3, nav_status: 0 }, { ts: new Date(T + 60_000).toISOString(), lon: 129.01, lat: 35 }],
+      gaps: [],
+    });
+    const map = await mountLoaded();
+    expect(map.getLayer("ship-track-point")).toBeDefined();
+    await act(() => useUi.getState().selectShip("200000001"));
+    await act(async () => { await Promise.resolve(); });
+    expect(fc(map, "ship-track-points").features.map((f) => f.properties.sog)).toEqual([12.3, null]);
+    expect(map.getLayer("ship-track-point")!.layout.visibility).toBe("visible");
+    const st = { ...lite("200000001", { lat: 35, lon: 129.02, sog_kn: 11, nav_status: 5, seen_at: new Date(T + 120_000).toISOString() }), rot: null, provider: "fixture", msg_type: "PositionReport", class: "A" as const };
+    await act(() => setData({ shipSelected: { mmsi: "200000001", received_at: 0, static: null, state: st } }));
+    expect(fc(map, "ship-track-points").features.map((f) => [f.properties.sog, f.properties.nav, f.properties.src])).toEqual([[12.3, 0, "rest"], [null, null, "rest"], [11, 5, "live"]]);
+    await act(() => useUi.getState().toggleLayer("tracks"));
+    expect(map.getLayer("ship-track-point")!.layout.visibility).toBe("none");
+  });
+});

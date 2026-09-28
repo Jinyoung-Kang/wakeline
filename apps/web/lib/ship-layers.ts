@@ -4,7 +4,7 @@
  * - 색: 선종 분류(ships.ts SHIP_CATEGORY_COLOR — 범례와 같은 표). 선택 = 흰색. STALE(> 15분) 반투명.
  * - 격자(계약 v4 §C — 줌 < 4 · 화면 안 선박이 상한 초과): 칸 선박 수에 따라 커지는 원(최소 반지름 8 px) + 수 라벨(halo), 색 = 가장 많은 선종,
  *   흰 테두리 1.5 px · 불투명도 0.85 — 어두운 육지·바다 어디서나 보인다. 항공기 기호보다 아래 층.
- * - 항적: 실선(기록 구간) · 회색 점선 + 라벨(AIS 공백·기록 없음 — 그 사이 위치는 모름).
+ * - 항적: 실선(기록 구간) · 회색 점선 + 라벨(AIS 공백·기록 없음 — 그 사이 위치는 모름) · 기록 점(호버하면 시각·속력·침로·항해 상태 — 계약 v5 §B3).
  * - 선택 선박(계약 v5 §B3): 격자 모드에서도 흰 고리 + 이름(모르면 MMSI) 라벨 — 줌과 무관. 선박 기호가 그리지 않을 때(격자·선종 필터)는 아이콘도.
  * - 수신 범위(계약 v3 §A): 운영 설정 수신 범위의 바깥 경계만 옅은 점선. 범위 밖을 가리지 않는다. status 에 범위가 없으면 그리지 않는다.
  */
@@ -77,9 +77,11 @@ export const SHIP_COVERAGE_COLOR = "#7f93a8";
 export const SHIP_COVERAGE_DASH: [number, number] = [4, 3];
 
 export const SHIP_LAYERS = [
-  "ship-coverage-line", "ship-track-line", "ship-track-gap", "ship-track-gap-label", "ship-grid-circle", "ship-grid-label", "ship-symbol",
+  "ship-coverage-line", "ship-track-line", "ship-track-gap", "ship-track-gap-label", "ship-track-point", "ship-grid-circle", "ship-grid-label", "ship-symbol",
   "ship-selected-ring", "ship-selected-icon", "ship-selected-label",
 ] as const;
+/** 항적 점(계약 v5 §B3) — 범례 견본과 같은 값. hitPad = 호버 질의용 투명 테두리 폭(px) */
+export const SHIP_TRACK_POINT_STYLE = { radius: 2.5, color: "#dbe4ee", hitPad: 4 } as const;
 /** 선택 선박 고리·라벨(계약 v5 §B3) — 범례 견본과 같은 값 */
 export const SHIP_SELECTED_STYLE = { ringRadius: 14, ringColor: "#ffffff", ringWidth: 2, labelColor: "#ffffff", labelHalo: "#0b0d10", labelHaloWidth: 1.5 } as const;
 export const SHIP_IMAGES = ["ship-hull", "ship-hull-cog", "ship-nodir"] as const;
@@ -111,6 +113,16 @@ export function addShipLayers(map: maplibregl.Map, beforeId = "aircraft-symbol")
     id: "ship-track-gap-label", type: "symbol", source: "ship-track", filter: ["==", ["get", "kind"], "gap"],
     layout: { ...hidden, "symbol-placement": "line-center", "text-field": ["get", "label"], "text-font": ["Noto Sans Regular"], "text-size": 10 },
     paint: { "text-color": "#a3aab4", "text-halo-color": "#0b0d10", "text-halo-width": 1 },
+  }, before);
+
+  // 항적 점(계약 v5 §B3): 호버하면 시각·속력·침로·항해 상태. 투명한 테두리로 잡기 쉬운 크기(질의는 반지름 + 테두리 폭)
+  map.addSource("ship-track-points", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: "ship-track-point", type: "circle", source: "ship-track-points", layout: hidden,
+    paint: {
+      "circle-radius": SHIP_TRACK_POINT_STYLE.radius, "circle-color": SHIP_TRACK_POINT_STYLE.color, "circle-opacity": 0.9,
+      "circle-stroke-width": SHIP_TRACK_POINT_STYLE.hitPad, "circle-stroke-color": "#000000", "circle-stroke-opacity": 0,
+    },
   }, before);
 
   map.addSource("ship-grid", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
