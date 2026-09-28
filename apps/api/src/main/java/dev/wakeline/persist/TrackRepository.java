@@ -23,7 +23,7 @@ public class TrackRepository {
                 : """
                 SELECT hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider
                 FROM track_point WHERE hex = :hex AND ts BETWEEN :from AND :to ORDER BY ts""";
-        var q = db.sql(sql).param("hex", hex).param("from", Sql.ts(from)).param("to", Sql.ts(to));
+        var q = Sql.publicRead(db, sql).param("hex", hex).param("from", Sql.ts(from)).param("to", Sql.ts(to));
         if (stepS > 0) q = q.param("step", stepS);
         return q.query().listOfRows().stream().map(r -> {
             var m = new java.util.LinkedHashMap<>(r);
@@ -43,7 +43,7 @@ public class TrackRepository {
      * 아니다, samples = 평균에 쓴 점 수). 요약에는 방위·지상 여부가 없으므로 null(0·false 로 채우지 않는다).
      */
     public Replay replay(Instant at, Bbox b) {
-        List<Map<String, Object>> rows = db.sql("""
+        List<Map<String, Object>> rows = Sql.publicRead(db, """
                 SELECT DISTINCT ON (hex) hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, on_ground, provider, false averaged
                 FROM track_point
                 WHERE ts BETWEEN :t - interval '3 minutes' AND :t
@@ -54,7 +54,7 @@ public class TrackRepository {
         String source = "track_point";
         if (rows.isEmpty()) {
             // 1분 요약에는 방위·지상 여부가 없다 — 모르는 값은 null 로 둔다(false·0 으로 채우지 않는다)
-            rows = db.sql("""
+            rows = Sql.publicRead(db, """
                     SELECT DISTINCT ON (hex) hex, ts_minute ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, NULL::real track_deg, NULL::boolean on_ground,
                            '1m_summary' provider, true averaged, n samples
                     FROM track_point_1m
@@ -79,7 +79,7 @@ public class TrackRepository {
      */
     public Map<String, Object> radarFrameNear(Instant at, Instant now) {
         if (at.isBefore(now.minus(RADAR_REPLAY_WINDOW)) || at.isAfter(now.plus(RADAR_MATCH_TOLERANCE))) return null;
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT frame_time, host, path FROM radar_frame
                 WHERE frame_time BETWEEN :lo AND :hi
                 ORDER BY abs(extract(epoch FROM frame_time - :t)), frame_time DESC LIMIT 1""")

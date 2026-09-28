@@ -25,7 +25,7 @@ public class AirportRepository {
 
     public List<Map<String, Object>> withLatestMetar(Bbox b, boolean watchedOnly) {
         Instant now = Instant.now();
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT a.icao, a.iata, a.name, a.country, a.elev_ft, a.watched, ST_X(a.geom) lon, ST_Y(a.geom) lat,
                        m.obs_time, m.flight_cat, m.flight_cat_source, m.wind_dir, m.wind_kt, m.vis_sm, m.ceiling_ft, m.ceiling_state,
                        m.temp_c, m.wx_string, m.fetched_at, m.provider
@@ -40,14 +40,14 @@ public class AirportRepository {
 
     public Map<String, Object> wx(String icao) {
         Instant now = Instant.now();
-        var airport = db.sql("SELECT icao, iata, name, country, elev_ft, ST_X(geom) lon, ST_Y(geom) lat FROM airport WHERE icao = :i")
+        var airport = Sql.publicRead(db, "SELECT icao, iata, name, country, elev_ft, ST_X(geom) lon, ST_Y(geom) lat FROM airport WHERE icao = :i")
                 .param("i", icao).query().listOfRows().stream().findFirst().orElse(null);
         if (airport == null) return null;
-        var latest = db.sql("""
+        var latest = Sql.publicRead(db, """
                 SELECT obs_time, raw, temp_c, dewp_c, wind_dir, wind_kt, vis_sm, vis_raw, ceiling_ft, ceiling_state, flight_cat, flight_cat_source,
                        wx_string, taf_raw, provider, fetched_at
                 FROM metar_obs WHERE icao = :i ORDER BY obs_time DESC LIMIT 1""").param("i", icao).query().listOfRows().stream().findFirst().orElse(null);
-        var history = db.sql("""
+        var history = Sql.publicRead(db, """
                 SELECT obs_time, flight_cat, flight_cat_source, wind_dir, wind_kt, vis_sm, vis_raw, ceiling_ft, ceiling_state, temp_c
                 FROM metar_obs WHERE icao = :i ORDER BY obs_time DESC LIMIT 24""")
                 .param("i", icao).query().listOfRows();

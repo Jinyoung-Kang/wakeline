@@ -15,6 +15,9 @@ spring:
       data-source-properties:
         ApplicationName: wakeline-api
         reWriteBatchedInserts: true      # 항적 배치(2,000행)를 다중 VALUES INSERT 로 — 왕복 수를 줄인다
+        # 격벽(R-62 · ADR-017 §2): 모든 문장 30 s · 잠금 대기 5 s 상한(파티션 DROP 이 부모 잠금을 기다리며 INSERT 를 줄줄이 막지 않게).
+        # 공개 조회는 문장마다 3 s(Sql.PUBLIC_READ_TIMEOUT_S). 되돌리기: 이 줄을 지운다.
+        options: "-c statement_timeout=30s -c lock_timeout=5s"
   flyway:
     # 스키마 변경은 compose 의 migrate 서비스(--migrate)만 한다 — 그 프로세스가 DB_MIGRATOR_PASSWORD 를 직접 읽는다(WakelineApplication).
     # api 는 DML 전용 계정(wakeline_api)만 가지며 DDL 비밀번호를 받지도, 참조하지도 않는다(최소 권한, SEC-3).

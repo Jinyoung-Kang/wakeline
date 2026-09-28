@@ -196,7 +196,7 @@ public class SigmetRepository {
 
     /** 재생: 시각 t 에 유효했던(발효 후, 철회·만료 전) 경보. base/top 출처는 계약 값만 내보내고 DB 전용 'unknown' 하한은 null. */
     public List<Map<String, Object>> validAt(Instant at) {
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT id, fir_id, fir_name, hazard, qualifier, base_ft, top_ft, base_source, top_source, valid_from, valid_to, withdrawn_at,
                        excluded_reason, raw_text, provider, ST_AsGeoJSON(geom)::text geometry
                 FROM sigmet WHERE valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t ORDER BY fir_id, series_id""")

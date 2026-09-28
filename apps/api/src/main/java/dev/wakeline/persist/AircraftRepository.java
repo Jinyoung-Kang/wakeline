@@ -99,7 +99,7 @@ public class AircraftRepository {
     }
 
     public Map<String, Object> find(String hex) {
-        return db.sql("SELECT hex, registration, type_code, category, source, first_seen, last_seen FROM aircraft WHERE hex = :hex")
+        return Sql.publicRead(db, "SELECT hex, registration, type_code, category, source, first_seen, last_seen FROM aircraft WHERE hex = :hex")
                 .param("hex", hex).query().listOfRows().stream().findFirst().map(m -> {
                     var out = new LinkedHashMap<String, Object>();
                     m.forEach((k, v) -> out.put(k, v));
@@ -110,7 +110,7 @@ public class AircraftRepository {
     }
 
     public List<Map<String, Object>> search(String prefix, int limit) {
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT hex, registration, type_code, last_seen FROM aircraft
                 WHERE upper(hex) LIKE :p OR upper(registration) LIKE :p ORDER BY last_seen DESC LIMIT :n""")
                 .param("p", prefix + "%").param("n", limit).query().listOfRows().stream().map(m -> {

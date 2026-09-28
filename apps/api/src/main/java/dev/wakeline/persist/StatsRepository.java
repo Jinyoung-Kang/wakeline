@@ -16,7 +16,7 @@ public class StatsRepository {
     public StatsRepository(JdbcClient db) { this.db = db; }
 
     public List<Map<String, Object>> sigmet(LocalDate from, LocalDate to, String group) {
-        return db.sql("SELECT day, dim, value FROM stats_daily WHERE metric = :m AND day BETWEEN :f AND :t ORDER BY day, dim")
+        return Sql.publicRead(db, "SELECT day, dim, value FROM stats_daily WHERE metric = :m AND day BETWEEN :f AND :t ORDER BY day, dim")
                 .param("m", "sigmet_by_" + group).param("f", from).param("t", to).query().listOfRows();
     }
 
@@ -29,10 +29,10 @@ public class StatsRepository {
     public record Traffic(List<Map<String, Object>> items, Map<String, Object> region) {}
 
     public Traffic traffic(LocalDate day) {
-        var items = db.sql("SELECT day, dim, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = :d ORDER BY dim")
+        var items = Sql.publicRead(db, "SELECT day, dim, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = :d ORDER BY dim")
                 .param("d", day).query().listOfRows();
         Map<String, Number> reg = new LinkedHashMap<>();
-        for (var r : db.sql("SELECT dim, value FROM stats_daily WHERE metric = 'traffic_region' AND day = :d").param("d", day).query().listOfRows())
+        for (var r : Sql.publicRead(db, "SELECT dim, value FROM stats_daily WHERE metric = 'traffic_region' AND day = :d").param("d", day).query().listOfRows())
             reg.put(String.valueOf(r.get("dim")), (Number) r.get("value"));
         Map<String, Object> region = null;
         if (reg.containsKey("center_lat") && reg.containsKey("center_lon") && reg.containsKey("radius_nm")) {
@@ -48,7 +48,7 @@ public class StatsRepository {
     }
 
     public List<Map<String, Object>> alerts(LocalDate from, LocalDate to) {
-        return db.sql("SELECT day, metric, dim, value FROM stats_daily WHERE metric IN ('alerts_by_kind','alert_dwell_avg_s') AND day BETWEEN :f AND :t ORDER BY day, metric, dim")
+        return Sql.publicRead(db, "SELECT day, metric, dim, value FROM stats_daily WHERE metric IN ('alerts_by_kind','alert_dwell_avg_s') AND day BETWEEN :f AND :t ORDER BY day, metric, dim")
                 .param("f", from).param("t", to).query().listOfRows();
     }
 }

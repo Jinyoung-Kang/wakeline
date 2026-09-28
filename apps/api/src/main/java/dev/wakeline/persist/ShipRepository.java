@@ -171,7 +171,7 @@ public class ShipRepository {
      * (계약 v3 §D — 예전에는 오래된 것부터 잘라 최근 공백이 빠졌다).
      */
     public List<AisGap> gaps(Instant from, Instant to, int limit) {
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT started_at, ended_at, reason, provider, scope FROM (
                   SELECT started_at, ended_at, reason, provider, scope FROM ingest_gap
                   WHERE source = :src AND started_at < :to AND ended_at > :from
@@ -186,7 +186,7 @@ public class ShipRepository {
      * 짧은 공백이 많아 그 목록이 잘려도 끊기 판정은 영향을 받지 않는다(계약 v3 §D).
      */
     public List<AisGap> gapsAtLeast(Instant from, Instant to, long minS, int limit) {
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT started_at, ended_at, reason, provider, scope FROM ingest_gap
                 WHERE source = :src AND started_at < :to AND ended_at > :from AND extract(epoch FROM ended_at - started_at) >= :min
                 ORDER BY started_at LIMIT :lim""")
@@ -213,7 +213,7 @@ public class ShipRepository {
     public record StoredShip(ShipStatic stat, Instant firstSeen, Instant lastSeen) {}
 
     public StoredShip find(String mmsi) {
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT mmsi, name, call_sign, imo, ship_type, dim_a, dim_b, dim_c, dim_d, draught_m, destination,
                        eta_month, eta_day, eta_hour, eta_minute, first_seen, last_seen, updated_at, provider
                 FROM ship WHERE mmsi = :m""").param("m", mmsi)
@@ -231,7 +231,7 @@ public class ShipRepository {
 
     /** 저장된 마지막 위치의 시각(보존 72 h 안, 없으면 null) — (mmsi, ts) PK 색인을 파티션마다 거꾸로 한 번씩 본다. */
     public Instant lastPositionAt(String mmsi) {
-        return db.sql("SELECT ts FROM ship_position WHERE mmsi = :m ORDER BY ts DESC LIMIT 1").param("m", mmsi)
+        return Sql.publicRead(db, "SELECT ts FROM ship_position WHERE mmsi = :m ORDER BY ts DESC LIMIT 1").param("m", mmsi)
                 .query(java.time.OffsetDateTime.class).optional().map(java.time.OffsetDateTime::toInstant).orElse(null);
     }
 
@@ -241,7 +241,7 @@ public class ShipRepository {
 
     /** [from, to] 의 저장 위치(시간순, 최대 limit 점). */
     public List<TrackPoint> track(String mmsi, Instant from, Instant to, int limit) {
-        return db.sql("""
+        return Sql.publicRead(db, """
                 SELECT ts, ST_X(geom) lon, ST_Y(geom) lat, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider
                 FROM ship_position WHERE mmsi = :m AND ts BETWEEN :from AND :to ORDER BY ts LIMIT :lim""")
                 .param("m", mmsi).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)
