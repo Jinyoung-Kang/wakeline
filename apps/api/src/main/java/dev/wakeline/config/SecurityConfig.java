@@ -72,16 +72,16 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /**
-     * Spring 방화벽(StrictHttpFirewall)이 거절한 요청(//·;·/./·인코딩된 . 등)도 RFC 9457 로(R-84). 기본은 예외를 컨테이너로 올려 Boot 기본
-     * JSON 오류 본문이 나갔다. 거절 자체는 그대로다(우회 없음). WebSecurity 가 이 빈을 FilterChainProxy 에 건다.
-     */
     /** Tomcat 이 앱에 닿기 전에 거절한 요청(예: %2F)의 본문도 problem+json(R-84) — {@link ProblemErrorReportValve}. */
     @Bean
     static ProblemErrorReportValve.Customizer problemErrorReportValveCustomizer(@Value("${wakeline.trusted-proxy:}") String trustedProxy) {
         return new ProblemErrorReportValve.Customizer(trustedProxy);
     }
 
+    /**
+     * Spring 방화벽(StrictHttpFirewall)이 거절한 요청(//·;·/./·인코딩된 . 등)도 RFC 9457 로(R-84). 기본은 예외를 컨테이너로 올려 Boot 기본
+     * JSON 오류 본문이 나갔다. 거절 자체는 그대로다(우회 없음). WebSecurity 가 이 빈을 FilterChainProxy 에 건다.
+     */
     @Bean
     RequestRejectedHandler requestRejectedHandler() {
         return (req, res, ex) -> {
