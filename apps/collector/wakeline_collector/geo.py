@@ -30,7 +30,16 @@ def dead_reckon(lat: float, lon: float, track_deg: float, gs_kt: float, dt_s: fl
 
 
 def bbox_around(lat: float, lon: float, radius_nm: float) -> tuple[float, float, float, float]:
-    """(lamin, lomin, lamax, lomax) — 반경을 감싸는 위경도 상자(극지방 제외)."""
+    """(lamin, lomin, lamax, lomax) — 반경을 감싸는 위경도 상자(극지방 제외).
+    날짜변경선을 넘으면 lomin > lomax 가 된다 — 조회에는 boxes_around 를 쓴다."""
     dlat = radius_nm / 60.0
     dlon = radius_nm / (60.0 * max(math.cos(math.radians(lat)), 0.1))
     return (max(lat - dlat, -90), wrap180(lon - dlon), min(lat + dlat, 90), wrap180(lon + dlon))
+
+
+def boxes_around(lat: float, lon: float, radius_nm: float) -> list[tuple[float, float, float, float]]:
+    """bbox_around 를 lomin ≤ lomax 인 상자들로. 날짜변경선을 넘으면 [lomin, 180] · [-180, lomax] 두 개(R-68)."""
+    lamin, lomin, lamax, lomax = bbox_around(lat, lon, radius_nm)
+    if lomin <= lomax:
+        return [(lamin, lomin, lamax, lomax)]
+    return [(lamin, lomin, lamax, 180.0), (lamin, -180.0, lamax, lomax)]

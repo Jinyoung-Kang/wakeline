@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import orjson
+import pytest
 from fakes import FakeRaw, FakeRedis, make_ctx
 
 from wakeline_collector.models import ProviderResult
@@ -270,3 +271,35 @@ async def test_r42_weather_guard_budget_exhausted_does_not_call_the_provider():
     runs.clear()
     await job.run_once()
     assert len(awc.bboxes) == 2
+
+
+# ---- R-68: 날짜변경선 근처 관심 지역의 METAR 조회 상자 ------------------------------------------------------------------
+def test_r68_boxes_around_split_at_the_antimeridian():
+    from wakeline_collector.geo import boxes_around
+
+    (one,) = boxes_around(36.5, 127.8, 250)  # 한국: 상자 하나
+    assert one[1] < one[3]
+    west, east = boxes_around(52.0, 178.0, 250)  # 리뷰 재현: bbox_around 는 (47.83, 171.23, 56.17, -175.23)
+    assert west[1] == pytest.approx(171.23, abs=0.01) and west[3] == 180.0
+    assert east[1] == -180.0 and east[3] == pytest.approx(-175.23, abs=0.01)
+    assert all(b[1] <= b[3] and b[0] <= b[2] for b in (west, east))
+    w2, e2 = boxes_around(52.0, -178.0, 250)  # 서쪽에서 넘는 경우도 같다
+    assert w2[3] == 180.0 and e2[1] == -180.0
+
+
+async def test_r68_metar_job_queries_both_sides_of_the_antimeridian():
+    from wakeline_collector.jobs.weather import MetarJob
+
+    items = orjson.loads((FIX / "awc_metar_region.json").read_bytes())
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"awc": 1000})
+    ctx.rt.region = (52.0, 178.0, 250)  # type: ignore[misc]
+    awc = FakeAwcMetar(items)
+    runs: list[dict] = []
+    real = ctx.db.record_run
+    ctx.db.record_run = lambda job, prov, started, **kw: (runs.append(kw), real(job, prov, started, **kw))  # type: ignore[method-assign]
+    await MetarJob(awc, ctx).run_once()
+    assert len(awc.bboxes) == 2 and all(lomin <= lomax for _la, lomin, _lb, lomax in awc.bboxes)
+    assert (await ctx.budget.usage("awc"))[0] == 2  # 조회 두 번 = 예산 2
+    (run,) = runs  # 한 실행으로 기록한다
+    assert run["status"] == "ok" and run["records_in"] == len(items)  # 두 응답에 같은 관측이 있으면 한 번만

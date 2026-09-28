@@ -12,7 +12,7 @@ from typing import Any
 
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.flight_category import assess_ceiling, flight_category, parse_visibility_sm
-from wakeline_collector.geo import bbox_around
+from wakeline_collector.geo import boxes_around
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import Sigmet
@@ -311,23 +311,36 @@ class MetarJob:
     async def run_once(self) -> None:
         ctx = self.ctx
         lat, lon, radius = ctx.rt.region
-        lamin, lomin, lamax, lomax = bbox_around(lat, lon, radius)
-        started, res = await _guard(ctx, "metar", self.awc.name, 1, lambda: self.awc.metar_bbox(lamin, lomin, lamax, lomax))
-        if res is None:
+        # 날짜변경선을 넘는 관심 지역은 상자 두 개로 나눠 묻는다(lomin > lomax 상자를 보내지 않는다, R-68). 조회마다 예산 1.
+        got: list[tuple[datetime, Any]] = []
+        for lamin, lomin, lamax, lomax in boxes_around(lat, lon, radius):
+            started_i, res_i = await _guard(
+                ctx, "metar", self.awc.name, 1, lambda b=(lamin, lomin, lamax, lomax): self.awc.metar_bbox(*b)
+            )
+            if res_i is not None:
+                got.append((started_i, res_i))
+        if not got:
             return
+        started, res = got[0]
         raw_ref = res.extra.get("raw_ref") or await archive(ctx.raw, "awc_metar", res.raw, res.fetched_at)
+        for _s, extra_res in got[1:]:
+            if not extra_res.extra.get("raw_ref"):
+                await archive(ctx.raw, "awc_metar", extra_res.raw, extra_res.fetched_at)
         airports: list[dict[str, Any]] = []
         obs: list[dict[str, Any]] = []
         bad: list[tuple[str, str | None, dict[str, Any]]] = []
-        for it in res.data:
-            try:
-                row = metar_row(it, self.awc.name, res.fetched_at) if isinstance(it, dict) else None
-            except (TypeError, ValueError, OverflowError) as e:
-                bad.append(("metar_parse_error", None, {"icao": str(it.get("icaoId"))[:8], "error": repr(e)[:200]}))
-                continue
-            if row is not None:
-                airports.append(row[0])
-                obs.append(row[1])
+        seen: set[tuple[str, datetime]] = set()  # 두 상자에 같은 관측이 오면 한 번만
+        for _s, r_i in got:
+            for it in r_i.data:
+                try:
+                    row = metar_row(it, self.awc.name, r_i.fetched_at) if isinstance(it, dict) else None
+                except (TypeError, ValueError, OverflowError) as e:
+                    bad.append(("metar_parse_error", None, {"icao": str(it.get("icaoId"))[:8], "error": repr(e)[:200]}))
+                    continue
+                if row is not None and (row[1]["icao"], row[1]["obs_time"]) not in seen:
+                    seen.add((row[1]["icao"], row[1]["obs_time"]))
+                    airports.append(row[0])
+                    obs.append(row[1])
         # METAR 의 출력은 DB 뿐이다 — 쓰기는 writer 가 순서대로(airport → metar_obs, FK) 처리한다
         ctx.db.upsert_airports(airports)
         ctx.db.upsert_metar(obs)
