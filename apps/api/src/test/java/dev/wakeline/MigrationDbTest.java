@@ -30,7 +30,7 @@ class MigrationDbTest {
         Map<String, String> noPw = new HashMap<>(DbTestSupport.env("wakeline"));
         noPw.remove("DB_MIGRATOR_PASSWORD");
         assertThat(WakelineApplication.migrate(noPw)).isEqualTo(2);
-        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(8);
+        assertThat(DbTestSupport.admin().sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
     }
 
     @Test
@@ -237,7 +237,8 @@ class MigrationDbTest {
                 INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider) VALUES
                   ('ais', '2026-09-28T01:00:00Z', '2026-09-28T01:02:00Z', 'server closed (1006)', 'aisstream')""").update();
 
-        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        // V8 까지만(V9 이후는 V8 되돌리기 시험의 대상이 아니다 — 같은 migrator · 같은 위치)
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target("8").load().migrate();
 
         assertThat(stage.sql("SELECT scope FROM ingest_gap").query(String.class).optional()).as("existing rows: no scope").isEmpty();
         assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_gap_source_started'").query(Long.class).single()).isZero();
@@ -282,8 +283,8 @@ class MigrationDbTest {
                 .as("V7 schema again: the V5 constraint under its original name").isEqualTo(1);
         assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(7);
 
-        // 다시 앞으로: 운영과 같은 --migrate 경로로 V8 이 다시 적용된다(제약 이름이 V8 이 지우는 이름과 같다)
-        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        // 다시 앞으로: 같은 migrator · 같은 위치로 V8 이 다시 적용된다(제약 이름이 V8 이 지우는 이름과 같다)
+        Flyway.configure().dataSource(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW).locations("classpath:db/migration").target("8").load().migrate();
         assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '8' AND success").query(String.class).single())
                 .isEqualTo("wakeline_migrator");
         assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_gap_source_started'").query(Long.class).single()).isZero();
@@ -291,6 +292,56 @@ class MigrationDbTest {
         assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "am after roll-forward", "aisstream",
                 dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isTrue();
         assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
+    }
+
+    /** V9 머리 주석의 되돌리기 SQL(주석 표시 '-- ' 를 뗀 본문). 블록 경계가 바뀌면 여기서 먼저 깨진다. */
+    static String v9RollbackSql() throws java.io.IOException {
+        String v9;
+        try (var in = MigrationDbTest.class.getResourceAsStream("/db/migration/V9__review_v1.sql")) {
+            assertThat(in).as("V9 on the classpath").isNotNull();
+            v9 = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        String start = "-- ==== 되돌리기(rollback) SQL", end = "-- ==== 되돌리기 끝 ====";
+        int s = v9.indexOf(start), e = v9.indexOf(end);
+        assertThat(s).as("rollback block start").isNotNegative();
+        assertThat(e).as("rollback block end").isGreaterThan(s);
+        StringBuilder sql = new StringBuilder();
+        for (String line : v9.substring(v9.indexOf('\n', s) + 1, e).split("\n")) {
+            assertThat(line).as("every rollback line is a comment").startsWith("--");
+            sql.append(line.startsWith("-- ") ? line.substring(3) : line.substring(2)).append('\n');
+        }
+        return sql.toString();
+    }
+
+    /**
+     * V9(리뷰 v1, ADR-017 §2): 머리 주석의 되돌리기 SQL 을 migrator 로 실행하면 V8 상태로 돌아가고(이력 행도 지워짐), 그 뒤 --migrate 로
+     * V9 를 다시 적용할 수 있다. 되돌리기 SQL 이 실제로 동작하는지 여기서 고정한다.
+     */
+    @Test
+    void v9RollbackSqlInTheHeaderRestoresV8AndV9ReappliesCleanly() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_nine";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(9);
+        assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'track_point_drop_old'").query(String.class).single()).contains("boundary");
+
+        try (Connection c = DriverManager.getConnection(url, "wakeline_migrator", DbTestSupport.MIGRATOR_PW); Statement st = c.createStatement()) {
+            st.execute(v9RollbackSql());
+        }
+        assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(8);
+        for (String fn : new String[]{"track_point_drop_old", "ship_position_drop_old"}) {
+            assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = :f").param("f", fn).query(String.class).single()).as(fn).contains("::date - 1");
+            assertThat(stage.sql("SELECT prosecdef FROM pg_proc WHERE proname = :f").param("f", fn).query(Boolean.class).single()).as(fn).isTrue();
+            assertThat(stage.sql("SELECT has_function_privilege('wakeline_api', :f || '(int)', 'EXECUTE')").param("f", fn).query(Boolean.class).single()).isTrue();
+        }
+
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '9' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT prosrc FROM pg_proc WHERE proname = 'ship_position_drop_old'").query(String.class).single()).contains("boundary");
     }
 
     /**

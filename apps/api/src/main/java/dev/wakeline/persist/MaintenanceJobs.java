@@ -18,8 +18,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 파티션 생성·삭제·보존 삭제(매일 03:00 UTC), 1분 요약(매시 :05, 관심 지역만 · 30일), 통계 집계(03:30). 기동 시 파티션 보장.
- * 보존 정책 ADR-007: 원해상도 72 h, 1분 요약 30일, 알림·SIGMET·통계 영구. 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
+ * 파티션 생성, 만료 파티션 삭제(매시 :02 UTC), 보존 삭제(매일 03:00 UTC), 1분 요약(매시 :05, 관심 지역만 · 30일), 통계 집계(03:30). 기동 시 파티션 보장.
+ * 보존 정책 ADR-007(R-06 · ADR-017 §2 로 고침): 원해상도 72 h(파티션 전체가 72 h 보다 오래되면 곧바로 삭제 — 가장 오래된 행 72–96 h),
+ * 1분 요약 30일, 알림은 끝난 것만 30일(열린 알림은 남긴다 · {@code wakeline.alert-retention-days}, 0 이면 지우지 않는다), SIGMET·통계 영구.
+ * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
  * 최근 7일 중 통계가 없는 날을 채운다(둘 다 멱등).
@@ -34,16 +36,29 @@ public class MaintenanceJobs {
     static final int SHIP_RETENTION_HOURS = 72;
     /** 체류 통계에 넣는 '확인된 이탈' 조건(V4 마이그레이션의 재계산과 같은 식 — 바꾸면 둘 다 바꾼다). */
     static final String CONFIRMED_EXIT = "close_reason = 'left' AND NOT coalesce((evidence->>'sigmet_expired')::boolean, false)";
+    /** 끝난 알림 보존(일, R-06). 0 이하면 지우지 않는다(되돌리기 스위치). */
+    static final int DEFAULT_ALERT_RETENTION_DAYS = 30;
+    /** 알림 보존 삭제: 한 문장에 지우는 최대 행 수 · 한 번 실행의 최대 반복(긴 트랜잭션·잠금을 피한다 — 남으면 다음 날 이어서). */
+    static final int ALERT_DELETE_BATCH = 5_000;
+    static final int ALERT_DELETE_MAX_BATCHES = 200;
     private final JdbcClient db;
     private final AppProperties props;
     private final RegionSettings region;
     private final TransactionTemplate tx;
+    private final int alertRetentionDays;
 
     public MaintenanceJobs(JdbcClient db, AppProperties props, RegionSettings region, TransactionTemplate tx) {
+        this(db, props, region, tx, DEFAULT_ALERT_RETENTION_DAYS);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MaintenanceJobs(JdbcClient db, AppProperties props, RegionSettings region, TransactionTemplate tx,
+                           @org.springframework.beans.factory.annotation.Value("${wakeline.alert-retention-days:30}") int alertRetentionDays) {
         this.db = db;
         this.props = props;
         this.region = region;
         this.tx = tx;
+        this.alertRetentionDays = alertRetentionDays;
     }
 
     @Scheduled(initialDelay = 5_000, fixedDelay = 6 * 3600_000)
@@ -58,17 +73,55 @@ public class MaintenanceJobs {
         }
     }
 
+    /**
+     * 만료 파티션 삭제(R-06): 파티션 전체가 보존 기간보다 오래되면 지운다(V9 함수). 매시 돈다 — 경계를 넘은 파티션이 1시간 안에 지워진다
+     * (지울 것이 없으면 카탈로그만 읽는다). 하나가 실패해도 다른 것은 돈다.
+     */
+    @Scheduled(cron = "0 2 * * * *", zone = "UTC")
+    public void dropExpiredPartitions() {
+        retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
+        retention("ship_position partitions", () -> db.sql("SELECT ship_position_drop_old(:h)").param("h", SHIP_RETENTION_HOURS).query(Integer.class).single());
+    }
+
     /** 보존 삭제. 문장마다 따로 시도한다 — 하나가 실패해도(권한·잠금) 나머지는 돈다(REL-11). */
     @Scheduled(cron = "0 0 3 * * *", zone = "UTC")
     public void dropOldPartitions() {
-        retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
-        retention("ship_position partitions", () -> db.sql("SELECT ship_position_drop_old(:h)").param("h", SHIP_RETENTION_HOURS).query(Integer.class).single());
+        dropExpiredPartitions();
         retention("track_point_1m", () -> db.sql("DELETE FROM track_point_1m WHERE ts_minute < now() - make_interval(days => :d)").param("d", props.summaryRetentionDays()).update());
+        retention("alert_event (closed)", this::deleteOldClosedAlerts);
         retention("metar_obs", () -> db.sql("DELETE FROM metar_obs WHERE obs_time < now() - interval '30 days'").update());
         retention("radar_frame", () -> db.sql("DELETE FROM radar_frame WHERE frame_time < now() - interval '7 days'").update());
         retention("quality_event", () -> db.sql("DELETE FROM quality_event WHERE created_at < now() - interval '30 days'").update());
         retention("ingest_run", () -> db.sql("DELETE FROM ingest_run WHERE started_at < now() - interval '30 days'").update());
         retention("quality_rule_count", () -> db.sql("DELETE FROM quality_rule_count WHERE day < CURRENT_DATE - 90").update());
+    }
+
+    /**
+     * 끝난 알림 중 끝난 지 보존 기간(기본 30일)이 지난 것을 지운다 — 열린 알림(left_at 없음)은 남긴다. entered_at ≤ left_at 이므로
+     * entered_at 범위(인덱스 alert_event_entered)로 후보를 좁힌다. 한 문장에 {@value #ALERT_DELETE_BATCH} 행씩(긴 잠금·트랜잭션을 피한다).
+     * @return 지운 행 수
+     */
+    int deleteOldClosedAlerts() {
+        if (alertRetentionDays <= 0) return 0;
+        int total = 0;
+        for (int i = 0; i < ALERT_DELETE_MAX_BATCHES; i++) {
+            int n = db.sql("""
+                    DELETE FROM alert_event WHERE id IN (
+                      SELECT id FROM alert_event
+                      WHERE entered_at < now() - make_interval(days => :d) AND left_at < now() - make_interval(days => :d)
+                      LIMIT :n)""").param("d", alertRetentionDays).param("n", ALERT_DELETE_BATCH).update();
+            total += n;
+            if (n < ALERT_DELETE_BATCH) break;
+        }
+        return total;
+    }
+
+    /**
+     * 그날의 알림이 아직 모두 남아 있는가(보존 삭제가 그날에 닿지 않았는가). 아니면 재집계가 알림 통계를 다시 세지 않는다 —
+     * 원본이 지워진 날을 다시 세면 영구 통계가 0·빈 값으로 바뀐다(R-06).
+     */
+    boolean alertsRetained(LocalDate day) {
+        return alertRetentionDays <= 0 || day.isAfter(LocalDate.now(ZoneOffset.UTC).minusDays(alertRetentionDays));
     }
 
     private void retention(String what, java.util.function.Supplier<Integer> op) {
@@ -185,8 +238,11 @@ public class MaintenanceJobs {
         Instant end = start.plus(1, ChronoUnit.DAYS);
         RegionSettings.Region r = region.current();
         Bbox b = r.bbox();
+        boolean alerts = alertsRetained(day);
         tx.executeWithoutResult(status -> {
-            db.sql("DELETE FROM stats_daily WHERE day = :d").param("d", day).update();
+            // 보존 삭제가 닿은 날은 알림 통계를 그대로 둔다 — 다시 셀 원본이 없다(R-06)
+            db.sql("DELETE FROM stats_daily WHERE day = :d" + (alerts ? "" : " AND metric NOT IN ('alerts_by_kind', 'alert_dwell_avg_s')"))
+                    .param("d", day).update();
             db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'sigmet_by_fir', fir_id, count(*) FROM sigmet WHERE valid_from >= :s AND valid_from < :e GROUP BY fir_id""")
@@ -209,6 +265,7 @@ public class MaintenanceJobs {
                           (:d, 'traffic_region', 'center_lat', :lat), (:d, 'traffic_region', 'center_lon', :lon), (:d, 'traffic_region', 'radius_nm', :r)""")
                         .param("d", day).param("lat", r.lat()).param("lon", r.lon()).param("r", r.radiusNm()).update();
             }
+            if (!alerts) return;
             db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'alerts_by_kind', kind, count(*) FROM alert_event WHERE entered_at >= :s AND entered_at < :e GROUP BY kind""")

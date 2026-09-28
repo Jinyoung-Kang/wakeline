@@ -83,6 +83,7 @@ wakeline:
   fixture-mode: ${WAKELINE_FIXTURE_MODE:0}
   schemas-dir: ${WAKELINE_SCHEMAS_DIR:classpath:schemas}
   track-retention-hours: 72
+  alert-retention-days: ${WAKELINE_ALERT_RETENTION_DAYS:30}   # 끝난 알림 보존(일, R-06 · ADR-017 §2). 0 = 지우지 않음
   summary-retention-days: 30
 
 logging:
