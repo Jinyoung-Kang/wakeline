@@ -1,5 +1,6 @@
 package dev.wakeline.persist;
 
+import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.ingest.IngestEvents;
@@ -194,13 +195,22 @@ public class SigmetRepository {
         persisted.values().removeIf(p -> p.content().validTo().isBefore(cutoff));
     }
 
-    /** 재생: 시각 t 에 유효했던(발효 후, 철회·만료 전) 경보. base/top 출처는 계약 값만 내보내고 DB 전용 'unknown' 하한은 null. */
-    public List<Map<String, Object>> validAt(Instant at) {
+    /** 재생: 시각 t 에 유효했던(발효 후, 철회·만료 전) 경보 — 전세계. */
+    public List<Map<String, Object>> validAt(Instant at) { return validAt(at, Bbox.world()); }
+
+    /**
+     * 재생: 시각 t 에 유효했던(발효 후, 철회·만료 전) 경보 중 bbox 와 겹치는 것(R-26, GIST sigmet_geom_gist). 도형이 없는 경보(좌표 없음)는
+     * 위치를 모르므로 뺄 수 없어 남긴다. base/top 출처는 계약 값만 내보내고 DB 전용 'unknown' 하한은 null.
+     */
+    public List<Map<String, Object>> validAt(Instant at, Bbox b) {
         return Sql.publicRead(db, """
                 SELECT id, fir_id, fir_name, hazard, qualifier, base_ft, top_ft, base_source, top_source, valid_from, valid_to, withdrawn_at,
                        excluded_reason, raw_text, provider, ST_AsGeoJSON(geom)::text geometry
-                FROM sigmet WHERE valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t ORDER BY fir_id, series_id""")
-                .param("t", Sql.ts(at)).query().listOfRows().stream().map(r -> {
+                FROM sigmet WHERE valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t
+                  AND (geom IS NULL OR geom && ST_MakeEnvelope(:lomin, :lamin, :lomax, :lamax, 4326))
+                ORDER BY fir_id, series_id""")
+                .param("t", Sql.ts(at)).param("lomin", b.lomin()).param("lamin", b.lamin()).param("lomax", b.lomax()).param("lamax", b.lamax())
+                .query().listOfRows().stream().map(r -> {
                     var m = new LinkedHashMap<>(r);
                     Object g = m.get("geometry");
                     m.put("geometry", g == null ? null : json.readTree(g.toString()));

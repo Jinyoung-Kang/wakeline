@@ -42,7 +42,7 @@ public class HistoryController {
     }
 
     /**
-     * 시각 at 의 항공기 스냅샷(3분 창) + 그때 유효했던(철회·만료 전) SIGMET + 그 시각의 레이더 프레임.
+     * 시각 at 의 항공기 스냅샷(3분 창) + 그때 유효했던(철회·만료 전) SIGMET 중 bbox 와 겹치는 것(도형 없는 경보 포함, R-26) + 그 시각의 레이더 프레임.
      * source: 행을 실제로 준 테이블(track_point | track_point_1m | none — COR-22). radar: 저장된 RainViewer 프레임(±10분)
      * {host, path, time(유닉스 초)} — at 이 최근 2시간 밖이면 null(RainViewer 가 타일을 2시간만 제공한다, GAP-19).
      */
@@ -55,7 +55,7 @@ public class HistoryController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("at", at);
         m.put("aircraft", r.aircraft());
-        m.put("sigmets", sigmetRepo.validAt(at));
+        m.put("sigmets", sigmetRepo.validAt(at, b)); // 요청 bbox 와 겹치는 경보만(R-26)
         m.put("source", r.source());
         m.put("radar", tracks.radarFrameNear(at, now));
         m.put("meta", Meta.of(req, "db", at, Integer.MAX_VALUE));
