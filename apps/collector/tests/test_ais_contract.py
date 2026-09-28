@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import filecmp
 import json
+import random
 
 import pytest
 from test_ais_helpers import ROOT, SCHEMAS, validator
 
+from wakeline_collector.ais.bbox import MAX_BOXES, format_bboxes, parse_bboxes, parse_shards
 from wakeline_collector.ais.book import STATE_FIELDS
 from wakeline_collector.ais.parse import POSITION_CLASS, POSITION_SOURCE, POSITION_SOURCE_EPFS, STATIC_FIELDS
 
@@ -104,3 +106,51 @@ def test_gap_payload_schema():
     good = {"started_at": "2026-09-27T16:29:44.000Z", "ended_at": "2026-09-27T16:31:00.000Z", "reason": "server closed (1006)"}
     assert not list(v.iter_errors(good))
     assert list(v.iter_errors({**good, "reason": ""})) and list(v.iter_errors({**good, "x": 1}))
+
+
+@pytest.mark.parametrize(
+    ("scope", "ok"),
+    [
+        ("-90,-180,90,0", True),
+        ("-90,45,90,180;18,105,46,150", True),
+        ("0.000001,-179.999999,1.5,2", True),
+        (";".join(["1,1,2,2"] * 16), True),
+        (";".join(["1,1,2,2"] * 17), False),  # 구역 하나는 상자 16개까지
+        ("-90,-180,90,0|-90,45,90,180", False),  # 구역 하나의 문자열 — '|' 없음
+        ("", False),
+        ("1,1,2", False),
+        ("1e-6,1,2,2", False),
+        ("1.1234567,1,2,2", False),
+        ("fixture:ais_east_asia_90s.jsonl", False),
+        ("1,1,2,2 ", False),
+        (5, False),
+    ],
+)
+def test_gap_payload_scope_schema(scope, ok):
+    """계약 v4 §D: scope 는 선택 필드 — 그 구역의 정규화한 상자 문자열(최대 1,024자)."""
+    v = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
+    good = {"started_at": "2026-09-27T16:29:44.000Z", "ended_at": "2026-09-27T16:31:00.000Z", "reason": "server closed (1006)"}
+    assert (not list(v.iter_errors({**good, "scope": scope}))) is ok
+    s = _schema("stream_envelope.v1.json")["$defs"]["ais_gap_payload"]
+    assert "scope" not in s["required"] and s["properties"]["scope"]["maxLength"] == 1024
+
+
+def test_every_normalized_shard_string_matches_the_scope_schema():
+    """수집기가 만드는 scope(format_bboxes)는 어떤 유효한 설정이든 스키마를 통과한다 — 통과 못 하면 api 가 공백을 버린다(DLQ)."""
+    v = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
+    base = {"started_at": "2026-09-27T16:29:44.000Z", "ended_at": "2026-09-27T16:31:00.000Z", "reason": "r"}
+    rng = random.Random(20260928)
+    for _ in range(300):
+        boxes = []
+        for _ in range(rng.randint(1, MAX_BOXES)):
+            lat1, lat2 = sorted(rng.sample([rng.uniform(-90, 90) for _ in range(4)] + [-90.0, 90.0, -0.0], 2))
+            lon1, lon2 = sorted(rng.sample([rng.uniform(-180, 180) for _ in range(4)] + [-180.0, 180.0, 1e-7], 2))
+            if lat1 == lat2 or lon1 == lon2:
+                continue
+            boxes.append(f"{lat1!r},{lon1!r},{lat2!r},{lon2!r}")
+        if not boxes:
+            continue
+        for shard in parse_shards(";".join(boxes)):
+            scope = format_bboxes(shard)
+            assert not list(v.iter_errors({**base, "scope": scope})), scope
+            assert parse_bboxes(scope) and len(scope) <= 767

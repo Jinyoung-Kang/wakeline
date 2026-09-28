@@ -8,7 +8,7 @@ from __future__ import annotations
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from wakeline_collector.ais.bbox import DEFAULT_BBOXES, parse_bboxes
+from wakeline_collector.ais.bbox import DEFAULT_BBOXES, parse_shards
 
 
 class AisSettings(BaseSettings):
@@ -20,7 +20,7 @@ class AisSettings(BaseSettings):
     redis_password: SecretStr = SecretStr("")
     aisstream_api_key: SecretStr = SecretStr("")  # compose 가 .env 의 aisstream_key 를 이 이름으로 넘긴다
 
-    ais_bboxes: str = DEFAULT_BBOXES  # 런타임에는 wakeline:settings.ais_bboxes 가 덮어쓴다
+    ais_bboxes: str = DEFAULT_BBOXES  # 런타임에는 wakeline:settings.ais_bboxes 가 덮어쓴다('|' 로 구역 나누기, 계약 v4 §D)
     http_user_agent: str = "wakeline-dev/0.2"
     fixtures_dir: str = "/app/fixtures"
     wakeline_fixture_mode: int = 0
@@ -33,7 +33,7 @@ class AisSettings(BaseSettings):
     @field_validator("ais_bboxes")
     @classmethod
     def _bboxes(cls, v: str) -> str:
-        parse_bboxes(v)  # 잘못된 기본값은 기동 거부(설정 오류를 숨기지 않는다)
+        parse_shards(v)  # 잘못된 기본값은 기동 거부(설정 오류를 숨기지 않는다)
         return v
 
     @field_validator("http_user_agent")

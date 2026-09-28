@@ -22,13 +22,15 @@ from websockets.extensions.permessage_deflate import PerMessageDeflate
 
 from wakeline_collector.ais import main as ais_main
 from wakeline_collector.ais.backoff import Backoff
-from wakeline_collector.ais.bbox import BboxState, parse_bboxes
+from wakeline_collector.ais.bbox import BboxState, ShardsState, parse_bboxes, parse_shards
 from wakeline_collector.ais.client import AisStreamClient
 from wakeline_collector.ais.config import AisSettings
 from wakeline_collector.ais.feed import FeedState, parse_iso
 from wakeline_collector.ais.health import evaluate
 from wakeline_collector.ais.parse import SUBSCRIBED_TYPES, go_time
+from wakeline_collector.ais.pool import AisStreamPool
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.sink import STATUS_KEY, AisSink
 from wakeline_collector.publisher import STREAM_SHIPS
 
@@ -406,7 +408,12 @@ async def test_main_live_mode_end_to_end():
     s = AisSettings(aisstream_api_key=KEY, ais_flush_s=1.0, wakeline_fixture_mode=0)
     stop = asyncio.Event()
     task = asyncio.create_task(
-        ais_main.main(stop=stop, redis=r, settings=s, client_kw={"url": url, "backoff": Backoff(base_s=0.05, cap_s=0.1)})
+        ais_main.main(
+            stop=stop,
+            redis=r,
+            settings=s,
+            client_kw={"url": url, "backoff_factory": lambda: Backoff(base_s=0.05, cap_s=0.1)},
+        )
     )
     try:
         await wait_until(lambda: any(f["kind"] == "ais_gap" for _, f in r.streams.get(STREAM_SHIPS, [])), 6)
@@ -565,3 +572,281 @@ async def test_main_returns_1_when_a_task_dies(monkeypatch):
     r = ClosableRedis()
     rc = await asyncio.wait_for(ais_main.main(stop=asyncio.Event(), redis=r, settings=AisSettings(wakeline_fixture_mode=1)), 10)
     assert rc == 1 and r.kv[STATUS_KEY]["state"] == "stopped"
+
+
+# ── 구역마다 연결 하나(계약 v4 §D) ─────────────────────────────
+
+AMERICAS, ASIA = "-90,-180,90,0", "-90,45,90,180"
+AMERICAS_BOXES = [[[-90.0, -180.0], [90.0, 0.0]]]
+ASIA_BOXES = [[[-90.0, 45.0], [90.0, 180.0]]]
+
+
+def boxes_of(srv: FakeAis, idx: int) -> list:
+    return srv.subs[idx][0][1]["BoundingBoxes"]
+
+
+def conns(srv: FakeAis, boxes: list) -> list[int]:
+    """처음 구독이 boxes 인 연결 번호들."""
+    return [i for i in range(len(srv.subs)) if srv.subs[i] and srv.subs[i][0][1]["BoundingBoxes"] == boxes]
+
+
+def make_pool(url: str, spec: str, **kw):
+    q = RawQueue(5000)
+    shards = ShardSet("aisstream")
+    desired = ShardsState(parse_shards(spec))
+    pool = AisStreamPool(
+        api_key=KEY,
+        queue=q,
+        shards=shards,
+        desired=desired,
+        backoff_factory=lambda: Backoff(base_s=0.05, cap_s=0.2, rng=random.Random(5)),
+        url=url,
+        user_agent="wakeline-test/1",
+        **kw,
+    )
+    return pool, q, shards, desired
+
+
+async def test_pool_one_connection_per_shard_with_its_own_gap_and_backoff():
+    async def script(idx, ws, srv):
+        asia = boxes_of(srv, idx) == ASIA_BOXES
+        for f in frames(5 if asia else 8):
+            await ws.send(f)
+        if asia and len(conns(srv, ASIA_BOXES)) == 1:  # 아시아 구역의 첫 연결만 끊는다
+            await asyncio.sleep(0.05)
+            await ws.close(1011, "try again later")
+            return
+        await ws.wait_closed()
+
+    fake = FakeAis(script)
+    server, url = await start(fake)
+    pool, q, shards, _ = make_pool(url, f"{AMERICAS}|{ASIA}", idle_timeout_s=5)
+    stop = asyncio.Event()
+    task = asyncio.create_task(pool.run(stop))
+    try:
+        await wait_until(lambda: len(shards.active) == 2 and shards.active[1].feed.gaps.last is not None)
+        am, asia = shards.active
+        # 구역마다 연결 하나, 구독은 그 구역의 상자만
+        assert len(conns(fake, AMERICAS_BOXES)) == 1 and len(conns(fake, ASIA_BOXES)) == 2
+        assert all(fake.subs[i][0][1]["APIKey"] == KEY for i in range(len(fake.subs)))
+        # 공백·백오프는 끊긴 구역에만
+        gap = asia.feed.gaps.last
+        assert gap["scope"] == ASIA and gap["reason"] == "server closed (1011 try again later)"
+        assert am.feed.gaps.last is None and am.feed.gaps.open_since is None and am.feed.sessions_ended == 0
+        assert asia.feed.sessions_ended == 1 and am.feed.state == "receiving" and asia.feed.state == "receiving"
+        # 대기열의 원문에는 받은 구역 번호가 붙는다
+        tags = [q.get_tagged_nowait()[0] for _ in range(q.qsize())]
+        assert tags.count(am.id) == 8 and tags.count(asia.id) == 10
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+
+
+async def test_pool_follows_runtime_shard_changes():
+    async def script(idx, ws, srv):
+        await ws.send(frames(1)[0])
+        await ws.wait_closed()
+
+    fake = FakeAis(script)
+    server, url = await start(fake)
+    pool, _q, shards, desired = make_pool(url, AMERICAS, resubscribe_min_s=0.05)
+    stop = asyncio.Event()
+    task = asyncio.create_task(pool.run(stop))
+    try:
+        await wait_until(lambda: len(shards.active) == 1 and shards.active[0].feed.state == "receiving")
+        first = shards.active[0]
+        # 구역 추가 → 새 연결
+        desired.set(parse_shards(f"{AMERICAS}|{ASIA}"))
+        await wait_until(lambda: len(shards.active) == 2 and shards.active[1].feed.state == "receiving")
+        assert len(fake.subs) == 2 and boxes_of(fake, 1) == ASIA_BOXES
+        second = shards.active[1]
+        # 같은 순번 구역의 상자만 바뀜 → 그 연결에서 재구독(새 연결 없음)
+        desired.set(parse_shards(f"-90,-180,90,-30|{ASIA}"))
+        await wait_until(lambda: len(fake.subs[0]) == 2)
+        assert fake.subs[0][1][1]["BoundingBoxes"] == [[[-90.0, -180.0], [90.0, -30.0]]]
+        assert len(fake.subs) == 2 and len(fake.subs[1]) == 1 and shards.active[0] is first
+        assert first.feed.subscribe_updates == 1 and first.feed.scope == "-90,-180,90,-30"
+        # 구역 제거 → 그 연결만 닫고, 끊김이 아니므로 공백을 만들지 않는다
+        desired.set(parse_shards("-90,-180,90,-30"))
+        await wait_until(lambda: not shards.closing and len(shards.active) == 1)
+        assert shards.active == [first] and second.task.done() and first.feed.connected
+        assert second.feed.gaps.open_since is None and not shards.retired_pending and shards.retired_msgs_total == 1
+        assert first.feed.gaps.open_since is None and first.feed.sessions_ended == 0
+        # 다시 추가하면 새 연결(새 구역 번호)
+        desired.set(parse_shards(f"-90,-180,90,-30|{ASIA}"))
+        await wait_until(lambda: len(shards.active) == 2 and shards.active[1].feed.state == "receiving")
+        assert len(fake.subs) == 3 and shards.active[1].id not in (first.id, second.id)
+        assert shards.active[1].label == "shard 2"
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+
+
+async def test_pool_closes_all_shards_promptly_on_stop():
+    async def script(idx, ws, srv):
+        await ws.send(frames(1)[0])
+        await ws.wait_closed()
+
+    server, url = await start(FakeAis(script))
+    pool, _q, shards, _ = make_pool(url, "1,1,2,2|3,3,4,4|5,5,6,6")
+    stop = asyncio.Event()
+    task = asyncio.create_task(pool.run(stop))
+    await wait_until(lambda: len(shards.active) == 3 and all(f.state == "receiving" for f in shards.feeds()))
+    t0 = time.monotonic()
+    stop.set()
+    await asyncio.wait_for(task, 5)
+    assert time.monotonic() - t0 < 2.0 and all(s.task.done() for s in shards.active)
+    assert all(s.feed.gaps.open_since is None for s in shards.active)  # 종료 공백은 진입점(on_stopped)이 연다
+    server.close()
+
+
+async def test_pool_task_ends_when_a_connection_task_dies(monkeypatch):
+    calls: list[int] = []
+
+    async def dying(self, stop):
+        calls.append(self.tag)
+        if self.tag == 1:
+            raise RuntimeError("boom")
+        await stop.wait()
+
+    monkeypatch.setattr(AisStreamClient, "run", dying)
+    pool, _q, shards, _ = make_pool("ws://127.0.0.1:9", f"{AMERICAS}|{ASIA}")
+    with pytest.raises(RuntimeError, match="shard 2 connection task ended unexpectedly"):
+        await asyncio.wait_for(pool.run(asyncio.Event()), 5)
+    assert sorted(calls) == [0, 1] and all(s.stop.is_set() for s in shards.active)  # 나머지 연결도 닫았다
+
+
+async def test_pool_survives_a_removed_shard_failing_while_it_closes(monkeypatch, caplog):
+    async def run(self, stop):
+        await stop.wait()
+        if self.tag == 1:
+            raise RuntimeError("close failed")
+
+    monkeypatch.setattr(AisStreamClient, "run", run)
+    pool, _q, shards, desired = make_pool("ws://127.0.0.1:9", f"{AMERICAS}|{ASIA}")
+    stop = asyncio.Event()
+    task = asyncio.create_task(pool.run(stop))
+    await wait_until(lambda: len(shards.active) == 2)
+    desired.set(parse_shards(AMERICAS))
+    await wait_until(lambda: len(shards.active) == 1 and not shards.closing)
+    assert not task.done() and "shard 2 ended with RuntimeError('close failed') while closing" in caplog.text
+    stop.set()
+    await asyncio.wait_for(task, 5)
+
+
+async def test_pool_never_exceeds_three_connections_while_removed_shards_close(monkeypatch):
+    """키당 연결은 3개(ADR-014) — 줄인 직후 다시 늘려도 닫는 중인 연결이 끝난 뒤에 새 연결을 연다."""
+    peak = [0]
+    open_now = [0]
+
+    async def slow_close(self, stop):
+        open_now[0] += 1
+        peak[0] = max(peak[0], open_now[0])
+        try:
+            await stop.wait()
+            await asyncio.sleep(0.3)  # close_timeout 동안 연결이 남아 있다
+        finally:
+            open_now[0] -= 1
+
+    monkeypatch.setattr(AisStreamClient, "run", slow_close)
+    pool, _q, shards, desired = make_pool("ws://127.0.0.1:9", "1,1,2,2|3,3,4,4|5,5,6,6")
+    stop = asyncio.Event()
+    task = asyncio.create_task(pool.run(stop))
+    try:
+        await wait_until(lambda: open_now[0] == 3)
+        desired.set(parse_shards("1,1,2,2"))
+        await wait_until(lambda: len(shards.closing) == 2)
+        desired.set(parse_shards("1,1,2,2|7,7,8,8|9,9,10,10"))
+        await asyncio.sleep(0.1)
+        assert len(shards.active) == 1 and len(shards.closing) == 2  # 아직 열지 않았다
+        await wait_until(lambda: len(shards.active) == 3 and open_now[0] == 3)
+        assert [s.feed.scope for s in shards.active] == ["1,1,2,2", "7,7,8,8", "9,9,10,10"] and not shards.closing
+        assert peak[0] == 3
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+
+def test_pool_validates_url_and_key_before_starting():
+    with pytest.raises(ValueError):
+        make_pool("ws://example.com/v0/stream", AMERICAS)
+    with pytest.raises(ValueError):
+        AisStreamPool(api_key="", queue=RawQueue(10), shards=ShardSet("aisstream"), desired=ShardsState(parse_shards(AMERICAS)))
+
+
+async def test_main_two_shards_publish_scoped_gaps_and_status():
+    async def script(idx, ws, srv):
+        asia = boxes_of(srv, idx) == ASIA_BOXES
+        for f in frames(10):
+            await ws.send(f)
+        if asia and len(conns(srv, ASIA_BOXES)) == 1:
+            await asyncio.sleep(0.1)
+            await ws.close(1001, "going away")
+            return
+        await ws.wait_closed()
+
+    fake = FakeAis(script)
+    server, url = await start(fake)
+    r = ClosableRedis()
+    await r.hset("wakeline:settings", "ais_bboxes", f"{AMERICAS}|{ASIA}")
+    s = AisSettings(aisstream_api_key=KEY, ais_flush_s=1.0)
+    kw = {"url": url, "backoff_factory": lambda: Backoff(base_s=0.05, cap_s=0.1)}
+
+    def gaps() -> list[dict]:
+        return [decode(f) for _, f in r.streams.get(STREAM_SHIPS, []) if f["kind"] == "ais_gap"]
+
+    stop = asyncio.Event()
+    task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=s, client_kw=kw))
+    try:
+        await wait_until(lambda: len(gaps()) == 1, 6)
+        await wait_until(lambda: len(json.loads(r.kv.get(STATUS_KEY, {}).get("shards", "[]"))) == 2, 3)
+    finally:
+        stop.set()
+        assert await asyncio.wait_for(task, 10) == 0
+    gap_v = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
+    (g,) = gaps()
+    assert not list(gap_v.iter_errors(g)) and g["scope"] == ASIA and g["reason"] == "server closed (1001 going away)"
+    h = r.kv[STATUS_KEY]
+    view = json.loads(h["shards"])
+    assert [v["scope"] for v in view] == [AMERICAS, ASIA] and all(v["state"] == "stopped" for v in view)
+    assert [v["sessions_ended"] for v in view] == [0, 1] and all(v["gap_reason"] == "ais process stopped" for v in view)
+    assert h["bbox"] == f"{AMERICAS}|{ASIA}" and h["state"] == "stopped" and int(h["msgs_total"]) == 30
+    assert KEY not in json.dumps(r.kv) + json.dumps(r.streams)
+    # 다시 띄우면 구역마다 자기 종료 공백을 이어받아 첫 메시지에서 닫는다(scope 그대로)
+    stop2 = asyncio.Event()
+    task2 = asyncio.create_task(ais_main.main(stop=stop2, redis=r, settings=s, client_kw=kw))
+    try:
+        await wait_until(lambda: len(gaps()) >= 3, 6)
+    finally:
+        stop2.set()
+        assert await asyncio.wait_for(task2, 10) == 0
+        server.close()
+    restart = [g for g in gaps() if g["reason"] == "ais process stopped"]
+    assert sorted(g["scope"] for g in restart) == sorted([AMERICAS, ASIA])
+    assert all(not list(gap_v.iter_errors(g)) for g in gaps())
+
+
+async def test_main_fixture_mode_is_one_unscoped_shard():
+    r = ClosableRedis()
+    stop = asyncio.Event()
+    task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=AisSettings(wakeline_fixture_mode=1), replay_speed=60))
+    await wait_until(lambda: r.kv.get(STATUS_KEY, {}).get("state") == "replaying")
+    stop.set()
+    assert await asyncio.wait_for(task, 10) == 0
+    (only,) = json.loads(r.kv[STATUS_KEY]["shards"])
+    assert only["scope"] is None and only["state"] == "stopped" and r.kv[STATUS_KEY]["bbox"] == "fixture:ais_east_asia_90s.jsonl"
+
+
+async def test_main_without_key_lists_each_configured_shard_as_disabled():
+    r = ClosableRedis()
+    stop = asyncio.Event()
+    s = AisSettings(aisstream_api_key="", ais_bboxes=f"{AMERICAS}|{ASIA}")
+    task = asyncio.create_task(ais_main.main(stop=stop, redis=r, settings=s))
+    await wait_until(lambda: r.kv.get(STATUS_KEY, {}).get("state") == "disabled")
+    view = json.loads(r.kv[STATUS_KEY]["shards"])
+    assert [(v["scope"], v["state"]) for v in view] == [(AMERICAS, "disabled"), (ASIA, "disabled")]
+    assert evaluate(r.kv[STATUS_KEY])[0]
+    stop.set()
+    assert await asyncio.wait_for(task, 5) == 0

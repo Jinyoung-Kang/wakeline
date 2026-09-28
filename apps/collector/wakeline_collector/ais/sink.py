@@ -2,11 +2,12 @@
 
 - 10 s 마다 바뀐 선박만 `wakeline:ships` 로 XADD(kind "ships", scope "ships"). 한 엔트리에 선박·정적 정보를 각각 최대 CHUNK 건,
   넘으면 part/parts 로 나눈다.
-- 닫힌 공백은 다음 틱(≤ 1 s)에 XADD(kind "ais_gap").
+- 닫힌 공백은 다음 틱(≤ 1 s)에 XADD(kind "ais_gap"). 구역 연결의 공백은 payload scope(그 구역의 정규화한 상자 문자열)를 싣는다(계약 v4 §D).
 - 상태 해시 `wakeline:ais:status` 는 5 s 마다 + 상태가 바뀔 때. updated_at 은 프로세스가 살아 있다는 heartbeat(헬스체크가 본다).
+  구역이 여럿이면 합계 필드 + shards(JSON 배열) — 합계의 의미는 shards.py 설명.
 
 Redis 장애: 선박 변경분은 쌓지 않고 ShipBook 에 '바뀜' 표시를 되돌린다 — 복구 뒤 첫 발행이 그때의 최신값을 싣는다(메모리는 선박 수 상한 안).
-공백 이벤트는 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, started_at) 유일키로 중복을 막는다).
+공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).
 """
 
 from __future__ import annotations
@@ -14,17 +15,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import orjson
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from wakeline_collector.ais.book import ShipBook
-from wakeline_collector.ais.feed import FeedState
 from wakeline_collector.ais.parse import iso_ms
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.masking import mask
 from wakeline_collector.publisher import MAXLEN, STREAM_SHIPS, Publisher
@@ -49,7 +52,7 @@ class AisSink:
         redis: Redis,
         *,
         book: ShipBook,
-        feed: FeedState,
+        shards: ShardSet,
         worker: Worker,
         queue: RawQueue,
         provider: str,
@@ -60,7 +63,7 @@ class AisSink:
         mono: Callable[[], float] = time.monotonic,
     ) -> None:
         self._r = redis
-        self.book, self.feed, self.worker, self.queue = book, feed, worker, queue
+        self.book, self.shards, self.worker, self.queue = book, shards, worker, queue
         self.provider, self.raw_ref, self.flush_s = provider, raw_ref, flush_s
         self._redact = redact or (lambda s: mask(s) or "")
         self._wall, self._mono = wall, mono
@@ -68,8 +71,6 @@ class AisSink:
         self._last_warn = 0.0
         self._prev_flush = (mono(), 0, 0, 0, 0)  # 직전 창 끝: (mono, msgs, dropped, quarantined, invalid)
         self._last_status = float("-inf")
-        self.msgs_per_s: float | None = None
-        self.lag_p50_s: float | None = None
         self.published_entries = 0
         self.published_ships = 0
         self.publish_errors = 0
@@ -86,23 +87,27 @@ class AisSink:
     # ── 선박 변경분 ──────────────────────────────────────────────
 
     def _window(self) -> dict[str, Any]:
-        """직전 발행 틱 이후의 건수(이번 창)."""
+        """직전 발행 틱 이후의 건수(이번 창). 구역마다 수신률·지연 중앙값도 이 창으로 갱신한다(상태 해시 shards)."""
         now = self._mono()
-        cur = (now, self.feed.msgs_total, self.queue.dropped, self.worker.quarantined_total, self.worker.invalid_total)
+        cur = (now, self.shards.msgs_total, self.queue.dropped, self.worker.quarantined_total, self.worker.invalid_total)
         prev, self._prev_flush = self._prev_flush, cur
         span = max(1e-3, cur[0] - prev[0])
         msgs = cur[1] - prev[1]
-        self.msgs_per_s = msgs / span
-        self.lag_p50_s = self.worker.take_lag_p50()
+        lags = self.worker.take_lag_p50()
+        for s in self.shards.active:
+            t0, m0 = s.window
+            s.window = (now, s.feed.msgs_total)
+            s.msgs_per_s = (s.feed.msgs_total - m0) / max(1e-3, now - t0)
+            s.lag_p50_s = lags.get(s.id)
         return {
             "msgs": msgs,
-            "msgs_per_s": round(self.msgs_per_s, 2),
+            "msgs_per_s": round(msgs / span, 2),
             "dropped": cur[2] - prev[2],
             "quarantined": cur[3] - prev[3],
             "invalid": cur[4] - prev[4],
             "window_s": round(span, 1),
-            "connected": self.feed.connected,
-            "bbox": self.feed.bbox,
+            "connected": self.shards.connected,
+            "bbox": self.shards.bbox,
             "ships_tracked": len(self.book),
             "queue_depth": self.queue.qsize(),
         }
@@ -155,69 +160,83 @@ class AisSink:
     # ── 공백 ─────────────────────────────────────────────────────
 
     async def publish_gaps(self) -> int:
-        """보관한 닫힌 공백을 순서대로 보낸다. 보낸 그 이벤트만 지운다 — 보내는 사이 보관 상한 때문에 밀려났으면 지우지 않는다."""
+        """보관한 닫힌 공백을 구역마다 순서대로 보낸다. 보낸 그 이벤트만 지운다 — 보내는 사이 보관 상한 때문에 밀려났으면 지우지 않는다.
+        XADD 가 실패하면 그 틱은 멈춘다(다음 틱에 다시)."""
         async with self._gap_lock:
-            pending = self.feed.gaps.pending
             n = 0
-            while pending:
-                ev = pending[0]
-                env = self._env.envelope(
-                    kind="ais_gap",
-                    scope="ships",
-                    provider=self.provider,
-                    fetched_at=datetime.fromtimestamp(self._wall(), UTC),
-                    raw_ref=self.raw_ref,
-                    count=1,
-                    payload=ev,
-                )
-                try:
-                    await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
-                except (RedisError, OSError) as e:
-                    self.publish_errors += 1
-                    self._warn("ais_gap xadd failed (%s) — %d gap event(s) pending", type(e).__name__, len(pending))
+            for pending in self.shards.pending_queues():
+                sent, ok = await self._publish_queue(pending)
+                n += sent
+                if not ok:
                     break
-                if pending and pending[0] is ev:
-                    pending.popleft()
-                n += 1
-                log.info("ais gap published: %s → %s (%s)", ev["started_at"], ev["ended_at"], ev["reason"])
             return n
+
+    async def _publish_queue(self, pending: deque[dict[str, str]]) -> tuple[int, bool]:
+        n = 0
+        while pending:
+            ev = pending[0]
+            env = self._env.envelope(
+                kind="ais_gap",
+                scope="ships",
+                provider=self.provider,
+                fetched_at=datetime.fromtimestamp(self._wall(), UTC),
+                raw_ref=self.raw_ref,
+                count=1,
+                payload=ev,
+            )
+            try:
+                await self._r.xadd(STREAM_SHIPS, env, maxlen=MAXLEN, approximate=True)  # type: ignore[arg-type]
+            except (RedisError, OSError) as e:
+                self.publish_errors += 1
+                self._warn("ais_gap xadd failed (%s) — %d gap event(s) pending", type(e).__name__, self.shards.gaps_pending)
+                return n, False
+            if pending and pending[0] is ev:
+                pending.popleft()
+            n += 1
+            where = f" scope={ev['scope'][:120]}" if ev.get("scope") else ""
+            log.info("ais gap published: %s → %s (%s)%s", ev["started_at"], ev["ended_at"], ev["reason"], where)
+        return n, True
 
     # ── 상태 해시 ────────────────────────────────────────────────
 
     def status_fields(self) -> dict[str, str]:
-        f, g, w = self.feed, self.feed.gaps, self.worker
-        last = g.last or {}
+        """상태 해시. 구역이 여럿이면 합계(의미는 shards.py) + shards(JSON). 구역 하나면 v4 이전과 같은 값이다."""
+        sh, w = self.shards, self.worker
+        last = sh.last_gap() or {}
+        opened = sh.gap_open()
+        deflate, backoff, rate, lag = sh.deflate, sh.backoff_s, sh.msgs_per_s, sh.lag_p50_s
         return {
             "provider": self.provider,
             "fixture": "1" if self.provider == "fixture" else "0",
-            "state": f.state,
-            "connected": "1" if f.connected else "0",
-            "connected_since": _iso(f.connected_since),
-            "last_msg_at": _iso(f.last_msg_at),
-            "msgs_per_s": "" if self.msgs_per_s is None else f"{self.msgs_per_s:.2f}",
-            "msgs_total": str(f.msgs_total),
+            "state": sh.state,
+            "connected": "1" if sh.connected else "0",
+            "connected_since": _iso(sh.connected_since),
+            "last_msg_at": _iso(sh.last_msg_at),
+            "msgs_per_s": "" if rate is None else f"{rate:.2f}",
+            "msgs_total": str(sh.msgs_total),
             "dropped_total": str(self.queue.dropped),
             "quarantined_total": str(w.quarantined_total),
             "invalid_total": str(w.invalid_total),
-            "gap_open_since": _iso(g.open_since),
-            "gap_reason": g.reason if g.open_since is not None else "",
+            "gap_open_since": _iso(opened[0]) if opened else "",
+            "gap_reason": opened[1] if opened else "",
             "last_gap_started_at": last.get("started_at", ""),
             "last_gap_ended_at": last.get("ended_at", ""),
             "last_gap_reason": last.get("reason", ""),
-            "gaps_pending": str(len(g.pending)),
-            "bbox": f.bbox,
-            "deflate": "" if f.deflate is None else ("1" if f.deflate else "0"),
-            "sessions_ended": str(f.sessions_ended),
-            "subscribe_updates": str(f.subscribe_updates),
-            "backoff_s": "" if f.backoff_s is None else f"{f.backoff_s:.1f}",
-            "last_error": self._redact(f.last_error)[:ERROR_TEXT_MAX],
-            "provider_error": self._redact(f.provider_error)[:ERROR_TEXT_MAX],
+            "gaps_pending": str(sh.gaps_pending),
+            "bbox": sh.bbox,
+            "deflate": "" if deflate is None else ("1" if deflate else "0"),
+            "sessions_ended": str(sh.sessions_ended),
+            "subscribe_updates": str(sh.subscribe_updates),
+            "backoff_s": "" if backoff is None else f"{backoff:.1f}",
+            "last_error": self._redact(sh.last_error)[:ERROR_TEXT_MAX],
+            "provider_error": self._redact(sh.provider_error)[:ERROR_TEXT_MAX],
             "queue_depth": str(self.queue.qsize()),
             "queue_max": str(self.queue.maxsize),
             "queue_bytes": str(self.queue.bytes),
             "ships_tracked": str(len(self.book)),
             "evicted_total": str(self.book.evicted),
-            "lag_p50_s": "" if self.lag_p50_s is None else f"{self.lag_p50_s:.1f}",
+            "lag_p50_s": "" if lag is None else f"{lag:.1f}",
+            "shards": orjson.dumps(sh.shards_view()).decode(),
             "published_ships_total": str(self.published_ships),
             "last_publish_at": _iso(self.last_publish_at),
             "publish_errors": str(self.publish_errors),
@@ -260,8 +279,8 @@ class AisSink:
                     next_flush += self.flush_s
                     if next_flush <= self._mono():  # 밀린 틱은 건너뛴다(한꺼번에 몰아 보내지 않음)
                         next_flush = self._mono() + self.flush_s
-                if now >= next_status or (self.feed.changed.is_set() and now - self._last_status >= STATUS_MIN_GAP_S):
-                    self.feed.changed.clear()
+                if now >= next_status or (self.shards.changed.is_set() and now - self._last_status >= STATUS_MIN_GAP_S):
+                    self.shards.changed.clear()
                     await self.write_status()
                     next_status = self._mono() + STATUS_EVERY_S
             except Exception:  # noqa: BLE001 — 예상 밖 오류 하나로 발행 루프가 멈추지 않게(다음 틱에 다시)
@@ -270,7 +289,7 @@ class AisSink:
                 next_flush = max(next_flush, self._mono() + TICK_S)
                 next_status = max(next_status, self._mono() + TICK_S)
             timeout = min(TICK_S, max(0.0, min(next_flush, next_status) - self._mono()))
-            await _wait_any(stop, self.feed.changed, timeout)
+            await _wait_any(stop, self.shards.changed, timeout)
 
     async def final(self) -> None:
         """종료 직전: 남은 변경분·공백을 보내고 마지막 상태(stopped, 공백 열림)를 쓴다. 발행이 예상 밖으로 실패해도 상태는 쓴다.

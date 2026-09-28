@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,56 @@ def ago(s: float) -> str:
 )
 def test_evaluate(h, ok):
     assert health.evaluate(h, NOW)[0] is ok
+
+
+def shard(state: str, last: float | None = None, gap: float | None = None) -> dict:
+    return {
+        "scope": "1,1,2,2",
+        "state": state,
+        "connected": state in ("subscribed", "receiving"),
+        "last_msg_at": None if last is None else ago(last),
+        "gap_open_since": None if gap is None else ago(gap),
+    }
+
+
+def with_shards(*shards: dict, top_state: str = "backoff", **top: str) -> dict:
+    return {"updated_at": ago(3), "state": top_state, "shards": json.dumps(list(shards)), **top}
+
+
+@pytest.mark.parametrize(
+    ("h", "ok"),
+    [
+        # 한 구역이라도 120 s 안에 받고 있으면 정상(계약 v4 §D)
+        (with_shards(shard("receiving", 1), shard("backoff", 600, 600)), True),
+        (with_shards(shard("receiving", 1), shard("stopped", 600, 600), top_state="stopped"), True),
+        (with_shards(shard("receiving", 1), shard("backoff")), True),  # 다른 구역은 처음부터 실패 중이어도
+        # 받는 구역이 없으면: 공백이 열린 구역이 모두 다시 붙는 중이어야 정상
+        (with_shards(shard("backoff", 600, 600), shard("connecting", 300, 300)), True),
+        (with_shards(shard("subscribed", 600, 600), shard("backoff", 300, 300)), True),
+        (with_shards(shard("backoff", 600, 600), shard("backoff")), True),
+        (with_shards(shard("backoff", 600, 600), shard("stopped", 300, 300), top_state="stopped"), False),
+        (with_shards(shard("receiving", 121), shard("receiving", 200)), False),  # 모두 조용하고 공백도 없다
+        (with_shards(shard("backoff"), shard("connecting")), False),  # 한 번도 받지 못했고 공백도 없다
+        (with_shards(shard("receiving", -600)), False),  # 미래 시각은 믿지 않는다
+        # 합계 state disabled(키 없음)는 구역과 상관없이 정상
+        (with_shards(shard("disabled"), shard("disabled"), top_state="disabled"), True),
+        # shards 가 비었거나 깨졌으면 합계 필드(v4 이전 규칙)
+        ({"updated_at": ago(3), "state": "receiving", "last_msg_at": ago(1), "shards": "[]"}, True),
+        ({"updated_at": ago(3), "state": "receiving", "last_msg_at": ago(1), "shards": "{broken"}, True),
+        ({"updated_at": ago(3), "state": "receiving", "last_msg_at": ago(500), "shards": "[1, 2]"}, False),
+        # heartbeat 가 오래됐으면 구역이 받고 있어도 비정상
+        ({**with_shards(shard("receiving", 1)), "updated_at": ago(61)}, False),
+    ],
+)
+def test_evaluate_with_shards(h, ok):
+    assert health.evaluate(h, NOW)[0] is ok
+
+
+def test_evaluate_with_shards_explains_itself():
+    ok, why = health.evaluate(with_shards(shard("receiving", 4), shard("backoff", 600, 600)), NOW)
+    assert ok and why == "1/2 shard(s) receiving, last message 4 s ago"
+    ok, why = health.evaluate(with_shards(shard("backoff", 600, 600), shard("stopped", 300, 300)), NOW)
+    assert not ok and "backoff,stopped" in why
 
 
 class FakeSyncRedis:

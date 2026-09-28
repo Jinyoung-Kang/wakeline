@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -12,8 +13,9 @@ from test_ais_helpers import decode, dumps, fixture_docs, validator
 from wakeline_collector.ais import sink as sink_mod
 from wakeline_collector.ais.book import ShipBook
 from wakeline_collector.ais.feed import FeedState, GapTracker
-from wakeline_collector.ais.parse import go_time, parse_message
+from wakeline_collector.ais.parse import go_time, iso_ms, parse_message
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.shards import SHARD_FIELDS, ShardSet
 from wakeline_collector.ais.sink import STATUS_KEY, AisSink
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.publisher import STREAM_SHIPS
@@ -23,13 +25,15 @@ SHIPS = validator("stream_envelope.v1.json", "/$defs/ships_payload")
 GAP = validator("stream_envelope.v1.json", "/$defs/ais_gap_payload")
 
 
-def _setup(provider="aisstream", r=None, **kw):
+def _setup(provider="aisstream", r=None, scope=None, **kw):
+    """구역 하나(scope=None 이면 구역 없는 수신원 — v4 이전과 같은 공백 모양)."""
     r = r if r is not None else FakeRedis()
     q = RawQueue(1000)
     book = ShipBook(provider)
-    feed = FeedState(provider)
+    shards = ShardSet(provider)
+    feed = shards.add(scope).feed
     w = Worker(q, book)
-    sink = AisSink(r, book=book, feed=feed, worker=w, queue=q, provider=provider, raw_ref="-", **kw)  # type: ignore[arg-type]
+    sink = AisSink(r, book=book, shards=shards, worker=w, queue=q, provider=provider, raw_ref="-", **kw)  # type: ignore[arg-type]
     return r, q, book, feed, w, sink
 
 
@@ -321,3 +325,135 @@ async def test_run_loop_survives_unexpected_errors(monkeypatch):
     assert not task.done() and sink.publish_errors >= 1
     stop.set()
     await asyncio.wait_for(task, 2)
+
+
+# ── 구역(계약 v4 §D) ────────────────────────────────────────
+
+A, B = "-90,-180,90,0", "-90,45,90,180"
+
+
+def _multi(r=None, scopes=(A, B)):
+    r = r if r is not None else FakeRedis()
+    q = RawQueue(1000)
+    book = ShipBook("aisstream")
+    shards = ShardSet("aisstream")
+    for sc in scopes:
+        shards.add(sc)
+    w = Worker(q, book)
+    sink = AisSink(r, book=book, shards=shards, worker=w, queue=q, provider="aisstream", raw_ref="-")  # type: ignore[arg-type]
+    return r, q, shards, w, sink
+
+
+def _cycle(feed: FeedState, scope: str, t: float, reason: str) -> None:
+    """받던 연결이 끊겼다가 다시 붙어 첫 메시지를 받는다 → 닫힌 공백 하나."""
+    feed.on_subscribed(scope, deflate=True)
+    feed.on_message(t)
+    feed.on_disconnected(reason)
+    feed.on_subscribed(scope, deflate=True)
+    feed.on_message(t + 7)
+
+
+async def test_gap_events_carry_their_shard_scope():
+    r, _q, shards, _w, sink = _multi()
+    a, b = shards.active
+    t = time.time()
+    _cycle(a.feed, A, t, "server closed (1006)")
+    _cycle(b.feed, B, t, "client closed (1011 keepalive ping timeout)")  # 같은 시각의 다른 구역 공백
+    assert await sink.publish_gaps() == 2 and shards.gaps_pending == 0
+    gaps = [_assert_valid(f) for _, f in r.streams[STREAM_SHIPS]]
+    assert [(g["scope"], g["reason"]) for g in gaps] == [
+        (A, "server closed (1006)"),
+        (B, "client closed (1011 keepalive ping timeout)"),
+    ]
+    assert gaps[0]["started_at"] == gaps[1]["started_at"] == iso_ms(t)  # api 는 (source, scope, started_at) 로 가른다
+
+
+async def test_unscoped_gap_event_has_no_scope_key():
+    r, _q, _book, feed, _w, sink = _setup(provider="fixture")
+    feed.on_subscribed("fixture:ais_east_asia_90s.jsonl", deflate=None, state="replaying")
+    feed.on_message(time.time())
+    feed.on_disconnected("ais process restart")
+    feed.on_message(time.time() + 1)
+    assert await sink.publish_gaps() == 1
+    assert "scope" not in _assert_valid(r.streams[STREAM_SHIPS][0][1])
+
+
+async def test_gap_publish_across_shards_stops_on_redis_error_and_resumes_in_order():
+    r, _q, shards, _w, sink = _multi()
+    a, b = shards.active
+    t = time.time()
+    _cycle(a.feed, A, t, "r-a1")
+    _cycle(a.feed, A, t + 20, "r-a2")
+    _cycle(b.feed, B, t + 5, "r-b1")
+    r.down = True
+    assert await sink.publish_gaps() == 0 and shards.gaps_pending == 3 and sink.publish_errors == 1
+    r.down = False
+    assert await sink.publish_gaps() == 3
+    assert [decode(f)["reason"] for _, f in r.streams[STREAM_SHIPS]] == ["r-a1", "r-a2", "r-b1"]
+
+
+async def test_gaps_of_a_removed_shard_are_still_published():
+    r, _q, shards, _w, sink = _multi()
+    _a, b = shards.active
+    _cycle(b.feed, B, time.time(), "server closed (1006)")
+    r.down = True
+    await sink.publish_gaps()
+    shards.begin_closing(b)
+    shards.retire(b)
+    r.down = False
+    assert await sink.publish_gaps() == 1
+    g = _assert_valid(r.streams[STREAM_SHIPS][0][1])
+    assert g["scope"] == B and not shards.retired_pending
+
+
+async def test_status_hash_aggregates_shards_and_lists_them():
+    r, q, shards, w, sink = _multi()
+    a, b = shards.active
+    now = time.time()
+    a.feed.on_subscribed(A, deflate=True)
+    b.feed.on_subscribed(B, deflate=True)
+    docs = fixture_docs()
+    for i, d in enumerate(docs[:200]):
+        d.pop("_recv_offset_s")
+        shard = a if i % 4 else b  # a 150건 · b 50건
+        lag = 2.0 if shard is a else 9.0
+        d["MetaData"]["time_utc"] = go_time(now - lag)
+        q.put(dumps(d), shard.id)
+        shard.feed.on_message(now)
+    w.drain_nowait(1000)
+    b.feed.on_disconnected("server closed (1006)")
+    await sink.flush()
+    stats = decode(r.streams[STREAM_SHIPS][0][1])["stats"]
+    assert stats["msgs"] == 200 and stats["connected"] is False and stats["bbox"] == f"{A}|{B}"
+    await sink.write_status()
+    h = r.kv[STATUS_KEY]
+    view = json.loads(h["shards"])
+    assert [tuple(v) for v in view] == [SHARD_FIELDS, SHARD_FIELDS] and [v["scope"] for v in view] == [A, B]
+    va, vb = view
+    assert va["connected"] is True and vb["connected"] is False and h["connected"] == "0"  # 모든 구역 연결일 때만 1
+    assert va["msgs_per_s"] > 0 and vb["msgs_per_s"] > 0
+    assert float(h["msgs_per_s"]) == pytest.approx(va["msgs_per_s"] + vb["msgs_per_s"], abs=0.02)  # 합
+    assert va["lag_p50_s"] == pytest.approx(2.0, abs=0.2) and vb["lag_p50_s"] == pytest.approx(9.0, abs=0.2)
+    assert float(h["lag_p50_s"]) == pytest.approx(9.0, abs=0.2)  # 최댓값
+    assert (
+        h["gap_open_since"] == vb["gap_open_since"] == iso_ms(now)
+        and h["gap_reason"] == vb["gap_reason"] == "server closed (1006)"
+    )
+    assert va["gap_open_since"] is None and h["last_msg_at"] == iso_ms(now) and h["msgs_total"] == "200"
+    assert h["bbox"] == f"{A}|{B}" and h["sessions_ended"] == "1" and h["state"] == "receiving"
+    b.feed.on_backoff(3.0)
+    await sink.write_status()
+    assert r.kv[STATUS_KEY]["state"] == "backoff" and json.loads(r.kv[STATUS_KEY]["shards"])[1]["state"] == "backoff"
+
+
+async def test_single_shard_status_keeps_the_pre_v4_fields():
+    r, _q, _book, feed, _w, sink = _setup(scope="18,105,46,150")
+    feed.on_subscribed("18,105,46,150", deflate=True)
+    _load_fixture(_w, feed)
+    await sink.flush()
+    await sink.write_status()
+    h = r.kv[STATUS_KEY]
+    assert h["bbox"] == "18,105,46,150" and h["connected"] == "1" and h["state"] == "receiving" and h["msgs_total"] == "484"
+    (only,) = json.loads(h["shards"])
+    assert only["scope"] == "18,105,46,150" and only["sessions_ended"] == 0
+    assert float(h["msgs_per_s"]) == pytest.approx(only["msgs_per_s"], abs=0.01)

@@ -45,6 +45,19 @@ async def test_queue_bytes_tracked_through_async_get():
     assert await q.get() == "héllo" and q.bytes == 0
 
 
+async def test_queue_keeps_the_shard_tag_with_each_raw_message():
+    """대기열은 구역이 함께 쓴다 — 원문마다 구역 번호를 붙여 정리 태스크가 구역별로 가른다(계약 v4 §D)."""
+    q = RawQueue(3, max_bytes=100)
+    q.put(b"a", 0)
+    q.put(b"bb", 2)
+    q.put("ccc")  # tag 없음 = 0
+    assert q.get_tagged_nowait() == (0, b"a") and await q.get_tagged() == (2, b"bb")
+    assert q.bytes == 3 and q.get_nowait() == "ccc" and q.bytes == 0
+    for i in range(4):
+        q.put(b"x%d" % i, i)
+    assert q.dropped == 1 and [q.get_tagged_nowait() for _ in range(3)] == [(1, b"x1"), (2, b"x2"), (3, b"x3")]
+
+
 def test_queue_rejects_bad_size():
     for kw in ({"maxsize": 0}, {"max_bytes": 0}):
         with pytest.raises(ValueError):

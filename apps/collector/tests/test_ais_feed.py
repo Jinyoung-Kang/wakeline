@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from test_ais_helpers import T0_EPOCH
 
 from wakeline_collector.ais.feed import FeedState, GapTracker, parse_iso
@@ -128,3 +130,62 @@ def test_feed_disabled():
     f = FeedState("aisstream")
     f.on_disabled("AISSTREAM_API_KEY not set")
     assert f.state == "disabled" and f.last_error == "AISSTREAM_API_KEY not set"
+
+
+# ── 구역(계약 v4 §D) ────────────────────────────────────────
+
+
+def test_gap_carries_the_scope_it_was_opened_with():
+    """공백 scope = 공백이 열린 순간 그 연결이 구독하던 상자. 다시 붙을 때 상자가 바뀌어도(설정 변경) 바꾸지 않는다."""
+    wall, mono = Clock(T0_EPOCH), Clock(500.0)
+    f = FeedState("aisstream", scope="18,105,46,150", wall=wall, mono=mono)
+    f.on_subscribed("18,105,46,150", deflate=True)
+    f.on_message(T0_EPOCH + 1)
+    f.on_disconnected("server closed (1006)")
+    assert f.gaps.open_since == T0_EPOCH + 1 and f.gaps.scope == "18,105,46,150"
+    f.on_subscribed("10,100,20,110", deflate=True)  # 새 상자로 다시 붙음
+    assert f.scope == "10,100,20,110" and f.gaps.scope == "18,105,46,150"
+    f.on_message(T0_EPOCH + 30)
+    assert f.gaps.last == {
+        "started_at": iso_ms(T0_EPOCH + 1),
+        "ended_at": iso_ms(T0_EPOCH + 30),
+        "reason": "server closed (1006)",
+        "scope": "18,105,46,150",
+    }
+    assert f.gaps.scope is None
+    f.on_resubscribed("11,101,21,111")  # 같은 연결에서 재구독 → 이후 공백의 구역
+    f.on_stopped()
+    assert f.gaps.scope == "11,101,21,111" and f.gaps.reason == "ais process stopped"
+
+
+def test_unscoped_feed_never_labels_gaps():
+    """fixture 재생(구독 영역 없음)은 scope 가 없다 — 'fixture:<파일>' 을 상자처럼 싣지 않는다."""
+    f = FeedState("fixture")
+    f.on_subscribed("fixture:ais_east_asia_90s.jsonl", deflate=None, state="replaying")
+    assert f.scope is None
+    f.on_message(T0_EPOCH)
+    f.on_disconnected("x")
+    ev = f.gaps.close(T0_EPOCH + 5)
+    assert ev is not None and "scope" not in ev
+
+
+def test_gap_restore_keeps_the_given_scope_and_empty_scope_is_none():
+    g = GapTracker()
+    g.restore({"provider": "aisstream", "gap_open_since": iso_ms(T0_EPOCH)}, "aisstream", T0_EPOCH + 10, "1,1,2,2")
+    assert g.scope == "1,1,2,2"
+    assert g.close(T0_EPOCH + 20)["scope"] == "1,1,2,2"
+    g.open(T0_EPOCH + 30, "x", "")
+    assert g.scope is None and "scope" not in g.close(T0_EPOCH + 40)
+
+
+def test_feeds_can_share_one_changed_event_and_record_error_times():
+    wall = Clock(T0_EPOCH)
+    shared = asyncio.Event()
+    a, b = FeedState("aisstream", changed=shared, wall=wall), FeedState("aisstream", changed=shared, wall=wall)
+    b.on_connecting()
+    assert a.changed is shared and shared.is_set()
+    wall.t += 5
+    a.on_disconnected("network error: OSError")
+    a.on_error("slow down")
+    assert a.last_error_at == T0_EPOCH + 5 and a.provider_error_at == T0_EPOCH + 5 and b.last_error_at is None
+    assert parse_iso(123) is None  # type: ignore[arg-type]  # JSON 에서 온 문자열이 아닌 값

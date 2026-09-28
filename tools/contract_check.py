@@ -21,8 +21,8 @@ from typing import get_args  # noqa: E402
 from jsonschema import Draft202012Validator, FormatChecker  # noqa: E402
 from referencing import Registry, Resource  # noqa: E402
 
+from wakeline_collector.ais.bbox import format_bboxes, parse_shards  # noqa: E402
 from wakeline_collector.ais.book import STATE_FIELDS, ShipBook  # noqa: E402
-from wakeline_collector.ais.feed import FeedState  # noqa: E402
 from wakeline_collector.ais.parse import (  # noqa: E402
     POSITION_CLASS,
     POSITION_SOURCE,
@@ -33,6 +33,7 @@ from wakeline_collector.ais.parse import (  # noqa: E402
     parse_message,
 )
 from wakeline_collector.ais.queue import RawQueue  # noqa: E402
+from wakeline_collector.ais.shards import SHARD_FIELDS, ShardSet  # noqa: E402
 from wakeline_collector.ais.sink import AisSink  # noqa: E402
 from wakeline_collector.ais.worker import Worker  # noqa: E402
 from wakeline_collector.demand import HotCell, parse_cell_key  # noqa: E402
@@ -179,24 +180,42 @@ def check_ships(env_v: Draft202012Validator) -> int:
     print(f"{'FAIL' if missing_types else 'ok  '} ais fixture covers all subscribed message types: {sorted(types)}")
     failures += bool(missing_types)
 
-    async def run() -> tuple[list[dict[str, str]], Worker]:
+    # 구역 둘(계약 v4 §D 운영 권장값): 구역 1 이 fixture 를 받고, 구역 2 는 끊겼다가 다시 받는다 → 구역 2 의 scope 가 붙은 공백
+    ops = parse_shards("-90,-180,90,0|-90,45,90,180")
+    scopes = [format_bboxes(x) for x in ops]
+
+    async def run() -> tuple[list[dict[str, str]], Worker, dict[str, str], list[dict[str, str]]]:
         cap = _CaptureRedis()
-        q, book, feed = RawQueue(), ShipBook("aisstream"), FeedState("aisstream")
+        q, book, shards = RawQueue(), ShipBook("aisstream"), ShardSet("aisstream")
+        a, b = (shards.add(sc) for sc in scopes)
         w = Worker(q, book)
-        sink = AisSink(cap, book=book, feed=feed, worker=w, queue=q, provider="aisstream", raw_ref="-")  # type: ignore[arg-type]
+        sink = AisSink(cap, book=book, shards=shards, worker=w, queue=q, provider="aisstream", raw_ref="-")  # type: ignore[arg-type]
         now = datetime.now(UTC).timestamp()
-        feed.on_subscribed("18,105,46,150", deflate=True)
+        for sh, sc in ((a, scopes[0]), (b, scopes[1])):
+            sh.feed.on_subscribed(sc, deflate=True)
         for d in lines:
             d = {**d, "MetaData": {**d["MetaData"], "time_utc": go_time(now + d.get("_recv_offset_s", 0) - 90)}}
-            w.handle(json.dumps(d).encode())
-            feed.on_message(now)
-        feed.gaps.open(now - 60, "server closed (1006)")
-        feed.gaps.close(now)
+            w.handle(json.dumps(d).encode(), a.id)
+            a.feed.on_message(now)
+        b.feed.on_message(now - 60)
+        b.feed.on_disconnected("server closed (1006)")
+        b.feed.on_subscribed(scopes[1], deflate=True)
+        b.feed.on_message(now)
         await sink.flush()
         await sink.publish_gaps()
-        return cap.entries, w
+        status = sink.status_fields()
+        # fixture 재생(구역 하나, 구독 영역 없음): 공백에 scope 가 없다
+        fcap, fshards, fbook, fq = _CaptureRedis(), ShardSet("fixture"), ShipBook("fixture"), RawQueue()
+        fx = fshards.add(None)
+        fsink = AisSink(fcap, book=fbook, shards=fshards, worker=Worker(fq, fbook), queue=fq, provider="fixture", raw_ref="fixture")  # type: ignore[arg-type]
+        fx.feed.on_subscribed("fixture:ais_east_asia_90s.jsonl", deflate=None, state="replaying")
+        fx.feed.on_message(now - 30)
+        fx.feed.on_disconnected("ais process restart")
+        fx.feed.on_message(now)
+        await fsink.publish_gaps()
+        return cap.entries, w, status, fcap.entries
 
-    entries, w = asyncio.run(run())
+    entries, w, status, fixture_entries = asyncio.run(run())
     rejected = {k: v for k, v in w.counts.items() if k in ("json", "shape", "type", "invalid_flag", "mmsi", "time", "position_range", "part")}
     print(f"{'FAIL' if rejected else 'ok  '} ais fixture parse: {w.processed} messages, rejected {rejected or 0}")
     failures += bool(rejected)
@@ -211,6 +230,44 @@ def check_ships(env_v: Draft202012Validator) -> int:
     if {f["kind"] for f in entries} != {"ships", "ais_gap"}:
         print("FAIL ais entries missing a kind:", [f["kind"] for f in entries])
         failures += 1
+    # 구역(계약 v4 §D): 공백 scope = 그 구역의 정규화한 상자 문자열, fixture 공백은 scope 없음, 스키마가 틀린 scope 를 거부
+    gaps = [_decode(f) for f in entries if f["kind"] == "ais_gap"]
+    fx_gaps = [_decode(f) for f in fixture_entries]
+    fx_errs = [e for g in fx_gaps for e in gap_v.iter_errors(g)]
+    base = {"started_at": "2026-09-28T00:00:00.000Z", "ended_at": "2026-09-28T00:01:00.000Z", "reason": "r"}
+    bad_scopes = ["", "|".join(scopes), "x" * 1025, "fixture:ais_east_asia_90s.jsonl", ";".join(["1,1,2,2"] * 17)]
+    accepted = [sc for sc in bad_scopes if not list(gap_v.iter_errors({**base, "scope": sc}))]
+    scope_bad = [g.get("scope") for g in gaps] != [scopes[1]] or [("scope" in g) for g in fx_gaps] != [False] or fx_errs or accepted
+    print(
+        f"{'FAIL' if scope_bad else 'ok  '} ais_gap scope: shard gaps {[g.get('scope') for g in gaps]}, fixture gaps unscoped "
+        f"{[('scope' not in g) for g in fx_gaps]}, bad scopes accepted {len(accepted)}"
+    )
+    failures += bool(scope_bad)
+    # 상태 해시 shards(≤ 3, 계약 필드 그대로)와 합계의 의미
+    try:
+        view = json.loads(status["shards"])
+    except (KeyError, ValueError):
+        view = None
+    bad_status = []
+    if not isinstance(view, list) or not 1 <= len(view) <= 3 or any(tuple(v) != SHARD_FIELDS for v in view):
+        bad_status.append(f"shards != list of {SHARD_FIELDS}")
+    else:
+        if [v["scope"] for v in view] != scopes:
+            bad_status.append("shards[].scope")
+        rates = [v["msgs_per_s"] for v in view if v["msgs_per_s"] is not None]
+        if not rates or abs(float(status["msgs_per_s"]) - sum(rates)) > 0.02:
+            bad_status.append("msgs_per_s != sum")
+        lags = [v["lag_p50_s"] for v in view if v["lag_p50_s"] is not None]
+        if not lags or abs(float(status["lag_p50_s"]) - max(lags)) > 0.05:
+            bad_status.append("lag_p50_s != max")
+        if status["connected"] != ("1" if all(v["connected"] for v in view) else "0"):
+            bad_status.append("connected != all")
+        if status["last_msg_at"] != max(v["last_msg_at"] for v in view if v["last_msg_at"]):
+            bad_status.append("last_msg_at != max")
+        if status["bbox"] != "|".join(scopes):
+            bad_status.append("bbox")
+    print(f"{'FAIL' if bad_status else 'ok  '} ais status shards/aggregates" + (f": {bad_status}" if bad_status else f": {len(view or [])} shards"))
+    failures += bool(bad_status)
     # 정직성: '값 없음' 표기가 null 로 바뀌었다(fixture 의 heading 511 · cog 360 · rot -128 · ETA/IMO/선종/흘수 0)
     ships = [s for f in entries if f["kind"] == "ships" for s in _decode(f)["ships"]]  # type: ignore[index]
     statics = [s for f in entries if f["kind"] == "ships" for s in _decode(f)["static"]]  # type: ignore[index]

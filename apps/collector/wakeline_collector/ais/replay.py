@@ -2,6 +2,7 @@
 
 외부 호출 없음. 각 메시지의 MetaData.time_utc 를 '지금' 으로 바꿔 실시간 경로(대기열 → 정리 → 발행)를 그대로 태운다.
 공급자 표시는 "fixture". 한 바퀴(≈ 90 s)가 끝나면 처음 위치로 돌아간다(선박이 조금 뒤로 이동해 보인다 — 재생 자료의 한계).
+재생은 구역 하나다(계약 v4 §D) — 구독 영역이 없으므로 공백에 scope 를 붙이지 않는다.
 """
 
 from __future__ import annotations
@@ -55,12 +56,14 @@ class FixtureReplayer:
         loop: bool = True,
         wall: Callable[[], float] = time.time,
         mono: Callable[[], float] = time.monotonic,
+        tag: int = 0,
     ) -> None:
         if speed <= 0:
             raise ValueError("speed must be > 0")
         self.path, self.queue, self.feed = path, queue, feed
         self.speed, self.loop = speed, loop
         self._wall, self._mono = wall, mono
+        self.tag = tag  # 대기열에 넣는 원문의 구역 번호
         self.rounds = 0
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -74,7 +77,7 @@ class FixtureReplayer:
                     return
                 now = self._wall()
                 out = {**doc, "MetaData": {**doc["MetaData"], "time_utc": go_time(now)}}
-                self.queue.put(orjson.dumps(out))
+                self.queue.put(orjson.dumps(out), self.tag)
                 self.feed.on_message(now)
             self.rounds += 1
             if not self.loop or await _stopped_within(stop, 1.0 / self.speed):

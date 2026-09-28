@@ -1,7 +1,8 @@
 """런타임 구독 영역: Redis 해시 wakeline:settings 의 ais_bboxes(운영 API 가 씀, 이 프로세스는 읽기 전용)를 30 s 마다 읽는다.
 
 값이 없거나 비면 환경변수 기본값(AIS_BBOXES). 형식이 틀리면 무시하고 현재 구독을 유지한다(분당 1회 경고).
-Redis 오류도 현재 구독 유지. 바뀐 값은 BboxState 로 넘기고, 연결 세션이 5 s 속도 제한 안에서 구독을 다시 보낸다.
+Redis 오류도 현재 구독 유지. 바뀐 값(구역 목록, 계약 v4 §D)은 ShardsState 로 넘기고, 구역 관리(AisStreamPool)가 연결을 늘리거나 줄이며
+상자만 바뀐 구역은 그 연결에서 5 s 속도 제한 안에 구독을 다시 보낸다.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import time
 
 from redis.asyncio import Redis
 
-from wakeline_collector.ais.bbox import BBox, BboxState, format_bboxes, parse_bboxes
+from wakeline_collector.ais.bbox import Shards, ShardsState, format_shards, parse_shards
 
 log = logging.getLogger("ais.settings")
 
@@ -22,7 +23,7 @@ REFRESH_S = 30.0
 
 
 class BboxWatcher:
-    def __init__(self, redis: Redis, bboxes: BboxState, default: tuple[BBox, ...], *, interval_s: float = REFRESH_S) -> None:
+    def __init__(self, redis: Redis, bboxes: ShardsState, default: Shards, *, interval_s: float = REFRESH_S) -> None:
         self._r = redis
         self.bboxes = bboxes
         self.default = default
@@ -50,13 +51,13 @@ class BboxWatcher:
             target = self.default
         else:
             try:
-                target = parse_bboxes(text)
+                target = parse_shards(text)
             except ValueError as e:
                 self.invalid += 1
                 self._warn("ignoring invalid runtime ais_bboxes (%s) — keeping current subscription", str(e)[:120])
                 return "invalid"
         if self.bboxes.set(target):
-            log.info("ais bbox setting changed → %s", format_bboxes(target))
+            log.info("ais bbox setting changed → %s (%d shard(s))", format_shards(target), len(target))
             return "changed"
         return "same"
 

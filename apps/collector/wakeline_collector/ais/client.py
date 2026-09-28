@@ -8,6 +8,8 @@
 - 데이터 메시지가 idle_timeout_s(기본 120 s) 동안 없으면 조용히 멈춘 연결로 보고 다시 붙는다(서버가 close 프레임 없이 끊는 사례 실측).
 - 끊기면 FeedState 가 공백을 열고, Backoff(1→60 s, ±20 %, 60 s 정상 연결 뒤에만 초기화) 만큼 쉬었다가 다시 붙는다.
 - 구독 영역이 바뀌면(BboxState) 같은 연결에서 구독을 다시 보낸다 — 5 s 에 한 번까지, 마지막 값만.
+- 이 클래스는 연결(구역) 하나다. 구역이 여럿이면 AisStreamPool(pool.py)이 구역마다 하나씩 띄운다 — Backoff·FeedState·idle 기한·
+  재구독 제한은 연결마다 따로, 대기열은 함께(원문에 구역 번호 tag 를 붙인다, 계약 v4 §D).
 
 비밀값: API 키는 구독 메시지 본문에만 실린다(URL·헤더·로그에 없음). websockets 로거는 DEBUG 에서 프레임 내용을 찍으므로
 WARNING 으로 고정하고, 오류 문구는 masking 규칙 + 키 문자열 치환을 거친다.
@@ -40,6 +42,13 @@ logging.getLogger("websockets").setLevel(logging.WARNING)  # DEBUG 는 구독 �
 AIS_URL = "wss://stream.aisstream.io/v0/stream"
 MAX_MESSAGE_BYTES = 1 << 20
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def check_url(url: str) -> None:
+    """키가 평문으로 나가지 않게: 암호화하지 않은 ws:// 는 이 기계 안(시험용 가짜 서버)에서만 허용."""
+    parts = urlsplit(url)
+    if not (parts.scheme == "wss" or (parts.scheme == "ws" and parts.hostname in LOOPBACK)):
+        raise ValueError("AIS stream URL must use wss:// (ws:// only for loopback test servers)")
 
 
 def make_redactor(secret: str) -> Callable[[str], str]:
@@ -84,11 +93,10 @@ class AisStreamClient:
         ping_timeout_s: float = 20.0,
         close_timeout_s: float = 3.0,
         wall: Callable[[], float] = time.time,
+        tag: int = 0,
+        label: str = "",
     ) -> None:
-        parts = urlsplit(url)
-        if not (parts.scheme == "wss" or (parts.scheme == "ws" and parts.hostname in LOOPBACK)):
-            # 키가 평문으로 나가지 않게: 암호화하지 않은 ws:// 는 이 기계 안(시험용 가짜 서버)에서만 허용
-            raise ValueError("AIS stream URL must use wss:// (ws:// only for loopback test servers)")
+        check_url(url)
         if not api_key:
             raise ValueError("API key is required")
         self._key = api_key
@@ -110,6 +118,8 @@ class AisStreamClient:
             "max_queue": 64,
         }
         self._wall = wall
+        self.tag = tag  # 대기열에 넣는 원문의 구역 번호
+        self.name = f"ais {label}" if label else "ais"  # 로그용
         self.redact = make_redactor(api_key)
 
     def subscription(self, boxes: tuple[BBox, ...]) -> str:
@@ -133,14 +143,14 @@ class AisStreamClient:
                 reason = session.result()
             except Exception as e:  # noqa: BLE001 — 예상 밖 오류도 재연결로 흡수한다
                 reason = f"unexpected error: {type(e).__name__}"
-                log.exception("ais session crashed")
+                log.exception("%s session crashed", self.name)
             reason = self.redact(reason)
             healthy = self.feed.on_disconnected(reason)
             if self.backoff.session_ended(healthy):
-                log.info("ais connection was healthy for %.0f s — backoff reset", healthy or 0)
+                log.info("%s connection was healthy for %.0f s — backoff reset", self.name, healthy or 0)
             delay = self.backoff.next_delay()
             self.feed.on_backoff(delay)
-            log.warning("ais disconnected: %s — reconnecting in %.1f s", reason, delay)
+            log.warning("%s disconnected: %s — reconnecting in %.1f s", self.name, reason, delay)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=delay)
             except TimeoutError:
@@ -159,7 +169,7 @@ class AisStreamClient:
                 limiter.mark()
                 deflate = _deflate_negotiated(ws)
                 self.feed.on_subscribed(format_bboxes(boxes), deflate=deflate)
-                log.info("ais subscribed: bbox=%s deflate=%s", format_bboxes(boxes), deflate)
+                log.info("%s subscribed: bbox=%s deflate=%s", self.name, format_bboxes(boxes), deflate)
                 resub = asyncio.create_task(self._resubscriber(ws, version, limiter))
                 phase = "read"
                 try:
@@ -186,10 +196,10 @@ class AisStreamClient:
 
     async def _read(self, ws: ClientConnection) -> None:
         loop = asyncio.get_running_loop()
-        put, on_message, wall = self.queue.put, self.feed.on_message, self._wall
+        put, on_message, wall, tag = self.queue.put, self.feed.on_message, self._wall, self.tag
         async with asyncio.timeout_at(loop.time() + self.idle_timeout_s) as deadline:
             async for msg in ws:
-                put(msg)
+                put(msg, tag)
                 if is_provider_error(msg):
                     continue  # 데이터가 아니다(모듈 설명)
                 deadline.reschedule(loop.time() + self.idle_timeout_s)
@@ -205,4 +215,4 @@ class AisStreamClient:
             await ws.send(self.subscription(boxes))
             limiter.mark()
             self.feed.on_resubscribed(format_bboxes(boxes))
-            log.info("ais subscription updated: bbox=%s", format_bboxes(boxes))
+            log.info("%s subscription updated: bbox=%s", self.name, format_bboxes(boxes))

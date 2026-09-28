@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
 from test_ais_helpers import dumps, fixture_docs, position
 
 from wakeline_collector.ais import worker as worker_mod
@@ -44,15 +45,15 @@ def test_worker_processes_fixture():
         }
     )
     lag = w.take_lag_p50()
-    assert lag is not None and 0 <= lag <= 120
-    assert w.take_lag_p50() is None  # 표본을 비웠다
+    assert set(lag) == {0} and 0 <= lag[0] <= 120  # tag 없이 넣은 원문은 구역 0
+    assert w.take_lag_p50() == {}  # 표본을 비웠다
 
 
 def test_worker_counts_rejects_quarantine_and_provider_error():
     errors: list[str] = []
     q = RawQueue(100)
     now = time.time()
-    w = Worker(q, ShipBook("aisstream"), wall=lambda: now, on_provider_error=errors.append)
+    w = Worker(q, ShipBook("aisstream"), wall=lambda: now, on_provider_error=lambda tag, text: errors.append(text))
     w.handle(b"{bad")
     w.handle(b'{"error": "Api Key Is Not Valid"}')
     w.handle(dumps(position(time_utc=go_time(now), Latitude=91)))
@@ -88,3 +89,19 @@ async def test_worker_run_yields_and_survives_errors(monkeypatch):
     await asyncio.sleep(0.01)
     assert not task.done() and w.counts["worker_error"] == 1
     task.cancel()
+
+
+def test_worker_splits_lag_and_provider_errors_by_shard_tag():
+    """구역(연결)마다 지연 중앙값을 따로 낸다 — 한 연결만 뒤처져도 상태 해시 shards[].lag_p50_s 에 보인다(계약 v4 §D)."""
+    now = time.time()
+    errors: list[tuple[int, str]] = []
+    q = RawQueue(100)
+    w = Worker(q, ShipBook("aisstream"), wall=lambda: now, on_provider_error=lambda tag, text: errors.append((tag, text)))
+    q.put(dumps(position(mmsi=440000001, time_utc=go_time(now - 2))), 0)
+    q.put(dumps(position(mmsi=440000002, time_utc=go_time(now - 4))), 0)
+    q.put(dumps(position(mmsi=440000003, time_utc=go_time(now - 30))), 1)
+    q.put(b'{"error": "Concurrent connections per user exceeded"}', 1)
+    assert w.drain_nowait(10) == 4
+    lag = w.take_lag_p50()
+    assert lag[0] == pytest.approx(3.0, abs=0.01) and lag[1] == pytest.approx(30.0, abs=0.01)
+    assert errors == [(1, "Concurrent connections per user exceeded")]
