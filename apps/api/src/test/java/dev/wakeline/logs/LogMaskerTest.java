@@ -123,6 +123,32 @@ class LogMaskerTest {
         assertThat(masked).as("cases where the rules masked something").isGreaterThan(1_000);
     }
 
+    /**
+     * (?i) 규칙은 접은 글(Java UNICODE_CASE 비교와 같은 접기)에 규칙의 낱말이 있을 때만 돈다 — 흔한 글(스택 등)에서 규칙 12개가 글자마다
+     * 대소문자 비교를 하던 비용을 없앤다. 결과는 규칙을 모두 돌린 것과 글자 하나까지 같아야 한다(대소문자 변형 ſ · K · İ · ı 포함).
+     */
+    @Test
+    void keywordPrefilterDoesNotChangeTheOutput() {
+        Random rnd = new Random(29092026);
+        String[] parts = {"client_secret=", "CLIENT_ID=", "serviceKey=", "authKey=", "auth\u212Aey=", "api-key=", "API_KEY=", "?key=", "&apikey=",
+                "&access_key=", "pa\u017f\u017fword=", "password=", "TOKEN=", "secret=", "client_\u0130d=", "client_\u0131d=", "Bearer ", "bearer\u001c",
+                "Authorization: ", "AUTHORIZATION:", "\"token\": \"", "'secret':'", "\"refresh_token\"", "\"", "'", ":", " ", "&", "=", "?", "abc",
+                "x", "\n", "\r", "é", "\uD835\uDC00", "*", "key", "KEY", "tok", "en="};
+        int masked = 0;
+        for (int i = 0; i < 20_000; i++) {
+            StringBuilder sb = new StringBuilder();
+            for (int k = rnd.nextInt(10); k > 0; k--) sb.append(parts[rnd.nextInt(parts.length)]);
+            String s = sb.toString();
+            String all = s;
+            for (LogMasker.Rule r : LogMasker.RULES) all = r.pattern().matcher(all).replaceAll(r.replacement()); // 거르지 않고 모든 규칙
+            String now = LogMasker.maskKeyRules(s);
+            assertThat(now).as("input %s", s).isEqualTo(all);
+            if (!all.equals(s)) masked++;
+        }
+        assertThat(masked).as("cases where a key rule masked something").isGreaterThan(5_000);
+        assertThat(LogMasker.fold("PA\u017f\u017fWORD \u212A \u0130 \u0131 \uD835\uDC00")).isEqualTo("password k i i \uD835\uDC00");
+    }
+
     @Test
     void maskingIsIdempotent() {
         String once = LogMasker.mask("password=hunter2 Bearer abcdefghijklmnop redis://u:pw@h:1 {\"token\":\"t\"}");

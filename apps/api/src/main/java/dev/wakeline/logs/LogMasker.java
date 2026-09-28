@@ -36,24 +36,37 @@ public final class LogMasker {
     static final String WD = "\\p{L}\\p{N}_";
     private static final String KEYS = "(?:client_secret|client_id|serviceKey|authKey|api[_-]?key|password|access_token|refresh_token|token|secret)";
 
-    private record Rule(Pattern pattern, String replacement) {}
+    /**
+     * (?i) 규칙 하나: 식 · 바꿀 글 · 낱말(접은 글에 이 중 하나도 없으면 이 규칙은 일치할 수 없다 — 식을 돌리지 않는다).
+     * 규칙마다 글자마다 유니코드 대소문자 비교를 하면 흔한 스택 7,800자에 규칙 하나 50 µs · 모두 0.6 ms 가 들었다(읽을 때마다 3,000건).
+     */
+    record Rule(Pattern pattern, String replacement, List<String> words) {
+        boolean mayMatch(String folded) {
+            for (String w : words) if (folded.contains(w)) return true;
+            return false;
+        }
+    }
+
+    private static Rule rule(String regex, String replacement, String... words) {
+        return new Rule(Pattern.compile(regex, CI), replacement, List.of(words));
+    }
 
     /** 순서가 결과를 정한다 — masking.py 의 _PATTERNS 와 같은 순서(새 쿼리 키 규칙은 api_key= 다음). */
-    private static final List<Rule> RULES = List.of(
-            new Rule(Pattern.compile("(client_secret=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(client_id=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(bearer[" + SP + "]+)[A-Za-z0-9\\-._~+/]+=*", CI), "$1***"),
-            new Rule(Pattern.compile("(authorization:[" + SP + "]*)[^\\r\\n]+", CI), "$1***"),
-            new Rule(Pattern.compile("(serviceKey=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(authKey=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(api[_-]?key=)[^&" + SP + "]+", CI), "$1***"),
+    static final List<Rule> RULES = List.of(
+            rule("(client_secret=)[^&" + SP + "]+", "$1***", "client_secret="),
+            rule("(client_id=)[^&" + SP + "]+", "$1***", "client_id="),
+            rule("(bearer[" + SP + "]+)[A-Za-z0-9\\-._~+/]+=*", "$1***", "bearer"),
+            rule("(authorization:[" + SP + "]*)[^\\r\\n]+", "$1***", "authorization:"),
+            rule("(serviceKey=)[^&" + SP + "]+", "$1***", "servicekey="),
+            rule("(authKey=)[^&" + SP + "]+", "$1***", "authkey="),
+            rule("(api[_-]?key=)[^&" + SP + "]+", "$1***", "key="),
             // v5: ?key= · &apikey= · &access_key= (예: 선박 정보 공급자 URL). 앞이 '?'·'&' 일 때만 — 문장 속 "primary key=…" 는 그대로
-            new Rule(Pattern.compile("([?&](?:key|apikey|access_key)=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(password=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(token=)[^&" + SP + "]+", CI), "$1***"),
-            new Rule(Pattern.compile("(secret=)[^&" + SP + "]+", CI), "$1***"),
-            // JSON·파이썬 repr 형태: "authKey": "…" / 'access_token': '…' ('=' 가 없어 위 규칙이 못 잡는다)
-            new Rule(Pattern.compile("([\"']" + KEYS + "[\"'][" + SP + "]*:[" + SP + "]*[\"'])[^\"']*([\"'])", CI), "$1***$2"));
+            rule("([?&](?:key|apikey|access_key)=)[^&" + SP + "]+", "$1***", "key="),
+            rule("(password=)[^&" + SP + "]+", "$1***", "password="),
+            rule("(token=)[^&" + SP + "]+", "$1***", "token="),
+            rule("(secret=)[^&" + SP + "]+", "$1***", "secret="),
+            // JSON·파이썬 repr 형태: "authKey": "…" / 'access_token': '…' ('=' 가 없어 위 규칙이 못 잡는다). 낱말: KEYS 가 모두 이 중 하나를 품는다
+            rule("([\"']" + KEYS + "[\"'][" + SP + "]*:[" + SP + "]*[\"'])[^\"']*([\"'])", "$1***$2", "secret", "client_id", "key", "password", "token"));
     // 그다음 maskUserinfo · maskJwt(마지막 두 규칙 — 글자 수에 비례하는 시간으로 쓴 것)
     /** 낱말 글자열 하나, 뒤에 '://호스트:비밀번호' 와 '@' 가 오면 그것까지. 그룹: 1 scheme · 2 ://호스트: · 3 '@'(없으면 가리지 않는다). */
     private static final Pattern USERINFO = Pattern.compile("([" + WD + "]+)(?:(://[^:/" + SP + "]+:)[^@" + SP + "]+(@)?)?");
@@ -89,14 +102,39 @@ public final class LogMasker {
     /** 모양 규칙 → 등록 값 치환 → 앞에서 limit 코드 포인트. null → null. */
     public static String mask(String text, int limit) {
         if (text == null) return null;
+        String out = maskJwt(maskUserinfo(maskKeyRules(text)));
+        for (String secret : SECRETS) if (out.contains(secret)) out = out.replace(secret, "***");
+        return cut(out, limit);
+    }
+
+    /**
+     * (?i) 규칙들({@link #RULES})을 차례로. 규칙은 접은 글({@link #fold})에 낱말이 있을 때만 돈다 — Java 의 대소문자 무시 비교(UNICODE_CASE)는
+     * 글자마다 toLowerCase(toUpperCase(c)) 로 견주므로, 일치하는 곳이 있으면 접은 글에 그 낱말이 그대로 있다. 앞 규칙이 바꾼 곳은 '***' 이라
+     * 새 낱말을 만들지 못하므로 처음 한 번 접은 글로 모든 규칙을 거른다(LogMaskerTest 가 무작위 글 20,000개로 모두 돌린 결과와 견준다).
+     */
+    static String maskKeyRules(String text) {
+        String folded = fold(text);
         String out = text;
         for (Rule r : RULES) {
+            if (!r.mayMatch(folded)) continue;
             Matcher m = r.pattern().matcher(out);
             if (m.find()) out = m.replaceAll(r.replacement());
         }
-        out = maskJwt(maskUserinfo(out));
-        for (String secret : SECRETS) if (out.contains(secret)) out = out.replace(secret, "***");
-        return cut(out, limit);
+        return out;
+    }
+
+    /** Java 의 UNICODE_CASE 비교와 같은 접기: 글자(UTF-16 단위)마다 toLowerCase(toUpperCase(c)) — ſ → s · K(켈빈) → k · İ · ı → i. 길이는 그대로. */
+    static String fold(String s) {
+        char[] c = null;
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            char f = ch < 0x80 ? (ch >= 'A' && ch <= 'Z' ? (char) (ch + 32) : ch) : Character.toLowerCase(Character.toUpperCase(ch)); // ASCII 는 빠른 길
+            if (f != ch) {
+                if (c == null) c = s.toCharArray();
+                c[i] = f;
+            }
+        }
+        return c == null ? s : new String(c);
     }
 
     /**
