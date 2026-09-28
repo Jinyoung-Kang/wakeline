@@ -43,9 +43,10 @@ ok() { # ok <설명> <기대 문자열(정규식)> <user> <pw> <args...>
   else fails=$((fails+1)); echo "  FAIL  $what → $out"; fi
 }
 denied() { # denied <설명> <user> <pw> <args...>  — NOPERM(ACL) 또는 이름 바꾼 명령(unknown command) 이어야 한다
+  # 스크립트 안 redis.call 이 막히면 "ERR ACL failure in script: … has no permissions to run the 'x' command"(소문자) 로 온다
   local what=$1; shift
   local out; out="$(cli "$@")"
-  if grep -Eq "NOPERM|No permissions|unknown command" <<<"$out"; then passes=$((passes+1)); echo "  ok    denied: $what"
+  if grep -Eq "NOPERM|No permissions|has no permissions|ACL failure in script|unknown command" <<<"$out"; then passes=$((passes+1)); echo "  ok    denied: $what"
   else fails=$((fails+1)); echo "  FAIL  not denied: $what → $out"; fi
 }
 
@@ -211,9 +212,17 @@ denied "XDEL wakeline:logs"                    "${K[@]}" xdel wakeline:logs 0-1
 denied "SET 으로 wakeline:logs 덮어쓰기"         "${K[@]}" set wakeline:logs x
 denied "EXPIRE wakeline:logs"                  "${K[@]}" expire wakeline:logs 1
 denied "XGROUP CREATE wakeline:logs"           "${K[@]}" xgroup create wakeline:logs c9 0
-denied "EVALSHA 로도 wakeline:logs DEL 불가"     "${K[@]}" evalsha "$DEL_SHA" 1 wakeline:logs
+# 스크립트: 키를 선언하면(numkeys 1) EVALSHA 자체의 키 검사(읽기·쓰기)에서 먼저 막힌다 — 스크립트 안 redis.call 검사는
+# 키를 선언하지 않고(numkeys 0) 이름을 박아 넣은 스크립트로 따로 본다(거부 문구 "ERR ACL failure in script: …")
+denied "EVALSHA 로도 wakeline:logs DEL 불가(선언한 키)"     "${K[@]}" evalsha "$DEL_SHA" 1 wakeline:logs
 XTRIM_SHA="$(cli "${D[@]}" script load "return redis.call('XTRIM', KEYS[1], 'MAXLEN', 0)")"
-denied "EVALSHA 로도 wakeline:logs XTRIM 불가"   "${K[@]}" evalsha "$XTRIM_SHA" 1 wakeline:logs
+denied "EVALSHA 로도 wakeline:logs XTRIM 불가(선언한 키)"   "${K[@]}" evalsha "$XTRIM_SHA" 1 wakeline:logs
+LOGS_READ_SHA="$(cli "${D[@]}" script load "return redis.call('XREVRANGE', 'wakeline:logs', '+', '-', 'COUNT', 1)")"
+LOGS_TRIM_SHA="$(cli "${D[@]}" script load "return redis.call('XTRIM', 'wakeline:logs', 'MAXLEN', 0)")"
+LOGS_DEL_SHA="$(cli "${D[@]}" script load "return redis.call('DEL', 'wakeline:logs')")"
+denied "EVALSHA 안 XREVRANGE wakeline:logs(선언 안 한 키 — 스크립트 안 검사)" "${K[@]}" evalsha "$LOGS_READ_SHA" 0
+denied "EVALSHA 안 XTRIM wakeline:logs(선언 안 한 키 — 스크립트 안 검사)"     "${K[@]}" evalsha "$LOGS_TRIM_SHA" 0
+denied "EVALSHA 안 DEL wakeline:logs(선언 안 한 키 — 스크립트 안 검사)"       "${K[@]}" evalsha "$LOGS_DEL_SHA" 0
 ok "로그 스트림은 그대로(관리자로 확인)" "^[1-9][0-9]*$" "${D[@]}" xlen wakeline:logs
 denied "비슷한 이름 wakeline:logs:x"            "${K[@]}" xadd wakeline:logs:x '*' e x
 denied "비슷한 이름 wakeline:logsx"             "${K[@]}" xadd wakeline:logsx '*' e x
