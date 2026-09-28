@@ -106,6 +106,101 @@ class QueryPlanDbTest {
     }
 
     /**
+     * 계약 v5 §B1: 선박 검색(ship 표는 보존 없이 커진다)이 조건마다 인덱스를 쓴다 — 선명·호출부호 앞부분은 V10 의 text_pattern_ops 식 인덱스 둘(BitmapOr),
+     * IMO 는 V10 ship_imo, MMSI 정확·앞부분은 기본 키. 같은 연결에서 여러 번 실행된 뒤의 일반 계획에서도(파라미터 그대로).
+     */
+    @Test
+    void shipSearchUsesIndexesAlsoInTheGenericPlan() {
+        // 20,000행: 선명 'SHIP n' · 호출부호 'CSn' · IMO 9000000+n, 1,000행마다 정적 정보 없음(위치로만 만든 행)
+        admin.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider)
+                SELECT lpad((200000000 + g)::text, 9, '0'), CASE WHEN g % 1000 = 0 THEN NULL ELSE 'SHIP ' || g END,
+                       CASE WHEN g % 1000 = 0 THEN NULL ELSE 'CS' || g END, CASE WHEN g % 1000 = 0 THEN NULL ELSE 9000000 + g END, 70,
+                       now() - interval '2 days', now() - (g * interval '1 second'), CASE WHEN g % 1000 = 0 THEN NULL ELSE now() - interval '1 day' END, 'fixture'
+                FROM generate_series(1, 20000) g""").update();
+        admin.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider) VALUES
+                  ('440100001', 'HANJIN BUSAN', 'D7HB', 9321483, 70, now() - interval '3 days', now() - interval '1 hour', now(), 'fixture'),
+                  ('440100002', 'HANJIN', 'D7HJ', NULL, 80, now() - interval '3 days', now() - interval '2 hours', now(), 'fixture'),
+                  ('440100003', 'hanjin lower', NULL, NULL, 30, now() - interval '3 days', now(), now(), 'fixture'),
+                  ('563000004', 'SG STAR', 'HANJ1', 4400000, 60, now() - interval '3 days', now(), now(), 'fixture')""").update();
+        admin.sql("ANALYZE ship").update();
+        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM ship s WHERE", PlanCapture.Mode.GENERIC);
+        ShipRepository repo = new ShipRepository(null, JdbcClient.create(plans.dataSource()));
+        java.util.function.Function<String, java.util.List<String>> mmsis = q -> repo.search(dev.wakeline.domain.ShipQuery.parse(q), 20).stream()
+                .map(ShipRepository.SearchRow::mmsi).toList();
+
+        // 선명·호출부호 앞부분(대소문자 무시): 정확 일치(HANJIN) → last_seen 최신 순, 호출부호 HANJ1 도
+        assertThat(mmsis.apply("hanjin")).containsExactly("440100002", "440100003", "440100001");
+        String text = plans.last();
+        assertThat(text).as("text plan: %s", text).doesNotContain("\"Node Type\": \"Seq Scan\"");
+        assertThat(text).contains("\"Index Name\": \"ship_name_prefix\"").contains("\"Index Name\": \"ship_call_sign_prefix\"");
+        // 같은 last_seen(한 문장의 now())은 MMSI 순
+        assertThat(mmsis.apply("HANJ")).containsExactly("440100003", "563000004", "440100001", "440100002");
+        assertThat(mmsis.apply("SHIP 1999")).containsExactly("200001999", "200019990", "200019991", "200019992", "200019993", "200019994",
+                "200019995", "200019996", "200019997", "200019998", "200019999");
+        assertThat(mmsis.apply("ZZZZ")).isEmpty();
+
+        assertThat(mmsis.apply("IMO 9321483")).containsExactly("440100001");
+        String imo = plans.last();
+        assertThat(imo).as("imo plan: %s", imo).doesNotContain("\"Node Type\": \"Seq Scan\"").contains("\"Index Name\": \"ship_imo\"");
+
+        assertThat(mmsis.apply("440100002")).containsExactly("440100002");
+        assertThat(plans.last()).contains("\"Index Name\": \"ship_pkey\"").doesNotContain("\"Node Type\": \"Seq Scan\"");
+        assertThat(mmsis.apply("4401")).containsExactly("440100003", "440100001", "440100002");
+        String prefix = plans.last();
+        assertThat(prefix).as("mmsi prefix plan: %s", prefix).contains("\"Index Name\": \"ship_pkey\"").doesNotContain("\"Node Type\": \"Seq Scan\"");
+        // 7자리: IMO 4400000 정확(먼저) + MMSI 4400000.. 앞부분(없음)
+        assertThat(mmsis.apply("4400000")).containsExactly("563000004");
+        String seven = plans.last();
+        assertThat(seven).as("7-digit plan: %s", seven).contains("\"Index Name\": \"ship_imo\"").contains("\"Index Name\": \"ship_pkey\"")
+                .doesNotContain("\"Node Type\": \"Seq Scan\"");
+        assertThat(mmsis.apply("2000")).as("MMSI prefix 2000xxxxx").hasSize(20).startsWith("200000001", "200000002");
+    }
+
+    /**
+     * 계약 v5 §B1: 검색 결과의 저장 정적 정보 + 마지막 저장 위치 시각(한 문장). 행이 없는 MMSI 는 결과에 없고, 위치로만 만든 행은 정적 정보 null.
+     * 마지막 위치 시각은 MMSI 마다 기본 키 역순 한 행(파티션 전체를 훑지 않는다).
+     */
+    @Test
+    void shipLookupReturnsStoredStaticAndLastPositionPerMmsi() {
+        // 계획이 인덱스를 고를 만큼: ship 20,000행 · 위치 200척 × 60분
+        admin.sql("""
+                INSERT INTO ship (mmsi, name, first_seen, last_seen, updated_at, provider)
+                SELECT lpad((200000000 + g)::text, 9, '0'), 'SHIP ' || g, now() - interval '2 days', now(), now(), 'fixture'
+                FROM generate_series(1, 20000) g""").update();
+        admin.sql("""
+                INSERT INTO ship_position (mmsi, ts, geom, position_source, provider)
+                SELECT lpad((200000000 + g)::text, 9, '0'), date_trunc('minute', now()) - m * interval '1 minute', ST_SetSRID(ST_MakePoint(129, 35), 4326),
+                       'epfs', 'fixture'
+                FROM generate_series(1, 200) g, generate_series(0, 59) m""").update();
+        admin.sql("""
+                INSERT INTO ship (mmsi, name, call_sign, imo, ship_type, first_seen, last_seen, updated_at, provider) VALUES
+                  ('440100001', 'HANJIN BUSAN', 'D7HB', 9321483, 70, now(), now(), now(), 'fixture'),
+                  ('440100005', NULL, NULL, NULL, NULL, now(), now(), NULL, 'fixture')""").update();
+        admin.sql("""
+                INSERT INTO ship_position (mmsi, ts, geom, position_source, provider)
+                SELECT '440100001', date_trunc('minute', now()) - g * interval '1 minute', ST_SetSRID(ST_MakePoint(129, 35), 4326), 'epfs', 'fixture'
+                FROM generate_series(0, 120) g""").update();
+        admin.sql("""
+                INSERT INTO ship_position (mmsi, ts, geom, position_source, provider)
+                VALUES ('440100005', date_trunc('minute', now()) - interval '3 hours', ST_SetSRID(ST_MakePoint(129, 35), 4326), NULL, 'fixture')""").update();
+        admin.sql("ANALYZE ship").update();
+        admin.sql("ANALYZE ship_position").update();
+        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "unnest(string_to_array", PlanCapture.Mode.GENERIC);
+        ShipRepository repo = new ShipRepository(null, JdbcClient.create(plans.dataSource()));
+        var known = repo.lookup(java.util.List.of("440100001", "440100005", "440199999"));
+        assertThat(known.keySet()).containsExactlyInAnyOrder("440100001", "440100005");
+        assertThat(known.get("440100001").stat().name()).isEqualTo("HANJIN BUSAN");
+        assertThat(known.get("440100001").lastPositionAt()).isEqualTo(Instant.now().truncatedTo(ChronoUnit.MINUTES));
+        assertThat(known.get("440100005").stat()).as("row made from positions only").isNull();
+        assertThat(known.get("440100005").lastPositionAt()).isEqualTo(Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(3, ChronoUnit.HOURS));
+        String plan = plans.last();
+        assertThat(plan).as("lookup plan: %s", plan).doesNotContain("\"Node Type\": \"Seq Scan\"").contains("ship_position_");
+        assertThat(repo.lookup(java.util.List.of())).isEmpty();
+    }
+
+    /**
      * R-27: 일 통계 traffic_by_hour(시간대별 서로 다른 항공기 수)의 정렬이 디스크로 넘쳤다(external merge, 임시 파일). 집계 트랜잭션이 스스로
      * work_mem 을 넉넉히 잡으므로 연결의 기본값(여기서는 일부러 최소 64 kB)과 상관없이 메모리에서 끝난다. 실제 문장을 EXPLAIN ANALYZE 로 본다.
      */
