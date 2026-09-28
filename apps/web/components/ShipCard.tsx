@@ -156,7 +156,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         ))}
         <div className="mt-2" data-testid="ship-track-info">
           <div className="mb-0.5 flex items-center justify-between gap-2">
-            <span className="label">항적 · 최근 {hours} h</span>
+            <span className="label normal-case!">항적 · 최근 {hours} h</span>
             {/* 기간(계약 v5 §B3): 바꾸면 지도가 그 창으로 다시 받는다(REST ≤ 24 h) */}
             <span className="flex gap-1" role="group" aria-label="항적 기간">
               {SHIP_TRACK_HOURS.map((h) => (

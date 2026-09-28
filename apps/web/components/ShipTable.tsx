@@ -6,7 +6,7 @@ import {
 import { SogStack } from "./UnitStack";
 
 const COLS: { key: ShipSortKey; label: string; title: string; className?: string }[] = [
-  { key: "cat", label: "선종", title: "AIS 선종 코드의 분류(USCG AIS Guide) — 색은 지도와 같다" },
+  { key: "cat", label: "선종", title: "선종(색) — AIS 선종 코드의 분류(USCG AIS Guide), 색은 지도와 같다. 이름은 칸에 마우스를 올리면" },
   { key: "name", label: "선명", title: "선박이 보고한 이름(검증하지 않은 보고값)" },
   { key: "mmsi", label: "MMSI", title: "해상 이동 업무 식별 번호(9자리)" },
   { key: "sog", label: "속력", title: "대지속력(SOG) kn · km/h(1 kn = 1.852 km/h) — 선박 보고값", className: "text-right" },
@@ -19,8 +19,10 @@ const COLS: { key: ShipSortKey; label: string; title: string; className?: string
  * 줄을 누르면(또는 선명 단추에서 Enter) onPick. 실시간이 아닌 선박은 경과 칸에 "실시간 아님"과 마지막 저장 시각을 적는다.
  * 선명 등은 외부 문자열 — React 텍스트로만 넣는다.
  */
-export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi, rowId, onHover }: {
+export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi, rowId, onHover, wide }: {
   rows: readonly ShipRow[]; now: number; sort: ShipSort | null; onSort: (k: ShipSortKey) => void; onPick: (r: ShipRow) => void; testId: string;
+  /** 넓은 표(검색 결과): 경과 칸에 "실시간 아님 · 저장 시각"이 한 줄씩 들어갈 폭 */
+  wide?: boolean;
   /** 키보드 활성 줄(검색 결과) */
   activeMmsi?: string | null;
   /** 줄 id(검색 입력의 aria-activedescendant) */
@@ -29,8 +31,9 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi,
 }) {
   return (
     <table className="table-fixed text-[11px]" data-testid={`${testId}-table`}>
+      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게 */}
       <colgroup>
-        <col className="w-[52px]" /><col /><col className="w-[74px]" /><col className="w-[62px]" /><col className="w-[70px]" /><col className="w-[58px]" />
+        <col className="w-[28px]" /><col /><col className="w-[68px]" /><col className="w-[62px]" /><col className="w-[60px]" /><col className={wide ? "w-[118px]" : "w-[50px]"} />
       </colgroup>
       <thead>
         <tr>
@@ -38,7 +41,7 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi,
             const on = sort?.key === c.key;
             return (
               <th key={c.key} scope="col" aria-sort={on ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"} className={`px-1! py-1! ${c.className ?? ""}`} title={c.title}>
-                <button type="button" className={`label w-full cursor-pointer text-[9px] ${c.className ?? "text-left"} ${on ? "text-fg!" : ""}`} onClick={() => onSort(c.key)} data-testid={`${testId}-sort-${c.key}`}>
+                <button type="button" className={`label w-full cursor-pointer text-[9px] tracking-normal! whitespace-nowrap ${c.className ?? "text-left"} ${on ? "text-fg!" : ""}`} onClick={() => onSort(c.key)} data-testid={`${testId}-sort-${c.key}`}>
                   {c.label}{on ? (sort!.dir === "asc" ? " ▲" : " ▼") : ""}
                 </button>
               </th>
@@ -54,21 +57,19 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, activeMmsi,
               className={`cursor-pointer ${activeMmsi === r.mmsi ? "bg-[#1c2a3f]" : "hover:bg-bg-2"}`}
               onClick={() => onPick(r)} onMouseEnter={onHover ? () => onHover(r.mmsi) : undefined} data-testid={`${testId}-item`} data-mmsi={r.mmsi}>
               <td className="px-1! py-0.5!" title={`${SHIP_CATEGORY_LABEL[r.category]} · 코드 ${SHIP_CATEGORY_CODES[r.category]}`}>
-                <span className="flex items-center gap-1">
-                  <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: SHIP_CATEGORY_COLOR[r.category] }} aria-hidden />
-                  <span className="truncate text-[10px] text-fg-2">{SHIP_CATEGORY_LABEL[r.category]}</span>
-                </span>
+                <span className="inline-block h-2.5 w-2.5 align-middle" style={{ background: SHIP_CATEGORY_COLOR[r.category] }} aria-hidden />
+                <span className="sr-only">{SHIP_CATEGORY_LABEL[r.category]}</span>
               </td>
               <td className="truncate px-1! py-0.5!">
                 <button type="button" className="w-full truncate text-left" title={r.name ?? `이름 모름 · MMSI ${r.mmsi}`}>{r.name ?? "—"}</button>
               </td>
               <td className="mono px-1! py-0.5! text-fg-2">{r.mmsi}</td>
-              <td className="px-1! py-0.5! text-right"><SogStack kn={r.sog_kn} /></td>
-              <td className="truncate px-1! py-0.5!" title={navStatusLabel(r.nav_status)}>{navStatusShort(r.nav_status)}</td>
+              <td className="px-0.5! py-0.5! text-right"><SogStack kn={r.sog_kn} nowrap /></td>
+              <td className="truncate px-1! py-0.5! text-[10px]" title={navStatusLabel(r.nav_status)}>{navStatusShort(r.nav_status)}</td>
               <td className="mono px-1! py-0.5! text-right" title={fmtIso(r.live ? r.seen_at : r.last_position_at)}>
                 {r.live ? (age == null ? "—" : fmtDuration(age)) : (
-                  <span className="flex flex-col items-end leading-tight">
-                    <span className="text-warn">실시간 아님</span>
+                  <span className="flex flex-col items-end leading-tight whitespace-nowrap">
+                    <span className="text-[10px] text-warn">실시간 아님</span>
                     <span className="text-[10px] text-fg-3">저장 {fmtSavedAt(r.last_position_at, now)}</span>
                   </span>
                 )}

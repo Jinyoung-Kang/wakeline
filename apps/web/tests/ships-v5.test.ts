@@ -350,7 +350,7 @@ describe("sortable ship table (contract v5 §B3)", () => {
     expect(html).toContain("<table");
     expect(html).toMatch(/data-testid="ship-list-item"[^>]*data-mmsi="300000001"|data-mmsi="300000001"[^>]*data-testid="ship-list-item"/);
     expect(text(html)).toContain("3.2 kn5.9 km/h");
-    expect(text(html)).toContain("어로 중 (7)");
+    expect(html).toMatch(/title="어로 중 \(7\)"[^>]*>어로 중</); // 칸은 줄임, 코드·전체 이름은 title
     resetData();
   });
 });

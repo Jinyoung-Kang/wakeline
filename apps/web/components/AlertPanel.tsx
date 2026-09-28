@@ -89,8 +89,8 @@ export function AlertPanel() {
                 <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`}>{a.hazard}{a.qualifier ? ` ${a.qualifier}` : ""}</span><span className="sr-only">, </span>
                 <span className="mono w-12 shrink-0 text-[11px] text-fg-3">{a.fir_id}</span><span className="sr-only">, </span>
                 {a.kind === "PREDICTED"
-                  ? <span className="mono est-val w-14 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span><AltStack ft={a.alt_ft} est align="start" /></span>
-                  : <span className="mono w-14 shrink-0 text-[11px]" title="관측 고도"><AltStack ft={a.alt_ft} align="start" /></span>}<span className="sr-only">, </span>
+                  ? <span className="mono est-val w-16 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span><AltStack ft={a.alt_ft} est align="start" nowrap /></span>
+                  : <span className="mono w-16 shrink-0 text-[11px]" title="관측 고도"><AltStack ft={a.alt_ft} align="start" nowrap /></span>}<span className="sr-only">, </span>
                 {a.kind === "PREDICTED" ? <EtaBadge a={a} state={listState} /> : <span className="badge bad ml-auto">INSIDE<span className="sr-only"> — 경보 안</span></span>}
               </button>
               {open === a.id ? (

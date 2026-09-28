@@ -240,7 +240,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
             <span className="mono w-[76px] shrink-0 font-semibold">{h.callsign ?? "—"}</span>
             <span className="mono w-[54px] shrink-0 text-fg-2">{h.hex}</span>
             <span className="mono w-[64px] shrink-0 text-fg-2" title="등록번호">{h.registration ?? "—"}</span>
-            <span className="w-[74px] shrink-0 text-right" title="고도(ft · FL / m)">{h.on_ground === true ? <span className="mono">GND</span> : <AltStack ft={h.alt_ft} />}</span>
+            <span className="w-[74px] shrink-0 text-right" title="고도(ft · FL / m)">{h.on_ground === true ? <span className="mono">GND</span> : <AltStack ft={h.alt_ft} nowrap />}</span>
             {h.live ? <span className="badge ok ml-auto">live</span> : <span className="badge ml-auto" title={h.last_seen ? `마지막 수신 ${fmtTime(h.last_seen)}` : "마지막 수신 시각 모름"}>db</span>}
           </li>
         ))}
@@ -248,7 +248,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
       <GroupHead title="선박" count={ships.state === "done" ? `${rows.length}건` : "—"} source="출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)" testId="search-group-ships" />
       {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`}>{sMsg}</div> : null}
       {rows.length ? (
-        <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" activeMmsi={activeShip} rowId={(m) => optionId(uid, `s-${m}`)}
+        <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" activeMmsi={activeShip} wide rowId={(m) => optionId(uid, `s-${m}`)}
           onHover={(m) => onHover(nA + rows.findIndex((r) => r.mmsi === m))}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}

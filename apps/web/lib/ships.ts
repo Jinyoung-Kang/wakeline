@@ -416,14 +416,14 @@ export function navStatusLabel(v: number | null | undefined): string {
   return v === 15 ? "— (15 · 미정의, 선박 미입력)" : `${NAV_STATUS_LABEL[v]} (${v})`;
 }
 
-/** 좁은 표 칸용 줄임(같은 USCG 0–15 표 — 전체 이름은 title 로 navStatusLabel) */
+/** 좁은 표 칸용 줄임(같은 USCG 0–15 표 — 코드와 전체 이름은 title 로 navStatusLabel) */
 export const NAV_STATUS_SHORT: readonly string[] = [
   "기관 항해", "묘박", "조종 불능", "조종 제한", "흘수 제약", "계류", "좌초", "어로 중",
   "범주 항해", "예약(HSC)", "예약(WIG)", "선미 예인", "밀어 예인", "예약", "SART·MOB·EPIRB", "미정의",
 ];
 export function navStatusShort(v: number | null | undefined): string {
   if (v == null || !Number.isInteger(v) || v < 0 || v > 15) return "—";
-  return `${NAV_STATUS_SHORT[v]} (${v})`;
+  return NAV_STATUS_SHORT[v];
 }
 
 export const POSITION_SOURCE_LABEL: Record<PositionSource, string> = {
