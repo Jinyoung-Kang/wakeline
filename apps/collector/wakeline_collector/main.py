@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Iterable
 from typing import Any
 
 from redis.asyncio import Redis
@@ -30,6 +31,7 @@ from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
+from wakeline_collector.masking import install_log_masking, register_secrets
 from wakeline_collector.providers import fixture as fx
 from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
 from wakeline_collector.providers.awc import AwcProvider
@@ -51,6 +53,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
+
+
+def configure_logging(secrets: Iterable[str | None]) -> None:
+    """모든 로그(트레이스백 포함)가 mask 를 거치게 한다: 설정 비밀값을 값 치환 목록에 넣고 루트 핸들러에 MaskFilter(R-83)."""
+    register_secrets(*secrets)
+    install_log_masking()
+
 
 SHUTDOWN_GRACE_S = 18.0  # 진행 중 작업(KMA 실측 최대 25 s 중 대부분)을 끝낼 시간
 DB_DRAIN_S = 4.0  # db.close: 큐 비우기 + 풀 닫기 각각의 상한
@@ -93,6 +102,9 @@ def make_redis(s: Settings) -> Redis:
 async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> None:
     """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
     fixture = settings.fixture_mode
+    configure_logging(
+        [settings.kma_apihub_key, settings.opensky_client_secret, settings.redis_password, settings.db_collector_password]
+    )
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
     redis = redis if redis is not None else make_redis(settings)
     db = db or Db()

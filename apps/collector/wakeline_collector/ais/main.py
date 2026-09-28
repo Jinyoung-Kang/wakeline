@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ from wakeline_collector.ais.runtime import BboxWatcher
 from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.sink import AisSink
 from wakeline_collector.ais.worker import Worker
+from wakeline_collector.masking import install_log_masking, register_secrets
 from wakeline_collector.redis_retry import short_retry
 
 log = logging.getLogger("ais.main")
@@ -61,9 +63,11 @@ def make_redis(s: AisSettings) -> Redis:
     )
 
 
-def _configure_logging() -> None:
+def _configure_logging(secrets: Iterable[str | None] = ()) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("websockets").setLevel(logging.WARNING)  # DEBUG 는 구독 프레임(API 키)을 찍는다
+    register_secrets(*secrets)  # R-83: aisstream 키·Redis 비밀번호 값 자체도 모든 로그에서 가린다
+    install_log_masking()  # 루트 핸들러에 MaskFilter — %r 로 찍는 예외·트레이스백까지
 
 
 async def main(
@@ -76,13 +80,13 @@ async def main(
 ) -> int:
     """stop·redis·settings·replay_speed·client_kw 는 시험용 주입(client_kw 의 backoff_factory 는 구역마다 새 Backoff 를 만든다).
     반환: 종료 코드(태스크가 예상 밖으로 죽으면 1)."""
-    _configure_logging()
+    s = settings or AisSettings()
+    _configure_logging([s.aisstream_api_key.get_secret_value(), s.redis_password.get_secret_value()])
     if stop is None:  # 기동 중(Redis 대기 등)에 온 SIGTERM 도 정상 종료 경로로
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
-    s = settings or AisSettings()
     fixture = s.fixture_mode
     provider = "fixture" if fixture else "aisstream"
     key = s.aisstream_api_key.get_secret_value()

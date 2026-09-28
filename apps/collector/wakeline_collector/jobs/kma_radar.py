@@ -26,6 +26,7 @@ from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, render_mercator_png
+from wakeline_collector.masking import mask
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
@@ -125,7 +126,9 @@ class KmaRadarJob:
         await self.ctx.status.hset_meta(
             KEY_META, {"status": str(http_status or ""), "note": note[:200], "checked_at": _iso(datetime.now(UTC))}
         )
-        log.warning("kma radar: %s", note if http_status == 403 else repr(e)[:160])
+        log.warning(
+            "kma radar: %s", note if http_status == 403 else (mask(repr(e)) or "")[:160]
+        )  # R-83: 응답 본문 앞부분이 실린다
 
     async def _reserve(self, started: datetime) -> bool:
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
