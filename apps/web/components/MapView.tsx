@@ -223,6 +223,8 @@ export function MapView() {
       const bbox = subscriptionBbox(b.getWest(), b.getSouth(), b.getEast(), b.getNorth(), map.getZoom(), map.getCenter().lng); // 날짜변경선(lib/viewport)
       client.subscribe(bbox, Math.floor(map.getZoom()));
       worker.postMessage({ type: "viewport", bbox, zoom: map.getZoom() });
+      // 목록에서 고른 항목이 화면 밖인지(lib/focus)는 구독 bbox 가 아니라 보이는 범위로 판단한다(R-08)
+      setData({ mapBounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] });
     };
     let moveTimer: ReturnType<typeof setTimeout> | null = null;
     map.on("moveend", () => {

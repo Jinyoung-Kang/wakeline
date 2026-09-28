@@ -75,6 +75,12 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(rec.api).toContain("/api/v1/airports?watched=true");
   });
 
+  it("keeps the visible map bounds (unwrapped, as MapLibre gives them) for the list-selection pan check (R-08)", async () => {
+    await mount();
+    // FakeMap.getBounds() = 120,30,135,43 — 구독 bbox(WS 대역이 기록)와 별도로, 화면 그대로
+    expect(getData().mapBounds).toEqual([120, 30, 135, 43]);
+  });
+
   it("a failed style request falls back to a local background-only style, says so, and the data layers still get drawn", async () => {
     const map = await mount();
     await act(() => map.fire("error", { type: "error", error: new Error("AJAXError: Failed to fetch (0): https://tiles.openfreemap.org/styles/dark") }));

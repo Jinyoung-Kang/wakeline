@@ -71,6 +71,11 @@ export interface ServerData {
   ais: AisStatus | null;
   /** 마지막으로 구독한 화면(WS subscribe 의 bbox [w,s,e,n]·정수 줌). 선박 칩이 규칙·수신 범위를 말할 때 쓴다. null = 아직 없음 */
   viewport: { bbox: [number, number, number, number]; zoom: number } | null;
+  /**
+   * 지도에 실제로 보이는 화면 [west, south, east, north] — MapLibre getBounds() 그대로(날짜변경선을 넘으면 경도를 펼친 값, 예: 49 ~ 207).
+   * 구독 bbox(viewport)는 낮은 줌에서 날짜변경선을 넘으면 위도 띠 전체라 "화면 안" 판정에 쓸 수 없다(R-08). null = 지도 없음·아직 모름
+   */
+  mapBounds: [number, number, number, number] | null;
 }
 
 export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] };
@@ -100,6 +105,7 @@ const initial: ServerData = {
   shipTrack: null,
   ais: null,
   viewport: null,
+  mapBounds: null,
 };
 let data: ServerData = initial;
 

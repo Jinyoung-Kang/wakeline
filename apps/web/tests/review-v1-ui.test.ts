@@ -115,6 +115,22 @@ describe("R-08 alert row: expand stays, selection moves the map", () => {
     expect(useUi.getState().flyTo).toMatchObject({ lon: 121.5, lat: 31.2, zoom: 6 });
     expect(panIfOutside(null)).toBe(false); // 위치 모름 — 움직이지 않는다
   });
+  it("the on-screen check uses the visible map bounds, not the WS subscription band: zoom 3 over the Pacific does not count France as on screen", () => {
+    // 줌 3, 화면 약 49E ~ 153W(MapLibre 는 펼친 경도 49 ~ 207 을 준다) — 구독은 날짜변경선 규칙으로 위도 띠 전체(lib/viewport)
+    const sub = subscriptionBbox(49, 5, 207, 62, 3, 128);
+    expect(sub).toEqual([-180, 5, 180, 62]);
+    setData({ viewport: { bbox: sub, zoom: 3 }, mapBounds: [49, 5, 207, 62] });
+    // 수정 전: 구독 띠 [-180, 5, 180, 62] 와 비교해 프랑스(LFRR)도 "화면 안" → 옮기지 않았다
+    expect(panIfOutside([-2, 47])).toBe(true);
+    expect(useUi.getState().flyTo).toMatchObject({ lon: -2, lat: 47, zoom: 3 });
+    useUi.setState({ flyTo: null });
+    expect(panIfOutside([140, 35])).toBe(false); // 도쿄 — 보인다
+    expect(panIfOutside([-160, 21])).toBe(false); // 호놀룰루 — 날짜변경선 너머지만 보인다(펼친 경도 200)
+    expect(useUi.getState().flyTo).toBeNull();
+    // 한 바퀴 넘게 보이는 화면(줌 0–1)이면 경도는 어디든 보인다
+    setData({ mapBounds: [-300, -80, 300, 80] });
+    expect(panIfOutside([-2, 47])).toBe(false);
+  });
   it("the aircraft position comes from the live state first, then the alert's evidence position ([lat, lon])", async () => {
     const { aircraftPos } = await import("@/lib/focus");
     expect(aircraftPos("780f47", alert())).toEqual([121.5, 31.2]);
