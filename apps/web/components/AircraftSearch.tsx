@@ -15,12 +15,13 @@ import { useUi } from "@/lib/ui-store";
 import type { AircraftState } from "@/lib/types";
 import { ShipTable } from "./ShipTable";
 import { AltStack } from "./UnitStack";
+import { RequestIdOf } from "./logs/ErrorNote";
 
 const DEBOUNCE_MS = 250;
 
 type GroupState = "idle" | "loading" | "done" | "error";
-/** note = 결과와 함께 보일 알림(예: 선박 DB 사용 불가 — 결과가 실시간 목록뿐) */
-export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string }
+/** note = 결과와 함께 보일 알림(예: 선박 DB 사용 불가 — 결과가 실시간 목록뿐). error = 실패의 오류 그대로(ApiError 면 요청 id 를 문구에 — 계약 v5 §G5) */
+export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string; error?: unknown }
 const IDLE = { hits: [], state: "idle" as const, msg: "" };
 
 /** 검색 실패 문구(묶음마다) — 404 는 서버가 아직 그 검색을 지원하지 않는 경우(구 api) */
@@ -83,7 +84,7 @@ export function AircraftSearch() {
         setAircraft((g) => ({ ...g, state: "loading" }));
         apiGet<unknown>(`/api/v1/aircraft/search?q=${encodeURIComponent(qa)}`, { signal: ctl.signal })
           .then((body) => { const h = parseSearchResponse(body); setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e) }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e), error: e }); });
       } else setAircraft(IDLE);
       if (qs) {
         setShips((g) => ({ ...g, state: "loading" }));
@@ -92,7 +93,7 @@ export function AircraftSearch() {
             const h = parseShipSearchResponse(body);
             setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: shipSearchDbUnavailable(body) ? SHIP_SEARCH_DB_NOTE : undefined });
           })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e) }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e), error: e }); });
       } else setShips(IDLE);
     }, DEBOUNCE_MS);
     return () => { clearTimeout(t); ctl.abort(); };
@@ -238,7 +239,9 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
   return (
     <div className="max-h-[60vh] overflow-y-auto">
       <GroupHead id={headId(uid, "aircraft")} title="항공기" count={aircraft.state === "done" ? `${nA}건` : "—"} source="출처: 실시간 스냅샷(live) · DB 과거 기록(db)" testId="search-group-aircraft" />
-      {aMsg ? <div className={`px-2 py-1.5 ${aircraft.state === "error" ? "text-warn" : "text-fg-3"}`}>{aMsg}</div> : null}
+      {aMsg ? <div className={`px-2 py-1.5 ${aircraft.state === "error" ? "text-warn" : "text-fg-3"}`} data-testid={aircraft.state === "error" ? "search-error-aircraft" : undefined}>
+        {aMsg}{aircraft.state === "error" ? <RequestIdOf error={aircraft.error} /> : null}
+      </div> : null}
       <ul role="listbox" id={lists.aircraft} aria-labelledby={headId(uid, "aircraft")}>
         {aircraft.hits.map((h, i) => (
           <li
@@ -261,7 +264,9 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
       </ul>
       <GroupHead id={headId(uid, "ships")} title="선박" count={ships.state === "done" ? `${rows.length}건` : "—"} source="출처: AIS 실시간 목록(live) · DB 선박 표(실시간 아님)" testId="search-group-ships" />
       {ships.note && ships.state === "done" ? <div className="px-2 py-1 text-[11px] text-warn" data-testid="ship-search-db-note">{ships.note}</div> : null}
-      {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`}>{sMsg}</div> : null}
+      {sMsg ? <div className={`px-2 py-1.5 ${ships.state === "error" ? "text-warn" : "text-fg-3"}`} data-testid={ships.state === "error" ? "search-error-ships" : undefined}>
+        {sMsg}{ships.state === "error" ? <RequestIdOf error={ships.error} /> : null}
+      </div> : null}
       {rows.length ? (
         <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" wide
           listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}

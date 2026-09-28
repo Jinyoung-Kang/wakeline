@@ -14,6 +14,7 @@ import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
 import { ShipTable } from "./ShipTable";
+import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
 
 /**
  * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
@@ -53,7 +54,8 @@ function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
  */
 export function ShipCard({ mmsi }: { mmsi: string }) {
   const [detail, setDetail] = useState<ShipDetail | null>(null);
-  const [error, setError] = useState<{ mmsi: string; msg: string } | null>(null);
+  /** 상세 조회 실패 — 오류 그대로(ApiError 면 요청 id 를 문구에, 계약 v5 §G5) */
+  const [error, setError] = useState<{ mmsi: string; error: unknown } | null>(null);
   const loaded = useRef<ShipDetail | null>(null);
   const now = useServerNow(1000);
   // WS 가 "실시간 목록에 없음(state null)"이라고 하면 상세를 다시 받는다 — 카드를 연 뒤 목록에서 빠진 선박의 '마지막 저장 위치'가
@@ -65,16 +67,19 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
     let alive = true;
     apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
       .then((r) => { if (alive) { const p = parseShipDetail(mmsi, r); loaded.current = p; setDetail(p); setError(null); } })
-      .catch((e: Error) => { if (alive) setError({ mmsi, msg: String(e.message) }); });
+      .catch((e: unknown) => { if (alive) setError({ mmsi, error: e }); });
     return () => { alive = false; };
   }, [mmsi, gone]);
   const d = detail && detail.mmsi === mmsi ? detail : null;
-  const err = error && error.mmsi === mmsi ? error.msg : null;
+  const err = error && error.mmsi === mmsi ? error.error : null;
   return <ShipCardView mmsi={mmsi} detail={d} error={err} now={now} />;
 }
 
-/** 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용) */
-export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: string | null; now: number }) {
+/**
+ * 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용). error = 상세 조회 실패(문자열 또는 오류 — ApiError 면 요청 id 를 복사할 수 있게,
+ * 계약 v5 §G5), 없으면 null.
+ */
+export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: unknown; now: number }) {
   const selectShip = useUi((s) => s.selectShip);
   const live = useServerData((x) => (x.shipSelected && x.shipSelected.mmsi === mmsi ? x.shipSelected : null));
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
@@ -160,7 +165,9 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
-        {err ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err})</div> : null}
+        {err != null ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">
+          상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err instanceof Error ? err.message : String(err)}<RequestIdOf error={err} />)
+        </div> : null}
         {d?.db_unavailable ? <div className="text-[11px] text-warn">선박 정보 DB 일시 사용 불가 — 정적 정보는 “—”일 수 있음</div> : null}
         {rows.map(([k, val, title, field]) => (
           <div key={field ?? k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="ship-row" data-field={field ?? k}>
@@ -178,7 +185,9 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
             </span>
           </div>
           {track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
-            : track.error ? <div className="text-[11px] text-warn">기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error})</div>
+            : track.error ? <div className="text-[11px] text-warn" data-testid="ship-track-error">
+                기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error}{track.requestId ? <RequestIdCopy id={track.requestId} /> : null})
+              </div>
             : <div className="text-[11px] text-fg-2">기록 구간 {track.segments}개 · 60 s 에 1점(저장 기준) + 실시간 관측</div>}
           <div className="text-[10px] text-fg-3">항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태(보고값, 없으면 —)</div>
           {gaps ? (

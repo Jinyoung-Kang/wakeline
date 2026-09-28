@@ -11,15 +11,17 @@ import { useUi } from "@/lib/ui-store";
 import { parseGridCells, SHIP_CATEGORIES, type ShipCategory, type ShipLite } from "@/lib/ships";
 import { SHIP_SYMBOL_TEXT_EXPR } from "@/lib/ship-layers";
 
-const rec = vi.hoisted(() => ({ api: [] as string[], responses: new Map<string, unknown>(), selectShip: [] as (string | null)[] }));
+const rec = vi.hoisted(() => ({ api: [] as string[], responses: new Map<string, unknown>(), failures: new Map<string, unknown>(), selectShip: [] as (string | null)[] }));
 
 vi.mock("@/lib/maplibre", async (orig) => {
   const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
   return { ...(await orig<typeof import("@/lib/maplibre")>()), maplibre: () => fake, loadMaplibre: async () => fake };
 });
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async (orig) => ({
+  ...(await orig<typeof import("@/lib/api")>()),
   apiGet: (p: string) => {
     rec.api.push(p);
+    for (const [prefix, err] of rec.failures) if (p.startsWith(prefix)) return Promise.reject(err);
     for (const [prefix, body] of rec.responses) if (p.startsWith(prefix)) return Promise.resolve(body);
     return new Promise(() => {});
   },
@@ -71,7 +73,7 @@ type FC = { features: { properties: Record<string, unknown>; geometry: { coordin
 const fc = (map: FakeMap, id: string) => map.getSource(id)!.data as FC;
 
 beforeEach(() => {
-  rec.api.length = 0; rec.responses.clear(); rec.selectShip.length = 0; FakeMap.instances.length = 0; resetData();
+  rec.api.length = 0; rec.responses.clear(); rec.failures.clear(); rec.selectShip.length = 0; FakeMap.instances.length = 0; resetData();
   useUi.setState(initialUi, true);
   useUi.setState({ layers: { ...initialUi.layers, ships: true } });
 });
@@ -191,5 +193,19 @@ describe("selected ship track: period and hover points (contract v5 §B3)", () =
     expect(fc(map, "ship-track-points").features.map((f) => [f.properties.sog, f.properties.nav, f.properties.src])).toEqual([[12.3, 0, "rest"], [null, null, "rest"], [11, 5, "live"]]);
     await act(() => useUi.getState().toggleLayer("tracks"));
     expect(map.getLayer("ship-track-point")!.layout.visibility).toBe("none");
+  });
+
+  it("v5-G5: a failed track request keeps the server's request id for the card (null when there is none)", async () => {
+    const { ApiError } = await import("@/lib/api");
+    const { getData } = await import("@/lib/store");
+    rec.failures.set("/api/v1/ships/200000001/track", new ApiError(503, "data store temporarily unavailable; retry later", 10, "UNAVAILABLE", "7ac47ac47ac47ac4"));
+    rec.failures.set("/api/v1/ships/200000002/track", new TypeError("Failed to fetch"));
+    await mountLoaded();
+    await act(() => useUi.getState().selectShip("200000001"));
+    await act(async () => { await Promise.resolve(); });
+    expect(getData().shipTrack).toMatchObject({ mmsi: "200000001", loaded: true, error: "data store temporarily unavailable; retry later", requestId: "7ac47ac47ac47ac4" });
+    await act(() => useUi.getState().selectShip("200000002"));
+    await act(async () => { await Promise.resolve(); });
+    expect(getData().shipTrack).toMatchObject({ mmsi: "200000002", loaded: true, error: "Failed to fetch", requestId: null });
   });
 });
