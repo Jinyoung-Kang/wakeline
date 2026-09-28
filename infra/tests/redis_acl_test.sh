@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D).
+# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D · 계약 v5 §C3).
 # compose 와 같은 방식(redis 사용자 999·read-only 루트 FS·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
 # 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector / wakeline_ais 가 필요한 명령·키만 쓸 수 있는지 확인한다.
 # 마지막으로 REDIS_AIS_PASSWORD 없이 한 번 더 띄워 wakeline_ais 가 빈 비밀번호로 열리지 않는지 본다.
@@ -53,6 +53,9 @@ A=(wakeline_api "$API_PW"); K=(wakeline_collector "$COL_PW"); S=(wakeline_ais "$
 NOW_MS="$(($(date +%s) * 1000))"
 BUDGET_LUA="local used = tonumber(redis.call('HGET', KEYS[1], 'used') or '0') redis.call('HINCRBY', KEYS[1], 'used', 1) redis.call('EXPIRE', KEYS[1], 60) return used"
 RL_LUA="local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return {n, redis.call('TTL', KEYS[1])}"
+# 계약 v5 §C1: wakeline:logs 항목은 필드 하나 e = JSON 문자열. 값은 합성 자료(서비스 이름만 확인에 쓴다).
+# level 은 WARN — ok() 가 출력의 "ERR" 를 오류로 보므로 ERROR 를 쓰지 않는다
+log_event() { printf '{"v":1,"ts":"2026-01-01T00:00:00Z","service":"%s","instance":"acltest","level":"WARN","logger":"acltest","message":"acltest","fp":"0000000000000000"}' "$1"; }
 
 echo "image: $IMAGE"
 echo "[auth]"
@@ -93,6 +96,8 @@ ok "XGROUP CREATE wakeline:ships"       OK         "${A[@]}" xgroup create wakel
 ok "HGETALL wakeline:ais:status(읽기)"  ""         "${A[@]}" hgetall wakeline:ais:status
 # 계약 v4 §A: 노선 캐시는 수집기가 쓰고 api 가 읽는다(값 확인은 수집기 절에서)
 ok "GET wakeline:route:*(읽기, 없음)"    ""         "${A[@]}" get wakeline:route:ZZX000
+# 계약 v5 §C: api 는 자기 로그 · 브라우저 오류(client-errors)를 싣고 운영 조회로 읽는다(읽기 확인은 ais 절 뒤에)
+ok "XADD wakeline:logs MAXLEN ~ 3000(api 로그)" "^[0-9]+-[0-9]+$" "${A[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event api)"
 
 echo "[wakeline_api — 거부]"
 denied "FLUSHALL"             "${A[@]}" flushall
@@ -167,6 +172,8 @@ ok "TTL wakeline:route:*(관리자로 확인)"  "^(1[0-7][0-9]{2}|1800)$" "${D[@
 ok "api GET wakeline:route:*(수집기가 쓴 값)" "not_found" "${A[@]}" get wakeline:route:ZZX123
 
 ok "DEL wakeline:radar_kr:frames(목록 비움 — kma_radar._save_frames)" "^[01]$" "${K[@]}" del wakeline:radar_kr:frames
+# 계약 v5 §C2 · §C3: 로그 싱크 — XADD wakeline:logs MAXLEN ~ 3000 * e <json>
+ok "XADD wakeline:logs MAXLEN ~ 3000(로그 싱크)" "^[0-9]+-[0-9]+$" "${K[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event collector)"
 
 echo "[wakeline_collector — 거부]"
 # R-86: 허용 목록 — 스트림(api 소비자 그룹·PEL)을 지우거나 덮어쓰거나 만료시키거나 이름을 바꾸는 명령은 어느 키에도 없다
@@ -193,6 +200,24 @@ denied "EVAL(임의 스크립트)"                     "${K[@]}" eval "return 1"
 DEL_SHA="$(cli "${D[@]}" script load "return redis.call('DEL', KEYS[1])")"
 denied "EVALSHA 로도 스트림 DEL 불가"              "${K[@]}" evalsha "$DEL_SHA" 1 wakeline:aircraft
 ok "스트림은 그대로(관리자로 확인)" "^[1-9][0-9]*$" "${D[@]}" xlen wakeline:aircraft
+# 계약 v5 §C3: 로그 스트림은 쓰기 전용(%W~) — XADD 만. 다른 서비스(api · web-client)의 로그를 읽거나 지우거나 줄이지 못한다.
+# (남는 위험: ACL 은 XADD 의 인자를 보지 않는다 — XADD … MAXLEN 0 으로 비우기 · 다른 service 이름으로 쓰기는 막지 못한다. start.sh 머리 주석)
+denied "XREVRANGE wakeline:logs(쓰기 전용 — 다른 서비스 로그 읽기)" "${K[@]}" xrevrange wakeline:logs + - count 1
+denied "DEL wakeline:logs"                     "${K[@]}" del wakeline:logs
+denied "UNLINK wakeline:logs"                  "${K[@]}" unlink wakeline:logs
+denied "RENAME wakeline:logs"                  "${K[@]}" rename wakeline:logs wakeline:events
+denied "XTRIM wakeline:logs MAXLEN 0"          "${K[@]}" xtrim wakeline:logs maxlen 0
+denied "XDEL wakeline:logs"                    "${K[@]}" xdel wakeline:logs 0-1
+denied "SET 으로 wakeline:logs 덮어쓰기"         "${K[@]}" set wakeline:logs x
+denied "EXPIRE wakeline:logs"                  "${K[@]}" expire wakeline:logs 1
+denied "XGROUP CREATE wakeline:logs"           "${K[@]}" xgroup create wakeline:logs c9 0
+denied "EVALSHA 로도 wakeline:logs DEL 불가"     "${K[@]}" evalsha "$DEL_SHA" 1 wakeline:logs
+XTRIM_SHA="$(cli "${D[@]}" script load "return redis.call('XTRIM', KEYS[1], 'MAXLEN', 0)")"
+denied "EVALSHA 로도 wakeline:logs XTRIM 불가"   "${K[@]}" evalsha "$XTRIM_SHA" 1 wakeline:logs
+ok "로그 스트림은 그대로(관리자로 확인)" "^[1-9][0-9]*$" "${D[@]}" xlen wakeline:logs
+denied "비슷한 이름 wakeline:logs:x"            "${K[@]}" xadd wakeline:logs:x '*' e x
+denied "비슷한 이름 wakeline:logsx"             "${K[@]}" xadd wakeline:logsx '*' e x
+denied "DLQ 읽기 wakeline:dlq(XREVRANGE)"       "${K[@]}" xrevrange wakeline:dlq + - count 1
 denied "세션 읽기 wakeline:session:*"   "${K[@]}" hgetall wakeline:session:sessions:t
 denied "세션 위조 wakeline:session:*"   "${K[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
 denied "세션 삭제"                   "${K[@]}" del wakeline:session:sessions:t
@@ -244,6 +269,7 @@ ok "HGETALL wakeline:ais:status(health)" "last_msg_at"  "${S[@]}" hgetall wakeli
 ok "HSET wakeline:ais:*(다른 필드)"       "^[0-9]+$"     "${S[@]}" hset wakeline:ais:stats msgs 1
 ok "HGET wakeline:settings ais_bboxes(읽기)" ""         "${S[@]}" hget wakeline:settings ais_bboxes
 ok "HGETALL wakeline:settings(읽기)"     "region_poll_s" "${S[@]}" hgetall wakeline:settings
+ok "XADD wakeline:logs MAXLEN ~ 3000(로그 싱크)" "^[0-9]+-[0-9]+$" "${S[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event ais)"
 
 echo "[wakeline_ais — 거부]"
 # R-86: 허용 목록(XADD·HSET·HGET·HGETALL) — 선박 스트림을 지우거나 덮어쓰거나 만료시킬 수 없다
@@ -274,6 +300,16 @@ denied "세션 읽기 wakeline:session:*"       "${S[@]}" hgetall wakeline:sessi
 denied "세션 위조 wakeline:session:*"       "${S[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
 denied "요청 제한 rl:*"                    "${S[@]}" del rl:public:1.2.3.4:1
 denied "DLQ wakeline:dlq"                  "${S[@]}" xadd wakeline:dlq '*' x y
+# 계약 v5 §C3: 로그 스트림은 XADD 만(쓰기 전용)
+denied "XREVRANGE wakeline:logs(읽기)"       "${S[@]}" xrevrange wakeline:logs + - count 1
+denied "DEL wakeline:logs"                   "${S[@]}" del wakeline:logs
+denied "UNLINK wakeline:logs"                "${S[@]}" unlink wakeline:logs
+denied "RENAME wakeline:logs"                "${S[@]}" rename wakeline:logs wakeline:ais:x
+denied "XTRIM wakeline:logs MAXLEN 0"        "${S[@]}" xtrim wakeline:logs maxlen 0
+denied "XDEL wakeline:logs"                  "${S[@]}" xdel wakeline:logs 0-1
+denied "SET 으로 wakeline:logs 덮어쓰기"       "${S[@]}" set wakeline:logs x
+denied "EXPIRE wakeline:logs"                "${S[@]}" expire wakeline:logs 1
+denied "비슷한 이름 wakeline:logs:x"          "${S[@]}" xadd wakeline:logs:x '*' e x
 denied "XREADGROUP wakeline:ships"          "${S[@]}" xreadgroup group api c9 count 1 streams wakeline:ships '>'
 denied "XACK wakeline:ships"                "${S[@]}" xack wakeline:ships api 0-1
 denied "XGROUP DESTROY wakeline:ships"      "${S[@]}" xgroup destroy wakeline:ships api
@@ -294,6 +330,12 @@ denied "CLIENT TRACKING(RESP3)"           "${S[@]}" -3 client tracking on bcast
 denied "CLIENT TRACKING OPTIN"            "${S[@]}" client tracking on optin
 denied "CLIENT CACHING"                   "${S[@]}" client caching yes
 denied "다른 키"                           "${S[@]}" set other:key x
+
+echo "[wakeline_api — 로그 조회(계약 v5 §C4): 세 서비스가 실은 항목을 읽는다]"
+for svc in api collector ais; do
+  ok "XREVRANGE wakeline:logs 에 $svc 항목" "\"service\":\"$svc\"" "${A[@]}" xrevrange wakeline:logs + - count 50
+done
+ok "로그 스트림 항목 수(관리자로 확인)" "^[3-9]$|^[1-9][0-9]+$" "${D[@]}" xlen wakeline:logs
 
 echo "[컨테이너 권한]"
 uid="$(docker exec "$C" sh -c 'awk "/^Uid:/{print \$2}" /proc/1/status')"

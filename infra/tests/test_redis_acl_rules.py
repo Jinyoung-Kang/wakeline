@@ -1,4 +1,4 @@
-"""infra/redis/start.sh 가 만드는 ACL 규칙 정책 시험(계약 §6 · 계약 v2 §C · 계약 v4 §A) — 컨테이너를 띄우지 않는다.
+"""infra/redis/start.sh 가 만드는 ACL 규칙 정책 시험(계약 §6 · 계약 v2 §C · 계약 v4 §A · 계약 v5 §C3) — 컨테이너를 띄우지 않는다.
 
 start.sh 를 그대로 실행하되 PATH 앞에 가짜 redis-server(받은 인자를 한 줄에 하나씩 출력)를 두어,
 사용자별로 실제로 넘어가는 키 규칙을 읽는다. 동작 시험(명령이 실제로 거부되는지)은 redis_acl_test.sh(docker)가 한다.
@@ -122,6 +122,30 @@ class RedisAclRulesTest(unittest.TestCase):
             "script|load", "evalsha"})
         self.assertEqual(self.commands("wakeline_ais"), base | {"xadd", "hset", "hget", "hgetall"})
 
+    # --- 계약 v5 §C3 · ADR-018: 시스템 로그 스트림 wakeline:logs ---
+    def test_producers_write_logs_stream_write_only(self):
+        for user in ("wakeline_collector", "wakeline_ais"):
+            with self.subTest(user=user):
+                keys = self.keys(user)
+                self.assertIn("%W~wakeline:logs", keys, "XADD wakeline:logs MAXLEN ~ 3000 (계약 v5 §C2)")
+                # 쓰기 전용 — 수집기의 XREVRANGE 가 다른 서비스(api · web-client)의 로그를 읽지 못하게(조회는 운영 세션 전용, ADR-018)
+                self.assertEqual([k for k in keys if "logs" in k], ["%W~wakeline:logs"], "정확한 이름 하나 · 읽기 권한 없음 · 와일드카드 없음")
+                self.assertFalse([s for s in self.selectors(user) if any("logs" in r for r in s)], "셀렉터로도 로그 스트림에 명령을 더 주지 않는다")
+
+    def test_producer_key_patterns_are_pinned(self):
+        # 키 규칙 전체를 고정한다 — 넓히려면 이 목록과 redis_acl_test.sh 를 함께 바꾼다
+        self.assertEqual(sorted(self.keys("wakeline_collector")), sorted([
+            "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
+            "~wakeline:provider:*", "~wakeline:radar_kr:*", "%R~wakeline:settings", "~budget:*",
+            "%R~wakeline:demand:hot", "%R~wakeline:demand:focus", "%R~wakeline:demand:hot:meta", "%R~wakeline:demand:focus:meta",
+            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs"]))
+        self.assertEqual(sorted(self.keys("wakeline_ais")), sorted([
+            "~wakeline:ships", "~wakeline:ais:*", "%R~wakeline:settings", "%W~wakeline:logs"]))
+
+    def test_api_reads_and_writes_logs_stream(self):
+        # api 는 자기 로그 · 브라우저 오류(client-errors)를 싣고 /api/v1/ops/logs 로 읽는다 — wakeline:* 에 이미 들어 있다
+        self.assertIn("~wakeline:*", self.keys("wakeline_api"))
+
     def test_api_rules_unchanged(self):
         self.assertIn("+@all", self.users["wakeline_api"])
         self.assertIn("-@dangerous", self.users["wakeline_api"])
@@ -131,6 +155,7 @@ class RedisAclRulesTest(unittest.TestCase):
         users = acl_rules(env)
         self.assertEqual(set(users), {"wakeline_api", "wakeline_collector"})
         self.assertIn("~wakeline:route:*", [r for r in users["wakeline_collector"] if r.startswith("~")])
+        self.assertIn("%W~wakeline:logs", users["wakeline_collector"])
 
 
 if __name__ == "__main__":

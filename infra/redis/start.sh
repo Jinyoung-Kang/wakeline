@@ -1,5 +1,5 @@
 #!/bin/sh
-# Wakeline redis 기동 스크립트 — 서비스별 ACL 사용자를 만들고 redis-server 를 직접 실행한다(계약 §6 · 계약 v2 §C).
+# Wakeline redis 기동 스크립트 — 서비스별 ACL 사용자를 만들고 redis-server 를 직접 실행한다(계약 §6 · 계약 v2 §C · 계약 v5 §C3).
 #
 #   default          관리용(헬스체크·운영 redis-cli). 비밀번호 REDIS_PASSWORD. api·collector·ais 는 쓰지 않는다.
 #   wakeline_api        비밀번호 REDIS_API_PASSWORD.        키 wakeline:* · rl:*  (스트림 소비·DLQ·세션·설정·요청 제한)
@@ -9,6 +9,12 @@
 #                    노선 캐시(ADR-016, 계약 v4 §A): wakeline:route:{CALLSIGN} 을 SET EX 로 쓰고 EXISTS 로 확인한다(api 는 wakeline:* 로 읽는다). ais 에는 주지 않는다.
 #   wakeline_ais        비밀번호 REDIS_AIS_PASSWORD(ADR-014, 계약 v2 §C). 선박 스트림 wakeline:ships 와 wakeline:ais:* 만 쓰고 wakeline:settings 는 읽기 전용.
 #                    항공기 스트림·예산·수요 임대·세션에는 접근하지 못한다. 소비자 그룹 명령·키 이름 열람 금지는 수집기와 같다.
+#   시스템 로그(ADR-018, 계약 v5 §C3): collector·ais 는 wakeline:logs 에 XADD(MAXLEN ~ 3000)만 한다 — 키 규칙은 쓰기 전용 %W~.
+#                    ~(읽기·쓰기)로 주면 수집기의 XREVRANGE(루트 규칙이라 모든 키에 적용)로 api · web-client 로그를 읽을 수 있다 — 조회는 운영 세션 전용.
+#                    DEL·XTRIM·RENAME·EXPIRE 는 허용 목록에 없어 이 키에도 닿지 않는다. api 는 wakeline:* 로 싣고 읽는다.
+#                    남는 위험(ACL 은 명령 인자를 보지 않는다): XADD … MAXLEN 0 / MINID 로 스트림을 비울 수 있고(api 가 실은 항목 포함),
+#                    service 를 다른 이름으로 적어 실을 수 있다 — 읽는 쪽(api)은 스키마 검증·가림만 하고 출처를 증명하지 못한다.
+#                    다른 생산자 스트림(wakeline:aircraft · wakeline:ships …)의 XADD 트리밍도 같은 한계다.
 #                    REDIS_AIS_PASSWORD 가 비어 있으면 이 사용자를 만들지 않는다(빈 비밀번호로 열린 사용자를 만들지 않기 위해).
 #                    compose 는 ${REDIS_AIS_PASSWORD:?} 로 값이 없으면 기동을 거부한다 — 비어 있는 경우는 이 스크립트를 쓰는 api 통합 테스트(ItStack)뿐이다.
 #
@@ -41,10 +47,12 @@ COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:radar ~wakeline:ev
 COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:hot %R~wakeline:demand:focus %R~wakeline:demand:hot:meta %R~wakeline:demand:focus:meta ~wakeline:demand:status"
 # 노선 캐시(계약 v4 §A): 수집기가 유일한 작성자(adsbdb 조회 결과, TTL 만 — 약관상 다른 곳에 저장하지 않는다)
 COLLECTOR_KEYS="$COLLECTOR_KEYS ~wakeline:route:*"
+# 시스템 로그(계약 v5 §C3): 쓰기 전용 — XADD 만, 다른 서비스 로그는 읽지 못한다
+COLLECTOR_KEYS="$COLLECTOR_KEYS %W~wakeline:logs"
 # 생산자 공통: 접속(redis-py 8 은 HELLO 3 AUTH 로 붙는다)·헬스 체크(PING, health_check_interval)·클라이언트 정보만.
 # 소비자 그룹 명령(XGROUP·XREADGROUP·XACK …)·키 이름 열람(SCAN·RANDOMKEY·KEYS)·CLIENT TRACKING 은 목록에 없어서 거부된다.
 PRODUCER_BASE='resetchannels -@all +hello +ping +info +client|setinfo +client|setname +client|id'
-# 수집기가 쓰는 명령(wakeline_collector 코드 전체): 스트림 XADD(MAXLEN ~)·XREVRANGE, 해시 HSET·HGET·HGETALL·HMGET·HINCRBY·HDEL·HKEYS,
+# 수집기가 쓰는 명령(wakeline_collector 코드 전체): 스트림 XADD(MAXLEN ~ · 로그 싱크 포함)·XREVRANGE, 해시 HSET·HGET·HGETALL·HMGET·HINCRBY·HDEL·HKEYS,
 # EXISTS·GET, 임대 ZRANGEBYSCORE, 예산 Lua SCRIPT LOAD + EVALSHA
 COLLECTOR_CMDS='+xadd +xrevrange +hset +hget +hgetall +hmget +hincrby +hdel +hkeys +exists +get +zrangebyscore +script|load +evalsha'
 # 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만, EXPIRE 는 예산 키(Lua)에만
@@ -52,8 +60,8 @@ COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:radar_kr:frames ~wakeline:radar_
 COLLECTOR_SEL_DEL='(~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +del)'
 COLLECTOR_SEL_EXPIRE='(~budget:* +expire)'
 
-AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings'
-# ais 가 쓰는 명령: 선박 스트림 XADD, 상태 해시 HSET·HGETALL, 설정 HGET·HGETALL — 지우거나 덮어쓰는 명령은 없다
+AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings %W~wakeline:logs'
+# ais 가 쓰는 명령: 선박 스트림 XADD, 로그 스트림 XADD(쓰기 전용), 상태 해시 HSET·HGETALL, 설정 HGET·HGETALL — 지우거나 덮어쓰는 명령은 없다
 AIS_CMDS='+xadd +hset +hget +hgetall'
 
 umask 0077
