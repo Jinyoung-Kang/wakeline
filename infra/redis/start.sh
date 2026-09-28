@@ -12,8 +12,12 @@
 #                    REDIS_AIS_PASSWORD 가 비어 있으면 이 사용자를 만들지 않는다(빈 비밀번호로 열린 사용자를 만들지 않기 위해).
 #                    compose 는 ${REDIS_AIS_PASSWORD:?} 로 값이 없으면 기동을 거부한다 — 비어 있는 경우는 이 스크립트를 쓰는 api 통합 테스트(ItStack)뿐이다.
 #
-# 공통 명령 권한: +@all -@dangerous (KEYS·FLUSHALL·CONFIG·MONITOR·REPLICAOF·MIGRATE·RESTORE·DEBUG·SHUTDOWN·ACL 변경·CLIENT KILL 등 제외)
+# api 명령 권한(COMMON): +@all -@dangerous (KEYS·FLUSHALL·CONFIG·MONITOR·REPLICAOF·MIGRATE·RESTORE·DEBUG·SHUTDOWN·ACL 변경·CLIENT KILL 등 제외)
 #   + 클라이언트가 접속·상태 확인에 쓰는 것만 다시 허용: INFO(Spring 헬스 인디케이터), PING, CLIENT SETINFO/SETNAME/ID(Lettuce·redis-py 접속 시).
+# 생산자(collector·ais) 명령 권한(R-86 · ADR-017 §4): 허용 목록 — -@all 에서 시작해 코드가 실제로 쓰는 명령만 더한다.
+#   거부 목록(+@all -@dangerous)이면 DEL·UNLINK·RENAME·XTRIM·EXPIRE·SET 덮어쓰기·*STORE 로 스트림을 지워 api 소비자 그룹과 PEL 을 없앨 수 있었다.
+#   키를 지우거나 덮어쓰거나 만료시키는 명령(SET·DEL·EXPIRE)은 셀렉터로 그 명령을 쓰는 키에만 준다 — 스트림·해시에는 닿지 않는다.
+#   스크립트 안의 redis.call 도 같은 규칙을 따른다(예산 Lua 의 EXPIRE 는 budget:* 에서만). 목록은 infra/tests/redis_acl_test.sh 가 확정한다.
 #   pub/sub 채널 권한 없음(resetchannels) — 서비스 클라이언트(api·collector·ais) 모두 pub/sub 를 쓰지 않는다.
 #   CLIENT TRACKING·CACHING 금지(계약 v3 §D): 출시된 Redis 8.x 의 BCAST 무효화 알림은 키 권한을 보지 않고 바뀐 키 *이름*을 보낸다 —
 #   세션 키 이름이 곧 세션 ID 라서 SCAN·RANDOMKEY 와 같은 이유로 막는다. 서비스 클라이언트는 클라이언트 측 캐시를 쓰지 않는다.
@@ -37,17 +41,25 @@ COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:radar ~wakeline:ev
 COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:hot %R~wakeline:demand:focus %R~wakeline:demand:hot:meta %R~wakeline:demand:focus:meta ~wakeline:demand:status"
 # 노선 캐시(계약 v4 §A): 수집기가 유일한 작성자(adsbdb 조회 결과, TTL 만 — 약관상 다른 곳에 저장하지 않는다)
 COLLECTOR_KEYS="$COLLECTOR_KEYS ~wakeline:route:*"
-# 수집기는 스트림 생산자다 — api 의 소비자 그룹을 지우거나 대기 목록(PEL)을 조작하는 명령은 필요 없다.
-# SCAN·RANDOMKEY 는 키 권한과 무관하게 키 *이름*을 돌려준다: 세션 키 이름이 곧 세션 ID(쿠키 값)라서 수집기에서는 막는다.
-COLLECTOR_DENY='-xgroup -xreadgroup -xack -xclaim -xautoclaim -xsetid -scan -randomkey'
+# 생산자 공통: 접속(redis-py 8 은 HELLO 3 AUTH 로 붙는다)·헬스 체크(PING, health_check_interval)·클라이언트 정보만.
+# 소비자 그룹 명령(XGROUP·XREADGROUP·XACK …)·키 이름 열람(SCAN·RANDOMKEY·KEYS)·CLIENT TRACKING 은 목록에 없어서 거부된다.
+PRODUCER_BASE='resetchannels -@all +hello +ping +info +client|setinfo +client|setname +client|id'
+# 수집기가 쓰는 명령(wakeline_collector 코드 전체): 스트림 XADD(MAXLEN ~)·XREVRANGE, 해시 HSET·HGET·HGETALL·HMGET·HINCRBY·HDEL·HKEYS,
+# EXISTS·GET, 임대 ZRANGEBYSCORE, 예산 Lua SCRIPT LOAD + EVALSHA
+COLLECTOR_CMDS='+xadd +xrevrange +hset +hget +hgetall +hmget +hincrby +hdel +hkeys +exists +get +zrangebyscore +script|load +evalsha'
+# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만, EXPIRE 는 예산 키(Lua)에만
+COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +set)'
+COLLECTOR_SEL_DEL='(~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +del)'
+COLLECTOR_SEL_EXPIRE='(~budget:* +expire)'
 
 AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings'
-AIS_DENY="$COLLECTOR_DENY"
+# ais 가 쓰는 명령: 선박 스트림 XADD, 상태 해시 HSET·HGETALL, 설정 HGET·HGETALL — 지우거나 덮어쓰는 명령은 없다
+AIS_CMDS='+xadd +hset +hget +hgetall'
 
 umask 0077
 # shellcheck disable=SC2086 # 규칙 문자열은 의도적으로 단어 분리한다(글롭은 set -f 로 꺼 두었다)
 if [ -n "${REDIS_AIS_PASSWORD:-}" ]; then
-  set -- --user wakeline_ais on ">$REDIS_AIS_PASSWORD" $AIS_KEYS $COMMON $AIS_DENY "$@"
+  set -- --user wakeline_ais on ">$REDIS_AIS_PASSWORD" $AIS_KEYS $PRODUCER_BASE $AIS_CMDS "$@"
 else
   echo "start.sh: REDIS_AIS_PASSWORD 가 비어 있어 wakeline_ais 사용자를 만들지 않습니다(선박 수신 불가)" >&2
 fi
@@ -55,5 +67,6 @@ fi
 exec redis-server "${REDIS_CONF:-/etc/redis/redis.conf}" \
   --requirepass "$REDIS_PASSWORD" \
   --user wakeline_api on ">$REDIS_API_PASSWORD" $API_KEYS $COMMON \
-  --user wakeline_collector on ">$REDIS_COLLECTOR_PASSWORD" $COLLECTOR_KEYS $COMMON $COLLECTOR_DENY \
+  --user wakeline_collector on ">$REDIS_COLLECTOR_PASSWORD" $COLLECTOR_KEYS $PRODUCER_BASE $COLLECTOR_CMDS \
+    "$COLLECTOR_SEL_SET" "$COLLECTOR_SEL_DEL" "$COLLECTOR_SEL_EXPIRE" \
   "$@"

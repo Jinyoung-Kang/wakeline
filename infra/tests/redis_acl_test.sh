@@ -125,6 +125,7 @@ echo "[wakeline_collector — 허용]"
 ok "PING"                      PONG           "${K[@]}" ping
 ok "INFO"                      redis_version  "${K[@]}" info server
 ok "CLIENT SETINFO(redis-py)"  OK             "${K[@]}" client setinfo lib-name redis-py
+ok "HELLO 3 AUTH(redis-py 8 은 RESP3 로 접속)" "proto" "${K[@]}" hello 3 auth wakeline_collector "$COL_PW"
 for s in wakeline:aircraft wakeline:sigmet wakeline:radar wakeline:events; do
   ok "XADD $s MAXLEN ~ 200"    "^[0-9]+-[0-9]+$" "${K[@]}" xadd "$s" maxlen '~' 200 '*' payload x
 done
@@ -141,8 +142,11 @@ ok "HGETALL wakeline:settings(읽기)" "region_poll_s" "${K[@]}" hgetall wakelin
 ok "XREVRANGE wakeline:sigmet(마지막 발행 확인)" "payload" "${K[@]}" xrevrange wakeline:sigmet + - count 1
 ok "EXISTS wakeline:radar_kr:frame:*" "^1$"      "${K[@]}" exists wakeline:radar_kr:frame:202601010000
 ok "DEL wakeline:radar_kr:frame:*" "^1$"         "${K[@]}" del wakeline:radar_kr:frame:202601010000
-ok "예산 Lua budget:*"          "^[0-9]+$"     "${K[@]}" eval "$BUDGET_LUA" 1 budget:adsb_lol:20260101
+# 수집기는 SCRIPT LOAD + EVALSHA 만 쓴다(budget.py). 스크립트 안 EXPIRE 는 budget:* 셀렉터로만 허용된다(R-86)
 ok "SCRIPT LOAD(예산)"          "^[0-9a-f]{40}$" "${K[@]}" script load "$BUDGET_LUA"
+BUDGET_SHA="$(cli "${K[@]}" script load "$BUDGET_LUA")"
+ok "EVALSHA 예산 Lua(HGET·HINCRBY·EXPIRE) budget:*" "^[0-9]+$" "${K[@]}" evalsha "$BUDGET_SHA" 1 budget:adsb_lol:20260101
+ok "예산 키 TTL 이 걸렸다(관리자로 확인)" "^[1-9][0-9]*$" "${D[@]}" ttl budget:adsb_lol:20260101
 ok "HINCRBY budget:*"          "^-?[0-9]+$"   "${K[@]}" hincrby budget:adsb_lol:20260101 used -1
 ok "HGETALL budget:*"          "used"         "${K[@]}" hgetall budget:adsb_lol:20260101
 # 계약 v2 §A2 · §C: 임대는 읽기(1 s 폴링), 조회 상태는 쓰기
@@ -159,10 +163,36 @@ ok "SET wakeline:route:* EX 1800"        OK         "${K[@]}" set wakeline:route
 ok "SET wakeline:route:* EX 120"         OK         "${K[@]}" set wakeline:route:ZZX124 '{"v":1,"status":"error","callsign":"ZZX124"}' ex 120
 ok "EXISTS wakeline:route:*"             "^1$"      "${K[@]}" exists wakeline:route:ZZX123
 ok "GET wakeline:route:*"                "not_found" "${K[@]}" get wakeline:route:ZZX123
-ok "TTL wakeline:route:*"                "^(1[0-7][0-9]{2}|1800)$" "${K[@]}" ttl wakeline:route:ZZX123
+ok "TTL wakeline:route:*(관리자로 확인)"  "^(1[0-7][0-9]{2}|1800)$" "${D[@]}" ttl wakeline:route:ZZX123
 ok "api GET wakeline:route:*(수집기가 쓴 값)" "not_found" "${A[@]}" get wakeline:route:ZZX123
 
+ok "DEL wakeline:radar_kr:frames(목록 비움 — kma_radar._save_frames)" "^[01]$" "${K[@]}" del wakeline:radar_kr:frames
+
 echo "[wakeline_collector — 거부]"
+# R-86: 허용 목록 — 스트림(api 소비자 그룹·PEL)을 지우거나 덮어쓰거나 만료시키거나 이름을 바꾸는 명령은 어느 키에도 없다
+cli "${D[@]}" xadd wakeline:aircraft '*' payload keep >/dev/null
+denied "DEL 스트림 wakeline:aircraft"            "${K[@]}" del wakeline:aircraft
+denied "UNLINK 스트림 wakeline:aircraft"         "${K[@]}" unlink wakeline:aircraft
+denied "RENAME 스트림"                           "${K[@]}" rename wakeline:aircraft wakeline:events
+denied "XTRIM 스트림 MAXLEN 0"                   "${K[@]}" xtrim wakeline:aircraft maxlen 0
+denied "XDEL 스트림"                             "${K[@]}" xdel wakeline:aircraft 0-1
+denied "SET 으로 스트림 덮어쓰기"                  "${K[@]}" set wakeline:aircraft x
+denied "SUNIONSTORE 로 스트림 덮어쓰기"            "${K[@]}" sunionstore wakeline:aircraft wakeline:nokey
+denied "COPY … REPLACE 로 스트림 덮어쓰기"          "${K[@]}" copy wakeline:events wakeline:aircraft replace
+denied "EXPIRE 스트림"                           "${K[@]}" expire wakeline:aircraft 1
+denied "PEXPIRE 스트림"                          "${K[@]}" pexpire wakeline:aircraft 1
+denied "DEL 해시 wakeline:provider:*"            "${K[@]}" del wakeline:provider:adsb_fi
+denied "DEL 예산 budget:*"                       "${K[@]}" del budget:adsb_lol:20260101
+denied "EXPIRE 노선 캐시(SET EX 만)"              "${K[@]}" expire wakeline:route:ZZX123 1
+denied "UNLINK 레이더 목록(DEL 만)"               "${K[@]}" unlink wakeline:radar_kr:frames
+denied "GETDEL 노선 캐시"                        "${K[@]}" getdel wakeline:route:ZZX123
+denied "SELECT 1"                              "${K[@]}" select 1
+denied "FUNCTION FLUSH"                        "${K[@]}" function flush
+denied "SCRIPT FLUSH(api 의 요청 제한 스크립트 캐시)" "${K[@]}" script flush
+denied "EVAL(임의 스크립트)"                     "${K[@]}" eval "return 1" 0
+DEL_SHA="$(cli "${D[@]}" script load "return redis.call('DEL', KEYS[1])")"
+denied "EVALSHA 로도 스트림 DEL 불가"              "${K[@]}" evalsha "$DEL_SHA" 1 wakeline:aircraft
+ok "스트림은 그대로(관리자로 확인)" "^[1-9][0-9]*$" "${D[@]}" xlen wakeline:aircraft
 denied "세션 읽기 wakeline:session:*"   "${K[@]}" hgetall wakeline:session:sessions:t
 denied "세션 위조 wakeline:session:*"   "${K[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
 denied "세션 삭제"                   "${K[@]}" del wakeline:session:sessions:t
@@ -206,6 +236,7 @@ echo "[wakeline_ais — 허용]"
 ok "PING"                                PONG           "${S[@]}" ping
 ok "INFO"                                redis_version  "${S[@]}" info server
 ok "CLIENT SETINFO(redis-py)"            OK             "${S[@]}" client setinfo lib-name redis-py
+ok "HELLO 3 AUTH(redis-py 8 은 RESP3 로 접속)" "proto"   "${S[@]}" hello 3 auth wakeline_ais "$AIS_PW"
 ok "XADD wakeline:ships MAXLEN ~ 200"    "^[0-9]+-[0-9]+$" "${S[@]}" xadd wakeline:ships maxlen '~' 200 '*' kind ships payload x
 ok "XADD wakeline:ships(ais_gap)"        "^[0-9]+-[0-9]+$" "${S[@]}" xadd wakeline:ships maxlen '~' 200 '*' kind ais_gap payload x
 ok "HSET wakeline:ais:status"            "^[0-9]+$"     "${S[@]}" hset wakeline:ais:status connected 1 last_msg_at 2026-01-01T00:00:00Z gap_open_since ''
@@ -215,6 +246,18 @@ ok "HGET wakeline:settings ais_bboxes(읽기)" ""         "${S[@]}" hget wakelin
 ok "HGETALL wakeline:settings(읽기)"     "region_poll_s" "${S[@]}" hgetall wakeline:settings
 
 echo "[wakeline_ais — 거부]"
+# R-86: 허용 목록(XADD·HSET·HGET·HGETALL) — 선박 스트림을 지우거나 덮어쓰거나 만료시킬 수 없다
+denied "DEL 스트림 wakeline:ships"               "${S[@]}" del wakeline:ships
+denied "UNLINK 스트림 wakeline:ships"            "${S[@]}" unlink wakeline:ships
+denied "RENAME 스트림 wakeline:ships"            "${S[@]}" rename wakeline:ships wakeline:ais:x
+denied "XTRIM 스트림 MAXLEN 0"                   "${S[@]}" xtrim wakeline:ships maxlen 0
+denied "SET 으로 스트림 덮어쓰기"                  "${S[@]}" set wakeline:ships x
+denied "EXPIRE 스트림"                           "${S[@]}" expire wakeline:ships 1
+denied "DEL wakeline:ais:status"               "${S[@]}" del wakeline:ais:status
+denied "SELECT 1"                              "${S[@]}" select 1
+denied "FUNCTION FLUSH"                        "${S[@]}" function flush
+denied "SCRIPT FLUSH"                          "${S[@]}" script flush
+denied "EVAL"                                  "${S[@]}" eval "return 1" 0
 denied "설정 쓰기 wakeline:settings ais_bboxes" "${S[@]}" hset wakeline:settings ais_bboxes '-90,-180,90,180'
 denied "설정 삭제 wakeline:settings"     "${S[@]}" del wakeline:settings
 denied "항공기 스트림 wakeline:aircraft"   "${S[@]}" xadd wakeline:aircraft '*' payload x

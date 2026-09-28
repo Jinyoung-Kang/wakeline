@@ -81,6 +81,51 @@ class RedisAclRulesTest(unittest.TestCase):
             self.assertNotIn(broad, keys)
         self.assertNotIn("allkeys", self.users["wakeline_collector"])
 
+    # --- R-86 · ADR-017 §4: 생산자(collector·ais)는 허용 목록 — 키를 지우거나 덮어쓰거나 만료시키는 명령은 쓰는 키에만 ---
+    def commands(self, user: str) -> set[str]:
+        """루트 규칙에서 허용한 명령(+x)과 카테고리(+@x)."""
+        return {r[1:] for r in self.users[user] if r.startswith("+")}
+
+    def selectors(self, user: str) -> list[list[str]]:
+        return [r.strip("()").split() for r in self.users[user] if r.startswith("(")]
+
+    def test_producers_start_from_nothing(self):
+        for user in ("wakeline_collector", "wakeline_ais"):
+            with self.subTest(user=user):
+                rules = self.users[user]
+                self.assertIn("-@all", rules, "허용 목록 방식(+@all -@dangerous 가 아니다)")
+                self.assertLess(rules.index("-@all"), min(i for i, r in enumerate(rules) if r.startswith("+")), "-@all 이 먼저")
+                self.assertFalse({c for c in self.commands(user) if c.startswith("@")}, "카테고리 통째 허용 없음")
+
+    def test_producers_have_no_delete_rename_overwrite_or_expire_in_root(self):
+        risky = {"del", "unlink", "rename", "renamenx", "xtrim", "xdel", "set", "mset", "getdel", "getex", "copy", "move", "restore",
+                 "expire", "pexpire", "expireat", "pexpireat", "persist", "select", "swapdb", "flushdb", "flushall", "eval", "eval_ro",
+                 "function", "script|flush", "sunionstore", "zunionstore", "sort", "xgroup", "xreadgroup", "xack", "xclaim", "xautoclaim",
+                 "xsetid", "scan", "randomkey", "keys", "client|tracking", "client|caching", "monitor", "config", "debug", "acl"}
+        for user in ("wakeline_collector", "wakeline_ais"):
+            with self.subTest(user=user):
+                self.assertFalse(self.commands(user) & risky, "루트 규칙(모든 키)에는 파괴적 명령이 없다")
+
+    def test_collector_destructive_commands_are_scoped_to_the_keys_it_writes(self):
+        sel = {tuple(sorted(c[1:] for c in s if c.startswith("+"))): sorted(k for k in s if k.startswith(("~", "%"))) for s in self.selectors("wakeline_collector")}
+        self.assertEqual(sel, {
+            ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*"],
+            ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
+            ("expire",): ["~budget:*"],
+        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)에만 — 스트림·해시에는 닿지 않는다")
+        self.assertEqual(self.selectors("wakeline_ais"), [], "ais 는 지우거나 덮어쓰는 명령이 필요 없다")
+
+    def test_producer_commands_are_exactly_what_the_code_uses(self):
+        base = {"hello", "ping", "info", "client|setinfo", "client|setname", "client|id"}
+        self.assertEqual(self.commands("wakeline_collector"), base | {
+            "xadd", "xrevrange", "hset", "hget", "hgetall", "hmget", "hincrby", "hdel", "hkeys", "exists", "get", "zrangebyscore",
+            "script|load", "evalsha"})
+        self.assertEqual(self.commands("wakeline_ais"), base | {"xadd", "hset", "hget", "hgetall"})
+
+    def test_api_rules_unchanged(self):
+        self.assertIn("+@all", self.users["wakeline_api"])
+        self.assertIn("-@dangerous", self.users["wakeline_api"])
+
     def test_without_ais_password_no_ais_user(self):
         env = {k: v for k, v in FAKE_ENV.items() if k != "REDIS_AIS_PASSWORD"}
         users = acl_rules(env)
