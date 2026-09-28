@@ -79,7 +79,7 @@ public class WakelineApplication {
     /**
      * 운영자 계정 생성/갱신. 비밀번호는 표준 입력 한 줄(--password-stdin, 계약 §7 — 명령행·프로세스 목록에 남지 않는다) 또는
      * 환경변수 WAKELINE_OPS_PASSWORD(이전 방식 호환). 사용자명은 WAKELINE_OPS_USER(기본 admin). 비밀번호는 소스·로그에 남지 않는다.
-     * @return 종료 코드(0 성공, 2 입력 오류)
+     * @return 종료 코드(0 성공, 2 입력 오류, 3 비밀번호는 바뀌었지만 기존 세션을 끝내지 못함 — {@link #applyOpsUser})
      */
     static int createOpsUser(boolean passwordFromStdin, InputStream stdin, Map<String, String> env) {
         String user = env.getOrDefault("WAKELINE_OPS_USER", "admin");
@@ -110,10 +110,24 @@ public class WakelineApplication {
         var app = new SpringApplication(WakelineApplication.class);
         app.setAdditionalProfiles("cli");
         try (ConfigurableApplicationContext ctx = app.run("--spring.main.web-application-type=none", "--spring.flyway.enabled=false")) {
-            ctx.getBean(OpsUserService.class).upsert(user, password);
-            System.out.println("ops user '" + user + "' ready");
+            return applyOpsUser(ctx.getBean(OpsUserService.class), user, password, System.out, System.err);
         }
-        return 0;
+    }
+
+    /**
+     * 계정을 만들거나 비밀번호를 바꾸고 결과를 알린다. 비밀번호를 바꾸면 그 사용자의 기존 운영 세션이 모두 끝난다(R-95).
+     * @return 0 성공, 3 비밀번호는 바뀌었지만 기존 세션을 지우지 못함(Redis 장애 — 다시 실행하면 다시 지운다)
+     */
+    static int applyOpsUser(OpsUserService users, String user, String password, java.io.PrintStream out, java.io.PrintStream err) {
+        try {
+            int revoked = users.upsert(user, password);
+            out.println("ops user '" + user + "' ready" + (revoked > 0 ? " (ended " + revoked + " existing session(s))" : ""));
+            return 0;
+        } catch (OpsUserService.SessionsNotRevoked e) {
+            err.println("ops user '" + user + "': password updated, but existing sessions could not be ended — run it again when Redis is up ("
+                    + e.getCause() + ")");
+            return 3;
+        }
     }
 
     /** 첫 줄(줄바꿈·CR 제외). 스트림이 비어 있으면 null. 앞뒤 공백은 비밀번호의 일부일 수 있어 자르지 않는다. */

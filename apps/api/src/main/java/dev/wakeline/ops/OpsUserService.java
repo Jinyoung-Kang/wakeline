@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 운영자 계정: BCrypt(12), 5회 실패 시 15분 잠금. 계정은 CLI(make ops-user)로만 만든다.
+ * 운영자 계정: BCrypt(12), 5회 실패 시 15분 잠금. 계정은 CLI(make ops-user)로만 만든다. 비밀번호를 바꾸면 기존 세션을 지운다(R-95).
  * 실패 집계는 한 문장의 원자적 UPDATE(failed_count = failed_count + 1 … RETURNING) — 동시 실패가 서로를 덮어쓰지 않는다(COR-21·SEC-6).
  * 잠긴 계정·없는 계정도 BCrypt 비교를 한 번 한다 — 응답 시간으로 잠금 여부·계정 존재를 알 수 없게.
  */
@@ -21,9 +21,20 @@ public class OpsUserService {
     /** 타이밍 균일화용 더미 해시(BCrypt 12). 어떤 비밀번호와도 일치하지 않는다. */
     private static final String DUMMY_HASH = "$2a$12$C6UzMDM.H6dfI/f/IKcEeO5fHhy2oXWKQzSEWMSo8pvj3mOwVbw3i";
     private final JdbcClient db;
+    private final OpsSessionRegistry sessions;
     private final PasswordEncoder encoder = new BCryptPasswordEncoder(12);
 
-    public OpsUserService(JdbcClient db) { this.db = db; }
+    public OpsUserService(JdbcClient db, OpsSessionRegistry sessions) {
+        this.db = db;
+        this.sessions = sessions;
+    }
+
+    /** 비밀번호는 바뀌었지만 기존 세션을 지우지 못했다(Redis 장애) — CLI 가 알리고 실패 코드로 끝낸다. 다시 실행하면 다시 지운다. */
+    public static final class SessionsNotRevoked extends RuntimeException {
+        public SessionsNotRevoked(String username, Throwable cause) {
+            super("password for '" + username + "' was updated, but existing sessions could not be revoked: " + cause, cause);
+        }
+    }
 
     /** 세션(Redis, JDK 직렬화)에 저장되므로 Serializable. */
     public record User(int id, String username, String role) implements java.io.Serializable {}
@@ -41,11 +52,22 @@ public class OpsUserService {
         static AuthResult fail(Failure f, boolean lockedNow) { return new AuthResult(Optional.empty(), f, lockedNow); }
     }
 
-    public void upsert(String username, String password) {
-        db.sql("""
+    /**
+     * 계정 생성 또는 비밀번호 교체(make ops-user). 교체면 그 사용자의 기존 운영 세션을 모두 지운다(R-95 — 탈취된 세션이 비밀번호 교체 뒤에도
+     * 살아 있으면 안 된다). 비밀번호 변경은 세션 폐기가 실패해도 되돌리지 않는다(예전 비밀번호로 돌아가는 편이 더 위험) — {@link SessionsNotRevoked}.
+     * @return 지운 기존 세션 수
+     */
+    public int upsert(String username, String password) {
+        int id = db.sql("""
                 INSERT INTO ops_user (username, password_hash, role) VALUES (:u, :h, 'OPS')
-                ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, failed_count = 0, locked_until = NULL""")
-                .param("u", username).param("h", encoder.encode(password)).update();
+                ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, failed_count = 0, locked_until = NULL
+                RETURNING id""")
+                .param("u", username).param("h", encoder.encode(password)).query(Integer.class).single();
+        try {
+            return sessions.revokeAll(id);
+        } catch (RuntimeException e) {
+            throw new SessionsNotRevoked(username, e);
+        }
     }
 
     public AuthResult authenticate(String username, String password) {

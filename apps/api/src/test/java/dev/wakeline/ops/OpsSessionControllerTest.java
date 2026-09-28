@@ -39,12 +39,16 @@ class OpsSessionControllerTest {
     int authCalls;
     /** true 면 감사 기록이 DB 장애로 실패한다. */
     boolean auditDown;
+    /** 세션 목록(R-95) 호출 기록 "userId:sessionId" — registryDown 이면 로그아웃 정리가 Redis 장애로 실패한다. */
+    final List<String> registered = new ArrayList<>();
+    final List<String> unregistered = new ArrayList<>();
+    boolean registryDown;
 
     MockMvc mvc(Supplier<long[]> limiterResult, OpsUserService.AuthResult auth) {
         RateLimiter limiter = new RateLimiter(new StringRedisTemplate()) {
             @Override public long[] hitStrict(String bucket, String ip, int windowS) { return limiterResult.get(); }
         };
-        OpsUserService users = new OpsUserService(null) {
+        OpsUserService users = new OpsUserService(null, null) {
             @Override public AuthResult authenticate(String username, String password) { authCalls++; return auth; }
         };
         AuditService audit = new AuditService(null, null, PROPS) {
@@ -53,7 +57,14 @@ class OpsSessionControllerTest {
                 audited.add(action + ":" + target);
             }
         };
-        var controller = new OpsSessionController(users, new HttpSessionSecurityContextRepository(), audit, limiter, PROPS, meters);
+        OpsSessionRegistry registry = new OpsSessionRegistry(null, "wakeline:session", java.time.Duration.ofHours(8)) {
+            @Override public void register(int userId, String sessionId) { registered.add(userId + ":" + sessionId); }
+            @Override public void unregister(int userId, String sessionId) {
+                if (registryDown) throw new org.springframework.data.redis.RedisConnectionFailureException("down");
+                unregistered.add(userId + ":" + sessionId);
+            }
+        };
+        var controller = new OpsSessionController(users, new HttpSessionSecurityContextRepository(), audit, limiter, PROPS, meters, registry);
         return MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ProblemAdvice()).build();
     }
 
@@ -121,6 +132,25 @@ class OpsSessionControllerTest {
         assertThat(audited).containsExactly("LOGIN:admin");
         assertThat(r.getRequest().getSession(false)).isNotNull();
         assertThat(r.getRequest().getSession(false).getAttribute("ops_user_id")).isEqualTo(7);
+        // R-95: 최종 세션 id(교체 뒤)를 사용자 목록에 올린다
+        assertThat(registered).containsExactly("7:" + r.getRequest().getSession(false).getId());
+    }
+
+    /** R-95: 로그아웃은 목록에서 빼고, 목록 정리가 실패해도(Redis 장애) 세션은 끝낸다. */
+    @Test
+    void logoutRemovesTheSessionFromTheUserListAndStillEndsItWhenThatFails() throws Exception {
+        var auth = new OpsAuthentication(new OpsUserService.User(7, "admin", "OPS"), List.of());
+        MockHttpSession session = new MockHttpSession();
+        mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.fail(OpsUserService.Failure.BAD_PASSWORD, false))
+                .perform(delete("/api/v1/ops/session").session(session).principal(auth))
+                .andExpect(status().isNoContent());
+        assertThat(unregistered).containsExactly("7:" + session.getId());
+        registryDown = true;
+        MockHttpSession second = new MockHttpSession();
+        mvc(() -> new long[]{1, 60}, OpsUserService.AuthResult.fail(OpsUserService.Failure.BAD_PASSWORD, false))
+                .perform(delete("/api/v1/ops/session").session(second).principal(auth))
+                .andExpect(status().isNoContent());
+        assertThat(second.isInvalid()).isTrue();
     }
 
     /** 로그아웃은 감사 기록이 실패해도 세션을 끝내고 204 — 실패는 지표로 센다. */

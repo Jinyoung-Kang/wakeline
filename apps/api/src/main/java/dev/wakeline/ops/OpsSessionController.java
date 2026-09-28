@@ -48,9 +48,12 @@ public class OpsSessionController {
     private final AppProperties props;
     private final Counter auditFailures;
 
+    private final OpsSessionRegistry sessions;
+
     public OpsSessionController(OpsUserService users, SecurityContextRepository contextRepository, AuditService audit, RateLimiter limiter, AppProperties props,
-                                MeterRegistry meters) {
+                                MeterRegistry meters, OpsSessionRegistry sessions) {
         this.users = users;
+        this.sessions = sessions;
         this.contextRepository = contextRepository;
         this.audit = audit;
         this.limiter = limiter;
@@ -95,6 +98,8 @@ public class OpsSessionController {
         audit.record(req, user.id(), "LOGIN", user.username(), null, null);
         req.getSession(true);
         req.changeSessionId(); // 세션 고정 방지: 로그인 전 세션이 있었다면 ID 를 교체한다
+        // 비밀번호 교체 때 지울 수 있게 사용자 목록에 올린다(R-95) — 인증 컨텍스트보다 먼저: 실패하면(Redis 장애) 인증된 세션이 생기지 않는다
+        sessions.register(user.id(), req.getSession().getId());
         Authentication auth = new OpsAuthentication(user, List.of(new SimpleGrantedAuthority("ROLE_OPS")));
         SecurityContext ctx = SecurityContextHolder.createEmptyContext();
         ctx.setAuthentication(auth);
@@ -126,7 +131,13 @@ public class OpsSessionController {
             log.error("LOGOUT audit record failed (session invalidated anyway): {}", e.toString());
         } finally {
             var s = req.getSession(false);
-            if (s != null) s.invalidate();
+            if (s != null) {
+                if (uid != null) {
+                    try { sessions.unregister(uid, s.getId()); } // 목록 정리일 뿐 — 실패해도 세션은 끝낸다(남은 id 는 TTL 로 사라진다)
+                    catch (RuntimeException e) { log.debug("session registry cleanup failed: {}", e.toString()); }
+                }
+                s.invalidate();
+            }
             SecurityContextHolder.clearContext();
         }
         return ResponseEntity.noContent().build();

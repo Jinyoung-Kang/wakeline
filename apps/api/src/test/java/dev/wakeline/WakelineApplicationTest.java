@@ -36,6 +36,33 @@ class WakelineApplicationTest {
         assertThat(WakelineApplication.createOpsUser(true, in("long-enough-password\n"), Map.of("WAKELINE_OPS_USER", " "))).isEqualTo(2);
     }
 
+    /** R-95: ops-user 는 끝낸 기존 세션 수를 알리고, 세션을 끝내지 못하면(Redis 장애) 비밀번호는 바뀐 채 종료 코드 3 으로 알린다. */
+    @Test
+    void opsUserReportsEndedSessionsAndRevocationFailure() {
+        var out = new java.io.ByteArrayOutputStream();
+        var err = new java.io.ByteArrayOutputStream();
+        dev.wakeline.ops.OpsUserService ok = new dev.wakeline.ops.OpsUserService(null, null) {
+            @Override public int upsert(String username, String password) { return 2; }
+        };
+        assertThat(WakelineApplication.applyOpsUser(ok, "admin", "long-enough-password", new java.io.PrintStream(out, true), new java.io.PrintStream(err, true))).isZero();
+        assertThat(out.toString()).contains("ops user 'admin' ready").contains("ended 2 existing session(s)");
+
+        dev.wakeline.ops.OpsUserService fresh = new dev.wakeline.ops.OpsUserService(null, null) {
+            @Override public int upsert(String username, String password) { return 0; }
+        };
+        out.reset();
+        assertThat(WakelineApplication.applyOpsUser(fresh, "admin", "long-enough-password", new java.io.PrintStream(out, true), new java.io.PrintStream(err, true))).isZero();
+        assertThat(out.toString()).isEqualTo("ops user 'admin' ready" + System.lineSeparator());
+
+        dev.wakeline.ops.OpsUserService redisDown = new dev.wakeline.ops.OpsUserService(null, null) {
+            @Override public int upsert(String username, String password) {
+                throw new SessionsNotRevoked(username, new IllegalStateException("redis down"));
+            }
+        };
+        assertThat(WakelineApplication.applyOpsUser(redisDown, "admin", "long-enough-password", new java.io.PrintStream(out, true), new java.io.PrintStream(err, true))).isEqualTo(3);
+        assertThat(err.toString()).contains("ops user 'admin'").contains("password updated").contains("could not be ended").doesNotContain("long-enough-password");
+    }
+
     @Test
     void migrateNeedsOnlyTheMigratorPassword() {
         assertThat(WakelineApplication.migrate(Map.of("DB_HOST", "127.0.0.1"))).isEqualTo(2);

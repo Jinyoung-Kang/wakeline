@@ -101,9 +101,48 @@ class OpsDbTest {
 
     // ---------- 로그인 잠금 ----------
 
+    // ---------- 비밀번호 교체 → 세션 폐기(R-95) ----------
+
+    /** 사용자 목록의 세션을 지운다(없는 id 는 세지 않는다). 목록 키에는 TTL(절대 수명 + 1 h)이 걸린다. 다른 사용자는 그대로. */
+    @Test
+    void passwordChangeDeletesTheUsersRegisteredSessions() {
+        OpsSessionRegistry registry = new OpsSessionRegistry(redis, "wakeline:session", Duration.ofHours(8));
+        OpsUserService users = new OpsUserService(api, registry);
+        assertThat(users.upsert("alice", "correct-horse-battery")).as("new account: nothing to end").isZero();
+        assertThat(users.upsert("bob", "correct-horse-battery")).isZero();
+        int alice = api.sql("SELECT id FROM ops_user WHERE username = 'alice'").query(Integer.class).single();
+        int bob = api.sql("SELECT id FROM ops_user WHERE username = 'bob'").query(Integer.class).single();
+        for (String id : List.of("s-a1", "s-a2", "s-b1")) redis.opsForHash().put("wakeline:session:sessions:" + id, "creationTime", "x");
+        registry.register(alice, "s-a1");
+        registry.register(alice, "s-a2");
+        registry.register(alice, "s-gone"); // 이미 끝난 세션
+        registry.register(bob, "s-b1");
+        Long ttl = redis.getExpire(OpsSessionRegistry.key(alice));
+        assertThat(ttl).isBetween(Duration.ofHours(8).toSeconds(), Duration.ofHours(9).toSeconds());
+        registry.unregister(alice, "s-gone");
+
+        assertThat(users.upsert("alice", "a-new-correct-horse")).isEqualTo(2);
+        assertThat(redis.hasKey("wakeline:session:sessions:s-a1")).isFalse();
+        assertThat(redis.hasKey("wakeline:session:sessions:s-a2")).isFalse();
+        assertThat(redis.hasKey(OpsSessionRegistry.key(alice))).isFalse();
+        assertThat(redis.hasKey("wakeline:session:sessions:s-b1")).as("other operator").isTrue();
+        assertThat(users.authenticate("alice", "a-new-correct-horse").user()).isPresent();
+        redis.delete(List.of("wakeline:session:sessions:s-b1", OpsSessionRegistry.key(bob)));
+    }
+
+    /** Redis 장애: 비밀번호는 바뀐다(예전 비밀번호로 되돌리지 않는다) — 세션을 끝내지 못했다는 것은 예외로 알린다(CLI 가 종료 코드 3). */
+    @Test
+    void passwordChangeStillAppliesWhenSessionsCannotBeEnded() {
+        OpsUserService users = new OpsUserService(api, new OpsSessionRegistry(deadRedis, "wakeline:session", Duration.ofHours(8)));
+        assertThatThrownBy(() -> users.upsert("carol", "correct-horse-battery"))
+                .isInstanceOf(OpsUserService.SessionsNotRevoked.class)
+                .hasMessageContaining("carol").hasMessageNotContaining("correct-horse-battery");
+        assertThat(users.authenticate("carol", "correct-horse-battery").user()).isPresent();
+    }
+
     @Test
     void concurrentWrongPasswordsLockTheAccountAfterExactlyFiveFailures() throws Exception {
-        OpsUserService users = new OpsUserService(api);
+        OpsUserService users = new OpsUserService(api, new OpsSessionRegistry(redis, "wakeline:session", Duration.ofHours(8)));
         users.upsert("admin", "correct-horse-battery");
         ExecutorService pool = Executors.newFixedThreadPool(10);
         CountDownLatch go = new CountDownLatch(1);

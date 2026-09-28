@@ -303,6 +303,36 @@ class SecurityIT extends IntegrationTest {
         assertThat(ItStack.admin().hasKey(key)).isFalse();
     }
 
+    // ---------- 비밀번호 변경 → 기존 세션 폐기(R-95) ----------
+
+    /**
+     * make ops-user(= OpsUserService.upsert)로 비밀번호를 바꾸면 그 사용자의 기존 세션이 모두 끝난다(ADR-017 §3) — 탈취된 세션 쿠키가
+     * 비밀번호 교체 뒤에도 유효하면 안 된다. 다른 운영자의 세션은 그대로다.
+     */
+    @Test
+    void changingThePasswordEndsAllExistingSessionsOfThatUser() {
+        users.upsert("it-rotate", PW);
+        users.upsert("it-bystander", PW);
+        Browser first = new Browser(), second = new Browser(), bystander = new Browser();
+        assertThat(first.login("it-rotate", PW).status()).isEqualTo(200);
+        assertThat(second.login("it-rotate", PW).status()).isEqualTo(200);
+        assertThat(bystander.login("it-bystander", PW).status()).isEqualTo(200);
+        for (Browser b : List.of(first, second, bystander)) assertThat(b.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
+        String firstKey = sessionKey(first);
+
+        String newPw = "rotated-" + PW;
+        users.upsert("it-rotate", newPw); // ops-user CLI 경로
+
+        for (Browser b : List.of(first, second))
+            assertProblem(b.send("GET", "/api/v1/ops/providers", null, Map.of()), 404, "NOT_FOUND", "/api/v1/ops/providers");
+        assertThat(ItStack.admin().hasKey(firstKey)).as("revoked session deleted from Redis").isFalse();
+        assertThat(bystander.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).as("other operator unaffected").isEqualTo(200);
+        assertThat(new Browser().login("it-rotate", PW).status()).isEqualTo(401);
+        Browser fresh = new Browser();
+        assertThat(fresh.login("it-rotate", newPw).status()).isEqualTo(200);
+        assertThat(fresh.send("GET", "/api/v1/ops/providers", null, Map.of()).status()).isEqualTo(200);
+    }
+
     // ---------- 잠금 ----------
 
     @Test
