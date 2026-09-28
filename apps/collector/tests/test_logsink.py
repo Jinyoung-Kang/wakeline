@@ -154,7 +154,6 @@ def test_message_exception_and_stack_are_masked_even_without_a_mask_filter():
     assert "RuntimeError: provider said token=*** and ***" in e["exception"]["stack"]
 
 
-@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 짝 없는 서로게이트가 든 레코드를 UnicodeEncodeError 로 통째로 버린다")
 @pytest.mark.parametrize("with_filter", [False, True])
 def test_lone_surrogates_are_escaped_not_dropped(with_filter):
     """surrogateescape 로 읽은 바이트(UTF-8 이 아닌 파일 이름 등)가 든 WARN·ERROR 도 싣는다 — UTF-8 로 적을 수 없는 그 글자만

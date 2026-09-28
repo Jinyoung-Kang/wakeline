@@ -36,7 +36,7 @@ from typing import Any
 
 import orjson
 
-from wakeline_collector.masking import LOG_LIMIT, MASKED_ATTR, install_log_masking, mask
+from wakeline_collector.masking import LOG_LIMIT, MASKED_ATTR, install_log_masking, mask, printable
 
 log = logging.getLogger("logsink")
 
@@ -164,7 +164,8 @@ def _type_name(exc: BaseException) -> str:
 
 
 def _masked(text: str) -> str:
-    return mask(text, None) or ""
+    """가린 글 전체. UTF-8 로 적을 수 없는 글자는 \\udcXX 로(지문 · JSON 이 UTF-8 을 요구한다 — 버리지 않는다)."""
+    return printable(mask(text, None) or "")
 
 
 def _masked_capped(text: str) -> tuple[str, int]:
@@ -254,8 +255,8 @@ class LogSink(logging.Handler):
             text = str(record.msg)
         message, lost["message"] = _was_masked(text, whole, "msg") if whole is not None else _masked_capped(text)
         exc = record.exc_info[1] if record.exc_info and record.exc_info[1] is not None else None
-        exc_type = _limit(_type_name(exc), MAX_EXC_TYPE)[0] if exc is not None else ""
-        logger = _limit(record.name, MAX_LOGGER)[0]
+        exc_type = _limit(printable(_type_name(exc)), MAX_EXC_TYPE)[0] if exc is not None else ""
+        logger = _limit(printable(record.name), MAX_LOGGER)[0]
         fp = fingerprint(self.service, logger, exc_type, message)
         carried = self._admit(fp)
         if carried is None:
@@ -279,7 +280,7 @@ class LogSink(logging.Handler):
             "instance": self.instance,
             "level": "ERROR" if record.levelno >= logging.ERROR else "WARN",
             "logger": logger,
-            "thread": _limit(record.threadName, MAX_THREAD)[0] if record.threadName else None,
+            "thread": _limit(printable(record.threadName), MAX_THREAD)[0] if record.threadName else None,
             "message": message,
             "exception": exception,
             "fp": fp,

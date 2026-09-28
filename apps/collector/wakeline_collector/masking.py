@@ -82,8 +82,9 @@ def mask(text: str | None, limit: int | None = 4000) -> str | None:
 class MaskFilter(logging.Filter):
     """로그 레코드의 메시지(인자 포함)·트레이스백·스택을 mask 로 가린다. 핸들러에 붙여 모든 로거의 레코드에 적용한다.
 
-    가린 칸은 LOG_LIMIT 에서 자르고, 자르기 전 길이를 MASKED_ATTR 에 남긴다. 이미 표시가 있는 레코드(다른 핸들러의 필터가 가린 것)는
-    그대로 둔다 — 같은 글을 다시 훑지 않고, 잘린 글로 길이를 다시 재서 원래 길이를 잃지도 않는다."""
+    가린 칸은 UTF-8 로 적을 수 있게 하고(printable) LOG_LIMIT 에서 자르며, 자르기 전 길이를 MASKED_ATTR 에 남긴다.
+    이미 표시가 있는 레코드(다른 핸들러의 필터가 가린 것)는 그대로 둔다 — 같은 글을 다시 훑지 않고, 잘린 글로 길이를 다시 재서
+    원래 길이를 잃지도 않는다."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(getattr(record, MASKED_ATTR, None), dict):
@@ -104,8 +105,17 @@ class MaskFilter(logging.Filter):
         return True
 
 
+def printable(text: str) -> str:
+    """UTF-8 로 적을 수 없는 글자(짝 없는 서로게이트 — surrogateescape 로 읽은 바이트 등)만 \\udcXX 로 바꾼다. 나머지는 그대로."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return text
+
+
 def _mask_capped(text: str, field: str, whole: dict[str, int]) -> str:
-    out = mask(text, None) or ""
+    out = printable(mask(text, None) or "")
     whole[field] = len(out)
     return out[:LOG_LIMIT]
 
