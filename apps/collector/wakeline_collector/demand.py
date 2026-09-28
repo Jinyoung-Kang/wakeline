@@ -51,8 +51,8 @@ HEX_RE = re.compile(r"^[0-9a-f]{6}$")
 # schemas/stream_envelope.v1.json aircraft_payload.cell 과 같은 패턴(0.5° 격자, 반경 50 NM 단위 50–250)
 CELL_RE = re.compile(r"^(-?[0-9]{1,2}\.[05]):(-?[0-9]{1,3}\.[05]):(50|100|150|200|250)$")
 
-STATES_FOCUS = frozenset({"active", "throttled", "not_found", "error"})
-STATES_HOT = frozenset({"active", "throttled", "error"})
+# wakeline:demand:status 의 state 값 — api CollectorDemandStatus.STATES 와 같은 집합(다른 값은 api 가 버린다, R-22)
+STATES = frozenset({"active", "throttled", "not_found", "error", "disabled"})
 
 
 def parse_cell_key(key: str) -> tuple[float, float, int] | None:
@@ -240,7 +240,9 @@ def _iso(dt: datetime | None) -> str | None:
 def status_value(
     state: str, interval_s: int | None, last_success_at: datetime | None, last_error: str | None, provider: str
 ) -> dict[str, Any]:
-    """interval_s None = 조회가 돌지 않아 주기가 없다(예: 운영자가 공급자를 끔)."""
+    """interval_s None = 조회가 돌지 않아 주기가 없다(예: 운영자가 공급자를 끔). state 는 STATES 중 하나."""
+    if state not in STATES:
+        raise ValueError(f"unknown demand state {state!r}")
     return {
         "state": state,
         "interval_s": interval_s,

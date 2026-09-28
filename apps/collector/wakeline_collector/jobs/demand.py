@@ -7,7 +7,7 @@
 - hot: 셀마다 30 s. 용량 계획(adsb.fi 상한 × 0.8 − 관심 지역 폴백 − focus)이 모자라면 30 → 60 → 120 s 로 늘리고,
   그래도 모자라면 순위(세션 수) 밖의 셀은 건너뛴다(state throttled). 실제로 허가를 못 받은 셀은 그 셀만 한 단계 물러난다.
   새 셀의 즉시 첫 조회는 30 s 에 2개까지, 나머지는 한 주기 뒤 첫 조회(계약 v3 §C).
-- 운영자가 공급자를 끄면(wakeline:provider:{name} disabled=1) 틱마다 확인해 호출하지 않고 state throttled 로 알린다.
+- 운영자가 공급자를 끄면(wakeline:provider:{name} disabled=1) 틱마다 확인해 호출하지 않고 state disabled 로 알린다.
 - 우선순위 region > focus > hot: 속도 상한 대기열 우선순위(0 > 1 > 2) + 하루 예산 여유분(focus 는 관심 지역 몫을,
   hot 은 거기에 focus 몫까지 남기고 멈춘다).
 - 발행: wakeline:aircraft 에 scope focus(requested·missing) / hot(cell·region). 품질 게이트는 관심 지역과 같은 규칙.
@@ -336,7 +336,7 @@ class DemandTracker:
         await self.status.delete(lifted)
 
     def _disabled(self, demand: Demand) -> dict[str, dict[str, Any]]:
-        """운영자가 끈 공급자: 조회하지 않고 모든 필드를 throttled 로(주기 없음 — 조회가 돌지 않는다)."""
+        """운영자가 끈 공급자: 조회하지 않고 모든 필드를 disabled 로(주기 없음 — 조회가 돌지 않는다)."""
         self._served = set()
         updates: dict[str, dict[str, Any]] = {}
         for f in demand.focus:

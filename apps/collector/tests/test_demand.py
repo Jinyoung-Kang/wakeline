@@ -163,6 +163,29 @@ def test_status_value_shape():
     assert v["last_success_at"] is None and len(v["last_error"]) == 200
 
 
+def test_r22_status_states_match_the_api_and_are_enforced():
+    """리뷰 R-22: STATES_FOCUS/STATES_HOT 는 쓰이지 않았고 api 가 받는 'disabled' 가 빠져 있었다."""
+    import re
+    from pathlib import Path
+
+    import pytest
+
+    from wakeline_collector import demand as mod
+
+    java = (
+        Path(__file__).resolve().parents[3] / "apps/api/src/main/java/dev/wakeline/demand/CollectorDemandStatus.java"
+    ).read_text()
+    m = re.search(r"STATES\s*=\s*Set\.of\(([^)]*)\)", java)
+    assert m
+    api_states = {s.strip().strip('"') for s in m.group(1).split(",")}
+    assert mod.STATES == api_states  # 수집기가 쓰는 값 집합 = api 가 받아들이는 집합
+    for st in api_states:
+        assert status_value(st, None, None, None, "adsb_fi")["state"] == st
+    with pytest.raises(ValueError):
+        status_value("paused", 5, None, None, "adsb_fi")  # api 가 버리는 값은 쓰지 않는다
+    assert not hasattr(mod, "STATES_FOCUS") and not hasattr(mod, "STATES_HOT")
+
+
 async def test_status_put_and_prune_including_leftovers():
     r = FakeRedis()
     await r.hset(STATUS_KEY, "focus:dead00", '{"state":"active"}')  # 이전 프로세스가 남긴 필드

@@ -33,6 +33,7 @@ from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
 from wakeline_collector.providers import fixture as fx
 from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
 from wakeline_collector.providers.awc import AwcProvider
+from wakeline_collector.providers.base import AircraftProvider
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
@@ -127,7 +128,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         fixture=fixture,
     )
 
-    aircraft_providers: dict[str, Any]
+    aircraft_providers: dict[str, AircraftProvider]  # 3.2절 어댑터 계약(구조적 타입 — mypy 가 확인)
     demand_provider: DemandProvider
     awc: Any
     rv: Any
