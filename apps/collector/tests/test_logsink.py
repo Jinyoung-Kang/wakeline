@@ -221,6 +221,51 @@ def test_same_fingerprint_is_sent_once_per_10s_and_the_next_entry_carries_the_su
     assert sink.suppressed == 4 and ls.DEDUP_WINDOW_S == 10.0
 
 
+@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 뒤에 같은 지문이 오지 않으면 억제 수가 어디에도 남지 않는다")
+async def test_burst_then_silence_still_reports_the_suppressed_count(caplog):
+    """ADR-018 '억제 수는 남긴다': 같은 오류가 10 s 안에 20번 나고 끊기면 스트림에는 1건(suppressed 0)뿐이다 — 나머지 19건은
+    자기 지표 log_suppressed(기동 뒤 누계)에 남고, 종료 때 다음 항목에 실리지 못한 억제 수를 표준 출력에 적는다."""
+    r = FakeRedis()
+    sink = ls.LogSink("collector", r, clock=Clock())
+    lg = logger_for(sink)
+    for i in range(20):
+        lg.error("upstream 503 after %d ms", i)
+    caplog.set_level(logging.INFO, logger="logsink")
+    await sink.aclose()
+    assert [(e["message"], e["suppressed"]) for e in entries(r)] == [("upstream 503 after 0 ms", 0)]
+    assert sink.metrics() == {"log_sent": "1", "log_dropped": "0", "log_suppressed": "19"}
+    assert ls.sink_metrics(sink) == sink.metrics()
+    notes = [rec.getMessage() for rec in caplog.records if rec.name == "logsink"]
+    assert any("19 suppressed" in m and "1 fingerprint" in m for m in notes), notes
+
+
+@pytest.mark.xfail(strict=True, reason="v5-C2: 고치기 전 — 싣지 못한 항목의 억제 수가 사라지고 그 지문은 10 s 억제된다")
+@pytest.mark.parametrize("failure", ["too-big", "raises"])
+def test_an_entry_that_is_not_queued_gives_its_suppressed_count_back(monkeypatch, failure):
+    """억제 창을 연 항목을 만들지 못하면(8 KiB 에 못 맞춤 · 만드는 중 예외) 그 항목이 실어 가던 억제 수는 다음 항목이 싣고,
+    보낸 것이 없으므로 다음 항목도 억제하지 않는다. 버린 레코드는 log_dropped 에."""
+    clock = Clock()
+    sink = ls.LogSink("collector", FakeRedis(), clock=clock)
+    lg = logger_for(sink)
+    for i in range(4):  # 첫 건만 가고 3건 억제
+        lg.warning("x %d", i)
+    clock.t += ls.DEDUP_WINDOW_S
+    real = ls.fit_event
+
+    def broken(ev, lost=None):
+        if failure == "raises":
+            raise RuntimeError("boom")
+        return None
+
+    monkeypatch.setattr(ls, "fit_event", broken)
+    lg.warning("x %d", 4)
+    monkeypatch.setattr(ls, "fit_event", real)
+    lg.warning("x %d", 5)  # 같은 창이지만 보낸 것이 없다
+    got = [orjson.loads(js) for js, _n in sink.pending()]
+    assert [(e["message"], e["suppressed"]) for e in got] == [("x 0", 0), ("x 5", 3)]
+    assert (sink.dropped, sink.suppressed) == (1, 3)
+
+
 def test_dedup_table_stays_bounded():
     clock = Clock()
     sink = ls.LogSink("collector", FakeRedis(), clock=clock, queue_max=10_000, queue_max_bytes=1 << 30)
