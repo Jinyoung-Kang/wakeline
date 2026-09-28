@@ -144,10 +144,15 @@ public abstract class IntegrationTest {
     // ---------- 대기 ----------
 
     static void await(String what, Duration timeout, BooleanSupplier cond) {
+        awaitEvery(what, timeout, Duration.ofMillis(50), cond);
+    }
+
+    /** REST 를 부르는 조건은 간격을 넓혀(요청 제한을 쓰지 않게) — 준비 대기 자체는 빈·DB·Redis 로 한다. */
+    static void awaitEvery(String what, Duration timeout, Duration every, BooleanSupplier cond) {
         long end = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < end) {
             if (cond.getAsBoolean()) return;
-            try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
+            try { Thread.sleep(every.toMillis()); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
         }
         if (!cond.getAsBoolean()) throw new AssertionError("timed out after " + timeout + " waiting for " + what);
     }

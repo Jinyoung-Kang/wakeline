@@ -36,6 +36,7 @@ class ShipsIT extends IntegrationTest {
     static final Duration WAIT = Duration.ofSeconds(15);
 
     @Autowired ShipStore ships;
+    @Autowired dev.wakeline.ingest.AisStatus aisStatus;
 
     long pendingShips() {
         var p = ItStack.admin().opsForStream().pending(Streams.SHIPS, StreamConsumer.GROUP);
@@ -140,7 +141,14 @@ class ShipsIT extends IntegrationTest {
         ItStack.hset(ItStack.ais(), "wakeline:ais:status", Map.of("provider", "fixture", "connected", "1", "msgs_per_s", "5.40",
                 "last_msg_at", now.toString(), "updated_at", now.toString(), "gap_open_since", "",
                 "last_gap_started_at", now.minusSeconds(3600).toString(), "last_gap_ended_at", now.minusSeconds(3500).toString(), "last_gap_reason", "idle 120 s"));
-        await("status refreshed", Duration.ofSeconds(12), () -> {
+        // 준비 대기는 빈으로(IntegrationTest 규칙): 5 s 주기 갱신 + 스케줄 지연이 부하에 따라 8 s 를 넘을 수 있는데, /status 를 50 ms 마다 부르면
+        // 이 시험의 IP 한도(분당 120)를 약 8 s 에 다 써서 그 뒤로는 429 만 받았다(2026-09 전체 실행에서 한 번 시간 초과).
+        await("ais status refreshed", Duration.ofSeconds(20), () -> {
+            Map<String, Object> v = aisStatus.publicView(System.currentTimeMillis());
+            return v != null && Boolean.TRUE.equals(v.get("connected")) && Double.valueOf(5.4).equals(v.get("msgs_per_s"));
+        });
+        // /status 는 3 s 공유 캐시 — 1 s 간격으로 몇 번만 본다
+        awaitEvery("status refreshed", Duration.ofSeconds(8), Duration.ofSeconds(1), () -> {
             JsonNode ais = get("/api/v1/status").json().path("sources").path("ais");
             return ais.path("connected").asBoolean(false) && ais.path("msgs_per_s").asDouble() == 5.4;
         });
