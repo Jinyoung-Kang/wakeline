@@ -28,7 +28,8 @@ import java.util.function.Supplier;
  *   <li>api: 이 api 프로세스 기동 뒤 누계 — 메모리 큐 넘침으로 버린 항적·선박 행, 강제로 놓은 영수증, DLQ 로 보낸 메시지, 스트림 보존 창 손실
  *       (R-14) 수와 마지막 손실 구간(없으면 null). 영구 손실도 같이: DB 가 거절해(영구 오류) 재시도하지 않고 버린 항적·선박 행, 처리 중 예외로
  *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등).</li>
- *   <li>시스템 로그 싱크(계약 v5 §C2): 세 프로세스 모두 log_sent(wakeline:logs 에 실은 항목) · log_dropped(대기열 상한·종료로 버린 항목),
+ *   <li>시스템 로그 싱크(계약 v5 §C2): 세 프로세스 모두 log_sent(wakeline:logs 에 실은 항목 — api 는 wakeline:logs:client 에 실은 브라우저 오류 포함, §G2) ·
+ *       log_dropped(대기열 상한·종료로 버린 항목),
  *       기동 뒤 누계. collector·ais 는 위 해시의 같은 이름 필드(같은 신선도 규칙), api 는 wakeline_log_events_total{result} 에 log_suppressed
  *       (같은 지문 10 s 억제로 싣지 않은 수 — 손실이 아니라 묶음 요약)까지.</li>
  * </ul>

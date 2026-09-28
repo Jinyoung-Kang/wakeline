@@ -20,3 +20,16 @@
 - Redis 메모리: 최악 약 24 MiB(3,000 × 8 KiB). maxmemory 256 MiB · noeviction 안.
 - edge(nginx) 오류 로그는 범위 밖(에이전트 없음). 화면에 그렇게 적는다.
 - 되돌리기: 싱크 등록을 끄는 설정(`wakeline.logs.sink-enabled=false` · `LOG_SINK_ENABLED=0`) 또는 커밋 되돌리기. `DEL wakeline:logs`.
+
+## 개정(2026-09-29 · 계약 v5 §G2 · §G3)
+- 브라우저 오류는 **별도 스트림** `wakeline:logs:client`(`MAXLEN ~ 1000`)에 싣는다. 한 스트림이던 때는 누구나 보낼 수 있는 브라우저 오류가 서버 오류를
+  밀어냈다(전체 한도 분당 120건이면 약 25분에 3,000건이 모두 바뀐다). 이제 브라우저 오류 1,100건이 실려도 서버 로그는 한 건도 밀려나지 않는다(LogsIT).
+  api 싱크는 한 대기열 · 한 순서로 보내되 항목마다 제 스트림으로 싣는다(`LogStream`). collector · ais 의 `%W~wakeline:logs` 는 정확한 이름이라
+  새 스트림에는 쓰지도 읽지도 못한다 — api 만(`~wakeline:*`).
+- 조회(`/api/v1/ops/logs*`)는 두 스트림을 스트림 id 순으로 합쳐 최신 순으로 보이고 항목마다 `stream`(`server` | `client`)을 싣는다. 두 스트림은 id 를
+  따로 매기므로 같은 id 가 둘 다에 있을 수 있다 — 같은 id 는 server 가 앞이고, `next_cursor` 는 `"<stream>:<id>"`(스트림 id 만 있는 옛 커서는 server)
+  라서 쪽이 그 둘 사이에서 끊겨도 빠지거나 겹치는 항목이 없다. 한 요청이 훑는 항목 상한은 두 스트림 MAXLEN 의 합(4,000) — 브라우저 오류 스트림이 가득이어도
+  서버 로그의 몫을 쓰지 못한다(§C4 의 3,000 에서 늘었다). 묶음(fp)도 두 스트림(`last_stream`), `GET /ops/logs/{id}` 는 server → client 순(`?stream=` 으로 한쪽만).
+- `POST /api/v1/client-errors` 의 JSON 이 아닌 Content-Type(없는 것 포함)은 415 `UNSUPPORTED_MEDIA_TYPE`(로그인과 같은 관례, 요청 제한 수를 쓰지 않는다),
+  본문 형식 오류는 400 `BAD_CLIENT_ERROR`.
+- Redis 메모리 최악: 약 24 MiB + 8 MiB(1,000 × 8 KiB). 되돌리기에 `DEL wakeline:logs:client` 를 더한다.
