@@ -63,11 +63,12 @@ test("ship card: every field is listed and values the ship did not report are '�
   const ships = await fixtureShips(request);
   // IMO 를 보고하지 않은 선박(정적 보고 없음 또는 Class B) 하나를 고른다 — 공개 API 분당 한도(IP 당 120)를 생각해 몇 척만 본다
   let target: ShipFeature | null = null;
+  let sogReported = false;
   for (const s of ships.slice(0, 8)) {
     const r = await request.get(`/api/v1/ships/${s.properties.mmsi}`);
     if (!r.ok()) continue;
     const d = await r.json();
-    if (!d.static || d.static.imo == null) { target = s; break; }
+    if (!d.static || d.static.imo == null) { target = s; sogReported = d.state?.sog_kn != null; break; }
   }
   expect(target, "fixture has a ship without a reported IMO").toBeTruthy();
   const [lon, lat] = target!.geometry.coordinates;
@@ -85,8 +86,9 @@ test("ship card: every field is listed and values the ship did not report are '�
   for (const f of ["선박명", "MMSI", "호출부호", "IMO", "선종", "크기", "흘수", "출발지(보고)", "목적지(보고)", "ETA", "속력/침로/선수방위", "항해 상태", "위치 출처", "관측 시각", "처음 기록", "마지막 저장 위치"]) {
     await expect(card.locator(`[data-field="${f}"]`)).toHaveCount(1);
   }
-  // 속력은 kn 과 km/h 를 함께(계약 v5 §A) — 값이 없으면 "—"
-  await expect(card.locator('[data-field="속력/침로/선수방위"]')).toContainText(/\d+\.\d kn · \d+\.\d km\/h|—/);
+  // 속력 줄(침로·선수방위 줄과 따로)은 kn 과 km/h 를 함께(계약 v5 §A) — 상세가 속력을 줬으면 반드시 두 단위, 아니면 두 단위이거나 "—" 하나
+  const dual = /^\d+\.\d kn · \d+\.\d km\/h$/;
+  await expect(card.getByTestId("ship-sog")).toHaveText(sogReported ? dual : /^(\d+\.\d kn · \d+\.\d km\/h|—)$/);
   await expect(card.locator('[data-field="IMO"]')).toContainText("—");
   // 출발지(보고): A>B 로 적힌 목적지의 풀이이거나, AIS 에 출발지 항목이 없다는 설명 또는 모름(—) — 지어낸 항구가 아니다
   await expect(card.locator('[data-field="출발지(보고)"]')).toContainText(/UN\/LOCODE|AIS 에는 출발지 항목이 없습니다|—/);

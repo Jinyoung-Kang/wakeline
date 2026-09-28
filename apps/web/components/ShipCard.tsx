@@ -127,7 +127,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
     ["ETA", fmtShipEta(st)],
     ["속력/침로/선수방위", (
       <span key="mo" className="flex flex-col items-end">
-        <span className="mono">{fmtSogDual(s?.sog_kn)}</span>
+        <span className="mono" data-testid="ship-sog">{fmtSogDual(s?.sog_kn)}</span>
         <span className="mono text-[11px] text-fg-2">침로 {s?.cog_deg == null ? "—" : `${s.cog_deg.toFixed(1)}°`} · 선수방위 {s?.heading_deg == null ? "—" : `${s.heading_deg.toFixed(0)}°`}</span>
       </span>
     ), "대지속력(SOG, kn · km/h) / 대지침로(COG) / 선수방위(HDG) — 선박 보고값. km/h 는 1 kn = 1.852 km/h 로 바꾼 값"],

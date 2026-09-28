@@ -185,6 +185,7 @@ describe("dual units at every display site (contract v5 §A2)", () => {
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: { ...st, rot: null, provider: "fixture", msg_type: "PositionReport", class: "A" } } });
     const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
     expect(text(html)).toContain("속력/침로/선수방위12.3 kn · 22.8 km/h침로 123.4° · 선수방위 120°");
+    expect(html).toContain('<span class="mono" data-testid="ship-sog">12.3 kn · 22.8 km/h</span>'); // e2e 가 이 줄만 본다
     const tip = Object.fromEntries(shipTip(st, T0).rows);
     expect(tip).toMatchObject({ SOG: "12.3 kn · 22.8 km/h", "COG/HDG": "123.4° / 120°" });
     expect(Object.fromEntries(shipTip({ ...st, sog_kn: null, cog_deg: null }, T0).rows)).toMatchObject({ SOG: "—", "COG/HDG": "— / 120°" });
