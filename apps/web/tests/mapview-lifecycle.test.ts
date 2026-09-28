@@ -101,6 +101,7 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     afterEach(() => { vi.useRealTimers(); });
 
     it("switches to the local fallback style and says so when style.load has not come by the timeout", async () => {
+      expect((await import("@/lib/maplayers")).STYLE_LOAD_TIMEOUT_MS).toBe(STYLE_TIMEOUT_MS);
       const map = await mount();
       await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS - 1); });
       expect(map.styleSet).toHaveLength(0);
