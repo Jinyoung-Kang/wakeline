@@ -48,9 +48,10 @@ type Kind = "loss" | "queue" | "quarantine" | "age" | "count";
 /**
  * [묶음, 필드, 이름, 종류, 설명] — 손실(loss)만 0 이 아니면 강조한다.
  * log_* = 시스템 로그 싱크 자기 지표(계약 v5 §C2): collector·ais 는 heartbeat/상태 해시의 log_sent · log_dropped,
- * api 는 Micrometer wakeline_log_events_total{result=sent|dropped|suppressed}. 억제(suppressed)는 손실이 아니다 — 건수가 다음 항목에 남는다.
+ * api 는 Micrometer wakeline_log_events_total{result=sent|dropped|suppressed}. 억제(suppressed)는 손실이 아니다 — 건수는 같은 지문의
+ * 다음 항목 suppressed 에 실리고, 다음 항목이 오지 않으면 창(10 s)이 닫힐 때 마지막 억제 발생이 제 항목으로 실린다(계약 v5 §G9).
  * 버림(dropped)의 원인은 보내는 쪽이 세는 그대로 적는다: collector·ais(logsink.py) = 대기열 상한 초과 · 항목 생성 실패(8 KiB 맞춤 실패 포함),
- * api(LogSink) = 대기열 상한 초과 · 종료 때 남은 항목.
+ * api(LogSink) = 대기열 상한 초과 · 항목 생성 실패 · 종료 때 남은 항목. 세 프로세스 모두 억제 중에 지문 표 상한에서 밀려난 발생(억제 수까지 — §G9).
  */
 const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["collector", "publish_dropped", "스트림 발행 드롭", "loss", "Redis 스트림에 싣지 못하고 버린 수집 묶음(로컬 큐 상한) — 누적"],
@@ -58,13 +59,13 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["collector", "db_pending", "DB 기록 대기", "queue", "아직 DB 에 쓰지 않은 기록 수(지금 값) — 손실 아님"],
   ["collector", "stream_budget_trims", "항공기 스트림 예산 트림", "loss", "메모리 예산 때문에 항공기 스트림을 보존 창(2.5 h)보다 일찍 자른 발행 수 — 누적. 0 이 아니면 api 가 멈춘 동안의 항적이 읽히기 전에 지워질 수 있음"],
   ["collector", "log_sent", "시스템 로그 전송", "count", "시스템 로그 스트림(wakeline:logs)에 실은 WARN·ERROR 항목 — 누적"],
-  ["collector", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
+  ["collector", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["collector", "heartbeat_age_s", "heartbeat 경과", "age", "collector 가 마지막으로 상태를 보고한 뒤 지난 시간"],
   ["ais", "dropped_total", "AIS 큐 드롭", "loss", "처리 대기열 상한으로 버린 AIS 메시지 — 누적(ais 시작 이후)"],
   ["ais", "quarantined_total", "AIS 격리", "quarantine", "품질 규칙으로 걸러낸 메시지(지도에 표시 안 함) — 누적"],
   ["ais", "stream_budget_trims", "선박 스트림 예산 트림", "loss", "메모리 예산 때문에 선박 스트림을 보존 창(2.5 h)보다 일찍 자른 발행 수 — 누적. 0 이 아니면 api 가 멈춘 동안의 선박 위치가 읽히기 전에 지워질 수 있음"],
   ["ais", "log_sent", "시스템 로그 전송", "count", "시스템 로그 스트림(wakeline:logs)에 실은 WARN·ERROR 항목 — 누적"],
-  ["ais", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
+  ["ais", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["api", "track_queue_dropped", "항적 저장 큐 넘침", "loss", "DB 저장 대기열 상한으로 버린 항적 행 — 누적(api 시작 이후)"],
   ["api", "ship_queue_dropped", "선박 저장 큐 넘침", "loss", "DB 저장 대기열 상한으로 버린 선박 위치 행 — 누적"],
   ["api", "receipts_force_released", "영수증 강제 해제", "loss", "DB 저장 확인 전에 ACK 한 스트림 메시지(표식 상한) — 저장되지 않았을 수 있음"],
@@ -75,8 +76,8 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["api", "stream_apply_errors", "메시지 처리 오류", "loss", "처리 중 예외로 건너뛴 스트림 메시지(검증은 통과) — 누적"],
   ["api", "listener_errors", "이벤트 리스너 오류", "loss", "알림 저장·팬아웃 등 이벤트 리스너가 실패한 횟수 — 누적"],
   ["api", "log_sent", "시스템 로그 전송", "count", "wakeline_log_events_total{result=sent} — 시스템 로그 스트림에 실은 WARN·ERROR 항목(브라우저 보고 포함 — 브라우저 오류는 wakeline:logs:client, 계약 v5 §G2) — 누적"],
-  ["api", "log_dropped", "시스템 로그 버림", "loss", "wakeline_log_events_total{result=dropped} — wakeline:logs · wakeline:logs:client 에 싣지 못하고 버린 항목: 대기열 상한(500건 · 2 MiB) 초과 · 종료 때 보내지 못한 항목 — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
-  ["api", "log_suppressed", "시스템 로그 억제", "count", "wakeline_log_events_total{result=suppressed} — 같은 지문 10 s 1건 규칙으로 보내지 않은 항목. 손실 아님: 건수는 다음 항목의 suppressed 에 — 누적"],
+  ["api", "log_dropped", "시스템 로그 버림", "loss", "wakeline_log_events_total{result=dropped} — wakeline:logs · wakeline:logs:client 에 싣지 못하고 버린 항목: 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함 · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) · 종료 때 보내지 못한 항목 — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
+  ["api", "log_suppressed", "시스템 로그 억제", "count", "wakeline_log_events_total{result=suppressed} — 같은 지문 10 s 1건 규칙으로 따로 보내지 않은 발생. 손실 아님: 건수는 같은 지문의 다음 항목 suppressed 에 실린다 — 다음 항목이 오지 않으면 창(10 s)이 닫힐 때 마지막 억제 발생을 항목으로 보낸다(계약 v5 §G9). 항목에 실릴 때 센다 — 누적"],
 ];
 
 export interface PipelineRow { group: PipelineGroup; key: string; label: string; title: string; value: number | null; text: string; tone: "bad" | "ok" | "muted" }

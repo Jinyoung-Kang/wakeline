@@ -24,7 +24,7 @@ describe("v5-C2 pipeline tab: log sink rows (sent · dropped · suppressed)", ()
     expect(by("collector", "log_sent")).toMatchObject({ value: 42, tone: "muted" });
     expect(by("ais", "log_sent")).toMatchObject({ value: 7, tone: "muted" });
     expect(by("api", "log_sent")).toMatchObject({ value: 120, tone: "muted", text: "120" });
-    expect(by("api", "log_suppressed")).toMatchObject({ value: 31, tone: "muted" }); // 억제는 손실이 아니다(건수는 다음 항목에)
+    expect(by("api", "log_suppressed")).toMatchObject({ value: 31, tone: "muted" }); // 억제는 손실이 아니다(건수는 항목의 suppressed 에)
     expect(by("api", "log_suppressed")!.title).toMatch(/suppressed/);
     expect(opsLib.pipelineLossCount(resp)).toBe(1);
   });
@@ -39,6 +39,15 @@ describe("v5-C2 pipeline tab: log sink rows (sent · dropped · suppressed)", ()
     const api = by("api", "log_dropped")!.title;
     expect(api).toContain("대기열 상한(500건 · 2 MiB)");
     expect(api).toContain("종료 때 보내지 못한 항목");
+    // §G9: 억제 중인 발생이 있는 지문을 지문 표 상한에서 잊으면 그 발생(억제 수까지)을 버림으로 센다 — 세 프로세스 모두. api 도 항목 생성 실패를 센다
+    for (const g of ["collector", "ais", "api"]) expect(by(g, "log_dropped")!.title).toContain("억제 중에 지문 표에서 밀려난 발생");
+    expect(api).toContain("항목을 만들지 못함");
+  });
+  it("v5-G9: suppression is not only carried by a next entry — the last suppressed occurrence is sent when the 10 s window closes", () => {
+    const t = by("api", "log_suppressed")!.title;
+    expect(t).toContain("다음 항목이 오지 않으면 창(10 s)이 닫힐 때 마지막 억제 발생을 항목으로 보낸다");
+    expect(t).toContain("계약 v5 §G9");
+    expect(t).not.toMatch(/건수는 다음 항목의 suppressed 에 — 누적$/); // 예전 문구: 다음 항목에만 실린다고 읽혔다
   });
   it("an api / heartbeat without the fields (older lane, stale heartbeat → null) shows —, never 0", () => {
     const old = opsLib.pipelineRows({ collector: {}, ais: { log_dropped: null }, api: {} });
