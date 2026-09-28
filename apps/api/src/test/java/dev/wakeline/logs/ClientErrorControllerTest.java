@@ -56,6 +56,8 @@ class ClientErrorControllerTest {
     }
 
     final List<String> written = new ArrayList<>();
+    /** XADD 한 스트림(written 과 같은 순서). */
+    final List<LogStream> streams = new ArrayList<>();
     final MemLimiter limiter = new MemLimiter();
     LogSink sink;
     MockMvc mvc;
@@ -65,7 +67,8 @@ class ClientErrorControllerTest {
 
     void build(boolean enabled) {
         LoggerContext ctx = new LoggerContext();
-        sink = new LogSink(written::add, new SimpleMeterRegistry(), enabled, System::currentTimeMillis, ctx, 60_000, 1000, 30_000);
+        sink = new LogSink((stream, json) -> { streams.add(stream); written.add(json); }, new SimpleMeterRegistry(), enabled, System::currentTimeMillis, ctx,
+                60_000, 1000, 30_000);
         mvc = MockMvcBuilders.standaloneSetup(new ClientErrorController(sink, limiter, PROPS, () -> NOW))
                 .setControllerAdvice(new ProblemAdvice()).build();
     }
@@ -101,6 +104,8 @@ class ClientErrorControllerTest {
             LogMasker.clearSecrets();
         }
         JsonNode e = lastQueued();
+        // 계약 v5 §G2: 브라우저 오류는 따로 자르는 스트림 wakeline:logs:client 로(서버 오류를 밀어내지 못하게)
+        assertThat(streams).containsExactly(LogStream.CLIENT);
         assertThat(new LogEventSchema().validate(written.getLast())).isNull();
         assertThat(e.path("service").asString()).isEqualTo("web-client");
         assertThat(e.path("level").asString()).isEqualTo("ERROR");

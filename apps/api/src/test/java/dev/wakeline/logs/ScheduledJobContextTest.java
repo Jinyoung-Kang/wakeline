@@ -29,7 +29,7 @@ class ScheduledJobContextTest {
 
     ScheduledJobContextTest() {
         logback.setMDCAdapter(MDC.getMDCAdapter()); // 처리기가 쓰는 slf4j MDC 와 같은 것
-        sink = new LogSink(written::add, new SimpleMeterRegistry(), true, System::currentTimeMillis, logback, 60_000, 1000, 30_000);
+        sink = new LogSink((stream, json) -> written.add(json), new SimpleMeterRegistry(), true, System::currentTimeMillis, logback, 60_000, 1000, 30_000);
         sink.attach();
         observations.observationConfig().observationHandler(new ScheduledJobContext());
     }

@@ -11,7 +11,6 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
-import org.springframework.data.redis.connection.RedisStreamCommands.TrimOptions;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -31,14 +30,17 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
 
 /**
- * 시스템 로그 싱크(계약 v5 §C2, ADR-018): 이 프로세스의 WARN·ERROR 와 브라우저 오류(§C6)를 가려서 Redis 스트림 {@value #STREAM} 에 싣는다.
+ * 시스템 로그 싱크(계약 v5 §C2, ADR-018): 이 프로세스의 WARN·ERROR 를 가려서 Redis 스트림 {@value #STREAM} 에, 브라우저 오류(§C6)는
+ * 따로 자르는 {@value #CLIENT_STREAM} 에 싣는다(§G2 — {@link LogStream}: 익명 입력이 서버 오류를 밀어내지 못하게).
  * <ul>
  *   <li>등록: 기동 때 logback 루트 로거에 {@link SinkAppender} 를 붙인다(설정 파일 없이 코드로). 로그 싱크 자신의 로그
  *       (dev.wakeline.logs.*)와 싱크 스레드에서 난 로그는 싣지 않는다 — 재귀 금지, 표준 출력에만 남는다.</li>
  *   <li>억제: 같은 지문(fp)은 {@value #SUPPRESS_WINDOW_MS} ms 에 1건만 싣고, 그사이 억제한 수는 그 fp 의 다음 항목 suppressed 에 싣는다.</li>
  *   <li>대기열: {@value #QUEUE_MAX}건 · 2 MiB 상한 — 넘으면 오래된 것부터 버리고 센다(result="dropped"). 앱 스레드는 대기열에 넣기만 한다
- *       (짧은 잠금 하나, Redis 를 기다리지 않는다).</li>
- *   <li>보내기: 가상 스레드 하나가 1 s 마다 또는 {@value #BATCH}건이 모이면 {@code XADD wakeline:logs MAXLEN ~ 3000 * e <json>}.
+ *       (짧은 잠금 하나, Redis 를 기다리지 않는다). 두 스트림이 한 대기열을 쓴다 — Redis 장애 동안에는 브라우저 오류를 받지 않으므로
+ *       (ClientErrorController: 제한기가 Redis 에 닿지 않으면 503) 익명 입력이 대기열의 서버 오류를 밀어내지 못한다.</li>
+ *   <li>보내기: 가상 스레드 하나가 1 s 마다 또는 {@value #BATCH}건이 모이면 항목마다 제 스트림으로 {@code XADD wakeline:logs MAXLEN ~ 3000 * e <json>}
+ *       · {@code XADD wakeline:logs:client MAXLEN ~ 1000 * e <json>}.
  *       Redis 가 안 되면 대기열에 남겨 두고 1 → 30 s 지수 백오프로 다시 보낸다(보내지 못한 항목은 대기열 맨 앞으로 — 순서 유지).</li>
  *   <li>지표: wakeline_log_events_total{result=sent|dropped|suppressed} · wakeline_log_queue(지금 대기 수) — 운영 pipeline 에도 싣는다.</li>
  *   <li>종료: 앱 구성 요소·웹 서버가 멈춘 뒤(낮은 phase) 한 번 더 보내 보고, 남은 것은 dropped 로 센다. Redis 연결은 그 뒤에 닫힌다.</li>
@@ -51,6 +53,9 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(LogSink.class);
     public static final String STREAM = "wakeline:logs";
     public static final long MAXLEN = 3000;
+    /** 브라우저 오류 스트림(계약 v5 §G2). */
+    public static final String CLIENT_STREAM = "wakeline:logs:client";
+    public static final long CLIENT_MAXLEN = 1000;
     static final int QUEUE_MAX = 500;
     static final long QUEUE_MAX_BYTES = 2L * 1024 * 1024;
     static final int BATCH = 50;
@@ -68,9 +73,9 @@ public class LogSink implements SmartLifecycle, DisposableBean {
      */
     public static final int PHASE = Integer.MAX_VALUE - 4096;
 
-    /** XADD 한 건. 실패하면 예외를 던진다. */
+    /** XADD 한 건(스트림 · 트림은 stream 이 정한다). 실패하면 예외를 던진다. */
     @FunctionalInterface
-    public interface Writer { void xadd(String json); }
+    public interface Writer { void xadd(LogStream stream, String json); }
 
     /** 억제를 통과한 뒤에만 부른다 — 스택 가림·직렬화 같은 비싼 일은 여기서(억제된 로그 폭주에 CPU 를 쓰지 않게). */
     @FunctionalInterface
@@ -78,7 +83,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
 
     public enum Offer { QUEUED, SUPPRESSED, DISABLED }
 
-    private record Entry(String json, int bytes) {}
+    private record Entry(LogStream stream, String json, int bytes) {}
 
     private final Writer writer;
     private final boolean enabled;
@@ -130,7 +135,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
         this.appender = new SinkAppender(this);
         this.appender.setContext(logback);
         sent = Counter.builder("wakeline_log_events_total").tag("result", "sent")
-                .description("시스템 로그 항목: wakeline:logs 에 실은 수").register(meters);
+                .description("시스템 로그 항목: wakeline:logs(서버) · wakeline:logs:client(브라우저 오류)에 실은 수").register(meters);
         dropped = Counter.builder("wakeline_log_events_total").tag("result", "dropped")
                 .description("시스템 로그 항목: 대기열 상한·종료로 버린 수").register(meters);
         suppressed = Counter.builder("wakeline_log_events_total").tag("result", "suppressed")
@@ -138,12 +143,12 @@ public class LogSink implements SmartLifecycle, DisposableBean {
         meters.gauge("wakeline_log_queue", this, LogSink::queued);
     }
 
-    /** XADD … MAXLEN ~ 3000(근사 트림 — Redis 가 내부 노드 단위로 자른다). */
-    static final XAddOptions XADD_OPTIONS = XAddOptions.trim(TrimOptions.maxLen(MAXLEN).approximate());
+    /** 서버 로그 스트림의 XADD … MAXLEN ~ 3000(근사 트림 — Redis 가 내부 노드 단위로 자른다). */
+    static final XAddOptions XADD_OPTIONS = LogStream.SERVER.xaddOptions();
 
-    /** api 기본 Redis 연결(끊겨 있으면 곧바로 실패, 명령 한도 3 s — RedisConfig)로 XADD MAXLEN ~ 3000. */
+    /** api 기본 Redis 연결(끊겨 있으면 곧바로 실패, 명령 한도 3 s — RedisConfig)로 XADD — 서버 로그 MAXLEN ~ 3000, 브라우저 오류 MAXLEN ~ 1000. */
     public static Writer redisWriter(StringRedisTemplate redis) {
-        return json -> redis.opsForStream().add(MapRecord.create(STREAM, Map.of("e", json)), XADD_OPTIONS);
+        return (stream, json) -> redis.opsForStream().add(MapRecord.create(stream.key(), Map.of("e", json)), stream.xaddOptions());
     }
 
     public boolean enabled() { return enabled; }
@@ -174,11 +179,16 @@ public class LogSink implements SmartLifecycle, DisposableBean {
                 (fp, n) -> LogEvents.serialize(LogEvents.fromLogback(e, instance, msg), fp, n));
     }
 
+    /** 서버 로그 스트림으로 {@link #submit(LogStream, String, String, String, String, Body)}. */
+    public Offer submit(String service, String logger, String exceptionType, String maskedMessage, Body body) {
+        return submit(LogStream.SERVER, service, logger, exceptionType, maskedMessage, body);
+    }
+
     /**
-     * 지문을 구해 억제 여부를 정하고, 통과하면 body 로 항목을 만들어 대기열에 넣는다.
+     * 지문을 구해 억제 여부를 정하고, 통과하면 body 로 항목을 만들어 대기열에 넣는다(보낼 때 stream 으로).
      * @param maskedMessage 가린 메시지(지문의 메시지 틀 재료)
      */
-    public Offer submit(String service, String logger, String exceptionType, String maskedMessage, Body body) {
+    public Offer submit(LogStream stream, String service, String logger, String exceptionType, String maskedMessage, Body body) {
         if (!enabled) return Offer.DISABLED;
         String fp = LogEvents.fingerprint(service, logger, exceptionType, maskedMessage);
         Integer n = admit(fp, clock.getAsLong());
@@ -186,7 +196,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
             suppressed.increment();
             return Offer.SUPPRESSED;
         }
-        enqueue(body.json(fp, n));
+        enqueue(stream, body.json(fp, n));
         return Offer.QUEUED;
     }
 
@@ -217,9 +227,12 @@ public class LogSink implements SmartLifecycle, DisposableBean {
         fps.remove(oldest);
     }
 
+    /** 서버 로그 스트림으로 {@link #enqueue(LogStream, String)}. */
+    void enqueue(String json) { enqueue(LogStream.SERVER, json); }
+
     /** 대기열 끝에 넣는다. 상한을 넘으면 오래된 것부터 버리고 센다. */
-    void enqueue(String json) {
-        Entry e = new Entry(json, json.getBytes(StandardCharsets.UTF_8).length);
+    void enqueue(LogStream stream, String json) {
+        Entry e = new Entry(stream, json, json.getBytes(StandardCharsets.UTF_8).length);
         int drop;
         boolean full;
         lock.lock();
@@ -394,14 +407,14 @@ public class LogSink implements SmartLifecycle, DisposableBean {
             while (it.hasNext()) {
                 Entry e = it.next();
                 try {
-                    writer.xadd(e.json());
+                    writer.xadd(e.stream(), e.json());
                     sent.increment();
                     it.remove();
                 } catch (RuntimeException ex) {
                     requeue(batch);
                     if (!failing) {
                         failing = true;
-                        log.warn("log sink: XADD {} failed, keeping {} entries queued and retrying with backoff: {}", STREAM, queued(), ex.toString());
+                        log.warn("log sink: XADD {} failed, keeping {} entries queued and retrying with backoff: {}", e.stream().key(), queued(), ex.toString());
                     }
                     return false;
                 }
@@ -412,7 +425,7 @@ public class LogSink implements SmartLifecycle, DisposableBean {
     private void recovered() {
         if (failing) {
             failing = false;
-            log.info("log sink: XADD {} works again", STREAM);
+            log.info("log sink: XADD {} works again", STREAM + " / " + CLIENT_STREAM);
         }
     }
 

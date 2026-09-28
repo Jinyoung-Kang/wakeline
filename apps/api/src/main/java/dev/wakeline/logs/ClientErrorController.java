@@ -38,6 +38,7 @@ import java.util.function.Supplier;
  *   <li>요청 제한: IP당 분당 {@value #PER_IP_PER_MIN} · 전체 분당 {@value #GLOBAL_PER_MIN}(Redis 제한기, 키 rl:cerr:{ip}|all:{분}) — 429 + Retry-After.
  *       IP 가 막힌 요청은 전체 한도를 쓰지 않는다. 제한기가 Redis 에 닿지 않으면 받지 않는다(503) — Redis 장애 중에는 대기열이 서버 오류를
  *       붙잡아 두는 자리라서, 누구나 보낼 수 있는 브라우저 오류로 그 자리를 밀어내지 못하게 한다. /api/** 공통 제한(IP당 분당 120)도 그대로 적용된다.</li>
+ *   <li>스트림: wakeline:logs:client(MAXLEN ~ 1000, 계약 v5 §G2) — 서버 로그 wakeline:logs 와 따로 자른다(익명 입력이 서버 오류를 밀어내지 못하게).</li>
  *   <li>항목: service "web-client" · level ERROR · untrusted true(브라우저가 보낸 내용 — 사실로 믿지 말 것). ts 는 api 가 받은 시각이고
  *       브라우저가 보낸 시각은 context.client_ts. logger = component(가린 뒤, 없으면 "browser"), 스택이 있으면 exception {type:""(모름 — 브라우저는 오류
  *       종류를 따로 보내지 않는다, 출처는 service · untrusted 가 말한다), message:null, stack}. request_id 는 null(이 수집 요청은 오류의 원인이 아니다 — 받은 요청의 id 는
@@ -124,7 +125,9 @@ public class ClientErrorController {
         if (LogEvents.REQUEST_ID.matcher(rid).matches()) ctx.put("receive_request_id", rid);
 
         var draft = new LogEvents.Draft(clock.get(), SERVICE, sink.instance(), "ERROR", logger, null, maskedMessage, ex, null, ctx, true);
-        LogSink.Offer offer = sink.submit(SERVICE, logger, ex == null ? null : ex.type(), maskedMessage, (fp, n) -> LogEvents.serialize(draft, fp, n));
+        // §G2: 따로 자르는 브라우저 오류 스트림(wakeline:logs:client MAXLEN ~ 1000)으로 — 서버 오류(wakeline:logs)를 밀어내지 못하게
+        LogSink.Offer offer = sink.submit(LogStream.CLIENT, SERVICE, logger, ex == null ? null : ex.type(), maskedMessage,
+                (fp, n) -> LogEvents.serialize(draft, fp, n));
         if (offer == LogSink.Offer.DISABLED)
             throw new Problem(HttpStatus.SERVICE_UNAVAILABLE, "LOG_SINK_DISABLED", "service unavailable", "log collection is turned off on this server");
     }

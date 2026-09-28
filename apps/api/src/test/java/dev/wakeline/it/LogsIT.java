@@ -255,7 +255,7 @@ class LogsIT extends IntegrationTest {
         var writer = LogSink.redisWriter(ItStack.apiUser()); // api 와 같은 ACL 사용자 · 같은 XADD 옵션
         String e = collectorEntry(randomFp(), "trim probe", 0);
         try {
-            for (int i = 0; i < 3_300; i++) writer.xadd(e);
+            for (int i = 0; i < 3_300; i++) writer.xadd(dev.wakeline.logs.LogStream.SERVER, e);
             Long len = ItStack.admin().opsForStream().size(LogSink.STREAM);
             // MAXLEN ~ 3000: 근사 트림은 내부 노드(기본 100 항목) 단위로 자른다 — 3000 이상, 3000 + 노드 하나 이하
             assertThat(len).isBetween(3_000L, 3_100L);
