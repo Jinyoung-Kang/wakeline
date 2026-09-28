@@ -148,10 +148,6 @@ public final class WsSession {
 
     private final TaskErrors taskErrors;
 
-    WsSession(WebSocketSession raw, String ip, Executor executor) {
-        this(raw, ip, executor, (s, job, e) -> { });
-    }
-
     WsSession(WebSocketSession raw, String ip, Executor executor, TaskErrors taskErrors) {
         this.id = raw.getId();
         this.ip = ip;
