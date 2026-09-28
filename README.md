@@ -15,11 +15,11 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
-| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V9) |
+| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V12) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 2,152건(pytest 746 · JUnit 534 · Vitest 378 · Playwright E2E 16 · 인프라 정책 113 · 버리는 컨테이너 시험 365) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 30건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 497.7 KiB · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 19건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 20건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -142,7 +142,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,config} · Flyway V1–V9 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,config} · Flyway V1–V12 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·about) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope (계약의 단일 원천)
