@@ -505,4 +505,26 @@ class SecurityIT extends IntegrationTest {
         // 클라이언트가 보낸 요청 id 는 믿지 않는다
         assertThat(get("/api/v1/status", headers("X-Request-Id", "attacker-chosen")).header("X-Request-Id")).isNotEqualTo("attacker-chosen");
     }
+
+    /**
+     * R-49: edge(신뢰 프록시)가 붙인 X-Request-Id(nginx $request_id, 32 hex)는 그대로 쓴다 — edge 접근 로그·api 로그·오류 본문이 같은 id 로 이어진다.
+     * 로그 줄에는 요청 중 MDC 의 id 가 [rid:…] 로 붙는다. 형식이 틀린 값(로그 주입 등)이나 신뢰하지 않는 원격의 값은 버리고 새로 만든다.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void requestIdFromTheTrustedEdgeIsUsedInProblemsAndLogs(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+        String edgeId = "3f2b8c1d9e7a4b6c8d0e1f2a3b4c5d6e";
+        var r = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/aircraft?bbox=126,37,127,38")
+                        .with(req -> { req.setRemoteAddr(TRUSTED_PROXY); return req; })
+                        .header("X-Request-Id", edgeId).contentType("application/json").content("{}"))
+                .andExpect(status().isMethodNotAllowed()).andReturn();
+        assertThat(r.getResponse().getHeader("X-Request-Id")).isEqualTo(edgeId);
+        assertThat(Streams.JSON.readTree(r.getResponse().getContentAsString()).path("request_id").asString()).isEqualTo(edgeId);
+        assertThat(output.getOut()).contains("[rid:" + edgeId + "]");
+
+        for (String bad : List.of("bad id\r\nforged log line", "x".repeat(65), "short"))
+            assertThat(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/status")
+                            .with(req -> { req.setRemoteAddr(TRUSTED_PROXY); return req; }).header("X-Request-Id", bad))
+                    .andReturn().getResponse().getHeader("X-Request-Id")).as("malformed edge id %s", bad).matches("^[0-9a-f]{20,}$");
+    }
 }

@@ -78,8 +78,8 @@ public class SecurityConfig {
      */
     /** Tomcat 이 앱에 닿기 전에 거절한 요청(예: %2F)의 본문도 problem+json(R-84) — {@link ProblemErrorReportValve}. */
     @Bean
-    static ProblemErrorReportValve.Customizer problemErrorReportValveCustomizer() {
-        return new ProblemErrorReportValve.Customizer();
+    static ProblemErrorReportValve.Customizer problemErrorReportValveCustomizer(@Value("${wakeline.trusted-proxy:}") String trustedProxy) {
+        return new ProblemErrorReportValve.Customizer(trustedProxy);
     }
 
     @Bean

@@ -22,8 +22,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 요청 id 는 앱 필터가 붙였으면 그 값, 아니면 여기서 만든다(X-Request-Id 로도 돌려준다).
  */
 public class ProblemErrorReportValve extends ErrorReportValve {
+    /** edge 주소 — edge 가 보낸 요청 id 를 여기서도 쓴다(R-49, {@link RequestIdFilter#resolve}). */
+    private final String trustedProxy;
 
-    public ProblemErrorReportValve() {
+    public ProblemErrorReportValve() { this(null); }
+
+    public ProblemErrorReportValve(String trustedProxy) {
+        this.trustedProxy = trustedProxy;
         setShowReport(false);
         setShowServerInfo(false);
     }
@@ -36,7 +41,7 @@ public class ProblemErrorReportValve extends ErrorReportValve {
         response.getCoyoteResponse().action(ActionCode.IS_IO_ALLOWED, ioAllowed);
         if (!ioAllowed.get()) return;
         Object attr = request.getAttribute(RequestIdFilter.ATTR);
-        String rid = attr != null ? attr.toString() : RequestIdFilter.newId();
+        String rid = attr != null ? attr.toString() : RequestIdFilter.resolve(request, trustedProxy);
         String[] codeTitle = ProblemJson.codeAndTitle(status);
         try {
             response.setContentType(ProblemJson.CONTENT_TYPE);
@@ -58,23 +63,27 @@ public class ProblemErrorReportValve extends ErrorReportValve {
      * (errorReportValveClass 도 이 클래스로 — 호스트가 기본 밸브를 다시 넣지 않게). 순서와 무관하게 동작하도록 가장 늦게 돈다.
      */
     public static final class Customizer implements WebServerFactoryCustomizer<ConfigurableTomcatWebServerFactory>, Ordered {
+        private final String trustedProxy;
+
+        public Customizer(String trustedProxy) { this.trustedProxy = trustedProxy; }
+
         @Override
         public void customize(ConfigurableTomcatWebServerFactory factory) {
             factory.addContextCustomizers(context -> {
                 if (context.getParent() instanceof StandardHost host) {
                     host.setErrorReportValveClass(ProblemErrorReportValve.class.getName());
                     host.addLifecycleListener(e -> {
-                        if (Lifecycle.BEFORE_START_EVENT.equals(e.getType())) install(host);
+                        if (Lifecycle.BEFORE_START_EVENT.equals(e.getType())) install(host, trustedProxy);
                     });
                 }
             });
         }
 
-        static void install(StandardHost host) {
+        static void install(StandardHost host, String trustedProxy) {
             for (Valve v : host.getPipeline().getValves())
                 if (v instanceof ErrorReportValve && !(v instanceof ProblemErrorReportValve)) host.getPipeline().removeValve(v);
             for (Valve v : host.getPipeline().getValves()) if (v instanceof ProblemErrorReportValve) return;
-            host.getPipeline().addValve(new ProblemErrorReportValve());
+            host.getPipeline().addValve(new ProblemErrorReportValve(trustedProxy));
         }
 
         @Override

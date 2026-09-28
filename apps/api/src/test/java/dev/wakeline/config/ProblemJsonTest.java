@@ -40,13 +40,13 @@ class ProblemJsonTest {
         StandardHost host = new StandardHost();
         ErrorReportValve bootDefault = new ErrorReportValve();
         host.getPipeline().addValve(bootDefault);
-        ProblemErrorReportValve.Customizer.install(host);
-        ProblemErrorReportValve.Customizer.install(host); // 두 번 불려도 하나
+        ProblemErrorReportValve.Customizer.install(host, null);
+        ProblemErrorReportValve.Customizer.install(host, null); // 두 번 불려도 하나
         List<Class<?>> reporters = new ArrayList<>();
         for (Valve v : host.getPipeline().getValves()) if (v instanceof ErrorReportValve) reporters.add(v.getClass());
         assertThat(reporters).containsExactly(ProblemErrorReportValve.class);
         assertThat(new ProblemErrorReportValve().isShowReport()).isFalse();
         assertThat(new ProblemErrorReportValve().isShowServerInfo()).isFalse();
-        assertThat(new ProblemErrorReportValve.Customizer().getOrder()).isEqualTo(org.springframework.core.Ordered.LOWEST_PRECEDENCE);
+        assertThat(new ProblemErrorReportValve.Customizer(null).getOrder()).isEqualTo(org.springframework.core.Ordered.LOWEST_PRECEDENCE);
     }
 }

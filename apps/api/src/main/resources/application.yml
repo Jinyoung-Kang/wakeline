@@ -90,3 +90,5 @@ logging:
     root: INFO
     dev.wakeline: INFO
     org.springframework.security: WARN
+  # 요청 중의 로그 줄에 요청 id(MDC request_id — edge 가 보낸 id 면 그 값, R-49)를 [rid:…] 로 붙인다. 요청 밖(스케줄·소비 스레드)은 붙이지 않는다.
+  pattern.correlation: "%replace([rid:%X{request_id}] ){'\\[rid:\\] ', ''}"
