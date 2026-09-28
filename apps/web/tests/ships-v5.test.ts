@@ -36,10 +36,21 @@ describe("ship category order (contract v5 §B2)", () => {
   it("SHIP_CATEGORIES is the contract order", () => {
     expect([...SHIP_CATEGORIES]).toEqual(CONTRACT_ORDER);
   });
-  it("SHIP_CATEGORIES equals the shared vector schemas/vectors/ship-categories.v1.json (api ShipCategory asserts the same file)", () => {
-    // 저장소 밖(웹 이미지 빌드 등)에서는 공유 파일이 없다 — 그때는 위의 계약 순서 시험만
-    const shared = new URL("../../../schemas/vectors/ship-categories.v1.json", import.meta.url);
-    if (!existsSync(shared)) return;
+  // 저장소 안에서 돌 때(apps/api 가 옆에 있을 때)는 Java 선언 순서를 직접 읽어 비교한다 — 파일이 옮겨지면 조용히 꺼지지 않고 실패한다.
+  // 저장소 밖(웹 이미지 빌드 등)에서는 건너뛴다(건너뜀이 결과에 보인다)
+  const repoRoot = new URL("../../../", import.meta.url);
+  const inRepo = existsSync(new URL("apps/api/", repoRoot)) && existsSync(new URL("schemas/", repoRoot));
+  it.skipIf(!inRepo)("SHIP_CATEGORIES equals the declaration order of the Java enum ShipCategory (apps/api)", () => {
+    const java = new URL("apps/api/src/main/java/dev/wakeline/domain/ShipCategory.java", repoRoot);
+    expect(existsSync(java), "ShipCategory.java moved — update this pin").toBe(true);
+    const src = readFileSync(java, "utf8");
+    const body = /public enum ShipCategory \{([^;]*);/.exec(src)?.[1] ?? "";
+    const keys = [...body.matchAll(/[A-Z_]+\("([a-z]+)"\)/g)].map((m) => m[1]);
+    expect(keys).toEqual([...SHIP_CATEGORIES]);
+  });
+  // 공유 벡터는 api-ships 레인이 만든다 — 두 레인을 합치기 전에는 없으므로 건너뜀(보이게)
+  const shared = new URL("schemas/vectors/ship-categories.v1.json", repoRoot);
+  it.skipIf(!existsSync(shared))("SHIP_CATEGORIES equals the shared vector schemas/vectors/ship-categories.v1.json (api ShipCategory asserts the same file)", () => {
     const v = JSON.parse(readFileSync(shared, "utf8")) as { version: number; order: string[] };
     expect(v.version).toBe(1);
     expect([...SHIP_CATEGORIES]).toEqual(v.order);
