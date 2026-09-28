@@ -1,5 +1,10 @@
 """공급자 폴백 체인(FR-16): 1순위 3회 연속 실패 → 다음 순위, 10분 뒤 복귀 시도. 전환은 provider_switch 이벤트로 기록.
 
+429 이력(R-17): 429 가 RATE_LIMIT_RESET_S(15분) 안에 되풀이되면 백오프(최대 300 s)가 끝난 뒤에도 그 공급자를 한동안
+뒤로 미룬다(hold: 10 → 20 → 40 → 60분). 그동안 다음 순위가 같은 주기로 맡는다. hold 는 차단이 아니라 선호도라서, 다른 공급자가
+하나도 없으면 백오프가 끝난 공급자를 그대로 쓴다. 15분 동안 429 없이 쓰이면 단계가 초기화된다. 공급자의 실제 한도 수치는 모르므로
+호출 속도를 추정해 정하지 않는다.
+
 체인은 작업(region·global)마다 따로지만, 공급자 객체에 붙은 paused_until(UTC)은 두 체인이 함께 본다
 (예: OpenSky 남은 크레딧이 예비분 아래로 내려가면 자정까지 어느 체인도 쓰지 않는다).
 상태 기록(set_active·switch_event·is_disabled)은 ProviderStatus 가 Redis 오류를 삼키므로 선택을 막지 않는다.
@@ -7,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +20,7 @@ from typing import Any
 from wakeline_collector.status import ProviderStatus
 
 RATE_LIMIT_RESET_S = 900.0  # 마지막 429 로부터 이만큼 조용하면 백오프 단계를 초기화
+RATE_LIMIT_HOLD_S = (600.0, 1200.0, 2400.0, 3600.0)  # 15분 안에 되풀이된 429 뒤 복귀를 늦추는 시간(R-17)
 
 
 class ProviderChain:
@@ -29,6 +36,8 @@ class ProviderChain:
         self._down_until: dict[str, float] = {}
         self._rate_limited: dict[str, int] = {}  # 429 단계(최근 15분 내)
         self._last_429: dict[str, float] = {}
+        self._hold_until: dict[str, float] = {}  # 되풀이된 429 → 이 시각까지 뒤로 미룸(다른 공급자가 없으면 씀)
+        self._rl_until: dict[str, float] = {}  # 429 로 쉬거나 미뤄 둔 기간의 끝(조용함은 여기서부터 센다)
         self._current: str | None = None
 
     def mark_down(self, name: str, seconds: float) -> None:
@@ -41,6 +50,7 @@ class ProviderChain:
 
     async def pick(self, order: list[str], *, need_global: bool = False) -> Any | None:
         now = time.monotonic()
+        held: list[tuple[str, Any]] = []
         for name in order:
             p = self._providers.get(name)
             if p is None:
@@ -57,29 +67,51 @@ class ProviderChain:
                 continue
             if await self._status.is_disabled(name):
                 continue
-            if self._current != name:
-                prev = self._current or "-"
-                reason = "initial" if prev == "-" else "fallback/recovery"
-                self._current = name
-                await self._status.set_active(self.job, name, reason=reason)
-                if prev != "-":
-                    await self._status.switch_event(self.job, prev, name, reason)
-            return p
+            if self._hold_until.get(name, 0.0) > now:
+                held.append((name, p))  # 되풀이된 429 — 다른 공급자가 없을 때만
+                continue
+            return await self._use(name, p)
+        if held:
+            return await self._use(*held[0])
         return None
+
+    async def _use(self, name: str, p: Any) -> Any:
+        if self._current != name:
+            prev = self._current or "-"
+            reason = "initial" if prev == "-" else "fallback/recovery"
+            self._current = name
+            await self._status.set_active(self.job, name, reason=reason)
+            if prev != "-":
+                await self._status.switch_event(self.job, prev, name, reason)
+        return p
+
+    def _quiet(self, name: str, now: float) -> bool:
+        """429 로 쉬거나 미뤄 둔 기간이 끝난 뒤 RATE_LIMIT_RESET_S 동안 429 가 없었는가.
+        쉬는·미루는 시간은 '조용함'으로 세지 않는다 — 세면 hold 가 끝나자마자 단계가 초기화되어 반복이 다시 시작된다."""
+        return now - self._rl_until.get(name, -math.inf) > RATE_LIMIT_RESET_S
 
     def record_success(self, name: str) -> None:
         self._fails[name] = 0
         # 성공 한 번으로 단계를 초기화하면 60 s 마다 429 ↔ 복귀가 반복된다(실측). 15분 조용해야 초기화.
-        if time.monotonic() - self._last_429.get(name, 0.0) > RATE_LIMIT_RESET_S:
+        if self._quiet(name, time.monotonic()):
             self._rate_limited[name] = 0
+            self._hold_until.pop(name, None)
 
     def record_rate_limited(self, name: str) -> float:
-        """429: 지수 백오프(60 → 120 → 240 → 300 s)로 쉬게 한다. 반환값은 쉬는 시간(초)."""
+        """429: 지수 백오프(60 → 120 → 240 → 300 s)로 쉬게 한다. 반환값은 쉬는 시간(초).
+        15분 안에 되풀이된 429 면 그 뒤로도 RATE_LIMIT_HOLD_S 만큼 뒤로 미룬다(R-17)."""
+        now = time.monotonic()
+        if self._quiet(name, now):
+            self._rate_limited[name] = 0  # 조용했던 뒤의 첫 429
         n = self._rate_limited.get(name, 0)
         self._rate_limited[name] = n + 1
-        self._last_429[name] = time.monotonic()
+        self._last_429[name] = now
         wait = min(300.0, 60.0 * (2**n))
         self.mark_down(name, wait)
+        hold = RATE_LIMIT_HOLD_S[min(n - 1, len(RATE_LIMIT_HOLD_S) - 1)] if n >= 1 else 0.0
+        if hold:
+            self._hold_until[name] = now + hold
+        self._rl_until[name] = now + max(wait, hold)
         return wait
 
     def record_failure(self, name: str) -> bool:
