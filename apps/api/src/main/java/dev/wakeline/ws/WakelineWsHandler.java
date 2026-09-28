@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
  * 수신 스레드는 상태만 바꾸고 전송은 모두 세션 우편함(WsHub)에 맡긴다 — 여기서 블로킹 전송을 하지 않는다.
  * 선박(계약 v2 §B3): {type:"layers", aircraft, ships}(boolean — 없는 키는 그대로, 다른 형식은 BAD_LAYERS) · {type:"select_ship", mmsi|null}
  * (9자리 문자열 — 아니면 BAD_MMSI) · resync 는 항공기와 함께 선박 스냅샷도 다시 보낸다(웹은 sseq 틈에도 resync 를 보낸다).
+ * resync scope(계약 v5 §E2): "alerts" · "sigmets" · "radar" 면 그 목록 하나만 버전과 무관하게 전체로(웹이 형식 오류로 버린 메시지), 그 밖은 BAD_RESYNC.
  */
 @Profile("!cli & !migrate")
 @Component
@@ -106,16 +107,32 @@ public class WakelineWsHandler extends TextWebSocketHandler {
             case "select" -> select(s, m);
             case "pause" -> { s.paused = true; hub.demandChanged(); } // 보지 않는 세션은 수요를 내지 않는다(계약 v2 §A1)
             case "resume" -> resume(s);
-            case "resync" -> { // 다음 스냅샷을 기다리지 않고 바로 — 항공기와 (켜져 있으면) 선박 모두
-                s.needsResync = true;
-                hub.requestFanout(s);
-                ships.resync(s);
-            }
+            case "resync" -> resync(s, m);
             case "layers" -> layers(s, m);
             case "select_ship" -> selectShip(s, m);
             case "pong" -> s.missedPongs.set(0);
             case "ping" -> hub.reply(s, PONG);
             default -> hub.error(s, "UNKNOWN_TYPE", "unknown message type");
+        }
+    }
+
+    /**
+     * resync: scope 가 없으면 다음 스냅샷을 기다리지 않고 바로 — 항공기와 (켜져 있으면) 선박 모두(seq · sseq 틈, 버린 흐름 메시지).
+     * scope 가 있으면 그 목록 하나만 전체로(계약 v5 §E2 — 알림 배치는 증분이라 버린 배치가 다음 배치로 바로잡히지 않는다). null 은 없는 것과 같다.
+     */
+    private void resync(WsSession s, JsonNode m) {
+        JsonNode scope = m.get("scope");
+        if (scope == null || scope.isNull()) {
+            s.needsResync = true;
+            hub.requestFanout(s);
+            ships.resync(s);
+            return;
+        }
+        switch (scope.isString() ? scope.asString() : "") {
+            case "alerts" -> hub.resyncAlerts(s);
+            case "sigmets" -> hub.resyncSigmets(s);
+            case "radar" -> hub.resyncRadar(s);
+            default -> hub.error(s, "BAD_RESYNC", "scope must be alerts, sigmets, radar or absent");
         }
     }
 

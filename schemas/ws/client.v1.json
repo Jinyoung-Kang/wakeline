@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://wakeline.invalid/schemas/ws/client.v1.json",
   "title": "WS 프로토콜 v1 — 클라이언트 → 서버 메시지 10종(계약 v5 §E1 · ADR-008 · ADR-020)",
-  "description": "브라우저(lib/ws.ts)가 /ws/v1 로 보내는 JSON 텍스트 메시지 하나(≤ 4 KB, 10 s 에 20 개 — 넘으면 1008). 첫 메시지는 hello(5 s 안). 이 스키마는 '따르는 클라이언트' 가 보내는 모양이다 — 서버(WakelineWsHandler)는 모르는 키를 무시하고 zoom 을 0–24 로 자르는 등 더 너그럽지만, 틀린 값은 error(BAD_BBOX · BAD_HEX · BAD_MMSI · BAD_LAYERS · UNSUPPORTED_PROTO · UNKNOWN_TYPE)로 답한다.",
+  "description": "브라우저(lib/ws.ts)가 /ws/v1 로 보내는 JSON 텍스트 메시지 하나(≤ 4 KB, 10 s 에 20 개 — 넘으면 1008). 첫 메시지는 hello(5 s 안). 이 스키마는 '따르는 클라이언트' 가 보내는 모양이다 — 서버(WakelineWsHandler)는 모르는 키를 무시하고 zoom 을 0–24 로 자르는 등 더 너그럽지만, 틀린 값은 error(BAD_BBOX · BAD_HEX · BAD_MMSI · BAD_LAYERS · BAD_RESYNC · UNSUPPORTED_PROTO · UNKNOWN_TYPE)로 답한다.",
   "type": "object",
   "required": ["type"],
   "properties": {
@@ -73,8 +73,14 @@
       "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "resume" } }
     },
     "resync": {
-      "description": "seq·sseq 틈 · 형식이 틀린 메시지 · 처리 중 예외(계약 v5 §E2) — 서버는 항공기 스냅샷과 (켜져 있으면) 선박 스냅샷을 바로 다시 보낸다.",
-      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "resync" } }
+      "description": "scope 가 없으면: seq·sseq 틈 · 항공기·선박 흐름의 형식이 틀린 메시지 · 처리 중 예외(계약 v5 §E2) — 서버는 항공기 스냅샷과 (켜져 있으면) 선박 스냅샷을 바로 다시 보낸다. scope 가 있으면: 웹이 그 종류의 메시지(알림 전체·배치 · SIGMET · 레이더)를 버렸거나 알림 버전에 틈이 있다 — 서버는 그 목록 하나만 버전과 무관하게 전체로 다시 보낸다(항공기·선박은 보내지 않는다). 모르는 scope 는 error BAD_RESYNC.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "resync" },
+        "scope": { "enum": ["alerts", "sigmets", "radar"] }
+      }
     },
     "layers": {
       "description": "켜진 레이어(계약 v2 §B3). 없는 키는 그대로 둔다 — 적어도 하나는 보낸다. 서버 기본값: 항공기 켬 · 선박 끔.",

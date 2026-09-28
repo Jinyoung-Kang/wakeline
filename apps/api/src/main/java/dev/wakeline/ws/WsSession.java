@@ -94,6 +94,13 @@ public final class WsSession {
     final AtomicBoolean shipsForce = new AtomicBoolean();
     /** 다음 ship_selected 는 바뀌지 않았어도 보낸다 — select_ship·resume. */
     final AtomicBoolean shipSelectedForce = new AtomicBoolean();
+    /**
+     * 다음 알림 · SIGMET · 레이더 작업은 버전과 무관하게 전체 목록을 보낸다 — 클라이언트 {type:"resync", scope}(계약 v5 §E2: 웹이 형식 오류 ·
+     * 처리 예외로 그 메시지를 버렸다). 핸들러가 올리고 우편함이 보낼 때 내린다.
+     */
+    final AtomicBoolean alertsForce = new AtomicBoolean();
+    final AtomicBoolean sigmetsForce = new AtomicBoolean();
+    final AtomicBoolean radarForce = new AtomicBoolean();
 
     // ---- 수요(DemandService 스레드가 쓴다) ----
     /** 이 세션의 최신 demand 메시지(JSON) — 우편함의 DEMAND 작업·초기 세트가 보낸다. 아직 계산 전이면 null. */

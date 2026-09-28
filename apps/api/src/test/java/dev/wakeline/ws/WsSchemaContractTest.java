@@ -1,6 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.demand.CollectorDemandStatus;
+import dev.wakeline.demand.DemandStats;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.HotCell;
@@ -10,10 +11,12 @@ import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.AlertStateMachine;
 import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.engine.EngineService;
+import dev.wakeline.ingest.AisStatus;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.Receipt;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.ops.RegionSettings;
 import dev.wakeline.rest.StatusService;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
@@ -29,6 +32,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -58,6 +62,9 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * WS 메시지 계약(계약 v5 §E1 · ADR-020 · R-76). 서버 메시지 17종은 실제 빌더 — WsMessages · WsHub(스냅샷·diff·알림·SIGMET·레이더·status·ping)
@@ -116,6 +123,38 @@ class WsSchemaContractTest {
         EngineService engine = new EngineService(k.snapshots, k.sigmets, e -> { }, k.meters);
         k.prediction = engine::predictionAvailability;
         k.status.set(new StatusService(k.snapshots, k.sigmets, k.radar, engine, new StringRedisTemplate(), k.props).publicStatus());
+    }
+
+    /**
+     * Redis 에 수집기 heartbeat · 기상청 레이더 메타 · 활성 공급자 · AIS 상태 해시가 있을 때의 운영 StatusService 공개 상태(2차 리뷰 — 연결 없는 Redis 만으로는
+     * sources.ais · radar_kr · active_providers · demand.adsb_fi_rps_1m 이 표본에 없어 웹 검증기가 그 값을 본 적이 없었다). 해시 값은 합성(수집기가 쓰는 모양).
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static Map<String, Object> populatedStatus(WsTestKit k, Instant now) {
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        Map<String, Map<Object, Object>> h = Map.of(
+                "wakeline:collector", Map.of("fixture", "0", "adsb_fi_rps_1m", "0.2667", "region_at", now.minusSeconds(5).toString()),
+                "wakeline:radar_kr:meta", Map.of("available", "1", "status", "200", "latest_tm", "202609290500",
+                        "fetched_at", now.minusSeconds(120).toString(), "checked_at", now.minusSeconds(30).toString()),
+                "wakeline:active", Map.of("region", "adsb_lol", "global", "opensky", "hot", "adsb_fi"),
+                AisStatus.KEY, Map.of("provider", "aisstream", "connected", "1", "state", "receiving", "updated_at", now.minusSeconds(3).toString(),
+                        "last_msg_at", now.minusSeconds(1).toString(), "msgs_per_s", "12.5",
+                        "last_gap_started_at", now.minusSeconds(900).toString(), "last_gap_ended_at", now.minusSeconds(840).toString(), "last_gap_reason", "reconnect"));
+        when(hash.entries(anyString())).thenAnswer(inv -> h.getOrDefault(inv.<String>getArgument(0), Map.of()));
+        StringRedisTemplate redis = new StringRedisTemplate() {
+            @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations) hash; }
+        };
+        AisStatus ais = new AisStatus(redis, k.ships);
+        ais.refresh();
+        DemandStats demand = new DemandStats();
+        demand.update(new DemandStats.Counts(1, 1, 1, 1, 1, 1));
+        EngineService engine = new EngineService(k.snapshots, k.sigmets, e -> { }, k.meters);
+        Map<String, Object> st = new StatusService(k.snapshots, k.sigmets, k.radar, engine, redis, new RegionSettings(redis, null, null, k.props), demand, ais)
+                .publicStatus();
+        assertThat(((Map<?, ?>) st.get("sources")).get("ais")).as("sources.ais").isNotNull();
+        assertThat(((Map<String, Object>) st.get("radar_kr")).keySet()).as("radar_kr").contains("available", "status", "latest_tm");
+        assertThat(((Map<?, ?>) st.get("demand")).get("adsb_fi_rps_1m")).as("demand.adsb_fi_rps_1m").isNotNull();
+        return st;
     }
 
     static String type(String message) { return json.readTree(message).path("type").asString(); }
@@ -298,6 +337,16 @@ class WsSchemaContractTest {
             all.addAll(d.sent);
             samples.add(new Sample("ships_grid.capped", first(d.sent, "ships_grid", n -> n.path("capped").asBoolean(false))));
         }
+        // ---- 세션 4(따로): 값이 채워진 status(수집기 · AIS · 기상청 레이더 해시가 있는 Redis) — 초기 세트의 status
+        try (WsTestKit k = new WsTestKit(json)) {
+            ships(k, List.of(pos("440000001", 35.1, 129.1, 12.3, 45.2, 44, 0, 3, "epfs", now.minusSeconds(8), "PositionReport", "A")), List.of(), now.minusSeconds(5));
+            k.status.set(populatedStatus(k, now));
+            FakeWsSession q = k.connect("s-status", "10.0.0.4");
+            k.msg(q, "{\"type\":\"hello\",\"proto\":1}");
+            k.msg(q, "{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
+            all.addAll(q.sent);
+            samples.add(new Sample("status.populated", first(q.sent, "status", n -> n.path("status").path("sources").has("ais"))));
+        }
         return new Run(all, samples);
     }
 
@@ -346,6 +395,9 @@ class WsSchemaContractTest {
                 new Sample("pause", "{\"type\":\"pause\"}"),
                 new Sample("resume", "{\"type\":\"resume\"}"),
                 new Sample("resync", "{\"type\":\"resync\"}"),
+                new Sample("resync.alerts", "{\"type\":\"resync\",\"scope\":\"alerts\"}"),
+                new Sample("resync.sigmets", "{\"type\":\"resync\",\"scope\":\"sigmets\"}"),
+                new Sample("resync.radar", "{\"type\":\"resync\",\"scope\":\"radar\"}"),
                 new Sample("ping", "{\"type\":\"ping\"}"),
                 new Sample("pong", "{\"type\":\"pong\"}"));
     }
@@ -421,6 +473,7 @@ class WsSchemaContractTest {
         badClient.put("layers string", "{\"type\":\"layers\",\"ships\":\"yes\"}");
         badClient.put("layers without a layer", "{\"type\":\"layers\"}");
         badClient.put("unknown client type", "{\"type\":\"subscribe_all\"}");
+        badClient.put("resync unknown scope", "{\"type\":\"resync\",\"scope\":\"aircraft\"}");
         for (var e : badClient.entrySet()) assertThat(WsSchemas.client(e.getValue())).as(e.getKey()).isNotEmpty();
     }
 
