@@ -381,6 +381,42 @@ class WsHubTest {
         }
     }
 
+    // ---------------------------------------------------------------- 우편함 작업 예외(R-73)
+
+    /**
+     * 우편함 작업이 예외로 끝나면 조용히 삼키지 않는다: wakeline_ws_task_errors_total{job} 로 세고, 그 세션은 다음 팬아웃에서 전체 초기 세트
+     * (스냅샷 seq 1 · 알림 · 레이더 · status)로 되돌린다 — diff 계산이 sent 를 먼저 바꾸므로 예외 뒤의 세션 상태는 클라이언트보다 앞서 있을 수 있다.
+     * 결함 주입: 선택 항공기의 예측 조회가 팬아웃 작업 안에서 던진다.
+     */
+    @Test void outboxTaskError_isCounted_andTheNextFanoutResyncsTheSession() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant now = Instant.now();
+            k.publish("region", now, ac("aaa001", 36, 127, 30000, now, "adsb_lol"));
+            FakeWsSession f = k.subscribed("s1", "1.1.1.1");
+            k.msg(f, "{\"type\":\"select\",\"hex\":\"aaa001\"}");
+            k.prediction = a -> { throw new IllegalStateException("prediction bug"); };
+            k.publish("region", now.plusSeconds(10), ac("aaa001", 36.1, 127, 30000, now.plusSeconds(10), "adsb_lol"));
+            assertThat(k.meters.counter("wakeline_ws_task_errors_total", "job", "fanout").count()).isEqualTo(1.0);
+            assertThat(f.open).as("the session stays open").isTrue();
+
+            k.prediction = a -> a == null ? new PredictionAvailability(false, null) : PredictionAvailability.AVAILABLE;
+            int before = f.sent.size();
+            k.publish("region", now.plusSeconds(20), ac("aaa001", 36.2, 127, 30000, now.plusSeconds(20), "adsb_lol"));
+            List<String> next = types(f).subList(before, f.sent.size());
+            assertThat(next).as("full initial set after the failed task").contains("snapshot", "alerts", "radar", "status", "selected");
+            assertThat(seqs(f).getLast()).isEqualTo(1);
+            // 다음부터는 평소대로 diff
+            k.publish("region", now.plusSeconds(30), ac("aaa001", 36.3, 127, 30000, now.plusSeconds(30), "adsb_lol"));
+            assertThat(seqs(f).getLast()).isEqualTo(2);
+
+            // 같은 결함이 1분 안에 되풀이되면 세기만 한다(로그 폭주 없음) — 세션은 매번 재동기로 돌아온다
+            k.prediction = a -> { throw new IllegalStateException("prediction bug"); };
+            k.publish("region", now.plusSeconds(40), ac("aaa001", 36.4, 127, 30000, now.plusSeconds(40), "adsb_lol"));
+            assertThat(k.meters.counter("wakeline_ws_task_errors_total", "job", "fanout").count()).isEqualTo(2.0);
+            assertThat(k.meters.counter("wakeline_ws_task_errors_total", "job", "reply").count()).isZero(); // 미리 등록된 0
+        }
+    }
+
     // ---------------------------------------------------------------- select
 
     @Test void select_repliesImmediately_thenOnChangeOnly_evenOutsideBbox() throws Exception {

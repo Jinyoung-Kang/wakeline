@@ -137,10 +137,26 @@ public final class WsSession {
     boolean shipsDense;
     ShipSelectedSent shipSelectedSent;
 
+    /** 우편함 작업 실패 알림(R-73) — 허브가 wakeline_ws_task_errors_total{job} 로 세고 1분에 한 번 WARN 을 남긴다. */
+    @FunctionalInterface
+    interface TaskErrors {
+        void failed(WsSession s, String job, RuntimeException e);
+    }
+
+    /** 제어 응답(welcome·pong·error) 작업의 지표 이름. */
+    static final String REPLY_JOB = "REPLY";
+
+    private final TaskErrors taskErrors;
+
     WsSession(WebSocketSession raw, String ip, Executor executor) {
+        this(raw, ip, executor, (s, job, e) -> { });
+    }
+
+    WsSession(WebSocketSession raw, String ip, Executor executor, TaskErrors taskErrors) {
         this.id = raw.getId();
         this.ip = ip;
         this.raw = raw;
+        this.taskErrors = taskErrors;
         this.outbox = new SerialOutbox(executor);
         this.inbound = new SlidingWindowLimiter(RATE_MAX, TimeUnit.SECONDS.toNanos(RATE_WINDOW_S));
         for (int i = 0; i < scheduled.length; i++) scheduled[i] = new AtomicBoolean();
@@ -161,14 +177,31 @@ public final class WsSession {
     boolean schedule(Job job, Runnable task) {
         AtomicBoolean f = scheduled[job.ordinal()];
         if (!f.compareAndSet(false, true)) return false;
-        if (!outbox.offer(() -> { f.set(false); task.run(); })) { f.set(false); return false; }
+        if (!outbox.offer(() -> { f.set(false); guarded(job.name(), task); })) { f.set(false); return false; }
         return true;
     }
 
     boolean isScheduled(Job job) { return scheduled[job.ordinal()].get(); }
 
     /** 제어 응답(welcome·pong·error) — 개수는 수신 rate limit 이 묶는다. */
-    boolean post(Runnable task) { return outbox.offer(task); }
+    boolean post(Runnable task) { return outbox.offer(() -> guarded(REPLY_JOB, task)); }
+
+    /**
+     * 우편함 작업 실행(R-73). 예외면 이 세션의 전송 상태(sent·seq·버전)가 클라이언트가 실제로 받은 것보다 앞서 있을 수 있다 — 예: diff 계산이
+     * sent 를 바꾼 뒤 직렬화·예측·노선 조회가 실패. 그래서 다음 팬아웃은 전체 초기 세트(스냅샷 seq 1·알림·레이더·status·선박)로, 항공기를 끈
+     * 세션은 다음 선박 작업이 전체 선박으로 되돌리게 표시하고, 허브에 알려 센다. 여기서 곧바로 다시 예약하지 않는다(같은 결함이면 무한 반복).
+     * 우편함은 다음 작업을 계속 처리한다.
+     */
+    private void guarded(String job, Runnable task) {
+        try {
+            task.run();
+        } catch (RuntimeException e) {
+            needsResync = true;
+            stateResync.set(true);
+            shipsForce.set(true);
+            taskErrors.failed(this, job, e);
+        }
+    }
 
     /** 테스트용: 원본 세션 */
     WebSocketSession raw() { return raw; }

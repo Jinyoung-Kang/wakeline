@@ -51,8 +51,8 @@ final class SerialOutbox {
             while (!closed && (r = queue.poll()) != null) {
                 try {
                     r.run();
-                } catch (RuntimeException e) {
-                    log.debug("ws outbox task failed: {}", e.toString());
+                } catch (RuntimeException e) { // 세션 작업은 WsSession 이 먼저 잡아 세고 재동기를 건다(R-73) — 여기까지 오면 그 처리 자체의 실패다
+                    log.warn("ws outbox task failed: {}", e.toString());
                 }
             }
         } finally {

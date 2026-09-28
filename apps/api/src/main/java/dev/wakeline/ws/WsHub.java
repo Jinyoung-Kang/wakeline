@@ -106,6 +106,11 @@ public class WsHub implements SmartLifecycle {
     private final Counter rateLimited;
     private final Counter rejected;
     private final Timer fanoutTimer;
+    private final MeterRegistry meters;
+    /** 우편함 작업 예외(R-73): 작업 종류별 계수기와 마지막 WARN 시각(종류별 1분에 한 번). */
+    private final Map<String, Counter> taskErrors = new ConcurrentHashMap<>();
+    private final Map<String, Long> taskErrorLoggedMs = new ConcurrentHashMap<>();
+    static final long TASK_ERROR_LOG_INTERVAL_MS = 60_000;
 
     // ---- 알림 버전(배치마다 +1). 쓰기는 alertsLock 안에서만. ----
     record Batch(long version, String json) {}
@@ -152,6 +157,7 @@ public class WsHub implements SmartLifecycle {
         this.timer = timer;
         this.helloTimeoutMs = helloTimeoutMs;
         this.fragments = new AircraftJsonCache(json);
+        this.meters = meters;
         meters.gauge("wakeline_ws_sessions", sessions, Map::size);
         this.dropped = Counter.builder("wakeline_ws_dropped_total").description("열린 세션에 보내지 못한 메시지").register(meters);
         this.coalesced = Counter.builder("wakeline_ws_coalesced_total").description("이전 팬아웃이 대기 중이라 합친 요청").register(meters);
@@ -159,6 +165,29 @@ public class WsHub implements SmartLifecycle {
         this.rejected = Counter.builder("wakeline_ws_rejected_total").description("연결 상한으로 거절한 연결").register(meters);
         this.fanoutTimer = Timer.builder("wakeline_ws_fanout_seconds").description("세션 하나의 팬아웃 작업 시간")
                 .publishPercentiles(0.5, 0.95).register(meters);
+        for (WsSession.Job j : WsSession.Job.values()) taskErrorCounter(j.name()); // 0 부터 보이게 미리 등록한다
+        taskErrorCounter(WsSession.REPLY_JOB);
+    }
+
+    private Counter taskErrorCounter(String job) {
+        return taskErrors.computeIfAbsent(job.toLowerCase(java.util.Locale.ROOT), tag -> Counter.builder("wakeline_ws_task_errors_total").tag("job", tag)
+                .description("예외로 끝난 WS 우편함 작업(그 세션은 다음 팬아웃에서 전체 재동기)").register(meters));
+    }
+
+    /**
+     * 우편함 작업 예외(R-73): 세고, 종류별로 1분에 한 번만 WARN(스택 포함) — 같은 결함이 팬아웃마다 반복돼도 로그가 넘치지 않는다.
+     * 세션의 재동기 표시는 {@link WsSession} 이 이미 했다.
+     */
+    void taskFailed(WsSession s, String job, RuntimeException e) {
+        taskErrorCounter(job).increment();
+        String tag = job.toLowerCase(java.util.Locale.ROOT);
+        long now = System.currentTimeMillis();
+        Long last = taskErrorLoggedMs.get(tag);
+        if (last == null || now - last >= TASK_ERROR_LOG_INTERVAL_MS) {
+            taskErrorLoggedMs.put(tag, now);
+            log.warn("ws {} task failed (session {}) — the session resyncs on its next fanout; repeats within 1 min are only counted: {}",
+                    tag, s.id, e.toString(), e);
+        }
     }
 
     // ---- 정상 종료(설계 5.3): SIGTERM → 모든 WS 에 going_away(1001) → 클라이언트는 지수 백오프로 재접속 ----
@@ -188,7 +217,7 @@ public class WsHub implements SmartLifecycle {
     }
 
     // ---- 세션 관리 ----
-    WsSession newSession(WebSocketSession raw, String ip) { return new WsSession(raw, ip, pool); }
+    WsSession newSession(WebSocketSession raw, String ip) { return new WsSession(raw, ip, pool, this::taskFailed); }
 
     /** 등록 + 세션별 hello 타이머(정확히 helloTimeoutMs 뒤 1회, GAP-22). */
     void add(WsSession s) {
