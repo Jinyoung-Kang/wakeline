@@ -225,7 +225,7 @@ services:
       REDIS_PASSWORD: ${REDIS_AIS_PASSWORD:?REDIS_AIS_PASSWORD 가 .env 에 없습니다 — make init}
       # 사용자가 .env 에 저장한 이름(aisstream_key)을 그대로 읽어 이 컨테이너에서만 AISSTREAM_API_KEY 로 넘긴다. 없으면 빈 값(수신 안 함).
       AISSTREAM_API_KEY: ${aisstream_key:-}
-      AIS_BBOXES: ${AIS_BBOXES:-18,105,46,150}     # lat1,lon1,lat2,lon2; ';' 로 여러 상자. 런타임에는 wakeline:settings.ais_bboxes 가 덮어쓴다
+      AIS_BBOXES: ${AIS_BBOXES:-18,105,46,150}     # lat1,lon1,lat2,lon2; ';' 로 여러 상자, '|' 로 구역별 연결(최대 3). 런타임에는 wakeline:settings.ais_bboxes 가 덮어쓴다
       HTTP_USER_AGENT: ${HTTP_USER_AGENT:-wakeline-dev/0.2}
       FIXTURES_DIR: /app/fixtures
       SCHEMAS_DIR: /app/schemas

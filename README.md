@@ -16,7 +16,7 @@
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
 | **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V7) |
-| **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky / 선박 aisstream.io / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
+| **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 1,288건(pytest 453 · JUnit 395 · Vitest 209 · Playwright E2E 16 · 인프라 정책 44 · Redis ACL 171) · 적대적 리뷰 2회(97건 · 19건 수정) · 장애 주입 6종 · 실측 문제 기록 23건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 8.6–12 ms · WS 200 연결 p95 286 ms(목표 500) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
 | **설계 기록** | ADR 15건([docs/adr](docs/adr)) · 변경 계약 v1–v3([docs/audit](docs/audit)) |
@@ -25,9 +25,9 @@
 
 | 영역 | 기능 |
 |---|---|
-| 항공기 | 관심 지역(한반도 반경 250 NM, 10 s) · 전세계(OpenSky, 120 s) · **뷰포트 핫 리전**(줌 7 이상이고 관심 지역 밖이면 화면 중심 반경 ≤ 250 NM 을 30 s 마다, 줌 아웃·이동·보는 사람 없으면 60 s 안에 해제) · **선택 항공기 집중 추적**(ICAO 24-bit hex 로 전세계 어디서든 5 s, 세션당 30분 상한) · 검색 · 항적 · 10분 예측(추정) |
+| 항공기 | 관심 지역(한반도 반경 250 NM, 10 s) · 전세계(OpenSky, 120 s) · **뷰포트 핫 리전**(줌 7 이상이고 관심 지역 밖이면 화면 중심 반경 ≤ 250 NM 을 30 s 마다, 줌 아웃·이동·보는 사람 없으면 60 s 안에 해제) · **선택 항공기 집중 추적**(ICAO 24-bit hex 로 전세계 어디서든 5 s, 세션당 30분 상한) · **출발·도착 공항**(선택한 항공기의 콜사인으로 adsbdb 등록 노선 조회 — 선택할 때만 호출, Redis 캐시 30분, DB 저장 없음, "등록 노선이며 실제 경로와 다를 수 있음" 표기) · 검색 · 항적(공급자별 수신 공백 표시) · 10분 예측(추정) |
 | 위험기상 | SIGMET 폴리곤 + 고도대 + 유효시간으로 구조화 → STRtree 교차 판정 → 히스테리시스 상태기계(진입 2회·이탈 3회) → 관측/예측 알림 근거 카드 · RainViewer / 기상청 HSR 레이더(LCC → 메르카토르 서버 재투영) · METAR/TAF |
-| 선박 | AIS 실시간 · 선종별 색 · 선수방위 회전(없으면 침로 점선, 둘 다 없으면 원) · 줌 < 7 은 격자 집계 · 카드(선명·선종·크기·흘수·목적지·ETA — 모두 "보고값") · 항적 · **수신 공백 기록·표시** · 수신 범위 경계 |
+| 선박 | AIS 실시간(구역별 연결 2개) · 선종별 색 · 선수방위 회전(없으면 침로 점선, 둘 다 없으면 원) · **적응형 표시**(줌 ≥ 7 은 5,000척, 줌 4–7 은 1,500척까지 개별 점 — 넘으면 격자 집계) · 카드(선명·선종·크기·흘수·목적지·ETA — 모두 "보고값") · **목적지 해석**(보고 문자열을 UN/LOCODE 표로 결정적으로 풀이 — `A>B`·`A<>B` 형식, 이름이 겹치면 "모호" 표시, 못 풀면 원문만) · 항적 · **수신 공백 기록·표시**(구역 단위) · 수신 범위 경계 · 선박이 0척이면 이유(범위 밖·공급자 공백·수신 끊김)를 표시 |
 | 이력·운영 | 재생(과거 시각 프레임) · 통계 · 공항 · 운영 화면(공급자 on/off · 수집 이력 · 품질 격리 · 런타임 설정 · 감사 로그 · DLQ) |
 
 | 집중 추적(5 s) | 선박 카드 · 항적 · 공백 | 격자 + 수신 범위 |
@@ -42,13 +42,13 @@ flowchart LR
   E -->|/| W[web · Next.js]
   E -->|/api /ws| A[api · Spring Boot<br/>ingest · engine · ws · demand · rest · ops · persist]
   C[collector · Python<br/>항공기·기상 폴링 · 정규화 · 품질 게이트 · 예산 · 속도 상한] -->|XADD| R[(redis · Streams · ACL<br/>예산 Lua · 세션 · 수요 임대)]
-  S[ais · Python<br/>WebSocket 1개 · 대기열 · MMSI 별 최신 · 10 s 배치] -->|XADD| R
+  S[ais · Python<br/>구역별 WebSocket(최대 3) · 대기열 · MMSI 별 최신 · 10 s 배치] -->|XADD| R
   R -->|XREADGROUP → XACK| A
   A -->|수요 임대 ZSET 60 s| R
   R -->|임대 읽기 전용| C
   A --> D[(db · PostGIS<br/>항적 · 선박 · SIGMET · 알림 · 감사)]
   C -->|수집 기록·품질| D
-  X[adsb.lol · adsb.fi · OpenSky<br/>AWC · RainViewer · 기상청] -->|collector 만 호출| C
+  X[adsb.lol · adsb.fi · OpenSky · adsbdb<br/>AWC · RainViewer · 기상청] -->|collector 만 호출| C
   Y[aisstream.io] -->|ais 만 연결| S
   B -.->|지도·레이더 타일만| T[OpenFreeMap · RainViewer]
 ```
@@ -65,6 +65,8 @@ flowchart LR
 | 결정 | 근거(측정·문서) |
 |---|---|
 | 선박 수신 범위를 0~45°E 제외 전 해역으로 | 연결 하나로 전세계를 받으면 공급자 쪽 지연이 13 → 22 s 로 커지다 10분에 11번 끊겼다. 구역별로 재 보니 유럽은 단독으로도 따라가지 못했다(ADR-014 부록 A) |
+| 그 범위를 연결 2개(아메리카 · 아시아·태평양)로 나눔 | 한 연결로는 6시간에 끊김 51회 · 지연 p90 17.9 s, 두 연결은 10분 동안 끊김 0 · 지연 p50 1.9 s · p90 6.0 s(ADR-014 부록 B) |
+| 노선은 선택할 때만 조회하고 저장하지 않음 | adsbdb 약관·호출 한도 — 보이는 모든 항공기를 조회하지 않고, 결과는 Redis 캐시(30분)에만 둔다(ADR-016) |
 | 항적 선은 60 s 이상 수신 공백에서만 끊음 | 저장 간격이 60 s 라 더 짧은 공백은 저장점을 없애지 못한다. 그러지 않으면 1분마다 생기는 2–6 s 공백이 항적을 조각낸다 |
 | seen_at 기준을 공급자 서버 시각으로 | 같은 관측이 세 작업에서 0.1 s 씩 다른 점으로 저장됐다(원천 응답 대조). 공급자 시각이 −10 ~ +2 s 밖이면 수신 시각으로 되돌린다 |
 | 컨테이너 PID 1 = docker-init | `docker kill` 은 수동 정지로 기록돼 재시작 정책이 동작하지 않았다(장애 주입에서 발견) |
@@ -80,6 +82,8 @@ flowchart LR
 - 서버는 관측값만 스트림에 싣는다. 브라우저 보간 위치는 "지도 위치 추정 · dead reckoning", 예측 알림은 `PREDICTED` 유형과 보라색 점선으로 구분한다.
 - AIS "값 없음" 표기(SOG 102.3, 선수방위 511, ETA 0/24/60 등)는 null 로 바꾼다. Timestamp 60(값 없음)은 위치 출처를 단정하지 않고 `—`, 61/62/63 은 수동·추정·장치 비작동 배지.
 - 크기·ETA·목적지는 선원이 입력한 보고값이라고 적고, ETA 에는 연도가 없다고 적는다. 기국 공식 번호를 IMO 로 부르지 않는다.
+- 선박 목적지는 표(UN/LOCODE)로 찾을 수 있을 때만 항구 이름을 붙이고, 이름이 여러 항구와 겹치면 "모호"로 표시한다. 선박 출발지는 AIS 에 없으므로 만들지 않는다.
+- 항공기 노선은 콜사인에 등록된 정기 노선이며 실제 비행 경로와 다를 수 있다고 적는다. 편명 번호 범위 등으로 항공사·기종을 짐작하지 않는다.
 - SIGMET 상한이 "TOP ABV FLnnn" 이면 그 값은 상한의 **하한**으로 표시한다. 폴리곤을 만들 수 없는 경보는 원문으로 남기고 판정에서 뺀다.
 - 수집 공백·지연·오래됨은 숨기지 않는다: 상태 바 lag 배지, AIS 공백 배지, 선박·항공기마다 관측 시각(나이), 운영자가 공급자를 끄면 "공급자 꺼짐(운영자)".
 
