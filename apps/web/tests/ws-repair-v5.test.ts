@@ -146,7 +146,9 @@ describe("alerts: a dropped or missing piece makes the counts unknown and asks f
     expect(alertListState("open", null, true, true)).toBe("incomplete");
     expect(alertListState("open", null, true, false)).toBe("waiting");
     expect(alertListState("closed", null, true, true)).toBe("waiting"); // 끊긴 뒤는 이전 연결의 목록
-    setData({ conn: "open", lastRxAt: Date.now(), alertsVersion: null, alertsIncomplete: true, alerts: new Map([[2, { ...alert(2, "PREDICTED"), eta_s: 120, eta_at: TS } as never]]) });
+    const predicted = { ...alert(2, "PREDICTED"), eta_s: 120, eta_at: TS, evidence: { judged_at: TS, position: [36.5, 127.8] } };
+    setData({ conn: "open", lastRxAt: Date.now(), alertsVersion: null, alertsIncomplete: true, alerts: new Map([[2, predicted as never]]),
+      status: { region: { center: [36.5, 127.8], radius_nm: 250 } } as never });
     const h = renderToStaticMarkup(createElement(AlertPanel));
     expect(h).toContain('data-state="incomplete"');
     expect(h.replace(/<[^>]+>/g, "")).toContain("알림 목록 일부 누락");

@@ -131,10 +131,15 @@ export interface AlertsBatchResult extends AlertsState {
   last: { type: AlertEventType; alert: Alert } | null;
 }
 
-/** 증분: 이미 반영된 버전(≤ 현재)이면 무시한다. */
+/**
+ * 증분: 이미 반영된 버전(≤ 현재)이면 무시한다(null). 서버는 세션마다 전체 목록 뒤로 버전을 1씩 빠짐없이 보낸다 — 그래서 버전을 아는 것은
+ * 가진 목록 바로 다음(현재+1) 배치뿐이다. 현재 버전을 모르거나(전체 목록 없음 · 이미 빠진 것이 있음), 틈이거나(> 현재+1 — 배치를 잃었다),
+ * 배치에 버전이 없으면 항목은 반영하되 결과 버전은 null(모름) — 호출부(lib/ws.ts)가 전체 목록을 다시 요청한다(계약 v5 §E2).
+ */
 export function applyAlertsBatch(cur: AlertsState, version: unknown, items: { event: string; alert: Alert }[]): AlertsBatchResult | null {
   const v = typeof version === "number" ? version : null;
   if (v != null && cur.version != null && v <= cur.version) return null;
+  const next = v != null && cur.version != null && v === cur.version + 1 ? v : null;
   const map = new Map(cur.alerts);
   let last: AlertsBatchResult["last"] = null;
   for (const it of items) {
@@ -143,7 +148,7 @@ export function applyAlertsBatch(cur: AlertsState, version: unknown, items: { ev
     else map.delete(it.alert.id);
     if (BANNER_EVENTS.has(it.event)) last = { type: it.event as AlertEventType, alert: it.alert };
   }
-  return { alerts: map, version: v ?? cur.version, last };
+  return { alerts: map, version: next, last };
 }
 
 // ---- 피드(region/global) ----

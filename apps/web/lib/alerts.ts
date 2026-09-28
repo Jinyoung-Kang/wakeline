@@ -69,11 +69,13 @@ export function evidenceBandSource(ev: Record<string, unknown>, sigmet: Pick<Sig
  * - disconnected: 받은 적은 있으나 연결이 끊김/재연결 중 — 마지막 목록(갱신 안 됨).
  * - silent: 연결은 열려 있지만 RX_FRESH_MS 넘게 아무것도 받지 못함(반쯤 열린 연결) — 상태 바·지도 칩과 같은 규칙(isRxFresh, R-58).
  * - paused: 탭 숨김으로 서버가 보내지 않는 중.
- * rxFresh = isRxFresh(conn, lastRxAt, now) — 화면은 useRxFresh() 로 얻는다.
+ * - incomplete: 이 연결의 목록에 빠진 것이 있다(계약 v5 §E2 — 형식 오류로 버린 알림 메시지·원소, 배치 버전 틈). 받은 배치는 반영하지만 수는 모르고
+ *   ETA 는 멈춘다 — 전체 목록을 다시 받으면 live.
+ * rxFresh = isRxFresh(conn, lastRxAt, now) — 화면은 useRxFresh() 로 얻는다. incomplete = 스토어 alertsIncomplete.
  */
-export type AlertListState = "live" | "waiting" | "disconnected" | "silent" | "paused";
-export function alertListState(conn: string, alertsVersion: number | null | undefined, rxFresh = true): AlertListState {
+export type AlertListState = "live" | "waiting" | "incomplete" | "disconnected" | "silent" | "paused";
+export function alertListState(conn: string, alertsVersion: number | null | undefined, rxFresh = true, incomplete = false): AlertListState {
   if (conn === "paused") return "paused";
-  if (conn === "open") return alertsVersion == null ? "waiting" : rxFresh ? "live" : "silent";
+  if (conn === "open") return alertsVersion == null ? (incomplete ? "incomplete" : "waiting") : rxFresh ? "live" : "silent";
   return alertsVersion != null ? "disconnected" : "waiting";
 }

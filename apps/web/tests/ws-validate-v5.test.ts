@@ -216,13 +216,13 @@ describe("malformed input in lib/ws.ts", () => {
     expect(getData().wsInvalid.messages).toBe(1);
   });
 
-  it("a frame that is not JSON is counted and triggers a resync", () => {
+  it("a frame that is not JSON is counted and triggers a resync (type unknown — also the alerts · sigmets · radar lists, tests/ws-repair-v5)", () => {
     const t = setup();
     welcomed(t);
     t.ws().recv(snap([ac("aaa001")]));
     t.ws().recv("{not json");
     expect(getData().wsInvalid.messages).toBe(1);
-    expect(resyncs(t)).toBe(1);
+    expect(t.ws().sent.filter((m) => m.type === "resync" && m.scope === undefined)).toHaveLength(1);
   });
 
   it("an unknown message type is ignored: not counted, no resync", () => {

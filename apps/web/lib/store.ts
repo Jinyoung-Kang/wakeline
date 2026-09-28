@@ -63,7 +63,13 @@ export interface ServerData {
   radar: RadarFrames | null;
   radarKr: KrRadar | null;
   alerts: Map<number, Alert>;
+  /** 가진 알림 목록이 완전한 버전(전체 목록 + 이어진 배치). null = 모름(이 연결에서 아직 전체 목록 없음 · 빠진 것이 있음) — 수를 "—" 로 */
   alertsVersion: number | null;
+  /**
+   * 이 연결에서 알림 목록에 빠진 것이 있다(계약 v5 §E2): 형식 오류로 버린 alerts/alerts_batch · 버린 알림 원소 · 배치 버전 틈. 받은 배치는 반영하지만
+   * 수는 모름 — 전체 목록(resync scope alerts · resume · 재연결)을 받으면 false.
+   */
+  alertsIncomplete: boolean;
   status: PublicStatus | null;
   lastEvent: { type: AlertEventType; alert: Alert; at: number } | null;
   /** WS "selected" — 선택 항공기의 최신 full 상태와 예측 가능 여부 */
@@ -112,6 +118,7 @@ const initial: ServerData = {
   radarKr: null,
   alerts: new Map(),
   alertsVersion: null,
+  alertsIncomplete: false,
   status: null,
   lastEvent: null,
   selected: null,
