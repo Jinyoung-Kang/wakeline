@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import tools.jackson.databind.JsonNode;
 
 import java.net.URLEncoder;
@@ -20,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 계약 v5 §C(api 부분) 끝에서 끝까지 — 실제 앱 · ACL Redis(wakeline_api):
  * <ul>
  *   <li>§C2: 앱의 WARN(요청 MDC 포함)이 logback 싱크를 거쳐 wakeline:logs 에 실리고(설정 비밀값 가림), 자기 지표가 pipeline 에 보인다.
- *       XADD 는 MAXLEN ~ 3000.</li>
+ *       @Scheduled 작업 안의 WARN 은 context.job 에 작업 이름이 있다. XADD 는 MAXLEN ~ 3000.</li>
  *   <li>§C4: 운영 조회 — 익명 404, 목록 · 필터 · fp 묶음 · 항목 하나 · 스키마에 맞지 않는 항목은 invalid.</li>
  *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429.</li>
  * </ul>
@@ -39,6 +42,7 @@ class LogsIT extends IntegrationTest {
     static final String PW = "logs-horse-battery-staple";
 
     @Autowired OpsUserService users;
+    @Autowired ScheduledAnnotationBeanPostProcessor scheduling;
 
     OpsBrowser login() { return OpsBrowser.login(this, users, "it-logs", PW); }
 
@@ -107,6 +111,57 @@ class LogsIT extends IntegrationTest {
         assertThat(String.valueOf(raw.getFirst().getValue().get("e"))).doesNotContain(ItStack.REDIS_API_PW).doesNotContain("hunter2");
         // 자기 지표(wakeline_log_events_total{result="sent"}) → pipeline
         assertThat(b.get("/api/v1/ops/pipeline").json().path("api").path("log_sent").asLong()).isGreaterThan(sentBefore);
+    }
+
+    /** 시험용 예약 작업: 처음 한 번만 경고를 남긴다. */
+    static final class ProbeJob {
+        final String marker;
+        final AtomicBoolean done = new AtomicBoolean();
+
+        ProbeJob(String marker) { this.marker = marker; }
+
+        @Scheduled(fixedDelay = 3_600_000)
+        public void warnOnce() {
+            if (done.compareAndSet(false, true)) LoggerFactory.getLogger(ProbeJob.class).warn("scheduled probe {} could not finish", marker);
+        }
+    }
+
+    /**
+     * §C2 "context 는 스레드 이름 외에 작업 이름 등": 예약 작업은 스케줄러 풀(sched-*)에서 돌아 스레드 이름으로는 어느 작업인지 모른다 —
+     * @Scheduled 메서드 안의 WARN 은 context.job = 클래스.메서드. 앱의 @Scheduled 처리기 · 스케줄러 · 관측 레지스트리를 그대로 거친다.
+     */
+    @Test
+    void aWarningInsideAScheduledJobCarriesTheJobName() {
+        OpsBrowser b = login();
+        String marker = "sched" + UUID.randomUUID().toString().replace("-", "");
+        ProbeJob job = new ProbeJob(marker);
+        scheduling.postProcessAfterInitialization(job, "logsItProbeJob"); // 앱의 @Scheduled 작업처럼 등록 — 곧바로 한 번 돈다
+        try {
+            AtomicReference<JsonNode> found = new AtomicReference<>();
+            await("the scheduled job's warning in GET /api/v1/ops/logs", Duration.ofSeconds(15), () -> {
+                JsonNode items = b.get("/api/v1/ops/logs?service=api&q=" + enc(marker)).json().path("items");
+                if (items.isEmpty()) return false;
+                found.set(items.get(0));
+                return true;
+            });
+            JsonNode e = found.get();
+            assertThat(e.path("context").path("job").asString()).isEqualTo("ProbeJob.warnOnce");
+            assertThat(e.path("thread").asString()).startsWith("sched-");
+            assertThat(e.path("request_id").isNull()).isTrue();
+        } finally {
+            scheduling.postProcessBeforeDestruction(job, "logsItProbeJob");
+        }
+        // 작업 밖의 경고에는 job 이 없다(스케줄러 스레드의 MDC 를 작업이 끝나면 되돌린다)
+        String outside = "nojob" + UUID.randomUUID().toString().replace("-", "");
+        LoggerFactory.getLogger(LogsIT.class).warn("outside any job {}", outside);
+        AtomicReference<JsonNode> plain = new AtomicReference<>();
+        await("the plain warning", Duration.ofSeconds(15), () -> {
+            JsonNode items = b.get("/api/v1/ops/logs?q=" + enc(outside)).json().path("items");
+            if (items.isEmpty()) return false;
+            plain.set(items.get(0));
+            return true;
+        });
+        assertThat(plain.get().path("context").has("job")).isFalse();
     }
 
     @Test
