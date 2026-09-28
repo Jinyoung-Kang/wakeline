@@ -53,12 +53,13 @@ class OpsPipelineIT extends IntegrationTest {
             ItStack.admin().delete(COLLECTOR);
             ItStack.admin().delete(AIS);
             JsonNode none = b.get("/api/v1/ops/pipeline").json();
-            for (String f : new String[]{"publish_dropped", "db_dropped", "db_pending", "stream_budget_trims", "heartbeat_age_s"})
+            for (String f : new String[]{"publish_dropped", "db_dropped", "db_pending", "stream_budget_trims", "heartbeat_age_s", "log_sent", "log_dropped"})
                 assertThat(none.path("collector").has(f) && none.path("collector").get(f).isNull()).as("collector." + f).isTrue();
-            for (String f : new String[]{"dropped_total", "quarantined_total", "stream_budget_trims"})
+            for (String f : new String[]{"dropped_total", "quarantined_total", "stream_budget_trims", "log_sent", "log_dropped"})
                 assertThat(none.path("ais").has(f) && none.path("ais").get(f).isNull()).as("ais." + f).isTrue();
             JsonNode api = none.path("api");
-            for (String f : new String[]{"track_queue_dropped", "ship_queue_dropped", "receipts_force_released", "dlq", "stream_trim_loss_events"})
+            for (String f : new String[]{"track_queue_dropped", "ship_queue_dropped", "receipts_force_released", "dlq", "stream_trim_loss_events",
+                    "log_sent", "log_dropped", "log_suppressed"})
                 assertThat(api.path(f).isIntegralNumber() && api.path(f).asLong() >= 0).as("api." + f).isTrue();
             assertThat(api.has("last_stream_trim_loss")).isTrue();
             JsonNode loss = api.get("last_stream_trim_loss");
@@ -68,8 +69,9 @@ class OpsPipelineIT extends IntegrationTest {
             // 최근 heartbeat → 수집기가 센 값 그대로
             Instant now = Instant.now();
             ItStack.hset(col, COLLECTOR, Map.of("region_at", now.toString(), "publish_dropped", "3", "db_dropped", "2", "db_pending", "7",
-                    "db_failures", "1", "stream_budget_trims", "5"));
-            ItStack.hset(ais, AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1", "stream_budget_trims", "2"));
+                    "db_failures", "1", "stream_budget_trims", "5", "log_sent", "12", "log_dropped", "1"));
+            ItStack.hset(ais, AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1", "stream_budget_trims", "2",
+                    "log_sent", "9", "log_dropped", "0"));
             JsonNode fresh = b.get("/api/v1/ops/pipeline").json();
             assertThat(fresh.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
             assertThat(fresh.path("collector").path("db_dropped").asLong()).isEqualTo(2);
@@ -80,6 +82,11 @@ class OpsPipelineIT extends IntegrationTest {
             // R-14: 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수 — 수집기(항공기 스트림)·ais(선박 스트림)가 센 값 그대로
             assertThat(fresh.path("collector").path("stream_budget_trims").asLong()).isEqualTo(5);
             assertThat(fresh.path("ais").path("stream_budget_trims").asLong()).isEqualTo(2);
+            // 계약 v5 §C2: 시스템 로그 싱크의 자기 지표 — 수집기·ais 가 heartbeat/상태 해시에 센 값 그대로
+            assertThat(fresh.path("collector").path("log_sent").asLong()).isEqualTo(12);
+            assertThat(fresh.path("collector").path("log_dropped").asLong()).isEqualTo(1);
+            assertThat(fresh.path("ais").path("log_sent").asLong()).isEqualTo(9);
+            assertThat(fresh.path("ais").path("log_dropped").asLong()).isEqualTo(0);
 
             // 형식이 틀린 값은 모름
             col.opsForHash().put(COLLECTOR, "db_pending", "-1");
@@ -106,6 +113,10 @@ class OpsPipelineIT extends IntegrationTest {
             assertThat(stale.path("ais").get("quarantined_total").isNull()).isTrue();
             assertThat(stale.path("collector").get("stream_budget_trims").isNull()).isTrue();
             assertThat(stale.path("ais").get("stream_budget_trims").isNull()).isTrue();
+            for (String f : new String[]{"log_sent", "log_dropped"}) {
+                assertThat(stale.path("collector").get(f).isNull()).as("stale collector." + f).isTrue();
+                assertThat(stale.path("ais").get(f).isNull()).as("stale ais." + f).isTrue();
+            }
 
             // api 자신의 지표(이 프로세스 기동 뒤 누계)
             long dropped = fresh.path("api").path("track_queue_dropped").asLong();
@@ -125,6 +136,14 @@ class OpsPipelineIT extends IntegrationTest {
             assertThat(after.path("ship_rows_failed").asLong()).isEqualTo(before.path("ship_rows_failed").asLong() + 3);
             assertThat(after.path("stream_apply_errors").asLong()).isEqualTo(before.path("stream_apply_errors").asLong() + 4);
             assertThat(after.path("listener_errors").asLong()).isEqualTo(before.path("listener_errors").asLong() + 6);
+
+            // 계약 v5 §C2: api 자신의 로그 싱크 지표(wakeline_log_events_total{result}) — 싣지 못하고 버린 것 · 억제한 것도 보인다
+            meters.counter("wakeline_log_events_total", "result", "dropped").increment(7);
+            meters.counter("wakeline_log_events_total", "result", "suppressed").increment(3);
+            JsonNode logs = b.get("/api/v1/ops/pipeline").json().path("api");
+            assertThat(logs.path("log_dropped").asLong()).isEqualTo(after.path("log_dropped").asLong() + 7);
+            assertThat(logs.path("log_suppressed").asLong()).isEqualTo(after.path("log_suppressed").asLong() + 3);
+            assertThat(logs.path("log_sent").asLong()).isGreaterThanOrEqualTo(after.path("log_sent").asLong());
         } finally {
             restore(COLLECTOR, collectorBefore);
             restore(AIS, aisBefore);
