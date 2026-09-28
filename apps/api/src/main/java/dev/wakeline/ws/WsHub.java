@@ -329,6 +329,26 @@ public class WsHub implements SmartLifecycle {
         if (!s.schedule(WsSession.Job.FANOUT, () -> runFanout(s))) coalesced.increment();
     }
 
+    /**
+     * 클라이언트 resync scope(계약 v5 §E2): 그 목록 하나만 버전과 무관하게 전체로 다시 보낸다 — 웹이 형식 오류 · 처리 예외로 알림 · SIGMET · 레이더
+     * 메시지를 버렸을 때(알림 배치는 증분이라 다음 배치로 바로잡히지 않고, SIGMET 은 버전이 바뀔 때만 온다). 항공기 · 선박은 보내지 않는다.
+     * 일시정지 중이면 작업이 아무것도 보내지 않고 표시만 남는다 — resume 의 전체 초기 세트가 보낸다.
+     */
+    void resyncAlerts(WsSession s) {
+        s.alertsForce.set(true);
+        s.schedule(WsSession.Job.ALERTS, () -> runAlerts(s));
+    }
+
+    void resyncSigmets(WsSession s) {
+        s.sigmetsForce.set(true);
+        s.schedule(WsSession.Job.SIGMETS, () -> runSigmets(s));
+    }
+
+    void resyncRadar(WsSession s) {
+        s.radarForce.set(true);
+        s.schedule(WsSession.Job.RADAR, () -> runRadar(s, false));
+    }
+
     /** 모든 구독 세션에 팬아웃(병합 뷰가 스트림 이벤트 없이 바뀌었을 때 — 예: 선택 해제로 focus 관측이 빠짐). */
     void fanoutAll() {
         for (WsSession s : sessions.values()) if (s.subscribed()) requestFanout(s);
@@ -467,12 +487,14 @@ public class WsHub implements SmartLifecycle {
             if (!sendAlertsFull(s)) return;
         }
         SigmetPayload sp = sigmetsPayload();
-        if (s.sigmetsV != sp.version()) {
+        boolean sigmetsForced = s.sigmetsForce.getAndSet(false);
+        if (sigmetsForced || s.sigmetsV != sp.version()) {
             if (!send(s, sp.json())) return;
             s.sigmetsV = sp.version();
         }
         RadarPayload rp = radarPayload();
-        if (force || s.radarSent != rp.frames()) {
+        boolean radarForced = s.radarForce.getAndSet(false);
+        if (force || radarForced || s.radarSent != rp.frames()) {
             if (!send(s, rp.json())) return;
             s.radarSent = rp.frames();
         }
@@ -518,6 +540,10 @@ public class WsHub implements SmartLifecycle {
 
     private void runAlerts(WsSession s) {
         if (!s.ready() || !s.subscribed()) return;
+        if (s.alertsForce.get()) { // 클라이언트가 목록을 잃었다(resync scope) — 배치가 아니라 전체 목록
+            sendAlertsFull(s);
+            return;
+        }
         long cur = alertsVersion;
         if (s.alertsV >= cur) return;
         List<Batch> missing = s.alertsV < 0 ? null : batchesAfter(s.alertsV, cur);
@@ -533,15 +559,17 @@ public class WsHub implements SmartLifecycle {
 
     private void runSigmets(WsSession s) {
         if (!s.ready() || !s.subscribed()) return;
+        boolean forced = s.sigmetsForce.getAndSet(false);
         SigmetPayload p = sigmetsPayload();
-        if (s.sigmetsV == p.version()) return;
+        if (!forced && s.sigmetsV == p.version()) return;
         if (send(s, p.json())) s.sigmetsV = p.version();
     }
 
     private void runRadar(WsSession s, boolean force) {
         if (!s.ready() || !s.subscribed()) return;
+        boolean forced = s.radarForce.getAndSet(false) || force;
         RadarPayload p = radarPayload();
-        if (!force && s.radarSent == p.frames()) return;
+        if (!forced && s.radarSent == p.frames()) return;
         if (send(s, p.json())) s.radarSent = p.frames();
     }
 
@@ -615,6 +643,7 @@ public class WsHub implements SmartLifecycle {
     }
 
     private boolean sendAlertsFull(WsSession s) {
+        s.alertsForce.set(false); // 이 뒤에 온 resync scope 는 다음 작업이 한 번 더 보낸다(이 목록보다 새것)
         Payload p = alertsFullPayload();
         if (!send(s, p.json())) return false;
         s.alertsV = p.version();

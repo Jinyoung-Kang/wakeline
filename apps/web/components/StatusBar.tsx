@@ -4,6 +4,7 @@ import { useNow } from "@/lib/clock";
 import { fmtAgo, fmtClock, fmtIso, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
 import { aisBadge, aisGapBadge } from "@/lib/ships";
 import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
+import { WsInvalidBadge } from "./WsInvalidBadge";
 
 /**
  * 상단 상태 바(FR-11): 연결 상태·지역/전세계 피드별 출처·수집 시각·지연 배지(지역 > 60 s, 전세계 > 300 s 면 경고)·SIGMET·레이더.
@@ -13,6 +14,8 @@ import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, 
  * AIS 구역이 여럿이면(계약 v4 §D) 일부 구역만 끊기거나 공백일 때 "n/m 구역"으로 말한다(전체 끊김처럼 보이지 않게).
  * 출처 표기는 가로 스크롤되는 이 줄이 아니라 모든 화면 하단의 고정 줄(AttributionFooter)에 있다(FR-20).
  * KMA STALE 처럼 따로 붙는 경고 배지는 연결 상태 바로 뒤에 둔다(R-31) — 1280 px 에서도 이 줄은 가로로 스크롤된다.
+ * WS 형식 오류 배지(계약 v5 §E2): 받은 메시지에서 버린 원소·값 · 메시지 · 처리 예외의 누적 수를 단위별로 — 0 이면 없다. 단추라서 키보드 · 터치로
+ * 상세(무엇을 버렸고 어떻게 다시 받는지 · 마지막 사유 · 복사)를 연다(WsInvalidBadge).
  */
 export function StatusBar() {
   // useSyncExternalStore 의 getSnapshot 은 안정된 참조를 돌려줘야 한다 — 객체를 새로 만들지 않고 스토어 객체 자체를 선택한다.
@@ -28,12 +31,16 @@ export function StatusBar() {
   // AIS(계약 v2 §B4): 연결·초당 메시지·지연 — 연결이 실시간이 아니면 받은 뒤 경과를 지연에 더한다(피드 지연과 같은 규칙)
   const ais = aisBadge(s.ais, now, live);
   const gap = aisGapBadge(s.ais, srvNow);
+  // WS 수신 검증(계약 v5 §E2): 버린 원소·값 · 메시지 · 처리 예외(페이지를 연 뒤 누적). 0 이면 보이지 않는다
+  const inv = s.wsInvalid;
+  const invAny = inv.elements + inv.messages + inv.errors > 0;
+  const connTitle = silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — 75 s 가 되면 다시 연결` : undefined;
   return (
     <div className="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-b border-line bg-bg-1 px-3 text-[11px] whitespace-nowrap" data-testid="statusbar" role="group" aria-label="수집·연결 상태">
-      <span className={`badge ${connTone(s.conn, silent, s.reconnectAttempt)}`} data-testid="conn"
-        title={silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — 75 s 가 되면 다시 연결` : undefined}>
+      <span className={`badge ${connTone(s.conn, silent, s.reconnectAttempt)}`} data-testid="conn" title={connTitle}>
         WS {s.conn}{silent ? " · 수신 없음" : ""}{s.conn !== "open" && s.reconnectAttempt > 0 ? ` · retry ${s.reconnectAttempt}` : ""}
       </span>
+      {invAny ? <WsInvalidBadge inv={inv} /> : null}
       {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
       {/* 경고 배지는 앞쪽에 — 가로 스크롤 끝으로 밀려 보이지 않게 두지 않는다(R-31) */}
       {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더 수집이 ${KR_RADAR_STALE_S / 60}분 넘게 갱신되지 않음(마지막 수집 ${fmtIso(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
@@ -51,9 +58,9 @@ export function StatusBar() {
       </span>
       {ais ? <span className={`badge normal-case! ${ais.tone === "muted" ? "" : ais.tone}`} data-testid="ais-badge" data-tone={ais.tone} title={ais.title}>{ais.text}</span> : null}
       {gap ? <span className={`badge normal-case! ${gap.open && !gap.partial ? "bad" : "warn"}`} data-testid="ais-gap-badge" data-partial={gap.partial ? "true" : undefined} title={gap.title}>{gap.text}</span> : null}
-      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet.active ?? "—"} active · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
+      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet?.active ?? "—"} active · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
       <span className="mono text-fg-2"><span className="label mr-1">radar</span>{s.radar?.past.length ?? "—"} frames · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
-      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{s.status?.engine.index_polygons ?? "—"} polys · {s.status?.engine.last_cycle_ms ?? "—"} ms</span>
+      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{s.status?.engine?.index_polygons ?? "—"} polys · {s.status?.engine?.last_cycle_ms ?? "—"} ms</span>
       <span className="mono text-fg-3">v{s.snapshotVersion}</span>
     </div>
   );

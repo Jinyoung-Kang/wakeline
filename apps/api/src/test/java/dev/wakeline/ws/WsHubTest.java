@@ -99,6 +99,54 @@ class WsHubTest {
         }
     }
 
+    /**
+     * 계약 v5 §E2(2차 리뷰): 웹이 형식 오류로 버린 알림 · SIGMET · 레이더 메시지는 {type:"resync", scope} 로 그 목록만 다시 받는다 — 버전이 그대로여도
+     * 전체를 보내고, 항공기 스냅샷 · 선박은 보내지 않는다(scope 없는 resync 만 스냅샷). 전체 알림 목록 뒤의 배치는 그 버전에서 이어진다. 모르는 scope 는 BAD_RESYNC.
+     */
+    @Test void clientResyncScope_resendsOnlyThatFullList_evenWhenItsVersionIsUnchanged() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Instant now = Instant.now();
+            k.publish("region", now, ac("aaa001", 36, 127, 30000, now, "adsb_lol"));
+            var st = k.sigmets.replace(now, "awc_isigmet", Map.of("S1", sig("S1", now.minusSeconds(60), now.plusSeconds(3600))));
+            k.radar.replace(new RadarStore.Frames("https://tilecache.rainviewer.com", 1, List.of(new RadarStore.Frame(1, "/v2/radar/1")), now, "rainviewer"));
+            FakeWsSession f = k.subscribed("s1", "1.1.1.1");
+            k.hub.onAlerts(changed(AlertStateMachine.EventType.ENTERED, alert(1, "OBSERVED", "aaa001", now, null))); // 배치 v1
+            k.alerts.set(List.of(alert(1, "OBSERVED", "aaa001", now, null)));
+            f.clear();
+
+            k.msg(f, "{\"type\":\"resync\",\"scope\":\"alerts\"}");
+            assertThat(types(f)).containsExactly("alerts");
+            JsonNode full = ofType(f, "alerts").get(0);
+            assertThat(full.path("version").asLong()).isEqualTo(1);
+            assertThat(full.path("alerts").get(0).path("id").asLong()).isEqualTo(1);
+            k.hub.onAlerts(changed(AlertStateMachine.EventType.LEFT, alert(1, "OBSERVED", "aaa001", now, null).closed(now, Alert.CLOSE_LEFT, null)));
+            assertThat(ofType(f, "alerts_batch")).extracting(n -> n.path("version").asLong()).containsExactly(2L);
+
+            f.clear();
+            k.msg(f, "{\"type\":\"resync\",\"scope\":\"sigmets\"}");
+            assertThat(types(f)).containsExactly("sigmets");
+            assertThat(ofType(f, "sigmets").get(0).path("v").asLong()).isEqualTo(st.version());
+
+            f.clear();
+            k.msg(f, "{\"type\":\"resync\",\"scope\":\"radar\"}");
+            assertThat(types(f)).containsExactly("radar");
+
+            f.clear();
+            k.msg(f, "{\"type\":\"resync\",\"scope\":\"aircraft\"}");
+            k.msg(f, "{\"type\":\"resync\",\"scope\":1}");
+            assertThat(ofType(f, "error")).extracting(n -> n.path("code").asString()).containsExactly("BAD_RESYNC", "BAD_RESYNC");
+            assertThat(types(f)).containsOnly("error");
+            assertThat(seqs(f)).isEmpty();
+
+            // 일시정지 중에는 보내지 않는다 — resume 이 전체 초기 세트를 보낸다
+            k.msg(f, "{\"type\":\"pause\"}");
+            f.clear();
+            k.msg(f, "{\"type\":\"resync\",\"scope\":\"alerts\"}");
+            assertThat(f.sent).isEmpty();
+            assertThat(f.open).isTrue();
+        }
+    }
+
     @Test void periodicResync_30sForLite_120sForWorld() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             Instant now = Instant.now();

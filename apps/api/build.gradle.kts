@@ -58,11 +58,16 @@ tasks.withType<JavaCompile> {
 // 통합 테스트(Testcontainers)는 운영과 같은 초기화 스크립트(infra/db/init, infra/redis)와 커밋된 OpenAPI 스냅샷을 읽는다 —
 // 그 파일이 바뀌면 테스트를 다시 돌린다(입력으로 선언).
 val itInputs = files("../../infra/db/init/01-roles.sh", "../../infra/redis/start.sh", "../../infra/redis/redis.conf", "openapi/openapi-v1.json")
+// WS 메시지 계약(계약 v5 §E1 · ADR-020): WsSchemaContractTest 가 저장소 루트의 스키마를 읽고, 커밋된 웹 fixture 와 비교한다(시험 전용 — 클래스패스 복사본 없음)
+val wsContractInputs = files("../../schemas/ws/server.v1.json", "../../schemas/ws/client.v1.json", "../../schemas/aircraft_state.v1.json",
+    "../../schemas/ship_state.v1.json", "../../schemas/ship_static.v1.json", "../../schemas/vectors/ship-categories.v1.json",
+    "../web/tests/fixtures/ws-samples.v1.json")
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     jvmArgs("-Duser.timezone=UTC", "-Dfile.encoding=UTF-8")
     inputs.files(itInputs).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("itInputs")
+    inputs.files(wsContractInputs).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("wsContractInputs")
     testLogging {
         events("failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
@@ -72,6 +77,8 @@ tasks.withType<Test>().configureEach {
 tasks.test {
     // -PupdateOpenApi: OpenApiSnapshotIT 가 비교 대신 스냅샷을 다시 쓴다
     systemProperty("wakeline.openapi.update", providers.gradleProperty("updateOpenApi").map { it != "false" }.getOrElse(false).toString())
+    // -PupdateWsSamples: WsSchemaContractTest 가 비교 대신 apps/web/tests/fixtures/ws-samples.v1.json 을 다시 쓴다(make ws-samples)
+    systemProperty("wakeline.ws-samples.update", providers.gradleProperty("updateWsSamples").map { it != "false" }.getOrElse(false).toString())
     finalizedBy(tasks.jacocoTestReport)
 }
 

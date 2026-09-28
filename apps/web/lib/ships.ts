@@ -215,16 +215,27 @@ function parseCatCounts(v: unknown, count: number): number[] | null {
  * 다섯째 원소(선종별 수, 계약 v5 §B2)가 없는 네 원소 칸(구 서버)도 받는다 — counts null.
  */
 export function parseGridCells(v: unknown): ShipGridCell[] {
-  if (!Array.isArray(v)) return [];
+  return parseGridCellsCounted(v).cells;
+}
+
+/**
+ * parseGridCells + 버린 수(계약 v5 §E2 — lib/ws-validate 가 센다): 버린 칸, 그리고 칸은 남겼지만 있는데 틀린 다섯째 원소(선종별 수를 버림).
+ * 네 원소 칸(구 서버)은 틀린 것이 아니다(세지 않는다).
+ */
+export function parseGridCellsCounted(v: unknown): { cells: ShipGridCell[]; dropped: number } {
+  if (!Array.isArray(v)) return { cells: [], dropped: 0 };
   const out: ShipGridCell[] = [];
+  let dropped = 0;
   for (const c of v) {
     if (out.length >= MAX_GRID_CELLS) break;
-    if (!Array.isArray(c) || c.length < 3) continue;
-    const lat = num(c[0], -90, 90), lon = num(c[1], -180, 180), count = int(c[2], 1, 10_000_000);
-    if (lat == null || lon == null || count == null) continue;
-    out.push({ lat, lon, count, category: parseCategory(c[3]), counts: parseCatCounts(c[4], count) });
+    const lat = Array.isArray(c) ? num(c[0], -90, 90) : null, lon = Array.isArray(c) ? num(c[1], -180, 180) : null;
+    const count = Array.isArray(c) ? int(c[2], 1, Number.MAX_SAFE_INTEGER) : null;
+    if (!Array.isArray(c) || lat == null || lon == null || count == null) { dropped++; continue; }
+    const counts = parseCatCounts(c[4], count);
+    if (counts == null && c[4] !== undefined) dropped++;
+    out.push({ lat, lon, count, category: parseCategory(c[3]), counts });
   }
-  return out;
+  return { cells: out, dropped };
 }
 
 /** 목록에서 MMSI 만(ships_diff.remove) */

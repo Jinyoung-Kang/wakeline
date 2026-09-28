@@ -189,6 +189,8 @@ def main() -> int:
     failures += check_ships(env_v)
     # 6. 시스템 로그(계약 v5 §C): 로그 싱크가 만든 LogEvent · 언어 간 가림 벡터
     failures += check_logs()
+    # 7. WS 메시지(계약 v5 §E1 · ADR-020): api 시험이 실제 빌더로 만든 웹 fixture 를 Python 으로도 같은 스키마로
+    failures += check_ws_samples()
     print("contract check:", "FAILED" if failures else "PASSED")
     return 1 if failures else 0
 
@@ -509,6 +511,72 @@ def check_ships(env_v: Draft202012Validator) -> int:
     empty = [t for t, p in kinds.items() if p.position is None and p.static is None]
     print(f"{'FAIL' if empty else 'ok  '} ais parser yields data for every message type" + (f": empty {empty}" if empty else ""))
     failures += bool(empty)
+    return failures
+
+
+WS_SCHEMAS = SCHEMAS / "ws"
+WS_SAMPLES = ROOT / "apps" / "web" / "tests" / "fixtures" / "ws-samples.v1.json"
+# RFC 3339 날짜-시간(시간대 필수). 이 환경의 FormatChecker 는 date-time 을 보지 않는다(rfc3339 검사기 없음) — WS 검사에만 직접 건다
+RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
+
+
+def _ws_format_checker() -> FormatChecker:
+    fc = FormatChecker()
+
+    @fc.checks("date-time", raises=ValueError)
+    def _date_time(v: object) -> bool:
+        if not isinstance(v, str):
+            return True
+        if not RFC3339.match(v):
+            return False
+        datetime.fromisoformat(v.replace("Z", "+00:00"))  # 달력에 없는 날짜는 ValueError
+        return True
+
+    return fc
+
+
+def check_ws_samples() -> int:
+    """계약 v5 §E1: schemas/ws/server.v1.json · client.v1.json 이 올바른 2020-12 스키마이고, 커밋된 웹 fixture(api WsSchemaContractTest 가
+    실제 빌더로 만든 표본)의 모든 메시지가 그 스키마를 만족하며, 서버 17종 · 클라이언트 10종을 모두 담고, ships_grid 칸의 선종별 수 합 = 칸 수인지.
+    fixture 가 없거나 낡았으면: cd apps/api && ./gradlew test --tests 'dev.wakeline.ws.WsSchemaContractTest' -PupdateWsSamples"""
+    failures = 0
+    samples = json.loads(WS_SAMPLES.read_text())
+    fc = _ws_format_checker()
+    for part, file in (("server", "server.v1.json"), ("client", "client.v1.json")):
+        doc = json.loads((WS_SCHEMAS / file).read_text())
+        Draft202012Validator.check_schema(doc)
+        v = Draft202012Validator(doc, format_checker=fc)
+        rows = samples.get(part) or []
+        bad = [
+            f"{r['name']}: {next(iter(v.iter_errors(r['message']))).message[:160]}" for r in rows if not v.is_valid(r["message"])
+        ]
+        want = set(doc["properties"]["type"]["enum"])
+        have = {r["message"].get("type") for r in rows}
+        missing = sorted(want - have)
+        print(
+            f"{'FAIL' if bad or missing else 'ok  '} ws {part} samples: {len(rows)} messages, {len(have & want)}/{len(want)} types"
+            + (f" — invalid: {bad}" if bad else "")
+            + (f" — missing types: {missing}" if missing else "")
+        )
+        failures += bool(bad) or bool(missing)
+        # 가짜 date-time 은 거절해야 한다(검사기가 실제로 걸려 있는지)
+        if part == "server":
+            probe = next(r["message"] for r in rows if r["message"].get("type") == "welcome")
+            if v.is_valid({**probe, "server_time": "2026-02-30T00:00:00Z"}) or v.is_valid({**probe, "server_time": "yesterday"}):
+                print("FAIL ws date-time format is not enforced")
+                failures += 1
+    grid_bad = [
+        c
+        for r in samples.get("server", [])
+        if r["message"].get("type") == "ships_grid"
+        for c in r["message"]["cells"]
+        if sum(c[4]) != c[2]
+    ]
+    print(
+        f"{'FAIL' if grid_bad else 'ok  '} ws ships_grid per-category counts sum to the cell count"
+        + (f": {grid_bad[:3]}" if grid_bad else "")
+    )
+    failures += bool(grid_bad)
     return failures
 
 

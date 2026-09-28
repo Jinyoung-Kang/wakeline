@@ -75,16 +75,16 @@ describe("WakelineWsClient", () => {
     t.client.connect();
     t.ws().open();
     t.ws().recv({ type: "welcome" });
-    t.ws().recv(snap(1, [{ hex: "a", lat: 1, lon: 1 }]));
-    t.ws().recv({ type: "diff", seq: 2, v: 103, ts: "2026-09-27T05:10:10Z", upsert: [{ hex: "b", lat: 2, lon: 2 }], remove: [] });
-    expect(aircraftStates.has("b")).toBe(true);
-    t.ws().recv({ type: "diff", seq: 4, v: 105, upsert: [{ hex: "c", lat: 3, lon: 3 }], remove: ["a"] });
-    t.ws().recv({ type: "diff", seq: 5, v: 106, upsert: [{ hex: "d", lat: 4, lon: 4 }], remove: [] });
-    expect(aircraftStates.has("c")).toBe(false);
-    expect(aircraftStates.has("a")).toBe(true);
+    t.ws().recv(snap(1, [{ hex: "00000a", lat: 1, lon: 1 }]));
+    t.ws().recv({ type: "diff", seq: 2, v: 103, ts: "2026-09-27T05:10:10Z", upsert: [{ hex: "00000b", lat: 2, lon: 2 }], remove: [] });
+    expect(aircraftStates.has("00000b")).toBe(true);
+    t.ws().recv({ type: "diff", seq: 4, v: 105, upsert: [{ hex: "00000c", lat: 3, lon: 3 }], remove: ["00000a"] });
+    t.ws().recv({ type: "diff", seq: 5, v: 106, upsert: [{ hex: "00000d", lat: 4, lon: 4 }], remove: [] });
+    expect(aircraftStates.has("00000c")).toBe(false);
+    expect(aircraftStates.has("00000a")).toBe(true);
     expect(t.ws().types().filter((x) => x === "resync")).toHaveLength(1);
-    t.ws().recv(snap(1, [{ hex: "c", lat: 3, lon: 3 }]));
-    t.ws().recv({ type: "diff", seq: 2, upsert: [], remove: ["c"] });
+    t.ws().recv(snap(1, [{ hex: "00000c", lat: 3, lon: 3 }]));
+    t.ws().recv({ type: "diff", seq: 2, upsert: [], remove: ["00000c"] });
     expect(aircraftStates.size).toBe(0);
     // 다음 불연속에서는 다시 resync 를 요청할 수 있다
     t.ws().recv({ type: "diff", seq: 9, upsert: [], remove: [] });
@@ -98,8 +98,8 @@ describe("WakelineWsClient", () => {
     t.ws().open();
     t.ws().recv({ type: "welcome" });
     t.ws().recv(snap(1));
-    t.ws().recv({ type: "diff", seq: 2, upsert: [{ hex: "w1", lat: 50.123, lon: 8.456, provider: "opensky" }], remove: [] });
-    const w1 = aircraftStates.get("w1")!;
+    t.ws().recv({ type: "diff", seq: 2, upsert: [{ hex: "0000f1", lat: 50.123, lon: 8.456, provider: "opensky" }], remove: [] });
+    const w1 = aircraftStates.get("0000f1")!;
     expect(w1.on_ground).toBeUndefined();
     expect(w1.seen_at).toBeUndefined();
     expect(w1.quality).toBeUndefined();

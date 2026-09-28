@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wakeline.invalid/schemas/ws/client.v1.json",
+  "title": "WS 프로토콜 v1 — 클라이언트 → 서버 메시지 10종(계약 v5 §E1 · ADR-008 · ADR-020)",
+  "description": "브라우저(lib/ws.ts)가 /ws/v1 로 보내는 JSON 텍스트 메시지 하나(≤ 4 KB, 10 s 에 20 개 — 넘으면 1008). 첫 메시지는 hello(5 s 안). 이 스키마는 '따르는 클라이언트' 가 보내는 모양이다 — 서버(WakelineWsHandler)는 모르는 키를 무시하고 zoom 을 0–24 로 자르는 등 더 너그럽지만, 틀린 값은 error(BAD_BBOX · BAD_HEX · BAD_MMSI · BAD_LAYERS · BAD_RESYNC · UNSUPPORTED_PROTO · UNKNOWN_TYPE)로 답한다.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "enum": ["hello", "subscribe", "select", "pause", "resume", "resync", "layers", "select_ship", "pong", "ping"] }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/subscribe" },
+    { "$ref": "#/$defs/select" },
+    { "$ref": "#/$defs/pause" },
+    { "$ref": "#/$defs/resume" },
+    { "$ref": "#/$defs/resync" },
+    { "$ref": "#/$defs/layers" },
+    { "$ref": "#/$defs/select_ship" },
+    { "$ref": "#/$defs/pong" },
+    { "$ref": "#/$defs/ping" }
+  ],
+  "$defs": {
+    "hello": {
+      "description": "연결 직후 한 번. proto 는 1 만(아니면 UNSUPPORTED_PROTO 로 닫는다). client 는 참고용 식별 문자열.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "proto"],
+      "properties": {
+        "type": { "const": "hello" },
+        "proto": { "const": 1 },
+        "client": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "subscribe": {
+      "description": "화면 구독(연결당 하나 — 마지막 것이 이긴다). bbox = [서경, 남위, 동경, 북위](유한 · 범위 안 · 최소 < 최대 — 크기 비교는 스키마로 말할 수 없다, 서버가 BAD_BBOX). 면적 상한(welcome.limits.max_bbox_area)을 넘는 bbox 는 줌 ≤ 5(전세계 보기)에서만. zoom 이 없으면 7, detail 이 없으면 lite.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "bbox"],
+      "properties": {
+        "type": { "const": "subscribe" },
+        "bbox": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            { "type": "number", "minimum": -180, "maximum": 180 },
+            { "type": "number", "minimum": -90, "maximum": 90 },
+            { "type": "number", "minimum": -180, "maximum": 180 },
+            { "type": "number", "minimum": -90, "maximum": 90 }
+          ]
+        },
+        "zoom": { "type": "integer", "minimum": 0, "maximum": 24 },
+        "detail": { "enum": ["lite", "full"] }
+      }
+    },
+    "select": {
+      "description": "항공기 선택(집중 추적 수요 — 계약 v2 §A1). null 은 선택 해제. 서버는 hex 를 소문자로 바꿔 받는다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "hex"],
+      "properties": {
+        "type": { "const": "select" },
+        "hex": { "anyOf": [ { "type": "string", "pattern": "^[0-9a-fA-F]{6}$" }, { "type": "null" } ] }
+      }
+    },
+    "pause": {
+      "description": "탭 숨김 — 서버는 이 세션에 팬아웃하지 않고 수요를 내지 않는다.",
+      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "pause" } }
+    },
+    "resume": {
+      "description": "다시 보임 — 일시정지였으면 서버가 전체 초기 세트를 다시 보낸다.",
+      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "resume" } }
+    },
+    "resync": {
+      "description": "scope 가 없으면: seq·sseq 틈 · 항공기·선박 흐름의 형식이 틀린 메시지 · 처리 중 예외(계약 v5 §E2) — 서버는 항공기 스냅샷과 (켜져 있으면) 선박 스냅샷을 바로 다시 보낸다. scope 가 있으면: 웹이 그 종류의 메시지(알림 전체·배치 · SIGMET · 레이더)를 버렸거나 알림 버전에 틈이 있다 — 서버는 그 목록 하나만 버전과 무관하게 전체로 다시 보낸다(항공기·선박은 보내지 않는다). 모르는 scope 는 error BAD_RESYNC.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "resync" },
+        "scope": { "enum": ["alerts", "sigmets", "radar"] }
+      }
+    },
+    "layers": {
+      "description": "켜진 레이어(계약 v2 §B3). 없는 키는 그대로 둔다 — 적어도 하나는 보낸다. 서버 기본값: 항공기 켬 · 선박 끔.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "minProperties": 2,
+      "properties": {
+        "type": { "const": "layers" },
+        "aircraft": { "type": "boolean" },
+        "ships": { "type": "boolean" }
+      }
+    },
+    "select_ship": {
+      "description": "선박 선택(9자리 MMSI 문자열) — null 은 선택 해제.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "mmsi"],
+      "properties": {
+        "type": { "const": "select_ship" },
+        "mmsi": { "anyOf": [ { "type": "string", "pattern": "^[0-9]{9}$" }, { "type": "null" } ] }
+      }
+    },
+    "pong": {
+      "description": "서버 ping 에 대한 응답.",
+      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "pong" } }
+    },
+    "ping": {
+      "description": "클라이언트 ping — 서버가 pong 으로 답한다.",
+      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "ping" } }
+    }
+  }
+}

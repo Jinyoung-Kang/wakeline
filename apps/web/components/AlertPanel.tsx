@@ -15,6 +15,7 @@ import { AltStack } from "./UnitStack";
  * 펼친 영역의 "항공기 카드·지도" 버튼이 항공기를 선택하고 알려진 위치가 화면 밖이면 지도를 옮긴다(R-08).
  * 예측 ETA 는 eta_at 에서 1 s 마다 줄어든다(추정). 배너는 진입·이탈·신호 끊김·진입 예상만(예측 갱신/해제는 목록에만 반영).
  * 목록을 아직 받지 못했으면 "없음"이라고 하지 않고 "수신 대기", 연결이 끊겼으면 마지막 목록임을 밝히고 ETA 를 멈춘다(DH-9).
+ * 이 연결의 목록에 빠진 것이 있으면(계약 v5 §E2 — 형식 오류로 버린 알림 메시지 · 배치 틈) 수는 "—", "일부 누락"을 밝히고 ETA 를 멈춘다.
  * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15). 고도 칸 둘째 줄은 m(계약 v5 §A2).
  */
 export function AlertPanel() {
@@ -22,7 +23,8 @@ export function AlertPanel() {
   const lastEvent = useServerData((d) => d.lastEvent);
   const conn = useServerData((d) => d.conn);
   const alertsVersion = useServerData((d) => d.alertsVersion);
-  const listState = alertListState(conn, alertsVersion, useRxFresh());
+  const incomplete = useServerData((d) => d.alertsIncomplete);
+  const listState = alertListState(conn, alertsVersion, useRxFresh(), incomplete);
   const select = useUi((s) => s.select);
   const [open, setOpen] = useState<number | null>(null);
   const [scope, setScope] = useState<"region" | "world">("region");
@@ -33,7 +35,7 @@ export function AlertPanel() {
   // 관심 지역 = 서버 설정의 중심·반경(설정값이 없으면 전체). 항공기 위치는 evidence.position([lat, lon]) 또는 없음 → 전세계 뷰에서만 표시
   const list = useMemo(() => {
     if (scope === "region" && status == null) return [];
-    const center = status?.region.center, radius = status?.region.radius_nm;
+    const center = status?.region?.center, radius = status?.region?.radius_nm;
     const inRegion = (a: (typeof all)[number]) => {
       if (!center || !radius) return true;
       const pos = (a.evidence as { position?: number[] }).position;
@@ -47,7 +49,7 @@ export function AlertPanel() {
   const observed = list.filter((a) => a.kind === "OBSERVED").length;
   // 목록을 받기 전·관심 지역을 모를 때 수는 모름("—") — 0 이라고 하지 않는다(R-09)
   const countsKnown = alertsVersion != null && !regionPending;
-  const regionText = "관심 지역(중심 " + (status?.region.center?.join(", ") ?? "—") + ", 반경 " + (status?.region.radius_nm ?? "—") + " NM)에서 ";
+  const regionText = "관심 지역(중심 " + (status?.region?.center?.join(", ") ?? "—") + ", 반경 " + (status?.region?.radius_nm ?? "—") + " NM)에서 ";
   return (
     <div className="flex h-full flex-col" data-testid="alert-panel">
       <div className="row">
@@ -65,6 +67,7 @@ export function AlertPanel() {
       {listState !== "live" && (listState !== "waiting" || list.length > 0) ? (
         <div className="border-b border-line bg-bg-2 px-2 py-1 text-[11px] text-warn" role="note" data-testid="alerts-stale" data-state={listState}>
           {listState === "waiting" ? "알림 수신 대기 — 아래는 이전 연결의 목록(갱신 안 됨 · ETA 멈춤)"
+            : listState === "incomplete" ? "알림 목록 일부 누락(형식이 틀린 알림 메시지를 버림) — 수 모름 · ETA 멈춤 · 전체 목록을 다시 받으면 바로잡힘"
             : listState === "paused" ? "일시정지(탭 숨김) — 마지막으로 받은 목록 · 갱신 안 됨"
             : listState === "silent" ? "수신 없음(연결은 열림) — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"
             : "연결 끊김 — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"}
@@ -129,6 +132,7 @@ const ETA_FROZEN_TITLE: Record<Exclude<AlertListState, "live">, string> = {
   silent: "수신 없음(연결은 열림) — 갱신되지 않음 · 이미 해제됐을 수 있습니다",
   paused: "일시정지(탭 숨김) — 갱신되지 않음 · 이미 해제됐을 수 있습니다",
   waiting: "알림 수신 대기 — 이전 연결의 목록이라 갱신되지 않음 · 이미 해제됐을 수 있습니다",
+  incomplete: "알림 목록 일부 누락(형식 오류) — 전체 목록을 다시 받을 때까지 멈춤 · 이미 해제됐을 수 있습니다",
   disconnected: "연결이 끊겨 갱신되지 않음 — 이미 해제됐을 수 있습니다",
 };
 

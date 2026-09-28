@@ -65,7 +65,13 @@ export interface ServerData {
   radar: RadarFrames | null;
   radarKr: KrRadar | null;
   alerts: Map<number, Alert>;
+  /** 가진 알림 목록이 완전한 버전(전체 목록 + 이어진 배치). null = 모름(이 연결에서 아직 전체 목록 없음 · 빠진 것이 있음) — 수를 "—" 로 */
   alertsVersion: number | null;
+  /**
+   * 이 연결에서 알림 목록에 빠진 것이 있다(계약 v5 §E2): 형식 오류로 버린 alerts/alerts_batch · 버린 알림 원소 · 배치 버전 틈. 받은 배치는 반영하지만
+   * 수는 모름 — 전체 목록(resync scope alerts · resume · 재연결)을 받으면 false.
+   */
+  alertsIncomplete: boolean;
   status: PublicStatus | null;
   lastEvent: { type: AlertEventType; alert: Alert; at: number } | null;
   /** WS "selected" — 선택 항공기의 최신 full 상태와 예측 가능 여부 */
@@ -84,7 +90,17 @@ export interface ServerData {
    * 구독 bbox(viewport)는 낮은 줌에서 날짜변경선을 넘으면 위도 띠 전체라 "화면 안" 판정에 쓸 수 없다(R-08). null = 지도 없음·아직 모름
    */
   mapBounds: [number, number, number, number] | null;
+  /** WS 수신 검증(계약 v5 §E2) — 페이지를 연 뒤 누적(재접속해도 지우지 않는다). 상태 바가 0 이 아닐 때만 보인다 */
+  wsInvalid: WsInvalid;
 }
+
+/**
+ * elements = 버린 원소(형식이 틀린 항공기 · 선박 · 알림 · SIGMET · 격자 칸 · 선택 상태 등 — 메시지의 나머지는 적용했다),
+ * messages = 버린 메시지(봉투가 틀림 · JSON 이 아님 — resync 요청), errors = 처리 중 예외(resync 요청 · 브라우저 오류로 보고).
+ * last = 마지막 사유("type: 사유"), at = 그때의 브라우저 시각(ms).
+ */
+export interface WsInvalid { elements: number; messages: number; errors: number; last: string | null; at: number | null }
+export const WS_INVALID_NONE: WsInvalid = { elements: 0, messages: 0, errors: 0, last: null, at: null };
 
 export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] };
 
@@ -104,6 +120,7 @@ const initial: ServerData = {
   radarKr: null,
   alerts: new Map(),
   alertsVersion: null,
+  alertsIncomplete: false,
   status: null,
   lastEvent: null,
   selected: null,
@@ -114,6 +131,7 @@ const initial: ServerData = {
   ais: null,
   viewport: null,
   mapBounds: null,
+  wsInvalid: WS_INVALID_NONE,
 };
 let data: ServerData = initial;
 

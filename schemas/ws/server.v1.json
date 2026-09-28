@@ -1,0 +1,714 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wakeline.invalid/schemas/ws/server.v1.json",
+  "title": "WS 프로토콜 v1 — 서버 → 클라이언트 메시지 17종(계약 v5 §E1 · ADR-008 · ADR-020)",
+  "description": "api(/ws/v1)가 보내는 JSON 텍스트 메시지 하나. type 으로 나뉜 oneOf. 직렬화는 snake_case · non_null(값이 null 인 키는 보내지 않는다 = 모름) — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info · SIGMET geometry)는 키가 항상 있다. 항공기·선박 필드 제약은 schemas/aircraft_state.v1.json · ship_state.v1.json · ship_static.v1.json 과 같다(null 제외 — api 시험이 비교한다). 검증: api WsSchemaContractTest(networknt) · tools/contract_check.py(fixture) · 웹 lib/ws-validate.ts(손으로 쓴 같은 규칙 — fixture 시험으로 묶는다).",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "enum": ["welcome", "snapshot", "diff", "alerts", "alerts_batch", "selected", "error", "demand", "sigmets", "radar", "status", "ping", "pong", "ships_snapshot", "ships_diff", "ships_grid", "ship_selected"] }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/welcome" },
+    { "$ref": "#/$defs/snapshot" },
+    { "$ref": "#/$defs/diff" },
+    { "$ref": "#/$defs/alerts" },
+    { "$ref": "#/$defs/alerts_batch" },
+    { "$ref": "#/$defs/selected" },
+    { "$ref": "#/$defs/error" },
+    { "$ref": "#/$defs/demand" },
+    { "$ref": "#/$defs/sigmets" },
+    { "$ref": "#/$defs/radar" },
+    { "$ref": "#/$defs/status" },
+    { "$ref": "#/$defs/ping" },
+    { "$ref": "#/$defs/pong" },
+    { "$ref": "#/$defs/ships_snapshot" },
+    { "$ref": "#/$defs/ships_diff" },
+    { "$ref": "#/$defs/ships_grid" },
+    { "$ref": "#/$defs/ship_selected" }
+  ],
+  "$defs": {
+    "date_time": { "type": "string", "format": "date-time" },
+    "hex": { "type": "string", "pattern": "^[0-9a-f]{6}$" },
+    "mmsi": { "type": "string", "pattern": "^[0-9]{9}$" },
+    "version": { "type": "integer", "minimum": 0 },
+
+    "welcome": {
+      "description": "hello 에 대한 응답. limits 는 서버 설정값 그대로.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "server_time", "snapshot_version", "limits"],
+      "properties": {
+        "type": { "const": "welcome" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "server_time": { "$ref": "#/$defs/date_time" },
+        "snapshot_version": { "$ref": "#/$defs/version" },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_bbox_area", "diff_interval_s", "resync_interval_s", "resync_world_interval_s", "max_client_messages", "client_message_window_s", "hello_timeout_s"],
+          "properties": {
+            "max_bbox_area": { "type": "number", "exclusiveMinimum": 0 },
+            "diff_interval_s": { "type": "integer", "minimum": 1 },
+            "resync_interval_s": { "type": "integer", "minimum": 1 },
+            "resync_world_interval_s": { "type": "integer", "minimum": 1 },
+            "max_client_messages": { "type": "integer", "minimum": 1 },
+            "client_message_window_s": { "type": "integer", "minimum": 1 },
+            "hello_timeout_s": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+
+    "aircraft": {
+      "description": "항공기 하나(WsMessages.encode). LITE(줌 > 5): 아래에서 registration·type_code·category·fetched_at 제외. WORLD(줌 ≤ 5): 좌표 소수 3자리, vrate_fpm·quality 도 제외. FULL(selected · detail=full): 전부. 모르는 값은 키가 없다(0·false 로 채우지 않는다). estimated 는 싣지 않는다(서버 값은 관측).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hex", "lat", "lon", "on_ground"],
+      "properties": {
+        "hex": { "type": "string", "pattern": "^[0-9a-f]{6}$" },
+        "callsign": { "type": "string", "maxLength": 8 },
+        "registration": { "type": "string", "maxLength": 16 },
+        "type_code": { "type": "string", "maxLength": 8 },
+        "category": { "type": "string", "maxLength": 4 },
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "alt_ft": { "type": "integer", "minimum": -2000, "maximum": 100000 },
+        "gs_kt": { "type": "number", "minimum": 0 },
+        "track_deg": { "type": "number", "minimum": 0, "maximum": 360 },
+        "vrate_fpm": { "type": "number" },
+        "on_ground": { "type": "boolean" },
+        "squawk": { "type": "string", "pattern": "^[0-7]{4}$" },
+        "seen_at": { "type": "string", "format": "date-time" },
+        "provider": { "type": "string", "enum": ["adsb_lol", "adsb_fi", "opensky", "fixture"] },
+        "fetched_at": { "type": "string", "format": "date-time" },
+        "quality": { "type": "integer", "enum": [0, 1] }
+      }
+    },
+    "aircraft_full": {
+      "description": "FULL 인코딩(selected.state) — quality 가 항상 있다.",
+      "allOf": [ { "$ref": "#/$defs/aircraft" }, { "required": ["quality"] } ]
+    },
+
+    "source": {
+      "description": "피드(스코프) 하나의 출처·지연. lag_s = now − fetched_at(수집 이력이 없으면 키 없음), stale = 임계(지역 60 s · 전세계 300 s) 초과 또는 이력 없음.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stale"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "fetched_at": { "$ref": "#/$defs/date_time" },
+        "lag_s": { "type": "number" },
+        "stale": { "type": "boolean" }
+      }
+    },
+    "snapshot": {
+      "description": "구독 bbox 안 항공기 전부. seq 는 세션별로 스냅샷마다 1 에서 다시 시작한다(ADR-008 R-50). v 는 전역 병합 뷰 버전(참고용).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "seq", "v", "ts", "sources", "sigmets_version", "aircraft"],
+      "properties": {
+        "type": { "const": "snapshot" },
+        "seq": { "const": 1 },
+        "v": { "$ref": "#/$defs/version" },
+        "ts": { "$ref": "#/$defs/date_time" },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["region", "global"],
+          "properties": {
+            "region": { "$ref": "#/$defs/source" },
+            "global": { "anyOf": [ { "$ref": "#/$defs/source" }, { "type": "null" } ] }
+          }
+        },
+        "sigmets_version": { "$ref": "#/$defs/version" },
+        "aircraft": { "type": "array", "items": { "$ref": "#/$defs/aircraft" } }
+      }
+    },
+    "diff": {
+      "description": "마지막으로 보낸 상태와의 차이. seq 는 직전 +1(빈 diff 는 보내지 않아 틈이 없다) — 스냅샷 뒤 첫 diff 가 2.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "seq", "v", "ts", "upsert", "remove"],
+      "properties": {
+        "type": { "const": "diff" },
+        "seq": { "type": "integer", "minimum": 2 },
+        "v": { "$ref": "#/$defs/version" },
+        "ts": { "$ref": "#/$defs/date_time" },
+        "upsert": { "type": "array", "items": { "$ref": "#/$defs/aircraft" } },
+        "remove": { "type": "array", "items": { "$ref": "#/$defs/hex" } }
+      }
+    },
+
+    "alert": {
+      "description": "알림(domain Alert). evidence 는 판정 근거(자유 형식 객체). left_at 이 있으면 닫힌 알림.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "hex", "sigmet_id", "fir_id", "hazard", "entered_at", "evidence", "estimated"],
+      "properties": {
+        "id": { "type": "integer" },
+        "kind": { "enum": ["OBSERVED", "PREDICTED"] },
+        "hex": { "$ref": "#/$defs/hex" },
+        "callsign": { "type": "string" },
+        "sigmet_id": { "type": "string", "minLength": 1 },
+        "fir_id": { "type": "string", "minLength": 1 },
+        "hazard": { "type": "string", "minLength": 1 },
+        "qualifier": { "type": "string" },
+        "entered_at": { "$ref": "#/$defs/date_time" },
+        "left_at": { "$ref": "#/$defs/date_time" },
+        "close_reason": { "enum": ["left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared"] },
+        "eta_s": { "type": "integer" },
+        "eta_at": { "$ref": "#/$defs/date_time" },
+        "alt_ft": { "type": "integer" },
+        "evidence": { "type": "object" },
+        "estimated": { "type": "boolean" }
+      }
+    },
+    "alerts": {
+      "description": "활성 알림 전체 목록과 그 버전(배치마다 +1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version", "alerts"],
+      "properties": {
+        "type": { "const": "alerts" },
+        "version": { "$ref": "#/$defs/version" },
+        "alerts": { "type": "array", "items": { "$ref": "#/$defs/alert" } }
+      }
+    },
+    "alerts_batch": {
+      "description": "알림 증분(AlertStateMachine.EventType 이름 그대로).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version", "items"],
+      "properties": {
+        "type": { "const": "alerts_batch" },
+        "version": { "type": "integer", "minimum": 1 },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "alert"],
+            "properties": {
+              "event": { "enum": ["ENTERED", "LEFT", "LOST", "SIGMET_ENDED", "PREDICTED", "PREDICTION_UPDATED", "PREDICTION_CLEARED"] },
+              "alert": { "$ref": "#/$defs/alert" }
+            }
+          }
+        }
+      }
+    },
+
+    "airport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["icao", "name", "lat", "lon"],
+      "properties": {
+        "icao": { "type": "string", "pattern": "^[A-Z0-9]{4}$" },
+        "iata": { "type": "string", "pattern": "^[A-Z0-9]{3}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "city": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "country": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "country_iso": { "type": "string", "pattern": "^[A-Z]{2}$" },
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 }
+      }
+    },
+    "route": {
+      "description": "등록 노선(계약 v4 §A · ADR-016). 콜사인에 등록된 정기 노선 — 실제 운항 경로가 아닐 수 있다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "source"],
+      "properties": {
+        "status": { "enum": ["found", "not_found", "pending", "unavailable", "no_callsign", "disabled"] },
+        "callsign": { "type": "string", "minLength": 1 },
+        "airline": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "icao": { "type": "string", "pattern": "^[A-Z0-9]{3}$" },
+            "iata": { "type": "string", "pattern": "^[A-Z0-9]{2}$" }
+          }
+        },
+        "origin": { "$ref": "#/$defs/airport" },
+        "destination": { "$ref": "#/$defs/airport" },
+        "midpoint": { "$ref": "#/$defs/airport" },
+        "fetched_at": { "$ref": "#/$defs/date_time" },
+        "source": { "const": "adsbdb" }
+      }
+    },
+    "selected": {
+      "description": "선택 항공기: FULL 상태(스냅샷에 없으면 null) · 예측 가능 여부 · 등록 노선(상태가 없으면 null).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "hex", "state", "prediction", "route"],
+      "properties": {
+        "type": { "const": "selected" },
+        "hex": { "$ref": "#/$defs/hex" },
+        "state": { "anyOf": [ { "$ref": "#/$defs/aircraft_full" }, { "type": "null" } ] },
+        "prediction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available"],
+          "properties": {
+            "available": { "type": "boolean" },
+            "reason": { "enum": ["turning", "slow", "on_ground", "no_track", "stale"] }
+          }
+        },
+        "route": { "anyOf": [ { "$ref": "#/$defs/route" }, { "type": "null" } ] }
+      }
+    },
+
+    "error": {
+      "description": "요청 오류(치명적이면 뒤이어 연결을 닫는다).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "title", "detail"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z_]*$" },
+        "title": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    },
+
+    "demand": {
+      "description": "이 세션의 수요 상태(계약 v2 §A3). hot·focus 키는 항상 있다(null = 이 세션의 수요 없음). interval_s·last_success_at 은 수집기 보고값.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "hot", "focus"],
+      "properties": {
+        "type": { "const": "demand" },
+        "hot": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["state"],
+              "properties": {
+                "cell": { "type": "string", "pattern": "^(-?[0-9]{1,2}\\.[05]):(-?[0-9]{1,3}\\.[05]):(50|100|150|200|250)$" },
+                "radius_nm": { "type": "integer", "minimum": 50, "maximum": 250 },
+                "state": { "enum": ["active", "pending", "throttled", "covered_by_region", "error", "disabled", "limited"] },
+                "interval_s": { "type": "integer", "minimum": 1, "maximum": 3600 },
+                "last_success_at": { "$ref": "#/$defs/date_time" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "focus": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["hex", "state", "since"],
+              "properties": {
+                "hex": { "$ref": "#/$defs/hex" },
+                "state": { "enum": ["active", "pending", "throttled", "not_found", "error", "disabled", "expired_session_cap", "limited"] },
+                "interval_s": { "type": "integer", "minimum": 1, "maximum": 3600 },
+                "since": { "$ref": "#/$defs/date_time" },
+                "last_success_at": { "$ref": "#/$defs/date_time" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "position": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 }
+      ]
+    },
+    "multipolygon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "coordinates"],
+      "properties": {
+        "type": { "const": "MultiPolygon" },
+        "coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "array", "minItems": 4, "items": { "$ref": "#/$defs/position" } }
+          }
+        }
+      }
+    },
+    "sigmet_properties": {
+      "description": "SIGMET 속성(SigmetGeoJson). active·expiring_soon 은 computed_at 기준(화면은 valid_from/valid_to 와 서버 시각으로 다시 계산한다).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fir_id", "series_id", "hazard", "base_ft", "valid_from", "valid_to", "active", "expiring_soon", "raw_text", "provider", "fetched_at"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "fir_id": { "type": "string" },
+        "fir_name": { "type": "string" },
+        "issuer": { "type": "string" },
+        "series_id": { "type": "string" },
+        "hazard": { "type": "string" },
+        "qualifier": { "type": "string" },
+        "base_ft": { "type": "integer", "minimum": 0 },
+        "top_ft": { "type": "integer" },
+        "base_source": { "enum": ["json", "assumed_surface"] },
+        "top_source": { "enum": ["json", "raw_text", "raw_text_lower_bound", "unknown"] },
+        "valid_from": { "$ref": "#/$defs/date_time" },
+        "valid_to": { "$ref": "#/$defs/date_time" },
+        "active": { "type": "boolean" },
+        "expiring_soon": { "type": "boolean" },
+        "move_dir": { "type": "string" },
+        "move_spd": { "type": "string" },
+        "chng": { "type": "string" },
+        "excluded_reason": { "type": "string" },
+        "raw_text": { "type": "string" },
+        "provider": { "type": "string", "enum": ["awc_isigmet", "awc_airsigmet", "fixture"] },
+        "fetched_at": { "$ref": "#/$defs/date_time" }
+      }
+    },
+    "sigmets": {
+      "description": "활성 SIGMET 전체(GeoJSON FeatureCollection). 폴리곤이 없는(판정 제외) 경보도 geometry null 로 남는다(RFC 7946 §3.2 — geometry 멤버는 항상 있다). 수신 이력이 없으면 fetched_at 1970-01-01 · provider \"-\".",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "v", "fetched_at", "provider", "computed_at", "collection"],
+      "properties": {
+        "type": { "const": "sigmets" },
+        "v": { "$ref": "#/$defs/version" },
+        "fetched_at": { "$ref": "#/$defs/date_time" },
+        "provider": { "type": "string", "minLength": 1 },
+        "computed_at": { "$ref": "#/$defs/date_time" },
+        "collection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "features"],
+          "properties": {
+            "type": { "const": "FeatureCollection" },
+            "features": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "id", "geometry", "properties"],
+                "properties": {
+                  "type": { "const": "Feature" },
+                  "id": { "type": "string", "minLength": 1 },
+                  "geometry": { "anyOf": [ { "$ref": "#/$defs/multipolygon" }, { "type": "null" } ] },
+                  "properties": { "$ref": "#/$defs/sigmet_properties" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "radar": {
+      "description": "RainViewer 레이더 프레임 목록. 수신 이력이 없으면 host \"\" · generated 0 · past [] · fetched_at 1970-01-01 · provider \"-\".",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "host", "generated", "past", "fetched_at", "provider"],
+      "properties": {
+        "type": { "const": "radar" },
+        "host": { "type": "string" },
+        "generated": { "type": "integer", "minimum": 0 },
+        "past": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["time", "path"],
+            "properties": { "time": { "type": "integer", "minimum": 0 }, "path": { "type": "string" } }
+          }
+        },
+        "fetched_at": { "$ref": "#/$defs/date_time" },
+        "provider": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "status": {
+      "description": "공개 상태(REST GET /api/v1/status 와 같은 값 — StatusService.publicStatus, 3 s 공유 캐시). 세부 필드는 tools/rest_contract_check.py 도 검사한다. sources.ais 는 AIS 수신 상태(AisStatus.publicView — 본 적이 없으면 키 없음).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "status"],
+      "properties": {
+        "type": { "const": "status" },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["server_time", "snapshot_version", "fixture_mode", "collector_mode_known", "region", "global", "sigmet", "radar", "radar_kr", "engine", "active_providers", "demand", "sources"],
+          "properties": {
+            "server_time": { "$ref": "#/$defs/date_time" },
+            "snapshot_version": { "$ref": "#/$defs/version" },
+            "fixture_mode": { "type": "boolean" },
+            "collector_mode_known": { "type": "boolean" },
+            "region": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["center", "radius_nm", "aircraft", "stale"],
+              "properties": {
+                "center": { "type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [ { "type": "number", "minimum": -90, "maximum": 90 }, { "type": "number", "minimum": -180, "maximum": 180 } ] },
+                "radius_nm": { "type": "integer", "minimum": 1 },
+                "provider": { "type": "string" },
+                "aircraft": { "type": "integer", "minimum": 0 },
+                "lag_s": { "type": "number" },
+                "stale": { "type": "boolean" },
+                "fetched_at": { "$ref": "#/$defs/date_time" }
+              }
+            },
+            "global": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["aircraft", "stale"],
+              "properties": {
+                "provider": { "type": "string" },
+                "aircraft": { "type": "integer", "minimum": 0 },
+                "lag_s": { "type": "number" },
+                "stale": { "type": "boolean" },
+                "fetched_at": { "$ref": "#/$defs/date_time" }
+              }
+            },
+            "sigmet": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider", "count", "active", "fetched_at", "stale"],
+              "properties": {
+                "provider": { "type": "string" },
+                "count": { "type": "integer", "minimum": 0 },
+                "active": { "type": "integer", "minimum": 0 },
+                "fetched_at": { "$ref": "#/$defs/date_time" },
+                "lag_s": { "type": "number" },
+                "stale": { "type": "boolean" }
+              }
+            },
+            "radar": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider", "frames", "fetched_at", "stale"],
+              "properties": {
+                "provider": { "type": "string" },
+                "frames": { "type": "integer", "minimum": 0 },
+                "fetched_at": { "$ref": "#/$defs/date_time" },
+                "stale": { "type": "boolean" }
+              }
+            },
+            "radar_kr": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "available": { "type": "boolean" },
+                "status": { "type": "string", "pattern": "^[1-5][0-9]{2}$" },
+                "latest_tm": { "type": "string", "pattern": "^[0-9]{12}$" },
+                "fetched_at": { "$ref": "#/$defs/date_time" },
+                "checked_at": { "$ref": "#/$defs/date_time" }
+              }
+            },
+            "engine": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["index_polygons", "last_cycle_ms"],
+              "properties": {
+                "index_polygons": { "type": "integer", "minimum": 0 },
+                "last_cycle_ms": { "type": "number", "minimum": 0 }
+              }
+            },
+            "active_providers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "demand": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["hot_active", "focus_active"],
+              "properties": {
+                "hot_active": { "type": "integer", "minimum": 0 },
+                "focus_active": { "type": "integer", "minimum": 0 },
+                "adsb_fi_rps_1m": { "type": "number", "minimum": 0 }
+              }
+            },
+            "sources": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "ais": { "type": "object" } }
+            }
+          }
+        }
+      }
+    },
+
+    "ping": {
+      "description": "서버 heartbeat(30 s) — 클라이언트는 pong 으로 답한다(2회 무응답이면 서버가 닫는다).",
+      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "ping" } }
+    },
+    "pong": {
+      "description": "클라이언트 ping 에 대한 응답.",
+      "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "pong" } }
+    },
+
+    "ship_category": {
+      "description": "선종 분류 — 순서는 schemas/vectors/ship-categories.v1.json(Java ShipCategory 선언 순서 = 웹 SHIP_CATEGORIES).",
+      "enum": ["cargo", "tanker", "passenger", "fishing", "tug", "pleasure", "hsc", "special", "military", "other", "unknown"]
+    },
+    "ship_lite": {
+      "description": "ShipLite(계약 v2 §B3). ship_type·name 은 정적 정보가 있을 때만. 모르는 값은 키가 없다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mmsi", "lat", "lon"],
+      "properties": {
+        "mmsi": { "type": "string", "pattern": "^[0-9]{9}$" },
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "sog_kn": { "type": "number", "minimum": 0, "maximum": 102.2 },
+        "cog_deg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+        "heading_deg": { "type": "integer", "minimum": 0, "maximum": 359 },
+        "ship_type": { "type": "integer", "minimum": 1, "maximum": 99 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "seen_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$" },
+        "position_source": { "type": "string", "enum": ["epfs", "manual", "estimated", "inoperative", "gnss"] },
+        "nav_status": { "type": "integer", "minimum": 0, "maximum": 15 }
+      }
+    },
+    "ship_state": {
+      "description": "ShipState 전체(ship_selected.state · REST 상세).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mmsi", "lat", "lon"],
+      "properties": {
+        "mmsi": { "type": "string", "pattern": "^[0-9]{9}$" },
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "sog_kn": { "type": "number", "minimum": 0, "maximum": 102.2 },
+        "cog_deg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+        "heading_deg": { "type": "integer", "minimum": 0, "maximum": 359 },
+        "nav_status": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "rot": { "type": "integer", "minimum": -127, "maximum": 127 },
+        "position_source": { "type": "string", "enum": ["epfs", "manual", "estimated", "inoperative", "gnss"] },
+        "seen_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$" },
+        "provider": { "enum": ["aisstream", "fixture"] },
+        "msg_type": { "enum": ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport"] },
+        "class": { "enum": ["A", "B"] }
+      }
+    },
+    "ship_static": {
+      "description": "ShipStatic 전체(ship_selected.static · REST 상세) — 선원이 입력한 보고값.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mmsi"],
+      "properties": {
+        "mmsi": { "type": "string", "pattern": "^[0-9]{9}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "call_sign": { "type": "string", "minLength": 1, "maxLength": 7 },
+        "imo": { "type": "integer", "minimum": 1000000, "maximum": 1073741823 },
+        "ship_type": { "type": "integer", "minimum": 1, "maximum": 99 },
+        "dim_a": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "dim_b": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "dim_c": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "dim_d": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "draught_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 25.5 },
+        "destination": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "eta_month": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "eta_day": { "type": "integer", "minimum": 1, "maximum": 31 },
+        "eta_hour": { "type": "integer", "minimum": 0, "maximum": 23 },
+        "eta_minute": { "type": "integer", "minimum": 0, "maximum": 59 },
+        "updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$" },
+        "provider": { "enum": ["aisstream", "fixture"] }
+      }
+    },
+    "ships_snapshot": {
+      "description": "개별 표시(줌 ≥ 7, 또는 줌 4~6 에서 선박이 적을 때 — 계약 v4 §C): 뷰포트 안 선박 전부. sseq 는 항공기 seq 와 같은 규칙(스냅샷마다 1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sseq", "ts", "ships"],
+      "properties": {
+        "type": { "const": "ships_snapshot" },
+        "sseq": { "const": 1 },
+        "ts": { "$ref": "#/$defs/date_time" },
+        "ships": { "type": "array", "items": { "$ref": "#/$defs/ship_lite" } }
+      }
+    },
+    "ships_diff": {
+      "description": "개별 표시: 마지막으로 보낸 상태와의 차이(빈 diff 는 보내지 않는다 — sseq 틈이 없다).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sseq", "ts", "upsert", "remove"],
+      "properties": {
+        "type": { "const": "ships_diff" },
+        "sseq": { "type": "integer", "minimum": 2 },
+        "ts": { "$ref": "#/$defs/date_time" },
+        "upsert": { "type": "array", "items": { "$ref": "#/$defs/ship_lite" } },
+        "remove": { "type": "array", "items": { "$ref": "#/$defs/mmsi" } }
+      }
+    },
+    "ship_grid_cell": {
+      "description": "[칸 중심 lat, 칸 중심 lon, 선박 수, 대표 분류, [선종별 수 n0..n10]](계약 v5 §B2). 선종별 수의 순서 = ship_category, 합 = 선박 수(스키마로 말할 수 없는 합은 api 시험이 본다). 0척 칸은 없다.",
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "prefixItems": [
+        { "type": "number", "minimum": -90, "maximum": 90 },
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "integer", "minimum": 1 },
+        { "$ref": "#/$defs/ship_category" },
+        { "type": "array", "minItems": 11, "maxItems": 11, "items": { "type": "integer", "minimum": 0 } }
+      ]
+    },
+    "ships_grid": {
+      "description": "격자(줌 < 4, 또는 뷰포트 안 선박이 개별 표시 상한을 넘을 때 capped:true — 계약 v4 §C). cell_deg: 5°(줌 < 3) · 2°(줌 < 5) · 0.5°.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "cell_deg", "cells"],
+      "properties": {
+        "type": { "const": "ships_grid" },
+        "ts": { "$ref": "#/$defs/date_time" },
+        "cell_deg": { "enum": [5.0, 2.0, 0.5] },
+        "cells": { "type": "array", "items": { "$ref": "#/$defs/ship_grid_cell" } },
+        "capped": { "const": true }
+      }
+    },
+    "dest_place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "ambiguous"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "locode": { "type": "string", "pattern": "^[A-Z]{2} ?[A-Z0-9]{3}$" },
+        "name": { "type": "string" },
+        "country": { "type": "string" },
+        "subdivision": { "type": "string" },
+        "ambiguous": { "type": "boolean" }
+      }
+    },
+    "ship_selected": {
+      "description": "선택 선박(계약 v2 §B3 · v4 §B): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "mmsi", "state", "static", "destination_info"],
+      "properties": {
+        "type": { "const": "ship_selected" },
+        "mmsi": { "$ref": "#/$defs/mmsi" },
+        "state": { "anyOf": [ { "$ref": "#/$defs/ship_state" }, { "type": "null" } ] },
+        "static": { "anyOf": [ { "$ref": "#/$defs/ship_static" }, { "type": "null" } ] },
+        "destination_info": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["raw", "kind", "places"],
+              "properties": {
+                "raw": { "type": "string", "minLength": 1 },
+                "kind": { "enum": ["from_to", "to", "text", "between"] },
+                "from": { "$ref": "#/$defs/dest_place" },
+                "to": { "$ref": "#/$defs/dest_place" },
+                "places": { "type": "array", "items": { "$ref": "#/$defs/dest_place" } }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

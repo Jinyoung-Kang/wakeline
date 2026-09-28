@@ -12,7 +12,7 @@ NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest ws-samples e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -86,6 +86,9 @@ contract: ## Python↔Java 스키마 계약 검사 (+ api 테스트가 남긴 RE
 
 contract-rest: ## Java→Python REST 계약 검사 — api 통합 테스트(RestSamplesIT)가 기록한 응답을 JSON Schema 로 검사 (GAP-24)
 	cd apps/collector && uv run python ../../tools/rest_contract_check.py --dir ../api/build/rest-samples
+
+ws-samples: ## WS 메시지 표본 다시 만들기(계약 v5 §E1) — api 시험이 실제 빌더로 만들어 schemas/ws 로 검증한 뒤 apps/web/tests/fixtures/ws-samples.v1.json 에 쓴다(커밋)
+	cd apps/api && ./gradlew test --tests 'dev.wakeline.ws.WsSchemaContractTest' -PupdateWsSamples
 
 # 실패하면 스택을 지우기 전에 상태·로그를 남긴다(CI 에서 원인을 볼 수 있게). E2E_KEEP=1 이면 스택을 남긴다.
 e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 스택·볼륨 삭제. 개발 스택(8700)은 건드리지 않는다

@@ -96,16 +96,20 @@ export interface FeedInfo {
   received_at: number;
 }
 
+/**
+ * WS "status" · REST /status(StatusService.publicStatus). 서버는 모든 묶음을 보내지만(schemas/ws/server.v1.json) 웹 검증기(lib/ws-validate)는
+ * 없는 묶음을 모름으로 받는다 — 화면은 ?. 로 읽고 없으면 "—". 있는데 형식이 틀리면 메시지를 버린다.
+ */
 export interface PublicStatus {
-  server_time: string;
-  snapshot_version: number;
-  fixture_mode: boolean;
-  region: { center: number[]; radius_nm: number; provider: string; aircraft: number; lag_s: number | null; stale: boolean; fetched_at: string | null };
-  global?: { provider: string | null; aircraft: number; lag_s: number | null; stale: boolean; fetched_at: string | null } | null;
-  sigmet: { provider: string; count: number; active: number; fetched_at: string; lag_s: number | null; stale: boolean };
-  radar: { provider: string; frames: number; fetched_at: string; stale: boolean };
-  engine: { index_polygons: number; last_cycle_ms: number };
-  active_providers: Record<string, string>;
+  server_time?: string;
+  snapshot_version?: number;
+  fixture_mode?: boolean;
+  region?: { center?: number[]; radius_nm?: number; provider?: string | null; aircraft?: number; lag_s?: number | null; stale?: boolean; fetched_at?: string | null };
+  global?: { provider?: string | null; aircraft?: number; lag_s?: number | null; stale?: boolean; fetched_at?: string | null } | null;
+  sigmet?: { provider?: string; count?: number; active?: number; fetched_at?: string; lag_s?: number | null; stale?: boolean };
+  radar?: { provider?: string; frames?: number; fetched_at?: string; stale?: boolean };
+  engine?: { index_polygons?: number; last_cycle_ms?: number };
+  active_providers?: Record<string, string>;
 }
 
 export type PredictionReason = "turning" | "slow" | "on_ground" | "no_track" | "stale";

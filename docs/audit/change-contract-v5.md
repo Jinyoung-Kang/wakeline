@@ -116,3 +116,6 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G7(§G4) **`last_seen_at`** = `ship.last_seen` 과 저장된 마지막 위치 시각 중 늦은 것(검색 · 상세 모두, 저장만 된 선박만 — 실시간 선박은 검색에서 null · 상세에서 키 없음,
   마지막 수신은 `seen_at` · `state.seen_at`). `ship.last_seen` 은 위치로는 10분에 한 번만 넓히므로(ShipWriter — 쓰기 증폭 방지) 그대로 보이면 "마지막 저장 위치"보다 이른
   "마지막 수신"이 나올 수 있다. 두 값 모두 받은 AIS 보고의 실제 시각이다(추정이 아니다). REST 계약 검사: `last_seen_at` ≥ `last_position_at`.
+- G8(§E2 · 레인 ws-contract 2차 리뷰): 버린 메시지의 복구는 종류마다 — 항공기 · 선박 흐름은 `resync`, 알림 · SIGMET · 레이더는 클라이언트 메시지 `{type:"resync", scope:"alerts"|"sigmets"|"radar"}`
+  (client.v1.json 에 선택 키 scope 추가 · 서버는 그 목록만 버전과 무관하게 전체로 · 모르는 scope 는 BAD_RESYNC), status · selected · demand 는 다음 갱신. 알림 배치 버전 틈도 잃은 것으로 보고,
+  전체 목록을 받을 때까지 알림 수는 "—". 웹 검증기는 스키마의 잎 제약마다 시험한다(ADR-020).
