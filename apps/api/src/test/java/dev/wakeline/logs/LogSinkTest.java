@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
+import org.springframework.data.redis.connection.RedisStreamCommands;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -175,6 +176,19 @@ class LogSinkTest {
         assertThat(s.queued()).isEqualTo(1);
     }
 
+    /** logback 이 다시 초기화되면(설정 다시 읽기 · reset) 루트 로거의 어펜더가 모두 떨어지고 멈춘다 — 보내는 루프가 다음 주기에 다시 붙인다. */
+    @Test
+    void theFlusherReattachesTheAppenderAfterLogbackIsReset() {
+        LogSink s = sink(true, 20, 1000, 30_000);
+        s.start();
+        assertThat(s.isAttached()).isTrue();
+        logback.reset();
+        assertThat(s.isAttached()).as("reset detaches and stops every appender").isFalse();
+        await("the flusher loop re-attaches the appender", s::isAttached);
+        logback.getLogger("dev.wakeline.ingest.StreamConsumer").warn("after logback reset {}", 7);
+        await("the warning written after the reset", () -> written.stream().anyMatch(j -> j.contains("after logback reset 7")));
+    }
+
     @Test
     void disabledSinkQueuesNothingAndDoesNotAttach() {
         LogSink s = sink(false, 1000, 1000, 30_000);
@@ -206,6 +220,15 @@ class LogSinkTest {
         s.stop();
         assertThat(written).hasSize(3);
         assertThat(counter("dropped")).isZero();
+    }
+
+    /** XADD wakeline:logs MAXLEN ~ 3000 — 근사 트림(정확한 트림은 XADD 마다 노드를 다시 쓴다). 실제 트림 결과는 LogsIT. */
+    @Test
+    void xaddTrimsToMaxlen3000Approximately() {
+        var trim = LogSink.XADD_OPTIONS.getTrimOptions();
+        assertThat(trim.getTrimStrategy()).isInstanceOfSatisfying(RedisStreamCommands.MaxLenTrimStrategy.class,
+                m -> assertThat(m.threshold()).isEqualTo(3_000));
+        assertThat(trim.getTrimOperator()).isEqualTo(RedisStreamCommands.TrimOperator.APPROXIMATE);
     }
 
     @Test

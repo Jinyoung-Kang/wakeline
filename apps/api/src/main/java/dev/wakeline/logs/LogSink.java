@@ -11,6 +11,7 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.data.redis.connection.RedisStreamCommands.TrimOptions;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -137,10 +138,12 @@ public class LogSink implements SmartLifecycle, DisposableBean {
         meters.gauge("wakeline_log_queue", this, LogSink::queued);
     }
 
+    /** XADD … MAXLEN ~ 3000(근사 트림 — Redis 가 내부 노드 단위로 자른다). */
+    static final XAddOptions XADD_OPTIONS = XAddOptions.trim(TrimOptions.maxLen(MAXLEN).approximate());
+
     /** api 기본 Redis 연결(끊겨 있으면 곧바로 실패, 명령 한도 3 s — RedisConfig)로 XADD MAXLEN ~ 3000. */
     public static Writer redisWriter(StringRedisTemplate redis) {
-        XAddOptions opts = XAddOptions.maxlen(MAXLEN).approximateTrimming(true);
-        return json -> redis.opsForStream().add(MapRecord.create(STREAM, Map.of("e", json)), opts);
+        return json -> redis.opsForStream().add(MapRecord.create(STREAM, Map.of("e", json)), XADD_OPTIONS);
     }
 
     public boolean enabled() { return enabled; }
