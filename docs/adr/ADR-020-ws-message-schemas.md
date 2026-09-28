@@ -38,14 +38,15 @@ Redis 스트림은 `schemas/*.json` 으로 두 언어가 계약하지만, WebSoc
 - **다시 받기(lib/ws.ts recoverFrom)**: 버린 · 처리에 실패한 메시지 뒤 — 항공기 · 선박 흐름은 그 seq 를 버리고 `resync`(서버: 항공기 · 선박 스냅샷). 알림 · SIGMET · 레이더는
   `{type:"resync", scope:"alerts"|"sigmets"|"radar"}` — 서버(WakelineWsHandler → WsHub.resyncAlerts/Sigmets/Radar)는 그 목록 하나만 버전과 무관하게 전체로 보낸다(일시정지 중이면
   보내지 않고 resume 의 전체 초기 세트가 보낸다, 모르는 scope 는 BAD_RESYNC). 요청은 목록마다 그 목록이 올 때까지 한 번(10 s 뒤 다시). JSON 이 아닌 프레임은 위를 모두.
-  status 는 30 s heartbeat, selected · ship_selected 는 대상이 바뀔 때, demand 는 바뀌거나 30 s 마다 다시 오므로 요청하지 않는다(항공기 스냅샷 — 1만 대면 2 MB — 을 끌어오지 않는다).
+  status 는 30 s heartbeat, selected · ship_selected 는 대상이 바뀔 때, demand 는 바뀌거나 30 s 마다 다시 오므로 요청하지 않는다(항공기 스냅샷 — 1만 대 LITE 면 약 2.8 MB, 아래 번들 절의 측정 — 을 끌어오지 않는다).
   알림: 버린 alerts/alerts_batch · 버린 알림 원소 · 배치 버전 틈 · 버전 없는 배치면 `alertsVersion` 을 null(수 "—"), `alertsIncomplete` 로 두고 전체 목록을 요청한다. 그동안 받은
   배치는 반영하지만 수는 모름이다 — 알림 패널은 "알림 목록 일부 누락"을 밝히고 ETA 를 멈춘다(R-09). 틀린 원소가 든 전체 목록은 보이되 수는 모름으로 두고 바로 다시 묻지 않는다
   (같은 버전이면 같은 목록 — 다음 배치가 10 s 게이트로 다시 묻는다). welcome 은 처리 중 예외일 때만 연결을 다시 맺는다(4001).
 - **상태 바**: "WS 형식 오류 · 원소 N · 메시지 N · 예외 N"(0 인 단위는 뺀다 — 단위가 다른 수를 더하지 않는다) 단추. 키보드 · 터치로 여는 popover(최상위 층 — 가로 스크롤되는
   상태 바에 잘리지 않는다)에 단위별 뜻 · 실제 다시 받기 · 보고 위치 · 마지막 사유와 시각, 복사 단추.
-- **번들**(`next build`, gzip -9): 검증기는 지도(MapView)와 함께 동적으로 불러오는 청크에 있다 — `/` 의 첫 로드 목록(page entryJSFiles)에는 없다. 그 청크 30.9 KiB(레인 전) →
-  37.8 KiB(1차) → 42.0 KiB(2차, gzip 10.2 → 12.9 → 14.6 KiB). `/` 첫 로드에 드는 것은 상태 바 배지(WsInvalidBadge)뿐 — `/` entry 합계 +2.1 KiB(gzip +0.7 KiB).
+- **번들**(`next build`, gzip -9): 검증기는 지도(MapView)와 함께 동적으로 불러오는 청크에 있다 — `/` 의 첫 로드 목록(page entryJSFiles)에는 없다. 레인 안의 빌드로 잰 값(레인 보고 —
+  결과 파일은 남기지 않았다): 그 청크 30.9 KiB(레인 전) → 37.8 KiB(1차) → 42.0 KiB(2차, gzip 10.2 → 12.9 → 14.6 KiB), `/` 첫 로드에 드는 것은 상태 바 배지(WsInvalidBadge)뿐 — `/` entry 합계 +2.1 KiB(gzip +0.7 KiB).
+  병합 뒤 main 빌드(09-29 06:21 KST)에서 다시 잰 그 청크: 42.2 KiB · gzip -9 14.6 KiB. 첫 로드 전송량 전체의 변화는 PERF §8.
   1만 대 LITE 스냅샷(2.8 MB) 검사 3.8 ms(1차 규칙 2.2 ms, JSON.parse 9 ms — 같은 기계).
 
 ## 되돌리기

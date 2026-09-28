@@ -81,14 +81,20 @@ k6: `/aircraft` p95 4.6 ms · `/sigmets` p95 5.7 ms · `/status` p95 9.5 ms · W
 - GC 는 경합 없을 때 지연의 원인이 아니었다: 7분 부하 중 일시정지 합계 약 1.4–1.8 s · 최대 68–89 ms(GC 표본이 있는 10:45 · 11:21 실행). 경합이 있으면 최대 344 ms(13:54) · 939 ms(14:05)로 늘고, 힙 커밋이 241 → 298 · 217 → 316 MiB 로 커져(k6 없이 큰 경합 속 381 MiB) api RSS 가 함께 오른다(RSS ≈ 힙 커밋 + 약 280 MiB).
 - **collector 메모리**: 재기동 뒤 40분에 99 → 289–298 MiB 로 계단식으로 늘었다 — 기상청 레이더 해석(수십 MB numpy)이 공용 스레드 풀의 아무 스레드에서 돌아 스레드마다 malloc 아레나가 최고점을 따로 쥠(해석은 기준선부터 풀에서 돌았고, R-21 이 풀 사용을 늘린 것으로 추정). 전용 해석 스레드 + `MALLOC_ARENA_MAX=2` 뒤 같은 40분에 173–217 MiB 로 평탄.
 
-## 8. 계약 v5 뒤(2026-09-28 21:5x UTC = 한국 09-29 06:5x, 개발 스택 · Lighthouse 12.8.2 데스크톱 · headless SwiftShader · 3회)
-| 항목 | 리뷰 v1 뒤 | 계약 v5 뒤 |
-|---|---|---|
-| 첫 화면 JS(`/`, Lighthouse 전송량 — 스크립트) | 497.7 KiB(16개) | **526.3 KiB**(17개, 3회 모두 526.2–526.3) |
-| Lighthouse `/` 성능 · LCP · TBT | 5회 중앙값 53 · 2.39 s · 698 ms | 44–55 · 1.99–2.69 s · 1,239–2,367 ms(3회 — 호스트 1분 부하 5.9, 경합 속 값이라 비교하지 않는다) |
+## 8. 계약 v5 뒤(2026-09-28 21:5x · 23:2x UTC = 한국 09-29 06:5x · 08:2x, 개발 스택 · Lighthouse 12.8.2 데스크톱 · headless SwiftShader)
+| 항목 | 리뷰 v1 뒤 | 계약 v5 뒤(21:5x, 3회) | 오류 화면 청크 정리 뒤(23:2x, 2회 · `b9ebfb4`) |
+|---|---|---|---|
+| 첫 화면 JS(`/`, Lighthouse 전송량 — 스크립트) | 497.7 KiB(요청 16건 — 파일 15개 + 워커의 maplibre-gl-shared.mjs 재요청 0 B) | 526.3 KiB(요청 17건 — 파일 16개 + 같은 0 B 재요청, 3회 모두 526.2–526.3) | **520.6 KiB**(요청 17건, 2회 같음) |
+| Lighthouse `/` 성능 · LCP · TBT | 5회 중앙값 53 · 2.39 s · 698 ms | 44–55 · 1.99–2.69 s · 1,239–2,368 ms(호스트 1분 부하 5.9, 경합 속 값이라 비교하지 않는다) | 재지 않음(바이트만) |
 
-- 늘어난 28.6 KiB 는 앱 청크다(MapLibre 두 파일은 같은 148.2 · 145.8 KiB). 새 청크 하나(12.1 KiB)는 상단 통합 검색(선박 검색 · 목록 표 · 정렬)과 브라우저 오류 보고,
-  나머지는 기존 청크가 조금씩 커진 것(선박 필터 · 이중 단위 · WS 검증기와 오류 배지). NFR-04(400 KB)는 리뷰 v1 때부터 미충족이며 목표를 다시 정할지는 사용자 결정으로 남아 있다.
+- 계약 v5 로 늘어난 28.6 KiB 는 모두 `/_next/static/chunks` 앱 청크다(MapLibre 두 파일은 같은 148.2 · 145.8 KiB). 청크 수가 하나 는 것은 오류 화면 청크 둘(`app/error.tsx` 5.7 KiB ·
+  `app/global-error.tsx` 5.8 KiB — 둘 다 ErrorScreen 과 lib/logs 를 따로 실었다, 합 11.5 KiB)이 새로 생기고 리뷰 v1 의 Next 기본 global-error 청크(2.5 KiB)가 프레임워크 청크에 합쳐졌기 때문이다.
+  12.1 KiB 청크는 새 청크가 아니라 리뷰 v1 의 머리글 청크(15.0 KiB)가 나뉜 것이다(Shell · 상단 통합 검색 · 브라우저 오류 보고 — 선박 표 · 정렬 · 이중 단위 · 선박 필터 저장은 23.3 KiB 청크).
+  나머지는 기존 청크가 커진 것이다: 머리글·공용 청크 묶음 15.0 · 14.2 · 7.5 → 12.1 · 23.3 · 10.7 KiB(+9.2), 지도와 함께 동적으로 받는 청크는 WS 검증기로 +4.8 KiB(`next build` 의 `/` entry 에는 없지만
+  Lighthouse 는 첫 로드 중에 받는다), `/` 페이지 청크는 오류 배지 · 선박 카드 등으로 +3.6 KiB, 그 밖의 청크 합 −0.5 KiB.
+- 오류 화면 두 청크는 오류가 없어도 첫 로드에 받는데, 머리 한 줄 형식 함수 하나 때문에 로그 화면 모듈(lib/logs) 전체를 실었다. 그 함수를 `lib/log-line.ts` 로 옮겨 두 청크가 `global-error` 3.0 · `error` 2.9 KiB 가 되었고
+  첫 화면 JS 는 526.3 → 520.6 KiB(시험 `tests/error-chunk-graph.test.ts` 가 두 오류 경계의 import 그래프에 lib/logs 가 없는지 본다). NFR-04(400 KB)는 리뷰 v1 때부터 미충족이며 목표를 다시 정할지는 사용자 결정으로 남아 있다.
+- 청크 비교 방법: 리뷰 v1 빌드의 청크(이름·크기가 review-final/lh_root.json 과 같음)와 지금 제공되는 청크의 Turbopack 모듈 id 를 대조(사실 확인 워크플로).
 - 재현: `CHROME_PATH=<playwright chromium> lighthouse http://localhost:8700/ --preset=desktop --only-categories=performance --chrome-flags="--headless=new --use-angle=swiftshader"` 의 `network-requests` 에서 resourceType Script 의 transferSize 합.
 
 ## 재현

@@ -17,8 +17,8 @@
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
 | **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V12) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
-| **검증** | 자동 시험 2,811건(pytest 902 · JUnit 685 · Vitest 678 · Playwright E2E 16 · 인프라 정책 117 · 버리는 컨테이너 시험 413) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 36건([VERIFICATION](docs/VERIFICATION.md)) |
-| **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 526.3 KiB(계약 v5 의 선박 검색·목록·단위·WS 검증으로 +28.6 KiB — 목표 400 KB 미충족, 사용자 결정) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
+| **검증** | 자동 시험 2,813건(pytest 902 · JUnit 685 · Vitest 680 · Playwright E2E 16 · 인프라 정책 117 · 버리는 컨테이너 시험 413) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 36건([VERIFICATION](docs/VERIFICATION.md)) |
+| **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 520.6 KiB(리뷰 v1 뒤 497.7 → 계약 v5 의 통합 검색·선박 표·이중 단위·브라우저 오류 보고와 오류 화면·WS 검증으로 +22.9 KiB — 목표 400 KB 미충족, 목표 재설정은 사용자 결정 대기) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
 | **설계 기록** | ADR 20건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
@@ -61,7 +61,7 @@ flowchart LR
   끊기면 1 → 60 s 지수 백오프 + 지터로 다시 붙고, 재전송이 없으므로 끊긴 구간을 공백으로 기록해 화면·항적에 보인다.
 - **스트림이 언어 경계**: 두 언어는 `schemas/*.json` 하나로 계약하고 양쪽에서 같은 파일로 검증한다(바이트 동일 사본 검사 포함).
   WebSocket 메시지도 `schemas/ws/*.json`(ADR-020): api 시험이 실제 빌더의 출력을 검증해 표본을 웹 fixture 로 남기고, 웹은 번들에 스키마 검증기를 싣지 않는 대신 손으로 쓴 검증기(`lib/ws-validate.ts`)를 그 표본과 스키마 잎 제약 전수 시험으로 묶는다.
-  버린 메시지는 종류마다 다시 받는다(항공기 · 선박 `resync`, 알림 · SIGMET · 레이더 `resync` scope).
+  버린 메시지는 종류에 맞게 다시 받는다(항공기 · 선박 `resync`, 알림 · SIGMET · 레이더 `resync` scope — status · 선택 · demand 는 요청하지 않고 다음 주기 메시지를 기다린다).
 - **핫 상태는 메모리, 이력은 DB**: 불변 스냅샷 참조 교체(락 없음), STRtree 는 SIGMET 갱신 때만 재구축, 항적·선박 위치는 비동기 배치 저장(일 파티션 · 보존 정책).
 
 ### 결정과 그 근거(발췌)
@@ -147,10 +147,10 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,config} · Flyway V1–V12 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,domain,config} · Flyway V1–V12 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
-schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) (계약의 단일 원천)
+schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
 infra/           compose.yml · edge(nginx) · redis(ACL) · db(역할·pg_hba) · tests
 docs/            adr/ · audit/(감사·리뷰·변경 계약) · PERF.md · VERIFICATION.md · images/
 perf/ tools/     k6 스크립트 · AIS 측정 · 장애 주입 · 계약 검사 · .env 생성

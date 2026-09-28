@@ -35,8 +35,9 @@
   숨기지 않도록 자르지 않는다(WARN 로그). 한 요청이 훑는 항목 상한은 스트림마다 MAXLEN 에 Redis 내부 노드 하나(stream-node-max-entries 기본 100)를
   더한 합 (3,000 + 100) + (1,000 + 100) = 4,200 — 근사 트림(MAXLEN ~)은 노드 통째로만 잘라 한 스트림에 MAXLEN + 99 건까지 남으므로(실측 3,300 · 1,150 건
   → 3,000 · 1,050) 두 MAXLEN 의 합(4,000)이면 두 스트림이 트림 끝일 때 가장 오래된 서버 항목이 빠졌다. 이제 한 번 훑기가 두 스트림 전체를 보고, 브라우저
-  오류 스트림(api 만 싣는다 — 1,099건 이하)이 가득이어도 서버 로그의 몫을 쓰지 못한다(§C4 의 3,000 에서 늘었다 — 계약 v5 §G6). 최악 비용: 누구나
-  보낼 수 있는 가장 비싼 항목 4,200건을 묶음 + 목록으로 두 번 훑어 약 2.5–4 s(LogReaderTest — 웹 /logs 는 15 s 마다 새로 읽는다). 묶음(fp)도 두 스트림(`last_stream`), `GET /ops/logs/{id}` 는 server → client 순(`?stream=` 으로 한쪽만).
+  오류 스트림(api 만 싣는다 — 1,099건 이하)이 가득이어도 서버 로그의 몫을 쓰지 못한다(§C4 의 3,000 에서 늘었다 — 계약 v5 §G6). 최악 비용: 브라우저
+  오류 모양의 가장 비싼 항목 4,200건(지금 누구나 보낼 수 있는 것은 브라우저 오류 스트림의 1,099건 이하 — 나머지는 §G2 전에 서버 스트림에 실린 web-client 항목 · 서비스를 속인 항목)을
+  묶음 + 목록으로 두 번 훑어 약 2.5 s(LogReaderTest · 이 기계 — 웹 /logs 는 15 s 마다 새로 읽는다). 묶음(fp)도 두 스트림(`last_stream`), `GET /ops/logs/{id}` 는 server → client 순(`?stream=` 으로 한쪽만).
 - `POST /api/v1/client-errors` 의 JSON 이 아닌 Content-Type(없는 것 포함)은 415 `UNSUPPORTED_MEDIA_TYPE`(로그인과 같은 관례, 요청 제한 수를 쓰지 않는다),
   본문 형식 오류는 400 `BAD_CLIENT_ERROR`.
 - Redis 메모리 최악: 약 24 MiB + 8 MiB(1,000 × 8 KiB). 되돌리기에 `DEL wakeline:logs:client` 를 더한다.

@@ -194,10 +194,11 @@
 - **회귀** `edge_test.sh`(양동이가 찬 뒤 `/maplibre` 100회 중 429 0) · `test_edge_policy.StaticAssetsTest` · `make e2e` 16/16 연속 2회.
 
 ## #30 E2E 가 계약 v5 뒤 1건 실패 — 주 메뉴 미리 가져오기가 IP당 양동이를 먼저 씀
-- **증상** `make e2e` 13 통과 · 1 실패 · 2 실행 안 됨. 실패한 시험의 `/api/v1/aircraft` 가 JSON 대신 nginx 의 HTML(429)을 받았다(edge 로그 `limiting requests, excess: 36.630 by zone "perip"`).
+- **증상** `make e2e` 13 통과 · 1 실패 · 2 실행 안 됨. 실패한 시험(dashboard.spec.ts:76)의 `/api/v1/aircraft` 가 JSON 대신 nginx 의 HTML 오류 페이지를 받았다(429 로 보임 — 실패 뒤 남긴 edge 로그
+  마지막 150줄에는 이 요청 줄이 없다). 같은 실행의 뒤 시험에서도 `/api/v1/radar/kr` 부터 `limiting requests, excess: 36.630 by zone "perip"` 로 429 가 이어졌고, 초과분은 미리 가져오기 요청에서 60 대까지 올랐다.
 - **원인** 모든 화면이 요청 때 그리는 동적 경로(ƒ)인데 Next 가 주 메뉴 링크 6개를 화면을 열 때마다 미리 가져왔다(서버 렌더 6번). edge 의 `perip`(10 r/s)은 `/`(burst 60)와 `/api/`(burst 30)가 같이 쓰므로,
-  계약 v5 가 더한 "로그" 메뉴까지 미리 가져오기가 초과분을 30 위로 올려 그 뒤 API 호출이 429 를 받았다 — 실제 사용자도 화면을 빨리 넘기면 같은 일이 난다.
-- **수정** 셸의 링크는 `prefetch={false}`. **회귀** `tests/shell-prefetch.test.ts`(수정 전 실패 7건) · `make e2e` 16/16, edge 의 `limiting requests` 0건.
+  계약 v5 가 더한 "로그" 메뉴까지 미리 가져오기가 초과분을 30 위로 올려 그 뒤 API 호출이 429 를 받았다 — 실제 사용자도 화면을 빨리 넘기면 같은 일이 날 수 있다(재현하지는 않았다).
+- **수정** 셸의 링크(로고 + 메뉴 6)는 `prefetch={false}`. **회귀** `tests/shell-prefetch.test.ts`(시험 1건 — 수정 전에는 prefetch 를 끄지 않은 링크 7개로 실패) · `make e2e` 16/16(수정 뒤 2회 — 성공한 실행은 edge 로그를 남기지 않아 429 수는 세지 않았다).
 
 ## #31 gitleaks 가 새 가짜 값 4건에서 실패
 - **증상** 보안 게이트 `leaks found: 4`(이전 0).
@@ -211,7 +212,7 @@
   경도 > 180 인 폴리곤이 그대로 나갔다. api 는 경도 −180..180 의 항공기로 판정하므로 이 경보의 180° 동쪽 부분(서경 약 169–180°)에 있는 항공기는 **경보 안으로 잡히지 않았다**. 웹은 스키마(경도 ±180)에 맞지 않아 이 경보를 지도에서 뺐다.
 - **수정** 링을 먼저 이어진 경도로 편 뒤 360° 폭 창마다 잘라 되돌린다(점프 · 이어진 경도 두 형식 모두). **회귀** 시험 2건(수정 전 실패) · 실수신 UHMM 폴리곤을 다시 풀면 2조각 · 면적 99.825 제곱도 그대로 · 서경 175° 점이 안에 든다.
   배포 뒤 `/api/v1/sigmets` 160건 모두 경도 ±180 안.
-- **스키마 전수 확인** 배포한 스택의 실제 WS 메시지를 150 s 동안 세 세션(전세계 · 도쿄만 · 밴쿠버, 선박 켬 · 선박 선택)으로 받아 `schemas/ws/server.v1.json` 으로 검증: 243건 · 14종 모두 통과.
+- **스키마 전수 확인** 배포한 스택의 실제 WS 메시지를 150 s 동안 세 세션(전세계 · 도쿄만 · 밴쿠버, 선박 켬 · 선박 선택)으로 받아 `schemas/ws/server.v1.json` 으로 검증: 최종 빌드에서 230건 · 14종, 형식 오류 0건([perf/results/v5-ws-live-check.txt](../perf/results/v5-ws-live-check.txt) — 스크립트 포함).
 - **교훈** 스키마를 코드와 fixture 로만 만들면 실제 공급자 값의 모양을 놓친다 — 배포 뒤 실메시지를 한 번 검증한다(위 절차).
 
 ## #33 `make ops-user` 가 뜨지 못함(2026-09-28 부터) — 운영자 계정을 만들 수 없었음
@@ -235,13 +236,13 @@
 ## 자동 검사 현황(2026-09-29 KST, 계약 v5 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 902 통과(10 건너뜀 — 실 Redis · 실 PostgreSQL 시험, CI 가 버리는 컨테이너로 실행) · 커버리지 97 % |
+| collector · ais 단위·통합 | pytest | 902 통과(10 건너뜀 — 실 Redis 8건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
 | api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 685 · JaCoCo LINE 96.3 % · BRANCH 84.6 %(하한 95 / 80) |
-| web 단위 | Vitest | 678 · 커버리지(소스 전체) Lines 87.4 % · Branches 75.2 % |
+| web 단위 | Vitest | 680 · 커버리지(소스 전체) Lines 87.4 % · Branches 75.2 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 27 · 클라이언트 15) + 가림 · 억제 벡터 |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 31종 |
 | 인프라 정책 | infra/tests(unittest) | 117 |
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 259 · 36 · 48 · 27 · 8 |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
 | 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 243건 · 14종 통과(#32) |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 230건 · 14종, 형식 오류 0건(#32 · perf/results/v5-ws-live-check.txt) |
