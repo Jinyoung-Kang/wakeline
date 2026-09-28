@@ -1,3 +1,7 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "출처·한계" };
+
 export default function AboutPage() {
   const rows: [string, string, string][] = [
     ["항공기 (1순위)", "adsb.lol — readsb v2 API", "ODbL 1.0 · 출처 표기 · 429 시 백오프 후 adsb.fi 폴백"],

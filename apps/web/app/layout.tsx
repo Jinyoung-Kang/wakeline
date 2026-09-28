@@ -3,8 +3,9 @@ import { connection } from "next/server";
 import "./globals.css";
 import { Shell } from "@/components/Shell";
 
+// 화면마다 다른 제목(R-30): 하위 경로는 "%s — Wakeline", 상황판(/)은 기본 제목
 export const metadata: Metadata = {
-  title: "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+  title: { default: "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판", template: "%s — Wakeline" },
   description: "ADS-B 항공기·AIS 선박 위치, 기상 레이더, SIGMET 을 한 지도에 겹치고 교차·진입 예측을 근거와 함께 보여 주는 상황판",
 };
 

@@ -25,8 +25,8 @@ export default function OpsPage() {
   useEffect(() => { apiGet<{ username: string }>(OPS_SESSION_PATH).then(setMe).catch(() => setMe(null)).finally(() => setChecked(true)); }, []);
   const leave = useCallback((note: string | null) => { setNotice(note); setMe(null); }, []);
   const login = useCallback((u: { username: string }) => { setNotice(null); setMe(u); }, []);
-  if (!checked) return <div className="p-4 text-fg-3">…</div>;
-  return me ? <OpsDashboard me={me} onLeave={leave} /> : <Login onLogin={login} notice={notice} />;
+  if (!checked) return <div className="p-4 text-fg-3"><h1 className="sr-only">운영</h1>…</div>;
+  return <><h1 className="sr-only">운영{me ? "" : " — 로그인"}</h1>{me ? <OpsDashboard me={me} onLeave={leave} /> : <Login onLogin={login} notice={notice} />}</>;
 }
 
 function Login({ onLogin, notice }: { onLogin: (u: { username: string }) => void; notice: string | null }) {

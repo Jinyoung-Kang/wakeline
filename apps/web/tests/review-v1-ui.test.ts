@@ -323,3 +323,39 @@ describe("R-40 keyboard paths to SIGMETs, airports and replay items; airport cat
     expect(renderToStaticMarkup(createElement(ReplayListView, { frame, q: "kal", onPick: () => {} }))).not.toContain("def456");
   });
 });
+
+describe("R-30 structure for assistive technology", () => {
+  it("each route has its own document title (template on the root layout)", async () => {
+    const root = (await import("@/app/layout")).metadata as { title: { default: string; template: string } };
+    expect(root.title.template).toContain("%s");
+    const titles = await Promise.all(["replay", "stats", "ops"].map(async (r) => (await import(`@/app/${r}/layout.tsx`)).metadata.title as string));
+    const about = (await import("@/app/about/page")).metadata?.title as string | undefined;
+    const airport = (await import("@/app/airports/[icao]/layout")).metadata.title as string;
+    const all = [root.title.default, ...titles, about, airport];
+    expect(all.every((t) => typeof t === "string" && t.length > 0)).toBe(true);
+    expect(new Set(all).size).toBe(all.length);
+  });
+  it("pages without a visible heading get a screen-reader h1; the shell starts with skip links and a focusable main", async () => {
+    expect(renderToStaticMarkup(createElement(Dashboard))).toMatch(/<h1 class="sr-only">[^<]+<\/h1>/);
+    expect(renderToStaticMarkup(createElement(ReplayPage))).toMatch(/<h1 class="sr-only">[^<]+<\/h1>/);
+    const { Shell } = await import("@/components/Shell");
+    const html = renderToStaticMarkup(createElement(Shell, null, createElement("p", null, "x")));
+    expect(html.indexOf('href="#main"')).toBeGreaterThan(-1);
+    expect(html.indexOf('href="#main"')).toBeLessThan(html.indexOf("<header"));
+    expect(html).toMatch(/<main[^>]*id="main"[^>]*tabindex="-1"|<main[^>]*tabindex="-1"[^>]*id="main"/i);
+    expect(renderToStaticMarkup(createElement(Dashboard))).toMatch(/<aside[^>]*id="side-panel"/);
+  });
+  it("on-map credit links are out of the Tab order (the same links are in the footer)", async () => {
+    const { mapAttributionHtml } = await import("@/lib/attribution");
+    const html = mapAttributionHtml();
+    const anchors = html.match(/<a /g)!.length;
+    expect(anchors).toBeGreaterThan(5);
+    expect(html.match(/<a [^>]*tabindex="-1"/g)?.length ?? 0).toBe(anchors);
+  });
+  it("alert rows are read with pauses between fields", () => {
+    setData({ alerts: new Map([[7, alert()]]), alertsVersion: 1, conn: "open" });
+    const html = renderToStaticMarkup(createElement(SidePanelView, { panel: "alerts", hex: null, sigmet: null, airport: null }));
+    const row = html.slice(html.indexOf('data-testid="alert-toggle"'), html.indexOf("</button>", html.indexOf('data-testid="alert-toggle"')));
+    expect(row.match(/<span class="sr-only">, <\/span>/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+  });
+});

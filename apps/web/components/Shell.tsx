@@ -13,9 +13,14 @@ const NAV = [
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const path = usePathname();
+  const path = usePathname() ?? "";
+  // 건너뛰기 링크(R-30): Tab 첫 정지점. 상황판은 지도 조작·출처 링크를 건너 알림 패널로 바로 갈 수 있다.
   return (
     <div className="flex h-full flex-col">
+      <div className="absolute top-0 left-0 z-50 flex gap-1">
+        <a href="#main" className="skip-link">본문으로 건너뛰기</a>
+        {path === "/" ? <a href="#side-panel" className="skip-link">알림 목록으로 건너뛰기</a> : null}
+      </div>
       {/* 좁은 화면: 줄바꿈(검색은 다음 줄) · 메뉴는 가로 스크롤 — 헤더 밖으로 잘리지 않게(R-39) */}
       <header className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line bg-bg-1 px-3 py-1">
         <div className="flex min-w-0 items-center gap-3 sm:gap-6">
@@ -37,7 +42,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="label hidden xl:block">portfolio · non-commercial · local</div>
         </div>
       </header>
-      <main className="min-h-0 flex-1">{children}</main>
+      <main id="main" tabIndex={-1} className="min-h-0 flex-1 outline-none">{children}</main>
       <AttributionFooter />
     </div>
   );

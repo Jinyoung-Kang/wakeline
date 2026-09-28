@@ -84,13 +84,13 @@ export function AlertPanel() {
               <button className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-bg-2" aria-expanded={open === a.id} aria-controls={open === a.id ? `evidence-${a.id}` : undefined}
                 onClick={() => setOpen(open === a.id ? null : a.id)} data-testid="alert-toggle">
                 <span className="inline-block h-2 w-2 shrink-0" style={{ background: hazardColor(a.hazard) }} />
-                <span className="mono w-16 shrink-0 text-[12px]">{a.callsign ?? a.hex}</span>
-                <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`}>{a.hazard}{a.qualifier ? ` ${a.qualifier}` : ""}</span>
-                <span className="mono w-12 shrink-0 text-[11px] text-fg-3">{a.fir_id}</span>
+                <span className="mono w-16 shrink-0 text-[12px]">{a.callsign ?? a.hex}</span><span className="sr-only">, </span>
+                <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`}>{a.hazard}{a.qualifier ? ` ${a.qualifier}` : ""}</span><span className="sr-only">, </span>
+                <span className="mono w-12 shrink-0 text-[11px] text-fg-3">{a.fir_id}</span><span className="sr-only">, </span>
                 {a.kind === "PREDICTED"
                   ? <span className="mono est-val w-14 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span>{fmtAlt(a.alt_ft)}</span>
-                  : <span className="mono w-14 shrink-0 text-[11px]" title="관측 고도">{fmtAlt(a.alt_ft)}</span>}
-                {a.kind === "PREDICTED" ? <EtaBadge a={a} frozen={listState !== "live"} /> : <span className="badge bad ml-auto">INSIDE</span>}
+                  : <span className="mono w-14 shrink-0 text-[11px]" title="관측 고도">{fmtAlt(a.alt_ft)}</span>}<span className="sr-only">, </span>
+                {a.kind === "PREDICTED" ? <EtaBadge a={a} frozen={listState !== "live"} /> : <span className="badge bad ml-auto">INSIDE<span className="sr-only"> — 경보 안</span></span>}
               </button>
               {open === a.id ? (
                 <div id={`evidence-${a.id}`} className="px-2 pb-2">

@@ -48,6 +48,9 @@ input:focus, select:focus { outline: 1px solid var(--color-accent); }
 /* 키보드 초점은 항상 보이게(2px, 1px 띄움). 마우스 클릭에는 표시하지 않는다(:focus-visible). */
 :focus-visible { outline: 2px solid var(--color-accent) !important; outline-offset: 1px; }
 .maplibregl-canvas:focus-visible { outline-offset: -2px; }
+/* 건너뛰기 링크: 평소에는 보이지 않고 키보드 초점을 받으면 나타난다(R-30) */
+.skip-link { position: absolute; left: -10000px; top: 0; }
+.skip-link:focus { position: static; left: auto; display: inline-block; padding: 6px 10px; background: var(--color-bg-2); color: var(--color-fg); border: 1px solid var(--color-accent); font-size: 12px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn:disabled:hover { border-color: var(--color-line-2); }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }

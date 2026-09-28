@@ -48,10 +48,11 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
  * MapLibre AttributionControl 의 customAttribution(HTML 문자열). 위 고정 목록만으로 만들며 외부 입력은 들어가지 않는다(그래도 escape).
  * 배경지도 크레딧(OpenFreeMap·OpenMapTiles·OSM)은 스타일 소스가 이미 붙였으면(includeMap=false) 중복하지 않고,
  * 스타일에 없으면 여기서 붙인다(mapStyleHasBasemapCredit). `extra` 는 재생 화면처럼 앞에 붙일 설명.
+ * 링크는 Tab 순서에서 뺀다(tabindex=-1, R-30) — 같은 링크가 모든 화면 하단(AttributionFooter)에 있어 키보드로는 거기서 연다.
  */
 export function mapAttributionHtml(opts: { extra?: string; includeMap?: boolean } = {}): string {
   const { extra, includeMap = true } = opts;
-  const link = (c: { label: string; href: string }) => `<a href="${esc(c.href)}" target="_blank" rel="noopener noreferrer">${esc(c.label)}</a>`;
+  const link = (c: { label: string; href: string }) => `<a href="${esc(c.href)}" tabindex="-1" target="_blank" rel="noopener noreferrer">${esc(c.label)}</a>`;
   const parts = creditGroups(includeMap ? CREDITS : CREDITS.filter((c) => c.role !== "Map")).map((g) => `${esc(g.role)}: ${g.items.map((c) => link(c) + (c.license ? ` (${link(c.license)})` : "") + (c.note ? ` (${esc(c.note)})` : "")).join(" · ")}`);
   return (extra ? `${esc(extra)} · ` : "") + parts.join(" | ");
 }

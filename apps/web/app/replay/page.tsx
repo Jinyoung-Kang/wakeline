@@ -58,6 +58,7 @@ export default function ReplayPage() {
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
     <div className="flex h-full flex-col">
+      <h1 className="sr-only">이력 재생</h1>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-bg-1 px-3 py-1 text-[11px] whitespace-nowrap">
         <span className="label">Replay</span>
         <button className="btn" onClick={() => setPlaying(!playing)} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
