@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { copyText } from "@/lib/copy";
 import { describeThrown, reportClientError, type ReportResult } from "@/lib/errorReport";
-import { logHeaderLine } from "@/lib/logs";
+import { logHeaderLine } from "@/lib/log-line";
 import { RequestIdCopy } from "./ErrorNote";
 
 const REPORT_TEXT: Record<ReportResult, string> = {

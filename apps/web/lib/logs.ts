@@ -5,6 +5,7 @@
  * 같은 id 가 둘 다에 있을 수 있어 화면은 항목을 stream + id(entryKey)로 가른다(같은 id 는 server 가 앞 — api 순서).
  */
 import { REQUEST_ID_RE } from "./api";
+import { logHeaderLine } from "./log-line";
 
 export const LOGS_PATH = "/api/v1/ops/logs";
 export const LOG_SERVICES = ["api", "collector", "ais", "web-client"] as const;
@@ -265,9 +266,7 @@ export function fmtLogTime(v: string | null | undefined): string {
 export const firstLine = (s: string) => s.split(/\r?\n/, 1)[0];
 
 /** 복사 텍스트 첫 줄: `[시각 수준 서비스/로거] rid=…` — 요청 id 가 없으면 rid=— */
-export function logHeaderLine(ts: string, level: string, service: string, logger: string, rid: string | null): string {
-  return `[${ts} ${level} ${service}/${logger}] rid=${rid ?? "—"}`;
-}
+export { logHeaderLine } from "./log-line";
 
 /** 예외 종류 표시(§G5): 빈 글(브라우저 오류 — 종류를 보내지 않는다)과 모름은 "—" */
 export const exceptionTypeText = (t: string | null | undefined): string => (t && t.trim() ? t : "—");
