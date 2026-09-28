@@ -95,6 +95,60 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(map.getSource("sigmets")).toBeDefined();
   });
 
+  describe("a style host that hangs (packets dropped — no error event for minutes)", () => {
+    const STYLE_TIMEOUT_MS = 15_000; // lib/maplayers STYLE_LOAD_TIMEOUT_MS(근거는 그 주석)
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("switches to the local fallback style and says so when style.load has not come by the timeout", async () => {
+      const map = await mount();
+      await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS - 1); });
+      expect(map.styleSet).toHaveLength(0);
+      // 수정 전: 'error' 가 오지 않으면 대체 스타일로 바꾸지 않았다 — 데이터는 오는데 지도 레이어·배너 없이 빈 화면
+      await act(() => { vi.advanceTimersByTime(1); });
+      expect(map.styleSet).toHaveLength(1);
+      expect((map.styleSet[0] as { layers: { id: string }[] }).layers[0].id).toBe("wakeline-no-basemap");
+      expect(dom.container.textContent).toContain("배경지도를 불러오지 못함");
+      await act(() => { map.fire("style.load"); map.fire("load"); });
+      expect(map.getSource("aircraft")).toBeDefined();
+    });
+
+    it("a style that answers late after the switch does not flip the map back (no second setStyle, banner stays)", async () => {
+      const map = await mount();
+      await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS); });
+      expect(map.styleSet).toHaveLength(1);
+      // 대체 스타일의 style.load/load, 그리고 혹시 늦게 도착한 원래 스타일의 이벤트·오류
+      await act(() => { map.fire("style.load"); map.fire("load"); map.fire("style.load"); });
+      await act(() => map.fire("error", { type: "error", error: new Error("AbortError") }));
+      await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS * 4); });
+      expect(map.styleSet).toHaveLength(1);
+      expect(dom.container.textContent).toContain("배경지도를 불러오지 못함");
+    });
+
+    it("a style that loads in time cancels the timer; an error fallback is not repeated by the timer; unmount clears it", async () => {
+      const ok = await mount();
+      await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS - 1000); ok.fire("style.load"); ok.fire("load"); });
+      await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS * 2); });
+      expect(ok.styleSet).toHaveLength(0);
+      expect(dom.container.textContent).not.toContain("배경지도를 불러오지 못함");
+      await React.act(async () => { root!.unmount(); });
+      root = null;
+
+      const failed = await mount();
+      await act(() => failed.fire("error", { type: "error", error: new Error("AJAXError: Failed to fetch (0)") }));
+      await act(() => { vi.advanceTimersByTime(STYLE_TIMEOUT_MS * 2); });
+      expect(failed.styleSet).toHaveLength(1);
+      await React.act(async () => { root!.unmount(); });
+      root = null;
+
+      const gone = await mount();
+      await React.act(async () => { root!.unmount(); });
+      root = null;
+      vi.advanceTimersByTime(STYLE_TIMEOUT_MS * 2);
+      expect(gone.styleSet).toHaveLength(0); // 떠난 지도에 스타일을 바꾸지 않는다
+    });
+  });
+
   it("tile/source errors after the style loaded do not replace the style", async () => {
     const map = await mount();
     await act(() => { map.fire("style.load"); map.fire("load"); });

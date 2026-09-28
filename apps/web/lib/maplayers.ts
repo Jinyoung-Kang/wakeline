@@ -15,6 +15,13 @@ export const FALLBACK_STYLE: maplibregl.StyleSpecification = {
   sources: {},
   layers: [{ id: "wakeline-no-basemap", type: "background", paint: { "background-color": "#0b0d10" } }],
 };
+/**
+ * 배경지도 스타일(STYLE_URL) 대기 상한(R-01). 이 안에 style.load(스타일 JSON 하나를 받아 해석함 — 스프라이트·글꼴·타일은 그 뒤)가 오지 않으면
+ * FALLBACK_STYLE 로 바꾼다. MapLibre 는 스타일 요청에 시간 제한이 없고, 호스트가 패킷을 버리면(방화벽 DROP·DNS 블랙홀) 오류 없이 수 분 기다린다.
+ * 15 s = 이 저장소의 다른 네트워크 제한보다 길게: collector 외부 HTTP 요청 8 s(config.http_timeout_s), WS resync 응답 대기 10 s(ResyncGate),
+ * edge 의 api 연결 5 s(proxy_connect_timeout) — 느리지만 살아 있는 호스트를 바꾸지 않으면서, 빈 지도를 오래 두지 않는다.
+ */
+export const STYLE_LOAD_TIMEOUT_MS = 15_000;
 /** MapLibre 워커 경로(버전 폴더) — scripts/copy-maplibre-worker.mjs 가 public/maplibre/<버전>/ 에 복사한다. 지도를 만들기 전에 한 번 지정. */
 export { MAPLIBRE_WORKER_URL } from "./maplibre";
 export const RADAR_COLOR_SCHEME = 2;
