@@ -29,6 +29,19 @@ import static org.assertj.core.api.Assertions.fail;
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class OpenApiSnapshotIT extends IntegrationTest {
+
+    @org.springframework.beans.factory.annotation.Autowired org.springdoc.core.properties.SpringDocConfigProperties springDoc;
+
+    /**
+     * 공개 문서(/api/v1/openapi)는 일부러 켠다 — 그 뜻을 설정에 명시한다. springdoc 은 이 속성을 적지 않으면 엔드포인트는 켜 두면서
+     * 기동마다 WARN("enabled by default … set the property 'springdoc.api-docs.enabled=false'")을 남겼고, 시스템 로그에 매번 실렸다.
+     * 그 경고의 조건이 바로 이 값이 false 인 것이다(SpringDocAppInitializer).
+     */
+    @Test
+    void openApiDocsAreEnabledExplicitly_soStartupLogsNoSpringDocWarning() {
+        assertThat(springDoc.getApiDocs().isEnabled()).isTrue();
+        assertThat(springDoc.getApiDocs().getPath()).isEqualTo("/api/v1/openapi");
+    }
     static final Path SNAPSHOT = Path.of("openapi", "openapi-v1.json");
     static final Path ACTUAL = Path.of("build", "openapi", "openapi-v1.actual.json");
     static final ObjectMapper PRETTY = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();

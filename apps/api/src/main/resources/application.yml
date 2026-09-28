@@ -60,6 +60,8 @@ management:
   health.db.enabled: true
 
 springdoc:
+  # 공개 API 문서는 일부러 켠다 — 명시하지 않으면 springdoc 이 기동마다 "enabled by default" WARN 을 남긴다(시스템 로그 소음)
+  api-docs.enabled: true
   api-docs.path: /api/v1/openapi
   swagger-ui.enabled: false
   # 공개 문서에서 운영 API 를 뺀다(R-89, ADR-017 §1) — 익명 /api/v1/ops/** 는 404 로 존재를 숨긴다
