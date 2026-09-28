@@ -6,19 +6,20 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  altM, fmtAltDual, fmtAltGndDual, fmtGsDual, fmtSogDual, fmtVrateDual, fpmToMs, ftToM, gsKmh, KMH_PER_KT, ktToKmh, M_PER_FT, sogKmh,
+  altM, band, BASE_ASSUMED_LABEL, TOP_UNKNOWN_LABEL, fmtAltDual, fmtAltGndDual, fmtGsDual, fmtSogDual, fmtVrateDual, fpmToMs, ftToM, gsKmh, KMH_PER_KT, ktToKmh, M_PER_FT, sogKmh,
 } from "@/lib/format";
-import { aircraftTip, shipTip } from "@/lib/tooltip";
+import { aircraftTip, shipTip, sigmetTip } from "@/lib/tooltip";
 import { fmtCourse } from "@/lib/ships";
 import { replayAircraftRows, replayAircraftTip } from "@/lib/replay";
 import { aircraftStates, resetData, setData } from "@/lib/store";
 import { AircraftCard } from "@/components/AircraftCard";
 import { AlertPanel } from "@/components/AlertPanel";
 import { EvidenceCard } from "@/components/EvidenceCard";
-import { InsideAircraftList } from "@/components/SigmetCard";
+import { InsideAircraftList, SigmetCard } from "@/components/SigmetCard";
+import { ALT_TICKS, MapLegendView } from "@/components/MapLegend";
 import { ShipCard } from "@/components/ShipCard";
 import { AltStack, SogStack } from "@/components/UnitStack";
-import type { Alert, PublicStatus } from "@/lib/types";
+import type { Alert, PublicStatus, SigmetCollection, SigmetProps } from "@/lib/types";
 
 describe("unit conversions (contract v5 §A1) — defined constants only", () => {
   it("constants are the exact definitions", () => {
@@ -188,5 +189,43 @@ describe("dual units at every display site (contract v5 §A2)", () => {
     expect(tip).toMatchObject({ SOG: "12.3 kn · 22.8 km/h", "COG/HDG": "123.4° / 120°" });
     expect(Object.fromEntries(shipTip({ ...st, sog_kn: null, cog_deg: null }, T0).rows)).toMatchObject({ SOG: "—", "COG/HDG": "— / 120°" });
     expect(fmtCourse({ cog_deg: null, heading_deg: 33 })).toBe("— / 33°");
+  });
+});
+
+// ---------------------------------------------------------------- §A3 범례 눈금 · SIGMET 고도대(카드만)
+
+describe("legend altitude ticks and SIGMET bands (contract v5 §A3)", () => {
+  beforeEach(() => resetData());
+  afterEach(() => resetData());
+  const layers = { radar: false, sigmet: true, aircraft: true, ships: false, airports: false, tracks: false, prediction: false };
+
+  it("legend altitude ticks carry metres (ft · m)", () => {
+    expect(ALT_TICKS.map((t) => `${t.ft} · ${t.m}`)).toEqual(["0 ft · 0 m", "10k ft · 3,048 m", "FL250 · 7,620 m", "FL400+ · 12,192 m+"]);
+    const html = renderToStaticMarkup(createElement(MapLegendView, { id: "lg", layers, radarSource: "rainviewer" }));
+    for (const t of ALT_TICKS) expect(html).toContain(`title="${t.ft} · ${t.m}"`);
+    expect(html).toContain("10,000 ft(3,048 m) 파랑");
+  });
+
+  it("band with metres: numeric bounds get (N m); assumptions, SFC and source notes stay as they are", () => {
+    expect(band(10000, 38000, { base_source: "json", top_source: "json" }, { metric: true })).toBe("10,000 ft (3,048 m) – FL380 (11,582 m)");
+    expect(band(0, 38000, { base_source: "json", top_source: "raw_text", top_above: true }, { metric: true })).toBe("SFC – FL380 (11,582 m) 이상 (원문)");
+    expect(band(0, 30000, { base_source: "json", top_source: "raw_text_lower_bound" }, { metric: true })).toBe("SFC – FL300 (9,144 m) 이상 (원문 ABV)");
+    expect(band(0, null, { base_source: "assumed_surface", top_source: "unknown" }, { metric: true })).toBe(`${BASE_ASSUMED_LABEL} – ${TOP_UNKNOWN_LABEL}`);
+    expect(band(null, 20000, null, { metric: true })).toBe("— – FL200 (6,096 m)");
+    // 지도 툴팁(카드가 아님)은 그대로 — SIGMET 고도대는 항공기 고도가 아니다
+    expect(band(10000, 38000, { base_source: "json", top_source: "json" })).toBe("10,000 ft – FL380");
+  });
+
+  it("the SIGMET card and the evidence card show the band with metres; the SIGMET tooltip does not", () => {
+    const props = {
+      id: "S1", fir_id: "RKRR", fir_name: "INCHEON", series_id: "A1", hazard: "TS", base_ft: 10000, top_ft: 38000, base_source: "json", top_source: "json",
+      valid_from: iso(T0 - 3_600_000), valid_to: iso(T0 + 3_600_000), active: true, expiring_soon: false, raw_text: "", provider: "awc", fetched_at: iso(T0),
+    } as SigmetProps;
+    setData({ sigmets: { type: "FeatureCollection", features: [{ type: "Feature", geometry: null, properties: props }] } as SigmetCollection });
+    const card = text(renderToStaticMarkup(createElement(SigmetCard, { id: "S1" })));
+    expect(card).toContain("고도대10,000 ft (3,048 m) – FL380 (11,582 m)");
+    const ev = text(renderToStaticMarkup(createElement(EvidenceCard, { a: alertOf({ evidence: { band_ft: [10000, 38000], base_source: "json", top_source: "json" } }) })));
+    expect(ev).toContain("고도대10,000 ft (3,048 m) – FL380 (11,582 m)");
+    expect(Object.fromEntries(sigmetTip(props, T0).rows).BAND).toBe("10,000 ft – FL380");
   });
 });

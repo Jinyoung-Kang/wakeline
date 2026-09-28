@@ -2,14 +2,17 @@
 import { useServerData } from "@/lib/store";
 import { useUi, type Layers } from "@/lib/ui-store";
 import {
-  ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
+  ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
 import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH } from "@/lib/ship-layers";
 import { aisCoverageFeatures, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
 const ALT_MAX = ALT_RAMP[ALT_RAMP.length - 1][0];
-const ALT_TICKS: [number, string][] = [[0, "0"], [10000, "10k ft"], [25000, "FL250"], [40000, "FL400+"]];
+/** 고도 램프 눈금(계약 v5 §A3): ft(FL) 과 m. 마지막 눈금은 "그 이상" */
+export const ALT_TICKS: { at: number; ft: string; m: string }[] = [
+  { at: 0, ft: "0 ft", m: altM(0) }, { at: 10000, ft: "10k ft", m: altM(10000) }, { at: 25000, ft: "FL250", m: altM(25000) }, { at: 40000, ft: "FL400+", m: `${altM(40000)}+` },
+];
 
 /** 지도 아이콘과 같은 모양의 작은 비행기(nodir = 방위 모름 마름모) */
 function Plane({ color, opacity = 1, halo, title, nodir }: { color: string; opacity?: number; halo?: string; title?: string; nodir?: boolean }) {
@@ -71,10 +74,15 @@ export function MapLegendView({ id, layers, radarSource }: { id: string; layers:
       {layers.aircraft ? (
         <Section title="항공기 · 고도(아이콘 색)">
           <li className="pb-1">
-            <div className="h-2 w-full" style={{ background: grad }} role="img" aria-label="고도 색 램프: 0 ft 녹색, 10,000 ft 파랑, FL250 하늘색, FL400 이상 흰색" />
-            <div className="relative mt-0.5 h-3 text-[9px] text-fg-3 mono">
-              {ALT_TICKS.map(([ft, l], i) => (
-                <span key={l} className="absolute" style={i === 0 ? { left: 0 } : i === ALT_TICKS.length - 1 ? { right: 0 } : { left: `${(ft / ALT_MAX) * 100}%`, transform: "translateX(-50%)" }}>{l}</span>
+            <div className="h-2 w-full" style={{ background: grad }} role="img"
+              aria-label={`고도 색 램프: 0 ft(0 m) 녹색, 10,000 ft(${altM(10000)}) 파랑, FL250(${altM(25000)}) 하늘색, FL400(${altM(40000)}) 이상 흰색`} />
+            {/* 눈금 두 줄: ft(FL) 아래 m — 한 줄로 쓰면 이웃 눈금과 겹친다 */}
+            <div className="relative mt-0.5 h-6 text-[9px] text-fg-3 mono" data-testid="legend-alt-ticks">
+              {ALT_TICKS.map((t, i) => (
+                <span key={t.ft} title={`${t.ft} · ${t.m}`} className={`absolute flex flex-col leading-tight ${i === 0 ? "items-start" : i === ALT_TICKS.length - 1 ? "items-end" : "items-center"}`}
+                  style={i === 0 ? { left: 0 } : i === ALT_TICKS.length - 1 ? { right: 0 } : { left: `${(t.at / ALT_MAX) * 100}%`, transform: "translateX(-50%)" }}>
+                  <span>{t.ft}</span><span className="text-fg-3/80">{t.m}</span>
+                </span>
               ))}
             </div>
           </li>

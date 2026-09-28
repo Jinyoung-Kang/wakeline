@@ -200,18 +200,20 @@ export const TOP_UNKNOWN_LABEL = "상한 미발표(무제한 가정)";
  * - 하한: base_source=assumed_surface → "하한 미발표(SFC 가정)", 0 → "SFC", 없음 → "—"
  * - 상한: null → "상한 미발표(무제한 가정)"(판정이 무제한으로 가정하므로), raw_text → "FL380 (원문)" / ABV → "FL380 이상 (원문)"
  * - 하한 출처를 모르는 0(구 알림 근거 등)은 "SFC(출처 미확인)" 로 가정일 수 있음을 드러낸다.
+ * - opts.metric(계약 v5 §A3): 카드에서만 숫자 경계에 m 를 괄호로 덧붙인다("FL380 (11,582 m)"). 고도대는 항공기 고도가 아니므로 툴팁·목록은 그대로.
  */
-export function band(base: number | null | undefined, top: number | null | undefined, src?: BandSource | null) {
+export function band(base: number | null | undefined, top: number | null | undefined, src?: BandSource | null, opts?: { metric?: boolean }) {
+  const alt = (ft: number) => (opts?.metric ? `${fmtAlt(ft)} (${altM(ft)})` : fmtAlt(ft));
   let lo: string;
   if (src?.base_source === "assumed_surface") lo = BASE_ASSUMED_LABEL;
   else if (base == null) lo = "—";
   else if (base === 0) lo = src?.base_source === "json" ? "SFC" : "SFC(출처 미확인)";
-  else lo = fmtAlt(base);
+  else lo = alt(base);
   let hi: string;
   if (top == null || src?.top_source === "unknown") hi = TOP_UNKNOWN_LABEL;
-  else if (src?.top_source === "raw_text_lower_bound") hi = `${fmtAlt(top)} 이상 (원문 ABV)`;
-  else if (src?.top_source === "raw_text") hi = `${fmtAlt(top)}${src.top_above ? " 이상" : ""} (원문)`;
-  else hi = fmtAlt(top);
+  else if (src?.top_source === "raw_text_lower_bound") hi = `${alt(top)} 이상 (원문 ABV)`;
+  else if (src?.top_source === "raw_text") hi = `${alt(top)}${src.top_above ? " 이상" : ""} (원문)`;
+  else hi = alt(top);
   return `${lo} – ${hi}`;
 }
 

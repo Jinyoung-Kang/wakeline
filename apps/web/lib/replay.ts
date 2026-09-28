@@ -129,8 +129,9 @@ export function replaySigmetTip(s: ReplaySigmet, at: string): Tip {
   };
 }
 
+/** 재생 상세(카드)의 고도대 — 숫자 경계에 m 를 괄호로(계약 v5 §A3). 툴팁은 replaySigmetTip(그대로) */
 export function replaySigmetBand(s: ReplaySigmet): string {
-  return band(s.base_ft, s.top_ft, bandSrc(s));
+  return band(s.base_ft, s.top_ft, bandSrc(s), { metric: true });
 }
 
 // ---- 요청 영역·오류(R-05) ----

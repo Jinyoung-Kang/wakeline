@@ -11,6 +11,7 @@ import { AltStack } from "./UnitStack";
 
 /**
  * SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—".
+ * 숫자 경계에는 m 를 괄호로(계약 v5 §A3 — 카드에서만).
  * 발효 전(valid_from > 지금)이면 "발효 전"과 남은 시간 — 엔진은 발효 전 경보로 판정하지 않는다(DH-8).
  */
 export function SigmetCard({ id }: { id: string }) {
@@ -33,7 +34,7 @@ export function SigmetCard({ id }: { id: string }) {
   const startsIn = pending ? (Date.parse(p.valid_from) - now) / 1000 : null;
   const rows: [string, React.ReactNode][] = [
     ["FIR", p.fir_name ?? p.fir_id ?? "—"],
-    ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p))],
+    ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p), { metric: true })],
     ["유효", <span key="v" className="mono">{fmtTime(p.valid_from)} – {fmtTime(p.valid_to)}</span>],
     ["이동", p.move_dir || p.move_spd ? `${p.move_dir ?? "—"}${p.move_spd ? ` ${p.move_spd}` : ""}` : "—"],
     ["변화", p.chng ?? "—"],

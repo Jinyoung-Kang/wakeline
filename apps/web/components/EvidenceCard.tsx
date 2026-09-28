@@ -28,7 +28,7 @@ export function EvidenceCard({ a }: { a: Alert }) {
   const rows: [string, React.ReactNode][] = [
     ["경보", `${a.fir_id} · ${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`],
     ["SIGMET id", <span key="id" className="mono text-fg-2">{a.sigmet_id}</span>],
-    ["고도대", bandFt ? band(bandFt.base, bandFt.top, src) : "—"],
+    ["고도대", bandFt ? band(bandFt.base, bandFt.top, src, { metric: true }) : "—"],
     [a.kind === "PREDICTED" ? "진입 시 고도(추정)" : "항공기 고도", <span key="alt" className="mono">{fmtAltDual(a.alt_ft)}</span>],
     ["유효시간", <span key="v" className="mono">{fmtTime(str(ev.valid_from))} – {fmtTime(str(ev.valid_to))}</span>],
     ["판정 시각", <span key="j" className="mono">{fmtTime(str(ev.judged_at))}</span>],
