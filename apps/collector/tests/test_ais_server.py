@@ -472,8 +472,15 @@ async def test_main_without_key_reports_disabled_and_stays_healthy():
     ok, why = evaluate(r.kv[STATUS_KEY])
     assert ok and "disabled" in why
     assert "AISSTREAM_API_KEY" in r.kv[STATUS_KEY]["last_error"]
+    # 계약 v5 §C2: 그 경고가 가려진 LogEvent 로 wakeline:logs 에 실린다(service ais), 상태 해시에 싱크 지표
+    await wait_until(lambda: any(f["e"] for _sid, f in r.streams.get("wakeline:logs", [])), 3)
+    logs = [json.loads(f["e"]) for _sid, f in r.streams["wakeline:logs"]]
+    warn = next(e for e in logs if "AISSTREAM_API_KEY is not set" in e["message"])
+    assert warn["service"] == "ais" and warn["level"] == "WARN" and warn["logger"] == "ais.main" and warn["exception"] is None
+    assert r.kv[STATUS_KEY]["log_sent"].isdigit() and r.kv[STATUS_KEY]["log_dropped"].isdigit()
     stop.set()
     assert await asyncio.wait_for(task, 5) == 0
+    assert not any(type(h).__name__ == "LogSink" for h in logging.getLogger().handlers)  # 끝나면 루트 로거에서 뗀다
 
 
 async def test_main_fixture_mode_publishes_and_carries_gap_over_restart():

@@ -4,8 +4,11 @@ ADR-013)·선택 항공기 노선 조회(계약 v4 §A)를 하나의 이벤트 �
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
 외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
 
-종료(SIGTERM, COL-4): 진행 중 작업을 SHUTDOWN_GRACE_S 동안 끝내게 두고, 남은 작업은 취소한 뒤 DB 쓰기 큐를 DB_DRAIN_S 안에서 비운다.
-합계(18 + 4 + 4 s)는 compose stop_grace_period(30 s) 안이다 — 그래야 SIGKILL 전에 close() 가 돈다.
+WARN·ERROR 로그는 가려서 wakeline:logs 로도 보낸다(계약 v5 §C2 · logsink.py). 작업 태스크 이름(job:<작업>)이 로그 항목의 context.task 다.
+
+종료(SIGTERM, COL-4): 진행 중 작업을 SHUTDOWN_GRACE_S 동안 끝내게 두고, 남은 작업은 취소한 뒤 DB 쓰기 큐를 DB_DRAIN_S 안에서 비우고,
+남은 로그 항목을 logsink.CLOSE_S 안에서 보낸다. 합계(18 + 4 + 4 + 0.5 s)는 compose stop_grace_period(30 s) 안이다 — 그래야 SIGKILL 전에
+close() 가 돈다.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
+from wakeline_collector.logsink import LogSink, close_log_sink, sink_metrics, start_log_sink
 from wakeline_collector.masking import install_log_masking, register_secrets
 from wakeline_collector.providers import fixture as fx
 from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
@@ -114,6 +118,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     limits = build_limits(settings)
     publisher = Publisher(redis)
     tracker: DemandTracker | None = None
+    logsink: LogSink | None = None
 
     def metrics() -> dict[str, str]:
         m = {
@@ -127,6 +132,8 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "adsbdb_rps_1m": f"{limiter.rate_1m(ADSBDB_HOST):.3f}",
             "http_rps_1m": f"{limiter.rate_1m():.3f}",
             "http_throttled": str(limiter.throttled),
+            # 계약 v5 §C2: 로그 싱크가 wakeline:logs 로 보낸 수 · 대기열 상한으로 버린 수(기동 뒤 누계, 끄면 빈 값)
+            **sink_metrics(logsink),
         }
         if tracker is not None:
             m.update(tracker.metrics())
@@ -182,24 +189,26 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
 
-    await ctx.rt.refresh()
-    coros = [
-        run_periodic("region", region.run_once, lambda: ctx.rt.region_poll_s, stop, ctx.rt.refresh),
-        run_periodic("global", global_.run_once, lambda: ctx.rt.global_poll_s, stop, initial_delay=5),
-        run_periodic("sigmet", sigmet.run_once, lambda: ctx.rt.sigmet_poll_s, stop, initial_delay=1),
-        run_periodic("radar", radar.run_once, lambda: ctx.rt.radar_poll_s, stop, initial_delay=2),
-        run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
-        run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
-        run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
-    ]
-    if tracker is not None:
-        coros.append(tracker.run(stop))
-    tasks = [asyncio.create_task(c) for c in coros]
+    logsink = start_log_sink("collector", redis, enabled=settings.log_sink_enabled)  # MaskFilter(configure_logging) 뒤에 붙인다
     try:
+        await ctx.rt.refresh()
+        jobs = {
+            "region": run_periodic("region", region.run_once, lambda: ctx.rt.region_poll_s, stop, ctx.rt.refresh),
+            "global": run_periodic("global", global_.run_once, lambda: ctx.rt.global_poll_s, stop, initial_delay=5),
+            "sigmet": run_periodic("sigmet", sigmet.run_once, lambda: ctx.rt.sigmet_poll_s, stop, initial_delay=1),
+            "radar": run_periodic("radar", radar.run_once, lambda: ctx.rt.radar_poll_s, stop, initial_delay=2),
+            "metar": run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
+            "maintenance": run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
+            "radar_kr": run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
+        }
+        if tracker is not None:
+            jobs["demand"] = tracker.run(stop)
+        tasks = [asyncio.create_task(c, name=f"job:{name}") for name, c in jobs.items()]  # 로그 항목 context.task
         await run_until_stopped(tasks, stop, grace_s=SHUTDOWN_GRACE_S)
     finally:
         await http.aclose()
         await db.close(drain_s=DB_DRAIN_S)
+        await close_log_sink(logsink)  # 루트 로거에서 떼고 남은 항목을 보낸다(Redis 를 닫기 전에)
         await redis.aclose()
         log.info("collector stopped")
 

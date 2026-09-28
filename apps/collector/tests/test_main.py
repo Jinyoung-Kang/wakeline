@@ -248,4 +248,90 @@ async def test_main_fixture_mode_smoke(monkeypatch):
         v = orjson.loads(r.kv[key])
         assert v["status"] == "disabled" and v["origin"] is None and v["destination"] is None and r.ttl[key] - time.time() <= 120
     assert sorted(k for k in r.kv if k.startswith("wakeline:route:")) == sorted(routes)
-    assert mainmod.SHUTDOWN_GRACE_S + 2 * mainmod.DB_DRAIN_S < 30  # compose stop_grace_period 30 s 안
+    from wakeline_collector.logsink import CLOSE_S
+
+    assert mainmod.SHUTDOWN_GRACE_S + 2 * mainmod.DB_DRAIN_S + CLOSE_S < 30  # compose stop_grace_period 30 s 안(로그 전송 포함)
+
+
+async def _run_collector_until(monkeypatch, pred, *, enabled: bool):
+    """fixture 모드 collector main 을 pred(r) 가 참이 될 때까지 돌리고 멈춘다(외부 호출·실 Redis·실 DB 없음)."""
+    import asyncio
+    import logging
+
+    from fakes import FakeRedis
+
+    from wakeline_collector import main as mainmod
+    from wakeline_collector.db import Db
+
+    async def no_db():
+        raise OSError("no db in tests")
+
+    monkeypatch.setattr(mainmod.settings, "wakeline_fixture_mode", 1)
+    monkeypatch.setattr(mainmod.settings, "log_sink_enabled", enabled)
+    monkeypatch.setattr(mainmod, "DB_DRAIN_S", 0.1)
+    r = FakeRedis()
+    stop = asyncio.Event()
+    task = asyncio.create_task(mainmod.main(stop=stop, redis=r, db=Db(no_db)))
+    try:
+        for _ in range(300):
+            if "region_at" in r.kv.get("wakeline:collector", {}):
+                break
+            await asyncio.sleep(0.01)
+        logging.getLogger("test.v5.collector").error("probe %s", "token=tok_hidden_1")
+        for _ in range(300):
+            if pred(r):
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 10)
+    return r
+
+
+def _logs(r) -> list[dict]:
+    import orjson
+
+    return [orjson.loads(f["e"]) for _sid, f in r.streams.get("wakeline:logs", [])]
+
+
+async def test_v5_collector_main_ships_masked_warnings_to_the_log_stream(monkeypatch):
+    """계약 v5 §C2: collector 의 WARN·ERROR 가 가려진 LogEvent 로 wakeline:logs 에(service collector), heartbeat 에 log_sent ·
+    log_dropped, 끝나면 루트 로거에서 뗀다. 작업 태스크에 이름이 있어 context.task 로 어느 작업인지 보인다."""
+    import logging
+
+    from wakeline_collector.logsink import LogSink
+
+    r = await _run_collector_until(monkeypatch, lambda r: any(e["logger"] == "test.v5.collector" for e in _logs(r)), enabled=True)
+    probe = next(e for e in _logs(r) if e["logger"] == "test.v5.collector")
+    assert probe["service"] == "collector" and probe["level"] == "ERROR" and probe["message"] == "probe token=***"
+    hb = r.kv["wakeline:collector"]
+    assert hb["log_sent"].isdigit() and hb["log_dropped"].isdigit()
+    assert not any(isinstance(h, LogSink) for h in logging.getLogger().handlers)
+    tasks = {t.get_name() for t in __import__("asyncio").all_tasks()}
+    assert not any(n.startswith("job:") or n == "logsink" for n in tasks)  # 작업·전송 루프 모두 끝났다
+
+
+async def test_v5_collector_job_tasks_are_named_for_the_log_context(monkeypatch):
+    import asyncio
+
+    from wakeline_collector import main as mainmod
+
+    seen: set[str] = set()
+    real = mainmod.run_until_stopped
+
+    async def spy(tasks, stop, *, grace_s):
+        seen.update(t.get_name() for t in tasks)
+        await real(tasks, stop, grace_s=grace_s)
+
+    monkeypatch.setattr(mainmod, "run_until_stopped", spy)
+    await _run_collector_until(monkeypatch, lambda r: bool(seen), enabled=True)
+    assert {"job:region", "job:global", "job:sigmet", "job:radar", "job:metar", "job:maintenance", "job:radar_kr"} <= seen
+    assert asyncio.current_task() is not None
+
+
+async def test_v5_collector_log_sink_can_be_switched_off(monkeypatch):
+    """LOG_SINK_ENABLED=0(ADR-018 되돌리기): 스트림에 싣지 않고 heartbeat 의 두 값은 빈 값(모름)."""
+    r = await _run_collector_until(monkeypatch, lambda r: False, enabled=False)
+    assert _logs(r) == []
+    hb = r.kv["wakeline:collector"]
+    assert (hb["log_sent"], hb["log_dropped"]) == ("", "")
