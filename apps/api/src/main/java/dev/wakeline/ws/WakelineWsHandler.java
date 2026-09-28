@@ -150,10 +150,8 @@ public class WakelineWsHandler extends TextWebSocketHandler {
             JsonNode n = b.get(i);
             if (n == null || !n.isNumber()) return null;
             v[i] = n.asDouble();
-            if (!Double.isFinite(v[i])) return null;
         }
-        if (v[1] < -90 || v[3] > 90 || v[1] >= v[3] || v[0] < -180 || v[2] > 180 || v[0] >= v[2]) return null;
-        return new Bbox(v[0], v[1], v[2], v[3]);
+        return Bbox.checked(v[0], v[1], v[2], v[3]); // REST 와 같은 규칙(유한 · 범위 · 최소 < 최대, R-16)
     }
 
     /**
