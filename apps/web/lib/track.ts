@@ -2,7 +2,7 @@
  * 선택 항공기 항적(FR-18 · GAP-10) — 순수 함수. REST(/aircraft/{hex}/track, DB 기록)로 한 번 받고,
  * 이후 WS "selected" 상태의 새 관측(seen_at 이 바뀐 것)을 끝에 붙인다. REST 응답 전에 온 관측은 보류했다가 합친다.
  */
-import { seenAtMs } from "./interpolate";
+import { seenAtMs, STALE_AFTER_S } from "./interpolate";
 import type { AircraftState } from "./types";
 
 export interface TrackPt { ts: number; lon: number; lat: number; alt_ft: number | null }
@@ -45,15 +45,28 @@ export function mergeTrack(rest: TrackPt[], pending: TrackPt[]): TrackPt[] {
   return out;
 }
 
-/** 고도 색을 입힌 선분 FeatureCollection(선분마다 끝점 고도) */
+/**
+ * 연속한 두 관측이 이보다 멀리 떨어져 있으면 실선으로 잇지 않는다(R-04) — 그 사이는 관측하지 않은 구간이다.
+ * 상황판이 항공기를 STALE(위치 모름)로 바꾸는 기준과 같다(interpolate.ts STALE_AFTER_S). 항적 점에는 공급자가 없으므로
+ * thresholds() 의 "공급자를 모르면 더 짧은 지역 기준" 규칙을 따른다.
+ */
+export const TRACK_GAP_MS = STALE_AFTER_S * 1000;
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+const hhmm = (ms: number) => { const d = new Date(ms); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
+
+/**
+ * 항적 → 지도 FeatureCollection: 관측 선분(kind "track", 선분마다 끝점 고도 — 고도색 실선) +
+ * 수신 공백 연결(kind "gap", 회색 점선 + "수신 없음 hh:mm–hh:mm"(UTC) 라벨 — 선박 항적의 공백 표시와 같은 모양).
+ */
 export function trackFeatureCollection(pts: TrackPt[]): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (let i = 1; i < pts.length; i++) {
-    features.push({
-      type: "Feature",
-      properties: { alt_ft: pts[i].alt_ft },
-      geometry: { type: "LineString", coordinates: [[pts[i - 1].lon, pts[i - 1].lat], [pts[i].lon, pts[i].lat]] },
-    });
+    const a = pts[i - 1], b = pts[i];
+    const coordinates = [[a.lon, a.lat], [b.lon, b.lat]];
+    features.push(b.ts - a.ts > TRACK_GAP_MS
+      ? { type: "Feature", properties: { kind: "gap", label: `수신 없음 ${hhmm(a.ts)}–${hhmm(b.ts)}` }, geometry: { type: "LineString", coordinates } }
+      : { type: "Feature", properties: { kind: "track", alt_ft: b.alt_ft }, geometry: { type: "LineString", coordinates } });
   }
   return { type: "FeatureCollection", features };
 }

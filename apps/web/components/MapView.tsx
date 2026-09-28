@@ -495,7 +495,7 @@ export function MapView() {
       vis(["sigmet-fill", "sigmet-line"], layers.sigmet);
       vis(["aircraft-symbol"], layers.aircraft);
       vis(["airport-circle", "airport-label"], layers.airports);
-      vis(["track-line"], layers.tracks);
+      vis(["track-line", "track-gap", "track-gap-label"], layers.tracks);
       vis(["prediction-line", "prediction-label"], layers.prediction);
       vis(SHIP_LAYERS.filter((l) => !l.startsWith("ship-track")), layers.ships);
       vis(SHIP_LAYERS.filter((l) => l.startsWith("ship-track")), layers.ships && layers.tracks);

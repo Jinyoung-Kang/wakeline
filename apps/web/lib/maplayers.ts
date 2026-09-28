@@ -106,8 +106,18 @@ export function addBaseLayers(map: maplibregl.Map) {
 
   map.addSource("tracks", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({
-    id: "track-line", type: "line", source: "tracks",
+    id: "track-line", type: "line", source: "tracks", filter: ["==", ["get", "kind"], "track"],
     paint: { "line-color": ALT_COLOR_EXPR, "line-width": 2, "line-opacity": 0.9 },
+  });
+  // 수신 공백(R-04, lib/track.ts TRACK_GAP_MS): 관측하지 않은 구간 — 선박 항적 공백과 같은 회색 점선 + "수신 없음 hh:mm–hh:mm"
+  map.addLayer({
+    id: "track-gap", type: "line", source: "tracks", filter: ["==", ["get", "kind"], "gap"],
+    paint: { "line-color": "#8a929d", "line-width": 1.5, "line-dasharray": [2, 2] },
+  });
+  map.addLayer({
+    id: "track-gap-label", type: "symbol", source: "tracks", filter: ["==", ["get", "kind"], "gap"],
+    layout: { "symbol-placement": "line-center", "text-field": ["get", "label"], "text-font": ["Noto Sans Regular"], "text-size": 10 },
+    paint: { "text-color": "#a3aab4", "text-halo-color": "#0b0d10", "text-halo-width": 1 },
   });
 
   // 10분 예측 궤적(추정) — 선택 항공기(서버가 예측 가능하다고 한 경우)와 PREDICTED 알림 대상만. 선 위에 "추정" 라벨.
