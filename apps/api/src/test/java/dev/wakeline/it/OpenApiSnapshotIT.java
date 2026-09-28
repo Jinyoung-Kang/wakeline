@@ -72,7 +72,7 @@ class OpenApiSnapshotIT extends IntegrationTest {
         assertThat(spec.path("openapi").asString()).startsWith("3.");
         for (String p : List.of("/api/v1/aircraft", "/api/v1/aircraft/{hex}", "/api/v1/aircraft/search", "/api/v1/sigmets", "/api/v1/alerts",
                 "/api/v1/alerts/history", "/api/v1/status", "/api/v1/replay", "/api/v1/airports", "/api/v1/radar/frames",
-                "/api/v1/ships", "/api/v1/ships/{mmsi}", "/api/v1/ships/{mmsi}/track", "/api/v1/ais/gaps"))
+                "/api/v1/ships", "/api/v1/ships/{mmsi}", "/api/v1/ships/{mmsi}/track", "/api/v1/ais/gaps", "/api/v1/client-errors"))
             assertThat(spec.path("paths").has(p)).as("path " + p).isTrue();
 
         if (updateRequested()) {
@@ -103,6 +103,10 @@ class OpenApiSnapshotIT extends IntegrationTest {
         for (Map.Entry<String, JsonNode> p : spec.path("paths").properties()) if (p.getKey().startsWith("/api/v1/ops")) ops.add(p.getKey());
         assertThat(ops).as("ops paths in the public spec").isEmpty();
         assertThat(spec.path("components").path("schemas").has("Login")).as("ops login schema").isFalse();
+        // 계약 v5 §C4: 로그 조회는 운영 전용 — 공개 문서에 경로도 응답 모양도 없다(§C6 브라우저 오류 수집만 공개)
+        assertThat(spec.path("components").path("schemas").has("Page")).as("ops log page schema").isFalse();
+        assertThat(spec.path("components").path("schemas").has("Groups")).as("ops log groups schema").isFalse();
+        assertThat(spec.path("paths").path("/api/v1/client-errors").has("post")).isTrue();
         assertThat(spec.path("paths").has("/api/v1/status")).isTrue();
     }
 
