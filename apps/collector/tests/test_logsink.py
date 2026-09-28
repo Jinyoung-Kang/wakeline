@@ -321,7 +321,7 @@ class GatedRedis(FakeRedis):
         return p
 
 
-@pytest.mark.parametrize("text,more", [("n=%d", 550), ("가" * 4000 + " %d", 300)])
+@pytest.mark.parametrize("text,more", [("n=%d", 550), ("가" * 4000 + " %d", 300)], ids=["count", "bytes"])
 async def test_queue_cap_counts_the_batch_being_sent(text, more):
     """대기열 상한(500건 · 2 MiB)은 보내는 중인 묶음(≤ 50건)까지 센다 — Redis 가 느린 동안에도 프로세스가 붙잡는 항목은 상한 안.
     넘으면 대기열의 오래된 것부터 버린다(보내는 중인 묶음은 건드리지 않는다)."""
@@ -614,7 +614,7 @@ async def test_emit_never_blocks_while_redis_hangs():
             p.execute = execute  # type: ignore[method-assign]
             return p
 
-    sink = ls.LogSink("collector", Hung(), flush_every_s=0.01, send_timeout_s=0.05, backoff=(0.05, 0.05))
+    sink = ls.LogSink("collector", Hung(), flush_every_s=0.01, send_timeout_s=0.2, backoff=(0.05, 0.05))
     lg = logger_for(sink)
     sink.start(attach=False)
     try:
@@ -622,8 +622,10 @@ async def test_emit_never_blocks_while_redis_hangs():
         t0 = time.monotonic()
         for i in range(1000):
             lg.error("hang %s", chr(0x4E00 + i))
-        assert time.monotonic() - t0 < 0.5
-        await _wait(lambda: sink.failures >= 1, 1.0)
+        # 보통 ~35 ms. 부하가 큰 기계(다른 시험이 함께 도는)에서도 흔들리지 않게 넉넉히 잡되, 전송을 기다리면(묶음마다
+        # send_timeout 0.2 s × 20 묶음 = 4 s, 건마다면 200 s) 반드시 넘는 값
+        assert time.monotonic() - t0 < 2.0
+        await _wait(lambda: sink.failures >= 1, 3.0)
         assert len(sink.pending()) == ls.QUEUE_MAX and sink.dropped == 500  # 보내지 못한 것은 대기열에 그대로(상한 안)
     finally:
         await sink.aclose(drain_s=0.1)

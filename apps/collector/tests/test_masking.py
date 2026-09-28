@@ -167,7 +167,7 @@ def test_v5_masking_is_linear_on_separator_delimited_urls_and_jwt_runs():
     t0 = time.perf_counter()
     for text in cases:
         assert mask(text, None) == text  # '@' · 점 세 칸이 없다 — 가릴 것 없음
-    assert time.perf_counter() - t0 < 0.5
+    assert time.perf_counter() - t0 < 1.0  # 선형이면 ~0.05 s, 고치기 전(제곱)은 2.9 s — 부하가 큰 기계에서도 흔들리지 않게
     assert mask("a://x:" * 3 + "pw@h") == "a://x:***@h"
     assert mask("eyJ" * 3 + "a" * 10 + ".b" + "b" * 10 + ".c" + "c" * 10) == "***jwt***"
 
