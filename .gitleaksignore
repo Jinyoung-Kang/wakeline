@@ -1,7 +1,14 @@
 # gitleaks 허용 목록 — 정확한 지문(커밋:파일:규칙:줄)만 적는다. 정규식·경로 전체 허용은 쓰지 않는다(R-07).
-# 두 값 모두 시험용 가짜 값이다(실제 키·토큰 아님):
+# 모든 값이 시험용 가짜 값이다(실제 키·토큰 아님):
 #  - apps/collector/tests/test_ais_server.py:35 (커밋 5251859)  가짜 aisstream 키 상수 — 로그·상태·스트림에 새지 않는지 보는 시험 입력
 #  - apps/collector/tests/test_masking.py:12 (커밋 94ae84e)     합성 HS256 토큰(sub=1234567890) — 가림 함수 시험 입력
+#  - schemas/vectors/masking-cases.v1.json:15 · :175 (커밋 1a5fe75 · e0a211e)  위와 같은 합성 HS256 토큰 — Java·Python 가림 규칙이 같은지 보는 공유 표본(계약 v5 §C5)
+#  - schemas/vectors/masking-cases.v1.json:67 (커밋 1a5fe75) · apps/collector/tests/test_masking.py:130 (커밋 ae22d59)  자리표시 키 ABCDEFGH12345(호스트 *.test) — URL 의 key= 가림 시험 입력
+# (2026-09-29 확인: 네 값 모두 .env 의 어떤 값과도 같지 않다 — 스크립트로 대조, 값은 출력하지 않음)
 # 새 항목은 값이 가짜임을 확인한 뒤 gitleaks 보고서의 Fingerprint 를 한 줄씩 더한다.
 5251859bac52838e622a55edd431727500aebb18:apps/collector/tests/test_ais_server.py:generic-api-key:35
 94ae84e2f28cfdc00835410d58b0780bccd791bd:apps/collector/tests/test_masking.py:jwt:12
+1a5fe755abccc67a952bc972584caa2b27be245b:schemas/vectors/masking-cases.v1.json:jwt:15
+e0a211eaf195842aac3dd3e8beee39ef47916b96:schemas/vectors/masking-cases.v1.json:jwt:175
+1a5fe755abccc67a952bc972584caa2b27be245b:schemas/vectors/masking-cases.v1.json:generic-api-key:67
+ae22d59146f8a4b597762bf48027bf058a5f6abb:apps/collector/tests/test_masking.py:generic-api-key:130
