@@ -206,6 +206,17 @@ class ComposePolicyTest(unittest.TestCase):
                 self.assertEqual(m.get("restart"), "no")
                 self.assertEqual(m.get("command"), ["--migrate"])
 
+    # --- R-78: 수집 계층은 api 건강에 묶이지 않는다(api 크래시 루프여도 수집·원천 보관·DB 기록이 기동된다) ---
+    def test_collectors_do_not_wait_for_api_health(self):
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                for name in ("collector", "ais"):
+                    self.assertNotIn("api", self.svc(name, cfg).get("depends_on", {}), name)
+                dep = self.svc("collector", cfg)["depends_on"]
+                self.assertEqual(dep["migrate"]["condition"], "service_completed_successfully", "ingest 테이블은 migrate 가 만든다")
+                self.assertEqual(dep["redis"]["condition"], "service_healthy")
+                self.assertEqual(dep["db"]["condition"], "service_healthy")
+
     # --- 외부 키: 쓰는 컨테이너에만(개발), 격리 스택에는 없음 ---
     def test_external_keys_only_where_used(self):
         where = {"aisstream_key": ("ais", "AISSTREAM_API_KEY"), "OPENSKY_CLIENT_ID": ("collector", "OPENSKY_CLIENT_ID"),

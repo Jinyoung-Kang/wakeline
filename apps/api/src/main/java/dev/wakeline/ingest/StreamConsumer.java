@@ -257,13 +257,18 @@ public class StreamConsumer implements SmartLifecycle {
         flushAcksQuietly(); // 멈추기 전에 durable 해진 것까지 ACK(남은 것은 종료 뒤 StreamAckFinalizer 가 한 번 더)
     }
 
-    /** @return 그룹이 이미 있던 스트림(이번에 만든 그룹은 이전 위치가 없어 손실을 판단하지 않는다) */
+    /**
+     * 그룹이 없으면 스트림 처음부터(0) 만든다(R-78) — '$'(끝)로 만들면 그룹이 생기기 전에 발행된 엔트리(첫 기동·Redis 초기화 뒤 수집기가 먼저
+     * 발행한 것)를 건너뛰었다. 다시 읽는 엔트리는 항적 (hex, ts)·SIGMET 자연키 멱등과 fetched_at 단조 가드가 흡수한다. 그래서 수집기는
+     * api 가 건강해질 때까지 기다리지 않아도 된다(compose depends_on).
+     * @return 그룹이 이미 있던 스트림(이번에 만든 그룹은 이전 위치가 없어 손실을 판단하지 않는다)
+     */
     private Set<String> ensureGroups() {
         Set<String> existing = new java.util.HashSet<>();
         for (String s : STREAMS) {
             try {
                 redis.execute((org.springframework.data.redis.core.RedisCallback<Object>) conn -> {
-                    conn.streamCommands().xGroupCreate(s.getBytes(StandardCharsets.UTF_8), GROUP, ReadOffset.latest(), true);
+                    conn.streamCommands().xGroupCreate(s.getBytes(StandardCharsets.UTF_8), GROUP, ReadOffset.from("0-0"), true);
                     return null;
                 });
                 log.info("created consumer group {} on {}", GROUP, s);
@@ -454,13 +459,13 @@ public class StreamConsumer implements SmartLifecycle {
 
     /**
      * 부트스트랩: 이 엔트리가 그룹 소비로 다시 전달될 예정인가 — 그룹이 아직 읽지 않았거나(id > last-delivered-id) PEL 에 남아 있다.
-     * 그룹이 방금 만들어졌으면($) 마지막 엔트리까지 읽은 것으로 되어 있어 false.
+     * 그룹이 방금 만들어졌으면(0 — 스트림 처음부터, R-78) 모든 엔트리가 전달될 예정이라 true.
      */
     boolean willBeRedelivered(String stream, String id) {
         String lastDelivered = null;
         StreamInfo.XInfoGroups groups = ops().groups(stream);
         if (groups != null) for (StreamInfo.XInfoGroup g : groups) if (GROUP.equals(g.groupName())) lastDelivered = g.lastDeliveredId();
-        if (lastDelivered == null) return false;                // 그룹 없음 — 소비가 $ 로 만든다(다시 전달되지 않는다)
+        if (lastDelivered == null) return false;                // 그룹 없음(소비가 아직 만들지 않음) — 판단하지 않는다
         if (compareIds(id, lastDelivered) > 0) return true;     // 아직 읽지 않음
         PendingMessages p = ops().pending(stream, GROUP, Range.closed(id, id), 1);
         return p != null && !p.isEmpty();                       // 읽었지만 ACK 전(PEL)

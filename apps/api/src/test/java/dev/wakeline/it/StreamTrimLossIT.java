@@ -105,6 +105,27 @@ class StreamTrimLossIT extends IntegrationTest {
         assertThat(loss.to()).isEqualTo(idTime(id));
     }
 
+    /**
+     * R-78: 소비자 그룹이 없을 때(첫 기동 · Redis 초기화) 그룹을 '$'(끝)로 만들면 그 전에 발행된 엔트리를 건너뛴다. 스트림 처음부터('0')
+     * 만들어 이미 있는 엔트리도 소비한다(자연키·fetched_at 단조 가드가 다시 읽기를 흡수한다). 새로 만든 그룹은 손실로 세지 않는다.
+     */
+    @Test
+    void aGroupCreatedAfterEntriesWerePublishedStillConsumesThem(@Autowired dev.wakeline.ingest.RadarStore radar) throws Exception {
+        String stream = Streams.RADAR;
+        double before = lossEvents(stream);
+        Instant f = Streams.nextFetchedAt();
+        consumer.stop();
+        try {
+            ItStack.admin().opsForStream().destroyGroup(stream, StreamConsumer.GROUP); // 그룹이 사라졌다(Redis 초기화와 같다)
+            Streams.xadd(stream, Streams.radar(f, f.getEpochSecond() - f.getEpochSecond() % 600)); // 그룹이 생기기 전에 발행
+        } finally {
+            consumer.start();
+        }
+        await("entry published before the group existed is consumed", WAIT, () -> radar.frames().fetchedAt().equals(f));
+        Thread.sleep(300);
+        assertThat(lossEvents(stream)).as("a new group has no previous position — not a loss").isEqualTo(before);
+    }
+
     /** 읽은 엔트리만 지워졌으면(평상시 MAXLEN 트림) 손실이 아니다. */
     @Test
     void trimmingOnlyAlreadyReadEntriesIsNotALoss() throws Exception {

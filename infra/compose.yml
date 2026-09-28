@@ -185,7 +185,9 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       db: { condition: service_healthy }
-      api: { condition: service_healthy }      # Flyway 가 ingest 테이블을 만든 뒤에 시작
+      # 스키마(ingest 테이블)는 migrate 가 만든다. api 건강에 묶지 않는다(R-78): api 가 크래시 루프여도 수집·원천 보관·DB 기록은 기동·재생성된다
+      # (api 는 소비자 그룹을 스트림 처음부터 만들어 먼저 발행된 엔트리도 읽는다).
+      migrate: { condition: service_completed_successfully }
     deploy:
       resources:
         limits: { memory: 512m, pids: 256 }
@@ -227,9 +229,8 @@ services:
       SCHEMAS_DIR: /app/schemas
       WAKELINE_FIXTURE_MODE: ${WAKELINE_FIXTURE_MODE:-0}
     depends_on:
+      # api 건강에 묶지 않는다(R-78): api 는 wakeline:ships 소비자 그룹을 스트림 처음부터 만들므로 먼저 발행한 정적 정보 묶음도 읽는다.
       redis: { condition: service_healthy }
-      # api 가 wakeline:ships 소비자 그룹을 만든 뒤에 발행을 시작한다(첫 정적 정보 묶음을 놓치지 않게). 재시작 때는 적용되지 않는다.
-      api: { condition: service_healthy }
     deploy:
       resources:
         limits: { memory: 256m, pids: 128 }
