@@ -243,7 +243,10 @@ def test_v5_g4_ship_detail_last_seen_at_only_when_not_live():
     assert rcc._ship_detail(ship_detail(last_position_at="2026-09-28T00:00:00Z", last_seen_at="2026-09-27T00:00:00Z"))
     no_record = {k: val for k, val in stored.items() if k != "first_recorded_at"}
     assert rcc._ship_detail(no_record)  # 저장 기록(ship 행)이 없으면 마지막 수신 기록도 없다
-    live = ship_detail(state={"mmsi": "440123457", "lat": 35.0, "lon": 129.0, "seen_at": "2026-09-29T00:00:00Z"}, last_seen_at="2026-09-28T00:05:00Z")
+    live = ship_detail(
+        state={"mmsi": "440123457", "lat": 35.0, "lon": 129.0, "seen_at": "2026-09-29T00:00:00Z"},
+        last_seen_at="2026-09-28T00:05:00Z",
+    )
     assert rcc._ship_detail(live)  # 실시간이면 싣지 않는다
 
 

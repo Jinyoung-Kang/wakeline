@@ -1172,7 +1172,8 @@ CHECKS = [
     # 선박 검색(계약 v5 §B1): 실행 중 스택은 목록의 첫 선박 MMSI 로, 기록은 선명 앞부분(실시간) · DB 에만 있는 선박(live=false)
     Check("ship_search", "ship_search", 200, "application/json", True),
     Check("ship_search_db", "ship_search", 200, "application/json", True, recorded_only=True),
-    Check("ship_detail_stored", "ship_detail", 200, "application/json", True, recorded_only=True),  # 실시간 아님 — last_seen_at(§G4)
+    # 실시간 아닌 선박의 상세 — 마지막 수신 기록 last_seen_at(계약 v5 §G4)
+    Check("ship_detail_stored", "ship_detail", 200, "application/json", True, recorded_only=True),
     Check("problem_bad_ship_query", "problem", 400, "application/problem+json", False),
     Check("status_ais", "status_ais", 200, "application/json", True, recorded_only=True),
 ]
