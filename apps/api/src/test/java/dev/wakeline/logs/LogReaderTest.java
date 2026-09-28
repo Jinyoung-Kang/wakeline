@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * fp 묶음(count · suppressed 합 · 처음/마지막 · 표본), 항목 하나.
  * §G2: 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 id 순으로 합쳐 최신 순 — 항목마다 stream, cursor 는 두 스트림을 함께 이어 가고
  * (같은 id 는 server 가 앞), 훑기 상한은 두 스트림 MAXLEN 의 합(4,000), 묶음도 두 스트림, 항목 하나는 server → client 순으로 찾는다.
+ * 첫 쪽 · 묶음은 두 스트림의 한 시점(Redis TIME 앞 밀리초까지) — 두 스트림 읽기 사이에 실린 항목도 첫 쪽에 있거나 첫 쪽 맨 위보다 새 것이다.
  */
 class LogReaderTest {
     static final Instant T0 = Instant.parse("2026-09-29T00:00:00Z");
@@ -249,6 +250,128 @@ class LogReaderTest {
             } while (cursor != null);
             assertThat(got).as("limit " + limit).containsExactlyElementsOf(newestFirst);
         }
+    }
+
+    /** 합친 순서(api 목록 순서 — 웹 entryCmp 와 같다)에서 a 가 b 보다 새 것인가: 스트림 id 가 크거나, 같으면 server 가 앞. */
+    static boolean newer(JsonNode a, JsonNode b) {
+        int c = LogReader.compareIds(a.path("id").asString(), b.path("id").asString());
+        return c != 0 ? c > 0 : "server".equals(a.path("stream").asString()) && "client".equals(b.path("stream").asString());
+    }
+
+    static String key(JsonNode n) { return n.path("stream").asString() + ":" + n.path("id").asString(); }
+
+    /**
+     * 웹 /logs 가 첫 쪽을 보인 뒤 항목을 보게 되는 길은 셋이다: 그 첫 쪽, 자동 새로 고침의 "새 항목"(다시 읽은 첫 쪽에서 보이는 맨 위보다 새 것 —
+     * lib/logs.ts pendingEntries), '이전 항목 더 보기'(next_cursor 로 이어 읽기). 나중에 두 스트림 전체를 읽었을 때 모든 항목이 이 셋 중
+     * 하나로 — 한 번씩 — 보여야 한다.
+     */
+    static void assertEveryEntryIsReachableFrom(LogReader.Page page1, LogReader later) {
+        List<String> seen = new ArrayList<>(keys(page1));
+        JsonNode top = page1.items().getFirst();
+        for (JsonNode n : later.list(all(), null, 200).items()) if (newer(n, top)) seen.add(key(n)); // 새 항목 N건
+        for (String cursor = page1.nextCursor(); cursor != null; ) {                                       // 이전 항목 더 보기
+            LogReader.Page p = later.list(all(), cursor, 2);
+            seen.addAll(keys(p));
+            cursor = p.nextCursor();
+        }
+        List<String> everything = keys(later.list(all(), null, 200));
+        assertThat(seen).as("page 1 %s, then new entries and older pages", keys(page1)).containsExactlyInAnyOrderElementsOf(everything);
+    }
+
+    /** 스트림 하나 앞에 끼워 넣어, 처음 읽힐 때 한 번만 일을 한다(두 스트림 읽기 사이에 다른 항목이 실리는 경우). */
+    static LogReader.Source onFirstRead(LogReader.Source src, Runnable arrive) {
+        return new LogReader.Source() {
+            boolean fired;
+
+            @Override
+            public List<LogReader.Raw> reverse(String endInclusive, String startInclusive, int count) {
+                if (!fired) { fired = true; arrive.run(); }
+                return src.reverse(endInclusive, startInclusive, count);
+            }
+
+            @Override
+            public LogReader.Raw get(String id) { return src.get(id); }
+        };
+    }
+
+    /**
+     * §G2 첫 쪽은 두 스트림의 한 시점 모습이어야 한다. 두 스트림은 XREVRANGE 를 따로 부르므로 그 사이에(api 싱크가 [S, C] 한 묶음을
+     * 차례로 XADD) 서버 항목 S 와 그보다 새 브라우저 오류 C 가 실리면, 고치기 전에는 첫 쪽에 C 만 있고 S 는 C 보다 오래돼 "새 항목"에도,
+     * cursor 아래에도 없었다(리뷰 RaceProbe). Redis 는 TIME 뒤에 실린 항목에 그 시각 이상의 id 를 준다 — 첫 쪽을 TIME 앞 밀리초까지로 자르면
+     * 그 뒤에 실린 것은 모두 첫 쪽 맨 위보다 새 것이다.
+     */
+    @Test
+    void anEntryArrivingBetweenTheTwoStreamReadsIsOnPage1OrNewerThanItsTop() {
+        long now = T0.plusSeconds(100).toEpochMilli(); // Redis TIME(첫 쪽을 읽기 전)
+        addEvent(1, "api", "WARN", "old 1", FP_A);
+        addClient(2, "old 2");
+        addEvent(3, "api", "WARN", "old 3", FP_A);
+        Instant at = Instant.ofEpochMilli(now);
+        // 서버 스트림을 읽은 뒤 · 브라우저 오류 스트림을 읽기 전에 두 항목이 실린다(TIME 뒤이므로 id 의 ms ≥ now)
+        LogReader racy = new LogReader(stream, onFirstRead(client, () -> {
+            stream.add(now, 0, event(at, "api", "ERROR", "L", "S (server, arrives mid-read)", FP_A, null, null, 0));
+            client.add(now + 1, 0, event(at, "web-client", "ERROR", "browser", "C (client, arrives mid-read)", FP_B, null, null, 0));
+        }), () -> now);
+        LogReader.Page page1 = racy.list(all(), null, 100);
+        assertEveryEntryIsReachableFrom(page1, new LogReader(stream, client, () -> now + 60_000));
+        // 쪽이 작아 cursor 로 이어 읽어도 같다
+        stream.entries.clear();
+        client.entries.clear();
+        for (int i = 1; i <= 7; i++) { if (i % 2 == 0) addClient(i, "old " + i); else addEvent(i, "api", "WARN", "old " + i, FP_A); }
+        LogReader racy2 = new LogReader(stream, onFirstRead(client, () -> {
+            stream.add(now, 0, event(at, "api", "ERROR", "L", "S", FP_A, null, null, 0));
+            client.add(now + 1, 0, event(at, "web-client", "ERROR", "browser", "C", FP_B, null, null, 0));
+        }), () -> now);
+        assertEveryEntryIsReachableFrom(racy2.list(all(), null, 3), new LogReader(stream, client, () -> now + 60_000));
+    }
+
+    /**
+     * 두 스트림은 순번을 따로 매기므로, 같은 밀리초 안에서는 나중에 실린 항목의 id 가 다른 스트림에 먼저 실린 항목보다 작을 수 있다
+     * (브라우저 오류 T-0 … T-4 뒤에 서버 T-0). 그래서 첫 쪽은 TIME 의 밀리초를 통째로 뺀다 — 그 밀리초의 항목은 다음 새로 고침에 "새 항목"으로.
+     */
+    @Test
+    void entriesOfTheCurrentMillisecondWaitForTheNextRefresh() {
+        long now = T0.plusSeconds(100).toEpochMilli();
+        Instant at = Instant.ofEpochMilli(now);
+        addEvent(1, "api", "WARN", "old 1", FP_A);
+        stream.add(now - 1, 0, event(at, "api", "WARN", "L", "just before", FP_A, null, null, 0));
+        for (int seq = 0; seq < 5; seq++) client.add(now, seq, event(at, "web-client", "ERROR", "browser", "same ms " + seq, FP_B, null, null, 0));
+        // 브라우저 오류 스트림을 읽을 때 서버 스트림에 같은 밀리초의 첫 항목(now-0)이 실린다 — 브라우저 오류 now-4 보다 id 가 작다
+        LogReader racy = new LogReader(stream, onFirstRead(client, () ->
+                stream.add(now, 0, event(at, "api", "ERROR", "L", "server, same ms", FP_A, null, null, 0))), () -> now);
+        LogReader.Page page1 = racy.list(all(), null, 100);
+        assertThat(keys(page1)).as("nothing at or after the Redis time").allMatch(k -> LogReader.compareIds(k.substring(k.indexOf(':') + 1), now + "-0") < 0);
+        assertEveryEntryIsReachableFrom(page1, new LogReader(stream, client, () -> now + 1));
+        // 묶음도 같은 시점까지(첫 쪽과 같은 모습)
+        assertThat(new LogReader(stream, client, () -> now).groups(all()).scanned()).isEqualTo(2);
+    }
+
+    /**
+     * 첫 쪽을 Redis TIME 으로 자르는 것은 스트림 id 가 Redis 시계를 따른다는 전제다. id 가 시계보다 앞서면(Redis 호스트 시계가 뒤로 감 — Redis 는
+     * 그동안 마지막 id 의 ms 를 이어 쓴다 · id 를 지정한 XADD) 자르기가 새 항목을 시계가 따라잡을 때까지 숨긴다. 시계 차이 여유(SKEW_MS) 안이면
+     * 잠깐 숨겼다가 "새 항목"으로 보이고, 그보다 앞서면 자르지 않는다 — 새 오류를 오래 숨기지 않는다(그때는 두 스트림 읽기 사이의 경합을 막지 못한다).
+     */
+    @Test
+    void streamIdsFarAheadOfTheRedisClockAreNotHidden() {
+        long now = T0.plusSeconds(100).toEpochMilli();
+        Instant at = Instant.ofEpochMilli(now);
+        addEvent(1, "api", "WARN", "old 1", FP_A);
+        addClient(2, "old 2");
+        long ahead = now + LogReader.SKEW_MS + 1;
+        stream.add(ahead, 0, event(at, "api", "ERROR", "L", "clock stepped back", FP_A, null, null, 0));
+        stream.add(ahead, 1, event(at, "api", "ERROR", "L", "clock stepped back, next", FP_A, null, null, 0));
+        LogReader.Page p = new LogReader(stream, client, () -> now).list(all(), null, 100);
+        assertThat(keys(p)).containsExactly("server:" + ahead + "-1", "server:" + ahead + "-0", "client:" + T0.plusSeconds(2).toEpochMilli() + "-0",
+                "server:" + T0.plusSeconds(1).toEpochMilli() + "-0");
+        assertThat(new LogReader(stream, client, () -> now).groups(all()).scanned()).isEqualTo(4);
+        // 여유 안(시계가 몇 초 뒤로 간 정도)이면 잠깐 숨긴다 — 시계가 지나가면 첫 쪽 맨 위보다 새 것으로 보인다
+        stream.entries.clear();
+        addEvent(1, "api", "WARN", "old 1", FP_A);
+        long near = now + LogReader.SKEW_MS;
+        stream.add(near, 0, event(at, "api", "ERROR", "L", "a few seconds ahead", FP_A, null, null, 0));
+        LogReader.Page q = new LogReader(stream, client, () -> now).list(all(), null, 100);
+        assertThat(keys(q)).doesNotContain("server:" + near + "-0");
+        assertEveryEntryIsReachableFrom(q, new LogReader(stream, client, () -> near + 1));
     }
 
     /**

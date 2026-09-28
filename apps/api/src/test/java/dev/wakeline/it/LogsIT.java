@@ -9,6 +9,9 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.RecordId;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import tools.jackson.databind.JsonNode;
@@ -21,6 +24,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -65,7 +69,23 @@ class LogsIT extends IntegrationTest {
     }
 
     static String xadd(String e) {
-        return ItStack.admin().opsForStream().add(MapRecord.create(LogSink.STREAM, Map.of("e", e))).getValue();
+        String id = ItStack.admin().opsForStream().add(MapRecord.create(LogSink.STREAM, Map.of("e", e))).getValue();
+        nextRedisMillisecond();
+        return id;
+    }
+
+    static long redisNowMs() {
+        return ItStack.admin().execute((RedisCallback<Long>) c -> c.serverCommands().time(TimeUnit.MILLISECONDS));
+    }
+
+    /**
+     * 조회의 첫 쪽은 Redis TIME 앞 밀리초까지다(§G2 — 두 스트림의 한 시점, LogReader.snapshotLanes). 방금 실은 항목이 같은 밀리초의 조회에서
+     * 빠지지 않게(다음 새로 고침에 보이는 것이 정상 동작) Redis 시계가 지금 밀리초를 지날 때까지 기다린다 — 1 ms 안팎.
+     */
+    static void nextRedisMillisecond() {
+        long t = redisNowMs();
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        while (redisNowMs() <= t) assertThat(System.nanoTime()).as("redis clock stuck at " + t).isLessThan(deadline);
     }
 
     @Test
@@ -275,6 +295,7 @@ class LogsIT extends IntegrationTest {
                 "TypeError: flood", null, null, Map.of("path", "/"), true), randomFp(), 0);
         try {
             for (int i = 0; i < 1_100; i++) writer.xadd(dev.wakeline.logs.LogStream.CLIENT, flood);
+            nextRedisMillisecond();
             Long clientLen = ItStack.admin().opsForStream().size(LogSink.CLIENT_STREAM);
             // MAXLEN ~ 1000: 근사 트림은 내부 노드(기본 100 항목) 단위 — 1000 이상, 1000 + 노드 하나 이하
             assertThat(clientLen).isBetween(1_000L, 1_100L);
@@ -312,6 +333,40 @@ class LogsIT extends IntegrationTest {
             assertProblem(b.get("/api/v1/ops/logs/" + clientId + "?stream=server"), 404, "NOT_FOUND", "/api/v1/ops/logs/" + clientId);
         } finally {
             ItStack.admin().delete(LogSink.CLIENT_STREAM); // 다른 조회 시험의 훑기 상한에 걸리지 않게
+        }
+    }
+
+    /**
+     * §G2 첫 쪽은 두 스트림의 한 시점 — Redis TIME 앞 밀리초까지(LogReader.snapshotLanes, api ACL 사용자가 TIME 을 부른다). 전제인 실제 Redis 의
+     * id 규칙까지: id 를 지정해 시계보다 앞선 항목을 실으면 뒤이은 자동 id 도 그 ms 를 이어 쓴다. 여유(60 s) 안이면 시계가 지날 때까지 첫 쪽에서
+     * 빠졌다가 보이고, 그보다 앞서면 자르지 않고 곧바로 보인다 — 시계가 뒤로 간 동안 새 오류를 숨기지 않는다.
+     */
+    @Test
+    void theFirstPageIsCutAtTheRedisClockUnlessStreamIdsRunFarAhead() {
+        OpsBrowser b = login();
+        String fp = randomFp();
+        String q = "/api/v1/ops/logs?fp=" + fp;
+        try {
+            String near = (redisNowMs() + 2_000) + "-0";
+            ItStack.admin().opsForStream().add(StreamRecords.newRecord().in(LogSink.STREAM).withId(RecordId.of(near))
+                    .ofMap(Map.of("e", collectorEntry(fp, "two seconds ahead of the redis clock", 0))));
+            assertThat(b.get(q).json().path("items")).as("cut at the redis time until the clock passes it").isEmpty();
+            await("the entry once the redis clock passes it", Duration.ofSeconds(15), () -> b.get(q).json().path("items").size() == 1);
+
+            String far = (redisNowMs() + 3_600_000) + "-0";
+            ItStack.admin().opsForStream().add(StreamRecords.newRecord().in(LogSink.STREAM).withId(RecordId.of(far))
+                    .ofMap(Map.of("e", collectorEntry(fp, "an hour ahead of the redis clock", 0))));
+            String after = xadd(collectorEntry(fp, "auto id after it", 0));
+            assertThat(after).as("redis keeps the last id's ms while the clock is behind").isEqualTo(far.substring(0, far.indexOf('-')) + "-1");
+            JsonNode page = b.get(q).json();
+            assertThat(page.path("items")).extracting(n -> n.path("id").asString()).containsExactly(after, far, near);
+            JsonNode groups = b.get("/api/v1/ops/logs/groups?service=collector").json();
+            JsonNode g = null;
+            for (JsonNode x : groups.path("groups")) if (fp.equals(x.path("fp").asString())) g = x;
+            assertThat(g).isNotNull();
+            assertThat(g.path("count").asLong()).isEqualTo(3);
+        } finally {
+            ItStack.admin().delete(LogSink.STREAM); // 앞선 마지막 id 를 지운다 — 뒤 시험의 자동 id 가 시계를 따르게
         }
     }
 

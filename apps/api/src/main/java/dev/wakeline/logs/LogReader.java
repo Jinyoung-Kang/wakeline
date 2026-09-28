@@ -6,6 +6,7 @@ import org.springframework.data.domain.Range;
 import org.springframework.data.domain.Range.Bound;
 import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -22,6 +23,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +39,9 @@ import java.util.regex.Pattern;
  *       (비밀값으로 검색해 그 값이 로그에 있는지 알아내지 못하게).</li>
  *   <li>기간(since · until)은 항목의 ts 로 거른다. 항목의 ts 는 실린 시각(스트림 id)보다 늦을 수 없으므로(같은 호스트 시계) since 보다
  *       {@value #SKEW_MS} ms 앞의 id 에서 읽기를 멈춘다(여유는 시계 차이 대비).</li>
+ *   <li>첫 쪽(cursor 없음)과 묶음은 두 스트림의 한 시점 모습 — Redis TIME 앞 밀리초까지만 읽는다({@link #snapshotLanes}). 그 뒤에 실린 항목은
+ *       모두 첫 쪽 맨 위보다 새 것이라 웹의 "새 항목"이 찾는다. 첫 쪽 · 새 항목 · cursor 로 이어 읽기를 합치면 빠지거나 겹치는 항목이 없다
+ *       (스트림 id 가 Redis 시계보다 {@value #SKEW_MS} ms 넘게 앞서는 때는 빼고 — 그때는 자르지 않는다).</li>
  *   <li>cursor = "{stream}:{id}" — 합친 순서에서 마지막으로 본 항목(그 항목은 빼고 이어 읽는다). 쪽이 차서 멈추면 마지막 항목, 훑기 상한에 걸려
  *       멈추면 마지막으로 훑은 항목(scan_truncated) — 같은 항목을 다시 훑지 않고 이어 간다. 더 없으면 null. 이어 읽기: server 항목 뒤면 server 는
  *       그 id 앞부터 · client 는 그 id 부터(같은 id 는 server 가 앞), client 항목 뒤면 두 스트림 모두 그 id 앞부터. 스트림 id 만 있는 cursor(§G2 전)는
@@ -51,6 +57,7 @@ public class LogReader {
     static final long SKEW_MS = 60_000;
     static final int SAMPLE_MAX = 500;
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(LogReader.class);
     private static final Pattern STREAM_ID = Pattern.compile("\\d{1,20}-\\d{1,20}");
 
     /** 스트림 하나 접근(시험에서 메모리 스트림으로 바꾼다). */
@@ -95,14 +102,24 @@ public class LogReader {
 
     private final Source server;
     private final Source client;
+    private final LongSupplier redisNowMs;
     private final LogEventSchema schema = new LogEventSchema();
 
     @Autowired
-    public LogReader(StringRedisTemplate redis) { this(redisSource(redis, LogStream.SERVER), redisSource(redis, LogStream.CLIENT)); }
+    public LogReader(StringRedisTemplate redis) {
+        this(redisSource(redis, LogStream.SERVER), redisSource(redis, LogStream.CLIENT), redisClock(redis));
+    }
 
+    /** 시험용: 시계 없음 — 모든 항목이 이미 실린 것으로 본다(첫 쪽을 자르지 않는다). */
     LogReader(Source server, Source client) {
+        this(server, client, () -> Long.MAX_VALUE);
+    }
+
+    /** @param redisNowMs Redis 서버 시각(epoch ms — TIME). 첫 쪽 · 묶음의 윗끝을 정한다({@link #snapshotLanes}). */
+    LogReader(Source server, Source client, LongSupplier redisNowMs) {
         this.server = server;
         this.client = client;
+        this.redisNowMs = redisNowMs;
     }
 
     private Source source(LogStream s) { return s == LogStream.SERVER ? server : client; }
@@ -124,6 +141,15 @@ public class LogReader {
                 var recs = redis.opsForStream().range(stream.key(), Range.closed(id, id), Limit.limit().count(1));
                 return recs == null || recs.isEmpty() ? null : raw(recs.getFirst());
             }
+        };
+    }
+
+    /** Redis TIME(ms). 스트림 id 를 매기는 시계와 같은 시계다 — api 호스트의 시계가 아니다. */
+    static LongSupplier redisClock(StringRedisTemplate redis) {
+        return () -> {
+            Long ms = redis.execute((RedisCallback<Long>) c -> c.serverCommands().time(TimeUnit.MILLISECONDS));
+            if (ms == null) throw new IllegalStateException("redis TIME returned no value");
+            return ms;
         };
     }
 
@@ -163,6 +189,13 @@ public class LogReader {
             return buf.peekFirst();
         }
 
+        /** 윗끝(포함, null = 아무것도 보이지 않음)을 건다: 읽어 둔 것 중 그보다 새 것은 버리고, 다음 조각은 그 아래에서 읽는다. */
+        void cap(String top) {
+            if (top == null) { buf.clear(); done = true; return; }
+            while (!buf.isEmpty() && compareIds(buf.peekFirst().id(), top) > 0) buf.pollFirst();
+            if (!done && (upper == null || compareIds(upper, top) > 0)) upper = top;
+        }
+
         /** 합친 순서에서 아직 보지 않은 항목이 (lower 안에) 더 있는가 — 읽어 둔 것이 없으면 한 건만 물어본다. */
         boolean hasMore() {
             return !buf.isEmpty() || (!done && !src.reverse(upper, lower, 1).isEmpty());
@@ -172,9 +205,38 @@ public class LogReader {
     /** 합친 순서의 한 항목. */
     private record Next(LogStream stream, Raw raw) {}
 
-    /** cursor 뒤부터(없으면 처음부터) 읽는 두 자리 — 클래스 설명의 이어 읽기 규칙. */
+    /**
+     * 첫 쪽(cursor 없음) · 묶음은 두 스트림의 한 시점 모습으로 읽는다: Redis TIME(T)을 먼저 읽고, 두 스트림 모두 T 앞 밀리초의 마지막 id
+     * ({@code (T-1)-18446744073709551615})까지만 보인다.
+     * <p>까닭: 두 스트림은 XREVRANGE 를 따로 부르므로 끝을 '+' 로만 두면 그 사이에 실린 항목이 한쪽에만 보인다 — 서버 스트림을 읽은 뒤 서버 항목 S 와
+     * 그보다 새 브라우저 오류 C 가 실리면(api 싱크가 한 묶음을 차례로 XADD) 첫 쪽에는 C 만 있고, S 는 C 보다 오래돼 웹의 "새 항목"
+     * (맨 위보다 새 것 — lib/logs.ts pendingEntries)에도 cursor 아래에도 없다. Redis 는 XADD 마다 그 명령의 시각 이상 · 그 스트림 마지막 id 초과의
+     * id 를 매기므로(streamNextID) TIME 뒤에 실린 항목의 ms 는 T 이상이다 — T 앞 밀리초까지는 두 스트림 모두 더 늘지 않고, 그 뒤에 실린 것은 모두
+     * 첫 쪽 맨 위보다 새 것이다. 밀리초를 통째로 빼는 까닭: 두 스트림은 순번을 따로 매겨 같은 밀리초 안에서는 나중에 실린 항목의 id 가 다른 스트림에
+     * 먼저 실린 항목보다 작을 수 있다. T 의 밀리초에 이미 실린 항목은 다음 새로 고침에 "새 항목"으로 보인다.</p>
+     * <p>전제는 스트림 id 가 Redis 시계를 따른다는 것이다. 한 스트림의 맨 위 id 가 T 보다 {@value #SKEW_MS} ms 넘게 앞서면(Redis 호스트 시계가 뒤로 감 —
+     * 그동안 Redis 는 마지막 id 의 ms 를 이어 쓴다 · id 를 지정한 XADD) 자르지 않고 두 스트림을 끝까지 보인다 — 자르면 새 오류를 시계가 따라잡을
+     * 때까지 숨긴다. 그때는 위의 경합을 막지 못한다(새로 읽으면 보인다). 여유 안이면 잘라서 잠깐(그만큼) 늦게 보인다.</p>
+     */
+    private Lane[] snapshotLanes(String lower) {
+        long now = redisNowMs.getAsLong();
+        Lane[] ls = {new Lane(LogStream.SERVER, server, null, lower, false), new Lane(LogStream.CLIENT, client, null, lower, false)};
+        for (Lane l : ls) {
+            Raw head = l.peek(CHUNK);
+            if (head != null && Long.compareUnsigned(parseId(head.id())[0], now + SKEW_MS) > 0) {
+                log.warn("log stream {} has id {} ahead of the redis clock {} by more than {} ms (clock stepped back, or an XADD with an explicit id)"
+                        + " — the first page is not cut at the redis time", l.stream.key(), head.id(), now, SKEW_MS);
+                return ls;
+            }
+        }
+        String top = previousId(Long.toUnsignedString(now) + "-0"); // T = 0 이면 null — 그 앞에는 아무것도 없다
+        for (Lane l : ls) l.cap(top);
+        return ls;
+    }
+
+    /** cursor 뒤부터(없으면 처음부터 — {@link #snapshotLanes}) 읽는 두 자리 — 클래스 설명의 이어 읽기 규칙. */
     private Lane[] lanes(Cursor c, String lower) {
-        if (c == null) return new Lane[]{new Lane(LogStream.SERVER, server, null, lower, false), new Lane(LogStream.CLIENT, client, null, lower, false)};
+        if (c == null) return snapshotLanes(lower);
         String before = previousId(c.id()); // 0-0 이면 null — 그 앞에는 아무것도 없다
         String clientUpper = c.stream() == LogStream.SERVER ? c.id() : before;
         return new Lane[]{new Lane(LogStream.SERVER, server, before, lower, before == null),
