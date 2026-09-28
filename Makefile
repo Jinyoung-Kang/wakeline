@@ -132,8 +132,8 @@ db-superuser-local-only: ## 기존 db 볼륨에 '슈퍼유저 postgres 는 로�
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' bash tools/db-superuser-local-only.sh
 
 # R-13: 영구 보존 자료(SIGMET·알림·통계·감사·운영자·설정)의 사본. db 컨테이너 안에서 로컬 소켓 슈퍼유저로 pg_dump(비밀번호 없음) — 스택을 멈추지 않아도 한 스냅샷.
-backup: ## DB 백업 → backups/<프로젝트>-<UTC>.dump (pg_dump 사용자 지정 형식, 파일 0600·디렉터리 0700, git 제외). 72 h 원해상도 행은 빼고(full=1 이면 포함) · 격리 스택: P=wakeline-e2e
-	@WAKELINE_PROJECT='$(or $(P),wakeline)' FULL='$(full)' bash tools/db-backup.sh
+backup: ## DB 백업 → backups/<프로젝트>-<UTC>.dump (pg_dump 사용자 지정 형식, 파일 0600·디렉터리 0700, git 제외). 72 h 원해상도 행은 빼고(full=1 이면 포함) · 최신 keep 개(기본 10, 0 = 모두)만 보관 · 격리 스택: P=wakeline-e2e
+	@WAKELINE_PROJECT='$(or $(P),wakeline)' FULL='$(full)' KEEP='$(or $(keep),10)' bash tools/db-backup.sh
 
 # 빈 새 볼륨에만 복원한다(확인 문구 · 쓰는 컨테이너 정지 · 빈 DB 확인 · 한 트랜잭션). 절차: README '백업·복원'.
 restore: ## 백업 복원: make restore f=backups/<파일>.dump confirm=wakeline — api·collector·ais 정지 + db 만 새 볼륨으로 띄운 상태에서

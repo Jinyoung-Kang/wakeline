@@ -82,6 +82,25 @@ f2="$(ls -t "$OUT"/*.dump | head -1)"
 [ "$f2" != "$f1" ]; check "새 파일(덮어쓰지 않음)" $? "$f2"
 has "FULL=1: 원해상도 행 포함" "$(docker exec -i -u postgres "$SRC" pg_restore --list < "$f2")" "TABLE DATA public track_point_$today"
 
+echo "[보관 개수: KEEP — 같은 대상의 이 도구 이름 형식 파일만, 오래된 것부터]"
+OUT2="$TMP/rotate"; mkdir -p "$OUT2"; chmod 700 "$OUT2"
+for t in 20260101T000000Z 20260102T000000Z 20260103T000000Z; do : > "$OUT2/$SRC-$t.dump"; done
+: > "$OUT2/other-20250101T000000Z.dump"; : > "$OUT2/$SRC-manual.dump"; : > "$OUT2/$SRC-20250101T000000Z.dump.txt"
+rc=0; out="$(KEEP=2 bash "$ROOT/tools/db-backup.sh" --container "$SRC" --out "$OUT2" 2>&1)" || rc=$?
+check "KEEP=2 백업 종료 코드 0" "$rc" "$out"
+is "KEEP=2: 이 대상의 백업 2개만 남음" "$(ls "$OUT2" | grep -Ec "^$SRC-[0-9]{8}T[0-9]{6}Z\.dump$")" 2
+[ ! -e "$OUT2/$SRC-20260101T000000Z.dump" ] && [ ! -e "$OUT2/$SRC-20260102T000000Z.dump" ] && [ -e "$OUT2/$SRC-20260103T000000Z.dump" ]
+check "가장 오래된 것부터 지움" $? "$(ls "$OUT2")"
+[ -e "$OUT2/other-20250101T000000Z.dump" ] && [ -e "$OUT2/$SRC-manual.dump" ] && [ -e "$OUT2/$SRC-20250101T000000Z.dump.txt" ]
+check "다른 대상·다른 이름 형식은 지우지 않음" $? "$(ls "$OUT2")"
+has "지운 파일을 알림" "$out" "$SRC-20260101T000000Z.dump"
+: > "$OUT2/$SRC-20250601T000000Z.dump"
+sleep 1   # 같은 초의 두 번째 백업은 이름이 같아 거부된다(덮어쓰지 않음)
+rc=0; out="$(KEEP=0 bash "$ROOT/tools/db-backup.sh" --container "$SRC" --out "$OUT2" 2>&1)" || rc=$?
+[ "$rc" = 0 ] && [ -e "$OUT2/$SRC-20250601T000000Z.dump" ]; check "KEEP=0: 지우지 않음" $? "$out"
+rc=0; out="$(KEEP=abc bash "$ROOT/tools/db-backup.sh" --container "$SRC" --out "$OUT2" 2>&1)" || rc=$?
+[ "$rc" = 2 ]; check "KEEP 형식 오류 → 백업 전에 거부" $? "rc=$rc $out"
+
 echo "[make restore: 거부해야 하는 경우 — 아무것도 바꾸지 않는다]"
 run_db "$DST" --label "com.docker.compose.project=$PROJ" --label com.docker.compose.service=db; check "새 볼륨 db 준비(빈 DB)" $? "not ready"
 tables_dst() { sql "$DST" -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'spatial_ref_sys'"; }
