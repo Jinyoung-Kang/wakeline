@@ -182,3 +182,17 @@ class SecretsNotOnArgvTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PortableShellTest(unittest.TestCase):
+    """시험·도구 셸 스크립트는 macOS(BSD)와 Linux(GNU, CI) 모두에서 같은 값을 내야 한다."""
+
+    def test_no_bsd_only_stat_format(self):
+        # GNU stat 의 -f 는 "파일 시스템 상태"라 `stat -f %Lp f` 는 %Lp 를 파일 이름으로 읽고 파일 시스템 정보를 먼저 출력한다 —
+        # `|| stat -c %a` 로 넘어가도 앞 출력이 섞여 값이 틀린다. 권한은 python3 os.stat 로 읽는다(file_mode).
+        offenders = []
+        for p in sorted([*(ROOT / "infra" / "tests").glob("*.sh"), *(ROOT / "tools").glob("*.sh"), ROOT / "tools" / "dc"]):
+            for n, line in enumerate(p.read_text().splitlines(), 1):
+                if re.search(r"\bstat\s+-f\b", line.split("#", 1)[0]):
+                    offenders.append(f"{p.relative_to(ROOT)}:{n}")
+        self.assertEqual(offenders, [])

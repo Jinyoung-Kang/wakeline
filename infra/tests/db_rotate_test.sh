@@ -15,6 +15,7 @@ cleanup() { docker rm -f "$ID" >/dev/null 2>&1 || true; docker volume rm "$ID-da
 trap cleanup EXIT
 check() { if [ "$2" = 0 ]; then passes=$((passes+1)); echo "  ok    $1"; else fails=$((fails+1)); echo "  FAIL  $1 → $3"; fi; }
 is() { if [ "$2" = "$3" ]; then check "$1" 0; else check "$1" 1 "$2 (기대: $3)"; fi; }
+file_mode() { python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o7777, "o"))' "$1"; }  # BSD·GNU stat 형식 차이 없이 권한(8진)
 val() { sed -n "s/^$1=//p" "$ENVF"; }
 # login <역할> <비밀번호> → current_user 또는 오류. 같은 망의 다른 컨테이너에서 TCP 로(서비스와 같은 경로 — scram-sha-256).
 # 컨테이너 안 127.0.0.1 은 이미지 기본 pg_hba 가 trust 라 비밀번호를 보지 않는다. 비밀번호는 -e 이름으로만(값은 이 함수의 환경).
@@ -54,7 +55,7 @@ for pair in wakeline_migrator:DB_MIGRATOR_PASSWORD:mig-test-pw wakeline_api:DB_A
 done
 is "다른 값은 그대로(DB_ROOT_PASSWORD)" "$(val DB_ROOT_PASSWORD)" root-test-pw
 is "다른 값은 그대로(REDIS_PASSWORD)" "$(val REDIS_PASSWORD)" keep-me-test
-is ".env 권한 600" "$(stat -f %Lp "$ENVF" 2>/dev/null || stat -c %a "$ENVF")" 600
+is ".env 권한 600" "$(file_mode "$ENVF")" 600
 is "임시 파일 없음" "$(find "$TMP" -mindepth 1 ! -name .env | wc -l | tr -d ' ')" 0
 is "DB 에는 SCRAM 검증값만(4096회)" \
   "$(docker exec -u postgres "$ID" psql -X -U postgres -d postgres -tAc "SELECT count(*) FROM pg_authid WHERE rolname LIKE 'wakeline\_%' AND rolpassword LIKE 'SCRAM-SHA-256\$4096:%'")" 3

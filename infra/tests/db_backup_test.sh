@@ -23,6 +23,7 @@ trap cleanup EXIT
 check() { if [ "$2" = 0 ]; then passes=$((passes+1)); echo "  ok    $1"; else fails=$((fails+1)); echo "  FAIL  $1 → $3"; fi; }
 is()  { if [ "$2" = "$3" ]; then check "$1" 0; else check "$1" 1 "$2 (기대: $3)"; fi; }
 has() { if grep -q -- "$3" <<<"$2"; then check "$1" 0; else check "$1" 1 "$2"; fi; }
+file_mode() { python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o7777, "o"))' "$1"; }  # BSD·GNU stat 형식 차이 없이 권한(8진)
 
 run_db() { # run_db <이름> [추가 docker run 인자...]
   local name=$1; shift
@@ -66,8 +67,8 @@ rc=0; out="$(bash "$ROOT/tools/db-backup.sh" --container "$SRC" --out "$OUT" 2>&
 check "백업 종료 코드 0" "$rc" "$out"
 f1="$(ls "$OUT"/*.dump 2>/dev/null | head -1)"
 [ -n "$f1" ]; check "백업 파일 생성: $(basename "${f1:-없음}")" $? "$out"
-is "파일 권한 600" "$(stat -f %Lp "$f1" 2>/dev/null || stat -c %a "$f1")" 600
-is "디렉터리 권한 700" "$(stat -f %Lp "$OUT" 2>/dev/null || stat -c %a "$OUT")" 700
+is "파일 권한 600" "$(file_mode "$f1")" 600
+is "디렉터리 권한 700" "$(file_mode "$OUT")" 700
 [ -z "$(find "$OUT" -mindepth 1 ! -name '*.dump' | head -1)" ]; check "임시 파일이 남지 않음" $? "$(ls -A "$OUT")"
 toc="$(docker exec -i -u postgres "$SRC" pg_restore --list < "$f1")"
 has "pg_restore --list: audit_log 행" "$toc" "TABLE DATA public audit_log"
