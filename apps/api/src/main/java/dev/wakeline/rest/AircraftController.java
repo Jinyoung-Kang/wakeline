@@ -158,6 +158,9 @@ public class AircraftController {
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 
+    /** 항적 한 번의 점 수 상한(R-52 — 선박 항적과 같다). 넘으면 앞에서부터(시간순) 이만큼만 싣고 properties.truncated = true. */
+    static final int TRACK_MAX_POINTS = 5_000;
+
     @GetMapping(value = "/{hex}/track", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> track(@PathVariable String hex, @RequestParam(required = false) Instant from,
                                                      @RequestParam(required = false) Instant to, @RequestParam(defaultValue = "0") int stepS,
@@ -166,13 +169,15 @@ public class AircraftController {
         Instant end = to == null ? Instant.now() : to;
         Instant start = from == null ? end.minus(Duration.ofHours(2)) : from;
         if (Duration.between(start, end).toHours() > 24 || !start.isBefore(end)) throw Problem.badRequest("BAD_RANGE", "range must be within 24 h");
-        List<Map<String, Object>> pts = tracks.track(h, start, end, Math.max(0, Math.min(stepS, 3600)));
+        List<Map<String, Object>> rows = tracks.track(h, start, end, Math.max(0, Math.min(stepS, 3600)), TRACK_MAX_POINTS + 1);
+        boolean truncated = rows.size() > TRACK_MAX_POINTS;
+        List<Map<String, Object>> pts = truncated ? rows.subList(0, TRACK_MAX_POINTS) : rows;
         List<double[]> coords = new ArrayList<>(pts.size());
         for (var p : pts) coords.add(new double[]{(double) p.get("lon"), (double) p.get("lat")});
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", "Feature");
         m.put("geometry", Map.of("type", "LineString", "coordinates", coords));
-        m.put("properties", Map.of("hex", h, "from", start, "to", end, "points", pts.size()));
+        m.put("properties", Map.of("hex", h, "from", start, "to", end, "points", pts.size(), "truncated", truncated));
         m.put("points", pts);
         m.put("meta", Meta.of(req, "db", pts.isEmpty() ? null : (Instant) pts.getLast().get("ts"), 120));
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic()).body(m);

@@ -93,3 +93,23 @@ def test_stats_days_are_utc_date_strings_with_an_aggregated_flag():
     assert not list(t.iter_errors(traffic))
     assert list(t.iter_errors({k: x for k, x in traffic.items() if k != "aggregated"}))  # 집계 전인지 알 수 없다
     assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-27", "dim": "10", "value": 1}]})
+
+
+def test_aircraft_track_is_capped_and_says_so():
+    """R-52: 점 수 상한 5,000 · truncated 필수 · 점 수와 좌표 수가 같다."""
+    v = Draft202012Validator(rcc.SCHEMAS["aircraft_track"], format_checker=rcc.FORMATS)
+    pts = [{"ts": f"2026-09-28T00:00:0{i}Z", "lat": 36.0, "lon": 127.0} for i in range(3)]
+    props = {"hex": "abc123", "from": "2026-09-27T22:00:00Z", "to": "2026-09-28T00:00:00Z", "points": 3, "truncated": False}
+    body = {
+        "type": "Feature",
+        "geometry": {"type": "LineString", "coordinates": [[127.0, 36.0]] * 3},
+        "properties": props,
+        "points": pts,
+        "meta": META,
+    }
+    assert not list(v.iter_errors(body))
+    assert rcc._aircraft_track(body) == []
+    assert list(v.iter_errors({**body, "properties": {k: x for k, x in props.items() if k != "truncated"}}))
+    assert rcc._aircraft_track({**body, "properties": {**props, "truncated": True}})  # 상한보다 적은데 잘렸다고 함
+    assert rcc._aircraft_track({**body, "points": pts[:2]})  # 점 수 불일치
+    assert rcc._aircraft_track({**body, "points": list(reversed(pts))})  # 시간순 아님

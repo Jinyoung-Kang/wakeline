@@ -706,11 +706,19 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "geometry": {"type": "object", "required": ["type", "coordinates"], "properties": {"type": {"const": "LineString"}}},
             "properties": {
                 "type": "object",
-                "required": ["hex", "from", "to", "points"],
-                "properties": {"hex": HEX, "from": TS, "to": TS, "points": INT},
+                # R-52: 점 수 상한 5,000(선박 항적과 같다) — 넘으면 앞에서부터(시간순) 자르고 truncated = true
+                "required": ["hex", "from", "to", "points", "truncated"],
+                "properties": {
+                    "hex": HEX,
+                    "from": TS,
+                    "to": TS,
+                    "points": {"type": "integer", "minimum": 0, "maximum": 5000},
+                    "truncated": BOOL,
+                },
             },
             "points": {
                 "type": "array",
+                "maxItems": 5000,
                 "items": {
                     "type": "object",
                     "required": ["ts", "lat", "lon"],
@@ -1402,6 +1410,22 @@ def _stats_days(body: dict[str, Any]) -> list[str]:
     return errs
 
 
+def _aircraft_track(body: dict[str, Any]) -> list[str]:
+    """R-52: properties.points = 점 수 = 선의 좌표 수, 시간순. 5,000점 미만인데 truncated 면 틀렸다."""
+    errs: list[str] = []
+    props = body.get("properties") or {}
+    pts = body.get("points") or []
+    coords = (body.get("geometry") or {}).get("coordinates") or []
+    if not (props.get("points") == len(pts) == len(coords)):
+        errs.append(f"properties.points {props.get('points')}, {len(pts)} points and {len(coords)} coordinates differ")
+    ts = [_ts(p["ts"]) for p in pts]
+    if ts != sorted(ts):
+        errs.append("points are not in time order")
+    if props.get("truncated") and len(pts) < 5000:
+        errs.append(f"truncated with only {len(pts)} points (the cap is 5,000)")
+    return errs
+
+
 def _stats_traffic(body: dict[str, Any]) -> list[str]:
     days = {row["day"] for row in body.get("items") or []}
     return [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
@@ -1428,6 +1452,7 @@ CROSS_CHECKS = {
     "stats_sigmet": _stats_days,
     "stats_alerts": _stats_days,
     "stats_traffic": _stats_traffic,
+    "aircraft_track": _aircraft_track,
 }
 
 

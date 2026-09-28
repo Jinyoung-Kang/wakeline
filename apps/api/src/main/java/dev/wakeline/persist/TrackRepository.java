@@ -15,15 +15,16 @@ public class TrackRepository {
 
     public TrackRepository(JdbcClient db) { this.db = db; }
 
-    public List<Map<String, Object>> track(String hex, Instant from, Instant to, int stepS) {
+    /** [from, to] 의 항적(시간순, 앞에서부터 최대 limit 점 — 호출자가 limit + 1 로 물어 잘렸는지 안다). stepS > 0 이면 버킷마다 첫 점. */
+    public List<Map<String, Object>> track(String hex, Instant from, Instant to, int stepS, int limit) {
         String sql = stepS > 0 ? """
                 SELECT DISTINCT ON (bucket) hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider,
                        to_timestamp(floor(extract(epoch FROM ts) / :step) * :step) bucket
-                FROM track_point WHERE hex = :hex AND ts BETWEEN :from AND :to ORDER BY bucket, ts"""
+                FROM track_point WHERE hex = :hex AND ts BETWEEN :from AND :to ORDER BY bucket, ts LIMIT :lim"""
                 : """
                 SELECT hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider
-                FROM track_point WHERE hex = :hex AND ts BETWEEN :from AND :to ORDER BY ts""";
-        var q = Sql.publicRead(db, sql).param("hex", hex).param("from", Sql.ts(from)).param("to", Sql.ts(to));
+                FROM track_point WHERE hex = :hex AND ts BETWEEN :from AND :to ORDER BY ts LIMIT :lim""";
+        var q = Sql.publicRead(db, sql).param("hex", hex).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit);
         if (stepS > 0) q = q.param("step", stepS);
         return q.query().listOfRows().stream().map(r -> {
             var m = new java.util.LinkedHashMap<>(r);
