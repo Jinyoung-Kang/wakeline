@@ -169,6 +169,11 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     await click(button("JSON 복사", d));
     expect(JSON.parse(written.at(-1)!)).toEqual(FIRST.items[0]);
     expect(byTestId("logs-note")!.textContent).toContain("복사됨");
+    // 같은 화면 안에서는 링크(#rid=)가 아니라 필터를 바로 바꾼다(Next 링크의 해시 이동은 hashchange 를 내지 않는다)
+    await click(button("이 요청 id 로 거르기", d));
+    const last = new URL(calls.filter((c) => c.startsWith("GET /api/v1/ops/logs?")).at(-1)!.slice(4), "http://x").searchParams;
+    expect(last.get("rid")).toBe("5f2c9a0e1b7d4c3a");
+    expect((find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "요청 id") as unknown as { value: string }).value).toBe("5f2c9a0e1b7d4c3a");
   });
   it("copy visible list (text) and download .txt / .ndjson are built in the browser from the shown rows", async () => {
     const written: string[] = [];

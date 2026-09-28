@@ -249,6 +249,11 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   };
   const reset = () => { setFilter(DEFAULT_LOG_FILTER); setDraftQ(""); setDraftRid(""); setRidError(null); };
   const filterFp = useCallback((fp: string) => { setView("list"); setFilter((f) => ({ ...f, fp })); }, []);
+  /** 요청 id 로 거르기(상세 · 오류 문구) — 요청 시각을 모르므로 가장 긴 기간 */
+  const filterRid = useCallback((rid: string) => {
+    setTab("logs"); setView("list"); setDraftRid(rid); setRidError(null);
+    setFilter((f) => ({ ...f, rid, period: "7d" }));
+  }, []);
   const openEntry = useCallback((e: LogEntry) => { setDetail(e); setDetailMiss(null); }, []);
   const closeDetail = useCallback(() => { setDetail(null); setDetailMiss(null); }, []);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
@@ -265,7 +270,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           <button type="button" className="btn" onClick={() => void load(view, filter)} disabled={loading}>새로 고침</button>
           <span className="mono text-[11px] text-fg-3" title="마지막 성공 응답 시각 — 15 s 마다 새 항목을 확인(목록은 단추를 눌러야 바뀜)" data-testid="logs-last-ok">갱신 {fmtClock(lastOk)} · 15 s 확인</span>
         </> : null}
-        {err && tab === "logs" ? <span className="text-[11px] text-bad" role="alert"><ErrorNote error={err} /></span> : null}
+        {err && tab === "logs" ? <span className="text-[11px] text-bad" role="alert"><ErrorNote error={err} onFilterRid={filterRid} /></span> : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span>
         <Link className="btn" href="/ops">운영</Link>
         <button type="button" className="btn" onClick={logout}>sign out</button>
@@ -402,12 +407,12 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           {view === "list" && (detail || detailMiss) ? (
             <aside className="max-h-[50%] min-h-0 overflow-auto border-t border-line bg-bg-1 lg:max-h-none lg:w-[46%] lg:border-t-0 lg:border-l" aria-label="항목 상세">
               {detail ? (
-                <LogDetail key={detail.id} entry={detail} period={filter.period} onClose={closeDetail} onOpen={openEntry} onFilterFp={filterFp} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} />
+                <LogDetail key={detail.id} entry={detail} period={filter.period} onClose={closeDetail} onOpen={openEntry} onFilterFp={filterFp} onFilterRid={filterRid} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} />
               ) : detailMiss ? (
                 <div className="p-3 text-[12px]" data-testid="log-detail-miss">
                   <div className="mb-1"><span className="label mr-2">항목</span><span className="mono">{detailMiss.id}</span></div>
                   <div className="text-bad">
-                    항목을 열지 못함 — 스트림에서 잘렸거나(최근 약 3,000건만 보관) id 가 틀림 · <ErrorNote error={detailMiss.error} />
+                    항목을 열지 못함 — 스트림에서 잘렸거나(최근 약 3,000건만 보관) id 가 틀림 · <ErrorNote error={detailMiss.error} onFilterRid={filterRid} />
                   </div>
                   <button type="button" className="btn mt-2" onClick={closeDetail}>닫기</button>
                 </div>

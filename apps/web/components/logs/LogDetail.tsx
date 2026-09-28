@@ -18,8 +18,8 @@ const RELATED_LIMIT = 50;
  * 항목 상세(계약 v5 §C7): 전체 메시지 · 예외 종류·메시지 · 스택(mono, 줄바꿈 전환) · context · 같은 지문 묶음 통계 · 같은 요청 id 의 다른 항목.
  * 복사: 항목 텍스트 · 항목 JSON(api 가 준 그대로) · 항목 링크(/logs#id=…). 바뀐 항목마다 새로 마운트한다(key) — 앞 항목의 조회 결과가 남지 않게.
  */
-export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onCopy, onAuthMiss }: {
-  entry: LogEntry; period: LogPeriod; onClose: () => void; onOpen: (e: LogEntry) => void; onFilterFp: (fp: string) => void;
+export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilterRid, onCopy, onAuthMiss }: {
+  entry: LogEntry; period: LogPeriod; onClose: () => void; onOpen: (e: LogEntry) => void; onFilterFp: (fp: string) => void; onFilterRid: (rid: string) => void;
   onCopy: (label: string, text: string) => void; onAuthMiss: (e: unknown) => void;
 }) {
   const [wrap, setWrap] = useState(true);
@@ -67,7 +67,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onCopy, 
           {row("인스턴스", <span className="mono">{entry.instance ?? "—"}</span>)}
           {row("스레드", <span className="mono">{entry.thread ?? "—"}</span>)}
           {row("로거", <span className="mono break-all">{entry.logger ?? "—"}</span>)}
-          {row("요청 id", entry.request_id ? <RequestIdCopy id={entry.request_id} /> : <span className="text-fg-3">— (필드 없음)</span>)}
+          {row("요청 id", entry.request_id ? <RequestIdCopy id={entry.request_id} onFilter={onFilterRid} /> : <span className="text-fg-3">— (필드 없음)</span>)}
           {row("지문(fp)", entry.fp ? <span className="flex flex-wrap items-center gap-1"><span className="mono select-all">{entry.fp}</span><button type="button" className="btn px-1.5! py-0! normal-case!" onClick={() => onFilterFp(entry.fp!)}>이 묶음만 목록</button></span> : "—")}
           {row("억제", entry.suppressed == null ? <span className="text-fg-3">— (필드 없음)</span> : <span><span className="mono">{entry.suppressed}</span>건 <span className="text-fg-3">— 직전 전송 뒤 같은 지문이라 보내지 않은 수</span></span>)}
         </tbody>
@@ -100,7 +100,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onCopy, 
       </div>
       <div className="label mb-1">같은 요청 id 의 다른 항목(최근 {LOG_PERIOD_LABEL[RELATED_PERIOD]})</div>
       {!entry.request_id ? <div className="text-fg-3">요청 id 없음</div>
-        : relatedErr ? <div className="text-bad"><ErrorNote error={relatedErr} /></div>
+        : relatedErr ? <div className="text-bad"><ErrorNote error={relatedErr} onFilterRid={onFilterRid} /></div>
         : !related ? <div className="text-fg-3">불러오는 중…</div>
         : !related.items.length ? <div className="text-fg-3">없음</div>
         : <table><tbody>{related.items.map((r) => (
