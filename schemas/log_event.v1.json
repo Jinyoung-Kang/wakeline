@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wakeline.invalid/schemas/log_event.v1.json",
+  "title": "LogEvent v1 — 시스템 로그 스트림(wakeline:logs) 한 항목(계약 v5 §C)",
+  "description": "api · collector · ais 가 WARN·ERROR 로그를 가려서(비밀값) 싣는다. web-client 는 api 가 받은 브라우저 오류를 대신 싣는다(untrusted). 스트림 필드 'e' 에 JSON 문자열로 들어간다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "ts", "service", "instance", "level", "logger", "message", "fp"],
+  "properties": {
+    "v": { "const": 1 },
+    "ts": { "type": "string", "format": "date-time", "description": "발생 시각(UTC, 밀리초)" },
+    "service": { "enum": ["api", "collector", "ais", "web-client"] },
+    "instance": { "type": "string", "minLength": 1, "maxLength": 64, "description": "호스트명:pid 등 프로세스 구분" },
+    "level": { "enum": ["ERROR", "WARN"] },
+    "logger": { "type": "string", "maxLength": 200 },
+    "thread": { "type": ["string", "null"], "maxLength": 100 },
+    "message": { "type": "string", "maxLength": 4000, "description": "가린 뒤의 메시지" },
+    "exception": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["type", "message", "stack"],
+      "properties": {
+        "type": { "type": "string", "maxLength": 200 },
+        "message": { "type": ["string", "null"], "maxLength": 2000 },
+        "stack": { "type": "string", "maxLength": 12000, "description": "가린 뒤의 스택(원인 체인 포함). 넘으면 끝에 잘림 표시" }
+      }
+    },
+    "fp": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "묶음 지문: 서비스·로거·예외 종류·숫자/id 를 지운 메시지 틀의 SHA-256 앞 16자리" },
+    "request_id": { "type": ["string", "null"], "pattern": "^[0-9A-Za-z-]{8,64}$" },
+    "context": {
+      "type": "object",
+      "maxProperties": 20,
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"], "maxLength": 200 }
+    },
+    "suppressed": { "type": "integer", "minimum": 0, "description": "같은 지문으로 직전 전송 뒤 억제한(보내지 않은) 건수" },
+    "untrusted": { "type": "boolean", "description": "브라우저가 보낸 내용(web-client) — 사실로 믿지 말 것" }
+  }
+}

@@ -1,0 +1,87 @@
+{
+ "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터.",
+ "version": 1,
+ "limit": 4000,
+ "cases": [
+  {
+   "input": "POST token client_secret=abc123&grant_type=x",
+   "expected": "POST token client_secret=***&grant_type=x"
+  },
+  {
+   "input": "client_id=myid&x=1",
+   "expected": "client_id=***&x=1"
+  },
+  {
+   "input": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+   "expected": "Authorization: ***"
+  },
+  {
+   "input": "Bearer abcdefghijklmnop",
+   "expected": "Bearer ***"
+  },
+  {
+   "input": "url?serviceKey=SK123&type=json",
+   "expected": "url?serviceKey=***&type=json"
+  },
+  {
+   "input": "rdr_cmp_file.php?tm=1&authKey=KMA_SECRET_1",
+   "expected": "rdr_cmp_file.php?tm=1&authKey=***"
+  },
+  {
+   "input": "api_key=KEY99",
+   "expected": "api_key=***"
+  },
+  {
+   "input": "password=hunter2",
+   "expected": "password=***"
+  },
+  {
+   "input": "token=tok_1",
+   "expected": "token=***"
+  },
+  {
+   "input": "secret=s3cr3t",
+   "expected": "secret=***"
+  },
+  {
+   "input": "redis://default:pa55@redis:6379/0",
+   "expected": "redis://default:***@redis:6379/0"
+  },
+  {
+   "input": "{\"result\":\"error\",\"authKey\":\"KMA_SECRET_1\"}",
+   "expected": "{\"result\":\"error\",\"authKey\":\"***\"}"
+  },
+  {
+   "input": "{\"client_secret\": \"abc123xyz\"}",
+   "expected": "{\"client_secret\": \"***\"}"
+  },
+  {
+   "input": "{\"APIKey\":\"ais-key-777\",\"BoundingBoxes\":[]}",
+   "expected": "{\"APIKey\":\"***\",\"BoundingBoxes\":[]}"
+  },
+  {
+   "input": "{'access_token': 'tok_ABCDEF'}",
+   "expected": "{'access_token': '***'}"
+  },
+  {
+   "input": "GET https://api.example.test/v2/vessel/location/latest?mmsi=440123456&key=ABCDEFGH12345",
+   "expected": "GET https://api.example.test/v2/vessel/location/latest?mmsi=440123456&key=***"
+  },
+  {
+   "input": "https://x.test/a?apikey=Zz99-secret&b=1",
+   "expected": "https://x.test/a?apikey=***&b=1"
+  },
+  {
+   "input": "jdbc:postgresql://db:5432/wakeline?user=wakeline_api&password=pw_value_1",
+   "expected": "jdbc:postgresql://db:5432/wakeline?user=wakeline_api&password=***"
+  },
+  {
+   "input": "org.springframework.data.redis.RedisConnectionFailureException: Unable to connect to redis:6379",
+   "expected": "org.springframework.data.redis.RedisConnectionFailureException: Unable to connect to redis:6379"
+  },
+  {
+   "input": "no secrets here: took 123 ms for 42 aircraft",
+   "expected": "no secrets here: took 123 ms for 42 aircraft"
+  }
+ ]
+}
