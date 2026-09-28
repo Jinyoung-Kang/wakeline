@@ -1,0 +1,106 @@
+Native Memory Tracking:
+
+Total: reserved=2070380316, committed=448028444
+       malloc: 55406364 #359783, peak=86919947 #355545
+       mmap:   reserved=2014973952, committed=392622080
+
+-                 Java Heap (reserved=429916160, committed=223346688)
+                            (mmap: reserved=429916160, committed=223346688, at peak)
+
+-                     Class (reserved=1075315582, committed=13304702)
+                            (classes #18359)
+                            (  instance classes #17181, array classes #1178)
+                            (malloc=1573758 tag=Class #35083) (peak=1622142 #37188)
+                            (mmap: reserved=1073741824, committed=11730944, at peak)
+                            (  Metadata:   )
+                            (    reserved=134217728, committed=76152832)
+                            (    used=75617000)
+                            (    waste=535832 =0.70%)
+                            (  Class space:)
+                            (    reserved=1073741824, committed=11730944)
+                            (    used=11324440)
+                            (    waste=406504 =3.47%)
+
+-                    Thread (reserved=62789624, committed=2959352)
+                            (threads #29)
+                            (stack: reserved=62668800, committed=2838528, peak=2838528)
+                            (malloc=82424 tag=Thread #208) (peak=154656 #356)
+                            (arena=38400 #64) (peak=4295440 #68)
+
+-                      Code (reserved=265681272, committed=37308792)
+                            (malloc=10081696 tag=Code #37701) (peak=14660568 #55199)
+                            (mmap: reserved=255598592, committed=27226112, at peak)
+                            (arena=984 #1) (peak=35680 #3)
+
+-                        GC (reserved=52801871, committed=48771407)
+                            (malloc=10793295 tag=GC #10358) (peak=11487167 #12979)
+                            (mmap: reserved=42008576, committed=37978112, at peak)
+                            (arena=0 #0) (peak=3936 #4)
+
+-                 GCCardSet (reserved=34056, committed=34056)
+                            (malloc=34056 tag=GCCardSet #39) (peak=64144 #111)
+
+-                  Compiler (reserved=291408, committed=291408)
+                            (malloc=90672 tag=Compiler #196) (peak=146392 #246)
+                            (arena=200736 #6) (peak=39551152 #25)
+
+-                  Internal (reserved=601134, committed=601134)
+                            (malloc=564270 tag=Internal #16477) (peak=592470 #16658)
+                            (mmap: reserved=36864, committed=36864, at peak)
+
+-                     Other (reserved=2421896, committed=2421896)
+                            (malloc=2421896 tag=Other #33) (peak=7968360 #64)
+
+-                    Symbol (reserved=17389459, committed=17389459)
+                            (malloc=15940795 tag=Symbol #238963) (at peak)
+                            (arena=1448664 #1) (at peak)
+
+-    Native Memory Tracking (reserved=6588870, committed=6588870)
+                            (malloc=112776 tag=Native Memory Tracking #1987) (peak=116416 #2036)
+                            (tracking overhead=6476094)
+
+-        Shared class space (reserved=16777312, committed=13303904, readonly=0)
+                            (malloc=96 tag=Shared class space #2) (at peak)
+                            (mmap: reserved=16777216, committed=13303808, peak=13500416)
+
+-               Arena Chunk (reserved=3324088, committed=3324088)
+                            (malloc=3324088 tag=Arena Chunk #265) (peak=45814144 #948)
+
+-                   Tracing (reserved=9041, committed=9041)
+                            (malloc=9041 tag=Tracing #43) (peak=15185 #67)
+                            (arena=0 #0) (peak=32728 #1)
+
+-                   Logging (reserved=8, committed=8)
+                            (malloc=8 tag=Logging #1) (at peak)
+
+-                Statistics (reserved=128, committed=128)
+                            (malloc=128 tag=Statistics #2) (at peak)
+
+-                 Arguments (reserved=86, committed=86)
+                            (malloc=86 tag=Arguments #4) (at peak)
+
+-                    Module (reserved=124896, committed=124896)
+                            (malloc=124896 tag=Module #3048) (at peak)
+
+-                 Safepoint (reserved=8192, committed=8192)
+                            (mmap: reserved=8192, committed=8192, at peak)
+
+-           Synchronization (reserved=1702584, committed=1702584)
+                            (malloc=1702584 tag=Synchronization #15189) (peak=1703032 #15193)
+
+-            Serviceability (reserved=17577, committed=17577)
+                            (malloc=17577 tag=Serviceability #19) (peak=17721 #21)
+
+-                 Metaspace (reserved=134579592, committed=76514696)
+                            (malloc=361864 tag=Metaspace #133) (at peak)
+                            (mmap: reserved=134217728, committed=76152832, at peak)
+
+-      String Deduplication (reserved=680, committed=680)
+                            (malloc=680 tag=String Deduplication #8) (at peak)
+
+-           Object Monitors (reserved=4800, committed=4800)
+                            (malloc=4800 tag=Object Monitors #24) (peak=106600 #533)
+
+
+# 같은 순간의 프로세스 메모리(세션 출력 — docker exec … grep /proc/7/status, api 를 멈추기 직전): VmRSS 627,908 kB · RssAnon 602,500 kB(= 588 MiB)
+# NMT committed 448,028,444 B = 427 MiB → JVM 밖 약 161 MiB(RssAnon − NMT committed, 계산)

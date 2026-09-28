@@ -1,0 +1,72 @@
+
+== security.log
+== gitleaks (git 이력 전체, .gitleaksignore 적용)
+PASS  gitleaks
+== trivy 자체 이미지 (HIGH·CRITICAL, 고칠 수 있는 것만, 차단)
+PASS  trivy wakeline-api:local
+PASS  trivy wakeline-collector:local
+PASS  trivy wakeline-web:local
+== trivy 제3자 이미지 (ci.yml third-party-images 행렬의 blocking 그대로)
+PASS  trivy edge (nginxinc/nginx-unprivileged:1.30-alpine@sha256:ed04ec1ff34502c339ee5c3ae3f855442398edc1d05591e2b98981dcbbd20b1e)
+PASS  trivy redis (redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0)
+=================================
+=============================
+WARN  trivy db (imresamu/postgis:18-3.6@sha256:b5766ee720aca09c61b9a868abefbf273348a4b90ad4cf146b4f8c9ac85d48e4) (보고만)
+===================================
+WARN  trivy k6 (grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34) (보고만)
+security gate: PASS
+
+== e2e.log
+  16 passed (39.0s)
+
+== infra-docker.log
+edge test: 32 passed, 0 failed
+redis ACL test: 219 passed, 0 failed
+db hardening test: 36 passed, 0 failed
+db backup test: 48 passed, 0 failed
+db rotate test: 27 passed, 0 failed
+
+== edge-final.log
+  ok    화면 경로 폭주 → 429 (120회 중 47)
+  ok    /maplibre 정적 파일은 양동이가 찬 뒤에도 429 없음 (100회 중 0)
+  ok    /maplibre 캐시 + 보안 헤더
+edge test: 35 passed, 0 failed
+
+== e2e2.log
+  16 passed (39.5s)
+
+== test-api-full3.log
+ok   status           /api/v1/status
+ok   aircraft         /api/v1/aircraft?bbox=124,33,132,39
+ok   aircraft_full    /api/v1/aircraft?bbox=124,33,132,39&detail=full
+ok   aircraft_detail  /api/v1/aircraft/a1d001
+ok   aircraft_search  /api/v1/aircraft/search?q=ITD0
+ok   aircraft_search_db /api/v1/aircraft/search?q=HLDB
+ok   aircraft_track   /api/v1/aircraft/a1d001/track
+ok   sigmets          /api/v1/sigmets
+ok   sigmet_detail    /api/v1/sigmets/RKRR:IT-REST:1790605761292
+ok   alerts           /api/v1/alerts
+ok   alerts_history   /api/v1/alerts/history
+ok   radar_frames     /api/v1/radar/frames
+ok   airports         /api/v1/airports
+ok   airport_wx       /api/v1/airports/RKSI/wx
+ok   replay           /api/v1/replay?at=2026-09-28T14:29:16Z&bbox=124,33,132,39
+ok   stats_traffic    /api/v1/stats/traffic?day=2026-09-28
+ok   stats_alerts     /api/v1/stats/alerts
+ok   stats_sigmet     /api/v1/stats/sigmet
+ok   problem_400      /api/v1/aircraft?bbox=1,2,3
+ok   problem_404      /api/v1/ops/providers
+ok   ships            /api/v1/ships?bbox=128,34,130,36
+ok   ship_detail      /api/v1/ships/440700100
+ok   ship_track       /api/v1/ships/440700100/track
+ok   ais_gaps         /api/v1/ais/gaps
+ok   problem_bad_mmsi /api/v1/ships/12345
+ok   ship_detail_nostatic /api/v1/ships/440700101
+ok   status_ais       /api/v1/status
+rest contract check: 27 passed, 0 failed, 0 skipped — PASSED
+
+== api 전체 재실행(최종)
+api 전체 재실행(ShipsIT 창 30 s 뒤, `make test-api`, 산출물 시각 2026-09-28T14:31Z): 534 tests · 0 failures · 0 errors · 0 skipped · JaCoCo LINE 95.86 % · BRANCH 83.56 % — apps/api/build 의 JUnit XML 합계와 jacocoTestReport.xml 에서 읽음
+== 인프라 정책(python3 -m unittest discover -s infra/tests, HEAD 0ab26cd, 2026-09-28T15:30Z)
+Ran 113 tests in 5.964s
+OK

@@ -1,0 +1,203 @@
+# k6 실행별 요약(REST 100 rps × 3분 + WS 200 연결, api 층 직접). 원본: perf/results/k6-*.log · A/B·재측정 로그
+
+== make bench 20260928T055027Z
+REST: reqs=17996 rate=100.0/s failed=0.00%
+ aircraft p50=2.5ms p95=9.4ms p99=87.7ms max=525.4ms
+ sigmets  p50=2.7ms p95=10.9ms p99=86.5ms max=569.4ms
+ status   p50=2.6ms p95=13.7ms p99=130.0ms max=646.9ms
+WS: max VUs=200 messages=20516 snapshots=1461 diffs=3184 errors=0
+ lag (server ts → client recv) p50=23ms p95=151ms p99=225ms max=320ms
+ ships: messages=4320 lag p50=6ms p95=35ms max=68ms
+
+== make bench 20260928T103605Z
+REST: reqs=17992 rate=100.0/s failed=0.00%
+ aircraft p50=2.5ms p95=21.9ms p99=208.0ms max=743.0ms
+ sigmets  p50=2.8ms p95=23.5ms p99=207.2ms max=728.4ms
+ status   p50=1.5ms p95=15.4ms p99=228.4ms max=993.5ms
+WS: max VUs=200 messages=19592 snapshots=1470 diffs=3009 errors=0
+ lag (server ts → client recv) p50=38ms p95=214ms p99=315ms max=453ms
+ ships: messages=4362 lag p50=6ms p95=26ms max=48ms
+
+== make bench 20260928T104455Z
+REST: reqs=18001 rate=100.0/s failed=0.00%
+ aircraft p50=2.3ms p95=7.8ms p99=33.7ms max=341.2ms
+ sigmets  p50=2.5ms p95=7.5ms p99=27.2ms max=329.4ms
+ status   p50=1.4ms p95=5.6ms p99=30.1ms max=286.9ms
+WS: max VUs=200 messages=19485 snapshots=1421 diffs=2804 errors=0
+ lag (server ts → client recv) p50=45ms p95=226ms p99=908ms max=1017ms
+ ships: messages=4458 lag p50=8ms p95=48ms max=743ms
+
+== make bench 20260928T105327Z
+REST: reqs=18001 rate=100.0/s failed=0.00%
+ aircraft p50=2.6ms p95=10.1ms p99=87.6ms max=526.3ms
+ sigmets  p50=3.0ms p95=12.1ms p99=137.1ms max=521.3ms
+ status   p50=1.6ms p95=7.4ms p99=89.5ms max=552.6ms
+WS: max VUs=200 messages=21090 snapshots=1474 diffs=3244 errors=0
+ lag (server ts → client recv) p50=26ms p95=166ms p99=243ms max=329ms
+ ships: messages=4391 lag p50=5ms p95=17ms max=26ms
+
+== make bench 20260928T112142Z
+REST: reqs=17954 rate=99.7/s failed=0.00%
+ aircraft p50=2.7ms p95=16.1ms p99=267.3ms max=889.2ms
+ sigmets  p50=3.2ms p95=17.9ms p99=315.2ms max=1062.9ms
+ status   p50=1.6ms p95=9.3ms p99=228.7ms max=1133.5ms
+WS: max VUs=200 messages=19780 snapshots=1401 diffs=2996 errors=0
+ lag (server ts → client recv) p50=27ms p95=266ms p99=602ms max=1225ms
+ ships: messages=4492 lag p50=7ms p95=54ms max=283ms
+
+== make bench 20260928T132142Z
+REST: reqs=15464 rate=85.3/s failed=0.00%
+ aircraft p50=541.1ms p95=4169.0ms p99=5807.3ms max=7593.7ms
+ sigmets  p50=539.8ms p95=4119.5ms p99=5730.9ms max=7230.3ms
+ status   p50=598.2ms p95=6231.0ms p99=9305.0ms max=14372.0ms
+time="2026-09-28T13:25:15Z" level=error msg="thresholds on metrics 'http_req_duration{name:aircraft}, http_req_duration{name:sigmets}, http_req_duration{name:status}' have been crossed"
+WS: max VUs=200 messages=19991 snapshots=1465 diffs=3247 errors=0
+ lag (server ts → client recv) p50=63ms p95=451ms p99=1324ms max=1641ms
+ ships: messages=4264 lag p50=18ms p95=385ms max=2797ms
+
+== make bench 20260928T133017Z
+REST: reqs=17578 rate=97.7/s failed=0.00%
+ aircraft p50=5.0ms p95=1017.8ms p99=3042.0ms max=6112.6ms
+ sigmets  p50=6.2ms p95=1017.2ms p99=2844.7ms max=6045.5ms
+ status   p50=3.2ms p95=1601.5ms p99=6371.7ms max=10186.2ms
+time="2026-09-28T13:33:56Z" level=error msg="thresholds on metrics 'http_req_duration{name:aircraft}, http_req_duration{name:sigmets}, http_req_duration{name:status}' have been crossed"
+time="2026-09-28T13:38:17Z" level=error msg="thresholds on metrics 'ws_diff_lag_ms' have been crossed"
+WS: max VUs=200 messages=19338 snapshots=1384 diffs=2931 errors=0
+ lag (server ts → client recv) p50=47ms p95=571ms p99=916ms max=1683ms
+ ships: messages=4483 lag p50=23ms p95=175ms max=627ms
+
+== make bench 20260928T135420Z
+REST: reqs=17891 rate=99.4/s failed=0.00%
+ aircraft p50=3.0ms p95=67.5ms p99=265.3ms max=1821.1ms
+ sigmets  p50=3.5ms p95=67.0ms p99=306.1ms max=1851.9ms
+ status   p50=1.8ms p95=60.1ms p99=266.3ms max=1857.1ms
+WS: max VUs=200 messages=19957 snapshots=1479 diffs=3033 errors=0
+ lag (server ts → client recv) p50=44ms p95=287ms p99=472ms max=694ms
+ ships: messages=4015 lag p50=10ms p95=91ms max=188ms
+
+== make bench 20260928T140508Z
+REST: reqs=17948 rate=99.7/s failed=0.00%
+ aircraft p50=2.7ms p95=126.9ms p99=523.7ms max=1194.8ms
+ sigmets  p50=3.1ms p95=121.7ms p99=516.7ms max=1195.9ms
+ status   p50=1.8ms p95=140.5ms p99=621.9ms max=1363.2ms
+WS: max VUs=200 messages=20337 snapshots=1501 diffs=3195 errors=0
+ lag (server ts → client recv) p50=10ms p95=175ms p99=338ms max=424ms
+ ships: messages=4634 lag p50=9ms p95=77ms max=404ms
+
+== ab.log
+== B1 (arena default) 11:31
+api MALLOC_ARENA_MAX='32'
+REST: reqs=18001 rate=100.0/s failed=0.00%
+ aircraft p50=2.8ms p95=6.9ms p99=50.3ms max=514.4ms
+ sigmets  p50=2.9ms p95=7.6ms p99=43.2ms max=486.1ms
+ status   p50=1.7ms p95=5.5ms p99=51.2ms max=686.2ms
+WS: max VUs=200 messages=19325 snapshots=1452 diffs=2991 errors=0
+ lag (server ts → client recv) p50=42ms p95=159ms p99=482ms max=730ms
+ ships: messages=4009 lag p50=5ms p95=31ms max=141ms
+api mem end 646.2MiB / 1GiB
+== A1 (arena 2) 11:38
+api MALLOC_ARENA_MAX='2'
+REST: reqs=18001 rate=100.0/s failed=0.00%
+ aircraft p50=2.8ms p95=6.3ms p99=35.3ms max=476.8ms
+ sigmets  p50=3.1ms p95=6.6ms p99=29.2ms max=441.2ms
+ status   p50=1.7ms p95=5.2ms p99=21.6ms max=587.2ms
+WS: max VUs=200 messages=20071 snapshots=1456 diffs=3169 errors=0
+ lag (server ts → client recv) p50=34ms p95=198ms p99=420ms max=508ms
+ ships: messages=4484 lag p50=6ms p95=33ms max=160ms
+api mem end 501MiB / 1GiB
+== B2 (arena default) 11:46
+api MALLOC_ARENA_MAX='32'
+REST: reqs=18001 rate=100.0/s failed=0.00%
+ aircraft p50=2.8ms p95=6.0ms p99=25.6ms max=353.9ms
+ sigmets  p50=3.1ms p95=6.4ms p99=26.0ms max=317.0ms
+ status   p50=1.6ms p95=5.1ms p99=43.1ms max=470.3ms
+WS: max VUs=200 messages=20493 snapshots=1480 diffs=3248 errors=0
+ lag (server ts → client recv) p50=18ms p95=123ms p99=254ms max=461ms
+ ships: messages=4446 lag p50=6ms p95=33ms max=426ms
+api mem end 671.7MiB / 1GiB
+== A2 (arena 2) 11:54
+api MALLOC_ARENA_MAX='2'
+REST: reqs=17925 rate=99.6/s failed=0.00%
+ aircraft p50=2.8ms p95=414.4ms p99=930.5ms max=1378.9ms
+ sigmets  p50=3.1ms p95=455.8ms p99=974.9ms max=1967.5ms
+ status   p50=1.6ms p95=440.5ms p99=1224.5ms max=3232.2ms
+WS: max VUs=200 messages=20149 snapshots=1490 diffs=3077 errors=0
+ lag (server ts → client recv) p50=77ms p95=812ms p99=1330ms max=1812ms
+ ships: messages=4436 lag p50=19ms p95=672ms max=1923ms
+time="2026-09-28T12:01:45Z" level=error msg="thresholds on metrics 'ws_diff_lag_ms' have been crossed"
+api mem end 506MiB / 1GiB
+
+== ab2.log
+== A3 (arena 2) 12:03 load=5.66 5.32 4.29
+api MALLOC_ARENA_MAX='2'
+REST: reqs=9986 rate=55.3/s failed=0.00%
+ aircraft p50=943.0ms p95=7901.0ms p99=13382.0ms max=32765.3ms
+ sigmets  p50=961.2ms p95=8191.1ms p99=13621.9ms max=32658.1ms
+ status   p50=1114.4ms p95=30134.3ms p99=40567.4ms max=45427.8ms
+WS: max VUs=200 messages=20202 snapshots=1396 diffs=3050 errors=0
+ lag (server ts → client recv) p50=111ms p95=1421ms p99=2257ms max=2758ms
+ ships: messages=4384 lag p50=33ms p95=287ms max=1551ms
+time="2026-09-28T12:10:56Z" level=error msg="thresholds on metrics 'ws_diff_lag_ms' have been crossed"
+api mem end 670MiB / 1GiB
+== B3 (arena default) 12:10 load=4.98 6.90 5.87
+api MALLOC_ARENA_MAX='32'
+REST: reqs=15896 rate=88.3/s failed=0.00%
+ aircraft p50=144.2ms p95=3105.5ms p99=6025.3ms max=9859.2ms
+ sigmets  p50=157.1ms p95=3185.7ms p99=6879.0ms max=9852.3ms
+ status   p50=143.7ms p95=5031.7ms p99=7359.5ms max=10588.7ms
+WS: max VUs=200 messages=19382 snapshots=1406 diffs=2770 errors=0
+ lag (server ts → client recv) p50=171ms p95=6738ms p99=15363ms max=21271ms
+ ships: messages=4285 lag p50=66ms p95=3123ms max=18451ms
+time="2026-09-28T12:18:59Z" level=error msg="thresholds on metrics 'ws_diff_lag_ms' have been crossed"
+api mem end 766.4MiB / 1GiB
+
+== bench5.log
+== run 5 13:21:41
+REST: reqs=15464 rate=85.3/s failed=0.00%
+ aircraft p50=541.1ms p95=4169.0ms p99=5807.3ms max=7593.7ms
+ sigmets  p50=539.8ms p95=4119.5ms p99=5730.9ms max=7230.3ms
+ status   p50=598.2ms p95=6231.0ms p99=9305.0ms max=14372.0ms
+time="2026-09-28T13:25:15Z" level=error msg="thresholds on metrics 'http_req_duration{name:aircraft}, http_req_duration{name:sigmets}, http_req_duration{name:status}' have been crossed"
+WS: max VUs=200 messages=19991 snapshots=1465 diffs=3247 errors=0
+ lag (server ts → client recv) p50=63ms p95=451ms p99=1324ms max=1641ms
+ ships: messages=4264 lag p50=18ms p95=385ms max=2797ms
+k6 exit: rest=99 ws=0 (99 = threshold crossed)
+exit 2
+
+== bench6.log
+== run 6 13:30:17
+REST: reqs=17578 rate=97.7/s failed=0.00%
+ aircraft p50=5.0ms p95=1017.8ms p99=3042.0ms max=6112.6ms
+ sigmets  p50=6.2ms p95=1017.2ms p99=2844.7ms max=6045.5ms
+ status   p50=3.2ms p95=1601.5ms p99=6371.7ms max=10186.2ms
+time="2026-09-28T13:33:56Z" level=error msg="thresholds on metrics 'http_req_duration{name:aircraft}, http_req_duration{name:sigmets}, http_req_duration{name:status}' have been crossed"
+time="2026-09-28T13:38:17Z" level=error msg="thresholds on metrics 'ws_diff_lag_ms' have been crossed"
+WS: max VUs=200 messages=19338 snapshots=1384 diffs=2931 errors=0
+ lag (server ts → client recv) p50=47ms p95=571ms p99=916ms max=1683ms
+ ships: messages=4483 lag p50=23ms p95=175ms max=627ms
+k6 exit: rest=99 ws=99 (99 = threshold crossed)
+exit 2
+
+== g1.log
+== g1 start 13:54:20
+REST: reqs=17891 rate=99.4/s failed=0.00%
+ aircraft p50=3.0ms p95=67.5ms p99=265.3ms max=1821.1ms
+ sigmets  p50=3.5ms p95=67.0ms p99=306.1ms max=1851.9ms
+ status   p50=1.8ms p95=60.1ms p99=266.3ms max=1857.1ms
+WS: max VUs=200 messages=19957 snapshots=1479 diffs=3033 errors=0
+ lag (server ts → client recv) p50=44ms p95=287ms p99=472ms max=694ms
+ ships: messages=4015 lag p50=10ms p95=91ms max=188ms
+k6 exit: rest=0 ws=0 (99 = threshold crossed)
+exit 0
+
+== g2.log
+== g2 start 14:05:08
+REST: reqs=17948 rate=99.7/s failed=0.00%
+ aircraft p50=2.7ms p95=126.9ms p99=523.7ms max=1194.8ms
+ sigmets  p50=3.1ms p95=121.7ms p99=516.7ms max=1195.9ms
+ status   p50=1.8ms p95=140.5ms p99=621.9ms max=1363.2ms
+WS: max VUs=200 messages=20337 snapshots=1501 diffs=3195 errors=0
+ lag (server ts → client recv) p50=10ms p95=175ms p99=338ms max=424ms
+ ships: messages=4634 lag p50=9ms p95=77ms max=404ms
+k6 exit: rest=0 ws=0 (99 = threshold crossed)
+exit 0

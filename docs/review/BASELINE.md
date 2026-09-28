@@ -1,6 +1,6 @@
 # 기준선(BASELINE) — 리뷰 1단계
 
-측정 대상: 커밋 `80716cb`(계약 v4 기능 반영 뒤) · 측정 시각 2026-09-28 05:4x–06:xx UTC · 이 기계(Apple Silicon, macOS 26.6, Docker Desktop 29.8) ·
+측정 대상: 커밋 `80716cb`(계약 v4 기능 반영 뒤) · 측정 시각 2026-09-28 05:4x–06:xx UTC · 이 기계(Apple Silicon, macOS 26.7, Docker Desktop 엔진 29.8.0) ·
 개발 스택(127.0.0.1:8700, 실데이터 수집 중). 원자료: `perf/results/review-baseline/`(요약 `summary.tsv`), k6: `perf/results/k6-*-<시각>.log`.
 측정 명령은 하나로 묶었다 — `bash perf/review_measure.sh <label>`(4단계에서 같은 명령으로 다시 잰다).
 

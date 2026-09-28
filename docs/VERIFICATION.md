@@ -155,14 +155,53 @@
   줌 ≥ 7 에서 넘으면 화면 중심 쪽만 — api 가 핫 리전 칸을 구독 영역 중심으로 정하므로 띠 전체를 보내면 중심이 경도 0 으로 잡힌다. 재생 화면의 REST 요청도 같은 규칙(중심 쪽).
 - **회귀** 단위 시험 5건(보통 화면 · 낮은 줌 띠 전체 · 한 바퀴 이상 · 확대 시 중심 쪽 양방향 · 바퀴 수 정규화). 같은 화면에서 항공기 10,232대 · 선박 14k척(130칸)으로 아메리카 포함.
 
-## 자동 검사 현황(2026-09-28)
+## #24 리뷰 v1(4단계 절차) — 98건 진단(고유 97 + 3단계 추가 R-98) · 85건 승인 · 2차 검토 35건 · 문서 사실 확인 2회
+- 절차: 기준선 측정([review/BASELINE](review/BASELINE.md)) → 진단([review/REVIEW-v1](review/REVIEW-v1.md), 독립 검증자가 반박 시도) → 승인 항목 수정(버그·보안은 실패하는 시험 먼저, 계약 변경은 [ADR-017](adr/ADR-017-review-v1-contract-changes.md) 먼저)
+  → 재측정·검증([review/VERIFICATION](review/VERIFICATION.md)). 1차 수정은 6개 레인 90커밋, 레인마다 독립 검토자가 다시 확인해 35건을 찾았고 모두 다시 처리했다.
+- 결과 요약: api 이미지 CRITICAL 3 → 0 · web 이미지 HIGH 4 → 0 · Semgrep 9 → 0 · gitleaks 2 → 0 · 첫 화면 JS 613.6 → 497.7 KiB · api 메모리 611 → 경합 기록이 없는 오전 k6 실행에서 약 500 MiB(최종 측정 스크립트 527.2 MiB · 같은 기계에 다른 부하가 있으면 577–611 MiB) · collector 메모리 40분 뒤 약 297 → 약 210 MiB ·
+  시험 collector 682 → 746 · api 457 → 534 · web 286 → 378.
+
+## #25 퍼센트 인코딩한 경로로 운영 세션 수명·CSRF·요청 제한 우회(R-98)
+- **증상** `/api/v1/%6Fps/providers/opensky/disable` 을 CSRF 헤더 없이 쿠키만으로 보내면 204 — 공급자가 실제로 꺼졌다. 같은 방법으로 만료 세션 200, 분당 한도 우회.
+- **원인** 세 검사가 원문 `getRequestURI()` 앞부분으로 대상을 골랐고, 인가·Spring MVC 는 디코딩한 경로로 맞췄다. edge 는 원문 URI 를 그대로 넘긴다.
+- **수정** 경로 판단을 인가와 같은 `PathPatternRequestMatcher`(`ApiPaths`) 하나로. **회귀** 실제 HTTP 로 보내는 `SecurityIT` 4건(수정 전 200·204·200 — 기대 404·403·429).
+- **교훈** 경로로 보안 결정을 할 때는 인가 규칙과 같은 매처를 쓴다. 문자열 앞부분 비교는 정규화 차이로 우회된다.
+
+## #26 api 메모리가 힙을 줄여도 줄지 않음 — glibc malloc 아레나(NFR-03)
+- **증상** 힙 비율을 60 → 40 % 로 줄였지만(R-25) 부하 중 RSS 605–629 MiB(목표 ≤ 512 MB). 힙 커밋은 약 200 MiB 뿐이었다.
+- **원인 찾기** JVM Native Memory Tracking(종료 때 요약 출력 — 강화된 컨테이너라 `jcmd` 붙이기가 실패)으로 JVM 이 쓴 메모리(NMT committed) 427 MiB, 종료 직전 프로세스 익명 메모리 588 MiB — 약 160 MiB 가 JVM 밖, 스레드별 malloc 아레나였다.
+- **수정** 실행 이미지에 `MALLOC_ARENA_MAX=2` → 경합 없을 때 k6 부하 중 최대 497 MiB · 실행 끝 501 MiB. 같은 부하의 교대 A/B 로 지연 차이가 실행 간 흔들림 안임을 확인.
+- **남은 것** 같은 기계에 다른 부하가 있으면 처리가 밀려 G1 이 힙 커밋을 늘리고(241 → 298 · 217 → 316 MiB) RSS 가 577–611 MiB 까지 오른다(힙 표본). k6 없이 큰 경합 속에서는 힙 커밋 381 · RSS 661 MiB, 최종 측정 스크립트(k6 없음)는 527.2 MiB — NFR-03(≤ 512)은 경합 없는 k6 실행에서만 맞았다. 힙 상한 조정은 경합 없는 측정으로 정할 다음 후보.
+
+## #26b collector 메모리가 재기동 뒤 계단식으로 늘어남 — 스레드별 malloc 아레나
+- **증상** 재기동 뒤 40분에 RssAnon 99 → 289–298 MiB. 누수로 보였다.
+- **원인 찾기** 코드 감사(3개 갈래, 후보마다 반박 검증)에서 끝없이 자라는 자료 구조는 없었다. 메모리가 뛴 시각이 기상청 레이더 해석(수십 MB numpy)과 맞았고, 이 해석이 공용 스레드 풀(최대 8)의 아무 스레드에서 돌아 스레드마다 glibc 아레나가 최고점을 따로 쥐었다(해석은 기준선부터 풀에서 돌았고, R-21 이 풀을 쓰는 호출을 늘려 스레드가 많아진 것으로 추정). 아레나만 묶어서는 멈추지 않았다.
+- **수정** 해석은 전용 스레드 하나에서만 + `MALLOC_ARENA_MAX=2` → 같은 40분에 173–217 MiB 로 평탄. **회귀** `test_decode_runs_on_one_dedicated_thread_not_the_shared_pool` · 정책 시험.
+
+## #27 푸시 전에 잡은 CI 빨간불 — 실 Redis 시험이 없어진 ACL 변수를 읽음
+- **증상** R-86(Redis 명령 허용 목록) 뒤 `collector_redis_test.sh`(CI collector job)가 시험 코드에 닿기 전에 실패 — 로컬 기본 실행에서는 건너뛰는 시험이라 드러나지 않았다.
+- **수정** 시험이 start.sh 와 같은 규칙(키·명령 목록·선택자, 이어 붙인 줄 포함)으로 사용자를 만든다. 6/6 통과.
+
+## #28 부하 시험 결과가 같은 기계의 다른 작업에 흔들림 — 측정 방법
+- 브라우저 패널에 상황판(선박 약 1.4만 척 WebGL)을 열어 둔 채 k6 를 돌리면 REST p99 가 207–228 ms 로 올랐다(닫고 27–137 ms). 같은 Docker VM 에서 다른 프로젝트(aptlake)의 CPU 를 실행 중 기록한 13:21 · 13:30 실행(23–244 %)에서는 REST p95 가 1.0–6.2 s,
+  호스트 부하만 기록한 12:03 · 12:10 실행(1분 부하 5.3–12.4)에서는 3.1–30 s 까지 나빴다(기록이 없는 11:54 실행은 0.4 s — 원인은 확인하지 않았다). 이후 부하 시험은 호스트 부하·`docker stats` 를 함께 기록하고, 오염된 실행은 이유를 적고 버린다. Lighthouse 도 한 번의 값은 흔들림이 커서(TBT 620–2,732 ms) 5회 중앙값을 쓴다.
+
+## #29 E2E 가 조용한 날에 4건 실패 — MapLibre 파일이 IP당 제한 안으로 들어감(R-02 부작용)
+- **증상** 최종 코드의 `make e2e` 가 4/16 실패, edge 로그 `limiting requests … zone "perip"`(429). 호스트가 바빠 느리게 돈 날에는 통과했다.
+- **원인** R-02 가 MapLibre 를 `/_next/static`(제한 밖)에서 `/maplibre/<버전>/` 으로 옮겼는데 edge 는 이를 `location /`(IP당 제한)로 보냈다. 첫 화면마다 양동이를 3–4칸 더 쓰고,
+  Playwright 작업자 여럿은 같은 IP 라 캐시 없는 첫 화면을 동시에 열어 양동이를 넘겼다.
+- **수정** `/maplibre/` 를 `/_next/static` 처럼 제한 밖·1년 immutable 로. UI 시험은 작업자 1명(여러 브라우저 = 한 IP 뒤의 여러 사용자 — 재시도로 가리지 않는다).
+- **회귀** `edge_test.sh`(양동이가 찬 뒤 `/maplibre` 100회 중 429 0) · `test_edge_policy.StaticAssetsTest` · `make e2e` 16/16 연속 2회.
+
+## 자동 검사 현황(2026-09-28, 리뷰 v1 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 453 통과(4 건너뜀) · 커버리지 95.8 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 395 · JaCoCo LINE 95.5 % · BRANCH 81.7 %(하한 95 / 80) |
-| web 단위 | Vitest | 209 |
+| collector · ais 단위·통합 | pytest | 746 통과(6 건너뜀 — 실 Redis 시험, CI 가 버리는 Redis 로 실행) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 534 · JaCoCo LINE 95.9 % · BRANCH 83.6 %(하한 95 / 80) |
+| web 단위 | Vitest | 378 · 커버리지(소스 전체) Lines 78.4 % · Branches 65.7 % |
 | 언어 간 스키마 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture 검사 |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 27종 |
-| 인프라 정책 | infra/tests(unittest) | 44 |
-| Redis ACL 동작 | infra/tests/redis_acl_test.sh(버리는 컨테이너) | 171 |
-| E2E | Playwright(격리된 fixture 스택 8701) | 16 |
+| 인프라 정책 | infra/tests(unittest) | 113 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 | 35 · 219 · 36 · 48 · 27 |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
+| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |

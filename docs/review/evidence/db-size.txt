@@ -1,0 +1,14 @@
+# DB 크기·파티션(읽기 전용 질의) — 2026-09-28T15:11:38Z
+database_size|2038 MB
+ship_position_20260926|64 kB
+ship_position_20260927|80 MB
+ship_position_20260928|420 MB
+ship_position_20260929|64 kB
+ship_position_20260930|64 kB
+ship_position_20261001|64 kB
+track_point_20260926|80 kB
+track_point_20260927|752 MB
+track_point_20260928|634 MB
+track_point_20260929|64 kB
+track_point_20260930|64 kB
+track_point_20261001|64 kB

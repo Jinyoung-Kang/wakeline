@@ -1,0 +1,26 @@
+collector pytest	682 passed, 5 skipped · cov 96%
+api junit	457 tests · 0 failures · 0 errors · 0 skipped (gradle rc 0)
+api jacoco	LINE 95.7% · BRANCH 83.1%
+web vitest	Tests  286 passed (286)
+web vitest coverage	Branches : 79.88% ( 2256/2824 ) Lines : 92.1% ( 1680/1824 ) 
+ruff	All checks passed! · 112 files already formatted
+mypy	Success: no issues found in 63 source files
+eslint	0 errors · 0 warnings
+tsc	0 errors
+javac -Xlint:all 경고	19
+semgrep	9 findings {'MEDIUM': 6, 'WARNING': 3} · errors 6
+npm audit	critical 0, high 0, moderate 0, low 0
+pip-audit	0 vulns in 26 packages
+trivy wakeline-api:local	CRITICAL 3, HIGH 0, MEDIUM 36, LOW 4
+trivy wakeline-web:local	CRITICAL 0, HIGH 4, MEDIUM 5, LOW 0
+trivy wakeline-collector:local	CRITICAL 0, HIGH 46, MEDIUM 54, LOW 57
+gitleaks(git 이력 전체)	2 findings
+trivy secret(작업 트리, .env 제외)	3 findings
+web static js+css	1992 KiB · gzip 553 KiB · 파일 21개
+web 가장 큰 js 3개(gzip)	2v5dqe5g89ze4.js 272 KiB · 0bma92pht_c97.js 70 KiB · 1gd3h8x2ifg_a.js 43 KiB
+lighthouse /	perf 39 · a11y 100 · best 96 · LCP 3.1s · TBT 2165ms · CLS 0.133
+lighthouse /about	perf 98 · a11y 100 · best 96 · LCP 0.5s · TBT 0ms · CLS 0.000
+lighthouse /stats	perf 99 · a11y 100 · best 96 · LCP 0.6s · TBT 69ms · CLS 0.000
+lighthouse /ops	perf 71 · a11y 100 · best 96 · LCP 0.6s · TBT 660ms · CLS 0.000
+컨테이너 메모리	wakeline-ais-1 54.47MiB · wakeline-api-1 611.3MiB · wakeline-collector-1 142.4MiB · wakeline-db-1 210.1MiB · wakeline-edge-1 6.953MiB · wakeline-redis-1 44.48MiB · wakeline-web-1 56.51MiB · 
+api 지표(기동 이후)	api 누적 요청 99 · 5xx 0 (0.000 %) · 힙 사용 144 MiB

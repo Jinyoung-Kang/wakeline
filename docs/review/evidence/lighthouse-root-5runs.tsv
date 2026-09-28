@@ -1,0 +1,13 @@
+run	perf	LCP_s	TBT_ms	CLS	script_transfer_KiB
+1	58	2.04	698	0.067	497.7
+2	44	2.95	2732	0.038	497.7
+3	49	2.39	1305	0.079	497.7
+4	53	2.84	636	0.078	497.7
+5	61	1.97	620	0.067	497.7
+median	53	2.39	698	0.067	-
+
+# 측정 스크립트(review_measure.sh)의 경로별 1회 실행 — perf/results/review-*/lh_root.json 에서 계산
+single_run	perf	LCP_s	TBT_ms	CLS	script_transfer_KiB
+baseline(05:5x)	39	3.13	2165	0.133	613.6
+after(10:30)	38	3.58	2991	0.112	497.7
+final(14:2x)	47	2.47	2135	0.090	497.7

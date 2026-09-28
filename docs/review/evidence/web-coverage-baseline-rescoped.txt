@@ -1,0 +1,7 @@
+# 기준선 커밋 fcb2c52 의 web 커버리지를 지금 범위(vitest.config.ts — R-34, 소스 전체)로 다시 잰 값 — 2026-09-28T15:30Z, 버리는 작업 트리
+      Tests  286 passed (286)
+Statements   : 56.69% ( 2172/3831 )
+Branches     : 57.38% ( 2256/3931 )
+Functions    : 47.84% ( 399/834 )
+Lines        : 61.11% ( 1680/2749 )
+# 이후(같은 범위): summary-final.tsv 의 web vitest coverage 줄

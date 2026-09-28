@@ -1,0 +1,3 @@
+# /status 표본(공개 API, 읽기 전용) — 2026-09-28T15:11:38Z
+region_aircraft 50 global_aircraft 12917 sigmet 138 ships 14862 ais_shards 2
+# 세션 중 같은 방식으로 읽었던 값(원본 출력은 세션 기록): 10:23Z region 110 · global 7,651 · ships 14,686 · sigmet 130 / 10:53Z(k6 직전) region 130 · global 7,978 · ships 14,449
