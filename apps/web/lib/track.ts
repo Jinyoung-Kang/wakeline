@@ -2,20 +2,21 @@
  * 선택 항공기 항적(FR-18 · GAP-10) — 순수 함수. REST(/aircraft/{hex}/track, DB 기록)로 한 번 받고,
  * 이후 WS "selected" 상태의 새 관측(seen_at 이 바뀐 것)을 끝에 붙인다. REST 응답 전에 온 관측은 보류했다가 합친다.
  */
-import { seenAtMs, STALE_AFTER_S } from "./interpolate";
+import { seenAtMs, STALE_AFTER_S, thresholds } from "./interpolate";
 import type { AircraftState } from "./types";
 
-export interface TrackPt { ts: number; lon: number; lat: number; alt_ft: number | null }
+/** provider: 그 점을 준 공급자(track_point.provider · WS 상태) — 수신 공백 기준에 쓴다. 모르면 null/없음 */
+export interface TrackPt { ts: number; lon: number; lat: number; alt_ft: number | null; provider?: string | null }
 
 /** 2 h × 10 s ≈ 720 점. 오래 선택해 두어도 메모리가 무한히 늘지 않게 상한. */
 export const MAX_TRACK_POINTS = 5000;
 
-export function trackFromRest(points: { ts?: string | null; lon: number; lat: number; alt_ft?: number | null }[] | null | undefined): TrackPt[] {
+export function trackFromRest(points: { ts?: string | null; lon: number; lat: number; alt_ft?: number | null; provider?: string | null }[] | null | undefined): TrackPt[] {
   const out: TrackPt[] = [];
   for (const p of points ?? []) {
     const ts = seenAtMs(p.ts ?? null);
     if (ts == null || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
-    appendTrackPoint(out, { ts, lon: p.lon, lat: p.lat, alt_ft: p.alt_ft ?? null });
+    appendTrackPoint(out, { ts, lon: p.lon, lat: p.lat, alt_ft: p.alt_ft ?? null, provider: typeof p.provider === "string" ? p.provider : null });
   }
   return out;
 }
@@ -25,7 +26,7 @@ export function pointFromState(s: AircraftState | null | undefined): TrackPt | n
   if (!s || !Number.isFinite(s.lat) || !Number.isFinite(s.lon)) return null;
   const ts = seenAtMs(s.seen_at);
   if (ts == null) return null;
-  return { ts, lon: s.lon, lat: s.lat, alt_ft: s.alt_ft ?? null };
+  return { ts, lon: s.lon, lat: s.lat, alt_ft: s.alt_ft ?? null, provider: s.provider ?? null };
 }
 
 /** 마지막 점보다 새 관측이고 위치가 다르면 붙인다. 붙였으면 true. */
@@ -47,10 +48,15 @@ export function mergeTrack(rest: TrackPt[], pending: TrackPt[]): TrackPt[] {
 
 /**
  * 연속한 두 관측이 이보다 멀리 떨어져 있으면 실선으로 잇지 않는다(R-04) — 그 사이는 관측하지 않은 구간이다.
- * 상황판이 항공기를 STALE(위치 모름)로 바꾸는 기준과 같다(interpolate.ts STALE_AFTER_S). 항적 점에는 공급자가 없으므로
- * thresholds() 의 "공급자를 모르면 더 짧은 지역 기준" 규칙을 따른다.
+ * 상황판이 항공기를 STALE(위치 모름)로 바꾸는 기준과 같다(interpolate.ts thresholds()): 공급자마다 갱신 주기가 달라서
+ * (지역 약 10 s, 전세계 OpenSky 약 120 s) 한 기준을 쓰면 OpenSky 로만 잡힌 항공기의 모든 선분이 공백이 된다.
+ * 선분은 두 끝점 공급자 중 더 느린 쪽 기준을 쓰고, 공급자를 모르면 더 짧은 지역 기준이다. 공급자는 기록된 값(track_point.provider)이다.
  */
 export const TRACK_GAP_MS = STALE_AFTER_S * 1000;
+
+export function trackGapMs(a: string | null | undefined, b: string | null | undefined): number {
+  return Math.max(thresholds(a).staleAfterS, thresholds(b).staleAfterS) * 1000;
+}
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 const hhmm = (ms: number) => { const d = new Date(ms); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
@@ -64,7 +70,7 @@ export function trackFeatureCollection(pts: TrackPt[]): GeoJSON.FeatureCollectio
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
     const coordinates = [[a.lon, a.lat], [b.lon, b.lat]];
-    features.push(b.ts - a.ts > TRACK_GAP_MS
+    features.push(b.ts - a.ts > trackGapMs(a.provider, b.provider)
       ? { type: "Feature", properties: { kind: "gap", label: `수신 없음 ${hhmm(a.ts)}–${hhmm(b.ts)}` }, geometry: { type: "LineString", coordinates } }
       : { type: "Feature", properties: { kind: "track", alt_ft: b.alt_ft }, geometry: { type: "LineString", coordinates } });
   }
