@@ -142,9 +142,13 @@ class RedisAclRulesTest(unittest.TestCase):
         self.assertEqual(sorted(self.keys("wakeline_ais")), sorted([
             "~wakeline:ships", "~wakeline:ais:*", "%R~wakeline:settings", "%W~wakeline:logs"]))
 
-    def test_api_reads_and_writes_logs_stream(self):
-        # api 는 자기 로그 · 브라우저 오류(client-errors)를 싣고 /api/v1/ops/logs 로 읽는다 — wakeline:* 에 이미 들어 있다
-        self.assertIn("~wakeline:*", self.keys("wakeline_api"))
+    def test_api_logs_stream_access_is_not_narrowed(self):
+        # api 는 자기 로그 · 브라우저 오류(client-errors)를 XADD 로 싣고 /api/v1/ops/logs 에서 XREVRANGE 로 읽는다.
+        # 키는 ~wakeline:*(test_api_can_read_route_cache) 그대로 — 로그 스트림만 좁히는 규칙이나 스트림 명령 빼기가 없어야 한다
+        rules = self.users["wakeline_api"]
+        self.assertFalse([r for r in rules if "logs" in r], "api 에 wakeline:logs 전용 규칙(%R~ · %W~ · 셀렉터)이 없다")
+        removed = {r[1:] for r in rules if r.startswith("-")}
+        self.assertFalse(removed & {"xadd", "xrevrange", "xrange", "@stream", "@read", "@write"}, "XADD · XREVRANGE 를 빼지 않는다")
 
     def test_api_rules_unchanged(self):
         self.assertIn("+@all", self.users["wakeline_api"])
