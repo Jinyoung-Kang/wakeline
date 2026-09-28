@@ -34,6 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       @Scheduled 작업 안의 WARN 은 context.job 에 작업 이름이 있다. XADD 는 MAXLEN ~ 3000.</li>
  *   <li>§C4: 운영 조회 — 익명 404, 목록 · 필터 · fp 묶음 · 항목 하나 · 스키마에 맞지 않는 항목은 invalid.</li>
  *   <li>§C6: 브라우저 오류 공개 수집 — 204 → untrusted web-client 항목, 새 제한 키 rl:cerr:*, IP당 분당 10 초과 429, JSON 이 아니면 415(§G3).</li>
+ *   <li>§G2: 브라우저 오류는 wakeline:logs:client(MAXLEN ~ 1000)에 — 1,100건이 실려도 서버 로그(wakeline:logs)는 한 건도 밀려나지 않고,
+ *       조회는 두 스트림을 합쳐(stream 표시) 보이며 항목 하나는 server → client 순으로 찾는다.</li>
  * </ul>
  * 수집기 모양의 항목은 관리 사용자로 XADD 한다 — 수집기 ACL 에 ~wakeline:logs 를 더하는 것은 infra 레인(§C3)이다.
  */
@@ -227,6 +229,12 @@ class LogsIT extends IntegrationTest {
         });
         JsonNode e = found.get();
         assertThat(e.path("untrusted").asBoolean()).isTrue();
+        assertThat(e.path("stream").asString()).as("§G2 browser error stream").isEqualTo("client");
+        String cid = e.path("id").asString();
+        assertThat(ItStack.admin().opsForStream().range(LogSink.CLIENT_STREAM, org.springframework.data.domain.Range.closed(cid, cid))).hasSize(1);
+        assertThat(ItStack.admin().opsForStream().range(LogSink.STREAM, org.springframework.data.domain.Range.closed(cid, cid)))
+                .as("not in the server log stream").isEmpty();
+        assertThat(ops.get("/api/v1/ops/logs/" + cid).json().path("message").asString()).contains(marker);
         assertThat(e.path("level").asString()).isEqualTo("ERROR");
         assertThat(e.path("logger").asString()).isEqualTo("MapView");
         assertThat(e.path("context").path("path").asString()).isEqualTo("/map");
@@ -248,6 +256,63 @@ class LogsIT extends IntegrationTest {
         Res limited = send("POST", "/api/v1/client-errors", body, headers("Content-Type", "application/json"));
         assertProblem(limited, 429, "RATE_LIMITED", "/api/v1/client-errors");
         assertThat(limited.header("Retry-After")).isNotBlank();
+    }
+
+    /**
+     * 계약 v5 §G2 의 목적: 누구나 보낼 수 있는 브라우저 오류가 1,100건 실려도(한 IP 는 분당 10 · 전체 분당 120 — 전체 한도로 약 9분) 서버 로그는
+     * 한 건도 밀려나지 않는다. 한 스트림(MAXLEN ~ 3000)이던 때는 같은 양이 서버 오류를 그만큼 밀어냈다. 브라우저 오류 스트림은 1,000 근처로 잘린다.
+     * api 와 같은 ACL 사용자 · 같은 XADD 옵션(LogSink.redisWriter)으로 싣는다 — api 의 ~wakeline:* 가 새 스트림도 덮는지까지.
+     */
+    @Test
+    void a1100EntryBrowserFloodDoesNotEvictServerEntries() {
+        OpsBrowser b = login();
+        var writer = LogSink.redisWriter(ItStack.apiUser());
+        String fp = randomFp();
+        List<String> serverIds = new java.util.ArrayList<>();
+        for (int i = 0; i < 30; i++) serverIds.add(xadd(collectorEntry(fp, "server error before the flood " + i, 0)));
+        long serverLen = ItStack.admin().opsForStream().size(LogSink.STREAM);
+        String flood = LogEvents.serialize(new LogEvents.Draft(Instant.now(), "web-client", "api-it:1", "ERROR", "browser", null,
+                "TypeError: flood", null, null, Map.of("path", "/"), true), randomFp(), 0);
+        try {
+            for (int i = 0; i < 1_100; i++) writer.xadd(dev.wakeline.logs.LogStream.CLIENT, flood);
+            Long clientLen = ItStack.admin().opsForStream().size(LogSink.CLIENT_STREAM);
+            // MAXLEN ~ 1000: 근사 트림은 내부 노드(기본 100 항목) 단위 — 1000 이상, 1000 + 노드 하나 이하
+            assertThat(clientLen).isBetween(1_000L, 1_100L);
+            assertThat(ItStack.admin().opsForStream().size(LogSink.STREAM)).as("the server stream did not move").isEqualTo(serverLen);
+            for (String id : serverIds)
+                assertThat(ItStack.admin().opsForStream().range(LogSink.STREAM, org.springframework.data.domain.Range.closed(id, id))).as(id).hasSize(1);
+            // 조회: 가장 최근은 브라우저 오류(stream client), 서버 항목은 한 번 훑기로 모두(훑기 상한 = 두 스트림 MAXLEN 의 합)
+            JsonNode top = b.get("/api/v1/ops/logs?limit=1").json();
+            assertThat(top.path("items").get(0).path("stream").asString()).isEqualTo("client");
+            assertThat(top.path("next_cursor").asString()).startsWith("client:");
+            JsonNode mine = b.get("/api/v1/ops/logs?fp=" + fp + "&limit=200").json();
+            assertThat(mine.path("items")).hasSize(30);
+            assertThat(mine.path("scan_truncated").asBoolean()).isFalse();
+            for (JsonNode it : mine.path("items")) assertThat(it.path("stream").asString()).isEqualTo("server");
+            assertThat(mine.path("items").get(0).path("id").asString()).isEqualTo(serverIds.getLast());
+            // 이어 읽기: 브라우저 오류 쪽에서 끊긴 커서로도 서버 항목에 닿는다
+            JsonNode next = b.get("/api/v1/ops/logs?limit=200&cursor=" + enc(top.path("next_cursor").asString())).json();
+            assertThat(next.path("items")).hasSize(200);
+            // 묶음도 두 스트림: 서버 fp 묶음 30건 · 브라우저 오류 묶음(1,000 근처)
+            JsonNode groups = b.get("/api/v1/ops/logs/groups").json();
+            JsonNode g = null, web = null;
+            for (JsonNode x : groups.path("groups")) {
+                if (fp.equals(x.path("fp").asString())) g = x;
+                if ("web-client".equals(x.path("service").asString()) && "TypeError: flood".equals(x.path("sample_message").asString())) web = x;
+            }
+            assertThat(g).isNotNull();
+            assertThat(g.path("count").asLong()).isEqualTo(30);
+            assertThat(g.path("last_stream").asString()).isEqualTo("server");
+            assertThat(web).isNotNull();
+            assertThat(web.path("count").asLong()).isEqualTo(clientLen);
+            assertThat(web.path("last_stream").asString()).isEqualTo("client");
+            // 항목 하나: 서버 스트림에 없는 id 는 브라우저 오류 스트림에서
+            String clientId = top.path("items").get(0).path("id").asString();
+            assertThat(b.get("/api/v1/ops/logs/" + clientId).json().path("stream").asString()).isEqualTo("client");
+            assertProblem(b.get("/api/v1/ops/logs/" + clientId + "?stream=server"), 404, "NOT_FOUND", "/api/v1/ops/logs/" + clientId);
+        } finally {
+            ItStack.admin().delete(LogSink.CLIENT_STREAM); // 다른 조회 시험의 훑기 상한에 걸리지 않게
+        }
     }
 
     @Test
