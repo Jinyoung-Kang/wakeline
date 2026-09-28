@@ -459,6 +459,42 @@
         "tags" : [ "ship-controller" ]
       }
     },
+    "/api/v1/ships/search" : {
+      "get" : {
+        "operationId" : "shipSearch",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "q",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "schema" : {
+            "default" : 10,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "ship-controller" ]
+      }
+    },
     "/api/v1/ships/{mmsi}" : {
       "get" : {
         "operationId" : "shipDetail",
