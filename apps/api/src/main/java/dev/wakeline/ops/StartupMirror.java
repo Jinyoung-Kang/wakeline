@@ -24,6 +24,10 @@ public class StartupMirror {
     private final AppProperties props;
     private final ProviderSwitchService switches;
     private volatile boolean seeded;
+    /** 공급자 스위치 동기화 실패 경고: 성공 뒤 첫 실패는 바로, 계속 실패하면 10분마다(그 사이는 DEBUG) */
+    private final FailureWarnings switchSyncWarnings = new FailureWarnings(java.time.Duration.ofMinutes(10));
+    /** 시각(ms) — 시험이 바꾼다 */
+    java.util.function.LongSupplier clock = System::currentTimeMillis;
 
     public StartupMirror(SettingsService settings, RegionSettings region, AuditService audit, AppProperties props, ProviderSwitchService switches) {
         this.settings = settings;
@@ -37,7 +41,7 @@ public class StartupMirror {
     public void onReady() {
         seedOnce();
         try { settings.mirror(); log.info("settings mirrored to redis"); } catch (RuntimeException e) { log.warn("settings mirror failed: {}", e.toString()); }
-        syncSwitches(true);
+        syncSwitches();
         region.refreshNow();
     }
 
@@ -45,22 +49,29 @@ public class StartupMirror {
     public void periodicMirror() {
         seedOnce(); // 기동 때 DB 가 없었으면 여기서 다시 시도
         try { settings.mirror(); } catch (RuntimeException e) { log.debug("periodic settings mirror failed: {}", e.toString()); }
-        syncSwitches(false);
+        syncSwitches();
         region.refreshNow();
     }
 
     /**
      * 공급자 스위치 이관 + DB → Redis 미러. Redis 값이 DB 와 달라 고쳐 쓴 공급자는 경고로 남긴다 — collector 가 바꿨거나 Redis 를 잃었다는 뜻이다
-     * (토글 직후의 미러는 여기로 오지 않는다). 실패하면(Redis·DB 장애) 다음 주기에 다시 한다.
+     * (토글 직후의 미러가 다른 공급자를 고친 것도 같은 문구 — ProviderSwitchService). 실패하면(Redis·DB 장애·권한) 다음 주기에 다시 한다.
+     * 이 동기화는 R-94 의 안전망이라 멈추면 보여야 한다: 성공 뒤 첫 실패(기동 포함)는 WARN, 계속 실패하면 10분마다 WARN(그 사이는 DEBUG —
+     * 60 s 마다 같은 경고를 쌓지 않는다), 실패 뒤 첫 성공은 INFO 로 한 번. v5 시스템 로그(§C2)는 WARN·ERROR 만 모은다.
      */
-    private void syncSwitches(boolean startup) {
+    private void syncSwitches() {
+        long now = clock.getAsLong();
         try {
             var r = switches.sync();
+            var recovered = switchSyncWarnings.succeeded();
+            if (recovered != null) log.info("provider switch sync recovered after {} failed attempt(s) since {}", recovered.failures(), java.time.Instant.ofEpochMilli(recovered.sinceMs()));
             if (!r.imported().isEmpty()) log.info("provider switches imported from redis into provider_switch: {}", r.imported());
-            if (!r.corrected().isEmpty()) log.warn("provider switch in redis differed from provider_switch — restored from the database: {}", r.corrected());
+            if (!r.corrected().isEmpty()) log.warn(ProviderSwitchService.CORRECTED_LOG, r.corrected());
         } catch (RuntimeException e) {
-            if (startup) log.warn("provider switch sync failed (will retry every 60 s): {}", e.toString());
-            else log.debug("periodic provider switch sync failed: {}", e.toString());
+            var f = switchSyncWarnings.failed(now);
+            if (f.warn()) log.warn("provider switch sync failed ({} in a row since {} — retried every 60 s, this warning repeats every 10 min while it fails): {}",
+                    f.failures(), java.time.Instant.ofEpochMilli(f.sinceMs()), e.toString());
+            else log.debug("provider switch sync failed ({} in a row): {}", f.failures(), e.toString());
         }
     }
 

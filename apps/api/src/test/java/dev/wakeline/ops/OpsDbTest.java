@@ -421,6 +421,74 @@ class OpsDbTest {
         assertThat(state(s, "opensky")).containsEntry("redis_disabled", "1");
     }
 
+    static final String CORRECTED = "provider switch in redis differed from provider_switch";
+
+    static List<String> lines(org.springframework.boot.test.system.CapturedOutput out, String... parts) {
+        return out.getAll().lines().filter(l -> java.util.Arrays.stream(parts).allMatch(l::contains)).toList();
+    }
+
+    /**
+     * 토글 직후의 미러는 모든 공급자를 원본으로 맞춘다 — 그때 다른 공급자의 Redis 값을 고쳤다면(collector 가 바꿨거나 Redis 를 잃었다) 주기 미러와 같은
+     * 경고로 남긴다(ADR-019). 방금 토글한 공급자는 운영자의 변경이라 넣지 않는다. 이전에는 고친 목록을 버려 조용히 되돌렸다.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void theToggleTimeMirrorWarnsAboutOtherProvidersItRestored(org.springframework.boot.test.system.CapturedOutput output) {
+        alice();
+        var ops = ops(redis, audit);
+        ops.toggleProvider("adsbdb", "disable", request(), ALICE);
+        assertThat(lines(output, CORRECTED)).as("nothing restored yet").isEmpty();
+        redis.opsForHash().put(ProviderSwitchService.key("adsbdb"), "disabled", "0"); // collector 계정이 뒤집었다
+        ops.toggleProvider("opensky", "disable", request(), ALICE);
+        assertThat(redisFlag("adsbdb")).isEqualTo("1");
+        assertThat(lines(output, CORRECTED)).singleElement().satisfies(l -> assertThat(l).contains("WARN").contains("[adsbdb]").doesNotContain("opensky"));
+    }
+
+    /**
+     * 주기 동기화(R-94 의 안전망)가 계속 실패하면 기본 로그 수준에서 보인다(v5 시스템 로그는 WARN·ERROR 만 모은다): 성공 뒤 첫 실패는 WARN,
+     * 계속 실패하면 10분마다 WARN(그 사이는 DEBUG), 실패 뒤 첫 성공은 INFO 로 한 번. 이전에는 기동 뒤의 실패가 DEBUG 뿐이었다.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void aFailingPeriodicSwitchSyncWarnsOnceThenEveryTenMinutesAndReportsRecovery(org.springframework.boot.test.system.CapturedOutput output) {
+        boolean[] down = {true};
+        var flaky = new ProviderSwitchService(api, redis, DbTestSupport.apiTx(), audit) {
+            @Override public synchronized SyncResult sync() {
+                if (down[0]) throw new RedisConnectionFailureException("redis down (test)");
+                return super.sync();
+            }
+        };
+        var m = new StartupMirror(settings(redis), region(redis), audit, PROPS, flaky);
+        long[] now = {1_000_000L};
+        m.clock = () -> now[0];
+        String failed = "provider switch sync failed";
+
+        m.periodicMirror();
+        assertThat(lines(output, "WARN", failed)).hasSize(1);
+        now[0] += 60_000;
+        m.periodicMirror();
+        now[0] += 8 * 60_000;
+        m.periodicMirror();
+        assertThat(lines(output, "WARN", failed)).as("not every 60 s").hasSize(1);
+        now[0] += 60_000; // 첫 경고 뒤 10분
+        m.periodicMirror();
+        assertThat(lines(output, "WARN", failed)).hasSize(2);
+        assertThat(lines(output, "WARN", failed).get(1)).contains("4 in a row");
+
+        down[0] = false;
+        now[0] += 60_000;
+        m.periodicMirror();
+        assertThat(lines(output, "INFO", "provider switch sync recovered")).hasSize(1);
+        now[0] += 60_000;
+        m.periodicMirror();
+        assertThat(lines(output, "provider switch sync recovered")).as("once").hasSize(1);
+
+        down[0] = true; // 성공 뒤 첫 실패는 바로 경고
+        now[0] += 60_000;
+        m.periodicMirror();
+        assertThat(lines(output, "WARN", failed)).hasSize(3);
+    }
+
     static Map<String, Object> state(ProviderSwitchService s, String provider) {
         return s.states().stream().filter(m -> provider.equals(m.get("provider"))).findFirst().orElseThrow();
     }

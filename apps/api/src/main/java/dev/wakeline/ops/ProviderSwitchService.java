@@ -39,6 +39,8 @@ public class ProviderSwitchService {
     static final String FIELD = "disabled";
     /** 이관 감사 행에 싣는 Redis 원문의 길이 상한 — collector 도 쓸 수 있는 값이라 그대로 믿지 않는다. */
     static final int MAX_RAW = 32;
+    /** Redis 값을 원본으로 고쳐 쓴 공급자 경고(collector 가 바꿨거나 Redis 를 잃었다) — 토글 직후 미러와 주기 미러(StartupMirror)가 같은 문구를 쓴다. */
+    static final String CORRECTED_LOG = "provider switch in redis differed from provider_switch — restored from the database: {}";
 
     /** 변경 감사 기록 콜백(같은 트랜잭션 안에서 불린다). before 는 행이 없으면 disabled·version 이 null. */
     @FunctionalInterface
@@ -80,13 +82,15 @@ public class ProviderSwitchService {
             return after;
         });
         Map<String, Object> out = new LinkedHashMap<>(row);
-        out.put("mirrored", tryMirror());
+        out.put("mirrored", tryMirror(provider));
         return out;
     }
 
-    private boolean tryMirror() {
+    /** 커밋 뒤 미러. 다른 공급자의 Redis 값까지 고쳤다면 주기 미러와 같은 경고로 남긴다 — 방금 토글한 공급자는 운영자의 변경이라 빼고. */
+    private boolean tryMirror(String toggled) {
         try {
-            mirror();
+            List<String> others = mirror().stream().filter(p -> !p.equals(toggled)).toList();
+            if (!others.isEmpty()) log.warn(CORRECTED_LOG, others);
             return true;
         } catch (RuntimeException e) {
             log.warn("provider switch mirror to redis failed (periodic mirror will retry): {}", e.toString());
