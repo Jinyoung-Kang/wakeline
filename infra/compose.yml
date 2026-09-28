@@ -273,6 +273,10 @@ services:
       retries: 10
 
   db:
+    # 다이제스트 갱신(R-63): docker buildx imagetools inspect imresamu/postgis:18-3.6 --format '{{.Manifest.Digest}}' 로 새 값을 보고,
+    #   `postgres --version` 이 18.x · PostGIS 3.6 인지 확인한 뒤 바꾼다(같은 메이저면 기존 볼륨 그대로). 메이저가 바뀌면 make backup → 새 볼륨 → make restore.
+    #   2026-09-28 기준 이 태그(Debian trixie)는 2026-02-09 이후 재빌드가 없어 새 다이제스트가 없다. 재빌드되는 -alpine 변형은 문자열 정렬(glibc → musl)이
+    #   달라 이 볼륨에 그대로 쓸 수 없다 — 이미지 교체는 ADR-004 재결정 사항이다.
     image: imresamu/postgis:18-3.6@sha256:b5766ee720aca09c61b9a868abefbf273348a4b90ad4cf146b4f8c9ac85d48e4   # 공식 postgis/postgis 18-3.6 은 amd64 뿐이라 arm64 네이티브 빌드를 쓴다 (ADR-004)
     read_only: true
     tmpfs: ["/var/run/postgresql", "/tmp"]
