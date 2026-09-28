@@ -219,6 +219,51 @@ class AisStatusTest {
         assertThat(AisStatus.parse(healthy(NOW)).shards()).as("older collector: no shards field").isNull();
     }
 
+    /**
+     * 계약 v4 §G D-2(리뷰 api-ships-realtime #2): 수신 범위는 실제로 구독한 구역만 — 상태 해시 bbox('|' 로 이은 구독 문자열)에 든 구역의 상자 합.
+     * 구역의 scope 는 설정에서 오므로 꺼진·구독 전 구역에도 있다. 그 상자를 범위로 그리지 않는다(구역별 상태·상자는 shards 가 따로 말한다).
+     */
+    @Test void coverage_isOnlyTheShardsActuallySubscribed() {
+        ShipStore ships = new ShipStore();
+        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        // aisstream 키 없음 → 설정의 구역 하나가 disabled, 구독 없음(bbox 빈 값)
+        Map<Object, Object> disabled = sharded(NOW.minusSeconds(3), shard("18,105,46,150", "disabled", false, null, null));
+        disabled.put("state", "disabled");
+        disabled.put("connected", "0");
+        disabled.put("bbox", "");
+        st.update(disabled);
+        assertThat(st.current().coverage()).isNull();
+        Map<String, Object> v = st.publicView(NOW_MS);
+        assertThat(v).containsEntry("state", "disabled").containsEntry("coverage", null);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> shardView = (List<Map<String, Object>>) v.get("shards");
+        assertThat(shardView).singleElement().satisfies(sh -> assertThat(sh).containsEntry("state", "disabled").containsEntry("connected", false)
+                .containsEntry("coverage", List.of(List.of(18.0, 105.0, 46.0, 150.0))));
+        disabled.remove("bbox"); // bbox 필드 없음도 구독 없음
+        assertThat(AisStatus.parse(disabled).coverage()).isNull();
+
+        // 둘 중 하나만 구독됨(다른 하나는 아직 연결 중) → 구독한 구역의 상자만
+        Map<Object, Object> half = sharded(NOW.minusSeconds(3), shard(AMERICAS, "receiving", true, null, null),
+                shard(ASIA_PACIFIC, "connecting", false, null, null));
+        half.put("bbox", AMERICAS);
+        assertThat(AisStatus.parse(half).coverage()).containsExactly(List.of(-90.0, -180.0, 90.0, 0.0));
+        half.put("bbox", " " + ASIA_PACIFIC + " | " + AMERICAS + " "); // 조각 순서와 상관없이 구역 순서대로
+        assertThat(AisStatus.parse(half).coverage()).containsExactly(List.of(-90.0, -180.0, 90.0, 0.0), List.of(-90.0, 45.0, 90.0, 180.0));
+        half.put("bbox", "0,0,1,1"); // 구독 문자열에 든 구역이 없다 → 모름
+        assertThat(AisStatus.parse(half).coverage()).isNull();
+
+        // disabled 모드 수집기(계약 v4 §G D-2): 구역 없는(scope null) 항목 하나 → 구역 정보 없음 · 범위 없음 · 상태는 disabled 그대로
+        Map<Object, Object> noScope = healthy(NOW.minusSeconds(3));
+        noScope.put("state", "disabled");
+        noScope.put("connected", "0");
+        noScope.put("bbox", "");
+        noScope.put("shards", "[{\"scope\":null,\"state\":\"disabled\",\"connected\":false,\"last_msg_at\":null,\"msgs_per_s\":null,"
+                + "\"lag_p50_s\":null,\"gap_open_since\":null,\"gap_reason\":null,\"sessions_ended\":0}]");
+        st.update(noScope);
+        assertThat(st.current().shards()).isNull();
+        assertThat(st.publicView(NOW_MS)).containsEntry("state", "disabled").containsEntry("connected", false)
+                .containsEntry("coverage", null).containsEntry("shards", null);
+    }
+
     /** 계약 v4 §D: bbox 필드도 '|' 구역 문법 — coverage 는 모든 구역 상자의 합. */
     @Test void coverageFromTheBboxField_isTheUnionOfItsShards() {
         assertThat(AisStatus.parse(hash("bbox", AMERICAS + "|" + ASIA_PACIFIC + ";0,0,1,1")).coverage())

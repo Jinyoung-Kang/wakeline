@@ -22,7 +22,11 @@ import java.util.function.Supplier;
 /** 공개 상태(비밀값·수치 예산 없음)와 운영 상태(공급자 해시 전체). collector 가 Redis 에 쓴 값을 읽는다. */
 @Service
 public class StatusService {
-    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "fixture");
+    /**
+     * 운영 화면 공급자(상태 해시 wakeline:provider:{name} · 켜고 끄기는 감사 기록과 함께 — OpsController). adsbdb = 선택 항공기 노선 조회
+     * (계약 v4 §G A-2 — 끄면 수집기가 묻지 않고 노선 상태는 disabled). 해시에는 호출 시각·지연·건수·오류·예산만 있고 노선 내용은 없다(ADR-016).
+     */
+    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb", "fixture");
     private final SnapshotStore snapshots;
     private final SigmetStore sigmets;
     private final RadarStore radar;

@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
 
 /**
  * 항공기 등록 노선(계약 v4 §A · ADR-016) — WS selected 와 REST 항공기 상세의 route.
- * status: found | not_found | pending(캐시 없음 — 선택 직후) | unavailable(수집기 조회 실패 또는 Redis 오류·읽을 수 없는 값) | no_callsign.
+ * status: found | not_found | pending(캐시 없음 — 선택 직후) | unavailable(수집기 조회 실패 또는 Redis 오류·읽을 수 없는 값) | no_callsign |
+ * disabled(계약 v4 §G A-2 — fixture 모드이거나 운영자가 adsbdb 를 꺼서 수집기가 묻지 않았다).
  * 콜사인에 등록된 정기 노선이며 실제 운항 경로가 아닐 수 있다(화면이 밝힌다). 값이 없으면 키 없음. source 는 항상 "adsbdb".
  * <p>수집기가 wakeline:route:{CALLSIGN} 에 쓴 값은 믿지 않고 다시 검사한다: 코드 형식·좌표 범위를 통과하지 못한 공항은 버리고,
  * 문자열은 제어문자를 빼고 길이를 자른다. 출발·도착 공항이 둘 다 없으면 not_found.
@@ -26,6 +27,7 @@ public record RouteInfo(String status, String callsign, Airline airline, Airport
     public static final String PENDING = "pending";
     public static final String UNAVAILABLE = "unavailable";
     public static final String NO_CALLSIGN = "no_callsign";
+    public static final String DISABLED = "disabled";
     /** 캐시 값 크기 상한(공항 셋 + 항공사 — 보통 2 KB 안팎). */
     static final int MAX_RAW = 16 * 1024;
     static final int NAME_MAX = 120;
@@ -51,6 +53,9 @@ public record RouteInfo(String status, String callsign, Airline airline, Airport
 
     public static RouteInfo unavailable(String callsign) { return status(UNAVAILABLE, callsign, null); }
 
+    /** 조회하지 않았다(운영 설정) — 조회 결과가 아니므로 fetched_at 도 없다. */
+    static RouteInfo disabled(String callsign) { return status(DISABLED, callsign, null); }
+
     static RouteInfo notFound(String callsign, Instant fetchedAt) { return status(NOT_FOUND, callsign, fetchedAt); }
 
     private static RouteInfo status(String status, String callsign, Instant fetchedAt) {
@@ -59,7 +64,7 @@ public record RouteInfo(String status, String callsign, Airline airline, Airport
 
     /**
      * 캐시 원문 → 값. raw 가 null 이면 pending(아직 조회 전). 형식이 틀리면(버전·상태·콜사인 불일치 포함) unavailable —
-     * 읽을 수 없는 값을 '노선 없음' 으로 말하지 않는다. 캐시 status error 도 unavailable.
+     * 읽을 수 없는 값을 '노선 없음' 으로 말하지 않는다. 캐시 status error 도 unavailable, disabled(묻지 않음)는 disabled.
      */
     public static RouteInfo fromCache(String callsign, String raw, ObjectMapper json) {
         if (raw == null) return pending(callsign);
@@ -80,6 +85,7 @@ public record RouteInfo(String status, String callsign, Airline airline, Airport
         Instant fetchedAt = time(n.get("fetched_at"));
         return switch (status) {
             case "not_found" -> notFound(callsign, fetchedAt);
+            case "disabled" -> disabled(callsign);
             case "found" -> {
                 Airport origin = airport(n.get("origin")), destination = airport(n.get("destination"));
                 if (origin == null && destination == null) yield notFound(callsign, fetchedAt);

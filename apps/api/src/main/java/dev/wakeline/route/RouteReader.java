@@ -18,7 +18,8 @@ import java.util.regex.Pattern;
  * 등록 노선 읽기(계약 v4 §A · ADR-016). 조회(adsbdb)는 수집기만 하고 결과는 Redis wakeline:route:{CALLSIGN}(TTL 캐시)에만 있다 —
  * api 는 그 키를 읽기만 하고 어디에도 쓰지 않는다(약관: 저장·재게시 금지).
  * <ul>
- *   <li>콜사인 = 항공기 상태의 콜사인을 trim·대문자, {@code ^[A-Z0-9]{3,8}$} 가 아니면 no_callsign(묻지 않는다).</li>
+ *   <li>콜사인 = 항공기 상태의 콜사인을 trim → ASCII 가 아니면 콜사인 없음 → 대문자, {@code ^[A-Z0-9]{3,8}$} 가 아니면 no_callsign(묻지 않는다).
+ *       수집기(route.normalize_callsign)와 같은 규칙이고(계약 v4 §G A-1), 집중 추적 임대 메타의 callsign 도 이 값이다.</li>
  *   <li>콜사인별 5 s 메모리 캐시(WS 세션·REST 가 같은 값을 쓴다). Redis 오류는 unavailable 로 같은 5 s 동안 둔다(장애 중에 매번 묻지 않는다).</li>
  *   <li>로그에는 콜사인·오류 종류만(노선 내용은 쓰지 않는다).</li>
  * </ul>
@@ -89,10 +90,15 @@ public class RouteReader {
 
     int cached() { return cache.size(); }
 
-    /** trim·대문자 뒤 {@code ^[A-Z0-9]{3,8}$} 이면 그 값, 아니면 null. */
+    /**
+     * 계약 v4 §G A-1: 앞뒤 공백 제거 → ASCII 가 아니면 null → 대문자 → {@code ^[A-Z0-9]{3,8}$} 이면 그 값, 아니면 null.
+     * ASCII 검사를 대문자 변환보다 먼저 한다 — 'ı'·'ſ' 같은 글자가 대문자 변환으로 ASCII(I·S)가 되어 다른 콜사인의 노선을 읽지 않게.
+     */
     public static String normalizeCallsign(String raw) {
         if (raw == null) return null;
-        String cs = raw.strip().toUpperCase(Locale.ROOT);
+        String s = raw.strip();
+        for (int i = 0; i < s.length(); i++) if (s.charAt(i) >= 0x80) return null;
+        String cs = s.toUpperCase(Locale.ROOT);
         return CALLSIGN.matcher(cs).matches() ? cs : null;
     }
 }

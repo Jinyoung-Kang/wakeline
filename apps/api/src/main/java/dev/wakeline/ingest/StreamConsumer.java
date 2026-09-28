@@ -508,13 +508,14 @@ public class StreamConsumer implements SmartLifecycle {
 
     /**
      * 검증·해석을 마친 메시지(종류별로 하나만 채운다 — 반영 단계에서 다시 해석하지 않는다).
-     * cell: scope hot 의 셀 키(검증됨), 그 밖은 null.
+     * cell: scope hot 의 셀 키(검증됨), 그 밖은 null. gapScopeInvalid: ais_gap 의 scope 가 구역 규칙에 맞지 않아 구역 없음으로 받았다 —
+     * 해석은 부트스트랩도 하므로 여기서 세지 않고 실시간 반영({@link #apply})에서 한 번만 센다.
      */
     record Parsed(String kind, Map<String, String> fields, Instant fetchedAt, Map<String, AircraftState> aircraft, String cell,
-                  Map<String, SigmetRecord> sigmets, RadarStore.Frames radar, ShipsBatch ships, AisGap gap) {
+                  Map<String, SigmetRecord> sigmets, RadarStore.Frames radar, ShipsBatch ships, AisGap gap, boolean gapScopeInvalid) {
         Parsed(String kind, Map<String, String> fields, Instant fetchedAt, Map<String, AircraftState> aircraft, String cell,
                Map<String, SigmetRecord> sigmets, RadarStore.Frames radar) {
-            this(kind, fields, fetchedAt, aircraft, cell, sigmets, radar, null, null);
+            this(kind, fields, fetchedAt, aircraft, cell, sigmets, radar, null, null, false);
         }
     }
 
@@ -577,11 +578,13 @@ public class StreamConsumer implements SmartLifecycle {
                 for (JsonNode n : payload.path("ships")) st.add(ShipCodec.state(n));
                 List<ShipStatic> sc = new java.util.ArrayList<>();
                 for (JsonNode n : payload.path("static")) sc.add(ShipCodec.stat(n));
-                yield new Parsed(kind, f, fetchedAt, null, null, null, null, new ShipsBatch(List.copyOf(st), List.copyOf(sc)), null);
+                yield new Parsed(kind, f, fetchedAt, null, null, null, null, new ShipsBatch(List.copyOf(st), List.copyOf(sc)), null, false);
             }
             case "ais_gap" -> {
                 requireScope(f, "ships");
-                yield new Parsed(kind, f, fetchedAt, null, null, null, null, null, ShipCodec.gap(payload, f.get("provider"), gapScopeInvalid::increment));
+                boolean[] invalidScope = {false};
+                AisGap gap = ShipCodec.gap(payload, f.get("provider"), () -> invalidScope[0] = true);
+                yield new Parsed(kind, f, fetchedAt, null, null, null, null, null, gap, invalidScope[0]);
             }
             case "radar" -> {
                 List<RadarStore.Frame> past = new java.util.ArrayList<>();
@@ -627,6 +630,7 @@ public class StreamConsumer implements SmartLifecycle {
     }
 
     private void aisGap(Parsed p, Receipt receipt) {
+        if (p.gapScopeInvalid()) gapScopeInvalid.increment(); // 부트스트랩(다시 읽기)은 여기를 거치지 않는다 — 같은 공백을 두 번 세지 않는다
         shipStore.addGap(p.gap());
         events.publishEvent(new IngestEvents.AisGapReceived(p.gap(), receipt));
     }

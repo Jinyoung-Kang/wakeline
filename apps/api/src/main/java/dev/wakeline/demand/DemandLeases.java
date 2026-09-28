@@ -7,7 +7,8 @@ import java.util.Map;
  * 수요 임대 저장소(ADR-013, 계약 v2 §A1). api 가 유일한 작성자이고 수집기는 읽기만 한다(Redis ACL %R~).
  * <ul>
  *   <li>ZSET {@value #HOT} member = 셀 키, score = 만료 epoch ms · HASH {@value #HOT_META} 셀 키 → {lat, lon, radius_nm, sessions, first_at}</li>
- *   <li>ZSET {@value #FOCUS} member = hex, score = 만료 epoch ms · HASH {@value #FOCUS_META} hex → {sessions, first_at}</li>
+ *   <li>ZSET {@value #FOCUS} member = hex, score = 만료 epoch ms · HASH {@value #FOCUS_META} hex → {sessions, first_at, callsign?}
+ *       (callsign = api 가 보이는 콜사인을 정규화한 값, 노선 조회용 — 계약 v4 §G A-1. 모르면 키 없음)</li>
  *   <li>HASH {@value #STATUS}(수집기가 쓴다) focus:{hex} / hot:{셀 키} → {state, interval_s, last_success_at, last_error, provider}</li>
  * </ul>
  */

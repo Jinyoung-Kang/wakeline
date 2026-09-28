@@ -3,11 +3,13 @@ package dev.wakeline.ws;
 import dev.wakeline.demand.CollectorDemandStatus;
 import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.demand.DemandStats;
+import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.Geo;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -49,6 +51,8 @@ import java.util.function.Supplier;
  *       원 안이면 covered_by_region(임대 없음). 같은 hex·셀은 세션끼리 임대 하나를 나눈다.</li>
  *   <li>한 세션이 같은 hex 를 30분 넘게 연속 선택하면(비용 상한) 수요를 내지 않고 expired_session_cap 을 알린다. 다시 선택하면 새로 시작.</li>
  *   <li>상한: hot 6 셀 · focus 50 hex(세션 수 많은 순 → 먼저 요청된 순). 상한 밖 세션에는 throttled.</li>
+ *   <li>focus 메타의 callsign(계약 v4 §G A-1): 화면이 보는 병합 뷰의 그 hex 콜사인을 노선 읽기와 같은 규칙({@link RouteReader#normalizeCallsign})으로
+ *       정규화한 값 — 수집기는 이 콜사인으로 노선을 조회한다(api 가 읽는 캐시 키와 같다). 콜사인을 모르거나 형식이 틀리면 키 없음.</li>
  *   <li>세션 제한(계약 v3 §C — 남용 방지): 한 세션이 새로 올리는 hex·셀은 60 s 창에 각각 6개까지만 임대에 반영한다. 넘으면 그 세션의 직전
  *       임대를 그대로 두고(새 키 무시) 그 항목에 limited 를 알린다. 연결은 끊지 않는다. 키를 빼는 변화(선택 해제·줌 아웃)는 언제나 반영한다.</li>
  *   <li>주기: 10 s 마다 + 구독·선택·일시정지·종료 뒤 1 s 로 모아(debounce) 다시 계산한다. 임대 만료는 60 s — api 가 멈춰도 수집기 호출은
@@ -236,7 +240,8 @@ public class DemandService implements SmartLifecycle {
         List<DemandLeases.Lease> hotLeases = new ArrayList<>(hot.size());
         for (String k : hot) hotLeases.add(new DemandLeases.Lease(k, hotMeta(cells.get(k), hotCount.get(k), hotFirstAt.get(k))));
         List<DemandLeases.Lease> focusLeases = new ArrayList<>(focus.size());
-        for (String h : focus) focusLeases.add(new DemandLeases.Lease(h, focusMeta(focusCount.get(h), focusFirstAt.get(h))));
+        Map<String, AircraftState> live = focus.isEmpty() ? Map.of() : snapshots.merged(Instant.ofEpochMilli(nowMs));
+        for (String h : focus) focusLeases.add(new DemandLeases.Lease(h, focusMeta(focusCount.get(h), focusFirstAt.get(h), live.get(h))));
         try {
             leases.replace(hotLeases, focusLeases, nowMs + LEASE_TTL_MS);
         } catch (RuntimeException e) {
@@ -333,10 +338,13 @@ public class DemandService implements SmartLifecycle {
         return json.writeValueAsString(m);
     }
 
-    private String focusMeta(int sessions, long firstAtMs) {
+    /** focus 메타 {sessions, first_at, callsign?} — callsign 은 지금 보이는 상태의 콜사인을 정규화한 값(모르면 키 없음). */
+    private String focusMeta(int sessions, long firstAtMs, AircraftState live) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("sessions", sessions);
         m.put("first_at", Instant.ofEpochMilli(firstAtMs).toString());
+        String callsign = live == null ? null : RouteReader.normalizeCallsign(live.callsign());
+        if (callsign != null) m.put("callsign", callsign);
         return json.writeValueAsString(m);
     }
 

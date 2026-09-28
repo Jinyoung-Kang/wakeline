@@ -469,6 +469,45 @@ class DemandServiceTest {
         }
     }
 
+    /**
+     * 계약 v4 §G A-1: focus 메타에 api 가 보이는 콜사인(병합 뷰의 그 hex — 노선 읽기와 같은 정규화)을 싣는다. 수집기는 이 콜사인으로 노선을
+     * 조회하므로 adsb.fi 가 그 항공기를 돌려주지 않아도 조회가 끝난다. 콜사인을 모르거나 형식이 틀리거나 ASCII 가 아니면 키 없음(추정하지 않는다).
+     */
+    @Test void focusMetaCarriesTheNormalizedVisibleCallsign() throws Exception {
+        try (Rig r = new Rig()) {
+            Instant t = Instant.ofEpochMilli(r.now());
+            r.k.publish("region", t, plane("abc001", " syn736 ", t), plane("abc002", "ıab12ſ", t), plane("abc003", null, t), plane("abc005", "SY", t));
+            for (String hex : new String[]{"abc001", "abc002", "abc003", "abc004", "abc005"}) {
+                FakeWsSession f = r.session("s-" + hex, TOKYO);
+                r.k.msg(f, "{\"type\":\"select\",\"hex\":\"" + hex + "\"}");
+            }
+            r.refresh();
+            Map<String, JsonNode> meta = focusMeta(r.leases.last());
+            assertThat(meta).containsOnlyKeys("abc001", "abc002", "abc003", "abc004", "abc005");
+            assertThat(meta.get("abc001").path("callsign").asString()).isEqualTo("SYN736");
+            assertThat(meta.get("abc001").path("sessions").asInt()).isEqualTo(1);
+            assertThat(meta.get("abc002").has("callsign")).as("non-ASCII — uppercasing would turn it into IAB12S").isFalse();
+            assertThat(meta.get("abc003").has("callsign")).as("no callsign").isFalse();
+            assertThat(meta.get("abc004").has("callsign")).as("not in the merged view").isFalse();
+            assertThat(meta.get("abc005").has("callsign")).as("too short").isFalse();
+
+            // 보이는 콜사인이 바뀌면 다음 계산의 메타도 바뀐다
+            r.k.publish("region", t.plusSeconds(5), plane("abc003", "kal081", t.plusSeconds(5)));
+            r.refresh();
+            assertThat(focusMeta(r.leases.last()).get("abc003").path("callsign").asString()).isEqualTo("KAL081");
+        }
+    }
+
+    static AircraftState plane(String hex, String callsign, Instant seen) {
+        return new AircraftState(hex, callsign, null, null, null, 35.5, 139.6, 30000, 400.0, 90.0, 0.0, false, null, seen, "adsb_lol", seen, 0, false);
+    }
+
+    static Map<String, JsonNode> focusMeta(FakeLeases.Call c) {
+        Map<String, JsonNode> out = new HashMap<>();
+        for (DemandLeases.Lease l : c.focus()) out.put(l.member(), WsTestKit.parse(l.metaJson()));
+        return out;
+    }
+
     @Test void deselectDropsFocusObservation_andFansOut() throws Exception {
         try (Rig r = new Rig()) {
             Instant t = Instant.ofEpochMilli(r.now());

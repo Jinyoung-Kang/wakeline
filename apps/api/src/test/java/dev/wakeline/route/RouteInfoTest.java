@@ -111,6 +111,43 @@ public class RouteInfoTest {
         }
     }
 
+    /**
+     * 계약 v4 §G A-2: fixture 모드이거나 운영자가 adsbdb 를 끄면 수집기가 status "disabled"(120 s)를 쓴다 → route.status disabled.
+     * 조회 결과가 아니므로 fetched_at·노선 내용은 없다(값이 섞여 있어도 싣지 않는다). 콜사인이 키와 다르면 다른 값처럼 unavailable.
+     */
+    @Test void disabledCacheValue_isDisabled_withoutRouteContentOrFetchTime() {
+        RouteInfo r = parse("SYN8", cached("disabled", "SYN8"));
+        assertThat(r).isEqualTo(new RouteInfo(RouteInfo.DISABLED, "SYN8", null, null, null, null, null, "adsbdb"));
+        ObjectNode odd = found("SYN8");
+        odd.put("status", "disabled");
+        assertThat(parse("SYN8", odd)).as("route content in a disabled value is ignored").isEqualTo(r);
+        JsonNode j = JSON.valueToTree(r);
+        assertThat(j.path("status").asString()).isEqualTo("disabled");
+        assertThat(j.has("fetched_at")).isFalse();
+        assertThat(j.path("callsign").asString()).isEqualTo("SYN8");
+        assertThat(parse("SYN8", cached("disabled", "OTHER")).status()).isEqualTo(RouteInfo.UNAVAILABLE);
+    }
+
+    /** 계약 v4 §G A-3: 항공사 이름이 없어도 ICAO(3자)·IATA(2자) 코드가 유효하면 항공사를 남긴다(이름 null — 키 없음). 수집기와 같은 규칙. */
+    @Test void airlineWithCodesButNoName_isKept() {
+        ObjectNode n = found("SYN9");
+        ObjectNode codes = F.objectNode();
+        codes.putNull("name");
+        codes.put("icao", "SYN");
+        codes.put("iata", "S9");
+        n.set("airline", codes);
+        RouteInfo r = parse("SYN9", n);
+        assertThat(r.airline()).isEqualTo(new RouteInfo.Airline(null, "SYN", "S9"));
+        JsonNode j = JSON.valueToTree(r).path("airline");
+        assertThat(j.has("name")).isFalse();
+        assertThat(j.path("icao").asString()).isEqualTo("SYN");
+        codes.remove("name");
+        codes.remove("icao");
+        assertThat(parse("SYN9", n).airline()).as("IATA only").isEqualTo(new RouteInfo.Airline(null, null, "S9"));
+        codes.put("iata", "S99");
+        assertThat(parse("SYN9", n).airline()).as("no name and no valid code → no airline").isNull();
+    }
+
     @Test void invalidAirportsAreDropped_noOriginOrDestinationMeansNotFound() {
         ObjectNode n = found("SYN2");
         n.set("origin", airport("zzaa", "ZAA", "Lower", 37, 127));             // 소문자 ICAO

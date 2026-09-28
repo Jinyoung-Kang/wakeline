@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import os
@@ -90,6 +91,10 @@ class GenUnlocodeTest(unittest.TestCase):
             self.assertIn("# rows: 4", head)
             self.assertIn(f"# source_rows: {len(ROWS)}", head)
             self.assertIn(f"# source: {gen.DEFAULT_URL}", head)
+            # 계약 v4 §G B-1: 판 표기가 없으니 추정하지 않고, 판 대신 원천 파일의 SHA-256 으로 어느 파일인지 밝힌다
+            self.assertIn(f"# source_sha256: {hashlib.sha256(CSV).hexdigest()}", head)
+            edition = [line for line in head if line.startswith("# edition:")]
+            self.assertEqual(edition, ["# edition: code-list.csv 에 판 표기 없음 — 아래 내려받은 날의 파일(sha256)"])
             body = [line for line in lines if not line.startswith("#")]
             self.assertEqual(body[0], "\t".join(gen.COLUMNS))
             self.assertEqual(body[1], "ZZABC\tAlpha Port\tZZ\t01\t1-3-----\t0")

@@ -101,6 +101,28 @@ class AircraftControllerTest {
                 .andExpect(jsonPath("$.route.callsign").doesNotExist());
     }
 
+    /**
+     * 계약 v4 §G: 수집기가 묻지 않은 노선(A-2 — fixture 모드·운영자가 adsbdb 끔)은 disabled(조회 시각 없음), ASCII 가 아닌 콜사인(A-1)은
+     * no_callsign — 대문자 변환으로 다른 콜사인(IAB12S)이 되어 그 노선을 붙이지 않는다.
+     */
+    @Test
+    void detailRoute_disabledByOperator_andNonAsciiCallsignIsNoCallsign() throws Exception {
+        routeCache.put("wakeline:route:KAL081", RouteInfoTest.cached("disabled", "KAL081").toString());
+        routeCache.put("wakeline:route:IAB12S", RouteInfoTest.found("IAB12S").toString());
+        mvc.perform(get("/api/v1/aircraft/71be01")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.route.status").value("disabled"))
+                .andExpect(jsonPath("$.route.callsign").value("KAL081"))
+                .andExpect(jsonPath("$.route.source").value("adsbdb"))
+                .andExpect(jsonPath("$.route.fetched_at").doesNotExist());
+        Instant now = Instant.now();
+        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now.plusSeconds(1), now, "-",
+                Map.of("71be04", ac("71be04", "ıab12ſ", 50.2, 10.2, now, "adsb_lol"))));
+        mvc.perform(get("/api/v1/aircraft/71be04")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.route.status").value("no_callsign"))
+                .andExpect(jsonPath("$.route.callsign").doesNotExist())
+                .andExpect(jsonPath("$.route.origin").doesNotExist());
+    }
+
     @Test
     void searchUsesTheMergedSnapshotAndCallsigns() throws Exception {
         mvc.perform(get("/api/v1/aircraft/search").param("q", "ual"))

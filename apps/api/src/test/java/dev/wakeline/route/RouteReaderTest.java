@@ -46,6 +46,22 @@ class RouteReaderTest {
         assertThat(gets).as("an invalid callsign is never looked up").isEmpty();
     }
 
+    /**
+     * 계약 v4 §G A-1(리뷰 api-route-locode #1): trim 뒤 ASCII 가 아니면 콜사인 없음 — 대문자 변환 전에 검사한다. 'ı'(U+0131)·'ſ'(U+017F)는
+     * 대문자 변환으로 ASCII I·S 가 되어, 검사하지 않으면 다른 항공기(IAB12S)의 노선 키를 읽는다. 수집기(route.normalize_callsign)와 같은 규칙.
+     */
+    @Test void nonAsciiCallsignIsNoCallsign_evenIfUppercasingWouldMakeItAscii() {
+        assertThat("ıab12ſ".toUpperCase(java.util.Locale.ROOT)).as("the trap").isEqualTo("IAB12S");
+        for (String raw : new String[]{"ıab12ſ", "zzxı12", "ZZſ123", "ＡＢＣ123", "ABC1２3", "KAL081\u00e9"}) {
+            assertThat(RouteReader.normalizeCallsign(raw)).as(raw).isNull();
+            assertThat(reader.forCallsign(raw)).as(raw).isEqualTo(RouteInfo.noCallsign());
+        }
+        assertThat(reader.forAircraft(ac("ıab12ſ")).status()).isEqualTo(RouteInfo.NO_CALLSIGN);
+        assertThat(gets).as("never looked up").isEmpty();
+        // 앞뒤 ASCII 공백은 trim 으로 빠진다(ASCII 검사는 trim 뒤)
+        assertThat(RouteReader.normalizeCallsign("\tsyn736 \n")).isEqualTo("SYN736");
+    }
+
     @Test void readsTheCollectorCacheKey_andCachesPerCallsignForFiveSeconds() {
         RouteInfo pending = reader.forAircraft(ac("syn736 "));
         assertThat(pending.status()).isEqualTo(RouteInfo.PENDING);

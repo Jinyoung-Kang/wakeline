@@ -20,7 +20,7 @@ import java.util.Map;
 
 /**
  * 선박 표(V5: ship · ship_position · ingest_gap) 쓰기·읽기. 쓰기는 ShipWriter(가상 스레드 하나)와 순서 큐만 부른다 — 요청·소비 스레드는 부르지 않는다.
- * 모든 쓰기는 멱등이다(재시도·재처리·재시작): 위치 (mmsi, ts) PK + 60 s 창 가드, 정적 정보 updated_at 단조, 공백 (source, started_at).
+ * 모든 쓰기는 멱등이다(재시도·재처리·재시작): 위치 (mmsi, ts) PK + 60 s 창 가드, 정적 정보 updated_at 단조, 공백 (source, coalesce(scope, ''), started_at)(V8 — 구역이 다르면 같은 시각이어도 다른 공백).
  */
 @Repository
 public class ShipRepository {

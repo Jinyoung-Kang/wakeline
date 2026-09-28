@@ -81,7 +81,7 @@ class OpsDbTest {
         admin = DbTestSupport.admin();
         redis = new StringRedisTemplate(redisFactory);
         deadRedis = new StringRedisTemplate(deadFactory);
-        redis.delete(List.of(SettingsService.REDIS_KEY, "wakeline:provider:opensky"));
+        redis.delete(List.of(SettingsService.REDIS_KEY, "wakeline:provider:opensky", "wakeline:provider:adsbdb"));
         audit = new AuditService(api, DbTestSupport.JSON, PROPS);
     }
 
@@ -193,6 +193,30 @@ class OpsDbTest {
     }
 
     // ---------- Redis 전용 토글 ----------
+
+    /**
+     * 계약 v4 §G A-2(리뷰 collector-route #5): 노선 조회 공급자 adsbdb 도 운영 화면에서 감사 기록과 함께 끄고 켠다 — 수집기가 읽는
+     * wakeline:provider:adsbdb disabled 를 쓴다. 공급자 목록(/ops/providers)에 수집기가 쓴 호출 상태가 보인다(노선 내용은 해시에 없다).
+     */
+    @Test
+    void adsbdbIsAnOpsProvider_toggledWithAudit_andListed() {
+        var status = new dev.wakeline.rest.StatusService(null, null, null, null, redis, PROPS);
+        var jobs = new MaintenanceJobs(api, PROPS, region(redis), DbTestSupport.apiTx());
+        var auth = new OpsAuthentication(new OpsUserService.User(1, "alice", "OPS"), List.of(new SimpleGrantedAuthority("ROLE_OPS")));
+        admin.sql("INSERT INTO ops_user (id, username, password_hash) VALUES (1, 'alice', 'x')").update();
+        var ops = new OpsController(status, api, redis, settings(redis), audit, jobs, DbTestSupport.apiTx());
+
+        assertThat(ops.toggleProvider("adsbdb", "disable", request(), auth).getStatusCode().value()).isEqualTo(204);
+        assertThat(redis.opsForHash().get("wakeline:provider:adsbdb", "disabled")).isEqualTo("1");
+        assertThat(admin.sql("SELECT target FROM audit_log WHERE action = 'PROVIDER_DISABLE'").query(String.class).single()).isEqualTo("adsbdb");
+        ops.toggleProvider("adsbdb", "enable", request(), auth);
+        assertThat(redis.opsForHash().get("wakeline:provider:adsbdb", "disabled")).isEqualTo("0");
+        assertThat(auditCount("PROVIDER_ENABLE")).isEqualTo(1);
+
+        redis.opsForHash().putAll("wakeline:provider:adsbdb", Map.of("last_error", "HTTP 503", "consecutive_failures", "2"));
+        assertThat(status.providerStatuses()).filteredOn(p -> "adsbdb".equals(p.get("name"))).singleElement()
+                .satisfies(p -> assertThat(p).containsEntry("disabled", "0").containsEntry("last_error", "HTTP 503"));
+    }
 
     @Test
     void providerToggleIsAuditedAtomically() {

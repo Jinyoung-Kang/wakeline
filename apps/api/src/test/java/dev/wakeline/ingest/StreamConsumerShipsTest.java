@@ -136,15 +136,37 @@ class StreamConsumerShipsTest {
         }
         assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).isZero();
 
+        int seq = 3;
         for (String bad : new String[]{"\"91,0,1,1\"", "\"-90,-180,90,0|-90,45,90,180\"", "\"x\"", "\"" + "0,0,1,1;".repeat(17) + "\""}) {
-            StreamConsumer.Parsed p = consumer.parse(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(9), T, bad), 3));
+            MapRecord<String, String, String> r = rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(9), T, bad), seq);
+            StreamConsumer.Parsed p = consumer.parse(r);
             assertThat(p.gap().scope()).as(bad).isNull();
             assertThat(p.gap().reason()).isEqualTo("server closed (1006)");
+            assertThat(p.gapScopeInvalid()).as(bad).isTrue();
+            assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).as("parsing alone does not count").isEqualTo(seq - 3);
+            consumer.handle(r);
+            seq++;
+            assertThat(((IngestEvents.AisGapReceived) events.getLast()).gap().scope()).as("received without a scope, not dead-lettered").isNull();
         }
         assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).isEqualTo(4);
         // 스키마: scope 는 문자열·null 만(다른 형은 검증 실패 → DLQ)
         assertThatThrownBy(() -> consumer.parse(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(9), T, "5"), 4)))
                 .hasMessageContaining("payload");
+    }
+
+    /**
+     * 리뷰(api-ships-realtime #4): 기동 때 선박 부트스트랩이 최근 35분을 다시 읽어도 구역이 틀린 공백을 세지 않는다 — 이미 ACK 한 공백을 재시작마다,
+     * 아직 PEL 에 있는 공백을 두 번(부트스트랩 + 소비) 세지 않게. 세는 것은 실시간 소비 한 번뿐.
+     */
+    @Test void gapScopeInvalid_isNotCountedByTheBootstrapReplay() throws Exception {
+        MapRecord<String, String, String> bad = rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(300), T.minusSeconds(60), "\"x\""), 0);
+        StreamConsumer.ForwardPageReader reader = (fromInclusive, count) ->
+                StreamConsumer.compareIds(bad.getId().getValue(), fromInclusive) >= 0 ? List.of(bad) : List.of();
+        assertThat(consumer.bootstrapShips(reader, T.toEpochMilli())).isEqualTo(1);
+        assertThat(ships.gaps()).singleElement().satisfies(g -> assertThat(g.scope()).isNull());
+        assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).as("bootstrap replay").isZero();
+        consumer.handle(bad); // 같은 엔트리가 소비로 다시 전달됨(PEL)
+        assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).as("counted once, by the live consumer").isEqualTo(1);
     }
 
     /** 신뢰 경계(ADR-014): ais 사용자가 쓰는 스트림에서 온 항공기 메시지, 다른 스트림에서 온 선박 메시지는 받지 않는다(검증 실패 → DLQ). */

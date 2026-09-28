@@ -95,6 +95,23 @@ class RouteAndDestinationWsTest {
         }
     }
 
+    /** 계약 v4 §G A-2: 수집기가 묻지 않은 노선(disabled — fixture 모드·운영자가 adsbdb 끔)은 selected.route.status disabled, 조회 시각 없음. */
+    @Test void selectedRouteDisabled() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            k.hub.setRouteSource(reader()::forAircraft);
+            redis.put("wakeline:route:SYN5", RouteInfoTest.cached("disabled", "SYN5").toString());
+            Instant now = Instant.now();
+            k.publish("global", now, plane("bbb005", " syn5", 50, 10, now));
+            FakeWsSession f = k.subscribed("s", "1.1.1.1");
+            k.msg(f, "{\"type\":\"select\",\"hex\":\"bbb005\"}");
+            JsonNode route = ofType(f, "selected").getLast().path("route");
+            assertThat(route.path("status").asString()).isEqualTo("disabled");
+            assertThat(route.path("callsign").asString()).isEqualTo("SYN5");
+            assertThat(route.has("fetched_at")).isFalse();
+            assertThat(route.has("origin")).isFalse();
+        }
+    }
+
     @Test void selectedWithoutARouteSourceHasNullRoute() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             Instant now = Instant.now();

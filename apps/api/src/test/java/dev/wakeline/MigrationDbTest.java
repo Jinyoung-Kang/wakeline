@@ -222,7 +222,8 @@ class MigrationDbTest {
     /**
      * V8(계약 v4 §D): ingest_gap.scope(NULL = 구역 나누기 전) · 고유성 (source, coalesce(scope,''), started_at) 식 인덱스로 UNIQUE(source, started_at) 대체.
      * 기존 행은 그대로(scope NULL), 구역이 다르면 같은 시각 공백을 받고, 구역 없음끼리·같은 구역끼리는 막는다. api 권한은 그대로(INSERT·SELECT 만) —
-     * 운영 저장소 문장(ON CONFLICT 식 추론)이 api 계정으로 동작한다. ADR-014 부록 B 의 되돌리기 SQL 도 적용된다.
+     * 운영 저장소 문장(ON CONFLICT 식 추론)이 api 계정으로 동작한다. ADR-014 부록 B 의 되돌리기 SQL(계약 v4 §G D-4 — 원래 이름의 제약 ·
+     * flyway_schema_history 의 V8 행 삭제)을 적용하면 스키마가 V7 과 같아지고, 그 뒤 --migrate 로 V8 을 다시 적용할 수 있다.
      */
     @Test
     void v8ScopesIngestGapsWithAnExpressionUniqueIndex() throws SQLException {
@@ -269,12 +270,27 @@ class MigrationDbTest {
         assertThatThrownBy(() -> stage.sql("INSERT INTO ingest_gap (source, started_at, ended_at, reason, provider, scope) "
                 + "VALUES ('ais', now(), now() + interval '1 s', 'r', 'x', '')").update()).hasMessageContaining("ingest_gap_scope_len");
 
-        // 되돌리기(ADR-014 부록 B): 같은 시각의 구역 공백을 하나만 남긴 뒤 인덱스 삭제 · 제약 복원 · 열 삭제
+        // 되돌리기(ADR-014 부록 B · 계약 v4 §G D-4): 같은 시각의 구역 공백을 하나만 남긴 뒤 인덱스 삭제 · 제약을 원래 이름(V5)으로 복원 · 열 삭제 ·
+        // V8 이력 행 삭제
         stage.sql("DELETE FROM ingest_gap WHERE scope IS NOT NULL").update();
         stage.sql("DROP INDEX ingest_gap_source_scope_started_uq").update();
-        stage.sql("ALTER TABLE ingest_gap ADD CONSTRAINT ingest_gap_source_started_at_key UNIQUE (source, started_at)").update();
+        stage.sql("ALTER TABLE ingest_gap ADD CONSTRAINT ingest_gap_source_started UNIQUE (source, started_at)").update();
         stage.sql("ALTER TABLE ingest_gap DROP COLUMN scope").update();
+        stage.sql("DELETE FROM flyway_schema_history WHERE version = '8'").update();
         assertThat(stage.sql("SELECT count(*) FROM ingest_gap").query(Long.class).single()).isEqualTo(1);
+        assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_gap_source_started'").query(Long.class).single())
+                .as("V7 schema again: the V5 constraint under its original name").isEqualTo(1);
+        assertThat(stage.sql("SELECT max(version::int) FROM flyway_schema_history WHERE success").query(Integer.class).single()).isEqualTo(7);
+
+        // 다시 앞으로: 운영과 같은 --migrate 경로로 V8 이 다시 적용된다(제약 이름이 V8 이 지우는 이름과 같다)
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '8' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_gap_source_started'").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT count(*) FROM pg_indexes WHERE indexname = 'ingest_gap_source_scope_started_uq'").query(Long.class).single()).isEqualTo(1);
+        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "am after roll-forward", "aisstream",
+                dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isTrue();
+        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
     }
 
     /**

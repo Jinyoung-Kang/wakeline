@@ -55,8 +55,8 @@ public class AisStatus {
 
     /**
      * 검증한 상태 해시. present = 해시가 있었다. connected 는 수집기 보고값 그대로(지금 값인지는 {@link #connectedNow}).
-     * state = 알려진 상태 이름만(아니면 null). coverage = 수집기가 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...] — 구역 정보가 있으면 모든 구역 상자의 합,
-     * 없으면 해시의 bbox(형식 오류·빈 값이면 null). shards = 구역별 상태(1~3개, 없거나 틀리면 null).
+     * state = 알려진 상태 이름만(아니면 null). coverage = 수집기가 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...] — 구역 정보가 있으면 해시의 bbox
+     * (구독 문자열을 '|' 로 이은 것)에 든 구역의 상자 합, 없으면 해시의 bbox(형식 오류·빈 값이면 null). shards = 구역별 상태(1~3개, 없거나 틀리면 null).
      */
     public record Feed(boolean present, String provider, Boolean connected, Instant updatedAt, Instant lastMsgAt, Double msgsPerS,
                        Instant gapOpenSince, String gapReason, AisGap lastGap, String state, List<List<Double>> coverage, List<Shard> shards) {
@@ -117,7 +117,7 @@ public class AisStatus {
         String c = text(h, "connected");
         Boolean connected = "1".equals(c) ? Boolean.TRUE : "0".equals(c) ? Boolean.FALSE : null;
         List<Shard> shards = shards(h.get("shards"));
-        List<List<Double>> coverage = shards != null ? union(shards) : coverage(h.get("bbox"));
+        List<List<Double>> coverage = shards != null ? subscribed(shards, h.get("bbox")) : coverage(h.get("bbox"));
         return new Feed(true, provider, connected, time(h, "updated_at"), time(h, "last_msg_at"), number(h, "msgs_per_s"),
                 time(h, "gap_open_since"), text(h, "gap_reason"), last, known(text(h, "state")), coverage, shards);
     }
@@ -142,11 +142,18 @@ public class AisStatus {
         }
     }
 
-    /** 구역들의 상자 합(구역 순서 · 구역 안 순서 그대로). */
-    static List<List<Double>> union(List<Shard> shards) {
+    /**
+     * 실제로 구독한 구역의 상자 합(계약 v4 §G D-2 — 구역 순서 · 구역 안 순서 그대로). 구역의 scope 는 설정에서 오므로 구독 전·비활성에도 있다 —
+     * 해시의 bbox(수집기가 구독할 때 실제로 보낸 구역 문자열을 '|' 로 이은 것, 구독 전·비활성이면 빈 값)의 조각과 같은 구역만 합친다.
+     * bbox 가 없거나 비었거나 든 구역이 없으면 null(범위를 추정해 그리지 않는다).
+     */
+    static List<List<Double>> subscribed(List<Shard> shards, Object bbox) {
+        if (bbox == null) return null;
+        Set<String> parts = new java.util.HashSet<>();
+        for (String p : String.valueOf(bbox).split("\\|", -1)) if (!p.isBlank()) parts.add(p.strip());
         List<List<Double>> out = new ArrayList<>();
-        for (Shard sh : shards) out.addAll(sh.scope().coverage());
-        return List.copyOf(out);
+        for (Shard sh : shards) if (parts.contains(sh.scope().text())) out.addAll(sh.scope().coverage());
+        return out.isEmpty() ? null : List.copyOf(out);
     }
 
     /**
@@ -239,7 +246,7 @@ public class AisStatus {
      *   <li>lag_s: 지금 − api 가 가진 가장 새 보고의 seen_at(aisstream 수신 시각) — 수집기 연결 끊김과 파이프라인 멈춤을 모두 드러낸다.</li>
      *   <li>msgs_per_s: 수집기의 최근 창 수신률(heartbeat 가 오래됐으면 모름).</li>
      *   <li>last_gap: 가장 최근에 끝난 공백(수집기 해시와 api 가 받은 ais_gap 중 늦게 끝난 것).</li>
-     *   <li>state · coverage(계약 v3 §A): 수집기 상태 이름 · 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...](구역이 있으면 모든 구역 상자의 합) —
+     *   <li>state · coverage(계약 v3 §A): 수집기 상태 이름 · 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...](구역이 있으면 구독한 구역 상자의 합) —
      *       connected 처럼 heartbeat 가 30 s 안일 때만(아니면 키 없음 — 죽은 수집기의 마지막 값을 지금 값처럼 말하지 않는다).</li>
      *   <li>shards(계약 v4 §D): 구역마다 {coverage, state, connected, gap_open_since} — heartbeat 가 30 s 안이고 구역 정보가 검증을 통과했을 때만.</li>
      * </ul>

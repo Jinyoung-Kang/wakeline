@@ -65,6 +65,9 @@ public final class IngestEvents {
         }
     }
 
-    /** AIS 수신 공백 하나가 끝났다(kind ais_gap) — 저장기가 ingest_gap 에 남긴다(영구, 중복은 (source, started_at) 로 무시). */
+    /**
+     * AIS 수신 공백 하나가 끝났다(kind ais_gap) — 저장기가 ingest_gap 에 남긴다(영구, 중복은 (source, 구역(scope), started_at) 으로 무시 — V8).
+     * 같은 시각에 시작해도 구역이 다르면 다른 공백이다.
+     */
     public record AisGapReceived(AisGap gap, Receipt receipt) {}
 }

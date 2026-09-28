@@ -2,11 +2,13 @@
 """UN/LOCODE 항구 표 만들기(계약 v4 §B): datasets/un-locode 의 data/code-list.csv 에서 항구(기능 1)·내륙항(기능 8) 항목만 골라
 apps/api/src/main/resources/data/unlocode-ports.tsv 를 쓴다. api(DestinationParser)가 기동할 때 한 번 읽어 AIS 목적지의 UN/LOCODE 를 푼다.
 
-- 자료: UNECE UN/LOCODE 를 datasets/un-locode 가 CSV 로 옮긴 것(ODC-PDDL-1.0). 파일 머리에 출처·라이선스·판·내려받은 날·행 수를 적는다.
+- 자료: UNECE UN/LOCODE 를 datasets/un-locode 가 CSV 로 옮긴 것(ODC-PDDL-1.0). 파일 머리에 출처·라이선스·내려받은 날·원천 SHA-256·
+  원천 행 수·항구 행 수를 적는다.
 - 골라내기: Function 의 첫 글자가 '1'(항구)이거나 어디든 '8'(내륙항)이 있는 줄. 같은 코드가 여러 줄(다른 언어 이름)이면 원본 순서의 첫 줄.
 - name_collision: 5자 코드가 UN/LOCODE 의 어떤 지명(글자로만 된 이름, 대소문자 무시)과 같으면 1(예: 코드 CAVAN = 지명 Cavan).
   붙임형 목적지 'CAVAN' 은 코드로도 지명으로도 읽히므로 api 가 ambiguous 로 표시한다.
-- 판(版): code-list.csv 에는 판 표기가 없다 — 추정해 적지 않고 '표기 없음' 과 원본 SHA-256 을 적는다.
+- 판(版): code-list.csv 에는 판 표기가 없다 — 추정해 적지 않고 '표기 없음' 이라 적은 뒤, 판 대신 내려받은 날·원본 SHA-256·행 수로
+  어느 파일인지 밝힌다(계약 v4 §G B-1).
 
 apps/collector 의 uv 환경에서 실행한다(표준 라이브러리만 쓴다):
   cd apps/collector && uv run python ../../tools/gen_unlocode.py                       # 기본 URL 에서 내려받는다

@@ -17,6 +17,7 @@ apps/collector 의 uv 환경에서 실행한다(jsonschema):
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 import sys
@@ -140,7 +141,7 @@ ROUTE: Schema = {
     "required": ["status", "source"],
     "additionalProperties": False,
     "properties": {
-        "status": {"enum": ["found", "not_found", "pending", "unavailable", "no_callsign"]},
+        "status": {"enum": ["found", "not_found", "pending", "unavailable", "no_callsign", "disabled"]},
         "callsign": {"type": "string", "pattern": "^[A-Z0-9]{3,8}$"},
         "airline": {
             "type": "object",
@@ -180,9 +181,9 @@ ROUTE: Schema = {
                 }
             },
         },
-        # 조회 시각은 조회 결과(찾음·없음)에만
+        # 조회 시각은 조회 결과(찾음·없음)에만 — disabled(계약 v4 §G A-2: 운영 설정으로 묻지 않음)는 조회 결과가 아니다
         {
-            "if": {"properties": {"status": {"enum": ["pending", "unavailable", "no_callsign"]}}},
+            "if": {"properties": {"status": {"enum": ["pending", "unavailable", "no_callsign", "disabled"]}}},
             "then": {"not": {"required": ["fetched_at"]}},
         },
     ],
@@ -435,7 +436,7 @@ PLACE: Schema = {
         {"if": {"required": ["locode"]}, "then": {"required": ["name", "country"]}},
         {
             "if": {"not": {"required": ["locode"]}},
-            "then": {"not": {"anyOf": [{"required": ["name"]}, {"required": ["country"]}]}},
+            "then": {"not": {"anyOf": [{"required": ["name"]}, {"required": ["country"]}, {"required": ["subdivision"]}]}},
         },
         # 코드로도 지명으로도 읽히는 것은 코드로 푼 경우뿐
         {"if": {"properties": {"ambiguous": {"const": True}}}, "then": {"required": ["locode"]}},
@@ -528,7 +529,7 @@ AIS_SOURCE: Schema = {  # status.sources.ais · ships meta.ais — 수집기 hea
         "last_msg_at": TS,
         "ships": {"type": "integer", "minimum": 0},
         # 계약 v3 §A: 수집기 상태 이름(그 밖이면 키 없음) · 지금 구독한 상자 [[lat1, lon1, lat2, lon2], ...]
-        # 계약 v4 §D: 구역(최대 3, 구역마다 상자 1~16)이 있으면 coverage 는 모든 구역 상자의 합 — 최대 48개
+        # 계약 v4 §D·§G D-2: 구역(최대 3, 구역마다 상자 1~16)이 있으면 coverage 는 구독한 구역 상자의 합 — 최대 48개
         "state": AIS_STATES,
         "coverage": {"type": "array", "minItems": 1, "maxItems": 48, "items": AIS_BOX},
         "shards": {"type": "array", "minItems": 1, "maxItems": 3, "items": AIS_SHARD},
@@ -640,8 +641,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "allOf": [
             # DB 가 없으면 static 이 없고 meta 가 그렇다고 말한다(계약 §2)
             {"if": {"not": {"required": ["static"]}}, "then": {"properties": {"meta": {"required": ["db_unavailable"]}}}},
-            # 노선은 실시간 상태의 콜사인에서만 나온다(계약 v4 §A) — 상태가 없으면 route 도 없다
+            # 노선은 실시간 상태의 콜사인에서만 나온다(계약 v4 §A) — 상태가 없으면 route 도 없고, 있으면 route 가 반드시 있다
             {"if": {"not": {"required": ["state"]}}, "then": {"not": {"required": ["route"]}}},
+            {"if": {"required": ["state"]}, "then": {"required": ["route"]}},
         ],
     },
     "aircraft_search": {
@@ -1177,7 +1179,47 @@ def _ship_detail(body: dict[str, Any]) -> list[str]:
         for key, idx in (("from", 0), ("to", -1)):
             if key in dest and places and dest[key] != places[idx]:
                 errs.append(f"destination_info.{key} is not places[{idx}]")
+        for i, place in enumerate(places):
+            errs.extend(f"destination_info.places[{i}]: {e}" for e in _place_errors(place))
     return errs
+
+
+# 계약 v4 §B: 조각의 UN/LOCODE 는 공백형(뒤에 선석 등 문구 허용) 또는 붙임형(정확히 5자)으로만 읽는다 — 코드 = 두 글자 + 세 글자
+_LOCODE_SPACED = re.compile(r"^([A-Z]{2}) ([A-Z0-9]{3})(?: .*)?$")
+_LOCODE_COMPACT = re.compile(r"^([A-Z]{2})([A-Z0-9]{3})$")
+
+
+def _place_errors(place: dict[str, Any]) -> list[str]:
+    """풀이한 조각의 locode 는 그 조각 글자가 규칙으로 내는 코드여야 하고(다른 항구를 붙이지 않는다), country 는 코드의 앞 두 글자,
+    ambiguous 는 붙임형으로 푼 것뿐이다."""
+    locode = place.get("locode")
+    if locode is None:
+        return []
+    text = place.get("text") or ""
+    spaced, compact = _LOCODE_SPACED.fullmatch(text), _LOCODE_COMPACT.fullmatch(text)
+    m = spaced or compact
+    errs: list[str] = []
+    if m is None or m.group(1) + m.group(2) != locode:
+        errs.append(f"locode {locode!r} is not the code the text {text!r} yields")
+    if place.get("country") != locode[:2]:
+        errs.append(f"country {place.get('country')!r} is not the first two letters of locode {locode!r}")
+    if place.get("ambiguous") and compact is None:
+        errs.append("ambiguous is only for the compact 5-letter form")
+    return errs
+
+
+_ROUTE_CALLSIGN = re.compile(r"^[A-Z0-9]{3,8}$")
+
+
+def _route_callsign(raw: object) -> str | None:
+    """api RouteReader.normalizeCallsign 과 같은 규칙(계약 v4 §G A-1): 앞뒤 공백 제거 → ASCII 가 아니면 없음 → 대문자 → ^[A-Z0-9]{3,8}$."""
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s.isascii():
+        return None
+    cs = s.upper()
+    return cs if _ROUTE_CALLSIGN.fullmatch(cs) else None
 
 
 def _aircraft_detail(body: dict[str, Any]) -> list[str]:
@@ -1185,9 +1227,14 @@ def _aircraft_detail(body: dict[str, Any]) -> list[str]:
     route = body.get("route")
     if route is None:
         return errs
-    # 노선은 실시간 상태의 콜사인(trim·대문자)에서만 — 다른 콜사인의 노선을 붙이지 않는다
-    cs = ((body.get("state") or {}).get("callsign") or "").strip().upper()
-    if route.get("status") != "no_callsign" and route.get("callsign") != cs:
+    # 노선은 실시간 상태의 콜사인(정규화)에서만 — 다른 콜사인의 노선을 붙이지 않고, 읽을 수 있는 콜사인을 '콜사인 없음' 이라 하지 않는다
+    cs = _route_callsign((body.get("state") or {}).get("callsign"))
+    if route.get("status") == "no_callsign":
+        if cs is not None:
+            errs.append(f"route.status is no_callsign but the live callsign {cs!r} is valid")
+    elif cs is None:
+        errs.append(f"route.status {route.get('status')!r} but the live callsign is missing or invalid (expected no_callsign)")
+    elif route.get("callsign") != cs:
         errs.append(f"route.callsign {route.get('callsign')!r} is not the live callsign {cs!r}")
     return errs
 
@@ -1229,12 +1276,16 @@ def _gap_scope_errors(where: str, gaps: list[Any]) -> list[str]:
 
 
 def _ais_source_errors(where: str, ais: Any) -> list[str]:
-    """계약 v4 §D: 구역 상태가 있으면 coverage 는 모든 구역 상자의 합(구역 순서 그대로)."""
-    if not isinstance(ais, dict) or "shards" not in ais:
+    """계약 v4 §D·§G D-2: 구역 상태가 있으면 coverage 는 실제로 구독한 구역(shards 중 일부, 구역 순서 그대로)의 상자 합 —
+    구독한 구역이 없으면(비활성·구독 전) coverage 가 없다. 구독 여부는 공개 응답에 없으므로 '어떤 구역들의 합' 인지만 본다."""
+    if not isinstance(ais, dict) or "shards" not in ais or ais.get("coverage") is None:
         return []
-    union = [box for sh in ais["shards"] for box in sh.get("coverage", [])]
-    if ais.get("coverage") != union:
-        return [f"{where}.coverage is not the union of shards[].coverage"]
+    parts = [sh.get("coverage", []) for sh in ais["shards"]]
+    unions = (
+        [box for part in chosen for box in part] for n in range(1, len(parts) + 1) for chosen in itertools.combinations(parts, n)
+    )
+    if ais["coverage"] not in unions:
+        return [f"{where}.coverage is not the union of (subscribed) shards[].coverage"]
     return []
 
 
