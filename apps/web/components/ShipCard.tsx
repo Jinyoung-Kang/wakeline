@@ -6,13 +6,14 @@ import { ageS, fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
 import {
   fmtDraught, fmtShipEta, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
-  SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipsChip, SHIPS_RULE_TEXT,
-  type DestinationInfo, type ShipCategory, type ShipState, type ShipStatic,
+  SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
+  type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
+import { ShipTable } from "./ShipTable";
 
 /**
  * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
@@ -222,6 +223,13 @@ export function ShipPanelView({ selected, shipsOn, shipCats = SHIP_CATEGORIES }:
   return <ShipList shipCats={shipCats} />;
 }
 
+/** 화면 안 선박 표에 한 번에 보이는 줄 수 — 정렬한 뒤 앞에서부터 */
+const SHIP_LIST_MAX = 50;
+
+/**
+ * 화면 안 선박(계약 v5 §B3): 정렬 가능한 표(선종 색 · 선명 · MMSI · 속력 kn/km/h · 항해 상태 · 경과) — 검색 결과와 같은 표(ShipTable).
+ * 선종 필터는 지도와 같게 적용하고 숨긴 수를 적는다.
+ */
 function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const view = useServerData((x) => x.ships);
   const ais = useServerData((x) => x.ais);
@@ -229,11 +237,13 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const aisOff = ais?.state === "disabled";
   const selectShip = useUi((s) => s.selectShip);
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<ShipSort>(SHIP_SORT_DEFAULT);
+  const now = useServerNow(1000);
   if (view.mode !== "points") {
     return (
       <div className="p-3 text-[11px] text-fg-3" data-testid="ship-list-empty">
         {view.mode === "grid" ? <>
-          지금은 격자(선박 수)로 표시 중입니다 — 확대해서 개별 표시가 되면 선박을 고를 수 있습니다.
+          지금은 격자(선박 수)로 표시 중입니다 — 확대해서 개별 표시가 되면 선박을 고를 수 있습니다. 이름·MMSI 로 찾으려면 상단 검색(/ 키)을 쓰세요.
           <div className="mt-1">{SHIPS_RULE_TEXT}</div>
         </> : aisOff ? "AIS 수집이 꺼져 있습니다(aisstream.io 키 없음 — 운영 설정). 선박 데이터가 오지 않습니다." : "선박 수신 대기 중…"}
       </div>
@@ -243,24 +253,22 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais });
   // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
   const filtered = shipCats.length < SHIP_CATEGORIES.length;
-  const { items: shown, total, hidden } = shipList(shipStates.values(), q, 50, filtered ? new Set(shipCats) : null);
+  const { items, total, hidden } = shipList(shipStates.values(), q, Infinity, filtered ? new Set(shipCats) : null);
+  const rows = sortShipRows(items.map(shipRowFromLite), sort, now).slice(0, SHIP_LIST_MAX);
+  const onSort = (k: ShipSortKey) => setSort((cur) => (cur.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
   return (
     <div className="flex h-full flex-col" data-testid="ship-list">
       <div className="row">
         <span className="label">화면 안 선박 {view.count}{filtered ? <span className="text-warn normal-case" data-testid="ship-list-cat-filter"> · 선종 필터 {shipCats.length}/{SHIP_CATEGORIES.length} · {hidden}척 숨김</span> : null}</span>
         <input value={q} onChange={(e) => setQ(e.target.value.slice(0, 32))} placeholder="이름·MMSI" aria-label="선박 이름 또는 MMSI 로 거르기" className="w-40" data-testid="ship-list-filter" />
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto text-[12px]">
-        {shown.map((s) => (
-          <li key={s.mmsi} className="border-b border-line">
-            <button className="flex w-full justify-between gap-2 px-2 py-1 text-left hover:bg-bg-2" onClick={() => { selectShip(s.mmsi); panIfOutside(shipPos(s.mmsi)); }} data-testid="ship-list-item" data-mmsi={s.mmsi}>
-              <span>{s.name ?? "—"}</span><span className="mono text-fg-3">{s.mmsi}</span>
-            </button>
-          </li>
-        ))}
-        {total > shown.length ? <li className="px-2 py-1 text-[11px] text-fg-3">외 {total - shown.length}척 — 이름·MMSI 로 거르세요</li> : null}
-        {total === 0 ? <li className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-none">{shipStates.size ? "조건에 맞는 선박 없음" : zero?.text ?? "화면 안에 선박 없음"}</li> : null}
-      </ul>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {rows.length ? (
+          <ShipTable rows={rows} now={now} sort={sort} onSort={onSort} testId="ship-list" onPick={(r) => { selectShip(r.mmsi); panIfOutside(shipPos(r.mmsi)); }} />
+        ) : null}
+        {total > rows.length ? <div className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-more">정렬 앞 {rows.length}척만 표시 · 외 {total - rows.length}척 — 이름·MMSI 로 거르세요</div> : null}
+        {total === 0 ? <div className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-none">{shipStates.size ? "조건에 맞는 선박 없음" : zero?.text ?? "화면 안에 선박 없음"}</div> : null}
+      </div>
     </div>
   );
 }

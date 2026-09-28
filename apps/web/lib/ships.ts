@@ -416,6 +416,16 @@ export function navStatusLabel(v: number | null | undefined): string {
   return v === 15 ? "— (15 · 미정의, 선박 미입력)" : `${NAV_STATUS_LABEL[v]} (${v})`;
 }
 
+/** 좁은 표 칸용 줄임(같은 USCG 0–15 표 — 전체 이름은 title 로 navStatusLabel) */
+export const NAV_STATUS_SHORT: readonly string[] = [
+  "기관 항해", "묘박", "조종 불능", "조종 제한", "흘수 제약", "계류", "좌초", "어로 중",
+  "범주 항해", "예약(HSC)", "예약(WIG)", "선미 예인", "밀어 예인", "예약", "SART·MOB·EPIRB", "미정의",
+];
+export function navStatusShort(v: number | null | undefined): string {
+  if (v == null || !Number.isInteger(v) || v < 0 || v > 15) return "—";
+  return `${NAV_STATUS_SHORT[v]} (${v})`;
+}
+
 export const POSITION_SOURCE_LABEL: Record<PositionSource, string> = {
   epfs: "전자 위치 장치(EPFS) · 선박 보고",
   estimated: "선박 추측항법 — 선박이 보고한 추정 위치",
@@ -1253,11 +1263,63 @@ export function shipsGapSuffix(ais: Pick<AisStatus, "gap_open_since" | "shards">
  * 오늘처럼 보이지 않게). 저장된 위치 시각을 모르면 "—".
  */
 export function notLiveText(lastPositionAt: string | null | undefined, nowMs: number): string {
-  const t = lastPositionAt ? Date.parse(lastPositionAt) : NaN;
-  if (Number.isNaN(t)) return "실시간 아님 · 마지막 저장 —";
+  return `실시간 아님 · 마지막 저장 ${fmtSavedAt(lastPositionAt, nowMs)}`;
+}
+/** 저장 시각 "hh:mm UTC"(지금과 UTC 날짜가 다르면 "MM-DD hh:mm UTC"). 모르면 "—" */
+export function fmtSavedAt(v: string | null | undefined, nowMs: number): string {
+  const t = v ? Date.parse(v) : NaN;
+  if (Number.isNaN(t)) return "—";
   const d = new Date(t).toISOString();
   const sameDay = nowMs > 0 && new Date(nowMs).toISOString().slice(0, 10) === d.slice(0, 10);
-  return `실시간 아님 · 마지막 저장 ${sameDay ? "" : `${d.slice(5, 10)} `}${d.slice(11, 16)} UTC`;
+  return `${sameDay ? "" : `${d.slice(5, 10)} `}${d.slice(11, 16)} UTC`;
+}
+
+// ---- 선박 표(계약 v5 §B3 — 화면 안 목록 · 검색 결과가 같은 표) ----
+
+/**
+ * 표의 한 줄. live = 실시간 목록(AIS)에 있음 — 경과는 관측 시각(seen_at)부터. 실시간이 아니면 마지막 저장 위치 시각(last_position_at)부터.
+ * 값은 받은 그대로(모르면 null → "—").
+ */
+export interface ShipRow {
+  mmsi: string; name: string | null; category: ShipCategory; sog_kn: number | null; nav_status: number | null;
+  live: boolean; seen_at: string | null; last_position_at: string | null;
+}
+export type ShipSortKey = "cat" | "name" | "mmsi" | "sog" | "nav" | "age";
+export interface ShipSort { key: ShipSortKey; dir: "asc" | "desc" }
+export const SHIP_SORT_DEFAULT: ShipSort = { key: "name", dir: "asc" };
+
+export function shipRowFromLite(s: ShipLite): ShipRow {
+  return { mmsi: s.mmsi, name: s.name, category: shipCategory(s.ship_type), sog_kn: s.sog_kn, nav_status: s.nav_status, live: true, seen_at: s.seen_at, last_position_at: null };
+}
+
+/** 줄의 경과(초): 실시간이면 관측 시각, 아니면 마지막 저장 시각부터. 모르면 null */
+export function shipRowAgeS(r: ShipRow, nowMs: number): number | null {
+  return shipAgeS(r.live ? r.seen_at : r.last_position_at, nowMs);
+}
+
+const CAT_INDEX: ReadonlyMap<ShipCategory, number> = new Map(SHIP_CATEGORIES.map((c, i) => [c, i]));
+
+/**
+ * 표 정렬: 선종(SHIP_CATEGORIES 순서) · 선명(대소문자 무시) · MMSI · 속력 · 항해 상태(코드) · 경과. 모르는 값은 방향과 상관없이 끝에,
+ * 같으면 MMSI 오름차순(결정적).
+ */
+export function sortShipRows(rows: readonly ShipRow[], sort: ShipSort, nowMs: number): ShipRow[] {
+  const val = (r: ShipRow): number | string | null => {
+    switch (sort.key) {
+      case "cat": return CAT_INDEX.get(r.category) ?? null;
+      case "name": return r.name ? r.name.toUpperCase() : null;
+      case "mmsi": return r.mmsi;
+      case "sog": return r.sog_kn;
+      case "nav": return r.nav_status;
+      case "age": return shipRowAgeS(r, nowMs);
+    }
+  };
+  const sign = sort.dir === "asc" ? 1 : -1;
+  return rows.map((r) => ({ r, v: val(r) })).sort((a, b) => {
+    if (a.v == null || b.v == null) return a.v == null && b.v == null ? a.r.mmsi.localeCompare(b.r.mmsi) : a.v == null ? 1 : -1;
+    const c = typeof a.v === "number" && typeof b.v === "number" ? a.v - b.v : String(a.v).localeCompare(String(b.v));
+    return c !== 0 ? c * sign : a.r.mmsi.localeCompare(b.r.mmsi);
+  }).map((x) => x.r);
 }
 
 // ---- 선박 목록(지도 없이 고르기 — 키보드·스크린리더) ----

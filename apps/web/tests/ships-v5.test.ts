@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  appendShipTrack, filterGridCells, gridFeatures, notLiveText, parseGridCells, SHIP_CATEGORIES, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
+  appendShipTrack, filterGridCells, gridFeatures, notLiveText, parseGridCells, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, sortShipRows, type ShipRow, type ShipSortKey, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
 } from "@/lib/ships";
 import { shipCategoryFilter } from "@/lib/ship-layers";
 import { shipGridTip, shipTrackPointTip } from "@/lib/tooltip";
@@ -17,6 +17,7 @@ import { resetData, setData, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { MapLegendView } from "@/components/MapLegend";
 import { LayerPanelView } from "@/components/LayerPanel";
+import { ShipTable } from "@/components/ShipTable";
 import { MapChipsView } from "@/components/MapChips";
 import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
 
@@ -291,5 +292,63 @@ describe("ship card: first recorded / last stored position and the not-live stat
     // 실시간 상태가 있으면 "실시간 아님" 이 아니다
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: { mmsi: "431011305", lat: 35, lon: 129, sog_kn: 1, cog_deg: null, heading_deg: null, ship_type: 70, name: "SYN BRAVO", seen_at: "2026-09-28T02:59:00Z", position_source: null, nav_status: null, rot: null, provider: "fixture", msg_type: null, class: "A" } } });
     expect(renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }))).not.toContain("ship-not-live");
+  });
+});
+
+// ---------------------------------------------------------------- §B3 정렬 가능한 선박 표(목록 · 검색 결과)
+
+describe("sortable ship table (contract v5 §B3)", () => {
+  const NOW = Date.parse("2026-09-28T03:00:00Z");
+  const row = (mmsi: string, over: Partial<ShipRow> = {}): ShipRow => ({
+    mmsi, name: null, category: "unknown", sog_kn: null, nav_status: null, live: true, seen_at: null, last_position_at: null, ...over,
+  });
+  const rows = [
+    row("300000003", { name: "CHARLIE", category: "tanker", sog_kn: 14, nav_status: 0, seen_at: "2026-09-28T02:59:00Z" }),
+    row("300000001", { name: "ALPHA", category: "fishing", sog_kn: 3.2, nav_status: 7, seen_at: "2026-09-28T02:50:00Z" }),
+    row("300000002", { category: "cargo", sog_kn: null, nav_status: null, seen_at: null }),
+    row("300000004", { name: "bravo", category: "cargo", live: false, last_position_at: "2026-09-28T01:00:00Z" }),
+  ];
+  const order = (key: ShipSortKey, dir: "asc" | "desc") => sortShipRows(rows, { key, dir }, NOW).map((r) => r.mmsi.slice(-1)).join("");
+
+  it("sorts by each column; unknown values always last; ties by MMSI", () => {
+    expect(order("name", "asc")).toBe("1432"); // ALPHA, bravo, CHARLIE, 이름 없음
+    expect(order("name", "desc")).toBe("3412");
+    expect(order("mmsi", "asc")).toBe("1234");
+    expect(order("cat", "asc")).toBe("2431"); // cargo(2, 4) · tanker · fishing — SHIP_CATEGORIES 순서
+    expect(order("sog", "desc")).toBe("3124"); // 속력 모름은 방향과 상관없이 끝
+    expect(order("sog", "asc")).toBe("1324");
+    expect(order("nav", "asc")).toBe("3124");
+    expect(order("age", "asc")).toBe("3142"); // 실시간 아님은 마지막 저장 시각으로 경과, 모름은 끝
+    expect(order("age", "desc")).toBe("4132");
+  });
+
+  it("renders the columns with their units and the sort state; not-live rows say so", () => {
+    const html = renderToStaticMarkup(createElement(ShipTable, { rows, now: NOW, sort: { key: "sog", dir: "desc" }, onSort: () => {}, onPick: () => {}, testId: "ship-list" }));
+    expect(html).toMatch(/<th[^>]*aria-sort="descending"[^>]*>.*?속력/);
+    for (const h of ["선종", "선명", "MMSI", "속력", "항해 상태", "경과"]) expect(text(html)).toContain(h);
+    expect(html.match(/data-testid="ship-list-item"/g)).toHaveLength(4);
+    const r3 = /data-mmsi="300000003".*?<\/tr>/.exec(html)![0];
+    expect(r3).toContain(`background:${SHIP_CATEGORY_COLOR.tanker}`);
+    expect(text(r3)).toContain("CHARLIE");
+    expect(text(r3)).toContain("14.0 kn25.9 km/h");
+    expect(r3).toContain('title="기관 사용 항해 중 (0)"');
+    expect(text(r3)).toContain("1m 00s");
+    const r4 = /data-mmsi="300000004".*?<\/tr>/.exec(html)![0];
+    expect(text(r4)).toContain("실시간 아님");
+    expect(text(r4)).toContain("저장 01:00 UTC");
+    const r2 = /data-mmsi="300000002".*?<\/tr>/.exec(html)![0];
+    expect(text(r2)).toContain("—");
+  });
+
+  it("the in-view ship list is this table", () => {
+    resetData();
+    shipStates.set("300000001", { mmsi: "300000001", lat: 35, lon: 129, sog_kn: 3.2, cog_deg: null, heading_deg: null, ship_type: 30, name: "ALPHA", seen_at: "2026-09-28T02:50:00Z", position_source: null, nav_status: 7 });
+    setData({ ships: { mode: "points", version: 1, count: 1, total: 1, ts: null, cell_deg: null, capped: false, grid: [] } });
+    const html = renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true }));
+    expect(html).toContain("<table");
+    expect(html).toMatch(/data-testid="ship-list-item"[^>]*data-mmsi="300000001"|data-mmsi="300000001"[^>]*data-testid="ship-list-item"/);
+    expect(text(html)).toContain("3.2 kn5.9 km/h");
+    expect(text(html)).toContain("어로 중 (7)");
+    resetData();
   });
 });
