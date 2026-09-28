@@ -240,6 +240,10 @@ public class MaintenanceJobs {
         Bbox b = r.bbox();
         boolean alerts = alertsRetained(day);
         tx.executeWithoutResult(status -> {
+            // traffic_by_hour 는 하루치 관심 지역 점을 (시, hex) 로 정렬한다 — 기본 work_mem(4 MB)으로는 디스크로 넘쳤다(external merge, R-27).
+            // 이 트랜잭션에만 넉넉히 준다. 읽는 양(하루 파티션 순차 스캔)은 그대로다: 관심 지역 점은 전세계 점과 같은 페이지에 섞여 있어
+            // 공간 인덱스로도 거의 모든 페이지를 읽게 된다(하루 1회 배치 — 요청 경로 아님).
+            db.sql("SET LOCAL work_mem = '64MB'").update();
             // 보존 삭제가 닿은 날은 알림 통계를 그대로 둔다 — 다시 셀 원본이 없다(R-06)
             db.sql("DELETE FROM stats_daily WHERE day = :d" + (alerts ? "" : " AND metric NOT IN ('alerts_by_kind', 'alert_dwell_avg_s')"))
                     .param("d", day).update();

@@ -75,4 +75,45 @@ class QueryPlanDbTest {
         assertThat(all.items()).hasSize(50);
         assertThat(all.nextCursor()).isNotNull();
     }
+
+    /**
+     * R-27: 일 통계 traffic_by_hour(시간대별 서로 다른 항공기 수)의 정렬이 디스크로 넘쳤다(external merge, 임시 파일). 집계 트랜잭션이 스스로
+     * work_mem 을 넉넉히 잡으므로 연결의 기본값(여기서는 일부러 최소 64 kB)과 상관없이 메모리에서 끝난다. 실제 문장을 EXPLAIN ANALYZE 로 본다.
+     */
+    @Test
+    void dailyTrafficAggregationDoesNotSpillToDisk() {
+        java.time.LocalDate day = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1);
+        Instant d0 = day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        // 관심 지역 안 30,000점(3,000대 × 10점, 하루에 고르게)
+        admin.sql("""
+                INSERT INTO track_point (hex, ts, geom, alt_ft, provider, fetched_at)
+                SELECT lpad(to_hex(g % 3000), 6, '0'), :d0 + (g * interval '2.8 seconds'), ST_SetSRID(ST_MakePoint(127.0 + (g % 100) * 0.01, 36.0), 4326),
+                       30000, 'adsb_lol', :d0
+                FROM generate_series(1, 30000) g ON CONFLICT DO NOTHING""").param("d0", Sql.ts(d0)).update();
+        admin.sql("ANALYZE track_point").update();
+
+        com.zaxxer.hikari.HikariConfig c = new com.zaxxer.hikari.HikariConfig();
+        c.setJdbcUrl(DbTestSupport.jdbcUrl("wakeline"));
+        c.setUsername("wakeline_api");
+        c.setPassword(DbTestSupport.API_PW);
+        c.setMaximumPoolSize(2);
+        c.setConnectionInitSql("SET work_mem = '64kB'");
+        try (com.zaxxer.hikari.HikariDataSource small = new com.zaxxer.hikari.HikariDataSource(c)) {
+            PlanCapture plans = new PlanCapture(small, "'traffic_by_hour'", PlanCapture.Mode.ANALYZE);
+            javax.sql.DataSource ds = plans.dataSource();
+            JdbcClient db = JdbcClient.create(ds);
+            var props = PersistDbTest.PROPS;
+            var region = new dev.wakeline.ops.RegionSettings(new org.springframework.data.redis.core.StringRedisTemplate(), db, DbTestSupport.JSON, props);
+            var tx = new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(ds));
+            new MaintenanceJobs(db, props, region, tx).aggregateDay(day);
+
+            String plan = plans.last();
+            assertThat(plan).as("traffic plan: %s", plan).doesNotContain("\"Sort Space Type\": \"Disk\"");
+            assertThat(plan).doesNotContainPattern("\"Temp Written Blocks\": [1-9]");
+        }
+        assertThat(admin.sql("SELECT sum(value)::int FROM stats_daily WHERE day = :d AND metric = 'traffic_by_hour'").param("d", day)
+                .query(Integer.class).single()).as("distinct aircraft per hour, summed").isPositive();
+        assertThat(admin.sql("SELECT count(*) FROM stats_daily WHERE day = :d AND metric = 'traffic_by_hour'").param("d", day)
+                .query(Long.class).single()).isEqualTo(24L);
+    }
 }
