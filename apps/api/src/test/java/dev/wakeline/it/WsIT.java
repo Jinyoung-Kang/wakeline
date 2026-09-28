@@ -1,6 +1,7 @@
 package dev.wakeline.it;
 
 import dev.wakeline.ingest.SnapshotStore;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -26,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * WebSocket 프로토콜 v1(계약 §1)을 전체 앱으로: 허용되지 않은 Origin → 핸드셰이크 403, hello 5 s 제한(1002),
  * subscribe → snapshot(seq=1) → 스트림 갱신마다 diff(seq 가 1씩 — 틈 없음), 제거, select → selected, 메시지 폭주 → 1008.
  * 스냅샷은 실제 Redis 스트림 발행(XADD) → 소비 → 이벤트 → 팬아웃 경로로 만든다.
+ * 받은 메시지는 모두 schemas/ws/server.v1.json(계약 v5 §E1)으로 검증한다 — 운영 설정의 매퍼 · 실제 소켓으로 보낸 그대로.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class WsIT extends IntegrationTest {
@@ -36,12 +39,21 @@ class WsIT extends IntegrationTest {
         final LinkedBlockingQueue<JsonNode> messages = new LinkedBlockingQueue<>();
         final CompletableFuture<Integer> closed = new CompletableFuture<>();
         final CompletableFuture<String> closeReason = new CompletableFuture<>();
+        /** 계약 v5 §E1: 받은 메시지 중 schemas/ws/server.v1.json 을 만족하지 않은 것(type → 위반). */
+        final List<String> schemaViolations = new CopyOnWriteArrayList<>();
         private final StringBuilder buf = new StringBuilder();
         WebSocket ws;
 
         @Override public CompletionStage<?> onText(WebSocket w, CharSequence data, boolean last) {
             buf.append(data);
-            if (last) { messages.add(Streams.JSON.readTree(buf.toString())); buf.setLength(0); }
+            if (last) {
+                String text = buf.toString();
+                buf.setLength(0);
+                JsonNode n = Streams.JSON.readTree(text);
+                List<String> v = dev.wakeline.ws.WsSchemas.server(text);
+                if (!v.isEmpty()) schemaViolations.add(n.path("type").asString() + " → " + v);
+                messages.add(n);
+            }
             w.request(1);
             return null;
         }
@@ -84,8 +96,17 @@ class WsIT extends IntegrationTest {
         }
     }
 
+    final List<Client> opened = new CopyOnWriteArrayList<>();
+
+    /** 이 시험이 연 모든 연결이 받은 메시지는 WS 스키마를 만족해야 한다. */
+    @AfterEach
+    void everyReceivedMessageMatchesTheWsSchema() {
+        for (Client c : opened) assertThat(c.schemaViolations).as("messages violating schemas/ws/server.v1.json").isEmpty();
+    }
+
     Client open(String origin) throws Exception {
         Client c = new Client();
+        opened.add(c);
         WebSocket.Builder b = HTTP.newWebSocketBuilder();
         if (origin != null) b.header("Origin", origin);
         c.ws = b.buildAsync(URI.create("ws://127.0.0.1:" + port + "/ws/v1"), c).get(5, TimeUnit.SECONDS);
