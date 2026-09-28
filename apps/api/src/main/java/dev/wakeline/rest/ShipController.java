@@ -67,9 +67,6 @@ public class ShipController {
     /** 검색 결과 수(계약 v5 §B1: limit 1–20, 기본 10). */
     static final int SEARCH_MAX_LIMIT = 20;
     static final int SEARCH_DEFAULT_LIMIT = 10;
-    /** 검색 결과 항목의 키(계약 v5 §B1 — 모르는 값도 키는 남기고 null). */
-    static final List<String> SEARCH_ITEM_KEYS = List.of("mmsi", "name", "call_sign", "imo", "ship_type", "category", "live", "lat", "lon", "sog_kn",
-            "seen_at", "last_position_at");
 
     private final ShipStore store;
     private final ShipRepository repo;
@@ -158,19 +155,26 @@ public class ShipController {
         }
         if (limit < 1 || limit > SEARCH_MAX_LIMIT) throw Problem.badRequest("BAD_LIMIT", "limit must be 1.." + SEARCH_MAX_LIMIT);
         ShipStore.View v = store.view();
-        List<ShipStore.Ship> live = new ArrayList<>();
+        java.util.Comparator<ShipStore.Ship> order = java.util.Comparator.comparing((ShipStore.Ship s) -> !query.exact(s.mmsi(), s.stat()))
+                .thenComparing((ShipStore.Ship s) -> s.state().seenAt(), java.util.Comparator.reverseOrder()).thenComparing(ShipStore.Ship::mmsi);
+        // 상위 limit 척만 남기며 고른다(짧은 MMSI 앞부분은 실시간 목록 전체가 일치할 수 있다 — 전부 정렬하지 않는다)
+        java.util.PriorityQueue<ShipStore.Ship> top = new java.util.PriorityQueue<>(limit + 1, order.reversed());
         if (query.kind() == ShipQuery.Kind.MMSI) {
             ShipStore.Ship s = v.get(query.text());
-            if (s != null) live.add(s);
+            if (s != null) top.add(s);
         } else {
-            for (ShipStore.Ship s : v.ships().values()) if (query.matches(s.mmsi(), s.stat())) live.add(s);
+            for (ShipStore.Ship s : v.ships().values()) {
+                if (!query.matches(s.mmsi(), s.stat())) continue;
+                if (top.size() == limit && order.compare(s, top.peek()) >= 0) continue; // 지금 남긴 것 중 가장 뒤보다 앞서지 않는다
+                top.add(s);
+                if (top.size() > limit) top.poll();
+            }
         }
-        live.sort(java.util.Comparator.comparing((ShipStore.Ship s) -> !query.exact(s.mmsi(), s.stat()))
-                .thenComparing((ShipStore.Ship s) -> s.state().seenAt(), java.util.Comparator.reverseOrder()).thenComparing(ShipStore.Ship::mmsi));
+        List<ShipStore.Ship> live = new ArrayList<>(top);
+        live.sort(order);
         List<Hit> hits = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (ShipStore.Ship s : live) {
-            if (hits.size() >= limit) break;
             hits.add(new Hit(s.mmsi(), s, s.stat()));
             seen.add(s.mmsi());
         }

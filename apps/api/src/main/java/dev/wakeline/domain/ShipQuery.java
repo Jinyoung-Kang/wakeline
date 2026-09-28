@@ -61,7 +61,7 @@ public record ShipQuery(String text, Kind kind, Integer imo) {
             case MMSI -> text.equals(mmsi);
             case MMSI_PREFIX -> false;
             case MMSI_PREFIX_OR_IMO, IMO -> imoEquals(st);
-            case NAME_OR_CALL_SIGN -> st != null && (text.equals(upper(st.name())) || text.equals(upper(st.callSign())));
+            case NAME_OR_CALL_SIGN -> st != null && (text.equalsIgnoreCase(st.name()) || text.equalsIgnoreCase(st.callSign()));
         };
     }
 
@@ -76,7 +76,6 @@ public record ShipQuery(String text, Kind kind, Integer imo) {
 
     private boolean imoEquals(ShipStatic st) { return st != null && imo != null && Objects.equals(st.imo(), imo); }
 
-    private boolean startsWith(String v) { return v != null && upper(v).startsWith(text); }
-
-    private static String upper(String v) { return v == null ? null : v.toUpperCase(Locale.ROOT); }
+    /** 대소문자 무시 앞부분 일치 — 실시간 목록(최대 60,000 척)을 요청마다 훑으므로 대문자 사본을 만들지 않는다. */
+    private boolean startsWith(String v) { return v != null && v.regionMatches(true, 0, text, 0, text.length()); }
 }

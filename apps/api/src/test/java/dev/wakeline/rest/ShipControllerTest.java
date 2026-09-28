@@ -650,6 +650,35 @@ class ShipControllerTest {
         assertThat(repo.searchCalls).as("limit reached from memory — no DB search").isZero();
     }
 
+    /**
+     * 측정(성능 주장은 측정값만): 실시간 목록이 메모리 상한(60,000 척, 모두 정적 정보 있음)일 때 검색 한 번 — 선명 앞부분(11척 일치) · MMSI 앞부분
+     * (3자리 "200" — 60,000척 모두 일치: 최악, 상위 limit 만 남기며 고른다) · MMSI 정확. MockMvc 포함, DB 는 가짜(0행). 결과는 표준 출력에 남긴다.
+     */
+    @Test void measure_searchOverTheLiveCap() throws Exception {
+        ShipStore big = new ShipStore();
+        List<ShipState> st = new ArrayList<>();
+        List<ShipStatic> sc = new ArrayList<>();
+        for (int i = 0; i < ShipStore.MAX_SHIPS; i++) {
+            String m = String.format("%09d", 200_000_000 + i);
+            st.add(pos(m, -60 + (i % 1200) * 0.1, -170 + (i / 1200) * 0.1, T.minusSeconds(i % 600)));
+            sc.add(full(m, "SHIP " + i, "C" + i, null, 70));
+        }
+        big.apply(st, sc, T, "aisstream", System.currentTimeMillis());
+        MockMvc m = MockMvcBuilders.standaloneSetup(new ShipController(big, repo, ais, dev.wakeline.rest.AircraftControllerTest.PROPS))
+                .setControllerAdvice(new ProblemAdvice()).build();
+        StringBuilder out = new StringBuilder("MEASURE ship search over " + ShipStore.MAX_SHIPS + " live ships:");
+        for (String q : new String[]{"SHIP 1234", "200", "200012345"}) {
+            for (int i = 0; i < 30; i++) m.perform(get("/api/v1/ships/search").param("q", q)).andExpect(status().isOk()); // 예열
+            int n = 50;
+            long t0 = System.nanoTime();
+            for (int i = 0; i < n; i++) m.perform(get("/api/v1/ships/search").param("q", q)).andExpect(status().isOk());
+            out.append(String.format(" q=%s %.2f ms;", q, (System.nanoTime() - t0) / 1e6 / n));
+        }
+        System.out.println(out);
+        m.perform(get("/api/v1/ships/search").param("q", "SHIP 1234").param("limit", "20")).andExpect(jsonPath("$.items.length()").value(11))
+                .andExpect(jsonPath("$.items[0].name").value("SHIP 1234"));
+    }
+
     /** DB 장애: 실시간 결과는 그대로 200, meta.db_unavailable = true, 마지막 저장 시각은 모름(null). */
     @Test void search_dbOutageKeepsLiveResults() throws Exception {
         repo.down = true;
