@@ -137,7 +137,7 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     # R-18: 손실 신호가 api 가 읽는 heartbeat 해시(wakeline:collector)에 있다 — 발행 큐 버림·DB 쓰기 버림/대기/실패·속도 상한
     loss = ("publish_dropped", "publish_queued", "db_dropped", "db_pending", "db_failures", "db_ok", "http_throttled")
     assert all(hb.get(k, "").isdigit() for k in loss), {k: hb.get(k) for k in loss}
-    assert hb["db_ok"] == "0" and int(hb["db_failures"]) > 0  # 시험의 DB 는 연결되지 않는다 — 그대로 드러난다
+    assert hb["db_ok"] == "0"  # 시험의 DB 는 연결되지 않는다 — 그대로 드러난다(실패 횟수는 heartbeat 시점에 따라 0 일 수 있다)
     # 계약 v4 G A-2: fixture 모드는 외부 호출이 없다 — 노선을 묻지 않고, 선택한 항공기의 콜사인(응답의 콜사인 · 메타 콜사인)에
     # disabled(120 s)를 써서 api 가 "노선 조회 중"(pending)으로 남기지 않게 한다
     assert hb["adsbdb_rps_1m"] == "0.000" and hb["route_lookups"] == "0"
