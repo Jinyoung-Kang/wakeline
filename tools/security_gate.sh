@@ -4,7 +4,7 @@
 #   2) trivy: 자체 이미지 wakeline-api·collector·web:local — 고칠 수 있는(ignore-unfixed) HIGH/CRITICAL 이 있으면 실패
 #   3) trivy: compose 에 고정된 제3자 이미지 + make bench 의 k6 — 차단 여부는 ci.yml third-party-images 행렬(blocking)을 그대로 읽는다
 # 이미지를 빌드하지 않는다 — 현재 코드로 스캔하려면 먼저 `make build` 한다. 스캐너 규칙(다이제스트 고정·docker.sock 없음·네트워크 없음)은 tools/scan_lib.sh.
-# SCAN_OFFLINE=1 이면 trivy DB 를 받지 않고 캐시만 쓴다.
+# SCAN_OFFLINE=1 이면 trivy DB 를 받지 않고 캐시만 쓴다. SECURITY_OWN_IMAGES="이미지 …" 로 자체 이미지 태그를 바꿀 수 있다.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 # shellcheck source=tools/scan_lib.sh
@@ -26,7 +26,8 @@ verdict gitleaks "$rc" 1
 
 trivy_db_update || exit 2
 echo "== trivy 자체 이미지 (HIGH·CRITICAL, 고칠 수 있는 것만, 차단)"
-for img in wakeline-api:local wakeline-collector:local wakeline-web:local; do
+# SECURITY_OWN_IMAGES 로 다른 태그를 볼 수 있다(예: 방금 빌드한 :review-check). 기본은 compose 가 붙이는 태그.
+for img in ${SECURITY_OWN_IMAGES:-wakeline-api:local wakeline-collector:local wakeline-web:local}; do
   if ! docker image inspect "$img" >/dev/null 2>&1; then echo "FAIL  $img 이미지 없음 — make build 먼저"; fail=1; continue; fi
   rc=0; trivy_image "$img" "$WORK" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table || rc=$?
   verdict "trivy $img" "$rc" 1
