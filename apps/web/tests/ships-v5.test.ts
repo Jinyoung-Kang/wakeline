@@ -295,6 +295,31 @@ describe("ship card: first recorded / last stored position and the not-live stat
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: { mmsi: "431011305", lat: 35, lon: 129, sog_kn: 1, cog_deg: null, heading_deg: null, ship_type: 70, name: "SYN BRAVO", seen_at: "2026-09-28T02:59:00Z", position_source: null, nav_status: null, rot: null, provider: "fixture", msg_type: null, class: "A" } } });
     expect(renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }))).not.toContain("ship-not-live");
   });
+
+  it("picked while not live: the server's ship_selected{state:null} reply still shows \"실시간 아님 · 마지막 저장 hh:mm\" (not the gone badge)", () => {
+    // 실제 흐름: select_ship 에 서버가 곧바로 ship_selected{state:null} 로 답한다(실시간 ShipStore 에 없는 MMSI)
+    const detail = parseShipDetail("431011305", { state: null, static: { name: "SYN BRAVO", ship_type: 70 }, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", meta: {} });
+    setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: null } });
+    const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
+    expect(html).toContain('data-testid="ship-not-live"');
+    expect(text(html)).toContain("실시간 아님 · 마지막 저장 01:00 UTC");
+    expect(html).not.toContain('data-testid="ship-gone"');
+    // 상세(REST)가 아직 없으면 저장 시각을 모른다 — WS 판단(목록에 없음)만
+    const pending = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: null, error: null, now: NOW }));
+    expect(pending).toContain('data-testid="ship-gone"');
+    expect(pending).not.toContain('data-testid="ship-not-live"');
+  });
+
+  it("a ship that left the live list after the detail was read (REST still had a live state): gone badge, no outdated 'last stored' time", () => {
+    const detail = parseShipDetail("431011305", {
+      state: { lat: 35, lon: 129, sog_kn: 1, seen_at: "2026-09-28T01:00:00Z" }, static: null, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", meta: {},
+    });
+    expect(detail.state).not.toBeNull();
+    setData({ shipSelected: { mmsi: "431011305", received_at: 0, static: null, state: null } });
+    const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
+    expect(html).toContain('data-testid="ship-gone"');
+    expect(html).not.toContain('data-testid="ship-not-live"'); // 상세를 다시 받기 전에는(ShipCard) 그때의 저장 시각을 '마지막'으로 적지 않는다
+  });
 });
 
 // ---------------------------------------------------------------- §B3 정렬 가능한 선박 표(목록 · 검색 결과)

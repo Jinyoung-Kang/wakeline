@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
 import { ageS, fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
@@ -54,14 +54,20 @@ function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
 export function ShipCard({ mmsi }: { mmsi: string }) {
   const [detail, setDetail] = useState<ShipDetail | null>(null);
   const [error, setError] = useState<{ mmsi: string; msg: string } | null>(null);
+  const loaded = useRef<ShipDetail | null>(null);
   const now = useServerNow(1000);
+  // WS 가 "실시간 목록에 없음(state null)"이라고 하면 상세를 다시 받는다 — 카드를 연 뒤 목록에서 빠진 선박의 '마지막 저장 위치'가
+  // 연 때의 값에 머물지 않게(계약 v5 §B3). 이미 받은 상세도 실시간이 아니라고 했으면 같은 사실이라 다시 받지 않는다
+  const gone = useServerData((x) => x.shipSelected != null && x.shipSelected.mmsi === mmsi && x.shipSelected.state == null);
   useEffect(() => {
+    const have = loaded.current;
+    if (gone && have?.mmsi === mmsi && have.state == null) return;
     let alive = true;
     apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
-      .then((r) => { if (alive) { setDetail(parseShipDetail(mmsi, r)); setError(null); } })
+      .then((r) => { if (alive) { const p = parseShipDetail(mmsi, r); loaded.current = p; setDetail(p); setError(null); } })
       .catch((e: Error) => { if (alive) setError({ mmsi, msg: String(e.message) }); });
     return () => { alive = false; };
-  }, [mmsi]);
+  }, [mmsi, gone]);
   const d = detail && detail.mmsi === mmsi ? detail : null;
   const err = error && error.mmsi === mmsi ? error.msg : null;
   return <ShipCardView mmsi={mmsi} detail={d} error={err} now={now} />;
@@ -92,8 +98,10 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   // 문구의 기간은 받은 항적의 창(선택 버튼은 다음에 받을 창)
   const hours = track?.hours ?? SHIP_TRACK_WINDOW_MS / 3600_000;
   const savedAge = ageS(d?.last_position_at, now);
-  // 실시간 상태가 없고 상세를 받았으면 "실시간 아님"(계약 v5 §B3) — 위치를 지어내지 않는다(WS 가 목록에 없다고 한 경우는 gone 배지)
-  const notLive = s == null && d != null && !gone;
+  // 실시간 상태가 없고 상세(REST)도 실시간이 아니라고 했으면 "실시간 아님 · 마지막 저장 hh:mm"(계약 v5 §B3) — 위치를 지어내지 않는다.
+  // 검색에서 실시간이 아닌 선박을 고르면 서버가 곧바로 ship_selected{state:null} 로 답하므로 gone 이어도 같은 문구.
+  // 상세가 아직 없거나 상세를 받은 뒤 목록에서 빠졌으면(상세의 저장 시각이 옛 값일 수 있다 — ShipCard 가 다시 받는다) gone 배지만
+  const notLive = s == null && d != null && d.state == null;
   const code = st?.ship_type ?? s?.ship_type ?? null;
   const name = st?.name ?? s?.name ?? null;
   const imo = imoField(st?.imo);
@@ -130,7 +138,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
     ["처음 기록", <span key="first" className="mono" title={fmtIso(d?.first_recorded_at)}>{fmtTime(d?.first_recorded_at)}</span>,
       "이 서비스(Wakeline)가 이 MMSI 를 처음 기록한 시각 — 선박의 건조·취항 시각이 아님"],
     ["마지막 저장 위치", <span key="last" className="mono" title={fmtIso(d?.last_position_at)}>{fmtTime(d?.last_position_at)}{savedAge != null ? ` (${fmtDuration(savedAge)} 전)` : ""}</span>,
-      "DB 에 저장된 마지막 위치의 시각(60 s 에 1점, 보존 72 h — 그보다 오래됐거나 없으면 —)"],
+      "DB 에 저장된 마지막 위치의 시각(60 s 에 1점, 보존 72 h — 그보다 오래됐거나 없으면 —). 카드를 열 때(실시간 목록에서 빠지면 그때 다시) 받은 값 — 실시간 선박은 그 뒤에도 계속 저장됩니다"],
     ["출처", s?.provider ?? st?.provider ?? "—"],
   ];
   return (
@@ -138,7 +146,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
       <div className="row">
         <span className="label">Ship</span>
         <div className="flex flex-wrap items-center justify-end gap-1">
-          {gone ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
+          {gone && !notLive ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
           {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 저장 위치 시각 ${fmtIso(d?.last_position_at)}`}>{notLiveText(d?.last_position_at, now)}</span> : null}
           {stale ? <span className="badge warn" data-testid="ship-stale">STALE · 15분 넘게 위치 없음</span> : null}
           {pb ? <span className={`badge ${pb.tone === "est" ? "est" : "warn"}`} data-testid="ship-pos-badge">{pb.text}</span> : null}
