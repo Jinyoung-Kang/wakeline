@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { fmtBudgetLimit, fmtClock, fmtTime } from "@/lib/format";
-import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, pipelineLossCount, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
+import {
+  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, pipelineLossCount, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict, settingIfMatch, signOut, type SettingEdit,
+} from "@/lib/ops";
 import { OpsPipeline } from "@/components/OpsPipeline";
 
 type Any = Record<string, unknown>;
@@ -143,26 +145,46 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
 }
 
 function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]; onSaved: () => void; onAuthMiss: (e: unknown) => void }) {
-  const [edit, setEdit] = useState<Record<string, string>>({});
+  // 편집 값과 편집을 시작할 때 본 version(R-35): 15 s 새로고침이 version 을 바꿔도 저장은 처음 본 version 으로 If-Match 한다
+  const [edit, setEdit] = useState<Record<string, SettingEdit>>({});
   const [msg, setMsg] = useState<string | null>(null);
-  const save = async (k: string, version: number) => {
-    const raw = edit[k];
-    if (raw === undefined) return;
+  const drop = (k: string) => setEdit((e) => { const c = { ...e }; delete c[k]; return c; });
+  const save = async (k: string) => {
+    const ed = edit[k];
+    if (ed === undefined) return;
+    const raw = ed.value;
     let value: unknown = raw;
     if (/^-?\d+$/.test(raw)) value = Number(raw); else if (raw === "true" || raw === "false") value = raw === "true";
-    try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value }, { "If-Match": String(version) }); setMsg(`${k} 저장됨 — 다음 주기부터 적용`); setEdit((e) => { const c = { ...e }; delete c[k]; return c; }); onSaved(); }
-    catch (e) { if (isAuthMiss(e)) onAuthMiss(e); setMsg(`${k}: ${(e as Error).message}`); }
+    try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value }, { "If-Match": settingIfMatch(ed) }); setMsg(`${k} 저장됨 — 다음 주기부터 적용`); drop(k); onSaved(); }
+    catch (e) {
+      if (isAuthMiss(e)) onAuthMiss(e);
+      setMsg(e instanceof ApiError && e.status === 409 ? `${k}: 편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요` : `${k}: ${(e as Error).message}`);
+      if (e instanceof ApiError && e.status === 409) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
+    }
   };
   return (
     <div>
-      <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다.</div>
+      <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       {msg ? <div className="mb-2 text-[11px] text-accent">{msg}</div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated</th><th></th></tr></thead>
-        <tbody>{items.map((s) => <tr key={s.key}><td className="mono">{s.key}</td>
-          <td><input className="mono w-72" aria-label={`${s.key} 값`} value={edit[s.key] ?? String(s.value)} onChange={(e) => setEdit({ ...edit, [s.key]: e.target.value })} /></td>
-          <td className="mono">{s.version}</td><td className="mono text-fg-3">{s.updated_by ?? "—"} {fmtTime(s.updated_at)}</td>
-          <td><button className="btn" onClick={() => save(s.key, s.version)} disabled={edit[s.key] === undefined}>save</button></td></tr>)}</tbody></table>
+        <tbody>{items.map((s) => {
+          const ed = edit[s.key];
+          const conflict = settingConflict(ed, s);
+          return <tr key={s.key} data-testid="setting-row" data-conflict={conflict ? "true" : undefined}><td className="mono">{s.key}</td>
+            <td>
+              <input className="mono w-72" aria-label={`${s.key} 값`} value={ed?.value ?? String(s.value)} onChange={(e) => setEdit({ ...edit, [s.key]: editSetting(ed, s, e.target.value) })} />
+              {conflict && ed ? (
+                <div className="mt-1 text-[11px] text-warn" role="alert" data-testid="setting-conflict">
+                  편집하는 동안 서버 값이 바뀜(v{ed.version} → v{s.version}: <span className="mono">{String(s.value)}</span>)
+                  <button className="btn ml-1" onClick={() => drop(s.key)}>새 값 보기</button>
+                  <button className="btn ml-1" onClick={() => setEdit({ ...edit, [s.key]: rebaseSetting(ed, s) })}>내 값으로 덮어쓰기</button>
+                </div>
+              ) : null}
+            </td>
+            <td className="mono">{s.version}</td><td className="mono text-fg-3">{s.updated_by ?? "—"} {fmtTime(s.updated_at)}</td>
+            <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict} title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
+        })}</tbody></table>
     </div>
   );
 }

@@ -88,3 +88,28 @@ export function lastTrimLoss(resp: unknown): { stream: string; from: string; to:
   const t = obj(obj(obj(resp).api).last_stream_trim_loss);
   return typeof t.stream === "string" && typeof t.from === "string" && typeof t.to === "string" ? { stream: t.stream, from: t.from, to: t.to } : null;
 }
+
+// ---- 설정 편집의 낙관적 잠금(R-35) ----
+
+/** 편집 중인 값과 편집을 시작할 때 본 서버 version */
+export interface SettingEdit { value: string; version: number }
+
+/** 입력: 처음 편집하면 지금 서버 version 을 기억하고, 이미 편집 중이면 그 version 을 유지한다(새로고침이 바꾸지 않는다). */
+export function editSetting(prev: SettingEdit | undefined, item: { version: number }, value: string): SettingEdit {
+  return { value, version: prev?.version ?? item.version };
+}
+
+/** 저장 요청의 If-Match — 편집을 시작할 때 본 version */
+export function settingIfMatch(edit: SettingEdit): string {
+  return String(edit.version);
+}
+
+/** 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) */
+export function settingConflict(edit: SettingEdit | undefined, item: { version: number }): boolean {
+  return edit != null && edit.version !== item.version;
+}
+
+/** 운영자가 "내 값으로 덮어쓰기"를 고른 경우: 지금 본 서버 version 으로 옮긴다 */
+export function rebaseSetting(edit: SettingEdit, item: { version: number }): SettingEdit {
+  return { value: edit.value, version: item.version };
+}

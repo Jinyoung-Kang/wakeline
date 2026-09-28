@@ -187,3 +187,21 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toContain("09-28 01:00:00Z");
   });
 });
+
+describe("R-35 settings: the version is taken when editing starts, so a refresh cannot defeat If-Match", () => {
+  it("an edit keeps the version it started from; a newer server version is a visible conflict, not a silent overwrite", () => {
+    const v3 = { key: "region_radius_nm", value: 250, version: 3 };
+    const e1 = opsLib.editSetting(undefined, v3, "300");
+    expect(e1).toEqual({ value: "300", version: 3 });
+    // 15 s 새로고침이 다른 운영자의 변경(v4)을 가져온 뒤에도 계속 입력
+    const v4 = { ...v3, value: 200, version: 4 };
+    const e2 = opsLib.editSetting(e1, v4, "310");
+    expect(e2.version).toBe(3);
+    expect(opsLib.settingIfMatch(e2)).toBe("3"); // 수정 전: 새로고침된 s.version(4)을 보내 서버 잠금을 통과했다
+    expect(opsLib.settingConflict(e2, v4)).toBe(true);
+    expect(opsLib.settingConflict(e1, v3)).toBe(false);
+    expect(opsLib.settingConflict(undefined, v4)).toBe(false);
+    // 운영자가 "덮어쓰기"를 고르면 그때 본 서버 version 으로 옮긴다
+    expect(opsLib.rebaseSetting(e2, v4)).toEqual({ value: "310", version: 4 });
+  });
+});
