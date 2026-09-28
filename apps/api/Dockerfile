@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
  && groupadd -r app && useradd -r -g app app
 COPY --from=build /src/build/libs/wakeline-api.jar /app/app.jar
 COPY --from=build /src/src/main/resources/schemas /app/schemas
-# 힙 = 컨테이너 한도의 60% (나머지는 메타스페이스·스레드·버퍼). G1 명시, 힙 소진 시 종료 → restart 정책.
-ENV JAVA_TOOL_OPTIONS="-XX:+UseG1GC -XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError" TZ=UTC
+# 힙 = 컨테이너 한도의 40 %(R-25 · ADR-017 §4: compose 한도 1g → 약 410 MiB, NFR-03 512 MB 안. GC 뒤 살아 있는 데이터는 약 75 MiB, 부하 중 힙 최대 약 220 MiB).
+# 나머지는 메타스페이스·코드 캐시·스레드·직접 버퍼. G1 명시, 힙 소진 시 종료 → restart 정책.
+ENV JAVA_TOOL_OPTIONS="-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError" TZ=UTC
 USER app
 EXPOSE 8000 9000
 ENTRYPOINT ["java", "-Duser.timezone=UTC", "-jar", "/app/app.jar"]
