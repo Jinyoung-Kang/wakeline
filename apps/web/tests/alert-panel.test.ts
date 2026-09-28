@@ -6,7 +6,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resetData, setData } from "@/lib/store";
+import { getData, resetData, setData } from "@/lib/store";
+import { EVENT_BANNER_TTL_MS, eventBannerVisible } from "@/lib/alerts";
+import { WakelineWsClient, type SocketLike } from "@/lib/ws";
 import { AlertPanel } from "@/components/AlertPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { Alert, PublicStatus } from "@/lib/types";
@@ -71,5 +73,40 @@ describe("status bar connection badge (R-09)", () => {
     expect(conn()).toBe("bad");
     setData({ conn: "open", lastRxAt: Date.now(), reconnectAttempt: 0 });
     expect(conn()).toBe("ok");
+  });
+});
+
+describe("last-event banner (R-23)", () => {
+  it("shows when the event was received (server clock), not just what happened", () => {
+    setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: alert(3, [36.5, 127.8]), at: Date.parse("2026-09-28T01:02:03Z") } });
+    const h = html();
+    expect(h).toContain('data-testid="alert-banner"');
+    expect(text(h)).toContain("수신 01:02:03Z");
+  });
+  it("is hidden once older than the TTL (5 min) — an old entry is not shown as if it just happened", () => {
+    expect(EVENT_BANNER_TTL_MS).toBe(5 * 60_000);
+    const at = 1_000_000;
+    expect(eventBannerVisible(at, 0)).toBe(true); // 시계를 아직 모름(첫 렌더) → 숨기지 않음
+    expect(eventBannerVisible(at, at + EVENT_BANNER_TTL_MS)).toBe(true);
+    expect(eventBannerVisible(at, at + EVENT_BANNER_TTL_MS + 1)).toBe(false);
+  });
+  it("a new connection (welcome) clears the previous connection's banner", () => {
+    let sock: SocketLike & { recv: (m: unknown) => void; open: () => void } | null = null;
+    const client = new WakelineWsClient({ postMessage: () => {} }, {
+      url: "ws://test/ws/v1", isHidden: () => false,
+      createSocket: () => {
+        const s = { readyState: 0, send: () => {}, close: () => {}, onopen: null, onmessage: null, onclose: null, onerror: null } as unknown as SocketLike & { recv: (m: unknown) => void; open: () => void };
+        s.open = () => { s.readyState = 1; s.onopen?.({}); };
+        s.recv = (m: unknown) => s.onmessage?.({ data: JSON.stringify(m) });
+        sock = s;
+        return s;
+      },
+    });
+    setData({ lastEvent: { type: "ENTERED", alert: alert(3, [36.5, 127.8]), at: Date.now() - 3 * 3600_000 } });
+    client.connect();
+    sock!.open();
+    sock!.recv({ type: "welcome" });
+    expect(getData().lastEvent).toBeNull();
+    client.close();
   });
 });

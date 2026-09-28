@@ -27,6 +27,13 @@ export function closeReasonLabel(r: string | null | undefined): string {
   return r && r in CLOSE_REASON_LABEL ? CLOSE_REASON_LABEL[r as CloseReason] : "—";
 }
 
+/** 알림 배너(마지막 이벤트)를 보이는 시간 — 이보다 오래된 이벤트는 방금 일어난 일처럼 보이지 않게 숨긴다(R-23) */
+export const EVENT_BANNER_TTL_MS = 5 * 60_000;
+/** 받은 시각(atMs)과 지금(nowMs, 둘 다 브라우저 시계)으로 배너를 보일지. 지금을 아직 모르면(0 — 첫 렌더) 보인다. */
+export function eventBannerVisible(atMs: number, nowMs: number): boolean {
+  return !nowMs || nowMs - atMs <= EVENT_BANNER_TTL_MS;
+}
+
 export const EVENT_LABEL: Record<AlertEventType, string> = {
   ENTERED: "진입",
   LEFT: "이탈",

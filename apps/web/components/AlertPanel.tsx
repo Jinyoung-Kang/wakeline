@@ -1,12 +1,12 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useServerData } from "@/lib/store";
-import { useServerNow } from "@/lib/clock";
+import { serverNowMs, useServerData, type ServerData } from "@/lib/store";
+import { useNow, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { fmtAlt, fmtEta, fmtTime, hazardColor } from "@/lib/format";
-import { alertListState, EVENT_LABEL, etaRemainingS } from "@/lib/alerts";
+import { fmtAlt, fmtClock, fmtEta, fmtTime, hazardColor } from "@/lib/format";
+import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible } from "@/lib/alerts";
 
 /**
  * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 펼치면 근거 카드.
@@ -57,13 +57,7 @@ export function AlertPanel() {
       </div>
       {/* 새 이벤트를 스크린리더에 알린다(영역은 항상 있어야 변경이 읽힌다). 높이를 고정해 배너가 나타나거나 사라져도 목록이 밀리지 않는다(R-09) */}
       <div role="status" aria-live="polite" aria-atomic="true" className="h-[26px] shrink-0 overflow-hidden border-b border-line">
-        {lastEvent ? (
-          <div key={lastEvent.at} className="flash truncate px-2 py-1 text-[11px] text-fg-2" data-testid="alert-banner" data-event={lastEvent.type}>
-            <span className="label mr-1">{lastEvent.type}</span>
-            <span className={lastEvent.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[lastEvent.type] ?? lastEvent.type}</span>
-            {" · "}<span className="mono">{lastEvent.alert.callsign ?? lastEvent.alert.hex}</span> · {lastEvent.alert.hazard} {lastEvent.alert.fir_id}
-          </div>
-        ) : null}
+        {lastEvent ? <EventBanner key={lastEvent.at} ev={lastEvent} /> : null}
       </div>
       {listState !== "live" && (listState !== "waiting" || list.length > 0) ? (
         <div className="border-b border-line bg-bg-2 px-2 py-1 text-[11px] text-warn" role="note" data-testid="alerts-stale" data-state={listState}>
@@ -100,6 +94,23 @@ export function AlertPanel() {
         ))}
         {list.some((a) => a.kind === "PREDICTED") ? <div className="px-2 py-1 text-[10px] text-fg-3">예측 행의 고도(<span className="est-val">보라 점선</span>) = 진입 시 고도 추정값 · ETA 도 추정</div> : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 — 오래된 진입이 방금 일처럼 보이지 않게.
+ * 시각은 고정 문자열이라 aria-live 영역이 1 s 마다 다시 읽히지 않는다(숨길 때 한 번만 바뀐다).
+ */
+function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
+  const now = useNow(1000);
+  if (!eventBannerVisible(ev.at, now)) return null;
+  return (
+    <div className="flash truncate px-2 py-1 text-[11px] text-fg-2" data-testid="alert-banner" data-event={ev.type}>
+      <span className="label mr-1">{ev.type}</span>
+      <span className={ev.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[ev.type] ?? ev.type}</span>
+      {" · "}<span className="mono">{ev.alert.callsign ?? ev.alert.hex}</span> · {ev.alert.hazard} {ev.alert.fir_id}
+      {" · "}<span className="mono text-fg-3" data-testid="alert-banner-time">수신 {fmtClock(serverNowMs(ev.at))}</span>
     </div>
   );
 }

@@ -369,7 +369,8 @@ export class WakelineWsClient {
         this.observeClock(m.server_time, now);
         if (this.isHidden()) this.paused = true;
         this.lastRxStored = now;
-        setData({ conn: this.paused ? "paused" : "open", alertsVersion: null, lastRxAt: now });
+        // 이전 연결의 마지막 이벤트 배너는 지운다(R-23) — 새 연결에서 받은 이벤트만 "방금"으로 보인다
+        setData({ conn: this.paused ? "paused" : "open", alertsVersion: null, lastRxAt: now, lastEvent: null });
         const ws = this.ws;
         if (this.healthyTimer) clearTimeout(this.healthyTimer);
         this.healthyTimer = setTimeout(() => { this.healthyTimer = null; if (this.ws === ws) this.markHealthy(); }, HEALTHY_AFTER_MS);
