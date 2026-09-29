@@ -262,6 +262,32 @@ describe("/logs entry detail: resolve and revoke", () => {
     expect(button("해결 처리", byTestId("log-detail")!)).not.toBeNull();
     expect(byTestId("logs-note")!.textContent).toContain("되돌림");
   });
+  it("a slow re-read of the entry after one write never overrides the re-read after a later write", async () => {
+    let state: "none" | "resolved" | "revoked" = "none";
+    let holdNext = false;
+    let release: (() => void) | null = null;
+    stub(async (m, url, body) => {
+      if (m === "POST") { state = "resolved"; holdNext = true; return created(body, 21); }
+      if (m === "DELETE") { state = "revoked"; return { status: 204 }; }
+      if (url.startsWith(`/api/v1/ops/logs/${A.id}`)) {
+        const snapshot = { ...A, resolved: state === "resolved" ? { id: 21, upto: TS_A, resolved_by: "op" } : null };
+        if (holdNext) { holdNext = false; await new Promise<void>((r) => { release = r; }); }
+        return { status: 200, body: snapshot };
+      }
+      return logsRoutes(url);
+    });
+    await open();
+    await click(allByTestId("log-row")[0]);
+    await click(button("해결 처리", byTestId("log-detail")!));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!)); // 201 뒤 항목 다시 읽기 — 해결된 값을 싣고 기다린다
+    expect(byTestId("log-detail-resolve")!.textContent).toContain("해결됨");
+    await click(button("되돌리기", byTestId("log-detail")!));
+    await click(button("되돌리기 확인", byTestId("resolve-confirm")!)); // 204 뒤 항목 다시 읽기 — 바로 온다(해결 없음)
+    expect(byTestId("log-detail-resolve")!.textContent).toContain("해결되지 않음");
+    await React.act(async () => { release!(); });
+    await settle();
+    expect(byTestId("log-detail-resolve")!.textContent).toContain("해결되지 않음"); // 먼저 떠난 느린 응답은 버린다
+  });
   it("revoking a resolution that is already gone (404, session alive) says so and reloads the list", async () => {
     stub((m, url) => (m === "DELETE" ? { status: 404, body: { detail: "no such resolution", request_id: "feed0000feed0000" } } : logsRoutes(url, { aResolved: REF })));
     await open();

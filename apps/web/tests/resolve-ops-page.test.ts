@@ -128,6 +128,29 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
     expect(statusText()).toContain("해결 처리됨: 공급자 adsb_lol");
     expect(unpairedKst(byTestId("ops-dashboard")!.textContent)).toEqual([]);
   });
+  it("a providers response that left before the write and lands after the post-write reload is dropped (the older answer never wins)", async () => {
+    let resolved = false;
+    let hold = false;
+    let release: (() => void) | null = null;
+    stub({
+      "GET /api/v1/ops/providers": async () => {
+        const body = PROV([resolved ? lol({ last_error_resolution: { id: 5, upto: ERR_AT, resolved_by: "op" }, last_error_resolved: true }) : lol(), fi]);
+        if (hold) { hold = false; await new Promise<void>((r) => { release = r; }); }
+        return { status: 200, body };
+      },
+      "POST /api/v1/ops/resolutions": () => { resolved = true; return { status: 201, body: { id: 5, kind: "provider_error", key: "adsb_lol", upto: ERR_AT, resolved_at: NOW, resolved_by: "op", note: null } }; },
+    });
+    await mount();
+    hold = true;
+    await click(button("refresh")); // 해결 전 값을 싣고 기다리는 요청
+    await click(button("해결 처리", cell()));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+    expect(byTestId("provider-error-resolved")).not.toBeNull();
+    await React.act(async () => { release!(); });
+    await settle();
+    expect(byTestId("provider-error-resolved")).not.toBeNull();
+    expect(byTestId("ops-tab-stale", byTestId("ops-tab-providers")!)).toBeNull();
+  });
   it("a resolved last error is muted with 해결됨; '되돌리기' confirms and sends DELETE /api/v1/ops/resolutions/{id} (no body, CSRF); after 204 the lists are re-read", async () => {
     let revoked = false;
     stub({

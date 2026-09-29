@@ -285,6 +285,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
   const detailRef = useRef<LogEntry | null>(null);
   useEffect(() => { detailRef.current = detail; }, [detail]);
+  /** 항목 다시 읽기 번호 — 먼저 떠난 느린 응답이 나중 쓰기 뒤에 읽은 값을 덮지 않게(마지막 요청의 응답만 반영) */
+  const rereadSeq = useRef(0);
   /**
    * 해결 쓰기 뒤(201/204 — ResolveConfirm): 201 은 받은 해결을 바로 붙이고(낙관적 표시는 201 뒤에만: 묶음 · 열린 상세가 그 지문의 upto 이하일 때),
    * 204 는 붙이지 않는다(같은 지문의 앞선 해결이 아직 덮을 수 있다 — 서버가 정한다). 둘 다 지금 보기(목록 · 묶음)와 열린 상세를 다시 읽는다.
@@ -302,11 +304,14 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     }
     void load(view, filter);
     if (open) {
+      const my = ++rereadSeq.current;
       void apiGet<unknown>(logItemUrl(open.id, open.stream)).then((v) => {
+        if (my !== rereadSeq.current) return;
         const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
         const x = parseLogEntry(raw);
         if (x) setDetail((d) => (d && entryKey(d) === entryKey(open) ? x : d));
       }, () => {
+        if (my !== rereadSeq.current) return;
         // 항목을 다시 읽지 못함(스트림에서 잘림 등) — 해결 표시는 받은 결과까지만 믿는다
         if (r.op === "revoke" && r.complete) setDetail((d) => (d && entryKey(d) === entryKey(open) ? { ...d, resolved: null } : d));
       });

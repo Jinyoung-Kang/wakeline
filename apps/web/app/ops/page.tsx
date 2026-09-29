@@ -134,6 +134,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   /** 실행 요약의 해결 표시(ADR-022): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
   const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
   const runsModeRef = useRef<ResolvedMode>("hide");
+  /** 탭마다 마지막으로 떠난 요청 번호 — 늦게 온 이전 요청의 응답(성공 · 실패)은 버린다: 해결 쓰기 뒤 다시 읽은 값을 그 전에 떠난 주기 요청이 덮지 않게, 토글 전 해결 표시의 요약이 표에 오지 않게 */
+  const seq = useRef<Partial<Record<Tab, number>>>({});
   /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
   const fail = useCallback((e: unknown) => {
     if (!isAuthMiss(e)) { setErr(e); return; }
@@ -152,8 +154,9 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     const load = <T,>(t: Tab, set: (v: T, mode: ResolvedMode) => void) => {
       if (only && !only.includes(t)) return;
       const mode = runsModeRef.current;
-      /** 실행 요약을 요청한 뒤 해결 표시가 바뀌었으면 늦게 온 응답(성공 · 실패 모두)을 버린다 — 표가 다른 쪽 값을 보이지 않게 */
-      const stale = () => t === "runs" && mode !== runsModeRef.current;
+      const my = (seq.current[t] ?? 0) + 1;
+      seq.current[t] = my;
+      const stale = () => seq.current[t] !== my;
       void apiGet<T>(tabPath(t, mode)).then(
         (v) => { if (stale()) return; set(v, mode); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
         (e: unknown) => {
