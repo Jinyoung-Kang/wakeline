@@ -25,10 +25,10 @@ import httpx
 import orjson
 
 from wakeline_collector.budget import UNKNOWN
+from wakeline_collector.errors import describe_error
 from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, render_mercator_png
-from wakeline_collector.masking import mask
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
@@ -126,16 +126,15 @@ class KmaRadarJob:
     async def _fail(self, started: datetime, e: Exception) -> None:
         http_status = e.status if isinstance(e, ProviderHttpError) else None
         note = "활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기)" if http_status == 403 else f"{type(e).__name__}"
+        why = describe_error(e)  # 가린 한 줄(R-83: 응답 본문 앞부분이 실릴 수 있다)
         await self.ctx.status.failure(
-            self.p.name, at=datetime.now(UTC), error=note if http_status == 403 else repr(e), http_status=http_status
+            self.p.name, at=datetime.now(UTC), error=note if http_status == 403 else why, http_status=http_status
         )
-        self.ctx.db.record_run(self.job_name, self.p.name, started, status="error", http_status=http_status, error_text=repr(e))
+        self.ctx.db.record_run(self.job_name, self.p.name, started, status="error", http_status=http_status, error_text=why)
         await self.ctx.status.hset_meta(
             KEY_META, {"status": str(http_status or ""), "note": note[:200], "checked_at": _iso(datetime.now(UTC))}
         )
-        log.warning(
-            "kma radar: %s", note if http_status == 403 else (mask(repr(e)) or "")[:160]
-        )  # R-83: 응답 본문 앞부분이 실린다
+        log.warning("kma radar: %s", note if http_status == 403 else why)
 
     async def _reserve(self, started: datetime) -> bool:
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
@@ -182,7 +181,7 @@ class KmaRadarJob:
         try:
             prev = await self.p.file_list((now_kst - timedelta(days=1)).strftime("%Y%m%d"))
         except Exception as e:  # noqa: BLE001
-            log.warning("kma radar: previous-day listing failed — using today's only: %s", (mask(repr(e)) or "")[:160])
+            log.warning("kma radar: previous-day listing failed — using today's only: %s", describe_error(e))
             return today
         today.data = sorted({*prev.data, *today.data})
         return today

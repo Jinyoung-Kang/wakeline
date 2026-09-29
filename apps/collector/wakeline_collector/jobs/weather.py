@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from wakeline_collector.budget import UNKNOWN
+from wakeline_collector.errors import describe_error
 from wakeline_collector.flight_category import assess_ceiling, flight_category, parse_visibility_sm
 from wakeline_collector.geo import boxes_around
 from wakeline_collector.http import ProviderHttpError
@@ -45,9 +46,10 @@ async def _guard(ctx: JobContext, job: str, provider: str, cost: int, coro_facto
         return started, await coro_factory()
     except Exception as e:  # noqa: BLE001
         http_status = e.status if isinstance(e, ProviderHttpError) else None
-        await ctx.status.failure(provider, at=datetime.now(UTC), error=repr(e), http_status=http_status)
-        ctx.db.record_run(job, provider, started, status="error", http_status=http_status, error_text=repr(e))
-        log.warning("%s/%s failed: %s", job, provider, type(e).__name__)
+        why = describe_error(e)
+        await ctx.status.failure(provider, at=datetime.now(UTC), error=why, http_status=http_status)
+        ctx.db.record_run(job, provider, started, status="error", http_status=http_status, error_text=why)
+        log.warning("%s/%s failed: %s", job, provider, why)
         return started, None
 
 
@@ -87,7 +89,7 @@ def _parse_feed(items: list, at: datetime, parse, provider: str, errors: list[di
         try:
             s = parse(it, at, provider) if isinstance(it, dict) else None
         except Exception as e:  # noqa: BLE001 — 한 건의 이상 자료가 전체 발행을 막지 않게 격리
-            errors.append({"feed": parse.__name__, "error": repr(e)[:200]})
+            errors.append({"feed": parse.__name__, "error": describe_error(e, limit=200)})
             continue
         if s is not None:
             out.append(s)
@@ -216,8 +218,8 @@ class SigmetJob:
         try:
             us, err = await self.awc.airsigmet(), None
         except Exception as e:  # noqa: BLE001 — 미국 경보 실패는 국제 경보를 막지 않는다(직전 미국 세트를 싣는다)
-            log.warning("airsigmet failed: %s", type(e).__name__)
-            us, err = None, repr(e)[:200]
+            us, err = None, describe_error(e, limit=200)
+            log.warning("airsigmet failed: %s", err)
         return intl, us, err
 
 
@@ -336,7 +338,9 @@ class MetarJob:
                 try:
                     row = metar_row(it, self.awc.name, r_i.fetched_at) if isinstance(it, dict) else None
                 except (TypeError, ValueError, OverflowError) as e:
-                    bad.append(("metar_parse_error", None, {"icao": str(it.get("icaoId"))[:8], "error": repr(e)[:200]}))
+                    bad.append(
+                        ("metar_parse_error", None, {"icao": str(it.get("icaoId"))[:8], "error": describe_error(e, limit=200)})
+                    )
                     continue
                 if row is not None and (row[1]["icao"], row[1]["obs_time"]) not in seen:
                     seen.add((row[1]["icao"], row[1]["obs_time"]))

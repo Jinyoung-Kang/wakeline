@@ -136,14 +136,18 @@ async def test_found_without_valid_airports_is_not_found():
 @pytest.mark.parametrize(
     ("resp", "why", "http_status", "budget_used"),
     [
-        (httpx.Response(500, text="Synthetic Field Alpha exploded"), "HTTP 500", "500", 1),
-        (httpx.Response(404, text="Synthetic Field Alpha gone"), "HTTP 404", "404", 1),  # 모르는 콜사인 응답이 아닌 404
+        # 사유는 describe_error(content=False): 상태 코드·문구·시간 제한·호스트뿐 — 응답 내용(본문·예외 메시지)은 싣지 않는다
+        (httpx.Response(500, text="Synthetic Field Alpha exploded"), "HTTP 500 Internal Server Error", "500", 1),
+        (httpx.Response(404, text="Synthetic Field Alpha gone"), "HTTP 404 Not Found", "404", 1),  # 모르는 콜사인 응답이 아닌 404
         (httpx.Response(200, text="<html>Synthetic Field Alpha</html>"), "RouteParseError", "", 1),
-        (httpx.ConnectError("Synthetic Field Alpha"), "ConnectError", "", 0),  # 보내지 못했다 → 예산 되돌림
-        (httpx.ConnectTimeout("Synthetic Field Alpha"), "ConnectTimeout", "", 0),
-        (httpx.PoolTimeout("Synthetic Field Alpha"), "PoolTimeout", "", 0),  # 연결 풀을 기다리다 끝남 — 보내지 않았다
-        (httpx.ProxyError("Synthetic Field Alpha"), "ProxyError", "", 0),
-        (httpx.ReadTimeout("Synthetic Field Alpha"), "ReadTimeout", "", 1),  # 보냈다 → 예산은 쓴 것으로
+        # 보내지 못했다 → 예산 되돌림
+        (httpx.ConnectError("Synthetic Field Alpha"), "ConnectError — 연결 실패 (api.adsbdb.com)", "", 0),
+        (httpx.ConnectTimeout("Synthetic Field Alpha"), "ConnectTimeout — connect 제한 4 s 초과 (api.adsbdb.com)", "", 0),
+        # 연결 풀을 기다리다 끝남 — 보내지 않았다
+        (httpx.PoolTimeout("Synthetic Field Alpha"), "PoolTimeout — pool 제한 8 s 초과 (api.adsbdb.com)", "", 0),
+        (httpx.ProxyError("Synthetic Field Alpha"), "ProxyError — 연결 실패 (api.adsbdb.com)", "", 0),
+        # 보냈다 → 예산은 쓴 것으로
+        (httpx.ReadTimeout("Synthetic Field Alpha"), "ReadTimeout — read 제한 8 s 초과 (api.adsbdb.com)", "", 1),
     ],
 )
 async def test_provider_failures_are_cached_as_error_for_120s(caplog, resp, why, http_status, budget_used):

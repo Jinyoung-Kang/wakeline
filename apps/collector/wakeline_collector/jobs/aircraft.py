@@ -16,6 +16,7 @@ import httpx
 
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
+from wakeline_collector.errors import describe_error
 from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
@@ -181,22 +182,23 @@ class AircraftJob:
         http_status = e.status if isinstance(e, ProviderHttpError) else None
         if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
             await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
-        await ctx.status.failure(name, at=datetime.now(UTC), error=repr(e), http_status=http_status)
-        ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=repr(e))
+        why = describe_error(e)
+        await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
+        ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
         if http_status == 429:
             wait = self.chain.record_rate_limited(name)
             log.warning("%s: %s rate limited (429) — backing off %.0f s", self.scope, name, wait)
         elif self.chain.record_failure(name):
             log.warning("%s: %s failed 3x — cooling down", self.scope, name)
         else:
-            log.info("%s: %s failed (%s)", self.scope, name, type(e).__name__)
+            log.info("%s: %s failed (%s)", self.scope, name, why)
 
     async def _on_throttled(self, name: str, cost: int, started: datetime, e: Throttled) -> None:
         """속도 상한이 막아 호출하지 않았다 — 공급자 실패가 아니다. 3회 규칙·공급자 상태 해시에 넣지 않는다.
         429 쿨다운 때문이면(다른 작업이 받은 429 포함) 그 남은 시간만 이 공급자를 건너뛴다(다음 순위로 폴백할 수 있게)."""
         if cost:
             await self.ctx.budget.release(name, cost)
-        self.ctx.db.record_run(self.job_name, name, started, status="throttled", error_text=repr(e))
+        self.ctx.db.record_run(self.job_name, name, started, status="throttled", error_text=describe_error(e))
         if e.cooldown_s > 0:
             self.chain.mark_down(name, e.cooldown_s)
         log.info("%s: %s not called (%s)", self.scope, name, e.reason)
