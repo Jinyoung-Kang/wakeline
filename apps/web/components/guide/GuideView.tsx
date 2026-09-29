@@ -28,8 +28,9 @@ import { GuideToc } from "./GuideToc";
 const EXAMPLE_AT = "2026-09-29T05:22:11Z";
 const n0 = (n: number) => n.toLocaleString("en-US");
 
+/* 되풀이되는 요소의 모양은 globals.css 의 .g-* (설명서 블록) — 요소마다 긴 유틸리티 글자를 싣지 않는다(요청마다 렌더되는 화면) */
 function Kbd({ children }: { children: React.ReactNode }) {
-  return <kbd className="mono inline-block min-w-[1.6em] border border-line-2 bg-bg-2 px-1 text-center text-[11px] leading-[1.5] text-fg">{children}</kbd>;
+  return <kbd className="g-kbd">{children}</kbd>;
 }
 
 function Note({ tone = "info", children }: { tone?: "info" | "warn"; children: React.ReactNode }) {
@@ -41,9 +42,9 @@ function Sec({ id, sub = false, children }: { id: string; sub?: boolean; childre
   const t = tocItem(id);
   const H = sub ? "h3" : "h2";
   return (
-    <section id={id} data-guide-section={id} aria-labelledby={`${id}-h`} className={`scroll-mt-14 min-[900px]:scroll-mt-4 ${sub ? "mt-8" : "mt-12 border-t border-line pt-6 first:mt-0 first:border-t-0 first:pt-0"}`}>
-      <H id={`${id}-h`} tabIndex={-1} className={`flex items-baseline gap-3 outline-none ${sub ? "mb-2 text-[14px] font-semibold" : "mb-3 text-[18px] font-semibold tracking-tight"}`}>
-        <span className={`mono ${sub ? "text-[12px]" : "text-[13px]"} text-accent`}>{t.n}</span><span>{t.title}</span>
+    <section id={id} data-guide-section={id} aria-labelledby={`${id}-h`} className={sub ? "g-sub" : "g-sec"}>
+      <H id={`${id}-h`} tabIndex={-1} className="g-h">
+        <span className="g-n">{t.n}</span><span>{t.title}</span>
       </H>
       {children}
     </section>
@@ -53,18 +54,19 @@ function Sec({ id, sub = false, children }: { id: string; sub?: boolean; childre
 /** 표(머리글 · 줄) — 설명서의 표는 모두 이 모양 */
 function Table({ head, rows, label }: { head: string[]; rows: React.ReactNode[][]; label: string }) {
   return (
-    <div className="my-3 overflow-x-auto border border-line">
-      <table aria-label={label} className="min-w-[560px]">
-        <thead className="bg-bg-1"><tr>{head.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={j === 0 ? "whitespace-nowrap text-fg" : "text-fg-2"}>{c}</td>)}</tr>)}</tbody>
+    <div className="g-table">
+      <table aria-label={label}>
+        <thead><tr>{head.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );
 }
 
-const P = ({ children }: { children: React.ReactNode }) => <p className="my-2 max-w-[860px] text-fg-2">{children}</p>;
-const UL = ({ children }: { children: React.ReactNode }) => <ul className="my-2 max-w-[860px] list-disc space-y-1 pl-5 text-fg-2 marker:text-fg-3">{children}</ul>;
-const B = ({ children }: { children: React.ReactNode }) => <b className="font-semibold text-fg">{children}</b>;
+const P = ({ children }: { children: React.ReactNode }) => <p className="g-p">{children}</p>;
+const UL = ({ children }: { children: React.ReactNode }) => <ul className="g-ul">{children}</ul>;
+/** 굵은 낱말 — 모양은 .g-doc b */
+const B = ({ children }: { children: React.ReactNode }) => <b>{children}</b>;
 
 /** 버린 결과의 묶음 제목 — 그림에 무슨 일이 생겼는지(효과별) */
 const DROP_EFFECT: [ManifestDrop["effect"], string][] = [
@@ -101,7 +103,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
         {/* 글줄은 읽기 좋은 폭(860 px)까지, 그림 · 표는 더 넓게 — 스크린샷의 작은 글자가 덜 줄어들게 */}
-        <article className="min-w-0 max-w-[1120px] pt-4 text-[13px] leading-relaxed">
+        <article className="g-doc min-w-0 max-w-[1120px] pt-4 text-[13px] leading-relaxed">
           <header className="mb-2 pb-4">
             <div className="label mb-1">Wakeline · 설명서</div>
             <h1 className="text-[22px] font-semibold tracking-tight">서비스 설명과 사용 방법</h1>
