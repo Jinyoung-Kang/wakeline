@@ -370,15 +370,16 @@ def traffic(**over):
         "fetched_at": "2026-09-29T09:06:01.250Z",
         "age_s": 70,
         "stale_after_s": 900,
-        "total": 3,
-        "total_count": 3,
+        "total": 4,
+        "total_count": 4,
         "partial": False,
         "rejected": 0,
         "resolved": 2,
-        "unresolved": 1,
+        "unresolved": 2,
         "pending": 0,
         "not_found": 1,
         "off_grid": 0,
+        "failed": 1,
         "invalid_cells": 0,
         "cell_deg": 0.025,
         "cells": [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0], ["GR4_F2K41_D3", 37.425, 126.6, 102, 100.0]],
@@ -404,7 +405,7 @@ EMPTY_KEYS = (
     "rejected",
     "resolved",
     "unresolved",
-) + ("pending", "not_found", "off_grid", "invalid_cells", "disabled_reason")
+) + ("pending", "not_found", "off_grid", "failed", "invalid_cells", "disabled_reason")
 
 
 def traffic_empty(**over):
@@ -442,6 +443,7 @@ def test_traffic_grid_schema_and_rules_accept_every_honest_state():
         {"secret_like": 1},
         {"total": None},  # 모르는 값은 null 이 아니라 키가 없다
         {"disabled_reason": None},
+        {"failed": -1},
     ],
 )
 def test_traffic_grid_schema_rejects(over):
@@ -459,7 +461,10 @@ def test_traffic_grid_schema_rejects(over):
         {"reg_dt_kst": "2026-09-29T18:05:06+09:00"},  # 다른 순간
         {"reg_dt_kst": None},  # 한쪽만(키가 없다 = None)
         {"resolved": 3, "unresolved": 1, "total": 4, "cells": [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0]] * 1},
-        {"pending": 1},  # 기다림 + 없음 + 격자 밖 != 미해석
+        {"pending": 1},  # 기다림 + 없음 + 격자 밖 + 조회 실패 != 미해석
+        {"failed": 0},  # 조회 실패 칸을 빼먹었다
+        # 응답 시각보다 120 s 넘게 미래인 regDt 가 ok
+        {"reg_dt_utc": "2026-09-29T09:10:05Z", "reg_dt_kst": "2026-09-29T18:10:05+09:00"},
         {"cells": [["GR4_F2K41_C3", 37.4512, 126.6, 12, 34.0], ["GR4_F2K41_D3", 37.425, 126.6, 102, 100.0]]},  # 격자점 아님
         {"cells": [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0], ["GR4_F2K41_C3", 37.425, 126.6, 102, 100.0]]},  # 같은 칸 두 번
         {"status": "no_data", "available": False, "cells": [], "disabled_reason": None},  # 스냅샷이 없다면서 값을 싣는다

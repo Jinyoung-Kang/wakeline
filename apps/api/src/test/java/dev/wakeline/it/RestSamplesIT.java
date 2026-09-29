@@ -177,7 +177,7 @@ class RestSamplesIT extends IntegrationTest {
         } finally {
             ItStack.deleteKeys("wakeline:radar_kr:*");
         }
-        // 연안 교통량(ADR-023): 수집기 역할로 스냅샷(SET EX 1200) — 칸 2 · 공급자에 없는 칸 1(부정 캐시)
+        // 연안 교통량(ADR-023): 수집기 역할로 스냅샷(SET EX 1200) — 칸 2 · 해양격자에 없는 칸 1 · 위치 조회 실패 칸 1(부정 캐시)
         try {
             TrafficGridIT.clearHeartbeat();
             TrafficGridIT.publish(TrafficGridIT.snapshot(Instant.now().truncatedTo(ChronoUnit.SECONDS).minusSeconds(90), 12));

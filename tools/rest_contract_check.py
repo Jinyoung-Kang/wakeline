@@ -900,7 +900,18 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "stale_after_s": {"const": 900},
             **{
                 k: {"type": "integer", "minimum": 0}
-                for k in ("total", "total_count", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "invalid_cells")
+                for k in (
+                    "total",
+                    "total_count",
+                    "rejected",
+                    "resolved",
+                    "unresolved",
+                    "pending",
+                    "not_found",
+                    "off_grid",
+                    "failed",
+                    "invalid_cells",
+                )
             },
             "partial": BOOL,
             "cell_deg": {"const": 0.025},
@@ -1732,7 +1743,8 @@ def _stats_traffic(body: dict[str, Any]) -> list[str]:
     return [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
 
 
-TRAFFIC_COUNTS = ("total", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "invalid_cells")
+TRAFFIC_COUNTS = ("total", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "failed", "invalid_cells")
+TRAFFIC_FUTURE_SKEW_S = 120  # api TrafficGridReader.FUTURE_SKEW_S
 
 
 def _on_lattice(v: object) -> bool:
@@ -1741,7 +1753,8 @@ def _on_lattice(v: object) -> bool:
 
 def _traffic_grid(body: dict[str, Any]) -> list[str]:
     """ADR-023 /traffic/grid: 쓸 수 있음 ⇔ ok, 쓸 수 없으면 칸 없음, 꺼짐 이유는 disabled 일 때만, 시각 둘이 같은 순간(KST +09:00),
-    수가 맞음(해석 = 칸 + 버린 칸, 해석 + 미해석 = 전체, 미해석 = 기다림 + 없음 + 격자 밖), 칸은 0.025° 격자점, 오래됨 ⇔ age_s > 900."""
+    수가 맞음(해석 = 칸 + 버린 칸, 해석 + 미해석 = 전체, 미해석 = 기다림 + 없음 + 격자 밖 + 조회 실패), 칸은 0.025° 격자점,
+    오래됨 ⇔ age_s > 900, regDt 가 응답 시각(meta.generated_at)보다 120 s 넘게 미래면 ok · stale 이 아니다."""
     errs: list[str] = []
     st, cells = body.get("status"), body.get("cells") or []
     if bool(body.get("available")) != (st == "ok"):
@@ -1763,8 +1776,15 @@ def _traffic_grid(body: dict[str, Any]) -> list[str]:
         else:
             if c["resolved"] + c["unresolved"] != c["total"]:
                 errs.append(f"resolved {c['resolved']} + unresolved {c['unresolved']} != total {c['total']}")
-            if c["pending"] + c["not_found"] + c["off_grid"] != c["unresolved"]:
-                errs.append("pending + not_found + off_grid != unresolved")
+            if c["pending"] + c["not_found"] + c["off_grid"] + c["failed"] != c["unresolved"]:
+                errs.append("pending + not_found + off_grid + failed != unresolved")
+            gen = (body.get("meta") or {}).get("generated_at")
+            if isinstance(gen, str):
+                ahead = (
+                    datetime.fromisoformat(utc.replace("Z", "+00:00")) - datetime.fromisoformat(gen.replace("Z", "+00:00"))
+                ).total_seconds()
+                if ahead > TRAFFIC_FUTURE_SKEW_S:
+                    errs.append(f"reg_dt_utc {utc} is {ahead:.0f} s ahead of meta.generated_at {gen} with status {st}")
             if st == "ok" and len(cells) + c["invalid_cells"] != c["resolved"]:
                 errs.append(f"{len(cells)} cells + {c['invalid_cells']} invalid != resolved {c['resolved']}")
         age = body.get("age_s")

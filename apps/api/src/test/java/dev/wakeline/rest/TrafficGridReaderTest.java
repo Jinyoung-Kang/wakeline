@@ -39,7 +39,7 @@ class TrafficGridReaderTest {
 
     static String snapshot(String cells, String over) {
         return ("{\"v\":1,\"reg_dt_kst\":\"2026-09-29T18:05:05+09:00\",\"reg_dt_utc\":\"2026-09-29T09:05:05Z\",\"fetched_at\":\"2026-09-29T09:06:01.250Z\","
-                + "\"total\":3,\"total_count\":3,\"partial\":false,\"rejected\":0,\"resolved\":2,\"unresolved\":1,\"pending\":1,\"not_found\":0,\"off_grid\":0,"
+                + "\"total\":3,\"total_count\":3,\"partial\":false,\"rejected\":0,\"resolved\":2,\"unresolved\":1,\"pending\":1,\"not_found\":0,\"off_grid\":0,\"failed\":0,"
                 + "\"cell_deg\":0.025,\"cells\":" + cells + over + "}");
     }
 
@@ -144,6 +144,8 @@ class TrafficGridReaderTest {
                 {snapshot(CELLS, "").replace("\"cell_deg\":0.025", "\"cell_deg\":0.05"), "cell_deg"},
                 {snapshot(CELLS, "").replace("\"resolved\":2", "\"resolved\":-2"), "resolved"},
                 {snapshot(CELLS, "").replace("\"unresolved\":1", "\"unresolved\":2"), "counts"},
+                {snapshot(CELLS, "").replace("\"failed\":0,", ""), "failed"},
+                {snapshot(CELLS, "").replace("\"failed\":0", "\"failed\":1"), "counts"},
                 {snapshot(CELLS, "").replace("\"total_count\":3", "\"total_count\":\"3\""), "total_count"},
                 {snapshot(CELLS, "").replace("\"partial\":false", "\"partial\":\"no\""), "partial"},
                 {snapshot("[]", ""), "cells"},
@@ -157,6 +159,36 @@ class TrafficGridReaderTest {
             assertThat(errors(b[1])).as(b[1]).isGreaterThanOrEqualTo(1);
         }
         assertThat(TrafficGridController.body(reader.read(), new MockHttpServletRequest(), REG)).containsEntry("cells", List.of());
+    }
+
+    @Test
+    void failedLookupsAreTheirOwnCountAndAddUpWithTheOthers() {
+        // 위치 조회가 거듭 실패해 잠시 묻지 않는 칸(failed)은 확인 중(pending)과 따로 — 합이 미해석과 같아야 한다
+        raw = snapshot(CELLS, "").replace("\"pending\":1", "\"pending\":0").replace("\"failed\":0", "\"failed\":1");
+        TrafficGridReader.View v = reader.read();
+        assertThat(v.status()).isEqualTo("ok");
+        assertThat(v.parsed().counts()).containsEntry("pending", 0).containsEntry("failed", 1);
+        assertThat(TrafficGridController.body(v, new MockHttpServletRequest(), REG.plusSeconds(70))).containsEntry("failed", 1);
+    }
+
+    @Test
+    void aRegDtFromTheFutureIsInvalidNotOk() {
+        // 수집기가 막지만 api 도 믿지 않는다(R-72): 지금보다 FUTURE_SKEW_S 넘게 앞선 regDt 는 invalid — 칸 없음, 나이 0 으로 '신선'하게 보이지 않는다
+        raw = snapshot(CELLS, "");
+        clock.set(REG.minusSeconds(TrafficGridReader.FUTURE_SKEW_S + 1).toEpochMilli());
+        TrafficGridReader.View v = reader.read();
+        assertThat(v.status()).isEqualTo("invalid");
+        assertThat(v.available()).isFalse();
+        assertThat(v.etag()).isEqualTo("\"ti\"");
+        Map<String, Object> body = TrafficGridController.body(v, new MockHttpServletRequest(), Instant.ofEpochMilli(clock.get()));
+        assertThat(body).containsEntry("cells", List.of()).containsEntry("reg_dt_utc", null).containsEntry("age_s", null);
+        reader.read();
+        clock.addAndGet(TrafficGridReader.MEMO_MS);
+        reader.read();
+        assertThat(errors("reg_dt_future")).as("같은 원문은 한 번만 센다").isEqualTo(1);
+        // 시계 차이(FUTURE_SKEW_S 안)는 받는다
+        clock.set(REG.minusSeconds(TrafficGridReader.FUTURE_SKEW_S - 10).toEpochMilli());
+        assertThat(reader.read().status()).isEqualTo("ok");
     }
 
     @Test

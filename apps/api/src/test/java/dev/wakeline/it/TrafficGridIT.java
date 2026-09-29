@@ -29,8 +29,8 @@ class TrafficGridIT extends IntegrationTest {
 
     /** 수집기 build_payload 와 같은 모양(합성 값). */
     static String snapshot(Instant reg, int vmtc) {
-        return ("{\"v\":1,\"reg_dt_kst\":\"%s\",\"reg_dt_utc\":\"%s\",\"fetched_at\":\"%s\",\"total\":3,\"total_count\":3,\"partial\":false,\"rejected\":0,"
-                + "\"resolved\":2,\"unresolved\":1,\"pending\":0,\"not_found\":1,\"off_grid\":0,\"cell_deg\":0.025,"
+        return ("{\"v\":1,\"reg_dt_kst\":\"%s\",\"reg_dt_utc\":\"%s\",\"fetched_at\":\"%s\",\"total\":4,\"total_count\":4,\"partial\":false,\"rejected\":0,"
+                + "\"resolved\":2,\"unresolved\":2,\"pending\":0,\"not_found\":1,\"off_grid\":0,\"failed\":1,\"cell_deg\":0.025,"
                 + "\"cells\":[[\"GR4_F2K41_C3\",37.45,126.6,%d,34.0],[\"GR4_F2K41_D3\",37.425,126.6,102,100.0]]}")
                 .formatted(ISO_KST.format(reg), reg, reg.plusSeconds(61), vmtc);
     }
@@ -61,6 +61,7 @@ class TrafficGridIT extends IntegrationTest {
             assertThat(b.path("cells").size()).isEqualTo(2);
             assertThat(b.path("cells").get(0).get(0).asString()).isEqualTo("GR4_F2K41_C3");
             assertThat(b.path("not_found").asInt()).isEqualTo(1);
+            assertThat(b.path("failed").asInt()).isEqualTo(1);
             assertThat(b.path("source").path("note").asString()).isEqualTo("5분 집계 — 격자별 선박 척수(개별 위치 아님)");
             assertThat(b.path("meta").path("provider").asString()).isEqualTo("komsa_traffic");
 

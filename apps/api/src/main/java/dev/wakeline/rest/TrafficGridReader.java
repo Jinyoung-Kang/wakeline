@@ -34,7 +34,10 @@ import java.util.regex.Pattern;
  *   <li>수집기 값을 믿지 않는다(R-72): 형식이 틀린 스냅샷은 쓰지 않고(status invalid), 틀린 칸은 빼고 센다(invalid_cells · 지표) — 500 이 되지 않는다.
  *       칸은 0.025° 격자점(1e-6° 안)의 [grid_no, lat_min, lon_min, 척수, 밀집도 %] 만 받는다.</li>
  *   <li>상태: disabled(heartbeat 가 {@value #HEARTBEAT_MAX_AGE_S} s 안이고 수집기가 꺼졌다고 알림 — 키 없음 · fixture · 운영자 끔) · no_data(스냅샷 없음) ·
- *       invalid · stale(자료 시각 regDt 가 {@value #STALE_AFTER_S} s 넘게 지남 — 칸을 싣지 않는다, 지난 자료를 지금처럼 보이지 않게) · ok.</li>
+ *       invalid(형식 오류, 또는 regDt 가 지금보다 {@value #FUTURE_SKEW_S} s 넘게 미래 — 나이 0 으로 '신선'하게 보이지 않게) ·
+ *       stale(자료 시각 regDt 가 {@value #STALE_AFTER_S} s 넘게 지남 — 칸을 싣지 않는다, 지난 자료를 지금처럼 보이지 않게) · ok.</li>
+ *   <li>수: 해석 + 미해석 = 전체, 미해석 = 확인 중(pending) + 해양격자에 없음(not_found) + 격자 밖(off_grid) + 위치 조회 실패(failed — 거듭 실패해
+ *       잠시 묻지 않는 칸). 하나라도 빠지거나 맞지 않으면 invalid.</li>
  *   <li>읽기는 {@value #MEMO_MS} ms 동안 같은 결과를 쓰고(요청마다 Redis 에서 250 KB 를 읽지 않게), 원문이 같으면 다시 해석하지 않는다.
  *       ETag 는 원문의 SHA-256 앞 8바이트 + 상태 — 내용이나 상태(오래됨 전환 포함)가 바뀔 때만 바뀐다.</li>
  * </ul>
@@ -44,6 +47,8 @@ public class TrafficGridReader {
     public static final String KEY = "wakeline:traffic_grid";
     static final String HEARTBEAT = "wakeline:collector";
     public static final long STALE_AFTER_S = 900;
+    /** 수집기 시계와 이만큼까지의 차이는 받는다(수집기도 같은 값으로 막는다 — PUBLISH_FUTURE_SKEW_S). */
+    public static final long FUTURE_SKEW_S = 120;
     static final long HEARTBEAT_MAX_AGE_S = 120;
     static final long MEMO_MS = 5_000;
     public static final double CELL_DEG = 0.025;
@@ -79,6 +84,7 @@ public class TrafficGridReader {
     private volatile Map<Object, Object> lastHb = Map.of();
     private volatile boolean everRead;
     private volatile long readAtMs;
+    private volatile Parsed futureCounted; // 미래 regDt 를 센 스냅샷(같은 원문을 읽을 때마다 다시 세지 않게)
 
     @Autowired
     public TrafficGridReader(StringRedisTemplate redis, ObjectMapper json, MeterRegistry meters) {
@@ -127,6 +133,13 @@ public class TrafficGridReader {
         if (hbFresh && state instanceof String s && DISABLED_STATES.contains(s)) return new View("disabled", s, "\"td-" + s + "\"", null, hbAt);
         if (r == null) return new View("no_data", null, "\"tn\"", null, hbAt);
         if (p == null) return new View("invalid", null, "\"ti\"", null, hbAt);
+        if (Duration.between(now, p.regDtUtc()).toSeconds() > FUTURE_SKEW_S) {
+            if (futureCounted != p) {
+                futureCounted = p;
+                meters.counter("wakeline_traffic_grid_parse_errors_total", "field", "reg_dt_future").increment();
+            }
+            return new View("invalid", null, "\"ti\"", null, hbAt);
+        }
         boolean stale = Duration.between(p.regDtUtc(), now).toSeconds() > STALE_AFTER_S;
         return new View(stale ? "stale" : "ok", null, "\"t" + p.etag() + (stale ? "-s" : "") + "\"", p, hbAt);
     }
@@ -148,14 +161,15 @@ public class TrafficGridReader {
         JsonNode cd = n.get("cell_deg");
         if (cd == null || !cd.isNumber() || Math.abs(cd.doubleValue() - CELL_DEG) > 1e-12) return fail("cell_deg");
         Map<String, Object> counts = new LinkedHashMap<>();
-        for (String k : List.of("total", "resolved", "unresolved", "pending", "not_found", "off_grid", "rejected")) {
+        for (String k : List.of("total", "resolved", "unresolved", "pending", "not_found", "off_grid", "failed", "rejected")) {
             Integer v = count(n.get(k));
             if (v == null) return fail(k);
             counts.put(k, v);
         }
         int total = (int) counts.get("total"), resolved = (int) counts.get("resolved"), unresolved = (int) counts.get("unresolved");
         if (resolved + unresolved != total
-                || (int) counts.get("pending") + (int) counts.get("not_found") + (int) counts.get("off_grid") != unresolved) return fail("counts");
+                || (int) counts.get("pending") + (int) counts.get("not_found") + (int) counts.get("off_grid") + (int) counts.get("failed") != unresolved)
+            return fail("counts");
         JsonNode tc = n.get("total_count");
         if (tc != null && !tc.isNull() && count(tc) == null) return fail("total_count");
         counts.put("total_count", tc == null || tc.isNull() ? null : count(tc));

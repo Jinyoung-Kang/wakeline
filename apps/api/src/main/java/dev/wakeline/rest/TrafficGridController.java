@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
  * 연안 교통량 REST v1(ADR-023) — GET /api/v1/traffic/grid. 한국해양교통안전공단 실시간 해양교통정보(5분 집계)의 격자별 선박 척수 · 밀집도에
  * 해양수산부 해양격자 4단계 기하(0.025° 칸)를 붙인 스냅샷. 개별 선박 위치가 아니다.
  * <p>공개 · 캐시(public, 30 s) · ETag(내용 · 상태가 바뀔 때만) · 요청 제한(/api/** 공통). 값은 {@link TrafficGridReader} 가 검증한 것만.
- * 꺼졌거나(disabled — 이유 disabled_reason) · 자료가 없거나(no_data) · 형식이 틀리거나(invalid) · 오래되면(stale — regDt 15분 초과)
+ * 꺼졌거나(disabled — 이유 disabled_reason) · 자료가 없거나(no_data) · 형식이 틀리거나 regDt 가 미래이면(invalid) · 오래되면(stale — regDt 15분 초과)
  * available=false 이고 cells 는 빈 목록이다(지난 자료를 지금처럼 그리지 않는다). 시각: reg_dt_kst(공급자 벽시계, +09:00) · reg_dt_utc · fetched_at(UTC).
  * 모르는 값은 키가 없다(Jackson non_null — 이 저장소의 응답 규칙). 늘 있는 키: available · status · stale_after_s · cell_deg · cells · source · time_zone · meta.
  */
@@ -51,7 +51,7 @@ public class TrafficGridController {
         m.put("fetched_at", p == null ? null : p.fetchedAt());
         m.put("age_s", p == null ? null : Math.max(0, Duration.between(p.regDtUtc(), now).toSeconds()));
         m.put("stale_after_s", TrafficGridReader.STALE_AFTER_S);
-        for (String k : List.of("total", "total_count", "partial", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid"))
+        for (String k : List.of("total", "total_count", "partial", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "failed"))
             m.put(k, p == null ? null : p.counts().get(k));
         m.put("invalid_cells", p == null ? null : p.invalidCells());
         m.put("cell_deg", TrafficGridReader.CELL_DEG);
