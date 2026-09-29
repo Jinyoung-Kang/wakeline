@@ -151,9 +151,14 @@ test("radar timeline: frame and source switches update the UI within 200 ms", as
   expect(switchMs).toBeLessThan(200);
   await expect(kma).toHaveAttribute("aria-pressed", "true");
   await expect(label).toContainText("KST");
+  await expect(label).toHaveAttribute("title", /기상청이 준 KST 그대로/); // 기상청 tm 은 원래 KST — 원본 UTC 가 없다
+  const kmaText = await label.textContent();
   await page.getByTestId("radar-src-rv").click();
-  // RainViewer 프레임도 한국 표준시(사용자 요청 2026-09-29) — 예전 "…Z" 가 아니다
   await expect(page.getByTestId("radar-src-rv")).toHaveAttribute("aria-pressed", "true");
+  // 두 공급자 라벨이 같은 모양("MM-DD HH:MM KST" — 사용자 요청 2026-09-29 로 RainViewer 도 KST)이라 모양만으로는 라벨이 RainViewer 로
+  // 돌아왔는지 알 수 없다: 툴팁이 RainViewer 의 원본 UTC 이고, 글자가 방금 본 기상청 라벨과 달라야 한다(첫 프레임 2 h 전 ≠ 기상청 최신 프레임)
+  await expect(label).toHaveAttribute("title", /^원본 UTC \d{4}-\d\d-\d\dT\d\d:\d\d/);
+  await expect(label).not.toHaveText(kmaText ?? "");
   await expect(label).toHaveText(/^\d\d-\d\d \d\d:\d\d KST$/);
 });
 
