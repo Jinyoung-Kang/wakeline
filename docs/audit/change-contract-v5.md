@@ -417,9 +417,10 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
       그렇다고 적는다(옛 api 와 새 웹이 섞인 배포 중에 UTC 날짜를 KST 날짜로 보이지 않게). 통계 날짜의 옛 "UTC 자정 시각" 문자열은 날짜로 읽지 않는다(`—`).
   - 바꾸지 않는 것: API · WS · DB · 서버 로그의 시각(UTC ISO), 복사 · 내려받기 형식(텍스트 머리 줄 ISO `+09:00`, 항목 JSON · `.ndjson` 의 `ts` — 버튼 title 이 "서버 형식 ‘…Z’" 라 적는다), 원문.
   - 성능: §G13 과 같다 — 고정 오프셋 산술(Intl 없음 — 형식기 생성 비용 · ICU 차이 없음), 같은 입력의 분해 결과 캐시(2,048개, 차면 비움, `TIME_CACHE_MAX`).
-  - 옮기는 중인 이름: 다른 레인(대시보드 UX)이 같은 때 고치는 파일(StatusBar · AlertPanel · AircraftSearch · AircraftCard)은 이 레인이 건드리지 않았다 — 그 파일이 쓰는
-    `DualTime` · `dualPair` · `fmtDual` 을 **KST 전용 별칭(@deprecated)** 으로 남겼다(그 파일들도 이미 KST 만 그린다). 합친 뒤 호출부를 `KstTime` · `fmtKst` 로 옮기고
-    별칭을 지운다. 상단 검색 상자의 설명 한 줄("… KST · UTC(…Z) …")이 남아 있다 — 시험(`tests/helpers/kst-only` OTHER_LANE_PENDING)이 셈하고, 고치면 알린다.
+  - 옮기는 중인 이름: 다른 레인(대시보드 UX)이 같은 때 고치는 파일(StatusBar · AlertPanel · AircraftSearch · AircraftCard)은 이 레인이 건드리지 않았다 — 그 파일과
+    그 레인의 새 코드(lib/statusbar.ts · lib/ships.ts)가 쓰는 `DualTime` · `dualPair` · `fmtDual` · `dualParts` · `dualRangePair` · `fmtDualDayMinute` · `fmtDualSpan` 을
+    **KST 전용 별칭(@deprecated)** 으로 남겼다(UTC 쪽 필드 없음 — 그 레인도 이미 KST 만 그린다). 합친 뒤 호출부를 `KstTime` · `fmtKst` · `timeParts` · `fmtKstRange` ·
+    `fmtKstDayMinute` · `fmtKstSpan` 으로 옮기고 별칭을 지운다. 상단 검색 상자의 설명 한 줄("… KST · UTC(…Z) …")이 남아 있다 — 시험(`tests/helpers/kst-only` OTHER_LANE_PENDING)이 셈하고, 고치면 알린다.
   - 회귀 막기: `tests/kst-time.test.ts`(형식 · 모름 · 캐시 · 컴포넌트) · `tests/helpers/kst-only.ts`(글자 · DOM 의 UTC 흔적 — data-raw 밖) · 화면마다 그 검사(상황판 전체
     `tests/kst-dashboard.test.ts` · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서 · 오류 화면) · 소스 검사(lib/time 밖의 시각 글자 모양 · 한국어 화면 글의 UTC · 별칭을
     쓰는 파일) · `tests/kst-only-screens.test.ts`(모든 경로가 이 검사에 들어 있는지) · api `StatsAggregationDbTest`(KST 자정 경계 · KST 시) · `MigrationDbTest` V16 ·

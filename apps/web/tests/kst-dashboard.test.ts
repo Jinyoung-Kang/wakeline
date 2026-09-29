@@ -402,15 +402,20 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
   });
   it("lib/format has no clock formatters (they live in lib/time); lib/time has no UTC display helper any more", () => {
     for (const k of ["fmtTime", "fmtClock", "fmtTimeKst", "fmtTimeKstLabel", "fmtClockKst", "fmtMinuteKst", "hmKst", "fmtRangeKst", "fmtDayMinuteKst", "fmtIso"]) expect(k in F, k).toBe(false);
-    for (const k of ["fmtIso", "fmtUtcTitle", "fmtUtcRangeTitle", "fmtUtcDayDual", "utcDayHours", "dualCell", "dualParts", "fmtDualCompact", "fmtDualRange", "fmtDualSpan", "fmtDualClock"]) expect(k in T, k).toBe(false);
+    // dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan 은 병행 레인의 새 코드가 쓴다 — KST 전용 별칭으로 남았다(아래 · tests/kst-time)
+    for (const k of ["fmtIso", "fmtUtcTitle", "fmtUtcRangeTitle", "fmtUtcDayDual", "utcDayHours", "dualCell", "fmtDualCompact", "fmtDualRange", "fmtDualClock"]) expect(k in T, k).toBe(false);
     expect(T.fmtIsoKst("2026-09-28T23:41:14Z")).toBe("2026-09-29T08:41:14.000+09:00");
   });
-  /** 옮기는 중인 이름(@deprecated — KST 전용 별칭)을 아직 쓰는 파일: 다른 레인(대시보드 UX)의 파일만. 합친 뒤 호출부를 옮기고 별칭을 지운다(open issue) */
+  /**
+   * 옮기는 중인 이름(@deprecated — KST 전용 별칭)을 쓸 수 있는 파일: 다른 레인(대시보드 UX)의 파일만 — 이 레인에서는 앞의 네 파일, 합치면 그 레인이
+   * 새로 쓰는 lib/statusbar.ts · lib/ships.ts 도(9942f88). 합친 뒤 호출부를 옮기고 별칭을 지운다(open issue). 이 레인의 다른 파일이 쓰면 실패한다.
+   */
   const DEPRECATED_USERS = [join("components", "AircraftCard.tsx"), join("components", "AircraftSearch.tsx"), join("components", "AlertPanel.tsx"), join("components", "StatusBar.tsx")];
-  it("only the other lane's files still use the deprecated KST-only aliases (DualTime · dualPair · fmtDual)", () => {
+  const DEPRECATED_USERS_AFTER_MERGE = [join("lib", "ships.ts"), join("lib", "statusbar.ts")];
+  it("only the other lane's files use the deprecated KST-only aliases (DualTime · dualPair · fmtDual · dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan)", () => {
     const users = files.filter((f) => f !== join("lib", "time.ts") && f !== join("components", "DualTime.tsx"))
-      .filter((f) => /\b(DualTime|dualPair|fmtDual)\b/.test(readFileSync(join(root, f), "utf8").split("\n").map(code).join("\n"))).sort();
-    expect(users).toEqual(DEPRECATED_USERS);
+      .filter((f) => /\b(DualTime|dualPair|fmtDual|dualParts|dualRangePair|fmtDualDayMinute|fmtDualSpan)\b/.test(readFileSync(join(root, f), "utf8").split("\n").map(code).join("\n"))).sort();
+    expect(users.filter((f) => !DEPRECATED_USERS_AFTER_MERGE.includes(f))).toEqual(DEPRECATED_USERS);
     expect(T.fmtDual(LATE)).toBe("09-29 08:41:14 KST");
     expect(T.dualPair(LATE)).toEqual({ kst: "09-29 08:41:14 KST", iso: "2026-09-29T08:41:14.906+09:00" });
   });

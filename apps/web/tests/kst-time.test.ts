@@ -190,4 +190,22 @@ describe("deprecated aliases kept for the other lane's files draw KST only (remo
     expect(txt(createElement(DualTime, { v: LATE, variant: "cell" }))).toBe("09-29 08:41:14 KST");
     expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).not.toMatch(/UTC|\d(Z|\.\d{3}Z)"/);
   });
+  /**
+   * 리뷰(2026-09-30): 병행 레인(대시보드 UX — 9942f88)의 새 코드가 쓰는 옛 이름 — lib/statusbar.ts 의 dualParts(v)?.kst.ymd · dualPair,
+   * lib/ships.ts 의 dualParts · dualRangePair(a, b)?.kst · fmtDualDayMinute · fmtDualSpan. 지우면 합친 뒤 tsc 가 깨진다(수정 전 이 시험이 실패했다).
+   * 모두 KST 만 — 합친 뒤 호출부를 timeParts(v)?.wall.ymd · fmtKstRange · fmtKstDayMinute · fmtKstSpan 으로 옮기고 지운다.
+   */
+  it("dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan (the other lane's new code) are KST-only aliases", () => {
+    const p = T.dualParts(LATE);
+    expect(p?.kst.ymd).toBe("2026-09-29"); // lib/statusbar.ts kstAt · lib/ships.ts 의 '오늘과 같은 KST 날짜' 비교
+    expect(p?.kst.hms).toBe("08:41:14");
+    expect(p && "utc" in p).toBe(false);
+    expect(T.dualParts(null)).toBeNull();
+    const end = "2026-09-29T03:05:00Z";
+    expect(T.dualRangePair(LATE, end)).toEqual({ kst: T.fmtKstRange(LATE, end) });
+    expect(T.dualRangePair(LATE, end, { seconds: false })?.kst).toBe("09-29 08:41 – 09-29 12:05 KST");
+    expect(T.dualRangePair(LATE, null)).toBeNull(); // 옛 모양 그대로 — 한쪽이라도 모르면 null(부르는 쪽이 "—")
+    expect(T.fmtDualDayMinute(LATE, Date.parse(end))).toBe(T.fmtKstDayMinute(LATE, Date.parse(end)));
+    expect(T.fmtDualSpan(LATE, end)).toBe("08:41–12:05 KST");
+  });
 });
