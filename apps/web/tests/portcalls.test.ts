@@ -15,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { validateServerMessage } from "@/lib/ws-validate";
 import {
   gapText, legText, noExitTitle, parsePortCalls, portCallStatusText, portText, reportTime, PORT_CALL_CALL_SIGN_TEXT, PORT_CALL_DISABLED_TEXT,
-  PORT_CALL_ERROR_TEXT, PORT_CALL_INCOMPLETE_TEXT, PORT_CALL_NONE_TEXT, reportedNameNotes, windowText, type PortCallsInfo,
+  PORT_CALL_CAVEAT, PORT_CALL_ERROR_TEXT, PORT_CALL_INCOMPLETE_TEXT, PORT_CALL_INDEX_AS_OF_TITLE, PORT_CALL_NONE_TEXT, reportedNameNotes, windowText,
+  type PortCallsInfo,
 } from "@/lib/portcalls";
 import { PortCallsSection } from "@/components/PortCallsSection";
 import { ShipCardView } from "@/components/ShipCard";
@@ -298,6 +299,15 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(t).toContain("포항(700) — 아직 색인 안 됨");
     expect(t).toContain("갱신 —"); // 10곳의 공통 기준 시각이 없다 — 지어내지 않는다
     expect(t).toContain("색인 불완전");
+  });
+
+  it("the index time claims only what it knows: the last 3 days as of that time, older days re-fetched about once a day", () => {
+    const html = render(parsed("ship_selected.port_calls_none"));
+    expect(html).toContain(`title="${PORT_CALL_INDEX_AS_OF_TITLE}"`);
+    expect(PORT_CALL_INDEX_AS_OF_TITLE).toContain("최근 3일은 이 시각까지 올라온 신고가 색인에 있다");
+    expect(PORT_CALL_INDEX_AS_OF_TITLE).toContain("더 오래된 날은 하루에 한 번쯤 다시 받으므로");
+    expect(html).not.toContain("이 순간까지 올라온 신고가 색인에 있다"); // 모든 날이 그 시각 기준이라고 말하지 않는다(다시 받기는 하루에 한 번쯤)
+    expect(PORT_CALL_CAVEAT).toContain("그보다 오래된 날은 하루에 한 번쯤 다시 받습니다");
   });
 
   it("an ok list from an incomplete index says the list may be missing records", () => {

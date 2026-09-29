@@ -206,7 +206,10 @@ describe("features the guide describes exist in the screens", () => {
     expect(ship).toMatch(/고를 때 외부에 묻지 않습니다/);
     expect(ship).toContain(`최근 ${PORT_CALL_WINDOW_DAYS}일`);
     expect(ship).toContain(`색인: ${PORT_CALL_AUTHORITIES}개 항만청 · 최근 ${PORT_CALL_WINDOW_DAYS}일 · 갱신`);
-    expect(ship).toMatch(/기록 없음[^.]*모두 창 전체를 색인했고 2시간 안에 갱신됐을 때만/);
+    expect(ship).toMatch(/기록 없음[^.]*모두 창 전체를 오늘\(KST\) 목록까지 빈 곳 없이 색인했고 2시간 안에 갱신됐을 때만/);
+    expect(ship).toMatch(/최근 3일\s*은 그 시각까지 올라온 신고가 색인에 있고, 더 오래된 날은 마지막으로 다시 받은 때/); // 모든 날이 그 시각 기준이라고 말하지 않는다
+    expect(ship).not.toMatch(/그 순간까지 올라온 신고가 색인에 있습니다/);
+    expect(ship).toMatch(/끝까지 색인하지 못한 날/);
     expect(ship).toMatch(/아직 받지 않음/);
     expect(ship).not.toMatch(/조회 한도|6시간\(실패는 5분\)/); // 선택마다 묻던 설계의 한도 · 캐시는 없다
     expect(ship).toMatch(/00:00\(KST\)[^.]*날짜만/);

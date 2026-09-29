@@ -1,6 +1,6 @@
 import { DualTime } from "@/components/DualTime";
 import {
-  gapText, legText, noExitTitle, portCallStatusText, portText, reportTime, PORT_CALL_AUTHORITIES, PORT_CALL_CAVEAT, PORT_CALL_MAX_ITEMS,
+  gapText, legText, noExitTitle, portCallStatusText, portText, reportTime, PORT_CALL_AUTHORITIES, PORT_CALL_CAVEAT, PORT_CALL_INDEX_AS_OF_TITLE, PORT_CALL_MAX_ITEMS,
   PORT_CALL_SOURCE, PORT_CALL_SOURCE_URL, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS, reportedNameNotes, windowText,
   type PortCall, type PortCallRevision, type PortCallsInfo,
 } from "@/lib/portcalls";
@@ -58,13 +58,16 @@ export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | nu
   );
 }
 
-/** "색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>" — 갱신 시각 = 10곳의 꼬리 갱신 중 가장 오래된 것(모르면 "—"), 그리고 창(KST 날짜). */
+/**
+ * "색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>" — 갱신 시각 = 10곳의 꼬리 갱신(최근 3일 다시 받기) 중 가장 오래된 것(모르면 "—"), 그리고 창(KST 날짜).
+ * 그 시각이 말하는 것은 최근 3일뿐이다 — 더 오래된 날은 하루에 한 번쯤 다시 받으므로 그보다 이른 때까지의 신고일 수 있다(title 이 밝힌다).
+ */
 function IndexLine({ calls }: { calls: PortCallsInfo }) {
   const ix = calls.index!;
   return (
     <div className="mt-0.5 text-[10px] text-fg-3" data-testid="port-calls-index">
       <span>색인: {PORT_CALL_AUTHORITIES}개 항만청 · 최근 {PORT_CALL_WINDOW_DAYS}일 · 갱신 </span>
-      <span title="항만청 10곳의 최근 3일 다시 받기 중 가장 오래된 것 — 이 순간까지 올라온 신고가 색인에 있다">
+      <span title={PORT_CALL_INDEX_AS_OF_TITLE}>
         {ix.refreshed_at ? <DualTime v={ix.refreshed_at} seconds={false} /> : "—"}
       </span>
       <span className="block" data-testid="port-calls-window">{windowText(calls)}{ix.complete ? "" : " · 색인 불완전"}</span>
@@ -72,7 +75,7 @@ function IndexLine({ calls }: { calls: PortCallsInfo }) {
   );
 }
 
-/** 색인 빈 곳: 항만청마다 무엇이(색인 안 됨 · 창 앞쪽 일부만 · 갱신 오래됨)와 마지막 갱신 시각. */
+/** 색인 빈 곳: 항만청마다 무엇이(색인 안 됨 · 창 앞쪽 일부만 · 오늘 목록 아직 · 갱신 오래됨 · 끝까지 색인하지 못한 날)와 마지막 갱신 시각. */
 function GapList({ calls }: { calls: PortCallsInfo }) {
   return (
     <ul className="mt-0.5 list-none text-[10px] text-fg-2" data-testid="port-calls-gaps">
