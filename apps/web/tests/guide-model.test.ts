@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import planJson from "@/lib/guide-shots.json";
 import manifestJson from "@/lib/guide-manifest.json";
 import {
-  dualTime, flattenToc, GUIDE_FILE_RE, GUIDE_TOC, kstClockToUtc, metarTimeToken, parseManifest, parsePlan, PLAN, shotView, type GuideManifest,
+  dualInline, dualTime, flattenToc, GUIDE_FILE_RE, GUIDE_TOC, kstClockToUtc, metarTimeToken, parseManifest, parsePlan, PLAN, shotView, type GuideManifest,
 } from "@/lib/guide";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -132,6 +132,11 @@ describe("dual time for examples (KST first, UTC alongside)", () => {
     expect(dualTime("2026-09-29T20:30:00Z")).toEqual({ kst: "2026-09-30 05:30:00", utc: "2026-09-29 20:30:00" });
     expect(dualTime(null)).toBeNull();
     expect(dualTime("not a time")).toBeNull();
+  });
+  it("inline shape is the one every screen uses (lib/time of web-core-v6 with the year): KST · UTC, UTC date only when it differs", () => {
+    expect(dualInline("2026-09-29T05:22:11Z")).toEqual({ kst: "2026-09-29 14:22:11 KST", utc: "05:22:11 UTC", iso: "2026-09-29T05:22:11.000Z" });
+    expect(dualInline("2026-09-29T20:30:00Z")).toEqual({ kst: "2026-09-30 05:30:00 KST", utc: "2026-09-29 20:30:00 UTC", iso: "2026-09-29T20:30:00.000Z" });
+    expect(dualInline(undefined)).toBeNull();
   });
   it("the raw-bulletin time token of an instant is its UTC day-hour-minute + Z (as published)", () => {
     expect(metarTimeToken("2026-09-29T05:00:00Z")).toBe("290500Z");

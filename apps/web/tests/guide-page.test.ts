@@ -131,8 +131,8 @@ describe("screenshots", () => {
   it("capture meta follows the time rule (KST with UTC alongside) and names the capture condition", () => {
     const f = figures(render(FULL))[0];
     const t = text(f);
-    expect(t).toContain("2026-09-29 14:22:11 KST");
-    expect(t).toContain("2026-09-29 05:22:11 UTC");
+    expect(t).toContain("2026-09-29 14:22:11 KST · 05:22:11 UTC"); // 다른 화면과 같은 모양(KST · UTC, 같은 날이면 UTC 날짜 생략)
+    expect(f).toMatch(/<time dateTime="2026-09-29T05:22:11.000Z"/);
     expect(t).toContain("한반도 #6.3/36.1/127.9");
     expect(t).toMatch(/WebP · 1440×900 · 88 KB/);
   });
@@ -208,7 +208,8 @@ describe("time examples", () => {
     expect(t).toContain("2026-09-29 14:22:11");
     expect(t).toContain("2026-09-29 05:22:11");
     expect(t).toContain("290500Z"); // 원문은 발표 그대로
-    expect(text(html)).toMatch(/12:30 KST\s*\(03:30 UTC\)/);
+    expect(text(html)).toMatch(/12:30 KST · 03:30 UTC/);
+    expect(t).toContain("2026-09-29 14:22:11 KST · 05:22:11 UTC");
   });
   it("unknown values are shown as — without a unit", () => {
     const t = text(render(EMPTY));

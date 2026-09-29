@@ -239,6 +239,18 @@ export function dualTime(v: string | number | null | undefined): { kst: string; 
 }
 
 /**
+ * 글 속 한 줄 모양 { kst: "2026-09-29 14:22:11 KST", utc: "05:22:11 UTC" | "2026-09-29 20:30:00 UTC", iso } — 다른 화면의 공용 시각 모양
+ * (web-core-v6 lib/time dualPair(v, { year: true }) · <DualTime year>: "KST · UTC", UTC 날짜가 KST 날짜와 다를 때만 UTC 쪽에 날짜)과 같게 둔다.
+ * 두 레인이 합쳐지면 이 함수와 GuideFigure 의 DualTime 을 lib/time · components/DualTime 으로 바꾼다. 모르면 null.
+ */
+export function dualInline(v: string | number | null | undefined): { kst: string; utc: string; iso: string } | null {
+  const d = dualTime(v);
+  if (!d || v == null) return null;
+  const sameDate = d.kst.slice(0, 10) === d.utc.slice(0, 10);
+  return { kst: `${d.kst} KST`, utc: `${sameDate ? d.utc.slice(11) : d.utc} UTC`, iso: new Date(v).toISOString() };
+}
+
+/**
  * 발표 원문(METAR · TAF)의 시각 토큰 "DDHHMMZ"(UTC — 발표된 그대로의 모양). 설명서 7장의 예에서 원문 글자와 KST 를 나란히 보이는 데만 쓴다.
  * 읽을 수 없으면 null
  */

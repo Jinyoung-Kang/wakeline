@@ -1,13 +1,18 @@
-import { dualTime, type GuideShot, type ShotView } from "@/lib/guide";
+import { dualInline, type GuideShot, type ShotView } from "@/lib/guide";
 
 /** 번호 칸(그림 위 겹침과 설명 목록이 같은 모양) — 파랑 바탕 · 어두운 글자, 밝은 1px 테두리로 레이더 색 위에서도 보인다 */
 const NUM = "mono inline-flex h-5 min-w-5 shrink-0 items-center justify-center border border-bg bg-accent px-0.5 text-[11px] font-bold leading-none text-bg shadow-[0_0_0_1px_rgba(230,232,235,0.85)]";
 
-/** 시각: KST 를 먼저, UTC 를 함께(설명서 7장 규칙). 모르면 "—" */
+/** 시각: KST 를 먼저, UTC 를 흐리게 함께 — 다른 화면과 같은 "… KST · … UTC" 모양(설명서 7장 규칙, lib/guide dualInline). 모르면 "—" */
 export function DualTime({ v }: { v: string | number | null | undefined }) {
-  const d = dualTime(v);
+  const d = dualInline(v);
   if (!d) return <span className="mono">—</span>;
-  return <span className="mono"><span className="text-fg-2">{d.kst} KST</span> <span className="text-fg-3">({d.utc} UTC)</span></span>;
+  return (
+    <span className="mono" title={`원본 UTC ${d.iso}`}>
+      <time dateTime={d.iso} className="whitespace-nowrap text-fg-2">{d.kst}</time>
+      <span className="text-fg-3"> · <span className="whitespace-nowrap">{d.utc}</span></span>
+    </span>
+  );
 }
 
 /**
