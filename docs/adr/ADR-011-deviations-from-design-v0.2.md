@@ -38,8 +38,8 @@ KMA 레이더는 5분 주기 약 27회 중 약 7회 `ReadTimeout` 경고를 남�
   5(쉼 300 s · 미룸 60분이 모두 가장 긴 값인 단계)에서 멈춘다 — 이력이 재시작을 넘어 이어지므로 상한이 없으면 1025단계에서 백오프 계산이 넘쳤다.
   Redis 오류는 선택을 막지 않는다(호출마다 1.5 s 상한, 메모리 이력으로 계속, 경고는 장애마다 한 번). 첫 읽기가 실패하면 읽힐 때까지 선택 · 429 마다
   다시 읽고, 그동안 받은 429 는 메모리에만 적는다(읽지 못한 기록을 1단계로 덮지 않게) — 읽기가 되면 저장된 단계에 이어 센 것으로 맞추고 저장한다.
-  되살린 쉼·미룸은 전환 사유에 `(재시작 전 기록)` 을 붙인다. 호출 속도는 바꾸지 않았다 — adsb.lol README 는 한도가 부하에 따라 달라진다고만 하고
-  수치를 밝히지 않으므로(이 변경에서 다시 열어 보지는 않았다) 속도를 추정해 정하지 않는다.
+  되살린 쉼·미룸은 전환 사유에 `(재시작 전 기록)` 을 붙인다. 호출 속도는 바꾸지 않았다 — adsb.lol README(github.com/adsblol/api, 2026-09-29 확인)는 "Rate limits are dynamic based on the environment load." ·
+  "If you get 4xx errors, you are doing something wrong." 라고만 하고 수치를 밝히지 않으므로 속도를 추정해 정하지 않는다.
 - **전환 사유**: 앞 순위를 건너뛴 까닭 · 돌아온 까닭을 적는다 — `fallback — adsb_lol 429 쉼(60 s)` · `fallback — adsb_lol 429 반복 → 20분 뒤로 미룸` ·
   `fallback — adsb_lol 3회 연속 실패(10분 쉼)` · `fallback — adsb_lol 운영자 끔` · `fallback — adsb_lol 일시정지(크레딧/예산)` ·
   `recovery — adsb_lol 쉼 끝(1순위 복귀)`. 가린 뒤 120자, `set_active` 와 `switch_event` 에 같은 글. 순위는 그 작업 범위를 지원하는 공급자 사이의 순서다.
