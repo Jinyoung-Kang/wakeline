@@ -1,5 +1,5 @@
 {
- "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터. 가장자리 사례: Python re 의 \\s(U+001C–U+001F 포함) · \\w(글자·숫자 — '²' 같은 No 포함) · 유니코드 대소문자(U+017F · U+212A · U+0130 이 s · k · i 와 같다), 되짚기가 많은 모양(낱말 글자열 · 'eyJ' 반복 · ':' 로 이어진 URL).",
+ "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터. 가장자리 사례: Python re 의 \\s(U+001C–U+001F 포함) · \\w(글자·숫자 — '²' 같은 No 포함) · 유니코드 대소문자(U+017F · U+212A · U+0130 이 s · k · i 와 같다), 되짚기가 많은 모양(낱말 글자열 · 'eyJ' 반복 · ':' 로 이어진 URL). 공공데이터포털 서비스 키(ADR-023): 두 서비스의 파라미터 이름 serviceKey · ServiceKey(대소문자가 다르다), 인코딩 키(%2B)·디코딩 키(+ / =), JSON 모양.",
  "version": 1,
  "limit": 4000,
  "cases": [
@@ -182,6 +182,22 @@
   {
    "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA redis://u:pa55@h",
    "expected": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA redis://u:***@h"
+  },
+  {
+   "input": "GET https://apis.data.go.kr/1192000/apVhdService_G4s/getOpnG4sWFS?ServiceKey=Te5tKey%2Bnot%2Freal%3D%3D&grid_no=GR4_F2K41_C3&maxFeatures=1",
+   "expected": "GET https://apis.data.go.kr/1192000/apVhdService_G4s/getOpnG4sWFS?ServiceKey=***&grid_no=GR4_F2K41_C3&maxFeatures=1"
+  },
+  {
+   "input": "https://apis.data.go.kr/B554035/realtime/get_realtime?serviceKey=Te5tKey+not/real==&pageNo=1&numOfRows=6000&dataType=JSON",
+   "expected": "https://apis.data.go.kr/B554035/realtime/get_realtime?serviceKey=***&pageNo=1&numOfRows=6000&dataType=JSON"
+  },
+  {
+   "input": "{\"ServiceKey\": \"Te5tKey+not/real==\", \"grid_no\": \"GR4_F2K41_C3\"}",
+   "expected": "{\"ServiceKey\": \"***\", \"grid_no\": \"GR4_F2K41_C3\"}"
+  },
+  {
+   "input": "SERVICEKEY=Te5tKey0123 rejected",
+   "expected": "SERVICEKEY=*** rejected"
   }
  ]
 }

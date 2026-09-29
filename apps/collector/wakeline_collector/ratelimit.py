@@ -2,7 +2,7 @@
 
 - 모든 외부 HTTP 호출은 수집기 전체 버킷(기본 2.0 req/s, burst 2)을, 호스트 버킷이 정의된 호스트는 그것도(adsb.fi 0.8 req/s,
   burst 1 — 공식 초당 1회의 80 % · adsbdb 0.5 req/s, burst 2 — 계약 v4 §A) 함께 통과해야 한다. HttpClient 가 호출 직전에 받으므로 새 코드도 우회할 수 없다.
-- 기다리는 호출은 우선순위(0 고정 관심 지역·기타 주기 작업 > 1 focus > 2 hot > 3 노선 조회) · 도착 순으로 줄 선다.
+- 기다리는 호출은 우선순위(0 고정 관심 지역·기타 주기 작업 > 1 focus > 2 hot > 3 노선 조회 > 4 격자 기하 채우기) · 도착 순으로 줄 선다.
   앞선 대기자가 막혀 있는 버킷은 뒤 대기자도 쓰지 않는다 → 낮은 우선순위가 높은 우선순위의 토큰을 가로채지 못한다.
   단 429 쿨다운 중인 대기자는 자기 호스트만 막는다(공용 버킷을 잡아 두지 않는다 — 다른 호스트 호출이 그 뒤에 서지 않게).
 - 대기 상한(wait_s) 안에 토큰을 못 받으면 Throttled. 호출하지 않았으므로 공급자 쪽 사용량도 없다(예산은 호출자가 되돌린다).
@@ -25,6 +25,7 @@ PRIORITY_FIXED = 0  # 고정 관심 지역·전세계·기상 등 주기 작업
 PRIORITY_FOCUS = 1  # 선택 항공기 집중 추적
 PRIORITY_HOT = 2  # 뷰포트 핫 리전
 PRIORITY_ROUTE = 3  # 선택 항공기 노선 조회(adsbdb, 계약 v4 §A) — 핫 리전보다 낮다
+PRIORITY_BACKFILL = 4  # 연안 교통량 격자 기하 채우기(ADR-023 — 모르는 칸마다 WFS 한 번) — 가장 낮다
 
 GLOBAL = "*"
 MAX_WAITERS = 64
@@ -235,9 +236,19 @@ class RateLimiter:
 
 
 ADSBDB_BURST = 2
+DATA_GO_KR_BURST = 2
 
 
-def default_limiter(global_rps: float, adsb_fi_rps: float, adsbdb_rps: float = 0.5) -> RateLimiter:
+def default_limiter(global_rps: float, adsb_fi_rps: float, adsbdb_rps: float = 0.5, data_go_kr_rps: float = 1.0) -> RateLimiter:
     """계약 v2 §A2: 수집기 전체 2.0 req/s(burst 2) · opendata.adsb.fi 0.8 req/s(burst 1).
-    계약 v4 §A: api.adsbdb.com 0.5 req/s(burst 2) — 공급자 문서에 한도가 없어 보수적으로 둔다."""
-    return RateLimiter(global_rps, 2, {"opendata.adsb.fi": (adsb_fi_rps, 1), "api.adsbdb.com": (adsbdb_rps, ADSBDB_BURST)})
+    계약 v4 §A: api.adsbdb.com 0.5 req/s(burst 2) — 공급자 문서에 한도가 없어 보수적으로 둔다.
+    ADR-023: apis.data.go.kr 1.0 req/s(burst 2) — 두 서비스(해양교통 · 해양격자)가 나눠 쓴다. 선택값(포털의 초당 한도를 재지 않았다)."""
+    return RateLimiter(
+        global_rps,
+        2,
+        {
+            "opendata.adsb.fi": (adsb_fi_rps, 1),
+            "api.adsbdb.com": (adsbdb_rps, ADSBDB_BURST),
+            "apis.data.go.kr": (data_go_kr_rps, DATA_GO_KR_BURST),
+        },
+    )

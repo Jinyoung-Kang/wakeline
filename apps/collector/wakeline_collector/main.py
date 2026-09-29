@@ -41,6 +41,7 @@ from wakeline_collector.providers import fixture as fx
 from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
 from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.base import AircraftProvider
+from wakeline_collector.providers.data_go_kr import normalize_service_key, secret_forms
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
@@ -58,6 +59,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
+
+
+def secret_values(s: Settings) -> list[str | None]:
+    """값으로 가릴 설정 비밀값(R-83). 공공데이터포털 키는 디코딩 · 인코딩 · + 인코딩 형태를 모두(ADR-023 — 응답이 어느 형태로 되돌려 줘도 가린다)."""
+    return [
+        s.kma_apihub_key,
+        s.opensky_client_secret,
+        s.redis_password,
+        s.db_collector_password,
+        *secret_forms(normalize_service_key(s.data_go_kr_service_key)),
+    ]
 
 
 def configure_logging(secrets: Iterable[str | None]) -> None:
@@ -107,14 +119,12 @@ def make_redis(s: Settings) -> Redis:
 async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> None:
     """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
     fixture = settings.fixture_mode
-    configure_logging(
-        [settings.kma_apihub_key, settings.opensky_client_secret, settings.redis_password, settings.db_collector_password]
-    )
+    configure_logging(secret_values(settings))
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
     redis = redis if redis is not None else make_redis(settings)
     db = db or Db()
     db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
-    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps)
+    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.data_go_kr_rps)
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
