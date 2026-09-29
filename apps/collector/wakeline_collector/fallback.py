@@ -305,6 +305,7 @@ class ProviderChain:
 
         held = self._hold_until.get(name, 0.0) > now_m
         quiet_from = self._rl_until.get(name, now_m)
+        expires_in = quiet_from + RATE_LIMIT_RESET_S - now_m
         fields = {
             "v": VERSION,
             "stage": str(self._rate_limited[name]),
@@ -313,10 +314,10 @@ class ProviderChain:
             "hold_until": wall(self._hold_until[name]) if held else "",
             "hold_s": f"{self._hold_len.get(name, 0.0):.0f}" if held else "0",
             "quiet_from": wall(quiet_from),
-            "expires_at": wall(quiet_from + RATE_LIMIT_RESET_S),  # 논리 TTL — 이 뒤에는 이력이 초기화된 것과 같다
+            "expires_at": wall(quiet_from + RATE_LIMIT_RESET_S),  # 논리 만료 — 이 뒤에는 이력이 초기화된 것과 같다
             "saved_at": f"{now_w:.3f}",
         }
-        await self._store.save(self.job, name, fields)
+        await self._store.save(self.job, name, fields, ttl_s=math.ceil(expires_in))  # Redis TTL 도 같은 때
 
     async def _restore(self) -> None:
         """저장된 429 이력을 되살린다. Redis 오류로 읽지 못하면 그대로 두고(_restored=False) 다음 선택·429 때 다시 읽는다.

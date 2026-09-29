@@ -373,3 +373,40 @@ async def test_load_reports_a_redis_error_as_unknown_not_empty():
     assert await store.load("region", ["a"]) is None
     r.down = False
     assert await store.load("region", ["a"]) == {}
+
+
+# ---- Redis TTL(요구 사항 1): 기록마다 Redis 만료를 논리 만료(expires_at)와 같은 때로 건다 — 더 쓰지 않는 공급자·작업의 키도 남지 않는다 ----
+@pytest.mark.asyncio
+async def test_saved_history_gets_a_redis_ttl_at_its_logical_expiry(monkeypatch):
+    import time
+
+    clk = Clocks(monkeypatch)
+    r = FakeRedis()
+    chain, _ = _chain(r, clk)
+    await _repeated_429(chain, clk)  # 미룸 600 s → 조용함 기준 +600 s, 만료 +600 + 900 s
+    saved = r.kv[KEY]
+    logical = float(saved["expires_at"]) - clk.wall
+    assert logical == pytest.approx(600 + RATE_LIMIT_RESET_S)
+    assert r.ttl[KEY] - time.time() == pytest.approx(logical, abs=2)  # FakeRedis.ttl 은 실제 시계 기준 만료 시각
+
+
+@pytest.mark.asyncio
+async def test_expire_refused_by_an_older_acl_keeps_the_record_and_warns_once(monkeypatch, caplog):
+    """EXPIRE 규칙이 없는 Redis(start.sh 를 바꾸기 전에 뜬 컨테이너): 기록은 남기고(논리 만료로 계속) 경고는 한 번만."""
+    from redis.exceptions import NoPermissionError
+
+    caplog.set_level(logging.INFO, logger="chain_store")
+
+    class OldAcl(FakeRedis):
+        async def expire(self, key, seconds):
+            raise NoPermissionError("this user has no permissions to run the 'expire' command")
+
+    clk = Clocks(monkeypatch)
+    r = OldAcl()
+    chain, _ = _chain(r, clk)
+    await _repeated_429(chain, clk)
+    assert r.kv[KEY]["stage"] == "2"  # HSET 은 됐다
+    warns = [x.getMessage() for x in caplog.records if x.name == "chain_store" and x.levelno == logging.WARNING]
+    assert len(warns) == 1, warns
+    assert warns[0].startswith("429 history TTL not set (NoPermissionError)")
+    assert chain._store is not None and chain._store.errors == 0  # 쓰기 실패가 아니다

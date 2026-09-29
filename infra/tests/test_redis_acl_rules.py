@@ -111,8 +111,24 @@ class RedisAclRulesTest(unittest.TestCase):
         self.assertEqual(sel, {
             ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*"],
             ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
-            ("expire",): ["~budget:*"],
-        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)에만 — 스트림·해시에는 닿지 않는다")
+            ("expire",): ["~budget:*", "~wakeline:provider:*:ratelimit:*"],
+        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만 — 스트림·다른 해시에는 닿지 않는다")
+
+    def test_collector_expire_reaches_only_the_429_history_among_provider_keys(self):
+        # R-17 보존의 429 이력 해시(wakeline:provider:{공급자}:ratelimit:{작업})에 TTL 을 건다. 같은 접두어의 공급자 상태 해시
+        # wakeline:provider:{공급자}(api StatusService 가 읽는다)는 EXPIRE 로 지울 수 없어야 한다
+        import fnmatch
+
+        (expire,) = [s for s in self.selectors("wakeline_collector") if "+expire" in s]
+        pats = [k.split("~", 1)[1] for k in expire if k.startswith("~")]
+        def hits(key: str) -> bool:
+            return any(fnmatch.fnmatchcase(key, p) for p in pats)
+        self.assertTrue(hits("wakeline:provider:adsb_lol:ratelimit:region"))
+        self.assertTrue(hits("wakeline:provider:adsb_fi:ratelimit:global"))
+        for key in ("wakeline:provider:adsb_lol", "wakeline:provider:kma_radar", "wakeline:aircraft", "wakeline:collector",
+                    "wakeline:active", "wakeline:route:ZZX123", "wakeline:logs"):
+            with self.subTest(key=key):
+                self.assertFalse(hits(key))
         self.assertEqual(self.selectors("wakeline_ais"), [], "ais 는 지우거나 덮어쓰는 명령이 필요 없다")
 
     def test_producer_commands_are_exactly_what_the_code_uses(self):

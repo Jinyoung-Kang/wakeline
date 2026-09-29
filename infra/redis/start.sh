@@ -29,6 +29,9 @@
 #   거부 목록(+@all -@dangerous)이면 DEL·UNLINK·RENAME·XTRIM·EXPIRE·SET 덮어쓰기·*STORE 로 스트림을 지워 api 소비자 그룹과 PEL 을 없앨 수 있었다.
 #   키를 지우거나 덮어쓰거나 만료시키는 명령(SET·DEL·EXPIRE)은 셀렉터로 그 명령을 쓰는 키에만 준다 — 스트림·해시에는 닿지 않는다.
 #   스크립트 안의 redis.call 도 같은 규칙을 따른다(예산 Lua 의 EXPIRE 는 budget:* 에서만). 목록은 infra/tests/redis_acl_test.sh 가 확정한다.
+#   429 이력 해시 wakeline:provider:{공급자}:ratelimit:{작업}(R-17 보존, chain_store.py)에도 EXPIRE 를 준다 — 기록이 논리 만료와 같은 때에
+#   지워지게. 패턴에 ':ratelimit:' 이 있어 api 가 읽는 공급자 상태 해시 wakeline:provider:{공급자} 에는 닿지 않는다.
+#   (이 규칙은 redis 기동 때 읽는다 — 바꾼 뒤에는 redis 컨테이너를 다시 띄워야 적용된다. 그 전까지 수집기는 TTL 없이 논리 만료로 계속한다.)
 #   pub/sub 채널 권한 없음(resetchannels) — 서비스 클라이언트(api·collector·ais) 모두 pub/sub 를 쓰지 않는다.
 #   CLIENT TRACKING·CACHING 금지(계약 v3 §D): 출시된 Redis 8.x 의 BCAST 무효화 알림은 키 권한을 보지 않고 바뀐 키 *이름*을 보낸다 —
 #   세션 키 이름이 곧 세션 ID 라서 SCAN·RANDOMKEY 와 같은 이유로 막는다. 서비스 클라이언트는 클라이언트 측 캐시를 쓰지 않는다.
@@ -60,10 +63,11 @@ PRODUCER_BASE='resetchannels -@all +hello +ping +info +client|setinfo +client|se
 # 수집기가 쓰는 명령(wakeline_collector 코드 전체): 스트림 XADD(MAXLEN ~ · 로그 싱크 포함)·XREVRANGE, 해시 HSET·HGET·HGETALL·HMGET·HINCRBY·HDEL·HKEYS,
 # EXISTS·GET, 임대 ZRANGEBYSCORE, 예산 Lua SCRIPT LOAD + EVALSHA
 COLLECTOR_CMDS='+xadd +xrevrange +hset +hget +hgetall +hmget +hincrby +hdel +hkeys +exists +get +zrangebyscore +script|load +evalsha'
-# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만, EXPIRE 는 예산 키(Lua)에만
+# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만,
+# EXPIRE 는 예산 키(Lua)와 429 이력 해시에만
 COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +set)'
 COLLECTOR_SEL_DEL='(~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +del)'
-COLLECTOR_SEL_EXPIRE='(~budget:* +expire)'
+COLLECTOR_SEL_EXPIRE='(~budget:* ~wakeline:provider:*:ratelimit:* +expire)'
 
 AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings %W~wakeline:logs'
 # ais 가 쓰는 명령: 선박 스트림 XADD, 로그 스트림 XADD(쓰기 전용), 상태 해시 HSET·HGETALL, 설정 HGET·HGETALL — 지우거나 덮어쓰는 명령은 없다
