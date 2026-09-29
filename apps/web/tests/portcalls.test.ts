@@ -5,6 +5,7 @@
  * - 검증: 모르는 상태 · 다른 조회 창 · 읽을 항목 없는 ok 는 표시하지 않는다. 틀린 묶음은 통째로 버리고 센다(메시지의 나머지는 쓴다).
  * - 화면: 상태마다 문구(조회 중 = 바쁨 표시 · 한도 = 조회하지 않음) · 결과 표(항만청 · 입항/출항 KST+UTC — KST 00:00 신고는 날짜만 · 목적 ·
  *   전출항지 → 차항지) · 선명이 다르면 경고(영문이 아닌 신고 선명은 비교 불가) · 모르면 "—" 만.
+ * - 시각은 공유 형식기(lib/time · components/DualTime — 계약 v5 §G13): 표 칸은 첫 줄 KST · 둘째 줄 UTC(머리글 "(KST · UTC)"), 조회 시각은 inline.
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
@@ -12,7 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { validateServerMessage } from "@/lib/ws-validate";
 import {
-  callTimes, kstUtc, legText, parsePortCalls, portCallStatusText, portText, reportTime, PORT_CALL_ERROR_KINDS, PORT_CALL_ERROR_TEXT, PORT_CALL_LIMITED_BY,
+  callTimes, legText, parsePortCalls, portCallStatusText, portText, reportTime, PORT_CALL_ERROR_KINDS, PORT_CALL_ERROR_TEXT, PORT_CALL_LIMITED_BY,
   PORT_CALL_LIMITED_TEXT, reportedNameNotes, windowText, type PortCall, type PortCallsInfo,
 } from "@/lib/portcalls";
 import { PortCallsSection } from "@/components/PortCallsSection";
@@ -126,21 +127,13 @@ describe("ws-validate: ship_selected.port_calls is one droppable bundle", () => 
 });
 
 describe("port-call helpers", () => {
-  it("KST and UTC of the same instant; unknown is — only (no zone word)", () => {
-    expect(kstUtc("2026-09-28T15:00:00Z")).toEqual({ kst: "09-29 00:00 KST", utc: "09-28 15:00 UTC", title: "원본 UTC 2026-09-28T15:00:00.000Z" });
-    expect(kstUtc("2026-09-29T00:00:00+09:00").kst).toBe("09-29 00:00 KST");
-    for (const v of [null, undefined, "", "bad"]) expect(kstUtc(v)).toEqual({ kst: "—", utc: null, title: undefined });
-  });
-
-  it("report times: KST 00:00 is shown as a date only (time unverified, never converted to UTC); other times are KST + UTC", () => {
+  it("report times: KST 00:00 is shown as a date only (time unverified, never converted to UTC); other times go to the shared KST + UTC formatter", () => {
     // 확인한 실제 응답의 값 2026-09-29T00:00:00+09:00(= 15:00Z) — 날짜만 신고했는지 자정인지 원천이 구분하지 않는다(ADR-022)
     const d = reportTime("2026-09-28T15:00:00Z");
-    expect(d).toMatchObject({ kst: "09-29 KST", utc: null, dateOnly: true });
-    expect(d.title).toContain("2026-09-29 00:00(+09:00)");
-    expect(d.title).not.toContain("UTC");
-    expect(reportTime("2026-09-28T15:00:00.001Z").dateOnly).toBe(false); // 00:00:00.001 — 시각이 있다
-    expect(reportTime("2026-09-28T16:30:00Z")).toEqual({ kst: "09-29 01:30 KST", utc: "09-28 16:30 UTC", dateOnly: false, title: "원본 UTC 2026-09-28T16:30:00.000Z" });
-    for (const v of [null, undefined, "", "bad"]) expect(reportTime(v)).toEqual({ kst: "—", utc: null, dateOnly: false, title: undefined });
+    expect(d).toEqual({ dateOnly: true, kst: "09-29 KST", title: "PORT-MIS 신고 2026-09-29T00:00:00.000+09:00 — 날짜만 신고했는지 자정인지 원천이 구분하지 않음" });
+    expect(reportTime("2026-09-28T15:00:00.001Z")).toEqual({ dateOnly: false }); // 00:00:00.001 — 시각이 있다
+    expect(reportTime("2026-09-28T16:30:00Z")).toEqual({ dateOnly: false });
+    for (const v of [null, undefined, "", "bad"]) expect(reportTime(v)).toBeNull();
   });
 
   it("ports and legs: name(code) · either · —", () => {
@@ -169,7 +162,7 @@ describe("port-call helpers", () => {
     expect(callTimes(c, "입항")).toEqual({ single: null, reports: ["2026-09-19T23:30:00Z"], total: 2 });
     const t = text(render({ ...parsePortCalls(calls("ship_selected"))!, items: [c], truncated: false, incomplete: false }));
     expect(t).toContain("입항 신고 2건 중 시각 있는 1건");
-    expect(t).toContain("09-20 08:30 KST09-19 23:30 UTC");
+    expect(t).toContain("09-20 08:30:00 KST · 09-19 23:30:00 UTC");
     const three: PortCall = { ...c, reports: [...c.reports, { kind: "입항", at: "2026-09-20T01:00:00Z", type: "변경" }] };
     expect(text(render({ ...parsePortCalls(calls("ship_selected"))!, items: [three], truncated: false, incomplete: false })))
       .toContain("입항 신고 3건 · 시각 다름 · 시각 없는 신고 1건");
@@ -232,7 +225,7 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(err).toContain('role="alert"');
     expect(text(err)).toContain("조회 실패 — PORT-MIS HTTP 오류 (503)");
     expect(text(err)).toContain("원문 사유는 운영 화면의 공급자 portmis 상태·시스템 로그에만 있습니다");
-    expect(text(err)).toContain("조회 09-29 12:00 KST (09-29 03:00 UTC)");
+    expect(text(err)).toContain("조회 09-29 12:00 KST · 03:00 UTC");
     const none = text(render(parsePortCalls(calls("ship_selected.static_only"))));
     expect(none).toContain("AIS 정적 정보에 호출부호 없음 또는 조회 형식 밖(영문·숫자 3–7자) — 조회 불가");
     expect(none).not.toContain("KST 날짜"); // 조회하지 않았다 — 조회 창을 말하지 않는다
@@ -265,12 +258,12 @@ describe("PortCallsSection (server-rendered)", () => {
     const html = render(parsePortCalls(calls("ship_selected")), "SYNTH ONE");
     const t = text(html);
     expect(html.match(/data-testid="port-call-row"/g)).toHaveLength(1);
-    for (const h of ["항만청", "입항", "출항", "목적", "전출항지 → 차항지"]) expect(t).toContain(h);
+    for (const h of ["항만청", "입항(KST · UTC)", "출항(KST · UTC)", "목적", "전출항지 → 차항지"]) expect(t).toContain(h);
     expect(t).toContain("부산020");
     // 실제 응답의 신고 시각 00:00(+09:00) — 날짜만 · 시각 미확인 · UTC 로 바꾸지 않는다
     expect(t).toContain("09-29 KST시각 미확인(00:00 신고)");
-    expect(t).not.toContain("09-28 15:00 UTC");
-    expect(t).not.toContain("09-29 00:00 KST");
+    expect(t).not.toMatch(/15:00(:00)? UTC|15:00(:00)?Z/);
+    expect(t).not.toMatch(/09-29 00:00(:00)?/);
     expect(html).toContain('data-testid="port-call-date-only"');
     expect(t).toContain("00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보이고 UTC 로 바꾸지 않습니다");
     expect(t).toContain("양하");
@@ -286,7 +279,7 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(t).toContain("최근 신고 선종 석유제품 운반선 · 국적 —");
     expect(t).toContain("최근 20건만 표시 — 더 있음");
     expect(t).toContain("항만청당 300건");
-    expect(t).toContain("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준) · 조회 09-29 12:00 KST (09-29 03:00 UTC)");
+    expect(t).toContain("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준) · 조회 09-29 12:00 KST · 03:00 UTC");
     expect(t).toContain("출처 해양수산부 선박운항정보(PORT-MIS) · 공공데이터포털");
     // 모르는 출항 시각은 "—" 만(시간대·단위 글자 없음)
     expect(t).not.toMatch(/— ?(KST|UTC)/);
@@ -297,10 +290,14 @@ describe("PortCallsSection (server-rendered)", () => {
     const p = parsePortCalls(calls("ship_selected"))!;
     const c: PortCall = { ...p.items[0], entry_at: null, dest_port: { code: "KRPUS", name: "부산항" },
       reports: [{ kind: "입항", at: "2026-09-28T15:00:00Z", type: "최초" }, { kind: "입항", at: "2026-09-28T16:30:00Z", type: "변경" }] };
-    const t = text(render({ ...p, items: [c], truncated: false, incomplete: false }));
+    const html = render({ ...p, items: [c], truncated: false, incomplete: false });
+    const t = text(html);
+    // 시각이 있는 신고는 공유 형식기(DualTime 표 칸)로 — <time dateTime> 에 그 순간, title 에 원본 UTC
+    expect(html).toContain('<time dateTime="2026-09-28T16:30:00.000Z"');
+    expect(html).toContain('title="원본 UTC 2026-09-28T16:30:00.000Z"');
     expect(t).toContain("입항 신고 2건 · 시각 다름");
     expect(t).toContain("09-29 KST시각 미확인(00:00 신고)");
-    expect(t).toContain("09-29 01:30 KST09-28 16:30 UTC");
+    expect(t).toContain("09-29 01:30:00 KST · 09-28 16:30:00 UTC");
     expect(t).toContain("목적지 부산항(KRPUS)");
     expect(t).not.toContain("더 있음");
   });

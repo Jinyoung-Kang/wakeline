@@ -308,6 +308,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     교차 규칙은 ADR-023 §6(수의 합 · ok/stale 의 regDt 가 meta.generated_at 보다 120 s 넘게 미래가 아님).
   - 웹: 레이어 키 `traffic`(선택 필드 — 없으면 끔, 이 브라우저에 기억), 조회 90 s · `If-None-Match` · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만,
     ok 라도 서버 시각 보정 시계로 regDt + stale_after_s 가 지나면 칸을 그리지 않는다(조회 실패 때도), 범례 문구
-    "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님", 툴팁 기준 시각은 KST 와 UTC 를 함께("MM-DD HH:MM:SS KST · MM-DD HH:MM:SS UTC").
+    "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님". 기준 시각은 §G13 공유 형식기(lib/time)로 KST 와 UTC 를 함께 — 지도 툴팁은
+    compact 초까지(`18:05:05 KST · 09:05:05Z`), 레이어 상태 줄은 inline(`09-29 18:05:05 KST · 09:05:05 UTC`), UTC 날짜가 다르면 UTC 쪽에 날짜.
   - 가림(§C5 확장): 언어 간 벡터에 `serviceKey=` · `ServiceKey=`(인코딩 · 디코딩 키) · JSON `"ServiceKey"` · `SERVICEKEY=` 네 사례(ADR-022 의 PORT-MIS
     사례와 합쳐 중복 없이). 키 값은 `providers/data_go_kr.service_key_forms` 하나로 네 형태(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩)를 값 치환한다 — 세 잡이 같은 목록.

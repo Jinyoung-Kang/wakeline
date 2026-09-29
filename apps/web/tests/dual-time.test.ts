@@ -97,6 +97,22 @@ describe("table cell", () => {
   });
 });
 
+describe("date only (a source that may have sent only a date — PORT-MIS reports at 00:00 +09:00, ADR-022)", () => {
+  it("KST midnight is recognised to the millisecond; the date is shown in KST and never converted to UTC", () => {
+    expect(T.isKstMidnight("2026-09-29T00:00:00+09:00")).toBe(true);
+    expect(T.isKstMidnight("2026-09-28T15:00:00Z")).toBe(true); // 같은 순간
+    expect(T.isKstMidnight("2026-09-28T15:00:00.001Z")).toBe(false); // 시각이 있다
+    expect(T.isKstMidnight("2026-09-28T15:00:01Z")).toBe(false);
+    expect(T.isKstMidnight(NOON)).toBe(false);
+    expect(T.fmtKstDateOnly("2026-09-28T15:00:00Z")).toBe("09-29 KST");
+    expect(T.fmtKstDateOnly("2026-09-28T15:00:00Z", { year: true })).toBe("2026-09-29 KST");
+    for (const v of UNKNOWN) {
+      expect(T.isKstMidnight(v)).toBe(false);
+      expect(T.fmtKstDateOnly(v)).toBe("—");
+    }
+  });
+});
+
 describe("unknown values", () => {
   it("'—' only (no zone letters), no title; out-of-range values do not throw", () => {
     for (const v of UNKNOWN) {

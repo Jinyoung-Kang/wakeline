@@ -1,15 +1,17 @@
+import { DualTime } from "@/components/DualTime";
 import {
-  callTimes, kstUtc, legText, portCallStatusText, portText, reportTime, PORT_CALL_CAVEAT, PORT_CALL_MAX_ITEMS, PORT_CALL_PAGE_CAP, PORT_CALL_SOURCE,
+  callTimes, legText, portCallStatusText, portText, reportTime, PORT_CALL_CAVEAT, PORT_CALL_MAX_ITEMS, PORT_CALL_PAGE_CAP, PORT_CALL_SOURCE,
   PORT_CALL_SOURCE_URL, PORT_CALL_ERROR_WHERE, PORT_CALL_TITLE,
   reportedNameNotes, windowText, type PortCall, type PortCallsInfo,
 } from "@/lib/portcalls";
 
 /**
- * 신고 시각 한 칸: KST 위 · UTC 아래(같은 순간) · 툴팁 원본 UTC ISO. KST 00:00 신고는 날짜만 · "시각 미확인"(UTC 로 바꾸지 않는다 — ADR-022).
- * 모르면 "—" 만.
+ * 신고 시각 한 칸: 공유 형식기의 표 칸(DualTime cell — 첫 줄 KST · 둘째 줄 흐린 UTC, 머리글 "(KST · UTC)", title 에 원본 UTC — 계약 v5 §G13).
+ * KST 00:00 신고는 날짜만 · "시각 미확인"(UTC 로 바꾸지 않는다 — ADR-022). 모르면 "—" 만.
  */
 function When({ at }: { at: string | null }) {
   const t = reportTime(at);
+  if (t == null) return <span className="text-fg-3">—</span>;
   if (t.dateOnly) {
     return (
       <span className="flex flex-col" title={t.title} data-testid="port-call-date-only">
@@ -18,13 +20,7 @@ function When({ at }: { at: string | null }) {
       </span>
     );
   }
-  if (t.utc == null) return <span className="text-fg-3">—</span>;
-  return (
-    <span className="flex flex-col" title={t.title}>
-      <span className="mono">{t.kst}</span>
-      <span className="mono text-[10px] text-fg-3">{t.utc}</span>
-    </span>
-  );
+  return <DualTime v={at} variant="cell" />;
 }
 
 /** 입항·출항 한 칸: 정해진 시각 · 시각이 서로 다른 신고 여럿(모두) · 시각 없는 신고와 함께 온 시각 있는 신고 하나 · 모름 */
@@ -88,9 +84,9 @@ export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | nu
   );
 }
 
+/** 조회 시각(우리 시각 — 늘 KST · UTC, 분까지): 공유 형식기 inline */
 function FetchedAt({ at }: { at: string }) {
-  const t = kstUtc(at);
-  return <span className="mono" title={t.title}>{t.kst}{t.utc ? ` (${t.utc})` : ""}</span>;
+  return <DualTime v={at} seconds={false} />;
 }
 
 function PortCallTable({ calls, aisName }: { calls: PortCallsInfo; aisName: string | null }) {
@@ -116,8 +112,8 @@ function PortCallTable({ calls, aisName }: { calls: PortCallsInfo; aisName: stri
         <thead>
           <tr>
             <th scope="col" className="px-1 py-1">항만청</th>
-            <th scope="col" className="px-1 py-1">입항</th>
-            <th scope="col" className="px-1 py-1">출항</th>
+            <th scope="col" className="px-1 py-1" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만">입항(KST · UTC)</th>
+            <th scope="col" className="px-1 py-1" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만">출항(KST · UTC)</th>
             <th scope="col" className="px-1 py-1">목적</th>
             <th scope="col" className="px-1 py-1">전출항지 → 차항지</th>
           </tr>

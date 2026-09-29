@@ -6,12 +6,12 @@
  *   같게 제어·서식 문자 제거 · 코드포인트 길이 절단. 모르는 값은 "—"(단위도 붙이지 않는다) — 추측해 채우지 않는다.
  * - 호출부호로만 찾는다(선명으로 찾지 않는다). PORT-MIS 에 신고된 선명(reported_name)이 AIS 선명과 다르면 그렇다고 밝힌다 — 같은 선박인지는
  *   판정하지 않는다. AIS 선명은 영문(6-bit ASCII)이라 한글 등 영문이 아닌 신고 선명과는 비교하지 않고 그렇다고만 적는다(로마자 표기를 짐작하지 않는다).
- * - 신고 시각은 KST 와 UTC 를 함께(원천은 +09:00 신고 시각). 단 KST 00:00:00 은 날짜만 신고한 것인지 자정인지 원천이 구분하지 않으므로(ADR-022)
- *   날짜만 보이고 UTC 로 바꾸지 않는다(reportTime). 조회 시각(fetched_at)은 우리 시각이라 늘 KST+UTC(kstUtc).
+ * - 신고 시각은 KST 와 UTC 를 함께(원천은 +09:00 신고 시각 — 공유 형식기 lib/time · components/DualTime, 계약 v5 §G13). 단 KST 00:00:00 은 날짜만
+ *   신고한 것인지 자정인지 원천이 구분하지 않으므로(ADR-022) 날짜만 보이고 UTC 로 바꾸지 않는다(reportTime). 조회 시각(fetched_at)은 우리 시각이라
+ *   늘 KST+UTC(DualTime).
  * - 조회하지 않는 상태를 '조회 중' 으로 말하지 않는다: limited(이 세션의 조회가 남용 한도에 걸림 — limited_by) · no_static(호출부호를 아직 모름).
  */
-import { fmtUtcTitle } from "./format";
-import { isoKst } from "./kst";
+import { dualParts, fmtIsoKst, fmtKstDateOnly, isKstMidnight } from "./time";
 
 export const PORT_CALL_STATUSES = ["ok", "none", "pending", "error", "disabled", "no_call_sign", "no_static", "limited"] as const;
 export type PortCallStatus = (typeof PORT_CALL_STATUSES)[number];
@@ -194,26 +194,18 @@ export function portCallStatusText(p: PortCallsInfo): string | null {
   }
 }
 
-/** 시각 한 칸: KST "MM-DD HH:MM KST" 와 UTC "MM-DD HH:MM UTC"(같은 순간) · 툴팁 원본 UTC ISO. 모르면 kst "—" · utc null(시간대 글자 없음) */
-export function kstUtc(v: string | null | undefined): { kst: string; utc: string | null; title: string | undefined } {
-  const k = isoKst(v ?? null);
-  if (k == null || v == null) return { kst: "—", utc: null, title: undefined };
-  const u = new Date(v).toISOString();
-  return { kst: `${k.slice(5, 10)} ${k.slice(11, 16)} KST`, utc: `${u.slice(5, 10)} ${u.slice(11, 16)} UTC`, title: fmtUtcTitle(v) };
-}
-
 /**
  * PORT-MIS 신고 시각 한 칸. 원천 시각은 +09:00 이고, 확인한 실제 응답의 값(2026-09-29T00:00:00+09:00)이 날짜만 신고한 것인지 자정인지 원천이
- * 구분하지 않는다(ADR-022 — 확인하지 못함). 그래서 KST 00:00:00.000 인 시각은 날짜만(dateOnly — 시각 미확인) 보이고 UTC 로 바꾸지 않는다
- * (바꾸면 모르는 시각이 전날 15:00 UTC 처럼 보인다). 그 밖의 시각은 시각이 있는 신고이므로 KST 와 UTC 를 함께.
+ * 구분하지 않는다(ADR-022). 그래서 KST 00:00:00.000 인 시각은 날짜만(dateOnly — 시각 미확인, lib/time fmtKstDateOnly) 보이고 UTC 로 바꾸지 않는다
+ * (바꾸면 모르는 시각이 전날 15:00 UTC 처럼 보인다). 그 밖의 시각은 시각이 있는 신고 — { dateOnly: false } 이고 화면은 공유 형식기(DualTime 표 칸)로
+ * KST 와 UTC 를 함께 그린다. 모르면 null(화면은 "—" 만).
  */
-export function reportTime(v: string | null | undefined): { kst: string; utc: string | null; dateOnly: boolean; title: string | undefined } {
-  const k = isoKst(v ?? null);
-  if (k == null || v == null) return { kst: "—", utc: null, dateOnly: false, title: undefined };
-  if (k.slice(11, 23) === "00:00:00.000") {
-    return { kst: `${k.slice(5, 10)} KST`, utc: null, dateOnly: true, title: `PORT-MIS 신고 ${k.slice(0, 10)} 00:00(+09:00) — 날짜만 신고했는지 자정인지 원천이 구분하지 않음` };
+export function reportTime(v: string | null | undefined): { dateOnly: true; kst: string; title: string } | { dateOnly: false } | null {
+  if (dualParts(v) == null) return null;
+  if (isKstMidnight(v)) {
+    return { dateOnly: true, kst: fmtKstDateOnly(v), title: `PORT-MIS 신고 ${fmtIsoKst(v)} — 날짜만 신고했는지 자정인지 원천이 구분하지 않음` };
   }
-  return { ...kstUtc(v), dateOnly: false };
+  return { dateOnly: false };
 }
 
 /** 항구 한 칸: "이름(코드)" · 이름만 · 코드만. 모르면 "—" */

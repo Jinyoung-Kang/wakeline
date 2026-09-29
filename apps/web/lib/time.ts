@@ -7,6 +7,7 @@
  * - 구간     "09-29 10:00:00 – 09-29 14:00:00 KST · 01:00:00 – 05:00:00 UTC"(fmtDualRange) · hh:mm 구간 "08:40–08:45 KST · 23:40–23:45Z"(fmtDualSpan)
  * - UTC 날짜가 KST 날짜와 다르면(KST 00:00–08:59) UTC 쪽에 날짜를 붙인다 — "08:41:14 KST · 09-28 23:41:14 UTC". 구간은 한쪽이라도 다르면 양쪽에.
  * - 모르면 "—" 만(시간대 글자도 붙이지 않는다). title 에는 원본 UTC ISO(fmtUtcTitle — 서버 · 컨테이너 로그와 대조, ms 까지).
+ * - 날짜만(원천이 날짜만 줬을 수 있는 KST 자정 — isKstMidnight): "09-29 KST"(fmtKstDateOnly — UTC 로 바꾸지 않는다)
  * 바꾸지 않는 것: METAR · TAF · SIGMET 원문(발표된 그대로), 통계의 UTC 날짜 "(UTC 날짜)", 복사 · 내려받기 형식(머리 줄 ISO +09:00, JSON 의 UTC ts).
  * 계산: 고정 오프셋 +09:00(lib/kst — 1988년 뒤로 일광 절약 없음, tz 데이터베이스와 대조한 시험 있음). Intl 을 쓰지 않는다 — 보는 사람의 시간대 ·
  * ICU 자료와 상관없이 같은 글자이고 형식기 생성 비용이 없다. 같은 입력의 분해 결과는 작은 캐시에 둔다(표가 매초 같은 시각을 다시 그린다).
@@ -148,6 +149,23 @@ export function dualCell(v: TimeIn, o: { ms?: boolean } = {}): { kst: string; ut
   if (!p) return null;
   const c = (w: Wall) => (o.ms ? `${w.hms}${w.ms3}` : w.hms);
   return { kst: `${p.kst.md} ${c(p.kst)}`, utc: `${p.sameDate ? "" : `${p.utc.md} `}${c(p.utc)} UTC`, iso: p.iso };
+}
+
+/**
+ * KST 벽시계로 자정(00:00:00.000)인 순간인지 — 원천이 날짜만 줬을 수 있는 값(예: PORT-MIS 신고 시각 "…T00:00:00+09:00", ADR-022 — 날짜만 신고했는지
+ * 자정인지 원천이 구분하지 않는다). 모르면 false.
+ */
+export function isKstMidnight(v: TimeIn): boolean {
+  const p = dualParts(v);
+  return p != null && p.kst.hms === "00:00:00" && p.kst.ms3 === ".000";
+}
+/**
+ * 날짜만(시각을 모르는 값 — UTC 로 바꾸지 않는다: 바꾸면 모르는 시각이 "전날 15:00 UTC" 처럼 보인다) "09-29 KST"(year 면 "2026-09-29 KST").
+ * 모르면 "—". 시각이 있는 값에는 쓰지 않는다(그때는 fmtDual · DualTime).
+ */
+export function fmtKstDateOnly(v: TimeIn, o: { year?: boolean } = {}): string {
+  const p = dualParts(v);
+  return p ? `${o.year ? p.kst.ymd : p.kst.md} KST` : "—";
 }
 
 /** "YYYY-MM-DD" 가 달력에 있는 UTC 날짜면 그날 00:00 UTC(epoch ms), 아니면 null(형식 오류 · 2월 30일 등 — 다른 날로 넘기지 않는다) */
