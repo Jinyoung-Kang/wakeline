@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
-import { fmtDual, fmtDualClock, fmtUtcTitle } from "@/lib/time";
+import { fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
@@ -14,7 +14,7 @@ import { OpsLogin } from "@/components/OpsLogin";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
-import { DualTime } from "@/components/DualTime";
+import { KstTime } from "@/components/KstTime";
 
 type Any = Record<string, unknown>;
 /** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
@@ -41,22 +41,27 @@ const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder(
 const RESOLVE_AFFECTS: readonly Tab[] = ["providers", "runs", "audit"];
 /** 응답 필드 → 시각 값(ISO 문자열 · epoch ms). 그 밖은 모름(null) */
 const at = (v: unknown): string | number | null => (typeof v === "string" || typeof v === "number" ? v : null);
-/** 일 단위 집계의 날짜 칸 머리글 — 수집기가 UTC 날짜로 센다(예산: budget.py day_key · 격리 수: db.py started_at 의 UTC 날짜) */
+/** 격리 수 날짜 칸 머리글 — 수집기가 UTC 날짜로 센다(db.py started_at 의 UTC 날짜) */
 const UTC_DAY_TITLE = "UTC 날짜(수집기가 UTC 날짜마다 센다) — 한국 표준시 날짜가 아니다: KST 09:00 에 날짜가 바뀐다";
 /**
- * 공급자 표의 사용량 머리글: budget_used 는 수집이 성공할 때만 쓰는 스냅숏이다(collector status.py success() 만 쓰고 failure() 는 건드리지 않는다) —
- * 실패만 이어지는 공급자(예: 429 백오프)는 이전 UTC 날짜의 값이 남아 있을 수 있다. "지금 날짜의 호출 수" 라고 말하지 않는다.
+ * 예산 날 칸(계약 v5 §G19): 수집기의 하루 예산 키(budget.py day_key — budget:{공급자}:{yyyymmdd})는 UTC 날로 정해져 매일 09:00 KST 에 새로 시작한다.
+ * 그 날짜를 KST 날짜로 이름만 바꾸지 않고(다른 하루가 된다) 한 행의 창을 KST 로 적는다(lib/time utcDayWindowKst).
  */
-const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 호출 수(그때의 UTC 날짜 — KST 09:00 에 날짜가 바뀐다) · 실패한 호출 뒤로는 갱신되지 않아 지금 날짜의 값이 아닐 수 있다 · 날짜별 값은 아래 Daily budget snapshot";
-/** 원본 칸(격리 detail · DLQ payload head): api 가 준 글자 그대로 — 안의 시각은 수집기가 쓴 UTC 이고 화면의 KST 로 바꾸지 않는다 */
-const RAW_UTC_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 UTC(수집기가 쓴 형식 그대로), 옆 칸의 KST 와 다르다";
+const BUDGET_DAY_TITLE = "공급자 하루 예산의 한 창 — 수집기의 예산 키는 매일 09:00 KST 에 새로 시작한다(한 행 = 09:00 KST 부터 다음 날 08:59 KST 까지, KST 날짜 하루가 아니다)";
+/**
+ * 공급자 표의 사용량 머리글: budget_used 는 수집이 성공할 때만 쓰는 스냅숏이다(collector status.py success() 만 쓰고 failure() 는 건드리지 않는다) —
+ * 실패만 이어지는 공급자(예: 429 백오프)는 이전 예산 창의 값이 남아 있을 수 있다. "지금 날짜의 호출 수" 라고 말하지 않는다.
+ */
+const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 호출 수(그때의 예산 창 — 매일 09:00 KST 초기화) · 실패한 호출 뒤로는 갱신되지 않아 지금 창의 값이 아닐 수 있다 · 창별 값은 아래 Daily budget snapshot";
+/** 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자): api 가 준 글자 그대로(data-raw) — 안의 시각은 수집기가 쓴 형식이고 화면의 KST 로 바꾸지 않는다 */
+const RAW_RECORD_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수집기가 쓴 형식 그대로(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
 
 /** 숫자 칸: 고정폭 숫자 + 한 줄("1,225 ms" 가 값 · 단위 두 줄로 갈라지지 않게 — 머리글은 줄바꿈해도 된다) */
 const NUM_CELL = "mono whitespace-nowrap tabular-nums";
 
-/** 표 칸의 시각: 첫 줄 KST "MM-DD HH:MM:SS" · 둘째 줄 흐린 UTC(머리글 "(KST · UTC)" — lib/time), title 에 원본 UTC ISO. 모르면 "—" */
+/** 표 칸의 시각: KST "MM-DD HH:MM:SS"(머리글 "(KST)" — lib/time), title 에 연도 · ms 까지의 KST. 모르면 "—" */
 function TimeCell({ v }: { v: unknown }) {
-  return <td className="whitespace-nowrap"><DualTime v={at(v)} variant="cell" /></td>;
+  return <td className="whitespace-nowrap"><KstTime v={at(v)} variant="cell" /></td>;
 }
 
 const LAST_ERROR_TITLE = "수집기가 마지막으로 남긴 오류(공급자 해시 last_error · last_error_at — 다음 실패가 덮어쓴다). 해결 처리(ADR-024) = 그 오류의 시각까지 해결로 적는다: "
@@ -64,7 +69,7 @@ const LAST_ERROR_TITLE = "수집기가 마지막으로 남긴 오류(공급자 �
 const SMALL_BTN = "btn ml-1 px-1.5! py-0! normal-case!";
 
 /**
- * LAST ERROR 칸(ADR-024): 오류 글자 + 시각(KST · UTC) 아래에 해결 상태 — 해결됨(흐리게 "해결됨 · <by> · <upto>" + 되돌리기) ·
+ * LAST ERROR 칸(ADR-024): 오류 글자 + 시각(KST) 아래에 해결 상태 — 해결됨(흐리게 "해결됨 · <by> · <upto>" + 되돌리기) ·
  * 해결 뒤 재발("이전 해결 #id(upto …) 뒤 다시 남" — 오류 시각이 upto 뒤로 확인될 때만) · 확인되지 않으면 "해결 #id 있음 — …"(시각을 몰라 재발이라 하지 않는다) ·
  * 해결 처리(upto = 그 오류의 시각 last_error_at 그대로 — 시각을 읽을 수 없으면 막는다).
  * 확인 패널은 부모가 그 행 아래에 연다(onOpen).
@@ -75,28 +80,28 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
   const res = le.resolution;
   return (
     <td className={`max-w-[360px] ${le.resolved ? "text-fg-3" : "text-fg-2"}`} data-testid="provider-last-error">
-      <div className="truncate" title={`${String(p.last_error ?? "")}${p.last_error_at ? `\n${fmtUtcTitle(at(p.last_error_at)) ?? ""}` : ""}`}>
-        <span data-testid="provider-last-error-text">{String(p.last_error ?? "")} {p.last_error_at ? fmtDual(at(p.last_error_at)) : ""}</span>
+      <div className="truncate" title={`${String(p.last_error ?? "")}${p.last_error_at ? `\n${fmtTimeTitle(at(p.last_error_at)) ?? ""}` : ""}`}>
+        <span data-testid="provider-last-error-text">{String(p.last_error ?? "")} {p.last_error_at ? fmtKst(at(p.last_error_at)) : ""}</span>
       </div>
       {le.resolved && res ? (
         <div className="text-[10px]">
-          <span data-testid="provider-error-resolved">해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span>
+          <span data-testid="provider-error-resolved">해결됨 · <span className="mono">{res.resolved_by}</span> · <KstTime v={res.upto} /></span>
           <button className={SMALL_BTN} {...opener} aria-label={`되돌리기: 공급자 ${name} 해결 #${res.id}`} onClick={() => onOpen({
             op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
-            subject: <>해결 #{res.id} · 공급자 <span className="mono">{name}</span> 오류 · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
+            subject: <>해결 #{res.id} · 공급자 <span className="mono">{name}</span> 오류 · upto <KstTime v={res.upto} /> · {res.resolved_by}</>,
           })}>되돌리기</button>
         </div>
       ) : le.hasError ? (
         <div className="text-[10px]">
-          {le.recurred && res ? <span className="text-warn" data-testid="provider-error-recurred">이전 해결 #{res.id}(upto <DualTime v={res.upto} />) 뒤 다시 남</span>
+          {le.recurred && res ? <span className="text-warn" data-testid="provider-error-recurred">이전 해결 #{res.id}(upto <KstTime v={res.upto} />) 뒤 다시 남</span>
             : le.undecided && res ? <span className="text-fg-3" data-testid="provider-error-undecided" title="api 가 이 오류를 해결됨으로 보지 않았다(last_error_resolved=false) — 재발인지는 오류 시각으로만 말한다">
-              해결 #{res.id}(upto <DualTime v={res.upto} />) 있음 — {le.upto ? "api 가 그 해결이 이 오류를 덮지 않는다고 함" : "이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음"}</span>
+              해결 #{res.id}(upto <KstTime v={res.upto} />) 있음 — {le.upto ? "api 가 그 해결이 이 오류를 덮지 않는다고 함" : "이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음"}</span>
             : null}
           <button className={SMALL_BTN} disabled={!le.upto} {...opener} aria-label={`해결 처리: 공급자 ${name} 오류`}
             title={le.upto ? "이 오류의 시각까지 이 공급자의 오류를 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "오류 시각을 모름(last_error_at 을 시각으로 읽을 수 없음) — 해결 범위(upto)를 정할 수 없음"}
             onClick={() => le.upto && onOpen({
               op: "resolve", drafts: [{ kind: "provider_error", key: name, upto: le.upto }], effect: RESOLVE_EFFECT.provider_error,
-              subject: <>공급자 <span className="mono">{name}</span> 의 마지막 오류 · upto <DualTime v={le.upto} /> <span className="text-fg-3">(그 오류의 시각)</span> — <span className="mono">{String(p.last_error)}</span></>,
+              subject: <>공급자 <span className="mono">{name}</span> 의 마지막 오류 · upto <KstTime v={le.upto} /> <span className="text-fg-3">(그 오류의 시각)</span> — <span className="mono">{String(p.last_error)}</span></>,
             })}>해결 처리</button>
         </div>
       ) : null}
@@ -107,9 +112,9 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
 /**
  * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ·파이프라인 손실 지표(R-18). 비로그인은 404 → 로그인 폼.
  * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
- * 시각은 KST 먼저 · UTC 함께(사용자 요청 2026-09-29, lib/time) 날짜 포함 — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
- * 표 칸은 첫 줄 KST · 둘째 줄 흐린 UTC(머리글 "(KST · UTC)"), 그 밖의 자리는 "… KST · … UTC", title 에 원본 UTC ISO. 일 단위 집계(예산 · 격리 수)의 day 는 UTC 날짜 그대로("day (UTC)").
- * 원본 칸(격리 detail · DLQ payload head)은 api 가 준 글자 그대로 — 안의 UTC 시각을 바꾸지 않고 머리글이 "(raw · UTC)" 를 말한다.
+ * 시각은 KST 만(계약 v5 §G19, lib/time) 날짜 포함 — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
+ * 표 칸은 KST "MM-DD HH:MM:SS"(머리글 "(KST)"), 그 밖의 자리는 "… KST", title 에 연도 · ms 까지의 KST. 일 단위 집계의 날짜는 아래 표마다 그 기준을 적는다.
+ * 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자)은 api 가 준 글자 그대로(data-raw) — 안의 시각을 바꾸지 않고 머리글이 "(raw)" 를 말한다.
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
@@ -233,11 +238,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         <div className="flex gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
           <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>
             {t}{t === "pipeline" && losses ? <span className="ml-1 text-bad" title="0 이 아닌 손실 지표 수">● {losses}</span> : null}
-            {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtDualClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
+            {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtKstClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
           </button>
         ))}</div>
         <button className="btn" onClick={refresh}>refresh</button>
-        <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${tabPath(tab, runsMode)})의 마지막 성공 응답 시각(KST · UTC) — 15 s 마다 다시 요청${lastOk[tab] ? ` · ${fmtUtcTitle(lastOk[tab])}` : ""}`} data-testid="ops-last-ok">갱신 {fmtDualClock(lastOk[tab])}</span>
+        <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${tabPath(tab, runsMode)})의 마지막 성공 응답 시각(KST) — 15 s 마다 다시 요청${lastOk[tab] ? ` · ${fmtTimeTitle(lastOk[tab])}` : ""}`} data-testid="ops-last-ok">갱신 {fmtKstClock(lastOk[tab])}</span>
         {err || TABS.some((t) => tabErr[t]) ? (
           <span className="text-[11px] text-bad" role="alert">
             {TABS.filter((t) => tabErr[t]).map((t, i) => <span key={t}>{i ? " · " : ""}<ErrorNote prefix={`${t}: `} error={tabErr[t]} /></span>)}
@@ -250,7 +255,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         {tab === "providers" && prov ? <>
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {Object.entries(prov.active ?? {}).filter(([k]) => !k.includes("_")).map(([job, name]) => <span key={job} className="badge ok">{job}: {name}</span>)}
-            {Object.entries(prov.collector ?? {}).filter(([k]) => k.endsWith("_at")).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtUtcTitle(at(v)) ? ` · ${fmtUtcTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtDual(at(v))}</span>)}
+            {Object.entries(prov.collector ?? {}).filter(([k]) => k.endsWith("_at")).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>
           <div role="status" aria-live="polite">{switchMsg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="switch-ok">{switchMsg.text}</div> : null}</div>
@@ -262,7 +267,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           ) : null}
           <div role="status" aria-live="polite">{resolveNote ? <div className="mb-2 text-[11px] text-ok" data-testid="resolve-ok">{resolveNote}</div> : null}</div>
           {(() => { const s = parseResolutionState(prov.resolution_state); return s && s !== "ok" ? <div className="mb-2 text-[11px] text-warn" data-testid="ops-resolution-state">{RESOLUTION_STATE_TEXT[s]}</div> : null; })()}
-          <table><thead><tr><th>provider</th><th>last success (KST · UTC)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th title={LAST_ERROR_TITLE}>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
+          <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th title={LAST_ERROR_TITLE}>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1"; return <Fragment key={String(p.name)}><tr>
               <td className="mono">{String(p.name)}{off ? <span className="badge bad ml-1" title={sw?.disabled != null ? "원본(DB) 기준" : "Redis 미러 기준(원본 행 없음)"}>disabled</span> : null}</td>
               <TimeCell v={p.last_success_at} /><td className={NUM_CELL}>{fmtLatencyMs(p.last_latency_ms)}</td><td className={NUM_CELL}>{String(p.last_records ?? "—")}</td>
@@ -276,9 +281,9 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               <ResolveConfirm key={resolveOpen.n} id={resolvePanelId(resolveOpen.at)} target={resolveOpen.target} onClose={closeResolve} onChanged={(r) => resolveChanged(r, resolveOpen.n)} onAuthMiss={authMiss} />
             </td></tr> : null}</Fragment>; })}</tbody></table>
           <div className="label mt-4 mb-1" title="수집기가 스스로 한 공급자 전환(wakeline:events) — 위 표의 수동 켜고 끄기와 다르다">Provider switches (collector 자동 전환)</div>
-          <table><thead><tr><th>at (KST · UTC)</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><TimeCell v={s.at} /><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>
+          <table><thead><tr><th>at (KST)</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><TimeCell v={s.at} /><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>
           <div className="label mt-4 mb-1">Daily budget snapshot</div>
-          <table><thead><tr><th title={UTC_DAY_TITLE}>day (UTC)</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono">{statsDay(b.day) ?? "—"}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
+          <table><thead><tr><th title={BUDGET_DAY_TITLE}>budget window (KST)</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono whitespace-nowrap" data-testid="budget-window">{utcDayWindowKst(statsDay(b.day)) ?? "—"}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "runs" && runs ? <>
           <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -289,23 +294,23 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               {runs.mode === "show" ? "해결된 오류 포함(요약에서 빼지 않음)" : `해결 처리로 요약에서 뺀 오류 실행 ${hiddenText(hiddenCount(runs.hidden_resolved_errors))} · 아래 실행 기록(Recent runs)은 가리지 않음`}
             </span>
           </div>
-          <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST · UTC)</th></tr></thead><tbody>{runs.summary_24h.map((s, i) => <tr key={i} data-testid="runs-summary-row"><td>{String(s.job)}</td><td>{String(s.provider)}</td><td className={String(s.status) === "ok" ? "text-ok" : "text-warn"}>{String(s.status)}</td><td className="mono">{String(s.n)}</td><td className={NUM_CELL}>{fmtLatencyMs(s.avg_latency_ms)}</td><TimeCell v={s.last_at} /></tr>)}</tbody></table>
+          <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST)</th></tr></thead><tbody>{runs.summary_24h.map((s, i) => <tr key={i} data-testid="runs-summary-row"><td>{String(s.job)}</td><td>{String(s.provider)}</td><td className={String(s.status) === "ok" ? "text-ok" : "text-warn"}>{String(s.status)}</td><td className="mono">{String(s.n)}</td><td className={NUM_CELL}>{fmtLatencyMs(s.avg_latency_ms)}</td><TimeCell v={s.last_at} /></tr>)}</tbody></table>
           <div className="label mb-1">Recent runs (errors masked, copy raw)</div>
-          <table><thead><tr><th>id</th><th>job</th><th>provider</th><th>started (KST · UTC)</th><th>status</th><th>http</th><th>ms</th><th>in / quarantined</th><th>raw_ref</th><th>error</th></tr></thead>
-            <tbody>{runs.items.map((r) => <tr key={String(r.id)}><td className="mono">{String(r.id)}</td><td>{String(r.job)}</td><td>{String(r.provider)}</td><TimeCell v={r.started_at} /><td className={String(r.status) === "ok" ? "text-ok" : "text-bad"}>{String(r.status)}</td><td className="mono">{String(r.http_status ?? "")}</td><td className="mono">{r.latency_ms == null ? "—" : String(r.latency_ms)}</td><td className="mono">{String(r.records_in)} / {String(r.records_quarantined)}</td><td className="mono text-fg-3">{String(r.raw_ref ?? "")}</td><td>{r.error_text ? <pre className="mono max-w-[360px] whitespace-pre-wrap text-[10px] text-fg-2">{String(r.error_text)}</pre> : null}</td></tr>)}</tbody></table>
+          <table><thead><tr><th>id</th><th>job</th><th>provider</th><th>started (KST)</th><th>status</th><th>http</th><th>ms</th><th>in / quarantined</th><th>raw_ref</th><th>error</th></tr></thead>
+            <tbody>{runs.items.map((r) => <tr key={String(r.id)}><td className="mono">{String(r.id)}</td><td>{String(r.job)}</td><td>{String(r.provider)}</td><TimeCell v={r.started_at} /><td className={String(r.status) === "ok" ? "text-ok" : "text-bad"}>{String(r.status)}</td><td className="mono">{String(r.http_status ?? "")}</td><td className="mono">{r.latency_ms == null ? "—" : String(r.latency_ms)}</td><td className="mono">{String(r.records_in)} / {String(r.records_quarantined)}</td><td className="mono text-fg-3">{String(r.raw_ref ?? "")}</td><td>{r.error_text ? <pre className="mono max-w-[360px] whitespace-pre-wrap text-[10px] text-fg-2" title={RAW_RECORD_TITLE} data-raw="record">{String(r.error_text)}</pre> : null}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "quality" && quality ? <>
           <div className="label mb-1">Quarantine counts by rule (7d)</div>
           <table className="mb-4"><thead><tr><th title={UTC_DAY_TITLE}>day (UTC)</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{statsDay(r.day) ?? "—"}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
-          <table><thead><tr><th>at (KST · UTC)</th><th>run</th><th>rule</th><th>hex</th><th title={`격리 규칙이 남긴 detail JSON — ${RAW_UTC_TITLE}`}>detail (raw · UTC)</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3">{String(r.detail)}</td></tr>)}</tbody></table>
+          <table><thead><tr><th>at (KST)</th><th>run</th><th>rule</th><th>hex</th><th title={`격리 규칙이 남긴 detail JSON — ${RAW_RECORD_TITLE}`}>detail (raw)</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3" data-raw="record">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "pipeline" && pipeline ? <OpsPipeline data={pipeline} /> : null}
         {tab === "settings" && settings ? <SettingsForm items={settings.items} onSaved={refresh} onAuthMiss={fail} /> : null}
-        {tab === "audit" && audit ? <table><thead><tr><th>at (KST · UTC)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
+        {tab === "audit" && audit ? <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
           <tbody>{audit.items.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
-        {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at (KST · UTC)</th><th>stream</th><th>kind</th><th>reason</th><th title={`스트림 메시지 앞 200자 — ${RAW_UTC_TITLE}`}>payload head (raw · UTC)</th></tr></thead>
-          <tbody>{dlq.items.map((d) => <tr key={String(d.stream_id)}><TimeCell v={d.at} /><td className="mono">{String(d.source_stream)}</td><td>{String(d.kind)}</td><td className="text-bad">{String(d.reason)}</td><td className="mono text-fg-3">{String(d.payload_head)}</td></tr>)}</tbody></table> : <div className="text-fg-3">스키마 검증에 실패한 메시지가 없습니다.</div>) : null}
+        {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at (KST)</th><th>stream</th><th>kind</th><th>reason</th><th title={`스트림 메시지 앞 200자 — ${RAW_RECORD_TITLE}`}>payload head (raw)</th></tr></thead>
+          <tbody>{dlq.items.map((d) => <tr key={String(d.stream_id)}><TimeCell v={d.at} /><td className="mono">{String(d.source_stream)}</td><td>{String(d.kind)}</td><td className="text-bad">{String(d.reason)}</td><td className="mono text-fg-3" data-raw="record">{String(d.payload_head)}</td></tr>)}</tbody></table> : <div className="text-fg-3">스키마 검증에 실패한 메시지가 없습니다.</div>) : null}
       </div>
     </div>
   );
@@ -342,7 +347,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
       {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} /></div> : null}
-      <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST · UTC)</th><th></th></tr></thead>
+      <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST)</th><th></th></tr></thead>
         <tbody>{items.map((s) => {
           const ed = edit[s.key];
           const conflict = settingConflict(ed, s);
@@ -357,7 +362,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
                 </div>
               ) : null}
             </td>
-            <td className="mono">{s.version}</td><td className="text-fg-3"><span className="mono">{s.updated_by ?? "—"}</span> <DualTime v={s.updated_at} variant="cell" /></td>
+            <td className="mono">{s.version}</td><td className="text-fg-3"><span className="mono">{s.updated_by ?? "—"}</span> <KstTime v={s.updated_at} variant="cell" /></td>
             <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict} title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
         })}</tbody></table>
     </div>

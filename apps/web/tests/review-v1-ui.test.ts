@@ -233,7 +233,8 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toMatch(/data-key="publish_dropped" data-tone="bad"/);
     expect(html).toMatch(/data-key="dropped_total" data-tone="muted"[^>]*>.*?—/);
     expect(html).toContain("wakeline:aircraft");
-    expect(html).toContain("09-28 10:00:00 – 09-28 10:02:00 KST · 01:00:00 – 01:02:00 UTC"); // 운영 화면은 KST 먼저 · UTC 함께
+    expect(html).toContain("09-28 10:00:00 – 09-28 10:02:00 KST"); // 운영 화면은 KST 만(계약 v5 §G19)
+    expect(html).not.toContain("UTC");
   });
   it("permanent losses (rejected rows, apply errors, listener errors) are loss rows too", () => {
     const rows = opsLib.pipelineRows({ ...resp, api: { ...resp.api, track_rows_failed: 2, ship_rows_failed: 0, stream_apply_errors: 1, listener_errors: 0 } });
@@ -274,7 +275,7 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     const badStart = { ...resp, api: { ...resp.api, last_stream_trim_loss: { stream: "wakeline:ships", from: "garbage", to: "2026-09-28T01:02:00Z" } } };
     const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: badStart }));
     expect(html).not.toContain("undefined");
-    expect(html).toContain('title="— – 원본 UTC 2026-09-28T01:02:00.000Z"');
+    expect(html).toContain('title="— – 2026-09-28 10:02:00.000 KST"');
     expect(html).toContain("wakeline:ships · — – 09-28 10:02:00 KST");
   });
 });

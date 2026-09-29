@@ -147,7 +147,7 @@ describe("/logs: hidden by default, counted, and shown on request", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].getAttribute("data-resolved")).toBe("true");
     expect(rows[0].getAttribute("class")).toContain("text-fg-3");
-    expect(byTestId("log-resolved-mark", rows[0])!.textContent).toBe("해결됨 · op · 09-29 10:59:00 KST · 01:59:00 UTC");
+    expect(byTestId("log-resolved-mark", rows[0])!.textContent).toBe("해결됨 · op · 09-29 10:59:00 KST");
     expect(rows[1].getAttribute("data-resolved")).toBeNull();
     expect(byTestId("log-resolved-mark", rows[1])).toBeNull();
     expect(byTestId("logs-hidden-resolved")!.textContent).toBe("해결된 항목 포함(흐리게 표시)");
@@ -171,7 +171,7 @@ describe("/logs entry detail: resolve and revoke", () => {
     await click(button("해결 처리", d));
     const panel = byTestId("resolve-confirm", d)!;
     expect(panel.textContent).toContain(FP);
-    expect(panel.textContent).toContain("upto 09-29 10:59:00 KST · 01:59:00 UTC");
+    expect(panel.textContent).toContain("upto 09-29 10:59:00 KST");
     expect(panel.textContent).toContain("지우지 않");
     expect(panel.textContent).toContain("다시 보입니다");
     expect(calls.some((c) => c.method !== "GET")).toBe(false); // 확인 전에는 보내지 않는다
@@ -191,7 +191,7 @@ describe("/logs entry detail: resolve and revoke", () => {
     await React.act(async () => { release!(); });
     await settle();
     await settle();
-    expect(byTestId("log-detail-resolve")!.textContent).toContain("해결됨 · op · 09-29 10:59:00 KST · 01:59:00 UTC");
+    expect(byTestId("log-detail-resolve")!.textContent).toContain("해결됨 · op · 09-29 10:59:00 KST");
     expect(button("되돌리기", byTestId("log-detail")!)).not.toBeNull();
     expect(byTestId("resolve-confirm")).toBeNull();
     const after = calls.slice(before);
@@ -254,7 +254,7 @@ describe("/logs entry detail: resolve and revoke", () => {
     await click(button("해결된 항목 보기"));
     await click(allByTestId("log-row")[0]);
     const d = byTestId("log-detail")!;
-    expect(byTestId("log-detail-resolve", d)!.textContent).toContain("해결됨 · op · 09-29 10:59:00 KST · 01:59:00 UTC");
+    expect(byTestId("log-detail-resolve", d)!.textContent).toContain("해결됨 · op · 09-29 10:59:00 KST");
     await click(button("되돌리기", d));
     const panel = byTestId("resolve-confirm")!;
     expect(panel.textContent).toContain("해결 #12");
@@ -350,14 +350,14 @@ describe("/logs groups: per group and bulk", () => {
     const [r1, r2, r3] = allByTestId("log-group");
     expect(r2.getAttribute("data-resolved")).toBe("true");
     expect(r2.getAttribute("class")).toContain("text-fg-3");
-    expect(byTestId("group-resolved-mark", r2)!.textContent).toBe("해결됨 · kim · 09-29 10:10:00 KST · 01:10:00 UTC");
+    expect(byTestId("group-resolved-mark", r2)!.textContent).toBe("해결됨 · kim · 09-29 10:10:00 KST");
     expect(button("되돌리기", r2)).not.toBeNull();
     expect(button("해결 처리", r3)!.getAttribute("disabled")).not.toBeNull();
     expect(button("해결 처리", r3)!.getAttribute("title")).toContain("마지막 시각 모름");
     await click(button("해결 처리", r1));
     const panel = byTestId("resolve-confirm")!;
     expect(panel.textContent).toContain(`지문 묶음 ${FP}`);
-    expect(panel.textContent).toContain("upto 09-29 10:59:00 KST · 01:59:00 UTC");
+    expect(panel.textContent).toContain("upto 09-29 10:59:00 KST");
     expect(panel.textContent).toContain("마지막 항목 시각");
     const before = calls.length;
     await click(button("해결 처리 확인", panel));

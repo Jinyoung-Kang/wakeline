@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { copyText, downloadText } from "@/lib/copy";
-import { fmtDualClock, fmtUtcTitle } from "@/lib/time";
+import { fmtKstClock, fmtTimeTitle } from "@/lib/time";
 import {
   appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
   LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
@@ -16,7 +16,7 @@ import { AisGapsTable } from "./AisGapsTable";
 import { ErrorNote } from "./ErrorNote";
 import { LogDetail } from "./LogDetail";
 import { LogGroupsTable } from "./LogGroupsTable";
-import { DualTime } from "../DualTime";
+import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { revokeLogGroup } from "./logGroupTargets";
 
@@ -61,7 +61,8 @@ function initialState(): { filter: LogFilter; openId: string | null; openStream:
  * 시스템 로그 화면(계약 v5 §C7): 필터(서비스 여러 개 · 수준 · 기간 · 글자 · 요청 id) · 보기(목록 / 지문 묶음) · 상세 · 복사 · 내려받기 · AIS 수신 공백 탭.
  * - 15 s 마다 새 항목을 확인하지만 목록은 "새 항목 N건" 단추를 눌러야 바뀐다(보던 줄이 움직이지 않게).
  * - 서버가 말한 한계(스캔 상한 잘림 · 형식 오류로 건너뜀 · 다음 커서)를 그대로 보인다. 모르는 값은 "—".
- * - 시각은 KST 먼저 · UTC 함께(lib/time — 표 칸은 첫 줄 KST · 둘째 줄 UTC, title 에 원본 UTC ISO). 텍스트 복사 · .txt 도 KST(+09:00), JSON 복사 · .ndjson 은 api 원본(UTC).
+ * - 시각은 KST 만(계약 v5 §G19 · lib/time — 표 칸 "(KST)", title 에 연도 · ms 까지의 KST). 텍스트 복사 · .txt 도 KST(+09:00), JSON 복사 · .ndjson 은 api 원본(ts 는 서버 형식 …Z).
+ * - 메시지 칸은 서버가 기록한 글자 그대로(data-raw — 안의 시각을 바꾸지 않는다).
  * - 세션 만료(ops 호출 401/404 + 세션 확인도 401/404)면 로그인으로(R-12 와 같은 규칙).
  */
 export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
@@ -334,7 +335,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         </div>
         {tab === "logs" ? <>
           <button type="button" className="btn" onClick={() => void load(view, filter)} disabled={loading}>새로 고침</button>
-          <span className="mono text-[11px] text-fg-3" title={`마지막 성공 응답 시각(KST · UTC) — 15 s 마다 새 항목을 확인(목록은 단추를 눌러야 바뀜)${lastOk ? ` · ${fmtUtcTitle(lastOk)}` : ""}`} data-testid="logs-last-ok">갱신 {fmtDualClock(lastOk)} · 15 s 확인</span>
+          <span className="mono text-[11px] text-fg-3" title={`마지막 성공 응답 시각(KST) — 15 s 마다 새 항목을 확인(목록은 단추를 눌러야 바뀜)${lastOk ? ` · ${fmtTimeTitle(lastOk)}` : ""}`} data-testid="logs-last-ok">갱신 {fmtKstClock(lastOk)} · 15 s 확인</span>
         </> : null}
         {err && tab === "logs" ? <span className="text-[11px] text-bad" role="alert"><ErrorNote error={err} onFilterRid={filterRid} /></span> : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span>
@@ -404,7 +405,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             <span className="ml-auto flex gap-1">
               <button type="button" className="btn" onClick={() => void copy(`보이는 목록 ${n(items.length)}건`, logsText(items))} disabled={!items.length} title="보이는 목록 — 텍스트(머리 줄 시각은 KST, ISO 8601 +09:00)">보이는 목록 복사</button>
               <button type="button" className="btn normal-case!" onClick={() => download("txt")} disabled={!items.length} title="보이는 목록 — 텍스트(머리 줄 시각은 KST, ISO 8601 +09:00)">.txt</button>
-              <button type="button" className="btn normal-case!" onClick={() => download("ndjson")} disabled={!items.length} title="보이는 목록 — 한 줄에 항목 하나(JSON, api 가 준 그대로 — ts 는 UTC, 화면의 KST 로 바꾸지 않음)">.ndjson</button>
+              <button type="button" className="btn normal-case!" onClick={() => download("ndjson")} disabled={!items.length} title="보이는 목록 — 한 줄에 항목 하나(JSON, api 가 준 그대로 — ts 는 서버 형식 ‘…Z’(KST 보다 9시간 이르다), 화면의 KST 로 바꾸지 않음)">.ndjson</button>
             </span>
           </> : <>
             <span>{groups ? `묶음 ${n(groups.groups.length)}개(최근 ${LOG_PERIOD_LABEL[filter.period]})` : loading ? "불러오는 중…" : "—"}</span>
@@ -419,7 +420,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         </div>
         <div className="shrink-0 border-b border-line px-3 py-1 text-[10px] text-fg-3">
           수집: api · collector · ais 의 WARN·ERROR(비밀값 가림) + 브라우저 오류(web-client — 브라우저가 보낸 내용, 검증 안 됨, 따로 보관) · {KEEP_TEXT} · 목록은 두 스트림을 시각(스트림 id) 순으로 합침 ·
-          시각 = 한국 표준시(KST, UTC+9) 먼저 · UTC 함께(원본 UTC ISO 는 시각에 마우스를 올리면 · JSON 복사 · .ndjson 의 ts) ·
+          시각 = 한국 표준시(KST — 마우스를 올리면 연도 · ms 까지) · 메시지는 서버가 기록한 글자 그대로 · JSON 복사 · .ndjson 의 ts 는 서버 형식(…Z) ·
           edge(nginx) 로그는 컨테이너 표준 출력에만(수집 에이전트 없음) · 키보드(목록): ↑/↓ 이동 · Enter 상세 · c 텍스트 복사
         </div>
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -430,7 +431,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                 <table role="grid" aria-readonly="true" tabIndex={0} onKeyDown={onKey} aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사"
                   aria-activedescendant={selIdx >= 0 ? rowDomId(entryKey(items[selIdx])) : undefined} data-testid="log-grid">
                   <thead className="sticky top-0 bg-bg-1"><tr>
-                    <th scope="col" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 칸에 마우스를 올리면 원본 UTC ISO">시각(KST · UTC)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
+                    <th scope="col" title="한국 표준시(KST) — 칸에 마우스를 올리면 연도 · ms 까지">시각(KST)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
                     <th scope="col" title="직전 전송 뒤 같은 지문으로 보내지 않은 건수 — — = 필드 없음">억제</th><th scope="col">요청 id</th>
                   </tr></thead>
                   <tbody>{items.map((e) => {
@@ -444,15 +445,15 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                       ref={(el) => { if (el) rowEls.current.set(k, el); else rowEls.current.delete(k); }}
                       onClick={() => { setSelId(k); openEntry(e); }}
                       className={`cursor-pointer ${e.resolved ? "text-fg-3" : ""} ${k === selId ? "bg-[#1c2a3f]" : "hover:bg-bg-2"} ${detail && entryKey(detail) === k ? "outline outline-1 -outline-offset-1 outline-accent" : ""}`}>
-                      <td className="whitespace-nowrap"><DualTime v={e.ts} variant="cell" ms /></td>
+                      <td className="whitespace-nowrap"><KstTime v={e.ts} variant="cell" ms /></td>
                       <td><span className={LEVEL_BADGE[e.level]}>{e.level}</span></td>
                       <td className="mono whitespace-nowrap">{e.service}{e.untrusted ? <span className="badge ml-1 normal-case!" title="브라우저가 보낸 내용 — 검증 안 됨">untrusted</span> : null}
                         {e.stream === "client" ? <span className="badge ml-1 normal-case!" title={`${LOG_STREAM_KEY.client} — 브라우저 오류 스트림(따로 보관 · 최근 약 ${n(LOG_STREAM_KEEP.client)}건)`}>client</span> : null}</td>
                       <td className="mono max-w-[240px] truncate text-fg-2" title={e.logger ?? ""}>{e.logger ?? "—"}</td>
-                      <td className="max-w-[560px] truncate" title={firstLine(e.message)}>{firstLine(e.message)}
+                      <td className="max-w-[560px] truncate"><span title={firstLine(e.message)} data-raw="log">{firstLine(e.message)}</span>
                         {res ? (
                           <div className="text-[10px]">
-                            <span data-testid="log-resolved-mark" title={`해결 #${res.id} — 지문 묶음 단위(같은 지문의 upto 이하 항목)`}>해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span>
+                            <span data-testid="log-resolved-mark" title={`해결 #${res.id} — 지문 묶음 단위(같은 지문의 upto 이하 항목)`}>해결됨 · <span className="mono">{res.resolved_by}</span> · <KstTime v={res.upto} /></span>
                             {/* 줄의 클릭(상세 열기)으로 올라가지 않는다 — 확인은 이 줄 아래 */}
                             <button type="button" className="btn ml-1 px-1.5! py-0! normal-case!" {...rowResolve.openerProps(k)} aria-label={`되돌리기: 지문 ${e.fp ?? "—"} 해결 #${res.id}`}
                               onClick={(ev) => { ev.stopPropagation(); rowResolve.show(k, revokeLogGroup(res, e.fp)); }}>되돌리기</button>
