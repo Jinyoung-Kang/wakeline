@@ -240,6 +240,7 @@
   수집기 오류 문구 하나로(`errors.describe_error` — `HTTP 429 Too Many Requests` · `ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr)` · `ConnectError — 연결 실패 (host): 원인`).
   전환 사유는 까닭을 적는다(`fallback — adsb_lol 429 쉼(60 s)` · `… 429 반복 → 20분 뒤로 미룸` · `recovery — adsb_lol 쉼 끝(1순위 복귀)` 등, ADR-011).
   모르는 값 뒤에 단위를 붙이지 않는다(운영 · 로그 · 상태 바 · AIS 배지 · 재생 — `— ms` · `— frames` · `— msg/s` 대신 `—`).
+- **뒤이은 요청** 사용자가 상황판도 KST 로 바꾸라고 했다 — 상황판 · 재생(입력도 KST, 요청은 UTC) · 통계(시각은 KST, 일 집계는 "(UTC 날짜)") · 공항까지 KST, 원문 METAR · TAF · SIGMET 은 발표 그대로(계약 v5 §G11).
 - **확인** 배포 뒤 개발 스택의 Redis: 전환 사유 `fallback — adsb_lol 429 쉼(60 s)`, 공급자 상태 `last_error = HTTP 429 Too Many Requests`. 격리 스택에서 운영 7개 탭 · 로그 목록 · 상세를
   브라우저로 열어 남은 `HH:MM:SSZ` 0건 · `— ms` 0건, 복사 머리 `2026-09-29T10:14:36.115+09:00`. **회귀** 웹 시험(시간대 5곳에서 같은 결과) · 수집기 오류 문구 시험(위 원문 그대로의 입력).
 
@@ -266,16 +267,24 @@
 - **확인** 배포 뒤 30분 동안 목록 호출 시간 초과 1회(01:37:36, 15.1 s) → 5 s 뒤 다시 불러 01:37:42 에 프레임 저장(경고 없음). 30분에 프레임 6개로 5분 주기를 모두 채웠다.
   15 s 로도 시간 초과가 난다는 것은 공급자 쪽 정지가 길 때가 있다는 뜻이다 — 다시 부르기가 그 주기를 살렸다.
 
-## 자동 검사 현황(2026-09-29 KST, 계약 v5 · 운영 화면 보강 뒤)
+## #40 전체 시험에서 가끔 실패하던 ShipsIT(선박 diff 를 30 s 안에 못 받음)
+- **증상** `ShipsIT.wsShipsLayer_snapshotThenDiffWithContiguousSseq` 가 호스트가 바쁜 전체 실행에서 가끔 `no 'ships_diff' message within PT30S`(2026-09-28 에는 20 s 창에서, 이날 레인 리뷰에서 4회 중 2회).
+  혼자서 3회 · 통합 시험 묶음 2회는 모두 통과(7.6 s).
+- **원인 찾기** 코드로 본 후보(미래 시각 거절 5분 · 60 s 전체 재동기 · 우편함 합치기 · 소비자 재시작)는 모두 해당하지 않았다. 시험은 스트림 소비와 10 s 팬아웃을 한 창(30 s)으로 기다려,
+  어느 쪽이 늦었는지 실패 문구로 알 수 없었다 — 재현하지 못해 원인은 확정하지 않았다(부하 때 소비 지연으로 본다 — 추정).
+- **수정(시험)** 두 번째 위치가 ShipStore 에 반영될 때까지 빈으로 먼저 기다리고, 그다음 diff 에 30 s 를 따로 준다. 시험 WS 클라이언트는 시간이 넘으면 그사이 받은 메시지 종류를 적는다.
+  수정 뒤 전체 실행 통과(JUnit 696). 다시 실패하면 문구가 어느 단계인지 말해 준다.
+
+## 자동 검사 현황(2026-09-29 KST, 계약 v5 · 운영 화면 보강 · 상황판 KST 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 975 통과(11 건너뜀 — 실 Redis 9건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 686 · JaCoCo LINE 96.3 % · BRANCH 84.5 %(하한 95 / 80) |
-| web 단위 | Vitest | 698 · 커버리지(소스 전체) Lines 87.8 % · Branches 75.9 % |
+| collector · ais 단위·통합 | pytest | 1,021 통과(12 건너뜀 — 실 Redis 10건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 696 · JaCoCo LINE 96.3 % · BRANCH 84.7 %(하한 95 / 80) |
+| web 단위 | Vitest | 770 · 커버리지(소스 전체) Lines 88.5 % · Branches 78.3 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 27 · 클라이언트 15) + 가림 · 억제 벡터 |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 31종 |
 | 인프라 정책 | infra/tests(unittest) | 118 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 265 · 36 · 48 · 27 · 9 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 265 · 36 · 48 · 27 · 10 |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
 | 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |
 | 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 230건 · 14종, 형식 오류 0건(#32 · docs/review/evidence/v5-ws-live-check.txt) |
