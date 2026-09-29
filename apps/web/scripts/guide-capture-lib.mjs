@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 /** 페이지의 GUIDE_FILE_RE 와 같은 모양(시험이 둘을 맞춰 본다) */
 export const FILE_RE = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.([0-9a-f]{10})\.(webp|png)$/;
 export const DEFAULT_QUALITY = 0.86;
+/** 화면 코드의 조회 오류 표시(data-testid) — 이것이 보이는 화면은 싣지 않는다(tests/guide-selectors 가 화면 코드에 있는지 확인) */
+export const ERROR_MARKS = ["error-note", "request-id", "replay-error", "aircraft-detail-error", "ship-detail-error", "ship-track-error", "search-error-aircraft", "search-error-ships", "ops-login-error", "logs-rid-error"];
 /** 번호를 요소 가장자리에서 안쪽으로 들이는 거리(px) — 번호 칸이 요소 위에 걸쳐 보이게 */
 const INSET = 12;
 /** 번호 칸이 이미지 밖으로 잘리지 않게 % 를 이 안으로 */

@@ -5,6 +5,7 @@
 // - 번호 위치: 찍기 직전에 각 번호의 대상 요소(CSS 선택자)를 재서 % 로 기록한다. 화면에 없으면 기록하지 않는다(설명서는 "보이지 않음"이라고 적는다).
 // - 운영 · 로그 화면은 /ops 로그인이 필요하다: 자격 증명은 인자로 받은 파일에서만 읽는다(인자 값 · 환경 변수로 받지 않는다). 끝나면 sign out.
 // - 로컬 스택만 찍는다(로그인 정보를 보낸다). FIXTURE MODE(가짜 자료) 스택이면 멈춘다 — 설명서에 지어낸 값이 실리지 않게(--allow-fixture 로만 무시).
+// - 조회 오류가 보이는 화면(오류 문구 · 요청 id)은 싣지 않는다 — 건너뛰고 이유를 보고한다.
 // - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
 // - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
 import { chromium } from "@playwright/test";
@@ -12,7 +13,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, hashedName, mergeManifest, parseArgs, parseCredentials, sizeReport, staleFiles,
+  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, hashedName, mergeManifest, parseArgs, parseCredentials, sizeReport, staleFiles,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -238,6 +239,17 @@ const RECIPES = {
   },
 };
 
+/**
+ * 조회 오류가 보이는 화면은 설명서에 싣지 않는다(정상 사용 모습처럼 보이게 두지 않는다) — 화면 코드의 오류 표시(testid)만 본다.
+ * 경고성 상태(STALE · 일부 합성 · 미러 불일치 등)는 실제 상태라 막지 않는다.
+ */
+async function assertNoErrors() {
+  for (const id of ERROR_MARKS) {
+    const el = page.getByTestId(id).first();
+    if (await el.count() && await el.isVisible()) throw new Skip(`화면에 조회 오류가 보임(${id}: ${(await el.innerText()).trim().slice(0, 120)})`);
+  }
+}
+
 /** 번호 대상 요소의 화면 사각형(보이지 않으면 null) */
 async function measure(callouts) {
   const rects = await page.evaluate((targets) => targets.map((sel) => {
@@ -282,6 +294,7 @@ for (const shot of shots) {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
     console.log(`… ${shot.id}`);
     const variant = await recipe();
+    await assertNoErrors();
     await page.evaluate(() => document.fonts?.ready);
     const positions = await measure(shot.callouts);
     const png = await page.screenshot({ type: "png" });

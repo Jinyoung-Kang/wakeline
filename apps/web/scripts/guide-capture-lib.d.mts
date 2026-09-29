@@ -8,6 +8,7 @@ export interface ReportRow { id: string; format: string; bytes: number; pngBytes
 
 export const FILE_RE: RegExp;
 export const DEFAULT_QUALITY: number;
+export const ERROR_MARKS: readonly string[];
 export const USAGE: string;
 export function parseArgs(argv: string[]): CaptureArgs;
 export function checkLocalBase(s: string): string;

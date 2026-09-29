@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PLAN } from "@/lib/guide";
 import { activeSection } from "@/components/guide/GuideToc";
+import { ERROR_MARKS } from "../scripts/guide-capture-lib.mjs";
 
 const WEB = new URL("..", import.meta.url).pathname;
 const walk = (d: string): string[] => readdirSync(join(WEB, d)).flatMap((n) => {
@@ -16,9 +17,10 @@ const walk = (d: string): string[] => readdirSync(join(WEB, d)).flatMap((n) => {
 });
 const SRC = ["app", "components"].flatMap(walk).map((f) => readFileSync(join(WEB, f), "utf8")).join("\n");
 
-/** 소스에 그 data-testid 가 있는가 — 글자 그대로, 컴포넌트 prop(testId="…"), 또는 `${앞}-${…}` 로 만들고 뒷부분이 소스의 글자로 있을 때 */
+/** 소스에 그 data-testid 가 있는가 — 글자 그대로, 컴포넌트 prop(testId="…"), 조건부 값, 또는 `${앞}-${…}` 로 만들고 뒷부분이 소스의 글자로 있을 때 */
 function hasTestId(id: string): boolean {
   if (SRC.includes(`data-testid="${id}"`) || SRC.includes(`testId="${id}"`)) return true;
+  if (new RegExp(`data-testid=\\{[^}\\n]*\\? "${id}"`).test(SRC)) return true; // 조건부: data-testid={조건 ? "id" : undefined}
   const cut = id.lastIndexOf("-");
   if (cut > 0) {
     const pre = id.slice(0, cut), suf = id.slice(cut + 1);
@@ -37,6 +39,9 @@ describe("capture plan selectors exist in the screens", () => {
   it("every aria-label a callout points at is rendered by some screen", () => {
     const missing = targets.flatMap(({ where, target }) => [...target.matchAll(/aria-label="([^"]+)"/g)].map((m) => m[1]).filter((l) => !SRC.includes(`aria-label="${l}"`)).map((l) => `${where}: ${l}`));
     expect(missing).toEqual([]);
+  });
+  it("the error marks the capture script refuses to publish are rendered by some screen", () => {
+    expect(ERROR_MARKS.filter((id) => !hasTestId(id))).toEqual([]);
   });
   it("MapLibre class targets exist in the bundled MapLibre", () => {
     const ml = readFileSync(join(WEB, "node_modules/maplibre-gl/dist/maplibre-gl.css"), "utf8");
