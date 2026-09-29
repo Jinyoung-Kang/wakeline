@@ -31,7 +31,9 @@ return {1, used}
 """
 
 UNKNOWN = -1  # 예약 결과의 사용량을 알 수 없음(Redis 장애)
-DEFAULT_STRICT = frozenset({"opensky", "kma_radar"})
+DEFAULT_STRICT = frozenset(
+    {"opensky", "kma_radar", "komsa_traffic", "mof_grid4"}
+)  # 공공데이터포털 두 서비스: 포털 하루 한도(ADR-023)
 
 
 def day_key(provider: str, now: datetime | None = None) -> str:

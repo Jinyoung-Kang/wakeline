@@ -187,10 +187,9 @@ def build_payload(
     fetched_at: datetime,
     cells: Mapping[str, Cell],
     negative: Mapping[str, str],
-    *,
-    published_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Redis 스냅샷 값(dict — 호출자가 orjson 으로 싣는다). negative = grid_id → 'not_found' | 'off_grid'(기하를 쓰지 않는 칸)."""
+    """Redis 스냅샷 값(dict — 호출자가 orjson 으로 싣는다). negative = grid_id → 'not_found' | 'off_grid'(기하를 쓰지 않는 칸).
+    같은 입력이면 같은 값이다(발행 시각을 싣지 않는다 — api 의 ETag 가 내용이 바뀔 때만 바뀌게. 발행 시각은 heartbeat traffic_grid_at)."""
     out_cells: list[list[Any]] = []
     not_found = off_grid = pending = 0
     for it in sorted(snap.items, key=lambda i: i.grid_id):
@@ -211,7 +210,6 @@ def build_payload(
         "reg_dt_kst": snap.reg_dt.astimezone(KST).isoformat(),
         "reg_dt_utc": iso_z(snap.reg_dt),
         "fetched_at": iso_z(fetched_at),
-        "published_at": iso_z(published_at or datetime.now(UTC)),
         "total": len(snap.items),
         "total_count": snap.total_count,
         "partial": snap.total_count is not None and snap.total_count > seen,

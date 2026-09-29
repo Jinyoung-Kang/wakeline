@@ -1,5 +1,5 @@
-"""collector 진입점 — 주기 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)과 수요 기반 추적(focus·hot,
-ADR-013)·선택 항공기 노선 조회(계약 v4 §A)를 하나의 이벤트 루프에서 돌린다.
+"""collector 진입점 — 주기 작업 8종(region·global·sigmet·radar·metar·maintenance·radar_kr·traffic_grid)과 수요 기반 추적(focus·hot,
+ADR-013)·선택 항공기 노선 조회(계약 v4 §A)를 하나의 이벤트 루프에서 돌린다. traffic_grid = 연안 교통량(ADR-023 — 공공데이터포털 키가 있을 때만).
 
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
 외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
@@ -34,6 +34,7 @@ from wakeline_collector.jobs.demand import DemandProvider, DemandTracker
 from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
 from wakeline_collector.jobs.route import RouteLookup
+from wakeline_collector.jobs.traffic_grid import TrafficGridJob
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
 from wakeline_collector.logsink import LogSink, close_log_sink, sink_metrics, start_log_sink
 from wakeline_collector.masking import install_log_masking, register_secrets
@@ -41,7 +42,7 @@ from wakeline_collector.providers import fixture as fx
 from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
 from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.base import AircraftProvider
-from wakeline_collector.providers.data_go_kr import normalize_service_key, secret_forms
+from wakeline_collector.providers.data_go_kr import Grid4WfsProvider, KomsaTrafficProvider, normalize_service_key, secret_forms
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
@@ -92,6 +93,8 @@ def build_limits(s: Settings) -> dict[str, int]:
         "rainviewer": s.budget_rainviewer,
         "kma_radar": s.budget_kma_radar,
         "adsbdb": s.budget_adsbdb,
+        "komsa_traffic": s.budget_komsa_traffic,
+        "mof_grid4": s.budget_mof_grid4,
         "fixture": 0,
     }
 
@@ -189,6 +192,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
     maint = MaintenanceJob(snapshot_providers(limits, fixture=fixture), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
+    # 연안 교통량(ADR-023): fixture 모드는 외부 호출이 없으므로 키를 넘기지 않는다(작업이 state fixture 로 알린다)
+    dgk = "" if fixture else settings.data_go_kr_service_key
+    traffic = TrafficGridJob(KomsaTrafficProvider(http, dgk), Grid4WfsProvider(http, dgk), ctx)
     if settings.demand_enabled:
         # 노선(계약 v4 §A · G A-2): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 묻지 않고
         # 요청된 콜사인에 status "disabled" 를 쓴다(화면이 "노선 조회 중" 에 머물지 않게).
@@ -214,6 +220,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "metar": run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
             "maintenance": run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
             "radar_kr": run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
+            "traffic_grid": run_periodic(
+                "traffic_grid", traffic.run_once, lambda: settings.traffic_grid_tick_s, stop, initial_delay=12
+            ),
         }
         if tracker is not None:
             jobs["demand"] = tracker.run(stop)

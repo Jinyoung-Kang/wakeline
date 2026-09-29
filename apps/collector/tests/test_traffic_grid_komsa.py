@@ -158,7 +158,9 @@ def test_payload_counts_and_cells():
     s = parse_komsa(FIX.read_bytes())
     fetched = datetime(2026, 9, 29, 9, 6, 1, 250000, tzinfo=UTC)
     cells = {"GR4_F2K41_C3": _cell("GR4_F2K41_C3", 37.45, 126.6), "GR4_F2K41_D3": _cell("GR4_F2K41_D3", 37.425, 126.6)}
-    p = build_payload(s, fetched, cells, {"GR4_F2K41_C4": "not_found"}, published_at=fetched)
+    p = build_payload(s, fetched, cells, {"GR4_F2K41_C4": "not_found"})
+    assert "published_at" not in p  # 같은 입력 → 같은 값(ETag)
+    assert build_payload(s, fetched, cells, {"GR4_F2K41_C4": "not_found"}) == p
     assert p["v"] == 1
     assert p["reg_dt_kst"] == "2026-09-29T18:05:05+09:00"
     assert p["reg_dt_utc"] == "2026-09-29T09:05:05Z"

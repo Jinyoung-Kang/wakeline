@@ -118,8 +118,13 @@ async def test_r43_calls_give_up_within_seconds_when_redis_accepts_but_never_ans
 
 def test_every_budgeted_provider_is_snapshotted():
     limits = build_limits(Settings())
-    assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb"} <= set(limits)
+    assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb", "komsa_traffic", "mof_grid4"} <= set(
+        limits
+    )
     assert limits["adsbdb"] == 2000  # 계약 v4 §A: 노선 조회 하루 2,000회
+    # ADR-023: 공공데이터포털 개발계정 한도(해양교통 하루 500 · 격자 WFS 하루 10,000) 안의 선택값
+    assert (limits["komsa_traffic"], limits["mof_grid4"]) == (400, 6000)
+    assert limits["komsa_traffic"] < 500 and limits["mof_grid4"] < 10_000
 
 
 def test_adsbdb_settings_defaults_and_validation():
@@ -327,7 +332,16 @@ async def test_v5_collector_job_tasks_are_named_for_the_log_context(monkeypatch)
 
     monkeypatch.setattr(mainmod, "run_until_stopped", spy)
     await _run_collector_until(monkeypatch, lambda r: bool(seen), enabled=True)
-    assert {"job:region", "job:global", "job:sigmet", "job:radar", "job:metar", "job:maintenance", "job:radar_kr"} <= seen
+    assert {
+        "job:region",
+        "job:global",
+        "job:sigmet",
+        "job:radar",
+        "job:metar",
+        "job:maintenance",
+        "job:radar_kr",
+        "job:traffic_grid",
+    } <= seen
     assert asyncio.current_task() is not None
 
 
