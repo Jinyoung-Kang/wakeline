@@ -124,6 +124,31 @@ export interface ShipStatic {
 export const STATIC_SOURCES = ["live", "stored", "none", "stored_unavailable"] as const;
 export type StaticSource = (typeof STATIC_SOURCES)[number];
 
+/** 저장된 정적 보고 표기(카드 · 설명서 2.6 이 같은 글 — 계약 v5 §G17) */
+export const STORED_STATIC_LABEL = "저장된 AIS 정적 보고";
+/** 저장 행의 updated_at 이 뜻하는 것 — 이 내용이 담긴 첫 메시지의 수신 시각. 같은 내용의 재수신은 저장하지 않으므로 '마지막 수신' 이 아니다 */
+export const STORED_STATIC_TIME_LABEL = "이 내용 첫 수신";
+/** 카드 설명(title) — 왜 저장값인지 · 시각의 뜻 · 입출항도 이 호출부호로 찾는다는 것 */
+export const STORED_STATIC_TITLE =
+  "실시간 선박 스트림(보존 최대 2.5 h — 서버가 다시 시작한 뒤처럼)에 이 선박의 정적 보고가 아직 없어, DB 에 저장된 마지막 AIS 정적 보고를 보입니다(실시간 값이 아님). "
+  + "시각은 이 내용이 담긴 첫 메시지의 수신 시각(DB ship.updated_at)입니다 — 같은 내용의 재수신은 저장하지 않아 그 뒤에 다시 받았을 수 있습니다. "
+  + "한국 항만 입출항도 이 보고의 호출부호로 찾습니다. 스트림에 정적 보고가 오면 실시간 값으로 바뀝니다";
+/** 메모리에 없고 DB 도 읽지 못했다 — '없음' 이 아니라 '모름' */
+export const STORED_STATIC_UNAVAILABLE_TEXT = "저장된 AIS 정적 보고를 읽지 못함(DB) — 정적 정보를 모릅니다(없다는 뜻이 아님)";
+
+/**
+ * 카드가 보이는 정적 정보의 출처와 저장 행 시각(계약 v5 §G17). 보이는 정적 정보는 WS ship_selected → REST 상세 순(ShipCard 와 같은 순서)이고,
+ * 출처는 그 정적 정보를 준 쪽의 것만 쓴다(다른 쪽 출처를 붙이지 않는다). 둘 다 정적 정보가 없으면 WS 의 출처(none · stored_unavailable — 왜 없는지).
+ */
+export function staticProvenance(
+  ws: { static: ShipStatic | null; static_source?: StaticSource | null; static_updated_at?: string | null } | null,
+  rest: { static: ShipStatic | null; static_source: StaticSource | null; static_updated_at: string | null } | null,
+): { source: StaticSource | null; storedAt: string | null } {
+  const from = ws?.static ? ws : rest?.static ? rest : null;
+  if (from) return { source: from.static_source ?? null, storedAt: from.static_source === "stored" ? from.static_updated_at ?? null : null };
+  return { source: ws?.static_source ?? null, storedAt: null };
+}
+
 /**
  * ships_grid 칸. counts = 선종별 수(계약 v5 §B2 다섯째 원소, 순서 = SHIP_CATEGORIES = Java ShipCategory 선언 순서).
  * 구 서버(네 원소 칸)이거나 모양·합이 맞지 않으면 null — 선종 필터를 적용할 수 없다(지어내지 않는다).

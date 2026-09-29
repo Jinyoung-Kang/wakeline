@@ -3,10 +3,21 @@
  * 보고로 채우고 stored 로 밝힌다(static_updated_at = 저장 행의 updated_at).
  * - 검증(lib/ws-validate): api 가 실제 빌더로 만든 표본(fixtures/ws-samples.v1.json — live · stored · none · stored_unavailable)을 모두 받는다.
  *   출처가 틀리거나 static 과 어긋나면 그 값만 모름(null)으로 두고 센다 — 저장값에 실시간 표시를, 없는 정적 정보에 출처를 붙이지 않는다.
+ * - 카드(ShipCard): 보이는 정적 정보가 저장값이면 정적 필드 바로 위에 "저장된 AIS 정적 보고 · 이 내용 첫 수신 <KST · UTC> (경과)" — 실시간 값이 아님.
+ *   출처는 그 정적 정보를 준 쪽(WS → REST)의 것만. DB 를 읽지 못했으면 '없음' 이 아니라 '모름'. 실시간 값 · 정적 정보 없음에는 표시하지 않는다.
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
+import { fmtDuration } from "@/lib/format";
+import {
+  staticProvenance, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipStatic,
+} from "@/lib/ships";
+import { resetData, setData } from "@/lib/store";
 import { validateServerMessage, type ShipSelectedMsg } from "@/lib/ws-validate";
+import { unpairedKst } from "./helpers/dual-time";
 
 type Json = Record<string, unknown>;
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/ws-samples.v1.json", import.meta.url), "utf8")) as { server: { name: string; message: Json }[] };
@@ -87,5 +98,105 @@ describe("ws-validate: ship_selected.static_source · static_updated_at", () => 
     expect(r.msg.static_updated_at).toBeNull();
     expect(r.dropped).toBe(0);
     expect(r.msg.static?.name).toBe("SYNTH ONE");
+  });
+});
+
+// ---------------------------------------------------------------- 카드
+
+const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+/** 저장 시각을 고정한 표본(api 표본은 만든 때의 시각 — 글자 비교를 위해 같은 순간으로 옮긴다) */
+const STORED_AT = "2026-09-29T03:00:00Z";
+const NOW = Date.parse("2026-09-29T08:00:00Z");
+function selected(name: string, over: (m: Json) => void = () => {}): ShipSelectedMsg {
+  const m = sample(name);
+  over(m);
+  return accept(m).msg;
+}
+function show(msg: ShipSelectedMsg | null, detail: ReturnType<typeof parseShipDetail> | null = null, mmsi = msg?.mmsi ?? "440000010"): string {
+  if (msg) {
+    setData({ shipSelected: { mmsi: msg.mmsi, state: msg.state, static: msg.static, static_source: msg.static_source, static_updated_at: msg.static_updated_at,
+      destination_info: msg.destination_info, port_calls: msg.port_calls, received_at: 1 } });
+  }
+  return renderToStaticMarkup(createElement(ShipCardView, { mmsi, detail, error: null, now: NOW }));
+}
+const storedMsg = () => selected("ship_selected.static_stored", (m) => {
+  (m.static as Json).updated_at = STORED_AT;
+  m.static_updated_at = STORED_AT;
+});
+
+describe("ship card: a stored static report is labelled next to the static fields", () => {
+  beforeEach(() => resetData());
+  afterEach(() => resetData());
+
+  it("stored: the note names the stored report and the time this content was first received (KST · UTC, age) — above the static rows", () => {
+    const html = show(storedMsg());
+    const t = text(html);
+    expect(html).toContain('data-testid="ship-static-stored"');
+    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST · 03:00:00 UTC (${fmtDuration(5 * 3600)} 전)`);
+    expect(t).toContain("실시간 값이 아님");
+    expect(html).toContain(`title="${STORED_STATIC_TITLE}"`);
+    expect(html).toContain('<time dateTime="2026-09-29T03:00:00.000Z"');
+    expect(unpairedKst(t)).toEqual([]);
+    // 정적 필드는 저장된 보고의 값이고, 표시는 그 필드들보다 앞(선박명 행 위)에 있다
+    expect(t).toContain("SYNTH STORED");
+    expect(html).toMatch(/data-field="호출부호"[^]*D7AG/);
+    expect(html.indexOf('data-testid="ship-static-stored"')).toBeLessThan(html.indexOf('data-field="선박명"'));
+    // 입출항도 이 호출부호로(WS 가 저장된 호출부호로 찾은 결과)
+    expect(t).toContain("D7AG");
+  });
+
+  it("the time is never called the last reception; without a readable time the note still says stored, with —", () => {
+    expect(STORED_STATIC_TIME_LABEL).not.toMatch(/마지막/);
+    expect(STORED_STATIC_TITLE).toMatch(/다시 받았을 수 있습니다/);
+    const t = text(show(selected("ship_selected.static_stored", (m) => { m.static_updated_at = "later"; })));
+    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} —`);
+  });
+
+  it("live, none and a static without a known source show no note; a DB read failure says unknown, not none", () => {
+    for (const name of ["ship_selected", "ship_selected.static_only", "ship_selected.static_none"]) {
+      resetData();
+      const html = show(selected(name));
+      expect(html, name).not.toContain("ship-static-stored");
+      expect(html, name).not.toContain("ship-static-unavailable");
+    }
+    resetData();
+    const old = selected("ship_selected", (m) => { delete m.static_source; delete m.static_updated_at; });
+    expect(show(old)).not.toContain(STORED_STATIC_LABEL);
+    resetData();
+    const down = text(show(selected("ship_selected.static_stored_unavailable")));
+    expect(down).toContain(STORED_STATIC_UNAVAILABLE_TEXT);
+    expect(down).not.toContain(`${STORED_STATIC_LABEL} ·`);
+  });
+
+  it("REST detail: the same note when the card shows the stored static from /ships/{mmsi} (before or without a WS value)", () => {
+    const body = { state: null, static: { name: "SYN STORED REST", call_sign: "D9RS", updated_at: STORED_AT, provider: "aisstream" }, static_source: "stored",
+      static_updated_at: STORED_AT, first_recorded_at: "2026-09-20T00:00:00Z", meta: {} };
+    const d = parseShipDetail("440000077", body);
+    expect(d.static_source).toBe("stored");
+    expect(d.static_updated_at).toBe(STORED_AT);
+    const t = text(show(null, d, "440000077"));
+    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST · 03:00:00 UTC`);
+    expect(text(show(null, parseShipDetail("440000077", { ...body, static_source: "live", static_updated_at: undefined }), "440000077")))
+      .not.toContain(STORED_STATIC_LABEL);
+  });
+
+  it("parseShipDetail: a source only with a static, only live or stored; the time only for stored", () => {
+    const st = { name: "X", updated_at: STORED_AT };
+    expect(parseShipDetail("440000077", { static: null, static_source: "stored", static_updated_at: STORED_AT }).static_source).toBeNull();
+    expect(parseShipDetail("440000077", { static: st, static_source: "none" }).static_source).toBeNull();
+    expect(parseShipDetail("440000077", { static: st, static_source: "guessed" }).static_source).toBeNull();
+    const live = parseShipDetail("440000077", { static: st, static_source: "live", static_updated_at: STORED_AT });
+    expect([live.static_source, live.static_updated_at]).toEqual(["live", null]);
+    expect(parseShipDetail("440000077", { static: st, static_source: "stored", static_updated_at: 5 }).static_updated_at).toBeNull();
+  });
+
+  it("staticProvenance: the source of the static the card shows (WS first, then REST) — never the other side's", () => {
+    const s = { mmsi: "440000077", updated_at: STORED_AT } as ShipStatic;
+    const rest = { static: s, static_source: "stored" as const, static_updated_at: STORED_AT };
+    expect(staticProvenance({ static: s, static_source: "live", static_updated_at: null }, rest)).toEqual({ source: "live", storedAt: null });
+    expect(staticProvenance({ static: null, static_source: "none" }, rest)).toEqual({ source: "stored", storedAt: STORED_AT });
+    expect(staticProvenance({ static: null, static_source: "stored_unavailable" }, null)).toEqual({ source: "stored_unavailable", storedAt: null });
+    expect(staticProvenance({ static: s }, null)).toEqual({ source: null, storedAt: null }); // 이전 서버 — 모름
+    expect(staticProvenance(null, { static: null, static_source: null, static_updated_at: null })).toEqual({ source: null, storedAt: null });
   });
 });
