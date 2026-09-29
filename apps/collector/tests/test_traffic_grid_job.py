@@ -14,7 +14,7 @@ import pytest
 from fakes import FakeRedis, RecordingDb, make_ctx
 
 from wakeline_collector import masking
-from wakeline_collector.budget import DEFAULT_STRICT
+from wakeline_collector.budget import DEFAULT_STRICT, day_key
 from wakeline_collector.http import FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs import traffic_grid as tg
 from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, SNAPSHOT_KEY, TrafficGridJob
@@ -391,7 +391,7 @@ async def test_restarts_cannot_exceed_the_hourly_cap_because_it_is_counted_in_re
         clock.advance(30)
     assert calls == tg.HOURLY_CAP
     assert r.kv["budget:komsa_traffic:h:2026092909"]["used"] == str(tg.HOURLY_CAP)
-    assert r.kv["budget:komsa_traffic:20260929"]["used"] == str(tg.HOURLY_CAP)  # 거절된 호출은 하루 예산을 쓰지 않는다
+    assert r.kv[day_key("komsa_traffic")]["used"] == str(tg.HOURLY_CAP)  # 거절된 호출은 하루 예산을 쓰지 않는다
     refused = [kw for _j, _p, kw in ctx.db.runs if kw["status"] == "budget_exhausted"]  # type: ignore[attr-defined]
     assert len(refused) == 3 and "hourly cap" in refused[0]["error_text"]
     assert job.schedule.next_due == datetime(2026, 9, 29, 10, 0, tzinfo=UTC)  # 다음 시가 시작할 때 다시 본다
@@ -401,12 +401,12 @@ async def test_a_call_not_sent_gives_back_both_the_day_and_the_hour():
     job, komsa, _w, r, _c, _db = setup(Throttled("apis.data.go.kr", "no slot"))
     await job.run_once()
     assert komsa.calls == 0
-    assert r.kv["budget:komsa_traffic:20260929"]["used"] == "0" and r.kv["budget:komsa_traffic:h:2026092909"]["used"] == "0"
+    assert r.kv[day_key("komsa_traffic")]["used"] == "0" and r.kv["budget:komsa_traffic:h:2026092909"]["used"] == "0"
 
 
 async def test_day_budget_refusal_gives_the_hour_back():
     job, komsa, _w, r, _c, db = setup(komsa_body(), limits={"komsa_traffic": 1, "mof_grid4": 6000})
-    r.kv["budget:komsa_traffic:20260929"] = {"used": "1", "limit": "1"}
+    r.kv[day_key("komsa_traffic")] = {"used": "1", "limit": "1"}
     await job.run_once()
     assert komsa.calls == 0 and statuses(db) == ["budget_exhausted"]
     assert r.kv["budget:komsa_traffic:h:2026092909"]["used"] == "0"
@@ -504,7 +504,7 @@ async def test_budget_store_down_fails_closed():
 async def test_throttled_or_switched_off_call_gives_the_budget_back():
     job, komsa, _w, r, _c, _db = setup(Throttled("apis.data.go.kr", "no slot"))
     await job.run_once()
-    assert komsa.calls == 0 and r.kv.get("budget:komsa_traffic:20260929", {}).get("used") == "0"
+    assert komsa.calls == 0 and r.kv.get(day_key("komsa_traffic"), {}).get("used") == "0"
 
 
 async def test_operator_switches_stop_each_part():
@@ -668,7 +668,7 @@ async def test_throttled_lookup_gives_the_budget_back_and_stops_the_tick():
     wfs = FakeWfs({g: Throttled("apis.data.go.kr", "no slot") for g in CELLS})
     job, _k, _w, r, _c, db = setup(wfs=wfs)
     await job.run_once()
-    assert wfs.asked == [] and r.kv["budget:mof_grid4:20260929"]["used"] == "0"
+    assert wfs.asked == [] and r.kv[day_key("mof_grid4")]["used"] == "0"
     assert statuses(db, "traffic_grid_geom") == []
 
 
@@ -733,7 +733,7 @@ async def test_cancelled_lookup_before_sending_gives_the_budget_back():
     t.cancel()
     with pytest.raises(asyncio.CancelledError):
         await t
-    assert r.kv["budget:mof_grid4:20260929"]["used"] == "0"
+    assert r.kv[day_key("mof_grid4")]["used"] == "0"
 
 
 def test_geometry_queue_is_bounded(monkeypatch):
