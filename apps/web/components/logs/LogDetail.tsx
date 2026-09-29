@@ -38,22 +38,31 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   const [relatedErr, setRelatedErr] = useState<unknown>(null);
   const [fpStats, setFpStats] = useState<{ g: LogGroup | null; scanTruncated: boolean | null } | null>(null);
   const [fpErr, setFpErr] = useState<unknown>(null);
+  /*
+   * 두 훑기(서버가 스트림을 최대 4,200 건 훑는다)는 그 값이 바뀔 때만 다시 한다 — 항목 객체가 바뀌었다고(해결 쓰기 뒤 낙관적 표시 · 다시 읽은 항목) 두 번 하지 않는다.
+   * resolvedId = 이 항목의 해결(없으면 null): 해결 · 되돌림으로 바뀌면 한 번 다시 읽는다(묶음 통계는 가림을 따르고, 같은 요청 id 항목의 "해결됨" 표시도 바뀔 수 있다).
+   */
+  const key = entryKey(entry);
+  const { request_id: rid, fp, service, level } = entry;
+  const resolvedId = entry.resolved?.id ?? null;
+  // 같은 요청 id 의 다른 항목 — 해결 여부와 무관하게 모두(resolved=show), 목록의 해결 표시를 따르지 않는다
   useEffect(() => {
+    if (!rid) return;
     let live = true;
-    const now = Date.now();
-    const failTo = (set: (e: unknown) => void) => (e: unknown) => { if (!live) return; set(e); if (isAuthMiss(e)) onAuthMiss(e); };
-    if (entry.request_id) {
-      apiGet<unknown>(logsUrl({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid: entry.request_id, resolved: "show" }, now, { limit: RELATED_LIMIT }))
-        .then((v) => { if (!live) return; const p = parseLogPage(v); setRelated({ items: p.items.filter((x) => entryKey(x) !== entryKey(entry)), more: p.nextCursor != null || p.scanTruncated === true }); })
-        .catch(failTo(setRelatedErr));
-    }
-    if (entry.fp) {
-      apiGet<unknown>(logGroupsUrl({ services: [entry.service], level: entry.level, period, resolved: resolvedMode }, now))
-        .then((v) => { if (!live) return; const g = parseLogGroups(v); setFpStats({ g: g.groups.find((x) => x.fp === entry.fp) ?? null, scanTruncated: g.scanTruncated }); })
-        .catch(failTo(setFpErr));
-    }
+    apiGet<unknown>(logsUrl({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid, resolved: "show" }, Date.now(), { limit: RELATED_LIMIT }))
+      .then((v) => { if (!live) return; const p = parseLogPage(v); setRelated({ items: p.items.filter((x) => entryKey(x) !== key), more: p.nextCursor != null || p.scanTruncated === true }); setRelatedErr(null); })
+      .catch((e: unknown) => { if (!live) return; setRelatedErr(e); if (isAuthMiss(e)) onAuthMiss(e); });
     return () => { live = false; };
-  }, [entry, period, resolvedMode, onAuthMiss]);
+  }, [key, rid, resolvedId, onAuthMiss]);
+  // 같은 지문 묶음 통계 — 목록의 해결 표시(resolvedMode)를 따른다
+  useEffect(() => {
+    if (!fp) return;
+    let live = true;
+    apiGet<unknown>(logGroupsUrl({ services: [service], level, period, resolved: resolvedMode }, Date.now()))
+      .then((v) => { if (!live) return; const g = parseLogGroups(v); setFpStats({ g: g.groups.find((x) => x.fp === fp) ?? null, scanTruncated: g.scanTruncated }); setFpErr(null); })
+      .catch((e: unknown) => { if (!live) return; setFpErr(e); if (isAuthMiss(e)) onAuthMiss(e); });
+    return () => { live = false; };
+  }, [fp, service, level, period, resolvedMode, resolvedId, onAuthMiss]);
   const upto = uptoOf(entry.ts);
   const res = entry.resolved;
   const resolveTarget = (fp: string, u: string): ResolveTarget => ({

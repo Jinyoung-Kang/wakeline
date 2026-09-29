@@ -510,3 +510,47 @@ describe("/logs: a write whose confirmation is gone before the answer still coun
     expect(byTestId("logs-note")!.textContent).toContain(`해결 처리됨: 묶음 ${FP}(해결 #21)`);
   });
 });
+
+describe("/logs entry detail: its two server scans run once per change", () => {
+  const RID = "abcdabcdabcdabcd";
+  const A2 = { ...A, request_id: RID };
+  /** 상세의 두 훑기: 같은 요청 id 항목(7 d) · 같은 지문 묶음 */
+  const scans = (from: number) => {
+    const after = calls.slice(from).filter((c) => c.method === "GET");
+    return { rid: after.filter((c) => c.url.startsWith("/api/v1/ops/logs?") && qs(c.url).get("rid") === RID).length, groups: after.filter((c) => c.url.startsWith("/api/v1/ops/logs/groups?")).length };
+  };
+  function routes() {
+    const s = { done: false };
+    stub(async (m, url, body) => {
+      if (m === "POST") { s.done = true; return created(body, 21); }
+      const a = { ...A2, resolved: s.done ? { id: 21, upto: TS_A, resolved_by: "op" } : null };
+      if (url.startsWith(`/api/v1/ops/logs/${A.id}`)) { await new Promise((r) => setTimeout(r, 10)); return { status: 200, body: a }; } // 다시 읽기는 낙관적 표시 뒤에 온다
+      if (url.startsWith("/api/v1/ops/logs/groups?")) return { status: 200, body: GROUPS([group(FP)]) };
+      if (url.startsWith("/api/v1/ops/logs?")) return { status: 200, body: qs(url).get("rid") ? PAGE([a]) : PAGE(s.done ? [B] : [a, B]) };
+      return undefined;
+    });
+    return s;
+  }
+  it("one resolve re-runs each scan once (the optimistic mark and the re-read entry are the same resolution)", async () => {
+    routes();
+    await open();
+    const opened = calls.length;
+    await click(allByTestId("log-row")[0]);
+    expect(scans(opened)).toEqual({ rid: 1, groups: 1 });
+    await click(button("해결 처리", byTestId("log-detail")!));
+    const before = calls.length;
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+    await settle(); await settle();
+    expect(byTestId("log-detail-resolve")!.textContent).toContain("해결됨");
+    expect(scans(before)).toEqual({ rid: 1, groups: 1 });
+  });
+  it("'해결된 항목 보기' re-runs only the fingerprint stats (they follow it), not the request-id scan (it always includes resolved entries)", async () => {
+    routes();
+    await open();
+    await click(allByTestId("log-row")[0]);
+    const before = calls.length;
+    await click(button("해결된 항목 보기"));
+    expect(byTestId("log-detail")).not.toBeNull();
+    expect(scans(before)).toEqual({ rid: 0, groups: 1 });
+  });
+});
