@@ -3,7 +3,8 @@
  * 보고로 채우고 stored 로 밝힌다(static_updated_at = 저장 행의 updated_at).
  * - 검증(lib/ws-validate): api 가 실제 빌더로 만든 표본(fixtures/ws-samples.v1.json — live · stored · none · stored_unavailable)을 모두 받는다.
  *   출처가 틀리거나 static 과 어긋나면 그 값만 모름(null)으로 두고 센다 — 저장값에 실시간 표시를, 없는 정적 정보에 출처를 붙이지 않는다.
- * - 카드(ShipCard): 보이는 정적 정보가 저장값이면 정적 필드 바로 위에 "저장된 AIS 정적 보고 · 이 내용 첫 수신 <KST · UTC> (경과)" — 실시간 값이 아님.
+ * - 카드(ShipCard): 보이는 정적 정보가 저장값이면 정적 필드 바로 위에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 <KST · UTC> (경과)" — 실시간 값이 아님.
+ *   시각은 저장 행의 updated_at 이고 그 내용의 첫 수신도 마지막 수신도 아니다(수집기 재시작 · 30분 무수신 뒤 같은 내용도 새 시각 — 수집기 test_ais_book).
  *   출처는 그 정적 정보를 준 쪽(WS → REST)의 것만. DB 를 읽지 못했으면 '없음' 이 아니라 '모름'. 실시간 값 · 정적 정보 없음에는 표시하지 않는다.
  */
 import { readFileSync } from "node:fs";
@@ -128,7 +129,7 @@ describe("ship card: a stored static report is labelled next to the static field
   beforeEach(() => resetData());
   afterEach(() => resetData());
 
-  it("stored: the note names the stored report and the time this content was first received (KST · UTC, age) — above the static rows", () => {
+  it("stored: the note names the stored report and the receive time recorded on the stored row (KST · UTC, age) — above the static rows", () => {
     const html = show(storedMsg());
     const t = text(html);
     expect(html).toContain('data-testid="ship-static-stored"');
@@ -145,9 +146,15 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(t).toContain("D7AG");
   });
 
-  it("the time is never called the last reception; without a readable time the note still says stored, with —", () => {
-    expect(STORED_STATIC_TIME_LABEL).not.toMatch(/마지막/);
-    expect(STORED_STATIC_TITLE).toMatch(/다시 받았을 수 있습니다/);
+  it("the time is called neither the first nor the last reception — the title says what rewrites it; without a readable time the note still says stored, with —", () => {
+    // ship.updated_at 은 수집기 메모리가 '바뀜' 으로 본 메시지의 수신 시각 — 수집기 재시작 · 30분 무수신(메모리에서 빠짐) 뒤 같은 내용도 새 시각이다
+    expect(STORED_STATIC_TIME_LABEL).not.toMatch(/첫|처음|마지막|최초/);
+    expect(STORED_STATIC_TIME_LABEL).toBe("DB 기록 수신 시각");
+    expect(STORED_STATIC_TITLE).toMatch(/첫 수신도 마지막 수신도 아닙니다/);
+    expect(STORED_STATIC_TITLE).toMatch(/내용이 바뀔 때/);
+    expect(STORED_STATIC_TITLE).toMatch(/수집기가 다시 시작/);
+    expect(STORED_STATIC_TITLE).toMatch(/30분 넘게/);
+    expect(STORED_STATIC_TITLE).not.toMatch(/첫 메시지|처음 받은/);
     const t = text(show(selected("ship_selected.static_stored", (m) => { m.static_updated_at = "later"; })));
     expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} —`);
   });

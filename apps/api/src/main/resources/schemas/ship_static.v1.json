@@ -22,7 +22,7 @@
     "eta_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 31, "description": "ETA 일. 0 = 값 없음 → null" },
     "eta_hour": { "type": ["integer", "null"], "minimum": 0, "maximum": 23, "description": "ETA 시(UTC). 24 = 값 없음 → null" },
     "eta_minute": { "type": ["integer", "null"], "minimum": 0, "maximum": 59, "description": "ETA 분. 60 = 값 없음 → null" },
-    "updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "이 MMSI 의 정적 정보 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(MetaData.time_utc). 내용이 같으면 30분에 한 번 다시 싣되 이 값은 그대로다" },
+    "updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "수집기 메모리(ShipBook)에서 이 MMSI 의 정적 정보 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(MetaData.time_utc). 내용이 같으면 30분에 한 번 다시 싣되 이 값은 그대로다. 수집기가 다시 시작했거나 선박이 메모리에서 빠졌다(30분 무수신 · 선박 수 상한) 다시 잡히면 같은 내용이어도 새 시각이다 — 그 내용의 첫 수신 시각이 아니다(계약 v5 §G17)" },
     "provider": { "enum": ["aisstream", "fixture"] }
   }
 }

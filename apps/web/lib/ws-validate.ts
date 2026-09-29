@@ -52,7 +52,7 @@ export interface ShipSelectedMsg {
   type: "ship_selected"; mmsi: string; state: ShipState | null; static: ShipStatic | null;
   /** 계약 v5 §G17 static 의 출처 — 모르거나 static 과 어긋나면 null */
   static_source: StaticSource | null;
-  /** static_source 가 stored 일 때만: 저장 행의 updated_at(이 내용이 담긴 첫 메시지의 수신 시각) */
+  /** static_source 가 stored 일 때만: 저장 행의 updated_at(DB 에 기록된 수신 시각 — 첫 수신도 마지막 수신도 아님, lib/ships STORED_STATIC_TIME_LABEL) */
   static_updated_at: string | null;
   destination_info: DestinationInfo | null; port_calls: PortCallsInfo | null;
 }

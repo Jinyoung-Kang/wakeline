@@ -109,6 +109,27 @@ def test_static_unchanged_is_republished_only_after_refresh_interval():
     assert statics[0]["updated_at"] == iso_ms(T0_EPOCH)  # 내용이 바뀐 시각 그대로
 
 
+def test_static_time_is_not_the_first_reception_after_eviction_or_restart():
+    """updated_at(= api 의 ship.updated_at · 계약 v5 §G17 static_updated_at)은 이 책(메모리)이 내용이 바뀌었다고 본 메시지의 수신 시각이다.
+    책은 재시작하면 비고, 30분(ttl_s 기본값 — ais/main.py 는 바꾸지 않는다) 넘게 갱신이 없는 선박을 지운다. 그 뒤 같은 내용을 다시 받으면
+    '바뀜' 으로 새 시각을 싣는다 — 그래서 저장된 시각은 그 내용의 첫 수신이 아니다(화면 글 'DB 기록 수신 시각')."""
+    assert ShipBook("aisstream").ttl_s == 1800.0
+    clock = Clock()
+    b = ShipBook("aisstream", mono=clock)
+    fields = {"name": "SYNTH SAME", "call_sign": "D7ZZ"}
+    assert b.apply_static(static(**fields), T0_EPOCH) == "changed"
+    assert [s["updated_at"] for s in b.drain()[1]] == [iso_ms(T0_EPOCH)]
+    # 30분 넘게 아무 메시지도 없다 → 책에서 빠진다 → 같은 내용을 40분 뒤 다시 받으면 새 시각
+    clock.t += 1801
+    assert b.evict() == 1
+    assert b.apply_static(static(t=T0_EPOCH + 2400, **fields), T0_EPOCH + 2400) == "changed"
+    assert [s["updated_at"] for s in b.drain()[1]] == [iso_ms(T0_EPOCH + 2400)]
+    # 수집기 재시작(새 책)도 같다
+    fresh = ShipBook("aisstream", mono=clock)
+    assert fresh.apply_static(static(t=T0_EPOCH + 7200, **fields), T0_EPOCH + 7200) == "changed"
+    assert [s["updated_at"] for s in fresh.drain()[1]] == [iso_ms(T0_EPOCH + 7200)]
+
+
 def test_mark_dirty_after_failed_publish():
     b = ShipBook("aisstream")
     b.apply_position(pos(mmsi="111111111"), T0_EPOCH)

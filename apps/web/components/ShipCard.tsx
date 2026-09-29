@@ -104,7 +104,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   // 위치·속도는 가장 새 관측, 등급·출처는 full 상태에서(지도 목록 사본 ShipLite 에는 없다)
   const s: ShipState | null = gone || !pos ? null : { ...pos, class: pos.class ?? full?.class ?? null, provider: pos.provider ?? full?.provider ?? null };
   const st: ShipStatic | null = live?.static ?? d?.static ?? null;
-  // 계약 v5 §G17: 보이는 정적 정보의 출처 — 저장값(stored)이면 정적 필드 위에 밝힌다(실시간 값이 아님 · 이 내용 첫 수신 시각)
+  // 계약 v5 §G17: 보이는 정적 정보의 출처 — 저장값(stored)이면 정적 필드 위에 밝힌다(실시간 값이 아님 · DB 기록 수신 시각)
   const prov = staticProvenance(live, d);
   const storedAge = prov.source === "stored" ? ageS(prov.storedAt, now) : null;
   const age = shipAgeS(s?.seen_at, now);

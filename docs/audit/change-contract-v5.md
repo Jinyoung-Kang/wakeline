@@ -357,9 +357,13 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     (찾음 · 없음 60 s, 읽기 실패 15 s — 한 선택을 되풀이해 다시 계산해도 DB 는 이 간격에 한 번) · 예외를 던지지 않는다. 지표
     `wakeline_cache_requests_total{cache="stored_static"}` · `wakeline_stored_static_errors_total`. 저장값은 ShipStore 에 넣지 않는다(지도 목록 ShipLite · 검색의
     실시간 일치는 그대로). 입출항은 그 호출부호로 찾는다(`PortCallReader.forStatic`).
-  - 시각 열: `ship.updated_at` = 정적 정보 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(= 지금 내용이 담긴 첫 메시지 — `static.updated_at` 과 같다).
-    같은 내용의 재수신은 저장하지 않으므로(ShipWriter) 정적 보고의 마지막 수신 시각을 적은 열은 없고, `ship.last_seen` 은 위치 보고로도 넓혀진다 — 그래서
-    이름은 `static_updated_at`, 화면 글은 '이 내용 첫 수신' 이다('마지막 수신' 이라 하지 않는다). 마이그레이션 없음.
+  - 시각 열: `ship.updated_at` = 지금 저장된 내용을 DB 에 쓴 정적 메시지의 aisstream 수신 시각(`static.updated_at` 과 같다 — DB 에 기록된 수신 시각).
+    수집기(`ShipBook`)는 메모리의 정적 정보가 바뀐 메시지의 시각을 싣는데, 그 메모리는 수집기가 다시 시작하면 비고 30분 넘게 수신이 없거나(ttl_s 기본 1800 —
+    `ais/main.py` 는 바꾸지 않는다) 선박 수 상한에 밀린 선박을 지운다 — 그 뒤 같은 내용을 다시 받으면 '바뀜' 으로 새 시각을 싣고 api 가 그 시각으로 행을 덮는다
+    (수집기 `test_ais_book.py::test_static_time_is_not_the_first_reception_after_eviction_or_restart`). 그 밖의 같은 내용 재수신은 저장하지 않으므로(ShipWriter)
+    이 값은 지금 내용의 첫 수신도 마지막 수신도 아니고, `ship.last_seen` 은 위치 보고로도 넓혀진다. 그래서 이름은 `static_updated_at`, 화면 글은
+    'DB 기록 수신 시각' 이고 카드 설명(title) · 설명서 2.6 이 언제 새로 기록되는지와 '첫 수신도 마지막 수신도 아님' 을 적는다. 마이그레이션 없음.
+    (리뷰 뒤 고침: 처음 화면 글 '이 내용 첫 수신' 은 수집기 재시작 · 메모리 제거를 빠뜨린 추정이었다.)
   - WS `ship_selected`(`schemas/ws/server.v1.json` — 두 키는 늘 있다): `static_source` = `live`(메모리) · `stored`(DB 의 마지막 저장 정적 보고) · `none`(둘 다 없음) ·
     `stored_unavailable`(메모리에 없고 DB 를 읽지 못함 — 저장돼 있는지 모름) · null(읽는 쪽이 없는 구성 — 시험뿐). `static_updated_at` = stored 일 때만 저장 행의
     updated_at, 그 밖에는 null. static 과의 관계는 스키마 anyOf(live · stored → static 있음, 그 밖 → static null), 시각이 `static.updated_at` 과 같은지는 api 시험 ·
@@ -368,5 +372,5 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - REST `/ships/{mmsi}`: `static_source`(live · stored — static 이 있을 때만) · `static_updated_at`(stored 일 때만, 같은 뜻). `tools/rest_contract_check.py` 가
     있음 규칙과 같은 순간인지 본다(표본 `ship_detail` = live, `ship_detail_stored` = stored).
   - 웹: 검증기는 틀리거나 static 과 어긋난 출처 · 시각을 모름(null)으로 두고 센다. 선박 카드는 보이는 정적 정보가 저장값이면(WS → REST 순 — 그 정적 정보를
-    준 쪽의 출처만) 정적 필드 바로 위에 "저장된 AIS 정적 보고 · 이 내용 첫 수신 <KST · UTC> (경과)" · "실시간 값이 아님", DB 를 읽지 못했으면 '모름' 을 적는다.
+    준 쪽의 출처만) 정적 필드 바로 위에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 <KST · UTC> (경과)" · "실시간 값이 아님", DB 를 읽지 못했으면 '모름' 을 적는다.
     설명서 2.6 이 한 문장으로 적는다.

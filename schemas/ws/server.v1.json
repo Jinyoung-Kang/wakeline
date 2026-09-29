@@ -769,7 +769,7 @@
       }
     },
     "ship_selected": {
-      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022 · 계약 v5 §G17): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). static_source 는 static 의 출처 — live(api 메모리: 선박 스트림) · stored(메모리에 없어 DB ship 표의 마지막 저장 정적 보고를 실었다 — 메모리에 넣지 않는다) · none(메모리에도 DB 에도 없다) · stored_unavailable(메모리에 없고 DB 를 읽지 못했다 — 저장돼 있는지 모름). null 은 저장 정적 보고를 읽는 쪽이 없는 구성(시험)에서 메모리에 없을 때뿐. static_updated_at 은 stored 일 때만: 저장 행의 updated_at = 이 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(static.updated_at 과 같다 — 같은 내용의 재수신은 저장하지 않으므로 마지막 수신 시각이 아니다). 세 키 사이의 규칙은 아래 anyOf(같은 값인지는 api 시험 · contract_check 가 본다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 입출항 색인에서 찾은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐) — stored 이면 저장된 호출부호로 찾는다.",
+      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022 · 계약 v5 §G17): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). static_source 는 static 의 출처 — live(api 메모리: 선박 스트림) · stored(메모리에 없어 DB ship 표의 마지막 저장 정적 보고를 실었다 — 메모리에 넣지 않는다) · none(메모리에도 DB 에도 없다) · stored_unavailable(메모리에 없고 DB 를 읽지 못했다 — 저장돼 있는지 모름). null 은 저장 정적 보고를 읽는 쪽이 없는 구성(시험)에서 메모리에 없을 때뿐. static_updated_at 은 stored 일 때만: 저장 행의 updated_at = DB 에 기록된 수신 시각(static.updated_at 과 같다) — 내용이 바뀔 때와 수집기 재시작 · 선박이 수집기 메모리에서 빠졌다(30분 무수신 · 상한) 다시 잡힐 때 새로 기록되고 그 밖의 같은 내용 재수신은 저장하지 않으므로 첫 수신도 마지막 수신도 아니다. 세 키 사이의 규칙은 아래 anyOf(같은 값인지는 api 시험 · contract_check 가 본다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 입출항 색인에서 찾은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐) — stored 이면 저장된 호출부호로 찾는다.",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "mmsi", "state", "static", "static_source", "static_updated_at", "destination_info", "port_calls"],
