@@ -1,0 +1,116 @@
+/**
+ * 항공기 카드 노선의 "노선 조회 중"이 진행 중으로 읽히게(사용자 요청 2026-09-29).
+ * - 조회 중: role=status(한 번만 읽힘) · 구역 aria-busy · 작은 회전 표시(움직임 줄이기 설정이면 멈춤) · 출발/도착 자리 표시 줄(skeleton) · 경과 초(시각만, 읽지 않음).
+ * - 보통 경로보다 오래 걸리면(수집기 집중 추적 주기 5 s + api 노선 메모리 캐시 5 s = 10 s) "평소보다 오래 걸림"을 한 번 더 알린다.
+ *   이 수들은 서버 코드의 값을 읽어 확인한다(짐작한 값이 아니다). 상한은 말하지 않는다 — 수집기의 조회 대기열(동시 2개)은 기다림에 상한이 없다.
+ * - 실패 · 없음 · 꺼짐 문구는 그대로(계약 v4 §A).
+ * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
+ */
+import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterAll, describe, expect, it } from "vitest";
+import { RouteSection } from "@/components/AircraftCard";
+import { parseRoute, ROUTE_NORMAL_PATH_S, ROUTE_SLOW_AFTER_S, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, routePendingPhase, type RouteInfo } from "@/lib/route";
+import { byTestId, classes, findAll, parseHtml, textOf } from "./helpers/html-tree";
+import { installMiniDom } from "./helpers/mini-dom";
+
+const PENDING = parseRoute({ status: "pending", callsign: "KAL081", source: "adsbdb" })!;
+const render = (route: RouteInfo | null, pendingForS: number | null = null) =>
+  parseHtml(renderToStaticMarkup(createElement(RouteSection, { route, pos: null, callsign: "KAL081", pendingForS })));
+
+describe("pending route lookup reads as in progress", () => {
+  it("status line: role=status with the contract text, a motion indicator hidden from screen readers, the section is aria-busy", () => {
+    const root = render(PENDING, 3);
+    const section = byTestId(root, "route-section")!;
+    expect(section.attrs["aria-busy"]).toBe("true");
+    const st = byTestId(root, "route-status")!;
+    expect(st.attrs.role).toBe("status");
+    expect(textOf(st)).toContain(ROUTE_STATUS_TEXT.pending);
+    const spin = findAll(st, (n) => classes(n).has("busy-spinner"));
+    expect(spin).toHaveLength(1);
+    expect(spin[0].attrs["aria-hidden"]).toBe("true");
+  });
+  it("placeholder rows for 출발 / 도착 (skeleton, hidden from screen readers) — no airport values are shown", () => {
+    const root = render(PENDING, 3);
+    const sk = byTestId(root, "route-skeleton")!;
+    expect(sk.attrs["aria-hidden"]).toBe("true");
+    expect(textOf(sk)).toContain("출발");
+    expect(textOf(sk)).toContain("도착");
+    expect(findAll(sk, (n) => classes(n).has("skeleton")).length).toBe(2);
+    expect(textOf(root)).not.toContain("계산값");
+  });
+  it("elapsed seconds are shown but not announced (outside the live region); unknown elapsed shows nothing, not 0", () => {
+    const el = byTestId(render(PENDING, 4.4), "route-elapsed")!;
+    expect(textOf(el)).toBe("4 s");
+    expect(el.attrs["aria-hidden"]).toBe("true");
+    expect(byTestId(render(PENDING, 4.4), "route-status")!.children.some((c) => c === el)).toBe(false);
+    expect(byTestId(render(PENDING, null), "route-elapsed")).toBeNull();
+  });
+  it(`after ${ROUTE_SLOW_AFTER_S} s the live text says it is taking longer than usual (once), with the reason in the title`, () => {
+    expect(routePendingPhase(null)).toBe("normal");
+    expect(routePendingPhase(ROUTE_SLOW_AFTER_S - 0.1)).toBe("normal");
+    expect(routePendingPhase(ROUTE_SLOW_AFTER_S)).toBe("slow");
+    const early = byTestId(render(PENDING, ROUTE_SLOW_AFTER_S - 1), "route-status")!;
+    expect(textOf(early)).not.toContain(ROUTE_SLOW_TEXT);
+    const slow = byTestId(render(PENDING, ROUTE_SLOW_AFTER_S + 2), "route-status")!;
+    expect(textOf(slow)).toContain(ROUTE_SLOW_TEXT);
+    expect(slow.attrs["data-phase"]).toBe("slow");
+    expect(slow.attrs.title).toContain("5 s");
+    expect(slow.attrs.title).toContain("노선 조회 실패");
+    expect(ROUTE_SLOW_TEXT).toContain(`${ROUTE_NORMAL_PATH_S} s`);
+  });
+  it("other statuses keep their wording, with no spinner, no skeleton and no aria-busy", () => {
+    for (const status of ["not_found", "no_callsign", "unavailable", "disabled"] as const) {
+      const root = render(parseRoute({ status, callsign: status === "no_callsign" ? null : "KAL081", source: "adsbdb" }), 30);
+      expect(textOf(byTestId(root, "route-status")!), status).toContain(ROUTE_STATUS_TEXT[status]);
+      expect(byTestId(root, "route-section")!.attrs["aria-busy"], status).toBeUndefined();
+      expect(byTestId(root, "route-skeleton"), status).toBeNull();
+      expect(findAll(root, (n) => classes(n).has("busy-spinner")), status).toEqual([]);
+    }
+  });
+  it("motion respects prefers-reduced-motion (spinner and skeleton stop)", () => {
+    const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+    const block = /@media \(prefers-reduced-motion: reduce\)\s*\{([^}]*\}[^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(block).toMatch(/\.busy-spinner/);
+    expect(block).toMatch(/\.skeleton/);
+    expect(block).toMatch(/animation:\s*none/);
+  });
+});
+
+describe("the 10 s threshold comes from the server's route path (read from the code, not guessed)", () => {
+  const repo = new URL("../../../", import.meta.url);
+  const src = (p: string) => readFileSync(new URL(p, repo), "utf8");
+  it("collector focus cycle 5 s + api route memory cache 5 s", () => {
+    const focus = Number(/^FOCUS_INTERVAL_S = (\d+(?:\.\d+)?)/m.exec(src("apps/collector/wakeline_collector/jobs/demand.py"))![1]);
+    const apiCacheMs = Number(/TTL_MS = ([\d_]+);/.exec(src("apps/api/src/main/java/dev/wakeline/route/RouteReader.java"))![1].replace(/_/g, ""));
+    expect(ROUTE_NORMAL_PATH_S).toBe(focus + apiCacheMs / 1000);
+    expect(ROUTE_SLOW_AFTER_S).toBe(ROUTE_NORMAL_PATH_S);
+  });
+});
+
+describe("the card tracks how long it has seen 'pending' for this aircraft and callsign", () => {
+  const dom = installMiniDom();
+  afterAll(() => dom.restore());
+  it("starts at the first pending render, resets when the callsign changes or the lookup ends", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { useElapsedSince } = await import("@/lib/clock");
+    const seen: (number | null)[] = [];
+    function Probe({ k, now }: { k: string | null; now: number }) { seen.push(useElapsedSince(k, now)); return null; }
+    const root = createRoot(dom.container as never);
+    const at = async (k: string | null, now: number) => { await React.act(async () => { root.render(React.createElement(Probe, { k, now })); }); return seen.at(-1); };
+    expect(await at("a|KAL081", 0)).toBeNull(); // 시계를 아직 모름
+    expect(await at("a|KAL081", 10_000)).toBe(0);
+    expect(await at("a|KAL081", 14_500)).toBe(4.5);
+    expect(await at("a|KAL082", 15_000)).toBe(0); // 콜사인이 바뀌면 새로
+    expect(await at(null, 16_000)).toBeNull(); // 끝남
+    expect(await at("a|KAL082", 20_000)).toBe(0); // 다시 조회 중이면 그때부터
+    await React.act(async () => { root.unmount(); });
+  });
+  it("the aircraft card passes it to the route section", () => {
+    const card = readFileSync(new URL("../components/AircraftCard.tsx", import.meta.url), "utf8");
+    expect(card).toMatch(/useElapsedSince\(/);
+    expect(card).toMatch(/<RouteSection [^>]*pendingForS=\{/);
+  });
+});

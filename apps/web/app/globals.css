@@ -88,3 +88,14 @@ td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-alig
 .flash { animation: flash 1.2s ease-out; }
 /* 추정 값(글자) — 보라 + 점선 밑줄. 배지(.badge.est)의 점선 테두리와 같은 "추정" 표기(DH-15) */
 .est-val { color: var(--color-est); text-decoration: underline dashed; text-decoration-color: #5a3f8c; text-underline-offset: 2px; }
+/*
+  진행 중 표시(노선 조회 등): 작은 회전 사각형(모서리 없음 규칙 그대로) · 자리 표시 줄(skeleton — 값이 올 자리, 값처럼 보이지 않게 무늬 없는 막대).
+  움직임을 줄이라는 설정(prefers-reduced-motion)이면 멈춘 모양 그대로 둔다 — 글자("노선 조회 중")가 상태를 말한다.
+*/
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+@keyframes busy-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.busy-spinner { display: inline-block; width: 9px; height: 9px; flex-shrink: 0; border: 1.5px solid var(--color-line-2); border-top-color: var(--color-accent); animation: busy-spin 0.9s linear infinite; }
+.skeleton { display: inline-block; background: var(--color-bg-2); border: 1px solid var(--color-line); animation: busy-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .busy-spinner, .skeleton { animation: none; }
+}
