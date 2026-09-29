@@ -414,8 +414,6 @@ public class DemandService implements SmartLifecycle {
         return w;
     }
 
-    int portCallIpWindowCount() { return portCallIpWindows.size(); }
-
     /** 세션 하나의 수요(계약 v2 §A1). */
     static Want want(WsSession s, RegionSettings.Region reg, long nowMs) {
         String hex = s.selectedHex;
