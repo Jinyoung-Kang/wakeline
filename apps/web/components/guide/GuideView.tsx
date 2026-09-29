@@ -13,9 +13,11 @@ import {
 } from "@/lib/portcalls";
 import { LEGEND_OPEN_MIN_WIDTH } from "@/lib/prefs";
 import { REPLAY_FULL_RES_MS, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, REPLAY_SUMMARY_MS } from "@/lib/replay";
-import { ROUTE_CAVEAT, ROUTE_STATUS_TEXT, ROUTE_TITLE } from "@/lib/route";
+import { ROUTE_CAVEAT, ROUTE_SLOW_AFTER_S, ROUTE_STATUS_TEXT, ROUTE_TITLE } from "@/lib/route";
+import { BUSY_APPEAR_DELAY_MS } from "@/lib/busy";
+import { HEALTH_MARK, RADAR_STALE_S, SIGMET_STALE_S } from "@/lib/statusbar";
 import {
-  SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
+  AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
 import { STATS_RUN_KST } from "@/lib/stats";
@@ -223,7 +225,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               {fig("aircraft")}
               <UL>
                 <li><B>값</B> — 호출부호 · ICAO24 · 등록번호 · 기종 · 고도(ft · m) · 지상속도(kt · km/h) · 방위 · 수직속도 · squawk · 출처 · 관측/수신 시각 · 품질 · 10분 예측 여부. 모르는 값은 —. 비상 squawk(7500 · 7600 · 7700)는 빨간 EMERGENCY.</li>
-                <li><B>{ROUTE_TITLE}</B> — {ROUTE_CAVEAT}. 판단 근거로 마지막 관측 위치와 노선 대권 경로 사이 거리를 <B>계산값</B>으로 함께 보입니다. 상태는 그대로 적습니다: {Object.values(ROUTE_STATUS_TEXT).map((s, i) => <span key={s}>{i ? " · " : ""}‘{s}’</span>)}.</li>
+                <li><B>{ROUTE_TITLE}</B> — {ROUTE_CAVEAT}. 판단 근거로 마지막 관측 위치와 노선 대권 경로 사이 거리를 <B>계산값</B>으로 함께 보입니다. 상태는 그대로 적습니다: {Object.values(ROUTE_STATUS_TEXT).map((s, i) => <span key={s}>{i ? " · " : ""}‘{s}’</span>)}.
+                  ‘노선 조회 중’ 동안은 글자 아래 가는 진행 막대(몇 % 인지 말하지 않음)와 출발 · 도착 자리 표시가 보이고, 경과 초를 셉니다 — {BUSY_APPEAR_DELAY_MS / 1000} s 안에 끝나는 조회는 진행 표시가 나타나지 않습니다(번쩍이지 않게 고른 값).
+                  {ROUTE_SLOW_AFTER_S} s 를 넘으면 ‘보통 경로 계산값보다 오래 걸림’을 덧붙입니다. 움직임 줄이기 설정이면 막대가 움직이지 않습니다.</li>
                 <li><B>집중 추적</B> — 항공기를 고르면 서버 수집기가 그 항공기만 따로 조회합니다{ref("aircraft", 2)}. 고르지 않고 확대하면 화면 중심 주변을 따로 조회합니다(핫 리전). 칩에는 서버가 보고한 상태 · 주기만 쓰고, 호출 상한 때문에 늦어지면 그렇다고 적습니다. 창을 닫으면 최대 60초 안에 멈추고, 한 세션의 연속 집중 추적은 30분까지입니다.</li>
                 <li><B>항적 · 예측</B> — 항적은 DB 기록(최근 2 h)에 실시간 관측을 이은 선, 점선 궤적은 서버가 예측할 수 있다고 판단할 때만 그리는 10분 추정입니다. 예측하지 않으면 카드에 이유(선회 중 · 저속 · 지상 · 속도/방위 없음 · 수신 지연)를 적습니다.</li>
               </UL>
@@ -297,18 +301,20 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               ]} />
             </Sec>
             <Sec id="dashboard-status" sub>
-              <P>상태 바{ref("dashboard", 1)}는 가로로 스크롤될 수 있습니다. 경고 배지는 앞쪽에 옵니다. 아래 ‘모양’의 N 과 한글 낱말은 자리 표시입니다(실제 값이 들어갑니다).</P>
+              <P>상태 바{ref("dashboard", 1)}는 한 줄입니다(가로로 스크롤되지 않습니다). 왼쪽부터 연결 → 경고 → 피드마다 칩 하나 → 오른쪽 끝 ‘상세’ 단추.
+                칩은 이름 · 상태 모양 · 핵심 수 하나(lag = 서버가 보고한 피드 지연, age = 마지막 수집 뒤 경과)입니다. 상태는 색과 함께 모양으로도 말합니다 —
+                {HEALTH_MARK.ok} 정상 · {HEALTH_MARK.warn} 주의 · {HEALTH_MARK.bad} 경고 · {HEALTH_MARK.unknown} 모름 — 정상이 아니면 STALE · 끊김 같은 낱말이 붙습니다.
+                창이 좁아 다 들어가지 않으면 정상 · 모름 칩만 뒤에서부터 상세로 옮기고 단추에 ‘+N’ 을 적습니다(주의 · 경고 칩은 줄에서 빼지 않습니다).
+                아래 ‘모양’의 N 과 한글 낱말은 자리 표시입니다(실제 값이 들어갑니다). 시각은 KST 입니다.</P>
               <Table label="상태 바 항목" head={["항목", "모양", "뜻"]} rows={[
-                ["연결", <span key="c" className="mono">WS open · WS connecting · retry N</span>, <>실시간 연결 상태. 열려 있어도 {RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 ‘수신 없음’, {RX_DEAD_MS / 1000} s 가 되면 다시 연결합니다.</>],
+                ["연결", <span key="c" className="mono">WS open · WS paused · 탭 숨김 · WS connecting · retry N</span>, <>실시간 연결 상태. 열려 있어도 {RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 ‘수신 없음’, {RX_DEAD_MS / 1000} s 가 되면 다시 연결합니다. ‘paused · 탭 숨김’ 은 탭이 숨겨져 서버에 일시정지를 보낸 상태 — 그동안 화면 값은 멈추고, 탭이 보이면 처음 값부터 다시 받습니다.</>],
+                ["경고", <span key="b" className="mono">FIXTURE MODE · 형식 오류 · AIS 공백 진행 중 N</span>, "따로 붙는 경고(줄 앞쪽). 형식 오류 배지는 눌러서 무엇을 버렸는지 · 어떻게 다시 받는지 봅니다. AIS 공백은 진행 중인 길이를 셉니다."],
                 ["항공기 수", <span key="a" className="mono">aircraft N</span>, "지금 지도 영역 안의 항공기 수(STALE 포함). 레이어가 꺼져 있거나 아직 받지 않았으면 —."],
-                ["지역 피드", <span key="r" className="mono">region 공급자 · 수집 시각 · lag Ns</span>, <>공급자 · 수집 시각 · 서버가 보고한 지연. {REGION_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA.</>],
-                ["전세계 피드", <span key="w" className="mono">world 공급자 · lag Ns</span>, <>전세계 스냅샷. {GLOBAL_STALE_S} s 를 넘으면 STALE.</>],
-                ["AIS", <span key="s" className="mono">AIS …</span>, "선박 스트림 연결 · 초당 메시지 · 지연. 구역이 여럿이면 일부만 끊겨도 ‘AIS 공백 n/m 구역’으로 따로 알립니다."],
-                ["SIGMET", <span key="g" className="mono">sigmet 공급자 · N active · 경과</span>, "유효 SIGMET 수와 마지막 수집 뒤 경과."],
-                ["레이더", <span key="d" className="mono">radar N frames · 경과 · KMA Nf 최신 tm · 합성 N/M곳</span>, "RainViewer 프레임 수와 경과, 기상청 프레임 수 · 최신 tm · 합성 크기."],
-                ["엔진", <span key="e" className="mono">engine N polys · cycle N ms</span>, "판정 엔진이 보는 SIGMET 폴리곤 수와 마지막 주기 시간."],
-                ["판", <span key="v" className="mono">vN</span>, "받은 스냅샷의 판 번호."],
-                ["경고 배지", <span key="b" className="mono">KMA STALE · KMA 일부 합성 · FIXTURE MODE · 형식 오류</span>, "따로 붙는 경고. 형식 오류 배지는 눌러서 무엇을 버렸는지 · 어떻게 다시 받는지 봅니다."],
+                ["지역 · 전세계", <span key="r" className="mono">region {HEALTH_MARK.ok} lag Ns · world {HEALTH_MARK.ok} lag Ns</span>, <>서버가 보고한 지연. 지역 {REGION_STALE_S} s · 전세계 {GLOBAL_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA. 공급자 · 수집 시각은 상세.</>],
+                ["AIS", <span key="s" className="mono">AIS {HEALTH_MARK.ok} lag Ns · AIS {HEALTH_MARK.bad} 끊김 · 끊김 n/m 구역</span>, <>선박 스트림 연결과 지연({AIS_LAG_WARN_S} s 를 넘으면 주의). 초당 메시지는 상세.</>],
+                ["AIS 공백", <span key="p" className="mono">AIS 공백 N s · HH:MM KST 끝남</span>, <>끝난 공백은 길이와 끝난 시각 — 끝난 뒤 {AIS_GAP_SHOW_MS / 60_000}분까지 줄에, 그 뒤로는 상세에만. 1분이 안 되는 공백도 초로 적습니다.</>],
+                ["SIGMET · 레이더", <span key="g" className="mono">sigmet {HEALTH_MARK.ok} age Ns · radar {HEALTH_MARK.ok} age Ns · KMA {HEALTH_MARK.ok} age Nm</span>, <>마지막 수집 뒤 경과. SIGMET {SIGMET_STALE_S} s · RainViewer {RADAR_STALE_S} s(서버 기준과 같음) · 기상청 {KR_RADAR_STALE_S / 60}분을 넘으면 STALE. 기상청은 최신 프레임이 일부 합성이면 ‘일부 합성’.</>],
+                ["상세", <span key="d" className="mono">상세 +N ▾</span>, "눌러서(또는 Enter · Space) 표를 엽니다: 항목마다 상태 · 값 · 출처와 수집 시각 · 기준 — 공급자 · 초당 메시지 · 유효 SIGMET 수 · 레이더 프레임 수 · 기상청 최신 tm · 합성 N/M곳 · 엔진(폴리곤 수 · 주기) · 스냅샷 판 · 마지막 AIS 공백. Esc · 바깥 누르기 · 닫기로 닫습니다."],
               ]} />
             </Sec>
           </Sec>

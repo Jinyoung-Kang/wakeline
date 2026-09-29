@@ -9,7 +9,7 @@
       "title": "상황판 — 한 화면의 구성",
       "alt": "상황판 전체 화면: 위쪽 상태 바와 통합 검색, 가운데 한반도 지도 위의 항공기·레이더·SIGMET, 지도 오른쪽 위 레이어 단추와 펼친 범례, 오른쪽 알림 패널, 아래쪽 레이더 타임라인과 출처 줄",
       "callouts": [
-        { "n": 1, "label": "상태 바", "text": "연결(WS) · 피드별 출처와 지연 · SIGMET · 레이더 상태. 경고 배지는 줄 앞쪽에 옵니다(2.10).", "target": "[data-testid=\"statusbar\"]", "anchor": "l" },
+        { "n": 1, "label": "상태 바", "text": "연결(WS) · 경고 · 피드마다 칩(상태 모양 · 지연 또는 경과). 출처 · 수집 시각 · 기준은 오른쪽 끝 ‘상세’ 표(2.10).", "target": "[data-testid=\"statusbar\"]", "anchor": "l" },
         { "n": 2, "label": "통합 검색", "text": "항공기와 선박을 한 입력에서 찾습니다. / 키로 바로 입력(2.4).", "target": "[data-testid=\"aircraft-search\"]", "anchor": "l" },
         { "n": 3, "label": "확대 · 축소", "text": "지도 확대·축소 단추. 휠 · 핀치 · 키보드(= / -)로도 됩니다(2.2).", "target": ".maplibregl-ctrl-zoom-in", "anchor": "r" },
         { "n": 4, "label": "지도 상태 칩", "text": "지금 지도가 선박을 어떻게 그리는지(개별 · 격자 · 0척의 이유)와 집중 추적 상태 — 서버가 보고한 값만.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" },
