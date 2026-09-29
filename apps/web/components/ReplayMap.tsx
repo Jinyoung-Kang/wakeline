@@ -5,6 +5,7 @@ import { subscriptionBbox } from "@/lib/viewport";
 import { addBaseLayers, MAPLIBRE_WORKER_URL, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
 import { applyBasemap } from "@/lib/basemap";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
+import { mapAttributionControl } from "@/lib/map-attribution";
 import { renderTip } from "@/lib/tooltip";
 import { fmtReplayBbox, replayAircraftTip, replayQueryBbox, replaySigmetTip, type ReplayAircraft, type ReplayFrame } from "@/lib/replay";
 
@@ -74,7 +75,7 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
       map.addSource("replay-query", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "replay-query", type: "line", source: "replay-query", paint: { "line-color": "#f2b33d", "line-width": 1.5, "line-dasharray": [3, 2] } });
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
-      map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ extra: "Replay: 로컬 PostGIS 기록", includeMap: !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
+      map.addControl(mapAttributionControl(maplibregl, mapAttributionHtml({ extra: "Replay: 로컬 PostGIS 기록", includeMap: !styleHasBasemapCredit(styleCredits) })), "bottom-right");
       emit();
       map.on("mousemove", (e: maplibregl.MapMouseEvent) => { last = e; if (!raf) raf = requestAnimationFrame(hover); });
       map.on("mouseout", () => { popup.remove(); last = null; });

@@ -165,6 +165,17 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(cls).toEqual(expect.arrayContaining(["absolute", "top-20", "left-3", "max-w-[50%]"]));
   });
 
+  it("the map credit is MapLibre's compact attribution (ⓘ) with every data source, added once on load (user request 2026-09-29)", async () => {
+    const { CompactAttribution } = await import("@/lib/map-attribution");
+    const map = await mount();
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    const ctl = map.controls.filter((c) => c instanceof CompactAttribution);
+    expect(ctl).toHaveLength(1);
+    const inner = (ctl[0] as unknown as { inner: { opts: { compact: boolean; customAttribution: string } } }).inner;
+    expect(inner.opts.compact).toBe(true);
+    for (const s of ["adsb.lol", "OpenSky Network", "aisstream.io", "AviationWeather.gov", "RainViewer", "기상청 API허브"]) expect(inner.opts.customAttribution).toContain(s);
+  });
+
   it("tile/source errors after the style loaded do not replace the style", async () => {
     const map = await mount();
     await act(() => { map.fire("style.load"); map.fire("load"); });

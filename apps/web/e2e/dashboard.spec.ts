@@ -14,10 +14,20 @@ test("dashboard loads with attribution, lag badge and aircraft", async ({ page }
   for (const src of SOURCES) await expect(attribution).toContainText(src);
   expect(await attribution.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await expect(page.getByTestId("conn")).toContainText("open", { timeout: 20_000 });
-  // 지도 위 크레딧에도 데이터 출처 전부(OpenSky·기상청 포함)
+  // 지도 위 크레딧(compact ⓘ — 사용자 요청 2026-09-29): 이 창(1400 px)의 지도(1020 px)에서는 접힌 채로 시작하고, ⓘ 를 누르면 데이터 출처 전부(OpenSky·기상청 포함)
   const mapCredit = page.locator(".maplibregl-ctrl-attrib");
   await expect(mapCredit).toBeInViewport({ timeout: 20_000 });
+  await expect(mapCredit).not.toHaveAttribute("open", "");
+  const creditToggle = mapCredit.locator("summary");
+  await expect(creditToggle).toHaveAttribute("aria-label", /SOURCES/);
+  await creditToggle.click();
+  await expect(mapCredit).toHaveAttribute("open", "");
   for (const src of ["adsb.lol", "ODbL", "adsb.fi", "OpenSky Network", "aisstream.io", "AviationWeather.gov", "RainViewer", "기상청 API허브", "OpenStreetMap"]) await expect(mapCredit).toContainText(src);
+  await expect(mapCredit.locator(".maplibregl-ctrl-attrib-inner")).toBeVisible();
+  // 펼친 상자 안의 링크도 Tab 순서 밖(R-30 — MapLibre 정화가 지운 tabindex 를 그린 뒤에 다시 건다)
+  expect(await mapCredit.locator("a:not([tabindex='-1'])").count()).toBe(0);
+  await creditToggle.click();
+  await expect(mapCredit).not.toHaveAttribute("open", "");
   await expect(page.getByTestId("fixture-badge")).toBeVisible({ timeout: 20_000 });
   // 배지만이 아니라 실제 수집 출처가 fixture 인지(외부 호출 없음) 확인
   await expect(page.getByTestId("statusbar")).toContainText("fixture", { timeout: 20_000 });

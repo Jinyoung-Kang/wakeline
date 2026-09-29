@@ -20,6 +20,7 @@ import { WakelineWsClient } from "@/lib/ws";
 import { apiGet } from "@/lib/api";
 import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
+import { mapAttributionControl } from "@/lib/map-attribution";
 import { isMetarStale } from "@/lib/format";
 import { krLayerId } from "@/lib/kr-radar";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
@@ -364,7 +365,8 @@ export function MapView() {
       // 출처(FR-20): 스타일이 배경지도 크레딧을 이미 붙였으면 중복하지 않는다. 배경지도를 못 받았으면(대체 스타일) 배경지도 크레딧을 붙이지 않는다.
       // 데이터 출처는 항상 전부(OpenSky·기상청 포함).
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
-      map.addControl(new ml.AttributionControl({ compact: false, customAttribution: mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) }) }), "bottom-right");
+      // 지도 위 표기는 compact(ⓘ) — 좁은 지도에서는 접힌 채로 시작한다. 전체 출처는 화면 아래 SOURCES 줄에 늘 보인다(lib/map-attribution)
+      map.addControl(mapAttributionControl(ml, mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) })), "bottom-right");
       applyRender();
       applyAirports();
       map.on("mousemove", (e: maplibregl.MapMouseEvent) => { hoverEvt = e; if (!hoverRaf) hoverRaf = requestAnimationFrame(doHover); });
