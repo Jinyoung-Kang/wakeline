@@ -1,6 +1,10 @@
 package dev.wakeline.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
@@ -11,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.sql.SQLTransientConnectionException;
 import java.util.Map;
 
@@ -23,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 오류 → RFC 9457: 저장소 장애는 503 + Retry-After(계약 §2, REL-16), Spring MVC 4xx 는 제 상태 그대로(SEC-10), 나머지만 500. */
+@ExtendWith(OutputCaptureExtension.class)
 class ProblemAdviceTest {
 
     @RestController
@@ -34,6 +40,11 @@ class ProblemAdviceTest {
         @GetMapping("/unavailable") String unavailable() { throw Problem.unavailable("try later"); }
         @GetMapping("/limited") String limited() { throw Problem.tooManyRequests("slow down", 42); }
         @GetMapping("/boom") String boom() { throw new IllegalStateException("bug"); }
+        // 배포 뒤 로그(2026-09-30): 응답을 쓰는 중 브라우저가 떠나면 Spring 이 이 모양으로 던진다 — /ships/{mmsi}/track 에서 'unhandled error' ERROR 4건
+        @GetMapping("/gone") String gone() {
+            throw new HttpMessageNotWritableException("Could not write JSON: ServletOutputStream failed to write: java.io.IOException: Broken pipe",
+                    new IOException("ServletOutputStream failed to write: java.io.IOException: Broken pipe", new IOException("Broken pipe")));
+        }
         @PostMapping(value = "/json", consumes = MediaType.APPLICATION_JSON_VALUE) String json(@RequestBody Map<String, Object> body) { return "ok"; }
         @GetMapping(value = "/only-json", produces = MediaType.APPLICATION_JSON_VALUE) Map<String, Object> onlyJson() { return Map.of("a", 1); }
     }
@@ -59,6 +70,14 @@ class ProblemAdviceTest {
                 .andExpect(header().exists("Accept"));
         mvc.perform(get("/only-json").accept(MediaType.APPLICATION_XML)).andExpect(status().isNotAcceptable())
                 .andExpect(content().string(""));
+    }
+
+    @Test
+    void aClientThatLeftMidResponseIsNotLoggedAsAnError(CapturedOutput out) throws Exception {
+        mvc.perform(get("/gone"));
+        org.assertj.core.api.Assertions.assertThat(out.getAll()).doesNotContain("unhandled error").doesNotContain("ERROR");
+        mvc.perform(get("/boom")); // 진짜 결함은 여전히 ERROR
+        org.assertj.core.api.Assertions.assertThat(out.getAll()).contains("unhandled error");
     }
 
     @Test

@@ -271,6 +271,9 @@ public class ShipFanout implements SmartLifecycle {
 
     void run(WsSession s) {
         if (!s.ready() || !s.subscribed()) return;
+        // 초기 세트가 기다리는 중이면 그 끝의 선박 훅(onInitial)이 전체를 보낸다 — 여기서도 보내면 한 구독에 스냅샷이 둘이 된다(layers → subscribe 를
+        // 잇달아 받아 layers 가 예약한 이 작업이 구독 뒤에 돌 때). 강제 표시는 소비하지 않고 둔다. 항공기 팬아웃(WsHub.runFanout)과 같은 규칙
+        if (s.isScheduled(WsSession.Job.INITIAL)) return;
         boolean force = s.shipsForce.getAndSet(false);
         if (!s.layerShips) { // 껐다: 보낸 상태만 비운다(클라이언트는 스스로 지운다)
             s.shipsMode = WsSession.ShipsMode.OFF;

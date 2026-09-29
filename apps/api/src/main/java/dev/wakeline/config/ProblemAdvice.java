@@ -22,6 +22,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.util.DisconnectedClientHelper;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -80,6 +81,13 @@ public class ProblemAdvice {
     @ExceptionHandler(Exception.class)
     ResponseEntity<?> other(Exception e, HttpServletRequest req) {
         if (e instanceof ErrorResponse er) return springError(e, er, req);
+        // 응답을 쓰는 중 클라이언트가 떠났다(Broken pipe · connection reset — 쓰기 실패가 HttpMessageNotWritableException 등으로 감싸져 온다).
+        // 서버 결함이 아니고 보낼 곳도 없다 — ERROR 로 남기면 운영 · 로그 화면에 오류로 보인다(2026-09-30 배포 뒤 /ships/{mmsi}/track 4건).
+        // 판정은 Spring 의 DisconnectedClientHelper(예외 이름 · 메시지 · 원인 사슬, 나가는 호출 · DB 예외는 제외)
+        if (DisconnectedClientHelper.isClientDisconnectedException(e)) {
+            log.debug("client gone while writing the response path={}: {}", req.getRequestURI(), brief(e));
+            return null;
+        }
         log.error("unhandled error request_id={} path={}", RequestIdFilter.current(req), req.getRequestURI(), e);
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL", "internal error", "unexpected error", req);
     }

@@ -493,11 +493,25 @@
   그 자리 타일(z7 110/49)을 풀어 속성 `admin_level 2 · maritime 1 · adm0_r KOR`(해상 국경)을 확인했다. 작은 속 빈 원(공항, METAR 2 h 넘음)과는 다르다.
 - **수정** 범례에 '바탕 지도 선' 묶음(국경 — 육상 · 해상, 섬 둘레의 원 포함 · 행정 경계 · 해안선)을 실제 칠 색으로. **회귀** `tests/legend-basemap.test.ts`.
 
-## 자동 검사 현황(2026-09-30 KST, 배포 뒤 — 세 레인 통합(#52–#57) · KOMSA 요청 크기(#58) · 재생 목록 배치(#59) · 바탕 지도 범례(#60))
+## #61 응답을 쓰는 중 떠난 브라우저가 api 'unhandled error'(ERROR)로 남음
+- **증상**(2026-09-30 배포 뒤 로그 점검) `/api/v1/ships/{mmsi}/track` 에서 ERROR 4건 — 원인은 `HttpMessageNotWritableException: … Broken pipe`, 설명서 캡처 스크립트가
+  응답을 다 받기 전에 페이지를 닫았다. 서버 결함이 아닌데 운영 · 로그 화면에 오류로 보인다.
+- **수정** `ProblemAdvice` 가 Spring `DisconnectedClientHelper.isClientDisconnectedException`(예외 이름 · 메시지 · 원인 사슬 — 나가는 HTTP 호출 · DB 예외는 제외)으로
+  클라이언트가 떠난 경우를 가려 DEBUG 로만 남기고 응답을 쓰지 않는다. 진짜 결함은 그대로 ERROR · 500. **회귀** `ProblemAdviceTest`(고치기 전 'unhandled error' 로 실패).
+
+## #62 layers → subscribe 를 잇달아 받으면 한 구독에 선박 스냅샷이 둘(ShipsIT 가끔 실패의 원인)
+- **증상**(2026-09-30 전체 api 시험) `ShipsIT.wsShipsLayer_snapshotThenDiffWithContiguousSseq` — 두 번째 위치가 반영됐는데 30 s 안에 ships_diff 가 없고,
+  기다리는 동안 ships_snapshot 1건이 더 왔다. 다시 돌리면 4/4 통과(드묾).
+- **원인** layers(선박 켬)가 예약한 선박 작업이 구독이 정해진 뒤 · 초기 세트보다 먼저 돌면 스냅샷을 보내고, 초기 세트 끝의 선박 훅이 다시 강제해 두 번째 스냅샷을 보냈다.
+  두 번째가 다음 위치 반영 뒤에 나가면 그 변화가 스냅샷에 실려 diff 가 없다 — 클라이언트 자료는 맞지만(최신 스냅샷) 같은 스냅샷을 두 번 보낸다.
+- **수정** 선박 작업은 초기 세트가 기다리는 중이면 돌지 않는다(강제 표시는 남겨 초기 세트의 훅이 한 번 보낸다 — 항공기 팬아웃과 같은 규칙).
+  **회귀** `ShipFanoutTest.layersThenSubscribe_sendOneShipsSnapshot…` — 우편함을 손으로 돌려 그 순서를 만들고, 고치기 전 스냅샷 2건으로 실패 · 고친 뒤 1건 + sseq 2 diff.
+
+## 자동 검사 현황(2026-09-30 KST, 배포 뒤 — 세 레인 통합(#52–#57) · KOMSA 요청 크기(#58) · 재생 목록 배치(#59) · 바탕 지도 범례(#60) · 클라이언트 끊김 로그(#61) · 선박 스냅샷 중복(#62))
 | 층 | 도구 | 수 |
 |---|---|---|
 | collector · ais 단위·통합 | pytest | 1,389 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 %(앞 회차 값 — 이번 리뷰에서 수집기 코드는 바뀌지 않았다) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 832 · JaCoCo LINE 96.5 % · BRANCH 85.3 %(하한 95 / 80) |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 834 · JaCoCo LINE 96.5 % · BRANCH 85.3 %(하한 95 / 80) |
 | web 단위 | Vitest | 1,142(76 파일) · 커버리지(소스 전체) Lines 91.0 % · Branches 81.6 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15) + 가림 · 억제 벡터 — PASSED |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 34종(통계 표본은 실제로 집계한 KST 날짜 — #57, 오늘 응답 `stats_traffic_today` 추가) |

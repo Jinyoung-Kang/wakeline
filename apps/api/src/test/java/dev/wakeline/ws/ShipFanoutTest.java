@@ -100,6 +100,31 @@ class ShipFanoutTest {
         }
     }
 
+    /**
+     * layers(선박 켬) → subscribe 를 잇달아 보내면 layers 가 예약한 선박 작업과 초기 세트 끝의 선박 훅이 둘 다 스냅샷을 보낼 수 있었다 — 선박 작업이
+     * 구독이 정해진 뒤에 돌면(우편함 순서상 초기 세트보다 먼저) 스냅샷 1, 초기 세트 훅이 다시 강제해 스냅샷 2. 두 번째가 다음 위치 반영 뒤에 나가면 그 변화가
+     * 스냅샷에 실려 diff 가 오지 않았다(ShipsIT.wsShipsLayer_snapshotThenDiffWithContiguousSseq 가 가끔 실패 — 2026-09-30 '건너뜀: ships_snapshot=1').
+     * 우편함을 손으로 돌려 그 순서를 만든다: 스냅샷은 하나, 다음 변화는 sseq 2 의 diff.
+     */
+    @Test void layersThenSubscribe_sendOneShipsSnapshot_evenWhenTheLayersJobRunsAfterTheSubscriptionIsSet() throws Exception {
+        java.util.ArrayDeque<Runnable> q = new java.util.ArrayDeque<>();
+        Runnable drain = () -> { for (Runnable r; (r = q.poll()) != null; ) r.run(); };
+        try (WsTestKit k = new WsTestKit(q::add, 5_000, 200, 5)) {
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T)), List.of());
+            drain.run();
+            FakeWsSession f = k.connect("race", "10.0.0.9");
+            k.msg(f, "{\"type\":\"hello\",\"proto\":1}");
+            drain.run();
+            k.msg(f, "{\"type\":\"layers\",\"aircraft\":false,\"ships\":true}"); // 선박 작업이 우편함에 — 아직 돌지 않는다
+            k.msg(f, BUSAN);                                                         // 구독이 정해지고 초기 세트가 그 뒤에
+            drain.run();
+            assertThat(ofType(f, "ships_snapshot")).as("one ships snapshot for one subscription").hasSize(1);
+            publish(k, List.of(pos("440000001", 35.2, 129.1, T.plusSeconds(10))), List.of());
+            drain.run();
+            assertThat(sseqs(f)).containsExactly(1, 2);
+        }
+    }
+
     @Test void diffs_areContiguous_noEmptyDiffs_removalsOnExpiryAndLeavingTheViewport() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of());
