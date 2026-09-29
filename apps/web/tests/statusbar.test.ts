@@ -303,6 +303,16 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
       await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: close }); });
       expect(isOpen(), "상세 열림").toBe(false);
       expect(dom.document.activeElement === btn, "초점 = 상세 단추").toBe(true);
+      // 상세 안의 글자(초점을 받지 않는 칸)를 누르면 브라우저는 초점을 초점 받을 수 있는 조상(<main tabindex=-1> 등)으로 옮긴다 — 밖으로 나간 것이 아니다
+      // (하네스 e2e 에서 발견: th 를 누르자 focusin 대상이 MAIN 이라 상세가 닫혔다). 그 상태의 Esc 는 '초점 없음'처럼 닫는다
+      await React.act(async () => { propsOf(btn).onClick({}); });
+      const ancestor = dom.container; // 상세를 품은 요소
+      ancestor.focus();
+      await React.act(async () => { dom.document.dispatch("focusin", { type: "focusin", target: ancestor }); });
+      expect(isOpen(), "조상으로 옮긴 초점").toBe(true);
+      await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: ancestor }); });
+      expect(isOpen(), "조상에서의 Esc").toBe(false);
+      expect(dom.document.activeElement === btn, "초점 = 상세 단추").toBe(true);
       // 초점이 아무 데도 없을 때(마우스로 연 뒤 — 문서 본문)의 Esc 도 닫는다
       await React.act(async () => { propsOf(btn).onClick({}); });
       await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: dom.document.body }); });

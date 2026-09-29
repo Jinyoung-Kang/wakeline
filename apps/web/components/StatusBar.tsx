@@ -128,12 +128,14 @@ export function StatusBarView({ input, inv }: { input: StatusInput; inv: WsInval
   useEffect(() => {
     if (!open) return;
     const inside = (n: Node | null) => n != null && (panelRef.current?.contains(n) === true || btnRef.current?.contains(n) === true);
-    // Esc 는 초점이 있는 곳의 것이다: 초점이 상세(표 · 단추)에 있거나 아무 데도 없을(문서 본문) 때만 닫고 초점을 단추로 돌린다.
+    // 상세를 품은 조상(문서 본문 · <main tabindex=-1> 등): 상세 안의 글자처럼 초점을 받지 않는 곳을 누르면 브라우저가 초점을 여기로 옮긴다 — '초점 없음'과 같다
+    const around = (n: Node | null) => n == null || n === document.body || n === document.documentElement || (panelRef.current != null && n.contains(panelRef.current));
+    // Esc 는 초점이 있는 곳의 것이다: 초점이 상세(표 · 단추)에 있거나 아무 데도 없을 때만 닫고 초점을 단추로 돌린다.
     // 다른 입력(검색 등)의 Esc · 이미 처리된 Esc(defaultPrevented)는 건드리지 않는다 — e.target 은 누를 때 초점이 있던 요소(처리기가 초점을 옮겨도 그대로)
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const t = e.target as Node | null;
-      if (t && t !== document.body && t !== document.documentElement && !inside(t)) return;
+      if (!inside(t) && !around(t)) return;
       setOpen(false);
       btnRef.current?.focus();
     };
@@ -141,8 +143,8 @@ export function StatusBarView({ input, inv }: { input: StatusInput; inv: WsInval
       if (inside(e.target as Node | null)) return; // 단추는 onClick 이 여닫는다
       setOpen(false);
     };
-    // 초점이 밖으로 나가면(예: '/' 로 검색) 닫는다 — 초점은 옮겨 간 곳에 그대로 둔다
-    const onFocusIn = (e: FocusEvent) => { if (!inside(e.target as Node | null)) setOpen(false); };
+    // 초점이 다른 요소로 나가면(예: '/' 로 검색) 닫는다 — 초점은 옮겨 간 곳에 그대로 둔다. 조상으로 간 초점(위)은 나간 것이 아니다(바깥 누르기는 onDown 이 닫는다)
+    const onFocusIn = (e: FocusEvent) => { const t = e.target as Node | null; if (!inside(t) && !around(t)) setOpen(false); };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("focusin", onFocusIn);
