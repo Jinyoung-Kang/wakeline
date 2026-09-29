@@ -388,28 +388,42 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     공개 조회 문장 3 s). 풀에 연결이 없는 동안 선택 하나가 그 세션의 항공기 · 선박 diff · pong · heartbeat 를 저장 정적 보고 한 번에 최대 약 8 s, 입출항까지
     최대 약 19 s(설정값의 합) 붙잡고, 실패 기억(15 s)이 끝날 때마다 되풀이했다.
   - api(`ws.ShipLookups` · `ShipFanout`): 우편함은 읽는 쪽의 메모리 캐시만 본다(`StoredStaticReader.cached` · `PortCallReader.cachedForStatic` — I/O 없음).
-    다 답할 수 있으면 곧바로 보낸다(대부분의 다시 계산). 읽어야 하면 조회 실행기에 맡기고 돌아온다 — 스레드 = 읽기 풀 연결 수(4), 대기열 256, 가득 차면 그
-    읽기는 하지 않고 읽지 못함으로 답한다(`outcome=rejected` — 기억하지 않아 다음 다시 계산이 다시 읽는다). 결과는 SHIP_SELECTED 우편함 작업으로 돌아와,
-    그 조회가 세션의 지금 조회(세대 — `WsSession.shipLookup` 객체)이고 물음(선박 · 메모리 정적 정보가 있는가 · 그 호출부호)이 같을 때만 그때의 최신 선박
-    상태와 함께 보낸다. 선택이 바뀌었거나(다른 선박 · 해제) 캐시가 먼저 답했으면 버린다(`wakeline_ws_ship_lookup_dropped_total`), 세션이 닫혔으면 작업이
-    실행되지 않는다. 세션마다 진행 중인 조회는 하나 — 같은 물음의 다시 계산(선박 이동 · 15 s 주기)은 새로 맡기지 않는다. 같은 MMSI 의 동시 읽기 한 번 ·
-    캐시 수명(찾음 60 s · 실패 15 s · 입출항 15 s)은 그대로다.
-  - 마감: 조회는 늦어도 `ReadPool.readBoundMs()` = 읽기 풀 연결 대기 2 s + 공개 조회 문장 3 s = **5 s**(설정값 — 잰 값 아님) 뒤 끝난다. 그때까지 끝나지 않은
-    부분은 계약에 이미 있는 값으로 답한다 — static → `stored_unavailable`(static null · port_calls no_call_sign/not_received), 입출항 → `error`(색인을 읽지
-    못함 — '기록 없음' 이 아니다). 읽기는 계속돼 캐시를 채우고 다음 다시 계산(선박 변화 · ≤ 15 s 주기)이 바뀐 값을 보낸다.
+    다 답할 수 있으면 곧바로 보낸다(대부분의 다시 계산). 읽어야 하면 조회 실행기에 맡기고 돌아온다 — 스레드 = 읽기 풀 연결 수(4), 대기열 max(256,
+    `wakeline.ws-max-conn`), 가득 차면 그 읽기는 하지 않고 읽지 못함으로 답한다(`outcome=rejected` — 기억하지 않아 다음 다시 계산이 다시 읽는다). 결과는
+    SHIP_SELECTED 우편함 작업으로 돌아와, 그 조회가 세션의 지금 조회(세대 — `WsSession.shipLookup` 객체)이고 물음(선박 · 메모리 정적 정보가 있는가 · 그
+    호출부호)이 같을 때만 그때의 최신 선박 상태와 함께 보낸다. 선택이 바뀌었으면(다른 선박 · 해제) 버린다(답을 보내지 않은 조회 —
+    `wakeline_ws_ship_lookup_dropped_total`), 세션이 닫혔으면 작업이 실행되지 않는다. 캐시 수명(찾음 60 s · 실패 15 s · 입출항 15 s)은 그대로다.
+  - 리뷰 뒤 고침('답을 보냄' ≠ '읽는 중' — `ShipSelectionLookupTest` 가 재현: 마감 뒤 다시 계산마다 같은 호출부호를 다시 읽어 한 세션 · 한 선박이 조회 스레드
+    넷을, 같은 선박을 고른 세 세션이 한 읽기에 스레드 셋을 잡았다): (1) `ShipLookups.load` 는 answer(늦어도 마감)와 settled(그 조회의 읽기가 모두 끝남 —
+    마감과 무관)를 따로 준다. 세션은 settled 까지 조회를 들고 있어 같은 물음의 다시 계산(선박 이동 · 15 s 주기)은 새 읽기를 올리지 않고 캐시 또는 그 답과
+    최신 선박 상태로 보낸다. 마감 뒤에 끝난 읽기는 곧바로 다시 계산을 불러 실제 값을 보낸다. (2) 같은 키의 동시 읽기는 하나(`persist.SingleFlight` — 저장
+    정적 보고는 MMSI, 입출항은 정규화한 호출부호): 기다리는 쪽은 진행 중인 읽기의 future 에 이어 붙어 스레드를 잡지 않는다. (3) 한 세션의 다음 물음의 읽기는
+    앞 조회가 settled 된 뒤 시작하고, 그사이 물음이 또 바뀌면 그 읽기는 하지 않는다(`outcome=skipped`) — 한 세션이 실행기에 두는 작업은 늘 하나 이하, 그래서
+    대기열 max(256, WS 연결 상한)는 연결 상한 안에서 넘치지 않는다.
+  - 마감: 답은 늦어도 물음 뒤 `ReadPool.readBoundMs()` = 읽기 풀 연결 대기 2 s + 공개 조회 문장 3 s = **5 s**(설정값 — 잰 값 아님)에 나간다(앞 조회를 기다린
+    시간 포함). 그때까지 끝나지 않은 부분은 계약에 이미 있는 값으로 답한다 — static → `stored_unavailable`(static null · port_calls no_call_sign/not_received),
+    입출항 → `error`(색인을 읽지 못함 — '기록 없음' 이 아니다). 읽기는 계속돼 캐시를 채우고, 끝나면 곧바로 바뀐 값을 보낸다.
   - 읽기 풀(`persist.ReadPool` — 이 두 읽기만 쓴다): `wakeline-read` · 크기 `wakeline.read-pool.size` 4(1–8) · 연결 대기
     `wakeline.read-pool.connection-timeout-ms` 2,000(문장 상한 이하만 받는다 — 넘으면 기동하지 않는다) · 최소 유휴 0(DB 가 없는 동안 뒤에서 다시 맺지 않는다) ·
-    연결마다 서버 `statement_timeout=3s` · `default_transaction_read_only=on` · ApplicationName `wakeline-api-read` · Micrometer
+    연결마다 서버 `statement_timeout=3s` · `default_transaction_read_only=on` · pgjdbc `socketTimeout=5`(문장 상한 + 2 s — 리뷰 뒤 고침: 두 문장 상한은 서버가
+    답할 때만 문장을 끝낸다. 서버가 멈췄거나 망이 끊기면 소켓에서 기다리는 읽기는 이것만 끝낸다 — `ReadPoolDbTest`, 고치기 전 8 s 뒤에도 막힘) ·
+    `connectTimeout` = 연결 대기를 초로 올림(2) · ApplicationName `wakeline-api-read` · Micrometer
     `hikaricp_connections_*{pool="wakeline-read"}`. DB 연결 수: 역할별 상한 없음(`infra/db/init/01-roles.sh`), 서버 max_connections 기본 100(compose 가 바꾸지
     않는다 — 슈퍼유저 예약 3) — api 공유 풀 12 + 읽기 풀 4 = 16, 수집기 프로세스는 각 2(`db.py`).
   - 새 최악(설정값): 세션의 다른 메시지는 선택 조회를 기다리지 않는다. ship_selected 는 조회가 필요하면 물음 뒤 ≤ 5 s. 읽기 풀이 바닥나면 저장 정적 보고는
     연결 대기 2 s 에 `stored_unavailable`(`StoredStaticIT` — 4 연결을 2.8 s 잡은 동안 1.8–2.8 s 에 답, 그동안 pong). 실행기 포화면 곧바로.
+    스레드 · 연결이 묶이는 시간(리뷰 뒤 고침 — 포화를 정하는 값): 문장 하나 ≤ 2 s + 3 s = 5 s(서버가 답할 때) · ≤ 2 s + 소켓 5 s = 7 s(서버가 멈출 때 —
+    `ReadPool.hardReadBoundMs`). 작업 하나가 스레드를 잡는 시간: 저장 정적 보고 ≤ 5 s(7 s) · 입출항 ≤ Redis 3 s(`spring.data.redis.timeout` — heartbeat 는
+    15 s 기억) + 문장 둘(범위 — 15 s 기억 · 호출부호) = 13 s(17 s). 한 조회가 settled 되기까지(두 작업이 차례로) ≤ 18 s(24 s). 같은 키는 읽기 하나 · 세션마다
+    작업 하나 이하라 스레드 넷이 모두 묶이려면 서로 다른 키를 읽는 세션이 넷 있어야 한다.
   - WS 계약은 그대로(키 · 값 · 스키마 사본 · 웹 검증기 · 표본 변화 없음): ship_selected 가 조회를 기다리는 동안 늦게 나갈 뿐이다. 웹은 첫 ship_selected 전에는
     입출항 절을 "—" 로 둔다(명시적 '조회 중' 상태를 새로 두지 않는다 — 계약 · 검증기 · 표본을 늘릴 만큼의 쓸모가 없다).
-  - 지표: `wakeline_ws_ship_lookups_total{outcome=ok|deadline|rejected|error}` · `wakeline_ws_ship_lookup_seconds`(물음 → 답) · `wakeline_ws_ship_lookup_queue` ·
-    `wakeline_ws_ship_lookup_dropped_total`. 시험: `ShipSelectionLookupTest`(pong · diff 가 막힌 읽기를 기다리지 않음 · 마감의 읽지 못함 · 늦은 결과는 다음
-    다시 보기 · 입출항도 우편함 밖 · 늦게 온 결과 버리기 · 포화 · 같은 MMSI 한 번 읽기와 캐시) · `StoredStaticIT`(표 잠금 3 s 동안 pong < 1 s · 읽기 풀 소진 ·
-    읽기 풀 연결의 서버 설정).
+  - 지표: `wakeline_ws_ship_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_ship_lookup_seconds`(물음 → 답) ·
+    `wakeline_ws_ship_lookup_queue` · `wakeline_ws_ship_lookup_dropped_total`(답을 보내지 않은 조회). 시험: `ShipSelectionLookupTest`(pong · diff 가 막힌 읽기를
+    기다리지 않음 · 마감의 읽지 못함 · 늦은 결과는 읽기가 끝나면 곧바로 · 입출항도 우편함 밖 · 늦게 온 결과 버리기 · 포화 · 같은 MMSI 한 번 읽기 · 스레드
+    하나와 캐시 · 마감 뒤 다시 계산 넷에 읽기 하나 · 한 세션이 선박 넷을 바꿔도 실행기 작업 하나) · `StoredStaticReaderTest` · `PortCallReaderTest`(future
+    합치기 · 거절은 표시를 남기지 않음) · `StoredStaticIT`(표 잠금 3 s 동안 pong < 1 s · 읽기 풀 소진 · 읽기 풀 연결의 서버 설정) · `ReadPoolTest` ·
+    `ReadPoolDbTest`(멈춘 서버 → 소켓 5 s).
 - G19(§G17 의 시각 열 문장 · ADR-014 의 정적 정보 저장) **정적 정보의 받은 필드 — 저장 행은 받은 필드만 덮는다**.
   - 관찰(재현 — 수집기 `test_ais_static_received.py`, api `ShipPersistDbTest` · `StaticPartsIT`): ais 재시작이나 ShipBook 제거(ttl 30분 · 선박 수 상한) 뒤 레코드는
     빈 것(14칸 None)에서 시작해 받은 조각만 채운다. Class B 는 24A(선명)와 24B(호출부호 · 선종 · 크기)가 따로 오는데, 둘이 다른 발행(10 s)에 들어가면 첫
@@ -433,8 +447,9 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `wakeline_ship_static_unknown_fields_total` 로 센다. 목록에서 빠진 MMSI 도 같다.
   - 시각 열(§G17 문장 고침): `ship.updated_at` = 이 행에 **마지막으로 저장한** 정적 보고의 aisstream 수신 시각(DB 에 기록된 수신 시각) — 그 보고가 싣지 않은
     필드(받지 않은 부분)는 그보다 앞서 저장된 보고의 값이다. 그 밖(재시작 · 제거 뒤 새 시각, 같은 내용 재수신은 저장하지 않음, 첫 수신도 마지막 수신도 아님)은
-    §G17 그대로. 수집기 쪽 updated_at 은 내용 또는 받은 필드가 바뀐 메시지의 시각(`ship_static.v1.json` 설명). 웹 카드 설명(title — `lib/ships.STORED_STATIC_TITLE`)이
-    이 뜻을 적는다. 마이그레이션 없음.
+    §G17 그대로. 수집기 쪽 updated_at 은 내용 또는 받은 필드가 바뀐 메시지의 시각(`ship_static.v1.json` 설명). 웹 카드의 보이는 줄(`lib/ships.STORED_STATIC_FIELDS_TEXT` — 아래 필드는 DB 에 저장된 값, 위 시각의 보고가
+    싣지 않은 필드는 앞선 보고의 값) · 설명(title — `STORED_STATIC_TITLE`) · 설명서 2.6 · WS 스키마 ship_selected 설명이 이 뜻을 적는다(리뷰 뒤 고침: 처음에는
+    title 만 고쳐 보이는 줄이 모든 필드를 '이 보고의 값' 이라 했다 — `static-source.test.ts` 가 보이는 글을 본다). 마이그레이션 없음.
   - 계약 검사: `tools/contract_check.py`(실수신 fixture → 발행: 모든 part 의 static_received 가 그 part 의 MMSI 를 정확히 덮고, 필드는 그 MMSI 가 fixture 에서
     실제로 보낸 조각의 키 합 · enum = STATIC_FIELDS 순서), `ShipStaticTest`(FIELDS = 스키마 enum = ship_static 정적 칸), `SchemaContractTest` · 수집기 시험
     (같은 스키마 파일로 이름 · 키 · 중복 거절).
