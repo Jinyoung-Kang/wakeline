@@ -57,7 +57,8 @@ public record PortCallsInfo(String status, @JsonProperty("call_sign") String cal
     public static final Set<String> LIMITED_BY = Set.of("session", "ip", "capacity");
     /** api 가 캐시 값을 읽지 못함(Redis 오류 · 형식이 다른 값). 나머지는 수집기가 쓴 종류 그대로. */
     public static final String KIND_CACHE = "cache";
-    static final Set<String> ERROR_KINDS = Set.of("budget", "rate_limited", "http", "provider", "response", "network", "internal", KIND_CACHE);
+    /** budget = 하루 예산(UTC 날) · hourly_cap = 해양수산부 시간 창(격자 WFS 와 함께 센다 — ADR-022 · ADR-023) · 그 밖은 요청 실패의 종류. */
+    static final Set<String> ERROR_KINDS = Set.of("budget", "hourly_cap", "rate_limited", "http", "provider", "response", "network", "internal", KIND_CACHE);
     static final Set<String> DISABLED_REASONS = Set.of("no_key", "fixture", "operator");
 
     static final Pattern CALL_SIGN = Pattern.compile("^[A-Z0-9]{3,7}$");

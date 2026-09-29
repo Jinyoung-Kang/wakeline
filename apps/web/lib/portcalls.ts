@@ -15,7 +15,7 @@ import { dualParts, fmtIsoKst, fmtKstDateOnly, isKstMidnight } from "./time";
 
 export const PORT_CALL_STATUSES = ["ok", "none", "pending", "error", "disabled", "no_call_sign", "no_static", "limited"] as const;
 export type PortCallStatus = (typeof PORT_CALL_STATUSES)[number];
-export const PORT_CALL_ERROR_KINDS = ["budget", "rate_limited", "http", "provider", "response", "network", "internal", "cache"] as const;
+export const PORT_CALL_ERROR_KINDS = ["budget", "hourly_cap", "rate_limited", "http", "provider", "response", "network", "internal", "cache"] as const;
 export type PortCallErrorKind = (typeof PORT_CALL_ERROR_KINDS)[number];
 export const PORT_CALL_DISABLED_REASONS = ["no_key", "fixture", "operator"] as const;
 export type PortCallDisabledReason = (typeof PORT_CALL_DISABLED_REASONS)[number];
@@ -165,6 +165,8 @@ export const PORT_CALL_DISABLED_TEXT: Record<PortCallDisabledReason, string> = {
 };
 export const PORT_CALL_ERROR_TEXT: Record<PortCallErrorKind, string> = {
   budget: "하루 호출 예산 소진(UTC 자정 = 09:00 KST 에 다시 셈)",
+  // 수집기 해양수산부 시간 창(budget:mof:h:{UTC 시} — PORT-MIS 와 격자 WFS 를 함께 센다, ADR-022 · ADR-023). UTC 와 KST 는 시 경계가 같다
+  hourly_cap: "해양수산부 시간당 호출 상한(격자 조회와 합계)에 걸림 · 매시 정각에 다시 셈",
   rate_limited: "호출 속도 상한 대기 초과",
   http: "PORT-MIS HTTP 오류",
   provider: "PORT-MIS 오류 응답(resultCode)",

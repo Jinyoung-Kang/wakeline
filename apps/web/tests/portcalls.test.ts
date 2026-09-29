@@ -182,6 +182,10 @@ describe("port-call helpers", () => {
     expect(portCallStatusText(e)).toBe("조회 실패 — PORT-MIS HTTP 오류 (503) · 선택해 두면 5분 뒤 다시 조회");
     for (const k of PORT_CALL_ERROR_KINDS) expect(portCallStatusText({ ...e, error_kind: k, error_code: null })).toContain(PORT_CALL_ERROR_TEXT[k]);
     expect(portCallStatusText({ ...e, error_kind: null, error_code: null })).toContain("원인 모름");
+    // 해양수산부 시간 창(수집기 budget:mof:h:* — 격자 WFS 와 함께 셈)이 찬 것을 '하루 예산 소진'으로 말하지 않는다
+    const hourly = parsePortCalls({ ...calls("ship_selected.port_calls_error"), error_kind: "hourly_cap", error_code: undefined })!;
+    expect(hourly.error_kind).toBe("hourly_cap");
+    expect(portCallStatusText(hourly)).toBe("조회 실패 — 해양수산부 시간당 호출 상한(격자 조회와 합계)에 걸림 · 매시 정각에 다시 셈 · 선택해 두면 5분 뒤 다시 조회");
     const d = parsePortCalls(calls("ship_selected.port_calls_disabled"))!;
     expect(portCallStatusText(d)).toBe("공공데이터포털 키 없음 — 조회하지 않음");
     expect(portCallStatusText({ ...d, disabled_reason: "fixture" })).toBe("fixture 모드 — 외부 조회 없음");

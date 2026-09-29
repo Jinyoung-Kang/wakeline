@@ -743,7 +743,7 @@
         "items": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/port_call" } },
         "truncated": { "const": true },
         "incomplete": { "const": true },
-        "error_kind": { "enum": ["budget", "rate_limited", "http", "provider", "response", "network", "internal", "cache"] },
+        "error_kind": { "enum": ["budget", "hourly_cap", "rate_limited", "http", "provider", "response", "network", "internal", "cache"] },
         "error_code": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,16}$" },
         "disabled_reason": { "enum": ["no_key", "fixture", "operator"] }
       }

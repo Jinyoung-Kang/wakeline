@@ -150,6 +150,8 @@ public class PortCallsInfoTest {
         assertThat(p.errorKind()).isEqualTo("budget");
         assertThat(p.errorCode()).isNull();
         assertThat(RouteInfoTest.JSON.valueToTree(p).toString()).doesNotContain("3000").doesNotContain("exhausted");
+        // 해양수산부 시간 창(ADR-022 · ADR-023 — 격자 WFS 와 함께 센다)이 찼다: 하루 예산 소진과 따로 말한다
+        assertThat(parse(e.put("error_kind", "hourly_cap")).errorKind()).isEqualTo("hourly_cap");
         assertThat(parse(e.put("error_kind", "http").put("error_code", "503")).errorCode()).isEqualTo("503");
         assertThat(parse(e.put("error_code", "5 03")).errorCode()).as("shape-checked").isNull();
         assertThat(parse(e.put("error_kind", "cache")).errorKind()).as("only the api says cache").isEqualTo("internal");
