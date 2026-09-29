@@ -147,7 +147,7 @@ class PortCallReaderTest {
         assertThat(p.index().gaps()).containsExactly(new PortCallsInfo.Gap("020", "부산", List.of("partial"), "2026-08-31", "2026-09-29", NOW));
     }
 
-    @Test void staleness_isTwoHours_orNoRefreshYet_orCoverageBehindItsRefresh_orAFutureRefresh() {
+    @Test void staleness_isTwoHours_orNoRefreshYet_orAFutureRefresh_andACoverageEndingBeforeTodayIsBehind() {
         index.coverage = new ArrayList<>(PortCallFixtures.fullCoverage(FROM, TO, NOW));
         index.coverage.set(1, new PortCallIndex.Coverage("030", FROM, TO, NOW.minusSeconds(7_200))); // 경계 — 아직 새것
         assertThat(reader.forCallSign("D7AB2").status()).isEqualTo("none");
@@ -159,17 +159,53 @@ class PortCallReaderTest {
         PortCallsInfo p = reader.forCallSign("D7AB3");
         assertThat(p.status()).isEqualTo("incomplete");
         assertThat(p.index().gaps()).extracting(PortCallsInfo.Gap::portAuthorityCode).containsExactly("030", "200", "300", "500");
-        assertThat(p.index().gaps()).allSatisfy(g -> assertThat(g.issues()).containsExactly("stale"));
+        assertThat(p.index().gaps()).extracting(PortCallsInfo.Gap::issues)
+                .containsExactly(List.of("stale"), List.of("stale"), List.of("behind"), List.of("stale"));
         assertThat(p.index().refreshedAt()).isNull();
     }
 
-    @Test void justAfterKstMidnightTheLastEveningRefreshStillCountsAsComplete() {
+    /**
+     * 리뷰 재현(2026-09-29): 자정 직후 창의 끝은 오늘(KST)인데 범위는 어제까지다 — 오늘 목록은 아직 받지 않았다. 전날 밤 갱신이 새것이어도 'none' 이 아니다
+     * (00:00 뒤 입항해 오늘 목록에 오른 선박을 '기록 없음' 으로 말하게 된다). 자정 뒤 꼬리 갱신이 오늘까지 덮으면 다시 none.
+     */
+    @Test void justAfterKstMidnightTodaysListIsNotIndexedYet_soNotNone() {
         clock.set(Instant.parse("2026-09-29T15:10:00Z").toEpochMilli()); // 2026-09-30 00:10 KST — 창 2026-08-31 ~ 2026-09-30
         index.coverage = PortCallFixtures.fullCoverage(FROM, TO, Instant.parse("2026-09-29T14:50:00Z")); // 23:50 KST 에 9-29 까지 갱신
         PortCallsInfo p = reader.forCallSign("D7AB2");
-        assertThat(p.status()).as("complete as of 23:50 — refreshed_at says so").isEqualTo("none");
+        assertThat(p.status()).as("today's list has not been fetched — not a definite 'none'").isEqualTo("incomplete");
         assertThat(p.windowFrom()).isEqualTo("2026-08-31");
         assertThat(p.windowTo()).isEqualTo("2026-09-30");
+        assertThat(p.index().gaps()).hasSize(10).allSatisfy(g -> {
+            assertThat(g.issues()).containsExactly("behind");
+            assertThat(g.coveredTo()).isEqualTo("2026-09-29");
+        });
+        assertThat(p.index().refreshedAt()).isEqualTo(Instant.parse("2026-09-29T14:50:00Z"));
+        clock.addAndGet(PortCallReader.TTL_MS);
+        index.coverage = PortCallFixtures.fullCoverage(FROM, TO.plusDays(1), Instant.parse("2026-09-29T15:05:00Z")); // 00:05 KST 꼬리 갱신이 끝났다
+        assertThat(reader.forCallSign("D7AB2").status()).isEqualTo("none");
+    }
+
+    /**
+     * 리뷰 재현(2026-09-29): 수집기가 끝까지 색인하지 못한 날(빈 곳 — 색인할 수 없는 item 등)이 창 안에 있으면 그 항만청은 unindexed_days 와 그 날짜들 —
+     * 'none' 이 아니다. 창 밖(창 첫날 전)의 빈 곳은 보지 않는다. 기록을 찾으면 여전히 ok(빈 곳은 함께 간다).
+     */
+    @Test void aHoleInsideTheWindowBlocksNone_andIsListed_butAHoleBeforeTheWindowDoesNot() {
+        index.coverage = new ArrayList<>(PortCallFixtures.fullCoverage(FROM, TO, NOW.minusSeconds(600)));
+        index.coverage.set(0, new PortCallIndex.Coverage("020", FROM, TO, NOW.minusSeconds(600),
+                List.of(LocalDate.parse("2026-09-28"), FROM.minusDays(1), LocalDate.parse("2026-09-12"))));
+        index.coverage.set(9, new PortCallIndex.Coverage("820", FROM.minusDays(5), TO, NOW.minusSeconds(600), List.of(FROM.minusDays(2))));
+        PortCallsInfo p = reader.forCallSign("D7AB2");
+        assertThat(p.status()).isEqualTo("incomplete");
+        assertThat(p.index().gaps()).containsExactly(new PortCallsInfo.Gap("020", "부산", List.of("unindexed_days"), "2026-08-30", "2026-09-29",
+                NOW.minusSeconds(600), List.of("2026-09-12", "2026-09-28")));
+        JsonNode json = RouteInfoTest.JSON.valueToTree(p);
+        assertThat(json.path("index").path("gaps").get(0).path("unindexed_days").toString()).isEqualTo("[\"2026-09-12\",\"2026-09-28\"]");
+        clock.addAndGet(PortCallReader.TTL_MS);
+        index.rows.put("V7A3884", List.of(PortCallFixtures.row(NOW)));
+        PortCallsInfo ok = reader.forCallSign("V7A3884");
+        assertThat(ok.status()).isEqualTo("ok");
+        assertThat(ok.index().complete()).isFalse();
+        assertThat(ok.index().gaps()).extracting(PortCallsInfo.Gap::portAuthorityCode).containsExactly("020");
     }
 
     @Test void theOldestRefreshIsTheIndexAsOf() {

@@ -88,10 +88,15 @@ class PortCallIndexDbTest {
     }
 
     @Test
-    void coverageRowsAreMapped() {
+    void coverageRowsAreMapped_withTheirHoleDaysInOrder() {
         coverAll(FROM, TO, NOW);
+        admin.sql("UPDATE port_call_coverage SET hole_days = ARRAY[DATE '2026-09-28', DATE '2026-09-03'] WHERE prt_ag_cd = '030'").update();
         List<PortCallIndex.Coverage> cov = new PortCallIndex(DbTestSupport.apiClient()).coverage();
-        assertThat(cov).hasSize(10).contains(new PortCallIndex.Coverage("020", FROM, TO, NOW));
+        assertThat(cov).hasSize(10).contains(new PortCallIndex.Coverage("020", FROM, TO, NOW),
+                new PortCallIndex.Coverage("030", FROM, TO, NOW, List.of(LocalDate.parse("2026-09-03"), LocalDate.parse("2026-09-28"))));
+        PortCallsInfo p = new PortCallReader(new PortCallIndex(DbTestSupport.apiClient()), List::of, NOW::toEpochMilli).forCallSign("D7AB2");
+        assertThat(p.status()).as("a hole in the window — never 'none'").isEqualTo("incomplete");
+        assertThat(p.index().gaps()).extracting(PortCallsInfo.Gap::unindexedDays).containsExactly(List.of("2026-09-03", "2026-09-28"));
     }
 
     /** 재현한 결함의 api 쪽: 색인에 있는 호출부호는 ok, 완전하고 새 색인에 없는 호출부호만 none, 한 곳이라도 빠지면 incomplete. */

@@ -35,8 +35,9 @@ import java.util.regex.Pattern;
  *   <li>호출부호 = AIS 정적 보고의 호출부호를 수집기(portcalls.normalize_call_sign)와 같은 규칙으로 — 언어 간 벡터 schemas/vectors/call-sign-cases.v1.json.
  *       정적 정보가 없거나 칸이 비었으면 no_call_sign(not_received — '없음' 이 아니라 '아직 받지 않음'), 형식 밖이면 no_call_sign(unusable).
  *       선명으로는 찾지 않는다(동명 선박을 섞지 않게).</li>
- *   <li>'기록 없음'(none)은 10곳({@link #PORT_AUTHORITIES} — schemas/vectors/port-authorities.v1.json)이 모두 30일 창의 첫날부터 색인돼 있고 꼬리 갱신이
- *       {@value PortCallsInfo#STALE_AFTER_S} s 안일 때만. 아니면 incomplete 와 빈 곳(어느 항만청 · 무엇이) — 색인이 모자란 것을 기록 없음으로 말하지 않는다.</li>
+ *   <li>'기록 없음'(none)은 10곳({@link #PORT_AUTHORITIES} — schemas/vectors/port-authorities.v1.json)이 모두 30일 창의 첫날부터 오늘(KST — 창의 끝)까지
+ *       색인돼 있고, 창 안에 끝까지 색인하지 못한 날(빈 곳)이 없고, 꼬리 갱신이 {@value PortCallsInfo#STALE_AFTER_S} s 안일 때만. 아니면 incomplete 와 빈 곳
+ *       (어느 항만청 · 무엇이) — 색인이 모자란 것을 기록 없음으로 말하지 않는다.</li>
  *   <li>꺼짐: 수집기 heartbeat(wakeline:collector 의 portcalls_index_state · portcalls_index_at)가 {@value #HEARTBEAT_MAX_AGE_S} s 안이고 no_key · fixture ·
  *       operator_off 이면 disabled. heartbeat 가 없거나 오래됐으면 색인만 본다(색인이 오래되면 incomplete 가 된다).</li>
  *   <li>메모리 캐시 {@value #TTL_MS} ms: 범위(모든 선박이 같이) · heartbeat · 호출부호별 기록. 선박을 고른 세션이 여럿이어도 DB 는 호출부호마다
@@ -151,7 +152,7 @@ public class PortCallReader {
             if (items.size() == PortCallsInfo.MAX_ITEMS) break;
             if (cs.equals(r.callSign())) items.add(item(r)); // 색인도 믿지 않는다 — 다른 호출부호의 행은 이 선박의 기록이 아니다
         }
-        return PortCallsInfo.found(cs, from.toString(), to.toString(), items, rows.size() > PortCallsInfo.MAX_ITEMS, summarize(cov, from, now));
+        return PortCallsInfo.found(cs, from.toString(), to.toString(), items, rows.size() > PortCallsInfo.MAX_ITEMS, summarize(cov, from, to, now));
     }
 
     private List<PortCallIndex.Coverage> coverage(long nowMs) {
@@ -181,10 +182,12 @@ public class PortCallReader {
     }
 
     /**
-     * 범위 → 색인 상태. 항만청마다: 행이 없으면 not_indexed · 창 첫날(from)보다 늦게 시작하면 partial · 꼬리 갱신이 없거나 {@value PortCallsInfo#STALE_AFTER_S} s 넘게
-     * 지났거나(미래로 {@value #FUTURE_SKEW_S} s 넘게 어긋나도) 범위 끝이 그 갱신의 KST 날짜보다 앞서면 stale. 빈 곳이 없어야 complete.
+     * 범위 → 색인 상태. 항만청마다: 행이 없으면 not_indexed · 창 첫날(from)보다 늦게 시작하면 partial · 범위 끝이 창의 끝(to — 오늘 KST)보다 앞서면
+     * behind(오늘 목록을 아직 받지 않았다 — 자정 직후 전날 밤 갱신만으로는 오늘 입항한 선박을 모른다) · 꼬리 갱신이 없거나
+     * {@value PortCallsInfo#STALE_AFTER_S} s 넘게 지났거나 미래로 {@value #FUTURE_SKEW_S} s 넘게 어긋나면 stale · 창 안에 끝까지 색인하지 못한 날이 있으면
+     * unindexed_days(그 날짜들). 빈 곳이 없어야 complete.
      */
-    static PortCallsInfo.Index summarize(List<PortCallIndex.Coverage> coverage, LocalDate from, Instant now) {
+    static PortCallsInfo.Index summarize(List<PortCallIndex.Coverage> coverage, LocalDate from, LocalDate to, Instant now) {
         Map<String, PortCallIndex.Coverage> byCode = new HashMap<>();
         for (PortCallIndex.Coverage c : coverage) if (c != null && c.portAuthority() != null) byCode.put(c.portAuthority(), c);
         List<PortCallsInfo.Gap> gaps = new ArrayList<>();
@@ -197,16 +200,21 @@ public class PortCallReader {
                 allRefreshed = false;
                 continue;
             }
-            List<String> issues = new ArrayList<>(2);
+            List<String> issues = new ArrayList<>(4);
             if (c.coveredFrom().isAfter(from)) issues.add(PortCallsInfo.PARTIAL);
+            if (c.coveredTo().isBefore(to)) issues.add(PortCallsInfo.BEHIND);
             Instant r = c.refreshedAt();
             boolean stale = r == null || Duration.between(r, now).toSeconds() > PortCallsInfo.STALE_AFTER_S
-                    || Duration.between(now, r).toSeconds() > FUTURE_SKEW_S || c.coveredTo().isBefore(r.atOffset(KST).toLocalDate());
+                    || Duration.between(now, r).toSeconds() > FUTURE_SKEW_S;
             if (stale) issues.add(PortCallsInfo.STALE);
+            List<String> holes = c.holeDays().stream().filter(d -> d != null && !d.isBefore(from) && !d.isAfter(to)).distinct().sorted()
+                    .map(LocalDate::toString).toList();
+            if (!holes.isEmpty()) issues.add(PortCallsInfo.UNINDEXED_DAYS);
             if (r == null) allRefreshed = false;
             else if (oldest == null || r.isBefore(oldest)) oldest = r;
             if (!issues.isEmpty())
-                gaps.add(new PortCallsInfo.Gap(pa.getKey(), pa.getValue(), List.copyOf(issues), c.coveredFrom().toString(), c.coveredTo().toString(), r));
+                gaps.add(new PortCallsInfo.Gap(pa.getKey(), pa.getValue(), List.copyOf(issues), c.coveredFrom().toString(), c.coveredTo().toString(), r,
+                        holes.isEmpty() ? null : holes));
         }
         return new PortCallsInfo.Index(PORT_AUTHORITIES.size(), gaps.isEmpty(), allRefreshed ? oldest : null, PortCallsInfo.STALE_AFTER_S, List.copyOf(gaps));
     }

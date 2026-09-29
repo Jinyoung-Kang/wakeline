@@ -3,8 +3,9 @@
  * - 자료: 수집기가 해양수산부 선박운항정보(PORT-MIS, 공공데이터포털)의 항만청 10곳 입출항 신고를 KST 날짜별로 모두 받아 둔 서버 색인에서, api 가
  *   AIS 호출부호로 찾아 ship_selected.port_calls 로 보낸다. 선택은 외부 호출을 만들지 않는다(예전에는 선택마다 호출부호로 물었으나 원천이 호출부호로
  *   거르지 않아 거의 모든 선박이 '기록 없음' 으로 보였다 — 그 설계를 버렸다).
- * - '기록 없음'(none)은 서버가 10곳 모두 30일 창을 색인했고 2시간 안에 갱신했다고 할 때만 — 웹도 index.complete 와 빈 곳 없음을 다시 확인하고, 어긋나면
- *   표시하지 않는다(null → "—"). 색인이 모자라면 incomplete — 어느 항만청이 왜(색인 안 됨 · 앞쪽 일부만 · 갱신 오래됨)를 그대로 적는다.
+ * - '기록 없음'(none)은 서버가 10곳 모두 30일 창을 오늘까지 빈 곳 없이 색인했고 2시간 안에 갱신했다고 할 때만 — 웹도 index.complete 와 빈 곳 없음을
+ *   다시 확인하고, 어긋나면 표시하지 않는다(null → "—"). 색인이 모자라면 incomplete — 어느 항만청이 왜(색인 안 됨 · 앞쪽 일부만 · 오늘 목록 아직 ·
+ *   갱신 오래됨 · 끝까지 색인하지 못한 날짜)를 그대로 적는다.
  * - 서버 값도 믿지 않는다: 모르는 상태는 null, 형식이 틀린 필드는 그 필드만 null. 문자열은 api 와 같게 제어·서식 문자 제거 · 코드포인트 길이 절단.
  *   모르는 값은 "—"(단위도 붙이지 않는다) — 추측해 채우지 않는다.
  * - 호출부호로만 찾는다(선명으로 찾지 않는다). PORT-MIS 신고 선명이 AIS 선명과 다르면 밝힌다 — 같은 선박인지는 판정하지 않는다. 두 이름이 모두 영문일
@@ -20,7 +21,7 @@ export const PORT_CALL_CALL_SIGN_STATES = ["not_received", "unusable"] as const;
 export type PortCallCallSignState = (typeof PORT_CALL_CALL_SIGN_STATES)[number];
 export const PORT_CALL_DISABLED_REASONS = ["no_key", "fixture", "operator"] as const;
 export type PortCallDisabledReason = (typeof PORT_CALL_DISABLED_REASONS)[number];
-export const PORT_CALL_GAP_ISSUES = ["not_indexed", "partial", "stale"] as const;
+export const PORT_CALL_GAP_ISSUES = ["not_indexed", "partial", "behind", "stale", "unindexed_days"] as const;
 export type PortCallGapIssue = (typeof PORT_CALL_GAP_ISSUES)[number];
 /** 신고의 판(최종 → 최초 — 서버가 시각이 있는 앞 판을 골라 이름을 함께 보낸다) */
 export const PORT_CALL_REVISIONS = ["최종", "최초"] as const;
@@ -62,6 +63,8 @@ export interface PortCallGap {
   covered_from: string | null;
   covered_to: string | null;
   refreshed_at: string | null;
+  /** 창 안에서 받았지만 끝까지 색인하지 못한 날(KST 날짜 · 오름차순) — issues 에 unindexed_days 가 있을 때만, 없으면 빈 배열 */
+  unindexed_days: string[];
 }
 export interface PortCallIndex { complete: boolean; refreshed_at: string | null; gaps: PortCallGap[] }
 export interface PortCallsInfo {
@@ -123,7 +126,12 @@ function parseGap(v: unknown): PortCallGap | null {
   const pa = code(v.port_authority_code, PA_CODE_RE), name = text(v.port_authority);
   const issues = Array.isArray(v.issues) ? v.issues.map((i) => oneOf(i, PORT_CALL_GAP_ISSUES)).filter((i): i is PortCallGapIssue => i != null) : [];
   if (pa == null || name == null || issues.length === 0) return null;
-  return { port_authority_code: pa, port_authority: name, issues: [...new Set(issues)], covered_from: day(v.covered_from), covered_to: day(v.covered_to), refreshed_at: time(v.refreshed_at) };
+  const days = issues.includes("unindexed_days") && Array.isArray(v.unindexed_days)
+    ? [...new Set(v.unindexed_days.slice(0, PORT_CALL_WINDOW_DAYS + 1).map(day).filter((d): d is string => d != null))].sort() : [];
+  return {
+    port_authority_code: pa, port_authority: name, issues: [...new Set(issues)], covered_from: day(v.covered_from), covered_to: day(v.covered_to),
+    refreshed_at: time(v.refreshed_at), unindexed_days: days,
+  };
 }
 
 /** index → 값. 항만청 수 · 오래됨 기준이 이 화면의 것과 다르거나, 완전하다면서 빈 곳이 있거나, 빈 곳을 읽을 수 없으면 null(색인 상태를 모른다). */
@@ -184,8 +192,12 @@ export const PORT_CALL_ERROR_TEXT = "입출항 색인을 읽지 못함(서버 �
 export const PORT_CALL_GAP_TEXT: Record<PortCallGapIssue, string> = {
   not_indexed: "아직 색인 안 됨",
   partial: "창 앞쪽 일부만 색인됨",
+  behind: "오늘(KST) 목록 아직 색인 안 됨",
   stale: "색인 갱신이 오래됨",
+  unindexed_days: "끝까지 색인하지 못한 날 있음",
 };
+/** 빈 곳 한 줄에 적는 날짜 수 상한(넘으면 "외 N일") */
+const GAP_DAYS_SHOWN = 5;
 export const PORT_CALL_CAVEAT =
   "AIS 호출부호로만 찾습니다 — 선박이 보낸 호출부호가 틀리거나 같은 호출부호를 쓰는 다른 선박이 있으면 다른 선박의 신고일 수 있습니다. 서버가 항만청 10곳의 신고를 날짜별로 미리 모은 색인에서 찾으며(고를 때 외부에 묻지 않습니다), 색인은 한 시간마다 최근 3일을 다시 받습니다. 입출항 시각은 PORT-MIS 신고 시각입니다 — 00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보이고 UTC 로 바꾸지 않습니다.";
 
@@ -201,9 +213,21 @@ export function portCallStatusText(p: PortCallsInfo): string | null {
   }
 }
 
-/** 빈 곳 한 줄의 글자(시각은 화면이 DualTime 으로 따로 그린다): "부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터) · 색인 갱신이 오래됨" */
+/**
+ * 빈 곳 한 줄의 글자(시각은 화면이 DualTime 으로 따로 그린다): "부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터) · 색인 갱신이 오래됨".
+ * behind 는 색인한 마지막 날(covered_to), unindexed_days 는 그 날짜들(많으면 앞의 5개와 "외 N일") — 모르면 문구만.
+ */
 export function gapText(g: PortCallGap): string {
-  const parts = g.issues.map((i) => (i === "partial" && g.covered_from ? `${PORT_CALL_GAP_TEXT.partial}(${g.covered_from}부터)` : PORT_CALL_GAP_TEXT[i]));
+  const parts = g.issues.map((i) => {
+    if (i === "partial" && g.covered_from) return `${PORT_CALL_GAP_TEXT.partial}(${g.covered_from}부터)`;
+    if (i === "behind" && g.covered_to) return `${PORT_CALL_GAP_TEXT.behind}(${g.covered_to}까지 색인)`;
+    if (i === "unindexed_days" && g.unindexed_days.length > 0) {
+      const shown = g.unindexed_days.slice(0, GAP_DAYS_SHOWN).join(", ");
+      const more = g.unindexed_days.length - GAP_DAYS_SHOWN;
+      return `끝까지 색인하지 못한 날 ${g.unindexed_days.length}일(${shown}${more > 0 ? ` 외 ${more}일` : ""})`;
+    }
+    return PORT_CALL_GAP_TEXT[i];
+  });
   return `${g.port_authority}(${g.port_authority_code}) — ${parts.join(" · ")}`;
 }
 

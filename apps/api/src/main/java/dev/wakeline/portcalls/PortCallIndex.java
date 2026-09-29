@@ -5,11 +5,14 @@ import dev.wakeline.persist.TrackRepository;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Array;
 import java.sql.Date;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 
 /**
  * 한국 항만 입출항 색인 읽기(ADR-022 개정 · V15). 수집기가 항만청 10곳의 KST 날짜별 신고를 모두 받아 port_call 에 두고, 항만청마다 끝까지 색인한
@@ -22,13 +25,28 @@ public class PortCallIndex implements PortCallReader.Source {
 
     public PortCallIndex(JdbcClient db) { this.db = db; }
 
-    /** 항만청별 색인 범위(행이 없는 항만청은 아직 색인하지 않았다). */
+    /** 항만청별 색인 범위와 빈 곳(행이 없는 항만청은 아직 색인하지 않았다). 배열(hole_days)은 연결을 돌려주기 전에 행 안에서 풀어 둔다. */
     @Override
     public List<Coverage> coverage() {
-        return Sql.publicRead(db, "SELECT prt_ag_cd, covered_from, covered_to, refreshed_at FROM port_call_coverage")
-                .query().listOfRows().stream()
-                .map(r -> new Coverage(str(r, "prt_ag_cd"), date(r.get("covered_from")), date(r.get("covered_to")), TrackRepository.toInstant(r.get("refreshed_at"))))
-                .toList();
+        return Sql.publicRead(db, "SELECT prt_ag_cd, covered_from, covered_to, refreshed_at, hole_days FROM port_call_coverage")
+                .query((rs, n) -> new Coverage(rs.getString("prt_ag_cd"), date(rs.getObject("covered_from")), date(rs.getObject("covered_to")),
+                        TrackRepository.toInstant(rs.getObject("refreshed_at")), dates(rs.getArray("hole_days"))))
+                .list();
+    }
+
+    /** date[] → 날짜(오름차순 · 중복 없음). NULL 원소는 V15 CHECK 가 막지만 읽을 때도 버린다. */
+    static List<LocalDate> dates(Array a) throws SQLException {
+        if (a == null) return List.of();
+        try {
+            TreeSet<LocalDate> out = new TreeSet<>();
+            for (Object x : (Object[]) a.getArray()) {
+                LocalDate d = date(x);
+                if (d != null) out.add(d);
+            }
+            return List.copyOf(out);
+        } finally {
+            a.free();
+        }
     }
 
     /**
@@ -68,8 +86,20 @@ public class PortCallIndex implements PortCallReader.Source {
         return null;
     }
 
-    /** 항만청 하나의 색인 범위: [coveredFrom, coveredTo](KST 날짜)를 끝까지 색인했다 · refreshedAt = 마지막으로 끝난 꼬리 갱신(최근 3일)이 시작한 때(없으면 null). */
-    public record Coverage(String portAuthority, LocalDate coveredFrom, LocalDate coveredTo, Instant refreshedAt) {}
+    /**
+     * 항만청 하나의 색인 범위: [coveredFrom, coveredTo](KST 날짜)의 모든 날을 받았다 — holeDays(빈 곳: 받았지만 끝까지 색인하지 못한 날)만 빼고 끝까지
+     * 색인했다 · refreshedAt = 마지막으로 끝난 꼬리 갱신(최근 3일)이 시작한 때(없으면 null).
+     */
+    public record Coverage(String portAuthority, LocalDate coveredFrom, LocalDate coveredTo, Instant refreshedAt, List<LocalDate> holeDays) {
+        public Coverage {
+            holeDays = holeDays == null ? List.of() : List.copyOf(holeDays);
+        }
+
+        /** 빈 곳이 없는 범위. */
+        public Coverage(String portAuthority, LocalDate coveredFrom, LocalDate coveredTo, Instant refreshedAt) {
+            this(portAuthority, coveredFrom, coveredTo, refreshedAt, List.of());
+        }
+    }
 
     /** port_call 한 행(화면에 쓰는 열만). */
     public record Row(String portAuthorityCode, String portAuthority, String callSign, LocalDate listedDate, String reportedName, String nationality,

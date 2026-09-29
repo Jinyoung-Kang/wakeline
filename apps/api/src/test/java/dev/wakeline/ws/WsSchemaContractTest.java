@@ -384,6 +384,8 @@ class WsSchemaContractTest {
             partial.removeIf(c -> c.portAuthority().equals("700"));
             partial.set(0, new dev.wakeline.portcalls.PortCallIndex.Coverage("020", java.time.LocalDate.parse("2026-09-12"), to, PC_NOW.minusSeconds(600)));
             partial.set(1, new dev.wakeline.portcalls.PortCallIndex.Coverage("030", from, java.time.LocalDate.parse("2026-09-28"), PC_NOW.minusSeconds(9_000)));
+            partial.set(2, new dev.wakeline.portcalls.PortCallIndex.Coverage("200", from, to, PC_NOW.minusSeconds(600),
+                    List.of(java.time.LocalDate.parse("2026-09-20"), java.time.LocalDate.parse("2026-09-27"))));
             gaps.coverage = partial;
             PortCallFixtures.FakeSource broken = new PortCallFixtures.FakeSource();
             broken.fail = new org.springframework.dao.QueryTimeoutException("statement timeout");
@@ -523,6 +525,9 @@ class WsSchemaContractTest {
                 n -> ((ObjectNode) n.get("port_calls")).put("call_sign_state", "absent")));
         bad.put("port_calls index gap unknown issue", mutate(byName.get("ship_selected.port_calls_incomplete"),
                 n -> ((ArrayNode) ((ObjectNode) ((ArrayNode) n.get("port_calls").get("index").get("gaps")).get(0)).get("issues")).set(0, StringNode.valueOf("guessed"))));
+        bad.put("port_calls index gap unindexed day not a date", mutate(byName.get("ship_selected.port_calls_incomplete"),
+                n -> ((ArrayNode) ((ObjectNode) ((ArrayNode) n.get("port_calls").get("index").get("gaps")).get(2)).get("unindexed_days"))
+                        .set(0, StringNode.valueOf("recently"))));
         bad.put("port_calls index other authority count", mutate(byName.get("ship_selected.port_calls_none"),
                 n -> ((ObjectNode) n.get("port_calls").get("index")).put("authorities", 11)));
         bad.put("port_call without read_at", mutate(byName.get("ship_selected"),

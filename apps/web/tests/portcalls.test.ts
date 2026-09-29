@@ -57,9 +57,10 @@ describe("port_calls parsing (every state the api sends)", () => {
     expect(inc.index!.complete).toBe(false);
     expect(inc.index!.refreshed_at).toBeNull(); // 한 곳이 색인되지 않았다 — 하나의 '기준 시각' 이 없다
     expect(inc.index!.gaps).toEqual([
-      { port_authority_code: "020", port_authority: "부산", issues: ["partial"], covered_from: "2026-09-12", covered_to: "2026-09-29", refreshed_at: "2026-09-29T12:50:00Z" },
-      { port_authority_code: "030", port_authority: "인천", issues: ["stale"], covered_from: "2026-08-30", covered_to: "2026-09-28", refreshed_at: "2026-09-29T10:30:00Z" },
-      { port_authority_code: "700", port_authority: "포항", issues: ["not_indexed"], covered_from: null, covered_to: null, refreshed_at: null },
+      { port_authority_code: "020", port_authority: "부산", issues: ["partial"], covered_from: "2026-09-12", covered_to: "2026-09-29", refreshed_at: "2026-09-29T12:50:00Z", unindexed_days: [] },
+      { port_authority_code: "030", port_authority: "인천", issues: ["behind", "stale"], covered_from: "2026-08-30", covered_to: "2026-09-28", refreshed_at: "2026-09-29T10:30:00Z", unindexed_days: [] },
+      { port_authority_code: "200", port_authority: "동해", issues: ["unindexed_days"], covered_from: "2026-08-30", covered_to: "2026-09-29", refreshed_at: "2026-09-29T12:50:00Z", unindexed_days: ["2026-09-20", "2026-09-27"] },
+      { port_authority_code: "700", port_authority: "포항", issues: ["not_indexed"], covered_from: null, covered_to: null, refreshed_at: null, unindexed_days: [] },
     ]);
     expect(parsed("ship_selected.static_only")).toMatchObject({ status: "no_call_sign", call_sign_state: "not_received", call_sign: null });
     expect(parsed("ship_selected.port_calls_no_call_sign_not_received").call_sign_state).toBe("not_received");
@@ -180,11 +181,26 @@ describe("port-call helpers", () => {
   });
 
   it("gaps name the authority and what is missing", () => {
-    const [p, s, n] = parsed("ship_selected.port_calls_incomplete").index!.gaps;
+    const [p, s, h, n] = parsed("ship_selected.port_calls_incomplete").index!.gaps;
     expect(gapText(p)).toBe("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터)");
-    expect(gapText(s)).toBe("인천(030) — 색인 갱신이 오래됨");
+    expect(gapText(s)).toBe("인천(030) — 오늘(KST) 목록 아직 색인 안 됨(2026-09-28까지 색인) · 색인 갱신이 오래됨");
+    expect(gapText(h)).toBe("동해(200) — 끝까지 색인하지 못한 날 2일(2026-09-20, 2026-09-27)");
     expect(gapText(n)).toBe("포항(700) — 아직 색인 안 됨");
     expect(gapText({ ...p, issues: ["partial", "stale"] })).toBe("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터) · 색인 갱신이 오래됨");
+    const many = Array.from({ length: 7 }, (_, i) => `2026-09-0${i + 1}`);
+    expect(gapText({ ...h, unindexed_days: many })).toBe("동해(200) — 끝까지 색인하지 못한 날 7일(2026-09-01, 2026-09-02, 2026-09-03, 2026-09-04, 2026-09-05 외 2일)");
+    expect(gapText({ ...h, unindexed_days: [] })).toBe("동해(200) — 끝까지 색인하지 못한 날 있음"); // 날짜를 읽지 못했다 — 지어내지 않는다
+    expect(gapText({ ...s, covered_to: null, issues: ["behind"] })).toBe("인천(030) — 오늘(KST) 목록 아직 색인 안 됨");
+  });
+
+  it("unindexed days are read only with their issue, as dates, deduplicated and sorted; anything else is dropped", () => {
+    const inc = calls("ship_selected.port_calls_incomplete");
+    const gaps = (inc.index as Json).gaps as Json[];
+    const hole = { ...gaps[2], unindexed_days: ["2026-09-27", "yesterday", "2026-09-20", "2026-09-27", 5] };
+    const p = parsePortCalls({ ...inc, index: { ...(inc.index as Json), gaps: [hole] } });
+    expect(p!.index!.gaps[0].unindexed_days).toEqual(["2026-09-20", "2026-09-27"]);
+    const noIssue = { ...gaps[0], unindexed_days: ["2026-09-20"] }; // 까닭(issue) 없이 온 날짜는 싣지 않는다
+    expect(parsePortCalls({ ...inc, index: { ...(inc.index as Json), gaps: [noIssue] } })!.index!.gaps[0].unindexed_days).toEqual([]);
   });
 
   it("reported names: only two Latin names are compared (spacing · case · width are the same name); a Hangul name is never a mismatch on its own", () => {
@@ -277,7 +293,8 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(t).not.toContain(PORT_CALL_NONE_TEXT);
     expect(t).toContain(PORT_CALL_INCOMPLETE_TEXT);
     expect(t).toContain("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터)");
-    expect(t).toContain("인천(030) — 색인 갱신이 오래됨 · 마지막 갱신 09-29 19:30 KST · 10:30 UTC");
+    expect(t).toContain("인천(030) — 오늘(KST) 목록 아직 색인 안 됨(2026-09-28까지 색인) · 색인 갱신이 오래됨 · 마지막 갱신 09-29 19:30 KST · 10:30 UTC");
+    expect(t).toContain("동해(200) — 끝까지 색인하지 못한 날 2일(2026-09-20, 2026-09-27)");
     expect(t).toContain("포항(700) — 아직 색인 안 됨");
     expect(t).toContain("갱신 —"); // 10곳의 공통 기준 시각이 없다 — 지어내지 않는다
     expect(t).toContain("색인 불완전");

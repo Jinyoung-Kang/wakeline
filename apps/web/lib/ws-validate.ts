@@ -191,8 +191,8 @@ const PORT_CALL = shape({
   next_port: PORT_REF, dest_port: PORT_REF, reported_name: TEXT80, kind: TEXT80, nationality: TEXT80, read_at: TIME,
 }, ["read_at"]);
 const PORT_CALL_GAP = shape({
-  port_authority_code: re(/^[0-9]{3}$/), port_authority: TEXT80, issues: arrOf(oneOf(...PORT_CALL_GAP_ISSUES), 1, 2), covered_from: DATE, covered_to: DATE,
-  refreshed_at: TIME,
+  port_authority_code: re(/^[0-9]{3}$/), port_authority: TEXT80, issues: arrOf(oneOf(...PORT_CALL_GAP_ISSUES), 1, 4), covered_from: DATE, covered_to: DATE,
+  refreshed_at: TIME, unindexed_days: arrOf(DATE, 1, PORT_CALL_WINDOW_DAYS + 1),
 }, ["port_authority_code", "port_authority", "issues"]);
 const PORT_CALL_INDEX = shape({
   authorities: oneOf(PORT_CALL_AUTHORITIES), complete: isBool, refreshed_at: TIME, stale_after_s: oneOf(PORT_CALL_STALE_AFTER_S),
