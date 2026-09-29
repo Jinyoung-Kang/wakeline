@@ -421,6 +421,8 @@ class DemandIT extends IntegrationTest {
             assertThat(focusScore).isNotNull();
             assertThat(hotScore.longValue() - now).as("hot lease expiry").isBetween(1L, 60_000L);
             assertThat(focusScore.longValue() - now).as("focus lease expiry").isBetween(1L, 60_000L);
+            // 키 만료는 api 시계로 잰 남은 시간(PEXPIRE)이라 Redis 시계와의 차이와 상관없이 60 s 이하다(전에는 PEXPIREAT 라 Docker VM 시계가
+            // 호스트보다 늦으면 PTTL 60,012 처럼 넘었다 — RedisDemandLeasesIT)
             for (String key : List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META)) {
                 Long ttl = admin.getExpire(key, TimeUnit.MILLISECONDS);
                 assertThat(ttl).as("PTTL of " + key).isBetween(1L, 60_000L);
@@ -660,7 +662,7 @@ class DemandIT extends IntegrationTest {
             apiAllowed.add(new String[]{"ZADD", k, "1", "m"});
             apiAllowed.add(new String[]{"ZREMRANGEBYSCORE", k, "-inf", "1"});
             apiAllowed.add(new String[]{"ZRANGEBYSCORE", k, "0", "+inf"});
-            apiAllowed.add(new String[]{"PEXPIREAT", k, "1"});
+            apiAllowed.add(new String[]{"PEXPIRE", k, "60000"}); // 교체 Lua 의 키 만료(남은 시간 — RedisDemandLeases)
         }
         for (String k : List.of(DemandLeases.HOT_META, DemandLeases.FOCUS_META)) {
             apiAllowed.add(new String[]{"HSET", k, "m", "{}"});
