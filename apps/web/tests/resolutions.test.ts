@@ -64,6 +64,11 @@ describe("note and request body follow the contract exactly", () => {
     expect(R.noteError("가".repeat(201))).toContain("200");
     expect(R.noteError("a\nb")).toContain("한 줄");
     expect(R.noteError("a\u0007b")).toContain("한 줄");
+    // api 는 \p{Cc} 전체를 거절한다 — C1 제어 문자(U+0080–U+009F, 예: U+0085 NEL)도 보내기 전에 거른다
+    expect(R.noteError("a\u0085b")).toContain("한 줄");
+    expect(R.noteError("a\u0080b")).toContain("한 줄");
+    expect(R.noteError("a\u009fb")).toContain("한 줄");
+    expect(R.noteError("a\u00a0b")).toBeNull(); // U+00A0 은 제어 문자가 아니다
   });
   it("body: {kind, key} + upto only when known + note only when not blank — no other fields", () => {
     expect(R.resolutionBody({ kind: "log_group", key: "0123456789abcdef", upto: null }, "")).toEqual({ kind: "log_group", key: "0123456789abcdef" });

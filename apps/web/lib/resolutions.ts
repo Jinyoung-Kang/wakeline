@@ -80,8 +80,8 @@ export function compareInstants(a: unknown, b: unknown): number | null {
 /** 메모 검사(보내기 전 — 서버가 다시 검사한다). 문제가 없으면 null. 빈 글은 "메모 없음" */
 export function noteError(note: string): string | null {
   const t = note.trim();
-  // 제어 문자(줄바꿈 포함)를 거른다 — 서버 규칙과 같다
-  if (/[\u0000-\u001f\u007f]/.test(t)) return "메모는 한 줄이어야 합니다(줄바꿈 · 제어 문자 없음).";
+  // 제어 문자(줄바꿈 포함 — C0 · DEL · C1, api 의 \p{Cc} 와 같은 범위)를 거른다
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(t)) return "메모는 한 줄이어야 합니다(줄바꿈 · 제어 문자 없음).";
   return [...t].length > NOTE_MAX ? `메모는 ${NOTE_MAX}자 이하입니다(지금 ${[...t].length}자).` : null;
 }
 
