@@ -1,0 +1,27 @@
+# 운영 화면 보강 배포(2026-09-29 01:11Z, HEAD 63ef09f) 뒤 개발 스택 관찰 — 수집기 로그 · Redis(읽기 전용)
+
+window: 2026-09-29T01:15:55Z → 2026-09-29T01:45:56Z (collector since deploy 01:11Z)
+== region cycles by provider (ok log lines)
+ 158 adsb_fi
+  15 adsb_lol
+== 429 warnings
+2026-09-29 01:15:30,720 WARNING job.aircraft: region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; next: 'adsb_fi takes over'
+2026-09-29 01:27:27,508 WARNING job.aircraft: region: adsb_lol rate limited (429) — backing off 240 s, deferred 20 min; next: 'adsb_fi takes over'
+== kma lines (warn/retry)
+2026-09-29 01:37:36,689 INFO job.kma_radar: kma radar: listing 20260929 — ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr) after 15.1 s — retrying once in 5 s
+== kma frames stored
+6
+== ratelimit state
+wakeline:provider:adsb_lol:ratelimit:region ttl=991 3 1200
+
+== KMA 재시도 전후(수집기 로그)
+2026-09-29 01:37:36,689 INFO job.kma_radar: kma radar: listing 20260929 — ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr) after 15.1 s — retrying once in 5 s
+2026-09-29 01:37:42,288 INFO job.kma_radar: kma radar: tm=202609291030 HSR echo cells=60267 png=25782 B (12 frames)
+
+== 공급자 전환(wakeline:events, 최신 순)
+job region from adsb_lol to adsb_fi reason fallback — adsb_lol 429 반복 → 20분 뒤로 미룸 at 2026-09-29T01:27:37.989752Z
+job region from adsb_fi to adsb_lol reason recovery — adsb_lol 미룸 끝(1순위 복귀) at 2026-09-29T01:25:30.980694Z
+job region from adsb_lol to adsb_fi reason fallback — adsb_lol 429 반복 → 10분 뒤로 미룸 at 2026-09-29T01:15:40.918661Z
+job region from adsb_fi to adsb_lol reason recovery — adsb_lol 쉼 끝(1순위 복귀) at 2026-09-29T01:14:32.776119Z
+job region from adsb_lol to adsb_fi reason fallback — adsb_lol 429 쉼(60 s) at 2026-09-29T01:13:37.253781Z
+job region from adsb_lol to adsb_fi reason fallback/recovery at 2026-09-29T00:43:09.878352Z
