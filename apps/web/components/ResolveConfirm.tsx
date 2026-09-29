@@ -56,6 +56,8 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
   const [savedSome, setSavedSome] = useState(false);
   const first = useRef<HTMLInputElement & HTMLButtonElement>(null);
   const live = useRef(true);
+  /** 보내는 중 — 상태(sending)는 다음 그리기에야 단추를 막으므로 같은 프레임의 두 번째 누름은 이것이 막는다 */
+  const busy = useRef(false);
   const noteId = useId();
   useEffect(() => {
     live.current = true;
@@ -68,7 +70,8 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
   const expired = async (e: unknown) => (isAuthMiss(e) ? (await onAuthMiss(e)) === "expired" : false);
 
   const run = async () => {
-    if (sending || noteErr || (target.op === "resolve" && !remaining.length)) return;
+    if (busy.current || noteErr || (target.op === "resolve" && !remaining.length)) return;
+    busy.current = true;
     setSending(true);
     setError(null);
     try {
@@ -101,6 +104,7 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
         onChanged({ op: "resolve", created: out.done.flatMap((x) => (x.res ? [x.res] : [])), saved: out.done.length, complete: left.length === 0 });
       }
     } finally {
+      busy.current = false;
       if (live.current) setSending(false);
     }
   };

@@ -220,6 +220,17 @@ describe("/logs entry detail: resolve and revoke", () => {
     // 확인 단추는 다시 누를 수 있다(같은 요청)
     expect(button("해결 처리 확인", byTestId("resolve-confirm")!)!.getAttribute("disabled")).toBeNull();
   });
+  it("two clicks on the confirm button in the same frame send one request", async () => {
+    stub((m, url, body) => (m === "POST" ? created(body, 21) : logsRoutes(url)));
+    await open();
+    await click(allByTestId("log-row")[0]);
+    await click(button("해결 처리", byTestId("log-detail")!));
+    const confirm = button("해결 처리 확인", byTestId("resolve-confirm")!)!;
+    await React.act(async () => { propsOf(confirm).onClick({}); propsOf(confirm).onClick({}); });
+    await settle();
+    await settle();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
   it("a note over 200 characters (or with a line break) is refused before sending", async () => {
     stub((_m, url) => logsRoutes(url));
     await open();
