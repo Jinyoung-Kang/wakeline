@@ -238,6 +238,7 @@ async def test_unchanged_reg_dt_backs_off_and_republishes_the_identical_value():
 
 async def test_an_older_reg_dt_never_replaces_the_newer_snapshot():
     job, _k, _w, r, clock, db = setup(komsa_body("2026-09-29 18:10:05"), komsa_body("2026-09-29 18:05:05"))
+    clock.advance(tg.PERIOD_S)  # 18:10:05 KST 자료가 나온 뒤
     await job.run_once()
     first = r.kv[SNAPSHOT_KEY]
     clock.t = job.schedule.next_due
@@ -409,6 +410,35 @@ async def test_day_budget_refusal_gives_the_hour_back():
     await job.run_once()
     assert komsa.calls == 0 and statuses(db) == ["budget_exhausted"]
     assert r.kv["budget:komsa_traffic:h:2026092909"]["used"] == "0"
+
+
+async def test_a_future_reg_dt_is_rejected_so_it_cannot_freeze_the_layer():
+    """검토 지적: 미래 regDt 하나를 받으면 뒤의 옳은 자료가 모두 '더 이른 것'(unchanged)이 되어 층이 얼고 api 는 ok 로 보였다.
+    수집기 시계보다 PUBLISH_FUTURE_SKEW_S 넘게 앞선 regDt 는 실패로 — 싣지 않고, 원본 · 품질 사례를 남긴다."""
+    future = komsa_body("2026-09-30 18:05:05")  # 하루 앞
+    job, _k, _w, r, clock, db = setup(komsa_body(), future, komsa_body("2026-09-29 18:10:05"))
+    await job.run_once()
+    clock.t = job.schedule.next_due
+    await job.run_once()
+    assert statuses(db) == ["ok", "error"]
+    assert snapshot(r)["reg_dt_kst"] == "2026-09-29T18:05:05+09:00"
+    run = db.runs[-1][2]
+    assert "ahead of the collector clock" in run["error_text"] and run["raw_ref"]
+    assert run["quality"][0][0] == "traffic_grid_reg_dt_future" and run["quality"][0][2]["reg_dt"] == "2026-09-30T09:05:05Z"
+    assert "ahead of the collector clock" in r.kv["wakeline:provider:komsa_traffic"]["last_error"]
+    assert job.schedule.next_due == clock.t + timedelta(seconds=tg.FAIL_BACKOFF_S[0])
+    clock.t = job.schedule.next_due
+    await job.run_once()
+    assert snapshot(r)["reg_dt_kst"] == "2026-09-29T18:10:05+09:00"  # 옳은 다음 자료는 그대로 받는다
+
+
+async def test_a_first_answer_from_the_future_is_rejected_but_small_clock_skew_is_accepted():
+    job, _k, _w, r, _c, db = setup(komsa_body("2026-09-29 18:30:00"))  # 앞선 자료 없이 23분 앞
+    await job.run_once()
+    assert statuses(db) == ["error"] and SNAPSHOT_KEY not in r.kv
+    job2, _k2, _w2, r2, _c2, db2 = setup(komsa_body("2026-09-29 18:07:05"))  # 50 s 앞 — 시계 차이 안
+    await job2.run_once()
+    assert statuses(db2) == ["ok"] and snapshot(r2)["reg_dt_utc"] == "2026-09-29T09:07:05Z"
 
 
 async def test_no_more_than_the_hourly_cap_in_any_hour(monkeypatch):

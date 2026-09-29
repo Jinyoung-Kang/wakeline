@@ -7,7 +7,8 @@
   처음 추정 PUBLISH_DELAY_S, [DELAY_MIN_S, DELAY_MAX_S]) — 고정값이면 공급자가 65 s 넘게 늦을 때 주기마다 두 번 불러 시간 상한에 막히고
   자료가 '멈춤'이 됐다(검토 지적). 배운 값은 heartbeat traffic_grid_publish_delay_s 에 싣고 재기동 뒤 다시 쓴다.
   같은 regDt 가 오면(unchanged — 더 이른 regDt 도: 지난 자료로 되돌리지 않는다) 새로 해석해 싣지 않고 60 → 60 → 60 s(늦은 발행) 뒤
-  120 → 240 → 480 → 900 s(멈춘 공급자) 물러난다. 실패는 60 → 120 → 240 → 480 → 900 s.
+  120 → 240 → 480 → 900 s(멈춘 공급자) 물러난다. 실패는 60 → 120 → 240 → 480 → 900 s. 수집기 시계보다 PUBLISH_FUTURE_SKEW_S 넘게 앞선
+  regDt 는 받지 않는다(실패 · 품질 사례 traffic_grid_reg_dt_future — 한 번 받으면 뒤의 옳은 자료가 모두 '더 이른 것'이 되어 층이 얼어붙는다).
   상한 둘: 메모리 60분 창 HOURLY_CAP(15) · Redis 시간 창(budget:komsa_traffic:h:{UTC 시}, 같은 15 — 재기동 · 두 번째 수집기도 센다). KST 날은 UTC 시
   24개이므로 어느 날 경계로 세어도 하루 360번 이하 — 포털 한도(500) 안. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다).
   예산은 엄격(Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
@@ -28,7 +29,7 @@
   operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · 오늘 쓴 호출 수(두 예산) ·
   traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값).
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
-PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일은
+PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
 """
 
@@ -77,6 +78,7 @@ MIN_SPACING_S = 120  # 새 regDt 를 받은 뒤 다음 호출까지 최소 간�
 HOURLY_CAP = 15  # 어느 한 시간이든(메모리 — 60분 창) · 어느 UTC 시든(Redis — 재기동을 넘어) 교통 호출 상한
 UNCHANGED_BACKOFF_S = (60, 60, 60, 120, 240, 480, 900)  # 같은 regDt: 처음 세 번은 짧게(발행이 늦을 뿐), 그 뒤는 멈춘 공급자
 FAIL_BACKOFF_S = (60, 120, 240, 480, 900)
+PUBLISH_FUTURE_SKEW_S = 120  # 수집기 시계보다 이보다 더 앞선 regDt 는 받지 않는다(시계 차이는 허용)
 SKIP_RETRY_S = 600  # 예산 소진 · 예산 저장소 장애 뒤 다시 볼 때
 WFS_PER_TICK = 15
 FILL_MAX_S = 15.0  # 한 틱의 채우기 시간 상한(종료 유예 18 s 안)
@@ -476,6 +478,29 @@ class TrafficGridJob:
             log.warning("traffic grid: komsa fetch failed — %s (next try %s)", why, iso_z(self.schedule.next_due or now))
             return
         self._count_sent(now)
+        ahead = (snap.reg_dt - resp.fetched_at).total_seconds()
+        if ahead > PUBLISH_FUTURE_SKEW_S:
+            # 미래 regDt 를 받으면 뒤의 옳은 자료가 모두 '더 이른 것'이 되어 층이 얼어붙는다 — 받지 않는다(실패 · 원본 · 품질 사례)
+            why = (
+                f"regDt {iso_z(snap.reg_dt)} is {ahead:.0f} s ahead of the collector clock "
+                f"(limit {PUBLISH_FUTURE_SKEW_S} s) — snapshot not used"
+            )
+            ref = await archive(self.ctx.raw, p.name, resp.body, resp.fetched_at)
+            await self.ctx.status.failure(p.name, at=self._now(), error=why, http_status=None)
+            self.ctx.db.record_run(
+                self.job_name,
+                p.name,
+                started,
+                status="error",
+                http_status=resp.status,
+                latency_ms=resp.latency_ms,
+                error_text=why,
+                raw_ref=ref,
+                quality=[("traffic_grid_reg_dt_future", None, {"reg_dt": iso_z(snap.reg_dt), "ahead_s": round(ahead)})],
+            )
+            self.schedule.on_failure(now)
+            log.warning("traffic grid: %s", why)
+            return
         quality: list[tuple[str, str | None, dict[str, Any]]] = [("traffic_grid_item_rejected", None, r) for r in snap.rejected]
         if self.snapshot is not None and snap.reg_dt <= self.snapshot.reg_dt:
             # 같은 regDt(새 자료 아님) — 또는 더 이른 regDt(공급자 쪽 서버가 뒤처진 응답): 지난 자료로 되돌리지 않는다
