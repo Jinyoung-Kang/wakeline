@@ -1,0 +1,25 @@
+# 공공데이터포털(data.go.kr) 해양 API 확인 — 2026-09-29(KST), 사용자 인증키로 직접 호출(키는 기록하지 않음)
+# 명세는 각 데이터셋 페이지의 Swagger(브라우저로 읽음), 응답은 실제 호출 결과.
+
+== 사용자가 신청한 4개 — 개별 선박 위치(위도·경도) 제공 여부
+해양수산부_선박운항정보 (1192000/VsslEtrynd5)        : 입출항 신고(항만청·입출항 일시·선명·국적·선종·목적·전출항지·차항지·목적지) — 위치 없음
+인천항만공사_인천항여객터미널 국내외 선박정보       : 선박 개요·선석·운임·운항 정보(XML) — 위치 없음(데이터셋 설명)
+한국해양교통안전공단_실시간 교통정보 (B554035/realtime): 해양격자 4단계별 선박 척수(vmtc)·밀집도(dnsty %), 5분 — 격자 집계, 개별 위치 없음
+한국해양교통안전공단_운항항로 정보 (oprt-rt-info-v3)  : 면허항로코드·운항항로코드·운항항로명 — 좌표 없음(데이터셋 설명)
+(참고) 울산항만공사_항내 선박위치정보(15156631)는 개별 위치(위경도·대지속력·침로)를 주지만 울산항 항내만, 메타데이터 '업데이트 주기: 일간' — 신청하지 않음
+
+== KOMSA 실시간 해양교통정보 — GET https://apis.data.go.kr/B554035/realtime/get_realtime?serviceKey=***&pageNo=1&numOfRows=N&dataType=JSON
+numOfRows=5    → 200 application/json, resultCode "200" NORMAL_SERVICE, totalCount 5128, regDt "2026-09-29 17:40:05"
+                 item 예: {"grid_id":"GR4_F2K41_C3","vmtc":111,"dnsty":100}, {"grid_id":"GR4_G3B33_L3","vmtc":103,"dnsty":100}
+numOfRows=6000 → 245,985 B, items 5,099 = totalCount 5,099 (한 번에 전체), regDt "2026-09-29 18:05:05", vmtc 1–102, dnsty 0–100, 접두어 GR4_ 만
+
+== 해양수산부 격자4단계 WFS — GET https://apis.data.go.kr/1192000/apVhdService_G4s/getOpnG4sWFS?ServiceKey=***&grid_no=GR4_F2K41_C3&maxFeatures=1
+200 text/xml; subtype=gml/3.1.1, numberOfFeatures=1, ofbd-DB:opn_grid_4_step_a gid 167305, grid_no GR4_F2K41_C3,
+MultiSurface EPSG:5179 posList 920421.56066741 1942133.04361461 922632.11858739 1942112.20913241 922606.35270926 1939338.57576189 920395.05845389 1939359.4053201 (닫힘)
+EPSG:5179(TM · GRS80 · lat0 38 · lon0 127.5 · k0 0.9996 · FE 1,000,000 · FN 2,000,000) 역변환 → 꼭짓점 lat 37.475/37.450 · lon 126.600/126.625
+— 모두 0.025°(1′30″) 배수(1499·1498 / 5064·5065 × 0.025) → KOMSA grid_id 와 WFS grid_no 가 같은 체계이고 칸 = 0.025° 정사각형
+
+== 해양수산부 선박운항정보 — GET https://apis.data.go.kr/1192000/VsslEtrynd5/Info5?serviceKey=***&prtAgCd=CODE&sde=YYYYMMDD&ede=YYYYMMDD[&clsgn=호출부호]
+응답은 XML(resultCode "00"). 부산 예(2026-09-29): prtAgNm 부산 · vsslNm 부광9호 · clsgn 230025 · vsslKndNm 석유제품 운반선 · etryptPurpsNm 양하 · 전출항지/차항지/목적지 여천항(KRYOC) · detail 최초·입항·2026-09-29T00:00:00+09:00
+항만청 코드(국가물류통합정보센터 nlic.go.kr 항만청코드 표 — 11건이라 적혀 있으나 10건만 보임)를 API 로 확인(최근 3일 · 돌려준 prtAgNm · totalCount):
+020 부산 344 · 030 인천 139 · 200 동해 23 · 300 대산 62 · 500 군산 27 · 610 목포 13 · 620 여수 86 · 700 포항 3 · 810 마산 52 · 820 울산 208
