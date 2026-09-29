@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     budget_adsbdb: int = 2000  # 계약 v4 §A: 노선 조회(선택한 항공기의 콜사인만)
     # 공공데이터포털 하루 예산(UTC 날 — 포털 개발계정 한도는 API 하나당 하루 10,000 · 500, ADR-022 · ADR-023). UTC 날 예산만으로는 포털이 하루를
     # 다른 경계(KST 자정 · 지난 24시간)로 셀 때 두 UTC 날의 몫이 그 하루에 들어갈 수 있다 — 어느 경계로 세어도 지키는 것은 Redis 시간 창이다:
-    # 해양수산부 두 API(portmis · mof_grid4)는 함께 세는 budget:mof:h:*(시간당 400 × 창 25개 = 10,000 — 한도가 기관 단위로 묶여 있더라도,
+    # 해양수산부 두 API(portmis · mof_grid4)는 함께 세는 budget:mof:h:*(시간당 390 × 창 25개 = 9,750 ≤ 10,000 — 한도가 기관 단위로 묶여 있더라도,
     # providers/data_go_kr.MOF_*), 해양교통안전공단은 budget:komsa_traffic:h:*(15 × 25 = 375 ≤ 500)
     budget_portmis: int = 3000  # ADR-022: 한국 항만 입출항 — 선박 하나 조회 = 항만청 10곳 × 쪽 수
     budget_komsa_traffic: int = 400  # ADR-023: 실시간 해양교통정보(5분 주기 288 + 여유)
