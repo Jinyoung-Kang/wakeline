@@ -25,7 +25,8 @@ const UNKNOWN = [null, undefined, "", "bad", Number.NaN, 8.64e15];
 
 describe("the display zone is decided in one place", () => {
   it("DISPLAY_TZ names KST (+09:00, Asia/Seoul); every formatter labels with it", () => {
-    expect(T.DISPLAY_TZ).toMatchObject({ label: "KST", iana: "Asia/Seoul", offsetMs: 9 * 3_600_000 });
+    expect(T.DISPLAY_TZ).toMatchObject({ label: "KST", iana: "Asia/Seoul", offsetMs: 9 * 3_600_000, isoOffset: "+09:00" });
+    expect(T.timeParts(LATE)!.iso).toBe("2026-09-29T08:41:14.906+09:00"); // 벽시계 · <time dateTime> 도 DISPLAY_TZ 에서
     expect(T.fmtKst(NOON).endsWith(` ${T.DISPLAY_TZ.label}`)).toBe(true);
   });
 });

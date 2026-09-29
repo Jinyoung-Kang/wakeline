@@ -14,10 +14,13 @@
  * 계산: 고정 오프셋 +09:00(lib/kst — 1988년 뒤로 일광 절약 없음, tz 데이터베이스와 대조한 시험 있음). Intl 을 쓰지 않는다 — 보는 사람의 시간대 ·
  * ICU 자료와 상관없이 같은 글자이고 형식기 생성 비용이 없다. 같은 입력의 분해 결과는 작은 캐시에 둔다(표가 매초 같은 시각을 다시 그린다).
  */
-import { isoKst, KST_OFFSET_MS } from "./kst";
+import { KST_OFFSET_MS } from "./kst";
 
-/** 화면 시간대(한 곳) — 글자 이름 · 이름 · tz 데이터베이스 이름 · 오프셋. 모든 형식기가 이 값으로 이름표를 단다 */
-export const DISPLAY_TZ = { label: "KST", name: "한국 표준시", iana: "Asia/Seoul", offsetMs: KST_OFFSET_MS } as const;
+/**
+ * 화면 시간대(한 곳) — 글자 이름 · 이름 · tz 데이터베이스 이름 · 오프셋(ms · ISO 표기). 모든 형식기가 이 값으로 벽시계를 만들고 이름표를 단다.
+ * 한국은 1988년 뒤로 일광 절약이 없어 고정 오프셋이 tz 데이터베이스와 같다(tests/kst-format.test.ts 가 2000–2040 을 대조).
+ */
+export const DISPLAY_TZ = { label: "KST", name: "한국 표준시", iana: "Asia/Seoul", offsetMs: KST_OFFSET_MS, isoOffset: "+09:00" } as const;
 const ZONE = DISPLAY_TZ.label;
 
 export type TimeIn = string | number | null | undefined;
@@ -36,8 +39,12 @@ export const timeCacheSize = () => partsCache.size;
 function computeParts(v: string | number): TimeParts | null {
   const t = new Date(v).getTime();
   if (!Number.isFinite(t)) return null;
-  const iso = isoKst(t); // 0000–9999 년만(그 밖 · Date 범위 밖은 null)
-  return iso == null ? null : { ms: t, iso, wall: wallOf(iso) };
+  const shifted = new Date(t + DISPLAY_TZ.offsetMs);
+  if (!Number.isFinite(shifted.getTime())) return null; // Date 범위 끝(±8.64e15 ms)을 넘으면 toISOString 이 던진다
+  const s = shifted.toISOString();
+  if (s.length !== 24) return null; // 0000–9999 년만("YYYY-…Z" 24자) — 그 밖은 확장 연도라 자리로 자를 수 없다
+  const iso = `${s.slice(0, 23)}${DISPLAY_TZ.isoOffset}`;
+  return { ms: t, iso, wall: wallOf(iso) };
 }
 
 /** 시각(ISO 문자열 · 숫자는 epoch ms) → 화면 시간대 벽시계. 읽을 수 없으면 null */
