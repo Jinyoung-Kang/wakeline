@@ -110,8 +110,8 @@ export class SendBudget {
 
 /** 목록에 남기는 이벤트(활성). 나머지(LEFT·LOST·PREDICTION_CLEARED)는 목록에서 뺀다. */
 const ACTIVE_EVENTS: ReadonlySet<string> = new Set(["ENTERED", "PREDICTED", "PREDICTION_UPDATED"]);
-/** 배너(lastEvent)로 알릴 이벤트. PREDICTION_UPDATED/CLEARED 는 잦고 가치가 낮아 배너에서 뺀다(GAP-21). */
-const BANNER_EVENTS: ReadonlySet<string> = new Set(["ENTERED", "LEFT", "LOST", "PREDICTED"]);
+/** 배너(lastEvent)로 알릴 이벤트. PREDICTION_UPDATED/CLEARED 는 잦고 가치가 낮아 배너에서 뺀다(GAP-21). e2e 배너 시험도 이 목록을 쓴다 */
+export const BANNER_EVENTS: ReadonlySet<string> = new Set(["ENTERED", "LEFT", "LOST", "PREDICTED"]);
 
 export interface AlertsState {
   alerts: Map<number, Alert>;

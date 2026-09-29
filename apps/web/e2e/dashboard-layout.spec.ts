@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { predictedEvent, withPendingRoute } from "./ws-inject";
+import { predictedEvent, withoutBannerEvents, withPendingRoute } from "./ws-inject";
 
 /**
  * 상황판 배치(사용자 스크린샷 2026-09-30 · 1427×829) — 격리된 fixture 스택(make e2e)에서 세 창 크기로 잰다.
@@ -8,7 +8,8 @@ import { predictedEvent, withPendingRoute } from "./ws-inject";
  *   검색의 Esc 는 검색만(상세 단추로 초점을 빼앗지 않는다).
  * - 노선 조회 중: 가는 진행 막대 + 출발 · 도착 자리 표시(회전 사각형 없음), 나타남 지연 0.18 s, 움직임 줄이기 설정이면 막대 조각 없음.
  *   fixture 모드의 노선은 'disabled'(계약 v4 §G A-2)라 조회 중이 오지 않는다 — WS 를 실제 서버로 이어 주되 selected.route 만 pending 으로 바꿔 보낸다.
- * - 알림 배너: 두 줄(종류 · 호출부호 / SIGMET · 받은 시각)이 잘리지 않고 보인다 — 이벤트는 같은 방법으로 alerts_batch 하나를 끼워 넣는다.
+ * - 알림 배너: 두 줄(종류 · 호출부호 / SIGMET · 받은 시각)이 잘리지 않고 보인다 — 이벤트는 같은 방법으로 alerts_batch 하나를 끼워 넣고,
+ *   서버의 배너 이벤트는 뺀다(끼워 넣은 것만 배너가 된다).
  * - 알림 수 줄 · 검색 자리 글자 · 지도 위 배치(레이어 단추 · 칩 · 범례)가 서로 겹치거나 잘리지 않는다.
  * 모든 값은 fixture 스택의 자료나 이 파일이 끼워 넣은 메시지뿐이다(외부 호출 없음).
  */
@@ -159,7 +160,8 @@ for (const size of SIZES) {
     });
 
     test("alert banner: kind, callsign, SIGMET and time are all readable (two lines, nothing cut)", async ({ page }) => {
-      const ws = await proxyWs(page);
+      // 서버(fixture)의 배너 이벤트는 뺀다 — 합성 SIGMET 에 드나드는 실제 이벤트가 끼워 넣은 배너를 덮지 않게(검토 발견)
+      const ws = await proxyWs(page, withoutBannerEvents);
       await open(page);
       await expect(page.getByTestId("alerts-counts")).toBeVisible();
       // 버전을 크게(틈) — 항목은 반영되고 배너가 뜬다(목록은 전체를 다시 받는다 — lib/ws-protocol applyAlertsBatch)
