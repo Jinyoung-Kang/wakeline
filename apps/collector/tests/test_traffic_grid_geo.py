@@ -37,6 +37,15 @@ SAMPLE_RING = [
 # ---- 투영 ------------------------------------------------------------------------------------------------------------
 
 
+def test_the_fixture_is_the_real_response_and_its_srs_name_is_accepted():
+    """fixtures/mof_grid4_wfs_GR4_F2K41_C3.xml 은 2026-09-29 실제 응답 그대로다(docs/review/evidence/public-data-apis-2026-09-29.txt).
+    처음 구현은 짐작한 srsName="EPSG:5179" 를 기대해, 배포 뒤 모든 기하 조회가 'unexpected srsName' 으로 실패했다."""
+    text = FIX.read_text()
+    assert 'srsName="http://www.opengis.net/gml/srs/epsg.xml#5179"' in text
+    assert 'srsName="EPSG:5179"' not in text
+    assert "<!--" not in text  # 만든 자료가 아니다
+
+
 def test_projection_origin_maps_to_38n_127_5e():
     lat, lon = tm5179_to_wgs84(1_000_000.0, 2_000_000.0)
     assert lat == pytest.approx(38.0, abs=1e-12)
@@ -156,7 +165,7 @@ def test_ring_far_outside_korea_is_rejected():
 def test_parse_verified_feature():
     r = parse_wfs(FIX.read_bytes(), "GR4_F2K41_C3")
     assert r.kind == "found"
-    assert r.cell == Cell("GR4_F2K41_C3", 37.45, 126.6, 37.475, 126.625, 1)
+    assert r.cell == Cell("GR4_F2K41_C3", 37.45, 126.6, 37.475, 126.625, 167305)  # 실제 응답의 gid
 
 
 def test_zero_features_is_not_found():
@@ -181,13 +190,17 @@ def test_off_grid_geometry_is_quarantined():
 
 
 def test_unexpected_srs_name_is_an_error():
-    body = FIX.read_text().replace('srsName="EPSG:5179"', 'srsName="urn:ogc:def:crs:EPSG::5179"').encode()
+    body = (
+        FIX.read_text()
+        .replace('srsName="http://www.opengis.net/gml/srs/epsg.xml#5179"', 'srsName="urn:ogc:def:crs:EPSG::5179"')
+        .encode()
+    )
     with pytest.raises(WfsError, match="srsName"):
         parse_wfs(body, "GR4_F2K41_C3")
 
 
 def test_missing_srs_name_is_an_error():
-    body = FIX.read_text().replace(' srsName="EPSG:5179"', "").encode()
+    body = FIX.read_text().replace(' srsName="http://www.opengis.net/gml/srs/epsg.xml#5179"', "").encode()
     with pytest.raises(WfsError, match="srsName"):
         parse_wfs(body, "GR4_F2K41_C3")
 
@@ -257,6 +270,6 @@ def test_oversized_body_is_refused():
 
 
 def test_bad_gid_is_unknown_not_invented():
-    body = FIX.read_text().replace("<ofbd-DB:gid>1</ofbd-DB:gid>", "<ofbd-DB:gid>x1</ofbd-DB:gid>").encode()
+    body = FIX.read_text().replace("<ofbd-DB:gid>167305</ofbd-DB:gid>", "<ofbd-DB:gid>x1</ofbd-DB:gid>").encode()
     r = parse_wfs(body, "GR4_F2K41_C3")
     assert r.kind == "found" and r.cell is not None and r.cell.gid is None
