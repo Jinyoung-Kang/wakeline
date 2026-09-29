@@ -179,6 +179,38 @@ export function fmtUtcTitle(v: string | number | null | undefined): string | und
   const s = isoOf(v);
   return s == null ? undefined : `원본 UTC ${s}`;
 }
+/** 분 단위 시각(레이더 프레임 등) KST "MM-DD HH:MM KST" — 자정 부근도 날짜로 구분된다. 모르면 "—" */
+export function fmtMinuteKst(v: string | number | null | undefined) {
+  const s = isoKst(v);
+  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 16)} KST`;
+}
+/** KST "HH:MM"(시간대 글자 없음 — 구간 "08:40–08:45 KST" 처럼 끝에 한 번 붙이는 자리). 모르면 null */
+export function hmKst(v: string | number | null | undefined): string | null {
+  const s = isoKst(v);
+  return s == null ? null : s.slice(11, 16);
+}
+/**
+ * 구간 "MM-DD HH:MM:SS – MM-DD HH:MM:SS KST"(시간대는 끝에 한 번). 한쪽을 모르면 그쪽만 "—"(아는 쪽에 " KST"), 둘 다 모르면 "— – —".
+ * open 을 주면 끝이 없는 구간(진행 중)은 그 글자로.
+ */
+export function fmtRangeKst(a: string | number | null | undefined, b: string | number | null | undefined, open?: string) {
+  const x = fmtTimeKst(a), y = fmtTimeKst(b);
+  if (x !== "—" && y !== "—") return `${x} – ${y} KST`;
+  const right = y !== "—" ? `${y} KST` : b == null && open ? open : "—";
+  return `${x === "—" ? x : `${x} KST`} – ${right}`;
+}
+/** 시각이 title 에만 있는 자리(보이는 글자가 경과 등): "09-29 08:41:14 KST · 원본 UTC 2026-09-28T23:41:14.906Z". 모르면 "—" */
+export function fmtKstTitle(v: string | number | null | undefined) {
+  const t = fmtTimeKstLabel(v);
+  return t === "—" ? t : `${t} · ${fmtUtcTitle(v)}`;
+}
+/** 지금과 같은 KST 날짜면 "HH:MM KST", 아니면(또는 지금을 모르면) "MM-DD HH:MM KST" — 어제 시각이 오늘처럼 보이지 않게. 모르면 "—" */
+export function fmtDayMinuteKst(v: string | number | null | undefined, nowMs: number) {
+  const s = isoKst(v);
+  if (s == null) return "—";
+  const today = nowMs > 0 ? isoKst(nowMs) : null;
+  return `${today != null && today.slice(0, 10) === s.slice(0, 10) ? "" : `${s.slice(5, 10)} `}${s.slice(11, 16)} KST`;
+}
 /** 경과 시간(초) — "42s", "3m 05s", "1h 12m", "2d 03h". 모르면 "—". */
 export function fmtDuration(sec: number | null | undefined) {
   if (sec == null || !Number.isFinite(sec)) return "—";
