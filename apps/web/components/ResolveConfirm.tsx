@@ -27,19 +27,24 @@ export type ResolveResult =
 /**
  * 확인 패널 자리(한 화면에 하나): 열 때마다 번호(n)를 새로 매긴다 — 부모는 n 을 패널의 key 로 준다.
  * 같은 자리를 다시 열어도(예: 일부 실패 뒤 목록이 바뀐 다음 "보이는 묶음 모두" 다시) 패널이 새로 시작해 지난 시도의 남은 요청 · 오류를 쓰지 않는다.
+ * close = 지금 열린 패널을 닫는다(취소 · Esc — 패널이 화면에 있다). closeIf(n) = 그 번호의 패널이 아직 열려 있을 때만 닫는다(쓰기 결과 —
+ * 보내는 동안 운영자가 다른 대상의 확인을 열었으면 그것을 닫지 않는다).
  */
 export function useResolveSlot() {
   const [open, setOpen] = useState<{ at: string; target: ResolveTarget; n: number } | null>(null);
   const seq = useRef(0);
   const show = useCallback((at: string, target: ResolveTarget) => setOpen({ at, target, n: ++seq.current }), []);
   const close = useCallback(() => setOpen(null), []);
-  return { open, show, close };
+  const closeIf = useCallback((n: number) => setOpen((o) => (o?.n === n ? null : o)), []);
+  return { open, show, close, closeIf };
 }
 
 /**
  * 해결 처리 · 되돌리기 확인 패널(ADR-022) — 보내기 전에 대상 · 범위(upto) · 결과를 글로 말하고, 운영자가 확인해야 보낸다.
  * - 쓰기는 lib/api apiSend(CSRF 헤더). 401/404 는 onAuthMiss 로 세션을 확인해 만료면 부모가 로그인으로 보낸다(패널은 사라진다).
  * - 보내는 동안 단추를 막고("처리 중…", aria-busy) 두 번 보내지 않는다. 화면(해결됨 표시)은 부모가 201/204 를 받은 뒤에만 바꾼다.
+ * - 보내는 동안 패널이 사라져도(상세 닫기 · 보기 · 탭 전환 · 다른 대상의 확인) 받은 결과는 부모에게 알린다 — 서버는 이미 바뀌었다(목록을 다시 읽어야 한다).
+ *   패널 자신의 상태(남은 요청 · 오류 · 요약)만 사라진 패널에는 쓰지 않는다.
  * - 실패는 한국어 첫 문구 + (HTTP · code) + 요청 id(복사 · 로그로 거르기). 일괄의 일부 실패는 결과 수를 말하고 "남은 N개 다시 시도"로 실패 · 보내지 않은 것만 다시 보낸다.
  * - Esc = 취소(보내는 중이 아닐 때). 메모는 선택, 앞뒤 공백을 떼어 200자 이하 한 줄(서버가 다시 검사한다).
  */
@@ -80,9 +85,9 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
           await apiSend<void>("DELETE", resolutionPath(target.ref.id));
           onChanged({ op: "revoke", id: target.ref.id, complete: true });
         } catch (e) {
-          if (await expired(e) || !live.current) return;
-          setError(e);
-          // 404(세션은 살아 있음) = 이미 되돌렸거나 없는 해결 — 보이는 목록이 틀렸으니 다시 불러온다
+          if (await expired(e)) return;
+          if (live.current) setError(e);
+          // 404(세션은 살아 있음) = 이미 되돌렸거나 없는 해결 — 보이는 목록이 틀렸으니 다시 불러온다(패널이 사라졌어도)
           if (e instanceof ApiError && e.status === 404) onChanged({ op: "revoke", id: target.ref.id, complete: false });
         }
         return;
@@ -91,16 +96,18 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
       const out = await resolveAll(drafts, async (d) => parseResolution(await apiSend<unknown>("POST", RESOLUTIONS_PATH, resolutionBody(d, note))));
       const err = out.stopped ?? out.failed[0]?.error ?? null;
       if (err != null && await expired(err)) return;
-      if (!live.current) return;
       // 남은 것 = 실패 + 멈춘 뒤 보내지 않은 것(뒤쪽) — 다시 시도는 이것만 보낸다(이미 저장한 해결을 두 번 만들지 않는다)
       const left = [...out.failed.map((f) => f.draft), ...drafts.slice(drafts.length - out.notTried)];
-      setRemaining(left);
-      setError(err);
-      if (total > 1) {
-        setSummary(`${out.done.length}개 해결됨 · ${out.failed.length}개 실패${out.notTried ? ` · ${out.notTried}개 보내지 않음(나머지도 같은 이유로 실패 — 멈춤)` : ""}`);
+      if (live.current) {
+        setRemaining(left);
+        setError(err);
+        if (total > 1) {
+          setSummary(`${out.done.length}개 해결됨 · ${out.failed.length}개 실패${out.notTried ? ` · ${out.notTried}개 보내지 않음(나머지도 같은 이유로 실패 — 멈춤)` : ""}`);
+        }
+        if (out.done.length) setSavedSome(true);
       }
+      // 저장된 해결은 패널이 사라졌어도 알린다 — 부모가 목록을 다시 읽고 상태 줄에 남긴다
       if (out.done.length) {
-        setSavedSome(true);
         onChanged({ op: "resolve", created: out.done.flatMap((x) => (x.res ? [x.res] : [])), saved: out.done.length, complete: left.length === 0 });
       }
     } finally {
@@ -140,7 +147,7 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
           ref={target.op === "revoke" ? first : undefined} type="button" className="btn border-accent! text-accent!" onClick={() => void run()}
           disabled={sending || !!noteErr || (target.op === "resolve" && !remaining.length)} aria-busy={sending}
         >{confirmLabel}</button>
-        <button type="button" className="btn" onClick={onClose} disabled={sending}>{savedSome ? "닫기" : "취소"}</button>
+        <button type="button" className="btn" onClick={() => onClose()} disabled={sending}>{savedSome ? "닫기" : "취소"}</button>
       </div>
       {summary ? <div className="mt-1 text-warn" role="status" data-testid="resolve-summary">{summary}</div> : null}
       {error != null ? (

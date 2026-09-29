@@ -32,7 +32,7 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
   onAuthMiss: (e: unknown) => Promise<"expired" | "error">; onFilterRid: (rid: string) => void;
 }) {
   /** 확인 패널이 열린 자리: 묶음 하나(fp) 또는 일괄("bulk") — 한 번에 하나만 */
-  const { open, show, close } = useResolveSlot();
+  const { open, show, close, closeIf } = useResolveSlot();
   const plan = bulkPlan(groups);
   const n = plan.eligible.length;
   const excluded = [plan.resolved ? `이미 해결됨 ${plan.resolved}개` : null, plan.noTime ? `마지막 시각 모름 ${plan.noTime}개` : null].filter(Boolean).join(" · ");
@@ -43,7 +43,7 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
   });
   const panel = (at: string) => (open?.at === at ? (
     <ResolveConfirm key={open.n} target={open.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
-      onChanged={(r) => { if (r.complete) close(); onChanged(r); }} />
+      onChanged={(r) => { if (r.complete) closeIf(open.n); onChanged(r); }} />
   ) : null);
   return (
     <>

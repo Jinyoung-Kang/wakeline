@@ -386,3 +386,30 @@ describe("/ops tabs: an answer slower than the 15 s refresh", () => {
     expect(byTestId("runs-hidden-resolved")!.textContent).toBe("해결된 오류 포함(요약에서 빼지 않음)");
   });
 });
+
+describe("/ops: a write whose confirmation is gone before the answer still counts", () => {
+  it("switching tabs while the POST is in flight: the 201 re-reads the lists, says so, and the confirmation does not come back", async () => {
+    let resolved = false;
+    let release: (() => void) | null = null;
+    stub({
+      "GET /api/v1/ops/providers": () => ({ status: 200, body: PROV([resolved ? lol({ last_error_resolution: { id: 5, upto: ERR_AT, resolved_by: "op" }, last_error_resolved: true }) : lol(), fi]) }),
+      "POST /api/v1/ops/resolutions": async () => {
+        await new Promise<void>((r) => { release = r; });
+        resolved = true;
+        return { status: 201, body: { id: 5, kind: "provider_error", key: "adsb_lol", upto: ERR_AT, resolved_at: NOW, resolved_by: "op", note: null } };
+      },
+    });
+    await mount();
+    await click(button("해결 처리", cell()));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+    await click(byTestId("ops-tab-runs"));
+    const before = calls.length;
+    await React.act(async () => { release!(); });
+    await settle(); await settle();
+    expect(calls.slice(before).filter((c) => c.method === "GET").map((c) => c.url)).toEqual(expect.arrayContaining(["/api/v1/ops/providers", RUNS_HIDE, "/api/v1/ops/audit"]));
+    await click(byTestId("ops-tab-providers"));
+    expect(byTestId("resolve-confirm")).toBeNull();
+    expect(byTestId("provider-error-resolved")).not.toBeNull();
+    expect(statusText()).toContain("해결 처리됨: 공급자 adsb_lol(해결 #5)");
+  });
+});

@@ -197,11 +197,14 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     reload(["runs"]);
   };
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
-  const { open: resolveOpen, show: showResolve, close: closeResolve } = useResolveSlot();
+  const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
-  /** 201/204 뒤: 201 은 받은 해결을 공급자 행에 바로 붙이고(낙관적 — 201 뒤에만), 204 는 붙이지 않는다(서버가 정한다). 영향받는 탭을 다시 읽는다 */
-  const resolveChanged = useCallback((r: ResolveResult) => {
-    if (r.complete) closeResolve();
+  /**
+   * 201/204 뒤: 201 은 받은 해결을 공급자 행에 바로 붙이고(낙관적 — 201 뒤에만), 204 는 붙이지 않는다(서버가 정한다). 영향받는 탭을 다시 읽는다.
+   * n = 결과를 낸 패널 번호 — 그 패널이 아직 열려 있을 때만 닫는다(보내는 동안 다른 공급자의 확인을 열었으면 그대로)
+   */
+  const resolveChanged = useCallback((r: ResolveResult, n: number) => {
+    if (r.complete) closeResolveIf(n);
     if (r.op === "resolve") {
       setProv((p) => (p ? withProviderResolutions(p, r.created) : p));
       setResolveNote(`해결 처리됨: ${r.created.map((c) => `공급자 ${c.key}(해결 #${c.id})`).join(" · ") || `${r.saved}건`} — 공급자 · 실행 요약 · 감사를 다시 불러옴`);
@@ -209,7 +212,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
       setResolveNote(`되돌림: 해결 #${r.id} — 공급자 · 실행 요약 · 감사를 다시 불러옴`);
     }
     reload(RESOLVE_AFFECTS);
-  }, [reload, closeResolve]);
+  }, [reload, closeResolveIf]);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
   const losses = pipelineLossCount(pipeline);
   /** 마지막 토글 결과(R-94): DB 원본에 커밋됐어도 Redis 미러에 실패했으면(mirrored=false) 수집기는 아직 이전 값을 따른다 — 경고로 보인다 */
@@ -266,7 +269,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
                 {off ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
             </tr>
             {resolveOpen?.at === String(p.name) ? <tr><td colSpan={9}>
-              <ResolveConfirm key={resolveOpen.n} target={resolveOpen.target} onClose={closeResolve} onChanged={resolveChanged} onAuthMiss={authMiss} />
+              <ResolveConfirm key={resolveOpen.n} target={resolveOpen.target} onClose={closeResolve} onChanged={(r) => resolveChanged(r, resolveOpen.n)} onAuthMiss={authMiss} />
             </td></tr> : null}</Fragment>; })}</tbody></table>
           <div className="label mt-4 mb-1" title="수집기가 스스로 한 공급자 전환(wakeline:events) — 위 표의 수동 켜고 끄기와 다르다">Provider switches (collector 자동 전환)</div>
           <table><thead><tr><th>at (KST · UTC)</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><TimeCell v={s.at} /><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>

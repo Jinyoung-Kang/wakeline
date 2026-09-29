@@ -285,6 +285,9 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
   const detailRef = useRef<LogEntry | null>(null);
   useEffect(() => { detailRef.current = detail; }, [detail]);
+  /** 지금 보기 · 필터 — 쓰기 결과는 보낼 때가 아니라 받을 때 보이는 것을 다시 읽는다(보내는 동안 보기를 바꿨을 수 있다) */
+  const shown = useRef({ view, filter });
+  useEffect(() => { shown.current = { view, filter }; }, [view, filter]);
   /** 항목 다시 읽기 번호 — 먼저 떠난 느린 응답이 나중 쓰기 뒤에 읽은 값을 덮지 않게(마지막 요청의 응답만 반영) */
   const rereadSeq = useRef(0);
   /**
@@ -302,7 +305,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     } else if (r.complete) {
       setNote({ ok: true, text: `되돌림: 해결 #${r.id} — 목록을 다시 불러옴` });
     }
-    void load(view, filter);
+    void load(shown.current.view, shown.current.filter);
     if (open) {
       const my = ++rereadSeq.current;
       void apiGet<unknown>(logItemUrl(open.id, open.stream)).then((v) => {
@@ -316,7 +319,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         if (r.op === "revoke" && r.complete) setDetail((d) => (d && entryKey(d) === entryKey(open) ? { ...d, resolved: null } : d));
       });
     }
-  }, [load, view, filter]);
+  }, [load]);
 
   return (
     <div className="flex h-full flex-col" data-testid="logs-dashboard">

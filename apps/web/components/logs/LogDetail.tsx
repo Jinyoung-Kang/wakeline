@@ -32,7 +32,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   onResolveChanged: (r: ResolveResult) => void;
 }) {
   const [wrap, setWrap] = useState(true);
-  const { open: confirm, show, close } = useResolveSlot();
+  const { open: confirm, show, close, closeIf } = useResolveSlot();
   const setConfirm = (t: ResolveTarget) => show("entry", t);
   const [related, setRelated] = useState<{ items: LogEntry[]; more: boolean } | null>(null);
   const [relatedErr, setRelatedErr] = useState<unknown>(null);
@@ -113,7 +113,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
       </table>
       {confirm ? (
         <ResolveConfirm key={confirm.n} target={confirm.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
-          onChanged={(r) => { if (r.complete) close(); onResolveChanged(r); }} />
+          onChanged={(r) => { if (r.complete) closeIf(confirm.n); onResolveChanged(r); }} />
       ) : null}
       <div className="label mb-1">메시지</div>
       <pre className="mono mb-3 whitespace-pre-wrap break-words border border-line bg-bg p-2 text-[11px]">{entry.message || "—"}</pre>

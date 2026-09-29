@@ -452,3 +452,61 @@ describe("/logs groups: per group and bulk", () => {
     expect(b.getAttribute("title")).toContain("해결 처리할 묶음 없음");
   });
 });
+
+describe("/logs: a write whose confirmation is gone before the answer still counts", () => {
+  /** POST 를 붙잡아 두는 대역 — release 로 201 을 보낸다 */
+  const holdPost = (o: { groups?: () => unknown } = {}) => {
+    const s = { release: null as (() => void) | null, done: false };
+    stub(async (m, url, body) => {
+      if (m === "POST" && url === "/api/v1/ops/resolutions") { await new Promise<void>((r) => { s.release = r; }); s.done = true; return created(body, 21); }
+      return logsRoutes(url, { aResolved: s.done ? { id: 21, upto: TS_A, resolved_by: "op" } : null, ...(o.groups ? { groups: o.groups() } : {}) });
+    });
+    return s;
+  };
+  it("closing the detail while the POST is in flight: the 201 reloads the list, says so, and the resolved entry leaves the hidden list", async () => {
+    const s = holdPost();
+    await open();
+    await click(allByTestId("log-row")[0]);
+    await click(button("해결 처리", byTestId("log-detail")!));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+    await click(button("닫기", byTestId("log-detail")!)); // 보내는 중에 상세를 닫는다
+    expect(byTestId("log-detail")).toBeNull();
+    const before = calls.length;
+    await React.act(async () => { s.release!(); });
+    await settle(); await settle();
+    expect(calls.slice(before).some((c) => c.method === "GET" && c.url.startsWith("/api/v1/ops/logs?"))).toBe(true);
+    expect(byTestId("logs-note")!.textContent).toContain(`해결 처리됨: 묶음 ${FP}(해결 #21)`);
+    expect(allByTestId("log-row").map((r) => r.getAttribute("data-id"))).toEqual([B.id]);
+  });
+  it("switching to the groups view while an entry's POST is in flight: the 201 reloads the view now shown", async () => {
+    const s = holdPost();
+    await open();
+    await click(allByTestId("log-row")[0]);
+    await click(button("해결 처리", byTestId("log-detail")!));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+    await click(button("묶음(fp)"));
+    const before = calls.length;
+    await React.act(async () => { s.release!(); });
+    await settle(); await settle();
+    const after = calls.slice(before).filter((c) => c.method === "GET").map((c) => c.url);
+    expect(after.some((u) => u.startsWith("/api/v1/ops/logs/groups?"))).toBe(true);
+    expect(after.some((u) => u.startsWith("/api/v1/ops/logs?"))).toBe(false); // 보이지 않는 목록을 읽지 않는다
+    expect(allByTestId("log-group")).toHaveLength(1);
+    expect(byTestId("logs-note")!.textContent).toContain("해결 처리됨");
+  });
+  it("a group's 201 that lands after another group's confirmation was opened does not close that one", async () => {
+    const G4 = group(FP4, { last_at: "2026-09-29T01:30:00.5Z" });
+    const s = holdPost({ groups: () => GROUPS([group(FP), G4]) });
+    await open();
+    await click(button("묶음(fp)"));
+    const [r1, r4] = allByTestId("log-group");
+    await click(button("해결 처리", r1));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+    await click(button("해결 처리", r4)); // 첫 쓰기가 떠 있는 동안 다른 묶음의 확인을 연다
+    expect(byTestId("resolve-confirm")!.textContent).toContain(`지문 묶음 ${FP4}`);
+    await React.act(async () => { s.release!(); });
+    await settle(); await settle();
+    expect(byTestId("resolve-confirm")?.textContent ?? "").toContain(`지문 묶음 ${FP4}`);
+    expect(byTestId("logs-note")!.textContent).toContain(`해결 처리됨: 묶음 ${FP}(해결 #21)`);
+  });
+});
