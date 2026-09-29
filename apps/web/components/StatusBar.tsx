@@ -17,7 +17,8 @@ const NONE: ReadonlySet<string> = new Set();
  *   그래도 넘치면(좁은 화면의 경고들) 줄이 다음 줄로 넘어간다(flex-wrap) — 잘리지 않는다.
  * - 줄 폭은 ResizeObserver 가 크기 변화를 알릴 때만 잰다(1 s 시계 틱마다 재지 않는다 — 레이아웃 강제 없음). 옮긴 칩은 보이지 않게 겹쳐 두어(invisible ·
  *   absolute) 계속 잴 수 있고 화면 읽기 프로그램에서는 숨긴다(값은 상세 표에 있다).
- * - 상세: 단추(aria-expanded · aria-controls) — 누름 · Enter · Space 로 열고 닫고, Esc(단추로 초점을 돌린다) · 바깥 누르기로 닫힌다. 열려 있을 때만 그린다.
+ * - 상세: 단추(aria-expanded · aria-controls) — 누름 · Enter · Space 로 열고 닫고, Esc(초점이 상세 안 · 단추에 있거나 아무 데도 없을 때 — 단추로 초점을
+ *   돌린다) · 바깥 누르기 · 초점이 밖으로 나감(초점은 그대로)으로 닫힌다. 다른 입력의 Esc 는 그 입력의 것. 열려 있을 때만 그린다.
  * - 스토어는 보이는 값만 골라 구독한다(전체 스토어가 아니라) — 항공기 diff 마다 모든 값을 다시 계산하지 않는다.
  * - 출처 표기는 모든 화면 하단의 고정 줄(AttributionFooter — FR-20).
  * - WS 형식 오류 배지(계약 v5 §E2)는 단추 — 상세는 popover(최상위 층)라 이 줄에 잘리지 않는다(WsInvalidBadge).
@@ -107,15 +108,30 @@ export function StatusBarView({ input, inv }: { input: StatusInput; inv: WsInval
   const hidden = chips.filter((x) => hiddenAll.has(x.key) && !x.pinned);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); btnRef.current?.focus(); } };
-    const onDown = (e: PointerEvent) => {
+    const inside = (n: Node | null) => n != null && (panelRef.current?.contains(n) === true || btnRef.current?.contains(n) === true);
+    // Esc 는 초점이 있는 곳의 것이다: 초점이 상세(표 · 단추)에 있거나 아무 데도 없을(문서 본문) 때만 닫고 초점을 단추로 돌린다.
+    // 다른 입력(검색 등)의 Esc · 이미 처리된 Esc(defaultPrevented)는 건드리지 않는다 — e.target 은 누를 때 초점이 있던 요소(처리기가 초점을 옮겨도 그대로)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       const t = e.target as Node | null;
-      if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return; // 단추는 onClick 이 여닫는다
+      if (t && t !== document.body && t !== document.documentElement && !inside(t)) return;
+      setOpen(false);
+      btnRef.current?.focus();
+    };
+    const onDown = (e: PointerEvent) => {
+      if (inside(e.target as Node | null)) return; // 단추는 onClick 이 여닫는다
       setOpen(false);
     };
+    // 초점이 밖으로 나가면(예: '/' 로 검색) 닫는다 — 초점은 옮겨 간 곳에 그대로 둔다
+    const onFocusIn = (e: FocusEvent) => { if (!inside(e.target as Node | null)) setOpen(false); };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
-    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("pointerdown", onDown); };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("focusin", onFocusIn);
+    };
   }, [open]);
   const hiddenNames = hidden.map((x) => x.label).join(" · ");
   return (

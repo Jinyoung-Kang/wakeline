@@ -254,7 +254,9 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
     expect(byId("statusbar-details")).not.toBeNull();
     await React.act(async () => { dom.document.dispatch("pointerdown", { type: "pointerdown", target: btn }); }); // 단추는 onClick 이 맡는다
     expect(byId("statusbar-details")).not.toBeNull();
-    await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape" }); });
+    // 키보드: 초점이 상세 단추에 있을 때 Esc → 닫고 초점은 단추에
+    btn.focus();
+    await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: btn }); });
     expect(byId("statusbar-details")).toBeNull();
     expect(dom.document.activeElement).toBe(btn);
     await React.act(async () => { propsOf(btn).onClick({}); });
@@ -263,6 +265,52 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
     // 닫힌 뒤에는 문서에 남은 처리기가 없다
     expect(dom.document.listenerCount("keydown")).toBe(0);
     expect(dom.document.listenerCount("pointerdown")).toBe(0);
+    expect(dom.document.listenerCount("focusin")).toBe(0);
+  });
+  it("Escape belongs to the focused control: 상세 closes on Escape only from inside it (or with no focus); focus moving elsewhere closes it without taking focus back (review finding)", async () => {
+    await mount();
+    const isOpen = () => byId("statusbar-details") != null;
+    const btn = byId("statusbar-details-toggle")!;
+    const search = dom.document.createElement("input");
+    dom.document.body.appendChild(search);
+    try {
+      // 하네스 재현: 키보드로 연 뒤 '/' 로 검색에 초점 → 상세는 닫히고 초점은 검색에 남는다(전에는 열린 채였다가 검색의 Esc 가 상세도 닫고 초점을 빼앗았다)
+      btn.focus();
+      await React.act(async () => { propsOf(btn).onClick({}); });
+      expect(isOpen(), "상세 열림").toBe(true);
+      search.focus();
+      await React.act(async () => { dom.document.dispatch("focusin", { type: "focusin", target: search }); });
+      expect(isOpen(), "상세 열림").toBe(false);
+      expect(dom.document.activeElement === search, "초점 = 검색").toBe(true);
+      // 초점이 이미 다른 입력에 있을 때 연 경우: 그 입력의 Esc 는 그 입력의 것 — 상세는 열린 채, 초점은 그대로
+      await React.act(async () => { propsOf(btn).onClick({}); });
+      await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: search }); });
+      expect(isOpen(), "상세 열림").toBe(true);
+      expect(dom.document.activeElement === search, "초점 = 검색").toBe(true);
+      // 다른 처리기가 이미 쓴 Esc(defaultPrevented)도 건드리지 않는다
+      await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: dom.document.body, defaultPrevented: true }); });
+      expect(isOpen(), "상세 열림").toBe(true);
+      // 상세 안(닫기 단추)에서의 Esc → 닫고 초점은 상세 단추로
+      const panel = byId("statusbar-details")!;
+      const close = (function first(e: MiniElement): MiniElement | null {
+        if (e.tagName === "BUTTON") return e;
+        for (const c of e.childNodes) { const f = c instanceof MiniElement ? first(c) : null; if (f) return f; }
+        return null;
+      })(panel)!;
+      close.focus();
+      await React.act(async () => { dom.document.dispatch("focusin", { type: "focusin", target: close }); });
+      expect(isOpen(), "상세 열림").toBe(true); // 안으로 옮긴 초점은 닫지 않는다
+      await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: close }); });
+      expect(isOpen(), "상세 열림").toBe(false);
+      expect(dom.document.activeElement === btn, "초점 = 상세 단추").toBe(true);
+      // 초점이 아무 데도 없을 때(마우스로 연 뒤 — 문서 본문)의 Esc 도 닫는다
+      await React.act(async () => { propsOf(btn).onClick({}); });
+      await React.act(async () => { dom.document.dispatch("keydown", { type: "keydown", key: "Escape", target: dom.document.body }); });
+      expect(isOpen(), "상세 열림").toBe(false);
+      expect(dom.document.listenerCount("focusin")).toBe(0);
+    } finally {
+      dom.document.body.removeChild(search);
+    }
   });
   it("overflow: measured by a ResizeObserver (not per clock tick) — hidden chips stay measurable, are aria-hidden and counted as '+N'", async () => {
     const observers: { cb: () => void; targets: unknown[] }[] = [];

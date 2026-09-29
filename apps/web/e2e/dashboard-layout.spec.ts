@@ -4,7 +4,8 @@ import { predictedEvent, withPendingRoute } from "./ws-inject";
 /**
  * 상황판 배치(사용자 스크린샷 2026-09-30 · 1427×829) — 격리된 fixture 스택(make e2e)에서 세 창 크기로 잰다.
  * - 상태 바: 가로로 스크롤되지 않고(scrollWidth ≤ clientWidth), 보이는 칩은 모두 줄 안에(잘리지 않음). 줄에서 뺀 칩은 '상세 +N' 과 상세 표에.
- * - 상세: 마우스(누름 · 바깥 누르기)와 키보드(Enter · Space · Esc — Esc 는 단추로 초점을 돌린다)로 열고 닫는다.
+ * - 상세: 마우스(누름 · 바깥 누르기)와 키보드(Enter · Space · Esc — Esc 는 단추로 초점을 돌린다)로 열고 닫는다. '/' 로 검색에 가면 닫히고
+ *   검색의 Esc 는 검색만(상세 단추로 초점을 빼앗지 않는다).
  * - 노선 조회 중: 가는 진행 막대 + 출발 · 도착 자리 표시(회전 사각형 없음), 나타남 지연 0.18 s, 움직임 줄이기 설정이면 막대 조각 없음.
  *   fixture 모드의 노선은 'disabled'(계약 v4 §G A-2)라 조회 중이 오지 않는다 — WS 를 실제 서버로 이어 주되 selected.route 만 pending 으로 바꿔 보낸다.
  * - 알림 배너: 두 줄(종류 · 호출부호 / SIGMET · 받은 시각)이 잘리지 않고 보인다 — 이벤트는 같은 방법으로 alerts_batch 하나를 끼워 넣는다.
@@ -100,6 +101,19 @@ for (const size of SIZES) {
       await expect(details).toBeVisible();
       await page.keyboard.press("Space");
       await expect(details).toHaveCount(0);
+      // 키보드로 연 뒤 '/' 로 검색에 가면 상세는 닫히고 초점은 검색에 남는다 — 검색의 Esc 는 검색의 것(상세 단추로 초점을 빼앗지 않는다)
+      const search = page.getByTestId("aircraft-search-input");
+      await page.keyboard.press("Enter");
+      await expect(details).toBeVisible();
+      await page.keyboard.press("/");
+      await expect(search).toBeFocused();
+      await expect(details).toHaveCount(0);
+      await page.keyboard.type("SYN1");
+      await page.keyboard.press("Escape");
+      await expect(search).toBeFocused();
+      await expect(search).toHaveValue("SYN1");
+      await expect(toggle).not.toBeFocused();
+      await search.fill("");
       // 안쪽을 눌러도 닫히지 않고, 닫기 단추로 닫힌다
       await toggle.click();
       await details.locator("th").first().click();
