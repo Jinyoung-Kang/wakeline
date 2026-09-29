@@ -189,6 +189,11 @@ export function fmtRangeKst(a: string | number | null | undefined, b: string | n
   const right = y !== "—" ? `${y} KST` : b == null && open ? open : "—";
   return `${x === "—" ? x : `${x} KST`} – ${right}`;
 }
+/** KST 로 보인 구간의 툴팁: "원본 UTC a – b"(모르는 쪽은 "—"). 둘 다 모르면 undefined(title 없음) */
+export function fmtUtcRangeTitle(a: string | number | null | undefined, b: string | number | null | undefined): string | undefined {
+  const x = isoOf(a), y = isoOf(b);
+  return x == null && y == null ? undefined : `원본 UTC ${x ?? "—"} – ${y ?? "—"}`;
+}
 /** 시각이 title 에만 있는 자리(보이는 글자가 경과 등): "09-29 08:41:14 KST · 원본 UTC 2026-09-28T23:41:14.906Z". 모르면 "—" */
 export function fmtKstTitle(v: string | number | null | undefined) {
   const t = fmtTimeKstLabel(v);

@@ -56,6 +56,11 @@ describe("dashboard KST formatters (lib/format)", () => {
     expect(F.fmtRangeKst(null, "bad")).toBe("— – —");
     expect(F.fmtRangeKst("2026-09-28T23:00:00Z", null, "진행 중")).toBe("09-29 08:00:00 KST – 진행 중");
   });
+  it("range tooltip: the UTC originals once labelled; unknown sides are —; nothing known → no title", () => {
+    expect(F.fmtUtcRangeTitle("2026-09-28T23:00:00Z", "2026-09-29T03:00:00Z")).toBe("원본 UTC 2026-09-28T23:00:00.000Z – 2026-09-29T03:00:00.000Z");
+    expect(F.fmtUtcRangeTitle("2026-09-28T23:00:00Z", null)).toBe("원본 UTC 2026-09-28T23:00:00.000Z – —");
+    expect(F.fmtUtcRangeTitle(null, "bad")).toBeUndefined();
+  });
   it("title-only times (the visible text is an age): KST plus the UTC original; unknown → —", () => {
     expect(F.fmtKstTitle(LATE)).toBe("09-29 08:41:14 KST · 원본 UTC 2026-09-28T23:41:14.906Z");
     expect(F.fmtKstTitle(null)).toBe("—");
@@ -113,6 +118,7 @@ describe("dashboard components show KST (the UTC original stays in the tooltip)"
     } as unknown as Alert;
     const t = text(renderToStaticMarkup(createElement(EvidenceCard, { a })));
     expect(t).toContain("유효시간09-29 07:00:00 – 09-29 11:00:00 KST");
+    expect(renderToStaticMarkup(createElement(EvidenceCard, { a }))).toContain('title="원본 UTC 2026-09-28T22:00:00.000Z – 2026-09-29T02:00:00.000Z"');
     expect(t).toContain("판정 시각09-29 08:00:00 KST");
     expect(t).toContain("출처 / 관측adsb_fi · 09-29 07:59:30 KST");
     expect(t).toMatch(/종료09-29 08:30:00 KST · /);

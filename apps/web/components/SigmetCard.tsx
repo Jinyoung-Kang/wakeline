@@ -4,7 +4,7 @@ import { apiGet } from "@/lib/api";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
-import { band, fmtAltDual, fmtAltGndDual, fmtDuration, fmtRangeKst, fmtTimeKstLabel, fmtUtcTitle, hazardColor } from "@/lib/format";
+import { band, fmtAltDual, fmtAltGndDual, fmtDuration, fmtRangeKst, fmtTimeKstLabel, fmtUtcRangeTitle, fmtUtcTitle, hazardColor } from "@/lib/format";
 import { isExpired, isPending, sigmetBandSource } from "@/lib/sigmet";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
@@ -36,7 +36,7 @@ export function SigmetCard({ id }: { id: string }) {
   const rows: [string, React.ReactNode][] = [
     ["FIR", p.fir_name ?? p.fir_id ?? "—"],
     ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p), { metric: true })],
-    ["유효", <span key="v" className="mono" title={`${fmtUtcTitle(p.valid_from) ?? "—"} – ${fmtUtcTitle(p.valid_to) ?? "—"}`}>{fmtRangeKst(p.valid_from, p.valid_to)}</span>],
+    ["유효", <span key="v" className="mono" title={fmtUtcRangeTitle(p.valid_from, p.valid_to)}>{fmtRangeKst(p.valid_from, p.valid_to)}</span>],
     ["이동", p.move_dir || p.move_spd ? `${p.move_dir ?? "—"}${p.move_spd ? ` ${p.move_spd}` : ""}` : "—"],
     ["변화", p.chng ?? "—"],
     ["출처", <span key="s">{p.provider ?? "—"} · <span className="mono" title={fmtUtcTitle(p.fetched_at)}>{fmtTimeKstLabel(p.fetched_at)}</span></span>],
