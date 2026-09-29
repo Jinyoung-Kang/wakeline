@@ -12,7 +12,9 @@ const MAX_AIRCRAFT = 200;
 export const ReplayList = memo(function ReplayList({ frame, onPick }: { frame: ReplayFrame | null; onPick: (p: ReplayPick) => void }) {
   const [q, setQ] = useState("");
   return (
-    <div className="flex max-h-full flex-col">
+    // 패널(max-h 만 있는 flex 열) 안에서 max-h-full 은 풀리지 않아 목록이 패널 밖(아래 SOURCES 줄 위)으로 넘쳤다(2026-09-30 설명서 캡처) —
+    // flex 자식으로 줄어들게(min-h-0 flex-1) 하고 목록만 스크롤
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="row">
         <input value={q} onChange={(e) => setQ(e.target.value.slice(0, 16))} placeholder="호출부호·hex" aria-label="재생 항공기 거르기(호출부호 또는 hex)" className="w-full" />
       </div>

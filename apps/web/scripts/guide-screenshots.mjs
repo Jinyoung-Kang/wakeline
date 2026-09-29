@@ -58,7 +58,8 @@ if (needsLogin) {
 }
 
 mkdirSync(OUT, { recursive: true });
-const browser = await chromium.launch({ args: ["--use-angle=metal", "--enable-gpu-rasterization", "--ignore-gpu-blocklist"] });
+// --lang: 날짜 · 시각 입력칸(type=date · datetime-local)의 표시 형식은 브라우저 UI 언어를 따른다 — 문맥의 locale 만으로는 09/29/2026 · AM 으로 찍혔다
+const browser = await chromium.launch({ args: ["--use-angle=metal", "--enable-gpu-rasterization", "--ignore-gpu-blocklist", "--lang=ko-KR"] });
 const ctx = await browser.newContext({ viewport: VP, deviceScaleFactor: 1, colorScheme: "dark", locale: "ko-KR", reducedMotion: "reduce" });
 const page = await ctx.newPage();
 page.setDefaultTimeout(20_000);

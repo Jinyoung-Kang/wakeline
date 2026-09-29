@@ -102,7 +102,7 @@ export default function ReplayPage() {
         <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />
         {/* 키보드 경로(R-40): 지도 클릭 없이 그 시각의 SIGMET·항공기를 고른다 */}
         {showList ? (
-          <div id="replay-list" className="panel absolute top-3 left-12 z-10 flex max-h-[calc(100%-1.5rem)] w-[260px] max-w-[calc(100%-4rem)] flex-col" role="region" aria-label="재생 항목 목록" data-testid="replay-list">
+          <div id="replay-list" className="panel absolute top-3 left-12 z-10 flex max-h-[calc(100%-1.5rem)] w-[260px] max-w-[calc(100%-4rem)] flex-col overflow-hidden" role="region" aria-label="재생 항목 목록" data-testid="replay-list">
             <ReplayList frame={frame} onPick={setPick} />
           </div>
         ) : null}
