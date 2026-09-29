@@ -161,7 +161,19 @@ describe("AIS gap: a duration, not an identical start–end", () => {
       { coverage: [[18, 105, 46, 150]], state: "receiving", connected: true, gap_open_since: null },
       { coverage: [[-90, 45, 90, 180]], state: "backoff", connected: false, gap_open_since: iso(-60_000) },
     ] } } }, NOW) });
-    expect(openGapWarning(shards)).toMatchObject({ text: "AIS 공백 1/2 구역 진행 중", partial: true });
+    expect(openGapWarning(shards)).toMatchObject({ text: "AIS 공백 1/2 구역 진행 중 1m 00s", partial: true });
+    // 상세: 상태에 구역 수, 값에 길이(줄과 같은 길이 — 따로 짓지 않는다)
+    const zoneRow = detailRows(shards).find((r) => r.key === "ais-gap")!;
+    expect([zoneRow.health, zoneRow.state, zoneRow.value]).toEqual(["warn", "진행 중 · 1/2 구역", "1m 00s"]);
+    const openRow = detailRows(open).find((r) => r.key === "ais-gap")!;
+    expect([openRow.health, openRow.state, openRow.value]).toEqual(["bad", "진행 중", "4m 12s"]);
+  });
+  it("상세 marks an ended gap as 주의 only while it is still in the row's 30-minute window; an older one is neutral (review finding)", () => {
+    const at = (endedAgoMs: number) => input({ ais: parseAisStatus({ sources: { ais: { connected: true, lag_s: 3, msgs_per_s: 1, last_gap: { started_at: iso(-endedAgoMs - 42_000), ended_at: iso(-endedAgoMs), reason: "restart" } } } }, NOW) });
+    const recent = detailRows(at(AIS_GAP_SHOW_MS)).find((r) => r.key === "ais-gap")!;
+    expect([recent.health, recent.state, recent.value]).toEqual(["warn", "끝남", "42s"]);
+    const old = detailRows(at(AIS_GAP_SHOW_MS + 1000)).find((r) => r.key === "ais-gap")!;
+    expect([old.health, old.state, old.value]).toEqual([null, "끝남", "42s"]);
   });
 });
 

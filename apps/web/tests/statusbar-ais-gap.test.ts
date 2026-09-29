@@ -59,6 +59,12 @@ describe("AIS gap in zones (contract v4 §D)", () => {
     expect(g.title).toContain("구역 1 -90,-180,90,0 — 공백 11:50:00 KST 부터");
     expect(g.title).toMatch(/구역 2 -90,45,90,180 — 공백 없음 · 연결$/m);
   });
+  it("a gap open in only some zones shows how long it has run (from the earliest zone) — in the row and in 상세 (review finding)", () => {
+    const two = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:50:00Z", connected: false }), shard(ASIA, { gap_open_since: null })]);
+    expect(aisGapInfo(two, NOW)).toMatchObject({ text: "AIS 공백 1/2 구역 진행 중 10m 00s", durationS: 600, zones: { open: 1, total: 2 } });
+    // 서버 시각을 모르면 길이를 지어내지 않는다
+    expect(aisGapInfo(two, 0)).toMatchObject({ text: "AIS 공백 1/2 구역 진행 중", durationS: null });
+  });
   it("the other zones' reported connection, never 'receiving' by assumption", () => {
     const back = aisGapInfo(status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:50:00Z", connected: false }), shard(ASIA, { connected: false, state: "backoff" })]), NOW)!;
     expect(back.title).toContain("구역 2 -90,45,90,180 — 공백 없음 · 끊김(재연결 중)");

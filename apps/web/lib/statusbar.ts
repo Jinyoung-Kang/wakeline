@@ -104,13 +104,15 @@ function kstSpan(a: TimeIn, b: TimeIn): string {
 
 /** AIS 공백 하나(줄의 칩 · 앞쪽 경고 · 상세 표). 모든 시각은 KST 만 */
 export interface AisGapInfo {
-  /** 한 줄 요약(칩 글자와 같다): "AIS 공백 진행 중 4m 12s" · "AIS 공백 1/2 구역 진행 중" · "AIS 공백 42s · 02:22 KST 끝남" */
+  /** 한 줄 요약(칩 글자와 같다): "AIS 공백 진행 중 4m 12s" · "AIS 공백 1/2 구역 진행 중 1m 00s" · "AIS 공백 42s · 02:22 KST 끝남" */
   text: string;
   /** 칩의 값 · 상태 낱말(text 를 나눈 것) */
   value: string;
   state: string | null;
   open: boolean;
   partial?: boolean;
+  /** 일부 구역만 공백일 때: 공백 구역 수 / 전체 구역 수 */
+  zones?: { open: number; total: number };
   /** 상태 바 줄에 보일지: 열린 공백, 또는 끝난 지 AIS_GAP_SHOW_MS(30분, 계약 v2 §B4) 안 */
   recent: boolean;
   /** 길이(초): 열림 = 서버 기준 지금 − 시작(지금을 모르면 null) · 끝남 = 끝 − 시작 */
@@ -127,7 +129,7 @@ export interface AisGapInfo {
  * AIS 수신 공백(계약 v2 §B4 · v4 §D). 길이를 먼저 적는다(1분 미만은 초 — fmtDuration): 전에는 분까지의 시작–끝("02:22–02:22 KST")을 적어
  * 1분이 안 되는 공백(재시작)이 같은 두 시각으로 보였다(사용자 보고 2026-09-30).
  * - 열린 공백 → "AIS 공백 진행 중 4m 12s"(지금 = 서버 기준 — 모르면 길이 없이).
- * - 구역이 여럿이고 일부만 공백이면 "AIS 공백 n/m 구역 진행 중" — 툴팁에 공백 구역 · 시작 시각, 나머지 구역은 보고된 연결 상태 그대로
+ * - 구역이 여럿이고 일부만 공백이면 "AIS 공백 n/m 구역 진행 중 1m 00s"(길이는 가장 이른 구역부터) — 툴팁에 공백 구역 · 시작 시각, 나머지 구역은 보고된 연결 상태 그대로
  *   (연결 · 끊김 · 연결 모름 — 공백이 없다고 "수신 중"이라고 말하지 않는다).
  * - 끝난 공백 → "AIS 공백 42s · 02:22 KST 끝남". 끝난 공백은 상태에 구역이 없다 — 구역이 여럿이면 그렇다고 적는다.
  * 모르면(상태 없음 · 공백 기록 없음 · 끝을 모르는 지난 공백) null. 줄에 보일지는 recent(상세 표는 늘 보인다).
@@ -143,8 +145,10 @@ export function aisGapInfo(ais: AisStatus | null, nowMs: number): AisGapInfo | n
     const lines = ais.shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${
       sh.gap_open_since ? `공백 ${clock(sh.gap_open_since, true) ?? "—"} 부터` : `공백 없음 · ${shardConnText(sh)}`}`);
     const first = sg.open.map((sh) => sh.gap_open_since!).sort()[0];
+    const d = since(first);
     return out({
-      value: `${sg.open.length}/${sg.total} 구역 진행 중`, state: null, open: true, partial: true, recent: true, durationS: since(first),
+      value: `${sg.open.length}/${sg.total} 구역 진행 중${d == null ? "" : ` ${fmtDuration(d)}`}`, state: null, open: true, partial: true,
+      zones: { open: sg.open.length, total: sg.total }, recent: true, durationS: d,
       startedAt: first, endedAt: null, reason: null, span: `${clock(first, true) ?? "—"} 부터(가장 이른 구역)`,
       title: `${lines.join("\n")}\n공백 구역 안 선박 위치는 멈춰 있고, ${loss}`,
     });
@@ -351,9 +355,10 @@ export function detailRows(i: StatusInput): DetailRow[] {
   });
   const g = aisGapInfo(i.ais, i.srvNowMs);
   rows.push({
-    key: "ais-gap", name: "AIS 공백(마지막)", health: g ? (g.open ? (g.partial ? "warn" : "bad") : "warn") : null,
-    state: g ? (g.open ? "진행 중" : "끝남") : i.ais ? "기록 없음" : "—",
-    value: g ? (g.durationS == null ? "—" : g.value.replace(/^진행 중 /, "")) : "—", valueTitle: g?.title,
+    // 끝난 공백은 줄의 창(AIS_GAP_SHOW_MS) 안에서만 주의 — 그보다 오래된 공백은 기록일 뿐이다(줄에서도 빠졌다)
+    key: "ais-gap", name: "AIS 공백(마지막)", health: g ? (g.open ? (g.partial ? "warn" : "bad") : g.recent ? "warn" : null) : null,
+    state: g ? (g.open ? `진행 중${g.zones ? ` · ${g.zones.open}/${g.zones.total} 구역` : ""}` : "끝남") : i.ais ? "기록 없음" : "—",
+    value: g ? fmtDuration(g.durationS) : "—", valueTitle: g?.title,
     source: g ? `${g.span}${g.reason ? ` · ${g.reason}` : ""}` : "—",
     rule: `줄에는 진행 중이거나 끝난 뒤 ${AIS_GAP_SHOW_MS / 60_000}분까지(계약 v2 §B4) · status 는 마지막 하나만 — 이력은 로그 메뉴의 AIS 수신 공백 탭`,
   });
