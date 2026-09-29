@@ -555,4 +555,104 @@ class LogReaderTest {
         client.add(T0.plusSeconds(20).toEpochMilli(), 0, event(T0.plusSeconds(20), "web-client", "ERROR", "browser", "valid twin", FP_B, null, null, 0));
         assertThat(reader.get(badServer).path("stream").asString()).isEqualTo("client");
     }
+
+    // ---------------------------------------------------------------- 해결 표시(계약 v5 §G13)
+
+    /** FP_A 를 T0 + upToS 초까지 해결한 것으로 본다(id 7, "ops"). */
+    static LogReader.Resolver resolvedUpTo(long upToS) {
+        LogReader.Resolved r = new LogReader.Resolved(7, T0.plusSeconds(upToS), "ops");
+        return new LogReader.Resolver() {
+            @Override public LogReader.Resolved of(String fp) { return FP_A.equals(fp) ? r : null; }
+            @Override public String state() { return "ok"; }
+        };
+    }
+
+    /**
+     * upto 이하(같은 시각 포함)에 난 항목은 기본으로 가리고 그 수를 hidden_resolved 로 센다 — upto 뒤의 발생(재발)은 그대로 보이고 resolved 는 null.
+     * resolved=show 면 모두 보이고 해결된 항목에만 resolved {id, upto, resolved_by}. 가린 항목은 쪽 크기(limit)를 쓰지 않고, 다른 필터에 걸린 항목은
+     * 가림 수에 들지 않는다.
+     */
+    @Test
+    void resolvedEntriesAreHiddenByDefault_countedAndNewerOccurrencesStayVisible() {
+        List<String> a = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) a.add(addEvent(i, "api", "WARN", "m" + i, FP_A));
+        String b = addEvent(6, "collector", "ERROR", "other", FP_B);
+        LogReader.Page hide = reader.list(all(), null, 100, resolvedUpTo(3), true);
+        assertThat(ids(hide)).containsExactly(b, a.get(4), a.get(3));
+        assertThat(hide.hiddenResolved()).isEqualTo(3);
+        assertThat(hide.resolutionState()).isEqualTo("ok");
+        assertThat(hide.scanned()).isEqualTo(6);
+        for (JsonNode n : hide.items()) assertThat(n.has("resolved") && n.get("resolved").isNull()).as("explicit null").isTrue();
+
+        LogReader.Page show = reader.list(all(), null, 100, resolvedUpTo(3), false);
+        assertThat(ids(show)).containsExactly(b, a.get(4), a.get(3), a.get(2), a.get(1), a.get(0));
+        assertThat(show.hiddenResolved()).isZero();
+        JsonNode resolved = show.items().get(3).get("resolved");
+        assertThat(resolved.path("id").asLong()).isEqualTo(7);
+        assertThat(resolved.path("upto").asString()).isEqualTo("2026-09-29T00:00:03Z");
+        assertThat(resolved.path("resolved_by").asString()).isEqualTo("ops");
+        assertThat(show.items().get(2).get("resolved").isNull()).as("after upto: a regression, not resolved").isTrue();
+
+        // 쪽 크기는 보이는 항목만 센다 · 가린 항목도 훑은 수에는 든다
+        LogReader.Page p1 = reader.list(all(), null, 2, resolvedUpTo(5), true);
+        assertThat(ids(p1)).containsExactly(b);
+        assertThat(p1.hiddenResolved()).isEqualTo(5);
+        assertThat(p1.nextCursor()).isNull();
+        // 다른 필터에 걸린 항목은 가림 수에 들지 않는다
+        LogReader.Page errors = reader.list(new LogReader.Filter(Set.of(), Set.of("ERROR"), null, null, null, null, null), null, 100, resolvedUpTo(5), true);
+        assertThat(ids(errors)).containsExactly(b);
+        assertThat(errors.hiddenResolved()).isZero();
+        // 해결을 모르는 호출(이전 서명)은 아무것도 가리지 않는다
+        assertThat(reader.list(all(), null, 100).items()).hasSize(6);
+        assertThat(reader.list(all(), null, 100).resolutionState()).isNull();
+    }
+
+    /**
+     * 묶음: 기본(hide)은 해결된 항목을 빼고 센다 — 재발한 묶음은 upto 뒤의 항목만(count · first_at), resolved 는 null. 모두 해결된 묶음은 사라진다.
+     * show 면 모두 세고, 묶음의 resolved 는 그 묶음의 모든 항목이 해결됐을 때만(하나라도 upto 뒤면 null — 뒤늦게 실린 항목은 ts 가 스트림 순서와
+     * 다를 수 있어 맨 위 항목 하나로 판단하지 않는다).
+     */
+    @Test
+    void groupsLeaveOutResolvedEntries_andAGroupIsResolvedOnlyWhenAllItsEntriesAre() {
+        for (int i = 1; i <= 4; i++) addEvent(i, "api", "WARN", "m" + i, FP_A);
+        addEvent(5, "collector", "ERROR", "other", FP_B);
+        LogReader.Groups hide = reader.groups(all(), resolvedUpTo(2), true);
+        assertThat(hide.groups()).extracting(LogReader.Group::fp).containsExactly(FP_B, FP_A);
+        LogReader.Group a = hide.groups().get(1);
+        assertThat(a.count()).isEqualTo(2);
+        assertThat(a.firstAt()).isEqualTo("2026-09-29T00:00:03.000Z");
+        assertThat(a.resolved()).isNull();
+        assertThat(hide.hiddenResolved()).isEqualTo(2);
+        assertThat(hide.resolutionState()).isEqualTo("ok");
+
+        LogReader.Groups gone = reader.groups(all(), resolvedUpTo(4), true);
+        assertThat(gone.groups()).extracting(LogReader.Group::fp).containsExactly(FP_B);
+        assertThat(gone.hiddenResolved()).isEqualTo(4);
+
+        LogReader.Groups showAll = reader.groups(all(), resolvedUpTo(4), false);
+        assertThat(showAll.groups().get(1).count()).isEqualTo(4);
+        assertThat(showAll.groups().get(1).resolved()).isEqualTo(new LogReader.Resolved(7, T0.plusSeconds(4), "ops"));
+        assertThat(showAll.groups().get(0).resolved()).isNull();
+        assertThat(reader.groups(all(), resolvedUpTo(3), false).groups().get(1).resolved()).as("one entry after upto").isNull();
+
+        // 뒤늦게 실린 항목(스트림 맨 위지만 ts 는 더 이르다): 맨 위 항목이 해결 범위 안이어도 묶음 전체는 해결이 아니다
+        Instant early = T0.plusSeconds(1);
+        stream.add(T0.plusSeconds(9).toEpochMilli(), 0, event(early, "api", "WARN", "dev.wakeline.X", "trailing", FP_A, null, null, 1));
+        LogReader.Groups trailing = reader.groups(all(), resolvedUpTo(3), false);
+        assertThat(trailing.groups().getFirst().fp()).isEqualTo(FP_A);
+        assertThat(trailing.groups().getFirst().resolved()).isNull();
+    }
+
+    @Test
+    void oneEntryCarriesItsResolution() {
+        String old = addEvent(1, "api", "ERROR", "boom", FP_A);
+        String fresh = addEvent(5, "api", "ERROR", "boom again", FP_A);
+        String other = addClient(6, "browser");
+        assertThat(reader.get(old, null, resolvedUpTo(3)).path("resolved").path("id").asLong()).isEqualTo(7);
+        assertThat(reader.get(fresh, null, resolvedUpTo(3)).get("resolved").isNull()).isTrue();
+        assertThat(reader.get(other, LogStream.CLIENT, resolvedUpTo(30)).get("resolved").isNull()).as("another fp").isTrue();
+        assertThat(reader.get(other, LogStream.SERVER, resolvedUpTo(30))).isNull();
+        assertThat(reader.get("1-0", null, resolvedUpTo(30))).isNull();
+        assertThat(reader.get(old).get("resolved").isNull()).as("without resolutions: explicit null").isTrue();
+    }
 }

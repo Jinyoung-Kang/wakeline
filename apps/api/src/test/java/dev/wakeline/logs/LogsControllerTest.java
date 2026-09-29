@@ -1,12 +1,15 @@
 package dev.wakeline.logs;
 
 import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.ops.Resolution;
+import dev.wakeline.ops.Resolutions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -22,11 +25,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class LogsControllerTest {
     final LogReaderTest.MemStream stream = new LogReaderTest.MemStream();
     final LogReaderTest.MemStream client = new LogReaderTest.MemStream();
+    /** 활성 해결(계약 v5 §G13) — 시험마다 바꾼다. */
+    Resolutions resolutions = Resolutions.of(List.of(), Resolutions.State.OK);
     MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.standaloneSetup(new LogsController(new LogReader(stream, client))).setControllerAdvice(new ProblemAdvice()).build();
+        mvc = MockMvcBuilders.standaloneSetup(new LogsController(new LogReader(stream, client), () -> resolutions))
+                .setControllerAdvice(new ProblemAdvice()).build();
     }
 
     void add(int n) {
@@ -132,5 +138,36 @@ class LogsControllerTest {
                 .andExpect(jsonPath("$.message").value("m1"));
         mvc.perform(get("/api/v1/ops/logs/1-0")).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
         mvc.perform(get("/api/v1/ops/logs/not-an-id")).andExpect(status().isNotFound());
+    }
+
+    /**
+     * 계약 v5 §G13: resolved=hide(기본) | show — 그 밖의 값은 400 BAD_RESOLVED. 목록 · 묶음은 hidden_resolved(가린 수)와 resolution_state
+     * (ok | stale | unavailable — 해결 기록을 DB 에서 읽었는가)를, 항목 · 묶음 · 항목 하나는 resolved({id, upto, resolved_by} | null)를 싣는다.
+     */
+    @Test
+    void resolvedEntriesAreHiddenUnlessShowIsAsked() throws Exception {
+        Instant t = Instant.parse("2026-09-29T00:00:00Z");
+        for (int i = 1; i <= 3; i++) // m1 · m2 · m3: ts = 스트림 id = T0 + 1 · 2 · 3 ms, 모두 fp aaaa…
+            stream.add(t.toEpochMilli() + i, 0, LogReaderTest.event(t.plusMillis(i), "api", "WARN", "L", "m" + i, "aaaaaaaaaaaaaaaa", null, null, 0));
+        resolutions = Resolutions.of(List.of(new Resolution(9, Resolution.LOG_GROUP, "aaaaaaaaaaaaaaaa", t.plusMillis(2), t, "ops", null)),
+                Resolutions.State.STALE);
+        mvc.perform(get("/api/v1/ops/logs")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1)).andExpect(jsonPath("$.items[0].message").value("m3"))
+                .andExpect(jsonPath("$.items[0].resolved").isEmpty())
+                .andExpect(jsonPath("$.hiddenResolved").value(2)).andExpect(jsonPath("$.resolutionState").value("stale"));
+        mvc.perform(get("/api/v1/ops/logs").param("resolved", "SHOW ")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(3)).andExpect(jsonPath("$.items[1].resolved.id").value(9))
+                .andExpect(jsonPath("$.items[1].resolved.resolved_by").value("ops"))
+                .andExpect(jsonPath("$.hiddenResolved").value(0));
+        mvc.perform(get("/api/v1/ops/logs/groups")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.groups[0].count").value(1)).andExpect(jsonPath("$.hiddenResolved").value(2))
+                .andExpect(jsonPath("$.resolutionState").value("stale"));
+        mvc.perform(get("/api/v1/ops/logs/groups").param("resolved", "show")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.groups[0].count").value(3));
+        String first = (t.toEpochMilli() + 1) + "-0";
+        mvc.perform(get("/api/v1/ops/logs/" + first)).andExpect(status().isOk()).andExpect(jsonPath("$.resolved.id").value(9));
+        for (String path : new String[]{"/api/v1/ops/logs", "/api/v1/ops/logs/groups"})
+            mvc.perform(get(path).param("resolved", "all")).andExpect(status().isBadRequest())
+                    .andExpect(content().contentTypeCompatibleWith("application/problem+json")).andExpect(jsonPath("$.code").value("BAD_RESOLVED"));
     }
 }

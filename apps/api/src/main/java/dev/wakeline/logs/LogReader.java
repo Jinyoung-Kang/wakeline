@@ -44,6 +44,9 @@ import java.util.regex.Pattern;
  *   <li>첫 쪽(cursor 없음)과 묶음은 두 스트림의 한 시점 모습 — Redis TIME 앞 밀리초까지만 읽는다({@link #snapshotLanes}). 그 뒤에 실린 항목은
  *       모두 첫 쪽 맨 위보다 새 것이라 웹의 "새 항목"이 찾는다. 첫 쪽 · 새 항목 · cursor 로 이어 읽기를 합치면 빠지거나 겹치는 항목이 없다
  *       (스트림 id 가 Redis 시계보다 {@value #SKEW_MS} ms 넘게 앞서는 때는 빼고 — 그때는 자르지 않는다).</li>
+ *   <li>해결 표시(계약 v5 §G13): {@link Resolver} 가 fp 의 유효 해결(upto)을 주면 upto ≥ ts 인 항목이 해결됨이다. 목록 · 묶음은 해결된 항목을
+ *       가리거나(hide — 가린 수 hidden_resolved, 쪽 크기는 쓰지 않는다) 보이고(show), 항목마다 resolved = {id, upto, resolved_by} | null 을 싣는다.
+ *       upto 뒤의 발생(재발)은 해결되지 않은 항목이다. 스트림은 건드리지 않는다(지우지 않는다).</li>
  *   <li>cursor = "{stream}:{id}" — 합친 순서에서 마지막으로 본 항목(그 항목은 빼고 이어 읽는다). 쪽이 차서 멈추면 마지막 항목, 훑기 상한에 걸려
  *       멈추면 마지막으로 훑은 항목(scan_truncated) — 같은 항목을 다시 훑지 않고 이어 간다. 더 없으면 null. 이어 읽기: server 항목 뒤면 server 는
  *       그 id 앞부터 · client 는 그 id 부터(같은 id 는 server 가 앞), client 항목 뒤면 두 스트림 모두 그 id 앞부터. 스트림 id 만 있는 cursor(§G2 전)는
@@ -88,20 +91,40 @@ public class LogReader {
      */
     public record Filter(Set<String> services, Set<String> levels, String q, String fp, String rid, Instant since, Instant until) {}
 
-    /** 목록 쪽: items 는 {id, stream, ...항목}. */
+    /**
+     * 목록 쪽: items 는 {id, stream, ...항목, resolved}. hidden_resolved = 이 쪽을 훑으며 가린 해결된 항목 수(필터에 맞은 것만),
+     * resolution_state = 해결 기록의 상태({@link Resolver#state()} — ok | stale | unavailable, 해결을 모르는 호출은 null).
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record Page(List<JsonNode> items, String nextCursor, int scanned, boolean scanTruncated, int invalid) {}
+    public record Page(List<JsonNode> items, String nextCursor, int scanned, boolean scanTruncated, int invalid, int hiddenResolved,
+                       String resolutionState) {}
+
+    /** 항목 · 묶음에 싣는 해결 {id, upto, resolved_by}. */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record Resolved(long id, Instant upto, String resolvedBy) {}
+
+    /** fp → 유효 해결(없으면 null). 조회 한 번 동안 같은 값을 준다(한 시점 모습). */
+    public interface Resolver {
+        Resolved of(String fp);
+
+        /** 해결 기록의 상태(응답 resolution_state) — 모르면 null. */
+        default String state() { return null; }
+
+        /** 해결을 모른다: 아무것도 가리지 않는다. */
+        Resolver NONE = fp -> null;
+    }
 
     /**
      * fp 묶음: count = 항목 수, suppressed = 항목들의 suppressed 합, first_at · last_at 은 항목의 ts 그대로, 표본은 가장 최근 항목의 메시지.
-     * last_id 는 가장 최근 항목의 스트림 id, last_stream 은 그 스트림("server" | "client" — §G2).
+     * last_id 는 가장 최근 항목의 스트림 id, last_stream 은 그 스트림("server" | "client" — §G2). 셈은 보이는 항목만(hide 면 해결된 항목은 빠진다).
+     * resolved(§G13) = 묶음의 모든 항목이 해결됐을 때 그 해결, 하나라도 해결되지 않았으면 null(hide 면 늘 null — 남은 항목은 모두 해결되지 않은 것).
      */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Group(String fp, String service, String level, String logger, String exceptionType, String sampleMessage, long count,
-                        long suppressed, String firstAt, String lastAt, String lastId, String lastStream) {}
+                        long suppressed, String firstAt, String lastAt, String lastId, String lastStream, Resolved resolved) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record Groups(List<Group> groups, int scanned, boolean scanTruncated, int invalid) {}
+    public record Groups(List<Group> groups, int scanned, boolean scanTruncated, int invalid, int hiddenResolved, String resolutionState) {}
 
     private record Parsed(ObjectNode node, Instant ts) {}
 
@@ -266,15 +289,21 @@ public class LogReader {
 
     // ---------------------------------------------------------------- 목록
 
-    /** @param cursor 앞 쪽의 next_cursor({@link #parseCursor} 로 읽을 수 있어야 한다 — 컨트롤러가 먼저 거른다) */
-    public Page list(Filter f, String cursor, int limit) {
+    /** 해결을 모르는 목록(아무것도 가리지 않는다 — 항목의 resolved 는 null). */
+    public Page list(Filter f, String cursor, int limit) { return list(f, cursor, limit, Resolver.NONE, false); }
+
+    /**
+     * @param cursor 앞 쪽의 next_cursor({@link #parseCursor} 로 읽을 수 있어야 한다 — 컨트롤러가 먼저 거른다)
+     * @param hideResolved true 면 해결된 항목을 빼고 hidden_resolved 로 센다(쪽 크기에 들지 않는다 — 훑은 수에는 든다)
+     */
+    public Page list(Filter f, String cursor, int limit, Resolver resolver, boolean hideResolved) {
         Cursor c = null;
         if (cursor != null && (c = parseCursor(cursor)) == null) throw new IllegalArgumentException("cursor: " + cursor);
         String lower = lowerBound(f.since());
         Lane[] lanes = lanes(c, lower);
         String q = f.q() == null ? null : f.q().toLowerCase(Locale.ROOT);
         List<JsonNode> items = new ArrayList<>();
-        int scanned = 0, invalid = 0;
+        int scanned = 0, invalid = 0, hidden = 0;
         Next last = null;
         boolean stopped = false;
         while (true) {
@@ -285,20 +314,29 @@ public class LogReader {
             last = n;
             Parsed p = parse(n.stream(), n.raw());
             if (p == null) invalid++;
-            else if (matches(f, q, p)) items.add(p.node());
+            else if (matches(f, q, p)) {
+                Resolved r = covering(resolver, p);
+                if (r != null && hideResolved) hidden++;
+                else items.add(annotate(p.node(), r));
+            }
             if (items.size() >= limit) { stopped = true; break; }
         }
         boolean more = stopped && last != null && hasMore(lanes);
-        return new Page(items, more ? new Cursor(last.stream(), last.raw().id()).encode() : null, scanned, more && items.size() < limit, invalid);
+        return new Page(items, more ? new Cursor(last.stream(), last.raw().id()).encode() : null, scanned, more && items.size() < limit, invalid,
+                hidden, resolver.state());
     }
 
     // ---------------------------------------------------------------- 묶음
 
-    public Groups groups(Filter f) {
+    /** 해결을 모르는 묶음(아무것도 가리지 않는다). */
+    public Groups groups(Filter f) { return groups(f, Resolver.NONE, false); }
+
+    /** @param hideResolved true 면 해결된 항목을 셈에서 빼고(모두 해결된 묶음은 없다) hidden_resolved 로 센다 */
+    public Groups groups(Filter f, Resolver resolver, boolean hideResolved) {
         Lane[] lanes = lanes(null, lowerBound(f.since()));
         String q = f.q() == null ? null : f.q().toLowerCase(Locale.ROOT);
         Map<String, Acc> acc = new LinkedHashMap<>(); // 처음 만난 순서 = 가장 최근 항목 순서
-        int scanned = 0, invalid = 0;
+        int scanned = 0, invalid = 0, hidden = 0;
         boolean stopped = false;
         while (true) {
             if (scanned >= SCAN_MAX) { stopped = true; break; }
@@ -308,14 +346,16 @@ public class LogReader {
             Parsed p = parse(n.stream(), n.raw());
             if (p == null) invalid++;
             else if (matches(f, q, p)) {
+                Resolved r = covering(resolver, p);
+                if (r != null && hideResolved) { hidden++; continue; }
                 ObjectNode e = p.node();
                 String service = e.path("service").asString(), fp = e.path("fp").asString();
-                acc.computeIfAbsent(service + "\n" + fp, k -> new Acc(e)).add(e);
+                acc.computeIfAbsent(service + "\n" + fp, k -> new Acc(e, r)).add(e, r);
             }
         }
         List<Group> groups = new ArrayList<>(acc.size());
         for (Acc a : acc.values()) groups.add(a.group());
-        return new Groups(groups, scanned, stopped && hasMore(lanes), invalid);
+        return new Groups(groups, scanned, stopped && hasMore(lanes), invalid, hidden, resolver.state());
     }
 
     /** 한 묶음의 누계. 첫 항목(가장 최근)이 대표값을 정한다. */
@@ -323,8 +363,11 @@ public class LogReader {
         final String fp, service, level, logger, exceptionType, sample, lastAt, lastId, lastStream;
         long count, suppressed;
         String firstAt;
+        /** 지금까지 더한 항목이 모두 해결됐으면 그 해결(같은 fp — 유효 해결은 하나), 하나라도 아니면 null. */
+        Resolved resolved;
 
-        Acc(ObjectNode e) {
+        Acc(ObjectNode e, Resolved first) {
+            resolved = first;
             fp = e.path("fp").asString();
             service = e.path("service").asString();
             level = e.path("level").asString();
@@ -337,35 +380,59 @@ public class LogReader {
             lastStream = e.path("stream").asString();
         }
 
-        void add(ObjectNode e) {
+        void add(ObjectNode e, Resolved r) {
+            if (r == null) resolved = null; // 뒤늦게 실린 항목은 ts 가 스트림 순서와 다를 수 있다 — 맨 위 하나로 판단하지 않는다
             count++;
             suppressed += Math.max(0, e.path("suppressed").asLong(0));
             firstAt = e.path("ts").asString(); // 거꾸로 읽으므로 마지막에 더한 것이 가장 오래된 것
         }
 
-        Group group() { return new Group(fp, service, level, logger, exceptionType, sample, count, suppressed, firstAt, lastAt, lastId, lastStream); }
+        Group group() {
+            return new Group(fp, service, level, logger, exceptionType, sample, count, suppressed, firstAt, lastAt, lastId, lastStream, resolved);
+        }
     }
 
     // ---------------------------------------------------------------- 하나
 
-    /** 항목 하나({id, stream, ...항목}) — server → client 순으로 찾는다(§G2). 둘 다 없거나(트림) 스키마에 맞지 않으면 null. */
-    public JsonNode get(String id) {
-        for (LogStream s : LogStream.values()) {
-            JsonNode n = get(id, s);
-            if (n != null) return n;
+    /** 항목 하나({id, stream, ...항목, resolved}) — server → client 순으로 찾는다(§G2). 둘 다 없거나(트림) 스키마에 맞지 않으면 null. */
+    public JsonNode get(String id) { return get(id, null, Resolver.NONE); }
+
+    /** 그 스트림의 항목 하나. 없거나 스키마에 맞지 않으면 null. */
+    public JsonNode get(String id, LogStream stream) { return get(id, stream, Resolver.NONE); }
+
+    /**
+     * 항목 하나 + resolved(§G13 — 해결됐는지와 무관하게 늘 돌려준다: 가리지 않는다). only 가 null 이면 server → client 순, 아니면 그 스트림만.
+     * 없거나 스키마에 맞지 않으면 null.
+     */
+    public JsonNode get(String id, LogStream only, Resolver resolver) {
+        for (LogStream s : only == null ? LogStream.values() : new LogStream[]{only}) {
+            Raw r = source(s).get(id);
+            if (r == null) continue;
+            Parsed p = parse(s, r);
+            if (p != null) return annotate(p.node(), covering(resolver, p));
         }
         return null;
     }
 
-    /** 그 스트림의 항목 하나. 없거나 스키마에 맞지 않으면 null. */
-    public JsonNode get(String id, LogStream stream) {
-        Raw r = source(stream).get(id);
-        if (r == null) return null;
-        Parsed p = parse(stream, r);
-        return p == null ? null : p.node();
+    // ---------------------------------------------------------------- 공통
+
+    /** 이 항목을 덮는 해결(fp 의 유효 해결이 있고 upto ≥ ts) — 없으면 null. */
+    private static Resolved covering(Resolver resolver, Parsed p) {
+        Resolved r = resolver.of(p.node().path("fp").asString(null));
+        return r != null && !p.ts().isAfter(r.upto()) ? r : null;
     }
 
-    // ---------------------------------------------------------------- 공통
+    /** 항목에 resolved 를 싣는다(없으면 명시적 null — 키를 빼지 않는다). */
+    private static ObjectNode annotate(ObjectNode node, Resolved r) {
+        if (r == null) node.putNull("resolved");
+        else {
+            ObjectNode o = node.putObject("resolved");
+            o.put("id", r.id());
+            o.put("upto", r.upto().toString());
+            o.put("resolved_by", r.resolvedBy());
+        }
+        return node;
+    }
 
     private static String lowerBound(Instant since) {
         return since == null ? null : Math.max(0, since.toEpochMilli() - SKEW_MS) + "-0";
