@@ -249,9 +249,22 @@ const RECIPES = {
     await login();
     await page.goto(BASE + shot.path);
     await page.getByTestId("logs-dashboard").waitFor();
+    // 기본 기간(1 h)은 조용한 때 비기 쉽다 — 24 h 로 넓혀 찍는다(그 응답을 기다린다). 조건에는 실제로 눌린 기간 · 서비스를 적는다
+    const period = page.getByRole("group", { name: "기간", exact: true });
+    const wide = period.getByRole("button", { name: "24 h", exact: true });
+    if ((await wide.count()) && (await wide.getAttribute("aria-pressed")) !== "true") {
+      await Promise.all([
+        page.waitForResponse((r) => new URL(r.url()).pathname === "/api/v1/ops/logs", { timeout: 15_000 }).catch(() => null),
+        wide.click(),
+      ]);
+    }
     await Promise.race([page.getByTestId("log-grid").waitFor(), page.getByTestId("logs-empty").waitFor()]).catch(() => {});
     await wait(1_500);
-    return "기본 필터(최근 기간 · 전체 서비스)";
+    const picked = (await period.locator('button[aria-pressed="true"]').allInnerTexts()).map((t) => t.trim()).filter(Boolean);
+    if (await page.locator('[data-testid="logs-empty"]:visible').count()) throw new Skip(`기간 ${picked.join(",") || "—"} 에 항목 없음 — 빈 목록은 싣지 않음(번호 4가 가리킬 목록이 없다)`);
+    if (!(await page.locator('[data-testid="log-grid"]:visible').count())) throw new Skip("로그 목록이 나오지 않음");
+    const svc = (await page.getByRole("group", { name: /^서비스/ }).locator('button[aria-pressed="true"]').allInnerTexts()).map((t) => t.trim());
+    return `기간 ${picked.join(",") || "—"} · 서비스 ${svc.length ? svc.join(", ") : "전체"}`;
   },
 };
 
@@ -261,8 +274,9 @@ const RECIPES = {
  */
 async function assertNoErrors() {
   for (const id of ERROR_MARKS) {
-    const el = page.getByTestId(id).first();
-    if (await el.count() && await el.isVisible()) throw new Skip(`화면에 조회 오류가 보임(${id}: ${(await el.innerText()).trim().slice(0, 120)})`);
+    // 보이는 것만(:visible) 모두 본다 — 첫 요소가 숨은 탭 안에 있어도 뒤의 보이는 오류를 놓치지 않게
+    const vis = page.locator(`[data-testid="${id}"]:visible`);
+    if (await vis.count()) throw new Skip(`화면에 조회 오류가 보임(${id}: ${(await vis.first().innerText()).trim().slice(0, 120)})`);
   }
 }
 
