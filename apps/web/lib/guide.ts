@@ -206,6 +206,16 @@ export function dualTime(v: string | number | null | undefined): { kst: string; 
   return { kst: `${k.slice(0, 10)} ${k.slice(11, 19)}`, utc: `${u.slice(0, 10)} ${u.slice(11, 19)}` };
 }
 
+/**
+ * 발표 원문(METAR · TAF)의 시각 토큰 "DDHHMMZ"(UTC — 발표된 그대로의 모양). 설명서 7장의 예에서 원문 글자와 KST 를 나란히 보이는 데만 쓴다.
+ * 읽을 수 없으면 null
+ */
+export function metarTimeToken(v: string | number | null | undefined): string | null {
+  const d = dualTime(v);
+  if (!d) return null;
+  return d.utc.slice(8, 10) + d.utc.slice(11, 13) + d.utc.slice(14, 16) + "Z";
+}
+
 /** KST 벽시계 "HH:MM"(뒤의 " KST" 는 있어도 됨) → "HH:MM UTC" — UTC 날짜가 전날이면 "(전날)". 형식이 아니면 null */
 export function kstClockToUtc(kst: string): string | null {
   const m = /^(\d\d):(\d\d)(?: KST)?$/.exec(kst.trim());

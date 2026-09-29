@@ -2,7 +2,7 @@ import Link from "next/link";
 import { creditGroups } from "@/lib/attribution";
 import { KR_RADAR_STALE_S, METAR_STALE_S } from "@/lib/format";
 import {
-  dualTime, flattenToc, GUIDE_TOC, kstClockToUtc, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest,
+  dualTime, flattenToc, GUIDE_TOC, kstClockToUtc, metarTimeToken, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest,
 } from "@/lib/guide";
 import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
@@ -83,7 +83,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
   const ex = dualTime(EXAMPLE_AT)!;
   const exNight = dualTime("2026-09-29T20:30:00Z")!;
   const exMetar = dualTime("2026-09-29T05:00:00Z")!;
-  const metarToken = `${exMetar.utc.slice(8, 10)}${exMetar.utc.slice(11, 13)}${exMetar.utc.slice(14, 16)}Z`;
+  const metarToken = metarTimeToken("2026-09-29T05:00:00Z")!;
   const exTm = dualTime("2026-09-29T05:20:00Z")!;
   const tm = exTm.kst.replace(/\D/g, "").slice(0, 12);
   const dayFrom = dualTime("2026-09-28T00:00:00Z")!;
@@ -94,7 +94,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
         <article className="min-w-0 max-w-[980px] pt-4 text-[13px] leading-relaxed">
-          <header className="mb-8 border-b border-line pb-5">
+          <header className="mb-2 pb-4">
             <div className="label mb-1">Wakeline · 설명서</div>
             <h1 className="text-[22px] font-semibold tracking-tight">서비스 설명과 사용 방법</h1>
             <p className="mt-2 max-w-[760px] text-fg-2">
@@ -237,15 +237,15 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               ]} />
             </Sec>
             <Sec id="dashboard-status" sub>
-              <P>상태 바{ref("dashboard", 1)}는 가로로 스크롤될 수 있습니다. 경고 배지는 앞쪽에 옵니다. 아래 ‘모양’의 N · HH:MM 은 자리 표시입니다.</P>
+              <P>상태 바{ref("dashboard", 1)}는 가로로 스크롤될 수 있습니다. 경고 배지는 앞쪽에 옵니다. 아래 ‘모양’의 N 과 한글 낱말은 자리 표시입니다(실제 값이 들어갑니다).</P>
               <Table label="상태 바 항목" head={["항목", "모양", "뜻"]} rows={[
                 ["연결", <span key="c" className="mono">WS open · WS connecting · retry N</span>, <>실시간 연결 상태. 열려 있어도 {RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 ‘수신 없음’, {RX_DEAD_MS / 1000} s 가 되면 다시 연결합니다.</>],
                 ["항공기 수", <span key="a" className="mono">aircraft N</span>, "지금 지도 영역 안의 항공기 수(STALE 포함). 레이어가 꺼져 있거나 아직 받지 않았으면 —."],
-                ["지역 피드", <span key="r" className="mono">region 공급자 · HH:MM:SS · lag Ns</span>, <>공급자 · 수집 시각 · 서버가 보고한 지연. {REGION_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA.</>],
+                ["지역 피드", <span key="r" className="mono">region 공급자 · 수집 시각 · lag Ns</span>, <>공급자 · 수집 시각 · 서버가 보고한 지연. {REGION_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA.</>],
                 ["전세계 피드", <span key="w" className="mono">world 공급자 · lag Ns</span>, <>전세계 스냅샷. {GLOBAL_STALE_S} s 를 넘으면 STALE.</>],
                 ["AIS", <span key="s" className="mono">AIS …</span>, "선박 스트림 연결 · 초당 메시지 · 지연. 구역이 여럿이면 일부만 끊겨도 ‘AIS 공백 n/m 구역’으로 따로 알립니다."],
                 ["SIGMET", <span key="g" className="mono">sigmet 공급자 · N active · 경과</span>, "유효 SIGMET 수와 마지막 수집 뒤 경과."],
-                ["레이더", <span key="d" className="mono">radar N frames · 경과 · KMA Nf HH:MM KST · 합성 N/M곳</span>, "RainViewer 프레임 수와 경과, 기상청 프레임 수 · 최신 tm · 합성 크기."],
+                ["레이더", <span key="d" className="mono">radar N frames · 경과 · KMA Nf 최신 tm · 합성 N/M곳</span>, "RainViewer 프레임 수와 경과, 기상청 프레임 수 · 최신 tm · 합성 크기."],
                 ["엔진", <span key="e" className="mono">engine N polys · cycle N ms</span>, "판정 엔진이 보는 SIGMET 폴리곤 수와 마지막 주기 시간."],
                 ["판", <span key="v" className="mono">vN</span>, "받은 스냅샷의 판 번호."],
                 ["경고 배지", <span key="b" className="mono">KMA STALE · KMA 일부 합성 · FIXTURE MODE · 형식 오류</span>, "따로 붙는 경고. 형식 오류 배지는 눌러서 무엇을 버렸는지 · 어떻게 다시 받는지 봅니다."],
@@ -368,6 +368,11 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             ])} />
             <P>마우스 없이도 쓸 수 있게 목록(알림 · SIGMET · 공항 · 선박 · 재생 항목)은 모두 단추로 고를 수 있습니다 — 지도를 누르지 않아도 됩니다.</P>
           </Sec>
+          {/* 마지막 절도 목차의 '지금 읽는 절'이 될 수 있게(위쪽 띠까지 올라오도록) 끝에 여백 */}
+          <footer className="mt-12 flex min-h-[45vh] items-start justify-between gap-3 border-t border-line pt-3 text-[11px] text-fg-3">
+            <span>설명서 끝</span>
+            <Link href="/about" prefetch={false} className="text-fg-2 underline underline-offset-2 hover:text-fg">출처·한계 — 출처 · 라이선스 · 한계 전체</Link>
+          </footer>
         </article>
       </div>
     </div>

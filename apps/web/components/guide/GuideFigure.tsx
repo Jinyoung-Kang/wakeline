@@ -14,7 +14,7 @@ export function DualTime({ v }: { v: string | number | null | undefined }) {
  * 스크린샷 한 장 + 번호 설명.
  * - 번호는 이미지에 굽지 않고 HTML 로 겹친다: 위치는 캡처 스크립트가 찍을 때 그 요소의 위치를 잰 값(%) — 이미지가 줄어도 같은 자리.
  *   번호 글자는 장식(aria-hidden)이고, 같은 번호의 설명 목록이 내용이다(대체 글 + 목록으로 이미지 없이도 읽힌다).
- * - 결과가 없으면 같은 비율의 자리표시("스크린샷 준비 중") + 그 화면의 설명 — 깨진 이미지를 보이지 않고, 들어올 때 레이아웃도 밀리지 않는다.
+ * - 결과가 없으면 자리표시("스크린샷 준비 중") + 그 화면의 설명 — 깨진 이미지를 보이지 않는다.
  * - 이미지: 명시 width · height(비율 예약), loading="lazy", decoding="async". 원본 크기 링크.
  */
 export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotView; no: number }) {
@@ -36,11 +36,12 @@ export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotVie
             ))}
           </>
         ) : (
-          <div role="img" aria-label={`${shot.alt} — 스크린샷 준비 중`} data-guide-placeholder="" style={{ aspectRatio: `${view.width} / ${view.height}` }}
-            className="grid-bg flex flex-col items-center justify-center gap-2 border-b border-dashed border-line-2 p-6 text-center">
+          // 자리표시는 낮게(이미지 비율로 잡지 않는다): 스크린샷은 다시 빌드할 때만 들어오므로 보는 중에 자리가 바뀌지 않고, 빈 큰 상자 11개가 글을 밀어내지 않게
+          <div role="img" aria-label={`${shot.alt} — 스크린샷 준비 중`} data-guide-placeholder=""
+            className="grid-bg flex min-h-[168px] flex-col items-center justify-center gap-2 border-b border-dashed border-line-2 px-6 py-5 text-center">
             <span className="badge warn">스크린샷 준비 중</span>
             <span className="max-w-[560px] text-[12px] leading-relaxed text-fg-2">{shot.alt}</span>
-            <span className="mono text-[10px] text-fg-3">{view.width}×{view.height} · 번호 설명은 아래</span>
+            <span className="mono text-[10px] text-fg-3">찍을 크기 {view.width}×{view.height} · 번호 설명은 아래</span>
           </div>
         )}
       </div>

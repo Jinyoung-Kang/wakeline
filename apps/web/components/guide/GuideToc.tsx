@@ -5,7 +5,7 @@ import type { TocItem } from "@/lib/guide";
 const flat = (items: readonly TocItem[]): TocItem[] => items.flatMap((t) => [t, ...flat(t.children ?? [])]);
 
 /**
- * 지금 읽는 절: 관찰 띠(화면 위쪽 12–20 %)에 걸린 절 중 문서 순서로 마지막 것 — 소절은 부모 절보다 뒤라 가장 안쪽 절이 된다.
+ * 지금 읽는 절: 관찰 띠(화면 위쪽 22 %)에 걸린 절 중 문서 순서로 마지막 것 — 소절은 부모 절보다 뒤라 가장 안쪽 절이 된다.
  * 띠에 걸린 절이 없으면(절 사이 여백) 이전 값을 그대로 둔다.
  */
 export function activeSection(order: readonly string[], visible: ReadonlySet<string>, prev: string | null): string | null {
@@ -29,7 +29,7 @@ export function GuideToc({ items }: { items: readonly TocItem[] }) {
     const io = new IntersectionObserver((entries) => {
       for (const e of entries) { if (e.isIntersecting) visible.add(e.target.id); else visible.delete(e.target.id); }
       setActive((prev) => activeSection(order, visible, prev));
-    }, { rootMargin: "-12% 0px -80% 0px" });
+    }, { rootMargin: "0px 0px -78% 0px" });
     for (const e of els) io.observe(e);
     return () => io.disconnect();
   }, [items]);
@@ -47,8 +47,8 @@ export function GuideToc({ items }: { items: readonly TocItem[] }) {
     const inside = !sub && parentOf(active) === t.id;
     return (
       <a href={`#${t.id}`} aria-current={on ? "location" : undefined}
-        className={`flex gap-2 border-l-2 py-[3px] pr-2 ${sub ? "pl-5 text-[12px]" : "pl-2 text-[12.5px] font-semibold"} ${on ? "border-accent bg-[#1c2a3f] text-[#cfe0ff]" : inside ? "border-line-2 text-fg" : "border-transparent text-fg-2 hover:text-fg"}`}>
-        <span className="mono w-7 shrink-0 text-fg-3">{t.n}</span><span>{t.title}</span>
+        className={`flex gap-2 border-l-2 py-[3px] pr-2 ${sub ? "pl-4 text-[12px]" : "pl-2 text-[12.5px] font-semibold"} ${on ? "border-accent bg-[#1c2a3f] text-[#cfe0ff]" : inside ? "border-line-2 text-fg" : "border-transparent text-fg-2 hover:text-fg"}`}>
+        <span className={`mono shrink-0 text-fg-3 ${sub ? "w-9" : "w-6"}`}>{t.n}</span><span>{t.title}</span>
       </a>
     );
   };

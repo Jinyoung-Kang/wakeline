@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import planJson from "@/lib/guide-shots.json";
 import manifestJson from "@/lib/guide-manifest.json";
 import {
-  dualTime, flattenToc, GUIDE_FILE_RE, GUIDE_TOC, kstClockToUtc, parseManifest, parsePlan, PLAN, shotView, type GuideManifest,
+  dualTime, flattenToc, GUIDE_FILE_RE, GUIDE_TOC, kstClockToUtc, metarTimeToken, parseManifest, parsePlan, PLAN, shotView, type GuideManifest,
 } from "@/lib/guide";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -107,6 +107,11 @@ describe("dual time for examples (KST first, UTC alongside)", () => {
     expect(dualTime("2026-09-29T20:30:00Z")).toEqual({ kst: "2026-09-30 05:30:00", utc: "2026-09-29 20:30:00" });
     expect(dualTime(null)).toBeNull();
     expect(dualTime("not a time")).toBeNull();
+  });
+  it("the raw-bulletin time token of an instant is its UTC day-hour-minute + Z (as published)", () => {
+    expect(metarTimeToken("2026-09-29T05:00:00Z")).toBe("290500Z");
+    expect(metarTimeToken("2026-09-30T23:59:00Z")).toBe("302359Z");
+    expect(metarTimeToken(undefined)).toBeNull();
   });
   it("a KST clock (\"12:30 KST\") → its UTC clock, saying when the UTC date is the day before", () => {
     expect(kstClockToUtc("12:30 KST")).toBe("03:30 UTC");

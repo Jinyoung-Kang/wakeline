@@ -76,7 +76,7 @@ describe("guide page structure", () => {
 });
 
 describe("screenshots", () => {
-  it("missing screenshots render a clear placeholder at the planned size — no <img>, no markers", () => {
+  it("missing screenshots render a clear placeholder that describes the screen — no <img>, no markers", () => {
     const html = render(EMPTY);
     expect(tags(html, "img")).toEqual([]);
     const figs = figures(html);
@@ -85,7 +85,7 @@ describe("screenshots", () => {
       const ph = tags(f, "div").map(attrs).find((a) => a["data-guide-placeholder"] != null)!;
       expect(ph.role).toBe("img");
       expect(ph["aria-label"]).toContain(PLAN.shots[i].alt.replace(/&/g, "&amp;").replace(/"/g, "&quot;"));
-      expect(ph.style).toContain("aspect-ratio:1440 / 900");
+      expect(text(f)).toContain("1440×900"); // 찍을 크기를 적는다
       expect(text(f)).toContain("스크린샷 준비 중");
       expect(f).not.toContain("data-callout-marker");
     });
