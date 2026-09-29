@@ -87,6 +87,16 @@ def test_parse_fixture_reads_exactly_the_verified_fields():
     assert it.nationality is None
 
 
+def test_real_no_records_response_is_an_empty_page():
+    """실제 '기록 없음' 응답(2026-09-29 부산 020 · 없는 호출부호 — docs/review/evidence/public-data-apis-2026-09-29.txt):
+    resultCode 00 · <items/> · numOfRows 0 · totalCount 0. 손으로 만든 빈 쪽이 아니라 이 모양에서도 빈 결과여야 한다."""
+    body = (Path(__file__).resolve().parents[3] / "fixtures" / "portmis_info5_empty.xml").read_bytes()
+    parsed = parse_page(body, "ZZ9ZZ")
+    assert parsed.total == 0
+    assert parsed.items == []
+    assert parsed.mismatched == 0
+
+
 def test_items_with_another_call_sign_are_dropped_and_counted():
     """조회는 clsgn 으로 거르지만 응답을 믿지 않는다 — 다른 호출부호의 기록은 이 선박의 기록으로 보이지 않는다."""
     body = page([item(), item(clsgn="999999"), item(clsgn=None)], 3)
