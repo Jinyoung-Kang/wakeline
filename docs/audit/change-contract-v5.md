@@ -353,8 +353,11 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     no_call_sign(not_received)로 오래 남았다. ShipStore 의 정적 정보는 선박 스트림(시간 창 최대 2.5 h — `publisher.STREAM_RETENTION_S`)에서만 다시 채워지는데
     이 선박의 정적 보고가 그보다 오래됐다. DB `ship` 행(ShipRepository — REST 상세 · 검색이 이미 읽는다)에는 마지막 정적 보고(호출부호 V7A3884)가 있었다.
     REST `/ships/{mmsi}` 는 이미 DB 로 채웠지만 저장값이라고 밝히지 않아, 카드는 호출부호를 보이면서 입출항은 '호출부호 아직 받지 않음' 이었다.
-  - api(`StoredStaticReader` — ShipFanout 이 메모리에 정적 정보가 없을 때만 부른다): `ShipRepository.find`(공개 조회 상한 3 s) · MMSI 별 메모리 캐시
-    (찾음 · 없음 60 s, 읽기 실패 15 s — 한 선택을 되풀이해 다시 계산해도 DB 는 이 간격에 한 번) · 예외를 던지지 않는다. 지표
+  - api(`StoredStaticReader` — ShipFanout 이 메모리에 정적 정보가 없을 때만 부른다): `ShipRepository.find`(문장 — 공개 조회 상한 3 s) · MMSI 별 메모리 캐시
+    (찾음 · 없음 60 s, 읽기 실패 15 s — 한 선택을 되풀이해 다시 계산해도 DB 는 이 간격에 한 번) · 같은 MMSI 의 동시 miss 는 한 번만 읽는다(리뷰) · 예외를
+    던지지 않는다. 대기 상한: 읽기는 세션의 순서 큐(SerialOutbox)에서 돌고, 풀 연결 대기는 문장 상한과 따로 Hikari connection-timeout 5 s(공유 풀 12)가
+    걸린다 — 연결을 얻지 못하는 동안(풀 소진 · DB 없음) 한 번의 읽기가 그 세션의 메시지를 최악 약 8 s(5 s + 3 s) 막고 15 s 마다 되풀이된다
+    (PortCallReader 와 같은 모양 — 순서 큐 밖으로 옮기거나 공개 조회 전용 풀을 두는 것은 이 레인 밖). 지표
     `wakeline_cache_requests_total{cache="stored_static"}` · `wakeline_stored_static_errors_total`. 저장값은 ShipStore 에 넣지 않는다(지도 목록 ShipLite · 검색의
     실시간 일치는 그대로). 입출항은 그 호출부호로 찾는다(`PortCallReader.forStatic`).
   - 시각 열: `ship.updated_at` = 지금 저장된 내용을 DB 에 쓴 정적 메시지의 aisstream 수신 시각(`static.updated_at` 과 같다 — DB 에 기록된 수신 시각).

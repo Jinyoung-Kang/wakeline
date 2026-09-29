@@ -11,6 +11,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,7 +25,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * 저장된 AIS 정적 보고 읽기(static-fallback · 계약 v5 §G17): 결과 세 가지(stored · none · unavailable), 캐시(찾음 · 없음 60 s, 실패 15 s), 같은 값이면
- * 같은 객체, 캐시 상한, 운영 연결(ShipRepository.find — 위치로만 만든 행은 정적 보고가 아니다), 지표. 예외는 밖으로 나가지 않는다.
+ * 같은 객체, 캐시 상한, 운영 연결(ShipRepository.find — 위치로만 만든 행은 정적 보고가 아니다), 지표, 같은 MMSI 의 동시 miss 는 한 번만 읽기.
+ * 예외는 밖으로 나가지 않는다.
  */
 class StoredStaticReaderTest {
     static final Instant T = Instant.parse("2026-09-29T08:00:00Z");
@@ -88,6 +95,81 @@ class StoredStaticReaderTest {
         assertThat(meters.counter("wakeline_stored_static_errors_total").count()).isEqualTo(1.0);
         assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).isEqualTo(4.0);
         assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "miss").count()).isEqualTo(db.reads.size());
+    }
+
+    /**
+     * 리뷰: 캐시가 지나면 그 MMSI 를 고른 세션마다(각자의 순서 큐에서) 동시에 DB 를 읽었다 — 공유 풀(12)을 그 수만큼 쓴다. 같은 MMSI 의 동시 miss 는 한 번만
+     * 읽고 결과(같은 객체)를 함께 쓴다. 기다린 쪽은 hit 로 센다(DB 를 읽지 않았다) — miss = DB 읽기 수.
+     */
+    @Test void concurrentMissesForOneMmsi_shareOneRead() throws Exception {
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger reads = new AtomicInteger();
+        ShipStatic st = stat("440000040", "V7A3884", T);
+        StoredStaticReader r = new StoredStaticReader(mmsi -> {
+            reads.incrementAndGet();
+            entered.countDown();
+            try {
+                if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("not released");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+            return st;
+        }, () -> 0, meters);
+        int waiters = 7;
+        try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<StoredStaticReader.Lookup> first = ex.submit(() -> r.lookup("440000040"));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            List<Future<StoredStaticReader.Lookup>> others = new ArrayList<>();
+            for (int i = 0; i < waiters; i++) others.add(ex.submit(() -> r.lookup("440000040")));
+            // 모두 진행 중인 읽기에 붙을 때까지(붙을 때 hit 를 센다) — 그 뒤에 읽기를 끝낸다
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count() < waiters && System.nanoTime() < deadline)
+                Thread.sleep(5);
+            release.countDown();
+            StoredStaticReader.Lookup v = first.get(5, TimeUnit.SECONDS);
+            assertThat(v.status()).isEqualTo(StoredStaticReader.Status.STORED);
+            for (Future<StoredStaticReader.Lookup> f : others) assertThat(f.get(5, TimeUnit.SECONDS)).isSameAs(v);
+        }
+        assertThat(reads.get()).as("one DB read for concurrent misses of one MMSI").isEqualTo(1);
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "miss").count()).isEqualTo(1.0);
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).isEqualTo(waiters);
+        // 끝난 읽기는 캐시에 남고, 진행 중 표시는 지워졌다(다음 miss 는 다시 읽을 수 있다)
+        assertThat(r.lookup("440000040")).isSameAs(r.lookup("440000040"));
+        assertThat(r.inflight()).isZero();
+    }
+
+    /** 읽는 쪽이 예외가 아닌 오류(Error)로 끝나도 기다린 쪽은 모름(unavailable)을 받고, 진행 중 표시는 남지 않는다 — 다음 선택이 다시 읽는다. */
+    @Test void aReadEndingInAnError_releasesWaitersAsUnavailable() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger reads = new AtomicInteger();
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        StoredStaticReader r = new StoredStaticReader(mmsi -> {
+            if (reads.incrementAndGet() > 1) return null;
+            entered.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new AssertionError("boom");
+        }, () -> 0, meters);
+        try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<StoredStaticReader.Lookup> first = ex.submit(() -> r.lookup("440000041"));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            Future<StoredStaticReader.Lookup> waiter = ex.submit(() -> r.lookup("440000041"));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count() < 1 && System.nanoTime() < deadline)
+                Thread.sleep(5);
+            release.countDown();
+            assertThat(waiter.get(5, TimeUnit.SECONDS)).isSameAs(StoredStaticReader.Lookup.UNAVAILABLE);
+            assertThat(org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.ExecutionException.class, () -> first.get(5, TimeUnit.SECONDS)))
+                    .hasCauseInstanceOf(AssertionError.class);
+        }
+        assertThat(r.inflight()).isZero();
+        assertThat(r.lookup("440000041")).as("the next lookup reads again").isSameAs(StoredStaticReader.Lookup.NONE);
+        assertThat(reads.get()).isEqualTo(2);
     }
 
     @Test void anyRuntimeFailureIsUnavailable_neverThrown() {

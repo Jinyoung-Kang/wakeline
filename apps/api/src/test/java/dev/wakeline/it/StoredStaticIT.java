@@ -31,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 그보다 오래됐다 — DB ship 표(ShipRepository — /ships/{mmsi} · 검색이 이미 읽는 곳)에는 마지막으로 받은 정적 보고(호출부호 V7A3884)가 있다.
  * <p>재현: DB 에 5시간 전 정적 보고를 넣고 스트림에는 위치만 발행한다(재시작 뒤 스트림 보존 창에 정적 보고가 없는 상태) → WS select_ship.
  * 고침(계약 v5 §G17): 저장된 정적 보고를 static_source = stored · static_updated_at(저장 행의 updated_at)으로 밝혀 싣고 입출항은 그 호출부호로 찾는다 —
- * 메모리(ShipStore)에는 넣지 않는다. REST 상세도 같은 출처를 밝힌다. DB 가 막히면(공개 조회 상한 3 s) static null · stored_unavailable · no_call_sign.
+ * 메모리(ShipStore)에는 넣지 않는다. REST 상세도 같은 출처를 밝힌다. ship 표가 잠기면(문장 — 공개 조회 상한 3 s) static null · stored_unavailable · no_call_sign.
+ * 연결을 얻지 못하는 경우(풀 소진 · DB 없음)는 Hikari 연결 대기(5 s)가 문장 상한에 더해진다 — 이 시험은 문장 상한만 본다(계약 v5 §G17).
  * MMSI 는 이 시험만 쓰는 값이다(컨텍스트를 함께 쓰는 다른 시험의 메모리 정적 정보와 섞이지 않게) — 이름 · 호출부호는 관찰된 선박의 값.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -125,7 +126,7 @@ class StoredStaticIT extends IntegrationTest {
     }
 
     /**
-     * DB 가 막힌 동안(ship 표 잠금 — 공개 조회 상한 {@value Sql#PUBLIC_READ_TIMEOUT_S} s 에 끊긴다): static null · static_source stored_unavailable
+     * DB 가 막힌 동안(ship 표 잠금 — 문장이 공개 조회 상한 {@value Sql#PUBLIC_READ_TIMEOUT_S} s 에 끊긴다. 연결 대기는 따로 — 위 설명): static null · static_source stored_unavailable
      * (저장돼 있는지 모름 — none 이 아니다) · 입출항 no_call_sign/not_received. 연결 · 세션은 그대로이고 선택 응답은 상한 안에 온다.
      */
     @Test

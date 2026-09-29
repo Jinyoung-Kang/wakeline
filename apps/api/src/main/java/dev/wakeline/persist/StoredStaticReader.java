@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
@@ -23,7 +24,12 @@ import java.util.function.LongSupplier;
  *       그 뒤 같은 내용을 다시 받으면 새 시각이 실려 행을 덮는다. 그 밖의 같은 내용 재수신(수집기가 30분마다 다시 보낸다)은 저장하지 않는다(ShipWriter).
  *       그래서 이 값은 지금 내용의 첫 수신도 마지막 수신도 아니고, 그렇게 말하지 않는다(ship.last_seen 은 위치 보고로도 넓혀진다).</li>
  *   <li>메모리 캐시(MMSI 별): 찾음 · 없음은 {@value #TTL_MS} ms, 읽기 실패(시간 초과 · 연결 없음 · 그 밖의 예외)는 {@value #ERROR_TTL_MS} ms — 선택 하나를
- *       되풀이해 다시 계산해도(선박 변화 · {@code ShipFanout} 주기 다시 보기) DB 는 MMSI 마다 이 간격에 한 번. 실패는 예외가 아니라 {@link Status#UNAVAILABLE}.</li>
+ *       되풀이해 다시 계산해도(선박 변화 · {@code ShipFanout} 주기 다시 보기) DB 는 MMSI 마다 이 간격에 한 번. 실패는 예외가 아니라 {@link Status#UNAVAILABLE}.
+ *       같은 MMSI 의 동시 miss(그 선박을 고른 세션들 — 각자의 순서 큐)는 한 번만 읽고 결과를 함께 쓴다(리뷰: 공유 풀을 세션 수만큼 쓰지 않게).</li>
+ *   <li>대기 상한(부르는 쪽 = 세션의 순서 큐 WsSession SerialOutbox — 그동안 그 세션의 선박 · 항공기 diff · pong 이 기다린다): 문장은 공개 조회 상한
+ *       {@value Sql#PUBLIC_READ_TIMEOUT_S} s 지만 풀에서 연결을 얻는 대기는 Hikari connection-timeout(application.yml 5 s — 공유 풀 12)이 따로 걸린다.
+ *       연결을 얻지 못하는 동안(풀 소진 · DB 없음) 한 번의 읽기는 최악 약 8 s(연결 5 s + 문장 3 s) 걸리고, 실패는 {@value #ERROR_TTL_MS} ms 마다 되풀이된다
+ *       ({@code PortCallReader} 와 같은 모양 — 순서 큐 밖으로 옮기는 것은 이 레인 밖).</li>
  *   <li>로그에는 MMSI · 오류 종류만.</li>
  * </ul>
  */
@@ -57,6 +63,8 @@ public class StoredStaticReader {
     private final Source source;
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Memo> cache = new ConcurrentHashMap<>();
+    /** MMSI → 진행 중인 읽기. 같은 MMSI 의 동시 miss 는 이것을 기다린다(DB 를 한 번만 읽는다). */
+    private final ConcurrentHashMap<String, CompletableFuture<Lookup>> inflight = new ConcurrentHashMap<>();
     private final Counter hit;
     private final Counter miss;
     private final Counter errors;
@@ -79,8 +87,34 @@ public class StoredStaticReader {
                 .description("선택 선박의 저장된 AIS 정적 보고(DB ship)를 읽지 못한 수 — ship_selected.static_source = stored_unavailable").register(meters);
     }
 
-    /** 이 MMSI 의 저장된 정적 보고(캐시 — 찾음 · 없음 {@value #TTL_MS} ms, 실패 {@value #ERROR_TTL_MS} ms). 예외를 던지지 않는다. */
+    /**
+     * 이 MMSI 의 저장된 정적 보고(캐시 — 찾음 · 없음 {@value #TTL_MS} ms, 실패 {@value #ERROR_TTL_MS} ms). 같은 MMSI 를 이미 읽는 중이면 그 결과를 기다린다
+     * (지표 hit = DB 를 읽지 않았다 — 캐시 또는 진행 중인 읽기, miss = DB 읽기). 예외를 던지지 않는다.
+     */
     public Lookup lookup(String mmsi) {
+        Memo m = cache.get(mmsi);
+        if (fresh(m, clock.getAsLong())) {
+            hit.increment();
+            return m.value();
+        }
+        CompletableFuture<Lookup> mine = new CompletableFuture<>();
+        CompletableFuture<Lookup> running = inflight.putIfAbsent(mmsi, mine);
+        if (running != null) {
+            hit.increment();
+            return running.join(); // 읽는 쪽은 늘 끝낸다(finally) — 그 읽기의 상한 안에 돌아온다
+        }
+        try {
+            Lookup v = readThrough(mmsi);
+            mine.complete(v);
+            return v;
+        } finally {
+            inflight.remove(mmsi, mine);
+            mine.complete(Lookup.UNAVAILABLE); // 읽기가 Error 로 끝났으면 기다린 쪽은 모름(이미 끝났으면 아무 일도 없다)
+        }
+    }
+
+    /** 진행 중 표시를 얻은 쪽만: 그사이 다른 읽기가 캐시를 채웠으면 그것, 아니면 DB 를 읽어 캐시에 넣는다. */
+    private Lookup readThrough(String mmsi) {
         long now = clock.getAsLong();
         Memo m = cache.get(mmsi);
         if (fresh(m, now)) {
@@ -119,4 +153,6 @@ public class StoredStaticReader {
     }
 
     int cached() { return cache.size(); }
+
+    int inflight() { return inflight.size(); }
 }
