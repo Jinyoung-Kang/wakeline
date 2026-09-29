@@ -240,7 +240,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               </UL>
               {fig("port-calls")}
               <UL>
-                <li><B>{PORT_CALL_TITLE}</B>{ref("port-calls", 1)} — 선박을 고르면 서버 수집기가 그 선박이 AIS 로 보낸 <B>호출부호로만</B> {PORT_CALL_SOURCE}(공공데이터포털)에
+                <li><B>{PORT_CALL_TITLE}</B>{ref("port-calls", 1)} — 선박을 고르면 서버 수집기가 그 선박이 AIS 로 보낸 <B>호출부호로만</B> 공공데이터포털의 {PORT_CALL_SOURCE}에
                   최근 {PORT_CALL_WINDOW_DAYS}일(KST 날짜 · 입항일 기준) 입출항 신고를 항만청 10곳에 묻습니다. 선명으로는 찾지 않습니다 — 호출부호가 틀리거나 같은 호출부호를 쓰는
                   다른 선박이 있으면 다른 선박의 신고일 수 있습니다.</li>
                 <li><B>결과 표</B>{ref("port-calls", 3)} — 항만청 · 입항 / 출항(KST · UTC) · 목적 · 전출항지 → 차항지, 최근 {PORT_CALL_MAX_ITEMS}건까지.
