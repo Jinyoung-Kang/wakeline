@@ -111,12 +111,12 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     expect(rows).toHaveLength(2);
     const cells = findAll((e) => e.tagName === "TD", rows[0]).map((c) => c.textContent);
     expect(cells).toEqual(["09-29 10:59:00.000 KST", "ERROR", "api", "dev.wakeline.ingest.StreamConsumer", `failure ${T(1)}`, "3", "5f2c9a0e1b7d4c3a"]);
-    // 시각은 KST 만(계약 v5 §G19) — 칸은 KST(머리글 "(KST)"), title 에 연도 · ms 까지의 KST
+    // 시각은 KST 만(계약 v5 §G20) — 칸은 KST(머리글 "(KST)"), title 에 연도 · ms 까지의 KST
     expect(findAll((e) => e.tagName === "TH", byTestId("log-grid")!)[0].textContent).toBe("시각(KST)");
     const timeCell = findAll((e) => e.tagName === "TD", rows[0])[0];
     expect(findAll((e) => e.getAttribute("title") != null, timeCell)[0].getAttribute("title")).toBe("2026-09-29 10:59:00.000 KST");
     expect(byTestId("logs-last-ok")!.textContent).toBe("갱신 11:00:00 KST · 15 s 확인");
-    expect(domUtcLeaks(dom.container)).toEqual([]); // 목록 화면 어디에도(메시지 본문 data-raw 밖) UTC 가 없다(계약 v5 §G19)
+    expect(domUtcLeaks(dom.container)).toEqual([]); // 목록 화면 어디에도(메시지 본문 data-raw 밖) UTC 가 없다(계약 v5 §G20)
     const second = findAll((e) => e.tagName === "TD", rows[1]).map((c) => c.textContent);
     expect([second[1], second[5], second[6]]).toEqual(["WARN", "—", "—"]); // 억제·요청 id 모름은 —
     const status = byTestId("logs-status")!.textContent;

@@ -90,7 +90,7 @@ class JobsAndRadarIT extends IntegrationTest {
                 .query(Integer.class).single()).isEqualTo(2);
         assertThat(count("SELECT count(*) FROM track_point_1m WHERE hex = 'a1e0bb'")).isZero();
 
-        // 일 통계(어제 — KST 날짜, 계약 v5 §G19): 관심 지역 안의 서로 다른 항공기 수 + 어느 지역을 셌는지. 시(dim)는 KST 시 —
+        // 일 통계(어제 — KST 날짜, 계약 v5 §G20): 관심 지역 안의 서로 다른 항공기 수 + 어느 지역을 셌는지. 시(dim)는 KST 시 —
         // 20:00 KST 는 그 KST 날짜의 11:00 UTC 라 운영 파티션(어제 · 오늘 UTC)에 든다
         LocalDate y = dev.wakeline.persist.MaintenanceJobs.today().minusDays(1);
         Instant eightPm = y.atStartOfDay(dev.wakeline.persist.MaintenanceJobs.DAY_ZONE).toInstant().plusSeconds(20 * 3600);

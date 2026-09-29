@@ -111,7 +111,7 @@ describe("cells → map squares, colour scale shared by map and legend", () => {
 });
 
 describe("tooltip and time text: KST only, unknown is — without a unit", () => {
-  it("time text is the shared inline form (lib/time fmtKst — contract v5 §G19)", () => {
+  it("time text is the shared inline form (lib/time fmtKst — contract v5 §G20)", () => {
     expect(trafficTimeText("2026-09-29T09:05:05Z")).toBe("09-29 18:05:05 KST");
     expect(trafficTimeText("2026-09-29T09:05:05Z")).toBe(fmtKst("2026-09-29T09:05:05Z"));
     expect(trafficTimeText("2026-09-29T15:30:00Z")).toBe("09-30 00:30:00 KST"); // KST 로는 다음 날
@@ -124,7 +124,7 @@ describe("tooltip and time text: KST only, unknown is — without a unit", () =>
     expect(tip.rows).toEqual([
       ["척수", "12척"], ["밀집도", "34 %"], ["기준", "18:05:05 KST"], ["격자", "0.025° 칸(약 2.2×2.8 km)"],
     ]);
-    // 지도 툴팁은 초까지(lib/time fmtKst — regDt 는 초 단위 원천 값, 계약 v5 §G19). 칸은 15분 안의 자료만 그리므로 날짜가 자명하다
+    // 지도 툴팁은 초까지(lib/time fmtKst — regDt 는 초 단위 원천 값, 계약 v5 §G20). 칸은 15분 안의 자료만 그리므로 날짜가 자명하다
     expect(tip.rows[2][1]).toBe(fmtKst(REG, { date: false }));
     expect(trafficGridTip({ g: "GR4_A", v: 1, d: 0 }, { reg_dt_utc: "2026-09-29T15:30:00Z" })!.rows[2][1]).toBe("00:30:00 KST");
     expect(tip.flags.map((f) => f.text)).toEqual(["5분 집계 · 개별 선박 위치 아님"]);

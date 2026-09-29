@@ -135,7 +135,7 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT alt_ft_at_entry FROM alert_event WHERE id = 6").query(Integer.class).single()).isEqualTo(37000);
         assertThat(stage.sql("SELECT alt_ft_at_entry FROM alert_event WHERE id = 7").query(Integer.class).single()).isEqualTo(35000);
         // 체류: 확인된 이탈(id 1, 600 s)만 — NULL·만료 뒤 left·restart 는 빠진다. 집계된 적 없는 날은 새로 만들지 않는다.
-        // (V4 가 고친 행은 UTC 날짜 집계 — 최신까지 올리면 V16 이 보관 표 stats_daily_utc_legacy 로 옮긴다. 계약 v5 §G19)
+        // (V4 가 고친 행은 UTC 날짜 집계 — 최신까지 올리면 V16 이 보관 표 stats_daily_utc_legacy 로 옮긴다. 계약 v5 §G20)
         assertThat(stage.sql("SELECT value FROM stats_daily_utc_legacy WHERE day = :d AND metric = 'alert_dwell_avg_s'").param("d", day)
                 .query(java.math.BigDecimal.class).single().doubleValue()).isEqualTo(600.0);
         assertThat(stage.sql("SELECT count(*) FROM stats_daily_utc_legacy WHERE day = :d").param("d", notAggregated).query(Long.class).single()).isZero();
@@ -781,7 +781,7 @@ class MigrationDbTest {
     }
 
     /**
-     * V16(계약 v5 §G19 — 사용자 결정 2026-09-30 "UTC 지우고 KST"): 우리 일 집계(stats_daily · quality_rule_count)의 날짜 = KST 날짜.
+     * V16(계약 v5 §G20 — 사용자 결정 2026-09-30 "UTC 지우고 KST"): 우리 일 집계(stats_daily · quality_rule_count)의 날짜 = KST 날짜.
      * 이전 행은 UTC 날짜로 센 것이라 KST 날짜로 이름만 바꾸지 않는다 — 보관 표(*_utc_legacy)로 옮기고(서비스 역할은 아무 권한 없음 — 읽는 코드 없음),
      * 새 표는 비어 있다(api 따라잡기가 원본이 남은 계열을 KST 날짜로 다시 센다). 권한은 이전 표와 같다(api 통계 DML · collector 규칙별 수 upsert ·
      * api 규칙별 수 읽기 · 보존 삭제). 머리 주석의 되돌리기 SQL 로 옛 표가 돌아오고(행 그대로), 다시 적용된다.

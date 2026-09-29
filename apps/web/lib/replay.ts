@@ -3,7 +3,7 @@
  * API: GET /api/v1/replay?at=&bbox= → { at, aircraft, sigmets, source, radar: {host, path, time} | null }(계약서 §2).
  * 원해상도 보관(72 h) 밖은 1분 요약(track_point_1m)에서 온다 — 행의 위치·고도·속도는 그 1분 동안 관측의 평균이고 방위·지상 여부는 없다.
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
- * 시각: 고르는 입력 · 보이는 글자 · title 은 KST 만(계약 v5 §G19, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z — 저장 · 전송 형식) 그대로.
+ * 시각: 고르는 입력 · 보이는 글자 · title 은 KST 만(계약 v5 §G20, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z — 저장 · 전송 형식) 그대로.
  */
 import { ApiError } from "./api";
 import { fmtKst, fmtKstRange, fmtRangeTitle, fmtTimeTitle, timeParts } from "./time";

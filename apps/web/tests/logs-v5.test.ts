@@ -208,7 +208,7 @@ describe("v5-C7 lib/logs: copy formats", () => {
     expect(t).toContain("아래 항목 1건 — 묶음의 일부만(목록 상한 또는 스캔 잘림)");
     expect(t).toContain(L.logText(items[0]));
   });
-  it("list time is KST with milliseconds (the column header says KST — contract v5 §G19); first line of a message", async () => {
+  it("list time is KST with milliseconds (the column header says KST — contract v5 §G20); first line of a message", async () => {
     const L = await import("@/lib/logs");
     const T = await import("@/lib/time");
     expect(T.kstCell("2026-09-29T01:02:03.456Z", { ms: true })).toMatchObject({ text: "09-29 10:02:03.456" });

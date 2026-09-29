@@ -1,6 +1,6 @@
 /**
  * 통계 화면 표시 규칙(순수 함수, R-32 · R-45).
- * - day: api 는 KST 날짜 "YYYY-MM-DD" 를 준다(계약 v5 §G19 — 응답 day_zone "Asia/Seoul", ADR-017 R-45 의 날짜 문자열). 날짜 문자열이 아닌 값
+ * - day: api 는 KST 날짜 "YYYY-MM-DD" 를 준다(계약 v5 §G20 — 응답 day_zone "Asia/Seoul", ADR-017 R-45 의 날짜 문자열). 날짜 문자열이 아닌 값
  *   (옛 응답의 "UTC 자정 시각" 문자열 — UTC 날짜였다 · 다른 시간대 JVM 의 자정)은 날짜를 단정하지 않는다("—") — 다른 하루를 KST 날짜로 보이지 않는다.
  * - day_zone: KST 날짜로 셌다고 밝힌 응답만 그린다(statsZoneOk) — 밝히지 않은 응답(옛 api — UTC 날짜 집계)은 그리지 않고 그렇다고 말한다.
  * - aggregated: 집계 전(false)·집계됨(true)·모름(필드 없음). 빈 목록을 "자료 없음"으로 단정하지 않는다.
@@ -37,7 +37,7 @@ export function aggregatedFlag(resp: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
 
-/** 응답이 KST 날짜로 셌다고 밝혔는가(day_zone === "Asia/Seoul" — 계약 v5 §G19). 아니면 그 날짜 · 시를 KST 로 그리지 않는다 */
+/** 응답이 KST 날짜로 셌다고 밝혔는가(day_zone === "Asia/Seoul" — 계약 v5 §G20). 아니면 그 날짜 · 시를 KST 로 그리지 않는다 */
 export function statsZoneOk(resp: unknown): boolean {
   return typeof resp === "object" && resp !== null && (resp as { day_zone?: unknown }).day_zone === DISPLAY_TZ.iana;
 }
@@ -59,7 +59,7 @@ export function yesterdayKst(nowMs: number): string {
  * 집계 전이면 채워질 때를 말하되, 따라잡기 범위 밖의 지난 날짜에는 "다음 집계"를 약속하지 않는다.
  * source = 원본이 UTC 날 파티션째 지워지는 계열의 보존(TRAFFIC_SOURCE — 원해상도 항적)과 지금 시각 — 주면 그날 첫 파티션이 다음 집계 시도(늦어도
  * STATS_CATCH_UP_EVERY_H 뒤)까지 남아 있을 때만 채워진다고 말한다(R-32). 이미 지워졌으면 채워지지 않는다고, 그 사이면 채워지지 않을 수 있다고 말한다.
- * "집계되지 않은 날짜" 의 이유에는 KST 날짜 집계로 바꾸기 전 날짜(계약 v5 §G19 — 원본이 남은 만큼만 다시 셌다)도 든다.
+ * "집계되지 않은 날짜" 의 이유에는 KST 날짜 집계로 바꾸기 전 날짜(계약 v5 §G20 — 원본이 남은 만큼만 다시 셌다)도 든다.
  */
 export function statsEmptyText(aggregated: boolean | undefined, day: string | null, today: string, source?: { name: string; retentionH: number; nowMs: number }): string {
   if (aggregated === true) return day ? "이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음)." : "최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음).";

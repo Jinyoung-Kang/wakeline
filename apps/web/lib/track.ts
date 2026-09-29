@@ -71,7 +71,7 @@ export function trackGapMs(a: string | null | undefined, b: string | null | unde
 
 /**
  * 항적 → 지도 FeatureCollection: 관측 선분(kind "track", 선분마다 끝점 고도 — 고도색 실선) +
- * 수신 공백 연결(kind "gap", 회색 점선 + "수신 없음 hh:mm–hh:mm KST" 라벨(계약 v5 §G19) — 선박 항적의 공백 표시와 같은 모양).
+ * 수신 공백 연결(kind "gap", 회색 점선 + "수신 없음 hh:mm–hh:mm KST" 라벨(계약 v5 §G20) — 선박 항적의 공백 표시와 같은 모양).
  */
 export function trackFeatureCollection(pts: TrackPt[]): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];

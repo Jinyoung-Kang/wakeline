@@ -164,7 +164,7 @@ export function shipGridTip(p: { count?: unknown; cat?: unknown; all?: unknown; 
 }
 
 /**
- * 항적 점 툴팁(계약 v5 §B3): 시각(KST — 날짜 · 초까지, §G19) · 속력(kn · km/h) · 침로 · 항해 상태 — API points[] 값 그대로(없으면 —).
+ * 항적 점 툴팁(계약 v5 §B3): 시각(KST — 날짜 · 초까지, §G20) · 속력(kn · km/h) · 침로 · 항해 상태 — API points[] 값 그대로(없으면 —).
  * shipLabel = 선박 이름(모르면 MMSI) — 외부 문자열이라 renderTip 이 텍스트 노드로만 넣는다.
  */
 export function shipTrackPointTip(p: { ts?: unknown; sog?: unknown; cog?: unknown; hdg?: unknown; nav?: unknown; src?: unknown }, shipLabel: string | null): Tip {

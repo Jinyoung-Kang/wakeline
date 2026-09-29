@@ -10,7 +10,7 @@
  *   모르는 값은 "—"(단위도 붙이지 않는다) — 추측해 채우지 않는다.
  * - 호출부호로만 찾는다(선명으로 찾지 않는다). PORT-MIS 신고 선명이 AIS 선명과 다르면 밝힌다 — 같은 선박인지는 판정하지 않는다. 두 이름이 모두 영문일
  *   때만 비교한다(한글 · 영문처럼 표기 체계가 다른 것은 다름의 신호가 아니다 — 로마자 표기를 짐작하지 않는다).
- * - 신고 시각은 KST(공유 형식기 lib/time · components/KstTime, 계약 v5 §G19). 단 KST 00:00:00 은 날짜만 신고했는지 자정인지 원천이
+ * - 신고 시각은 KST(공유 형식기 lib/time · components/KstTime, 계약 v5 §G20). 단 KST 00:00:00 은 날짜만 신고했는지 자정인지 원천이
  *   구분하지 않으므로 날짜만 보인다(reportTime — 시각을 지어내지 않는다). 색인 갱신 시각 · 읽은 시각도 KST.
  */
 import { fmtKst, fmtKstDateOnly, fmtTimeTitle, isKstMidnight, timeParts } from "./time";

@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * R-46: 일 통계 '집계 완료' 는 행이 있는지가 아니라 완료 표식(stats_daily metric 'aggregated_at', dim = 계열)으로 판단한다.
  * 자료가 없는 날도 한 번 집계하면 끝나고(이전: 따라잡기마다 영원히 다시), 원본이 보존으로 사라진 계열은 다시 세지 않는다(이전: 0·빈 값으로 덮음).
- * 계약 v5 §G19: 하루 = KST 날짜(Asia/Seoul 00:00–24:00). '오늘' · '끝난 날' · 보존 경계도 KST 날짜로 센다.
+ * 계약 v5 §G20: 하루 = KST 날짜(Asia/Seoul 00:00–24:00). '오늘' · '끝난 날' · 보존 경계도 KST 날짜로 센다.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class StatsAggregationDbTest {
@@ -89,7 +89,7 @@ class StatsAggregationDbTest {
     }
 
     /**
-     * 계약 v5 §G19(사용자 결정 2026-09-30 "UTC 지우고 KST"): 하루는 KST 날짜 — 경계는 KST 자정(= UTC 15:00). 시간대별 교통량의 시(dim)는 KST 시.
+     * 계약 v5 §G20(사용자 결정 2026-09-30 "UTC 지우고 KST"): 하루는 KST 날짜 — 경계는 KST 자정(= UTC 15:00). 시간대별 교통량의 시(dim)는 KST 시.
      * 수정 전(UTC 날짜 집계)에는 KST 00:00–08:59 의 발표 · 진입 · 항적이 전날에, UTC 15:00 뒤(KST 다음 날)가 그날에 들어갔다 — 이 시험이 실패했다.
      */
     @Test

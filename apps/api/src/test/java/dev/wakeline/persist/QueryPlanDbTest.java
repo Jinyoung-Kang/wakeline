@@ -206,7 +206,7 @@ class QueryPlanDbTest {
      */
     @Test
     void dailyTrafficAggregationDoesNotSpillToDisk() {
-        java.time.LocalDate day = MaintenanceJobs.today().minusDays(1); // KST 날짜(계약 v5 §G19)
+        java.time.LocalDate day = MaintenanceJobs.today().minusDays(1); // KST 날짜(계약 v5 §G20)
         Instant d0 = day.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant();
         DbTestSupport.ensureTrackPartitions(d0, d0.plusSeconds(26 * 3600));
         // 관심 지역 안 30,000점(3,000대 × 10점, 하루에 고르게)

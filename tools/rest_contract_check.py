@@ -586,7 +586,7 @@ DEMAND_COUNTS: Schema = {  # /status demand — 수만(hex·셀 키를 공개하
 }
 
 # R-45: 통계의 날짜는 날짜 문자열 "YYYY-MM-DD" 만(자정 시각 문자열 "…T00:00:00.000Z" 는 JVM 시간대에 따라 하루 밀렸다).
-# 계약 v5 §G19: 그 날짜는 KST 날짜 — 응답이 day_zone "Asia/Seoul" 로 밝힌다(V16 전의 UTC 날짜 집계는 보관 표에만 있고 내지 않는다).
+# 계약 v5 §G20: 그 날짜는 KST 날짜 — 응답이 day_zone "Asia/Seoul" 로 밝힌다(V16 전의 UTC 날짜 집계는 보관 표에만 있고 내지 않는다).
 STATS_DAY: Schema = {"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
 STATS_DAY_ZONE: Schema = {"const": "Asia/Seoul"}
 STATS_ROW: Schema = {
@@ -1769,7 +1769,7 @@ _HOUR_DIM = re.compile(r"^(?:[01][0-9]|2[0-3])$")
 
 
 def _stats_traffic(body: dict[str, Any]) -> list[str]:
-    """그날(KST 날짜)의 행만, 시(dim)는 그 KST 날짜의 시 "00"–"23" 이고 시마다 한 행(계약 v5 §G19)."""
+    """그날(KST 날짜)의 행만, 시(dim)는 그 KST 날짜의 시 "00"–"23" 이고 시마다 한 행(계약 v5 §G20)."""
     rows = body.get("items") or []
     days = {row["day"] for row in rows}
     errs = [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]

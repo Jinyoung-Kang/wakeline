@@ -4,7 +4,7 @@
  * - §G12: 운영 PIPELINE 의 스트림 보존 창 필드 계약과 판정 규칙 — 숫자 · 상태 글자는 lib/ops 에서 읽어 문서와 견준다.
  * - README: 시각 기준을 운영 · 로그만이 아니라 모든 화면으로 적는다.
  * - §G13(사용자 요청 2026-09-29 "UTC 와 KST 함께"): KST 를 먼저, UTC 를 함께 — §G11 의 "원본 UTC 는 툴팁" 규칙을 대신했다.
- * - §G19(사용자 결정 2026-09-30 "UTC 지우고 KST"): 화면은 KST 만 — §G13 을 대신한다. 예시 글자는 lib/time 에서 만들어 견준다. README 의 시각 줄도 §G19 를 따른다.
+ * - §G20(사용자 결정 2026-09-30 "UTC 지우고 KST"): 화면은 KST 만 — §G13 을 대신한다. 예시 글자는 lib/time 에서 만들어 견준다. README 의 시각 줄도 §G20 을 따른다.
  * 수정 전 문서에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { readFileSync } from "node:fs";
@@ -26,7 +26,7 @@ function amendment(n: number): string {
 const g11 = amendment(11);
 const g12 = amendment(12);
 const g13 = amendment(13);
-const g19 = amendment(19);
+const g20 = amendment(20);
 
 describe("contract v5 §G11 records the dashboard time basis", () => {
   it("§G11 exists and names every aviation screen as KST, with the parts that stay UTC", () => {
@@ -76,30 +76,41 @@ describe("README states the time basis for every screen", () => {
   });
 });
 
-describe("contract v5 §G13 (KST first with UTC — 2026-09-29) is superseded by §G19 (KST only — 2026-09-30)", () => {
-  it("§G13 still exists (history) and says §G19 replaces its dual display", () => {
+describe("contract v5 §G13 (KST first with UTC — 2026-09-29) is superseded by §G20 (KST only — 2026-09-30)", () => {
+  it("§G13 still exists (history) and says §G20 replaces its dual display", () => {
     expect(g13).not.toBe("");
-    expect(g13.split("\n")[0]).toContain("§G19");
+    expect(g13.split("\n")[0]).toContain("§G20");
   });
-  it("§G19 exists, names every screen, the forms as lib/time writes them, the raw exception, the KST-day aggregates and the budget window", () => {
-    expect(g19).not.toBe("");
+  it("§G20 exists, names every screen, the forms as lib/time writes them, the raw exception, the KST-day aggregates and the budget window", () => {
+    expect(g20).not.toBe("");
     for (const s of ["상황판", "재생", "통계", "공항", "운영", "로그", "출처", "설명서", "lib/time.ts", "components/KstTime.tsx", "DISPLAY_TZ", "(KST)", "+09:00",
       `(${RAW_BULLETIN_LABEL})`, "data-raw", "day_zone", "budget_day_zone", "V16", "stats_daily_utc_legacy", "quality_rule_count_utc_legacy", "Asia/Seoul", "03:30 KST",
-      "@deprecated", "DualTime", "dualPair", "fmtDual", "OTHER_LANE_PENDING"]) expect(g19, s).toContain(s);
+      "@deprecated", "DualTime", "dualPair", "fmtDual", "OTHER_LANE_PENDING"]) expect(g20, s).toContain(s);
     const noon = "2026-09-29T05:02:54Z";
-    expect(g19).toContain(fmtKst(noon)); // inline
-    expect(g19).toContain(fmtKst(noon, { date: false })); // 날짜가 자명한 자리
-    expect(g19).toContain(fmtKstMinute(noon)); // 좁은 자리
-    expect(g19).toContain(kstCell(noon)!.text); // 표 칸
-    expect(g19).toContain(fmtTimeTitle(noon)!); // title
-    expect(g19).toContain(utcDayWindowKst("2026-09-28")!); // 공급자 예산 창
+    expect(g20).toContain(fmtKst(noon)); // inline
+    expect(g20).toContain(fmtKst(noon, { date: false })); // 날짜가 자명한 자리
+    expect(g20).toContain(fmtKstMinute(noon)); // 좁은 자리
+    expect(g20).toContain(kstCell(noon)!.text); // 표 칸
+    expect(g20).toContain(fmtTimeTitle(noon)!); // title
+    expect(g20).toContain(utcDayWindowKst("2026-09-28")!); // 공급자 예산 창
     expect(g12).not.toContain("KstTime"); // 절이 섞이지 않았다(추출 확인)
   });
-  it("README's time row states the KST-only rule and points to §G19; no dual wording is left", () => {
+  it("README's time row states the KST-only rule and points to §G20; no dual wording is left", () => {
     const line = readme.split("\n").find((l) => l.startsWith("| 시각 |"))!;
     expect(line).toContain("한국 표준시(KST, +09:00 고정)만");
-    expect(line).toContain("§G19");
+    expect(line).toContain("§G20");
     expect(line).not.toMatch(/UTC 를 함께|KST · UTC|원본 UTC/);
     expect(readme).not.toMatch(/KST · UTC|KST\+UTC/);
+  });
+});
+
+describe("contract v5 amendment numbers are unique", () => {
+  /** 리뷰(2026-09-30): 병행 레인(백엔드 — 1fe80e4)이 11차 개정으로 §G18 · §G19(정적 정보의 받은 필드)를 먼저 썼다. 이 레인의 KST 전용 규칙은 §G20 이다 — 수정 전 §G19 로 겹쳤다. */
+  it("each '- Gn' item appears once, and the KST-only rule is §G20", () => {
+    const nums = [...contract.matchAll(/^- G(\d+)\b/gm)].map((m) => Number(m[1]));
+    expect(nums.length).toBeGreaterThan(10);
+    expect(nums.filter((n, i) => nums.indexOf(n) !== i)).toEqual([]);
+    expect(amendment(20)).toContain("화면의 시각은 한국 표준시(KST)만");
+    expect(amendment(19)).not.toContain("화면의 시각은 한국 표준시(KST)만");
   });
 });

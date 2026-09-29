@@ -1,6 +1,6 @@
 /**
  * 상황판(지도 · 카드 · 상태 바 · 툴팁)의 시각은 한국 표준시(KST)만(사용자 결정 2026-09-30 "[상황판·재생·통계·공항 화면]을 포함한 필요한(해당되는)
- * 메뉴에 시각을 UTC 지우고, KST 표시" — 계약 v5 §G19 가 §G13 의 "KST 먼저 · UTC 함께" 를 대신한다).
+ * 메뉴에 시각을 UTC 지우고, KST 표시" — 계약 v5 §G20 이 §G13 의 "KST 먼저 · UTC 함께" 를 대신한다).
  * - "09-29 08:41:14 KST", 상태 바 · 지도 툴팁 · 선 라벨은 분까지 "08:41 KST", 구간은 끝에 한 번("08:40–08:45 KST"). title 은 연도 · ms 까지의 KST.
  * - 원문 전문(METAR · TAF · SIGMET raw)은 발표된 그대로(data-raw) — 안의 "…Z" 시각을 바꾸지 않는다.
  * - 모르면 "—" 만(시간대 글자도 붙이지 않는다).
@@ -357,7 +357,7 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
     [join("components", "logs", "ErrorScreen.tsx")]: 1,
     [join("lib", "ships.ts")]: 4,
   };
-  /** 한국어 화면 글이 UTC 를 말하는 줄(주석 밖) — 계약 v5 §G19: 화면은 KST 만 */
+  /** 한국어 화면 글이 UTC 를 말하는 줄(주석 밖) — 계약 v5 §G20: 화면은 KST 만 */
   const KOREAN_UTC = /[\uAC00-\uD7A3][^"'`\n]*\bUTC\b|\bUTC\b[^"'`\n]*[\uAC00-\uD7A3]/;
   const code = (line: string) => (/^\s*(\*|\/\/|\/\*|\{\/\*)/.test(line) ? "" : line.replace(/\s\/\/ .*$/, "").replace(/\{\/\*.*?\*\/\}/g, ""));
   /** 다른 레인(대시보드 UX)의 파일 — 이 레인은 고치지 않았다(open issue). 그 레인이 고치면 줄 수를 0 으로(아래 시험이 알린다) */

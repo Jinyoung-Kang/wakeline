@@ -18,7 +18,7 @@ class OpsStatsIT extends IntegrationTest {
     @Autowired OpsUserService users;
 
     /**
-     * R-46: 끝나지 않은 날(오늘 이후 — KST 날짜, 계약 v5 §G19)은 재집계하지 않는다(400 BAD_DAY) — 부분 집계가 완성된 통계처럼 굳지 않게.
+     * R-46: 끝나지 않은 날(오늘 이후 — KST 날짜, 계약 v5 §G20)은 재집계하지 않는다(400 BAD_DAY) — 부분 집계가 완성된 통계처럼 굳지 않게.
      * 끝난 날은 감사 기록과 함께 집계된다.
      */
     @Test

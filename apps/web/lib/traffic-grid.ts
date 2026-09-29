@@ -9,7 +9,7 @@
  *   탭이 다시 보이면 곧바로 한 번(방금 확인했으면 TRAFFIC_VISIBLE_MIN_GAP_MS 안에는 다시 부르지 않는다), 켜면 곧바로 한 번.
  * - 색: 척수 구간(표시용 선택 — 2026-09-29 확인한 범위 1–102 를 2배씩) · 한 가지 색상(주황)으로 척수가 많을수록 밝게(어두운 지도 위 순서 색).
  *   0척 칸은 회색. 밀집도 %는 공급자 값 그대로 툴팁에.
- * - 시각: 기준(regDt)은 KST 로 적는다(공급자 원본도 KST 벽시계) — 공유 형식기 lib/time(계약 v5 §G19): 상태 줄은 날짜 · 초까지, 지도 툴팁은 초까지.
+ * - 시각: 기준(regDt)은 KST 로 적는다(공급자 원본도 KST 벽시계) — 공유 형식기 lib/time(계약 v5 §G20): 상태 줄은 날짜 · 초까지, 지도 툴팁은 초까지.
  */
 import { fmtKst } from "./time";
 import type { Tip } from "./tooltip";
@@ -148,7 +148,7 @@ export function trafficColorExpr(): unknown[] {
   return ["step", ["get", "v"], TRAFFIC_ZERO_COLOR, ...TRAFFIC_BINS.flatMap((b) => [b.min, b.color])];
 }
 
-/** 기준 시각(상태 줄): 공유 형식기 "09-29 18:05:05 KST"(계약 v5 §G19). 모르면 "—" */
+/** 기준 시각(상태 줄): 공유 형식기 "09-29 18:05:05 KST"(계약 v5 §G20). 모르면 "—" */
 export function trafficTimeText(utc: string | null | undefined): string {
   return fmtKst(utc);
 }

@@ -72,7 +72,7 @@ META = {"stale": False, "generated_at": "2026-09-28T00:00:00Z", "request_id": "a
 
 def test_stats_days_are_kst_date_strings_with_an_aggregated_flag():
     """R-45: 통계 day 는 "YYYY-MM-DD" 만, 범위 응답은 날마다 aggregated, 행의 날은 그 범위 안.
-    계약 v5 §G19: 그 날짜는 KST 날짜 — day_zone "Asia/Seoul" 이 늘 있고, 교통량의 시(dim)는 그 KST 날짜의 시 "00"–"23"(시마다 한 행)."""
+    계약 v5 §G20: 그 날짜는 KST 날짜 — day_zone "Asia/Seoul" 이 늘 있고, 교통량의 시(dim)는 그 KST 날짜의 시 "00"–"23"(시마다 한 행)."""
     v = Draft202012Validator(rcc.SCHEMAS["stats_sigmet"], format_checker=rcc.FORMATS)
     ok = {
         "group": "fir",

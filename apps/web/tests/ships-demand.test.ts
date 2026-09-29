@@ -114,7 +114,7 @@ describe("ship message validation (untrusted input → null, never defaults)", (
 });
 
 describe("ship card formatting (contract v2 §B4)", () => {
-  it("ETA needs all four fields, is shown in KST (crew input, no year — contract v5 §G19: no UTC on screen); otherwise —", () => {
+  it("ETA needs all four fields, is shown in KST (crew input, no year — contract v5 §G20: no UTC on screen); otherwise —", () => {
     expect(fmtShipEta({ eta_month: 9, eta_day: 30, eta_hour: 6, eta_minute: 5 })).toBe("09-30 15:05 KST · 선원 입력 · 연도 없음");
     expect(fmtShipEta({ eta_month: 9, eta_day: 30, eta_hour: null, eta_minute: 5 })).toBe("—");
     expect(fmtShipEta(null)).toBe("—");

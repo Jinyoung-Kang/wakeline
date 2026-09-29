@@ -16,7 +16,7 @@ import type { SigmetProps } from "@/lib/types";
 const NOW = Date.parse("2026-09-27T09:00:00Z");
 
 describe("timestamps carry the date (GAP-26)", () => {
-  it("times carry the date (KST only — contract v5 §G19); the clock form is time only; unknown is —", () => {
+  it("times carry the date (KST only — contract v5 §G20); the clock form is time only; unknown is —", () => {
     expect(fmtKst("2026-09-27T08:44:33.912Z")).toBe("09-27 17:44:33 KST");
     expect(fmtKst("2026-09-26T23:59:59Z")).toBe("09-27 08:59:59 KST"); // UTC 로는 전날 — KST 날짜만
     expect(fmtKst(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 17:44:33 KST");

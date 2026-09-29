@@ -1,6 +1,6 @@
 /**
  * 운영(/ops)·로그(/logs) 화면의 시각을 한국 표준시(KST, UTC+09:00)로(사용자 요청 2026-09-29). 상황판·재생·통계·공항도 같은 날 뒤따랐다(tests/kst-dashboard.test.ts).
- * 사용자 결정 2026-09-30(계약 v5 §G19): 모든 화면이 KST 만 — UTC 는 화면에서 지운다(형식기는 lib/time, tests/kst-time.test.ts).
+ * 사용자 결정 2026-09-30(계약 v5 §G20): 모든 화면이 KST 만 — UTC 는 화면에서 지운다(형식기는 lib/time, tests/kst-time.test.ts).
  * - 표 칸은 KST "MM-DD HH:MM:SS"(머리글 "(KST)"), 그 밖은 "… KST". title 에 연도 · ms 까지의 KST.
  * - 복사 텍스트·.txt 의 머리 줄은 오프셋을 붙인 ISO 8601("…+09:00", ms 유지). .ndjson · JSON 복사는 api 가 준 그대로(ts 는 서버 형식 …Z).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.

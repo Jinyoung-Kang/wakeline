@@ -28,7 +28,7 @@ import { GuideToc } from "./GuideToc";
 /*
  * 설명서(/guide) 본문 — 서버 컴포넌트(정적 내용, 데이터 요청 없음). 클라이언트 코드는 목차(GuideToc)뿐.
  * 숫자 · 문구는 가능한 한 화면 코드가 쓰는 상수를 그대로 가져온다(lib/*) — 동작이 바뀌면 설명도 같이 바뀐다.
- * 출처 목록은 하단 출처 줄과 같은 lib/attribution 에서. 시각은 화면 전체의 공유 형식기(lib/time · components/KstTime — 계약 v5 §G19, KST 만)로만 그린다
+ * 출처 목록은 하단 출처 줄과 같은 lib/attribution 에서. 시각은 화면 전체의 공유 형식기(lib/time · components/KstTime — 계약 v5 §G20, KST 만)로만 그린다
  * (7장의 예가 화면과 글자까지 같다). 예는 정해 둔 순간(아래 상수)에서 계산한다.
  */
 
@@ -416,7 +416,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           {/* ---------------- 7 ---------------- */}
           <Sec id="time">
             <UL>
-              <li>화면의 시각은 모두 <B>한국 표준시(KST)</B>입니다(계약 v5 §G19 — 모든 화면이 같은 형식기 하나를 씁니다). 시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST)이 보입니다.</li>
+              <li>화면의 시각은 모두 <B>한국 표준시(KST)</B>입니다(계약 v5 §G20 — 모든 화면이 같은 형식기 하나를 씁니다). 시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST)이 보입니다.</li>
               <li><B>모르는 시각</B>은 — 만 적습니다(KST 글자도 붙이지 않습니다).</li>
               <li><B>발표 원문</B>(METAR · TAF · SIGMET)은 글자 그대로 둡니다 — 안의 “…Z” 시각은 발표 형식이라 KST 보다 9시간 이릅니다(KST = …Z + 9시간). 원문에는 ‘{RAW_BULLETIN_LABEL}’ 이름표를 답니다.</li>
               <li><B>기상청 레이더 tm</B> 은 기상청이 KST 로 준 값 그대로입니다.</li>

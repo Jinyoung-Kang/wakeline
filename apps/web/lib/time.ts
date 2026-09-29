@@ -1,6 +1,6 @@
 /**
  * 화면 시각의 한 곳 — 한국 표준시(KST)만(사용자 결정 2026-09-30 "[상황판·재생·통계·공항 화면]을 포함한 필요한 메뉴에 시각을 UTC 지우고, KST 표시" —
- * 계약 v5 §G19 가 §G13 의 "KST 먼저 · UTC 함께" 를 대신한다). 모든 화면(상황판 · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서 · 오류 화면)이 이 모듈을 쓴다.
+ * 계약 v5 §G20 이 §G13 의 "KST 먼저 · UTC 함께" 를 대신한다). 모든 화면(상황판 · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서 · 오류 화면)이 이 모듈을 쓴다.
  * 화면 시간대는 DISPLAY_TZ 한 곳이 정한다. UTC 는 저장 · 전송 형식(API · WS · DB · 서버 로그)으로만 남고 화면 글자 · title 에는 나오지 않는다.
  * - inline "09-29 14:02:54 KST"(fmtKst) · 날짜가 자명한 자리 "14:02:54 KST"(fmtKstClock) · 좁은 자리(상태 바 · 지도 툴팁) "14:02 KST"(fmtKstMinute)
  * - 표 칸 "09-29 14:02:54"(kstCell + <KstTime variant="cell"> — 머리글 "(KST)", 화면 읽기에는 "… KST")
@@ -157,7 +157,7 @@ export function fmtKstDateOnly(v: TimeIn, o: { year?: boolean } = {}): string {
 
 // ---- 날짜(집계 단위) ----
 
-/** 순간의 KST 날짜 "YYYY-MM-DD"(통계 · 품질 규칙 일별 수의 날짜 — 계약 v5 §G19). 모르면 null */
+/** 순간의 KST 날짜 "YYYY-MM-DD"(통계 · 품질 규칙 일별 수의 날짜 — 계약 v5 §G20). 모르면 null */
 export function kstDayOf(v: TimeIn): string | null {
   return timeParts(v)?.wall.ymd ?? null;
 }
@@ -184,7 +184,7 @@ export function addDays(day: string | null | undefined, n: number): string | nul
 /** 통계 시간대별 막대 한 칸: label "07"(KST 시) · full "09-29 07시 KST"(툴팁 · 화면 읽기 표) */
 export interface KstDayHour { label: string; full: string }
 /**
- * KST 날짜 하루(day "YYYY-MM-DD" — 통계 집계 단위, 계약 v5 §G19)의 24개 시(00 → 23시, 막대 순서). 날짜를 모르면(없음 · 형식 오류 · 달력에 없는 날)
+ * KST 날짜 하루(day "YYYY-MM-DD" — 통계 집계 단위, 계약 v5 §G20)의 24개 시(00 → 23시, 막대 순서). 날짜를 모르면(없음 · 형식 오류 · 달력에 없는 날)
  * 시만("07시 KST") — 날짜를 지어내지 않는다.
  */
 export function kstDayHours(day: string | null | undefined): KstDayHour[] {
@@ -243,9 +243,9 @@ export function fmtZuluToken(v: TimeIn): string | null {
 // ==== 옮기는 중인 이름(@deprecated) — 다른 레인(대시보드 UX: StatusBar · AlertPanel · AircraftSearch · AircraftCard)이 합쳐질 때까지만 ====
 // 두 시간대를 그리지 않는다 — 이름만 남긴 KST 전용 별칭이다. 합친 뒤 호출부를 fmtKst · KstTime 으로 옮기고 지운다(tests/kst-time.test.ts 가 동작을 고정).
 
-/** @deprecated 계약 v5 §G19 — fmtKst 를 쓴다. KST 전용 별칭: "09-29 08:41:14 KST"(모르면 "—") */
+/** @deprecated 계약 v5 §G20 — fmtKst 를 쓴다. KST 전용 별칭: "09-29 08:41:14 KST"(모르면 "—") */
 export const fmtDual = fmtKst;
-/** @deprecated 계약 v5 §G19 — fmtKst · KstTime 을 쓴다. KST 전용: { kst: "09-29 08:41:14 KST", iso: ISO +09:00 }(UTC 쪽은 없다). 모르면 null */
+/** @deprecated 계약 v5 §G20 — fmtKst · KstTime 을 쓴다. KST 전용: { kst: "09-29 08:41:14 KST", iso: ISO +09:00 }(UTC 쪽은 없다). 모르면 null */
 export function dualPair(v: TimeIn, o: KstOpts = {}): { kst: string; iso: string } | null {
   const p = timeParts(v);
   return p ? { kst: fmtKst(v, o), iso: p.iso } : null;

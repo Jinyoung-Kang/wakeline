@@ -55,7 +55,7 @@ export function RadarTimeline() {
   const srvNow = useServerNow(30_000);
   const krFrames = kma && krAvailable && radarKr ? radarKr.frames : null;
   const comp = krFrames ? krComposite(krFrames[cur], srvNow) : null;
-  // 프레임 시각은 둘 다 "MM-DD HH:MM KST"(계약 v5 §G19 — lib/time): RainViewer 는 epoch 초(순간), 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
+  // 프레임 시각은 둘 다 "MM-DD HH:MM KST"(계약 v5 §G20 — lib/time): RainViewer 는 epoch 초(순간), 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
   // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
   const frameMs = kma ? kstWallMs(krTm) : time ? time * 1000 : null;
   const label = fmtKstMinute(frameMs, { date: true });

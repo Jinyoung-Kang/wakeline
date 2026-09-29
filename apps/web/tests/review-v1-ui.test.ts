@@ -233,7 +233,7 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toMatch(/data-key="publish_dropped" data-tone="bad"/);
     expect(html).toMatch(/data-key="dropped_total" data-tone="muted"[^>]*>.*?—/);
     expect(html).toContain("wakeline:aircraft");
-    expect(html).toContain("09-28 10:00:00 – 09-28 10:02:00 KST"); // 운영 화면은 KST 만(계약 v5 §G19)
+    expect(html).toContain("09-28 10:00:00 – 09-28 10:02:00 KST"); // 운영 화면은 KST 만(계약 v5 §G20)
     expect(html).not.toContain("UTC");
   });
   it("permanent losses (rejected rows, apply errors, listener errors) are loss rows too", () => {
@@ -467,7 +467,7 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
   it("day values: 'YYYY-MM-DD' as is; anything else (incl. an old midnight timestamp — a UTC day) is unknown (—), never shifted", async () => {
     const stats = await import("@/lib/stats");
     expect(stats.statsDay("2026-09-27")).toBe("2026-09-27");
-    expect(stats.statsDay("2026-09-27T00:00:00.000Z")).toBeNull(); // 옛 응답(UTC JVM 자정 = UTC 날짜) — KST 날짜로 읽지 않는다(계약 v5 §G19)
+    expect(stats.statsDay("2026-09-27T00:00:00.000Z")).toBeNull(); // 옛 응답(UTC JVM 자정 = UTC 날짜) — KST 날짜로 읽지 않는다(계약 v5 §G20)
     expect(stats.statsDay("2026-09-26T15:00:00.000Z")).toBeNull(); // KST JVM 이 만든 자정 — 날짜를 단정하지 않는다
     expect(stats.statsDay(null)).toBeNull();
     expect(stats.statsDay("2026-02-30")).toBeNull();
@@ -488,7 +488,7 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
     const html = renderToStaticMarkup(createElement(AlertStatsTable, { rows }));
     expect(html).not.toMatch(/alert_dwell_avg_s|alerts_by_kind/);
     expect(html).toContain("평균 체류");
-    expect(html).toContain("날짜(KST)"); // 서버가 KST 날짜로 센다(계약 v5 §G19)
+    expect(html).toContain("날짜(KST)"); // 서버가 KST 날짜로 센다(계약 v5 §G20)
     expect(html).not.toContain("UTC");
   });
   it("rows whose day cannot be read stay separate ('—' each) instead of one row where one day's value overwrites another's", async () => {

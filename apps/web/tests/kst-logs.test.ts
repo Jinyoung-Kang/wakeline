@@ -26,7 +26,7 @@ describe("KST in /logs copy text and export (lib/logs · lib/log-line · ErrorSc
       "context: task=job:radar_kr · module=kma_radar · func=_fail · line=136",
     ]);
   });
-  it("list time: KST \"MM-DD HH:MM:SS.mmm\" (the column header says KST — contract v5 §G19); unreadable → —", async () => {
+  it("list time: KST \"MM-DD HH:MM:SS.mmm\" (the column header says KST — contract v5 §G20); unreadable → —", async () => {
     const T = await import("@/lib/time");
     expect(T.kstCell(USER_TS, { ms: true })).toEqual({ text: "09-29 08:41:14.906", iso: "2026-09-29T08:41:14.906+09:00" });
     expect(T.kstCell("bad", { ms: true })).toBeNull();

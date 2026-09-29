@@ -87,7 +87,7 @@ export function krLayerId(f: Pick<KrRadarFrame, "tm" | "url">): string {
   return v ? `kmar-${f.tm}-${v}` : `kmar-${f.tm}`;
 }
 
-/** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST"(계약 v5 §G19). 틀리면 "—". */
+/** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST"(계약 v5 §G20). 틀리면 "—". */
 export function krTmClock(tm: string | null | undefined): string {
   return fmtKstMinute(kstWallMs(tm));
 }

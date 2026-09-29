@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 재생 · 통계 · 공개 상태 REST v1. 통계의 날짜는 KST 날짜(계약 v5 §G19 — 응답의 day_zone "Asia/Seoul"), 기본 날짜 · 범위도 KST 오늘로 센다.
+ * 재생 · 통계 · 공개 상태 REST v1. 통계의 날짜는 KST 날짜(계약 v5 §G20 — 응답의 day_zone "Asia/Seoul"), 기본 날짜 · 범위도 KST 오늘로 센다.
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
@@ -121,7 +121,7 @@ public class HistoryController {
         return new LocalDate[]{f, t};
     }
 
-    /** 통계 응답: 본문 + day_zone(날짜가 어느 시간대의 달력 날짜인지 — 계약 v5 §G19) + meta. 10분 공개 캐시 */
+    /** 통계 응답: 본문 + day_zone(날짜가 어느 시간대의 달력 날짜인지 — 계약 v5 §G20) + meta. 10분 공개 캐시 */
     private static ResponseEntity<Map<String, Object>> ok(Map<String, Object> body, HttpServletRequest req) {
         Map<String, Object> m = new LinkedHashMap<>(body);
         m.put("day_zone", MaintenanceJobs.DAY_ZONE_ID);

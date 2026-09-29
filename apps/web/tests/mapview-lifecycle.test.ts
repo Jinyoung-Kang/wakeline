@@ -335,7 +335,7 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     const mark = byTestId("kr-frame-partial");
     expect(mark?.textContent).toBe("일부 합성");
     expect(mark?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — ${dueOf(until)}까지 다시 받기 대상(지점이 늘면 바꿈)`);
-    expect(mark?.getAttribute("title")).toMatch(/— \d\d:\d\d KST까지/); // KST 만(계약 v5 §G19)
+    expect(mark?.getAttribute("title")).toMatch(/— \d\d:\d\d KST까지/); // KST 만(계약 v5 §G20)
     const strip = byTestId("kr-frame-strip");
     expect(strip?.getAttribute("title")).toContain("기준 도달(지난 60분 최대와 같음 — 완전한지는 모름)");
     expect(strip?.getAttribute("title")).not.toContain("= 완전");

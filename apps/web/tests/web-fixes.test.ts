@@ -216,7 +216,7 @@ describe("small honesty fixes", () => {
   });
   it("OBSERVED alert stats on/before the hysteresis fix day carry the caveat", () => {
     expect(HYSTERESIS_FIX_AT).toBe("2026-09-27T15:10:00Z");
-    // 통계 날짜는 KST 날짜(계약 v5 §G19): 수정 시각 15:10Z 09-27 = 00:10 KST 09-28 — KST 날짜 09-28 까지가 수정 전 판정을 (일부라도) 포함한다
+    // 통계 날짜는 KST 날짜(계약 v5 §G20): 수정 시각 15:10Z 09-27 = 00:10 KST 09-28 — KST 날짜 09-28 까지가 수정 전 판정을 (일부라도) 포함한다
     expect(preFixHysteresis({ day: "2026-09-28", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(true);
     expect(preFixHysteresis({ day: "2026-09-26", metric: "alert_dwell_avg_s", dim: "OBSERVED" })).toBe(true);
     expect(preFixHysteresis({ day: "2026-09-29", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(false);

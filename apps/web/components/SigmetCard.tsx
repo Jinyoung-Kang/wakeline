@@ -14,7 +14,7 @@ import { KstRange, KstTime } from "./KstTime";
 /**
  * SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—".
  * 숫자 경계에는 m 를 괄호로(계약 v5 §A3 — 카드에서만).
- * 시각은 KST(계약 v5 §G19 · lib/time — "09-29 14:02:54 KST", title 에 연도 · ms 까지의 KST) — 원문(Raw)은 발표된 그대로(data-raw, 이름표 "원문 · 발표 그대로").
+ * 시각은 KST(계약 v5 §G20 · lib/time — "09-29 14:02:54 KST", title 에 연도 · ms 까지의 KST) — 원문(Raw)은 발표된 그대로(data-raw, 이름표 "원문 · 발표 그대로").
  * 발효 전(valid_from > 지금)이면 "발효 전"과 남은 시간 — 엔진은 발효 전 경보로 판정하지 않는다(DH-8).
  */
 export function SigmetCard({ id }: { id: string }) {

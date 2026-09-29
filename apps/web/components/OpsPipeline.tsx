@@ -8,7 +8,7 @@ const TONE: Record<string, string> = { bad: "text-bad font-semibold", warn: "tex
 /**
  * 운영 화면 "pipeline" 탭(R-18): 데이터 손실 신호(드롭·트림·저장 실패)를 한곳에. 0 이 아닌 손실 지표는 빨간색,
  * 스트림 보존 창이 바이트 예산 때문에 목표보다 짧으면 주황(손실 아님 — 공유 필드 계약 stream_window_s · stream_retention_s),
- * 모르는 값(collector·ais heartbeat 가 오래됐거나 필드 없음)은 "—" — 0 으로 보이지 않는다. 시각은 KST 만(계약 v5 §G19 · lib/time — "09-29 14:02:54 KST", title 에 연도 · ms 까지의 KST).
+ * 모르는 값(collector·ais heartbeat 가 오래됐거나 필드 없음)은 "—" — 0 으로 보이지 않는다. 시각은 KST 만(계약 v5 §G20 · lib/time — "09-29 14:02:54 KST", title 에 연도 · ms 까지의 KST).
  */
 export function OpsPipeline({ data }: { data: unknown }) {
   const rows = pipelineRows(data);

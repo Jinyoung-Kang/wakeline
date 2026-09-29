@@ -16,7 +16,7 @@ type TrafficResp = ItemsResp & { scope?: string | null; region?: TrafficRegion |
 type Agg = { fir?: boolean; haz?: boolean; traffic?: boolean; alerts?: boolean };
 
 /**
- * 통계(FR-24): FIR별 SIGMET · 시간대별 트래픽 · 알림 건수. api 가 매일 03:30 KST 에 전날(KST 날짜)을 센다(계약 v5 §G19 — stats_daily 의 날 = KST 날짜).
+ * 통계(FR-24): FIR별 SIGMET · 시간대별 트래픽 · 알림 건수. api 가 매일 03:30 KST 에 전날(KST 날짜)을 센다(계약 v5 §G20 — stats_daily 의 날 = KST 날짜).
  * 날짜 · 시각은 모두 KST(lib/time) — 응답이 day_zone "Asia/Seoul" 로 KST 날짜라고 밝혀야 그린다(아니면 그리지 않고 그렇다고 말한다: 옛 api 의
  * UTC 날짜 집계를 KST 날짜로 보이지 않는다). 시간대별 막대는 그 KST 날짜의 00시 → 23시.
  * 행이 없는 시간대는 "자료 없음"(0 대로 그리지 않는다 — 수집 중단과 0 대를 구분할 수 없으므로).

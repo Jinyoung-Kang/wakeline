@@ -216,7 +216,7 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
 });
 
 /**
- * 운영 화면의 시각은 KST 만(계약 v5 §G19 — 사용자 결정 2026-09-30): 모든 탭의 표 칸은 KST "MM-DD HH:MM:SS" + 머리글 "(KST)",
+ * 운영 화면의 시각은 KST 만(계약 v5 §G20 — 사용자 결정 2026-09-30): 모든 탭의 표 칸은 KST "MM-DD HH:MM:SS" + 머리글 "(KST)",
  * 머리글이 없는 자리는 "… KST", title 에 연도 · ms 까지의 KST. 공급자 예산 날(수집기의 UTC 날 예산 키)은 KST 날짜로 이름만 바꾸지 않고 그 창을 KST 로
  * ("09-28 09:00 – 09-29 08:59 KST"). 원본 칸(격리 detail · DLQ payload head)은 data-raw — 글자 그대로.
  * 지연을 모르면 "—" 만(단위가 붙은 "— ms" 가 아니다). 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
@@ -327,7 +327,7 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
     noUtcNoDashUnit();
 
     await tab("quality");
-    // 격리 수의 날짜는 수집기가 KST 날짜로 센다(응답 day_zone "Asia/Seoul" — 계약 v5 §G19)
+    // 격리 수의 날짜는 수집기가 KST 날짜로 센다(응답 day_zone "Asia/Seoul" — 계약 v5 §G20)
     expect(heads()).toEqual(["day (KST)", "rule", "count", "at (KST)", "run", "rule", "hex", "detail (raw)"]);
     expect(row("2026-09-29")[1].textContent).toBe("seen_in_future");
     expect(row("09-29 08:30:00")[2].textContent).toBe("seen_in_future");
@@ -362,7 +362,7 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
   });
 });
 
-describe("ops day columns trust only the zone the api names (contract v5 §G19)", () => {
+describe("ops day columns trust only the zone the api names (contract v5 §G20)", () => {
   const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
     if (pred(from)) out.push(from);
     for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);

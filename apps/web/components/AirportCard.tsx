@@ -23,7 +23,7 @@ interface Wx {
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).
  * METAR 가 2 시간보다 오래되면 "오래됨" — 지도에서도 회색 고리로 그린다(GAP-14).
- * 관측·수신 시각은 KST 만(계약 v5 §G19 · lib/time, 마우스를 올리면 연도 · ms 까지) — METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
+ * 관측·수신 시각은 KST 만(계약 v5 §G20 · lib/time, 마우스를 올리면 연도 · ms 까지) — METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
  * 시정은 AWC 원문 값(vis_raw, 법정마일)에 단위 SM 을 붙이고 "6+" 는 "6 SM 이상"(DH-7) — km 로 읽히지 않게.
  */
 export function AirportCard({ icao }: { icao: string }) {

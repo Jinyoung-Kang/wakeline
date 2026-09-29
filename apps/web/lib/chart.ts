@@ -28,7 +28,7 @@ export function hourlyRows(items: { hour?: string | null; dim?: string | null; v
 }
 
 /**
- * KST 날짜 하루(day, "YYYY-MM-DD" — 서버가 KST 날짜로 센다, 계약 v5 §G19)의 시간대별 행: 막대 순서 = KST 00시 → 23시, 눈금 = KST 시,
+ * KST 날짜 하루(day, "YYYY-MM-DD" — 서버가 KST 날짜로 센다, 계약 v5 §G20)의 시간대별 행: 막대 순서 = KST 00시 → 23시, 눈금 = KST 시,
  * full = "09-29 07시 KST"(날짜를 모르면 시만 — lib/time kstDayHours). 값은 hourlyRows 와 같다(없으면 null).
  */
 export function hourlyRowsKst(items: Parameters<typeof hourlyRows>[0], day: string | null): ChartRow[] {
@@ -60,7 +60,7 @@ export function trafficScopeLabel(scope: unknown, region: TrafficRegion | null |
  * 그 전에는 위치 보고 1건으로도 진입·이탈이 확정될 수 있었다(감사 COR-1·REL-5·PERF-5) — 그날까지의 관측 알림 건수·체류 시간은 이후와 비교할 수 없다.
  */
 export const HYSTERESIS_FIX_AT = "2026-09-27T15:10:00Z";
-/** 수정 시각의 KST 날짜(통계 날짜 단위 — 계약 v5 §G19): "2026-09-28"(00:10 KST) */
+/** 수정 시각의 KST 날짜(통계 날짜 단위 — 계약 v5 §G20): "2026-09-28"(00:10 KST) */
 export const HYSTERESIS_FIX_DAY = kstDayOf(HYSTERESIS_FIX_AT)!;
 
 /** 이 통계 행이 수정 전 판정의 관측 알림을 (일부라도) 포함하는가 — KST 날짜 ≤ 수정일인 OBSERVED 건수·체류. 날짜가 아닌 값은 false */

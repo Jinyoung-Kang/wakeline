@@ -1,6 +1,6 @@
 /**
  * 화면 시각은 한국 표준시(KST)만(사용자 결정 2026-09-30 "[상황판·재생·통계·공항 화면]을 포함한 필요한 메뉴에 시각을 UTC 지우고, KST 표시" —
- * 계약 v5 §G19 가 §G13 의 "KST 먼저 · UTC 함께" 를 대신한다). 한 곳(lib/time.ts · components/KstTime.tsx)에서 만든다 — 화면 시간대도 그 한 곳
+ * 계약 v5 §G20 이 §G13 의 "KST 먼저 · UTC 함께" 를 대신한다). 한 곳(lib/time.ts · components/KstTime.tsx)에서 만든다 — 화면 시간대도 그 한 곳
  * (DISPLAY_TZ)이 정한다. UTC 는 저장 · 전송 형식(API · WS · DB · 로그)으로만 남는다.
  * - inline "09-29 14:02:54 KST" · 날짜가 자명한 자리 "14:02:54 KST" · 좁은 자리(분까지) "14:02 KST"
  * - 표 칸: "09-29 14:02:54"(머리글 "(KST)" — 화면 읽기에는 "… KST")
@@ -99,7 +99,7 @@ describe("table cell and titles", () => {
   });
 });
 
-describe("KST days (stats aggregate by KST day — contract v5 §G19)", () => {
+describe("KST days (stats aggregate by KST day — contract v5 §G20)", () => {
   it("the KST date of an instant", () => {
     expect(T.kstDayOf("2026-09-28T14:59:59Z")).toBe("2026-09-28");
     expect(T.kstDayOf("2026-09-28T15:00:00Z")).toBe("2026-09-29");
@@ -177,7 +177,7 @@ describe("<KstTime> / <KstRange>", () => {
   });
 });
 
-describe("deprecated aliases kept for the other lane's files draw KST only (removed after the merge — contract v5 §G19)", () => {
+describe("deprecated aliases kept for the other lane's files draw KST only (removed after the merge — contract v5 §G20)", () => {
   it("fmtDual · dualPair · <DualTime> (inline · compact · cell) never draw UTC", () => {
     expect(T.fmtDual(LATE)).toBe("09-29 08:41:14 KST");
     expect(T.dualPair(LATE, { date: false })).toEqual({ kst: "08:41:14 KST", iso: "2026-09-29T08:41:14.906+09:00" });

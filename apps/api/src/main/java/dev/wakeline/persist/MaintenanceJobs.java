@@ -21,7 +21,7 @@ import java.util.Map;
 
 /**
  * 파티션 생성, 만료 파티션 삭제(매시 :02 UTC), 보존 삭제(매일 03:00 UTC), 1분 요약(매시 :05, 관심 지역만 · 30일), 통계 집계(매일 03:30 KST — 전날 KST 날짜,
- * 계약 v5 §G19). 기동 시 파티션 보장. 통계의 하루 = KST 날짜({@link #DAY_ZONE}) — 오늘 · 끝난 날도 KST 날짜로 센다. 교통량을 다시 셀 수 있는지는
+ * 계약 v5 §G20). 기동 시 파티션 보장. 통계의 하루 = KST 날짜({@link #DAY_ZONE}) — 오늘 · 끝난 날도 KST 날짜로 센다. 교통량을 다시 셀 수 있는지는
  * 항적의 저장 단위(UTC 날 파티션)로 판단한다({@link #families}).
  * 보존 정책 ADR-007(R-06 · ADR-017 §2 로 고침): 원해상도 72 h(파티션 전체가 72 h 보다 오래되면 곧바로 삭제 — 가장 오래된 행 72–96 h),
  * 1분 요약 30일, 알림은 끝난 것만 30일(열린 알림은 남긴다 · {@code wakeline.alert-retention-days}, 0 이면 지우지 않는다), SIGMET·통계 영구.
@@ -36,7 +36,7 @@ import java.util.Map;
 public class MaintenanceJobs {
     private static final Logger log = LoggerFactory.getLogger(MaintenanceJobs.class);
     /**
-     * 일 집계의 날짜 = 이 시간대의 달력 날짜(계약 v5 §G19 — 사용자 결정 2026-09-30 "화면 시각은 KST"): 통계(stats_daily)와 품질 규칙 일별 수
+     * 일 집계의 날짜 = 이 시간대의 달력 날짜(계약 v5 §G20 — 사용자 결정 2026-09-30 "화면 시각은 KST"): 통계(stats_daily)와 품질 규칙 일별 수
      * (collector quality_rule_count)가 같은 날을 센다. 통계 응답 · 운영 격리 수 응답이 day_zone 으로 밝힌다. 한국은 1988년 뒤로 일광 절약이 없다.
      */
     public static final java.time.ZoneId DAY_ZONE = java.time.ZoneId.of("Asia/Seoul");
@@ -311,7 +311,7 @@ public class MaintenanceJobs {
     }
 
     /**
-     * 하루치(KST 날짜 — [그날 00:00 KST, 다음 날 00:00 KST), 계약 v5 §G19) 통계를 한 트랜잭션으로 다시 만든다(지우고 넣기 — 멱등, 중간 실패 시 이전 값 유지).
+     * 하루치(KST 날짜 — [그날 00:00 KST, 다음 날 00:00 KST), 계약 v5 §G20) 통계를 한 트랜잭션으로 다시 만든다(지우고 넣기 — 멱등, 중간 실패 시 이전 값 유지).
      * 호출자의 트랜잭션이 있으면 거기에 합류한다.
      * <ul>
      *   <li>sigmet_by_fir / sigmet_by_hazard: 발표일(valid_from 의 KST 날짜) 기준, 경보당 한 번(계약 §2). 자정을 넘는 경보를 이틀에 세지 않는다.</li>

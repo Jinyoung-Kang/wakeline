@@ -419,7 +419,7 @@ class RolePrivilegesDbTest {
                     // V15(ADR-022 개정): 입출항 색인 — collector 가 쓰고 api 는 읽기만
                     java.util.Map.entry("port_call", "SELECT"),
                     java.util.Map.entry("port_call_coverage", "SELECT"),
-                    // V16(계약 v5 §G19): UTC 날짜로 센 옛 일 집계의 보관 표 — 서비스 역할은 아무 권한 없음(읽는 코드 없음)
+                    // V16(계약 v5 §G20): UTC 날짜로 센 옛 일 집계의 보관 표 — 서비스 역할은 아무 권한 없음(읽는 코드 없음)
                     java.util.Map.entry("stats_daily_utc_legacy", ""),
                     java.util.Map.entry("quality_rule_count_utc_legacy", "")));
             assertThat(actual).isEqualTo(expected);

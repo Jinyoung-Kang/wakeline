@@ -526,7 +526,7 @@ describe("unified search (contract v5 §B1/§B3)", () => {
       uid: "s", aircraft: { hits: [], state: "idle" as const, msg: "" }, ships: { hits, state: "done" as const, msg: "1건" }, active: -1, now: NOW, shipSort: null,
       onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
     }));
-    // 고정 칸 합 378 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 160 — §G4 "마지막 수신 MM-DD hh:mm KST", §G19 KST 만) + 선명 ≥ 104 px
+    // 고정 칸 합 378 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 160 — §G4 "마지막 수신 MM-DD hh:mm KST", §G20 KST 만) + 선명 ≥ 104 px
     expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table[^>]*class="[^"]*min-w-\[482px\]/);
   });
 });

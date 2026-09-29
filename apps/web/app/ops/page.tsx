@@ -41,13 +41,13 @@ const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder(
 const RESOLVE_AFFECTS: readonly Tab[] = ["providers", "runs", "audit"];
 /** 응답 필드 → 시각 값(ISO 문자열 · epoch ms). 그 밖은 모름(null) */
 const at = (v: unknown): string | number | null => (typeof v === "string" || typeof v === "number" ? v : null);
-/** 격리 수 날짜 칸 머리글 — 수집기가 실행이 시작된 KST 날짜로 센다(db.py — 계약 v5 §G19, 응답 day_zone "Asia/Seoul") */
+/** 격리 수 날짜 칸 머리글 — 수집기가 실행이 시작된 KST 날짜로 센다(db.py — 계약 v5 §G20, 응답 day_zone "Asia/Seoul") */
 const KST_DAY_TITLE = "KST 날짜 — 수집기가 실행이 시작된 한국 표준시 날짜(00:00–24:00 KST)마다 센다";
 /** 응답이 밝힌 날짜 기준이 이 화면이 아는 것과 다를 때(옛 api 등) — 날짜를 KST 로 보이지 않고 그렇다고 말한다 */
 const QUALITY_ZONE_UNKNOWN = "격리 수 응답이 KST 날짜로 센 응답이 아님(day_zone 없음 — api 가 이 화면보다 옛 판일 수 있음) — 날짜를 보이지 않음";
 const BUDGET_ZONE_UNKNOWN = "예산 날의 기준을 응답이 밝히지 않음(budget_day_zone 없음 — api 가 이 화면보다 옛 판일 수 있음) — 창을 보이지 않음";
 /**
- * 예산 날 칸(계약 v5 §G19): 수집기의 하루 예산 키(budget.py day_key — budget:{공급자}:{yyyymmdd})는 UTC 날로 정해져 매일 09:00 KST 에 새로 시작한다.
+ * 예산 날 칸(계약 v5 §G20): 수집기의 하루 예산 키(budget.py day_key — budget:{공급자}:{yyyymmdd})는 UTC 날로 정해져 매일 09:00 KST 에 새로 시작한다.
  * 그 날짜를 KST 날짜로 이름만 바꾸지 않고(다른 하루가 된다) 한 행의 창을 KST 로 적는다(lib/time utcDayWindowKst).
  */
 const BUDGET_DAY_TITLE = "공급자 하루 예산의 한 창 — 수집기의 예산 키는 매일 09:00 KST 에 새로 시작한다(한 행 = 09:00 KST 부터 다음 날 08:59 KST 까지, KST 날짜 하루가 아니다)";
@@ -115,7 +115,7 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
 /**
  * 운영 화면(FR-13/14/25/27): 로그인(세션) 후 공급자·실행 이력·품질 게이트·설정·감사·DLQ·파이프라인 손실 지표(R-18). 비로그인은 404 → 로그인 폼.
  * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
- * 시각은 KST 만(계약 v5 §G19, lib/time) 날짜 포함 — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
+ * 시각은 KST 만(계약 v5 §G20, lib/time) 날짜 포함 — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
  * 표 칸은 KST "MM-DD HH:MM:SS"(머리글 "(KST)"), 그 밖의 자리는 "… KST", title 에 연도 · ms 까지의 KST. 일 단위 집계의 날짜는 아래 표마다 그 기준을 적는다.
  * 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자)은 api 가 준 글자 그대로(data-raw) — 안의 시각을 바꾸지 않고 머리글이 "(raw)" 를 말한다.
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").

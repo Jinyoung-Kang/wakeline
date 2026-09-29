@@ -138,7 +138,7 @@ describe("screenshots", () => {
   it("capture meta follows the time rule (KST only, with the year) and names the capture condition", () => {
     const f = figures(render(FULL))[0];
     const t = text(f);
-    expect(t).toContain("캡처 2026-09-29 14:22:11 KST"); // 다른 화면과 같은 모양(계약 v5 §G19 — KST 만)
+    expect(t).toContain("캡처 2026-09-29 14:22:11 KST"); // 다른 화면과 같은 모양(계약 v5 §G20 — KST 만)
     expect(utcLeaks(t)).toEqual([]);
     expect(f).toMatch(/<time dateTime="2026-09-29T14:22:11.000\+09:00"/);
     expect(t).toContain("한반도 #6.3/36.1/127.9");
@@ -265,7 +265,7 @@ describe("rules the guide states match the code", () => {
 });
 
 describe("time examples", () => {
-  it("section 7 states the §G19 rule (KST only) with the shared formatter's own output (inline · minute · table cell · tooltip · raw token · KST day · budget window)", () => {
+  it("section 7 states the §G20 rule (KST only) with the shared formatter's own output (inline · minute · table cell · tooltip · raw token · KST day · budget window)", () => {
     const html = render(EMPTY);
     const t = section(html, "time");
     expect(t).toContain(fmtKst("2026-09-29T05:22:11Z")); // 09-29 14:22:11 KST
@@ -275,8 +275,8 @@ describe("time examples", () => {
     expect(t).toContain("290500Z"); // 원문은 발표 그대로(data-raw)
     expect(t).toContain("09-28 00:00 – 09-28 23:59 KST"); // 통계 날짜 = KST 날짜
     expect(t).toContain(utcDayWindowKst("2026-09-28")!); // 공급자 예산 창 "09-28 09:00 – 09-29 08:59 KST"
-    expect(t).toMatch(/§G19/);
-    expect(text(html)).toMatch(/매일 03:30 KST 에 전날/); // 통계 집계 시각(api 03:30 KST — 계약 v5 §G19)
+    expect(t).toMatch(/§G20/);
+    expect(text(html)).toMatch(/매일 03:30 KST 에 전날/); // 통계 집계 시각(api 03:30 KST — 계약 v5 §G20)
     const sec = /<section id="time"[\s\S]*?<\/section>/.exec(html)![0];
     // 표 칸 모양: KST 한 줄(머리글 "(KST)" — 화면 읽기에는 KST)
     expect(sec).toMatch(/<time dateTime="2026-09-29T14:22:11.000\+09:00" title="2026-09-29 14:22:11.000 KST" class="mono whitespace-nowrap">09-29 14:22:11<span class="sr-only"> KST<\/span><\/time>/);

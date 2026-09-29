@@ -128,7 +128,7 @@ describe("capture result (lib/guide-manifest.json)", () => {
   });
 });
 
-describe("time: the guide uses the shared formatter (lib/time · components/KstTime — contract v5 §G19)", () => {
+describe("time: the guide uses the shared formatter (lib/time · components/KstTime — contract v5 §G20)", () => {
   // 합친 뒤(web-core-v6 의 lib/time 이 들어온 뒤) 켠 시험 — 설명서가 제 형식기(dualInline · dualTime · 제 DualTime)를 두면 7장의 예가 화면과 어긋날 수 있다.
   it("lib/guide has no clock formatter of its own and GuideFigure has no local time component", () => {
     for (const k of ["dualInline", "dualTime", "kstClockToUtc", "metarTimeToken"]) expect(k in G, k).toBe(false);

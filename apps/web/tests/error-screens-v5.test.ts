@@ -97,7 +97,7 @@ describe("v5-C8 error boundaries: readable screen, copy, retry, report", () => {
     await React.act(async () => { await propsOf(byTestId("error-copy")!).onClick({}); });
     // 머리 줄은 /logs 항목과 같은 틀 — 시각은 KST(오프셋을 붙인 ISO, ms 유지)
     expect(written[0].split("\n")[0]).toMatch(/^\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+09:00 ERROR web-client\/app\/error\.tsx\] rid=—$/);
-    // 화면의 시각 칸: 복사 머리와 같은 KST 글자만(계약 v5 §G19 — 원본 UTC 는 보이지 않는다)
+    // 화면의 시각 칸: 복사 머리와 같은 KST 글자만(계약 v5 §G20 — 원본 UTC 는 보이지 않는다)
     const shown = byTestId("error-time")!.textContent;
     expect(shown).toBe(written[0].slice(1, 30));
     expect(shown).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+09:00$/);

@@ -61,7 +61,7 @@ public class OpsController {
     }
 
     /**
-     * 통계 재집계(멱등). day = KST 날짜(계약 v5 §G19), 기본은 어제(KST). 그 날의 재집계와 감사 기록이 한 트랜잭션 — 실패하면 둘 다 없다.
+     * 통계 재집계(멱등). day = KST 날짜(계약 v5 §G20), 기본은 어제(KST). 그 날의 재집계와 감사 기록이 한 트랜잭션 — 실패하면 둘 다 없다.
      * 끝난 날(오늘 KST 이전)만 받는다(R-46) — 부분 집계가 완성된 통계처럼 남지 않게. 원본이 보존으로 사라진 계열은 다시 세지 않는다(MaintenanceJobs).
      */
     @PostMapping("/stats/aggregate")
@@ -80,7 +80,7 @@ public class OpsController {
      * 공급자 상태(수집기 해시) · 자동 전환 · 예산 · 스위치. 공급자마다 해결 표시(계약 v5 §G14): last_error_resolution = 그 공급자의 유효한
      * provider_error 해결 {id, upto, resolved_by} | null(키는 늘 있다), last_error_resolved = 그 해결의 upto ≥ last_error_at(시각을 모르거나
      * 형식이 틀리면 false — 모르는 오류를 해결됨으로 보이지 않는다). 해시의 오류 값은 그대로 둔다(증거). resolution_state 는 해결 기록의 상태.
-     * budget_days 는 수집기의 하루 예산 키(budget.py day_key)를 옮긴 것이라 그 day 는 UTC 날 — budget_day_zone "UTC" 로 밝힌다(계약 v5 §G19: 화면은
+     * budget_days 는 수집기의 하루 예산 키(budget.py day_key)를 옮긴 것이라 그 day 는 UTC 날 — budget_day_zone "UTC" 로 밝힌다(계약 v5 §G20: 화면은
      * 그 날짜를 KST 날짜로 이름만 바꾸지 않고 창 "09:00 KST 부터 24 h" 로 적는다). 최근 8개 UTC 날.
      */
     @GetMapping("/providers")
@@ -168,7 +168,7 @@ public class OpsController {
     @GetMapping("/quality")
     public Map<String, Object> quality(@RequestParam(defaultValue = "7") int days) {
         int d = Math.max(1, Math.min(days, 90));
-        // day 는 KST 날짜 "YYYY-MM-DD"(계약 v5 §G19 — 수집기가 실행이 시작된 KST 날짜로 센다 · R-45 — JVM 시간대의 자정 시각이 아니다). 최근 d 일(KST 오늘 포함 d+1 개 날)
+        // day 는 KST 날짜 "YYYY-MM-DD"(계약 v5 §G20 — 수집기가 실행이 시작된 KST 날짜로 센다 · R-45 — JVM 시간대의 자정 시각이 아니다). 최근 d 일(KST 오늘 포함 d+1 개 날)
         var counts = db.sql("SELECT to_char(day, 'YYYY-MM-DD') AS day, rule, count FROM quality_rule_count WHERE day >= :from ORDER BY 1 DESC, rule")
                 .param("from", dev.wakeline.persist.MaintenanceJobs.today().minusDays(d)).query().listOfRows();
         var recent = db.sql("SELECT id, run_id, rule, hex, detail::text detail, created_at FROM quality_event ORDER BY id DESC LIMIT 50").query().listOfRows();

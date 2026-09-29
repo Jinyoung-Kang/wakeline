@@ -6,7 +6,7 @@ import {
 } from "@/lib/portcalls";
 
 /**
- * 신고 시각 한 칸: 공유 형식기(KstTime — 머리글이 없는 자리라 " KST" 를 보이게, title 에 연도 · ms 까지 — 계약 v5 §G19).
+ * 신고 시각 한 칸: 공유 형식기(KstTime — 머리글이 없는 자리라 " KST" 를 보이게, title 에 연도 · ms 까지 — 계약 v5 §G20).
  * KST 00:00 신고는 날짜만 · "시각 미확인"(시각을 지어내지 않는다 — ADR-022). 판(최종 · 최초)을 아래에 적는다. 모르면 "—" 만.
  */
 function When({ at, revision, testId }: { at: string | null; revision: PortCallRevision | null; testId: string }) {

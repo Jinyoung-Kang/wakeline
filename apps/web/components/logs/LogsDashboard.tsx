@@ -61,7 +61,7 @@ function initialState(): { filter: LogFilter; openId: string | null; openStream:
  * 시스템 로그 화면(계약 v5 §C7): 필터(서비스 여러 개 · 수준 · 기간 · 글자 · 요청 id) · 보기(목록 / 지문 묶음) · 상세 · 복사 · 내려받기 · AIS 수신 공백 탭.
  * - 15 s 마다 새 항목을 확인하지만 목록은 "새 항목 N건" 단추를 눌러야 바뀐다(보던 줄이 움직이지 않게).
  * - 서버가 말한 한계(스캔 상한 잘림 · 형식 오류로 건너뜀 · 다음 커서)를 그대로 보인다. 모르는 값은 "—".
- * - 시각은 KST 만(계약 v5 §G19 · lib/time — 표 칸 "(KST)", title 에 연도 · ms 까지의 KST). 텍스트 복사 · .txt 도 KST(+09:00), JSON 복사 · .ndjson 은 api 원본(ts 는 서버 형식 …Z).
+ * - 시각은 KST 만(계약 v5 §G20 · lib/time — 표 칸 "(KST)", title 에 연도 · ms 까지의 KST). 텍스트 복사 · .txt 도 KST(+09:00), JSON 복사 · .ndjson 은 api 원본(ts 는 서버 형식 …Z).
  * - 메시지 칸은 서버가 기록한 글자 그대로(data-raw — 안의 시각을 바꾸지 않는다).
  * - 세션 만료(ops 호출 401/404 + 세션 확인도 401/404)면 로그인으로(R-12 와 같은 규칙).
  */

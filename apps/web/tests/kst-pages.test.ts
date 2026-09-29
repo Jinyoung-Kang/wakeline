@@ -1,5 +1,5 @@
 /**
- * 통계(/stats) · 공항(/airports/[icao] · 공항 카드)은 한국 표준시만(계약 v5 §G19 — 사용자 결정 2026-09-30) — 실제 react-dom 으로 마운트(최소 DOM + fetch 대역).
+ * 통계(/stats) · 공항(/airports/[icao] · 공항 카드)은 한국 표준시만(계약 v5 §G20 — 사용자 결정 2026-09-30) — 실제 react-dom 으로 마운트(최소 DOM + fetch 대역).
  * - 통계: 서버가 KST 날짜로 센다(응답 day_zone "Asia/Seoul") — 날짜 · 시간대별 막대(KST 시) · 집계 시각(03:30 KST) 모두 KST. KST 날짜라고 밝히지 않은 응답은 그리지 않는다.
  * - 공항: 관측 · 수신 시각은 KST, METAR · TAF 원문은 발표된 그대로(data-raw).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
@@ -45,7 +45,7 @@ async function mount(el: React.ReactElement) {
   await settle();
 }
 
-describe("stats: the server counts KST days (contract v5 §G19) — dates, hours and the aggregation time are KST only", () => {
+describe("stats: the server counts KST days (contract v5 §G20) — dates, hours and the aggregation time are KST only", () => {
   it("hourly rows: the 24 KST hours of the KST day in order (00 → 23); the full label names the KST date; no UTC tick line", () => {
     const rows = hourlyRowsKst([{ hour: "00", value: 3 }, { hour: "23", value: 7 }], "2026-09-29");
     expect(rows).toHaveLength(24);
@@ -115,7 +115,7 @@ describe("stats: the server counts KST days (contract v5 §G19) — dates, hours
   });
 });
 
-describe("airport weather: observation and reception times in KST only (contract v5 §G19); raw METAR/TAF exactly as issued, marked data-raw", () => {
+describe("airport weather: observation and reception times in KST only (contract v5 §G20); raw METAR/TAF exactly as issued, marked data-raw", () => {
   const METAR = "METAR RKSI 282330Z 27010KT 9999 FEW030 18/12 Q1012 NOSIG";
   const TAF = "TAF RKSI 282300Z 2900/3006 27010KT 9999 FEW030 TX22/2906Z TN14/2921Z";
   const WX = {

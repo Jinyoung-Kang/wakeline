@@ -11,7 +11,7 @@ const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 /**
  * "AIS 수신 공백" 탭(계약 v5 §C7): 이미 있는 공개 `GET /api/v1/ais/gaps` 를 표로 — 구역 · 시작 · 끝 · 길이 · 사유(+ 공급자).
  * 길이는 끝 − 시작(정확한 계산), 열린 공백은 응답 시각(to)까지. 구역이 없는 끝난 공백은 옛 기록(모든 구역에 적용). 값은 api 가 준 그대로.
- * 시각은 KST 만(계약 v5 §G19 · lib/time — 표 칸 "(KST)", title 에 연도 · ms 까지의 KST).
+ * 시각은 KST 만(계약 v5 §G20 · lib/time — 표 칸 "(KST)", title 에 연도 · ms 까지의 KST).
  * onFilterRid = 조회 실패의 요청 id 로 로그 탭을 거른다(같은 화면 — /logs#rid= 링크는 hashchange 를 내지 않는다).
  */
 export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: LogPeriod; onFilterRid?: (rid: string) => void }) {

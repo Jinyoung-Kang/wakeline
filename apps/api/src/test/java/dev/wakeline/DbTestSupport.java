@@ -174,7 +174,7 @@ public final class DbTestSupport {
 
     /**
      * [from, to] 가 걸친 UTC 날마다 track_point 일 파티션(운영과 같은 이름 · 같은 소유자 wakeline_migrator)을 만든다 — 마이그레이션은 어제(UTC)부터만 만든다.
-     * KST 날짜 하루(전날 15:00 UTC 부터)의 자료를 넣는 시험이 쓴다(계약 v5 §G19).
+     * KST 날짜 하루(전날 15:00 UTC 부터)의 자료를 넣는 시험이 쓴다(계약 v5 §G20).
      */
     public static void ensureTrackPartitions(java.time.Instant from, java.time.Instant to) {
         start();

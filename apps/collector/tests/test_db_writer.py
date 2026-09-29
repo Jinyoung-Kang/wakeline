@@ -99,7 +99,7 @@ async def test_writes_in_order_with_quality_in_same_run():
     tables = [t for t, _ in pool.log]
     assert tables == ["ingest_run", "quality_event", "quality_rule_count", "airport", "metar_obs"]
     assert len(pool.log[1][1]) == 20  # 규칙별 대표 사례 20건
-    assert pool.log[2][1] == [(kst_date(now), "no_position", 25)]  # 실행한 날(KST 날짜 — 계약 v5 §G19)로 집계(COL-6)
+    assert pool.log[2][1] == [(kst_date(now), "no_position", 25)]  # 실행한 날(KST 날짜 — 계약 v5 §G20)로 집계(COL-6)
     metar_args = pool.log[4][1][0]
     assert metar_args[10] == "none"  # ceiling_state 가 11번째 인자
     await db.close()
@@ -308,7 +308,7 @@ def test_error_classification():
         assert classify_error(e) == "transient", e
 
 
-# ---- COL-6: 규칙별 건수는 실행한 날로 — 그 날은 KST 날짜(계약 v5 §G19) ----------------------------------------------------------
+# ---- COL-6: 규칙별 건수는 실행한 날로 — 그 날은 KST 날짜(계약 v5 §G20) ----------------------------------------------------------
 async def test_quality_count_booked_to_run_day_even_if_flushed_after_midnight():
     pool = FakePool()
     pool.up = False
@@ -329,7 +329,7 @@ async def test_quality_count_booked_to_run_day_even_if_flushed_after_midnight():
 
 
 async def test_quality_count_day_is_the_kst_date_of_the_run_start():
-    """계약 v5 §G19: 규칙별 건수의 날짜 = 실행이 시작된 KST 날짜 — 경계는 KST 자정(15:00 UTC). 수정 전에는 UTC 날짜라 KST 00:00–08:59 의
+    """계약 v5 §G20: 규칙별 건수의 날짜 = 실행이 시작된 KST 날짜 — 경계는 KST 자정(15:00 UTC). 수정 전에는 UTC 날짜라 KST 00:00–08:59 의
     실행이 전날에 들어갔다(이 시험이 실패했다)."""
     pool = FakePool()
 

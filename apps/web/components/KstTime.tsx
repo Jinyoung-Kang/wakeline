@@ -1,7 +1,7 @@
 import { fmtKst, fmtRangeTitle, fmtTimeTitle, kstCell, kstRangeParts, timeParts, type TimeIn } from "@/lib/time";
 
 /**
- * 시각 그리기 한 곳(계약 v5 §G19 — 화면 시각은 한국 표준시만, 글자 규칙은 lib/time.ts).
+ * 시각 그리기 한 곳(계약 v5 §G20 — 화면 시각은 한국 표준시만, 글자 규칙은 lib/time.ts).
  * - inline(기본): "09-29 08:41:14 KST" — date={false} 면 날짜가 자명한 자리의 "08:41:14 KST", seconds={false} 면 분까지, year · ms 로 늘린다
  * - cell: 표 칸 "09-29 08:41:14"(머리글 "(KST)" 가 시간대를 말한다 — 화면 읽기 프로그램에는 숨긴 " KST" 까지)
  * <time dateTime> 에 같은 순간의 ISO 8601 +09:00, title 에 연도 · ms 까지의 KST. 한 시각은 줄이 바뀌지 않는다(whitespace-nowrap).

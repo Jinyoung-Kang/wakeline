@@ -19,7 +19,7 @@ interface Wx {
 }
 
 /**
- * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G19, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
+ * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G20, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
  * 시정은 원문(vis_raw, 예 "6+")을 우선 — 파싱한 숫자(6)는 "6 이상"을 잃는다.
  * 조회 실패는 한국어 안내 + 요청 id(복사 — 계약 v5 §C8).
  */

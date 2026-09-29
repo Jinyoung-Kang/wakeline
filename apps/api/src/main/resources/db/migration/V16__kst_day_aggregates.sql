@@ -1,4 +1,4 @@
--- Wakeline 스키마 V16 — 우리 일 집계의 날짜 = KST 날짜(Asia/Seoul 00:00–24:00) (계약 v5 §G19 · 사용자 결정 2026-09-30 "화면 시각은 UTC 지우고 KST").
+-- Wakeline 스키마 V16 — 우리 일 집계의 날짜 = KST 날짜(Asia/Seoul 00:00–24:00) (계약 v5 §G20 · 사용자 결정 2026-09-30 "화면 시각은 UTC 지우고 KST").
 -- V1~V15 는 고치지 않는다.
 -- stats_daily(api 가 센다 — 통계 화면)와 quality_rule_count(collector 가 센다 — 운영 화면 격리 수)는 지금까지 UTC 날짜로 셌다. 그 행의 날짜 값은
 -- KST 날짜와 모양이 같지만 다른 하루(09:00 KST 에 바뀌던 날)라서, 날짜 이름만 KST 로 바꾸면 틀린 집계가 된다. 그래서 옛 행은 보관 표
@@ -28,25 +28,25 @@
 ALTER TABLE stats_daily RENAME TO stats_daily_utc_legacy;
 ALTER TABLE stats_daily_utc_legacy RENAME CONSTRAINT stats_daily_pkey TO stats_daily_utc_legacy_pkey;
 REVOKE ALL ON stats_daily_utc_legacy FROM wakeline_api, wakeline_collector;
-COMMENT ON TABLE stats_daily_utc_legacy IS 'V16 전 일 통계 — day 는 UTC 날짜(KST 날짜가 아니다, 09:00 KST 에 바뀌던 날). 보관만 — 서비스가 읽지 않는다(계약 v5 §G19)';
+COMMENT ON TABLE stats_daily_utc_legacy IS 'V16 전 일 통계 — day 는 UTC 날짜(KST 날짜가 아니다, 09:00 KST 에 바뀌던 날). 보관만 — 서비스가 읽지 않는다(계약 v5 §G20)';
 
 CREATE TABLE stats_daily (
   day date NOT NULL, metric text NOT NULL, dim text NOT NULL, value numeric NOT NULL,
   PRIMARY KEY (day, metric, dim)
 );
-COMMENT ON TABLE stats_daily IS '일 통계 — day 는 KST 날짜(Asia/Seoul 00:00–24:00), traffic_by_hour 의 dim 은 KST 시(00–23). api MaintenanceJobs 가 센다(계약 v5 §G19)';
+COMMENT ON TABLE stats_daily IS '일 통계 — day 는 KST 날짜(Asia/Seoul 00:00–24:00), traffic_by_hour 의 dim 은 KST 시(00–23). api MaintenanceJobs 가 센다(계약 v5 §G20)';
 GRANT SELECT, INSERT, UPDATE, DELETE ON stats_daily TO wakeline_api;
 
 -- ---- 품질 규칙 일별 수(collector) ----
 ALTER TABLE quality_rule_count RENAME TO quality_rule_count_utc_legacy;
 ALTER TABLE quality_rule_count_utc_legacy RENAME CONSTRAINT quality_rule_count_pkey TO quality_rule_count_utc_legacy_pkey;
 REVOKE ALL ON quality_rule_count_utc_legacy FROM wakeline_api, wakeline_collector;
-COMMENT ON TABLE quality_rule_count_utc_legacy IS 'V16 전 품질 규칙 일별 수 — day 는 UTC 날짜(KST 날짜가 아니다). 보관만 — 서비스가 읽지 않는다(계약 v5 §G19)';
+COMMENT ON TABLE quality_rule_count_utc_legacy IS 'V16 전 품질 규칙 일별 수 — day 는 UTC 날짜(KST 날짜가 아니다). 보관만 — 서비스가 읽지 않는다(계약 v5 §G20)';
 
 CREATE TABLE quality_rule_count (
   day date NOT NULL, rule text NOT NULL, count bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (day, rule)
 );
-COMMENT ON TABLE quality_rule_count IS '품질 규칙 일별 격리 수 — day 는 실행이 시작된 KST 날짜(Asia/Seoul). collector db.py 가 센다(계약 v5 §G19)';
+COMMENT ON TABLE quality_rule_count IS '품질 규칙 일별 격리 수 — day 는 실행이 시작된 KST 날짜(Asia/Seoul). collector db.py 가 센다(계약 v5 §G20)';
 GRANT SELECT, INSERT, UPDATE ON quality_rule_count TO wakeline_collector;
 GRANT SELECT, DELETE ON quality_rule_count TO wakeline_api;

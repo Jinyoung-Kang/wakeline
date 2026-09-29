@@ -372,7 +372,7 @@ class PersistDbTest {
 
     @Test
     void dailyStatsCountRegionTrafficIssueDaySigmetsAndHonestDwell() {
-        LocalDate day = MaintenanceJobs.today().minusDays(1); // KST 날짜(계약 v5 §G19)
+        LocalDate day = MaintenanceJobs.today().minusDays(1); // KST 날짜(계약 v5 §G20)
         Instant d0 = day.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant();
         DbTestSupport.ensureTrackPartitions(d0, d0.plusSeconds(26 * 3600));
         sigmets.upsert(sig("X", "awc_isigmet", "X", d0.plusSeconds(20 * 3600), d0.plusSeconds(26 * 3600)));  // 그날 발표, 다음날까지

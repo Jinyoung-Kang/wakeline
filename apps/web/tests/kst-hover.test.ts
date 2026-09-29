@@ -1,6 +1,6 @@
 /**
  * 보인 시각에는 같은 순간의 전체(연도 · ms 까지의 KST)가 툴팁으로 붙는다 — /about · 선박 카드가 "시각에 마우스를 올리면 연도 · ms 까지의 같은 순간"
- * 이라고 말하는 약속(계약 v5 §G19 — 사용자 결정 2026-09-30 "UTC 지우고 KST": 예전의 "원본 UTC" 툴팁을 대신한다). 공항 카드 관측 · 수신, 근거 카드
+ * 이라고 말하는 약속(계약 v5 §G20 — 사용자 결정 2026-09-30 "UTC 지우고 KST": 예전의 "원본 UTC" 툴팁을 대신한다). 공항 카드 관측 · 수신, 근거 카드
  * 출처/관측 · 종료, 기상청 패널 수신, 알림 배너, SIGMET 발효 전 배지, 선박 카드 수신 공백 목록, 재생 SIGMET 유효 · 기록 시각. 원문(METAR · SIGMET raw)은
  * 보이는 이름표 "(원문 · 발표 그대로)" 를 달고 data-raw 로 표시한다 — KST 시각 바로 옆의 "…Z" 가 발표 형식이라는 것이 툴팁 없이도 보이게.
  * 규칙(missingHover): 마운트한 카드 안에서 "hh:mm" 이 든 보이는 글자는 title 에 연도 · ms 까지의 KST 가 있는 요소 안에 있거나(원문 · data-raw 밖),
@@ -213,7 +213,7 @@ describe("time labels on the radar timeline and the replay toolbar", () => {
     expect(label.getAttribute("title")).toBe("2026-09-29 08:40:00.000 KST");
     expect(missingHover()).toEqual([]);
   });
-  it("replay radar frame: the tooltip gives the frame's full KST instant (no UTC original — contract v5 §G19)", async () => {
+  it("replay radar frame: the tooltip gives the frame's full KST instant (no UTC original — contract v5 §G20)", async () => {
     const { replayRadarTitle } = await import("@/lib/replay");
     expect(replayRadarTitle({ at: "2026-09-28T15:10:00Z", radar: { host: "h", path: "/p", time: Date.parse("2026-09-28T15:00:00Z") / 1000 } })).toBe("2026-09-29 00:00:00.000 KST");
     expect(replayRadarTitle({ at: "2026-09-28T15:10:00Z", radar: null })).toBeUndefined();

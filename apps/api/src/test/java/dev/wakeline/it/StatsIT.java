@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * R-45: 통계 응답의 day 는 날짜 문자열 "YYYY-MM-DD"(JVM 시간대와 무관 — 이전에는 java.sql.Date 를 그대로 직렬화해 "…T00:00:00.000Z" 였고
  * KST JVM 이면 하루 밀렸다). 집계하지 않은 날은 aggregated:false 로 밝힌다(이전: 빈 목록이라 '자료 없음' 과 구분할 수 없었다).
- * 계약 v5 §G19: 그 날짜는 KST 날짜 — 응답이 day_zone "Asia/Seoul" 로 밝히고, 기본 날짜 · 범위도 KST 로 센다. 운영 화면의 격리 수 날짜도 KST 날짜이고,
+ * 계약 v5 §G20: 그 날짜는 KST 날짜 — 응답이 day_zone "Asia/Seoul" 로 밝히고, 기본 날짜 · 범위도 KST 로 센다. 운영 화면의 격리 수 날짜도 KST 날짜이고,
  * 공급자 예산 날은 수집기의 UTC 날 예산 키 그대로라 budget_day_zone "UTC" 로 밝힌다(화면이 그 창을 KST 로 적는다).
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
