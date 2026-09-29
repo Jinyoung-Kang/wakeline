@@ -137,6 +137,21 @@ async def test_r14_byte_budget_bounds_memory_when_the_rate_is_unexpectedly_high(
     assert p.budget_trims[STREAM_AIRCRAFT] > 0  # 예산이 잘랐다는 사실을 셀 수 있다(heartbeat 로 노출)
 
 
+def test_publisher_reports_the_trim_settings_it_uses_per_time_trimmed_stream():
+    """heartbeat stream_retention_s · stream_budget_bytes 의 원천: 이 Publisher 의 StreamTrim 설정(시간 트림 스트림만)."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RADAR, STREAM_SHIPS
+
+    p = Publisher(None)  # type: ignore[arg-type]
+    assert p.stream_limits(STREAM_AIRCRAFT) == (9000.0, 80 * 2**20)
+    assert p.stream_limits(STREAM_SHIPS) == (9000.0, 32 * 2**20)
+    assert p.stream_limits(STREAM_RADAR) is None  # 개수 트리밍 스트림 — 보존 창·예산이 없다
+    assert pubmod.limit_fields(p.stream_limits(STREAM_AIRCRAFT)) == {
+        "stream_retention_s": "9000",
+        "stream_budget_bytes": "83886080",
+    }
+    assert pubmod.limit_fields(None) == {"stream_retention_s": "", "stream_budget_bytes": ""}  # 모름 — 0 이 아니다
+
+
 async def test_r14_other_streams_keep_count_trim():
     """SIGMET(300 s)·레이더(60 s)는 200개로 이미 2 h 를 넘게 담는다 — 개수 트리밍 그대로."""
     from wakeline_collector.publisher import MAXLEN, STREAM_RADAR

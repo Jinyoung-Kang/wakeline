@@ -507,6 +507,16 @@ async def test_ships_budget_keeps_the_full_retention_window_at_the_measured_entr
     assert kept / STREAM_BUDGET_BYTES[STREAM_SHIPS] <= 0.8  # 선택값 32 MiB: 필요량(약 25.4 MB)이 예산의 약 76 %
 
 
+async def test_status_carries_the_ships_stream_retention_target_and_budget():
+    """필드 계약: wakeline:ais:status 에 선박 스트림의 시간 트림 목표(초)와 바이트 예산 — 이 sink 가 실제로 쓰는 값(정수 문자열)."""
+    r, _q, _book, _feed, _w, sink = _setup()
+    await sink.write_status()
+    h = r.kv[STATUS_KEY]
+    assert h["stream_retention_s"] == "9000" and h["stream_budget_bytes"] == str(32 * 2**20)
+    sink._trim.retention_s, sink._trim.budget_bytes = 7200.0, 1234  # 설정이 바뀌면 그 값을 싣는다(상수를 따로 적지 않는다)
+    assert (sink.status_fields()["stream_retention_s"], sink.status_fields()["stream_budget_bytes"]) == ("7200", "1234")
+
+
 async def test_ships_budget_is_32_mib_and_aircraft_stays_80_mib():
     from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_BUDGET_BYTES
 

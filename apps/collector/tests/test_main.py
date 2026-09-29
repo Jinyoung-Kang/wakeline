@@ -237,6 +237,8 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     hb = r.kv["wakeline:collector"]
     assert hb["fixture"] == "1" and hb["region_poll_s"] == "10" and "adsb_fi_rps_1m" in hb and hb["demand_focus"] == "2"
     assert hb["stream_budget_trims"] == "0"  # R-14: 바이트 예산 때문에 보존 창보다 일찍 자른 적 없음
+    # 필드 계약(운영 PIPELINE 보존 창): 항공기 스트림의 시간 트림 목표(초)·바이트 예산 — 수집기가 실제로 쓰는 설정값(정수 문자열)
+    assert hb["stream_retention_s"] == "9000" and hb["stream_budget_bytes"] == str(80 * 2**20)
     # R-18: 손실 신호가 api 가 읽는 heartbeat 해시(wakeline:collector)에 있다 — 발행 큐 버림·DB 쓰기 버림/대기/실패·속도 상한
     loss = ("publish_dropped", "publish_queued", "db_dropped", "db_pending", "db_failures", "db_ok", "http_throttled")
     assert all(hb.get(k, "").isdigit() for k in loss), {k: hb.get(k) for k in loss}

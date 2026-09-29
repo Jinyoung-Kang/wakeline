@@ -202,3 +202,18 @@ class Publisher:
     def budget_trims(self) -> dict[str, int]:
         """스트림별로 바이트 예산 때문에 보존 창보다 일찍 자른 XADD 수(heartbeat stream_budget_trims)."""
         return {s: t.budget_trims for s, t in self._trims.items()}
+
+    def stream_limits(self, stream: str) -> tuple[float, int] | None:
+        """(보존 창 목표 초, 바이트 예산) — 이 Publisher 가 그 스트림에 실제로 거는 설정. 개수 트리밍 스트림이면 None.
+        heartbeat stream_retention_s · stream_budget_bytes 의 원천(설정값 — 잰 값이 아니다)."""
+        t = self._trims.get(stream)
+        return None if t is None else (t.retention_s, t.budget_bytes)
+
+
+def limit_fields(limits: tuple[float, int] | None) -> dict[str, str]:
+    """상태 해시 필드 계약: stream_retention_s(시간 트림 목표, 정수 초) · stream_budget_bytes(바이트 예산) — 정수 문자열.
+    시간 트림 스트림이 아니면(None) 빈 값 = 모름(0 으로 채우지 않는다)."""
+    if limits is None:
+        return {"stream_retention_s": "", "stream_budget_bytes": ""}
+    retention_s, budget_bytes = limits
+    return {"stream_retention_s": f"{retention_s:.0f}", "stream_budget_bytes": str(int(budget_bytes))}
