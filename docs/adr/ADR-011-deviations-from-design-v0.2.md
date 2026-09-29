@@ -95,12 +95,30 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
 - **선박 스트림 예산 16 → 32 MiB**(`publisher.py` `STREAM_BUDGET_BYTES`). 필요량 약 25.4 MB 는 예산의 약 76 %(필드 길이 합으로는 조금 더
   남는다). 선박 수가 늘면 다시 모자랄 수 있다 — 운영 화면 PIPELINE 의 '선박 스트림 보존 창'(api `stream_window_s.ships` 와 ais
   `stream_retention_s` 비교)과 ais `stream_budget_trims` 로 본다. 항공기 80 MiB 는 그대로.
-- **Redis 여유(설정값으로 계산 — 잰 값이 아니다)**: 두 스트림 예산 합계 96 → 112 MiB. 예산이 창을 줄일 만큼 발행량이 클 때 수집기나 ais 가
-  재시작하면 재시작 전 항목이 그 프로세스의 계산에서 빠져 최대 2.5 h 동안 두 배(224 MiB)까지 남을 수 있고, 로그 스트림 최악(약 24 MiB,
-  ADR-018)을 더하면 248 MiB — maxmemory 256 MiB 에 약 8 MiB 만 남는다(`noeviction` 이라 넘으면 쓰기가 거부된다). 지금 발행량(항공기 약
-  37.8 MB · 선박 약 25.4 MB / 2.5 h)은 두 예산보다 작아 시간 트림(MINID)이 먼저 자르므로 이 두 배 경우가 생기지 않는다 — 두 스트림 합계는
-  약 63 MB 다(계산). Redis used 는 측정 때 65.7 MB(16 MiB 로 잘린 선박 16.8 MB 포함)에서 약 8.6 MB 늘어 약 74 MB 로 예상한다(계산 — 배포 뒤
-  다시 잰다). maxmemory 는 바꾸지 않았다. 위 최악 계산은 그것을 정할 근거로 남긴다.
+- **Redis 여유(설정값 · 측정값으로 계산 — 최악을 잰 것이 아니다)**: 두 스트림 예산 합계 96 → 112 MiB.
+  - 첫 구현의 계산은 틀렸다(리뷰): "두 배 224 MiB + 로그 약 24 MiB = 248 MiB, maxmemory 에 약 8 MiB 남음"은 로그 스트림을 서버 로그
+    하나로만 넣었고(ADR-018 개정의 브라우저 오류 스트림 `wakeline:logs:client` 8 MiB 를 빠뜨렸다) 스트림이 아닌 키를 모두 뺐다.
+  - 바로잡은 최악(재시작 전 항목이 예산 계산에서 빠지던 리뷰 전 코드): 예산이 창을 줄일 만큼 발행량이 클 때 두 발행자(수집기 · ais)가 재시작하면
+    두 스트림이 최대 2.5 h 동안 예산의 두 배 — 2 × 112 = 224 MiB. 여기에 로그 두 스트림 약 32 MiB(3,000 × 8 KiB + 1,000 × 8 KiB,
+    ADR-018 개정 — `MAXLEN ~` 은 노드 단위라 스트림마다 한 노드(기본 `stream-node-max-bytes` 4 KiB · 100항목) 이하가 더 남는다)와 그 밖의
+    키 약 11 MB(측정 때 used 65.7 MB − 항공기 37.8 MB − 선박 16.8 MB: KMA 프레임 · SIGMET · 레이더 스트림 · 상태 · 예산 · 속도 제한 해시와
+    그때의 로그 스트림 — 최악이 아니라 그 시점 값)를 더하면 약 267 MiB. **maxmemory 256 MiB 를 약 11 MiB 넘는다** — `noeviction` 이라
+    넘는 동안 XADD · HSET · 예산 EVAL 쓰기가 거부된다. 선박 16 MiB 때는 2 × 96 + 32 + 11 ≈ 235 MiB 였다 — 이 변경(16 → 32 MiB)이 최악을
+    한도 밖으로 밀었다.
+  - 그래서 고친 것: 수집기 Publisher 는 스트림에 처음 보내기 전 한 번 보존 창 안의 기존 항목을 최신부터 되읽어(XREVRANGE 16항목씩 — 수집기
+    ACL 에 이미 있는 명령, 예산 + 한 항목까지만 읽는다) 예산 계산에 넣는다(`publisher.existing_entries` · `StreamTrim.seed`). 항공기
+    스트림은 재시작해도 예산 80 MiB(+ 한 항목)를 넘지 않는다. 되읽기가 거부되면(NOPERM 등) 경고 한 번 뒤 예전처럼 이 프로세스가 보낸
+    것만 센다(발행은 막지 않는다), Redis 연결 오류면 그 항목을 로컬 큐에 넣고 다음 발행 때 다시 되읽는다. ais 는 선박 스트림을 읽을
+    권한이 없어(ACL `+xadd +hset +hget +hgetall`) 되읽지 않는다 — 선박은 여전히 재시작 뒤 최대 2 × 32 MiB 다(ACL 을 넓히려면 Redis
+    재시작이 필요해 이번에는 하지 않았다).
+  - 고친 뒤 최악(계산): 80 + 2 × 32 + 32 + 11 ≈ 187 MiB — maxmemory 256 MiB 에 약 69 MiB 남는다. 그 밖 키의 최악(SIGMET 스트림 200항목 ·
+    KMA 프레임 12장의 크기)은 재지 않았다 — 이 여유 안에 드는지는 운영 `INFO memory` 로 본다.
+  - 예산은 필드 길이 합이고 MEMORY USAGE 는 항목마다 조금 더 크다: 일회용 `redis:8-alpine`(8.10.2)에서 MEMORY USAGE − 필드 길이 합 = 항목당
+    약 61–65 B(28,000 B × 200항목 · 8,000 B × 3,000항목, 2026-09-29). 항공기 2.5 h(약 1,000항목)면 약 0.06 MiB 라 위 계산을 바꾸지 않는다.
+  - 지금 발행량(항공기 약 37.8 MB · 선박 약 25.4 MB / 2.5 h)은 두 예산보다 작아 시간 트림(MINID)이 먼저 자르므로 두 배 경우가 생기지
+    않는다 — 두 스트림 합계는 약 63 MB 다(계산). Redis used 는 측정 때 65.7 MB(16 MiB 로 잘린 선박 16.8 MB 포함)에서 약 8.6 MB 늘어 약
+    74 MB 로 예상한다(계산 — 배포 뒤 다시 잰다). maxmemory 는 바꾸지 않았다 — 올리면 컨테이너 한도 512 MB 안의 AOF 재작성 fork 여유가
+    줄어든다(`infra/compose.yml` 주석).
 - **429 미룸 사다리 10 → 20 → 40 → 60 → 120 → 240 → 360분(상한 6 h)**(`fallback.py` `RATE_LIMIT_HOLD_S`). 120 · 240 · 360분은 선택값이다 —
   근거는 위 관찰(60분 미룸 뒤에도 약 1분 만에 429)뿐이고, adsb.lol 이 언제 풀리는지는 모른다. 관찰한 모양(복귀하고 약 1분 뒤 429)을 흉내 낸
   24 h 모의 시험에서 1순위 429 는 27 → 10번으로 준다(모의 — 측정이 아니다, `test_r17_primary_that_429s_right_after_every_recovery…`).
@@ -110,7 +128,19 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
 - **기상 작업도 일시 오류를 한 번 다시 부른다**(AWC METAR/TAF · SIGMET 국제/미국, RainViewer). KMA 의 규칙을 `retry.py`
   (`call_retry_once` · `CallFailed`)로 옮겨 함께 쓴다: 시간 초과 · 연결 실패 · 프로토콜 오류만, **실패한 호출마다** 5 s 뒤 한 번, 그 전에 예산
   1 을 따로 예약(못 하면 다시 부르지 않는다, fixture 모드는 예산을 쓰지 않는다), 다시 부른 호출도 HttpClient 의 속도 상한을 지난다(허가를
-  못 받으면 Throttled 로 끝나고 또 부르지 않는다). HTTP 오류(4xx · 5xx) · Throttled · 응답 모양 오류는 다시 부르지 않는다. 살린 주기는 경고 없이
+  못 받으면 Throttled 로 끝나고 또 부르지 않는다). **예산(리뷰 후속)**: 첫 구현은 다시 부르기를 여유 없이 예약하고 보내지 않은 호출의
+  몫도 돌려주지 않아, 연결 실패가 곧바로 끝나는 긴 장애에서 RainViewer 가 주기(약 65 s)마다 2 를 써 약 18 h 뒤 일일 예산 2,000 이 바닥나고
+  RainViewer 가 돌아와도 UTC 자정까지 레이더가 budget_exhausted 였다(리뷰의 모의 — 측정이 아니다). 이제 (1) 보내지 않은 시도
+  (`http.NOT_SENT_ERRORS` — 연결 전 실패 · 연결 풀 대기 초과 등 — 와 속도 상한 Throttled)는 첫 시도든 다시 부른 시도든 예산 1 을 돌려준다
+  (aircraft · route 와 같은 규칙, KMA 도 같다 — 전날 목록 포함). (2) 기상 작업의 다시 부르기 예약은 남은 하루의 정규 주기 몫을 남긴다
+  (`weather.retry_headroom` — 예산 날(UTC)이 끝날 때까지 작업마다 (남은 초 // 주기 + 1) × 주기당 최대 호출 수의 합: RainViewer 60 s × 1,
+  AWC 는 SIGMET 300 s × 2 + METAR 600 s × 상자 최대 2. 지금 주기 설정으로 계산한 상한이다). 하루 내내 보낸 뒤의 일시 오류여도 정규 주기가 예산
+  소진으로 막히지 않는다 — 모의 시험(측정이 아니다, `test_a_day_of_…`): 한도 2,000 · 60 s 주기에서 하루 내내 RemoteProtocolError 면 1,390
+  주기 · 다시 부르기 609번 · 사용량 1,999 로 budget_exhausted 없음, 하루 내내 ConnectError 면 사용량 0. 정규 주기만으로 한도를 넘는
+  설정이면 다시 부르지 않는다. (3) SIGMET 은 국제 호출이 실패해 미국 호출을 하지 않으면 세트 예산 2 중 그 1 을 돌려준다.
+  KMA 의 다시 부르기 예약에는 여유를 두지 않는다 — 정규 호출 수가 주기마다 다르고(목록 1 + 바이너리 0–4, 상한 5 × 288 = 1,440 > 한도
+  1,000) 계속 실패하는(보낸 뒤 실패하는) 서버에서는 첫 호출이 두 번 실패하는 즉시 주기가 끝나 하루 최대 2 × 288 = 576 이다(설정값 계산).
+  HTTP 오류(4xx · 5xx) · Throttled · 응답 모양 오류는 다시 부르지 않는다. 살린 주기는 경고 없이
   INFO 한 줄(`sigmet/awc: isigmet — ReadTimeout — … after N s — retrying once in 5 s`), 다시 불러도 실패하면 경고 한 번과 같은 내용의 상태
   `last_error` · 실행 기록 — 모양은 KMA 와 같다(N 은 그 시도에 실제로 걸린 시간): `sigmet/awc failed: isigmet — ReadTimeout — read 제한 8 s 초과
   (aviationweather.gov) after N s; retried once after 5 s (first attempt: ReadTimeout after N s)` · `ReadTimeout — read 제한 8 s 초과
