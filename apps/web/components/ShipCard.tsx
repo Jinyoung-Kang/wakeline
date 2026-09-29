@@ -177,7 +177,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
             <span className="shrink-0 text-fg-3" title={title}>{k}</span><span className="text-right">{val}</span>
           </div>
         ))}
-        {/* ADR-022: 호출부호로 조회한 한국 항만 입출항(WS ship_selected.port_calls — 수집기 조회 결과가 오면 바뀐다) */}
+        {/* ADR-022 개정: 호출부호로 서버 색인에서 찾은 한국 항만 입출항(WS ship_selected.port_calls — 색인이 갱신되면 바뀐다) */}
         <PortCallsSection calls={live?.port_calls ?? null} aisName={name} />
         <div className="mt-2" data-testid="ship-track-info">
           <div className="mb-0.5 flex items-center justify-between gap-2">

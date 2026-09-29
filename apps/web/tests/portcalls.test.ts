@@ -1,11 +1,12 @@
 /**
- * 한국 항만 입출항(ADR-022) — 선박 카드의 "한국 항만 입출항 (해양수산부 PORT-MIS · 최근 30일)".
+ * 한국 항만 입출항(ADR-022 개정) — 선박 카드의 "한국 항만 입출항 (해양수산부 PORT-MIS · 최근 30일)".
  * 자료는 api 가 실제 빌더로 만든 WS 표본(fixtures/ws-samples.v1.json — ship_selected.port_calls 의 모든 상태)과, 그 값의 필드만 바꾼 것이다
- * (필드 이름을 지어내지 않는다 · 입출항 값은 수집기가 실제 응답 fixture 로 만든 부산 1건).
- * - 검증: 모르는 상태 · 다른 조회 창 · 읽을 항목 없는 ok 는 표시하지 않는다. 틀린 묶음은 통째로 버리고 센다(메시지의 나머지는 쓴다).
- * - 화면: 상태마다 문구(조회 중 = 바쁨 표시 · 한도 = 조회하지 않음) · 결과 표(항만청 · 입항/출항 KST+UTC — KST 00:00 신고는 날짜만 · 목적 ·
- *   전출항지 → 차항지) · 선명이 다르면 경고(영문이 아닌 신고 선명은 비교 불가) · 모르면 "—" 만.
- * - 시각은 공유 형식기(lib/time · components/DualTime — 계약 v5 §G13): 표 칸은 첫 줄 KST · 둘째 줄 UTC(머리글 "(KST · UTC)"), 조회 시각은 inline.
+ * (필드 이름을 지어내지 않는다 · 입출항 값은 수집기가 실제 전체 기록(AZAMARA PURSUIT · 부산)을 해석한 색인 행의 호출부호만 바꾼 것).
+ * - 검증: 모르는 상태 · 다른 창 · 읽을 항목 없는 ok · 색인 상태 없는 결과 · 완전하지 않은 none · 까닭 없는 no_call_sign 은 표시하지 않는다.
+ *   틀린 묶음은 통째로 버리고 센다(메시지의 나머지는 쓴다).
+ * - 화면: 상태마다 문구(기록 없음은 색인이 완전할 때만 · 색인 불완전은 항만청별 이유 · 호출부호를 아직 받지 않음은 '없음' 이 아니다) · 결과 표
+ *   (항만청 · 입항 · 출항 KST+UTC(판) · 선석 · 목적 · 전출항지 → 차항지) · 색인 상태 줄 · 두 이름이 모두 영문일 때만 선명 다름 경고 · 모르면 "—" 만.
+ * - 시각은 공유 형식기(lib/time · components/DualTime — 계약 v5 §G13): 표 칸은 첫 줄 KST · 둘째 줄 UTC, 색인 갱신 시각은 inline.
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
@@ -13,8 +14,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { validateServerMessage } from "@/lib/ws-validate";
 import {
-  callTimes, legText, parsePortCalls, portCallStatusText, portText, reportTime, PORT_CALL_ERROR_KINDS, PORT_CALL_ERROR_TEXT, PORT_CALL_LIMITED_BY,
-  PORT_CALL_LIMITED_TEXT, reportedNameNotes, windowText, type PortCall, type PortCallsInfo,
+  gapText, legText, noExitTitle, parsePortCalls, portCallStatusText, portText, reportTime, PORT_CALL_CALL_SIGN_TEXT, PORT_CALL_DISABLED_TEXT,
+  PORT_CALL_ERROR_TEXT, PORT_CALL_INCOMPLETE_TEXT, PORT_CALL_NONE_TEXT, reportedNameNotes, windowText, type PortCallsInfo,
 } from "@/lib/portcalls";
 import { PortCallsSection } from "@/components/PortCallsSection";
 import { ShipCardView } from "@/components/ShipCard";
@@ -26,70 +27,92 @@ type Json = Record<string, unknown>;
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/ws-samples.v1.json", import.meta.url), "utf8")) as { server: { name: string; message: Json }[] };
 const sample = (name: string) => structuredClone(fixture.server.find((s) => s.name === name)!.message);
 const calls = (name: string) => sample(name).port_calls as Json;
-const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<");
+const parsed = (name: string) => parsePortCalls(calls(name))!;
+const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&#x27;/g, "'");
 const render = (c: PortCallsInfo | null, aisName: string | null = "SYNTH ONE") => renderToStaticMarkup(createElement(PortCallsSection, { calls: c, aisName }));
+const ALL = ["ship_selected", "ship_selected.static_only", "ship_selected.port_calls_error", "ship_selected.port_calls_disabled", "ship_selected.port_calls_none",
+  "ship_selected.port_calls_incomplete", "ship_selected.port_calls_no_call_sign_not_received", "ship_selected.port_calls_no_call_sign_unusable"];
 
 describe("port_calls parsing (every state the api sends)", () => {
-  it("ok: the collector's Busan call with the verified fields; unknown fields stay null", () => {
-    const p = parsePortCalls(calls("ship_selected"))!;
-    expect(p.status).toBe("ok");
-    expect(p.call_sign).toBe("D7AB");
-    expect(p.window_from).toBe("2026-08-30");
-    expect(p.window_to).toBe("2026-09-29");
-    expect(p.truncated).toBe(true);
-    expect(p.incomplete).toBe(true);
-    expect(p.items).toHaveLength(1);
-    const c = p.items[0];
-    expect(c).toMatchObject({
-      port_authority_code: "020", port_authority: "부산", entry_at: "2026-09-28T15:00:00Z", exit_at: null, purpose: "양하",
-      prev_port: { code: "KRYOC", name: "여천항" }, next_port: { code: "KRYOC", name: "여천항" }, reported_name: "부광9호", kind: "석유제품 운반선",
-      nationality: null,
+  it("ok: the collector's real record (AZAMARA PURSUIT, Busan) with entry, exit from tkoffDt, berth and the final revision", () => {
+    const p = parsed("ship_selected");
+    expect(p).toMatchObject({ status: "ok", call_sign: "D7AB", window_from: "2026-08-30", window_to: "2026-09-29", truncated: true });
+    expect(p.index).toEqual({ complete: true, refreshed_at: "2026-09-29T12:50:00Z", gaps: [] });
+    expect(p.items).toHaveLength(20);
+    expect(p.items[0]).toEqual({
+      port_authority_code: "020", port_authority: "부산", listed_date: "2026-09-24", entry_at: "2026-09-23T23:17:00Z", entry_revision: "최종",
+      exit_at: "2026-09-25T05:24:00Z", exit_revision: "최종", berth: "북항크루즈터미널 2선석", purpose: "여객상륙",
+      first_port: { code: "JPUKB", name: "KOBE" }, prev_port: { code: "JPSMN", name: "SAKAIMINATO" }, next_port: { code: "JPHIJ", name: "HIROSHIMA" },
+      dest_port: { code: "JPHIJ", name: "HIROSHIMA" }, reported_name: "AZAMARA PURSUIT", kind: "크루즈선", nationality: "마샬 제도",
+      read_at: "2026-09-29T12:45:00Z",
     });
-    expect(c.reports).toEqual([{ kind: "입항", at: "2026-09-28T15:00:00Z", type: "최초" }]);
   });
 
   it("other states carry only their own fields", () => {
-    expect(parsePortCalls(calls("ship_selected.port_calls_error"))).toMatchObject({ status: "error", error_kind: "http", error_code: "503", items: [] });
-    expect(parsePortCalls(calls("ship_selected.port_calls_disabled"))).toMatchObject({ status: "disabled", disabled_reason: "no_key", error_kind: null });
-    expect(parsePortCalls(calls("ship_selected.port_calls_pending"))).toMatchObject({ status: "pending", call_sign: "D7AE", fetched_at: null });
-    expect(parsePortCalls(calls("ship_selected.static_only"))).toMatchObject({ status: "no_call_sign", call_sign: null });
-    expect(parsePortCalls(calls("ship_selected.port_calls_no_static"))).toMatchObject({ status: "no_static", call_sign: null, limited_by: null });
-    expect(parsePortCalls(calls("ship_selected.port_calls_limited"))).toMatchObject({ status: "limited", call_sign: "D7AF", limited_by: "session" });
-    // limited_by 는 limited 일 때만 · 이유 없는 limited 는 표시하지 않는다(이유를 지어내지 않는다)
-    expect(parsePortCalls({ ...calls("ship_selected.port_calls_pending"), limited_by: "ip" })!.limited_by).toBeNull();
-    expect(parsePortCalls({ ...calls("ship_selected.port_calls_limited"), limited_by: undefined })).toBeNull();
-    expect(parsePortCalls({ ...calls("ship_selected.port_calls_limited"), limited_by: "mood" })).toBeNull();
-    // error_kind 는 error 일 때만 — 다른 상태에 붙어 와도 쓰지 않는다
-    expect(parsePortCalls({ ...calls("ship_selected.port_calls_pending"), error_kind: "http" })!.error_kind).toBeNull();
+    expect(parsed("ship_selected.port_calls_error")).toMatchObject({ status: "error", call_sign: "D7AC", items: [], index: null });
+    expect(parsed("ship_selected.port_calls_disabled")).toMatchObject({ status: "disabled", disabled_reason: "no_key", index: null });
+    expect(parsed("ship_selected.port_calls_none")).toMatchObject({ status: "none", call_sign: "D7AE", items: [], index: { complete: true, gaps: [] } });
+    const inc = parsed("ship_selected.port_calls_incomplete");
+    expect(inc.status).toBe("incomplete");
+    expect(inc.index!.complete).toBe(false);
+    expect(inc.index!.refreshed_at).toBeNull(); // 한 곳이 색인되지 않았다 — 하나의 '기준 시각' 이 없다
+    expect(inc.index!.gaps).toEqual([
+      { port_authority_code: "020", port_authority: "부산", issues: ["partial"], covered_from: "2026-09-12", covered_to: "2026-09-29", refreshed_at: "2026-09-29T12:50:00Z" },
+      { port_authority_code: "030", port_authority: "인천", issues: ["stale"], covered_from: "2026-08-30", covered_to: "2026-09-28", refreshed_at: "2026-09-29T10:30:00Z" },
+      { port_authority_code: "700", port_authority: "포항", issues: ["not_indexed"], covered_from: null, covered_to: null, refreshed_at: null },
+    ]);
+    expect(parsed("ship_selected.static_only")).toMatchObject({ status: "no_call_sign", call_sign_state: "not_received", call_sign: null });
+    expect(parsed("ship_selected.port_calls_no_call_sign_not_received").call_sign_state).toBe("not_received");
+    expect(parsed("ship_selected.port_calls_no_call_sign_unusable").call_sign_state).toBe("unusable");
+    // disabled_reason 은 disabled 일 때만 · call_sign_state 는 no_call_sign 일 때만
+    expect(parsePortCalls({ ...calls("ship_selected.port_calls_none"), disabled_reason: "no_key", call_sign_state: "unusable" }))
+      .toMatchObject({ disabled_reason: null, call_sign_state: null });
   });
 
-  it("unknown state, another window or an ok without readable items is not shown (null), never turned into 'none'", () => {
-    expect(parsePortCalls({ ...calls("ship_selected"), status: "maybe" })).toBeNull();
+  it("'none' is only shown for a complete index; results without their index state are not shown", () => {
+    const none = calls("ship_selected.port_calls_none");
+    const inc = calls("ship_selected.port_calls_incomplete");
+    expect(parsePortCalls({ ...none, index: (inc as Json).index })).toBeNull(); // 서버가 '없음' 이라 해도 색인이 완전하지 않으면 말하지 않는다
+    expect(parsePortCalls({ ...inc, index: (none as Json).index })).toBeNull();
+    expect(parsePortCalls({ ...none, index: undefined })).toBeNull();
+    expect(parsePortCalls({ ...calls("ship_selected"), index: undefined })).toBeNull();
+    expect(parsePortCalls({ ...none, index: { ...(none.index as Json), authorities: 11 } })).toBeNull();
+    expect(parsePortCalls({ ...none, index: { ...(none.index as Json), stale_after_s: 86400 } })).toBeNull();
+    expect(parsePortCalls({ ...none, index: { ...(none.index as Json), gaps: (inc.index as Json).gaps } })).toBeNull(); // 완전하다면서 빈 곳
+    expect(parsePortCalls({ ...inc, index: { ...(inc.index as Json), gaps: [{ port_authority_code: "700", port_authority: "포항", issues: ["guessed"] }] } })).toBeNull();
+    expect(parsePortCalls({ ...calls("ship_selected.static_only"), call_sign_state: undefined })).toBeNull(); // 까닭을 지어내지 않는다
+  });
+
+  it("unknown or retired states, another window, an ok without readable items are not shown (null), never turned into 'none'", () => {
+    for (const status of ["maybe", "pending", "limited", "no_static"]) expect(parsePortCalls({ ...calls("ship_selected"), status }), status).toBeNull();
     expect(parsePortCalls({ ...calls("ship_selected"), window_days: 7 })).toBeNull();
     expect(parsePortCalls({ ...calls("ship_selected"), items: [] })).toBeNull();
     expect(parsePortCalls({ ...calls("ship_selected"), items: [1, "x"] })).toBeNull();
     for (const v of [null, undefined, "ok", 1, []]) expect(parsePortCalls(v)).toBeNull();
   });
 
-  it("fields are shape-checked and text is cleaned; times need a zone", () => {
+  it("fields are shape-checked and text is cleaned; times need a zone; a revision needs its time", () => {
     const base = calls("ship_selected");
-    const item = { ...(base.items as Json[])[0], port_authority_code: "20", port_authority: "부산‮\u0007", entry_at: "2026-09-29T00:00:00",
-      prev_port: { code: "kryoc", name: "여천항" }, next_port: { code: null, name: null }, reported_name: "  부광9호​ ", purpose: "x".repeat(120) };
+    const item = { ...(base.items as Json[])[0], port_authority_code: "20", port_authority: "부산‮\u0007", entry_at: "2026-09-24T08:17:00",
+      entry_revision: "최종", exit_revision: "추정", prev_port: { code: "jpsmn", name: "SAKAIMINATO" }, next_port: { code: null, name: null },
+      reported_name: "  AZAMARA PURSUIT​ ", purpose: "x".repeat(120), listed_date: "24-09-2026" };
     const c = parsePortCalls({ ...base, items: [item] })!.items[0];
     expect(c.port_authority_code).toBeNull();
     expect(c.port_authority).toBe("부산");
     expect(c.entry_at).toBeNull();
-    expect(c.prev_port).toEqual({ code: null, name: "여천항" });
+    expect(c.entry_revision).toBeNull();
+    expect(c.exit_revision).toBeNull();
+    expect(c.prev_port).toEqual({ code: null, name: "SAKAIMINATO" });
     expect(c.next_port).toBeNull();
-    expect(c.reported_name).toBe("부광9호");
+    expect(c.reported_name).toBe("AZAMARA PURSUIT");
     expect(Array.from(c.purpose!)).toHaveLength(80);
+    expect(c.listed_date).toBeNull();
   });
 });
 
 describe("ws-validate: ship_selected.port_calls is one droppable bundle", () => {
   it("every api sample is accepted with its port_calls", () => {
-    for (const name of ["ship_selected", "ship_selected.static_only", "ship_selected.port_calls_error", "ship_selected.port_calls_disabled", "ship_selected.port_calls_pending",
-      "ship_selected.port_calls_limited", "ship_selected.port_calls_no_static"]) {
+    for (const name of ALL) {
       const r = validateServerMessage(sample(name));
       expect(r.kind, name).toBe("ok");
       if (r.kind !== "ok" || r.msg.type !== "ship_selected") throw new Error(name);
@@ -99,30 +122,33 @@ describe("ws-validate: ship_selected.port_calls is one droppable bundle", () => 
   });
 
   it("a wrong port_calls is dropped and counted; the rest of the message still applies", () => {
-    const m = sample("ship_selected");
-    (m.port_calls as Json).items = [{ ...((m.port_calls as Json).items as Json[])[0], port_authority_code: 20 }];
+    const bad: [string, (pc: Json) => void][] = [
+      ["item code", (pc) => { pc.items = [{ ...(pc.items as Json[])[0], port_authority_code: 20 }]; }],
+      ["item without read_at", (pc) => { const it = { ...(pc.items as Json[])[0] }; delete it.read_at; pc.items = [it]; }],
+      ["guessed revision", (pc) => { pc.items = [{ ...(pc.items as Json[])[0], entry_revision: "추정" }]; }],
+      ["retired status", (pc) => { pc.status = "pending"; }],
+      ["index authorities", (pc) => { pc.index = { ...(pc.index as Json), authorities: 9 }; }],
+      ["index without gaps", (pc) => { const ix = { ...(pc.index as Json) }; delete ix.gaps; pc.index = ix; }],
+    ];
+    for (const [what, mutate] of bad) {
+      const m = sample("ship_selected");
+      mutate(m.port_calls as Json);
+      const r = validateServerMessage(m);
+      expect(r.kind, what).toBe("ok");
+      if (r.kind !== "ok" || r.msg.type !== "ship_selected") throw new Error(what);
+      expect(r.dropped, what).toBe(1);
+      expect(r.where, what).toBe("ship_selected.port_calls");
+      expect(r.msg.port_calls, what).toBeNull();
+      expect(r.msg.state, what).not.toBeNull();
+    }
+    const m = sample("ship_selected.port_calls_no_call_sign_unusable");
+    (m.port_calls as Json).call_sign_state = "absent";
     const r = validateServerMessage(m);
-    expect(r.kind).toBe("ok");
-    if (r.kind !== "ok" || r.msg.type !== "ship_selected") throw new Error("kind");
-    expect(r.dropped).toBe(1);
-    expect(r.where).toBe("ship_selected.port_calls");
-    expect(r.msg.port_calls).toBeNull();
-    expect(r.msg.state).not.toBeNull();
+    expect(r.kind === "ok" && r.dropped === 1 && r.msg.type === "ship_selected" && r.msg.port_calls === null).toBe(true);
     const old = sample("ship_selected");
     delete old.port_calls; // 이전 서버(키 없음) — 모름
     const r2 = validateServerMessage(old);
     expect(r2.kind === "ok" && r2.msg.type === "ship_selected" && r2.msg.port_calls === null && r2.dropped === 0).toBe(true);
-  });
-
-  it("an unknown limit reason drops the bundle; a limited without its reason is not shown (the reason is never guessed)", () => {
-    const m = sample("ship_selected.port_calls_limited");
-    (m.port_calls as Json).limited_by = "mood";
-    const r = validateServerMessage(m);
-    expect(r.kind === "ok" && r.dropped === 1 && r.msg.type === "ship_selected" && r.msg.port_calls === null).toBe(true);
-    const m2 = sample("ship_selected.port_calls_limited");
-    delete (m2.port_calls as Json).limited_by;
-    const r2 = validateServerMessage(m2);
-    expect(r2.kind === "ok" && r2.msg.type === "ship_selected" && r2.msg.port_calls === null).toBe(true);
   });
 });
 
@@ -132,178 +158,150 @@ describe("port-call helpers", () => {
     const d = reportTime("2026-09-28T15:00:00Z");
     expect(d).toEqual({ dateOnly: true, kst: "09-29 KST", title: "PORT-MIS 신고 2026-09-29T00:00:00.000+09:00 — 날짜만 신고했는지 자정인지 원천이 구분하지 않음" });
     expect(reportTime("2026-09-28T15:00:00.001Z")).toEqual({ dateOnly: false }); // 00:00:00.001 — 시각이 있다
-    expect(reportTime("2026-09-28T16:30:00Z")).toEqual({ dateOnly: false });
+    expect(reportTime("2026-09-23T23:17:00Z")).toEqual({ dateOnly: false });
     for (const v of [null, undefined, "", "bad"]) expect(reportTime(v)).toBeNull();
   });
 
   it("ports and legs: name(code) · either · —", () => {
-    expect(portText({ code: "KRYOC", name: "여천항" })).toBe("여천항(KRYOC)");
-    expect(portText({ code: "KRYOC", name: null })).toBe("KRYOC");
+    expect(portText({ code: "JPHIJ", name: "HIROSHIMA" })).toBe("HIROSHIMA(JPHIJ)");
+    expect(portText({ code: "JPHIJ", name: null })).toBe("JPHIJ");
     expect(portText({ code: null, name: "여천항" })).toBe("여천항");
     expect(portText(null)).toBe("—");
-    const c = parsePortCalls(calls("ship_selected"))!.items[0];
-    expect(legText(c)).toBe("여천항(KRYOC) → 여천항(KRYOC)");
+    const c = parsed("ship_selected").items[0];
+    expect(legText(c)).toBe("SAKAIMINATO(JPSMN) → HIROSHIMA(JPHIJ)");
     expect(legText({ ...c, prev_port: null, next_port: null })).toBe("—");
-    expect(legText({ ...c, prev_port: null })).toBe("— → 여천항(KRYOC)");
+    expect(legText({ ...c, prev_port: null })).toBe("— → HIROSHIMA(JPHIJ)");
   });
 
-  it("entry/exit: the single time, or every report when several differ — never a pick", () => {
-    const c: PortCall = { ...parsePortCalls(calls("ship_selected"))!.items[0], entry_at: null,
-      reports: [{ kind: "입항", at: "2026-09-28T15:00:00Z", type: "최초" }, { kind: "입항", at: "2026-09-28T16:00:00Z", type: "변경" }, { kind: "출항", at: "2026-09-29T01:00:00Z", type: "최초" }] };
-    expect(callTimes(c, "입항")).toEqual({ single: null, reports: ["2026-09-28T15:00:00Z", "2026-09-28T16:00:00Z"], total: 2 });
-    expect(callTimes(c, "출항")).toEqual({ single: null, reports: [], total: 0 }); // 한 건뿐인데 서버가 exit_at 을 비웠다 — 고르지 않고 모름
-    expect(callTimes({ ...c, exit_at: "2026-09-29T01:00:00Z" }, "출항").single).toBe("2026-09-29T01:00:00Z");
+  it("an empty exit says what is known: no exit report in the index as of when the record was last read", () => {
+    const c = parsed("ship_selected").items[0];
+    expect(noExitTitle({ ...c, exit_at: null })).toBe("출항 신고가 색인에 없음 — 아직 입항 중이거나, 색인이 이 기록을 마지막으로 읽은 2026-09-29T21:45:00.000+09:00 뒤에 출항했을 수 있음");
+    expect(noExitTitle({ ...c, exit_at: null, read_at: null })).toBe("출항 신고가 색인에 없음");
   });
 
-  it("a lone dated report next to an undated one of the same kind is shown with that context (the collector leaves entry_at empty)", () => {
-    // 수집기 규칙(test_an_undated_report_of_the_same_kind_keeps_the_time_undecided): 시각 없는 같은 종류의 신고가 있으면 entry_at 은 null
-    const c: PortCall = { ...parsePortCalls(calls("ship_selected"))!.items[0], entry_at: null,
-      reports: [{ kind: "입항", at: "2026-09-19T23:30:00Z", type: "최초" }, { kind: "입항", at: null, type: "변경" }] };
-    expect(callTimes(c, "입항")).toEqual({ single: null, reports: ["2026-09-19T23:30:00Z"], total: 2 });
-    const t = text(render({ ...parsePortCalls(calls("ship_selected"))!, items: [c], truncated: false, incomplete: false }));
-    expect(t).toContain("입항 신고 2건 중 시각 있는 1건");
-    expect(t).toContain("09-20 08:30:00 KST · 09-19 23:30:00 UTC");
-    const three: PortCall = { ...c, reports: [...c.reports, { kind: "입항", at: "2026-09-20T01:00:00Z", type: "변경" }] };
-    expect(text(render({ ...parsePortCalls(calls("ship_selected"))!, items: [three], truncated: false, incomplete: false })))
-      .toContain("입항 신고 3건 · 시각 다름 · 시각 없는 신고 1건");
+  it("gaps name the authority and what is missing", () => {
+    const [p, s, n] = parsed("ship_selected.port_calls_incomplete").index!.gaps;
+    expect(gapText(p)).toBe("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터)");
+    expect(gapText(s)).toBe("인천(030) — 색인 갱신이 오래됨");
+    expect(gapText(n)).toBe("포항(700) — 아직 색인 안 됨");
+    expect(gapText({ ...p, issues: ["partial", "stale"] })).toBe("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터) · 색인 갱신이 오래됨");
   });
 
-  it("reported names: Latin names that differ warn (spacing · case · width are the same name); a Hangul name is not compared with the Latin AIS name", () => {
-    const c = parsePortCalls(calls("ship_selected"))!.items[0]; // 실제 응답의 선명 "부광9호"
-    expect(reportedNameNotes([c], "BUKWANG 9")).toEqual([{ name: "부광9호", note: "other_script" }]); // 로마자 표기를 짐작하지 않는다
-    expect(reportedNameNotes([{ ...c, reported_name: "BUKWANG 7" }], "BUKWANG 9")).toEqual([{ name: "BUKWANG 7", note: "differs" }]);
-    expect(reportedNameNotes([{ ...c, reported_name: "Bukwang  9" }], " BUKWANG 9 ")).toEqual([]);
-    expect(reportedNameNotes([{ ...c, reported_name: "ＢＵＫＷＡＮＧ 9" }], "BUKWANG 9")).toEqual([]); // 전각 — NFKC 뒤 같은 영문
-    expect(reportedNameNotes([c, c, { ...c, reported_name: null }], null)).toEqual([{ name: "부광9호", note: "no_ais_name" }]); // 비교 불가 — 한 번만
+  it("reported names: only two Latin names are compared (spacing · case · width are the same name); a Hangul name is never a mismatch on its own", () => {
+    const c = parsed("ship_selected").items[0]; // 실제 기록의 선명 "AZAMARA PURSUIT"
+    expect(reportedNameNotes([c], "AZAMARA PURSUIT")).toEqual([]);
+    expect(reportedNameNotes([c], " azamara  pursuit ")).toEqual([]);
+    expect(reportedNameNotes([{ ...c, reported_name: "ＡＺＡＭＡＲＡ PURSUIT" }], "AZAMARA PURSUIT")).toEqual([]); // 전각 — NFKC 뒤 같은 영문
+    expect(reportedNameNotes([c], "AZAMARA QUEST")).toEqual([{ name: "AZAMARA PURSUIT", note: "differs" }]);
+    expect(reportedNameNotes([{ ...c, reported_name: "부광9호" }], "BUKWANG 9")).toEqual([{ name: "부광9호", note: "other_script" }]); // 로마자 표기를 짐작하지 않는다
+    expect(reportedNameNotes([c], "부광9호")).toEqual([{ name: "AZAMARA PURSUIT", note: "other_script" }]);
+    expect(reportedNameNotes([c, c, { ...c, reported_name: null }], null)).toEqual([{ name: "AZAMARA PURSUIT", note: "no_ais_name" }]); // 비교 불가 — 한 번만
   });
 
-  it("status line for every state and every error kind", () => {
-    const e = parsePortCalls(calls("ship_selected.port_calls_error"))!;
-    expect(portCallStatusText(e)).toBe("조회 실패 — PORT-MIS HTTP 오류 (503) · 선택해 두면 5분 뒤 다시 조회");
-    for (const k of PORT_CALL_ERROR_KINDS) expect(portCallStatusText({ ...e, error_kind: k, error_code: null })).toContain(PORT_CALL_ERROR_TEXT[k]);
-    expect(portCallStatusText({ ...e, error_kind: null, error_code: null })).toContain("원인 모름");
-    // 해양수산부 시간 창(수집기 budget:mof:h:* — 격자 WFS 와 함께 셈)이 찬 것을 '하루 예산 소진'으로 말하지 않는다
-    const hourly = parsePortCalls({ ...calls("ship_selected.port_calls_error"), error_kind: "hourly_cap", error_code: undefined })!;
-    expect(hourly.error_kind).toBe("hourly_cap");
-    expect(portCallStatusText(hourly)).toBe("조회 실패 — 해양수산부 시간당 호출 상한(격자 조회와 합계)에 걸림 · 매시 정각에 다시 셈 · 선택해 두면 5분 뒤 다시 조회");
-    const d = parsePortCalls(calls("ship_selected.port_calls_disabled"))!;
-    expect(portCallStatusText(d)).toBe("공공데이터포털 키 없음 — 조회하지 않음");
-    expect(portCallStatusText({ ...d, disabled_reason: "fixture" })).toBe("fixture 모드 — 외부 조회 없음");
-    expect(portCallStatusText({ ...d, disabled_reason: "operator" })).toBe("운영자가 조회를 껐음(운영 설정)");
-    expect(portCallStatusText({ ...d, disabled_reason: null })).toBe("조회 꺼짐");
-    expect(portCallStatusText({ ...d, status: "none" })).toBe("최근 30일 한국 항만 입출항 기록 없음(호출부호 기준)");
-    expect(portCallStatusText({ ...d, status: "none", incomplete: true })).toContain("'기록 없음' 으로 판정하지 않음");
-    expect(portCallStatusText({ ...d, status: "no_call_sign" })).toBe("AIS 정적 정보에 호출부호 없음 또는 조회 형식 밖(영문·숫자 3–7자) — 조회 불가");
-    expect(portCallStatusText({ ...d, status: "no_static" })).toBe("호출부호 모름 — AIS 정적 정보(호출부호)를 아직 받지 못함 · 받으면 조회");
-    for (const by of PORT_CALL_LIMITED_BY) {
-      const t = portCallStatusText({ ...d, status: "limited", limited_by: by })!;
-      expect(t).toBe(PORT_CALL_LIMITED_TEXT[by]);
-      expect(t).toContain("지금 조회하지 않음"); // 한도에 걸린 선박을 '조회 중' 이라 하지 않는다
-      expect(t).not.toContain("조회 중");
-    }
-    expect(PORT_CALL_LIMITED_TEXT.session).toContain("60초에 6척");
-    expect(PORT_CALL_LIMITED_TEXT.ip).toContain("24시간에 60척");
-    expect(portCallStatusText(parsePortCalls(calls("ship_selected"))!)).toBeNull();
-    expect(windowText(parsePortCalls(calls("ship_selected"))!)).toBe("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준)");
+  it("status line for every state", () => {
+    expect(portCallStatusText(parsed("ship_selected"))).toBeNull();
+    expect(portCallStatusText(parsed("ship_selected.port_calls_none"))).toBe("최근 30일 한국 항만 입출항 기록 없음(호출부호 기준 · 항만청 10곳 색인 완료)");
+    expect(portCallStatusText(parsed("ship_selected.port_calls_incomplete"))).toBe(PORT_CALL_INCOMPLETE_TEXT);
+    expect(PORT_CALL_INCOMPLETE_TEXT).toContain("'기록 없음' 으로 판정하지 않음");
+    expect(portCallStatusText(parsed("ship_selected.port_calls_error"))).toBe(PORT_CALL_ERROR_TEXT);
+    const d = parsed("ship_selected.port_calls_disabled");
+    expect(portCallStatusText(d)).toBe("공공데이터포털 키 없음 — 서버가 입출항 색인을 만들지 않음");
+    expect(portCallStatusText({ ...d, disabled_reason: "fixture" })).toBe(PORT_CALL_DISABLED_TEXT.fixture);
+    expect(portCallStatusText({ ...d, disabled_reason: "operator" })).toBe("운영자가 입출항 색인 갱신을 껐음(운영 설정)");
+    expect(portCallStatusText({ ...d, disabled_reason: null })).toBe("입출항 색인 꺼짐");
+    const nr = parsed("ship_selected.port_calls_no_call_sign_not_received");
+    expect(portCallStatusText(nr)).toBe("AIS 호출부호를 아직 받지 않음 — 정적 정보(호출부호)가 오면 색인에서 찾음");
+    expect(portCallStatusText(nr)).not.toMatch(/호출부호 없음/); // '없음' 이 아니다
+    expect(portCallStatusText(parsed("ship_selected.port_calls_no_call_sign_unusable"))).toBe(PORT_CALL_CALL_SIGN_TEXT.unusable);
+    expect(windowText(parsed("ship_selected"))).toBe("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준)");
     expect(windowText(d)).toBe("최근 30일");
   });
 });
 
 describe("PortCallsSection (server-rendered)", () => {
-  it("pending: a busy indicator announced politely, not a static label", () => {
-    const html = render(parsePortCalls(calls("ship_selected.port_calls_pending")));
-    expect(html).toContain('role="status"');
-    expect(html).toContain('aria-busy="true"');
-    expect(html).toContain('data-testid="port-calls-busy"');
-    expect(html).toContain("wl-busy");
-    expect(text(html)).toContain("조회 중 — PORT-MIS 항만청 10곳에 차례로 묻는 중");
-    expect(text(html)).toContain("호출부호 D7AE");
-  });
-
-  it("none · disabled · error · no call sign say exactly that", () => {
-    const d = parsePortCalls(calls("ship_selected.port_calls_disabled"))!;
-    expect(text(render({ ...d, status: "none", disabled_reason: null, window_from: "2026-08-30", window_to: "2026-09-29" })))
-      .toContain("최근 30일 한국 항만 입출항 기록 없음(호출부호 기준)");
-    expect(text(render(d))).toContain("공공데이터포털 키 없음");
-    const err = render(parsePortCalls(calls("ship_selected.port_calls_error")));
-    expect(err).toContain('role="alert"');
-    expect(text(err)).toContain("조회 실패 — PORT-MIS HTTP 오류 (503)");
-    expect(text(err)).toContain("원문 사유는 운영 화면의 공급자 portmis 상태·시스템 로그에만 있습니다");
-    expect(text(err)).toContain("조회 09-29 12:00 KST · 03:00 UTC");
-    const none = text(render(parsePortCalls(calls("ship_selected.static_only"))));
-    expect(none).toContain("AIS 정적 정보에 호출부호 없음 또는 조회 형식 밖(영문·숫자 3–7자) — 조회 불가");
-    expect(none).not.toContain("KST 날짜"); // 조회하지 않았다 — 조회 창을 말하지 않는다
-    const noStatic = text(render(parsePortCalls(calls("ship_selected.port_calls_no_static"))));
-    expect(noStatic).toContain("호출부호 모름 — AIS 정적 정보(호출부호)를 아직 받지 못함");
-    expect(noStatic).not.toContain("KST 날짜");
-    expect(text(render(null))).toContain("한국 항만 입출항 (해양수산부 PORT-MIS · 최근 30일)—");
-  });
-
-  it("limited: says the lookup is not running (no busy bar) and why", () => {
-    const html = render(parsePortCalls(calls("ship_selected.port_calls_limited")));
-    expect(html).not.toContain("port-calls-busy");
-    expect(html).not.toContain('aria-busy="true"');
-    expect(html).toContain('data-status="limited"');
-    expect(html).toContain("text-warn");
-    expect(text(html)).toContain(PORT_CALL_LIMITED_TEXT.session);
-    expect(text(html)).toContain("호출부호 D7AF");
-  });
-
-  it("none but incomplete is not a definite 'no records' (warning tone, says why)", () => {
-    const d = parsePortCalls(calls("ship_selected.port_calls_disabled"))!;
-    const html = render({ ...d, status: "none", disabled_reason: null, incomplete: true, window_from: "2026-08-30", window_to: "2026-09-29" });
-    expect(text(html)).not.toContain("최근 30일 한국 항만 입출항 기록 없음");
-    expect(text(html)).toContain("받은 기록 안에는 이 호출부호의 입출항 없음");
-    expect(text(html)).toContain("항만청당 300건");
-    expect(html).toContain("text-warn");
-  });
-
-  it("ok: compact table with KST and UTC, purpose and legs; name mismatch, truncation and incompleteness are explicit", () => {
-    const html = render(parsePortCalls(calls("ship_selected")), "SYNTH ONE");
+  it("ok: table with 항만청 · 입항 · 출항 (KST · UTC, revision) · 선석 · 목적 · legs; the index line; truncation", () => {
+    const html = render(parsed("ship_selected"), "AZAMARA PURSUIT");
     const t = text(html);
-    expect(html.match(/data-testid="port-call-row"/g)).toHaveLength(1);
-    for (const h of ["항만청", "입항(KST · UTC)", "출항(KST · UTC)", "목적", "전출항지 → 차항지"]) expect(t).toContain(h);
-    expect(t).toContain("부산020");
-    // 실제 응답의 신고 시각 00:00(+09:00) — 날짜만 · 시각 미확인 · UTC 로 바꾸지 않는다
-    expect(t).toContain("09-29 KST시각 미확인(00:00 신고)");
-    expect(t).not.toMatch(/15:00(:00)? UTC|15:00(:00)?Z/);
-    expect(t).not.toMatch(/09-29 00:00(:00)?/);
-    expect(html).toContain('data-testid="port-call-date-only"');
-    expect(t).toContain("00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보이고 UTC 로 바꾸지 않습니다");
-    expect(t).toContain("양하");
-    expect(t).toContain("여천항(KRYOC) → 여천항(KRYOC)");
-    expect(t).not.toContain("목적지 여천항"); // 차항지와 같으면 되풀이하지 않는다
-    expect(t).toContain("PORT-MIS 선명 부광9호 — AIS 선명(SYNTH ONE)은 영문이라 표기 체계가 달라 비교하지 않음");
-    expect(html).not.toContain("port-calls-name-mismatch"); // 경고가 아니다
-    expect(text(render(parsePortCalls(calls("ship_selected")), "BUKWANG 7"))).toContain("PORT-MIS 선명 부광9호 — AIS 선명(BUKWANG 7)은 영문이라");
-    const latin = parsePortCalls(calls("ship_selected"))!;
-    const other = render({ ...latin, items: [{ ...latin.items[0], reported_name: "BUKWANG 9" }] }, "HANJIN BUSAN");
-    expect(other).toContain('data-testid="port-calls-name-mismatch"');
-    expect(text(other)).toContain("PORT-MIS 선명 BUKWANG 9 — AIS 선명(HANJIN BUSAN)과 다름");
-    expect(t).toContain("최근 신고 선종 석유제품 운반선 · 국적 —");
+    expect(html).toContain('data-status="ok"');
+    for (const h of ["항만청", "입항(KST · UTC)", "출항(KST · UTC)", "선석", "목적", "전출항지 → 차항지"]) expect(t).toContain(h);
+    expect(t).toContain("09-24 08:17:00 KST · 09-23 23:17:00 UTC"); // 입항 — 표 칸(KST 첫 줄 · UTC 둘째 줄)
+    expect(t).toContain("09-25 14:24:00 KST · 05:24:00 UTC"); // 출항(tkoffDt)
+    expect(t).toContain("최종 신고");
+    expect(t).toContain("북항크루즈터미널 2선석");
+    expect(t).toContain("여객상륙");
+    expect(t).toContain("SAKAIMINATO(JPSMN) → HIROSHIMA(JPHIJ)");
+    expect(t).toContain("최초 출항지 KOBE(JPUKB)");
+    expect(t).not.toContain("목적지 HIROSHIMA"); // 차항지와 같은 목적지는 한 번만
+    expect(t).toContain("최근 신고 선종 크루즈선 · 국적 마샬 제도");
+    expect(t).toContain("색인: 10개 항만청 · 최근 30일 · 갱신 09-29 21:50 KST · 12:50 UTC");
+    expect(t).toContain("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준)");
     expect(t).toContain("최근 20건만 표시 — 더 있음");
-    expect(t).toContain("항만청당 300건");
-    expect(t).toContain("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준) · 조회 09-29 12:00 KST · 03:00 UTC");
-    expect(t).toContain("출처 해양수산부 선박운항정보(PORT-MIS) · 공공데이터포털");
-    // 모르는 출항 시각은 "—" 만(시간대·단위 글자 없음)
-    expect(t).not.toMatch(/— ?(KST|UTC)/);
-    expect(text(render(parsePortCalls(calls("ship_selected")), null))).toContain("PORT-MIS 선명 부광9호 — AIS 선명 없음(비교 불가)");
+    expect(html).not.toContain("port-calls-name-mismatch");
+    expect(html).not.toContain("port-calls-incomplete");
+    expect(html).toContain('data-testid="port-calls-caveat"');
+    expect(html).toContain('href="https://www.data.go.kr"');
   });
 
-  it("ambiguous entry times are all listed, and a different destination is shown under the legs", () => {
-    const p = parsePortCalls(calls("ship_selected"))!;
-    const c: PortCall = { ...p.items[0], entry_at: null, dest_port: { code: "KRPUS", name: "부산항" },
-      reports: [{ kind: "입항", at: "2026-09-28T15:00:00Z", type: "최초" }, { kind: "입항", at: "2026-09-28T16:30:00Z", type: "변경" }] };
-    const html = render({ ...p, items: [c], truncated: false, incomplete: false });
+  it("a ship still in port shows — for the exit, with the reason in its title; KST midnight reports are dates only", () => {
+    const p = parsed("ship_selected");
+    const c = { ...p.items[0], exit_at: null, exit_revision: null, entry_at: "2026-09-28T15:00:00Z" };
+    const html = render({ ...p, items: [c], truncated: false });
+    expect(html).toMatch(/data-testid="port-call-exit"[^>]*>—|title="출항 신고가 색인에 없음[^"]*"[^>]*data-testid="port-call-exit">—/);
+    expect(html).toContain("출항 신고가 색인에 없음 — 아직 입항 중이거나");
+    expect(html).toContain('data-testid="port-call-date-only"');
+    expect(text(html)).toContain("09-29 KST시각 미확인(00:00 신고)");
+    expect(text(html)).not.toContain("09-28 15:00:00 UTC"); // 모르는 시각을 UTC 로 바꾸지 않는다
+  });
+
+  it("names: Latin names that differ warn; a Hangul reported name is noted as not compared", () => {
+    const p = parsed("ship_selected");
+    expect(render(p, "AZAMARA QUEST")).toContain('data-testid="port-calls-name-mismatch"');
+    expect(text(render(p, "AZAMARA QUEST"))).toContain("PORT-MIS 선명 AZAMARA PURSUIT — AIS 선명(AZAMARA QUEST)과 다름");
+    const hangul = render({ ...p, items: [{ ...p.items[0], reported_name: "부광9호" }], truncated: false }, "BUKWANG 9");
+    expect(hangul).not.toContain("port-calls-name-mismatch");
+    expect(text(hangul)).toContain("PORT-MIS 선명 부광9호 — AIS 선명(BUKWANG 9)과 표기 체계가 달라 비교하지 않음");
+  });
+
+  it("none says so only with a complete index, and shows when the index was refreshed", () => {
+    const t = text(render(parsed("ship_selected.port_calls_none")));
+    expect(t).toContain(PORT_CALL_NONE_TEXT);
+    expect(t).toContain("색인: 10개 항만청 · 최근 30일 · 갱신 09-29 21:50 KST · 12:50 UTC");
+    expect(t).not.toContain("색인 불완전");
+  });
+
+  it("incomplete is a warning that names each authority and why — never a definite 'no records'", () => {
+    const html = render(parsed("ship_selected.port_calls_incomplete"));
     const t = text(html);
-    // 시각이 있는 신고는 공유 형식기(DualTime 표 칸)로 — <time dateTime> 에 그 순간, title 에 원본 UTC
-    expect(html).toContain('<time dateTime="2026-09-28T16:30:00.000Z"');
-    expect(html).toContain('title="원본 UTC 2026-09-28T16:30:00.000Z"');
-    expect(t).toContain("입항 신고 2건 · 시각 다름");
-    expect(t).toContain("09-29 KST시각 미확인(00:00 신고)");
-    expect(t).toContain("09-29 01:30:00 KST · 09-28 16:30:00 UTC");
-    expect(t).toContain("목적지 부산항(KRPUS)");
-    expect(t).not.toContain("더 있음");
+    expect(html).toContain('data-status="incomplete"');
+    expect(html).toContain("text-warn");
+    expect(t).not.toContain(PORT_CALL_NONE_TEXT);
+    expect(t).toContain(PORT_CALL_INCOMPLETE_TEXT);
+    expect(t).toContain("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터)");
+    expect(t).toContain("인천(030) — 색인 갱신이 오래됨 · 마지막 갱신 09-29 19:30 KST · 10:30 UTC");
+    expect(t).toContain("포항(700) — 아직 색인 안 됨");
+    expect(t).toContain("갱신 —"); // 10곳의 공통 기준 시각이 없다 — 지어내지 않는다
+    expect(t).toContain("색인 불완전");
+  });
+
+  it("an ok list from an incomplete index says the list may be missing records", () => {
+    const p = parsed("ship_selected");
+    const gaps = parsed("ship_selected.port_calls_incomplete").index!;
+    const t = text(render({ ...p, index: gaps }));
+    expect(t).toContain("색인이 아직 완전하지 않아 목록이 빠졌을 수 있음");
+    expect(t).toContain("포항(700) — 아직 색인 안 됨");
+  });
+
+  it("disabled · error · no call sign say exactly that", () => {
+    expect(text(render(parsed("ship_selected.port_calls_disabled")))).toContain("공공데이터포털 키 없음 — 서버가 입출항 색인을 만들지 않음");
+    const err = render(parsed("ship_selected.port_calls_error"));
+    expect(err).toContain('role="alert"');
+    expect(text(err)).toContain(PORT_CALL_ERROR_TEXT);
+    const nr = render(parsed("ship_selected.port_calls_no_call_sign_not_received"));
+    expect(text(nr)).toContain("AIS 호출부호를 아직 받지 않음");
+    expect(nr).not.toContain('data-testid="port-calls-index"');
+    expect(text(render(parsed("ship_selected.port_calls_no_call_sign_unusable")))).toContain("찾는 형식(영문 대문자 · 숫자 3–7자) 밖");
+    expect(text(render(null))).toContain("—");
+    expect(render(null)).toContain('data-status="unknown"');
   });
 });
 
@@ -316,10 +314,10 @@ describe("ship card shows the section from ship_selected", () => {
     const v = validateServerMessage(m);
     if (v.kind !== "ok" || v.msg.type !== "ship_selected") throw new Error("sample");
     setData({ shipSelected: { mmsi: v.msg.mmsi, state: v.msg.state, static: v.msg.static, destination_info: v.msg.destination_info, port_calls: v.msg.port_calls, received_at: 1 } });
-    const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: v.msg.mmsi, detail: null, error: null, now: Date.parse("2026-09-29T03:00:00Z") }));
+    const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: v.msg.mmsi, detail: null, error: null, now: Date.parse("2026-09-29T13:00:00Z") }));
     expect(html).toContain('data-testid="port-calls"');
     expect(html).toContain('data-status="ok"');
-    expect(text(html)).toContain(`PORT-MIS 선명 부광9호 — AIS 선명(${v.msg.static?.name})은 영문이라 표기 체계가 달라 비교하지 않음`);
+    expect(text(html)).toContain(`PORT-MIS 선명 AZAMARA PURSUIT — AIS 선명(${v.msg.static?.name})과 다름`); // 두 이름 모두 영문 — 견준다
   });
 
   it("without a WS message the section says — (the REST detail carries no port calls)", () => {
@@ -329,13 +327,14 @@ describe("ship card shows the section from ship_selected", () => {
 });
 
 describe("sources", () => {
-  it("the footer and /about name PORT-MIS", () => {
+  it("the footer and /about name PORT-MIS and describe the index", () => {
     expect(attributionText()).toContain("입출항: 해양수산부 선박운항정보(PORT-MIS) (공공데이터포털)");
     expect(CREDITS.find((c) => c.role === "입출항")?.href).toBe("https://www.data.go.kr");
     const about = text(renderToStaticMarkup(createElement(AboutPage)));
     expect(about).toContain("해양수산부 선박운항정보(PORT-MIS)");
-    expect(about).toContain("호출부호로만 수집기가 조회");
-    expect(about).toContain("새 선박 조회는 창마다 60초에 6척, 접속 주소마다 24시간에 60척");
+    expect(about).toContain("서버 색인(DB)");
+    expect(about).toContain("외부에 묻지 않음");
+    expect(about).not.toContain("60초에 6척"); // 선택마다 묻던 설계의 한도는 없다
     expect(about).toContain("00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보입니다");
   });
 });

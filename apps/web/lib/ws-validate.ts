@@ -16,8 +16,8 @@
  */
 import { FOCUS_STATES, HOT_STATES, parseDemand, type FocusDemand, type HotDemand } from "./demand";
 import {
-  parsePortCalls, PORT_CALL_DISABLED_REASONS, PORT_CALL_ERROR_KINDS, PORT_CALL_LIMITED_BY, PORT_CALL_SOURCE, PORT_CALL_STATUSES, PORT_CALL_WINDOW_DAYS,
-  type PortCallsInfo,
+  parsePortCalls, PORT_CALL_AUTHORITIES, PORT_CALL_CALL_SIGN_STATES, PORT_CALL_DISABLED_REASONS, PORT_CALL_GAP_ISSUES, PORT_CALL_REVISIONS, PORT_CALL_SOURCE,
+  PORT_CALL_STALE_AFTER_S, PORT_CALL_STATUSES, PORT_CALL_WINDOW_DAYS, type PortCallsInfo,
 } from "./portcalls";
 import { parseRoute, ROUTE_STATUSES, type RouteInfo } from "./route";
 import {
@@ -180,22 +180,28 @@ const ROUTE = shape({
 const PREDICTION_REASONS = ["turning", "slow", "on_ground", "no_track", "stale"] as const;
 const PREDICTION = shape({ available: isBool, reason: oneOf(...PREDICTION_REASONS) }, ["available"]);
 
-/** $defs/port_ref · port_call · port_calls(ADR-022 — 한국 항만 입출항) */
+/** $defs/port_ref · port_call · port_call_index · port_calls(ADR-022 개정 — 한국 항만 입출항 색인) */
 const TEXT80 = str(1, 80);
+const DATE = re(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
 const PORT_REF_FIELDS = shape({ code: re(/^[A-Z0-9]{2,10}$/), name: TEXT80 });
 const PORT_REF: Rule = (v) => PORT_REF_FIELDS(v) && Object.keys(v).length >= 1; // minProperties 1
-const PORT_REPORT_FIELDS = shape({ kind: TEXT80, at: TIME, type: TEXT80 });
-const PORT_REPORT: Rule = (v) => PORT_REPORT_FIELDS(v) && Object.keys(v).length >= 1;
 const PORT_CALL = shape({
-  port_authority_code: re(/^[0-9]{3}$/), port_authority: TEXT80, entry_at: TIME, exit_at: TIME, reports: arrOf(PORT_REPORT, 0, 8), purpose: TEXT80,
-  prev_port: PORT_REF, next_port: PORT_REF, dest_port: PORT_REF, reported_name: TEXT80, kind: TEXT80, nationality: TEXT80,
-});
-const DATE = re(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
+  port_authority_code: re(/^[0-9]{3}$/), port_authority: TEXT80, listed_date: DATE, entry_at: TIME, entry_revision: oneOf(...PORT_CALL_REVISIONS),
+  exit_at: TIME, exit_revision: oneOf(...PORT_CALL_REVISIONS), berth: TEXT80, purpose: TEXT80, first_port: PORT_REF, prev_port: PORT_REF,
+  next_port: PORT_REF, dest_port: PORT_REF, reported_name: TEXT80, kind: TEXT80, nationality: TEXT80, read_at: TIME,
+}, ["read_at"]);
+const PORT_CALL_GAP = shape({
+  port_authority_code: re(/^[0-9]{3}$/), port_authority: TEXT80, issues: arrOf(oneOf(...PORT_CALL_GAP_ISSUES), 1, 2), covered_from: DATE, covered_to: DATE,
+  refreshed_at: TIME,
+}, ["port_authority_code", "port_authority", "issues"]);
+const PORT_CALL_INDEX = shape({
+  authorities: oneOf(PORT_CALL_AUTHORITIES), complete: isBool, refreshed_at: TIME, stale_after_s: oneOf(PORT_CALL_STALE_AFTER_S),
+  gaps: arrOf(PORT_CALL_GAP, 0, PORT_CALL_AUTHORITIES),
+}, ["authorities", "complete", "stale_after_s", "gaps"]);
 const PORT_CALLS = shape({
-  status: oneOf(...PORT_CALL_STATUSES), call_sign: re(/^[A-Z0-9]{3,7}$/), fetched_at: TIME, window_days: oneOf(PORT_CALL_WINDOW_DAYS),
-  window_from: DATE, window_to: DATE, source: oneOf(PORT_CALL_SOURCE), items: arrOf(PORT_CALL, 1, 20), truncated: oneOf(true), incomplete: oneOf(true),
-  error_kind: oneOf(...PORT_CALL_ERROR_KINDS), error_code: re(/^[A-Za-z0-9_]{1,16}$/), disabled_reason: oneOf(...PORT_CALL_DISABLED_REASONS),
-  limited_by: oneOf(...PORT_CALL_LIMITED_BY),
+  status: oneOf(...PORT_CALL_STATUSES), call_sign: re(/^[A-Z0-9]{3,7}$/), call_sign_state: oneOf(...PORT_CALL_CALL_SIGN_STATES),
+  window_days: oneOf(PORT_CALL_WINDOW_DAYS), window_from: DATE, window_to: DATE, source: oneOf(PORT_CALL_SOURCE), items: arrOf(PORT_CALL, 1, 20),
+  truncated: oneOf(true), index: PORT_CALL_INDEX, disabled_reason: oneOf(...PORT_CALL_DISABLED_REASONS),
 }, ["status", "window_days", "source"]);
 
 /** $defs/demand 의 hot · focus(계약 v2 §A3) */
@@ -448,7 +454,7 @@ const VALIDATORS: Record<ServerType, (m: Obj, d: Drops) => ServerMsg> = {
       return null;
     };
     const dest = part<Obj>(m, "destination_info", DEST_INFO, d);
-    // 한국 항만 입출항(ADR-022): 묶음 하나 — 틀리면 통째로 버리고 센다(카드는 "—")
+    // 한국 항만 입출항(ADR-022 개정): 묶음 하나 — 틀리면 통째로 버리고 센다(카드는 "—")
     const calls = part<Obj>(m, "port_calls", PORT_CALLS, d);
     return {
       type: "ship_selected", mmsi, state: one("state", SHIP_STATE, parseShipState), static: one("static", SHIP_STATIC, parseShipStatic),

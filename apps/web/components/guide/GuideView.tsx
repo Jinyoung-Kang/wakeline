@@ -9,7 +9,7 @@ import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, ST
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
 import { LOG_LEVELS, LOG_PERIOD_LABEL, LOG_SERVICES } from "@/lib/logs";
 import {
-  PORT_CALL_IP_LIMIT, PORT_CALL_MAX_ITEMS, PORT_CALL_SESSION_LIMIT, PORT_CALL_SOURCE, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS,
+  PORT_CALL_AUTHORITIES, PORT_CALL_MAX_ITEMS, PORT_CALL_SOURCE, PORT_CALL_STALE_AFTER_S, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS,
 } from "@/lib/portcalls";
 import { LEGEND_OPEN_MIN_WIDTH } from "@/lib/prefs";
 import { REPLAY_FULL_RES_MS, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, REPLAY_SUMMARY_MS } from "@/lib/replay";
@@ -203,7 +203,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   범례{ref("traffic", 3)}: “{TRAFFIC_LEGEND_NOTE}”. 칸의 수는 <B>격자별 척수이고 개별 선박 위치가 아닙니다</B> — 지도의 선박 기호(AIS)와 다른 자료입니다.
                   색 구간은 {TRAFFIC_BINS.map((b) => b.label).join(" · ")}척(표시용 선택 — 많을수록 밝은 주황), 0척은 회색.</li>
                 <li><B>칸의 위치</B> — 해양수산부 해양격자 4단계에서 칸마다 한 번 받아 0.025° 격자에 맞는지 서버가 확인한 칸만 그립니다. 칸 번호의 글자로 위치를 짐작하지 않으므로,
-                  칸 조회는 시간당 많아야 290칸(선박 항만 입출항 조회와 나눠 쓰는 해양수산부 호출 상한)이라 처음 약 18시간 이상(계산)은 확인한 칸만 보이고 상태 줄{ref("traffic", 2)}이 ‘위치 확인 중 N칸’을 적습니다(거듭 실패한 칸은 ‘위치 조회 실패 N칸’, 해양격자에 없는 칸 · 격자 검사에 실패한 칸도 따로 셉니다).</li>
+                  칸 조회는 시간당 많아야 290칸(항만 입출항 색인과 나눠 쓰는 해양수산부 호출 상한)이라 처음 약 18시간 이상(계산)은 확인한 칸만 보이고 상태 줄{ref("traffic", 2)}이 ‘위치 확인 중 N칸’을 적습니다(거듭 실패한 칸은 ‘위치 조회 실패 N칸’, 해양격자에 없는 칸 · 격자 검사에 실패한 칸도 따로 셉니다).</li>
                 <li><B>상태 줄</B> — 기준 시각(KST · UTC) · 표시한 칸 / 전체, 또는 꺼짐(이유 — 공공데이터포털 키 없음 · fixture 모드 · 운영자가 끔) · 자료 없음 · 검증 실패 · 조회 실패.
                   레이어가 켜져 있고 탭이 보일 때만 {TRAFFIC_POLL_MS / 1000} s 마다 조회합니다. 기준 시각이 15분 넘게 지나면(조회가 실패해도 이 브라우저 시계로) 칸을 지우고 ‘자료 멈춤’이라고 적습니다.</li>
                 <li><B>툴팁</B> — 칸에 마우스를 올리면 격자 번호 · 척수 · 밀집도 % · 기준 시각(KST · UTC).</li>
@@ -240,16 +240,19 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               </UL>
               {fig("port-calls")}
               <UL>
-                <li><B>{PORT_CALL_TITLE}</B>{ref("port-calls", 1)} — 선박을 고르면 서버 수집기가 그 선박이 AIS 로 보낸 <B>호출부호로만</B> 공공데이터포털의 {PORT_CALL_SOURCE}에
-                  최근 {PORT_CALL_WINDOW_DAYS}일(KST 날짜 · 입항일 기준) 입출항 신고를 항만청 10곳에 묻습니다. 선명으로는 찾지 않습니다 — 호출부호가 틀리거나 같은 호출부호를 쓰는
-                  다른 선박이 있으면 다른 선박의 신고일 수 있습니다.</li>
-                <li><B>결과 표</B>{ref("port-calls", 3)} — 항만청 · 입항 / 출항(KST · UTC) · 목적 · 전출항지 → 차항지, 최근 {PORT_CALL_MAX_ITEMS}건까지.
-                  00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보이고 ‘시각 미확인’이라고 적습니다(UTC 로 바꾸지 않습니다).
-                  PORT-MIS 에 신고된 선명이 AIS 선명과 다르면 경고로 밝히고 같은 선박인지 판정하지 않습니다(한글 신고 선명은 영문인 AIS 선명과 비교하지 않고 그렇다고만 적습니다).</li>
-                <li><B>상태</B>{ref("port-calls", 2)} — 조회 중(항만청 10곳에 요청 10회 이상을 차례로 보냅니다 — 공공데이터포털 호출이 초당 약 1회로 묶여 있어 수 초 이상 걸립니다) · 기록 없음 · 키 없음 · 조회 실패(종류와 코드만 — 원문 사유는 운영 화면에) ·
-                  호출부호 없음 · 호출부호 모름(AIS 정적 정보를 받기 전) · 조회 한도를 그대로 적습니다.</li>
-                <li><B>조회 한도</B> — 새 선박 조회는 한 화면에서 {PORT_CALL_SESSION_LIMIT.window}에 {PORT_CALL_SESSION_LIMIT.max}척, 같은 접속 주소(IP)에서 {PORT_CALL_IP_LIMIT.window}에 {PORT_CALL_IP_LIMIT.max}척까지입니다.
-                  넘으면 ‘지금 조회하지 않음’이라고 적고(‘조회 중’이라 하지 않음) 한도가 풀리면 스스로 조회합니다. 결과는 서버에 6시간(실패는 5분) 보관해 다시 고를 때는 묻지 않습니다.</li>
+                <li><B>{PORT_CALL_TITLE}</B>{ref("port-calls", 1)} — 서버 수집기가 공공데이터포털의 {PORT_CALL_SOURCE}에서 항만청 {PORT_CALL_AUTHORITIES}곳의 입출항 신고를
+                  KST 날짜별로 모두 받아 <B>색인</B>해 두고, 선박을 고르면 그 선박이 AIS 로 보낸 <B>호출부호로만</B> 색인에서 최근 {PORT_CALL_WINDOW_DAYS}일(KST 날짜 · 입항일 기준) 기록을 찾습니다.
+                  고를 때 외부에 묻지 않습니다(원천의 호출부호 검색이 거르지 않아 — 선박마다 틀린 ‘기록 없음’이 나왔습니다 — 색인으로 바꿨습니다). 선명으로는 찾지 않습니다 — 호출부호가 틀리거나
+                  같은 호출부호를 쓰는 다른 선박이 있으면 다른 선박의 신고일 수 있습니다.</li>
+                <li><B>결과 표</B>{ref("port-calls", 3)} — 항만청 · 입항 · 출항(KST · UTC, 그 신고의 판 — 최종 · 최초) · 선석 · 목적 · 전출항지 → 차항지, 최근 {PORT_CALL_MAX_ITEMS}건까지.
+                  출항 신고가 색인에 없으면 —(아직 입항 중이거나 색인이 그 뒤를 다시 읽지 않았을 수 있습니다). 00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아
+                  날짜만 보이고 ‘시각 미확인’이라고 적습니다(UTC 로 바꾸지 않습니다). PORT-MIS 에 신고된 선명이 AIS 선명과 다르면 경고로 밝히고 같은 선박인지 판정하지 않습니다 —
+                  두 이름이 모두 영문일 때만 견줍니다(한글 신고 선명은 비교하지 않고 그렇다고만 적습니다).</li>
+                <li><B>색인 상태</B>{ref("port-calls", 4)} — ‘색인: {PORT_CALL_AUTHORITIES}개 항만청 · 최근 {PORT_CALL_WINDOW_DAYS}일 · 갱신 (KST · UTC)’. 수집기는 한 시간마다 항만청마다 최근 3일을
+                  다시 받고(출항 · 최종 신고가 뒤에 붙습니다) 그보다 오래된 날은 하루에 한 번 다시 받습니다. 갱신 시각은 {PORT_CALL_AUTHORITIES}곳 중 가장 오래된 것 — 그 순간까지 올라온 신고가 색인에 있습니다.</li>
+                <li><B>상태</B>{ref("port-calls", 2)} — <B>기록 없음</B>은 {PORT_CALL_AUTHORITIES}곳 모두 창 전체를 색인했고 {PORT_CALL_STALE_AFTER_S / 3600}시간 안에 갱신됐을 때만 말합니다.
+                  아니면 ‘색인 불완전’과 항만청마다 이유(아직 색인 안 됨 · 창 앞쪽 일부만 · 갱신 오래됨 — 마지막 갱신 시각)를 적습니다. 그 밖에 꺼짐(공공데이터포털 키 없음 · 운영자가 끔) ·
+                  AIS 호출부호를 아직 받지 않음(정적 정보 전 — ‘없음’이 아닙니다) · 찾는 형식 밖 호출부호 · 색인 읽기 실패를 그대로 적습니다.</li>
               </UL>
             </Sec>
             <Sec id="dashboard-alerts" sub>

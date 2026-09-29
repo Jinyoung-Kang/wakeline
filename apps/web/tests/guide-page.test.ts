@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
 import { normalizeQuery, normalizeShipQuery } from "@/lib/search";
 import { flattenToc, parseManifest, PLAN, type GuideManifest, type ManifestDrop } from "@/lib/guide";
-import { PORT_CALL_IP_LIMIT, PORT_CALL_SESSION_LIMIT, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS } from "@/lib/portcalls";
+import { PORT_CALL_AUTHORITIES, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS } from "@/lib/portcalls";
 import { RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
 import { fmtDual, fmtDualCompact, fmtUtcDayDual } from "@/lib/time";
 import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
@@ -198,13 +198,17 @@ describe("features the guide describes exist in the screens", () => {
     expect(text(html)).toContain(RESOLUTION_STATE_TEXT.stale);
     expect(text(html)).toContain(RESOLUTION_STATE_TEXT.unavailable);
   });
-  it("2.6 describes Korean port calls on the ship card: PORT-MIS, call-sign match, the window, the lookup limits", () => {
+  it("2.6 describes Korean port calls on the ship card: the server-side index, call-sign match, the window, when 'none' is said", () => {
     const ship = section(render(EMPTY), "dashboard-ship");
     expect(ship).toContain(PORT_CALL_TITLE);
     expect(ship).toMatch(/호출부호로만/);
+    expect(ship).toMatch(/색인/);
+    expect(ship).toMatch(/고를 때 외부에 묻지 않습니다/);
     expect(ship).toContain(`최근 ${PORT_CALL_WINDOW_DAYS}일`);
-    expect(ship).toContain(`${PORT_CALL_SESSION_LIMIT.window}에 ${PORT_CALL_SESSION_LIMIT.max}척`);
-    expect(ship).toContain(`${PORT_CALL_IP_LIMIT.window}에 ${PORT_CALL_IP_LIMIT.max}척`);
+    expect(ship).toContain(`색인: ${PORT_CALL_AUTHORITIES}개 항만청 · 최근 ${PORT_CALL_WINDOW_DAYS}일 · 갱신`);
+    expect(ship).toMatch(/기록 없음[^.]*모두 창 전체를 색인했고 2시간 안에 갱신됐을 때만/);
+    expect(ship).toMatch(/아직 받지 않음/);
+    expect(ship).not.toMatch(/조회 한도|6시간\(실패는 5분\)/); // 선택마다 묻던 설계의 한도 · 캐시는 없다
     expect(ship).toMatch(/00:00\(KST\)[^.]*날짜만/);
   });
   it("2.3 describes the coastal traffic layer: grid counts not positions, 5-minute snapshot, cells appear as their geometry is resolved", () => {

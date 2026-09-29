@@ -739,7 +739,7 @@
             "properties": {
               "port_authority_code": { "type": "string", "pattern": "^[0-9]{3}$" },
               "port_authority": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "issues": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["not_indexed", "partial", "stale"] } },
+              "issues": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "enum": ["not_indexed", "partial", "stale"] } },
               "covered_from": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
               "covered_to": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
               "refreshed_at": { "$ref": "#/$defs/date_time" }
