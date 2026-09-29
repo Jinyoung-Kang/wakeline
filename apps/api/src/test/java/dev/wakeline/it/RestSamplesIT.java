@@ -17,8 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -140,7 +138,7 @@ class RestSamplesIT extends IntegrationTest {
                 VALUES ('RKSI', date_trunc('hour', now()), 'RKSI 271200Z 27010KT 9999 BKN030 20/15 Q1013', 20, 15, 270, 10, 6.0, '6+', 3000, 'measured', 'VFR', 'awc', 'awc', now())
                 ON CONFLICT DO NOTHING""").update();
 
-        String day = LocalDate.now(ZoneOffset.UTC).toString();
+        String day = dev.wakeline.persist.MaintenanceJobs.today().toString(); // 통계 날짜 = KST 날짜(계약 v5 §G19)
         String bbox = "124,33,132,39";
         record("status", "/api/v1/status", 200);
         record("aircraft", "/api/v1/aircraft?bbox=" + bbox, 200);

@@ -248,7 +248,7 @@ class SecurityIT extends IntegrationTest {
         assertProblem(b.send("POST", "/api/v1/ops/providers/opensky/explode", null, b.withCsrf()), 404, "NOT_FOUND", "/api/v1/ops/providers/opensky/explode");
 
         // 통계 재집계(멱등) + 감사
-        String day = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(2).toString();
+        String day = dev.wakeline.persist.MaintenanceJobs.today().minusDays(2).toString(); // KST 날짜(계약 v5 §G19)
         Res agg = b.send("POST", "/api/v1/ops/stats/aggregate?day=" + day, null, b.withCsrf());
         assertThat(agg.status()).isEqualTo(200);
         assertThat(agg.json().path("day").asString()).isEqualTo(day);

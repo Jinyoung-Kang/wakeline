@@ -3,6 +3,7 @@ package dev.wakeline.rest;
 import dev.wakeline.config.AppProperties;
 import dev.wakeline.config.Problem;
 import dev.wakeline.domain.Bbox;
+import dev.wakeline.persist.MaintenanceJobs;
 import dev.wakeline.persist.SigmetRepository;
 import dev.wakeline.persist.StatsRepository;
 import dev.wakeline.persist.TrackRepository;
@@ -22,7 +23,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/** 재생 · 통계 · 공개 상태 REST v1. */
+/**
+ * 재생 · 통계 · 공개 상태 REST v1. 통계의 날짜는 KST 날짜(계약 v5 §G19 — 응답의 day_zone "Asia/Seoul"), 기본 날짜 · 범위도 KST 오늘로 센다.
+ */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1")
@@ -75,7 +78,7 @@ public class HistoryController {
         var range = range(from, to);
         String g = "hazard".equals(group) ? "hazard" : "fir";
         return ok(Map.of("group", g, "items", stats.sigmet(range[0], range[1], g),
-                "days", stats.days(range[0], range[1], dev.wakeline.persist.MaintenanceJobs.FAMILY_SIGMET)), req);
+                "days", stats.days(range[0], range[1], MaintenanceJobs.FAMILY_SIGMET)), req);
     }
 
     /**
@@ -83,11 +86,11 @@ public class HistoryController {
      * {center, radius_nm, bbox — 집계가 실제로 쓴 사각형(DH-10)}.
      * 지역 기록이 없는 옛 집계(전세계 표본이 섞였을 수 있음)는 scope·region 이 null — 어느 범위인지 단정하지 않는다.
      * 자료가 없는 시간은 items 에 없다(0 이 아니다). aggregated = 그날 집계를 마쳤는가(R-45) — false 면 빈 items 는 '0 대' 가 아니라 '집계 전'
-     * (오늘은 끝나지 않아 항상 false). day 는 UTC 날짜 "YYYY-MM-DD".
+     * (오늘은 끝나지 않아 항상 false). day 는 KST 날짜 "YYYY-MM-DD"(기본 = KST 오늘), items 의 dim 은 그날의 KST 시.
      */
     @GetMapping("/stats/traffic")
     public ResponseEntity<Map<String, Object>> statsTraffic(@RequestParam(required = false) LocalDate day, HttpServletRequest req) {
-        LocalDate d = day == null ? LocalDate.now(java.time.ZoneOffset.UTC) : day;
+        LocalDate d = day == null ? MaintenanceJobs.today() : day;
         StatsRepository.Traffic t = stats.traffic(d);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("day", d.toString());
@@ -101,7 +104,7 @@ public class HistoryController {
     @GetMapping("/stats/alerts")
     public ResponseEntity<Map<String, Object>> statsAlerts(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to, HttpServletRequest req) {
         var range = range(from, to);
-        return ok(Map.of("items", stats.alerts(range[0], range[1]), "days", stats.days(range[0], range[1], dev.wakeline.persist.MaintenanceJobs.FAMILY_ALERTS)), req);
+        return ok(Map.of("items", stats.alerts(range[0], range[1]), "days", stats.days(range[0], range[1], MaintenanceJobs.FAMILY_ALERTS)), req);
     }
 
     @GetMapping("/status")
@@ -112,14 +115,16 @@ public class HistoryController {
     }
 
     private static LocalDate[] range(LocalDate from, LocalDate to) {
-        LocalDate t = to == null ? LocalDate.now(java.time.ZoneOffset.UTC) : to;
+        LocalDate t = to == null ? MaintenanceJobs.today() : to;
         LocalDate f = from == null ? t.minusDays(7) : from;
         if (f.isAfter(t) || f.plusDays(92).isBefore(t)) throw Problem.badRequest("BAD_RANGE", "range must be within 92 days");
         return new LocalDate[]{f, t};
     }
 
+    /** 통계 응답: 본문 + day_zone(날짜가 어느 시간대의 달력 날짜인지 — 계약 v5 §G19) + meta. 10분 공개 캐시 */
     private static ResponseEntity<Map<String, Object>> ok(Map<String, Object> body, HttpServletRequest req) {
         Map<String, Object> m = new LinkedHashMap<>(body);
+        m.put("day_zone", MaintenanceJobs.DAY_ZONE_ID);
         m.put("meta", Meta.of(req, "db", Instant.now(), Integer.MAX_VALUE));
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(600, TimeUnit.SECONDS).cachePublic()).body(m);
     }

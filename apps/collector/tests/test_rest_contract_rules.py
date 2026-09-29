@@ -70,11 +70,13 @@ def test_recorded_status_needs_the_union_of_every_shard_but_live_status_may_be_a
 META = {"stale": False, "generated_at": "2026-09-28T00:00:00Z", "request_id": "abcdefgh"}
 
 
-def test_stats_days_are_utc_date_strings_with_an_aggregated_flag():
-    """R-45: 통계 day 는 "YYYY-MM-DD" 만, 범위 응답은 날마다 aggregated, 행의 날은 그 범위 안."""
+def test_stats_days_are_kst_date_strings_with_an_aggregated_flag():
+    """R-45: 통계 day 는 "YYYY-MM-DD" 만, 범위 응답은 날마다 aggregated, 행의 날은 그 범위 안.
+    계약 v5 §G19: 그 날짜는 KST 날짜 — day_zone "Asia/Seoul" 이 늘 있고, 교통량의 시(dim)는 그 KST 날짜의 시 "00"–"23"(시마다 한 행)."""
     v = Draft202012Validator(rcc.SCHEMAS["stats_sigmet"], format_checker=rcc.FORMATS)
     ok = {
         "group": "fir",
+        "day_zone": "Asia/Seoul",
         "items": [{"day": "2026-09-27", "dim": "RKRR", "value": 3}],
         "days": [{"day": "2026-09-26", "aggregated": False}, {"day": "2026-09-27", "aggregated": True}],
         "meta": META,
@@ -84,16 +86,33 @@ def test_stats_days_are_utc_date_strings_with_an_aggregated_flag():
     midnight = {**ok, "items": [{"day": "2026-09-27T00:00:00.000Z", "dim": "RKRR", "value": 3}]}
     assert list(v.iter_errors(midnight))  # 자정 시각 문자열(JVM 시간대 의존)은 날짜가 아니다
     assert list(v.iter_errors({**ok, "days": [{"day": "2026-09-27"}]}))  # aggregated 없음
+    assert list(v.iter_errors({k: x for k, x in ok.items() if k != "day_zone"}))  # 어느 날짜인지 밝히지 않은 응답
+    assert list(v.iter_errors({**ok, "day_zone": "UTC"}))  # UTC 날짜 집계는 계약 밖(보관 표에만)
     unordered = [{"day": "2026-09-27", "aggregated": True}, {"day": "2026-09-26", "aggregated": True}]
     assert rcc._stats_days({**ok, "days": unordered})
     holes = [{"day": "2026-09-25", "aggregated": True}, {"day": "2026-09-27", "aggregated": True}]
     assert rcc._stats_days({**ok, "days": holes})
     assert rcc._stats_days({**ok, "days": [{"day": "2026-09-26", "aggregated": True}]})  # 행의 날이 범위 밖
+    a = Draft202012Validator(rcc.SCHEMAS["stats_alerts"], format_checker=rcc.FORMATS)
+    alerts = {
+        "day_zone": "Asia/Seoul",
+        "items": [{"day": "2026-09-27", "metric": "alerts_by_kind", "dim": "OBSERVED", "value": 2}],
+        "days": ok["days"],
+        "meta": META,
+    }
+    assert not list(a.iter_errors(alerts))
+    assert list(a.iter_errors({k: x for k, x in alerts.items() if k != "day_zone"}))
     t = Draft202012Validator(rcc.SCHEMAS["stats_traffic"], format_checker=rcc.FORMATS)
-    traffic = {"day": "2026-09-28", "aggregated": False, "items": [], "meta": META}
+    traffic = {"day": "2026-09-28", "day_zone": "Asia/Seoul", "aggregated": False, "items": [], "meta": META}
     assert not list(t.iter_errors(traffic))
     assert list(t.iter_errors({k: x for k, x in traffic.items() if k != "aggregated"}))  # 집계 전인지 알 수 없다
-    assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-27", "dim": "10", "value": 1}]})
+    assert list(t.iter_errors({k: x for k, x in traffic.items() if k != "day_zone"}))
+    assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-27", "dim": "10", "value": 1}]})  # 다른 날의 행
+    hours = [{"day": "2026-09-28", "dim": h, "value": 1} for h in ("00", "09", "23")]
+    assert rcc._stats_traffic({**traffic, "items": hours}) == []
+    assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-28", "dim": "24", "value": 1}]})  # 하루에 없는 시
+    assert rcc._stats_traffic({**traffic, "items": [{"day": "2026-09-28", "dim": "7", "value": 1}]})  # 두 자리가 아니다
+    assert rcc._stats_traffic({**traffic, "items": hours + [hours[0]]})  # 같은 시가 두 번
 
 
 def test_status_radar_kr_carries_only_validated_fields():

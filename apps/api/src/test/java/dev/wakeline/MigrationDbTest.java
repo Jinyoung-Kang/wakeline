@@ -135,11 +135,13 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT alt_ft_at_entry FROM alert_event WHERE id = 6").query(Integer.class).single()).isEqualTo(37000);
         assertThat(stage.sql("SELECT alt_ft_at_entry FROM alert_event WHERE id = 7").query(Integer.class).single()).isEqualTo(35000);
         // 체류: 확인된 이탈(id 1, 600 s)만 — NULL·만료 뒤 left·restart 는 빠진다. 집계된 적 없는 날은 새로 만들지 않는다.
-        assertThat(stage.sql("SELECT value FROM stats_daily WHERE day = :d AND metric = 'alert_dwell_avg_s'").param("d", day)
+        // (V4 가 고친 행은 UTC 날짜 집계 — 최신까지 올리면 V16 이 보관 표 stats_daily_utc_legacy 로 옮긴다. 계약 v5 §G19)
+        assertThat(stage.sql("SELECT value FROM stats_daily_utc_legacy WHERE day = :d AND metric = 'alert_dwell_avg_s'").param("d", day)
                 .query(java.math.BigDecimal.class).single().doubleValue()).isEqualTo(600.0);
-        assertThat(stage.sql("SELECT count(*) FROM stats_daily WHERE day = :d").param("d", notAggregated).query(Long.class).single()).isZero();
-        assertThat(stage.sql("SELECT value FROM stats_daily WHERE day = :d AND metric = 'alerts_by_kind'").param("d", day)
+        assertThat(stage.sql("SELECT count(*) FROM stats_daily_utc_legacy WHERE day = :d").param("d", notAggregated).query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT value FROM stats_daily_utc_legacy WHERE day = :d AND metric = 'alerts_by_kind'").param("d", day)
                 .query(java.math.BigDecimal.class).single().intValue()).isEqualTo(4);
+        assertThat(stage.sql("SELECT count(*) FROM stats_daily").query(Long.class).single()).as("V16: the KST-day table starts empty").isZero();
         // 새 값은 제약을 통과하고, 목록 밖 값은 여전히 거부된다
         stage.sql("UPDATE alert_event SET close_reason = 'sigmet_ended' WHERE id = 4").update();
         stage.sql("UPDATE sigmet SET top_source = 'raw_text_lower_bound' WHERE id = 'TOP_EXACT'").update();
@@ -776,6 +778,74 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_collector', 'port_call_coverage', 'DELETE')").query(Boolean.class).single()).isFalse();
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'port_call', 'SELECT')").query(Boolean.class).single()).isTrue();
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'port_call_coverage', 'UPDATE')").query(Boolean.class).single()).isFalse();
+    }
+
+    /**
+     * V16(계약 v5 §G19 — 사용자 결정 2026-09-30 "UTC 지우고 KST"): 우리 일 집계(stats_daily · quality_rule_count)의 날짜 = KST 날짜.
+     * 이전 행은 UTC 날짜로 센 것이라 KST 날짜로 이름만 바꾸지 않는다 — 보관 표(*_utc_legacy)로 옮기고(서비스 역할은 아무 권한 없음 — 읽는 코드 없음),
+     * 새 표는 비어 있다(api 따라잡기가 원본이 남은 계열을 KST 날짜로 다시 센다). 권한은 이전 표와 같다(api 통계 DML · collector 규칙별 수 upsert ·
+     * api 규칙별 수 읽기 · 보존 삭제). 머리 주석의 되돌리기 SQL 로 옛 표가 돌아오고(행 그대로), 다시 적용된다.
+     */
+    @Test
+    void v16MovesUtcDayAggregatesAsideAndStartsKstDayTablesWithTheSameGrants() throws Exception {
+        DbTestSupport.start();
+        assertThat(latestMigrationVersion()).as("latest migration on the classpath").isGreaterThanOrEqualTo(16);
+        String db = "wakeline_stage_sixteen";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "15");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        stage.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES ('2026-09-28', 'sigmet_by_fir', 'RKRR', 3), ('2026-09-28', 'aggregated_at', 'sigmet', 1)").update();
+        stage.sql("INSERT INTO quality_rule_count (day, rule, count) VALUES ('2026-09-28', 'seen_in_future', 7)").update();
+
+        migrateTo(url, "16");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '16' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        // 옛 행은 보관 표에 그대로(날짜 값을 바꾸지 않는다), 새 표는 비어 있다
+        assertThat(stage.sql("SELECT day || ' ' || metric || ' ' || dim || ' ' || value FROM stats_daily_utc_legacy ORDER BY metric").query(String.class).list())
+                .containsExactly("2026-09-28 aggregated_at sigmet 1", "2026-09-28 sigmet_by_fir RKRR 3");
+        assertThat(stage.sql("SELECT day || ' ' || rule || ' ' || count FROM quality_rule_count_utc_legacy").query(String.class).list())
+                .containsExactly("2026-09-28 seen_in_future 7");
+        assertThat(stage.sql("SELECT count(*) FROM stats_daily").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT count(*) FROM quality_rule_count").query(Long.class).single()).isZero();
+        for (String t : new String[]{"stats_daily", "quality_rule_count", "stats_daily_utc_legacy", "quality_rule_count_utc_legacy"})
+            assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = :t").param("t", t).query(String.class).single())
+                    .as(t).isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT obj_description('stats_daily'::regclass)").query(String.class).single()).contains("KST");
+        assertThat(stage.sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'stats_daily'::regclass AND contype = 'p'").query(String.class).single())
+                .isEqualTo("PRIMARY KEY (day, metric, dim)");
+        assertThat(stage.sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'quality_rule_count'::regclass AND contype = 'p'").query(String.class).single())
+                .isEqualTo("PRIMARY KEY (day, rule)");
+
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            for (String sql : new String[]{"INSERT INTO stats_daily (day, metric, dim, value) VALUES ('2026-09-29', 'sigmet_by_fir', 'RKRR', 1)",
+                    "UPDATE stats_daily SET value = 2", "SELECT * FROM stats_daily", "DELETE FROM stats_daily", "SELECT * FROM quality_rule_count",
+                    "DELETE FROM quality_rule_count WHERE day < '2026-01-01'"})
+                assertThat(sqlState(c, sql)).as(sql).isNull();
+            for (String sql : new String[]{"INSERT INTO quality_rule_count (day, rule, count) VALUES ('2026-09-29', 'r', 1)",
+                    "SELECT * FROM stats_daily_utc_legacy", "DELETE FROM stats_daily_utc_legacy", "SELECT * FROM quality_rule_count_utc_legacy"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+        }
+        try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW)) {
+            assertThat(sqlState(c, """
+                    INSERT INTO quality_rule_count (day, rule, count) VALUES ('2026-09-29', 'seen_in_future', 1)
+                    ON CONFLICT (day, rule) DO UPDATE SET count = quality_rule_count.count + EXCLUDED.count""")).isNull();
+            for (String sql : new String[]{"DELETE FROM quality_rule_count", "SELECT * FROM stats_daily", "SELECT * FROM quality_rule_count_utc_legacy",
+                    "INSERT INTO quality_rule_count_utc_legacy (day, rule, count) VALUES ('2026-09-29', 'r', 1)"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+        }
+
+        // 되돌리기(머리 주석): 새 표(KST 날짜 행)를 지우고 보관 표를 원래 이름 · 권한으로 → V15 와 같은 스키마 · 옛 행 그대로. 그 뒤 다시 앞으로
+        runAsMigrator(url, rollbackSql("V16__kst_day_aggregates.sql"));
+        assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '16'").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT to_regclass('stats_daily_utc_legacy') IS NULL AND to_regclass('quality_rule_count_utc_legacy') IS NULL").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT value::int FROM stats_daily WHERE metric = 'sigmet_by_fir'").query(Integer.class).single()).isEqualTo(3);
+        assertThat(stage.sql("SELECT count FROM quality_rule_count WHERE rule = 'seen_in_future'").query(Long.class).single()).isEqualTo(7L);
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'stats_daily', 'INSERT') AND has_table_privilege('wakeline_collector', 'quality_rule_count', 'UPDATE')")
+                .query(Boolean.class).single()).isTrue();
+        migrateTo(url, "16");
+        assertThat(stage.sql("SELECT count(*) FROM stats_daily_utc_legacy").query(Long.class).single()).isEqualTo(2L);
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'stats_daily_utc_legacy', 'SELECT')").query(Boolean.class).single()).isFalse();
     }
 
     /**
