@@ -1,6 +1,6 @@
 "use client";
 import * as maplibregl from "maplibre-gl";
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { subscriptionBbox } from "@/lib/viewport";
 import { addBaseLayers, MAPLIBRE_WORKER_URL, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
 import { applyBasemap } from "@/lib/basemap";
@@ -16,8 +16,9 @@ export type ReplayPick = { kind: "aircraft"; hex: string } | { kind: "sigmet"; i
  * (RainViewer 는 2 h 만 보관 — 없으면 그리지 않고 화면에 "레이더 이력 없음"). 호출부호는 기록에 없으면 비운다(hex 로 채우지 않는다).
  * 클릭하면 onPick(항공기/SIGMET), 호버하면 툴팁.
  * 조회 영역은 서버 면적 상한(2500 sq°) 안으로 줄여 보낸다 — 줄였으면 점선 상자로 조회한 영역을 그린다(R-05). frame 이 null 이면 지도를 비운다.
+ * memo: 슬라이더를 끄는 동안 재생 화면은 입력마다 다시 그려지지만(시각 라벨), 지도는 frame · 레이더 · 콜백이 바뀔 때만.
  */
-export function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean }) {
+export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean }) {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const frameRef = useRef<ReplayFrame | null>(frame);
@@ -127,4 +128,4 @@ export function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayF
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radarKey, showRadar]);
   return <div ref={el} className="h-full w-full" data-testid="replay-map" />;
-}
+});

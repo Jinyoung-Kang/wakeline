@@ -278,53 +278,93 @@ export function fromKstInput(v: string): number | null {
 /** 시각 이동 버튼 [ms, 라벨] */
 export const REPLAY_STEPS: [number, string][] = [[-3600_000, "−1h"], [-600_000, "−10m"], [-60_000, "−1m"], [60_000, "+1m"], [600_000, "+10m"], [3600_000, "+1h"]];
 
-// ---- 요청 순서(R-47) ----
+// ---- 요청 순서(R-47) · 끌기(사용자 영상 2026-09-29) ----
 
 export interface ReplayReq { at: number; bbox: string }
+/** 슬라이더를 끄는 동안 입력이 멈춘 뒤 이만큼 지나야 보낸다 — 입력마다 요청을 만들지 않는다(시각 라벨은 입력마다 바로 바뀐다) */
+export const REPLAY_DEBOUNCE_MS = 150;
+export interface ReplayRequestOpts {
+  /**
+   * true(사용자가 옮김): 보내는 중인 다른 요청을 취소(AbortController)하고 바로 보낸다 — 그 응답은 이미 낡았다.
+   * false(재생 ▶): 취소하지 않고 끝나면 가장 최근 것을 보낸다 — 응답이 틱 간격보다 느려도 프레임이 계속 온다(R-47).
+   */
+  supersede?: boolean;
+}
+type Timers = { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
+const defaultTimers: Timers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+};
 
 /**
- * 재생 요청을 한 번에 하나만 보내되, 보내는 중에 들어온 요청을 버리지 않는다(R-47): 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀)
- * 응답이 오면 바로 보낸다 — 결국 마지막으로 원한 (at, bbox) 가 그려진다. 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이
- * "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다). 기다리는 요청이 실패한 것과
- * 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로.
+ * 재생 요청은 한 번에 하나만 보낸다(보내는 중인 요청은 늘 최대 1개).
+ * - schedule(): debounce(REPLAY_DEBOUNCE_MS) 뒤 마지막 값 하나만 request() 로 — 끄는 동안 요청이 입력 수만큼 쌓이지 않는다.
+ * - request(supersede): 보내는 중인 요청을 취소하고 바로 보낸다. 취소한 요청의 응답·실패는 반영하지 않는다(지도를 비우지 않는다).
+ * - request(기본): 보내는 중이면 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀) 응답이 오면 바로 보낸다(R-47) — 결국 마지막으로 원한 (at, bbox) 가 그려진다.
+ * 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이 "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다).
+ * 기다리는 요청이 실패한 것과 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로. 보내는 중인 것과 같은 요청은 취소하지도 다시 보내지도 않는다.
  */
 export class ReplayLoader {
-  private inflight: ReplayReq | null = null;
+  private inflight: { r: ReplayReq; ctl: AbortController } | null = null;
   private queued: ReplayReq | null = null;
+  private timer: unknown = null;
   private disposed = false;
 
   constructor(
-    private readonly fetchFrame: (r: ReplayReq) => Promise<ReplayFrame>,
+    private readonly fetchFrame: (r: ReplayReq, signal: AbortSignal) => Promise<ReplayFrame>,
     private readonly onEvent: (e: ReplayEvent, r: ReplayReq) => void,
     private readonly clock: () => number = () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
+    private readonly timers: Timers = defaultTimers,
+    private readonly debounceMs = REPLAY_DEBOUNCE_MS,
   ) {}
 
-  request(r: ReplayReq): void {
+  /** 입력(슬라이더·재생 틱 등) — 마지막 값만 debounce 뒤에 보낸다 */
+  schedule(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
     if (this.disposed) return;
-    if (this.inflight) { this.queued = r; return; }
+    if (this.timer != null) this.timers.clear(this.timer);
+    this.timer = this.timers.set(() => { this.timer = null; this.request(r, opts); }, this.debounceMs);
+  }
+
+  request(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
+    if (this.disposed) return;
+    const cur = this.inflight;
+    if (cur) {
+      if (sameReq(cur.r, r)) { this.queued = null; return; } // 이미 그것을 받는 중
+      if (!opts.supersede) { this.queued = r; return; }
+      this.inflight = null;
+      this.queued = null;
+      cur.ctl.abort(); // 낡은 요청 — 응답을 기다리지 않는다
+    }
     void this.run(r);
   }
 
-  /** 화면을 떠나면 더 보내지도 반영하지도 않는다 */
+  /** 화면을 떠나면 더 보내지도 반영하지도 않는다(기다리는 debounce · 보내는 중인 요청도 취소) */
   dispose(): void {
     this.disposed = true;
     this.queued = null;
+    if (this.timer != null) { this.timers.clear(this.timer); this.timer = null; }
+    const cur = this.inflight;
+    this.inflight = null;
+    cur?.ctl.abort();
   }
 
   private async run(r: ReplayReq): Promise<void> {
-    this.inflight = r;
+    const me = { r, ctl: new AbortController() };
+    this.inflight = me;
     const t0 = this.clock();
     try {
-      const frame = await this.fetchFrame(r);
-      if (!this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
+      const frame = await this.fetchFrame(r, me.ctl.signal);
+      if (this.inflight === me && !this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
     } catch (error) {
-      // 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
-      if (!this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
+      // 취소된(대신한) 요청은 알리지 않는다. 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
+      if (this.inflight === me && !this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
     } finally {
-      this.inflight = null;
-      const next = this.queued;
-      this.queued = null;
-      if (next && !this.disposed && !sameReq(next, r)) void this.run(next);
+      if (this.inflight === me) {
+        this.inflight = null;
+        const next = this.queued;
+        this.queued = null;
+        if (next && !this.disposed && !sameReq(next, r)) void this.run(next);
+      }
     }
   }
 }

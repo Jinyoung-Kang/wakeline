@@ -1,12 +1,15 @@
 "use client";
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { ReplayPick } from "./ReplayMap";
 import type { ReplayFrame } from "@/lib/replay";
 
 const MAX_AIRCRAFT = 200;
 
-/** 재생 목록(R-40): 그 시각 프레임의 SIGMET·항공기를 버튼으로 — 지도 클릭 없이 상세(inspector)를 연다. */
-export function ReplayList({ frame, onPick }: { frame: ReplayFrame | null; onPick: (p: ReplayPick) => void }) {
+/**
+ * 재생 목록(R-40): 그 시각 프레임의 SIGMET·항공기를 버튼으로 — 지도 클릭 없이 상세(inspector)를 연다.
+ * memo: 슬라이더를 끄는 동안(입력마다 화면이 다시 그려짐) 수백 대 정렬을 되풀이하지 않는다 — frame 이 바뀔 때만.
+ */
+export const ReplayList = memo(function ReplayList({ frame, onPick }: { frame: ReplayFrame | null; onPick: (p: ReplayPick) => void }) {
   const [q, setQ] = useState("");
   return (
     <div className="flex max-h-full flex-col">
@@ -16,7 +19,7 @@ export function ReplayList({ frame, onPick }: { frame: ReplayFrame | null; onPic
       <ReplayListView frame={frame} q={q} onPick={onPick} />
     </div>
   );
-}
+});
 
 /** 표시 부분(거르기 문자열을 인자로 — 서버 렌더 시험용) */
 export function ReplayListView({ frame, q, onPick }: { frame: ReplayFrame | null; q: string; onPick: (p: ReplayPick) => void }) {
