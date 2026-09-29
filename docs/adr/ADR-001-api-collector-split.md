@@ -19,5 +19,5 @@
 
 ## 이후 변경(R-50, 리뷰 v1 — 현재 값)
 - **PEL 재처리의 한계**: api 가 멈춰 있는 동안의 메시지는 스트림 보존 창 안에서만 남는다. 항공기·선박 스트림은 개수(MAXLEN)가 아니라 시간으로 자른다 — `XADD MINID ~ (지금 − 2.5 h)`
-  (collector `publisher.py` `STREAM_RETENTION_S`, R-14) + 메모리 상한(보존 창 안 발행 바이트, `STREAM_BUDGET_BYTES` 항공기 80 MiB · 선박 16 MiB). 창보다 오래 멈추면 잘려 나간 구간은 영구 손실이며,
+  (collector `publisher.py` `STREAM_RETENTION_S`, R-14) + 메모리 상한(보존 창 안 발행 바이트, `STREAM_BUDGET_BYTES` 항공기 80 MiB · 선박 32 MiB — 선박은 2026-09-29 실측으로 16 MiB 에서 올렸다, ADR-011). 창보다 오래 멈추면 잘려 나간 구간은 영구 손실이며,
   api 가 이어 읽을 때 이를 감지해 손실 구간을 기록한다(`GET /api/v1/ops/pipeline` 의 `stream_trim_loss_events` · `last_stream_trim_loss`, R-14 · R-18). "api 가 죽어도 PEL 로 재처리" 는 이 창 안에서만 참이다.

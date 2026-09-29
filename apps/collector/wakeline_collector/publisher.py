@@ -8,8 +8,11 @@
   최신 항목 수로 MAXLEN ~ 을 건다(budget_trims 로 센다). 그때만 창이 2.5 h 보다 짧아진다.
   fixture 로 잰 항목 크기(측정: 관심 지역 127대 9.3 KB · 전세계 6,604대(합성) 448 KB · 선박 1척 49 B)로 본 api 정지 중 항공기 2.5 h 분량
   (관심 지역 10 s · 전세계 120 s — 수요 임대는 api 가 쓰므로 정지 중에는 focus·hot 이 없다)은 약 42 MB(관심 지역 500대면 약 66 MB)라
-  예산 80 MiB 안이다. 운영 설정 최단 주기(5 s · 60 s)에 관심 지역이 크면 예산이 창을 약 2 h 로 줄인다. 선박은 10 s 마다 약 13 KB
-  (ADR-014 실측: 200항목 2.5 MiB) → 2.5 h 약 12 MB, 예산 16 MiB. 두 스트림 합계 상한 96 MiB(Redis maxmemory 256 MB).
+  예산 80 MiB 안이다(2026-09-29 운영 실측: 890항목 37.8 MB 로 2.5 h 전체). 운영 설정 최단 주기(5 s · 60 s)에 관심 지역이 크면 예산이
+  창을 약 2 h 로 줄인다. 선박은 ADR-014 때 10 s 마다 약 13 KB(200항목 2.5 MiB)였으나 2026-09-29 운영 실측은 약 28.2 KB
+  (597항목 · MEMORY USAGE 16,825,126 B)라 2.5 h(900항목)에 약 25.4 MB 가 든다 — 그때의 예산 16 MiB 는 창을 약 1.66 h 로 줄였다
+  (ais stream_budget_trims 233). 그래서 선박 예산을 32 MiB 로 골랐다(선택값: 필요량이 예산의 약 76 %, MEMORY USAGE 기준이라
+  필드 길이 합으로는 조금 더 남는다). 두 스트림 예산 합계 112 MiB(Redis maxmemory 256 MiB — 헤드룸 계산은 ADR-011).
   수집기가 재시작하면 재시작 전 항목은 이 계산에 들어가지 않으므로, 창이 꽉 찬 채 재시작한 경우 최대 2.5 h 동안 두 배까지 남을 수 있다.
 - MINID 기준 시각은 이 프로세스의 벽시계다. 스트림 ID 는 Redis 서버 시계로 매겨지지만 같은 호스트라 차이는 무시할 수 있다.
 - SIGMET(300 s)·레이더(60 s)는 MAXLEN ~200 으로 이미 2 h 를 넘게 담는다(개수 트리밍 유지).
@@ -45,7 +48,8 @@ STREAM_RADAR = "wakeline:radar"
 STREAM_SHIPS = "wakeline:ships"
 MAXLEN = 200  # 개수 트리밍(SIGMET·레이더)
 STREAM_RETENTION_S = 2.5 * 3600  # 시간 트리밍 보존 창(항공기·선박) — api 정지 2 h + 재기동·따라잡기 여유
-STREAM_BUDGET_BYTES = {STREAM_AIRCRAFT: 80 * 2**20, STREAM_SHIPS: 16 * 2**20}  # 보존 창 안 발행 바이트 상한(메모리 상한)
+# 보존 창 안 발행 바이트 상한(메모리 상한, 선택값). 선박 32 MiB: 실측 약 25.4 MB/2.5 h 위 여유(위 설명 · ADR-011)
+STREAM_BUDGET_BYTES = {STREAM_AIRCRAFT: 80 * 2**20, STREAM_SHIPS: 32 * 2**20}
 QUEUE_MAX = 1000
 QUEUE_MAX_BYTES = 64 * 1024 * 1024
 PAYLOAD_MAX_BYTES = 64 * 1024 * 1024  # decode_payload 해제 상한
