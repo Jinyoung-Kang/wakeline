@@ -4,7 +4,7 @@
  * 시각: api 항목의 ts 는 UTC(원본 — JSON 복사 · NDJSON 은 그대로). 화면은 KST 먼저 · UTC 함께(lib/time), 텍스트 복사 · .txt 는 KST ISO(+09:00 — lib/kst).
  * §G2: api 는 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 합쳐 준다 — 항목마다 stream. 두 스트림은 id 를 따로 매기므로
  * 같은 id 가 둘 다에 있을 수 있어 화면은 항목을 stream + id(entryKey)로 가른다(같은 id 는 server 가 앞 — api 순서).
- * 해결 표시(ADR-022 — lib/resolutions): 항목 · 묶음에 resolved({id, upto, resolved_by} | null), 목록 · 묶음 응답에 hidden_resolved(가린 수) ·
+ * 해결 표시(ADR-024 — lib/resolutions): 항목 · 묶음에 resolved({id, upto, resolved_by} | null), 목록 · 묶음 응답에 hidden_resolved(가린 수) ·
  * resolution_state. 요청은 resolved=hide|show 를 늘 명시한다(기본 hide — 해결 처리한 지문의 upto 이하 항목을 빼고 뺀 수를 알린다).
  */
 import { REQUEST_ID_RE } from "./api";

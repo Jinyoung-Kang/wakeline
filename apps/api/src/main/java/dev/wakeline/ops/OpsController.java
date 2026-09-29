@@ -44,9 +44,11 @@ public class OpsController {
     private final dev.wakeline.persist.MaintenanceJobs jobs;
     private final TransactionTemplate tx;
     private final ProviderSwitchService switches;
+    private final ResolutionService resolutions;
 
     public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit,
-                         dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches) {
+                         dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches,
+                         ResolutionService resolutions) {
         this.status = status;
         this.db = db;
         this.redis = redis;
@@ -55,6 +57,7 @@ public class OpsController {
         this.jobs = jobs;
         this.tx = tx;
         this.switches = switches;
+        this.resolutions = resolutions;
     }
 
     /**
@@ -73,9 +76,21 @@ public class OpsController {
         return ResponseEntity.ok(Map.of("day", d.toString()));
     }
 
+    /**
+     * 공급자 상태(수집기 해시) · 자동 전환 · 예산 · 스위치. 공급자마다 해결 표시(계약 v5 §G14): last_error_resolution = 그 공급자의 유효한
+     * provider_error 해결 {id, upto, resolved_by} | null(키는 늘 있다), last_error_resolved = 그 해결의 upto ≥ last_error_at(시각을 모르거나
+     * 형식이 틀리면 false — 모르는 오류를 해결됨으로 보이지 않는다). 해시의 오류 값은 그대로 둔다(증거). resolution_state 는 해결 기록의 상태.
+     */
     @GetMapping("/providers")
     public Map<String, Object> providers() {
         List<Map<String, Object>> list = status.providerStatuses();
+        Resolutions res = resolutions.active();
+        for (Map<String, Object> p : list) {
+            Resolution r = res.provider(String.valueOf(p.get("name")));
+            // 앱 JSON 규칙(NON_NULL)은 Map 의 null 값을 뺀다 — 계약은 명시적 null 이라 JSON null 노드로 싣는다
+            p.put("last_error_resolution", r == null ? tools.jackson.databind.node.NullNode.getInstance() : r.ref());
+            p.put("last_error_resolved", r != null && r.covers(OpsPipelineController.time(p.get("last_error_at"))));
+        }
         List<Map<String, Object>> switchEvents = new java.util.ArrayList<>(); // collector 의 자동 전환(wakeline:events)
         try {
             List<MapRecord<String, Object, Object>> recs = redis.opsForStream().reverseRange("wakeline:events", Range.unbounded(), Limit.limit().count(20));
@@ -84,7 +99,7 @@ public class OpsController {
         var budgets = db.sql("SELECT provider, to_char(day, 'YYYY-MM-DD') AS day, calls, limit_value FROM provider_budget_day WHERE day >= CURRENT_DATE - 7 ORDER BY 2 DESC, provider").query().listOfRows();
         // provider_switch: 켜고 끄기의 원본(DB)과 collector 가 따르는 Redis 미러를 공급자마다 나란히(R-94) — providers 의 disabled 는 미러 값이다
         return Map.of("providers", list, "active", status.publicStatus().get("active_providers"), "collector", status.collectorHeartbeat(),
-                "switches", switchEvents, "budget_days", budgets, "provider_switch", switches.states());
+                "switches", switchEvents, "budget_days", budgets, "provider_switch", switches.states(), "resolution_state", res.state().label());
     }
 
     /**
@@ -103,22 +118,48 @@ public class OpsController {
                 (before, after) -> audit.record(req, uid, disable ? "PROVIDER_DISABLE" : "PROVIDER_ENABLE", name, before, after));
     }
 
+    /**
+     * 수집 실행 기록(items — 증거라 가리지 않는다)과 24 h 요약(summary_24h — job · provider · status 마다 n · last_at · avg_latency_ms).
+     * 요약은 resolved=hide(기본) | show(계약 v5 §G14): hide 면 활성 provider_error 해결이 있는 공급자의 status 'error' 실행 중 finished_at ≤ upto
+     * (그 공급자의 유효 해결 — upto 가 가장 늦은 것)를 셈 · 마지막 시각 · 평균에서 빼고 hidden_resolved_errors 로 센다(n 이 0 이 된 행은 없다).
+     * 기준은 실패를 기록한 시각(finished_at)이다 — collector 는 status.failure(last_error_at = 그때)를 쓴 바로 뒤 record_run(finished_at = 그때)을 적으므로
+     * /ops/providers 의 last_error_resolved(upto ≥ last_error_at)와 같은 순간을 본다. started_at 으로 보면 해결 순간에 진행 중이던 실행(단계마다 읽기 8 s ·
+     * 재시도)이 upto 뒤에 실패해도 가려져, 같은 실패가 공급자에서는 미해결 · 요약에서는 해결로 갈린다. finished_at 이 없으면(실패 시각을 모름) 가리지 않는다.
+     * 'error' 만 공급자 오류다 — collector 가 status.failure(last_error)를 쓰는 실행과 같다(throttled · budget_* 는 그대로). 해결은 DB 에서 같은 문장으로
+     * 읽는다(캐시 없이 — 요약 자체가 DB 조회라 더 부를 것이 없다).
+     */
     @GetMapping("/runs")
     public Map<String, Object> runs(@RequestParam(required = false) String job, @RequestParam(required = false) String status,
-                                    @RequestParam(required = false) Long cursor, @RequestParam(defaultValue = "50") int limit) {
+                                    @RequestParam(required = false) Long cursor, @RequestParam(defaultValue = "50") int limit,
+                                    @RequestParam(required = false) String resolved) {
+        boolean hide = Resolutions.hide(resolved);
         int n = Math.max(1, Math.min(limit, 200));
         var rows = db.sql("""
                 SELECT id, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text
                 FROM ingest_run WHERE (:job::text IS NULL OR job = :job) AND (:status::text IS NULL OR status = :status) AND (:cursor::bigint IS NULL OR id < :cursor)
                 ORDER BY id DESC LIMIT :n""").param("job", job).param("status", status).param("cursor", cursor).param("n", n + 1).query().listOfRows();
         Long next = rows.size() > n ? ((Number) rows.get(n - 1).get("id")).longValue() : null;
-        var summary = db.sql("""
-                SELECT job, provider, status, count(*) n, max(finished_at) last_at, avg(latency_ms)::int avg_latency_ms
-                FROM ingest_run WHERE started_at > now() - interval '24 hours' GROUP BY job, provider, status ORDER BY job, provider, status""").query().listOfRows();
+        var grouped = db.sql("""
+                WITH res AS (SELECT key AS provider, max(upto) AS upto FROM ops_resolution
+                             WHERE kind = 'provider_error' AND revoked_at IS NULL GROUP BY key),
+                     r AS (SELECT i.job, i.provider, i.status, i.finished_at, i.latency_ms,
+                                  :hide AND coalesce(i.status = 'error' AND i.finished_at <= res.upto, false) AS hidden
+                           FROM ingest_run i LEFT JOIN res ON res.provider = i.provider
+                           WHERE i.started_at > now() - interval '24 hours')
+                SELECT job, provider, status, count(*) FILTER (WHERE NOT hidden) n, max(finished_at) FILTER (WHERE NOT hidden) last_at,
+                       (avg(latency_ms) FILTER (WHERE NOT hidden))::int avg_latency_ms, count(*) FILTER (WHERE hidden) hidden_n
+                FROM r GROUP BY job, provider, status ORDER BY job, provider, status""").param("hide", hide).query().listOfRows();
+        List<Map<String, Object>> summary = new java.util.ArrayList<>(grouped.size());
+        long hiddenErrors = 0;
+        for (Map<String, Object> row : grouped) {
+            hiddenErrors += ((Number) row.remove("hidden_n")).longValue();
+            if (((Number) row.get("n")).longValue() > 0) summary.add(row); // 모두 해결된 행은 빠진다
+        }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("items", rows.size() > n ? rows.subList(0, n) : rows);
         m.put("next_cursor", next);
         m.put("summary_24h", summary);
+        m.put("hidden_resolved_errors", hiddenErrors);
         return m;
     }
 

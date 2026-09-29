@@ -124,7 +124,7 @@ describe("v5-C7 lib/logs: requests follow §C4", () => {
     expect(u.pathname).toBe("/api/v1/ops/logs");
     expect(Object.fromEntries(u.searchParams)).toEqual({ service: "api,collector", level: "ERROR", since: "2026-09-28T20:00:00.000Z", q: "timeout", rid: "5f2c9a0e1b7d4c3a", fp: "0123456789abcdef", cursor: "1790000000000-0", limit: "100", resolved: "show" });
     const plain = new URL(L.logsUrl(L.DEFAULT_LOG_FILTER, now), "http://x");
-    // 기본: 전체 서비스·수준, 1 h, 해결된 항목은 가림(ADR-022 — 늘 명시)
+    // 기본: 전체 서비스·수준, 1 h, 해결된 항목은 가림(ADR-024 — 늘 명시)
     expect(Object.fromEntries(plain.searchParams)).toEqual({ since: "2026-09-29T01:00:00.000Z", limit: "100", resolved: "hide" });
     const badRid = new URL(L.logsUrl({ ...L.DEFAULT_LOG_FILTER, rid: "<x>" }, now), "http://x");
     expect(badRid.searchParams.has("rid")).toBe(false);

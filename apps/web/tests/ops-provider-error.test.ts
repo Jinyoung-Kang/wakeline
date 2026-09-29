@@ -1,5 +1,5 @@
 /**
- * 공급자 LAST ERROR 칸의 해결 상태(lib/ops providerLastError — 계약 v5 §G13): 해결됨은 api 의 last_error_resolved 가 정하고,
+ * 공급자 LAST ERROR 칸의 해결 상태(lib/ops providerLastError — 계약 v5 §G14): 해결됨은 api 의 last_error_resolved 가 정하고,
  * "재발"은 이 오류의 시각이 해결의 upto 뒤라고 화면이 보인 값으로 확인될 때만 말한다. 시각을 모르면 재발이라고 하지 않는다(지어내지 않는다).
  */
 import { describe, expect, it } from "vitest";

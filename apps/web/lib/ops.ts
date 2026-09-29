@@ -201,13 +201,13 @@ export class RequestOrder {
   get busy(): boolean { return this.open > 0; }
 }
 
-// ---- 공급자 마지막 오류의 해결(ADR-022 — /ops/providers 의 last_error_resolution · last_error_resolved) ----
+// ---- 공급자 마지막 오류의 해결(ADR-024 — /ops/providers 의 last_error_resolution · last_error_resolved) ----
 
 /**
  * 공급자 표의 LAST ERROR 칸이 쓰는 사실. resolution = 그 공급자의 유효한 provider_error 해결(api 가 준 그대로, 형식이 틀리면 null),
  * resolved = api 가 "이 오류는 그 해결의 upto 이하" 라고 했고 해결을 읽을 수 있을 때만 true(모르는 것을 해결로 치지 않는다),
  * recurred = 해결이 있고 지금 오류의 시각(last_error_at)이 그 upto 뒤라고 받은 값으로 확인될 때(재발),
- * undecided = 해결은 있지만 해결됨도 재발도 확인되지 않음 — api 는 last_error_at 이 없거나 형식이 틀려도 last_error_resolved=false 를 준다(계약 §G13):
+ * undecided = 해결은 있지만 해결됨도 재발도 확인되지 않음 — api 는 last_error_at 이 없거나 형식이 틀려도 last_error_resolved=false 를 준다(계약 §G14):
  * 그때 "다시 남"이라고 하지 않는다(시각을 모르는 오류의 재발을 지어내지 않는다).
  * upto = 해결 처리로 보낼 그 오류의 시각(last_error_at 그대로) — 시각으로 읽을 수 없으면 null(해결 처리 불가).
  */

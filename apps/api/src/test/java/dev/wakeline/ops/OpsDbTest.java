@@ -240,7 +240,8 @@ class OpsDbTest {
     OpsController ops(StringRedisTemplate r, AuditService a) {
         var status = new dev.wakeline.rest.StatusService(null, null, null, null, r, PROPS);
         var jobs = new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx());
-        return new OpsController(status, api, r, settings(r), a, jobs, DbTestSupport.apiTx(), switches(r));
+        return new OpsController(status, api, r, settings(r), a, jobs, DbTestSupport.apiTx(), switches(r),
+                new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
     }
 
     static final OpsAuthentication ALICE = new OpsAuthentication(new OpsUserService.User(1, "alice", "OPS"), List.of(new SimpleGrantedAuthority("ROLE_OPS")));

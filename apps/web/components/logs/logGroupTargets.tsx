@@ -3,7 +3,7 @@ import { DualTime } from "../DualTime";
 import type { ResolveTarget } from "../ResolveConfirm";
 
 /**
- * 지문(fp) 묶음 해결의 확인 대상(ADR-022 — 해결은 지문 묶음 단위) — 묶음 표 · 항목 상세 · 목록 줄이 같은 문구로 말한다.
+ * 지문(fp) 묶음 해결의 확인 대상(ADR-024 — 해결은 지문 묶음 단위) — 묶음 표 · 항목 상세 · 목록 줄이 같은 문구로 말한다.
  * resolve: upto = 서버가 준 시각 그대로(why = 그 시각이 무엇인지), revoke: 그 해결 하나.
  */
 export function resolveLogGroup(fp: string, upto: string, why: string): ResolveTarget {

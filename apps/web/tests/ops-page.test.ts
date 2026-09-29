@@ -29,7 +29,7 @@ afterEach(async () => {
 const BODY: Record<string, unknown> = {
   "/api/v1/ops/session": { username: "op" },
   "/api/v1/ops/providers": { providers: [], active: {}, collector: {}, switches: [], budget_days: [] },
-  "/api/v1/ops/runs?limit=50&resolved=hide": { items: [], summary_24h: [] }, // 실행 요약은 해결 표시를 늘 명시한다(ADR-022)
+  "/api/v1/ops/runs?limit=50&resolved=hide": { items: [], summary_24h: [] }, // 실행 요약은 해결 표시를 늘 명시한다(ADR-024)
   "/api/v1/ops/quality": { rule_counts: [], recent: [] },
   "/api/v1/ops/settings": { items: [] },
   "/api/v1/ops/audit": { items: [] },
@@ -301,7 +301,7 @@ describe("ops: every tab shows Korean time first with UTC; unknown latency is �
     expect(lol[1].textContent).toBe("09-29 08:40:21 KST · 09-28 23:40:21 UTC"); // 첫 줄 KST · 둘째 줄 UTC(UTC 날짜가 달라 날짜도)
     expect(all((e) => e.getAttribute?.("title") === "원본 UTC 2026-09-28T23:40:21.631Z", lol[1]).length).toBeGreaterThan(0);
     expect(lol[2].textContent).toBe("—"); // 지연 모름 — "— ms" 가 아니다
-    // 오류 글자 + 시각(아래 줄은 해결 처리 단추 — ADR-022, tests/resolve-ops-page)
+    // 오류 글자 + 시각(아래 줄은 해결 처리 단추 — ADR-024, tests/resolve-ops-page)
     expect(byTestId("provider-last-error-text", lol[7])!.textContent).toBe("rate limited (429) 09-29 08:40:21 KST · 09-28 23:40:21 UTC");
     expect(row("adsb_fi")[2].textContent).toBe("420 ms");
     // 숫자 칸(지연 · 레코드 · 실패 · 예산 · 남은 호출)은 한 줄 — "1,225 ms" 가 "1,225" / "ms" 두 줄로 갈라지지 않는다(머리글은 줄바꿈해도 된다)

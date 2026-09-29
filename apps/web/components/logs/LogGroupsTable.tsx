@@ -24,7 +24,7 @@ export function bulkPlan(groups: readonly LogGroup[]): { eligible: { g: LogGroup
 }
 
 /**
- * 지문(fp) 묶음 표 + 해결(ADR-022). 묶음마다 "해결 처리"(upto = 그 묶음의 마지막 항목 시각 last_at — 서버가 준 글자 그대로),
+ * 지문(fp) 묶음 표 + 해결(ADR-024). 묶음마다 "해결 처리"(upto = 그 묶음의 마지막 항목 시각 last_at — 서버가 준 글자 그대로),
  * 해결된 묶음(보일 때)은 흐리게 "해결됨 · <by> · <upto>" + "되돌리기". 위쪽 "보이는 묶음 모두 해결 처리"는 확인 창이 수(와 뺀 것)를 먼저 말하고
  * 묶음마다 요청 하나(동시에 최대 4)를 보낸다. 쓰기 결과는 onChanged 로 — 부모가 목록을 다시 읽는다(201/204 뒤에만 바뀐다).
  */
@@ -60,7 +60,7 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
         <thead className="sticky top-0 bg-bg-1"><tr>
           <th scope="col">지문(fp)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거 · 예외 종류</th><th scope="col">표본 메시지</th>
           <th scope="col">항목</th><th scope="col" title="같은 지문으로 보내지 않은 건수의 합">억제 합</th><th scope="col">처음(KST · UTC)</th><th scope="col">마지막(KST · UTC)</th>
-          <th scope="col" title="해결 처리(ADR-022): 지문 묶음을 upto(마지막 항목 시각)까지 해결로 적는다 — 지우지 않고 가린다, upto 뒤 재발은 다시 보인다">해결</th><th scope="col"></th>
+          <th scope="col" title="해결 처리(ADR-024): 지문 묶음을 upto(마지막 항목 시각)까지 해결로 적는다 — 지우지 않고 가린다, upto 뒤 재발은 다시 보인다">해결</th><th scope="col"></th>
         </tr></thead>
         <tbody>{groups.map((g) => {
           const upto = uptoOf(g.last_at);

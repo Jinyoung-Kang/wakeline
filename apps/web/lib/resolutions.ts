@@ -1,5 +1,5 @@
 /**
- * 해결 표시(ADR-022 · api /api/v1/ops/resolutions — 사용자 요청 "해결 완료된 [운영/로그] 메뉴에 있는 error 는 지우는 기능") — 순수 함수와 일괄 처리.
+ * 해결 표시(ADR-024 · api /api/v1/ops/resolutions — 사용자 요청 "해결 완료된 [운영/로그] 메뉴에 있는 error 는 지우는 기능") — 순수 함수와 일괄 처리.
  * 지우지 않고 가린다: 운영자가 (kind, key, upto) 를 적으면 조회가 그 key 의 upto 이하 발생을 기본으로 빼고 뺀 수를 알린다. upto 뒤의 재발은 다시 보인다.
  * - kind = "log_group"(key = 로그 지문 fp) | "provider_error"(key = 공급자 이름)
  * - POST {"kind","key","upto"?,"note"?} → 201 {"id","kind","key","upto","resolved_at","resolved_by","note"} · DELETE /{id} → 204(행은 남는다)
@@ -99,7 +99,7 @@ export function resolveErrorText(e: unknown, op: "resolve" | "revoke"): string {
     case 400: return `${lead} — 서버가 요청을 거절함: ${e.message}`;
     case 403: return `${lead} — 요청이 거부되었습니다(보안 토큰) — 페이지를 새로 고친 뒤 다시 시도하세요.`;
     case 404: return op === "revoke" ? `${lead} — 이미 되돌렸거나 없는 해결입니다(다른 운영자 · 다른 탭) — 목록을 다시 불러옵니다.`
-      : `${lead} — 해결 API 를 찾지 못함 — api 가 해결 표시(ADR-022)를 지원하는 버전인지 확인하세요.`;
+      : `${lead} — 해결 API 를 찾지 못함 — api 가 해결 표시(ADR-024)를 지원하는 버전인지 확인하세요.`;
     case 429: return `${lead} — 요청이 너무 많습니다 — 잠시 뒤 다시 시도하세요.`;
     default: return e.status >= 500 ? `${lead} — 서버 오류(HTTP ${e.status}) — 잠시 뒤 다시 시도하세요.` : `${lead}(HTTP ${e.status}).`;
   }

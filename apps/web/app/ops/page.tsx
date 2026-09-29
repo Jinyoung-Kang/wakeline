@@ -18,11 +18,11 @@ import { DualTime } from "@/components/DualTime";
 
 type Any = Record<string, unknown>;
 /** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
-/** resolution_state = 해결 기록의 상태(ok | stale | unavailable — ADR-022). providers[] 마다 last_error_resolution · last_error_resolved */
+/** resolution_state = 해결 기록의 상태(ok | stale | unavailable — ADR-024). providers[] 마다 last_error_resolution · last_error_resolved */
 interface Providers {
   providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; provider_switch?: SwitchState[]; resolution_state?: unknown;
 }
-/** hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-022). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다) */
+/** hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다) */
 interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; mode: ResolvedMode }
 interface Quality { rule_counts: Any[]; recent: Any[] }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
@@ -33,7 +33,7 @@ const TAB_PATH: Record<Tab, string> = {
   providers: "/api/v1/ops/providers", runs: "/api/v1/ops/runs?limit=50", quality: "/api/v1/ops/quality", settings: "/api/v1/ops/settings",
   audit: "/api/v1/ops/audit", dlq: "/api/v1/ops/dlq", pipeline: "/api/v1/ops/pipeline",
 };
-/** 실제 요청 경로 — 실행 요약은 해결 표시(resolved=hide|show, 기본 hide)를 늘 명시한다(ADR-022) */
+/** 실제 요청 경로 — 실행 요약은 해결 표시(resolved=hide|show, 기본 hide)를 늘 명시한다(ADR-024) */
 const tabPath = (t: Tab, runsMode: ResolvedMode) => (t === "runs" ? `${TAB_PATH.runs}&resolved=${runsMode}` : TAB_PATH[t]);
 /** 탭마다 요청 순서(lib/ops RequestOrder) — 대시보드마다 하나 */
 const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder()])) as Record<Tab, RequestOrder>;
@@ -59,12 +59,12 @@ function TimeCell({ v }: { v: unknown }) {
   return <td className="whitespace-nowrap"><DualTime v={at(v)} variant="cell" /></td>;
 }
 
-const LAST_ERROR_TITLE = "수집기가 마지막으로 남긴 오류(공급자 해시 last_error · last_error_at — 다음 실패가 덮어쓴다). 해결 처리(ADR-022) = 그 오류의 시각까지 해결로 적는다: "
+const LAST_ERROR_TITLE = "수집기가 마지막으로 남긴 오류(공급자 해시 last_error · last_error_at — 다음 실패가 덮어쓴다). 해결 처리(ADR-024) = 그 오류의 시각까지 해결로 적는다: "
   + "지우지 않고 흐리게 '해결됨', 실행 요약(24 h)의 error 행에서 뺀다. 그 뒤 새 오류는 다시 보인다";
 const SMALL_BTN = "btn ml-1 px-1.5! py-0! normal-case!";
 
 /**
- * LAST ERROR 칸(ADR-022): 오류 글자 + 시각(KST · UTC) 아래에 해결 상태 — 해결됨(흐리게 "해결됨 · <by> · <upto>" + 되돌리기) ·
+ * LAST ERROR 칸(ADR-024): 오류 글자 + 시각(KST · UTC) 아래에 해결 상태 — 해결됨(흐리게 "해결됨 · <by> · <upto>" + 되돌리기) ·
  * 해결 뒤 재발("이전 해결 #id(upto …) 뒤 다시 남" — 오류 시각이 upto 뒤로 확인될 때만) · 확인되지 않으면 "해결 #id 있음 — …"(시각을 몰라 재발이라 하지 않는다) ·
  * 해결 처리(upto = 그 오류의 시각 last_error_at 그대로 — 시각을 읽을 수 없으면 막는다).
  * 확인 패널은 부모가 그 행 아래에 연다(onOpen).
@@ -137,7 +137,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   /** 탭(엔드포인트)마다 마지막 성공 시각과 마지막 요청의 실패(성공하면 지운다) — 한 탭만 계속 실패해도 드러난다(R-12) */
   const [lastOk, setLastOk] = useState<Partial<Record<Tab, number>>>({});
   const [tabErr, setTabErr] = useState<Partial<Record<Tab, unknown>>>({});
-  /** 실행 요약의 해결 표시(ADR-022): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
+  /** 실행 요약의 해결 표시(ADR-024): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
   const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
   const runsModeRef = useRef<ResolvedMode>("hide");
   /**
@@ -285,7 +285,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             <span className="label">Last 24 h</span>
             <button className="btn normal-case!" aria-pressed={runsMode === "show"} onClick={toggleRunsMode} data-testid="runs-show-resolved"
               title="해결 처리한 공급자 오류(upto 이하)의 error 실행 — 끄면(기본) 요약에서 빼고 수만 보인다, 켜면 빼지 않는다. 아래 실행 기록은 늘 그대로">해결된 오류 포함</button>
-            <span className="text-[11px] text-fg-3" data-testid="runs-hidden-resolved" title="해결 처리(ADR-022)는 지우지 않는다 — 실행 기록(ingest_run)은 그대로이고 요약의 셈 · 마지막 시각 · 평균에서만 뺀다">
+            <span className="text-[11px] text-fg-3" data-testid="runs-hidden-resolved" title="해결 처리(ADR-024)는 지우지 않는다 — 실행 기록(ingest_run)은 그대로이고 요약의 셈 · 마지막 시각 · 평균에서만 뺀다">
               {runs.mode === "show" ? "해결된 오류 포함(요약에서 빼지 않음)" : `해결 처리로 요약에서 뺀 오류 실행 ${hiddenText(hiddenCount(runs.hidden_resolved_errors))} · 아래 실행 기록(Recent runs)은 가리지 않음`}
             </span>
           </div>

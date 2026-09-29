@@ -36,9 +36,9 @@ const n0 = (v: number) => v.toLocaleString("en-US");
 const KEEP_TEXT = `서버 로그 ${LOG_STREAM_KEY.server} 는 최근 약 ${n0(LOG_STREAM_KEEP.server)}건 · 브라우저 오류 ${LOG_STREAM_KEY.client} 는 최근 약 ${n0(LOG_STREAM_KEEP.client)}건만 보관`;
 /** 묶음 목록이 바뀌었는지(지문 · 건수 · 마지막 항목 · 해결) */
 const groupsSig = (g: Groups | null) => (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}:${x.resolved?.id ?? ""}`).join("|") : "");
-/** "해결 처리로 숨김 N건"의 뜻(ADR-022) */
+/** "해결 처리로 숨김 N건"의 뜻(ADR-024) */
 const HIDDEN_TITLE = "해결 처리(운영자가 지문 묶음을 'upto 까지 해결'로 적음)로 이 보기에서 뺀 항목 수 — 훑은 범위에서 다른 필터에 맞은 것만. "
-  + "지우지 않음: '해결된 항목 보기'로 다시 보고, upto 뒤의 재발은 다시 보인다(ADR-022). — = api 가 수를 주지 않음";
+  + "지우지 않음: '해결된 항목 보기'로 다시 보고, upto 뒤의 재발은 다시 보인다(ADR-024). — = api 가 수를 주지 않음";
 
 /** 해결 표시 줄: 가림이면 "해결 처리로 숨김 N건"(여러 쪽이면 합계라고), 보임이면 그렇다고. 해결 기록 상태가 ok 가 아니면 경고 */
 function HiddenLine({ show, hidden, pages, state }: { show: boolean; hidden: number | null; pages: number; state: ResolutionState | null }) {

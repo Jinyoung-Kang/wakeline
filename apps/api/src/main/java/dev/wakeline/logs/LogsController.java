@@ -1,6 +1,10 @@
 package dev.wakeline.logs;
 
 import dev.wakeline.config.Problem;
+import dev.wakeline.ops.Resolution;
+import dev.wakeline.ops.ResolutionService;
+import dev.wakeline.ops.Resolutions;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -27,6 +32,9 @@ import java.util.regex.Pattern;
  *   <li>GET /api/v1/ops/logs/{id} — 항목 하나: server → client 순으로 찾는다. stream=server|client 면 그 스트림에서만(두 스트림은 id 를 따로
  *       매기므로 같은 id 가 둘 다에 있을 수 있다). 트림돼 없거나 스키마에 맞지 않으면 404.</li>
  * </ul>
+ * 해결 표시(계약 v5 §G14): 목록 · 묶음은 resolved=hide(기본) | show(그 밖은 400 BAD_RESOLVED) — hide 면 해결된 항목(그 fp 의 활성 해결 upto ≥ ts)을
+ * 가리고 hidden_resolved 로 센다. 항목 · 묶음 · 항목 하나에 resolved({id, upto, resolved_by} | null), 목록 · 묶음에 resolution_state
+ * (ok | stale | unavailable — {@link Resolutions.State}). 해결 기록은 {@link ResolutionService#active()}(5 s 이하 캐시)에서 한 요청에 한 번 읽는다.
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
@@ -36,12 +44,19 @@ public class LogsController {
     static final Set<String> LEVELS = Set.of("ERROR", "WARN");
     static final int LIMIT_MAX = 200;
     static final int Q_MAX = 200;
-    static final Pattern FP = Pattern.compile("[0-9a-f]{16}");
+    static final Pattern FP = Resolution.FP; // 해결 표시의 log_group key 와 같은 규칙(한 곳 — 의존은 logs → ops)
 
     private final LogReader reader;
+    private final Supplier<Resolutions> resolutions;
 
-    public LogsController(LogReader reader) {
+    @Autowired
+    public LogsController(LogReader reader, ResolutionService resolutions) {
+        this(reader, resolutions::active);
+    }
+
+    LogsController(LogReader reader, Supplier<Resolutions> resolutions) {
         this.reader = reader;
+        this.resolutions = resolutions;
     }
 
     @GetMapping
@@ -49,17 +64,19 @@ public class LogsController {
                                @RequestParam(required = false) String q, @RequestParam(required = false) String fp,
                                @RequestParam(required = false) String rid, @RequestParam(required = false) Instant since,
                                @RequestParam(required = false) Instant until, @RequestParam(required = false) String cursor,
-                               @RequestParam(defaultValue = "100") int limit) {
+                               @RequestParam(defaultValue = "100") int limit, @RequestParam(required = false) String resolved) {
         if (cursor != null && !cursor.isBlank() && LogReader.parseCursor(cursor) == null)
             throw Problem.badRequest("BAD_CURSOR", "cursor must be the next_cursor of the previous page (server:<stream id> or client:<stream id>)");
         var f = filter(service, level, q, fp, rid, since, until);
-        return reader.list(f, cursor == null || cursor.isBlank() ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)));
+        boolean hide = Resolutions.hide(resolved);
+        return reader.list(f, cursor == null || cursor.isBlank() ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)), resolver(), hide);
     }
 
     @GetMapping("/groups")
     public LogReader.Groups groups(@RequestParam(required = false) Instant since, @RequestParam(required = false) List<String> service,
-                                   @RequestParam(required = false) List<String> level) {
-        return reader.groups(filter(service, level, null, null, null, since, null));
+                                   @RequestParam(required = false) List<String> level, @RequestParam(required = false) String resolved) {
+        var f = filter(service, level, null, null, null, since, null);
+        return reader.groups(f, resolver(), Resolutions.hide(resolved));
     }
 
     @GetMapping("/{id:\\d{1,20}-\\d{1,20}}")
@@ -68,7 +85,7 @@ public class LogsController {
         if (stream != null && !stream.isBlank() && (only = LogStream.ofLabel(stream.trim())) == null)
             throw Problem.badRequest("BAD_STREAM", "stream must be server or client");
         JsonNode n = LogReader.parseId(id) == null ? null // 64비트를 넘는 id 는 스트림에 있을 수 없다
-                : only == null ? reader.get(id) : reader.get(id, only);
+                : reader.get(id, only, resolver());
         if (n == null) throw Problem.notFound("no such log entry (trimmed from the stream, or it failed schema validation)");
         return n;
     }
@@ -86,6 +103,21 @@ public class LogsController {
         if (r != null && !LogEvents.REQUEST_ID.matcher(r).matches()) throw Problem.badRequest("BAD_RID", "rid must be 8-64 characters of [0-9A-Za-z-]");
         if (since != null && until != null && since.isAfter(until)) throw Problem.badRequest("BAD_RANGE", "since must not be after until");
         return new LogReader.Filter(services, levels, text, f, r, since, until);
+    }
+
+    /** 이 요청의 해결 기록(한 시점 모습) → fp 조회. */
+    private LogReader.Resolver resolver() {
+        Resolutions r = resolutions.get();
+        return new LogReader.Resolver() {
+            @Override
+            public LogReader.Resolved of(String fp) {
+                Resolution x = r.logGroup(fp);
+                return x == null ? null : new LogReader.Resolved(x.id(), x.upto(), x.resolvedBy());
+            }
+
+            @Override
+            public String state() { return r.state().label(); }
+        };
     }
 
     /** 쉼표·되풀이 모두 받는다. 빈 값은 버린다. */
