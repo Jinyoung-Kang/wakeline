@@ -2,7 +2,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtTime } from "@/lib/format";
+import { fmtTime, fmtLatencyMs } from "@/lib/format";
 import {
   fromUtcInput, isSummaryRow, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayAircraftRows, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRange, replayReduce, replaySigmetBand,
   ReplayLoader, replayZone, stepAt, SUMMARY_FLAG, toUtcInput, type ReplayFrame, type ReplayRange,
@@ -78,7 +78,7 @@ export default function ReplayPage() {
         <span className="mono" data-testid="replay-at">{at ? `${new Date(at).toISOString().replace("T", " ").slice(0, 19)}Z` : "—"}</span>
         {at && max ? <span className={replayZone(at, range) === "full" ? "text-fg-2" : "text-warn"} data-testid="replay-zone">{replayZone(at, range) === "full" ? "원해상도 구간(72 h 안)" : "1분 요약 구간(72 h 밖)"}</span> : null}
         <span className={`mono ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title="지도에 그린 기록의 시각(응답 at)">지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
-        <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${latency ?? "—"} ms` : "—"}</span>
+        <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${fmtLatencyMs(latency)}` : "—"}</span>
         <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
         <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
         <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar">{replayRadarLabel(frame)}</span>

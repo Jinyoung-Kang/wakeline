@@ -6,6 +6,9 @@ import { aisBadge, aisGapBadge } from "@/lib/ships";
 import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
 import { WsInvalidBadge } from "./WsInvalidBadge";
 
+/** "12 frames" · 모르면 "frames —"(단위를 "—" 뒤에 붙이면 잰 값처럼 읽힌다 — /ops · /logs 와 같은 규칙). label 을 주면 모를 때 그 이름으로 */
+const qty = (n: number | null | undefined, unit: string, label = unit) => (n == null ? `${label} —` : `${n} ${unit}`);
+
 /**
  * 상단 상태 바(FR-11): 연결 상태·지역/전세계 피드별 출처·수집 시각·지연 배지(지역 > 60 s, 전세계 > 300 s 면 경고)·SIGMET·레이더.
  * 지연은 서버가 보고한 값(스냅샷 sources·30 s status). "실시간"은 연결이 열려 있고 45 s 안에 무엇이든(ping 포함) 받은 경우만(WS-2) —
@@ -58,9 +61,9 @@ export function StatusBar() {
       </span>
       {ais ? <span className={`badge normal-case! ${ais.tone === "muted" ? "" : ais.tone}`} data-testid="ais-badge" data-tone={ais.tone} title={ais.title}>{ais.text}</span> : null}
       {gap ? <span className={`badge normal-case! ${gap.open && !gap.partial ? "bad" : "warn"}`} data-testid="ais-gap-badge" data-partial={gap.partial ? "true" : undefined} title={gap.title}>{gap.text}</span> : null}
-      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {s.status?.sigmet?.active ?? "—"} active · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
-      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{s.radar?.past.length ?? "—"} frames · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
-      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{s.status?.engine?.index_polygons ?? "—"} polys · {s.status?.engine?.last_cycle_ms ?? "—"} ms</span>
+      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {qty(s.status?.sigmet?.active, "active")} · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
+      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{qty(s.radar?.past.length, "frames")} · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${s.radarKr.latest_tm?.slice(8, 10)}:${s.radarKr.latest_tm?.slice(10, 12)}K` : ""}</span>
+      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{qty(s.status?.engine?.index_polygons, "polys")} · {qty(s.status?.engine?.last_cycle_ms, "ms", "cycle")}</span>
       <span className="mono text-fg-3">v{s.snapshotVersion}</span>
     </div>
   );

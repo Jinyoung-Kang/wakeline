@@ -773,7 +773,7 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
   }
   const elapsed = nowMs ? Math.max(0, (nowMs - ais.received_at) / 1000) : 0;
   const lag = ais.lag_s == null ? null : live && elapsed <= RX_FRESH_MS / 1000 ? ais.lag_s : ais.lag_s + elapsed;
-  const rate = ais.msgs_per_s == null ? "— msg/s" : `${ais.msgs_per_s.toFixed(1)} msg/s`;
+  const rate = ais.msgs_per_s == null ? "msg/s —" : `${ais.msgs_per_s.toFixed(1)} msg/s`;
   const lagText = lag == null ? "lag —" : `lag ${Math.round(lag)}s`;
   const title = `AIS(aisstream.io) 수신 상태 — 지연 = 마지막 메시지 이후 경과(경고 > ${AIS_LAG_WARN_S} s)`;
   if (partial) {
