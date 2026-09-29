@@ -552,6 +552,77 @@ class MigrationDbTest {
     }
 
     /**
+     * V13(계약 v5 §G13 · ADR-022): ops_resolution — 운영자의 '해결' 표시(로그 묶음 fp · 공급자 오류). 증거(로그 스트림 · ingest_run · 공급자 해시)는
+     * 지우지 않고 upto 이하를 가린다. 열 · 제약은 계약 그대로(+ fp 모양 · 메모 200자 · 되돌림 쌍 CHECK), api 는 SELECT · INSERT 와 revoked_at ·
+     * revoked_by 열의 UPDATE 만(행을 지우지 않는다 — 되돌림은 revoked_at 을 채운다 · 이미 적은 kind · key · upto · 메모는 고치지 못한다),
+     * collector 는 권한 없음. 머리 주석의 되돌리기 SQL 로 표와 이력 행이 사라지고, 다시 적용된다.
+     */
+    @Test
+    void v13CreatesTheResolutionTableWithInsertAndRevokeOnlyGrants() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_thirteen";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "13");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '13' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'ops_resolution'").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        Map<String, String> cols = new java.util.TreeMap<>();
+        for (var r : stage.sql("SELECT column_name, data_type || ':' || is_nullable t FROM information_schema.columns WHERE table_name = 'ops_resolution'")
+                .query().listOfRows()) cols.put(String.valueOf(r.get("column_name")), String.valueOf(r.get("t")));
+        assertThat(cols).isEqualTo(new java.util.TreeMap<>(Map.of("id", "bigint:NO", "kind", "text:NO", "key", "text:NO",
+                "upto", "timestamp with time zone:NO", "resolved_at", "timestamp with time zone:NO", "resolved_by", "text:NO", "note", "text:YES",
+                "revoked_at", "timestamp with time zone:YES", "revoked_by", "text:YES")));
+        assertThat(stage.sql("SELECT column_default FROM information_schema.columns WHERE table_name = 'ops_resolution' AND column_name = 'resolved_at'")
+                .query(String.class).single()).isEqualTo("now()");
+        assertThat(stage.sql("SELECT indexdef FROM pg_indexes WHERE indexname = 'ops_resolution_active'").query(String.class).single())
+                .contains("(kind, key)").contains("WHERE (revoked_at IS NULL)");
+
+        String fp = "0123456789abcdef";
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            String ok = "INSERT INTO ops_resolution (kind, key, upto, resolved_by, note) VALUES ('log_group', '" + fp + "', now(), 'ops', 'fixed in 1.2')";
+            assertThat(sqlState(c, ok)).isNull();
+            assertThat(sqlState(c, "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('provider_error', 'adsb_lol', now(), 'ops')")).isNull();
+            assertThat(sqlState(c, "SELECT * FROM ops_resolution")).isNull();
+            // 되돌림(revoked_at · revoked_by)만 고칠 수 있다 — 이미 적은 해결 범위 · 누가 · 메모는 바꾸지 못한다
+            assertThat(sqlState(c, "UPDATE ops_resolution SET revoked_at = now(), revoked_by = 'ops' WHERE kind = 'provider_error'")).isNull();
+            for (String sql : new String[]{"UPDATE ops_resolution SET upto = now()", "UPDATE ops_resolution SET key = 'x'",
+                    "UPDATE ops_resolution SET note = 'rewritten'", "UPDATE ops_resolution SET resolved_by = 'someone else'",
+                    "DELETE FROM ops_resolution", "TRUNCATE ops_resolution"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+            // 제약: kind 목록 · log_group 의 key 는 fp 모양(16자리 소문자 16진) · 메모 200자 이하 · 되돌림 시각과 사람은 함께
+            for (String bad : new String[]{
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('alert', 'x', now(), 'ops')",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('log_group', '0123456789ABCDEF', now(), 'ops')",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('log_group', 'abc', now(), 'ops')",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('provider_error', '', now(), 'ops')",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by, note) VALUES ('provider_error', 'awc', now(), 'ops', repeat('가', 201))",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by, revoked_at) VALUES ('provider_error', 'awc', now(), 'ops', now())",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('provider_error', 'awc', now(), '')"})
+                assertThat(sqlState(c, bad)).as(bad).isEqualTo("23514");
+            assertThat(sqlState(c, "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('provider_error', 'awc', NULL, 'ops')")).isEqualTo("23502");
+            assertThat(sqlState(c, "INSERT INTO ops_resolution (kind, key, upto, resolved_by, note) VALUES ('provider_error', 'awc', now(), 'ops', repeat('가', 200))"))
+                    .as("200 characters (not bytes) is the limit").isNull();
+        }
+        try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW)) {
+            for (String sql : new String[]{"SELECT * FROM ops_resolution", "UPDATE ops_resolution SET revoked_at = now(), revoked_by = 'c'",
+                    "INSERT INTO ops_resolution (kind, key, upto, resolved_by) VALUES ('provider_error', 'awc', now(), 'c')"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+        }
+
+        // 되돌리기(머리 주석): 표 삭제 + 이력 행 삭제 → V12 와 같은 스키마(가림이 없어 모든 증거가 다시 보인다). 그 뒤 다시 앞으로
+        runAsMigrator(url, rollbackSql("V13__ops_resolution.sql"));
+        assertThat(stage.sql("SELECT to_regclass('ops_resolution') IS NULL").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '13'").query(Long.class).single()).isZero();
+        migrateTo(url, "13");
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'ops_resolution', 'INSERT')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_column_privilege('wakeline_api', 'ops_resolution', 'revoked_at', 'UPDATE')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'ops_resolution', 'DELETE')").query(Boolean.class).single()).isFalse();
+    }
+
+    /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다
      * (서비스 역할 소유 객체 없음). V5 파티션 함수는 SECURITY DEFINER 인데 PUBLIC 실행 권한이 없다.
      */

@@ -77,6 +77,8 @@ class RolePrivilegesDbTest {
                     "DELETE FROM audit_log",
                     "DELETE FROM ops_user",                       // 운영자 계정은 SELECT·INSERT·UPDATE 만
                     "DELETE FROM provider_switch",                // 공급자 스위치(V11)도 SELECT·INSERT·UPDATE 만
+                    "DELETE FROM ops_resolution",                 // 해결 표시(V13)는 지우지 않는다 — 되돌림은 revoked_at 을 채운다
+                    "UPDATE ops_resolution SET upto = now()",     // 이미 적은 해결 범위는 고치지 못한다(되돌림 두 열만)
                     "INSERT INTO airport (icao, geom) VALUES ('ZZZZ', ST_SetSRID(ST_MakePoint(0, 0), 4326))", // 수집기 테이블은 읽기(+보존 삭제)만
             }) {
                 assertThat(state(c, ddl)).as(ddl).isEqualTo(INSUFFICIENT_PRIVILEGE);
@@ -109,6 +111,7 @@ class RolePrivilegesDbTest {
                     "UPDATE app_setting SET value = '1'",
                     "SELECT * FROM provider_switch",              // 공급자 스위치의 원본(V11) — 수집기는 Redis 미러만 읽는다
                     "UPDATE provider_switch SET disabled = false",
+                    "SELECT * FROM ops_resolution",               // 해결 표시(V13)는 api 만
                     "DELETE FROM stats_daily",
                     "INSERT INTO audit_log (action) VALUES ('forged')",
                     "SELECT password_hash FROM ops_user",
@@ -359,8 +362,20 @@ class RolePrivilegesDbTest {
                     java.util.Map.entry("ship", "SELECT,INSERT,UPDATE"),
                     java.util.Map.entry("ship_position", "SELECT,INSERT"),
                     java.util.Map.entry("ingest_gap", "SELECT,INSERT"),
-                    java.util.Map.entry("provider_switch", "SELECT,INSERT,UPDATE")));
+                    java.util.Map.entry("provider_switch", "SELECT,INSERT,UPDATE"),
+                    // V13: 해결 표시 — 표 단위 UPDATE 는 없고 되돌림 두 열만(아래), 지우지 않는다
+                    java.util.Map.entry("ops_resolution", "SELECT,INSERT")));
             assertThat(actual).isEqualTo(expected);
+            // 열 단위 UPDATE 스냅샷(표 단위 권한이 없는 표만): api 가 고칠 수 있는 열은 이것뿐이다
+            java.util.Map<String, String> columns = new java.util.TreeMap<>();
+            try (Statement s = m.createStatement(); ResultSet rs = s.executeQuery("""
+                    SELECT a.table_name, string_agg(a.column_name, ',' ORDER BY a.column_name) FROM information_schema.column_privileges a
+                    WHERE a.grantee = 'wakeline_api' AND a.privilege_type = 'UPDATE' AND a.table_schema = 'public'
+                      AND NOT has_table_privilege('wakeline_api', (quote_ident(a.table_schema) || '.' || quote_ident(a.table_name))::regclass, 'UPDATE')
+                    GROUP BY a.table_name""")) {
+                while (rs.next()) columns.put(rs.getString(1), rs.getString(2));
+            }
+            assertThat(columns).isEqualTo(java.util.Map.of("ops_resolution", "revoked_at,revoked_by"));
             // 기존 track_point 파티션(V9 전 기본 권한으로 직접 권한을 받았던 것 포함)도 api 직접 권한 없음
             assertThat(scalar(m, """
                     SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
