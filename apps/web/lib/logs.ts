@@ -1,10 +1,12 @@
 /**
  * 시스템 로그 화면 보조(계약 v5 §C7) — 순수 함수. 항목 형식은 schemas/log_event.v1.json, 조회 API 는 §C4(`/api/v1/ops/logs*`, 운영 세션 전용).
- * 모르는 값은 null/"—"(0·빈 값으로 채우지 않는다). 형식이 틀린 항목은 보이지 않고 수만 센다. 시각은 UTC.
+ * 모르는 값은 null/"—"(0·빈 값으로 채우지 않는다). 형식이 틀린 항목은 보이지 않고 수만 센다.
+ * 시각: api 항목의 ts 는 UTC(원본 — JSON 복사 · NDJSON 은 그대로). 화면 · 텍스트 복사 · .txt 는 한국 표준시(KST, +09:00 — lib/kst).
  * §G2: api 는 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 합쳐 준다 — 항목마다 stream. 두 스트림은 id 를 따로 매기므로
  * 같은 id 가 둘 다에 있을 수 있어 화면은 항목을 stream + id(entryKey)로 가른다(같은 id 는 server 가 앞 — api 순서).
  */
 import { REQUEST_ID_RE } from "./api";
+import { isoKst } from "./kst";
 import { logHeaderLine } from "./log-line";
 
 export const LOGS_PATH = "/api/v1/ops/logs";
@@ -251,21 +253,18 @@ export function applyPending(shown: readonly LogEntry[], pending: readonly LogEn
 
 // ---- 표시 · 복사 형식 ----
 
-const iso = (v: string | null | undefined): string => {
-  if (!v) return "—";
-  const t = Date.parse(v);
-  return Number.isNaN(t) ? "—" : new Date(t).toISOString();
-};
+/** 텍스트 복사의 시각: 오프셋을 붙인 KST ISO 8601("2026-09-29T08:41:14.906+09:00"). 모르면 "—" */
+const isoText = (v: string | null | undefined): string => isoKst(v) ?? "—";
 
-/** 목록 시각: UTC "MM-DD HH:MM:SS.mmmZ" */
+/** 목록 시각: KST "MM-DD HH:MM:SS.mmm"(ms 유지 — 같은 초의 항목 순서가 보인다). 칸 머리글이 "시각(KST)", title 에 원본 UTC */
 export function fmtLogTime(v: string | null | undefined): string {
-  const s = iso(v);
-  return s === "—" ? s : `${s.slice(5, 10)} ${s.slice(11, 23)}Z`;
+  const s = isoKst(v);
+  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 23)}`;
 }
 
 export const firstLine = (s: string) => s.split(/\r?\n/, 1)[0];
 
-/** 복사 텍스트 첫 줄: `[시각 수준 서비스/로거] rid=…` — 요청 id 가 없으면 rid=— */
+/** 복사 텍스트 첫 줄: `[시각(KST, +09:00) 수준 서비스/로거] rid=…` — 요청 id 가 없으면 rid=— */
 export { logHeaderLine } from "./log-line";
 
 /** 예외 종류 표시(§G5): 빈 글(브라우저 오류 — 종류를 보내지 않는다)과 모름은 "—" */
@@ -275,7 +274,7 @@ export const exceptionTypeText = (t: string | null | undefined): string => (t &&
  * 항목 텍스트(사람이 읽고 붙여 넣기 좋게): 첫 줄 머리, 메시지, 예외, 스택, 그리고 사실 한 줄(id · 스트림(알 때) · fp · instance · thread · 억제 · 신뢰 여부), context.
  */
 export function logText(e: LogEntry): string {
-  const lines = [logHeaderLine(iso(e.ts), e.level, e.service, e.logger ?? "—", e.request_id), e.message];
+  const lines = [logHeaderLine(e.ts, e.level, e.service, e.logger ?? "—", e.request_id), e.message];
   if (e.exception) {
     lines.push(`예외 ${exceptionTypeText(e.exception.type)}${e.exception.message != null ? `: ${e.exception.message}` : ""}`);
     if (e.exception.stack) lines.push(e.exception.stack);
@@ -292,20 +291,24 @@ export function logText(e: LogEntry): string {
 /** 보이는 목록 전체(텍스트) — 항목 사이 빈 줄 */
 export const logsText = (items: readonly LogEntry[]) => items.map(logText).join("\n\n");
 
-/** 항목 JSON(복사용, 들여쓰기) — api 가 준 그대로 */
+/** 항목 JSON(복사용, 들여쓰기) — api 가 준 그대로(ts 는 UTC) */
 export const logJson = (e: LogEntry) => JSON.stringify(e.raw, null, 2);
 
-/** NDJSON — 한 줄에 항목 하나(api 가 준 그대로, 스트림 id 포함), 끝에 줄바꿈 */
+/** NDJSON — 한 줄에 항목 하나(api 가 준 그대로, 스트림 id 포함 · ts 는 UTC — 화면의 KST 로 바꾸지 않는다), 끝에 줄바꿈 */
 export const logsNdjson = (items: readonly LogEntry[]) => items.map((e) => JSON.stringify(e.raw)).join("\n") + (items.length ? "\n" : "");
 
-/** 내려받기 파일 이름: wakeline-logs-YYYYMMDDTHHMMSSZ.<ext> */
+/** 내려받기 파일 이름: wakeline-logs-YYYYMMDDTHHMMSS+0900.<ext> — 내려받은 시각(KST, ISO 8601 기본 형식 + 오프셋) */
 export function logsFileName(ext: "txt" | "ndjson", nowMs: number): string {
-  return `wakeline-logs-${new Date(nowMs).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z.${ext}`;
+  const s = isoKst(nowMs);
+  return `wakeline-logs-${s ? `${s.slice(0, 19).replace(/[-:]/g, "")}+0900` : "time-unknown"}.${ext}`;
 }
+
+/** 묶음의 항목 수: "12건". 모르면 "—" 만 — 단위를 붙인 "—건" 은 센 값처럼 읽힌다(지연의 "— ms" 와 같은 규칙) */
+export const groupCountText = (count: number | null): string => (count == null ? "—" : `${count}건`);
 
 /** 묶음 전체 텍스트: 묶음 머리(건수 · 억제 합 · 처음 · 마지막) + 붙인 항목이 묶음의 전부인지 + 항목들 */
 export function groupText(g: LogGroup, items: readonly LogEntry[], meta: { truncated: boolean }): string {
-  const head = `[묶음 fp=${g.fp} ${g.level ?? "—"} ${g.service ?? "—"}/${g.logger ?? "—"}] 항목 ${g.count ?? "—"}건 · 억제 합 ${g.suppressed ?? "—"} · 처음 ${iso(g.first_at)} · 마지막 ${iso(g.last_at)}`;
+  const head = `[묶음 fp=${g.fp} ${g.level ?? "—"} ${g.service ?? "—"}/${g.logger ?? "—"}] 항목 ${groupCountText(g.count)} · 억제 합 ${g.suppressed ?? "—"} · 처음 ${isoText(g.first_at)} · 마지막 ${isoText(g.last_at)}`;
   const lines = [head, `예외 종류 ${exceptionTypeText(g.exception_type)}`, `표본 메시지 ${g.sample_message ?? "—"}`,
     `아래 항목 ${items.length}건${meta.truncated ? " — 묶음의 일부만(목록 상한 또는 스캔 잘림)" : ""}`];
   return [lines.join("\n"), ...items.map(logText)].join("\n\n");

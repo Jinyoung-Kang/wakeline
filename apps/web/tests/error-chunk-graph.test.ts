@@ -35,6 +35,9 @@ describe("error boundary chunks", () => {
       const files = [...graph(entry)].map((f) => f.slice(ROOT.length + 1));
       expect(files).toContain("components/logs/ErrorScreen.tsx");
       expect(files).not.toContain("lib/logs.ts");
+      // 복사 머리 줄의 KST 는 의존성 없는 lib/kst 로 — 표시 규칙 전체(lib/format)를 싣지 않는다
+      expect(files).toContain("lib/kst.ts");
+      expect(files).not.toContain("lib/format.ts");
     });
   }
 });

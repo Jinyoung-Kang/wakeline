@@ -2,6 +2,7 @@
  * 표시 규칙(순수 함수). 값이 없으면 "—" — 0/false/"없음" 으로 채우지 않는다(데이터 정직성).
  * 색은 지도 레이어(maplayers.ts)·범례(MapLegend)·카드가 이 한 곳을 공유한다.
  */
+import { isoKst } from "./kst";
 
 /**
  * SIGMET 위험 유형 색. TC(빨강)와 IFR(분홍)은 서로 다른 색(GAP-13). 목록에 없는 유형은 HAZARD_DEFAULT_COLOR.
@@ -150,6 +151,34 @@ export function fmtClock(v: string | number | null | undefined) {
 export function fmtIso(v: string | number | null | undefined) {
   return isoOf(v) ?? "—";
 }
+
+// ---- 한국 표준시(KST) — 운영(/ops)·로그(/logs) 화면만(사용자 요청 2026-09-29). 항공 자료 화면(상황판·재생·통계·공항)은 위의 UTC 그대로 ----
+// 오프셋은 +09:00 고정(lib/kst — 1988년 뒤로 일광 절약 없음, tz 데이터베이스와 대조한 시험 있음). 숫자는 epoch ms.
+
+/** 표 칸의 KST "MM-DD HH:MM:SS"(예: 09-29 08:41:14) — 머리글이 "(KST)" 를 말하는 칸에만. 모르면 "—" */
+export function fmtTimeKst(v: string | number | null | undefined) {
+  const s = isoKst(v);
+  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 19)}`;
+}
+/** 머리글이 없는 자리(문장·배지·툴팁)의 KST "MM-DD HH:MM:SS KST". 모르면 "—"(시간대 글자도 붙이지 않는다) */
+export function fmtTimeKstLabel(v: string | number | null | undefined) {
+  const t = fmtTimeKst(v);
+  return t === "—" ? t : `${t} KST`;
+}
+/** KST "HH:MM:SS KST" — 날짜가 자명한 곳(방금 받은 응답의 '갱신' 시각)에만. 모르면 "—" */
+export function fmtClockKst(v: string | number | null | undefined) {
+  const s = isoKst(v);
+  return s == null ? "—" : `${s.slice(11, 19)} KST`;
+}
+/** 오프셋을 붙인 ISO 8601 "2026-09-29T08:41:14.906+09:00"(ms 유지 — 복사 텍스트·상세). 모르면 "—" */
+export function fmtIsoKst(v: string | number | null | undefined) {
+  return isoKst(v) ?? "—";
+}
+/** KST 로 보인 시각의 툴팁: 원본 UTC ISO("원본 UTC 2026-09-28T23:41:14.906Z" — 서버·컨테이너 로그와 대조용). 모르면 undefined(title 없음) */
+export function fmtUtcTitle(v: string | number | null | undefined): string | undefined {
+  const s = isoOf(v);
+  return s == null ? undefined : `원본 UTC ${s}`;
+}
 /** 경과 시간(초) — "42s", "3m 05s", "1h 12m", "2d 03h". 모르면 "—". */
 export function fmtDuration(sec: number | null | undefined) {
   if (sec == null || !Number.isFinite(sec)) return "—";
@@ -295,6 +324,15 @@ export function fmtBudgetLimit(v: unknown) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return "—";
   return n > 0 ? String(n) : "∞";
+}
+
+/**
+ * 지연(ms) 칸: "420 ms". 숫자 또는 숫자 문자열(Redis 해시 값)만 값 — 모르면(null·없음·형식 오류·음수) "—".
+ * 단위만 붙은 "— ms" 로 보이지 않게(값을 모르는데 단위가 있으면 측정값처럼 읽힌다).
+ */
+export function fmtLatencyMs(v: unknown): string {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? `${n.toLocaleString("en-US")} ms` : "—";
 }
 
 /** 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다) */
