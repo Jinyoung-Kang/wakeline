@@ -272,7 +272,7 @@ describe("time examples", () => {
     expect(t).toContain("290500Z"); // 원문은 발표 그대로
     expect(t).toContain(fmtUtcDayDual("2026-09-28")!);
     expect(t).toMatch(/§G13/);
-    expect(text(html)).toMatch(/12:30 KST · 03:30 UTC/);
+    expect(text(html)).toMatch(/매일 03:30 KST 에 전날/); // 통계 집계 시각(api 03:30 KST — 계약 v5 §G19)
     // 표 칸 모양: 첫 줄 KST · 둘째 줄 UTC(DualTime cell — 화면 읽기에는 KST · UTC 로)
     expect(/<section id="time"[\s\S]*?<\/section>/.exec(html)![0]).toMatch(/<time dateTime="2026-09-29T05:22:11.000Z" class="block">09-29 14:22:11/);
   });

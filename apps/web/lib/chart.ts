@@ -1,11 +1,8 @@
 /** 통계 차트 보조(순수 함수). value=null = 자료 없음(0 이 아니다 — GAP-17). */
-import { fmtUtcDayDual, utcDayHours } from "./time";
+import { kstDayHours, kstDayOf } from "./time";
 
-/**
- * full = 막대 툴팁 · 스크린리더 표에 쓸 전체 이름(없으면 label).
- * sub = 눈금 둘째 줄(흐리게, 라벨 아래) — 시간대별 막대의 같은 순간 UTC 시("00Z"). 없으면 한 줄.
- */
-export interface ChartRow { label: string; value: number | null; full?: string; sub?: string }
+/** full = 막대 툴팁 · 스크린리더 표에 쓸 전체 이름(없으면 label). */
+export interface ChartRow { label: string; value: number | null; full?: string }
 
 /** 스크린리더용 한 줄 요약: 항목 수·최댓값·자료 없는 항목 수 */
 export function chartSummary(rows: ChartRow[], unit = ""): string {
@@ -17,7 +14,7 @@ export function chartSummary(rows: ChartRow[], unit = ""): string {
 }
 
 /**
- * 시간대별(00–23 UTC) 행: 서버에 행이 없는 시간은 null(자료 없음) — 0 으로 채우지 않는다.
+ * 시간대별(00–23 — 서버가 준 시, 통계는 KST 시) 행: 서버에 행이 없는 시간은 null(자료 없음) — 0 으로 채우지 않는다.
  * 서버 행의 시간 키는 hour 또는 dim("00".."23").
  */
 export function hourlyRows(items: { hour?: string | null; dim?: string | null; value: unknown }[]): ChartRow[] {
@@ -31,17 +28,13 @@ export function hourlyRows(items: { hour?: string | null; dim?: string | null; v
 }
 
 /**
- * UTC 날짜 하루(day, "YYYY-MM-DD")의 시간대별 행 — KST 와 UTC 를 함께(사용자 요청 2026-09-29): 막대 순서는 그 UTC 날짜의 시간 순서(UTC 00시 → 23시)
- * 그대로이고, 눈금 윗줄(label)은 KST 시(09 … 23, 00 … 08 — 00 부터는 다음 KST 날), 아랫줄(sub)은 같은 순간의 UTC 시("00Z"). 집계 날짜를 KST 날짜로 옮기지 않는다.
- * full = "09-29 00시 KST · 09-28 15시 UTC"(날짜를 모르면 시만 — lib/time utcDayHours). 값은 hourlyRows 와 같다(없으면 null).
+ * KST 날짜 하루(day, "YYYY-MM-DD" — 서버가 KST 날짜로 센다, 계약 v5 §G19)의 시간대별 행: 막대 순서 = KST 00시 → 23시, 눈금 = KST 시,
+ * full = "09-29 07시 KST"(날짜를 모르면 시만 — lib/time kstDayHours). 값은 hourlyRows 와 같다(없으면 null).
  */
 export function hourlyRowsKst(items: Parameters<typeof hourlyRows>[0], day: string | null): ChartRow[] {
-  const hours = utcDayHours(day);
-  return hourlyRows(items).map((r, h) => ({ label: hours[h].kst, sub: hours[h].utcTick, value: r.value, full: hours[h].full }));
+  const hours = kstDayHours(day);
+  return hourlyRows(items).map((r, h) => ({ label: hours[h].label, value: r.value, full: hours[h].full }));
 }
-
-/** UTC 날짜 하루가 두 시간대로 어디부터 어디까지인지: "09-28 09:00 – 09-29 08:59 KST · 09-28 00:00 – 09-28 23:59 UTC". 날짜 형식이 아니면 null */
-export const utcDayDual = (day: string | null): string | null => fmtUtcDayDual(day);
 
 // ---- 트래픽 범위(DH-10) ----
 
@@ -67,12 +60,12 @@ export function trafficScopeLabel(scope: unknown, region: TrafficRegion | null |
  * 그 전에는 위치 보고 1건으로도 진입·이탈이 확정될 수 있었다(감사 COR-1·REL-5·PERF-5) — 그날까지의 관측 알림 건수·체류 시간은 이후와 비교할 수 없다.
  */
 export const HYSTERESIS_FIX_AT = "2026-09-27T15:10:00Z";
-const HYSTERESIS_FIX_DAY = HYSTERESIS_FIX_AT.slice(0, 10);
+/** 수정 시각의 KST 날짜(통계 날짜 단위 — 계약 v5 §G19): "2026-09-28"(00:10 KST) */
+export const HYSTERESIS_FIX_DAY = kstDayOf(HYSTERESIS_FIX_AT)!;
 
-/** 이 통계 행이 수정 전 판정의 관측 알림을 (일부라도) 포함하는가 — UTC 날짜 ≤ 수정일인 OBSERVED 건수·체류 */
+/** 이 통계 행이 수정 전 판정의 관측 알림을 (일부라도) 포함하는가 — KST 날짜 ≤ 수정일인 OBSERVED 건수·체류. 날짜가 아닌 값은 false */
 export function preFixHysteresis(r: { day?: unknown; metric?: unknown; dim?: unknown }): boolean {
   if (r.dim !== "OBSERVED") return false;
   if (r.metric !== "alerts_by_kind" && r.metric !== "alert_dwell_avg_s") return false;
-  const d = typeof r.day === "string" ? r.day.slice(0, 10) : null;
-  return d != null && /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= HYSTERESIS_FIX_DAY;
+  return typeof r.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.day) && r.day <= HYSTERESIS_FIX_DAY;
 }

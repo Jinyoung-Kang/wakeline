@@ -1,7 +1,7 @@
 /**
- * 통계(/stats) · 공항(/airports/[icao] · 공항 카드)도 한국 표준시(사용자 요청 2026-09-29 "상황판도 KST로 바꿔") — 실제 react-dom 으로 마운트(최소 DOM + fetch 대역).
- * - 통계: UTC 날짜로 센 집계는 날짜를 KST 로 옮기지 않고 "(UTC 날짜)" 라고 적는다. 하루 안의 시각(시간대별 막대 · 집계 시각)은 KST(· UTC).
- * - 공항: 관측 · 수신 시각은 KST 먼저 · UTC 함께(사용자 요청 2026-09-29 "UTC 와 KST 함께"), METAR · TAF 원문은 발표된 그대로(안의 "…Z" 는 UTC).
+ * 통계(/stats) · 공항(/airports/[icao] · 공항 카드)은 한국 표준시만(계약 v5 §G19 — 사용자 결정 2026-09-30) — 실제 react-dom 으로 마운트(최소 DOM + fetch 대역).
+ * - 통계: 서버가 KST 날짜로 센다(응답 day_zone "Asia/Seoul") — 날짜 · 시간대별 막대(KST 시) · 집계 시각(03:30 KST) 모두 KST. KST 날짜라고 밝히지 않은 응답은 그리지 않는다.
+ * - 공항: 관측 · 수신 시각은 KST, METAR · TAF 원문은 발표된 그대로(data-raw).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -9,8 +9,7 @@ import { createElement } from "react";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { hourlyRowsKst } from "@/lib/chart";
 import { statsEmptyText } from "@/lib/stats";
-import { unpairedKst } from "./helpers/dual-time";
-import { domUtcLeaks } from "./helpers/kst-only";
+import { domUtcLeaks, utcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -46,71 +45,73 @@ async function mount(el: React.ReactElement) {
   await settle();
 }
 
-describe("stats: UTC-day aggregates keep the UTC date; times of day are KST", () => {
-  it("hourly rows: bars stay in time order for the UTC day; each tick names the KST hour and, below it, the UTC hour; the full label names both", () => {
-    const rows = hourlyRowsKst([{ hour: "00", value: 3 }, { hour: "15", value: 7 }], "2026-09-28");
+describe("stats: the server counts KST days (contract v5 §G19) — dates, hours and the aggregation time are KST only", () => {
+  it("hourly rows: the 24 KST hours of the KST day in order (00 → 23); the full label names the KST date; no UTC tick line", () => {
+    const rows = hourlyRowsKst([{ hour: "00", value: 3 }, { hour: "23", value: 7 }], "2026-09-29");
     expect(rows).toHaveLength(24);
-    expect(rows.map((r) => r.label)).toEqual(["09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "00", "01", "02", "03", "04", "05", "06", "07", "08"]);
-    expect(rows.map((r) => r.sub)).toEqual(Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}Z`)); // 둘째 줄 = 같은 순간의 UTC 시
-    expect(rows[0]).toEqual({ label: "09", sub: "00Z", value: 3, full: "09-28 09시 KST · 00시 UTC" });
-    expect(rows[15]).toEqual({ label: "00", sub: "15Z", value: 7, full: "09-29 00시 KST · 09-28 15시 UTC" }); // UTC 15시 = 다음 KST 날의 자정(UTC 날짜가 달라 UTC 쪽에 날짜)
-    expect(rows[1]).toEqual({ label: "10", sub: "01Z", value: null, full: "09-28 10시 KST · 01시 UTC" }); // 자료 없음은 null 그대로
-    // 날짜를 모르면(없음 · 형식 오류 · 달력에 없는 날) 시각만(날짜를 지어내지 않는다)
-    for (const d of [null, "2026-9-28", "2026-02-30"]) expect(hourlyRowsKst([], d)[15].full, String(d)).toBe("00시 KST · 15시 UTC");
+    expect(rows.map((r) => r.label)).toEqual(Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")));
+    expect(rows[0]).toEqual({ label: "00", value: 3, full: "09-29 00시 KST" });
+    expect(rows[23]).toEqual({ label: "23", value: 7, full: "09-29 23시 KST" });
+    expect(rows[1]).toEqual({ label: "01", value: null, full: "09-29 01시 KST" }); // 자료 없음은 null 그대로
+    for (const d of [null, "2026-9-29", "2026-02-30"]) expect(hourlyRowsKst([], d)[15].full, String(d)).toBe("15시 KST"); // 날짜를 지어내지 않는다
   });
-  it("BarChart draws the second tick line (UTC) under each label when rows have one; bars without it keep one line", async () => {
+  it("BarChart draws one tick line per bar (the KST hour); the full KST label is its tooltip", async () => {
     const { BarChart } = await import("@/components/BarChart");
     const { renderToStaticMarkup } = await import("react-dom/server");
-    const html = renderToStaticMarkup(createElement(BarChart, { id: "h", title: "t", rows: hourlyRowsKst([{ hour: "00", value: 3 }], "2026-09-28") }));
-    const ticks = [...html.matchAll(/<text[^>]*data-tick="(kst|utc)"[^>]*>(?:<title>[^<]*<\/title>)?([^<]*)<\/text>/g)].map((m) => [m[1], m[2]]);
-    expect(ticks.filter(([k]) => k === "kst").map(([, v]) => v)).toEqual(hourlyRowsKst([], "2026-09-28").map((r) => r.label));
-    expect(ticks.filter(([k]) => k === "utc").map(([, v]) => v)).toEqual(hourlyRowsKst([], "2026-09-28").map((r) => r.sub));
-    // 칸마다 KST 줄 바로 다음에 그 칸의 UTC 줄
-    for (let i = 0; i < 24; i++) expect([ticks[2 * i][0], ticks[2 * i + 1][0]]).toEqual(["kst", "utc"]);
-    const plain = renderToStaticMarkup(createElement(BarChart, { id: "p", title: "t", rows: [{ label: "A", value: 1 }] }));
-    expect(plain).not.toContain('data-tick="utc"');
+    const html = renderToStaticMarkup(createElement(BarChart, { id: "h", title: "t", rows: hourlyRowsKst([{ hour: "00", value: 3 }], "2026-09-29") }));
+    expect(html).not.toContain("data-tick");
+    expect(html).toContain("<title>09-29 00시 KST</title>00</text>");
+    expect(utcLeaks(html.replace(/<[^>]+>/g, " "))).toEqual([]);
   });
-  it("empty-state text names the aggregation time in KST with UTC", () => {
-    expect(statsEmptyText(false, "2026-09-27", "2026-09-28")).toContain("다음 12:30 KST · 03:30 UTC 집계");
-    expect(statsEmptyText(undefined, "2026-09-27", "2026-09-28")).toContain("집계는 매일 12:30 KST · 03:30 UTC");
-    for (const t of [statsEmptyText(false, "2026-09-27", "2026-09-28"), statsEmptyText(undefined, null, "2026-09-28")]) expect(unpairedKst(t)).toEqual([]);
+  it("empty-state text names the aggregation time in KST only", () => {
+    expect(statsEmptyText(false, "2026-09-27", "2026-09-28")).toContain("다음 03:30 KST 집계");
+    expect(statsEmptyText(undefined, "2026-09-27", "2026-09-28")).toContain("집계는 매일 03:30 KST");
+    for (const t of [statsEmptyText(false, "2026-09-27", "2026-09-28"), statsEmptyText(undefined, null, "2026-09-28")]) expect(utcLeaks(t)).toEqual([]);
   });
-  it("the page: day picker and table say UTC date; chart bars, caption and the hysteresis note use KST", async () => {
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-29T01:00:00Z") }); // KST 09-29 10:00 → 어제(UTC 날짜) 09-28
-    stub({
-      "/api/v1/stats/sigmet?group=fir": { items: [], aggregated: true },
-      "/api/v1/stats/sigmet?group=hazard": { items: [], aggregated: true },
-      "/api/v1/stats/traffic?day=2026-09-28": { items: [{ day: "2026-09-28", hour: "00", dim: "00", value: 3 }, { day: "2026-09-28", hour: "15", dim: "15", value: 7 }], aggregated: true, scope: null, region: null },
-      "/api/v1/stats/alerts": { items: [{ day: "2026-09-27", metric: "alerts_by_kind", dim: "OBSERVED", value: 5 }], aggregated: true },
-    });
+  const STATS = (trafficDay: string, zone: string | null = "Asia/Seoul") => {
+    const z = zone == null ? {} : { day_zone: zone };
+    return {
+      "/api/v1/stats/sigmet?group=fir": { items: [], days: [], ...z },
+      "/api/v1/stats/sigmet?group=hazard": { items: [], days: [], ...z },
+      [`/api/v1/stats/traffic?day=${trafficDay}`]: { day: trafficDay, items: [{ day: trafficDay, dim: "00", value: 3 }, { day: trafficDay, dim: "23", value: 7 }], aggregated: true, scope: null, region: null, ...z },
+      "/api/v1/stats/alerts": { items: [{ day: "2026-09-27", metric: "alerts_by_kind", dim: "OBSERVED", value: 5 }], days: [], ...z },
+    };
+  };
+  it("the page: yesterday is the KST yesterday; the day picker, chart, table and notes say KST; no UTC anywhere", async () => {
+    // 01:00 KST 09-29 = 16:00 UTC 09-28 — UTC 로는 어제가 09-27 이지만 KST 로는 09-28
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-28T16:00:00Z") });
+    stub(STATS("2026-09-28"));
     const StatsPage = (await import("@/app/stats/page")).default;
     await mount(createElement(StatsPage));
     const t = dom.container.textContent;
-    expect(t).toContain("Distinct aircraft by hour (KST · UTC 시각, UTC 날짜)");
-    const inputs = all((e) => e.tagName === "INPUT").map((e) => e.getAttribute("aria-label"));
-    expect(inputs).toEqual(["집계 날짜(UTC 날짜)"]);
-    expect(byTestId("traffic-hours-note")!.textContent).toBe("UTC 날짜 2026-09-28 = 09-28 09:00 – 09-29 08:59 KST · 09-28 00:00 – 09-28 23:59 UTC · 눈금 윗줄 KST 시 · 아랫줄 UTC 시(Z)");
-    // 막대 눈금: 칸마다 윗줄 KST 시 · 아랫줄 UTC 시 — 첫 칸 09 / 00Z, 16번째 칸 00 / 15Z(다음 KST 날)
+    expect(t).toContain("Distinct aircraft by hour (KST)");
+    const input = all((e) => e.tagName === "INPUT")[0];
+    expect([input.getAttribute("aria-label"), input.getAttribute("max")]).toEqual(["집계 날짜(KST)", "2026-09-28"]);
+    expect(byTestId("traffic-hours-note")!.textContent).toBe("KST 날짜 2026-09-28(00:00–24:00 KST) · 눈금 = KST 시");
     const svg = all((e) => e.tagName === "svg")[0];
     const own = (x: MiniElement) => x.childNodes.filter((c) => !(c instanceof MiniElement)).map((c) => c.textContent).join("");
-    const kst = all((e) => e.tagName === "text" && e.getAttribute("data-tick") === "kst", svg).map(own);
-    const utc = all((e) => e.tagName === "text" && e.getAttribute("data-tick") === "utc", svg).map(own);
-    expect(kst).toHaveLength(24);
-    expect(utc).toHaveLength(24);
-    expect(kst.slice(0, 2)).toEqual(["09", "10"]);
-    expect(utc.slice(0, 2)).toEqual(["00Z", "01Z"]);
-    expect([kst[15], utc[15]]).toEqual(["00", "15Z"]);
-    kst.forEach((k, i) => expect(Number(k), `slot ${i}`).toBe((Number(utc[i].slice(0, 2)) + 9) % 24)); // 칸마다 같은 순간의 두 시
+    const ticks = all((e) => e.tagName === "text", svg).map(own).filter((x) => /^\d\d$/.test(x));
+    expect(ticks.slice(0, 3)).toEqual(["00", "01", "02"]);
     const srRows = all((e) => e.tagName === "TR").map((r) => all((e) => e.tagName === "TD", r).map((c) => c.textContent)).filter((c) => c.length === 2);
-    expect(srRows).toContainEqual(["09-29 00시 KST · 09-28 15시 UTC", "7"]);
-    // 알림 표: 날짜는 UTC 날짜 그대로 — KST 로 옮기지 않는다
-    const heads = all((e) => e.tagName === "TH").map((h) => h.textContent);
-    expect(heads).toContain("날짜(UTC 날짜)");
+    expect(srRows).toContainEqual(["09-28 23시 KST", "7"]);
+    // 알림 표: KST 날짜
+    expect(all((e) => e.tagName === "TH").map((h) => h.textContent)).toContain("날짜(KST)");
     expect(all((e) => e.tagName === "TD").map((c) => c.textContent)).toContain("2026-09-27");
-    expect(byTestId("hysteresis-caveat")!.textContent).toContain("09-28 00:10:00 KST · 09-27 15:10:00 UTC 이전에 생성된 관측(OBSERVED) 알림");
-    expect(byTestId("hysteresis-caveat")!.textContent).toContain("UTC 날짜 2026-09-27 까지");
-    expect(t).toContain("매일 12:30 KST · 03:30 UTC 에 전날(UTC 날짜) 집계");
-    expect(unpairedKst(t)).toEqual([]);
+    expect(byTestId("hysteresis-caveat")!.textContent).toContain("09-28 00:10:00 KST 이전에 생성된 관측(OBSERVED) 알림");
+    expect(byTestId("hysteresis-caveat")!.textContent).toContain("KST 날짜 2026-09-28 까지");
+    expect(t).toContain("매일 03:30 KST 에 전날(KST 날짜) 집계");
+    expect(domUtcLeaks(dom.container)).toEqual([]);
+  });
+  it("a response that does not say its days are KST days (older api — UTC days) is not drawn as KST days", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-29T01:00:00Z") });
+    stub(STATS("2026-09-28", null));
+    const StatsPage = (await import("@/app/stats/page")).default;
+    await mount(createElement(StatsPage));
+    expect(all((e) => e.tagName === "svg")).toHaveLength(0); // 차트 없음
+    expect(all((e) => e.tagName === "TD").map((c) => c.textContent)).not.toContain("2026-09-27");
+    const notes = all((e) => e.getAttribute("data-testid") === "stats-zone-error").map((e) => e.textContent);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("KST 날짜로 센 응답이 아님");
   });
 });
 

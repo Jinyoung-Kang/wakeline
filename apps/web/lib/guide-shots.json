@@ -139,8 +139,8 @@
       "callouts": [
         { "n": 1, "label": "FIR별 SIGMET", "text": "최근 7일 FIR별 발표 건수(상위 24).", "target": "main .grid > section:nth-of-type(1)", "anchor": "tl" },
         { "n": 2, "label": "위험 유형별", "text": "최근 7일 위험 유형별 발표 건수.", "target": "main .grid > section:nth-of-type(2)", "anchor": "tl" },
-        { "n": 3, "label": "시간대별 항공기", "text": "그 날짜(UTC 날짜)의 시간대별 고유 항공기 수 — 막대 이름은 KST 시각.", "target": "main .grid > section:nth-of-type(3)", "anchor": "tl" },
-        { "n": 4, "label": "집계 날짜", "text": "UTC 날짜로 고릅니다(오늘은 아직 집계 전).", "target": "input[aria-label=\"집계 날짜(UTC 날짜)\"]", "anchor": "l" },
+        { "n": 3, "label": "시간대별 항공기", "text": "그 날짜(KST 날짜 — 00:00–24:00 KST)의 시간대별 고유 항공기 수 — 막대 이름은 KST 시.", "target": "main .grid > section:nth-of-type(3)", "anchor": "tl" },
+        { "n": 4, "label": "집계 날짜", "text": "KST 날짜로 고릅니다(오늘은 아직 집계 전 — 매일 03:30 KST 에 전날을 셉니다).", "target": "input[aria-label=\"집계 날짜(KST)\"]", "anchor": "l" },
         { "n": 5, "label": "알림 통계", "text": "날짜 · 종류별 건수와 평균 체류.", "target": "main .grid > section:nth-of-type(4)", "anchor": "tl" }
       ]
     },

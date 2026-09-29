@@ -237,7 +237,7 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
       ],
       active: { region: "adsb_fi" }, collector: { region_at: "2026-09-28T23:41:00Z", fixture: "0" },
       switches: [{ at: "2026-09-28T23:25:26.025Z", job: "region", from: "adsb_lol", to: "adsb_fi", reason: "429" }],
-      budget_days: [{ day: "2026-09-28", provider: "adsb_fi", calls: 10, limit_value: 0 }],
+      budget_days: [{ day: "2026-09-28", provider: "adsb_fi", calls: 10, limit_value: 0 }], budget_day_zone: "UTC",
     },
     "/api/v1/ops/runs?limit=50&resolved=hide": {
       items: [
@@ -249,7 +249,7 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
         { job: "region", provider: "adsb_fi", status: "ok", n: 40, avg_latency_ms: 250, last_at: "2026-09-28T23:41:00Z" },
       ],
     },
-    "/api/v1/ops/quality": { rule_counts: [{ day: "2026-09-28", rule: "seen_in_future", count: 2 }], recent: [{ id: 1, run_id: 6, rule: "seen_in_future", hex: "abc123", detail: RAW_DETAIL, created_at: "2026-09-28T23:30:00Z" }] },
+    "/api/v1/ops/quality": { day_zone: "Asia/Seoul", rule_counts: [{ day: "2026-09-29", rule: "seen_in_future", count: 2 }], recent: [{ id: 1, run_id: 6, rule: "seen_in_future", hex: "abc123", detail: RAW_DETAIL, created_at: "2026-09-28T23:30:00Z" }] },
     "/api/v1/ops/settings": { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] },
     "/api/v1/ops/audit": { items: [{ id: 1, username: "op", action: "SETTING_UPDATE", target: "region_poll_s", before: "5", after: "10", ip: "127.0.0.1", request_id: "abcd1234abcd1234", at: "2026-09-28T15:00:00Z" }] },
     "/api/v1/ops/dlq": { items: [{ stream_id: "1-0", at: "2026-09-28T14:59:59Z", source_stream: "wakeline:aircraft", kind: "schema", reason: "bad", payload_head: RAW_PAYLOAD }] },
@@ -278,10 +278,8 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
     const text = [RAW_DETAIL, RAW_PAYLOAD].reduce((t, raw) => t.split(raw).join(""), byTestId("ops-dashboard")!.textContent);
     expect(text).not.toMatch(UTC_TIME);
     expect(text).not.toContain("— ms");
-    expect(domUtcLeaks(byTestId("ops-dashboard")!).filter((x) => !PENDING_QUALITY_DAY.some((p) => x.includes(p)))).toEqual([]);
+    expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);
   };
-  /** 격리 수의 날짜(수집기 UTC 날짜 집계) — 서버가 KST 날짜로 세도록 바꾸는 커밋에서 없앤다 */
-  const PENDING_QUALITY_DAY = ["day (UTC)", "UTC 날짜(수집기가"];
   const th = (label: string) => all((e) => e.tagName === "TH" && e.textContent === label)[0];
   it("providers · runs · quality · settings · audit · dlq · pipeline", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(NOW) });
@@ -329,7 +327,9 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
     noUtcNoDashUnit();
 
     await tab("quality");
-    expect(heads()).toEqual(["day (UTC)", "rule", "count", "at (KST)", "run", "rule", "hex", "detail (raw)"]);
+    // 격리 수의 날짜는 수집기가 KST 날짜로 센다(응답 day_zone "Asia/Seoul" — 계약 v5 §G19)
+    expect(heads()).toEqual(["day (KST)", "rule", "count", "at (KST)", "run", "rule", "hex", "detail (raw)"]);
+    expect(row("2026-09-29")[1].textContent).toBe("seen_in_future");
     expect(row("09-29 08:30:00")[2].textContent).toBe("seen_in_future");
     expect(row("09-29 08:30:00")[4].textContent).toBe(RAW_DETAIL); // 원본 그대로(바꾸지 않는다)
     expect(row("09-29 08:30:00")[4].getAttribute("data-raw")).toBe("record");
@@ -359,6 +359,36 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
     expect(pipe).toContain("생성 09-29 08:41:14 KST");
     expect(byTestId("ops-pipeline-trim")!.textContent).toContain("wakeline:aircraft · 09-29 08:00:00 – 09-29 08:02:00 KST");
     noUtcNoDashUnit();
+  });
+});
+
+describe("ops day columns trust only the zone the api names (contract v5 §G19)", () => {
+  const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+    if (pred(from)) out.push(from);
+    for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);
+    return out;
+  };
+  it("a budget day without budget_day_zone \"UTC\" and a rule-count day without day_zone \"Asia/Seoul\" are not shown as KST (— and a warning)", async () => {
+    const data: Record<string, unknown> = {
+      "/api/v1/ops/session": { username: "op" },
+      "/api/v1/ops/providers": { providers: [], active: {}, collector: {}, switches: [], budget_days: [{ day: "2026-09-28", provider: "adsb_fi", calls: 10, limit_value: 0 }] },
+      "/api/v1/ops/quality": { rule_counts: [{ day: "2026-09-28", rule: "seen_in_future", count: 2 }], recent: [] },
+    };
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-28T23:41:14Z") });
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in data ? data[url] : { detail: "no such resource" }), { status: url in data ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    expect(byTestId("budget-window")!.textContent).toBe("—");
+    expect(byTestId("budget-zone-unknown")!.textContent).toContain("예산 날의 기준");
+    const b = byTestId("ops-tab-quality")!;
+    const k = Object.keys(b).find((x) => x.startsWith("__reactProps$"))!;
+    await React.act(async () => { (b as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
+    await settle();
+    const cells = all((e) => e.tagName === "TD").map((c) => c.textContent);
+    expect(cells.slice(0, 3)).toEqual(["—", "seen_in_future", "2"]);
+    expect(byTestId("quality-zone-unknown")!.textContent).toContain("KST 날짜로 센 응답이 아님");
   });
 });
 

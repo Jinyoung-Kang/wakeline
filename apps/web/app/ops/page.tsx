@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
-import { fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
+import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
@@ -20,11 +20,11 @@ type Any = Record<string, unknown>;
 /** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
 /** resolution_state = 해결 기록의 상태(ok | stale | unavailable — ADR-024). providers[] 마다 last_error_resolution · last_error_resolved */
 interface Providers {
-  providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; provider_switch?: SwitchState[]; resolution_state?: unknown;
+  providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; budget_day_zone?: unknown; provider_switch?: SwitchState[]; resolution_state?: unknown;
 }
 /** hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다) */
 interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; mode: ResolvedMode }
-interface Quality { rule_counts: Any[]; recent: Any[] }
+interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
 type Tab = "providers" | "runs" | "quality" | "settings" | "audit" | "dlq" | "pipeline";
 const TABS: readonly Tab[] = ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"];
@@ -41,8 +41,11 @@ const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder(
 const RESOLVE_AFFECTS: readonly Tab[] = ["providers", "runs", "audit"];
 /** 응답 필드 → 시각 값(ISO 문자열 · epoch ms). 그 밖은 모름(null) */
 const at = (v: unknown): string | number | null => (typeof v === "string" || typeof v === "number" ? v : null);
-/** 격리 수 날짜 칸 머리글 — 수집기가 UTC 날짜로 센다(db.py started_at 의 UTC 날짜) */
-const UTC_DAY_TITLE = "UTC 날짜(수집기가 UTC 날짜마다 센다) — 한국 표준시 날짜가 아니다: KST 09:00 에 날짜가 바뀐다";
+/** 격리 수 날짜 칸 머리글 — 수집기가 실행이 시작된 KST 날짜로 센다(db.py — 계약 v5 §G19, 응답 day_zone "Asia/Seoul") */
+const KST_DAY_TITLE = "KST 날짜 — 수집기가 실행이 시작된 한국 표준시 날짜(00:00–24:00 KST)마다 센다";
+/** 응답이 밝힌 날짜 기준이 이 화면이 아는 것과 다를 때(옛 api 등) — 날짜를 KST 로 보이지 않고 그렇다고 말한다 */
+const QUALITY_ZONE_UNKNOWN = "격리 수 응답이 KST 날짜로 센 응답이 아님(day_zone 없음 — api 가 이 화면보다 옛 판일 수 있음) — 날짜를 보이지 않음";
+const BUDGET_ZONE_UNKNOWN = "예산 날의 기준을 응답이 밝히지 않음(budget_day_zone 없음 — api 가 이 화면보다 옛 판일 수 있음) — 창을 보이지 않음";
 /**
  * 예산 날 칸(계약 v5 §G19): 수집기의 하루 예산 키(budget.py day_key — budget:{공급자}:{yyyymmdd})는 UTC 날로 정해져 매일 09:00 KST 에 새로 시작한다.
  * 그 날짜를 KST 날짜로 이름만 바꾸지 않고(다른 하루가 된다) 한 행의 창을 KST 로 적는다(lib/time utcDayWindowKst).
@@ -283,7 +286,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="label mt-4 mb-1" title="수집기가 스스로 한 공급자 전환(wakeline:events) — 위 표의 수동 켜고 끄기와 다르다">Provider switches (collector 자동 전환)</div>
           <table><thead><tr><th>at (KST)</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><TimeCell v={s.at} /><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>
           <div className="label mt-4 mb-1">Daily budget snapshot</div>
-          <table><thead><tr><th title={BUDGET_DAY_TITLE}>budget window (KST)</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono whitespace-nowrap" data-testid="budget-window">{utcDayWindowKst(statsDay(b.day)) ?? "—"}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
+          {prov.budget_days.length && prov.budget_day_zone !== "UTC" ? <div className="mb-1 text-[11px] text-warn" role="alert" data-testid="budget-zone-unknown">{BUDGET_ZONE_UNKNOWN}</div> : null}
+          <table><thead><tr><th title={BUDGET_DAY_TITLE}>budget window (KST)</th><th>provider</th><th>calls</th><th>limit</th></tr></thead><tbody>{prov.budget_days.map((b, i) => <tr key={i}><td className="mono whitespace-nowrap" data-testid="budget-window">{(prov.budget_day_zone === "UTC" ? utcDayWindowKst(statsDay(b.day)) : null) ?? "—"}</td><td>{String(b.provider)}</td><td className="mono">{String(b.calls)}</td><td className="mono">{String(b.limit_value)}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "runs" && runs ? <>
           <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -301,7 +305,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         </> : null}
         {tab === "quality" && quality ? <>
           <div className="label mb-1">Quarantine counts by rule (7d)</div>
-          <table className="mb-4"><thead><tr><th title={UTC_DAY_TITLE}>day (UTC)</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{statsDay(r.day) ?? "—"}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
+          {quality.rule_counts.length && quality.day_zone !== DISPLAY_TZ.iana ? <div className="mb-1 text-[11px] text-warn" role="alert" data-testid="quality-zone-unknown">{QUALITY_ZONE_UNKNOWN}</div> : null}
+          <table className="mb-4"><thead><tr><th title={KST_DAY_TITLE}>day (KST)</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{(quality.day_zone === DISPLAY_TZ.iana ? statsDay(r.day) : null) ?? "—"}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
           <table><thead><tr><th>at (KST)</th><th>run</th><th>rule</th><th>hex</th><th title={`격리 규칙이 남긴 detail JSON — ${RAW_RECORD_TITLE}`}>detail (raw)</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3" data-raw="record">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}

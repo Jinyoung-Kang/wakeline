@@ -159,6 +159,11 @@ function calendarDayMs(day: string | null | undefined): number | null {
   const t = Date.parse(`${day}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day ? t : null;
 }
+/** KST 날짜 "YYYY-MM-DD" 가 시작하는 순간(그날 00:00 KST, epoch ms). 달력에 없으면 null */
+export function kstDayStartMs(day: string | null | undefined): number | null {
+  const t = calendarDayMs(day);
+  return t == null ? null : t - KST_OFFSET_MS;
+}
 /** 달력에 있는 "YYYY-MM-DD" 인가 */
 export const isCalendarDay = (day: string | null | undefined): boolean => calendarDayMs(day) != null;
 /** 날짜 + n 일("YYYY-MM-DD"). 달력에 없으면 null */

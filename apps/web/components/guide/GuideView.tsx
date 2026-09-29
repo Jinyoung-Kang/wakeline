@@ -330,9 +330,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           <Sec id="stats">
             {fig("stats")}
             <UL>
-              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(UTC 날짜)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(UTC 날짜)입니다.</li>
+              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.</li>
               <li><B>SIGMET</B> — 최근 7일 FIR별(상위 24) · 위험 유형별 발표 건수.</li>
-              <li><B>시간대별 고유 항공기</B> — 날짜는 UTC 날짜(09:00 KST = 00:00 UTC 에 바뀜)이고, 막대 이름은 KST 시각이라 09시부터 다음 날 08시 순서입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
+              <li><B>시간대별 고유 항공기</B> — 날짜는 KST 날짜이고 막대 이름은 그날의 KST 시(00시 → 23시)입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
               <li><B>알림</B> — 날짜 · 종류별 건수와 평균 체류. † 표시 행은 수정 전 기준으로 판정된 관측 알림이라 이후 날짜와 비교할 수 없습니다.</li>
               <li><B>비어 있을 때</B> — ‘집계 전’ · ‘집계됨(자료 없음)’ · ‘모름’을 구분해 적습니다.</li>
             </UL>
