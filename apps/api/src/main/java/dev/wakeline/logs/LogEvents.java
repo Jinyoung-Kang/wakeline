@@ -50,6 +50,8 @@ public final class LogEvents {
     /** 요청 id 형식(RequestIdFilter 와 같은 규칙) — 맞지 않으면 싣지 않는다. */
     public static final Pattern REQUEST_ID = Pattern.compile("[0-9A-Za-z-]{8,64}");
     public static final String MDC_REQUEST_ID = "request_id";
+    /** 지문 fp 모양(SHA-256 앞 16자리 소문자 16진 — 스키마 log_event.v1): 조회 필터 · 해결 표시(계약 v5 §G13)의 key 가 같은 규칙. */
+    public static final Pattern FP = Pattern.compile("[0-9a-f]{16}");
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
     private static final JsonMapper JSON = JsonMapper.builder().build();

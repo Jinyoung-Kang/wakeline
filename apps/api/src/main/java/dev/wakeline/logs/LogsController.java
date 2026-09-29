@@ -36,7 +36,7 @@ public class LogsController {
     static final Set<String> LEVELS = Set.of("ERROR", "WARN");
     static final int LIMIT_MAX = 200;
     static final int Q_MAX = 200;
-    static final Pattern FP = Pattern.compile("[0-9a-f]{16}");
+    static final Pattern FP = LogEvents.FP;
 
     private final LogReader reader;
 
