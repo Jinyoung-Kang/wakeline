@@ -438,3 +438,29 @@ async def test_budget_and_limiter_cooldowns_name_their_reason(monkeypatch):
     await job.run_once()  # 예산 소진 → 10분 쉼
     await job.run_once()  # → adsb_fi
     assert (await r.hgetall("wakeline:active"))["region_reason"] == "fallback — adsb_lol 예산 소진(10분 쉼)"
+
+
+async def test_region_429_history_survives_a_collector_restart(monkeypatch):
+    """재배포(재시작) 직후 1순위(adsb_lol)를 바로 다시 부르지 않는다 — 429 이력을 Redis 에서 되살린다(R-17 보존)."""
+    from wakeline_collector.chain_store import ChainStateStore
+
+    clk = [80_000.0]
+    wall = [1_790_000_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+
+    def build():
+        ctx = make_ctx(r)
+        lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi")
+        store = ChainStateStore(r, wall=lambda: wall[0])  # type: ignore[arg-type]
+        chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status, store=store)
+        return AircraftJob("region", chain, ctx), lol, fi
+
+    job, lol, fi = build()
+    await job.run_once()  # 429 → 60 s 쉼, 저장
+    assert "wakeline:provider:adsb_lol:ratelimit:region" in r.kv
+    clk[0], wall[0] = 5.0, wall[0] + 15  # 재시작: 새 단조 시계, 벽시계는 15 s 뒤
+    job2, lol2, fi2 = build()
+    await job2.run_once()
+    assert lol2.calls == 0 and fi2.calls == 1
+    assert (await r.hgetall("wakeline:active"))["region_reason"] == "initial — adsb_lol 429 쉼(60 s)(재시작 전 기록)"

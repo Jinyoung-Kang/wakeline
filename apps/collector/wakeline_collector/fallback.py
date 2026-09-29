@@ -9,6 +9,10 @@
 (예: OpenSky 남은 크레딧이 예비분 아래로 내려가면 자정까지 어느 체인도 쓰지 않는다).
 상태 기록(set_active·switch_event·is_disabled)은 ProviderStatus 가 Redis 오류를 삼키므로 선택을 막지 않는다.
 
+재시작(R-17 보존): store(ChainStateStore)를 주면 429 이력(단계·마지막 429·쉼 끝·미룸 끝·조용함 기준)을 429 마다 Redis 에 벽시계 epoch 초로
+남기고(persist), 첫 선택 때 읽어 단조 시계로 바꿔 되살린다. 지난 기록(expires_at)·형식이 틀린 기록·상한보다 먼 미래를 가리키는 기록은
+버린다. Redis 가 안 되면 메모리 이력만 쓴다(선택을 막지 않는다). 되살린 쉼·미룸의 전환 사유에는 '(재시작 전 기록)'을 붙인다.
+
 전환 사유(set_active·switch_event 에 같은 글, 가린 뒤 REASON_MAX 자): 무엇을 왜 건너뛰었는지·왜 돌아왔는지를 적는다.
   "fallback — adsb_lol 429 쉼(60 s)" · "fallback — adsb_lol 429 반복 → 20분 뒤로 미룸" · "fallback — adsb_lol 3회 연속 실패(10분 쉼)" ·
   "fallback — adsb_lol 운영자 끔" · "fallback — adsb_lol 일시정지(크레딧/예산)" · "recovery — adsb_lol 쉼 끝(1순위 복귀)" ·
@@ -17,17 +21,26 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from wakeline_collector.chain_store import VERSION, ChainStateStore
 from wakeline_collector.masking import mask
 from wakeline_collector.status import ProviderStatus
 
 RATE_LIMIT_RESET_S = 900.0  # 마지막 429 로부터 이만큼 조용하면 백오프 단계를 초기화
 RATE_LIMIT_HOLD_S = (600.0, 1200.0, 2400.0, 3600.0)  # 15분 안에 되풀이된 429 뒤 복귀를 늦추는 시간(R-17)
 REASON_MAX = 120  # 전환 사유 글자 수 상한
+BACKOFF_MAX_S = 300.0
+# 저장된 이력이 가리킬 수 있는 가장 먼 미래: 가장 긴 미룸(60분) + 여유 60 s. 더 먼 값은 벽시계가 뒤로 갔거나 망가진 기록이다.
+SAVED_MAX_AHEAD_S = max(BACKOFF_MAX_S, *RATE_LIMIT_HOLD_S) + 60.0
+RESTORED = "(재시작 전 기록)"
+
+log = logging.getLogger("fallback")
 
 # 건너뛴 까닭의 종류 → 돌아올 때의 말. 종류: down(쉼: 429·실패·예산·속도 상한) · hold · disabled · paused · config
 _RECOVERED = {"hold": "미룸 끝", "disabled": "운영자 켬", "paused": "일시정지 끝", "config": "설정됨"}
@@ -44,11 +57,64 @@ def _hold_text(hold_s: float) -> str:
     return f"429 반복 → {_dur(hold_s)} 뒤로 미룸"
 
 
+def _backoff_s(stage: int) -> float:
+    """stage 번째 429 의 쉼(60 → 120 → 240 → 300 s)."""
+    return min(BACKOFF_MAX_S, 60.0 * (2 ** max(0, stage - 1)))
+
+
+def _hold_for(stage: int) -> float:
+    """stage 번째 429 뒤의 미룸(첫 429 는 없음, 그 뒤 10 → 20 → 40 → 60분)."""
+    return RATE_LIMIT_HOLD_S[min(stage - 2, len(RATE_LIMIT_HOLD_S) - 1)] if stage >= 2 else 0.0
+
+
+@dataclass(frozen=True)
+class _Saved:
+    """Redis 에 남긴 429 이력(벽시계 epoch 초)."""
+
+    stage: int
+    last_429: float
+    backoff_until: float
+    hold_until: float  # 0 = 미룸 없음
+    hold_s: float
+    quiet_from: float
+    expires_at: float
+
+
+def parse_saved(row: dict[str, str], now_wall: float) -> tuple[_Saved | None, str]:
+    """(이력 | None, 버린 까닭 'format' · 'expired' · 'future' | '')."""
+    if row.get("v") != VERSION:
+        return None, "format"
+    try:
+        stage = int(row["stage"])
+        vals = [float(row[k]) for k in ("last_429_at", "backoff_until", "quiet_from", "expires_at")]
+        hold = float(row["hold_until"]) if row.get("hold_until") else 0.0
+        hold_s = float(row.get("hold_s") or 0.0)
+    except (KeyError, ValueError):
+        return None, "format"
+    if stage < 1 or not all(math.isfinite(v) for v in (*vals, hold, hold_s)):
+        return None, "format"
+    last, backoff, quiet, expires = vals
+    if expires <= now_wall:
+        return None, "expired"
+    if max(last, backoff, hold, quiet) > now_wall + SAVED_MAX_AHEAD_S:
+        return None, "future"
+    return _Saved(stage, last, backoff, hold, hold_s or _hold_for(stage), quiet, expires), ""
+
+
 class ProviderChain:
     def __init__(
-        self, job: str, providers: dict[str, Any], status: ProviderStatus, fail_threshold: int = 3, cooldown_s: float = 600.0
+        self,
+        job: str,
+        providers: dict[str, Any],
+        status: ProviderStatus,
+        fail_threshold: int = 3,
+        cooldown_s: float = 600.0,
+        *,
+        store: ChainStateStore | None = None,
     ):
         self.job = job
+        self._store = store
+        self._restored = store is None
         self._providers = providers
         self._status = status
         self._threshold = fail_threshold
@@ -63,6 +129,7 @@ class ProviderChain:
         self._hold_why: dict[str, str] = {}
         self._hold_len: dict[str, float] = {}
         self._last_skip: dict[str, str] = {}  # 마지막으로 건너뛴 까닭의 종류(돌아올 때의 말)
+        self._backoff_until: dict[str, float] = {}  # 429 쉼의 끝(mark_down 의 다른 쉼과 따로 — 저장용)
         self._current: str | None = None
 
     def mark_down(self, name: str, seconds: float, *, why: str | None = None) -> None:
@@ -85,7 +152,10 @@ class ProviderChain:
         return out
 
     async def _evaluate(self, order: list[str], need_global: bool) -> tuple[str | None, list[tuple[str, str, str]], bool]:
-        """(고를 공급자 | None, 건너뛴 [(이름, 종류, 까닭)], 미룸 중인 공급자를 대안이 없어 골랐는가). 상태를 바꾸지 않는다."""
+        """(고를 공급자 | None, 건너뛴 [(이름, 종류, 까닭)], 미룸 중인 공급자를 대안이 없어 골랐는가). 상태를 바꾸지 않는다
+        (처음 한 번은 저장된 429 이력을 되살린다)."""
+        if not self._restored:
+            await self._restore()
         now = time.monotonic()
         skipped: list[tuple[str, str, str]] = []
         held: list[str] = []
@@ -183,15 +253,83 @@ class ProviderChain:
         n = self._rate_limited.get(name, 0)
         self._rate_limited[name] = n + 1
         self._last_429[name] = now
-        wait = min(300.0, 60.0 * (2**n))
-        hold = RATE_LIMIT_HOLD_S[min(n - 1, len(RATE_LIMIT_HOLD_S) - 1)] if n >= 1 else 0.0
+        wait = _backoff_s(n + 1)
+        hold = _hold_for(n + 1)
         self.mark_down(name, wait, why=_hold_text(hold) if hold else f"429 쉼({wait:.0f} s)")
+        self._backoff_until[name] = now + wait
         if hold:
             self._hold_until[name] = now + hold
             self._hold_why[name] = _hold_text(hold)
             self._hold_len[name] = hold
         self._rl_until[name] = now + max(wait, hold)
         return wait
+
+    # ---- 재시작 보존(ChainStateStore) ---------------------------------------------------------------------------------
+    async def persist(self, name: str) -> None:
+        """name 의 429 이력을 저장한다(429 를 기록한 뒤 부른다). 저장소가 없거나 이력이 없으면 아무것도 하지 않는다.
+        Redis 오류는 저장소가 삼킨다(메모리 이력으로 계속)."""
+        if self._store is None or not self._rate_limited.get(name):
+            return
+        now_m, now_w = time.monotonic(), self._store.wall()
+
+        def wall(m: float) -> str:
+            return f"{now_w + (m - now_m):.3f}"
+
+        held = self._hold_until.get(name, 0.0) > now_m
+        quiet_from = self._rl_until.get(name, now_m)
+        fields = {
+            "v": VERSION,
+            "stage": str(self._rate_limited[name]),
+            "last_429_at": wall(self._last_429.get(name, now_m)),
+            "backoff_until": wall(self._backoff_until.get(name, now_m)),
+            "hold_until": wall(self._hold_until[name]) if held else "",
+            "hold_s": f"{self._hold_len.get(name, 0.0):.0f}" if held else "0",
+            "quiet_from": wall(quiet_from),
+            "expires_at": wall(quiet_from + RATE_LIMIT_RESET_S),  # 논리 TTL — 이 뒤에는 이력이 초기화된 것과 같다
+            "saved_at": f"{now_w:.3f}",
+        }
+        await self._store.save(self.job, name, fields)
+
+    async def _restore(self) -> None:
+        """저장된 429 이력을 되살린다(한 번). Redis 가 안 되면 메모리 이력만 — 다시 시도하지 않는다(그사이 메모리가 더 새롭다)."""
+        self._restored = True
+        store = self._store
+        if store is None:
+            return
+        rows = await store.load(self.job, list(self._providers))
+        now_m, now_w = time.monotonic(), store.wall()
+        for name, row in rows.items():
+            saved, why = parse_saved(row, now_w)
+            if saved is None:
+                if why != "expired":
+                    log.info("%s: %s 429 history ignored (%s)", self.job, name, why)
+                await store.drop(self.job, name)
+                continue
+            self._apply_saved(name, saved, now_m, now_w)
+
+    def _apply_saved(self, name: str, s: _Saved, now_m: float, now_w: float) -> None:
+        off = now_m - now_w  # 벽시계 → 단조 시계
+        self._rate_limited[name] = s.stage
+        self._last_429[name] = s.last_429 + off
+        self._rl_until[name] = s.quiet_from + off
+        self._backoff_until[name] = s.backoff_until + off
+        held = s.hold_until > now_w
+        if held:
+            self._hold_until[name] = s.hold_until + off
+            self._hold_len[name] = s.hold_s
+            self._hold_why[name] = _hold_text(s.hold_s) + RESTORED
+        if s.backoff_until > now_w and s.backoff_until + off > self._down_until.get(name, 0.0):
+            self._down_until[name] = s.backoff_until + off
+            self._down_why[name] = (_hold_text(s.hold_s) if held else f"429 쉼({_backoff_s(s.stage):.0f} s)") + RESTORED
+        log.info(
+            "%s: %s 429 history restored — stage %d, backoff %.0f s left, deferred %.0f s left (saved %.0f s ago)",
+            self.job,
+            name,
+            s.stage,
+            max(0.0, s.backoff_until - now_w),
+            max(0.0, s.hold_until - now_w),
+            max(0.0, now_w - s.last_429),
+        )
 
     def record_failure(self, name: str) -> bool:
         """True 면 임계치 도달 → 쿨다운 진입(다음 pick 에서 전환)."""

@@ -22,6 +22,7 @@ from typing import Any
 from redis.asyncio import Redis
 
 from wakeline_collector.budget import Budget
+from wakeline_collector.chain_store import ChainStateStore
 from wakeline_collector.config import Settings, settings
 from wakeline_collector.db import Db
 from wakeline_collector.demand import DemandPoller, DemandStatus
@@ -170,8 +171,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
                 "opensky is global-only; region chain uses adsb_lol → adsb_fi (daily cap %d credits)", settings.budget_opensky
             )
 
-    region = AircraftJob("region", ProviderChain("region", aircraft_providers, ctx.status), ctx)
-    global_ = AircraftJob("global", ProviderChain("global", aircraft_providers, ctx.status), ctx)
+    chain_store = ChainStateStore(redis)  # 429 이력(R-17)을 재시작 뒤에도 잇는다 — wakeline:provider:{name}:ratelimit:{job}
+    region = AircraftJob("region", ProviderChain("region", aircraft_providers, ctx.status, store=chain_store), ctx)
+    global_ = AircraftJob("global", ProviderChain("global", aircraft_providers, ctx.status, store=chain_store), ctx)
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
     maint = MaintenanceJob(snapshot_providers(limits, fixture=fixture), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
