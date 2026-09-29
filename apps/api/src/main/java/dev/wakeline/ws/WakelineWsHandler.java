@@ -222,12 +222,14 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         if (v == null || v.isNull()) {
             s.selectedMmsi = null;
             ships.selected(s);
+            hub.demandChanged(); // 한국 항만 입출항 조회 임대를 뺀다(ADR-022)
             return;
         }
         String mmsi = v.isString() ? v.asString() : "";
         if (!MMSI.matcher(mmsi).matches()) { hub.error(s, "BAD_MMSI", "mmsi must be 9 digits or null"); return; }
         s.selectedMmsi = mmsi;
         ships.selected(s);
+        hub.demandChanged(); // 선택 선박의 호출부호로 입출항 조회 임대(ADR-022) — 1 s 로 모아 계산
     }
 
     /** 일시정지 중 놓친 것(알림·SIGMET·레이더·항공기)을 전체 초기 세트로 다시 보낸다(GAP-3/COR-7). */

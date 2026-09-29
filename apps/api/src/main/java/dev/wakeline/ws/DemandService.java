@@ -7,8 +7,10 @@ import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.Geo;
 import dev.wakeline.domain.HotCell;
+import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -38,6 +40,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -60,6 +64,11 @@ import java.util.function.Supplier;
  *   <li>상태: 수집기가 쓴 wakeline:demand:status 를 읽어 세션마다 {type:"demand"} 를 바뀌었을 때와 30 s 마다 보낸다. 수집기가 보고하지
  *       않은 주기는 말하지 않는다(pending 은 interval 없음). 오래된 active 는 믿지 않는다({@link CollectorDemandStatus#activeAt}).</li>
  *   <li>스레드: 전용 스레드 하나(계산·Redis I/O). WS 수신·스트림 소비·팬아웃 스레드는 기다리지 않는다 — 신호만 보낸다.</li>
+ *   <li>한국 항만 입출항(ADR-022): 선박을 선택한 구독 세션마다 그 선박의 호출부호(카드와 같은 정적 정보 · 수집기와 같은 정규화 —
+ *       {@link PortCallReader#callSigns})를 임대 wakeline:demand:portcalls 에 올린다. 같은 호출부호는 세션끼리 나누고, 상한
+ *       {@value #MAX_PORT_CALL_LEASES}개(세션 수 많은 순 → 먼저 요청된 순). hot·focus 와 따로 쓰고 따로 센다(한쪽 실패가 다른 쪽을 막지 않는다).
+ *       남용 한도는 수집기 쪽(호스트 1 req/s · 하루 예산 · 6 h 캐시)이 정한다 — 세션이 선박을 바꿔 가며 골라도 호출 수는 그 상한을 넘지 않는다.
+ *       아무도 선박을 고르지 않았고 직전 쓰기도 비었으면(성공) 다시 쓰지 않는다.</li>
  * </ul>
  */
 @Profile("!cli & !migrate")
@@ -74,6 +83,8 @@ public class DemandService implements SmartLifecycle {
     public static final int HOT_MIN_ZOOM = 7;
     public static final int MAX_HOT_CELLS = 6;
     public static final int MAX_FOCUS_HEXES = 50;
+    /** 입출항 조회 임대 상한(수집기도 20개까지만 읽는다 — jobs/portcalls.MAX_LEASES). */
+    public static final int MAX_PORT_CALL_LEASES = 20;
     /** 세션 제한(계약 v3 §C): 새 hex·새 셀은 각각 이 창(60 s)에 이 수(6)까지. */
     public static final int SESSION_NEW_KEYS_MAX = 6;
     public static final long SESSION_NEW_KEYS_WINDOW_MS = 60_000;
@@ -95,28 +106,43 @@ public class DemandService implements SmartLifecycle {
     private final ObjectMapper json;
     private final ScheduledExecutorService exec;
     private final LongSupplier clock;
+    /** MMSI → 입출항 조회 호출부호(모르면 null). */
+    private final Function<String, String> callSigns;
     private final AtomicBoolean refreshQueued = new AtomicBoolean();
     private final Timer refreshTimer;
     private final Counter writeErrors;
     private final Counter statusErrors;
     private final Counter refreshErrors;
+    private final Counter portCallErrors;
+    private final AtomicInteger portCallLeased = new AtomicInteger();
     private volatile boolean running;
     private ScheduledFuture<?> periodic;
     // ---- 수요 스레드 전용 ----
     private final Map<String, Long> hotFirstAt = new HashMap<>();
     private final Map<String, Long> focusFirstAt = new HashMap<>();
+    private final Map<String, Long> portCallFirstAt = new HashMap<>();
+    /** 마지막으로 성공한 입출항 임대 쓰기가 빈 목록이었나(아무도 선박을 고르지 않으면 매번 쓰지 않는다). */
+    private boolean portCallsClear;
     private long lastWarnMs;
 
     @Autowired
-    public DemandService(WsHub hub, RegionSettings region, SnapshotStore snapshots, DemandLeases leases, DemandStats stats,
+    public DemandService(WsHub hub, RegionSettings region, SnapshotStore snapshots, ShipStore ships, DemandLeases leases, DemandStats stats,
                          ObjectMapper json, MeterRegistry meters) {
         this(hub, region::current, snapshots, leases, stats, json, meters,
-                Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("demand").factory()), System::currentTimeMillis);
+                Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("demand").factory()), System::currentTimeMillis,
+                PortCallReader.callSigns(ships));
     }
 
-    /** 테스트용: 실행기·시계·지역을 주입한다. */
+    /** 테스트용: 실행기·시계·지역을 주입한다(선박 호출부호 없음 — 입출항 임대는 늘 비어 있다). */
     DemandService(WsHub hub, Supplier<RegionSettings.Region> region, SnapshotStore snapshots, DemandLeases leases, DemandStats stats,
                   ObjectMapper json, MeterRegistry meters, ScheduledExecutorService exec, LongSupplier clock) {
+        this(hub, region, snapshots, leases, stats, json, meters, exec, clock, mmsi -> null);
+    }
+
+    /** 테스트용: MMSI → 호출부호도 주입한다. */
+    DemandService(WsHub hub, Supplier<RegionSettings.Region> region, SnapshotStore snapshots, DemandLeases leases, DemandStats stats,
+                  ObjectMapper json, MeterRegistry meters, ScheduledExecutorService exec, LongSupplier clock, Function<String, String> callSigns) {
+        this.callSigns = callSigns;
         this.hub = hub;
         this.region = region;
         this.snapshots = snapshots;
@@ -129,6 +155,8 @@ public class DemandService implements SmartLifecycle {
         this.writeErrors = Counter.builder("wakeline_demand_errors_total").tag("op", "write").register(meters);
         this.statusErrors = Counter.builder("wakeline_demand_errors_total").tag("op", "status").register(meters);
         this.refreshErrors = Counter.builder("wakeline_demand_errors_total").tag("op", "refresh").register(meters);
+        this.portCallErrors = Counter.builder("wakeline_demand_errors_total").tag("op", "port_calls").register(meters);
+        meters.gauge("wakeline_demand_leases", List.of(io.micrometer.core.instrument.Tag.of("kind", "port_calls")), portCallLeased);
         meters.gauge("wakeline_demand_leases", List.of(io.micrometer.core.instrument.Tag.of("kind", "hot")), stats, s -> s.counts().hotLeased());
         meters.gauge("wakeline_demand_leases", List.of(io.micrometer.core.instrument.Tag.of("kind", "focus")), stats, s -> s.counts().focusLeased());
         meters.gauge("wakeline_demand_wanted", List.of(io.micrometer.core.instrument.Tag.of("kind", "hot")), stats, s -> s.counts().hotWanted());
@@ -158,6 +186,11 @@ public class DemandService implements SmartLifecycle {
                     leases.replace(List.of(), List.of(), clock.getAsLong());
                 } catch (RuntimeException e) {
                     log.info("demand leases not cleared on shutdown (they expire within {} s): {}", LEASE_TTL_MS / 1000, e.toString());
+                }
+                try {
+                    leases.replacePortCalls(List.of(), clock.getAsLong());
+                } catch (RuntimeException e) {
+                    log.info("port-call leases not cleared on shutdown (they expire within {} s): {}", LEASE_TTL_MS / 1000, e.toString());
                 }
             });
             f.get(STOP_WAIT_MS, TimeUnit.MILLISECONDS);
@@ -267,7 +300,32 @@ public class DemandService implements SmartLifecycle {
             }
         }
         stats.update(new DemandStats.Counts(hotActive, focusActive, hot.size(), focus.size(), hotCount.size(), focusCount.size()));
+        refreshPortCalls(wants, nowMs);
         refreshTimer.record(Duration.ofNanos(System.nanoTime() - t0));
+    }
+
+    /**
+     * 입출항 조회 임대(ADR-022): 구독 세션(일시정지 제외)이 고른 선박의 호출부호 → 상한 안에서 임대 교체. 실패는 세고 넘어간다
+     * (수집기는 이전 임대를 각자의 만료까지 쓴다). 항공기 수요 계산과 따로 — 여기 예외는 위의 임대·메시지에 영향이 없다.
+     */
+    void refreshPortCalls(List<Want> wants, long nowMs) {
+        try {
+            Map<String, Integer> count = new LinkedHashMap<>();
+            for (Want w : wants) {
+                String mmsi = w.session().selectedMmsi;
+                String cs = mmsi == null ? null : callSigns.apply(mmsi);
+                if (cs != null) count.merge(cs, 1, Integer::sum);
+            }
+            List<String> leased = choose(count, portCallFirstAt, MAX_PORT_CALL_LEASES, nowMs);
+            portCallLeased.set(leased.size());
+            if (leased.isEmpty() && portCallsClear) return;
+            leases.replacePortCalls(leased, nowMs + LEASE_TTL_MS);
+            portCallsClear = leased.isEmpty();
+        } catch (RuntimeException e) {
+            portCallsClear = false;
+            portCallErrors.increment();
+            warn("port-call lease write failed (collector keeps the previous leases until they expire): {}", e);
+        }
     }
 
     /** 세션 하나의 수요(계약 v2 §A1). */

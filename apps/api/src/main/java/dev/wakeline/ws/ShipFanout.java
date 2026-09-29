@@ -7,6 +7,8 @@ import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.portcalls.PortCallReader;
+import dev.wakeline.portcalls.PortCallsInfo;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -31,6 +33,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 
 /**
@@ -45,6 +48,9 @@ import java.util.function.LongSupplier;
  *       세션은 자기 bbox 와 겹치는 칸만 고른다. 같은 버전·bbox 의 격자는 다시 보내지 않는다.</li>
  *   <li>select_ship → ship_selected(즉시, 그리고 그 선박이 바뀌거나 목록에서 빠질 때마다). state 는 실시간 목록에 있을 때만, static 은 알고 있으면.
  *       destination_info 는 static 의 보고 목적지를 결정적으로 푼 것(계약 v4 §B — 항구 표는 JVM 에서 한 번 읽는다).</li>
+ *   <li>port_calls(ADR-022): static 의 호출부호로 읽은 한국 항만 입출항({@link PortCallReader} — 호출부호별 5 s 캐시). 수집기 조회가 끝나거나
+ *       캐시가 만료되는 것은 선박 변화와 무관하므로, {@value #SELECTED_REFRESH_MS} ms 마다 선박을 고른 세션의 ship_selected 를 다시 계산하고
+ *       값이 바뀌었을 때만 보낸다(pending → ok 등).</li>
  *   <li>빈도: ships 메시지(수집기 10 s)가 올 때 모든 선박 세션에 한 번 — 연달아 와도(분할 발행·만료) 10 s 에 한 번으로 모은다. 전송은 세션 우편함
  *       (항공기와 같은 단일 비행)이 하므로 느린 세션이 다른 세션·스트림 소비를 막지 않는다.</li>
  * </ul>
@@ -68,6 +74,8 @@ public class ShipFanout implements SmartLifecycle {
     static final long SEEN_REFRESH_S = 60;
     /** 위치 변화 임계(°) — 약 11 m. 정박 선박의 GNSS 흔들림을 매번 보내지 않는다. */
     static final double POS_TOL_DEG = 1e-4;
+    /** 선택 선박의 입출항 다시 보기 주기(ADR-022) — 읽기 캐시(5 s)와 같다. */
+    static final long SELECTED_REFRESH_MS = 5_000;
 
     private final WsHub hub;
     private final ShipStore store;
@@ -80,6 +88,8 @@ public class ShipFanout implements SmartLifecycle {
     private final AtomicBoolean fanoutQueued = new AtomicBoolean();
     private volatile long lastFanoutMs;
     private volatile boolean running = true;
+    /** 정적 정보 → 입출항(운영: PortCallReader). 테스트 구성에서 없으면 port_calls 는 null. */
+    private volatile Function<ShipStatic, PortCallsInfo> portCalls = st -> null;
     private final Counter snapshots;
     private final Counter diffs;
     private final Counter grids;
@@ -89,10 +99,15 @@ public class ShipFanout implements SmartLifecycle {
     private record CachedJson(ShipStore.Ship ship, String json) {}
 
     @Autowired
-    public ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters) {
+    public ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters, PortCallReader portCallReader) {
         this(hub, store, meters, Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ship-fanout").factory()),
                 System::currentTimeMillis);
+        setPortCallSource(portCallReader::forStatic);
+        scheduleSelectedRefresh();
     }
+
+    /** ship_selected.port_calls 의 출처(운영: PortCallReader::forStatic). 테스트는 가짜를 넣는다 — 없으면 null. */
+    void setPortCallSource(Function<ShipStatic, PortCallsInfo> f) { portCalls = f == null ? st -> null : f; }
 
     /** 테스트용: timer 가 null 이면 모으지 않고 이벤트마다 바로 팬아웃한다. */
     ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters, ScheduledExecutorService timer, LongSupplier clock) {
@@ -107,6 +122,19 @@ public class ShipFanout implements SmartLifecycle {
                 .description("뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘어 격자로 대신 보낸 경우").register(meters);
         this.gridBuild = Timer.builder("wakeline_ship_grid_build_seconds").description("선박 격자(세 단계) 한 번 만들기 — ShipStore 버전당 한 번").register(meters);
         hub.setShipsHook(this::onInitial);
+    }
+
+    /**
+     * 선택 선박 다시 보기({@link #refreshSelected})를 {@value #SELECTED_REFRESH_MS} ms 마다 예약한다(운영 생성자에서 한 번). 수명 start() 에 두지 않는다 —
+     * 이 빈은 처음부터 running 이라 Spring 이 start() 를 부르지 않는다. 멈춘 타이머면 예약하지 않는다(선박 변화 때만 다시 보낸다).
+     */
+    void scheduleSelectedRefresh() {
+        if (timer == null) return;
+        try {
+            timer.scheduleWithFixedDelay(this::refreshSelected, SELECTED_REFRESH_MS, SELECTED_REFRESH_MS, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException ignored) {
+            // 이미 멈춘 타이머(종료 뒤)
+        }
     }
 
     // ---- 수명: WS 허브보다 늦게, 타이머만 정리 ----
@@ -145,6 +173,18 @@ public class ShipFanout implements SmartLifecycle {
     void onInitial(WsSession s) {
         if (s.layerShips) layersChanged(s);
         if (s.selectedMmsi != null) selected(s);
+    }
+
+    /**
+     * 선박을 고른 세션마다 ship_selected 를 다시 계산하도록 예약한다(우편함 — 바뀐 것이 없으면 보내지 않는다). 입출항 조회 결과·캐시 만료처럼
+     * 선박 변화와 무관한 변화를 알린다. 예외가 주기 작업을 멈추지 않게 삼킨다.
+     */
+    void refreshSelected() {
+        try {
+            for (WsSession s : hub.sessionsView()) if (s.selectedMmsi != null) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
+        } catch (RuntimeException e) {
+            // 다음 주기에 다시
+        }
     }
 
     // ---- 이벤트(스트림 소비·만료 스레드 — 예약만) ----
@@ -311,13 +351,15 @@ public class ShipFanout implements SmartLifecycle {
         if (mmsi == null) { s.shipSelectedSent = null; return; }
         ShipStore.Ship ship = store.view().get(mmsi);
         ShipStatic stat = ship != null ? ship.stat() : store.staticOf(mmsi);
+        PortCallsInfo calls = portCalls.apply(stat);
         WsSession.ShipSelectedSent prev = s.shipSelectedSent;
-        if (!force && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && prev.stat() == stat) return;
+        if (!force && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && prev.stat() == stat && Objects.equals(prev.portCalls(), calls))
+            return;
         String state = ship == null ? null : hub.toJson(WsMessages.encodeShipState(ship.state()));
         String st = stat == null ? null : hub.toJson(WsMessages.encodeShipStatic(stat));
         DestinationInfo dest = stat == null ? null : destinations.parse(stat.destination());
-        if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st, dest))))
-            s.shipSelectedSent = new WsSession.ShipSelectedSent(mmsi, ship, stat);
+        if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st, dest, calls))))
+            s.shipSelectedSent = new WsSession.ShipSelectedSent(mmsi, ship, stat, calls);
     }
 
     // ---- 공유 캐시 ----

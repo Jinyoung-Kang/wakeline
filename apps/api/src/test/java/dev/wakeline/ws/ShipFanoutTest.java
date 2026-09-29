@@ -5,12 +5,17 @@ import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.Receipt;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.portcalls.PortCallReader;
+import dev.wakeline.portcalls.PortCallsInfoTest;
+import dev.wakeline.route.RouteInfoTest;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -336,6 +341,67 @@ class ShipFanoutTest {
             k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":null}");
             publish(k, List.of(pos("123456789", 35.3, 129.1, T.plusSeconds(20))), List.of());
             assertThat(ofType(f, "ship_selected")).hasSize(n);
+        }
+    }
+
+    /**
+     * ADR-022: ship_selected.port_calls = 정적 정보의 호출부호로 읽은 입출항. 선박이 바뀌지 않아도 주기 다시 보기(refreshSelected)가 입출항이
+     * 바뀐 것(조회 중 → 결과)만 보낸다 — 같은 값이면 보내지 않는다.
+     */
+    @Test void selectShip_carriesPortCalls_andThePeriodicRefreshSendsOnlyChanges() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            Map<String, String> redis = new HashMap<>();
+            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+            k.shipFanout.setPortCallSource(new PortCallReader(redis::get, RouteInfoTest.JSON, clock::get)::forStatic);
+            publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of(stat("440000001", "HANJIN BUSAN", 70)));
+            FakeWsSession f = session(k, "s", BUSAN, true);
+            FakeWsSession idle = session(k, "idle", BUSAN, true); // 선박을 고르지 않은 세션 — 받지 않는다
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            JsonNode first = ofType(f, "ship_selected").getLast();
+            assertThat(first.path("port_calls").path("status").asString()).isEqualTo("pending");
+            assertThat(first.path("port_calls").path("call_sign").asString()).isEqualTo("D7AB");
+
+            k.shipFanout.refreshSelected(); // 같은 값 — 보내지 않는다
+            assertThat(ofType(f, "ship_selected")).hasSize(1);
+            redis.put("wakeline:portcalls:D7AB", PortCallsInfoTest.sample().put("call_sign", "D7AB").toString());
+            clock.addAndGet(PortCallReader.TTL_MS);
+            k.shipFanout.refreshSelected();
+            JsonNode ok = ofType(f, "ship_selected").getLast();
+            assertThat(ofType(f, "ship_selected")).hasSize(2);
+            assertThat(ok.path("port_calls").path("status").asString()).isEqualTo("ok");
+            assertThat(ok.path("port_calls").path("items").get(0).path("reported_name").asString()).isEqualTo("부광9호");
+            assertThat(ok.path("state").path("lat").asDouble()).as("the rest of the message is the same").isEqualTo(35.1);
+            clock.addAndGet(PortCallReader.TTL_MS);
+            k.shipFanout.refreshSelected(); // 다시 읽어도 같은 값(새 객체) — 보내지 않는다
+            assertThat(ofType(f, "ship_selected")).hasSize(2);
+            assertThat(ofType(idle, "ship_selected")).isEmpty();
+
+            // 호출부호가 없는 선박(정적 정보 없음) → no_call_sign
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000002\"}");
+            assertThat(ofType(f, "ship_selected").getLast().path("port_calls").path("status").asString()).isEqualTo("no_call_sign");
+        }
+    }
+
+    @Test void portCallRefreshIsScheduledEveryFiveSeconds_notAfterStop() throws Exception {
+        final class Recording extends ScheduledThreadPoolExecutor {
+            final List<Long> periods = new ArrayList<>();
+            Recording() { super(1); }
+            @Override public ScheduledFuture<?> scheduleWithFixedDelay(Runnable r, long initial, long delay, TimeUnit unit) {
+                if (isShutdown()) throw new java.util.concurrent.RejectedExecutionException("stopped");
+                periods.add(unit.toMillis(delay));
+                return null;
+            }
+        }
+        try (WsTestKit k = new WsTestKit()) {
+            Recording timer = new Recording();
+            ShipFanout f = new ShipFanout(k.hub, k.ships, k.meters, timer, k.shipClock::get);
+            assertThat(f.isRunning()).as("running from construction — Spring never calls start()").isTrue();
+            f.scheduleSelectedRefresh();
+            assertThat(timer.periods).containsExactly(ShipFanout.SELECTED_REFRESH_MS);
+            f.stop();
+            f.scheduleSelectedRefresh(); // 멈춘 타이머 — 예약하지 못해도 예외 없이
+            assertThat(timer.periods).hasSize(1);
+            new ShipFanout(k.hub, k.ships, k.meters, null, k.shipClock::get).scheduleSelectedRefresh(); // 타이머 없음(시험 구성) — 아무것도 안 한다
         }
     }
 

@@ -4,8 +4,10 @@ import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.demand.DemandStats;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.HotCell;
+import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.portcalls.PortCallReader;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -36,7 +38,10 @@ class DemandServiceTest {
     /** 기록하는 임대 저장소. status 는 테스트가 채운다. */
     static final class FakeLeases implements DemandLeases {
         record Call(List<Lease> hot, List<Lease> focus, long expiresAtMs) {}
+        record PortCalls(List<String> callSigns, long expiresAtMs) {}
         final List<Call> calls = new CopyOnWriteArrayList<>();
+        final List<PortCalls> portCalls = new CopyOnWriteArrayList<>();
+        volatile RuntimeException failPortCalls;
         final Map<String, String> status = new HashMap<>();
         volatile RuntimeException failReplace;
         volatile RuntimeException failStatus;
@@ -45,6 +50,11 @@ class DemandServiceTest {
         @Override public void replace(List<Lease> hot, List<Lease> focus, long expiresAtMs) {
             if (failReplace != null) throw failReplace;
             calls.add(new Call(List.copyOf(hot), List.copyOf(focus), expiresAtMs));
+        }
+
+        @Override public void replacePortCalls(List<String> callSigns, long expiresAtMs) {
+            if (failPortCalls != null) throw failPortCalls;
+            portCalls.add(new PortCalls(List.copyOf(callSigns), expiresAtMs));
         }
 
         @Override public Map<String, String> status(List<String> fields) {
@@ -66,7 +76,7 @@ class DemandServiceTest {
         final java.util.concurrent.atomic.AtomicInteger ips = new java.util.concurrent.atomic.AtomicInteger();
         final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor();
         final DemandService demand = new DemandService(k.hub, () -> new RegionSettings.Region(36.5, 127.8, 250), k.snapshots, leases, stats,
-                WsTestKit.JSON, k.meters, exec, clock::get);
+                WsTestKit.JSON, k.meters, exec, clock::get, PortCallReader.callSigns(k.ships));
 
         long now() { return clock.get(); }
 
@@ -559,6 +569,110 @@ class DemandServiceTest {
             assertThat(r.leases.last().hot()).isEmpty(); // 종료 — 수집기 호출을 바로 멈춘다
             assertThat(r.leases.last().focus()).isEmpty();
             r.demand.requestRefresh(); // 멈춘 뒤에는 아무것도 하지 않는다
+        }
+    }
+
+    // ---------------------------------------------------------------- 한국 항만 입출항 임대(ADR-022)
+
+    /** 정적 정보만 있는 합성 선박(호출부호만 다르다). */
+    static void shipStatics(Rig r, String... mmsiAndCallSign) {
+        List<ShipStatic> stats = new ArrayList<>();
+        Instant t = Instant.ofEpochMilli(r.now());
+        for (int i = 0; i + 1 < mmsiAndCallSign.length; i += 2)
+            stats.add(new ShipStatic(mmsiAndCallSign[i], "SYN " + i, mmsiAndCallSign[i + 1], null, 70, null, null, null, null, null, null, null, null,
+                    null, null, t, "aisstream"));
+        r.k.ships.apply(List.of(), stats, t, "aisstream", r.now());
+    }
+
+    @Test void portCalls_selectedShipsCallSignsAreLeased_sharedAndNormalized_pausedAndUnknownExcluded() throws Exception {
+        try (Rig r = new Rig()) {
+            shipStatics(r, "440000001", " d7ab ", "440000002", "D7AB", "440000003", null, "440000004", "AB", "440000005", "230025");
+            FakeWsSession a = r.session("a", TOKYO), b = r.session("b", TOKYO), c = r.session("c", TOKYO), d = r.session("d", TOKYO);
+            FakeWsSession e = r.session("e", TOKYO), paused = r.session("p", TOKYO);
+            r.k.msg(a, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            r.k.msg(b, "{\"type\":\"select_ship\",\"mmsi\":\"440000002\"}");  // 같은 호출부호(정규화 뒤) — 임대 하나
+            r.k.msg(c, "{\"type\":\"select_ship\",\"mmsi\":\"440000003\"}");  // 호출부호 없음
+            r.k.msg(d, "{\"type\":\"select_ship\",\"mmsi\":\"440000004\"}");  // 형식 밖
+            r.k.msg(e, "{\"type\":\"select_ship\",\"mmsi\":\"440000009\"}");  // 모르는 선박
+            r.k.msg(paused, "{\"type\":\"select_ship\",\"mmsi\":\"440000005\"}");
+            r.k.msg(paused, "{\"type\":\"pause\"}");
+            r.refresh();
+            DemandServiceTest.FakeLeases.PortCalls pc = r.leases.portCalls.getLast();
+            assertThat(pc.callSigns()).containsExactly("D7AB");
+            assertThat(pc.expiresAtMs()).isEqualTo(r.now() + 60_000);
+            assertThat(r.leases.last().hot()).as("aircraft demand is unaffected").hasSize(1);
+            assertThat(r.k.meters.get("wakeline_demand_leases").tag("kind", "port_calls").gauge().value()).isEqualTo(1.0);
+
+            r.k.msg(paused, "{\"type\":\"resume\"}");
+            r.k.msg(a, "{\"type\":\"select_ship\",\"mmsi\":null}");
+            r.clock.addAndGet(1_000); // 230025 는 D7AB 보다 나중에 요청됐다
+            r.refresh();
+            assertThat(r.leases.portCalls.getLast().callSigns()).as("b still wants D7AB · resumed session adds 230025").containsExactly("D7AB", "230025");
+        }
+    }
+
+    @Test void portCalls_capRanksBySessionsThenFirstRequested_andEmptyIsWrittenOnceOnly() throws Exception {
+        try (Rig r = new Rig()) {
+            List<String> spec = new ArrayList<>();
+            for (int i = 0; i < DemandService.MAX_PORT_CALL_LEASES + 2; i++) {
+                spec.add(String.valueOf(440_100_000 + i));
+                spec.add(String.format("CS%03d", i));
+            }
+            shipStatics(r, spec.toArray(String[]::new));
+            List<FakeWsSession> sessions = new ArrayList<>();
+            for (int i = 0; i < DemandService.MAX_PORT_CALL_LEASES + 2; i++) {
+                FakeWsSession f = r.session("s" + i, TOKYO);
+                r.k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"" + (440_100_000 + i) + "\"}");
+                sessions.add(f);
+                r.clock.addAndGet(1); // 먼저 요청된 순서
+                r.refresh();
+            }
+            FakeWsSession extra = r.session("x", TOKYO); // 마지막 호출부호를 두 세션이 원한다 → 세션 수가 많아 앞선다
+            r.k.msg(extra, "{\"type\":\"select_ship\",\"mmsi\":\"" + (440_100_000 + DemandService.MAX_PORT_CALL_LEASES + 1) + "\"}");
+            r.refresh();
+            List<String> leased = r.leases.portCalls.getLast().callSigns();
+            assertThat(leased).hasSize(DemandService.MAX_PORT_CALL_LEASES);
+            assertThat(leased.getFirst()).isEqualTo(String.format("CS%03d", DemandService.MAX_PORT_CALL_LEASES + 1));
+            assertThat(leased).contains("CS000").doesNotContain(String.format("CS%03d", DemandService.MAX_PORT_CALL_LEASES));
+
+            for (FakeWsSession f : sessions) r.k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":null}");
+            r.k.msg(extra, "{\"type\":\"select_ship\",\"mmsi\":null}");
+            int before = r.leases.portCalls.size();
+            r.refresh();
+            r.refresh();
+            r.refresh();
+            assertThat(r.leases.portCalls).hasSize(before + 1); // 비운 뒤로는 다시 쓰지 않는다
+            assertThat(r.leases.portCalls.getLast().callSigns()).isEmpty();
+        }
+    }
+
+    @Test void portCalls_writeFailureIsContained_andRetriedEvenWhenEmpty() throws Exception {
+        try (Rig r = new Rig()) {
+            shipStatics(r, "440000001", "D7AB");
+            FakeWsSession f = r.session("s", TOKYO);
+            r.k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            r.leases.failPortCalls = new org.springframework.data.redis.RedisConnectionFailureException("down");
+            r.refresh();
+            assertThat(r.k.meters.counter("wakeline_demand_errors_total", "op", "port_calls").count()).isEqualTo(1.0);
+            assertThat(r.leases.last().hot()).as("hot lease still written").hasSize(1);
+            assertThat(lastDemand(f).path("hot").path("state").asString()).isEqualTo("pending");
+            r.leases.failPortCalls = null;
+            r.k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":null}");
+            r.refresh();
+            assertThat(r.leases.portCalls).hasSize(1);
+            assertThat(r.leases.portCalls.getLast().callSigns()).as("clears after a failed write").isEmpty();
+        }
+    }
+
+    @Test void portCalls_selectShipAsksForARefresh_andStopClearsThem() throws Exception {
+        try (Rig r = new Rig()) {
+            shipStatics(r, "440000001", "D7AB");
+            r.demand.start();
+            FakeWsSession f = r.session("s", TOKYO);
+            r.k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            WsHubTest.await(() -> !r.leases.portCalls.isEmpty() && r.leases.portCalls.getLast().callSigns().equals(List.of("D7AB")));
+            r.demand.stop();
+            assertThat(r.leases.portCalls.getLast().callSigns()).isEmpty();
         }
     }
 

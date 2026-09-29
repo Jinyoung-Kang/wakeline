@@ -25,8 +25,10 @@ public class StatusService {
     /**
      * 운영 화면 공급자(상태 해시 wakeline:provider:{name} · 켜고 끄기는 감사 기록과 함께 — OpsController). adsbdb = 선택 항공기 노선 조회
      * (계약 v4 §G A-2 — 끄면 수집기가 묻지 않고 노선 상태는 disabled). 해시에는 호출 시각·지연·건수·오류·예산만 있고 노선 내용은 없다(ADR-016).
+     * portmis = 선택 선박의 한국 항만 입출항(해양수산부 PORT-MIS, ADR-022 — 끄면 수집기가 묻지 않고 입출항 상태는 disabled(operator)).
      */
-    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb", "fixture");
+    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb", "portmis",
+            "fixture");
     private final SnapshotStore snapshots;
     private final SigmetStore sigmets;
     private final RadarStore radar;
