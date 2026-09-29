@@ -5,8 +5,31 @@
  * - 모르면 "—" 만(시간대 글자도 붙이지 않는다).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
+import { resetData, setData } from "@/lib/store";
+import { useUi } from "@/lib/ui-store";
+import { StatusBar } from "@/components/StatusBar";
+import { AlertPanel } from "@/components/AlertPanel";
+import { EvidenceCard } from "@/components/EvidenceCard";
+import { SigmetCard } from "@/components/SigmetCard";
+import { SigmetListView } from "@/components/SigmetList";
+import { KrRadarPanel } from "@/components/KrRadarPanel";
+import { RadarTimeline } from "@/components/RadarTimeline";
+import { MapLegendView } from "@/components/MapLegend";
+import { AircraftCard, RouteSection } from "@/components/AircraftCard";
+import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
+import { ShipTable } from "@/components/ShipTable";
+import { SearchResultsView } from "@/components/AircraftSearch";
+import { wsInvalidText } from "@/components/WsInvalidBadge";
+import { airportTip, shipTrackPointTip, sigmetTip } from "@/lib/tooltip";
+import { aisGapBadge, fmtSavedAt, fmtShipEta, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
+import { trackFeatureCollection } from "@/lib/track";
+import { focusChip, parseDemand } from "@/lib/demand";
+import { parseRoute } from "@/lib/route";
+import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
 
 /** UTC 자정 직전 — KST 로는 다음 날 아침 */
 const LATE = "2026-09-28T23:41:14.906Z";
@@ -41,5 +64,211 @@ describe("dashboard KST formatters (lib/format)", () => {
     expect(F.fmtDayMinuteKst("2026-09-28T14:30:00Z", NOW)).toBe("09-28 23:30 KST"); // KST 로 전날
     expect(F.fmtDayMinuteKst("2026-09-28T14:30:00Z", 0)).toBe("09-28 23:30 KST"); // 지금을 모르면 날짜를 붙인다
     expect(F.fmtDayMinuteKst(null, NOW)).toBe("—");
+  });
+});
+
+/** 남은 UTC 시각: "HH:MM:SS" 또는 "HH:MM" 뒤에 "Z"/" UTC" — 예전 fmtTime/fmtClock/hhmm 의 모양 */
+const UTC_LEFT = /\d\d:\d\d(:\d\d)?(\.\d+)?(Z\b| UTC\b)/;
+const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<");
+
+describe("dashboard components show KST (the UTC original stays in the tooltip)", () => {
+  beforeEach(() => resetData());
+  afterEach(() => { resetData(); useUi.getState().setRadarSource("rainviewer"); });
+
+  it("status bar: region fetch time HH:MM:SS KST (title = original UTC); KMA latest tm HH:MM KST; KMA STALE title in KST", () => {
+    const kr = {
+      available: true, latest_tm: "202609290840", georeferenced: true, coordinates: null, legend: null,
+      frames: [{ tm: "202609290840", obs_tm: "202609290840", fetched_at: "2026-09-28T23:41:00Z", echo_cells: 5, url: "/x" }],
+      attribution: "기상청", meta: { fetched_at: "2026-09-28T23:20:00Z", stale: true },
+    } as KrRadar;
+    setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr, feeds: { region: { provider: "adsb_fi", fetched_at: "2026-09-28T23:41:14Z", lag_s: 2, stale: false, received_at: Date.now() }, global: null } });
+    const html = renderToStaticMarkup(createElement(StatusBar));
+    const region = /<span[^>]*data-testid="region-source".*?<\/span><\/span>/.exec(html)![0];
+    expect(text(region)).toBe("regionadsb_fi · 08:41:14 KST");
+    expect(region).toContain('title="원본 UTC 2026-09-28T23:41:14.000Z"');
+    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*마지막 수집 09-29 08:20:00 KST/);
+    expect(text(html)).toContain("KMA 1f 08:40 KST");
+    expect(text(html)).not.toMatch(UTC_LEFT);
+    // 최신 tm 을 모르면 "—" 만 — "undefined:undefinedK" 가 아니다
+    setData({ radarKr: { ...kr, latest_tm: null, meta: { fetched_at: null, stale: false } } });
+    expect(text(renderToStaticMarkup(createElement(StatusBar)))).toContain("KMA 1f —");
+  });
+
+  it("alert banner: received time in KST", () => {
+    const a = { id: 3, kind: "OBSERVED", hex: "a3", callsign: "CS3", sigmet_id: "S3", fir_id: "RKRR", hazard: "TS", entered_at: "2026-09-28T23:00:00Z", eta_s: null, alt_ft: 35000, evidence: {}, estimated: false } as unknown as Alert;
+    setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: a, at: Date.parse("2026-09-28T23:02:03Z") } });
+    const t = text(renderToStaticMarkup(createElement(AlertPanel)));
+    expect(t).toContain("수신 08:02:03 KST");
+    expect(t).not.toMatch(UTC_LEFT);
+  });
+
+  it("evidence card: validity range, judged time, observation and end in KST", () => {
+    const a = {
+      id: 1, kind: "OBSERVED", hex: "a1", callsign: "CS1", sigmet_id: "S1", fir_id: "RKRR", hazard: "TS", entered_at: "2026-09-28T23:00:00Z", eta_s: null, alt_ft: 35000, estimated: false,
+      left_at: "2026-09-28T23:30:00Z", close_reason: "EXITED",
+      evidence: { valid_from: "2026-09-28T22:00:00Z", valid_to: "2026-09-29T02:00:00Z", judged_at: "2026-09-28T23:00:00Z", seen_at: "2026-09-28T22:59:30Z", provider: "adsb_fi" },
+    } as unknown as Alert;
+    const t = text(renderToStaticMarkup(createElement(EvidenceCard, { a })));
+    expect(t).toContain("유효시간09-29 07:00:00 – 09-29 11:00:00 KST");
+    expect(t).toContain("판정 시각09-29 08:00:00 KST");
+    expect(t).toContain("출처 / 관측adsb_fi · 09-29 07:59:30 KST");
+    expect(t).toMatch(/종료09-29 08:30:00 KST · /);
+    expect(t).not.toMatch(UTC_LEFT);
+  });
+
+  it("SIGMET card and list: validity in KST, the raw bulletin exactly as issued", () => {
+    const RAW = "WSKO31 RKSI 282300\nRKRR SIGMET A1 VALID 282300/290300 RKSI-\nRKRR INCHEON FIR EMBD TS OBS AT 2250Z";
+    const p = { id: "S1", fir_id: "RKRR", fir_name: "INCHEON", series_id: "A1", hazard: "TS", valid_from: "2026-09-28T23:00:00Z", valid_to: "2026-09-29T03:00:00Z",
+      active: true, expiring_soon: false, raw_text: RAW, provider: "awc", fetched_at: "2026-09-28T23:05:00Z" } as SigmetProps;
+    setData({ sigmets: { type: "FeatureCollection", features: [{ type: "Feature", properties: p, geometry: null }] } as never });
+    const html = renderToStaticMarkup(createElement(SigmetCard, { id: "S1" }));
+    expect(text(html)).toContain("유효09-29 08:00:00 – 09-29 12:00:00 KST");
+    expect(text(html)).toContain("출처awc · 09-29 08:05:00 KST");
+    expect(text(html.replace(/\n/g, "⏎"))).toContain(RAW.replace(/\n/g, "⏎")); // 원문은 발표된 그대로(…2250Z 포함)
+    expect(text(html).split(RAW).join("")).not.toMatch(UTC_LEFT);
+    const list = renderToStaticMarkup(createElement(SigmetListView, { items: [{ id: "S1", hazard: "TS", qualifier: null, fir_id: "RKRR", fir_name: "INCHEON", valid_to: p.valid_to, pending: false, inside: 0, predicted: 0, center: null }] }));
+    expect(list).toContain("유효 09-29 12:00:00 KST 까지");
+  });
+
+  it("KMA radar panel and radar timeline: reception and frame times in KST (the KMA-unavailable note: tests/mapview-lifecycle.test.ts)", () => {
+    const kr = {
+      available: true, latest_tm: "202609290840", georeferenced: true, coordinates: null, legend: [], frames: [{ tm: "202609290840", obs_tm: "202609290840", fetched_at: "2026-09-28T23:41:00Z", echo_cells: 5, url: "/x" }],
+      attribution: "기상청", meta: { fetched_at: "2026-09-28T23:41:00Z", stale: false },
+    } as unknown as KrRadar;
+    setData({ radarKr: kr, radar: { host: "h", generated: 0, past: [{ time: Date.parse("2026-09-28T23:40:00Z") / 1000, path: "/p" }], fetched_at: "2026-09-28T23:41:00Z" } });
+    expect(text(renderToStaticMarkup(createElement(KrRadarPanel, { onClose: () => {} })))).toContain("수신09-29 08:41:00 KST");
+    const tl = renderToStaticMarkup(createElement(RadarTimeline));
+    expect(/data-testid="radar-frame-time">([^<]*)</.exec(tl)![1]).toBe("09-29 08:40 KST"); // RainViewer 프레임(UTC epoch) → KST
+  });
+
+  it("map legend: the ship track point tooltip says KST", () => {
+    const html = renderToStaticMarkup(createElement(MapLegendView, { id: "l", layers: { ...useUi.getState().layers, ships: true, tracks: true }, radarSource: "rainviewer" }));
+    expect(text(html)).toContain("항적 점 — 마우스를 올리면 시각(KST)·속력·침로·항해 상태");
+    expect(text(html)).not.toContain("시각(UTC)");
+  });
+
+  it("aircraft card and route section: observation, reception and route lookup times in KST (title = original UTC)", () => {
+    setData({ selected: { hex: "71c081", received_at: 0, prediction: null, state: { hex: "71c081", lat: 36, lon: 127, seen_at: "2026-09-28T23:41:14Z", fetched_at: "2026-09-28T23:41:15Z", provider: "adsb_fi" } } as never });
+    const card = renderToStaticMarkup(createElement(AircraftCard, { hex: "71c081" }));
+    expect(text(card)).toContain("관측 시각09-29 08:41:14 KST");
+    expect(text(card)).toContain("수신 시각09-29 08:41:15 KST");
+    expect(card).toContain('title="원본 UTC 2026-09-28T23:41:14.000Z"');
+    expect(text(card)).not.toMatch(UTC_LEFT);
+    const route = parseRoute({ status: "found", callsign: "KAL081", source: "adsbdb", fetched_at: "2026-09-28T23:00:00Z", airline: null,
+      origin: { icao: "RKSI", name: "Incheon", lat: 37.46, lon: 126.44 }, destination: { icao: "KJFK", name: "John F Kennedy", lat: 40.64, lon: -73.78 } });
+    const r = renderToStaticMarkup(createElement(RouteSection, { route, pos: null, callsign: "KAL081" }));
+    expect(text(r)).toContain("조회 시각09-29 08:00:00 KST");
+    expect(r).toContain('title="원본 UTC 2026-09-28T23:00:00.000Z"');
+  });
+
+  it("ship card: times, the reception gaps and the crew ETA in KST; the hover hint says KST", () => {
+    const NOW = Date.parse("2026-09-29T01:00:00Z");
+    const detail = parseShipDetail("431011305", {
+      state: null, static: { name: "SYN BRAVO", ship_type: 70, eta_month: 9, eta_day: 30, eta_hour: 20, eta_minute: 5 },
+      first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T23:00:00Z", last_seen_at: "2026-09-28T23:05:00Z", meta: {},
+    });
+    setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gapsTruncated: false, segments: 2, fromMs: null, hours: 6,
+      gaps: [{ started_at: "2026-09-28T22:00:00Z", ended_at: "2026-09-28T22:05:00Z", reason: "keepalive" }, { started_at: "2026-09-28T23:10:00Z", ended_at: null, reason: null }] } });
+    const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
+    const t = text(html);
+    expect(t).toContain("처음 기록09-20 10:02:03 KST");
+    expect(t).toContain("마지막 저장 위치09-29 08:00:00 KST (2h 00m 전)");
+    expect(t).toContain("마지막 수신09-29 08:05:00 KST (1h 55m 전)");
+    expect(t).toContain("실시간 아님 · 마지막 수신 08:05 KST · 마지막 저장 08:00 KST");
+    expect(t).toContain("수신 공백 09-29 07:00:00 – 09-29 07:05:00 KST · 300 s · keepalive");
+    expect(t).toContain("수신 공백 09-29 08:10:00 KST – 진행 중");
+    expect(t).toContain("ETA10-01 05:05 KST · 선원 입력 09-30 20:05 UTC · 연도 없음");
+    expect(t).toContain("항적 점에 마우스를 올리면 시각(KST)·속력·침로·항해 상태");
+    expect(html).toContain('title="원본 UTC 2026-09-20T01:02:03.000Z"');
+    // 선원이 입력한 원 값(UTC)만 남는다 — 그 밖의 UTC 시각은 없다
+    expect(t.replace("선원 입력 09-30 20:05 UTC", "")).not.toMatch(UTC_LEFT);
+  });
+
+  it("ship table and search results: not-live rows in KST (the KST day decides whether the date is shown); tooltips carry KST and UTC", () => {
+    const NOW = Date.parse("2026-09-29T01:00:00Z"); // KST 09-29 10:00
+    const rows: ShipRow[] = [
+      { mmsi: "300000001", name: "ALPHA", category: "cargo", sog_kn: 3, nav_status: 0, live: true, seen_at: "2026-09-29T00:59:00Z", last_position_at: null, last_seen_at: null },
+      { mmsi: "300000002", name: "BRAVO", category: "cargo", sog_kn: null, nav_status: null, live: false, seen_at: null, last_position_at: "2026-09-28T15:30:00Z", last_seen_at: "2026-09-28T14:30:00Z" },
+    ] as ShipRow[];
+    const html = renderToStaticMarkup(createElement(ShipTable, { rows, now: NOW, sort: null, onSort: () => {}, onPick: () => {}, testId: "ship-list" }));
+    const r2 = text(/data-mmsi="300000002".*?<\/tr>/.exec(html)![0]);
+    expect(r2).toContain("마지막 수신 09-28 23:30 KST"); // KST 로 전날
+    expect(r2).toContain("저장 00:30 KST"); // UTC 로는 전날이지만 KST 로는 오늘
+    expect(html).toContain('title="09-29 09:59:00 KST · 원본 UTC 2026-09-29T00:59:00.000Z"');
+    expect(html).toMatch(/title="마지막 수신 09-28 23:30:00 KST · 원본 UTC 2026-09-28T14:30:00.000Z · 마지막 저장 위치 09-29 00:30:00 KST · 원본 UTC 2026-09-28T15:30:00.000Z — /);
+    expect(text(html)).not.toMatch(UTC_LEFT);
+    const results = renderToStaticMarkup(createElement(SearchResultsView, {
+      uid: "u", now: NOW, active: -1, shipSort: { key: "sog", dir: "desc" }, onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
+      aircraft: { hits: [{ hex: "71c081", callsign: "KAL081", registration: null, type_code: null, alt_ft: null, on_ground: null, lat: null, lon: null, live: false, last_seen: "2026-09-28T23:41:14Z" }], state: "done", msg: "1건" },
+      ships: { hits: [{ mmsi: "300000002", name: "BRAVO", call_sign: null, imo: null, ship_type: null, category: "cargo", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T15:30:00Z", last_seen_at: "2026-09-28T14:30:00Z" }], state: "done", msg: "1건", note: null, error: null },
+    } as never));
+    expect(results).toContain('title="마지막 수신 09-29 08:41:14 KST"');
+    expect(text(results)).toContain("마지막 수신·저장 시각은 KST");
+    expect(text(results)).not.toMatch(UTC_LEFT);
+  });
+
+  it("WS format-error detail: the browser-clock time in KST", () => {
+    const t = wsInvalidText({ elements: 1, messages: 0, errors: 0, last: "aircraft: bad lat", at: Date.parse("2026-09-28T23:41:14Z") });
+    expect(t).toContain("마지막: aircraft: bad lat · 08:41:14 KST(브라우저 시계)");
+    expect(t).not.toMatch(UTC_LEFT);
+  });
+});
+
+describe("map tooltips and text helpers in KST", () => {
+  const NOW = Date.parse("2026-09-28T23:41:14Z");
+  it("SIGMET tooltip: validity range and the 'not yet valid' flag in KST", () => {
+    const p = { id: "S1", fir_id: "RKRR", series_id: "A1", hazard: "TS", valid_from: "2026-09-29T00:00:00Z", valid_to: "2026-09-29T04:00:00Z", active: false, expiring_soon: false, raw_text: "", provider: "awc", fetched_at: "" } as SigmetProps;
+    const tip = sigmetTip(p, NOW);
+    expect(Object.fromEntries(tip.rows).VALID).toBe("09-29 09:00:00 – 09-29 13:00:00 KST");
+    expect(tip.flags.map((f) => f.text)).toContain("발효 전 · 09-29 09:00:00 KST부터 · 판정 전");
+  });
+  it("airport tooltip: the METAR observation time in KST", () => {
+    const tip = airportTip({ icao: "RKSI", obs_time: "2026-09-28T23:30:00Z" }, NOW);
+    expect(Object.fromEntries(tip.rows).METAR).toBe("09-29 08:30:00 KST · 11m 14s 전");
+  });
+  it("ship track point tooltip: TIME in KST", () => {
+    const tip = shipTrackPointTip({ ts: "2026-09-28T23:41:14Z", sog: 1, src: "rest" }, "X");
+    expect(Object.fromEntries(tip.rows)).toMatchObject({ TIME: "09-29 08:41:14 KST" });
+    expect(tip.rows.map(([k]) => k)).not.toContain("TIME UTC");
+  });
+  it("AIS gap badge: open and closed gaps as HH:MM KST; the tooltip keeps the original UTC", () => {
+    const base = { connected: false, msgs_per_s: 0, lag_s: null, gap_open_since: null, last_gap: null } as never as Parameters<typeof aisGapBadge>[0] & object;
+    const open = aisGapBadge({ ...base, gap_open_since: "2026-09-28T23:40:00Z" }, NOW)!;
+    expect(open.text).toBe("AIS 공백 08:40– KST · 진행 중");
+    expect(open.title).toContain("AIS 수신이 09-29 08:40:00 KST 부터 끊겨 있음(원본 UTC 2026-09-28T23:40:00.000Z)");
+    const closed = aisGapBadge({ ...base, last_gap: { started_at: "2026-09-28T23:20:00Z", ended_at: "2026-09-28T23:25:00Z", reason: "keepalive" } }, NOW)!;
+    expect(closed.text).toBe("AIS 공백 08:20–08:25 KST");
+    expect(closed.title).toContain("AIS 수신 공백 09-29 08:20:00 – 09-29 08:25:00 KST (keepalive)");
+  });
+  it("not-live text and saved times use the KST day", () => {
+    const now = Date.parse("2026-09-29T01:00:00Z");
+    expect(fmtSavedAt("2026-09-28T15:30:00Z", now)).toBe("00:30 KST");
+    expect(fmtSavedAt("2026-09-28T14:30:00Z", now)).toBe("09-28 23:30 KST");
+    expect(fmtSavedAt(null, now)).toBe("—");
+    expect(notLiveText({ lastSeenAt: null, lastPositionAt: "2026-09-29T00:59:00Z" }, now)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 09:59 KST");
+  });
+  it("crew ETA (UTC month-day-hour-minute, no year) → KST; the day that depends on the unknown year is not guessed", () => {
+    expect(fmtShipEta({ eta_month: 9, eta_day: 30, eta_hour: 6, eta_minute: 5 })).toBe("09-30 15:05 KST · 선원 입력 09-30 06:05 UTC · 연도 없음");
+    expect(fmtShipEta({ eta_month: 9, eta_day: 30, eta_hour: 15, eta_minute: 0 })).toBe("10-01 00:00 KST · 선원 입력 09-30 15:00 UTC · 연도 없음");
+    expect(fmtShipEta({ eta_month: 12, eta_day: 31, eta_hour: 23, eta_minute: 59 })).toBe("01-01 08:59 KST · 선원 입력 12-31 23:59 UTC · 연도 없음");
+    expect(fmtShipEta({ eta_month: 2, eta_day: 29, eta_hour: 16, eta_minute: 0 })).toBe("03-01 01:00 KST · 선원 입력 02-29 16:00 UTC · 연도 없음");
+    // 2월 28일 15시 이후: 윤년이면 02-29, 아니면 03-01 — 연도가 없어 둘 다 적는다(고르지 않는다)
+    expect(fmtShipEta({ eta_month: 2, eta_day: 28, eta_hour: 20, eta_minute: 0 })).toBe("02-29 또는 03-01 05:00 KST(연도 없어 윤년 모름) · 선원 입력 02-28 20:00 UTC · 연도 없음");
+    // 달력에 없는 날(04-31)은 바꾸지 않고 입력값 그대로
+    expect(fmtShipEta({ eta_month: 4, eta_day: 31, eta_hour: 20, eta_minute: 0 })).toBe("04-31 20:00 UTC · 선원 입력값(달력에 없는 날 — KST 로 바꾸지 않음), 연도 없음");
+    expect(fmtShipEta({ eta_month: 9, eta_day: null, eta_hour: 6, eta_minute: 5 })).toBe("—");
+  });
+  it("track gap labels on the map (aircraft and ship) name KST", () => {
+    const a = trackFeatureCollection([
+      { ts: Date.parse("2026-09-28T23:40:00Z"), lat: 36, lon: 127, alt_ft: 1000, provider: "adsb_fi" },
+      { ts: Date.parse("2026-09-28T23:45:00Z"), lat: 36.1, lon: 127.1, alt_ft: 1000, provider: "adsb_fi" },
+    ] as never);
+    expect(a.features[0].properties).toMatchObject({ kind: "gap", label: "수신 없음 08:40–08:45 KST" });
+    const s = shipTrackFeatures({ segs: [{ pts: [[129, 35]], startMs: Date.parse("2026-09-28T23:00:00Z"), endMs: Date.parse("2026-09-28T23:10:00Z") }, { pts: [[129.1, 35]], startMs: Date.parse("2026-09-28T23:40:00Z"), endMs: null }], gaps: [] } as never);
+    expect(s.features.find((f) => f.properties?.kind === "gap")?.properties?.label).toBe("기록 없음 08:10–08:40 KST");
+  });
+  it("focus-tracking chip: the start time in its tooltip is KST", () => {
+    const d = parseDemand({ focus: { hex: "71c081", state: "active", interval_s: 5, since: "2026-09-28T23:40:00Z" } }, 0);
+    expect(focusChip(d, "71c081", NOW)!.title).toContain("시작 09-29 08:40:00 KST.");
   });
 });

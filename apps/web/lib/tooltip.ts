@@ -3,7 +3,7 @@
  * 값은 받은 데이터 그대로, 없으면 "—". DOM 은 textContent 로만 만든다(원문·호출부호 등 외부 문자열을 HTML 로 해석하지 않는다).
  * 고도·속도는 두 단위(계약 v5 §A — ft·kt 와 m·km/h, 정의된 상수로 바꾼 계산값).
  */
-import { band, catSourceLabel, ceilingLabel, fmtAltGndDual, fmtDuration, fmtGsDual, fmtNum, fmtSogDual, fmtTime, fmtVrateDual, isMetarStale, metarAgeS } from "./format";
+import { band, catSourceLabel, ceilingLabel, fmtAltGndDual, fmtDuration, fmtGsDual, fmtNum, fmtRangeKst, fmtSogDual, fmtTimeKstLabel, fmtVrateDual, isMetarStale, metarAgeS } from "./format";
 import { seenAtMs, thresholds } from "./interpolate";
 import { isExpired, isPending, sigmetBandSource } from "./sigmet";
 import { fmtCourse, navStatusLabel, positionBadge, ROT_LABEL, SHIP_CATEGORY_LABEL, SHIP_STALE_S, shipAgeS, shipCategory, shipRotation, SHIPS_RULE, type ShipLite } from "./ships";
@@ -64,7 +64,7 @@ export function sigmetTip(p: SigmetProps, nowMs: number): Tip {
   const expired = nowMs ? isExpired(p, nowMs) : false;
   const pending = nowMs ? isPending(p, nowMs) : p.pending === true;
   if (expired) flags.push({ text: "만료됨", tone: "warn" });
-  else if (pending) flags.push({ text: `발효 전 · ${fmtTime(p.valid_from)}부터 · 판정 전`, tone: "muted" });
+  else if (pending) flags.push({ text: `발효 전 · ${fmtTimeKstLabel(p.valid_from)}부터 · 판정 전`, tone: "muted" });
   else if (p.expiring_soon) flags.push({ text: "30분 내 만료", tone: "warn" });
   if (p.inside && !pending) flags.push({ text: "안에 항공기(관측)", tone: "bad" });
   if (p.excluded_reason) flags.push({ text: `판정 제외: ${p.excluded_reason}`, tone: "muted" });
@@ -72,7 +72,7 @@ export function sigmetTip(p: SigmetProps, nowMs: number): Tip {
   const starts = nowMs ? (Date.parse(p.valid_from) - nowMs) / 1000 : NaN;
   const rows: [string, string][] = [
     ["BAND", band(p.base_ft, p.top_ft, sigmetBandSource(p))],
-    ["VALID", `${fmtTime(p.valid_from)} – ${fmtTime(p.valid_to)}`],
+    ["VALID", fmtRangeKst(p.valid_from, p.valid_to)],
   ];
   if (pending) rows.push(["STARTS", Number.isFinite(starts) && starts > 0 ? `${fmtDuration(starts)} 뒤` : "—"]);
   rows.push(["LEFT", Number.isFinite(left) && left > 0 ? fmtDuration(left) : "—"]);
@@ -108,7 +108,7 @@ export function airportTip(p: AirportProps, nowMs: number): Tip {
     subtitle: p.name ?? undefined,
     rows: [
       ["CAT", `${p.flight_cat ?? "—"}${p.flight_cat ? ` · ${catSourceLabel(p.flight_cat_source, p.flight_cat).replace("카테고리: ", "")}` : ""}`],
-      ["METAR", hasMetar ? `${fmtTime(p.obs_time)} · ${age == null ? "—" : `${fmtDuration(age)} 전`}` : "—"],
+      ["METAR", hasMetar ? `${fmtTimeKstLabel(p.obs_time)} · ${age == null ? "—" : `${fmtDuration(age)} 전`}` : "—"],
       ["CEIL", hasMetar ? ceilingLabel(p.ceiling_state, p.ceiling_ft) : "—"],
     ],
     flags,
@@ -163,7 +163,7 @@ export function shipGridTip(p: { count?: unknown; cat?: unknown; all?: unknown; 
 }
 
 /**
- * 항적 점 툴팁(계약 v5 §B3): 시각(UTC) · 속력(kn · km/h) · 침로 · 항해 상태 — API points[] 값 그대로(없으면 —).
+ * 항적 점 툴팁(계약 v5 §B3): 시각(KST) · 속력(kn · km/h) · 침로 · 항해 상태 — API points[] 값 그대로(없으면 —).
  * shipLabel = 선박 이름(모르면 MMSI) — 외부 문자열이라 renderTip 이 텍스트 노드로만 넣는다.
  */
 export function shipTrackPointTip(p: { ts?: unknown; sog?: unknown; cog?: unknown; hdg?: unknown; nav?: unknown; src?: unknown }, shipLabel: string | null): Tip {
@@ -173,7 +173,7 @@ export function shipTrackPointTip(p: { ts?: unknown; sog?: unknown; cog?: unknow
     title: "항적 점",
     subtitle: shipLabel ?? undefined,
     rows: [
-      ["TIME UTC", fmtTime(typeof p.ts === "string" ? p.ts : null)],
+      ["TIME", fmtTimeKstLabel(typeof p.ts === "string" ? p.ts : null)],
       ["SOG", fmtSogDual(n(p.sog))],
       ["COG", cog == null ? "—" : `${cog.toFixed(1)}°`],
       ["STATUS", navStatusLabel(n(p.nav))],

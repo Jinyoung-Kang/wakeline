@@ -252,7 +252,7 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     await mountTimeline();
     // 수정 전: "—"와 "0 frames · 5 min · 기상청 HSR 500 m…"만 — 이유는 비활성 버튼의 title 에만 있었다
     const why = byTestId("radar-kr-unavailable");
-    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 01:31:00Z");
+    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 10:31:00 KST"); // 01:31:00Z 를 한국 표준시로
     expect(dom.container.textContent).not.toContain("0 frames · 5 min");
   });
 

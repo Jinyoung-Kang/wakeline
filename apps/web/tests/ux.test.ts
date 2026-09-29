@@ -187,7 +187,7 @@ describe("hover tooltips (GAP-26)", () => {
   });
   it("airport: category, METAR age, stale, ceiling state", () => {
     const t = airportTip({ icao: "RKSI", flight_cat: "VFR", flight_cat_source: "awc", obs_time: "2026-09-27T06:00:00Z", ceiling_state: "none" }, NOW);
-    expect(Object.fromEntries(t.rows)).toMatchObject({ CAT: "VFR · AWC 제공", METAR: "09-27 06:00:00Z · 3h 00m 전", CEIL: "실링 없음" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ CAT: "VFR · AWC 제공", METAR: "09-27 15:00:00 KST · 3h 00m 전", CEIL: "실링 없음" });
     expect(t.flags.map((f) => f.text)).toContain("오래됨 · 2시간 초과");
     const none = airportTip({ icao: "RKXX" }, NOW);
     expect(Object.fromEntries(none.rows)).toMatchObject({ CAT: "—", METAR: "—", CEIL: "—" });

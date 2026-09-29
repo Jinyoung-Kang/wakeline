@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import { useServerNow } from "@/lib/clock";
 import { panIfOutside } from "@/lib/focus";
-import { fmtTime, hazardColor } from "@/lib/format";
+import { fmtTimeKstLabel, hazardColor } from "@/lib/format";
 import { sigmetListItems, type SigmetListItem } from "@/lib/sigmet";
 import { useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
@@ -28,7 +28,7 @@ export function SigmetListView({ items, waiting = false }: { items: SigmetListIt
           <li key={s.id} className="border-b border-line">
             <button className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-bg-2" data-testid="sigmet-list-item" data-id={s.id}
               onClick={() => { selectSigmet(s.id); panIfOutside(s.center); }}
-              aria-label={`${s.hazard}${s.qualifier ? ` ${s.qualifier}` : ""}, ${s.fir_name ?? s.fir_id}, ${s.pending ? "발효 전, " : ""}안 항공기 ${s.inside ?? "모름"}, 진입 예상 ${s.predicted ?? "모름"}, 유효 ${fmtTime(s.valid_to)} 까지`}>
+              aria-label={`${s.hazard}${s.qualifier ? ` ${s.qualifier}` : ""}, ${s.fir_name ?? s.fir_id}, ${s.pending ? "발효 전, " : ""}안 항공기 ${s.inside ?? "모름"}, 진입 예상 ${s.predicted ?? "모름"}, 유효 ${fmtTimeKstLabel(s.valid_to)} 까지`}>
               <span className="inline-block h-2 w-2 shrink-0" style={{ background: hazardColor(s.hazard) }} />
               <span className="w-[84px] shrink-0 truncate">{s.hazard}{s.qualifier ? ` ${s.qualifier}` : ""}</span>
               <span className="mono w-12 shrink-0 text-fg-3">{s.fir_id}</span>

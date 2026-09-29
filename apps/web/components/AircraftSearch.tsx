@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { fmtTime } from "@/lib/format";
+import { fmtTimeKstLabel } from "@/lib/format";
 import { saveLayers } from "@/lib/prefs";
 import {
   isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
@@ -112,7 +112,7 @@ export function AircraftSearch() {
     }
     const name = h.callsign ?? h.hex;
     if (pos) { requestFlyTo(pos[0], pos[1], 8); setMsg(`${name} 선택 — 지도 이동`); }
-    else setMsg(`${name} 선택 — 현재 위치 없음(DB 기록만${h.last_seen ? `, 마지막 ${fmtTime(h.last_seen)}` : ""})`);
+    else setMsg(`${name} 선택 — 현재 위치 없음(DB 기록만${h.last_seen ? `, 마지막 ${fmtTimeKstLabel(h.last_seen)}` : ""})`);
   }, [select, requestFlyTo]);
 
   const chooseShip = useCallback((h: ShipHit) => {
@@ -258,7 +258,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
             <span className="mono w-[54px] shrink-0 text-fg-2">{h.hex}</span>
             <span className="mono w-[64px] shrink-0 text-fg-2" title="등록번호">{h.registration ?? "—"}</span>
             <span className="w-[74px] shrink-0 text-right" title="고도(ft · FL / m)">{h.on_ground === true ? <span className="mono">GND</span> : <AltStack ft={h.alt_ft} nowrap />}</span>
-            {h.live ? <span className="badge ok ml-auto">live</span> : <span className="badge ml-auto" title={h.last_seen ? `마지막 수신 ${fmtTime(h.last_seen)}` : "마지막 수신 시각 모름"}>db</span>}
+            {h.live ? <span className="badge ok ml-auto">live</span> : <span className="badge ml-auto" title={h.last_seen ? `마지막 수신 ${fmtTimeKstLabel(h.last_seen)}` : "마지막 수신 시각 모름"}>db</span>}
           </li>
         ))}
       </ul>
@@ -272,7 +272,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
           listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}
-      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 수신·저장 시각은 UTC · 마지막 수신 = 이 서비스가 그 선박의 AIS 메시지를 마지막으로 받은 기록).</div> : null}
+      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 수신·저장 시각은 KST · 마지막 수신 = 이 서비스가 그 선박의 AIS 메시지를 마지막으로 받은 기록).</div> : null}
     </div>
   );
 }

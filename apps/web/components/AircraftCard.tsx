@@ -8,7 +8,7 @@ import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
 import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
-import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtIso, fmtNum, fmtTime, fmtVrateDual } from "@/lib/format";
+import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtTimeKstLabel, fmtUtcTitle, fmtVrateDual } from "@/lib/format";
 import {
   EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
   ROUTE_STATUS_TEXT, ROUTE_TITLE, routeCallsignMismatch, routeDistanceKm, type RouteAirport, type RouteInfo,
@@ -73,7 +73,7 @@ export function RouteSection({ route, pos, callsign }: { route: RouteInfo | null
     ["경로와의 거리", km == null ? "—" : <span key="km" className="mono">{fmtRouteKm(km)} · 계산값</span>,
       `마지막 관측 위치에서 출발→${route.midpoint ? "경유→" : ""}도착 대권 경로까지 가장 가까운 거리 — 구면 지구(반지름 ${EARTH_RADIUS_KM.toLocaleString("en-US")} km) 계산값입니다. 실제 비행 경로와의 거리가 아닙니다.`],
     ["조회 콜사인", <span key="cs" className="mono">{route.callsign ?? "—"}</span>],
-    ["조회 시각", <span key="at" className="mono" title={fmtIso(route.fetched_at)}>{fmtTime(route.fetched_at)}</span>],
+    ["조회 시각", <span key="at" className="mono" title={fmtUtcTitle(route.fetched_at)}>{fmtTimeKstLabel(route.fetched_at)}</span>],
   ] : [];
   const otherSource = route?.source != null && route.source !== "adsbdb";
   return (
@@ -162,8 +162,8 @@ export function AircraftCard({ hex }: { hex: string }) {
     ["Squawk", <span key="sq" className={`mono ${emergency ? "text-bad" : ""}`}>{s?.squawk ?? "—"}{emergency ? " EMERGENCY" : ""}</span>],
     ["지상", fmtBool(s?.on_ground)],
     ["출처", s?.provider ?? "—"],
-    ["관측 시각", <span key="seen" className="mono" title={fmtIso(seen)}>{fmtTime(seen)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
-    ["수신 시각", <span key="fetched" className="mono">{fmtTime(s?.fetched_at ?? d?.meta?.fetched_at)}</span>],
+    ["관측 시각", <span key="seen" className="mono" title={fmtUtcTitle(seen)}>{fmtTimeKstLabel(seen)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
+    ["수신 시각", <span key="fetched" className="mono" title={fmtUtcTitle(s?.fetched_at ?? d?.meta?.fetched_at)}>{fmtTimeKstLabel(s?.fetched_at ?? d?.meta?.fetched_at)}</span>],
     ["품질", qualityLabel(s?.quality)],
     ["10분 예측", pred == null ? "—" : pred.available ? "가능 · 지도 점선(추정)" : `안 함 · ${pred.reason ? REASON_LABEL[pred.reason] : "—"}`],
   ];

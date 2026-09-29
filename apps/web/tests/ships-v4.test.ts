@@ -103,7 +103,7 @@ describe("ship card rows 출발지(보고) / 목적지(보고) (server render)",
     expect(html).toContain("Alpha Port · ZZ · UN/LOCODE ZZAAA");
     expect(html).toContain("“ZZ AAA&gt;ZZBBB”");
     expect(html).toContain("Bravo Harbour · ZZ · UN/LOCODE ZZBBB");
-    expect(html).toContain("09-30 06:00 UTC · 선원 입력값, 연도 없음");
+    expect(html).toContain("09-30 15:00 KST · 선원 입력 09-30 06:00 UTC · 연도 없음");
   });
   it("an info for a different destination text is not attached", () => {
     setData({ shipSelected: { mmsi: "431011305", received_at: 0, state: null, static: statik("FOR ORDERS"), destination_info: info("ZZ AAA>ZZBBB", "from_to", { from: ALPHA, to: BRAVO }) } });
@@ -322,8 +322,8 @@ describe("AIS shards (contract v4 §D)", () => {
     expect(b.text).toBe("AIS 공백 1/2 구역");
     expect(b.partial).toBe(true);
     expect(b.title).toContain("-90,-180,90,0");
-    expect(b.title).toContain("2026-09-28T02:50:00Z");
-    expect(b.title).toContain("02:50 UTC");
+    expect(b.title).toContain("원본 UTC 2026-09-28T02:50:00.000Z");
+    expect(b.title).toContain("09-28 11:50:00 KST");
     expect(shipsGapSuffix(s)).toBe(" · AIS 공백 1/2 구역(그 구역 위치 멈춤)");
   });
   it("gap badge tooltip lists the other shards' reported connection, never 'receiving' by assumption", () => {
@@ -334,7 +334,7 @@ describe("AIS shards (contract v4 §D)", () => {
     expect(b.text).toBe("AIS 공백 1/2 구역");
     expect(b.title).not.toContain("수신 중");
     expect(b.title).toContain("구역 2 -90,45,90,180 — 공백 없음 · 끊김(재연결 중)");
-    expect(b.title).toContain("구역 1 -90,-180,90,0 — 공백 2026-09-28T02:50:00Z 부터(02:50 UTC)");
+    expect(b.title).toContain("구역 1 -90,-180,90,0 — 공백 09-28 11:50:00 KST 부터(원본 UTC 2026-09-28T02:50:00.000Z)");
     // 같은 순간 연결 배지도 끊김이라 말한다 — 두 배지가 서로 어긋나지 않는다
     expect(aisBadge(s, NOW, true)!.text).toBe("AIS 끊김");
     // 연결을 모르는 구역은 모른다고
@@ -346,18 +346,18 @@ describe("AIS shards (contract v4 §D)", () => {
   });
   it("all shards in a gap, or a single connection: the existing wording", () => {
     const all = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:40:00Z" }), shard(ASIA, { gap_open_since: "2026-09-28T02:50:00Z" })], { gap_open_since: "2026-09-28T02:40:00Z" });
-    expect(aisGapBadge(all, NOW)!.text).toBe("AIS 공백 02:40– UTC · 진행 중");
+    expect(aisGapBadge(all, NOW)!.text).toBe("AIS 공백 11:40– KST · 진행 중");
     expect(aisGapBadge(all, NOW)!.title).toContain("모든 구역(2개)");
     expect(shipsGapSuffix(all)).toBe(" · AIS 공백 중(위치 멈춤)");
     const one = status([shard(AMERICAS, { gap_open_since: "2026-09-28T02:40:00Z" })], { gap_open_since: "2026-09-28T02:40:00Z" });
-    expect(aisGapBadge(one, NOW)!.text).toBe("AIS 공백 02:40– UTC · 진행 중");
+    expect(aisGapBadge(one, NOW)!.text).toBe("AIS 공백 11:40– KST · 진행 중");
     expect(aisGapBadge(one, NOW)!.partial).toBeUndefined();
     expect(shipsGapSuffix(status(null))).toBe("");
   });
   it("a closed gap cannot be attributed to a shard (the status has no scope) — the tooltip says so", () => {
     const s = status([shard(AMERICAS), shard(ASIA)], { last_gap: { started_at: "2026-09-28T02:40:00Z", ended_at: "2026-09-28T02:45:00Z", reason: "keepalive" } });
     const b = aisGapBadge(s, NOW)!;
-    expect(b.text).toBe("AIS 공백 02:40–02:45 UTC");
+    expect(b.text).toBe("AIS 공백 11:40–11:45 KST");
     expect(b.title).toContain("어느 구역의 공백인지는 상태에 없음");
   });
   it("connection badge: one of two shards down is 'AIS 일부 끊김 1/2 구역' (warn), not 'AIS 끊김'; all down stays 'AIS 끊김'", () => {

@@ -1,5 +1,5 @@
 "use client";
-import { fmtDuration, fmtIso } from "@/lib/format";
+import { fmtDuration, fmtKstTitle } from "@/lib/format";
 import {
   fmtSavedAt, LAST_SEEN_TITLE, navStatusLabel, navStatusShort, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, shipRowAgeS, type ShipRow, type ShipSort,
   type ShipSortKey,
@@ -45,7 +45,7 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, wide, listb
   const cell = lb ? "none" : undefined;
   const table = (
     <table className={wide ? "table-fixed min-w-[472px] text-[11px]" : "table-fixed text-[11px]"} role={lb ? "presentation" : undefined} data-testid={`${testId}-table`}>
-      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게. 넓은 표: 고정 칸 368 px + 선명 ≥ 104 px(경과 칸 150 px = "마지막 수신 MM-DD hh:mm UTC") */}
+      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게. 넓은 표: 고정 칸 368 px + 선명 ≥ 104 px(경과 칸 150 px = "마지막 수신 MM-DD hh:mm KST") */}
       <colgroup>
         <col className="w-[28px]" /><col /><col className="w-[68px]" /><col className="w-[62px]" /><col className="w-[60px]" /><col className={wide ? "w-[150px]" : "w-[50px]"} />
       </colgroup>
@@ -85,7 +85,7 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, wide, listb
               <td role={cell} className="px-0.5! py-0.5! text-right"><SogStack kn={r.sog_kn} nowrap /></td>
               <td role={cell} className="truncate px-1! py-0.5! text-[10px]" title={navStatusLabel(r.nav_status)}>{navStatusShort(r.nav_status)}</td>
               <td role={cell} className="mono px-1! py-0.5! text-right"
-                title={r.live ? fmtIso(r.seen_at) : `마지막 수신 ${fmtIso(r.last_seen_at)} · 마지막 저장 위치 ${fmtIso(r.last_position_at)} — ${LAST_SEEN_TITLE}`}>
+                title={r.live ? fmtKstTitle(r.seen_at) : `마지막 수신 ${fmtKstTitle(r.last_seen_at)} · 마지막 저장 위치 ${fmtKstTitle(r.last_position_at)} — ${LAST_SEEN_TITLE}`}>
                 {r.live ? (age == null ? "—" : fmtDuration(age)) : (
                   <span className="flex flex-col items-end leading-tight whitespace-nowrap">
                     <span className="text-[10px] text-warn">실시간 아님</span>

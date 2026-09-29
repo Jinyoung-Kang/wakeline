@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { ageS, fmtDuration, fmtIso, fmtSogDual, fmtTime } from "@/lib/format";
+import { ageS, fmtDuration, fmtKstTitle, fmtRangeKst, fmtSogDual, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
 import {
   fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
@@ -130,7 +130,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         {dest.lines.map((l, i) => <span key={i} className="text-[11px] text-fg-2">{l}</span>)}
       </span>
     ), "선원이 입력한 목적지 원문(검증하지 않은 보고값)과 UN/LOCODE 풀이 — 항구(1)·내륙항(8) 항목만, 규칙으로만 읽고 추정하지 않음"],
-    ["ETA", fmtShipEta(st)],
+    ["ETA", fmtShipEta(st), "선원이 AIS 로 보낸 도착 예정 월·일·시·분(UTC, 연도 없음)을 한국 표준시로 바꾼 값과 입력값 그대로 — 검증하지 않은 보고값"],
     ["속력/침로/선수방위", (
       <span key="mo" className="flex flex-col items-end">
         <span className="mono" data-testid="ship-sog">{fmtSogDual(s?.sog_kn)}</span>
@@ -140,13 +140,13 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
     ["항해 상태", navStatusLabel(s?.nav_status)],
     ["위치 출처", positionSourceLabel(s?.position_source), "보고의 Timestamp 필드 — 0–59 전자 위치 장치(종류는 모름) · 61 수동 · 62 추측항법 · 63 장치 비작동 · 60(값 없음)은 —"],
     ["AIS 등급", s?.class ? `Class ${s.class}` : "—"],
-    ["관측 시각", <span key="seen" className="mono" title={fmtIso(s?.seen_at)}>{fmtTime(s?.seen_at)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
-    ["처음 기록", <span key="first" className="mono" title={fmtIso(d?.first_recorded_at)}>{fmtTime(d?.first_recorded_at)}</span>,
+    ["관측 시각", <span key="seen" className="mono" title={fmtUtcTitle(s?.seen_at)}>{fmtTimeKstLabel(s?.seen_at)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
+    ["처음 기록", <span key="first" className="mono" title={fmtUtcTitle(d?.first_recorded_at)}>{fmtTimeKstLabel(d?.first_recorded_at)}</span>,
       "이 서비스(Wakeline)가 이 MMSI 를 처음 기록한 시각 — 선박의 건조·취항 시각이 아님"],
-    ["마지막 저장 위치", <span key="last" className="mono" title={fmtIso(d?.last_position_at)}>{fmtTime(d?.last_position_at)}{savedAge != null ? ` (${fmtDuration(savedAge)} 전)` : ""}</span>,
+    ["마지막 저장 위치", <span key="last" className="mono" title={fmtUtcTitle(d?.last_position_at)}>{fmtTimeKstLabel(d?.last_position_at)}{savedAge != null ? ` (${fmtDuration(savedAge)} 전)` : ""}</span>,
       "DB 에 저장된 마지막 위치의 시각(60 s 에 1점, 보존 72 h — 그보다 오래됐거나 없으면 —). 카드를 열 때(실시간 목록에서 빠지면 그때 다시) 받은 값 — 실시간 선박은 그 뒤에도 계속 저장됩니다"],
     // 계약 v5 §G4: 실시간 상태가 없을 때만 — 실시간이면 '관측 시각'이 마지막 수신이다
-    ...(s == null ? [["마지막 수신", <span key="heard" className="mono" title={fmtIso(d?.last_seen_at)}>{fmtTime(d?.last_seen_at)}{heardAge != null ? ` (${fmtDuration(heardAge)} 전)` : ""}</span>,
+    ...(s == null ? [["마지막 수신", <span key="heard" className="mono" title={fmtUtcTitle(d?.last_seen_at)}>{fmtTimeKstLabel(d?.last_seen_at)}{heardAge != null ? ` (${fmtDuration(heardAge)} 전)` : ""}</span>,
       `${LAST_SEEN_TITLE}. 위치 보존(72 h)이 지나도 남습니다`] as [string, React.ReactNode, string]] : []),
     ["출처", s?.provider ?? st?.provider ?? "—"],
   ];
@@ -156,7 +156,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         <span className="label">Ship</span>
         <div className="flex flex-wrap items-center justify-end gap-1">
           {gone && !notLive ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
-          {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 수신 기록 ${fmtIso(d?.last_seen_at)} · 마지막 저장 위치 시각 ${fmtIso(d?.last_position_at)}`}>
+          {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 수신 기록 ${fmtKstTitle(d?.last_seen_at)} · 마지막 저장 위치 시각 ${fmtKstTitle(d?.last_position_at)}`}>
             {notLiveText({ lastSeenAt: d?.last_seen_at, lastPositionAt: d?.last_position_at }, now)}</span> : null}
           {stale ? <span className="badge warn" data-testid="ship-stale">STALE · 15분 넘게 위치 없음</span> : null}
           {pb ? <span className={`badge ${pb.tone === "est" ? "est" : "warn"}`} data-testid="ship-pos-badge">{pb.text}</span> : null}
@@ -189,7 +189,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
                 기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error}{track.requestId ? <RequestIdCopy id={track.requestId} /> : null})
               </div>
             : <div className="text-[11px] text-fg-2">기록 구간 {track.segments}개 · 60 s 에 1점(저장 기준) + 실시간 관측</div>}
-          <div className="text-[10px] text-fg-3">항적 점에 마우스를 올리면 시각(UTC)·속력·침로·항해 상태(보고값, 없으면 —)</div>
+          <div className="text-[10px] text-fg-3">항적 점에 마우스를 올리면 시각(KST)·속력·침로·항해 상태(보고값, 없으면 —)</div>
           {gaps ? (
             <div className="mt-1 text-[11px]" data-testid="ship-gap-summary">
               <div className={gaps.count ? "text-warn" : "text-fg-2"}>
@@ -206,7 +206,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
                 const dur = gapDurationS(g);
                 return (
                   <li key={`${g.started_at}-${g.ended_at ?? "open"}`} className="mono">
-                    수신 공백 {fmtTime(g.started_at)} – {g.ended_at ? fmtTime(g.ended_at) : "진행 중"}{dur != null ? ` · ${dur} s` : ""}{g.reason ? ` · ${g.reason}` : ""}
+                    수신 공백 {fmtRangeKst(g.started_at, g.ended_at, "진행 중")}{dur != null ? ` · ${dur} s` : ""}{g.reason ? ` · ${g.reason}` : ""}
                   </li>
                 );
               })}
@@ -214,7 +214,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
           ) : null}
         </div>
         <div className="mt-2 text-[10px] text-fg-3">
-          선박명·호출부호·크기·흘수·목적지·ETA 는 선박이 AIS 로 보낸 보고값(선원 입력)이며 검증하지 않았습니다. ETA 에는 연도가 없습니다.
+          선박명·호출부호·크기·흘수·목적지·ETA 는 선박이 AIS 로 보낸 보고값(선원 입력)이며 검증하지 않았습니다. ETA 에는 연도가 없습니다(입력은 UTC — 한국 표준시로 바꿔 함께 보입니다).
+          시각은 한국 표준시(KST) — 시각에 마우스를 올리면 원본 UTC.
           출발지(보고)는 선원이 목적지 칸에 “A&gt;B” 로 적은 경우의 A 이고, 항구 이름·국가는 UN/LOCODE 코드 모양일 때만 풀이합니다.
           아이콘은 선수방위, 없으면 침로(점선 외곽), 둘 다 없으면 방향 없는 원입니다. 지도 위 선은 기록된 위치를 이은 것이고, 회색 점선은 그 사이 위치를 모르는 공백입니다.
         </div>

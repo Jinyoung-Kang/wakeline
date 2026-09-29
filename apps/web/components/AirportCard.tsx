@@ -5,7 +5,7 @@ import { apiGet } from "@/lib/api";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTime, fmtVisSm, isMetarStale, metarAgeS } from "@/lib/format";
+import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTimeKstLabel, fmtVisSm, isMetarStale, metarAgeS } from "@/lib/format";
 import { ErrorNote } from "./logs/ErrorNote";
 
 interface Wx {
@@ -21,6 +21,7 @@ interface Wx {
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).
  * METAR 가 2 시간보다 오래되면 "오래됨" — 지도에서도 회색 고리로 그린다(GAP-14).
+ * 관측·수신 시각은 한국 표준시(" KST") — METAR · TAF 원문은 발표된 그대로(안의 "…Z" 는 UTC).
  * 시정은 AWC 원문 값(vis_raw, 법정마일)에 단위 SM 을 붙이고 "6+" 는 "6 SM 이상"(DH-7) — km 로 읽히지 않게.
  */
 export function AirportCard({ icao }: { icao: string }) {
@@ -54,19 +55,19 @@ export function AirportCard({ icao }: { icao: string }) {
               {stale ? <span className="badge warn" data-testid="metar-stale" title="관측 후 2시간 초과 — 현재 기상으로 보지 마세요">오래됨</span> : null}
             </div>
             {([
-              ["관측", `${fmtTime(m.obs_time)}${age != null ? ` · ${fmtDuration(age)} 전` : ""}`],
+              ["관측", `${fmtTimeKstLabel(m.obs_time)}${age != null ? ` · ${fmtDuration(age)} 전` : ""}`],
               ["바람", m.wind_dir != null ? `${m.wind_dir}° ${m.wind_kt ?? "—"} kt` : m.wind_kt != null ? `— ${m.wind_kt} kt` : "—"],
               ["시정", fmtVisSm(m.vis_raw)],
               ["실링", ceilingLabel(m.ceiling_state, m.ceiling_ft)],
               ["기온/이슬점", `${m.temp_c ?? "—"} / ${m.dewp_c ?? "—"} °C`],
               ["현상", m.wx_string ?? "—"],
-              ["출처", `${m.provider ?? "—"} · 수신 ${fmtTime(m.fetched_at)}`],
+              ["출처", `${m.provider ?? "—"} · 수신 ${fmtTimeKstLabel(m.fetched_at)}`],
             ] as [string, string][]).map(([k, v]) => (
               <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right" data-testid={k === "실링" ? "airport-ceiling" : undefined}>{v}</span></div>
             ))}
-            <div className="mt-2 label">METAR</div>
+            <div className="mt-2 label" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">METAR (원문 · UTC)</div>
             <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]">{m.raw}</pre>
-            <div className="mt-2 label">TAF</div>
+            <div className="mt-2 label" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">TAF (원문 · UTC)</div>
             <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]">{m.taf_raw ?? "—"}</pre>
           </> : <div className="text-fg-3">METAR 없음</div>}
         </> : null}

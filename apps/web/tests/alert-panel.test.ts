@@ -99,7 +99,7 @@ describe("last-event banner (R-23)", () => {
     setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: alert(3, [36.5, 127.8]), at: Date.parse("2026-09-28T01:02:03Z") } });
     const h = html();
     expect(h).toContain('data-testid="alert-banner"');
-    expect(text(h)).toContain("수신 01:02:03Z");
+    expect(text(h)).toContain("수신 10:02:03 KST"); // 01:02:03Z 를 한국 표준시로
   });
   it("is hidden once older than the TTL (5 min) — an old entry is not shown as if it just happened", () => {
     expect(EVENT_BANNER_TTL_MS).toBe(5 * 60_000);
