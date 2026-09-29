@@ -25,7 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>로그 묶음을 해결하면 그 fp 의 지난 항목이 목록 · 묶음에서 빠지고(hidden_resolved), resolved=show 로 다시 보인다. upto 뒤의 새 발생은
  *       다시 보이고(재발), 되돌리면 모두 돌아온다. 스트림 항목은 그대로다. 감사 RESOLVE · UNRESOLVE 는 요청의 운영자 · request_id 와 함께.</li>
  *   <li>공급자 오류: /ops/providers 의 last_error_resolution · last_error_resolved(upto ≥ last_error_at).</li>
- *   <li>수집 실행 요약(/ops/runs summary_24h): 해결된 공급자의 upto 이하 error 실행은 빠지고 hidden_resolved_errors 로 센다 — ok 행 · 다른 공급자는 그대로.</li>
+ *   <li>수집 실행 요약(/ops/runs summary_24h): 해결된 공급자의 error 실행 중 실패를 기록한 시각(finished_at — 공급자 해시의 last_error_at 과 같은 순간)이
+ *       upto 이하인 것만 빠지고 hidden_resolved_errors 로 센다 — upto 전에 시작해 뒤에 실패한 실행 · 실패 시각을 모르는 실행은 보인다. ok 행 · 다른 공급자는 그대로.</li>
  * </ul>
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -246,7 +247,11 @@ class OpsResolutionsIT extends IntegrationTest {
                       (:job, :p, now() - interval '90 minutes', now() - interval '90 minutes' + interval '1 second', 'ok', 100, NULL),
                       (:job, :p, now() - interval '10 minutes', now() - interval '10 minutes' + interval '2 seconds', 'error', 2000, 'timeout'),
                       (:job, :p, now() - interval '2 hours', now() - interval '2 hours', 'throttled', NULL, '429'),
-                      (:job, 'awc', now() - interval '2 hours', now() - interval '2 hours' + interval '1 second', 'error', 500, 'HTTP 500')""")
+                      (:job, 'awc', now() - interval '2 hours', now() - interval '2 hours' + interval '1 second', 'error', 500, 'HTTP 500'),
+                      -- upto(아래 지금 - 3600 s) 전에 시작해 그 뒤에 실패한 실행: 해결 순간에 진행 중이던 실행 — 실패는 upto 뒤라 보인다
+                      (:job, :p, now() - interval '3630 seconds', now() - interval '3570 seconds', 'error', 60000, 'timeout in flight'),
+                      -- 실패 시각(finished_at)을 모르는 실행: 해결됐다고 보이지 않는다(공급자의 last_error_at 이 없을 때와 같은 규칙)
+                      (:job, :p, now() - interval '3 hours', NULL, 'error', NULL, 'unknown finish')""")
                     .param("job", JOB).param("p", PROVIDER).update();
             Instant lastError = db.sql("SELECT max(finished_at) FROM ingest_run WHERE job = :j AND provider = :p AND status = 'error'")
                     .param("j", JOB).param("p", PROVIDER).query(java.time.OffsetDateTime.class).single().toInstant();
@@ -255,10 +260,12 @@ class OpsResolutionsIT extends IntegrationTest {
             made.add(r.json().path("id").asLong());
 
             JsonNode hide = b.get("/api/v1/ops/runs?limit=1").json();
-            assertThat(hide.path("hidden_resolved_errors").asLong()).isEqualTo(2);
+            assertThat(hide.path("hidden_resolved_errors").asLong()).as("only the two runs that failed at or before upto").isEqualTo(2);
             Map<String, JsonNode> rows = rows(hide);
-            assertThat(rows.get(PROVIDER + "/error").path("n").asLong()).as("the error after upto stays").isEqualTo(1);
-            assertThat(rows.get(PROVIDER + "/error").path("avg_latency_ms").asInt()).isEqualTo(2000);
+            assertThat(rows.get(PROVIDER + "/error").path("n").asLong())
+                    .as("the error after upto, the run in flight at upto that failed after it, the run with an unknown failure time").isEqualTo(3);
+            assertThat(rows.get(PROVIDER + "/error").path("avg_latency_ms").asInt()).as("avg of 2000 and 60000 (the unknown one has no latency)")
+                    .isEqualTo(31000);
             // last_at 은 이 요약의 기존 표기(ms — java.sql.Timestamp 직렬화) 그대로
             assertThat(Instant.parse(rows.get(PROVIDER + "/error").path("last_at").asString())).as("the visible error's finish time")
                     .isEqualTo(lastError.truncatedTo(ChronoUnit.MILLIS));
@@ -266,19 +273,24 @@ class OpsResolutionsIT extends IntegrationTest {
             assertThat(rows.get(PROVIDER + "/throttled").path("n").asLong()).as("only status error is a provider error").isEqualTo(1);
             assertThat(rows.get("awc/error").path("n").asLong()).as("another provider").isEqualTo(1);
             assertThat(b.get("/api/v1/ops/runs?job=" + JOB + "&limit=50").json().path("items").size()).as("the run list (evidence) is not filtered")
-                    .isEqualTo(6);
+                    .isEqualTo(8);
 
             JsonNode show = b.get("/api/v1/ops/runs?limit=1&resolved=show").json();
             assertThat(show.path("hidden_resolved_errors").asLong()).isZero();
-            assertThat(rows(show).get(PROVIDER + "/error").path("n").asLong()).isEqualTo(3);
-            assertThat(rows(show).get(PROVIDER + "/error").path("avg_latency_ms").asInt()).isEqualTo(2000);
+            assertThat(rows(show).get(PROVIDER + "/error").path("n").asLong()).isEqualTo(5);
+            assertThat(rows(show).get(PROVIDER + "/error").path("avg_latency_ms").asInt()).isEqualTo(16500);
 
-            // 모든 error 실행을 덮으면 그 행은 사라진다
+            // 지금까지 해결: 실패 시각을 아는 error 실행은 모두 빠지고, 모르는 실행 하나만 남는다
             Res all = resolve(b, "{\"kind\":\"provider_error\",\"key\":\"" + PROVIDER + "\"}");
             made.add(all.json().path("id").asLong());
+            JsonNode unknown = b.get("/api/v1/ops/runs?limit=1").json();
+            assertThat(rows(unknown).get(PROVIDER + "/error").path("n").asLong()).as("unknown failure time: never shown as resolved").isEqualTo(1);
+            assertThat(unknown.path("hidden_resolved_errors").asLong()).isEqualTo(4);
+            // 모든 error 실행을 덮으면 그 행은 사라진다
+            admin().sql("DELETE FROM ingest_run WHERE job = :j AND finished_at IS NULL").param("j", JOB).update();
             JsonNode none = b.get("/api/v1/ops/runs?limit=1").json();
             assertThat(rows(none)).doesNotContainKey(PROVIDER + "/error").containsKey(PROVIDER + "/ok");
-            assertThat(none.path("hidden_resolved_errors").asLong()).isEqualTo(3);
+            assertThat(none.path("hidden_resolved_errors").asLong()).isEqualTo(4);
             assertProblem(b.get("/api/v1/ops/runs?resolved=everything"), 400, "BAD_RESOLVED", "/api/v1/ops/runs");
         } finally {
             for (long id : made) revoke(b, id);

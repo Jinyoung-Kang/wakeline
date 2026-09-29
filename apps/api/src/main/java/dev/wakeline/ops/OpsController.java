@@ -120,8 +120,11 @@ public class OpsController {
 
     /**
      * 수집 실행 기록(items — 증거라 가리지 않는다)과 24 h 요약(summary_24h — job · provider · status 마다 n · last_at · avg_latency_ms).
-     * 요약은 resolved=hide(기본) | show(계약 v5 §G13): hide 면 활성 provider_error 해결이 있는 공급자의 status 'error' 실행 중 started_at ≤ upto
+     * 요약은 resolved=hide(기본) | show(계약 v5 §G13): hide 면 활성 provider_error 해결이 있는 공급자의 status 'error' 실행 중 finished_at ≤ upto
      * (그 공급자의 유효 해결 — upto 가 가장 늦은 것)를 셈 · 마지막 시각 · 평균에서 빼고 hidden_resolved_errors 로 센다(n 이 0 이 된 행은 없다).
+     * 기준은 실패를 기록한 시각(finished_at)이다 — collector 는 status.failure(last_error_at = 그때)를 쓴 바로 뒤 record_run(finished_at = 그때)을 적으므로
+     * /ops/providers 의 last_error_resolved(upto ≥ last_error_at)와 같은 순간을 본다. started_at 으로 보면 해결 순간에 진행 중이던 실행(단계마다 읽기 8 s ·
+     * 재시도)이 upto 뒤에 실패해도 가려져, 같은 실패가 공급자에서는 미해결 · 요약에서는 해결로 갈린다. finished_at 이 없으면(실패 시각을 모름) 가리지 않는다.
      * 'error' 만 공급자 오류다 — collector 가 status.failure(last_error)를 쓰는 실행과 같다(throttled · budget_* 는 그대로). 해결은 DB 에서 같은 문장으로
      * 읽는다(캐시 없이 — 요약 자체가 DB 조회라 더 부를 것이 없다).
      */
@@ -140,7 +143,7 @@ public class OpsController {
                 WITH res AS (SELECT key AS provider, max(upto) AS upto FROM ops_resolution
                              WHERE kind = 'provider_error' AND revoked_at IS NULL GROUP BY key),
                      r AS (SELECT i.job, i.provider, i.status, i.finished_at, i.latency_ms,
-                                  :hide AND coalesce(i.status = 'error' AND i.started_at <= res.upto, false) AS hidden
+                                  :hide AND coalesce(i.status = 'error' AND i.finished_at <= res.upto, false) AS hidden
                            FROM ingest_run i LEFT JOIN res ON res.provider = i.provider
                            WHERE i.started_at > now() - interval '24 hours')
                 SELECT job, provider, status, count(*) FILTER (WHERE NOT hidden) n, max(finished_at) FILTER (WHERE NOT hidden) last_at,

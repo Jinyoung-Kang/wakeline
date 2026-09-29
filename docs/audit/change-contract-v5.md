@@ -238,8 +238,10 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     지금 오류를 덮는지와 무관) · `"last_error_resolved"`: 유효 해결의 upto ≥ `last_error_at` 이면 true, 아니면 false(해결 없음 · `last_error_at` 없음 · 형식이 틀림 —
     모르는 오류를 해결됨으로 보이지 않는다). 해시의 `last_error` 등은 그대로. 응답에 `"resolution_state"`.
   - 실행: `GET /api/v1/ops/runs` 에 `resolved=hide|show`(기본 hide, 같은 400 규칙). hide 면 `summary_24h` 에서 유효한 provider_error 해결이 있는 공급자의
-    **status `'error'`** 실행 중 started_at ≤ upto 를 셈(n) · `last_at` · `avg_latency_ms` 에서 빼고 `"hidden_resolved_errors"`(뺀 실행 수, show 면 0)로 센다 —
-    n 이 0 이 된 행은 없다. 공급자 오류는 `'error'` 만이다(collector 가 `status.failure` 로 `last_error` 를 쓰는 실행과 같다) — ok · throttled · budget_* 행은 그대로.
+    **status `'error'`** 실행 중 **finished_at ≤ upto** 를 셈(n) · `last_at` · `avg_latency_ms` 에서 빼고 `"hidden_resolved_errors"`(뺀 실행 수, show 면 0)로 센다 —
+    n 이 0 이 된 행은 없다. 기준은 실패를 기록한 시각이다: collector 는 `status.failure`(해시 `last_error_at` = 그때)를 쓴 바로 뒤 `record_run`(finished_at = 그때)을
+    적으므로 공급자의 `last_error_resolved` 와 같은 순간을 본다 — 해결 순간에 진행 중이던 실행이 upto 뒤에 실패하면 두 곳 모두 미해결로 보인다(started_at 으로 보면
+    요약만 가려 두 답이 갈린다). finished_at 이 없는 실행(실패 시각을 모름)은 가리지 않는다. 공급자 오류는 `'error'` 만이다(collector 가 `status.failure` 로 `last_error` 를 쓰는 실행과 같다) — ok · throttled · budget_* 행은 그대로.
     실행 목록 `items` 는 증거라 가리지 않는다. 해결은 요약과 같은 문장에서 DB 로 읽는다(캐시 없이). `last_at` 표기는 지금과 같다(ms).
   - 캐시 · 장애: api 는 활성 해결 전체를 **5 s 이하** 캐시하고 쓰기(해결 · 되돌림) 뒤 바로 버린다 — 쓴 운영자의 다음 조회가 바로 반영한다. 캐시를 채우는 읽기와 겹친
     쓰기는 세대 번호로 가려 옛 값이 남지 않는다. 읽기는 3 s 상한, 실패하면 위 `stale`/`unavailable` 로 답하고 30 s 뒤 다시 읽는다(요청마다 느린 DB 를 기다리지
@@ -248,4 +250,4 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 시험: MigrationDbTest(V13 열 · 제약 · 권한 · 되돌리기 · 다시 적용) · RolePrivilegesDbTest(표 스냅샷 `SELECT,INSERT` + 열 UPDATE 스냅샷) · ResolutionServiceTest
     (본문 규칙 · 유효 해결 · 캐시 5 s · 쓰기 뒤 버림 · 겹친 읽기 · stale/unavailable · 30 s) · ResolutionDbTest(감사와 한 트랜잭션 · 되돌림은 행을 남김 · 404) ·
     LogReaderTest · LogsControllerTest(hide/show · 가린 수 · 쪽 크기 · 묶음 규칙 · 뒤늦게 실린 항목) · ResolutionControllerTest(201 · 415 · 400 · 404 · 503 · stale) ·
-    OpsResolutionsIT(세션 · CSRF · 해결 → 재발 → 되돌림 · 공급자 · 실행 요약 · 같은 xmin). REST 계약 표본(rest_contract_check)은 운영 경로를 싣지 않는다(익명 404 표본만).
+    OpsResolutionsIT(세션 · CSRF · 해결 → 재발 → 되돌림 · 공급자 · 실행 요약(upto 전에 시작해 뒤에 실패한 실행 · 실패 시각을 모르는 실행은 보임) · 같은 xmin). REST 계약 표본(rest_contract_check)은 운영 경로를 싣지 않는다(익명 404 표본만).
