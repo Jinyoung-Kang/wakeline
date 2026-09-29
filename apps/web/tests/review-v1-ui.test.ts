@@ -520,21 +520,27 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
   });
   it("traffic: a fill is promised only while the raw tracks (72 h) are still kept at the next aggregation attempt", async () => {
     const stats = await import("@/lib/stats");
-    // api: track-retention-hours 72 · MaintenanceJobs.families 는 그날(KST 날짜) 끝 > now − 72 h 일 때만 교통량을 다시 센다 · 따라잡기 3 h 마다
+    // api: track-retention-hours 72 · 항적은 UTC 날 파티션째 지워진다(V9) · MaintenanceJobs.families 는 그날 첫 순간(00:00 KST)이 든 UTC 파티션의
+    // 끝 > now − 72 h 일 때만 교통량을 다시 센다 · 따라잡기 3 h 마다
     const src = (iso: string) => ({ name: "원본 항적", retentionH: 72, nowMs: Date.parse(iso) });
     const today = "2026-09-28";
-    // 5일 전(09-23): 그날 끝(09-24 00:00 KST = 09-23 15Z) + 72 h = 09-26 15Z < 지금 → 원본이 없다
+    // 5일 전(09-23): 첫 파티션(UTC 09-22) 끝 09-23 00Z + 72 h = 09-26 00Z < 지금 → 원본이 없다
     const gone = stats.statsEmptyText(false, "2026-09-23", today, src("2026-09-28T01:00:00Z"));
     expect(gone).not.toContain("다음 03:30");
     expect(gone).not.toMatch(/채워집니다/);
     expect(gone).toContain("채워지지 않습니다");
     expect(gone).toContain("72 h");
-    // 3일 전(09-25): 원본은 그날 끝(09-26 00:00 KST = 09-25 15Z) + 72 h = 09-28 15Z 까지 — 01Z 에는 약속, 13Z 에는 다음 따라잡기(≤ 3 h) 전에
-    // 지워질 수 있어 약속하지 않는다(수정 전 UTC 날짜 셈으로는 09-29 00Z 까지라 13Z 에도 약속했다)
-    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T01:00:00Z"))).toContain("다음 03:30 KST");
-    const soon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T13:00:00Z"));
+    // 3일 전(09-25): 00:00–08:59 KST 는 UTC 09-24 파티션에 있다 — 그 끝(09-25 00Z) + 72 h = 09-28 00Z(09:00 KST)까지만 다시 센다.
+    // 리뷰 2026-09-30: 그날 끝(09-26 00:00 KST = 09-25 15Z)으로 셈해 09-28 15Z 까지 약속했다 — 그 사이의 재집계는 00–08시가 빠진 수를 남겼다(api 도 고침)
+    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-27T20:00:00Z"))).toContain("다음 03:30 KST"); // 05:00 KST — 4 h 남음
+    const soon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-27T22:00:00Z")); // 07:00 KST — 다음 따라잡기(≤ 3 h) 전에 지워질 수 있다
     expect(soon).not.toMatch(/채워집니다/);
     expect(soon).toContain("채워지지 않을 수 있습니다");
+    const afternoon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T05:00:00Z")); // 14:00 KST — 앞 파티션이 이미 지워졌다
+    expect(afternoon).not.toMatch(/채워집니다/);
+    expect(afternoon).toContain("채워지지 않습니다");
+    expect(stats.trackPartitionEndMs(Date.parse("2026-09-24T15:00:00Z"))).toBe(Date.parse("2026-09-25T00:00:00Z"));
+    expect(stats.trackPartitionEndMs(Date.parse("2026-09-24T00:00:00Z"))).toBe(Date.parse("2026-09-25T00:00:00Z")); // 경계 순간은 그 날 파티션(FROM 포함)
     // 어제는 그대로 약속한다 · 원본 보존을 모르는(넘기지 않은) 계열은 기존 규칙(따라잡기 7일)
     expect(stats.statsEmptyText(false, "2026-09-27", today, src("2026-09-28T14:59:00Z"))).toContain("다음 03:30 KST");
     expect(stats.statsEmptyText(false, "2026-09-23", today)).toContain("다음 03:30 KST");
