@@ -200,3 +200,25 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     아니면 `ok`(시간 트림 `MINID ~` 은 대략이라 조금 짧은 것은 정상 — 웹 `STREAM_WINDOW_SLACK_S`) · w < t 이고 n = 0 → `muted` `채우는 중`(기동 직후 등).
   - `stream_budget_trims`(collector · ais)는 손실(loss)이 아니라 누계(count)로 보인다 — 빨간색이 아니고, pipeline 탭의 빨간 배지는 손실(loss) 지표만 센다.
     탭 설명: 빨간 값 = 0 이 아닌 손실 지표 · 주황 = 예산 때문에 짧아진 스트림 보존 창(손실 아님).
+
+## G. 6차 개정(2026-09-29 · 레인 traffic-grid · 사용자 요청 "상황판 한반도 주변 선박 정보" — 사용자 선택: 연안 교통량 격자, ADR-023)
+- G13 **연안 교통량 계약**(collector · api · web · infra — 근거 · 확인한 형식 · 선택값은 ADR-023):
+  - 외부: 공공데이터포털 `apis.data.go.kr` 두 서비스(한국해양교통안전공단 실시간 해양교통정보 `B554035/realtime/get_realtime` · 해양수산부 격자4단계 WFS
+    `1192000/apVhdService_G4s/getOpnG4sWFS`), 키 하나 `DATA_GO_KR_SERVICE_KEY`(collector 에만 — 격리 스택은 빈 값, 인코딩 키 · 디코딩 키 모두). 공급자 이름 ·
+    예산 키 `komsa_traffic`(하루 400) · `mof_grid4`(하루 6,000), 둘 다 엄격 예산. 호스트 버킷 1.0 req/s(burst 2), 격자 조회 우선순위 `PRIORITY_BACKFILL`(4).
+  - Redis(collector 가 쓰고 api 가 읽는다): `wakeline:traffic_grid` 문자열 JSON(SET EX 1200) = `{v:1, reg_dt_kst(+09:00), reg_dt_utc, fetched_at, total,
+    total_count|null, partial, rejected, resolved, unresolved, pending, not_found, off_grid, cell_deg: 0.025, cells: [[grid_no, lat_min, lon_min, 척수, 밀집도 %], …]}`
+    (기하를 확인한 칸만 · grid_no 순 · 발행 시각 없음 — 같은 입력이면 같은 값). `wakeline:traffic_grid:negative` 해시(grid_no → `{"reason":"not_found"|"off_grid","at"}`).
+    heartbeat `wakeline:collector` 필드 `traffic_grid_state`(active · no_key · fixture · operator_off) · `traffic_grid_last_ok` · `traffic_grid_reg_dt` ·
+    `traffic_grid_resolved` · `traffic_grid_unresolved` · `traffic_grid_cells_known` · `traffic_grid_pending` · `traffic_grid_calls_komsa` · `traffic_grid_calls_wfs`
+    (모르면 빈 값) · `traffic_grid_at` · `traffic_grid_lag_s`. ACL: collector 에 `~wakeline:traffic_grid`(SET 셀렉터로만) · `~wakeline:traffic_grid:negative` 두 이름만.
+  - DB: Flyway **V14** `marine_grid4(grid_no text pk, lat_min, lon_min, lat_max, lon_max double precision, gid int, fetched_at timestamptz)` — 한 칸 CHECK ·
+    grid_no 형식 CHECK, collector SELECT · INSERT · UPDATE, api SELECT. (V13 은 다른 레인 — 합칠 때 번호 순서를 맞춘다.)
+  - REST `GET /api/v1/traffic/grid`(공개 · `Cache-Control: public, max-age=30` · ETag `"t<원문 SHA-256 앞 8바이트>[-s]"` · 꺼짐 `"td-<이유>"` · 없음 `"tn"` ·
+    형식 오류 `"ti"` · 요청 제한 공통): 늘 있는 키 `available` · `status`(ok · stale · disabled · no_data · invalid) · `stale_after_s`(900) · `cell_deg`(0.025) ·
+    `cells` · `source{provider, grid, note}` · `time_zone` · `meta`, 그 밖(`disabled_reason` · `reg_dt_kst` · `reg_dt_utc` · `fetched_at` · `age_s` · 수들 ·
+    `partial` · `invalid_cells`)은 모르면 키가 없다. `available` ⇔ `status == ok`, 그 밖에는 `cells: []`. stale = regDt 가 900 s 넘게 지남. disabled 는
+    heartbeat 가 120 s 안일 때만. 검사: `tools/rest_contract_check.py` `traffic_grid`(표본 RestSamplesIT) — 교차 규칙은 ADR-023 §6.
+  - 웹: 레이어 키 `traffic`(선택 필드 — 없으면 끔, 이 브라우저에 기억), 조회 90 s · `If-None-Match` · 탭이 보일 때만 · 켜져 있을 때만, 범례 문구
+    "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님", 툴팁 기준 시각은 KST 와 UTC 를 함께("MM-DD HH:MM:SS KST · MM-DD HH:MM:SS UTC").
+  - 가림(§C5 확장): 언어 간 벡터에 `serviceKey=` · `ServiceKey=`(인코딩 · 디코딩 키) · JSON `"ServiceKey"` · `SERVICEKEY=` 네 사례. 키 값은 세 형태로 값 치환.
