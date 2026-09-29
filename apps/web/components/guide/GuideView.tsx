@@ -90,7 +90,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
   const dayTo = dualTime("2026-09-28T23:59:00Z")!;
   const statsUtc = kstClockToUtc(STATS_RUN_KST);
   return (
-    <div className="h-full overflow-y-auto" data-testid="guide">
+    <div className="h-full overflow-y-auto" data-testid="guide" data-guide-scroll="">
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
         {/* 글줄은 읽기 좋은 폭(860 px)까지, 그림 · 표는 더 넓게 — 스크린샷의 작은 글자가 덜 줄어들게 */}

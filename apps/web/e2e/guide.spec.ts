@@ -22,6 +22,22 @@ test("guide: contents move to sections on wide and narrow screens; every figure 
   await expect(page).toHaveURL(/#time$/);
   await expect(page.locator("#time-h")).toBeInViewport();
   await expect(nav.getByRole("link", { name: /시각 표기/ })).toHaveAttribute("aria-current", "location");
+  // 짧은 절(6.1)을 고르면 다음 절(6.2)이 띠에 들어와도 고른 절이 현재 — 사용자가 스크롤하기 전까지
+  const current = nav.locator('a[aria-current="location"]');
+  await nav.getByRole("link", { name: /^6\.1\s*로그인$/ }).click();
+  await expect(page).toHaveURL(/#ops-login$/);
+  await expect(current).toHaveAttribute("href", "#ops-login");
+  await page.waitForTimeout(300); // 이동이 부른 scroll 이벤트 뒤에도 그대로
+  await expect(current).toHaveAttribute("href", "#ops-login");
+  // 맨 위로 돌아오면 첫 절 — 앞에서 본 절(마지막 절 포함)이 남지 않는다
+  await nav.getByRole("link", { name: /키보드 단축키/ }).click();
+  await expect(current).toHaveAttribute("href", "#shortcuts");
+  const scroller = page.locator("[data-guide-scroll]");
+  await scroller.evaluate((el) => el.scrollTo(0, 0));
+  await expect(current).toHaveAttribute("href", "#overview");
+  // 사용자가 스크롤하면 고정이 풀리고 그 위치의 절이 현재
+  await scroller.evaluate((el) => { const t = document.getElementById("replay")!; el.scrollTo(0, el.scrollTop + t.getBoundingClientRect().top - el.getBoundingClientRect().top - 8); });
+  await expect(current).toHaveAttribute("href", "#replay");
   // 좁은 화면: 목록 대신 선택 상자 — 고르면 그 절로 옮기고 제목에 초점
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(nav).toBeHidden();
@@ -30,5 +46,9 @@ test("guide: contents move to sections on wide and narrow screens; every figure 
   await expect(page.locator("#stats-h")).toBeInViewport();
   await expect(page.locator("#stats-h")).toBeFocused();
   await expect(page).toHaveURL(/#stats$/);
+  await expect(select).toHaveValue("stats");
+  // 좁은 화면도 맨 위로 돌아오면 첫 절
+  await page.locator("[data-guide-scroll]").evaluate((el) => el.scrollTo(0, 0));
+  await expect(select).toHaveValue("overview");
   expect(errors).toEqual([]);
 });

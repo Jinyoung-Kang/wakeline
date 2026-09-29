@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PLAN } from "@/lib/guide";
-import { activeSection } from "@/components/guide/GuideToc";
+import { currentSection } from "@/components/guide/GuideToc";
 import { ERROR_MARKS } from "../scripts/guide-capture-lib.mjs";
 
 const WEB = new URL("..", import.meta.url).pathname;
@@ -62,11 +62,29 @@ describe("capture plan selectors exist in the screens", () => {
 });
 
 describe("table of contents: current section", () => {
+  // tops = 각 절 위쪽 가장자리(스크롤 영역 위 기준 px, 문서 순서 — 부모 절은 자식보다 먼저 시작), band = 관찰 띠 아래 끝(px)
   const order = ["overview", "dashboard", "dashboard-layout", "dashboard-map", "replay"];
-  it("the last visible section in document order wins (the innermost), and nothing visible keeps the previous", () => {
-    expect(activeSection(order, new Set(["dashboard", "dashboard-map"]), null)).toBe("dashboard-map");
-    expect(activeSection(order, new Set(["dashboard"]), "overview")).toBe("dashboard");
-    expect(activeSection(order, new Set(), "replay")).toBe("replay");
-    expect(activeSection(order, new Set(["overview", "replay"]), null)).toBe("replay");
+  const at = (tops: (number | null)[], scrollTop = 500, pinned: string | null = null) => currentSection(order, tops, { scrollTop, band: 180, pinned });
+  it("the last section in document order that starts above the band's lower edge — the innermost one", () => {
+    expect(at([-2000, -300, -250, 40, 900])).toBe("dashboard-map");
+    expect(at([-2000, -300, -250, 181, 900])).toBe("dashboard-layout");
+    expect(at([-2000, -1500, -1200, -900, 100])).toBe("replay");
+  });
+  it("between sections (nothing inside the band) it is the section above, not a stale earlier value", () => {
+    // 2.2 가 끝난 뒤 3 이 아직 띠 아래 — 바로 앞 절(2.2)
+    expect(at([-3000, -2400, -2300, -900, 400])).toBe("dashboard-map");
+  });
+  it("at the top of the page it is the first section, whatever was current before", () => {
+    expect(at([231, 900, 950, 1400, 2400], 0)).toBe("overview");
+    expect(at([228, 897, 947, 1397, 2397], 3)).toBe("overview");
+  });
+  it("a section picked in the contents stays current until the reader scrolls (a short section does not hand over to the next one)", () => {
+    expect(at([-2000, -300, 16, 60, 900], 700, "dashboard-layout")).toBe("dashboard-layout");
+    expect(at([-2000, -300, 16, 60, 900], 700, null)).toBe("dashboard-map");
+    expect(at([-2000, -300, 16, 60, 900], 700, "nowhere")).toBe("dashboard-map"); // 모르는 id 는 무시
+  });
+  it("missing sections are skipped; nothing measurable is null", () => {
+    expect(at([-2000, null, null, 40, 900])).toBe("dashboard-map");
+    expect(currentSection([], [], { scrollTop: 0, band: 180, pinned: null })).toBeNull();
   });
 });
