@@ -326,6 +326,15 @@ export function fmtBudgetLimit(v: unknown) {
   return n > 0 ? String(n) : "∞";
 }
 
+/**
+ * 지연(ms) 칸: "420 ms". 숫자 또는 숫자 문자열(Redis 해시 값)만 값 — 모르면(null·없음·형식 오류·음수) "—".
+ * 단위만 붙은 "— ms" 로 보이지 않게(값을 모르는데 단위가 있으면 측정값처럼 읽힌다).
+ */
+export function fmtLatencyMs(v: unknown): string {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? `${n.toLocaleString("en-US")} ms` : "—";
+}
+
 /** 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다) */
 export function airportErrorText(e: unknown, icao: string): string {
   const status = typeof e === "object" && e !== null && typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : null;

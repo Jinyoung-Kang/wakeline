@@ -233,7 +233,7 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toMatch(/data-key="publish_dropped" data-tone="bad"/);
     expect(html).toMatch(/data-key="dropped_total" data-tone="muted"[^>]*>.*?—/);
     expect(html).toContain("wakeline:aircraft");
-    expect(html).toContain("09-28 01:00:00Z");
+    expect(html).toContain("09-28 10:00:00 KST"); // 운영 화면은 한국 표준시
   });
   it("permanent losses (rejected rows, apply errors, listener errors) are loss rows too", () => {
     const rows = opsLib.pipelineRows({ ...resp, api: { ...resp.api, track_rows_failed: 2, ship_rows_failed: 0, stream_apply_errors: 1, listener_errors: 0 } });
@@ -266,7 +266,7 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: unknownStart }));
     expect(html).toContain("wakeline:ships");
     expect(html).toContain("시작 모름");
-    expect(html).toContain("09-28 01:02:00Z");
+    expect(html).toContain("09-28 10:02:00 KST");
     expect(opsLib.lastTrimLoss({ api: { last_stream_trim_loss: { stream: "wakeline:ships", from: 5, to: "x" } } })).toBeNull();
   });
 });
