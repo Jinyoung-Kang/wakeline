@@ -393,9 +393,16 @@ def test_portmis_settings_defaults_budget_and_validation():
         {"portmis_base_url": "https://apis.data.go.kr.example.org/1192000/VsslEtrynd5"},
         {"data_go_kr_rps": 0},
         {"data_go_kr_rps": 3},
+        # 검토 지적: 상한 2 는 기본 전체 버킷(2 req/s)과 같았다 — 세 잡의 호스트 버킷이 전체 토큰을 모두 가져갈 수 있었다
+        {"data_go_kr_rps": 2.0},
+        {"http_global_rps": 1.0},  # 전체 버킷을 낮추면 호스트 버킷(기본 1.0)도 그 아래여야 한다
+        {"http_global_rps": 0.5, "data_go_kr_rps": 0.5},
     ):
         with pytest.raises(ValidationError):
             Settings(**bad)
+    assert Settings(data_go_kr_rps=1.9).data_go_kr_rps == 1.9
+    assert Settings(http_global_rps=4.0, data_go_kr_rps=2.0).data_go_kr_rps == 2.0
+    assert Settings(http_global_rps=1.0, data_go_kr_rps=0.5).data_go_kr_rps == 0.5
 
 
 async def test_fixture_mode_answers_port_call_demand_with_disabled_and_reports_metrics(monkeypatch):
