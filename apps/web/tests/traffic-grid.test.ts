@@ -353,6 +353,6 @@ describe("layer toggle, legend, sources", () => {
     const about = text(renderToStaticMarkup(createElement(AboutPage)));
     expect(about).toContain("연안 교통량(격자)");
     expect(about).toContain("개별 선박 위치가 아닙니다");
-    expect(about).toContain("KST 와 UTC 를 함께");
+    expect(about).toContain("기준 시각은 KST 로 적고");
   });
 });

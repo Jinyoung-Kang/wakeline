@@ -247,12 +247,12 @@ describe("replay inspector: record times and SIGMET validity in KST only (title 
 });
 
 describe("the hover promise is stated only where it holds", () => {
-  it("/about: KST first with UTC on every screen; the ISO original on hover; the KMA tm is issued in KST and its UTC is computed", () => {
+  it("/about: KST only on every screen; the full KST instant on hover; the KMA tm is issued in KST", () => {
     const t = renderToStaticMarkup(createElement(AboutPage)).replace(/<[^>]+>/g, "");
-    expect(t).toContain("같은 순간의 UTC 를 함께 적습니다");
-    expect(t).toContain("시각에 마우스를 올리면 원본 UTC(ISO, ms 까지)가 보입니다");
-    expect(t).toContain("기상청 레이더 tm 은 기상청이 준 KST 이고 UTC 는 그 값에서 계산합니다");
-    expect(t).not.toContain("KST 만)"); // "지도 툴팁은 KST 만" 이라는 예외는 없어졌다
+    expect(t).toContain("화면의 시각은 모두 한국 표준시(KST)입니다");
+    expect(t).toContain("시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST)이 보입니다");
+    expect(t).toContain("기상청 레이더 tm 은 기상청이 준 KST 그대로입니다");
+    expect(t).not.toContain("원본 UTC");
   });
   it("ship card footer: KST first with UTC; the ISO original on hover (no 'KST only' exception any more)", async () => {
     const { parseShipDetail, ShipCardView } = await import("@/components/ShipCard");

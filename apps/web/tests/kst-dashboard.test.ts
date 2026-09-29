@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
 import * as T from "@/lib/time";
 import { unpairedKst } from "./helpers/dual-time";
+import { utcLeaks } from "./helpers/kst-only";
 import { resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { StatusBar } from "@/components/StatusBar";
@@ -285,12 +286,14 @@ describe("map tooltips and text helpers: compact KST · UTC", () => {
 });
 
 describe("about page states the time basis", () => {
-  it("screens show KST first with UTC, raw bulletins stay UTC, stats days are UTC dates, the ISO original is in the tooltip", () => {
+  it("screens show KST only; raw bulletins stay as issued (their …Z is 9 h behind KST); stats days are KST days; budget windows in KST; no UTC", () => {
     const t = text(renderToStaticMarkup(createElement(AboutPage)));
-    expect(t).toContain("화면의 시각은 한국 표준시(KST, UTC+9)를 먼저, 같은 순간의 UTC 를 함께");
-    expect(t).toContain("09-29 14:02:54 KST · 05:02:54 UTC");
-    expect(t).toContain("METAR · TAF · SIGMET 원문은 발표된 그대로(UTC");
-    expect(t).toContain("통계의 날짜는 UTC 날짜");
+    expect(t).toContain("화면의 시각은 모두 한국 표준시(KST)입니다");
+    expect(t).toContain("“09-29 14:02:54 KST”");
+    expect(t).toContain("METAR · TAF · SIGMET 원문은 발표된 그대로 두고 바꾸지 않습니다");
+    expect(t).toContain("통계의 날짜와 운영 화면의 격리 수 날짜는 KST 날짜");
+    expect(t).toContain("매일 09:00 KST 에 새로 시작하는 창");
+    expect(utcLeaks(t)).toEqual([]);
   });
 });
 

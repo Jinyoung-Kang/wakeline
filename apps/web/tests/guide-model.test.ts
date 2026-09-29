@@ -128,15 +128,16 @@ describe("capture result (lib/guide-manifest.json)", () => {
   });
 });
 
-describe("time: the guide uses the shared formatter (lib/time · components/DualTime — contract v5 §G13)", () => {
+describe("time: the guide uses the shared formatter (lib/time · components/KstTime — contract v5 §G19)", () => {
   // 합친 뒤(web-core-v6 의 lib/time 이 들어온 뒤) 켠 시험 — 설명서가 제 형식기(dualInline · dualTime · 제 DualTime)를 두면 7장의 예가 화면과 어긋날 수 있다.
-  it("lib/guide has no clock formatter of its own and GuideFigure has no local DualTime", () => {
+  it("lib/guide has no clock formatter of its own and GuideFigure has no local time component", () => {
     for (const k of ["dualInline", "dualTime", "kstClockToUtc", "metarTimeToken"]) expect(k in G, k).toBe(false);
     const fig = readFileSync(join(WEB, "components", "guide", "GuideFigure.tsx"), "utf8");
-    expect(fig).toMatch(/import \{[^}]*\bDualTime\b[^}]*\} from "@\/components\/DualTime"/);
-    expect(fig).not.toMatch(/function DualTime\b/);
+    expect(fig).toMatch(/import \{[^}]*\bKstTime\b[^}]*\} from "@\/components\/KstTime"/);
+    expect(fig).not.toMatch(/function (Dual|Kst)Time\b/);
     const view = readFileSync(join(WEB, "components", "guide", "GuideView.tsx"), "utf8");
-    expect(view).toMatch(/from "@\/components\/DualTime"/);
+    expect(view).toMatch(/from "@\/components\/KstTime"/);
+    expect(view).not.toMatch(/DualTime/);
     expect(view).toMatch(/from "@\/lib\/time"/);
   });
   it("the raw-bulletin time token of an instant (lib/time fmtZuluToken) is its UTC day-hour-minute + Z (as published)", () => {
