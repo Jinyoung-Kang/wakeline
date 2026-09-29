@@ -13,6 +13,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AlertPanel } from "@/components/AlertPanel";
+import { SearchResultsView } from "@/components/AircraftSearch";
 import { MapLegendView } from "@/components/MapLegend";
 import { MapChipsView } from "@/components/MapChips";
 import { resetData, setData } from "@/lib/store";
@@ -89,6 +90,23 @@ describe("search box: the '/' key hint has its own space and the placeholder is 
     expect(ph).toBe("항공기 · 선박 검색");
     expect(input).toMatch(/title="[^"]*호출부호[^"]*MMSI[^"]*"/);
     expect(src).toContain("통합 검색 — 항공기(호출부호·hex·등록번호) · 선박(선명·MMSI·IMO·호출부호)");
+  });
+});
+
+describe("search box: its own times and help text are KST only (the user's decision 2026-09-30; review finding)", () => {
+  it("the not-live help line says the times are KST — no 'UTC(…Z)' left in this lane's file", () => {
+    const html = renderToStaticMarkup(createElement(SearchResultsView, {
+      uid: "k", now: Date.parse("2026-09-29T01:00:00Z"), active: -1, shipSort: null, onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
+      aircraft: { hits: [], state: "idle", msg: "" },
+      ships: { hits: [{ mmsi: "300000002", name: "BRAVO", call_sign: null, imo: null, ship_type: null, category: "cargo", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T15:30:00Z", last_seen_at: "2026-09-28T14:30:00Z" }], state: "done", msg: "1건", note: null, error: null },
+    } as never));
+    const t = textOf(parseHtml(html));
+    expect(t).toContain("마지막 수신·저장 시각은 KST ·");
+    expect(t).not.toContain("UTC(…Z)");
+    // 항공기를 골랐는데 위치가 없을 때의 알림 글자도 KST 만(두 시간대 fmtDual 이 아니라 dualPair(…).kst)
+    const src = readFileSync(new URL("../components/AircraftSearch.tsx", import.meta.url), "utf8");
+    expect(src).not.toMatch(/\bfmtDual\b/);
+    expect(src).not.toMatch(/KST · UTC/);
   });
 });
 

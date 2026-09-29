@@ -216,7 +216,7 @@ describe("dashboard components show KST first with UTC (the ISO original stays i
       ships: { hits: [{ mmsi: "300000002", name: "BRAVO", call_sign: null, imo: null, ship_type: null, category: "cargo", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T15:30:00Z", last_seen_at: "2026-09-28T14:30:00Z" }], state: "done", msg: "1건", note: null, error: null },
     } as never));
     expect(results).toContain('title="마지막 수신 09-29 08:41:14 KST · 09-28 23:41:14 UTC (원본 2026-09-28T23:41:14.000Z)"');
-    expect(text(results)).toContain("마지막 수신·저장 시각은 KST · UTC");
+    expect(text(results)).toContain("마지막 수신·저장 시각은 KST ·"); // 검색 상자의 설명 줄은 KST 만(사용자 결정 2026-09-30 — 이 레인의 파일)
     expect(unpairedKst(text(results))).toEqual([]);
   });
 
