@@ -14,6 +14,7 @@ import {
 } from "@/lib/guide";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+const hashedFile = (id: string, ext: string) => `${id}.0123456789.${ext}`;
 const WEB = new URL("..", import.meta.url).pathname;
 
 describe("capture plan (lib/guide-shots.json)", () => {
@@ -112,5 +113,23 @@ describe("dual time for examples (KST first, UTC alongside)", () => {
     expect(kstClockToUtc("09:00")).toBe("00:00 UTC");
     expect(kstClockToUtc("08:59")).toBe("23:59 UTC(전날)");
     expect(kstClockToUtc("25:00")).toBeNull();
+  });
+});
+
+describe("caching of screenshots", () => {
+  it("file names carry a content hash, so hashed /guide/ files get a one-year immutable cache (like /maplibre/) — never the /guide page itself", async () => {
+    const { default: cfg, GUIDE_IMAGE_SOURCE } = await import("@/next.config");
+    const rules = await cfg.headers!();
+    const guide = rules.find((r) => r.source === GUIDE_IMAGE_SOURCE);
+    expect(guide?.headers).toEqual([{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }]);
+    expect(rules.some((r) => r.source === "/maplibre/:version/:file*")).toBe(true);
+    // Next 가 빌드 때 하는 그대로 정규식으로 바꿔 본다(next/dist/lib/build-custom-route)
+    const { buildCustomRoute } = await import("next/dist/lib/build-custom-route" as string) as { buildCustomRoute: (t: string, r: { source: string; headers: unknown[] }) => { regex: string } };
+    const re = new RegExp(buildCustomRoute("header", { source: GUIDE_IMAGE_SOURCE, headers: [] }).regex);
+    const named = hashedFile("dashboard", "webp");
+    expect(named).toMatch(GUIDE_FILE_RE);
+    expect(re.test(`/guide/${named}`)).toBe(true);
+    expect(re.test(`/guide/${hashedFile("ops", "png")}`)).toBe(true);
+    for (const p of ["/guide", "/guide/", "/guide/logo.webp", "/guide/a/dashboard.0123456789.webp", "/guidex/dashboard.0123456789.webp"]) expect(re.test(p)).toBe(false);
   });
 });
