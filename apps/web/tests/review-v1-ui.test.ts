@@ -245,20 +245,21 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     // 예전 api(필드 없음)면 모름
     expect(opsLib.pipelineRows(resp).find((r) => r.key === "track_rows_failed")!.text).toBe("—");
   });
-  it("R-14 stream budget trims (collector: aircraft stream, ais: ships stream) are loss rows; unknown is —", () => {
+  it("R-14 stream budget trims (collector: aircraft stream, ais: ships stream) are shown as counts, not losses (shared field contract); unknown is —", () => {
     const trims = { ...resp, collector: { ...resp.collector, stream_budget_trims: 2 }, ais: { ...resp.ais, stream_budget_trims: 0 } };
     const rows = opsLib.pipelineRows(trims);
     const by = (g: string) => rows.find((r) => r.group === g && r.key === "stream_budget_trims");
-    expect(by("collector")).toMatchObject({ value: 2, tone: "bad", text: "2" });
-    expect(by("ais")).toMatchObject({ value: 0, tone: "ok", text: "0" });
+    // 예산 트림은 보존 창을 줄일 뿐 손실이 아니다 — 읽기 전에 잘린 것만 api stream_trim_loss_events 가 센다(tests/ops-pipeline-window.test.ts)
+    expect(by("collector")).toMatchObject({ value: 2, tone: "muted", text: "2" });
+    expect(by("ais")).toMatchObject({ value: 0, tone: "muted", text: "0" });
     expect(by("collector")!.label).toMatch(/트림/);
-    expect(opsLib.pipelineLossCount(trims)).toBe(5);
+    expect(opsLib.pipelineLossCount(trims)).toBe(4); // 수정 전 5 — 트림을 손실로 셌다
     // 필드가 없거나(예전 api·heartbeat 오래됨 → null) 형식이 틀리면 모름 — 0 으로 보이지 않는다
     const unknown = opsLib.pipelineRows({ ...resp, collector: { ...resp.collector, stream_budget_trims: null }, ais: { stream_budget_trims: "3" } });
     expect(unknown.filter((r) => r.key === "stream_budget_trims").map((r) => [r.group, r.text, r.tone])).toEqual([["collector", "—", "muted"], ["ais", "—", "muted"]]);
     const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: trims }));
-    expect(html).toMatch(/data-key="stream_budget_trims" data-tone="bad"/);
-    expect(html).toMatch(/data-key="stream_budget_trims" data-tone="ok"/);
+    expect(html).toMatch(/data-key="stream_budget_trims" data-tone="muted"/);
+    expect(html).not.toMatch(/data-key="stream_budget_trims" data-tone="bad"/);
   });
   it("a trimmed range whose start is unknown (from=null) is still shown, with the start marked unknown", () => {
     const unknownStart = { ...resp, api: { ...resp.api, last_stream_trim_loss: { stream: "wakeline:ships", from: null, to: "2026-09-28T01:02:00Z" } } };
