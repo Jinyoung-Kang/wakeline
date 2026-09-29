@@ -2,7 +2,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtIsoKst, fmtUtcTitle } from "@/lib/time";
+import { fmtUtcTitle } from "@/lib/time";
 import { fmtLatencyMs } from "@/lib/format";
 import {
   fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRadarTitle, replayRange,
@@ -90,7 +90,7 @@ export default function ReplayPage() {
         </div>
         <div className="px-3 pt-0.5" data-testid="replay-slider-row">
           <input type="range" min={min} max={max} step={10_000} value={Math.min(max, Math.max(min, at))} onChange={(e) => { setPlaying(false); setAt(Number(e.target.value)); }} className="block w-full"
-            list="replay-marks" aria-label="재생 시각" aria-valuetext={at ? `${fmtIsoKst(at)} · ${replayZone(at, range) === "full" ? "원해상도" : "1분 요약"}` : "—"} />
+            list="replay-marks" aria-label="재생 시각" aria-valuetext={at ? `${replayAtLabel(at)} · ${replayZone(at, range) === "full" ? "원해상도" : "1분 요약"}` : "—"} />
           <datalist id="replay-marks"><option value={range.fullResFrom} label="72 h" /></datalist>
         </div>
         <div className="flex h-5 items-center gap-x-3 overflow-hidden px-3 whitespace-nowrap" data-testid="replay-status">
