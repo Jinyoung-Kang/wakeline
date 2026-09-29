@@ -10,6 +10,11 @@ export interface Layers {
   airports: boolean;
   tracks: boolean;
   prediction: boolean;
+  /**
+   * 연안 교통량(ADR-023 — 5분 집계 격자별 선박 척수, 개별 위치 아님) — 기본 끔. 켜면 /api/v1/traffic/grid 를 조회한다.
+   * 선택 필드: 이 필드 전에 만든 레이어 객체(저장된 설정 · 시험의 리터럴)도 그대로 '끔'으로 읽힌다(undefined = 끔).
+   */
+  traffic?: boolean;
 }
 
 export type UiPanel = "alerts" | "aircraft" | "ship" | "sigmet" | "airport";
@@ -54,7 +59,7 @@ interface UiState {
 }
 
 export const useUi = create<UiState>((set) => ({
-  layers: { radar: true, sigmet: true, aircraft: true, ships: false, airports: true, tracks: true, prediction: true },
+  layers: { radar: true, sigmet: true, aircraft: true, ships: false, airports: true, tracks: true, prediction: true, traffic: false },
   toggleLayer: (k) => set((s) => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
   radarOpacity: 0.6,

@@ -6,7 +6,7 @@ import type { Layers } from "./ui-store";
 import { SHIP_CATEGORIES, type ShipCategory } from "./ships";
 
 export const LAYERS_KEY = "wakeline.layers";
-const LAYER_KEYS: readonly (keyof Layers)[] = ["radar", "sigmet", "aircraft", "ships", "airports", "tracks", "prediction"];
+const LAYER_KEYS: readonly (keyof Layers)[] = ["radar", "sigmet", "aircraft", "ships", "airports", "tracks", "prediction", "traffic"];
 
 export interface KV { getItem(k: string): string | null; setItem(k: string, v: string): void }
 
@@ -40,7 +40,7 @@ export function legendDefaultOpen(viewportWidth: number): boolean {
 export function saveLayers(l: Layers, kv: KV | null = storage()): void {
   if (!kv) return;
   const o: Partial<Layers> = {};
-  for (const k of LAYER_KEYS) o[k] = l[k] === true;
+  for (const k of LAYER_KEYS) if (l[k] !== undefined) o[k] = l[k] === true; // 선택 필드(traffic)가 없는 객체는 그 키를 쓰지 않는다(끔으로 읽힌다)
   try { kv.setItem(LAYERS_KEY, JSON.stringify(o)); } catch { /* 저장소 가득 참·차단 — 기억하지 못할 뿐 */ }
 }
 

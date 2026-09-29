@@ -4,6 +4,7 @@ import { ServerClock } from "./server-clock";
 import type { DemandInfo } from "./demand";
 import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipState, ShipStatic } from "./ships";
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
+import { TRAFFIC_POLL_NONE, type TrafficPollState } from "./traffic-grid";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
 
@@ -92,6 +93,8 @@ export interface ServerData {
   mapBounds: [number, number, number, number] | null;
   /** WS 수신 검증(계약 v5 §E2) — 페이지를 연 뒤 누적(재접속해도 지우지 않는다). 상태 바가 0 이 아닐 때만 보인다 */
   wsInvalid: WsInvalid;
+  /** 연안 교통량(ADR-023) 조회 상태 — 레이어가 켜져 있을 때만 갱신. 지도는 version 이 바뀔 때만 다시 그린다 */
+  trafficGrid: TrafficPollState;
 }
 
 /**
@@ -132,6 +135,7 @@ const initial: ServerData = {
   viewport: null,
   mapBounds: null,
   wsInvalid: WS_INVALID_NONE,
+  trafficGrid: TRAFFIC_POLL_NONE,
 };
 let data: ServerData = initial;
 
