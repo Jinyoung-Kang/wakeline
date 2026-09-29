@@ -30,6 +30,7 @@ import { trackFeatureCollection } from "@/lib/track";
 import { focusChip, parseDemand } from "@/lib/demand";
 import { parseRoute } from "@/lib/route";
 import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
+import AboutPage from "@/app/about/page";
 
 /** UTC 자정 직전 — KST 로는 다음 날 아침 */
 const LATE = "2026-09-28T23:41:14.906Z";
@@ -270,5 +271,14 @@ describe("map tooltips and text helpers in KST", () => {
   it("focus-tracking chip: the start time in its tooltip is KST", () => {
     const d = parseDemand({ focus: { hex: "71c081", state: "active", interval_s: 5, since: "2026-09-28T23:40:00Z" } }, 0);
     expect(focusChip(d, "71c081", NOW)!.title).toContain("시작 09-29 08:40:00 KST.");
+  });
+});
+
+describe("about page states the time basis", () => {
+  it("screens are KST, raw bulletins stay UTC, stats days are UTC dates, the original UTC is in the tooltip", () => {
+    const t = text(renderToStaticMarkup(createElement(AboutPage)));
+    expect(t).toContain("화면의 시각은 한국 표준시(KST, UTC+9)");
+    expect(t).toContain("METAR · TAF · SIGMET 원문은 발표된 그대로(UTC");
+    expect(t).toContain("통계의 날짜는 UTC 날짜");
   });
 });
