@@ -350,7 +350,8 @@ class ShipSelectionLookupTest {
             wire(k, lookups, 5_000, db, new AtomicLong(System.currentTimeMillis()));
             FakeWsSession a = ready(k, "a"), b = ready(k, "b"), c = ready(k, "c");
             for (FakeWsSession f : List.of(a, b, c)) k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"" + MMSI + "\"}");
-            await(() -> lookups.getActiveCount() == 3); // 세 조회가 모두 떠 있다(하나는 읽고 둘은 그 읽기를 기다린다)
+            // 관찰(리뷰 — 고치기 전): 세 조회가 모두 스레드를 잡는다(하나는 읽고 둘은 그 읽기를 join 으로 기다린다) — DB 읽기 하나에 스레드 셋
+            await(() -> lookups.getActiveCount() == 3);
             db.hold.countDown();
             await(() -> List.of(a, b, c).stream().allMatch(f -> !ofType(f, "ship_selected").isEmpty()));
             assertThat(db.reads).as("one DB read for three concurrent selections").hasSize(1);
@@ -364,6 +365,71 @@ class ShipSelectionLookupTest {
             assertThat(ofType(d, "ship_selected").getLast().path("static").path("call_sign").asString()).isEqualTo("D7SL");
             assertThat(outcome(k, "ok")).as("answered from the cache — no lookup").isEqualTo(loads);
             assertThat(db.reads).hasSize(1);
+        } finally {
+            lookups.shutdownNow();
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * 마감에 답한 뒤에도 그 읽기는 계속 돈다(리뷰 — 재현). 같은 물음의 다시 계산(선박 이동 · 주기 다시 보기)이 그 읽기가 끝나기 전에 오면 새 읽기를 올리지
+     * 않아야 한다. 관찰(고치기 전): 답을 쓴 순간 세션의 진행 중 표시를 지워, 마감 뒤의 다시 계산마다 같은 호출부호의 색인 읽기를 새로 올린다
+     * (PortCallReader 는 같은 호출부호의 동시 읽기를 합치지 않는다) — 한 세션 · 한 선박이 조회 스레드 여럿을 잡는다.
+     */
+    @Test void afterADeadlineAnswer_rechecksWhileTheReadStillRuns_startNoOtherRead() throws Exception {
+        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        ThreadPoolExecutor lookups = ShipLookups.boundedExecutor(4);
+        try (WsTestKit k = new WsTestKit(pool, 5_000, 200, 5)) {
+            Instant now = Instant.parse("2026-09-29T13:00:00Z");
+            ShipFanoutTest.publish(k, List.of(pos(MMSI, 35.1, 129.1, T)), List.of(ShipFanoutTest.stat(MMSI, "LIVE ONE", 70))); // 호출부호 D7AB
+            k.shipFanout.useLookups(new ShipLookups(lookups, 300, k.meters));
+            PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
+            k.shipFanout.setPortCallSource(ShipLookups.portCalls(new PortCallReader(index, List::of, now::toEpochMilli)));
+            FakeWsSession f = ready(k, "s");
+            WsSession s = k.handler.session("s");
+            index.hold = new CountDownLatch(1);
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"" + MMSI + "\"}");
+            await(() -> !ofType(f, "ship_selected").isEmpty()); // 마감(300 ms)의 답 — port_calls error
+            for (int i = 1; i <= 4; i++) { // 다시 계산 넷(선박 이동 셋 · 주기 다시 보기 하나) — 모두 앞 답의 마감 뒤
+                if (i == 4) k.shipFanout.refreshSelected();
+                else ShipFanoutTest.publish(k, List.of(pos(MMSI, 35.1 + 0.01 * i, 129.1, T.plusSeconds(10L * i))), List.of());
+                await(s::idle);
+                Thread.sleep(350);
+            }
+            assertThat(index.queries.size()).as("observed: every recheck past the deadline reads the same call sign again").isGreaterThan(1);
+            assertThat(lookups.getActiveCount()).as("observed: one session and one ship hold several lookup threads").isGreaterThan(1);
+            index.hold.countDown();
+        } finally {
+            lookups.shutdownNow();
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * 한 세션이 읽기가 막힌 동안 선박을 연달아 바꾼다(재현 — 리뷰의 크기 논증 '세션마다 조회 하나'). 관찰(고치기 전): 선택이 바뀔 때마다 앞 조회를 버리고
+     * 새 읽기를 올린다 — 버린 조회의 읽기는 계속 돌아, 한 세션이 조회 스레드를 모두 잡고 다른 세션의 조회를 대기열 · 마감 · 거절로 민다.
+     */
+    @Test void oneSessionSwitchingShipsWhileReadsWait_holdsOneLookupThreadAtMost() throws Exception {
+        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        ThreadPoolExecutor lookups = ShipLookups.boundedExecutor(4);
+        String fourth = "440000064";
+        try (WsTestKit k = new WsTestKit(pool, 5_000, 200, 5)) {
+            ShipFanoutTest.publish(k, List.of(pos(MMSI, 35.1, 129.1, T), pos(OTHER, 35.2, 129.2, T), pos(THIRD, 35.3, 129.3, T),
+                    pos(fourth, 35.4, 129.4, T)), List.of()); // 위치만(메모리에 정적 정보 없음 — 저장 정적 보고를 읽는다)
+            BlockingStored db = new BlockingStored();
+            db.rows.put(fourth, stored(fourth, "D7FO"));
+            db.hold = new CountDownLatch(1);
+            wire(k, lookups, 300, db, new AtomicLong(System.currentTimeMillis()));
+            FakeWsSession f = ready(k, "s");
+            WsSession s = k.handler.session("s");
+            for (String m : List.of(MMSI, OTHER, THIRD, fourth)) {
+                k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"" + m + "\"}");
+                await(s::idle);
+            }
+            await(() -> ofType(f, "ship_selected").stream().anyMatch(n -> fourth.equals(n.path("mmsi").asString()))); // 지금 선택은 마감에 답한다
+            assertThat(db.reads.size()).as("observed: every switch starts another read").isGreaterThan(1);
+            assertThat(lookups.getActiveCount() + lookups.getQueue().size()).as("observed: one session holds several lookup threads").isGreaterThan(1);
+            db.hold.countDown();
         } finally {
             lookups.shutdownNow();
             pool.shutdownNow();
