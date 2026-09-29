@@ -28,6 +28,13 @@
   지점 수(stations)·코드(station_ids)를 싣고, 기준(stations_ref) = 가장 새 저장 tm 에서 REF_WINDOW_S 안(경계 포함)의 저장된 프레임 중 가장
   많은 지점 수(그 프레임 포함), partial = stations < stations_ref(annotate_partial — 저장할 때마다 다시 계산). 지점 수를 모르는 옛 항목은
   세지 않고 판정도 두지 않는다(모름). 60분은 선택값이다.
+- 다시 받기(ADR-021): 정규 후보를 다 받은 뒤, 부분 합성 프레임 중 tm 이 REFETCH_MAX_AGE_S(30분) 안이고 마지막 시도(처음 받은 시각 또는
+  다시 받은 시각)가 REFETCH_SPACING_S(4분) 넘게 지난 것을 오래된 tm 부터 주기마다 REFETCH_MAX_PER_CYCLE(2)개까지 다시 받는다. 헤더의 지점
+  수가 늘었을 때만 PNG · 항목(지점 · 에코 셀 · raw_ref · fetched_at) · (최신 프레임이면) meta 를 바꾸고, 쓰지 않은 원본은 보관하지 않는다.
+  시도(refetches · refetched_at)와 바꾼 수(upgrades)는 항목에 남는다. 예산은 한 번에 1 을 예약하되 남은 하루(UTC)의 정규 주기 몫(주기당
+  REGULAR_CALLS_PER_CYCLE = 목록 1 + 새 프레임 1 + 일시 오류 다시 부르기 1)을 남기고만(budget.regular_headroom — 기상 작업의 다시 부르기와
+  같은 규칙). 오류는 INFO 한 줄 — 주기를 끝내지 않고, 다시 부르지 않고, 공급자 실패로 기록하지 않는다(보내지 않은 시도는 예산 1 을
+  돌려준다). 30분 · 4분 · 2개 · 3은 선택값이다(잰 값이 아니다).
 """
 
 from __future__ import annotations
@@ -44,7 +51,8 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import orjson
 
-from wakeline_collector.budget import UNKNOWN
+from wakeline_collector.budget import UNKNOWN, regular_headroom
+from wakeline_collector.config import settings
 from wakeline_collector.errors import describe_error
 from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
 from wakeline_collector.jobs.context import JobContext
@@ -67,6 +75,9 @@ MAX_NOT_READY_TRIES = 3  # 목록에 있으나 아직 받을 수 없는 tm 을 �
 PREV_DAY_LIST_MIN = 15  # KST 00:00 부터 이 분 동안은 전날 목록도 조회
 REF_WINDOW_S = 60 * 60  # 기준 지점 수(stations_ref)를 세는 창 — 가장 새 저장 tm 에서 거꾸로(선택값, ADR-021)
 REFETCH_MAX_AGE_S = 30 * 60  # 부분 합성 프레임을 다시 받는 tm 나이 상한(선택값, ADR-021)
+REFETCH_SPACING_S = 4 * 60  # 같은 프레임의 마지막 시도(처음 받기 포함) 뒤 이만큼은 기다린다(선택값)
+REFETCH_MAX_PER_CYCLE = 2  # 주기마다 다시 받는 프레임 수 상한(선택값)
+REGULAR_CALLS_PER_CYCLE = 3  # 다시 받기가 남겨 둘 정규 주기 몫: 목록 1 + 새 프레임 바이너리 1 + 일시 오류 다시 부르기 1(선택값)
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
 
@@ -129,6 +140,39 @@ def annotate_partial(frames: list[dict]) -> list[dict]:
             f.pop("stations_ref", None)
             f.pop("partial", None)
     return frames
+
+
+def _parse_iso(v: object) -> datetime | None:
+    if not isinstance(v, str) or not v:
+        return None
+    try:
+        t = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
+
+
+def select_refetch(frames: list[dict], now_kst: datetime, now_utc: datetime) -> list[str]:
+    """다시 받을 부분 합성 프레임(오래된 tm 부터, 최대 REFETCH_MAX_PER_CYCLE 개): partial 이 참이고, tm 이 REFETCH_MAX_AGE_S 안이고
+    (now_kst — KST 벽시계), 마지막 시도(fetched_at · refetched_at 중 늦은 것)가 REFETCH_SPACING_S 이상 지난 것. 시도 시각을 모르면 막지 않는다."""
+    now_kst = now_kst.replace(tzinfo=None)
+    out: list[str] = []
+    for f in sorted(frames, key=lambda f: str(f.get("tm"))):
+        t = _tm_dt(f.get("tm"))
+        if f.get("partial") is not True or t is None:
+            continue
+        if (now_kst - t).total_seconds() > REFETCH_MAX_AGE_S:
+            continue
+        last = max((d for d in (_parse_iso(f.get("fetched_at")), _parse_iso(f.get("refetched_at"))) if d), default=None)
+        if last is not None and (now_utc - last).total_seconds() < REFETCH_SPACING_S:
+            continue
+        out.append(f["tm"])
+    return out[:REFETCH_MAX_PER_CYCLE]
+
+
+def refetch_headroom(now: datetime, poll_s: float | None = None) -> int:
+    """다시 받기 예약이 남겨 둘 몫: 예산 날(UTC)이 끝날 때까지의 정규 주기 × REGULAR_CALLS_PER_CYCLE(기상 작업과 같은 규칙)."""
+    return regular_headroom(((poll_s or settings.kma_radar_poll_s, REGULAR_CALLS_PER_CYCLE),), now)
 
 
 def _refetch_until(tm: str) -> str | None:
@@ -372,6 +416,7 @@ class KmaRadarJob:
                 return
             self._not_ready.pop(tm, None)
             stored_n += 1
+        partial_now = await self._refetch_partial()
         ctx.db.record_run(
             self.job_name,
             self.p.name,
@@ -389,7 +434,115 @@ class KmaRadarJob:
         )
         if not stored_n:
             await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
-        await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture)  # 재지 않은 값은 0 이 아니라 모름(R-20)
+        await ctx.status.heartbeat(
+            self.job_name,
+            lag_s=None,  # 재지 않은 값은 0 이 아니라 모름(R-20)
+            fixture=ctx.fixture,
+            extra={  # 부분 합성(ADR-021): 지금 목록의 부분 합성 수(모르면 빈 값) · 기동 뒤 누계
+                "radar_kr_partial": "" if partial_now is None else str(partial_now),
+                "radar_kr_partial_stored": str(self.partial_stored),
+                "radar_kr_refetches": str(self.refetch_attempts),
+                "radar_kr_upgrades": str(self.upgrades),
+            },
+        )
+
+    async def _refetch_partial(self) -> int | None:
+        """정규 후보 뒤: 부분 합성 프레임을 다시 받는다(select_refetch). 예산이 정규 주기 몫을 남기지 못하면 멈춘다.
+        무엇이 실패해도 주기를 끝내지 않는다(INFO 한 줄). 돌려주는 값: 끝난 뒤 목록의 부분 합성 프레임 수(Redis 를 못 읽으면 None)."""
+        try:
+            frames = await self._frames()
+            todo = select_refetch(frames, kst_now(), _now())
+        except Exception as e:  # noqa: BLE001 — 다시 받기는 덧붙이는 일이다
+            log.info("kma radar: refetch of partial frames skipped — %s", describe_error(e))
+            return None
+        for tm in todo:
+            ok, used = await self.ctx.budget.reserve(self.p.name, 1, headroom=refetch_headroom(_now()))
+            if not ok:
+                log.info(
+                    "kma radar: refetch of partial frames skipped — budget %s (the regular cycles' share is kept)",
+                    "unavailable" if used == UNKNOWN else f"used={used}, share kept={refetch_headroom(_now())}",
+                )
+                break
+            self.refetch_attempts += 1
+            try:
+                await self._refetch_one(tm, frames)
+            except Exception as e:  # noqa: BLE001 — 저장 중 예상 밖 오류도 주기를 끝내지 않는다
+                log.info("kma radar: refetch tm=%s — %s — kept the stored frame", tm, describe_error(e))
+        try:
+            return sum(1 for f in await self._frames() if f.get("partial") is True)
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _refetch_one(self, tm: str, frames: list[dict]) -> None:
+        """한 프레임을 다시 받는다(다시 부르지 않는다). 지점 수가 늘었을 때만 바꾸고, 시도는 항상 항목에 남긴다."""
+        have = next((_site_count(f) for f in frames if f.get("tm") == tm), None) or 0
+        at = _now()
+        t0 = time.monotonic()
+        try:
+            res = await self.p.binary(tm)
+            header, png, meta = await asyncio.get_running_loop().run_in_executor(_DECODE_POOL, _decode_if_more, res.raw, have)
+        except Exception as e:  # noqa: BLE001 — 오류는 INFO(경고를 쌓지 않는다) · 저장본을 그대로 둔다
+            if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
+                await self.ctx.budget.release(self.p.name, 1)
+            log.info(
+                "kma radar: refetch tm=%s — %s after %.1f s — kept the stored frame (%d sites)",
+                tm,
+                describe_error(e),
+                time.monotonic() - t0,
+                have,
+            )
+            await self._note_refetch(tm, at)
+            return
+        if png is None:
+            log.info("kma radar: refetch tm=%s — %d sites (stored %d) — kept the stored frame", tm, len(header.stations), have)
+            await self._note_refetch(tm, at)
+            return
+        raw_ref = await archive(self.ctx.raw, "kma_radar", res.raw, res.fetched_at)  # 바꿀 때만 — 보이는 영상의 원본
+        replaced = await self._note_refetch(tm, at, upgrade=(header, png, meta, raw_ref, res.fetched_at))
+        if replaced:
+            self.upgrades += 1
+            log.info(
+                "kma radar: refetch tm=%s — %d → %d sites, echo cells %d — replaced",
+                tm,
+                have,
+                len(header.stations),
+                meta["echo_cells"],
+            )
+
+    async def _note_refetch(self, tm: str, at: datetime, upgrade: tuple | None = None) -> bool:
+        """시도를 항목에 남기고(refetches · refetched_at), upgrade 가 있으면 PNG · 항목 · (최신 프레임이면) meta 를 바꾼다.
+        그 사이 목록에서 빠진 프레임이면 아무것도 쓰지 않는다(목록에 없는 이미지를 만들지 않는다). 바꿨으면 True."""
+        r = self.ctx.status.redis
+        frames = await self._frames()
+        entry = next((f for f in frames if f.get("tm") == tm), None)
+        if entry is None:
+            return False
+        entry["refetches"] = int(entry.get("refetches") or 0) + 1
+        entry["refetched_at"] = _iso(at)
+        mapping: dict[str, str] = {}
+        if upgrade is not None:
+            header, png, meta, raw_ref, fetched_at = upgrade
+            now = datetime.now(UTC)
+            # 이미지를 먼저 바꾼다: 목록 저장이 실패하면 항목은 더 적은 지점(부분 합성)을 말한다 — 반대 순서면 부분 합성 영상을 완전하다고 말할 수 있다
+            await r.set(KEY_FRAME.format(tm=tm), base64.b64encode(png).decode("ascii"), ex=FRAME_TTL_S)
+            entry |= {
+                "obs_tm": header.tm.strftime("%Y%m%d%H%M"),
+                "fetched_at": _iso(fetched_at),
+                "expires_at": _iso(now + timedelta(seconds=FRAME_TTL_S)),
+                "bytes": len(png),
+                "echo_cells": meta["echo_cells"],
+                "raw_ref": raw_ref,
+                "stations": len(header.stations),
+                "station_ids": list(header.stations),
+                "upgrades": int(entry.get("upgrades") or 0) + 1,
+            }
+            if frames[-1].get("tm") == tm:  # meta 는 latest_tm 프레임을 설명한다 — 그 프레임을 바꿨을 때만 헤더 값 · fetched_at
+                mapping |= self._header_meta(header, meta, fetched_at)
+        annotate_partial(frames)
+        await self._save_frames(frames)
+        mapping |= _latest_station_fields(frames)  # 다른 프레임이 늘어 기준이 바뀌면 최신 프레임의 판정도 바뀐다
+        await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
+        return upgrade is not None
 
     def _skip_bad(self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]]) -> None:
         """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류) — 다시 받아도 같으므로 기억해 두고 건너뛴다."""

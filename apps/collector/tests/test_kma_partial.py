@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import orjson
@@ -248,3 +249,271 @@ async def test_a_fuller_frame_arriving_later_flags_the_earlier_ones_and_updates_
     assert [(f["stations"], f["stations_ref"], f["partial"]) for f in frames][:2] == [(7, 15, True), (15, 15, False)]
     meta = await r.hgetall(mod.KEY_META)
     assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291455", "15", "15", "0")
+
+
+# ---- 다시 받기: 고르기 ---------------------------------------------------------------------------------------------------
+def test_refetch_picks_partial_frames_at_most_30_min_old_spaced_4_min_oldest_first_at_most_2():
+    from wakeline_collector.jobs.kma_radar import annotate_partial, select_refetch
+
+    now_kst = _tm("202609291455")
+    now_utc = _utc_of("202609291455")
+    frames = annotate_partial(
+        [
+            _entry("202609291415", 15),  # 기준 15
+            _entry("202609291420", 7),  # 35분 — 다시 받지 않는다
+            _entry("202609291425", 7),  # 정확히 30분 — 받는다
+            _entry("202609291430", 7, refetched_at=_iso(now_utc - timedelta(minutes=3))),  # 마지막 시도 3분 전 — 아직
+            _entry("202609291435", 7),  # 처음 받은 뒤 16분 — 받는다
+            _entry("202609291440", 7),  # 조건은 맞지만 주기당 2개까지
+            _entry("202609291445", 15),  # 부분 합성 아님
+            _entry("202609291450", None),  # 지점 수 모름 — 판정 없음
+        ]
+    )
+    assert select_refetch(frames, now_kst, now_utc) == ["202609291425", "202609291435"]
+
+    # 간격 경계: 마지막 시도가 정확히 4분 전이면 받는다. 처음 받은 시각보다 나중의 다시 받기 시도가 마지막 시도다.
+    def spaced(minutes_ago: float) -> list[dict]:
+        at = _iso(now_utc - timedelta(minutes=minutes_ago))
+        return annotate_partial([_entry("202609291440", 15), _entry("202609291445", 7, refetched_at=at)])  # 처음 받은 뒤 6분 20초
+
+    assert select_refetch(spaced(4), now_kst, now_utc) == ["202609291445"]
+    assert select_refetch(spaced(3.9), now_kst, now_utc) == []
+    recent = annotate_partial([_entry("202609291445", 15), _entry("202609291450", 7, fetched_after_s=60 * 2)])
+    assert select_refetch(recent, now_kst, now_utc) == []  # 14:52 에 받았다 — 3분 전
+
+
+def test_refetch_headroom_is_the_regular_share_until_utc_midnight_at_three_calls_per_cycle():
+    """정규 주기 몫 = (남은 초 // 주기 + 1) × 3(목록 1 + 새 프레임 1 + 일시 오류 다시 부르기 1 — 선택값). 기상 작업과 같은 규칙(budget.regular_headroom)."""
+    from wakeline_collector.budget import regular_headroom
+    from wakeline_collector.jobs.kma_radar import REGULAR_CALLS_PER_CYCLE, refetch_headroom
+
+    assert REGULAR_CALLS_PER_CYCLE == 3
+    midnight = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
+    assert refetch_headroom(midnight, 300) == (86400 // 300 + 1) * 3 == 867
+    assert refetch_headroom(datetime(2026, 9, 29, 23, 58, tzinfo=UTC), 300) == 3
+    assert refetch_headroom(midnight, 300) == regular_headroom(((300, 3),), midnight)
+
+
+# ---- 다시 받기: 작업 흐름 --------------------------------------------------------------------------------------------------
+async def _seed(mod, r, entries: list[dict]) -> list[dict]:
+    """저장된 상태를 만든다: 목록(판정 포함) · 이미지 · meta(최신 프레임)."""
+    from wakeline_collector.jobs.kma_radar import annotate_partial
+
+    for e in entries:
+        await r.set(mod.KEY_FRAME.format(tm=e["tm"]), f"old-{e['tm']}", ex=mod.FRAME_TTL_S)
+        e.setdefault("expires_at", _iso(datetime.now(UTC) + timedelta(hours=3)))
+        e.setdefault("refetches", 0)
+        e.setdefault("upgrades", 0)
+    annotate_partial(entries)
+    await r.set(mod.KEY_FRAMES, orjson.dumps(entries).decode(), ex=mod.FRAME_TTL_S)
+    last = entries[-1]
+    await r.hset(
+        mod.KEY_META,
+        mapping={
+            "available": "1",
+            "latest_tm": last["tm"],
+            "fetched_at": last["fetched_at"],
+            "stations": str(last.get("stations", "")),
+            "partial": "1" if last.get("partial") else "0",
+        },
+    )
+    return entries
+
+
+async def _stored(mod, r) -> dict[str, dict]:
+    return {f["tm"]: f for f in orjson.loads(await r.get(mod.KEY_FRAMES))}
+
+
+def _runs(ctx) -> list[dict]:
+    runs: list[dict] = []
+    real = ctx.db.record_run
+
+    def rec(job, provider, started_at, **kw):
+        runs.append(kw)
+        real(job, provider, started_at, **kw)
+
+    ctx.db.record_run = rec
+    return runs
+
+
+async def test_partial_frame_is_replaced_when_the_refetch_has_more_sites(env):
+    mod, r, ctx, clock = env
+    seeded = await _seed(
+        r=r, mod=mod, entries=[_entry("202609291440", 7), _entry("202609291445", 15), _entry("202609291450", 15)]
+    )
+    before_meta = await r.hgetall(mod.KEY_META)
+    runs = _runs(ctx)
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291440": [15]})
+    job = mod.KmaRadarJob(prov, ctx)
+    await job.run_once()
+    assert prov.binaries == ["202609291440"]  # 정규 후보 없음 · 부분 합성 1개만 다시 받았다
+    f = (await _stored(mod, r))["202609291440"]
+    assert (f["stations"], f["stations_ref"], f["partial"]) == (15, 15, False)
+    assert f["station_ids"] == [f"K{i:02d}" for i in range(15)]
+    assert f["echo_cells"] == 15000 and f["raw_ref"] == "raw/kma_radar/1"  # 새 원본만 보관한다
+    assert f["fetched_at"] == f["refetched_at"] == _iso(clock["utc"])
+    assert (f["refetches"], f["upgrades"]) == (1, 1)
+    assert f["expires_at"] > seeded[0]["expires_at"]
+    assert await r.get(mod.KEY_FRAME.format(tm="202609291440")) != "old-202609291440"
+    # 최신 프레임이 아니므로 meta 의 헤더 값 · fetched_at 은 그대로(latest_tm 을 설명한다)
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["latest_tm"], meta["fetched_at"]) == ("202609291450", before_meta["fetched_at"])
+    assert [run["status"] for run in runs] == ["ok"] and runs[0]["records_in"] == 0
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1 + 1  # 목록 1 + 다시 받기 1
+    hb = await r.hgetall("wakeline:collector")
+    assert (hb["radar_kr_refetches"], hb["radar_kr_upgrades"], hb["radar_kr_partial"]) == ("1", "1", "0")
+
+
+async def test_refetch_runs_after_the_regular_candidates(env):
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 15), _entry("202609291450", 15)])
+    clock["set"]("202609291458", 40)
+    prov = SitesKma(clock, [*(e["tm"] for e in seeded), "202609291455"], {"202609291440": [15], "202609291455": [15]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == ["202609291455", "202609291440"]
+
+
+async def test_upgrading_the_latest_frame_updates_the_meta_that_describes_it(env):
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291445", 15), _entry("202609291450", 7)])
+    assert (await r.hgetall(mod.KEY_META))["partial"] == "1"
+    clock["set"]("202609291458")  # 14:50 을 받은 뒤 4분 20초
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291450": [12]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291450", "12", "15", "1")
+    assert meta["station_ids"] == ",".join(f"K{i:02d}" for i in range(12))
+    assert meta["fetched_at"] == _iso(clock["utc"])  # 보이는 영상을 받은 시각
+
+
+async def test_refetch_with_the_same_or_fewer_sites_keeps_the_stored_frame_and_waits_4_min(env, caplog):
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 15), _entry("202609291450", 15)])
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291440": [7, 5, 5]})
+    job = mod.KmaRadarJob(prov, ctx)
+    await job.run_once()
+    f = (await _stored(mod, r))["202609291440"]
+    assert (f["stations"], f["echo_cells"], f["fetched_at"], f["raw_ref"]) == (
+        7,
+        1000,
+        seeded[0]["fetched_at"],
+        "raw/202609291440",
+    )
+    assert (f["refetches"], f["upgrades"], f["refetched_at"]) == (1, 0, _iso(clock["utc"]))
+    assert await r.get(mod.KEY_FRAME.format(tm="202609291440")) == "old-202609291440"
+    assert ctx.raw.n == 0  # 쓰지 않은 원본은 보관하지 않는다
+    assert any("refetch tm=202609291440" in m and "kept" in m for m in caplog.messages)
+    clock["set"]("202609291457", 59)  # 3분 59초 뒤 — 아직 다시 받지 않는다
+    await job.run_once()
+    assert prov.binaries == ["202609291440"]
+    clock["set"]("202609291459")  # 4분 뒤
+    await job.run_once()
+    assert prov.binaries == ["202609291440", "202609291440"]
+    f = (await _stored(mod, r))["202609291440"]
+    assert (f["stations"], f["refetches"], f["upgrades"], f["partial"]) == (7, 2, 0, True)  # 5곳 — 줄어든 자료로 바꾸지 않는다
+    hb = await r.hgetall("wakeline:collector")
+    assert (hb["radar_kr_refetches"], hb["radar_kr_upgrades"], hb["radar_kr_partial"]) == ("2", "0", "1")
+
+
+async def test_frames_older_than_30_min_are_not_refetched_and_at_most_two_per_cycle_oldest_first(env):
+    mod, r, ctx, clock = env
+    tms = ["202609291415", "202609291420", "202609291425", "202609291430", "202609291435", "202609291440"]
+    seeded = await _seed(mod, r, [_entry(tms[0], 15), *(_entry(t, 7) for t in tms[1:])])
+    clock["set"]("202609291451")  # 14:20 은 31분 — 다시 받지 않는다
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {t: [7] for t in tms[1:]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == ["202609291425", "202609291430"]
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1 + 2
+
+
+def _refetch_errors():
+    import httpx
+
+    from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
+
+    return {
+        "read-timeout": (httpx.ReadTimeout(""), 1),  # 보낸 뒤 실패 — 보낸 호출로 센다
+        "connect": (httpx.ConnectError("refused"), 0),  # 보내지 않았다 — 예산을 돌려준다
+        "http-503": (ProviderHttpError(503, "Service Unavailable"), 1),
+        "not-gzip": (ValueError("not gzip: '# file not exist'"), 1),
+        "too-large": (ResponseTooLarge("body over 8 MB"), 1),
+        "unexpected": (RuntimeError("boom"), 1),
+    }
+
+
+@pytest.mark.parametrize("case", list(_refetch_errors()))
+async def test_refetch_errors_are_info_never_retried_and_do_not_end_the_cycle(env, caplog, case):
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = env
+    error, sent = _refetch_errors()[case]
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 9), _entry("202609291450", 15)])
+    runs = _runs(ctx)
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291445": [15]}, errors={"202609291440": [error]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == ["202609291440", "202609291445"]  # 다시 부르지 않고 다음 프레임으로 넘어간다
+    warns = [x.getMessage() for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+    assert warns == []
+    assert any(m.startswith("kma radar: refetch tm=202609291440") for m in caplog.messages)
+    stored = await _stored(mod, r)
+    assert (stored["202609291440"]["stations"], stored["202609291440"]["refetches"]) == (7, 1)
+    assert stored["202609291445"]["stations"] == 15 and stored["202609291445"]["upgrades"] == 1
+    assert [run["status"] for run in runs] == ["ok"]
+    assert "last_error" not in await r.hgetall("wakeline:provider:kma_radar")  # 다시 받기 실패는 공급자 실패가 아니다
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1 + sent + 1
+
+
+async def test_a_decode_error_on_refetch_keeps_the_stored_frame(env, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = env
+
+    def broken(raw: bytes, have: int):
+        raise ValueError("data block truncated")
+
+    monkeypatch.setattr(mod, "_decode_if_more", broken)
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291450", 15)])
+    await mod.KmaRadarJob(SitesKma(clock, [e["tm"] for e in seeded]), ctx).run_once()
+    f = (await _stored(mod, r))["202609291440"]
+    assert (f["stations"], f["refetches"], f["upgrades"]) == (7, 1, 0)
+    assert not [x for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+
+
+async def test_refetch_never_takes_the_regular_schedules_share_of_the_budget(env, caplog):
+    """다시 받기 예약은 사용량 + 1 ≤ 한도 − 정규 주기 몫(남은 하루)일 때만. 경계에서 한 번은 되고 다음은 안 된다 — 정규 호출은 그대로 한다."""
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = env
+    share = mod.refetch_headroom(clock["utc"])
+    assert share == ((datetime(2026, 9, 30, tzinfo=UTC) - clock["utc"]).seconds // 300 + 1) * 3
+    ok, _ = await ctx.budget.reserve("kma_radar", 1000 - share - 2)  # 목록 1 을 쓰면 경계 − 1
+    assert ok
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 7), _entry("202609291450", 15)])
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291440": [15], "202609291445": [15]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.list_calls == 1 and prov.binaries == ["202609291440"]
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1000 - share
+    assert any("refetch" in m and "budget" in m for m in caplog.messages)
+    assert not [x for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+
+
+async def test_heartbeat_counts_partial_frames_stored_refetches_and_upgrades(env):
+    mod, r, ctx, clock = env
+    clock["set"]("202609291448", 40)
+    prov = SitesKma(clock, ["202609291440", "202609291445"], {"202609291440": [15], "202609291445": [7, 12]})
+    job = mod.KmaRadarJob(prov, ctx)
+    await job.run_once()  # 15곳 · 7곳 저장 — 1개 부분 합성
+    hb = await r.hgetall("wakeline:collector")
+    assert (hb["radar_kr_partial"], hb["radar_kr_partial_stored"], hb["radar_kr_refetches"], hb["radar_kr_upgrades"]) == (
+        "1",
+        "1",
+        "0",
+        "0",
+    )
+    clock["set"]("202609291453", 40)
+    await job.run_once()  # 14:45 를 다시 받아 12곳 — 늘었으니 바꾸지만 아직 부분 합성
+    hb = await r.hgetall("wakeline:collector")
+    assert (hb["radar_kr_partial"], hb["radar_kr_partial_stored"], hb["radar_kr_refetches"], hb["radar_kr_upgrades"]) == (
+        "1",
+        "1",
+        "1",
+        "1",
+    )
