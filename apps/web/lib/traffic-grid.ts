@@ -1,7 +1,8 @@
 /**
  * 연안 교통량(ADR-023) — 한국해양교통안전공단 실시간 해양교통정보(5분 집계)의 격자별 선박 척수를 해양수산부 해양격자 4단계 칸(0.025°)에 칠한다.
  * 개별 선박 위치가 아니다(화면 곳곳에 그렇게 적는다). 값은 api /api/v1/traffic/grid 가 검증한 것 — 여기서도 모양을 다시 본다(틀린 칸은 버린다).
- * - 상태: ok(그림) · stale(regDt 15분 초과 — 칸 없음, 마지막 기준 시각만) · disabled(키 없음 · fixture · 운영자 끔) · no_data · invalid. 모르는 수는 "—".
+ * - 상태: ok(그림) · stale(regDt 15분 초과 — 칸 없음, 마지막 기준 시각만) · disabled(키 없음 · fixture · 운영자 끔) · no_data ·
+ *   invalid(형식 오류 또는 regDt 가 api 시계보다 120 s 넘게 미래). 모르는 수는 "—".
  *   ok 라도 이 브라우저 시계(서버 시각 보정)로 regDt 가 stale_after_s 를 넘기면 그리지 않고 '자료 멈춤'으로 적는다 — 조회가 실패하거나 탭이 오래
  *   숨었다가 돌아오면 api 가 '멈춤'이라고 말할 기회가 없기 때문이다(trafficDrawable · trafficStatusLine 의 nowMs).
  * - 조회: 레이어가 켜져 있고 탭이 보일 때만, TRAFFIC_POLL_MS 마다, ETag(If-None-Match)로 — 304 · 같은 ETag 면 지도를 다시 그리지 않는다.
@@ -201,7 +202,7 @@ export function trafficStatusLine(g: TrafficGrid | null, error: string | null, n
     case "no_data":
       return { text: `자료 없음 — 수집기가 아직 싣지 않았거나 20분 넘게 멈춤${err}`, tone: "warn", detail: null };
     case "invalid":
-      return { text: `받은 자료 형식 오류 — 표시 안 함${err}`, tone: "bad", detail: null };
+      return { text: `받은 자료 검증 실패(형식 또는 미래 시각) — 표시 안 함${err}`, tone: "bad", detail: null };
     case "stale":
       return {
         text: `자료 멈춤 — 마지막 기준 ${trafficTimeText(g.reg_dt_utc)} · ${Math.round(g.stale_after_s / 60)}분 넘게 새 자료 없음 · 표시 안 함${err}`,

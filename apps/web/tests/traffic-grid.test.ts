@@ -176,7 +176,9 @@ describe("status line: every state says why the map shows what it shows", () => 
     expect(dis("fixture")).toBe("꺼짐 — fixture 모드 — 외부 호출 없음");
     expect(dis("operator_off")).toBe("꺼짐 — 운영자가 수집을 끔");
     expect(trafficStatusLine(grid({ status: "no_data", available: false, ...NOW_UNKNOWN }), null).text).toBe("자료 없음 — 수집기가 아직 싣지 않았거나 20분 넘게 멈춤");
-    expect(trafficStatusLine(grid({ status: "invalid", available: false, ...NOW_UNKNOWN }), null).tone).toBe("bad");
+    const invalid = trafficStatusLine(grid({ status: "invalid", available: false, ...NOW_UNKNOWN }), null);
+    expect(invalid.tone).toBe("bad");
+    expect(invalid.text).toBe("받은 자료 검증 실패(형식 또는 미래 시각) — 표시 안 함"); // api 는 형식 오류와 미래 regDt 를 invalid 로 낸다
     const failed = trafficStatusLine(grid({ pending: 0 }), "HTTP 503");
     expect(failed.text).toContain("조회 실패(HTTP 503) — 마지막 값");
     expect(failed.tone).toBe("warn");
