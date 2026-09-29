@@ -8,13 +8,17 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * R-46: 일 통계 '집계 완료' 는 행이 있는지가 아니라 완료 표식(stats_daily metric 'aggregated_at', dim = 계열)으로 판단한다.
@@ -36,6 +40,16 @@ class StatsAggregationDbTest {
     MaintenanceJobs jobs() {
         return new MaintenanceJobs(api, PersistDbTest.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, PersistDbTest.PROPS),
                 DbTestSupport.apiTx());
+    }
+
+    /** 시계를 고정한 잡(보존 경계 · '오늘' 이 이 시계를 따른다) */
+    MaintenanceJobs jobs(Clock clock) {
+        return new MaintenanceJobs(api, PersistDbTest.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, PersistDbTest.PROPS),
+                DbTestSupport.apiTx(), MaintenanceJobs.DEFAULT_ALERT_RETENTION_DAYS, clock);
+    }
+
+    static Clock kstClock(LocalDate day, int hour) {
+        return Clock.fixed(day.atTime(hour, 0).atZone(MaintenanceJobs.DAY_ZONE).toInstant(), ZoneOffset.UTC);
     }
 
     @Test
@@ -104,6 +118,63 @@ class StatsAggregationDbTest {
         assertThat(markers(day)).containsExactlyInAnyOrder("alerts", "sigmet", "traffic"); // 끝난 KST 날
         jobs().aggregateDay(day.plusDays(1)); // 오늘(KST) — 끝나지 않아 표식 없음
         assertThat(markers(day.plusDays(1))).isEmpty();
+    }
+
+    /**
+     * 리뷰(2026-09-30, high): 원해상도 항적은 UTC 날 파티션에 있고 UTC 날 단위로 지워진다(V9 track_point_drop_old — 파티션 끝 ≤ now − 72 h).
+     * KST 날짜 D 의 00:00–08:59 KST 는 UTC 날 D−1 파티션에 있어, 그 파티션은 D 의 끝(다음 날 00:00 KST)보다 15시간 먼저 지워진다.
+     * 수정 전에는 재집계 가능 여부를 D 의 끝으로 판단해, 매일 09:00–24:00 KST 에 D = 오늘−3 을 다시 세면 00–08시가 빠진 교통량을 완료로 남겼다
+     * (V16 배포 1분 뒤의 따라잡기가 바로 그날을 센다) — 이 시험이 실패했다. 이제 그날 첫 순간이 든 UTC 파티션이 보존 안일 때만 다시 센다.
+     */
+    @Test
+    void trafficIsNotRecountedOnceTheUtcPartitionHoldingTheKstDaysFirstHoursIsGone() {
+        LocalDate day = LocalDate.now(MaintenanceJobs.DAY_ZONE).minusDays(3);
+        Instant k0 = day.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant(); // D 00:00 KST = D−1 15:00 UTC
+        DbTestSupport.ensureTrackPartitions(k0, k0.plusSeconds(24 * 3600 - 1));
+        track("e00001", k0.plusSeconds(30 * 60));             // 00:30 KST — UTC 날 D−1 파티션
+        track("e00002", k0.plusSeconds(10 * 3600 + 30 * 60)); // 10:30 KST — UTC 날 D 파티션
+        admin.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d, 'traffic_by_hour', '00', 1), (:d, 'traffic_by_hour', '10', 1)")
+                .param("d", day).update(); // 두 파티션이 모두 있을 때 센 값
+        // D+3 14:00 KST: 보존 경계 = D 05:00 UTC — UTC 날 D−1 파티션(끝 D 00:00 UTC)은 보존 삭제가 지웠다, D 파티션은 남았다
+        dropTrackPartition(LocalDate.ofInstant(k0, ZoneOffset.UTC));
+        MaintenanceJobs afternoon = jobs(kstClock(day.plusDays(3), 14));
+        assertThat(afternoon.families(day)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC);
+        afternoon.aggregateDay(day);
+        assertThat(trafficByHour(day)).as("a partial recount must not replace the full one").containsExactlyInAnyOrderEntriesOf(Map.of("00", 1, "10", 1));
+        assertThat(markers(day)).containsExactlyInAnyOrder("sigmet", "alerts");
+        // 경계 양쪽: D+3 08:59 KST(경계 D−1 23:59 UTC)에는 D−1 파티션이 아직 보존 안 — 다시 셀 수 있다. 09:00 KST 부터는 아니다.
+        Clock before = Clock.fixed(day.plusDays(3).atTime(8, 59, 59).atZone(MaintenanceJobs.DAY_ZONE).toInstant(), ZoneOffset.UTC);
+        assertThat(jobs(before).families(day)).contains(MaintenanceJobs.FAMILY_TRAFFIC);
+        assertThat(jobs(kstClock(day.plusDays(3), 9)).families(day)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC);
+        assertThat(jobs(kstClock(day.plusDays(3), 23)).families(day)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC);
+    }
+
+    /**
+     * 판단(시계)과 읽기 사이에 보존 삭제가 끼지 않는다: 교통량을 다시 셀 때 트랜잭션 처음에 부모 track_point 를 ACCESS SHARE 로 잡는다 —
+     * 파티션 DROP 은 부모의 ACCESS EXCLUSIVE 를 기다려야 하므로(PostgreSQL heap_drop_with_catalog) 집계가 끝날 때까지 지워지지 않는다.
+     */
+    @Test
+    void aPartitionDropWaitsWhileATransactionHoldsTheParentTrackPointLock() {
+        LocalDate utcDay = LocalDate.now(ZoneOffset.UTC).minusDays(1);
+        DbTestSupport.ensureTrackPartitions(utcDay.atStartOfDay(ZoneOffset.UTC).toInstant(), utcDay.atStartOfDay(ZoneOffset.UTC).toInstant());
+        String part = "track_point_" + utcDay.format(DateTimeFormatter.BASIC_ISO_DATE);
+        DbTestSupport.apiTx().executeWithoutResult(status -> {
+            MaintenanceJobs.lockTrackPoint(api);
+            assertThatThrownBy(() -> admin.sql("DO $$ BEGIN SET LOCAL lock_timeout = '300ms'; EXECUTE 'DROP TABLE " + part + "'; END $$").update())
+                    .hasMessageContaining("lock timeout");
+        });
+        assertThat(admin.sql("SELECT to_regclass(:p) IS NOT NULL").param("p", part).query(Boolean.class).single()).isTrue();
+    }
+
+    Map<String, Integer> trafficByHour(LocalDate d) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (var r : admin.sql("SELECT dim, value::int v FROM stats_daily WHERE day = :d AND metric = 'traffic_by_hour'").param("d", d).query().listOfRows())
+            m.put((String) r.get("dim"), ((Number) r.get("v")).intValue());
+        return m;
+    }
+
+    void dropTrackPartition(LocalDate utcDay) {
+        admin.sql("DROP TABLE IF EXISTS track_point_" + utcDay.format(DateTimeFormatter.BASIC_ISO_DATE)).update();
     }
 
     void sigmet(String id, String fir, Instant validFrom) {

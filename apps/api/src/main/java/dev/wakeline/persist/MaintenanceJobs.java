@@ -10,8 +10,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +21,8 @@ import java.util.Map;
 
 /**
  * 파티션 생성, 만료 파티션 삭제(매시 :02 UTC), 보존 삭제(매일 03:00 UTC), 1분 요약(매시 :05, 관심 지역만 · 30일), 통계 집계(매일 03:30 KST — 전날 KST 날짜,
- * 계약 v5 §G19). 기동 시 파티션 보장. 통계의 하루 = KST 날짜({@link #DAY_ZONE}) — 오늘 · 끝난 날 · 보존 경계도 KST 날짜로 센다.
+ * 계약 v5 §G19). 기동 시 파티션 보장. 통계의 하루 = KST 날짜({@link #DAY_ZONE}) — 오늘 · 끝난 날도 KST 날짜로 센다. 교통량을 다시 셀 수 있는지는
+ * 항적의 저장 단위(UTC 날 파티션)로 판단한다({@link #families}).
  * 보존 정책 ADR-007(R-06 · ADR-017 §2 로 고침): 원해상도 72 h(파티션 전체가 72 h 보다 오래되면 곧바로 삭제 — 가장 오래된 행 72–96 h),
  * 1분 요약 30일, 알림은 끝난 것만 30일(열린 알림은 남긴다 · {@code wakeline.alert-retention-days}, 0 이면 지우지 않는다), SIGMET·통계 영구.
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
@@ -57,6 +60,8 @@ public class MaintenanceJobs {
     private final RegionSettings region;
     private final TransactionTemplate tx;
     private final int alertRetentionDays;
+    /** 보존 경계 · '오늘'(KST 날짜)을 정하는 시계 — 운영은 시스템 시계, 시험은 고정 시계(경계 시각을 재현한다) */
+    private final Clock clock;
 
     public MaintenanceJobs(JdbcClient db, AppProperties props, RegionSettings region, TransactionTemplate tx) {
         this(db, props, region, tx, DEFAULT_ALERT_RETENTION_DAYS);
@@ -65,12 +70,20 @@ public class MaintenanceJobs {
     @org.springframework.beans.factory.annotation.Autowired
     public MaintenanceJobs(JdbcClient db, AppProperties props, RegionSettings region, TransactionTemplate tx,
                            @org.springframework.beans.factory.annotation.Value("${wakeline.alert-retention-days:30}") int alertRetentionDays) {
+        this(db, props, region, tx, alertRetentionDays, Clock.systemUTC());
+    }
+
+    MaintenanceJobs(JdbcClient db, AppProperties props, RegionSettings region, TransactionTemplate tx, int alertRetentionDays, Clock clock) {
         this.db = db;
         this.props = props;
         this.region = region;
         this.tx = tx;
         this.alertRetentionDays = alertRetentionDays;
+        this.clock = clock;
     }
+
+    /** 이 잡의 시계로 본 오늘(KST 날짜) */
+    LocalDate todayKst() { return LocalDate.ofInstant(clock.instant(), DAY_ZONE); }
 
     @Scheduled(initialDelay = 5_000, fixedDelay = 6 * 3600_000)
     public void ensurePartitions() {
@@ -104,7 +117,7 @@ public class MaintenanceJobs {
         retention("radar_frame", () -> db.sql("DELETE FROM radar_frame WHERE frame_time < now() - interval '7 days'").update());
         retention("quality_event", () -> db.sql("DELETE FROM quality_event WHERE created_at < now() - interval '30 days'").update());
         retention("ingest_run", () -> db.sql("DELETE FROM ingest_run WHERE started_at < now() - interval '30 days'").update());
-        retention("quality_rule_count", () -> db.sql("DELETE FROM quality_rule_count WHERE day < :d").param("d", today().minusDays(90)).update());
+        retention("quality_rule_count", () -> db.sql("DELETE FROM quality_rule_count WHERE day < :d").param("d", todayKst().minusDays(90)).update());
     }
 
     /**
@@ -132,7 +145,7 @@ public class MaintenanceJobs {
      * 원본이 지워진 날을 다시 세면 영구 통계가 0·빈 값으로 바뀐다(R-06).
      */
     boolean alertsRetained(LocalDate day) {
-        return alertRetentionDays <= 0 || day.isAfter(today().minusDays(alertRetentionDays));
+        return alertRetentionDays <= 0 || day.isAfter(todayKst().minusDays(alertRetentionDays));
     }
 
     private void retention(String what, java.util.function.Supplier<Integer> op) {
@@ -176,7 +189,7 @@ public class MaintenanceJobs {
     public void catchUp() {
         try {
             List<Instant> hours = catchUpSummaries(Instant.now());
-            List<LocalDate> days = catchUpStats(today());
+            List<LocalDate> days = catchUpStats(todayKst());
             if (!hours.isEmpty() || !days.isEmpty()) log.info("catch-up: summarized hours {}, aggregated days {}", hours, days);
         } catch (RuntimeException e) {
             log.warn("catch-up failed (will retry): {}", e.toString());
@@ -234,20 +247,27 @@ public class MaintenanceJobs {
             FAMILY_ALERTS, List.of("alerts_by_kind", "alert_dwell_avg_s"));
 
     /**
-     * 그날(KST 날짜) 원본이 아직 모두 남아 있어 다시 셀 수 있는 계열: SIGMET 은 영구, 교통량은 그날의 원해상도 항적이 보존 안일 때(그날 끝 — 다음 날
-     * 00:00 KST — 이 now − 72 h 보다 뒤), 알림은 보존 삭제가 닿기 전. 원본이 사라진 계열은 재집계가 건드리지 않는다(0·빈 값으로 덮지 않는다).
+     * 그날(KST 날짜) 원본이 아직 모두 남아 있어 다시 셀 수 있는 계열: SIGMET 은 영구, 교통량은 그날의 원해상도 항적이 모두 보존 안일 때, 알림은 보존 삭제가
+     * 닿기 전. 원본이 사라진 계열은 재집계가 건드리지 않는다(0·빈 값으로 덮지 않는다).
+     * 교통량의 경계는 저장 단위를 따른다: 항적은 UTC 날 파티션에 있고 파티션째 지워진다(V9 track_point_drop_old — 파티션 끝 ≤ now − 보존). KST 날짜
+     * 하루는 UTC 날 두 파티션에 걸치고(00:00–08:59 KST 는 앞 UTC 날), 앞 파티션이 먼저 지워진다 — 그래서 그날 첫 순간이 든 UTC 파티션의 끝이
+     * now − 보존 보다 뒤일 때만 다시 센다(리뷰 2026-09-30: 그날 끝으로 판단하면 매일 09:00–24:00 KST 에 오늘−3 의 00–08시가 빠진 수를 완료로 남겼다).
      */
     List<String> families(LocalDate day) {
         List<String> f = new ArrayList<>(List.of(FAMILY_SIGMET));
-        Instant dayEnd = day.plusDays(1).atStartOfDay(DAY_ZONE).toInstant();
-        if (dayEnd.isAfter(Instant.now().minus(props.trackRetentionHours(), ChronoUnit.HOURS))) f.add(FAMILY_TRAFFIC);
+        if (trackPartitionEnd(day.atStartOfDay(DAY_ZONE).toInstant()).isAfter(clock.instant().minus(props.trackRetentionHours(), ChronoUnit.HOURS))) f.add(FAMILY_TRAFFIC);
         if (alertsRetained(day)) f.add(FAMILY_ALERTS);
         return f;
     }
 
+    /** 순간 t 가 든 항적 파티션(UTC 날 [d, d+1))의 끝 = 다음 UTC 날 00:00 — 파티션 이름 · 경계 · 보존 삭제가 모두 UTC 날이다(V2 · V9) */
+    static Instant trackPartitionEnd(Instant t) {
+        return LocalDate.ofInstant(t, ZoneOffset.UTC).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+    }
+
     /** 매일 03:30 KST 에 전날(KST 날짜)을 센다 — 그날이 끝나고 3.5 h 뒤(늦게 들어온 기록 여유). 놓치면 따라잡기가 채운다. */
     @Scheduled(cron = "0 30 3 * * *", zone = DAY_ZONE_ID)
-    public void aggregateDaily() { aggregate(today().minusDays(1)); }
+    public void aggregateDaily() { aggregate(todayKst().minusDays(1)); }
 
     /** 예약 작업용: 실패를 기록하고 삼킨다. */
     public void aggregate(LocalDate day) {
@@ -279,24 +299,33 @@ public class MaintenanceJobs {
         Instant end = start.plus(1, ChronoUnit.DAYS);
         RegionSettings.Region r = region.current();
         Bbox b = r.bbox();
-        List<String> families = families(day);
-        boolean finished = day.isBefore(today());
-        List<String> metrics = families.stream().flatMap(f -> FAMILY_METRICS.get(f).stream()).toList();
-        tx.executeWithoutResult(status -> {
+        boolean finished = day.isBefore(todayKst());
+        List<String> families = tx.execute(status -> {
             // traffic_by_hour 는 하루치 관심 지역 점을 (시, hex) 로 정렬한다 — 기본 work_mem(4 MB)으로는 디스크로 넘쳤다(external merge, R-27).
             // 이 트랜잭션에만 넉넉히 준다. 읽는 양(하루 파티션 순차 스캔)은 그대로다: 관심 지역 점은 전세계 점과 같은 페이지에 섞여 있어
             // 공간 인덱스로도 거의 모든 페이지를 읽게 된다(하루 1회 배치 — 요청 경로 아님).
             db.sql("SET LOCAL work_mem = '64MB'").update();
+            // 교통량을 다시 셀 수 있으면 부모 track_point 를 먼저 잡고(ACCESS SHARE — 수집기의 쓰기와는 부딪치지 않는다) 계열을 다시 판단한다:
+            // 판단과 읽기 사이에 보존 삭제(매시 :02)가 파티션을 지우지 못한다 — DROP 은 이 트랜잭션이 끝날 때까지 기다린다.
+            if (families(day).contains(FAMILY_TRAFFIC)) lockTrackPoint(db);
+            List<String> fam = families(day);
+            List<String> metrics = fam.stream().flatMap(f -> FAMILY_METRICS.get(f).stream()).toList();
             // 다시 만드는 계열의 행·표식만 지운다 — 원본이 사라진 계열은 그대로(다시 셀 수 없다)
             db.sql("DELETE FROM stats_daily WHERE day = :d AND (metric IN (:metrics) OR (metric = :marker AND dim IN (:families)))")
-                    .param("d", day).param("metrics", metrics).param("marker", MARKER).param("families", families).update();
+                    .param("d", day).param("metrics", metrics).param("marker", MARKER).param("families", fam).update();
             if (finished) {
                 db.sql("INSERT INTO stats_daily (day, metric, dim, value) SELECT :d, :marker, f, extract(epoch FROM now())::bigint FROM unnest(:families::text[]) f")
-                        .param("d", day).param("marker", MARKER).param("families", families.toArray(String[]::new)).update();
+                        .param("d", day).param("marker", MARKER).param("families", fam.toArray(String[]::new)).update();
             }
-            aggregateFamilies(day, families, start, end, r, b);
+            aggregateFamilies(day, fam, start, end, r, b);
+            return fam;
         });
         log.info("daily stats aggregated for {}: {} (region {},{} r={} NM){}", day, families, r.lat(), r.lon(), r.radiusNm(), finished ? "" : " — partial day, not marked complete");
+    }
+
+    /** 부모 track_point 를 ACCESS SHARE 로 잡는다(트랜잭션 끝까지) — 파티션 DROP(보존 삭제)은 부모의 ACCESS EXCLUSIVE 가 필요해 그동안 기다린다. */
+    static void lockTrackPoint(JdbcClient db) {
+        db.sql("LOCK TABLE track_point IN ACCESS SHARE MODE").update();
     }
 
     private void aggregateFamilies(LocalDate day, List<String> families, Instant start, Instant end, RegionSettings.Region r, Bbox b) {
