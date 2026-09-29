@@ -61,8 +61,9 @@ function AirportLine({ a }: { a: RouteAirport }) {
 }
 
 /**
- * "노선 조회 중"(사용자 요청 2026-09-29 — 조회하고 있다는 느낌이 나게): 상태 줄은 role=status(한 번 읽힘) · 구역은 aria-busy ·
- * 작은 회전 표시(움직임 줄이기 설정이면 멈춤 — globals.css) · 출발/도착 자리 표시 줄(skeleton, 읽지 않음) · 경과 초(시각 표시만 — 매초 읽지 않게 live 영역 밖).
+ * "노선 조회 중"(사용자 요청 2026-09-29 — 조회하고 있다는 느낌이 나게): 상태 줄은 role=status(한 번 읽힘 — aria-busy 조상 밖에 둔다: busy 안의 알림은
+ * 화면 읽기 프로그램이 미룰 수 있다) · 값이 채워질 자리(출발/도착 skeleton)만 aria-busy · 작은 회전 표시(움직임 줄이기 설정이면 멈춤 — globals.css) ·
+ * 경과 초(시각 표시만 — 매초 읽지 않게 live 영역 밖).
  * 보통 경로(ROUTE_SLOW_AFTER_S)를 넘으면 상태 줄에 "평소보다 오래 걸림"을 덧붙인다(한 번 읽힘). 경과를 모르면(null) 경과를 쓰지 않는다.
  */
 function RoutePending({ callsign, pendingForS }: { callsign: string | null; pendingForS: number | null }) {
@@ -77,10 +78,10 @@ function RoutePending({ callsign, pendingForS }: { callsign: string | null; pend
         </div>
         {pendingForS != null ? <span className="mono ml-auto shrink-0 text-fg-3" aria-hidden="true" data-testid="route-elapsed">{Math.floor(pendingForS)} s</span> : null}
       </div>
-      <div aria-hidden="true" data-testid="route-skeleton">
+      <div aria-busy="true" data-testid="route-skeleton">
         {["출발", "도착"].map((k) => (
           <div key={k} className="flex items-center justify-between gap-2 border-b border-line py-1">
-            <span className="shrink-0 text-fg-3">{k}</span><span className="skeleton h-3 w-28" />
+            <span className="shrink-0 text-fg-3">{k}</span><span className="skeleton h-3 w-28" aria-hidden="true" />
           </div>
         ))}
       </div>
@@ -107,7 +108,7 @@ export function RouteSection({ route, pos, callsign, pendingForS = null }: { rou
   ] : [];
   const otherSource = route?.source != null && route.source !== "adsbdb";
   return (
-    <div className="mt-2" data-testid="route-section" data-status={route?.status ?? "unknown"} aria-busy={route?.status === "pending" ? "true" : undefined}>
+    <div className="mt-2" data-testid="route-section" data-status={route?.status ?? "unknown"}>
       <div className="label mb-0.5">{ROUTE_TITLE}</div>
       {route == null ? <div className="text-[11px] text-fg-3" data-testid="route-status">—</div>
         : route.status === "pending" ? <RoutePending callsign={route.callsign} pendingForS={pendingForS} />

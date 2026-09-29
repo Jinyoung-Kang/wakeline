@@ -1,6 +1,7 @@
 /**
  * 항공기 카드 노선의 "노선 조회 중"이 진행 중으로 읽히게(사용자 요청 2026-09-29).
- * - 조회 중: role=status(한 번만 읽힘) · 구역 aria-busy · 작은 회전 표시(움직임 줄이기 설정이면 멈춤) · 출발/도착 자리 표시 줄(skeleton) · 경과 초(시각만, 읽지 않음).
+ * - 조회 중: role=status(한 번만 읽힘 — aria-busy 조상 밖에 두어 알림이 미뤄지지 않게) · 값이 채워질 자리(출발/도착 skeleton)만 aria-busy ·
+ *   작은 회전 표시(움직임 줄이기 설정이면 멈춤) · 경과 초(시각만, 읽지 않음).
  * - 보통 경로보다 오래 걸리면(수집기 집중 추적 주기 5 s + api 노선 메모리 캐시 5 s = 10 s) "평소보다 오래 걸림"을 한 번 더 알린다.
  *   이 수들은 서버 코드의 값을 읽어 확인한다(짐작한 값이 아니다). 상한은 말하지 않는다 — 수집기의 조회 대기열(동시 2개)은 기다림에 상한이 없다.
  * - 실패 · 없음 · 꺼짐 문구는 그대로(계약 v4 §A).
@@ -12,7 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, describe, expect, it } from "vitest";
 import { RouteSection } from "@/components/AircraftCard";
 import { parseRoute, ROUTE_NORMAL_PATH_S, ROUTE_SLOW_AFTER_S, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, routePendingPhase, type RouteInfo } from "@/lib/route";
-import { byTestId, classes, findAll, parseHtml, textOf } from "./helpers/html-tree";
+import { ancestors, byTestId, classes, findAll, parseHtml, textOf } from "./helpers/html-tree";
 import { installMiniDom } from "./helpers/mini-dom";
 
 const PENDING = parseRoute({ status: "pending", callsign: "KAL081", source: "adsbdb" })!;
@@ -20,24 +21,25 @@ const render = (route: RouteInfo | null, pendingForS: number | null = null) =>
   parseHtml(renderToStaticMarkup(createElement(RouteSection, { route, pos: null, callsign: "KAL081", pendingForS })));
 
 describe("pending route lookup reads as in progress", () => {
-  it("status line: role=status with the contract text, a motion indicator hidden from screen readers, the section is aria-busy", () => {
+  it("status line: role=status with the contract text, a motion indicator hidden from screen readers; no aria-busy ancestor delays it", () => {
     const root = render(PENDING, 3);
-    const section = byTestId(root, "route-section")!;
-    expect(section.attrs["aria-busy"]).toBe("true");
     const st = byTestId(root, "route-status")!;
     expect(st.attrs.role).toBe("status");
+    expect(ancestors(st).filter((a) => a.attrs["aria-busy"] === "true")).toEqual([]);
     expect(textOf(st)).toContain(ROUTE_STATUS_TEXT.pending);
     const spin = findAll(st, (n) => classes(n).has("busy-spinner"));
     expect(spin).toHaveLength(1);
     expect(spin[0].attrs["aria-hidden"]).toBe("true");
   });
-  it("placeholder rows for 출발 / 도착 (skeleton, hidden from screen readers) — no airport values are shown", () => {
+  it("placeholder rows for 출발 / 도착: the region to be filled is aria-busy, the bars are hidden from screen readers — no airport values are shown", () => {
     const root = render(PENDING, 3);
     const sk = byTestId(root, "route-skeleton")!;
-    expect(sk.attrs["aria-hidden"]).toBe("true");
+    expect(sk.attrs["aria-busy"]).toBe("true");
     expect(textOf(sk)).toContain("출발");
     expect(textOf(sk)).toContain("도착");
-    expect(findAll(sk, (n) => classes(n).has("skeleton")).length).toBe(2);
+    const bars = findAll(sk, (n) => classes(n).has("skeleton"));
+    expect(bars.length).toBe(2);
+    for (const b of bars) expect(b.attrs["aria-hidden"]).toBe("true");
     expect(textOf(root)).not.toContain("계산값");
   });
   it("elapsed seconds are shown but not announced (outside the live region); unknown elapsed shows nothing, not 0", () => {
@@ -64,7 +66,7 @@ describe("pending route lookup reads as in progress", () => {
     for (const status of ["not_found", "no_callsign", "unavailable", "disabled"] as const) {
       const root = render(parseRoute({ status, callsign: status === "no_callsign" ? null : "KAL081", source: "adsbdb" }), 30);
       expect(textOf(byTestId(root, "route-status")!), status).toContain(ROUTE_STATUS_TEXT[status]);
-      expect(byTestId(root, "route-section")!.attrs["aria-busy"], status).toBeUndefined();
+      expect(findAll(root, (n) => n.attrs["aria-busy"] === "true"), status).toEqual([]);
       expect(byTestId(root, "route-skeleton"), status).toBeNull();
       expect(findAll(root, (n) => classes(n).has("busy-spinner")), status).toEqual([]);
     }
