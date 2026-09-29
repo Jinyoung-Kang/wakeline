@@ -85,20 +85,23 @@ describe("capture result (lib/guide-manifest.json)", () => {
     }, PLAN);
     expect(Object.keys(manifest.shots)).toEqual([first]);
     expect(manifest.shots[first].callouts).toEqual([{ n: 1, x: 10, y: 5.5 }]);
-    expect(dropped.join("\n")).toMatch(new RegExp(`${second}.*file`));
-    expect(dropped.join("\n")).toMatch(/nosuch/);
-    expect(dropped.join("\n")).toMatch(/99/);
-    expect(dropped.join("\n")).toMatch(/140/);
+    // 버린 결과가 그림에 무엇을 했는지 이유마다: 항목을 버림(그 그림은 자리표시) · 계획에 없음(그림 없음) · 일부만 버림(그림은 보이고 그 번호만 빠짐)
+    const of = (re: RegExp) => dropped.filter((d) => re.test(d.text)).map((d) => d.effect);
+    expect(of(new RegExp(`${second}.*file`))).toEqual(["placeholder"]);
+    expect(of(/nosuch/)).toEqual(["unused"]);
+    expect(of(/99/)).toEqual(["partial"]);
+    expect(of(/140/)).toEqual(["partial"]);
   });
   it("a malformed capture condition is dropped with a reason, not silently", () => {
     const id = PLAN.shots[0].id;
     const r = parseManifest({ version: 1, shots: { [id]: PNG_SHOT(id, { variant: 42 }) } }, PLAN);
     expect(r.manifest.shots[id].variant).toBeNull();
-    expect(r.dropped.join("\n")).toMatch(new RegExp(`${id}: variant`));
+    expect(r.manifest.shots[id].file).toBe(`${id}.0123456789.webp`); // 그림은 그대로 보인다
+    expect(r.dropped).toEqual([{ text: expect.stringMatching(new RegExp(`${id}: variant`)), effect: "partial" }]);
   });
   it("a missing or malformed manifest is empty (every screenshot shows the placeholder)", () => {
     expect(parseManifest(null, PLAN).manifest.shots).toEqual({});
-    expect(parseManifest({ version: 2, shots: {} }, PLAN).dropped[0]).toMatch(/version/);
+    expect(parseManifest({ version: 2, shots: {} }, PLAN).dropped).toEqual([{ text: expect.stringMatching(/version/), effect: "placeholder" }]);
   });
   it("shotView: missing → placeholder at the planned size; present → /guide/<file> with markers only for measured callouts", () => {
     const s = PLAN.shots[0];

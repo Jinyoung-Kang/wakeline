@@ -2,7 +2,7 @@ import Link from "next/link";
 import { creditGroups } from "@/lib/attribution";
 import { KR_RADAR_STALE_S, METAR_STALE_S } from "@/lib/format";
 import {
-  dualTime, flattenToc, GUIDE_TOC, kstClockToUtc, metarTimeToken, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest,
+  dualTime, flattenToc, GUIDE_TOC, kstClockToUtc, metarTimeToken, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest, type ManifestDrop,
 } from "@/lib/guide";
 import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
@@ -66,7 +66,14 @@ const P = ({ children }: { children: React.ReactNode }) => <p className="my-2 ma
 const UL = ({ children }: { children: React.ReactNode }) => <ul className="my-2 max-w-[860px] list-disc space-y-1 pl-5 text-fg-2 marker:text-fg-3">{children}</ul>;
 const B = ({ children }: { children: React.ReactNode }) => <b className="font-semibold text-fg">{children}</b>;
 
-export function GuideView({ manifest, dropped }: { manifest: GuideManifest; dropped: readonly string[] }) {
+/** 버린 결과의 묶음 제목 — 그림에 무슨 일이 생겼는지(효과별) */
+const DROP_EFFECT: [ManifestDrop["effect"], string][] = [
+  ["placeholder", "항목을 버림 — 그 그림은 자리표시로 보입니다"],
+  ["partial", "일부만 버림 — 그림은 보이고 그 부분만 빠짐(캡처 조건 · 번호 위치)"],
+  ["unused", "계획에 없어 무시 — 어느 그림에도 영향 없음"],
+];
+
+export function GuideView({ manifest, dropped }: { manifest: GuideManifest; dropped: readonly ManifestDrop[] }) {
   /** 그림 번호 = 계획 순서(문서 순서 — parsePlan 이 확인) */
   const fig = (id: string) => {
     const i = PLAN.shots.findIndex((s) => s.id === id);
@@ -111,8 +118,16 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
 
           {dropped.length ? (
             <div role="alert" className="mb-6 border border-warn/60 bg-bg-1 px-3 py-2 text-[12px] text-warn">
-              스크린샷 결과(lib/guide-manifest.json)에서 형식이 틀린 항목을 버렸습니다 — 해당 그림은 자리표시로 보입니다:
-              <ul className="mono mt-1 list-disc pl-5 text-[11px]">{dropped.map((d) => <li key={d}>{d}</li>)}</ul>
+              스크린샷 결과(lib/guide-manifest.json)에서 형식이 틀린 부분을 버렸습니다.
+              {DROP_EFFECT.map(([effect, title]) => {
+                const list = dropped.filter((d) => d.effect === effect);
+                return list.length ? (
+                  <div key={effect} className="mt-1">
+                    <div>{title}:</div>
+                    <ul className="mono list-disc pl-5 text-[11px]">{list.map((d, i) => <li key={i}>{d.text}</li>)}</ul>
+                  </div>
+                ) : null;
+              })}
             </div>
           ) : null}
 

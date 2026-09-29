@@ -4,6 +4,7 @@
  * - 캡처 계획(guide-shots.json): 스크린샷마다 경로 · 대체 글 · 번호 설명(무엇을 가리키는지 CSS 선택자 포함). 틀리면 던진다(빌드 · 시험에서 드러나게).
  * - 캡처 결과(guide-manifest.json): 스크립트가 찍은 파일 이름(내용 해시) · 크기 · 캡처 시각 · 번호 위치(찍을 때 잰 요소 위치, %)를 쓴다.
  *   항목 단위로 검증해 틀린 항목은 버리고 이유를 남긴다 — 버린 · 없는 스크린샷은 화면에서 "스크린샷 준비 중" 자리표시가 된다(깨진 이미지를 보이지 않는다).
+ *   캡처 조건 · 번호 위치 하나만 틀리면 그것만 버리고 그림은 보인다(ManifestDrop.effect 가 어느 쪽인지 말한다).
  * 번호 위치는 추정하지 않는다: 찍을 때 그 요소가 화면에 보였을 때만 기록하고, 없으면 번호 목록에 "이 스크린샷에는 보이지 않음"이라고 적는다.
  * 의존성 없음(lib/kst 만) — 서버 컴포넌트가 불러오고, 시험이 그대로 부른다.
  */
@@ -173,31 +174,39 @@ export interface GuideManifest { version: 1; shots: Record<string, ManifestShot>
 
 const pct = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
 
+/**
+ * 캡처 결과에서 버린 것과 그것이 그림에 한 일 — 화면 머리의 경고가 이유마다 사실대로 말한다.
+ * placeholder: 항목(또는 결과 전체)을 버려 그 그림이 자리표시 · partial: 캡처 조건이나 번호 위치 하나만 버려 그림은 보이고 그 부분만 빠짐 ·
+ * unused: 계획에 없는 스크린샷이라 무시(어느 그림에도 영향 없음)
+ */
+export interface ManifestDrop { text: string; effect: "placeholder" | "partial" | "unused" }
+
 /** 캡처 결과 검증 — 틀린 항목(또는 번호 하나)만 버리고 이유를 모은다. 커밋된 결과는 시험이 버린 것 없음을 확인한다 */
-export function parseManifest(raw: unknown, plan: GuidePlan): { manifest: GuideManifest; dropped: string[] } {
-  const dropped: string[] = [];
+export function parseManifest(raw: unknown, plan: GuidePlan): { manifest: GuideManifest; dropped: ManifestDrop[] } {
+  const dropped: ManifestDrop[] = [];
+  const drop = (effect: ManifestDrop["effect"], text: string) => dropped.push({ text, effect });
   const out: GuideManifest = { version: 1, shots: {} };
   if (raw == null) return { manifest: out, dropped };
   if (!isObj(raw) || raw.version !== 1 || !isObj(raw.shots)) {
-    dropped.push("manifest: version 1 · shots 객체가 아님 — 전체를 버림");
+    drop("placeholder", "manifest: version 1 · shots 객체가 아님 — 전체를 버림");
     return { manifest: out, dropped };
   }
   for (const [id, m] of Object.entries(raw.shots)) {
     const shot = plan.shots.find((s) => s.id === id);
-    if (!shot) { dropped.push(`${id}: 계획에 없는 스크린샷`); continue; }
-    if (!isObj(m)) { dropped.push(`${id}: 객체가 아님`); continue; }
+    if (!shot) { drop("unused", `${id}: 계획에 없는 스크린샷`); continue; }
+    if (!isObj(m)) { drop("placeholder", `${id}: 객체가 아님`); continue; }
     const f = typeof m.file === "string" ? GUIDE_FILE_RE.exec(m.file) : null;
-    if (!f || f[1] !== id || f[3] !== m.format) { dropped.push(`${id}: file 이름이 "<id>.<해시 10자>.<format>" 이 아님 (${String(m.file)})`); continue; }
-    if (!posInt(m.width) || !posInt(m.height)) { dropped.push(`${id}: width · height`); continue; }
-    if (typeof m.bytes !== "number" || !Number.isInteger(m.bytes) || m.bytes <= 0) { dropped.push(`${id}: bytes`); continue; }
-    if (typeof m.captured_at !== "string" || !Number.isFinite(Date.parse(m.captured_at))) { dropped.push(`${id}: captured_at`); continue; }
+    if (!f || f[1] !== id || f[3] !== m.format) { drop("placeholder", `${id}: file 이름이 "<id>.<해시 10자>.<format>" 이 아님 (${String(m.file)})`); continue; }
+    if (!posInt(m.width) || !posInt(m.height)) { drop("placeholder", `${id}: width · height`); continue; }
+    if (typeof m.bytes !== "number" || !Number.isInteger(m.bytes) || m.bytes <= 0) { drop("placeholder", `${id}: bytes`); continue; }
+    if (typeof m.captured_at !== "string" || !Number.isFinite(Date.parse(m.captured_at))) { drop("placeholder", `${id}: captured_at`); continue; }
     const variant = typeof m.variant === "string" && m.variant.length <= 120 ? m.variant : null;
-    if (m.variant != null && variant == null) dropped.push(`${id}: variant(캡처 조건)가 120자 이하 문자열이 아님 — 조건 없이 보인다`);
+    if (m.variant != null && variant == null) drop("partial", `${id}: variant(캡처 조건)가 120자 이하 문자열이 아님 — 조건 없이 보인다`);
     const callouts: CalloutPos[] = [];
     for (const c of Array.isArray(m.callouts) ? m.callouts : []) {
       const ok = isObj(c) && shot.callouts.some((x) => x.n === c.n) && pct(c.x) && pct(c.y) && !callouts.some((x) => x.n === c.n);
       if (ok) callouts.push({ n: c.n as number, x: c.x as number, y: c.y as number });
-      else dropped.push(`${id}: 번호 위치를 버림 ${JSON.stringify(c)}`);
+      else drop("partial", `${id}: 번호 위치를 버림 ${JSON.stringify(c)}`);
     }
     out.shots[id] = { file: m.file as string, format: m.format as "webp" | "png", width: m.width, height: m.height, bytes: m.bytes, captured_at: m.captured_at, variant, callouts };
   }
@@ -255,4 +264,4 @@ export const PLAN: GuidePlan = parsePlan(planJson);
 const parsed = parseManifest(manifestJson, PLAN);
 export const MANIFEST: GuideManifest = parsed.manifest;
 /** 커밋된 결과에서 버린 항목(있으면 화면 머리에 적는다 — 조용히 자리표시로 바꾸지 않게) */
-export const MANIFEST_DROPPED: readonly string[] = parsed.dropped;
+export const MANIFEST_DROPPED: readonly ManifestDrop[] = parsed.dropped;

@@ -11,7 +11,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
-import { flattenToc, parseManifest, PLAN, tocItem, type GuideManifest } from "@/lib/guide";
+import { flattenToc, parseManifest, PLAN, tocItem, type GuideManifest, type ManifestDrop } from "@/lib/guide";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
 vi.mock("next/link", () => ({
@@ -35,7 +35,7 @@ const FULL: GuideManifest = parseManifest({
   }])),
 }, PLAN).manifest;
 
-const render = (manifest: GuideManifest, dropped: string[] = []) => renderToStaticMarkup(createElement(GuideView, { manifest, dropped }));
+const render = (manifest: GuideManifest, dropped: ManifestDrop[] = []) => renderToStaticMarkup(createElement(GuideView, { manifest, dropped }));
 const attrs = (tag: string) => Object.fromEntries([...tag.matchAll(/([a-zA-Z-]+)="([^"]*)"/g)].map((m) => [m[1], m[2]]));
 const tags = (html: string, name: string) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, "g"))].map((m) => m[0]);
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
@@ -135,10 +135,19 @@ describe("screenshots", () => {
     expect(t).toContain("한반도 #6.3/36.1/127.9");
     expect(t).toMatch(/WebP · 1440×900 · 88 KB/);
   });
-  it("a dropped manifest entry is shown at the top, not silently replaced by a placeholder", () => {
-    const html = render(EMPTY, ["dashboard: file 이름이 …"]);
-    expect(text(html)).toContain("dashboard: file 이름이 …");
+  it("dropped manifest parts are shown at the top, each saying what it did to the figure (placeholder · image without that part · not in the plan)", () => {
+    const html = render(EMPTY, [
+      { text: "dashboard: file 이름이 …", effect: "placeholder" },
+      { text: "search: variant(캡처 조건)가 …", effect: "partial" },
+      { text: "nosuch: 계획에 없는 스크린샷", effect: "unused" },
+    ]);
     expect(html).toMatch(/role="alert"/);
+    const alert = text(html.slice(html.indexOf('role="alert"'), html.indexOf('data-guide-section="overview"')));
+    expect(alert).toMatch(/항목을 버림 — 그 그림은 자리표시[\s\S]*dashboard: file 이름이/);
+    expect(alert).toMatch(/일부만 버림 — 그림은 보이고 그 부분만 빠짐[\s\S]*search: variant/);
+    expect(alert).toMatch(/계획에 없어 무시[\s\S]*nosuch/);
+    // 해당 없는 묶음은 적지 않는다
+    expect(text(render(EMPTY, [{ text: "search: variant …", effect: "partial" }]))).not.toMatch(/자리표시로 보입니다|항목을 버림/);
   });
 });
 
