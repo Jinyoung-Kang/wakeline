@@ -32,7 +32,7 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
   onAuthMiss: (e: unknown) => Promise<"expired" | "error">; onFilterRid: (rid: string) => void;
 }) {
   /** 확인 패널이 열린 자리: 묶음 하나(fp) 또는 일괄("bulk") — 한 번에 하나만 */
-  const { open, show, close, closeIf } = useResolveSlot();
+  const { open, show, close, closeIf, panelId, openerProps } = useResolveSlot();
   const plan = bulkPlan(groups);
   const n = plan.eligible.length;
   const excluded = [plan.resolved ? `이미 해결됨 ${plan.resolved}개` : null, plan.noTime ? `마지막 시각 모름 ${plan.noTime}개` : null].filter(Boolean).join(" · ");
@@ -42,13 +42,13 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
     subject: <>보이는 묶음 {n}개를 해결 처리합니다 — 묶음마다 그 묶음의 마지막 항목 시각(last_at)까지 · 요청 {n}건(묶음마다 1건 · 동시에 최대 {BULK_CONCURRENCY}건)</>,
   });
   const panel = (at: string) => (open?.at === at ? (
-    <ResolveConfirm key={open.n} target={open.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
+    <ResolveConfirm key={open.n} id={panelId(at)} target={open.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
       onChanged={(r) => { if (r.complete) closeIf(open.n); onChanged(r); }} />
   ) : null);
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1 text-[11px]" data-testid="log-groups-actions">
-        <button type="button" className="btn" disabled={!n} onClick={openBulk}
+        <button type="button" className="btn" disabled={!n} onClick={openBulk} {...openerProps("bulk")}
           title={n ? `보이는 묶음마다 그 묶음의 마지막 항목 시각(last_at)까지 해결 처리 — 확인 창이 수를 먼저 말한다` : "해결 처리할 묶음 없음 — 보이는 묶음이 모두 해결됨이거나 마지막 시각을 모름"}>
           보이는 묶음 모두 해결 처리
         </button>
@@ -76,21 +76,25 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
                 <td className="mono text-right">{g.suppressed ?? "—"}</td>
                 <td className="whitespace-nowrap"><DualTime v={g.first_at} variant="cell" /></td>
                 <td className="whitespace-nowrap"><DualTime v={g.last_at} variant="cell" /></td>
+                {/* 해결 · 되돌리기는 같은 자리의 단추 하나(같은 DOM 요소) — 해결 뒤 초점이 그 행의 "되돌리기"에 남는다 */}
                 <td className="min-w-[140px]">
-                  {res ? <>
-                    <span data-testid="group-resolved-mark">해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span>
-                    <button type="button" className="btn ml-1 px-1.5! py-0! normal-case!" onClick={() => show(g.fp, {
-                      op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
-                      subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{g.fp}</span> · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
-                    })}>되돌리기</button>
-                  </> : (
-                    <button type="button" className="btn" disabled={!upto}
-                      title={upto ? "이 묶음의 마지막 항목 시각까지 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "마지막 시각 모름 — 해결 범위(upto)를 정할 수 없음"}
-                      onClick={() => upto && show(g.fp, {
-                        op: "resolve", drafts: [{ kind: "log_group", key: g.fp, upto }], effect: RESOLVE_EFFECT.log_group,
-                        subject: <>지문 묶음 <span className="mono">{g.fp}</span> · upto <DualTime v={upto} /> <span className="text-fg-3">(이 묶음의 마지막 항목 시각)</span></>,
-                      })}>해결 처리</button>
-                  )}
+                  {res ? <span data-testid="group-resolved-mark" className="mr-1">해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span> : null}
+                  <button type="button" className={res ? "btn px-1.5! py-0! normal-case!" : "btn"} disabled={!res && !upto} {...openerProps(g.fp)}
+                    aria-label={res ? `되돌리기: 지문 ${g.fp} 해결 #${res.id}` : `해결 처리: 지문 ${g.fp}`}
+                    title={res ? undefined : upto ? "이 묶음의 마지막 항목 시각까지 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "마지막 시각 모름 — 해결 범위(upto)를 정할 수 없음"}
+                    onClick={() => {
+                      if (res) {
+                        show(g.fp, {
+                          op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
+                          subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{g.fp}</span> · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
+                        });
+                      } else if (upto) {
+                        show(g.fp, {
+                          op: "resolve", drafts: [{ kind: "log_group", key: g.fp, upto }], effect: RESOLVE_EFFECT.log_group,
+                          subject: <>지문 묶음 <span className="mono">{g.fp}</span> · upto <DualTime v={upto} /> <span className="text-fg-3">(이 묶음의 마지막 항목 시각)</span></>,
+                        });
+                      }
+                    }}>{res ? "되돌리기" : "해결 처리"}</button>
                 </td>
                 <td className="whitespace-nowrap">
                   <button type="button" className="btn mr-1" onClick={() => onFilterFp(g.fp)}>목록으로</button>

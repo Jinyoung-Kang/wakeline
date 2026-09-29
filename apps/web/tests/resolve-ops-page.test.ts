@@ -421,3 +421,18 @@ describe("/ops: a write whose confirmation is gone before the answer still count
     expect(statusText()).toContain("해결 처리됨: 공급자 adsb_lol(해결 #5)");
   });
 });
+
+describe("/ops LAST ERROR actions for screen-reader users", () => {
+  it("the actions name the provider and say whether their confirmation is open", async () => {
+    stub({ "GET /api/v1/ops/providers": { status: 200, body: PROV([lol(), { ...fi, name: "adsb_fi", last_error: "timeout", last_error_at: ERR_AT, last_error_resolution: { id: 7, upto: ERR_AT, resolved_by: "kim" }, last_error_resolved: true }]) } });
+    await mount();
+    const [c1, c2] = (() => { const out: MiniElement[] = []; const walk = (n: MiniElement) => { if (n.getAttribute?.("data-testid") === "provider-last-error") out.push(n); for (const c of n.childNodes) if (c instanceof MiniElement) walk(c); }; walk(dom.container); return out; })();
+    const act = button("해결 처리", c1)!;
+    expect(act.getAttribute("aria-label")).toBe("해결 처리: 공급자 adsb_lol 오류");
+    expect(act.getAttribute("aria-expanded")).toBe("false");
+    expect(button("되돌리기", c2)!.getAttribute("aria-label")).toBe("되돌리기: 공급자 adsb_fi 해결 #7");
+    await click(act);
+    expect(button("해결 처리", cell())!.getAttribute("aria-expanded")).toBe("true");
+    expect(button("해결 처리", cell())!.getAttribute("aria-controls")).toBe(byTestId("resolve-confirm")!.getAttribute("id"));
+  });
+});

@@ -33,10 +33,35 @@ export type ResolveResult =
 export function useResolveSlot() {
   const [open, setOpen] = useState<{ at: string; target: ResolveTarget; n: number } | null>(null);
   const seq = useRef(0);
-  const show = useCallback((at: string, target: ResolveTarget) => setOpen({ at, target, n: ++seq.current }), []);
+  /** 패널을 연 요소(키보드로 누른 단추) — 닫힌 뒤 초점을 되돌릴 곳 */
+  const opener = useRef<HTMLElement | null>(null);
+  const base = useId();
+  const show = useCallback((at: string, target: ResolveTarget) => {
+    opener.current = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+    setOpen({ at, target, n: ++seq.current });
+  }, []);
   const close = useCallback(() => setOpen(null), []);
   const closeIf = useCallback((n: number) => setOpen((o) => (o?.n === n ? null : o)), []);
-  return { open, show, close, closeIf };
+  // 닫힌 뒤(취소 · Esc · 완료) 초점이 사라진 패널과 함께 갈 곳을 잃었으면 연 단추로 되돌린다 — 긴 표에서 키보드 사용자가 자리를 잃지 않게.
+  // 초점이 이미 다른 곳(운영자가 누른 다른 단추)에 있으면 건드리지 않는다. 연 단추가 사라졌으면(행이 목록에서 빠짐) 되돌리지 않는다
+  useEffect(() => {
+    if (open) return;
+    const el = opener.current;
+    opener.current = null;
+    if (el?.isConnected && focusLost()) el.focus?.();
+  }, [open]);
+  /** 그 자리 패널의 DOM id(aria-controls 가 가리킨다) */
+  const panelId = useCallback((at: string) => `${base}resolve-${at}`, [base]);
+  /** 패널을 여는 단추의 속성 — 열려 있는지(aria-expanded)와 열린 패널(aria-controls) */
+  const openerProps = useCallback((at: string) => ({ "aria-expanded": open?.at === at, "aria-controls": open?.at === at ? panelId(at) : undefined }), [open, panelId]);
+  return { open, show, close, closeIf, panelId, openerProps };
+}
+
+/** 초점이 갈 곳을 잃었는가(문서 본문 · 없음 · 문서에서 떨어진 요소) */
+function focusLost(): boolean {
+  if (typeof document === "undefined") return false;
+  const a = document.activeElement as HTMLElement | null;
+  return a == null || a === document.body || !a.isConnected;
 }
 
 /**
@@ -48,7 +73,9 @@ export function useResolveSlot() {
  * - 실패는 한국어 첫 문구 + (HTTP · code) + 요청 id(복사 · 로그로 거르기). 일괄의 일부 실패는 결과 수를 말하고 "남은 N개 다시 시도"로 실패 · 보내지 않은 것만 다시 보낸다.
  * - Esc = 취소(보내는 중이 아닐 때). 메모는 선택, 앞뒤 공백을 떼어 200자 이하 한 줄(서버가 다시 검사한다).
  */
-export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilterRid, testId = "resolve-confirm" }: {
+export function ResolveConfirm({ id, target, onClose, onChanged, onAuthMiss, onFilterRid, testId = "resolve-confirm" }: {
+  /** 패널의 DOM id — 여는 단추의 aria-controls(useResolveSlot panelId) */
+  id?: string;
   target: ResolveTarget; onClose: () => void; onChanged: (r: ResolveResult) => void;
   onAuthMiss: (e: unknown) => Promise<"expired" | "error">; onFilterRid?: (rid: string) => void; testId?: string;
 }) {
@@ -64,6 +91,9 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
   /** 보내는 중 — 상태(sending)는 다음 그리기에야 단추를 막으므로 같은 프레임의 두 번째 누름은 이것이 막는다 */
   const busy = useRef(false);
   const noteId = useId();
+  const subjectId = useId(), effectId = useId(), excludedId = useId();
+  /** 무엇을 · 무엇이 일어나는지 — 초점이 메모 · 확인 단추에 오면 화면 읽기 프로그램이 함께 읽는다 */
+  const describedBy = [subjectId, effectId, target.op === "resolve" && target.excluded ? excludedId : null].filter(Boolean).join(" ");
   useEffect(() => {
     live.current = true;
     first.current?.focus?.(); // 열리면 첫 입력(메모 · 되돌리기 확인)으로 — 키보드로 바로 확인 · Esc
@@ -123,21 +153,21 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
     : total > 1 ? `${total}개 해결 처리 확인` : "해결 처리 확인";
   return (
     <form
-      role="group" aria-label={heading} data-testid={testId} className="my-1 border border-accent/60 bg-bg p-2 text-[11px] whitespace-normal"
+      id={id} role="group" aria-label={heading} data-testid={testId} className="my-1 border border-accent/60 bg-bg p-2 text-[11px] whitespace-normal"
       onSubmit={(e) => { e.preventDefault(); void run(); }}
       onKeyDown={(e) => { if (e.key === "Escape" && !sending) { e.preventDefault(); onClose(); } }}
     >
       <div className="label mb-1">{heading}</div>
-      <div className="mb-1 text-fg" data-testid="resolve-subject">{target.subject}</div>
-      <p className="mb-1 text-fg-3">{target.effect}</p>
-      {target.op === "resolve" && target.excluded ? <p className="mb-1 text-fg-3" data-testid="resolve-excluded">{target.excluded}</p> : null}
+      <div id={subjectId} className="mb-1 text-fg" data-testid="resolve-subject">{target.subject}</div>
+      <p id={effectId} className="mb-1 text-fg-3" data-testid="resolve-effect">{target.effect}</p>
+      {target.op === "resolve" && target.excluded ? <p id={excludedId} className="mb-1 text-fg-3" data-testid="resolve-excluded">{target.excluded}</p> : null}
       {target.op === "resolve" ? (
         <label className="mb-1 flex flex-wrap items-center gap-1">
           <span className="label">메모</span>
           <input
             ref={first} aria-label="해결 메모" className="mono w-80 max-w-full" value={note} disabled={sending}
             placeholder={`선택 · ${NOTE_MAX}자 이하 한 줄 · 감사 기록에 남음`} onChange={(e) => setNote(e.target.value)}
-            aria-invalid={noteErr ? true : undefined} aria-describedby={noteErr ? noteId : undefined}
+            aria-invalid={noteErr ? true : undefined} aria-describedby={noteErr ? `${describedBy} ${noteId}` : describedBy}
           />
         </label>
       ) : null}
@@ -145,7 +175,7 @@ export function ResolveConfirm({ target, onClose, onChanged, onAuthMiss, onFilte
       <div className="flex flex-wrap items-center gap-1">
         <button
           ref={target.op === "revoke" ? first : undefined} type="button" className="btn border-accent! text-accent!" onClick={() => void run()}
-          disabled={sending || !!noteErr || (target.op === "resolve" && !remaining.length)} aria-busy={sending}
+          disabled={sending || !!noteErr || (target.op === "resolve" && !remaining.length)} aria-busy={sending} aria-describedby={describedBy}
         >{confirmLabel}</button>
         <button type="button" className="btn" onClick={() => onClose()} disabled={sending}>{savedSome ? "닫기" : "취소"}</button>
       </div>

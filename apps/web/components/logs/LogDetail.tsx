@@ -32,7 +32,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   onResolveChanged: (r: ResolveResult) => void;
 }) {
   const [wrap, setWrap] = useState(true);
-  const { open: confirm, show, close, closeIf } = useResolveSlot();
+  const { open: confirm, show, close, closeIf, panelId, openerProps } = useResolveSlot();
   const setConfirm = (t: ResolveTarget) => show("entry", t);
   const [related, setRelated] = useState<{ items: LogEntry[]; more: boolean } | null>(null);
   const [relatedErr, setRelatedErr] = useState<unknown>(null);
@@ -69,21 +69,18 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
     op: "resolve", drafts: [{ kind: "log_group", key: fp, upto: u }], effect: RESOLVE_EFFECT.log_group,
     subject: <>지문 묶음 <span className="mono">{fp}</span> · upto <DualTime v={u} /> <span className="text-fg-3">(이 항목의 시각 — 이 항목과 그보다 앞선 같은 지문 항목)</span></>,
   });
-  const resolveCell = res ? (
-    <span data-testid="log-detail-resolve" className="text-fg-3">
-      해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} />
-      <button type="button" className="btn ml-1 px-1.5! py-0! normal-case!" onClick={() => setConfirm({
-        op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
-        subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{entry.fp ?? "—"}</span> · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
-      })}>되돌리기</button>
-    </span>
-  ) : !entry.fp ? <span data-testid="log-detail-resolve" className="text-fg-3">— (지문 없음 — 해결은 지문 묶음 단위)</span>
-    : !upto ? <span data-testid="log-detail-resolve" className="text-fg-3">— (시각 형식을 몰라 해결 범위(upto)를 정할 수 없음)</span>
+  // 해결됨 · 해결되지 않음의 단추는 같은 자리의 하나(같은 DOM 요소) — 해결 · 되돌린 뒤 초점이 그 단추에 남는다
+  const resolveCell = !res && !entry.fp ? <span data-testid="log-detail-resolve" className="text-fg-3">— (지문 없음 — 해결은 지문 묶음 단위)</span>
+    : !res && !upto ? <span data-testid="log-detail-resolve" className="text-fg-3">— (시각 형식을 몰라 해결 범위(upto)를 정할 수 없음)</span>
     : (
-      <span data-testid="log-detail-resolve">
-        <span className="text-fg-2">해결되지 않음</span>
-        <button type="button" className="btn ml-1 px-1.5! py-0! normal-case!" onClick={() => setConfirm(resolveTarget(entry.fp!, upto))}
-          title="이 항목의 시각까지 이 지문 묶음을 해결로 적는다 — 확인 창이 먼저 범위를 말한다">해결 처리</button>
+      <span data-testid="log-detail-resolve" className={res ? "text-fg-3" : undefined}>
+        {res ? <span>해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span> : <span className="text-fg-2">해결되지 않음</span>}
+        <button type="button" className="btn ml-1 px-1.5! py-0! normal-case!" {...openerProps("entry")}
+          title={res ? undefined : "이 항목의 시각까지 이 지문 묶음을 해결로 적는다 — 확인 창이 먼저 범위를 말한다"}
+          onClick={() => setConfirm(res ? {
+            op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
+            subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{entry.fp ?? "—"}</span> · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
+          } : resolveTarget(entry.fp!, upto!))}>{res ? "되돌리기" : "해결 처리"}</button>
       </span>
     );
   const link = () => `${typeof window !== "undefined" ? window.location?.origin ?? "" : ""}/logs${logLinkHash(entry)}`;
@@ -121,7 +118,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
         </tbody>
       </table>
       {confirm ? (
-        <ResolveConfirm key={confirm.n} target={confirm.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
+        <ResolveConfirm key={confirm.n} id={panelId("entry")} target={confirm.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
           onChanged={(r) => { if (r.complete) closeIf(confirm.n); onResolveChanged(r); }} />
       ) : null}
       <div className="label mb-1">메시지</div>

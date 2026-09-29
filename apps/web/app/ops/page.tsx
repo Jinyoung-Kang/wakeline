@@ -69,7 +69,7 @@ const SMALL_BTN = "btn ml-1 px-1.5! py-0! normal-case!";
  * 해결 처리(upto = 그 오류의 시각 last_error_at 그대로 — 시각을 읽을 수 없으면 막는다).
  * 확인 패널은 부모가 그 행 아래에 연다(onOpen).
  */
-function ProviderErrorCell({ p, onOpen }: { p: Any; onOpen: (t: ResolveTarget) => void }) {
+function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveTarget) => void; opener: { "aria-expanded": boolean; "aria-controls": string | undefined } }) {
   const name = String(p.name);
   const le = providerLastError(p);
   const res = le.resolution;
@@ -81,7 +81,7 @@ function ProviderErrorCell({ p, onOpen }: { p: Any; onOpen: (t: ResolveTarget) =
       {le.resolved && res ? (
         <div className="text-[10px]">
           <span data-testid="provider-error-resolved">해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span>
-          <button className={SMALL_BTN} onClick={() => onOpen({
+          <button className={SMALL_BTN} {...opener} aria-label={`되돌리기: 공급자 ${name} 해결 #${res.id}`} onClick={() => onOpen({
             op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
             subject: <>해결 #{res.id} · 공급자 <span className="mono">{name}</span> 오류 · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
           })}>되돌리기</button>
@@ -92,7 +92,7 @@ function ProviderErrorCell({ p, onOpen }: { p: Any; onOpen: (t: ResolveTarget) =
             : le.undecided && res ? <span className="text-fg-3" data-testid="provider-error-undecided" title="api 가 이 오류를 해결됨으로 보지 않았다(last_error_resolved=false) — 재발인지는 오류 시각으로만 말한다">
               해결 #{res.id}(upto <DualTime v={res.upto} />) 있음 — {le.upto ? "api 가 그 해결이 이 오류를 덮지 않는다고 함" : "이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음"}</span>
             : null}
-          <button className={SMALL_BTN} disabled={!le.upto}
+          <button className={SMALL_BTN} disabled={!le.upto} {...opener} aria-label={`해결 처리: 공급자 ${name} 오류`}
             title={le.upto ? "이 오류의 시각까지 이 공급자의 오류를 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "오류 시각을 모름(last_error_at 을 시각으로 읽을 수 없음) — 해결 범위(upto)를 정할 수 없음"}
             onClick={() => le.upto && onOpen({
               op: "resolve", drafts: [{ kind: "provider_error", key: name, upto: le.upto }], effect: RESOLVE_EFFECT.provider_error,
@@ -201,7 +201,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     reload(["runs"]);
   };
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
-  const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf } = useResolveSlot();
+  const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf, panelId: resolvePanelId, openerProps: resolveOpener } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
   /**
    * 201/204 뒤: 201 은 받은 해결을 공급자 행에 바로 붙이고(낙관적 — 201 뒤에만), 204 는 붙이지 않는다(서버가 정한다). 영향받는 탭을 다시 읽는다.
@@ -268,12 +268,12 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               <TimeCell v={p.last_success_at} /><td className={NUM_CELL}>{fmtLatencyMs(p.last_latency_ms)}</td><td className={NUM_CELL}>{String(p.last_records ?? "—")}</td>
               <td className={`${NUM_CELL} ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
               <td className={NUM_CELL} title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className={NUM_CELL}>{String(p.budget_remaining ?? "—")}</td>
-              <ProviderErrorCell p={p} onOpen={(target) => showResolve(String(p.name), target)} />
+              <ProviderErrorCell p={p} onOpen={(target) => showResolve(String(p.name), target)} opener={resolveOpener(String(p.name))} />
               <td className="whitespace-nowrap" title={cell.title} data-testid="provider-switch"><span className="mono">{cell.source}</span> <span className={`badge ${cell.tone}`}>{cell.mirror}</span>{" "}
                 {off ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
             </tr>
             {resolveOpen?.at === String(p.name) ? <tr><td colSpan={9}>
-              <ResolveConfirm key={resolveOpen.n} target={resolveOpen.target} onClose={closeResolve} onChanged={(r) => resolveChanged(r, resolveOpen.n)} onAuthMiss={authMiss} />
+              <ResolveConfirm key={resolveOpen.n} id={resolvePanelId(resolveOpen.at)} target={resolveOpen.target} onClose={closeResolve} onChanged={(r) => resolveChanged(r, resolveOpen.n)} onAuthMiss={authMiss} />
             </td></tr> : null}</Fragment>; })}</tbody></table>
           <div className="label mt-4 mb-1" title="수집기가 스스로 한 공급자 전환(wakeline:events) — 위 표의 수동 켜고 끄기와 다르다">Provider switches (collector 자동 전환)</div>
           <table><thead><tr><th>at (KST · UTC)</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><TimeCell v={s.at} /><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>

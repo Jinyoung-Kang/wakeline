@@ -554,3 +554,101 @@ describe("/logs entry detail: its two server scans run once per change", () => {
     expect(scans(before)).toEqual({ rid: 0, groups: 1 });
   });
 });
+
+describe("/logs resolve actions for keyboard and screen-reader users", () => {
+  const G2 = group(FP2, { last_at: "2026-09-29T01:10:00Z", resolved: { id: 13, upto: "2026-09-29T01:10:00Z", resolved_by: "kim" } });
+  const ids = (e: MiniElement | null) => (e?.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+  it("row actions name their target and say whether their confirmation is open; the panel's subject and effect describe its input and confirm button", async () => {
+    stub((_m, url) => logsRoutes(url, { groups: GROUPS([group(FP), G2]) }));
+    await open();
+    await click(button("묶음(fp)"));
+    const [r1, r2] = allByTestId("log-group");
+    const act = button("해결 처리", r1)!;
+    expect(act.getAttribute("aria-label")).toBe(`해결 처리: 지문 ${FP}`);
+    expect(act.getAttribute("aria-expanded")).toBe("false");
+    expect(act.getAttribute("aria-controls")).toBeNull();
+    expect(button("되돌리기", r2)!.getAttribute("aria-label")).toBe(`되돌리기: 지문 ${FP2} 해결 #13`);
+    expect(button("보이는 묶음 모두 해결 처리")!.getAttribute("aria-expanded")).toBe("false");
+    await click(act);
+    const panel = byTestId("resolve-confirm")!;
+    expect(button("해결 처리", allByTestId("log-group")[0])!.getAttribute("aria-expanded")).toBe("true");
+    expect(button("해결 처리", allByTestId("log-group")[0])!.getAttribute("aria-controls")).toBe(panel.getAttribute("id"));
+    expect(panel.getAttribute("id")).toBeTruthy();
+    const subject = byTestId("resolve-subject", panel)!.getAttribute("id")!;
+    const effect = byTestId("resolve-effect", panel)!.getAttribute("id")!;
+    expect(subject && effect).toBeTruthy();
+    expect(ids(input("해결 메모", panel))).toEqual(expect.arrayContaining([subject, effect]));
+    expect(ids(button("해결 처리 확인", panel))).toEqual(expect.arrayContaining([subject, effect]));
+  });
+
+  describe("focus comes back to the row", () => {
+    /** 최소 DOM 에는 초점이 없다 — focus() 가 activeElement 를 바꾸고 isConnected 가 문서에 붙어 있는지 말하게 한다 */
+    let undo: (() => void) | null = null;
+    const withFocus = () => {
+      const proto = MiniElement.prototype as unknown as Record<string, unknown>;
+      proto.focus = function (this: MiniElement) { (dom.document as unknown as { activeElement: unknown }).activeElement = this; };
+      Object.defineProperty(proto, "isConnected", { configurable: true, get(this: MiniElement) { return dom.document.contains(this); } });
+      undo = () => { delete proto.focus; delete proto.isConnected; (dom.document as unknown as { activeElement: unknown }).activeElement = null; };
+    };
+    afterEach(() => { undo?.(); undo = null; });
+    const focused = () => (dom.document as unknown as { activeElement: MiniElement | null }).activeElement;
+    const focusOn = (e: MiniElement) => (e as unknown as { focus: () => void }).focus();
+    it("취소 and Esc put focus back on the button that opened the confirmation", async () => {
+      withFocus();
+      stub((_m, url) => logsRoutes(url, { groups: GROUPS([group(FP), G2]) }));
+      await open();
+      await click(button("묶음(fp)"));
+      const act = button("해결 처리", allByTestId("log-group")[0])!;
+      focusOn(act);
+      await click(act);
+      expect(focused()).toBe(input("해결 메모", byTestId("resolve-confirm")!)); // 열리면 메모로
+      await click(button("취소", byTestId("resolve-confirm")!));
+      expect(byTestId("resolve-confirm")).toBeNull();
+      expect(focused()).toBe(act);
+      await click(act);
+      await React.act(async () => { propsOf(byTestId("resolve-confirm")!).onKeyDown({ key: "Escape", preventDefault() {} }); });
+      await settle();
+      expect(byTestId("resolve-confirm")).toBeNull();
+      expect(focused()).toBe(act);
+    });
+    it("after a resolve focus lands on the same row's action, now 되돌리기", async () => {
+      withFocus();
+      let done = false;
+      stub((m, url, body) => {
+        if (m === "POST") { done = true; return created(body, 30); }
+        return logsRoutes(url, { groups: GROUPS([group(FP, done ? { resolved: { id: 30, upto: TS_A, resolved_by: "op" } } : {}), G2]) });
+      });
+      await open();
+      await click(button("해결된 항목 보기")); // 해결된 묶음도 보이는 보기 — 행이 남는다
+      await click(button("묶음(fp)"));
+      const act = button("해결 처리", allByTestId("log-group")[0])!;
+      focusOn(act);
+      await click(act);
+      await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+      expect(byTestId("resolve-confirm")).toBeNull();
+      expect(focused()?.textContent).toBe("되돌리기");
+      expect(allByTestId("log-group")[0].contains(focused())).toBe(true);
+    });
+    it("the entry detail does the same: 취소 returns to its 해결 처리, a resolve lands on its 되돌리기", async () => {
+      withFocus();
+      let done = false;
+      stub((m, url, body) => {
+        if (m === "POST") { done = true; return created(body, 21); }
+        return logsRoutes(url, { aResolved: done ? { id: 21, upto: TS_A, resolved_by: "op" } : null });
+      });
+      await open();
+      await click(allByTestId("log-row")[0]);
+      const act = button("해결 처리", byTestId("log-detail")!)!;
+      expect(act.getAttribute("aria-expanded")).toBe("false");
+      focusOn(act);
+      await click(act);
+      expect(act.getAttribute("aria-controls")).toBe(byTestId("resolve-confirm")!.getAttribute("id"));
+      await click(button("취소", byTestId("resolve-confirm")!));
+      expect(focused()).toBe(act);
+      await click(act);
+      await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
+      expect(focused()?.textContent).toBe("되돌리기");
+      expect(byTestId("log-detail-resolve")!.contains(focused())).toBe(true);
+    });
+  });
+});
