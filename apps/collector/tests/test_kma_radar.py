@@ -517,6 +517,26 @@ async def test_r03_previous_day_listing_failure_keeps_todays_cycle(kma_env, erro
     assert "last_error" not in await r.hgetall("wakeline:provider:kma_radar")
 
 
+async def test_previous_day_listing_that_was_never_sent_gives_back_its_budget_unit(kma_env):
+    """전날 목록(KST 00:00–00:14)도 보내지 않은 호출(연결 전 실패)이면 예산 1 을 돌려준다 — 오늘 목록 1 + 바이너리 1 만 남는다."""
+    import httpx
+
+    mod, r, ctx, clock = kma_env
+
+    class PrevDayRefused(NotYetKma):
+        async def file_list(self, day):
+            if day == "20260927":
+                self.days.append(day)
+                raise httpx.ConnectError("connection refused")
+            return await super().file_list(day)
+
+    prov = PrevDayRefused([], {}, by_day={"20260928": ["202609280000"]})
+    clock["now"] = "202609280002"
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.days == ["20260928", "20260927"] and prov.binaries == ["202609280000"]
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1 + 1
+
+
 async def test_r03_previous_day_listing_without_budget_records_no_run_of_its_own(kma_env):
     """리뷰 R-03 후속: 전날 목록용 추가 예약이 예산 부족이면 _reserve 가 따로 'budget_exhausted' 실행을 남기고, 같은 주기가 다시
     'ok' 를 남겨 한 주기에 실행 기록이 둘이었다. 추가 예약은 실행 기록 없이 확인만 하고, 안 되면 오늘 목록만 쓴다."""
@@ -723,6 +743,33 @@ async def test_kma_binary_that_fails_twice_ends_the_cycle_with_one_warning(kma_e
     assert len(warns) == 1 and warns[0].startswith(f"kma radar: binary tm={tms[-3]} — RemoteProtocolError — 연결 실패")
     assert "retried once after 5 s" in warns[0]
     assert [run["status"] for run in runs] == ["error"]
+
+
+@pytest.mark.parametrize(
+    ("errors", "used"),
+    [
+        (["connect", "connect"], 0),  # 두 시도 모두 연결 전 실패 — 보내지 않았으니 둘 다 돌려준다
+        (["connect", "read"], 1),  # 다시 부른 시도는 보낸 뒤 시간 초과 — 보낸 호출로 센다
+        (["read", "read"], 2),
+        (["throttled"], 0),  # 속도 상한이 막았다 — 보내지 않았다(다시 부르지도 않는다)
+    ],
+    ids=["connect-twice", "connect-then-read", "read-twice", "throttled"],
+)
+async def test_kma_listing_attempts_that_were_never_sent_give_back_their_budget_unit(kma_env, no_wait, errors, used):
+    """기상 작업과 같은 규칙(retry.py): 보내지 않은 시도(NOT_SENT_ERRORS · Throttled)는 예산 1 을 돌려준다 — aircraft · route 와 같다."""
+    import httpx
+
+    from wakeline_collector.ratelimit import Throttled
+
+    make = {
+        "connect": lambda: httpx.ConnectError("connection refused"),
+        "read": _read_timeout,
+        "throttled": lambda: Throttled("apihub.kma.go.kr", "cooling down 30 s after HTTP 429"),
+    }
+    mod, r, ctx, clock = kma_env
+    prov = FlakyKma(_tms("202609272000"), list_errors=[make[e]() for e in errors])
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == [] and (await ctx.budget.usage("kma_radar"))[0] == used
 
 
 async def test_kma_retry_needs_budget(kma_env, no_wait):

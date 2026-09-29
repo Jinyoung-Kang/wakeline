@@ -17,6 +17,7 @@ from fakes import FakeRedis, make_ctx
 from test_sigmet_job import FakeAwc
 from test_weather_jobs import FIX, FakeAwcMetar, FakeRainViewer
 
+from wakeline_collector.config import settings
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.models import ProviderResult
 from wakeline_collector.publisher import STREAM_RADAR, STREAM_SIGMET
@@ -35,6 +36,9 @@ AWC_ISIGMET = "https://aviationweather.gov/api/data/isigmet"
 AWC_AIRSIGMET = "https://aviationweather.gov/api/data/airsigmet"
 AWC_METAR = "https://aviationweather.gov/api/data/metar"
 RV_URL = "https://api.rainviewer.com/public/weather-maps.json"
+# 설정의 일일 예산(기본 2,000). 다시 부르기는 남은 하루의 정규 주기 몫(60 s 주기 → 최대 1,441)을 남기고만 예약하므로, 정규 주기만으로
+# 넘치는 한도(예: 1,000)에서는 다시 부르지 않는다 — 시험도 실제 한도를 쓴다.
+RV_BUDGET = settings.budget_rainviewer
 
 
 @pytest.fixture
@@ -118,7 +122,7 @@ async def test_radar_read_timeout_is_retried_once_and_the_cycle_is_ok(no_wait, c
 
     caplog.set_level(logging.INFO, logger="job.weather")
     r = FakeRedis()
-    ctx = make_ctx(r, limits={"rainviewer": 1000})
+    ctx = make_ctx(r, limits={"rainviewer": RV_BUDGET})
     runs = _runs(ctx)
     rv = FlakyRadar([_read_timeout(RV_URL)])
     await RadarJob(rv, ctx).run_once()
@@ -230,7 +234,7 @@ async def test_radar_retry_that_fails_again_records_one_error(no_wait, caplog):
     from wakeline_collector.jobs.weather import RadarJob
 
     r = FakeRedis()
-    ctx = make_ctx(r, limits={"rainviewer": 1000})
+    ctx = make_ctx(r, limits={"rainviewer": RV_BUDGET})
     runs = _runs(ctx)
     rv = FlakyRadar([httpx.ConnectTimeout(""), httpx.ConnectTimeout("")])
     await RadarJob(rv, ctx).run_once()
@@ -255,11 +259,12 @@ async def test_http_errors_throttling_and_bad_shapes_are_never_retried(no_wait, 
     from wakeline_collector.jobs.weather import RadarJob
 
     r = FakeRedis()
-    ctx = make_ctx(r, limits={"rainviewer": 1000})
+    ctx = make_ctx(r, limits={"rainviewer": RV_BUDGET})
     rv = FlakyRadar([error])
     await RadarJob(rv, ctx).run_once()
     assert rv.calls == 1 and no_wait == []
-    assert (await ctx.budget.usage("rainviewer"))[0] == 1
+    # 보낸 호출은 예산 1 — 속도 상한이 막은 호출(Throttled)은 보내지 않았으므로 돌려준다
+    assert (await ctx.budget.usage("rainviewer"))[0] == (0 if isinstance(error, Throttled) else 1)
     warns = _warnings(caplog)
     assert len(warns) == 1 and warns[0].startswith("radar/rainviewer failed: frames — "), warns
     assert "retried" not in warns[0]
@@ -316,7 +321,7 @@ async def test_retry_passes_through_the_rate_limiter(no_wait):
         return httpx.Response(200, content=body)
 
     r = FakeRedis()
-    ctx = make_ctx(r, limits={"rainviewer": 1000})
+    ctx = make_ctx(r, limits={"rainviewer": RV_BUDGET})
     with respx.mock:
         respx.get(RV_URL).mock(side_effect=respond)
         await RadarJob(RainViewerProvider(http), ctx).run_once()
@@ -367,3 +372,149 @@ async def test_fixture_mode_retry_reserves_no_budget(no_wait):
     rv = FlakyRadar([_read_timeout(RV_URL)])
     await RadarJob(rv, ctx).run_once()
     assert rv.calls == 2 and (await ctx.budget.usage("rainviewer"))[0] == 0
+
+
+# ---- 예산: 다시 부르기는 정규 주기의 몫을 쓰지 않고, 보내지 않은 호출은 예산을 돌려준다(리뷰) -------------------------------------
+@pytest.fixture
+def fake_now(monkeypatch):
+    """다시 부르기 여유 계산이 읽는 시각(UTC). 예산 키 날짜는 실제 날짜 그대로 — 시험 하루가 한 예산 날이다."""
+    from datetime import UTC, datetime
+
+    from wakeline_collector.jobs import weather as mod
+
+    now = [datetime(2026, 9, 29, 0, 0, 0, tzinfo=UTC)]
+    monkeypatch.setattr(mod, "_now", lambda: now[0])
+    return now
+
+
+async def _radar_day(ctx, rv, no_wait, fake_now) -> list[dict]:
+    """UTC 하루 동안 RadarJob 을 run_periodic 처럼 돌린다: 주기가 끝난 뒤 radar_poll_s(60 s) 쉰다 — 다시 불렀으면 5 s 가 더 붙는다."""
+    from datetime import timedelta
+
+    from wakeline_collector.jobs.weather import RadarJob
+
+    runs = _runs(ctx)
+    job = RadarJob(rv, ctx)
+    end = fake_now[0] + timedelta(days=1)
+    while fake_now[0] < end:
+        waited = len(no_wait)
+        await job.run_once()
+        fake_now[0] += timedelta(seconds=ctx.rt.radar_poll_s + 5.0 * (len(no_wait) - waited))
+    return runs
+
+
+async def test_a_day_of_connect_errors_spends_no_rainviewer_budget(no_wait, fake_now):
+    """리뷰: 연결 실패가 빠르게 끝나는 긴 장애에서 주기마다 2(첫 호출 + 다시 부르기)를 써 약 18 h 뒤 일일 예산 2,000 이 바닥나고
+    RainViewer 가 돌아와도 UTC 자정까지 budget_exhausted 였다. 연결조차 못 한 호출(NOT_SENT_ERRORS)은 보내지 않았으므로 예산을 돌려준다
+    (aircraft · route 와 같다) — 하루 내내 ConnectError 여도 사용량이 쌓이지 않는다."""
+    from wakeline_collector.config import settings
+
+    ctx = make_ctx(FakeRedis(), limits={"rainviewer": settings.budget_rainviewer})
+    rv = FlakyRadar([])
+    rv.errors = _Always(lambda: httpx.ConnectError("connection refused"))  # type: ignore[assignment]
+    runs = await _radar_day(ctx, rv, no_wait, fake_now)
+    assert len(runs) > 1300 and {run["status"] for run in runs} == {"error"}  # 주기마다 다시 불렀다(65 s 주기)
+    assert (await ctx.budget.usage("rainviewer"))[0] == 0
+
+
+async def test_a_day_of_sent_transient_errors_never_exhausts_the_regular_radar_budget(no_wait, fake_now):
+    """보낸 뒤의 일시 오류(여기서는 곧바로 끊기는 RemoteProtocolError — 보낸 호출로 센다)가 하루 내내여도, 다시 부르기는 남은 하루의
+    정규 주기 몫(radar_poll_s 60 s → 남은 초 // 60 + 1)을 남기고만 예약하므로 정규 주기가 예산 소진으로 막히지 않는다."""
+    from wakeline_collector.config import settings
+
+    ctx = make_ctx(FakeRedis(), limits={"rainviewer": settings.budget_rainviewer})
+    rv = FlakyRadar([])
+    rv.errors = _Always(lambda: httpx.RemoteProtocolError("Server disconnected without sending a response."))  # type: ignore[assignment]
+    runs = await _radar_day(ctx, rv, no_wait, fake_now)
+    statuses = [run["status"] for run in runs]
+    assert "budget_exhausted" not in statuses and set(statuses) == {"error"}
+    used = (await ctx.budget.usage("rainviewer"))[0]
+    assert used is not None and used <= settings.budget_rainviewer
+    assert len(no_wait) > 300  # 여유가 있는 동안은 여전히 다시 부른다
+
+
+def test_retry_headroom_is_the_regular_schedules_remaining_calls_until_utc_midnight():
+    """다시 부르기가 남겨 둘 몫 = 예산 날(UTC)이 끝날 때까지 정규 주기의 최대 호출 수(설정값 계산): 남은 주기 ≤ 남은 초 // 주기 + 1.
+    AWC 는 SIGMET(국제·미국 2) 과 METAR(상자 최대 2) 가 한 예산을 나눈다."""
+    from datetime import UTC, datetime
+
+    from fakes import FakeRt
+
+    from wakeline_collector.jobs.weather import retry_headroom
+
+    rt = FakeRt()
+    midnight = datetime(2026, 9, 29, 0, 0, 0, tzinfo=UTC)
+    assert retry_headroom(rt, "rainviewer", midnight) == 86400 // 60 + 1
+    assert retry_headroom(rt, "awc", midnight) == (86400 // 300 + 1) * 2 + (86400 // 600 + 1) * 2
+    late = datetime(2026, 9, 29, 23, 59, 30, tzinfo=UTC)
+    assert retry_headroom(rt, "rainviewer", late) == 1 and retry_headroom(rt, "awc", late) == 4
+
+
+async def test_retry_is_not_reserved_from_the_regular_cycles_share(no_wait, fake_now):
+    """자정(UTC)에 레이더 정규 주기 몫은 1,441 — 한도 2,000 이면 사용량 559 부터는 다시 부르지 않는다(첫 호출은 그대로 한다)."""
+    from wakeline_collector.budget import day_key
+    from wakeline_collector.config import settings
+    from wakeline_collector.jobs.weather import RadarJob
+
+    limit = settings.budget_rainviewer
+    share = 86400 // 60 + 1
+    for used_before, retried in ((limit - share - 2, True), (limit - share - 1, False)):
+        r = FakeRedis()
+        ctx = make_ctx(r, limits={"rainviewer": limit})
+        await r.hincrby(day_key("rainviewer"), "used", used_before)
+        rv = FlakyRadar([_read_timeout(RV_URL), _read_timeout(RV_URL)])
+        no_wait.clear()
+        await RadarJob(rv, ctx).run_once()
+        assert (rv.calls == 2) is retried and (no_wait == [5.0]) is retried, used_before
+
+
+@pytest.mark.parametrize(
+    ("errors", "used"),
+    [
+        ([httpx.ConnectError(""), httpx.ConnectError("")], 0),  # 두 시도 모두 연결 전 실패 — 둘 다 돌려준다
+        ([httpx.ConnectTimeout(""), _read_timeout(RV_URL)], 1),  # 첫 시도만 보내지 않았다
+        ([httpx.PoolTimeout("")] * 2, 0),
+        ([Throttled("api.rainviewer.com", "no slot within 10.0 s")], 0),  # 속도 상한이 막았다 — 보내지 않았다
+        ([_read_timeout(RV_URL), _read_timeout(RV_URL)], 2),  # 보낸 뒤 시간 초과 — 보낸 호출로 센다(과대 집계는 안전 쪽)
+    ],
+    ids=["connect-twice", "connect-then-read", "pool", "throttled", "read-twice"],
+)
+async def test_calls_that_were_never_sent_give_back_their_budget_unit(no_wait, errors, used):
+    from wakeline_collector.config import settings
+    from wakeline_collector.jobs.weather import RadarJob
+
+    ctx = make_ctx(FakeRedis(), limits={"rainviewer": settings.budget_rainviewer})
+    await RadarJob(FlakyRadar(list(errors)), ctx).run_once()
+    assert (await ctx.budget.usage("rainviewer"))[0] == used
+
+
+async def test_sigmet_international_failure_gives_back_the_unit_for_the_us_call_it_never_made(fixtures_dir, no_wait):
+    """세트는 예산 2(국제 · 미국)를 먼저 예약한다 — 국제 호출이 실패해 미국 호출을 하지 않으면 그 1 을 돌려준다."""
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"awc": 2000})
+    from wakeline_collector.jobs.weather import SigmetJob
+
+    awc = FlakyAwc(fixtures_dir, intl=[_read_timeout(AWC_ISIGMET), _read_timeout(AWC_ISIGMET)])
+    await SigmetJob(awc, ctx).run_once()
+    assert awc.intl_calls == 2 and awc.us_calls == 0
+    assert (await ctx.budget.usage("awc"))[0] == 2  # 국제 두 시도(보냄) — 미국 몫은 돌려줬다
+
+
+async def test_fixture_mode_never_releases_budget(no_wait):
+    """fixture 모드는 예약하지 않으므로 돌려주지도 않는다(사용량이 음수가 되지 않게)."""
+    from wakeline_collector.jobs.weather import RadarJob
+
+    ctx = make_ctx(FakeRedis(), limits={"rainviewer": 2000}, fixture=True)
+    await RadarJob(FlakyRadar([httpx.ConnectError(""), httpx.ConnectError("")]), ctx).run_once()
+    assert (await ctx.budget.usage("rainviewer"))[0] == 0
+
+
+class _Always(list):
+    """FlakyRadar.errors 대신: 비지 않은 목록처럼 보이고 pop 마다 새 오류를 만든다."""
+
+    def __init__(self, make) -> None:
+        super().__init__([None])
+        self._make = make
+
+    def pop(self, _i: int = -1):  # type: ignore[override]
+        return self._make()

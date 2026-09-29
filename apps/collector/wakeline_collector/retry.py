@@ -5,6 +5,11 @@ RainViewer)도 같은 규칙을 쓴다.
   프로토콜 오류(RemoteProtocolError). 그 밖 — HTTP 오류(ProviderHttpError, 4xx · 5xx) · 속도 상한(Throttled) · 응답 모양 오류(ValueError)
   등 — 은 다시 부르지 않는다.
 - 실패한 호출마다 한 번, RETRY_DELAY_S 뒤. 그 전에 예산 1 을 따로 예약한다(reserve) — 예약하지 못하면 다시 부르지 않는다(INFO 한 줄).
+  기상 작업은 이 예약에 여유(headroom)를 둔다 — 남은 하루의 정규 주기 몫을 남기고만 다시 부른다(jobs/weather.py retry_headroom).
+- 보내지 않은 시도(NOT_SENT: http.NOT_SENT_ERRORS — 연결 전 실패 · 연결 풀 대기 초과 등 — 와 속도 상한 Throttled)는 시도마다
+  release() 로 예산 1 을 돌려준다(첫 시도 몫은 호출자가 예약한 것, 다시 부른 몫은 reserve 가 예약한 것). aircraft · route 작업과 같은
+  규칙이다 — 연결조차 못 한 긴 장애에서 예산이 쌓여 바닥나지 않게. 보낸 뒤의 실패(읽기 시간 초과 · 전체 상한 RequestTimedOut ·
+  프로토콜 오류)는 보낸 호출로 센다(과대 집계는 안전 쪽).
 - 다시 부른 호출도 공급자 → HttpClient 를 지나므로 속도 상한(RateLimiter) 허가를 받는다(우회하지 않는다). 허가를 못 받으면 Throttled 로
   끝나고, 그것은 다시 부르지 않는다.
 - 로그: 다시 부르기 전 INFO 한 줄(단계 · 오류 · 걸린 시간). 최종 실패의 WARN 은 호출자가 한 번 남긴다 — CallFailed.log_text() 가 단계 ·
@@ -23,12 +28,17 @@ import httpx
 
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.errors import LIMIT, describe_error
+from wakeline_collector.http import NOT_SENT_ERRORS
+from wakeline_collector.ratelimit import Throttled
 
 RETRY_DELAY_S = 5.0  # 일시 오류 뒤 다시 부르기 전 기다림(선택값). 다시 부르기는 실패한 호출마다 한 번
 # 다시 불러 볼 만한 일시 오류. RequestTimedOut(전체 상한 초과)은 httpx.TimeoutException 하위라 여기 든다.
 RETRY_ERRORS: tuple[type[Exception], ...] = (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError)
+# 보내지 않은 시도 — 예산을 돌려준다. ConnectTimeout · PoolTimeout 은 TimeoutException 하위라 다시 부르기도 한다.
+NOT_SENT: tuple[type[Exception], ...] = (*NOT_SENT_ERRORS, Throttled)
 
 Reserve = Callable[[], Awaitable[tuple[bool, int]]]  # (허용 여부, 예약 후 사용량 | budget.UNKNOWN)
+Release = Callable[[], Awaitable[None]]  # 예산 1 돌려주기(실패는 삼킨다 — budget.release)
 Sleep = Callable[[float], Awaitable[None]]
 
 
@@ -69,15 +79,24 @@ async def call_retry_once[T](
     log: logging.Logger,
     label: str,
     sleep: Sleep = asyncio.sleep,
+    release: Release | None = None,
 ) -> T:
     """step 호출. 실패는 모두 CallFailed(단계 · 걸린 시간)로 올린다. 일시 오류(RETRY_ERRORS)면 reserve() 로 예산 1 을 예약할 수 있을 때
-    RETRY_DELAY_S 뒤 한 번 다시 부른다. label 은 로그 앞머리(예: 'kma radar' · 'sigmet/awc')."""
+    RETRY_DELAY_S 뒤 한 번 다시 부른다. label 은 로그 앞머리(예: 'kma radar' · 'sigmet/awc').
+    release 가 있으면 보내지 않은 시도(NOT_SENT)마다 한 번 부른다(예산을 쓰지 않는 fixture 모드는 None)."""
+
+    async def give_back(e: BaseException) -> None:
+        if release is not None and isinstance(e, NOT_SENT):
+            await release()
+
     t0 = time.monotonic()
     try:
         return await fn()
     except RETRY_ERRORS as e:
         first, first_s = e, time.monotonic() - t0
+        await give_back(e)
     except Exception as e:  # noqa: BLE001 — 호출자가 종류별로 나눈다(해석 불가 · 아직 없음 · 실패)
+        await give_back(e)
         raise CallFailed(step, e, time.monotonic() - t0) from e
     ok, used = await reserve()
     if not ok:
@@ -96,4 +115,5 @@ async def call_retry_once[T](
     try:
         return await fn()
     except Exception as e:  # noqa: BLE001
+        await give_back(e)
         raise CallFailed(step, e, time.monotonic() - t1, first=(first, first_s)) from e

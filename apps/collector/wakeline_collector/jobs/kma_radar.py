@@ -14,7 +14,10 @@
 - 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류 — retry.RETRY_ERRORS)는 실패한 호출마다 같은 주기 안에서 RETRY_DELAY_S 뒤 한 번 다시
   부른다(예산 1 을 따로 예약한다 — 규칙은 retry.py, 기상 작업도 같은 것을 쓴다). 다시 불러도 실패하면 그 주기를 끝낸다(남은 tm 은 다음 주기).
   전날 목록은 덧붙이는 것이라 다시 부르지 않는다. HTTP 오류(ProviderHttpError — 403 활용신청 전 등)·속도 상한(Throttled)도 다시 부르지
-  않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다).
+  않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다). 보내지 않은 시도(연결 전 실패 · 연결 풀 대기 초과 · 속도 상한 — retry.NOT_SENT)는
+  예산 1 을 돌려준다(전날 목록 포함). 다시 부르기 예약에는 기상 작업과 달리 여유(headroom)를 두지 않는다 — 정규 호출 수가 주기마다
+  다르고(목록 1 + 바이너리 0–4, 상한 5 × 288 = 1,440 > 한도 1,000) 계속 실패하는 서버에서는 첫 호출이 두 번 실패하는 즉시 주기가 끝나
+  하루 최대 2 × 288 = 576 이다(설정값 계산).
 - 주기 길이(설정값으로 계산한 상한 — 잰 값이 아니다): 최악은 다시 부른 호출이 모두 첫 시도에서 전체 상한(KMA_TOTAL_S 40 s)을 채우고
   실패한 뒤 다시 40 s 걸려 성공하는 경우다 — 오늘 목록 (40 + 5 + 40) + 전날 목록 40(KST 00:00–00:14 만) + 바이너리 4 × (40 + 5 + 40) = 465 s.
   속도 상한 대기(호출마다 최대 DEFAULT_WAIT_S 10 s, 최대 11번)는 전체 상한 밖이라 더 붙을 수 있다(+110 s). 주기(300 s)를 넘을 수 있지만
@@ -46,7 +49,7 @@ from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
-from wakeline_collector.retry import CallFailed, call_retry_once
+from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
 
 log = logging.getLogger("job.kma_radar")
 KEY_META = "wakeline:radar_kr:meta"  # hash
@@ -169,6 +172,7 @@ class KmaRadarJob:
             log=log,
             label="kma radar",
             sleep=lambda s: _sleep(s),
+            release=lambda: self.ctx.budget.release(self.p.name, 1),  # 보내지 않은 시도(연결 전 실패 · 속도 상한)는 돌려준다
         )
 
     async def _reserve(self, started: datetime) -> bool:
@@ -219,6 +223,8 @@ class KmaRadarJob:
         try:
             prev = await self.p.file_list(prev_day)  # 덧붙이는 목록 — 다시 부르지 않는다(재시도는 오늘 목록·바이너리 몫)
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
+                await self.ctx.budget.release(self.p.name, 1)
             log.warning(
                 "kma radar: previous-day listing %s — %s after %.1f s — using today's only",
                 prev_day,

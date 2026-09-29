@@ -3,7 +3,9 @@
 발행(Redis)이 먼저, DB 기록은 큐에 넣기만 한다(비동기 writer). 상태 기록의 Redis 오류는 삼킨다.
 
 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류)는 공급자 호출마다 같은 주기 안에서 5 s 뒤 한 번 다시 부른다 — KMA 와 같은 규칙(retry.py):
-예산 1 을 따로 예약하고(fixture 모드는 예산을 쓰지 않는다), 다시 부른 호출도 속도 상한을 지난다. HTTP 오류(ProviderHttpError)·속도 상한
+예산 1 을 따로 예약하고(fixture 모드는 예산을 쓰지 않는다), 다시 부른 호출도 속도 상한을 지난다. 그 예약은 남은 하루(UTC)의 정규 주기 몫을
+남기고만 한다(retry_headroom — 하루 내내 일시 오류여도 정규 주기가 budget_exhausted 로 막히지 않게), 보내지 않은 시도(연결 전 실패 · 연결 풀
+대기 초과 · 속도 상한)는 예산 1 을 돌려준다(aircraft · route 와 같다). HTTP 오류(ProviderHttpError)·속도 상한
 (Throttled)·응답 모양 오류는 다시 부르지 않는다. 다시 불러 살리면 경고 없이 INFO 한 줄, 다시 불러도 실패하면 경고 한 번(단계 · 걸린 시간 ·
 첫 시도)과 같은 내용의 상태 last_error · 실행 기록. 5 s · 한 번은 선택값이다(2026-09-29 관찰: AWC SIGMET 호출 하나가 "ReadTimeout —
 read 제한 8 s 초과 (aviationweather.gov)" 로 실패해 그 주기를 잃었고 다음 주기는 성공했다 — 응답 시간을 재서 정한 값이 아니다).
@@ -16,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wakeline_collector.budget import UNKNOWN
@@ -35,19 +37,53 @@ log = logging.getLogger("job.weather")
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
 
+def _now() -> datetime:  # 다시 부르기 여유 계산의 시각 — 시험이 바꿔 끼운다
+    return datetime.now(UTC)
+
+
+# 공급자별 정규 주기: (주기 설정 이름 — RuntimeSettings, 주기마다 최대 호출 수). 같은 예산을 쓰는 작업을 모두 적는다.
+# AWC = SIGMET(국제 · 미국 2) + METAR(상자 최대 2 — 날짜변경선, geo.boxes_around). RainViewer = 레이더 프레임 목록 1.
+REGULAR_CALLS: dict[str, tuple[tuple[str, int], ...]] = {
+    "awc": (("sigmet_poll_s", 2), ("metar_poll_s", 2)),
+    "rainviewer": (("radar_poll_s", 1),),
+}
+
+
+def retry_headroom(rt: Any, provider: str, now: datetime) -> int:
+    """다시 부르기 예약이 남겨 둘 몫: 예산 날(UTC — budget.day_key)이 끝날 때까지 정규 주기가 이 공급자 예산에서 더 쓸 수 있는 최대
+    호출 수. 지금 주기 설정으로 계산한 상한이다(잰 값이 아니다) — run_periodic 은 주기가 끝난 뒤 주기만큼 쉬므로 남은 주기는
+    남은 초 // 주기 + 1(지금 돌거나 곧 시작할 주기 하나) 이하다. 다시 부르기는 사용량 + 1 ≤ 한도 − 이 값일 때만 예약하므로(budget
+    headroom) 하루 내내 일시 오류여도 정규 주기가 예산 소진으로 막히지 않는다. 정규 주기만으로 한도를 넘는 설정이면 다시 부르지 않는다."""
+    now = now.astimezone(UTC)
+    left = ((now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0) - now).total_seconds()
+    return sum((int(left // getattr(rt, name)) + 1) * calls for name, calls in REGULAR_CALLS.get(provider, ()))
+
+
 def _iso(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 async def _call[T](ctx: JobContext, job: str, provider: str, step: str, fn: Callable[[], Awaitable[T]]) -> T:
-    """공급자 호출 하나. 일시 오류면 5 s 뒤 한 번 다시 부른다(예산 1 추가 예약 · 속도 상한 통과 — retry.py). 실패는 모두 CallFailed."""
+    """공급자 호출 하나. 일시 오류면 5 s 뒤 한 번 다시 부른다(예산 1 추가 예약 — 남은 하루의 정규 주기 몫을 남기고만 · 속도 상한 통과 —
+    retry.py). 보내지 않은 시도(연결 전 실패 · 속도 상한)는 예산 1 을 돌려준다. 실패는 모두 CallFailed."""
 
     async def reserve() -> tuple[bool, int]:
         if ctx.fixture:  # fixture 모드는 예산을 쓰지 않는다(_guard 와 같다)
             return True, 0
-        return await ctx.budget.reserve(provider, 1)
+        return await ctx.budget.reserve(provider, 1, headroom=retry_headroom(ctx.rt, provider, _now()))
 
-    return await call_retry_once(step, fn, reserve=reserve, log=log, label=f"{job}/{provider}", sleep=lambda s: _sleep(s))
+    async def release() -> None:
+        await ctx.budget.release(provider, 1)
+
+    return await call_retry_once(
+        step,
+        fn,
+        reserve=reserve,
+        log=log,
+        label=f"{job}/{provider}",
+        sleep=lambda s: _sleep(s),
+        release=None if ctx.fixture else release,
+    )
 
 
 async def _guard(ctx: JobContext, job: str, provider: str, cost: int, coro_factory) -> tuple[datetime, Any | None]:
@@ -239,7 +275,12 @@ class SigmetJob:
 
     async def _fetch_both(self):
         ctx, name = self.ctx, self.awc.name
-        intl = await _call(ctx, "sigmet", name, "isigmet", self.awc.isigmet)  # 실패하면 _guard 가 기록한다(발행하지 않음)
+        try:
+            intl = await _call(ctx, "sigmet", name, "isigmet", self.awc.isigmet)  # 실패하면 _guard 가 기록한다(발행하지 않음)
+        except CallFailed:
+            if not ctx.fixture:  # 세트 예산 2 중 미국 호출 몫 — 부르지 않으므로 돌려준다
+                await ctx.budget.release(name, 1)
+            raise
         try:
             us, err = await _call(ctx, "sigmet", name, "airsigmet", self.awc.airsigmet), None
         except CallFailed as f:  # 미국 경보 실패는 국제 경보를 막지 않는다(직전 미국 세트를 싣는다)

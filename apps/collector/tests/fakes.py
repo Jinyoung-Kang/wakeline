@@ -245,6 +245,9 @@ class FakeRt:
     region: tuple[float, float, int] = (36.5, 127.8, 250)
     global_enabled: bool = True
     region_poll_s: int = 10
+    sigmet_poll_s: int = 300  # 기상 작업 주기 — config 기본값과 같다(다시 부르기 여유 계산이 읽는다)
+    radar_poll_s: int = 60
+    metar_poll_s: int = 600
 
 
 class RecordingDb(Db):
