@@ -1,0 +1,57 @@
+# 상황판 KST · 스트림 보존 창 배포(2026-09-29 05:02Z, HEAD 058555a) 뒤 개발 스택 관찰 — 읽기 전용(Redis · api 지표 · 수집기 로그)
+
+== 05:03:33Z
+ais trims=0 collector trims=0 ships_mem=16958213 used_memory_human:63.10M
+wakeline_stream_window_seconds{stream="wakeline:aircraft"} 9028.6
+wakeline_stream_window_seconds{stream="wakeline:ships"} 6281.1
+== 05:13:33Z
+ais trims=0 collector trims=0 ships_mem=18792005 used_memory_human:64.89M
+wakeline_stream_window_seconds{stream="wakeline:aircraft"} 9028.8
+wakeline_stream_window_seconds{stream="wakeline:ships"} 6881.4
+== 05:23:34Z
+ais trims=0 collector trims=0 ships_mem=20343357 used_memory_human:66.44M
+wakeline_stream_window_seconds{stream="wakeline:aircraft"} 9027.2
+wakeline_stream_window_seconds{stream="wakeline:ships"} 7481.7
+== 05:33:34Z
+ais trims=0 collector trims=0 ships_mem=21881125 used_memory_human:68.03M
+wakeline_stream_window_seconds{stream="wakeline:aircraft"} 9028.1
+wakeline_stream_window_seconds{stream="wakeline:ships"} 8082.0
+== 05:43:34Z
+ais trims=0 collector trims=0 ships_mem=23428121 used_memory_human:69.29M
+wakeline_stream_window_seconds{stream="wakeline:aircraft"} 9020.8
+wakeline_stream_window_seconds{stream="wakeline:ships"} 8682.1
+== 05:53:34Z
+ais trims=0 collector trims=0 ships_mem=24281028 used_memory_human:70.16M
+wakeline_stream_window_seconds{stream="wakeline:aircraft"} 9031.7
+wakeline_stream_window_seconds{stream="wakeline:ships"} 9032.3
+== collector since 2026-09-29T05:03:33Z
+2026-09-29 05:13:09,694 INFO job.kma_radar: kma radar: listing 20260929 — ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr) after 15.1 s — retrying once in 5 s
+2026-09-29 05:13:29,802 WARNING job.kma_radar: kma radar: listing 20260929 — ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr) after 15.1 s; retried once after 5 s (first attempt: ReadTimeout after 15.1 s)
+2026-09-29 05:35:26,611 WARNING job.aircraft: region: adsb_lol rate limited (429) — backing off 300 s, deferred 120 min; next: 'adsb_fi takes over'
+== switches
+job region from adsb_lol to adsb_fi reason fallback — adsb_lol 429 반복 → 120분 뒤로 미룸 at 2026-09-29T05:35:36.754252Z
+job region from adsb_fi to adsb_lol reason recovery — adsb_lol 미룸 끝(1순위 복귀) at 2026-09-29T05:34:05.093684Z
+job region from adsb_lol to adsb_fi reason fallback — adsb_lol 429 반복 → 60분 뒤로 미룸 at 2026-09-29T04:34:05.619075Z
+job region from adsb_fi to adsb_lol reason recovery — adsb_lol 미룸 끝(1순위 복귀) at 2026-09-29T04:32:33.114533Z
+job region from adsb_lol to adsb_fi reason fallback — adsb_lol 429 반복 → 60분 뒤로 미룸 at 2026-09-29T03:32:36.431137Z
+job region from adsb_fi to adsb_lol reason recovery — adsb_lol 미룸 끝(1순위 복귀) at 2026-09-29T03:30:41.421983Z 
+== ratelimit
+wakeline:provider:adsb_lol:ratelimit:region ttl=7011 6 7200
+
+== KMA 합성 레이더: 저장된 원본(raw_ref)을 수집기 안에서 다시 해석 — 헤더의 레이더 지점 수
+050017_499204.bin.gz tm 1355 KST · 지점 12 · 에코 셀 28365
+050753_524773.bin.gz tm 1400 KST · 지점 15 · 에코 셀 32564
+051831_593731.bin.gz tm 1405 KST · 지점 15 · 에코 셀 32968
+051832_260683.bin.gz tm 1410 KST · 지점 15 · 에코 셀 33804
+051832_690209.bin.gz tm 1415 KST · 지점 5 · 에코 셀 1455
+052837_076466.bin.gz tm 1420 KST · 지점 15 · 에코 셀 37647
+053339_460113.bin.gz tm 1425 KST · 지점 15 · 에코 셀 38060
+053340_285744.bin.gz tm 1430 KST · 지점 7 · 에코 셀 9122
+053842_873406.bin.gz tm 1435 KST · 지점 12 · 에코 셀 37948
+054344_992264.bin.gz tm 1440 KST · 지점 7 · 에코 셀 8587
+054847_667550.bin.gz tm 1445 KST · 지점 9 · 에코 셀 17548
+055349_923126.bin.gz tm 1450 KST · 지점 7 · 에코 셀 7950
+
+== 같은 tm 을 약 17분 뒤 다시 받음(05:5xZ, 수집기 코드 · 저장 안 함, KMA 호출 2회)
+refetch 202609291440 stations 15 echo>0 42275   (저장본: 지점 7 · 8,587)
+refetch 202609291450 stations 12 echo>0 38652   (저장본: 지점 7 · 7,950)
