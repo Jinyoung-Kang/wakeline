@@ -29,6 +29,13 @@ const TAB_PATH: Record<Tab, string> = {
 const at = (v: unknown): string | number | null => (typeof v === "string" || typeof v === "number" ? v : null);
 /** 일 단위 집계의 날짜 칸 머리글 — 수집기가 UTC 날짜로 센다(예산: budget.py day_key · 격리 수: db.py started_at 의 UTC 날짜) */
 const UTC_DAY_TITLE = "UTC 날짜(수집기가 UTC 날짜마다 센다) — 한국 표준시 날짜가 아니다: KST 09:00 에 날짜가 바뀐다";
+/**
+ * 공급자 표의 사용량 머리글: budget_used 는 수집이 성공할 때만 쓰는 스냅숏이다(collector status.py success() 만 쓰고 failure() 는 건드리지 않는다) —
+ * 실패만 이어지는 공급자(예: 429 백오프)는 이전 UTC 날짜의 값이 남아 있을 수 있다. "지금 날짜의 호출 수" 라고 말하지 않는다.
+ */
+const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 호출 수(그때의 UTC 날짜 — KST 09:00 에 날짜가 바뀐다) · 실패한 호출 뒤로는 갱신되지 않아 지금 날짜의 값이 아닐 수 있다 · 날짜별 값은 아래 Daily budget snapshot";
+/** 원본 칸(격리 detail · DLQ payload head): api 가 준 글자 그대로 — 안의 시각은 수집기가 쓴 UTC 이고 화면의 KST 로 바꾸지 않는다 */
+const RAW_UTC_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 UTC(수집기가 쓴 형식 그대로), 옆 칸의 KST 와 다르다";
 
 /** 표 칸의 시각: 한국 표준시 "MM-DD HH:MM:SS"(머리글이 "(KST)"), title 에 원본 UTC. 모르면 "—" */
 function TimeCell({ v }: { v: unknown }) {
@@ -41,6 +48,7 @@ function TimeCell({ v }: { v: unknown }) {
  * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
  * 시각은 한국 표준시(KST, 사용자 요청 2026-09-29) 날짜 포함 "MM-DD HH:MM:SS" — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
  * 표는 머리글이 "(KST)" 를 말하고 머리글이 없는 자리는 " KST" 를 붙이며, title 에 원본 UTC. 일 단위 집계(예산 · 격리 수)의 day 는 UTC 날짜 그대로("day (UTC)").
+ * 원본 칸(격리 detail · DLQ payload head)은 api 가 준 글자 그대로 — 안의 UTC 시각을 바꾸지 않고 머리글이 "(raw · UTC)" 를 말한다.
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
@@ -137,7 +145,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               Redis 미러가 DB 원본과 다름 — 수집기는 Redis 값을 따른다: {differs.join(", ")} · api 가 60 s 주기로 원본을 다시 미러한다
             </div>
           ) : null}
-          <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title="사용량 = 오늘(UTC 날짜)의 호출 수 — 수집기가 UTC 날짜마다 새로 센다(KST 09:00)">budget used / limit</th><th>remaining (hdr)</th><th>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
+          <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1"; return <tr key={String(p.name)}>
               <td className="mono">{String(p.name)}{off ? <span className="badge bad ml-1" title={sw?.disabled != null ? "원본(DB) 기준" : "Redis 미러 기준(원본 행 없음)"}>disabled</span> : null}</td>
               <TimeCell v={p.last_success_at} /><td className="mono">{fmtLatencyMs(p.last_latency_ms)}</td><td className="mono">{String(p.last_records ?? "—")}</td>
@@ -163,13 +171,13 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="label mb-1">Quarantine counts by rule (7d)</div>
           <table className="mb-4"><thead><tr><th title={UTC_DAY_TITLE}>day (UTC)</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{statsDay(r.day) ?? "—"}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
-          <table><thead><tr><th>at (KST)</th><th>run</th><th>rule</th><th>hex</th><th>detail</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3">{String(r.detail)}</td></tr>)}</tbody></table>
+          <table><thead><tr><th>at (KST)</th><th>run</th><th>rule</th><th>hex</th><th title={`격리 규칙이 남긴 detail JSON — ${RAW_UTC_TITLE}`}>detail (raw · UTC)</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "pipeline" && pipeline ? <OpsPipeline data={pipeline} /> : null}
         {tab === "settings" && settings ? <SettingsForm items={settings.items} onSaved={refresh} onAuthMiss={fail} /> : null}
         {tab === "audit" && audit ? <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
           <tbody>{audit.items.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
-        {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at (KST)</th><th>stream</th><th>kind</th><th>reason</th><th>payload head</th></tr></thead>
+        {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at (KST)</th><th>stream</th><th>kind</th><th>reason</th><th title={`스트림 메시지 앞 200자 — ${RAW_UTC_TITLE}`}>payload head (raw · UTC)</th></tr></thead>
           <tbody>{dlq.items.map((d) => <tr key={String(d.stream_id)}><TimeCell v={d.at} /><td className="mono">{String(d.source_stream)}</td><td>{String(d.kind)}</td><td className="text-bad">{String(d.reason)}</td><td className="mono text-fg-3">{String(d.payload_head)}</td></tr>)}</tbody></table> : <div className="text-fg-3">스키마 검증에 실패한 메시지가 없습니다.</div>) : null}
       </div>
     </div>

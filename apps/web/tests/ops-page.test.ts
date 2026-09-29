@@ -43,6 +43,8 @@ function stubFetch(failing: Set<string>) {
     return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
   });
 }
+/** 남은 UTC 시각: "HH:MM:SS" 뒤에 (소수 초) + "Z" 또는 "±00:00" — 예전 fmtClock/fmtIso 와 api 원본 문자열의 모양 */
+const UTC_TIME = /\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]00:00)/;
 const settle = () => React.act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 const byTestId = (id: string, from: MiniElement = dom.container): MiniElement | null => {
   if (from.getAttribute?.("data-testid") === id) return from;
@@ -220,6 +222,9 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
 describe("ops: every tab shows Korean time; unknown latency is — (not '— ms')", () => {
   /** 사용자가 붙여 넣은 로그와 같은 무렵 — UTC 23 시대라 KST 로는 다음 날 */
   const NOW = "2026-09-28T23:41:14Z";
+  /** 원본 칸(격리 detail · DLQ payload head)은 api 가 준 글자 그대로 — 안의 UTC 시각을 KST 로 바꾸지 않는다(머리글이 "raw · UTC" 를 말한다) */
+  const RAW_DETAIL = '{"seen_at": "2026-09-28T23:59:00+00:00"}'; // quality.py seen_in_future 의 isoformat()
+  const RAW_PAYLOAD = '{"v":1,"fetched_at":"2026-09-28T14:59:58.120Z","items":[';
   const DATA: Record<string, unknown> = {
     "/api/v1/ops/session": { username: "op" },
     "/api/v1/ops/providers": {
@@ -242,10 +247,10 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
         { job: "region", provider: "adsb_fi", status: "ok", n: 40, avg_latency_ms: 250, last_at: "2026-09-28T23:41:00Z" },
       ],
     },
-    "/api/v1/ops/quality": { rule_counts: [{ day: "2026-09-28", rule: "seen_in_future", count: 2 }], recent: [{ id: 1, run_id: 6, rule: "seen_in_future", hex: "abc123", detail: "{}", created_at: "2026-09-28T23:30:00Z" }] },
+    "/api/v1/ops/quality": { rule_counts: [{ day: "2026-09-28", rule: "seen_in_future", count: 2 }], recent: [{ id: 1, run_id: 6, rule: "seen_in_future", hex: "abc123", detail: RAW_DETAIL, created_at: "2026-09-28T23:30:00Z" }] },
     "/api/v1/ops/settings": { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] },
     "/api/v1/ops/audit": { items: [{ id: 1, username: "op", action: "SETTING_UPDATE", target: "region_poll_s", before: "5", after: "10", ip: "127.0.0.1", request_id: "abcd1234abcd1234", at: "2026-09-28T15:00:00Z" }] },
-    "/api/v1/ops/dlq": { items: [{ stream_id: "1-0", at: "2026-09-28T14:59:59Z", source_stream: "wakeline:aircraft", kind: "schema", reason: "bad", payload_head: "{" }] },
+    "/api/v1/ops/dlq": { items: [{ stream_id: "1-0", at: "2026-09-28T14:59:59Z", source_stream: "wakeline:aircraft", kind: "schema", reason: "bad", payload_head: RAW_PAYLOAD }] },
     "/api/v1/ops/pipeline": { collector: {}, api: { last_stream_trim_loss: { stream: "wakeline:aircraft", from: "2026-09-28T23:00:00Z", to: "2026-09-28T23:02:00Z" } }, generated_at: "2026-09-28T23:41:14Z" },
   };
   const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
@@ -266,12 +271,13 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
     await React.act(async () => { (b as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
     await settle();
   };
-  /** 운영 화면 어디에도 UTC "…Z" 시각이나 "— ms" 가 남지 않는다 */
+  /** 운영 화면 어디에도(원본 칸 밖) UTC 시각("…:SSZ" · "…:SS.mmmZ" · "…+00:00")이나 "— ms" 가 남지 않는다 */
   const noUtcNoDashUnit = () => {
-    const text = byTestId("ops-dashboard")!.textContent;
-    expect(text).not.toMatch(/\d\d:\d\d:\d\dZ/);
+    const text = [RAW_DETAIL, RAW_PAYLOAD].reduce((t, raw) => t.split(raw).join(""), byTestId("ops-dashboard")!.textContent);
+    expect(text).not.toMatch(UTC_TIME);
     expect(text).not.toContain("— ms");
   };
+  const th = (label: string) => all((e) => e.tagName === "TH" && e.textContent === label)[0];
   it("providers · runs · quality · settings · audit · dlq · pipeline", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(NOW) });
     vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in DATA ? DATA[url] : { detail: "no such resource" }), { status: url in DATA ? 200 : 404, headers: { "Content-Type": "application/json" } }));
@@ -284,6 +290,11 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
 
     // providers(기본 탭)
     expect(heads()).toEqual(expect.arrayContaining(["last success (KST)", "at (KST)", "day (UTC)"]));
+    // 사용량은 마지막 성공 수집 때의 스냅숏(status.py success() 만 쓴다) — "오늘의 호출 수" 라고 말하지 않는다
+    const budgetTitle = th("budget used / limit").getAttribute("title")!;
+    expect(budgetTitle).toContain("마지막으로 성공한 수집");
+    expect(budgetTitle).toContain("UTC 날짜");
+    expect(budgetTitle).not.toContain("오늘");
     const lol = row("adsb_lol");
     expect(lol[1].textContent).toBe("09-29 08:40:21");
     expect(all((e) => e.getAttribute?.("title") === "원본 UTC 2026-09-28T23:40:21.631Z", lol[1]).length).toBeGreaterThan(0);
@@ -308,8 +319,10 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
     noUtcNoDashUnit();
 
     await tab("quality");
-    expect(heads()).toEqual(["day (UTC)", "rule", "count", "at (KST)", "run", "rule", "hex", "detail"]);
+    expect(heads()).toEqual(["day (UTC)", "rule", "count", "at (KST)", "run", "rule", "hex", "detail (raw · UTC)"]);
     expect(row("09-29 08:30:00")[2].textContent).toBe("seen_in_future");
+    expect(row("09-29 08:30:00")[4].textContent).toBe(RAW_DETAIL); // 원본 그대로(바꾸지 않는다)
+    expect(th("detail (raw · UTC)").getAttribute("title")).toContain("UTC");
     noUtcNoDashUnit();
 
     await tab("settings");
@@ -325,6 +338,9 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
     await tab("dlq");
     expect(heads()[0]).toBe("at (KST)");
     expect(row("09-28 23:59:59")[1].textContent).toBe("wakeline:aircraft"); // 14:59:59Z = KST 자정 1초 전
+    expect(heads()).toContain("payload head (raw · UTC)");
+    expect(row("09-28 23:59:59")[4].textContent).toBe(RAW_PAYLOAD);
+    expect(th("payload head (raw · UTC)").getAttribute("title")).toContain("UTC");
     noUtcNoDashUnit();
 
     await tab("pipeline");
@@ -332,6 +348,13 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
     expect(pipe).toContain("생성 09-29 08:41:14 KST");
     expect(byTestId("ops-pipeline-trim")!.textContent).toContain("wakeline:aircraft · 09-29 08:00:00 KST – 09-29 08:02:00 KST");
     noUtcNoDashUnit();
+  });
+});
+
+describe("the leftover-UTC guard catches every UTC form the old formatters or raw api strings produce", () => {
+  it("…:SSZ · …:SS.mmmZ · …:SS+00:00 match; KST text does not", () => {
+    for (const s of ["23:41:14Z", "23:41:14.906Z", "2026-09-28T23:41:14+00:00", "23:41:14.906-00:00"]) expect(s).toMatch(UTC_TIME);
+    for (const s of ["09-29 08:41:14", "08:41:14 KST", "2026-09-29T08:41:14.906+09:00"]) expect(s).not.toMatch(UTC_TIME);
   });
 });
 
