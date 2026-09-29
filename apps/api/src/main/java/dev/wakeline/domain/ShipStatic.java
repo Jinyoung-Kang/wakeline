@@ -22,11 +22,30 @@ public record ShipStatic(String mmsi, String name, String callSign, Integer imo,
     public static final List<String> FIELDS = List.of("name", "call_sign", "imo", "ship_type", "dim_a", "dim_b", "dim_c", "dim_d", "draught_m",
             "destination", "eta_month", "eta_day", "eta_hour", "eta_minute");
 
-    public ShipStatic {
-        if (received != null) {
-            for (String f : received) if (!FIELDS.contains(f)) throw new IllegalArgumentException("unknown static field: " + f);
-            received = Set.copyOf(received);
+    /**
+     * 받은 필드 묶음의 표준 사본(리뷰 2026-09-30 — api 메모리): 묶음(14비트 · 많아야 16,384가지, 실수신은 몇 가지)마다 하나를 모든 정적 정보가 함께 쓴다.
+     * 원소는 {@link #FIELDS} 의 상수 문자열이다 — payload 에서 읽은 새 문자열과 집합을 정적 정보마다 쥐지 않는다(ShipStore 는 정적 정보를 최대 100,000건
+     * 쥔다: 전에는 3만 건에 약 25 MB). 순서는 FIELDS 순서, 바꿀 수 없다.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Integer, Set<String>> CANONICAL = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 필드 이름 집합 → 표준 사본. 모르는 이름이면 IllegalArgumentException. */
+    static Set<String> canonical(Set<String> fields) {
+        int mask = 0;
+        for (String f : fields) {
+            int i = FIELDS.indexOf(f);
+            if (i < 0) throw new IllegalArgumentException("unknown static field: " + f);
+            mask |= 1 << i;
         }
+        return CANONICAL.computeIfAbsent(mask, m -> {
+            Set<String> names = new LinkedHashSet<>();
+            for (int i = 0; i < FIELDS.size(); i++) if ((m & (1 << i)) != 0) names.add(FIELDS.get(i));
+            return java.util.Collections.unmodifiableSet(names);
+        });
+    }
+
+    public ShipStatic {
+        if (received != null) received = canonical(received);
     }
 
     /** 받은 필드를 모르는 정적 정보(DB 에서 읽은 행 · 이전 수집기 · 시험). */
@@ -66,7 +85,7 @@ public record ShipStatic(String mmsi, String name, String callSign, Integer imo,
         if (received != null) return received;
         Set<String> out = new LinkedHashSet<>();
         for (String f : FIELDS) if (value(f) != null) out.add(f);
-        return Set.copyOf(out);
+        return canonical(out);
     }
 
     /**

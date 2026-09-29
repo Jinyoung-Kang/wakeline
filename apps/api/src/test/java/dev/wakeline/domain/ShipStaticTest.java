@@ -75,6 +75,27 @@ class ShipStaticTest {
         assertThat(required).startsWith("mmsi").endsWith("updated_at", "provider");
     }
 
+    /**
+     * 메모리(리뷰 2026-09-30): api 메모리(ShipStore)는 정적 정보를 최대 100,000건 쥔다 — 받은 필드 집합을 정적 정보마다 새로 만들면(payload 에서 읽은 새 문자열)
+     * 3만 건에 약 25 MB 였다. 같은 묶음은 같은 집합 하나를, 원소는 FIELDS 의 상수 문자열을 함께 쓴다. 겹치기(overlay)의 합집합 · 받은 필드를 모를 때의 written 도.
+     */
+    @Test void equalReceivedSetsShareOneCanonicalInstanceOfTheFieldConstants() throws Exception {
+        List<ShipStatic> many = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            JsonNode map = M.readTree("{\"416009981\":[\"call_sign\",\"name\"]}"); // 매번 새로 읽은 문자열
+            many.add(s("A", "B", null, null, T, ShipCodec.received(map, "416009981")));
+        }
+        assertThat(many.get(1).received()).isSameAs(many.get(0).received()).isSameAs(many.get(2).received());
+        assertThat(many.get(0).received()).containsExactly("name", "call_sign"); // FIELDS 순서
+        for (String f : many.get(0).received()) assertThat(f).isSameAs(ShipStatic.FIELDS.get(ShipStatic.FIELDS.indexOf(f)));
+        assertThatThrownBy(() -> many.get(0).received().add("imo")).isInstanceOf(UnsupportedOperationException.class);
+        ShipStatic other = s("A", "B", null, null, T, Set.of(new String("name"), new String("call_sign")));
+        assertThat(other.received()).isSameAs(many.get(0).received());
+        ShipStatic merged = s(null, null, 37, null, T, Set.of("ship_type")).overlay(many.get(0));
+        assertThat(merged.received()).isSameAs(s(null, null, null, null, T, Set.of("ship_type", "name", "call_sign")).received());
+        assertThat(s("X", null, 30, null, T, null).written()).isSameAs(s(null, null, null, null, T, Set.of("name", "ship_type")).received());
+    }
+
     @Test void codecReadsTheReceivedMapPerMmsi() throws Exception {
         JsonNode map = M.readTree("{\"416009981\":[\"name\",\"call_sign\"],\"416009982\":\"name\"}");
         assertThat(ShipCodec.received(map, "416009981")).containsExactly("name", "call_sign");
