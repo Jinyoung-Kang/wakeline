@@ -7,6 +7,7 @@ import { FakeMap } from "./helpers/fake-maplibre";
 import { getData, resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
+import { fmtDualCompact } from "@/lib/time";
 
 const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[] }));
 
@@ -278,7 +279,7 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     await mountTimeline();
     // 수정 전: "—"와 "0 frames · 5 min · 기상청 HSR 500 m…"만 — 이유는 비활성 버튼의 title 에만 있었다
     const why = byTestId("radar-kr-unavailable");
-    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 10:31:00 KST"); // 01:31:00Z 를 한국 표준시로
+    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 10:31:00 KST · 01:31:00 UTC"); // 01:31:00Z 를 한국 표준시 먼저, UTC 함께
     expect(dom.container.textContent).not.toContain("0 frames · 5 min");
   });
 
@@ -322,7 +323,8 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     return out;
   };
 
-  const hmKstOf = (iso: string) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
+  /** 기한 표기(compact KST · UTC — lib/time, UTC 날짜가 다르면 UTC 쪽에 날짜). 지금 시각에 따라 달라 형식기로 만든다(형식은 tests/dual-time 이 본다) */
+  const dueOf = (iso: string) => fmtDualCompact(iso);
 
   it("KMA timeline: the current frame's composite size, a warn marker for a partial frame and a per-frame strip (partial · at reference · no verdict)", async () => {
     useUi.setState({ radarSource: "kma" });
@@ -332,14 +334,15 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     expect(byTestId("kr-frame-composite")?.textContent).toBe("합성 7/15곳"); // 최신(마지막) 프레임
     const mark = byTestId("kr-frame-partial");
     expect(mark?.textContent).toBe("일부 합성");
-    expect(mark?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — ${hmKstOf(until)} KST까지 다시 받기 대상(지점이 늘면 바꿈)`);
+    expect(mark?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — ${dueOf(until)}까지 다시 받기 대상(지점이 늘면 바꿈)`);
+    expect(mark?.getAttribute("title")).toMatch(/— \d\d:\d\d KST · (\d\d-\d\d )?\d\d:\d\dZ까지/);
     const strip = byTestId("kr-frame-strip");
     expect(strip?.getAttribute("title")).toContain("기준 도달(지난 60분 최대와 같음 — 완전한지는 모름)");
     expect(strip?.getAttribute("title")).not.toContain("= 완전");
     const cells = findAll((n) => n.getAttribute?.("data-kr-frame") != null);
     expect(cells.map((c) => c.getAttribute("data-state"))).toEqual(["unknown", "at_ref", "partial"]);
-    expect(cells[0].getAttribute("title")).toBe("12:00 KST · 합성 —");
-    expect(cells[2].getAttribute("title")).toContain("12:10 KST · 합성 7/15곳 · 일부 지점만 합성(7/15곳)");
+    expect(cells[0].getAttribute("title")).toBe("12:00 KST · 03:00Z · 합성 —"); // 기상청 tm(KST) 과 같은 순간의 UTC
+    expect(cells[2].getAttribute("title")).toContain("12:10 KST · 03:10Z · 합성 7/15곳 · 일부 지점만 합성(7/15곳)");
     // 다른 프레임으로 옮기면 그 프레임의 값: 기준 도달 → 경고 없음, 옛 항목 → "—"
     await act(() => useUi.setState({ krFrameIndex: 1 }));
     expect(byTestId("kr-frame-composite")?.textContent).toBe("합성 15/15곳");
@@ -353,6 +356,6 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     const until = new Date(Date.now() - 60_000).toISOString();
     setData({ radarKr: krFrames(until) as never });
     await mountTimeline();
-    expect(byTestId("kr-frame-partial")?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — 다시 받기 기한 ${hmKstOf(until)} KST 지남`);
+    expect(byTestId("kr-frame-partial")?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — 다시 받기 기한 ${dueOf(until)} 지남`);
   });
 });

@@ -5,10 +5,12 @@ import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { fmtClockKst, fmtEta, fmtKstTitle, fmtUtcTitle, hazardColor } from "@/lib/format";
+import { fmtKstTitle } from "@/lib/time";
+import { fmtEta, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
+import { DualTime } from "./DualTime";
 
 /**
  * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 행을 누르면 목록 안에서 근거 카드를 펼치고(선택하지 않음),
@@ -111,7 +113,7 @@ export function AlertPanel() {
 }
 
 /**
- * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정 · KST)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 — 오래된 진입이 방금 일처럼 보이지 않게.
+ * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정 · KST · UTC)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 — 오래된 진입이 방금 일처럼 보이지 않게.
  * 시각은 고정 문자열이라 aria-live 영역이 1 s 마다 다시 읽히지 않는다(숨길 때 한 번만 바뀐다).
  */
 function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
@@ -122,7 +124,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
       <span className="label mr-1">{ev.type}</span>
       <span className={ev.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[ev.type] ?? ev.type}</span>
       {" · "}<span className="mono">{ev.alert.callsign ?? ev.alert.hex}</span> · {ev.alert.hazard} {ev.alert.fir_id}
-      {" · "}<span className="mono text-fg-3" data-testid="alert-banner-time" title={fmtUtcTitle(serverNowMs(ev.at))}>수신 {fmtClockKst(serverNowMs(ev.at))}</span>
+      {" · "}<span className="text-fg-3" data-testid="alert-banner-time">수신 <DualTime v={serverNowMs(ev.at)} date={false} /></span>
     </div>
   );
 }

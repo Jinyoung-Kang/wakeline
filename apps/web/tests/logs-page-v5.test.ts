@@ -102,18 +102,19 @@ describe("v5-C7 /logs: session gate", () => {
 });
 
 describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
-  it("first request follows §C4 defaults and the rows show time (KST, ms) · level · service · logger · first line · suppressed · request id", async () => {
+  it("first request follows §C4 defaults and the rows show time (KST · UTC, ms) · level · service · logger · first line · suppressed · request id", async () => {
     stubFetch((url) => (url.startsWith("/api/v1/ops/logs?") ? { status: 200, body: FIRST } : undefined));
     await open();
     expect(calls).toContain(`GET ${L.logsUrl(L.DEFAULT_LOG_FILTER, NOW)}`);
     const rows = allByTestId("log-row");
     expect(rows).toHaveLength(2);
     const cells = findAll((e) => e.tagName === "TD", rows[0]).map((c) => c.textContent);
-    expect(cells).toEqual(["09-29 10:59:00.000", "ERROR", "api", "dev.wakeline.ingest.StreamConsumer", `failure ${T(1)}`, "3", "5f2c9a0e1b7d4c3a"]);
-    // 시각은 한국 표준시(사용자 요청) — 머리글이 시간대를 말하고, 칸의 title 에 원본 UTC(서버·컨테이너 로그와 대조)
-    expect(findAll((e) => e.tagName === "TH", byTestId("log-grid")!)[0].textContent).toBe("시각(KST)");
-    expect(findAll((e) => e.tagName === "TD", rows[0])[0].getAttribute("title")).toBe("원본 UTC 2026-09-29T01:59:00.000Z");
-    expect(byTestId("logs-last-ok")!.textContent).toBe("갱신 11:00:00 KST · 15 s 확인");
+    expect(cells).toEqual(["09-29 10:59:00.000 KST · 01:59:00.000 UTC", "ERROR", "api", "dev.wakeline.ingest.StreamConsumer", `failure ${T(1)}`, "3", "5f2c9a0e1b7d4c3a"]);
+    // 시각은 KST 먼저 · UTC 함께(사용자 요청) — 칸은 첫 줄 KST · 둘째 줄 UTC(머리글이 둘 다 말한다), title 에 원본 UTC ISO(서버·컨테이너 로그와 대조)
+    expect(findAll((e) => e.tagName === "TH", byTestId("log-grid")!)[0].textContent).toBe("시각(KST · UTC)");
+    const timeCell = findAll((e) => e.tagName === "TD", rows[0])[0];
+    expect(findAll((e) => e.getAttribute("title") != null, timeCell)[0].getAttribute("title")).toBe("원본 UTC 2026-09-29T01:59:00.000Z");
+    expect(byTestId("logs-last-ok")!.textContent).toBe("갱신 11:00:00 KST · 02:00:00 UTC · 15 s 확인");
     const second = findAll((e) => e.tagName === "TD", rows[1]).map((c) => c.textContent);
     expect([second[1], second[5], second[6]]).toEqual(["WARN", "—", "—"]); // 억제·요청 id 모름은 —
     const status = byTestId("logs-status")!.textContent;
@@ -169,11 +170,11 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     // 같은 지문 묶음 통계(기간 안) · 같은 요청 id 의 다른 항목(자기 자신 제외)
     expect(byTestId("log-fp-stats")!.textContent).toContain("17");
     expect(byTestId("log-fp-stats")!.textContent).toContain("40");
-    expect(byTestId("log-fp-stats")!.textContent).toContain("처음 09-29 10:00:00 KST · 마지막 09-29 10:59:00 KST");
+    expect(byTestId("log-fp-stats")!.textContent).toContain("처음 09-29 10:00:00 KST · 01:00:00 UTC · 마지막 09-29 10:59:00 KST · 01:59:00 UTC");
     const rel = allByTestId("log-related");
     expect(rel).toHaveLength(1);
     expect(rel[0].textContent).toContain("data store unavailable");
-    expect(rel[0].textContent).toContain("09-29 10:58:59.500 KST"); // 머리글 없는 표 — 시간대를 칸에
+    expect(rel[0].textContent).toContain("09-29 10:58:59.500 KST · 01:58:59.500 UTC"); // 머리글 없는 표 — 두 줄(화면 읽기용 시간대 글자 포함)
     await key(list, "c");
     expect(written.at(-1)).toBe(L.logText(L.parseLogPage(FIRST).items[0]));
     await click(button("JSON 복사", d));
@@ -329,8 +330,8 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
     const text = g[0].textContent;
     for (const s of ["0123456789abcdef", "17", "40", "09-29 10:00:00", "09-29 10:59:00", "java.lang.IllegalStateException"]) expect(text).toContain(s);
     const gHeads = findAll((e) => e.tagName === "TH", byTestId("log-list")!).map((h) => h.textContent);
-    expect(gHeads).toContain("처음(KST)");
-    expect(gHeads).toContain("마지막(KST)");
+    expect(gHeads).toContain("처음(KST · UTC)");
+    expect(gHeads).toContain("마지막(KST · UTC)");
     expect(byTestId("logs-status")!.textContent).toContain("잘림"); // scan_truncated 를 숨기지 않는다
     await click(button("묶음 복사", g[0]));
     expect(calls.at(-1)).toContain("fp=0123456789abcdef");
@@ -349,12 +350,12 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
     await click(button("AIS 수신 공백"));
     expect(calls.at(-1)).toBe("GET /api/v1/ais/gaps?from=2026-09-29T01%3A00%3A00.000Z");
     const heads = findAll((e) => e.tagName === "TH", byTestId("ais-gaps")!).map((h) => h.textContent);
-    expect(heads.slice(0, 5)).toEqual(["구역", "시작(KST)", "끝(KST)", "길이", "사유"]);
+    expect(heads.slice(0, 5)).toEqual(["구역", "시작(KST · UTC)", "끝(KST · UTC)", "길이", "사유"]);
     const rows = allByTestId("ais-gap-row").map((r) => findAll((e) => e.tagName === "TD", r).map((c) => c.textContent));
-    expect(rows[0].slice(0, 5)).toEqual(["합계(가장 이른 열린 공백)", "09-29 10:50:00", "진행 중", "10m 00s(응답 시각까지)", "no messages 120 s"]);
-    expect(rows[1].slice(0, 5)).toEqual(["30,120,40,135", "09-29 10:10:00", "09-29 10:13:05", "3m 05s", "ws closed 1006"]);
+    expect(rows[0].slice(0, 5)).toEqual(["합계(가장 이른 열린 공백)", "09-29 10:50:00 KST · 01:50:00 UTC", "진행 중", "10m 00s(응답 시각까지)", "no messages 120 s"]);
+    expect(rows[1].slice(0, 5)).toEqual(["30,120,40,135", "09-29 10:10:00 KST · 01:10:00 UTC", "09-29 10:13:05 KST · 01:13:05 UTC", "3m 05s", "ws closed 1006"]);
     const startCell = findAll((e) => e.tagName === "TD", allByTestId("ais-gap-row")[1])[1];
-    expect(startCell.getAttribute("title")).toBe("원본 UTC 2026-09-29T01:10:00.000Z");
-    expect(byTestId("ais-gaps")!.textContent).toContain("기간 09-29 10:00:00 KST – 09-29 11:00:00 KST");
+    expect(findAll((e) => e.getAttribute("title") != null, startCell)[0].getAttribute("title")).toBe("원본 UTC 2026-09-29T01:10:00.000Z");
+    expect(byTestId("ais-gaps")!.textContent).toContain("기간 09-29 10:00:00 – 09-29 11:00:00 KST · 01:00:00 – 02:00:00 UTC");
   });
 });

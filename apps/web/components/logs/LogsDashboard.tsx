@@ -3,9 +3,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { copyText, downloadText } from "@/lib/copy";
-import { fmtClockKst, fmtTimeKst, fmtUtcTitle } from "@/lib/format";
+import { fmtDualClock, fmtUtcTitle } from "@/lib/time";
 import {
-  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
+  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
   LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
   parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash, pendingEntries, validRid,
   type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
@@ -14,6 +14,7 @@ import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, SESSION_EXPIRED_NOTE, s
 import { AisGapsTable } from "./AisGapsTable";
 import { ErrorNote } from "./ErrorNote";
 import { LogDetail } from "./LogDetail";
+import { DualTime } from "../DualTime";
 
 type Tab = "logs" | "gaps";
 type View = "list" | "groups";
@@ -43,7 +44,7 @@ function initialState(): { filter: LogFilter; openId: string | null; openStream:
  * 시스템 로그 화면(계약 v5 §C7): 필터(서비스 여러 개 · 수준 · 기간 · 글자 · 요청 id) · 보기(목록 / 지문 묶음) · 상세 · 복사 · 내려받기 · AIS 수신 공백 탭.
  * - 15 s 마다 새 항목을 확인하지만 목록은 "새 항목 N건" 단추를 눌러야 바뀐다(보던 줄이 움직이지 않게).
  * - 서버가 말한 한계(스캔 상한 잘림 · 형식 오류로 건너뜀 · 다음 커서)를 그대로 보인다. 모르는 값은 "—".
- * - 시각은 한국 표준시(KST, UTC+9 — 머리글·글자에 적고, title 에 원본 UTC). 텍스트 복사 · .txt 도 KST(+09:00), JSON 복사 · .ndjson 은 api 원본(UTC).
+ * - 시각은 KST 먼저 · UTC 함께(lib/time — 표 칸은 첫 줄 KST · 둘째 줄 UTC, title 에 원본 UTC ISO). 텍스트 복사 · .txt 도 KST(+09:00), JSON 복사 · .ndjson 은 api 원본(UTC).
  * - 세션 만료(ops 호출 401/404 + 세션 확인도 401/404)면 로그인으로(R-12 와 같은 규칙).
  */
 export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
@@ -273,7 +274,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         </div>
         {tab === "logs" ? <>
           <button type="button" className="btn" onClick={() => void load(view, filter)} disabled={loading}>새로 고침</button>
-          <span className="mono text-[11px] text-fg-3" title={`마지막 성공 응답 시각(KST) — 15 s 마다 새 항목을 확인(목록은 단추를 눌러야 바뀜)${lastOk ? ` · ${fmtUtcTitle(lastOk)}` : ""}`} data-testid="logs-last-ok">갱신 {fmtClockKst(lastOk)} · 15 s 확인</span>
+          <span className="mono text-[11px] text-fg-3" title={`마지막 성공 응답 시각(KST · UTC) — 15 s 마다 새 항목을 확인(목록은 단추를 눌러야 바뀜)${lastOk ? ` · ${fmtUtcTitle(lastOk)}` : ""}`} data-testid="logs-last-ok">갱신 {fmtDualClock(lastOk)} · 15 s 확인</span>
         </> : null}
         {err && tab === "logs" ? <span className="text-[11px] text-bad" role="alert"><ErrorNote error={err} onFilterRid={filterRid} /></span> : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span>
@@ -350,7 +351,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         </div>
         <div className="shrink-0 border-b border-line px-3 py-1 text-[10px] text-fg-3">
           수집: api · collector · ais 의 WARN·ERROR(비밀값 가림) + 브라우저 오류(web-client — 브라우저가 보낸 내용, 검증 안 됨, 따로 보관) · {KEEP_TEXT} · 목록은 두 스트림을 시각(스트림 id) 순으로 합침 ·
-          시각 = 한국 표준시(KST, UTC+9 — 원본 UTC 는 시각에 마우스를 올리면 · JSON 복사 · .ndjson 의 ts) ·
+          시각 = 한국 표준시(KST, UTC+9) 먼저 · UTC 함께(원본 UTC ISO 는 시각에 마우스를 올리면 · JSON 복사 · .ndjson 의 ts) ·
           edge(nginx) 로그는 컨테이너 표준 출력에만(수집 에이전트 없음) · 키보드(목록): ↑/↓ 이동 · Enter 상세 · c 텍스트 복사
         </div>
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -361,7 +362,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                 <table role="grid" aria-readonly="true" tabIndex={0} onKeyDown={onKey} aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사"
                   aria-activedescendant={selIdx >= 0 ? rowDomId(entryKey(items[selIdx])) : undefined} data-testid="log-grid">
                   <thead className="sticky top-0 bg-bg-1"><tr>
-                    <th scope="col" title="한국 표준시(UTC+9) — 칸에 마우스를 올리면 원본 UTC">시각(KST)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
+                    <th scope="col" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 칸에 마우스를 올리면 원본 UTC ISO">시각(KST · UTC)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
                     <th scope="col" title="직전 전송 뒤 같은 지문으로 보내지 않은 건수 — — = 필드 없음">억제</th><th scope="col">요청 id</th>
                   </tr></thead>
                   <tbody>{items.map((e) => {
@@ -371,7 +372,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                       ref={(el) => { if (el) rowEls.current.set(k, el); else rowEls.current.delete(k); }}
                       onClick={() => { setSelId(k); openEntry(e); }}
                       className={`cursor-pointer ${k === selId ? "bg-[#1c2a3f]" : "hover:bg-bg-2"} ${detail && entryKey(detail) === k ? "outline outline-1 -outline-offset-1 outline-accent" : ""}`}>
-                      <td className="mono whitespace-nowrap" title={fmtUtcTitle(e.ts)}>{fmtLogTime(e.ts)}</td>
+                      <td className="whitespace-nowrap"><DualTime v={e.ts} variant="cell" ms /></td>
                       <td><span className={LEVEL_BADGE[e.level]}>{e.level}</span></td>
                       <td className="mono whitespace-nowrap">{e.service}{e.untrusted ? <span className="badge ml-1 normal-case!" title="브라우저가 보낸 내용 — 검증 안 됨">untrusted</span> : null}
                         {e.stream === "client" ? <span className="badge ml-1 normal-case!" title={`${LOG_STREAM_KEY.client} — 브라우저 오류 스트림(따로 보관 · 최근 약 ${n(LOG_STREAM_KEEP.client)}건)`}>client</span> : null}</td>
@@ -396,7 +397,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                 <table>
                   <thead className="sticky top-0 bg-bg-1"><tr>
                     <th scope="col">지문(fp)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거 · 예외 종류</th><th scope="col">표본 메시지</th>
-                    <th scope="col">항목</th><th scope="col" title="같은 지문으로 보내지 않은 건수의 합">억제 합</th><th scope="col">처음(KST)</th><th scope="col">마지막(KST)</th><th scope="col"></th>
+                    <th scope="col">항목</th><th scope="col" title="같은 지문으로 보내지 않은 건수의 합">억제 합</th><th scope="col">처음(KST · UTC)</th><th scope="col">마지막(KST · UTC)</th><th scope="col"></th>
                   </tr></thead>
                   <tbody>{groups.groups.map((g) => (
                     <tr key={g.fp} data-testid="log-group">
@@ -407,8 +408,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                       <td className="max-w-[420px] truncate" title={g.sample_message ?? ""}>{g.sample_message ? firstLine(g.sample_message) : "—"}</td>
                       <td className="mono text-right">{g.count ?? "—"}</td>
                       <td className="mono text-right">{g.suppressed ?? "—"}</td>
-                      <td className="mono whitespace-nowrap" title={fmtUtcTitle(g.first_at)}>{fmtTimeKst(g.first_at)}</td>
-                      <td className="mono whitespace-nowrap" title={fmtUtcTitle(g.last_at)}>{fmtTimeKst(g.last_at)}</td>
+                      <td className="whitespace-nowrap"><DualTime v={g.first_at} variant="cell" /></td>
+                      <td className="whitespace-nowrap"><DualTime v={g.last_at} variant="cell" /></td>
                       <td className="whitespace-nowrap">
                         <button type="button" className="btn mr-1" onClick={() => filterFp(g.fp)}>목록으로</button>
                         <button type="button" className="btn" onClick={() => void copyGroup(g)}>묶음 복사</button>

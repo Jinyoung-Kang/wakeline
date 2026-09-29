@@ -1,7 +1,7 @@
 /**
  * 통계(/stats) · 공항(/airports/[icao] · 공항 카드)도 한국 표준시(사용자 요청 2026-09-29 "상황판도 KST로 바꿔") — 실제 react-dom 으로 마운트(최소 DOM + fetch 대역).
- * - 통계: UTC 날짜로 센 집계는 날짜를 KST 로 옮기지 않고 "(UTC 날짜)" 라고 적는다. 하루 안의 시각(시간대별 막대 · 집계 시각)만 KST.
- * - 공항: 관측 · 수신 시각은 KST, METAR · TAF 원문은 발표된 그대로(안의 "…Z" 는 UTC).
+ * - 통계: UTC 날짜로 센 집계는 날짜를 KST 로 옮기지 않고 "(UTC 날짜)" 라고 적는다. 하루 안의 시각(시간대별 막대 · 집계 시각)은 KST(· UTC).
+ * - 공항: 관측 · 수신 시각은 KST 먼저 · UTC 함께(사용자 요청 2026-09-29 "UTC 와 KST 함께"), METAR · TAF 원문은 발표된 그대로(안의 "…Z" 는 UTC).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import { createElement } from "react";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { hourlyRowsKst } from "@/lib/chart";
 import { statsEmptyText } from "@/lib/stats";
+import { unpairedKst } from "./helpers/dual-time";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -43,8 +44,6 @@ async function mount(el: React.ReactElement) {
   await settle();
   await settle();
 }
-/** 남은 UTC 시각: "HH:MM(:SS)" 뒤에 "Z" 또는 " UTC" */
-const UTC_LEFT = /\d\d:\d\d(:\d\d)?(\.\d+)?(Z\b| UTC\b)/;
 
 describe("stats: UTC-day aggregates keep the UTC date; times of day are KST", () => {
   it("hourly rows: bars stay in time order for the UTC day, labelled with the KST hour; the full label names both", () => {
@@ -57,10 +56,10 @@ describe("stats: UTC-day aggregates keep the UTC date; times of day are KST", ()
     // 날짜를 모르면 시각만(날짜를 지어내지 않는다)
     expect(hourlyRowsKst([], null)[15].full).toBe("00시 KST (UTC 15시)");
   });
-  it("empty-state text names the aggregation time in KST", () => {
-    expect(statsEmptyText(false, "2026-09-27", "2026-09-28")).toContain("다음 12:30 KST 집계");
-    expect(statsEmptyText(undefined, "2026-09-27", "2026-09-28")).toContain("집계는 매일 12:30 KST");
-    for (const t of [statsEmptyText(false, "2026-09-27", "2026-09-28"), statsEmptyText(undefined, null, "2026-09-28")]) expect(t).not.toMatch(UTC_LEFT);
+  it("empty-state text names the aggregation time in KST with UTC", () => {
+    expect(statsEmptyText(false, "2026-09-27", "2026-09-28")).toContain("다음 12:30 KST · 03:30 UTC 집계");
+    expect(statsEmptyText(undefined, "2026-09-27", "2026-09-28")).toContain("집계는 매일 12:30 KST · 03:30 UTC");
+    for (const t of [statsEmptyText(false, "2026-09-27", "2026-09-28"), statsEmptyText(undefined, null, "2026-09-28")]) expect(unpairedKst(t)).toEqual([]);
   });
   it("the page: day picker and table say UTC date; chart bars, caption and the hysteresis note use KST", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-29T01:00:00Z") }); // KST 09-29 10:00 → 어제(UTC 날짜) 09-28
@@ -88,14 +87,14 @@ describe("stats: UTC-day aggregates keep the UTC date; times of day are KST", ()
     const heads = all((e) => e.tagName === "TH").map((h) => h.textContent);
     expect(heads).toContain("날짜(UTC 날짜)");
     expect(all((e) => e.tagName === "TD").map((c) => c.textContent)).toContain("2026-09-27");
-    expect(byTestId("hysteresis-caveat")!.textContent).toContain("09-28 00:10:00 KST 이전에 생성된 관측(OBSERVED) 알림");
+    expect(byTestId("hysteresis-caveat")!.textContent).toContain("09-28 00:10:00 KST · 09-27 15:10:00 UTC 이전에 생성된 관측(OBSERVED) 알림");
     expect(byTestId("hysteresis-caveat")!.textContent).toContain("UTC 날짜 2026-09-27 까지");
-    expect(t).toContain("매일 12:30 KST 에 전날(UTC 날짜) 집계");
-    expect(t).not.toMatch(UTC_LEFT);
+    expect(t).toContain("매일 12:30 KST · 03:30 UTC 에 전날(UTC 날짜) 집계");
+    expect(unpairedKst(t)).toEqual([]);
   });
 });
 
-describe("airport weather: observation and reception times in KST; raw METAR/TAF exactly as issued", () => {
+describe("airport weather: observation and reception times in KST with UTC; raw METAR/TAF exactly as issued", () => {
   const METAR = "METAR RKSI 282330Z 27010KT 9999 FEW030 18/12 Q1012 NOSIG";
   const TAF = "TAF RKSI 282300Z 2900/3006 27010KT 9999 FEW030 TX22/2906Z TN14/2921Z";
   const WX = {
@@ -109,15 +108,15 @@ describe("airport weather: observation and reception times in KST; raw METAR/TAF
     const AirportPage = (await import("@/app/airports/[icao]/page")).default;
     await mount(createElement(AirportPage, { params: Promise.resolve({ icao: "rksi" }) }));
     const t = dom.container.textContent;
-    expect(t).toContain("METAR · 09-29 08:30:00 KST");
-    expect(all((e) => e.tagName === "TH").map((h) => h.textContent)).toContain("obs (KST)");
+    expect(t).toContain("METAR · 09-29 08:30:00 KST · 09-28 23:30:00 UTC");
+    expect(all((e) => e.tagName === "TH").map((h) => h.textContent)).toContain("obs (KST · UTC)");
     const cells = all((e) => e.tagName === "TD").map((c) => c.textContent);
-    expect(cells).toContain("09-29 08:30:00");
-    expect(cells).toContain("09-28 23:30:00"); // 14:30Z = 같은 날 KST 23:30
+    expect(cells).toContain("09-29 08:30:00 KST · 09-28 23:30:00 UTC"); // 표 칸: 첫 줄 KST · 둘째 줄 UTC(화면 읽기용 글자 포함)
+    expect(cells).toContain("09-28 23:30:00 KST · 14:30:00 UTC"); // 14:30Z = 같은 날 KST 23:30 — UTC 날짜가 같아 UTC 쪽에 날짜 없음
     expect(t).not.toMatch(/—°|— kt/); // 바람을 모르는 행은 "—" 만(단위 없이)
     const pres = all((e) => e.tagName === "PRE").map((p) => p.textContent);
     expect(pres).toEqual([METAR, TAF]); // 원문은 글자 그대로(282330Z 등 UTC 그대로)
-    expect([METAR, TAF].reduce((x, raw) => x.split(raw).join(""), t)).not.toMatch(UTC_LEFT);
+    expect(unpairedKst([METAR, TAF].reduce((x, raw) => x.split(raw).join(""), t))).toEqual([]);
   });
   it("airport card: observation and reception in KST; raw METAR and TAF unchanged", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-28T23:40:00Z") });
@@ -125,10 +124,10 @@ describe("airport weather: observation and reception times in KST; raw METAR/TAF
     const { AirportCard } = await import("@/components/AirportCard");
     await mount(createElement(AirportCard, { icao: "RKSI" }));
     const t = dom.container.textContent;
-    expect(t).toContain("관측09-29 08:30:00 KST");
-    expect(t).toContain("출처awc · 수신 09-29 08:31:00 KST");
+    expect(t).toContain("관측09-29 08:30:00 KST · 09-28 23:30:00 UTC");
+    expect(t).toContain("출처awc · 수신 09-29 08:31:00 KST · 09-28 23:31:00 UTC");
     expect(all((e) => e.tagName === "PRE").map((p) => p.textContent)).toEqual([METAR, TAF]);
     expect(t).toContain("METAR (원문 · UTC)");
-    expect([METAR, TAF].reduce((x, raw) => x.split(raw).join(""), t)).not.toMatch(UTC_LEFT);
+    expect(unpairedKst([METAR, TAF].reduce((x, raw) => x.split(raw).join(""), t))).toEqual([]);
   });
 });

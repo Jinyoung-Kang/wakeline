@@ -3,10 +3,11 @@
  * API: GET /api/v1/replay?at=&bbox= → { at, aircraft, sigmets, source, radar: {host, path, time} | null }(계약서 §2).
  * 원해상도 보관(72 h) 밖은 1분 요약(track_point_1m)에서 온다 — 행의 위치·고도·속도는 그 1분 동안 관측의 평균이고 방위·지상 여부는 없다.
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
- * 시각은 한국 표준시(사용자 요청 2026-09-29): 고르는 입력 · 보이는 글자는 KST, api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
+ * 시각: 고르는 입력은 KST(datetime-local), 보이는 글자는 KST 먼저 · UTC 함께(사용자 요청 2026-09-29, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
  */
 import { ApiError } from "./api";
-import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtRangeKst, fmtTimeKstLabel, fmtUtcRangeTitle, fmtUtcTitle } from "./format";
+import { fmtDual, fmtDualRange, fmtUtcRangeTitle, fmtUtcTitle } from "./time";
+import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum } from "./format";
 import { isoKst, KST_OFFSET_MS } from "./kst";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
@@ -71,7 +72,7 @@ export function replayRadarLabel(frame: Pick<ReplayFrame, "at" | "radar"> | null
   const t = radarTimeMs(r?.time);
   if (!r || t == null) return "레이더 이력 없음(RainViewer 보관 2 h 밖)";
   const d = Math.round((t - Date.parse(frame.at)) / 60000);
-  return `레이더 ${fmtTimeKstLabel(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
+  return `레이더 ${fmtDual(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
 }
 
 const bandSrc = (s: ReplaySigmet) => ({ base_source: s.base_source ?? null, top_source: s.top_source ?? null });
@@ -86,10 +87,10 @@ export function replayRecLabel(a: Pick<ReplayAircraft, "ts" | "provider">, at: s
   if (!a.ts) return "—";
   if (isSummaryRow(a)) {
     const t0 = Date.parse(a.ts);
-    return Number.isNaN(t0) ? "—" : `${fmtRangeKst(t0, t0 + 60_000)} 평균`;
+    return Number.isNaN(t0) ? "—" : `${fmtDualRange(t0, t0 + 60_000)} 평균`;
   }
   const lag = (Date.parse(at) - Date.parse(a.ts)) / 1000;
-  return `${fmtTimeKstLabel(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
+  return `${fmtDual(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
 }
 
 /** 기록 시각 행의 이름 — 원해상도는 "기록 시각", 요약은 그 1분 구간이라 "기록 구간" */
@@ -113,7 +114,7 @@ export function replayAircraftRows(a: ReplayAircraft, at: string): [string, stri
     [summary ? "지상속도(1분 평균)" : "지상속도", fmtGsDual(a.gs_kt)],
     ["방위", fmtNum(a.track_deg, "°")],
     ["지상", fmtBool(a.on_ground)],
-    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtTimeKstLabel(a.ts)],
+    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtDual(a.ts)],
     ["출처", summary ? "1분 요약(track_point_1m)" : a.provider ?? "—"],
   ];
 }
@@ -141,7 +142,7 @@ export function replaySigmetTip(s: ReplaySigmet, at: string): Tip {
     subtitle: s.fir_id,
     rows: [
       ["BAND", band(s.base_ft, s.top_ft, bandSrc(s))],
-      ["VALID", fmtRangeKst(s.valid_from, s.valid_to)],
+      ["VALID", fmtDualRange(s.valid_from, s.valid_to, { seconds: false })],
       ["LEFT", Number.isFinite(left) && left > 0 ? `${fmtDuration(left)}(재생 시각 기준)` : "—"],
     ],
     flags: s.excluded_reason ? [{ text: `판정 제외: ${s.excluded_reason}`, tone: "muted" }] : [],
@@ -212,14 +213,12 @@ export function replayErrorText(e: unknown): string {
   return "서버에 연결할 수 없음 — 기록을 불러오지 못함";
 }
 
-/** 재생 시각 표시(KST, 날짜 포함) "YYYY-MM-DD HH:MM:SS KST" — 30일을 오가므로 연도까지. 모르면(0 · 형식 오류) "—" */
+/** 재생 시각 표시(KST 먼저, UTC 함께 — 날짜 포함) "YYYY-MM-DD HH:MM:SS KST · HH:MM:SS UTC" — 30일을 오가므로 연도까지(UTC 날짜가 다르면 UTC 쪽에도). 모르면(0 · 형식 오류) "—" */
 export function replayAtLabel(ms: number | string | null | undefined): string {
-  if (!ms) return "—";
-  const s = isoKst(ms);
-  return s == null ? "—" : `${s.slice(0, 10)} ${s.slice(11, 19)} KST`;
+  return ms ? fmtDual(ms, { year: true }) : "—";
 }
 
-/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST 로. 요청 시각과 다르면 아직 새 프레임이 오지 않은 것 */
+/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST · UTC 로. 요청 시각과 다르면(1 s 이상) 아직 새 프레임이 오지 않은 것 */
 export function replayFrameAtLabel(frame: Pick<ReplayFrame, "at"> | null, wantAtMs: number): { text: string; behind: boolean } {
   if (!frame) return { text: "—", behind: false };
   const t = Date.parse(frame.at);

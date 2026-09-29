@@ -2,7 +2,8 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtIsoKst, fmtLatencyMs, fmtUtcTitle } from "@/lib/format";
+import { fmtIsoKst, fmtUtcTitle } from "@/lib/time";
+import { fmtLatencyMs } from "@/lib/format";
 import {
   fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRadarTitle, replayRange,
   replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayFrame, type ReplayRange,
@@ -19,7 +20,7 @@ const SOURCE_LABEL: Record<string, string> = { track_point: "원해상도 기록
 
 /**
  * 이력 재생(FR-23): 최근 30일(72 h 원해상도, 그 이전은 1분 요약) · 1×~60× · 그 시각 SIGMET · 레이더(있을 때만).
- * 시각은 한국 표준시(KST) 날짜·시각 입력, ±1분·±10분·±1 h 버튼, 슬라이더(72 h 경계 눈금)로 고른다(R-10). 보이는 시각도 KST —
+ * 시각은 한국 표준시(KST) 날짜·시각 입력, ±1분·±10분·±1 h 버튼, 슬라이더(72 h 경계 눈금)로 고른다(R-10). 보이는 시각은 KST 먼저 · UTC 함께 —
  * api 에는 그 순간을 UTC ISO(…Z)로 보낸다(lib/replay replayApiPath). SIGMET 원문은 발표된 그대로(안의 "…Z" 는 UTC).
  */
 export default function ReplayPage() {
@@ -95,7 +96,10 @@ export default function ReplayPage() {
         <div className="flex h-5 items-center gap-x-3 overflow-hidden px-3 whitespace-nowrap" data-testid="replay-status">
           <span className="mono shrink-0" data-testid="replay-at" title={at ? fmtUtcTitle(at) : undefined}>{replayAtLabel(at)}</span>
           {at && max ? <span className={`shrink-0 ${replayZone(at, range) === "full" ? "text-fg-2" : "text-warn"}`} data-testid="replay-zone">{replayZone(at, range) === "full" ? "원해상도 구간(72 h 안)" : "1분 요약 구간(72 h 밖)"}</span> : null}
-          <span className={`mono min-w-0 truncate ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title={`지도에 그린 기록의 시각(응답 at — KST)${frame ? ` · ${fmtUtcTitle(frame.at) ?? "원본 UTC —"}` : ""}`}>지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
+          <span className={`mono min-w-0 truncate ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title={`지도에 그린 기록의 시각(응답 at): ${shown.text}${frame ? ` · ${fmtUtcTitle(frame.at) ?? "원본 UTC —"}` : ""}`}>
+            {/* 응답 시각이 재생 시각과 같으면(1 s 안) 같은 글자를 되풀이하지 않는다 — 다를 때(불러오는 중)만 그린 시각을 보인다 */}
+            지도 {shown.text !== "—" && !shown.behind ? "= 재생 시각" : shown.text}{shown.behind ? " · 불러오는 중" : ""}
+          </span>
           <span className="mono min-w-0 truncate text-fg-2" data-testid="replay-summary" title={summary}>{summary}</span>
           <span className={`min-w-0 truncate ${frame?.radar ? "text-fg-2" : "text-fg-3"}`} data-testid="replay-radar" title={[replayRadarLabel(frame), replayRadarTitle(frame)].filter(Boolean).join(" · ")}>{replayRadarLabel(frame)}</span>
         </div>

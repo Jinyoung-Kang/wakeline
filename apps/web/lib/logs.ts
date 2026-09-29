@@ -1,7 +1,7 @@
 /**
  * 시스템 로그 화면 보조(계약 v5 §C7) — 순수 함수. 항목 형식은 schemas/log_event.v1.json, 조회 API 는 §C4(`/api/v1/ops/logs*`, 운영 세션 전용).
  * 모르는 값은 null/"—"(0·빈 값으로 채우지 않는다). 형식이 틀린 항목은 보이지 않고 수만 센다.
- * 시각: api 항목의 ts 는 UTC(원본 — JSON 복사 · NDJSON 은 그대로). 화면 · 텍스트 복사 · .txt 는 한국 표준시(KST, +09:00 — lib/kst).
+ * 시각: api 항목의 ts 는 UTC(원본 — JSON 복사 · NDJSON 은 그대로). 화면은 KST 먼저 · UTC 함께(lib/time), 텍스트 복사 · .txt 는 KST ISO(+09:00 — lib/kst).
  * §G2: api 는 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 합쳐 준다 — 항목마다 stream. 두 스트림은 id 를 따로 매기므로
  * 같은 id 가 둘 다에 있을 수 있어 화면은 항목을 stream + id(entryKey)로 가른다(같은 id 는 server 가 앞 — api 순서).
  */
@@ -256,11 +256,7 @@ export function applyPending(shown: readonly LogEntry[], pending: readonly LogEn
 /** 텍스트 복사의 시각: 오프셋을 붙인 KST ISO 8601("2026-09-29T08:41:14.906+09:00"). 모르면 "—" */
 const isoText = (v: string | null | undefined): string => isoKst(v) ?? "—";
 
-/** 목록 시각: KST "MM-DD HH:MM:SS.mmm"(ms 유지 — 같은 초의 항목 순서가 보인다). 칸 머리글이 "시각(KST)", title 에 원본 UTC */
-export function fmtLogTime(v: string | null | undefined): string {
-  const s = isoKst(v);
-  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 23)}`;
-}
+// 목록 시각은 <DualTime variant="cell" ms /> — 첫 줄 KST "MM-DD HH:MM:SS.mmm"(ms 유지 — 같은 초의 항목 순서가 보인다) · 둘째 줄 UTC(lib/time 의 표 칸 형식)
 
 export const firstLine = (s: string) => s.split(/\r?\n/, 1)[0];
 

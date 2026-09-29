@@ -4,15 +4,17 @@ import { apiGet } from "@/lib/api";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
-import { band, fmtAltDual, fmtAltGndDual, fmtDuration, fmtKstTitle, fmtRangeKst, fmtTimeKstLabel, fmtUtcRangeTitle, fmtUtcTitle, hazardColor } from "@/lib/format";
+import { fmtKstTitle } from "@/lib/time";
+import { band, fmtAltDual, fmtAltGndDual, fmtDuration, hazardColor } from "@/lib/format";
 import { isExpired, isPending, sigmetBandSource } from "@/lib/sigmet";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
+import { DualRange, DualTime } from "./DualTime";
 
 /**
  * SIGMET 상세: 고도대는 발표값·가정·원문 출처를 구분해 표시(하한 미발표(SFC 가정) / 상한 미발표(무제한 가정)). 값이 없으면 "—".
  * 숫자 경계에는 m 를 괄호로(계약 v5 §A3 — 카드에서만).
- * 시각은 한국 표준시(" KST", title 에 원본 UTC) — 원문(Raw)은 발표된 그대로(안의 "…Z" 는 UTC).
+ * 시각은 KST 먼저 · UTC 함께(lib/time — "09-29 14:02:54 KST · 05:02:54 UTC", title 에 원본 UTC ISO) — 원문(Raw)은 발표된 그대로(안의 "…Z" 는 UTC).
  * 발효 전(valid_from > 지금)이면 "발효 전"과 남은 시간 — 엔진은 발효 전 경보로 판정하지 않는다(DH-8).
  */
 export function SigmetCard({ id }: { id: string }) {
@@ -36,10 +38,10 @@ export function SigmetCard({ id }: { id: string }) {
   const rows: [string, React.ReactNode][] = [
     ["FIR", p.fir_name ?? p.fir_id ?? "—"],
     ["고도대", band(p.base_ft, p.top_ft, sigmetBandSource(p), { metric: true })],
-    ["유효", <span key="v" className="mono" title={fmtUtcRangeTitle(p.valid_from, p.valid_to)}>{fmtRangeKst(p.valid_from, p.valid_to)}</span>],
+    ["유효", <DualRange key="v" a={p.valid_from} b={p.valid_to} />],
     ["이동", p.move_dir || p.move_spd ? `${p.move_dir ?? "—"}${p.move_spd ? ` ${p.move_spd}` : ""}` : "—"],
     ["변화", p.chng ?? "—"],
-    ["출처", <span key="s">{p.provider ?? "—"} · <span className="mono" title={fmtUtcTitle(p.fetched_at)}>{fmtTimeKstLabel(p.fetched_at)}</span></span>],
+    ["출처", <span key="s">{p.provider ?? "—"} · <DualTime v={p.fetched_at} /></span>],
     ["판정", p.excluded_reason ? `제외 (${p.excluded_reason})` : pending ? "발효 전 — 발효 시각부터 폴리곤·고도대 검사" : "폴리곤·고도대·유효시간 검사"],
   ];
   return (

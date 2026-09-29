@@ -8,10 +8,10 @@ import { preFixHysteresis } from "./chart";
 import { fmtDuration } from "./format";
 
 /**
- * 일 집계 시각(api MaintenanceJobs.aggregateDaily — @Scheduled(cron = "0 30 3 * * *", zone = "UTC"), 매일 03:30 UTC)을 한국 표준시로 적은 것. 집계하는 날짜는 UTC 날짜(전날) 그대로다.
- * 화면은 하루 안의 시각만 KST 로 보인다(사용자 요청 2026-09-29).
+ * 일 집계 시각(api MaintenanceJobs.aggregateDaily — @Scheduled(cron = "0 30 3 * * *", zone = "UTC"), 매일 03:30 UTC) — KST 먼저 · UTC 함께 적는다. 집계하는 날짜는 UTC 날짜(전날) 그대로다.
+ * 화면은 하루 안의 시각만 KST(· UTC)로 보인다(사용자 요청 2026-09-29).
  */
-export const STATS_RUN_KST = "12:30 KST";
+export const STATS_RUN_KST = "12:30 KST · 03:30 UTC";
 /** api MaintenanceJobs.CATCH_UP_DAYS — 놓친 날의 집계를 3시간마다 다시 시도하는 범위(최근 n일) */
 export const STATS_CATCH_UP_DAYS = 7;
 /** api MaintenanceJobs.catchUp 주기(fixedDelay 3 h) — 놓친 날의 다음 집계 시도는 늦어도 이만큼 뒤(api 가 돌고 있을 때) */

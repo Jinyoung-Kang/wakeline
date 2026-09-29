@@ -5,9 +5,9 @@ import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 import { HYSTERESIS_FIX_AT, hourlyRowsKst, trafficScopeLabel, utcDayInKst, type TrafficRegion } from "@/lib/chart";
-import { fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
 import { aggregatedFlag, alertStatsRows, STATS_RUN_KST, statsEmptyText, TRAFFIC_SOURCE, yesterdayUtc } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
+import { DualTime } from "@/components/DualTime";
 
 type Row = { day: string; dim: string; value: number; metric?: string; hour?: string };
 type ItemsResp = { items: Row[]; aggregated?: unknown };
@@ -17,7 +17,7 @@ type Agg = { fir?: boolean; haz?: boolean; traffic?: boolean; alerts?: boolean }
 
 /**
  * 통계(FR-24): FIR별 SIGMET · 시간대별 트래픽 · 알림 건수. stats_daily 는 매일 03:30 UTC(= 12:30 KST)에 전날(UTC 날짜)을 집계.
- * 시각은 한국 표준시(사용자 요청 2026-09-29) — 단 집계 단위인 날짜는 UTC 날짜 그대로 "(UTC 날짜)" 라고 적는다(KST 날짜로 옮기면 다른 하루가 된다).
+ * 시각은 KST 먼저 · UTC 함께(사용자 요청 2026-09-29, lib/time) — 단 집계 단위인 날짜는 UTC 날짜 그대로 "(UTC 날짜)" 라고 적는다(KST 날짜로 옮기면 다른 하루가 된다).
  * 시간대별 막대는 그 UTC 날짜의 시간 순서 그대로 KST 시로 이름 붙인다(09시 → 다음 날 08시).
  * 행이 없는 시간대는 "자료 없음"(0 대로 그리지 않는다 — 수집 중단과 0 대를 구분할 수 없으므로).
  * 트래픽 제목은 서버가 준 범위(scope·region)를 그대로 — 범위 기록이 없는 날은 "범위 미확인"(DH-10).
@@ -73,7 +73,7 @@ export default function StatsPage() {
         <section className="panel p-3"><h2 className="label mb-2">Alerts by kind (7d) · avg dwell</h2>
           {alertRows.length ? <AlertStatsTable rows={alertRows} /> : <Empty text={statsEmptyText(agg.alerts, null, today)} />}
           {caveat ? <div className="mt-1 text-[10px] text-warn" data-testid="hysteresis-caveat">
-            † <span title={fmtUtcTitle(HYSTERESIS_FIX_AT)}>{fmtTimeKstLabel(HYSTERESIS_FIX_AT)}</span> 이전에 생성된 관측(OBSERVED) 알림은 수정 전 히스테리시스(엔진 주기를 관측으로 셈 — 위치 보고 1건으로 진입·이탈 확정 가능)로 판정됐습니다.
+            † <DualTime v={HYSTERESIS_FIX_AT} /> 이전에 생성된 관측(OBSERVED) 알림은 수정 전 히스테리시스(엔진 주기를 관측으로 셈 — 위치 보고 1건으로 진입·이탈 확정 가능)로 판정됐습니다.
             † 표시 행(UTC 날짜 {HYSTERESIS_FIX_AT.slice(0, 10)} 까지)의 관측 알림 건수는 부풀려졌을 수 있고, 건수·평균 체류 모두 이후 날짜와 같은 기준으로 비교할 수 없습니다.
           </div> : null}
         </section>

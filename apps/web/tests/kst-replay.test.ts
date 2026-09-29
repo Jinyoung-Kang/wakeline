@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import * as R from "@/lib/replay";
 import ReplayPage from "@/app/replay/page";
+import { unpairedKst } from "./helpers/dual-time";
 
 describe("replay time input is KST; the api still receives UTC", () => {
   it("KST input → UTC instant across KST midnight, month end, year end and a leap day", () => {
@@ -34,20 +35,21 @@ describe("replay time input is KST; the api still receives UTC", () => {
     const at = R.fromKstInput("2026-09-29T00:10")!;
     expect(R.replayApiPath({ at, bbox: "124,33,132,39" })).toBe("/api/v1/replay?at=2026-09-28T15%3A10%3A00.000Z&bbox=124%2C33%2C132%2C39");
   });
-  it("shown times: the chosen time, the drawn frame, record times, radar and SIGMET validity are KST", () => {
+  it("shown times: the chosen time, the drawn frame, record times, radar and SIGMET validity are KST first with UTC (the UTC date when it differs)", () => {
     const at = Date.parse("2026-09-28T15:10:00Z");
-    expect(R.replayAtLabel(at)).toBe("2026-09-29 00:10:00 KST");
+    expect(R.replayAtLabel(at)).toBe("2026-09-29 00:10:00 KST · 2026-09-28 15:10:00 UTC");
+    expect(R.replayAtLabel(Date.parse("2026-09-29T05:10:00Z"))).toBe("2026-09-29 14:10:00 KST · 05:10:00 UTC");
     expect(R.replayAtLabel(0)).toBe("—");
-    expect(R.replayFrameAtLabel({ at: "2026-09-28T15:10:00Z" }, at)).toEqual({ text: "2026-09-29 00:10:00 KST", behind: false });
-    expect(R.replayFrameAtLabel({ at: "2026-09-28T15:09:00Z" }, at)).toEqual({ text: "2026-09-29 00:09:00 KST", behind: true });
-    expect(R.replayRadarLabel({ at: "2026-09-28T15:10:00Z", radar: { host: "h", path: "/p", time: Date.parse("2026-09-28T15:00:00Z") / 1000 } })).toBe("레이더 09-29 00:00:00 KST (재생 시각 −10분)");
-    expect(R.replayRecLabel({ ts: "2026-09-28T15:09:30Z", provider: "adsb_fi" }, "2026-09-28T15:10:00Z")).toBe("09-29 00:09:30 KST (재생 시각 −30s)");
-    expect(R.replayRecLabel({ ts: "2026-09-28T14:59:00Z", provider: R.SUMMARY_PROVIDER }, "2026-09-28T15:10:00Z")).toBe("09-28 23:59:00 – 09-29 00:00:00 KST 평균");
-    expect(Object.fromEntries(R.replayAircraftRows({ hex: "71c081", lat: 36, lon: 127, ts: "2026-09-28T15:09:30Z", provider: "adsb_fi" }, "2026-09-28T15:10:00Z"))["기록 시각"]).toBe("09-29 00:09:30 KST");
+    expect(R.replayFrameAtLabel({ at: "2026-09-28T15:10:00Z" }, at)).toEqual({ text: "2026-09-29 00:10:00 KST · 2026-09-28 15:10:00 UTC", behind: false });
+    expect(R.replayFrameAtLabel({ at: "2026-09-28T15:09:00Z" }, at)).toEqual({ text: "2026-09-29 00:09:00 KST · 2026-09-28 15:09:00 UTC", behind: true });
+    expect(R.replayRadarLabel({ at: "2026-09-28T15:10:00Z", radar: { host: "h", path: "/p", time: Date.parse("2026-09-28T15:00:00Z") / 1000 } })).toBe("레이더 09-29 00:00:00 KST · 09-28 15:00:00 UTC (재생 시각 −10분)");
+    expect(R.replayRecLabel({ ts: "2026-09-28T15:09:30Z", provider: "adsb_fi" }, "2026-09-28T15:10:00Z")).toBe("09-29 00:09:30 KST · 09-28 15:09:30 UTC (재생 시각 −30s)");
+    expect(R.replayRecLabel({ ts: "2026-09-28T14:59:00Z", provider: R.SUMMARY_PROVIDER }, "2026-09-28T15:10:00Z")).toBe("09-28 23:59:00 – 09-29 00:00:00 KST · 09-28 14:59:00 – 09-28 15:00:00 UTC 평균");
+    expect(Object.fromEntries(R.replayAircraftRows({ hex: "71c081", lat: 36, lon: 127, ts: "2026-09-28T15:09:30Z", provider: "adsb_fi" }, "2026-09-28T15:10:00Z"))["기록 시각"]).toBe("09-29 00:09:30 KST · 09-28 15:09:30 UTC");
     const sg = { id: "S", hazard: "TS", fir_id: "RKRR", valid_from: "2026-09-28T14:00:00Z", valid_to: "2026-09-28T18:00:00Z", raw_text: "RKRR SIGMET 1 VALID 281400/281800 RKSI-", geometry: null };
-    expect(Object.fromEntries(R.replaySigmetTip(sg, "2026-09-28T15:10:00Z").rows).VALID).toBe("09-28 23:00:00 – 09-29 03:00:00 KST");
+    expect(Object.fromEntries(R.replaySigmetTip(sg, "2026-09-28T15:10:00Z").rows).VALID).toBe("09-28 23:00 – 09-29 03:00 KST · 09-28 14:00 – 09-28 18:00 UTC");
     const texts = [R.replayAtLabel(at), R.replayFrameAtLabel({ at: "2026-09-28T15:10:00Z" }, at).text, R.replayRecLabel({ ts: "2026-09-28T15:09:30Z" }, "2026-09-28T15:10:00Z")];
-    for (const t of texts) expect(t).not.toMatch(/\d\d:\d\d(:\d\d)?Z/);
+    for (const t of texts) expect(unpairedKst(t)).toEqual([]);
   });
   it("the toolbar names KST next to the date-time input (browsers render it in their own locale format)", () => {
     const html = renderToStaticMarkup(createElement(ReplayPage));

@@ -4,7 +4,7 @@
  * 화면은 서버가 보고한 상태·주기만 말한다: interval_s 가 없으면 주기를 쓰지 않는다(“5초”를 지어내지 않는다).
  * 경과(N분째)는 서버가 준 since 와 서버 기준 현재 시각의 차이 — 결정적 계산이다.
  */
-import { fmtKstTitle } from "./format";
+import { fmtKstTitle } from "./time";
 import type { Tone } from "./tooltip";
 
 export const HOT_STATES = ["active", "pending", "throttled", "covered_by_region", "error", "disabled", "limited"] as const;

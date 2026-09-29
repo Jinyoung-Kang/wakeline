@@ -207,10 +207,11 @@ describe("v5-C7 lib/logs: copy formats", () => {
     expect(t).toContain("아래 항목 1건 — 묶음의 일부만(목록 상한 또는 스캔 잘림)");
     expect(t).toContain(L.logText(items[0]));
   });
-  it("list time is KST with milliseconds; first line of a message", async () => {
+  it("list time is KST with milliseconds (UTC on the second line); first line of a message", async () => {
     const L = await import("@/lib/logs");
-    expect(L.fmtLogTime("2026-09-29T01:02:03.456Z")).toBe("09-29 10:02:03.456");
-    expect(L.fmtLogTime("bad")).toBe("—");
+    const T = await import("@/lib/time");
+    expect(T.dualCell("2026-09-29T01:02:03.456Z", { ms: true })).toMatchObject({ kst: "09-29 10:02:03.456", utc: "01:02:03.456 UTC" });
+    expect(T.dualCell("bad", { ms: true })).toBeNull();
     expect(L.firstLine("a\r\nb")).toBe("a");
   });
 });
