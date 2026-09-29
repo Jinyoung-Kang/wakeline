@@ -16,6 +16,7 @@ import httpx
 
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
+from wakeline_collector.errors import describe_error
 from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
@@ -75,7 +76,9 @@ class AircraftJob:
                 status="budget_unavailable" if unavailable else "budget_exhausted",
                 error_text="budget store unavailable (fail closed)" if unavailable else f"daily budget exhausted (used={used})",
             )
-            self.chain.mark_down(prov.name, 60 if unavailable else 600)
+            self.chain.mark_down(
+                prov.name, 60 if unavailable else 600, why="예산 저장소 불가(60 s 쉼)" if unavailable else "예산 소진(10분 쉼)"
+            )
             log.warning("%s: %s budget %s", self.scope, prov.name, "unavailable" if unavailable else "exhausted")
             return
         try:
@@ -181,22 +184,40 @@ class AircraftJob:
         http_status = e.status if isinstance(e, ProviderHttpError) else None
         if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
             await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
-        await ctx.status.failure(name, at=datetime.now(UTC), error=repr(e), http_status=http_status)
-        ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=repr(e))
+        why = describe_error(e)
+        await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
+        ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
         if http_status == 429:
-            wait = self.chain.record_rate_limited(name)
-            log.warning("%s: %s rate limited (429) — backing off %.0f s", self.scope, name, wait)
+            wait = await self.chain.on_rate_limited(name)  # 적고 저장 — 재시작해도 쉼·미룸을 잇는다(Redis 오류는 삼킨다)
+            log.warning(
+                "%s: %s rate limited (429) — backing off %.0f s, deferred %.0f min; next: '%s'",
+                self.scope,
+                name,
+                wait,
+                self.chain.hold_s(name) / 60,
+                await self._after_429(name),
+            )
         elif self.chain.record_failure(name):
             log.warning("%s: %s failed 3x — cooling down", self.scope, name)
         else:
-            log.info("%s: %s failed (%s)", self.scope, name, type(e).__name__)
+            log.info("%s: %s failed (%s)", self.scope, name, why)
+
+    async def _after_429(self, name: str) -> str:
+        """429 경고의 next: '…' — 체인이 다음 주기에 고를 공급자(추정이 아니라 지금 상태로 정해진 값).
+        바뀌는 글은 따옴표 안에만 둔다: 로그 지문(logsink.message_template)이 따옴표 안·숫자를 지워 한 429 계열이 한 묶음이 된다."""
+        order = ["fixture"] if self.ctx.fixture else self.ctx.rt.provider_order
+        nxt = await self.chain.peek(order, need_global=self.scope == "global")
+        if nxt is None or nxt == name:  # 미룸은 선호도일 뿐 — 대안이 없으면 쉼이 끝난 뒤 같은 공급자를 쓴다
+            why = "no other provider — deferral not applied" if self.chain.hold_s(name) else "no other provider"
+            return f"{name} again after the backoff ({why})"
+        return f"{nxt} takes over"
 
     async def _on_throttled(self, name: str, cost: int, started: datetime, e: Throttled) -> None:
         """속도 상한이 막아 호출하지 않았다 — 공급자 실패가 아니다. 3회 규칙·공급자 상태 해시에 넣지 않는다.
         429 쿨다운 때문이면(다른 작업이 받은 429 포함) 그 남은 시간만 이 공급자를 건너뛴다(다음 순위로 폴백할 수 있게)."""
         if cost:
             await self.ctx.budget.release(name, cost)
-        self.ctx.db.record_run(self.job_name, name, started, status="throttled", error_text=repr(e))
+        self.ctx.db.record_run(self.job_name, name, started, status="throttled", error_text=describe_error(e))
         if e.cooldown_s > 0:
-            self.chain.mark_down(name, e.cooldown_s)
+            self.chain.mark_down(name, e.cooldown_s, why=f"호출 제한기 429 쿨다운({e.cooldown_s:.0f} s)")
         log.info("%s: %s not called (%s)", self.scope, name, e.reason)

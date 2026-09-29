@@ -534,3 +534,204 @@ async def test_r03_previous_day_listing_without_budget_records_no_run_of_its_own
     await job.run_once()
     assert prov.days == ["20260928"]  # 예산이 없으면 전날 목록은 부르지 않는다
     assert [run["status"] for run in runs] == ["ok"]  # 한 주기 = 실행 기록 하나
+
+
+# ---- 운영 관찰(2026-09-29): 'kma radar: ReadTimeout('')' 가 5분 주기 약 27회 중 7회 — 어느 단계인지·얼마나 걸렸는지 몰랐다 ------------
+# 읽기 제한은 KMA 호출만 15 s(선택값), 일시 오류는 같은 주기 안에서 5 s 뒤 한 번 다시 부른다. HTTP 오류(403 등)는 다시 부르지 않는다.
+_KMA_TIMEOUT = {"connect": 4.0, "read": 15.0, "write": 8.0, "pool": 8.0}
+
+
+def _kma_req(path: str = "typ01/url/rdr_cmp_file_list.php"):
+    import httpx
+
+    return httpx.Request("GET", f"https://apihub.kma.go.kr/api/{path}", extensions={"timeout": dict(_KMA_TIMEOUT)})
+
+
+def _read_timeout():
+    import httpx
+
+    e = httpx.ReadTimeout("")
+    e.request = _kma_req()
+    return e
+
+
+class FlakyKma(FakeKma):
+    """목록·바이너리가 정해 둔 횟수만큼 먼저 실패한다."""
+
+    def __init__(self, listing, *, list_errors=(), binary_errors=None):
+        super().__init__(listing)
+        self.list_errors = list(list_errors)
+        self.binary_errors = {k: list(v) for k, v in (binary_errors or {}).items()}
+        self.list_calls = 0
+
+    async def file_list(self, day):
+        self.list_calls += 1
+        if self.list_errors:
+            raise self.list_errors.pop(0)
+        return await super().file_list(day)
+
+    async def binary(self, tm):
+        errs = self.binary_errors.get(tm)
+        if errs:
+            self.binaries.append(tm)
+            raise errs.pop(0)
+        return await super().binary(tm)
+
+
+@pytest.fixture
+def no_wait(kma_env, monkeypatch):
+    mod = kma_env[0]
+    waits: list[float] = []
+
+    async def fake_sleep(s):
+        waits.append(s)
+
+    monkeypatch.setattr(mod, "_sleep", fake_sleep)
+    return waits
+
+
+def _kma_warnings(caplog) -> list[str]:
+    import logging
+
+    return [r.getMessage() for r in caplog.records if r.name == "job.kma_radar" and r.levelno >= logging.WARNING]
+
+
+async def test_kma_calls_use_their_own_read_timeout_and_keep_the_total_cap():
+    import httpx
+    import respx
+
+    from wakeline_collector.errors import describe_error
+    from wakeline_collector.http import HttpClient
+    from wakeline_collector.providers import kma_radar as prov_mod
+    from wakeline_collector.providers.kma_radar import KmaRadarProvider
+    from wakeline_collector.ratelimit import RateLimiter
+
+    assert prov_mod.KMA_READ_S == 15.0 and prov_mod.KMA_TOTAL_S == 40.0
+    http = HttpClient(RateLimiter(100, 100))
+    seen: list[dict] = []
+
+    def capture(request):
+        seen.append(dict(request.extensions["timeout"]))
+        if "rdr_cmp_file_list" in str(request.url):
+            return httpx.Response(200, content=b"RDR_CMP_HSR_EXT_202609272000.bin.gz,=\n")
+        return httpx.Response(200, content=b"\x1f\x8b" + b"\0" * 10)
+
+    p = KmaRadarProvider(http, "k" * 12)
+    with respx.mock:
+        respx.get(url__regex=r"https://apihub\.kma\.go\.kr/.*").mock(side_effect=capture)
+        await p.file_list("20260927")
+        await p.binary("202609272000")
+    assert seen == [_KMA_TIMEOUT, _KMA_TIMEOUT]
+    with respx.mock:
+        respx.get(url__regex=r"https://apihub\.kma\.go\.kr/.*").mock(side_effect=httpx.ReadTimeout(""))
+        with pytest.raises(httpx.ReadTimeout) as ei:
+            await p.file_list("20260927")
+    assert describe_error(ei.value) == "ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr)"
+    await http.aclose()
+
+
+async def test_kma_listing_timeout_retried_once_then_cycle_is_ok_without_warning(kma_env, no_wait, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    prov = FlakyKma(_tms("202609272000"), list_errors=[_read_timeout()])
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.list_calls == 2 and no_wait == [5.0]
+    assert len(prov.binaries) == 4
+    assert [run["status"] for run in runs] == ["ok"]
+    assert _kma_warnings(caplog) == []
+    assert any("retrying once in 5 s" in m for m in caplog.messages)
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1 + 1 + 4  # 다시 부른 목록도 예산을 쓴다
+
+
+async def test_kma_binary_connect_error_retried_once(kma_env, no_wait, caplog):
+    import httpx
+
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    tms = _tms("202609272000")
+    prov = FlakyKma(tms, binary_errors={tms[-4]: [httpx.ConnectError("")]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == [tms[-4], *tms[-4:]]  # 첫 tm 을 한 번 더 부르고 나머지를 이어 받았다
+    assert [run["status"] for run in runs] == ["ok"] and _kma_warnings(caplog) == []
+
+
+async def test_kma_retry_that_fails_again_gives_one_warning_with_step_and_elapsed(kma_env, no_wait, caplog):
+    import logging
+    import re
+
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    prov = FlakyKma(_tms("202609272000"), list_errors=[_read_timeout(), _read_timeout()])
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.list_calls == 2 and prov.binaries == []
+    warns = _kma_warnings(caplog)
+    assert len(warns) == 1, warns
+    assert re.fullmatch(
+        r"kma radar: listing 20260927 — ReadTimeout — read 제한 15 s 초과 \(apihub\.kma\.go\.kr\) after \d+\.\d s"
+        r"; retried once after 5 s \(first attempt: ReadTimeout after \d+\.\d s\)",
+        warns[0],
+    ), warns[0]
+    st = await r.hgetall("wakeline:provider:kma_radar")
+    assert st["last_error"].startswith("ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr) · listing 20260927 · ")
+    assert [run["status"] for run in runs] == ["error"] and runs[0]["error_text"] == st["last_error"]
+
+
+async def test_kma_http_error_is_never_retried(kma_env, no_wait, caplog):
+    from wakeline_collector.http import ProviderHttpError
+
+    mod, r, ctx, clock = kma_env
+    prov = FlakyKma(_tms("202609272000"), list_errors=[ProviderHttpError(403, '{"result":"unauthorized"}')])
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.list_calls == 1 and no_wait == []
+    assert (await ctx.budget.usage("kma_radar"))[0] == 1
+    assert (await r.hgetall("wakeline:provider:kma_radar"))["last_error"].startswith("활용신청 필요")
+    warns = _kma_warnings(caplog)
+    assert len(warns) == 1 and warns[0].startswith("kma radar: listing 20260927 — 활용신청 필요")
+
+
+async def test_kma_each_failing_call_is_retried_once(kma_env, no_wait, caplog):
+    """'한 번 다시 부른다'는 실패한 호출마다다 — 목록에서 다시 불렀어도 뒤의 바이너리가 일시 오류면 그것도 한 번 다시 부른다
+    (이전: 한 주기에 한 번뿐이라 이 경우 주기를 잃었다)."""
+    import httpx
+
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    tms = _tms("202609272000")
+    prov = FlakyKma(tms, list_errors=[_read_timeout()], binary_errors={tms[-4]: [httpx.RemoteProtocolError("")]})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.list_calls == 2 and prov.binaries == [tms[-4], *tms[-4:]]
+    assert no_wait == [5.0, 5.0]
+    assert [run["status"] for run in runs] == ["ok"] and _kma_warnings(caplog) == []
+    assert (await ctx.budget.usage("kma_radar"))[0] == 2 + 4 + 1  # 목록 2 · 바이너리 4 · 다시 부른 바이너리 1
+
+
+async def test_kma_binary_that_fails_twice_ends_the_cycle_with_one_warning(kma_env, no_wait, caplog):
+    import httpx
+
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    tms = _tms("202609272000")
+    errs = [httpx.RemoteProtocolError(""), httpx.RemoteProtocolError("")]
+    prov = FlakyKma(tms, binary_errors={tms[-3]: errs})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == [tms[-4], tms[-3], tms[-3]]  # 두 번 실패한 호출에서 주기를 끝낸다(남은 tm 은 다음 주기)
+    warns = _kma_warnings(caplog)
+    assert len(warns) == 1 and warns[0].startswith(f"kma radar: binary tm={tms[-3]} — RemoteProtocolError — 연결 실패")
+    assert "retried once after 5 s" in warns[0]
+    assert [run["status"] for run in runs] == ["error"]
+
+
+async def test_kma_retry_needs_budget(kma_env, no_wait):
+    from fakes import FakeRedis, make_ctx
+
+    mod, _r, _ctx, clock = kma_env
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"kma_radar": 1})  # 목록 한 번분만 — 다시 부를 예산이 없다
+    prov = FlakyKma(_tms("202609272000"), list_errors=[_read_timeout()])
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.list_calls == 1 and no_wait == []
+    assert (await r.hgetall("wakeline:provider:kma_radar"))["last_error"].startswith("ReadTimeout")

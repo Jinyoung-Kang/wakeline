@@ -11,6 +11,15 @@
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
   목록 키도 이미지와 같은 TTL 을 갖는다(수집기가 멈추면 함께 만료). 각 항목에 expires_at 을 둔다.
 - 해석(gzip 해제·재투영·PNG)은 CPU 작업이라 스레드에서 돈다(이벤트 루프를 막지 않게).
+- 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류 — RETRY_ERRORS)는 실패한 호출마다 같은 주기 안에서 RETRY_DELAY_S 뒤 한 번 다시
+  부른다(예산 1 을 따로 예약한다). 다시 불러도 실패하면 그 주기를 끝낸다(남은 tm 은 다음 주기). 전날 목록은 덧붙이는 것이라 다시 부르지
+  않는다. HTTP 오류(ProviderHttpError — 403 활용신청 전 등)·속도 상한(Throttled)도 다시 부르지 않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다).
+- 주기 길이(설정값으로 계산한 상한 — 잰 값이 아니다): 최악은 다시 부른 호출이 모두 첫 시도에서 전체 상한(KMA_TOTAL_S 40 s)을 채우고
+  실패한 뒤 다시 40 s 걸려 성공하는 경우다 — 오늘 목록 (40 + 5 + 40) + 전날 목록 40(KST 00:00–00:14 만) + 바이너리 4 × (40 + 5 + 40) = 465 s.
+  속도 상한 대기(호출마다 최대 DEFAULT_WAIT_S 10 s, 최대 11번)는 전체 상한 밖이라 더 붙을 수 있다(+110 s). 주기(300 s)를 넘을 수 있지만
+  run_periodic 은 한 주기가 끝난 뒤 주기만큼 쉬고 다음을 시작하므로 겹치지 않는다 — 다음 주기가 늦어질 뿐이고, 놓친 프레임은 보관 창
+  안에서 채운다. 계속 실패하는 서버에서는 첫 호출이 두 번 실패하는 즉시 끝난다.
+- 실패 기록(상태 last_error · 실행 기록 · 경고 로그)에는 실패한 단계(목록 날짜 · 바이너리 tm)와 그 호출에 걸린 시간을 싣는다.
 """
 
 from __future__ import annotations
@@ -18,17 +27,21 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import functools
 import logging
+import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import orjson
 
 from wakeline_collector.budget import UNKNOWN
+from wakeline_collector.errors import describe_error
 from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, render_mercator_png
-from wakeline_collector.masking import mask
+from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
@@ -43,6 +56,10 @@ FRAME_TTL_S = 3 * 3600
 MAX_BAD = 64  # 해석 불가로 건너뛴 tm 기억 상한
 MAX_NOT_READY_TRIES = 3  # 목록에 있으나 아직 받을 수 없는 tm 을 다시 시도하는 횟수(주기마다 1번 ≈ 15분)
 PREV_DAY_LIST_MIN = 15  # KST 00:00 부터 이 분 동안은 전날 목록도 조회
+RETRY_DELAY_S = 5.0  # 일시 오류 뒤 같은 주기 안에서 다시 부르기 전 기다림(선택값). 다시 부르기는 실패한 호출마다 한 번
+# 다시 불러 볼 만한 일시 오류. RequestTimedOut(전체 상한 초과)은 httpx.TimeoutException 하위라 여기 든다.
+RETRY_ERRORS: tuple[type[Exception], ...] = (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError)
+_sleep = asyncio.sleep  # 시험이 바꿔 끼운다
 
 
 def _iso(dt: datetime) -> str:
@@ -72,6 +89,17 @@ def _decode(raw: bytes):
 
 class _BadFrame(Exception):
     """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류). 다시 받아도 같으므로 건너뛴다."""
+
+
+class _StepFailed(Exception):
+    """한 단계(목록 · 바이너리)의 호출 실패. error = 마지막 시도의 예외, elapsed_s = 그 시도에 걸린 시간(모르면 None),
+    first = 다시 불렀다면 첫 시도의 (예외, 걸린 시간)."""
+
+    def __init__(
+        self, step: str, error: Exception, elapsed_s: float | None, first: tuple[Exception, float] | None = None
+    ) -> None:
+        super().__init__(f"{step}: {type(error).__name__}")
+        self.step, self.error, self.elapsed_s, self.first = step, error, elapsed_s, first
 
 
 class KmaRadarJob:
@@ -123,19 +151,61 @@ class KmaRadarJob:
         await self._save_frames(frames)
         return frames
 
-    async def _fail(self, started: datetime, e: Exception) -> None:
+    async def _fail(self, started: datetime, f: _StepFailed) -> None:
+        e = f.error
         http_status = e.status if isinstance(e, ProviderHttpError) else None
         note = "활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기)" if http_status == 403 else f"{type(e).__name__}"
+        why = describe_error(e)  # 가린 한 줄(R-83: 응답 본문 앞부분이 실릴 수 있다)
+        took = f" · {f.elapsed_s:.1f} s 경과" if f.elapsed_s is not None else ""
+        retried = ""
+        if f.first is not None:
+            first_e, first_s = f.first
+            retried = f" · {RETRY_DELAY_S:.0f} s 뒤 1회 재시도(첫 시도 {type(first_e).__name__} · {first_s:.1f} s)"
+        detail = f"{why} · {f.step}{took}{retried}"
         await self.ctx.status.failure(
-            self.p.name, at=datetime.now(UTC), error=note if http_status == 403 else repr(e), http_status=http_status
+            self.p.name, at=datetime.now(UTC), error=note if http_status == 403 else detail, http_status=http_status
         )
-        self.ctx.db.record_run(self.job_name, self.p.name, started, status="error", http_status=http_status, error_text=repr(e))
+        self.ctx.db.record_run(self.job_name, self.p.name, started, status="error", http_status=http_status, error_text=detail)
         await self.ctx.status.hset_meta(
             KEY_META, {"status": str(http_status or ""), "note": note[:200], "checked_at": _iso(datetime.now(UTC))}
         )
-        log.warning(
-            "kma radar: %s", note if http_status == 403 else (mask(repr(e)) or "")[:160]
-        )  # R-83: 응답 본문 앞부분이 실린다
+        if http_status == 403:
+            log.warning("kma radar: %s — %s", f.step, note)
+            return
+        after = f" after {f.elapsed_s:.1f} s" if f.elapsed_s is not None else ""
+        again = ""
+        if f.first is not None:
+            first_e, first_s = f.first
+            again = f"; retried once after {RETRY_DELAY_S:.0f} s (first attempt: {type(first_e).__name__} after {first_s:.1f} s)"
+        log.warning("kma radar: %s — %s%s%s", f.step, why, after, again)
+
+    async def _call(self, step: str, fn: Callable[[], Awaitable[ProviderResult]]) -> ProviderResult:
+        """step 호출. 실패는 모두 _StepFailed(단계·걸린 시간)로 올린다. 일시 오류(RETRY_ERRORS)면 예산 1 을 예약할 수 있을 때
+        RETRY_DELAY_S 뒤 한 번 다시 부른다(호출마다 한 번). HTTP 오류·속도 상한은 다시 부르지 않는다."""
+        t0 = time.monotonic()
+        try:
+            return await fn()
+        except RETRY_ERRORS as e:
+            first, first_s = e, time.monotonic() - t0
+        except Exception as e:  # noqa: BLE001 — 호출자가 종류별로 나눈다(해석 불가·아직 없음·실패)
+            raise _StepFailed(step, e, time.monotonic() - t0) from e
+        ok, used = await self.ctx.budget.reserve(self.p.name, 1)
+        if not ok:
+            log.info(
+                "kma radar: %s — %s after %.1f s; not retried (budget %s)",
+                step,
+                describe_error(first),
+                first_s,
+                "unavailable" if used == UNKNOWN else f"exhausted (used={used})",
+            )
+            raise _StepFailed(step, first, first_s) from first
+        log.info("kma radar: %s — %s after %.1f s — retrying once in %.0f s", step, describe_error(first), first_s, RETRY_DELAY_S)
+        await _sleep(RETRY_DELAY_S)
+        t1 = time.monotonic()
+        try:
+            return await fn()
+        except Exception as e:  # noqa: BLE001
+            raise _StepFailed(step, e, time.monotonic() - t1, first=(first, first_s)) from e
 
     async def _reserve(self, started: datetime) -> bool:
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
@@ -169,7 +239,8 @@ class KmaRadarJob:
         """오늘(KST) 목록. 자정 직후에는 전날 목록도 합친다. 첫 결과(오늘)를 돌려준다.
         전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다)."""
         now_kst = kst_now()
-        today = await self.p.file_list(now_kst.strftime("%Y%m%d"))
+        day = now_kst.strftime("%Y%m%d")
+        today = await self._call(f"listing {day}", lambda: self.p.file_list(day))
         if now_kst.hour != 0 or now_kst.minute >= PREV_DAY_LIST_MIN:
             return today
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
@@ -179,10 +250,17 @@ class KmaRadarJob:
                 "unavailable" if used == UNKNOWN else f"exhausted (used={used})",
             )
             return today
+        prev_day = (now_kst - timedelta(days=1)).strftime("%Y%m%d")
+        t0 = time.monotonic()
         try:
-            prev = await self.p.file_list((now_kst - timedelta(days=1)).strftime("%Y%m%d"))
+            prev = await self.p.file_list(prev_day)  # 덧붙이는 목록 — 다시 부르지 않는다(재시도는 오늘 목록·바이너리 몫)
         except Exception as e:  # noqa: BLE001
-            log.warning("kma radar: previous-day listing failed — using today's only: %s", (mask(repr(e)) or "")[:160])
+            log.warning(
+                "kma radar: previous-day listing %s — %s after %.1f s — using today's only",
+                prev_day,
+                describe_error(e),
+                time.monotonic() - t0,
+            )
             return today
         today.data = sorted({*prev.data, *today.data})
         return today
@@ -200,8 +278,11 @@ class KmaRadarJob:
             return
         try:
             listing = await self._listing()
-        except Exception as e:  # noqa: BLE001
-            await self._fail(started, e)
+        except _StepFailed as f:
+            await self._fail(started, f)
+            return
+        except Exception as e:  # noqa: BLE001 — 목록 호출 밖(예: 전날 목록 준비)의 예상 밖 오류도 주기 실패로
+            await self._fail(started, _StepFailed("listing", e, None))
             return
         now_tm = kst_now().strftime("%Y%m%d%H%M")
         candidates = select_candidates(listing.data, [f["tm"] for f in stored], now_tm, frozenset(self._bad))
@@ -211,27 +292,29 @@ class KmaRadarJob:
             if not await self._reserve(started):
                 break
             try:
-                res = await self.p.binary(tm)
+                res = await self._call(f"binary tm={tm}", functools.partial(self.p.binary, tm))
+            except _StepFailed as f:
+                err = f.error
+                if isinstance(err, ResponseTooLarge):
+                    self._skip_bad(tm, err, quality)
+                elif isinstance(err, ValueError):
+                    self._not_ready_or_missing(tm, err, quality)
+                elif isinstance(err, ProviderHttpError | httpx.HTTPError | OSError | Throttled):  # Throttled: 429 쿨다운 등
+                    await self._fail(started, f)
+                    return
+                else:
+                    raise err from None  # 예상 밖 — 스케줄러가 기록한다(이전과 같다)
+                continue
+            try:
                 await self._store(tm, res)
-                self._not_ready.pop(tm, None)
-                stored_n += 1
-            except (_BadFrame, ResponseTooLarge) as e:
-                # 이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류) — 다시 받아도 같으므로 기억해 두고 건너뛴다.
-                self._mark_bad(tm)
-                quality.append(("kma_radar_parse", None, {"tm": tm, "error": str(e)[:200]}))
-                log.warning("kma radar: tm=%s skipped — %s", tm, str(e)[:160])
-            except ValueError as e:
-                # gzip 아닌 응답("file not exist" 등): 목록에는 있으나 바이너리가 아직 없다 — 다음 주기에 다시 받는다.
-                tries = self._not_ready_again(tm)
-                if tries < MAX_NOT_READY_TRIES:
-                    log.info("kma radar: tm=%s not available yet (try %d/%d)", tm, tries, MAX_NOT_READY_TRIES)
-                    continue
-                self._mark_bad(tm)
-                quality.append(("kma_radar_missing", None, {"tm": tm, "tries": tries, "error": str(e)[:200]}))
-                log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, str(e)[:160])
-            except (ProviderHttpError, httpx.HTTPError, OSError, Throttled) as e:  # Throttled: 속도 상한(429 쿨다운 등)
-                await self._fail(started, e)
+            except _BadFrame as e:
+                self._skip_bad(tm, e, quality)
+                continue
+            except OSError as e:
+                await self._fail(started, _StepFailed(f"store tm={tm}", e, None))
                 return
+            self._not_ready.pop(tm, None)
+            stored_n += 1
         ctx.db.record_run(
             self.job_name,
             self.p.name,
@@ -250,6 +333,22 @@ class KmaRadarJob:
         if not stored_n:
             await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
         await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture)  # 재지 않은 값은 0 이 아니라 모름(R-20)
+
+    def _skip_bad(self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]]) -> None:
+        """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류) — 다시 받아도 같으므로 기억해 두고 건너뛴다."""
+        self._mark_bad(tm)
+        quality.append(("kma_radar_parse", None, {"tm": tm, "error": str(e)[:200]}))
+        log.warning("kma radar: tm=%s skipped — %s", tm, str(e)[:160])
+
+    def _not_ready_or_missing(self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]]) -> None:
+        """gzip 아닌 응답("file not exist" 등): 목록에는 있으나 바이너리가 아직 없다 — 다음 주기에 다시 받는다(R-03)."""
+        tries = self._not_ready_again(tm)
+        if tries < MAX_NOT_READY_TRIES:
+            log.info("kma radar: tm=%s not available yet (try %d/%d)", tm, tries, MAX_NOT_READY_TRIES)
+            return
+        self._mark_bad(tm)
+        quality.append(("kma_radar_missing", None, {"tm": tm, "tries": tries, "error": str(e)[:200]}))
+        log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, str(e)[:160])
 
     async def _store(self, tm: str, res) -> None:
         ctx = self.ctx

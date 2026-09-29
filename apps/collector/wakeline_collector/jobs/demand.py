@@ -36,6 +36,7 @@ import httpx
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.demand import Demand, DemandPoller, DemandStatus, HotCell, status_value
+from wakeline_collector.errors import describe_error
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.route import RouteLookup
@@ -105,6 +106,7 @@ def _chunks(items: list[str], n: int) -> list[list[str]]:
 
 
 def _err(e: BaseException) -> str:
+    """수요 상태 해시(wakeline:demand:status, 화면에 보이는 짧은 사유). 운영 기록·로그는 describe_error 로 자세히 남긴다."""
     if isinstance(e, Throttled):
         return e.reason
     if isinstance(e, ProviderHttpError):
@@ -403,8 +405,9 @@ class DemandTracker:
             if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout):
                 await self._release()
             self.counts["errors"] += 1
-            self.ctx.db.record_run(job, self.provider.name, started, status="error", http_status=http_status, error_text=repr(e))
-            log.info("%s: %s failed (%s)", job, self.provider.name, _err(e))
+            why = describe_error(e)
+            self.ctx.db.record_run(job, self.provider.name, started, status="error", http_status=http_status, error_text=why)
+            log.info("%s: %s failed (%s)", job, self.provider.name, why)
             return None, "throttled" if http_status == 429 else "error", _err(e), started
 
     async def _normalize(

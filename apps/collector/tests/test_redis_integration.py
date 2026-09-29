@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 from redis.exceptions import NoPermissionError
 
 from wakeline_collector.budget import Budget, day_key
+from wakeline_collector.chain_store import ChainStateStore
 from wakeline_collector.demand import FOCUS_KEY, FOCUS_META_KEY, HOT_KEY, HOT_META_KEY, STATUS_KEY, DemandPoller, DemandStatus
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.providers.adsbdb import RouteFetch
@@ -236,3 +237,26 @@ async def test_v5_log_sink_backs_off_on_noperm_and_keeps_entries(admin):
         await r.aclose()
         await admin.execute_command("ACL", "DELUSER", user)
         await admin.delete(STREAM_LOGS)
+
+
+async def test_chain_429_history_store_under_collector_acl(admin, collector, caplog):
+    """R-17 보존: 429 이력 키(wakeline:provider:{name}:ratelimit:{job})는 수집기 규칙으로 HSET + EXPIRE(파이프라인) · HGETALL · HDEL 이
+    된다. EXPIRE 는 start.sh 의 셀렉터가 이 키에만 준다 — 같은 접두어의 공급자 상태 해시는 만료시킬 수 없다."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="chain_store")
+    store = ChainStateStore(collector)
+    key = store.key("itest", "adsb_lol")
+    try:
+        fields = {"v": "1", "stage": "2", "hold_until": "", "expires_at": "1790001500.000"}
+        assert await store.save("itest", "adsb_lol", fields, ttl_s=1500)
+        assert 1490 <= await admin.ttl(key) <= 1500  # TTL 조회는 수집기가 쓰지 않는 명령이라 관리자로 본다
+        assert await store.load("itest", ["adsb_lol", "adsb_fi"]) == {"adsb_lol": fields}
+        await store.drop("itest", "adsb_lol")
+        assert await admin.exists(key) == 0
+        assert store.errors == 0 and not [r for r in caplog.records if r.name == "chain_store"]
+        await admin.hset("wakeline:provider:itest", "ok", "1")
+        with pytest.raises(NoPermissionError):
+            await collector.expire("wakeline:provider:itest", 1)
+    finally:
+        await admin.delete(key, "wakeline:provider:itest")

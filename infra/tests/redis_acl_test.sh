@@ -140,6 +140,11 @@ done
 ok "HSET wakeline:provider:*"     "^[0-9]+$"     "${K[@]}" hset wakeline:provider:adsb_fi disabled 0 ok 1
 ok "HGET wakeline:provider:*"     "^0$"          "${K[@]}" hget wakeline:provider:adsb_fi disabled
 ok "HINCRBY wakeline:provider:*"  "^[0-9]+$"     "${K[@]}" hincrby wakeline:provider:adsb_fi consecutive_failures 1
+# R-17 보존: 429 이력 해시(chain_store.py) — HSET 뒤 EXPIRE 로 논리 만료와 같은 때에 지워지게 한다(EXPIRE 는 이 키 셀렉터에만)
+ok "HSET wakeline:provider:*:ratelimit:*"   "^[0-9]+$" "${K[@]}" hset wakeline:provider:adsb_lol:ratelimit:region v 1 stage 2
+ok "EXPIRE wakeline:provider:*:ratelimit:*" "^1$"      "${K[@]}" expire wakeline:provider:adsb_lol:ratelimit:region 1500
+ok "429 이력 TTL 이 걸렸다(관리자로 확인)" "^1[0-9]{3}$" "${D[@]}" ttl wakeline:provider:adsb_lol:ratelimit:region
+ok "HGETALL wakeline:provider:*:ratelimit:*" "stage"   "${K[@]}" hgetall wakeline:provider:adsb_lol:ratelimit:region
 ok "HSET wakeline:active"         "^[0-9]+$"     "${K[@]}" hset wakeline:active region adsb_lol
 ok "HSET wakeline:collector"      "^[0-9]+$"     "${K[@]}" hset wakeline:collector region_at 2026-01-01T00:00:00Z
 ok "HGET wakeline:collector(health)" "2026"      "${K[@]}" hget wakeline:collector region_at
@@ -192,6 +197,8 @@ denied "COPY … REPLACE 로 스트림 덮어쓰기"          "${K[@]}" copy wak
 denied "EXPIRE 스트림"                           "${K[@]}" expire wakeline:aircraft 1
 denied "PEXPIRE 스트림"                          "${K[@]}" pexpire wakeline:aircraft 1
 denied "DEL 해시 wakeline:provider:*"            "${K[@]}" del wakeline:provider:adsb_fi
+denied "EXPIRE 공급자 상태 해시(429 이력만)"        "${K[@]}" expire wakeline:provider:adsb_fi 1
+denied "DEL 429 이력(HDEL · EXPIRE 만)"          "${K[@]}" del wakeline:provider:adsb_lol:ratelimit:region
 denied "DEL 예산 budget:*"                       "${K[@]}" del budget:adsb_lol:20260101
 denied "EXPIRE 노선 캐시(SET EX 만)"              "${K[@]}" expire wakeline:route:ZZX123 1
 denied "UNLINK 레이더 목록(DEL 만)"               "${K[@]}" unlink wakeline:radar_kr:frames

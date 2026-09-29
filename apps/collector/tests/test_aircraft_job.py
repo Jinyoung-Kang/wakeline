@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import gzip
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -378,3 +379,113 @@ async def test_r33_one_inf_record_does_not_sink_the_region_batch():
     states = {s["hex"]: s for s in _decode(fields)["states"]}
     assert len(states) == 51 and states["71cfff"]["alt_ft"] is None and states["71cfff"]["gs_kt"] is None
     assert (await r.hgetall("wakeline:collector"))["region_at"]
+
+
+# ---- 429 경고는 다음에 무엇을 하는지 말한다 · 전환 사유 ---------------------------------------------------------------------
+class RL429(FakeReadsb):
+    async def fetch_region(self, lat, lon, radius):
+        from wakeline_collector.http import ProviderHttpError
+
+        self.calls += 1
+        raise ProviderHttpError(429, "too many")
+
+
+def _warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == "job.aircraft" and r.levelno == logging.WARNING]
+
+
+async def test_region_429_warning_says_what_happens_next(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi")
+    chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    await job.run_once()
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; next: 'adsb_fi takes over'"
+    )
+    await job.run_once()  # adsb_fi
+    assert fi.calls == 1
+    assert (await r.hgetall("wakeline:active"))["region_reason"] == "fallback — adsb_lol 429 쉼(60 s)"
+    clk[0] += 61
+    await job.run_once()  # 1순위 복귀 → 다시 429(15분 안) → 120 s 쉬고 10분 뒤로 미룸
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; next: 'adsb_fi takes over'"
+    )
+
+
+async def test_region_429_warning_when_no_other_provider(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    ctx = make_ctx(FakeRedis())
+    job = AircraftJob("region", ProviderChain("region", {"adsb_lol": RL429("adsb_lol")}, ctx.status), ctx)
+    await job.run_once()
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; "
+        "next: 'adsb_lol again after the backoff (no other provider)'"
+    )
+    clk[0] += 61
+    await job.run_once()  # 15분 안에 되풀이 — 미룸이 걸렸지만 다른 공급자가 없어 쉼 뒤 다시 쓴다
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; "
+        "next: 'adsb_lol again after the backoff (no other provider — deferral not applied)'"
+    )
+
+
+def test_region_429_warnings_share_one_log_fingerprint():
+    """/logs 에서 429 한 계열이 한 묶음(지문)으로 보인다 — 바뀌는 값은 숫자와 따옴표 안에만 둔다(logsink.message_template).
+    이전: 뒤에 붙인 '다음에 무엇을 하는지'의 문장 모양이 4가지라 한 계열이 2–4개 지문으로 갈렸다."""
+    from wakeline_collector.logsink import fingerprint
+
+    msgs = [
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; next: 'adsb_fi takes over'",
+        "region: adsb_lol rate limited (429) — backing off 300 s, deferred 60 min; next: 'adsb_fi takes over'",
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; "
+        "next: 'adsb_lol again after the backoff (no other provider)'",
+        "region: adsb_lol rate limited (429) — backing off 240 s, deferred 20 min; "
+        "next: 'adsb_lol again after the backoff (no other provider — deferral not applied)'",
+    ]
+    assert len({fingerprint("collector", "job.aircraft", "", m) for m in msgs}) == 1
+
+
+async def test_budget_and_limiter_cooldowns_name_their_reason(monkeypatch):
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_lol": 1, "adsb_fi": 0, "opensky": 2880})
+    chain = ProviderChain("region", {"adsb_lol": FakeReadsb("adsb_lol"), "adsb_fi": FakeReadsb("adsb_fi")}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    await job.run_once()  # adsb_lol 예산 1회분 사용
+    await job.run_once()  # 예산 소진 → 10분 쉼
+    await job.run_once()  # → adsb_fi
+    assert (await r.hgetall("wakeline:active"))["region_reason"] == "fallback — adsb_lol 예산 소진(10분 쉼)"
+
+
+async def test_region_429_history_survives_a_collector_restart(monkeypatch):
+    """재배포(재시작) 직후 1순위(adsb_lol)를 바로 다시 부르지 않는다 — 429 이력을 Redis 에서 되살린다(R-17 보존)."""
+    from wakeline_collector.chain_store import ChainStateStore
+
+    clk = [80_000.0]
+    wall = [1_790_000_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+
+    def build():
+        ctx = make_ctx(r)
+        lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi")
+        store = ChainStateStore(r, wall=lambda: wall[0])  # type: ignore[arg-type]
+        chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status, store=store)
+        return AircraftJob("region", chain, ctx), lol, fi
+
+    job, lol, fi = build()
+    await job.run_once()  # 429 → 60 s 쉼, 저장
+    assert "wakeline:provider:adsb_lol:ratelimit:region" in r.kv
+    clk[0], wall[0] = 5.0, wall[0] + 15  # 재시작: 새 단조 시계, 벽시계는 15 s 뒤
+    job2, lol2, fi2 = build()
+    await job2.run_once()
+    assert lol2.calls == 0 and fi2.calls == 1
+    assert (await r.hgetall("wakeline:active"))["region_reason"] == "initial — adsb_lol 429 쉼(60 s)(재시작 전 기록)"

@@ -30,6 +30,7 @@ from redis.asyncio import Redis
 
 from wakeline_collector import route
 from wakeline_collector.budget import UNKNOWN, Budget
+from wakeline_collector.errors import describe_error
 from wakeline_collector.http import NOT_SENT_ERRORS, BeforeSend, ProviderHttpError, SendCancelled
 from wakeline_collector.providers.adsbdb import ROUTE_WAIT_S, RouteFetch
 from wakeline_collector.ratelimit import Throttled
@@ -143,7 +144,8 @@ class RouteLookup:
             log.info("route %s: %s", cs, value.status)
 
     async def _resolve(self, cs: str) -> tuple[RouteValue, str | None]:
-        """(캐시 값, 사유 | None). 사유는 고정 문구·HTTP 상태·예외 이름뿐이다(응답 내용 없음)."""
+        """(캐시 값, 사유 | None). 사유는 고정 문구이거나 describe_error(content=False) — HTTP 상태·문구, 예외 종류, 시간 제한·호스트뿐이다
+        (응답 내용 없음)."""
         p = self.provider
         if p is None:
             return route.disabled(cs), FIXTURE_MSG
@@ -178,13 +180,13 @@ class RouteLookup:
             return route.disabled(cs), DISABLED_MSG
         except ProviderHttpError as e:  # 429 는 HttpClient 가 이미 호스트 벌점을 줬다(모든 호출자 공통)
             self.counts["lookups"] += 1
-            why, http_status = f"HTTP {e.status}", e.status
+            why, http_status = describe_error(e, content=False), e.status
         except NOT_SENT_ERRORS as e:  # 허용 호스트 아님·연결 풀 대기 초과·연결 전 실패 — 보내지 않았다
             await self._budget.release(p.name, p.cost)
-            why = type(e).__name__
+            why = describe_error(e, content=False)
         except Exception as e:  # noqa: BLE001 — 읽기 시간 초과·응답 모양 이상 등(보낸 것으로 센다)
             self.counts["lookups"] += 1
-            why = type(e).__name__
+            why = describe_error(e, content=False)
         else:
             self.counts["lookups"] += 1
             if got.latency_ms is not None:

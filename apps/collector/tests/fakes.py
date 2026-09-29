@@ -71,6 +71,13 @@ class FakeRedis:
         self._check()
         return sum(1 for k in keys if not self._expired(k) and k in self.kv)
 
+    async def expire(self, key: str, seconds: int) -> bool:
+        self._check()
+        if self._expired(key) or key not in self.kv:
+            return False
+        self.ttl[key] = time.time() + seconds
+        return True
+
     # hashes
     async def hset(self, key: str, field: str | None = None, value: str | None = None, mapping: dict | None = None) -> int:
         self._check()
@@ -192,10 +199,19 @@ class FakePipeline:
 
         return queue
 
-    async def execute(self) -> list:
+    async def execute(self, raise_on_error: bool = True) -> list:
+        """raise_on_error=False 면 redis-py 처럼 명령마다의 오류를 결과 자리에 예외 객체로 돌려준다(나머지 명령은 실행된다)."""
         self._r._check()
         ops, self._ops = self._ops, []
-        return [await getattr(self._r, name)(*args, **kwargs) for name, args, kwargs in ops]
+        out: list = []
+        for name, args, kwargs in ops:
+            try:
+                out.append(await getattr(self._r, name)(*args, **kwargs))
+            except Exception as e:  # noqa: BLE001
+                if raise_on_error:
+                    raise
+                out.append(e)
+        return out
 
 
 class FakeRaw:
