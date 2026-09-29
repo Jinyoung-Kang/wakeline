@@ -233,7 +233,8 @@ class OpsPipelineIT extends IntegrationTest {
 
     /**
      * 창 = 요청 시각 − 첫 엔트리 id 의 ms(XINFO STREAM first-entry, 30 s 측정). 시험이 고른 id 로 항공기·선박 스트림에 한 건씩 싣고, 읽혀
-     * ACK 된 뒤 그보다 앞의 엔트리를 지운다(MINID) → 첫 엔트리가 그 id 다. 빈 스트림은 모름(null). 없는 스트림·Redis 오류는 단위 시험(StreamWindowTest).
+     * ACK 된 뒤 그보다 앞의 엔트리를 지운다(MINID) → 첫 엔트리가 그 id 다. 측정 없이 1.2 s 뒤 다시 GET 하면 창이 그만큼 자란다 — 측정 시각에
+     * 계산하는 구현은 그대로다. 빈 스트림은 모름(null). 없는 스트림·Redis 오류는 단위 시험(StreamWindowTest).
      */
     @Test
     void streamWindowIsRequestTimeMinusTheFirstEntryIdOfTheAircraftAndShipsStreams() throws Exception {
@@ -257,16 +258,25 @@ class OpsPipelineIT extends IntegrationTest {
         xtrim(Streams.SHIPS, "MINID", sId.getValue());
         assertThat(ItStack.admin().opsForStream().info(Streams.AIRCRAFT).firstEntryId()).isEqualTo(aId.getValue());
         assertThat(ItStack.admin().opsForStream().info(Streams.SHIPS).firstEntryId()).isEqualTo(sId.getValue());
-        Thread.sleep(1_200); // 창이 요청 시각에 계산됨을 보이려고 측정과 요청 사이를 벌린다(아래 하한)
 
         long[] t = new long[2];
         JsonNode w = windowAfterRefresh(b, x -> x.path("aircraft").isNumber() && x.path("ships").isNumber()
                 && x.path("aircraft").asDouble() <= (System.currentTimeMillis() - aMs) / 1000.0 + 0.05
                 && x.path("ships").asDouble() <= (System.currentTimeMillis() - sMs) / 1000.0 + 0.05, t);
         assertThat(w.path("aircraft").asDouble()).as("aircraft window = request time − first entry id ms")
-                .isBetween((t[0] - aMs) / 1000.0 - 0.05, (t[1] - aMs) / 1000.0 + 0.05).isGreaterThanOrEqualTo(1.1);
+                .isBetween((t[0] - aMs) / 1000.0 - 0.05, (t[1] - aMs) / 1000.0 + 0.05);
         assertThat(w.path("ships").asDouble()).as("ships window = request time − first entry id ms")
                 .isBetween((t[0] - sMs) / 1000.0 - 0.05, (t[1] - sMs) / 1000.0 + 0.05);
+
+        // 창은 요청 시각에 계산된다: 측정(refresh) 없이 1.2 s 뒤 다시 GET → 그 사이 시간만큼 자란다(측정 시각 계산이면 0).
+        // 두 값 모두 0.1 s 반올림이라 ±0.1 s. 예약 측정(30 s)이 사이에 돌아도 첫 엔트리는 그대로라 결과는 같다.
+        Thread.sleep(1_200);
+        long u0 = System.currentTimeMillis();
+        JsonNode later = b.get("/api/v1/ops/pipeline").json().path("api").path("stream_window_s");
+        long u1 = System.currentTimeMillis();
+        for (String k : new String[]{"aircraft", "ships"})
+            assertThat(later.path(k).asDouble() - w.path(k).asDouble()).as(k + " window grows with request time, no new sample")
+                    .isBetween((u0 - t[1]) / 1000.0 - 0.1, (u1 - t[0]) / 1000.0 + 0.1).isGreaterThanOrEqualTo(1.1);
 
         // Prometheus 게이지도 같은 값(스크레이프 시각 기준)
         long g0 = System.currentTimeMillis();
