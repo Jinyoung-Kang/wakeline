@@ -11,6 +11,13 @@
  *   해안 색 선으로 보였다(문서 스크린샷 01 · 06 에서 같은 자리, 외곽선을 넣기 전 판(70e9955)에는 없다). 이제 채움 외곽선은 물 색이고, 해안선은 물 채움 층마다
  *   바로 아래에 같은 지물의 선 층(coastLayers)을 더해 1 px 바깥(육지 쪽 — line-offset 음수)으로 민다. 물 채움이 위에서 물 쪽을 덮으므로 이음새의 선은 가려지고
  *   육지와 맞닿은 해안의 선만 남는다. 외부 요청은 늘지 않는다(같은 타일).
+ * - 층 순서(통합 리뷰 2026-09-30): OpenFreeMap dark 는 물 채움(1번째)보다 뒤에 육지 채움(얼음 · 빙하 · 주거지 · 숲 · 공원 · 건물 · 공항 활주로 구역)을 그린다.
+ *   해안선은 육지 쪽 1 px 에 있으므로 그 채움이 해안에 닿는 곳에서는 해안선을 덮을 수 있다. 그래서 첫 물 채움보다 뒤의 지표 피복 · 토지 이용 · 공원 · 건물 채움을
+ *   해안선 바로 아래로 옮긴다(landFillsAboveWater — 서로의 순서는 그대로). 물 · 해안선보다 위의 선(물길 · 도로 · 경계) · 글자(바다 이름 · 지명)는 그대로 위에 있다.
+ *   물 다각형과 겹치는 그 채움은 이제 물 아래라 물로 보인다(물 쪽이 이긴다). 공항 활주로 구역(aeroway 채움)은 옮기지 않는다 — 스타일이 그 아래에 둔 유도로 선
+ *   (#181818, 칠하지 않는다)이 드러난다(실제 타일 인천 z12 에서 확인). 부두 구역(transportation 채움)도 옮기지 않는다 — 물 위에 있다.
+ *   실제 OpenFreeMap 타일(2026-09-30, 900×600 · 부산 z10 · 해운대 z13 · 인천 z10 · z12 · 강릉 z11 · 속초 z12 · 제주 z11 · 동해 38.6°N z7)에서 옮기기 전후의
+ *   해안선 화소는 같거나(7곳) 28 px 늘었다(동해 z7 — 주거지 채움 0.4 불투명이 덮던 곳) — 덮임은 드물었지만 순서로 막는다.
  */
 import type * as maplibregl from "maplibre-gl";
 
@@ -120,17 +127,35 @@ export function coastLayers(layers: readonly StyleLayerLike[]): CoastLayer[] {
   return out;
 }
 
+/** 해안선 아래로 옮길 육지 채움의 source-layer — 공항(aeroway)은 빼고(위 머리 주석: 그 아래의 유도로 선이 드러난다) */
+const MOVE_BELOW_COAST: ReadonlySet<string> = new Set(["landcover", "landuse", "park", "building"]);
+
+/**
+ * 첫 물 채움(해안선이 붙는 층)보다 뒤에 그려지는 육지 채움(landcover · landuse · park · building 의 fill)의 id — 층 순서대로. 이 층들이 물 위에 있으면
+ * 육지 쪽 1 px 의 해안선을 덮을 수 있다(applyBasemap 이 해안선 아래로 옮긴다). 물 채움이 없거나 source 가 없어 해안선이 없으면 [].
+ */
+export function landFillsAboveWater(layers: readonly StyleLayerLike[]): string[] {
+  const first = coastLayers(layers)[0];
+  if (!first) return [];
+  const at = layers.findIndex((l) => l?.id === first.beforeId);
+  return layers.slice(at + 1)
+    .filter((l) => l && typeof l.id === "string" && l.type === "fill" && typeof l["source-layer"] === "string" && MOVE_BELOW_COAST.has(l["source-layer"]))
+    .map((l) => l.id);
+}
+
 /** 지도에서 쓰는 부분만(maplibregl.Map 이 맞는다 — 시험은 가짜로) */
 export interface BasemapTarget {
   getStyle(): { layers?: readonly unknown[] } | undefined;
   setPaintProperty(id: string, prop: string, value: unknown): unknown;
   getLayer(id: string): unknown;
   addLayer(layer: CoastLayer["layer"], beforeId?: string): unknown;
+  moveLayer(id: string, beforeId?: string): unknown;
 }
 
 /**
- * 지도에 적용(style.load 마다): 알려진 층의 색을 바꾸고 해안선 층을 더한다(이미 있으면 더하지 않는다). 적용한 수를 돌려준다.
- * 스타일을 읽을 수 없거나 층이 없으면 0. 거절된 속성 · 층은 건너뛴다(배경지도가 조금 덜 칠해질 뿐 지도는 계속 그려진다).
+ * 지도에 적용(style.load 마다): 알려진 층의 색을 바꾸고 해안선 층을 더한 뒤(이미 있으면 더하지 않는다), 첫 해안선보다 위의 육지 채움을 그 해안선 바로 아래로
+ * 옮긴다(landFillsAboveWater — 서로의 순서는 그대로, 다시 불러도 같은 자리). 적용한 수를 돌려준다.
+ * 스타일을 읽을 수 없거나 층이 없으면 0. 거절된 속성 · 층 · 옮기기는 건너뛴다(배경지도가 조금 덜 칠해질 뿐 지도는 계속 그려진다).
  */
 export function applyBasemap(map: BasemapTarget): number {
   let layers: readonly StyleLayerLike[] = [];
@@ -139,12 +164,21 @@ export function applyBasemap(map: BasemapTarget): number {
   for (const o of basemapOverrides(layers)) {
     try { map.setPaintProperty(o.id, o.prop, o.value); n++; } catch { /* 그 층에 없는 속성 — 건너뛴다 */ }
   }
-  for (const c of coastLayers(layers)) {
+  const coasts = coastLayers(layers);
+  for (const c of coasts) {
     try {
       if (map.getLayer(c.layer.id)) continue;
       map.addLayer(c.layer, c.beforeId);
       n++;
     } catch { /* 그 스타일이 받지 않는 층 — 해안선 없이 그린다 */ }
+  }
+  const first = coasts[0]?.layer.id;
+  let hasFirst = false;
+  try { hasFirst = first != null && !!map.getLayer(first); } catch { /* 모름 — 옮기지 않는다 */ }
+  if (first && hasFirst) {
+    for (const id of landFillsAboveWater(layers)) {
+      try { map.moveLayer(id, first); n++; } catch { /* 옮기지 못한 층 — 그 자리에서 해안선을 덮을 수 있다 */ }
+    }
   }
   return n;
 }

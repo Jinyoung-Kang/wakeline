@@ -7,7 +7,7 @@ import { createPropertyExpression, latest, validateStyleMin } from "@maplibre/ma
 import { describe, expect, it } from "vitest";
 import {
   applyBasemap, BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST, BASEMAP_HALO, BASEMAP_LABEL, BASEMAP_LAND, BASEMAP_LAND_DETAIL, BASEMAP_ROAD, BASEMAP_WATER,
-  BASEMAP_WATER_LABEL, basemapOverrides, BOUNDARY_COLOR_EXPR, COAST_LINE_OFFSET_PX, coastLayers, contrastRatio, relativeLuminance, type StyleLayerLike,
+  BASEMAP_WATER_LABEL, basemapOverrides, BOUNDARY_COLOR_EXPR, COAST_LINE_OFFSET_PX, coastLayers, contrastRatio, landFillsAboveWater, relativeLuminance, type StyleLayerLike,
 } from "@/lib/basemap";
 import { ALT_RAMP, ALT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR } from "@/lib/format";
 import { AIRCRAFT_COLOR_EXPR, COVERAGE_PAINT } from "@/lib/maplayers";
@@ -228,6 +228,7 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
   it("applyBasemap sets each override once, adds each coastline once below its water fill, survives a rejected property or layer and an unreadable style", () => {
     const calls: [string, string, unknown][] = [];
     const added: [string, string | undefined][] = [];
+    const moved: [string, string | undefined][] = [];
     const have = new Set<string>();
     let rejectOnce = true;
     const target = {
@@ -241,9 +242,15 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
         if (l.id === "wakeline-coast-water_intermittent" && rejectOnce) { rejectOnce = false; throw new Error("rejected"); }
         have.add(l.id); added.push([l.id, before]);
       }) as never,
+      moveLayer: ((id: string, before?: string) => {
+        if (id === "building") throw new Error("rejected");
+        moved.push([id, before]);
+      }) as never,
     };
     const n = applyBasemap(target);
-    expect(n).toBe(overrides.length - 1 + 1);
+    // 칠하기(park 거절) + 해안선 1(두 번째 거절) + 육지 채움 옮기기 4 중 building 거절(공항 구역은 옮기지 않는다)
+    expect(n).toBe(overrides.length - 1 + 1 + 3);
+    expect(moved).toEqual(["landcover_ice", "landuse_residential", "park"].map((id) => [id, "wakeline-coast-water"]));
     expect(calls.map((c) => `${c[0]}.${c[1]}`)).toEqual(overrides.filter((o) => o.id !== "park").map((o) => `${o.id}.${o.prop}`));
     expect(added).toEqual([["wakeline-coast-water", "water"]]); // 거절된 층은 건너뛴다
     // 다시 불러도(같은 스타일) 이미 있는 선은 더하지 않는다
@@ -252,6 +259,43 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
     applyBasemap(target);
     expect(added).toHaveLength(2);
     expect(applyBasemap({ ...target, getStyle: () => { throw new Error("no style"); } })).toBe(0);
+    // 해안선을 더하지 못했으면 육지 채움을 옮기지 않는다(스타일 순서 그대로)
+    moved.length = 0;
+    applyBasemap({ ...target, getLayer: () => undefined, addLayer: (() => { throw new Error("rejected"); }) as never });
+    expect(moved).toEqual([]);
+  });
+  /**
+   * 층 순서(통합 리뷰 2026-09-30): OpenFreeMap dark 는 물 채움보다 뒤에 육지 채움(주거지 · 숲 · 공원 · 건물 · 활주로 구역)을 그린다 — 해안선을 물 채움 바로 아래에만
+   * 두면 해안에 닿는 그 채움이 육지 쪽 1 px 의 해안선을 덮을 수 있었다(이 시험이 실패했다). 이제 지표 피복 · 토지 이용 · 공원 · 건물 채움은 해안선 아래,
+   * 물 위의 선 · 글자는 그대로 위. 공항 구역 채움은 제자리(그 아래의 유도로 선이 드러나지 않게 — 실제 타일 인천 z12).
+   */
+  it("after applyBasemap no landcover · landuse · park · building fill is drawn above a coastline; lines and labels stay above the water in their order", () => {
+    const order: string[] = SYNTHETIC_LAYERS.map((l) => l.id);
+    const at = (id: string) => order.indexOf(id);
+    const place = (id: string, before?: string) => { const i = order.indexOf(id); if (i >= 0) order.splice(i, 1); order.splice(before ? order.indexOf(before) : order.length, 0, id); };
+    const target = {
+      getStyle: () => ({ layers: SYNTHETIC_LAYERS }) as never,
+      setPaintProperty: (() => undefined) as never,
+      getLayer: (id: string) => (order.includes(id) ? { id } : undefined),
+      addLayer: ((l: { id: string }, before?: string) => place(l.id, before)) as never,
+      moveLayer: ((id: string, before?: string) => place(id, before)) as never,
+    };
+    applyBasemap(target);
+    const coasts = order.filter((id) => id.startsWith("wakeline-coast-"));
+    expect(coasts).toEqual(["wakeline-coast-water", "wakeline-coast-water_intermittent"]);
+    for (const c of coasts) expect(order[at(c) + 1], c).toBe(c.replace("wakeline-coast-", "")); // 해안선은 제 물 채움 바로 아래
+    const landFills = ["landcover_ice", "landuse_residential", "park", "building"];
+    for (const f of landFills) expect(at(f), `${f} below the first coastline`).toBeLessThan(at("wakeline-coast-water"));
+    expect(landFills.map(at)).toEqual([...landFills.map(at)].sort((a, b) => a - b)); // 서로의 순서는 그대로
+    for (const id of ["waterway", "highway_major", "boundary_state", "boundary_country", "water_name", "place_city", "road_label", "sigmet-fill", "airport-label"])
+      expect(at(id), `${id} above the water`).toBeGreaterThan(at("water_intermittent"));
+    const rest = order.filter((id) => !coasts.includes(id) && !landFills.includes(id));
+    expect(rest).toEqual(SYNTHETIC_LAYERS.map((l) => l.id).filter((id) => !landFills.includes(id))); // 나머지 층의 순서는 스타일 그대로
+    // 다시 불러도 같은 자리
+    const once = [...order];
+    applyBasemap(target);
+    expect(order).toEqual(once);
+    expect(landFillsAboveWater(order.map((id) => SYNTHETIC_LAYERS.find((l) => l.id === id) ?? { id, type: "line" }) as StyleLayerLike[])).toEqual([]);
   });
   it("both maps (dashboard and replay) apply it on every style.load", () => {
     for (const f of ["../components/MapView.tsx", "../components/ReplayMap.tsx"]) {
