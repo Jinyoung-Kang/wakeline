@@ -64,7 +64,7 @@ function AirportLine({ a }: { a: RouteAirport }) {
  * "노선 조회 중"(사용자 요청 2026-09-29 — 조회하고 있다는 느낌이 나게): 상태 줄은 role=status(한 번 읽힘 — aria-busy 조상 밖에 둔다: busy 안의 알림은
  * 화면 읽기 프로그램이 미룰 수 있다) · 값이 채워질 자리(출발/도착 skeleton)만 aria-busy · 작은 회전 표시(움직임 줄이기 설정이면 멈춤 — globals.css) ·
  * 경과 초(시각 표시만 — 매초 읽지 않게 live 영역 밖).
- * 보통 경로(ROUTE_SLOW_AFTER_S)를 넘으면 상태 줄에 "평소보다 오래 걸림"을 덧붙인다(한 번 읽힘). 경과를 모르면(null) 경과를 쓰지 않는다.
+ * 보통 경로 계산값(ROUTE_SLOW_AFTER_S)을 넘으면 상태 줄에 "보통 경로 계산값(10 s)보다 오래 걸림"을 덧붙인다(한 번 읽힘). 경과를 모르면(null) 경과를 쓰지 않는다.
  */
 function RoutePending({ callsign, pendingForS }: { callsign: string | null; pendingForS: number | null }) {
   const phase = routePendingPhase(pendingForS);

@@ -2,8 +2,9 @@
  * 항공기 카드 노선의 "노선 조회 중"이 진행 중으로 읽히게(사용자 요청 2026-09-29).
  * - 조회 중: role=status(한 번만 읽힘 — aria-busy 조상 밖에 두어 알림이 미뤄지지 않게) · 값이 채워질 자리(출발/도착 skeleton)만 aria-busy ·
  *   작은 회전 표시(움직임 줄이기 설정이면 멈춤) · 경과 초(시각만, 읽지 않음).
- * - 보통 경로보다 오래 걸리면(수집기 집중 추적 주기 5 s + api 노선 메모리 캐시 5 s = 10 s) "평소보다 오래 걸림"을 한 번 더 알린다.
- *   이 수들은 서버 코드의 값을 읽어 확인한다(짐작한 값이 아니다). 상한은 말하지 않는다 — 수집기의 조회 대기열(동시 2개)은 기다림에 상한이 없다.
+ * - 보통 경로 계산값(api 노선 메모리 캐시 5 s + 선택 항공기 갱신(selected) 주기 약 5 s = 10 s)보다 오래 걸리면 한 번 더 알린다.
+ *   이 수들은 서버 코드의 값을 읽어 확인한다(짐작한 값이 아니다) — 측정값이 아니라 계산값이라고 적는다(리뷰 2026-09-29: 수집기는 콜사인을 5 s 주기가 아니라
+ *   다음 1 s 틱에 조회에 넘긴다 — 5 s 는 selected 가 오는 주기다). 상한은 말하지 않는다 — 수집기의 조회 대기열(동시 2개)은 기다림에 상한이 없다.
  * - 실패 · 없음 · 꺼짐 문구는 그대로(계약 v4 §A).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
@@ -12,7 +13,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, describe, expect, it } from "vitest";
 import { RouteSection } from "@/components/AircraftCard";
-import { parseRoute, ROUTE_NORMAL_PATH_S, ROUTE_SLOW_AFTER_S, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, routePendingPhase, type RouteInfo } from "@/lib/route";
+import { parseRoute, ROUTE_NORMAL_PATH_S, ROUTE_PENDING_TITLE, ROUTE_SLOW_AFTER_S, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, routePendingPhase, type RouteInfo } from "@/lib/route";
 import { ancestors, byTestId, classes, findAll, parseHtml, textOf } from "./helpers/html-tree";
 import { installMiniDom } from "./helpers/mini-dom";
 
@@ -58,9 +59,17 @@ describe("pending route lookup reads as in progress", () => {
     const slow = byTestId(render(PENDING, ROUTE_SLOW_AFTER_S + 2), "route-status")!;
     expect(textOf(slow)).toContain(ROUTE_SLOW_TEXT);
     expect(slow.attrs["data-phase"]).toBe("slow");
-    expect(slow.attrs.title).toContain("5 s");
     expect(slow.attrs.title).toContain("노선 조회 실패");
     expect(ROUTE_SLOW_TEXT).toContain(`${ROUTE_NORMAL_PATH_S} s`);
+  });
+  it("the wording says what 10 s really is: a value computed from the api cache and the selected push cadence, not a measured usual time", () => {
+    expect(ROUTE_SLOW_TEXT).not.toContain("평소"); // 잰 적 없는 "평소" 가 아니다
+    expect(ROUTE_SLOW_TEXT).toContain("계산값");
+    expect(ROUTE_PENDING_TITLE).toContain("api 가 “조회 중”을 5 s 동안 캐시");
+    expect(ROUTE_PENDING_TITLE).toContain("selected");
+    expect(ROUTE_PENDING_TITLE).toContain("약 5 s");
+    expect(ROUTE_PENDING_TITLE).toContain("계산값");
+    expect(ROUTE_PENDING_TITLE).not.toContain("수집기 조회 주기"); // 수집기는 콜사인을 다음 1 s 틱에 넘긴다
   });
   it("other statuses keep their wording, with no spinner, no skeleton and no aria-busy", () => {
     for (const status of ["not_found", "no_callsign", "unavailable", "disabled"] as const) {
@@ -83,10 +92,19 @@ describe("pending route lookup reads as in progress", () => {
 describe("the 10 s threshold comes from the server's route path (read from the code, not guessed)", () => {
   const repo = new URL("../../../", import.meta.url);
   const src = (p: string) => readFileSync(new URL(p, repo), "utf8");
-  it("collector focus cycle 5 s + api route memory cache 5 s", () => {
-    const focus = Number(/^FOCUS_INTERVAL_S = (\d+(?:\.\d+)?)/m.exec(src("apps/collector/wakeline_collector/jobs/demand.py"))![1]);
+  it("api route memory cache 5 s (a 'pending' read is served for that long) + the next selected push (focus observations every FOCUS_INTERVAL_S)", () => {
+    const demand = src("apps/collector/wakeline_collector/jobs/demand.py");
+    const focus = Number(/^FOCUS_INTERVAL_S = (\d+(?:\.\d+)?)/m.exec(demand)![1]);
+    const tick = Number(/^TICK_S = (\d+(?:\.\d+)?)/m.exec(demand)![1]);
     const apiCacheMs = Number(/TTL_MS = ([\d_]+);/.exec(src("apps/api/src/main/java/dev/wakeline/route/RouteReader.java"))![1].replace(/_/g, ""));
-    expect(ROUTE_NORMAL_PATH_S).toBe(focus + apiCacheMs / 1000);
+    // 5 s 는 selected 가 오는 주기: 수집기의 집중 추적 관측이 FOCUS_INTERVAL_S 마다(_focus_due) → WsHub 가 그 관측마다 selected 를 보낸다(≈ 5 s)
+    expect(demand).toMatch(/self\._focus_due = now \+ FOCUS_INTERVAL_S/);
+    expect(src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java")).toMatch(/focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다\(≈ 5 s/);
+    // 노선 조회에 넘기는 것은 틱마다(TICK_S) — 처음 보는 콜사인은 곧바로(FOCUS_INTERVAL_S 는 같은 콜사인을 다시 넘기기까지의 간격일 뿐)
+    expect(tick).toBeLessThan(focus);
+    expect(demand).toMatch(/self\._request_routes\(demand, now\)/);
+    expect(demand).toMatch(/now - self\._route_asked\.get\(cs, -math\.inf\) >= FOCUS_INTERVAL_S/);
+    expect(ROUTE_NORMAL_PATH_S).toBe(apiCacheMs / 1000 + focus);
     expect(ROUTE_SLOW_AFTER_S).toBe(ROUTE_NORMAL_PATH_S);
   });
 });

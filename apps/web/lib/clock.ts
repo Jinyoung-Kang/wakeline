@@ -50,7 +50,7 @@ export function useNow(periodMs = 1000): number {
 /**
  * key 가 처음 보인 때부터 지난 시간(초). key 가 null 이면(끝남) null, 시계를 아직 모르면(nowMs 0) null — 0 으로 채우지 않는다.
  * key 가 바뀌면(다른 항공기 · 콜사인) 그때부터 다시 잰다. 렌더 중 상태 조정(이전 렌더의 key 를 기억) — 이펙트 없이 같은 렌더에서 맞는 값.
- * 예: 항공기 카드의 "노선 조회 중" 경과(ROUTE_SLOW_AFTER_S 를 넘으면 "평소보다 오래 걸림").
+ * 예: 항공기 카드의 "노선 조회 중" 경과(ROUTE_SLOW_AFTER_S 를 넘으면 "보통 경로 계산값(10 s)보다 오래 걸림").
  */
 export function useElapsedSince(key: string | null, nowMs: number): number | null {
   const [since, setSince] = useState<{ key: string | null; at: number }>({ key: null, at: 0 });
