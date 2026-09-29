@@ -158,6 +158,10 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(STORED_STATIC_TITLE).toMatch(/수집기가 다시 시작/);
     expect(STORED_STATIC_TITLE).toMatch(/30분 넘게/);
     expect(STORED_STATIC_TITLE).not.toMatch(/첫 메시지|처음 받은/);
+    // 계약 v5 §G19: 저장 행은 받은 필드만 덮는다 — 시각은 마지막으로 저장한 보고의 것, 그 보고가 싣지 않은 부분은 더 앞선 보고의 값
+    expect(STORED_STATIC_TITLE).toMatch(/마지막으로 정적 보고를 저장한 메시지/);
+    expect(STORED_STATIC_TITLE).toMatch(/싣지 않은 부분.*앞서 저장된 보고의 값/);
+    expect(STORED_STATIC_TITLE).not.toMatch(/지금 저장된 내용을 DB 에 쓴 메시지/);
     const t = text(show(selected("ship_selected.static_stored", (m) => { m.static_updated_at = "later"; })));
     expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} —`);
   });

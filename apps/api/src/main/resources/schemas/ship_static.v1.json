@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://wakeline.invalid/schemas/ship_static.v1.json",
   "title": "ShipStatic",
-  "description": "선박 정적·항해 정보 — AIS 메시지 5(class A 전 필드) · 24A(선명) · 24B(호출부호·선종·크기) · 19(선명·선종·크기)를 MMSI 별로 합친 최신값. 필드마다 그 필드를 실은 마지막 메시지의 값이며, 한 번도 받지 못했거나 '값 없음' 으로 보고된 필드는 null. 모두 선박이 입력·송신한 보고값이다(검증된 등록 정보가 아님).",
+  "description": "선박 정적·항해 정보 — AIS 메시지 5(class A 전 필드) · 24A(선명) · 24B(호출부호·선종·크기) · 19(선명·선종·크기)를 MMSI 별로 합친 최신값. 필드마다 그 필드를 실은 마지막 메시지의 값이며, 한 번도 받지 못했거나 '값 없음' 으로 보고된 필드는 null — 둘 중 어느 것인지는 ships payload 의 static_received(계약 v5 §G19)가 말한다. 모두 선박이 입력·송신한 보고값이다(검증된 등록 정보가 아님).",
   "type": "object",
   "additionalProperties": false,
   "required": ["mmsi", "name", "call_sign", "imo", "ship_type", "dim_a", "dim_b", "dim_c", "dim_d", "draught_m", "destination", "eta_month", "eta_day", "eta_hour", "eta_minute", "updated_at", "provider"],
@@ -22,7 +22,7 @@
     "eta_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 31, "description": "ETA 일. 0 = 값 없음 → null" },
     "eta_hour": { "type": ["integer", "null"], "minimum": 0, "maximum": 23, "description": "ETA 시(UTC). 24 = 값 없음 → null" },
     "eta_minute": { "type": ["integer", "null"], "minimum": 0, "maximum": 59, "description": "ETA 분. 60 = 값 없음 → null" },
-    "updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "수집기 메모리(ShipBook)에서 이 MMSI 의 정적 정보 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(MetaData.time_utc). 내용이 같으면 30분에 한 번 다시 싣되 이 값은 그대로다. 수집기가 다시 시작했거나 선박이 메모리에서 빠졌다(30분 무수신 · 선박 수 상한) 다시 잡히면 같은 내용이어도 새 시각이다 — 그 내용의 첫 수신 시각이 아니다(계약 v5 §G17)" },
+    "updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "수집기 메모리(ShipBook)에서 이 MMSI 의 정적 정보 내용(또는 받은 필드 — 계약 v5 §G19)이 마지막으로 바뀐 메시지의 aisstream 수신 시각(MetaData.time_utc). 내용이 같으면 30분에 한 번 다시 싣되 이 값은 그대로다. 수집기가 다시 시작했거나 선박이 메모리에서 빠졌다(30분 무수신 · 선박 수 상한) 다시 잡히면 같은 내용이어도 새 시각이다 — 그 내용의 첫 수신 시각이 아니다(계약 v5 §G17)" },
     "provider": { "enum": ["aisstream", "fixture"] }
   }
 }

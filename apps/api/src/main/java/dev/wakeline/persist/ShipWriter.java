@@ -25,7 +25,9 @@ import java.util.Map;
  * <ul>
  *   <li>줄이기: MMSI 별 60 s 창(에포크 정렬)마다 첫 보고 하나만 쓴다 — 메모리 필터(여기, 소비 스레드) + DB 가드(ShipRepository — 재시작 뒤에도
  *       창마다 하나). 걸러 낸 보고는 wakeline_ship_rows_total{result=downsampled}. ship.last_seen 은 위치로는 10분에 한 번만 넓힌다(쓰기 증폭 방지).</li>
- *   <li>정적 정보: updated_at 이 이미 쓴 것보다 새 것만(수집기는 같은 내용을 30분마다 다시 보낸다 — 같은 것은 다시 쓰지 않는다).</li>
+ *   <li>정적 정보: updated_at 이 이미 쓴 것보다 새 것만(수집기는 같은 내용을 30분마다 다시 보낸다 — 같은 것은 다시 쓰지 않는다). 있는 행은 받은 필드만
+ *       덮는다(계약 v5 §G19 — ShipRepository.STATIC_SQL). 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 배포 전환 중)는 값이 있는 필드만 덮고
+ *       wakeline_ship_static_unknown_fields_total 로 센다.</li>
  *   <li>큐 상한 100,000 행 — 넘치면 오래된 것부터 버리고 result=dropped 로 센다. 실패는 TrackWriter 와 같다: 일시 장애는 같은 배치를 백오프(2 s → 30 s)로
  *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
@@ -73,6 +75,7 @@ public class ShipWriter implements SmartLifecycle {
     // ----
     private final Counter written;
     private final Counter staticWritten;
+    private final Counter staticUnknownFields;
     private final Counter dropped;
     private final Counter failed;
     private final Counter downsampled;
@@ -99,6 +102,8 @@ public class ShipWriter implements SmartLifecycle {
         meters.gauge("wakeline_ship_queue", queue, ReceiptBatchQueue::size);
         written = Counter.builder("wakeline_ship_rows_total").tag("result", "written").description("쓴 위치 행(60 s 창 가드로 DB 가 건너뛴 것 포함)").register(meters);
         staticWritten = Counter.builder("wakeline_ship_static_rows_total").description("쓴 정적 정보 행").register(meters);
+        staticUnknownFields = Counter.builder("wakeline_ship_static_unknown_fields_total")
+                .description("받은 필드를 싣지 않은 정적 정보(이전 수집기 — 값이 있는 필드만 덮는다, 계약 v5 §G19)").register(meters);
         dropped = Counter.builder("wakeline_ship_rows_total").tag("result", "dropped").description("큐가 넘치거나 종료로 쓰지 못한 행").register(meters);
         failed = Counter.builder("wakeline_ship_rows_total").tag("result", "failed").description("영구 오류로 버린 행").register(meters);
         downsampled = Counter.builder("wakeline_ship_rows_total").tag("result", "downsampled").description("60 s 창의 첫 보고가 아니어서 쓰지 않은 보고").register(meters);
@@ -133,6 +138,7 @@ public class ShipWriter implements SmartLifecycle {
             Instant prev = staticSeen.get(st.mmsi());
             if (prev != null && !st.updatedAt().isAfter(prev)) continue; // 같은 내용의 재전송 또는 더 오래된 것
             staticSeen.put(st.mmsi(), st.updatedAt());
+            if (st.received() == null) staticUnknownFields.increment();
             out.add(new Stat(st, receivedAt == null ? st.updatedAt() : receivedAt));
         }
         int skipped = 0, range = 0;

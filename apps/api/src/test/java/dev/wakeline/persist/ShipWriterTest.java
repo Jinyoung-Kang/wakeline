@@ -73,6 +73,16 @@ class ShipWriterTest {
         assertThat(s.receivedAt()).as("no envelope time → the static's own time").isEqualTo(T.plusSeconds(300));
     }
 
+    /** 계약 v5 §G19: 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 값이 있는 필드만 덮는다)는 센다 — 배포 전환이 끝났는지 지표로 보인다. */
+    @Test void staticsWithoutReceivedFieldsAreCounted() {
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(new FakeRepo(), null, meters, 1, 1);
+        ShipStatic withFields = new ShipStatic("440000011", "N", null, null, null, null, null, null, null, null, null, null, null, null, null, T,
+                "aisstream", java.util.Set.of("name"));
+        w.select(List.of(), List.of(stat("440000010", T), withFields), T);
+        assertThat(meters.counter("wakeline_ship_static_unknown_fields_total").count()).isEqualTo(1.0);
+    }
+
     @Test void reportsOutsideTheStoredRangeAreSkippedAndCounted() {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         ShipWriter w = new ShipWriter(new FakeRepo(), null, meters, 1, 1);

@@ -667,7 +667,8 @@ public class StreamConsumer implements SmartLifecycle {
                 List<ShipState> st = new java.util.ArrayList<>();
                 for (JsonNode n : payload.path("ships")) st.add(ShipCodec.state(n));
                 List<ShipStatic> sc = new java.util.ArrayList<>();
-                for (JsonNode n : payload.path("static")) sc.add(ShipCodec.stat(n));
+                JsonNode received = payload.get("static_received"); // 계약 v5 §G19 — 없으면 이전 수집기(받은 필드 모름)
+                for (JsonNode n : payload.path("static")) sc.add(ShipCodec.stat(n, ShipCodec.received(received, n.path("mmsi").asString())));
                 yield new Parsed(kind, f, fetchedAt, null, null, null, null, new ShipsBatch(List.copyOf(st), List.copyOf(sc)), null, false);
             }
             case "ais_gap" -> {

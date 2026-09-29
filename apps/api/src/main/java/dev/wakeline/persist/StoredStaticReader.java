@@ -20,7 +20,8 @@ import java.util.function.LongSupplier;
  *       스트림에 다시 올 때까지 정적 정보가 없다(입출항도 호출부호를 몰라 no_call_sign). DB ship 표에는 마지막으로 저장한 정적 보고가 있다.</li>
  *   <li>값은 DB 행 그대로({@link ShipRepository#find} — 공개 조회 상한 {@value Sql#PUBLIC_READ_TIMEOUT_S} s). 메모리(ShipStore)에 넣지 않는다 — 지도 목록 ·
  *       검색의 실시간 값과 섞지 않고, 받는 쪽이 출처를 stored 로 밝힌다.</li>
- *   <li>시각: 저장 행의 updated_at = 지금 저장된 내용을 DB 에 쓴 정적 메시지의 aisstream 수신 시각(DB 에 기록된 수신 시각). 수집기(ShipBook)는 메모리의
+ *   <li>시각: 저장 행의 updated_at = 이 행에 마지막으로 저장한 정적 메시지의 aisstream 수신 시각(DB 에 기록된 수신 시각 — 그 메시지가 싣지 않은 필드는
+ *       그보다 앞서 저장된 보고의 값이다, 계약 v5 §G19). 수집기(ShipBook)는 메모리의
  *       정적 정보가 바뀐 메시지의 시각을 싣는데, 그 메모리는 수집기가 다시 시작하면 비고 30분 넘게 수신이 없거나 선박 수 상한에 밀린 선박을 지운다 —
  *       그 뒤 같은 내용을 다시 받으면 새 시각이 실려 행을 덮는다. 그 밖의 같은 내용 재수신(수집기가 30분마다 다시 보낸다)은 저장하지 않는다(ShipWriter).
  *       그래서 이 값은 지금 내용의 첫 수신도 마지막 수신도 아니고, 그렇게 말하지 않는다(ship.last_seen 은 위치 보고로도 넓혀진다).</li>
