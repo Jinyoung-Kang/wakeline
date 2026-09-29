@@ -346,3 +346,27 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - REST: 바뀌지 않는다(`/ships/{mmsi}` 는 입출항을 싣지 않는다 — REST 표본 · 규칙 변경 없음).
   - 웹: 표 항만청 · 입항 · 출항(DualTime 칸 · 판, 출항이 없으면 "—") · 선석 · 목적 · 전출항지 → 차항지, 색인 줄 "색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>",
     incomplete 는 항만청별 이유, 선명 다름 경고는 두 이름이 모두 영문일 때만. 설명서 2.6 · /about 이 색인 동작을 적는다.
+
+## G. 10차 개정(2026-09-30 · 레인 static-fallback · 배포 뒤 결함 — api 재시작 뒤 선택 선박의 정적 정보가 null)
+- G17 **메모리에 없는 선택 선박의 정적 정보 = DB 의 마지막 저장 정적 보고, 저장값이라고 밝힌다**.
+  - 관찰(운영 스택): api 를 다시 시작한 뒤 지도에서 고른 실시간 선박(MMSI 538012043 AZAMARA PURSUIT)의 `ship_selected.static` 이 null, `port_calls` 가
+    no_call_sign(not_received)로 오래 남았다. ShipStore 의 정적 정보는 선박 스트림(시간 창 최대 2.5 h — `publisher.STREAM_RETENTION_S`)에서만 다시 채워지는데
+    이 선박의 정적 보고가 그보다 오래됐다. DB `ship` 행(ShipRepository — REST 상세 · 검색이 이미 읽는다)에는 마지막 정적 보고(호출부호 V7A3884)가 있었다.
+    REST `/ships/{mmsi}` 는 이미 DB 로 채웠지만 저장값이라고 밝히지 않아, 카드는 호출부호를 보이면서 입출항은 '호출부호 아직 받지 않음' 이었다.
+  - api(`StoredStaticReader` — ShipFanout 이 메모리에 정적 정보가 없을 때만 부른다): `ShipRepository.find`(공개 조회 상한 3 s) · MMSI 별 메모리 캐시
+    (찾음 · 없음 60 s, 읽기 실패 15 s — 한 선택을 되풀이해 다시 계산해도 DB 는 이 간격에 한 번) · 예외를 던지지 않는다. 지표
+    `wakeline_cache_requests_total{cache="stored_static"}` · `wakeline_stored_static_errors_total`. 저장값은 ShipStore 에 넣지 않는다(지도 목록 ShipLite · 검색의
+    실시간 일치는 그대로). 입출항은 그 호출부호로 찾는다(`PortCallReader.forStatic`).
+  - 시각 열: `ship.updated_at` = 정적 정보 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(= 지금 내용이 담긴 첫 메시지 — `static.updated_at` 과 같다).
+    같은 내용의 재수신은 저장하지 않으므로(ShipWriter) 정적 보고의 마지막 수신 시각을 적은 열은 없고, `ship.last_seen` 은 위치 보고로도 넓혀진다 — 그래서
+    이름은 `static_updated_at`, 화면 글은 '이 내용 첫 수신' 이다('마지막 수신' 이라 하지 않는다). 마이그레이션 없음.
+  - WS `ship_selected`(`schemas/ws/server.v1.json` — 두 키는 늘 있다): `static_source` = `live`(메모리) · `stored`(DB 의 마지막 저장 정적 보고) · `none`(둘 다 없음) ·
+    `stored_unavailable`(메모리에 없고 DB 를 읽지 못함 — 저장돼 있는지 모름) · null(읽는 쪽이 없는 구성 — 시험뿐). `static_updated_at` = stored 일 때만 저장 행의
+    updated_at, 그 밖에는 null. static 과의 관계는 스키마 anyOf(live · stored → static 있음, 그 밖 → static null), 시각이 `static.updated_at` 과 같은지는 api 시험 ·
+    `tools/contract_check.py` 가 본다. DB 실패 → static null · stored_unavailable · port_calls no_call_sign/not_received(세션은 그대로). 표본(`make ws-samples`)
+    `ship_selected.static_stored · _static_none · _static_stored_unavailable`.
+  - REST `/ships/{mmsi}`: `static_source`(live · stored — static 이 있을 때만) · `static_updated_at`(stored 일 때만, 같은 뜻). `tools/rest_contract_check.py` 가
+    있음 규칙과 같은 순간인지 본다(표본 `ship_detail` = live, `ship_detail_stored` = stored).
+  - 웹: 검증기는 틀리거나 static 과 어긋난 출처 · 시각을 모름(null)으로 두고 센다. 선박 카드는 보이는 정적 정보가 저장값이면(WS → REST 순 — 그 정적 정보를
+    준 쪽의 출처만) 정적 필드 바로 위에 "저장된 AIS 정적 보고 · 이 내용 첫 수신 <KST · UTC> (경과)" · "실시간 값이 아님", DB 를 읽지 못했으면 '모름' 을 적는다.
+    설명서 2.6 이 한 문장으로 적는다.

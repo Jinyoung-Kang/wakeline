@@ -15,7 +15,7 @@ import { LEGEND_OPEN_MIN_WIDTH } from "@/lib/prefs";
 import { REPLAY_FULL_RES_MS, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, REPLAY_SUMMARY_MS } from "@/lib/replay";
 import { ROUTE_CAVEAT, ROUTE_STATUS_TEXT, ROUTE_TITLE } from "@/lib/route";
 import {
-  SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT,
+  SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
 import { STATS_RUN_KST } from "@/lib/stats";
@@ -233,6 +233,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               <UL>
                 <li><B>고르기</B> — 지도의 선박 기호, ship 탭의 ‘화면 안 선박’ 표(머리글 정렬 · 이름/MMSI 거르기){ref("ship", 1)}, 통합 검색.</li>
                 <li><B>보고값</B> — 이름 · 크기 · 흘수 · 목적지 · ETA 는 선원이 입력한 값 그대로입니다(ETA 는 연도 없음). AIS 에는 출발지 항목이 없고, 목적지 문자열은 정해진 규칙(“A&gt;B” · “&gt;B” · “A&lt;&gt;B”)으로만 풀며 UN/LOCODE 항구 코드 모양일 때만 이름 · 국가를 붙입니다.</li>
+                <li><B>{STORED_STATIC_LABEL}</B> — 서버가 다시 시작한 직후처럼 실시간 선박 스트림(최대 2.5 h)에 그 선박의 정적 보고가 아직 없으면 DB 에 저장된 마지막 AIS 정적 보고를 대신 보이고,
+                  카드의 정적 필드 위에 ‘{STORED_STATIC_LABEL} · {STORED_STATIC_TIME_LABEL} (KST · UTC)’로 밝힙니다 — 실시간 값이 아니고, 시각은 그 내용이 담긴 첫 메시지를 받은 때(마지막 수신이 아님)이며, 입출항도 그 호출부호로 찾습니다.</li>
                 <li><B>항적</B> — 기간 {SHIP_TRACK_HOURS.join(" / ")} h 단추{ref("ship", 3)}. 기록(60 s 에 1점) + 실시간 관측. 수신이 끊긴 구간은 되살릴 수 없어 <B>회색 점선(공백)</B>으로 남기고, 공백 횟수 · 합계를 카드에 적습니다.</li>
                 <li><B>기호</B> — 선수방위 방향으로 회전, 선수방위가 없으면 침로 기준(점선 외곽), 둘 다 없으면 방향 없는 원. ‘추측항법 · 수동 입력’으로 보고된 위치는 배지로 구분합니다.</li>
                 <li><B>개별 · 격자</B> — {SHIPS_RULE_TEXT}. 격자 원의 크기 = 선박 수, 색 = 가장 많은 선종.</li>

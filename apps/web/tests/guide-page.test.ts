@@ -15,6 +15,7 @@ import { normalizeQuery, normalizeShipQuery } from "@/lib/search";
 import { flattenToc, parseManifest, PLAN, type GuideManifest, type ManifestDrop } from "@/lib/guide";
 import { PORT_CALL_AUTHORITIES, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS } from "@/lib/portcalls";
 import { RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
+import { STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL } from "@/lib/ships";
 import { fmtDual, fmtDualCompact, fmtUtcDayDual } from "@/lib/time";
 import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
 
@@ -213,6 +214,14 @@ describe("features the guide describes exist in the screens", () => {
     expect(ship).toMatch(/아직 받지 않음/);
     expect(ship).not.toMatch(/조회 한도|6시간\(실패는 5분\)/); // 선택마다 묻던 설계의 한도 · 캐시는 없다
     expect(ship).toMatch(/00:00\(KST\)[^.]*날짜만/);
+  });
+  it("2.6 says when the card shows a stored static report and how it is labelled (static-fallback, contract v5 §G17)", () => {
+    const ship = section(render(EMPTY), "dashboard-ship");
+    expect(ship).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} (KST · UTC)`);
+    expect(ship).toMatch(/실시간 선박 스트림\(최대 2\.5 h\)에 그 선박의 정적 보고가 아직 없으면 DB 에 저장된 마지막 AIS 정적 보고/);
+    expect(ship).toMatch(/실시간 값이 아니고/);
+    expect(ship).toMatch(/마지막 수신이 아님/);
+    expect(ship).toMatch(/입출항도 그 호출부호로 찾습니다/);
   });
   it("2.3 describes the coastal traffic layer: grid counts not positions, 5-minute snapshot, cells appear as their geometry is resolved", () => {
     const layers = section(render(EMPTY), "dashboard-layers");
