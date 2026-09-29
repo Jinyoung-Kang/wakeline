@@ -40,7 +40,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
         .catch(failTo(setRelatedErr));
     }
     if (entry.fp) {
-      apiGet<unknown>(logGroupsUrl({ services: [entry.service], level: entry.level, period }, now))
+      apiGet<unknown>(logGroupsUrl({ services: [entry.service], level: entry.level, period, resolved: "hide" }, now))
         .then((v) => { if (!live) return; const g = parseLogGroups(v); setFpStats({ g: g.groups.find((x) => x.fp === entry.fp) ?? null, scanTruncated: g.scanTruncated }); })
         .catch(failTo(setFpErr));
     }
