@@ -108,15 +108,10 @@ class PortCallsIT extends IntegrationTest {
             assertThat(ItStack.admin().hasKey("wakeline:demand:portcalls")).as("a selection writes no lease any more").isFalse();
             assertThat(ItStack.admin().keys("wakeline:portcalls:*")).as("nor a per-call-sign cache").isEmpty();
 
-            // 한 곳이 빠졌다 — 이제 '기록 없음' 이라 할 수 없다. 선박이 바뀌지 않아도 주기 다시 보기(읽기 캐시 15 s)가 바뀐 상태를 보낸다
+            // 한 곳이 빠졌다 — 이제 '기록 없음' 이라 할 수 없다. 읽기 캐시(15 s)가 지난 뒤 다시 고르면 빈 곳을 밝힌다
             admin().sql("DELETE FROM port_call_coverage WHERE prt_ag_cd = '700'").update();
-            JsonNode inc = null;
-            long end = System.nanoTime() + WAIT.plusMillis(PortCallReader.TTL_MS).toNanos();
-            while (inc == null && System.nanoTime() < end) {
-                JsonNode n = c.next("ship_selected", WAIT);
-                if ("incomplete".equals(n.path("port_calls").path("status").asString())) inc = n.path("port_calls");
-            }
-            assertThat(inc).as("periodic refresh sends the index change").isNotNull();
+            Thread.sleep(PortCallReader.TTL_MS + 500);
+            JsonNode inc = portCallsAfterSelect(c, ABSENT, "incomplete");
             assertThat(inc.path("index").path("gaps").get(0).path("port_authority_code").asString()).isEqualTo("700");
             assertThat(inc.path("index").path("gaps").get(0).path("issues").get(0).asString()).isEqualTo("not_indexed");
         } finally {
