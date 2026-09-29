@@ -37,6 +37,11 @@ class ReadPoolTest {
         assertThat(c.getInitializationFailTimeout()).as("starts without a DB, connects on first use").isEqualTo(-1);
         assertThat(c.getDataSourceProperties().getProperty("ApplicationName")).isEqualTo("wakeline-api-read");
         assertThat(c.getDataSourceProperties().getProperty("options")).isEqualTo("-c statement_timeout=3s -c default_transaction_read_only=on");
+        // 서버가 답하지 않아도 끝나는 읽기(리뷰 — ReadPoolDbTest): 소켓 읽기 5 s(문장 3 s + 2 s) · TCP 연결 맺기 = 연결 대기(초로 올림)
+        assertThat(c.getDataSourceProperties().getProperty("socketTimeout")).isEqualTo("5");
+        assertThat(c.getDataSourceProperties().getProperty("connectTimeout")).isEqualTo("2");
+        assertThat(config(1, 250).getDataSourceProperties().getProperty("connectTimeout")).as("never 0 (= no limit in pgjdbc)").isEqualTo("1");
+        assertThat(config(1, 2_001).getDataSourceProperties().getProperty("connectTimeout")).isEqualTo("3");
         assertThat(c.getMetricsTrackerFactory()).isNotNull();
         assertThat(config(1, 500).getValidationTimeout()).as("never longer than the connection wait").isEqualTo(500);
     }
@@ -47,6 +52,7 @@ class ReadPoolTest {
             assertThat(p.size()).isEqualTo(4);
             assertThat(p.connectionTimeoutMs()).isEqualTo(2_000);
             assertThat(p.readBoundMs()).as("connection wait 2 s + statement 3 s (configured values, not a measurement)").isEqualTo(5_000);
+            assertThat(p.hardReadBoundMs()).as("connection wait 2 s + socket timeout 5 s — a server that stops answering").isEqualTo(7_000);
             assertThat(p.jdbc()).isNotNull();
             assertThat(p.active()).isZero();
         } finally {

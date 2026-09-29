@@ -34,7 +34,7 @@ import java.util.function.LongSupplier;
  *   <li>부르는 쪽(계약 v5 §G18 · ADR-025): {@link #cached} 는 세션 우편함(WsSession SerialOutbox)에서 — 메모리만 본다. {@link #lookupAsync} 는 DB 를
  *       우편함 밖 선택 조회 실행기(ShipFanout · ShipLookups)에서 읽는다 — 기다리는 동안에도 그 세션의 diff · pong 은 간다. {@link #lookup} 은 같은 읽기를
  *       부른 스레드에서(시험 · 도구). DB 는 선택 조회 전용 풀({@link ReadPool} — 연결 대기 ≤ 문장 상한)로 읽는다: 한 번의 읽기 최악 =
- *       {@link ReadPool#readBoundMs()}(기본 2 s + 3 s).</li>
+ *       {@link ReadPool#readBoundMs()}(서버가 답할 때 — 기본 2 s + 3 s), 서버가 멈추면 {@link ReadPool#hardReadBoundMs()}(2 s + 소켓 5 s).</li>
  *   <li>로그에는 MMSI · 오류 종류만.</li>
  * </ul>
  */

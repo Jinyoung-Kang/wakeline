@@ -22,10 +22,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 읽기 풀의 읽기 상한이 네트워크에 기대지 않는가(리뷰 — 계약 v5 §G18 · ADR-025). 서버 쪽 statement_timeout 과 JDBC 문장 상한(취소 요청 — 새 연결로
@@ -102,8 +100,9 @@ class ReadPoolDbTest {
     }
 
     /**
-     * 연결을 연 뒤 서버의 답이 멈추면: 관찰(고치기 전) — 문장이 8 s 가 지나도 돌아오지 않는다(socketTimeout 없음 — 서버 statement_timeout 은 이미 답한 문장에
+     * 연결을 연 뒤 서버의 답이 멈추면: 관찰(고치기 전) — 문장이 8 s 가 지나도 돌아오지 않았다(socketTimeout 없음 — 서버 statement_timeout 은 이미 답한 문장에
      * 소용없고 답은 오지 않는다). 조회 스레드 넷이 이렇게 묶이면 실행기가 가득 찬다.
+     * 고친 뒤: 소켓 읽기 상한({@value ReadPool#SOCKET_TIMEOUT_S} s)에 예외로 끝난다(연결은 끊긴 것으로 버려진다).
      */
     @Test void aServerThatStopsAnswering_endsAReadAtTheSocketTimeout() throws Exception {
         DbTestSupport.start();
@@ -122,10 +121,16 @@ class ReadPoolDbTest {
                     return e;
                 }
             }, runner);
-            assertThatThrownBy(() -> read.get(8, TimeUnit.SECONDS)).as("observed: no socket timeout — the read is still blocked after 8 s")
-                    .isInstanceOf(TimeoutException.class);
-            proxy.frozen = false; // 쥔 답을 넘긴다 — 막힌 문장이 끝난다
-            assertThat(read.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+            long t0 = System.nanoTime();
+            Object out = read.get(ReadPool.SOCKET_TIMEOUT_S + 5L, TimeUnit.SECONDS);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(out).as("ended by the socket timeout, not by an answer").isInstanceOf(SQLException.class);
+            long socketMs = ReadPool.SOCKET_TIMEOUT_S * 1000L;
+            assertThat(ms).as("the socket timeout (5 s), not TCP keepalive").isBetween(socketMs - 500, socketMs + 2_500);
+            Throwable cause = (Throwable) out;
+            while (cause.getCause() != null && !(cause instanceof java.net.SocketTimeoutException)) cause = cause.getCause();
+            assertThat(cause).isInstanceOf(java.net.SocketTimeoutException.class);
+            assertThat(c.isValid(1)).as("the broken connection is not reused").isFalse();
         } finally {
             runner.shutdownNow();
         }
