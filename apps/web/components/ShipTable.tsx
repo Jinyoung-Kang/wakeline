@@ -1,5 +1,6 @@
 "use client";
-import { fmtDuration, fmtKstTitle } from "@/lib/format";
+import { fmtKstTitle } from "@/lib/time";
+import { fmtDuration } from "@/lib/format";
 import {
   fmtSavedAt, LAST_SEEN_TITLE, navStatusLabel, navStatusShort, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, shipRowAgeS, type ShipRow, type ShipSort,
   type ShipSortKey,
@@ -44,10 +45,10 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, wide, listb
   const lb = listbox ?? null;
   const cell = lb ? "none" : undefined;
   const table = (
-    <table className={wide ? "table-fixed min-w-[472px] text-[11px]" : "table-fixed text-[11px]"} role={lb ? "presentation" : undefined} data-testid={`${testId}-table`}>
-      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게. 넓은 표: 고정 칸 368 px + 선명 ≥ 104 px(경과 칸 150 px = "마지막 수신 MM-DD hh:mm KST") */}
+    <table className={wide ? "table-fixed min-w-[518px] text-[11px]" : "table-fixed text-[11px]"} role={lb ? "presentation" : undefined} data-testid={`${testId}-table`}>
+      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게. 넓은 표: 고정 칸 414 px + 선명 ≥ 104 px(경과 칸 196 px = "마지막 수신 MM-DD hh:mm KST · hh:mmZ") */}
       <colgroup>
-        <col className="w-[28px]" /><col /><col className="w-[68px]" /><col className="w-[62px]" /><col className="w-[60px]" /><col className={wide ? "w-[150px]" : "w-[50px]"} />
+        <col className="w-[28px]" /><col /><col className="w-[68px]" /><col className="w-[62px]" /><col className="w-[60px]" /><col className={wide ? "w-[196px]" : "w-[50px]"} />
       </colgroup>
       <thead>
         <tr>

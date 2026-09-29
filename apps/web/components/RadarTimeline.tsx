@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
 import { useServerNow } from "@/lib/clock";
-import { fmtMinuteKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
+import { fmtDual, fmtDualCompact, fmtUtcTitle, kstWallMs } from "@/lib/time";
 import { KR_REF_WINDOW_MIN, krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
@@ -14,7 +14,7 @@ import { useUi } from "@/lib/ui-store";
  */
 function krUnavailableText(d: KrRadar | null): string {
   if (!d) return "기상청 레이더 없음 — 상태 수신 전";
-  const last = fmtTimeKstLabel(d.meta?.fetched_at);
+  const last = fmtDual(d.meta?.fetched_at);
   return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
 }
 
@@ -55,13 +55,12 @@ export function RadarTimeline() {
   const srvNow = useServerNow(30_000);
   const krFrames = kma && krAvailable && radarKr ? radarKr.frames : null;
   const comp = krFrames ? krComposite(krFrames[cur], srvNow) : null;
-  // 프레임 시각은 둘 다 한국 표준시 "MM-DD HH:MM KST": RainViewer 는 epoch 초(UTC 순간)를 KST 로 바꾸고, 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
-  // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
-  const label = kma
-    ? (krTm && /^\d{12}$/.test(krTm) ? `${krTm.slice(4, 6)}-${krTm.slice(6, 8)} ${krTm.slice(8, 10)}:${krTm.slice(10, 12)} KST` : "—")
-    : time ? fmtMinuteKst(time * 1000) : "—";
-  // 툴팁: RainViewer 는 원본 UTC, 기상청은 tm 이 원래 KST 라 원본 UTC 가 없다 — 그렇다고 적는다
-  const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST 그대로(원본이 KST)`) : time ? fmtUtcTitle(time * 1000) : undefined;
+  // 프레임 시각은 둘 다 "MM-DD HH:MM KST · HH:MMZ"(KST 먼저, UTC 함께 — lib/time): RainViewer 는 epoch 초(UTC 순간), 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
+  // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함(UTC 날짜가 다르면 UTC 쪽에도)
+  const frameMs = kma ? kstWallMs(krTm) : time ? time * 1000 : null;
+  const label = fmtDualCompact(frameMs, { date: true });
+  // 툴팁: RainViewer 는 원본 UTC ISO, 기상청은 tm 이 원래 KST 라 원본은 그 tm — 그렇다고 적는다
+  const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST(원본이 KST, UTC 는 계산)`) : fmtUtcTitle(frameMs);
   const [kr, setKr] = useState(false);
   return (
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">

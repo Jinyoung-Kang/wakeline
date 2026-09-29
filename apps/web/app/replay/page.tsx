@@ -2,24 +2,23 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtIsoKst, fmtLatencyMs, fmtUtcTitle } from "@/lib/format";
 import {
-  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRadarTitle, replayRange,
+  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayInspectorMiss, replayRange,
   replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayFrame, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
 import { ReplayList } from "@/components/ReplayList";
 import { ReplayAircraftDetail, ReplaySigmetDetail } from "@/components/ReplayInspector";
+import { ReplayStatusRow } from "@/components/ReplayStatus";
 import { RequestIdCopy } from "@/components/logs/ErrorNote";
 
 const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
 const SPEEDS = [1, 5, 10, 30, 60];
-const SOURCE_LABEL: Record<string, string> = { track_point: "원해상도 기록", track_point_1m: "1분 요약(평균 위치)", none: "기록 없음" };
 
 /**
  * 이력 재생(FR-23): 최근 30일(72 h 원해상도, 그 이전은 1분 요약) · 1×~60× · 그 시각 SIGMET · 레이더(있을 때만).
- * 시각은 한국 표준시(KST) 날짜·시각 입력, ±1분·±10분·±1 h 버튼, 슬라이더(72 h 경계 눈금)로 고른다(R-10). 보이는 시각도 KST —
+ * 시각은 한국 표준시(KST) 날짜·시각 입력, ±1분·±10분·±1 h 버튼, 슬라이더(72 h 경계 눈금)로 고른다(R-10). 보이는 시각은 KST 먼저 · UTC 함께 —
  * api 에는 그 순간을 UTC ISO(…Z)로 보낸다(lib/replay replayApiPath). SIGMET 원문은 발표된 그대로(안의 "…Z" 는 UTC).
  */
 export default function ReplayPage() {
@@ -37,18 +36,22 @@ export default function ReplayPage() {
   // 기록 시각은 서버 시계 — 상황판에서 추정한 오프셋이 있으면 쓴다(없으면 브라우저 시계)
   useEffect(() => { const h = setTimeout(() => { const now = serverNowMs(Date.now()); setRange(replayRange(now)); setAt(now - 10 * 60_000); }, 0); return () => clearTimeout(h); }, []);
 
-  // 요청은 한 번에 하나, 보내는 중에 바뀐 시각·영역은 끝나면 바로 보낸다(R-47 — 예전에는 버려져 라벨과 지도가 어긋난 채 멈췄다)
+  // 요청은 탭당 한 번에 하나(ReplayLoader — 서버에서도): 입력은 debounce 뒤 마지막 값만, 사용자가 옮기면 보내는 중인 요청의 응답은 버리고
+  // 그것이 끝나면 곧바로 최신 값을 보낸다. 재생(▶) 중에는 응답을 그리고 끝나면 최신 틱을 보낸다(R-47). 시각 라벨은 입력마다 바로 바뀐다.
+  // signal 은 화면을 떠날 때(dispose) 브라우저가 기다림을 멈추는 데만 쓴다.
   // 마운트마다 새 로더(개발 모드 StrictMode 의 두 번 실행에도 폐기된 로더를 쓰지 않게)
   const loader = useRef<ReplayLoader | null>(null);
+  const playingRef = useRef(playing);
+  useEffect(() => { playingRef.current = playing; }, [playing]);
   useEffect(() => {
     const l = new ReplayLoader(
-      (r) => apiGet<ReplayFrame>(replayApiPath(r)),
+      (r, signal) => apiGet<ReplayFrame>(replayApiPath(r), { signal }),
       (e) => dispatch(e),
     );
     loader.current = l;
     return () => { l.dispose(); if (loader.current === l) loader.current = null; };
   }, []);
-  useEffect(() => { if (!at) return; const h = setTimeout(() => loader.current?.request({ at, bbox }), 150); return () => clearTimeout(h); }, [at, bbox]);
+  useEffect(() => { if (at) loader.current?.schedule({ at, bbox }, { supersede: !playingRef.current }); }, [at, bbox]);
   useEffect(() => {
     if (!playing) return;
     const tick = setInterval(() => setAt((t) => Math.min(max, t + speed * 1000)), 1000);
@@ -56,37 +59,44 @@ export default function ReplayPage() {
   }, [playing, speed, max]);
 
   const onBbox = useCallback((b: string, c: boolean) => { setBbox(b); setClamped(c); }, []);
-  const shown = replayFrameAtLabel(frame, at);
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
     <div className="flex h-full flex-col">
       <h1 className="sr-only">이력 재생</h1>
-      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-bg-1 px-3 py-1 text-[11px] whitespace-nowrap">
-        <span className="label">Replay</span>
-        <button className="btn" onClick={() => setPlaying(!playing)} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
-        <div className="flex gap-1" role="group" aria-label="재생 속도">
-          {SPEEDS.map((s) => <button key={s} className="btn" aria-pressed={speed === s} onClick={() => setSpeed(s)}>{s}×</button>)}
+      {/*
+        사용자 영상(2026-09-29): 슬라이더가 길이가 바뀌는 상태 글자와 한 flex-wrap 줄에 있어 끄는 동안 폭·위치가 바뀌었다.
+        1행 = 길이가 바뀌지 않는 조작(단추·시각 입력)만 · 2행 = 슬라이더 혼자(폭 = 줄 폭) · 3행 = 상태 글자(ReplayStatusRow — 높이 고정 · 한 줄 · 넘치면 잘림, 전체는 title,
+        "불러오는 중" 은 재생 시각 바로 뒤 — 잘리는 글자 앞)
+        · 4행 = 오류·조회 영역 제한·설명(줄바꿈 허용 — 슬라이더 아래라 슬라이더를 움직이지 않는다).
+      */}
+      <div className="shrink-0 border-b border-line bg-bg-1 text-[11px]">
+        <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 whitespace-nowrap" data-testid="replay-controls">
+          <span className="label">Replay</span>
+          <button className="btn min-w-[4.5em]" onClick={() => setPlaying(!playing)} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
+          <div className="flex gap-1" role="group" aria-label="재생 속도">
+            {SPEEDS.map((s) => <button key={s} className="btn" aria-pressed={speed === s} onClick={() => setSpeed(s)}>{s}×</button>)}
+          </div>
+          <span className="label" aria-hidden title="한국 표준시(UTC+9) — api 에는 같은 순간을 UTC 로 보낸다">KST</span><input type="datetime-local" step={60} min={max ? toKstInput(min) : undefined} max={max ? toKstInput(max) : undefined} value={at ? toKstInput(at) : ""}
+            onChange={(e) => { const t = fromKstInput(e.target.value); if (t != null && max) { setPlaying(false); setAt(stepAt(t, 0, range)); } }}
+            aria-label="재생 시각(KST)" data-testid="replay-at-input" />
+          <div className="flex gap-1" role="group" aria-label="재생 시각 이동">
+            {REPLAY_STEPS.map(([d, l]) => <button key={l} className="btn px-1.5 normal-case!" onClick={() => { setPlaying(false); setAt((t) => stepAt(t, d, range)); }} disabled={!at}>{l}</button>)}
+          </div>
+          <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
+          <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
         </div>
-        <span className="label" aria-hidden title="한국 표준시(UTC+9) — api 에는 같은 순간을 UTC 로 보낸다">KST</span><input type="datetime-local" step={60} min={max ? toKstInput(min) : undefined} max={max ? toKstInput(max) : undefined} value={at ? toKstInput(at) : ""}
-          onChange={(e) => { const t = fromKstInput(e.target.value); if (t != null && max) { setPlaying(false); setAt(stepAt(t, 0, range)); } }}
-          aria-label="재생 시각(KST)" data-testid="replay-at-input" />
-        <div className="flex gap-1" role="group" aria-label="재생 시각 이동">
-          {REPLAY_STEPS.map(([d, l]) => <button key={l} className="btn px-1.5 normal-case!" onClick={() => { setPlaying(false); setAt((t) => stepAt(t, d, range)); }} disabled={!at}>{l}</button>)}
+        <div className="px-3 pt-0.5" data-testid="replay-slider-row">
+          <input type="range" min={min} max={max} step={10_000} value={Math.min(max, Math.max(min, at))} onChange={(e) => { setPlaying(false); setAt(Number(e.target.value)); }} className="block w-full"
+            list="replay-marks" aria-label="재생 시각" aria-valuetext={at ? `${replayAtLabel(at)} · ${replayZone(at, range) === "full" ? "원해상도" : "1분 요약"}` : "—"} />
+          <datalist id="replay-marks"><option value={range.fullResFrom} label="72 h" /></datalist>
         </div>
-        <input type="range" min={min} max={max} step={10_000} value={Math.min(max, Math.max(min, at))} onChange={(e) => { setPlaying(false); setAt(Number(e.target.value)); }} className="min-w-[200px] flex-1"
-          list="replay-marks" aria-label="재생 시각" aria-valuetext={at ? `${fmtIsoKst(at)} · ${replayZone(at, range) === "full" ? "원해상도" : "1분 요약"}` : "—"} />
-        <datalist id="replay-marks"><option value={range.fullResFrom} label="72 h" /></datalist>
-        <span className="mono" data-testid="replay-at" title={at ? fmtUtcTitle(at) : undefined}>{replayAtLabel(at)}</span>
-        {at && max ? <span className={replayZone(at, range) === "full" ? "text-fg-2" : "text-warn"} data-testid="replay-zone">{replayZone(at, range) === "full" ? "원해상도 구간(72 h 안)" : "1분 요약 구간(72 h 밖)"}</span> : null}
-        <span className={`mono ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title={`지도에 그린 기록의 시각(응답 at — KST)${frame ? ` · ${fmtUtcTitle(frame.at) ?? "원본 UTC —"}` : ""}`}>지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
-        <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${fmtLatencyMs(latency)}` : "—"}</span>
-        <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
-        <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
-        <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar" title={replayRadarTitle(frame)}>{replayRadarLabel(frame)}</span>
-        {err ? <span className="whitespace-normal text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
-        {clamped ? <span className="whitespace-normal text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
-        <span className="whitespace-normal text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
+        <ReplayStatusRow at={at} range={range} frame={frame} latencyMs={latency} />
+        <div className="flex flex-wrap gap-x-3 px-3 pb-1 leading-snug">
+          {err ? <span className="text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
+          {clamped ? <span className="text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
+          <span className="text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
+        </div>
       </div>
       <div className="relative min-h-0 flex-1">
         <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />

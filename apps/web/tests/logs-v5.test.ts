@@ -119,18 +119,19 @@ describe("v5-C7 lib/logs: requests follow §C4", () => {
   it("list: services comma-joined, level, since from the period, q trimmed, rid only when well-formed, fp, cursor, limit", async () => {
     const L = await import("@/lib/logs");
     const now = Date.parse("2026-09-29T02:00:00Z");
-    const url = L.logsUrl({ services: ["api", "collector"], level: "ERROR", period: "6h", q: "  timeout ", rid: "5f2c9a0e1b7d4c3a", fp: "0123456789abcdef" }, now, { cursor: "1790000000000-0", limit: 100 });
+    const url = L.logsUrl({ services: ["api", "collector"], level: "ERROR", period: "6h", q: "  timeout ", rid: "5f2c9a0e1b7d4c3a", fp: "0123456789abcdef", resolved: "show" }, now, { cursor: "1790000000000-0", limit: 100 });
     const u = new URL(url, "http://x");
     expect(u.pathname).toBe("/api/v1/ops/logs");
-    expect(Object.fromEntries(u.searchParams)).toEqual({ service: "api,collector", level: "ERROR", since: "2026-09-28T20:00:00.000Z", q: "timeout", rid: "5f2c9a0e1b7d4c3a", fp: "0123456789abcdef", cursor: "1790000000000-0", limit: "100" });
+    expect(Object.fromEntries(u.searchParams)).toEqual({ service: "api,collector", level: "ERROR", since: "2026-09-28T20:00:00.000Z", q: "timeout", rid: "5f2c9a0e1b7d4c3a", fp: "0123456789abcdef", cursor: "1790000000000-0", limit: "100", resolved: "show" });
     const plain = new URL(L.logsUrl(L.DEFAULT_LOG_FILTER, now), "http://x");
-    expect(Object.fromEntries(plain.searchParams)).toEqual({ since: "2026-09-29T01:00:00.000Z", limit: "100" }); // 기본: 전체 서비스·수준, 1 h
+    // 기본: 전체 서비스·수준, 1 h, 해결된 항목은 가림(ADR-022 — 늘 명시)
+    expect(Object.fromEntries(plain.searchParams)).toEqual({ since: "2026-09-29T01:00:00.000Z", limit: "100", resolved: "hide" });
     const badRid = new URL(L.logsUrl({ ...L.DEFAULT_LOG_FILTER, rid: "<x>" }, now), "http://x");
     expect(badRid.searchParams.has("rid")).toBe(false);
     expect(L.logsUrl(L.DEFAULT_LOG_FILTER, now, { limit: 999 })).toContain("limit=200");
     const g = new URL(L.logGroupsUrl({ ...L.DEFAULT_LOG_FILTER, services: ["ais"], level: "WARN", period: "7d" }, now), "http://x");
     expect(g.pathname).toBe("/api/v1/ops/logs/groups");
-    expect(Object.fromEntries(g.searchParams)).toEqual({ since: "2026-09-22T02:00:00.000Z", service: "ais", level: "WARN" });
+    expect(Object.fromEntries(g.searchParams)).toEqual({ since: "2026-09-22T02:00:00.000Z", service: "ais", level: "WARN", resolved: "hide" });
     expect(L.logItemUrl("1790000000000-0")).toBe("/api/v1/ops/logs/1790000000000-0");
     expect(L.validRid("5f2c9a0e")).toBe(true);
     expect(L.validRid("short")).toBe(false);
@@ -207,10 +208,11 @@ describe("v5-C7 lib/logs: copy formats", () => {
     expect(t).toContain("아래 항목 1건 — 묶음의 일부만(목록 상한 또는 스캔 잘림)");
     expect(t).toContain(L.logText(items[0]));
   });
-  it("list time is KST with milliseconds; first line of a message", async () => {
+  it("list time is KST with milliseconds (UTC on the second line); first line of a message", async () => {
     const L = await import("@/lib/logs");
-    expect(L.fmtLogTime("2026-09-29T01:02:03.456Z")).toBe("09-29 10:02:03.456");
-    expect(L.fmtLogTime("bad")).toBe("—");
+    const T = await import("@/lib/time");
+    expect(T.dualCell("2026-09-29T01:02:03.456Z", { ms: true })).toMatchObject({ kst: "09-29 10:02:03.456", utc: "01:02:03.456 UTC" });
+    expect(T.dualCell("bad", { ms: true })).toBeNull();
     expect(L.firstLine("a\r\nb")).toBe("a");
   });
 });

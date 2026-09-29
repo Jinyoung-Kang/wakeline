@@ -6,7 +6,7 @@
  * 어디에도 '완전'이라고 하지 않는다: partial=false 는 "기준 도달"(지난 60분 저장 프레임 중 최대와 같음)일 뿐, 기상청 합성이 완전한지는 자료에 없다.
  * 기준이 그 프레임 하나뿐이면 수집기가 판정을 두지 않는다(REF_MIN_SUPPORT) — "판정 —".
  */
-import { hmKst } from "./format";
+import { fmtDualCompact, kstWallMs } from "./time";
 import type { KrRadarFrame } from "./types";
 
 /** 기준 지점 수를 세는 창(분) — 수집기 jobs/kma_radar.py REF_WINDOW_S(선택값)와 같다(tests/kma-partial 이 견준다). 설명 글자에만 쓴다. */
@@ -31,8 +31,8 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
 
 /** 기한이 지난 부분 합성: 수집기의 기록(refetches)이 말하는 것만 — 다시 받았는데도 기준 미만 · 다시 받지 못함 · 모름. */
 function afterDeadline(hm: string, re: number | null): string {
-  if (re == null) return `다시 받기 기한 ${hm} KST 지남`;
-  return re > 0 ? `기한 ${hm} KST까지 다시 받은 ${re}회에도 기준 미만` : `기한 ${hm} KST 안에 다시 받지 못함`;
+  if (re == null) return `다시 받기 기한 ${hm} 지남`;
+  return re > 0 ? `기한 ${hm}까지 다시 받은 ${re}회에도 기준 미만` : `기한 ${hm} 안에 다시 받지 못함`;
 }
 
 export function krComposite(f: KrRadarFrame | null | undefined, nowMs: number): KrComposite {
@@ -45,12 +45,12 @@ export function krComposite(f: KrRadarFrame | null | undefined, nowMs: number): 
   let verdict: string | null = null;
   if (f?.partial === true) {
     const until = f.refetch_until ? Date.parse(f.refetch_until) : NaN;
-    const hm = Number.isFinite(until) ? hmKst(until) : null;
+    const hm = Number.isFinite(until) ? fmtDualCompact(until) : null; // "08:40 KST · 23:40Z"
     const size = n != null && m != null ? `(${n}/${m}곳)` : "";
     if (nowMs > 0 && hm != null) {
       state = nowMs <= until ? "filling" : "final";
       // 기한 전: 다시 받기 '대상' — 주기당 개수 · 예산 여유에 따라 실제로 다시 받는지는 조건부라 '다음 주기에 다시 받음' 이라고 하지 않는다
-      warn = `일부 지점만 합성${size} — ${state === "filling" ? `${hm} KST까지 다시 받기 대상(지점이 늘면 바꿈)` : afterDeadline(hm, re)}`;
+      warn = `일부 지점만 합성${size} — ${state === "filling" ? `${hm}까지 다시 받기 대상(지점이 늘면 바꿈)` : afterDeadline(hm, re)}`;
     } else {
       state = "partial";
       warn = `일부 지점만 합성${size}`;
@@ -87,7 +87,7 @@ export function krLayerId(f: Pick<KrRadarFrame, "tm" | "url">): string {
   return v ? `kmar-${f.tm}-${v}` : `kmar-${f.tm}`;
 }
 
-/** tm(YYYYMMDDHHMM, KST) → "HH:MM KST". 틀리면 "—". */
+/** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST · HH:MMZ"(같은 순간의 UTC 를 함께). 틀리면 "—". */
 export function krTmClock(tm: string | null | undefined): string {
-  return tm && /^\d{12}$/.test(tm) ? `${tm.slice(8, 10)}:${tm.slice(10, 12)} KST` : "—";
+  return fmtDualCompact(kstWallMs(tm));
 }

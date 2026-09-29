@@ -22,7 +22,7 @@ describe("aircraft track gaps (R-04)", () => {
     const kinds = fc.features.map((f) => (f.properties as { kind?: string }).kind);
     expect(kinds).toEqual(["track", "track", "gap", "track"]);
     const gap = fc.features[2];
-    expect(gap.properties).toEqual({ kind: "gap", label: "수신 없음 14:48–15:04 KST" }); // 05:48Z–06:04Z 를 한국 표준시로
+    expect(gap.properties).toEqual({ kind: "gap", label: "수신 없음 14:48–15:04 KST · 05:48–06:04Z" }); // 05:48Z–06:04Z 를 한국 표준시 먼저, UTC 함께
     expect((gap.geometry as GeoJSON.LineString).coordinates).toEqual([[126.1, 37.0], [129.3, 37.3]]);
     // 관측 구간은 끝점 고도색 그대로
     expect(fc.features[0].properties).toEqual({ kind: "track", alt_ft: 39100 });

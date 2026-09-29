@@ -259,7 +259,7 @@ describe("selected ship track: REST MultiLineString + live appends, gaps drawn a
     expect(t.segs[1].startMs).toBe(T0 + 3_600_000);
     const fc = shipTrackFeatures(t);
     expect(fc.features.map((f) => f.properties!.kind)).toEqual(["track", "gap", "track"]);
-    expect(fc.features[1].properties!.label).toBe("AIS 공백 09:10–10:00 KST"); // 00:10Z–01:00Z 를 한국 표준시로
+    expect(fc.features[1].properties!.label).toBe("AIS 공백 09:10–10:00 KST · 00:10–01:00Z"); // 00:10Z–01:00Z 를 한국 표준시 먼저, UTC 함께
   });
   it("points with ts are split at > 15 min jumps and at AIS gaps of 60 s or more (contract v3 §D)", () => {
     const pts = [0, 60, 120, 1200, 1260, 1400].map((s, i) => ({ ts: iso(T0 + s * 1000), lon: 129 + i * 0.01, lat: 35 }));
@@ -269,7 +269,7 @@ describe("selected ship track: REST MultiLineString + live appends, gaps drawn a
     });
     expect(t.segs.map((s) => s.pts.length)).toEqual([3, 2, 1]); // 30 s 공백은 끊지 않는다
     const labels = shipTrackFeatures(t).features.filter((f) => f.properties!.kind === "gap").map((f) => f.properties!.label);
-    expect(labels).toEqual(["기록 없음 09:02–09:20 KST", "AIS 공백 09:21–09:23 KST"]);
+    expect(labels).toEqual(["기록 없음 09:02–09:20 KST · 00:02–00:20Z", "AIS 공백 09:21–09:23 KST · 00:21–00:23Z"]);
   });
   it("a closed gap shorter than 60 s neither breaks the line nor is labelled 'AIS 공백'; 60 s and open gaps do", () => {
     const pts = [0, 60].map((s, i) => ({ ts: iso(T0 + s * 1000), lon: 129 + i * 0.01, lat: 35 }));
@@ -282,7 +282,7 @@ describe("selected ship track: REST MultiLineString + live appends, gaps drawn a
       segs: [{ pts: [[129, 35]], startMs: T0, endMs: T0 }, { pts: [[129.1, 35]], startMs: T0 + 20 * 60_000, endMs: T0 + 20 * 60_000 }],
       gaps: [{ started_at: iso(T0 + 60_000), ended_at: iso(T0 + 90_000), reason: null }],
     };
-    expect(shipTrackFeatures(t).features.find((f) => f.properties!.kind === "gap")!.properties!.label).toBe("기록 없음 09:00–09:20 KST");
+    expect(shipTrackFeatures(t).features.find((f) => f.properties!.kind === "gap")!.properties!.label).toBe("기록 없음 09:00–09:20 KST · 00:00–00:20Z");
   });
   it("live points join the last segment, or start a new one after > 15 min / an AIS gap; stale and duplicate points are skipped", () => {
     const t: ShipTrack = { segs: [{ pts: [[129, 35]], startMs: T0, endMs: T0 }], gaps: [] };
@@ -334,7 +334,7 @@ describe("track gaps follow the AIS status: an open gap is a placeholder (review
     for (let i = 1; i <= 5; i++) appendShipTrack(t, { ts: Y + i * 60_000, lon: 129 + i * 0.01, lat: 35 });
     expect(t.segs).toHaveLength(2);
     const labels = shipTrackFeatures(t).features.filter((f) => f.properties!.kind === "gap").map((f) => f.properties!.label);
-    expect(labels).toEqual(["AIS 공백 09:59–10:06 KST"]);
+    expect(labels).toEqual(["AIS 공백 09:59–10:06 KST · 00:59–01:06Z"]);
   });
   it("an open gap the status no longer reports is dropped (its end is unknown); a different open gap replaces it", () => {
     const t: ShipTrack = { segs: [], gaps: [{ started_at: iso(X), ended_at: null, reason: null }] };
@@ -458,9 +458,9 @@ describe("AIS status badges (status.sources.ais)", () => {
   });
   it("gap badge: open gap, or a gap that ended within 30 min", () => {
     const base = { connected: true, lag_s: 1, msgs_per_s: 1, received_at: 0, state: null, coverage: null };
-    expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 11:50– KST · 진행 중", open: true });
+    expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 11:50 KST · 02:50Z 부터 · 진행 중", open: true });
     const ended = { started_at: "2026-09-28T02:40:00Z", ended_at: "2026-09-28T02:45:00Z", reason: null };
-    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 11:40–11:45 KST", open: false });
+    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 11:40–11:45 KST · 02:40–02:45Z", open: false });
     expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: { ...ended, ended_at: "2026-09-28T02:20:00Z" } }, NOW)).toBeNull();
   });
 });
@@ -598,7 +598,7 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
     const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
     expect(html).toContain("최근 6 h 수신 공백 7회 · 합계 280 s");
     expect(html).toContain("60 s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)");
-    expect(html.match(/수신 공백 \d\d-\d\d/g)).toHaveLength(5);
+    expect(html.replace(/<[^>]+>/g, "").match(/수신 공백 \d\d-\d\d/g)).toHaveLength(5); // 구간은 <DualRange>(KST · UTC 두 부분)
     expect(html).toContain("· 70 s"); // 가장 최근 공백의 길이
     setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: gaps.slice(0, 1), gapsTruncated: true, segments: 1, fromMs: null } });
     expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).toContain("수신 공백 1회 이상(최신 목록만)");

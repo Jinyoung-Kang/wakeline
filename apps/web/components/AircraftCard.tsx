@@ -3,19 +3,20 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
-import { useNow, useServerNow } from "@/lib/clock";
+import { useElapsedSince, useNow, useServerNow } from "@/lib/clock";
 import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
 import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
-import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtTimeKstLabel, fmtUtcTitle, fmtVrateDual } from "@/lib/format";
+import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtVrateDual } from "@/lib/format";
 import {
   EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
-  ROUTE_STATUS_TEXT, ROUTE_TITLE, routeCallsignMismatch, routeDistanceKm, type RouteAirport, type RouteInfo,
+  ROUTE_PENDING_TITLE, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, ROUTE_TITLE, routeCallsignMismatch, routeDistanceKm, routePendingPhase, type RouteAirport, type RouteInfo,
 } from "@/lib/route";
 import { EvidenceCard } from "./EvidenceCard";
 import { DemandBadge } from "./MapChips";
 import { RequestIdOf } from "./logs/ErrorNote";
+import { DualTime } from "./DualTime";
 
 interface Detail {
   hex: string;
@@ -60,10 +61,53 @@ function AirportLine({ a }: { a: RouteAirport }) {
 }
 
 /**
+ * 노선 상태 줄(live 영역) — 상태가 무엇이든 RouteSection 이 늘 같은 role=status 요소 하나를 두고 글자만 바꾼다. 화면 읽기 프로그램은 영역이 생기는 순간
+ * 함께 들어온 글자를 흔히 건너뛰므로, 영역을 "조회 중" 과 함께 새로 만들면 첫 "노선 조회 중" 이 읽히지 않을 수 있다(리뷰 2026-09-29).
+ * - 경로를 모름(null): "—" · 찾음: 화면에는 없고 화면 읽기 프로그램에만 "노선 찾음"(조회 중 → 끝남을 알린다, 값은 아래 행)
+ * - 조회 중(사용자 요청 2026-09-29 — 조회하고 있다는 느낌이 나게): 작은 회전 표시(움직임 줄이기 설정이면 멈춤 — globals.css) · 문구 · 콜사인.
+ *   aria-busy 조상 밖에 둔다(busy 안의 알림은 미뤄질 수 있다). 보통 경로 계산값(ROUTE_SLOW_AFTER_S)을 넘으면 "보통 경로 계산값(10 s)보다 오래 걸림"을
+ *   덧붙인다(한 번 읽힘). 경과 초는 live 영역 밖(시각 표시만 — 매초 읽지 않게), 모르면(null) 쓰지 않는다.
+ * - 그 밖(없음 · 실패 · 꺼짐 · 콜사인 없음): 계약 v4 §A 문구 그대로.
+ */
+function RouteStatusLine({ route, pendingForS }: { route: RouteInfo | null; pendingForS: number | null }) {
+  const pending = route?.status === "pending";
+  const phase = routePendingPhase(pendingForS);
+  const tone = route == null ? "text-fg-3" : pending ? (phase === "slow" ? "text-warn" : "text-fg-2") : route.status === "unavailable" ? "text-warn" : "text-fg-3";
+  return (
+    <div className={`flex items-center gap-1.5 text-[11px] ${route?.status === "found" ? "sr-only" : ""}`}>
+      <div role="status" className={`flex min-w-0 items-center gap-1.5 ${tone}`} data-testid="route-status" data-phase={pending ? phase : undefined} title={pending ? ROUTE_PENDING_TITLE : undefined}>
+        {route == null ? "—"
+          : route.status === "found" ? "노선 찾음"
+          : <>
+            {pending ? <span className="busy-spinner" aria-hidden="true" /> : null}
+            <span>{ROUTE_STATUS_TEXT[route.status]}{pending && phase === "slow" ? ` — ${ROUTE_SLOW_TEXT}` : ""}</span>
+            {route.callsign ? <span className="mono">· {route.callsign}</span> : null}
+          </>}
+      </div>
+      {pending && pendingForS != null ? <span className="mono ml-auto shrink-0 text-fg-3" aria-hidden="true" data-testid="route-elapsed">{Math.floor(pendingForS)} s</span> : null}
+    </div>
+  );
+}
+
+/** 조회 중: 값이 채워질 자리(출발/도착 skeleton)만 aria-busy — 막대는 화면 읽기 프로그램에서 숨긴다(공항 값을 지어 보이지 않는다) */
+function RouteSkeleton() {
+  return (
+    <div aria-busy="true" data-testid="route-skeleton">
+      {["출발", "도착"].map((k) => (
+        <div key={k} className="flex items-center justify-between gap-2 border-b border-line py-1">
+          <span className="shrink-0 text-fg-3">{k}</span><span className="skeleton h-3 w-28" aria-hidden="true" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * 노선(계약 v4 §A · ADR-016): 콜사인에 등록된 정기 노선 — 실제 운항 경로와 다를 수 있다고 적고, 판단 근거로 현재 위치와 노선 대권 경로 사이 거리(계산값)를 함께 보인다.
  * 상태별 문구는 계약 그대로. 노선이 맞다/틀리다를 판정해 붙이지 않는다. route 가 없으면(서버가 보내지 않음) "—".
+ * pendingForS: 카드가 "조회 중"을 처음 본 때부터 지난 초(모르면 null).
  */
-export function RouteSection({ route, pos, callsign }: { route: RouteInfo | null; pos: { lat: number; lon: number } | null; callsign: string | null }) {
+export function RouteSection({ route, pos, callsign, pendingForS = null }: { route: RouteInfo | null; pos: { lat: number; lon: number } | null; callsign: string | null; pendingForS?: number | null }) {
   const km = routeDistanceKm(route, pos);
   const rows: [string, React.ReactNode, string?][] = route?.status === "found" ? [
     ["출발", route.origin ? <AirportLine a={route.origin} /> : "—"],
@@ -73,18 +117,16 @@ export function RouteSection({ route, pos, callsign }: { route: RouteInfo | null
     ["경로와의 거리", km == null ? "—" : <span key="km" className="mono">{fmtRouteKm(km)} · 계산값</span>,
       `마지막 관측 위치에서 출발→${route.midpoint ? "경유→" : ""}도착 대권 경로까지 가장 가까운 거리 — 구면 지구(반지름 ${EARTH_RADIUS_KM.toLocaleString("en-US")} km) 계산값입니다. 실제 비행 경로와의 거리가 아닙니다.`],
     ["조회 콜사인", <span key="cs" className="mono">{route.callsign ?? "—"}</span>],
-    ["조회 시각", <span key="at" className="mono" title={fmtUtcTitle(route.fetched_at)}>{fmtTimeKstLabel(route.fetched_at)}</span>],
+    ["조회 시각", <DualTime key="at" v={route.fetched_at} />],
   ] : [];
   const otherSource = route?.source != null && route.source !== "adsbdb";
   return (
     <div className="mt-2" data-testid="route-section" data-status={route?.status ?? "unknown"}>
       <div className="label mb-0.5">{ROUTE_TITLE}</div>
-      {route == null ? <div className="text-[11px] text-fg-3" data-testid="route-status">—</div>
-        : route.status !== "found" ? (
-          <div className={`text-[11px] ${route.status === "unavailable" ? "text-warn" : "text-fg-3"}`} data-testid="route-status">
-            {ROUTE_STATUS_TEXT[route.status]}{route.callsign ? <span className="mono"> · {route.callsign}</span> : null}
-          </div>
-        ) : <>
+      <RouteStatusLine route={route} pendingForS={pendingForS} />
+      {route?.status === "pending" ? <RouteSkeleton />
+        : route?.status !== "found" ? null
+        : <>
           {rows.map(([k, val, title]) => (
             <div key={k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="route-row" data-field={k}>
               <span className="shrink-0 text-fg-3" title={title}>{k}</span><span className="text-right" title={title}>{val}</span>
@@ -146,6 +188,8 @@ export function AircraftCard({ hex }: { hex: string }) {
   // 노선: WS selected(변할 때마다) → 없으면 REST 상세(30 s 마다)
   const restRoute = useMemo(() => parseRoute(d?.route), [d]);
   const route = selected?.route ?? restRoute;
+  // "조회 중"을 이 항공기 · 콜사인으로 처음 본 때부터의 경과(브라우저 시계 — 카드 안의 경과만 잰다)
+  const routePendingForS = useElapsedSince(route?.status === "pending" ? `${hex}|${route.callsign ?? ""}` : null, wall);
   // 집중 추적(ADR-013): 서버가 이 hex 에 대해 보고한 상태·주기만. 연결이 실시간이 아니면 상태를 말하지 않는다.
   const live = isRxFresh(conn, lastRxAt, wall);
   const chip = live ? focusChip(demand, hex, now) : null;
@@ -162,8 +206,8 @@ export function AircraftCard({ hex }: { hex: string }) {
     ["Squawk", <span key="sq" className={`mono ${emergency ? "text-bad" : ""}`}>{s?.squawk ?? "—"}{emergency ? " EMERGENCY" : ""}</span>],
     ["지상", fmtBool(s?.on_ground)],
     ["출처", s?.provider ?? "—"],
-    ["관측 시각", <span key="seen" className="mono" title={fmtUtcTitle(seen)}>{fmtTimeKstLabel(seen)}{age != null ? ` (${fmtDuration(age)} 전)` : ""}</span>],
-    ["수신 시각", <span key="fetched" className="mono" title={fmtUtcTitle(s?.fetched_at ?? d?.meta?.fetched_at)}>{fmtTimeKstLabel(s?.fetched_at ?? d?.meta?.fetched_at)}</span>],
+    ["관측 시각", <span key="seen"><DualTime v={seen} />{age != null ? <span className="mono"> ({fmtDuration(age)} 전)</span> : null}</span>],
+    ["수신 시각", <DualTime key="fetched" v={s?.fetched_at ?? d?.meta?.fetched_at} />],
     ["품질", qualityLabel(s?.quality)],
     ["10분 예측", pred == null ? "—" : pred.available ? "가능 · 지도 점선(추정)" : `안 함 · ${pred.reason ? REASON_LABEL[pred.reason] : "—"}`],
   ];
@@ -189,7 +233,7 @@ export function AircraftCard({ hex }: { hex: string }) {
         {rows.map(([k, val]) => (
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{val}</span></div>
         ))}
-        <RouteSection route={route} pos={s ? { lat: s.lat, lon: s.lon } : null} callsign={s?.callsign ?? null} />
+        <RouteSection route={route} pos={s ? { lat: s.lat, lon: s.lon } : null} callsign={s?.callsign ?? null} pendingForS={routePendingForS} />
         {activeAlerts.length ? (
           <div className="mt-2 space-y-1">
             <div className="label">Active alerts</div>

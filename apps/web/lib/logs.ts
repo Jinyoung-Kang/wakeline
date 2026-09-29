@@ -1,13 +1,16 @@
 /**
  * 시스템 로그 화면 보조(계약 v5 §C7) — 순수 함수. 항목 형식은 schemas/log_event.v1.json, 조회 API 는 §C4(`/api/v1/ops/logs*`, 운영 세션 전용).
  * 모르는 값은 null/"—"(0·빈 값으로 채우지 않는다). 형식이 틀린 항목은 보이지 않고 수만 센다.
- * 시각: api 항목의 ts 는 UTC(원본 — JSON 복사 · NDJSON 은 그대로). 화면 · 텍스트 복사 · .txt 는 한국 표준시(KST, +09:00 — lib/kst).
+ * 시각: api 항목의 ts 는 UTC(원본 — JSON 복사 · NDJSON 은 그대로). 화면은 KST 먼저 · UTC 함께(lib/time), 텍스트 복사 · .txt 는 KST ISO(+09:00 — lib/kst).
  * §G2: api 는 서버 로그(wakeline:logs)와 브라우저 오류(wakeline:logs:client)를 합쳐 준다 — 항목마다 stream. 두 스트림은 id 를 따로 매기므로
  * 같은 id 가 둘 다에 있을 수 있어 화면은 항목을 stream + id(entryKey)로 가른다(같은 id 는 server 가 앞 — api 순서).
+ * 해결 표시(ADR-022 — lib/resolutions): 항목 · 묶음에 resolved({id, upto, resolved_by} | null), 목록 · 묶음 응답에 hidden_resolved(가린 수) ·
+ * resolution_state. 요청은 resolved=hide|show 를 늘 명시한다(기본 hide — 해결 처리한 지문의 upto 이하 항목을 빼고 뺀 수를 알린다).
  */
 import { REQUEST_ID_RE } from "./api";
 import { isoKst } from "./kst";
 import { logHeaderLine } from "./log-line";
+import { hiddenCount, parseResolutionState, parseResolvedRef, type ResolutionState, type ResolvedMode, type ResolvedRef } from "./resolutions";
 
 export const LOGS_PATH = "/api/v1/ops/logs";
 export const LOG_SERVICES = ["api", "collector", "ais", "web-client"] as const;
@@ -59,6 +62,8 @@ export interface LogEntry {
   suppressed: number | null;
   /** 브라우저가 보낸 내용(web-client) — 사실로 믿지 말 것 */
   untrusted: boolean;
+  /** 이 항목을 덮는 유효 해결(그 지문의 upto ≥ ts) — 없거나 형식이 틀리면 null(해결되지 않은 것으로 보인다) */
+  resolved: ResolvedRef | null;
   /** api 가 준 항목 그대로(JSON 복사 · NDJSON 내려받기는 이것 — 화면용 정리를 섞지 않는다) */
   raw: Record<string, unknown>;
 }
@@ -92,7 +97,7 @@ export function parseLogEntry(v: unknown): LogEntry | null {
   return {
     id: v.id, stream: streamName(v.stream), ts: v.ts, service: v.service, instance: str(v.instance), level: v.level, logger: str(v.logger), thread: str(v.thread),
     message: v.message, exception, fp: validFp(v.fp) ? v.fp : null, request_id: validRid(v.request_id) ? v.request_id : null,
-    context, suppressed: nonNeg(v.suppressed), untrusted: v.untrusted === true, raw: v,
+    context, suppressed: nonNeg(v.suppressed), untrusted: v.untrusted === true, resolved: parseResolvedRef(v.resolved), raw: v,
   };
 }
 
@@ -107,8 +112,12 @@ export interface LogPage {
   invalid: number;
   /** api 가 스키마 검증에 실패해 건너뛴 항목 수(§C4) — 없으면 null */
   serverInvalid: number | null;
-  /** 이 목록을 이룬 요청 수(첫 쪽 + '이전 항목 더 보기') — invalid · serverInvalid 는 이 쪽들의 합 */
+  /** 이 목록을 이룬 요청 수(첫 쪽 + '이전 항목 더 보기') — invalid · serverInvalid · hiddenResolved 는 이 쪽들의 합 */
   pages: number;
+  /** 해결 처리로 가린 항목 수(api hidden_resolved — 훑은 범위에서 다른 필터에 맞은 것만) — 없으면 null */
+  hiddenResolved: number | null;
+  /** 해결 기록의 상태(api resolution_state) — 없으면 null */
+  resolutionState: ResolutionState | null;
 }
 
 export function parseLogPage(v: unknown): LogPage {
@@ -119,6 +128,7 @@ export function parseLogPage(v: unknown): LogPage {
   return {
     items, nextCursor: validCursor(r.next_cursor) ? r.next_cursor : null, scanned: nonNeg(r.scanned), scanTruncated: bool(r.scan_truncated),
     invalid: raw.length - items.length, serverInvalid: nonNeg(r.invalid), pages: 1,
+    hiddenResolved: hiddenCount(r.hidden_resolved), resolutionState: parseResolutionState(r.resolution_state),
   };
 }
 
@@ -134,15 +144,21 @@ export function appendLogPage(prev: LogPage, next: LogPage): LogPage {
     invalid: prev.invalid + next.invalid,
     serverInvalid: prev.serverInvalid == null || next.serverInvalid == null ? null : prev.serverInvalid + next.serverInvalid,
     pages: prev.pages + next.pages,
+    hiddenResolved: prev.hiddenResolved == null || next.hiddenResolved == null ? null : prev.hiddenResolved + next.hiddenResolved,
+    resolutionState: next.resolutionState,
   };
 }
 
 export interface LogGroup {
   fp: string; service: string | null; level: string | null; logger: string | null; exception_type: string | null; sample_message: string | null;
   count: number | null; suppressed: number | null; first_at: string | null; last_at: string | null; last_id: string | null;
+  /** 묶음의 모든 항목을 덮는 해결(api 가 정한다 — 하나라도 해결되지 않았으면 null) */
+  resolved: ResolvedRef | null;
 }
 
-export function parseLogGroups(v: unknown): { groups: LogGroup[]; scanned: number | null; scanTruncated: boolean | null; invalid: number } {
+export function parseLogGroups(v: unknown): {
+  groups: LogGroup[]; scanned: number | null; scanTruncated: boolean | null; invalid: number; hiddenResolved: number | null; resolutionState: ResolutionState | null;
+} {
   const r = isObj(v) ? v : {};
   const raw = Array.isArray(r.groups) ? r.groups : [];
   const groups: LogGroup[] = [];
@@ -151,10 +167,28 @@ export function parseLogGroups(v: unknown): { groups: LogGroup[]; scanned: numbe
     groups.push({
       fp: g.fp, service: str(g.service), level: str(g.level), logger: str(g.logger), exception_type: str(g.exception_type), sample_message: str(g.sample_message),
       count: nonNeg(g.count), suppressed: nonNeg(g.suppressed), first_at: isTime(g.first_at) ? g.first_at : null, last_at: isTime(g.last_at) ? g.last_at : null,
-      last_id: validStreamId(g.last_id) ? g.last_id : null,
+      last_id: validStreamId(g.last_id) ? g.last_id : null, resolved: parseResolvedRef(g.resolved),
     });
   }
-  return { groups, scanned: nonNeg(r.scanned), scanTruncated: bool(r.scan_truncated), invalid: raw.length - groups.length };
+  return {
+    groups, scanned: nonNeg(r.scanned), scanTruncated: bool(r.scan_truncated), invalid: raw.length - groups.length,
+    hiddenResolved: hiddenCount(r.hidden_resolved), resolutionState: parseResolutionState(r.resolution_state),
+  };
+}
+
+/**
+ * 201 을 받은 해결을 묶음에 붙인다(낙관적 표시 — 201 뒤에만): 같은 지문이고 묶음의 마지막 항목이 upto 이하면 그 묶음 전체가 해결됐다.
+ * upto 가 마지막 항목보다 이르면(그 뒤 재발) 붙이지 않는다 — 다시 불러온 목록이 정한다.
+ */
+export function withGroupResolutions<G extends { groups: LogGroup[] }>(g: G, created: readonly { key: string; id: number; upto: string; resolved_by: string }[]): G {
+  const by = new Map(created.map((r) => [r.key, r]));
+  return {
+    ...g,
+    groups: g.groups.map((x) => {
+      const r = by.get(x.fp);
+      return r && x.last_at != null && Date.parse(x.last_at) <= Date.parse(r.upto) ? { ...x, resolved: { id: r.id, upto: r.upto, resolved_by: r.resolved_by } } : x;
+    }),
+  };
 }
 
 // ---- 요청(§C4) ----
@@ -168,8 +202,10 @@ export interface LogFilter {
   q: string;
   rid: string;
   fp: string;
+  /** 해결된 항목: hide = 빼고 수만(기본), show = 흐리게 함께 */
+  resolved: ResolvedMode;
 }
-export const DEFAULT_LOG_FILTER: LogFilter = { services: [], level: "", period: "1h", q: "", rid: "", fp: "" };
+export const DEFAULT_LOG_FILTER: LogFilter = { services: [], level: "", period: "1h", q: "", rid: "", fp: "", resolved: "hide" };
 /** 글자 검색 상한(화면 입력) */
 export const LOG_Q_MAX = 200;
 
@@ -187,15 +223,17 @@ export function logsUrl(f: LogFilter, nowMs: number, opts: { cursor?: string | n
   if (validFp(f.fp)) p.set("fp", f.fp);
   if (opts.cursor && validCursor(opts.cursor)) p.set("cursor", opts.cursor);
   p.set("limit", String(Math.min(LOGS_PAGE_MAX, Math.max(1, Math.floor(opts.limit ?? LOGS_PAGE)))));
+  p.set("resolved", f.resolved);
   return `${LOGS_PATH}?${p}`;
 }
 
-/** 묶음 요청(§C4: since · service · level 만 — 글자 검색 · 요청 id 는 묶음에 적용되지 않는다) */
-export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period">, nowMs: number): string {
+/** 묶음 요청(§C4: since · service · level + 해결 표시 — 글자 검색 · 요청 id 는 묶음에 적용되지 않는다) */
+export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period" | "resolved">, nowMs: number): string {
   const p = new URLSearchParams();
   p.set("since", sinceIso(f.period, nowMs));
   if (f.services.length) p.set("service", f.services.join(","));
   if (f.level) p.set("level", f.level);
+  p.set("resolved", f.resolved);
   return `${LOGS_PATH}/groups?${p}`;
 }
 
@@ -256,11 +294,7 @@ export function applyPending(shown: readonly LogEntry[], pending: readonly LogEn
 /** 텍스트 복사의 시각: 오프셋을 붙인 KST ISO 8601("2026-09-29T08:41:14.906+09:00"). 모르면 "—" */
 const isoText = (v: string | null | undefined): string => isoKst(v) ?? "—";
 
-/** 목록 시각: KST "MM-DD HH:MM:SS.mmm"(ms 유지 — 같은 초의 항목 순서가 보인다). 칸 머리글이 "시각(KST)", title 에 원본 UTC */
-export function fmtLogTime(v: string | null | undefined): string {
-  const s = isoKst(v);
-  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 23)}`;
-}
+// 목록 시각은 <DualTime variant="cell" ms /> — 첫 줄 KST "MM-DD HH:MM:SS.mmm"(ms 유지 — 같은 초의 항목 순서가 보인다) · 둘째 줄 UTC(lib/time 의 표 칸 형식)
 
 export const firstLine = (s: string) => s.split(/\r?\n/, 1)[0];
 
@@ -282,6 +316,7 @@ export function logText(e: LogEntry): string {
   const facts = [`id=${e.id}`, ...(e.stream ? [`stream=${e.stream}(${LOG_STREAM_KEY[e.stream]})`] : []), `fp=${e.fp ?? "—"}`, `instance=${e.instance ?? "—"}`,
     `thread=${e.thread ?? "—"}`, `억제 ${e.suppressed ?? "—"}`];
   if (e.untrusted) facts.push("브라우저가 보낸 내용(검증 안 됨)");
+  if (e.resolved) facts.push(`해결됨 #${e.resolved.id}(${e.resolved.resolved_by} · upto ${isoText(e.resolved.upto)})`);
   lines.push(facts.join(" · "));
   const ctx = Object.entries(e.context);
   if (ctx.length) lines.push(`context: ${ctx.map(([k, v]) => `${k}=${v === null ? "null" : String(v)}`).join(" · ")}`);

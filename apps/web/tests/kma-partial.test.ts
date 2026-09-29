@@ -2,7 +2,7 @@
  * 기상청 합성 레이더의 부분 합성(ADR-021, 2026-09-29 관찰: 저장된 프레임 절반가량이 레이더 15곳 중 5–9곳만 합성된 채 표시).
  * - 합성 크기를 명시한다: "합성 12/15곳"(헤더의 지점 수 / 지난 60분 저장 프레임 중 최대 — 수집기 기준). 모르면 "—"(단위를 붙이지 않는다).
  * - 부분 합성 프레임은 숨기지 않지만(실자료) 완전한 것처럼 보이지 않는다 — 경고 표시와 툴팁:
- *   "일부 지점만 합성(N/M곳) — HH:MM KST까지 다시 받기 대상(지점이 늘면 바꿈)"(수집기의 다시 받기 기한 refetch_until 전 — 주기당 개수 · 예산에
+ *   "일부 지점만 합성(N/M곳) — HH:MM KST · HH:MMZ까지 다시 받기 대상(지점이 늘면 바꿈)"(수집기의 다시 받기 기한 refetch_until 전 — 주기당 개수 · 예산에
  *   따라 실제로 다시 받는지는 조건부라 '다음 주기에 다시 받음' 이라고 하지 않는다). 기한이 지나면 수집기의 기록(refetches)대로:
  *   다시 받았으면 "기한 … 까지 다시 받은 N회에도 기준 미만", 0회면 "기한 … 안에 다시 받지 못함", 모르면 "다시 받기 기한 … 지남".
  *   기한이나 지금 시각을 모르면 뒤 문장을 붙이지 않는다(지어내지 않는다).
@@ -66,7 +66,7 @@ describe("krComposite: composite size and partial wording from the frame's own f
     const c = krComposite(partial("202609291410"), BEFORE);
     expect(c.label).toBe("합성 7/15곳");
     expect(c.state).toBe("filling");
-    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 14:40 KST까지 다시 받기 대상(지점이 늘면 바꿈)");
+    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 14:40 KST · 05:40Z까지 다시 받기 대상(지점이 늘면 바꿈)");
     expect(c.warn).not.toContain("다음 주기");
     expect(c.warn).not.toContain("채우는 중"); // 기상청이 채우는 중인지는 이 프레임의 자료에 없다(레이더 장애일 수도)
     expect(c.title).toContain(c.warn!);
@@ -76,9 +76,9 @@ describe("krComposite: composite size and partial wording from the frame's own f
   it("partial frame after the deadline: says only what the collector recorded (refetched N times · never refetched · unknown)", () => {
     const c = krComposite(partial("202609291410", { refetches: 2 }), AFTER);
     expect(c.state).toBe("final");
-    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 기한 14:40 KST까지 다시 받은 2회에도 기준 미만");
-    expect(krComposite(partial("202609291410", { refetches: 0 }), AFTER).warn).toBe("일부 지점만 합성(7/15곳) — 기한 14:40 KST 안에 다시 받지 못함");
-    expect(krComposite(partial("202609291410", { refetches: null }), AFTER).warn).toBe("일부 지점만 합성(7/15곳) — 다시 받기 기한 14:40 KST 지남");
+    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 기한 14:40 KST · 05:40Z까지 다시 받은 2회에도 기준 미만");
+    expect(krComposite(partial("202609291410", { refetches: 0 }), AFTER).warn).toBe("일부 지점만 합성(7/15곳) — 기한 14:40 KST · 05:40Z 안에 다시 받지 못함");
+    expect(krComposite(partial("202609291410", { refetches: null }), AFTER).warn).toBe("일부 지점만 합성(7/15곳) — 다시 받기 기한 14:40 KST · 05:40Z 지남");
     for (const re of [0, 2, null]) expect(krComposite(partial("202609291410", { refetches: re }), AFTER).warn).not.toContain("끝까지");
   });
   it("unknown deadline or unknown clock: the partial marker stays, the refetch sentence is not invented", () => {
@@ -132,15 +132,15 @@ describe("KMA panel, status bar and legend never present a partial composite as 
   it("status bar: KMA chip names the latest composite; a partial latest frame gets a warn badge with the sentence", () => {
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr([full("202609291405"), partial("202609291410")]) });
     const html = renderToStaticMarkup(createElement(StatusBar));
-    expect(text(html)).toContain("KMA 2f 14:10 KST · 합성 7/15곳");
+    expect(text(html)).toContain("KMA 2f 14:10 KST · 05:10Z · 합성 7/15곳");
     expect(html).toMatch(/data-testid="kr-status-partial"[^>]*title="일부 지점만 합성\(7\/15곳\)[^"]*"/);
     expect(text(html)).toContain("KMA 일부 합성");
     setData({ radarKr: kr([partial("202609291405"), full("202609291410")]) });
     const ok = renderToStaticMarkup(createElement(StatusBar));
-    expect(text(ok)).toContain("KMA 2f 14:10 KST · 합성 15/15곳");
+    expect(text(ok)).toContain("KMA 2f 14:10 KST · 05:10Z · 합성 15/15곳");
     expect(ok).not.toContain('data-testid="kr-status-partial"');
     setData({ radarKr: kr([legacy("202609291410")]) });
-    expect(text(renderToStaticMarkup(createElement(StatusBar)))).toContain("KMA 1f 14:10 KST · 합성 —");
+    expect(text(renderToStaticMarkup(createElement(StatusBar)))).toContain("KMA 1f 14:10 KST · 05:10Z · 합성 —");
   });
   it("legend (KMA): explains the composite size and the partial marker", () => {
     setData({ radarKr: kr([full("202609291405")]) });

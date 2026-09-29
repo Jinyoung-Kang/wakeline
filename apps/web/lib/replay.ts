@@ -3,10 +3,11 @@
  * API: GET /api/v1/replay?at=&bbox= → { at, aircraft, sigmets, source, radar: {host, path, time} | null }(계약서 §2).
  * 원해상도 보관(72 h) 밖은 1분 요약(track_point_1m)에서 온다 — 행의 위치·고도·속도는 그 1분 동안 관측의 평균이고 방위·지상 여부는 없다.
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
- * 시각은 한국 표준시(사용자 요청 2026-09-29): 고르는 입력 · 보이는 글자는 KST, api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
+ * 시각: 고르는 입력은 KST(datetime-local), 보이는 글자는 KST 먼저 · UTC 함께(사용자 요청 2026-09-29, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
  */
 import { ApiError } from "./api";
-import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtRangeKst, fmtTimeKstLabel, fmtUtcRangeTitle, fmtUtcTitle } from "./format";
+import { fmtDual, fmtDualRange, fmtUtcRangeTitle, fmtUtcTitle } from "./time";
+import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum } from "./format";
 import { isoKst, KST_OFFSET_MS } from "./kst";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
@@ -71,7 +72,7 @@ export function replayRadarLabel(frame: Pick<ReplayFrame, "at" | "radar"> | null
   const t = radarTimeMs(r?.time);
   if (!r || t == null) return "레이더 이력 없음(RainViewer 보관 2 h 밖)";
   const d = Math.round((t - Date.parse(frame.at)) / 60000);
-  return `레이더 ${fmtTimeKstLabel(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
+  return `레이더 ${fmtDual(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
 }
 
 const bandSrc = (s: ReplaySigmet) => ({ base_source: s.base_source ?? null, top_source: s.top_source ?? null });
@@ -86,10 +87,10 @@ export function replayRecLabel(a: Pick<ReplayAircraft, "ts" | "provider">, at: s
   if (!a.ts) return "—";
   if (isSummaryRow(a)) {
     const t0 = Date.parse(a.ts);
-    return Number.isNaN(t0) ? "—" : `${fmtRangeKst(t0, t0 + 60_000)} 평균`;
+    return Number.isNaN(t0) ? "—" : `${fmtDualRange(t0, t0 + 60_000)} 평균`;
   }
   const lag = (Date.parse(at) - Date.parse(a.ts)) / 1000;
-  return `${fmtTimeKstLabel(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
+  return `${fmtDual(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
 }
 
 /** 기록 시각 행의 이름 — 원해상도는 "기록 시각", 요약은 그 1분 구간이라 "기록 구간" */
@@ -113,7 +114,7 @@ export function replayAircraftRows(a: ReplayAircraft, at: string): [string, stri
     [summary ? "지상속도(1분 평균)" : "지상속도", fmtGsDual(a.gs_kt)],
     ["방위", fmtNum(a.track_deg, "°")],
     ["지상", fmtBool(a.on_ground)],
-    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtTimeKstLabel(a.ts)],
+    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtDual(a.ts)],
     ["출처", summary ? "1분 요약(track_point_1m)" : a.provider ?? "—"],
   ];
 }
@@ -141,7 +142,7 @@ export function replaySigmetTip(s: ReplaySigmet, at: string): Tip {
     subtitle: s.fir_id,
     rows: [
       ["BAND", band(s.base_ft, s.top_ft, bandSrc(s))],
-      ["VALID", fmtRangeKst(s.valid_from, s.valid_to)],
+      ["VALID", fmtDualRange(s.valid_from, s.valid_to, { seconds: false })],
       ["LEFT", Number.isFinite(left) && left > 0 ? `${fmtDuration(left)}(재생 시각 기준)` : "—"],
     ],
     flags: s.excluded_reason ? [{ text: `판정 제외: ${s.excluded_reason}`, tone: "muted" }] : [],
@@ -212,14 +213,12 @@ export function replayErrorText(e: unknown): string {
   return "서버에 연결할 수 없음 — 기록을 불러오지 못함";
 }
 
-/** 재생 시각 표시(KST, 날짜 포함) "YYYY-MM-DD HH:MM:SS KST" — 30일을 오가므로 연도까지. 모르면(0 · 형식 오류) "—" */
+/** 재생 시각 표시(KST 먼저, UTC 함께 — 날짜 포함) "YYYY-MM-DD HH:MM:SS KST · HH:MM:SS UTC" — 30일을 오가므로 연도까지(UTC 날짜가 다르면 UTC 쪽에도). 모르면(0 · 형식 오류) "—" */
 export function replayAtLabel(ms: number | string | null | undefined): string {
-  if (!ms) return "—";
-  const s = isoKst(ms);
-  return s == null ? "—" : `${s.slice(0, 10)} ${s.slice(11, 19)} KST`;
+  return ms ? fmtDual(ms, { year: true }) : "—";
 }
 
-/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST 로. 요청 시각과 다르면 아직 새 프레임이 오지 않은 것 */
+/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST · UTC 로. 요청 시각과 다르면(1 s 이상) 아직 새 프레임이 오지 않은 것 */
 export function replayFrameAtLabel(frame: Pick<ReplayFrame, "at"> | null, wantAtMs: number): { text: string; behind: boolean } {
   if (!frame) return { text: "—", behind: false };
   const t = Date.parse(frame.at);
@@ -278,53 +277,96 @@ export function fromKstInput(v: string): number | null {
 /** 시각 이동 버튼 [ms, 라벨] */
 export const REPLAY_STEPS: [number, string][] = [[-3600_000, "−1h"], [-600_000, "−10m"], [-60_000, "−1m"], [60_000, "+1m"], [600_000, "+10m"], [3600_000, "+1h"]];
 
-// ---- 요청 순서(R-47) ----
+// ---- 요청 순서(R-47) · 끌기(사용자 영상 2026-09-29) ----
 
 export interface ReplayReq { at: number; bbox: string }
+/** 슬라이더를 끄는 동안 입력이 멈춘 뒤 이만큼 지나야 보낸다 — 입력마다 요청을 만들지 않는다(시각 라벨은 입력마다 바로 바뀐다) */
+export const REPLAY_DEBOUNCE_MS = 150;
+export interface ReplayRequestOpts {
+  /**
+   * true(사용자가 옮김): 보내는 중인 다른 요청을 "낡음"으로 표시한다 — 그 응답·실패는 반영하지 않고, 끝나면 곧바로 가장 최근 값을 보낸다.
+   * false(재생 ▶): 보내는 중인 요청의 응답도 그대로 그리고, 끝나면 가장 최근 값을 보낸다 — 응답이 틱 간격보다 느려도 프레임이 계속 온다(R-47).
+   * 어느 쪽이든 보내는 중인 요청을 끊고(abort) 곧바로 새 요청을 보내지는 않는다 — 아래 ReplayLoader 설명.
+   */
+  supersede?: boolean;
+}
+type Timers = { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
+const defaultTimers: Timers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+};
 
 /**
- * 재생 요청을 한 번에 하나만 보내되, 보내는 중에 들어온 요청을 버리지 않는다(R-47): 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀)
- * 응답이 오면 바로 보낸다 — 결국 마지막으로 원한 (at, bbox) 가 그려진다. 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이
- * "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다). 기다리는 요청이 실패한 것과
- * 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로.
+ * 재생 요청은 탭당 한 번에 하나만 — 브라우저에서도 서버에서도(보내는 중인 요청은 늘 최대 1개).
+ * 브라우저가 fetch 를 끊어도(AbortController) 서버는 그 요청의 조회를 끝까지 돈다: HistoryController.replay 는 publicRead 문장을 최대 4개
+ * (각 3 s 상한, Hikari 풀 12) 차례로 돌고, 서블릿은 응답을 쓸 때에야 연결이 끊긴 것을 안다. 그래서 끊고 곧바로 새 요청을 보내면 멈췄다 끌기를
+ * 되풀이할 때 탭 하나가 서버에 요청을 여러 개 겹쳐 둔다(리뷰 2026-09-29). 새 요청은 보내는 중인 요청이 끝난 뒤(응답 또는 실패)에 보낸다 —
+ * 재생 응답은 보통 0.03–0.26 s(VERIFICATION R-47 측정)라 기다림은 그만큼이다.
+ * - schedule(): debounce(REPLAY_DEBOUNCE_MS) 뒤 마지막 값 하나만 request() 로 — 끄는 동안 요청이 입력 수만큼 쌓이지 않는다.
+ * - request(supersede): 보내는 중인 요청을 낡음으로 표시하고 최신 값 하나만 기억한다. 낡은 요청의 응답·실패는 반영하지 않는다(지도를 비우지 않는다).
+ * - request(기본): 보내는 중이면 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀) 응답이 오면 바로 보낸다(R-47) — 결국 마지막으로 원한 (at, bbox) 가 그려진다.
+ * 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이 "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다).
+ * 기다리는 요청이 실패한 것과 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로. 보내는 중인 것과 같은 요청은 다시 보내지 않는다
+ * (낡음으로 표시했던 것이면 되살려 그 응답을 그린다).
+ * 끊는 것(abort)은 화면을 떠날 때(dispose)만 — 그 뒤로는 이 탭이 재생 요청을 보내지 않는다.
  */
 export class ReplayLoader {
-  private inflight: ReplayReq | null = null;
+  private inflight: { r: ReplayReq; ctl: AbortController; stale: boolean } | null = null;
   private queued: ReplayReq | null = null;
+  private timer: unknown = null;
   private disposed = false;
 
   constructor(
-    private readonly fetchFrame: (r: ReplayReq) => Promise<ReplayFrame>,
+    private readonly fetchFrame: (r: ReplayReq, signal: AbortSignal) => Promise<ReplayFrame>,
     private readonly onEvent: (e: ReplayEvent, r: ReplayReq) => void,
     private readonly clock: () => number = () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
+    private readonly timers: Timers = defaultTimers,
+    private readonly debounceMs = REPLAY_DEBOUNCE_MS,
   ) {}
 
-  request(r: ReplayReq): void {
+  /** 입력(슬라이더·재생 틱 등) — 마지막 값만 debounce 뒤에 보낸다 */
+  schedule(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
     if (this.disposed) return;
-    if (this.inflight) { this.queued = r; return; }
-    void this.run(r);
+    if (this.timer != null) this.timers.clear(this.timer);
+    this.timer = this.timers.set(() => { this.timer = null; this.request(r, opts); }, this.debounceMs);
   }
 
-  /** 화면을 떠나면 더 보내지도 반영하지도 않는다 */
+  request(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
+    if (this.disposed) return;
+    const cur = this.inflight;
+    if (!cur) { void this.run(r); return; }
+    if (sameReq(cur.r, r)) { cur.stale = false; this.queued = null; return; } // 이미 그것을 받는 중(낡음으로 표시했으면 되살린다)
+    if (opts.supersede) cur.stale = true; // 사용자가 옮김 — 그 응답은 이미 낡았다(그리지 않는다)
+    this.queued = r; // 끝나면 곧바로(서버에 겹치지 않게)
+  }
+
+  /** 화면을 떠나면 더 보내지도 반영하지도 않는다(기다리는 debounce · 보내는 중인 요청도 취소) */
   dispose(): void {
     this.disposed = true;
     this.queued = null;
+    if (this.timer != null) { this.timers.clear(this.timer); this.timer = null; }
+    const cur = this.inflight;
+    this.inflight = null;
+    cur?.ctl.abort();
   }
 
   private async run(r: ReplayReq): Promise<void> {
-    this.inflight = r;
+    const me = { r, ctl: new AbortController(), stale: false };
+    this.inflight = me;
     const t0 = this.clock();
     try {
-      const frame = await this.fetchFrame(r);
-      if (!this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
+      const frame = await this.fetchFrame(r, me.ctl.signal);
+      if (this.inflight === me && !me.stale && !this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
     } catch (error) {
-      // 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
-      if (!this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
+      // 낡은 요청은 알리지 않는다. 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
+      if (this.inflight === me && !me.stale && !this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
     } finally {
-      this.inflight = null;
-      const next = this.queued;
-      this.queued = null;
-      if (next && !this.disposed && !sameReq(next, r)) void this.run(next);
+      if (this.inflight === me) {
+        this.inflight = null;
+        const next = this.queued;
+        this.queued = null;
+        if (next && !this.disposed && !sameReq(next, r)) void this.run(next);
+      }
     }
   }
 }

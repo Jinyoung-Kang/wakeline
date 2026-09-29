@@ -1,8 +1,11 @@
 /** 통계 차트 보조(순수 함수). value=null = 자료 없음(0 이 아니다 — GAP-17). */
-import { isoKst } from "./kst";
+import { fmtUtcDayDual, utcDayHours } from "./time";
 
-/** full = 막대 툴팁 · 스크린리더 표에 쓸 전체 이름(없으면 label) */
-export interface ChartRow { label: string; value: number | null; full?: string }
+/**
+ * full = 막대 툴팁 · 스크린리더 표에 쓸 전체 이름(없으면 label).
+ * sub = 눈금 둘째 줄(흐리게, 라벨 아래) — 시간대별 막대의 같은 순간 UTC 시("00Z"). 없으면 한 줄.
+ */
+export interface ChartRow { label: string; value: number | null; full?: string; sub?: string }
 
 /** 스크린리더용 한 줄 요약: 항목 수·최댓값·자료 없는 항목 수 */
 export function chartSummary(rows: ChartRow[], unit = ""): string {
@@ -28,27 +31,17 @@ export function hourlyRows(items: { hour?: string | null; dim?: string | null; v
 }
 
 /**
- * UTC 날짜 하루(day, "YYYY-MM-DD")의 시간대별 행을 한국 표준시 시각으로 이름 붙인다(사용자 요청 2026-09-29): 막대 순서는 그 UTC 날짜의
- * 시간 순서(UTC 00시 → 23시) 그대로이고 라벨만 KST 시(09 … 23, 00 … 08 — 00 부터는 다음 KST 날). 집계 날짜를 KST 날짜로 옮기지 않는다.
- * full = "09-29 00시 KST (UTC 15시)" — 날짜를 모르면 "00시 KST (UTC 15시)"(날짜를 지어내지 않는다). 값은 hourlyRows 와 같다(없으면 null).
+ * UTC 날짜 하루(day, "YYYY-MM-DD")의 시간대별 행 — KST 와 UTC 를 함께(사용자 요청 2026-09-29): 막대 순서는 그 UTC 날짜의 시간 순서(UTC 00시 → 23시)
+ * 그대로이고, 눈금 윗줄(label)은 KST 시(09 … 23, 00 … 08 — 00 부터는 다음 KST 날), 아랫줄(sub)은 같은 순간의 UTC 시("00Z"). 집계 날짜를 KST 날짜로 옮기지 않는다.
+ * full = "09-29 00시 KST · 09-28 15시 UTC"(날짜를 모르면 시만 — lib/time utcDayHours). 값은 hourlyRows 와 같다(없으면 null).
  */
 export function hourlyRowsKst(items: Parameters<typeof hourlyRows>[0], day: string | null): ChartRow[] {
-  const dayMs = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00Z`) : NaN;
-  return hourlyRows(items).map((r, h) => {
-    const kstH = String((h + 9) % 24).padStart(2, "0");
-    const kst = Number.isFinite(dayMs) ? isoKst(dayMs + h * 3600_000) : null;
-    const date = kst ? `${kst.slice(5, 10)} ` : "";
-    return { label: kstH, value: r.value, full: `${date}${kstH}시 KST (UTC ${r.label}시)` };
-  });
+  const hours = utcDayHours(day);
+  return hourlyRows(items).map((r, h) => ({ label: hours[h].kst, sub: hours[h].utcTick, value: r.value, full: hours[h].full }));
 }
 
-/** UTC 날짜 하루가 한국 표준시로 어디부터 어디까지인지: "KST 09-28 09:00 – 09-29 08:59". 날짜 형식이 아니면 null */
-export function utcDayInKst(day: string | null): string | null {
-  const t = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00Z`) : NaN;
-  if (!Number.isFinite(t)) return null;
-  const a = isoKst(t), b = isoKst(t + 86_400_000 - 60_000);
-  return a && b ? `KST ${a.slice(5, 10)} ${a.slice(11, 16)} – ${b.slice(5, 10)} ${b.slice(11, 16)}` : null;
-}
+/** UTC 날짜 하루가 두 시간대로 어디부터 어디까지인지: "09-28 09:00 – 09-29 08:59 KST · 09-28 00:00 – 09-28 23:59 UTC". 날짜 형식이 아니면 null */
+export const utcDayDual = (day: string | null): string | null => fmtUtcDayDual(day);
 
 // ---- 트래픽 범위(DH-10) ----
 

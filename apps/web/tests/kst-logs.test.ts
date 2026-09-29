@@ -26,11 +26,11 @@ describe("KST in /logs copy text and export (lib/logs · lib/log-line · ErrorSc
       "context: task=job:radar_kr · module=kma_radar · func=_fail · line=136",
     ]);
   });
-  it("list time is KST \"MM-DD HH:MM:SS.mmm\" (the column header says KST); unreadable → —", async () => {
-    const L = await import("@/lib/logs");
-    expect(L.fmtLogTime(USER_TS)).toBe("09-29 08:41:14.906");
-    expect(L.fmtLogTime("bad")).toBe("—");
-    expect(L.fmtLogTime(null)).toBe("—");
+  it("list time: KST \"MM-DD HH:MM:SS.mmm\" on the first line, UTC on the second (the column header says KST · UTC); unreadable → —", async () => {
+    const T = await import("@/lib/time");
+    expect(T.dualCell(USER_TS, { ms: true })).toMatchObject({ kst: "09-29 08:41:14.906", utc: "09-28 23:41:14.906 UTC" });
+    expect(T.dualCell("bad", { ms: true })).toBeNull();
+    expect(T.dualCell(null, { ms: true })).toBeNull();
   });
   it("group text: first / last in ISO 8601 with +09:00", async () => {
     const L = await import("@/lib/logs");

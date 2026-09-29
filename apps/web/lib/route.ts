@@ -43,6 +43,25 @@ export const ROUTE_STATUS_TEXT: Record<Exclude<RouteStatus, "found">, string> = 
   unavailable: "노선 조회 실패",
   disabled: "노선 조회 꺼짐(운영 설정)",
 };
+/**
+ * "조회 중"이 보통 경로보다 길어졌는가(사용자 요청 2026-09-29). 보통 경로 계산값(측정값이 아니다) = api 노선 메모리 캐시(RouteReader.TTL_MS 5 s —
+ * 콜사인을 처음 읽을 때 "조회 중"이면 그 값을 5 s 동안 그대로 준다) + 다음 selected 전송(WsHub 는 수집기의 집중 추적 관측마다 selected 를 보낸다 —
+ * 관측 주기 collector jobs/demand FOCUS_INTERVAL_S 5 s, WsHub "≈ 5 s") = 10 s. 수집기는 임대에 적힌 콜사인을 다음 틱(TICK_S 1 s)에 곧바로 노선 조회에
+ * 넘기므로(FOCUS_INTERVAL_S 는 같은 콜사인을 다시 넘기기까지의 간격), 조회가 캐시 5 s 안에 끝나면 결과는 이 계산값 안에 보인다. adsbdb 응답 시간은 잰 값이 없어
+ * 셈에 넣지 않았다. 넘으면 "보통 경로 계산값보다 오래 걸림"을 한 번 알린다 — 상한은 말하지 않는다
+ * (수집기의 조회 대기열은 동시 2개라 여러 항공기를 고르면 기다림에 상한이 없다). tests/route-pending.test.ts 가 서버 코드의 값과 경로를 읽어 대조한다.
+ */
+export const ROUTE_NORMAL_PATH_S = 10;
+export const ROUTE_SLOW_AFTER_S = ROUTE_NORMAL_PATH_S;
+export const ROUTE_SLOW_TEXT = `보통 경로 계산값(${ROUTE_NORMAL_PATH_S} s)보다 오래 걸림`;
+export const ROUTE_PENDING_TITLE = "수집기가 선택한 항공기의 콜사인을 adsbdb 에 묻는 중입니다. api 가 “조회 중”을 5 s 동안 캐시하고, "
+  + "선택 항공기 갱신(selected)은 집중 추적 관측마다(약 5 s) 옵니다 — 조회가 그 사이에 끝나면 결과는 10 s 안에 보입니다(서버 설정으로 셈한 계산값, 측정값 아님). "
+  + "수집기는 adsbdb 호출 한도(0.5 req/s, 대기 최대 10 s)와 응답(읽기 제한 8 s)을 기다릴 수 있고, 부르지 못하거나 실패하면 “노선 조회 실패”로 바뀝니다.";
+export type RoutePendingPhase = "normal" | "slow";
+/** 조회 중 경과(초, 카드가 처음 "조회 중"을 본 때부터 — 모르면 null) → 단계 */
+export function routePendingPhase(elapsedS: number | null): RoutePendingPhase {
+  return elapsedS != null && elapsedS >= ROUTE_SLOW_AFTER_S ? "slow" : "normal";
+}
 export const ROUTE_CAVEAT = "콜사인에 등록된 정기 노선입니다 — 실제 운항 경로와 다를 수 있습니다";
 /** 출처 표기: "adsbdb.com" + 뒤 문구(카드는 앞부분을 링크로) */
 export const ROUTE_ATTRIBUTION_TAIL = " · flight route data © David Taylor, Edinburgh & Jim Mason, Glasgow";

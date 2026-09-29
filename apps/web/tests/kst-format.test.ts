@@ -1,28 +1,29 @@
 /**
  * 운영(/ops)·로그(/logs) 화면의 시각을 한국 표준시(KST, UTC+09:00)로(사용자 요청 2026-09-29). 상황판·재생·통계·공항도 같은 날 뒤따랐다(tests/kst-dashboard.test.ts).
- * - 표 칸은 "MM-DD HH:MM:SS"(머리글이 (KST) 를 말한다), 머리글이 없는 자리는 " KST" 를 붙인다. title 에 원본 UTC ISO(서버·컨테이너 로그와 대조).
+ * 같은 날 뒤 요청("UTC 와 KST 함께")으로 모든 화면이 KST 를 먼저, UTC 를 함께 보인다 — 형식기는 lib/time(tests/dual-time.test.ts).
+ * - 표 칸은 첫 줄 KST "MM-DD HH:MM:SS" · 둘째 줄 UTC(머리글 "(KST · UTC)"), 그 밖은 "… KST · … UTC". title 에 원본 UTC ISO(서버·컨테이너 로그와 대조).
  * - 복사 텍스트·.txt 의 머리 줄은 오프셋을 붙인 ISO 8601("…+09:00", ms 유지). .ndjson · JSON 복사는 api 가 준 그대로(ts 는 UTC).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { describe, expect, it } from "vitest";
-import * as F from "@/lib/format";
+import * as F from "@/lib/time";
 
 /** 사용자가 붙여 넣은 /logs 항목(2026-09-28T23:41:14.906Z WARN collector/job.kma_radar) — UTC 자정 직전이라 KST 로는 다음 날 */
 const USER_TS = "2026-09-28T23:41:14.906Z";
 
-describe("KST formatters (lib/format)", () => {
+describe("KST formatters (lib/time)", () => {
   it("UTC 23:41 on 09-28 is 08:41 on 09-29 in KST — both sides of UTC and KST midnight", () => {
-    expect(F.fmtTimeKst(USER_TS)).toBe("09-29 08:41:14");
-    expect(F.fmtTimeKst("2026-09-28T14:59:59Z")).toBe("09-28 23:59:59"); // KST 자정 직전
-    expect(F.fmtTimeKst("2026-09-28T15:00:00Z")).toBe("09-29 00:00:00"); // KST 자정
-    expect(F.fmtTimeKst("2026-09-29T00:00:00Z")).toBe("09-29 09:00:00"); // UTC 자정
+    expect(F.dualCell(USER_TS)?.kst).toBe("09-29 08:41:14");
+    expect(F.dualCell("2026-09-28T14:59:59Z")?.kst).toBe("09-28 23:59:59"); // KST 자정 직전
+    expect(F.dualCell("2026-09-28T15:00:00Z")?.kst).toBe("09-29 00:00:00"); // KST 자정
+    expect(F.dualCell("2026-09-29T00:00:00Z")?.kst).toBe("09-29 09:00:00"); // UTC 자정
     expect(F.fmtIsoKst("2026-12-31T15:00:00Z")).toBe("2027-01-01T00:00:00.000+09:00"); // 해가 바뀜
     expect(F.fmtIsoKst("2028-02-28T15:00:00Z")).toBe("2028-02-29T00:00:00.000+09:00"); // 윤일
-    expect(F.fmtTimeKst(Date.parse(USER_TS))).toBe("09-29 08:41:14"); // 숫자는 epoch ms
+    expect(F.dualCell(Date.parse(USER_TS))?.kst).toBe("09-29 08:41:14"); // 숫자는 epoch ms
   });
-  it("label (no column header), clock and ISO-with-offset forms; the UTC original goes to the tooltip", () => {
-    expect(F.fmtTimeKstLabel(USER_TS)).toBe("09-29 08:41:14 KST");
-    expect(F.fmtClockKst(USER_TS)).toBe("08:41:14 KST");
+  it("label (no column header), clock and ISO-with-offset forms carry UTC with KST; the UTC original goes to the tooltip", () => {
+    expect(F.fmtDual(USER_TS)).toBe("09-29 08:41:14 KST · 09-28 23:41:14 UTC");
+    expect(F.fmtDualClock(USER_TS)).toBe("08:41:14 KST · 09-28 23:41:14 UTC");
     expect(F.fmtIsoKst(USER_TS)).toBe("2026-09-29T08:41:14.906+09:00");
     expect(F.fmtIsoKst("2026-09-29T08:41:14.906+09:00")).toBe("2026-09-29T08:41:14.906+09:00"); // 이미 KST 인 ISO 도 같은 순간
     expect(Date.parse(F.fmtIsoKst(USER_TS))).toBe(Date.parse(USER_TS)); // 같은 순간(표기만 바뀐다)
@@ -30,9 +31,9 @@ describe("KST formatters (lib/format)", () => {
   });
   it("unknown or unreadable → \"—\" (and no tooltip), never a made-up time; out-of-range values do not throw", () => {
     for (const v of [null, undefined, "", "bad", "undefined", "null", Number.NaN]) {
-      expect(F.fmtTimeKst(v)).toBe("—");
-      expect(F.fmtTimeKstLabel(v)).toBe("—");
-      expect(F.fmtClockKst(v)).toBe("—");
+      expect(F.dualCell(v)).toBeNull();
+      expect(F.fmtDual(v)).toBe("—");
+      expect(F.fmtDualClock(v)).toBe("—");
       expect(F.fmtIsoKst(v)).toBe("—");
       expect(F.fmtUtcTitle(v)).toBeUndefined();
     }
@@ -54,7 +55,7 @@ describe("KST formatters (lib/format)", () => {
     const before = process.env.TZ;
     try {
       process.env.TZ = "America/Los_Angeles";
-      expect(F.fmtTimeKst(USER_TS)).toBe("09-29 08:41:14");
+      expect(F.dualCell(USER_TS)?.kst).toBe("09-29 08:41:14");
       expect(F.fmtIsoKst(USER_TS)).toBe("2026-09-29T08:41:14.906+09:00");
     } finally {
       if (before === undefined) delete process.env.TZ; else process.env.TZ = before;

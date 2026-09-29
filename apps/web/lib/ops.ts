@@ -1,6 +1,7 @@
 /** 운영 화면 보조(순수 함수·주입 가능한 호출). 비인가 ops 호출은 404 로 숨겨지므로(SecurityConfig) 401 과 함께 "세션 없음 후보"로 본다. */
 import { ApiError } from "./api";
 import { fmtDuration } from "./format";
+import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
 
 export const OPS_SESSION_PATH = "/api/v1/ops/session";
 
@@ -168,6 +169,75 @@ export function lastTrimLoss(resp: unknown): { stream: string; from: string | nu
   const t = obj(obj(obj(resp).api).last_stream_trim_loss);
   const fromOk = typeof t.from === "string" || t.from === null;
   return typeof t.stream === "string" && fromOk && typeof t.to === "string" ? { stream: t.stream, from: (t.from as string | null), to: t.to } : null;
+}
+
+// ---- 탭(엔드포인트)마다 응답 순서 ----
+
+/**
+ * 한 탭(엔드포인트)의 요청 순서 — 어떤 응답(성공 · 실패)을 화면에 반영할지 정한다.
+ * - begin(barrier): 떠나는 요청에 번호를 매긴다. barrier = 기준 요청(쓰기 뒤 다시 읽기 · 해결 표시 토글 · refresh 단추): 그 전에 떠난 요청의 응답은
+ *   이제 버린다 — 먼저 오든 늦게 오든 쓰기 전 값 · 다른 해결 표시의 요약이 화면에 오지 않는다.
+ * - settle(my): 응답이 오면 부른다. 반영할 응답 = 기준 요청 이후에 떠났고 이미 반영한 응답보다 새것. 새로고침 주기보다 느린 응답도
+ *   (더 새 응답이 아직 오지 않았으면) 반영한다 — 느려진 api 의 실패가 "다음 요청이 떠났다"는 이유로 조용히 사라지지 않게.
+ * - busy: 떠 있는 요청이 있는가 — 주기 새로고침은 그 탭을 건너뛴다(느려진 api 에 요청을 쌓지 않는다. 기준 요청은 늘 보낸다).
+ */
+export class RequestOrder {
+  private sent = 0;
+  private applied = 0;
+  private floor = 0;
+  private open = 0;
+  begin(barrier: boolean): number {
+    const my = ++this.sent;
+    if (barrier) this.floor = my;
+    this.open++;
+    return my;
+  }
+  settle(my: number): boolean {
+    this.open = Math.max(0, this.open - 1);
+    if (my < this.floor || my <= this.applied) return false;
+    this.applied = my;
+    return true;
+  }
+  get busy(): boolean { return this.open > 0; }
+}
+
+// ---- 공급자 마지막 오류의 해결(ADR-022 — /ops/providers 의 last_error_resolution · last_error_resolved) ----
+
+/**
+ * 공급자 표의 LAST ERROR 칸이 쓰는 사실. resolution = 그 공급자의 유효한 provider_error 해결(api 가 준 그대로, 형식이 틀리면 null),
+ * resolved = api 가 "이 오류는 그 해결의 upto 이하" 라고 했고 해결을 읽을 수 있을 때만 true(모르는 것을 해결로 치지 않는다),
+ * recurred = 해결이 있고 지금 오류의 시각(last_error_at)이 그 upto 뒤라고 받은 값으로 확인될 때(재발),
+ * undecided = 해결은 있지만 해결됨도 재발도 확인되지 않음 — api 는 last_error_at 이 없거나 형식이 틀려도 last_error_resolved=false 를 준다(계약 §G13):
+ * 그때 "다시 남"이라고 하지 않는다(시각을 모르는 오류의 재발을 지어내지 않는다).
+ * upto = 해결 처리로 보낼 그 오류의 시각(last_error_at 그대로) — 시각으로 읽을 수 없으면 null(해결 처리 불가).
+ */
+export interface ProviderLastError { hasError: boolean; upto: string | null; resolution: ResolvedRef | null; resolved: boolean; recurred: boolean; undecided: boolean }
+
+export function providerLastError(p: Record<string, unknown>): ProviderLastError {
+  const hasError = typeof p.last_error === "string" && p.last_error.trim() !== "";
+  const resolution = parseResolvedRef(p.last_error_resolution);
+  const resolved = p.last_error_resolved === true && resolution != null;
+  const upto = uptoOf(p.last_error_at);
+  const open = hasError && !resolved && resolution != null;
+  const recurred = open && (compareInstants(upto, resolution.upto) ?? 0) > 0;
+  return { hasError, upto, resolution, resolved, recurred, undecided: open && !recurred };
+}
+
+/**
+ * 201 을 받은 provider_error 해결을 공급자 행에 붙인다(낙관적 표시 — 201 뒤에만). 덮는지(upto ≥ last_error_at)는 받은 값으로 따지고,
+ * 시각을 모르면 덮지 않는다. 다시 불러온 응답이 정한다.
+ */
+export function withProviderResolutions<P extends { providers: Record<string, unknown>[] }>(prov: P, created: readonly Resolution[]): P {
+  const by = new Map(created.filter((r) => r.kind === "provider_error").map((r) => [r.key, r]));
+  return {
+    ...prov,
+    providers: prov.providers.map((x) => {
+      const r = by.get(String(x.name));
+      if (!r) return x;
+      const c = compareInstants(x.last_error_at, r.upto);
+      return { ...x, last_error_resolution: { id: r.id, upto: r.upto, resolved_by: r.resolved_by }, last_error_resolved: c != null && c <= 0 };
+    }),
+  };
 }
 
 // ---- 설정 편집의 낙관적 잠금(R-35) ----

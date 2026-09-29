@@ -172,7 +172,9 @@ describe("aircraft card route section (server render)", () => {
       const html = section(parseRoute({ status, callsign: status === "no_callsign" ? null : "TST123", source: "adsbdb" }));
       expect(html, status).toContain(ROUTE_STATUS_TEXT[status]);
       expect(html, status).toContain(`data-status="${status}"`);
-      expect(html, status).not.toContain("계산값");
+      // 노선 값(거리 계산값 · 공항 행)이 없다 — 조회 중 툴팁의 "보통 경로 계산값" 은 노선 값이 아니다
+      expect(html, status).not.toContain("km · 계산값");
+      expect(html, status).not.toContain('data-testid="route-row"');
     }
     expect(ROUTE_STATUS_TEXT).toEqual({
       pending: "노선 조회 중", not_found: "이 콜사인의 등록 노선 없음", no_callsign: "콜사인 없음 — 노선을 찾을 수 없음", unavailable: "노선 조회 실패",
