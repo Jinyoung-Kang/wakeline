@@ -176,6 +176,37 @@
         }
       ]
     },
+    "port-calls": {
+      "file": "port-calls.9593031474.webp",
+      "format": "webp",
+      "width": 1440,
+      "height": 900,
+      "bytes": 132668,
+      "captured_at": "2026-09-29T17:35:17.315Z",
+      "variant": "선박 검색 “AZAMARA PURSUIT” 첫 결과 — 부산항 부근 · 도쿄만 후보 8척에 입출항 결과 없음",
+      "callouts": [
+        {
+          "n": 1,
+          "x": 75,
+          "y": 54.8
+        },
+        {
+          "n": 3,
+          "x": 75,
+          "y": 58.5
+        },
+        {
+          "n": 4,
+          "x": 75,
+          "y": 78.4
+        },
+        {
+          "n": 5,
+          "x": 75,
+          "y": 85.2
+        }
+      ]
+    },
     "alerts": {
       "file": "alerts.5ed282239d.webp",
       "format": "webp",

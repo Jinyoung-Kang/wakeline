@@ -339,13 +339,27 @@
 - **수정** 두 작업이 Redis 의 한 시간 창(시간당 390회 — 어느 24 h 에도 최대 9,782회 < 10,000)을 함께 쓴다. 포털이 날짜를 어떻게 세는지 · 두 API 가 한도를 나누는지는 확인하지 못했다 —
   어느 경우에도 넘지 않는 값을 고른 것이다(잰 값 아님). 대가로 격자 위치의 첫 채우기가 약 18 h 이상 걸린다(한 번 — 칸은 DB 에 남는다).
 
-## 자동 검사 현황(2026-09-30 KST, 재생 · 설명서 · UTC 병기 · 해결 처리 · 항만 입출항 색인 · 연안 교통량 뒤)
+## #50 새로 공개된 jackson-databind 취약점(CVE-2026-68497, HIGH) — 보안 게이트가 막음
+- **증상** 병합 뒤 `make security` 가 `wakeline-api:local` 에서 실패: app.jar 의 `tools.jackson.core:jackson-databind` 3.1.5 · `com.fasterxml.jackson.core:jackson-databind` 2.22.1
+  (Trivy: 3.1.6 · 2.22.2 에서 수정). 바로 전 배포 때는 통과했다 — 그 사이 Trivy DB 에 새로 실린 항목이다.
+- **수정** Boot 4.1.x 의 새 패치가 아직 없어(Maven Central 확인: 최신 4.1.1) Tomcat(R-37)과 같은 방식으로 올렸다 — Jackson 3 · 2 의 BOM 을 같은 minor 의 최신 패치(3.1.7 · 2.22.3)로
+  platform 제약. BOM 이라 core · annotations · 모듈이 함께 맞춰진다. **회귀** `JacksonVersionTest`(수정 전 3.1.5 · 2.22.1 로 실패 확인).
+
+## #51 api 재시작 뒤 선택한 선박의 정적 정보가 오래 비어 입출항을 못 찾음
+- **증상**(배포 뒤 확인) AZAMARA PURSUIT(538012043)를 골라도 `static` 이 null, 입출항은 "호출부호 아직 받지 않음" — 입출항 색인에는 이 배의 부산 입항(V7A3884)이 있었다.
+- **원인** api 의 메모리 정적 정보는 선박 스트림(보존 약 2.5 h)에서만 다시 채워지고, 이 배의 마지막 AIS 정적 보고는 그보다 오래됐다. DB `ship` 표에는 남아 있었다.
+- **수정** 메모리에 없을 때만 DB 의 마지막 정적 보고를 읽어(선박별 캐시 60 s · 실패 15 s · 같은 선박 동시 조회는 한 번) `static_source = stored` 와 DB 기록 수신 시각을 함께 보낸다.
+  메모리(지도 목록 · 검색)에는 섞지 않는다. 카드에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 KST · UTC" 를 보이고, 입출항이 이 호출부호로 찾은 때만 그렇다고 쓴다. 계약 v5 §G17.
+  **회귀** `StoredStaticIT`(수정 전 static null · no_call_sign 재현, `ship` 표를 잠그면 `stored_unavailable` · 세션 유지).
+- **남은 것** DB 풀이 바닥나면 한 조회가 그 세션의 메시지를 최대 약 8 s(연결 대기 5 s + 문장 3 s) 붙잡는다 — 입출항 조회와 같은 기존 방식이다. 전용 읽기 풀은 다음 일로 남긴다.
+
+## 자동 검사 현황(2026-09-30 KST, 재생 · 설명서 · UTC 병기 · 해결 처리 · 항만 입출항 색인 · 연안 교통량 · 저장된 정적 보고 · Jackson 패치 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,379 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 774 · JaCoCo LINE 96.5 % · BRANCH 85.0 %(하한 95 / 80) |
-| web 단위 | Vitest | 1,048 · 커버리지(소스 전체) Lines 89.8 % · Branches 80.7 % |
-| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 27 · 클라이언트 15) + 가림 · 억제 벡터 |
+| collector · ais 단위·통합 | pytest | 1,381 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 788 · JaCoCo LINE 96.5 % · BRANCH 85.0 %(하한 95 / 80) |
+| web 단위 | Vitest | 1,064 · 커버리지(소스 전체) Lines 89.8 % · Branches 80.8 % |
+| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 36 · 클라이언트 15) + 가림 · 억제 벡터 |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 33종 |
 | 인프라 정책 | infra/tests(unittest) | 122 |
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 12 |
