@@ -142,6 +142,18 @@ def test_entry_and_exit_are_set_only_when_unambiguous():
     assert [r.type for r in got.reports] == ["최초", "변경", "최초", "최초"]
 
 
+def test_an_undated_report_of_the_same_kind_keeps_the_time_undecided():
+    """같은 종류의 신고 중 시각 없는 것이 있으면 시각 있는 신고 하나로 정하지 않는다(그 신고가 다른 시각일 수 있다) — 신고는 모두 남기고
+    화면이 '입항 신고 2건 중 시각 있는 1건' 으로 밝힌다(웹 callTimes)."""
+    reports = [("최초", "입항", "2026-09-20T08:30:00+09:00"), ("변경", "입항", None)]
+    got = parse_page(page([item(reports=reports)], 1), "230025").items[0]
+    assert got.entry_at is None
+    assert [(r.kind, r.at, r.type) for r in got.reports] == [
+        ("입항", datetime(2026, 9, 19, 23, 30, tzinfo=UTC), "최초"),
+        ("입항", None, "변경"),
+    ]
+
+
 def test_non_normal_result_code_is_an_api_error_with_code_and_message():
     with pytest.raises(PortCallApiError) as e:
         parse_page(page([], None, code="99", msg="SOMETHING WRONG serviceKey=abc123XYZ"), "230025")
