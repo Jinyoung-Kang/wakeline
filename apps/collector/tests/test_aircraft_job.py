@@ -404,14 +404,16 @@ async def test_region_429_warning_says_what_happens_next(monkeypatch, caplog):
     chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status)
     job = AircraftJob("region", chain, ctx)
     await job.run_once()
-    assert _warnings(caplog)[-1] == "region: adsb_lol rate limited (429) — backing off 60 s, adsb_fi takes over"
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; next: 'adsb_fi takes over'"
+    )
     await job.run_once()  # adsb_fi
     assert fi.calls == 1
     assert (await r.hgetall("wakeline:active"))["region_reason"] == "fallback — adsb_lol 429 쉼(60 s)"
     clk[0] += 61
     await job.run_once()  # 1순위 복귀 → 다시 429(15분 안) → 120 s 쉬고 10분 뒤로 미룸
     assert _warnings(caplog)[-1] == (
-        "region: adsb_lol rate limited (429) — backing off 120 s; repeated 429 → deferred 10 min, adsb_fi takes over"
+        "region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; next: 'adsb_fi takes over'"
     )
 
 
@@ -423,8 +425,31 @@ async def test_region_429_warning_when_no_other_provider(monkeypatch, caplog):
     job = AircraftJob("region", ProviderChain("region", {"adsb_lol": RL429("adsb_lol")}, ctx.status), ctx)
     await job.run_once()
     assert _warnings(caplog)[-1] == (
-        "region: adsb_lol rate limited (429) — backing off 60 s; no other provider — adsb_lol again after the backoff"
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; "
+        "next: 'adsb_lol again after the backoff (no other provider)'"
     )
+    clk[0] += 61
+    await job.run_once()  # 15분 안에 되풀이 — 미룸이 걸렸지만 다른 공급자가 없어 쉼 뒤 다시 쓴다
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; "
+        "next: 'adsb_lol again after the backoff (no other provider — deferral not applied)'"
+    )
+
+
+def test_region_429_warnings_share_one_log_fingerprint():
+    """/logs 에서 429 한 계열이 한 묶음(지문)으로 보인다 — 바뀌는 값은 숫자와 따옴표 안에만 둔다(logsink.message_template).
+    이전: 뒤에 붙인 '다음에 무엇을 하는지'의 문장 모양이 4가지라 한 계열이 2–4개 지문으로 갈렸다."""
+    from wakeline_collector.logsink import fingerprint
+
+    msgs = [
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; next: 'adsb_fi takes over'",
+        "region: adsb_lol rate limited (429) — backing off 300 s, deferred 60 min; next: 'adsb_fi takes over'",
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; "
+        "next: 'adsb_lol again after the backoff (no other provider)'",
+        "region: adsb_lol rate limited (429) — backing off 240 s, deferred 20 min; "
+        "next: 'adsb_lol again after the backoff (no other provider — deferral not applied)'",
+    ]
+    assert len({fingerprint("collector", "job.aircraft", "", m) for m in msgs}) == 1
 
 
 async def test_budget_and_limiter_cooldowns_name_their_reason(monkeypatch):
