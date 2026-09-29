@@ -1,0 +1,52 @@
+{
+ "$comment": "ADR-022 — 수집기가 fixtures/portmis_info5_busan_230025.xml(실제 응답)을 파싱해 Redis wakeline:portcalls:230025 에 쓰는 값(fetched_at 만 고정). 수집기 시험(test_portcalls)이 이 파일과 같은지 보고, api 시험(PortCallsInfoTest)이 이 파일을 읽는다 — 손으로 고치지 않는다(수집기 값이 바뀌면 둘 다 실패한다).",
+ "value": {
+  "v": 1,
+  "status": "ok",
+  "call_sign": "230025",
+  "fetched_at": "2026-09-29T03:00:00.123Z",
+  "window": {
+   "from": "2026-08-30",
+   "to": "2026-09-29",
+   "days": 30
+  },
+  "source": "해양수산부 선박운항정보(PORT-MIS)",
+  "items": [
+   {
+    "port_authority_code": "020",
+    "port_authority": "부산",
+    "entry_at": "2026-09-28T15:00:00Z",
+    "exit_at": null,
+    "reports": [
+     {
+      "kind": "입항",
+      "at": "2026-09-28T15:00:00Z",
+      "type": "최초"
+     }
+    ],
+    "purpose": "양하",
+    "prev_port": {
+     "code": "KRYOC",
+     "name": "여천항"
+    },
+    "next_port": {
+     "code": "KRYOC",
+     "name": "여천항"
+    },
+    "dest_port": {
+     "code": "KRYOC",
+     "name": "여천항"
+    },
+    "reported_name": "부광9호",
+    "kind": "석유제품 운반선",
+    "nationality": null
+   }
+  ],
+  "truncated": false,
+  "incomplete": false,
+  "error": null,
+  "error_kind": null,
+  "error_code": null,
+  "reason": null
+ }
+}

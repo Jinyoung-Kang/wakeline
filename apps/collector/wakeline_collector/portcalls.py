@@ -9,8 +9,10 @@
 - 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(route.clean_text). 코드는 모양만 검사한다. 추측해 채우지 않는다.
 - 예외 메시지는 고정 문구 + 공급자가 준 resultCode·resultMsg(가린 뒤 · 자른 것) 또는 뜻밖의 XML 의 뿌리 이름·글(가린 뒤 · 자른 것)이다.
 값: {"v":1,"status":"ok"|"none"|"error"|"disabled","call_sign","fetched_at","window":{from,to,days}|null,"source","items":[…],
-"truncated"(MAX_ITEMS 넘게 있어 앞만 둠),"incomplete"(쪽 상한에 걸려 일부 항만청 기록을 다 받지 못함),"error"(error 사유),
+"truncated"(MAX_ITEMS 넘게 있어 앞만 둠),"incomplete"(쪽 상한에 걸려 일부 항만청 기록을 다 받지 못함),"error"(error 사유 원문 — 가린 뒤),
+"error_kind"(공개용 종류: budget · rate_limited · http · provider · response · network · internal),"error_code"(HTTP 상태 · resultCode — 모양 검사),
 "reason"(disabled 사유: no_key · fixture · operator)}.
+화면(api → 웹)에는 error 원문을 보내지 않는다 — 예산 수치·내부 사유가 공개 화면에 나가지 않게 종류·코드만(원문은 운영 화면 공급자 상태·로그에).
 
 수요(api 가 유일한 작성자, 수집기는 읽기만): ZSET wakeline:demand:portcalls member = 호출부호(이 규칙으로 정규화한 값), score = 만료 epoch ms.
 """
@@ -65,6 +67,8 @@ KST = timedelta(hours=9)  # 한국 표준시는 UTC+9 고정(일광 절약 시�
 
 Status = Literal["ok", "none", "error", "disabled"]
 DisabledReason = Literal["no_key", "fixture", "operator"]
+ErrorKind = Literal["budget", "rate_limited", "http", "provider", "response", "network", "internal"]
+_ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
 class PortCallParseError(ValueError):
@@ -182,6 +186,8 @@ class PortCallsValue(BaseModel):
     truncated: bool = False
     incomplete: bool = False
     error: str | None = Field(default=None, max_length=ERROR_MAX)
+    error_kind: ErrorKind | None = None
+    error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_]{1,16}$")
     reason: DisabledReason | None = None
 
     def to_json(self) -> bytes:
@@ -198,6 +204,8 @@ class PortCallsValue(BaseModel):
             "truncated": self.truncated,
             "incomplete": self.incomplete,
             "error": self.error,
+            "error_kind": self.error_kind,
+            "error_code": self.error_code,
             "reason": self.reason,
         }
         return orjson.dumps(doc)
@@ -211,9 +219,17 @@ class PortCallsValue(BaseModel):
         return TTL_RESULT_S
 
 
-def error(call_sign: str, reason: str, fetched_at: datetime | None = None) -> PortCallsValue:
+def error(
+    call_sign: str, reason: str, fetched_at: datetime | None = None, *, kind: ErrorKind = "internal", code: str | None = None
+) -> PortCallsValue:
+    """reason = 원문(가려서 캐시에만) · kind·code = 화면에 가는 공개 값(code 는 모양이 맞을 때만 — HTTP 상태 · resultCode)."""
     return PortCallsValue(
-        status="error", call_sign=call_sign, fetched_at=fetched_at or datetime.now(UTC), error=_safe(reason) or None
+        status="error",
+        call_sign=call_sign,
+        fetched_at=fetched_at or datetime.now(UTC),
+        error=_safe(reason) or None,
+        error_kind=kind,
+        error_code=code if code is not None and _ERROR_CODE_RE.fullmatch(code) else None,
     )
 
 

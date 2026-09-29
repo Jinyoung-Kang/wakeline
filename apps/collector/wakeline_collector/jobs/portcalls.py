@@ -9,6 +9,8 @@
   캐시에 쓰지 못하면 그 호출부호는 같은 TTL 동안 이 프로세스 안에서 다시 묻지 않는다(공급자 보호 — route 와 같다).
 - 한 요청이라도 실패하면(HTTP 오류 · resultCode ≠ 00 · 모양 이상 · 속도 상한 · 예산) 그 조회 전체를 error 로 적고 나머지 항만청은 묻지 않는다 —
   일부 항만청만 받은 결과를 "기록 없음" 처럼 보이지 않게.
+  error 값에는 원문 사유(가린 뒤 — 캐시·운영 화면·로그)와 공개용 error_kind(budget · rate_limited · http · provider · response · network ·
+  internal)·error_code(HTTP 상태 · resultCode)를 함께 적는다 — api 는 종류·코드만 화면에 보낸다.
 - 꺼져 있으면 disabled: 키 없음(no_key) · fixture 모드(fixture) · 운영자 스위치(operator, wakeline:provider:portmis disabled=1 — 요청마다
   보내기 직전에 다시 본다).
 - 하루 예산(portmis)은 요청마다 보내기 전에 예약하고, 보내지 않은 요청은 되돌린다. portcall_requests 는 실제로 보낸 요청만 센다.
@@ -27,16 +29,25 @@ from datetime import UTC, date, datetime
 from functools import partial
 from typing import Protocol
 
+import httpx
 from redis.asyncio import Redis
 
 from wakeline_collector import portcalls as pcv
 from wakeline_collector.budget import UNKNOWN, Budget
 from wakeline_collector.errors import describe_error
-from wakeline_collector.http import NOT_SENT_ERRORS, BeforeSend, ProviderHttpError, SendCancelled
+from wakeline_collector.http import (
+    NOT_SENT_ERRORS,
+    BeforeSend,
+    HostNotAllowed,
+    ProviderHttpError,
+    ResponseTooLarge,
+    SendCancelled,
+)
 from wakeline_collector.portcalls import (
     DEMAND_KEY,
     PORT_AUTHORITIES,
     DisabledReason,
+    ErrorKind,
     PortCall,
     PortCallApiError,
     PortCallParseError,
@@ -224,13 +235,15 @@ class PortCallLookup:
         return value, None
 
     async def _fetch(
-        self, p: PortCallProvider, cs: str, code: str, window: tuple[date, date], page_no: int, started: datetime
+        self, p: PortCallProvider, cs: str, pa: str, window: tuple[date, date], page_no: int, started: datetime
     ) -> tuple[PageFetch, int] | _Failed:
         """요청 하나: 예산 예약 → 속도 상한 → 보내기 직전 스위치 확인 → 파싱. 실패는 _Failed(이미 공급자 상태에 적었다)."""
         ok, used = await self._budget.reserve(p.name, p.cost)
         if not ok:
-            why = "budget store unavailable" if used == UNKNOWN else f"daily budget exhausted (used={used})"
-            return _Failed(pcv.error(cs, why, started), why)
+            if used == UNKNOWN:
+                return _Failed(pcv.error(cs, "budget store unavailable", started, kind="internal"), "budget store unavailable")
+            why = f"daily budget exhausted (used={used})"
+            return _Failed(pcv.error(cs, why, started, kind="budget"), why)
         sent = False
 
         async def before_send() -> bool:
@@ -242,9 +255,11 @@ class PortCallLookup:
             return True
 
         http_status: int | None = None
+        kind: ErrorKind = "internal"
+        code: str | None = None
         try:
             got = await p.fetch_page(
-                port_authority=code,
+                port_authority=pa,
                 call_sign=cs,
                 sde=window[0],
                 ede=window[1],
@@ -258,31 +273,37 @@ class PortCallLookup:
             raise
         except Throttled as e:  # 속도 상한 대기 초과·429 쿨다운 — 보내지 않았다
             await self._budget.release(p.name, p.cost)
-            return _Failed(pcv.error(cs, e.reason, started), e.reason)
+            return _Failed(pcv.error(cs, e.reason, started, kind="rate_limited"), e.reason)
         except SendCancelled:  # 기다리는 사이 운영자가 껐다 — 보내지 않았다
             await self._budget.release(p.name, p.cost)
             return _Failed(pcv.disabled(cs, "operator", started), DISABLED_MSG["operator"])
         except ProviderHttpError as e:
             self.counts["requests"] += 1
-            why, http_status = describe_error(e), e.status
-        except (
-            PortCallApiError,
-            PortCallParseError,
-        ) as e:  # 보냈고 응답을 받았다 — 사유는 이미 가린 고정 문구 + 공급자 코드·문구
+            why, http_status, kind, code = describe_error(e), e.status, "http", str(e.status)
+        except PortCallApiError as e:  # 보냈고 응답을 받았다 — resultCode ≠ 00(사유는 이미 가린 코드·문구)
             self.counts["requests"] += 1
-            why = str(e)
+            why, kind, code = str(e), "provider", e.code
+        except PortCallParseError as e:  # 보냈고 응답을 받았다 — 확인한 모양이 아니다
+            self.counts["requests"] += 1
+            why, kind = str(e), "response"
+        except ResponseTooLarge as e:  # 본문 크기 상한 초과(보냈다)
+            self.counts["requests"] += 1
+            why, kind = describe_error(e), "response"
         except NOT_SENT_ERRORS as e:  # 허용 호스트 아님·연결 풀 대기 초과·연결 전 실패 — 보내지 않았다
             await self._budget.release(p.name, p.cost)
-            why = describe_error(e)
-        except Exception as e:  # noqa: BLE001 — 읽기 시간 초과 등(보낸 것으로 센다)
+            why, kind = describe_error(e), "internal" if isinstance(e, HostNotAllowed) else "network"
+        except httpx.TransportError as e:  # 읽기 시간 초과 등(보낸 것으로 센다)
+            self.counts["requests"] += 1
+            why, kind = describe_error(e), "network"
+        except Exception as e:  # noqa: BLE001 — 그 밖(보낸 것으로 센다)
             self.counts["requests"] += 1
             why = describe_error(e)
         else:
             self.counts["requests"] += 1
             return got, used
-        why = f"prtAgCd {code}: {why}"  # 어느 항만청 요청에서 멈췄는가
+        why = f"prtAgCd {pa}: {why}"  # 어느 항만청 요청에서 멈췄는가
         await self._status.failure(p.name, at=self._now(), error=why, http_status=http_status)
-        return _Failed(pcv.error(cs, why, started), why)
+        return _Failed(pcv.error(cs, why, started, kind=kind, code=code), why)
 
     def _warn(self, what: str, e: Exception) -> None:
         now = time.monotonic()

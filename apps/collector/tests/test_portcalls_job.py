@@ -248,6 +248,7 @@ async def test_http_error_stops_the_lookup_and_is_error_for_5min(caplog):
     assert [_q(c.request)["prtAgCd"] for c in route.calls] == ["020", "030", "200"]  # 실패 뒤 나머지 항만청은 묻지 않는다
     v = _cached(r, "230025")
     assert v["status"] == "error" and v["items"] == [] and v["error"] == "prtAgCd 200: HTTP 500 err"  # 상태 코드 + HTML 제목
+    assert v["error_kind"] == "http" and v["error_code"] == "500"
     assert 290 < _ttl(r, "230025") <= 300
     assert (await budget.usage("portmis"))[0] == 3
     st = r.kv["wakeline:provider:portmis"]
@@ -268,6 +269,7 @@ async def test_result_code_error_is_error_with_provider_code(caplog):
     assert (
         v["status"] == "error" and v["error"] == "prtAgCd 020: resultCode 30 · SERVICE KEY IS NOT REGISTERED ERROR serviceKey=***"
     )
+    assert v["error_kind"] == "provider" and v["error_code"] == "30"
     _no_secret_anywhere(r, caplog)
 
 
@@ -294,6 +296,7 @@ async def test_daily_budget_exhausted_mid_lookup_is_error():
         await _drain(lk)
     assert route.call_count == 4
     assert _cached(r, "230025")["error"] == "daily budget exhausted (used=4)"
+    assert _cached(r, "230025")["error_kind"] == "budget" and _cached(r, "230025")["error_code"] is None
 
 
 async def test_rate_limit_wait_exceeded_is_error_and_budget_released():
@@ -306,6 +309,29 @@ async def test_rate_limit_wait_exceeded_is_error_and_budget_released():
         await _drain(lk)
     assert route.call_count == 1  # 두 번째 요청은 토큰을 기다리다 포기
     assert _cached(r, "230025")["status"] == "error" and (await budget.usage("portmis"))[0] == 1
+    assert _cached(r, "230025")["error_kind"] == "rate_limited"
+
+
+async def test_unexpected_body_is_a_response_error():
+    r = FakeRedis()
+    lk, _, _ = _lookup(r)
+    body = b"<OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE ERROR</errMsg></cmmMsgHeader></OpenAPI_ServiceResponse>"
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, content=body))
+        lk.request(["230025"])
+        await _drain(lk)
+    v = _cached(r, "230025")
+    assert v["error_kind"] == "response" and v["error_code"] is None and "OpenAPI_ServiceResponse" in v["error"]
+
+
+async def test_connection_failure_is_a_network_error_and_releases_the_budget():
+    r = FakeRedis()
+    lk, _, budget = _lookup(r)
+    with respx.mock:
+        respx.get(URL).mock(side_effect=httpx.ConnectError("refused"))
+        lk.request(["230025"])
+        await _drain(lk)
+    assert _cached(r, "230025")["error_kind"] == "network" and (await budget.usage("portmis"))[0] == 0
 
 
 async def test_redis_unavailable_means_no_lookup():

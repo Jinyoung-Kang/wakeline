@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import orjson
 import pytest
@@ -254,6 +255,7 @@ def test_value_json_shape_and_ttls():
     assert pc.error("230025", "HTTP 500", AT).ttl_s == pc.TTL_ERROR_S
     assert pc.disabled("230025", "no_key", AT).ttl_s == pc.TTL_DISABLED_S
     assert doc["truncated"] is False and doc["incomplete"] is False and doc["error"] is None and doc["reason"] is None
+    assert doc["error_kind"] is None and doc["error_code"] is None
 
 
 def test_error_and_disabled_carry_a_masked_capped_reason():
@@ -265,6 +267,39 @@ def test_error_and_disabled_carry_a_masked_capped_reason():
     assert d["status"] == "disabled" and d["reason"] == "no_key" and d["error"] is None and d["window"] is None
 
 
+@pytest.mark.parametrize(
+    ("kind", "code", "want_code"),
+    [("http", "503", "503"), ("provider", "30", "30"), ("provider", "SERVICE KEY", None), ("budget", None, None)],
+)
+def test_error_carries_a_public_kind_and_a_shape_checked_code(kind, code, want_code):
+    """화면(공개)에는 사유 원문 대신 종류·코드만 간다 — 원문(예산 수치 등)은 캐시·운영 화면·로그에만."""
+    doc = orjson.loads(pc.error("230025", "prtAgCd 020: x", AT, kind=kind, code=code).to_json())
+    assert doc["error_kind"] == kind and doc["error_code"] == want_code and doc["error"] == "prtAgCd 020: x"
+
+
+def test_error_kind_defaults_to_internal():
+    assert orjson.loads(pc.error("230025", "boom", AT).to_json())["error_kind"] == "internal"
+
+
 def test_incomplete_flag_is_carried():
     v = build_value("230025", AT, (date(2026, 8, 30), date(2026, 9, 29)), [], incomplete=True)
     assert orjson.loads(v.to_json())["incomplete"] is True
+
+
+# ---- 언어 간 계약(api PortCallReader · PortCallsInfo 와 같은 파일을 읽는다) ------------------------------------------------
+_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_call_sign_rule_matches_the_shared_vectors():
+    doc = orjson.loads((_ROOT / "schemas" / "vectors" / "call-sign-cases.v1.json").read_bytes())
+    assert doc["version"] == 1 and len(doc["cases"]) >= 15
+    for c in doc["cases"]:
+        assert normalize_call_sign(c["input"]) == c["expected"], c
+
+
+def test_shared_cache_value_sample_is_what_the_collector_writes_for_the_fixture():
+    """fixtures/portcalls_value_230025.json = 실제 응답 fixture → 캐시 값(fetched_at 고정). api 시험이 같은 파일을 읽는다."""
+    sample = orjson.loads((_ROOT / "fixtures" / "portcalls_value_230025.json").read_bytes())["value"]
+    p = parse_page(fixture_bytes(), "230025")
+    v = build_value("230025", AT, (date(2026, 8, 30), date(2026, 9, 29)), p.items)
+    assert orjson.loads(v.to_json()) == sample
