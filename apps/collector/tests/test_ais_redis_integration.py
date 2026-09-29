@@ -71,6 +71,8 @@ async def test_ais_process_runs_under_least_privilege_acl(admin, ais_user):
     h = await admin.hgetall(STATUS_KEY)
     assert h["state"] == "stopped" and h["provider"] == "fixture" and int(h["msgs_total"]) > 100
     assert int(h["publish_errors"]) == 0
+    # 필드 계약(운영 PIPELINE 보존 창): 선박 스트림의 시간 트림 목표 · 바이트 예산이 실제 Redis 상태 해시에 실린다
+    assert (h["stream_retention_s"], h["stream_budget_bytes"]) == ("9000", str(32 * 2**20))
 
 
 async def test_ais_user_is_denied_everything_else(admin, ais_user):
