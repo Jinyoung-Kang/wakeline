@@ -399,11 +399,19 @@ def test_default_limiter_has_a_portmis_host_bucket_and_lowest_priority():
 class _Rec:
     def __init__(self) -> None:
         self.asked: list[list[str]] = []
+        self.kept: list[set[str]] = []
         self.provider = None
 
     def request(self, cs):
         self.asked.append(list(cs))
         return len(cs)
+
+    def retain(self, wanted):
+        self.kept.append(set(wanted))
+        return 0
+
+    def accepted(self, cs) -> bool:
+        return True
 
     async def aclose(self) -> None:
         pass
@@ -450,3 +458,104 @@ async def test_job_run_stops_and_closes():
     await asyncio.sleep(0.05)
     stop.set()
     await asyncio.wait_for(t, 2)
+
+
+# ---- 아무도 원하지 않게 된 조회(선박을 바꿔 가며 고를 때) ------------------------------------------------------------------
+def _clsgn_counter():
+    sent: list[str] = []
+
+    def respond(req: httpx.Request) -> httpx.Response:
+        sent.append(_q(req)["clsgn"])
+        return httpx.Response(200, content=empty_page(), headers={"content-type": "text/xml"})
+
+    return sent, respond
+
+
+async def test_queued_lookups_nobody_wants_are_cancelled_and_spend_nothing():
+    """대기 중(아직 요청 전)인 조회는 임대에서 빠지면 취소된다 — 예산을 쓰지 않고 캐시에도 아무것도 쓰지 않는다."""
+    r = FakeRedis()
+    lk, _, budget = _lookup(r)
+    sent, respond = _clsgn_counter()
+    with respx.mock:
+        respx.get(URL).mock(side_effect=respond)
+        assert lk.request(["AAA111", "BBB222", "CCC333", "DDD444", "EEE555"]) == 5
+        assert lk.retain({"EEE555"}) == 4  # 아직 아무것도 시작하지 않았다 — 네 개 모두 대기 중에 취소
+        await _drain(lk)
+    assert sent == ["EEE555"] * len(PORT_AUTHORITIES)
+    assert (await budget.usage("portmis"))[0] == len(PORT_AUTHORITIES)
+    assert [k for k in r.kv if k.startswith("wakeline:portcalls:")] == [KEY.format("EEE555")]
+    assert lk.counts["cancelled"] == 4 and lk.inflight == 0
+
+
+async def test_running_lookup_stops_before_its_next_request_when_nobody_wants_it(caplog):
+    """진행 중인 조회는 다음 요청 전에 수요를 다시 본다 — 빠졌으면 멈추고, 일부만 받은 결과는 캐시에 쓰지 않는다(다시 고르면 처음부터)."""
+    caplog.set_level(logging.INFO)
+    r = FakeRedis()
+    lk, _, budget = _lookup(r)
+    sent: list[str] = []
+
+    def respond(req: httpx.Request) -> httpx.Response:
+        sent.append(_q(req)["prtAgCd"])
+        if len(sent) == 3:  # 세 번째 요청이 끝날 때 사용자가 다른 선박을 골랐다
+            lk.retain(set())
+        return httpx.Response(200, content=empty_page())
+
+    with respx.mock:
+        respx.get(URL).mock(side_effect=respond)
+        lk.request(["230025"])
+        await _drain(lk)
+    assert sent == ["020", "030", "200"]
+    assert KEY.format("230025") not in r.kv
+    assert (await budget.usage("portmis"))[0] == 3  # 보낸 요청만 — 네 번째는 예약하지 않았다
+    assert lk.counts["abandoned"] == 1 and lk.counts["none"] == 0
+    assert "portcalls 230025: abandoned after 3 request(s) — no longer selected" in caplog.text
+
+
+async def test_job_clicking_through_ships_spends_budget_only_on_the_current_one():
+    """리뷰 재현(선박 AAA111 → EEE555 를 2 s 간격으로 고름): 임대는 매번 지금 고른 선박 하나뿐 — 요청은 EEE555 의 10회뿐이다."""
+    r = FakeRedis()
+    lk, _, budget = _lookup(r)
+    t = [0.0]
+    job = PortCallJob(r, lk, now_ms=lambda: 1_000.0, clock=lambda: t[0])
+    sent, respond = _clsgn_counter()
+    with respx.mock:
+        respx.get(URL).mock(side_effect=respond)
+        for cs in ["AAA111", "BBB222", "CCC333", "DDD444", "EEE555"]:
+            r.kv[DEMAND_KEY] = {cs: 10_000.0}
+            await job.tick()
+            t[0] += 2.0
+        await _drain(lk)
+    assert sent == ["EEE555"] * len(PORT_AUTHORITIES)
+    assert (await budget.usage("portmis"))[0] == len(PORT_AUTHORITIES)
+
+
+async def test_job_does_not_stamp_call_signs_the_lookup_dropped():
+    """대기 상한(max_pending)에 걸려 버려진 호출부호는 '물었다' 로 적지 않는다 — 30 s 를 기다리지 않고 다음 읽기(2 s)에 다시 요청한다."""
+    r = FakeRedis()
+    lk, _, _ = _lookup(r, max_pending=1)
+    t = [0.0]
+    job = PortCallJob(r, lk, now_ms=lambda: 1_000.0, clock=lambda: t[0])
+    sent, respond = _clsgn_counter()
+    r.kv[DEMAND_KEY] = {"AAA111": 10_000.0, "BBB222": 10_000.0}
+    with respx.mock:
+        respx.get(URL).mock(side_effect=respond)
+        assert await job.tick() == 1 and lk.counts["dropped"] == 1
+        await _drain(lk)
+        t[0] += 2.0
+        assert await job.tick() == 1  # BBB222 — 30 s 가 지나지 않았어도
+        await _drain(lk)
+    assert sorted(set(sent)) == ["AAA111", "BBB222"]
+
+
+async def test_job_passes_the_current_demand_to_the_lookup():
+    r = FakeRedis()
+    await r.zadd(DEMAND_KEY, {"230025": 2_000_000})
+    rec = _Rec()
+    job = PortCallJob(r, rec, now_ms=lambda: 1_000_000.0)  # type: ignore[arg-type]
+    await job.tick()
+    await r.zadd(DEMAND_KEY, {"230025": 999_000})  # 만료
+    await job.tick()
+    assert rec.kept == [{"230025"}, set()]
+    r.down = True  # 임대를 못 읽으면 수요를 바꾸지 않는다(진행 중 조회를 멈추지 않는다)
+    await job.tick()
+    assert rec.kept == [{"230025"}, set()]

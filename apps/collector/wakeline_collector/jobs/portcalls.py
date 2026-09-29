@@ -2,6 +2,12 @@
 
 - 계기: api 가 쓰는 수요 임대 ZSET wakeline:demand:portcalls(member = 호출부호, score = 만료 epoch ms — 선박을 선택한 WS 세션이 있을 때).
   PortCallJob 이 2 s 마다 읽어(읽기 전용 ACL) PortCallLookup 에 넘긴다. 같은 호출부호는 30 s 에 한 번만 넘긴다(캐시 확인 EXISTS 를 줄인다).
+  대기 상한(MAX_PENDING)에 걸려 받아들여지지 않은 호출부호는 '물었다' 로 적지 않는다 — 다음 읽기(2 s)에 다시 넘긴다.
+- 아무도 원하지 않게 된 조회는 멈춘다(선박을 바꿔 가며 고를 때 예산을 지난 선박에 쓰지 않게): 읽을 때마다 지금의 임대를 PortCallLookup.retain 에
+  넘기면 아직 요청 전(대기 중)인 조회는 취소하고, 진행 중인 조회는 다음 요청을 보내기 전에 수요를 다시 봐 빠졌으면 멈춘다(abandoned —
+  일부만 받은 결과는 캐시에 쓰지 않는다. 다시 고르면 처음부터). 임대를 읽지 못한 차례에는 수요를 바꾸지 않는다.
+  대기 순서는 먼저 요청된 순(FIFO)이다 — 멈춘 조회가 빠지므로 대기열에는 지금 누군가 고른 선박만 있고, 늦게 고른 세션이 먼저 고른 세션을
+  앞지르지 않는다.
   항공기 수요 추적(DemandTracker)과 따로 돈다 — 한쪽의 오류·지연이 다른 쪽을 막지 않는다(격벽).
 - 조회 하나 = 항만청 10곳 × 쪽(numOfRows 50, totalCount 까지 · 항만청당 MAX_PAGES 쪽) — 최근 30일(KST 날짜), 입항일 기준(deGb=I).
   한 번에 조회 하나만(CONCURRENCY 1): 요청은 차례로 보내므로 속도 상한 대기열에는 이 작업의 대기자가 하나뿐이다.
@@ -126,9 +132,22 @@ class PortCallLookup:
         self._clock = clock
         self._now = now
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._running: set[str] = set()  # 세마포어를 잡고 요청을 보내는 중인 조회
+        self._wanted: frozenset[str] | None = None  # 지금 원하는 호출부호(retain) — None = 작업이 아직 알려 주지 않음(모두 원함)
         self._hold: dict[str, float] = {}
         self._last_log = 0.0
-        self.counts = {"lookups": 0, "requests": 0, "ok": 0, "none": 0, "errors": 0, "disabled": 0, "dropped": 0, "mismatched": 0}
+        self.counts = {
+            "lookups": 0,
+            "requests": 0,
+            "ok": 0,
+            "none": 0,
+            "errors": 0,
+            "disabled": 0,
+            "dropped": 0,
+            "mismatched": 0,
+            "cancelled": 0,
+            "abandoned": 0,
+        }
 
     @property
     def inflight(self) -> int:
@@ -158,6 +177,25 @@ class PortCallLookup:
         if self._tasks.get(cs) is task:
             del self._tasks[cs]
 
+    def accepted(self, cs: str) -> bool:
+        """이 호출부호를 맡았나(조회가 대기·진행 중이거나, 캐시 쓰기 실패로 TTL 동안 묻지 않기로 했다). request 가 버린 것은 False."""
+        return cs in self._tasks or self._hold.get(cs, 0.0) > self._clock()
+
+    def wanted(self, cs: str) -> bool:
+        return self._wanted is None or cs in self._wanted
+
+    def retain(self, wanted: Iterable[str]) -> int:
+        """지금 원하는 호출부호(수요 임대)를 알린다. 원하지 않는 조회 중 아직 요청 전(대기 중)인 것은 취소하고(예산 예약 전 — 쓴 것이 없다),
+        진행 중인 것은 다음 요청 전에 멈춘다(_resolve). 취소한 수."""
+        self._wanted = frozenset(wanted)
+        cancelled = 0
+        for cs, task in list(self._tasks.items()):
+            if cs not in self._wanted and cs not in self._running and not task.done():
+                task.cancel()
+                cancelled += 1
+        self.counts["cancelled"] += cancelled
+        return cancelled
+
     async def aclose(self) -> None:
         """진행 중 조회를 취소한다(종료). 보내지 않은 요청의 예산은 되돌린다."""
         tasks = list(self._tasks.values())
@@ -182,7 +220,18 @@ class PortCallLookup:
             self._warn("exists", e)
             return
         async with self._sem:
-            value, why = await self._resolve(cs)
+            if not self.wanted(cs):  # 기다리는 사이 아무도 원하지 않게 됐다(retain 보다 먼저 세마포어를 받은 경우)
+                self.counts["cancelled"] += 1
+                return
+            self._running.add(cs)
+            try:
+                value, why = await self._resolve(cs)
+            finally:
+                self._running.discard(cs)
+        if value is None:  # 진행 중에 수요가 빠졌다 — 일부만 받은 결과는 쓰지 않는다
+            self.counts["abandoned"] += 1
+            log.info("portcalls %s: abandoned after %s — no longer selected", cs, why)
+            return
         self.counts["errors" if value.status == "error" else value.status] += 1
         try:
             await self._r.set(key, value.to_json(), ex=value.ttl_s)
@@ -194,7 +243,8 @@ class PortCallLookup:
         extra = f", {len(value.items)} item(s)" if value.status == "ok" else ""
         log.info("portcalls %s: %s%s%s", cs, value.status, extra, f" ({why})" if why else "")
 
-    async def _resolve(self, cs: str) -> tuple[PortCallsValue, str | None]:
+    async def _resolve(self, cs: str) -> tuple[PortCallsValue | None, str | None]:
+        """조회 하나 → (값, 로그 사유). 요청 사이에 수요가 빠지면 (None, "n request(s)") — 값을 만들지 않는다."""
         p = self.provider
         started = self._now()
         if p is None:
@@ -205,10 +255,13 @@ class PortCallLookup:
         window = query_window(started)
         items: list[PortCall] = []
         incomplete = False
-        latency_ms, used = 0, UNKNOWN
+        latency_ms, used, sent = 0, UNKNOWN, 0
         for code, _name in PORT_AUTHORITIES:
             page_no = 1
             while True:
+                if not self.wanted(cs):  # 다음 요청(예산 예약) 전에 수요를 다시 본다
+                    return None, f"{sent} request(s)"
+                sent += 1
                 got = await self._fetch(p, cs, code, window, page_no, started)
                 if isinstance(got, _Failed):
                     return got.value, got.why
@@ -372,14 +425,17 @@ class PortCallJob:
         return sorted({cs for cs in (normalize_call_sign(m) for m in rows or []) if cs})[:MAX_LEASES]
 
     async def tick(self) -> int:
+        """임대 읽기 → 원하지 않게 된 조회 멈춤(retain) → 30 s 가 지난 호출부호 요청. 맡지 않은(버린) 호출부호는 다음 읽기에 다시."""
         wanted = await self.wanted()
         if wanted is None:
             return 0
         now = self._clock()
         keep = set(wanted)
+        self.lookup.retain(keep)
         self._asked = {k: t for k, t in self._asked.items() if k in keep}
         due = [cs for cs in wanted if now - self._asked.get(cs, -math.inf) >= self._reask_s]
         if not due:
             return 0
-        self._asked.update(dict.fromkeys(due, now))
-        return self.lookup.request(due)
+        started = self.lookup.request(due)
+        self._asked.update({cs: now for cs in due if self.lookup.accepted(cs)})
+        return started
