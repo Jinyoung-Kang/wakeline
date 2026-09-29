@@ -356,3 +356,119 @@ def test_v5_g4_ship_detail_last_seen_at_only_when_not_live():
 )
 def test_ship_search_match_rules(q, over, ok):
     assert rcc.ship_search_matches(q, search_item(**over)) is ok
+
+
+# ---- ADR-023: 연안 교통량 /traffic/grid ----------------------------------------------------------------------------------
+
+
+def traffic(**over):
+    body = {
+        "available": True,
+        "status": "ok",
+        "reg_dt_kst": "2026-09-29T18:05:05+09:00",
+        "reg_dt_utc": "2026-09-29T09:05:05Z",
+        "fetched_at": "2026-09-29T09:06:01.250Z",
+        "age_s": 70,
+        "stale_after_s": 900,
+        "total": 4,
+        "total_count": 4,
+        "partial": False,
+        "rejected": 0,
+        "resolved": 2,
+        "unresolved": 2,
+        "pending": 0,
+        "not_found": 1,
+        "off_grid": 0,
+        "failed": 1,
+        "invalid_cells": 0,
+        "cell_deg": 0.025,
+        "cells": [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0], ["GR4_F2K41_D3", 37.425, 126.6, 102, 100.0]],
+        "source": {
+            "provider": "한국해양교통안전공단 MTIS 실시간 해양교통정보",
+            "grid": "해양수산부 해양격자 4단계",
+            "note": "5분 집계 — 격자별 선박 척수(개별 위치 아님)",
+        },
+        "time_zone": "x",
+        "meta": {"stale": False, "generated_at": "2026-09-29T09:06:10Z", "request_id": "abcdefgh12"},
+    }
+    return {**body, **over}
+
+
+EMPTY_KEYS = (
+    "reg_dt_kst",
+    "reg_dt_utc",
+    "fetched_at",
+    "age_s",
+    "total",
+    "total_count",
+    "partial",
+    "rejected",
+    "resolved",
+    "unresolved",
+) + ("pending", "not_found", "off_grid", "failed", "invalid_cells", "disabled_reason")
+
+
+def traffic_empty(**over):
+    """스냅샷이 없는 상태 — 모르는 값은 키가 없다(api Jackson non_null)."""
+    return {k: v for k, v in traffic(cells=[], available=False, **over).items() if k not in EMPTY_KEYS or k in over}
+
+
+def test_traffic_grid_schema_and_rules_accept_every_honest_state():
+    v = Draft202012Validator(rcc.SCHEMAS["traffic_grid"], format_checker=rcc.FORMATS)
+    stale = traffic(status="stale", available=False, cells=[], age_s=1000)
+    bodies = [
+        traffic(),
+        stale,
+        traffic_empty(status="disabled", disabled_reason="no_key"),
+        traffic_empty(status="no_data"),
+        traffic_empty(status="invalid"),
+    ]
+    for b in bodies:
+        assert not list(v.iter_errors(b)), (b["status"], [e.message for e in v.iter_errors(b)])
+        assert rcc._traffic_grid(b) == [], (b["status"], rcc._traffic_grid(b))
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"cells": [["GR4 BAD", 37.45, 126.6, 1, 1]]},
+        {"cells": [["GR4_A", 37.45, 126.6, -1, 1]]},
+        {"cells": [["GR4_A", 37.45, 126.6, 1, 100.5]]},
+        {"cells": [["GR4_A", 37.45, 126.6, 1]]},
+        {"cells": [["GR4_A", 37.45, 126.6, 1, 1, "extra"]]},
+        {"cell_deg": 0.05},
+        {"status": "fresh"},
+        {"reg_dt_kst": "2026-09-29T09:05:05Z"},
+        {"source": {"provider": "x", "grid": "y", "note": "z"}},
+        {"secret_like": 1},
+        {"total": None},  # 모르는 값은 null 이 아니라 키가 없다
+        {"disabled_reason": None},
+        {"failed": -1},
+    ],
+)
+def test_traffic_grid_schema_rejects(over):
+    v = Draft202012Validator(rcc.SCHEMAS["traffic_grid"], format_checker=rcc.FORMATS)
+    assert list(v.iter_errors(traffic(**over))), over
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"available": False},  # ok 인데 쓸 수 없다고 한다
+        {"status": "stale", "available": False},  # 오래됐는데 칸을 싣는다
+        {"status": "stale", "available": False, "cells": [], "age_s": 70},  # 나이가 상태와 다르다
+        {"disabled_reason": "no_key"},  # ok 인데 꺼짐 이유
+        {"reg_dt_kst": "2026-09-29T18:05:06+09:00"},  # 다른 순간
+        {"reg_dt_kst": None},  # 한쪽만(키가 없다 = None)
+        {"resolved": 3, "unresolved": 1, "total": 4, "cells": [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0]] * 1},
+        {"pending": 1},  # 기다림 + 없음 + 격자 밖 + 조회 실패 != 미해석
+        {"failed": 0},  # 조회 실패 칸을 빼먹었다
+        # 응답 시각보다 120 s 넘게 미래인 regDt 가 ok
+        {"reg_dt_utc": "2026-09-29T09:10:05Z", "reg_dt_kst": "2026-09-29T18:10:05+09:00"},
+        {"cells": [["GR4_F2K41_C3", 37.4512, 126.6, 12, 34.0], ["GR4_F2K41_D3", 37.425, 126.6, 102, 100.0]]},  # 격자점 아님
+        {"cells": [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0], ["GR4_F2K41_C3", 37.425, 126.6, 102, 100.0]]},  # 같은 칸 두 번
+        {"status": "no_data", "available": False, "cells": [], "disabled_reason": None},  # 스냅샷이 없다면서 값을 싣는다
+    ],
+)
+def test_traffic_grid_cross_rules_catch(over):
+    assert rcc._traffic_grid(traffic(**over)), over

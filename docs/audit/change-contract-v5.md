@@ -277,3 +277,37 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     (본문 규칙 · 유효 해결 · 캐시 5 s · 쓰기 뒤 버림 · 겹친 읽기 · 다시 읽는 동안 다른 요청은 지난 값(쓰기 뒤는 기다림) · stale/unavailable · 30 s) · ResolutionDbTest(감사와 한 트랜잭션 · 되돌림은 행을 남김 · 404) ·
     LogReaderTest · LogsControllerTest(hide/show · 가린 수 · 쪽 크기 · 묶음 규칙 · 뒤늦게 실린 항목) · ResolutionControllerTest(201 · 415 · 400 · 404 · 503 + Retry-After 30 · stale) ·
     OpsResolutionsIT(세션 · CSRF · 해결 → 재발 → 되돌림 · 공급자 · 실행 요약(upto 전에 시작해 뒤에 실패한 실행 · 실패 시각을 모르는 실행은 보임) · 같은 xmin). REST 계약 표본(rest_contract_check)은 운영 경로를 싣지 않는다(익명 404 표본만).
+
+## G. 8차 개정(2026-09-29 · 레인 traffic-grid · 사용자 요청 "상황판 한반도 주변 선박 정보" — 사용자 선택: 연안 교통량 격자, ADR-023)
+레인 안에서는 §G13 으로 적었으나 합칠 때 §G13(두 시간대) · §G14(해결 표시) 다음 번호 §G15 로 바꿨다.
+- G15 **연안 교통량 계약**(collector · api · web · infra — 근거 · 확인한 형식 · 선택값은 ADR-023):
+  - 외부: 공공데이터포털 `apis.data.go.kr` 두 서비스(한국해양교통안전공단 실시간 해양교통정보 `B554035/realtime/get_realtime` · 해양수산부 격자4단계 WFS
+    `1192000/apVhdService_G4s/getOpnG4sWFS`), 키 하나 `DATA_GO_KR_SERVICE_KEY`(collector 에만 — 격리 스택은 빈 값, 인코딩 키 · 디코딩 키 모두 — ADR-022 의
+    해양수산부 선박운항정보(PORT-MIS)와 **같은 키 · 같은 설정 하나**). 공급자 이름 · 예산 키 `komsa_traffic`(하루 400) · `mof_grid4`(하루 6,000), 둘 다 엄격 예산.
+  - 호스트 한도(ADR-022 와 하나): `apis.data.go.kr` 호스트 버킷 **하나**(설정 `data_go_kr_rps` 1.0 req/s, burst 2)를 세 잡이 나눠 쓰고 우선순위로 나눈다 —
+    교통 5분 폴링 `PRIORITY_FIXED`(0) > 선택 선박 항만 입출항 `PRIORITY_PORTCALL`(4) > 격자 기하 채우기 `PRIORITY_BACKFILL`(5, 가장 낮다). 입출항 조회가
+    1 req/s 로 이어져도 교통 폴링은 다음 토큰(≤ 1 s)을 먼저 받고, 격자 채우기는 두 쪽이 기다리지 않을 때만 받는다(`tests/test_ratelimit.py`).
+    하루 예산은 포털의 API 별 개발계정 한도 안이다: `portmis` 3,000 + `mof_grid4` 6,000 = 9,000 — 해양수산부 두 API 의 한도(각 10,000)가 하나로 묶여
+    있더라도 넘지 않는다. `komsa_traffic` 400 ≤ 500(시간 창 15 × 24 = 360). heartbeat `data_go_kr_rps_1m` = 세 잡을 합친 최근 60 s 호출 수 / 60.
+  - Redis(collector 가 쓰고 api 가 읽는다): `wakeline:traffic_grid` 문자열 JSON(SET EX 1200) = `{v:1, reg_dt_kst(+09:00), reg_dt_utc, fetched_at, total,
+    total_count|null, partial, rejected, resolved, unresolved, pending, not_found, off_grid, failed, cell_deg: 0.025, cells: [[grid_no, lat_min, lon_min, 척수, 밀집도 %], …]}`
+    (기하를 확인한 칸만 · grid_no 순 · 발행 시각 없음 — 같은 입력이면 같은 값 · 미해석 = pending + not_found + off_grid + failed). `wakeline:traffic_grid:negative`
+    해시(grid_no → `{"reason":"not_found"|"off_grid"|"failed","at"}` — failed 는 1일, 나머지 7일). 시간 창 예산 `budget:komsa_traffic:h:{yyyymmddHH}`(UTC 시, 15).
+    heartbeat `wakeline:collector` 필드 `traffic_grid_state`(active · no_key · fixture · operator_off) · `traffic_grid_last_ok` · `traffic_grid_reg_dt` ·
+    `traffic_grid_resolved` · `traffic_grid_unresolved` · `traffic_grid_cells_known` · `traffic_grid_pending` · `traffic_grid_failed` · `traffic_grid_calls_komsa` ·
+    `traffic_grid_calls_wfs` · `traffic_grid_publish_delay_s`(배운 발행 지연 — 배우기 전 빈 값)(모르면 빈 값) · `traffic_grid_at` · `traffic_grid_lag_s`.
+    ACL: 두 이름은 collector 루트 키 목록에 없고 셀렉터로만 — `~wakeline:traffic_grid` SET, `~wakeline:traffic_grid:negative` HSET · HGETALL(EX 는 ACL 로
+    강제할 수 없다 — api 의 regDt 나이 판정이 방어선).
+  - DB: Flyway **V14** `marine_grid4(grid_no text pk, lat_min, lon_min, lat_max, lon_max double precision, gid int, fetched_at timestamptz)` — 한 칸 CHECK ·
+    grid_no 형식 CHECK, collector SELECT · INSERT · UPDATE, api SELECT. V13(해결 표시 §G14) 다음 번호다.
+  - REST `GET /api/v1/traffic/grid`(공개 · `Cache-Control: public, max-age=30` · ETag `"t<원문 SHA-256 앞 8바이트>[-s]"` · 꺼짐 `"td-<이유>"` · 없음 `"tn"` ·
+    형식 오류 `"ti"` · 요청 제한 공통): 늘 있는 키 `available` · `status`(ok · stale · disabled · no_data · invalid) · `stale_after_s`(900) · `cell_deg`(0.025) ·
+    `cells` · `source{provider, grid, note}` · `time_zone` · `meta`, 그 밖(`disabled_reason` · `reg_dt_kst` · `reg_dt_utc` · `fetched_at` · `age_s` · 수들(`failed`
+    포함) · `partial` · `invalid_cells`)은 모르면 키가 없다. `available` ⇔ `status == ok`, 그 밖에는 `cells: []`. stale = regDt 가 900 s 넘게 지남. regDt 가
+    api 시계보다 120 s 넘게 미래면 invalid. disabled 는 heartbeat 가 120 s 안일 때만. 검사: `tools/rest_contract_check.py` `traffic_grid`(표본 RestSamplesIT) —
+    교차 규칙은 ADR-023 §6(수의 합 · ok/stale 의 regDt 가 meta.generated_at 보다 120 s 넘게 미래가 아님).
+  - 웹: 레이어 키 `traffic`(선택 필드 — 없으면 끔, 이 브라우저에 기억), 조회 90 s · `If-None-Match` · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만,
+    ok 라도 서버 시각 보정 시계로 regDt + stale_after_s 가 지나면 칸을 그리지 않는다(조회 실패 때도), 범례 문구
+    "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님", 툴팁 기준 시각은 KST 와 UTC 를 함께("MM-DD HH:MM:SS KST · MM-DD HH:MM:SS UTC").
+  - 가림(§C5 확장): 언어 간 벡터에 `serviceKey=` · `ServiceKey=`(인코딩 · 디코딩 키) · JSON `"ServiceKey"` · `SERVICEKEY=` 네 사례(ADR-022 의 PORT-MIS
+    사례와 합쳐 중복 없이). 키 값은 `providers/data_go_kr.service_key_forms` 하나로 네 형태(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩)를 값 치환한다 — 세 잡이 같은 목록.

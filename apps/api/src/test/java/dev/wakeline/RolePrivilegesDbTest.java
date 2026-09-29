@@ -80,6 +80,10 @@ class RolePrivilegesDbTest {
                     "DELETE FROM ops_resolution",                 // 해결 표시(V13)는 지우지 않는다 — 되돌림은 revoked_at 을 채운다
                     "UPDATE ops_resolution SET upto = now()",     // 이미 적은 해결 범위는 고치지 못한다(되돌림 두 열만)
                     "INSERT INTO airport (icao, geom) VALUES ('ZZZZ', ST_SetSRID(ST_MakePoint(0, 0), 4326))", // 수집기 테이블은 읽기(+보존 삭제)만
+                    // V14(ADR-023): 격자 기하 캐시는 collector 가 쓰고 api 는 읽기만
+                    "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_API', 37.45, 126.6, 37.475, 126.625, now())",
+                    "UPDATE marine_grid4 SET gid = 1",
+                    "DELETE FROM marine_grid4",
             }) {
                 assertThat(state(c, ddl)).as(ddl).isEqualTo(INSUFFICIENT_PRIVILEGE);
             }
@@ -94,6 +98,7 @@ class RolePrivilegesDbTest {
             assertThat(state(c, "SELECT count(*) FROM audit_log")).isNull();
             assertThat(state(c, "UPDATE alert_event SET left_at = left_at WHERE false")).isNull();
             assertThat(state(c, "DELETE FROM metar_obs WHERE false")).isNull();
+            assertThat(state(c, "SELECT count(*) FROM marine_grid4")).isNull();
         }
     }
 
@@ -119,6 +124,8 @@ class RolePrivilegesDbTest {
                     "SELECT track_point_ensure_partitions(3)",
                     "SELECT track_point_drop_old(72)",
                     "DELETE FROM metar_obs",                      // 수집 테이블도 삭제는 없다(보존 정리는 api 의 일)
+                    "DELETE FROM marine_grid4",                   // V14 격자 기하 캐시도 upsert(INSERT · UPDATE)·읽기만
+                    "TRUNCATE marine_grid4",
                     "CREATE TABLE evil (id int)",
             }) {
                 assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
@@ -133,6 +140,22 @@ class RolePrivilegesDbTest {
             assertThat(state(c, once)).as("retry of the same run").isNull();
             assertThat(scalar(c, "SELECT count(*) FROM ingest_run WHERE run_key = '" + key + "'")).isEqualTo(1L);
             assertThat(state(c, "UPDATE metar_obs SET raw = raw WHERE false")).isNull();
+            // V14(ADR-023): collector 의 upsert(db.py _MARINE_GRID4_UPSERT 와 같은 모양)와 기동 때 읽기
+            String upsert = "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, gid, fetched_at) VALUES ('GR4_ROLE_TEST', 37.45, 126.6, 37.475, 126.625, 1, now()) "
+                    + "ON CONFLICT (grid_no) DO UPDATE SET gid = EXCLUDED.gid, fetched_at = EXCLUDED.fetched_at";
+            assertThat(state(c, upsert)).isNull();
+            assertThat(state(c, upsert)).as("upsert again").isNull();
+            assertThat(scalar(c, "SELECT count(*) FROM marine_grid4 WHERE grid_no = 'GR4_ROLE_TEST'")).isEqualTo(1L);
+            // 격자에 맞지 않는 행은 제약이 거절한다(수집기 검사의 둘째 방어선)
+            assertThat(state(c, "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_OFF', 37.4512, 126.6, 37.4762, 126.625, now())"))
+                    .isEqualTo("23514");
+            assertThat(state(c, "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_TWO', 37.45, 126.6, 37.5, 126.625, now())"))
+                    .isEqualTo("23514");
+            assertThat(state(c, "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4 bad', 37.45, 126.6, 37.475, 126.625, now())"))
+                    .isEqualTo("23514");
+        }
+        try (Connection m = migrator()) {
+            state(m, "DELETE FROM marine_grid4 WHERE grid_no = 'GR4_ROLE_TEST'");
         }
     }
 
@@ -364,7 +387,9 @@ class RolePrivilegesDbTest {
                     java.util.Map.entry("ingest_gap", "SELECT,INSERT"),
                     java.util.Map.entry("provider_switch", "SELECT,INSERT,UPDATE"),
                     // V13: 해결 표시 — 표 단위 UPDATE 는 없고 되돌림 두 열만(아래), 지우지 않는다
-                    java.util.Map.entry("ops_resolution", "SELECT,INSERT")));
+                    java.util.Map.entry("ops_resolution", "SELECT,INSERT"),
+                    // V14(ADR-023): 격자 기하 캐시 — collector 가 쓰고 api 는 읽기만
+                    java.util.Map.entry("marine_grid4", "SELECT")));
             assertThat(actual).isEqualTo(expected);
             // 열 단위 UPDATE 스냅샷(표 단위 권한이 없는 표만): api 가 고칠 수 있는 열은 이것뿐이다
             java.util.Map<String, String> columns = new java.util.TreeMap<>();

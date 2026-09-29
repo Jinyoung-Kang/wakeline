@@ -40,8 +40,11 @@ AIS 에는 "어느 항구에 언제 들어왔고 나갔는가" 가 없다. 목�
 
 ## 결정
 1. **누가 부르나 — 수집기만**(ADR-001 · ADR-006). 공급자 `portmis`(providers/portmis.py): 호스트 `apis.data.go.kr` 을 HttpClient 허용 목록에 더하고,
-   호스트 토큰 버킷 **1 req/s(burst 2)** — 수집기 전체 버킷(2 req/s)의 절반까지만 써서 조회가 이어져도 다른 작업 몫을 남긴다. 우선순위는 가장 낮다
-   (`PRIORITY_PORTCALL` — 고정 관심 지역 > focus > hot > 노선 > 입출항). 하루 예산 `portmis` **3,000회**(개발 한도의 30 %)를 요청마다 보내기 전에
+   호스트 토큰 버킷 **1 req/s(burst 2)** — 수집기 전체 버킷(2 req/s)의 절반까지만 써서 조회가 이어져도 다른 작업 몫을 남긴다. 우선순위
+   `PRIORITY_PORTCALL`(고정 관심 지역 · 주기 작업 > focus > hot > 노선 > 입출항 > 격자 채우기). **합친 뒤(ADR-023)**: 같은 호스트 버킷 하나를
+   연안 교통량의 두 서비스와 나눠 쓴다(설정 하나 `data_go_kr_rps`) — 교통 5분 폴링(`PRIORITY_FIXED`)이 입출항 조회보다 먼저, 격자 기하 채우기
+   (`PRIORITY_BACKFILL`)가 입출항 조회보다 뒤다. 키 · 키 모양 가림(`service_key_forms`)도 `providers/data_go_kr.py` 의 것 하나를 쓴다.
+   하루 예산 `portmis` **3,000회**(개발 한도의 30 %)를 요청마다 보내기 전에
    예약하고, 보내지 않은 요청은 되돌린다. 운영 화면의 공급자 스위치(`portmis`)로 끌 수 있고, 스위치는 요청마다 보내기 직전에 다시 본다.
 2. **언제 부르나 — 선택한 선박만**(ADR-013 과 같은 임대 방식). api 가 선박을 고른 구독 세션(일시정지 제외)의 호출부호를 ZSET
    `wakeline:demand:portcalls`(member = 호출부호, score = 만료 epoch ms, 키에도 같은 만료 · 60 s)에 쓴다 — 세션끼리 나누고 상한 20개(세션 수 많은 순 →
@@ -93,8 +96,8 @@ AIS 에는 "어느 항구에 언제 들어왔고 나갔는가" 가 없다. 목�
      "부광9호") "표기 체계가 달라 비교하지 않음" 으로 적고(경고 아님) 로마자 표기를 짐작하지 않는다. 영문끼리 다를 때만 "AIS 선명과 다름" 경고.
 9. **비밀값**: 인증키는 환경변수 `DATA_GO_KR_SERVICE_KEY` 로 **collector 컨테이너에만**(compose — 격리 스택은 빈 값). 비어 있으면 조회하지 않고 기동 로그에
    한 번 적으며, 요청된 호출부호에는 `disabled(no_key)` 를 쓴다(화면이 "조회 중" 에 머물지 않게). 공공데이터포털은 인코딩 키(%2B · %2F · %3D)와 디코딩 키를
-   함께 준다 — 어느 쪽을 넣어도 되게 `%` 가 있으면 한 번 풀어 두고 httpx 가 한 번만 인코딩한다(%252B 가 되지 않게). 원문 · 푼 값 · 다시 인코딩한 값을 모두
-   값-치환 가림에 올리고, 모양 규칙 `serviceKey=` 는 두 언어의 마스커(Python masking.py · Java LogMasker)가 이미 가진다 — 인코딩 · 디코딩 · JSON · 파이썬 repr
+   함께 준다 — 어느 쪽을 넣어도 되게 `%` 가 있으면 한 번 풀어 두고 httpx 가 한 번만 인코딩한다(%252B 가 되지 않게). 원문 · 푼 값 · 다시 인코딩한 값 ·
+   + 인코딩한 값을 모두(`providers/data_go_kr.service_key_forms` — 연안 교통량 ADR-023 과 같은 목록 하나) 값-치환 가림에 올리고, 모양 규칙 `serviceKey=` 는 두 언어의 마스커(Python masking.py · Java LogMasker)가 이미 가진다 — 인코딩 · 디코딩 · JSON · 파이썬 repr
    모양의 공유 벡터를 `schemas/vectors/masking-cases.v1.json` 에 더했다. 요청 URL 은 로그 · 상태 · Redis 에 쓰지 않는다(httpx 로그는 WARNING).
 10. **Redis ACL**(infra/redis/start.sh): 수집기에 `%R~wakeline:demand:portcalls`(읽기 전용) · `~wakeline:portcalls:*`(SET 은 문자열 키 셀렉터에만) —
     새 명령은 없다. ais 사용자는 둘 다 못 건드린다. 규칙 시험 · docker 동작 시험 · 수집기 실제 Redis 시험 · api 통합 시험(PortCallsIT)으로 고정했다.

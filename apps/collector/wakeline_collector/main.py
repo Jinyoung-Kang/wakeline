@@ -1,5 +1,6 @@
-"""collector 진입점 — 주기 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)과 수요 기반 추적(focus·hot,
+"""collector 진입점 — 주기 작업 8종(region·global·sigmet·radar·metar·maintenance·radar_kr·traffic_grid)과 수요 기반 추적(focus·hot,
 ADR-013)·선택 항공기 노선 조회(계약 v4 §A)·선택 선박 한국 항만 입출항 조회(ADR-022)를 하나의 이벤트 루프에서 돌린다.
+traffic_grid = 연안 교통량(ADR-023). 입출항 · 연안 교통량은 공공데이터포털 키 하나 · apis.data.go.kr 호스트 버킷 하나를 나눠 쓴다(키가 있을 때만).
 
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
 외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
@@ -35,6 +36,7 @@ from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
 from wakeline_collector.jobs.portcalls import PortCallJob, PortCallLookup
 from wakeline_collector.jobs.route import RouteLookup
+from wakeline_collector.jobs.traffic_grid import TrafficGridJob
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
 from wakeline_collector.logsink import LogSink, close_log_sink, sink_metrics, start_log_sink
 from wakeline_collector.masking import install_log_masking, register_secrets
@@ -42,9 +44,10 @@ from wakeline_collector.providers import fixture as fx
 from wakeline_collector.providers.adsbdb import ADSBDB_HOST, AdsbdbProvider
 from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.base import AircraftProvider
+from wakeline_collector.providers.data_go_kr import DATA_GO_KR_HOST, Grid4WfsProvider, KomsaTrafficProvider, service_key_forms
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
-from wakeline_collector.providers.portmis import PORTMIS_HOST, PortMisProvider, service_key_forms
+from wakeline_collector.providers.portmis import PortMisProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
 from wakeline_collector.providers.readsb import ADSB_FI_HOST, AdsbFiDemandProvider, adsb_fi, adsb_lol
 from wakeline_collector.publisher import STREAM_AIRCRAFT, Publisher, limit_fields
@@ -60,6 +63,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
+
+
+def secret_values(s: Settings) -> list[str | None]:
+    """값으로 가릴 설정 비밀값(R-83). 공공데이터포털 키는 모양 네 가지 모두(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩 — service_key_forms,
+    ADR-022 · ADR-023: 세 서비스 공통 · 응답이 어느 형태로 되돌려 줘도 가린다)."""
+    return [
+        s.kma_apihub_key,
+        s.opensky_client_secret,
+        s.redis_password,
+        s.db_collector_password,
+        *service_key_forms(s.data_go_kr_service_key),
+    ]
 
 
 def configure_logging(secrets: Iterable[str | None]) -> None:
@@ -83,6 +98,8 @@ def build_limits(s: Settings) -> dict[str, int]:
         "kma_radar": s.budget_kma_radar,
         "adsbdb": s.budget_adsbdb,
         "portmis": s.budget_portmis,
+        "komsa_traffic": s.budget_komsa_traffic,
+        "mof_grid4": s.budget_mof_grid4,
         "fixture": 0,
     }
 
@@ -110,20 +127,12 @@ def make_redis(s: Settings) -> Redis:
 async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> None:
     """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
     fixture = settings.fixture_mode
-    configure_logging(
-        [
-            settings.kma_apihub_key,
-            settings.opensky_client_secret,
-            settings.redis_password,
-            settings.db_collector_password,
-            *service_key_forms(settings.data_go_kr_service_key),  # 인코딩·디코딩 키 모두(ADR-022)
-        ]
-    )
+    configure_logging(secret_values(settings))
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
     redis = redis if redis is not None else make_redis(settings)
     db = db or Db()
     db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
-    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.portmis_rps)
+    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.data_go_kr_rps)
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
@@ -143,7 +152,8 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             # api /status 의 demand.adsb_fi_rps_1m 원천: 최근 60 s 동안 실제로 보낸 adsb.fi 호출 수 / 60
             "adsb_fi_rps_1m": f"{limiter.rate_1m(ADSB_FI_HOST):.3f}",
             "adsbdb_rps_1m": f"{limiter.rate_1m(ADSBDB_HOST):.3f}",
-            "portmis_rps_1m": f"{limiter.rate_1m(PORTMIS_HOST):.3f}",
+            # apis.data.go.kr 호스트 하나(입출항 · 해양교통 · 해양격자 합계 — ADR-022 · ADR-023)
+            "data_go_kr_rps_1m": f"{limiter.rate_1m(DATA_GO_KR_HOST):.3f}",
             "http_rps_1m": f"{limiter.rate_1m():.3f}",
             "http_throttled": str(limiter.throttled),
             # 계약 v5 §C2: 로그 싱크가 wakeline:logs 로 보낸 수 · 대기열 상한으로 버린 수(기동 뒤 누계, 끄면 빈 값)
@@ -192,6 +202,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
     maint = MaintenanceJob(snapshot_providers(limits, fixture=fixture), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
+    # 연안 교통량(ADR-023): fixture 모드는 외부 호출이 없으므로 키를 넘기지 않는다(작업이 state fixture 로 알린다)
+    dgk = "" if fixture else settings.data_go_kr_service_key
+    traffic = TrafficGridJob(KomsaTrafficProvider(http, dgk), Grid4WfsProvider(http, dgk), ctx)
     if settings.demand_enabled:
         # 노선(계약 v4 §A · G A-2): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 묻지 않고
         # 요청된 콜사인에 status "disabled" 를 쓴다(화면이 "노선 조회 중" 에 머물지 않게).
@@ -227,6 +240,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "maintenance": run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
             "radar_kr": run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
             "portcalls": portcall_job.run(stop),
+            "traffic_grid": run_periodic(
+                "traffic_grid", traffic.run_once, lambda: settings.traffic_grid_tick_s, stop, initial_delay=12
+            ),
         }
         if tracker is not None:
             jobs["demand"] = tracker.run(stop)

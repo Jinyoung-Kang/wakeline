@@ -27,6 +27,9 @@ export const CREDITS: Credit[] = [
   { role: "항구 코드", label: "UN/LOCODE", href: "https://unece.org/trade/uncefact/unlocode", note: "UNECE, datasets/un-locode ODC-PDDL" },
   // ADR-022: 선택한 선박의 한국 항만 입출항(호출부호 기준 — 수집기만 조회, Redis 6 h 캐시)
   { role: "입출항", label: "해양수산부 선박운항정보(PORT-MIS)", href: "https://www.data.go.kr", note: "공공데이터포털" },
+  // ADR-023: 연안 교통량(5분 집계 격자별 선박 척수) — 두 서비스 모두 공공데이터포털(apis.data.go.kr)에서 부른다
+  { role: "연안 교통량", label: "한국해양교통안전공단 MTIS 실시간 해양교통정보", href: "https://www.data.go.kr", note: "공공데이터포털" },
+  { role: "연안 교통량", label: "해양수산부 해양격자 4단계", href: "https://www.data.go.kr", note: "공공데이터포털" },
   { role: "Radar", label: "RainViewer", href: "https://www.rainviewer.com" },
   { role: "Radar (KR)", label: "기상청 API허브", href: "https://apihub.kma.go.kr" },
   { role: "Map", label: "OpenFreeMap", href: "https://openfreemap.org" },

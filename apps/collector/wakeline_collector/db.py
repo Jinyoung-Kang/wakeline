@@ -86,6 +86,14 @@ _METAR_UPSERT = """INSERT INTO metar_obs (icao, obs_time, raw, temp_c, dewp_c, w
        taf_raw=EXCLUDED.taf_raw, provider=EXCLUDED.provider, fetched_at=EXCLUDED.fetched_at"""
 
 
+# 연안 교통량 격자 기하 캐시(ADR-023 · V14 marine_grid4): 수집기가 WFS 로 확인한 칸만 쓴다(0.025° 격자 검사를 통과한 것 — marine_grid.cell_from_ring).
+_MARINE_GRID4_UPSERT = """INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, gid, fetched_at)
+   VALUES ($1,$2,$3,$4,$5,$6,$7)
+   ON CONFLICT (grid_no) DO UPDATE SET lat_min=EXCLUDED.lat_min, lon_min=EXCLUDED.lon_min, lat_max=EXCLUDED.lat_max,
+       lon_max=EXCLUDED.lon_max, gid=EXCLUDED.gid, fetched_at=EXCLUDED.fetched_at"""
+_MARINE_GRID4_SELECT = "SELECT grid_no, lat_min, lon_min, lat_max, lon_max, gid FROM marine_grid4"
+
+
 @dataclass
 class _Op:
     name: str
@@ -130,6 +138,7 @@ class Db:
         self._stop = asyncio.Event()  # 종료 요청
         self._closing = False
         self._task: asyncio.Task | None = None
+        self._pool_lock = asyncio.Lock()  # writer 와 읽기(read_marine_grid4)가 동시에 풀을 만들지 않게
         self._last_log = 0.0
         self._ok = False
         self.failures = 0  # 연결·쓰기 실패 누적(지표)
@@ -200,12 +209,17 @@ class Db:
 
     async def _ensure_pool(self) -> Any:
         if self._pool is None:
-            try:
-                self._pool = await asyncio.wait_for(self._factory(), OP_TIMEOUT_S)
-            except Exception as e:  # noqa: BLE001
-                self.failures += 1
-                self._ok = False
-                self._warn("db: connect failed (%s) — live path continues, writes queued (%d)", type(e).__name__, len(self._q))
+            async with self._pool_lock:
+                if self._pool is not None:  # 기다리는 사이 다른 쪽이 만들었다
+                    return self._pool
+                try:
+                    self._pool = await asyncio.wait_for(self._factory(), OP_TIMEOUT_S)
+                except Exception as e:  # noqa: BLE001
+                    self.failures += 1
+                    self._ok = False
+                    self._warn(
+                        "db: connect failed (%s) — live path continues, writes queued (%d)", type(e).__name__, len(self._q)
+                    )
         return self._pool
 
     async def _reachable(self, pool: Any) -> bool:
@@ -458,3 +472,29 @@ class Db:
             )
 
         self._submit(f"provider_budget_day({provider})", fn)
+
+    # ---- 연안 교통량 격자 기하 캐시(ADR-023) ------------------------------------------------------------------------
+    def upsert_marine_grid4(self, cells: list[Any], fetched_at: datetime) -> None:
+        """확인한 칸(marine_grid.Cell)들을 한 번에 upsert — 멱등(같은 grid_no 는 마지막 값)."""
+        if not cells:
+            return
+        args = [(c.grid_no, c.lat_min, c.lon_min, c.lat_max, c.lon_max, c.gid, fetched_at) for c in cells]
+
+        async def fn(pool: Any) -> None:
+            await self._executemany_rowwise_on_reject(pool, "marine_grid4", _MARINE_GRID4_UPSERT, args)
+
+        self._submit(f"marine_grid4({len(cells)})", fn)
+
+    async def read_marine_grid4(self) -> list[tuple[str, float, float, float, float, int | None]] | None:
+        """저장된 칸 전부(grid_no, lat_min, lon_min, lat_max, lon_max, gid). DB 에 닿지 못하면 None(모름 — 빈 목록과 다르다).
+        큐를 거치지 않는 읽기다(기동 때 한 번 · 실패하면 호출자가 다시). 값 검사는 호출자가 한다."""
+        pool = await self._ensure_pool()
+        if pool is None:
+            return None
+        try:
+            rows = await asyncio.wait_for(pool.fetch(_MARINE_GRID4_SELECT), OP_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001
+            self.failures += 1
+            self._warn("db: marine_grid4 read failed (%s) — geometry cache stays in memory", type(e).__name__)
+            return None
+        return [(r["grid_no"], r["lat_min"], r["lon_min"], r["lat_max"], r["lon_max"], r["gid"]) for r in rows]

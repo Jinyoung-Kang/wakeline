@@ -23,6 +23,7 @@ import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { isMetarStale } from "@/lib/format";
 import { krLayerId } from "@/lib/kr-radar";
+import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
@@ -34,8 +35,8 @@ const SIGMET_EXPIRY_CHECK_MS = 30_000;
 /** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다. */
 const AIRPORTS_REFRESH_MS = 300_000;
 const AIRPORTS_RECHECK_MS = 60_000;
-/** 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET */
-const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-track-point", "ship-grid-circle", "airport-circle", "sigmet-fill"] as const;
+/** 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET > 연안 교통량 격자(ADR-023) */
+const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-track-point", "ship-grid-circle", "airport-circle", "sigmet-fill", "traffic-grid-fill"] as const;
 /** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
 const SHIP_STALE_CHECK_MS = 30_000;
 /** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
@@ -305,7 +306,7 @@ export function MapView() {
       if (!f) { popup.remove(); hoverKey = ""; return; }
       const p = (f.properties ?? {}) as Record<string, unknown>;
       const now = serverNowMs(Date.now());
-      const key = `${f.layer.id}:${String(p.hex ?? p.mmsi ?? p.icao ?? p.id ?? (f.geometry.type === "Point" ? f.geometry.coordinates.join(",") : ""))}`;
+      const key = `${f.layer.id}:${String(p.hex ?? p.mmsi ?? p.icao ?? p.id ?? p.g ?? (f.geometry.type === "Point" ? f.geometry.coordinates.join(",") : ""))}`;
       if (key !== hoverKey || now - hoverAt > 1000) {
         let tip: Tip | null = null;
         if (f.layer.id === "aircraft-symbol") {
@@ -332,6 +333,8 @@ export function MapView() {
         } else if (f.layer.id === "airport-circle") {
           const ap = airportFeatures.find((x) => x.properties.icao === p.icao);
           if (ap) tip = airportTip(ap.properties, now);
+        } else if (f.layer.id === "traffic-grid-fill") {
+          tip = trafficGridTip(p, getData().trafficGrid.data);
         } else {
           const sg = getData().sigmets?.features.find((x) => x.properties.id === p.id);
           if (sg) tip = sigmetTip({ ...sg.properties, inside: p.inside === true }, now);
@@ -362,6 +365,7 @@ export function MapView() {
     map.on("load", () => {
       addBaseLayers(map);
       addShipLayers(map);
+      addTrafficGridLayers(map, RADAR_SLOT); // 연안 교통량(ADR-023) — 레이더 · SIGMET · 항공기 · 선박 아래
       // 출처(FR-20): 스타일이 배경지도 크레딧을 이미 붙였으면 중복하지 않는다. 배경지도를 못 받았으면(대체 스타일) 배경지도 크레딧을 붙이지 않는다.
       // 데이터 출처는 항상 전부(OpenSky·기상청 포함).
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
@@ -545,10 +549,34 @@ export function MapView() {
       vis(["airport-circle", "airport-label"], layers.airports);
       vis(["track-line", "track-gap", "track-gap-label"], layers.tracks);
       vis(["prediction-line", "prediction-label"], layers.prediction);
+      vis([...TRAFFIC_LAYERS], layers.traffic === true);
       vis(SHIP_LAYERS.filter((l) => !l.startsWith("ship-track")), layers.ships);
       vis(SHIP_LAYERS.filter((l) => l.startsWith("ship-track")), layers.ships && layers.tracks);
     });
   }, [layers]);
+
+  // ---- 연안 교통량(ADR-023): 켜져 있을 때만 조회(90 s · ETag · 숨긴 탭 제외 · 다시 보이면 곧바로). 지도는 내용이 바뀔 때(version)만 다시 그리고,
+  // 끄면 칸을 비운다. 받아 둔 값이 이 시계로 오래되면(regDt + stale_after_s) 그리지 않고, 그리는 중이면 그 순간 비운다 — 조회가 실패해 api 가 '멈춤'을
+  // 말할 수 없을 때도 지난 칸을 지금처럼 두지 않는다 ----
+  const trafficVersion = useServerData((d) => d.trafficGrid.version);
+  useEffect(() => {
+    if (!layers.traffic) return;
+    const poller = new TrafficGridPoller((s) => setData({ trafficGrid: s }), getData().trafficGrid);
+    poller.start();
+    return () => poller.stop();
+  }, [layers.traffic]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const g = getData().trafficGrid.data;
+    const now = serverNowMs(Date.now());
+    const draw = layers.traffic === true && trafficDrawable(g, now);
+    onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(draw ? trafficGridFeatures(g.cells) : EMPTY_FC));
+    const at = draw ? trafficStaleAt(g) : null;
+    if (at == null) return;
+    const t = setTimeout(() => onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(EMPTY_FC)), Math.max(0, at - now) + 50);
+    return () => clearTimeout(t);
+  }, [trafficVersion, layers.traffic]);
 
   // ---- 서버에 켜진 레이어 알림(선박은 켠 세션에만 온다). 선박을 끄면 선택도 해제 ----
   useEffect(() => {

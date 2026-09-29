@@ -118,8 +118,23 @@ async def test_r43_calls_give_up_within_seconds_when_redis_accepts_but_never_ans
 
 def test_every_budgeted_provider_is_snapshotted():
     limits = build_limits(Settings())
-    assert {"adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb"} <= set(limits)
+    assert {
+        "adsb_lol",
+        "adsb_fi",
+        "opensky",
+        "awc",
+        "rainviewer",
+        "kma_radar",
+        "adsbdb",
+        "portmis",
+        "komsa_traffic",
+        "mof_grid4",
+    } <= set(limits)
     assert limits["adsbdb"] == 2000  # 계약 v4 §A: 노선 조회 하루 2,000회
+    # ADR-022 · ADR-023: 공공데이터포털 개발계정 한도(API 하나당 — PORT-MIS · 격자 WFS 하루 10,000 · 해양교통 하루 500) 안의 선택값.
+    # 해양수산부 두 API(portmis · mof_grid4)를 합쳐도 한 API 한도 안이다 — 한도가 기관 단위로 묶여 있더라도 넘지 않는다
+    assert (limits["portmis"], limits["komsa_traffic"], limits["mof_grid4"]) == (3000, 400, 6000)
+    assert limits["portmis"] + limits["mof_grid4"] <= 10_000 and limits["komsa_traffic"] <= 500
 
 
 def test_adsbdb_settings_defaults_and_validation():
@@ -327,7 +342,17 @@ async def test_v5_collector_job_tasks_are_named_for_the_log_context(monkeypatch)
 
     monkeypatch.setattr(mainmod, "run_until_stopped", spy)
     await _run_collector_until(monkeypatch, lambda r: bool(seen), enabled=True)
-    assert {"job:region", "job:global", "job:sigmet", "job:radar", "job:metar", "job:maintenance", "job:radar_kr"} <= seen
+    assert {
+        "job:region",
+        "job:global",
+        "job:sigmet",
+        "job:radar",
+        "job:metar",
+        "job:maintenance",
+        "job:radar_kr",
+        "job:portcalls",
+        "job:traffic_grid",
+    } <= seen
     assert asyncio.current_task() is not None
 
 
@@ -345,15 +370,15 @@ def test_portmis_settings_defaults_budget_and_validation():
     from pydantic import ValidationError
 
     s = Settings()
-    assert s.data_go_kr_service_key == "" and s.portmis_rps == 1.0 and s.budget_portmis == 3000
+    assert s.data_go_kr_service_key == "" and s.data_go_kr_rps == 1.0 and s.budget_portmis == 3000
     assert s.portmis_base_url == "https://apis.data.go.kr/1192000/VsslEtrynd5"
     assert build_limits(s)["portmis"] == 3000  # 개발 계정 하루 10,000회의 30 %
     for bad in (
         {"portmis_base_url": "http://apis.data.go.kr/1192000/VsslEtrynd5"},
         {"portmis_base_url": "https://apis.data.go.kr/1192000/OtherService"},
         {"portmis_base_url": "https://apis.data.go.kr.example.org/1192000/VsslEtrynd5"},
-        {"portmis_rps": 0},
-        {"portmis_rps": 3},
+        {"data_go_kr_rps": 0},
+        {"data_go_kr_rps": 3},
     ):
         with pytest.raises(ValidationError):
             Settings(**bad)
@@ -384,11 +409,11 @@ async def test_fixture_mode_answers_port_call_demand_with_disabled_and_reports_m
     v = orjson.loads(r.kv["wakeline:portcalls:230025"])
     assert v["status"] == "disabled" and v["reason"] == "fixture" and r.ttl["wakeline:portcalls:230025"] - time.time() <= 120
     hb = r.kv["wakeline:collector"]
-    assert hb["portcall_requests"] == "0" and hb["portmis_rps_1m"] == "0.000"
+    assert hb["portcall_requests"] == "0" and hb["data_go_kr_rps_1m"] == "0.000"
 
 
 def test_service_key_forms_and_decoding():
-    from wakeline_collector.providers.portmis import decode_service_key, service_key_forms
+    from wakeline_collector.providers.data_go_kr import decode_service_key, service_key_forms
 
     assert decode_service_key(" abc%2Bdef%2F%3D%3D ") == "abc+def/=="
     assert decode_service_key("abc+def/==") == "abc+def/=="
@@ -404,9 +429,10 @@ def test_portmis_params_are_validated_before_they_reach_the_url():
     import pytest
 
     from wakeline_collector.http import ALLOWED_HOSTS, HttpClient
-    from wakeline_collector.providers.portmis import PORTMIS_HOST, PortMisProvider
+    from wakeline_collector.providers.data_go_kr import DATA_GO_KR_HOST
+    from wakeline_collector.providers.portmis import PortMisProvider
 
-    assert PORTMIS_HOST in ALLOWED_HOSTS
+    assert DATA_GO_KR_HOST in ALLOWED_HOSTS and PortMisProvider.host == DATA_GO_KR_HOST
     p = PortMisProvider(HttpClient(), "k")
     ok = {"port_authority": "020", "call_sign": "230025", "sde": date(2026, 8, 30), "ede": date(2026, 9, 29), "page_no": 1}
     assert p.params(**ok)["prtAgCd"] == "020" and p.configured

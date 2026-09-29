@@ -34,7 +34,8 @@ OPTIONAL_EXTERNAL = {
     "OPENSKY_CLIENT_ID": "global view",
     "OPENSKY_CLIENT_SECRET": "global view",
     "KMA_APIHUB_KEY": "KMA radar",
-    "DATA_GO_KR_SERVICE_KEY": "Korean port calls",  # 공공데이터포털 — 해양수산부 선박운항정보(ADR-022)
+    # 공공데이터포털 — 해양수산부 선박운항정보(ADR-022) · 해양교통안전공단 교통정보 · 해양수산부 격자(ADR-023)
+    "DATA_GO_KR_SERVICE_KEY": "Korean port calls, coastal traffic layer",
     "aisstream_key": "ships layer",
 }
 OWNER_ONLY = 0o600

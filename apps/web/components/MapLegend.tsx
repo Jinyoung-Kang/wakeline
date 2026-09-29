@@ -1,5 +1,6 @@
 "use client";
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
+import { TRAFFIC_BINS, TRAFFIC_FILL_OPACITY, TRAFFIC_LEGEND_NOTE, TRAFFIC_ZERO_COLOR } from "@/lib/traffic-grid";
 import { useServerData } from "@/lib/store";
 import { saveShipCats } from "@/lib/prefs";
 import { useUi, type Layers } from "@/lib/ui-store";
@@ -74,6 +75,11 @@ function ShipCategoryToggles({ cats }: { cats: readonly ShipCategory[] }) {
       </div>
     </li>
   );
+}
+
+/** "#rrggbb" → [r, g, b] (범례 글자색 고르기용) */
+function hexRgb(hex: string): number[] {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 }
 
 function Row({ swatch, children, wide }: { swatch: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
@@ -191,6 +197,17 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           <Row swatch={<span className="mono text-[9px] text-fg-2">ICAO</span>} wide>줌 7 이상: 라벨에 카테고리 글자(예: RKSI IFR)</Row>
           <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_UNKNOWN_COLOR }} />}>카테고리 판정 불가(—)</Row>
           <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_STALE_FILL, border: `1.5px solid ${CAT_STALE_STROKE}` }} />}>METAR 오래됨(&gt; {METAR_STALE_S / 3600} h) — 색 없음</Row>
+        </Section>
+      ) : null}
+      {layers.traffic ? (
+        <Section title="연안 교통량 · 격자별 선박 척수(KOMSA)">
+          <li className="flex flex-wrap items-center gap-[2px] pb-1" role="img" aria-label={`척수 구간 색: ${TRAFFIC_BINS.map((b) => b.label).join(", ")}척 — 많을수록 밝은 주황`} data-testid="legend-traffic-scale">
+            {TRAFFIC_BINS.map((b) => <span key={b.label} className="mono px-1 text-[10px]" style={{ background: b.color, color: legendTextColor(hexRgb(b.color)) }}>{b.label}</span>)}
+            <span className="ml-1 text-[10px] text-fg-3">척(칸마다)</span>
+          </li>
+          <Row swatch={<span className="legend-sw" style={{ background: TRAFFIC_ZERO_COLOR, opacity: TRAFFIC_FILL_OPACITY }} />}>0척 — 공급자가 보고한 빈 칸</Row>
+          <li className="pt-0.5 text-[10px] text-fg-2" data-testid="legend-traffic-note">{TRAFFIC_LEGEND_NOTE}</li>
+          <li className="text-[10px] text-fg-3">색 구간은 표시용 선택 · 칸에 마우스를 올리면 격자 번호 · 척수 · 밀집도 % · 기준 시각(KST · UTC)</li>
         </Section>
       ) : null}
       {layers.radar ? (

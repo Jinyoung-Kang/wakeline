@@ -126,6 +126,13 @@ def test_v5_c5_masking_vectors_match_exactly(case):
     assert mask(case["input"], _vectors()["limit"]) == case["expected"]
 
 
+def test_v5_c5_masking_vectors_have_unique_inputs():
+    """두 레인(ADR-022 PORT-MIS · ADR-023 연안 교통량)이 같은 파일에 사례를 더했다 — 같은 input 이 두 번 있으면 한쪽이 고친 기대값을
+    다른 쪽이 조용히 되돌릴 수 있다. input 은 파일 안에서 하나씩만."""
+    inputs = [c["input"] for c in _vectors()["cases"]]
+    assert len(inputs) == len(set(inputs))
+
+
 @pytest.mark.parametrize(
     "text,expected",
     [

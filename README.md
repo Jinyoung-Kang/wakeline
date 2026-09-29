@@ -15,11 +15,11 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
-| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V13) |
-| **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 선택 시만) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
+| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V14) |
+| **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 선택 시만) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 3,100건(pytest 1,054 · JUnit 703 · Vitest 788 · Playwright E2E 16 · 인프라 정책 118 · 버리는 컨테이너 시험 421) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 45건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 520.6 KiB(리뷰 v1 뒤 497.7 → 계약 v5 의 통합 검색·선박 표·이중 단위·브라우저 오류 보고와 오류 화면·WS 검증으로 +22.9 KiB — 목표 400 KB 미충족, 목표 재설정은 사용자 결정 대기) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 22건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 24건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -28,6 +28,7 @@
 | 항공기 | 관심 지역(한반도 반경 250 NM, 10 s) · 전세계(OpenSky, 120 s) · **뷰포트 핫 리전**(줌 7 이상이고 관심 지역 밖이면 화면 중심 반경 ≤ 250 NM 을 30 s 마다, 줌 아웃·이동·보는 사람 없으면 60 s 안에 해제) · **선택 항공기 집중 추적**(ICAO 24-bit hex 로 전세계 어디서든 5 s, 세션당 30분 상한) · **출발·도착 공항**(선택한 항공기의 콜사인으로 adsbdb 등록 노선 조회 — 선택할 때만 호출, Redis 캐시 30분, DB 저장 없음, "등록 노선이며 실제 경로와 다를 수 있음" 표기) · 검색 · 항적(공급자별 수신 공백 표시) · 10분 예측(추정) |
 | 위험기상 | SIGMET 폴리곤 + 고도대 + 유효시간으로 구조화 → STRtree 교차 판정 → 히스테리시스 상태기계(진입 2회·이탈 3회) → 관측/예측 알림 근거 카드 · RainViewer / 기상청 HSR 레이더(LCC → 메르카토르 서버 재투영 · 프레임마다 합성 지점 수 "합성 12/15곳" — 일부 지점만 합성된 프레임은 경고와 함께 표시하고 기한까지 다시 받기 대상, '완전'이라고는 하지 않음, ADR-021) · METAR/TAF |
 | 선박 | AIS 실시간(구역별 연결 2개) · 선종별 색 · 선수방위 회전(없으면 침로 점선, 둘 다 없으면 원) · **적응형 표시**(줌 ≥ 7 은 5,000척, 줌 4–7 은 1,500척까지 개별 점 — 넘으면 격자 집계) · 카드(선명·선종·크기·흘수·목적지·ETA — 모두 "보고값") · **목적지 해석**(보고 문자열을 UN/LOCODE 표로 결정적으로 풀이 — `A>B`·`A<>B` 형식, 이름이 겹치면 "모호" 표시, 못 풀면 원문만) · **통합 검색**(상단 한 칸에서 항공기와 함께 — 선명·호출부호 앞부분 · MMSI · IMO, 실시간 + 저장된 선박, 실시간이 아니면 "마지막 수신" 시각) · **선종 필터**(격자 칸도 선종별 수로 다시 셈 — 고른 선박은 필터·표시 상한과 무관하게 항상 표시) · 정렬되는 선박 목록 · 항적 6/12/24 h(점마다 시각·속도) · **수신 공백 기록·표시**(구역 단위) · 수신 범위 경계 · 선박이 0척이면 이유(범위 밖·공급자 공백·수신 끊김)를 표시 · **한국 항만 입출항**(선택한 선박의 AIS 호출부호로 해양수산부 PORT-MIS 최근 30일 입출항 신고 — 항만청 10곳, 선택할 때만 호출, Redis 캐시 6 h, 입항·출항 KST+UTC(원천이 날짜인지 자정인지 구분하지 않는 00:00 신고는 날짜만) · 목적 · 전출항지 → 차항지, 영문 신고 선명이 AIS 선명과 다르면 경고(한글 선명은 비교 불가로 표시), 조회 중·기록 없음·키 없음·실패 종류·조회 한도를 그대로 표시, ADR-022) |
+| 연안 교통량 | **레이어 "연안 교통량(KOMSA)"**(기본 끔) — 한국해양교통안전공단이 5분마다 집계한 해양격자 칸(0.025°, 약 2.2×2.8 km)별 선박 척수를 색으로(개별 선박 위치 아님) · 칸 위치는 해양수산부 해양격자 4단계 WFS 에서 칸마다 한 번 받아 EPSG:5179 를 순수 Python 으로 풀고 0.025° 격자에 맞는지 검사해 DB 에 저장(칸 번호로 짐작하지 않음 — 처음 몇 시간은 확인한 칸만, 상태 줄에 "위치 확인 중 N칸", 거듭 실패한 칸은 "위치 조회 실패 N칸") · 툴팁(격자 번호 · 척수 · 밀집도 % · 기준 시각 KST · UTC) · 자료가 15분 넘게 멈추면(조회가 실패해도 이 브라우저 시계로) 칸을 지우고 "자료 멈춤" · 호출은 자료 시각(regDt) + 관측으로 배운 발행 지연 기준 · 시간당 15회(Redis 시간 창 — 재기동 포함) · 하루 예산 400 · 6,000(포털 한도 안) · ETag 조회(ADR-023) |
 | 이력·운영 | 재생(과거 시각 프레임) · 통계 · 공항 · 운영 화면(공급자 on/off · 수집 이력 · 품질 격리 · 런타임 설정 · 감사 로그 · DLQ) · **시스템 로그**(`/logs` — api · collector · ais · 브라우저의 WARN/ERROR 를 한 화면에: 같은 오류 묶음 · 서비스·수준·기간 필터 · 스택까지 전체 내용 한 번에 복사 · 요청 id 로 화면 오류와 서버 로그 연결 · 비밀값은 싣기 전에 가림) · 운영 PIPELINE 에 스트림 보존 창(잰 값 · 목표 · 예산 트림 — 예산 트림은 손실이 아님) |
 | 시각 | 모든 화면(상황판 · 재생 · 통계 · 공항 · 운영 · 로그)이 한국 표준시(KST, +09:00 고정)를 먼저, 같은 순간의 UTC 를 함께 적는다 — 예 `09-29 14:02:54 KST · 05:02:54 UTC`, 상태 바 · 지도 툴팁은 `14:02 KST · 05:02Z`, 표는 첫 줄 KST · 둘째 줄 UTC(머리글 "(KST · UTC)"), UTC 날짜가 다르면 UTC 쪽에 날짜. 마우스를 올리면 원본 UTC ISO. 바꾸지 않는 것: METAR · TAF · SIGMET 원문(발표 그대로 — "(원문 · UTC)" 표기) · 통계의 날짜(UTC 날짜로 집계 — "(UTC 날짜)" 표기) · API · 저장 · 복사한 JSON(UTC). 선박 ETA 는 선원 입력(UTC, 연도 없음)을 KST 로 바꿔 입력값과 함께(계약 v5 §G10 · §G11 · §G13) |
 | 단위 | 항공기 고도 ft 와 m · 속도 kt 와 km/h · 상승률 ft/min 와 m/s, 선박 속도 kn 와 km/h 를 함께 표시(1 ft = 0.3048 m · 1 kt = 1.852 km/h 환산 — 원래 단위가 보고값) |
@@ -100,7 +101,7 @@ git clone <this repo> wakeline && cd wakeline
 make up                   # .env 생성(내부 비밀값 자동, 권한 600) + 빌드·기동 → http://localhost:8700
 make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬프트, 12자 이상 — 화면·파일에 남지 않는다)
 ```
-외부 키는 **없어도 동작**합니다(adsb.lol · adsb.fi · AWC · RainViewer 는 무인증). 있으면 켜지는 것: OpenSky(전세계 항공기), 기상청 API허브(한국 고해상도 레이더, 활용신청 필요), aisstream.io(선박), 공공데이터포털 `DATA_GO_KR_SERVICE_KEY`(선박 카드의 한국 항만 입출항 — 해양수산부_선박운항정보 활용신청, collector 에만 주입).
+외부 키는 **없어도 동작**합니다(adsb.lol · adsb.fi · AWC · RainViewer 는 무인증). 있으면 켜지는 것: OpenSky(전세계 항공기), 기상청 API허브(한국 고해상도 레이더, 활용신청 필요), aisstream.io(선박), 공공데이터포털 `DATA_GO_KR_SERVICE_KEY` 하나(선박 카드의 한국 항만 입출항 — 해양수산부_선박운항정보 · 연안 교통량 — 한국해양교통안전공단 실시간 교통정보 조회 · 해양수산부 해양격자 WFS 활용신청, collector 에만 주입).
 외부 호출 없이 보려면 `make demo` — 분리된 스택(http://localhost:8701)에서 실응답 스냅샷(fixtures/)을 재생합니다.
 
 | 명령 | 내용 |
@@ -149,7 +150,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,domain,config} · Flyway V1–V13 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,domain,config} · Flyway V1–V14 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
@@ -180,4 +181,4 @@ node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일> 
 
 ## 9. 데이터 출처·약관
 adsb.lol(ODbL 1.0) · adsb.fi(비상업, 초당 1회 이하) · OpenSky Network(연구·비상업) · aisstream.io(API 키, 재전송 없음) · AviationWeather.gov(미 정부 공개, 자체 상한 분당 20회) ·
-RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.
+RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 한국해양교통안전공단 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 `DATA_GO_KR_SERVICE_KEY`) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.

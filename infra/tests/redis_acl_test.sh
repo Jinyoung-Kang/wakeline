@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D · 계약 v5 §C3 · §G2).
+# Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D · 계약 v5 §C3 · §G2 · ADR-023).
 # compose 와 같은 방식(redis 사용자 999·read-only 루트 FS·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
 # 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector / wakeline_ais 가 필요한 명령·키만 쓸 수 있는지 확인한다.
 # 마지막으로 REDIS_AIS_PASSWORD 없이 한 번 더 띄워 wakeline_ais 가 빈 비밀번호로 열리지 않는지 본다.
@@ -191,6 +191,12 @@ ok "TTL wakeline:portcalls:*(관리자로 확인)" "^(21[0-5][0-9]{2}|21600)$" "
 ok "api GET wakeline:portcalls:*(수집기가 쓴 값)" "none" "${A[@]}" get wakeline:portcalls:230025
 
 ok "DEL wakeline:radar_kr:frames(목록 비움 — kma_radar._save_frames)" "^[01]$" "${K[@]}" del wakeline:radar_kr:frames
+# ADR-023: 연안 교통량 스냅샷(SET EX 1200)과 부정 캐시 해시(HSET · HGETALL). 값은 합성 자료.
+ok "SET wakeline:traffic_grid EX 1200"   OK         "${K[@]}" set wakeline:traffic_grid '{"v":1,"cells":[]}' ex 1200
+ok "TTL wakeline:traffic_grid(관리자로 확인)" "^(1[01][0-9]{2}|1200)$" "${D[@]}" ttl wakeline:traffic_grid
+ok "HSET wakeline:traffic_grid:negative" "^[01]$"   "${K[@]}" hset wakeline:traffic_grid:negative GR4_X '{"reason":"not_found","at":"2026-01-01T00:00:00Z"}'
+ok "HGETALL wakeline:traffic_grid:negative" "not_found" "${K[@]}" hgetall wakeline:traffic_grid:negative
+ok "api GET wakeline:traffic_grid(수집기가 쓴 값)" '"v":1' "${A[@]}" get wakeline:traffic_grid
 # 계약 v5 §C2 · §C3: 로그 싱크 — XADD wakeline:logs MAXLEN ~ 3000 * e <json>
 ok "XADD wakeline:logs MAXLEN ~ 3000(로그 싱크)" "^[0-9]+-[0-9]+$" "${K[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event collector)"
 
@@ -293,6 +299,19 @@ denied "DEL wakeline:demand:portcalls"       "${K[@]}" del wakeline:demand:portc
 denied "EXPIRE 입출항 캐시(SET EX 만)"         "${K[@]}" expire wakeline:portcalls:230025 1
 denied "DEL 입출항 캐시"                      "${K[@]}" del wakeline:portcalls:230025
 denied "입출항 캐시와 비슷한 이름 wakeline:portcalls" "${K[@]}" set wakeline:portcalls x
+# ADR-023: 연안 교통량 키는 셀렉터로만 — 스냅샷은 SET, 부정 캐시는 HSET · HGETALL. 지우거나 만료를 바꾸거나 모양을 바꾸거나 비슷한 이름에 쓰지 못한다
+# (SET 에 EX 를 붙이게 강제하는 ACL 은 없다 — 수집기가 늘 EX 1200 을 붙이고, api 의 regDt 나이 판정이 실제 방어선이다)
+denied "DEL wakeline:traffic_grid"          "${K[@]}" del wakeline:traffic_grid
+denied "EXPIRE wakeline:traffic_grid"       "${K[@]}" expire wakeline:traffic_grid 1
+denied "SET 으로 부정 캐시 해시 덮어쓰기"       "${K[@]}" set wakeline:traffic_grid:negative x
+denied "DEL wakeline:traffic_grid:negative" "${K[@]}" del wakeline:traffic_grid:negative
+denied "HDEL wakeline:traffic_grid:negative(부정 캐시 항목 지우기)" "${K[@]}" hdel wakeline:traffic_grid:negative GR4_X
+denied "HINCRBY wakeline:traffic_grid:negative" "${K[@]}" hincrby wakeline:traffic_grid:negative GR4_Y 1
+denied "XADD wakeline:traffic_grid(스트림으로 바꿔 api 가 WRONGTYPE)" "${K[@]}" xadd wakeline:traffic_grid '*' x y
+denied "HSET wakeline:traffic_grid(해시로 바꾸기)" "${K[@]}" hset wakeline:traffic_grid a b
+denied "GET wakeline:traffic_grid(수집기는 읽지 않는다)" "${K[@]}" get wakeline:traffic_grid
+denied "비슷한 이름 wakeline:traffic_grid:x" "${K[@]}" set wakeline:traffic_grid:x y
+denied "비슷한 이름 wakeline:traffic_grids"  "${K[@]}" set wakeline:traffic_grids y
 
 echo "[wakeline_ais — 허용]"
 ok "PING"                                PONG           "${S[@]}" ping
@@ -336,6 +355,8 @@ denied "노선 캐시 확인 EXISTS"               "${S[@]}" exists wakeline:rou
 denied "입출항 캐시 쓰기 wakeline:portcalls:*" "${S[@]}" set wakeline:portcalls:230025 x ex 21600
 denied "입출항 캐시 읽기 wakeline:portcalls:*" "${S[@]}" get wakeline:portcalls:230025
 denied "입출항 임대 읽기 wakeline:demand:portcalls" "${S[@]}" zrangebyscore wakeline:demand:portcalls 0 +inf
+denied "연안 교통량 스냅샷 읽기(ADR-023)"      "${S[@]}" get wakeline:traffic_grid
+denied "연안 교통량 스냅샷 쓰기(ADR-023)"      "${S[@]}" set wakeline:traffic_grid x
 denied "세션 읽기 wakeline:session:*"       "${S[@]}" hgetall wakeline:session:sessions:t
 denied "세션 위조 wakeline:session:*"       "${S[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
 denied "요청 제한 rl:*"                    "${S[@]}" del rl:public:1.2.3.4:1

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fakes import FakeRedis
 
-from wakeline_collector.budget import UNKNOWN, Budget, day_key
+from wakeline_collector.budget import UNKNOWN, Budget, day_key, hour_key
 
 
 async def test_headroom_keeps_share_for_higher_priority():
@@ -27,3 +29,31 @@ async def test_unlimited_provider_ignores_headroom_and_redis_failure_policy():
     assert await b.reserve("opensky") == (False, UNKNOWN)  # 엄격한 공급자는 호출하지 않는다
     assert await b.usage("adsb_fi") == (None, 0)
     await b.release("adsb_fi")  # 예외 없음
+
+
+async def test_hour_window_is_shared_by_every_process_and_counts_per_utc_hour():
+    """시간 창(ADR-023): 키는 UTC 시(KST 와 시 경계가 같다) — 재기동 · 두 번째 수집기도 같은 키를 센다. 되돌리기는 예약한 키에."""
+    r = FakeRedis()
+    a, b = Budget(r, {}), Budget(r, {})  # type: ignore[arg-type]
+    t = datetime(2026, 9, 29, 9, 59, 59, tzinfo=UTC)
+    assert hour_key("komsa_traffic", t) == "budget:komsa_traffic:h:2026092909"
+    assert await a.reserve_hour("komsa_traffic", 2, now=t) == (True, 1, "budget:komsa_traffic:h:2026092909")
+    assert (await b.reserve_hour("komsa_traffic", 2, now=t))[:2] == (True, 2)
+    assert (await a.reserve_hour("komsa_traffic", 2, now=t))[:2] == (False, 2)  # 다른 프로세스가 쓴 몫까지 센다
+    later = datetime(2026, 9, 29, 10, 0, 0, tzinfo=UTC)
+    ok, used, key = await a.reserve_hour("komsa_traffic", 2, now=later)
+    assert (ok, used) == (True, 1)
+    await a.release_key(key)
+    assert (await r.hgetall("budget:komsa_traffic:h:2026092910"))["used"] == "0"
+    assert (await r.hgetall("budget:komsa_traffic:h:2026092909"))["used"] == "2"  # 앞 시의 몫은 그대로
+    assert (await r.hgetall("budget:komsa_traffic:h:2026092909"))["limit"] == "2"
+
+
+async def test_hour_window_follows_the_strict_policy_when_redis_is_down():
+    r = FakeRedis()
+    b = Budget(r, {})  # type: ignore[arg-type]
+    r.down = True
+    t = datetime(2026, 9, 29, 9, 0, 0, tzinfo=UTC)
+    assert (await b.reserve_hour("komsa_traffic", 15, now=t))[:2] == (False, UNKNOWN)  # 엄격: 부르지 않는다
+    assert (await b.reserve_hour("adsb_fi", 15, now=t))[:2] == (True, UNKNOWN)
+    await b.release_key("budget:komsa_traffic:h:2026092909")  # 예외 없음

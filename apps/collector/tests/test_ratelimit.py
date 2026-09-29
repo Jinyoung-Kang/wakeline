@@ -9,9 +9,11 @@ import pytest
 
 from wakeline_collector import ratelimit as rl
 from wakeline_collector.ratelimit import (
+    PRIORITY_BACKFILL,
     PRIORITY_FIXED,
     PRIORITY_FOCUS,
     PRIORITY_HOT,
+    PRIORITY_PORTCALL,
     PRIORITY_ROUTE,
     RateLimiter,
     Throttled,
@@ -60,6 +62,30 @@ async def test_route_lookup_waits_behind_hot_on_the_shared_global_bucket():
 
     await asyncio.gather(call("route", "api.adsbdb.com", PRIORITY_ROUTE, 0), call("hot", "opendata.adsb.fi", PRIORITY_HOT, 0.001))
     assert order == ["hot", "route"] and lim.rate_1m("api.adsbdb.com") == pytest.approx(2 / 60)
+
+
+async def test_data_go_kr_host_is_shared_komsa_poll_first_then_port_calls_then_grid_fill():
+    """ADR-022 · ADR-023: apis.data.go.kr 버킷 하나를 세 잡이 나눠 쓴다. 도착 순서가 격자 채우기 → 입출항 조회 → 교통 폴링이어도
+    토큰은 교통 폴링(PRIORITY_FIXED) → 입출항(PRIORITY_PORTCALL) → 격자 채우기(PRIORITY_BACKFILL) — 입출항 조회가 이어져도 5분 폴링이
+    굶지 않고, 격자 채우기는 두 쪽이 기다리지 않을 때만 받는다."""
+    assert PRIORITY_FIXED < PRIORITY_PORTCALL < PRIORITY_BACKFILL
+    host = "apis.data.go.kr"
+    lim = default_limiter(100.0, 0.8, 0.5, 20.0)  # 호스트 버킷만 좁다(50 ms 간격 — 시험 시간을 줄인다, burst 2)
+    await lim.acquire(host)
+    await lim.acquire(host)  # 버킷 비움
+    order: list[str] = []
+
+    async def call(name: str, prio: int, delay: float) -> None:
+        await asyncio.sleep(delay)
+        await lim.acquire(host, priority=prio, wait_s=2)
+        order.append(name)
+
+    await asyncio.gather(
+        call("grid_fill", PRIORITY_BACKFILL, 0),
+        call("port_call", PRIORITY_PORTCALL, 0.001),
+        call("komsa_poll", PRIORITY_FIXED, 0.002),
+    )
+    assert order == ["komsa_poll", "port_call", "grid_fill"]
 
 
 async def test_host_bucket_spaces_calls():

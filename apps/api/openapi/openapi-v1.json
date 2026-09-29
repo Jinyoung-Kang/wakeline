@@ -815,6 +815,25 @@
         "tags" : [ "history-controller" ]
       }
     },
+    "/api/v1/traffic/grid" : {
+      "get" : {
+        "operationId" : "grid",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "traffic-grid-controller" ]
+      }
+    },
     "/healthz" : {
       "get" : {
         "operationId" : "healthz",

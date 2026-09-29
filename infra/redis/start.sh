@@ -8,6 +8,10 @@
 #                    수요 임대(ADR-013, 계약 v2 §A1·§C): wakeline:demand:{hot,focus}(+:meta)는 읽기 전용 — 임대는 api 만 만든다. 상태 wakeline:demand:status 만 쓴다.
 #                    노선 캐시(ADR-016, 계약 v4 §A): wakeline:route:{CALLSIGN} 을 SET EX 로 쓰고 EXISTS 로 확인한다(api 는 wakeline:* 로 읽는다). ais 에는 주지 않는다.
 #                    한국 항만 입출항(ADR-022): 임대 wakeline:demand:portcalls 는 읽기 전용, 캐시 wakeline:portcalls:{호출부호}는 SET EX · EXISTS. ais 에는 주지 않는다.
+#                    연안 교통량(ADR-023): 두 이름은 루트 키 목록에 없고 셀렉터로만 닿는다(정확한 이름 — 와일드카드 없음) — 스냅샷 wakeline:traffic_grid 는
+#                    SET 만, 부정 캐시 해시 wakeline:traffic_grid:negative 는 HSET·HGETALL 만. 지우기(DEL·HDEL)·만료 바꾸기·모양 바꾸기(XADD·HSET 스냅샷)는
+#                    거부된다. SET 에 EX 를 붙이게 강제하는 ACL 은 없다 — 수집기가 늘 EX 1200 을 붙이고, 실제 방어선은 api 의 regDt 나이 판정(stale)이다.
+#                    api 는 wakeline:* 로 읽는다.
 #   wakeline_ais        비밀번호 REDIS_AIS_PASSWORD(ADR-014, 계약 v2 §C). 선박 스트림 wakeline:ships 와 wakeline:ais:* 만 쓰고 wakeline:settings 는 읽기 전용.
 #                    항공기 스트림·예산·수요 임대·세션에는 접근하지 못한다. 소비자 그룹 명령·키 이름 열람 금지는 수집기와 같다.
 #   시스템 로그(ADR-018, 계약 v5 §C3): collector·ais 는 wakeline:logs 에 XADD(MAXLEN ~ 3000)만 한다 — 키 규칙은 쓰기 전용 %W~.
@@ -61,17 +65,19 @@ COLLECTOR_KEYS="$COLLECTOR_KEYS ~wakeline:route:*"
 COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:portcalls ~wakeline:portcalls:*"
 # 시스템 로그(계약 v5 §C3): 쓰기 전용 — XADD 만, 다른 서비스 로그는 읽지 못한다
 COLLECTOR_KEYS="$COLLECTOR_KEYS %W~wakeline:logs"
+# 연안 교통량(ADR-023): 루트 키 목록에 넣지 않는다(넣으면 HDEL·HINCRBY·XADD 같은 루트 명령이 모두 닿는다) — 아래 셀렉터 둘로만
 # 생산자 공통: 접속(redis-py 8 은 HELLO 3 AUTH 로 붙는다)·헬스 체크(PING, health_check_interval)·클라이언트 정보만.
 # 소비자 그룹 명령(XGROUP·XREADGROUP·XACK …)·키 이름 열람(SCAN·RANDOMKEY·KEYS)·CLIENT TRACKING 은 목록에 없어서 거부된다.
 PRODUCER_BASE='resetchannels -@all +hello +ping +info +client|setinfo +client|setname +client|id'
 # 수집기가 쓰는 명령(wakeline_collector 코드 전체): 스트림 XADD(MAXLEN ~ · 로그 싱크 포함)·XREVRANGE, 해시 HSET·HGET·HGETALL·HMGET·HINCRBY·HDEL·HKEYS,
 # EXISTS·GET, 임대 ZRANGEBYSCORE(focus·hot · 항만 입출항), 예산 Lua SCRIPT LOAD + EVALSHA
 COLLECTOR_CMDS='+xadd +xrevrange +hset +hget +hgetall +hmget +hincrby +hdel +hkeys +exists +get +zrangebyscore +script|load +evalsha'
-# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선·항만 입출항 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만,
-# EXPIRE 는 예산 키(Lua)와 429 이력 해시에만
-COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:portcalls:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +set)'
+# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선·항만 입출항 캐시 SET EX · 레이더 목록·이미지 · 연안 교통량 스냅샷)에만,
+# DEL 은 레이더 목록·이미지에만, EXPIRE 는 예산 키(Lua)와 429 이력 해시에만, 연안 교통량 부정 캐시 해시에는 HSET·HGETALL 만
+COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:portcalls:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* ~wakeline:traffic_grid +set)'
 COLLECTOR_SEL_DEL='(~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +del)'
 COLLECTOR_SEL_EXPIRE='(~budget:* ~wakeline:provider:*:ratelimit:* +expire)'
+COLLECTOR_SEL_TRAFFIC_NEG='(~wakeline:traffic_grid:negative +hset +hgetall)'
 
 AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings %W~wakeline:logs'
 # ais 가 쓰는 명령: 선박 스트림 XADD, 로그 스트림 XADD(쓰기 전용), 상태 해시 HSET·HGETALL, 설정 HGET·HGETALL — 지우거나 덮어쓰는 명령은 없다
@@ -89,5 +95,5 @@ exec redis-server "${REDIS_CONF:-/etc/redis/redis.conf}" \
   --requirepass "$REDIS_PASSWORD" \
   --user wakeline_api on ">$REDIS_API_PASSWORD" $API_KEYS $COMMON \
   --user wakeline_collector on ">$REDIS_COLLECTOR_PASSWORD" $COLLECTOR_KEYS $PRODUCER_BASE $COLLECTOR_CMDS \
-    "$COLLECTOR_SEL_SET" "$COLLECTOR_SEL_DEL" "$COLLECTOR_SEL_EXPIRE" \
+    "$COLLECTOR_SEL_SET" "$COLLECTOR_SEL_DEL" "$COLLECTOR_SEL_EXPIRE" "$COLLECTOR_SEL_TRAFFIC_NEG" \
   "$@"

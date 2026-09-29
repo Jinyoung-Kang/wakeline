@@ -24,7 +24,8 @@ from wakeline_collector.jobs import portcalls as pj
 from wakeline_collector.jobs.portcalls import PortCallJob, PortCallLookup
 from wakeline_collector.masking import register_secrets
 from wakeline_collector.portcalls import DEMAND_KEY, PORT_AUTHORITIES
-from wakeline_collector.providers.portmis import PORTMIS_HOST, PortMisProvider, service_key_forms
+from wakeline_collector.providers.data_go_kr import DATA_GO_KR_HOST, service_key_forms
+from wakeline_collector.providers.portmis import PortMisProvider
 from wakeline_collector.ratelimit import PRIORITY_PORTCALL, PRIORITY_ROUTE, RateLimiter, default_limiter
 from wakeline_collector.status import ProviderStatus
 
@@ -37,7 +38,7 @@ NOW = datetime(2026, 9, 29, 3, 0, tzinfo=UTC)  # KST 12:00 → 조회 창 2026-0
 
 
 def _lookup(r: FakeRedis, *, limit: int = 3000, limiter: RateLimiter | None = None, key: str = SERVICE_KEY, **kw):
-    http = HttpClient(limiter or RateLimiter(100, 100, {PORTMIS_HOST: (100, 2)}))
+    http = HttpClient(limiter or RateLimiter(100, 100, {DATA_GO_KR_HOST: (100, 2)}))
     prov = PortMisProvider(http, key)
     budget = Budget(r, {"portmis": limit})  # type: ignore[arg-type]
     lk = PortCallLookup(r, prov, budget, ProviderStatus(r), now=lambda: NOW, **kw)  # type: ignore[arg-type]
@@ -301,7 +302,7 @@ async def test_daily_budget_exhausted_mid_lookup_is_error():
 
 async def test_rate_limit_wait_exceeded_is_error_and_budget_released():
     r = FakeRedis()
-    limiter = RateLimiter(100, 100, {PORTMIS_HOST: (0.01, 1)})
+    limiter = RateLimiter(100, 100, {DATA_GO_KR_HOST: (0.01, 1)})
     lk, _, budget = _lookup(r, limiter=limiter, wait_s=0.05)
     with respx.mock:
         route = respx.get(URL).mock(side_effect=_responder({}))
@@ -373,7 +374,7 @@ async def test_request_validates_dedupes_and_caps_pending():
 
 async def test_shutdown_releases_the_budget_of_the_request_not_sent():
     r = FakeRedis()
-    limiter = RateLimiter(100, 100, {PORTMIS_HOST: (0.001, 1)})
+    limiter = RateLimiter(100, 100, {DATA_GO_KR_HOST: (0.001, 1)})
     lk, _, budget = _lookup(r, limiter=limiter, wait_s=30)
     with respx.mock:
         respx.get(URL).mock(side_effect=_responder({}))
@@ -390,8 +391,8 @@ async def test_shutdown_releases_the_budget_of_the_request_not_sent():
 # ---- 속도 상한 · 우선순위 ----------------------------------------------------------------------------------------------
 def test_default_limiter_has_a_portmis_host_bucket_and_lowest_priority():
     lim = default_limiter(2.0, 0.8, 0.5)
-    assert lim.host_rps(PORTMIS_HOST) == 1.0 and lim._hosts[PORTMIS_HOST].burst == 2
-    assert default_limiter(2.0, 0.8, 0.5, 0.5).host_rps(PORTMIS_HOST) == 0.5
+    assert lim.host_rps(DATA_GO_KR_HOST) == 1.0 and lim._hosts[DATA_GO_KR_HOST].burst == 2
+    assert default_limiter(2.0, 0.8, 0.5, 0.5).host_rps(DATA_GO_KR_HOST) == 0.5
     assert PRIORITY_PORTCALL > PRIORITY_ROUTE
 
 

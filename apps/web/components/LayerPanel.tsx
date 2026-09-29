@@ -4,10 +4,13 @@ import { legendDefaultOpen, loadLayers, loadShipCats, saveLayers } from "@/lib/p
 import { SHIP_CATEGORIES, type ShipCategory } from "@/lib/ships";
 import { useUi, type Layers } from "@/lib/ui-store";
 import { MapLegend } from "./MapLegend";
+import { TrafficGridStatus } from "./TrafficGridStatus";
+import { TRAFFIC_LAYER_LABEL } from "@/lib/traffic-grid";
 
 const ITEMS: { k: keyof Layers; label: string }[] = [
   { k: "radar", label: "레이더" }, { k: "sigmet", label: "SIGMET" }, { k: "aircraft", label: "항공기" }, { k: "ships", label: "선박" },
   { k: "airports", label: "공항" }, { k: "tracks", label: "항적" }, { k: "prediction", label: "예측(추정)" },
+  { k: "traffic", label: TRAFFIC_LAYER_LABEL }, // ADR-023 — 5분 집계 격자별 선박 척수(기본 끔)
 ];
 const LEGEND_KEY = "wakeline.legend";
 const LEGEND_ID = "map-legend";
@@ -54,7 +57,7 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
     <div className="pointer-events-none absolute top-3 right-3 bottom-16 left-12 z-10 flex flex-col items-end gap-1">
       <div className="pointer-events-auto flex flex-wrap justify-end gap-1" data-testid="layer-panel" role="group" aria-label="지도 레이어">
         {ITEMS.map((i) => (
-          <button key={i.k} className="btn" aria-pressed={layers[i.k]} onClick={() => toggle(i.k)} data-testid={`layer-${i.k}`}>{i.label}</button>
+          <button key={i.k} className="btn" aria-pressed={layers[i.k] === true} onClick={() => toggle(i.k)} data-testid={`layer-${i.k}`}>{i.label}</button>
         ))}
         {/* 선종 필터 상태(계약 v5 §B3) — 토글은 범례의 선종 항목. 누르면 범례를 펼친다 */}
         {layers.ships ? (
@@ -63,6 +66,7 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
         ) : null}
         <button className="btn" aria-expanded={legendOpen} aria-controls={legendOpen ? LEGEND_ID : undefined} onClick={flip} data-testid="legend-toggle">범례 {legendOpen ? "▾" : "▸"}</button>
       </div>
+      {layers.traffic ? <TrafficGridStatus /> : null}
       {legendOpen ? <div className="pointer-events-auto min-h-0 max-w-full"><MapLegend id={LEGEND_ID} /></div> : null}
     </div>
   );

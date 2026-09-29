@@ -69,10 +69,11 @@ class InitEnvTest(unittest.TestCase):
         self.assertRegex(self.env.read_text(), r"(?m)^aisstream_key=$")
         self.assertNotIn("aisstream_key", init_env.INTERNAL)
         self.assertIn("ships layer", self.out.getvalue())       # 없으면 무엇이 꺼지는지 알려 준다(값은 출력하지 않음)
-        # ADR-022: 공공데이터포털 키도 사람이 넣는 외부 키 — 만들지 않고, 없으면 꺼지는 기능을 알려 준다
+        # ADR-022 · ADR-023: 공공데이터포털 키 하나도 사람이 넣는 외부 키 — 만들지 않고, 없으면 꺼지는 두 기능을 알려 준다
         self.assertEqual(v.get("DATA_GO_KR_SERVICE_KEY"), "")
         self.assertNotIn("DATA_GO_KR_SERVICE_KEY", init_env.INTERNAL)
         self.assertIn("Korean port calls", self.out.getvalue())
+        self.assertIn("coastal traffic layer", self.out.getvalue())
 
     def test_owner_env_with_lowercase_ais_key_and_no_trailing_newline(self):
         """사용자 .env 처럼 마지막 줄이 소문자 aisstream_key=… 이고 줄바꿈이 없어도: 키는 그대로, REDIS_AIS_PASSWORD 는 새 줄에 추가."""
