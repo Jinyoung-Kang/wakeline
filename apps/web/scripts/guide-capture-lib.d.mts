@@ -12,6 +12,7 @@ export const ERROR_MARKS: readonly string[];
 export const USAGE: string;
 export function parseArgs(argv: string[]): CaptureArgs;
 export function checkLocalBase(s: string): string;
+export function realDataVerdict(httpStatus: number, body: unknown): string | null;
 export function parseCredentials(text: string): { username: string; password: string };
 export function credentialFileWarning(mode: number): string | null;
 export function anchorPoint(rect: Rect | null, anchor: Anchor, vp: { width: number; height: number }): { x: number; y: number } | null;

@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, hashedName, mergeManifest, parseArgs, parseCredentials, sizeReport, staleFiles,
+  anchorPoint, checkLocalBase, credentialFileWarning, hashedName, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
 } from "../scripts/guide-capture-lib.mjs";
 import { GUIDE_FILE_RE, parseManifest, PLAN } from "@/lib/guide";
 
@@ -36,6 +36,23 @@ describe("arguments", () => {
     expect(checkLocalBase("http://[::1]:8700")).toBe("http://[::1]:8700");
     expect(checkLocalBase("http://wakeline.localhost:8700")).toBe("http://wakeline.localhost:8700");
     for (const bad of ["https://example.com", "http://10.0.0.5:8700", "ftp://localhost", "http://user:pw@localhost:8700", "localhost:8700"]) expect(() => checkLocalBase(bad)).toThrow();
+  });
+});
+
+describe("real-data guard (/api/v1/status, before and after the captures)", () => {
+  const real = { fixture_mode: false, collector_mode_known: true, server_time: "2026-09-29T05:22:11Z" };
+  it("passes only when the stack says it collects real data", () => {
+    expect(realDataVerdict(200, real)).toBeNull();
+  });
+  it("stops on FIXTURE MODE, an unknown collector mode, a missing or wrong field, a non-200 answer or an unreadable body", () => {
+    expect(realDataVerdict(200, { ...real, fixture_mode: true })).toMatch(/FIXTURE MODE/);
+    expect(realDataVerdict(200, { ...real, collector_mode_known: false })).toMatch(/모름/);
+    expect(realDataVerdict(200, { collector_mode_known: true })).toMatch(/fixture_mode/);
+    expect(realDataVerdict(200, { ...real, fixture_mode: "false" })).toMatch(/fixture_mode/);
+    expect(realDataVerdict(503, null)).toMatch(/HTTP 503/);
+    expect(realDataVerdict(0, null)).toMatch(/응답 없음/);
+    expect(realDataVerdict(200, null)).toMatch(/객체가 아님/);
+    expect(realDataVerdict(200, [real])).toMatch(/객체가 아님/);
   });
 });
 

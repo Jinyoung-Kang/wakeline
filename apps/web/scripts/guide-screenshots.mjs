@@ -4,7 +4,9 @@
 // public/guide/<id>.<내용 해시>.webp 로 저장하고(브라우저가 WebP 로 못 바꾸면 PNG), lib/guide-manifest.json 을 갱신한다. 그다음 web 을 다시 빌드해야 화면에 나온다.
 // - 번호 위치: 찍기 직전에 각 번호의 대상 요소(CSS 선택자)를 재서 % 로 기록한다. 화면에 없으면 기록하지 않는다(설명서는 "보이지 않음"이라고 적는다).
 // - 운영 · 로그 화면은 /ops 로그인이 필요하다: 자격 증명은 인자로 받은 파일에서만 읽는다(인자 값 · 환경 변수로 받지 않는다). 끝나면 sign out.
-// - 로컬 스택만 찍는다(로그인 정보를 보낸다). FIXTURE MODE(가짜 자료) 스택이면 멈춘다 — 설명서에 지어낸 값이 실리지 않게(--allow-fixture 로만 무시).
+// - 로컬 스택만 찍는다(로그인 정보를 보낸다).
+// - 실데이터 확인: 찍기 전과 다 찍은 뒤(manifest 를 쓰기 전) 두 번 /api/v1/status 를 읽어, 확실히 실데이터일 때만 진행한다 — FIXTURE MODE(가짜 자료)이거나
+//   수집 모드를 모르면(heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춘다. 모든 스크린샷(상황판 밖 재생 · 통계 · 공항 · 운영 · 로그 포함)에 적용된다(--allow-fixture 로만 무시).
 // - 조회 오류가 보이는 화면(오류 문구 · 요청 id)은 싣지 않는다 — 건너뛰고 이유를 보고한다.
 // - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
 // - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
@@ -13,7 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, hashedName, mergeManifest, parseArgs, parseCredentials, sizeReport, staleFiles,
+  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, hashedName, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -71,9 +73,20 @@ async function openMap(path) {
   await page.goto(BASE + path);
   try { await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 }); }
   catch { throw new Skip("상황판 실시간 연결(WS open)이 30 s 안에 열리지 않음"); }
-  if (!args.allowFixture && await page.getByTestId("fixture-badge").count()) {
-    throw new Fatal("FIXTURE MODE 스택 — 가짜 자료가 설명서에 실리지 않게 멈춤(실데이터 스택에서 찍거나 --allow-fixture)");
-  }
+  // 실데이터 판단은 assertRealData(/api/v1/status)가 한다 — 배지는 status 메시지가 늦게 오면 아직 없어 판단에 쓰지 않는다(보이면 덧붙여 멈출 뿐)
+  if (!args.allowFixture && await page.getByTestId("fixture-badge").count()) throw new Fatal("FIXTURE MODE 배지가 보임 — 가짜 자료가 설명서에 실리지 않게 멈춤");
+}
+/** 실데이터 스택인지 /api/v1/status 로 확인(찍기 전 · 다 찍은 뒤). 아니면 전체를 멈춘다 */
+async function assertRealData(when) {
+  if (args.allowFixture) return;
+  let code = 0, body = null;
+  try {
+    const r = await page.request.get(`${BASE}/api/v1/status`, { timeout: 15_000 });
+    code = r.status();
+    body = await r.json().catch(() => null);
+  } catch { /* 응답 없음 → code 0 */ }
+  const why = realDataVerdict(code, body);
+  if (why) throw new Fatal(`${when}: ${why} — 가짜 자료가 설명서에 실리지 않게 이번 결과를 버리고 멈춤(실데이터 스택에서 다시 찍거나 --allow-fixture)`);
 }
 async function setPressed(testId, on) {
   const b = page.getByTestId(testId);
@@ -289,7 +302,8 @@ const captured = {};
 const rows = [];
 const skipped = [];
 let fatal = null;
-for (const shot of shots) {
+try { await assertRealData("찍기 전 확인"); } catch (e) { if (e instanceof Fatal) fatal = e; else throw e; }
+for (const shot of fatal ? [] : shots) {
   const recipe = RECIPES[shot.id];
   try {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
@@ -308,6 +322,10 @@ for (const shot of shots) {
     if (e instanceof Fatal) { fatal = e; break; }
     skipped.push({ id: shot.id, reason: e instanceof Skip ? e.message : `오류 — ${e.message.split("\n")[0]}` });
   }
+}
+// 찍는 사이에 스택이 FIXTURE 로 바뀌었어도 싣지 않는다(결과를 쓰기 전 마지막 확인)
+if (!fatal && Object.keys(captured).length) {
+  try { await assertRealData("다 찍은 뒤 확인"); } catch (e) { if (e instanceof Fatal) fatal = e; else throw e; }
 }
 if (loggedIn) {
   // 세션을 남기지 않는다

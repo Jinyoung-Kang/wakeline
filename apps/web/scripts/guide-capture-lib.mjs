@@ -54,6 +54,21 @@ export function checkLocalBase(s) {
   return u.origin;
 }
 
+/**
+ * 실데이터 스택인가 — GET /api/v1/status 의 답(HTTP 상태, JSON 본문)으로 판단한다. 설명서에 지어낸 값(FIXTURE MODE)이 실리지 않게 하는 유일한 관문이다.
+ * 상태 바의 FIXTURE MODE 배지는 구독 뒤 status 메시지가 와야 그려져(WS welcome 보다 늦다) 경합이 있고 상황판 화면에만 있어, 배지로 판단하지 않는다.
+ * 확실히 실데이터(fixture_mode === false · collector_mode_known === true)일 때만 null, 그 밖(FIXTURE · 수집 모드 모름 · 형식 아님 · 응답 없음)은 멈출 이유.
+ */
+export function realDataVerdict(httpStatus, body) {
+  if (!httpStatus) return "상태 조회(/api/v1/status) 응답 없음 — 수집 모드를 확인할 수 없음";
+  if (httpStatus !== 200) return `상태 조회(/api/v1/status) HTTP ${httpStatus} — 수집 모드를 확인할 수 없음`;
+  if (!isObj(body)) return "상태 응답이 객체가 아님 — 수집 모드를 확인할 수 없음";
+  if (body.fixture_mode === true) return "FIXTURE MODE 스택(가짜 자료)";
+  if (body.fixture_mode !== false) return "상태 응답에 fixture_mode(true/false)가 없음 — 수집 모드를 확인할 수 없음";
+  if (body.collector_mode_known !== true) return "수집기 heartbeat 가 없어 수집 모드를 모름(collector_mode_known ≠ true)";
+  return null;
+}
+
 /** 자격 증명 파일 내용 → { username, password }. 오류 문구에 값을 넣지 않는다(JSON.parse 의 문구도 원문 일부를 담을 수 있어 쓰지 않는다) */
 export function parseCredentials(text) {
   if (typeof text !== "string" || !text.trim()) throw new Error("자격 증명 파일이 비어 있음");
