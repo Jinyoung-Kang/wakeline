@@ -4,7 +4,7 @@
  * (필드 이름을 지어내지 않는다 · 입출항 값은 수집기가 실제 전체 기록(AZAMARA PURSUIT · 부산)을 해석한 색인 행의 호출부호만 바꾼 것).
  * - 검증: 모르는 상태 · 다른 창 · 읽을 항목 없는 ok · 색인 상태 없는 결과 · 완전하지 않은 none · 까닭 없는 no_call_sign 은 표시하지 않는다.
  *   틀린 묶음은 통째로 버리고 센다(메시지의 나머지는 쓴다).
- * - 화면: 상태마다 문구(기록 없음은 색인이 완전할 때만 · 색인 불완전은 항만청별 이유 · 호출부호를 아직 받지 않음은 '없음' 이 아니다) · 결과 표
+ * - 화면: 상태마다 문구(기록 없음은 색인이 완전할 때만 · 색인 불완전은 항만청별 이유 · 호출부호를 아직 받지 않음은 '없음' 이 아니다) · 결과는 신고마다 블록(좁은 카드 — 표 아님)
  *   (항만청 · 입항 · 출항 KST+UTC(판) · 선석 · 목적 · 전출항지 → 차항지) · 색인 상태 줄 · 두 이름이 모두 영문일 때만 선명 다름 경고 · 모르면 "—" 만.
  * - 시각은 공유 형식기(lib/time · components/DualTime — 계약 v5 §G13): 표 칸은 첫 줄 KST · 둘째 줄 UTC, 색인 갱신 시각은 inline.
  */
@@ -236,11 +236,18 @@ describe("port-call helpers", () => {
 });
 
 describe("PortCallsSection (server-rendered)", () => {
-  it("ok: table with 항만청 · 입항 · 출항 (KST · UTC, revision) · 선석 · 목적 · legs; the index line; truncation", () => {
+  it("ok: one stacked block per call (항만청 · 입항 · 출항 KST · UTC with revision · 선석 · 목적 · legs); the index line; truncation", () => {
     const html = render(parsed("ship_selected"), "AZAMARA PURSUIT");
     const t = text(html);
     expect(html).toContain('data-status="ok"');
-    for (const h of ["항만청", "입항(KST · UTC)", "출항(KST · UTC)", "선석", "목적", "전출항지 → 차항지"]) expect(t).toContain(h);
+    // 선박 카드(좁은 옆 칸)에서 6열 표는 선석 이름을 한 글자씩 접었다(설명서 캡처 2026-09-30) — 신고마다 라벨 · 값 두 열 블록
+    expect(html).not.toContain("<table");
+    expect(html).toMatch(/<ol[^>]*data-testid="port-calls-table"/);
+    expect(html.match(/data-testid="port-call-row"/g)).toHaveLength(20);
+    expect(html.match(/<dl/g)).toHaveLength(20);
+    for (const h of ["입항", "출항", "선석", "목적", "항로"]) expect(html).toMatch(new RegExp(`<dt[^>]*>${h}</dt>`));
+    expect(html).toContain('title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만"');
+    expect(t).toContain("부산 · 020");
     expect(t).toContain("09-24 08:17:00 KST · 09-23 23:17:00 UTC"); // 입항 — 표 칸(KST 첫 줄 · UTC 둘째 줄)
     expect(t).toContain("09-25 14:24:00 KST · 05:24:00 UTC"); // 출항(tkoffDt)
     expect(t).toContain("최종 신고");

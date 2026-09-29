@@ -201,19 +201,12 @@ const RECIPES = {
     throw new Skip("후보 해역(부산항 부근 · 도쿄만)에 선박 없음");
   },
   async "port-calls"(shot) {
-    // 한국 항만 입출항(ADR-022 개정): 부산항 부근 선박을 차례로 골라 입출항 결과(ok)가 나온 카드를 찍는다. 결과는 서버 색인에서 바로 온다(고를 때 외부에
-    // 묻지 않는다 — 한도 없음). 후보는 8척까지, 상태를 기다리는 상한 15 s. 다른 상태(기록 없음 · 색인 불완전 · 꺼짐 · 호출부호 없음)는 다음 후보.
+    // 한국 항만 입출항(ADR-022 개정): 후보 해역(부산항 부근 → 도쿄만)의 선박을 차례로 골라 입출항 결과(ok)가 나온 카드를 찍는다. 결과는 서버 색인에서 바로
+    // 온다(고를 때 외부에 묻지 않는다 — 한도 없음). 해역마다 후보 8척, 상태를 기다리는 상한 15 s. 다른 상태(기록 없음 · 색인 불완전 · 꺼짐 · 호출부호 없음)는 다음 후보.
+    // 두 해역 모두 없으면(aisstream 은 육상 수신국 기반 — 한반도 부근이 빌 때가 있다) GUIDE_PORT_CALLS_QUERY(선박 이름 · MMSI)로 선박 검색에서 고른다 — 조건에 적는다.
     const tried = [];
-    for (let i = 0; i < 8; i++) {
-      await openMap(shot.path);
-      await setPressed("layer-ships", true);
-      await setLegend(false);
-      await wait(12_000);
-      await page.getByTestId("tab-ship").click();
-      const item = page.getByTestId("ship-list-item").nth(i);
-      await item.waitFor({ timeout: 10_000 }).catch(() => {});
-      if (!(await item.count())) break;
-      await item.click();
+    let ships = 0; // 목록에서 골라 본 선박 수(해역에 선박이 없다는 표시는 세지 않는다)
+    const waitStatus = async () => {
       const sec = page.getByTestId("port-calls");
       await sec.waitFor({ timeout: 10_000 }).catch(() => {});
       await page.waitForFunction(() => {
@@ -222,10 +215,44 @@ const RECIPES = {
       }, null, { timeout: 15_000 }).catch(() => {});
       const st = (await sec.getAttribute("data-status").catch(() => null)) ?? "없음";
       tried.push(st);
-      if (st !== "ok") continue;
-      await sec.scrollIntoViewIfNeeded();
-      await wait(1_000);
-      return `부산항 부근 ${shot.path.slice(1)} · 선박 목록 ${i + 1}번째(입출항 결과가 있는 첫 선박)`;
+      if (st === "ok") {
+        await sec.scrollIntoViewIfNeeded();
+        await wait(1_000);
+      }
+      return st === "ok";
+    };
+    for (const [path, label] of [[shot.path, "부산항 부근"], ["/#10.6/35.45/139.78", "도쿄만"]]) {
+      for (let i = 0; i < 8; i++) {
+        await openMap(path);
+        await setPressed("layer-ships", true);
+        await setLegend(false);
+        await wait(12_000);
+        await page.getByTestId("tab-ship").click();
+        const item = page.getByTestId("ship-list-item").nth(i);
+        await item.waitFor({ timeout: 10_000 }).catch(() => {});
+        if (!(await item.count())) {
+          if (i === 0) tried.push(`${label} 선박 없음`);
+          break;
+        }
+        await item.click();
+        ships += 1;
+        if (await waitStatus()) return `${label} ${path.slice(1)} · 선박 목록 ${i + 1}번째(입출항 결과가 있는 첫 선박)`;
+      }
+    }
+    const q = (process.env.GUIDE_PORT_CALLS_QUERY ?? "").trim();
+    if (q) {
+      await openMap(shot.path);
+      await setPressed("layer-ships", true);
+      await setLegend(false);
+      await page.locator("body").press("/");
+      await page.keyboard.type(q);
+      const hit = page.getByTestId("ship-search-item").first();
+      await hit.waitFor({ timeout: 10_000 }).catch(() => {});
+      if (await hit.count()) {
+        await hit.click();
+        await page.getByTestId("ship-card").waitFor({ timeout: 10_000 }).catch(() => {});
+        if (await waitStatus()) return `선박 검색 “${q}” 첫 결과 — 부산항 부근 · 도쿄만 후보 ${ships}척에 입출항 결과 없음`;
+      } else tried.push(`검색 “${q}” 결과 없음`);
     }
     throw new Skip(`입출항 결과(ok)가 있는 선박을 찾지 못함 — 후보 상태 ${tried.join(", ") || "선박 없음"}`);
   },

@@ -77,11 +77,11 @@
       "section": "dashboard-ship",
       "path": "/#10/35.08/129.05",
       "title": "선박 카드 — 한국 항만 입출항(해양수산부 PORT-MIS)",
-      "alt": "선박 카드의 한국 항만 입출항 절: 찾는 데 쓴 호출부호, 항만청 · 입항 / 출항(KST · UTC · 신고의 판) · 선석 · 목적 · 전출항지 → 차항지 표, 색인 상태(10개 항만청 · 최근 30일 · 갱신 시각)와 창, 호출부호로만 찾는다는 안내와 출처",
+      "alt": "선박 카드의 한국 항만 입출항 절: 찾는 데 쓴 호출부호, 신고마다 항만청 · 입항 / 출항(KST · UTC · 신고의 판) · 선석 · 목적 · 항로(전출항지 → 차항지) 블록, 색인 상태(10개 항만청 · 최근 30일 · 갱신 시각)와 창, 호출부호로만 찾는다는 안내와 출처",
       "callouts": [
         { "n": 1, "label": "입출항 절", "text": "고른 선박의 AIS 호출부호로 서버 색인(PORT-MIS 항만청 10곳 · 최근 30일)에서 찾은 입출항 신고.", "target": "[data-testid=\"port-calls\"]", "anchor": "tl" },
         { "n": 2, "label": "상태", "text": "기록 없음(색인이 완전할 때만) · 색인 불완전(항만청별 이유) · 꺼짐 · 호출부호를 아직 받지 않음 · 읽기 실패 — 결과가 없을 때 그 이유.", "target": "[data-testid=\"port-calls-status\"]", "anchor": "l" },
-        { "n": 3, "label": "결과 표", "text": "항만청 · 입항 / 출항(KST · UTC — 00:00 신고는 날짜만 · 신고의 판) · 선석 · 목적 · 전출항지 → 차항지.", "target": "[data-testid=\"port-calls-table\"]", "anchor": "tl" },
+        { "n": 3, "label": "신고 목록", "text": "신고마다 한 블록 — 항만청 · 입항 / 출항(KST · UTC — 00:00 신고는 날짜만 · 신고의 판) · 선석 · 목적 · 항로(전출항지 → 차항지).", "target": "[data-testid=\"port-calls-table\"]", "anchor": "tl" },
         { "n": 4, "label": "색인 상태", "text": "색인: 10개 항만청 · 최근 30일 · 갱신 시각(KST · UTC)과 창(KST 날짜 · 입항일 기준).", "target": "[data-testid=\"port-calls-index\"]", "anchor": "l" },
         { "n": 5, "label": "안내 · 출처", "text": "호출부호로만 찾는다는 한계와 출처(해양수산부 선박운항정보 · 공공데이터포털).", "target": "[data-testid=\"port-calls-caveat\"]", "anchor": "l" }
       ]

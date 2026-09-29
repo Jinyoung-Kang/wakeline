@@ -28,7 +28,7 @@ function When({ at, revision, testId }: { at: string | null; revision: PortCallR
 /**
  * 한국 항만 입출항(ADR-022 개정): 서버 수집기가 해양수산부 PORT-MIS 의 항만청 10곳 신고를 KST 날짜별로 모두 받아 둔 색인에서, 고른 선박의 AIS
  * 호출부호로 찾은 것(api 가 ship_selected.port_calls 로 보낸다 — 고를 때 외부에 묻지 않는다). 상태마다 문구(기록 없음 · 색인 불완전 — 어느 항만청이
- * 왜 · 꺼짐 · 호출부호를 아직 받지 않음 · 읽기 실패), 결과는 표(항만청 · 입항 · 출항 KST+UTC · 선석 · 목적 · 전출항지 → 차항지). 색인 상태 한 줄
+ * 왜 · 꺼짐 · 호출부호를 아직 받지 않음 · 읽기 실패), 결과는 신고마다 블록(항만청 · 입항 · 출항 KST+UTC · 선석 · 목적 · 전출항지 → 차항지). 색인 상태 한 줄
  * ("색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>"). PORT-MIS 신고 선명이 AIS 선명과 다르면(둘 다 영문일 때만) 경고로 밝힌다.
  * calls 가 null(서버가 보내지 않음 · 형식 오류)이면 "—".
  */
@@ -110,29 +110,26 @@ function PortCallTable({ calls, aisName }: { calls: PortCallsInfo; aisName: stri
       <div className="mb-0.5 text-[10px] text-fg-3" data-testid="port-calls-reported">
         최근 신고 선종 {newest.kind ?? "—"} · 국적 {newest.nationality ?? "—"}
       </div>
-      <table className="text-[11px]" data-testid="port-calls-table">
-        <thead>
-          <tr>
-            <th scope="col" className="px-1 py-1">항만청</th>
-            <th scope="col" className="px-1 py-1" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만">입항(KST · UTC)</th>
-            <th scope="col" className="px-1 py-1" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 출항 신고가 없으면 —(아직 입항 중일 수 있다)">출항(KST · UTC)</th>
-            <th scope="col" className="px-1 py-1" title="입항 신고의 계류 시설(PORT-MIS laidupFcltyNm)">선석</th>
-            <th scope="col" className="px-1 py-1">목적</th>
-            <th scope="col" className="px-1 py-1">전출항지 → 차항지</th>
-          </tr>
-        </thead>
-        <tbody>
-          {calls.items.map((c, i) => (
-            <tr key={`${c.port_authority_code ?? "?"}-${c.listed_date ?? "?"}-${c.entry_at ?? c.exit_at ?? i}-${i}`} data-testid="port-call-row">
-              <td className="px-1 py-1">
-                <span className="block">{c.port_authority ?? "—"}</span>
-                {c.port_authority_code ? <span className="mono block text-[10px] text-fg-3" title="항만청 코드(PORT-MIS prtAgCd)">{c.port_authority_code}</span> : null}
-              </td>
-              <td className="px-1 py-1"><When at={c.entry_at} revision={c.entry_revision} testId="port-call-entry" /></td>
-              <td className="px-1 py-1"><Exit c={c} /></td>
-              <td className="px-1 py-1">{c.berth ?? "—"}</td>
-              <td className="px-1 py-1">{c.purpose ?? "—"}</td>
-              <td className="px-1 py-1">
+      {/* 신고마다 라벨 · 값 두 열 블록 — 선박 카드는 좁은 옆 칸이라 6열 표는 선석 이름을 한 글자씩 접었다(설명서 캡처로 확인) */}
+      <ol className="flex flex-col gap-1.5 text-[11px]" data-testid="port-calls-table" aria-label={`입출항 신고 ${calls.items.length}건`}>
+        {calls.items.map((c, i) => (
+          <li key={`${c.port_authority_code ?? "?"}-${c.listed_date ?? "?"}-${c.entry_at ?? c.exit_at ?? i}-${i}`}
+            className="border-l-2 border-line py-0.5 pl-2" data-testid="port-call-row">
+            <div className="font-semibold text-fg">
+              {c.port_authority ?? "—"}
+              {c.port_authority_code ? <span className="mono font-normal text-fg-3" title="항만청 코드(PORT-MIS prtAgCd)"> · {c.port_authority_code}</span> : null}
+            </div>
+            <dl className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-2 gap-y-0.5">
+              <dt className="text-fg-3" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만">입항</dt>
+              <dd><When at={c.entry_at} revision={c.entry_revision} testId="port-call-entry" /></dd>
+              <dt className="text-fg-3" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 출항 신고가 없으면 —(아직 입항 중일 수 있다)">출항</dt>
+              <dd><Exit c={c} /></dd>
+              <dt className="text-fg-3" title="입항 신고의 계류 시설(PORT-MIS laidupFcltyNm)">선석</dt>
+              <dd className="break-keep">{c.berth ?? "—"}</dd>
+              <dt className="text-fg-3">목적</dt>
+              <dd>{c.purpose ?? "—"}</dd>
+              <dt className="text-fg-3" title="전출항지 → 차항지(PORT-MIS 신고)">항로</dt>
+              <dd>
                 <span className="block">{legText(c)}</span>
                 {c.dest_port && portText(c.dest_port) !== portText(c.next_port) ? (
                   <span className="block text-[10px] text-fg-3">목적지 {portText(c.dest_port)}</span>
@@ -140,11 +137,11 @@ function PortCallTable({ calls, aisName }: { calls: PortCallsInfo; aisName: stri
                 {c.first_port && portText(c.first_port) !== portText(c.prev_port) ? (
                   <span className="block text-[10px] text-fg-3">최초 출항지 {portText(c.first_port)}</span>
                 ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </dd>
+            </dl>
+          </li>
+        ))}
+      </ol>
       {calls.truncated ? <div className="mt-0.5 text-[10px] text-warn" data-testid="port-calls-truncated">최근 {PORT_CALL_MAX_ITEMS}건만 표시 — 더 있음</div> : null}
       {calls.index && !calls.index.complete ? (
         <div className="mt-0.5 text-[10px] text-warn" data-testid="port-calls-incomplete">
