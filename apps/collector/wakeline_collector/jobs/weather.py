@@ -18,10 +18,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
-from wakeline_collector.budget import UNKNOWN
+from wakeline_collector.budget import UNKNOWN, regular_headroom
 from wakeline_collector.errors import describe_error
 from wakeline_collector.flight_category import assess_ceiling, flight_category, parse_visibility_sm
 from wakeline_collector.geo import boxes_around
@@ -53,10 +53,9 @@ def retry_headroom(rt: Any, provider: str, now: datetime) -> int:
     """다시 부르기 예약이 남겨 둘 몫: 예산 날(UTC — budget.day_key)이 끝날 때까지 정규 주기가 이 공급자 예산에서 더 쓸 수 있는 최대
     호출 수. 지금 주기 설정으로 계산한 상한이다(잰 값이 아니다) — run_periodic 은 주기가 끝난 뒤 주기만큼 쉬므로 남은 주기는
     남은 초 // 주기 + 1(지금 돌거나 곧 시작할 주기 하나) 이하다. 다시 부르기는 사용량 + 1 ≤ 한도 − 이 값일 때만 예약하므로(budget
-    headroom) 하루 내내 일시 오류여도 정규 주기가 예산 소진으로 막히지 않는다. 정규 주기만으로 한도를 넘는 설정이면 다시 부르지 않는다."""
-    now = now.astimezone(UTC)
-    left = ((now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0) - now).total_seconds()
-    return sum((int(left // getattr(rt, name)) + 1) * calls for name, calls in REGULAR_CALLS.get(provider, ()))
+    headroom) 하루 내내 일시 오류여도 정규 주기가 예산 소진으로 막히지 않는다. 정규 주기만으로 한도를 넘는 설정이면 다시 부르지 않는다.
+    계산은 budget.regular_headroom — KMA 부분 합성 다시 받기(jobs/kma_radar.py)도 같은 규칙이다."""
+    return regular_headroom(((getattr(rt, name), calls) for name, calls in REGULAR_CALLS.get(provider, ())), now)
 
 
 def _iso(dt: datetime) -> str:

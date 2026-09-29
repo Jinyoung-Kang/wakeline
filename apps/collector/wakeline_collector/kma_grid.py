@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import struct
+import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -104,6 +105,17 @@ def parse_header(buf: bytes) -> Header:
         if code:
             stations.append(code)
     return Header(version, ptype, tm, tm_in, num_stn, map_code, nx, ny, nz, dxy, num_data, data_code, stations)
+
+
+def read_header(gz_bytes: bytes) -> Header:
+    """gzip 파일의 앞 HEADER_BYTES 만 풀어 헤더를 읽는다 — 자료 블록(해제 약 40 MB)은 풀지 않는다(지점 수만 볼 때).
+    해제 결과를 HEADER_BYTES 로 자르므로 압축 폭탄도 부풀지 않는다. gzip 이 아니거나 헤더가 다 오지 않았으면 ValueError."""
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)  # 16+: gzip 헤더 검사
+    try:
+        head = d.decompress(gz_bytes, HEADER_BYTES)
+    except zlib.error as e:
+        raise ValueError(f"invalid gzip: {e}") from e
+    return parse_header(head)
 
 
 def read_echo(gz_bytes: bytes, max_raw_bytes: int = MAX_RAW_BYTES) -> tuple[Header, np.ndarray]:

@@ -21,6 +21,7 @@ import { apiGet } from "@/lib/api";
 import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { isMetarStale } from "@/lib/format";
+import { krLayerId } from "@/lib/kr-radar";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
@@ -501,10 +502,11 @@ export function MapView() {
     const c = radarKr.coordinates;
     const coords: [[number, number], [number, number], [number, number], [number, number]] = [c[0], c[1], c[2], c[3]];
     const display = frameDisplay(radarKr.frames.length, krFrameIndex, layers.radar && radarSource === "kma", radarPlaying);
+    // 레이어 id 에 영상 버전(?v=)을 붙인다 — 부분 합성 프레임을 다시 받아 바꾸면(ADR-021) 새 영상이 새 레이어로 그려지고 옛 영상 레이어는 지운다
     const frames: Frame[] = radarKr.frames.map((f) => ({
-      id: `kmar-${f.tm}`,
+      id: krLayerId(f),
       add: (m) => {
-        const id = `kmar-${f.tm}`;
+        const id = krLayerId(f);
         m.addSource(id, { type: "image", url: f.url, coordinates: coords });
         m.addLayer({ id, type: "raster", source: id, layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 150 }, "raster-resampling": "nearest" } }, "sigmet-fill");
       },

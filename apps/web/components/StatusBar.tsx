@@ -2,6 +2,7 @@
 import { serverNowMs, useServerData } from "@/lib/store";
 import { useNow } from "@/lib/clock";
 import { fmtAgo, fmtClockKst, fmtKstTitle, fmtUtcTitle, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
+import { krComposite } from "@/lib/kr-radar";
 import { aisBadge, aisGapBadge } from "@/lib/ships";
 import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
 import { WsInvalidBadge } from "./WsInvalidBadge";
@@ -31,6 +32,8 @@ export function StatusBar() {
   const live = isRxFresh(s.conn, s.lastRxAt, now);
   const silent = s.conn === "open" && !live;
   const krStale = s.radarKr?.available ? isKrRadarStale(s.radarKr, srvNow) : false;
+  // 최신 KMA 프레임의 합성 크기(ADR-021) — 부분 합성이면 연결 상태 뒤에 경고 배지(R-31 자리)
+  const krComp = s.radarKr?.available ? krComposite(s.radarKr.frames[s.radarKr.frames.length - 1], srvNow) : null;
   const region = feedLag(s.feeds.region, now, live, REGION_STALE_S);
   const world = s.feeds.global ? feedLag(s.feeds.global, now, live, GLOBAL_STALE_S) : null;
   const fixture = s.status?.fixture_mode;
@@ -49,7 +52,8 @@ export function StatusBar() {
       {invAny ? <WsInvalidBadge inv={inv} /> : null}
       {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
       {/* 경고 배지는 앞쪽에 — 가로 스크롤 끝으로 밀려 보이지 않게 두지 않는다(R-31) */}
-      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더 수집이 ${KR_RADAR_STALE_S / 60}분 넘게 갱신되지 않음(마지막 수집 ${fmtKstTitle(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
+      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더에 ${KR_RADAR_STALE_S / 60}분 넘게 새 프레임 없음(최신 tm 첫 수집 ${fmtKstTitle(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
+      {krComp?.warn ? <span className="badge warn normal-case!" data-testid="kr-status-partial" title={krComp.warn}>KMA 일부 합성</span> : null}
       <span className="mono" data-testid="aircraft-count"
         title={s.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다"}>
         <span className="label mr-1">aircraft</span>{s.aircraftCount ?? "—"}
@@ -65,7 +69,7 @@ export function StatusBar() {
       {ais ? <span className={`badge normal-case! ${ais.tone === "muted" ? "" : ais.tone}`} data-testid="ais-badge" data-tone={ais.tone} title={ais.title}>{ais.text}</span> : null}
       {gap ? <span className={`badge normal-case! ${gap.open && !gap.partial ? "bad" : "warn"}`} data-testid="ais-gap-badge" data-partial={gap.partial ? "true" : undefined} title={gap.title}>{gap.text}</span> : null}
       <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {qty(s.status?.sigmet?.active, "active")} · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
-      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{qty(s.radar?.past.length, "frames")} · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${kmaTmClock(s.radarKr.latest_tm)}` : ""}</span>
+      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{qty(s.radar?.past.length, "frames")} · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${kmaTmClock(s.radarKr.latest_tm)}` : ""}{krComp ? <span title={krComp.title} data-testid="kr-status-composite" className={krComp.warn ? "text-warn" : undefined}>{` · ${krComp.label}`}</span> : null}</span>
       <span className="mono text-fg-3"><span className="label mr-1">engine</span>{qty(s.status?.engine?.index_polygons, "polys")} · {qty(s.status?.engine?.last_cycle_ms, "ms", "cycle")}</span>
       <span className="mono text-fg-3">v{s.snapshotVersion}</span>
     </div>

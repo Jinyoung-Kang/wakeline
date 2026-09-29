@@ -70,6 +70,28 @@ class RestSamplesIT extends IntegrationTest {
         index.put(name, path);
     }
 
+    /** 수집기가 쓰는 모양의 기상청 프레임 목록(합성 값): 부분 합성 1 · 완전 1. */
+    static String krFrames(String partialTm, String fullTm, Instant at) {
+        String ids15 = String.join(",", List.of("\"KWK\"", "\"GDK\"", "\"GNG\"", "\"KSN\"", "\"JNI\"", "\"MYN\"", "\"PSN\"", "\"GSN\"", "\"SSP\"",
+                "\"BRI\"", "\"GAS\"", "\"GRS\"", "\"SBS\"", "\"SDS\"", "\"MHS\""));
+        return ("[{\"tm\":\"%s\",\"obs_tm\":\"%s\",\"fetched_at\":\"%s\",\"expires_at\":\"%s\",\"bytes\":68,\"echo_cells\":8587,\"raw_ref\":\"kma_radar/a.bin.gz\","
+                + "\"stations\":7,\"station_ids\":[\"KWK\",\"GDK\",\"GNG\",\"KSN\",\"JNI\",\"MYN\",\"PSN\"],\"stations_ref\":15,\"partial\":true,"
+                + "\"refetches\":1,\"upgrades\":0,\"refetched_at\":\"%s\",\"refetch_until\":\"%s\"},"
+                + "{\"tm\":\"%s\",\"obs_tm\":\"%s\",\"fetched_at\":\"%s\",\"expires_at\":\"%s\",\"bytes\":68,\"echo_cells\":38060,\"raw_ref\":\"kma_radar/b.bin.gz\","
+                + "\"stations\":15,\"station_ids\":[%s],\"stations_ref\":15,\"partial\":false,\"refetches\":0,\"upgrades\":0,\"refetch_until\":\"%s\"}]")
+                .formatted(partialTm, partialTm, at.minusSeconds(600), at.plusSeconds(3600), at.minusSeconds(60), at.plusSeconds(900),
+                        fullTm, fullTm, at.minusSeconds(300), at.plusSeconds(3600), ids15, at.plusSeconds(1200));
+    }
+
+    static Map<String, String> krMeta(String latestTm, Instant at) {
+        return Map.ofEntries(Map.entry("available", "1"), Map.entry("status", "200"), Map.entry("note", ""), Map.entry("latest_tm", latestTm),
+                Map.entry("product", "HSR"), Map.entry("cmp", "HSR"), Map.entry("coordinates", "[[121.8,39.9],[132.9,39.9],[132.9,31.6],[121.8,31.6]]"),
+                Map.entry("width", "640"), Map.entry("height", "480"), Map.entry("projection", "EPSG:3857"), Map.entry("grid", "{\"nx\":2305,\"ny\":2881}"),
+                Map.entry("legend", "[[5,[120,190,255,150]]]"), Map.entry("min_dbz", "5.0"), Map.entry("stations", "15"),
+                Map.entry("station_ids", "KWK,GDK,GNG,KSN,JNI,MYN,PSN,GSN,SSP,BRI,GAS,GRS,SBS,SDS,MHS"), Map.entry("stations_ref", "15"), Map.entry("partial", "0"),
+                Map.entry("fetched_at", at.minusSeconds(300).toString()), Map.entry("checked_at", at.toString()));
+    }
+
     @Test
     void recordsRestResponsesForThePythonContractCheck() throws Exception {
         // 자료: SIGMET 1(관측 판정 대상) + 관심 지역 3대(1대는 SIGMET 안) + 전세계 1대 + 레이더 프레임 + 공항·METAR
@@ -142,6 +164,17 @@ class RestSamplesIT extends IntegrationTest {
         record("alerts", "/api/v1/alerts", 200);
         record("alerts_history", "/api/v1/alerts/history", 200);
         record("radar_frames", "/api/v1/radar/frames", 200);
+        // 기상청 합성 레이더(ADR-021): 수집기 역할로 영상 · 목록 · meta — 14:40 은 부분 합성(7/15곳, 한 번 다시 받음), 14:45 는 완전(15/15곳)
+        String krPartial = "202609291440", krFull = "202609291445";
+        Instant krAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        try {
+            for (String tm : List.of(krPartial, krFull)) ItStack.collector().opsForValue().set("wakeline:radar_kr:frame:" + tm, RadarKrIT.PNG_1X1);
+            ItStack.collector().opsForValue().set("wakeline:radar_kr:frames", krFrames(krPartial, krFull, krAt));
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", krMeta(krFull, krAt));
+            record("radar_kr", "/api/v1/radar/kr", 200);
+        } finally {
+            ItStack.deleteKeys("wakeline:radar_kr:*");
+        }
         record("airports", "/api/v1/airports", 200);
         record("airport_wx", "/api/v1/airports/RKSI/wx", 200);
         record("replay", "/api/v1/replay?at=" + Instant.now().minusSeconds(5).truncatedTo(ChronoUnit.SECONDS) + "&bbox=" + bbox, 200);
@@ -194,14 +227,19 @@ class RestSamplesIT extends IntegrationTest {
                 "bbox", "-90,-180,90,0|" + ASIA_PACIFIC, "shards", shards));
         try {
             ItStack.hset(ItStack.collector(), "wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
-            await("status sources.ais and demand rate", WAIT, () -> {
+            Map<String, String> kr = new java.util.HashMap<>(krMeta(krPartial, krAt));
+            kr.putAll(Map.of("stations", "7", "stations_ref", "15", "partial", "1", "station_ids", "KWK,GDK,GNG,KSN,JNI,MYN,PSN"));
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", kr);
+            await("status sources.ais, demand rate and radar_kr sites", WAIT, () -> {
                 Map<String, Object> st = status.status();
                 return st.get("sources") instanceof Map<?, ?> src && src.get("ais") instanceof Map<?, ?> ais && Boolean.TRUE.equals(ais.get("connected"))
-                        && st.get("demand") instanceof Map<?, ?> d && d.get("adsb_fi_rps_1m") != null;
+                        && st.get("demand") instanceof Map<?, ?> d && d.get("adsb_fi_rps_1m") != null
+                        && st.get("radar_kr") instanceof Map<?, ?> k && k.get("partial") != null;
             });
             record("status_ais", "/api/v1/status", 200);
         } finally {
             ItStack.deleteKeys("wakeline:collector");
+            ItStack.deleteKeys("wakeline:radar_kr:*");
         }
         Files.writeString(OUT.resolve("index.json"), Streams.JSON.writeValueAsString(index), StandardCharsets.UTF_8);
 
@@ -249,7 +287,14 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(noStatic.has("static")).isFalse();
         assertThat(noStatic.has("destination_info")).isFalse();
         assertThat(noStatic.path("category").asString()).isEqualTo("unknown");
+        JsonNode krBody = Streams.JSON.readTree(Files.readString(OUT.resolve("radar_kr.json"))).path("body");
+        assertThat(krBody.path("frames").size()).isEqualTo(2);
+        assertThat(krBody.path("frames").get(0).path("partial").asBoolean()).isTrue();
+        assertThat(krBody.path("frames").get(0).path("stations").asInt()).isEqualTo(7);
+        assertThat(krBody.path("stations").asInt()).as("top level = the latest frame").isEqualTo(15);
         JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
+        assertThat(st.path("radar_kr").path("stations").asInt()).isEqualTo(7);
+        assertThat(st.path("radar_kr").path("partial").asBoolean()).isTrue();
         assertThat(st.path("sources").path("ais").path("msgs_per_s").asDouble()).isEqualTo(4.2);
         assertThat(st.path("sources").path("ais").path("state").asString()).isEqualTo("receiving");
         assertThat(st.path("sources").path("ais").path("coverage").toString()).isEqualTo("[[-90.0,-180.0,90.0,0.0],[-90.0,45.0,90.0,180.0]]");

@@ -135,7 +135,8 @@ class WsSchemaContractTest {
         Map<String, Map<Object, Object>> h = Map.of(
                 "wakeline:collector", Map.of("fixture", "0", "adsb_fi_rps_1m", "0.2667", "region_at", now.minusSeconds(5).toString()),
                 "wakeline:radar_kr:meta", Map.of("available", "1", "status", "200", "latest_tm", "202609290500",
-                        "fetched_at", now.minusSeconds(120).toString(), "checked_at", now.minusSeconds(30).toString()),
+                        "fetched_at", now.minusSeconds(120).toString(), "checked_at", now.minusSeconds(30).toString(),
+                        "stations", "7", "stations_ref", "15", "partial", "1", "station_ids", "KSN,GDK,JNI,MYN,PSN,GSN,SSP"), // ADR-021
                 "wakeline:active", Map.of("region", "adsb_lol", "global", "opensky", "hot", "adsb_fi"),
                 AisStatus.KEY, Map.of("provider", "aisstream", "connected", "1", "state", "receiving", "updated_at", now.minusSeconds(3).toString(),
                         "last_msg_at", now.minusSeconds(1).toString(), "msgs_per_s", "12.5",
@@ -152,7 +153,7 @@ class WsSchemaContractTest {
         Map<String, Object> st = new StatusService(k.snapshots, k.sigmets, k.radar, engine, redis, new RegionSettings(redis, null, null, k.props), demand, ais)
                 .publicStatus();
         assertThat(((Map<?, ?>) st.get("sources")).get("ais")).as("sources.ais").isNotNull();
-        assertThat(((Map<String, Object>) st.get("radar_kr")).keySet()).as("radar_kr").contains("available", "status", "latest_tm");
+        assertThat(((Map<String, Object>) st.get("radar_kr")).keySet()).as("radar_kr").contains("available", "status", "latest_tm", "stations", "stations_ref", "partial");
         assertThat(((Map<?, ?>) st.get("demand")).get("adsb_fi_rps_1m")).as("demand.adsb_fi_rps_1m").isNotNull();
         return st;
     }

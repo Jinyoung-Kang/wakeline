@@ -130,6 +130,7 @@ public class WeatherController {
 
     /**
      * 기상청 레이더 합성(FR-31): 최근 프레임 목록 + 웹 메르카토르 정합 좌표(문서 기반 LCC → EPSG:3857 재투영) + 범례.
+     * 프레임마다 합성 지점 수 · 코드 · 기준 · 부분 합성 · 다시 받기 기록(ADR-021 — KrRadarFrames 가 검증), 최상위는 최신 프레임의 같은 값.
      * 목록은 PNG 키가 아직 남아 있는 프레임만 싣는다 — 목록 키가 프레임(TTL 3 h)보다 오래 남아도 없는 이미지를 '있다' 고 하지 않는다(REL-19).
      * available·georeferenced 는 수집기가 쓸 수 있다고 표시했고 실제 프레임이 하나 이상 있을 때만 true. ETag = 응답을 결정하는 값들의 해시.
      */
@@ -144,15 +145,8 @@ public class WeatherController {
         if (listedNode != null && listedNode.isArray()) {
             List<Map<String, Object>> listed = new ArrayList<>();
             for (var f : listedNode) {
-                String tm = f.path("tm").asString();
-                if (!tm.matches("^\\d{12}$")) continue;
-                Map<String, Object> fr = new LinkedHashMap<>();
-                fr.put("tm", tm);
-                fr.put("obs_tm", f.path("obs_tm").asString());
-                fr.put("fetched_at", f.path("fetched_at").asString());
-                fr.put("echo_cells", f.path("echo_cells").asInt());
-                fr.put("url", "/api/v1/radar/kr/" + tm + ".png");
-                listed.add(fr);
+                Map<String, Object> fr = KrRadarFrames.frame(f, this::radarParseError); // tm 이 틀리면 null · 부분 합성 필드는 검증한 값만(ADR-021)
+                if (fr != null) listed.add(fr);
             }
             List<Boolean> exists = framesExist(listed.stream().map(fr -> (String) fr.get("tm")).toList());
             for (int i = 0; i < listed.size(); i++) if (i < exists.size() && Boolean.TRUE.equals(exists.get(i))) frames.add(listed.get(i));
@@ -162,8 +156,9 @@ public class WeatherController {
         tools.jackson.databind.JsonNode coordinates = h.get("coordinates") == null ? null : parseJson("coordinates", String.valueOf(h.get("coordinates")));
         int[] imageSize = imageSize(h.get("width"), h.get("height"));
         boolean available = "1".equals(h.get("available")) && !frames.isEmpty() && coordinates != null && imageSize != null;
+        // 프레임은 tm 뿐 아니라 내용 전체(받은 시각 · 지점 수 · partial · URL 버전) — 같은 tm 을 다시 받아 바꿔도 304 로 옛 값을 붙잡지 않는다(ADR-021)
         String etag = "\"k" + Integer.toHexString(java.util.Objects.hash(h.get("fetched_at"), h.get("latest_tm"), h.get("available"), h.get("status"),
-                h.get("coordinates"), h.get("width"), h.get("height"), frames.stream().map(fr -> fr.get("tm")).toList())) + "\"";
+                h.get("coordinates"), h.get("width"), h.get("height"), frames)) + "\"";
         CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
         if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
@@ -179,7 +174,7 @@ public class WeatherController {
         m.put("grid", h.get("grid") == null ? null : parseJson("grid", String.valueOf(h.get("grid"))));
         m.put("legend", h.get("legend") == null ? null : parseJson("legend", String.valueOf(h.get("legend"))));
         m.put("min_dbz", h.get("min_dbz"));
-        m.put("stations", h.get("stations"));
+        m.putAll(KrRadarFrames.latest(frames)); // 최신 프레임의 합성 지점 수 · 코드 · 기준 · partial(모르면 키 없음, ADR-021)
         m.put("image_size", imageSize);
         m.put("frames", frames);
         m.put("time_zone", "KST(UTC+9) for tm; fetched_at is UTC");
