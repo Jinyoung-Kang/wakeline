@@ -1,11 +1,10 @@
 /**
- * KST 로 보인 시각에는 원본 UTC 가 툴팁으로 붙는다(리뷰 2026-09-29 — /about · 선박 카드가 "시각에 마우스를 올리면 원본 UTC" 라고 말하는데
- * title 이 없던 자리: 공항 카드 관측 · 수신, 근거 카드 출처/관측 · 종료, 기상청 패널 수신, 알림 배너, SIGMET 발효 전 배지, 선박 카드 수신 공백 목록,
- * 재생 SIGMET 유효 · 기록 시각). 원문(METAR · SIGMET raw)은 보이는 이름표 "(원문 · UTC)" 를 단다 — KST 시각 바로 옆의 "…Z" 가 UTC 라는 것이
- * 툴팁 없이도 보이게(공항 카드 · SIGMET 카드와 같게).
- * 규칙(missingUtc): 마운트한 카드 안에서 "hh:mm" 이 든 보이는 글자는 title 에 "원본 UTC" 가 있는 요소 안에 있거나 스스로 UTC 를 적고
- * ("… UTC" · "…Z" — 사용자 요청 2026-09-29 "UTC 와 KST 함께" 뒤로는 거의 모든 시각이 UTC 를 보이게 적는다, 선원 ETA 입력값),
- * title 에 KST 시각을 적은 요소는 같은 title 에 UTC 도 적는다. 지도 툴팁도 이제 "… KST · …Z" 로 UTC 를 보인다(tests/kst-dashboard).
+ * 보인 시각에는 같은 순간의 전체(연도 · ms 까지의 KST)가 툴팁으로 붙는다 — /about · 선박 카드가 "시각에 마우스를 올리면 연도 · ms 까지의 같은 순간"
+ * 이라고 말하는 약속(계약 v5 §G19 — 사용자 결정 2026-09-30 "UTC 지우고 KST": 예전의 "원본 UTC" 툴팁을 대신한다). 공항 카드 관측 · 수신, 근거 카드
+ * 출처/관측 · 종료, 기상청 패널 수신, 알림 배너, SIGMET 발효 전 배지, 선박 카드 수신 공백 목록, 재생 SIGMET 유효 · 기록 시각. 원문(METAR · SIGMET raw)은
+ * 보이는 이름표 "(원문 · 발표 그대로)" 를 달고 data-raw 로 표시한다 — KST 시각 바로 옆의 "…Z" 가 발표 형식이라는 것이 툴팁 없이도 보이게.
+ * 규칙(missingHover): 마운트한 카드 안에서 "hh:mm" 이 든 보이는 글자는 title 에 연도 · ms 까지의 KST 가 있는 요소 안에 있거나(원문 · data-raw 밖),
+ * title 에 시각을 적은 요소는 KST 만 적는다(UTC 없음 — tests/helpers/kst-only).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +14,7 @@ import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { resetData, setData } from "@/lib/store";
 import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
 import AboutPage from "@/app/about/page";
-import { domUtcLeaks } from "./helpers/kst-only";
+import { domUtcLeaks, OTHER_LANE_PENDING } from "./helpers/kst-only";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -53,16 +52,18 @@ async function mount(el: React.ReactElement) {
 }
 const at = (iso: string) => vi.useFakeTimers({ toFake: ["Date"], now: Date.parse(iso) });
 
-/** 원본 UTC 를 보여 주지 않는 시각 — 보이는 글자(title 에 원본 UTC 가 있는 조상이 없음)와 KST 시각을 적었는데 원본 UTC 가 없는 title */
-function missingUtc(from: MiniElement = dom.container): string[] {
-  const out: string[] = [];
+/** 연도 · ms 까지의 KST(툴팁의 모양 — lib/time fmtTimeTitle) */
+const FULL_KST = /\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} KST/;
+/** 툴팁 약속을 지키지 않는 시각 — 보이는 hh:mm 글자인데 조상 title 에 연도 · ms 까지의 KST 가 없음(원문 data-raw 밖) + 원문 밖의 UTC 흔적 */
+function missingHover(from: MiniElement = dom.container): string[] {
+  const out: string[] = domUtcLeaks(from, OTHER_LANE_PENDING).map((x) => `utc: ${x}`); // 다른 레인의 검색 상자 설명 한 줄은 뺀다(helpers/kst-only)
   const walk = (n: MiniElement, covered: boolean) => {
-    const title = n.getAttribute("title") ?? "";
-    if (/\d\d:\d\d(:\d\d)? KST/.test(title) && !/UTC/.test(title)) out.push(`title: ${title}`);
-    const c2 = covered || title.includes("원본 UTC");
+    if (n.hasAttribute("data-raw")) return;
+    const c2 = covered || FULL_KST.test(n.getAttribute("title") ?? "");
     for (const c of n.childNodes) {
       if (c instanceof MiniElement) walk(c, c2);
-      else if (!c2 && /\d\d:\d\d/.test(c.textContent) && !/UTC|\d\d:\d\d(:\d\d)?Z/.test(c.textContent)) out.push(`text: ${c.textContent}`);
+      // 시각 모양의 글자 — 선원 ETA 는 연도가 없는 보고값이라 순간이 아니다(행 title 이 그렇게 말한다)
+      else if (!c2 && /\d\d:\d\d(:\d\d)?( KST|\b)/.test(c.textContent) && /\d\d:\d\d(:\d\d)? KST|\d\d-\d\d \d\d:\d\d/.test(c.textContent) && !c.textContent.includes("선원 입력")) out.push(`text: ${c.textContent}`);
     }
   };
   walk(from, false);
@@ -102,7 +103,7 @@ describe("airport: every time is KST with the full KST instant on hover; the raw
   });
 });
 
-describe("dashboard cards: the times the review found without a UTC original", () => {
+describe("dashboard cards: every time has the full KST instant on hover (no UTC anywhere)", () => {
   it("evidence card: source/observation and end rows", async () => {
     at("2026-09-28T23:40:00Z");
     const a = {
@@ -112,8 +113,8 @@ describe("dashboard cards: the times the review found without a UTC original", (
     } as unknown as Alert;
     const { EvidenceCard } = await import("@/components/EvidenceCard");
     await mount(createElement(EvidenceCard, { a }));
-    expect(dom.container.textContent).toContain("출처 / 관측adsb_fi · 09-29 07:59:30 KST · 09-28 22:59:30 UTC");
-    expect(missingUtc()).toEqual([]);
+    expect(dom.container.textContent).toContain("출처 / 관측adsb_fi · 09-29 07:59:30 KST");
+    expect(missingHover()).toEqual([]);
   });
   it("KMA radar panel: reception time and the STALE badge", async () => {
     at("2026-09-28T23:59:00Z");
@@ -125,10 +126,10 @@ describe("dashboard cards: the times the review found without a UTC original", (
     setData({ radarKr: kr });
     const { KrRadarPanel } = await import("@/components/KrRadarPanel");
     await mount(createElement(KrRadarPanel, { onClose: () => {} }));
-    expect(dom.container.textContent).toContain("수신09-29 08:41:00 KST · 09-28 23:41:00 UTC");
-    expect(dom.container.textContent).toContain("202609290840 (08:40 KST · 09-28 23:40Z)"); // 기상청 tm 원문 옆에 같은 순간
+    expect(dom.container.textContent).toContain("수신09-29 08:41:00 KST");
+    expect(dom.container.textContent).toContain("202609290840 (08:40 KST)"); // 기상청 tm 원문 옆에 같은 순간
     expect(all((e) => e.getAttribute("data-testid") === "kr-panel-stale")).toHaveLength(1);
-    expect(missingUtc()).toEqual([]);
+    expect(missingHover()).toEqual([]);
   });
   it("alert banner: the received time", async () => {
     at("2026-09-28T23:02:10Z");
@@ -136,10 +137,10 @@ describe("dashboard cards: the times the review found without a UTC original", (
     setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: a, at: Date.parse("2026-09-28T23:02:03Z") } });
     const { AlertPanel } = await import("@/components/AlertPanel");
     await mount(createElement(AlertPanel));
-    expect(all((e) => e.getAttribute("data-testid") === "alert-banner-time")[0].textContent).toBe("수신 08:02:03 KST · 09-28 23:02:03 UTC");
-    expect(missingUtc()).toEqual([]);
+    expect(all((e) => e.getAttribute("data-testid") === "alert-banner-time")[0].textContent).toBe("수신 08:02:03 KST");
+    expect(missingHover()).toEqual([]);
   });
-  it("SIGMET card: the 'not yet valid' badge names the start in KST and UTC", async () => {
+  it("SIGMET card: the 'not yet valid' badge names the start as the full KST instant", async () => {
     at("2026-09-28T22:00:00Z"); // 발효 1 h 전
     const p = { id: "S1", fir_id: "RKRR", fir_name: "INCHEON", series_id: "A1", hazard: "TS", valid_from: "2026-09-28T23:00:00Z", valid_to: "2026-09-29T03:00:00Z",
       active: true, expiring_soon: false, raw_text: "RKRR SIGMET A1 VALID 282300/290300 RKSI-", provider: "awc", fetched_at: "2026-09-28T21:55:00Z" } as SigmetProps;
@@ -147,9 +148,9 @@ describe("dashboard cards: the times the review found without a UTC original", (
     const { SigmetCard } = await import("@/components/SigmetCard");
     await mount(createElement(SigmetCard, { id: "S1" }));
     expect(all((e) => e.getAttribute("data-testid") === "sigmet-pending")).toHaveLength(1);
-    expect(missingUtc()).toEqual([]);
+    expect(missingHover()).toEqual([]);
   });
-  it("ship card: the reception-gap list (the footer promises the UTC original on hover)", async () => {
+  it("ship card: the reception-gap list (the footer promises the full KST instant on hover)", async () => {
     const NOW = Date.parse("2026-09-29T01:00:00Z");
     at("2026-09-29T01:00:00Z");
     const { parseShipDetail, ShipCardView } = await import("@/components/ShipCard");
@@ -162,14 +163,14 @@ describe("dashboard cards: the times the review found without a UTC original", (
     await mount(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
     const gaps = all((e) => e.getAttribute("data-testid") === "ship-gaps")[0];
     expect(all((e) => e.tagName === "LI", gaps).map((li) => li.getAttribute("title"))).toEqual([
-      "원본 UTC 2026-09-28T22:00:00.000Z – 2026-09-28T22:05:00.000Z", "원본 UTC 2026-09-28T23:10:00.000Z – —",
+      "2026-09-29 07:00:00.000 KST – 2026-09-29 07:05:00.000 KST", "2026-09-29 08:10:00.000 KST – —",
     ]);
-    expect(missingUtc()).toEqual([]);
+    expect(missingHover()).toEqual([]);
   });
 });
 
-describe("tooltips that name a KST time also name the UTC original", () => {
-  it("status bar: the KMA STALE badge (the KMA tm itself is issued in KST — no UTC original to show)", async () => {
+describe("tooltips that name a time name it in KST only", () => {
+  it("status bar: the KMA STALE badge", async () => {
     at("2026-09-28T23:59:00Z");
     const kr = {
       available: true, latest_tm: "202609290840", georeferenced: true, coordinates: null, legend: null,
@@ -180,7 +181,7 @@ describe("tooltips that name a KST time also name the UTC original", () => {
     const { StatusBar } = await import("@/components/StatusBar");
     await mount(createElement(StatusBar));
     expect(all((e) => e.getAttribute("data-testid") === "kr-radar-stale")).toHaveLength(1);
-    expect(missingUtc().filter((x) => x.startsWith("title: "))).toEqual([]);
+    expect(missingHover().filter((x) => x.startsWith("title: "))).toEqual([]);
   });
   it("search results: the 'db' badge of an aircraft that is not live, and the not-live ship rows", async () => {
     const NOW = Date.parse("2026-09-29T01:00:00Z");
@@ -191,26 +192,26 @@ describe("tooltips that name a KST time also name the UTC original", () => {
       aircraft: { hits: [{ hex: "71c081", callsign: "KAL081", registration: null, type_code: null, alt_ft: null, on_ground: null, lat: null, lon: null, live: false, last_seen: "2026-09-28T23:41:14Z" }], state: "done", msg: "1건" },
       ships: { hits: [{ mmsi: "300000002", name: "BRAVO", call_sign: null, imo: null, ship_type: null, category: "cargo", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T15:30:00Z", last_seen_at: "2026-09-28T14:30:00Z" }], state: "done", msg: "1건", note: null, error: null },
     } as never));
-    expect(all((e) => e.getAttribute("title") === "마지막 수신 09-29 08:41:14 KST · 09-28 23:41:14 UTC (원본 2026-09-28T23:41:14.000Z)")).toHaveLength(1);
-    expect(missingUtc()).toEqual([]);
+    expect(all((e) => e.getAttribute("title") === "마지막 수신 2026-09-29 08:41:14.000 KST")).toHaveLength(1);
+    expect(missingHover()).toEqual([]);
   });
   it("focus-tracking chip: the start time", async () => {
     const { focusChip, parseDemand } = await import("@/lib/demand");
     const d = parseDemand({ focus: { hex: "71c081", state: "active", interval_s: 5, since: "2026-09-28T23:40:00Z" } }, 0);
-    expect(focusChip(d, "71c081", Date.parse("2026-09-28T23:45:00Z"))!.title).toContain("시작 09-29 08:40:00 KST · 09-28 23:40:00 UTC (원본 2026-09-28T23:40:00.000Z).");
+    expect(focusChip(d, "71c081", Date.parse("2026-09-28T23:45:00Z"))!.title).toContain("시작 2026-09-29 08:40:00.000 KST.");
   });
 });
 
 describe("time labels on the radar timeline and the replay toolbar", () => {
-  it("radar timeline: a RainViewer frame (UTC epoch) shows KST with the original UTC; a KMA frame names its tm as issued in KST", async () => {
+  it("radar timeline: a RainViewer frame (epoch) shows KST with the full KST instant on hover", async () => {
     at("2026-09-28T23:45:00Z");
     setData({ radar: { host: "h", generated: 0, past: [{ time: Date.parse("2026-09-28T23:40:00Z") / 1000, path: "/p" }], fetched_at: "2026-09-28T23:41:00Z" } });
     const { RadarTimeline } = await import("@/components/RadarTimeline");
     await mount(createElement(RadarTimeline));
     const label = all((e) => e.getAttribute("data-testid") === "radar-frame-time")[0];
-    expect(label.textContent).toBe("09-29 08:40 KST · 09-28 23:40Z");
-    expect(label.getAttribute("title")).toBe("원본 UTC 2026-09-28T23:40:00.000Z");
-    expect(missingUtc()).toEqual([]);
+    expect(label.textContent).toBe("09-29 08:40 KST");
+    expect(label.getAttribute("title")).toBe("2026-09-29 08:40:00.000 KST");
+    expect(missingHover()).toEqual([]);
   });
   it("replay radar frame: the tooltip gives the frame's full KST instant (no UTC original — contract v5 §G19)", async () => {
     const { replayRadarTitle } = await import("@/lib/replay");
@@ -254,9 +255,9 @@ describe("the hover promise is stated only where it holds", () => {
     expect(t).toContain("기상청 레이더 tm 은 기상청이 준 KST 그대로입니다");
     expect(t).not.toContain("원본 UTC");
   });
-  it("ship card footer: KST first with UTC; the ISO original on hover (no 'KST only' exception any more)", async () => {
+  it("ship card footer: KST, the full KST instant on hover", async () => {
     const { parseShipDetail, ShipCardView } = await import("@/components/ShipCard");
     const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: parseShipDetail("431011305", { state: null, static: null, meta: {} }), error: null, now: 0 }));
-    expect(html).toContain("시각은 KST 먼저 · UTC 함께 — 이 카드의 시각에 마우스를 올리면 원본 UTC ISO(ms 까지).");
+    expect(html).toContain("시각은 KST — 이 카드의 시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST).");
   });
 });

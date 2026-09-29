@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { domUtcLeaks } from "./helpers/kst-only";
 import { ApiError } from "@/lib/api";
 
 const dom = installMiniDom();
@@ -101,6 +102,9 @@ describe("v5-C8 error boundaries: readable screen, copy, retry, report", () => {
     expect(shown).toBe(written[0].slice(1, 30));
     expect(shown).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+09:00$/);
     expect(shown).not.toContain("UTC");
+    // 오류 화면 어디에도(오류 메시지 · 스택 — 브라우저가 준 글자 그대로, data-raw — 밖) UTC 가 없다
+    expect(byTestId("error-stack")!.getAttribute("data-raw")).toBe("log");
+    expect(domUtcLeaks(screen)).toEqual([]);
     expect(written[0]).toContain("TypeError: Cannot read properties of undefined (reading 'lat')");
     expect(written[0]).toContain("digest=2718281828");
     await React.act(async () => { propsOf(byTestId("error-retry")!).onClick({}); });

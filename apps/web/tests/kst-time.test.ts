@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import * as T from "@/lib/time";
 import { KstRange, KstTime } from "@/components/KstTime";
+import { DualTime } from "@/components/DualTime";
 import { byTestId, parseHtml, textOf } from "./helpers/html-tree";
 
 /** UTC 자정 직전(09-28) — KST 로는 다음 날(09-29) 아침 */
@@ -172,5 +173,20 @@ describe("<KstTime> / <KstRange>", () => {
     expect(s.replace(/<[^>]+>/g, "")).toBe("—");
     expect(s).not.toContain("title=");
     expect(s).not.toContain("<time");
+  });
+});
+
+describe("deprecated aliases kept for the other lane's files draw KST only (removed after the merge — contract v5 §G19)", () => {
+  it("fmtDual · dualPair · <DualTime> (inline · compact · cell) never draw UTC", () => {
+    expect(T.fmtDual(LATE)).toBe("09-29 08:41:14 KST");
+    expect(T.dualPair(LATE, { date: false })).toEqual({ kst: "08:41:14 KST", iso: "2026-09-29T08:41:14.906+09:00" });
+    expect(T.dualPair(null)).toBeNull();
+    const txt = (el: ReturnType<typeof createElement>) => renderToStaticMarkup(el).replace(/<[^>]+>/g, "");
+    expect(txt(createElement(DualTime, { v: LATE }))).toBe("09-29 08:41:14 KST");
+    expect(txt(createElement(DualTime, { v: LATE, variant: "compact", seconds: true }))).toBe("08:41:14 KST"); // 상태 바 region 시각
+    expect(txt(createElement(DualTime, { v: LATE, variant: "compact" }))).toBe("08:41 KST");
+    expect(txt(createElement(DualTime, { v: LATE, date: false }))).toBe("08:41:14 KST"); // 알림 배너
+    expect(txt(createElement(DualTime, { v: LATE, variant: "cell" }))).toBe("09-29 08:41:14 KST");
+    expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).not.toMatch(/UTC|\d(Z|\.\d{3}Z)"/);
   });
 });

@@ -4,7 +4,7 @@ import {
   ageS, ALT_RAMP, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, HAZARD_COLORS, HAZARD_DEFAULT_COLOR, HAZARD_LEGEND,
   hazardColor, isMetarStale, metarAgeS,
 } from "@/lib/format";
-import { fmtDual, fmtDualClock } from "@/lib/time";
+import { fmtKst, fmtKstClock } from "@/lib/time";
 import { ALT_COLOR_EXPR, AIRPORT_FILL_EXPR, coverageTileUrl, frameDisplay, HAZARD_COLOR_EXPR } from "@/lib/maplayers";
 import { attributionText, CREDITS, mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { isTypingTarget, moveActive, normalizeQuery, parseSearchResponse } from "@/lib/search";
@@ -16,14 +16,14 @@ import type { SigmetProps } from "@/lib/types";
 const NOW = Date.parse("2026-09-27T09:00:00Z");
 
 describe("timestamps carry the date (GAP-26)", () => {
-  it("times carry the date (KST first with UTC — 사용자 요청 2026-09-29); the clock form is time only; unknown is —", () => {
-    expect(fmtDual("2026-09-27T08:44:33.912Z")).toBe("09-27 17:44:33 KST · 08:44:33 UTC");
-    expect(fmtDual("2026-09-26T23:59:59Z")).toBe("09-27 08:59:59 KST · 09-26 23:59:59 UTC"); // UTC 로는 전날 — UTC 쪽에 그 날짜
-    expect(fmtDual(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 17:44:33 KST · 08:44:33 UTC");
-    expect(fmtDualClock("2026-09-27T08:44:33Z")).toBe("17:44:33 KST · 08:44:33 UTC");
-    expect(fmtDual(null)).toBe("—");
-    expect(fmtDual("garbage")).toBe("—");
-    expect(fmtDual("")).toBe("—");
+  it("times carry the date (KST only — contract v5 §G19); the clock form is time only; unknown is —", () => {
+    expect(fmtKst("2026-09-27T08:44:33.912Z")).toBe("09-27 17:44:33 KST");
+    expect(fmtKst("2026-09-26T23:59:59Z")).toBe("09-27 08:59:59 KST"); // UTC 로는 전날 — KST 날짜만
+    expect(fmtKst(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 17:44:33 KST");
+    expect(fmtKstClock("2026-09-27T08:44:33Z")).toBe("17:44:33 KST");
+    expect(fmtKst(null)).toBe("—");
+    expect(fmtKst("garbage")).toBe("—");
+    expect(fmtKst("")).toBe("—");
   });
   it("durations are compact and never negative", () => {
     expect(fmtDuration(42)).toBe("42s");
@@ -188,7 +188,7 @@ describe("hover tooltips (GAP-26)", () => {
   });
   it("airport: category, METAR age, stale, ceiling state", () => {
     const t = airportTip({ icao: "RKSI", flight_cat: "VFR", flight_cat_source: "awc", obs_time: "2026-09-27T06:00:00Z", ceiling_state: "none" }, NOW);
-    expect(Object.fromEntries(t.rows)).toMatchObject({ CAT: "VFR · AWC 제공", METAR: "09-27 15:00 KST · 06:00Z · 3h 00m 전", CEIL: "실링 없음" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ CAT: "VFR · AWC 제공", METAR: "09-27 15:00 KST · 3h 00m 전", CEIL: "실링 없음" });
     expect(t.flags.map((f) => f.text)).toContain("오래됨 · 2시간 초과");
     const none = airportTip({ icao: "RKXX" }, NOW);
     expect(Object.fromEntries(none.rows)).toMatchObject({ CAT: "—", METAR: "—", CEIL: "—" });

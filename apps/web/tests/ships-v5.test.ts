@@ -262,10 +262,10 @@ describe("ship track points and period (contract v5 §B3)", () => {
     const t = shipTrackPointTip({ ts: iso(T), sog: 12.3, cog: 123.4, hdg: 120, nav: 0, src: "rest" }, "SYN ALPHA");
     expect(t.title).toBe("항적 점");
     expect(t.subtitle).toBe("SYN ALPHA");
-    expect(Object.fromEntries(t.rows)).toEqual({ TIME: "09-28 10:00:00 KST · 01:00:00Z", SOG: "12.3 kn · 22.8 km/h", COG: "123.4°", STATUS: "기관 사용 항해 중 (0)" });
+    expect(Object.fromEntries(t.rows)).toEqual({ TIME: "09-28 10:00:00 KST", SOG: "12.3 kn · 22.8 km/h", COG: "123.4°", STATUS: "기관 사용 항해 중 (0)" });
     expect(t.flags.map((f) => f.text)).toEqual(["저장 기록 · 60 s 창의 첫 보고"]);
     const u = shipTrackPointTip({ ts: iso(T), src: "live" }, null);
-    expect(Object.fromEntries(u.rows)).toEqual({ TIME: "09-28 10:00:00 KST · 01:00:00Z", SOG: "—", COG: "—", STATUS: "—" });
+    expect(Object.fromEntries(u.rows)).toEqual({ TIME: "09-28 10:00:00 KST", SOG: "—", COG: "—", STATUS: "—" });
     expect(u.flags.map((f) => f.text)).toEqual(["실시간 관측 · 선택한 뒤 받은 값"]);
   });
   it("period options are 6 / 12 / 24 h (REST ≤ 24 h)", () => {
@@ -283,7 +283,7 @@ describe("ship track points and period (contract v5 §B3)", () => {
     expect(html).toMatch(/aria-pressed="true"[^>]*data-testid="ship-track-hours-6"/); // 선택 상태는 ui-store(서버 렌더는 초기값)
     expect(text(html)).toContain("항적 · 최근 12 h");
     expect(text(html)).toContain("최근 12 h 수신 공백 0회");
-    expect(text(html)).toContain("항적 점에 마우스를 올리면 시각(KST · UTC)·속력·침로·항해 상태");
+    expect(text(html)).toContain("항적 점에 마우스를 올리면 시각(KST)·속력·침로·항해 상태");
     resetData();
   });
 });
@@ -303,8 +303,8 @@ describe("ship card: first recorded / last stored position and the not-live stat
   });
 
   it("not-live text: hh:mm KST · hh:mmZ, the KST date only on another KST day, — when nothing is stored (§G4: the last reception comes first)", () => {
-    expect(notLiveText({ lastSeenAt: null, lastPositionAt: "2026-09-28T02:59:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 11:59 KST · 02:59Z");
-    expect(notLiveText({ lastSeenAt: "2026-09-27T23:15:00Z", lastPositionAt: "2026-09-27T23:10:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 08:15 KST · 09-27 23:15Z · 마지막 저장 08:10 KST · 09-27 23:10Z"); // UTC 로는 전날이지만 KST 로는 같은 날(09-28) — UTC 쪽에 그 날짜
+    expect(notLiveText({ lastSeenAt: null, lastPositionAt: "2026-09-28T02:59:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 11:59 KST");
+    expect(notLiveText({ lastSeenAt: "2026-09-27T23:15:00Z", lastPositionAt: "2026-09-27T23:10:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 08:15 KST · 마지막 저장 08:10 KST"); // UTC 로는 전날이지만 KST 로는 같은 날(09-28) — UTC 쪽에 그 날짜
     expect(notLiveText({ lastSeenAt: null, lastPositionAt: null }, NOW)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 —");
   });
 
@@ -312,10 +312,10 @@ describe("ship card: first recorded / last stored position and the not-live stat
     const detail = parseShipDetail("431011305", { state: null, static: { name: "SYN BRAVO", ship_type: 70 }, first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T01:00:00Z", meta: {} });
     const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
     const t = text(html);
-    expect(t).toContain("처음 기록09-20 10:02:03 KST · 01:02:03 UTC");
-    expect(t).toContain("마지막 저장 위치09-28 10:00:00 KST · 01:00:00 UTC (2h 00m 전)");
+    expect(t).toContain("처음 기록09-20 10:02:03 KST");
+    expect(t).toContain("마지막 저장 위치09-28 10:00:00 KST (2h 00m 전)");
     expect(html).toContain('data-testid="ship-not-live"');
-    expect(t).toContain("실시간 아님 · 마지막 수신 — · 마지막 저장 10:00 KST · 01:00Z"); // 이 상세에는 last_seen_at 이 없다(§G4 전 api) — 모름
+    expect(t).toContain("실시간 아님 · 마지막 수신 — · 마지막 저장 10:00 KST"); // 이 상세에는 last_seen_at 이 없다(§G4 전 api) — 모름
     const none = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: parseShipDetail("431011305", { state: null, static: null }), error: null, now: NOW }));
     expect(text(none)).toContain("처음 기록—");
     expect(text(none)).toContain("마지막 저장 위치—");
@@ -450,7 +450,7 @@ describe("unified search (contract v5 §B1/§B3)", () => {
       { mmsi: "440999999", name: null, live: false, last_position_at: "2026-09-28T01:00:00Z" },
     ] });
     expect(shipChoice(live, null, NOW)).toEqual({ fly: [129.1, 35.1], message: "SYN ALPHA 선택 — 지도 이동" });
-    expect(shipChoice(stored, null, NOW)).toEqual({ fly: null, message: "MMSI 440999999 선택 — 실시간 아님 · 마지막 수신 — · 마지막 저장 10:00 KST · 01:00Z · 카드만(지도에 위치를 그리지 않음)" });
+    expect(shipChoice(stored, null, NOW)).toEqual({ fly: null, message: "MMSI 440999999 선택 — 실시간 아님 · 마지막 수신 — · 마지막 저장 10:00 KST · 카드만(지도에 위치를 그리지 않음)" });
     // 실시간 항목의 위치가 없으면 지도 목록 사본의 위치
     expect(shipChoice({ ...live, lat: null, lon: null }, { lat: 34, lon: 128 }, NOW).fly).toEqual([128, 34]);
     expect(shipChoice({ ...live, lat: null, lon: null }, null, NOW)).toEqual({ fly: null, message: "SYN ALPHA 선택 — 현재 위치 모름(지도 이동 안 함)" });
@@ -526,7 +526,7 @@ describe("unified search (contract v5 §B1/§B3)", () => {
       uid: "s", aircraft: { hits: [], state: "idle" as const, msg: "" }, ships: { hits, state: "done" as const, msg: "1건" }, active: -1, now: NOW, shipSort: null,
       onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
     }));
-    // 고정 칸 합 414 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 196 — §G4 "마지막 수신 MM-DD hh:mm KST · hh:mmZ") + 선명 ≥ 104 px
-    expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table[^>]*class="[^"]*min-w-\[518px\]/);
+    // 고정 칸 합 378 px(선종 28 · MMSI 68 · 속력 62 · 상태 60 · 경과 160 — §G4 "마지막 수신 MM-DD hh:mm KST", §G19 KST 만) + 선명 ≥ 104 px
+    expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table[^>]*class="[^"]*min-w-\[482px\]/);
   });
 });

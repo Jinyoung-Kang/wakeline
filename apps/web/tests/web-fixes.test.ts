@@ -161,7 +161,7 @@ describe("SIGMET not yet in force (DH-8)", () => {
   });
   it("tooltip says '발효 전' with the start time and how long until then", () => {
     const t = sigmetTip({ ...fc.features[1].properties, inside: true }, NOW);
-    expect(t.flags.map((x) => x.text)).toEqual(["발효 전 · 09-28 10:20 KST · 01:20Z부터 · 판정 전"]);
+    expect(t.flags.map((x) => x.text)).toEqual(["발효 전 · 09-28 10:20 KST부터 · 판정 전"]);
     expect(Object.fromEntries(t.rows)).toMatchObject({ STARTS: "20m 00s 뒤", LEFT: "4h 00m" });
     expect(sigmetTip(fc.features[0].properties, NOW).flags.map((x) => x.text)).not.toContain(expect.stringContaining("발효 전"));
   });

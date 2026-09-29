@@ -80,7 +80,7 @@ export function ErrorScreen({ error, retry, component }: { error: unknown; retry
         <table className="mb-3">
           <tbody>
             {row("종류", <span className="mono">{f.name}</span>)}
-            {row("메시지", <span className="mono whitespace-pre-wrap break-words">{f.message}</span>)}
+            {row("메시지", <span className="mono whitespace-pre-wrap break-words" data-raw="log">{f.message}</span>)}
             {f.api ? row("HTTP · code · 요청 id", <span><span className="mono">HTTP {f.api.status}{f.api.code ? ` · ${f.api.code}` : ""}</span>{f.api.requestId ? <RequestIdCopy id={f.api.requestId} /> : <span className="ml-2 text-fg-3">요청 id 없음</span>}</span>) : null}
             {row("digest", f.digest ? <span className="mono select-all">{f.digest}</span> : <span className="text-fg-3">—</span>)}
             {row("경로", <span className="mono">{seen?.path ?? "—"}</span>)}
@@ -92,7 +92,7 @@ export function ErrorScreen({ error, retry, component }: { error: unknown; retry
           <span className="label">스택</span>
           <button type="button" className="btn px-1.5! py-0! normal-case!" aria-pressed={wrap} onClick={() => setWrap((w) => !w)}>줄바꿈 {wrap ? "켬" : "끔"}</button>
         </div>
-        <pre className={`mono max-h-[50vh] overflow-auto border border-line bg-bg p-2 text-[11px] text-fg-2 ${wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} data-testid="error-stack">{f.stack || "스택 없음(브라우저가 주지 않음)"}</pre>
+        <pre className={`mono max-h-[50vh] overflow-auto border border-line bg-bg p-2 text-[11px] text-fg-2 ${wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} data-testid="error-stack" data-raw="log">{f.stack || "스택 없음(브라우저가 주지 않음)"}</pre>
         <p className="mt-2 text-[11px] text-fg-3">digest = 서버 렌더 오류 식별자(Next.js) — 서버 쪽 메시지는 브라우저로 오지 않으며 web 컨테이너 표준 출력에 같은 digest 로 남습니다.</p>
       </div>
     </div>

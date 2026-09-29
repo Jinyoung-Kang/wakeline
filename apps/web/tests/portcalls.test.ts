@@ -155,10 +155,10 @@ describe("ws-validate: ship_selected.port_calls is one droppable bundle", () => 
 });
 
 describe("port-call helpers", () => {
-  it("report times: KST 00:00 is shown as a date only (time unverified, never converted to UTC); other times go to the shared KST + UTC formatter", () => {
+  it("report times: KST 00:00 is shown as a date only (time unverified — no time is made up); other times go to the shared KST formatter", () => {
     // 확인한 실제 응답의 값 2026-09-29T00:00:00+09:00(= 15:00Z) — 날짜만 신고했는지 자정인지 원천이 구분하지 않는다(ADR-022)
     const d = reportTime("2026-09-28T15:00:00Z");
-    expect(d).toEqual({ dateOnly: true, kst: "09-29 KST", title: "PORT-MIS 신고 2026-09-29T00:00:00.000+09:00 — 날짜만 신고했는지 자정인지 원천이 구분하지 않음" });
+    expect(d).toEqual({ dateOnly: true, kst: "09-29 KST", title: "PORT-MIS 신고 2026-09-29 00:00:00.000 KST — 날짜만 신고했는지 자정인지 원천이 구분하지 않음" });
     expect(reportTime("2026-09-28T15:00:00.001Z")).toEqual({ dateOnly: false }); // 00:00:00.001 — 시각이 있다
     expect(reportTime("2026-09-23T23:17:00Z")).toEqual({ dateOnly: false });
     for (const v of [null, undefined, "", "bad"]) expect(reportTime(v)).toBeNull();
@@ -177,7 +177,7 @@ describe("port-call helpers", () => {
 
   it("an empty exit says what is known: no exit report in the index as of when the record was last read", () => {
     const c = parsed("ship_selected").items[0];
-    expect(noExitTitle({ ...c, exit_at: null })).toBe("출항 신고가 색인에 없음 — 아직 입항 중이거나, 색인이 이 기록을 마지막으로 읽은 2026-09-29T21:45:00.000+09:00 뒤에 출항했을 수 있음");
+    expect(noExitTitle({ ...c, exit_at: null })).toBe("출항 신고가 색인에 없음 — 아직 입항 중이거나, 색인이 이 기록을 마지막으로 읽은 09-29 21:45:00 KST 뒤에 출항했을 수 있음");
     expect(noExitTitle({ ...c, exit_at: null, read_at: null })).toBe("출항 신고가 색인에 없음");
   });
 
@@ -246,10 +246,10 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(html.match(/data-testid="port-call-row"/g)).toHaveLength(20);
     expect(html.match(/<dl/g)).toHaveLength(20);
     for (const h of ["입항", "출항", "선석", "목적", "항로"]) expect(html).toMatch(new RegExp(`<dt[^>]*>${h}</dt>`));
-    expect(html).toContain('title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만"');
+    expect(html).toContain('title="한국 표준시(KST) — 00:00(KST) 신고는 날짜만"');
     expect(t).toContain("부산 · 020");
-    expect(t).toContain("09-24 08:17:00 KST · 09-23 23:17:00 UTC"); // 입항 — 표 칸(KST 첫 줄 · UTC 둘째 줄)
-    expect(t).toContain("09-25 14:24:00 KST · 05:24:00 UTC"); // 출항(tkoffDt)
+    expect(t).toContain("09-24 08:17:00 KST"); // 입항 — 표 칸(KST 첫 줄 · UTC 둘째 줄)
+    expect(t).toContain("09-25 14:24:00 KST"); // 출항(tkoffDt)
     expect(t).toContain("최종 신고");
     expect(t).toContain("북항크루즈터미널 2선석");
     expect(t).toContain("여객상륙");
@@ -257,7 +257,7 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(t).toContain("최초 출항지 KOBE(JPUKB)");
     expect(t).not.toContain("목적지 HIROSHIMA"); // 차항지와 같은 목적지는 한 번만
     expect(t).toContain("최근 신고 선종 크루즈선 · 국적 마샬 제도");
-    expect(t).toContain("색인: 10개 항만청 · 최근 30일 · 갱신 09-29 21:50 KST · 12:50 UTC");
+    expect(t).toContain("색인: 10개 항만청 · 최근 30일 · 갱신 09-29 21:50 KST");
     expect(t).toContain("2026-08-30 ~ 2026-09-29 (KST 날짜 · 입항일 기준)");
     expect(t).toContain("최근 20건만 표시 — 더 있음");
     expect(html).not.toContain("port-calls-name-mismatch");
@@ -289,7 +289,7 @@ describe("PortCallsSection (server-rendered)", () => {
   it("none says so only with a complete index, and shows when the index was refreshed", () => {
     const t = text(render(parsed("ship_selected.port_calls_none")));
     expect(t).toContain(PORT_CALL_NONE_TEXT);
-    expect(t).toContain("색인: 10개 항만청 · 최근 30일 · 갱신 09-29 21:50 KST · 12:50 UTC");
+    expect(t).toContain("색인: 10개 항만청 · 최근 30일 · 갱신 09-29 21:50 KST");
     expect(t).not.toContain("색인 불완전");
   });
 
@@ -301,7 +301,7 @@ describe("PortCallsSection (server-rendered)", () => {
     expect(t).not.toContain(PORT_CALL_NONE_TEXT);
     expect(t).toContain(PORT_CALL_INCOMPLETE_TEXT);
     expect(t).toContain("부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터)");
-    expect(t).toContain("인천(030) — 오늘(KST) 목록 아직 색인 안 됨(2026-09-28까지 색인) · 색인 갱신이 오래됨 · 마지막 갱신 09-29 19:30 KST · 10:30 UTC");
+    expect(t).toContain("인천(030) — 오늘(KST) 목록 아직 색인 안 됨(2026-09-28까지 색인) · 색인 갱신이 오래됨 · 마지막 갱신 09-29 19:30 KST");
     expect(t).toContain("동해(200) — 끝까지 색인하지 못한 날 2일(2026-09-20, 2026-09-27)");
     expect(t).toContain("포항(700) — 아직 색인 안 됨");
     expect(t).toContain("갱신 —"); // 10곳의 공통 기준 시각이 없다 — 지어내지 않는다

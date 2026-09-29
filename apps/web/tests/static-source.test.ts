@@ -20,7 +20,7 @@ import {
 } from "@/lib/ships";
 import { resetData, setData } from "@/lib/store";
 import { validateServerMessage, type ShipSelectedMsg } from "@/lib/ws-validate";
-import { unpairedKst } from "./helpers/dual-time";
+import { utcLeaks } from "./helpers/kst-only";
 
 type Json = Record<string, unknown>;
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/ws-samples.v1.json", import.meta.url), "utf8")) as { server: { name: string; message: Json }[] };
@@ -135,11 +135,11 @@ describe("ship card: a stored static report is labelled next to the static field
     const html = show(storedMsg());
     const t = text(html);
     expect(html).toContain('data-testid="ship-static-stored"');
-    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST · 03:00:00 UTC (${fmtDuration(5 * 3600)} 전)`);
+    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST (${fmtDuration(5 * 3600)} 전)`);
     expect(t).toContain("실시간 값이 아님");
     expect(html).toContain(`title="${STORED_STATIC_TITLE}"`);
-    expect(html).toContain('<time dateTime="2026-09-29T03:00:00.000Z"');
-    expect(unpairedKst(t)).toEqual([]);
+    expect(html).toContain('<time dateTime="2026-09-29T12:00:00.000+09:00"');
+    expect(utcLeaks(t)).toEqual([]);
     // 정적 필드는 저장된 보고의 값이고, 표시는 그 필드들보다 앞(선박명 행 위)에 있다
     expect(t).toContain("SYNTH STORED");
     expect(html).toMatch(/data-field="호출부호"[^]*D7AG/);
@@ -185,7 +185,7 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(d.static_source).toBe("stored");
     expect(d.static_updated_at).toBe(STORED_AT);
     const t = text(show(null, d, "440000077"));
-    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST · 03:00:00 UTC`);
+    expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST`);
     expect(text(show(null, parseShipDetail("440000077", { ...body, static_source: "live", static_updated_at: undefined }), "440000077")))
       .not.toContain(STORED_STATIC_LABEL);
   });

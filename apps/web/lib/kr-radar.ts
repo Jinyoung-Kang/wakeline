@@ -6,7 +6,7 @@
  * 어디에도 '완전'이라고 하지 않는다: partial=false 는 "기준 도달"(지난 60분 저장 프레임 중 최대와 같음)일 뿐, 기상청 합성이 완전한지는 자료에 없다.
  * 기준이 그 프레임 하나뿐이면 수집기가 판정을 두지 않는다(REF_MIN_SUPPORT) — "판정 —".
  */
-import { fmtDualCompact, kstWallMs } from "./time";
+import { fmtKstMinute, kstWallMs } from "./time";
 import type { KrRadarFrame } from "./types";
 
 /** 기준 지점 수를 세는 창(분) — 수집기 jobs/kma_radar.py REF_WINDOW_S(선택값)와 같다(tests/kma-partial 이 견준다). 설명 글자에만 쓴다. */
@@ -45,7 +45,7 @@ export function krComposite(f: KrRadarFrame | null | undefined, nowMs: number): 
   let verdict: string | null = null;
   if (f?.partial === true) {
     const until = f.refetch_until ? Date.parse(f.refetch_until) : NaN;
-    const hm = Number.isFinite(until) ? fmtDualCompact(until) : null; // "08:40 KST · 23:40Z"
+    const hm = Number.isFinite(until) ? fmtKstMinute(until) : null; // "08:40 KST"
     const size = n != null && m != null ? `(${n}/${m}곳)` : "";
     if (nowMs > 0 && hm != null) {
       state = nowMs <= until ? "filling" : "final";
@@ -87,7 +87,7 @@ export function krLayerId(f: Pick<KrRadarFrame, "tm" | "url">): string {
   return v ? `kmar-${f.tm}-${v}` : `kmar-${f.tm}`;
 }
 
-/** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST · HH:MMZ"(같은 순간의 UTC 를 함께). 틀리면 "—". */
+/** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST"(계약 v5 §G19). 틀리면 "—". */
 export function krTmClock(tm: string | null | undefined): string {
-  return fmtDualCompact(kstWallMs(tm));
+  return fmtKstMinute(kstWallMs(tm));
 }

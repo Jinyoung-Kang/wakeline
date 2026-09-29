@@ -6,7 +6,7 @@ import { TRAFFIC_LAYER_LABEL, TRAFFIC_SOURCE_TEXT, trafficStatusLine } from "@/l
 const TONE = { ok: "text-fg-2", warn: "text-warn", bad: "text-bad", muted: "text-fg-3" } as const;
 
 /**
- * 연안 교통량 레이어 상태 줄(ADR-023) — 켜져 있을 때 레이어 버튼 아래에. 기준 시각(KST · UTC), 표시한 칸 / 전체, 격자 위치를 확인 중인 칸,
+ * 연안 교통량 레이어 상태 줄(ADR-023) — 켜져 있을 때 레이어 버튼 아래에. 기준 시각(KST), 표시한 칸 / 전체, 격자 위치를 확인 중인 칸,
  * 꺼짐 · 자료 없음 · 멈춤의 이유를 글로 적는다(지도에 칸이 없는 까닭이 화면에 보이게). 값은 lib/traffic-grid 의 trafficStatusLine.
  * 30 s 시계(서버 시각 보정)로 받아 둔 값의 나이를 다시 본다 — 조회가 실패해도 오래된 값은 '자료 멈춤'이 된다(지도도 같은 규칙).
  */

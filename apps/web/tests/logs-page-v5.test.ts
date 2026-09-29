@@ -4,6 +4,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { domUtcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -115,6 +116,7 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     const timeCell = findAll((e) => e.tagName === "TD", rows[0])[0];
     expect(findAll((e) => e.getAttribute("title") != null, timeCell)[0].getAttribute("title")).toBe("2026-09-29 10:59:00.000 KST");
     expect(byTestId("logs-last-ok")!.textContent).toBe("갱신 11:00:00 KST · 15 s 확인");
+    expect(domUtcLeaks(dom.container)).toEqual([]); // 목록 화면 어디에도(메시지 본문 data-raw 밖) UTC 가 없다(계약 v5 §G19)
     const second = findAll((e) => e.tagName === "TD", rows[1]).map((c) => c.textContent);
     expect([second[1], second[5], second[6]]).toEqual(["WARN", "—", "—"]); // 억제·요청 id 모름은 —
     const status = byTestId("logs-status")!.textContent;
@@ -175,6 +177,7 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     expect(rel).toHaveLength(1);
     expect(rel[0].textContent).toContain("data store unavailable");
     expect(rel[0].textContent).toContain("09-29 10:58:59.500 KST"); // 머리글 없는 표 — 시간대를 보이게 적는다
+    expect(domUtcLeaks(dom.container)).toEqual([]); // 상세 · 같은 요청 id 목록까지
     await key(list, "c");
     expect(written.at(-1)).toBe(L.logText(L.parseLogPage(FIRST).items[0]));
     await click(button("JSON 복사", d));
@@ -332,6 +335,7 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
     const gHeads = findAll((e) => e.tagName === "TH", byTestId("log-list")!).map((h) => h.textContent);
     expect(gHeads).toContain("처음(KST)");
     expect(gHeads).toContain("마지막(KST)");
+    expect(domUtcLeaks(dom.container)).toEqual([]);
     expect(byTestId("logs-status")!.textContent).toContain("잘림"); // scan_truncated 를 숨기지 않는다
     await click(button("묶음 복사", g[0]));
     expect(calls.at(-1)).toContain("fp=0123456789abcdef");
@@ -357,5 +361,6 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
     const startCell = findAll((e) => e.tagName === "TD", allByTestId("ais-gap-row")[1])[1];
     expect(findAll((e) => e.getAttribute("title") != null, startCell)[0].getAttribute("title")).toBe("2026-09-29 10:10:00.000 KST");
     expect(byTestId("ais-gaps")!.textContent).toContain("기간 09-29 10:00:00 – 09-29 11:00:00 KST");
+    expect(domUtcLeaks(dom.container)).toEqual([]);
   });
 });

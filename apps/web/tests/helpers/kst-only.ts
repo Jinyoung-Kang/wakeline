@@ -25,6 +25,14 @@ export function utcLeaks(text: string): string[] {
 
 const ATTRS = ["title", "aria-label", "placeholder", "alt"];
 
+/**
+ * 다른 레인(대시보드 UX)이 고치는 파일의 글자 — 이 레인은 그 파일(상단 검색 상자 components/AircraftSearch.tsx)을 고치지 않았다. 그 안의 설명 한 줄이
+ * 아직 "KST · UTC(…Z)" 라고 쓴다. 쓰는 시험은 그 글자가 아직 있는지(toContain)도 본다 — 그 레인이 고치면 실패하므로 그때 이 목록을 비운다(합치는 사람의 할 일).
+ */
+export const OTHER_LANE_PENDING = ["(마지막 수신·저장 시각은 KST · UTC(…Z) ·"];
+/** 다른 레인의 글자를 뺀 html/글자 */
+export const withoutOtherLane = (s: string) => OTHER_LANE_PENDING.reduce((x, p) => x.split(p).join(""), s);
+
 /** renderToStaticMarkup 트리(tests/helpers/html-tree)의 보이는 글자 · title · aria-label 에서 — data-raw 요소 아래는 건너뛴다 */
 export function htmlUtcLeaks(root: HNode): string[] {
   const out: string[] = [];
@@ -38,15 +46,15 @@ export function htmlUtcLeaks(root: HNode): string[] {
   return out;
 }
 
-/** 마운트한 최소 DOM(tests/helpers/mini-dom)의 보이는 글자 · title · aria-label 에서 — data-raw 요소 아래는 건너뛴다 */
-export function domUtcLeaks(root: MiniElement): string[] {
+/** 마운트한 최소 DOM(tests/helpers/mini-dom)의 보이는 글자 · title · aria-label 에서 — data-raw 요소 아래는 건너뛴다. ignore = 뺄 글자(다른 레인의 글) */
+export function domUtcLeaks(root: MiniElement, ignore: readonly string[] = []): string[] {
   const out: string[] = [];
   const walk = (n: MiniElement) => {
     if (n.hasAttribute("data-raw")) return;
     for (const a of ATTRS) { const v = n.getAttribute(a); if (v) out.push(...utcLeaks(v).map((x) => `${a}: ${x}`)); }
     for (const c of n.childNodes) {
       if (c instanceof MiniElement) walk(c);
-      else out.push(...utcLeaks(c.textContent));
+      else out.push(...utcLeaks(ignore.reduce((x, p) => x.split(p).join(""), c.textContent)));
     }
   };
   walk(root);

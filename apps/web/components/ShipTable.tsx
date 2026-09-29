@@ -45,10 +45,10 @@ export function ShipTable({ rows, now, sort, onSort, onPick, testId, wide, listb
   const lb = listbox ?? null;
   const cell = lb ? "none" : undefined;
   const table = (
-    <table className={wide ? "table-fixed min-w-[518px] text-[11px]" : "table-fixed text-[11px]"} role={lb ? "presentation" : undefined} data-testid={`${testId}-table`}>
-      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게. 넓은 표: 고정 칸 414 px + 선명 ≥ 104 px(경과 칸 196 px = "마지막 수신 MM-DD hh:mm KST · hh:mmZ") */}
+    <table className={wide ? "table-fixed min-w-[482px] text-[11px]" : "table-fixed text-[11px]"} role={lb ? "presentation" : undefined} data-testid={`${testId}-table`}>
+      {/* 선종은 색 칸만(이름은 title) — 380 px 패널에서 선명 칸이 가장 넓게. 넓은 표: 고정 칸 378 px + 선명 ≥ 104 px(경과 칸 160 px = "마지막 수신 MM-DD hh:mm KST" — §G19 KST 만) */}
       <colgroup>
-        <col className="w-[28px]" /><col /><col className="w-[68px]" /><col className="w-[62px]" /><col className="w-[60px]" /><col className={wide ? "w-[196px]" : "w-[50px]"} />
+        <col className="w-[28px]" /><col /><col className="w-[68px]" /><col className="w-[62px]" /><col className="w-[60px]" /><col className={wide ? "w-[160px]" : "w-[50px]"} />
       </colgroup>
       <thead>
         <tr>

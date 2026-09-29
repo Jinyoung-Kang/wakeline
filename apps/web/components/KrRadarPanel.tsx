@@ -1,14 +1,14 @@
 "use client";
 import { useServerData } from "@/lib/store";
 import { useServerNow } from "@/lib/clock";
-import { fmtKstTitle } from "@/lib/time";
+import { fmtKstTitle, fmtTimeTitle, kstWallMs } from "@/lib/time";
 import { isKrRadarStale, KR_RADAR_STALE_S, legendTextColor } from "@/lib/format";
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
-import { DualTime } from "./DualTime";
+import { KstTime } from "./KstTime";
 
 /**
  * 기상청 레이더 합성(FR-31) 범례·정합 정보. 좌표 정의는 서버가 문서 값(LCC 30/60·N38 E126·기준 격자점)으로 계산한다.
- * 시각은 KST 먼저 · UTC 함께(tm 은 기상청이 준 KST 원문 그대로 + 같은 순간의 KST · UTC, 수신 시각은 lib/time · 마우스를 올리면 원본 UTC ISO).
+ * 시각은 KST(계약 v5 §G19 — tm 은 기상청이 준 KST 원문 그대로 + 같은 순간의 "HH:MM KST", 수신 시각은 lib/time · 마우스를 올리면 연도 · ms 까지).
  * 수집이 15분 넘게 멈추면(서버 meta.stale 또는 수집 경과) 최신 tm 옆에 STALE(REL-19) — 3 h 프레임 보관 동안 현재처럼 보이지 않게.
  * STALE 시계 meta.fetched_at 은 최신 tm 을 처음 받은 시각이다(부분 합성을 다시 받아 바꿔도 옮기지 않는다 — ADR-021). "수신"은 보이는 영상을 받은 시각.
  * 합성 크기(ADR-021): 최신 프레임의 "합성 N/M곳"(헤더의 레이더 지점 수 / 기준), 부분 합성이면 경고 표시와 문장을 화면에(툴팁만이 아니라),
@@ -30,8 +30,8 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
             {(d.legend ?? []).map(([lo, c]) => <span key={lo} className="mono px-1" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: legendTextColor(c) }}>{lo}</span>)}
             <span className="text-fg-3">dBZ 이상 (표시 최소 {d.min_dbz} dBZ · 색 구간은 표시용 선택)</span>
           </div>
-          {([["최신 tm(KST)", <><span className="mono">{d.latest_tm ?? "—"}</span>{d.latest_tm ? <span className="mono text-fg-3"> ({krTmClock(d.latest_tm)})</span> : null}{stale ? <span className="badge bad ml-1" data-testid="kr-panel-stale" title={`최신 tm 첫 수집 ${fmtKstTitle(d.meta?.fetched_at)} — ${KR_RADAR_STALE_S / 60}분 넘게 새 프레임 없음`}>STALE</span> : null}</>],
-            ["수신", <DualTime key="rx" v={latest?.fetched_at} />], ["에코 셀", latest ? latest.echo_cells.toLocaleString() : "—"],
+          {([["최신 tm(KST)", <><span className="mono">{d.latest_tm ?? "—"}</span>{d.latest_tm ? <span className="mono text-fg-3" title={fmtTimeTitle(kstWallMs(d.latest_tm))}> ({krTmClock(d.latest_tm)})</span> : null}{stale ? <span className="badge bad ml-1" data-testid="kr-panel-stale" title={`최신 tm 첫 수집 ${fmtKstTitle(d.meta?.fetched_at)} — ${KR_RADAR_STALE_S / 60}분 넘게 새 프레임 없음`}>STALE</span> : null}</>],
+            ["수신", <KstTime key="rx" v={latest?.fetched_at} />], ["에코 셀", latest ? latest.echo_cells.toLocaleString() : "—"],
             ["격자", d.grid ? `${d.grid.nx}×${d.grid.ny} · ${d.grid.res_m} m · 기준점 (${d.grid.ref.join(", ")})` : "—"],
             ["합성(최신)", <span key="cmp" title={comp.title} data-testid="kr-panel-composite" className={comp.warn ? "text-warn" : undefined}>{comp.label}{comp.warn
               ? <span className="badge warn ml-1" data-testid="kr-panel-partial" title={comp.warn}>일부 합성</span> : null}</span>],
