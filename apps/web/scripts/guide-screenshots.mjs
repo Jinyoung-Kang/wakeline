@@ -1,0 +1,325 @@
+// 설명서(/guide) 스크린샷: node scripts/guide-screenshots.mjs <기준 주소> <자격 증명 파일> [--only id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]
+//
+// 배포된 실데이터 스택(예: http://localhost:8700)에서 lib/guide-shots.json 의 스크린샷을 1440×900(배율 1)으로 찍어
+// public/guide/<id>.<내용 해시>.webp 로 저장하고(브라우저가 WebP 로 못 바꾸면 PNG), lib/guide-manifest.json 을 갱신한다. 그다음 web 을 다시 빌드해야 화면에 나온다.
+// - 번호 위치: 찍기 직전에 각 번호의 대상 요소(CSS 선택자)를 재서 % 로 기록한다. 화면에 없으면 기록하지 않는다(설명서는 "보이지 않음"이라고 적는다).
+// - 운영 · 로그 화면은 /ops 로그인이 필요하다: 자격 증명은 인자로 받은 파일에서만 읽는다(인자 값 · 환경 변수로 받지 않는다). 끝나면 sign out.
+// - 로컬 스택만 찍는다(로그인 정보를 보낸다). FIXTURE MODE(가짜 자료) 스택이면 멈춘다 — 설명서에 지어낸 값이 실리지 않게(--allow-fixture 로만 무시).
+// - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
+// - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
+import { chromium } from "@playwright/test";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  anchorPoint, checkLocalBase, credentialFileWarning, hashedName, mergeManifest, parseArgs, parseCredentials, sizeReport, staleFiles,
+} from "./guide-capture-lib.mjs";
+
+const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 이 스크린샷을 건너뛴다(이유와 함께) — 다른 스크린샷은 계속 */
+class Skip extends Error {}
+/** 전체를 멈춘다 */
+class Fatal extends Error {}
+
+let args;
+try { args = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
+
+const BASE = (() => { try { return checkLocalBase(args.baseUrl); } catch (e) { console.error(e.message); process.exit(2); } })();
+const plan = JSON.parse(readFileSync(join(WEB, "lib/guide-shots.json"), "utf8"));
+const planIds = plan.shots.map((s) => s.id);
+if (args.only) {
+  const unknown = args.only.filter((id) => !planIds.includes(id));
+  if (unknown.length) { console.error(`--only: 계획에 없는 스크린샷 ${unknown.join(", ")} (있는 것: ${planIds.join(", ")})`); process.exit(2); }
+}
+const shots = plan.shots.filter((s) => !args.only || args.only.includes(s.id));
+const VP = plan.viewport;
+const OUT = args.outDir ? resolve(args.outDir) : join(WEB, "public/guide");
+const MANIFEST = args.outDir ? join(OUT, "guide-manifest.json") : join(WEB, "lib/guide-manifest.json");
+
+// 자격 증명은 운영 · 로그 스크린샷을 찍을 때만 읽는다 — 파일 내용 · 값을 출력하지 않는다
+const needsLogin = shots.some((s) => s.path === "/ops" || s.path === "/logs");
+let cred = null;
+if (needsLogin) {
+  try {
+    const st = statSync(args.credFile);
+    const warn = credentialFileWarning(st.mode);
+    if (warn) console.warn(warn);
+    cred = parseCredentials(readFileSync(args.credFile, "utf8"));
+  } catch (e) {
+    console.error(e.code === "ENOENT" ? `자격 증명 파일 없음: ${args.credFile}` : e.message);
+    process.exit(2);
+  }
+}
+
+mkdirSync(OUT, { recursive: true });
+const browser = await chromium.launch({ args: ["--use-angle=metal", "--enable-gpu-rasterization", "--ignore-gpu-blocklist"] });
+const ctx = await browser.newContext({ viewport: VP, deviceScaleFactor: 1, colorScheme: "dark", locale: "ko-KR", reducedMotion: "reduce" });
+const page = await ctx.newPage();
+page.setDefaultTimeout(20_000);
+const encoder = await ctx.newPage(); // PNG → WebP 변환 전용(about:blank)
+
+// ---- 공통 동작 ----
+
+const DASH = "#6.3/36.1/127.9";
+const KOREA_BBOX = "124,33,132,39";
+
+/** 상황판을 새로 연다(해시만 다른 goto 는 같은 문서 안 이동이라 선택 상태가 남는다 — 빈 페이지를 거친다). 실시간 연결이 열려야 찍는다 */
+async function openMap(hash) {
+  await page.goto("about:blank");
+  await page.goto(BASE + "/" + hash);
+  try { await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 }); }
+  catch { throw new Skip("상황판 실시간 연결(WS open)이 30 s 안에 열리지 않음"); }
+  if (!args.allowFixture && await page.getByTestId("fixture-badge").count()) {
+    throw new Fatal("FIXTURE MODE 스택 — 가짜 자료가 설명서에 실리지 않게 멈춤(실데이터 스택에서 찍거나 --allow-fixture)");
+  }
+}
+async function setPressed(testId, on) {
+  const b = page.getByTestId(testId);
+  if ((await b.getAttribute("aria-pressed")) !== String(on)) await b.click();
+}
+async function setLegend(open) {
+  const b = page.getByTestId("legend-toggle");
+  if ((await b.getAttribute("aria-expanded")) !== String(open)) await b.click();
+}
+/** 한반도 지도 영역의 실시간 항공기(서버가 준 값 그대로) */
+async function koreaAircraft() {
+  const r = await page.request.get(`${BASE}/api/v1/aircraft?bbox=${KOREA_BBOX}`);
+  if (!r.ok()) throw new Skip(`항공기 목록 조회 실패(HTTP ${r.status()})`);
+  const body = await r.json();
+  return (body.features ?? []).map((f) => f.properties ?? {});
+}
+/** 로그인(한 번) — 이미 세션이 있으면 그대로 */
+let loggedIn = false;
+async function login() {
+  if (loggedIn) return;
+  await page.goto(BASE + "/ops");
+  const form = page.getByTestId("ops-login"), dash = page.getByTestId("ops-dashboard");
+  await Promise.race([form.waitFor(), dash.waitFor()]).catch(() => {});
+  if (await dash.count()) { loggedIn = true; return; }
+  if (!cred) throw new Skip("자격 증명 없음");
+  await page.locator("#ops-user").fill(cred.username);
+  await page.locator("#ops-pass").fill(cred.password);
+  await form.locator('button[type="submit"]').click();
+  const err = page.getByTestId("ops-login-error");
+  await Promise.race([dash.waitFor({ timeout: 15_000 }), err.waitFor({ timeout: 15_000 })]).catch(() => {});
+  if (!(await dash.count())) throw new Skip(`로그인 실패 — ${(await err.count()) ? (await err.innerText()).trim() : "응답 없음"}`);
+  loggedIn = true;
+}
+
+// ---- 스크린샷별 준비(계획의 id 마다). 돌려주는 값 = 캡처 조건(설명서 그림 아래에 적힌다) ----
+
+const RECIPES = {
+  async dashboard() {
+    await openMap(DASH);
+    await setPressed("layer-ships", true);
+    await setLegend(true);
+    await wait(10_000); // 스냅샷 · 레이더 타일 · 선박 격자
+    return `한반도 ${DASH}`;
+  },
+  async search() {
+    await openMap(DASH);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    // 검색어 = 지금 지도의 호출부호에서 가장 많은 앞 3자(실제 자료에서 고른다 — 없으면 찍지 않는다)
+    const counts = new Map();
+    for (const p of await koreaAircraft()) {
+      const m = /^([A-Z]{3})\d/.exec(String(p.callsign ?? "").trim());
+      if (m) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+    }
+    const q = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+    if (!q) throw new Skip("지도 영역에 호출부호가 있는 항공기 없음");
+    await page.locator("body").press("/");
+    await page.keyboard.type(q);
+    await page.getByTestId("aircraft-search-results").waitFor();
+    await page.getByTestId("aircraft-search-item").first().waitFor({ timeout: 10_000 }).catch(() => {});
+    await wait(1200);
+    return `검색어 “${q}” — 지금 지도의 호출부호에서 가장 많은 앞 3자`;
+  },
+  async aircraft() {
+    await openMap(DASH);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    const list = (await koreaAircraft()).filter((p) => p.hex && p.callsign && p.on_ground !== true && (p.alt_ft ?? 0) > 6000);
+    const t = list.sort((a, b) => (b.alt_ft ?? 0) - (a.alt_ft ?? 0))[0];
+    if (!t) throw new Skip("지도 영역에 비행 중인 항공기(호출부호 있음) 없음");
+    await page.locator("body").press("/");
+    await page.keyboard.type(String(t.hex));
+    await page.getByTestId("aircraft-search-item").first().waitFor({ timeout: 10_000 }).catch(() => { throw new Skip(`검색 결과 없음(${t.hex})`); });
+    await page.keyboard.press("Enter");
+    await page.getByTestId("aircraft-card").waitFor();
+    await wait(9_000); // 지도 이동 · 상세 · 노선 · 집중 추적 첫 보고
+    return `${String(t.callsign).trim()} (${t.hex}) — 한반도 영역에서 가장 높이 나는 항공기`;
+  },
+  async ship() {
+    const candidates = [["#10/35.08/129.05", "부산항 부근"], ["#10.6/35.45/139.78", "도쿄만"]];
+    for (const [hash, label] of candidates) {
+      await openMap(hash);
+      await setPressed("layer-ships", true);
+      await setLegend(false);
+      await wait(15_000);
+      await page.getByTestId("tab-ship").click();
+      const item = page.getByTestId("ship-list-item").first();
+      await item.waitFor({ timeout: 10_000 }).catch(() => {});
+      if (!(await item.count())) { console.log(`  ship: ${label} 에 선박 없음 — 다음 후보`); continue; }
+      await item.click();
+      await page.getByTestId("ship-card").waitFor();
+      await wait(6_000); // 항적
+      return `${label} ${hash}`;
+    }
+    throw new Skip("후보 해역(부산항 부근 · 도쿄만)에 선박 없음");
+  },
+  async alerts() {
+    await openMap(DASH);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    await wait(8_000);
+    let scope = "관심 지역";
+    if (!(await page.getByTestId("alert-item").count())) {
+      await page.getByTestId("alerts-scope-world").click();
+      await wait(1500);
+      scope = "전세계";
+    }
+    const first = page.getByTestId("alert-item").first();
+    if (!(await first.count())) throw new Skip("알림 없음(관심 지역 · 전세계)");
+    await first.getByTestId("alert-toggle").click();
+    await page.getByTestId("evidence").first().waitFor();
+    await wait(1500);
+    return `알림 범위 ${scope}`;
+  },
+  async radar() {
+    await openMap(DASH);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    await wait(6_000);
+    const kma = page.getByTestId("radar-src-kma");
+    const useKma = await kma.isEnabled();
+    if (useKma) await kma.click();
+    await page.getByTestId("kr-radar-toggle").click();
+    await wait(5_000);
+    return useKma ? "기상청 HSR" : "RainViewer(기상청 프레임 없음)";
+  },
+  async replay() {
+    await page.goto(BASE + "/replay");
+    const sum = page.getByTestId("replay-summary");
+    const loaded = await sum.filter({ hasText: /aircraft/ }).waitFor({ timeout: 25_000 }).then(() => true, () => false);
+    if (!loaded) throw new Skip("재생 기록 응답 없음");
+    await page.getByTestId("replay-list-toggle").click();
+    await wait(3_000);
+    return `지도 시각 ${(await page.getByTestId("replay-frame-at").innerText()).replace(/^지도\s*/, "").trim()}`;
+  },
+  async stats() {
+    await page.goto(BASE + "/stats");
+    await page.locator("main .grid > section").first().waitFor();
+    await wait(4_000);
+    return null;
+  },
+  async airport() {
+    await page.goto(BASE + "/airports/RKSI");
+    await page.locator("main pre").first().waitFor({ timeout: 15_000 }).catch(() => { throw new Skip("RKSI METAR 없음"); });
+    await wait(1_500);
+    return "RKSI";
+  },
+  async ops() {
+    await login();
+    await page.goto(BASE + "/ops");
+    await page.getByTestId("ops-dashboard").waitFor();
+    await page.locator('[data-testid="ops-dashboard"] table').first().waitFor({ timeout: 15_000 }).catch(() => {});
+    await wait(2_000);
+    return "providers 탭";
+  },
+  async logs() {
+    await login();
+    await page.goto(BASE + "/logs");
+    await page.getByTestId("logs-dashboard").waitFor();
+    await Promise.race([page.getByTestId("log-grid").waitFor(), page.getByTestId("logs-empty").waitFor()]).catch(() => {});
+    await wait(1_500);
+    return "기본 필터(최근 기간 · 전체 서비스)";
+  },
+};
+
+/** 번호 대상 요소의 화면 사각형(보이지 않으면 null) */
+async function measure(callouts) {
+  const rects = await page.evaluate((targets) => targets.map((sel) => {
+    let el = null;
+    try { el = document.querySelector(sel); } catch { return null; }
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden") return null;
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  }), callouts.map((c) => c.target));
+  return callouts.flatMap((c, i) => {
+    const p = anchorPoint(rects[i], c.anchor, VP);
+    return p ? [{ n: c.n, x: p.x, y: p.y }] : [];
+  });
+}
+
+/** PNG → WebP(브라우저 캔버스 인코더 — 새 의존성 없음). 이 브라우저가 WebP 를 못 만들면 PNG 그대로 */
+async function encode(png) {
+  const url = await encoder.evaluate(async ({ b64, q }) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext("2d").drawImage(img, 0, 0);
+    return c.toDataURL("image/webp", q);
+  }, { b64: png.toString("base64"), q: args.quality });
+  const head = "data:image/webp;base64,";
+  return url.startsWith(head) ? { bytes: Buffer.from(url.slice(head.length), "base64"), format: "webp" } : { bytes: png, format: "png" };
+}
+
+// ---- 실행 ----
+
+const captured = {};
+const rows = [];
+const skipped = [];
+let fatal = null;
+for (const shot of shots) {
+  const recipe = RECIPES[shot.id];
+  try {
+    if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
+    console.log(`… ${shot.id}`);
+    const variant = await recipe();
+    await page.evaluate(() => document.fonts?.ready);
+    const positions = await measure(shot.callouts);
+    const png = await page.screenshot({ type: "png" });
+    const enc = await encode(png);
+    const file = hashedName(shot.id, enc.bytes, enc.format);
+    writeFileSync(join(OUT, file), enc.bytes);
+    captured[shot.id] = { file, format: enc.format, width: VP.width, height: VP.height, bytes: enc.bytes.length, captured_at: new Date().toISOString(), variant, callouts: positions };
+    rows.push({ id: shot.id, format: enc.format, bytes: enc.bytes.length, pngBytes: png.length, callouts: [positions.length, shot.callouts.length], variant });
+  } catch (e) {
+    if (e instanceof Fatal) { fatal = e; break; }
+    skipped.push({ id: shot.id, reason: e instanceof Skip ? e.message : `오류 — ${e.message.split("\n")[0]}` });
+  }
+}
+if (loggedIn) {
+  // 세션을 남기지 않는다
+  try {
+    await page.goto(BASE + "/ops");
+    await page.getByRole("button", { name: "sign out" }).click({ timeout: 10_000 });
+    await page.getByTestId("ops-login").waitFor({ timeout: 10_000 });
+  } catch { console.warn("경고: sign out 확인 못 함 — 세션은 8 h 뒤 만료"); }
+}
+await browser.close();
+
+if (fatal) {
+  // 이번에 쓴 파일은 결과에 넣지 않았으니 지운다(이전 결과 · 파일은 그대로)
+  for (const m of Object.values(captured)) { try { unlinkSync(join(OUT, m.file)); } catch { /* 없음 */ } }
+  console.error(fatal.message);
+  process.exit(1);
+}
+
+let prev = null;
+try { prev = existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, "utf8")) : null; } catch { console.warn(`경고: 이전 결과(${MANIFEST})를 읽지 못함 — 이번 결과만 씀`); }
+const manifest = mergeManifest(prev, captured, planIds);
+// 원자적으로 바꾼다(쓰다 멈춰도 반쯤 쓴 manifest 가 남지 않게)
+writeFileSync(`${MANIFEST}.tmp`, JSON.stringify(manifest, null, 2) + "\n");
+renameSync(`${MANIFEST}.tmp`, MANIFEST);
+for (const f of staleFiles(readdirSync(OUT), manifest)) unlinkSync(join(OUT, f));
+
+console.log(`\n${sizeReport(rows, skipped)}`);
+console.log(`\n저장: ${OUT}\n결과: ${MANIFEST}${args.outDir ? "" : "\n다음: web 을 다시 빌드하면(이미지는 이름에 내용 해시가 있어 1년 캐시) 설명서에 나온다."}`);
+process.exitCode = skipped.length ? 3 : 0;
