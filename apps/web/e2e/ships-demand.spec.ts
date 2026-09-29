@@ -150,16 +150,16 @@ test("radar timeline: frame and source switches update the UI within 200 ms", as
   }));
   expect(switchMs).toBeLessThan(200);
   await expect(kma).toHaveAttribute("aria-pressed", "true");
-  await expect(label).toContainText("KST");
-  await expect(label).toHaveAttribute("title", /기상청이 준 KST 그대로/); // 기상청 tm 은 원래 KST — 원본 UTC 가 없다
+  await expect(label).toHaveText(/^\d\d-\d\d \d\d:\d\d KST · (\d\d-\d\d )?\d\d:\d\dZ$/); // KST 먼저 · UTC 함께(계약 v5 §G13)
+  await expect(label).toHaveAttribute("title", /기상청이 준 KST/); // 기상청 tm 은 원래 KST — UTC 는 그 값에서 계산
   const kmaText = await label.textContent();
   await page.getByTestId("radar-src-rv").click();
   await expect(page.getByTestId("radar-src-rv")).toHaveAttribute("aria-pressed", "true");
-  // 두 공급자 라벨이 같은 모양("MM-DD HH:MM KST" — 사용자 요청 2026-09-29 로 RainViewer 도 KST)이라 모양만으로는 라벨이 RainViewer 로
+  // 두 공급자 라벨이 같은 모양("MM-DD HH:MM KST · HH:MMZ" — 사용자 요청 2026-09-29, §G13)이라 모양만으로는 라벨이 RainViewer 로
   // 돌아왔는지 알 수 없다: 툴팁이 RainViewer 의 원본 UTC 이고, 글자가 방금 본 기상청 라벨과 달라야 한다(첫 프레임 2 h 전 ≠ 기상청 최신 프레임)
   await expect(label).toHaveAttribute("title", /^원본 UTC \d{4}-\d\d-\d\dT\d\d:\d\d/);
   await expect(label).not.toHaveText(kmaText ?? "");
-  await expect(label).toHaveText(/^\d\d-\d\d \d\d:\d\d KST$/);
+  await expect(label).toHaveText(/^\d\d-\d\d \d\d:\d\d KST · (\d\d-\d\d )?\d\d:\d\dZ$/);
 });
 
 test("stats page renders its four panels (data or an explicit 'not aggregated yet')", async ({ page }) => {
@@ -175,11 +175,41 @@ test("stats page renders its four panels (data or an explicit 'not aggregated ye
 test("replay page renders a frame for a past time", async ({ page }) => {
   await page.goto("/replay");
   await expect(page.getByTestId("replay-at")).not.toHaveText("—", { timeout: 10_000 });
-  await expect(page.getByTestId("replay-at")).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d KST$/); // 재생 시각도 KST(api 에는 UTC)
+  // 재생 시각은 KST 먼저 · UTC 함께(§G13 — UTC 날짜가 다르면 UTC 쪽에 날짜), api 에는 UTC
+  await expect(page.getByTestId("replay-at")).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d KST · (\d{4}-\d\d-\d\d )?\d\d:\d\d:\d\d UTC$/);
   await expect(page.getByLabel("재생 시각(KST)")).toBeVisible();
   await expect(page.getByTestId("replay-summary")).toContainText(/\d+ aircraft · \d+ SIGMET · /, { timeout: 20_000 });
   await expect(page.getByTestId("replay-map")).toBeVisible();
   await expect(page.getByTestId("attribution")).toBeInViewport();
+});
+
+test("replay slider keeps its geometry while dragging; the label follows at once; frame requests are debounced", async ({ page }) => {
+  // 사용자 영상(2026-09-29): 끄는 동안 슬라이더 폭 · 위치가 바뀌어 손잡이가 커서에서 떨어졌다(상태 글자와 한 flex 줄)
+  const replayReqs: string[] = [];
+  page.on("request", (r) => { if (r.url().includes("/api/v1/replay?")) replayReqs.push(r.url()); });
+  await page.goto("/replay");
+  await expect(page.getByTestId("replay-summary")).toContainText(/\d+ aircraft · /, { timeout: 20_000 });
+  const slider = page.locator('input[type="range"][aria-label="재생 시각"]');
+  const box0 = (await slider.boundingBox())!;
+  const before = replayReqs.length;
+  const y = box0.y + box0.height / 2;
+  await page.mouse.move(box0.x + box0.width * 0.9, y);
+  await page.mouse.down();
+  const boxes: { x: number; width: number; y: number }[] = [];
+  const labels: string[] = [];
+  // 72 h 경계를 넘나들며(원해상도 ↔ 1분 요약 — 상태 글자 길이가 바뀐다) 끈다
+  for (const f of [0.8, 0.6, 0.4, 0.2, 0.05, 0.3, 0.7, 0.95]) {
+    await page.mouse.move(box0.x + box0.width * f, y, { steps: 4 });
+    const b = (await slider.boundingBox())!;
+    boxes.push({ x: Math.round(b.x), width: Math.round(b.width), y: Math.round(b.y) });
+    labels.push((await page.getByTestId("replay-at").textContent()) ?? "");
+  }
+  await page.mouse.up();
+  for (const b of boxes) expect(b).toEqual({ x: Math.round(box0.x), width: Math.round(box0.width), y: Math.round(box0.y) });
+  expect(new Set(labels).size).toBeGreaterThan(4); // 라벨은 입력마다 바로 바뀐다
+  await expect(page.getByTestId("replay-frame-at")).toContainText("= 재생 시각", { timeout: 20_000 }); // 마지막 값의 프레임이 그려진다
+  // 끄는 동안 입력(수십 건)마다 요청하지 않는다 — debounce 뒤 마지막 값만(움직임 사이 멈춤마다 최대 1건)
+  expect(replayReqs.length - before).toBeLessThanOrEqual(boxes.length + 1);
 });
 
 test("no CSP violations or uncaught errors across pages (ships layer on)", async ({ page }) => {
