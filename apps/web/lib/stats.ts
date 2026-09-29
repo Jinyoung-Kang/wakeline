@@ -7,6 +7,11 @@
 import { preFixHysteresis } from "./chart";
 import { fmtDuration } from "./format";
 
+/**
+ * 일 집계 시각(api MaintenanceJobs.aggregateDaily — @Scheduled(cron = "0 30 3 * * *", zone = "UTC"), 매일 03:30 UTC)을 한국 표준시로 적은 것. 집계하는 날짜는 UTC 날짜(전날) 그대로다.
+ * 화면은 하루 안의 시각만 KST 로 보인다(사용자 요청 2026-09-29).
+ */
+export const STATS_RUN_KST = "12:30 KST";
 /** api MaintenanceJobs.CATCH_UP_DAYS — 놓친 날의 집계를 3시간마다 다시 시도하는 범위(최근 n일) */
 export const STATS_CATCH_UP_DAYS = 7;
 /** api MaintenanceJobs.catchUp 주기(fixedDelay 3 h) — 놓친 날의 다음 집계 시도는 늦어도 이만큼 뒤(api 가 돌고 있을 때) */
@@ -61,9 +66,9 @@ export function statsEmptyText(aggregated: boolean | undefined, day: string | nu
       if (keptUntil <= source.nowMs) return `집계되지 않은 날짜입니다 — ${source.name} 보존(${source.retentionH} h)이 지나 다시 셀 수 없어 채워지지 않습니다(서비스 기록 전이거나 집계가 빠진 날).`;
       if (keptUntil <= source.nowMs + STATS_CATCH_UP_EVERY_H * 3600_000) return `아직 집계되지 않았습니다 — ${source.name} 보존(${source.retentionH} h)이 곧 끝나 다음 집계 전에 지워지면 채워지지 않을 수 있습니다.`;
     }
-    return `아직 집계되지 않았습니다 — 다음 03:30 UTC 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기).`;
+    return `아직 집계되지 않았습니다 — 다음 ${STATS_RUN_KST} 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기).`;
   }
-  return "자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 매일 03:30 UTC).";
+  return `자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 매일 ${STATS_RUN_KST}).`;
 }
 
 // ---- 알림 통계 표 ----

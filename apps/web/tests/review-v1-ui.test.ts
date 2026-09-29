@@ -486,7 +486,7 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
     const html = renderToStaticMarkup(createElement(AlertStatsTable, { rows }));
     expect(html).not.toMatch(/alert_dwell_avg_s|alerts_by_kind/);
     expect(html).toContain("평균 체류");
-    expect(html).toContain("날짜(UTC)");
+    expect(html).toContain("날짜(UTC 날짜)"); // 집계 날짜는 UTC 날짜 그대로(KST 날짜로 옮기지 않는다)
   });
   it("rows whose day cannot be read stay separate ('—' each) instead of one row where one day's value overwrites another's", async () => {
     const stats = await import("@/lib/stats");
@@ -504,8 +504,8 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
   it("empty states say whether the day was not aggregated yet, never aggregated, or aggregated with no data", async () => {
     const stats = await import("@/lib/stats");
     const today = "2026-09-28";
-    expect(stats.statsEmptyText(false, "2026-09-27", today)).toContain("다음 03:30 UTC");
-    expect(stats.statsEmptyText(false, "2020-01-01", today)).not.toContain("다음 03:30");
+    expect(stats.statsEmptyText(false, "2026-09-27", today)).toContain("다음 12:30 KST");
+    expect(stats.statsEmptyText(false, "2020-01-01", today)).not.toContain("다음 12:30");
     expect(stats.statsEmptyText(false, "2020-01-01", today)).toContain("집계되지 않은 날짜");
     expect(stats.statsEmptyText(true, "2026-09-20", today)).toContain("자료가 없습니다");
     expect(stats.statsEmptyText(undefined, "2026-09-20", today)).toContain("구분할 수 없");
@@ -518,20 +518,20 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
     // api: track-retention-hours 72 · MaintenanceJobs.families 는 그날 끝 > now − 72 h 일 때만 교통량을 다시 센다 · 따라잡기 3 h 마다
     const src = (iso: string) => ({ name: "원본 항적", retentionH: 72, nowMs: Date.parse(iso) });
     const today = "2026-09-28";
-    // 5일 전(09-23): 그날 끝(09-24 00Z) + 72 h = 09-27 00Z < 지금 → 원본이 없다. 수정 전: "다음 03:30 UTC 집계 뒤 채워집니다"
+    // 5일 전(09-23): 그날 끝(09-24 00Z) + 72 h = 09-27 00Z < 지금 → 원본이 없다. 수정 전: "다음 03:30 UTC(지금은 12:30 KST) 집계 뒤 채워집니다"
     const gone = stats.statsEmptyText(false, "2026-09-23", today, src("2026-09-28T01:00:00Z"));
-    expect(gone).not.toContain("다음 03:30");
+    expect(gone).not.toContain("다음 12:30");
     expect(gone).not.toMatch(/채워집니다/);
     expect(gone).toContain("채워지지 않습니다");
     expect(gone).toContain("72 h");
     // 3일 전(09-25): 원본은 09-29 00Z 까지 — 01Z 에는 약속, 22Z 에는 다음 따라잡기(≤ 3 h) 전에 지워질 수 있어 약속하지 않는다
-    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T01:00:00Z"))).toContain("다음 03:30 UTC");
+    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T01:00:00Z"))).toContain("다음 12:30 KST");
     const soon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T22:00:00Z"));
     expect(soon).not.toMatch(/채워집니다/);
     expect(soon).toContain("채워지지 않을 수 있습니다");
     // 어제는 그대로 약속한다 · 원본 보존을 모르는(넘기지 않은) 계열은 기존 규칙(따라잡기 7일)
-    expect(stats.statsEmptyText(false, "2026-09-27", today, src("2026-09-28T23:59:00Z"))).toContain("다음 03:30 UTC");
-    expect(stats.statsEmptyText(false, "2026-09-23", today)).toContain("다음 03:30 UTC");
+    expect(stats.statsEmptyText(false, "2026-09-27", today, src("2026-09-28T23:59:00Z"))).toContain("다음 12:30 KST");
+    expect(stats.statsEmptyText(false, "2026-09-23", today)).toContain("다음 12:30 KST");
     // 교통량 차트가 이 원본 보존 규칙으로 빈 상태를 말한다
     expect(stats.TRAFFIC_SOURCE).toEqual({ name: "원본 항적", retentionH: 72 });
     expect(readFileSync(new URL("../app/stats/page.tsx", import.meta.url), "utf8")).toMatch(/statsEmptyText\(agg\.traffic, day, today, \{ \.\.\.TRAFFIC_SOURCE, nowMs: /);
