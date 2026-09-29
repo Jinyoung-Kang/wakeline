@@ -129,10 +129,10 @@ async def existing_entries(redis: Redis, stream: str, *, since_ms: int, budget_b
     total = 0
     hi = "+"
     while True:
-        rows = await redis.xrevrange(stream, max=hi, min=str(since_ms), count=SEED_PAGE)
+        rows = await redis.xrevrange(stream, max=hi, min=str(since_ms), count=SEED_PAGE) or []
         for sid, fields in rows:
             sid_s = sid.decode() if isinstance(sid, bytes) else str(sid)
-            n = _size(fields)
+            n = sum(len(k) + len(v) for k, v in (fields or {}).items())  # _size 와 같다(bytes 응답이면 바이트 수)
             out.append((int(sid_s.split("-")[0]) / 1000, n))
             total += n
             if total > budget_bytes:
