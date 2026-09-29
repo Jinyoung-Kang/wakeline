@@ -29,9 +29,11 @@ test("dashboard loads with attribution, lag badge and aircraft", async ({ page }
   await creditToggle.click();
   await expect(mapCredit).not.toHaveAttribute("open", "");
   await expect(page.getByTestId("fixture-badge")).toBeVisible({ timeout: 20_000 });
-  // 배지만이 아니라 실제 수집 출처가 fixture 인지(외부 호출 없음) 확인
-  await expect(page.getByTestId("statusbar")).toContainText("fixture", { timeout: 20_000 });
+  // 배지만이 아니라 실제 수집 출처가 fixture 인지(외부 호출 없음) 확인 — 출처는 상태 바의 '상세' 표에 있다(2026-09-30 상태 바 칩)
   await expect(page.getByTestId("lag-badge")).toContainText("lag", { timeout: 30_000 });
+  await page.getByTestId("statusbar-details-toggle").click();
+  await expect(page.getByTestId("statusbar-details").locator('[data-row="region"]')).toContainText("fixture", { timeout: 20_000 });
+  await page.keyboard.press("Escape");
   await expect(page.getByTestId("layer-panel")).toBeVisible();
   expect(cspViolations).toEqual([]);
 });
