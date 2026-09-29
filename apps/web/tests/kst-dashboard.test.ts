@@ -94,7 +94,7 @@ describe("dashboard components show KST (the UTC original stays in the tooltip)"
     const region = /<span[^>]*data-testid="region-source".*?<\/span><\/span>/.exec(html)![0];
     expect(text(region)).toBe("regionadsb_fi · 08:41:14 KST");
     expect(region).toContain('title="원본 UTC 2026-09-28T23:41:14.000Z"');
-    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*마지막 수집 09-29 08:20:00 KST/);
+    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*최신 tm 첫 수집 09-29 08:20:00 KST/);
     expect(text(html)).toContain("KMA 1f 08:40 KST");
     expect(text(html)).not.toMatch(UTC_LEFT);
     // 최신 tm 을 모르면 "—" 만 — "undefined:undefinedK" 가 아니다

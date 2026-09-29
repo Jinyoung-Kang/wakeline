@@ -311,19 +311,25 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     return out;
   };
 
-  it("KMA timeline: the current frame's composite size, a warn marker for a partial frame and a per-frame strip (partial · full · unknown)", async () => {
+  const hmKstOf = (iso: string) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
+
+  it("KMA timeline: the current frame's composite size, a warn marker for a partial frame and a per-frame strip (partial · at reference · no verdict)", async () => {
     useUi.setState({ radarSource: "kma" });
-    setData({ radarKr: krFrames(new Date(Date.now() + 10 * 60_000).toISOString()) as never });
+    const until = new Date(Date.now() + 10 * 60_000).toISOString();
+    setData({ radarKr: krFrames(until) as never });
     await mountTimeline();
     expect(byTestId("kr-frame-composite")?.textContent).toBe("합성 7/15곳"); // 최신(마지막) 프레임
     const mark = byTestId("kr-frame-partial");
     expect(mark?.textContent).toBe("일부 합성");
-    expect(mark?.getAttribute("title")).toBe("일부 지점만 합성(7/15곳) — 기상청이 아직 채우는 중, 다음 주기에 다시 받음");
+    expect(mark?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — ${hmKstOf(until)} KST까지 다시 받기 대상(지점이 늘면 바꿈)`);
+    const strip = byTestId("kr-frame-strip");
+    expect(strip?.getAttribute("title")).toContain("기준 도달(지난 60분 최대와 같음 — 완전한지는 모름)");
+    expect(strip?.getAttribute("title")).not.toContain("= 완전");
     const cells = findAll((n) => n.getAttribute?.("data-kr-frame") != null);
-    expect(cells.map((c) => c.getAttribute("data-state"))).toEqual(["unknown", "full", "partial"]);
+    expect(cells.map((c) => c.getAttribute("data-state"))).toEqual(["unknown", "at_ref", "partial"]);
     expect(cells[0].getAttribute("title")).toBe("12:00 KST · 합성 —");
     expect(cells[2].getAttribute("title")).toContain("12:10 KST · 합성 7/15곳 · 일부 지점만 합성(7/15곳)");
-    // 다른 프레임으로 옮기면 그 프레임의 값: 완전 → 경고 없음, 옛 항목 → "—"
+    // 다른 프레임으로 옮기면 그 프레임의 값: 기준 도달 → 경고 없음, 옛 항목 → "—"
     await act(() => useUi.setState({ krFrameIndex: 1 }));
     expect(byTestId("kr-frame-composite")?.textContent).toBe("합성 15/15곳");
     expect(byTestId("kr-frame-partial")).toBeNull();
@@ -331,10 +337,11 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     expect(byTestId("kr-frame-composite")?.textContent).toBe("합성 —");
   });
 
-  it("KMA timeline: after the collector's refetch deadline the partial frame says it was never filled in", async () => {
+  it("KMA timeline: after the collector's refetch deadline the partial frame says only that the deadline passed (refetches unknown)", async () => {
     useUi.setState({ radarSource: "kma" });
-    setData({ radarKr: krFrames(new Date(Date.now() - 60_000).toISOString()) as never });
+    const until = new Date(Date.now() - 60_000).toISOString();
+    setData({ radarKr: krFrames(until) as never });
     await mountTimeline();
-    expect(byTestId("kr-frame-partial")?.getAttribute("title")).toBe("일부 지점만 합성(7/15곳) — 끝까지 채워지지 않음");
+    expect(byTestId("kr-frame-partial")?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — 다시 받기 기한 ${hmKstOf(until)} KST 지남`);
   });
 });

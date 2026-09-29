@@ -52,7 +52,7 @@ export function StatusBar() {
       {invAny ? <WsInvalidBadge inv={inv} /> : null}
       {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
       {/* 경고 배지는 앞쪽에 — 가로 스크롤 끝으로 밀려 보이지 않게 두지 않는다(R-31) */}
-      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더 수집이 ${KR_RADAR_STALE_S / 60}분 넘게 갱신되지 않음(마지막 수집 ${fmtKstTitle(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
+      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더에 ${KR_RADAR_STALE_S / 60}분 넘게 새 프레임 없음(최신 tm 첫 수집 ${fmtKstTitle(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
       {krComp?.warn ? <span className="badge warn normal-case!" data-testid="kr-status-partial" title={krComp.warn}>KMA 일부 합성</span> : null}
       <span className="mono" data-testid="aircraft-count"
         title={s.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다"}>

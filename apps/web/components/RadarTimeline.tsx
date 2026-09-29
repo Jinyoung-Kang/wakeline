@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
 import { useServerNow } from "@/lib/clock";
 import { fmtMinuteKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
-import { krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
+import { KR_REF_WINDOW_MIN, krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
@@ -21,8 +21,8 @@ function krUnavailableText(d: KrRadar | null): string {
 /**
  * 레이더 타임라인(FR-06): 과거 2 h · 10분 간격 프레임. 지도는 현재 프레임만 받아 그리고(PERF-12), 재생 중에만 다음 프레임을 미리 받는다.
  * RainViewer 는 커버리지 밖을 회색으로 가려 "에코 없음"과 구분한다(GAP-15).
- * 기상청(ADR-021): 지금 프레임의 합성 크기("합성 12/15곳")와 부분 합성 경고, 프레임 띠(프레임마다 완전 · 부분 합성 · 모름)를 함께 보인다 —
- * 부분 합성 프레임은 실자료라 숨기지 않지만 완전한 것처럼 보이지 않게.
+ * 기상청(ADR-021): 지금 프레임의 합성 크기("합성 12/15곳")와 부분 합성 경고, 프레임 띠(프레임마다 부분 합성 · 기준 도달 · 판정 없음)를 함께 보인다 —
+ * 부분 합성 프레임은 실자료라 숨기지 않지만 완전한 것처럼 보이지 않게. 기준 도달은 '완전'이 아니다(지난 60분 최대와 같을 뿐) — 초록(정상)이 아닌 파랑.
  */
 export function RadarTimeline() {
   const radar = useServerData((d) => d.radar);
@@ -79,12 +79,12 @@ export function RadarTimeline() {
       {comp?.warn ? <span className="badge warn normal-case!" title={comp.warn} data-testid="kr-frame-partial">일부 합성</span> : null}
       {krFrames ? (
         <span className="flex h-3 items-stretch gap-px" data-testid="kr-frame-strip" role="img" aria-label={`프레임별 합성 상태 — 부분 합성 ${krPartialSummary(krFrames)}`}
-          title={`프레임별 합성 상태(왼쪽이 오래된 프레임): 주황 = 일부 지점만 합성, 녹색 = 완전, 회색 = 모름 · 부분 합성 ${krPartialSummary(krFrames)}`}>
+          title={`프레임별 합성 상태(왼쪽이 오래된 프레임): 주황 = 일부 지점만 합성(기준 미만), 파랑 = 기준 도달(지난 ${KR_REF_WINDOW_MIN}분 최대와 같음 — 완전한지는 모름), 빈 칸 = 판정 없음 · 부분 합성 ${krPartialSummary(krFrames)}`}>
           {krFrames.map((f, i) => {
             const c = krComposite(f, srvNow);
-            const st = c.state === "full" ? "full" : c.state === "unknown" ? "unknown" : "partial";
+            const st = c.state === "at_ref" ? "at_ref" : c.state === "unknown" ? "unknown" : "partial";
             return <span key={f.tm} data-kr-frame={f.tm} data-state={st} title={`${krTmClock(f.tm)} · ${c.label}${c.warn ? ` · ${c.warn}` : ""}`}
-              className={`w-1.5 ${st === "partial" ? "bg-warn" : st === "full" ? "bg-ok/60" : "bg-fg-3/40"} ${i === cur ? "outline outline-1 outline-fg" : ""}`} />;
+              className={`w-1.5 ${st === "partial" ? "bg-warn" : st === "at_ref" ? "bg-accent/70" : "border border-fg-3/60"} ${i === cur ? "outline outline-1 outline-fg" : ""}`} />;
           })}
         </span>
       ) : null}

@@ -2,15 +2,19 @@
  * 기상청 합성 레이더의 부분 합성(ADR-021, 2026-09-29 관찰: 저장된 프레임 절반가량이 레이더 15곳 중 5–9곳만 합성된 채 표시).
  * - 합성 크기를 명시한다: "합성 12/15곳"(헤더의 지점 수 / 지난 60분 저장 프레임 중 최대 — 수집기 기준). 모르면 "—"(단위를 붙이지 않는다).
  * - 부분 합성 프레임은 숨기지 않지만(실자료) 완전한 것처럼 보이지 않는다 — 경고 표시와 툴팁:
- *   "일부 지점만 합성(N/M곳) — 기상청이 아직 채우는 중, 다음 주기에 다시 받음"(수집기의 다시 받기 기한 refetch_until 전),
- *   기한이 지나면 "… — 끝까지 채워지지 않음". 기한이나 지금 시각을 모르면 뒤 문장을 붙이지 않는다(지어내지 않는다).
+ *   "일부 지점만 합성(N/M곳) — HH:MM KST까지 다시 받기 대상(지점이 늘면 바꿈)"(수집기의 다시 받기 기한 refetch_until 전 — 주기당 개수 · 예산에
+ *   따라 실제로 다시 받는지는 조건부라 '다음 주기에 다시 받음' 이라고 하지 않는다). 기한이 지나면 수집기의 기록(refetches)대로:
+ *   다시 받았으면 "기한 … 까지 다시 받은 N회에도 기준 미만", 0회면 "기한 … 안에 다시 받지 못함", 모르면 "다시 받기 기한 … 지남".
+ *   기한이나 지금 시각을 모르면 뒤 문장을 붙이지 않는다(지어내지 않는다).
+ * - 어디에도 '완전'이라고 하지 않는다: partial=false 는 "기준 도달"(지난 60분 최대와 같음 — 기상청 합성이 완전한지는 자료에 없다). 기준이 그 프레임
+ *   하나뿐이면 수집기가 판정을 두지 않고, 화면은 "합성 N/M곳 · 판정 —".
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { KR_REF_WINDOW_MIN, krComposite, krLayerId, krPartialSummary } from "@/lib/kr-radar";
+import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krComposite, krLayerId, krPartialSummary } from "@/lib/kr-radar";
 import { resetData, setData } from "@/lib/store";
 import { KrRadarPanel } from "@/components/KrRadarPanel";
 import { StatusBar } from "@/components/StatusBar";
@@ -42,26 +46,40 @@ function kr(frames: KrRadarFrame[]): KrRadar {
 }
 
 describe("krComposite: composite size and partial wording from the frame's own fields", () => {
-  it("full frame: 합성 15/15곳, no warning", () => {
+  it("frame at the reference: 합성 15/15곳, no warning, and it is called 기준 도달 — never complete", () => {
     const c = krComposite(full("202609291405"), BEFORE);
     expect(c.label).toBe("합성 15/15곳");
-    expect(c.state).toBe("full");
+    expect(c.state).toBe("at_ref");
     expect(c.warn).toBeNull();
     expect(c.title).toContain("합성 지점 15곳 / 기준 15곳");
+    expect(c.title).toContain("기준 도달 — 지난 60분 저장 프레임 중 최대와 같음(기상청 합성이 완전한지는 자료에 없음)");
+    expect(c.title).not.toMatch(/= 완전|완전함|완전 합성/);
   });
-  it("partial frame before the collector's refetch deadline: still being filled, fetched again next cycle", () => {
+  it("no verdict although both counts are known (the reference is this frame alone): 판정 —, not complete", () => {
+    const c = krComposite(frame("202609291410", { stations: 7, station_ids: ids(7), stations_ref: 7 }), BEFORE);
+    expect(c.label).toBe("합성 7/7곳 · 판정 —");
+    expect(c.state).toBe("unknown");
+    expect(c.warn).toBeNull();
+    expect(c.title).toContain("판정 없음 — 기준(7곳)에 닿은 저장 프레임이 이 프레임뿐이거나(첫 프레임 · 공백 뒤) 판정 값이 없음");
+  });
+  it("partial frame before the collector's refetch deadline: a refetch candidate until the deadline (KST) — not 'next cycle'", () => {
     const c = krComposite(partial("202609291410"), BEFORE);
     expect(c.label).toBe("합성 7/15곳");
     expect(c.state).toBe("filling");
-    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 기상청이 아직 채우는 중, 다음 주기에 다시 받음");
+    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 14:40 KST까지 다시 받기 대상(지점이 늘면 바꿈)");
+    expect(c.warn).not.toContain("다음 주기");
+    expect(c.warn).not.toContain("채우는 중"); // 기상청이 채우는 중인지는 이 프레임의 자료에 없다(레이더 장애일 수도)
     expect(c.title).toContain(c.warn!);
     expect(c.title).toContain("다시 받음 1회 · 지점이 늘어 바꿈 0회");
     expect(c.title).toContain("K00, K01, K02, K03, K04, K05, K06");
   });
-  it("partial frame after the deadline: never filled in", () => {
-    const c = krComposite(partial("202609291410"), AFTER);
+  it("partial frame after the deadline: says only what the collector recorded (refetched N times · never refetched · unknown)", () => {
+    const c = krComposite(partial("202609291410", { refetches: 2 }), AFTER);
     expect(c.state).toBe("final");
-    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 끝까지 채워지지 않음");
+    expect(c.warn).toBe("일부 지점만 합성(7/15곳) — 기한 14:40 KST까지 다시 받은 2회에도 기준 미만");
+    expect(krComposite(partial("202609291410", { refetches: 0 }), AFTER).warn).toBe("일부 지점만 합성(7/15곳) — 기한 14:40 KST 안에 다시 받지 못함");
+    expect(krComposite(partial("202609291410", { refetches: null }), AFTER).warn).toBe("일부 지점만 합성(7/15곳) — 다시 받기 기한 14:40 KST 지남");
+    for (const re of [0, 2, null]) expect(krComposite(partial("202609291410", { refetches: re }), AFTER).warn).not.toContain("끝까지");
   });
   it("unknown deadline or unknown clock: the partial marker stays, the refetch sentence is not invented", () => {
     expect(krComposite(partial("202609291410", { refetch_until: null }), BEFORE).warn).toBe("일부 지점만 합성(7/15곳)");
@@ -130,6 +148,18 @@ describe("KMA panel, status bar and legend never present a partial composite as 
     expect(text(html)).toContain("합성 N/M곳");
     expect(text(html)).toContain("일부 합성");
     expect(text(html)).toContain("지난 60분");
+    expect(text(html)).toContain("기준 도달");
+    expect(text(html)).toContain("완전한지는 모름");
+    expect(text(html)).toContain("판정 —");
+    expect(text(html)).not.toContain("채우는 중");
+  });
+  it("KMA panel and status bar: the STALE tooltip names the time the latest tm was first collected (refetches do not move it)", () => {
+    const stale = { ...kr([full("202609291405"), full("202609291410")]), meta: { fetched_at: "2026-09-29T05:13:40Z", stale: true } } as KrRadar;
+    setData({ conn: "open", lastRxAt: Date.now(), radarKr: stale });
+    const bar = renderToStaticMarkup(createElement(StatusBar));
+    expect(bar).toMatch(/data-testid="kr-radar-stale"[^>]*title="[^"]*최신 tm 첫 수집 [^"]*"/);
+    const panel = renderToStaticMarkup(createElement(KrRadarPanel, { onClose: () => {} }));
+    expect(panel).toMatch(/data-testid="kr-panel-stale"[^>]*title="최신 tm 첫 수집 [^"]*"/);
   });
 });
 
@@ -139,6 +169,12 @@ describe("the words on screen follow the collector's choices", () => {
     const m = /^REF_WINDOW_S = (\d+) \* 60\b/m.exec(py);
     expect(m).not.toBeNull();
     expect(Number(m![1])).toBe(KR_REF_WINDOW_MIN);
+  });
+  it("the '기준 도달' support named on screen is the collector's REF_MIN_SUPPORT (a choice)", () => {
+    const py = readFileSync(new URL("../../collector/wakeline_collector/jobs/kma_radar.py", import.meta.url), "utf8");
+    const m = /^REF_MIN_SUPPORT = (\d+)\b/m.exec(py);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(KR_REF_MIN_SUPPORT);
   });
   it("map layer ids carry the image version so a re-downloaded frame gets a new layer; unversioned URLs keep the old id", () => {
     expect(krLayerId({ tm: "202609291440", url: "/api/v1/radar/kr/202609291440.png?v=1790662419000" })).toBe("kmar-202609291440-1790662419000");
