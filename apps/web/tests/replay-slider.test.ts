@@ -14,7 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ReplayPage from "@/app/replay/page";
 import * as R from "@/lib/replay";
-import { ancestors, byTestId, classes, elements, findAll, parseHtml, type HNode } from "./helpers/html-tree";
+import { ancestors, byTestId, classes, elements, findAll, parseHtml, textOf, type HNode } from "./helpers/html-tree";
 
 const page = () => parseHtml(renderToStaticMarkup(createElement(ReplayPage)));
 const isFlex = (n: HNode) => classes(n).has("flex") || classes(n).has("inline-flex") || classes(n).has("grid");
@@ -71,6 +71,40 @@ describe("replay slider geometry does not depend on any text", () => {
     expect(idx("replay-controls")).toBeLessThan(idx("replay-slider-row"));
     expect(idx("replay-slider-row")).toBeLessThan(idx("replay-status"));
     for (const id of ["replay-at", "replay-zone", "replay-frame-at", "replay-summary", "replay-radar"]) expect(byTestId(controls, id), id).toBeNull();
+  });
+});
+
+describe("the loading signal is never the first thing clipped on a narrow row", () => {
+  // 재생 시각(KST · UTC, 약 38자)과 구간 라벨은 shrink-0 이라 휴대폰 폭에서는 줄을 거의 채운다 — "불러오는 중" 이 잘리는 글자의 꼬리에 있으면 먼저 사라졌다(리뷰 2026-09-29)
+  const range = { min: Date.parse("2026-08-30T00:00:00Z"), max: Date.parse("2026-09-29T05:00:00Z"), fullResFrom: Date.parse("2026-09-26T05:00:00Z") };
+  const at = Date.parse("2026-09-29T04:50:00Z");
+  const frame = (iso: string): R.ReplayFrame => ({ at: iso, aircraft: [], sigmets: [], source: "track_point" });
+  const row = async (f: R.ReplayFrame | null) => {
+    const { ReplayStatusRow } = await import("@/components/ReplayStatus");
+    return parseHtml(renderToStaticMarkup(createElement(ReplayStatusRow, { at, range, frame: f, latencyMs: 42 })));
+  };
+  it("behind (the map still shows another time): a short shrink-0 badge right after the replay time, before every clipping text", async () => {
+    const root = await row(frame("2026-09-29T04:40:00Z"));
+    const badge = byTestId(root, "replay-loading")!;
+    expect(badge).not.toBeNull();
+    expect(badge.children.map((c) => (c.tag === "#text" ? c.text : "")).join("")).toBe("불러오는 중");
+    expect(classes(badge).has("shrink-0")).toBe(true);
+    expect(classes(badge).has("text-warn")).toBe(true);
+    const all = findAll(root, () => true);
+    const idx = (id: string) => all.indexOf(byTestId(root, id)!);
+    expect(idx("replay-loading")).toBeGreaterThan(idx("replay-at"));
+    for (const id of ["replay-zone", "replay-frame-at", "replay-summary", "replay-radar"]) expect(idx("replay-loading"), id).toBeLessThan(idx(id));
+    // 잘리는 글자에는 더 이상 싣지 않는다(두 번 말하지 않는다)
+    const frameAt = byTestId(root, "replay-frame-at")!;
+    expect(textOf(frameAt)).not.toContain("불러오는 중");
+    expect(textOf(frameAt)).toContain("지도 2026-09-29 13:40:00 KST · 04:40:00 UTC"); // 지도가 아직 그린 시각
+  });
+  it("caught up (the map shows the replay time): no badge", async () => {
+    expect(byTestId(await row(frame(new Date(at).toISOString())), "replay-loading")).toBeNull();
+  });
+  it("the page uses the status row component", async () => {
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(new URL("../app/replay/page.tsx", import.meta.url), "utf8")).toMatch(/<ReplayStatusRow at=\{at\} range=\{range\} frame=\{frame\} latencyMs=\{latency\} \/>/);
   });
 });
 

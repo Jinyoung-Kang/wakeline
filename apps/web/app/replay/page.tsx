@@ -2,21 +2,19 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtUtcTitle } from "@/lib/time";
-import { fmtLatencyMs } from "@/lib/format";
 import {
-  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRadarTitle, replayRange,
+  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayInspectorMiss, replayRange,
   replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayFrame, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
 import { ReplayList } from "@/components/ReplayList";
 import { ReplayAircraftDetail, ReplaySigmetDetail } from "@/components/ReplayInspector";
+import { ReplayStatusRow } from "@/components/ReplayStatus";
 import { RequestIdCopy } from "@/components/logs/ErrorNote";
 
 const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
 const SPEEDS = [1, 5, 10, 30, 60];
-const SOURCE_LABEL: Record<string, string> = { track_point: "원해상도 기록", track_point_1m: "1분 요약(평균 위치)", none: "기록 없음" };
 
 /**
  * 이력 재생(FR-23): 최근 30일(72 h 원해상도, 그 이전은 1분 요약) · 1×~60× · 그 시각 SIGMET · 레이더(있을 때만).
@@ -61,8 +59,6 @@ export default function ReplayPage() {
   }, [playing, speed, max]);
 
   const onBbox = useCallback((b: string, c: boolean) => { setBbox(b); setClamped(c); }, []);
-  const shown = replayFrameAtLabel(frame, at);
-  const summary = frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${fmtLatencyMs(latency)}` : "—";
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
@@ -70,7 +66,8 @@ export default function ReplayPage() {
       <h1 className="sr-only">이력 재생</h1>
       {/*
         사용자 영상(2026-09-29): 슬라이더가 길이가 바뀌는 상태 글자와 한 flex-wrap 줄에 있어 끄는 동안 폭·위치가 바뀌었다.
-        1행 = 길이가 바뀌지 않는 조작(단추·시각 입력)만 · 2행 = 슬라이더 혼자(폭 = 줄 폭) · 3행 = 상태 글자(높이 고정 · 한 줄 · 넘치면 잘림, 전체는 title)
+        1행 = 길이가 바뀌지 않는 조작(단추·시각 입력)만 · 2행 = 슬라이더 혼자(폭 = 줄 폭) · 3행 = 상태 글자(ReplayStatusRow — 높이 고정 · 한 줄 · 넘치면 잘림, 전체는 title,
+        "불러오는 중" 은 재생 시각 바로 뒤 — 잘리는 글자 앞)
         · 4행 = 오류·조회 영역 제한·설명(줄바꿈 허용 — 슬라이더 아래라 슬라이더를 움직이지 않는다).
       */}
       <div className="shrink-0 border-b border-line bg-bg-1 text-[11px]">
@@ -94,16 +91,7 @@ export default function ReplayPage() {
             list="replay-marks" aria-label="재생 시각" aria-valuetext={at ? `${replayAtLabel(at)} · ${replayZone(at, range) === "full" ? "원해상도" : "1분 요약"}` : "—"} />
           <datalist id="replay-marks"><option value={range.fullResFrom} label="72 h" /></datalist>
         </div>
-        <div className="flex h-5 items-center gap-x-3 overflow-hidden px-3 whitespace-nowrap" data-testid="replay-status">
-          <span className="mono shrink-0" data-testid="replay-at" title={at ? fmtUtcTitle(at) : undefined}>{replayAtLabel(at)}</span>
-          {at && max ? <span className={`shrink-0 ${replayZone(at, range) === "full" ? "text-fg-2" : "text-warn"}`} data-testid="replay-zone">{replayZone(at, range) === "full" ? "원해상도 구간(72 h 안)" : "1분 요약 구간(72 h 밖)"}</span> : null}
-          <span className={`mono min-w-0 truncate ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title={`지도에 그린 기록의 시각(응답 at): ${shown.text}${frame ? ` · ${fmtUtcTitle(frame.at) ?? "원본 UTC —"}` : ""}`}>
-            {/* 응답 시각이 재생 시각과 같으면(1 s 안) 같은 글자를 되풀이하지 않는다 — 다를 때(불러오는 중)만 그린 시각을 보인다 */}
-            지도 {shown.text !== "—" && !shown.behind ? "= 재생 시각" : shown.text}{shown.behind ? " · 불러오는 중" : ""}
-          </span>
-          <span className="mono min-w-0 truncate text-fg-2" data-testid="replay-summary" title={summary}>{summary}</span>
-          <span className={`min-w-0 truncate ${frame?.radar ? "text-fg-2" : "text-fg-3"}`} data-testid="replay-radar" title={[replayRadarLabel(frame), replayRadarTitle(frame)].filter(Boolean).join(" · ")}>{replayRadarLabel(frame)}</span>
-        </div>
+        <ReplayStatusRow at={at} range={range} frame={frame} latencyMs={latency} />
         <div className="flex flex-wrap gap-x-3 px-3 pb-1 leading-snug">
           {err ? <span className="text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
           {clamped ? <span className="text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
