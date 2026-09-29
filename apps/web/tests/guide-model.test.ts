@@ -138,6 +138,18 @@ describe("dual time for examples (KST first, UTC alongside)", () => {
     expect(dualInline("2026-09-29T20:30:00Z")).toEqual({ kst: "2026-09-30 05:30:00 KST", utc: "2026-09-29 20:30:00 UTC", iso: "2026-09-29T20:30:00.000Z" });
     expect(dualInline(undefined)).toBeNull();
   });
+  // 합친 뒤 확인(web-core-v6 의 공용 lib/time 이 들어오면 돈다): 설명서의 시각 모양이 다른 화면과 글자까지 같다 — 다르면 설명서 7장이 화면과 어긋난다.
+  // 이 시험이 돌기 시작하면 GuideFigure · GuideView 를 lib/time · components/DualTime 으로 바꾸고 dualInline 을 지운다.
+  const SHARED_TIME = join(WEB, "lib", "time.ts");
+  it.skipIf(!existsSync(SHARED_TIME))("after merge: dualInline equals the shared lib/time dualPair(v, { year: true })", async () => {
+    const spec = "../lib/time";
+    const time = (await import(/* @vite-ignore */ spec)) as { dualPair: (v: unknown, o: { year: boolean }) => { kst: string; utc: string } | null };
+    for (const v of ["2026-09-29T05:22:11Z", "2026-09-29T20:30:00Z", "2026-12-31T15:00:00Z", null]) {
+      const mine = dualInline(v);
+      const shared = time.dualPair(v, { year: true });
+      expect(mine ? { kst: mine.kst, utc: mine.utc } : null).toEqual(shared ? { kst: shared.kst, utc: shared.utc } : null);
+    }
+  });
   it("the raw-bulletin time token of an instant is its UTC day-hour-minute + Z (as published)", () => {
     expect(metarTimeToken("2026-09-29T05:00:00Z")).toBe("290500Z");
     expect(metarTimeToken("2026-09-30T23:59:00Z")).toBe("302359Z");
