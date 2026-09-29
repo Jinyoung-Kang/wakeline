@@ -410,3 +410,31 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `wakeline_ws_ship_lookup_dropped_total`. 시험: `ShipSelectionLookupTest`(pong · diff 가 막힌 읽기를 기다리지 않음 · 마감의 읽지 못함 · 늦은 결과는 다음
     다시 보기 · 입출항도 우편함 밖 · 늦게 온 결과 버리기 · 포화 · 같은 MMSI 한 번 읽기와 캐시) · `StoredStaticIT`(표 잠금 3 s 동안 pong < 1 s · 읽기 풀 소진 ·
     읽기 풀 연결의 서버 설정).
+- G19(§G17 의 시각 열 문장 · ADR-014 의 정적 정보 저장) **정적 정보의 받은 필드 — 저장 행은 받은 필드만 덮는다**.
+  - 관찰(재현 — 수집기 `test_ais_static_received.py`, api `ShipPersistDbTest` · `StaticPartsIT`): ais 재시작이나 ShipBook 제거(ttl 30분 · 선박 수 상한) 뒤 레코드는
+    빈 것(14칸 None)에서 시작해 받은 조각만 채운다. Class B 는 24A(선명)와 24B(호출부호 · 선종 · 크기)가 따로 오는데, 둘이 다른 발행(10 s)에 들어가면 첫
+    발행의 static 은 call_sign · ship_type · dim_* 가 null 이고, 메시지는 '받지 않음' 과 '빈 값으로 받음' 을 구별하지 않았다 → api 의 STATIC_SQL 이 ship 행의
+    호출부호 · 선종 · 크기를 NULL 로 덮었다(24B 가 오기 전에 선박이 사라지면 영구히 — §G17 의 저장 정적 보고 · REST /ships/{mmsi} 가 호출부호 없는 행을 보였다).
+  - 어느 층의 일인가: '무엇을 받았는가' 는 AIS 조각을 보는 수집기만 알고, 저장값과 합치는 일은 행을 쓰는 api 저장 층이 한다 — 수집기는 받은 필드를 싣고
+    api 는 그 필드만 덮는다. api 메모리(ShipStore — 지도 목록 · 검색 · 선택의 live)는 받은 그대로 둔다(저장값을 섞지 않는다).
+  - 스트림(`stream_envelope.v1.json` `$defs/ships_payload` — 두 사본): `static_received` = static 의 MMSI → 수집기 레코드가 시작된 뒤 받은 정적 필드
+    (`parse.STATIC_FIELDS` 순서 · enum · 중복 없음). 메시지 5 = 14칸 모두 · 24A = name · 24B = call_sign · ship_type · dim_a–d(보조 선박 98MIDxxxx 는 크기 키를
+    싣지 않으므로 크기 없음) · 19 = name · ship_type · dim_a–d. 필드 목록이 아니라 조각 이름(5 · 24A · 24B)을 싣지 않은 까닭: 파서가 조각마다 실은 키를 이미
+    정하고(보조 선박 24B 예외 포함), 필드 목록이면 api 가 조각 → 열 표와 예외를 다시 가질 필요가 없다. static 항목(`ship_static.v1.json`) 밖에 두는 까닭: 항목은
+    additionalProperties false 라 이전 api 가 메시지 전체(위치 포함)를 거절한다. 받은 필드만 늘어도(값은 같은 null — 선박이 비워 보냄) 레코드는 '바뀜' 으로 새
+    시각과 함께 다시 발행된다.
+  - api(`ShipCodec.received` → `ShipStatic.received` · `written()` · `overlay()`, `ShipRepository.STATIC_SQL`): 있는 행은 받은 필드만 바꾸고(열마다
+    `CASE WHEN ? THEN EXCLUDED.col ELSE s.col END`) 나머지 열은 저장값을 둔다. 받은 부분 안의 빈 값은 덮는다(선박이 비워 보냈다). updated_at 단조 규칙 · 보고
+    범위 넓히기는 그대로. 한 배치 안의 같은 MMSI 는 updated_at 순으로 겹쳐 한 행(필드마다 가장 새 값, 받은 필드는 합). 매개변수가 VALUES 뒤에도 있어 pgjdbc 는
+    이 문장을 다중 VALUES 로 다시 쓰지 않는다(정적 정보는 드물다 — 배치의 문장마다).
+  - 배포 전환(어느 순서든 안전): 새 수집기 · 이전 api → 이전 api 는 모르는 payload 키를 무시한다(ships_payload 는 추가 키 허용) — 이전처럼 덮는다(지금의
+    결함 그대로, 새로 나빠지지 않는다). 이전 수집기 · 새 api → `static_received` 가 없으면 받은 필드를 모름으로 보고 **값이 있는 필드만** 덮는다(null 은
+    '받지 않음' — 저장값을 지우지 않는 쪽. 대가: 선박이 실제로 비운 값은 새 수집기가 받은 필드를 실을 때부터 반영된다). 그런 정적 정보는
+    `wakeline_ship_static_unknown_fields_total` 로 센다. 목록에서 빠진 MMSI 도 같다.
+  - 시각 열(§G17 문장 고침): `ship.updated_at` = 이 행에 **마지막으로 저장한** 정적 보고의 aisstream 수신 시각(DB 에 기록된 수신 시각) — 그 보고가 싣지 않은
+    필드(받지 않은 부분)는 그보다 앞서 저장된 보고의 값이다. 그 밖(재시작 · 제거 뒤 새 시각, 같은 내용 재수신은 저장하지 않음, 첫 수신도 마지막 수신도 아님)은
+    §G17 그대로. 수집기 쪽 updated_at 은 내용 또는 받은 필드가 바뀐 메시지의 시각(`ship_static.v1.json` 설명). 웹 카드 설명(title — `lib/ships.STORED_STATIC_TITLE`)이
+    이 뜻을 적는다. 마이그레이션 없음.
+  - 계약 검사: `tools/contract_check.py`(실수신 fixture → 발행: 모든 part 의 static_received 가 그 part 의 MMSI 를 정확히 덮고, 필드는 그 MMSI 가 fixture 에서
+    실제로 보낸 조각의 키 합 · enum = STATIC_FIELDS 순서), `ShipStaticTest`(FIELDS = 스키마 enum = ship_static 정적 칸), `SchemaContractTest` · 수집기 시험
+    (같은 스키마 파일로 이름 · 키 · 중복 거절).
