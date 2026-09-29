@@ -47,7 +47,7 @@ class RedisDemandLeasesIT {
 
     @AfterAll
     static void close() {
-        if (redis != null) redis.delete(List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META, DemandLeases.PORT_CALLS));
+        if (redis != null) redis.delete(List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META));
         if (factory != null) factory.destroy();
     }
 
@@ -58,16 +58,14 @@ class RedisDemandLeasesIT {
         RedisDemandLeases leases = new RedisDemandLeases(redis, () -> System.currentTimeMillis() + SKEW_MS);
         long expiresAt = apiNow + LEASE_MS;
         leases.replace(List.of(new DemandLeases.Lease("c:1:2", "{}")), List.of(new DemandLeases.Lease("a0f0e1", "{}")), expiresAt);
-        leases.replacePortCalls(List.of("230025"), expiresAt);
 
-        for (String key : List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META, DemandLeases.PORT_CALLS)) {
+        for (String key : List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META)) {
             Long ttl = redis.getExpire(key, TimeUnit.MILLISECONDS);
             assertThat(ttl).as("PTTL of " + key + " (api clock %d ms ahead of Redis)", SKEW_MS).isBetween(1L, LEASE_MS);
         }
         // 점수는 계약 그대로 — api 가 정한 만료 epoch ms(수집기는 ZRANGEBYSCORE now +inf 로 읽는다)
         assertThat(redis.opsForZSet().score(DemandLeases.HOT, "c:1:2")).isEqualTo((double) expiresAt);
         assertThat(redis.opsForZSet().score(DemandLeases.FOCUS, "a0f0e1")).isEqualTo((double) expiresAt);
-        assertThat(redis.opsForZSet().score(DemandLeases.PORT_CALLS, "230025")).isEqualTo((double) expiresAt);
     }
 
     @Test
@@ -77,9 +75,8 @@ class RedisDemandLeasesIT {
         RedisDemandLeases leases = new RedisDemandLeases(redis, () -> System.currentTimeMillis() - SKEW_MS);
         long expiresAt = apiNow + LEASE_MS;
         leases.replace(List.of(new DemandLeases.Lease("c:1:2", "{}")), List.of(new DemandLeases.Lease("a0f0e1", "{}")), expiresAt);
-        leases.replacePortCalls(List.of("230025"), expiresAt);
 
-        for (String key : List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META, DemandLeases.PORT_CALLS)) {
+        for (String key : List.of(DemandLeases.HOT, DemandLeases.HOT_META, DemandLeases.FOCUS, DemandLeases.FOCUS_META)) {
             Long ttl = redis.getExpire(key, TimeUnit.MILLISECONDS);
             // 아래 끝 여유 2 s = 스크립트 · 읽기 사이 지난 시간(시계 차이는 PEXPIRE 에 들어가지 않는다)
             assertThat(ttl).as("PTTL of " + key + " (api clock %d ms behind Redis)", SKEW_MS).isBetween(LEASE_MS - 2_000, LEASE_MS);

@@ -1,0 +1,16 @@
+{
+ "$comment": "ADR-022 — 입출항 색인이 덮는 항만청 10곳(국가물류통합정보센터 nlic.go.kr 항만청코드 표 — 11행이라 적혀 있으나 10개가 실려 있다). 2026-09-29 각 코드로 PORT-MIS Info5 를 불러 이 이름(prtAgNm)이 돌아옴을 확인했다. 수집기(portcalls.PORT_AUTHORITIES — 이 곳들만 받는다)와 api(PortCallReader.PORT_AUTHORITIES — 이 곳들이 모두 창을 덮어야 '기록 없음')가 같은 파일로 시험한다.",
+ "version": 1,
+ "authorities": [
+  {"code": "020", "name": "부산"},
+  {"code": "030", "name": "인천"},
+  {"code": "200", "name": "동해"},
+  {"code": "300", "name": "대산"},
+  {"code": "500", "name": "군산"},
+  {"code": "610", "name": "목포"},
+  {"code": "620", "name": "여수"},
+  {"code": "700", "name": "포항"},
+  {"code": "810", "name": "마산"},
+  {"code": "820", "name": "울산"}
+ ]
+}

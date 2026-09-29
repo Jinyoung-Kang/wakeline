@@ -254,7 +254,10 @@ def test_call_sign_rule_matches_the_shared_vectors():
 
 
 def test_port_authorities_are_the_ten_verified_codes():
-    """nlic.go.kr 항만청코드 표(11행이라 적혀 있으나 10개) — 2026-09-29 API 로 각 코드가 이 이름(prtAgNm)을 돌려줌을 확인했다."""
+    """nlic.go.kr 항만청코드 표(11행이라 적혀 있으나 10개) — 2026-09-29 API 로 각 코드가 이 이름(prtAgNm)을 돌려줌을 확인했다.
+    api 가 같은 파일(schemas/vectors/port-authorities.v1.json)로 '10곳 모두 창을 덮었는가' 를 판정한다."""
+    doc = json.loads((ROOT / "schemas" / "vectors" / "port-authorities.v1.json").read_text(encoding="utf-8"))
+    assert doc["version"] == 1 and tuple((a["code"], a["name"]) for a in doc["authorities"]) == PORT_AUTHORITIES
     assert PORT_AUTHORITIES == (
         ("020", "부산"), ("030", "인천"), ("200", "동해"), ("300", "대산"), ("500", "군산"),
         ("610", "목포"), ("620", "여수"), ("700", "포항"), ("810", "마산"), ("820", "울산"),

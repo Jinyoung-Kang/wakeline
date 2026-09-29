@@ -45,19 +45,6 @@ public class RedisDemandLeases implements DemandLeases {
             return 1
             """, Long.class);
 
-    /** KEYS = portcalls · ARGV = 만료 epoch ms(점수), 키 만료 ms(남은 시간), 호출부호… — 지우고 다시 넣은 뒤 키에도 만료. 바꾼 수를 돌려준다. */
-    static final RedisScript<Long> REPLACE_PORT_CALLS = RedisScript.of("""
-            redis.call('DEL', KEYS[1])
-            local exp = ARGV[1]
-            for i = 3, #ARGV do
-              redis.call('ZADD', KEYS[1], exp, ARGV[i])
-            end
-            if #ARGV > 2 then
-              redis.call('PEXPIRE', KEYS[1], ARGV[2])
-            end
-            return #ARGV - 2
-            """, Long.class);
-
     private final StringRedisTemplate redis;
     private final LongSupplier clock;
 
@@ -88,15 +75,6 @@ public class RedisDemandLeases implements DemandLeases {
             }
         }
         redis.execute(REPLACE, List.of(HOT, HOT_META, FOCUS, FOCUS_META), args.toArray());
-    }
-
-    @Override
-    public void replacePortCalls(List<String> callSigns, long expiresAtMs) {
-        List<String> args = new ArrayList<>(2 + callSigns.size());
-        args.add(Long.toString(expiresAtMs));
-        args.add(Long.toString(keyTtlMs(expiresAtMs)));
-        args.addAll(callSigns);
-        redis.execute(REPLACE_PORT_CALLS, List.of(PORT_CALLS), args.toArray());
     }
 
     @Override

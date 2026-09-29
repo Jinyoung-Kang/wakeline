@@ -48,9 +48,9 @@ import java.util.function.LongSupplier;
  *       세션은 자기 bbox 와 겹치는 칸만 고른다. 같은 버전·bbox 의 격자는 다시 보내지 않는다.</li>
  *   <li>select_ship → ship_selected(즉시, 그리고 그 선박이 바뀌거나 목록에서 빠질 때마다). state 는 실시간 목록에 있을 때만, static 은 알고 있으면.
  *       destination_info 는 static 의 보고 목적지를 결정적으로 푼 것(계약 v4 §B — 항구 표는 JVM 에서 한 번 읽는다).</li>
- *   <li>port_calls(ADR-022): static 의 호출부호로 읽은 한국 항만 입출항({@link PortCallReader} — 호출부호별 5 s 캐시). 수집기 조회가 끝나거나
- *       캐시가 만료되는 것은 선박 변화와 무관하므로, {@value #SELECTED_REFRESH_MS} ms 마다 선박을 고른 세션의 ship_selected 를 다시 계산하고
- *       값이 바뀌었을 때만 보낸다(pending → ok 등).</li>
+ *   <li>port_calls(ADR-022 개정): static 의 호출부호로 DB 입출항 색인에서 찾은 한국 항만 입출항({@link PortCallReader} — 호출부호별
+ *       {@value PortCallReader#TTL_MS} ms 캐시). 색인 갱신 · 오래됨(2시간) 판정은 선박 변화와 무관하므로 {@value #SELECTED_REFRESH_MS} ms 마다 선박을 고른
+ *       세션의 ship_selected 를 다시 계산하고 값이 바뀌었을 때만 보낸다(incomplete → ok 등). 선택은 외부 호출도 Redis 임대도 만들지 않는다.</li>
  *   <li>빈도: ships 메시지(수집기 10 s)가 올 때 모든 선박 세션에 한 번 — 연달아 와도(분할 발행·만료) 10 s 에 한 번으로 모은다. 전송은 세션 우편함
  *       (항공기와 같은 단일 비행)이 하므로 느린 세션이 다른 세션·스트림 소비를 막지 않는다.</li>
  * </ul>
@@ -74,8 +74,8 @@ public class ShipFanout implements SmartLifecycle {
     static final long SEEN_REFRESH_S = 60;
     /** 위치 변화 임계(°) — 약 11 m. 정박 선박의 GNSS 흔들림을 매번 보내지 않는다. */
     static final double POS_TOL_DEG = 1e-4;
-    /** 선택 선박의 입출항 다시 보기 주기(ADR-022) — 읽기 캐시(5 s)와 같다. */
-    static final long SELECTED_REFRESH_MS = 5_000;
+    /** 선택 선박의 입출항 다시 보기 주기(ADR-022 개정) — 읽기 캐시와 같다. */
+    static final long SELECTED_REFRESH_MS = PortCallReader.TTL_MS;
 
     private final WsHub hub;
     private final ShipStore store;
@@ -122,7 +122,6 @@ public class ShipFanout implements SmartLifecycle {
                 .description("뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘어 격자로 대신 보낸 경우").register(meters);
         this.gridBuild = Timer.builder("wakeline_ship_grid_build_seconds").description("선박 격자(세 단계) 한 번 만들기 — ShipStore 버전당 한 번").register(meters);
         hub.setShipsHook(this::onInitial);
-        hub.setShipSelectedHook(this::recheckSelected);
     }
 
     /**
@@ -177,7 +176,7 @@ public class ShipFanout implements SmartLifecycle {
     }
 
     /**
-     * 선박을 고른 구독 세션마다 ship_selected 를 다시 계산하도록 예약한다(우편함 — 바뀐 것이 없으면 보내지 않는다). 입출항 조회 결과·캐시 만료처럼
+     * 선박을 고른 구독 세션마다 ship_selected 를 다시 계산하도록 예약한다(우편함 — 바뀐 것이 없으면 보내지 않는다). 입출항 색인 갱신 · 오래됨처럼
      * 선박 변화와 무관한 변화를 알린다. 일시정지한 세션은 건너뛴다(선박 변화 알림과 같다 — 다시 보면 초기 세트가 보낸다). 예외가 주기 작업을 멈추지 않게 삼킨다.
      */
     void refreshSelected() {
@@ -191,15 +190,6 @@ public class ShipFanout implements SmartLifecycle {
     /** 이 세션의 ship_selected 를 다시 계산하도록 예약한다(선박을 고른 구독 세션만 — 바뀐 것이 없으면 보내지 않는다). */
     void recheckSelected(WsSession s) {
         if (s.selectedMmsi != null && s.subscribed()) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
-    }
-
-    /**
-     * 캐시가 비어 있는(pending) 입출항인데 수요 서비스가 이 세션의 그 호출부호를 임대에 올리지 못했다(세션·IP 한도 · 서버 상한) → limited.
-     * 누구도 조회하지 않는데 '조회 중' 이라 하지 않게. 캐시에 결과가 있으면 결과가 먼저다.
-     */
-    static PortCallsInfo gated(PortCallsInfo calls, WsSession.PortCallGate gate) {
-        if (calls == null || gate == null || !PortCallsInfo.PENDING.equals(calls.status()) || !gate.callSign().equals(calls.callSign())) return calls;
-        return PortCallsInfo.limited(calls.callSign(), gate.limitedBy());
     }
 
     // ---- 이벤트(스트림 소비·만료 스레드 — 예약만) ----
@@ -366,7 +356,7 @@ public class ShipFanout implements SmartLifecycle {
         if (mmsi == null) { s.shipSelectedSent = null; return; }
         ShipStore.Ship ship = store.view().get(mmsi);
         ShipStatic stat = ship != null ? ship.stat() : store.staticOf(mmsi);
-        PortCallsInfo calls = gated(portCalls.apply(stat), s.portCallGate);
+        PortCallsInfo calls = portCalls.apply(stat);
         WsSession.ShipSelectedSent prev = s.shipSelectedSent;
         if (!force && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && prev.stat() == stat && Objects.equals(prev.portCalls(), calls))
             return;

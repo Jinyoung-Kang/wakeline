@@ -97,10 +97,7 @@ ok "XGROUP CREATE wakeline:ships"       OK         "${A[@]}" xgroup create wakel
 ok "HGETALL wakeline:ais:status(읽기)"  ""         "${A[@]}" hgetall wakeline:ais:status
 # 계약 v4 §A: 노선 캐시는 수집기가 쓰고 api 가 읽는다(값 확인은 수집기 절에서)
 ok "GET wakeline:route:*(읽기, 없음)"    ""         "${A[@]}" get wakeline:route:ZZX000
-# ADR-022: 한국 항만 입출항 — 선택 선박 호출부호 임대(api 가 유일한 작성자, 교체 Lua 의 DEL·ZADD·PEXPIRE — 키 만료는 남은 시간) · 캐시 읽기
-ok "ZADD wakeline:demand:portcalls(임대)" "^[01]$" "${A[@]}" zadd wakeline:demand:portcalls "$((NOW_MS + 60000))" 230025
-ok "PEXPIRE wakeline:demand:portcalls"   "^1$"    "${A[@]}" pexpire wakeline:demand:portcalls 60000
-ok "GET wakeline:portcalls:*(읽기, 없음)" ""       "${A[@]}" get wakeline:portcalls:ZZ0000
+# ADR-022 개정: 한국 항만 입출항은 DB 색인(api 는 읽기만) — Redis 임대 · 캐시가 없다(api 의 wakeline:* 규칙은 그대로)
 # 계약 v5 §C: api 는 자기 로그 · 브라우저 오류(client-errors)를 싣고 운영 조회로 읽는다(읽기 확인은 ais 절 뒤에)
 ok "XADD wakeline:logs MAXLEN ~ 3000(api 로그)" "^[0-9]+-[0-9]+$" "${A[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event api)"
 # 계약 v5 §G2: 브라우저 오류는 따로 자르는 스트림 — api 만 싣는다

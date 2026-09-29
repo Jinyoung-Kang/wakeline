@@ -695,61 +695,80 @@
       }
     },
     "port_call": {
-      "description": "입출항 한 건(ADR-022, 해양수산부 PORT-MIS). 모르는 값은 키 없음. entry_at · exit_at 은 같은 종류의 신고 시각이 하나로 정해질 때만(아니면 reports 에 모두). reported_name 은 PORT-MIS 에 신고된 선명(AIS 선명과 다를 수 있다).",
+      "description": "입출항 한 건(ADR-022 개정 — DB 색인 port_call 한 행, 해양수산부 PORT-MIS). 모르는 값은 키 없음. listed_date = 원천이 이 신고를 올린 KST 날짜(입항일 기준으로 받은 날). entry_at · exit_at 은 판(최종 → 최초)으로 고른 +09:00 신고 시각 — entry_revision · exit_revision 은 그 판(시각이 있을 때만). exit 가 없으면 아직 입항 중이거나 색인이 그 뒤를 다시 읽지 않았다(read_at = 이 기록을 마지막으로 읽은 때). berth = 입항 신고의 계류 시설. reported_name 은 PORT-MIS 에 신고된 선명(AIS 선명과 다를 수 있다).",
       "type": "object",
       "additionalProperties": false,
+      "required": ["read_at"],
       "properties": {
         "port_authority_code": { "type": "string", "pattern": "^[0-9]{3}$" },
         "port_authority": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "listed_date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
         "entry_at": { "$ref": "#/$defs/date_time" },
+        "entry_revision": { "enum": ["최종", "최초"] },
         "exit_at": { "$ref": "#/$defs/date_time" },
-        "reports": {
-          "type": "array",
-          "maxItems": 8,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "minProperties": 1,
-            "properties": {
-              "kind": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "at": { "$ref": "#/$defs/date_time" },
-              "type": { "type": "string", "minLength": 1, "maxLength": 80 }
-            }
-          }
-        },
+        "exit_revision": { "enum": ["최종", "최초"] },
+        "berth": { "type": "string", "minLength": 1, "maxLength": 80 },
         "purpose": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "first_port": { "$ref": "#/$defs/port_ref" },
         "prev_port": { "$ref": "#/$defs/port_ref" },
         "next_port": { "$ref": "#/$defs/port_ref" },
         "dest_port": { "$ref": "#/$defs/port_ref" },
         "reported_name": { "type": "string", "minLength": 1, "maxLength": 80 },
         "kind": { "type": "string", "minLength": 1, "maxLength": 80 },
-        "nationality": { "type": "string", "minLength": 1, "maxLength": 80 }
+        "nationality": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "read_at": { "$ref": "#/$defs/date_time" }
+      }
+    },
+    "port_call_index": {
+      "description": "입출항 색인 상태(ADR-022 개정): authorities = 덮어야 할 항만청 수(10) · complete = 10곳 모두 30일 창의 첫날부터 색인했고 꼬리 갱신이 stale_after_s 안 · refreshed_at = 10곳의 꼬리 갱신 중 가장 오래된 것(10곳 모두 갱신한 적이 있을 때만 — 이 순간까지 올라온 신고가 색인에 있다) · gaps = 빈 곳(항만청마다 not_indexed · partial(창 앞쪽 일부만) · stale(갱신이 없거나 오래됨), 지금 범위와 갱신 시각). complete 이면 gaps 는 빈 배열이다(api 시험 · 웹 해석이 지킨다).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorities", "complete", "stale_after_s", "gaps"],
+      "properties": {
+        "authorities": { "const": 10 },
+        "complete": { "type": "boolean" },
+        "refreshed_at": { "$ref": "#/$defs/date_time" },
+        "stale_after_s": { "const": 7200 },
+        "gaps": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["port_authority_code", "port_authority", "issues"],
+            "properties": {
+              "port_authority_code": { "type": "string", "pattern": "^[0-9]{3}$" },
+              "port_authority": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "issues": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["not_indexed", "partial", "stale"] } },
+              "covered_from": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+              "covered_to": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+              "refreshed_at": { "$ref": "#/$defs/date_time" }
+            }
+          }
+        }
       }
     },
     "port_calls": {
-      "description": "선택 선박의 한국 항만 입출항(ADR-022) — AIS 호출부호로 조회한 해양수산부 선박운항정보(PORT-MIS) 최근 30일(KST 날짜, 입항일 기준). status: ok · none(기록 없음 — incomplete 면 받은 기록 안에서만) · pending(조회 전·조회 중) · error(error_kind · error_code — 원문 사유는 싣지 않는다) · disabled(disabled_reason) · no_call_sign(정적 정보에 호출부호가 없거나 형식 밖 — 조회 불가) · no_static(AIS 정적 정보를 아직 받지 못해 호출부호를 모름) · limited(이 세션의 조회가 남용 한도에 걸려 조회하지 않고 있다 — limited_by session · ip · capacity. api 는 limited 에 늘 limited_by · call_sign 을 싣고 다른 상태에는 싣지 않는다 — 상태 간 규칙은 error_kind · disabled_reason 처럼 스키마가 아니라 api 시험과 웹 해석(parsePortCalls)이 지킨다). items 는 최근 순 · 최대 20건(더 있으면 truncated). incomplete = 쪽 상한 때문에 일부 항만청 기록을 다 받지 못했다.",
+      "description": "선택 선박의 한국 항만 입출항(ADR-022 개정) — 수집기가 항만청 10곳의 최근 30일(KST 날짜) 신고를 모두 받아 둔 DB 색인을 AIS 호출부호로 찾은 것(선택은 외부 호출을 만들지 않는다). status: ok(기록 있음 — items) · none(10곳 모두 창 전체를 색인했고 2시간 안에 갱신했는데 기록 없음 — 그때만) · incomplete(기록을 찾지 못했지만 색인에 빈 곳이 있거나 오래됐다 — index.gaps) · disabled(disabled_reason — 수집기가 색인하지 않는다) · no_call_sign(call_sign_state not_received: AIS 호출부호를 아직 받지 않음 · unusable: 받았지만 찾는 형식 밖) · error(api 가 색인을 읽지 못함). ok · none · incomplete 에는 늘 window_from · window_to · index 가 있고, 상태 간 규칙은 스키마가 아니라 api 시험과 웹 해석(parsePortCalls)이 지킨다. items 는 최근 순 · 최대 20건(더 있으면 truncated).",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "window_days", "source"],
       "properties": {
-        "status": { "enum": ["ok", "none", "pending", "error", "disabled", "no_call_sign", "no_static", "limited"] },
-        "limited_by": { "enum": ["session", "ip", "capacity"] },
+        "status": { "enum": ["ok", "none", "incomplete", "disabled", "no_call_sign", "error"] },
         "call_sign": { "type": "string", "pattern": "^[A-Z0-9]{3,7}$" },
-        "fetched_at": { "$ref": "#/$defs/date_time" },
+        "call_sign_state": { "enum": ["not_received", "unusable"] },
         "window_days": { "const": 30 },
         "window_from": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
         "window_to": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
         "source": { "const": "해양수산부 선박운항정보(PORT-MIS)" },
         "items": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/port_call" } },
         "truncated": { "const": true },
-        "incomplete": { "const": true },
-        "error_kind": { "enum": ["budget", "hourly_cap", "rate_limited", "http", "provider", "response", "network", "internal", "cache"] },
-        "error_code": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,16}$" },
+        "index": { "$ref": "#/$defs/port_call_index" },
         "disabled_reason": { "enum": ["no_key", "fixture", "operator"] }
       }
     },
     "ship_selected": {
-      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 읽은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐).",
+      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 입출항 색인에서 찾은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "mmsi", "state", "static", "destination_info", "port_calls"],

@@ -64,8 +64,9 @@ val wsContractInputs = files("../../schemas/ws/server.v1.json", "../../schemas/w
     "../web/tests/fixtures/ws-samples.v1.json")
 // 로그의 언어 간 시험 벡터: 억제(계약 v5 §G9, LogSinkTest) · 가림(§C5, LogMaskerTest) — 저장소 루트의 파일을 읽는다(pytest 도 같은 파일)
 val logVectorInputs = files("../../schemas/vectors/log-suppression.v1.json", "../../schemas/vectors/masking-cases.v1.json")
-// 한국 항만 입출항(ADR-022)의 언어 간 파일: 호출부호 정규화 벡터 · 수집기가 실제 응답 fixture 로 만든 캐시 값(pytest 도 같은 파일)
-val portCallInputs = files("../../schemas/vectors/call-sign-cases.v1.json", "../../fixtures/portcalls_value_230025.json")
+// 한국 항만 입출항(ADR-022 개정)의 언어 간 파일: 호출부호 정규화 벡터 · 항만청 10곳 · 수집기가 실제 전체 기록으로 만든 색인 행(pytest 도 같은 파일)
+val portCallInputs = files("../../schemas/vectors/call-sign-cases.v1.json", "../../schemas/vectors/port-authorities.v1.json",
+    "../../fixtures/portcall_row_V7A3884.json")
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
