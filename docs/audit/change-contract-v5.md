@@ -205,7 +205,10 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G13(§G10 · §G11) **KST 를 먼저, 같은 순간의 UTC 를 함께** — §G10 · §G11 의 "화면은 KST 만, 원본 UTC 는 툴팁" 과 §G11 의 예외(지도 툴팁 · 선 라벨 · 기상청 tm 은 KST 만)를 대신한다.
   API · 저장 · 스트림은 UTC 그대로이고 웹 표시만 바꾼다. 오프셋 +09:00 고정(`lib/kst.ts`).
   - 한 곳: `lib/time.ts`(글자) · `components/DualTime.tsx`(그리기 — KST 는 보통 글자, UTC 는 흐리게, `<time dateTime>` 에 그 순간, title 에 원본 UTC ISO).
-    화면 코드는 시각 글자를 직접 만들지 않는다 — `tests/kst-dashboard.test.ts` 가 lib/time · lib/kst 밖의 모양을 찾는다.
+    화면 코드는 시각 글자를 직접 만들지 않는다 — `tests/kst-dashboard.test.ts` 가 lib/time · lib/kst 밖의 모양(`…Z` 템플릿 · getUTC* · toISOString 자르기 ·
+    `isoKst(` · `${…} KST` / `${…}시 KST` / `${…} UTC` 템플릿)을 찾는다. 예외는 아래 "바꾸지 않는 것" 중 글자를 직접 만드는 곳뿐이고 시험에 파일 · 줄 수까지 적혀 있다:
+    복사 · 내려받기 형식(`lib/log-line.ts` · `lib/logs.ts`), 오류 화면 시각 칸(`components/logs/ErrorScreen.tsx`), 선박 ETA(`lib/ships.ts`),
+    재생 날짜 · 시각 입력 값(`lib/replay.ts` `toKstInput` — 보이는 글자가 아니라 datetime-local 값).
   - 범위: 모든 화면 — 상황판(상태 바 · 알림 · 카드 · 목록 · 지도 툴팁 · 선 라벨 · 레이더 타임라인 · 기상청 패널) · 재생 · 통계 · 공항 · 운영 · 로그 · 오류 화면.
   - 형식:
     - inline `09-29 14:02:54 KST · 05:02:54 UTC` · 날짜가 자명한 자리(방금 받은 응답의 갱신 시각) `14:02:54 KST · 05:02:54 UTC` · 재생 시각은 연도까지.

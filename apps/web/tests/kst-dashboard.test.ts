@@ -295,20 +295,48 @@ describe("about page states the time basis", () => {
 });
 
 describe("only lib/time builds clock strings (one shared formatter)", () => {
-  /** 화면 글자를 따로 만들던 모양: "…Z`" 템플릿 · getUTC* 로 hh:mm · toISOString() 을 월-일/시각 자리로 자르기 */
-  const PATTERNS = [/\}Z`/, /p2\([^)]*getUTC/, /toISOString\(\)\.slice\((5|11)\b/, /toISOString\(\)\.replace\("T"/];
+  /**
+   * 화면 글자를 따로 만들던 모양: "…Z`" 템플릿 · getUTC* 로 hh:mm · toISOString() 을 월-일/시각 자리로 자르기 ·
+   * isoKst(…) 를 잘라 쓰기(리뷰 2026-09-29 — lib/chart 가 그렇게 시간대별 라벨을 만들었다) · "${…} KST" / "${…}시 KST" / "${…} UTC" 템플릿.
+   */
+  const PATTERNS = [/\}Z`/, /p2\([^)]*getUTC/, /toISOString\(\)\.slice\((5|11)\b/, /toISOString\(\)\.replace\("T"/, /\bisoKst\(/, /\}(시)? (KST|UTC)\b/];
+  /**
+   * 일부러 lib/time 밖에서 만드는 곳(계약 v5 §G13 "바꾸지 않는 것") — 파일마다 줄 수까지 고정해, 같은 파일에 새로 생겨도 걸린다.
+   * - 복사 · 내려받기 형식(ISO +09:00): lib/log-line(머리 줄) · lib/logs(텍스트 · 파일 이름)
+   * - 오류 화면 시각 칸(KST ISO 와 원본 UTC ISO 를 나란히 — 오류 경계 청크는 lib/kst · lib/log-line 만 싣는다, PERF §8)
+   * - 재생 datetime-local 입력 값(보이는 글자가 아니라 입력 값 "YYYY-MM-DDTHH:MM")
+   * - 선박 ETA(선원 입력 월 · 일 · 시 · 분, 연도 없음 — 순간이 아니라 lib/time 에 넣을 수 없다)
+   */
+  const ALLOWED: Record<string, number> = {
+    [join("lib", "log-line.ts")]: 1,
+    [join("lib", "logs.ts")]: 2,
+    [join("components", "logs", "ErrorScreen.tsx")]: 1,
+    [join("lib", "replay.ts")]: 1,
+    [join("lib", "ships.ts")]: 5,
+  };
   const root = new URL("..", import.meta.url).pathname;
   const walk = (d: string): string[] => readdirSync(join(root, d)).flatMap((n) => {
     const rel = join(d, n);
     return statSync(join(root, rel)).isDirectory() ? walk(rel) : /\.(ts|tsx)$/.test(n) ? [rel] : [];
   });
-  it("app/ · components/ · lib/ (lib/time.ts · lib/kst.ts are the formatters themselves)", () => {
+  it("app/ · components/ · lib/ (lib/time.ts · lib/kst.ts are the formatters themselves; the listed exceptions have exactly their known lines)", () => {
     const hits: string[] = [];
+    const allowedSeen: Record<string, number> = {};
     for (const f of ["app", "components", "lib"].flatMap(walk)) {
       if (f === join("lib", "time.ts") || f === join("lib", "kst.ts")) continue;
-      readFileSync(join(root, f), "utf8").split("\n").forEach((line, i) => { if (PATTERNS.some((p) => p.test(line))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 120)}`); });
+      const own: string[] = [];
+      readFileSync(join(root, f), "utf8").split("\n").forEach((line, i) => { if (PATTERNS.some((p) => p.test(line))) own.push(`${f}:${i + 1}: ${line.trim().slice(0, 120)}`); });
+      if (f in ALLOWED) allowedSeen[f] = own.length;
+      else hits.push(...own);
     }
     expect(hits).toEqual([]);
+    expect(allowedSeen).toEqual(ALLOWED);
+  });
+  it("the patterns see the forms the review found (isoKst slicing, \"${…}시 KST\" labels)", () => {
+    for (const line of ["const kst = Number.isFinite(dayMs) ? isoKst(dayMs + h * 3600_000) : null;", "full: `${date}${kstH}시 KST (UTC ${r.label}시)`", "return `${p2(mo)}-${p2(d)} ${p2(hk)}:${p2(mi)} KST`;"]) {
+      expect(PATTERNS.some((p) => p.test(line)), line).toBe(true);
+    }
+    expect(PATTERNS.some((p) => p.test("expect(t).toContain(\"12:30 KST · 03:30 UTC\")"))).toBe(false);
   });
   it("lib/format has no clock formatters (they live in lib/time); the ISO original is there for tooltips / the log detail", () => {
     for (const k of ["fmtTime", "fmtClock", "fmtTimeKst", "fmtTimeKstLabel", "fmtClockKst", "fmtMinuteKst", "hmKst", "fmtRangeKst", "fmtDayMinuteKst", "fmtIso"]) expect(k in F, k).toBe(false);
