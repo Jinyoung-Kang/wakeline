@@ -8,7 +8,11 @@
   맞는지 고르지 않는다 — entry_at/exit_at 은 null 이고 신고(reports) 목록을 그대로 둔다(화면이 모두 보인다).
 - 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(route.clean_text). 코드는 모양만 검사한다. 추측해 채우지 않는다.
 - 예외 메시지는 고정 문구 + 공급자가 준 resultCode·resultMsg(가린 뒤 · 자른 것) 또는 뜻밖의 XML 의 뿌리 이름·글(가린 뒤 · 자른 것)이다.
-값: {"v":1,"status":"ok"|"none"|"error"|"disabled","call_sign","fetched_at","window":{from,to,days},"source","items":[…],"truncated","error"}.
+값: {"v":1,"status":"ok"|"none"|"error"|"disabled","call_sign","fetched_at","window":{from,to,days}|null,"source","items":[…],
+"truncated"(MAX_ITEMS 넘게 있어 앞만 둠),"incomplete"(쪽 상한에 걸려 일부 항만청 기록을 다 받지 못함),"error"(error 사유),
+"reason"(disabled 사유: no_key · fixture · operator)}.
+
+수요(api 가 유일한 작성자, 수집기는 읽기만): ZSET wakeline:demand:portcalls member = 호출부호(이 규칙으로 정규화한 값), score = 만료 epoch ms.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from wakeline_collector.masking import mask
 from wakeline_collector.route import clean_text
 
 PORTCALLS_KEY_PREFIX = "wakeline:portcalls:"
+DEMAND_KEY = "wakeline:demand:portcalls"
 SOURCE = "해양수산부 선박운항정보(PORT-MIS)"
 WINDOW_DAYS = 30
 MAX_ITEMS = 20  # 화면에 보이는 최근 건수(값에도 이만큼만 둔다)
@@ -59,6 +64,7 @@ PORT_AUTHORITIES: tuple[tuple[str, str], ...] = (
 KST = timedelta(hours=9)  # 한국 표준시는 UTC+9 고정(일광 절약 시간 없음)
 
 Status = Literal["ok", "none", "error", "disabled"]
+DisabledReason = Literal["no_key", "fixture", "operator"]
 
 
 class PortCallParseError(ValueError):
@@ -174,7 +180,9 @@ class PortCallsValue(BaseModel):
     source: str = SOURCE
     items: tuple[PortCall, ...] = ()
     truncated: bool = False
+    incomplete: bool = False
     error: str | None = Field(default=None, max_length=ERROR_MAX)
+    reason: DisabledReason | None = None
 
     def to_json(self) -> bytes:
         doc = {
@@ -188,7 +196,9 @@ class PortCallsValue(BaseModel):
             "source": self.source,
             "items": [i.model_dump(mode="json") for i in self.items],
             "truncated": self.truncated,
+            "incomplete": self.incomplete,
             "error": self.error,
+            "reason": self.reason,
         }
         return orjson.dumps(doc)
 
@@ -207,15 +217,17 @@ def error(call_sign: str, reason: str, fetched_at: datetime | None = None) -> Po
     )
 
 
-def disabled(call_sign: str, reason: str, fetched_at: datetime | None = None) -> PortCallsValue:
-    """묻지 않았다(키 없음 · fixture 모드 · 운영자가 portmis 를 끔). fetched_at = 그렇게 판단한 시각."""
-    return PortCallsValue(
-        status="disabled", call_sign=call_sign, fetched_at=fetched_at or datetime.now(UTC), error=_safe(reason) or None
-    )
+def disabled(call_sign: str, reason: DisabledReason, fetched_at: datetime | None = None) -> PortCallsValue:
+    """묻지 않았다: no_key(DATA_GO_KR_SERVICE_KEY 없음) · fixture(외부 호출 없음) · operator(운영자가 portmis 를 끔).
+    fetched_at = 그렇게 판단한 시각."""
+    return PortCallsValue(status="disabled", call_sign=call_sign, fetched_at=fetched_at or datetime.now(UTC), reason=reason)
 
 
-def build_value(call_sign: str, fetched_at: datetime, window: tuple[date, date], items: list[PortCall]) -> PortCallsValue:
-    """모은 기록 → 캐시 값. 같은 입항(항만청·입항년도·입항횟수가 모두 있을 때)은 한 번만, 최근 신고 순(시각 모름은 뒤), 최대 MAX_ITEMS."""
+def build_value(
+    call_sign: str, fetched_at: datetime, window: tuple[date, date], items: list[PortCall], *, incomplete: bool = False
+) -> PortCallsValue:
+    """모은 기록 → 캐시 값. 같은 입항(항만청·입항년도·입항횟수가 모두 있을 때)은 한 번만, 최근 신고 순(시각 모름은 뒤), 최대 MAX_ITEMS.
+    incomplete = 쪽 상한 때문에 어떤 항만청의 기록을 다 받지 못했다(받은 것 안에서만 최근 순이다 — 화면이 밝힌다)."""
     unique = _dedupe(items)
     unique.sort(key=_sort_key)
     return PortCallsValue(
@@ -226,6 +238,7 @@ def build_value(call_sign: str, fetched_at: datetime, window: tuple[date, date],
         window_to=window[1],
         items=tuple(unique[:MAX_ITEMS]),
         truncated=len(unique) > MAX_ITEMS,
+        incomplete=incomplete,
     )
 
 

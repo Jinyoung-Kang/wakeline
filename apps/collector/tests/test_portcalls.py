@@ -252,7 +252,8 @@ def test_value_json_shape_and_ttls():
     }
     assert v.ttl_s == 6 * 3600
     assert pc.error("230025", "HTTP 500", AT).ttl_s == pc.TTL_ERROR_S
-    assert pc.disabled("230025", "no key", AT).ttl_s == pc.TTL_DISABLED_S
+    assert pc.disabled("230025", "no_key", AT).ttl_s == pc.TTL_DISABLED_S
+    assert doc["truncated"] is False and doc["incomplete"] is False and doc["error"] is None and doc["reason"] is None
 
 
 def test_error_and_disabled_carry_a_masked_capped_reason():
@@ -260,5 +261,10 @@ def test_error_and_disabled_carry_a_masked_capped_reason():
     doc = orjson.loads(e.to_json())
     assert doc["status"] == "error" and doc["items"] == [] and "SECRETSECRET" not in doc["error"]
     assert len(doc["error"]) <= pc.ERROR_MAX
-    d = orjson.loads(pc.disabled("230025", "no service key", AT).to_json())
-    assert d["status"] == "disabled" and d["error"] == "no service key"
+    d = orjson.loads(pc.disabled("230025", "no_key", AT).to_json())
+    assert d["status"] == "disabled" and d["reason"] == "no_key" and d["error"] is None and d["window"] is None
+
+
+def test_incomplete_flag_is_carried():
+    v = build_value("230025", AT, (date(2026, 8, 30), date(2026, 9, 29)), [], incomplete=True)
+    assert orjson.loads(v.to_json())["incomplete"] is True
