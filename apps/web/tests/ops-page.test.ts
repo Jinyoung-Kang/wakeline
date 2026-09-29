@@ -301,6 +301,8 @@ describe("ops: every tab shows Korean time; unknown latency is — (not '— ms'
     expect(lol[2].textContent).toBe("—"); // 지연 모름 — "— ms" 가 아니다
     expect(lol[7].textContent).toBe("rate limited (429) 09-29 08:40:21 KST");
     expect(row("adsb_fi")[2].textContent).toBe("420 ms");
+    // 숫자 칸(지연 · 레코드 · 실패 · 예산 · 남은 호출)은 한 줄 — "1,225 ms" 가 "1,225" / "ms" 두 줄로 갈라지지 않는다(머리글은 줄바꿈해도 된다)
+    for (const r of [lol, row("adsb_fi")]) for (const i of [1, 2, 3, 4, 5, 6]) expect(r[i].getAttribute("class"), `cell ${i}`).toContain("whitespace-nowrap");
     expect(byTestId("ops-dashboard")!.textContent).toContain("region 09-29 08:41:00 KST"); // 위쪽 작업별 칩(머리글 없음)
     expect(row("09-29 08:25:26")[1].textContent).toBe("region"); // Provider switches — at (KST)
     expect(row("2026-09-28")[1].textContent).toBe("adsb_fi"); // Daily budget — UTC 날짜 그대로

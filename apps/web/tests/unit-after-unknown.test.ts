@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { aisBadge } from "@/lib/ships";
+import { fmtTempPair, fmtWind } from "@/lib/format";
 import { resetData } from "@/lib/store";
 import { StatusBar } from "@/components/StatusBar";
 
@@ -22,5 +23,16 @@ describe("no unit after an unknown value", () => {
     const b = aisBadge({ connected: true, state: "connected", lag_s: 3, msgs_per_s: null, received_at: 1_000 } as never, 1_000, true);
     expect(b?.text ?? "").not.toMatch(UNIT_AFTER_DASH);
     expect(b?.text).toContain("msg/s —");
+  });
+  it("airport wind and temperature: a known part keeps its unit, an unknown part is — alone (was \"—° — kt\" · \"— / — °C\")", () => {
+    expect(fmtWind(270, 10)).toBe("270° 10 kt");
+    expect(fmtWind(0, 0)).toBe("0° 0 kt");
+    expect(fmtWind(null, 10)).toBe("— 10 kt");
+    expect(fmtWind(270, null)).toBe("270° —");
+    expect(fmtWind(null, undefined)).toBe("—");
+    expect(fmtTempPair(18, 12)).toBe("18 °C / 12 °C");
+    expect(fmtTempPair(18, null)).toBe("18 °C / —");
+    expect(fmtTempPair(null, -3)).toBe("— / -3 °C");
+    expect(fmtTempPair(undefined, null)).toBe("—");
   });
 });

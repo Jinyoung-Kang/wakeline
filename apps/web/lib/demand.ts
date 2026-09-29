@@ -4,6 +4,7 @@
  * 화면은 서버가 보고한 상태·주기만 말한다: interval_s 가 없으면 주기를 쓰지 않는다(“5초”를 지어내지 않는다).
  * 경과(N분째)는 서버가 준 since 와 서버 기준 현재 시각의 차이 — 결정적 계산이다.
  */
+import { fmtKstTitle } from "./format";
 import type { Tone } from "./tooltip";
 
 export const HOT_STATES = ["active", "pending", "throttled", "covered_by_region", "error", "disabled", "limited"] as const;
@@ -70,7 +71,7 @@ export function focusChip(d: DemandInfo | null, hex: string | null, nowMs: numbe
   const cadence = f.interval_s != null ? `서버가 보고한 조회 주기 ${fmtInterval(f.interval_s)}.` : "서버가 조회 주기를 보고하지 않음.";
   switch (f.state) {
     case "active":
-      return { kind: "focus", tone: "ok", text: `집중 추적${every(f.interval_s)}${el ? ` · ${el}` : ""}`, title: `${base} ${cadence}${f.since ? ` 시작 ${f.since}.` : ""}` };
+      return { kind: "focus", tone: "ok", text: `집중 추적${every(f.interval_s)}${el ? ` · ${el}` : ""}`, title: `${base} ${cadence}${f.since ? ` 시작 ${fmtKstTitle(f.since)}.` : ""}` };
     case "pending":
       return { kind: "focus", tone: "muted", text: "집중 추적 대기", title: `수집기가 아직 이 항공기를 조회하지 않았습니다. ${base}` };
     case "throttled":

@@ -37,6 +37,9 @@ const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 
 /** 원본 칸(격리 detail · DLQ payload head): api 가 준 글자 그대로 — 안의 시각은 수집기가 쓴 UTC 이고 화면의 KST 로 바꾸지 않는다 */
 const RAW_UTC_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 UTC(수집기가 쓴 형식 그대로), 옆 칸의 KST 와 다르다";
 
+/** 숫자 칸: 고정폭 숫자 + 한 줄("1,225 ms" 가 값 · 단위 두 줄로 갈라지지 않게 — 머리글은 줄바꿈해도 된다) */
+const NUM_CELL = "mono whitespace-nowrap tabular-nums";
+
 /** 표 칸의 시각: 한국 표준시 "MM-DD HH:MM:SS"(머리글이 "(KST)"), title 에 원본 UTC. 모르면 "—" */
 function TimeCell({ v }: { v: unknown }) {
   const x = at(v);
@@ -148,9 +151,9 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1"; return <tr key={String(p.name)}>
               <td className="mono">{String(p.name)}{off ? <span className="badge bad ml-1" title={sw?.disabled != null ? "원본(DB) 기준" : "Redis 미러 기준(원본 행 없음)"}>disabled</span> : null}</td>
-              <TimeCell v={p.last_success_at} /><td className="mono">{fmtLatencyMs(p.last_latency_ms)}</td><td className="mono">{String(p.last_records ?? "—")}</td>
-              <td className={`mono ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
-              <td className="mono" title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className="mono">{String(p.budget_remaining ?? "—")}</td>
+              <TimeCell v={p.last_success_at} /><td className={NUM_CELL}>{fmtLatencyMs(p.last_latency_ms)}</td><td className={NUM_CELL}>{String(p.last_records ?? "—")}</td>
+              <td className={`${NUM_CELL} ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
+              <td className={NUM_CELL} title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className={NUM_CELL}>{String(p.budget_remaining ?? "—")}</td>
               <td className="max-w-[320px] truncate text-fg-3" title={`${String(p.last_error ?? "")}${p.last_error_at ? `\n${fmtUtcTitle(at(p.last_error_at)) ?? ""}` : ""}`}>{String(p.last_error ?? "")} {p.last_error_at ? fmtTimeKstLabel(at(p.last_error_at)) : ""}</td>
               <td className="whitespace-nowrap" title={cell.title} data-testid="provider-switch"><span className="mono">{cell.source}</span> <span className={`badge ${cell.tone}`}>{cell.mirror}</span>{" "}
                 {off ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
@@ -162,7 +165,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         </> : null}
         {tab === "runs" && runs ? <>
           <div className="label mb-1">Last 24 h</div>
-          <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST)</th></tr></thead><tbody>{runs.summary_24h.map((s, i) => <tr key={i}><td>{String(s.job)}</td><td>{String(s.provider)}</td><td className={String(s.status) === "ok" ? "text-ok" : "text-warn"}>{String(s.status)}</td><td className="mono">{String(s.n)}</td><td className="mono">{fmtLatencyMs(s.avg_latency_ms)}</td><TimeCell v={s.last_at} /></tr>)}</tbody></table>
+          <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST)</th></tr></thead><tbody>{runs.summary_24h.map((s, i) => <tr key={i}><td>{String(s.job)}</td><td>{String(s.provider)}</td><td className={String(s.status) === "ok" ? "text-ok" : "text-warn"}>{String(s.status)}</td><td className="mono">{String(s.n)}</td><td className={NUM_CELL}>{fmtLatencyMs(s.avg_latency_ms)}</td><TimeCell v={s.last_at} /></tr>)}</tbody></table>
           <div className="label mb-1">Recent runs (errors masked, copy raw)</div>
           <table><thead><tr><th>id</th><th>job</th><th>provider</th><th>started (KST)</th><th>status</th><th>http</th><th>ms</th><th>in / quarantined</th><th>raw_ref</th><th>error</th></tr></thead>
             <tbody>{runs.items.map((r) => <tr key={String(r.id)}><td className="mono">{String(r.id)}</td><td>{String(r.job)}</td><td>{String(r.provider)}</td><TimeCell v={r.started_at} /><td className={String(r.status) === "ok" ? "text-ok" : "text-bad"}>{String(r.status)}</td><td className="mono">{String(r.http_status ?? "")}</td><td className="mono">{r.latency_ms == null ? "—" : String(r.latency_ms)}</td><td className="mono">{String(r.records_in)} / {String(r.records_quarantined)}</td><td className="mono text-fg-3">{String(r.raw_ref ?? "")}</td><td>{r.error_text ? <pre className="mono max-w-[360px] whitespace-pre-wrap text-[10px] text-fg-2">{String(r.error_text)}</pre> : null}</td></tr>)}</tbody></table>

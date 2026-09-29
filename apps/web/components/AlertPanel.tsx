@@ -5,7 +5,7 @@ import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { fmtClock, fmtEta, fmtTime, hazardColor } from "@/lib/format";
+import { fmtClockKst, fmtEta, fmtKstTitle, fmtUtcTitle, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
@@ -111,7 +111,7 @@ export function AlertPanel() {
 }
 
 /**
- * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 — 오래된 진입이 방금 일처럼 보이지 않게.
+ * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정 · KST)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 — 오래된 진입이 방금 일처럼 보이지 않게.
  * 시각은 고정 문자열이라 aria-live 영역이 1 s 마다 다시 읽히지 않는다(숨길 때 한 번만 바뀐다).
  */
 function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
@@ -122,7 +122,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
       <span className="label mr-1">{ev.type}</span>
       <span className={ev.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[ev.type] ?? ev.type}</span>
       {" · "}<span className="mono">{ev.alert.callsign ?? ev.alert.hex}</span> · {ev.alert.hazard} {ev.alert.fir_id}
-      {" · "}<span className="mono text-fg-3" data-testid="alert-banner-time">수신 {fmtClock(serverNowMs(ev.at))}</span>
+      {" · "}<span className="mono text-fg-3" data-testid="alert-banner-time" title={fmtUtcTitle(serverNowMs(ev.at))}>수신 {fmtClockKst(serverNowMs(ev.at))}</span>
     </div>
   );
 }
@@ -142,7 +142,7 @@ function EtaBadge({ a, state }: { a: Alert; state: AlertListState }) {
   const judged = typeof a.evidence?.judged_at === "string" ? a.evidence.judged_at : null;
   const frozen = state !== "live";
   return (
-    <span className="badge est ml-auto" title={state === "live" ? `판정 ${fmtTime(judged)} · 현재 속도·방위 직선 외삽` : ETA_FROZEN_TITLE[state]} data-testid="alert-eta">
+    <span className="badge est ml-auto" title={state === "live" ? `판정 ${fmtKstTitle(judged)} · 현재 속도·방위 직선 외삽` : ETA_FROZEN_TITLE[state]} data-testid="alert-eta">
       추정 ETA {frozen ? "—" : fmtEta(now ? etaRemainingS(a, now) : a.eta_s)}
     </span>
   );

@@ -44,9 +44,11 @@ export const SESSION_EXPIRED_NOTE = "세션이 만료되었습니다 — 다시 
 // ---- 파이프라인 손실 지표(R-18) — GET /api/v1/ops/pipeline ----
 
 export type PipelineGroup = "collector" | "ais" | "api";
-type Kind = "loss" | "queue" | "quarantine" | "age" | "count";
+type Kind = "loss" | "queue" | "quarantine" | "age" | "count" | "window";
+/** 예산 트림의 뜻 — 손실이 아니다(공유 필드 계약: 보존 창이 짧아질 뿐, 읽기 전에 잘렸을 때만 api 가 손실로 센다) */
+const TRIM_NOT_LOSS = "손실 아님: 스트림에 남는 구간(api 가 멈췄다 돌아와 다시 읽을 수 있는 창)이 짧아질 뿐이다. 읽히기 전에 잘린 구간만 api 의 스트림 트림 손실(stream_trim_loss_events)로 센다 — 아래 보존 창 행 참고";
 /**
- * [묶음, 필드, 이름, 종류, 설명] — 손실(loss)만 0 이 아니면 강조한다.
+ * [묶음, 필드, 이름, 종류, 설명] — 손실(loss)만 0 이 아니면 빨간색. 보존 창(window)은 streamWindowRow 가 따로 계산한다(예산 때문에 짧아지면 주황 — 손실 아님).
  * log_* = 시스템 로그 싱크 자기 지표(계약 v5 §C2): collector·ais 는 heartbeat/상태 해시의 log_sent · log_dropped,
  * api 는 Micrometer wakeline_log_events_total{result=sent|dropped|suppressed}. 억제(suppressed)는 손실이 아니다 — 건수는 같은 지문의
  * 다음 항목 suppressed 에 실리고, 다음 항목이 오지 않으면 창(10 s)이 닫힐 때 마지막 억제 발생이 제 항목으로 실린다(계약 v5 §G9).
@@ -57,13 +59,15 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["collector", "publish_dropped", "스트림 발행 드롭", "loss", "Redis 스트림에 싣지 못하고 버린 수집 묶음(로컬 큐 상한) — 누적"],
   ["collector", "db_dropped", "DB 기록 드롭", "loss", "수집 기록(실행 이력 등)을 DB 에 쓰지 못하고 버린 건수 — 누적"],
   ["collector", "db_pending", "DB 기록 대기", "queue", "아직 DB 에 쓰지 않은 기록 수(지금 값) — 손실 아님"],
-  ["collector", "stream_budget_trims", "항공기 스트림 예산 트림", "loss", "메모리 예산 때문에 항공기 스트림을 보존 창(2.5 h)보다 일찍 자른 발행 수 — 누적. 0 이 아니면 api 가 멈춘 동안의 항적이 읽히기 전에 지워질 수 있음"],
+  ["collector", "stream_budget_trims", "항공기 스트림 예산 트림", "count", `바이트 예산 때문에 항공기 스트림을 보존 목표(시간)보다 일찍 자른 발행 수 — 누적. ${TRIM_NOT_LOSS}`],
+  ["collector", "stream_window_s.aircraft", "항공기 스트림 보존 창", "window", ""],
   ["collector", "log_sent", "시스템 로그 전송", "count", "시스템 로그 스트림(wakeline:logs)에 실은 WARN·ERROR 항목 — 누적"],
   ["collector", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["collector", "heartbeat_age_s", "heartbeat 경과", "age", "collector 가 마지막으로 상태를 보고한 뒤 지난 시간"],
   ["ais", "dropped_total", "AIS 큐 드롭", "loss", "처리 대기열 상한으로 버린 AIS 메시지 — 누적(ais 시작 이후)"],
   ["ais", "quarantined_total", "AIS 격리", "quarantine", "품질 규칙으로 걸러낸 메시지(지도에 표시 안 함) — 누적"],
-  ["ais", "stream_budget_trims", "선박 스트림 예산 트림", "loss", "메모리 예산 때문에 선박 스트림을 보존 창(2.5 h)보다 일찍 자른 발행 수 — 누적. 0 이 아니면 api 가 멈춘 동안의 선박 위치가 읽히기 전에 지워질 수 있음"],
+  ["ais", "stream_budget_trims", "선박 스트림 예산 트림", "count", `바이트 예산 때문에 선박 스트림을 보존 목표(시간)보다 일찍 자른 발행 수 — 누적. ${TRIM_NOT_LOSS}`],
+  ["ais", "stream_window_s.ships", "선박 스트림 보존 창", "window", ""],
   ["ais", "log_sent", "시스템 로그 전송", "count", "시스템 로그 스트림(wakeline:logs)에 실은 WARN·ERROR 항목 — 누적"],
   ["ais", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["api", "track_queue_dropped", "항적 저장 큐 넘침", "loss", "DB 저장 대기열 상한으로 버린 항적 행 — 누적(api 시작 이후)"],
@@ -80,7 +84,14 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["api", "log_suppressed", "시스템 로그 억제", "count", "wakeline_log_events_total{result=suppressed} — 같은 지문 10 s 1건 규칙으로 따로 보내지 않은 발생. 손실 아님: 건수는 같은 지문의 다음 항목 suppressed 에 실린다 — 다음 항목이 오지 않으면 창(10 s)이 닫힐 때 마지막 억제 발생을 항목으로 보낸다(계약 v5 §G9). 항목에 실릴 때 센다 — 누적"],
 ];
 
-export interface PipelineRow { group: PipelineGroup; key: string; label: string; title: string; value: number | null; text: string; tone: "bad" | "ok" | "muted" }
+/**
+ * 표 한 줄. value = 원 값(모르면 null), text = 값 칸 글자. detail · state 는 보존 창 행만: detail = 목표("목표 2.5 h — 수집기 설정"),
+ * state = 상태를 말로("예산 때문에 짧아짐" · "채우는 중" · 원인 모름) — 없으면 null.
+ */
+export interface PipelineRow {
+  group: PipelineGroup; key: string; label: string; title: string; value: number | null; text: string; tone: "bad" | "warn" | "ok" | "muted";
+  kind: Kind; detail?: string; state?: string | null;
+}
 
 const obj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 /** 0 이상 유한수만 값 — 그 밖(null·문자열·음수)은 모름 */
@@ -90,17 +101,66 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
 export function pipelineRows(resp: unknown): PipelineRow[] {
   const r = obj(resp);
   return PIPELINE_SPEC.map(([group, key, label, kind, title]) => {
+    if (kind === "window") return streamWindowRow(r, group, key, label);
     const value = count(obj(r[group])[key]);
     const text = value == null ? "—" : kind === "age" ? fmtDuration(value) : value.toLocaleString("en-US");
     const tone = kind !== "loss" || value == null ? "muted" : value > 0 ? "bad" : "ok";
-    return { group, key, label, title, value, text, tone };
+    return { group, key, label, title, value, text, tone, kind };
   });
 }
 
-/** 0 이 아닌 손실 지표 수(탭 배지). 응답이 없으면 null */
+/** 탭의 빨간 배지: 0 이 아닌 손실(loss) 지표 수 — 예산 트림 · 짧아진 보존 창은 손실이 아니라 세지 않는다. 응답이 없으면 null */
 export function pipelineLossCount(resp: unknown): number | null {
   if (resp == null) return null;
-  return pipelineRows(resp).filter((x) => x.tone === "bad").length;
+  return pipelineRows(resp).filter((x) => x.kind === "loss" && x.value != null && x.value > 0).length;
+}
+
+// ---- 스트림 보존 창(공유 필드 계약: collector · ais 의 stream_retention_s · stream_budget_bytes, api 의 stream_window_s) ----
+
+/** 창이 목표보다 이만큼(10분) 넘게 짧을 때만 "예산 때문에 짧아짐" — 시간 트림(XADD MINID ~)은 대략이라 조금 짧은 것은 정상 */
+export const STREAM_WINDOW_SLACK_S = 600;
+
+/** 시간 길이: 1 h 미만은 "30 min", 그 이상은 "1.7 h"(소수 1자리). 모르면 "—" */
+function fmtSpan(s: number | null): string {
+  if (s == null) return "—";
+  return s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+}
+/** 바이트 예산 "80 MiB"(2^20 단위, 정수가 아니면 소수 1자리). 모르면 "—" */
+function fmtMiB(b: number | null): string {
+  if (b == null) return "—";
+  const m = b / 2 ** 20;
+  return `${Number.isInteger(m) ? m : m.toFixed(1)} MiB`;
+}
+
+/**
+ * 보존 창 행. 창 = api.stream_window_s.{aircraft|ships}(api 가 30 s 스트림 지표와 함께 XINFO STREAM 첫 항목 id 로 잰 "지금 − 첫 항목 시각", 잰 값),
+ * 목표 = 그 스트림을 쓰는 프로세스(collector · ais) 상태 해시의 stream_retention_s(수집기 설정 — 고른 값), 바이트 예산 = stream_budget_bytes(설정).
+ * tone: 예산 트림 > 0 이고 창 < 목표 − 10분 → warn "예산 때문에 짧아짐" · 트림 0 이고 창 < 목표 → muted "채우는 중" · 그 밖 ok.
+ * 창을 모르면 "—"(단위 없이, muted), 목표를 모르면 판정하지 않는다(muted), 트림 수를 모르는데 짧으면 원인을 말하지 않는다.
+ */
+function streamWindowRow(r: Record<string, unknown>, group: PipelineGroup, key: string, label: string): PipelineRow {
+  const stream = key.endsWith(".ships") ? "ships" : "aircraft";
+  const src = obj(r[group]);
+  const win = count(obj(obj(r.api).stream_window_s)[stream]);
+  const target = count(src.stream_retention_s);
+  const trims = count(src.stream_budget_trims);
+  const budget = count(src.stream_budget_bytes);
+  const detail = `목표 ${fmtSpan(target)}${target == null ? "" : " — 수집기 설정"}`;
+  let tone: PipelineRow["tone"] = "muted";
+  let state: string | null = null;
+  if (win != null && target != null) {
+    if (win >= target) tone = "ok";
+    else if (trims == null) state = "원인 모름(예산 트림 수 모름)";
+    else if (trims > 0) {
+      if (win < target - STREAM_WINDOW_SLACK_S) { tone = "warn"; state = "예산 때문에 짧아짐"; } else tone = "ok";
+    } else state = "채우는 중";
+  }
+  const name = stream === "ships" ? "선박" : "항공기";
+  const title = `${name} 스트림(wakeline:${stream})에 지금 남아 있는 구간 = 지금 − 첫 항목 시각(api 가 30 s 마다 XINFO STREAM 첫 항목 id 로 잰 값) — `
+    + `api 가 멈췄다 돌아와 다시 읽을 수 있는 창. 목표 = ${group} 의 stream_retention_s(시간 트림 — 수집기 설정), `
+    + `바이트 예산 ${fmtMiB(budget)}(수집기 설정 stream_budget_bytes)이 먼저 차면 목표보다 짧아진다. 손실 아님 — 읽히기 전에 잘린 구간만 api 스트림 트림 손실로 센다. `
+    + `주황 = 예산 트림이 있고 목표보다 ${STREAM_WINDOW_SLACK_S / 60}분 넘게 짧음 · 채우는 중 = 트림 없이 아직 목표만큼 쌓이지 않음(기동 직후 등)`;
+  return { group, key, label, title, value: win, text: fmtSpan(win), tone, kind: "window", detail, state };
 }
 
 /** 마지막으로 감지한 스트림 트림 손실 구간. from 은 모르면 null(api 가 null 로 보낸다 — 손실 자체는 보인다). 없거나 형식이 틀리면 null */

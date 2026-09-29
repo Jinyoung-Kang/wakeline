@@ -134,25 +134,15 @@ function isoOf(v: string | number | null | undefined): string | null {
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
-/**
- * UTC 시각 "MM-DD HH:MM:SSZ"(예: 09-27 08:44:33Z). 날짜를 빼면 어제 METAR·감사 기록이 오늘 것처럼 보인다(GAP-26).
- * 숫자는 epoch ms.
- */
-export function fmtTime(v: string | number | null | undefined) {
-  const s = isoOf(v);
-  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 19)}Z`;
-}
-/** UTC "HH:MM:SSZ" — 날짜가 자명한 곳(방금 받은 값 + 지연 배지가 옆에 있는 상태 바)에만. */
-export function fmtClock(v: string | number | null | undefined) {
-  const s = isoOf(v);
-  return s == null ? "—" : `${s.slice(11, 19)}Z`;
-}
-/** 전체 ISO(툴팁 title 용) */
+/** 원본 UTC ISO 전체("2026-09-28T23:41:14.906Z") — 화면에 UTC 라고 밝혀 나란히 보이는 자리(로그 상세)용. 모르면 "—" */
 export function fmtIso(v: string | number | null | undefined) {
   return isoOf(v) ?? "—";
 }
 
-// ---- 한국 표준시(KST) — 운영(/ops)·로그(/logs) 화면만(사용자 요청 2026-09-29). 항공 자료 화면(상황판·재생·통계·공항)은 위의 UTC 그대로 ----
+// ---- 한국 표준시(KST) — 모든 화면(사용자 요청 2026-09-29: 운영 · 로그 → 상황판 · 재생 · 통계 · 공항도) ----
+// 화면의 시각은 모두 KST 다(날짜를 빼면 어제 METAR·감사 기록이 오늘 것처럼 보인다 — 날짜 포함, GAP-26). UTC 시각 글자를 만드는 formatter 는 없앴다
+// (tests/kst-dashboard.test.ts 가 화면 코드에 UTC 시각 글자가 다시 생기지 않는지 본다). 바꾸지 않는 것: METAR · TAF · SIGMET 원문, 통계의 UTC 날짜,
+// api 요청 · 복사한 JSON 의 ISO(…Z), 툴팁의 "원본 UTC …".
 // 오프셋은 +09:00 고정(lib/kst — 1988년 뒤로 일광 절약 없음, tz 데이터베이스와 대조한 시험 있음). 숫자는 epoch ms.
 
 /** 표 칸의 KST "MM-DD HH:MM:SS"(예: 09-29 08:41:14) — 머리글이 "(KST)" 를 말하는 칸에만. 모르면 "—" */
@@ -178,6 +168,43 @@ export function fmtIsoKst(v: string | number | null | undefined) {
 export function fmtUtcTitle(v: string | number | null | undefined): string | undefined {
   const s = isoOf(v);
   return s == null ? undefined : `원본 UTC ${s}`;
+}
+/** 분 단위 시각(레이더 프레임 등) KST "MM-DD HH:MM KST" — 자정 부근도 날짜로 구분된다. 모르면 "—" */
+export function fmtMinuteKst(v: string | number | null | undefined) {
+  const s = isoKst(v);
+  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 16)} KST`;
+}
+/** KST "HH:MM"(시간대 글자 없음 — 구간 "08:40–08:45 KST" 처럼 끝에 한 번 붙이는 자리). 모르면 null */
+export function hmKst(v: string | number | null | undefined): string | null {
+  const s = isoKst(v);
+  return s == null ? null : s.slice(11, 16);
+}
+/**
+ * 구간 "MM-DD HH:MM:SS – MM-DD HH:MM:SS KST"(시간대는 끝에 한 번). 한쪽을 모르면 그쪽만 "—"(아는 쪽에 " KST"), 둘 다 모르면 "— – —".
+ * open 을 주면 끝이 없는 구간(진행 중)은 그 글자로.
+ */
+export function fmtRangeKst(a: string | number | null | undefined, b: string | number | null | undefined, open?: string) {
+  const x = fmtTimeKst(a), y = fmtTimeKst(b);
+  if (x !== "—" && y !== "—") return `${x} – ${y} KST`;
+  const right = y !== "—" ? `${y} KST` : b == null && open ? open : "—";
+  return `${x === "—" ? x : `${x} KST`} – ${right}`;
+}
+/** KST 로 보인 구간의 툴팁: "원본 UTC a – b"(모르는 쪽은 "—"). 둘 다 모르면 undefined(title 없음) */
+export function fmtUtcRangeTitle(a: string | number | null | undefined, b: string | number | null | undefined): string | undefined {
+  const x = isoOf(a), y = isoOf(b);
+  return x == null && y == null ? undefined : `원본 UTC ${x ?? "—"} – ${y ?? "—"}`;
+}
+/** 시각이 title 에만 있는 자리(보이는 글자가 경과 등): "09-29 08:41:14 KST · 원본 UTC 2026-09-28T23:41:14.906Z". 모르면 "—" */
+export function fmtKstTitle(v: string | number | null | undefined) {
+  const t = fmtTimeKstLabel(v);
+  return t === "—" ? t : `${t} · ${fmtUtcTitle(v)}`;
+}
+/** 지금과 같은 KST 날짜면 "HH:MM KST", 아니면(또는 지금을 모르면) "MM-DD HH:MM KST" — 어제 시각이 오늘처럼 보이지 않게. 모르면 "—" */
+export function fmtDayMinuteKst(v: string | number | null | undefined, nowMs: number) {
+  const s = isoKst(v);
+  if (s == null) return "—";
+  const today = nowMs > 0 ? isoKst(nowMs) : null;
+  return `${today != null && today.slice(0, 10) === s.slice(0, 10) ? "" : `${s.slice(5, 10)} `}${s.slice(11, 16)} KST`;
 }
 /** 경과 시간(초) — "42s", "3m 05s", "1h 12m", "2d 03h". 모르면 "—". */
 export function fmtDuration(sec: number | null | undefined) {
@@ -258,6 +285,21 @@ export function fmtVisSm(raw: string | number | null | undefined) {
   const m = /^(\d+(?:\.\d+)?|\d+\/\d+|\d+ \d+\/\d+)(\+)?$/.exec(v);
   if (!m) return v;
   return m[2] ? `${m[1]} SM 이상` : `${m[1]} SM`;
+}
+
+const finiteNum = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** 바람 "270° 10 kt"(METAR 보고값). 모르는 부분은 "—" 만(단위를 붙이지 않는다 — "—° — kt" 는 잰 값처럼 읽힌다). 둘 다 모르면 "—" */
+export function fmtWind(dir: number | null | undefined, kt: number | null | undefined): string {
+  const d = finiteNum(dir), k = finiteNum(kt);
+  if (d == null && k == null) return "—";
+  return `${d == null ? "—" : `${d}°`} ${k == null ? "—" : `${k} kt`}`;
+}
+/** 기온/이슬점 "18 °C / 12 °C". 모르는 쪽은 "—" 만, 둘 다 모르면 "—" */
+export function fmtTempPair(t: number | null | undefined, dew: number | null | undefined): string {
+  const a = finiteNum(t), b = finiteNum(dew);
+  if (a == null && b == null) return "—";
+  const c = (v: number | null) => (v == null ? "—" : `${v} °C`);
+  return `${c(a)} / ${c(b)}`;
 }
 
 /** METAR 가 이보다 오래되면 "오래됨"(계약서 §2 stale: obs_age_s > 7200) */

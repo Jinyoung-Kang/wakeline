@@ -92,8 +92,8 @@ test("ship card: every field is listed and values the ship did not report are '�
   await expect(card.locator('[data-field="IMO"]')).toContainText("—");
   // 출발지(보고): A>B 로 적힌 목적지의 풀이이거나, AIS 에 출발지 항목이 없다는 설명 또는 모름(—) — 지어낸 항구가 아니다
   await expect(card.locator('[data-field="출발지(보고)"]')).toContainText(/UN\/LOCODE|AIS 에는 출발지 항목이 없습니다|—/);
-  // ETA 는 네 값이 모두 있을 때만 "선원 입력값, 연도 없음", 아니면 "—" — 연도를 지어내지 않는다
-  await expect(card.locator('[data-field="ETA"]')).toContainText(/—|선원 입력값, 연도 없음/);
+  // ETA 는 네 값이 모두 있을 때만 KST + "선원 입력 … UTC · 연도 없음"(바꿀 수 없는 입력은 "선원 입력값(…)"), 아니면 "—" — 연도를 지어내지 않는다
+  await expect(card.locator('[data-field="ETA"]')).toContainText(/—|선원 입력/);
   await expect(card.getByTestId("ship-track-info")).toBeVisible();
 });
 
@@ -151,8 +151,15 @@ test("radar timeline: frame and source switches update the UI within 200 ms", as
   expect(switchMs).toBeLessThan(200);
   await expect(kma).toHaveAttribute("aria-pressed", "true");
   await expect(label).toContainText("KST");
+  await expect(label).toHaveAttribute("title", /기상청이 준 KST 그대로/); // 기상청 tm 은 원래 KST — 원본 UTC 가 없다
+  const kmaText = await label.textContent();
   await page.getByTestId("radar-src-rv").click();
-  await expect(label).toContainText("Z");
+  await expect(page.getByTestId("radar-src-rv")).toHaveAttribute("aria-pressed", "true");
+  // 두 공급자 라벨이 같은 모양("MM-DD HH:MM KST" — 사용자 요청 2026-09-29 로 RainViewer 도 KST)이라 모양만으로는 라벨이 RainViewer 로
+  // 돌아왔는지 알 수 없다: 툴팁이 RainViewer 의 원본 UTC 이고, 글자가 방금 본 기상청 라벨과 달라야 한다(첫 프레임 2 h 전 ≠ 기상청 최신 프레임)
+  await expect(label).toHaveAttribute("title", /^원본 UTC \d{4}-\d\d-\d\dT\d\d:\d\d/);
+  await expect(label).not.toHaveText(kmaText ?? "");
+  await expect(label).toHaveText(/^\d\d-\d\d \d\d:\d\d KST$/);
 });
 
 test("stats page renders its four panels (data or an explicit 'not aggregated yet')", async ({ page }) => {
@@ -161,13 +168,15 @@ test("stats page renders its four panels (data or an explicit 'not aggregated ye
   for (const h of ["SIGMET by FIR", "SIGMET by hazard", "Distinct aircraft by hour", "Alerts by kind"]) {
     await expect(page.getByRole("heading", { name: new RegExp(h) })).toBeVisible();
   }
-  await expect(page.getByLabel("집계 날짜(UTC)")).toBeVisible();
+  await expect(page.getByLabel("집계 날짜(UTC 날짜)")).toBeVisible(); // 집계 날짜는 UTC 날짜 그대로(막대의 시각만 KST)
   await expect(page.locator(".text-bad")).toHaveCount(0); // API 오류 문구 없음
 });
 
 test("replay page renders a frame for a past time", async ({ page }) => {
   await page.goto("/replay");
   await expect(page.getByTestId("replay-at")).not.toHaveText("—", { timeout: 10_000 });
+  await expect(page.getByTestId("replay-at")).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d KST$/); // 재생 시각도 KST(api 에는 UTC)
+  await expect(page.getByLabel("재생 시각(KST)")).toBeVisible();
   await expect(page.getByTestId("replay-summary")).toContainText(/\d+ aircraft · \d+ SIGMET · /, { timeout: 20_000 });
   await expect(page.getByTestId("replay-map")).toBeVisible();
   await expect(page.getByTestId("attribution")).toBeInViewport();

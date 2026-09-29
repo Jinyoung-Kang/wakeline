@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
-import { fmtTime } from "@/lib/format";
+import { fmtMinuteKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
@@ -12,7 +12,7 @@ import { useUi } from "@/lib/ui-store";
  */
 function krUnavailableText(d: KrRadar | null): string {
   if (!d) return "기상청 레이더 없음 — 상태 수신 전";
-  const last = fmtTime(d.meta?.fetched_at);
+  const last = fmtTimeKstLabel(d.meta?.fetched_at);
   return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
 }
 
@@ -48,10 +48,13 @@ export function RadarTimeline() {
   const time = kma ? undefined : radar?.past[cur]?.time;
   const krTm = kma ? radarKr?.frames[cur]?.tm : undefined;
   const krAvailable = !!radarKr?.available && (radarKr?.frames.length ?? 0) > 0;
-  // 프레임 시각: RainViewer 는 UTC, 기상청 tm 은 KST(YYYYMMDDHHMM) — 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
+  // 프레임 시각은 둘 다 한국 표준시 "MM-DD HH:MM KST": RainViewer 는 epoch 초(UTC 순간)를 KST 로 바꾸고, 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
+  // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
   const label = kma
     ? (krTm && /^\d{12}$/.test(krTm) ? `${krTm.slice(4, 6)}-${krTm.slice(6, 8)} ${krTm.slice(8, 10)}:${krTm.slice(10, 12)} KST` : "—")
-    : time ? `${new Date(time * 1000).toISOString().slice(5, 16).replace("T", " ")}Z` : "—";
+    : time ? fmtMinuteKst(time * 1000) : "—";
+  // 툴팁: RainViewer 는 원본 UTC, 기상청은 tm 이 원래 KST 라 원본 UTC 가 없다 — 그렇다고 적는다
+  const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST 그대로(원본이 KST)`) : time ? fmtUtcTitle(time * 1000) : undefined;
   const [kr, setKr] = useState(false);
   return (
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
@@ -64,7 +67,7 @@ export function RadarTimeline() {
         aria-label={playing ? "레이더 애니메이션 정지" : "레이더 애니메이션 재생"}>{playing ? "정지" : "애니메이션 ▶"}</button>
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
-      <span className="mono text-[11px]" data-testid="radar-frame-time">{label}</span>
+      <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
       {kma && !krAvailable
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}

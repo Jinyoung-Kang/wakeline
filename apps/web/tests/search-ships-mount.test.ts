@@ -82,7 +82,7 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     await React.act(async () => setData({ shipSelected: { mmsi: MMSI, received_at: 0, static: null, state: null } }));
     await settle();
     expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`]);
-    expect(byTestId("ship-not-live")?.textContent).toMatch(/^실시간 아님 · 마지막 수신 (09-28 )?01:05 UTC · 마지막 저장 (09-28 )?01:00 UTC$/);
+    expect(byTestId("ship-not-live")?.textContent).toMatch(/^실시간 아님 · 마지막 수신 (09-28 )?10:05 KST · 마지막 저장 (09-28 )?10:00 KST$/); // 01:05Z · 01:00Z 를 한국 표준시로
     expect(byTestId("ship-gone")).toBeNull();
   });
 
@@ -95,7 +95,7 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     await React.act(async () => setData({ shipSelected: { mmsi: MMSI, received_at: 0, static: null, state: null } }));
     await settle();
     expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`, `/api/v1/ships/${MMSI}`]);
-    expect(byTestId("ship-not-live")?.textContent).toMatch(/마지막 수신 (09-28 )?02:41 UTC · 마지막 저장 (09-28 )?02:40 UTC$/);
+    expect(byTestId("ship-not-live")?.textContent).toMatch(/마지막 수신 (09-28 )?11:41 KST · 마지막 저장 (09-28 )?11:40 KST$/);
     expect(byTestId("ship-gone")).toBeNull();
   });
 });
@@ -224,6 +224,6 @@ describe("unified search wiring (contract v5 §B1/§B3)", () => {
     expect(ui.selectedShip).toBe("440999999");
     expect(ui.flyTo).toBeNull();
     const status = find((e) => e.getAttribute("aria-live") === "polite")!;
-    expect(status.textContent).toMatch(/^SYN BRAVO 선택 — 실시간 아님 · 마지막 수신 (09-28 )?01:05 UTC · 마지막 저장 (09-28 )?01:00 UTC · 카드만/);
+    expect(status.textContent).toMatch(/^SYN BRAVO 선택 — 실시간 아님 · 마지막 수신 (09-28 )?10:05 KST · 마지막 저장 (09-28 )?10:00 KST · 카드만/);
   });
 });

@@ -30,7 +30,7 @@ Marinesia 는 **연동하지 않는다**(키는 `.env` 에 그대로, 어느 컨
   - 통합 검색(`/` 키): 항공기·선박 결과를 두 묶음으로(묶음 제목과 출처 표시). 선박 선택 → 지도 이동 + 카드 + 항적. 실시간이 아닌 선박은 "실시간 아님 · 마지막 저장 hh:mm" 과 함께 카드만(위치를 지어내지 않는다).
   - 선종 필터: 범례·레이어 패널의 선종 항목을 켜고 끄는 토글(표시 수 명시 — 예: "선종 필터 9/11"), 점 모드는 MapLibre filter, 격자 모드는 B2 선종별 수로 칸 수를 다시 셈(0 이면 칸을 그리지 않음). 설정은 브라우저에만 저장.
   - 선택한 선박: 격자 모드에서도 항상 그리고(선택 표시 고리 + 이름 또는 MMSI 라벨), 줌과 무관하게 라벨.
-  - 항적: 기간 6 · 12 · 24 h 선택, 항적 점에 마우스를 올리면 시각(UTC) · 속력(kn · km/h) · 침로 · 항해 상태. 속력·상태는 API `points[]` 값 그대로(없으면 `—`).
+  - 항적: 기간 6 · 12 · 24 h 선택, 항적 점에 마우스를 올리면 시각(UTC — §G11 뒤 한국 표준시) · 속력(kn · km/h) · 침로 · 항해 상태. 속력·상태는 API `points[]` 값 그대로(없으면 `—`).
   - 카드: 처음 기록 · 마지막 저장 위치 시각 행 추가(API 가 이미 준다).
   - 선박 목록: 정렬 가능한 표(선종 색 · 선명 · MMSI · 속력 kn/km/h · 항해 상태 · 경과 시간), 검색 결과에도 같은 표.
 - B4 하지 않는 것: 선박 사진·총톤수·건조 연도·선주·입출항 기록(AIS 에 없음), 기국(ITU MID 표가 저장소에 없음 — 다음 후보), 위험물 등급(선종 둘째 자리 — 공식 표 확인 전에는 표시하지 않음), 목적지 항구 좌표 표시(UN/LOCODE 좌표 추출은 다음 후보).
@@ -152,7 +152,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 ## G. 4차 개정(2026-09-29 · 레인 web-kst · 사용자 요청) — 운영 · 로그 화면의 시각을 한국 표준시로
 - G10(§C7 · §C8) 사용자 요청 "[운영]과 [로그] 메뉴에 표시되는 시각을 한국 시각으로" — §C7 목록의 "시각(UTC)" 을 대신한다. API · 저장 · 스트림은 모두 UTC 그대로이고 웹 표시만 바꾼다.
   - 범위: 웹 `/ops`(모든 탭) · `/logs`(목록 · 상세 · 묶음 · AIS 수신 공백 탭) · 오류 화면(`ErrorScreen` — `app/error.tsx` · `app/global-error.tsx` 가 쓰므로 모든 경로에서 KST).
-    항공 자료 화면(상황판 · 재생 · 통계 · 공항)은 UTC 그대로(이번 요청의 범위 밖).
+    항공 자료 화면(상황판 · 재생 · 통계 · 공항)은 UTC 그대로(이번 요청의 범위 밖) — §G11 이 이 문장을 대신한다(그 화면들도 KST).
   - 표시: 한국 표준시 +09:00 고정(`lib/kst.ts` — 1988년 뒤로 일광 절약이 없고, 시험이 2000–2040 을 tz 데이터베이스 Asia/Seoul 과 대조한다). 표 칸 `MM-DD HH:MM:SS`(머리글 "(KST)"),
     머리글이 없는 자리 `… KST`, `/logs` 목록은 ms 까지. 원본 UTC 는 툴팁("원본 UTC …"). `/logs` 상세 · 오류 화면은 KST 와 UTC 를 나란히.
   - 복사: 항목 텍스트 · 보이는 목록 · `.txt` · 묶음 전체 · 오류 화면 복사의 머리 줄 시각 = ISO 8601 `…+09:00`(ms 유지). 내려받기 파일 이름 `wakeline-logs-YYYYMMDDTHHMMSS+0900.<ext>`.
@@ -160,3 +160,43 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     일 단위 집계(예산 · 격리 수)의 `day` 는 수집기가 UTC 날짜로 센다(budget.py `day_key` · db.py) — "day (UTC)", KST 09:00 에 날짜가 바뀐다.
   - 함께 고친 것: 값을 모르면 "—" 만 — 단위가 붙은 "— ms"(지연) · "—건"(묶음 항목 수)으로 보이지 않는다. `/ops` 공급자 표의 "budget used" 는 마지막으로 성공한 수집 때 센 값이다
     (collector `status.py` success() 만 쓴다 — 실패만 이어지는 공급자는 이전 UTC 날짜의 값이 남는다) — 툴팁이 "지금 날짜의 호출 수" 라고 말하지 않는다.
+
+## G. 5차 개정(2026-09-29 · 레인 web-dashboard-kst · api-stream-window · collector-headroom · 사용자 요청 "상황판도 KST로 바꿔") — 모든 화면 한국 표준시 · 스트림 보존 창
+- G11(§G10 · §B3) **항공 자료 화면(상황판 · 재생 · 통계 · 공항)도 한국 표준시** — §G10 의 "항공 자료 화면은 UTC 그대로" 와 §B3 의 "항적 점 … 시각(UTC)" 를 대신한다.
+  API · 저장 · 스트림은 UTC 그대로이고 웹 표시만 바꾼다. 오프셋 +09:00 고정(`lib/kst.ts`)과 표 칸 · 머리글 규칙은 §G10 과 같다.
+  - 상황판: 상태 바(지역 수집 `HH:MM:SS KST`) · 알림 배너 · 근거 카드 · SIGMET 카드 · 목록 · 기상청 패널 · 레이더 타임라인(RainViewer 프레임도 `MM-DD HH:MM KST`) ·
+    항공기 · 노선 · 선박 카드 · 선박 표 · 통합 검색 · WS 형식 오류 상세 · 지도 툴팁(SIGMET 유효 · 공항 METAR · 선박 항적 점 `TIME`) · AIS 공백 배지(`hh:mm– KST`) ·
+    항적 공백 라벨(`hh:mm–hh:mm KST`) · 집중 추적 칩. 머리글이 없는 자리는 ` KST` 를 붙이고, 구간은 끝에 한 번(`… – … KST`), 모르면 `—` 만(시간대 글자도 붙이지 않는다).
+    날짜를 빼는 자리(`HH:MM KST` — 실시간 아닌 선박의 마지막 수신 · 저장)는 지금과 같은 **KST** 날짜일 때만.
+  - 원본 UTC: 카드 · 표 · 목록 · 상태 바의 KST 시각은 title 에 `원본 UTC <ISO …Z>`(구간은 `원본 UTC a – b`, 시각이 title 에만 있는 자리는 `… KST · 원본 UTC …`).
+    예외 — 지도 툴팁 · 지도 선 라벨 안의 시각(툴팁 안에 또 툴팁을 둘 수 없어 KST 만)과 기상청 레이더 tm(기상청이 준 KST 그대로 — 원본이 KST, 툴팁이 그렇게 말한다).
+    `/about` 에 같은 문장이 있다.
+  - 재생: 날짜 · 시각 입력(datetime-local, 이름 `재생 시각(KST)`)은 KST 로 읽고 쓴다 — 벽시계 값 − 9 h, 없는 날짜 · 24시 · 형식 오류는 다른 날로 옮기지 않고 받지 않는다.
+    보이는 재생 시각 `YYYY-MM-DD HH:MM:SS KST` · 그린 프레임 · 기록 시각 · 레이더 · SIGMET 유효도 KST. api 요청의 `at` 은 그 순간의 UTC ISO(`…Z`) 그대로(`/api/v1/replay?at=` — 계약은 UTC).
+  - 통계: 집계 날짜는 UTC 날짜 그대로 — 날짜 고르기 `집계 날짜(UTC 날짜)` · 알림 표 `날짜(UTC 날짜)`(ADR-017 R-45, KST 09:00 에 날짜가 바뀐다 — KST 날짜로 옮기지 않는다).
+    시간대별 막대는 그 UTC 날짜의 시간 순서(UTC 00 → 23시) 그대로 두고 라벨만 KST 시(09 … 23, 00 … 08 — 00 부터는 다음 KST 날), 설명 줄
+    `UTC 날짜 D = KST MM-DD 09:00 – MM-DD 08:59`. 집계 시각 `매일 12:30 KST`(api cron 03:30 UTC).
+  - 공항: METAR 관측 시각 · 이력 표 `obs (KST)` · 공항 카드 관측 · 수신.
+  - 원문: METAR · TAF · SIGMET 원문은 발표된 그대로(안의 `…Z` 는 UTC) — 보이는 이름표 `(원문 · UTC)`(공항 카드 · 공항 화면 · SIGMET 카드 · 재생 상세). 툴팁만으로 두지 않는다.
+  - 선박 ETA(계약 v2 §B4 — 선원 입력 월 · 일 · 시 · 분, UTC, 연도 없음): KST 로 바꿔 입력값과 함께 `MM-DD HH:MM KST · 선원 입력 MM-DD HH:MM UTC · 연도 없음`.
+    +9 h 로 날이 넘어가면 그 달의 가장 긴 날 수로 넘기고(2월은 29일까지 입력을 받는다), 2월 28일 15:00 UTC 이후는 연도(윤년)를 몰라
+    `02-29 또는 03-01 HH:MM KST(연도 없어 윤년 모름)` 로 둘 다 적는다(고르지 않는다). 달력에 없는 날(04-31 등)은 바꾸지 않고 입력값(UTC)만.
+  - 바꾸지 않는 것: API · 저장 · 스트림 · 복사한 JSON(`ts` UTC) · 통계의 날짜 · 원문. 로그 화면 · 운영 화면은 §G10 그대로.
+  - 회귀 막기: `tests/kst-dashboard.test.ts` 가 app/ · components/ · lib/ 에서 UTC 시각 글자를 만드는 모양(`}Z` 템플릿 · getUTC* 로 hh:mm · ISO 자르기)을 찾으면,
+    `tests/kst-utc-hover.test.ts` 가 마운트한 카드에서 원본 UTC 툴팁이 없는 hh:mm 을 찾으면, `tests/docs-contract-g11.test.ts` 가 이 절과 README 가 동작과 어긋나면 실패한다.
+- G12(§C2 · R-14 · ADR-011 '수집기 여유 보강') **스트림 보존 창 필드 계약**(collector-headroom · api-stream-window · web-dashboard-kst) — 바이트 예산 트림은 손실이 아니다:
+  되읽기 창(api 가 멈췄다 돌아와 다시 읽을 수 있는 구간)을 줄일 뿐이고, 손실은 읽히기 전에 잘린 경우뿐이다(api `stream_trim_loss_events`).
+  - 수집기 상태 해시: `wakeline:collector` 에 `stream_retention_s`(항공기 스트림 시간 트림 목표, 정수 초) · `stream_budget_bytes`(항공기 스트림 바이트 예산),
+    `wakeline:ais:status` 에 선박 스트림의 같은 두 필드. 값은 그 프로세스의 `StreamTrim` 이 실제로 거는 설정(고른 값 — 잰 값이 아니다), 정수 문자열, 모르면 빈 값.
+    고른 값: 목표 2.5 h(9,000 s) · 예산 항공기 80 MiB · 선박 32 MiB(ADR-011 — 선박 16 → 32 MiB).
+  - `GET /api/v1/ops/pipeline`: `collector.stream_retention_s` · `collector.stream_budget_bytes` · `ais.stream_retention_s` · `ais.stream_budget_bytes`(해시 값, 다른 필드와 같은
+    신선도 규칙 — collector heartbeat 120 s · ais `updated_at` 30 s 보다 오래됐거나 형식이 틀리면 null) · `api.stream_window_s.aircraft` · `api.stream_window_s.ships`
+    (초, 0.1 s 반올림 = 요청 시각 − 30 s 스트림 지표가 XINFO STREAM 으로 기억한 첫 항목 id 의 시각 — **잰 값**. 스트림 없음 · 비었음 · Redis 오류 · 측정 전 · 측정이
+    120 s 보다 오래됨 · 첫 항목이 60 s 넘게 미래면 null — 0 이나 지난 값으로 채우지 않는다). Micrometer `wakeline_stream_window_seconds{stream}`(모르면 NaN).
+  - 웹 `/ops` PIPELINE 행 `stream_window_s.aircraft`(collector 묶음) · `stream_window_s.ships`(ais 묶음): 값 칸 = 창(1 h 미만 `30 min` — 분 정수, 그 이상 `1.7 h` — 소수 1자리,
+    모르면 `—` 만) · `목표 2.5 h — 수집기 설정`(목표를 모르면 `목표 —`) · 상태 글자. 툴팁에 창의 뜻 · 목표 · 바이트 예산(MiB, 수집기 설정) · 판정 규칙.
+  - 판정(창 w · 목표 t · 그 스트림의 `stream_budget_trims` n): w 나 t 를 모르면 판정하지 않는다(tone `muted`, 상태 없음) · w ≥ t → `ok` ·
+    w < t 이고 n 을 모름 → `muted` `원인 모름(예산 트림 수 모름)`(원인을 지어내지 않는다) · w < t 이고 n > 0 → w < t − 10분이면 `warn`(주황) `예산 때문에 짧아짐`,
+    아니면 `ok`(시간 트림 `MINID ~` 은 대략이라 조금 짧은 것은 정상 — 웹 `STREAM_WINDOW_SLACK_S`) · w < t 이고 n = 0 → `muted` `채우는 중`(기동 직후 등).
+  - `stream_budget_trims`(collector · ais)는 손실(loss)이 아니라 누계(count)로 보인다 — 빨간색이 아니고, pipeline 탭의 빨간 배지는 손실(loss) 지표만 센다.
+    탭 설명: 빨간 값 = 0 이 아닌 손실 지표 · 주황 = 예산 때문에 짧아진 스트림 보존 창(손실 아님).
