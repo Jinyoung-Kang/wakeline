@@ -117,7 +117,6 @@ async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin
     from test_traffic_grid_job import CELLS, T0, Clock, FakeKomsa, FakeWfs, TGDb, komsa_body
 
     from wakeline_collector.budget import hour_key
-
     from wakeline_collector.jobs.context import JobContext
     from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, SNAPSHOT_KEY, TrafficGridJob
     from wakeline_collector.marine_grid import WfsResult
