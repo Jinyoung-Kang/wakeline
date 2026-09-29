@@ -56,7 +56,7 @@ export function SigmetCard({ id }: { id: string }) {
           {pending ? <span className="badge" data-testid="sigmet-pending" title={`발효 ${fmtKstTitle(p.valid_from)}`}>발효 전 · {fmtDuration(startsIn)} 뒤</span> : null}
         </div>
         {rows.map(([k, v]) => (
-          <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>
+          <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{v}</span></div>
         ))}
         <div className="mt-2 label">Aircraft inside ({hexes == null ? "—" : hexes.length})</div>
         {hexes ? <InsideAircraftList sigmetId={id} hexes={hexes} /> : null}

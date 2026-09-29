@@ -137,6 +137,17 @@ describe("map overlays share one layout: toolbar row, then a left status column 
   });
 });
 
+describe("side-panel cards: the label column never shrinks, so a long value does not break a Korean label mid-word", () => {
+  // 하네스 1024 px: 항공기 카드의 "관측 시각" 이 긴 시각 값 옆에서 "관측 시 / 각" 으로 쪼개졌다
+  it("aircraft, airport, evidence and SIGMET cards keep their label cells at full width (shrink-0)", () => {
+    for (const f of ["AircraftCard", "AirportCard", "EvidenceCard", "SigmetCard"]) {
+      const src = readFileSync(new URL(`../components/${f}.tsx`, import.meta.url), "utf8");
+      expect(src, f).not.toMatch(/<span className="text-fg-3">\{k\}<\/span>/);
+      expect(src, f).toMatch(/<span className="shrink-0 text-fg-3">\{k\}<\/span>/);
+    }
+  });
+});
+
 describe("map: the hollow grey circles at zoom 6 are airports with a stale METAR — the legend says so with the zooms", () => {
   it("legend row names the shape (속이 빈 회색 고리) and the airport section names both zooms (circle 5.5+, label 7+)", () => {
     const html = renderToStaticMarkup(createElement(MapLegendView, { id: "l", layers: { ...useUi.getState().layers, airports: true }, radarSource: "rainviewer" }));

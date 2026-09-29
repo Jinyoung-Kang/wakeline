@@ -242,7 +242,7 @@ export function AircraftCard({ hex }: { hex: string }) {
         {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err}<RequestIdOf error={error?.error} />)</div> : null}
         {d?.meta?.db_unavailable ? <div className="text-[11px] text-warn">등록 정보 DB 일시 사용 불가 — 등록번호·기종은 “—”</div> : null}
         {rows.map(([k, val]) => (
-          <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{val}</span></div>
+          <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{val}</span></div>
         ))}
         <RouteSection route={route} pos={s ? { lat: s.lat, lon: s.lon } : null} callsign={s?.callsign ?? null} pendingForS={routePendingForS} />
         {activeAlerts.length ? (

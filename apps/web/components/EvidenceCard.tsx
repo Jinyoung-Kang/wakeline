@@ -57,7 +57,7 @@ export function EvidenceCard({ a }: { a: Alert }) {
         {a.estimated ? <span className="badge est">추정</span> : <span className="badge ok">관측</span>}
       </div>
       {rows.map(([k, v]) => (
-        <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>
+        <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{v}</span></div>
       ))}
       {assumptions.length ? <div className="border-t border-line pt-0.5 text-[10px] text-warn" data-testid="evidence-assumptions">판정 가정: {assumptions.join(" · ")}</div> : null}
     </div>

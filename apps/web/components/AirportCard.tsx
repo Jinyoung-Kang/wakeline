@@ -65,7 +65,7 @@ export function AirportCard({ icao }: { icao: string }) {
               ["현상", m.wx_string ?? "—"],
               ["출처", <>{m.provider ?? "—"} · 수신 <DualTime v={m.fetched_at} /></>],
             ] as [string, React.ReactNode][]).map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right" data-testid={k === "실링" ? "airport-ceiling" : undefined}>{v}</span></div>
+              <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="shrink-0 text-fg-3">{k}</span><span className="mono text-right" data-testid={k === "실링" ? "airport-ceiling" : undefined}>{v}</span></div>
             ))}
             <div className="mt-2 label" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">METAR (원문 · UTC)</div>
             <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]">{m.raw}</pre>
