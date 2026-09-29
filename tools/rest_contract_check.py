@@ -1130,6 +1130,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "mmsi": MMSI,
             "state": SHIP_STATE,
             "static": SHIP_STATIC,
+            # 계약 v5 §G17 — static 의 출처: 메모리(live) · DB 의 마지막 저장 정적 보고(stored). stored 이면 저장 행의 updated_at(= static.updated_at)
+            "static_source": {"enum": ["live", "stored"]},
+            "static_updated_at": TS,
             "destination_info": DESTINATION_INFO,
             "category": SHIP_CATEGORY,
             "first_recorded_at": TS,
@@ -1434,6 +1437,15 @@ def _ship_detail(body: dict[str, Any]) -> list[str]:
             errs.append(f"{part}.mmsi != mmsi")
     if "state" not in body and "static" not in body and "first_recorded_at" not in body:
         errs.append("a ship with no live state, no static info and no stored record must be a 404")
+    # 계약 v5 §G17: 정적 정보가 있으면 늘 출처를 밝히고, 저장값(stored)만 저장 행의 시각을 싣는다 — 그 시각은 static.updated_at 과 같다
+    if ("static" in body) != ("static_source" in body):
+        errs.append("static_source must be present exactly when static is")
+    if ("static_updated_at" in body) != (body.get("static_source") == "stored"):
+        errs.append("static_updated_at must be present exactly for a stored static")
+    elif "static_updated_at" in body and not _same_instant(
+        body["static_updated_at"], (body.get("static") or {}).get("updated_at")
+    ):
+        errs.append("static_updated_at is not the stored row's updated_at (static.updated_at)")
     # 계약 v5 §G4: 마지막 수신 기록은 실시간 목록에 없고 저장 기록(ship 행)이 있을 때만
     if "last_seen_at" in body and "state" in body:
         errs.append("last_seen_at on a live ship (state.seen_at is the last reception)")
@@ -1513,6 +1525,16 @@ def _aircraft_detail(body: dict[str, Any]) -> list[str]:
 
 def _ts(v: str) -> datetime:
     return datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def _same_instant(a: object, b: object) -> bool:
+    """두 ISO-8601 시각이 같은 순간인가(표기 · 소수 자리가 달라도). 시각이 아니면 False."""
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    try:
+        return _ts(a) == _ts(b)
+    except ValueError:
+        return False
 
 
 _SCOPE_NUM = re.compile(r"^-?\d{1,3}(\.\d{1,6})?$")

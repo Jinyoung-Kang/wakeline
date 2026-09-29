@@ -336,6 +336,25 @@ def test_v5_g4_ship_detail_last_seen_at_only_when_not_live():
     assert rcc._ship_detail(live)  # 실시간이면 싣지 않는다
 
 
+def test_v5_g17_ship_detail_names_the_static_source():
+    """계약 v5 §G17: 정적 정보가 있으면 출처(live · stored)를 밝히고, 저장값만 저장 행의 updated_at(= static.updated_at)을 싣는다."""
+    v = Draft202012Validator(rcc.SCHEMAS["ship_detail"], format_checker=rcc.FORMATS)
+    st = {"mmsi": "440123457", "call_sign": "V7A3884", "updated_at": "2026-09-29T03:00:00.123Z", "provider": "aisstream"}
+    stored = ship_detail(static=st, static_source="stored", static_updated_at="2026-09-29T03:00:00.123000Z")
+    live = ship_detail(static=st, static_source="live")
+    for ok in (stored, live, ship_detail()):
+        assert not list(v.iter_errors(ok)) and rcc._ship_detail(ok) == [], ok
+    assert list(v.iter_errors(ship_detail(static=st, static_source="guessed")))
+    assert rcc._ship_detail(ship_detail(static=st))  # 출처를 밝히지 않은 정적 정보
+    assert rcc._ship_detail(ship_detail(static_source="live"))  # 정적 정보 없는 출처
+    assert rcc._ship_detail(ship_detail(static=st, static_source="stored"))  # 저장값인데 시각 없음
+    assert rcc._ship_detail(
+        ship_detail(static=st, static_source="live", static_updated_at="2026-09-29T03:00:00.123Z")
+    )  # 실시간에 저장 시각
+    assert rcc._ship_detail(ship_detail(static=st, static_source="stored", static_updated_at="2026-09-29T04:00:00Z"))  # 다른 시각
+    assert rcc._ship_detail(ship_detail(static=st, static_source="stored", static_updated_at="soon"))
+
+
 @pytest.mark.parametrize(
     ("q", "over", "ok"),
     [

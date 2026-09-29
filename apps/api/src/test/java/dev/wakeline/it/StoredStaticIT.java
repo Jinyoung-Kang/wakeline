@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 그보다 오래됐다 — DB ship 표(ShipRepository — /ships/{mmsi} · 검색이 이미 읽는 곳)에는 마지막으로 받은 정적 보고(호출부호 V7A3884)가 있다.
  * <p>재현: DB 에 5시간 전 정적 보고를 넣고 스트림에는 위치만 발행한다(재시작 뒤 스트림 보존 창에 정적 보고가 없는 상태) → WS select_ship.
  * 고침(계약 v5 §G17): 저장된 정적 보고를 static_source = stored · static_updated_at(저장 행의 updated_at)으로 밝혀 싣고 입출항은 그 호출부호로 찾는다 —
- * 메모리(ShipStore)에는 넣지 않는다. DB 가 막히면(공개 조회 상한 3 s) static null · stored_unavailable · no_call_sign.
+ * 메모리(ShipStore)에는 넣지 않는다. REST 상세도 같은 출처를 밝힌다. DB 가 막히면(공개 조회 상한 3 s) static null · stored_unavailable · no_call_sign.
  * MMSI 는 이 시험만 쓰는 값이다(컨텍스트를 함께 쓰는 다른 시험의 메모리 정적 정보와 섞이지 않게) — 이름 · 호출부호는 관찰된 선박의 값.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -115,10 +115,11 @@ class StoredStaticIT extends IntegrationTest {
             // 메모리에 섞지 않았다 — 지도 목록 · 검색의 실시간 값은 그대로
             assertThat(ships.view().get(MMSI).stat()).isNull();
             assertThat(ships.staticOf(MMSI)).isNull();
-            // REST 상세는 이미 DB 로 채우지만 아직 저장값이라고 밝히지 않는다(다음 단계)
+            // REST 상세도 같은 출처를 밝힌다(저장 행의 updated_at)
             JsonNode detail = get("/api/v1/ships/" + MMSI).json();
             assertThat(detail.path("static").path("call_sign").asString()).isEqualTo("V7A3884");
-            assertThat(detail.has("static_source")).isFalse();
+            assertThat(detail.path("static_source").asString()).isEqualTo("stored");
+            assertThat(Instant.parse(detail.path("static_updated_at").asString())).isEqualTo(storedAt);
         } finally {
             c.close();
         }
