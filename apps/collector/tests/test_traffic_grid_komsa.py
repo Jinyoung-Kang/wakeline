@@ -167,19 +167,20 @@ def test_payload_counts_and_cells():
     assert p["fetched_at"] == "2026-09-29T09:06:01.250Z"
     assert p["cell_deg"] == 0.025
     assert (p["total"], p["resolved"], p["unresolved"]) == (3, 2, 1)
-    assert (p["pending"], p["not_found"], p["off_grid"], p["rejected"]) == (0, 1, 0, 0)
+    assert (p["pending"], p["not_found"], p["off_grid"], p["failed"], p["rejected"]) == (0, 1, 0, 0, 0)
     assert p["partial"] is False and p["total_count"] == 3
     # 칸: [grid_no, lat_min, lon_min, 척수, 밀집도 %] — grid_no 순(같은 입력이면 같은 값 → 같은 ETag)
     assert p["cells"] == [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0], ["GR4_F2K41_D3", 37.425, 126.6, 102, 100.0]]
 
 
-def test_payload_marks_a_truncated_page_partial_and_counts_pending_and_off_grid():
-    s = parse_komsa(
-        body({"item": [{"grid_id": "A1", "vmtc": 1, "dnsty": 1}, {"grid_id": "A2", "vmtc": 1, "dnsty": 1}]}, total=6200)
-    )
-    p = build_payload(s, datetime.now(UTC), {}, {"A2": "off_grid"})
+def test_payload_marks_a_truncated_page_partial_and_counts_pending_off_grid_and_failed():
+    items = [{"grid_id": g, "vmtc": 1, "dnsty": 1} for g in ("A1", "A2", "A3")]
+    s = parse_komsa(body({"item": items}, total=6200))
+    p = build_payload(s, datetime.now(UTC), {}, {"A2": "off_grid", "A3": "failed"})
     assert p["partial"] is True and p["total_count"] == 6200
-    assert (p["resolved"], p["unresolved"], p["pending"], p["off_grid"]) == (0, 2, 1, 1)
+    # failed = 위치 조회가 거듭 실패해 잠시 묻지 않는 칸(확인 중이 아니다 — pending 과 따로 센다)
+    assert (p["resolved"], p["unresolved"], p["pending"], p["off_grid"], p["failed"]) == (0, 3, 1, 1, 1)
+    assert p["pending"] + p["not_found"] + p["off_grid"] + p["failed"] == p["unresolved"]
     assert p["cells"] == []
 
 

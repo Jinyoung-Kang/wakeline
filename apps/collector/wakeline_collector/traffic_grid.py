@@ -11,7 +11,7 @@
 - regDt 가 없거나 형식이 틀리면 스냅샷 전체를 받지 않는다(시각을 모르는 집계를 '지금'으로 보이지 않는다).
 - 항목 하나가 틀리면 그 항목만 뺀다(rejected — 품질 사례). grid_id 는 WFS 요청에 들어가므로 영숫자·밑줄 1–32자만. 같은 grid_id 는 처음 것만.
 - 스냅샷 값(Redis wakeline:traffic_grid): 칸 = [grid_no, lat_min, lon_min, 척수, 밀집도 %] — 크기는 늘 0.025°(cell_deg).
-  기하를 아는 칸만 싣고, 모르는 칸은 수로만(pending · not_found · off_grid). 개별 선박 위치가 아니다.
+  기하를 아는 칸만 싣고, 모르는 칸은 수로만(pending · not_found · off_grid · failed). 개별 선박 위치가 아니다.
 """
 
 from __future__ import annotations
@@ -188,10 +188,11 @@ def build_payload(
     cells: Mapping[str, Cell],
     negative: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Redis 스냅샷 값(dict — 호출자가 orjson 으로 싣는다). negative = grid_id → 'not_found' | 'off_grid'(기하를 쓰지 않는 칸).
+    """Redis 스냅샷 값(dict — 호출자가 orjson 으로 싣는다). negative = grid_id → 'not_found' | 'off_grid' | 'failed'(기하를 쓰지 않는 칸 —
+    failed 는 위치 조회가 거듭 실패해 잠시 묻지 않는 칸이다 — 확인 중(pending)과 따로 센다).
     같은 입력이면 같은 값이다(발행 시각을 싣지 않는다 — api 의 ETag 가 내용이 바뀔 때만 바뀌게. 발행 시각은 heartbeat traffic_grid_at)."""
     out_cells: list[list[Any]] = []
-    not_found = off_grid = pending = 0
+    not_found = off_grid = failed = pending = 0
     for it in sorted(snap.items, key=lambda i: i.grid_id):
         c = cells.get(it.grid_id)
         if c is not None:
@@ -202,6 +203,8 @@ def build_payload(
             not_found += 1
         elif why == "off_grid":
             off_grid += 1
+        elif why == "failed":
+            failed += 1
         else:
             pending += 1
     seen = len(snap.items) + len(snap.rejected) + snap.duplicates
@@ -219,6 +222,7 @@ def build_payload(
         "pending": pending,
         "not_found": not_found,
         "off_grid": off_grid,
+        "failed": failed,
         "cell_deg": CELL_DEG,
         "cells": out_cells,
     }

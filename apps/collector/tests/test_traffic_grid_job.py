@@ -602,6 +602,59 @@ async def test_wfs_error_bodies_are_retried_later_not_negative_cached():
     assert wfs.asked.count("GR4_F2K41_D3") == 2
 
 
+async def test_a_lookup_that_keeps_failing_is_set_aside_for_a_day_and_counted_as_failed():
+    """검토 지적: 계속 실패하는 칸(포털 게이트웨이 문서 · grid_no 불일치 등)을 6시간마다 영원히 다시 묻고 '위치 확인 중'으로 셌다.
+    ID_MAX_FAILURES 번 연달아 실패하면 failed(부정 캐시, FAILED_TTL_S 뒤 다시) — 스냅샷에 pending 이 아니라 failed 로 센다."""
+    wfs = FakeWfs(
+        {
+            "GR4_F2K41_D3": WfsError("portal gateway document instead of GML"),
+            "GR4_F2K41_C3": WfsResult("found", cell=CELLS["GR4_F2K41_C3"]),
+            "GR4_F2K41_C4": WfsResult("found", cell=CELLS["GR4_F2K41_C4"]),
+        }
+    )
+    job, _k, _w, r, clock, db = setup(wfs=wfs)
+    await job.run_once()
+    for step in tg.ID_RETRY_S[: tg.ID_MAX_FAILURES - 1]:
+        clock.advance(step)
+        await job.run_once()
+    assert tg.ID_MAX_FAILURES == 5 and wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES
+    p = snapshot(r)
+    assert (p["resolved"], p["pending"], p["failed"], p["unresolved"]) == (2, 0, 1, 1)
+    neg = orjson.loads(r.kv[NEGATIVE_KEY]["GR4_F2K41_D3"])
+    assert neg["reason"] == "failed"
+    geom = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"][-1]
+    assert geom["quality"][0][0] == "traffic_grid_lookup_failed" and geom["quality"][0][2]["grid_no"] == "GR4_F2K41_D3"
+    assert r.kv["wakeline:collector"]["traffic_grid_failed"] == "1" and r.kv["wakeline:collector"]["traffic_grid_pending"] == "0"
+    clock.advance(tg.ID_RETRY_S[-1] * 3)
+    await job.run_once()
+    assert wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES  # 하루 동안은 묻지 않는다
+    clock.advance(tg.FAILED_TTL_S)
+    await job.run_once()
+    assert wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES + 1  # 하루 뒤 처음부터 다시
+
+
+def test_retries_wait_behind_first_time_lookups():
+    """오래 실패한 칸이 새 칸보다 먼저 나와 차단기(연달아 3번)를 걸고 채우기 전체를 멈추지 않게 — 실패 횟수가 적은 칸부터, 같으면 처음 본 순서."""
+    g = tg.GridGeometry()
+    g.observe([("A", 5), ("B", 4)], T0)
+    g.failed("A", T0)
+    g.observe([("C", 1)], T0)
+    later = T0 + timedelta(seconds=tg.ID_RETRY_S[0])
+    assert g.due(later, 10) == ["B", "C", "A"]
+
+
+def test_failed_ids_survive_a_restart_with_their_own_shorter_ttl():
+    g = tg.GridGeometry()
+    at = orjson.dumps({"reason": "failed", "at": "2026-09-29T09:00:00Z"}).decode()
+    nf = orjson.dumps({"reason": "not_found", "at": "2026-09-29T09:00:00Z"}).decode()
+    bad = orjson.dumps({"reason": "made_up", "at": "2026-09-29T09:00:00Z"}).decode()
+    assert g.load_negative({"GR4_A": at, "GR4_B": nf, "GR4_C": bad}) == 2
+    t = datetime(2026, 9, 29, 9, 0, tzinfo=UTC)
+    assert g.reasons(t + timedelta(hours=23)) == {"GR4_A": "failed", "GR4_B": "not_found"}
+    assert g.reasons(t + timedelta(hours=25)) == {"GR4_B": "not_found"}
+    assert g.observe([("GR4_A", 1), ("GR4_B", 1)], t + timedelta(hours=25)) == 1  # 기한이 지난 failed 만 다시 기다림에
+
+
 async def test_wfs_daily_budget_is_respected():
     job, _k, wfs, _r, clock, db = setup(limits={"komsa_traffic": 400, "mof_grid4": 2})
     await job.run_once()

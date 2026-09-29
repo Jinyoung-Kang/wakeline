@@ -18,18 +18,20 @@
   * found: 0.025° 격자 검사를 통과한 칸 → 메모리 + DB marine_grid4(V14 — 다시 시작해도 다시 묻지 않는다).
   * not_found(numberOfFeatures 0) · off_grid(격자 검사 실패 — 격리, 품질 사례 · 원본 보관): 부정 캐시 Redis wakeline:traffic_grid:negative
     (grid_no → {"reason","at"}) — NEGATIVE_TTL_S(7일) 뒤 다시 묻는다.
-  * 오류(HTTP · 응답 모양 · 시간 초과): 그 칸만 5분 → 30분 → 2시간 → 6시간 뒤 다시. 한 틱에서 연달아 FILL_BREAKER_ERRORS(3)번 실패하면
-    채우기 전체를 5분 → 10분 → 30분 → 1시간 쉰다(키 · 서비스 장애에 예산을 쓰지 않게).
+  * 오류(HTTP · 응답 모양 · 시간 초과): 그 칸만 5분 → 30분 → 2시간 → 6시간 뒤 다시. ID_MAX_FAILURES(5)번 연달아 실패하면 failed —
+    부정 캐시에 적고(FAILED_TTL_S, 1일 뒤 처음부터 다시) 스냅샷에 pending 이 아니라 failed 로 센다(품질 사례 traffic_grid_lookup_failed).
+    실패한 적이 있는 칸은 새 칸 뒤에 묻는다. 한 틱에서 연달아 FILL_BREAKER_ERRORS(3)번 실패하면 채우기 전체를 5분 → 10분 → 30분 → 1시간
+    쉰다(키 · 서비스 장애에 예산을 쓰지 않게).
   * 보내지 않은 호출(속도 상한 · 운영자 끔 · 연결 전 실패 · 종료 취소)은 예산을 돌려주고 그 틱의 채우기를 멈춘다.
   * DB 캐시를 아직 읽지 못했으면 기동 뒤 DB_WAIT_S(10분)까지는 채우지 않는다(이미 아는 칸을 다시 묻지 않게). 그 뒤에는 DB 없이 채우고, DB 가
     돌아오면 읽어 합친다(실시간 경로는 DB 에 의존하지 않는다).
 - 발행: 새 regDt 이거나 기하가 늘어 수가 바뀌면(PUBLISH_MIN_INTERVAL_S 에 한 번) SET wakeline:traffic_grid EX 1200. 값은 traffic_grid.build_payload.
   오래됨(regDt 15분 초과) 판정은 api 가 한다. 수집기가 멈추면 20분 뒤 키가 사라진다.
 - heartbeat(wakeline:collector): traffic_grid_at · traffic_grid_lag_s(regDt 나이) · traffic_grid_state(active · no_key · fixture ·
-  operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · 오늘 쓴 호출 수(두 예산) ·
+  operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · pending · failed · 오늘 쓴 호출 수(두 예산) ·
   traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값).
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
-PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 미래 허용 120 s 는
+PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 연달아 실패 5번 · failed 1일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
 """
 
@@ -85,7 +87,10 @@ FILL_MAX_S = 15.0  # 한 틱의 채우기 시간 상한(종료 유예 18 s 안)
 FILL_BREAKER_ERRORS = 3
 FILL_PAUSE_S = (300, 600, 1800, 3600)
 ID_RETRY_S = (300, 1800, 7200, 21600)
+ID_MAX_FAILURES = 5  # 한 칸이 연달아 이만큼 실패하면 failed — FAILED_TTL_S 동안 묻지 않는다(약 8.6시간에 걸친 다섯 번)
 NEGATIVE_TTL_S = 7 * 86400
+FAILED_TTL_S = 86400
+NEGATIVE_REASONS = ("not_found", "off_grid", "failed")
 MAX_TRACKED = 20_000  # 기다리는 칸 · 부정 캐시 상한(메모리 · Redis 해시)
 DB_RETRY_S = 60
 DB_WAIT_S = 600
@@ -208,12 +213,17 @@ class _Pending:
 
 @dataclass(frozen=True)
 class Negative:
-    reason: str  # not_found · off_grid
+    reason: str  # not_found · off_grid(NEGATIVE_TTL_S) · failed(FAILED_TTL_S)
     at: datetime
+
+    def valid(self, now: datetime) -> bool:
+        ttl = FAILED_TTL_S if self.reason == "failed" else NEGATIVE_TTL_S
+        return (now - self.at).total_seconds() < ttl
 
 
 class GridGeometry:
-    """grid_id → 칸. 모르는 칸은 처음 본 순서로 기다리고, 없는 칸 · 격자에 맞지 않는 칸은 부정 캐시(기한 NEGATIVE_TTL_S)."""
+    """grid_id → 칸. 모르는 칸은 처음 본 순서로 기다리고(실패한 적이 있는 칸은 뒤로), 없는 칸 · 격자에 맞지 않는 칸은 부정 캐시(기한
+    NEGATIVE_TTL_S), 조회가 ID_MAX_FAILURES 번 연달아 실패한 칸은 failed(기한 FAILED_TTL_S — 확인 중으로 세지 않는다)."""
 
     def __init__(self) -> None:
         self.cells: dict[str, Cell] = {}
@@ -228,7 +238,7 @@ class GridGeometry:
 
     def _negative_valid(self, g: str, now: datetime) -> bool:
         n = self.negative.get(g)
-        return n is not None and (now - n.at).total_seconds() < NEGATIVE_TTL_S
+        return n is not None and n.valid(now)
 
     def observe(self, items: Iterable[tuple[str, int]], now: datetime) -> int:
         """스냅샷의 (grid_id, 척수) — 모르는 칸을 기다림에 넣는다(척수가 많은 칸 먼저 번호). 새로 넣은 수."""
@@ -244,8 +254,9 @@ class GridGeometry:
         return added
 
     def due(self, now: datetime, limit: int) -> list[str]:
-        ready = [(p.seq, g) for g, p in self._pending.items() if p.next_try is None or p.next_try <= now]
-        return [g for _s, g in sorted(ready)[:limit]]
+        """묻을 때가 된 칸 — 실패 횟수가 적은 칸 먼저(오래 실패한 칸이 새 칸 앞에서 차단기를 걸지 않게), 같으면 처음 본 순서."""
+        ready = [(p.failures, p.seq, g) for g, p in self._pending.items() if p.next_try is None or p.next_try <= now]
+        return [g for _f, _s, g in sorted(ready)[:limit]]
 
     def resolved(self, cell: Cell) -> None:
         self.cells[cell.grid_no] = cell
@@ -257,14 +268,23 @@ class GridGeometry:
         if len(self.negative) < MAX_TRACKED or grid_no in self.negative:
             self.negative[grid_no] = Negative(reason, now)
 
-    def failed(self, grid_no: str, now: datetime) -> None:
+    def failed(self, grid_no: str, now: datetime) -> bool:
+        """조회 오류 한 번. ID_MAX_FAILURES 번째면 failed 로 옮기고 True(호출자가 Redis 에 적는다), 아니면 물러나기만."""
         p = self._pending.get(grid_no)
-        if p is not None:
-            p.next_try = now + timedelta(seconds=_step(ID_RETRY_S, p.failures))
-            p.failures += 1
+        if p is None:
+            return False
+        p.failures += 1
+        if p.failures >= ID_MAX_FAILURES:
+            self.mark_negative(grid_no, "failed", now)
+            return True
+        p.next_try = now + timedelta(seconds=_step(ID_RETRY_S, p.failures - 1))
+        return False
+
+    def failed_count(self, now: datetime) -> int:
+        return sum(1 for n in self.negative.values() if n.reason == "failed" and n.valid(now))
 
     def reasons(self, now: datetime) -> dict[str, str]:
-        return {g: n.reason for g, n in self.negative.items() if (now - n.at).total_seconds() < NEGATIVE_TTL_S}
+        return {g: n.reason for g, n in self.negative.items() if n.valid(now)}
 
     def load_cells(self, rows: Iterable[tuple[Any, ...]]) -> tuple[int, int]:
         """DB 행(grid_no, lat_min, lon_min, lat_max, lon_max, gid) → 칸. 격자 검사를 다시 한다(틀린 행은 쓰지 않는다). (넣은 수, 버린 수)."""
@@ -303,7 +323,7 @@ class GridGeometry:
                 reason, at = v["reason"], datetime.fromisoformat(str(v["at"]).replace("Z", "+00:00"))
             except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
                 continue
-            if reason in ("not_found", "off_grid") and at.tzinfo is not None and GRID_ID_RE.fullmatch(g) and g not in self.cells:
+            if reason in NEGATIVE_REASONS and at.tzinfo is not None and GRID_ID_RE.fullmatch(g) and g not in self.cells:
                 self.negative[g] = Negative(reason, at)
                 self._pending.pop(g, None)
                 n += 1
@@ -578,7 +598,7 @@ class TrafficGridJob:
         t0 = self._mono()
         found: list[Cell] = []
         quality: list[tuple[str, str | None, dict[str, Any]]] = []
-        calls = errors_in_row = off_grid = not_found = 0
+        calls = errors_in_row = off_grid = not_found = gave_up = 0
         last_error: str | None = None
         http_status: int | None = None
         latency: list[int] = []
@@ -614,9 +634,21 @@ class TrafficGridJob:
             except Exception as e:  # noqa: BLE001 — HTTP · 응답 모양(WfsError) · 읽기 시간 초과
                 calls += 1
                 errors_in_row += 1
-                last_error = describe_error(e)
+                last_error = why = describe_error(e)
                 http_status = e.status if isinstance(e, ProviderHttpError) else http_status
-                self.geometry.failed(g, now)
+                if self.geometry.failed(g, now):
+                    gave_up += 1
+                    await self._store_negative(g, "failed", now)
+                    quality.append(
+                        ("traffic_grid_lookup_failed", None, {"grid_no": g, "failures": ID_MAX_FAILURES, "last": why[:200]})
+                    )
+                    log.warning(
+                        "traffic grid: %s failed %d lookups in a row — set aside for %d h (last: %s)",
+                        g,
+                        ID_MAX_FAILURES,
+                        FAILED_TTL_S // 3600,
+                        last_error,
+                    )
                 if errors_in_row >= FILL_BREAKER_ERRORS:
                     self._fill_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._fill_pauses))
                     self._fill_pauses += 1
@@ -652,6 +684,8 @@ class TrafficGridJob:
         if found or not_found or off_grid:
             self._dirty = True
             self._fill_pauses = 0
+        if gave_up:
+            self._dirty = True  # pending → failed: 수가 바뀌었다
         if stop_reason and not calls:
             self.ctx.db.record_run(
                 self.geom_job_name,
@@ -733,6 +767,7 @@ class TrafficGridJob:
             "traffic_grid_unresolved": "" if unresolved is None else str(unresolved),
             "traffic_grid_cells_known": str(len(self.geometry.cells)),
             "traffic_grid_pending": str(self.geometry.pending),
+            "traffic_grid_failed": str(self.geometry.failed_count(now)),
             "traffic_grid_calls_komsa": "" if used_k is None else str(used_k),
             "traffic_grid_calls_wfs": "" if used_w is None else str(used_w),
             # 처음 추정(선택값)은 싣지 않는다 — 배운 값만
