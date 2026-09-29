@@ -181,4 +181,5 @@ node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일> 
 
 ## 9. 데이터 출처·약관
 adsb.lol(ODbL 1.0) · adsb.fi(비상업, 초당 1회 이하) · OpenSky Network(연구·비상업) · aisstream.io(API 키, 재전송 없음) · AviationWeather.gov(미 정부 공개, 자체 상한 분당 20회) ·
-RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 한국해양교통안전공단 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 `DATA_GO_KR_SERVICE_KEY`) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.
+adsbdb.com(노선 — flight route data © David Taylor · Jim Mason, 저작자 허락 없이 복사·게시 금지) · UN/LOCODE(항구 코드 — UNECE, ODC-PDDL) ·
+RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 해양수산부 선박운항정보(PORT-MIS) · 한국해양교통안전공단 MTIS 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 하나 `DATA_GO_KR_SERVICE_KEY`) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.

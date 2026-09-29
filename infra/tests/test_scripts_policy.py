@@ -214,6 +214,16 @@ class ReadmeFactsTest(unittest.TestCase):
         n = len(list((ROOT / "docs/adr").glob("ADR-*.md")))
         self.assertIn(f"ADR {n}건", self.readme)
 
+    def test_data_sources_section_names_every_credit_the_screens_show(self):
+        """§9 데이터 출처는 화면 하단 · /about 이 쓰는 목록(apps/web/lib/attribution.ts CREDITS)을 모두 적는다 — 레인을 합칠 때 한쪽 출처가
+        빠진 적이 있다(PORT-MIS · 검토 지적). 이름은 목록의 label 그대로."""
+        credits = re.findall(r'label: "([^"]+)"', (ROOT / "apps/web/lib/attribution.ts").read_text())
+        self.assertGreaterEqual(len(credits), 10)
+        m = re.search(r"^## 9\. 데이터 출처·약관\n(.*?)(?=^## |\Z)", self.readme, re.M | re.S)
+        self.assertIsNotNone(m, "README §9 '데이터 출처·약관'")
+        missing = [c for c in credits if c not in m.group(1)]
+        self.assertEqual(missing, [], "README §9 에 없는 출처")
+
     def test_contract_range_matches_the_files(self):
         audit = ROOT / "docs/audit"
         latest = max([1] + [int(m.group(1)) for p in audit.glob("change-contract-v*.md") if (m := re.match(r"change-contract-v(\d+)\.md", p.name))])
