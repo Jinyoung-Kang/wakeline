@@ -1,0 +1,30 @@
+{
+ "$comment": "ADR-022 개정 — 수집기가 실제 전체 기록 fixtures/portmis_info5_busan_V7A3884.xml(부산 020, 목록 날짜 2026-09-24 KST)을 해석한 색인 한 행(DB port_call 의 열 → 값, 시각은 UTC). 수집기 시험(test_portcall_index_parse)이 해석 결과와 같은지 보고, api 시험(PortCallIndexDbTest)이 이 행을 DB 에 넣어 읽는다 — 손으로 고치지 않는다(해석이 바뀌면 둘 다 실패한다).",
+ "row": {
+  "prt_ag_cd": "020",
+  "clsgn": "V7A3884",
+  "etrypt_year": "2026",
+  "etrypt_co": "005",
+  "listed_date": "2026-09-24",
+  "prt_ag_nm": "부산",
+  "vssl_nm": "AZAMARA PURSUIT",
+  "nationality_cd": "MH",
+  "nationality_nm": "마샬 제도",
+  "kind_cd": "14",
+  "kind_nm": "크루즈선",
+  "purpose_nm": "여객상륙",
+  "first_port_cd": "JPUKB",
+  "first_port_nm": "KOBE",
+  "prev_port_cd": "JPSMN",
+  "prev_port_nm": "SAKAIMINATO",
+  "next_port_cd": "JPHIJ",
+  "next_port_nm": "HIROSHIMA",
+  "dest_port_cd": "JPHIJ",
+  "dest_port_nm": "HIROSHIMA",
+  "entry_at": "2026-09-23T23:17:00Z",
+  "entry_revision": "최종",
+  "exit_at": "2026-09-25T05:24:00Z",
+  "exit_revision": "최종",
+  "berth": "북항크루즈터미널 2선석"
+ }
+}
