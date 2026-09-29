@@ -133,14 +133,35 @@ export const STORED_STATIC_LABEL = "저장된 AIS 정적 보고";
  * 그래서 첫 수신도 마지막 수신도 아니다 — 라벨은 어디에 기록된 무슨 시각인지만 말한다(리뷰 뒤 고침: '이 내용 첫 수신' 은 재시작 · 제거를 빠뜨린 추정이었다).
  */
 export const STORED_STATIC_TIME_LABEL = "DB 기록 수신 시각";
-/** 카드 설명(title) — 왜 저장값인지 · 시각이 무엇이고 언제 새로 기록되는지 · 입출항도 이 호출부호로 찾는다는 것 */
+/** 카드 설명(title) — 왜 저장값인지 · 시각이 무엇이고 언제 새로 기록되는지(입출항은 조건이 있어 본문 한 줄 — storedPortCallsNote) */
 export const STORED_STATIC_TITLE =
   "실시간 선박 스트림(보존 최대 2.5 h — 서버가 다시 시작한 뒤처럼)에 이 선박의 정적 보고가 아직 없어, DB 에 저장된 마지막 AIS 정적 보고를 보입니다(실시간 값이 아님). "
   + "시각은 DB(ship.updated_at)에 기록된 수신 시각 — 지금 저장된 내용을 DB 에 쓴 메시지를 받은 때입니다. 내용이 바뀔 때뿐 아니라 수집기가 다시 시작했거나 "
   + "이 선박이 수집기 메모리에서 빠졌다가(30분 넘게 수신 없음 · 선박 수 상한) 다시 잡힐 때도 같은 내용이 새 시각으로 기록되고, 그 밖의 같은 내용 재수신은 기록하지 않으므로 "
-  + "이 내용의 첫 수신도 마지막 수신도 아닙니다. 한국 항만 입출항도 이 보고의 호출부호로 찾습니다. 스트림에 정적 보고가 오면 실시간 값으로 바뀝니다";
+  + "이 내용의 첫 수신도 마지막 수신도 아닙니다. 스트림에 정적 보고가 오면 실시간 값으로 바뀝니다";
+/** 저장 정적 보고 표시의 입출항 한 줄 — 아래 입출항(WS port_calls)을 이 호출부호로 찾았을 때만 */
+export const STORED_STATIC_PORT_CALLS_TEXT = "입출항도 이 호출부호로 찾음";
+/** 카드는 REST 로 읽은 저장 보고를 보이지만 서버(WS)는 선택 때 그 보고를 읽지 못했다 — 아래 입출항은 이 호출부호로 찾은 결과가 아니다 */
+export const STORED_STATIC_PORT_CALLS_UNREAD_TEXT =
+  "입출항은 이 호출부호로 아직 찾지 않음 — 서버가 선택 때 저장된 보고를 읽지 못함(DB) · 서버가 다시 읽으면 바뀜";
 /** 메모리에 없고 DB 도 읽지 못했다 — '없음' 이 아니라 '모름' */
 export const STORED_STATIC_UNAVAILABLE_TEXT = "저장된 AIS 정적 보고를 읽지 못함(DB) — 정적 정보를 모릅니다(없다는 뜻이 아님)";
+
+/**
+ * 저장 정적 보고 표시에 붙이는 입출항 한 줄(계약 v5 §G17 · 리뷰). 카드의 입출항 절은 WS port_calls 뿐이므로, 그 결과를 찾은 호출부호
+ * (port_calls.call_sign — 서버 PortCallReader.normalizeCallSign: ASCII 만 · 앞뒤 공백 제거 · 대문자)가 보이는 호출부호와 같을 때만 looked_up.
+ * WS 가 저장 보고를 읽지 못했다(stored_unavailable)고 했으면 not_looked_up(보이는 저장 보고는 REST 가 읽은 것). 그 밖(WS 아직 · 다른 호출부호 ·
+ * 형식 밖 · 출처 모름)은 null — 말하지 않는다(입출항 절이 스스로 상태를 말한다).
+ */
+export function storedPortCallsNote(
+  callSign: string | null | undefined,
+  ws: { static_source?: StaticSource | null; port_calls?: { call_sign: string | null } | null } | null,
+): "looked_up" | "not_looked_up" | null {
+  if (!callSign || !ws) return null;
+  const cs = /[\u0080-\u{10ffff}]/u.test(callSign) ? null : callSign.trim().toUpperCase();
+  if (cs && ws.port_calls?.call_sign === cs) return "looked_up";
+  return ws.static_source === "stored_unavailable" ? "not_looked_up" : null;
+}
 
 /**
  * 카드가 보이는 정적 정보의 출처와 저장 행 시각(계약 v5 §G17). 보이는 정적 정보는 WS ship_selected → REST 상세 순(ShipCard 와 같은 순서)이고,

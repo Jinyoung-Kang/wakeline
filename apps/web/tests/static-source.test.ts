@@ -6,6 +6,7 @@
  * - 카드(ShipCard): 보이는 정적 정보가 저장값이면 정적 필드 바로 위에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 <KST · UTC> (경과)" — 실시간 값이 아님.
  *   시각은 저장 행의 updated_at 이고 그 내용의 첫 수신도 마지막 수신도 아니다(수집기 재시작 · 30분 무수신 뒤 같은 내용도 새 시각 — 수집기 test_ais_book).
  *   출처는 그 정적 정보를 준 쪽(WS → REST)의 것만. DB 를 읽지 못했으면 '없음' 이 아니라 '모름'. 실시간 값 · 정적 정보 없음에는 표시하지 않는다.
+ *   '입출항도 이 호출부호로 찾음' 은 아래 입출항(WS port_calls)을 그 호출부호로 찾았을 때만 — WS 가 저장 보고를 읽지 못했으면 찾지 않았다고 적는다(리뷰).
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
@@ -14,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
 import { fmtDuration } from "@/lib/format";
 import {
-  staticProvenance, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipStatic,
+  staticProvenance, storedPortCallsNote, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
+  STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipStatic,
 } from "@/lib/ships";
 import { resetData, setData } from "@/lib/store";
 import { validateServerMessage, type ShipSelectedMsg } from "@/lib/ws-validate";
@@ -144,6 +146,7 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(html.indexOf('data-testid="ship-static-stored"')).toBeLessThan(html.indexOf('data-field="선박명"'));
     // 입출항도 이 호출부호로(WS 가 저장된 호출부호로 찾은 결과)
     expect(t).toContain("D7AG");
+    expect(t).toContain(`이 보고의 값(${STORED_STATIC_PORT_CALLS_TEXT})`);
   });
 
   it("the time is called neither the first nor the last reception — the title says what rewrites it; without a readable time the note still says stored, with —", () => {
@@ -185,6 +188,40 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} 09-29 12:00:00 KST · 03:00:00 UTC`);
     expect(text(show(null, parseShipDetail("440000077", { ...body, static_source: "live", static_updated_at: undefined }), "440000077")))
       .not.toContain(STORED_STATIC_LABEL);
+  });
+
+  it("WS stored_unavailable + REST stored: the note never says the port calls used this call sign — it says they were not looked up (review)", () => {
+    // WS: 서버가 선택 때 저장 보고를 읽지 못했다(static null · port_calls no_call_sign/not_received). REST: 같은 행을 읽었다(stored · V7A3884).
+    const ws = selected("ship_selected.static_stored_unavailable");
+    const d = parseShipDetail(ws.mmsi, { state: null, static: { name: "SYN REST ONLY", call_sign: "V7A3884", updated_at: STORED_AT, provider: "aisstream" },
+      static_source: "stored", static_updated_at: STORED_AT, meta: {} });
+    const html = show(ws, d);
+    const t = text(html);
+    expect(html).toContain('data-testid="ship-static-stored"');
+    expect(html).toMatch(/data-field="호출부호"[^]*V7A3884/);
+    expect(t).not.toContain(STORED_STATIC_PORT_CALLS_TEXT);
+    expect(html).toContain('data-testid="ship-static-stored-portcalls"');
+    expect(t).toContain(STORED_STATIC_PORT_CALLS_UNREAD_TEXT);
+    expect(STORED_STATIC_TITLE).not.toMatch(/입출항/); // 설명(title)도 조건 없이 말하지 않는다
+    // REST 만(WS 아직 — 아래 입출항 없음): 찾았다고도 찾지 않았다고도 하지 않는다
+    resetData();
+    const only = text(show(null, d, ws.mmsi));
+    expect(only).toContain(`${STORED_STATIC_LABEL} ·`);
+    expect(only).not.toContain(STORED_STATIC_PORT_CALLS_TEXT);
+    expect(only).not.toContain(STORED_STATIC_PORT_CALLS_UNREAD_TEXT);
+  });
+
+  it("storedPortCallsNote: 'looked up' only when the WS port calls carry the shown call sign (server-normalized); 'not looked up' only for WS stored_unavailable", () => {
+    const calls = (call_sign: string | null) => ({ static_source: "stored" as const, port_calls: { call_sign } });
+    expect(storedPortCallsNote("D7AG", calls("D7AG"))).toBe("looked_up");
+    expect(storedPortCallsNote(" d7ag ", calls("D7AG"))).toBe("looked_up"); // 서버 정규화(앞뒤 공백 · 대문자)와 같은 규칙
+    expect(storedPortCallsNote("D7AG", calls("D7AH"))).toBeNull(); // 다른 호출부호로 찾은 결과
+    expect(storedPortCallsNote("AB", calls(null))).toBeNull(); // 형식 밖 — 입출항 절이 스스로 말한다
+    expect(storedPortCallsNote("D7ÄG", calls("D7ÄG"))).toBeNull(); // ASCII 밖은 서버가 찾지 않는다
+    expect(storedPortCallsNote(null, calls("D7AG"))).toBeNull();
+    expect(storedPortCallsNote("V7A3884", { static_source: "stored_unavailable", port_calls: { call_sign: null } })).toBe("not_looked_up");
+    expect(storedPortCallsNote("V7A3884", { static_source: "none", port_calls: { call_sign: null } })).toBeNull();
+    expect(storedPortCallsNote("V7A3884", null)).toBeNull();
   });
 
   it("parseShipDetail: a source only with a static, only live or stored; the time only for stored", () => {

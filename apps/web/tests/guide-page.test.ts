@@ -223,7 +223,8 @@ describe("features the guide describes exist in the screens", () => {
     expect(ship).toMatch(/DB 에 기록된 수신 시각[^.]*첫 수신도 마지막 수신도 아님/);
     expect(ship).toMatch(/수집기가 다시 시작했거나 그 선박을 30분 넘게 받지 못했다가/);
     expect(ship).not.toMatch(/첫 메시지를 받은 때/); // 리뷰: 재시작 · 제거 뒤에는 같은 내용도 새 시각이다
-    expect(ship).toMatch(/입출항도 그 호출부호로 찾습니다/);
+    // 입출항은 서버가 그 보고를 읽었을 때만 그 호출부호로 찾는다(REST 로만 보일 때는 카드가 찾지 않았다고 적는다 — 리뷰)
+    expect(ship).toMatch(/서버가 선택 때 그 보고를 읽었으면 입출항도 그 호출부호로 찾고, 읽지 못했으면 카드가 찾지 않았다고 적습니다/);
   });
   it("2.3 describes the coastal traffic layer: grid counts not positions, 5-minute snapshot, cells appear as their geometry is resolved", () => {
     const layers = section(render(EMPTY), "dashboard-layers");

@@ -8,7 +8,8 @@ import {
   fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
   SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
-  staticProvenance, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT,
+  staticProvenance, storedPortCallsNote, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
+  STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT,
   type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic, type StaticSource,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
@@ -107,6 +108,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   // 계약 v5 §G17: 보이는 정적 정보의 출처 — 저장값(stored)이면 정적 필드 위에 밝힌다(실시간 값이 아님 · DB 기록 수신 시각)
   const prov = staticProvenance(live, d);
   const storedAge = prov.source === "stored" ? ageS(prov.storedAt, now) : null;
+  // 입출항 절(WS port_calls)을 이 호출부호로 찾았을 때만 그렇다고 말한다 — REST 로만 보이는 저장 보고면 찾지 않았다고(리뷰)
+  const storedCalls = prov.source === "stored" ? storedPortCallsNote(st?.call_sign, live) : null;
   const age = shipAgeS(s?.seen_at, now);
   const stale = age != null && age > SHIP_STALE_S;
   const pb = positionBadge(s?.position_source);
@@ -189,7 +192,10 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
               <span className="text-fg-2"> · {STORED_STATIC_TIME_LABEL} </span>
               <DualTime v={prov.storedAt} />{storedAge != null ? <span className="mono text-fg-2"> ({fmtDuration(storedAge)} 전)</span> : null}
             </div>
-            <div className="text-[10px] text-fg-3">실시간 값이 아님 — 아래 선박명 · 호출부호 · IMO · 선종 · 크기 · 흘수 · 목적지 · ETA 는 이 보고의 값(입출항도 이 호출부호로 찾음)</div>
+            <div className="text-[10px] text-fg-3">
+              실시간 값이 아님 — 아래 선박명 · 호출부호 · IMO · 선종 · 크기 · 흘수 · 목적지 · ETA 는 이 보고의 값{storedCalls === "looked_up" ? `(${STORED_STATIC_PORT_CALLS_TEXT})` : null}
+            </div>
+            {storedCalls === "not_looked_up" ? <div className="text-[10px] text-warn" data-testid="ship-static-stored-portcalls">{STORED_STATIC_PORT_CALLS_UNREAD_TEXT}</div> : null}
           </div>
         ) : prov.source === "stored_unavailable" ? (
           <div className="mt-1 border-l-2 border-warn px-2 py-1 text-[11px] text-warn" data-testid="ship-static-unavailable">{STORED_STATIC_UNAVAILABLE_TEXT}</div>
