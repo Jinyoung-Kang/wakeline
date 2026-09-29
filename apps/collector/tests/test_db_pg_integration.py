@@ -165,3 +165,37 @@ async def test_two_runs_are_two_rows_on_real_postgres(pg):
     rows = await pg.fetch("SELECT run_key, status FROM ingest_run WHERE job = $1 ORDER BY id", job)
     assert [x["status"] for x in rows] == ["ok", "error"]
     assert rows[0]["run_key"] != rows[1]["run_key"]
+
+
+async def test_marine_grid4_upsert_and_read_on_the_v14_schema():
+    """ADR-023: db.py 의 격자 기하 upsert(ON CONFLICT grid_no) · 읽기가 V14 스키마와 수집기 권한으로 돈다. 격자에 맞지 않는 행은 V14 CHECK 가
+    거절하고, 행별 재시도(_executemany_rowwise_on_reject)가 그 행만 버린다. 시험 행은 지우지 않는다(수집기 계정에 DELETE 권한이 없다)."""
+    from wakeline_collector.marine_grid import Cell
+
+    pool = await asyncpg.create_pool(URL, min_size=1, max_size=2)
+
+    async def factory() -> Any:
+        return pool
+
+    db = Db(pool_factory=factory)
+    db.start()
+    g = f"GR4_T{uuid.uuid4().hex[:8]}"
+    at = datetime.now(UTC)
+    try:
+        db.upsert_marine_grid4([Cell(g, 37.45, 126.6, 37.475, 126.625, 7)], at)
+        db.upsert_marine_grid4([Cell(g, 37.45, 126.6, 37.475, 126.625, 8)], at)  # 같은 칸 — 마지막 값
+        db.upsert_marine_grid4(
+            [Cell(g + "X", 37.4512, 126.6, 37.4762, 126.625, None), Cell(g + "Y", 37.425, 126.6, 37.45, 126.625, None)], at
+        )
+        for _ in range(300):
+            if db.pending == 0:
+                break
+            await asyncio.sleep(0.02)
+        rows = await db.read_marine_grid4()
+        assert rows is not None
+        mine = {r[0]: r for r in rows if r[0].startswith(g)}
+        assert mine[g] == (g, 37.45, 126.6, 37.475, 126.625, 8)
+        assert g + "Y" in mine and g + "X" not in mine
+        assert db.dropped == 1
+    finally:
+        await db.close(drain_s=2)
