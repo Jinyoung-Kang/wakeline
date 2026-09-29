@@ -32,3 +32,12 @@ EPSG:5179(TM · GRS80 · lat0 38 · lon0 127.5 · k0 0.9996 · FE 1,000,000 · F
   tkoffPrrrnDt(출항예정): "YYYY-MM-DD HH:MM:SS"(오프셋 없음) 100건 — 시각 있음 96 · 00:00:00 4
   dstnEtryptDt(목적지 입항예정): 오프셋 없는 형식 40 · 그 밖(빈 값 등) 45
 → 입출항 시각은 대부분 분 단위 실제 시각이다. 00:00:00 은 자정인지 날짜만인지 자료로 가릴 수 없다(3 %). 오프셋 없는 필드는 시간대를 자료가 말하지 않는다.
+
+== 선박운항정보 clsgn(호출부호) 필터가 동작하지 않음 — 배포 뒤 발견(2026-09-29 22시 KST)
+화면: AZAMARA PURSUIT(MMSI 538012043, 호출부호 V7A3884)의 카드가 "최근 30일 한국 항만 입출항 기록 없음" — 틀린 답.
+같은 키 · 같은 항만청(020 부산)으로:
+  clsgn=V7A3884, 2026-08-30~09-29, deGb=I → totalCount 0
+  clsgn=V7A3884, 2026-08-30~09-29(deGb 없음) → totalCount 0
+  clsgn=V7A3884, 2026-09-24~09-29 → totalCount 0
+  clsgn 없음, 2026-09-24~09-29 → totalCount 494, 1쪽에 clsgn 'V7A3884' · vsslNm 'AZAMARA PURSUIT' · 입항 2026-09-24T08:17:00+09:00 · 출항 tkoffDt 2026-09-25T14:24:00+09:00
+→ 명세에 있는 clsgn 파라미터로는 찾을 수 없다. 이 항목 전체를 fixtures/portmis_info5_busan_V7A3884.xml 로 둔다(출항 시각은 출항 detail 의 tkoffDt).

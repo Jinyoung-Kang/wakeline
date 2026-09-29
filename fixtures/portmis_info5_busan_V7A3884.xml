@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<response>
+    <header>
+        <resultCode>00</resultCode>
+        <resultMsg>NORMAL_SERVICE</resultMsg>
+    </header>
+    <body>
+        <items>
+<item>
+                <prtAgCd>020</prtAgCd>
+                <prtAgNm>부산</prtAgNm>
+                <etryptYear>2026</etryptYear>
+                <etryptCo>005</etryptCo>
+                <clsgn>V7A3884</clsgn>
+                <vsslNm>AZAMARA PURSUIT</vsslNm>
+                <vsslNltyCd>MH</vsslNltyCd>
+                <vsslNltyNm>마샬 제도</vsslNltyNm>
+                <vsslKndCd>14</vsslKndCd>
+                <vsslKndNm>크루즈선</vsslKndNm>
+                <etryptPurpsCd>07</etryptPurpsCd>
+                <etryptPurpsNm>여객상륙</etryptPurpsNm>
+                <frstDpmprtNatPrtCd>JPUKB</frstDpmprtNatPrtCd>
+                <frstDpmprtPrtNm>KOBE</frstDpmprtPrtNm>
+                <prvsDpmprtNatPrtCd>JPSMN</prvsDpmprtNatPrtCd>
+                <prvsDpmprtPrtNm>SAKAIMINATO</prvsDpmprtPrtNm>
+                <nxlnptNatPrtCd>JPHIJ</nxlnptNatPrtCd>
+                <nxlnptPrtNm>HIROSHIMA</nxlnptPrtNm>
+                <dstnNatPrtCd>JPHIJ</dstnNatPrtCd>
+                <dstnPrtNm>HIROSHIMA</dstnPrtNm>
+                <details>
+                    <detail>
+                        <reqstSeNm>최종</reqstSeNm>
+                        <etryndNm>입항</etryndNm>
+                        <etryptDt>2026-09-24T08:17:00+09:00</etryptDt>
+                        <ibobprtNm>외항</ibobprtNm>
+                        <laidupFcltyCd>MBF</laidupFcltyCd>
+                        <laidupFcltySubCd>02</laidupFcltySubCd>
+                        <laidupFcltyNm>북항크루즈터미널 2선석</laidupFcltyNm>
+                        <tugYn>Y</tugYn>
+                        <piltgYn>Y</piltgYn>
+                        <ldadngFrghtClCd>-</ldadngFrghtClCd>
+                        <ldadngTon>0</ldadngTon>
+                        <trnpdtTon>0</trnpdtTon>
+                        <landngFrghtTon>0</landngFrghtTon>
+                        <grtg>30277</grtg>
+                        <intrlGrtg>30277</intrlGrtg>
+                        <satmntEntrpsNm>유니푸로스부산 주식회사</satmntEntrpsNm>
+                        <crewCo>387</crewCo>
+                        <koranCrewCo>1</koranCrewCo>
+                        <frgnrCrewCo>386</frgnrCrewCo>
+                        <mrNum>26UPBSC093I</mrNum>
+                        <tkoffPrrrnDt>2026-09-25 14:24:00</tkoffPrrrnDt>
+                    </detail>
+                    <detail>
+                        <reqstSeNm>최종</reqstSeNm>
+                        <etryndNm>출항</etryndNm>
+                        <tkoffDt>2026-09-25T14:24:00+09:00</tkoffDt>
+                        <ibobprtNm>외항</ibobprtNm>
+                        <laidupFcltyCd>MBF</laidupFcltyCd>
+                        <laidupFcltySubCd>02</laidupFcltySubCd>
+                        <laidupFcltyNm>북항크루즈터미널 2선석</laidupFcltyNm>
+                        <tugYn>Y</tugYn>
+                        <piltgYn>Y</piltgYn>
+                        <ldadngFrghtClCd>-</ldadngFrghtClCd>
+                        <ldadngTon>0</ldadngTon>
+                        <trnpdtTon>0</trnpdtTon>
+                        <ldFrghtTon>0</ldFrghtTon>
+                        <grtg>30277</grtg>
+                        <intrlGrtg>30277</intrlGrtg>
+                        <satmntEntrpsNm>유니푸로스부산 주식회사</satmntEntrpsNm>
+                        <crewCo>388</crewCo>
+                        <koranCrewCo>1</koranCrewCo>
+                        <frgnrCrewCo>387</frgnrCrewCo>
+                        <mrNum>26UPBSC093E</mrNum>
+                        <dstnEtryptDt></dstnEtryptDt>
+                    </detail>
+                </details>
+            </item>
+</items>
+        <numOfRows>50</numOfRows>
+        <pageNo>1</pageNo>
+        <totalCount>494</totalCount>
+    </body>
+</response>
