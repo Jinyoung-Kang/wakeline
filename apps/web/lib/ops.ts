@@ -1,7 +1,7 @@
 /** 운영 화면 보조(순수 함수·주입 가능한 호출). 비인가 ops 호출은 404 로 숨겨지므로(SecurityConfig) 401 과 함께 "세션 없음 후보"로 본다. */
 import { ApiError } from "./api";
 import { fmtDuration } from "./format";
-import { parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
+import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
 
 export const OPS_SESSION_PATH = "/api/v1/ops/session";
 
@@ -206,15 +206,21 @@ export class RequestOrder {
 /**
  * 공급자 표의 LAST ERROR 칸이 쓰는 사실. resolution = 그 공급자의 유효한 provider_error 해결(api 가 준 그대로, 형식이 틀리면 null),
  * resolved = api 가 "이 오류는 그 해결의 upto 이하" 라고 했고 해결을 읽을 수 있을 때만 true(모르는 것을 해결로 치지 않는다),
- * recurred = 해결이 있는데 지금 오류가 그 뒤(재발). upto = 해결 처리로 보낼 그 오류의 시각(last_error_at 그대로) — 시각으로 읽을 수 없으면 null(해결 처리 불가).
+ * recurred = 해결이 있고 지금 오류의 시각(last_error_at)이 그 upto 뒤라고 받은 값으로 확인될 때(재발),
+ * undecided = 해결은 있지만 해결됨도 재발도 확인되지 않음 — api 는 last_error_at 이 없거나 형식이 틀려도 last_error_resolved=false 를 준다(계약 §G13):
+ * 그때 "다시 남"이라고 하지 않는다(시각을 모르는 오류의 재발을 지어내지 않는다).
+ * upto = 해결 처리로 보낼 그 오류의 시각(last_error_at 그대로) — 시각으로 읽을 수 없으면 null(해결 처리 불가).
  */
-export interface ProviderLastError { hasError: boolean; upto: string | null; resolution: ResolvedRef | null; resolved: boolean; recurred: boolean }
+export interface ProviderLastError { hasError: boolean; upto: string | null; resolution: ResolvedRef | null; resolved: boolean; recurred: boolean; undecided: boolean }
 
 export function providerLastError(p: Record<string, unknown>): ProviderLastError {
   const hasError = typeof p.last_error === "string" && p.last_error.trim() !== "";
   const resolution = parseResolvedRef(p.last_error_resolution);
   const resolved = p.last_error_resolved === true && resolution != null;
-  return { hasError, upto: uptoOf(p.last_error_at), resolution, resolved, recurred: hasError && !resolved && resolution != null };
+  const upto = uptoOf(p.last_error_at);
+  const open = hasError && !resolved && resolution != null;
+  const recurred = open && (compareInstants(upto, resolution.upto) ?? 0) > 0;
+  return { hasError, upto, resolution, resolved, recurred, undecided: open && !recurred };
 }
 
 /**
@@ -228,8 +234,8 @@ export function withProviderResolutions<P extends { providers: Record<string, un
     providers: prov.providers.map((x) => {
       const r = by.get(String(x.name));
       if (!r) return x;
-      const t = typeof x.last_error_at === "string" ? Date.parse(x.last_error_at) : Number.NaN;
-      return { ...x, last_error_resolution: { id: r.id, upto: r.upto, resolved_by: r.resolved_by }, last_error_resolved: Number.isFinite(t) && t <= Date.parse(r.upto) };
+      const c = compareInstants(x.last_error_at, r.upto);
+      return { ...x, last_error_resolution: { id: r.id, upto: r.upto, resolved_by: r.resolved_by }, last_error_resolved: c != null && c <= 0 };
     }),
   };
 }

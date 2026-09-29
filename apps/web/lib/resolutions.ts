@@ -65,6 +65,18 @@ export function uptoOf(v: unknown): string | null {
   return typeof v === "string" && ISO_INSTANT.test(v) && !Number.isNaN(Date.parse(v)) ? v : null;
 }
 
+/**
+ * 두 ISO 시각의 순서 — 시간대와 1 ms 아래 자리까지(api 는 Instant 전체를 비교한다). a 가 앞이면 음수, 같으면 0, 뒤면 양수. 둘 중 하나라도 읽을 수 없으면 null.
+ * Date 는 ms 까지만 담으므로 초 단위까지는 Date 로(시간대 반영), 소수 초는 글자 그대로 9 자리로 맞춰 비교한다(시간대는 소수 초를 바꾸지 않는다).
+ */
+export function compareInstants(a: unknown, b: unknown): number | null {
+  const x = uptoOf(a), y = uptoOf(b);
+  if (x == null || y == null) return null;
+  const whole = (s: string) => Date.parse(s.replace(/\.\d+/, ""));
+  const frac = (s: string) => Number((/\.(\d+)/.exec(s)?.[1] ?? "").padEnd(9, "0"));
+  return Math.sign(whole(x) - whole(y)) || Math.sign(frac(x) - frac(y));
+}
+
 /** 메모 검사(보내기 전 — 서버가 다시 검사한다). 문제가 없으면 null. 빈 글은 "메모 없음" */
 export function noteError(note: string): string | null {
   const t = note.trim();

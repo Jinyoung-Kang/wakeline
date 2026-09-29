@@ -65,7 +65,8 @@ const SMALL_BTN = "btn ml-1 px-1.5! py-0! normal-case!";
 
 /**
  * LAST ERROR 칸(ADR-022): 오류 글자 + 시각(KST · UTC) 아래에 해결 상태 — 해결됨(흐리게 "해결됨 · <by> · <upto>" + 되돌리기) ·
- * 해결 뒤 재발("이전 해결 #id(upto …) 뒤 다시 남") · 해결 처리(upto = 그 오류의 시각 last_error_at 그대로 — 시각을 읽을 수 없으면 막는다).
+ * 해결 뒤 재발("이전 해결 #id(upto …) 뒤 다시 남" — 오류 시각이 upto 뒤로 확인될 때만) · 확인되지 않으면 "해결 #id 있음 — …"(시각을 몰라 재발이라 하지 않는다) ·
+ * 해결 처리(upto = 그 오류의 시각 last_error_at 그대로 — 시각을 읽을 수 없으면 막는다).
  * 확인 패널은 부모가 그 행 아래에 연다(onOpen).
  */
 function ProviderErrorCell({ p, onOpen }: { p: Any; onOpen: (t: ResolveTarget) => void }) {
@@ -87,7 +88,10 @@ function ProviderErrorCell({ p, onOpen }: { p: Any; onOpen: (t: ResolveTarget) =
         </div>
       ) : le.hasError ? (
         <div className="text-[10px]">
-          {le.recurred && res ? <span className="text-warn" data-testid="provider-error-recurred">이전 해결 #{res.id}(upto <DualTime v={res.upto} />) 뒤 다시 남</span> : null}
+          {le.recurred && res ? <span className="text-warn" data-testid="provider-error-recurred">이전 해결 #{res.id}(upto <DualTime v={res.upto} />) 뒤 다시 남</span>
+            : le.undecided && res ? <span className="text-fg-3" data-testid="provider-error-undecided" title="api 가 이 오류를 해결됨으로 보지 않았다(last_error_resolved=false) — 재발인지는 오류 시각으로만 말한다">
+              해결 #{res.id}(upto <DualTime v={res.upto} />) 있음 — {le.upto ? "api 가 그 해결이 이 오류를 덮지 않는다고 함" : "이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음"}</span>
+            : null}
           <button className={SMALL_BTN} disabled={!le.upto}
             title={le.upto ? "이 오류의 시각까지 이 공급자의 오류를 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "오류 시각을 모름(last_error_at 을 시각으로 읽을 수 없음) — 해결 범위(upto)를 정할 수 없음"}
             onClick={() => le.upto && onOpen({

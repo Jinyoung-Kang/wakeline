@@ -179,6 +179,14 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
     expect(byTestId("provider-error-resolved")).toBeNull();
     expect(button("해결 처리", cell())).not.toBeNull();
   });
+  it("a resolution the api could not match to this error (its time is unreadable) is not called a recurrence — it says the coverage is unknown", async () => {
+    stub({ "GET /api/v1/ops/providers": { status: 200, body: PROV([lol({ last_error_at: "yesterday", last_error_resolution: { id: 5, upto: "2026-09-28T23:00:00Z", resolved_by: "op" }, last_error_resolved: false }), fi]) } });
+    await mount();
+    expect(byTestId("provider-error-recurred")).toBeNull();
+    expect(byTestId("provider-error-resolved")).toBeNull();
+    expect(byTestId("provider-error-undecided")!.textContent).toBe("해결 #5(upto 09-29 08:00:00 KST · 09-28 23:00:00 UTC) 있음 — 이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음");
+    expect(button("해결 처리", cell())!.getAttribute("disabled")).not.toBeNull();
+  });
   it("no last error → no action; a last_error_at the web cannot read as an instant → the action is disabled and says why", async () => {
     stub({ "GET /api/v1/ops/providers": { status: 200, body: PROV([lol({ last_error_at: "yesterday" }), fi]) } });
     await mount();
