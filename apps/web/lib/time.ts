@@ -224,6 +224,14 @@ export function fmtIso(v: TimeIn) {
 export function fmtIsoKst(v: TimeIn) {
   return isoKst(v) ?? "—";
 }
+/**
+ * 발표 원문(METAR · TAF)의 시각 토큰 "DDHHMMZ"(UTC 일 · 시 · 분 — 발표된 그대로의 모양). 화면 시각이 아니라 원문 모양이다: 설명서 7장이 원문 글자 옆에
+ * 같은 순간을 KST · UTC 로 보이는 예에 쓴다. 모르면 null
+ */
+export function fmtZuluToken(v: TimeIn): string | null {
+  const p = dualParts(v);
+  return p ? `${p.utc.ymd.slice(8, 10)}${p.utc.hm.replace(":", "")}Z` : null;
+}
 /** 보인 시각의 title: 원본 UTC ISO("원본 UTC 2026-09-28T23:41:14.906Z" — 서버 · 컨테이너 로그와 대조용, ms 까지). 모르면 undefined(title 없음) */
 export function fmtUtcTitle(v: TimeIn): string | undefined {
   const s = isoOf(v);

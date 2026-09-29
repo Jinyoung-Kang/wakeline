@@ -13,11 +13,24 @@
         { "n": 2, "label": "통합 검색", "text": "항공기와 선박을 한 입력에서 찾습니다. / 키로 바로 입력(2.4).", "target": "[data-testid=\"aircraft-search\"]", "anchor": "l" },
         { "n": 3, "label": "확대 · 축소", "text": "지도 확대·축소 단추. 휠 · 핀치 · 키보드(= / -)로도 됩니다(2.2).", "target": ".maplibregl-ctrl-zoom-in", "anchor": "r" },
         { "n": 4, "label": "지도 상태 칩", "text": "지금 지도가 선박을 어떻게 그리는지(개별 · 격자 · 0척의 이유)와 집중 추적 상태 — 서버가 보고한 값만.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" },
-        { "n": 5, "label": "레이어 단추", "text": "레이더 · SIGMET · 항공기 · 선박 · 공항 · 항적 · 예측(추정)을 켜고 끕니다(2.3).", "target": "[data-testid=\"layer-panel\"]", "anchor": "l" },
+        { "n": 5, "label": "레이어 단추", "text": "레이더 · SIGMET · 항공기 · 선박 · 공항 · 항적 · 예측(추정) · 연안 교통량을 켜고 끕니다(2.3).", "target": "[data-testid=\"layer-panel\"]", "anchor": "l" },
         { "n": 6, "label": "범례", "text": "지도에 쓰인 기호 · 색의 뜻과 선종 필터(2.9).", "target": "[data-testid=\"map-legend\"]", "anchor": "tl" },
         { "n": 7, "label": "오른쪽 패널", "text": "alerts · aircraft · ship · sigmet · airport 탭. 처음에는 알림 목록(2.7).", "target": "[data-testid=\"tab-alerts\"]", "anchor": "l" },
         { "n": 8, "label": "레이더 타임라인", "text": "RainViewer · 기상청 레이더 프레임을 고르고 차례로 보여 줍니다(2.8).", "target": "[data-testid=\"radar-timeline\"]", "anchor": "l" },
         { "n": 9, "label": "출처 줄", "text": "모든 화면 맨 아래 — 데이터 출처 링크(1장).", "target": "[data-testid=\"attribution\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "traffic",
+      "section": "dashboard-layers",
+      "path": "/#7.2/35.2/128.6",
+      "title": "연안 교통량(KOMSA) — 해양격자 칸별 선박 척수",
+      "alt": "연안 교통량 레이어를 켠 남해안 부근 상황판: 바다 위 0.025° 격자 칸이 척수에 따라 주황 계열로 칠해져 있고, 레이어 단추 아래 상태 줄(기준 시각 KST · UTC, 표시한 칸 / 전체, 위치 확인 중 칸 수)과 펼친 범례의 척수 구간",
+      "callouts": [
+        { "n": 1, "label": "레이어 단추", "text": "연안 교통량(KOMSA)을 켜고 끕니다. 처음에는 꺼져 있고, 이 브라우저에 기억됩니다.", "target": "[data-testid=\"layer-traffic\"]", "anchor": "l" },
+        { "n": 2, "label": "상태 줄", "text": "기준 시각(KST · UTC) · 표시한 칸 / 전체 · 위치 확인 중 · 꺼짐 · 자료 멈춤의 이유.", "target": "[data-testid=\"traffic-status\"]", "anchor": "l" },
+        { "n": 3, "label": "범례 — 척수 구간", "text": "칸 색 = 척수 구간(많을수록 밝은 주황, 0척 회색). 5분 집계 · 개별 선박 위치 아님.", "target": "[data-testid=\"legend-traffic-scale\"]", "anchor": "l" },
+        { "n": 4, "label": "범례 — 뜻", "text": "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님.", "target": "[data-testid=\"legend-traffic-note\"]", "anchor": "l" }
       ]
     },
     {
@@ -57,6 +70,20 @@
         { "n": 2, "label": "선박 카드", "text": "이름 · 크기 · 흘수 · 목적지 · ETA 는 선원이 입력한 보고값. 모르면 —.", "target": "[data-testid=\"ship-card\"]", "anchor": "tl" },
         { "n": 3, "label": "항적", "text": "항적 기간 단추와 기록 상태, 수신 공백 요약.", "target": "[data-testid=\"ship-track-info\"]", "anchor": "l" },
         { "n": 4, "label": "선박 칩", "text": "개별 선박 N척 / 격자 N칸처럼 지금 지도가 그리는 방식.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "port-calls",
+      "section": "dashboard-ship",
+      "path": "/#10/35.08/129.05",
+      "title": "선박 카드 — 한국 항만 입출항(해양수산부 PORT-MIS)",
+      "alt": "선박 카드의 한국 항만 입출항 절: 조회에 쓴 호출부호, 항만청 · 입항 / 출항(KST · UTC) · 목적 · 전출항지 → 차항지 표, 조회 창(최근 30일)과 조회 시각, 호출부호로만 찾는다는 안내와 출처",
+      "callouts": [
+        { "n": 1, "label": "입출항 절", "text": "고른 선박의 AIS 호출부호로 PORT-MIS 에 물은 최근 30일 입출항 신고(항만청 10곳).", "target": "[data-testid=\"port-calls\"]", "anchor": "tl" },
+        { "n": 2, "label": "상태", "text": "조회 중 · 기록 없음 · 키 없음 · 조회 실패(종류) · 호출부호 없음 · 조회 한도 — 결과가 없을 때 그 이유.", "target": "[data-testid=\"port-calls-status\"]", "anchor": "l" },
+        { "n": 3, "label": "결과 표", "text": "항만청 · 입항 / 출항(KST · UTC — 00:00 신고는 날짜만) · 목적 · 전출항지 → 차항지.", "target": "[data-testid=\"port-calls-table\"]", "anchor": "tl" },
+        { "n": 4, "label": "조회 창 · 시각", "text": "조회한 기간(KST 날짜 · 입항일 기준)과 조회 시각(KST · UTC).", "target": "[data-testid=\"port-calls-window\"]", "anchor": "l" },
+        { "n": 5, "label": "안내 · 출처", "text": "호출부호로만 찾는다는 한계와 출처(해양수산부 선박운항정보 · 공공데이터포털).", "target": "[data-testid=\"port-calls-caveat\"]", "anchor": "l" }
       ]
     },
     {
@@ -153,7 +180,7 @@
       "section": "ops-logs",
       "path": "/logs",
       "title": "시스템 로그",
-      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 시각 · 수준 · 서비스 목록. 운영자 이름 · 로거 · 메시지 · 요청 id 칸은 회색 상자로 가림",
+      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 해결 표시(해결된 항목 보기 · 숨긴 수), 시각 · 수준 · 서비스 목록. 운영자 이름 · 로거 · 메시지 · 요청 id 칸은 회색 상자로 가림",
       "masks": [
         { "label": "운영자 이름", "session_user": true },
         { "label": "로거", "table": "[data-testid=\"log-grid\"]", "header": "로거" },
@@ -164,7 +191,9 @@
         { "n": 1, "label": "로그 탭", "text": "로그 / AIS 수신 공백.", "target": "[aria-label=\"로그 탭\"]", "anchor": "l" },
         { "n": 2, "label": "필터", "text": "서비스(여러 개) · 수준 · 기간 · 글자 검색 · 요청 id.", "target": "[data-testid=\"logs-filter-form\"]", "anchor": "tl" },
         { "n": 3, "label": "보기", "text": "목록 / 묶음(같은 지문 fp 끼리).", "target": "[aria-label=\"보기\"]", "anchor": "l" },
-        { "n": 4, "label": "로그 목록", "text": "줄을 누르거나 ↑↓ · Enter 로 상세. c 로 텍스트 복사.", "target": "[data-testid=\"log-grid\"]", "anchor": "tl" }
+        { "n": 4, "label": "로그 목록", "text": "줄을 누르거나 ↑↓ · Enter 로 상세. c 로 텍스트 복사.", "target": "[data-testid=\"log-grid\"]", "anchor": "tl" },
+        { "n": 5, "label": "해결 표시", "text": "해결된 항목 보기 — 켜면 해결 처리로 가린 항목도 흐리게 함께(되돌리기는 거기서).", "target": "[aria-label=\"해결 표시\"]", "anchor": "l" },
+        { "n": 6, "label": "숨긴 수", "text": "해결 처리로 숨김 N건 — 지우지 않고 가린 수. upto 뒤의 재발은 다시 보입니다.", "target": "[data-testid=\"logs-hidden-resolved\"]", "anchor": "l" }
       ]
     }
   ]

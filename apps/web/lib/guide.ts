@@ -6,11 +6,11 @@
  *   항목 단위로 검증해 틀린 항목은 버리고 이유를 남긴다 — 버린 · 없는 스크린샷은 화면에서 "스크린샷 준비 중" 자리표시가 된다(깨진 이미지를 보이지 않는다).
  *   캡처 조건 · 번호 위치 하나만 틀리면 그것만 버리고 그림은 보인다(ManifestDrop.effect 가 어느 쪽인지 말한다).
  * 번호 위치는 추정하지 않는다: 찍을 때 그 요소가 화면에 보였을 때만 기록하고, 없으면 번호 목록에 "이 스크린샷에는 보이지 않음"이라고 적는다.
- * 의존성 없음(lib/kst 만) — 서버 컴포넌트가 불러오고, 시험이 그대로 부른다.
+ * 시각은 제 형식기를 두지 않는다 — 화면(components/guide)이 공유 형식기(lib/time · components/DualTime, 계약 v5 §G13)를 쓴다(7장의 예가 화면과
+ *   글자까지 같게). 의존성 없음 — 서버 컴포넌트가 불러오고, 시험이 그대로 부른다.
  */
 import planJson from "./guide-shots.json";
 import manifestJson from "./guide-manifest.json";
-import { isoKst } from "./kst";
 
 // ---- 목차 ----
 
@@ -223,51 +223,6 @@ export function shotView(shot: GuideShot, manifest: GuideManifest, viewport: { w
   if (!m) return { kind: "placeholder", width: viewport.width, height: viewport.height };
   const markers = [...m.callouts].sort((a, b) => a.n - b.n);
   return { kind: "image", src: `${GUIDE_IMAGE_BASE}${m.file}`, width: m.width, height: m.height, format: m.format, bytes: m.bytes, capturedAt: m.captured_at, variant: m.variant, markers };
-}
-
-// ---- 시각 예(KST 를 먼저, UTC 를 함께) ----
-
-/**
- * 한 순간 → KST · UTC 벽시계 "YYYY-MM-DD HH:MM:SS" 두 개. 설명서의 예와 캡처 시각에 쓴다(시각 표기 규칙: KST 기본 + UTC 병기).
- * 읽을 수 없으면 null(지어내지 않는다).
- */
-export function dualTime(v: string | number | null | undefined): { kst: string; utc: string } | null {
-  const k = isoKst(v);
-  if (k == null || v == null) return null;
-  const u = new Date(v).toISOString(); // isoKst 가 읽은 값이라 유효 — 같은 순간의 UTC ISO
-  return { kst: `${k.slice(0, 10)} ${k.slice(11, 19)}`, utc: `${u.slice(0, 10)} ${u.slice(11, 19)}` };
-}
-
-/**
- * 글 속 한 줄 모양 { kst: "2026-09-29 14:22:11 KST", utc: "05:22:11 UTC" | "2026-09-29 20:30:00 UTC", iso } — 다른 화면의 공용 시각 모양
- * (web-core-v6 lib/time dualPair(v, { year: true }) · <DualTime year>: "KST · UTC", UTC 날짜가 KST 날짜와 다를 때만 UTC 쪽에 날짜)과 같게 둔다.
- * 두 레인이 합쳐지면 이 함수와 GuideFigure 의 DualTime 을 lib/time · components/DualTime 으로 바꾼다. 모르면 null.
- */
-export function dualInline(v: string | number | null | undefined): { kst: string; utc: string; iso: string } | null {
-  const d = dualTime(v);
-  if (!d || v == null) return null;
-  const sameDate = d.kst.slice(0, 10) === d.utc.slice(0, 10);
-  return { kst: `${d.kst} KST`, utc: `${sameDate ? d.utc.slice(11) : d.utc} UTC`, iso: new Date(v).toISOString() };
-}
-
-/**
- * 발표 원문(METAR · TAF)의 시각 토큰 "DDHHMMZ"(UTC — 발표된 그대로의 모양). 설명서 7장의 예에서 원문 글자와 KST 를 나란히 보이는 데만 쓴다.
- * 읽을 수 없으면 null
- */
-export function metarTimeToken(v: string | number | null | undefined): string | null {
-  const d = dualTime(v);
-  if (!d) return null;
-  return d.utc.slice(8, 10) + d.utc.slice(11, 13) + d.utc.slice(14, 16) + "Z";
-}
-
-/** KST 벽시계 "HH:MM"(뒤의 " KST" 는 있어도 됨) → "HH:MM UTC" — UTC 날짜가 전날이면 "(전날)". 형식이 아니면 null */
-export function kstClockToUtc(kst: string): string | null {
-  const m = /^(\d\d):(\d\d)(?: KST)?$/.exec(kst.trim());
-  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
-  const min = Number(m[1]) * 60 + Number(m[2]) - 9 * 60;
-  const wrapped = (min + 1440) % 1440;
-  const hm = `${String(Math.floor(wrapped / 60)).padStart(2, "0")}:${String(wrapped % 60).padStart(2, "0")}`;
-  return `${hm} UTC${min < 0 ? "(전날)" : ""}`;
 }
 
 // ---- 이 빌드의 계획 · 결과 ----

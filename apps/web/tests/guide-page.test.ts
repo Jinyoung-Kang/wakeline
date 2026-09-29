@@ -12,7 +12,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
 import { normalizeQuery, normalizeShipQuery } from "@/lib/search";
-import { flattenToc, parseManifest, PLAN, tocItem, type GuideManifest, type ManifestDrop } from "@/lib/guide";
+import { flattenToc, parseManifest, PLAN, type GuideManifest, type ManifestDrop } from "@/lib/guide";
+import { PORT_CALL_IP_LIMIT, PORT_CALL_SESSION_LIMIT, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS } from "@/lib/portcalls";
+import { RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
+import { fmtDual, fmtDualCompact, fmtUtcDayDual } from "@/lib/time";
+import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
 vi.mock("next/link", () => ({
@@ -160,23 +164,61 @@ const walk = (d: string): string[] => readdirSync(join(WEB, d)).flatMap((n) => {
 });
 const SCREENS = ["app", "components", "lib"].flatMap(walk).map((f) => readFileSync(join(WEB, f), "utf8")).join("\n");
 
+/** 절 하나의 글 — 소절(g-sub)은 다음 절 시작 전까지, 절(g-sec)은 소절을 포함해 다음 절(g-sec) 전까지 */
+const section = (html: string, id: string) => {
+  const start = html.indexOf(`<section id="${id}"`);
+  expect(start, id).toBeGreaterThanOrEqual(0);
+  const top = /^<section[^>]*class="g-sec"/.test(html.slice(start));
+  const rest = html.slice(start + 1);
+  const next = rest.search(top ? /<section[^>]*class="g-sec"/ : /<section\b/);
+  return text(next < 0 ? html.slice(start) : html.slice(start, start + 1 + next));
+};
+
 describe("features the guide describes exist in the screens", () => {
-  // 오류 '해결' 표시(ADR-022 · 계약 §G13 — 지우지 않고 upto 까지 가림)는 api 에만 있고 화면(/ops/resolutions 호출 · hidden_resolved 표시)이 아직 없다.
-  // 화면이 들어오면 이 시험이 실패한다 — 그때 6.2 · 6.3 에 가림 · 가린 수 · 다시 보기 · 되돌리기 · 재발은 다시 보임을 적는다(지운다고 쓰지 않는다).
-  const RESOLVE_UI = /ops\/resolutions|hidden_resolved/.test(SCREENS);
-  it("resolving errors is described only when the ops/logs screens have it — and never as deleting", () => {
+  // 오류 '해결' 표시(ADR-024 · 계약 v5 §G14): api(/ops/resolutions)와 화면(운영 · 로그의 해결 처리 · 가린 수 · 다시 보기 · 되돌리기)이 모두 있다.
+  it("the resolve screens exist, so 6.2 and 6.3 describe them — hiding up to upto, never deleting", () => {
+    expect(/ops\/resolutions|hidden_resolved/.test(SCREENS)).toBe(true);
     const html = render(EMPTY);
-    const logs = text(/<section[^>]*id="ops-logs"[\s\S]*?<\/section>/.exec(html)![0]);
-    const ops = text(/<section[^>]*id="ops"[\s\S]*?<\/section>\s*<\/section>/.exec(html)?.[0] ?? html);
-    expect(ops).not.toMatch(/지울 수|삭제/);
-    if (!RESOLVE_UI) {
-      expect(logs).not.toMatch(/해결/);
-      expect(tocItem("ops-logs").title).not.toMatch(/해결/);
-    } else {
-      expect(logs).toMatch(/해결/);
-      expect(logs).toMatch(/지우지 않/);
-      expect(logs).toMatch(/다시 보/);
+    const ops = section(html, "ops-dashboard");
+    const logs = section(html, "ops-logs");
+    for (const t of [ops, logs]) {
+      expect(t).toMatch(/해결 처리/);
+      expect(t).toMatch(/upto/);
+      expect(t).toMatch(/지우지 않/);
+      expect(t).toMatch(/되돌리기/);
+      expect(t).toMatch(/다시 보입니다/); // upto 뒤의 재발
+      expect(t).not.toMatch(/지울 수 있|삭제합니다/);
     }
+    expect(logs).toContain("해결된 항목 보기");
+    expect(logs).toContain("해결 처리로 숨김");
+    expect(logs).toContain(RESOLVE_EFFECT.log_group);
+    expect(ops).toContain("해결된 오류 포함");
+    expect(ops).toContain(RESOLVE_EFFECT.provider_error);
+    expect(ops).toMatch(/RESOLVE · UNRESOLVE/);
+    expect(text(html)).toContain(RESOLUTION_STATE_TEXT.stale);
+    expect(text(html)).toContain(RESOLUTION_STATE_TEXT.unavailable);
+  });
+  it("2.6 describes Korean port calls on the ship card: PORT-MIS, call-sign match, the window, the lookup limits", () => {
+    const ship = section(render(EMPTY), "dashboard-ship");
+    expect(ship).toContain(PORT_CALL_TITLE);
+    expect(ship).toMatch(/호출부호로만/);
+    expect(ship).toContain(`최근 ${PORT_CALL_WINDOW_DAYS}일`);
+    expect(ship).toContain(`${PORT_CALL_SESSION_LIMIT.window}에 ${PORT_CALL_SESSION_LIMIT.max}척`);
+    expect(ship).toContain(`${PORT_CALL_IP_LIMIT.window}에 ${PORT_CALL_IP_LIMIT.max}척`);
+    expect(ship).toMatch(/00:00\(KST\)[^.]*날짜만/);
+  });
+  it("2.3 describes the coastal traffic layer: grid counts not positions, 5-minute snapshot, cells appear as their geometry is resolved", () => {
+    const layers = section(render(EMPTY), "dashboard-layers");
+    expect(layers).toContain(TRAFFIC_LAYER_LABEL);
+    expect(layers).toContain(TRAFFIC_LEGEND_NOTE);
+    expect(layers).toMatch(/5분/);
+    expect(layers).toMatch(/개별 선박 위치가 아닙니다/);
+    expect(layers).toMatch(/위치 확인 중/);
+    expect(layers).toMatch(/자료 멈춤/);
+    expect(section(render(EMPTY), "dashboard-legend")).toContain("연안 교통량");
+  });
+  it("2.8 explains the KMA composite size '합성 N/M곳'", () => {
+    expect(section(render(EMPTY), "dashboard-radar")).toMatch(/합성 N\/M곳/);
   });
 });
 
@@ -201,15 +243,19 @@ describe("rules the guide states match the code", () => {
 });
 
 describe("time examples", () => {
-  it("the time section shows each example in KST and UTC; the stats run time is given in both", () => {
+  it("section 7 states the §G13 rule with the shared formatter's own output (inline · compact · table cell · other UTC date · originals)", () => {
     const html = render(EMPTY);
-    const sec = /<section[^>]*id="time"[\s\S]*?<\/section>/.exec(html)![0];
-    const t = text(sec);
-    expect(t).toContain("2026-09-29 14:22:11");
-    expect(t).toContain("2026-09-29 05:22:11");
+    const t = section(html, "time");
+    expect(t).toContain(fmtDual("2026-09-29T05:22:11Z")); // 09-29 14:22:11 KST · 05:22:11 UTC
+    expect(t).toContain("09-29 14:22:11 KST · 05:22:11 UTC");
+    expect(t).toContain(fmtDualCompact("2026-09-29T05:22:11Z")); // 14:22 KST · 05:22Z
+    expect(t).toContain("09-30 05:30:00 KST · 09-29 20:30:00 UTC"); // UTC 날짜가 다르면 UTC 쪽에 날짜
     expect(t).toContain("290500Z"); // 원문은 발표 그대로
+    expect(t).toContain(fmtUtcDayDual("2026-09-28")!);
+    expect(t).toMatch(/§G13/);
     expect(text(html)).toMatch(/12:30 KST · 03:30 UTC/);
-    expect(t).toContain("2026-09-29 14:22:11 KST · 05:22:11 UTC");
+    // 표 칸 모양: 첫 줄 KST · 둘째 줄 UTC(DualTime cell — 화면 읽기에는 KST · UTC 로)
+    expect(/<section id="time"[\s\S]*?<\/section>/.exec(html)![0]).toMatch(/<time dateTime="2026-09-29T05:22:11.000Z" class="block">09-29 14:22:11/);
   });
   it("unknown values are shown as — without a unit", () => {
     const t = text(render(EMPTY));

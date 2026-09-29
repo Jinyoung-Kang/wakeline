@@ -4,13 +4,15 @@
  * - 계획은 틀리면 던진다(빌드 · 시험에서 바로 드러나게). 결과(manifest)는 항목 단위로 버리고 이유를 남긴다 — 버린 항목은 화면에서 자리표시로.
  * - 커밋된 manifest 는 버린 항목이 없어야 하고, 가리키는 파일이 public/guide 에 있어야 하며, public/guide 에 manifest 가 모르는 파일이 없어야 한다.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import planJson from "@/lib/guide-shots.json";
 import manifestJson from "@/lib/guide-manifest.json";
+import * as G from "@/lib/guide";
+import { fmtZuluToken } from "@/lib/time";
 import {
-  dualInline, dualTime, flattenToc, GUIDE_FILE_RE, GUIDE_TOC, kstClockToUtc, metarTimeToken, parseManifest, parsePlan, PLAN, shotView, type GuideManifest,
+  flattenToc, GUIDE_FILE_RE, GUIDE_TOC, parseManifest, parsePlan, PLAN, shotView, type GuideManifest,
 } from "@/lib/guide";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -126,40 +128,23 @@ describe("capture result (lib/guide-manifest.json)", () => {
   });
 });
 
-describe("dual time for examples (KST first, UTC alongside)", () => {
-  it("one instant → the same wall clock in KST and UTC (+9 h), across midnight too; unknown → null", () => {
-    expect(dualTime("2026-09-29T05:22:11Z")).toEqual({ kst: "2026-09-29 14:22:11", utc: "2026-09-29 05:22:11" });
-    expect(dualTime("2026-09-29T20:30:00Z")).toEqual({ kst: "2026-09-30 05:30:00", utc: "2026-09-29 20:30:00" });
-    expect(dualTime(null)).toBeNull();
-    expect(dualTime("not a time")).toBeNull();
+describe("time: the guide uses the shared formatter (lib/time · components/DualTime — contract v5 §G13)", () => {
+  // 합친 뒤(web-core-v6 의 lib/time 이 들어온 뒤) 켠 시험 — 설명서가 제 형식기(dualInline · dualTime · 제 DualTime)를 두면 7장의 예가 화면과 어긋날 수 있다.
+  it("lib/guide has no clock formatter of its own and GuideFigure has no local DualTime", () => {
+    for (const k of ["dualInline", "dualTime", "kstClockToUtc", "metarTimeToken"]) expect(k in G, k).toBe(false);
+    const fig = readFileSync(join(WEB, "components", "guide", "GuideFigure.tsx"), "utf8");
+    expect(fig).toMatch(/import \{[^}]*\bDualTime\b[^}]*\} from "@\/components\/DualTime"/);
+    expect(fig).not.toMatch(/function DualTime\b/);
+    const view = readFileSync(join(WEB, "components", "guide", "GuideView.tsx"), "utf8");
+    expect(view).toMatch(/from "@\/components\/DualTime"/);
+    expect(view).toMatch(/from "@\/lib\/time"/);
   });
-  it("inline shape is the one every screen uses (lib/time of web-core-v6 with the year): KST · UTC, UTC date only when it differs", () => {
-    expect(dualInline("2026-09-29T05:22:11Z")).toEqual({ kst: "2026-09-29 14:22:11 KST", utc: "05:22:11 UTC", iso: "2026-09-29T05:22:11.000Z" });
-    expect(dualInline("2026-09-29T20:30:00Z")).toEqual({ kst: "2026-09-30 05:30:00 KST", utc: "2026-09-29 20:30:00 UTC", iso: "2026-09-29T20:30:00.000Z" });
-    expect(dualInline(undefined)).toBeNull();
-  });
-  // 합친 뒤 확인(web-core-v6 의 공용 lib/time 이 들어오면 돈다): 설명서의 시각 모양이 다른 화면과 글자까지 같다 — 다르면 설명서 7장이 화면과 어긋난다.
-  // 이 시험이 돌기 시작하면 GuideFigure · GuideView 를 lib/time · components/DualTime 으로 바꾸고 dualInline 을 지운다.
-  const SHARED_TIME = join(WEB, "lib", "time.ts");
-  it.skipIf(!existsSync(SHARED_TIME))("after merge: dualInline equals the shared lib/time dualPair(v, { year: true })", async () => {
-    const spec = "../lib/time";
-    const time = (await import(/* @vite-ignore */ spec)) as { dualPair: (v: unknown, o: { year: boolean }) => { kst: string; utc: string } | null };
-    for (const v of ["2026-09-29T05:22:11Z", "2026-09-29T20:30:00Z", "2026-12-31T15:00:00Z", null]) {
-      const mine = dualInline(v);
-      const shared = time.dualPair(v, { year: true });
-      expect(mine ? { kst: mine.kst, utc: mine.utc } : null).toEqual(shared ? { kst: shared.kst, utc: shared.utc } : null);
-    }
-  });
-  it("the raw-bulletin time token of an instant is its UTC day-hour-minute + Z (as published)", () => {
-    expect(metarTimeToken("2026-09-29T05:00:00Z")).toBe("290500Z");
-    expect(metarTimeToken("2026-09-30T23:59:00Z")).toBe("302359Z");
-    expect(metarTimeToken(undefined)).toBeNull();
-  });
-  it("a KST clock (\"12:30 KST\") → its UTC clock, saying when the UTC date is the day before", () => {
-    expect(kstClockToUtc("12:30 KST")).toBe("03:30 UTC");
-    expect(kstClockToUtc("09:00")).toBe("00:00 UTC");
-    expect(kstClockToUtc("08:59")).toBe("23:59 UTC(전날)");
-    expect(kstClockToUtc("25:00")).toBeNull();
+  it("the raw-bulletin time token of an instant (lib/time fmtZuluToken) is its UTC day-hour-minute + Z (as published)", () => {
+    expect(fmtZuluToken("2026-09-29T05:00:00Z")).toBe("290500Z");
+    expect(fmtZuluToken("2026-09-30T23:59:00Z")).toBe("302359Z");
+    expect(fmtZuluToken("2026-09-29T20:30:00Z")).toBe("292030Z"); // KST 로는 다음 날이어도 원문은 UTC 날짜
+    expect(fmtZuluToken(undefined)).toBeNull();
+    expect(fmtZuluToken("not a time")).toBeNull();
   });
 });
 

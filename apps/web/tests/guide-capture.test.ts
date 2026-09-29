@@ -5,6 +5,7 @@
  * - 번호 위치: 찍을 때 잰 요소 사각형 → 이미지 % (보이는 부분만, 가장자리 안쪽). 보이지 않으면 null(추정하지 않는다).
  * - 파일 이름: <id>.<sha-256 앞 10자>.<webp|png> — 페이지의 GUIDE_FILE_RE 와 같은 모양. 결과 합치기 · 고아 파일 · 크기 보고.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   anchorPoint, checkLocalBase, credentialFileWarning, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
@@ -149,5 +150,23 @@ describe("files and manifest", () => {
     expect(text).toMatch(/stats\s+png\s+50 KB\s+50 KB\s+100%\s+5\/5/);
     expect(text).toMatch(/합계\s+150 KB/);
     expect(text).toContain("ship — 건너뜀: 후보 해역에 선박 없음");
+  });
+});
+
+describe("capture recipes (scripts/guide-screenshots.mjs)", () => {
+  // 계획(lib/guide-shots.json)의 스크린샷마다 캡처 방법(RECIPES 의 키)이 있어야 한다 — 없으면 스크립트가 그 그림을 늘 건너뛴다(자리표시로 남는다)
+  const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("const RECIPES = {"), src.indexOf("\n};\n", src.indexOf("const RECIPES = {")));
+  const keys = [...body.matchAll(/^ {2}(?:async )?(?:"([a-z0-9-]+)"|([a-z0-9]+))\(shot\)/gm)].map((m) => m[1] ?? m[2]);
+  it("every planned shot has a recipe and every recipe a planned shot", () => {
+    expect(keys.length).toBeGreaterThan(0);
+    expect([...keys].sort()).toEqual(PLAN.shots.map((s) => s.id).sort());
+  });
+  it("the new feature figures have slots: port calls on the ship card, the coastal traffic layer", () => {
+    expect(PLAN.shots.find((s) => s.id === "port-calls")?.section).toBe("dashboard-ship");
+    expect(PLAN.shots.find((s) => s.id === "traffic")?.section).toBe("dashboard-layers");
+    // 해결 표시(ADR-024)는 로그 화면 그림의 번호로(운영 화면의 공급자 last error 칸은 가려 찍으므로 거기에 번호를 두지 않는다)
+    const logs = PLAN.shots.find((s) => s.id === "logs")!;
+    expect(logs.callouts.map((c) => c.target)).toEqual(expect.arrayContaining(['[aria-label="해결 표시"]', '[data-testid="logs-hidden-resolved"]']));
   });
 });

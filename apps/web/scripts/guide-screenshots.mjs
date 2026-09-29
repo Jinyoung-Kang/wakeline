@@ -133,6 +133,20 @@ const RECIPES = {
     await wait(10_000); // 스냅샷 · 레이더 타일 · 선박 격자
     return `한반도 ${shot.path.slice(1)}`;
   },
+  async traffic(shot) {
+    // 연안 교통량(ADR-023): 레이어를 켜면 곧바로 조회한다 — 상태 줄이 '불러오는 중'을 벗어날 때까지 기다리고, 칸을 그리는 상태(기준 …)일 때만 찍는다
+    await openMap(shot.path);
+    await setPressed("layer-ships", false);
+    await setPressed("layer-traffic", true);
+    await setLegend(true);
+    const status = page.getByTestId("traffic-status-text");
+    await status.waitFor({ timeout: 15_000 }).catch(() => { throw new Skip("연안 교통량 상태 줄이 나오지 않음"); });
+    await page.waitForFunction(() => !/^불러오는 중/.test(document.querySelector('[data-testid="traffic-status-text"]')?.textContent ?? ""), null, { timeout: 20_000 }).catch(() => {});
+    const line = (await status.innerText()).trim();
+    if (!line.startsWith("기준 ")) throw new Skip(`연안 교통량이 칸을 그리지 않음 — ${line.slice(0, 80)}`);
+    await wait(4_000); // 칸 그리기
+    return `연안 교통량 ${shot.path.slice(1)}`;
+  },
   async search(shot) {
     await openMap(shot.path);
     await setPressed("layer-ships", false);
@@ -185,6 +199,35 @@ const RECIPES = {
       return `${label} ${path.slice(1)}`;
     }
     throw new Skip("후보 해역(부산항 부근 · 도쿄만)에 선박 없음");
+  },
+  async "port-calls"(shot) {
+    // 한국 항만 입출항(ADR-022): 부산항 부근 선박을 차례로 골라 입출항 결과(ok)가 나온 카드를 찍는다. 선박마다 새 조회 = 요청 10회 이상(초당 1회)이고
+    // 세션 한도(60초에 6척)가 있어 후보는 4척까지. 결과를 기다리는 상한 60 s. 다른 상태(기록 없음 · 한도 · 실패 · 호출부호 없음)는 다음 후보.
+    const tried = [];
+    for (let i = 0; i < 4; i++) {
+      await openMap(shot.path);
+      await setPressed("layer-ships", true);
+      await setLegend(false);
+      await wait(12_000);
+      await page.getByTestId("tab-ship").click();
+      const item = page.getByTestId("ship-list-item").nth(i);
+      await item.waitFor({ timeout: 10_000 }).catch(() => {});
+      if (!(await item.count())) break;
+      await item.click();
+      const sec = page.getByTestId("port-calls");
+      await sec.waitFor({ timeout: 10_000 }).catch(() => {});
+      await page.waitForFunction(() => {
+        const st = document.querySelector('[data-testid="port-calls"]')?.getAttribute("data-status");
+        return st != null && st !== "pending" && st !== "unknown";
+      }, null, { timeout: 60_000 }).catch(() => {});
+      const st = (await sec.getAttribute("data-status").catch(() => null)) ?? "없음";
+      tried.push(st);
+      if (st !== "ok") continue;
+      await sec.scrollIntoViewIfNeeded();
+      await wait(1_000);
+      return `부산항 부근 ${shot.path.slice(1)} · 선박 목록 ${i + 1}번째(입출항 결과가 있는 첫 선박)`;
+    }
+    throw new Skip(`입출항 결과(ok)가 있는 선박을 찾지 못함 — 후보 상태 ${tried.join(", ") || "선박 없음"}`);
   },
   async alerts(shot) {
     await openMap(shot.path);

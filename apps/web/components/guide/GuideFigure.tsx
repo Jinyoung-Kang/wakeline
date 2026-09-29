@@ -1,17 +1,5 @@
-import { dualInline, type GuideShot, type ShotView } from "@/lib/guide";
-
-
-/** 시각: KST 를 먼저, UTC 를 흐리게 함께 — 다른 화면과 같은 "… KST · … UTC" 모양(설명서 7장 규칙, lib/guide dualInline). 모르면 "—" */
-export function DualTime({ v }: { v: string | number | null | undefined }) {
-  const d = dualInline(v);
-  if (!d) return <span className="mono">—</span>;
-  return (
-    <span className="mono" title={`원본 UTC ${d.iso}`}>
-      <time dateTime={d.iso} className="whitespace-nowrap text-fg-2">{d.kst}</time>
-      <span className="text-fg-3"> · <span className="whitespace-nowrap">{d.utc}</span></span>
-    </span>
-  );
-}
+import { DualTime } from "@/components/DualTime";
+import type { GuideShot, ShotView } from "@/lib/guide";
 
 /**
  * 스크린샷 한 장 + 번호 설명.
@@ -51,7 +39,7 @@ export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotVie
       </div>
       <figcaption className="g-cap">
         {view.kind === "image"
-          ? <>캡처 <DualTime v={view.capturedAt} /> · {view.format === "webp" ? "WebP" : "PNG"} · {view.width}×{view.height} · {Math.max(1, Math.round(view.bytes / 1024))} KB{view.variant ? <> · 조건: <span className="text-fg-2">{view.variant}</span></> : null}</>
+          ? <>캡처 <DualTime v={view.capturedAt} year className="text-fg-2" /> · {view.format === "webp" ? "WebP" : "PNG"} · {view.width}×{view.height} · {Math.max(1, Math.round(view.bytes / 1024))} KB{view.variant ? <> · 조건: <span className="text-fg-2">{view.variant}</span></> : null}</>
           : <>이 자리에는 배포된 서비스에서 찍은 화면이 들어갑니다(캡처 스크립트). 아래 번호 설명은 지금도 그대로 쓸 수 있습니다.</>}
       </figcaption>
       <ol className="g-callouts" aria-label={`그림 ${no} 번호 설명`}>
