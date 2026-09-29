@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { copyText } from "@/lib/copy";
 import { describeThrown, reportClientError, type ReportResult } from "@/lib/errorReport";
+import { isoKst } from "@/lib/kst";
 import { logHeaderLine } from "@/lib/log-line";
 import { RequestIdCopy } from "./ErrorNote";
 
@@ -27,10 +28,10 @@ function facts(error: unknown) {
   };
 }
 
-/** 복사 텍스트 — 로그 항목과 같은 틀(첫 줄 `[시각 ERROR web-client/컴포넌트] rid=…`, 그다음 메시지 · HTTP · digest · 경로 · 스택) */
+/** 복사 텍스트 — 로그 항목과 같은 틀(첫 줄 `[시각(KST, +09:00) ERROR web-client/컴포넌트] rid=…`, 그다음 메시지 · HTTP · digest · 경로 · 스택) */
 export function errorScreenText(error: unknown, component: string, atMs: number, path: string | null): string {
   const f = facts(error);
-  const lines = [logHeaderLine(new Date(atMs).toISOString(), "ERROR", "web-client", component, f.api?.requestId ?? null), `${f.name}: ${f.message}`];
+  const lines = [logHeaderLine(atMs, "ERROR", "web-client", component, f.api?.requestId ?? null), `${f.name}: ${f.message}`];
   if (f.api) lines.push(`HTTP ${f.api.status}${f.api.code ? ` · ${f.api.code}` : ""}`);
   if (f.digest) lines.push(`digest=${f.digest}`);
   lines.push(`path=${path ?? "—"}`);
@@ -83,7 +84,7 @@ export function ErrorScreen({ error, retry, component }: { error: unknown; retry
             {f.api ? row("HTTP · code · 요청 id", <span><span className="mono">HTTP {f.api.status}{f.api.code ? ` · ${f.api.code}` : ""}</span>{f.api.requestId ? <RequestIdCopy id={f.api.requestId} /> : <span className="ml-2 text-fg-3">요청 id 없음</span>}</span>) : null}
             {row("digest", f.digest ? <span className="mono select-all">{f.digest}</span> : <span className="text-fg-3">—</span>)}
             {row("경로", <span className="mono">{seen?.path ?? "—"}</span>)}
-            {row("시각(UTC)", <span className="mono">{seen ? new Date(seen.at).toISOString() : "—"}</span>)}
+            {row("시각(KST)", seen ? <span><span className="mono">{isoKst(seen.at) ?? "—"}</span><span className="mono ml-2 text-fg-3">UTC {new Date(seen.at).toISOString()}</span></span> : <span className="mono">—</span>, "error-time")}
             {row("보고", <span className={report === "sent" ? "text-fg-2" : "text-warn"}>{report ? REPORT_TEXT[report] : "…"}</span>, "error-report")}
           </tbody>
         </table>

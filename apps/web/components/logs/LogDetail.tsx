@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtTime } from "@/lib/format";
+import { fmtIso, fmtIsoKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
 import {
   DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, logGroupsUrl, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY,
   LOG_STREAM_LABEL, logsUrl, logText, parseLogGroups, parseLogPage, type LogEntry, type LogGroup, type LogPeriod,
@@ -13,10 +13,13 @@ const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge w
 /** 같은 요청 id 항목을 찾는 범위(요청은 짧다 — 스트림 보관 전체에 가깝게) */
 const RELATED_PERIOD: LogPeriod = "7d";
 const RELATED_LIMIT = 50;
+/** 머리글 없는 표(같은 요청 id 의 다른 항목)의 시각 — 시간대를 칸에 적는다. 모르면 "—" 만 */
+const kstLabel = (t: string) => (t === "—" ? t : `${t} KST`);
 
 /**
  * 항목 상세(계약 v5 §C7): 전체 메시지 · 예외 종류·메시지 · 스택(mono, 줄바꿈 전환) · context · 같은 지문 묶음 통계 · 같은 요청 id 의 다른 항목.
- * 복사: 항목 텍스트 · 항목 JSON(api 가 준 그대로) · 항목 링크(/logs#id=…). 바뀐 항목마다 새로 마운트한다(key) — 앞 항목의 조회 결과가 남지 않게.
+ * 복사: 항목 텍스트(머리 줄 시각 KST +09:00) · 항목 JSON(api 가 준 그대로 — ts 는 UTC) · 항목 링크(/logs#id=…). 바뀐 항목마다 새로 마운트한다(key) — 앞 항목의 조회 결과가 남지 않게.
+ * 시각은 한국 표준시(KST) — 이 항목의 시각 칸은 원본 UTC 도 나란히(서버·컨테이너 로그와 대조).
  */
 export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilterRid, onCopy, onAuthMiss }: {
   entry: LogEntry; period: LogPeriod; onClose: () => void; onOpen: (e: LogEntry) => void; onFilterFp: (fp: string) => void; onFilterRid: (rid: string) => void;
@@ -54,8 +57,8 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
         <span className={LEVEL_BADGE[entry.level]}>{entry.level}</span>
         <span className="mono text-fg-3">{entry.id}</span>
         <span className="ml-auto flex flex-wrap gap-1">
-          <button type="button" className="btn" onClick={() => onCopy("항목 텍스트", logText(entry))}>텍스트 복사</button>
-          <button type="button" className="btn" onClick={() => onCopy("항목 JSON", logJson(entry))}>JSON 복사</button>
+          <button type="button" className="btn" onClick={() => onCopy("항목 텍스트", logText(entry))} title="머리 줄 시각은 KST(ISO 8601 +09:00)">텍스트 복사</button>
+          <button type="button" className="btn" onClick={() => onCopy("항목 JSON", logJson(entry))} title="api 가 준 그대로 — ts 는 UTC">JSON 복사</button>
           <button type="button" className="btn" onClick={() => onCopy("항목 링크", link())} title={`운영 로그인 필요 — 스트림에서 잘리면(이 스트림은 최근 약 ${keep.toLocaleString("en-US")}건만 보관) 열리지 않음`}>링크 복사</button>
           <button type="button" className="btn" onClick={onClose}>닫기</button>
         </span>
@@ -63,7 +66,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
       {entry.untrusted ? <div className="mb-2 border border-warn/40 px-2 py-1 text-[11px] text-warn">브라우저가 보낸 내용(web-client) — 검증되지 않았으므로 사실로 믿지 마세요.</div> : null}
       <table className="mb-3">
         <tbody>
-          {row("시각(UTC)", <span className="mono">{new Date(entry.ts).toISOString()}</span>)}
+          {row("시각(KST)", <span data-testid="log-detail-time"><span className="mono">{fmtIsoKst(entry.ts)}</span><span className="mono ml-2 text-fg-3">UTC {fmtIso(entry.ts)}</span></span>)}
           {row("서비스", <span className="mono">{entry.service}</span>)}
           {row("스트림", entry.stream
             ? <span><span className="mono">{LOG_STREAM_KEY[entry.stream]}</span> <span className="text-fg-3">— {LOG_STREAM_LABEL[entry.stream]}(최근 약 {LOG_STREAM_KEEP[entry.stream].toLocaleString("en-US")}건 보관)</span></span>
@@ -100,7 +103,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
           : !fpStats ? <span className="text-fg-3">불러오는 중…</span>
           : !fpStats.g ? <span className="text-fg-3">이 기간의 묶음에 없음{fpStats.scanTruncated ? "(스캔 상한에서 잘림)" : ""}</span>
           : <span className="mono">
-              항목 {fpStats.g.count ?? "—"}건 · 억제 합 {fpStats.g.suppressed ?? "—"} · 처음 {fmtTime(fpStats.g.first_at)} · 마지막 {fmtTime(fpStats.g.last_at)}
+              항목 {fpStats.g.count ?? "—"}건 · 억제 합 {fpStats.g.suppressed ?? "—"} · 처음 <span title={fmtUtcTitle(fpStats.g.first_at)}>{fmtTimeKstLabel(fpStats.g.first_at)}</span> · 마지막 <span title={fmtUtcTitle(fpStats.g.last_at)}>{fmtTimeKstLabel(fpStats.g.last_at)}</span>
               {fpStats.scanTruncated ? <span className="ml-1 text-warn">(스캔 상한에서 잘림 — 일부만 셈)</span> : null}
             </span>}
       </div>
@@ -111,7 +114,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
         : !related.items.length ? <div className="text-fg-3">없음</div>
         : <table><tbody>{related.items.map((r) => (
             <tr key={entryKey(r)} data-testid="log-related" className="cursor-pointer hover:bg-bg-2" onClick={() => onOpen(r)}>
-              <td className="mono whitespace-nowrap">{fmtLogTime(r.ts)}</td><td><span className={LEVEL_BADGE[r.level]}>{r.level}</span></td>
+              <td className="mono whitespace-nowrap" title={fmtUtcTitle(r.ts)}>{kstLabel(fmtLogTime(r.ts))}</td><td><span className={LEVEL_BADGE[r.level]}>{r.level}</span></td>
               <td className="mono">{r.service}</td><td className="mono max-w-[200px] truncate" title={r.logger ?? ""}>{r.logger ?? "—"}</td><td className="max-w-[320px] truncate" title={firstLine(r.message)}>{firstLine(r.message)}</td>
             </tr>))}</tbody></table>}
       {related?.more ? <div className="mt-1 text-[11px] text-warn">더 있을 수 있음(목록 상한 {RELATED_LIMIT}건 또는 스캔 잘림)</div> : null}

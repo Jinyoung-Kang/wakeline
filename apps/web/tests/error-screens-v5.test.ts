@@ -94,7 +94,13 @@ describe("v5-C8 error boundaries: readable screen, copy, retry, report", () => {
     expect(posts[0].body).toMatchObject({ message: "TypeError: Cannot read properties of undefined (reading 'lat')", component: "app/error.tsx · digest 2718281828" });
     expect(byTestId("error-report")!.textContent).toContain("보냄");
     await React.act(async () => { await propsOf(byTestId("error-copy")!).onClick({}); });
-    expect(written[0].split("\n")[0]).toMatch(/^\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z ERROR web-client\/app\/error\.tsx\] rid=—$/);
+    // 머리 줄은 /logs 항목과 같은 틀 — 시각은 KST(오프셋을 붙인 ISO, ms 유지)
+    expect(written[0].split("\n")[0]).toMatch(/^\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+09:00 ERROR web-client\/app\/error\.tsx\] rid=—$/);
+    // 화면의 시각 칸: 복사 머리와 같은 KST 글자와 원본 UTC 를 나란히
+    const shown = byTestId("error-time")!.textContent;
+    expect(shown.startsWith(written[0].slice(1, 30))).toBe(true);
+    expect(shown).toMatch(/UTC \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    expect(Date.parse(written[0].slice(1, 30))).toBe(Date.parse(shown.slice(shown.indexOf("UTC ") + 4))); // 같은 순간
     expect(written[0]).toContain("TypeError: Cannot read properties of undefined (reading 'lat')");
     expect(written[0]).toContain("digest=2718281828");
     await React.act(async () => { propsOf(byTestId("error-retry")!).onClick({}); });

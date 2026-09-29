@@ -173,7 +173,7 @@ describe("v5-C7 lib/logs: copy formats", () => {
     const L = await import("@/lib/logs");
     const e = L.parseLogPage({ items: [entry()] }).items[0];
     const t = L.logText(e).split("\n");
-    expect(t[0]).toBe("[2026-09-29T01:02:03.456Z ERROR api/dev.wakeline.ingest.StreamConsumer] rid=5f2c9a0e1b7d4c3a");
+    expect(t[0]).toBe("[2026-09-29T10:02:03.456+09:00 ERROR api/dev.wakeline.ingest.StreamConsumer] rid=5f2c9a0e1b7d4c3a"); // KST(+09:00) — 운영·로그 화면
     expect(t.slice(1, 3)).toEqual(["apply failed for ship 440123456", "second line"]);
     expect(t[3]).toBe("예외 java.lang.IllegalStateException: boom");
     expect(t.slice(4, 6)).toEqual(["java.lang.IllegalStateException: boom", "\tat dev.wakeline.X.y(X.java:10)"]);
@@ -194,22 +194,22 @@ describe("v5-C7 lib/logs: copy formats", () => {
     expect(JSON.parse(lines[1])).toEqual(entry({ id: "1789999999999-0", level: "WARN", exception: null })); // api 가 준 그대로(화면용 정리 없음)
     expect(JSON.parse(L.logJson(items[0]))).toEqual(entry());
     expect(L.logsNdjson(items).endsWith("\n")).toBe(true);
-    expect(L.logsFileName("ndjson", Date.parse("2026-09-29T01:02:03Z"))).toBe("wakeline-logs-20260929T010203Z.ndjson");
+    expect(L.logsFileName("ndjson", Date.parse("2026-09-29T01:02:03Z"))).toBe("wakeline-logs-20260929T100203+0900.ndjson");
   });
   it("group text: header with count, suppressed, first/last and how complete the attached entries are", async () => {
     const L = await import("@/lib/logs");
     const g = L.parseLogGroups({ groups: [{ fp: "0123456789abcdef", service: "api", level: "ERROR", logger: "x.Y", exception_type: "java.io.IOException", sample_message: "read timed out", count: 12, suppressed: 30, first_at: "2026-09-29T00:00:00Z", last_at: "2026-09-29T01:00:00Z", last_id: "1790000000000-0" }] }).groups[0];
     const items = L.parseLogPage({ items: [entry()] }).items;
     const t = L.groupText(g, items, { truncated: true });
-    expect(t.split("\n")[0]).toBe("[묶음 fp=0123456789abcdef ERROR api/x.Y] 항목 12건 · 억제 합 30 · 처음 2026-09-29T00:00:00.000Z · 마지막 2026-09-29T01:00:00.000Z");
+    expect(t.split("\n")[0]).toBe("[묶음 fp=0123456789abcdef ERROR api/x.Y] 항목 12건 · 억제 합 30 · 처음 2026-09-29T09:00:00.000+09:00 · 마지막 2026-09-29T10:00:00.000+09:00");
     expect(t).toContain("예외 종류 java.io.IOException");
     expect(t).toContain("표본 메시지 read timed out");
     expect(t).toContain("아래 항목 1건 — 묶음의 일부만(목록 상한 또는 스캔 잘림)");
     expect(t).toContain(L.logText(items[0]));
   });
-  it("list time is UTC with milliseconds; first line of a message", async () => {
+  it("list time is KST with milliseconds; first line of a message", async () => {
     const L = await import("@/lib/logs");
-    expect(L.fmtLogTime("2026-09-29T01:02:03.456Z")).toBe("09-29 01:02:03.456Z");
+    expect(L.fmtLogTime("2026-09-29T01:02:03.456Z")).toBe("09-29 10:02:03.456");
     expect(L.fmtLogTime("bad")).toBe("—");
     expect(L.firstLine("a\r\nb")).toBe("a");
   });
