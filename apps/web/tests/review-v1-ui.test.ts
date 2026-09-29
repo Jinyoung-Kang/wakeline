@@ -306,7 +306,7 @@ describe("R-39 narrow screens (390 px phone, 768 px tablet)", () => {
   });
   it("the layer buttons wrap inside the map (bounded on the left) instead of running off screen", () => {
     const html = renderToStaticMarkup(createElement(LayerPanel));
-    expect(html).toMatch(/class="[^"]*left-12[^"]*"/);
+    expect(html).toMatch(/class="[^"]*left-\[48px\][^"]*"/); // 줌 단추 옆에서 멈춘다(tests/dashboard-layout — 전에는 left-12 = 39 px 로 2 px 겹침)
     expect(html).toMatch(/class="[^"]*flex-wrap[^"]*"[^>]*data-testid="layer-panel"/);
   });
   it("buttons never break inside a Korean word; the legend starts closed on narrow screens", () => {

@@ -197,6 +197,9 @@ for (const size of SIZES) {
         if (a.l < c.r - 1 && c.l < a.r - 1 && a.t < c.b - 1 && c.t < a.b - 1) overlaps.push(`${a.id} × ${c.id}`);
       }
       expect(overlaps).toEqual([]);
+      // 왼쪽 위 줌 단추와도 겹치지 않는다(겹침 배치의 왼쪽 경계 left-[48px] — 전에는 left-12 = 39 px 로 2 px 겹쳤다)
+      const zoom = (await page.locator(".maplibregl-ctrl-top-left .maplibregl-ctrl-group").first().boundingBox())!;
+      for (const b of boxes) if (b.t < zoom.y + zoom.height) expect(b.l, b.id).toBeGreaterThanOrEqual(zoom.x + zoom.width);
       const map = (await page.getByTestId("map").boundingBox())!;
       const legend = (await page.getByTestId("map-legend").boundingBox())!;
       expect(legend.y + legend.height).toBeLessThanOrEqual(map.y + map.height + 1);

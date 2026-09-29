@@ -59,8 +59,9 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
     try { window.localStorage.setItem(LEGEND_KEY, next ? "1" : "0"); } catch { /* 저장소 없음 */ }
   };
   return (
-    // bottom-16: 펼친 범례가 지도 오른쪽 아래 출처 표기(AttributionControl)를 가리지 않게(R-31)
-    <div className="pointer-events-none absolute top-3 right-3 bottom-16 left-12 z-10 flex flex-col gap-1">
+    // bottom-16: 펼친 범례가 지도 오른쪽 아래 출처 표기(AttributionControl)를 가리지 않게(R-31).
+    // left-[48px]: 왼쪽 위 줌 단추(여백 10 + 단추 29 + 테두리 2 = 41 px) 옆 — left-12 는 13 px 글꼴 기준 3 rem = 39 px 라 단추와 2 px 겹쳤다(하네스로 잼)
+    <div className="pointer-events-none absolute top-3 right-3 bottom-16 left-[48px] z-10 flex flex-col gap-1">
       <div className="pointer-events-auto flex flex-wrap justify-end gap-1 self-end" data-testid="layer-panel" role="group" aria-label="지도 레이어">
         {ITEMS.map((i) => (
           <button key={i.k} className="btn" aria-pressed={layers[i.k] === true} onClick={() => toggle(i.k)} data-testid={`layer-${i.k}`}>{i.label}</button>

@@ -122,6 +122,16 @@ describe("map overlays share one layout: toolbar row, then a left status column 
     expect(["max-h-full", "overflow-y-auto"].every((c) => classes(legend).has(c))).toBe(true);
     useUi.setState({ layers: { ...useUi.getState().layers, ships: false } });
   });
+  it("the overlay's left bound clears the zoom control in px (left-12 was 3 rem = 39 px at the 13 px root; the control ends at 41 px)", async () => {
+    const { LayerPanelView } = await import("@/components/LayerPanel");
+    const root = parseHtml(renderToStaticMarkup(createElement(LayerPanelView, { layers: useUi.getState().layers, shipCats: useUi.getState().shipCats, legendOpen: false })));
+    const overlay = byTestId(root, "layer-panel")!.parent!;
+    const left = [...classes(overlay)].map((c) => /^left-\[(\d+)px\]$/.exec(c)?.[1]).find(Boolean);
+    // MapLibre 줌 단추: 바깥 여백 10 px + 단추 29 px + 테두리 1 px × 2 = 41 px(하네스로 잼) — 4 px 이상 띄운다
+    expect(Number(left)).toBeGreaterThanOrEqual(45);
+    expect(classes(overlay).has("left-12")).toBe(false);
+    expect(readFileSync(new URL("../app/globals.css", import.meta.url), "utf8")).toMatch(/^html, body \{[^}]*font-size: 13px/m);
+  });
   it("the dashboard page renders the chips only through the overlay (once), and the basemap-failed notice joins the left column", () => {
     const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
     expect(page).not.toMatch(/<MapChips\b/);
