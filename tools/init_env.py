@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE, ENV = ROOT / ".env.example", ROOT / ".env"
-# 외부 키(OPENSKY_*, KMA_APIHUB_KEY, aisstream_key)는 사람이 넣는다 — 여기서 만들지 않는다.
+# 외부 키(OPENSKY_*, KMA_APIHUB_KEY, DATA_GO_KR_SERVICE_KEY, aisstream_key)는 사람이 넣는다 — 여기서 만들지 않는다.
 INTERNAL = [
     "DB_ROOT_PASSWORD",
     "DB_MIGRATOR_PASSWORD",
@@ -34,6 +34,7 @@ OPTIONAL_EXTERNAL = {
     "OPENSKY_CLIENT_ID": "global view",
     "OPENSKY_CLIENT_SECRET": "global view",
     "KMA_APIHUB_KEY": "KMA radar",
+    "DATA_GO_KR_SERVICE_KEY": "Korean port calls",  # 공공데이터포털 — 해양수산부 선박운항정보(ADR-022)
     "aisstream_key": "ships layer",
 }
 OWNER_ONLY = 0o600

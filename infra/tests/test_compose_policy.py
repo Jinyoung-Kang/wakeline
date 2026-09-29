@@ -34,6 +34,7 @@ FAKE_EXTERNAL = {
     "OPENSKY_CLIENT_ID": "test-opensky-id",
     "OPENSKY_CLIENT_SECRET": "test-opensky-secret-not-real",
     "KMA_APIHUB_KEY": "test-kma-key-not-real",
+    "DATA_GO_KR_SERVICE_KEY": "test-data-go-kr-key-not-real",
 }
 # migrate(--migrate)가 실제로 읽는 환경변수(WakelineApplication.migrate) — 이 밖의 값은 주지 않는다(SEC-R2)
 MIGRATE_ENV_ALLOWED = {"TZ", "DB_HOST", "DB_NAME", "DB_PORT", "DB_MIGRATOR_USER", "DB_MIGRATOR_PASSWORD"}
@@ -220,7 +221,8 @@ class ComposePolicyTest(unittest.TestCase):
     # --- 외부 키: 쓰는 컨테이너에만(개발), 격리 스택에는 없음 ---
     def test_external_keys_only_where_used(self):
         where = {"aisstream_key": ("ais", "AISSTREAM_API_KEY"), "OPENSKY_CLIENT_ID": ("collector", "OPENSKY_CLIENT_ID"),
-                 "OPENSKY_CLIENT_SECRET": ("collector", "OPENSKY_CLIENT_SECRET"), "KMA_APIHUB_KEY": ("collector", "KMA_APIHUB_KEY")}
+                 "OPENSKY_CLIENT_SECRET": ("collector", "OPENSKY_CLIENT_SECRET"), "KMA_APIHUB_KEY": ("collector", "KMA_APIHUB_KEY"),
+                 "DATA_GO_KR_SERVICE_KEY": ("collector", "DATA_GO_KR_SERVICE_KEY")}
         for key, (owner, var) in where.items():
             fake = FAKE_EXTERNAL[key]
             with self.subTest(key=key):

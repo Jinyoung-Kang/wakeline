@@ -168,6 +168,8 @@ services:
       OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
       OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
       KMA_APIHUB_KEY: ${KMA_APIHUB_KEY:-}
+      # 공공데이터포털 인증키(ADR-022 — 해양수산부 선박운항정보 PORT-MIS, 선택 선박의 한국 항만 입출항). 이 컨테이너에만. 비면 조회하지 않는다
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
       HTTP_USER_AGENT: ${HTTP_USER_AGENT:-wakeline-dev/0.2}
       AIRCRAFT_PROVIDERS: ${AIRCRAFT_PROVIDERS:-adsb_lol,adsb_fi,opensky}
       REGION_CENTER: ${REGION_CENTER:-36.5,127.8}
