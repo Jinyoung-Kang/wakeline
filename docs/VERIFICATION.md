@@ -352,17 +352,93 @@
   메모리(지도 목록 · 검색)에는 섞지 않는다. 카드에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 KST · UTC" 를 보이고, 입출항이 이 호출부호로 찾은 때만 그렇다고 쓴다. 계약 v5 §G17.
   **회귀** `StoredStaticIT`(수정 전 static null · no_call_sign 재현, `ship` 표를 잠그면 `stored_unavailable` · 세션 유지).
 - **남은 것** DB 풀이 바닥나면 한 조회가 그 세션의 메시지를 최대 약 8 s(연결 대기 5 s + 문장 3 s) 붙잡는다 — 입출항 조회와 같은 기존 방식이다. 전용 읽기 풀은 다음 일로 남긴다.
+  → **해결**(#52 · ADR-025 · 계약 v5 §G18): 선택 조회는 세션 우편함 밖의 조회 실행기와 전용 읽기 풀에서 하고, 우편함은 메모리 캐시만 본다.
 
-## 자동 검사 현황(2026-09-30 KST, 재생 · 설명서 · UTC 병기 · 해결 처리 · 항만 입출항 색인 · 연안 교통량 · 저장된 정적 보고 · Jackson 패치 뒤)
+## #52 선택 선박의 DB 조회가 그 WS 세션의 메시지를 붙잡음(#51 '남은 것')
+- **증상**(재현 — `ShipSelectionLookupTest` 첫 판, 가짜 DB) 저장 정적 보고 · 입출항 읽기가 막힌 동안 그 세션의 pong · 항공기 diff · 선박 diff 가 읽기가 끝난 뒤,
+  ship_selected 다음에야 나갔다. 설정값으로는 저장 정적 보고 한 번에 최대 약 8 s(공유 풀 연결 대기 5 s + 문장 3 s), 입출항까지 약 19 s — 잰 값이 아니라 설정값의 합이다.
+- **원인** `ShipFanout.runSelected` 가 세션 우편함(SerialOutbox — 한 번에 하나)에서 DB 를 읽었다.
+- **수정**(ADR-025 · 계약 v5 §G18) 우편함은 읽는 쪽의 메모리 캐시만 보고, 읽기는 조회 실행기(스레드 4 · 대기열 max(256, WS 연결 상한) — 넘치면 읽지 않고 읽지 못함으로 답함)와
+  전용 읽기 풀 `wakeline-read`(4 연결 · 연결 대기 2 s · 문장 3 s · 소켓 5 s · TCP 연결 2 s · 읽기 전용)에서 한다. 답은 늦어도 물음 뒤 5 s(설정값) — 끝나지 않은 부분은
+  계약에 있는 `stored_unavailable` · `error` 로 답하고, 읽기가 끝나면 곧바로 실제 값을 보낸다. 같은 MMSI · 호출부호의 읽기는 세션을 가로질러 하나, 한 세션이 실행기에 두는 작업은 하나 이하.
+  WS 계약(키 · 값 · 스키마 · 표본)은 그대로다.
+- **리뷰가 찾은 것**(고치기 전에 시험으로 재현) 마감에 답한 뒤의 다시 계산마다 같은 호출부호를 다시 읽어 한 세션 · 한 선박이 조회 스레드 넷을, 같은 선박을 고른 세 세션이
+  한 읽기에 스레드 셋을 잡았다. 서버 → 클라이언트 방향을 멈춘 중계 뒤에서 읽기 풀의 문장은 8 s 뒤에도 막혀 있었다(`ReadPoolDbTest` — pgjdbc socketTimeout 없음) →
+  고친 뒤 약 5 s 에 `SocketTimeoutException`.
+- **회귀** `ShipSelectionLookupTest` · `StoredStaticIT`(`ship` 표를 잠근 동안 pong < 1 s · 읽기 풀 4 연결을 2.8 s 잡은 동안 답이 1.8–2.8 s — 공유 풀의 5 s 가 아니라
+  읽기 풀의 연결 대기 2 s) · `ReadPoolDbTest` · `ReadPoolTest`.
+- **남은 것** 항공기 선택의 노선 조회(Redis — 상한 3 s · 캐시 5 s)는 같은 모양으로 아직 우편함에서 돈다(ADR-025 범위 밖). 배포된 스택의 조회 지표
+  (`wakeline_ws_ship_lookups_total` · `wakeline_ws_ship_lookup_seconds`)는 아직 보지 않았다.
+
+## #53 Class B 선박의 부분 정적 보고가 저장된 호출부호 · 선종 · 크기를 지움
+- **증상**(재현 — 수집기 `test_ais_static_received` · api `ShipPersistDbTest` · `StaticPartsIT`) ais 재시작이나 수집기 메모리 제거(30분 무수신 · 선박 수 상한) 뒤
+  Class B 의 24A(선명)와 24B(호출부호 · 선종 · 크기)가 다른 발행(10 s)에 들어가면 첫 발행의 정적 정보는 호출부호 · 선종 · 크기가 null 이고, api 가 `ship` 행의
+  저장값(시험: BX12 · 선종 37 · 크기)을 NULL 로 덮었다 — 24B 가 오기 전에 선박이 사라지면 그대로 남는다. 그러면 #51 의 저장 정적 보고와 `/ships/{mmsi}` 가
+  호출부호 없는 행을 보이고 입출항을 찾지 못한다.
+- **원인** 메시지가 '받지 않음' 과 '빈 값으로 받음' 을 구별하지 않았고, api 의 upsert 는 모든 열을 덮었다.
+- **수정**(계약 v5 §G19) 수집기가 ships payload `static_received`(MMSI → 레코드가 시작된 뒤 받은 정적 필드)를 싣고, api 는 받은 필드의 열만 덮는다(받은 부분 안의
+  빈 값은 덮는다 — 선박이 비워 보냈다). 배포 순서는 어느 쪽이든 안전하다: 이전 api 는 모르는 키를 무시하고(결함은 그대로), 새 api 는 그 키가 없는 이전 수집기의
+  메시지에서 값이 있는 필드만 덮고 `wakeline_ship_static_unknown_fields_total` 로 센다. 마이그레이션 없음.
+  리뷰 뒤 고침: 카드의 보이는 줄 · 설명서 2.6 · WS 스키마 설명도 "DB 기록 수신 시각은 마지막으로 저장한 보고의 것이고, 그 보고가 싣지 않은 필드는 그보다 앞서 저장된
+  보고의 값" 이라 적는다(처음에는 툴팁만 고쳐 보이는 줄이 모든 필드를 '이 보고의 값' 이라 했다).
+- **확인** `tools/contract_check.py` — 실수신 fixture 를 발행하면 모든 part 의 `static_received` 가 그 MMSI 가 실제로 보낸 조각의 키와 같다
+  (64척 · 서로 다른 필드 묶음 4가지 — 이번 통합 실행).
+
+## #54 화면 시각을 KST 만으로(사용자 결정 2026-09-30) — 우리 일 집계도 KST 날짜로 셈(V16)
+- **요청** "[상황판·재생·통계·공항 화면]을 포함한 필요한(해당되는) 메뉴에 시각을 UTC 지우고, KST 표시" — 계약 v5 §G20 이 §G13(KST 먼저 · UTC 함께)을 대신한다.
+- **수정** 화면 시각은 `lib/time`(화면 시간대는 `DISPLAY_TZ` 한 곳)과 `<KstTime>` · `<KstRange>` 만 만든다 — 모든 화면의 글자 · title · aria-label 에서 UTC 를 지웠다
+  (title 은 연도 · ms 까지의 KST). 원문(METAR · TAF · SIGMET · 서버 로그 메시지 본문 · 수집기 원본 레코드)은 그대로 두고 `data-raw` 와 "(원문 · 발표 그대로)" 이름표를 단다.
+  API · WS · DB · 서버 로그의 시각과 복사 · 내려받기 형식(머리 줄 ISO +09:00, JSON · .ndjson 의 ts)은 바꾸지 않았다. 공급자 하루 예산(수집기의 UTC 날 키)은 날짜를 바꾸지 않고
+  그 창을 KST 로 적는다(`09-28 09:00 – 09-29 08:59 KST`).
+- **세 레인을 합친 뒤(이번 통합)** 대시보드 UX 레인의 파일(AircraftCard · AircraftSearch · AlertPanel · lib/statusbar)이 쓰던 KST 전용 옛 이름(`DualTime` · `dualPair` 등)을
+  `KstTime` · `fmtKst` · `fmtKstClock` · `fmtTimeTitle` · `timeParts` · `fmtKstRange` 로 옮기고 별칭 · `components/DualTime.tsx` · 옛 상태 바 공백 배지(`aisGapBadge`)와
+  시험의 다른 레인 면제를 지웠다 — 화면 · 소스 검사가 면제 없이 모든 파일에 적용된다. 빌드 산출물(`.next`)에서 "UTC" 는 운영 화면 청크(클라이언트 · 서버)의 `budget_day_zone` 값 비교뿐이고
+  "KST · UTC" 는 0건, `…Z` 모양은 입력 상수 · 설명서 7장의 원문 토큰 예뿐이다(이번 통합 실행).
+- **날짜로 센 집계** 우리 집계는 KST 날짜로 센다: api `stats_daily`(SIGMET · 교통량 · 알림 — 하루 = [00:00, 다음 날 00:00) KST, 교통량 시 = KST 00–23시, 매일 03:30 KST 에
+  전날) · collector `quality_rule_count`(실행 시작의 KST 날짜). 통계 응답은 `day_zone: "Asia/Seoul"` 을 밝히고 웹은 그렇게 밝힌 응답만 그린다. Flyway **V16** 이 옛 UTC 날짜 행을
+  `stats_daily_utc_legacy` · `quality_rule_count_utc_legacy` 로 옮기고(서비스 역할 권한 없음 — 보관만, 날짜 이름만 바꿔 KST 로 보이지 않는다) 같은 모양의 새 표를 만든다.
+- **더는 화면에 보이지 않는 이력** api 따라잡기는 원본이 남은 계열만 KST 날짜로 다시 센다 — 최근 7일은 모든 계열, 그보다 오래된 날은 SIGMET(원본 영구) · 알림(끝난 알림 30일)을
+  한 번에 92일까지. 교통량은 그날 첫 순간(00:00 KST)이 든 UTC 날 파티션이 원본 항적 보존(72 h) 안일 때만 다시 센다(00:00–08:59 KST 는 앞 UTC 날 파티션에 있다 — 리뷰가
+  그날 끝으로 판단하면 00–08시가 빠진 수를 완료로 남기는 것을 재현했다). 그래서 V16 적용 뒤 통계의 **교통량은 원본 항적 파티션이 지워진 날, 알림은 끝난 알림이 지워진
+  30일 밖의 날**, 운영 화면의 **품질 규칙 일별 격리 수는 V16 이전의 모든 날**(실행마다의 규칙별 수는 그 표에만 있었다)이 '집계되지 않은 날짜' 로 비고, 그 값은 `*_utc_legacy` 표에만
+  남는다(서비스가 읽지 않는다 — 운영자가 psql 로 볼 수 있다). 되돌리기 SQL 은 V16 머리 주석에 있다.
+- **회귀** `tests/kst-time` · `kst-dashboard` · `kst-hover` · `kst-only-screens`(모든 경로) · 화면마다의 UTC 흔적 검사 · 소스 검사, api `StatsAggregationDbTest`(KST 자정 경계 ·
+  KST 시 · 교통량 파티션 경계 · 오래된 날 채우기) · `MigrationDbTest` V16, collector `test_db_writer`(KST 날짜) · `test_rest_contract_rules`(day_zone · KST 시).
+
+## #55 상황판 상태 바 · 노선 조회 표시 · 지도 겹침 — 바다 위의 파란 1 px 선은 해안선 외곽이 그린 물 다각형 이음매
+- **상태 바**(사용자 요청 2026-09-30 "[WS open] 줄에 정보가 너무 많아 잘리고 옆으로 끌어야 보인다") 1,427 px 창에서 줄의 내용이 2,063 px 였다. 이제 연결 · 경고 · 피드마다
+  칩 하나(이름 + 상태 모양 ■ ▲ ✕ □ + 수 하나)와 '상세' 표 — 폭이 모자라면 정상 · 모름 칩만 '상세 +N' 으로 옮기고 주의 · 경고 칩은 빼지 않는다(잘리지 않는다).
+  리뷰 하네스(레인 빌드 · 가짜 WS/REST · 매 프레임 높이): 전에는 1,024 px 에서 약 260 ms 동안 두 줄(52 px), 390 px 에서 서버 HTML 이 약 70 ms 동안 세 줄(75 px) →
+  고친 뒤 첫 그림이 390 · 1,024 · 1,280 · 1,427 · 1,440 px 모두 29 px. AIS 공백은 길이를 먼저 적는다(1분이 안 되는 재시작 공백이 "02:22–02:22 KST" 로 보였다).
+- **노선 조회 표시** 돌던 사각형 대신 얇은 진행 막대와 출발 · 도착 자리(0.18 s 뒤에 나타남 — 고른 값), 움직임 줄이기 설정이면 막대 없음.
+- **지도 겹침** 1,024×768 · 1,280×800 에서 레이어 단추 줄이 선박 칩을 덮었다 → 단추 줄 아래 왼쪽 상태 칸 · 오른쪽 범례 칸의 한 배치. 겹침 시작점 left-12(13 px 뿌리 글꼴에서
+  39 px)가 줌 단추(x 10–41 px)를 2 px 덮었다 → 48 px. 카드 이름표 "관측 시각" 이 긴 값 옆에서 "관측 시 / 각" 으로 쪼개졌다 → 이름표 칸은 줄지 않음.
+- **파란 1 px 선**(사용자 스크린샷 — 지도 도구 줄 약 36 px 아래의 곧은 가로선) 커밋된 스크린샷(01-dashboard-korea · 06-replay)의 같은 선은 강원 앞바다 약 38.6°N 에 있고,
+  화소 (78,108,142) 가 해안선 색 #56779c 를 바다 위 90 % 로 칠한 값과 같다. 배경지도 물 채움의 외곽선(fill-outline-color)을 해안선 색으로 칠해, 타일 안에서 두 물 다각형이
+  만나는 바다 속 이음매까지 그렸다. → 물 채움의 외곽선은 물 색, 해안선은 같은 원천의 따로 된 선 층(육지 쪽으로 1 px). 가짜 MapLibre 6.11.2 하네스(물 다각형 두 개가 38°N 에서
+  맞닿음 · 섬 구멍, 줌 6 · 6.3 · 7.7, DPR 1 · 2)에서 옛 칠은 이음매를 보이고 새 층은 보이지 않음을 확인했다. **실제 OpenFreeMap 타일에서는 아직 확인하지 않았다**
+  (레인에 망이 없었다) — 배포 뒤 동해 약 38.6°N 을 본다.
+- **회귀** `tests/statusbar` · `statusbar-ais-gap` · `dashboard-layout` · `basemap` 과 E2E `dashboard-layout.spec.ts`(1440×900 · 1280×800 · 1024×768 — 줄 안 넘침 · 상세 ·
+  노선 조회 · 알림 배너 · 겹침 없음). 이 E2E 는 레인에서 가짜 스택으로만 돌렸고, 이번 통합에서 격리된 fixture 스택으로 처음 돌렸다(아래 표).
+
+## #56 설명서 E2E 가 네 번째 그림에서 실패 — 시험이 lazy 이미지를 스크롤 없이 기다림
+- **증상** 이번 통합의 첫 `make e2e`: `guide.spec.ts` 가 네 번째 그림(aircraft)의 `img.complete && naturalWidth > 0` 을 15 s 기다리다 실패했고, 그 뒤에 도는
+  `edge-limits` 프로젝트(2건)는 의존 관계로 돌지 않았다(30 통과 · 1 실패 · 2 안 돎).
+- **원인** 설명서 그림은 `loading="lazy"` 다. 1400×900 에서 그림 위치는 dashboard 1,207 · traffic 2,496 · search 3,565 · aircraft 4,575 px … logs 15,996 px 이고,
+  시험은 스크롤하지 않고 기다려 브라우저가 넷째부터는 요청하지 않았다(실패 trace 의 요청: search · dashboard · traffic 세 장, 모두 200). 같은 시험이 main(98b4ca3)
+  빌드(로컬 `next start` — 그림 위치는 aircraft 까지 같았다)에서도 같은 자리에서 실패했다 — 스크린샷이 들어온 뒤(45219aa)부터의 시험 가정 문제이고, 이번 병합이나 fixture 탓이 아니다.
+- **수정** 그림마다 화면으로 옮긴 뒤 불러와졌는지 보고, 목차 시험 전에 맨 위로 돌아간다. 로컬 main · integ 빌드 모두에서 통과, 다시 돌린 `make e2e` 는 아래 표.
+
+## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 뒤 — 세션 우편함 · 읽기 풀(#52) · Class B 받은 필드(#53) · 화면 KST 만 · V16(#54) · 상태 바 · 지도 배치(#55))
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,381 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 788 · JaCoCo LINE 96.5 % · BRANCH 85.0 %(하한 95 / 80) |
-| web 단위 | Vitest | 1,064 · 커버리지(소스 전체) Lines 89.8 % · Branches 80.8 % |
-| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 36 · 클라이언트 15) + 가림 · 억제 벡터 |
+| collector · ais 단위·통합 | pytest | 1,389 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 830 · JaCoCo LINE 96.7 % · BRANCH 85.3 %(하한 95 / 80) |
+| web 단위 | Vitest | 1,137(75 파일) · 커버리지(소스 전체) Lines 90.9 % · Branches 81.6 % |
+| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15) + 가림 · 억제 벡터 |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 33종 |
 | 인프라 정책 | infra/tests(unittest) | 122 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 12 |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 18 |
-| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 230건 · 14종, 형식 오류 0건(#32 · docs/review/evidence/v5-ws-live-check.txt) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 12(이번 통합에서는 다시 돌리지 않았다 — 앞 회차 값, infra/ 는 바뀌지 않음) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 33(상황판 배치 15 추가 — #56 을 고친 뒤 33 통과) |
+| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | 앞 회차 PASS(db · k6 는 보고만) — 이번 통합에서는 돌리지 않았다 |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 회차 230건 · 14종, 형식 오류 0건(#32 · docs/review/evidence/v5-ws-live-check.txt) — 이번 통합은 배포 전 |
