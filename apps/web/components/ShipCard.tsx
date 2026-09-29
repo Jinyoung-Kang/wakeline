@@ -8,7 +8,9 @@ import {
   fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
   SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
-  type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic,
+  staticProvenance, storedPortCallsNote, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
+  STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT,
+  type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic, type StaticSource,
 } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
@@ -22,9 +24,11 @@ import { DualRange, DualTime } from "./DualTime";
 /**
  * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
  * (보존 72 h 안 — 없으면 null), last_seen_at = 실시간이 아닐 때의 마지막 수신 기록(계약 v5 §G4 — 없으면 null). 계약 v5 §B3 카드 행.
+ * static_source = 정적 정보의 출처(계약 v5 §G17 — live · stored, static 이 있을 때만), static_updated_at = stored 일 때 저장 행의 updated_at.
  */
 export interface ShipDetail {
-  mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null; db_unavailable: boolean;
+  mmsi: string; state: ShipState | null; static: ShipStatic | null; static_source: StaticSource | null; static_updated_at: string | null;
+  destination_info: DestinationInfo | null; db_unavailable: boolean;
   first_recorded_at: string | null; last_position_at: string | null; last_seen_at: string | null;
 }
 
@@ -36,8 +40,12 @@ export function parseShipDetail(mmsi: string, r: unknown): ShipDetail {
   const st = parseShipState(typeof o.state === "object" && o.state !== null ? { mmsi, ...(o.state as object) } : null);
   const sx = parseShipStatic(typeof o.static === "object" && o.static !== null ? { mmsi, ...(o.static as object) } : null);
   const meta = typeof o.meta === "object" && o.meta !== null ? (o.meta as Record<string, unknown>) : {};
+  const stat = sx?.mmsi === mmsi ? sx : null;
+  // 출처는 정적 정보가 있을 때만, 시각은 stored 일 때만(REST 는 live · stored 뿐 — 그 밖은 모름)
+  const source: StaticSource | null = stat && (o.static_source === "live" || o.static_source === "stored") ? o.static_source : null;
   return {
-    mmsi, state: st?.mmsi === mmsi ? st : null, static: sx?.mmsi === mmsi ? sx : null,
+    mmsi, state: st?.mmsi === mmsi ? st : null, static: stat, static_source: source,
+    static_updated_at: source === "stored" ? isoOrNull(o.static_updated_at) : null,
     destination_info: parseDestinationInfo(o.destination_info), db_unavailable: meta.db_unavailable === true,
     first_recorded_at: isoOrNull(o.first_recorded_at), last_position_at: isoOrNull(o.last_position_at), last_seen_at: isoOrNull(o.last_seen_at),
   };
@@ -97,6 +105,11 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   // 위치·속도는 가장 새 관측, 등급·출처는 full 상태에서(지도 목록 사본 ShipLite 에는 없다)
   const s: ShipState | null = gone || !pos ? null : { ...pos, class: pos.class ?? full?.class ?? null, provider: pos.provider ?? full?.provider ?? null };
   const st: ShipStatic | null = live?.static ?? d?.static ?? null;
+  // 계약 v5 §G17: 보이는 정적 정보의 출처 — 저장값(stored)이면 정적 필드 위에 밝힌다(실시간 값이 아님 · DB 기록 수신 시각)
+  const prov = staticProvenance(live, d);
+  const storedAge = prov.source === "stored" ? ageS(prov.storedAt, now) : null;
+  // 입출항 절(WS port_calls)을 이 호출부호로 찾았을 때만 그렇다고 말한다 — REST 로만 보이는 저장 보고면 찾지 않았다고(리뷰)
+  const storedCalls = prov.source === "stored" ? storedPortCallsNote(st?.call_sign, live) : null;
   const age = shipAgeS(s?.seen_at, now);
   const stale = age != null && age > SHIP_STALE_S;
   const pb = positionBadge(s?.position_source);
@@ -172,6 +185,21 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
           상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err instanceof Error ? err.message : String(err)}<RequestIdOf error={err} />)
         </div> : null}
         {d?.db_unavailable ? <div className="text-[11px] text-warn">선박 정보 DB 일시 사용 불가 — 정적 정보는 “—”일 수 있음</div> : null}
+        {prov.source === "stored" ? (
+          <div className="mt-1 border-l-2 border-warn bg-bg-2 px-2 py-1 text-[11px]" data-testid="ship-static-stored" title={STORED_STATIC_TITLE}>
+            <div>
+              <span className="font-semibold text-warn">{STORED_STATIC_LABEL}</span>
+              <span className="text-fg-2"> · {STORED_STATIC_TIME_LABEL} </span>
+              <DualTime v={prov.storedAt} />{storedAge != null ? <span className="mono text-fg-2"> ({fmtDuration(storedAge)} 전)</span> : null}
+            </div>
+            <div className="text-[10px] text-fg-3">
+              실시간 값이 아님 — 아래 선박명 · 호출부호 · IMO · 선종 · 크기 · 흘수 · 목적지 · ETA 는 이 보고의 값{storedCalls === "looked_up" ? `(${STORED_STATIC_PORT_CALLS_TEXT})` : null}
+            </div>
+            {storedCalls === "not_looked_up" ? <div className="text-[10px] text-warn" data-testid="ship-static-stored-portcalls">{STORED_STATIC_PORT_CALLS_UNREAD_TEXT}</div> : null}
+          </div>
+        ) : prov.source === "stored_unavailable" ? (
+          <div className="mt-1 border-l-2 border-warn px-2 py-1 text-[11px] text-warn" data-testid="ship-static-unavailable">{STORED_STATIC_UNAVAILABLE_TEXT}</div>
+        ) : null}
         {rows.map(([k, val, title, field]) => (
           <div key={field ?? k} className="flex justify-between gap-2 border-b border-line py-1" data-testid="ship-row" data-field={field ?? k}>
             <span className="shrink-0 text-fg-3" title={title}>{k}</span><span className="text-right">{val}</span>

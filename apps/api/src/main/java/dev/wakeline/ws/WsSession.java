@@ -40,8 +40,8 @@ public final class WsSession {
     /** 이 세션에 마지막으로 보낸 선박 표현: 없음 · 개별 선박(ships_snapshot/diff) · 격자(ships_grid, 줌 또는 선박 수 때문). */
     enum ShipsMode { OFF, POINTS, GRID }
 
-    /** 마지막으로 보낸 ship_selected(선박·정적 정보가 같은 객체이고 입출항이 같은 값이면 다시 보내지 않는다). */
-    record ShipSelectedSent(String mmsi, ShipStore.Ship ship, ShipStatic stat, PortCallsInfo portCalls) {}
+    /** 마지막으로 보낸 ship_selected(선박이 같은 객체이고 정적 정보 · 그 출처 · 입출항이 같은 값이면 다시 보내지 않는다). */
+    record ShipSelectedSent(String mmsi, ShipStore.Ship ship, ShipStatic stat, String staticSource, PortCallsInfo portCalls) {}
 
     /** 구독 한 벌(bbox·줌·상세도)을 한 번에 바꾼다 — 필드별로 따로 읽어 섞이는 일이 없게. */
     record Sub(Bbox bbox, int zoom, String detail) {

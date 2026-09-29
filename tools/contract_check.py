@@ -661,6 +661,16 @@ def _ws_format_checker() -> FormatChecker:
     return fc
 
 
+def _same_instant(a: object, b: object) -> bool:
+    """두 ISO-8601 시각이 같은 순간인가(표기 · 소수 자리가 달라도). 시각이 아니면 False."""
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    try:
+        return datetime.fromisoformat(a.replace("Z", "+00:00")) == datetime.fromisoformat(b.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+
 def check_ws_samples() -> int:
     """계약 v5 §E1: schemas/ws/server.v1.json · client.v1.json 이 올바른 2020-12 스키마이고, 커밋된 웹 fixture(api WsSchemaContractTest 가
     실제 빌더로 만든 표본)의 모든 메시지가 그 스키마를 만족하며, 서버 17종 · 클라이언트 10종을 모두 담고, ships_grid 칸의 선종별 수 합 = 칸 수인지.
@@ -703,6 +713,22 @@ def check_ws_samples() -> int:
         + (f": {grid_bad[:3]}" if grid_bad else "")
     )
     failures += bool(grid_bad)
+    # 계약 v5 §G17: 저장 정적 보고의 시각은 저장 행의 updated_at = static.updated_at(스키마 anyOf 로는 같은 값인지 말할 수 없다)
+    stored = [
+        r
+        for r in samples.get("server", [])
+        if r["message"].get("type") == "ship_selected" and r["message"].get("static_source") == "stored"
+    ]
+    stored_bad = [
+        r["name"]
+        for r in stored
+        if not _same_instant(r["message"].get("static_updated_at"), (r["message"].get("static") or {}).get("updated_at"))
+    ]
+    print(
+        f"{'FAIL' if stored_bad or not stored else 'ok  '} ws ship_selected stored static carries the row's updated_at "
+        f"({len(stored)} stored samples)" + (f": {stored_bad}" if stored_bad else "") + ("" if stored else " — no stored sample")
+    )
+    failures += bool(stored_bad) or not stored
     return failures
 
 

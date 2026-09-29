@@ -275,7 +275,8 @@ public class ShipController {
     private static Object orNull(Object v) { return v == null ? tools.jackson.databind.node.NullNode.getInstance() : v; }
 
     /**
-     * 상세: 실시간 위치(state — 목록에 있을 때만) + 정적 정보(static — 메모리, 없으면 DB) + 선종 분류(category — 코드의 결정적 변환)
+     * 상세: 실시간 위치(state — 목록에 있을 때만) + 정적 정보(static — 메모리, 없으면 DB) + 그 출처(static_source — live · stored, 계약 v5 §G17 —
+     * stored 이면 static_updated_at = 저장 행의 updated_at, WS ship_selected 와 같은 뜻) + 선종 분류(category — 코드의 결정적 변환)
      * + first_recorded_at(이 서비스가 이 MMSI 를 처음 기록한 시각) · last_position_at(저장된 마지막 위치 시각, 보존 72 h 안 — 없으면 키 없음)
      * + last_seen_at(실시간 목록에 없을 때만 — 마지막 수신 기록, {@link #lastSeenAt}, 계약 v5 §G4 — 검색과 같은 값. 실시간이면 state.seen_at)
      * + destination_info(static 의 보고 목적지를 결정적 규칙으로 푼 것, 계약 v4 §B — 목적지를 모르면 키 없음).
@@ -288,6 +289,7 @@ public class ShipController {
         ShipStore.View v = store.view();
         ShipStore.Ship live = v.get(m);
         ShipStatic stat = live != null && live.stat() != null ? live.stat() : store.staticOf(m);
+        String source = stat == null ? null : WsMessages.STATIC_LIVE;
         ShipRepository.StoredShip stored = null;
         Instant lastPosition = null;
         boolean dbUnavailable = false;
@@ -298,12 +300,18 @@ public class ShipController {
             if (live == null && stat == null) throw Problem.unavailable("ship history store unavailable");
             dbUnavailable = true;
         }
-        if (stat == null && stored != null) stat = stored.stat();
+        if (stat == null && stored != null && stored.stat() != null) {
+            stat = stored.stat();
+            source = WsMessages.STATIC_STORED;
+        }
         if (live == null && stat == null && stored == null) throw Problem.notFound("ship " + m + " not seen");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("mmsi", m);
         out.put("state", live == null ? null : WsMessages.encodeShipState(live.state()));
         out.put("static", stat == null ? null : WsMessages.encodeShipStatic(stat));
+        // 정적 정보가 있을 때만(없으면 키 없음 — 모름 · DB 불가는 meta.db_unavailable): 메모리(live) · DB 의 마지막 저장 정적 보고(stored)
+        if (source != null) out.put("static_source", source);
+        if (WsMessages.STATIC_STORED.equals(source)) out.put("static_updated_at", stat.updatedAt());
         out.put("destination_info", stat == null ? null : destinations.parse(stat.destination()));
         out.put("category", ShipCategory.of(stat == null ? null : stat.shipType()).key());
         // ship.last_seen 은 쓰기 증폭을 줄이려 10분 단위로만 넓히므로 그대로 내보내지 않는다 — 정확한 마지막 위치 시각은 ship_position 에서.

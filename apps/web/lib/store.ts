@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 import { ServerClock } from "./server-clock";
 import type { DemandInfo } from "./demand";
 import type { PortCallsInfo } from "./portcalls";
-import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipState, ShipStatic } from "./ships";
+import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipState, ShipStatic, StaticSource } from "./ships";
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
 import { TRAFFIC_POLL_NONE, type TrafficPollState } from "./traffic-grid";
 
@@ -33,6 +33,10 @@ export interface ShipSelectedInfo {
   /** null = 실시간 목록에 없음(30분 넘게 수신 없음) */
   state: ShipState | null;
   static: ShipStatic | null;
+  /** 계약 v5 §G17 static 의 출처(live · stored · none · stored_unavailable). 서버가 보내지 않았거나 어긋나면 null — 카드는 출처를 말하지 않는다 */
+  static_source?: StaticSource | null;
+  /** static_source 가 stored 일 때만: 저장 행의 updated_at(DB 에 기록된 수신 시각 — 첫 수신도 마지막 수신도 아님, lib/ships STORED_STATIC_TIME_LABEL) */
+  static_updated_at?: string | null;
   /** 계약 v4 §B 목적지 풀이(api 결정적 규칙). 없거나 형식이 틀리면 null — 원문만 보인다 */
   destination_info?: DestinationInfo | null;
   /** ADR-022 한국 항만 입출항(서버 색인을 호출부호로 찾은 것, 해양수산부 PORT-MIS). 서버가 보내지 않았거나 형식이 틀리면 null — 카드는 "—" */

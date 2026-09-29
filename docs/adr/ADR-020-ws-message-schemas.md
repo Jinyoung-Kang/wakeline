@@ -15,7 +15,7 @@ Redis 스트림은 `schemas/*.json` 으로 두 언어가 계약하지만, WebSoc
 
 ## 구현(레인 ws-contract, 2026-09-29)
 - **스키마**: `schemas/ws/server.v1.json`(17종 — `type` 상수로 나뉜 oneOf, ships_grid 칸은 다섯 원소 · 선종별 수 11개) · `client.v1.json`(10종). 서버는 null 인 키를 보내지 않으므로(non_null)
-  필드는 null 을 허용하지 않고 "없는 키 = 모름" 이다 — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected 의 세 값 · SIGMET geometry)만 null.
+  필드는 null 을 허용하지 않고 "없는 키 = 모름" 이다 — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected 의 state/static/static_source/static_updated_at/destination_info/port_calls · SIGMET geometry)만 null.
   항공기 · 선박 필드 제약은 스트림 스키마와 같게 두고 시험이 비교한다(null 제외). 운영 코드는 WS 스키마를 읽지 않으므로 클래스패스 복사본이 없다.
 - **Java**: `WsSchemaContractTest` 가 FakeWsSession 으로 실제 경로(WsHub · ShipFanout · ShipGrid · DemandService.message · StatusService · RouteReader · DestinationParser)를 태워 받은 메시지를 모두 검증한다.
   매퍼는 application.yml 의 `spring.jackson.*` 를 JacksonAutoConfiguration 에 넣어 만든 운영 매퍼 — 시험용 `WsTestKit.JSON` 은 맵의 null 값을 빼지 않아 운영과 다르다.
@@ -30,7 +30,7 @@ Redis 스트림은 `schemas/*.json` 으로 두 언어가 계약하지만, WebSoc
   (contract_check 와 같다 — `Date.parse` 는 "9999" · 2월 30일을 받는다), 길이는 코드포인트로 센다.
   틀린 값의 처리(모두 상태 바에 센다): (1) 적용에 꼭 필요한 값(type · seq/sseq · 원소 배열 · 알림 version · SIGMET collection · 레이더 host/generated/past · selected hex/prediction ·
   ship_selected mmsi · error code · status 의 모든 값)이면 메시지를 버린다. (2) 배열 원소와 따로 버릴 수 있는 묶음(selected.state/route · demand.hot/focus ·
-  ship_selected.state/static/destination_info · 스냅샷 sources.region/global · 격자 칸 선종별 수)은 그것만 버린다. (3) 참고 값(welcome 의 값 전부 · v/ts/fetched_at/provider/
+  ship_selected.state/static/static_source/static_updated_at/destination_info/port_calls · 스냅샷 sources.region/global · 격자 칸 선종별 수)은 그것만 버린다. (3) 참고 값(welcome 의 값 전부 · v/ts/fetched_at/provider/
   computed_at/sigmets_version · ships_grid cell_deg/capped · error title/detail)은 모름(null)으로 둔다 — welcome 은 버리지 않는다(쓰지 않는 값 때문에 연결을 다시 맺는 고리가 없다).
   웹이 스키마보다 너그러운 곳: 없는 키 · null(모름), 모르는 키(보지 않는다), 네 원소 격자 칸(구 서버). 엄격한 곳: 격자 칸 선종별 수의 합 = 칸 선박 수(교차 규칙 — 틀리면 선종별 수만 버린다).
   이 둘은 스윕 시험의 예외 목록에 적혀 있다. 검증을 통과한 뒤의 정규화(lib/ships · lib/route — AIS 채움 문자 제거 · 옛 위치 출처 gnss → 모름 · 선박 폭 dim_c/dim_d 0–63 ·

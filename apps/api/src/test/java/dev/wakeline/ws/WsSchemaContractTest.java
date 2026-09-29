@@ -17,6 +17,7 @@ import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.Receipt;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
@@ -393,6 +394,8 @@ class WsSchemaContractTest {
             PortCallReader incomplete = new PortCallReader(gaps, List::of, PC_NOW::toEpochMilli);
             PortCallReader error = new PortCallReader(broken, List::of, PC_NOW::toEpochMilli);
             PortCallReader off = new PortCallReader(full, () -> List.of("no_key", PC_NOW.minusSeconds(20).toString()), PC_NOW::toEpochMilli);
+            // 운영처럼 저장 정적 보고도 읽는다 — 위치만 받은 선박(440000008)은 DB 에도 없다(static_source none)
+            k.shipFanout.setStoredStaticSource(m -> StoredStaticReader.Lookup.NONE);
             k.shipFanout.setPortCallSource(st -> {
                 String cs = st == null ? null : st.callSign();
                 if ("D7AC".equals(cs)) return error.forStatic(st);
@@ -411,6 +414,32 @@ class WsSchemaContractTest {
             for (String st : List.of("not_received", "unusable"))
                 samples.add(new Sample("ship_selected.port_calls_no_call_sign_" + st,
                         first(c.sent, "ship_selected", n -> st.equals(n.path("port_calls").path("call_sign_state").asString()))));
+        }
+        // ---- 세션 6(따로): 메모리에 정적 정보가 없는 실시간 선박(api 재시작 뒤 — 계약 v5 §G17) — DB 의 마지막 저장 정적 보고(stored, 입출항은 그 호출부호로) ·
+        //      DB 를 읽지 못함(stored_unavailable — static null, 입출항 no_call_sign) · DB 에도 없음(none)
+        try (WsTestKit k = new WsTestKit(json)) {
+            ships(k, List.of(pos("440000010", 35.1, 129.0, 14.2, 200.1, 199, 0, null, "epfs", now.minusSeconds(6), "PositionReport", "A"),
+                    pos("440000011", 35.2, 129.1, 0.1, null, null, 5, null, "epfs", now.minusSeconds(9), "PositionReport", "A"),
+                    pos("440000012", 35.3, 129.2, 9.0, 90.0, null, 0, null, "epfs", now.minusSeconds(4), "PositionReport", "A")), List.of(), now.minusSeconds(5));
+            realStatus(k);
+            ShipStatic kept = new ShipStatic("440000010", "SYNTH STORED", "D7AG", null, 60, null, null, null, null, null, "KRPUS", null, null, null, null,
+                    now.minusSeconds(5 * 3600), "aisstream");
+            k.shipFanout.setStoredStaticSource(new StoredStaticReader(m -> switch (m) {
+                case "440000010" -> kept;
+                case "440000011" -> throw new org.springframework.dao.QueryTimeoutException("statement timeout");
+                default -> null;
+            }, now::toEpochMilli, k.meters)::lookup);
+            PortCallFixtures.FakeSource idx = new PortCallFixtures.FakeSource();
+            idx.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-30"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));
+            idx.rows.put("D7AG", List.of(portCallRow("D7AG")));
+            k.shipFanout.setPortCallSource(new PortCallReader(idx, List::of, PC_NOW::toEpochMilli)::forStatic);
+            FakeWsSession c = k.connect("s-stored", "10.0.0.6");
+            k.msg(c, "{\"type\":\"hello\",\"proto\":1}");
+            k.msg(c, "{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
+            for (String m : List.of("440000010", "440000011", "440000012")) k.msg(c, "{\"type\":\"select_ship\",\"mmsi\":\"" + m + "\"}");
+            all.addAll(c.sent);
+            for (String src : List.of("stored", "stored_unavailable", "none"))
+                samples.add(new Sample("ship_selected.static_" + src, first(c.sent, "ship_selected", n -> src.equals(n.path("static_source").asString()))));
         }
         return new Run(all, samples);
     }
@@ -442,6 +471,19 @@ class WsSchemaContractTest {
                 assertThat(sum).as("per-category counts sum to the cell count " + c).isEqualTo(c.get(2).asInt());
             }
         }
+        // ship_selected 의 정적 정보 출처(계약 v5 §G17): live · stored 는 static 이 있고, stored 의 static_updated_at = 저장 행의 updated_at = static.updated_at
+        Set<String> sources = new TreeSet<>();
+        for (String m : run.all()) {
+            JsonNode n = json.readTree(m);
+            if (!"ship_selected".equals(n.path("type").asString())) continue;
+            String src = n.path("static_source").isNull() ? "null" : n.path("static_source").asString();
+            sources.add(src);
+            assertThat(n.path("static").isObject()).as("static present iff live|stored: " + m).isEqualTo(src.equals("live") || src.equals("stored"));
+            if (src.equals("stored"))
+                assertThat(n.path("static_updated_at").asString()).as("stored time = the row's updated_at").isEqualTo(n.path("static").path("updated_at").asString());
+            else assertThat(n.path("static_updated_at").isNull()).as("time only for stored: " + m).isTrue();
+        }
+        assertThat(sources).as("every static source is sampled").contains("live", "stored", "none", "stored_unavailable");
         checkOrWriteFixture(run.samples(), clientSamples());
     }
 
@@ -518,6 +560,15 @@ class WsSchemaContractTest {
         bad.put("ships_diff remove not mmsi", mutate(byName.get("ships_diff"), n -> ((ArrayNode) n.get("remove")).add("12345")));
         bad.put("ship_selected without destination_info key", mutate(byName.get("ship_selected"), n -> n.remove("destination_info")));
         bad.put("ship_selected without port_calls key", mutate(byName.get("ship_selected"), n -> n.remove("port_calls")));
+        bad.put("ship_selected without static_source key", mutate(byName.get("ship_selected"), n -> n.remove("static_source")));
+        bad.put("ship_selected without static_updated_at key", mutate(byName.get("ship_selected"), n -> n.remove("static_updated_at")));
+        bad.put("static_source unknown value", mutate(byName.get("ship_selected"), n -> n.put("static_source", "guessed")));
+        bad.put("static_source stored without its time", mutate(byName.get("ship_selected.static_stored"), n -> n.putNull("static_updated_at")));
+        bad.put("static_source live with a stored time", mutate(byName.get("ship_selected"), n -> n.put("static_updated_at", "2026-09-29T08:00:00Z")));
+        bad.put("static_source live without a static", mutate(byName.get("ship_selected.static_none"), n -> n.put("static_source", "live")));
+        bad.put("static_source none with a static", mutate(byName.get("ship_selected"), n -> n.put("static_source", "none")));
+        bad.put("static_source stored_unavailable with a static", mutate(byName.get("ship_selected.static_stored"), n -> n.put("static_source", "stored_unavailable")));
+        bad.put("static_updated_at not a date-time", mutate(byName.get("ship_selected.static_stored"), n -> n.put("static_updated_at", "5 hours ago")));
         bad.put("port_calls unknown status", mutate(byName.get("ship_selected"), n -> ((ObjectNode) n.get("port_calls")).put("status", "guessing")));
         bad.put("port_calls raw error text", mutate(byName.get("ship_selected.port_calls_error"), n -> ((ObjectNode) n.get("port_calls")).put("error", "x")));
         bad.put("port_calls retired pending status", mutate(byName.get("ship_selected.port_calls_none"), n -> ((ObjectNode) n.get("port_calls")).put("status", "pending")));

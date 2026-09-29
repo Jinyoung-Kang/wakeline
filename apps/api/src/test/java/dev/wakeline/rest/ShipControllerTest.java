@@ -40,6 +40,8 @@ class ShipControllerTest {
         /** lookup 만 실패(검색 문장은 성공한 뒤 DB 가 끊긴 경우). */
         volatile boolean lookupDown;
         StoredShip stored;
+        /** stored 가 위치로만 만든 행(stat null)일 때 그 행의 MMSI. */
+        String storedMmsi;
         final List<TrackPoint> points = new ArrayList<>();
         final List<AisGap> gaps = new ArrayList<>();
 
@@ -47,7 +49,8 @@ class ShipControllerTest {
 
         @Override public StoredShip find(String mmsi) {
             if (down) throw new CannotGetJdbcConnectionException("down");
-            return stored != null && stored.stat() != null && stored.stat().mmsi().equals(mmsi) ? stored : null;
+            if (stored == null) return null;
+            return mmsi.equals(stored.stat() != null ? stored.stat().mmsi() : storedMmsi) ? stored : null;
         }
 
         @Override public Instant lastPositionAt(String mmsi) {
@@ -175,11 +178,16 @@ class ShipControllerTest {
         mvc.perform(get("/api/v1/ships/440000001")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.state.position_source").value("estimated"))
                 .andExpect(jsonPath("$.static.name").value("HANJIN BUSAN"))
+                .andExpect(jsonPath("$.static_source").value("live")) // 계약 v5 §G17 — 메모리(선박 스트림)
+                .andExpect(jsonPath("$.static_updated_at").doesNotExist())
                 .andExpect(jsonPath("$.category").value("cargo"));
-        // 실시간인데 정적 정보가 메모리에 없으면 DB 에서
-        repo.stored = new ShipRepository.StoredShip(stat("440000002", "FROM DB", 80), T.minusSeconds(86_400), T.minusSeconds(600));
+        // 실시간인데 정적 정보가 메모리에 없으면 DB 에서 — 저장값이라고 밝힌다(stored + 저장 행의 updated_at)
+        ShipStatic fromDb = stat("440000002", "FROM DB", 80);
+        repo.stored = new ShipRepository.StoredShip(fromDb, T.minusSeconds(86_400), T.minusSeconds(600));
         mvc.perform(get("/api/v1/ships/440000002")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.static.name").value("FROM DB"))
+                .andExpect(jsonPath("$.static_source").value("stored"))
+                .andExpect(jsonPath("$.static_updated_at").value(fromDb.updatedAt().toString()))
                 .andExpect(jsonPath("$.category").value("tanker"))
                 .andExpect(jsonPath("$.first_recorded_at").exists())
                 .andExpect(jsonPath("$.last_seen").doesNotExist())
@@ -193,13 +201,22 @@ class ShipControllerTest {
                 .andExpect(jsonPath("$.last_seen_at").value(T.minusSeconds(86_000).toString()))
                 .andExpect(jsonPath("$.state").value(nullValue()))
                 .andExpect(jsonPath("$.static.name").value("HISTORY"))
+                .andExpect(jsonPath("$.static_source").value("stored"))
                 .andExpect(jsonPath("$.meta.provider").value("db"));
+        // 위치로만 만든 행(정적 보고를 받은 적 없음) — 정적 정보도 출처도 없다
+        repo.stored = new ShipRepository.StoredShip(null, T.minusSeconds(86_400), T.minusSeconds(86_000));
+        repo.storedMmsi = "440000097";
+        mvc.perform(get("/api/v1/ships/440000097")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.static").doesNotExist())
+                .andExpect(jsonPath("$.static_source").doesNotExist())
+                .andExpect(jsonPath("$.static_updated_at").doesNotExist());
         mvc.perform(get("/api/v1/ships/440000098")).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/ships/44000009")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("BAD_MMSI"));
         // DB 장애: 실시간 선박은 200(db_unavailable), 모르는 선박은 503(없다고 단정하지 않는다)
         repo.down = true;
         mvc.perform(get("/api/v1/ships/440000002")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.static").value(nullValue()))
+                .andExpect(jsonPath("$.static_source").doesNotExist())
                 .andExpect(jsonPath("$.category").value("unknown"))
                 .andExpect(jsonPath("$.meta.db_unavailable").value(true));
         mvc.perform(get("/api/v1/ships/440000098")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));

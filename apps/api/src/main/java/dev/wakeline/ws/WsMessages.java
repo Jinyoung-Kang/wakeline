@@ -108,8 +108,21 @@ public final class WsMessages {
      */
     public record ShipsGridMsg(String type, Instant ts, double cellDeg, @JsonRawValue String cells, Boolean capped) {}
 
+    /** ship_selected.static_source(계약 v5 §G17): api 메모리(ShipStore — 선박 스트림에서 받은 정적 정보). */
+    public static final String STATIC_LIVE = "live";
+    /** 메모리에 없어 DB ship 표의 마지막 저장 정적 보고를 실었다(static_updated_at = 저장 행의 updated_at). */
+    public static final String STATIC_STORED = "stored";
+    /** 메모리에도 DB 에도 정적 보고가 없다(static null). */
+    public static final String STATIC_NONE = "none";
+    /** 메모리에 없고 DB 를 읽지 못했다(시간 초과 · 연결 없음 — 저장돼 있는지 모름, static null). */
+    public static final String STATIC_STORED_UNAVAILABLE = "stored_unavailable";
+
     /**
      * 선택 선박: state(ShipState 전체)·static(ShipStatic 전체) — 각각 없으면 null(키는 남긴다). 이미 직렬화된 JSON.
+     * static_source(계약 v5 §G17): static 의 출처 — live · stored · none · stored_unavailable({@link #STATIC_LIVE} 등). null 은 저장 정적 보고를 읽는 쪽이
+     * 연결되지 않은 구성(시험)에서 메모리에 없을 때뿐이다(키는 남긴다). static_updated_at: stored 일 때만 저장 행(ship)의 updated_at — DB 에 기록된 수신
+     * 시각(= static.updated_at): 내용이 바뀔 때와 수집기 재시작 · 선박이 수집기 메모리에서 빠졌다(30분 무수신 · 상한) 다시 잡힐 때 새로 기록되므로 첫 수신도
+     * 마지막 수신도 아니다({@link dev.wakeline.persist.StoredStaticReader}). 그 밖에는 null(키는 남긴다).
      * destination_info(계약 v4 §B): 보고된 목적지의 결정적 풀이 — 목적지를 모르면 null(키는 남긴다).
      * port_calls(ADR-022 개정): 호출부호로 DB 색인에서 찾은 한국 항만 입출항(해양수산부 PORT-MIS — 수집기가 색인한다) — 늘 객체(상태로 말한다). null 은 읽는 쪽이
      * 연결되지 않은 구성(시험)뿐이다(키는 남긴다).
@@ -117,6 +130,8 @@ public final class WsMessages {
     public record ShipSelectedMsg(String type, String mmsi,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonRawValue String state,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonRawValue @JsonProperty("static") String stat,
+                                  @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("static_source") String staticSource,
+                                  @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("static_updated_at") String staticUpdatedAt,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("destination_info") DestinationInfo destinationInfo,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("port_calls") PortCallsInfo portCalls) {}
 

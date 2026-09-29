@@ -80,6 +80,12 @@ class WsIntegrationTest {
             };
             return new dev.wakeline.portcalls.PortCallReader(none, new StringRedisTemplate(), m);
         }
+        /** 저장 정적 보고(계약 v5 §G17)도 DB 가 없는 구성 — 메모리에 정적 정보가 없는 선박은 static_source stored_unavailable. */
+        @Bean dev.wakeline.persist.StoredStaticReader storedStaticReader(MeterRegistry m) {
+            return new dev.wakeline.persist.StoredStaticReader(mmsi -> {
+                throw new org.springframework.dao.DataAccessResourceFailureException("no database in this test");
+            }, System::currentTimeMillis, m);
+        }
     }
 
     @BeforeAll
