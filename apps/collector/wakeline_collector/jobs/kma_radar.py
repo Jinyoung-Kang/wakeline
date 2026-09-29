@@ -31,7 +31,8 @@
   완전하다는 뜻이 아니다)는 기준에 닿은 프레임이 REF_MIN_SUPPORT(2)개 이상일 때만 — 기준이 자기 자신뿐이면 판정하지 않는다. 지점 수를 모르는
   옛 항목은 세지 않고 판정도 두지 않는다(모름). 60분 · 2개는 선택값이다.
 - 다시 받기(ADR-021): 정규 후보를 다 받은 뒤, 부분 합성 프레임 중 tm 이 REFETCH_MAX_AGE_S(30분) 안이고 마지막 시도(처음 받은 시각 또는
-  다시 받은 시각)가 REFETCH_SPACING_S(4분) 넘게 지난 것을 오래된 tm 부터 주기마다 REFETCH_MAX_PER_CYCLE(2)개까지 다시 받는다. 헤더의 지점
+  다시 받은 시각)가 REFETCH_SPACING_S(4분) 넘게 지난 것을 주기마다 REFETCH_MAX_PER_CYCLE(2)개까지 다시 받는다 — 다시 받은 횟수가 적은 것 →
+  마지막 시도가 오래된 것 → 오래된 tm 순(계속 부분 합성인 프레임이 자리를 독차지하지 않게). 헤더의 지점
   수가 늘었을 때만 PNG · 항목(지점 · 에코 셀 · raw_ref · fetched_at) · (최신 프레임이면) meta 의 헤더 값을 바꾸고, 쓰지 않은 원본은 보관하지
   않는다. meta fetched_at(latest_tm 을 처음 저장한 시각 — STALE 시계)은 다시 받기로 옮기지 않는다.
   시도(refetches · refetched_at)와 바꾼 수(upgrades)는 항목에 남는다. 예산은 한 번에 1 을 예약하되 남은 하루(UTC)의 정규 주기 몫(주기당
@@ -166,12 +167,17 @@ def _parse_iso(v: object) -> datetime | None:
     return t if t.tzinfo is not None else None
 
 
+_NEVER = datetime.min.replace(tzinfo=UTC)
+
+
 def select_refetch(frames: list[dict], now_kst: datetime, now_utc: datetime) -> list[str]:
-    """다시 받을 부분 합성 프레임(오래된 tm 부터, 최대 REFETCH_MAX_PER_CYCLE 개): partial 이 참이고, tm 이 REFETCH_MAX_AGE_S 안이고
-    (now_kst — KST 벽시계), 마지막 시도(fetched_at · refetched_at 중 늦은 것)가 REFETCH_SPACING_S 이상 지난 것. 시도 시각을 모르면 막지 않는다."""
+    """다시 받을 부분 합성 프레임(최대 REFETCH_MAX_PER_CYCLE 개): partial 이 참이고, tm 이 REFETCH_MAX_AGE_S 안이고(now_kst — KST 벽시계),
+    마지막 시도(fetched_at · refetched_at 중 늦은 것)가 REFETCH_SPACING_S 이상 지난 것. 시도 시각을 모르면 막지 않는다.
+    순서: 다시 받은 횟수(refetches)가 적은 것 → 마지막 시도가 오래된 것 → 오래된 tm. 오래된 tm 부터만 고르면 계속 부분 합성인 프레임
+    (레이더 장애 등) 둘이 주기마다 두 자리를 차지해 새 부분 합성 프레임이 기한 끝 무렵에야 처음 다시 받혔다(리뷰 모의)."""
     now_kst = now_kst.replace(tzinfo=None)
-    out: list[str] = []
-    for f in sorted(frames, key=lambda f: str(f.get("tm"))):
+    eligible: list[tuple[int, datetime, str]] = []
+    for f in frames:
         t = _tm_dt(f.get("tm"))
         if f.get("partial") is not True or t is None:
             continue
@@ -180,8 +186,10 @@ def select_refetch(frames: list[dict], now_kst: datetime, now_utc: datetime) -> 
         last = max((d for d in (_parse_iso(f.get("fetched_at")), _parse_iso(f.get("refetched_at"))) if d), default=None)
         if last is not None and (now_utc - last).total_seconds() < REFETCH_SPACING_S:
             continue
-        out.append(f["tm"])
-    return out[:REFETCH_MAX_PER_CYCLE]
+        tries = f.get("refetches")
+        tries = tries if isinstance(tries, int) and not isinstance(tries, bool) and tries >= 0 else 0
+        eligible.append((tries, last or _NEVER, f["tm"]))
+    return [tm for _n, _last, tm in sorted(eligible)[:REFETCH_MAX_PER_CYCLE]]
 
 
 def refetch_headroom(now: datetime, poll_s: float | None = None) -> int:

@@ -356,6 +356,46 @@ def test_refetch_picks_partial_frames_at_most_30_min_old_spaced_4_min_oldest_fir
     assert select_refetch(recent, now_kst, now_utc) == []  # 14:52 에 받았다 — 3분 전
 
 
+def test_refetch_takes_the_least_refetched_first_then_the_longest_waiting_then_the_oldest_tm():
+    """주기당 2개를 공정하게: 다시 받은 횟수가 적은 것 → 마지막 시도가 오래된 것 → 오래된 tm. 오래된 두 프레임이 계속 부분 합성이어도
+    새 부분 합성 프레임이 기한 끝까지 밀려나지 않는다('기한까지 다시 받기 대상' 이 빈말이 되지 않게)."""
+    from wakeline_collector.jobs.kma_radar import annotate_partial, select_refetch
+
+    now_utc = _utc_of("202609291418", 40)
+    at = lambda m: _iso(_utc_of("202609291413", 40) + timedelta(minutes=m))  # noqa: E731
+    frames = annotate_partial(
+        [
+            _entry("202609291350", 15),
+            _entry("202609291355", 15),
+            _entry("202609291400", 14, refetches=2, refetched_at=at(0)),
+            _entry("202609291405", 14, refetches=1, refetched_at=at(0)),
+            _entry("202609291410", 14, refetches=0),  # 14:13:40 에 처음 받음 — 다시 받은 적 없다
+        ]
+    )
+    assert select_refetch(frames, _tm("202609291418") + timedelta(seconds=40), now_utc) == ["202609291410", "202609291405"]
+
+
+async def test_one_radar_offline_every_partial_frame_is_first_refetched_one_spacing_after_its_first_look(env):
+    """리뷰 모의(한 지점이 14:00 부터 꺼져 14:xx 프레임이 계속 14/15): 오래된 tm 부터 고르면 14:00 · 14:05 가 주기마다 두 자리를 차지해
+    14:10–14:25 는 tm + 23.7분에야 처음 다시 받았다. 이제는 모든 부분 합성 프레임이 처음 받은 뒤 첫 가능한 주기(tm + 8분 40초)에 다시 받는다."""
+    mod, r, ctx, clock = env
+    await _seed(mod, r, [_entry("202609291350", 15), _entry("202609291355", 15)])
+    tms = [f"2026092914{m:02d}" for m in range(0, 35, 5)]
+    prov = SitesKma(clock, ["202609291350", "202609291355"], {t: [14] for t in tms})
+    job = mod.KmaRadarJob(prov, ctx)
+    first_refetch: dict[str, datetime] = {}
+    for tm in tms:
+        clock["set"](tm, 3 * 60 + 40)  # 새 tm 을 처음 받는 주기(tm + 3분 40초)
+        prov.listing.append(tm)
+        before = len(prov.binaries)
+        await job.run_once()
+        assert prov.binaries[before] == tm  # 정규 후보가 먼저
+        for again in prov.binaries[before + 1 :]:
+            first_refetch.setdefault(again, clock["kst"])
+    for tm in tms[:-1]:  # 마지막 tm 은 다음 주기가 없다
+        assert first_refetch[tm] - _tm(tm) == timedelta(minutes=8, seconds=40), tm
+
+
 def test_refetch_headroom_is_the_regular_share_until_utc_midnight_at_three_calls_per_cycle():
     """정규 주기 몫 = (남은 초 // 주기 + 1) × 3(목록 1 + 새 프레임 1 + 일시 오류 다시 부르기 1 — 선택값). 기상 작업과 같은 규칙(budget.regular_headroom)."""
     from wakeline_collector.budget import regular_headroom
