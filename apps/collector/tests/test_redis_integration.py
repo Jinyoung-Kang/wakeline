@@ -112,8 +112,11 @@ async def test_route_cache_set_ex_and_exists_with_collector_acl(admin, collector
 
 
 async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin, collector):
-    """ADR-023: 수집기 규칙으로 스냅샷 SET EX 1200 · 부정 캐시 HSET/HGETALL · 예산 Lua · 상태 해시가 되고, 지우기(DEL)는 거부된다."""
-    from test_traffic_grid_job import CELLS, Clock, FakeKomsa, FakeWfs, TGDb, komsa_body
+    """ADR-023: 수집기 규칙으로 스냅샷 SET EX 1200 · 부정 캐시 HSET/HGETALL · 예산 Lua(하루 · 시간 창) · 상태 해시가 되고,
+    지우기(DEL · HDEL) · 모양 바꾸기(XADD)는 거부된다(두 이름은 셀렉터로만 닿는다)."""
+    from test_traffic_grid_job import CELLS, T0, Clock, FakeKomsa, FakeWfs, TGDb, komsa_body
+
+    from wakeline_collector.budget import hour_key
 
     from wakeline_collector.jobs.context import JobContext
     from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, SNAPSHOT_KEY, TrafficGridJob
@@ -126,6 +129,7 @@ async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin
         NEGATIVE_KEY,
         day_key("komsa_traffic"),
         day_key("mof_grid4"),
+        hour_key("komsa_traffic", T0),
         "wakeline:provider:komsa_traffic",
         "wakeline:provider:mof_grid4",
     )
@@ -154,6 +158,12 @@ async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin
             await collector.delete(SNAPSHOT_KEY)
         with pytest.raises(NoPermissionError):
             await collector.set(NEGATIVE_KEY, "x")
+        with pytest.raises(NoPermissionError):
+            await collector.hdel(NEGATIVE_KEY, "GR4_F2K41_C4")
+        with pytest.raises(NoPermissionError):
+            await collector.xadd(SNAPSHOT_KEY, {"x": "y"})
+        assert (await admin.hgetall(hour_key("komsa_traffic", T0)))["used"] == "1"
+        assert 0 < await admin.ttl(hour_key("komsa_traffic", T0)) <= 7200
     finally:
         await admin.delete(*keys)
 

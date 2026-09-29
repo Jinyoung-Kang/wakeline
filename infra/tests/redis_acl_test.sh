@@ -282,11 +282,17 @@ denied "허용 목록 밖 wakeline:demand:*"      "${K[@]}" hgetall wakeline:dem
 denied "선박 스트림 wakeline:ships"          "${K[@]}" xadd wakeline:ships '*' payload x
 denied "AIS 상태 wakeline:ais:status"       "${K[@]}" hset wakeline:ais:status connected 1
 denied "노선 캐시와 비슷한 이름 wakeline:routes" "${K[@]}" set wakeline:routes x
-# ADR-023: 연안 교통량 키는 SET EX(스냅샷) · 해시 쓰기(부정 캐시)만 — 지우거나 만료를 바꾸거나 비슷한 이름에 쓰지 못한다
+# ADR-023: 연안 교통량 키는 셀렉터로만 — 스냅샷은 SET, 부정 캐시는 HSET · HGETALL. 지우거나 만료를 바꾸거나 모양을 바꾸거나 비슷한 이름에 쓰지 못한다
+# (SET 에 EX 를 붙이게 강제하는 ACL 은 없다 — 수집기가 늘 EX 1200 을 붙이고, api 의 regDt 나이 판정이 실제 방어선이다)
 denied "DEL wakeline:traffic_grid"          "${K[@]}" del wakeline:traffic_grid
 denied "EXPIRE wakeline:traffic_grid"       "${K[@]}" expire wakeline:traffic_grid 1
 denied "SET 으로 부정 캐시 해시 덮어쓰기"       "${K[@]}" set wakeline:traffic_grid:negative x
 denied "DEL wakeline:traffic_grid:negative" "${K[@]}" del wakeline:traffic_grid:negative
+denied "HDEL wakeline:traffic_grid:negative(부정 캐시 항목 지우기)" "${K[@]}" hdel wakeline:traffic_grid:negative GR4_X
+denied "HINCRBY wakeline:traffic_grid:negative" "${K[@]}" hincrby wakeline:traffic_grid:negative GR4_Y 1
+denied "XADD wakeline:traffic_grid(스트림으로 바꿔 api 가 WRONGTYPE)" "${K[@]}" xadd wakeline:traffic_grid '*' x y
+denied "HSET wakeline:traffic_grid(해시로 바꾸기)" "${K[@]}" hset wakeline:traffic_grid a b
+denied "GET wakeline:traffic_grid(수집기는 읽지 않는다)" "${K[@]}" get wakeline:traffic_grid
 denied "비슷한 이름 wakeline:traffic_grid:x" "${K[@]}" set wakeline:traffic_grid:x y
 denied "비슷한 이름 wakeline:traffic_grids"  "${K[@]}" set wakeline:traffic_grids y
 

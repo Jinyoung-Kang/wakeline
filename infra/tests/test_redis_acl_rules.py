@@ -112,7 +112,9 @@ class RedisAclRulesTest(unittest.TestCase):
             ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*", "~wakeline:traffic_grid"],
             ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
             ("expire",): ["~budget:*", "~wakeline:provider:*:ratelimit:*"],
-        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만 — 스트림·다른 해시에는 닿지 않는다")
+            ("hgetall", "hset"): ["~wakeline:traffic_grid:negative"],
+        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만, 연안 교통량 부정 캐시는 HSET·HGETALL 만 — "
+           "스트림·다른 해시에는 닿지 않는다")
 
     def test_collector_expire_reaches_only_the_429_history_among_provider_keys(self):
         # R-17 보존의 429 이력 해시(wakeline:provider:{공급자}:ratelimit:{작업})에 TTL 을 건다. 같은 접두어의 공급자 상태 해시
@@ -154,7 +156,7 @@ class RedisAclRulesTest(unittest.TestCase):
             "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
             "~wakeline:provider:*", "~wakeline:radar_kr:*", "%R~wakeline:settings", "~budget:*",
             "%R~wakeline:demand:hot", "%R~wakeline:demand:focus", "%R~wakeline:demand:hot:meta", "%R~wakeline:demand:focus:meta",
-            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs", "~wakeline:traffic_grid", "~wakeline:traffic_grid:negative"]))
+            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs"]))
         self.assertEqual(sorted(self.keys("wakeline_ais")), sorted([
             "~wakeline:ships", "~wakeline:ais:*", "%R~wakeline:settings", "%W~wakeline:logs"]))
 
@@ -181,20 +183,25 @@ class RedisAclRulesTest(unittest.TestCase):
                 self.assertEqual(covers(user, "wakeline:logs:client"), [])
                 self.assertEqual(covers(user, "wakeline:logs"), ["%W~wakeline:logs"])
 
-    # --- ADR-023: 연안 교통량 스냅샷 wakeline:traffic_grid(SET EX) · 부정 캐시 wakeline:traffic_grid:negative(해시) ---
-    def test_collector_writes_only_the_two_traffic_grid_keys(self):
+    # --- ADR-023: 연안 교통량 스냅샷 wakeline:traffic_grid(SET) · 부정 캐시 wakeline:traffic_grid:negative(HSET · HGETALL) ---
+    def test_collector_reaches_the_two_traffic_grid_keys_only_through_selectors(self):
+        """루트 키 목록에 두면 루트 명령 전부(HDEL · HINCRBY · XADD …)가 그 키에 닿는다(검토 지적) — 셀렉터로 쓰는 명령만 준다.
+        SET 에 EX 를 붙이게 강제하는 ACL 은 없다: 수집기가 늘 EX 1200 을 붙이고, 실제 방어선은 api 의 regDt 나이 판정(stale)이다."""
         import fnmatch
 
-        keys = self.keys("wakeline_collector")
-        self.assertEqual([k for k in keys if "traffic" in k], ["~wakeline:traffic_grid", "~wakeline:traffic_grid:negative"], "정확한 이름 둘 · 와일드카드 없음")
-        (set_sel,) = [s for s in self.selectors("wakeline_collector") if "+set" in s]
-        self.assertIn("~wakeline:traffic_grid", set_sel, "스냅샷은 SET EX 로 쓴다")
-        self.assertNotIn("~wakeline:traffic_grid:negative", set_sel, "부정 캐시 해시는 SET 으로 덮어쓰지 못한다")
-        for sel in self.selectors("wakeline_collector"):
-            if "+del" in sel or "+expire" in sel:
-                pats = [k.split("~", 1)[1] for k in sel if k.startswith("~")]
-                for key in ("wakeline:traffic_grid", "wakeline:traffic_grid:negative"):
-                    self.assertFalse(any(fnmatch.fnmatchcase(key, p) for p in pats), f"{key} 는 지우거나 만료시키지 못한다(TTL 은 SET EX 로만)")
+        self.assertFalse([k for k in self.keys("wakeline_collector") if "traffic" in k], "루트 키 목록에 없다")
+        sels = self.selectors("wakeline_collector")
+        traffic = [s for s in sels if any("traffic" in k for k in s)]
+        self.assertEqual(sorted(sorted(s) for s in traffic), sorted([
+            sorted(["~wakeline:route:*", "~wakeline:radar_kr:frames", "~wakeline:radar_kr:frame:*", "~wakeline:traffic_grid", "+set"]),
+            sorted(["~wakeline:traffic_grid:negative", "+hset", "+hgetall"]),
+        ]), "스냅샷은 SET 만, 부정 캐시는 HSET · HGETALL 만 — 정확한 이름(와일드카드 없음)")
+        for sel in sels:
+            pats = [k.split("~", 1)[1] for k in sel if k.startswith("~")]
+            cmds = {c for c in sel if c.startswith("+")}
+            for key in ("wakeline:traffic_grid", "wakeline:traffic_grid:negative"):
+                if any(fnmatch.fnmatchcase(key, p) for p in pats):
+                    self.assertFalse(cmds & {"+del", "+expire", "+hdel", "+hincrby", "+xadd", "+get"}, f"{key}: {cmds}")
 
     def test_ais_has_no_traffic_grid_access_and_api_reads_it(self):
         self.assertFalse([k for k in self.keys("wakeline_ais") if "traffic" in k])
