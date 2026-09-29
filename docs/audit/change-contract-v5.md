@@ -207,18 +207,23 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `1192000/apVhdService_G4s/getOpnG4sWFS`), 키 하나 `DATA_GO_KR_SERVICE_KEY`(collector 에만 — 격리 스택은 빈 값, 인코딩 키 · 디코딩 키 모두). 공급자 이름 ·
     예산 키 `komsa_traffic`(하루 400) · `mof_grid4`(하루 6,000), 둘 다 엄격 예산. 호스트 버킷 1.0 req/s(burst 2), 격자 조회 우선순위 `PRIORITY_BACKFILL`(4).
   - Redis(collector 가 쓰고 api 가 읽는다): `wakeline:traffic_grid` 문자열 JSON(SET EX 1200) = `{v:1, reg_dt_kst(+09:00), reg_dt_utc, fetched_at, total,
-    total_count|null, partial, rejected, resolved, unresolved, pending, not_found, off_grid, cell_deg: 0.025, cells: [[grid_no, lat_min, lon_min, 척수, 밀집도 %], …]}`
-    (기하를 확인한 칸만 · grid_no 순 · 발행 시각 없음 — 같은 입력이면 같은 값). `wakeline:traffic_grid:negative` 해시(grid_no → `{"reason":"not_found"|"off_grid","at"}`).
+    total_count|null, partial, rejected, resolved, unresolved, pending, not_found, off_grid, failed, cell_deg: 0.025, cells: [[grid_no, lat_min, lon_min, 척수, 밀집도 %], …]}`
+    (기하를 확인한 칸만 · grid_no 순 · 발행 시각 없음 — 같은 입력이면 같은 값 · 미해석 = pending + not_found + off_grid + failed). `wakeline:traffic_grid:negative`
+    해시(grid_no → `{"reason":"not_found"|"off_grid"|"failed","at"}` — failed 는 1일, 나머지 7일). 시간 창 예산 `budget:komsa_traffic:h:{yyyymmddHH}`(UTC 시, 15).
     heartbeat `wakeline:collector` 필드 `traffic_grid_state`(active · no_key · fixture · operator_off) · `traffic_grid_last_ok` · `traffic_grid_reg_dt` ·
-    `traffic_grid_resolved` · `traffic_grid_unresolved` · `traffic_grid_cells_known` · `traffic_grid_pending` · `traffic_grid_calls_komsa` · `traffic_grid_calls_wfs`
-    (모르면 빈 값) · `traffic_grid_at` · `traffic_grid_lag_s`. ACL: collector 에 `~wakeline:traffic_grid`(SET 셀렉터로만) · `~wakeline:traffic_grid:negative` 두 이름만.
+    `traffic_grid_resolved` · `traffic_grid_unresolved` · `traffic_grid_cells_known` · `traffic_grid_pending` · `traffic_grid_failed` · `traffic_grid_calls_komsa` ·
+    `traffic_grid_calls_wfs` · `traffic_grid_publish_delay_s`(배운 발행 지연 — 배우기 전 빈 값)(모르면 빈 값) · `traffic_grid_at` · `traffic_grid_lag_s`.
+    ACL: 두 이름은 collector 루트 키 목록에 없고 셀렉터로만 — `~wakeline:traffic_grid` SET, `~wakeline:traffic_grid:negative` HSET · HGETALL(EX 는 ACL 로
+    강제할 수 없다 — api 의 regDt 나이 판정이 방어선).
   - DB: Flyway **V14** `marine_grid4(grid_no text pk, lat_min, lon_min, lat_max, lon_max double precision, gid int, fetched_at timestamptz)` — 한 칸 CHECK ·
     grid_no 형식 CHECK, collector SELECT · INSERT · UPDATE, api SELECT. (V13 은 다른 레인 — 합칠 때 번호 순서를 맞춘다.)
   - REST `GET /api/v1/traffic/grid`(공개 · `Cache-Control: public, max-age=30` · ETag `"t<원문 SHA-256 앞 8바이트>[-s]"` · 꺼짐 `"td-<이유>"` · 없음 `"tn"` ·
     형식 오류 `"ti"` · 요청 제한 공통): 늘 있는 키 `available` · `status`(ok · stale · disabled · no_data · invalid) · `stale_after_s`(900) · `cell_deg`(0.025) ·
-    `cells` · `source{provider, grid, note}` · `time_zone` · `meta`, 그 밖(`disabled_reason` · `reg_dt_kst` · `reg_dt_utc` · `fetched_at` · `age_s` · 수들 ·
-    `partial` · `invalid_cells`)은 모르면 키가 없다. `available` ⇔ `status == ok`, 그 밖에는 `cells: []`. stale = regDt 가 900 s 넘게 지남. disabled 는
-    heartbeat 가 120 s 안일 때만. 검사: `tools/rest_contract_check.py` `traffic_grid`(표본 RestSamplesIT) — 교차 규칙은 ADR-023 §6.
-  - 웹: 레이어 키 `traffic`(선택 필드 — 없으면 끔, 이 브라우저에 기억), 조회 90 s · `If-None-Match` · 탭이 보일 때만 · 켜져 있을 때만, 범례 문구
+    `cells` · `source{provider, grid, note}` · `time_zone` · `meta`, 그 밖(`disabled_reason` · `reg_dt_kst` · `reg_dt_utc` · `fetched_at` · `age_s` · 수들(`failed`
+    포함) · `partial` · `invalid_cells`)은 모르면 키가 없다. `available` ⇔ `status == ok`, 그 밖에는 `cells: []`. stale = regDt 가 900 s 넘게 지남. regDt 가
+    api 시계보다 120 s 넘게 미래면 invalid. disabled 는 heartbeat 가 120 s 안일 때만. 검사: `tools/rest_contract_check.py` `traffic_grid`(표본 RestSamplesIT) —
+    교차 규칙은 ADR-023 §6(수의 합 · ok/stale 의 regDt 가 meta.generated_at 보다 120 s 넘게 미래가 아님).
+  - 웹: 레이어 키 `traffic`(선택 필드 — 없으면 끔, 이 브라우저에 기억), 조회 90 s · `If-None-Match` · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만,
+    ok 라도 서버 시각 보정 시계로 regDt + stale_after_s 가 지나면 칸을 그리지 않는다(조회 실패 때도), 범례 문구
     "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님", 툴팁 기준 시각은 KST 와 UTC 를 함께("MM-DD HH:MM:SS KST · MM-DD HH:MM:SS UTC").
   - 가림(§C5 확장): 언어 간 벡터에 `serviceKey=` · `ServiceKey=`(인코딩 · 디코딩 키) · JSON `"ServiceKey"` · `SERVICEKEY=` 네 사례. 키 값은 세 형태로 값 치환.
