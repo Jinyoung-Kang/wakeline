@@ -39,7 +39,6 @@ class FlakyOnce(ObservedPortMis):
         return super().__call__(req)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: a timeless revision violates V15 and the job holds every authority forever")
 async def test_two_times_in_one_revision_neither_keep_a_timeless_revision_nor_stall_the_index():
     fake = ObservedPortMis([])
     job, db, _r, clock = _job(direct=fake)

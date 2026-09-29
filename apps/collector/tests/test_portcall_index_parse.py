@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from portcall_index_fakes import v15_violation
 from portmis_observed import empty_bytes, full_record_bytes, real_item, response
 
 from wakeline_collector.portcalls import (
@@ -122,14 +123,24 @@ def test_exit_is_read_from_tkoffdt_only_not_from_an_etryptdt_on_the_exit_detail(
             datetime(2026, 9, 23, 22, 0, tzinfo=UTC),
             "최초",
         ),
-        # 같은 판에 서로 다른 시각 — 고르지 않는다
+        # 같은 판에 서로 다른 시각 — 고르지 않는다: 시각도 판 이름도 없다(판 이름만 남으면 V15 CHECK 가 그 날 전체를 되돌린다)
         (
             [
                 ("최종", "입항", "etryptDt", "2026-09-24T07:00:00+09:00"),
                 ("최종", "입항", "etryptDt", "2026-09-24T08:17:00+09:00"),
             ],
             None,
-            "최종",
+            None,
+        ),
+        # 최종이 서로 달라도 최초로 내려가지 않는다(더 나중 판이 있는데 옛 판을 답으로 보이지 않는다)
+        (
+            [
+                ("최초", "입항", "etryptDt", "2026-09-24T06:00:00+09:00"),
+                ("최종", "입항", "etryptDt", "2026-09-24T07:00:00+09:00"),
+                ("최종", "입항", "etryptDt", "2026-09-24T08:17:00+09:00"),
+            ],
+            None,
+            None,
         ),
         # 같은 판에 같은 시각 둘 — 하나로 정해진다
         (
@@ -147,6 +158,26 @@ def test_exit_is_read_from_tkoffdt_only_not_from_an_etryptdt_on_the_exit_detail(
 def test_revision_order_final_over_first(details, entry, revision):
     (row,) = parse_index_page(_page(_with_details(details)), "020", DAY).rows
     assert (row.entry_at, row.entry_revision) == (entry, revision)
+
+
+def test_conflicting_exit_times_keep_neither_and_parsed_rows_always_pass_the_v15_row_checks():
+    """판 이름은 시각과 함께만 — 어떤 details 조합이어도 해석한 행은 V15 의 행 CHECK 를 지킨다(어기면 그 날 전체가 되돌려진다)."""
+    conflicting_exit = _with_details(
+        [
+            ("최종", "입항", "etryptDt", "2026-09-24T08:17:00+09:00"),
+            ("최종", "출항", "tkoffDt", "2026-09-25T14:24:00+09:00"),
+            ("최종", "출항", "tkoffDt", "2026-09-25T15:00:00+09:00"),
+        ],
+        berth="북항",
+    )
+    (row,) = parse_index_page(_page(conflicting_exit), "020", DAY).rows
+    assert (row.entry_revision, row.exit_at, row.exit_revision, row.berth) == ("최종", None, None, "북항 최종")
+    conflicting_entry = _with_details(
+        [("최종", "입항", "etryptDt", "2026-09-24T07:00:00+09:00"), ("최종", "입항", "etryptDt", "2026-09-24T08:17:00+09:00")]
+    )
+    variants = [conflicting_exit, conflicting_entry, real_item(), _with_details([("최종", "입항", "etryptDt", None)])]
+    rows = parse_index_page(_page(*variants), "020", DAY).rows
+    assert len(rows) == 4 and [v15_violation(r) for r in rows] == [None] * 4
 
 
 def test_berth_comes_from_the_chosen_entry_report_else_the_chosen_exit_report():

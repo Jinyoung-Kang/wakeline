@@ -162,7 +162,9 @@ class PortCallRow:
     """색인 한 행(DB port_call) — 자연 키 (prt_ag_cd, clsgn, etrypt_year, etrypt_co). 모르는 값은 None(지어 채우지 않는다).
 
     entry_at · exit_at: 입항 detail 의 etryptDt · 출항 detail 의 tkoffDt(+09:00 만)를 판 순서(REVISIONS)대로 — 시각이 있는 첫 판의 것, 그 판 안에서
-    서로 다른 시각이 있으면 고르지 않고 None(그 판 이름은 남긴다). berth = 고른 입항 신고의 laidupFcltyNm(입항 신고가 없으면 고른 출항 신고의 것).
+    서로 다른 시각이 있으면 고르지 않는다: 시각도 판 이름도 None(뒤 판으로 내려가지 않는다 — 더 나중 판이 있는데 옛 판을 답으로 보이지 않게).
+    판 이름은 시각이 있을 때만 있다(V15 CHECK port_call_revision_needs_time — 어기면 그 날 전체가 되돌려진다).
+    berth = 고른 입항 신고의 laidupFcltyNm(입항 신고를 고르지 못했으면 고른 출항 신고의 것).
     """
 
     prt_ag_cd: str
@@ -228,7 +230,8 @@ class IndexPage:
 
 
 def _pick(details: list[ET.Element], kind: str) -> tuple[datetime | None, str | None, ET.Element | None]:
-    """(시각, 판, 고른 detail). 판 순서대로 이 종류의 신고 중 시각이 있는 첫 판 — 그 판 안의 시각이 둘 이상이면 (None, 판, None)."""
+    """(시각, 판, 고른 detail). 판 순서대로 이 종류의 신고 중 시각이 있는 첫 판 — 그 판 안의 시각이 둘 이상이면 (None, None, None):
+    판 이름만 남기지 않고(무엇의 판인지 모른다 — V15 CHECK), 뒤 판(최초)으로 내려가지도 않는다(최종이 있는데 최초를 답으로 보이지 않는다)."""
     tag = _TIME_TAG[kind]
     for rev in REVISIONS:
         same = [d for d in details if _text(d, "reqstSeNm") == rev and _text(d, "etryndNm") == kind]
@@ -236,7 +239,7 @@ def _pick(details: list[ET.Element], kind: str) -> tuple[datetime | None, str | 
         if not timed:
             continue
         if len({t for t, _ in timed}) > 1:
-            return None, rev, None  # 같은 판에 서로 다른 시각 — 고르지 않는다
+            return None, None, None  # 같은 판에 서로 다른 시각 — 고르지 않는다
         return timed[0][0], rev, timed[0][1]
     return None, None, None
 
@@ -282,9 +285,9 @@ def _index_row(el: ET.Element, clsgn: str, day: date) -> PortCallRow | None:
         dest_port_cd=_code(el, "dstnNatPrtCd", _PORT_CODE_RE),
         dest_port_nm=_text(el, "dstnPrtNm"),
         entry_at=entry_at,
-        entry_revision=entry_rev,
+        entry_revision=entry_rev if entry_at is not None else None,  # 판 이름은 시각과 함께만(V15 CHECK)
         exit_at=exit_at,
-        exit_revision=exit_rev,
+        exit_revision=exit_rev if exit_at is not None else None,
         berth=_text(berth_from, "laidupFcltyNm") if berth_from is not None else None,
     )
 

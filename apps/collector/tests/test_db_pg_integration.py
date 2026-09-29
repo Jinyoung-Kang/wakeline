@@ -265,3 +265,43 @@ async def test_port_call_day_upsert_withdraw_and_coverage_on_the_v15_schema():
     finally:
         await pool.execute("DELETE FROM port_call WHERE prt_ag_cd = $1", pa)
         await db.close(drain_s=2)  # 풀도 닫는다
+
+
+async def test_a_day_with_two_times_in_one_revision_is_accepted_by_the_v15_checks():
+    """리뷰 재현(2026-09-29): 한 판(최종)에 입항 시각이 둘인 item 을 해석한 행이 V15 CHECK port_call_revision_needs_time 에 걸려 그 날 전체가
+    되돌려졌다. 이제 해석기는 시각도 판 이름도 두지 않는다 — 같은 날의 다른 행과 함께 실제 V15 에 들어간다."""
+    import copy
+    import random
+    from datetime import date
+
+    from portmis_observed import response, synthetic_item
+
+    from wakeline_collector.portcalls import parse_index_page
+
+    pa = f"{random.randint(900, 999)}"
+    tag = uuid.uuid4().hex[:4].upper()
+    day = date(2026, 9, 24)
+    amb = synthetic_item(pa=pa, clsgn=f"M{tag}", entry="2026-09-24T07:00:00+09:00", count="009")
+    details = amb.find("details")
+    assert details is not None
+    second = copy.deepcopy(details[0])
+    second.find("etryptDt").text = "2026-09-24T08:17:00+09:00"  # type: ignore[union-attr]
+    details.append(second)
+    ok = synthetic_item(pa=pa, clsgn=f"K{tag}", entry="2026-09-24T10:00:00+09:00", count="010")
+    rows = parse_index_page(response([amb, ok], 2, 1, 50), pa, day).rows
+    assert len(rows) == 2
+    pool = await asyncpg.create_pool(URL, min_size=1, max_size=2)
+
+    async def factory() -> Any:
+        return pool
+
+    db = Db(pool_factory=factory)
+    try:
+        res = await db.apply_port_call_day(pa, day, rows, datetime.now(UTC), reset=True)
+        assert res is not None and res.applied and res.upserted == 2
+        got = {r["clsgn"]: r for r in await pool.fetch("SELECT * FROM port_call WHERE prt_ag_cd = $1", pa)}
+        assert (got[f"M{tag}"]["entry_at"], got[f"M{tag}"]["entry_revision"]) == (None, None)
+        assert got[f"K{tag}"]["entry_revision"] == "최종"
+    finally:
+        await pool.execute("DELETE FROM port_call WHERE prt_ag_cd = $1", pa)
+        await db.close(drain_s=2)
