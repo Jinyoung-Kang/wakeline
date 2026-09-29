@@ -3,7 +3,7 @@
  * 보고로 채우고 stored 로 밝힌다(static_updated_at = 저장 행의 updated_at).
  * - 검증(lib/ws-validate): api 가 실제 빌더로 만든 표본(fixtures/ws-samples.v1.json — live · stored · none · stored_unavailable)을 모두 받는다.
  *   출처가 틀리거나 static 과 어긋나면 그 값만 모름(null)으로 두고 센다 — 저장값에 실시간 표시를, 없는 정적 정보에 출처를 붙이지 않는다.
- * - 카드(ShipCard): 보이는 정적 정보가 저장값이면 정적 필드 바로 위에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 <KST · UTC> (경과)" — 실시간 값이 아님.
+ * - 카드(ShipCard): 보이는 정적 정보가 저장값이면 정적 필드 바로 위에 "저장된 AIS 정적 보고 · DB 기록 수신 시각 <KST> (경과)" — 실시간 값이 아님.
  *   시각은 저장 행의 updated_at 이고 그 내용의 첫 수신도 마지막 수신도 아니다(수집기 재시작 · 30분 무수신 뒤 같은 내용도 새 시각 — 수집기 test_ais_book).
  *   출처는 그 정적 정보를 준 쪽(WS → REST)의 것만. DB 를 읽지 못했으면 '없음' 이 아니라 '모름'. 실시간 값 · 정적 정보 없음에는 표시하지 않는다.
  *   '입출항도 이 호출부호로 찾음' 은 아래 입출항(WS port_calls)을 그 호출부호로 찾았을 때만 — WS 가 저장 보고를 읽지 못했으면 찾지 않았다고 적는다(리뷰).
@@ -131,7 +131,7 @@ describe("ship card: a stored static report is labelled next to the static field
   beforeEach(() => resetData());
   afterEach(() => resetData());
 
-  it("stored: the note names the stored report and the receive time recorded on the stored row (KST · UTC, age) — above the static rows", () => {
+  it("stored: the note names the stored report and the receive time recorded on the stored row (KST, age) — above the static rows", () => {
     const html = show(storedMsg());
     const t = text(html);
     expect(html).toContain('data-testid="ship-static-stored"');

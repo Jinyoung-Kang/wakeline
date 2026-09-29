@@ -236,7 +236,7 @@ describe("port-call helpers", () => {
 });
 
 describe("PortCallsSection (server-rendered)", () => {
-  it("ok: one stacked block per call (항만청 · 입항 · 출항 KST · UTC with revision · 선석 · 목적 · legs); the index line; truncation", () => {
+  it("ok: one stacked block per call (항만청 · 입항 · 출항 KST with revision · 선석 · 목적 · legs); the index line; truncation", () => {
     const html = render(parsed("ship_selected"), "AZAMARA PURSUIT");
     const t = text(html);
     expect(html).toContain('data-status="ok"');

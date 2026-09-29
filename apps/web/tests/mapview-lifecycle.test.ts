@@ -323,7 +323,7 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     return out;
   };
 
-  /** 기한 표기(compact KST · UTC — lib/time, UTC 날짜가 다르면 UTC 쪽에 날짜). 지금 시각에 따라 달라 형식기로 만든다(형식은 tests/dual-time 이 본다) */
+  /** 기한 표기(분까지 KST — lib/time fmtKstMinute). 지금 시각에 따라 달라 형식기로 만든다(형식은 tests/kst-time 이 본다) */
   const dueOf = (iso: string) => fmtKstMinute(iso);
 
   it("KMA timeline: the current frame's composite size, a warn marker for a partial frame and a per-frame strip (partial · at reference · no verdict)", async () => {

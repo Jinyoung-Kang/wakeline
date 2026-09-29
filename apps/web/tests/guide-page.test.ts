@@ -3,7 +3,7 @@
  * - 목차(넓은 화면 목록 · 좁은 화면 선택 상자)의 앵커와 절 id 가 같다(순서까지).
  * - 스크린샷: 결과(manifest)가 있으면 <img>(대체 글 · width · height · loading=lazy · decoding=async), 없으면 "스크린샷 준비 중" 자리표시.
  * - 번호: 그림 위 번호(HTML 겹침 — 이미지에 굽지 않음)마다 같은 번호의 설명 항목이 있고, 설명 목록은 1..n. 찍을 때 보이지 않은 번호는 목록에 그렇다고 적는다.
- * - 시각이 나오는 예는 KST 와 UTC 를 함께 적는다. 출처는 하단 출처 줄과 같은 목록(lib/attribution)에서.
+ * - 시각이 나오는 예는 KST 만 적는다(계약 v5 §G20 — 공유 형식기 lib/time 의 글자, 원문 토큰만 발표 그대로). 출처는 하단 출처 줄과 같은 목록(lib/attribution)에서.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

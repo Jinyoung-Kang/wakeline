@@ -1,7 +1,7 @@
 /**
  * 해결 처리(ADR-022 · 사용자 요청 "해결 완료된 [운영/로그] 메뉴에 있는 error 는 지우는 기능") — /logs 화면(실제 react-dom 마운트 — 최소 DOM + fetch 대역).
  * 묶음 · 항목 상세의 "해결 처리"(메모 선택, 확인) · "보이는 묶음 모두 해결 처리"(수를 말하는 확인) · "해결된 항목 보기" 토글 · "해결 처리로 숨김 N건" ·
- * 해결된 항목 · 묶음(보일 때)은 흐리게 "해결됨 · <by> · <upto KST · UTC>" + "되돌리기"(DELETE). 쓰기는 CSRF 헤더 · 세션 만료 처리 · 요청 id 를 붙인 오류,
+ * 해결된 항목 · 묶음(보일 때)은 흐리게 "해결됨 · <by> · <upto KST>" + "되돌리기"(DELETE). 쓰기는 CSRF 헤더 · 세션 만료 처리 · 요청 id 를 붙인 오류,
  * 화면은 201/204 뒤에만 바뀌고 영향받는 목록을 다시 불러온다. 지우지 않는다 — 가린 수를 늘 보인다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -136,7 +136,7 @@ describe("/logs: hidden by default, counted, and shown on request", () => {
     await open();
     expect(byTestId("logs-empty")!.textContent).toBe("조건에 맞는 항목 없음(최근 1 h) — 해결 처리로 숨긴 항목 4건('해결된 항목 보기'로 다시 봄)");
   });
-  it("'해결된 항목 보기' asks for resolved=show; resolved rows are muted with '해결됨 · <by> · <upto KST · UTC>'; 초기화 hides again", async () => {
+  it("'해결된 항목 보기' asks for resolved=show; resolved rows are muted with '해결됨 · <by> · <upto KST>'; 초기화 hides again", async () => {
     stub((_m, url) => logsRoutes(url, { aResolved: REF }));
     await open();
     expect(allByTestId("log-row")).toHaveLength(1); // 가림: A 는 해결됨

@@ -258,7 +258,7 @@ describe("ship track points and period (contract v5 §B3)", () => {
     expect(appendShipTrack(tr, { ts: T + 60_000, lon: 129.02, lat: 35 })).toBe(false); // 같은 시각 — 점도 늘지 않는다
     expect(tr.points).toHaveLength(2);
   });
-  it("hover tooltip: time (KST · UTC), speed in kn · km/h, course and navigation status — '—' when the point has none", () => {
+  it("hover tooltip: time (KST), speed in kn · km/h, course and navigation status — '—' when the point has none", () => {
     const t = shipTrackPointTip({ ts: iso(T), sog: 12.3, cog: 123.4, hdg: 120, nav: 0, src: "rest" }, "SYN ALPHA");
     expect(t.title).toBe("항적 점");
     expect(t.subtitle).toBe("SYN ALPHA");

@@ -598,7 +598,7 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
     const html = renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
     expect(html).toContain("최근 6 h 수신 공백 7회 · 합계 280 s");
     expect(html).toContain("60 s 이상 공백에서만 선을 끊습니다(저장 간격 60 s)");
-    expect(html.replace(/<[^>]+>/g, "").match(/수신 공백 \d\d-\d\d/g)).toHaveLength(5); // 구간은 <DualRange>(KST · UTC 두 부분)
+    expect(html.replace(/<[^>]+>/g, "").match(/수신 공백 \d\d-\d\d/g)).toHaveLength(5); // 구간은 <KstRange>(KST — 시간대는 끝에 한 번)
     expect(html).toContain("· 70 s"); // 가장 최근 공백의 길이
     setData({ shipTrack: { mmsi: "431011305", loaded: true, error: null, gaps: gaps.slice(0, 1), gapsTruncated: true, segments: 1, fromMs: null } });
     expect(renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }))).toContain("수신 공백 1회 이상(최신 목록만)");
