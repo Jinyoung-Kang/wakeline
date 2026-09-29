@@ -191,8 +191,8 @@ describe("port-call helpers", () => {
     expect(portCallStatusText({ ...d, disabled_reason: "fixture" })).toBe("fixture 모드 — 외부 조회 없음");
     expect(portCallStatusText({ ...d, disabled_reason: "operator" })).toBe("운영자가 조회를 껐음(운영 설정)");
     expect(portCallStatusText({ ...d, disabled_reason: null })).toBe("조회 꺼짐");
-    expect(portCallStatusText({ ...d, status: "none" })).toBe("최근 30일 한국 항만 입출항 기록 없음(호출부호 기준)");
-    expect(portCallStatusText({ ...d, status: "none", incomplete: true })).toContain("'기록 없음' 으로 판정하지 않음");
+    expect(portCallStatusText({ ...d, status: "none" })).toContain("확인 불가"); // 임시: clsgn 조회를 믿을 수 없다(tests/port-calls-none-stopgap.test.ts)
+    expect(portCallStatusText({ ...d, status: "none", incomplete: true })).toContain("확인 불가");
     expect(portCallStatusText({ ...d, status: "no_call_sign" })).toBe("AIS 정적 정보에 호출부호 없음 또는 조회 형식 밖(영문·숫자 3–7자) — 조회 불가");
     expect(portCallStatusText({ ...d, status: "no_static" })).toBe("호출부호 모름 — AIS 정적 정보(호출부호)를 아직 받지 못함 · 받으면 조회");
     for (const by of PORT_CALL_LIMITED_BY) {
@@ -223,7 +223,7 @@ describe("PortCallsSection (server-rendered)", () => {
   it("none · disabled · error · no call sign say exactly that", () => {
     const d = parsePortCalls(calls("ship_selected.port_calls_disabled"))!;
     expect(text(render({ ...d, status: "none", disabled_reason: null, window_from: "2026-08-30", window_to: "2026-09-29" })))
-      .toContain("최근 30일 한국 항만 입출항 기록 없음(호출부호 기준)");
+      .toContain("확인 불가");
     expect(text(render(d))).toContain("공공데이터포털 키 없음");
     const err = render(parsePortCalls(calls("ship_selected.port_calls_error")));
     expect(err).toContain('role="alert"');
@@ -253,8 +253,7 @@ describe("PortCallsSection (server-rendered)", () => {
     const d = parsePortCalls(calls("ship_selected.port_calls_disabled"))!;
     const html = render({ ...d, status: "none", disabled_reason: null, incomplete: true, window_from: "2026-08-30", window_to: "2026-09-29" });
     expect(text(html)).not.toContain("최근 30일 한국 항만 입출항 기록 없음");
-    expect(text(html)).toContain("받은 기록 안에는 이 호출부호의 입출항 없음");
-    expect(text(html)).toContain("항만청당 300건");
+    expect(text(html)).toContain("확인 불가"); // 임시: clsgn 조회를 믿을 수 없다(tests/port-calls-none-stopgap.test.ts)
     expect(html).toContain("text-warn");
   });
 

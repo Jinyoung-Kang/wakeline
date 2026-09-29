@@ -144,6 +144,7 @@ export function parsePortCalls(v: unknown): PortCallsInfo | null {
 // ---------------------------------------------------------------- 표시 문구
 
 export const PORT_CALL_TITLE = "한국 항만 입출항 (해양수산부 PORT-MIS · 최근 30일)";
+export const PORT_CALL_NONE_UNVERIFIED_TEXT = "확인 불가 — 해양수산부 API 의 호출부호 조회가 기록이 있는 선박에도 0건을 돌려줘 결과를 믿을 수 없음(색인 방식으로 바꾸는 중)";
 export const PORT_CALL_NONE_TEXT = "최근 30일 한국 항만 입출항 기록 없음(호출부호 기준)";
 /** none 인데 incomplete: 쪽 상한까지 받은 기록에 이 호출부호가 없었을 뿐 — 남은 기록은 보지 못했다('기록 없음' 이 아니다) */
 export const PORT_CALL_NONE_INCOMPLETE_TEXT =
@@ -183,7 +184,8 @@ export const PORT_CALL_ERROR_WHERE = "원문 사유는 운영 화면의 공급�
 export function portCallStatusText(p: PortCallsInfo): string | null {
   switch (p.status) {
     case "ok": return null;
-    case "none": return p.incomplete ? PORT_CALL_NONE_INCOMPLETE_TEXT : PORT_CALL_NONE_TEXT;
+    // 임시(2026-09-29): PORT-MIS 의 호출부호(clsgn) 조회가 기록이 있는 선박에도 0건을 준다(증거 파일) — 색인 방식으로 바꿀 때까지 'none' 을 "기록 없음"으로 말하지 않는다
+    case "none": return PORT_CALL_NONE_UNVERIFIED_TEXT;
     case "pending": return PORT_CALL_PENDING_TEXT;
     case "no_call_sign": return PORT_CALL_NO_CALL_SIGN_TEXT;
     case "no_static": return PORT_CALL_NO_STATIC_TEXT;
