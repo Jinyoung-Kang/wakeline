@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "viewport": { "width": 1440, "height": 900 },
+  "shots": [
+    {
+      "id": "dashboard",
+      "section": "dashboard-layout",
+      "path": "/#6.3/36.1/127.9",
+      "title": "상황판 — 한 화면의 구성",
+      "alt": "상황판 전체 화면: 위쪽 상태 바와 통합 검색, 가운데 한반도 지도 위의 항공기·레이더·SIGMET, 지도 오른쪽 위 레이어 단추와 펼친 범례, 오른쪽 알림 패널, 아래쪽 레이더 타임라인과 출처 줄",
+      "callouts": [
+        { "n": 1, "label": "상태 바", "text": "연결(WS) · 피드별 출처와 지연 · SIGMET · 레이더 상태. 경고 배지는 줄 앞쪽에 옵니다(2.10).", "target": "[data-testid=\"statusbar\"]", "anchor": "l" },
+        { "n": 2, "label": "통합 검색", "text": "항공기와 선박을 한 입력에서 찾습니다. / 키로 바로 입력(2.4).", "target": "[data-testid=\"aircraft-search\"]", "anchor": "l" },
+        { "n": 3, "label": "확대 · 축소", "text": "지도 확대·축소 단추. 휠 · 핀치 · 키보드(= / -)로도 됩니다(2.2).", "target": ".maplibregl-ctrl-zoom-in", "anchor": "r" },
+        { "n": 4, "label": "지도 상태 칩", "text": "지금 지도가 선박을 어떻게 그리는지(개별 · 격자 · 0척의 이유)와 집중 추적 상태 — 서버가 보고한 값만.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" },
+        { "n": 5, "label": "레이어 단추", "text": "레이더 · SIGMET · 항공기 · 선박 · 공항 · 항적 · 예측(추정)을 켜고 끕니다(2.3).", "target": "[data-testid=\"layer-panel\"]", "anchor": "l" },
+        { "n": 6, "label": "범례", "text": "지도에 쓰인 기호 · 색의 뜻과 선종 필터(2.9).", "target": "[data-testid=\"map-legend\"]", "anchor": "tl" },
+        { "n": 7, "label": "오른쪽 패널", "text": "alerts · aircraft · ship · sigmet · airport 탭. 처음에는 알림 목록(2.7).", "target": "[data-testid=\"tab-alerts\"]", "anchor": "l" },
+        { "n": 8, "label": "레이더 타임라인", "text": "RainViewer · 기상청 레이더 프레임을 고르고 차례로 보여 줍니다(2.8).", "target": "[data-testid=\"radar-timeline\"]", "anchor": "l" },
+        { "n": 9, "label": "출처 줄", "text": "모든 화면 맨 아래 — 데이터 출처 링크(1장).", "target": "[data-testid=\"attribution\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "search",
+      "section": "dashboard-search",
+      "path": "/#6.3/36.1/127.9",
+      "title": "통합 검색 — 항공기와 선박을 한 입력에서",
+      "alt": "상단 통합 검색에 검색어를 넣어 결과 팝업이 열린 상황판: 위에 항공기 결과 묶음(live · db 배지), 아래에 선박 결과 표, 맨 아래 키보드 안내 줄",
+      "callouts": [
+        { "n": 1, "label": "검색 입력", "text": "항공기 호출부호 · hex · 등록번호, 선박 선명 · 호출부호 · MMSI · IMO. 입력 중이 아닐 때 / 키로 초점.", "target": "[data-testid=\"aircraft-search-input\"]", "anchor": "l" },
+        { "n": 2, "label": "항공기 결과", "text": "live = 지금 스냅샷에 있음 · db = 과거 기록(지금 위치 없음).", "target": "[data-testid=\"search-group-aircraft\"]", "anchor": "l" },
+        { "n": 3, "label": "선박 결과", "text": "표 머리글을 누르면 정렬. 실시간이 아닌 선박은 카드만 열고 지도에 위치를 그리지 않습니다.", "target": "[data-testid=\"search-group-ships\"]", "anchor": "l" },
+        { "n": 4, "label": "키 안내", "text": "↑↓ 이동 · Enter 선택 · Esc 닫기.", "target": "[data-testid=\"aircraft-search-results\"] > div:last-child", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "aircraft",
+      "section": "dashboard-aircraft",
+      "path": "/#6.3/36.1/127.9",
+      "title": "항공기 카드와 집중 추적",
+      "alt": "검색으로 고른 항공기의 카드가 오른쪽 패널에 열리고 지도가 그 항공기로 옮겨진 상황판: 카드 위쪽의 갱신(집중 추적) 행, 값 표, 노선 구역, 지도 왼쪽 위의 집중 추적 칩",
+      "callouts": [
+        { "n": 1, "label": "카드 머리", "text": "상태 배지(위치 추정 · STALE · 수신 중단)와 닫기. 닫거나 지도 빈 곳을 누르면 선택이 풀리고 집중 추적도 멈춥니다.", "target": "[data-testid=\"aircraft-card\"]", "anchor": "tl" },
+        { "n": 2, "label": "갱신 행", "text": "서버가 보고한 집중 추적 상태와 주기. 연결이 실시간이 아니면 상태를 모른다고 적습니다.", "target": "[data-testid=\"demand-row\"]", "anchor": "l" },
+        { "n": 3, "label": "노선", "text": "콜사인에 등록된 정기 노선(adsbdb). 실제 운항 경로와 다를 수 있고, 경로와의 거리는 계산값입니다.", "target": "[data-testid=\"route-section\"]", "anchor": "tl" },
+        { "n": 4, "label": "집중 추적 칩", "text": "지도 왼쪽 위에도 같은 상태가 보입니다.", "target": "[data-testid=\"demand-map-chip\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "ship",
+      "section": "dashboard-ship",
+      "path": "/#10/35.08/129.05",
+      "title": "선박 목록 · 카드 · 항적",
+      "alt": "선박 레이어를 켜고 항구 부근을 확대한 지도에서 선박 탭 목록의 한 척을 고른 상황판: 오른쪽 선박 카드와 항적 기간 단추, 지도의 선택 선박과 항적, 왼쪽 위 선박 칩",
+      "callouts": [
+        { "n": 1, "label": "선박 탭", "text": "선택이 없으면 화면 안 선박 표(정렬 · 이름/MMSI 거르기) — 지도를 누르지 않고 고릅니다.", "target": "[data-testid=\"tab-ship\"]", "anchor": "l" },
+        { "n": 2, "label": "선박 카드", "text": "이름 · 크기 · 흘수 · 목적지 · ETA 는 선원이 입력한 보고값. 모르면 —.", "target": "[data-testid=\"ship-card\"]", "anchor": "tl" },
+        { "n": 3, "label": "항적", "text": "항적 기간 단추와 기록 상태, 수신 공백 요약.", "target": "[data-testid=\"ship-track-info\"]", "anchor": "l" },
+        { "n": 4, "label": "선박 칩", "text": "개별 선박 N척 / 격자 N칸처럼 지금 지도가 그리는 방식.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "alerts",
+      "section": "dashboard-alerts",
+      "path": "/#6.3/36.1/127.9",
+      "title": "알림 목록과 근거 카드",
+      "alt": "오른쪽 알림 패널에서 첫 알림을 펼쳐 근거 카드가 보이는 상황판: 위쪽 범위 단추(관심 지역 · 전세계)와 관측 · 예측 수, 펼친 알림 아래의 근거 카드와 항공기 카드 단추",
+      "callouts": [
+        { "n": 1, "label": "범위", "text": "관심 지역(서버 설정의 중심 · 반경) / 전세계.", "target": "[data-testid=\"alerts-scope-region\"]", "anchor": "l" },
+        { "n": 2, "label": "알림 행", "text": "관측(경보 구역 안)이 먼저, 예측(추정)은 보라. 누르면 근거 카드를 펼칩니다.", "target": "[data-testid=\"alert-item\"]", "anchor": "l" },
+        { "n": 3, "label": "근거 카드", "text": "무엇으로 판정했는지 — SIGMET · 위치 · 고도대 · 유효시간과 판정 가정.", "target": "[data-testid=\"evidence\"]", "anchor": "l" },
+        { "n": 4, "label": "항공기로", "text": "항공기 카드를 열고, 알려진 위치가 화면 밖이면 지도를 옮깁니다.", "target": "[data-testid=\"alert-open-aircraft\"]", "anchor": "l" },
+        { "n": 5, "label": "SIGMET 탭", "text": "SIGMET 목록 → 카드(유효시간 · 원문).", "target": "[data-testid=\"tab-sigmet\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "radar",
+      "section": "dashboard-radar",
+      "path": "/#6.3/36.1/127.9",
+      "title": "레이더 타임라인 — RainViewer · 기상청",
+      "alt": "아래쪽 레이더 타임라인에서 기상청 HSR 을 고르고 범례·정합 패널을 연 상황판: 출처 단추, 애니메이션 단추, 프레임 슬라이더와 시각, 합성 지점 수, 프레임 띠, 범례·정합 패널",
+      "callouts": [
+        { "n": 1, "label": "레이더 출처", "text": "RainViewer / 기상청 HSR 전환. 기상청은 수집된 프레임이 있을 때만 고를 수 있습니다.", "target": "[data-testid=\"radar-src-rv\"]", "anchor": "l" },
+        { "n": 2, "label": "애니메이션", "text": "프레임을 차례로 보여 줍니다(상단 메뉴의 ‘재생’ 화면과 다른 기능).", "target": "[data-testid=\"radar-play\"]", "anchor": "l" },
+        { "n": 3, "label": "프레임 시각", "text": "지금 지도에 그린 프레임의 시각.", "target": "[data-testid=\"radar-frame-time\"]", "anchor": "t" },
+        { "n": 4, "label": "합성 N/M곳", "text": "기상청: 그 프레임의 레이더 지점 수 / 기준.", "target": "[data-testid=\"kr-frame-composite\"]", "anchor": "t" },
+        { "n": 5, "label": "프레임 띠", "text": "프레임마다 주황 = 일부 합성 · 파랑 = 기준 도달 · 빈 칸 = 판정 없음.", "target": "[data-testid=\"kr-frame-strip\"]", "anchor": "t" },
+        { "n": 6, "label": "범례 · 정합", "text": "dBZ 색 구간 · 최신 tm · 격자와 투영 · 합성 상태.", "target": "[data-testid=\"kr-radar-panel\"]", "anchor": "tl" }
+      ]
+    },
+    {
+      "id": "replay",
+      "section": "replay",
+      "path": "/replay",
+      "title": "재생 — 지난 기록을 그 시각의 지도로",
+      "alt": "재생 화면: 위쪽 도구 줄의 재생 단추와 배속, KST 시각 입력, 앞뒤 이동 단추, 시각 슬라이더, 지도 시각과 요약, 목록 단추 — 아래 지도에 그 시각의 항공기와 SIGMET, 왼쪽 위 항목 목록",
+      "callouts": [
+        { "n": 1, "label": "재생 · 배속", "text": "바로 왼쪽의 재생/정지 단추와 배속.", "target": "[aria-label=\"재생 속도\"]", "anchor": "l" },
+        { "n": 2, "label": "시각 입력", "text": "한국 표준시(KST) 날짜 · 시각으로 고릅니다.", "target": "[data-testid=\"replay-at-input\"]", "anchor": "l" },
+        { "n": 3, "label": "앞뒤 이동", "text": "시각을 1분 · 10분 · 1시간씩 옮깁니다.", "target": "[aria-label=\"재생 시각 이동\"]", "anchor": "l" },
+        { "n": 4, "label": "시각 슬라이더", "text": "보관 기간 전체. 눈금은 원해상도 구간의 경계입니다.", "target": "input[aria-label=\"재생 시각\"]", "anchor": "l" },
+        { "n": 5, "label": "지도 시각", "text": "지금 지도에 그린 기록의 시각. 응답이 늦으면 ‘불러오는 중’.", "target": "[data-testid=\"replay-frame-at\"]", "anchor": "l" },
+        { "n": 6, "label": "항목 목록", "text": "그 시각의 SIGMET · 항공기 — 지도를 누르지 않고 상세를 엽니다.", "target": "[data-testid=\"replay-list\"]", "anchor": "tl" }
+      ]
+    },
+    {
+      "id": "stats",
+      "section": "stats",
+      "path": "/stats",
+      "title": "통계 — SIGMET · 시간대별 항공기 · 알림",
+      "alt": "통계 화면: 최근 7일 FIR별 · 위험 유형별 SIGMET 막대 그래프, 날짜를 고르는 시간대별 고유 항공기 막대 그래프, 알림 종류별 건수 · 평균 체류 표",
+      "callouts": [
+        { "n": 1, "label": "FIR별 SIGMET", "text": "최근 7일 FIR별 발표 건수(상위 24).", "target": "main .grid > section:nth-of-type(1)", "anchor": "tl" },
+        { "n": 2, "label": "위험 유형별", "text": "최근 7일 위험 유형별 발표 건수.", "target": "main .grid > section:nth-of-type(2)", "anchor": "tl" },
+        { "n": 3, "label": "시간대별 항공기", "text": "그 날짜(UTC 날짜)의 시간대별 고유 항공기 수 — 막대 이름은 KST 시각.", "target": "main .grid > section:nth-of-type(3)", "anchor": "tl" },
+        { "n": 4, "label": "집계 날짜", "text": "UTC 날짜로 고릅니다(오늘은 아직 집계 전).", "target": "input[aria-label=\"집계 날짜(UTC 날짜)\"]", "anchor": "l" },
+        { "n": 5, "label": "알림 통계", "text": "날짜 · 종류별 건수와 평균 체류.", "target": "main .grid > section:nth-of-type(4)", "anchor": "tl" }
+      ]
+    },
+    {
+      "id": "airport",
+      "section": "airport",
+      "path": "/airports/RKSI",
+      "title": "공항 기상 이력 (RKSI)",
+      "alt": "인천국제공항(RKSI) 기상 이력 화면: 최신 METAR 의 관측 시각과 원문, 비행 카테고리 배지, TAF 원문, 최근 24개 관측 표",
+      "callouts": [
+        { "n": 1, "label": "METAR", "text": "관측 시각과 원문 — 원문은 발표된 그대로(안의 …Z 는 UTC).", "target": "main .grid > section:nth-of-type(1)", "anchor": "tl" },
+        { "n": 2, "label": "비행 카테고리", "text": "AWC 제공값이 먼저, 없을 때만 실링 · 시정으로 계산(‘계산’ 표시). 2시간 넘은 METAR 는 ‘오래됨’.", "target": "main .grid > section:nth-of-type(1) .badge", "anchor": "l" },
+        { "n": 3, "label": "TAF", "text": "공항 예보 원문 그대로.", "target": "main .grid > section:nth-of-type(2)", "anchor": "tl" },
+        { "n": 4, "label": "관측 이력", "text": "최근 24개 관측 — 바람 · 시정(원문) · 실링 · 기온.", "target": "main table", "anchor": "tl" }
+      ]
+    },
+    {
+      "id": "ops",
+      "section": "ops-dashboard",
+      "path": "/ops",
+      "title": "운영 — 공급자 상태와 켜고 끄기",
+      "alt": "운영 화면의 providers 탭: 위쪽 탭 줄과 마지막 갱신 시각, 공급자별 마지막 성공 · 지연 · 연속 실패 · 사용량 표와 켜고 끄기 단추. 운영자 이름 · 마지막 오류 · 전환 사유 칸은 회색 상자로 가림",
+      "masks": [
+        { "label": "운영자 이름", "session_user": true },
+        { "label": "공급자 마지막 오류", "table": "[data-testid=\"ops-dashboard\"] table", "header": "last error" },
+        { "label": "전환 사유", "table": "[data-testid=\"ops-dashboard\"] table", "header": "reason" }
+      ],
+      "callouts": [
+        { "n": 1, "label": "운영 탭", "text": "providers · runs · quality · settings · audit · dlq · pipeline.", "target": "[aria-label=\"운영 탭\"]", "anchor": "l" },
+        { "n": 2, "label": "갱신 시각", "text": "이 탭의 마지막 성공 응답 시각. 실패하면 탭에 ‘갱신 실패’.", "target": "[data-testid=\"ops-last-ok\"]", "anchor": "l" },
+        { "n": 3, "label": "공급자 표", "text": "마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류.", "target": "[data-testid=\"ops-dashboard\"] table", "anchor": "tl" },
+        { "n": 4, "label": "켜고 끄기", "text": "원본(DB)과 수집기가 따르는 미러 값을 함께 보이고, 다르면 경고합니다.", "target": "[data-testid=\"provider-switch\"]", "anchor": "l" }
+      ]
+    },
+    {
+      "id": "logs",
+      "section": "ops-logs",
+      "path": "/logs",
+      "title": "시스템 로그",
+      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 시각 · 수준 · 서비스 목록. 운영자 이름 · 로거 · 메시지 · 요청 id 칸은 회색 상자로 가림",
+      "masks": [
+        { "label": "운영자 이름", "session_user": true },
+        { "label": "로거", "table": "[data-testid=\"log-grid\"]", "header": "로거" },
+        { "label": "메시지", "table": "[data-testid=\"log-grid\"]", "header": "메시지(첫 줄)" },
+        { "label": "요청 id", "table": "[data-testid=\"log-grid\"]", "header": "요청 id" }
+      ],
+      "callouts": [
+        { "n": 1, "label": "로그 탭", "text": "로그 / AIS 수신 공백.", "target": "[aria-label=\"로그 탭\"]", "anchor": "l" },
+        { "n": 2, "label": "필터", "text": "서비스(여러 개) · 수준 · 기간 · 글자 검색 · 요청 id.", "target": "[data-testid=\"logs-filter-form\"]", "anchor": "tl" },
+        { "n": 3, "label": "보기", "text": "목록 / 묶음(같은 지문 fp 끼리).", "target": "[aria-label=\"보기\"]", "anchor": "l" },
+        { "n": 4, "label": "로그 목록", "text": "줄을 누르거나 ↑↓ · Enter 로 상세. c 로 텍스트 복사.", "target": "[data-testid=\"log-grid\"]", "anchor": "tl" }
+      ]
+    }
+  ]
+}

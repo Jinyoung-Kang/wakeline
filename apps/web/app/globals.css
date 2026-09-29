@@ -106,3 +106,40 @@ td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-alig
 @media (prefers-reduced-motion: reduce) {
   .busy-spinner, .skeleton { animation: none; }
 }
+
+/*
+ * 설명서(/guide) — 수십 번 되풀이되는 요소의 모양을 한 곳에(유틸리티 클래스 글자가 HTML 과 RSC 페이로드에 요소마다 두 번씩 실리지 않게).
+ * 화면은 CSP nonce 때문에 요청마다 렌더되므로(app/layout connection()) 페이지 크기가 곧 요청마다의 비용이다. 값은 바꾸기 전 유틸리티와 같다(--spacing 배수).
+ */
+.g-doc b { font-weight: 600; color: var(--color-fg); }
+.g-p { margin-block: calc(var(--spacing) * 2); max-width: 860px; color: var(--color-fg-2); }
+.g-ul { margin-block: calc(var(--spacing) * 2); max-width: 860px; list-style: disc; padding-left: calc(var(--spacing) * 5); color: var(--color-fg-2); }
+.g-ul > li + li { margin-top: calc(var(--spacing) * 1); }
+.g-ul > li::marker { color: var(--color-fg-3); }
+.g-kbd { display: inline-block; min-width: 1.6em; border: 1px solid var(--color-line-2); background: var(--color-bg-2); padding-inline: calc(var(--spacing) * 1); text-align: center; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--color-fg); }
+.g-sec, .g-sub { scroll-margin-top: calc(var(--spacing) * 14); }
+@media (width >= 900px) { .g-sec, .g-sub { scroll-margin-top: calc(var(--spacing) * 4); } }
+.g-sec { margin-top: calc(var(--spacing) * 12); border-top: 1px solid var(--color-line); padding-top: calc(var(--spacing) * 6); }
+.g-sec:first-child { margin-top: 0; border-top-width: 0; padding-top: 0; }
+.g-sub { margin-top: calc(var(--spacing) * 8); }
+.g-h { display: flex; align-items: baseline; gap: calc(var(--spacing) * 3); outline-style: none; font-weight: 600; }
+h2.g-h { margin-bottom: calc(var(--spacing) * 3); font-size: 18px; letter-spacing: -0.025em; }
+h3.g-h { margin-bottom: calc(var(--spacing) * 2); font-size: 14px; }
+.g-h > .g-n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--color-accent); }
+h3.g-h > .g-n { font-size: 12px; }
+.g-table { margin-block: calc(var(--spacing) * 3); overflow-x: auto; border: 1px solid var(--color-line); }
+.g-table table { min-width: 560px; }
+.g-table thead { background: var(--color-bg-1); }
+.g-table td { color: var(--color-fg-2); }
+.g-table td:first-child { white-space: nowrap; color: var(--color-fg); }
+/* 그림(스크린샷 + 번호 설명) */
+.g-fig-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: calc(var(--spacing) * 3); row-gap: calc(var(--spacing) * 1); border-bottom: 1px solid var(--color-line); padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3); }
+.g-ph { display: flex; min-height: 168px; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--spacing) * 2); border-bottom: 1px dashed var(--color-line-2); padding: calc(var(--spacing) * 5) calc(var(--spacing) * 6); text-align: center; }
+.g-cap { border-top: 1px solid var(--color-line); padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3); font-size: 11px; color: var(--color-fg-3); }
+.g-callouts { display: grid; column-gap: calc(var(--spacing) * 6); row-gap: calc(var(--spacing) * 1.5); border-top: 1px solid var(--color-line); padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3); font-size: 12px; line-height: 1.625; }
+@media (width >= 700px) { .g-callouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.g-callouts > li { display: flex; align-items: flex-start; gap: calc(var(--spacing) * 2); }
+.g-callouts > li > .g-num { margin-top: 1px; }
+/* 번호 칸(그림 위 겹침과 설명 목록이 같은 모양) — 파랑 바탕 · 어두운 글자, 밝은 1px 테두리로 레이더 색 위에서도 보인다 */
+.g-num { display: inline-flex; height: calc(var(--spacing) * 5); min-width: calc(var(--spacing) * 5); flex-shrink: 0; align-items: center; justify-content: center; border: 1px solid var(--color-bg); background: var(--color-accent); padding-inline: calc(var(--spacing) * 0.5); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 700; line-height: 1; color: var(--color-bg); box-shadow: 0 0 0 1px rgba(230, 232, 235, 0.85); }
+.g-mark { position: absolute; z-index: 10; transform: translate(-50%, -50%); }

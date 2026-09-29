@@ -106,7 +106,7 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | 명령 | 내용 |
 |---|---|
 | `make test` | pytest · JUnit(+Testcontainers) · Vitest · 인프라 정책 |
-| `make e2e` | 격리된 fixture 스택(8701)을 띄워 Playwright 16건 → 스택·볼륨 삭제(개발 스택은 건드리지 않음) |
+| `make e2e` | 격리된 fixture 스택(8701)을 띄워 Playwright 17건 → 스택·볼륨 삭제(개발 스택은 건드리지 않음) |
 | `make contract` | Python 메시지 ↔ JSON Schema ↔ Java 사본 대조 + REST 응답 계약 + WS 메시지 표본(schemas/ws) |
 | `make ws-samples` | WS 메시지 표본 다시 만들기 — api 시험이 실제 빌더로 만든 17종을 `schemas/ws` 로 검증해 웹 fixture 로 쓴다(스키마·빌더를 바꿨을 때, 커밋) |
 | `make bench SHIPS=1` | k6 컨테이너로 api 층 직접 부하(측정 동안만 제한 상향, 끝나면 원복) |
@@ -151,7 +151,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 ```
 apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,domain,config} · Flyway V1–V13 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
-apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
+apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
 infra/           compose.yml · edge(nginx) · redis(ACL) · db(역할·pg_hba) · tests
 docs/            adr/ · audit/(감사·리뷰·변경 계약) · PERF.md · VERIFICATION.md · images/
@@ -164,6 +164,13 @@ perf/ tools/     k6 스크립트 · AIS 측정 · 장애 주입 · 계약 검사
 | ![근거 카드](docs/images/02-alert-evidence.png) 알림 근거 카드 | ![핫 리전](docs/images/04b-hot-region-tokyo.png) 핫 리전(도쿄, 관심 지역 밖) |
 | ![선박](docs/images/04d-ships-tokyo-bay.png) 선박(도쿄만) | ![세계](docs/images/05-world.png) 전세계 |
 | ![재생](docs/images/06-replay.png) 재생 | ![운영](docs/images/09-ops-providers.png) 운영 화면 |
+
+화면 안의 **설명서**(`/guide`, 메뉴 ‘설명서’)는 무엇을 보여 주는지 · 화면별 사용법 · 시각 표기(KST · UTC) · 표시 규칙 · 키보드 단축키를 스크린샷과 번호 설명으로 보여 줍니다. 스크린샷은 배포된 실데이터 스택에서 찍어 넣습니다.
+```bash
+cd apps/web
+node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>   # 파일: JSON {"username","password"} 또는 두 줄, chmod 600 — 값은 인자·환경 변수로 받지 않는다
+```
+1440×900 WebP(`public/guide/<id>.<내용 해시>.webp`)와 `lib/guide-manifest.json`(번호 위치 · 캡처 시각)을 쓰고 크기를 보고합니다. 커밋하고 web 을 다시 빌드하면 나옵니다. 로컬 스택만 찍습니다. 찍기 전과 다 찍은 뒤 두 번 `/api/v1/status` 로 실데이터인지(`fixture_mode=false` · 수집 모드 확인됨) 확인하고, 아니면(FIXTURE MODE 스택 8701 · 수집기 heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춥니다 — 모든 스크린샷에 적용. 조회 오류가 보이는 화면도 싣지 않습니다(못 찍은 그림은 ‘스크린샷 준비 중’ 자리표시). 설명서는 로그인 없이 보이므로 운영 · 로그 화면은 운영자 이름과 마지막 오류 · 전환 사유 · 로거 · 메시지 · 요청 id 열을 회색 상자로 가려 찍고(가릴 자리를 못 찾으면 싣지 않음), 가린 것을 그림 아래 캡처 조건에 적습니다. `/guide` 자체는 정적 페이지가 아닙니다: 모든 화면처럼 요청마다 CSP nonce 를 새로 붙여 렌더하므로(`app/layout.tsx` 의 `connection()`) 캐시되지 않습니다(no-store). CSP 를 약하게 하지 않고, 되풀이되는 모양을 CSS(`.g-*`)로 옮겨 요청마다의 HTML · RSC 크기를 줄였습니다.
 
 ## 8. 한계와 다음 단계
 - 선박은 0~45°E(유럽·아프리카·중동 서부)를 받지 않는다. 키당 3연결 안에서 구역을 나누고 구역별 공백을 기록하면 넓힐 수 있다(ADR-014 후속 과제).
