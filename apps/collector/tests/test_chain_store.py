@@ -151,7 +151,7 @@ async def test_malformed_state_is_ignored(monkeypatch, fields):
 
 @pytest.mark.asyncio
 async def test_state_far_in_the_future_is_ignored(monkeypatch):
-    """벽시계가 뒤로 갔거나 값이 망가져 미룸이 상한(60분)보다 길게 남은 기록은 믿지 않는다."""
+    """벽시계가 뒤로 갔거나 값이 망가져 미룸이 상한(360분)보다 길게 남은 기록은 믿지 않는다."""
     clk = Clocks(monkeypatch)
     r = FakeRedis()
     w = clk.wall
@@ -251,16 +251,42 @@ async def test_each_job_keeps_its_own_state(monkeypatch):
 
 # ---- 단계 상한(리뷰): 이력이 재시작을 넘어 이어지므로 단계가 끝없이 커질 수 있었다(1025단계에서 60 × 2**1024 → OverflowError) --------
 def test_stage_is_capped_in_memory(monkeypatch):
-    """15분 조용함 없이 429 가 2000번 이어져도(다른 공급자 없음) 쉼·미룸은 상한(300 s · 60분)에 머물고 예외가 나지 않는다."""
+    """15분 조용함 없이 429 가 2000번 이어져도(다른 공급자 없음) 쉼·미룸은 상한(300 s · 360분)에 머물고 예외가 나지 않는다."""
     clk = Clocks(monkeypatch)
     chain = ProviderChain("region", {"a": P("a")}, FakeStatus())
     for _ in range(2000):
         assert chain.record_rate_limited("a") <= 300
         clk.advance(1)
-    assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 3600
-    # 쉼(4단계 · 300 s)·미룸(5단계 · 60분)이 모두 상한에 닿는 단계
-    assert fallback.STAGE_MAX == len(fallback.RATE_LIMIT_HOLD_S) + 1
+    assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 6 * 3600
+    # 쉼(4단계 · 300 s)·미룸(8단계 · 360분)이 모두 상한에 닿는 단계
+    assert fallback.STAGE_MAX == len(fallback.RATE_LIMIT_HOLD_S) + 1 == 8
     assert chain._rate_limited["a"] == fallback.STAGE_MAX
+
+
+def test_hold_ladder_extends_to_six_hours_and_backoff_is_unchanged(monkeypatch):
+    """2026-09-29 관찰: adsb.lol 은 60분 미룸이 끝나고 약 1분 만에 다시 429 — 미룸 사다리를 10 → 20 → 40 → 60 → 120 → 240 → 360분
+    (상한 6 h)으로 늘렸다(선택값, ADR-011). 쉼(60 → 120 → 240 → 300 s)·15분 조용함 초기화는 그대로."""
+    clk = Clocks(monkeypatch)
+    chain = ProviderChain("region", {"a": P("a"), "b": P("b")}, FakeStatus())
+    got = []
+    for _ in range(10):
+        wait = chain.record_rate_limited("a")
+        got.append((wait, chain.hold_s("a") / 60))
+        clk.advance(1)
+    assert got == [
+        (60, 0),
+        (120, 10),
+        (240, 20),
+        (300, 40),
+        (300, 60),
+        (300, 120),
+        (300, 240),
+        (300, 360),
+        (300, 360),
+        (300, 360),
+    ]
+    assert fallback.RATE_LIMIT_RESET_S == 900 and fallback.BACKOFF_MAX_S == 300
+    assert fallback.SAVED_MAX_AHEAD_S == 6 * 3600 + 60  # 저장 기록의 먼 미래 상한도 새 최대 미룸을 따른다
 
 
 @pytest.mark.asyncio
@@ -283,8 +309,8 @@ async def test_restored_oversized_stage_is_clamped(monkeypatch, caplog):
     chain, st = _chain(r, clk)
     assert (await chain.pick(["a", "b"])).name == "b"
     assert st.active == [("b", "initial — a 429 쉼(300 s)(재시작 전 기록)")]
-    assert any("stage 5," in m for m in caplog.messages)
-    assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 3600
+    assert any("stage 8," in m for m in caplog.messages)
+    assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 6 * 3600
     await chain.persist("a")
     assert r.kv[KEY]["stage"] == str(fallback.STAGE_MAX)
 
@@ -305,6 +331,52 @@ def test_saved_hold_length_outside_the_known_range_is_malformed():
     assert fallback.parse_saved({**row, "hold_s": "-5"}, w) == (None, "format")
     saved, why = fallback.parse_saved({**row, "hold_s": "600"}, w)
     assert why == "" and saved is not None and saved.hold_s == 600
+    assert fallback.parse_saved({**row, "hold_s": str(6 * 3600 + 1)}, w) == (None, "format")  # 새 최대(360분)보다 길다
+
+
+@pytest.mark.asyncio
+async def test_restored_six_hour_hold_is_kept_across_a_restart(monkeypatch):
+    """새 최대 단계(8 — 360분 미룸)의 기록도 재시작 뒤 그대로 되살린다(이전 검증은 60분 넘는 hold_s 를 형식 오류로 버렸다)."""
+    clk = Clocks(monkeypatch)
+    r = FakeRedis()
+    chain, _ = _chain(r, clk)
+    await chain.pick(["a", "b"])
+    for _ in range(fallback.STAGE_MAX):
+        chain.record_rate_limited("a")
+        clk.advance(1)
+    await chain.persist("a")
+    saved = r.kv[KEY]
+    assert saved["stage"] == "8" and saved["hold_s"] == str(6 * 3600)
+    assert float(saved["hold_until"]) == pytest.approx(clk.wall - 1 + 6 * 3600)
+    assert float(saved["expires_at"]) == pytest.approx(clk.wall - 1 + 6 * 3600 + RATE_LIMIT_RESET_S)
+    clk.restart(downtime_s=3600)  # 한 시간 뒤 재시작 — 미룸은 약 5 h 남았다
+    chain2, st2 = _chain(r, clk)
+    assert (await chain2.pick(["a", "b"])).name == "b"
+    assert st2.active == [("b", "initial — a 429 반복 → 360분 뒤로 미룸(재시작 전 기록)")]
+    assert chain2.hold_s("a") == 6 * 3600
+    clk.advance(5 * 3600 - 10)
+    assert (await chain2.pick(["a", "b"])).name == "b"  # 아직 미룸
+    clk.advance(20)
+    assert (await chain2.pick(["a", "b"])).name == "a"  # 미룸 끝 — 복귀
+    assert chain2.record_rate_limited("a") == 300 and chain2.hold_s("a") == 6 * 3600  # 조용함 전 429: 상한 단계에 머문다
+
+
+def test_saved_six_hour_hold_is_accepted_but_beyond_it_is_future():
+    w = 1_790_000_000.0
+    row = {
+        "v": "1",
+        "stage": "8",
+        "last_429_at": str(w),
+        "backoff_until": str(w + 300),
+        "hold_until": str(w + 6 * 3600),
+        "hold_s": str(6 * 3600),
+        "quiet_from": str(w + 6 * 3600),
+        "expires_at": str(w + 6 * 3600 + RATE_LIMIT_RESET_S),
+    }
+    saved, why = fallback.parse_saved(row, w)
+    assert why == "" and saved is not None and saved.stage == 8 and saved.hold_s == 6 * 3600
+    far = {**row, "hold_until": str(w + 6 * 3600 + 61), "quiet_from": str(w + 6 * 3600 + 61)}
+    assert fallback.parse_saved(far, w) == (None, "future")  # 상한(360분 + 60 s)보다 먼 미래
 
 
 # ---- 첫 읽기 실패(리뷰): 이전에는 한 번만 읽어서, 그 순간 Redis 가 흔들리면 재시작 전 미룸을 잊고 다음 429 가 기록을 1단계로 덮었다 ---------
