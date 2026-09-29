@@ -13,7 +13,8 @@
   24개이므로 어느 날 경계로 세어도 하루 360번 이하 — 포털 한도(500) 안. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다).
   예산은 엄격(Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
 - 격자 기하(budget:mof_grid4, 하루 6,000 — 포털 10,000 안): 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
-  많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s)과 가장 낮은 우선순위(PRIORITY_BACKFILL)로.
+  많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s — 교통 폴링 · 항만 입출항 조회(ADR-022)와 하나)과
+  가장 낮은 우선순위(PRIORITY_BACKFILL — 입출항 조회보다도 낮다)로. 교통 폴링은 PRIORITY_FIXED 라 입출항 조회가 이어져도 먼저 받는다.
   첫 스냅샷(약 5,100칸)은 몇 시간에 걸쳐 채워진다 — 그동안 스냅샷 값의 resolved/unresolved 가 그대로 보인다.
   * found: 0.025° 격자 검사를 통과한 칸 → 메모리 + DB marine_grid4(V14 — 다시 시작해도 다시 묻지 않는다).
   * not_found(numberOfFeatures 0) · off_grid(격자 검사 실패 — 격리, 품질 사례 · 원본 보관): 부정 캐시 Redis wakeline:traffic_grid:negative
