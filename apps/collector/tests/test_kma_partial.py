@@ -6,7 +6,9 @@
 
 규칙(값은 선택값 — 잰 값이 아니다):
 - 프레임마다 헤더 STN_LIST 의 지점 수(stations)와 코드(station_ids). 기준(stations_ref) = 가장 새 저장 tm 에서 60분 안(경계 포함)의 저장된
-  프레임 중 가장 많은 지점 수(그 프레임 포함). partial = stations < stations_ref. 모르는 값(옛 항목)은 세지 않고 표시도 두지 않는다.
+  프레임 중 가장 많은 지점 수(그 프레임 포함). partial = stations < stations_ref — 참이면 더 많은 다른 프레임이 근거다. 거짓('기준 도달')은 기준에
+  닿은 프레임이 2개 이상일 때만(REF_MIN_SUPPORT) — 기준이 이 프레임 하나뿐이면(첫 기동 · 공백 뒤 · 가장 많은 프레임이 하나) 판정하지 않는다.
+  기준 도달도 '완전'이 아니다(기상청 합성이 완전한지는 자료에 없다). 모르는 값(옛 항목)은 세지 않고 표시도 두지 않는다.
 - 다시 받기: 정규 후보 뒤, 부분 합성 프레임 중 tm 이 30분 안이고 마지막 시도가 4분 넘게 지난 것을 오래된 것부터 주기마다 최대 2개.
   지점 수가 늘었을 때만 바꾼다. 예산 1 씩, 정규 주기 몫(남은 하루 × 주기당 3)을 남기고만. 오류는 INFO, 주기를 끝내지 않고 다시 부르지 않는다.
 """
@@ -64,26 +66,39 @@ def test_reference_is_the_largest_site_count_in_the_60_min_ending_at_the_newest_
     assert [f["tm"][-4:] for f in frames if f["partial"]] == ["1355", "1415", "1430", "1435", "1440", "1445", "1450"]
 
 
+def _verdicts(frames: list[dict]) -> list[tuple[int | None, bool | None]]:
+    return [(f.get("stations_ref"), f.get("partial")) for f in frames]
+
+
 def test_reference_window_includes_its_60_min_edge_and_leaves_older_frames_as_they_were():
     from wakeline_collector.jobs.kma_radar import annotate_partial
 
     old = _entry("202609291340", 15, stations_ref=15, partial=False)  # 창 밖(65분 전) — 창 안에 있을 때 받은 값 그대로
     edge = _entry("202609291345", 12)  # 정확히 60분 전 — 창 안
+    edge2 = _entry("202609291350", 12)
     newest = _entry("202609291445", 7)
-    frames = annotate_partial([old, edge, newest])
-    assert (frames[0]["stations_ref"], frames[0]["partial"]) == (15, False)
-    assert (frames[1]["stations_ref"], frames[1]["partial"]) == (12, False)  # 15곳 프레임은 창 밖이라 세지 않는다
-    assert (frames[2]["stations_ref"], frames[2]["partial"]) == (12, True)
+    frames = annotate_partial([old, edge, edge2, newest])
+    assert _verdicts(frames) == [(15, False), (12, False), (12, False), (12, True)]  # 15곳 프레임은 창 밖이라 세지 않는다
 
 
-def test_reference_counts_the_frame_itself_so_a_lone_frame_is_not_partial_until_a_fuller_one_arrives():
-    from wakeline_collector.jobs.kma_radar import annotate_partial
+def test_a_frame_that_alone_sets_the_reference_gets_no_verdict_until_another_frame_reaches_it():
+    """기준 도달(partial=False)은 기준에 닿은 프레임이 둘 이상일 때만. 기준이 자기 자신뿐이면 비교할 근거가 없다 — 판정 없음(모름).
+    부분 합성(partial=True)은 늘 더 많은 다른 프레임이 근거라 그대로 둔다."""
+    from wakeline_collector.jobs.kma_radar import REF_MIN_SUPPORT, annotate_partial
 
-    first = annotate_partial([_entry("202609291450", 7)])  # 첫 기동 — 비교할 프레임이 없다
-    assert (first[0]["stations_ref"], first[0]["partial"]) == (7, False)
-    # 다음 프레임이 더 많은 지점으로 오면 앞 프레임이 부분 합성이 된다
-    both = annotate_partial([*first, _entry("202609291455", 15)])
-    assert [(f["stations_ref"], f["partial"]) for f in both] == [(15, True), (15, False)]
+    assert REF_MIN_SUPPORT == 2
+    first = annotate_partial([_entry("202609291450", 7)])  # 첫 기동 · 공백 뒤 — 비교할 프레임이 없다
+    assert _verdicts(first) == [(7, None)]  # 기준은 둔다(창 안 최대 — 사실), 판정은 두지 않는다
+    both = annotate_partial([*first, _entry("202609291455", 15)])  # 더 많은 프레임이 오면 앞 프레임은 부분 합성
+    assert _verdicts(both) == [(15, True), (15, None)]  # 15곳은 아직 혼자 — 판정 없음
+    three = annotate_partial([*both, _entry("202609291500", 15)])
+    assert _verdicts(three) == [(15, True), (15, False), (15, False)]
+    # 일찍 받은 부분 합성만 모인 창(다시 받기가 멈췄거나 실패): 가장 많은 9곳 프레임이 혼자면 '기준 도달' 로 보이지 않는다
+    early = annotate_partial([_entry(f"2026092914{m}", n) for m, n in (("30", 7), ("35", 5), ("40", 9), ("45", 7))])
+    assert _verdicts(early) == [(9, True), (9, True), (9, None), (9, True)]
+    # 다시 받아 기준에 닿으면 판정이 생긴다
+    early[1] |= {"stations": 9, "station_ids": [f"S{i:02d}" for i in range(9)]}
+    assert _verdicts(annotate_partial(early)) == [(9, True), (9, False), (9, False), (9, True)]
 
 
 def test_unknown_site_counts_are_not_counted_and_get_no_reference_or_flag():
@@ -101,7 +116,7 @@ def test_unknown_site_counts_are_not_counted_and_get_no_reference_or_flag():
     frames = annotate_partial([legacy, bad, _entry("202609291450", 9)])
     assert "stations_ref" not in frames[0] and "partial" not in frames[0]  # 모르는 값에서 판정을 남기지 않는다
     assert "stations_ref" not in frames[1] and "partial" not in frames[1]
-    assert (frames[2]["stations_ref"], frames[2]["partial"]) == (9, False)
+    assert _verdicts(frames)[2] == (9, None)  # 지점 수를 아는 프레임이 하나뿐 — 판정 없음
     only_unknown = annotate_partial([dict(legacy)])
     assert "stations_ref" not in only_unknown[0] and "partial" not in only_unknown[0]
 
@@ -270,15 +285,15 @@ async def test_stored_frames_carry_site_count_ids_reference_and_partial_and_meta
     prov = SitesKma(clock, listing, {"202609291435": [12], "202609291440": [7], "202609291445": [9], "202609291450": [7]})
     await mod.KmaRadarJob(prov, ctx).run_once()
     frames = orjson.loads(await r.get(mod.KEY_FRAMES))
-    assert [(f["tm"][-4:], f["stations"], f["stations_ref"], f["partial"]) for f in frames] == [
-        ("1435", 12, 12, False),
+    assert [(f["tm"][-4:], f["stations"], f["stations_ref"], f.get("partial")) for f in frames] == [
+        ("1435", 12, 12, None),  # 12곳은 이 프레임뿐 — 기준 도달이라고 하지 않는다
         ("1440", 7, 12, True),
         ("1445", 9, 12, True),
         ("1450", 7, 12, True),
     ]
     assert frames[0]["station_ids"] == [f"K{i:02d}" for i in range(12)]
     assert all(f["refetches"] == 0 and f["upgrades"] == 0 for f in frames)
-    # 다시 받을 수 있는 마지막 시각(tm + 30분, UTC) — 웹이 '다음 주기에 다시 받음' / '끝까지 채워지지 않음' 을 가른다(추정하지 않는다)
+    # 다시 받을 수 있는 마지막 시각(tm + 30분, UTC) — 웹이 '기한까지 다시 받기 대상' / '기한 지남'(+ 다시 받은 횟수)을 가른다(추정하지 않는다)
     assert frames[-1]["refetch_until"] == _iso(_utc_of("202609291450", 30 * 60))
     meta = await r.hgetall(mod.KEY_META)
     assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291450", "7", "12", "1")
@@ -291,16 +306,23 @@ async def test_a_fuller_frame_arriving_later_flags_the_earlier_ones_and_updates_
     prov = SitesKma(clock, ["202609291450"], {"202609291450": [7]})
     job = mod.KmaRadarJob(prov, ctx)
     await job.run_once()
-    assert (await r.hgetall(mod.KEY_META))["partial"] == "0"  # 비교할 프레임이 없다 — 부분 합성이라고 하지 않는다
+    meta = await r.hgetall(mod.KEY_META)
+    # 비교할 프레임이 없다 — 판정 없음(완전하다고도 하지 않는다)
+    assert (meta["stations"], meta["stations_ref"], meta["partial"]) == ("7", "7", "")
     clock["set"]("202609291458", 40)
     prov.listing = ["202609291450", "202609291455"]
     prov.sites["202609291455"] = [15]
     prov.sites["202609291450"] = [7]  # 다시 받아도 7곳(이 시험은 저장 규칙만 본다)
     await job.run_once()
     frames = orjson.loads(await r.get(mod.KEY_FRAMES))
-    assert [(f["stations"], f["stations_ref"], f["partial"]) for f in frames][:2] == [(7, 15, True), (15, 15, False)]
+    assert [(f["stations"], f["stations_ref"], f.get("partial")) for f in frames] == [(7, 15, True), (15, 15, None)]
     meta = await r.hgetall(mod.KEY_META)
-    assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291455", "15", "15", "0")
+    assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291455", "15", "15", "")
+    clock["set"]("202609291503", 40)
+    prov.listing = [*prov.listing, "202609291500"]
+    await job.run_once()  # 15곳이 한 번 더 — 기준에 닿은 프레임이 둘
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291500", "15", "15", "0")
 
 
 # ---- 다시 받기: 고르기 ---------------------------------------------------------------------------------------------------

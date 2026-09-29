@@ -27,8 +27,9 @@
 - 실패 기록(상태 last_error · 실행 기록 · 경고 로그)에는 실패한 단계(목록 날짜 · 바이너리 tm)와 그 호출에 걸린 시간을 싣는다.
 - 부분 합성(ADR-021): 합성은 tm 마다 일찍 올라오고 레이더 지점이 보고하는 대로 채워진다(2026-09-29 관찰). 프레임마다 헤더 STN_LIST 의
   지점 수(stations)·코드(station_ids)를 싣고, 기준(stations_ref) = 가장 새 저장 tm 에서 REF_WINDOW_S 안(경계 포함)의 저장된 프레임 중 가장
-  많은 지점 수(그 프레임 포함), partial = stations < stations_ref(annotate_partial — 저장할 때마다 다시 계산). 지점 수를 모르는 옛 항목은
-  세지 않고 판정도 두지 않는다(모름). 60분은 선택값이다.
+  많은 지점 수(그 프레임 포함), partial = stations < stations_ref(annotate_partial — 저장할 때마다 다시 계산). partial=False('기준 도달' —
+  완전하다는 뜻이 아니다)는 기준에 닿은 프레임이 REF_MIN_SUPPORT(2)개 이상일 때만 — 기준이 자기 자신뿐이면 판정하지 않는다. 지점 수를 모르는
+  옛 항목은 세지 않고 판정도 두지 않는다(모름). 60분 · 2개는 선택값이다.
 - 다시 받기(ADR-021): 정규 후보를 다 받은 뒤, 부분 합성 프레임 중 tm 이 REFETCH_MAX_AGE_S(30분) 안이고 마지막 시도(처음 받은 시각 또는
   다시 받은 시각)가 REFETCH_SPACING_S(4분) 넘게 지난 것을 오래된 tm 부터 주기마다 REFETCH_MAX_PER_CYCLE(2)개까지 다시 받는다. 헤더의 지점
   수가 늘었을 때만 PNG · 항목(지점 · 에코 셀 · raw_ref · fetched_at) · (최신 프레임이면) meta 의 헤더 값을 바꾸고, 쓰지 않은 원본은 보관하지
@@ -76,6 +77,7 @@ MAX_BAD = 64  # 해석 불가로 건너뛴 tm 기억 상한
 MAX_NOT_READY_TRIES = 3  # 목록에 있으나 아직 받을 수 없는 tm 을 다시 시도하는 횟수(주기마다 1번 ≈ 15분)
 PREV_DAY_LIST_MIN = 15  # KST 00:00 부터 이 분 동안은 전날 목록도 조회
 REF_WINDOW_S = 60 * 60  # 기준 지점 수(stations_ref)를 세는 창 — 가장 새 저장 tm 에서 거꾸로(선택값, ADR-021)
+REF_MIN_SUPPORT = 2  # '기준 도달'(partial=False) 판정에 필요한, 창 안에서 기준 지점 수에 닿은 프레임 수(선택값 — 자기 자신만으로는 판정하지 않는다)
 REFETCH_MAX_AGE_S = 30 * 60  # 부분 합성 프레임을 다시 받는 tm 나이 상한(선택값, ADR-021)
 REFETCH_SPACING_S = 4 * 60  # 같은 프레임의 마지막 시도(처음 받기 포함) 뒤 이만큼은 기다린다(선택값)
 REFETCH_MAX_PER_CYCLE = 2  # 주기마다 다시 받는 프레임 수 상한(선택값)
@@ -120,6 +122,9 @@ def _site_count(f: dict) -> int | None:
 def annotate_partial(frames: list[dict]) -> list[dict]:
     """stations_ref · partial 을 다시 계산한다(저장할 때마다 — 늦게 온 더 많은 지점의 프레임 · 다시 받아 늘어난 프레임이 반영된다).
     기준 = 가장 새 tm 에서 REF_WINDOW_S 안(경계 포함)의 항목 중 가장 많은 지점 수(자기 자신 포함) — 창 안 항목 모두에 같은 값.
+    partial=True(stations < 기준)는 더 많은 지점의 다른 프레임이 근거다. partial=False('기준 도달' — 완전하다는 뜻이 아니다)는 기준에 닿은
+    프레임이 REF_MIN_SUPPORT 개 이상일 때만 둔다 — 기준이 이 프레임 하나뿐이면(첫 기동 · 공백 뒤 · 가장 많은 프레임이 하나) 비교할 근거가
+    없으므로 partial 을 두지 않는다(판정 없음). 기준 값은 둔다(창 안 최대 — 자료 그대로).
     창보다 오래된 항목(보관 창에 공백이 있을 때만 생긴다)은 창 안에 있을 때 받은 값을 그대로 둔다.
     지점 수를 모르는 항목은 세지 않고 stations_ref · partial 을 두지 않는다(모르는 값에서 판정을 만들지 않는다)."""
     times = [(f, _tm_dt(f.get("tm"))) for f in frames]
@@ -128,7 +133,9 @@ def annotate_partial(frames: list[dict]) -> list[dict]:
         return frames
     lo = newest - timedelta(seconds=REF_WINDOW_S)
     window = [f for f, t in times if t is not None and t >= lo]
-    ref = max((n for f in window if (n := _site_count(f)) is not None), default=None)
+    counts = [n for f in window if (n := _site_count(f)) is not None]
+    ref = max(counts, default=None)
+    support = counts.count(ref) if ref is not None else 0  # 기준에 닿은 프레임 수
     for f in window:
         n = _site_count(f)
         if n is None or ref is None:
@@ -136,7 +143,12 @@ def annotate_partial(frames: list[dict]) -> list[dict]:
             f.pop("partial", None)
             continue
         f["stations_ref"] = ref
-        f["partial"] = n < ref
+        if n < ref:
+            f["partial"] = True
+        elif support >= REF_MIN_SUPPORT:
+            f["partial"] = False
+        else:
+            f.pop("partial", None)  # 기준이 자기 자신뿐 — 판정 없음
     for f, t in times:
         if t is None or _site_count(f) is None:  # 창 밖이어도 모르는 값의 판정은 남기지 않는다
             f.pop("stations_ref", None)
@@ -178,7 +190,7 @@ def refetch_headroom(now: datetime, poll_s: float | None = None) -> int:
 
 
 def _refetch_until(tm: str) -> str | None:
-    """이 tm 을 다시 받을 수 있는 마지막 순간(UTC ISO): tm(KST) + REFETCH_MAX_AGE_S. 웹이 '다시 받음'과 '끝까지 채워지지 않음'을 가른다."""
+    """이 tm 을 다시 받을 수 있는 마지막 순간(UTC ISO): tm(KST) + REFETCH_MAX_AGE_S. 웹이 '기한까지 다시 받기 대상'과 '기한 지남'을 가른다."""
     t = _tm_dt(tm)
     return None if t is None else _iso((t - timedelta(hours=9)).replace(tzinfo=UTC) + timedelta(seconds=REFETCH_MAX_AGE_S))
 
