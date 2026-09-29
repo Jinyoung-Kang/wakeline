@@ -244,15 +244,14 @@ describe("map tooltips and text helpers: compact KST · UTC", () => {
     expect(Object.fromEntries(tip.rows)).toMatchObject({ TIME: "09-29 08:41:14 KST · 09-28 23:41:14Z" });
     expect(tip.rows.map(([k]) => k)).not.toContain("TIME UTC");
   });
-  it("AIS gap badge (상태 바 — KST 만, 사용자 결정 2026-09-30): open gap with its running duration; a closed gap as duration + end time, the span in the tooltip", () => {
+  it("AIS gap badge: open and closed gaps as HH:MM KST · HH:MMZ; the tooltip keeps the original UTC", () => {
     const base = { connected: false, msgs_per_s: 0, lag_s: null, gap_open_since: null, last_gap: null } as never as Parameters<typeof aisGapBadge>[0] & object;
     const open = aisGapBadge({ ...base, gap_open_since: "2026-09-28T23:40:00Z" }, NOW)!;
-    expect(open.text).toBe("AIS 공백 진행 중 1m 14s");
-    expect(open.title).toContain("AIS 수신이 08:40:00 KST 부터 끊겨 있음");
+    expect(open.text).toBe("AIS 공백 08:40 KST · 09-28 23:40Z 부터 · 진행 중");
+    expect(open.title).toContain("AIS 수신이 09-29 08:40:00 KST · 09-28 23:40:00 UTC 부터 끊겨 있음(원본 UTC 2026-09-28T23:40:00.000Z)");
     const closed = aisGapBadge({ ...base, last_gap: { started_at: "2026-09-28T23:20:00Z", ended_at: "2026-09-28T23:25:00Z", reason: "keepalive" } }, NOW)!;
-    expect(closed.text).toBe("AIS 공백 5m 00s · 08:25 KST 끝남");
-    expect(closed.title).toContain("AIS 수신 공백 5m 00s — 09-29 08:20:00 – 09-29 08:25:00 KST (keepalive)");
-    expect(`${open.title}${closed.title}`).not.toContain("UTC");
+    expect(closed.text).toBe("AIS 공백 08:20–08:25 KST · 09-28 23:20–23:25Z");
+    expect(closed.title).toContain("AIS 수신 공백 09-29 08:20:00 – 09-29 08:25:00 KST · 09-28 23:20:00 – 09-28 23:25:00 UTC (keepalive)");
   });
   it("not-live text and saved times use the KST day", () => {
     const now = Date.parse("2026-09-29T01:00:00Z");

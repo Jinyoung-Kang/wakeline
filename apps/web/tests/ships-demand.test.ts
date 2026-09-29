@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  aisBadge, aisCoverageFeatures, aisGapBadge, aisGapInfo, appendShipTrack, fmtCount, fmtCourse, fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
+  aisBadge, aisCoverageFeatures, aisGapBadge, appendShipTrack, fmtCount, fmtCourse, fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
   gridFeatures, imoField, mergeStatusGaps, navStatusLabel, normalizeGaps, parseAisCoverage, parseAisStatus, parseCategory, parseGridCells, parseShipLite,
   parseShipState, parseShipStatic, positionBadge, positionSourceLabel, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, shipCategory, shipFeatures, shipList,
   shipRotation, shipTrackFeatures, shipTrackFromRest, type AisBox, type AisGap, type AisStatus, type ShipLite, type ShipTrack,
@@ -456,14 +456,12 @@ describe("AIS status badges (status.sources.ais)", () => {
       expect(sides[0] !== sides[1]).toBe(true); // 한쪽만 범위 안 = 진짜 경계
     }
   });
-  it("gap badge: open gap, or a gap that ended within 30 min — a duration, not a start–end (사용자 보고 2026-09-30)", () => {
+  it("gap badge: open gap, or a gap that ended within 30 min", () => {
     const base = { connected: true, lag_s: 1, msgs_per_s: 1, received_at: 0, state: null, coverage: null };
-    expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 진행 중 10m 00s", open: true, durationS: 600 });
+    expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 11:50 KST · 02:50Z 부터 · 진행 중", open: true });
     const ended = { started_at: "2026-09-28T02:40:00Z", ended_at: "2026-09-28T02:45:00Z", reason: null };
-    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 5m 00s · 11:45 KST 끝남", open: false, durationS: 300 });
+    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 11:40–11:45 KST · 02:40–02:45Z", open: false });
     expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: { ...ended, ended_at: "2026-09-28T02:20:00Z" } }, NOW)).toBeNull();
-    // 줄에서 빠진 지난 공백도 상세 표(aisGapInfo)에는 남는다
-    expect(aisGapInfo({ ...base, gap_open_since: null, last_gap: { started_at: "2026-09-28T02:15:00Z", ended_at: "2026-09-28T02:20:00Z", reason: null } }, NOW)).toMatchObject({ recent: false, value: "5m 00s", span: "09-28 11:15:00 – 09-28 11:20:00 KST" });
   });
 });
 

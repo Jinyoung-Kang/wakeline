@@ -8,12 +8,14 @@
  *   SIGMET 900 s · 레이더 600 s(api StatusService 의 status.*.stale — SIGMET_STALE_S · RADAR_STALE_S 는 그 값을 옮겨 적은 것, 시험이 서버 코드와 견준다).
  *   새로 지은 수는 없다(칩 순서 · 폭 계산은 표시 규칙).
  * - 시각은 KST 만(사용자 결정 2026-09-30 — 계약 v5 §G13 의 KST · UTC 함께를 되돌림). 날짜가 오늘(KST)과 다르면 날짜도 붙인다.
+ *   lib/time 에서는 dualPair(…).kst · kstWallMs 만 쓴다 — 나란히 가는 KST 레인이 lib/time 을 다시 쓰며 남기는 이름이다(dualParts · dualRangePair 는 없어진다).
+ * - AIS 공백 모델(aisGapInfo)도 여기에 있다 — ships.ts 의 옛 상태 바 배지(aisGapBadge)는 KST 레인이 고치는 그대로 두었다가 합친 뒤 지운다.
  */
-import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS } from "./format";
+import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./format";
 import { krComposite } from "./kr-radar";
-import { aisBadge, aisGapInfo, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, type AisGapInfo, type AisStatus } from "./ships";
+import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
 import type { ConnState, ServerData } from "./store";
-import { dualPair, dualParts, kstWallMs, type TimeIn } from "./time";
+import { dualPair, kstWallMs, type TimeIn } from "./time";
 import type { FeedInfo, KrRadar, PublicStatus, RadarFrames } from "./types";
 import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "./ws-protocol";
 
@@ -82,11 +84,96 @@ export function statusInput(d: StatusSource, nowMs: number, srvNowMs: number): S
   };
 }
 
+/** KST 날짜 "YYYY-MM-DD"(dualPair 의 연도 형식 앞 10자). 모르면 null */
+const kstDay = (v: TimeIn): string | null => dualPair(v, { year: true })?.kst.slice(0, 10) ?? null;
+
 /** KST 벽시계 — 날짜가 오늘(KST)과 다르거나 오늘을 모르면 날짜도. 모르면 "—" */
 export function kstAt(v: TimeIn, nowMs: number, o: { seconds?: boolean } = {}): string {
-  const today = nowMs > 0 ? dualParts(nowMs) : null;
-  const sameDay = today != null && dualParts(v)?.kst.ymd === today.kst.ymd;
+  const day = kstDay(v);
+  const sameDay = day != null && nowMs > 0 && day === kstDay(nowMs);
   return dualPair(v, { date: !sameDay, seconds: o.seconds !== false })?.kst ?? "—";
+}
+
+/** 초까지의 KST 구간 "09-29 10:00:00 – 09-29 10:00:42 KST"(날짜는 늘 — 상세 표 · 툴팁). 한쪽이라도 모르면 "—" */
+function kstSpan(a: TimeIn, b: TimeIn): string {
+  const x = dualPair(a), y = dualPair(b);
+  return x && y ? `${x.kst.replace(/ KST$/, "")} – ${y.kst}` : "—";
+}
+
+// ---- AIS 수신 공백 ----
+
+/** AIS 공백 하나(줄의 칩 · 앞쪽 경고 · 상세 표). 모든 시각은 KST 만 */
+export interface AisGapInfo {
+  /** 한 줄 요약(칩 글자와 같다): "AIS 공백 진행 중 4m 12s" · "AIS 공백 1/2 구역 진행 중" · "AIS 공백 42s · 02:22 KST 끝남" */
+  text: string;
+  /** 칩의 값 · 상태 낱말(text 를 나눈 것) */
+  value: string;
+  state: string | null;
+  open: boolean;
+  partial?: boolean;
+  /** 상태 바 줄에 보일지: 열린 공백, 또는 끝난 지 AIS_GAP_SHOW_MS(30분, 계약 v2 §B4) 안 */
+  recent: boolean;
+  /** 길이(초): 열림 = 서버 기준 지금 − 시작(지금을 모르면 null) · 끝남 = 끝 − 시작 */
+  durationS: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  reason: string | null;
+  /** 시작 – 끝(KST, 초까지) — 상세 표 */
+  span: string;
+  title: string;
+}
+
+/**
+ * AIS 수신 공백(계약 v2 §B4 · v4 §D). 길이를 먼저 적는다(1분 미만은 초 — fmtDuration): 전에는 분까지의 시작–끝("02:22–02:22 KST")을 적어
+ * 1분이 안 되는 공백(재시작)이 같은 두 시각으로 보였다(사용자 보고 2026-09-30).
+ * - 열린 공백 → "AIS 공백 진행 중 4m 12s"(지금 = 서버 기준 — 모르면 길이 없이).
+ * - 구역이 여럿이고 일부만 공백이면 "AIS 공백 n/m 구역 진행 중" — 툴팁에 공백 구역 · 시작 시각, 나머지 구역은 보고된 연결 상태 그대로
+ *   (연결 · 끊김 · 연결 모름 — 공백이 없다고 "수신 중"이라고 말하지 않는다).
+ * - 끝난 공백 → "AIS 공백 42s · 02:22 KST 끝남". 끝난 공백은 상태에 구역이 없다 — 구역이 여럿이면 그렇다고 적는다.
+ * 모르면(상태 없음 · 공백 기록 없음 · 끝을 모르는 지난 공백) null. 줄에 보일지는 recent(상세 표는 늘 보인다).
+ */
+export function aisGapInfo(ais: AisStatus | null, nowMs: number): AisGapInfo | null {
+  if (!ais) return null;
+  const sg = openGapShards(ais);
+  const since = (v: string) => { const t = Date.parse(v); return nowMs > 0 && Number.isFinite(t) ? Math.max(0, (nowMs - t) / 1000) : null; };
+  const clock = (v: TimeIn, seconds: boolean) => { const t = kstAt(v, nowMs, { seconds }); return t === "—" ? null : t; };
+  const out = (o: Omit<AisGapInfo, "text">): AisGapInfo => ({ ...o, text: `AIS 공백 ${o.value}${o.state ? ` · ${o.state}` : ""}` });
+  const loss = "재전송이 없어 이 구간 선박 위치는 비어 있게 됩니다";
+  if (sg && sg.open.length > 0 && sg.open.length < sg.total) {
+    const lines = ais.shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${
+      sh.gap_open_since ? `공백 ${clock(sh.gap_open_since, true) ?? "—"} 부터` : `공백 없음 · ${shardConnText(sh)}`}`);
+    const first = sg.open.map((sh) => sh.gap_open_since!).sort()[0];
+    return out({
+      value: `${sg.open.length}/${sg.total} 구역 진행 중`, state: null, open: true, partial: true, recent: true, durationS: since(first),
+      startedAt: first, endedAt: null, reason: null, span: `${clock(first, true) ?? "—"} 부터(가장 이른 구역)`,
+      title: `${lines.join("\n")}\n공백 구역 안 선박 위치는 멈춰 있고, ${loss}`,
+    });
+  }
+  if (ais.gap_open_since) {
+    const all = sg && sg.open.length === sg.total ? ` · 모든 구역(${sg.total}개)` : "";
+    const d = since(ais.gap_open_since);
+    const from = clock(ais.gap_open_since, true) ?? "—";
+    return out({
+      value: `진행 중${d == null ? "" : ` ${fmtDuration(d)}`}`, state: null, open: true, recent: true, durationS: d,
+      startedAt: ais.gap_open_since, endedAt: null, reason: null, span: `${from} 부터`,
+      title: `AIS 수신이 ${from} 부터 끊겨 있음${all} — ${loss}`,
+    });
+  }
+  const g = ais.last_gap;
+  if (!g) return null;
+  const start = Date.parse(g.started_at);
+  const end = g.ended_at ? Date.parse(g.ended_at) : NaN;
+  if (!g.ended_at || !Number.isFinite(end)) return null; // 끝을 모르는 지난 공백 — 열린 공백은 gap_open_since 가 말한다
+  const d = Number.isFinite(start) ? Math.max(0, (end - start) / 1000) : null;
+  const recent = nowMs > 0 && nowMs - end <= AIS_GAP_SHOW_MS;
+  const endClock = clock(g.ended_at, false);
+  const scope = sg ? ` · 어느 구역의 공백인지는 상태에 없음(구역 ${sg.total}개)` : "";
+  const span = kstSpan(g.started_at, g.ended_at);
+  return out({
+    value: fmtDuration(d), state: endClock ? `${endClock} 끝남` : "끝남", open: false, recent, durationS: d,
+    startedAt: g.started_at, endedAt: g.ended_at, reason: g.reason, span,
+    title: `AIS 수신 공백 ${fmtDuration(d)} — ${span}${g.reason ? ` (${g.reason})` : ""} — 이 구간 선박 위치 없음${scope}`,
+  });
 }
 
 const toneHealth = (t: "ok" | "warn" | "bad" | "muted"): Health => (t === "muted" ? "unknown" : t);
