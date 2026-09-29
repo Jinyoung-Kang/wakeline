@@ -9,6 +9,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { HEALTH_MARK } from "@/lib/statusbar";
 import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
 import { normalizeQuery, normalizeShipQuery } from "@/lib/search";
@@ -179,6 +180,13 @@ const section = (html: string, id: string) => {
 };
 
 describe("features the guide describes exist in the screens", () => {
+  // 2.3 은 상태 바의 기상청 칩을 설명한다 — 예전 별도 배지 'KMA STALE'(badge bad)는 상태 바 칩(KMA ✕ age … STALE)으로 바뀌었다(계약 v5 §G20 · 상태 바 개편).
+  it("2.3 describes the KMA stale state as the status bar's KMA chip, not the removed red badge", () => {
+    const t = text(section(render(EMPTY), "dashboard-radar"));
+    expect(t).not.toMatch(/KMA STALE/);
+    expect(t).toContain(`KMA ${HEALTH_MARK.bad} age`);
+    expect(t).toMatch(/STALE/);
+  });
   // 오류 '해결' 표시(ADR-024 · 계약 v5 §G14): api(/ops/resolutions)와 화면(운영 · 로그의 해결 처리 · 가린 수 · 다시 보기 · 되돌리기)이 모두 있다.
   it("the resolve screens exist, so 6.2 and 6.3 describe them — hiding up to upto, never deleting", () => {
     expect(/ops\/resolutions|hidden_resolved/.test(SCREENS)).toBe(true);

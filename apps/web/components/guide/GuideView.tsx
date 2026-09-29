@@ -292,7 +292,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   기준에 닿은 프레임이 {KR_REF_MIN_SUPPORT}개 미만이면 판정하지 않습니다(—).</li>
                 <li><B>프레임 띠</B>{ref("radar", 5)} — 왼쪽이 오래된 프레임. 주황 = 일부 합성, 파랑 = 기준 도달, 빈 칸 = 판정 없음, 테두리 = 지금 프레임.</li>
                 <li><B>애니메이션</B>{ref("radar", 2)} — 프레임을 차례로 보여 줍니다. 슬라이더로 한 프레임을 고르면 멈추고, ‘latest’ 는 최신 프레임으로.</li>
-                <li>기상청 프레임이 {KR_RADAR_STALE_S / 60}분 넘게 새로 오지 않으면 상태 바에 <span className="badge bad">KMA STALE</span>.</li>
+                <li>기상청 프레임이 {KR_RADAR_STALE_S / 60}분 넘게 새로 오지 않으면 상태 바의 기상청 칩이 경고로 바뀝니다: <span className="mono text-bad">KMA {HEALTH_MARK.bad} age …m STALE</span>(칩 설명에 최신 프레임을 처음 받은 시각).</li>
               </UL>
             </Sec>
             <Sec id="dashboard-legend" sub>
