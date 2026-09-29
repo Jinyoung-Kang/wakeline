@@ -218,7 +218,10 @@ public class ShipRepository {
             s.mmsi, s.name, s.call_sign, s.imo, s.ship_type, s.dim_a, s.dim_b, s.dim_c, s.dim_d, s.draught_m, s.destination,
             s.eta_month, s.eta_day, s.eta_hour, s.eta_minute, s.updated_at, s.provider""";
 
-    public StoredShip find(String mmsi) {
+    public StoredShip find(String mmsi) { return find(db, mmsi); }
+
+    /** MMSI 하나의 저장 행(공개 조회 상한) — 주어진 연결 출처로(REST 는 공유 풀, 선택 조회는 {@link ReadPool}). */
+    public static StoredShip find(JdbcClient db, String mmsi) {
         return Sql.publicRead(db, "SELECT " + STATIC_COLUMNS + ", s.first_seen, s.last_seen FROM ship s WHERE s.mmsi = :m").param("m", mmsi)
                 .query((rs, i) -> new StoredShip(staticRow(rs), rs.getObject("first_seen", java.time.OffsetDateTime.class).toInstant(),
                         rs.getObject("last_seen", java.time.OffsetDateTime.class).toInstant()))

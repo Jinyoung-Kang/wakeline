@@ -90,6 +90,11 @@ wakeline:
   track-retention-hours: 72
   alert-retention-days: ${WAKELINE_ALERT_RETENTION_DAYS:30}   # 끝난 알림 보존(일, R-06 · ADR-017 §2). 0 = 지우지 않음
   summary-retention-days: 30
+  # WS 선택 선박 조회(저장 정적 보고 · 입출항 색인) 전용 읽기 풀(계약 v5 §G18 · ADR-025 · persist.ReadPool). 공유 풀(12 · 연결 대기 5 s)과 나눈다.
+  # 연결 대기는 공개 조회 문장 상한(3 s) 이하만 받는다 — 한 번의 읽기 상한 = 연결 대기 + 문장 = 2 s + 3 s(고른 값, 잰 값 아님). 크기 = 조회 실행기 스레드 수.
+  read-pool:
+    size: 4
+    connection-timeout-ms: 2000
   logs:
     # 시스템 로그 싱크(계약 v5 §C2, ADR-018): 이 프로세스의 WARN·ERROR 와 브라우저 오류를 가려서 Redis 스트림 wakeline:logs 로.
     # 되돌리기: false — logback 에 붙지 않고 스트림에 쓰지 않는다(브라우저 오류 수집은 503). 조회(/api/v1/ops/logs)는 그대로 남은 항목을 읽는다.

@@ -59,6 +59,8 @@ public final class PortCallFixtures {
         public final List<String> queries = new CopyOnWriteArrayList<>();
         public final AtomicInteger coverageReads = new AtomicInteger();
         public volatile RuntimeException fail;
+        /** 있으면 byCallSign 이 풀릴 때까지 기다린다(느린 DB · 풀 소진 흉내). */
+        public volatile java.util.concurrent.CountDownLatch hold;
 
         @Override public List<PortCallIndex.Coverage> coverage() {
             coverageReads.incrementAndGet();
@@ -68,6 +70,15 @@ public final class PortCallFixtures {
 
         @Override public List<PortCallIndex.Row> byCallSign(String callSign, LocalDate from, LocalDate to, int limit) {
             queries.add(callSign + " " + from + ".." + to + " limit " + limit);
+            java.util.concurrent.CountDownLatch h = hold;
+            if (h != null) {
+                try {
+                    if (!h.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("not released");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
             if (fail != null) throw fail;
             List<PortCallIndex.Row> all = rows.getOrDefault(callSign, List.of());
             return all.subList(0, Math.min(all.size(), limit));

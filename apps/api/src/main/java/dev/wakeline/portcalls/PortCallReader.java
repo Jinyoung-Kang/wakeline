@@ -114,6 +114,21 @@ public class PortCallReader {
         return cs == null ? PortCallsInfo.noCallSign(PortCallsInfo.UNUSABLE) : forCallSign(cs);
     }
 
+    /**
+     * DB · Redis 를 읽지 않고 답할 수 있으면 그 답(우편함에서 불러도 된다 — 계약 v5 §G18): 호출부호가 없거나 형식 밖이면 no_call_sign, 신선한 캐시면 그 값
+     * (지표 hit). 읽어야 하면 null — 부르는 쪽이 {@link #forStatic} 을 우편함 밖에서 부른다.
+     */
+    public PortCallsInfo cachedForStatic(ShipStatic st) {
+        String raw = st == null ? null : st.callSign();
+        if (raw == null || raw.isBlank()) return PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED);
+        String cs = normalizeCallSign(raw);
+        if (cs == null) return PortCallsInfo.noCallSign(PortCallsInfo.UNUSABLE);
+        Memo<PortCallsInfo> e = cache.get(cs);
+        if (!fresh(e, clock.getAsLong())) return null;
+        hit.increment();
+        return e.value();
+    }
+
     /** 정규화한 호출부호 → 입출항({@value #TTL_MS} ms 메모리 캐시). */
     public PortCallsInfo forCallSign(String cs) {
         if (cs == null || !CALL_SIGN.matcher(cs).matches()) return PortCallsInfo.noCallSign(PortCallsInfo.UNUSABLE);

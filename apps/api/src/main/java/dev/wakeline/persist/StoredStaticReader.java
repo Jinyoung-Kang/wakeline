@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.CompletableFuture;
@@ -26,10 +27,9 @@ import java.util.function.LongSupplier;
  *   <li>메모리 캐시(MMSI 별): 찾음 · 없음은 {@value #TTL_MS} ms, 읽기 실패(시간 초과 · 연결 없음 · 그 밖의 예외)는 {@value #ERROR_TTL_MS} ms — 선택 하나를
  *       되풀이해 다시 계산해도(선박 변화 · {@code ShipFanout} 주기 다시 보기) DB 는 MMSI 마다 이 간격에 한 번. 실패는 예외가 아니라 {@link Status#UNAVAILABLE}.
  *       같은 MMSI 의 동시 miss(그 선박을 고른 세션들 — 각자의 순서 큐)는 한 번만 읽고 결과를 함께 쓴다(리뷰: 공유 풀을 세션 수만큼 쓰지 않게).</li>
- *   <li>대기 상한(부르는 쪽 = 세션의 순서 큐 WsSession SerialOutbox — 그동안 그 세션의 선박 · 항공기 diff · pong 이 기다린다): 문장은 공개 조회 상한
- *       {@value Sql#PUBLIC_READ_TIMEOUT_S} s 지만 풀에서 연결을 얻는 대기는 Hikari connection-timeout(application.yml 5 s — 공유 풀 12)이 따로 걸린다.
- *       연결을 얻지 못하는 동안(풀 소진 · DB 없음) 한 번의 읽기는 최악 약 8 s(연결 5 s + 문장 3 s) 걸리고, 실패는 {@value #ERROR_TTL_MS} ms 마다 되풀이된다
- *       ({@code PortCallReader} 와 같은 모양 — 순서 큐 밖으로 옮기는 것은 이 레인 밖).</li>
+ *   <li>부르는 쪽(계약 v5 §G18 · ADR-025): {@link #cached} 는 세션 우편함(WsSession SerialOutbox)에서 — 메모리만 본다. {@link #lookup} 은 DB 를 읽을 수
+ *       있어 우편함 밖 선택 조회 실행기(ShipFanout · ShipLookups)에서만 부른다 — 기다리는 동안에도 그 세션의 diff · pong 은 간다.
+ *       DB 는 선택 조회 전용 풀({@link ReadPool} — 연결 대기 ≤ 문장 상한)로 읽는다: 한 번의 읽기 최악 = {@link ReadPool#readBoundMs()}(기본 2 s + 3 s).</li>
  *   <li>로그에는 MMSI · 오류 종류만.</li>
  * </ul>
  */
@@ -69,12 +69,22 @@ public class StoredStaticReader {
     private final Counter miss;
     private final Counter errors;
 
+    /** 운영: 선택 조회 전용 풀({@link ReadPool})로 ship 행을 읽는다({@link ShipRepository#find(JdbcClient, String)} — REST 와 같은 문장 · 행 해석). */
     @Autowired
+    public StoredStaticReader(ReadPool pool, MeterRegistry meters) {
+        this(statOf(mmsi -> ShipRepository.find(pool.jdbc(), mmsi)), System::currentTimeMillis, meters);
+    }
+
+    /** 시험용: 저장소(가짜 가능)의 find 로 읽는다. */
     public StoredStaticReader(ShipRepository repo, MeterRegistry meters) {
-        this(mmsi -> {
-            ShipRepository.StoredShip s = repo.find(mmsi);
+        this(statOf(repo::find), System::currentTimeMillis, meters);
+    }
+
+    private static Source statOf(java.util.function.Function<String, ShipRepository.StoredShip> find) {
+        return mmsi -> {
+            ShipRepository.StoredShip s = find.apply(mmsi);
             return s == null ? null : s.stat();
-        }, System::currentTimeMillis, meters);
+        };
     }
 
     /** 시험용(다른 패키지의 WS 시험도 쓴다): 읽기 · 시계를 주입한다. */
@@ -85,6 +95,16 @@ public class StoredStaticReader {
         this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "stored_static").tag("result", "miss").register(meters);
         this.errors = Counter.builder("wakeline_stored_static_errors_total")
                 .description("선택 선박의 저장된 AIS 정적 보고(DB ship)를 읽지 못한 수 — ship_selected.static_source = stored_unavailable").register(meters);
+    }
+
+    /**
+     * 캐시에만 묻는다(DB 를 읽지 않는다 — 우편함에서 불러도 된다): 신선한 값이면 그것(지표 hit), 아니면 null — 부르는 쪽이 {@link #lookup} 을 우편함 밖에서 부른다.
+     */
+    public Lookup cached(String mmsi) {
+        Memo m = cache.get(mmsi);
+        if (!fresh(m, clock.getAsLong())) return null;
+        hit.increment();
+        return m.value();
     }
 
     /**

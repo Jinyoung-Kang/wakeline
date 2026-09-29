@@ -199,6 +199,33 @@ class StoredStaticReaderTest {
         assertThat(r.cached()).isEqualTo(1);
     }
 
+    /**
+     * 캐시만 묻기(계약 v5 §G18 — 우편함에서 부른다): DB 를 읽지 않는다. 신선한 값이면 lookup 과 같은 객체(hit 로 센다), 없거나 지났으면 null(세지 않는다 —
+     * 이어 부르는 lookup 이 miss 를 센다). 실패 기억(unavailable)도 그 수명 동안은 캐시 답이다.
+     */
+    @Test void cachedNeverReadsTheDb_andAnswersOnlyFreshEntries() {
+        Db db = new Db();
+        AtomicLong clock = new AtomicLong(10_000_000);
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        StoredStaticReader r = new StoredStaticReader(db, clock::get, meters);
+        db.rows.put("440000051", stat("440000051", "V7A3884", T));
+        assertThat(r.cached("440000051")).isNull();
+        assertThat(db.reads).isEmpty();
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).isZero();
+        StoredStaticReader.Lookup found = r.lookup("440000051");
+        assertThat(r.cached("440000051")).isSameAs(found);
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).isEqualTo(1.0);
+        db.fail = new QueryTimeoutException("statement timeout");
+        r.lookup("440000052");
+        assertThat(r.cached("440000052")).isSameAs(StoredStaticReader.Lookup.UNAVAILABLE);
+        clock.addAndGet(StoredStaticReader.ERROR_TTL_MS);
+        assertThat(r.cached("440000052")).as("the failure is remembered only for ERROR_TTL_MS").isNull();
+        assertThat(r.cached("440000051")).isSameAs(found);
+        clock.addAndGet(StoredStaticReader.TTL_MS);
+        assertThat(r.cached("440000051")).isNull();
+        assertThat(db.reads).containsExactly("440000051", "440000052");
+    }
+
     /** 운영 연결: ShipRepository.find 의 행 → 정적 정보(위치로만 만든 행은 stat null → none), DB 예외 → unavailable. */
     @Test void productionSourceReadsTheShipRow() {
         ShipRepository repo = mock(ShipRepository.class);

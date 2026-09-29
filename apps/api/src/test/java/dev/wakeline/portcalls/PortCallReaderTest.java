@@ -39,6 +39,27 @@ class PortCallReaderTest {
 
     void fullFreshIndex() { index.coverage = PortCallFixtures.fullCoverage(FROM.minusDays(2), TO, NOW.minusSeconds(600)); }
 
+    // ---- 캐시만 묻기(계약 v5 §G18 — WS 우편함에서) ---------------------------------------------------------------------
+
+    /** 호출부호가 없거나 형식 밖이면 읽을 것이 없다(바로 답) · 신선한 캐시면 forStatic 과 같은 객체 · 아니면 null — 색인 · heartbeat 를 읽지 않는다. */
+    @Test void cachedForStatic_answersWithoutReading() {
+        fullFreshIndex();
+        int[] heartbeats = {0};
+        PortCallReader r = new PortCallReader(index, () -> { heartbeats[0]++; return List.of(); }, clock::get);
+        assertThat(r.cachedForStatic(null)).isEqualTo(PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED));
+        assertThat(r.cachedForStatic(stat("  "))).isEqualTo(PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED));
+        assertThat(r.cachedForStatic(stat("V7A 3884"))).isEqualTo(PortCallsInfo.noCallSign(PortCallsInfo.UNUSABLE));
+        assertThat(r.cachedForStatic(stat("v7a3884"))).as("not read yet").isNull();
+        assertThat(index.queries).isEmpty();
+        assertThat(index.coverageReads.get()).isZero();
+        assertThat(heartbeats[0]).isZero();
+        PortCallsInfo read = r.forStatic(stat("v7a3884"));
+        assertThat(r.cachedForStatic(stat(" V7A3884 "))).as("same normalized call sign").isSameAs(read);
+        clock.addAndGet(PortCallReader.TTL_MS);
+        assertThat(r.cachedForStatic(stat("V7A3884"))).isNull();
+        assertThat(index.queries).hasSize(1);
+    }
+
     // ---- 호출부호 -------------------------------------------------------------------------------------------------
 
     @Test void callSignRuleMatchesTheSharedVectors() throws Exception {

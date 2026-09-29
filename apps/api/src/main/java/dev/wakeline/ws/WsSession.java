@@ -144,6 +144,12 @@ public final class WsSession {
     /** 마지막 격자가 선박 수 때문이었다(capped) — 줌 4~6 에서 1,200 척 이하가 되어야 개별로 돌아온다(계약 v4 §C). */
     boolean shipsDense;
     ShipSelectedSent shipSelectedSent;
+    /**
+     * 진행 중인 선택 선박 조회(우편함 밖 — 계약 v5 §G18, ShipFanout). 이 객체가 지금 세대다 — 결과가 와도 이 객체이고 물음이 같을 때만 쓴다. null = 없음.
+     */
+    ShipFanout.PendingLookup shipLookup;
+    /** 다음 ship_selected 는 바뀌지 않았어도 보낸다 — shipSelectedForce(select_ship · resume)를 조회가 끝날 때까지 들고 있는다. */
+    boolean shipSelectedForcePending;
 
     /** 우편함 작업 실패 알림(R-73) — 허브가 wakeline_ws_task_errors_total{job} 로 세고 1분에 한 번 WARN 을 남긴다. */
     @FunctionalInterface

@@ -7,6 +7,7 @@ import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.persist.ReadPool;
 import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.portcalls.PortCallsInfo;
@@ -27,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -34,7 +36,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 import java.util.function.LongSupplier;
 
 /**
@@ -53,6 +54,10 @@ import java.util.function.LongSupplier;
  *       정적 보고) DB ship 표의 마지막 저장 정적 보고를 싣고 stored · static_updated_at(저장 행의 updated_at)으로 밝힌다({@link StoredStaticReader} —
  *       MMSI 별 캐시, 공개 조회 상한). 저장값은 메모리에 넣지 않는다(지도 목록 · 검색은 그대로). DB 에도 없으면 none, 읽지 못하면 stored_unavailable
  *       (static null — 입출항은 no_call_sign · not_received).</li>
+ *   <li>DB 조회는 우편함 밖(계약 v5 §G18 · ADR-025 — {@link ShipLookups}): 우편함은 캐시만 본다. 저장 정적 보고 · 입출항을 읽어야 하면 조회 실행기에 맡기고
+ *       돌아온다 — 그동안 그 세션의 diff · pong · heartbeat 는 제때 간다. 결과는 우편함에 SHIP_SELECTED 작업으로 돌아와, 세션의 지금 물음(선박 · 메모리
+ *       정적 정보의 유무 · 호출부호 — {@link Question})과 같을 때만 그때의 최신 상태와 함께 보낸다(선택이 바뀌었으면 버린다 — 세대 확인). 세션마다
+ *       진행 중인 조회는 하나. ship_selected 는 늦어도 조회 마감(운영 5 s — 읽기 풀의 연결 대기 2 s + 문장 3 s) 뒤에 나간다.</li>
  *   <li>port_calls(ADR-022 개정): static 의 호출부호로 DB 입출항 색인에서 찾은 한국 항만 입출항({@link PortCallReader} — 호출부호별
  *       {@value PortCallReader#TTL_MS} ms 캐시). 색인 갱신 · 오래됨(2시간) 판정은 선박 변화와 무관하므로 {@value #SELECTED_REFRESH_MS} ms 마다 선박을 고른
  *       세션의 ship_selected 를 다시 계산하고 값이 바뀌었을 때만 보낸다(incomplete → ok 등). 선택은 외부 호출도 Redis 임대도 만들지 않는다.</li>
@@ -81,6 +86,8 @@ public class ShipFanout implements SmartLifecycle {
     static final double POS_TOL_DEG = 1e-4;
     /** 선택 선박의 입출항 다시 보기 주기(ADR-022 개정) — 읽기 캐시와 같다. */
     static final long SELECTED_REFRESH_MS = PortCallReader.TTL_MS;
+    /** 시험 생성자의 조회 마감(바로 실행하는 실행기라 쓰이지 않는다 — 운영은 ReadPool.readBoundMs). */
+    static final long DIRECT_LOOKUP_DEADLINE_MS = 5_000;
 
     private final WsHub hub;
     private final ShipStore store;
@@ -93,10 +100,8 @@ public class ShipFanout implements SmartLifecycle {
     private final AtomicBoolean fanoutQueued = new AtomicBoolean();
     private volatile long lastFanoutMs;
     private volatile boolean running = true;
-    /** 정적 정보 → 입출항(운영: PortCallReader). 테스트 구성에서 없으면 port_calls 는 null. */
-    private volatile Function<ShipStatic, PortCallsInfo> portCalls = st -> null;
-    /** MMSI → 저장된 정적 보고(운영: StoredStaticReader). 테스트 구성에서 없으면 읽지 않는다 — 메모리에 없을 때 static_source 는 null. */
-    private volatile Function<String, StoredStaticReader.Lookup> storedStatics = m -> null;
+    /** 선택 선박의 DB 조회(저장 정적 보고 · 입출항 — 우편함 밖). 시험은 바로 실행하는 것을 쓰거나 바꿔 넣는다({@link #useLookups}). */
+    private volatile ShipLookups lookups;
     private final Counter snapshots;
     private final Counter diffs;
     private final Counter grids;
@@ -105,23 +110,36 @@ public class ShipFanout implements SmartLifecycle {
 
     private record CachedJson(ShipStore.Ship ship, String json) {}
 
+    /** 운영: 조회 실행기 스레드 = 선택 조회 전용 읽기 풀의 연결 수, 조회 마감 = 그 풀의 한 번 읽기 상한(연결 대기 + 문장). */
     @Autowired
-    public ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters, PortCallReader portCallReader, StoredStaticReader storedStaticReader) {
+    public ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters, PortCallReader portCallReader, StoredStaticReader storedStaticReader,
+                      ReadPool readPool) {
         this(hub, store, meters, Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ship-fanout").factory()),
                 System::currentTimeMillis);
-        setPortCallSource(portCallReader::forStatic);
-        setStoredStaticSource(storedStaticReader::lookup);
+        useLookups(new ShipLookups(ShipLookups.boundedExecutor(readPool.size()), readPool.readBoundMs(), meters));
+        setPortCallSource(ShipLookups.portCalls(portCallReader));
+        setStoredStaticSource(ShipLookups.stored(storedStaticReader));
         scheduleSelectedRefresh();
     }
 
-    /** ship_selected.port_calls 의 출처(운영: PortCallReader::forStatic). 테스트는 가짜를 넣는다 — 없으면 null. */
-    void setPortCallSource(Function<ShipStatic, PortCallsInfo> f) { portCalls = f == null ? st -> null : f; }
+    /** ship_selected.port_calls 의 출처(운영: PortCallReader — 캐시 · 읽기). 테스트는 가짜를 넣는다 — 없으면 null. */
+    void setPortCallSource(ShipLookups.Source<ShipStatic, PortCallsInfo> s) { lookups.setPortCalls(s); }
 
-    /** 메모리에 정적 정보가 없는 선택 선박의 저장 정적 보고(운영: StoredStaticReader::lookup). 테스트는 가짜를 넣는다 — 없으면 읽지 않는다. */
-    void setStoredStaticSource(Function<String, StoredStaticReader.Lookup> f) { storedStatics = f == null ? m -> null : f; }
+    /** 메모리에 정적 정보가 없는 선택 선박의 저장 정적 보고(운영: StoredStaticReader — 캐시 · 읽기). 테스트는 가짜를 넣는다 — 없으면 읽지 않는다(출처 null). */
+    void setStoredStaticSource(ShipLookups.Source<String, StoredStaticReader.Lookup> s) { lookups.setStored(s); }
 
-    /** 테스트용: timer 가 null 이면 모으지 않고 이벤트마다 바로 팬아웃한다. */
+    /** 조회 묶음을 바꾼다(운영 생성자 · 시험 — 출처는 바꾼 뒤에 넣는다). 이전 것의 실행기는 닫는다. */
+    void useLookups(ShipLookups l) {
+        ShipLookups old = lookups;
+        lookups = l;
+        if (old != null) old.close();
+    }
+
+    ShipLookups lookups() { return lookups; }
+
+    /** 테스트용: timer 가 null 이면 모으지 않고 이벤트마다 바로 팬아웃한다. 선택 조회는 바로 실행(부른 스레드 — 우편함)한다. */
     ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters, ScheduledExecutorService timer, LongSupplier clock) {
+        this.lookups = new ShipLookups(Runnable::run, DIRECT_LOOKUP_DEADLINE_MS, meters);
         this.hub = hub;
         this.store = store;
         this.timer = timer;
@@ -155,6 +173,7 @@ public class ShipFanout implements SmartLifecycle {
     public void stop() {
         running = false;
         if (timer != null) timer.shutdownNow();
+        lookups.close();
     }
 
     @Override public boolean isRunning() { return running; }
@@ -360,43 +379,104 @@ public class ShipFanout implements SmartLifecycle {
         }
     }
 
+    /**
+     * 선택 조회가 답하는 물음(계약 v5 §G18): 선박 · 메모리 정적 정보가 있는가(없으면 저장 정적 보고를 읽는다) · 입출항에 쓸 메모리 정적 정보의 호출부호.
+     * 선박 위치 · 다른 정적 필드가 바뀌어도 물음은 같다 — 진행 중인 조회의 답을 그때의 최신 상태와 함께 쓴다.
+     */
+    record Question(String mmsi, boolean live, String callSign) {
+        static Question of(String mmsi, ShipStatic live) { return new Question(mmsi, live != null, live == null ? null : live.callSign()); }
+    }
+
+    /**
+     * 세션의 진행 중인 선택 조회(우편함만 WsSession.shipLookup 을 바꾼다). result 는 조회가 끝나면 조회 · 마감 스레드가 쓴다 — 우편함은 이 객체가 세션의
+     * 지금 조회(세대)이고 물음이 같을 때만 읽는다. 앞 세대의 결과는 제 객체에 남아 읽히지 않는다(늦게 온 결과 버리기).
+     */
+    static final class PendingLookup {
+        final Question question;
+        volatile ShipLookups.Resolved result;
+
+        PendingLookup(Question question) { this.question = question; }
+    }
+
+    /**
+     * ship_selected 계산(우편함 작업). 캐시만으로 답할 수 있으면 바로 보낸다. 읽어야 하면 조회를 맡기고 돌아온다 — 같은 물음을 이미 읽는 중이면 새로 맡기지
+     * 않는다. 조회가 끝나면 이 작업이 다시 예약돼 그 결과(와 그때의 선박 상태)로 보낸다. 선택 해제 · 물음이 바뀌면 진행 중인 조회의 결과는 쓰지 않는다.
+     */
     void runSelected(WsSession s) {
         if (!s.ready() || !s.hello) return;
-        boolean force = s.shipSelectedForce.getAndSet(false);
+        if (s.shipSelectedForce.getAndSet(false)) s.shipSelectedForcePending = true; // 조회를 기다리는 동안에도 남는다
         String mmsi = s.selectedMmsi;
-        if (mmsi == null) { s.shipSelectedSent = null; return; }
+        if (mmsi == null) {
+            s.shipSelectedSent = null;
+            s.shipSelectedForcePending = false;
+            dropLookup(s);
+            return;
+        }
         ShipStore.Ship ship = store.view().get(mmsi);
-        SelectedStatic sel = selectedStatic(mmsi, ship != null ? ship.stat() : store.staticOf(mmsi));
-        ShipStatic stat = sel.stat();
-        PortCallsInfo calls = portCalls.apply(stat); // 저장값이면 그 호출부호로 찾는다
+        ShipStatic live = ship != null ? ship.stat() : store.staticOf(mmsi);
+        Question q = Question.of(mmsi, live);
+        PendingLookup p = s.shipLookup;
+        boolean same = p != null && p.question.equals(q);
+        ShipLookups.Resolved r = same ? p.result : null; // 이 물음에 대해 끝난 조회
+        if (r == null) r = lookups.cached(mmsi, live);  // 캐시(I/O 없음)
+        if (r == null) {
+            if (same) return; // 같은 물음을 읽는 중 — 끝나면 다시 온다
+            dropLookup(s);
+            startLookup(s, q, ship, live);
+            return;
+        }
+        if (p != null) {
+            s.shipLookup = null;
+            if (r != p.result) lookups.dropped(); // 다른 물음이었거나 캐시가 먼저 답했다
+        }
+        sendSelected(s, mmsi, ship, fit(r, live));
+    }
+
+    private void startLookup(WsSession s, Question q, ShipStore.Ship ship, ShipStatic live) {
+        ShipLookups l = lookups;
+        CompletableFuture<ShipLookups.Resolved> f = l.load(q.mmsi(), live);
+        if (f.isDone()) { // 바로 실행하는 실행기(시험) — 기다릴 것이 없다
+            sendSelected(s, q.mmsi(), ship, fit(f.join(), live));
+            return;
+        }
+        PendingLookup mine = new PendingLookup(q);
+        s.shipLookup = mine;
+        f.thenAccept(r -> {
+            mine.result = r;
+            if (!s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s)) && s.isClosing()) l.dropped();
+        });
+    }
+
+    /** 진행 중인 조회를 버린다(결과가 와도 쓰지 않는다). */
+    private void dropLookup(WsSession s) {
+        if (s.shipLookup == null) return;
+        s.shipLookup = null;
+        lookups.dropped();
+    }
+
+    /** 조회 결과를 지금의 메모리 정적 정보에 맞춘다: 물음이 같으면 입출항(같은 호출부호)은 그대로, 보일 정적 정보는 지금 메모리 값(live). */
+    private static ShipLookups.Resolved fit(ShipLookups.Resolved r, ShipStatic live) {
+        if (live == null || r.sel().stat() == live) return r;
+        return new ShipLookups.Resolved(new ShipLookups.SelectedStatic(live, WsMessages.STATIC_LIVE), r.calls());
+    }
+
+    /** 보낸 것과 다르거나(선박 객체 · 정적 정보 · 출처 · 입출항) 강제면 보낸다. */
+    private void sendSelected(WsSession s, String mmsi, ShipStore.Ship ship, ShipLookups.Resolved r) {
+        ShipStatic stat = r.sel().stat();
+        String source = r.sel().source();
+        PortCallsInfo calls = r.calls();
         WsSession.ShipSelectedSent prev = s.shipSelectedSent;
-        if (!force && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && Objects.equals(prev.stat(), stat)
-                && Objects.equals(prev.staticSource(), sel.source()) && Objects.equals(prev.portCalls(), calls))
+        if (!s.shipSelectedForcePending && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && Objects.equals(prev.stat(), stat)
+                && Objects.equals(prev.staticSource(), source) && Objects.equals(prev.portCalls(), calls))
             return;
         String state = ship == null ? null : hub.toJson(WsMessages.encodeShipState(ship.state()));
         String st = stat == null ? null : hub.toJson(WsMessages.encodeShipStatic(stat));
-        String storedAt = WsMessages.STATIC_STORED.equals(sel.source()) ? stat.updatedAt().toString() : null;
+        String storedAt = WsMessages.STATIC_STORED.equals(source) ? stat.updatedAt().toString() : null;
         DestinationInfo dest = stat == null ? null : destinations.parse(stat.destination());
-        if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st, sel.source(), storedAt, dest, calls))))
-            s.shipSelectedSent = new WsSession.ShipSelectedSent(mmsi, ship, stat, sel.source(), calls);
-    }
-
-    /** ship_selected 의 정적 정보와 그 출처(계약 v5 §G17 — {@link WsMessages#STATIC_LIVE} 등, 읽는 쪽이 없는 구성에서 모르면 null). */
-    record SelectedStatic(ShipStatic stat, String source) {}
-
-    /**
-     * 메모리 정적 정보(live)가 있으면 그것, 없으면 저장된 정적 보고 — 메모리에 넣지 않는다(이 메시지에만 싣는다). 저장 읽기는 캐시가 있고 예외를 던지지 않는다
-     * (실패 = stored_unavailable). 읽는 쪽이 없는 구성(시험)은 출처를 모른다(null).
-     */
-    SelectedStatic selectedStatic(String mmsi, ShipStatic live) {
-        if (live != null) return new SelectedStatic(live, WsMessages.STATIC_LIVE);
-        StoredStaticReader.Lookup l = storedStatics.apply(mmsi);
-        if (l == null) return new SelectedStatic(null, null);
-        return switch (l.status()) {
-            case STORED -> new SelectedStatic(l.stat(), WsMessages.STATIC_STORED);
-            case NONE -> new SelectedStatic(null, WsMessages.STATIC_NONE);
-            case UNAVAILABLE -> new SelectedStatic(null, WsMessages.STATIC_STORED_UNAVAILABLE);
-        };
+        if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st, source, storedAt, dest, calls)))) {
+            s.shipSelectedSent = new WsSession.ShipSelectedSent(mmsi, ship, stat, source, calls);
+            s.shipSelectedForcePending = false;
+        }
     }
 
     // ---- 공유 캐시 ----
