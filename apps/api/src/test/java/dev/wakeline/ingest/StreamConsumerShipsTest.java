@@ -86,6 +86,25 @@ class StreamConsumerShipsTest {
         assertThat(again.states()).hasSize(2);
     }
 
+    /**
+     * 계약 v5 §G19: payload static_received(MMSI → 수집기가 받은 정적 필드)가 정적 정보마다 received 로 붙는다. 목록에 빠진 MMSI · 키가 없는 이전 수집기의
+     * 메시지는 모름(null — 저장은 null 을 '받지 않음' 으로 본다). 스키마가 필드 이름 · MMSI 키를 검사한다(틀리면 메시지 검증 실패 → DLQ).
+     */
+    @Test void staticReceived_isAttachedPerMmsi_absentMeansUnknown() throws Exception {
+        String with = shipsPayload(List.of(), List.of(stat("416009981", "BLUE HOLE", null, T.minusSeconds(30)), stat("416009982", "OTHER", 37, T.minusSeconds(30))))
+                .replace(",\"stats\":", ",\"static_received\":{\"416009981\":[\"name\"]},\"stats\":");
+        consumer.handle(ships(T, with));
+        IngestEvents.ShipsUpdated e = (IngestEvents.ShipsUpdated) events.getLast();
+        assertThat(e.statics().get(0).received()).containsExactly("name");
+        assertThat(e.statics().get(1).received()).as("missing from the map — unknown").isNull();
+        assertThat(ships.staticOf("416009981").received()).as("memory keeps what was received live").containsExactly("name");
+        consumer.handle(ships(T.plusSeconds(10), shipsPayload(List.of(), List.of(stat("416009983", "LEGACY", 70, T.minusSeconds(20))))));
+        assertThat(((IngestEvents.ShipsUpdated) events.getLast()).statics().getFirst().received()).as("older collector").isNull();
+        for (String bad : List.of("{\"416009981\":[\"vendor\"]}", "{\"41600998\":[\"name\"]}", "{\"416009981\":[\"name\",\"name\"]}"))
+            assertThatThrownBy(() -> consumer.parse(ships(T, with.replace("{\"416009981\":[\"name\"]}", bad)))).as(bad)
+                    .hasMessageContaining("payload");
+    }
+
     /** 계약 v3 §B: 레거시 "gnss"(Timestamp 0~60·누락이 섞인 값)는 받자마자 null(모름) — 'epfs' 로 추정하지 않는다. 새 값과 null 은 그대로. */
     @Test void legacyGnssPositionSource_becomesUnknownAtIngest() throws Exception {
         consumer.handle(ships(T, shipsPayload(List.of(state("440123456", 35.1, 129.05, T.minusSeconds(3))), List.of())));

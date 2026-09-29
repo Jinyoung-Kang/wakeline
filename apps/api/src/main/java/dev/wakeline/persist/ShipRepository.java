@@ -46,16 +46,21 @@ public class ShipRepository {
             ON CONFLICT (mmsi) DO UPDATE SET first_seen = LEAST(s.first_seen, EXCLUDED.first_seen), last_seen = GREATEST(s.last_seen, EXCLUDED.last_seen)
             WHERE EXCLUDED.last_seen > s.last_seen OR EXCLUDED.first_seen < s.first_seen""";
 
-    /** 정적 정보 upsert: 더 오래된 내용(updated_at)이 최신을 덮지 않는다. */
+    /**
+     * 정적 정보 upsert: 더 오래된 내용(updated_at)이 최신을 덮지 않는다. 있는 행은 이 정적 정보가 덮어쓰는 필드({@link ShipStatic#written()} — 받은 필드,
+     * 모르면 값이 있는 필드)만 바꾸고 나머지 열은 저장값을 둔다(계약 v5 §G19 — Class B 24A 만 받은 레코드가 저장된 호출부호 · 크기를 NULL 로 지우지 않게).
+     * 열마다 불리언 매개변수(?) 하나 — VALUES 뒤의 매개변수라 pgjdbc 는 이 문장을 다중 VALUES 로 다시 쓰지 않는다(배치는 문장마다 — 정적 정보는 드물다).
+     * 열 이름 = {@link ShipStatic#FIELDS}.
+     */
     private static final String STATIC_SQL = """
             INSERT INTO ship AS s (mmsi, name, call_sign, imo, ship_type, dim_a, dim_b, dim_c, dim_d, draught_m, destination,
                                    eta_month, eta_day, eta_hour, eta_minute, first_seen, last_seen, updated_at, provider)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (mmsi) DO UPDATE SET
-              name = EXCLUDED.name, call_sign = EXCLUDED.call_sign, imo = EXCLUDED.imo, ship_type = EXCLUDED.ship_type,
-              dim_a = EXCLUDED.dim_a, dim_b = EXCLUDED.dim_b, dim_c = EXCLUDED.dim_c, dim_d = EXCLUDED.dim_d, draught_m = EXCLUDED.draught_m,
-              destination = EXCLUDED.destination, eta_month = EXCLUDED.eta_month, eta_day = EXCLUDED.eta_day, eta_hour = EXCLUDED.eta_hour,
-              eta_minute = EXCLUDED.eta_minute, updated_at = EXCLUDED.updated_at, provider = EXCLUDED.provider,
+            """ + String.join(",\n", ShipStatic.FIELDS.stream().map(f -> "  " + f + " = CASE WHEN ? THEN EXCLUDED." + f + " ELSE s." + f + " END").toList())
+            + """
+            ,
+              updated_at = EXCLUDED.updated_at, provider = EXCLUDED.provider,
               first_seen = LEAST(s.first_seen, EXCLUDED.first_seen), last_seen = GREATEST(s.last_seen, EXCLUDED.last_seen)
             WHERE s.updated_at IS NULL OR EXCLUDED.updated_at >= s.updated_at""";
 
@@ -116,16 +121,17 @@ public class ShipRepository {
     private record MergedStatic(ShipStatic stat, Instant firstSeen, Instant lastSeen) {}
 
     /**
-     * 정적 정보 배치. 같은 MMSI 는 먼저 한 행으로 합친다(updated_at 이 가장 새 내용 — 같으면 뒤의 것, first_seen = 받은 시각의 최솟값,
-     * last_seen = 최댓값): reWriteBatchedInserts 가 배치를 다중 VALUES INSERT 로 묶으면 한 문장 안의 같은 키는
-     * "ON CONFLICT DO UPDATE command cannot affect row a second time"(SQLState 21000)으로 배치 전체를 실패시킨다(리뷰 2026-09-28b #9).
+     * 정적 정보 배치. 같은 MMSI 는 먼저 한 행으로 합친다 — updated_at 순으로 겹친다({@link ShipStatic#overlay}: 필드마다 그 필드를 덮어쓴 가장 새 것의 값,
+     * 같은 시각이면 뒤의 것, 받은 필드는 합), first_seen = 받은 시각의 최솟값, last_seen = 최댓값. 한 행으로 만드는 까닭: 한 배치에 24A · 24B 가 따로 오면
+     * 가장 새 것 하나만 쓰면 앞 것만 받은 필드를 잃고, 같은 키 두 행이 한 다중 VALUES 문장이 되면 "ON CONFLICT DO UPDATE command cannot affect row a second
+     * time"(SQLState 21000)으로 배치 전체가 실패한다(리뷰 2026-09-28b #9).
      */
     public void upsertStatics(List<StaticRow> rows) {
         if (rows.isEmpty()) return;
         Map<String, MergedStatic> byMmsi = new LinkedHashMap<>();
         for (StaticRow r : rows) {
             byMmsi.merge(r.stat().mmsi(), new MergedStatic(r.stat(), r.receivedAt(), r.receivedAt()), (a, b) -> new MergedStatic(
-                    b.stat().updatedAt().isBefore(a.stat().updatedAt()) ? a.stat() : b.stat(),
+                    b.stat().updatedAt().isBefore(a.stat().updatedAt()) ? b.stat().overlay(a.stat()) : a.stat().overlay(b.stat()),
                     b.firstSeen().isBefore(a.firstSeen()) ? b.firstSeen() : a.firstSeen(),
                     b.lastSeen().isAfter(a.lastSeen()) ? b.lastSeen() : a.lastSeen()));
         }
@@ -151,6 +157,8 @@ public class ShipRepository {
             ps.setObject(17, Sql.ts(r.lastSeen()));
             ps.setObject(18, Sql.ts(s.updatedAt()));
             ps.setString(19, s.provider());
+            java.util.Set<String> written = s.written();
+            for (int i = 0; i < ShipStatic.FIELDS.size(); i++) ps.setBoolean(20 + i, written.contains(ShipStatic.FIELDS.get(i)));
         });
     }
 
@@ -218,7 +226,10 @@ public class ShipRepository {
             s.mmsi, s.name, s.call_sign, s.imo, s.ship_type, s.dim_a, s.dim_b, s.dim_c, s.dim_d, s.draught_m, s.destination,
             s.eta_month, s.eta_day, s.eta_hour, s.eta_minute, s.updated_at, s.provider""";
 
-    public StoredShip find(String mmsi) {
+    public StoredShip find(String mmsi) { return find(db, mmsi); }
+
+    /** MMSI 하나의 저장 행(공개 조회 상한) — 주어진 연결 출처로(REST 는 공유 풀, 선택 조회는 {@link ReadPool}). */
+    public static StoredShip find(JdbcClient db, String mmsi) {
         return Sql.publicRead(db, "SELECT " + STATIC_COLUMNS + ", s.first_seen, s.last_seen FROM ship s WHERE s.mmsi = :m").param("m", mmsi)
                 .query((rs, i) -> new StoredShip(staticRow(rs), rs.getObject("first_seen", java.time.OffsetDateTime.class).toInstant(),
                         rs.getObject("last_seen", java.time.OffsetDateTime.class).toInstant()))

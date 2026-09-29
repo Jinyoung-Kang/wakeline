@@ -359,7 +359,7 @@ class ShipFanoutTest {
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
             Instant now = Instant.parse("2026-09-29T13:00:00Z");
             java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(now.toEpochMilli());
-            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, clock::get)::forStatic);
+            k.shipFanout.setPortCallSource(ShipLookups.portCalls(new PortCallReader(index, List::of, clock::get)));
             publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of(stat("440000001", "HANJIN BUSAN", 70)));
             FakeWsSession f = session(k, "s", BUSAN, true);
             FakeWsSession idle = session(k, "idle", BUSAN, true); // 선박을 고르지 않은 세션 — 받지 않는다
@@ -434,9 +434,9 @@ class ShipFanoutTest {
             ShipStatic kept = new ShipStatic("440000021", "AZAMARA PURSUIT", "V7A3884", null, 60, null, null, null, null, null, "KRPUS", null, null, null,
                     null, storedAt, "aisstream");
             db.rows.put("440000021", kept);
-            k.shipFanout.setStoredStaticSource(new StoredStaticReader(db, clock::get, k.meters)::lookup);
+            k.shipFanout.setStoredStaticSource(ShipLookups.stored(new StoredStaticReader(db, clock::get, k.meters)));
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
-            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, clock::get)::forStatic);
+            k.shipFanout.setPortCallSource(ShipLookups.portCalls(new PortCallReader(index, List::of, clock::get)));
             publish(k, List.of(pos("440000021", 35.1, 129.1, T)), List.of()); // 위치만(재시작 뒤 스트림 보존 창에 정적 보고가 없다)
             FakeWsSession f = session(k, "s", BUSAN, true);
             assertThat(ofType(f, "ships_snapshot").getLast().path("ships").get(0).has("name")).as("the map list stays live-only").isFalse();
@@ -493,9 +493,9 @@ class ShipFanoutTest {
             db.rows.put("440000022", new ShipStatic("440000022", "STORED TWO", "D7AH", null, 70, null, null, null, null, null, null, null, null, null,
                     null, T.minusSeconds(9_000), "aisstream"));
             db.fail = new org.springframework.dao.QueryTimeoutException("statement timeout");
-            k.shipFanout.setStoredStaticSource(new StoredStaticReader(db, clock::get, k.meters)::lookup);
+            k.shipFanout.setStoredStaticSource(ShipLookups.stored(new StoredStaticReader(db, clock::get, k.meters)));
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
-            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, clock::get)::forStatic);
+            k.shipFanout.setPortCallSource(ShipLookups.portCalls(new PortCallReader(index, List::of, clock::get)));
             publish(k, List.of(pos("440000022", 35.1, 129.1, T), pos("440000023", 35.2, 129.2, T)), List.of());
             FakeWsSession f = session(k, "s", BUSAN, true);
 

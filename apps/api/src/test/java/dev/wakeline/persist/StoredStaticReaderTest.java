@@ -140,6 +140,64 @@ class StoredStaticReaderTest {
         assertThat(r.inflight()).isZero();
     }
 
+    /**
+     * 우편함 밖 조회(계약 v5 §G18 · 리뷰): lookupAsync 로 같은 MMSI 를 동시에 물으면 진행 중인 읽기의 future 를 함께 받는다 — 실행기에 올린 작업은 하나이고
+     * 기다리는 쪽은 스레드를 잡지 않는다(전에는 조회 스레드마다 join 으로 기다렸다). 끝나면 진행 중 표시는 지워지고 값은 캐시에 있다.
+     */
+    @Test void lookupAsync_joinsTheRunningReadWithoutAThread() throws Exception {
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger reads = new AtomicInteger();
+        ShipStatic st = stat("440000042", "D7AS", T);
+        StoredStaticReader r = new StoredStaticReader(mmsi -> {
+            reads.incrementAndGet();
+            try {
+                if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("not released");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+            return st;
+        }, () -> 0, meters);
+        java.util.concurrent.ThreadPoolExecutor one = new java.util.concurrent.ThreadPoolExecutor(1, 1, 60, TimeUnit.SECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(4));
+        try {
+            java.util.concurrent.CompletableFuture<StoredStaticReader.Lookup> first = r.lookupAsync("440000042", one);
+            List<java.util.concurrent.CompletableFuture<StoredStaticReader.Lookup>> others = new ArrayList<>();
+            for (int i = 0; i < 6; i++) others.add(r.lookupAsync("440000042", one));
+            for (var f : others) assertThat(f).as("the running read's future").isSameAs(first);
+            assertThat(one.getQueue()).as("no task per waiter").isEmpty();
+            assertThat(r.inflight()).isEqualTo(1);
+            release.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS).status()).isEqualTo(StoredStaticReader.Status.STORED);
+            assertThat(one.getCompletedTaskCount()).isEqualTo(1);
+        } finally {
+            one.shutdownNow();
+        }
+        assertThat(reads.get()).isEqualTo(1);
+        assertThat(r.inflight()).isZero();
+        assertThat(r.cached("440000042")).isSameAs(r.lookup("440000042"));
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).as("six joins + cached + lookup")
+                .isEqualTo(8.0);
+    }
+
+    /** 실행기가 거절하면(대기열 가득 · 종료) 읽지 않고 거절로 끝난 future — 진행 중 표시도 캐시도 남기지 않는다(다음 물음이 다시 올린다). */
+    @Test void lookupAsync_aRejectedReadLeavesNoMarkAndNoCacheEntry() {
+        Db db = new Db();
+        StoredStaticReader r = new StoredStaticReader(db, () -> 0, new SimpleMeterRegistry());
+        var f = r.lookupAsync("440000043", task -> { throw new java.util.concurrent.RejectedExecutionException("full"); });
+        assertThat(f).isCompletedExceptionally();
+        assertThatThrownByJoin(f);
+        assertThat(r.inflight()).isZero();
+        assertThat(r.cached("440000043")).isNull();
+        assertThat(db.reads).isEmpty();
+        assertThat(r.lookupAsync("440000043", Runnable::run).join()).isSameAs(StoredStaticReader.Lookup.NONE);
+    }
+
+    static void assertThatThrownByJoin(java.util.concurrent.CompletableFuture<?> f) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(f::join).hasCauseInstanceOf(java.util.concurrent.RejectedExecutionException.class);
+    }
+
     /** 읽는 쪽이 예외가 아닌 오류(Error)로 끝나도 기다린 쪽은 모름(unavailable)을 받고, 진행 중 표시는 남지 않는다 — 다음 선택이 다시 읽는다. */
     @Test void aReadEndingInAnError_releasesWaitersAsUnavailable() throws Exception {
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
@@ -197,6 +255,33 @@ class StoredStaticReaderTest {
         for (int i = 1; i < StoredStaticReader.MAX_ENTRIES; i++) r.lookup(String.format("45%07d", i));
         r.lookup("459999999"); // 모두 신선한데 상한 — 비우고 새 것 하나
         assertThat(r.cached()).isEqualTo(1);
+    }
+
+    /**
+     * 캐시만 묻기(계약 v5 §G18 — 우편함에서 부른다): DB 를 읽지 않는다. 신선한 값이면 lookup 과 같은 객체(hit 로 센다), 없거나 지났으면 null(세지 않는다 —
+     * 이어 부르는 lookup 이 miss 를 센다). 실패 기억(unavailable)도 그 수명 동안은 캐시 답이다.
+     */
+    @Test void cachedNeverReadsTheDb_andAnswersOnlyFreshEntries() {
+        Db db = new Db();
+        AtomicLong clock = new AtomicLong(10_000_000);
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        StoredStaticReader r = new StoredStaticReader(db, clock::get, meters);
+        db.rows.put("440000051", stat("440000051", "V7A3884", T));
+        assertThat(r.cached("440000051")).isNull();
+        assertThat(db.reads).isEmpty();
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).isZero();
+        StoredStaticReader.Lookup found = r.lookup("440000051");
+        assertThat(r.cached("440000051")).isSameAs(found);
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "stored_static", "result", "hit").count()).isEqualTo(1.0);
+        db.fail = new QueryTimeoutException("statement timeout");
+        r.lookup("440000052");
+        assertThat(r.cached("440000052")).isSameAs(StoredStaticReader.Lookup.UNAVAILABLE);
+        clock.addAndGet(StoredStaticReader.ERROR_TTL_MS);
+        assertThat(r.cached("440000052")).as("the failure is remembered only for ERROR_TTL_MS").isNull();
+        assertThat(r.cached("440000051")).isSameAs(found);
+        clock.addAndGet(StoredStaticReader.TTL_MS);
+        assertThat(r.cached("440000051")).isNull();
+        assertThat(db.reads).containsExactly("440000051", "440000052");
     }
 
     /** 운영 연결: ShipRepository.find 의 행 → 정적 정보(위치로만 만든 행은 stat null → none), DB 예외 → unavailable. */

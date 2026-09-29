@@ -43,6 +43,17 @@ class SchemaContractTest {
         assertThat(a.estimated()).isFalse();
     }
 
+    /** 계약 v5 §G19: ships payload 의 static_received — 있으면 MMSI 키 · 알려진 필드 이름 · 중복 없음, 없어도 된다(이전 수집기). Python 과 같은 스키마 파일. */
+    @Test void shipsPayloadStaticReceived_validatesAgainstTheSharedSchema() {
+        String base = """
+                {"ships":[],"static":[],"stats":{"msgs":0,"msgs_per_s":0,"dropped":0,"quarantined":0,"connected":true}%s}""";
+        assertThat(V.validatePayload("ships", base.formatted(""))).isNull();
+        assertThat(V.validatePayload("ships", base.formatted(",\"static_received\":{\"416009981\":[\"name\",\"call_sign\",\"dim_a\"]}"))).isNull();
+        for (String bad : new String[]{"{\"416009981\":[\"vendor\"]}", "{\"4160099\":[\"name\"]}", "{\"416009981\":[\"name\",\"name\"]}",
+                "{\"416009981\":\"name\"}", "[]"})
+            assertThat(V.validatePayload("ships", base.formatted(",\"static_received\":" + bad))).as(bad).isNotNull();
+    }
+
     @Test void estimatedTrue_isRejected() {
         String payload = """
                 {"states":[{"hex":"71c0a1","lat":37.4,"lon":126.4,"on_ground":false,"seen_at":"2026-09-27T05:10:03Z","provider":"adsb_lol",

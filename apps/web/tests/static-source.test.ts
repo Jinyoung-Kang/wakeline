@@ -7,6 +7,7 @@
  *   시각은 저장 행의 updated_at 이고 그 내용의 첫 수신도 마지막 수신도 아니다(수집기 재시작 · 30분 무수신 뒤 같은 내용도 새 시각 — 수집기 test_ais_book).
  *   출처는 그 정적 정보를 준 쪽(WS → REST)의 것만. DB 를 읽지 못했으면 '없음' 이 아니라 '모름'. 실시간 값 · 정적 정보 없음에는 표시하지 않는다.
  *   '입출항도 이 호출부호로 찾음' 은 아래 입출항(WS port_calls)을 그 호출부호로 찾았을 때만 — WS 가 저장 보고를 읽지 못했으면 찾지 않았다고 적는다(리뷰).
+ *   보이는 본문도 저장 행이 한 보고가 아님을 말한다(계약 v5 §G19 · 리뷰): 저장 행은 받은 필드만 덮으므로 그 시각의 보고가 싣지 않은 필드는 앞선 보고의 값.
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
@@ -15,7 +16,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
 import { fmtDuration } from "@/lib/format";
 import {
-  staticProvenance, storedPortCallsNote, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
+  staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT,
+  STORED_STATIC_TIME_LABEL,
   STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipStatic,
 } from "@/lib/ships";
 import { resetData, setData } from "@/lib/store";
@@ -146,7 +148,18 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(html.indexOf('data-testid="ship-static-stored"')).toBeLessThan(html.indexOf('data-field="선박명"'));
     // 입출항도 이 호출부호로(WS 가 저장된 호출부호로 찾은 결과)
     expect(t).toContain("D7AG");
-    expect(t).toContain(`이 보고의 값(${STORED_STATIC_PORT_CALLS_TEXT})`);
+    expect(t).toContain(`${STORED_STATIC_FIELDS_TEXT} · ${STORED_STATIC_PORT_CALLS_TEXT}`);
+  });
+
+  it("the visible line says the fields are stored values and that fields the last stored report did not carry are earlier reports' values (contract v5 §G19)", () => {
+    // 리뷰: 전에는 보이는 줄이 '아래 … 는 이 보고의 값' — 24A(선명)만 저장한 뒤의 호출부호(며칠 전 저장)를 그 시각의 보고로 말했다
+    const t = text(show(storedMsg()));
+    expect(STORED_STATIC_FIELDS_TEXT).toMatch(/실시간 값이 아님/);
+    expect(STORED_STATIC_FIELDS_TEXT).toMatch(/DB 에 저장된 값/);
+    expect(STORED_STATIC_FIELDS_TEXT).toMatch(/위 시각의 보고가 싣지 않은 필드는 그보다 앞서 저장된 보고의 값/);
+    expect(STORED_STATIC_FIELDS_TEXT).not.toMatch(/이 보고의 값/);
+    expect(t).toContain(STORED_STATIC_FIELDS_TEXT);
+    expect(t).not.toContain("이 보고의 값");
   });
 
   it("the time is called neither the first nor the last reception — the title says what rewrites it; without a readable time the note still says stored, with —", () => {
@@ -158,6 +171,10 @@ describe("ship card: a stored static report is labelled next to the static field
     expect(STORED_STATIC_TITLE).toMatch(/수집기가 다시 시작/);
     expect(STORED_STATIC_TITLE).toMatch(/30분 넘게/);
     expect(STORED_STATIC_TITLE).not.toMatch(/첫 메시지|처음 받은/);
+    // 계약 v5 §G19: 저장 행은 받은 필드만 덮는다 — 시각은 마지막으로 저장한 보고의 것, 그 보고가 싣지 않은 부분은 더 앞선 보고의 값
+    expect(STORED_STATIC_TITLE).toMatch(/마지막으로 정적 보고를 저장한 메시지/);
+    expect(STORED_STATIC_TITLE).toMatch(/싣지 않은 부분.*앞서 저장된 보고의 값/);
+    expect(STORED_STATIC_TITLE).not.toMatch(/지금 저장된 내용을 DB 에 쓴 메시지/);
     const t = text(show(selected("ship_selected.static_stored", (m) => { m.static_updated_at = "later"; })));
     expect(t).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} —`);
   });
@@ -199,6 +216,7 @@ describe("ship card: a stored static report is labelled next to the static field
     const t = text(html);
     expect(html).toContain('data-testid="ship-static-stored"');
     expect(html).toMatch(/data-field="호출부호"[^]*V7A3884/);
+    expect(t).toContain(STORED_STATIC_FIELDS_TEXT);
     expect(t).not.toContain(STORED_STATIC_PORT_CALLS_TEXT);
     expect(html).toContain('data-testid="ship-static-stored-portcalls"');
     expect(t).toContain(STORED_STATIC_PORT_CALLS_UNREAD_TEXT);

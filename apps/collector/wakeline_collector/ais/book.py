@@ -8,6 +8,11 @@
 - out_of_order(이미 받은 것보다 오래된 위치) · duplicate(같은 값) 는 격리가 아니라 대체된 것으로 센다.
 
 메모리 상한: 선박 수 max_ships(LRU 제거) + 마지막 갱신 뒤 ttl_s 가 지난 선박 제거. 레코드는 튜플로 둔다(선박당 ≈ 1 KiB).
+
+정적 정보의 받은 필드(계약 v5 §G19): 레코드는 재시작 · 제거 뒤 빈 것(14칸 None)에서 시작해 받은 조각만 채운다 — 메시지 5 는 14칸 모두, 24A 는 name,
+24B 는 call_sign · ship_type · dim_*(보조 선박 98MIDxxxx 는 크기 없음), 19 는 name · ship_type · dim_*. 레코드가 시작된 뒤 실제로 받은 필드를 비트로 들고
+있다가 발행 때 함께 꺼낸다(drain_received) — None 이 '받지 않음' 인지 '빈 값으로 받음'(선박이 비워 보냄)인지 api 가 가릴 수 있게. 받은 필드가 늘기만 해도
+(값은 같은 None) '바뀜' 이다 — 빈 값으로 받은 칸이 저장값을 비우도록.
 """
 
 from __future__ import annotations
@@ -40,14 +45,20 @@ _EMPTY_STATIC: tuple[Any, ...] = (None,) * len(STATIC_FIELDS)
 _STATIC_INDEX = {f: i for i, f in enumerate(STATIC_FIELDS)}
 
 
+def received_fields(mask: int) -> list[str]:
+    """받은 필드 비트 → 필드 이름(STATIC_FIELDS 순서)."""
+    return [f for i, f in enumerate(STATIC_FIELDS) if mask >> i & 1]
+
+
 class _Ship:
-    __slots__ = ("state", "t", "static", "static_at", "static_pub", "touched")
+    __slots__ = ("state", "t", "static", "static_recv", "static_at", "static_pub", "touched")
 
     def __init__(self, touched: float) -> None:
         self.state: tuple[Any, ...] | None = None
         self.t = 0.0  # 받아들인 마지막 위치의 수신 시각(epoch)
         self.static: tuple[Any, ...] | None = None
-        self.static_at = ""  # 정적 정보가 마지막으로 바뀐 메시지의 수신 시각(ISO)
+        self.static_recv = 0  # 이 레코드가 시작된 뒤 실제로 받은 정적 필드(STATIC_FIELDS 순서의 비트)
+        self.static_at = ""  # 정적 정보(내용 또는 받은 필드)가 마지막으로 바뀐 메시지의 수신 시각(ISO)
         self.static_pub = float("-inf")  # 정적 정보를 마지막으로 꺼낸(발행한) 단조 시각
         self.touched = touched
 
@@ -154,13 +165,15 @@ class ShipBook:
         ship = self._touch(part.mmsi)
         old = ship.static or _EMPTY_STATIC
         new = list(old)
+        recv = ship.static_recv
         for k, v in part.fields.items():
             i = _STATIC_INDEX.get(k)
             if i is not None:
                 new[i] = v
+                recv |= 1 << i
         merged = tuple(new)
-        if ship.static is None or merged != ship.static:
-            ship.static, ship.static_at = merged, part.seen_at
+        if ship.static is None or merged != ship.static or recv != ship.static_recv:
+            ship.static, ship.static_recv, ship.static_at = merged, recv, part.seen_at
             self._dirty_static.add(part.mmsi)
             return "changed"
         if self._mono() - ship.static_pub >= self.static_refresh_s:
@@ -170,9 +183,15 @@ class ShipBook:
 
     def drain(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """바뀐 선박의 최신 상태·정적 정보를 꺼내고 표시를 지운다."""
+        states, statics, _ = self.drain_received()
+        return states, statics
+
+    def drain_received(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[str]]]:
+        """drain + 꺼낸 정적 정보마다 이 레코드가 시작된 뒤 받은 필드(MMSI → 필드 이름, STATIC_FIELDS 순서 — 계약 v5 §G19)."""
         now = self._mono()
         states: list[dict[str, Any]] = []
         statics: list[dict[str, Any]] = []
+        received: dict[str, list[str]] = {}
         for mmsi in self._dirty_state:
             ship = self._ships.get(mmsi)
             if ship is not None and ship.state is not None:
@@ -183,10 +202,11 @@ class ShipBook:
                 d: dict[str, Any] = {"mmsi": mmsi, **dict(zip(STATIC_FIELDS, ship.static, strict=True))}
                 d["updated_at"], d["provider"] = ship.static_at, self.provider
                 statics.append(d)
+                received[mmsi] = received_fields(ship.static_recv)
                 ship.static_pub = now
         self._dirty_state.clear()
         self._dirty_static.clear()
-        return states, statics
+        return states, statics, received
 
     def mark_dirty(self, state_mmsis: Iterable[str], static_mmsis: Iterable[str]) -> None:
         """발행 실패분을 다시 표시한다 — 다음 발행이 그때의 최신값을 싣는다(낡은 변경분을 쌓아 두지 않는다)."""

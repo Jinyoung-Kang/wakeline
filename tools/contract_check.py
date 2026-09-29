@@ -630,8 +630,37 @@ def check_ships(env_v: Draft202012Validator) -> int:
         bad.append("msg_type/class enum")
     if set(ss["required"]) != {"mmsi", *STATIC_FIELDS, "updated_at", "provider"}:
         bad.append("ship_static required != parse.STATIC_FIELDS")
+    env_doc = json.loads((SCHEMAS / "stream_envelope.v1.json").read_text())
+    rec_items = env_doc["$defs"]["ships_payload"]["properties"]["static_received"]["additionalProperties"]["items"]
+    if rec_items["enum"] != list(STATIC_FIELDS):
+        bad.append("ships_payload.static_received enum != parse.STATIC_FIELDS (order)")
     print(f"{'FAIL' if bad else 'ok  '} ship schema enums/fields match code" + (f": {bad}" if bad else ""))
     failures += bool(bad)
+    # 받은 필드(계약 v5 §G19): 발행마다 static_received 가 그 part 의 static MMSI 를 정확히 덮고, 필드는 fixture 에서 그 MMSI 가 실제로 보낸 조각들의
+    # 키의 합(STATIC_FIELDS 순서)이다 — 메시지 5 = 14칸, 24A = name, 24B = 호출부호 · 선종 · 크기(보조 선박은 크기 없음), 19 = 선명 · 선종 · 크기
+    expected: dict[str, set[str]] = {}
+    for d in lines:
+        sp = parse_message(json.dumps(d).encode()).static
+        if sp is not None:
+            expected.setdefault(sp.mmsi, set()).update(k for k in sp.fields if k in STATIC_FIELDS)
+    rec_bad: list[str] = []
+    for f in entries:
+        if f["kind"] != "ships":
+            continue
+        p = _decode(f)
+        rec = p.get("static_received")  # type: ignore[union-attr]
+        if not isinstance(rec, dict) or set(rec) != {x["mmsi"] for x in p["static"]}:  # type: ignore[index]
+            rec_bad.append("static_received keys != static MMSIs")
+            continue
+        for m, fields in rec.items():
+            if fields != [x for x in STATIC_FIELDS if x in expected.get(m, set())]:
+                rec_bad.append(f"{m}: {fields}")
+    kinds_seen = {tuple(v) for f in entries if f["kind"] == "ships" for v in _decode(f)["static_received"].values()}  # type: ignore[index]
+    print(
+        f"{'FAIL' if rec_bad else 'ok  '} ais static_received = fields each MMSI actually sent ({len(expected)} ships, {len(kinds_seen)} distinct sets)"
+        + (f": {rec_bad[:3]}" if rec_bad else "")
+    )
+    failures += bool(rec_bad)
     # 파서 단독: 5개 형식 모두 위치 또는 정적 정보를 만든다
     kinds = {d["MessageType"]: parse_message(json.dumps(d).encode()) for d in lines}
     empty = [t for t, p in kinds.items() if p.position is None and p.static is None]

@@ -1,7 +1,7 @@
 """발행 태스크 — 이 프로세스에서 Redis 에 쓰는 유일한 곳(수신·정리 태스크는 Redis 를 기다리지 않는다).
 
 - 10 s 마다 바뀐 선박만 `wakeline:ships` 로 XADD(kind "ships", scope "ships"). 한 엔트리에 선박·정적 정보를 각각 최대 CHUNK 건,
-  넘으면 part/parts 로 나눈다.
+  넘으면 part/parts 로 나눈다. 정적 정보마다 받은 필드는 payload `static_received`(MMSI → 필드 — 계약 v5 §G19).
 - 닫힌 공백은 다음 틱(≤ 1 s)에 XADD(kind "ais_gap"). 구역 연결의 공백은 payload scope(그 구역의 정규화한 상자 문자열)를 싣는다(계약 v4 §D).
 - 상태 해시 `wakeline:ais:status` 는 5 s 마다 + 상태가 바뀔 때. updated_at 은 프로세스가 살아 있다는 heartbeat(헬스체크가 본다).
   구역이 여럿이면 합계 필드 + shards(JSON 배열) — 합계의 의미는 shards.py 설명.
@@ -129,7 +129,7 @@ class AisSink:
         """바뀐 선박을 발행한다. 반환: 보낸 XADD 수."""
         stats = self._window()
         self.book.evict()
-        states, statics = self.book.drain()
+        states, statics, received = self.book.drain_received()
         if not states and not statics:
             return 0
         parts = max(1, -(-len(states) // CHUNK), -(-len(statics) // CHUNK))
@@ -138,7 +138,15 @@ class AisSink:
         sent = 0
         for i in range(parts):
             ships, static = states[i * CHUNK : (i + 1) * CHUNK], statics[i * CHUNK : (i + 1) * CHUNK]
-            payload = {"ships": ships, "static": static, "stats": stats, "part": i + 1, "parts": parts}
+            payload = {
+                "ships": ships,
+                "static": static,
+                # 계약 v5 §G19: 정적 정보마다 받은 필드 — static 항목 밖에 둔다(항목은 additionalProperties false 라 이전 api 가 메시지 전체를 거절한다)
+                "static_received": {s["mmsi"]: received[s["mmsi"]] for s in static},
+                "stats": stats,
+                "part": i + 1,
+                "parts": parts,
+            }
             env = self._env.envelope(
                 kind="ships",
                 scope="ships",

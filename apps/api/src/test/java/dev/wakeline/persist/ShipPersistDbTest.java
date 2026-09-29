@@ -126,6 +126,100 @@ class ShipPersistDbTest {
         assertThat(TrackWriter.isPermanent(raw)).isTrue();
     }
 
+    /** Class B 정적 정보(24A · 24B 만 채운 칸) — received 는 수집기가 받은 필드(null = 모름 · 이전 수집기). */
+    static ShipStatic classB(String mmsi, String name, String callSign, Integer type, Integer dimA, Instant updated, java.util.Set<String> received) {
+        return new ShipStatic(mmsi, name, callSign, null, type, dimA, dimA == null ? null : 5, dimA == null ? null : 2, dimA == null ? null : 3, null, null,
+                null, null, null, null, updated, "aisstream", received);
+    }
+
+    static final java.util.Set<String> A = java.util.Set.of("name");
+    static final java.util.Set<String> B = java.util.Set.of("call_sign", "ship_type", "dim_a", "dim_b", "dim_c", "dim_d");
+    static final java.util.Set<String> AB = java.util.Set.of("name", "call_sign", "ship_type", "dim_a", "dim_b", "dim_c", "dim_d");
+
+    /**
+     * 계약 v5 §G19(재현을 뒤집음 — 첫 판은 NULL 로 덮이는 것을 단언했다): Class B 24A 만 받은 레코드(ais 재시작 뒤)는 받은 필드(name)만 덮고 저장된 호출부호 ·
+     * 선종 · 크기를 둔다. 나중의 24B 가 그것들을 바꾸고, 메시지 5(14칸 모두)는 모든 열을 덮고, 받은 부분 안의 빈 값(선박이 비워 보냄)은 덮는다. updated_at 은
+     * 마지막으로 저장한 정적 보고의 수신 시각 — 받지 않은 필드는 그보다 앞선 보고의 값이다.
+     */
+    @Test void statics_onlyReceivedFieldsOverwriteTheStoredRow() {
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000071", "BLUE HOLE", "BX12", 37, 10, W, AB), W)));
+        // ais 재시작 뒤 24A 만(나머지 칸은 받지 않아 null)
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000071", "BLUE HOLE II", null, null, null, W.plusSeconds(3600), A),
+                W.plusSeconds(3600))));
+        ShipStatic afterA = repo.find("440000071").stat();
+        assertThat(afterA.name()).isEqualTo("BLUE HOLE II");
+        assertThat(afterA.updatedAt()).isEqualTo(W.plusSeconds(3600));
+        assertThat(afterA.callSign()).as("24B not received since the restart — the stored call sign stays").isEqualTo("BX12");
+        assertThat(afterA.shipType()).isEqualTo(37);
+        assertThat(List.of(afterA.dimA(), afterA.dimB(), afterA.dimC(), afterA.dimD())).containsExactly(10, 5, 2, 3);
+        assertThat(afterA.received()).as("rows read from the DB carry no provenance").isNull();
+        // 나중의 24B 가 그 필드를 바꾼다
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000071", "BLUE HOLE II", "BX13", 36, 12, W.plusSeconds(3610), AB),
+                W.plusSeconds(3610))));
+        ShipStatic afterB = repo.find("440000071").stat();
+        assertThat(afterB.callSign()).isEqualTo("BX13");
+        assertThat(afterB.shipType()).isEqualTo(36);
+        assertThat(afterB.dimA()).isEqualTo(12);
+        // 받은 부분 안의 빈 값은 덮는다(선박이 호출부호를 비워 보냈다) — 받지 않은 칸과 다르다
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000071", "BLUE HOLE II", null, null, null, W.plusSeconds(3620), AB),
+                W.plusSeconds(3620))));
+        ShipStatic emptied = repo.find("440000071").stat();
+        assertThat(emptied.callSign()).isNull();
+        assertThat(emptied.dimA()).isNull();
+        // 메시지 5 는 14칸 모두 — 모든 열을 덮는다
+        ShipStatic msg5 = new ShipStatic("440000071", "BLUE HOLE III", "BX14", 9321483, 70, 150, 30, 14, 16, 9.8, "KR PUS", 9, 29, 6, 30,
+                W.plusSeconds(3630), "aisstream", java.util.Set.copyOf(ShipStatic.FIELDS));
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(msg5, W.plusSeconds(3630))));
+        ShipStatic all = repo.find("440000071").stat();
+        assertThat(new ShipStatic(all.mmsi(), all.name(), all.callSign(), all.imo(), all.shipType(), all.dimA(), all.dimB(), all.dimC(), all.dimD(),
+                all.draughtM(), all.destination(), all.etaMonth(), all.etaDay(), all.etaHour(), all.etaMinute(), all.updatedAt(), all.provider(),
+                msg5.received())).isEqualTo(msg5);
+        // 오래된 부분 정보는 여전히 최신을 되돌리지 않는다(updated_at 단조)
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000071", "OLD", "OLD1", 1, 1, W.plusSeconds(3625), AB), W.plusSeconds(3700))));
+        assertThat(repo.find("440000071").stat().name()).isEqualTo("BLUE HOLE III");
+        assertThat(repo.find("440000071").lastSeen()).as("the seen range still widens").isEqualTo(W.plusSeconds(3630));
+    }
+
+    /**
+     * 받은 필드를 싣지 않는 정적 정보(이전 수집기 — 배포 전환 중 어느 순서든): null 을 '받지 않음' 으로 본다 — 저장값을 지우지 않는다(대가: 선박이 실제로
+     * 비운 값은 새 수집기가 받은 필드를 실을 때부터 반영). 새 행이면 받은 값 그대로 넣는다.
+     */
+    @Test void statics_withoutProvenance_nullsDoNotEraseStoredValues() {
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000072", "BLUE HOLE", "BX12", 37, 10, W, null), W)));
+        assertThat(repo.find("440000072").stat().callSign()).isEqualTo("BX12");
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000072", "RENAMED", null, null, null, W.plusSeconds(60), null), W.plusSeconds(60))));
+        ShipStatic s = repo.find("440000072").stat();
+        assertThat(s.name()).isEqualTo("RENAMED");
+        assertThat(s.callSign()).isEqualTo("BX12");
+        assertThat(s.dimA()).isEqualTo(10);
+        assertThat(s.updatedAt()).isEqualTo(W.plusSeconds(60));
+    }
+
+    /**
+     * 한 배치에 24A · 24B 가 따로(같은 MMSI 두 행): 필드마다 가장 새 값으로 합쳐 한 행 — 가장 새 행 하나만 쓰면 앞 행만 받은 필드를 잃는다. 같은 배치의 다른
+     * MMSI 는 제 받은 필드대로(열마다의 불리언 매개변수가 행마다 제 값으로 묶인다 — 운영과 같은 reWriteBatchedInserts 연결).
+     */
+    @Test void statics_24aAnd24bInOneBatch_foldIntoOneRow_otherRowsKeepTheirOwnFields() {
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(classB("440000073", "STORED", "OLD9", 30, 99, W, AB), W),
+                new ShipRepository.StaticRow(classB("440000074", "OTHER", "OTH1", 52, 20, W, AB), W)));
+        repo.upsertStatics(List.of(
+                new ShipRepository.StaticRow(classB("440000073", null, "BX20", 37, 10, W.plusSeconds(10), B), W.plusSeconds(10)),
+                new ShipRepository.StaticRow(classB("440000074", "OTHER II", null, null, null, W.plusSeconds(15), A), W.plusSeconds(15)),
+                new ShipRepository.StaticRow(classB("440000073", "BLUE HOLE", null, null, null, W.plusSeconds(20), A), W.plusSeconds(20)),
+                new ShipRepository.StaticRow(classB("440000075", "NEW ROW", null, null, null, W.plusSeconds(20), A), W.plusSeconds(20))));
+        ShipStatic s = repo.find("440000073").stat();
+        assertThat(s.name()).isEqualTo("BLUE HOLE");
+        assertThat(s.callSign()).isEqualTo("BX20");
+        assertThat(s.shipType()).isEqualTo(37);
+        assertThat(s.dimA()).isEqualTo(10);
+        assertThat(s.updatedAt()).isEqualTo(W.plusSeconds(20));
+        ShipStatic o = repo.find("440000074").stat();
+        assertThat(List.of(o.name(), o.callSign(), o.shipType(), o.dimA())).containsExactly("OTHER II", "OTH1", 52, 20);
+        ShipStatic n = repo.find("440000075").stat();
+        assertThat(n.name()).as("a new row is inserted with what was received").isEqualTo("NEW ROW");
+        assertThat(n.callSign()).isNull();
+    }
+
     /** V7(계약 v3 §B): 위치 출처를 모르면 NULL 로 저장되고 NULL 로 읽힌다. */
     @Test void positions_unknownPositionSourceIsStoredAsNull() {
         ShipState p = pos("440000008", W.plusSeconds(5), 35.1);

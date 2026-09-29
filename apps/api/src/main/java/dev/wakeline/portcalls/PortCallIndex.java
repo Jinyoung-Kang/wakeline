@@ -1,7 +1,9 @@
 package dev.wakeline.portcalls;
 
+import dev.wakeline.persist.ReadPool;
 import dev.wakeline.persist.Sql;
 import dev.wakeline.persist.TrackRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -17,12 +19,17 @@ import java.util.TreeSet;
 /**
  * 한국 항만 입출항 색인 읽기(ADR-022 개정 · V15). 수집기가 항만청 10곳의 KST 날짜별 신고를 모두 받아 port_call 에 두고, 항만청마다 끝까지 색인한
  * 날짜 범위를 port_call_coverage 에 적는다 — api 는 읽기만 한다(SELECT 권한뿐). 문장마다 공개 조회 상한({@link Sql#PUBLIC_READ_TIMEOUT_S} s)을 건다
- * (DB 가 느려도 WS 우편함이 오래 붙잡히지 않게 — 실패는 호출자가 status error 로 말한다).
+ * (실패는 호출자가 status error 로 말한다). 운영은 선택 조회 전용 풀({@link ReadPool} — 연결 대기 ≤ 문장 상한, 계약 v5 §G18)로 읽고, 부르는 쪽은 WS 세션
+ * 우편함 밖의 선택 조회 실행기다(ShipFanout · ShipLookups).
  */
 @Repository
 public class PortCallIndex implements PortCallReader.Source {
     private final JdbcClient db;
 
+    @Autowired
+    public PortCallIndex(ReadPool pool) { this(pool.jdbc()); }
+
+    /** 시험용: 주어진 연결 출처로 읽는다. */
     public PortCallIndex(JdbcClient db) { this.db = db; }
 
     /** 항만청별 색인 범위와 빈 곳(행이 없는 항만청은 아직 색인하지 않았다). 배열(hole_days)은 연결을 돌려주기 전에 행 안에서 풀어 둔다. */
