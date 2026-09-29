@@ -268,7 +268,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
     state: g ? (g.open ? "진행 중" : "끝남") : i.ais ? "기록 없음" : "—",
     value: g ? (g.durationS == null ? "—" : g.value.replace(/^진행 중 /, "")) : "—", valueTitle: g?.title,
     source: g ? `${g.span}${g.reason ? ` · ${g.reason}` : ""}` : "—",
-    rule: `줄에는 진행 중이거나 끝난 뒤 ${AIS_GAP_SHOW_MS / 60_000}분까지(계약 v2 §B4)`,
+    rule: `줄에는 진행 중이거나 끝난 뒤 ${AIS_GAP_SHOW_MS / 60_000}분까지(계약 v2 §B4) · status 는 마지막 하나만 — 이력은 로그 메뉴의 AIS 수신 공백 탭`,
   });
   const sg = i.status?.sigmet;
   rows.push({

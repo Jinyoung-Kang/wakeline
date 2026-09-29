@@ -14,10 +14,11 @@ export function DemandBadge({ chip, testId }: { chip: Chip; testId: string }) {
 
 /**
  * 배경지도 스타일을 받지 못함(R-01) — 지도 위 왼쪽 상태 칸의 맨 위. 전에는 MapView 가 줌 단추 아래(top-20)에 따로 그려 칩 · 레이어 단추 줄과 겹칠 수 있었다.
+ * 알림 글자라 누르기를 받지 않는다(pointer-events-none — 그 밑의 지도를 끌 수 있게, 전과 같다).
  */
 function BasemapNotice() {
   return (
-    <div className="pointer-events-auto max-w-[420px] border border-line-2 bg-bg-1/90 px-2 py-1 text-[11px] text-warn" role="status" data-testid="basemap-failed">
+    <div className="pointer-events-none max-w-[420px] border border-line-2 bg-bg-1/90 px-2 py-1 text-[11px] text-warn" role="status" data-testid="basemap-failed">
       배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)
     </div>
   );
