@@ -284,8 +284,9 @@ export interface ReplayReq { at: number; bbox: string }
 export const REPLAY_DEBOUNCE_MS = 150;
 export interface ReplayRequestOpts {
   /**
-   * true(사용자가 옮김): 보내는 중인 다른 요청을 취소(AbortController)하고 바로 보낸다 — 그 응답은 이미 낡았다.
-   * false(재생 ▶): 취소하지 않고 끝나면 가장 최근 것을 보낸다 — 응답이 틱 간격보다 느려도 프레임이 계속 온다(R-47).
+   * true(사용자가 옮김): 보내는 중인 다른 요청을 "낡음"으로 표시한다 — 그 응답·실패는 반영하지 않고, 끝나면 곧바로 가장 최근 값을 보낸다.
+   * false(재생 ▶): 보내는 중인 요청의 응답도 그대로 그리고, 끝나면 가장 최근 값을 보낸다 — 응답이 틱 간격보다 느려도 프레임이 계속 온다(R-47).
+   * 어느 쪽이든 보내는 중인 요청을 끊고(abort) 곧바로 새 요청을 보내지는 않는다 — 아래 ReplayLoader 설명.
    */
   supersede?: boolean;
 }
@@ -296,15 +297,21 @@ const defaultTimers: Timers = {
 };
 
 /**
- * 재생 요청은 한 번에 하나만 보낸다(보내는 중인 요청은 늘 최대 1개).
+ * 재생 요청은 탭당 한 번에 하나만 — 브라우저에서도 서버에서도(보내는 중인 요청은 늘 최대 1개).
+ * 브라우저가 fetch 를 끊어도(AbortController) 서버는 그 요청의 조회를 끝까지 돈다: HistoryController.replay 는 publicRead 문장을 최대 4개
+ * (각 3 s 상한, Hikari 풀 12) 차례로 돌고, 서블릿은 응답을 쓸 때에야 연결이 끊긴 것을 안다. 그래서 끊고 곧바로 새 요청을 보내면 멈췄다 끌기를
+ * 되풀이할 때 탭 하나가 서버에 요청을 여러 개 겹쳐 둔다(리뷰 2026-09-29). 새 요청은 보내는 중인 요청이 끝난 뒤(응답 또는 실패)에 보낸다 —
+ * 재생 응답은 보통 0.03–0.26 s(VERIFICATION R-47 측정)라 기다림은 그만큼이다.
  * - schedule(): debounce(REPLAY_DEBOUNCE_MS) 뒤 마지막 값 하나만 request() 로 — 끄는 동안 요청이 입력 수만큼 쌓이지 않는다.
- * - request(supersede): 보내는 중인 요청을 취소하고 바로 보낸다. 취소한 요청의 응답·실패는 반영하지 않는다(지도를 비우지 않는다).
+ * - request(supersede): 보내는 중인 요청을 낡음으로 표시하고 최신 값 하나만 기억한다. 낡은 요청의 응답·실패는 반영하지 않는다(지도를 비우지 않는다).
  * - request(기본): 보내는 중이면 가장 최근 것 하나만 기억했다가(중간 것은 건너뜀) 응답이 오면 바로 보낸다(R-47) — 결국 마지막으로 원한 (at, bbox) 가 그려진다.
  * 받은 프레임은 도착 순서대로 반영하고(라벨과 다르면 화면이 "불러오는 중"으로 표시, R-05), 이미 새 요청이 기다리는 실패는 반영하지 않는다(곧 새 응답이 온다).
- * 기다리는 요청이 실패한 것과 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로. 보내는 중인 것과 같은 요청은 취소하지도 다시 보내지도 않는다.
+ * 기다리는 요청이 실패한 것과 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로. 보내는 중인 것과 같은 요청은 다시 보내지 않는다
+ * (낡음으로 표시했던 것이면 되살려 그 응답을 그린다).
+ * 끊는 것(abort)은 화면을 떠날 때(dispose)만 — 그 뒤로는 이 탭이 재생 요청을 보내지 않는다.
  */
 export class ReplayLoader {
-  private inflight: { r: ReplayReq; ctl: AbortController } | null = null;
+  private inflight: { r: ReplayReq; ctl: AbortController; stale: boolean } | null = null;
   private queued: ReplayReq | null = null;
   private timer: unknown = null;
   private disposed = false;
@@ -327,14 +334,10 @@ export class ReplayLoader {
   request(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
     if (this.disposed) return;
     const cur = this.inflight;
-    if (cur) {
-      if (sameReq(cur.r, r)) { this.queued = null; return; } // 이미 그것을 받는 중
-      if (!opts.supersede) { this.queued = r; return; }
-      this.inflight = null;
-      this.queued = null;
-      cur.ctl.abort(); // 낡은 요청 — 응답을 기다리지 않는다
-    }
-    void this.run(r);
+    if (!cur) { void this.run(r); return; }
+    if (sameReq(cur.r, r)) { cur.stale = false; this.queued = null; return; } // 이미 그것을 받는 중(낡음으로 표시했으면 되살린다)
+    if (opts.supersede) cur.stale = true; // 사용자가 옮김 — 그 응답은 이미 낡았다(그리지 않는다)
+    this.queued = r; // 끝나면 곧바로(서버에 겹치지 않게)
   }
 
   /** 화면을 떠나면 더 보내지도 반영하지도 않는다(기다리는 debounce · 보내는 중인 요청도 취소) */
@@ -348,15 +351,15 @@ export class ReplayLoader {
   }
 
   private async run(r: ReplayReq): Promise<void> {
-    const me = { r, ctl: new AbortController() };
+    const me = { r, ctl: new AbortController(), stale: false };
     this.inflight = me;
     const t0 = this.clock();
     try {
       const frame = await this.fetchFrame(r, me.ctl.signal);
-      if (this.inflight === me && !this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
+      if (this.inflight === me && !me.stale && !this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
     } catch (error) {
-      // 취소된(대신한) 요청은 알리지 않는다. 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
-      if (this.inflight === me && !this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
+      // 낡은 요청은 알리지 않는다. 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
+      if (this.inflight === me && !me.stale && !this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
     } finally {
       if (this.inflight === me) {
         this.inflight = null;

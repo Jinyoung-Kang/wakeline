@@ -3,8 +3,10 @@
  * 원인 — 슬라이더(flex-1 · min-w 200px)가 길이가 바뀌는 상태 글자("1분 요약 구간(72 h 밖) … 불러오는 중" ↔ "원해상도 구간(72 h 안) … 308 aircraft …")와
  * 한 flex-wrap 줄을 나눠 써서, 글자 길이에 따라 줄바꿈 위치와 남는 폭이 달라졌다(영상에서 약 160 ↔ 380 px).
  * - 레이아웃: 슬라이더는 자기 줄에 혼자 있다(폭 = 줄 폭). 상태 글자는 높이가 고정된 한 줄(넘치면 잘림)에 따로.
- * - 동작: 시각 라벨은 입력마다 바로 바뀌고, 기록 요청은 debounce 뒤 마지막 값 하나만 — 사용자가 옮기면 보내는 중인 이전 요청은 취소(AbortController).
- *   재생(▶) 중에는 취소하지 않고 끝나면 최신 값을 보낸다(R-47 — 응답이 느려도 프레임이 계속 온다).
+ * - 동작: 시각 라벨은 입력마다 바로 바뀌고, 기록 요청은 debounce 뒤 마지막 값 하나만 — 사용자가 옮기면 보내는 중인 이전 요청은 "낡음"으로 표시해
+ *   그 응답·실패를 반영하지 않는다. 새 요청은 그 요청이 끝난 뒤에 보낸다: 브라우저가 fetch 를 끊어도(AbortController) 서버는 그 요청의 조회
+ *   (HistoryController.replay — publicRead 최대 4문장, 각 3 s 상한)를 끝까지 돌므로, 끊고 바로 보내면 탭 하나가 서버에 요청을 여러 개 겹쳐 둔다
+ *   (리뷰 2026-09-29). 서버 쪽 동시 요청은 탭당 1개(R-47 과 같은 불변식). 재생(▶) 중에는 응답을 그대로 그리고 끝나면 최신 값을 보낸다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { createElement } from "react";
@@ -72,30 +74,46 @@ describe("replay slider geometry does not depend on any text", () => {
   });
 });
 
-describe("dragging: debounced requests, stale ones cancelled, at most one in flight, the last value wins", () => {
+describe("dragging: debounced requests, stale responses dropped, at most one request per tab at the server, the last value wins", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
+  /**
+   * fetch 모형 — 브라우저 쪽(clientActive: 기다리는 promise)과 서버 쪽(serverActive: 서버가 아직 처리 중인 요청)을 따로 센다.
+   * abort 는 브라우저만 멈춘다(promise 가 곧바로 AbortError 로 끝남). 서버는 pending[i].resolve/reject(= 서버가 응답을 끝냄) 때까지 그 요청을 계속 처리한다.
+   */
   function harness() {
-    let active = 0, maxActive = 0;
+    let clientActive = 0, maxClientActive = 0, serverActive = 0, maxServerActive = 0, startedWhileServerBusy = 0;
     const calls: R.ReplayReq[] = [];
     const aborted: R.ReplayReq[] = [];
-    const pending: { r: R.ReplayReq; resolve: (f: R.ReplayFrame) => void; signal: AbortSignal }[] = [];
+    const pending: { r: R.ReplayReq; resolve: (f: R.ReplayFrame) => void; reject: (e: unknown) => void; signal: AbortSignal }[] = [];
     const events: { type: string; at?: string }[] = [];
     const loader = new R.ReplayLoader(
       (r, signal) => {
         calls.push(r);
-        active++; maxActive = Math.max(maxActive, active);
+        if (serverActive > 0) startedWhileServerBusy++;
+        serverActive++; maxServerActive = Math.max(maxServerActive, serverActive);
+        clientActive++; maxClientActive = Math.max(maxClientActive, clientActive);
         return new Promise<R.ReplayFrame>((resolve, reject) => {
-          let done = false;
-          signal?.addEventListener("abort", () => { if (done) return; done = true; active--; aborted.push(r); reject(new DOMException("aborted", "AbortError")); });
-          pending.push({ r, signal: signal!, resolve: (f) => { if (done) return; done = true; active--; resolve(f); } });
+          let clientDone = false, serverDone = false;
+          const serverFinish = () => { if (!serverDone) { serverDone = true; serverActive--; } };
+          const clientFinish = () => { if (clientDone) return false; clientDone = true; clientActive--; return true; };
+          signal?.addEventListener("abort", () => { if (clientFinish()) { aborted.push(r); reject(new DOMException("aborted", "AbortError")); } });
+          pending.push({
+            r, signal: signal!,
+            resolve: (f) => { serverFinish(); if (clientFinish()) resolve(f); },
+            reject: (e) => { serverFinish(); if (clientFinish()) reject(e); },
+          });
         });
       },
       (e) => events.push(e.type === "loaded" ? { type: e.type, at: e.frame.at } : { type: e.type }),
     );
     const frame = (r: R.ReplayReq): R.ReplayFrame => ({ at: new Date(r.at).toISOString(), aircraft: [], sigmets: [], source: "track_point" });
-    return { calls, aborted, pending, events, loader, frame, get active() { return active; }, get maxActive() { return maxActive; } };
+    return {
+      calls, aborted, pending, events, loader, frame,
+      get clientActive() { return clientActive; }, get maxClientActive() { return maxClientActive; },
+      get serverActive() { return serverActive; }, get maxServerActive() { return maxServerActive; }, get startedWhileServerBusy() { return startedWhileServerBusy; },
+    };
   }
   const flush = async () => { await vi.advanceTimersByTimeAsync(0); };
 
@@ -110,33 +128,63 @@ describe("dragging: debounced requests, stale ones cancelled, at most one in fli
     expect(h.events).toEqual([{ type: "loaded", at: new Date(400_000).toISOString() }]);
   });
 
-  it("moving again while a request is in flight aborts it; never more than one in flight; the last value is drawn", async () => {
+  it("stop-and-go drag: no request starts while an earlier one is still running at the server; stale responses are not drawn; the last value is drawn", async () => {
     const h = harness();
-    // 끌다 멈추고(요청 1 보냄) · 다시 끌다 멈추고(요청 1 취소, 요청 2) · 다시(요청 2 취소, 요청 3)
+    // 끌다 멈추고(요청 1 보냄 — 서버가 느림) · 다시 끌다 멈추고 · 다시 — 요청 1 이 서버에서 끝나기 전
     for (const burst of [[1, 2, 3], [4, 5, 6, 7], [8, 9]]) {
       for (const v of burst) { h.loader.schedule({ at: v * 60_000, bbox: "b" }, { supersede: true }); await vi.advanceTimersByTimeAsync(16); }
       await vi.advanceTimersByTimeAsync(R.REPLAY_DEBOUNCE_MS);
     }
-    expect(h.calls.map((r) => r.at / 60_000)).toEqual([3, 7, 9]);
-    expect(h.aborted.map((r) => r.at / 60_000)).toEqual([3, 7]);
-    expect(h.maxActive).toBe(1);
-    expect(h.active).toBe(1);
-    // 취소된 요청은 실패로 알리지 않는다(지도를 비우지 않는다)
+    // 수정 전: 요청 1·2 를 끊고 곧바로 2·3 을 보냈다 — calls [3, 7, 9], 서버에는 셋이 겹쳐 있었다(serverActive 3)
+    expect(h.calls.map((r) => r.at / 60_000)).toEqual([3]);
+    expect(h.startedWhileServerBusy).toBe(0);
+    expect(h.serverActive).toBe(1);
+    h.pending[0].resolve(h.frame(h.pending[0].r)); // 서버가 요청 1 을 끝냄 — 이미 낡았다(그리지 않는다)
     await flush();
     expect(h.events).toEqual([]);
-    h.pending[2].resolve(h.frame(h.pending[2].r));
+    expect(h.calls.map((r) => r.at / 60_000)).toEqual([3, 9]); // 중간 값(7)은 건너뛰고 마지막 값만
+    h.pending[1].resolve(h.frame(h.pending[1].r));
     await flush();
     expect(h.events).toEqual([{ type: "loaded", at: new Date(9 * 60_000).toISOString() }]);
+    expect(h.maxServerActive).toBe(1);
+    expect(h.startedWhileServerBusy).toBe(0);
+    expect(h.maxClientActive).toBe(1);
   });
 
-  it("a response that arrives after its request was superseded is never drawn", async () => {
+  it("a response that arrives after its request was superseded is never drawn; the newer request is sent once it settles", async () => {
     const h = harness();
     h.loader.request({ at: 1_000, bbox: "b" }, { supersede: true });
     h.loader.request({ at: 2_000, bbox: "b" }, { supersede: true });
-    h.pending[0].resolve(h.frame(h.pending[0].r)); // 이미 취소됨 — 무시
+    expect(h.calls.map((r) => r.at)).toEqual([1_000]);
+    h.pending[0].resolve(h.frame(h.pending[0].r)); // 낡음 — 무시
+    await flush();
+    expect(h.events).toEqual([]);
+    expect(h.calls.map((r) => r.at)).toEqual([1_000, 2_000]);
     h.pending[1].resolve(h.frame(h.pending[1].r));
     await flush();
     expect(h.events).toEqual([{ type: "loaded", at: new Date(2_000).toISOString() }]);
+    expect(h.maxServerActive).toBe(1);
+  });
+
+  it("a superseded request that fails is not reported (the map is not cleared) and the newer request is still sent", async () => {
+    const h = harness();
+    h.loader.request({ at: 1_000, bbox: "b" }, { supersede: true });
+    h.loader.request({ at: 2_000, bbox: "b" }, { supersede: true });
+    h.pending[0].reject(new Error("boom"));
+    await flush();
+    expect(h.events).toEqual([]);
+    expect(h.calls.map((r) => r.at)).toEqual([1_000, 2_000]);
+  });
+
+  it("moving back to the time already in flight keeps it: no re-send, and its response is drawn", async () => {
+    const h = harness();
+    h.loader.request({ at: 1_000, bbox: "b" }, { supersede: true });
+    h.loader.request({ at: 2_000, bbox: "b" }, { supersede: true }); // 1 000 은 낡음
+    h.loader.request({ at: 1_000, bbox: "b" }, { supersede: true }); // 다시 1 000 — 보내는 중인 그것이 다시 최신
+    h.pending[0].resolve(h.frame(h.pending[0].r));
+    await flush();
+    expect(h.calls.map((r) => r.at)).toEqual([1_000]);
+    expect(h.events).toEqual([{ type: "loaded", at: new Date(1_000).toISOString() }]);
   });
 
   it("the same (at, bbox) as the one in flight is not cancelled or re-sent", async () => {
@@ -148,18 +196,19 @@ describe("dragging: debounced requests, stale ones cancelled, at most one in fli
     expect(h.aborted).toEqual([]);
   });
 
-  it("while playing (no supersede) a slow request is not cancelled: the latest tick is sent when it finishes (R-47)", async () => {
+  it("while playing (no supersede) a slow request is not cancelled: its frame is drawn and the latest tick is sent when it finishes (R-47)", async () => {
     const h = harness();
     for (let i = 1; i <= 5; i++) { h.loader.schedule({ at: i * 10_000, bbox: "b" }, { supersede: false }); await vi.advanceTimersByTimeAsync(1_000); }
     expect(h.calls.map((r) => r.at)).toEqual([10_000]); // 첫 요청이 아직 끝나지 않았다
     expect(h.aborted).toEqual([]);
     h.pending[0].resolve(h.frame(h.pending[0].r));
     await flush();
+    expect(h.events).toEqual([{ type: "loaded", at: new Date(10_000).toISOString() }]);
     expect(h.calls.map((r) => r.at)).toEqual([10_000, 50_000]);
-    expect(h.maxActive).toBe(1);
+    expect(h.maxServerActive).toBe(1);
   });
 
-  it("dispose cancels the pending debounce and aborts the request in flight", async () => {
+  it("dispose cancels the pending debounce and aborts the request in flight (nothing new is started)", async () => {
     const h = harness();
     h.loader.request({ at: 1_000, bbox: "b" });
     h.loader.schedule({ at: 2_000, bbox: "b" }, { supersede: true });
@@ -167,6 +216,9 @@ describe("dragging: debounced requests, stale ones cancelled, at most one in fli
     await vi.advanceTimersByTimeAsync(R.REPLAY_DEBOUNCE_MS * 2);
     expect(h.calls).toHaveLength(1);
     expect(h.aborted).toHaveLength(1);
+    h.pending[0].resolve(h.frame(h.pending[0].r));
+    await flush();
+    expect(h.calls).toHaveLength(1);
     expect(h.events).toEqual([]);
   });
 });

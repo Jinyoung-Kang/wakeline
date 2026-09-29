@@ -38,8 +38,9 @@ export default function ReplayPage() {
   // 기록 시각은 서버 시계 — 상황판에서 추정한 오프셋이 있으면 쓴다(없으면 브라우저 시계)
   useEffect(() => { const h = setTimeout(() => { const now = serverNowMs(Date.now()); setRange(replayRange(now)); setAt(now - 10 * 60_000); }, 0); return () => clearTimeout(h); }, []);
 
-  // 요청은 한 번에 하나(ReplayLoader): 입력은 debounce 뒤 마지막 값만, 사용자가 옮기면 보내는 중인 낡은 요청은 취소(AbortController),
-  // 재생(▶) 중에는 취소하지 않고 끝나면 최신 틱을 보낸다(R-47 — 응답이 느려도 프레임이 온다). 시각 라벨은 입력마다 바로 바뀐다.
+  // 요청은 탭당 한 번에 하나(ReplayLoader — 서버에서도): 입력은 debounce 뒤 마지막 값만, 사용자가 옮기면 보내는 중인 요청의 응답은 버리고
+  // 그것이 끝나면 곧바로 최신 값을 보낸다. 재생(▶) 중에는 응답을 그리고 끝나면 최신 틱을 보낸다(R-47). 시각 라벨은 입력마다 바로 바뀐다.
+  // signal 은 화면을 떠날 때(dispose) 브라우저가 기다림을 멈추는 데만 쓴다.
   // 마운트마다 새 로더(개발 모드 StrictMode 의 두 번 실행에도 폐기된 로더를 쓰지 않게)
   const loader = useRef<ReplayLoader | null>(null);
   const playingRef = useRef(playing);
