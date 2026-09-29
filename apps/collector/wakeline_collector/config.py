@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     budget_rainviewer: int = 2000
     budget_kma_radar: int = 1000
     budget_adsbdb: int = 2000  # 계약 v4 §A: 노선 조회(선택한 항공기의 콜사인만)
-    # ADR-022: 한국 항만 입출항(PORT-MIS) — 개발 계정 한도(API 하나당 하루 10,000회)의 30 %. 선박 하나 조회 = 항만청 10곳 × 쪽 수
+    # ADR-022: 한국 항만 입출항(PORT-MIS) — 개발 계정 한도(하루 10,000회 — 작업 지시의 값)의 30 %. 선박 하나 조회 = 항만청 10곳 × 쪽 수
     budget_portmis: int = 3000
     opensky_reserve_credits: int = 400  # OpenSky 가 알려 준 남은 크레딧이 이 아래면 UTC 자정까지 OpenSky 호출 중단
 
