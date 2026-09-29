@@ -225,9 +225,15 @@ class RestSamplesIT extends IntegrationTest {
         }
         JsonNode traffic = Streams.JSON.readTree(Files.readString(OUT.resolve("stats_traffic.json"))).path("body");
         assertThat(traffic.path("aggregated").asBoolean()).isTrue();
-        List<String> hours = new java.util.ArrayList<>();
-        for (JsonNode it : traffic.path("items")) hours.add(it.path("day").asString() + " " + it.path("dim").asString() + "=" + it.path("value").asInt());
-        assertThat(hours).as("KST hours of that KST day — 00:30 and 23:30 KST").containsExactly(statsDay + " 00=1", statsDay + " 23=1");
+        // 같은 DB 를 쓰는 다른 통합 시험의 항적이 그날 다른 시에 있을 수 있다 — 넣은 두 순간의 KST 시(00 · 23)가 그 날짜의 행으로 있는지만 본다(나머지 규칙은 Python 도구)
+        Map<String, Integer> hours = new LinkedHashMap<>();
+        for (JsonNode it : traffic.path("items")) {
+            assertThat(it.path("day").asString()).isEqualTo(statsDay.toString());
+            hours.put(it.path("dim").asString(), it.path("value").asInt());
+        }
+        assertThat(hours).as("KST hours of that KST day — 00:30 and 23:30 KST").containsKeys("00", "23");
+        assertThat(hours.get("00")).isPositive();
+        assertThat(hours.get("23")).isPositive();
         for (String f : List.of("stats_alerts", "stats_sigmet"))
             assertThat(Streams.JSON.readTree(Files.readString(OUT.resolve(f + ".json"))).path("body").path("items")).as(f).isNotEmpty();
         record("problem_400", "/api/v1/aircraft?bbox=1,2,3", 400);
