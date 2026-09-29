@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import gzip
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -378,3 +379,62 @@ async def test_r33_one_inf_record_does_not_sink_the_region_batch():
     states = {s["hex"]: s for s in _decode(fields)["states"]}
     assert len(states) == 51 and states["71cfff"]["alt_ft"] is None and states["71cfff"]["gs_kt"] is None
     assert (await r.hgetall("wakeline:collector"))["region_at"]
+
+
+# ---- 429 경고는 다음에 무엇을 하는지 말한다 · 전환 사유 ---------------------------------------------------------------------
+class RL429(FakeReadsb):
+    async def fetch_region(self, lat, lon, radius):
+        from wakeline_collector.http import ProviderHttpError
+
+        self.calls += 1
+        raise ProviderHttpError(429, "too many")
+
+
+def _warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == "job.aircraft" and r.levelno == logging.WARNING]
+
+
+async def test_region_429_warning_says_what_happens_next(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi")
+    chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    await job.run_once()
+    assert _warnings(caplog)[-1] == "region: adsb_lol rate limited (429) — backing off 60 s, adsb_fi takes over"
+    await job.run_once()  # adsb_fi
+    assert fi.calls == 1
+    assert (await r.hgetall("wakeline:active"))["region_reason"] == "fallback — adsb_lol 429 쉼(60 s)"
+    clk[0] += 61
+    await job.run_once()  # 1순위 복귀 → 다시 429(15분 안) → 120 s 쉬고 10분 뒤로 미룸
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 120 s; repeated 429 → deferred 10 min, adsb_fi takes over"
+    )
+
+
+async def test_region_429_warning_when_no_other_provider(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    ctx = make_ctx(FakeRedis())
+    job = AircraftJob("region", ProviderChain("region", {"adsb_lol": RL429("adsb_lol")}, ctx.status), ctx)
+    await job.run_once()
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 60 s; no other provider — adsb_lol again after the backoff"
+    )
+
+
+async def test_budget_and_limiter_cooldowns_name_their_reason(monkeypatch):
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_lol": 1, "adsb_fi": 0, "opensky": 2880})
+    chain = ProviderChain("region", {"adsb_lol": FakeReadsb("adsb_lol"), "adsb_fi": FakeReadsb("adsb_fi")}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    await job.run_once()  # adsb_lol 예산 1회분 사용
+    await job.run_once()  # 예산 소진 → 10분 쉼
+    await job.run_once()  # → adsb_fi
+    assert (await r.hgetall("wakeline:active"))["region_reason"] == "fallback — adsb_lol 예산 소진(10분 쉼)"

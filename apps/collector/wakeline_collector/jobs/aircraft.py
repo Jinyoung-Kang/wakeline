@@ -76,7 +76,9 @@ class AircraftJob:
                 status="budget_unavailable" if unavailable else "budget_exhausted",
                 error_text="budget store unavailable (fail closed)" if unavailable else f"daily budget exhausted (used={used})",
             )
-            self.chain.mark_down(prov.name, 60 if unavailable else 600)
+            self.chain.mark_down(
+                prov.name, 60 if unavailable else 600, why="예산 저장소 불가(60 s 쉼)" if unavailable else "예산 소진(10분 쉼)"
+            )
             log.warning("%s: %s budget %s", self.scope, prov.name, "unavailable" if unavailable else "exhausted")
             return
         try:
@@ -187,11 +189,22 @@ class AircraftJob:
         ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
         if http_status == 429:
             wait = self.chain.record_rate_limited(name)
-            log.warning("%s: %s rate limited (429) — backing off %.0f s", self.scope, name, wait)
+            log.warning("%s: %s rate limited (429) — backing off %.0f s%s", self.scope, name, wait, await self._after_429(name))
         elif self.chain.record_failure(name):
             log.warning("%s: %s failed 3x — cooling down", self.scope, name)
         else:
             log.info("%s: %s failed (%s)", self.scope, name, why)
+
+    async def _after_429(self, name: str) -> str:
+        """429 경고 뒤에 붙이는 '다음에 무엇을 하는가' — 체인이 다음 주기에 고를 공급자(추정이 아니라 지금 상태로 정해진 값)."""
+        order = ["fixture"] if self.ctx.fixture else self.ctx.rt.provider_order
+        nxt = await self.chain.peek(order, need_global=self.scope == "global")
+        hold = self.chain.hold_s(name)
+        held = f"; repeated 429 → deferred {hold / 60:.0f} min" if hold else ""
+        if nxt is None or nxt == name:  # 미룸은 선호도일 뿐 — 대안이 없으면 쉼이 끝난 뒤 같은 공급자를 쓴다
+            tail = f"no other provider — {name} again after the backoff"
+            return f"{held}, but {tail}" if held else f"; {tail}"
+        return f"{held}, {nxt} takes over"
 
     async def _on_throttled(self, name: str, cost: int, started: datetime, e: Throttled) -> None:
         """속도 상한이 막아 호출하지 않았다 — 공급자 실패가 아니다. 3회 규칙·공급자 상태 해시에 넣지 않는다.
@@ -200,5 +213,5 @@ class AircraftJob:
             await self.ctx.budget.release(name, cost)
         self.ctx.db.record_run(self.job_name, name, started, status="throttled", error_text=describe_error(e))
         if e.cooldown_s > 0:
-            self.chain.mark_down(name, e.cooldown_s)
+            self.chain.mark_down(name, e.cooldown_s, why=f"호출 제한기 429 쿨다운({e.cooldown_s:.0f} s)")
         log.info("%s: %s not called (%s)", self.scope, name, e.reason)
