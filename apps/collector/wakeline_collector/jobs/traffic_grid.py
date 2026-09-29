@@ -18,7 +18,7 @@
   호출마다 해양수산부 시간 창(budget:mof:h:{UTC 시} — 입출항 조회와 함께 센다, providers/data_go_kr.MOF_*)을 먼저 예약하되 입출항 조회 몫
   (MOF_GRID4_HOURLY_HEADROOM)을 남긴다 — 어느 날 경계로 세어도 두 API 합계가 포털 한도(10,000) 안(검토 지적: UTC 날 예산만으로는 KST 하루에
   두 몫을 쓸 수 있었다). 창이나 하루 예산에 막히면 그 까닭을 실행 기록에 한 번 적고 다음 UTC 시 · 다음 UTC 날까지 채우지 않는다(틱마다 적지 않는다).
-  채우기는 시간당 많아야 MOF_HOURLY_CAP − MOF_GRID4_HOURLY_HEADROOM(300)칸 — 첫 스냅샷(확인한 표본 5,099칸)은 17시간 넘게 걸쳐 채워진다
+  채우기는 시간당 많아야 MOF_HOURLY_CAP − MOF_GRID4_HOURLY_HEADROOM(300)칸 — 첫 스냅샷(확인한 표본 5,099칸)은 약 17시간 이상 걸쳐 채워진다
   (계산 — 잰 값이 아니다). 그동안 스냅샷 값의 resolved/unresolved 가 그대로 보인다.
   * found: 0.025° 격자 검사를 통과한 칸 → 메모리 + DB marine_grid4(V14 — 다시 시작해도 다시 묻지 않는다).
   * not_found(numberOfFeatures 0) · off_grid(격자 검사 실패 — 격리, 품질 사례 · 원본 보관): 부정 캐시 Redis wakeline:traffic_grid:negative

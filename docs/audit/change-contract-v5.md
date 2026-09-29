@@ -287,12 +287,16 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 호스트 한도(ADR-022 와 하나): `apis.data.go.kr` 호스트 버킷 **하나**(설정 `data_go_kr_rps` 1.0 req/s, burst 2)를 세 잡이 나눠 쓰고 우선순위로 나눈다 —
     교통 5분 폴링 `PRIORITY_FIXED`(0) > 선택 선박 항만 입출항 `PRIORITY_PORTCALL`(4) > 격자 기하 채우기 `PRIORITY_BACKFILL`(5, 가장 낮다). 입출항 조회가
     1 req/s 로 이어져도 교통 폴링은 다음 토큰(≤ 1 s)을 먼저 받고, 격자 채우기는 두 쪽이 기다리지 않을 때만 받는다(`tests/test_ratelimit.py`).
-    하루 예산은 포털의 API 별 개발계정 한도 안이다: `portmis` 3,000 + `mof_grid4` 6,000 = 9,000 — 해양수산부 두 API 의 한도(각 10,000)가 하나로 묶여
-    있더라도 넘지 않는다. `komsa_traffic` 400 ≤ 500(시간 창 15 × 24 = 360). heartbeat `data_go_kr_rps_1m` = 세 잡을 합친 최근 60 s 호출 수 / 60.
+    하루 예산(UTC 날)은 포털의 API 별 개발계정 한도 안이다: `portmis` 3,000 · `mof_grid4` 6,000 · `komsa_traffic` 400. 포털이 하루를 어느 경계로 세든
+    지키는 것은 Redis 시간 창이다(합친 뒤 검토 지적 — UTC 날 예산만으로는 KST 하루에 두 UTC 날의 몫이 들어갔다): 어떤 24시간이든 UTC 시 창은 많아야 25개.
+    해양수산부 두 API 는 함께 세는 `budget:mof:h:{yyyymmddHH}` 시간당 400(25 × 400 = 10,000 — 두 API 의 한도(각 10,000)가 하나로 묶여 있더라도), 격자
+    채우기는 그 창의 100 을 입출항 조회 몫으로 남긴다(시간당 많아야 300칸). `komsa_traffic` 은 `budget:komsa_traffic:h:*` 15(25 × 15 = 375 ≤ 500).
+    입출항 조회가 창에 막히면 error_kind `hourly_cap`(WS `$defs/port_calls` enum). heartbeat `data_go_kr_rps_1m` = 세 잡을 합친 최근 60 s 호출 수 / 60.
   - Redis(collector 가 쓰고 api 가 읽는다): `wakeline:traffic_grid` 문자열 JSON(SET EX 1200) = `{v:1, reg_dt_kst(+09:00), reg_dt_utc, fetched_at, total,
     total_count|null, partial, rejected, resolved, unresolved, pending, not_found, off_grid, failed, cell_deg: 0.025, cells: [[grid_no, lat_min, lon_min, 척수, 밀집도 %], …]}`
     (기하를 확인한 칸만 · grid_no 순 · 발행 시각 없음 — 같은 입력이면 같은 값 · 미해석 = pending + not_found + off_grid + failed). `wakeline:traffic_grid:negative`
-    해시(grid_no → `{"reason":"not_found"|"off_grid"|"failed","at"}` — failed 는 1일, 나머지 7일). 시간 창 예산 `budget:komsa_traffic:h:{yyyymmddHH}`(UTC 시, 15).
+    해시(grid_no → `{"reason":"not_found"|"off_grid"|"failed","at"}` — failed 는 1일, 나머지 7일). 시간 창 예산 `budget:komsa_traffic:h:{yyyymmddHH}`(UTC 시, 15) ·
+    `budget:mof:h:{yyyymmddHH}`(UTC 시, 400 — `portmis` · `mof_grid4` 가 함께, 기존 `~budget:*` 셀렉터로 쓴다).
     heartbeat `wakeline:collector` 필드 `traffic_grid_state`(active · no_key · fixture · operator_off) · `traffic_grid_last_ok` · `traffic_grid_reg_dt` ·
     `traffic_grid_resolved` · `traffic_grid_unresolved` · `traffic_grid_cells_known` · `traffic_grid_pending` · `traffic_grid_failed` · `traffic_grid_calls_komsa` ·
     `traffic_grid_calls_wfs` · `traffic_grid_publish_delay_s`(배운 발행 지연 — 배우기 전 빈 값)(모르면 빈 값) · `traffic_grid_at` · `traffic_grid_lag_s`.
