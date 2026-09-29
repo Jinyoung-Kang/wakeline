@@ -2,6 +2,7 @@ package dev.wakeline.ops;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import dev.wakeline.ingest.StreamConsumer;
+import dev.wakeline.ingest.StreamMetrics;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
@@ -20,14 +21,16 @@ import java.util.function.Supplier;
  * 운영 세션 필요, 익명은 404, GET 은 CSRF 헤더 없이).
  * <ul>
  *   <li>collector: 수집기 heartbeat 해시(wakeline:collector)의 publish_dropped·db_dropped·db_pending(수집기 프로세스 기동 뒤 누계·현재 대기 수)
- *       ·stream_budget_trims(R-14: 바이트 예산 때문에 항공기 스트림을 보존 창보다 일찍 자른 XADD 수, 기동 뒤 누계).
- *       heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다 오래됐으면 값은 null(수집기가 멈춰
- *       마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
- *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total·stream_budget_trims(선박 스트림, R-14).
- *       updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
+ *       ·stream_budget_trims(R-14: 바이트 예산 때문에 항공기 스트림을 보존 창보다 일찍 자른 XADD 수, 기동 뒤 누계 — 창을 줄일 뿐 손실이 아니다.
+ *       손실은 api 의 stream_trim_loss_events)·stream_retention_s(항공기 스트림 시간 트림 목표, 초 — 수집기 설정)·stream_budget_bytes(항공기
+ *       스트림 바이트 예산 — 수집기 설정). heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다
+ *       오래됐으면 값은 null(수집기가 멈춰 마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
+ *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total·stream_budget_trims·stream_retention_s·stream_budget_bytes
+ *       (선박 스트림, R-14). updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
  *   <li>api: 이 api 프로세스 기동 뒤 누계 — 메모리 큐 넘침으로 버린 항적·선박 행, 강제로 놓은 영수증, DLQ 로 보낸 메시지, 스트림 보존 창 손실
  *       (R-14) 수와 마지막 손실 구간(없으면 null). 영구 손실도 같이: DB 가 거절해(영구 오류) 재시도하지 않고 버린 항적·선박 행, 처리 중 예외로
- *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등).</li>
+ *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등). stream_window_s = 항공기·선박 스트림 보존 창(초): 요청 시각 − 첫 엔트리
+ *       id 의 시각(30 s 스트림 지표의 XINFO STREAM first-entry — 요청마다 Redis 를 더 부르지 않는다). 스트림이 없거나 비었거나 모르면 null.</li>
  *   <li>시스템 로그 싱크(계약 v5 §C2): 세 프로세스 모두 log_sent(wakeline:logs 에 실은 항목 — api 는 wakeline:logs:client 에 실은 브라우저 오류 포함, §G2) ·
  *       log_dropped(대기열 상한·종료로 버린 항목 · 억제 중에 지문 표에서 잊히거나 항목을 만들지 못한 발생 — §G9),
  *       기동 뒤 누계. collector·ais 는 위 해시의 같은 이름 필드(같은 신선도 규칙), api 는 wakeline_log_events_total{result} 에 log_suppressed
@@ -50,17 +53,21 @@ public class OpsPipelineController {
     private final StringRedisTemplate redis;
     private final MeterRegistry meters;
     private final ObjectProvider<StreamConsumer> consumer;
+    private final ObjectProvider<StreamMetrics> streams;
     private final Supplier<Instant> clock;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer) {
-        this(redis, meters, consumer, Instant::now);
+    public OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
+                                 ObjectProvider<StreamMetrics> streams) {
+        this(redis, meters, consumer, streams, Instant::now);
     }
 
-    OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer, Supplier<Instant> clock) {
+    OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
+                          ObjectProvider<StreamMetrics> streams, Supplier<Instant> clock) {
         this.redis = redis;
         this.meters = meters;
         this.consumer = consumer;
+        this.streams = streams;
         this.clock = clock;
     }
 
@@ -68,16 +75,21 @@ public class OpsPipelineController {
     public record Pipeline(CollectorSignals collector, AisSignals ais, ApiSignals api, Instant generatedAt) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record CollectorSignals(Long publishDropped, Long dbDropped, Long dbPending, Long streamBudgetTrims, Double heartbeatAgeS,
-                                   Long logSent, Long logDropped) {}
+    public record CollectorSignals(Long publishDropped, Long dbDropped, Long dbPending, Long streamBudgetTrims, Long streamRetentionS,
+                                   Long streamBudgetBytes, Double heartbeatAgeS, Long logSent, Long logDropped) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record AisSignals(Long droppedTotal, Long quarantinedTotal, Long streamBudgetTrims, Long logSent, Long logDropped) {}
+    public record AisSignals(Long droppedTotal, Long quarantinedTotal, Long streamBudgetTrims, Long streamRetentionS, Long streamBudgetBytes,
+                             Long logSent, Long logDropped) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record ApiSignals(long trackQueueDropped, long shipQueueDropped, long receiptsForceReleased, long dlq, long streamTrimLossEvents,
                              TrimLossWindow lastStreamTrimLoss, long trackRowsFailed, long shipRowsFailed, long streamApplyErrors,
-                             long listenerErrors, long logSent, long logDropped, long logSuppressed) {}
+                             long listenerErrors, long logSent, long logDropped, long logSuppressed, StreamWindow streamWindowS) {}
+
+    /** 스트림 보존 창(초): 요청 시각 − 첫 엔트리 id 의 시각. null = 모름(스트림 없음·비었음·측정 없음·오래됨). */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record StreamWindow(Double aircraft, Double ships) {}
 
     /** 마지막 보존 창 손실: stream, from(모르면 null), to. */
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -86,7 +98,7 @@ public class OpsPipelineController {
     @GetMapping("/pipeline")
     public Pipeline pipeline() {
         Instant now = clock.get();
-        return new Pipeline(collector(now), ais(now), api(), now);
+        return new Pipeline(collector(now), ais(now), api(now), now);
     }
 
     CollectorSignals collector(Instant now) {
@@ -102,22 +114,27 @@ public class OpsPipelineController {
             double s = (now.toEpochMilli() - newest.toEpochMilli()) / 1000.0;
             if (s >= -MAX_FUTURE_S) age = Math.round(Math.max(0, s) * 10) / 10.0;
         }
-        if (age == null || age > COLLECTOR_MAX_AGE_S) return new CollectorSignals(null, null, null, null, age, null, null);
+        if (age == null || age > COLLECTOR_MAX_AGE_S) return new CollectorSignals(null, null, null, null, null, null, age, null, null);
         return new CollectorSignals(count(h.get("publish_dropped")), count(h.get("db_dropped")), count(h.get("db_pending")),
-                count(h.get("stream_budget_trims")), age, count(h.get("log_sent")), count(h.get("log_dropped")));
+                count(h.get("stream_budget_trims")), count(h.get("stream_retention_s")), count(h.get("stream_budget_bytes")), age,
+                count(h.get("log_sent")), count(h.get("log_dropped")));
     }
 
     AisSignals ais(Instant now) {
         Map<Object, Object> h = hash("wakeline:ais:status");
         Instant hb = time(h.get("updated_at"));
         long ageS = hb == null ? Long.MAX_VALUE : (now.toEpochMilli() - hb.toEpochMilli()) / 1000;
-        if (hb == null || ageS > AIS_MAX_AGE_S || ageS < -MAX_FUTURE_S) return new AisSignals(null, null, null, null, null);
+        if (hb == null || ageS > AIS_MAX_AGE_S || ageS < -MAX_FUTURE_S) return new AisSignals(null, null, null, null, null, null, null);
         return new AisSignals(count(h.get("dropped_total")), count(h.get("quarantined_total")), count(h.get("stream_budget_trims")),
-                count(h.get("log_sent")), count(h.get("log_dropped")));
+                count(h.get("stream_retention_s")), count(h.get("stream_budget_bytes")), count(h.get("log_sent")), count(h.get("log_dropped")));
     }
 
-    ApiSignals api() {
+    ApiSignals api(Instant now) {
         StreamConsumer c = consumer.getIfAvailable();
+        StreamMetrics m = streams.getIfAvailable();
+        long nowMs = now.toEpochMilli();
+        StreamWindow window = m == null ? new StreamWindow(null, null)
+                : new StreamWindow(m.windowSeconds(StreamConsumer.S_AIRCRAFT, nowMs), m.windowSeconds(StreamConsumer.S_SHIPS, nowMs));
         long events = c == null ? 0 : c.trimLossEvents();
         StreamConsumer.TrimLoss last = c == null ? null : c.lastTrimLoss();
         return new ApiSignals(
@@ -133,7 +150,8 @@ public class OpsPipelineController {
                 counter("wakeline_event_listener_errors_total"),
                 counter("wakeline_log_events_total", "result", "sent"),
                 counter("wakeline_log_events_total", "result", "dropped"),
-                counter("wakeline_log_events_total", "result", "suppressed"));
+                counter("wakeline_log_events_total", "result", "suppressed"),
+                window);
     }
 
     private long counter(String name, String... tags) {
