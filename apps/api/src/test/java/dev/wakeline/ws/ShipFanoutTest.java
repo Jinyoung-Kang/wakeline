@@ -356,6 +356,9 @@ class ShipFanoutTest {
             publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of(stat("440000001", "HANJIN BUSAN", 70)));
             FakeWsSession f = session(k, "s", BUSAN, true);
             FakeWsSession idle = session(k, "idle", BUSAN, true); // 선박을 고르지 않은 세션 — 받지 않는다
+            FakeWsSession paused = session(k, "paused", BUSAN, true); // 고른 뒤 일시정지 — 다시 볼 때까지 받지 않는다
+            k.msg(paused, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            k.msg(paused, "{\"type\":\"pause\"}");
             k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
             JsonNode first = ofType(f, "ship_selected").getLast();
             assertThat(first.path("port_calls").path("status").asString()).isEqualTo("pending");
@@ -375,6 +378,8 @@ class ShipFanoutTest {
             k.shipFanout.refreshSelected(); // 다시 읽어도 같은 값(새 객체) — 보내지 않는다
             assertThat(ofType(f, "ship_selected")).hasSize(2);
             assertThat(ofType(idle, "ship_selected")).isEmpty();
+            assertThat(ofType(paused, "ship_selected")).as("only the answer to its own select_ship").hasSize(1);
+            assertThat(ofType(paused, "ship_selected").getFirst().path("port_calls").path("status").asString()).isEqualTo("pending");
 
             // 호출부호가 없는 선박(정적 정보 없음) → no_call_sign
             k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000002\"}");

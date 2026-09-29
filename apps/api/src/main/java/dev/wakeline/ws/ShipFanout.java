@@ -176,12 +176,13 @@ public class ShipFanout implements SmartLifecycle {
     }
 
     /**
-     * 선박을 고른 세션마다 ship_selected 를 다시 계산하도록 예약한다(우편함 — 바뀐 것이 없으면 보내지 않는다). 입출항 조회 결과·캐시 만료처럼
-     * 선박 변화와 무관한 변화를 알린다. 예외가 주기 작업을 멈추지 않게 삼킨다.
+     * 선박을 고른 구독 세션마다 ship_selected 를 다시 계산하도록 예약한다(우편함 — 바뀐 것이 없으면 보내지 않는다). 입출항 조회 결과·캐시 만료처럼
+     * 선박 변화와 무관한 변화를 알린다. 일시정지한 세션은 건너뛴다(선박 변화 알림과 같다 — 다시 보면 초기 세트가 보낸다). 예외가 주기 작업을 멈추지 않게 삼킨다.
      */
     void refreshSelected() {
         try {
-            for (WsSession s : hub.sessionsView()) if (s.selectedMmsi != null) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
+            for (WsSession s : hub.sessionsView())
+                if (s.selectedMmsi != null && s.subscribed()) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
         } catch (RuntimeException e) {
             // 다음 주기에 다시
         }
