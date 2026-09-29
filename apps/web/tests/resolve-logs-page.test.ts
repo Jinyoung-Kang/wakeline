@@ -652,3 +652,38 @@ describe("/logs resolve actions for keyboard and screen-reader users", () => {
     });
   });
 });
+
+describe("/logs list: a resolved row (shown) carries its own 되돌리기", () => {
+  it("it confirms under the row without opening the detail, sends DELETE for that resolution, and the list reloads", async () => {
+    let revoked = false;
+    stub((m, url) => {
+      if (m === "DELETE" && url === "/api/v1/ops/resolutions/12") { revoked = true; return { status: 204 }; }
+      return logsRoutes(url, { aResolved: revoked ? null : REF });
+    });
+    await open();
+    await click(button("해결된 항목 보기"));
+    const row = allByTestId("log-row")[0];
+    expect(row.getAttribute("data-resolved")).toBe("true");
+    const act = button("되돌리기", row)!;
+    expect(act.getAttribute("aria-label")).toBe(`되돌리기: 지문 ${FP} 해결 #12`);
+    expect(act.getAttribute("aria-expanded")).toBe("false");
+    expect(button("되돌리기", allByTestId("log-row")[1])).toBeNull(); // 해결되지 않은 줄에는 없다
+    let stopped = 0;
+    await React.act(async () => { propsOf(act).onClick({ preventDefault() {}, stopPropagation() { stopped++; } }); });
+    await settle();
+    expect(stopped).toBe(1); // 줄의 클릭(상세 열기)으로 올라가지 않는다
+    expect(byTestId("log-detail")).toBeNull();
+    const panel = byTestId("resolve-confirm", byTestId("log-list")!)!;
+    expect(panel.textContent).toContain("해결 #12");
+    expect(panel.textContent).toContain(`지문 묶음 ${FP}`);
+    expect(button("되돌리기", allByTestId("log-row")[0])!.getAttribute("aria-controls")).toBe(panel.getAttribute("id"));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    const before = calls.length;
+    await click(button("되돌리기 확인", panel));
+    expect(calls.find((c) => c.method === "DELETE")!.url).toBe("/api/v1/ops/resolutions/12");
+    expect(calls.slice(before).some((c) => c.method === "GET" && c.url.startsWith("/api/v1/ops/logs?"))).toBe(true);
+    expect(byTestId("resolve-confirm")).toBeNull();
+    expect(allByTestId("log-row")[0].getAttribute("data-resolved")).toBeNull();
+    expect(byTestId("logs-note")!.textContent).toContain("되돌림: 해결 #12");
+  });
+});

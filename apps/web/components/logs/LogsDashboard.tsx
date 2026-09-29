@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { copyText, downloadText } from "@/lib/copy";
 import { fmtDualClock, fmtUtcTitle } from "@/lib/time";
@@ -17,7 +17,8 @@ import { ErrorNote } from "./ErrorNote";
 import { LogDetail } from "./LogDetail";
 import { LogGroupsTable } from "./LogGroupsTable";
 import { DualTime } from "../DualTime";
-import type { ResolveResult } from "../ResolveConfirm";
+import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
+import { revokeLogGroup } from "./logGroupTargets";
 
 type Tab = "logs" | "gaps";
 type View = "list" | "groups";
@@ -84,6 +85,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const [err, setErr] = useState<unknown>(null);
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 목록 줄의 되돌리기 확인(해결된 항목이 보일 때 — 그 줄 아래, 한 번에 하나) */
+  const rowResolve = useResolveSlot();
   /** 목록·묶음을 새로 불러올 때마다 올린다 — 늦게 온 이전 필터의 응답(또는 그 사이의 자동 확인)을 버린다 */
   const loadSeq = useRef(0);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
@@ -432,8 +435,11 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                   </tr></thead>
                   <tbody>{items.map((e) => {
                     const k = entryKey(e);
+                    const res = e.resolved;
+                    const panel = rowResolve.open?.at === k ? rowResolve.open : null;
                     return (
-                    <tr key={k} id={rowDomId(k)} data-testid="log-row" data-id={e.id} data-stream={e.stream ?? undefined} aria-selected={k === selId}
+                    <Fragment key={k}>
+                    <tr id={rowDomId(k)} data-testid="log-row" data-id={e.id} data-stream={e.stream ?? undefined} aria-selected={k === selId}
                       data-resolved={e.resolved ? "true" : undefined}
                       ref={(el) => { if (el) rowEls.current.set(k, el); else rowEls.current.delete(k); }}
                       onClick={() => { setSelId(k); openEntry(e); }}
@@ -444,10 +450,22 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                         {e.stream === "client" ? <span className="badge ml-1 normal-case!" title={`${LOG_STREAM_KEY.client} — 브라우저 오류 스트림(따로 보관 · 최근 약 ${n(LOG_STREAM_KEEP.client)}건)`}>client</span> : null}</td>
                       <td className="mono max-w-[240px] truncate text-fg-2" title={e.logger ?? ""}>{e.logger ?? "—"}</td>
                       <td className="max-w-[560px] truncate" title={firstLine(e.message)}>{firstLine(e.message)}
-                        {e.resolved ? <div className="text-[10px]" data-testid="log-resolved-mark" title={`해결 #${e.resolved.id} — 되돌리기는 상세에서`}>해결됨 · <span className="mono">{e.resolved.resolved_by}</span> · <DualTime v={e.resolved.upto} /></div> : null}</td>
+                        {res ? (
+                          <div className="text-[10px]">
+                            <span data-testid="log-resolved-mark" title={`해결 #${res.id} — 지문 묶음 단위(같은 지문의 upto 이하 항목)`}>해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span>
+                            {/* 줄의 클릭(상세 열기)으로 올라가지 않는다 — 확인은 이 줄 아래 */}
+                            <button type="button" className="btn ml-1 px-1.5! py-0! normal-case!" {...rowResolve.openerProps(k)} aria-label={`되돌리기: 지문 ${e.fp ?? "—"} 해결 #${res.id}`}
+                              onClick={(ev) => { ev.stopPropagation(); rowResolve.show(k, revokeLogGroup(res, e.fp)); }}>되돌리기</button>
+                          </div>
+                        ) : null}</td>
                       <td className="mono text-right">{e.suppressed ?? "—"}</td>
                       <td className="mono whitespace-nowrap text-fg-3">{e.request_id ?? "—"}</td>
                     </tr>
+                    {panel ? <tr><td colSpan={7}>
+                      <ResolveConfirm key={panel.n} id={rowResolve.panelId(k)} target={panel.target} onClose={rowResolve.close} onAuthMiss={authMiss} onFilterRid={filterRid}
+                        onChanged={(r) => { if (r.complete) rowResolve.closeIf(panel.n); resolveChanged(r); }} />
+                    </td></tr> : null}
+                    </Fragment>
                     );
                   })}</tbody>
                 </table>

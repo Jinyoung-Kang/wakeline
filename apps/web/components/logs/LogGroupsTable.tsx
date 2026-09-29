@@ -4,6 +4,7 @@ import { exceptionTypeText, firstLine, type LogGroup } from "@/lib/logs";
 import { BULK_CONCURRENCY, RESOLVE_EFFECT, uptoOf } from "@/lib/resolutions";
 import { DualTime } from "../DualTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
+import { resolveLogGroup, revokeLogGroup } from "./logGroupTargets";
 
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };
 /** 표의 칸 수(확인 패널 줄의 colSpan) */
@@ -83,17 +84,8 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
                     aria-label={res ? `되돌리기: 지문 ${g.fp} 해결 #${res.id}` : `해결 처리: 지문 ${g.fp}`}
                     title={res ? undefined : upto ? "이 묶음의 마지막 항목 시각까지 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "마지막 시각 모름 — 해결 범위(upto)를 정할 수 없음"}
                     onClick={() => {
-                      if (res) {
-                        show(g.fp, {
-                          op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
-                          subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{g.fp}</span> · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
-                        });
-                      } else if (upto) {
-                        show(g.fp, {
-                          op: "resolve", drafts: [{ kind: "log_group", key: g.fp, upto }], effect: RESOLVE_EFFECT.log_group,
-                          subject: <>지문 묶음 <span className="mono">{g.fp}</span> · upto <DualTime v={upto} /> <span className="text-fg-3">(이 묶음의 마지막 항목 시각)</span></>,
-                        });
-                      }
+                      if (res) show(g.fp, revokeLogGroup(res, g.fp));
+                      else if (upto) show(g.fp, resolveLogGroup(g.fp, upto, "이 묶음의 마지막 항목 시각"));
                     }}>{res ? "되돌리기" : "해결 처리"}</button>
                 </td>
                 <td className="whitespace-nowrap">
