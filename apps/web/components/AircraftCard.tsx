@@ -64,9 +64,10 @@ function AirportLine({ a }: { a: RouteAirport }) {
  * 노선 상태 줄(live 영역) — 상태가 무엇이든 RouteSection 이 늘 같은 role=status 요소 하나를 두고 글자만 바꾼다. 화면 읽기 프로그램은 영역이 생기는 순간
  * 함께 들어온 글자를 흔히 건너뛰므로, 영역을 "조회 중" 과 함께 새로 만들면 첫 "노선 조회 중" 이 읽히지 않을 수 있다(리뷰 2026-09-29).
  * - 경로를 모름(null): "—" · 찾음: 화면에는 없고 화면 읽기 프로그램에만 "노선 찾음"(조회 중 → 끝남을 알린다, 값은 아래 행)
- * - 조회 중(사용자 요청 2026-09-29 — 조회하고 있다는 느낌이 나게): 작은 회전 표시(움직임 줄이기 설정이면 멈춤 — globals.css) · 문구 · 콜사인.
+ * - 조회 중(사용자 요청 2026-09-29 — 조회하고 있다는 느낌이 나게): 문구 · 콜사인. 움직이는 표시는 이 줄 아래 진행 막대(RouteLoading).
  *   aria-busy 조상 밖에 둔다(busy 안의 알림은 미뤄질 수 있다). 보통 경로 계산값(ROUTE_SLOW_AFTER_S)을 넘으면 "보통 경로 계산값(10 s)보다 오래 걸림"을
  *   덧붙인다(한 번 읽힘). 경과 초는 live 영역 밖(시각 표시만 — 매초 읽지 않게), 모르면(null) 쓰지 않는다.
+ *   보이는 줄은 BUSY_APPEAR_DELAY_MS(선택값) 뒤에 나타난다(.busy-appear — 빨리 끝나는 조회가 번쩍이지 않게). live 영역은 그대로 DOM 에 있어 바로 읽힌다.
  * - 그 밖(없음 · 실패 · 꺼짐 · 콜사인 없음): 계약 v4 §A 문구 그대로.
  */
 function RouteStatusLine({ route, pendingForS }: { route: RouteInfo | null; pendingForS: number | null }) {
@@ -74,12 +75,11 @@ function RouteStatusLine({ route, pendingForS }: { route: RouteInfo | null; pend
   const phase = routePendingPhase(pendingForS);
   const tone = route == null ? "text-fg-3" : pending ? (phase === "slow" ? "text-warn" : "text-fg-2") : route.status === "unavailable" ? "text-warn" : "text-fg-3";
   return (
-    <div className={`flex items-center gap-1.5 text-[11px] ${route?.status === "found" ? "sr-only" : ""}`}>
+    <div className={`flex items-center gap-1.5 text-[11px] ${route?.status === "found" ? "sr-only" : ""} ${pending ? "busy-appear" : ""}`}>
       <div role="status" className={`flex min-w-0 items-center gap-1.5 ${tone}`} data-testid="route-status" data-phase={pending ? phase : undefined} title={pending ? ROUTE_PENDING_TITLE : undefined}>
         {route == null ? "—"
           : route.status === "found" ? "노선 찾음"
           : <>
-            {pending ? <span className="busy-spinner" aria-hidden="true" /> : null}
             <span>{ROUTE_STATUS_TEXT[route.status]}{pending && phase === "slow" ? ` — ${ROUTE_SLOW_TEXT}` : ""}</span>
             {route.callsign ? <span className="mono">· {route.callsign}</span> : null}
           </>}
@@ -89,15 +89,26 @@ function RouteStatusLine({ route, pendingForS }: { route: RouteInfo | null; pend
   );
 }
 
-/** 조회 중: 값이 채워질 자리(출발/도착 skeleton)만 aria-busy — 막대는 화면 읽기 프로그램에서 숨긴다(공항 값을 지어 보이지 않는다) */
-function RouteSkeleton() {
+/**
+ * 조회 중(사용자 요청 2026-09-30 — 회전 사각형 대신): 상태 줄 아래 가는 진행 막대(값이 없는 indeterminate — 몇 % 라고 말하지 않는다)와
+ * 찾은 뒤의 모양을 닮은 자리 표시(출발 · 도착마다 코드 줄 + 이름 줄 — AirportLine). 값이 채워질 자리만 aria-busy, 막대 · 자리 표시는 화면 읽기
+ * 프로그램에서 숨긴다(공항 값을 지어 보이지 않는다). 묶음 전체가 BUSY_APPEAR_DELAY_MS 뒤에 나타난다(.busy-appear).
+ */
+function RouteLoading() {
   return (
-    <div aria-busy="true" data-testid="route-skeleton">
-      {["출발", "도착"].map((k) => (
-        <div key={k} className="flex items-center justify-between gap-2 border-b border-line py-1">
-          <span className="shrink-0 text-fg-3">{k}</span><span className="skeleton h-3 w-28" aria-hidden="true" />
-        </div>
-      ))}
+    <div className="busy-appear" data-testid="route-loading">
+      <span className="busy-bar mt-1" aria-hidden="true" data-testid="route-progress" />
+      <div aria-busy="true" data-testid="route-skeleton">
+        {["출발", "도착"].map((k) => (
+          <div key={k} className="flex items-center justify-between gap-2 border-b border-line py-1" data-field={k}>
+            <span className="shrink-0 text-fg-3">{k}</span>
+            <span className="flex flex-col items-end gap-1 py-px" aria-hidden="true">
+              <span className="skeleton h-3 w-24" />
+              <span className="skeleton h-2.5 w-40" />
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -124,7 +135,7 @@ export function RouteSection({ route, pos, callsign, pendingForS = null }: { rou
     <div className="mt-2" data-testid="route-section" data-status={route?.status ?? "unknown"}>
       <div className="label mb-0.5">{ROUTE_TITLE}</div>
       <RouteStatusLine route={route} pendingForS={pendingForS} />
-      {route?.status === "pending" ? <RouteSkeleton />
+      {route?.status === "pending" ? <RouteLoading />
         : route?.status !== "found" ? null
         : <>
           {rows.map(([k, val, title]) => (

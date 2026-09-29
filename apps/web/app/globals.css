@@ -89,15 +89,25 @@ td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-alig
 /* 추정 값(글자) — 보라 + 점선 밑줄. 배지(.badge.est)의 점선 테두리와 같은 "추정" 표기(DH-15) */
 .est-val { color: var(--color-est); text-decoration: underline dashed; text-decoration-color: #5a3f8c; text-underline-offset: 2px; }
 /*
-  진행 중 표시(노선 조회 등): 작은 회전 사각형(모서리 없음 규칙 그대로) · 자리 표시 줄(skeleton — 값이 올 자리, 값처럼 보이지 않게 무늬 없는 막대).
-  움직임을 줄이라는 설정(prefers-reduced-motion)이면 멈춘 모양 그대로 둔다 — 글자("노선 조회 중")가 상태를 말한다.
+  진행 중 표시(노선 조회 등 — 사용자 요청 2026-09-30: 전의 작은 회전 사각형은 "짧은 직선이 도는 것처럼" 보였다):
+  - .busy-bar: 줄 아래 가는(2 px) 진행 막대. 값이 없는 indeterminate — 짧은 조각이 왼쪽에서 오른쪽으로 흐를 뿐 몇 % 인지 말하지 않는다.
+  - .skeleton: 값이 올 자리의 모양(무늬 없는 막대 — 값처럼 보이지 않게), 밝기만 천천히 바뀐다.
+  - .busy-appear: --busy-appear-delay 뒤에 보인다 — 그보다 빨리 끝나는 조회는 진행 표시가 번쩍이지 않는다. 180 ms 는 선택값(잰 값 아님,
+    lib/busy BUSY_APPEAR_DELAY_MS 와 같다). 보이지 않을 뿐 글자는 DOM 에 있어 화면 읽기 프로그램에는 바로 읽힌다.
+  움직임을 줄이라는 설정(prefers-reduced-motion)이면 막대 조각을 없애고(빈 줄만) 자리 표시의 밝기 변화를 멈춘다 — 글자("노선 조회 중")가 상태를 말한다.
+  나타남 지연은 움직임이 아니라 그대로 둔다.
 */
-@keyframes busy-spin { to { transform: rotate(360deg); } }
+:root { --busy-appear-delay: 180ms; }
+@keyframes busy-appear { from { opacity: 0; } to { opacity: 1; } }
+@keyframes busy-slide { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
 @keyframes busy-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
-.busy-spinner { display: inline-block; width: 9px; height: 9px; flex-shrink: 0; border: 1.5px solid var(--color-line-2); border-top-color: var(--color-accent); animation: busy-spin 0.9s linear infinite; }
-.skeleton { display: inline-block; background: var(--color-bg-2); border: 1px solid var(--color-line); animation: busy-pulse 1.4s ease-in-out infinite; }
+.busy-appear { animation: busy-appear 1ms linear var(--busy-appear-delay) both; }
+.busy-bar { position: relative; display: block; height: 2px; overflow: hidden; background: var(--color-line); }
+.busy-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 28%; background: var(--color-accent); animation: busy-slide 1.4s ease-in-out infinite; }
+.skeleton { display: inline-block; background: var(--color-bg-2); border: 1px solid var(--color-line); animation: busy-pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .busy-spinner, .skeleton { animation: none; }
+  .busy-bar::after { animation: none; display: none; }
+  .skeleton { animation: none; }
 }
 
 /*
