@@ -2,7 +2,10 @@
  * 연안 교통량(ADR-023) — 한국해양교통안전공단 실시간 해양교통정보(5분 집계)의 격자별 선박 척수를 해양수산부 해양격자 4단계 칸(0.025°)에 칠한다.
  * 개별 선박 위치가 아니다(화면 곳곳에 그렇게 적는다). 값은 api /api/v1/traffic/grid 가 검증한 것 — 여기서도 모양을 다시 본다(틀린 칸은 버린다).
  * - 상태: ok(그림) · stale(regDt 15분 초과 — 칸 없음, 마지막 기준 시각만) · disabled(키 없음 · fixture · 운영자 끔) · no_data · invalid. 모르는 수는 "—".
+ *   ok 라도 이 브라우저 시계(서버 시각 보정)로 regDt 가 stale_after_s 를 넘기면 그리지 않고 '자료 멈춤'으로 적는다 — 조회가 실패하거나 탭이 오래
+ *   숨었다가 돌아오면 api 가 '멈춤'이라고 말할 기회가 없기 때문이다(trafficDrawable · trafficStatusLine 의 nowMs).
  * - 조회: 레이어가 켜져 있고 탭이 보일 때만, TRAFFIC_POLL_MS 마다, ETag(If-None-Match)로 — 304 · 같은 ETag 면 지도를 다시 그리지 않는다.
+ *   탭이 다시 보이면 곧바로 한 번(방금 확인했으면 TRAFFIC_VISIBLE_MIN_GAP_MS 안에는 다시 부르지 않는다), 켜면 곧바로 한 번.
  * - 색: 척수 구간(표시용 선택 — 2026-09-29 확인한 범위 1–102 를 2배씩) · 한 가지 색상(주황)으로 척수가 많을수록 밝게(어두운 지도 위 순서 색).
  *   0척 칸은 회색. 밀집도 %는 공급자 값 그대로 툴팁에.
  * - 시각: 기준(regDt)은 KST 와 UTC 를 함께 적는다(공급자 원본은 KST 벽시계).
@@ -15,6 +18,8 @@ export const TRAFFIC_LEGEND_NOTE = "격자 약 2.2×2.8 km · 5분 집계 · 선
 export const TRAFFIC_SOURCE_TEXT = "한국해양교통안전공단 MTIS 실시간 해양교통정보 · 해양수산부 해양격자 4단계(공공데이터포털)";
 export const TRAFFIC_URL = "/api/v1/traffic/grid";
 export const TRAFFIC_POLL_MS = 90_000;
+/** 탭이 다시 보일 때 곧바로 조회하되, 마지막 확인이 이보다 가까우면 부르지 않는다(탭을 빨리 오갈 때 몰아 부르지 않게) */
+export const TRAFFIC_VISIBLE_MIN_GAP_MS = 10_000;
 export const TRAFFIC_CELL_DEG = 0.025;
 const SNAP_TOL = 1e-6;
 const GRID_NO = /^[A-Za-z0-9_]{1,32}$/;
@@ -53,6 +58,8 @@ export interface TrafficGrid {
   pending: number | null;
   not_found: number | null;
   off_grid: number | null;
+  /** 위치(격자 기하) 조회가 거듭 실패해 잠시 묻지 않는 칸 — 확인 중(pending)과 다르다 */
+  failed: number | null;
   invalid_cells: number | null;
   cells: TrafficCell[];
   /** 이 브라우저가 형식이 틀려 버린 칸 수 */
@@ -93,8 +100,25 @@ export function parseTrafficGrid(x: unknown): TrafficGrid | null {
     stale_after_s: count(o.stale_after_s) ?? 900,
     total: count(o.total), total_count: count(o.total_count), partial: typeof o.partial === "boolean" ? o.partial : null,
     resolved: count(o.resolved), unresolved: count(o.unresolved), pending: count(o.pending), not_found: count(o.not_found),
-    off_grid: count(o.off_grid), invalid_cells: count(o.invalid_cells), cells, dropped,
+    off_grid: count(o.off_grid), failed: count(o.failed), invalid_cells: count(o.invalid_cells), cells, dropped,
   };
+}
+
+/** 이 값이 오래되는 시각(ms, regDt + stale_after_s). regDt 를 모르면 null */
+export function trafficStaleAt(g: Pick<TrafficGrid, "reg_dt_utc" | "stale_after_s">): number | null {
+  const reg = g.reg_dt_utc ? Date.parse(g.reg_dt_utc) : NaN;
+  return Number.isFinite(reg) ? reg + g.stale_after_s * 1000 : null;
+}
+
+/** 이 시계(nowMs — 서버 시각 보정)로도 오래됐는가. regDt 를 모르면 오래된 것으로 본다(신선하다고 말할 근거가 없다) */
+function agedOut(g: TrafficGrid, nowMs: number): boolean {
+  const at = trafficStaleAt(g);
+  return at == null || nowMs > at;
+}
+
+/** 지도에 칸을 그려도 되는가: api 가 ok 라고 했고 이 시계로도 아직 신선하다 */
+export function trafficDrawable(g: TrafficGrid | null | undefined, nowMs: number): g is TrafficGrid {
+  return !!g && g.available && g.status === "ok" && !agedOut(g, nowMs);
 }
 
 /** 칸 → 지도 GeoJSON(칸마다 정사각형 하나). 속성: g 격자 번호 · v 척수 · d 밀집도 %. */
@@ -164,13 +188,14 @@ const REASON_TEXT: Record<TrafficDisabledReason, string> = {
 };
 
 /**
- * 레이어 상태 줄. g = 마지막으로 받은 값(없으면 null), error = 마지막 조회 오류(성공하면 null).
- * 오류가 있어도 마지막 값을 보이되 오류를 함께 적는다(지난 값을 조용히 지금처럼 두지 않는다).
+ * 레이어 상태 줄. g = 마지막으로 받은 값(없으면 null), error = 마지막 조회 오류(성공하면 null), nowMs = 서버 시각 보정한 지금(0 = 아직 모름 —
+ * 첫 렌더). 오류가 있어도 마지막 값을 보이되 오류를 함께 적는다(지난 값을 조용히 지금처럼 두지 않는다). ok 라도 nowMs 로 오래됐으면 '자료 멈춤'.
  */
-export function trafficStatusLine(g: TrafficGrid | null, error: string | null): TrafficStatusLine {
+export function trafficStatusLine(g: TrafficGrid | null, error: string | null, nowMs = 0): TrafficStatusLine {
   const err = error ? ` · 조회 실패(${error}) — 마지막 값` : "";
   if (!g) return error ? { text: `조회 실패 — ${error}`, tone: "bad", detail: null } : { text: "불러오는 중…", tone: "muted", detail: null };
-  switch (g.status) {
+  const status = g.status === "ok" && nowMs > 0 && agedOut(g, nowMs) ? "stale" : g.status;
+  switch (status) {
     case "disabled":
       return { text: `꺼짐 — ${g.disabled_reason ? REASON_TEXT[g.disabled_reason] : "이유 —"}${err}`, tone: "muted", detail: null };
     case "no_data":
@@ -189,11 +214,12 @@ export function trafficStatusLine(g: TrafficGrid | null, error: string | null): 
       const extra: string[] = [];
       if (g.not_found) extra.push(`해양격자에 없음 ${nu(g.not_found, "칸")}`);
       if (g.off_grid) extra.push(`격자 검사 실패(격리) ${nu(g.off_grid, "칸")}`);
+      if (g.failed) extra.push(`위치 조회 실패 ${nu(g.failed, "칸")}`);
       if ((g.invalid_cells ?? 0) + g.dropped > 0) extra.push(`형식 오류로 뺀 칸 ${n((g.invalid_cells ?? 0) + g.dropped)}`);
       const partial = g.partial ? `일부만 수신(${n(g.total)} / 공급자 ${nu(g.total_count, "칸")})` : null;
       if (partial) extra.unshift(partial);
       const detail = extra.length ? extra.join(" · ") : null;
-      return { text: parts.join(" · ") + err, tone: partial || error ? "warn" : g.pending ? "muted" : "ok", detail };
+      return { text: parts.join(" · ") + err, tone: partial || error || g.failed ? "warn" : g.pending ? "muted" : "ok", detail };
     }
   }
 }
@@ -205,12 +231,23 @@ export const TRAFFIC_POLL_NONE: TrafficPollState = { data: null, etag: null, err
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
+type WatchVisible = (onVisible: () => void) => () => void;
+
+/** 탭이 다시 보일 때(visibilitychange → 보임) 알린다. 되돌리는 함수로 듣기를 멈춘다 */
+const watchVisible: WatchVisible = (onVisible) => {
+  if (typeof document === "undefined" || typeof document.addEventListener !== "function") return () => {};
+  const h = () => { if (!document.hidden) onVisible(); };
+  document.addEventListener("visibilitychange", h);
+  return () => document.removeEventListener("visibilitychange", h);
+};
+
 /**
  * 레이어가 켜져 있는 동안만 도는 조회기. 지도는 version 이 바뀔 때만 다시 그린다 — 304 · 같은 ETag · 같은 본문이면 version 을 올리지 않는다.
- * 숨긴 탭에서는 부르지 않는다. 동시에 두 번 부르지 않는다.
+ * 숨긴 탭에서는 부르지 않고, 다시 보이면 곧바로 부른다(마지막 확인이 TRAFFIC_VISIBLE_MIN_GAP_MS 안이면 빼고). 동시에 두 번 부르지 않는다.
  */
 export class TrafficGridPoller {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private unwatch: (() => void) | null = null;
   private inflight = false;
   private state: TrafficPollState;
 
@@ -221,6 +258,7 @@ export class TrafficGridPoller {
     private readonly hidden: () => boolean = () => typeof document !== "undefined" && document.hidden,
     private readonly now: () => number = () => Date.now(),
     private readonly intervalMs = TRAFFIC_POLL_MS,
+    private readonly watch: WatchVisible = watchVisible,
   ) {
     this.state = initial;
   }
@@ -229,11 +267,17 @@ export class TrafficGridPoller {
     if (this.timer) return;
     void this.poll();
     this.timer = setInterval(() => { if (!this.hidden()) void this.poll(); }, this.intervalMs);
+    this.unwatch = this.watch(() => {
+      const last = this.state.checkedAt;
+      if (last == null || this.now() - last >= TRAFFIC_VISIBLE_MIN_GAP_MS) void this.poll();
+    });
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.unwatch?.();
+    this.unwatch = null;
   }
 
   async poll(): Promise<void> {

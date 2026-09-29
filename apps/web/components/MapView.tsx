@@ -22,7 +22,7 @@ import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { isMetarStale } from "@/lib/format";
 import { krLayerId } from "@/lib/kr-radar";
-import { addTrafficGridLayers, TRAFFIC_LAYERS, TrafficGridPoller, trafficGridFeatures, trafficGridTip } from "@/lib/traffic-grid";
+import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
@@ -553,7 +553,9 @@ export function MapView() {
     });
   }, [layers]);
 
-  // ---- 연안 교통량(ADR-023): 켜져 있을 때만 조회(90 s · ETag · 숨긴 탭 제외). 지도는 내용이 바뀔 때(version)만 다시 그리고, 끄면 칸을 비운다 ----
+  // ---- 연안 교통량(ADR-023): 켜져 있을 때만 조회(90 s · ETag · 숨긴 탭 제외 · 다시 보이면 곧바로). 지도는 내용이 바뀔 때(version)만 다시 그리고,
+  // 끄면 칸을 비운다. 받아 둔 값이 이 시계로 오래되면(regDt + stale_after_s) 그리지 않고, 그리는 중이면 그 순간 비운다 — 조회가 실패해 api 가 '멈춤'을
+  // 말할 수 없을 때도 지난 칸을 지금처럼 두지 않는다 ----
   const trafficVersion = useServerData((d) => d.trafficGrid.version);
   useEffect(() => {
     if (!layers.traffic) return;
@@ -565,8 +567,13 @@ export function MapView() {
     const map = mapRef.current;
     if (!map) return;
     const g = getData().trafficGrid.data;
-    const fc = layers.traffic === true && g?.available ? trafficGridFeatures(g.cells) : EMPTY_FC;
-    onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(fc));
+    const now = serverNowMs(Date.now());
+    const draw = layers.traffic === true && trafficDrawable(g, now);
+    onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(draw ? trafficGridFeatures(g.cells) : EMPTY_FC));
+    const at = draw ? trafficStaleAt(g) : null;
+    if (at == null) return;
+    const t = setTimeout(() => onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(EMPTY_FC)), Math.max(0, at - now) + 50);
+    return () => clearTimeout(t);
   }, [trafficVersion, layers.traffic]);
 
   // ---- 서버에 켜진 레이어 알림(선박은 켠 세션에만 온다). 선박을 끄면 선택도 해제 ----

@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import {
   addTrafficGridLayers, parseTrafficGrid, TRAFFIC_BINS, TRAFFIC_CELL_DEG, TRAFFIC_LAYER_LABEL, TRAFFIC_LAYERS, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS,
-  TRAFFIC_SOURCE, TRAFFIC_URL, TRAFFIC_ZERO_COLOR, trafficColor, trafficColorExpr, TrafficGridPoller, trafficGridFeatures, trafficGridTip,
-  trafficStatusLine, trafficTimeText, type TrafficGrid, type TrafficPollState,
+  TRAFFIC_SOURCE, TRAFFIC_URL, TRAFFIC_VISIBLE_MIN_GAP_MS, TRAFFIC_ZERO_COLOR, trafficColor, trafficColorExpr, trafficDrawable, TrafficGridPoller,
+  trafficGridFeatures, trafficGridTip, trafficStaleAt, trafficStatusLine, trafficTimeText, type TrafficGrid, type TrafficPollState,
 } from "@/lib/traffic-grid";
 import { loadLayers, saveLayers } from "@/lib/prefs";
 import { attributionText, CREDITS } from "@/lib/attribution";
@@ -27,7 +27,7 @@ function body(over: Record<string, unknown> = {}) {
     available: true, status: "ok", disabled_reason: null,
     reg_dt_kst: "2026-09-29T18:05:05+09:00", reg_dt_utc: "2026-09-29T09:05:05Z", fetched_at: "2026-09-29T09:06:01.250Z",
     age_s: 70, stale_after_s: 900, total: 3, total_count: 3, partial: false, rejected: 0, resolved: 2, unresolved: 1, pending: 1, not_found: 0,
-    off_grid: 0, invalid_cells: 0, cell_deg: 0.025,
+    off_grid: 0, failed: 0, invalid_cells: 0, cell_deg: 0.025,
     cells: [["GR4_F2K41_C3", 37.45, 126.6, 12, 34.0], ["GR4_F2K41_D3", 37.425, 126.6, 102, 100.0]],
     source: { provider: "한국해양교통안전공단 MTIS 실시간 해양교통정보", grid: "해양수산부 해양격자 4단계", note: "5분 집계 — 격자별 선박 척수(개별 위치 아님)" },
     time_zone: "x", meta: { stale: false },
@@ -36,7 +36,8 @@ function body(over: Record<string, unknown> = {}) {
 }
 const grid = (over: Record<string, unknown> = {}) => parseTrafficGrid(body(over)) as TrafficGrid;
 const NOW_UNKNOWN = { reg_dt_kst: null, reg_dt_utc: null, fetched_at: null, age_s: null, total: null, total_count: null, partial: null, rejected: null,
-  resolved: null, unresolved: null, pending: null, not_found: null, off_grid: null, invalid_cells: null, cells: [] };
+  resolved: null, unresolved: null, pending: null, not_found: null, off_grid: null, failed: null, invalid_cells: null, cells: [] };
+const REG_MS = Date.parse("2026-09-29T09:05:05Z");
 
 describe("parseTrafficGrid: only verified shapes reach the map", () => {
   it("keeps valid cells of an ok snapshot", () => {
@@ -145,6 +146,22 @@ describe("status line: every state says why the map shows what it shows", () => 
     expect(done.tone).toBe("ok");
     expect(done.detail).toBe("해양격자에 없음 1칸");
   });
+  it("cells whose position lookup kept failing are their own count — not '위치 확인 중'", () => {
+    const g = grid({ unresolved: 2, total: 4, pending: 0, not_found: 1, failed: 1 });
+    expect(g.failed).toBe(1);
+    const l = trafficStatusLine(g, null);
+    expect(l.text).not.toContain("위치 확인 중");
+    expect(l.detail).toBe("해양격자에 없음 1칸 · 위치 조회 실패 1칸");
+    expect(l.tone).toBe("warn");
+    expect(trafficStatusLine(grid({ pending: 0, failed: undefined }), null).detail).toBeNull(); // 모르면 쓰지 않는다
+  });
+  it("an ok answer that has aged past stale_after_s on this clock reads '자료 멈춤' (the api cannot say so when polls fail)", () => {
+    const stale = trafficStatusLine(grid({ pending: 0 }), "HTTP 503", REG_MS + 901_000);
+    expect(stale.text).toBe("자료 멈춤 — 마지막 기준 09-29 18:05:05 KST · 09-29 09:05:05 UTC · 15분 넘게 새 자료 없음 · 표시 안 함 · 조회 실패(HTTP 503) — 마지막 값");
+    expect(stale.tone).toBe("warn");
+    expect(trafficStatusLine(grid({ pending: 0 }), null, REG_MS + 899_000).text).toMatch(/^기준 /);
+    expect(trafficStatusLine(grid({ pending: 0 }), null, 0).text).toMatch(/^기준 /); // 시각을 아직 모른다(첫 렌더) — api 판정 그대로
+  });
   it("partial page, quarantined and dropped cells are spelled out", () => {
     const l = trafficStatusLine(grid({ partial: true, total: 5099, total_count: 6200, pending: 0, off_grid: 2, invalid_cells: 1,
       cells: [["GR4_A", 37.45, 126.6, 1, 0], ["bad id", 37.45, 126.6, 1, 0]] }), null);
@@ -163,6 +180,19 @@ describe("status line: every state says why the map shows what it shows", () => 
     const failed = trafficStatusLine(grid({ pending: 0 }), "HTTP 503");
     expect(failed.text).toContain("조회 실패(HTTP 503) — 마지막 값");
     expect(failed.tone).toBe("warn");
+  });
+});
+
+describe("drawable: only a verified ok snapshot that is still fresh on this clock", () => {
+  it("ok and fresh draws; aged past stale_after_s, unknown regDt or a non-ok status does not", () => {
+    expect(trafficDrawable(grid(), REG_MS + 70_000)).toBe(true);
+    expect(trafficDrawable(grid(), REG_MS + 900_000)).toBe(true);
+    expect(trafficDrawable(grid(), REG_MS + 900_001)).toBe(false);
+    expect(trafficDrawable(grid({ reg_dt_utc: null }), REG_MS)).toBe(false); // 기준 시각을 모르면 '지금'이라고 그리지 않는다
+    expect(trafficDrawable(grid({ status: "stale", available: false }), REG_MS)).toBe(false);
+    expect(trafficDrawable(null, REG_MS)).toBe(false);
+    expect(trafficStaleAt(grid())).toBe(REG_MS + 900_000);
+    expect(trafficStaleAt(grid({ reg_dt_utc: "bad" }))).toBeNull();
   });
 });
 
@@ -206,6 +236,37 @@ describe("TrafficGridPoller: ETag, no redraw when unchanged, hidden tab, errors 
     await p.poll();
     expect(states.at(-1)!.error).toBe("응답 형식 오류");
     expect(states.at(-1)!.version).toBe(1);
+  });
+
+  it("polls right away when the tab becomes visible again (unless it just checked) and stops listening when stopped", async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 1_000_000;
+      let hidden = false;
+      let onVisible: (() => void) | null = null;
+      const watch = (cb: () => void) => { onVisible = cb; return () => { onVisible = null; }; };
+      answers.push(res(200, body(), '"ta"'), res(304), res(304));
+      const p = new TrafficGridPoller((s) => states.push(s), undefined, fetcher, () => hidden, () => now, TRAFFIC_POLL_MS, watch);
+      p.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toHaveLength(1);
+      hidden = true;
+      now += TRAFFIC_POLL_MS * 5; // 숨긴 동안에는 부르지 않는다
+      await vi.advanceTimersByTimeAsync(TRAFFIC_POLL_MS * 5);
+      expect(calls).toHaveLength(1);
+      hidden = false;
+      onVisible!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toHaveLength(2); // 다시 보이면 곧바로(다음 90 s 를 기다리지 않는다)
+      now += TRAFFIC_VISIBLE_MIN_GAP_MS - 1;
+      onVisible!(); // 방금 확인했다 — 탭을 빨리 오가도 몰아서 부르지 않는다
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toHaveLength(2);
+      p.stop();
+      expect(onVisible).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("polls every TRAFFIC_POLL_MS only while the tab is visible, never two at once, and stops cleanly", async () => {
