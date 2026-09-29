@@ -31,7 +31,8 @@
   세지 않고 판정도 두지 않는다(모름). 60분은 선택값이다.
 - 다시 받기(ADR-021): 정규 후보를 다 받은 뒤, 부분 합성 프레임 중 tm 이 REFETCH_MAX_AGE_S(30분) 안이고 마지막 시도(처음 받은 시각 또는
   다시 받은 시각)가 REFETCH_SPACING_S(4분) 넘게 지난 것을 오래된 tm 부터 주기마다 REFETCH_MAX_PER_CYCLE(2)개까지 다시 받는다. 헤더의 지점
-  수가 늘었을 때만 PNG · 항목(지점 · 에코 셀 · raw_ref · fetched_at) · (최신 프레임이면) meta 를 바꾸고, 쓰지 않은 원본은 보관하지 않는다.
+  수가 늘었을 때만 PNG · 항목(지점 · 에코 셀 · raw_ref · fetched_at) · (최신 프레임이면) meta 의 헤더 값을 바꾸고, 쓰지 않은 원본은 보관하지
+  않는다. meta fetched_at(latest_tm 을 처음 저장한 시각 — STALE 시계)은 다시 받기로 옮기지 않는다.
   시도(refetches · refetched_at)와 바꾼 수(upgrades)는 항목에 남는다. 예산은 한 번에 1 을 예약하되 남은 하루(UTC)의 정규 주기 몫(주기당
   REGULAR_CALLS_PER_CYCLE = 목록 1 + 새 프레임 1 + 일시 오류 다시 부르기 1)을 남기고만(budget.regular_headroom — 기상 작업의 다시 부르기와
   같은 규칙). 오류는 INFO 한 줄 — 주기를 끝내지 않고, 다시 부르지 않고, 공급자 실패로 기록하지 않는다(보내지 않은 시도는 예산 1 을
@@ -511,7 +512,7 @@ class KmaRadarJob:
             )
 
     async def _note_refetch(self, tm: str, at: datetime, upgrade: tuple | None = None) -> bool:
-        """시도를 항목에 남기고(refetches · refetched_at), upgrade 가 있으면 PNG · 항목 · (최신 프레임이면) meta 를 바꾼다.
+        """시도를 항목에 남기고(refetches · refetched_at), upgrade 가 있으면 PNG · 항목 · (최신 프레임이면) meta 의 헤더 값을 바꾼다(fetched_at 은 둔다).
         그 사이 목록에서 빠진 프레임이면 아무것도 쓰지 않는다(목록에 없는 이미지를 만들지 않는다). 바꿨으면 True."""
         r = self.ctx.status.redis
         frames = await self._frames()
@@ -537,8 +538,12 @@ class KmaRadarJob:
                 "station_ids": list(header.stations),
                 "upgrades": int(entry.get("upgrades") or 0) + 1,
             }
-            if frames[-1].get("tm") == tm:  # meta 는 latest_tm 프레임을 설명한다 — 그 프레임을 바꿨을 때만 헤더 값 · fetched_at
-                mapping |= self._header_meta(header, meta, fetched_at)
+            # meta 의 헤더 값은 latest_tm 프레임(보이는 영상)을 설명한다 — 그 프레임을 바꿨을 때만. meta fetched_at 은 바꾸지 않는다:
+            # 그것은 latest_tm 을 처음 저장한 시각 = STALE 시계(REL-19 — API meta.stale · 웹 KMA STALE 이 그 나이 > 900 s 로 뜬다)다.
+            # 다시 받은 시각으로 옮기면 새 tm 이 오지 않는 동안 마지막 프레임을 채울 때마다 STALE 이 늦어진다. 다시 받은 시각은 항목의
+            # fetched_at(보이는 영상을 받은 시각 — 영상 URL 버전) · refetched_at 에만 둔다.
+            if frames[-1].get("tm") == tm:
+                mapping |= self._header_meta(header, meta)
         annotate_partial(frames)
         await self._save_frames(frames)
         mapping |= _latest_station_fields(frames)  # 다른 프레임이 늘어 기준이 바뀌면 최신 프레임의 판정도 바뀐다
@@ -561,8 +566,8 @@ class KmaRadarJob:
         quality.append(("kma_radar_missing", None, {"tm": tm, "tries": tries, "error": str(e)[:200]}))
         log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, str(e)[:160])
 
-    def _header_meta(self, header, meta: dict, fetched_at: datetime) -> dict[str, str]:
-        """meta 해시의 헤더 값 · fetched_at — latest_tm 프레임을 설명할 때만 쓴다."""
+    def _header_meta(self, header, meta: dict) -> dict[str, str]:
+        """meta 해시의 헤더 값 — latest_tm 프레임을 설명할 때만 쓴다. fetched_at(STALE 시계)은 여기 없다 — 새 latest_tm 을 저장할 때만(_store)."""
         return {
             "product": header.product,
             "cmp": self.p.cmp,
@@ -574,7 +579,6 @@ class KmaRadarJob:
             "legend": orjson.dumps(meta["legend"]).decode(),
             "min_dbz": str(meta["min_dbz"]),
             "observed_cells": str(meta["observed_cells"]),
-            "fetched_at": _iso(fetched_at),
         }
 
     async def _store(self, tm: str, res) -> None:
@@ -624,7 +628,7 @@ class KmaRadarJob:
         # 헤더 값·fetched_at 은 latest_tm 프레임을 설명한다. 보관 창 안의 오래된 빈 곳을 채운 경우(R-03)에는 그대로 둔다 —
         # 옛 프레임 값으로 덮으면 meta 가 latest_tm 과 다른 프레임을 설명하고, fetched_at 이 새로 보여 STALE 이 가려진다.
         if frames[-1]["tm"] == tm:
-            mapping |= self._header_meta(header, meta, res.fetched_at)
+            mapping |= self._header_meta(header, meta) | {"fetched_at": _iso(res.fetched_at)}
         await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
         log.info(
             "kma radar: tm=%s %s stations=%d%s echo cells=%d png=%d B (%d frames)",

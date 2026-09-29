@@ -375,7 +375,7 @@ async def test_refetch_runs_after_the_regular_candidates(env):
 
 async def test_upgrading_the_latest_frame_updates_the_meta_that_describes_it(env):
     mod, r, ctx, clock = env
-    seeded = await _seed(mod, r, [_entry("202609291445", 15), _entry("202609291450", 7)])
+    seeded = await _seed(mod, r, [_entry("202609291440", 15), _entry("202609291445", 15), _entry("202609291450", 7)])
     assert (await r.hgetall(mod.KEY_META))["partial"] == "1"
     clock["set"]("202609291458")  # 14:50 을 받은 뒤 4분 20초
     prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291450": [12]})
@@ -383,7 +383,30 @@ async def test_upgrading_the_latest_frame_updates_the_meta_that_describes_it(env
     meta = await r.hgetall(mod.KEY_META)
     assert (meta["latest_tm"], meta["stations"], meta["stations_ref"], meta["partial"]) == ("202609291450", "12", "15", "1")
     assert meta["station_ids"] == ",".join(f"K{i:02d}" for i in range(12))
-    assert meta["fetched_at"] == _iso(clock["utc"])  # 보이는 영상을 받은 시각
+    assert meta["product"] == "HSR" and meta["observed_cells"] == "1"  # 헤더 값은 보이는 영상의 것
+    f = (await _stored(mod, r))["202609291450"]
+    assert f["fetched_at"] == f["refetched_at"] == _iso(clock["utc"])  # 보이는 영상을 받은 시각은 프레임 항목에
+    # meta fetched_at 은 STALE 시계(REL-19: API meta.stale · 웹 KMA STALE 이 이 값의 나이 > 900 s 로 뜬다) — latest_tm 을 처음 저장한 시각 그대로
+    assert meta["fetched_at"] == seeded[-1]["fetched_at"]
+
+
+async def test_a_stalled_latest_tm_still_goes_stale_while_its_partial_frame_keeps_being_upgraded(env):
+    """기상청이 새 tm 을 올리지 않고(목록에 없음) 마지막 부분 합성 프레임만 채우는 경우: 다시 받아 바꿔도 STALE 시계는 tm + 3분 40초에 멈춰 있다 —
+    tm + 19분에는 이미 STALE(> 900 s), tm + 28분에 또 바꿔도 그대로다(옛 프레임이 지금 것처럼 보이지 않는다)."""
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291440", 15), _entry("202609291445", 15), _entry("202609291450", 5)])
+    first = datetime.fromisoformat(seeded[-1]["fetched_at"])
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291450": [7, 9, 11, 13]})
+    job = mod.KmaRadarJob(prov, ctx)
+    for minutes in (8, 13, 19, 28):  # tm + 분 — 다시 받을 때마다 지점이 늘어 바꾼다
+        clock["set"]("202609291450", minutes * 60 + 40)
+        await job.run_once()
+        meta = await r.hgetall(mod.KEY_META)
+        age = (clock["utc"] - datetime.fromisoformat(meta["fetched_at"])).total_seconds()
+        assert meta["fetched_at"] == seeded[-1]["fetched_at"] and age == (clock["utc"] - first).total_seconds()
+        assert (age > 900) == (minutes >= 19), minutes
+    assert prov.binaries == ["202609291450"] * 4 and job.upgrades == 4
+    assert (await _stored(mod, r))["202609291450"]["stations"] == 13
 
 
 async def test_refetch_with_the_same_or_fewer_sites_keeps_the_stored_frame_and_waits_4_min(env, caplog):
