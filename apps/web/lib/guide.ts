@@ -170,6 +170,7 @@ export function parseManifest(raw: unknown, plan: GuidePlan): { manifest: GuideM
     if (typeof m.bytes !== "number" || !Number.isInteger(m.bytes) || m.bytes <= 0) { dropped.push(`${id}: bytes`); continue; }
     if (typeof m.captured_at !== "string" || !Number.isFinite(Date.parse(m.captured_at))) { dropped.push(`${id}: captured_at`); continue; }
     const variant = typeof m.variant === "string" && m.variant.length <= 120 ? m.variant : null;
+    if (m.variant != null && variant == null) dropped.push(`${id}: variant(캡처 조건)가 120자 이하 문자열이 아님 — 조건 없이 보인다`);
     const callouts: CalloutPos[] = [];
     for (const c of Array.isArray(m.callouts) ? m.callouts : []) {
       const ok = isObj(c) && shot.callouts.some((x) => x.n === c.n) && pct(c.x) && pct(c.y) && !callouts.some((x) => x.n === c.n);

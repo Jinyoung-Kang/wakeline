@@ -148,7 +148,7 @@
       "section": "ops-logs",
       "path": "/logs",
       "title": "시스템 로그",
-      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 시각(KST) · 수준 · 서비스 · 메시지 목록",
+      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 시각 · 수준 · 서비스 · 메시지 목록",
       "callouts": [
         { "n": 1, "label": "로그 탭", "text": "로그 / AIS 수신 공백.", "target": "[aria-label=\"로그 탭\"]", "anchor": "l" },
         { "n": 2, "label": "필터", "text": "서비스(여러 개) · 수준 · 기간 · 글자 검색 · 요청 id.", "target": "[data-testid=\"logs-filter-form\"]", "anchor": "tl" },

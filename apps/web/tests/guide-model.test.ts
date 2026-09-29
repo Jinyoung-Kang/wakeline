@@ -74,6 +74,12 @@ describe("capture result (lib/guide-manifest.json)", () => {
     expect(dropped.join("\n")).toMatch(/99/);
     expect(dropped.join("\n")).toMatch(/140/);
   });
+  it("a malformed capture condition is dropped with a reason, not silently", () => {
+    const id = PLAN.shots[0].id;
+    const r = parseManifest({ version: 1, shots: { [id]: PNG_SHOT(id, { variant: 42 }) } }, PLAN);
+    expect(r.manifest.shots[id].variant).toBeNull();
+    expect(r.dropped.join("\n")).toMatch(new RegExp(`${id}: variant`));
+  });
   it("a missing or malformed manifest is empty (every screenshot shows the placeholder)", () => {
     expect(parseManifest(null, PLAN).manifest.shots).toEqual({});
     expect(parseManifest({ version: 2, shots: {} }, PLAN).dropped[0]).toMatch(/version/);
