@@ -1,14 +1,13 @@
 package dev.wakeline.it;
 
+import dev.wakeline.DbTestSupport;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.persist.Sql;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
-
-import dev.wakeline.DbTestSupport;
-import dev.wakeline.persist.Sql;
 
 import java.net.URI;
 import java.sql.Connection;
