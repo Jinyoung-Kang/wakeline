@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as A from "@/lib/map-attribution";
 import { attributionText, CREDITS } from "@/lib/attribution";
 import { AttributionFooter } from "@/components/AttributionFooter";
@@ -70,6 +70,7 @@ function add(width: number, observe?: A.ObserveFn) {
 }
 
 describe("compact map attribution", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
   it("uses MapLibre's compact attribution (the ⓘ toggle) with our credit HTML", () => {
     const { inner } = add(800);
     expect(inner.opts).toEqual({ compact: true, customAttribution: "<a>x</a>" });
@@ -82,6 +83,7 @@ describe("compact map attribution", () => {
     expect(wide.cls.has("maplibregl-compact")).toBe(true); // 넓어도 ⓘ 로 접을 수 있다
   });
   it("collapses when the map becomes narrow (window resize); widening again does not force it open; nothing is remembered", () => {
+    const storage = spyStorage(); // 브라우저 저장소를 한 번이라도 건드리면(읽기 포함) 센다
     const { map, el } = add(A.ATTRIB_EXPANDED_MIN_PX + 200);
     expect(collapsed(el)).toBe(false);
     map.width = 900; map.fire("resize");
@@ -92,7 +94,7 @@ describe("compact map attribution", () => {
     expect(collapsed(el)).toBe(false);
     map.width = 2000; map.fire("resize");
     expect(collapsed(el)).toBe(false);
-    expect(localStorageUsed()).toBe(false);
+    expect(storage.calls).toEqual([]);
   });
   it("the toggle is labelled in Korean and says the full list is in the SOURCES footer", () => {
     const { el } = add(800);
@@ -123,7 +125,14 @@ describe("compact map attribution", () => {
   });
 });
 
-function localStorageUsed() { return false; } // 저장소를 쓰지 않는다 — 모듈에 localStorage 가 없는지 아래에서 본다
+/** localStorage · sessionStorage 대역 — 어떤 속성에 닿든(getItem · setItem · length …) 기록한다. 상태는 기억하지 않는다(모듈 글자 검사는 아래 describe) */
+function spyStorage() {
+  const calls: string[] = [];
+  const fake = (name: string) => new Proxy({}, { get: (_t, k) => { calls.push(`${name}.${String(k)}`); return () => null; } });
+  vi.stubGlobal("localStorage", fake("localStorage"));
+  vi.stubGlobal("sessionStorage", fake("sessionStorage"));
+  return { calls };
+}
 
 describe("both maps use it; attribution stays visible in the footer", () => {
   const src = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
