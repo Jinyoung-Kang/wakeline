@@ -233,16 +233,32 @@
 - **회귀** 두 언어가 같은 파일 `schemas/vectors/log-suppression.v1.json`(11 사례 · 87 단계)을 재생하고, 무작위 300 가지 순서에서 "항목 수 + 억제 합 = 발생 수"를 확인. `LogsIT`(같은 경고 두 번 → 수정 전 "Expected size: 2 but was: 1").
   레인 리뷰가 찾은 5건(전송 스레드의 Error 로 묶음을 잃음 · 같은 주기의 순서가 언어마다 다름 · 예외 문구를 늦게 읽음 · 벽시계 사용 · 계약 검사가 형식 오류에 멈춤)도 시험 먼저 고쳤다.
 
-## 자동 검사 현황(2026-09-29 KST, 계약 v5 뒤)
+## #36 운영 화면에서 읽을 수 없던 것 — UTC 시각 · 오류 원문 · 전환 사유 · "— ms"(사용자 확인, 2026-09-29)
+- **증상**(사용자 캡처) 운영 · 로그 화면의 모든 시각이 UTC(`…Z`). 마지막 오류 칸이 `ProviderHttpError('HTTP 429: <html>\r\n<head><title>429 To…` · `ReadTimeout('')` ·
+  `ConnectError('')` 처럼 원문 그대로. 공급자 전환 사유가 모두 `fallback/recovery`(왜 바뀌었는지 모름). 지연을 모르는 행이 `— ms`.
+- **수정** 운영 · 로그 화면은 한국 표준시(열 머리 `(KST)`, 원본 UTC 는 툴팁 · JSON 복사 · .ndjson — 계약 v5 §G10). 복사 · .txt 머리는 ISO 8601 `+09:00`.
+  수집기 오류 문구 하나로(`errors.describe_error` — `HTTP 429 Too Many Requests` · `ReadTimeout — read 제한 15 s 초과 (apihub.kma.go.kr)` · `ConnectError — 연결 실패 (host): 원인`).
+  전환 사유는 까닭을 적는다(`fallback — adsb_lol 429 쉼(60 s)` · `… 429 반복 → 20분 뒤로 미룸` · `recovery — adsb_lol 쉼 끝(1순위 복귀)` 등, ADR-011).
+  모르는 값 뒤에 단위를 붙이지 않는다(운영 · 로그 · 상태 바 · AIS 배지 · 재생 — `— ms` · `— frames` · `— msg/s` 대신 `—`).
+- **확인** 배포 뒤 개발 스택의 Redis: 전환 사유 `fallback — adsb_lol 429 쉼(60 s)`, 공급자 상태 `last_error = HTTP 429 Too Many Requests`. 격리 스택에서 운영 7개 탭 · 로그 목록 · 상세를
+  브라우저로 열어 남은 `HH:MM:SSZ` 0건 · `— ms` 0건, 복사 머리 `2026-09-29T10:14:36.115+09:00`. **회귀** 웹 시험(시간대 5곳에서 같은 결과) · 수집기 오류 문구 시험(위 원문 그대로의 입력).
+
+## #37 api 를 띄울 때마다 SpringDoc 경고가 시스템 로그에 실림
+- **증상** 배포마다 `WARN SpringDocAppInitializer — SpringDoc /api/v1/openapi endpoint is enabled by default …`(사용자가 로그 메뉴에서 봄).
+- **원인** 공개 API 문서는 일부러 켜 두었는데, springdoc 은 속성 `springdoc.api-docs.enabled` 를 적지 않으면 설정 객체의 값이 false 로 남고 그 값이 false 일 때 이 경고를 낸다
+  (엔드포인트 자체는 기본으로 켜진다 — 라이브러리 바이트코드로 확인).
+- **수정** 속성을 명시(`true`) — 엔드포인트는 그대로. **회귀** `OpenApiSnapshotIT.openApiDocsAreEnabledExplicitly_soStartupLogsNoSpringDocWarning`(수정 전 실패), 시험 컨텍스트 출력에 경고 없음.
+
+## 자동 검사 현황(2026-09-29 KST, 계약 v5 · 운영 화면 보강 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 902 통과(10 건너뜀 — 실 Redis 8건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 685 · JaCoCo LINE 96.3 % · BRANCH 84.6 %(하한 95 / 80) |
-| web 단위 | Vitest | 680 · 커버리지(소스 전체) Lines 87.4 % · Branches 75.2 % |
+| collector · ais 단위·통합 | pytest | 975 통과(11 건너뜀 — 실 Redis 9건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 686 · JaCoCo LINE 96.3 % · BRANCH 84.5 %(하한 95 / 80) |
+| web 단위 | Vitest | 698 · 커버리지(소스 전체) Lines 87.8 % · Branches 75.9 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 27 · 클라이언트 15) + 가림 · 억제 벡터 |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 31종 |
-| 인프라 정책 | infra/tests(unittest) | 117 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 259 · 36 · 48 · 27 · 8 |
+| 인프라 정책 | infra/tests(unittest) | 118 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 265 · 36 · 48 · 27 · 9 |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
 | 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(db · k6 는 보고만) |
 | 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 230건 · 14종, 형식 오류 0건(#32 · docs/review/evidence/v5-ws-live-check.txt) |
