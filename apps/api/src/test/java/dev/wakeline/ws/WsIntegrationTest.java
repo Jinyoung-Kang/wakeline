@@ -68,9 +68,17 @@ class WsIntegrationTest {
         }
         /** 노선 캐시(계약 v4 §A)도 연결 없는 템플릿 — 읽기 실패는 route.status unavailable. */
         @Bean dev.wakeline.route.RouteReader routeReader(ObjectMapper json) { return new dev.wakeline.route.RouteReader(new StringRedisTemplate(), json); }
-        /** 한국 항만 입출항 캐시(ADR-022)도 연결 없는 템플릿 — 읽기 실패는 port_calls.status error(cache). */
-        @Bean dev.wakeline.portcalls.PortCallReader portCallReader(ObjectMapper json, MeterRegistry m) {
-            return new dev.wakeline.portcalls.PortCallReader(new StringRedisTemplate(), json, m);
+        /** 한국 항만 입출항 색인(ADR-022 개정)은 DB 가 없는 구성 — 읽기 실패는 port_calls.status error, heartbeat 는 연결 없는 템플릿(오류는 삼킨다). */
+        @Bean dev.wakeline.portcalls.PortCallReader portCallReader(MeterRegistry m) {
+            dev.wakeline.portcalls.PortCallReader.Source none = new dev.wakeline.portcalls.PortCallReader.Source() {
+                @Override public java.util.List<dev.wakeline.portcalls.PortCallIndex.Coverage> coverage() {
+                    throw new org.springframework.dao.DataAccessResourceFailureException("no database in this test");
+                }
+                @Override public java.util.List<dev.wakeline.portcalls.PortCallIndex.Row> byCallSign(String cs, java.time.LocalDate f, java.time.LocalDate t, int n) {
+                    throw new org.springframework.dao.DataAccessResourceFailureException("no database in this test");
+                }
+            };
+            return new dev.wakeline.portcalls.PortCallReader(none, new StringRedisTemplate(), m);
         }
     }
 

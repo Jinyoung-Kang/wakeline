@@ -5,13 +5,15 @@ import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.Receipt;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.portcalls.PortCallFixtures;
+import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
-import dev.wakeline.portcalls.PortCallsInfoTest;
 import dev.wakeline.route.RouteInfoTest;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -345,14 +347,15 @@ class ShipFanoutTest {
     }
 
     /**
-     * ADR-022: ship_selected.port_calls = 정적 정보의 호출부호로 읽은 입출항. 선박이 바뀌지 않아도 주기 다시 보기(refreshSelected)가 입출항이
-     * 바뀐 것(조회 중 → 결과)만 보낸다 — 같은 값이면 보내지 않는다.
+     * ADR-022 개정: ship_selected.port_calls = 정적 정보의 호출부호로 DB 색인에서 찾은 입출항. 선박이 바뀌지 않아도 주기 다시 보기(refreshSelected)가
+     * 색인이 바뀐 것(빈 색인 → 기록)만 보낸다 — 같은 값이면 보내지 않는다. 선택은 외부 호출 · 임대를 만들지 않는다(색인 읽기뿐).
      */
     @Test void selectShip_carriesPortCalls_andThePeriodicRefreshSendsOnlyChanges() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
-            Map<String, String> redis = new HashMap<>();
-            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000);
-            k.shipFanout.setPortCallSource(new PortCallReader(redis::get, RouteInfoTest.JSON, clock::get)::forStatic);
+            PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
+            Instant now = Instant.parse("2026-09-29T13:00:00Z");
+            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(now.toEpochMilli());
+            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, clock::get)::forStatic);
             publish(k, List.of(pos("440000001", 35.1, 129.1, T), pos("440000002", 35.2, 129.2, T)), List.of(stat("440000001", "HANJIN BUSAN", 70)));
             FakeWsSession f = session(k, "s", BUSAN, true);
             FakeWsSession idle = session(k, "idle", BUSAN, true); // 선박을 고르지 않은 세션 — 받지 않는다
@@ -361,76 +364,46 @@ class ShipFanoutTest {
             k.msg(paused, "{\"type\":\"pause\"}");
             k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
             JsonNode first = ofType(f, "ship_selected").getLast();
-            assertThat(first.path("port_calls").path("status").asString()).isEqualTo("pending");
+            assertThat(first.path("port_calls").path("status").asString()).as("empty index — not 'none'").isEqualTo("incomplete");
             assertThat(first.path("port_calls").path("call_sign").asString()).isEqualTo("D7AB");
+            assertThat(first.path("port_calls").path("index").path("gaps").size()).isEqualTo(10);
 
             k.shipFanout.refreshSelected(); // 같은 값 — 보내지 않는다
             assertThat(ofType(f, "ship_selected")).hasSize(1);
-            redis.put("wakeline:portcalls:D7AB", PortCallsInfoTest.sample().put("call_sign", "D7AB").toString());
+            index.coverage = PortCallFixtures.fullCoverage(LocalDate.parse("2026-08-20"), LocalDate.parse("2026-09-29"), now);
+            PortCallIndex.Row row = PortCallFixtures.row(now);
+            index.rows.put("D7AB", List.of(new PortCallIndex.Row(row.portAuthorityCode(), row.portAuthority(), "D7AB", row.listedDate(), row.reportedName(),
+                    row.nationality(), row.kind(), row.purpose(), row.firstPortCode(), row.firstPortName(), row.prevPortCode(), row.prevPortName(),
+                    row.nextPortCode(), row.nextPortName(), row.destPortCode(), row.destPortName(), row.entryAt(), row.entryRevision(), row.exitAt(),
+                    row.exitRevision(), row.berth(), row.fetchedAt())));
             clock.addAndGet(PortCallReader.TTL_MS);
             k.shipFanout.refreshSelected();
             JsonNode ok = ofType(f, "ship_selected").getLast();
             assertThat(ofType(f, "ship_selected")).hasSize(2);
             assertThat(ok.path("port_calls").path("status").asString()).isEqualTo("ok");
-            assertThat(ok.path("port_calls").path("items").get(0).path("reported_name").asString()).isEqualTo("부광9호");
+            assertThat(ok.path("port_calls").path("items").get(0).path("reported_name").asString()).isEqualTo("AZAMARA PURSUIT");
+            assertThat(ok.path("port_calls").path("items").get(0).path("berth").asString()).isEqualTo("북항크루즈터미널 2선석");
             assertThat(ok.path("state").path("lat").asDouble()).as("the rest of the message is the same").isEqualTo(35.1);
             clock.addAndGet(PortCallReader.TTL_MS);
             k.shipFanout.refreshSelected(); // 다시 읽어도 같은 값(새 객체) — 보내지 않는다
             assertThat(ofType(f, "ship_selected")).hasSize(2);
             assertThat(ofType(idle, "ship_selected")).isEmpty();
             assertThat(ofType(paused, "ship_selected")).as("only the answer to its own select_ship").hasSize(1);
-            assertThat(ofType(paused, "ship_selected").getFirst().path("port_calls").path("status").asString()).isEqualTo("pending");
 
-            // 정적 정보를 아직 받지 못한 선박 → no_static(호출부호를 모른다 — '없음' 이 아니다)
+            // 정적 정보를 아직 받지 못한 선박 → no_call_sign · not_received(호출부호를 아직 받지 않음 — '없음' 이 아니다)
             k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000002\"}");
-            assertThat(ofType(f, "ship_selected").getLast().path("port_calls").path("status").asString()).isEqualTo("no_static");
-            // 정적 정보는 있는데 호출부호가 없다 → no_call_sign
-            publish(k, List.of(), List.of(new ShipStatic("440000002", "NO CS", null, null, 70, null, null, null, null, null, null, null, null, null, null,
+            JsonNode nr = ofType(f, "ship_selected").getLast().path("port_calls");
+            assertThat(nr.path("status").asString() + "/" + nr.path("call_sign_state").asString()).isEqualTo("no_call_sign/not_received");
+            // 받은 호출부호가 찾는 형식 밖 → unusable
+            publish(k, List.of(), List.of(new ShipStatic("440000002", "NO CS", "AB", null, 70, null, null, null, null, null, null, null, null, null, null,
                     T.minusSeconds(30), "aisstream")));
-            assertThat(ofType(f, "ship_selected").getLast().path("port_calls").path("status").asString()).isEqualTo("no_call_sign");
+            JsonNode un = ofType(f, "ship_selected").getLast().path("port_calls");
+            assertThat(un.path("status").asString() + "/" + un.path("call_sign_state").asString()).isEqualTo("no_call_sign/unusable");
+            assertThat(index.queries).as("the index is read only for usable call signs").allMatch(q -> q.startsWith("D7AB "));
         }
     }
 
-    /**
-     * ADR-022 · 남용 한도: 수요 서비스가 이 세션의 호출부호를 임대에 올리지 못했으면(세션·IP 한도 · 서버 상한 — portCallGate) 캐시가 비어 있어도
-     * '조회 중' 이라 하지 않고 limited(limited_by)로 보낸다. 캐시에 결과가 있으면 결과가 먼저다. 문(gate)이 바뀌면 허브 알림으로 바로 다시 계산한다.
-     */
-    @Test void portCallGate_turnsPendingIntoLimited_onlyForThatCallSign() throws Exception {
-        try (WsTestKit k = new WsTestKit()) {
-            Map<String, String> redis = new HashMap<>();
-            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000);
-            k.shipFanout.setPortCallSource(new PortCallReader(redis::get, RouteInfoTest.JSON, clock::get)::forStatic);
-            publish(k, List.of(pos("440000001", 35.1, 129.1, T)), List.of(stat("440000001", "HANJIN BUSAN", 70)));
-            FakeWsSession f = session(k, "s", BUSAN, true);
-            WsSession ws = k.hub.sessionsView().stream().filter(x -> x.id.equals("s")).findFirst().orElseThrow();
-            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
-            assertThat(ofType(f, "ship_selected").getLast().path("port_calls").path("status").asString()).isEqualTo("pending");
-
-            ws.portCallGate = new WsSession.PortCallGate("D7AB", "session");
-            k.hub.shipSelectedChanged(ws);
-            JsonNode lim = ofType(f, "ship_selected").getLast().path("port_calls");
-            assertThat(lim.path("status").asString()).isEqualTo("limited");
-            assertThat(lim.path("limited_by").asString()).isEqualTo("session");
-            assertThat(lim.path("call_sign").asString()).isEqualTo("D7AB");
-
-            ws.portCallGate = new WsSession.PortCallGate("OTHER1", "ip"); // 다른 호출부호의 문 — 이 선박과 무관
-            k.hub.shipSelectedChanged(ws);
-            assertThat(ofType(f, "ship_selected").getLast().path("port_calls").path("status").asString()).isEqualTo("pending");
-
-            ws.portCallGate = new WsSession.PortCallGate("D7AB", "ip");
-            redis.put("wakeline:portcalls:D7AB", PortCallsInfoTest.sample().put("call_sign", "D7AB").toString());
-            clock.addAndGet(PortCallReader.TTL_MS);
-            k.hub.shipSelectedChanged(ws);
-            assertThat(ofType(f, "ship_selected").getLast().path("port_calls").path("status").asString()).as("a cached result wins").isEqualTo("ok");
-
-            k.msg(f, "{\"type\":\"pause\"}");
-            int before = ofType(f, "ship_selected").size();
-            k.hub.shipSelectedChanged(ws); // 일시정지 — 보내지 않는다(다시 볼 때 초기 세트가 보낸다)
-            assertThat(ofType(f, "ship_selected")).hasSize(before);
-        }
-    }
-
-    @Test void portCallRefreshIsScheduledEveryFiveSeconds_notAfterStop() throws Exception {
+    @Test void portCallRefreshIsScheduledEveryReaderTtl_notAfterStop() throws Exception {
         final class Recording extends ScheduledThreadPoolExecutor {
             final List<Long> periods = new ArrayList<>();
             Recording() { super(1); }

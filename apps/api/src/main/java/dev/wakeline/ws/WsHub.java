@@ -269,14 +269,6 @@ public class WsHub implements SmartLifecycle {
     /** 초기 세트 끝에서 부를 선박 훅(우편함 안에서 불린다 — 훅은 선박 작업을 같은 우편함에 예약만 한다). */
     void setShipsHook(java.util.function.Consumer<WsSession> hook) { shipsHook = hook == null ? s -> { } : hook; }
 
-    private volatile java.util.function.Consumer<WsSession> shipSelectedHook = s -> { };
-
-    /** 선택 선박 다시 계산 훅(ShipFanout — 예약만 한다). */
-    void setShipSelectedHook(java.util.function.Consumer<WsSession> hook) { shipSelectedHook = hook == null ? s -> { } : hook; }
-
-    /** 이 세션의 ship_selected 가 바뀌었을 수 있다(입출항 조회의 문 — DemandService). 바뀐 것이 없으면 보내지 않는다. 바로 돌아온다. */
-    void shipSelectedChanged(WsSession s) { shipSelectedHook.accept(s); }
-
     /** 세션의 최신 demand 메시지(s.demandJson)를 우편함 순서대로 보낸다(단일 비행 — 여러 번 불러도 최신 하나). */
     void pushDemand(WsSession s) {
         if (s.subscribed()) s.schedule(WsSession.Job.DEMAND, () -> runDemand(s));

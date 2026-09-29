@@ -316,3 +316,33 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     compact 초까지(`18:05:05 KST · 09:05:05Z`), 레이어 상태 줄은 inline(`09-29 18:05:05 KST · 09:05:05 UTC`), UTC 날짜가 다르면 UTC 쪽에 날짜.
   - 가림(§C5 확장): 언어 간 벡터에 `serviceKey=` · `ServiceKey=`(인코딩 · 디코딩 키) · JSON `"ServiceKey"` · `SERVICEKEY=` 네 사례(ADR-022 의 PORT-MIS
     사례와 합쳐 중복 없이). 키 값은 `providers/data_go_kr.service_key_forms` 하나로 네 형태(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩)를 값 치환한다 — 세 잡이 같은 목록.
+
+## G. 9차 개정(2026-09-29 · 레인 port-index · 배포 뒤 결함 — PORT-MIS 의 clsgn 은 거르지 않는다, ADR-022 개정)
+- G16(ADR-022 결정 2 · 3 · 5 · 6 · 7 · 10 · §G15 의 입출항 부분) **한국 항만 입출항 = 수집기 색인, 선택은 읽기만** — 선택한 선박의 호출부호로 묻던 조회와
+  그 임대 · 한도 · 캐시를 대신한다. 근거 · 선택값 · 계산은 ADR-022 '개정'.
+  - 외부(collector): `GET apis.data.go.kr/1192000/VsslEtrynd5/Info5` 를 (항만청 10곳 × KST 날짜 하루)로 — `sde = ede` · `deGb=I` · `numOfRows=50` · 모든 쪽,
+    **`clsgn` 은 싣지 않는다**. 작업 `portcalls_index` — 꼬리(최근 3일) 매시 · 창(30일) 채우기 · 오래된 날 하루 한 번 다시 받기(시간당 15일치까지).
+    예산은 전과 같은 해양수산부 시간 창(`budget:mof:h:*` 390 — 격자 채우기는 100 을 남긴다) → `portmis` 하루 3,000 순서로 예약하고, 색인의 채우기 · 다시 받기는
+    창의 50 을 꼬리 갱신에 남긴다. `portmis` 는 엄격 예산이 됐다(`budget.DEFAULT_STRICT`). 우선순위 `PRIORITY_PORTCALL`(4) 그대로.
+  - DB: Flyway **V15** `port_call`(자연 키 `prt_ag_cd, clsgn, etrypt_year, etrypt_co` · `listed_date` · 값 열 · `entry_at/exit_at timestamptz` + 판 · `berth` ·
+    `fetched_at` · `updated_at`, 인덱스 `(clsgn, listed_date DESC)` · `(prt_ag_cd, listed_date)`)와 `port_call_coverage(prt_ag_cd pk, covered_from, covered_to,
+    refreshed_at, hole_days date[] NOT NULL DEFAULT '{}' — 받았지만 끝까지 색인하지 못한 날, updated_at)`. collector: port_call SELECT · INSERT · UPDATE · DELETE,
+    범위 SELECT · INSERT · UPDATE. api: 둘 다 SELECT. 보존 = 목록 날짜 60일(collector 유지보수 — 범위 시작과 그 앞의 빈 곳도 함께). V14(§G15) 다음 번호다.
+    끝까지 색인할 수 없는 날(키 없는 item · 쪽 사이 어긋남 · 다른 항만청 · 20쪽 초과 · DB 가 행을 거절)은 빈 곳 — 범위는 넘어가고 지우지 않는다. 저장된 행이
+    있는 날의 빈 응답은 10분 넘게 떨어진 두 번째 빈 응답이 같을 때만 지운다.
+  - Redis: `wakeline:demand:portcalls` · `wakeline:portcalls:*` 는 없다(쓰는 코드도 ACL 규칙도 — collector 규칙 · 셀렉터에서 뺐고 `infra/tests` 가 거부를 확인).
+    heartbeat `wakeline:collector` 에 `portcalls_index_state`(active · no_key · fixture · operator_off · db_unavailable) · `portcalls_index_at` ·
+    `portcalls_index_lag_s` · `portcalls_index_window_authorities` · `portcalls_index_hole_days` · `portcall_requests` · `portcall_index_units_ok/incomplete/failed` ·
+    `portcall_index_rows_upserted/deleted`.
+  - WS `ship_selected.port_calls`(`schemas/ws/server.v1.json` `$defs/port_calls` · `port_call` · `port_call_index`): status **ok · none · incomplete · disabled ·
+    no_call_sign · error**(pending · limited · no_static · limited_by · error_kind · error_code · fetched_at · incomplete · reports 는 없어졌다). ok · none · incomplete 에는
+    늘 `window_from` · `window_to` · `index{authorities: 10, complete, refreshed_at?, stale_after_s: 7200, gaps[{port_authority_code, port_authority,
+    issues[not_indexed|partial|behind|stale|unindexed_days](1–4), covered_from?, covered_to?, refreshed_at?, unindexed_days?[날짜 1–31]}]}`. **none 은
+    index.complete 일 때만**(10곳 모두 창 첫날부터 · 범위 끝 = 오늘(KST — window_to) · 창 안에 빈 곳 없음 · 꼬리 갱신 2시간 안) — 웹도 다시 확인하고 어긋나면
+    보이지 않는다. `refreshed_at` 은 최근 3일에 대한 시각이다(더 오래된 날은 하루에 한 번쯤 다시 받는다). no_call_sign 에는 `call_sign_state`(not_received — "아직 받지 않음" · unusable).
+    항목 `port_call`: `listed_date` · `entry_at`/`entry_revision` · `exit_at`/`exit_revision`(최종 · 최초 — 시각이 있을 때만) · `berth` · `purpose` · `first_port` ·
+    `prev_port` · `next_port` · `dest_port` · `reported_name` · `kind` · `nationality` · **`read_at`(필수)**. 표본 `apps/web/tests/fixtures/ws-samples.v1.json`
+    (`make ws-samples`)에 상태마다 하나씩(`ship_selected.port_calls_error · _disabled · _none · _incomplete · _no_call_sign_not_received · _no_call_sign_unusable`).
+  - REST: 바뀌지 않는다(`/ships/{mmsi}` 는 입출항을 싣지 않는다 — REST 표본 · 규칙 변경 없음).
+  - 웹: 표 항만청 · 입항 · 출항(DualTime 칸 · 판, 출항이 없으면 "—") · 선석 · 목적 · 전출항지 → 차항지, 색인 줄 "색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>",
+    incomplete 는 항만청별 이유, 선명 다름 경고는 두 이름이 모두 영문일 때만. 설명서 2.6 · /about 이 색인 동작을 적는다.

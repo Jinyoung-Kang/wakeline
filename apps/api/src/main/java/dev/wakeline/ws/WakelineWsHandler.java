@@ -216,20 +216,21 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         if (shipsChanged) ships.layersChanged(s);
     }
 
-    /** 선박 선택(계약 v2 §B3): 바로 ship_selected 한 번, 이후 그 선박이 바뀔 때마다. null 은 선택 해제(응답 없음). */
+    /**
+     * 선박 선택(계약 v2 §B3): 바로 ship_selected 한 번, 이후 그 선박이 바뀔 때마다. null 은 선택 해제(응답 없음). 수요는 바꾸지 않는다 — 한국 항만
+     * 입출항은 DB 색인을 읽을 뿐이라 임대가 없다(ADR-022 개정). 수요(DemandService.want)는 항공기 선택(selectedHex)만 본다.
+     */
     private void selectShip(WsSession s, JsonNode m) {
         JsonNode v = m.get("mmsi");
         if (v == null || v.isNull()) {
             s.selectedMmsi = null;
             ships.selected(s);
-            hub.demandChanged(); // 한국 항만 입출항 조회 임대를 뺀다(ADR-022)
             return;
         }
         String mmsi = v.isString() ? v.asString() : "";
         if (!MMSI.matcher(mmsi).matches()) { hub.error(s, "BAD_MMSI", "mmsi must be 9 digits or null"); return; }
         s.selectedMmsi = mmsi;
         ships.selected(s);
-        hub.demandChanged(); // 선택 선박의 호출부호로 입출항 조회 임대(ADR-022) — 1 s 로 모아 계산
     }
 
     /** 일시정지 중 놓친 것(알림·SIGMET·레이더·항공기)을 전체 초기 세트로 다시 보낸다(GAP-3/COR-7). */

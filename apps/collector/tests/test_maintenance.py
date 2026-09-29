@@ -1,4 +1,4 @@
-"""유지보수 작업: 원천 정리 + 예산 일별 스냅샷(모르는 사용량은 0 으로 적지 않는다)."""
+"""유지보수 작업: 원천 정리 + 예산 일별 스냅샷(모르는 사용량은 0 으로 적지 않는다) + 입출항 색인 보존."""
 
 from __future__ import annotations
 
@@ -14,10 +14,11 @@ async def test_budget_snapshot_and_redis_down():
     await r.hset(day_key("adsb_fi"), mapping={"used": "12", "limit": "40000"})
     job = MaintenanceJob(["adsb_fi", "awc"], ctx)
     await job.run_once()
-    assert ctx.db.names == ["provider_budget_day(adsb_fi)", "provider_budget_day(awc)"]  # type: ignore[attr-defined]
+    # 입출항 색인 보존(ADR-022 개정)은 DB 만 쓴다 — Redis 와 무관하게 매시
+    assert ctx.db.names == ["provider_budget_day(adsb_fi)", "provider_budget_day(awc)", "port_call_retention"]  # type: ignore[attr-defined]
     r.down = True
     await job.run_once()
-    assert len(ctx.db.names) == 2  # type: ignore[attr-defined]
+    assert ctx.db.names[2:] == ["port_call_retention", "port_call_retention"]  # type: ignore[attr-defined]
 
 
 def _capture(ctx) -> list[tuple]:

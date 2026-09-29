@@ -35,7 +35,7 @@ export interface ShipSelectedInfo {
   static: ShipStatic | null;
   /** 계약 v4 §B 목적지 풀이(api 결정적 규칙). 없거나 형식이 틀리면 null — 원문만 보인다 */
   destination_info?: DestinationInfo | null;
-  /** ADR-022 한국 항만 입출항(호출부호 기준, 해양수산부 PORT-MIS). 서버가 보내지 않았거나 형식이 틀리면 null — 카드는 "—" */
+  /** ADR-022 한국 항만 입출항(서버 색인을 호출부호로 찾은 것, 해양수산부 PORT-MIS). 서버가 보내지 않았거나 형식이 틀리면 null — 카드는 "—" */
   port_calls?: PortCallsInfo | null;
   received_at: number;
 }

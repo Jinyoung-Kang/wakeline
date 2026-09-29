@@ -17,8 +17,9 @@ import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.Receipt;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.portcalls.PortCallFixtures;
+import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
-import dev.wakeline.portcalls.PortCallsInfoTest;
 import dev.wakeline.rest.StatusService;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
@@ -83,6 +84,16 @@ class WsSchemaContractTest {
     static final Path SCHEMA_DIR = WsSchemas.DIR;
     static final Path STREAM_SCHEMA_DIR = Path.of("../../schemas").toAbsolutePath().normalize();
     static final Path SAMPLES = Path.of("../../apps/web/tests/fixtures/ws-samples.v1.json").toAbsolutePath().normalize();
+    /** 입출항 표본의 고정 시각(색인 창 · 날짜가 실행마다 같게 — 2026-09-29 22:00 KST). */
+    static final Instant PC_NOW = Instant.parse("2026-09-29T13:00:00Z");
+
+    /** 공유 fixture 행(수집기가 실제 전체 기록을 해석한 것)의 호출부호만 바꾼 행. */
+    static PortCallIndex.Row portCallRow(String cs) {
+        PortCallIndex.Row r = PortCallFixtures.row(PC_NOW.minusSeconds(900));
+        return new PortCallIndex.Row(r.portAuthorityCode(), r.portAuthority(), cs, r.listedDate(), r.reportedName(), r.nationality(), r.kind(), r.purpose(),
+                r.firstPortCode(), r.firstPortName(), r.prevPortCode(), r.prevPortName(), r.nextPortCode(), r.nextPortName(), r.destPortCode(),
+                r.destPortName(), r.entryAt(), r.entryRevision(), r.exitAt(), r.exitRevision(), r.berth(), r.fetchedAt());
+    }
     static final String REGENERATE = "cd apps/api && ./gradlew test --tests 'dev.wakeline.ws.WsSchemaContractTest' -PupdateWsSamples";
 
     /** 서버 → 클라이언트 17종(계약 v5 §E1). */
@@ -244,11 +255,11 @@ class WsSchemaContractTest {
             Map<String, String> routeCache = new HashMap<>();
             routeCache.put("wakeline:route:SYN081", RouteInfoTest.found("SYN081").toString());
             k.hub.setRouteSource(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)::forAircraft);
-            // 한국 항만 입출항(ADR-022): 수집기가 실제 응답 fixture 로 만든 값(호출부호만 이 선박의 것으로 · 잘림/일부 표시를 켠 것)
-            Map<String, String> portCallCache = new HashMap<>();
-            portCallCache.put("wakeline:portcalls:D7AB", PortCallsInfoTest.sample().put("call_sign", "D7AB").put("truncated", true)
-                    .put("incomplete", true).toString());
-            k.shipFanout.setPortCallSource(new PortCallReader(portCallCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)::forStatic);
+            // 한국 항만 입출항(ADR-022 개정): 색인에 수집기가 실제 전체 기록으로 만든 행(호출부호만 이 선박의 것으로) 21건 — 20건 + 잘림. 색인은 완전 · 새것
+            PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
+            index.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-20"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));
+            index.rows.put("D7AB", java.util.Collections.nCopies(21, portCallRow("D7AB")));
+            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, PC_NOW::toEpochMilli)::forStatic);
 
             // ---- 세션 1: 줌 7 · 선박 켬 — 개별 선박, lite 인코딩
             FakeWsSession p = k.connect("s-points", "10.0.0.1");
@@ -355,35 +366,51 @@ class WsSchemaContractTest {
             all.addAll(q.sent);
             samples.add(new Sample("status.populated", first(q.sent, "status", n -> n.path("status").path("sources").has("ais"))));
         }
-        // ---- 세션 5(따로): 한국 항만 입출항의 다른 상태(ADR-022) — 조회 실패(종류·코드) · 꺼짐(키 없음) · 조회 중(캐시 없음) ·
-        //      한도(수요 서비스가 이 세션의 호출부호를 임대에 올리지 못함 — 세션의 문) · 정적 정보 없음(위치만 받은 선박)
+        // ---- 세션 5(따로): 한국 항만 입출항의 다른 상태(ADR-022 개정) — 색인을 읽지 못함 · 꺼짐(키 없음) · 기록 없음(완전 · 새 색인) ·
+        //      빈 곳 있음(한 곳 빠짐 · 한 곳 채우는 중 · 한 곳 오래됨) · 호출부호를 아직 받지 않음(위치만 받은 선박) · 찾는 형식 밖 호출부호
         try (WsTestKit k = new WsTestKit(json)) {
             List<ShipStatic> stats = new ArrayList<>();
-            for (String[] s : new String[][]{{"440000004", "D7AC"}, {"440000005", "D7AD"}, {"440000006", "D7AE"}, {"440000007", "D7AF"}})
+            for (String[] s : new String[][]{{"440000004", "D7AC"}, {"440000005", "D7AD"}, {"440000006", "D7AE"}, {"440000007", "D7AF"}, {"440000009", "AB"}})
                 stats.add(new ShipStatic(s[0], "SYNTH " + s[1], s[1], null, 70, null, null, null, null, null, null, null, null, null, null,
                         now.minusSeconds(600), "aisstream"));
             ships(k, List.of(pos("440000008", 35.3, 129.3, 6.0, 180.0, null, 0, null, "epfs", now.minusSeconds(20), "PositionReport", "A")), stats,
                     now.minusSeconds(5));
             realStatus(k);
-            Map<String, String> cache = new HashMap<>();
-            cache.put("wakeline:portcalls:D7AC", PortCallsInfoTest.sample().put("call_sign", "D7AC").put("status", "error")
-                    .put("error_kind", "http").put("error_code", "503").put("error", "prtAgCd 020: HTTP 503 Service Unavailable").toString());
-            cache.put("wakeline:portcalls:D7AD", PortCallsInfoTest.sample().put("call_sign", "D7AD").put("status", "disabled")
-                    .put("reason", "no_key").toString());
-            k.shipFanout.setPortCallSource(new PortCallReader(cache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)::forStatic);
+            java.time.LocalDate from = java.time.LocalDate.parse("2026-08-30"), to = java.time.LocalDate.parse("2026-09-29");
+            PortCallFixtures.FakeSource full = new PortCallFixtures.FakeSource();
+            full.coverage = PortCallFixtures.fullCoverage(from, to, PC_NOW.minusSeconds(600));
+            PortCallFixtures.FakeSource gaps = new PortCallFixtures.FakeSource();
+            List<dev.wakeline.portcalls.PortCallIndex.Coverage> partial = new ArrayList<>(PortCallFixtures.fullCoverage(from, to, PC_NOW.minusSeconds(600)));
+            partial.removeIf(c -> c.portAuthority().equals("700"));
+            partial.set(0, new dev.wakeline.portcalls.PortCallIndex.Coverage("020", java.time.LocalDate.parse("2026-09-12"), to, PC_NOW.minusSeconds(600)));
+            partial.set(1, new dev.wakeline.portcalls.PortCallIndex.Coverage("030", from, java.time.LocalDate.parse("2026-09-28"), PC_NOW.minusSeconds(9_000)));
+            partial.set(2, new dev.wakeline.portcalls.PortCallIndex.Coverage("200", from, to, PC_NOW.minusSeconds(600),
+                    List.of(java.time.LocalDate.parse("2026-09-20"), java.time.LocalDate.parse("2026-09-27"))));
+            gaps.coverage = partial;
+            PortCallFixtures.FakeSource broken = new PortCallFixtures.FakeSource();
+            broken.fail = new org.springframework.dao.QueryTimeoutException("statement timeout");
+            PortCallReader ok = new PortCallReader(full, List::of, PC_NOW::toEpochMilli);
+            PortCallReader incomplete = new PortCallReader(gaps, List::of, PC_NOW::toEpochMilli);
+            PortCallReader error = new PortCallReader(broken, List::of, PC_NOW::toEpochMilli);
+            PortCallReader off = new PortCallReader(full, () -> List.of("no_key", PC_NOW.minusSeconds(20).toString()), PC_NOW::toEpochMilli);
+            k.shipFanout.setPortCallSource(st -> {
+                String cs = st == null ? null : st.callSign();
+                if ("D7AC".equals(cs)) return error.forStatic(st);
+                if ("D7AD".equals(cs)) return off.forStatic(st);
+                if ("D7AF".equals(cs)) return incomplete.forStatic(st);
+                return ok.forStatic(st);
+            });
             FakeWsSession c = k.connect("s-portcalls", "10.0.0.5");
             k.msg(c, "{\"type\":\"hello\",\"proto\":1}");
             k.msg(c, "{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
-            k.hub.sessionsView().stream().filter(x -> x.id.equals("s-portcalls")).findFirst().orElseThrow().portCallGate =
-                    new WsSession.PortCallGate("D7AF", "session");
             for (ShipStatic s : stats) k.msg(c, "{\"type\":\"select_ship\",\"mmsi\":\"" + s.mmsi() + "\"}");
             k.msg(c, "{\"type\":\"select_ship\",\"mmsi\":\"440000008\"}");
             all.addAll(c.sent);
-            samples.add(new Sample("ship_selected.port_calls_error", first(c.sent, "ship_selected", n -> "error".equals(n.path("port_calls").path("status").asString()))));
-            samples.add(new Sample("ship_selected.port_calls_disabled", first(c.sent, "ship_selected", n -> "disabled".equals(n.path("port_calls").path("status").asString()))));
-            samples.add(new Sample("ship_selected.port_calls_pending", first(c.sent, "ship_selected", n -> "pending".equals(n.path("port_calls").path("status").asString()))));
-            samples.add(new Sample("ship_selected.port_calls_limited", first(c.sent, "ship_selected", n -> "limited".equals(n.path("port_calls").path("status").asString()))));
-            samples.add(new Sample("ship_selected.port_calls_no_static", first(c.sent, "ship_selected", n -> "no_static".equals(n.path("port_calls").path("status").asString()))));
+            for (String st : List.of("error", "disabled", "none", "incomplete"))
+                samples.add(new Sample("ship_selected.port_calls_" + st, first(c.sent, "ship_selected", n -> st.equals(n.path("port_calls").path("status").asString()))));
+            for (String st : List.of("not_received", "unusable"))
+                samples.add(new Sample("ship_selected.port_calls_no_call_sign_" + st,
+                        first(c.sent, "ship_selected", n -> st.equals(n.path("port_calls").path("call_sign_state").asString()))));
         }
         return new Run(all, samples);
     }
@@ -493,8 +520,21 @@ class WsSchemaContractTest {
         bad.put("ship_selected without port_calls key", mutate(byName.get("ship_selected"), n -> n.remove("port_calls")));
         bad.put("port_calls unknown status", mutate(byName.get("ship_selected"), n -> ((ObjectNode) n.get("port_calls")).put("status", "guessing")));
         bad.put("port_calls raw error text", mutate(byName.get("ship_selected.port_calls_error"), n -> ((ObjectNode) n.get("port_calls")).put("error", "x")));
+        bad.put("port_calls retired pending status", mutate(byName.get("ship_selected.port_calls_none"), n -> ((ObjectNode) n.get("port_calls")).put("status", "pending")));
+        bad.put("port_calls unknown call_sign_state", mutate(byName.get("ship_selected.port_calls_no_call_sign_not_received"),
+                n -> ((ObjectNode) n.get("port_calls")).put("call_sign_state", "absent")));
+        bad.put("port_calls index gap unknown issue", mutate(byName.get("ship_selected.port_calls_incomplete"),
+                n -> ((ArrayNode) ((ObjectNode) ((ArrayNode) n.get("port_calls").get("index").get("gaps")).get(0)).get("issues")).set(0, StringNode.valueOf("guessed"))));
+        bad.put("port_calls index gap unindexed day not a date", mutate(byName.get("ship_selected.port_calls_incomplete"),
+                n -> ((ArrayNode) ((ObjectNode) ((ArrayNode) n.get("port_calls").get("index").get("gaps")).get(2)).get("unindexed_days"))
+                        .set(0, StringNode.valueOf("recently"))));
+        bad.put("port_calls index other authority count", mutate(byName.get("ship_selected.port_calls_none"),
+                n -> ((ObjectNode) n.get("port_calls").get("index")).put("authorities", 11)));
+        bad.put("port_call without read_at", mutate(byName.get("ship_selected"),
+                n -> ((ObjectNode) ((ArrayNode) n.get("port_calls").get("items")).get(0)).remove("read_at")));
+        bad.put("port_call guessed revision", mutate(byName.get("ship_selected"),
+                n -> ((ObjectNode) ((ArrayNode) n.get("port_calls").get("items")).get(0)).put("entry_revision", "추정")));
         bad.put("port_calls other window", mutate(byName.get("ship_selected"), n -> ((ObjectNode) n.get("port_calls")).put("window_days", 7)));
-        bad.put("port_calls limited unknown reason", mutate(byName.get("ship_selected.port_calls_limited"), n -> ((ObjectNode) n.get("port_calls")).put("limited_by", "mood")));
 
         bad.put("port_call guessed field", mutate(byName.get("ship_selected"),
                 n -> ((ObjectNode) ((ArrayNode) n.get("port_calls").get("items")).get(0)).put("ship_type_guess", "KTX")));

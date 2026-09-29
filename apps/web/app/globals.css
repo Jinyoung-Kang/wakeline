@@ -88,13 +88,6 @@ td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-alig
 .flash { animation: flash 1.2s ease-out; }
 /* 추정 값(글자) — 보라 + 점선 밑줄. 배지(.badge.est)의 점선 테두리와 같은 "추정" 표기(DH-15) */
 .est-val { color: var(--color-est); text-decoration: underline dashed; text-decoration-color: #5a3f8c; text-underline-offset: 2px; }
-/* 조회 중 표시(한국 항만 입출항 — ADR-022): 왼쪽에서 오른쪽으로 흐르는 가는 막대. 움직임을 줄인 환경에서는 멈춘 점선 막대로 */
-@keyframes wl-busy { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
-.wl-busy { position: relative; display: block; height: 2px; overflow: hidden; background: var(--color-line-2); }
-.wl-busy::after { content: ""; position: absolute; inset: 0; width: 40%; background: var(--color-accent); animation: wl-busy 1.1s linear infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .wl-busy::after { animation: none; width: 100%; background: repeating-linear-gradient(90deg, var(--color-accent) 0 6px, transparent 6px 10px); }
-}
 /*
   진행 중 표시(노선 조회 등): 작은 회전 사각형(모서리 없음 규칙 그대로) · 자리 표시 줄(skeleton — 값이 올 자리, 값처럼 보이지 않게 무늬 없는 막대).
   움직임을 줄이라는 설정(prefers-reduced-motion)이면 멈춘 모양 그대로 둔다 — 글자("노선 조회 중")가 상태를 말한다.

@@ -372,7 +372,7 @@ async def test_v5_collector_job_tasks_are_named_for_the_log_context(monkeypatch)
         "job:metar",
         "job:maintenance",
         "job:radar_kr",
-        "job:portcalls",
+        "job:portcalls_index",
         "job:traffic_grid",
     } <= seen
     assert asyncio.current_task() is not None
@@ -413,32 +413,18 @@ def test_portmis_settings_defaults_budget_and_validation():
     assert Settings(http_global_rps=1.0, data_go_kr_rps=0.5).data_go_kr_rps == 0.5
 
 
-async def test_fixture_mode_answers_port_call_demand_with_disabled_and_reports_metrics(monkeypatch):
-    """fixture 모드는 외부 호출이 없다 — api 가 임대한 호출부호에 disabled(fixture, 120 s)를 써서 화면이 '조회 중' 에 머물지 않게 한다."""
-    import time
-
-    import orjson
-
-    from wakeline_collector.portcalls import DEMAND_KEY
-
-    async def seed(r):
-        await r.zadd(DEMAND_KEY, {"230025": time.time() * 1000 + 60_000})
-
-    seeded: list[bool] = []
+async def test_fixture_mode_reports_the_port_call_index_as_off_in_the_heartbeat(monkeypatch):
+    """fixture 모드는 외부 호출이 없다 — 색인 작업은 받지 않고 heartbeat 에 portcalls_index_state=fixture 를 적는다(api 가 이것으로 '꺼짐' 을 말한다)."""
 
     def pred(r) -> bool:
-        if not seeded:
-            import asyncio
-
-            asyncio.get_running_loop().create_task(seed(r))
-            seeded.append(True)
-        return "wakeline:portcalls:230025" in r.kv and "portcall_requests" in r.kv.get("wakeline:collector", {})
+        hb = r.kv.get("wakeline:collector", {})
+        return hb.get("portcalls_index_state") == "fixture" and "portcall_requests" in hb
 
     r = await _run_collector_until(monkeypatch, pred, enabled=False)
-    v = orjson.loads(r.kv["wakeline:portcalls:230025"])
-    assert v["status"] == "disabled" and v["reason"] == "fixture" and r.ttl["wakeline:portcalls:230025"] - time.time() <= 120
     hb = r.kv["wakeline:collector"]
+    assert hb["portcalls_index_state"] == "fixture" and hb["portcalls_index_at"]
     assert hb["portcall_requests"] == "0" and hb["data_go_kr_rps_1m"] == "0.000"
+    assert not [k for k in r.kv if k.startswith("wakeline:portcalls:")]  # 선택마다 쓰던 캐시는 없다
 
 
 def test_service_key_forms_and_decoding():
@@ -453,7 +439,8 @@ def test_service_key_forms_and_decoding():
 
 
 def test_portmis_params_are_validated_before_they_reach_the_url():
-    from datetime import date
+    """ADR-022 개정: 요청은 (항만청, 하루, 쪽)뿐이다 — clsgn(호출부호)은 싣지 않는다(원천이 거르지 않는다)."""
+    from datetime import date, datetime
 
     import pytest
 
@@ -463,14 +450,28 @@ def test_portmis_params_are_validated_before_they_reach_the_url():
 
     assert DATA_GO_KR_HOST in ALLOWED_HOSTS and PortMisProvider.host == DATA_GO_KR_HOST
     p = PortMisProvider(HttpClient(), "k")
-    ok = {"port_authority": "020", "call_sign": "230025", "sde": date(2026, 8, 30), "ede": date(2026, 9, 29), "page_no": 1}
-    assert p.params(**ok)["prtAgCd"] == "020" and p.configured
+    ok = {"port_authority": "020", "day": date(2026, 9, 24), "page_no": 1}
+    q = p.params(**ok)
+    assert (
+        q
+        == {
+            "serviceKey": "k",
+            "prtAgCd": "020",
+            "sde": "20260924",
+            "ede": "20260924",
+            "pageNo": "1",
+            "numOfRows": "50",
+            "deGb": "I",
+        }
+        and p.configured
+    )
+    assert "clsgn" not in q
     for bad in (
         {"port_authority": "999"},
-        {"call_sign": "23 25"},
-        {"call_sign": "abc"},
         {"page_no": 0},
-        {"sde": date(2026, 10, 1)},
+        {"page_no": 101},
+        {"day": "20260924"},
+        {"day": datetime(2026, 9, 24, 1)},
     ):
         with pytest.raises(ValueError):
             p.params(**(ok | bad))

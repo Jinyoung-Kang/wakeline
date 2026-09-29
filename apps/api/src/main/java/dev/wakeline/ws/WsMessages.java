@@ -111,7 +111,7 @@ public final class WsMessages {
     /**
      * 선택 선박: state(ShipState 전체)·static(ShipStatic 전체) — 각각 없으면 null(키는 남긴다). 이미 직렬화된 JSON.
      * destination_info(계약 v4 §B): 보고된 목적지의 결정적 풀이 — 목적지를 모르면 null(키는 남긴다).
-     * port_calls(ADR-022): 호출부호로 읽은 한국 항만 입출항(해양수산부 PORT-MIS, 수집기 캐시) — 늘 객체(상태로 말한다). null 은 읽는 쪽이
+     * port_calls(ADR-022 개정): 호출부호로 DB 색인에서 찾은 한국 항만 입출항(해양수산부 PORT-MIS — 수집기가 색인한다) — 늘 객체(상태로 말한다). null 은 읽는 쪽이
      * 연결되지 않은 구성(시험)뿐이다(키는 남긴다).
      */
     public record ShipSelectedMsg(String type, String mmsi,

@@ -84,6 +84,12 @@ class RolePrivilegesDbTest {
                     "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_API', 37.45, 126.6, 37.475, 126.625, now())",
                     "UPDATE marine_grid4 SET gid = 1",
                     "DELETE FROM marine_grid4",
+                    // V15(ADR-022 개정): 입출항 색인도 collector 가 쓰고 api 는 읽기만
+                    "INSERT INTO port_call (prt_ag_cd, clsgn, etrypt_year, etrypt_co, listed_date, fetched_at, updated_at) VALUES ('020', 'API1', '2026', '1', '2026-09-29', now(), now())",
+                    "UPDATE port_call SET berth = 'x'",
+                    "DELETE FROM port_call",
+                    "UPDATE port_call_coverage SET refreshed_at = now()",
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('020', '2026-09-28', '2026-09-29', now())",
             }) {
                 assertThat(state(c, ddl)).as(ddl).isEqualTo(INSUFFICIENT_PRIVILEGE);
             }
@@ -99,6 +105,8 @@ class RolePrivilegesDbTest {
             assertThat(state(c, "UPDATE alert_event SET left_at = left_at WHERE false")).isNull();
             assertThat(state(c, "DELETE FROM metar_obs WHERE false")).isNull();
             assertThat(state(c, "SELECT count(*) FROM marine_grid4")).isNull();
+            assertThat(state(c, "SELECT count(*) FROM port_call WHERE clsgn = 'V7A3884'")).isNull();
+            assertThat(state(c, "SELECT count(*) FROM port_call_coverage")).isNull();
         }
     }
 
@@ -126,6 +134,8 @@ class RolePrivilegesDbTest {
                     "DELETE FROM metar_obs",                      // 수집 테이블도 삭제는 없다(보존 정리는 api 의 일)
                     "DELETE FROM marine_grid4",                   // V14 격자 기하 캐시도 upsert(INSERT · UPDATE)·읽기만
                     "TRUNCATE marine_grid4",
+                    "DELETE FROM port_call_coverage",             // V15 색인 범위는 쓰기(INSERT · UPDATE)·읽기만 — 지우지 않는다
+                    "TRUNCATE port_call",
                     "CREATE TABLE evil (id int)",
             }) {
                 assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
@@ -154,8 +164,24 @@ class RolePrivilegesDbTest {
             assertThat(state(c, "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4 bad', 37.45, 126.6, 37.475, 126.625, now())"))
                     .isEqualTo("23514");
         }
+        // V15(ADR-022 개정): collector 의 색인 쓰기 — 하루 치 upsert(값이 바뀐 행만 updated_at) · 그 날 목록에서 빠진 행 삭제 · 범위 upsert · 보존 삭제
+        try (Connection c = collector()) {
+            String upsert = "INSERT INTO port_call (prt_ag_cd, clsgn, etrypt_year, etrypt_co, listed_date, vssl_nm, fetched_at, updated_at) "
+                    + "VALUES ('020', 'ROLE1', '2026', '001', '2026-09-29', 'ROLE TEST', now(), now()) "
+                    + "ON CONFLICT (prt_ag_cd, clsgn, etrypt_year, etrypt_co) DO UPDATE SET vssl_nm = EXCLUDED.vssl_nm, fetched_at = EXCLUDED.fetched_at, "
+                    + "updated_at = CASE WHEN port_call.vssl_nm IS DISTINCT FROM EXCLUDED.vssl_nm THEN EXCLUDED.updated_at ELSE port_call.updated_at END";
+            assertThat(state(c, upsert)).isNull();
+            assertThat(state(c, upsert)).as("upsert again").isNull();
+            assertThat(scalar(c, "SELECT count(*) FROM port_call WHERE clsgn = 'ROLE1'")).isEqualTo(1L);
+            assertThat(state(c, "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('999', '2026-09-28', '2026-09-29', now()) "
+                    + "ON CONFLICT (prt_ag_cd) DO UPDATE SET covered_to = EXCLUDED.covered_to, updated_at = EXCLUDED.updated_at")).isNull();
+            assertThat(state(c, "SELECT covered_from, covered_to, refreshed_at FROM port_call_coverage WHERE prt_ag_cd = '999' FOR UPDATE")).isNull();
+            assertThat(state(c, "DELETE FROM port_call WHERE prt_ag_cd = '020' AND listed_date = '2026-09-29' AND clsgn = 'ROLE1'")).isNull();
+            assertThat(scalar(c, "SELECT count(*) FROM port_call WHERE clsgn = 'ROLE1'")).isEqualTo(0L);
+        }
         try (Connection m = migrator()) {
             state(m, "DELETE FROM marine_grid4 WHERE grid_no = 'GR4_ROLE_TEST'");
+            state(m, "DELETE FROM port_call_coverage WHERE prt_ag_cd = '999'");
         }
     }
 
@@ -389,7 +415,10 @@ class RolePrivilegesDbTest {
                     // V13: 해결 표시 — 표 단위 UPDATE 는 없고 되돌림 두 열만(아래), 지우지 않는다
                     java.util.Map.entry("ops_resolution", "SELECT,INSERT"),
                     // V14(ADR-023): 격자 기하 캐시 — collector 가 쓰고 api 는 읽기만
-                    java.util.Map.entry("marine_grid4", "SELECT")));
+                    java.util.Map.entry("marine_grid4", "SELECT"),
+                    // V15(ADR-022 개정): 입출항 색인 — collector 가 쓰고 api 는 읽기만
+                    java.util.Map.entry("port_call", "SELECT"),
+                    java.util.Map.entry("port_call_coverage", "SELECT")));
             assertThat(actual).isEqualTo(expected);
             // 열 단위 UPDATE 스냅샷(표 단위 권한이 없는 표만): api 가 고칠 수 있는 열은 이것뿐이다
             java.util.Map<String, String> columns = new java.util.TreeMap<>();

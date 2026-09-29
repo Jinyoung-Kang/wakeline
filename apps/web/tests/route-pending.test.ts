@@ -85,7 +85,7 @@ describe("pending route lookup reads as in progress", () => {
   });
   it("motion respects prefers-reduced-motion (spinner and skeleton stop)", () => {
     const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-    // 움직임 줄이기 블록은 여럿일 수 있다(입출항 조회 막대 .wl-busy 도 따로 둔다) — 스피너 · 자리 표시 줄을 멈추는 블록이 있어야 한다
+    // 움직임 줄이기 블록은 여럿일 수 있다 — 스피너 · 자리 표시 줄을 멈추는 블록이 있어야 한다
     const blocks = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([^}]*\}[^}]*)\}/g)].map((m) => m[1]);
     const block = blocks.find((b) => /\.busy-spinner/.test(b)) ?? "";
     expect(block).toMatch(/\.busy-spinner/);

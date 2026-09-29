@@ -75,16 +75,19 @@ class RedisAclRulesTest(unittest.TestCase):
     def test_api_can_read_route_cache(self):
         self.assertIn("~wakeline:*", self.keys("wakeline_api"))
 
-    # --- ADR-022: 한국 항만 입출항 — 임대 wakeline:demand:portcalls(읽기 전용) · 캐시 wakeline:portcalls:{호출부호} ---
-    def test_collector_reads_port_call_leases_and_writes_the_port_call_cache(self):
-        keys = self.keys("wakeline_collector")
-        self.assertIn("%R~wakeline:demand:portcalls", keys, "임대는 api 만 쓴다 — 수집기는 ZRANGEBYSCORE 로 읽기만")
-        self.assertNotIn("~wakeline:demand:portcalls", keys)
-        self.assertIn("~wakeline:portcalls:*", keys, "수집기가 SET EX · EXISTS 로 입출항 캐시를 쓴다")
-        self.assertNotIn("~wakeline:demand:*", keys, "임대 키를 와일드카드로 넓히지 않는다")
+    # --- ADR-022 개정: 한국 항만 입출항은 DB 색인(port_call) — 선택마다 쓰던 임대 · 캐시 키는 없앴고 규칙도 없다 ---
+    def test_no_producer_reaches_the_retired_port_call_keys(self):
+        import fnmatch
 
-    def test_ais_has_no_port_call_access(self):
-        self.assertFalse([k for k in self.keys("wakeline_ais") if "portcalls" in k])
+        for user in ("wakeline_collector", "wakeline_ais"):
+            with self.subTest(user=user):
+                self.assertFalse([k for k in self.keys(user) if "portcalls" in k], "예전 임대 · 캐시 이름을 다시 열지 않는다")
+                for sel in self.selectors(user):
+                    self.assertFalse([k for k in sel if "portcalls" in k])
+                pats = [r.split("~", 1)[1] for r in self.keys(user)]
+                for key in ("wakeline:demand:portcalls", "wakeline:portcalls:V7A3884"):
+                    self.assertFalse([p for p in pats if fnmatch.fnmatchcase(key, p)], key)
+        self.assertNotIn("~wakeline:demand:*", self.keys("wakeline_collector"), "임대 키를 와일드카드로 넓히지 않는다")
 
     def test_collector_key_rules_stay_narrow(self):
         keys = self.keys("wakeline_collector")
@@ -120,8 +123,7 @@ class RedisAclRulesTest(unittest.TestCase):
     def test_collector_destructive_commands_are_scoped_to_the_keys_it_writes(self):
         sel = {tuple(sorted(c[1:] for c in s if c.startswith("+"))): sorted(k for k in s if k.startswith(("~", "%"))) for s in self.selectors("wakeline_collector")}
         self.assertEqual(sel, {
-            ("set",): ["~wakeline:portcalls:*", "~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*",
-                       "~wakeline:traffic_grid"],
+            ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*", "~wakeline:traffic_grid"],
             ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
             ("expire",): ["~budget:*", "~wakeline:provider:*:ratelimit:*"],
             ("hgetall", "hset"): ["~wakeline:traffic_grid:negative"],
@@ -168,7 +170,7 @@ class RedisAclRulesTest(unittest.TestCase):
             "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
             "~wakeline:provider:*", "~wakeline:radar_kr:*", "%R~wakeline:settings", "~budget:*",
             "%R~wakeline:demand:hot", "%R~wakeline:demand:focus", "%R~wakeline:demand:hot:meta", "%R~wakeline:demand:focus:meta",
-            "~wakeline:demand:status", "~wakeline:route:*", "%R~wakeline:demand:portcalls", "~wakeline:portcalls:*", "%W~wakeline:logs"]))
+            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs"]))
         self.assertEqual(sorted(self.keys("wakeline_ais")), sorted([
             "~wakeline:ships", "~wakeline:ais:*", "%R~wakeline:settings", "%W~wakeline:logs"]))
 
@@ -205,8 +207,7 @@ class RedisAclRulesTest(unittest.TestCase):
         sels = self.selectors("wakeline_collector")
         traffic = [s for s in sels if any("traffic" in k for k in s)]
         self.assertEqual(sorted(sorted(s) for s in traffic), sorted([
-            sorted(["~wakeline:route:*", "~wakeline:portcalls:*", "~wakeline:radar_kr:frames", "~wakeline:radar_kr:frame:*", "~wakeline:traffic_grid",
-                    "+set"]),
+            sorted(["~wakeline:route:*", "~wakeline:radar_kr:frames", "~wakeline:radar_kr:frame:*", "~wakeline:traffic_grid", "+set"]),
             sorted(["~wakeline:traffic_grid:negative", "+hset", "+hgetall"]),
         ]), "스냅샷은 SET 만, 부정 캐시는 HSET · HGETALL 만 — 정확한 이름(와일드카드 없음)")
         for sel in sels:

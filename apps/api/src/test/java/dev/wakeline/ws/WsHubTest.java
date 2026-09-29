@@ -568,6 +568,18 @@ class WsHubTest {
         }
     }
 
+    /** 선박 선택은 수요를 다시 계산하지 않는다(입출항은 DB 색인 — 임대 없음, ADR-022 개정). 고르고 풀어도 수요 리스너는 불리지 않는다. */
+    @Test void selectingOrClearingAShipDoesNotRecomputeDemand() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            FakeWsSession f = k.subscribed("s", "1.1.1.1");
+            java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+            k.hub.setDemandListener(n::incrementAndGet);
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":null}");
+            assertThat(n.get()).isZero();
+        }
+    }
+
     // ---------------------------------------------------------------- 타이머 · heartbeat
 
     @Test void helloTimeout_closesExactlyAfterDeadline_perSession() throws Exception {

@@ -624,7 +624,7 @@ class MigrationDbTest {
 
     /**
      * V14(계약 v5 §G15 · ADR-023): marine_grid4 — 해양격자 4단계 칸의 기하 캐시(연안 교통량). V13(해결 표시) 다음에 적용되고(합친 순서 — 레인은
-     * 따로 만들었다), 이 저장소의 가장 높은 번호다. 열 · 한 칸 CHECK · grid_no 형식 CHECK, 권한은 collector SELECT · INSERT · UPDATE(upsert, 지우지 않음) ·
+     * 따로 만들었다), V15(입출항 색인) 앞이다. 열 · 한 칸 CHECK · grid_no 형식 CHECK, 권한은 collector SELECT · INSERT · UPDATE(upsert, 지우지 않음) ·
      * api SELECT. 머리 주석의 되돌리기 SQL 로 표와 이력 행이 사라지고, 다시 적용된다.
      */
     @Test
@@ -679,6 +679,103 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_collector', 'marine_grid4', 'UPDATE')").query(Boolean.class).single()).isTrue();
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'marine_grid4', 'SELECT')").query(Boolean.class).single()).isTrue();
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'marine_grid4', 'INSERT')").query(Boolean.class).single()).isFalse();
+    }
+
+    /**
+     * V15(계약 v5 §G16 · ADR-022 개정): 한국 항만 입출항 색인 — port_call(자연 키 항만청 · 호출부호 · 입항년도 · 입항횟수, 정규화한 호출부호 인덱스)과
+     * port_call_coverage(항만청마다 색인한 KST 날짜 범위 · 꼬리 갱신 시각). V14 다음에 적용되고, 권한은 collector 가 port_call 을 upsert · 삭제(철회된 신고 ·
+     * 보존 60일)하고 범위를 쓰며(지우지 않음) api 는 둘 다 읽기만. 형식 CHECK 가 collector 검사의 둘째 방어선이다. 머리 주석의 되돌리기 SQL 로 두 표와
+     * 이력 행이 사라지고, 다시 적용된다.
+     */
+    @Test
+    void v15CreatesThePortCallIndexAfterV14WithCollectorWriteAndApiReadGrants() throws Exception {
+        DbTestSupport.start();
+        assertThat(latestMigrationVersion()).as("latest migration on the classpath").isGreaterThanOrEqualTo(15);
+        String db = "wakeline_stage_fifteen";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "15");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        assertThat(stage.sql("SELECT version FROM flyway_schema_history WHERE version IN ('14', '15') AND success ORDER BY installed_rank").query(String.class).list())
+                .containsExactly("14", "15");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '15' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        for (String t : new String[]{"port_call", "port_call_coverage"})
+            assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = :t").param("t", t).query(String.class).single())
+                    .as(t).isEqualTo("wakeline_migrator");
+        Map<String, String> cols = new java.util.TreeMap<>();
+        for (var r : stage.sql("SELECT column_name, data_type || ':' || is_nullable t FROM information_schema.columns WHERE table_name = 'port_call'")
+                .query().listOfRows()) cols.put(String.valueOf(r.get("column_name")), String.valueOf(r.get("t")));
+        Map<String, String> want = new java.util.TreeMap<>();
+        for (String c : new String[]{"prt_ag_cd", "clsgn", "etrypt_year", "etrypt_co"}) want.put(c, "text:NO");
+        for (String c : new String[]{"prt_ag_nm", "vssl_nm", "nationality_cd", "nationality_nm", "kind_cd", "kind_nm", "purpose_nm", "first_port_cd",
+                "first_port_nm", "prev_port_cd", "prev_port_nm", "next_port_cd", "next_port_nm", "dest_port_cd", "dest_port_nm", "entry_revision",
+                "exit_revision", "berth"}) want.put(c, "text:YES");
+        want.put("listed_date", "date:NO");
+        want.put("entry_at", "timestamp with time zone:YES");
+        want.put("exit_at", "timestamp with time zone:YES");
+        want.put("fetched_at", "timestamp with time zone:NO");
+        want.put("updated_at", "timestamp with time zone:NO");
+        assertThat(cols).isEqualTo(want);
+        assertThat(stage.sql("SELECT indexdef FROM pg_indexes WHERE indexname = 'port_call_clsgn_idx'").query(String.class).single())
+                .contains("(clsgn, listed_date DESC)");
+        Map<String, String> cov = new java.util.TreeMap<>();
+        for (var r : stage.sql("SELECT column_name, data_type || ':' || is_nullable t FROM information_schema.columns WHERE table_name = 'port_call_coverage'")
+                .query().listOfRows()) cov.put(String.valueOf(r.get("column_name")), String.valueOf(r.get("t")));
+        assertThat(cov).isEqualTo(new java.util.TreeMap<>(Map.of("prt_ag_cd", "text:NO", "covered_from", "date:NO", "covered_to", "date:NO",
+                "refreshed_at", "timestamp with time zone:YES", "hole_days", "ARRAY:NO", "updated_at", "timestamp with time zone:NO")));
+        assertThat(stage.sql("SELECT udt_name FROM information_schema.columns WHERE table_name = 'port_call_coverage' AND column_name = 'hole_days'")
+                .query(String.class).single()).isEqualTo("_date");
+
+        String row = "INSERT INTO port_call (prt_ag_cd, clsgn, etrypt_year, etrypt_co, listed_date, vssl_nm, entry_at, entry_revision, fetched_at, updated_at) "
+                + "VALUES ('020', 'V7A3884', '2026', '005', '2026-09-24', 'AZAMARA PURSUIT', '2026-09-23T23:17:00Z', '최종', now(), now())";
+        try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW)) {
+            assertThat(sqlState(c, row)).isNull();
+            assertThat(sqlState(c, row)).as("natural key").isEqualTo("23505");
+            assertThat(sqlState(c, "UPDATE port_call SET exit_at = '2026-09-25T05:24:00Z', exit_revision = '최종' WHERE clsgn = 'V7A3884'")).isNull();
+            assertThat(sqlState(c, "SELECT * FROM port_call WHERE clsgn = 'V7A3884'")).isNull();
+            assertThat(sqlState(c, "DELETE FROM port_call WHERE listed_date < '2026-07-01'")).as("retention / withdrawn reports").isNull();
+            assertThat(sqlState(c, "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, refreshed_at, updated_at) "
+                    + "VALUES ('020', '2026-08-30', '2026-09-29', now(), now())")).isNull();
+            assertThat(sqlState(c, "UPDATE port_call_coverage SET covered_from = '2026-08-31', updated_at = now() WHERE prt_ag_cd = '020'")).isNull();
+            assertThat(stage.sql("SELECT cardinality(hole_days) FROM port_call_coverage WHERE prt_ag_cd = '020'").query(Integer.class).single())
+                    .as("no hole unless the collector says so").isZero();
+            assertThat(sqlState(c, "UPDATE port_call_coverage SET hole_days = ARRAY['2026-09-10'::date], updated_at = now() WHERE prt_ag_cd = '020'"))
+                    .as("a day fetched but not completely indexed").isNull();
+            for (String sql : new String[]{"DELETE FROM port_call_coverage", "TRUNCATE port_call_coverage", "TRUNCATE port_call"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+            for (String bad : new String[]{
+                    // 정규화하지 않은 호출부호 · 형식 밖 코드 · 모르는 판 · 시각 없는 판 · 뒤집힌 범위 · 80자 넘는 글
+                    row.replace("'V7A3884'", "'v7a3884'"), row.replace("'V7A3884'", "'V7-3884'"), row.replace("'020'", "'20'"),
+                    row.replace("'005'", "'0 5'").replace("'V7A3884'", "'V7A3885'"),
+                    row.replace("'최종'", "'변경'").replace("'V7A3884'", "'V7A3886'"),
+                    row.replace("'2026-09-23T23:17:00Z'", "NULL").replace("'V7A3884'", "'V7A3887'"),
+                    row.replace("'AZAMARA PURSUIT'", "'" + "A".repeat(81) + "'").replace("'V7A3884'", "'V7A3888'"),
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('030', '2026-09-29', '2026-09-28', now())",
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('ABC', '2026-09-28', '2026-09-29', now())",
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, hole_days, updated_at) "
+                            + "VALUES ('040', '2026-09-28', '2026-09-29', ARRAY[NULL]::date[], now())"})
+                assertThat(sqlState(c, bad)).as(bad).isEqualTo("23514");
+        }
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            assertThat(sqlState(c, "SELECT count(*) FROM port_call WHERE clsgn = 'V7A3884'")).isNull();
+            assertThat(sqlState(c, "SELECT * FROM port_call_coverage")).isNull();
+            for (String sql : new String[]{row.replace("'V7A3884'", "'API1'"), "UPDATE port_call SET berth = 'x'", "DELETE FROM port_call",
+                    "UPDATE port_call_coverage SET refreshed_at = now()", "DELETE FROM port_call_coverage",
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('200', '2026-09-28', '2026-09-29', now())"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+        }
+
+        // 되돌리기(머리 주석): 두 표 삭제 + 이력 행 삭제 → V14 와 같은 스키마(파생 색인 — 수집기가 다시 채운다). 그 뒤 다시 앞으로
+        runAsMigrator(url, rollbackSql("V15__port_call_index.sql"));
+        assertThat(stage.sql("SELECT to_regclass('port_call') IS NULL AND to_regclass('port_call_coverage') IS NULL").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '15'").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT to_regclass('marine_grid4') IS NOT NULL").query(Boolean.class).single()).as("V14 untouched").isTrue();
+        migrateTo(url, "15");
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_collector', 'port_call', 'DELETE')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_collector', 'port_call_coverage', 'DELETE')").query(Boolean.class).single()).isFalse();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'port_call', 'SELECT')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'port_call_coverage', 'UPDATE')").query(Boolean.class).single()).isFalse();
     }
 
     /**

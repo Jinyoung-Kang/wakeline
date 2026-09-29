@@ -12,7 +12,7 @@
 키는 URL 쿼리에만 실리고 로그 · 상태 · Redis · DB 로 가지 않는다: httpx 로그는 끄고(main), 오류 문구는 mask 를 거치며(serviceKey= · ServiceKey=
 모양 규칙 — 언어 간 벡터), 키 값 자체도 네 가지 형태(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩)를 값 치환 목록에 넣는다(service_key_forms — main).
 호출 속도는 HttpClient 의 RateLimiter 가 정한다: 호스트 apis.data.go.kr 버킷 하나(설정 data_go_kr_rps, burst 2) + 수집기 전체 버킷.
-세 잡은 우선순위로 나눈다 — 교통 5분 폴링 PRIORITY_FIXED > 선택 선박 입출항 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL(가장 낮다).
+세 잡은 우선순위로 나눈다 — 교통 5분 폴링 PRIORITY_FIXED > 입출항 색인 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL(가장 낮다).
 하루 호출 수: 공급자마다 UTC 날 예산(budget:{공급자}:{yyyymmdd}) + 포털 하루 한도를 어느 날 경계로 세어도 지키는 Redis 시간 창 — 교통 폴링은
 budget:komsa_traffic:h:*(jobs/traffic_grid.HOURLY_CAP), 해양수산부 두 서비스(PORT-MIS · 격자 WFS)는 함께 세는 budget:mof:h:*(아래 MOF_*).
 """
@@ -46,7 +46,7 @@ WFS_WAIT_S = 5.0  # 속도 상한 대기 상한 — 못 받으면 이번 틱의 
 # 있다(많아야 15 s × 2 req/s + burst 2 = 32 — test_main). 두 값 모두 선택값이다(잰 값이 아니다).
 MOF_HOUR_WINDOW = "mof"
 MOF_HOURLY_CAP = 390
-# 격자 채우기(가장 낮은 우선순위)는 창의 이만큼을 남기고 그 시의 채우기를 멈춘다 — 사람이 기다리는 입출항 조회(선박 하나 = 요청 10회 이상)가
+# 격자 채우기(가장 낮은 우선순위)는 창의 이만큼을 남기고 그 시의 채우기를 멈춘다 — 입출항 색인(ADR-022 개정 — 꼬리 갱신 약 45회 + 다시 받기 약 20회/시)이
 # 매시 적어도 이만큼을 쓸 수 있게. 채우기 몫은 시간당 많아야 MOF_HOURLY_CAP − 이 값(290칸)이다
 MOF_GRID4_HOURLY_HEADROOM = 100
 

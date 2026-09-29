@@ -201,10 +201,10 @@ const RECIPES = {
     throw new Skip("후보 해역(부산항 부근 · 도쿄만)에 선박 없음");
   },
   async "port-calls"(shot) {
-    // 한국 항만 입출항(ADR-022): 부산항 부근 선박을 차례로 골라 입출항 결과(ok)가 나온 카드를 찍는다. 선박마다 새 조회 = 요청 10회 이상(호스트 한도 초당 약 1회 · burst 2 — 수 초 이상)이고
-    // 세션 한도(60초에 6척)가 있어 후보는 4척까지. 결과를 기다리는 상한 60 s. 다른 상태(기록 없음 · 한도 · 실패 · 호출부호 없음)는 다음 후보.
+    // 한국 항만 입출항(ADR-022 개정): 부산항 부근 선박을 차례로 골라 입출항 결과(ok)가 나온 카드를 찍는다. 결과는 서버 색인에서 바로 온다(고를 때 외부에
+    // 묻지 않는다 — 한도 없음). 후보는 8척까지, 상태를 기다리는 상한 15 s. 다른 상태(기록 없음 · 색인 불완전 · 꺼짐 · 호출부호 없음)는 다음 후보.
     const tried = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
       await openMap(shot.path);
       await setPressed("layer-ships", true);
       await setLegend(false);
@@ -218,8 +218,8 @@ const RECIPES = {
       await sec.waitFor({ timeout: 10_000 }).catch(() => {});
       await page.waitForFunction(() => {
         const st = document.querySelector('[data-testid="port-calls"]')?.getAttribute("data-status");
-        return st != null && st !== "pending" && st !== "unknown";
-      }, null, { timeout: 60_000 }).catch(() => {});
+        return st != null && st !== "unknown";
+      }, null, { timeout: 15_000 }).catch(() => {});
       const st = (await sec.getAttribute("data-status").catch(() => null)) ?? "없음";
       tried.push(st);
       if (st !== "ok") continue;

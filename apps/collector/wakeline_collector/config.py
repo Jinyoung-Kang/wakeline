@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # 다른 경계(KST 자정 · 지난 24시간)로 셀 때 두 UTC 날의 몫이 그 하루에 들어갈 수 있다 — 어느 경계로 세어도 지키는 것은 Redis 시간 창이다:
     # 해양수산부 두 API(portmis · mof_grid4)는 함께 세는 budget:mof:h:*(시간당 390 × 창 25개 = 9,750 ≤ 10,000 — 한도가 기관 단위로 묶여 있더라도,
     # providers/data_go_kr.MOF_*), 해양교통안전공단은 budget:komsa_traffic:h:*(15 × 25 = 375 ≤ 500)
-    budget_portmis: int = 3000  # ADR-022: 한국 항만 입출항 — 선박 하나 조회 = 항만청 10곳 × 쪽 수
+    budget_portmis: int = 3000  # ADR-022 개정: 입출항 색인 — 계산 하루 약 1,450회(꼬리 갱신 · 다시 받기) + 처음 채우기 약 430회
     budget_komsa_traffic: int = 400  # ADR-023: 실시간 해양교통정보(5분 주기 288 + 여유)
     budget_mof_grid4: int = 6000  # ADR-023: 격자 기하(모르는 칸마다 한 번)
     opensky_reserve_credits: int = 400  # OpenSky 가 알려 준 남은 크레딧이 이 아래면 UTC 자정까지 OpenSky 호출 중단
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # 호스트는 api.adsbdb.com 만(HttpClient 허용 목록과 같다) — 다른 호스트는 보내지도 못하면서 예산·호출 수만 쓰게 된다
     adsbdb_base_url: str = Field(default="https://api.adsbdb.com", pattern=r"^https://api\.adsbdb\.com(:443)?/?$")
     # apis.data.go.kr 호스트 버킷 하나(burst 2)를 세 잡(portmis · komsa_traffic · mof_grid4)이 나눠 쓴다 — 나누는 규칙은 우선순위
-    # (교통 5분 폴링 PRIORITY_FIXED > 입출항 조회 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL). 상한 둘: 2 req/s 이하(포털 보호 — 선택값),
+    # (교통 5분 폴링 PRIORITY_FIXED > 입출항 색인 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL). 상한 둘: 2 req/s 이하(포털 보호 — 선택값),
     # 그리고 수집기 전체 버킷(http_global_rps)보다 작게(_data_go_kr_below_global — 같으면 세 잡이 기다릴 때마다 전체 버킷의 토큰을 모두 가져갈 수 있다)
     data_go_kr_rps: float = Field(default=1.0, gt=0, le=2.0)
     # 한국 항만 입출항(ADR-022): 호스트는 apis.data.go.kr 의 이 서비스 경로만(HttpClient 허용 목록과 같은 호스트)
