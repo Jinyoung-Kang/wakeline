@@ -16,7 +16,7 @@ import {
 import { EvidenceCard } from "./EvidenceCard";
 import { DemandBadge } from "./MapChips";
 import { RequestIdOf } from "./logs/ErrorNote";
-import { DualTime } from "./DualTime";
+import { KstTime } from "./KstTime";
 
 interface Detail {
   hex: string;
@@ -128,7 +128,7 @@ export function RouteSection({ route, pos, callsign, pendingForS = null }: { rou
     ["경로와의 거리", km == null ? "—" : <span key="km" className="mono">{fmtRouteKm(km)} · 계산값</span>,
       `마지막 관측 위치에서 출발→${route.midpoint ? "경유→" : ""}도착 대권 경로까지 가장 가까운 거리 — 구면 지구(반지름 ${EARTH_RADIUS_KM.toLocaleString("en-US")} km) 계산값입니다. 실제 비행 경로와의 거리가 아닙니다.`],
     ["조회 콜사인", <span key="cs" className="mono">{route.callsign ?? "—"}</span>],
-    ["조회 시각", <DualTime key="at" v={route.fetched_at} />],
+    ["조회 시각", <KstTime key="at" v={route.fetched_at} />],
   ] : [];
   const otherSource = route?.source != null && route.source !== "adsbdb";
   return (
@@ -217,8 +217,8 @@ export function AircraftCard({ hex }: { hex: string }) {
     ["Squawk", <span key="sq" className={`mono ${emergency ? "text-bad" : ""}`}>{s?.squawk ?? "—"}{emergency ? " EMERGENCY" : ""}</span>],
     ["지상", fmtBool(s?.on_ground)],
     ["출처", s?.provider ?? "—"],
-    ["관측 시각", <span key="seen"><DualTime v={seen} />{age != null ? <span className="mono"> ({fmtDuration(age)} 전)</span> : null}</span>],
-    ["수신 시각", <DualTime key="fetched" v={s?.fetched_at ?? d?.meta?.fetched_at} />],
+    ["관측 시각", <span key="seen"><KstTime v={seen} />{age != null ? <span className="mono"> ({fmtDuration(age)} 전)</span> : null}</span>],
+    ["수신 시각", <KstTime key="fetched" v={s?.fetched_at ?? d?.meta?.fetched_at} />],
     ["품질", qualityLabel(s?.quality)],
     ["10분 예측", pred == null ? "—" : pred.available ? "가능 · 지도 점선(추정)" : `안 함 · ${pred.reason ? REASON_LABEL[pred.reason] : "—"}`],
   ];

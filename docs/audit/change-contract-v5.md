@@ -489,11 +489,13 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
       그렇다고 적는다(옛 api 와 새 웹이 섞인 배포 중에 UTC 날짜를 KST 날짜로 보이지 않게). 통계 날짜의 옛 "UTC 자정 시각" 문자열은 날짜로 읽지 않는다(`—`).
   - 바꾸지 않는 것: API · WS · DB · 서버 로그의 시각(UTC ISO), 복사 · 내려받기 형식(텍스트 머리 줄 ISO `+09:00`, 항목 JSON · `.ndjson` 의 `ts` — 버튼 title 이 "서버 형식 ‘…Z’" 라 적는다), 원문.
   - 성능: §G13 과 같다 — 고정 오프셋 산술(Intl 없음 — 형식기 생성 비용 · ICU 차이 없음), 같은 입력의 분해 결과 캐시(2,048개, 차면 비움, `TIME_CACHE_MAX`).
-  - 옮기는 중인 이름: 다른 레인(대시보드 UX)이 같은 때 고치는 파일(StatusBar · AlertPanel · AircraftSearch · AircraftCard)은 이 레인이 건드리지 않았다 — 그 파일과
-    그 레인의 새 코드(lib/statusbar.ts · lib/ships.ts)가 쓰는 `DualTime` · `dualPair` · `fmtDual` · `dualParts` · `dualRangePair` · `fmtDualDayMinute` · `fmtDualSpan` 을
-    **KST 전용 별칭(@deprecated)** 으로 남겼다(UTC 쪽 필드 없음 — 그 레인도 이미 KST 만 그린다). 합친 뒤 호출부를 `KstTime` · `fmtKst` · `timeParts` · `fmtKstRange` ·
-    `fmtKstDayMinute` · `fmtKstSpan` 으로 옮기고 별칭을 지운다. 상단 검색 상자의 설명 한 줄("… KST · UTC(…Z) …")이 남아 있다(두 레인 모두 고치지 않았다) — 시험(`tests/helpers/kst-only` OTHER_LANE_PENDING)의
-    면제는 그 레인이 합쳐지기 전까지만(그 레인의 새 lib/statusbar.ts 가 있으면 끝난다): 합치면 화면 · 소스 검사가 그 줄을 잡고, 합치는 사람이 "KST · …" 로 고친다.
+  - 옮긴 이름(합친 뒤 지움): 다른 레인(대시보드 UX)이 같은 때 고치던 파일(StatusBar · AlertPanel · AircraftSearch · AircraftCard)과 그 레인의 새 코드
+    (lib/statusbar.ts · lib/ships.ts)를 위해 `DualTime` · `dualPair` · `fmtDual` · `dualParts` · `dualRangePair` · `fmtDualDayMinute` · `fmtDualSpan` 을
+    **KST 전용 별칭(@deprecated)** 으로 잠시 남겼다. 세 레인을 합친 뒤(integ) 호출부를 `KstTime` · `fmtKst` · `fmtKstClock` · `fmtTimeTitle` · `timeParts` ·
+    `fmtKstRange` 로 옮기고 별칭 · `components/DualTime.tsx` · 그 레인의 옛 상태 바 배지(`lib/ships.aisGapBadge` — `lib/statusbar.aisGapInfo` 가 대신한다)를 지웠다.
+    상단 검색 상자의 설명 한 줄은 그 레인이 "(마지막 수신·저장 시각은 KST · …)" 로 고쳤고(3c2ec90), 시험의 다른 레인 면제(`OTHER_LANE_PENDING` ·
+    `OTHER_LANE_KOREAN_UTC` · `DEPRECATED_USERS`)도 지웠다 — 화면 · 소스 검사는 면제 없이 모든 파일에 적용되고, 옛 이름을 쓰는 파일이 하나라도 있으면 실패한다
+    (`tests/kst-dashboard.test.ts` · `tests/kst-time.test.ts`).
   - 회귀 막기: `tests/kst-time.test.ts`(형식 · 모름 · 캐시 · 컴포넌트) · `tests/helpers/kst-only.ts`(글자 · DOM 의 UTC 흔적 — data-raw 밖) · 화면마다 그 검사(상황판 전체
     `tests/kst-dashboard.test.ts` · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서 · 오류 화면) · 소스 검사(lib/time 밖의 시각 글자 모양 · 한국어 화면 글의 UTC · 별칭을
     쓰는 파일) · `tests/kst-only-screens.test.ts`(모든 경로가 이 검사에 들어 있는지) · api `StatsAggregationDbTest`(KST 자정 경계 · KST 시) · `MigrationDbTest` V16 ·

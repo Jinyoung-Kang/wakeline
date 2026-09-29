@@ -7,15 +7,15 @@
  * - 기준은 모두 이미 있는 값: 지역 60 s · 전세계 300 s(ws-protocol · api StatusService), AIS 120 s(ships), 기상청 900 s(format — api meta),
  *   SIGMET 900 s · 레이더 600 s(api StatusService 의 status.*.stale — SIGMET_STALE_S · RADAR_STALE_S 는 그 값을 옮겨 적은 것, 시험이 서버 코드와 견준다).
  *   새로 지은 수는 없다(칩 순서 · 폭 계산은 표시 규칙).
- * - 시각은 KST 만(사용자 결정 2026-09-30 — 계약 v5 §G13 의 KST · UTC 함께를 되돌림). 날짜가 오늘(KST)과 다르면 날짜도 붙인다.
- *   lib/time 에서는 dualPair(…).kst · kstWallMs 만 쓴다 — 나란히 가는 KST 레인이 lib/time 을 다시 쓰며 남기는 이름이다(dualParts · dualRangePair 는 없어진다).
- * - AIS 공백 모델(aisGapInfo)도 여기에 있다 — ships.ts 의 옛 상태 바 배지(aisGapBadge)는 KST 레인이 고치는 그대로 두었다가 합친 뒤 지운다.
+ * - 시각은 KST 만(사용자 결정 2026-09-30 — 계약 v5 §G20). 날짜가 오늘(KST)과 다르면 날짜도 붙인다. 글자는 lib/time 의 공유 형식기(fmtKst · fmtKstRange ·
+ *   fmtTimeTitle)가 만든다 — 여기서 시각 글자를 직접 짓지 않는다.
+ * - AIS 공백 모델(aisGapInfo)도 여기에 있다(ships.ts 의 옛 상태 바 배지 aisGapBadge 를 대신한다 — 합친 뒤 지웠다).
  */
 import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./format";
 import { krComposite } from "./kr-radar";
 import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
 import type { ConnState, ServerData } from "./store";
-import { dualPair, kstWallMs, type TimeIn } from "./time";
+import { fmtKst, fmtKstRange, fmtTimeTitle, kstWallMs, timeParts, type TimeIn } from "./time";
 import type { FeedInfo, KrRadar, PublicStatus, RadarFrames } from "./types";
 import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "./ws-protocol";
 
@@ -84,25 +84,24 @@ export function statusInput(d: StatusSource, nowMs: number, srvNowMs: number): S
   };
 }
 
-/** KST 날짜 "YYYY-MM-DD"(dualPair 의 연도 형식 앞 10자). 모르면 null */
-const kstDay = (v: TimeIn): string | null => dualPair(v, { year: true })?.kst.slice(0, 10) ?? null;
+/** KST 날짜 "YYYY-MM-DD". 모르면 null */
+const kstDay = (v: TimeIn): string | null => timeParts(v)?.wall.ymd ?? null;
 
 /** KST 벽시계 — 날짜가 오늘(KST)과 다르거나 오늘을 모르면 날짜도. 모르면 "—" */
 export function kstAt(v: TimeIn, nowMs: number, o: { seconds?: boolean } = {}): string {
   const day = kstDay(v);
   const sameDay = day != null && nowMs > 0 && day === kstDay(nowMs);
-  return dualPair(v, { date: !sameDay, seconds: o.seconds !== false })?.kst ?? "—";
+  return fmtKst(v, { date: !sameDay, seconds: o.seconds !== false });
 }
 
-/** 마우스를 올렸을 때의 같은 순간 전체 "2026-09-30 02:43:23.000 KST"(연도 · ms — KST 레인의 보인 시각 title 과 같은 모양). 모르면 undefined */
-const kstFull = (v: TimeIn): string | undefined => dualPair(v, { year: true, ms: true })?.kst;
+/** 마우스를 올렸을 때의 같은 순간 전체 "2026-09-30 02:43:23.000 KST"(연도 · ms — 보인 시각 title 과 같은 모양, lib/time fmtTimeTitle). 모르면 undefined */
+const kstFull = (v: TimeIn): string | undefined => fmtTimeTitle(v);
 /** "앞말 + 전체 순간" title — 모르면 undefined(title 없음) */
 const fullTitle = (lead: string, v: TimeIn): string | undefined => { const f = kstFull(v); return f ? `${lead} ${f}` : undefined; };
 
 /** 초까지의 KST 구간 "09-29 10:00:00 – 09-29 10:00:42 KST"(날짜는 늘 — 상세 표 · 툴팁). 한쪽이라도 모르면 "—" */
 function kstSpan(a: TimeIn, b: TimeIn): string {
-  const x = dualPair(a), y = dualPair(b);
-  return x && y ? `${x.kst.replace(/ KST$/, "")} – ${y.kst}` : "—";
+  return timeParts(a) && timeParts(b) ? fmtKstRange(a, b) : "—";
 }
 
 // ---- AIS 수신 공백 ----

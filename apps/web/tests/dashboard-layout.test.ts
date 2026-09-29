@@ -105,9 +105,10 @@ describe("search box: its own times and help text are KST only (the user's decis
     const t = textOf(parseHtml(html));
     expect(t).toContain("마지막 수신·저장 시각은 KST ·");
     expect(t).not.toContain("UTC(…Z)");
-    // 항공기를 골랐는데 위치가 없을 때의 알림 글자도 KST 만(두 시간대 fmtDual 이 아니라 dualPair(…).kst)
+    // 항공기를 골랐는데 위치가 없을 때의 알림 글자도 KST 만(공유 형식기 fmtKst — 옛 두 시간대 이름은 지웠다)
     const src = readFileSync(new URL("../components/AircraftSearch.tsx", import.meta.url), "utf8");
-    expect(src).not.toMatch(/\bfmtDual\b/);
+    expect(src).toMatch(/마지막 \$\{fmtKst\(h\.last_seen\)\}/);
+    expect(src).not.toMatch(/\b(fmtDual|dualPair)\b/);
     expect(src).not.toMatch(/KST · UTC/);
   });
 });

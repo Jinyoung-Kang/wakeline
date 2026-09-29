@@ -8,7 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  aisBadge, aisCoverageFeatures, aisGapBadge, appendShipTrack, fmtCount, fmtCourse, fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
+  aisBadge, aisCoverageFeatures, appendShipTrack, fmtCount, fmtCourse, fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
   gridFeatures, imoField, mergeStatusGaps, navStatusLabel, normalizeGaps, parseAisCoverage, parseAisStatus, parseCategory, parseGridCells, parseShipLite,
   parseShipState, parseShipStatic, positionBadge, positionSourceLabel, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, shipCategory, shipFeatures, shipList,
   shipRotation, shipTrackFeatures, shipTrackFromRest, type AisBox, type AisGap, type AisStatus, type ShipLite, type ShipTrack,
@@ -455,13 +455,6 @@ describe("AIS status badges (status.sources.ais)", () => {
       const sides = x1 === x2 ? [inside(my, mx - d), inside(my, mx + d)] : [inside(my - d, mx), inside(my + d, mx)];
       expect(sides[0] !== sides[1]).toBe(true); // 한쪽만 범위 안 = 진짜 경계
     }
-  });
-  it("gap badge: open gap, or a gap that ended within 30 min", () => {
-    const base = { connected: true, lag_s: 1, msgs_per_s: 1, received_at: 0, state: null, coverage: null };
-    expect(aisGapBadge({ ...base, gap_open_since: "2026-09-28T02:50:00Z", last_gap: null }, NOW)).toMatchObject({ text: "AIS 공백 11:50 KST 부터 · 진행 중", open: true });
-    const ended = { started_at: "2026-09-28T02:40:00Z", ended_at: "2026-09-28T02:45:00Z", reason: null };
-    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: ended }, NOW)).toMatchObject({ text: "AIS 공백 11:40–11:45 KST", open: false });
-    expect(aisGapBadge({ ...base, gap_open_since: null, last_gap: { ...ended, ended_at: "2026-09-28T02:20:00Z" } }, NOW)).toBeNull();
   });
 });
 

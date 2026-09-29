@@ -9,13 +9,12 @@
  * - 모르면 "—" 만(시간대 글자 없이)
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(새 API 가 없었다).
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import * as T from "@/lib/time";
 import { KstRange, KstTime } from "@/components/KstTime";
-import { DualTime } from "@/components/DualTime";
 import { byTestId, parseHtml, textOf } from "./helpers/html-tree";
 
 /** UTC 자정 직전(09-28) — KST 로는 다음 날(09-29) 아침 */
@@ -78,13 +77,11 @@ describe("inline", () => {
 });
 
 describe("spans and ranges name the zone once at the end", () => {
-  it("hh:mm spans (map line labels, AIS gap badge); an unknown side is —; both unknown → —", () => {
+  it("hh:mm spans (map line labels, track no-reception labels); an unknown side is —; both unknown → —", () => {
     expect(T.fmtKstSpan("2026-09-29T05:40:00Z", "2026-09-29T05:45:00Z")).toBe("14:40–14:45 KST");
     expect(T.fmtKstSpan("2026-09-28T23:50:00Z", "2026-09-29T00:05:00Z")).toBe("08:50–09:05 KST");
     expect(T.fmtKstSpan(null, "2026-09-29T05:45:00Z")).toBe("—–14:45 KST");
     expect(T.fmtKstSpan(null, null)).toBe("—");
-    expect(T.fmtKstFrom("2026-09-28T23:40:00Z")).toBe("08:40 KST 부터");
-    expect(T.fmtKstFrom(null)).toBe("—");
   });
   it("ranges: both ends dated, the zone once; an unknown end is — on its side only; an open end can say so", () => {
     expect(T.fmtKstRange("2026-09-28T23:00:00Z", "2026-09-29T03:00:00Z")).toBe("09-29 08:00:00 – 09-29 12:00:00 KST");
@@ -209,35 +206,14 @@ describe("<KstTime> / <KstRange>", () => {
   });
 });
 
-describe("deprecated aliases kept for the other lane's files draw KST only (removed after the merge — contract v5 §G20)", () => {
-  it("fmtDual · dualPair · <DualTime> (inline · compact · cell) never draw UTC", () => {
-    expect(T.fmtDual(LATE)).toBe("09-29 08:41:14 KST");
-    expect(T.dualPair(LATE, { date: false })).toEqual({ kst: "08:41:14 KST", iso: "2026-09-29T08:41:14.906+09:00" });
-    expect(T.dualPair(null)).toBeNull();
-    const txt = (el: ReturnType<typeof createElement>) => renderToStaticMarkup(el).replace(/<[^>]+>/g, "");
-    expect(txt(createElement(DualTime, { v: LATE }))).toBe("09-29 08:41:14 KST");
-    expect(txt(createElement(DualTime, { v: LATE, variant: "compact", seconds: true }))).toBe("08:41:14 KST"); // 상태 바 region 시각
-    expect(txt(createElement(DualTime, { v: LATE, variant: "compact" }))).toBe("08:41 KST");
-    expect(txt(createElement(DualTime, { v: LATE, date: false }))).toBe("08:41:14 KST"); // 알림 배너
-    expect(txt(createElement(DualTime, { v: LATE, variant: "cell" }))).toBe("09-29 08:41:14 KST");
-    expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).not.toMatch(/UTC|\d(Z|\.\d{3}Z)"/);
-  });
+describe("the old dual-time names are gone after the lanes merged (contract v5 §G20)", () => {
   /**
-   * 리뷰(2026-09-30): 병행 레인(대시보드 UX — 9942f88)의 새 코드가 쓰는 옛 이름 — lib/statusbar.ts 의 dualParts(v)?.kst.ymd · dualPair,
-   * lib/ships.ts 의 dualParts · dualRangePair(a, b)?.kst · fmtDualDayMinute · fmtDualSpan. 지우면 합친 뒤 tsc 가 깨진다(수정 전 이 시험이 실패했다).
-   * 모두 KST 만 — 합친 뒤 호출부를 timeParts(v)?.wall.ymd · fmtKstRange · fmtKstDayMinute · fmtKstSpan 으로 옮기고 지운다.
+   * 합친 뒤(2026-09-30 · integ): 병행 레인(대시보드 UX)이 쓰던 KST 전용 별칭(DualTime · dualPair · fmtDual · dualParts · dualRangePair · fmtDualDayMinute ·
+   * fmtDualSpan)의 호출부를 KstTime · fmtKst · fmtTimeTitle · timeParts · fmtKstRange 로 옮기고 별칭을 지웠다 — 두 시간대를 뜻하는 이름이 다시 생기지 않게.
    */
-  it("dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan (the other lane's new code) are KST-only aliases", () => {
-    const p = T.dualParts(LATE);
-    expect(p?.kst.ymd).toBe("2026-09-29"); // lib/statusbar.ts kstAt · lib/ships.ts 의 '오늘과 같은 KST 날짜' 비교
-    expect(p?.kst.hms).toBe("08:41:14");
-    expect(p && "utc" in p).toBe(false);
-    expect(T.dualParts(null)).toBeNull();
-    const end = "2026-09-29T03:05:00Z";
-    expect(T.dualRangePair(LATE, end)).toEqual({ kst: T.fmtKstRange(LATE, end) });
-    expect(T.dualRangePair(LATE, end, { seconds: false })?.kst).toBe("09-29 08:41 – 09-29 12:05 KST");
-    expect(T.dualRangePair(LATE, null)).toBeNull(); // 옛 모양 그대로 — 한쪽이라도 모르면 null(부르는 쪽이 "—")
-    expect(T.fmtDualDayMinute(LATE, Date.parse(end))).toBe(T.fmtKstDayMinute(LATE, Date.parse(end)));
-    expect(T.fmtDualSpan(LATE, end)).toBe("08:41–12:05 KST");
+  it("lib/time exports no dual-time name and components/DualTime.tsx does not exist", () => {
+    const names = Object.keys(T);
+    expect(names.filter((n) => /dual/i.test(n))).toEqual([]);
+    expect(existsSync(new URL("../components/DualTime.tsx", import.meta.url))).toBe(false);
   });
 });

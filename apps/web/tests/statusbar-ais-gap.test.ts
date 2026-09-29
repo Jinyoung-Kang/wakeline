@@ -1,9 +1,9 @@
 /**
  * 상태 바의 AIS 수신 공백 모델(lib/statusbar aisGapInfo — 줄의 칩 · 앞쪽 경고 · 상세 표가 함께 쓴다). 사용자 보고 2026-09-30: 1분이 안 되는
  * 재시작 공백이 "02:22–02:22 KST" 처럼 같은 두 시각으로 보였다 → 길이를 먼저(1분 미만은 초). 시각은 KST 만(사용자 결정 2026-09-30).
- * - 시각은 lib/time 의 dualPair(…).kst 만으로 짓는다 — 나란히 가는 KST 레인이 lib/time 을 다시 쓰며 남기는 이름(dualParts · dualRangePair 는 없어진다).
- *   그래서 이 모델은 ships.ts 가 아니라 statusbar.ts 에 있다(ships.ts 의 옛 aisGapBadge 는 KST 레인이 고치는 그대로 둔다 — 합칠 때 겹치지 않게).
- * 수정 전 코드에서 실패하는 것을 먼저 확인했다(statusbar 에 aisGapInfo 가 없고, statusbar 가 dualParts 를 불러 왔다).
+ * - 시각 글자는 lib/time 의 공유 형식기(fmtKst · fmtKstRange · fmtTimeTitle)만 만든다(계약 v5 §G20). 이 모델이 ships.ts 의 옛 상태 바 배지(aisGapBadge)를
+ *   대신한다 — 세 레인을 합친 뒤 옛 배지와 그 시험을 지웠다.
+ * 수정 전 코드에서 실패하는 것을 먼저 확인했다(statusbar 에 aisGapInfo 가 없었다).
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -95,11 +95,12 @@ describe("AIS gap in zones (contract v4 §D)", () => {
   });
 });
 
-describe("merge safety: only the time helpers the KST lane keeps", () => {
-  it("lib/statusbar imports dualPair · kstWallMs · TimeIn from ./time and nothing else (dualParts · dualRangePair are removed there)", () => {
+describe("lib/statusbar builds its times with the shared KST formatters only", () => {
+  it("imports from ./time only the KST API (no removed dual-time name), and ships.ts no longer has the old gap badge", async () => {
     const src = readFileSync(new URL("../lib/statusbar.ts", import.meta.url), "utf8");
     const names = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*"\.\/time"/g)].flatMap((m) => m[1].split(",").map((s) => s.trim().replace(/^type\s+/, "")).filter(Boolean));
     expect(names.length).toBeGreaterThan(0);
-    for (const n of names) expect(["dualPair", "kstWallMs", "TimeIn"], n).toContain(n);
+    for (const n of names) expect(["fmtKst", "fmtKstRange", "fmtTimeTitle", "kstWallMs", "timeParts", "TimeIn"], n).toContain(n);
+    expect("aisGapBadge" in (await import("@/lib/ships"))).toBe(false);
   });
 });

@@ -7,14 +7,14 @@
  * - 이 파일이 상황판 전체(상태 바 · 레이어 · 칩 · 타임라인 · 오른쪽 패널의 모든 탭)를 그려 원문 밖의 UTC 흔적(tests/helpers/kst-only)이 없는지 본다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
 import * as T from "@/lib/time";
-import { htmlUtcLeaks, OTHER_LANE_MERGED, OTHER_LANE_PENDING, pendingOtherLane, utcLeaks, withoutOtherLane } from "./helpers/kst-only";
+import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
 import { parseHtml } from "./helpers/html-tree";
 import { getData, resetData, setData } from "@/lib/store";
 import { detailRows, statusInput } from "@/lib/statusbar";
@@ -35,7 +35,7 @@ import { SidePanelView } from "@/components/SidePanel";
 import { LayerPanel } from "@/components/LayerPanel";
 import { wsInvalidText } from "@/components/WsInvalidBadge";
 import { airportTip, shipTrackPointTip, sigmetTip } from "@/lib/tooltip";
-import { aisGapBadge, fmtSavedAt, fmtShipEta, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
+import { fmtSavedAt, fmtShipEta, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
 import { trackFeatureCollection } from "@/lib/track";
 import { focusChip, parseDemand } from "@/lib/demand";
 import { parseRoute } from "@/lib/route";
@@ -233,8 +233,7 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
     expect(leaks(html)).toEqual([]);
   });
 
-  // 상단 검색 상자(components/AircraftSearch.tsx)는 다른 레인(대시보드 UX)의 파일 — 그 안의 설명 한 줄은 tests/helpers/kst-only OTHER_LANE_PENDING
-  it("search results: the aircraft 'db' badge and the not-live ship rows name KST only (the search box's own help line is another lane's)", () => {
+  it("search results: the aircraft 'db' badge, the not-live ship rows and the search box's help line name KST only", () => {
     const NOW = Date.parse("2026-09-29T01:00:00Z");
     const results = renderToStaticMarkup(createElement(SearchResultsView, {
       uid: "u", now: NOW, active: -1, shipSort: { key: "sog", dir: "desc" }, onShipSort: () => {}, onChooseAircraft: () => {}, onChooseShip: () => {}, onHover: () => {},
@@ -244,20 +243,8 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
     expect(results).toContain('title="마지막 수신 2026-09-29 08:41:14.000 KST"');
     const t = text(results);
     expect(t).toContain("마지막 수신·저장 시각은 KST ·"); // 검색 상자의 설명 줄은 KST 만(사용자 결정 2026-09-30 — 대시보드 UX 레인 3c2ec90)
-    for (const p of OTHER_LANE_PENDING) expect(t).toContain(p);
-    expect(utcLeaks(withoutOtherLane(t))).toEqual([]);
-    expect(leaks(withoutOtherLane(results))).toEqual([]); // 그 한 줄 밖(글자 · title · aria-label)에는 UTC 가 없다
-  });
-
-  /**
-   * 리뷰(2026-09-30): 두 레인 모두 검색 상자의 그 한 줄을 고치지 않아, 면제가 영구하면 합친 뒤에도 "KST · UTC(…Z)" 가 화면에 남은 채 시험이 통과한다
-   * (수정 전 이 시험이 실패했다 — 면제가 늘 켜져 있었다). 이제 면제는 그 레인이 합쳐지기 전까지만: 그 레인이 새로 더하는 lib/statusbar.ts 가 있으면 비고,
-   * 위 시험과 아래 소스 검사가 그 줄을 잡는다 — 합치는 사람이 "(마지막 수신·저장 시각은 KST · …)" 로 고친다.
-   */
-  it("the other lane's exemption expires once that lane is merged (its new lib/statusbar.ts exists)", () => {
-    expect(pendingOtherLane(true)).toEqual([]);
-    expect(pendingOtherLane(false)).toEqual(["(마지막 수신·저장 시각은 KST · UTC(…Z) ·"]);
-    expect(OTHER_LANE_PENDING).toEqual(pendingOtherLane(existsSync(new URL("../lib/statusbar.ts", import.meta.url))));
+    expect(utcLeaks(t)).toEqual([]);
+    expect(leaks(results)).toEqual([]); // 글자 · title · aria-label 어디에도 UTC 가 없다
   });
 
   it("WS format-error detail: the browser-clock time in KST", () => {
@@ -302,16 +289,6 @@ describe("map tooltips and text helpers: KST only", () => {
   it("ship track point tooltip: TIME in KST (date and seconds)", () => {
     const tip = shipTrackPointTip({ ts: "2026-09-28T23:41:14Z", sog: 1, src: "rest" }, "X");
     expect(Object.fromEntries(tip.rows)).toMatchObject({ TIME: "09-29 08:41:14 KST" });
-  });
-  it("AIS gap badge: open and closed gaps as HH:MM KST; the tooltip has the KST range (no UTC original)", () => {
-    const base = { connected: false, msgs_per_s: 0, lag_s: null, gap_open_since: null, last_gap: null } as never as Parameters<typeof aisGapBadge>[0] & object;
-    const open = aisGapBadge({ ...base, gap_open_since: "2026-09-28T23:40:00Z" }, NOW)!;
-    expect(open.text).toBe("AIS 공백 08:40 KST 부터 · 진행 중");
-    expect(open.title).toContain("AIS 수신이 09-29 08:40:00 KST 부터 끊겨 있음");
-    const closed = aisGapBadge({ ...base, last_gap: { started_at: "2026-09-28T23:20:00Z", ended_at: "2026-09-28T23:25:00Z", reason: "keepalive" } }, NOW)!;
-    expect(closed.text).toBe("AIS 공백 08:20–08:25 KST");
-    expect(closed.title).toContain("AIS 수신 공백 09-29 08:20:00 – 09-29 08:25:00 KST (keepalive)");
-    for (const s of [open.text, open.title, closed.text, closed.title]) expect(utcLeaks(s)).toEqual([]);
   });
   it("not-live text and saved times use the KST day", () => {
     const now = Date.parse("2026-09-29T01:00:00Z");
@@ -379,8 +356,6 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
   /** 한국어 화면 글이 UTC 를 말하는 줄(주석 밖) — 계약 v5 §G20: 화면은 KST 만 */
   const KOREAN_UTC = /[\uAC00-\uD7A3][^"'`\n]*\bUTC\b|\bUTC\b[^"'`\n]*[\uAC00-\uD7A3]/;
   const code = (line: string) => (/^\s*(\*|\/\/|\/\*|\{\/\*)/.test(line) ? "" : line.replace(/\s\/\/ .*$/, "").replace(/\{\/\*.*?\*\/\}/g, ""));
-  /** 다른 레인(대시보드 UX)의 파일 — 이 레인은 고치지 않았다(open issue). 면제는 그 레인이 합쳐지기 전까지만(helpers/kst-only OTHER_LANE_MERGED) */
-  const OTHER_LANE_KOREAN_UTC: Record<string, number> = OTHER_LANE_MERGED ? {} : { [join("components", "AircraftSearch.tsx")]: 1 };
   const root = new URL("..", import.meta.url).pathname;
   const walk = (d: string): string[] => readdirSync(join(root, d)).flatMap((n) => {
     const rel = join(d, n);
@@ -400,16 +375,13 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
     expect(hits).toEqual([]);
     expect(allowedSeen).toEqual(ALLOWED);
   });
-  it("no Korean screen text outside comments says UTC (the other lane's search box line is counted until it is fixed)", () => {
+  it("no Korean screen text outside comments says UTC (no exemptions)", () => {
     const hits: string[] = [];
-    const other: Record<string, number> = {};
     for (const f of files) {
       const own = readFileSync(join(root, f), "utf8").split("\n").map(code).filter((l) => KOREAN_UTC.test(l));
-      if (f in OTHER_LANE_KOREAN_UTC) other[f] = own.length;
-      else hits.push(...own.map((l) => `${f}: ${l.trim().slice(0, 140)}`));
+      hits.push(...own.map((l) => `${f}: ${l.trim().slice(0, 140)}`));
     }
     expect(hits).toEqual([]);
-    expect(other).toEqual(OTHER_LANE_KOREAN_UTC);
     expect(KOREAN_UTC.test("title=\"한국 표준시(UTC+9) — 둘째 줄\"")).toBe(true);
     expect(KOREAN_UTC.test("prov.budget_day_zone === \"UTC\"")).toBe(false); // 값 비교는 화면 글이 아니다
   });
@@ -421,21 +393,16 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
   });
   it("lib/format has no clock formatters (they live in lib/time); lib/time has no UTC display helper any more", () => {
     for (const k of ["fmtTime", "fmtClock", "fmtTimeKst", "fmtTimeKstLabel", "fmtClockKst", "fmtMinuteKst", "hmKst", "fmtRangeKst", "fmtDayMinuteKst", "fmtIso"]) expect(k in F, k).toBe(false);
-    // dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan 은 병행 레인의 새 코드가 쓴다 — KST 전용 별칭으로 남았다(아래 · tests/kst-time)
-    for (const k of ["fmtIso", "fmtUtcTitle", "fmtUtcRangeTitle", "fmtUtcDayDual", "utcDayHours", "dualCell", "fmtDualCompact", "fmtDualRange", "fmtDualClock"]) expect(k in T, k).toBe(false);
+    for (const k of ["fmtIso", "fmtUtcTitle", "fmtUtcRangeTitle", "fmtUtcDayDual", "utcDayHours", "dualCell", "fmtDualCompact", "fmtDualRange", "fmtDualClock",
+      "fmtDual", "dualPair", "dualParts", "dualRangePair", "fmtDualDayMinute", "fmtDualSpan"]) expect(k in T, k).toBe(false);
     expect(T.fmtIsoKst("2026-09-28T23:41:14Z")).toBe("2026-09-29T08:41:14.000+09:00");
   });
   /**
-   * 옮기는 중인 이름(@deprecated — KST 전용 별칭)을 쓸 수 있는 파일: 다른 레인(대시보드 UX)의 파일만 — 이 레인에서는 앞의 네 파일, 합치면 그 레인이
-   * 새로 쓰는 lib/statusbar.ts · lib/ships.ts 도(9942f88). 합친 뒤 호출부를 옮기고 별칭을 지운다(open issue). 이 레인의 다른 파일이 쓰면 실패한다.
+   * 합친 뒤(2026-09-30 · integ): 대시보드 UX 레인의 파일(AircraftCard · AircraftSearch · AlertPanel · lib/statusbar)이 쓰던 KST 전용 별칭을 KstTime · fmtKst ·
+   * fmtTimeTitle · timeParts · fmtKstRange 로 옮기고 별칭과 components/DualTime.tsx 를 지웠다 — 면제 목록 없이 어느 파일도 그 이름을 쓰지 않는다.
    */
-  const DEPRECATED_USERS = [join("components", "AircraftCard.tsx"), join("components", "AircraftSearch.tsx"), join("components", "AlertPanel.tsx"), join("components", "StatusBar.tsx")];
-  const DEPRECATED_USERS_AFTER_MERGE = [join("lib", "ships.ts"), join("lib", "statusbar.ts")];
-  it("only the other lane's files use the deprecated KST-only aliases (DualTime · dualPair · fmtDual · dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan)", () => {
-    const users = files.filter((f) => f !== join("lib", "time.ts") && f !== join("components", "DualTime.tsx"))
-      .filter((f) => /\b(DualTime|dualPair|fmtDual|dualParts|dualRangePair|fmtDualDayMinute|fmtDualSpan)\b/.test(readFileSync(join(root, f), "utf8").split("\n").map(code).join("\n"))).sort();
-    expect(users.filter((f) => !DEPRECATED_USERS_AFTER_MERGE.includes(f))).toEqual(DEPRECATED_USERS);
-    expect(T.fmtDual(LATE)).toBe("09-29 08:41:14 KST");
-    expect(T.dualPair(LATE)).toEqual({ kst: "09-29 08:41:14 KST", iso: "2026-09-29T08:41:14.906+09:00" });
+  it("no file uses the removed dual-time names (DualTime · dualPair · fmtDual · dualParts · dualRangePair · fmtDualDayMinute · fmtDualSpan · fmtDualClock)", () => {
+    const users = files.filter((f) => /\b(DualTime|dualPair|fmtDual|dualParts|dualRangePair|fmtDualDayMinute|fmtDualSpan|fmtDualClock)\b/.test(readFileSync(join(root, f), "utf8").split("\n").map(code).join("\n")));
+    expect(users).toEqual([]);
   });
 });

@@ -5,8 +5,8 @@
  * - 검증: 모르는 상태 · 다른 창 · 읽을 항목 없는 ok · 색인 상태 없는 결과 · 완전하지 않은 none · 까닭 없는 no_call_sign 은 표시하지 않는다.
  *   틀린 묶음은 통째로 버리고 센다(메시지의 나머지는 쓴다).
  * - 화면: 상태마다 문구(기록 없음은 색인이 완전할 때만 · 색인 불완전은 항만청별 이유 · 호출부호를 아직 받지 않음은 '없음' 이 아니다) · 결과는 신고마다 블록(좁은 카드 — 표 아님)
- *   (항만청 · 입항 · 출항 KST+UTC(판) · 선석 · 목적 · 전출항지 → 차항지) · 색인 상태 줄 · 두 이름이 모두 영문일 때만 선명 다름 경고 · 모르면 "—" 만.
- * - 시각은 공유 형식기(lib/time · components/DualTime — 계약 v5 §G13): 표 칸은 첫 줄 KST · 둘째 줄 UTC, 색인 갱신 시각은 inline.
+ *   (항만청 · 입항 · 출항 KST(판) · 선석 · 목적 · 전출항지 → 차항지) · 색인 상태 줄 · 두 이름이 모두 영문일 때만 선명 다름 경고 · 모르면 "—" 만.
+ * - 시각은 공유 형식기(lib/time · components/KstTime — 계약 v5 §G20): 신고 시각 · 색인 갱신 시각 모두 KST 만(KST 00:00 신고는 날짜만).
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
@@ -248,7 +248,7 @@ describe("PortCallsSection (server-rendered)", () => {
     for (const h of ["입항", "출항", "선석", "목적", "항로"]) expect(html).toMatch(new RegExp(`<dt[^>]*>${h}</dt>`));
     expect(html).toContain('title="한국 표준시(KST) — 00:00(KST) 신고는 날짜만"');
     expect(t).toContain("부산 · 020");
-    expect(t).toContain("09-24 08:17:00 KST"); // 입항 — 표 칸(KST 첫 줄 · UTC 둘째 줄)
+    expect(t).toContain("09-24 08:17:00 KST"); // 입항 — KST 만(계약 v5 §G20)
     expect(t).toContain("09-25 14:24:00 KST"); // 출항(tkoffDt)
     expect(t).toContain("최종 신고");
     expect(t).toContain("북항크루즈터미널 2선석");

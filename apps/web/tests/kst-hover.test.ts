@@ -14,7 +14,7 @@ import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { resetData, setData } from "@/lib/store";
 import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
 import AboutPage from "@/app/about/page";
-import { domUtcLeaks, OTHER_LANE_PENDING } from "./helpers/kst-only";
+import { domUtcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -56,7 +56,7 @@ const at = (iso: string) => vi.useFakeTimers({ toFake: ["Date"], now: Date.parse
 const FULL_KST = /\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} KST/;
 /** 툴팁 약속을 지키지 않는 시각 — 보이는 hh:mm 글자인데 조상 title 에 연도 · ms 까지의 KST 가 없음(원문 data-raw 밖) + 원문 밖의 UTC 흔적 */
 function missingHover(from: MiniElement = dom.container): string[] {
-  const out: string[] = domUtcLeaks(from, OTHER_LANE_PENDING).map((x) => `utc: ${x}`); // 다른 레인의 검색 상자 설명 한 줄은 뺀다(helpers/kst-only)
+  const out: string[] = domUtcLeaks(from).map((x) => `utc: ${x}`);
   const walk = (n: MiniElement, covered: boolean) => {
     if (n.hasAttribute("data-raw")) return;
     const c2 = covered || FULL_KST.test(n.getAttribute("title") ?? "");

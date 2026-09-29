@@ -5,7 +5,7 @@ import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { dualPair, fmtKstTitle } from "@/lib/time";
+import { fmtKst, fmtKstClock, fmtKstTitle, fmtTimeTitle } from "@/lib/time";
 import { fmtEta, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
@@ -129,7 +129,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
   const who = a.callsign ?? a.hex;
   const sigmet = `${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""} · ${a.fir_id}`;
   const label = EVENT_LABEL[ev.type] ?? ev.type;
-  const full = `${ev.type} ${label} · ${who} · SIGMET ${sigmet}${a.sigmet_id ? `(${a.sigmet_id})` : ""} · 수신 ${dualPair(at, { date: true })?.kst ?? "—"}`;
+  const full = `${ev.type} ${label} · ${who} · SIGMET ${sigmet}${a.sigmet_id ? `(${a.sigmet_id})` : ""} · 수신 ${fmtKst(at)}`;
   return (
     <div className="flash flex h-full flex-col justify-center px-2 text-[11px] leading-[16px] text-fg-2" data-testid="alert-banner" data-event={ev.type} title={full}>
       <div className="truncate" data-line="event">
@@ -139,7 +139,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
       </div>
       <div className="truncate" data-line="sigmet">
         <span className="label mr-1">SIGMET</span>{sigmet}
-        {" · "}<span className="text-fg-3" data-testid="alert-banner-time" title={dualPair(at, { year: true, ms: true })?.kst}>수신 {dualPair(at, { date: false })?.kst ?? "—"}</span>
+        {" · "}<span className="text-fg-3" data-testid="alert-banner-time" title={fmtTimeTitle(at)}>수신 {fmtKstClock(at)}</span>
       </div>
     </div>
   );

@@ -4,7 +4,6 @@
  * 원문(METAR · TAF · SIGMET 발표문 · 서버 로그 메시지 본문 · 수집기가 쓴 원본 레코드)은 발표 · 기록된 그대로라 뺀다 — 화면은 그 요소에 data-raw 를 단다
  * (DOM 검사 함수가 data-raw 요소의 아래를 건너뛴다). 글자만 넘기는 곳은 부르는 쪽이 원문을 빼고 넘긴다.
  */
-import { existsSync } from "node:fs";
 import type { HNode } from "./html-tree";
 import { MiniElement } from "./mini-dom";
 
@@ -26,19 +25,6 @@ export function utcLeaks(text: string): string[] {
 
 const ATTRS = ["title", "aria-label", "placeholder", "alt"];
 
-/**
- * 다른 레인(대시보드 UX)의 파일 글자 — 이 레인은 그 파일(상단 검색 상자 components/AircraftSearch.tsx)을 고치지 않았다(파일 나눔). 그 안의 설명 한 줄이
- * 아직 "KST · UTC(…Z)" 라고 쓰고, 그 레인도 고치지 않았다(리뷰 2026-09-30). 그래서 면제는 그 레인이 합쳐지기 전까지만이다: 그 레인이 새로 더하는
- * lib/statusbar.ts 가 있으면(합친 뒤) 비어, 화면 검사 · 소스 검사가 그 줄을 UTC 로 잡는다 — 합치는 사람이 "(마지막 수신·저장 시각은 KST · …)" 로 고친다.
- * 면제 중에는 쓰는 시험이 그 글자가 아직 있는지(toContain)도 본다.
- */
-export const pendingOtherLane = (merged: boolean): string[] => (merged ? [] : ["(마지막 수신·저장 시각은 KST · UTC(…Z) ·"]);
-/** 다른 레인(대시보드 UX)이 합쳐졌는가 — 그 레인이 새로 더하는 lib/statusbar.ts 가 있으면 */
-export const OTHER_LANE_MERGED = existsSync(new URL("../../lib/statusbar.ts", import.meta.url));
-export const OTHER_LANE_PENDING = pendingOtherLane(OTHER_LANE_MERGED);
-/** 다른 레인의 글자를 뺀 html/글자 */
-export const withoutOtherLane = (s: string) => OTHER_LANE_PENDING.reduce((x, p) => x.split(p).join(""), s);
-
 /** renderToStaticMarkup 트리(tests/helpers/html-tree)의 보이는 글자 · title · aria-label 에서 — data-raw 요소 아래는 건너뛴다 */
 export function htmlUtcLeaks(root: HNode): string[] {
   const out: string[] = [];
@@ -52,15 +38,15 @@ export function htmlUtcLeaks(root: HNode): string[] {
   return out;
 }
 
-/** 마운트한 최소 DOM(tests/helpers/mini-dom)의 보이는 글자 · title · aria-label 에서 — data-raw 요소 아래는 건너뛴다. ignore = 뺄 글자(다른 레인의 글) */
-export function domUtcLeaks(root: MiniElement, ignore: readonly string[] = []): string[] {
+/** 마운트한 최소 DOM(tests/helpers/mini-dom)의 보이는 글자 · title · aria-label 에서 — data-raw 요소 아래는 건너뛴다(면제 없음) */
+export function domUtcLeaks(root: MiniElement): string[] {
   const out: string[] = [];
   const walk = (n: MiniElement) => {
     if (n.hasAttribute("data-raw")) return;
     for (const a of ATTRS) { const v = n.getAttribute(a); if (v) out.push(...utcLeaks(v).map((x) => `${a}: ${x}`)); }
     for (const c of n.childNodes) {
       if (c instanceof MiniElement) walk(c);
-      else out.push(...utcLeaks(ignore.reduce((x, p) => x.split(p).join(""), c.textContent)));
+      else out.push(...utcLeaks(c.textContent));
     }
   };
   walk(root);

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { dualPair, fmtKstTitle } from "@/lib/time";
+import { fmtKst, fmtKstTitle } from "@/lib/time";
 import { saveLayers } from "@/lib/prefs";
 import {
   isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
@@ -112,7 +112,7 @@ export function AircraftSearch() {
     }
     const name = h.callsign ?? h.hex;
     if (pos) { requestFlyTo(pos[0], pos[1], 8); setMsg(`${name} 선택 — 지도 이동`); }
-    else setMsg(`${name} 선택 — 현재 위치 없음(DB 기록만${h.last_seen ? `, 마지막 ${dualPair(h.last_seen)?.kst ?? "—"}` : ""})`);
+    else setMsg(`${name} 선택 — 현재 위치 없음(DB 기록만${h.last_seen ? `, 마지막 ${fmtKst(h.last_seen)}` : ""})`);
   }, [select, requestFlyTo]);
 
   const chooseShip = useCallback((h: ShipHit) => {

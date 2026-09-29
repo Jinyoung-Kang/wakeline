@@ -91,16 +91,11 @@ export function fmtKstDayMinute(v: TimeIn, nowMs: number): string {
   return fmtKstMinute(v, { date: !(today && today.wall.ymd === p.wall.ymd) });
 }
 
-/** hh:mm 구간(지도 선 라벨 · AIS 공백 배지) "08:40–08:45 KST". 한쪽을 모르면 그쪽만 "—", 둘 다 모르면 "—" */
+/** hh:mm 구간(지도 선 라벨 · 항적 수신 없음 라벨) "08:40–08:45 KST". 한쪽을 모르면 그쪽만 "—", 둘 다 모르면 "—" */
 export function fmtKstSpan(a: TimeIn, b: TimeIn): string {
   const x = timeParts(a), y = timeParts(b);
   if (!x && !y) return "—";
   return `${x ? x.wall.hm : "—"}–${y ? y.wall.hm : "—"} ${ZONE}`;
-}
-/** 끝이 없는 구간의 시작 "08:40 KST 부터". 모르면 "—" */
-export function fmtKstFrom(a: TimeIn): string {
-  const s = fmtKstMinute(a);
-  return s === "—" ? s : `${s} 부터`;
 }
 
 /**
@@ -239,29 +234,3 @@ export function fmtZuluToken(v: TimeIn): string | null {
   const z = new Date(p.ms).toISOString();
   return `${z.slice(8, 10)}${z.slice(11, 13)}${z.slice(14, 16)}Z`;
 }
-
-// ==== 옮기는 중인 이름(@deprecated) — 다른 레인(대시보드 UX: StatusBar · AlertPanel · AircraftSearch · AircraftCard · 새 lib/statusbar.ts ·
-// lib/ships.ts 의 새 코드)이 합쳐질 때까지만 ====
-// 두 시간대를 그리지 않는다 — 이름만 남긴 KST 전용 별칭이다. 합친 뒤 호출부를 fmtKst · KstTime · timeParts · fmtKstRange · fmtKstDayMinute ·
-// fmtKstSpan 으로 옮기고 지운다(tests/kst-time.test.ts 가 동작을 고정).
-
-/** @deprecated 계약 v5 §G20 — fmtKst 를 쓴다. KST 전용 별칭: "09-29 08:41:14 KST"(모르면 "—") */
-export const fmtDual = fmtKst;
-/** @deprecated 계약 v5 §G20 — fmtKst · KstTime 을 쓴다. KST 전용: { kst: "09-29 08:41:14 KST", iso: ISO +09:00 }(UTC 쪽은 없다). 모르면 null */
-export function dualPair(v: TimeIn, o: KstOpts = {}): { kst: string; iso: string } | null {
-  const p = timeParts(v);
-  return p ? { kst: fmtKst(v, o), iso: p.iso } : null;
-}
-/** @deprecated 계약 v5 §G20 — timeParts 를 쓴다(.wall). KST 전용: { ms, iso, kst: KST 벽시계 }(UTC 쪽 · sameDate 는 없다). 모르면 null */
-export function dualParts(v: TimeIn): { ms: number; iso: string; kst: Wall } | null {
-  const p = timeParts(v);
-  return p ? { ms: p.ms, iso: p.iso, kst: p.wall } : null;
-}
-/** @deprecated 계약 v5 §G20 — fmtKstRange 를 쓴다. KST 전용: { kst: "09-29 10:00:00 – 09-29 14:00:00 KST" }. 한쪽이라도 모르면 null(옛 모양 그대로) */
-export function dualRangePair(a: TimeIn, b: TimeIn, o: { seconds?: boolean } = {}): { kst: string } | null {
-  return timeParts(a) && timeParts(b) ? { kst: fmtKstRange(a, b, { seconds: o.seconds }) } : null;
-}
-/** @deprecated 계약 v5 §G20 — fmtKstDayMinute 를 쓴다(KST 전용) */
-export const fmtDualDayMinute = fmtKstDayMinute;
-/** @deprecated 계약 v5 §G20 — fmtKstSpan 을 쓴다(KST 전용) */
-export const fmtDualSpan = fmtKstSpan;

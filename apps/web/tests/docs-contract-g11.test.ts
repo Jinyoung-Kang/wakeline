@@ -86,6 +86,10 @@ describe("contract v5 §G13 (KST first with UTC — 2026-09-29) is superseded by
     for (const s of ["상황판", "재생", "통계", "공항", "운영", "로그", "출처", "설명서", "lib/time.ts", "components/KstTime.tsx", "DISPLAY_TZ", "(KST)", "+09:00",
       `(${RAW_BULLETIN_LABEL})`, "data-raw", "day_zone", "budget_day_zone", "V16", "stats_daily_utc_legacy", "quality_rule_count_utc_legacy", "Asia/Seoul", "03:30 KST",
       "@deprecated", "DualTime", "dualPair", "fmtDual", "OTHER_LANE_PENDING"]) expect(g20, s).toContain(s);
+    // 합친 뒤(integ): 옮기는 중이던 별칭 · 다른 레인 면제는 지웠다고 적는다(남아 있다고 적지 않는다)
+    expect(g20).toMatch(/세 레인을 합친 뒤\(integ\) 호출부를 `KstTime`[^\n]*[^]*별칭 · `components\/DualTime\.tsx` · [^]*를 지웠다/);
+    expect(g20).toMatch(/면제[^]*도 지웠다 — 화면 · 소스 검사는 면제 없이 모든 파일에 적용/);
+    expect(g20).not.toMatch(/면제는 그 레인이 합쳐지기 전까지만|합친 뒤 호출부를 [^\n]* 옮기고 별칭을 지운다\./);
     const noon = "2026-09-29T05:02:54Z";
     expect(g20).toContain(fmtKst(noon)); // inline
     expect(g20).toContain(fmtKst(noon, { date: false })); // 날짜가 자명한 자리

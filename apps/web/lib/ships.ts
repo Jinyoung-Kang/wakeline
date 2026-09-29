@@ -6,7 +6,7 @@
  *   (USCG NAVCEN 문서 2026-09-28 확인: 흘수 "0 = not available = default", 크기 "As default should A = B = C = D be set to '0'").
  * - 항해 상태 이름: USCG NAVCEN Class A 위치 보고 문서(2026-09-28 확인)의 0–15 표.
  */
-import { fmtKst, fmtKstDayMinute, fmtKstFrom, fmtKstRange, fmtKstSpan } from "./time";
+import { fmtKstDayMinute, fmtKstSpan } from "./time";
 import type { Tone } from "./tooltip";
 import { RX_FRESH_MS } from "./ws-protocol";
 
@@ -896,36 +896,6 @@ export function openGapShards(ais: Pick<AisStatus, "shards"> | null): { open: Ai
   const shards = ais?.shards;
   if (!shards || shards.length < 2) return null;
   return { open: shards.filter((sh) => sh.gap_open_since != null), total: shards.length };
-}
-
-/**
- * 상태 바 공백 배지(분까지 — KST, 계약 v5 §G20): 열린 공백 → "AIS 공백 08:40 KST 부터 · 진행 중",
- * 30분 안에 끝난 공백 → "AIS 공백 08:20–08:25 KST". 그 밖은 null. 툴팁은 날짜 · 초까지의 KST 구간.
- * 구역이 여럿이고 일부만 공백이면(계약 v4 §D) "AIS 공백 n/m 구역" — 툴팁에 공백 구역·시작 시각, 나머지 구역은 보고된 연결 상태 그대로
- * (연결·끊김·연결 모름 — 공백이 없다고 "수신 중"이라고 말하지 않는다).
- */
-export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: string; open: boolean; partial?: boolean; title: string } | null {
-  if (!ais) return null;
-  const sg = openGapShards(ais);
-  if (sg && sg.open.length > 0 && sg.open.length < sg.total) {
-    const lines = ais.shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${
-      sh.gap_open_since ? `공백 ${fmtKst(sh.gap_open_since)} 부터` : `공백 없음 · ${shardConnText(sh)}`}`);
-    return {
-      text: `AIS 공백 ${sg.open.length}/${sg.total} 구역`, open: true, partial: true,
-      title: `${lines.join("\n")}\n공백 구역 안 선박 위치는 멈춰 있고, 재전송이 없어 그 구간은 비어 있게 됩니다`,
-    };
-  }
-  if (ais.gap_open_since) {
-    const all = sg && sg.open.length === sg.total ? ` · 모든 구역(${sg.total}개)` : "";
-    return { text: `AIS 공백 ${fmtKstFrom(ais.gap_open_since)} · 진행 중`, open: true, title: `AIS 수신이 ${fmtKst(ais.gap_open_since)} 부터 끊겨 있음${all} — 재전송이 없어 이 구간 선박 위치는 비어 있게 됩니다` };
-  }
-  const g = ais.last_gap;
-  if (!g || !g.ended_at || !nowMs) return null;
-  const end = Date.parse(g.ended_at);
-  if (Number.isNaN(end) || nowMs - end > AIS_GAP_SHOW_MS) return null;
-  // 끝난 공백은 상태에 구역이 없다 — 구역이 여럿이면 그렇다고 적는다(모든 구역이라고 말하지 않는다)
-  const scope = sg ? ` · 어느 구역의 공백인지는 상태에 없음(구역 ${sg.total}개)` : "";
-  return { text: `AIS 공백 ${fmtKstSpan(g.started_at, g.ended_at)}`, open: false, title: `AIS 수신 공백 ${fmtKstRange(g.started_at, g.ended_at)}${g.reason ? ` (${g.reason})` : ""} — 이 구간 선박 위치 없음${scope}` };
 }
 
 // ---- 선택 선박 항적(REST + 실시간) ----
