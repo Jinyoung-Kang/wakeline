@@ -693,17 +693,36 @@ async def test_kma_http_error_is_never_retried(kma_env, no_wait, caplog):
     assert len(warns) == 1 and warns[0].startswith("kma radar: listing 20260927 — 활용신청 필요")
 
 
-async def test_kma_retries_at_most_once_per_cycle(kma_env, no_wait, caplog):
-    """주기 시간 상한: 다시 부르기는 한 주기에 한 번뿐(최악 5호출 × 40 s + 5 s + 40 s = 245 s < 주기 300 s)."""
+async def test_kma_each_failing_call_is_retried_once(kma_env, no_wait, caplog):
+    """'한 번 다시 부른다'는 실패한 호출마다다 — 목록에서 다시 불렀어도 뒤의 바이너리가 일시 오류면 그것도 한 번 다시 부른다
+    (이전: 한 주기에 한 번뿐이라 이 경우 주기를 잃었다)."""
     import httpx
 
     mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
     tms = _tms("202609272000")
     prov = FlakyKma(tms, list_errors=[_read_timeout()], binary_errors={tms[-4]: [httpx.RemoteProtocolError("")]})
     await mod.KmaRadarJob(prov, ctx).run_once()
-    assert prov.list_calls == 2 and prov.binaries == [tms[-4]]  # 목록에서 재시도를 썼으므로 바이너리는 다시 부르지 않는다
+    assert prov.list_calls == 2 and prov.binaries == [tms[-4], *tms[-4:]]
+    assert no_wait == [5.0, 5.0]
+    assert [run["status"] for run in runs] == ["ok"] and _kma_warnings(caplog) == []
+    assert (await ctx.budget.usage("kma_radar"))[0] == 2 + 4 + 1  # 목록 2 · 바이너리 4 · 다시 부른 바이너리 1
+
+
+async def test_kma_binary_that_fails_twice_ends_the_cycle_with_one_warning(kma_env, no_wait, caplog):
+    import httpx
+
+    mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
+    tms = _tms("202609272000")
+    errs = [httpx.RemoteProtocolError(""), httpx.RemoteProtocolError("")]
+    prov = FlakyKma(tms, binary_errors={tms[-3]: errs})
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    assert prov.binaries == [tms[-4], tms[-3], tms[-3]]  # 두 번 실패한 호출에서 주기를 끝낸다(남은 tm 은 다음 주기)
     warns = _kma_warnings(caplog)
-    assert len(warns) == 1 and warns[0].startswith(f"kma radar: binary tm={tms[-4]} — RemoteProtocolError — 연결 실패")
+    assert len(warns) == 1 and warns[0].startswith(f"kma radar: binary tm={tms[-3]} — RemoteProtocolError — 연결 실패")
+    assert "retried once after 5 s" in warns[0]
+    assert [run["status"] for run in runs] == ["error"]
 
 
 async def test_kma_retry_needs_budget(kma_env, no_wait):
