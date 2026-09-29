@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """REST 계약 검사(설계 14.1 — Java → Python 방향): Java api 가 만든 REST 응답이 웹·도구가 읽는 필드 계약(계약서 §1·§2,
-계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
+계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색, ADR-023 연안 교통량)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
 한쪽만 고치면 이 검사가 깨진다.
 
 두 가지 입력:
@@ -885,6 +885,55 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "meta": META,
         },
     },
+    "traffic_grid": {  # ADR-023: 연안 교통량 — 5분 집계 격자별 선박 척수(개별 위치 아님). 모르는 값은 키가 없다(non_null). 교차 검사 _traffic_grid
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["available", "status", "stale_after_s", "cell_deg", "cells", "source", "time_zone", "meta"],
+        "properties": {
+            "available": BOOL,
+            "status": {"enum": ["ok", "stale", "disabled", "no_data", "invalid"]},
+            "disabled_reason": {"enum": ["no_key", "fixture", "operator_off"]},
+            "reg_dt_kst": {"type": "string", "format": "date-time", "pattern": r"\+09:00$"},
+            "reg_dt_utc": TS,
+            "fetched_at": TS,
+            "age_s": {"type": "integer", "minimum": 0},
+            "stale_after_s": {"const": 900},
+            **{
+                k: {"type": "integer", "minimum": 0}
+                for k in ("total", "total_count", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "invalid_cells")
+            },
+            "partial": BOOL,
+            "cell_deg": {"const": 0.025},
+            "cells": {
+                "type": "array",
+                "maxItems": 20000,
+                "items": {  # [grid_no, lat_min, lon_min, 척수, 밀집도 %]
+                    "type": "array",
+                    "prefixItems": [
+                        {"type": "string", "pattern": "^[A-Za-z0-9_]{1,32}$"},
+                        {"type": "number", "minimum": -90, "maximum": 89.975},
+                        {"type": "number", "minimum": -180, "maximum": 179.975},
+                        {"type": "integer", "minimum": 0},
+                        {"type": "number", "minimum": 0, "maximum": 100},
+                    ],
+                    "items": False,
+                    "minItems": 5,
+                },
+            },
+            "source": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["provider", "grid", "note"],
+                "properties": {
+                    "provider": {"const": "한국해양교통안전공단 MTIS 실시간 해양교통정보"},
+                    "grid": {"const": "해양수산부 해양격자 4단계"},
+                    "note": {"const": "5분 집계 — 격자별 선박 척수(개별 위치 아님)"},
+                },
+            },
+            "time_zone": STR,
+            "meta": META,
+        },
+    },
     "airports": feature_collection(
         point_feature(
             {
@@ -1207,6 +1256,7 @@ CHECKS = [
     Check("alerts_history", "alerts_history", 200, "application/json", True),
     Check("radar_frames", "radar_frames", 200, "application/json", True),
     Check("radar_kr", "radar_kr", 200, "application/json", True),
+    Check("traffic_grid", "traffic_grid", 200, "application/json", True),
     Check("airports", "airports", 200, "application/geo+json", True),
     Check("airport_wx", "airport_wx", 200, "application/json", True),
     Check("replay", "replay", 200, "application/json", True),
@@ -1271,6 +1321,7 @@ def live_paths(base: str) -> dict[str, str | None]:
         "alerts_history": "/api/v1/alerts/history",
         "radar_frames": "/api/v1/radar/frames",
         "radar_kr": "/api/v1/radar/kr",
+        "traffic_grid": "/api/v1/traffic/grid",
         "airports": airports_path,
         "replay": "/api/v1/replay?"
         + urllib.parse.urlencode({"at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "bbox": bbox}, safe=","),
@@ -1681,6 +1732,55 @@ def _stats_traffic(body: dict[str, Any]) -> list[str]:
     return [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
 
 
+TRAFFIC_COUNTS = ("total", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "invalid_cells")
+
+
+def _on_lattice(v: object) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool) and abs(v - round(v / 0.025) * 0.025) <= 1e-6
+
+
+def _traffic_grid(body: dict[str, Any]) -> list[str]:
+    """ADR-023 /traffic/grid: 쓸 수 있음 ⇔ ok, 쓸 수 없으면 칸 없음, 꺼짐 이유는 disabled 일 때만, 시각 둘이 같은 순간(KST +09:00),
+    수가 맞음(해석 = 칸 + 버린 칸, 해석 + 미해석 = 전체, 미해석 = 기다림 + 없음 + 격자 밖), 칸은 0.025° 격자점, 오래됨 ⇔ age_s > 900."""
+    errs: list[str] = []
+    st, cells = body.get("status"), body.get("cells") or []
+    if bool(body.get("available")) != (st == "ok"):
+        errs.append(f"available {body.get('available')!r} with status {st!r}")
+    if st != "ok" and cells:
+        errs.append(f"{len(cells)} cells served with status {st!r}")
+    if (body.get("disabled_reason") is not None) != (st == "disabled"):
+        errs.append(f"disabled_reason {body.get('disabled_reason')!r} with status {st!r}")
+    kst, utc = body.get("reg_dt_kst"), body.get("reg_dt_utc")
+    if (kst is None) != (utc is None):
+        errs.append("reg_dt_kst and reg_dt_utc must both be present or both absent")
+    elif kst is not None and utc is not None:
+        if datetime.fromisoformat(kst) != datetime.fromisoformat(utc.replace("Z", "+00:00")):
+            errs.append(f"reg_dt_kst {kst} is not the instant reg_dt_utc {utc}")
+    if st in ("ok", "stale"):
+        c = {k: body.get(k) for k in TRAFFIC_COUNTS}
+        if any(v is None for v in c.values()) or utc is None:
+            errs.append(f"status {st} needs every count and the regDt")
+        else:
+            if c["resolved"] + c["unresolved"] != c["total"]:
+                errs.append(f"resolved {c['resolved']} + unresolved {c['unresolved']} != total {c['total']}")
+            if c["pending"] + c["not_found"] + c["off_grid"] != c["unresolved"]:
+                errs.append("pending + not_found + off_grid != unresolved")
+            if st == "ok" and len(cells) + c["invalid_cells"] != c["resolved"]:
+                errs.append(f"{len(cells)} cells + {c['invalid_cells']} invalid != resolved {c['resolved']}")
+        age = body.get("age_s")
+        if isinstance(age, int) and (age > body.get("stale_after_s", 900)) != (st == "stale"):
+            errs.append(f"age_s {age} does not match status {st}")
+    elif any(body.get(k) is not None for k in ("reg_dt_utc", "total", "resolved")):
+        errs.append(f"status {st} carries snapshot fields")
+    for i, cell in enumerate(cells):
+        if not (_on_lattice(cell[1]) and _on_lattice(cell[2])):
+            errs.append(f"cells[{i}] corner {cell[1]},{cell[2]} is off the 0.025° lattice")
+            break
+    if len({cell[0] for cell in cells}) != len(cells):
+        errs.append("duplicate grid_no in cells")
+    return errs
+
+
 SCHEMAS["status_ais"] = {
     **SCHEMAS["status"],
     "allOf": [
@@ -1694,6 +1794,7 @@ SCHEMAS["status_ais"] = {
 CROSS_CHECKS = {
     "status": _status,
     "radar_kr": _radar_kr,
+    "traffic_grid": _traffic_grid,
     "status_ais": _status_ais_recorded,
     "ships": _ships,
     "ship_detail": _ship_detail,

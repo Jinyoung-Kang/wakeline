@@ -44,6 +44,8 @@ class RestSamplesIT extends IntegrationTest {
     /** REST /status 가 보는 값(WS 와 같은 3 s 캐시, R-53) — 기다릴 때도 같은 값을 본다. */
     @Autowired dev.wakeline.ws.WsHub status;
     @Autowired dev.wakeline.route.RouteReader routes;
+    /** 연안 교통량 읽기(ADR-023) — 5 s 메모. 기다림은 이것으로(REST 요청 제한을 쓰지 않게). */
+    @Autowired dev.wakeline.rest.TrafficGridReader trafficGrid;
 
     final Map<String, String> index = new LinkedHashMap<>();
     static final String ASIA_PACIFIC = "-90,45,90,180";
@@ -174,6 +176,15 @@ class RestSamplesIT extends IntegrationTest {
             record("radar_kr", "/api/v1/radar/kr", 200);
         } finally {
             ItStack.deleteKeys("wakeline:radar_kr:*");
+        }
+        // 연안 교통량(ADR-023): 수집기 역할로 스냅샷(SET EX 1200) — 칸 2 · 공급자에 없는 칸 1(부정 캐시)
+        try {
+            TrafficGridIT.clearHeartbeat();
+            TrafficGridIT.publish(TrafficGridIT.snapshot(Instant.now().truncatedTo(ChronoUnit.SECONDS).minusSeconds(90), 12));
+            await("traffic grid snapshot", WAIT, () -> "ok".equals(trafficGrid.read().status()));
+            record("traffic_grid", "/api/v1/traffic/grid", 200);
+        } finally {
+            ItStack.deleteKeys("wakeline:traffic_grid");
         }
         record("airports", "/api/v1/airports", 200);
         record("airport_wx", "/api/v1/airports/RKSI/wx", 200);
