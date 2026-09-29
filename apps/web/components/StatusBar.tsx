@@ -1,77 +1,180 @@
 "use client";
-import { serverNowMs, useServerData } from "@/lib/store";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { serverNowMs, useServerData, type WsInvalid } from "@/lib/store";
 import { useNow } from "@/lib/clock";
-import { fmtKstTitle } from "@/lib/time";
-import { fmtAgo, isKrRadarStale, KR_RADAR_STALE_S } from "@/lib/format";
-import { krComposite, krTmClock } from "@/lib/kr-radar";
-import { aisBadge, aisGapBadge } from "@/lib/ships";
-import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_FRESH_MS } from "@/lib/ws-protocol";
-import { DualTime } from "./DualTime";
+import {
+  type Chip, connChip, detailRows, type DetailRow, fitChips, type Health, HEALTH_MARK, HEALTH_WORD, openGapWarning, statusChips, statusInput, type StatusInput,
+} from "@/lib/statusbar";
 import { WsInvalidBadge } from "./WsInvalidBadge";
 
-/** "12 frames" · 모르면 "frames —"(단위를 "—" 뒤에 붙이면 잰 값처럼 읽힌다 — /ops · /logs 와 같은 규칙). label 을 주면 모를 때 그 이름으로 */
-const qty = (n: number | null | undefined, unit: string, label = unit) => (n == null ? `${label} —` : `${n} ${unit}`);
+const NONE: ReadonlySet<string> = new Set();
 
 /**
- * 상단 상태 바(FR-11): 연결 상태·지역/전세계 피드별 출처·수집 시각·지연 배지(지역 > 60 s, 전세계 > 300 s 면 경고)·SIGMET·레이더.
- * 지연은 서버가 보고한 값(스냅샷 sources·30 s status). "실시간"은 연결이 열려 있고 45 s 안에 무엇이든(ping 포함) 받은 경우만(WS-2) —
- * 끊김·일시정지·반쯤 열린 연결이면 받은 뒤 경과 시간을 더한다(화면 데이터가 멈췄으므로).
- * SIGMET·레이더 경과는 서버 시각끼리의 차이라 서버 기준 현재 시각으로 계산한다(WS-3).
- * AIS 구역이 여럿이면(계약 v4 §D) 일부 구역만 끊기거나 공백일 때 "n/m 구역"으로 말한다(전체 끊김처럼 보이지 않게).
- * 시각은 KST 먼저, UTC 함께(compact "08:41:14 KST · 23:41:14Z" — 사용자 요청 2026-09-29, lib/time · title 에 원본 UTC ISO). 기상청 tm 은 원래 KST 이고 같은 순간의 UTC 를 함께 적는다.
- * 출처 표기는 가로 스크롤되는 이 줄이 아니라 모든 화면 하단의 고정 줄(AttributionFooter)에 있다(FR-20).
- * KMA STALE 처럼 따로 붙는 경고 배지는 연결 상태 바로 뒤에 둔다(R-31) — 1280 px 에서도 이 줄은 가로로 스크롤된다.
- * WS 형식 오류 배지(계약 v5 §E2): 받은 메시지에서 버린 원소·값 · 메시지 · 처리 예외의 누적 수를 단위별로 — 0 이면 없다. 단추라서 키보드 · 터치로
- * 상세(무엇을 버렸고 어떻게 다시 받는지 · 마지막 사유 · 복사)를 연다(WsInvalidBadge).
+ * 상단 상태 바(FR-11 — 사용자 요청 2026-09-30 "[WS open] 줄에 정보가 너무 많아 잘리고 옆으로 끌어야 보인다"로 다시 짰다).
+ * - 줄(가로 스크롤 없음): 연결 → 경고(WS 형식 오류 · FIXTURE · 열린 AIS 공백 — R-31 앞쪽) → 피드마다 칩 하나(이름 + 상태 모양 ■ ▲ ✕ □ 과 색 +
+ *   핵심 수 하나, 정상이 아니면 낱말) → 오른쪽 끝 '상세' 단추. 표시 모델은 lib/statusbar(순수 함수 — 기준은 모두 기존 값).
+ * - 폭이 모자라면 정상 · 모름 칩만 뒤에서부터 상세 표로 옮기고 단추에 '+N'(무엇을 옮겼는지 title) — 잘리지 않는다. 주의 · 경고 칩은 빼지 않는다.
+ *   그래도 넘치면(좁은 화면의 경고들) 줄이 다음 줄로 넘어간다(flex-wrap) — 잘리지 않는다.
+ * - 줄 폭은 ResizeObserver 가 크기 변화를 알릴 때만 잰다(1 s 시계 틱마다 재지 않는다 — 레이아웃 강제 없음). 옮긴 칩은 보이지 않게 겹쳐 두어(invisible ·
+ *   absolute) 계속 잴 수 있고 화면 읽기 프로그램에서는 숨긴다(값은 상세 표에 있다).
+ * - 상세: 단추(aria-expanded · aria-controls) — 누름 · Enter · Space 로 열고 닫고, Esc(단추로 초점을 돌린다) · 바깥 누르기로 닫힌다. 열려 있을 때만 그린다.
+ * - 스토어는 보이는 값만 골라 구독한다(전체 스토어가 아니라) — 항공기 diff 마다 모든 값을 다시 계산하지 않는다.
+ * - 출처 표기는 모든 화면 하단의 고정 줄(AttributionFooter — FR-20).
+ * - WS 형식 오류 배지(계약 v5 §E2)는 단추 — 상세는 popover(최상위 층)라 이 줄에 잘리지 않는다(WsInvalidBadge).
  */
 export function StatusBar() {
-  // useSyncExternalStore 의 getSnapshot 은 안정된 참조를 돌려줘야 한다 — 객체를 새로 만들지 않고 스토어 객체 자체를 선택한다.
-  const s = useServerData((x) => x);
+  const conn = useServerData((x) => x.conn);
+  const reconnectAttempt = useServerData((x) => x.reconnectAttempt);
+  const lastRxAt = useServerData((x) => x.lastRxAt);
+  const feeds = useServerData((x) => x.feeds);
+  const aircraftCount = useServerData((x) => x.aircraftCount);
+  const status = useServerData((x) => x.status);
+  const sigmetsProvider = useServerData((x) => x.sigmetsProvider);
+  const sigmetsFetchedAt = useServerData((x) => x.sigmetsFetchedAt);
+  const radar = useServerData((x) => x.radar);
+  const radarKr = useServerData((x) => x.radarKr);
+  const ais = useServerData((x) => x.ais);
+  const snapshotVersion = useServerData((x) => x.snapshotVersion);
+  const inv = useServerData((x) => x.wsInvalid);
   const now = useNow(1000);
-  const srvNow = now ? serverNowMs(now) : 0;
-  const live = isRxFresh(s.conn, s.lastRxAt, now);
-  const silent = s.conn === "open" && !live;
-  const krStale = s.radarKr?.available ? isKrRadarStale(s.radarKr, srvNow) : false;
-  // 최신 KMA 프레임의 합성 크기(ADR-021) — 부분 합성이면 연결 상태 뒤에 경고 배지(R-31 자리)
-  const krComp = s.radarKr?.available ? krComposite(s.radarKr.frames[s.radarKr.frames.length - 1], srvNow) : null;
-  const region = feedLag(s.feeds.region, now, live, REGION_STALE_S);
-  const world = s.feeds.global ? feedLag(s.feeds.global, now, live, GLOBAL_STALE_S) : null;
-  const fixture = s.status?.fixture_mode;
-  // AIS(계약 v2 §B4): 연결·초당 메시지·지연 — 연결이 실시간이 아니면 받은 뒤 경과를 지연에 더한다(피드 지연과 같은 규칙)
-  const ais = aisBadge(s.ais, now, live);
-  const gap = aisGapBadge(s.ais, srvNow);
-  // WS 수신 검증(계약 v5 §E2): 버린 원소·값 · 메시지 · 처리 예외(페이지를 연 뒤 누적). 0 이면 보이지 않는다
-  const inv = s.wsInvalid;
-  const invAny = inv.elements + inv.messages + inv.errors > 0;
-  const connTitle = silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — 75 s 가 되면 다시 연결` : undefined;
+  const input = useMemo(() => statusInput(
+    { conn, reconnectAttempt, lastRxAt, feeds, aircraftCount, status, sigmetsProvider, sigmetsFetchedAt, radar, radarKr, ais, snapshotVersion }, now, now ? serverNowMs(now) : 0,
+  ), [conn, reconnectAttempt, lastRxAt, now, feeds, aircraftCount, status, sigmetsProvider, sigmetsFetchedAt, radar, radarKr, ais, snapshotVersion]);
+  return <StatusBarView input={input} inv={inv} />;
+}
+
+/** 칩 하나: 이름 · 모양(화면 읽기 프로그램에는 낱말) · 값 · 상태 낱말. hidden = 줄에서 상세로 옮김(보이지 않게 겹쳐 두고 계속 잰다) */
+function ChipView({ chip, hidden }: { chip: Chip; hidden: boolean }) {
   return (
-    <div className="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-b border-line bg-bg-1 px-3 text-[11px] whitespace-nowrap" data-testid="statusbar" role="group" aria-label="수집·연결 상태">
-      <span className={`badge ${connTone(s.conn, silent, s.reconnectAttempt)}`} data-testid="conn" title={connTitle}>
-        WS {s.conn}{silent ? " · 수신 없음" : ""}{s.conn !== "open" && s.reconnectAttempt > 0 ? ` · retry ${s.reconnectAttempt}` : ""}
-      </span>
-      {invAny ? <WsInvalidBadge inv={inv} /> : null}
-      {fixture ? <span className="badge warn" data-testid="fixture-badge">FIXTURE MODE · 외부 호출 없음</span> : null}
-      {/* 경고 배지는 앞쪽에 — 가로 스크롤 끝으로 밀려 보이지 않게 두지 않는다(R-31) */}
-      {krStale ? <span className="badge bad" data-testid="kr-radar-stale" title={`기상청 레이더에 ${KR_RADAR_STALE_S / 60}분 넘게 새 프레임 없음(최신 tm 첫 수집 ${fmtKstTitle(s.radarKr?.meta?.fetched_at)})`}>KMA STALE</span> : null}
-      {krComp?.warn ? <span className="badge warn normal-case!" data-testid="kr-status-partial" title={krComp.warn}>KMA 일부 합성</span> : null}
-      <span className="mono" data-testid="aircraft-count"
-        title={s.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다"}>
-        <span className="label mr-1">aircraft</span>{s.aircraftCount ?? "—"}
-      </span>
-      <span className="mono" data-testid="region-source"><span className="label mr-1">region</span>{s.feeds.region?.provider ?? "—"} · <DualTime v={s.feeds.region?.fetched_at} variant="compact" seconds /></span>
-      <span className={`badge ${lagTone(region, s.conn, s.reconnectAttempt)}`} data-testid="lag-badge" title={`지역 피드 지연(경고 > ${REGION_STALE_S} s)`}>
-        {region.lag == null ? "NO DATA" : `lag ${Math.round(region.lag)}s`}{region.lag != null && region.stale ? " · STALE" : ""}
-      </span>
-      <span className="mono" data-testid="global-source"><span className="label mr-1">world</span>{s.feeds.global?.provider ?? "—"}</span>
-      <span className={`badge ${world == null ? "" : world.stale ? "bad" : "ok"}`} data-testid="global-lag-badge" title={world == null ? "전세계 피드 없음" : `전세계 피드 지연(경고 > ${GLOBAL_STALE_S} s)`}>
-        {world == null ? "—" : world.lag == null ? "NO DATA" : `lag ${Math.round(world.lag)}s`}{world?.lag != null && world.stale ? " · STALE" : ""}
-      </span>
-      {ais ? <span className={`badge normal-case! ${ais.tone === "muted" ? "" : ais.tone}`} data-testid="ais-badge" data-tone={ais.tone} title={ais.title}>{ais.text}</span> : null}
-      {gap ? <span className={`badge normal-case! ${gap.open && !gap.partial ? "bad" : "warn"}`} data-testid="ais-gap-badge" data-partial={gap.partial ? "true" : undefined} title={gap.title}>{gap.text}</span> : null}
-      <span className="mono text-fg-2"><span className="label mr-1">sigmet</span>{s.sigmetsProvider} · {qty(s.status?.sigmet?.active, "active")} · {srvNow ? fmtAgo(s.sigmetsFetchedAt, srvNow) : "—"}</span>
-      <span className="mono text-fg-2"><span className="label mr-1">radar</span>{qty(s.radar?.past.length, "frames")} · {srvNow ? fmtAgo(s.radar?.fetched_at, srvNow) : "—"}{s.radarKr?.available ? ` · KMA ${s.radarKr.frames.length}f ${krTmClock(s.radarKr.latest_tm)}` : ""}{krComp ? <span title={krComp.title} data-testid="kr-status-composite" className={krComp.warn ? "text-warn" : undefined}>{` · ${krComp.label}`}</span> : null}</span>
-      <span className="mono text-fg-3"><span className="label mr-1">engine</span>{qty(s.status?.engine?.index_polygons, "polys")} · {qty(s.status?.engine?.last_cycle_ms, "ms", "cycle")}</span>
-      <span className="mono text-fg-3">v{s.snapshotVersion}</span>
+    <span className={`chip ${chip.plain ? "plain" : chip.health}${hidden ? " pointer-events-none invisible absolute top-0 left-0" : ""}`}
+      data-chip={chip.key} data-pinned={chip.pinned ? "true" : undefined} data-overflow={hidden ? "true" : undefined} data-health={chip.plain ? undefined : chip.health}
+      data-testid={chip.testId} title={chip.title} aria-hidden={hidden ? "true" : undefined}>
+      <span className="chip-k">{chip.label}</span>
+      {chip.plain ? null : <span className="chip-m" aria-hidden="true">{HEALTH_MARK[chip.health]}</span>}
+      <span className="chip-v">{chip.value}</span>
+      {chip.words.map((w) => <span key={w.text} className="chip-s" data-testid={w.testId} title={w.title}>{w.text}</span>)}
+      {!chip.plain && chip.words.length === 0 ? <span className="sr-only">{HEALTH_WORD[chip.health]}</span> : null}
+    </span>
+  );
+}
+
+/** 줄의 내용 폭(패딩 제외) · 칩 사이 간격 · 고정 항목(연결 · 경고 · 상세 단추) 폭을 읽어 옮길 칩을 고른다 — ResizeObserver 콜백 안에서만 부른다 */
+function measure(row: HTMLElement): Set<string> {
+  const cs = getComputedStyle(row);
+  const gap = parseFloat(cs.columnGap) || 0;
+  const inner = row.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+  let reserved = 0;
+  for (const el of row.querySelectorAll<HTMLElement>("[data-pin]")) reserved += el.offsetWidth + gap;
+  const boxes = [...row.querySelectorAll<HTMLElement>("[data-chip]")].map((el) => ({ key: el.getAttribute("data-chip") ?? "", width: el.offsetWidth, pinned: el.getAttribute("data-pinned") === "true" }));
+  return fitChips(boxes, inner, reserved, gap);
+}
+
+/**
+ * 줄에서 옮길 칩(ResizeObserver): 줄 · 칩 · 고정 항목의 크기가 바뀔 때만 다시 잰다. layoutKey(어떤 칩이 있고 무엇이 pinned 인지)가 바뀌면 다시 관찰한다
+ * — 관찰을 시작하면 ResizeObserver 가 곧바로 한 번 알린다. ResizeObserver 가 없으면(서버 렌더 · 옛 브라우저) 옮기지 않고 줄이 넘어간다(flex-wrap).
+ */
+function useOverflow(rowRef: React.RefObject<HTMLDivElement | null>, layoutKey: string): ReadonlySet<string> {
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(NONE);
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const next = measure(row);
+      setHidden((prev) => (prev.size === next.size && [...next].every((k) => prev.has(k)) ? prev : next));
+    });
+    ro.observe(row);
+    for (const el of row.querySelectorAll("[data-chip], [data-pin]")) ro.observe(el);
+    return () => ro.disconnect();
+  }, [rowRef, layoutKey]);
+  return hidden;
+}
+
+/** 표시 부분(입력을 인자로 — 시험용). 스토어와 시계는 StatusBar 가 준다 */
+export function StatusBarView({ input, inv }: { input: StatusInput; inv: WsInvalid }) {
+  const c = connChip(input);
+  const chips = statusChips(input);
+  const gapOpen = openGapWarning(input);
+  const fixture = input.status?.fixture_mode === true;
+  const invAny = inv.elements + inv.messages + inv.errors > 0;
+  const rowRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  const layoutKey = `${chips.map((x) => `${x.key}${x.pinned ? "!" : ""}`).join(",")}|${invAny ? "i" : ""}${fixture ? "f" : ""}${gapOpen ? "g" : ""}`;
+  const hiddenAll = useOverflow(rowRef, layoutKey);
+  // 옮김은 정상 · 모름 칩만(주의 · 경고는 늘 줄에) — 마지막 측정 뒤 pinned 가 된 칩은 다음 측정 전에도 보인다
+  const hidden = chips.filter((x) => hiddenAll.has(x.key) && !x.pinned);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); btnRef.current?.focus(); } };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return; // 단추는 onClick 이 여닫는다
+      setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("pointerdown", onDown); };
+  }, [open]);
+  const hiddenNames = hidden.map((x) => x.label).join(" · ");
+  return (
+    <div className="relative shrink-0 border-b border-line bg-bg-1" data-testid="statusbar" role="group" aria-label="수집·연결 상태">
+      <div ref={rowRef} className="relative flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-[3px] text-[11px]" data-testid="statusbar-row">
+        <span className={`badge ${c.tone}`} data-testid="conn" title={c.title} data-pin="">{c.text}</span>
+        {invAny ? <span className="flex shrink-0" data-pin=""><WsInvalidBadge inv={inv} /></span> : null}
+        {fixture ? <span className="badge warn shrink-0 whitespace-nowrap" data-testid="fixture-badge" data-pin="" title="api 가 fixture 모드 — 외부 공급자를 부르지 않고 기록된 자료를 재생합니다">FIXTURE MODE · 외부 호출 없음</span> : null}
+        {gapOpen ? (
+          <span className={`chip ${gapOpen.partial ? "warn" : "bad"}`} data-testid="ais-gap-badge" data-pin="" data-partial={gapOpen.partial ? "true" : undefined} title={gapOpen.title}>
+            <span className="chip-k">AIS 공백</span><span className="chip-m" aria-hidden="true">{HEALTH_MARK[gapOpen.partial ? "warn" : "bad"]}</span>
+            <span className="chip-v">{gapOpen.value}</span>
+          </span>
+        ) : null}
+        {chips.map((x) => <ChipView key={x.key} chip={x} hidden={hidden.includes(x)} />)}
+        <button ref={btnRef} type="button" className="btn ml-auto min-w-[84px] shrink-0 px-2! py-0.5! normal-case!" data-pin="" data-testid="statusbar-details-toggle"
+          aria-expanded={open} aria-controls={open ? panelId : undefined} onClick={() => setOpen((v) => !v)}
+          title={hidden.length ? `줄에 다 넣지 못한 항목 ${hidden.length}개(${hiddenNames}) — 상세 표에 있습니다` : "피드별 출처 · 수집 시각(KST) · 속도 · 기준 · 엔진 · 판"}>
+          상세{hidden.length ? <span className="mono text-warn"> +{hidden.length}</span> : null} <span aria-hidden="true">{open ? "▴" : "▾"}</span>
+        </button>
+      </div>
+      {open ? <StatusDetails id={panelId} panelRef={panelRef} rows={detailRows(input)} hiddenNames={hiddenNames} onClose={() => { setOpen(false); btnRef.current?.focus(); }} /> : null}
+    </div>
+  );
+}
+
+const HEALTH_TEXT: Record<Health, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad", unknown: "text-fg-3" };
+
+/** 상세 표(열려 있을 때만): 줄의 모든 항목 + 줄에 없는 값(출처 · 수집 시각 KST · 속도 · 기상청 프레임 · 합성 지점 · 엔진 · 판 · AIS 공백 기록)과 기준 */
+function StatusDetails({ id, panelRef, rows, hiddenNames, onClose }: { id: string; panelRef: React.RefObject<HTMLDivElement | null>; rows: DetailRow[]; hiddenNames: string; onClose: () => void }) {
+  return (
+    <div ref={panelRef} id={id} role="region" aria-label="수집 · 연결 상세" data-testid="statusbar-details"
+      className="panel absolute top-full right-2 z-40 mt-1 max-h-[min(70vh,560px)] w-[min(900px,calc(100vw-16px))] overflow-auto text-[11px]">
+      <div className="row sticky top-0 z-10 bg-bg-1">
+        <span className="label">수집 · 연결 상세</span>
+        <span className="min-w-0 flex-1 truncate text-fg-3">{hiddenNames ? `줄에 다 넣지 못한 항목: ${hiddenNames}` : "시각은 KST"}</span>
+        <button type="button" className="btn px-2! py-0.5! normal-case!" onClick={onClose}>닫기</button>
+      </div>
+      <table className="text-[11px]">
+        <thead><tr><th>항목</th><th>상태</th><th>값</th><th>출처 · 수집 시각</th><th>기준</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} data-row={r.key}>
+              <td className="whitespace-nowrap text-fg">{r.name}</td>
+              <td className="whitespace-nowrap">
+                {r.health ? <span className={HEALTH_TEXT[r.health]} aria-hidden="true">{HEALTH_MARK[r.health]} </span> : null}
+                <span className={r.health && r.health !== "ok" && r.health !== "unknown" ? HEALTH_TEXT[r.health] : "text-fg-2"}>{r.state}</span>
+              </td>
+              <td className="mono" title={r.valueTitle} data-testid={r.key === "kma" ? "kr-status-composite" : undefined}>{r.value}</td>
+              <td className="text-fg-2">{r.source}</td>
+              <td className="text-fg-3">{r.rule}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="border-t border-line px-2 py-1 text-[10px] text-fg-3">
+        모양: {HEALTH_MARK.ok} 정상 · {HEALTH_MARK.warn} 주의 · {HEALTH_MARK.bad} 경고 · {HEALTH_MARK.unknown} 모름 — 색과 함께 모양 · 낱말로도 말합니다. lag = 서버가 보고한 피드 지연,
+        age = 마지막 수집 뒤 경과(연결이 실시간이 아니면 받은 뒤 경과를 더함). 주의 · 경고인 항목은 줄에서 빼지 않습니다.
+      </div>
     </div>
   );
 }

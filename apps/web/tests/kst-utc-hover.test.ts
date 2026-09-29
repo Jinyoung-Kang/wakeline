@@ -178,8 +178,11 @@ describe("tooltips that name a KST time also name the UTC original", () => {
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr, feeds: { region: { provider: "adsb_fi", fetched_at: "2026-09-28T23:58:14Z", lag_s: 2, stale: false, received_at: Date.now() }, global: null } });
     const { StatusBar } = await import("@/components/StatusBar");
     await mount(createElement(StatusBar));
-    expect(all((e) => e.getAttribute("data-testid") === "kr-radar-stale")).toHaveLength(1);
-    expect(missingUtc().filter((x) => x.startsWith("title: "))).toEqual([]);
+    const stale = all((e) => e.getAttribute("data-testid") === "kr-radar-stale");
+    expect(stale).toHaveLength(1);
+    // 상태 바는 KST 만(사용자 결정 2026-09-30 — 계약 v5 §G13 의 KST · UTC 함께를 되돌림): 툴팁에도 UTC 를 붙이지 않는다
+    expect(stale[0].getAttribute("title")).toMatch(/최신 tm 첫 수집 (09-29 )?08:20:00 KST\)/);
+    expect(all((e) => /UTC/.test(e.getAttribute("title") ?? ""))).toEqual([]);
   });
   it("search results: the 'db' badge of an aircraft that is not live, and the not-live ship rows", async () => {
     const NOW = Date.parse("2026-09-29T01:00:00Z");

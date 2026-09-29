@@ -43,6 +43,22 @@ a { color: inherit; }
 .badge.warn { border-color: #7a5a1a; color: var(--color-warn); }
 .badge.bad { border-color: #7a2a2d; color: var(--color-bad); }
 .badge.est { border-color: #5a3f8c; color: var(--color-est); border-style: dashed; }
+/*
+  상태 바 칩(lib/statusbar · components/StatusBar): 이름 · 상태 모양(■ 정상 ▲ 주의 ✕ 경고 □ 모름) · 값 · 상태 낱말.
+  색만으로 말하지 않는다(모양과 낱말) — 값은 밝은 글자(읽기 쉽게), 모양 · 낱말 · 테두리가 상태 색. plain = 상태 판정이 없는 수(항공기 수).
+*/
+.chip { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border: 1px solid var(--color-line-2); white-space: nowrap; font-size: 11px; color: var(--color-fg-2); }
+.chip-k { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600; color: var(--color-fg-3); }
+.chip-m { font-size: 9px; line-height: 1; }
+.chip-v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-fg); }
+.chip-s { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; }
+.chip.ok { border-color: #1f6b48; }
+.chip.ok .chip-m { color: var(--color-ok); }
+.chip.warn { border-color: #7a5a1a; }
+.chip.warn .chip-m, .chip.warn .chip-s { color: var(--color-warn); }
+.chip.bad { border-color: #7a2a2d; }
+.chip.bad .chip-m, .chip.bad .chip-s { color: var(--color-bad); }
+.chip.unknown .chip-m, .chip.unknown .chip-s { color: var(--color-fg-3); }
 input, select { background: var(--color-bg); border: 1px solid var(--color-line-2); color: var(--color-fg); padding: 4px 8px; font-size: 12px; }
 input:focus, select:focus { outline: 1px solid var(--color-accent); }
 /* 키보드 초점은 항상 보이게(2px, 1px 띄움). 마우스 클릭에는 표시하지 않는다(:focus-visible). */

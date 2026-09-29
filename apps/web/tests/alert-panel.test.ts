@@ -77,7 +77,8 @@ describe("status bar connection badge (R-09)", () => {
     expect(conn()).toBe("ok");
   });
   it("the region lag badge (NO DATA) is not the error colour during a normal first connection; real staleness and no data after a failed attempt stay red", () => {
-    const lag = () => /class="badge ([a-z]+)" data-testid="lag-badge"[^>]*>([^<]*)</.exec(renderToStaticMarkup(createElement(StatusBar))) ?? [];
+    // 칩(lib/statusbar): data-health = 색 · 모양, 값은 chip-v(사용자 요청 2026-09-30 상태 바 칩)
+    const lag = () => /data-health="([a-z]+)" data-testid="lag-badge".*?<span class="chip-v">([^<]*)</.exec(renderToStaticMarkup(createElement(StatusBar))) ?? [];
     setData({ conn: "connecting", reconnectAttempt: 0 });
     // 수정 전: feedLag 가 피드 없음을 stale 로 돌려 첫 로드부터 빨간 NO DATA(연결 배지는 이미 warn)
     expect(lag()[1]).toBe("warn");

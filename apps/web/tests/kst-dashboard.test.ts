@@ -15,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
 import * as T from "@/lib/time";
 import { unpairedKst } from "./helpers/dual-time";
-import { resetData, setData } from "@/lib/store";
+import { getData, resetData, setData } from "@/lib/store";
+import { detailRows, statusInput } from "@/lib/statusbar";
 import { useUi } from "@/lib/ui-store";
 import { StatusBar } from "@/components/StatusBar";
 import { AlertPanel } from "@/components/AlertPanel";
@@ -85,7 +86,7 @@ describe("dashboard components show KST first with UTC (the ISO original stays i
   beforeEach(() => resetData());
   afterEach(() => { resetData(); useUi.getState().setRadarSource("rainviewer"); });
 
-  it("status bar: region fetch time HH:MM:SS KST (title = original UTC); KMA latest tm HH:MM KST; KMA STALE title in KST", () => {
+  it("status bar (KST 만 — 사용자 결정 2026-09-30): region fetch time HH:MM:SS KST in the details; KMA latest tm HH:MM KST; KMA STALE title in KST", () => {
     const kr = {
       available: true, latest_tm: "202609290840", georeferenced: true, coordinates: null, legend: null,
       frames: [{ tm: "202609290840", obs_tm: "202609290840", fetched_at: "2026-09-28T23:41:00Z", echo_cells: 5, url: "/x" }],
@@ -93,15 +94,15 @@ describe("dashboard components show KST first with UTC (the ISO original stays i
     } as KrRadar;
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr, feeds: { region: { provider: "adsb_fi", fetched_at: "2026-09-28T23:41:14Z", lag_s: 2, stale: false, received_at: Date.now() }, global: null } });
     const html = renderToStaticMarkup(createElement(StatusBar));
-    const region = /<span[^>]*data-testid="region-source".*?<\/span><\/span>/.exec(html)![0];
-    expect(text(region)).toBe("regionadsb_fi · 08:41:14 KST · 09-28 23:41:14Z");
-    expect(region).toContain('title="원본 UTC 2026-09-28T23:41:14.000Z"');
-    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*최신 tm 첫 수집 09-29 08:20:00 KST/);
-    expect(text(html)).toContain("KMA 1f 08:40 KST · 09-28 23:40Z"); // 기상청 tm(KST) 과 같은 순간의 UTC
-    expect(unpairedKst(text(html))).toEqual([]);
+    // 오늘(KST 09-29)이 아닌 순간은 날짜와 함께 — 시계를 서버 시각으로 고정하지 않으므로 오늘이면 날짜가 없을 수 있다
+    const rows = () => { const now = Date.now(); return detailRows(statusInput(getData(), now, now)); };
+    expect(rows().find((r) => r.key === "region")!.source).toMatch(/^adsb_fi · 수집 (09-29 )?08:41:14 KST$/);
+    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*최신 tm 첫 수집 (09-29 )?08:20:00 KST/);
+    expect(rows().find((r) => r.key === "kma")!.value).toMatch(/^1f · 최신 tm (09-29 )?08:40 KST · /); // 기상청 tm 은 원래 KST
+    expect(text(html)).not.toContain("UTC");
     // 최신 tm 을 모르면 "—" 만 — "undefined:undefinedK" 가 아니다
     setData({ radarKr: { ...kr, latest_tm: null, meta: { fetched_at: null, stale: false } } });
-    expect(text(renderToStaticMarkup(createElement(StatusBar)))).toContain("KMA 1f —");
+    expect(rows().find((r) => r.key === "kma")!.value).toMatch(/^1f · 최신 tm — · /);
   });
 
   it("alert banner: received time in KST", () => {
@@ -242,14 +243,15 @@ describe("map tooltips and text helpers: compact KST · UTC", () => {
     expect(Object.fromEntries(tip.rows)).toMatchObject({ TIME: "09-29 08:41:14 KST · 09-28 23:41:14Z" });
     expect(tip.rows.map(([k]) => k)).not.toContain("TIME UTC");
   });
-  it("AIS gap badge: open and closed gaps as HH:MM KST · HH:MMZ; the tooltip keeps the original UTC", () => {
+  it("AIS gap badge (상태 바 — KST 만, 사용자 결정 2026-09-30): open gap with its running duration; a closed gap as duration + end time, the span in the tooltip", () => {
     const base = { connected: false, msgs_per_s: 0, lag_s: null, gap_open_since: null, last_gap: null } as never as Parameters<typeof aisGapBadge>[0] & object;
     const open = aisGapBadge({ ...base, gap_open_since: "2026-09-28T23:40:00Z" }, NOW)!;
-    expect(open.text).toBe("AIS 공백 08:40 KST · 09-28 23:40Z 부터 · 진행 중");
-    expect(open.title).toContain("AIS 수신이 09-29 08:40:00 KST · 09-28 23:40:00 UTC 부터 끊겨 있음(원본 UTC 2026-09-28T23:40:00.000Z)");
+    expect(open.text).toBe("AIS 공백 진행 중 1m 14s");
+    expect(open.title).toContain("AIS 수신이 08:40:00 KST 부터 끊겨 있음");
     const closed = aisGapBadge({ ...base, last_gap: { started_at: "2026-09-28T23:20:00Z", ended_at: "2026-09-28T23:25:00Z", reason: "keepalive" } }, NOW)!;
-    expect(closed.text).toBe("AIS 공백 08:20–08:25 KST · 09-28 23:20–23:25Z");
-    expect(closed.title).toContain("AIS 수신 공백 09-29 08:20:00 – 09-29 08:25:00 KST · 09-28 23:20:00 – 09-28 23:25:00 UTC (keepalive)");
+    expect(closed.text).toBe("AIS 공백 5m 00s · 08:25 KST 끝남");
+    expect(closed.title).toContain("AIS 수신 공백 5m 00s — 09-29 08:20:00 – 09-29 08:25:00 KST (keepalive)");
+    expect(`${open.title}${closed.title}`).not.toContain("UTC");
   });
   it("not-live text and saved times use the KST day", () => {
     const now = Date.parse("2026-09-29T01:00:00Z");
