@@ -3,7 +3,7 @@
 모든 외부 호출은 여기를 지나며, 호출 직전에 RateLimiter 허가(수집기 전체 + 호스트별 버킷, 우선순위)를 받는다.
 허가를 받은 뒤 보내기 직전에 호출자의 확인(before_send, 예: 운영자가 공급자를 껐는지)을 한 번 더 거친다 — 아니면 보내지 않는다(SendCancelled).
 429 응답은 그 호스트를 잠시 막는다(모든 호출자 공통) — Retry-After 가 있으면 따른다.
-시간 상한: httpx Timeout(읽기 8 s · 연결 4 s)은 단계마다라서, 조금씩 계속 보내는 응답은 끝나지 않을 수 있다. 그래서 보내기부터
+시간 상한: httpx Timeout(읽기 8 s · 연결 4 s — 호출자가 read_s 로 읽기 제한만 바꿀 수 있다)은 단계마다라서, 조금씩 계속 보내는 응답은 끝나지 않을 수 있다. 그래서 보내기부터
 본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
 속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
 """
@@ -23,6 +23,7 @@ from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_li
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
 DEFAULT_TOTAL_S = 30.0  # 요청 전체(보내기 ~ 본문 끝) 기본 상한. 관심 지역·KMA 는 호출자가 따로 준다(R-67).
+CONNECT_TIMEOUT_S = 4.0
 
 ALLOWED_HOSTS = frozenset(
     {
@@ -95,7 +96,7 @@ class HttpClient:
     def __init__(self, limiter: RateLimiter | None = None) -> None:
         self.limiter = limiter or default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps)
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(settings.http_timeout_s, connect=4.0),
+            timeout=httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S),
             follow_redirects=False,
             headers={"User-Agent": settings.http_user_agent, "Accept": "application/json"},
             http2=False,
@@ -115,10 +116,13 @@ class HttpClient:
         wait_s: float = DEFAULT_WAIT_S,
         before_send: BeforeSend | None = None,
         total_s: float = DEFAULT_TOTAL_S,
+        read_s: float | None = None,
     ) -> FetchResponse:
-        return await self._request(
-            "GET", url, priority=priority, wait_s=wait_s, before_send=before_send, total_s=total_s, headers=headers, params=params
-        )
+        """read_s: 이 요청만의 읽기 제한(청크 사이, 초). 없으면 기본(settings.http_timeout_s). 연결 제한·전체 상한(total_s)은 그대로."""
+        kw: dict = {"headers": headers, "params": params}
+        if read_s is not None:
+            kw["timeout"] = httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S, read=read_s)
+        return await self._request("GET", url, priority=priority, wait_s=wait_s, before_send=before_send, total_s=total_s, **kw)
 
     async def post_form(self, url: str, data: dict[str, str]) -> FetchResponse:
         return await self._request(
