@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # 다른 경계(KST 자정 · 지난 24시간)로 셀 때 두 UTC 날의 몫이 그 하루에 들어갈 수 있다 — 어느 경계로 세어도 지키는 것은 Redis 시간 창이다:
     # 해양수산부 두 API(portmis · mof_grid4)는 함께 세는 budget:mof:h:*(시간당 390 × 창 25개 = 9,750 ≤ 10,000 — 한도가 기관 단위로 묶여 있더라도,
     # providers/data_go_kr.MOF_*), 해양교통안전공단은 budget:komsa_traffic:h:*(15 × 25 = 375 ≤ 500)
-    budget_portmis: int = 3000  # ADR-022: 한국 항만 입출항 — 선박 하나 조회 = 항만청 10곳 × 쪽 수
+    budget_portmis: int = 3000  # ADR-022 개정: 입출항 색인 — 계산 하루 약 1,450회(꼬리 갱신 · 다시 받기) + 처음 채우기 약 430회
     budget_komsa_traffic: int = 400  # ADR-023: 실시간 해양교통정보(5분 주기 288 + 여유)
     budget_mof_grid4: int = 6000  # ADR-023: 격자 기하(모르는 칸마다 한 번)
     opensky_reserve_credits: int = 400  # OpenSky 가 알려 준 남은 크레딧이 이 아래면 UTC 자정까지 OpenSky 호출 중단
