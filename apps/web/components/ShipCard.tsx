@@ -15,6 +15,7 @@ import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
 import { ShipTable } from "./ShipTable";
 import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
+import { PortCallsSection } from "./PortCallsSection";
 
 /**
  * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
@@ -174,6 +175,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
             <span className="shrink-0 text-fg-3" title={title}>{k}</span><span className="text-right">{val}</span>
           </div>
         ))}
+        {/* ADR-022: 호출부호로 조회한 한국 항만 입출항(WS ship_selected.port_calls — 수집기 조회 결과가 오면 바뀐다) */}
+        <PortCallsSection calls={live?.port_calls ?? null} aisName={name} />
         <div className="mt-2" data-testid="ship-track-info">
           <div className="mb-0.5 flex items-center justify-between gap-2">
             <span className="label normal-case!">항적 · 최근 {hours} h</span>

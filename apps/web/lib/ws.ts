@@ -606,7 +606,7 @@ export class WakelineWsClient {
       }
       case "ship_selected":
         if (m.mmsi !== this.selectedShip) break; // 이전 선택에 대한 늦은 응답
-        setData({ shipSelected: { mmsi: m.mmsi, state: m.state, static: m.static, destination_info: m.destination_info, received_at: now } });
+        setData({ shipSelected: { mmsi: m.mmsi, state: m.state, static: m.static, destination_info: m.destination_info, port_calls: m.port_calls, received_at: now } });
         break;
       case "ping":
         this.raw({ type: "pong" });
