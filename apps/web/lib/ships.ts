@@ -117,6 +117,14 @@ export interface ShipStatic {
 }
 
 /**
+ * 정적 정보의 출처(계약 v5 §G17 — WS ship_selected.static_source · REST /ships/{mmsi} static_source):
+ * live = api 메모리(실시간 선박 스트림에서 받은 값) · stored = 메모리에 없어 DB 에 저장된 마지막 AIS 정적 보고(실시간 값이 아님) ·
+ * none = 메모리에도 DB 에도 없음 · stored_unavailable = 메모리에 없고 DB 를 읽지 못함(저장돼 있는지 모름). REST 는 live · stored 만.
+ */
+export const STATIC_SOURCES = ["live", "stored", "none", "stored_unavailable"] as const;
+export type StaticSource = (typeof STATIC_SOURCES)[number];
+
+/**
  * ships_grid 칸. counts = 선종별 수(계약 v5 §B2 다섯째 원소, 순서 = SHIP_CATEGORIES = Java ShipCategory 선언 순서).
  * 구 서버(네 원소 칸)이거나 모양·합이 맞지 않으면 null — 선종 필터를 적용할 수 없다(지어내지 않는다).
  */

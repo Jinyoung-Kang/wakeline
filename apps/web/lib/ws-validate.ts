@@ -5,7 +5,8 @@
  *   1) 메시지를 버린다({kind:"invalid"} — lib/ws.ts 가 보고하고 그 종류에 맞게 다시 받는다): 적용에 꼭 필요한 값 — type · seq/sseq · 원소 배열 ·
  *      알림 version · SIGMET collection · 레이더 host/generated/past · selected hex/prediction · ship_selected mmsi · error code · status 의 모든 값.
  *   2) 원소를 버린다: 배열 원소(항공기 · 선박 · 알림 · 배치 항목 · SIGMET · 레이더 프레임 · 격자 칸 · 삭제 목록)와 따로 버릴 수 있는 묶음
- *      (selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info/port_calls · 스냅샷 sources.region/global · 격자 칸 선종별 수).
+ *      (selected.state/route · demand.hot/focus · ship_selected.state/static/static_source/static_updated_at/destination_info/port_calls ·
+ *      스냅샷 sources.region/global · 격자 칸 선종별 수).
  *   3) 그 값만 모름(null)으로: 화면이 참고로만 쓰는 값 — welcome 의 값 전부 · 메시지의 v/ts/fetched_at/provider/computed_at/sigmets_version ·
  *      ships_grid cell_deg/capped · error title/detail.
  * - 스키마보다 너그러운 곳은 "모름" 뿐이다: 없는 키 · null 값, 모르는 키(보지 않는다), 네 원소 격자 칸(구 서버 — 선종별 수 없음).
@@ -21,8 +22,8 @@ import {
 } from "./portcalls";
 import { parseRoute, ROUTE_STATUSES, type RouteInfo } from "./route";
 import {
-  DEST_KINDS, isMmsi, parseDestinationInfo, parseGridCellsCounted, parseShipLite, parseShipState, parseShipStatic, SHIP_CATEGORIES,
-  type DestinationInfo, type ShipGridCell, type ShipLite, type ShipState, type ShipStatic,
+  DEST_KINDS, isMmsi, parseDestinationInfo, parseGridCellsCounted, parseShipLite, parseShipState, parseShipStatic, SHIP_CATEGORIES, STATIC_SOURCES,
+  type DestinationInfo, type ShipGridCell, type ShipLite, type ShipState, type ShipStatic, type StaticSource,
 } from "./ships";
 import type { AircraftState, Alert, PredictionReason, PublicStatus, RadarFrames, SigmetCollection, SourceInfo } from "./types";
 
@@ -48,8 +49,12 @@ export interface ShipsSnapshotMsg { type: "ships_snapshot"; sseq: number; ts: st
 export interface ShipsDiffMsg { type: "ships_diff"; sseq: number; ts: string | null; upsert: ShipLite[]; remove: string[] }
 export interface ShipsGridMsg { type: "ships_grid"; ts: string | null; cell_deg: number | null; capped: true | null; cells: ShipGridCell[] }
 export interface ShipSelectedMsg {
-  type: "ship_selected"; mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null;
-  port_calls: PortCallsInfo | null;
+  type: "ship_selected"; mmsi: string; state: ShipState | null; static: ShipStatic | null;
+  /** 계약 v5 §G17 static 의 출처 — 모르거나 static 과 어긋나면 null */
+  static_source: StaticSource | null;
+  /** static_source 가 stored 일 때만: 저장 행의 updated_at(이 내용이 담긴 첫 메시지의 수신 시각) */
+  static_updated_at: string | null;
+  destination_info: DestinationInfo | null; port_calls: PortCallsInfo | null;
 }
 export type ServerMsg = WelcomeMsg | SnapshotMsg | DiffMsg | AlertsMsg | AlertsBatchMsg | SelectedMsg | ErrorMsg | DemandMsg | SigmetsMsg
   | RadarMsg | StatusMsg | PingMsg | ShipsSnapshotMsg | ShipsDiffMsg | ShipsGridMsg | ShipSelectedMsg;
@@ -456,8 +461,15 @@ const VALIDATORS: Record<ServerType, (m: Obj, d: Drops) => ServerMsg> = {
     const dest = part<Obj>(m, "destination_info", DEST_INFO, d);
     // 한국 항만 입출항(ADR-022 개정): 묶음 하나 — 틀리면 통째로 버리고 센다(카드는 "—")
     const calls = part<Obj>(m, "port_calls", PORT_CALLS, d);
+    const stat = one("static", SHIP_STATIC, parseShipStatic);
+    // 정적 정보의 출처(계약 v5 §G17 — 스키마 anyOf): live · stored 는 static 이 있을 때만, 시각은 stored 일 때만. 어긋나면 그 값만 모름으로 두고 센다 —
+    // 저장값에 실시간이라는 표시를 붙이거나 없는 정적 정보에 출처를 붙이지 않는다. 시각이 static.updated_at 과 같은지는 보지 않는다(api 시험 · contract_check)
+    let source = part<StaticSource>(m, "static_source", oneOf(...STATIC_SOURCES), d);
+    if (source != null && (stat != null) !== (source === "live" || source === "stored")) { d.drop("static_source"); source = null; }
+    let storedAt = part<string>(m, "static_updated_at", TIME, d);
+    if (storedAt != null && source !== "stored") { d.drop("static_updated_at"); storedAt = null; }
     return {
-      type: "ship_selected", mmsi, state: one("state", SHIP_STATE, parseShipState), static: one("static", SHIP_STATIC, parseShipStatic),
+      type: "ship_selected", mmsi, state: one("state", SHIP_STATE, parseShipState), static: stat, static_source: source, static_updated_at: storedAt,
       destination_info: dest ? parseDestinationInfo(dest) : null, port_calls: calls ? parsePortCalls(calls) : null,
     };
   },

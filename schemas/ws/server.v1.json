@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://wakeline.invalid/schemas/ws/server.v1.json",
   "title": "WS 프로토콜 v1 — 서버 → 클라이언트 메시지 17종(계약 v5 §E1 · ADR-008 · ADR-020)",
-  "description": "api(/ws/v1)가 보내는 JSON 텍스트 메시지 하나. type 으로 나뉜 oneOf. 직렬화는 snake_case · non_null(값이 null 인 키는 보내지 않는다 = 모름) — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info/port_calls · SIGMET geometry)는 키가 항상 있다. 항공기·선박 필드 제약은 schemas/aircraft_state.v1.json · ship_state.v1.json · ship_static.v1.json 과 같다(null 제외 — api 시험이 비교한다). 검증: api WsSchemaContractTest(networknt) · tools/contract_check.py(fixture) · 웹 lib/ws-validate.ts(손으로 쓴 같은 규칙 — fixture 시험으로 묶는다).",
+  "description": "api(/ws/v1)가 보내는 JSON 텍스트 메시지 하나. type 으로 나뉜 oneOf. 직렬화는 snake_case · non_null(값이 null 인 키는 보내지 않는다 = 모름) — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected.state/static/static_source/static_updated_at/destination_info/port_calls · SIGMET geometry)는 키가 항상 있다. 항공기·선박 필드 제약은 schemas/aircraft_state.v1.json · ship_state.v1.json · ship_static.v1.json 과 같다(null 제외 — api 시험이 비교한다). 검증: api WsSchemaContractTest(networknt) · tools/contract_check.py(fixture) · 웹 lib/ws-validate.ts(손으로 쓴 같은 규칙 — fixture 시험으로 묶는다).",
   "type": "object",
   "required": ["type"],
   "properties": {
@@ -769,15 +769,43 @@
       }
     },
     "ship_selected": {
-      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 입출항 색인에서 찾은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐).",
+      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022 · 계약 v5 §G17): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). static_source 는 static 의 출처 — live(api 메모리: 선박 스트림) · stored(메모리에 없어 DB ship 표의 마지막 저장 정적 보고를 실었다 — 메모리에 넣지 않는다) · none(메모리에도 DB 에도 없다) · stored_unavailable(메모리에 없고 DB 를 읽지 못했다 — 저장돼 있는지 모름). null 은 저장 정적 보고를 읽는 쪽이 없는 구성(시험)에서 메모리에 없을 때뿐. static_updated_at 은 stored 일 때만: 저장 행의 updated_at = 이 내용이 마지막으로 바뀐 메시지의 aisstream 수신 시각(static.updated_at 과 같다 — 같은 내용의 재수신은 저장하지 않으므로 마지막 수신 시각이 아니다). 세 키 사이의 규칙은 아래 anyOf(같은 값인지는 api 시험 · contract_check 가 본다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 입출항 색인에서 찾은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐) — stored 이면 저장된 호출부호로 찾는다.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "mmsi", "state", "static", "destination_info", "port_calls"],
+      "required": ["type", "mmsi", "state", "static", "static_source", "static_updated_at", "destination_info", "port_calls"],
+      "anyOf": [
+        {
+          "description": "live — 메모리 정적 정보",
+          "properties": {
+            "static": { "$ref": "#/$defs/ship_static" },
+            "static_source": { "const": "live" },
+            "static_updated_at": { "type": "null" }
+          }
+        },
+        {
+          "description": "stored — DB 의 마지막 저장 정적 보고와 그 행의 updated_at",
+          "properties": {
+            "static": { "$ref": "#/$defs/ship_static" },
+            "static_source": { "const": "stored" },
+            "static_updated_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$" }
+          }
+        },
+        {
+          "description": "정적 정보 없음 — none · stored_unavailable · 모름(null: 읽는 쪽이 없는 구성)",
+          "properties": {
+            "static": { "type": "null" },
+            "static_source": { "enum": ["none", "stored_unavailable", null] },
+            "static_updated_at": { "type": "null" }
+          }
+        }
+      ],
       "properties": {
         "type": { "const": "ship_selected" },
         "mmsi": { "$ref": "#/$defs/mmsi" },
         "state": { "anyOf": [ { "$ref": "#/$defs/ship_state" }, { "type": "null" } ] },
         "static": { "anyOf": [ { "$ref": "#/$defs/ship_static" }, { "type": "null" } ] },
+        "static_source": { "description": "제약은 위 anyOf 가지마다(static 과 함께)" },
+        "static_updated_at": { "description": "제약은 위 anyOf 가지마다(static_source 가 stored 일 때만 시각)" },
         "destination_info": {
           "anyOf": [
             {

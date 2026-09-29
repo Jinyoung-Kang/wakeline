@@ -5,6 +5,7 @@ import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.Receipt;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
@@ -313,6 +314,8 @@ class ShipFanoutTest {
             assertThat(s1.path("static").path("name").asString()).isEqualTo("HANJIN BUSAN");
             assertThat(s1.path("static").path("eta_minute").asInt()).isEqualTo(30);
             assertThat(s1.path("static").path("updated_at").asString()).isNotBlank();
+            assertThat(s1.path("static_source").asString()).as("memory static — live").isEqualTo("live");
+            assertThat(s1.get("static_updated_at").isNull()).as("the stored time is only for stored statics (key kept)").isTrue();
 
             publish(k, List.of(pos("440000002", 35.3, 129.2, T.plusSeconds(10))), List.of());   // 다른 선박 → 없음
             assertThat(ofType(f, "ship_selected")).hasSize(1);
@@ -337,6 +340,7 @@ class ShipFanoutTest {
             JsonNode unknown = ofType(f, "ship_selected").getLast();
             assertThat(unknown.get("state").isNull()).isTrue();
             assertThat(unknown.get("static").isNull()).isTrue();
+            assertThat(unknown.get("static_source").isNull()).as("no stored-static reader wired — unknown, not 'none'").isTrue();
 
             // 선택 해제: 응답 없음, 이후 변경에도 없음
             int n = ofType(f, "ship_selected").size();
@@ -400,6 +404,133 @@ class ShipFanoutTest {
             JsonNode un = ofType(f, "ship_selected").getLast().path("port_calls");
             assertThat(un.path("status").asString() + "/" + un.path("call_sign_state").asString()).isEqualTo("no_call_sign/unusable");
             assertThat(index.queries).as("the index is read only for usable call signs").allMatch(q -> q.startsWith("D7AB "));
+        }
+    }
+
+    /** 저장 정적 보고 가짜: MMSI → 정적 정보(없으면 null), fail 이면 DB 장애. 몇 번 읽었는지 센다. */
+    static final class FakeStored implements StoredStaticReader.Source {
+        final Map<String, ShipStatic> rows = new HashMap<>();
+        volatile RuntimeException fail;
+        final List<String> reads = new ArrayList<>();
+
+        @Override public ShipStatic find(String mmsi) {
+            reads.add(mmsi);
+            if (fail != null) throw fail;
+            return rows.get(mmsi);
+        }
+    }
+
+    /**
+     * static-fallback(계약 v5 §G17) 재현 · 고침: api 재시작 뒤 메모리(ShipStore)에 정적 정보가 없는 실시간 선박을 고르면 DB 의 마지막 저장 정적 보고를
+     * stored 로 밝혀 싣고(static_updated_at = 저장 행의 updated_at), 입출항은 그 호출부호로 찾는다. 저장값은 메모리에 넣지 않는다(지도 목록의 ShipLite 에도
+     * 없다). 한 선택을 되풀이해 다시 계산해도(선박 변화 · 주기 다시 보기) DB 는 캐시 동안 한 번 — 같은 값이면 다시 보내지 않는다. 스트림에 정적 보고가
+     * 다시 오면 live 로 바뀌고 DB 는 더 읽지 않는다.
+     */
+    @Test void selectShip_withoutAStaticInMemory_usesTheStoredReport_markedStored_neverMergedIntoTheStore() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+            FakeStored db = new FakeStored();
+            Instant storedAt = T.minusSeconds(5 * 3600); // 스트림 보존(약 2.5 h)보다 오래된 정적 보고
+            ShipStatic kept = new ShipStatic("440000021", "AZAMARA PURSUIT", "V7A3884", null, 60, null, null, null, null, null, "KRPUS", null, null, null,
+                    null, storedAt, "aisstream");
+            db.rows.put("440000021", kept);
+            k.shipFanout.setStoredStaticSource(new StoredStaticReader(db, clock::get, k.meters)::lookup);
+            PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
+            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, clock::get)::forStatic);
+            publish(k, List.of(pos("440000021", 35.1, 129.1, T)), List.of()); // 위치만(재시작 뒤 스트림 보존 창에 정적 보고가 없다)
+            FakeWsSession f = session(k, "s", BUSAN, true);
+            assertThat(ofType(f, "ships_snapshot").getLast().path("ships").get(0).has("name")).as("the map list stays live-only").isFalse();
+
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000021\"}");
+            JsonNode sel = ofType(f, "ship_selected").getLast();
+            assertThat(sel.path("state").path("lat").asDouble()).isEqualTo(35.1);
+            assertThat(sel.path("static").path("name").asString()).isEqualTo("AZAMARA PURSUIT");
+            assertThat(sel.path("static").path("call_sign").asString()).isEqualTo("V7A3884");
+            assertThat(sel.path("static_source").asString()).isEqualTo("stored");
+            assertThat(sel.path("static_updated_at").asString()).isEqualTo(storedAt.toString()).isEqualTo(sel.path("static").path("updated_at").asString());
+            assertThat(sel.path("destination_info").path("raw").asString()).as("destination of the stored report").isEqualTo("KRPUS");
+            assertThat(sel.path("port_calls").path("call_sign").asString()).as("port calls use the stored call sign").isEqualTo("V7A3884");
+            assertThat(sel.path("port_calls").path("status").asString()).isNotEqualTo("no_call_sign");
+            // 메모리에 섞지 않는다
+            assertThat(k.ships.staticOf("440000021")).isNull();
+            assertThat(k.ships.view().get("440000021").stat()).isNull();
+            assertThat(db.reads).containsExactly("440000021");
+
+            // 되풀이 계산: 선박 이동(보낸다 — state 가 바뀜) · 주기 다시 보기(같은 값 — 보내지 않는다). DB 는 캐시 동안 더 읽지 않는다
+            publish(k, List.of(pos("440000021", 35.2, 129.1, T.plusSeconds(10))), List.of());
+            k.shipFanout.refreshSelected();
+            assertThat(ofType(f, "ship_selected")).hasSize(2);
+            assertThat(ofType(f, "ship_selected").getLast().path("static_source").asString()).isEqualTo("stored");
+            assertThat(db.reads).as("one DB read per cache period").hasSize(1);
+            clock.addAndGet(StoredStaticReader.TTL_MS);
+            k.shipFanout.refreshSelected(); // 캐시가 지나 다시 읽었지만 같은 값 — 보내지 않는다
+            assertThat(db.reads).hasSize(2);
+            assertThat(ofType(f, "ship_selected")).hasSize(2);
+            assertThat(ofType(f, "ships_diff").getLast().path("upsert").get(0).has("name")).as("still live-only on the map").isFalse();
+
+            // 스트림에 정적 보고가 다시 왔다 → live(메모리 값 · 시각 없음), DB 는 더 읽지 않는다
+            publish(k, List.of(), List.of(stat("440000021", "AZAMARA PURSUIT", 60)));
+            JsonNode live = ofType(f, "ship_selected").getLast();
+            assertThat(ofType(f, "ship_selected")).hasSize(3);
+            assertThat(live.path("static_source").asString()).isEqualTo("live");
+            assertThat(live.get("static_updated_at").isNull()).isTrue();
+            assertThat(live.path("static").path("call_sign").asString()).isEqualTo("D7AB");
+            clock.addAndGet(StoredStaticReader.TTL_MS);
+            k.shipFanout.refreshSelected();
+            assertThat(db.reads).hasSize(2);
+        }
+    }
+
+    /**
+     * 저장 정적 보고를 읽지 못함(DB 장애 · 시간 초과): static null · static_source stored_unavailable(저장돼 있는지 모름 — none 이 아니다) ·
+     * 입출항 no_call_sign/not_received. 세션은 그대로다. 실패는 짧게만 기억한다({@link StoredStaticReader#ERROR_TTL_MS}) — DB 가 돌아오면 주기 다시 보기가
+     * 저장값을 보낸다. DB 에도 없으면 none.
+     */
+    @Test void selectShip_storedReadFails_staticNullStoredUnavailable_noCallSign_thenRecovers() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+            FakeStored db = new FakeStored();
+            db.rows.put("440000022", new ShipStatic("440000022", "STORED TWO", "D7AH", null, 70, null, null, null, null, null, null, null, null, null,
+                    null, T.minusSeconds(9_000), "aisstream"));
+            db.fail = new org.springframework.dao.QueryTimeoutException("statement timeout");
+            k.shipFanout.setStoredStaticSource(new StoredStaticReader(db, clock::get, k.meters)::lookup);
+            PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
+            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, clock::get)::forStatic);
+            publish(k, List.of(pos("440000022", 35.1, 129.1, T), pos("440000023", 35.2, 129.2, T)), List.of());
+            FakeWsSession f = session(k, "s", BUSAN, true);
+
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000022\"}");
+            JsonNode down = ofType(f, "ship_selected").getLast();
+            assertThat(down.path("state").path("lat").asDouble()).as("the live state still goes out").isEqualTo(35.1);
+            assertThat(down.get("static").isNull()).isTrue();
+            assertThat(down.path("static_source").asString()).isEqualTo("stored_unavailable");
+            assertThat(down.get("static_updated_at").isNull()).isTrue();
+            assertThat(down.path("port_calls").path("status").asString() + "/" + down.path("port_calls").path("call_sign_state").asString())
+                    .isEqualTo("no_call_sign/not_received");
+            assertThat(f.open).isTrue();
+            assertThat(k.meters.counter("wakeline_stored_static_errors_total").count()).isEqualTo(1.0);
+
+            k.shipFanout.refreshSelected(); // 실패 기억 안 — 다시 읽지 않고 같은 값이라 보내지 않는다
+            assertThat(db.reads).hasSize(1);
+            assertThat(ofType(f, "ship_selected")).hasSize(1);
+            db.fail = null; // DB 가 돌아왔다
+            clock.addAndGet(StoredStaticReader.ERROR_TTL_MS);
+            k.shipFanout.refreshSelected();
+            JsonNode back = ofType(f, "ship_selected").getLast();
+            assertThat(ofType(f, "ship_selected")).hasSize(2);
+            assertThat(back.path("static_source").asString()).isEqualTo("stored");
+            assertThat(back.path("static").path("call_sign").asString()).isEqualTo("D7AH");
+            assertThat(back.path("port_calls").path("call_sign").asString()).isEqualTo("D7AH");
+
+            // DB 에도 없는 선박(위치로만 만든 행 · 행 없음) → none
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000023\"}");
+            JsonNode none = ofType(f, "ship_selected").getLast();
+            assertThat(none.get("static").isNull()).isTrue();
+            assertThat(none.path("static_source").asString()).isEqualTo("none");
+            assertThat(none.path("port_calls").path("call_sign_state").asString()).isEqualTo("not_received");
+            k.shipFanout.setStoredStaticSource(null); // 읽는 쪽을 뗀 구성 — 모름(null)
+            k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000023\"}");
+            assertThat(ofType(f, "ship_selected").getLast().get("static_source").isNull()).isTrue();
         }
     }
 
