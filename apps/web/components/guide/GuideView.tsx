@@ -305,16 +305,17 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 칩은 이름 · 상태 모양 · 핵심 수 하나(lag = 서버가 보고한 피드 지연, age = 마지막 수집 뒤 경과)입니다. 상태는 색과 함께 모양으로도 말합니다 —
                 {HEALTH_MARK.ok} 정상 · {HEALTH_MARK.warn} 주의 · {HEALTH_MARK.bad} 경고 · {HEALTH_MARK.unknown} 모름 — 정상이 아니면 STALE · 끊김 같은 낱말이 붙습니다.
                 창이 좁아 다 들어가지 않으면 정상 · 모름 칩만 뒤에서부터 상세로 옮기고 단추에 ‘+N’ 을 적습니다(주의 · 경고 칩은 줄에서 빼지 않습니다).
+                주의 · 경고 칩만으로도 폭이 모자라면(좁은 창에 경고가 많을 때) 잘라 내지 않고 둘째 줄로 넘어갑니다.
                 아래 ‘모양’의 N 과 한글 낱말은 자리 표시입니다(실제 값이 들어갑니다). 시각은 KST 입니다.</P>
               <Table label="상태 바 항목" head={["항목", "모양", "뜻"]} rows={[
                 ["연결", <span key="c" className="mono">WS open · WS paused · 탭 숨김 · WS connecting · retry N</span>, <>실시간 연결 상태. 열려 있어도 {RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 ‘수신 없음’, {RX_DEAD_MS / 1000} s 가 되면 다시 연결합니다. ‘paused · 탭 숨김’ 은 탭이 숨겨져 서버에 일시정지를 보낸 상태 — 그동안 화면 값은 멈추고, 탭이 보이면 처음 값부터 다시 받습니다.</>],
-                ["경고", <span key="b" className="mono">FIXTURE MODE · 형식 오류 · AIS 공백 진행 중 N</span>, "따로 붙는 경고(줄 앞쪽). 형식 오류 배지는 눌러서 무엇을 버렸는지 · 어떻게 다시 받는지 봅니다. AIS 공백은 진행 중인 길이를 셉니다."],
+                ["경고", <span key="b" className="mono">FIXTURE MODE · 형식 오류 · AIS 공백 진행 중 N · AIS 공백 n/m 구역 진행 중 N</span>, "따로 붙는 경고(줄 앞쪽). 형식 오류 배지는 눌러서 무엇을 버렸는지 · 어떻게 다시 받는지 봅니다. AIS 공백은 진행 중인 길이를 셉니다 — 일부 구역만 공백이면 가장 이른 구역부터."],
                 ["항공기 수", <span key="a" className="mono">aircraft N</span>, "지금 지도 영역 안의 항공기 수(STALE 포함). 레이어가 꺼져 있거나 아직 받지 않았으면 —."],
                 ["지역 · 전세계", <span key="r" className="mono">region {HEALTH_MARK.ok} lag Ns · world {HEALTH_MARK.ok} lag Ns</span>, <>서버가 보고한 지연. 지역 {REGION_STALE_S} s · 전세계 {GLOBAL_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA. 공급자 · 수집 시각은 상세.</>],
                 ["AIS", <span key="s" className="mono">AIS {HEALTH_MARK.ok} lag Ns · AIS {HEALTH_MARK.bad} 끊김 · 끊김 n/m 구역</span>, <>선박 스트림 연결과 지연({AIS_LAG_WARN_S} s 를 넘으면 주의). 초당 메시지는 상세.</>],
-                ["AIS 공백", <span key="p" className="mono">AIS 공백 N s · HH:MM KST 끝남</span>, <>끝난 공백은 길이와 끝난 시각 — 끝난 뒤 {AIS_GAP_SHOW_MS / 60_000}분까지 줄에, 그 뒤로는 상세에만. 1분이 안 되는 공백도 초로 적습니다.</>],
+                ["AIS 공백", <span key="p" className="mono">AIS 공백 N s · HH:MM KST 끝남</span>, <>끝난 공백은 길이와 끝난 시각 — 끝난 뒤 {AIS_GAP_SHOW_MS / 60_000}분까지 줄에(주의), 그 뒤로는 상세에만. 상세에서도 끝난 지 {AIS_GAP_SHOW_MS / 60_000}분이 지난 공백은 주의 표시 없이 기록으로만 보입니다. 1분이 안 되는 공백도 초로 적습니다.</>],
                 ["SIGMET · 레이더", <span key="g" className="mono">sigmet {HEALTH_MARK.ok} age Ns · radar {HEALTH_MARK.ok} age Ns · KMA {HEALTH_MARK.ok} age Nm</span>, <>마지막 수집 뒤 경과. SIGMET {SIGMET_STALE_S} s · RainViewer {RADAR_STALE_S} s(서버 기준과 같음) · 기상청 {KR_RADAR_STALE_S / 60}분을 넘으면 STALE. 기상청은 최신 프레임이 일부 합성이면 ‘일부 합성’.</>],
-                ["상세", <span key="d" className="mono">상세 +N ▾</span>, "눌러서(또는 Enter · Space) 표를 엽니다: 항목마다 상태 · 값 · 출처와 수집 시각 · 기준 — 공급자 · 초당 메시지 · 유효 SIGMET 수 · 레이더 프레임 수 · 기상청 최신 tm · 합성 N/M곳 · 엔진(폴리곤 수 · 주기) · 스냅샷 판 · 마지막 AIS 공백. Esc · 바깥 누르기 · 닫기로 닫습니다."],
+                ["상세", <span key="d" className="mono">상세 +N ▾</span>, "눌러서(또는 Enter · Space) 표를 엽니다: 항목마다 상태 · 값 · 출처와 수집 시각 · 기준 — 공급자 · 초당 메시지 · 유효 SIGMET 수 · 레이더 프레임 수 · 기상청 최신 tm · 합성 N/M곳 · 엔진(폴리곤 수 · 주기) · 스냅샷 판 · 마지막 AIS 공백. Esc(초점이 상세 표나 단추에 있을 때 — 초점은 단추로 돌아옵니다) · 바깥 누르기 · 닫기로 닫고, 초점이 밖으로 나가면(예: / 로 검색) 닫힙니다(초점은 옮겨 간 곳에 그대로 — 검색의 Esc 는 검색만 닫습니다)."],
               ]} />
             </Sec>
           </Sec>
