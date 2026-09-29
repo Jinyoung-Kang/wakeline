@@ -5,6 +5,8 @@
  * - 모르면 "—" 만(시간대 글자도 붙이지 않는다).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -280,5 +282,28 @@ describe("about page states the time basis", () => {
     expect(t).toContain("화면의 시각은 한국 표준시(KST, UTC+9)");
     expect(t).toContain("METAR · TAF · SIGMET 원문은 발표된 그대로(UTC");
     expect(t).toContain("통계의 날짜는 UTC 날짜");
+  });
+});
+
+describe("no screen code builds a UTC clock string any more", () => {
+  /** 화면 글자를 UTC 로 만들던 모양: "…Z`" 템플릿 · getUTC* 로 hh:mm · toISOString() 을 월-일/시각 자리로 자르기 */
+  const PATTERNS = [/\}Z`/, /p2\([^)]*getUTC/, /toISOString\(\)\.slice\((5|11)\b/, /toISOString\(\)\.replace\("T"/];
+  const root = new URL("..", import.meta.url).pathname;
+  const walk = (d: string): string[] => readdirSync(join(root, d)).flatMap((n) => {
+    const rel = join(d, n);
+    return statSync(join(root, rel)).isDirectory() ? walk(rel) : /\.(ts|tsx)$/.test(n) ? [rel] : [];
+  });
+  it("app/ · components/ · lib/ (lib/format.ts · lib/kst.ts are the formatters themselves)", () => {
+    const hits: string[] = [];
+    for (const f of ["app", "components", "lib"].flatMap(walk)) {
+      if (f === join("lib", "format.ts") || f === join("lib", "kst.ts")) continue;
+      readFileSync(join(root, f), "utf8").split("\n").forEach((line, i) => { if (PATTERNS.some((p) => p.test(line))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 120)}`); });
+    }
+    expect(hits).toEqual([]);
+  });
+  it("the UTC clock formatters are gone from lib/format (only the ISO original for tooltips / the log detail remains)", () => {
+    expect("fmtTime" in F).toBe(false);
+    expect("fmtClock" in F).toBe(false);
+    expect(F.fmtIso("2026-09-28T23:41:14Z")).toBe("2026-09-28T23:41:14.000Z");
   });
 });

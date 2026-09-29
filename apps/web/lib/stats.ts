@@ -30,7 +30,7 @@ function validDate(d: string): boolean {
   return t.toISOString().slice(0, 10) === d;
 }
 
-/** 통계 행의 날짜(UTC). 모르면 null */
+/** 통계 행의 날짜(UTC 날짜 — 집계 단위, KST 날짜로 옮기지 않는다). 모르면 null */
 export function statsDay(v: unknown): string | null {
   if (typeof v !== "string") return null;
   if (validDate(v)) return v;

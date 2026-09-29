@@ -134,25 +134,15 @@ function isoOf(v: string | number | null | undefined): string | null {
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
-/**
- * UTC 시각 "MM-DD HH:MM:SSZ"(예: 09-27 08:44:33Z). 날짜를 빼면 어제 METAR·감사 기록이 오늘 것처럼 보인다(GAP-26).
- * 숫자는 epoch ms.
- */
-export function fmtTime(v: string | number | null | undefined) {
-  const s = isoOf(v);
-  return s == null ? "—" : `${s.slice(5, 10)} ${s.slice(11, 19)}Z`;
-}
-/** UTC "HH:MM:SSZ" — 날짜가 자명한 곳(방금 받은 값 + 지연 배지가 옆에 있는 상태 바)에만. */
-export function fmtClock(v: string | number | null | undefined) {
-  const s = isoOf(v);
-  return s == null ? "—" : `${s.slice(11, 19)}Z`;
-}
-/** 전체 ISO(툴팁 title 용) */
+/** 원본 UTC ISO 전체("2026-09-28T23:41:14.906Z") — 화면에 UTC 라고 밝혀 나란히 보이는 자리(로그 상세)용. 모르면 "—" */
 export function fmtIso(v: string | number | null | undefined) {
   return isoOf(v) ?? "—";
 }
 
-// ---- 한국 표준시(KST) — 운영(/ops)·로그(/logs) 화면만(사용자 요청 2026-09-29). 항공 자료 화면(상황판·재생·통계·공항)은 위의 UTC 그대로 ----
+// ---- 한국 표준시(KST) — 모든 화면(사용자 요청 2026-09-29: 운영 · 로그 → 상황판 · 재생 · 통계 · 공항도) ----
+// 화면의 시각은 모두 KST 다(날짜를 빼면 어제 METAR·감사 기록이 오늘 것처럼 보인다 — 날짜 포함, GAP-26). UTC 시각 글자를 만드는 formatter 는 없앴다
+// (tests/kst-dashboard.test.ts 가 화면 코드에 UTC 시각 글자가 다시 생기지 않는지 본다). 바꾸지 않는 것: METAR · TAF · SIGMET 원문, 통계의 UTC 날짜,
+// api 요청 · 복사한 JSON 의 ISO(…Z), 툴팁의 "원본 UTC …".
 // 오프셋은 +09:00 고정(lib/kst — 1988년 뒤로 일광 절약 없음, tz 데이터베이스와 대조한 시험 있음). 숫자는 epoch ms.
 
 /** 표 칸의 KST "MM-DD HH:MM:SS"(예: 09-29 08:41:14) — 머리글이 "(KST)" 를 말하는 칸에만. 모르면 "—" */

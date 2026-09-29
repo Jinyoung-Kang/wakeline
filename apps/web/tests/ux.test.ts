@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  ageS, ALT_RAMP, CAT_COLORS, catSourceLabel, ceilingLabel, fmtClock, fmtDuration, fmtTime, HAZARD_COLORS, HAZARD_DEFAULT_COLOR, HAZARD_LEGEND,
+  ageS, ALT_RAMP, CAT_COLORS, catSourceLabel, ceilingLabel, fmtClockKst, fmtDuration, fmtTimeKstLabel, HAZARD_COLORS, HAZARD_DEFAULT_COLOR, HAZARD_LEGEND,
   hazardColor, isMetarStale, metarAgeS,
 } from "@/lib/format";
 import { ALT_COLOR_EXPR, AIRPORT_FILL_EXPR, coverageTileUrl, frameDisplay, HAZARD_COLOR_EXPR } from "@/lib/maplayers";
@@ -15,14 +15,14 @@ import type { SigmetProps } from "@/lib/types";
 const NOW = Date.parse("2026-09-27T09:00:00Z");
 
 describe("timestamps carry the date (GAP-26)", () => {
-  it("fmtTime is MM-DD HH:MM:SSZ; fmtClock is time only; unknown is —", () => {
-    expect(fmtTime("2026-09-27T08:44:33.912Z")).toBe("09-27 08:44:33Z");
-    expect(fmtTime("2026-09-26T23:59:59Z")).toBe("09-26 23:59:59Z");
-    expect(fmtTime(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 08:44:33Z");
-    expect(fmtClock("2026-09-27T08:44:33Z")).toBe("08:44:33Z");
-    expect(fmtTime(null)).toBe("—");
-    expect(fmtTime("garbage")).toBe("—");
-    expect(fmtTime("")).toBe("—");
+  it("times carry the date (now in KST — 사용자 요청 2026-09-29); the clock form is time only; unknown is —", () => {
+    expect(fmtTimeKstLabel("2026-09-27T08:44:33.912Z")).toBe("09-27 17:44:33 KST");
+    expect(fmtTimeKstLabel("2026-09-26T23:59:59Z")).toBe("09-27 08:59:59 KST"); // UTC 로는 전날
+    expect(fmtTimeKstLabel(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 17:44:33 KST");
+    expect(fmtClockKst("2026-09-27T08:44:33Z")).toBe("17:44:33 KST");
+    expect(fmtTimeKstLabel(null)).toBe("—");
+    expect(fmtTimeKstLabel("garbage")).toBe("—");
+    expect(fmtTimeKstLabel("")).toBe("—");
   });
   it("durations are compact and never negative", () => {
     expect(fmtDuration(42)).toBe("42s");

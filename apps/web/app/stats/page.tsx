@@ -33,7 +33,7 @@ export default function StatsPage() {
   const [agg, setAgg] = useState<Agg>({});
   /** 화면을 연 시각(서버 기준 추정) — 오늘·어제(UTC 날짜 — 집계 단위) 계산용 */
   const [openedAt] = useState(() => serverNowMs(Date.now()));
-  // 오늘은 아직 집계되지 않는다(매일 03:30 UTC 에 전날을 집계) — 기본·최대는 어제(UTC)
+  // 오늘은 아직 집계되지 않는다(매일 03:30 UTC = 12:30 KST 에 전날을 집계) — 기본·최대는 어제(UTC 날짜)
   const [day, setDay] = useState(() => yesterdayUtc(openedAt));
   /** 마지막 오류 — ApiError 면 요청 id 까지 보인다(계약 v5 §C8) */
   const [err, setErr] = useState<unknown>(null);

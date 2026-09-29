@@ -1,5 +1,5 @@
 /** 통계 차트 보조(순수 함수). value=null = 자료 없음(0 이 아니다 — GAP-17). */
-import { KST_OFFSET_MS } from "./kst";
+import { isoKst } from "./kst";
 
 /** full = 막대 툴팁 · 스크린리더 표에 쓸 전체 이름(없으면 label) */
 export interface ChartRow { label: string; value: number | null; full?: string }
@@ -36,7 +36,8 @@ export function hourlyRowsKst(items: Parameters<typeof hourlyRows>[0], day: stri
   const dayMs = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00Z`) : NaN;
   return hourlyRows(items).map((r, h) => {
     const kstH = String((h + 9) % 24).padStart(2, "0");
-    const date = Number.isFinite(dayMs) ? `${new Date(dayMs + h * 3600_000 + KST_OFFSET_MS).toISOString().slice(5, 10)} ` : "";
+    const kst = Number.isFinite(dayMs) ? isoKst(dayMs + h * 3600_000) : null;
+    const date = kst ? `${kst.slice(5, 10)} ` : "";
     return { label: kstH, value: r.value, full: `${date}${kstH}시 KST (UTC ${r.label}시)` };
   });
 }
@@ -45,9 +46,8 @@ export function hourlyRowsKst(items: Parameters<typeof hourlyRows>[0], day: stri
 export function utcDayInKst(day: string | null): string | null {
   const t = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00Z`) : NaN;
   if (!Number.isFinite(t)) return null;
-  const at = (ms: number) => new Date(ms + KST_OFFSET_MS).toISOString();
-  const a = at(t), b = at(t + 86_400_000 - 60_000);
-  return `KST ${a.slice(5, 10)} ${a.slice(11, 16)} – ${b.slice(5, 10)} ${b.slice(11, 16)}`;
+  const a = isoKst(t), b = isoKst(t + 86_400_000 - 60_000);
+  return a && b ? `KST ${a.slice(5, 10)} ${a.slice(11, 16)} – ${b.slice(5, 10)} ${b.slice(11, 16)}` : null;
 }
 
 // ---- 트래픽 범위(DH-10) ----
