@@ -134,8 +134,9 @@ class KomsaSchedule:
     """다음에 부를 시각(regDt + 주기 + 배운 발행 지연) · 물러나기 · 시간당 상한(메모리 60분 창 — Redis 시간 창은 작업이 따로 센다).
 
     발행 지연 배우기: 이른 호출(같은 regDt — unchanged) 뒤 새 regDt 를 받으면 그 regDt 의 지연은 (마지막 이른 호출 − regDt, 받은 때 − regDt] 안이다.
-    위쪽 끝(받은 때 − regDt)을 쓰고, 폭이 LEARN_SLACK_S 보다 넓으면 아래 끝 + LEARN_SLACK_S 로 좁힌다. 이른 호출 없이 한 번에 받은 주기는 추정을
-    DELAY_DECAY_S 씩 줄여 본다(늘리지 않는다). 첫 호출 · 실패 뒤 받은 regDt 의 나이는 지연이 아니다(그 regDt 가 언제 나왔는지 모른다) — 배우지 않는다.
+    위쪽 끝(받은 때 − regDt)을 쓰되 max(아래 끝, 지금 추정) + LEARN_SLACK_S 를 넘지 않게 좁히고(폭이 넓으면 위쪽 끝이 헐겁다), 지금 추정보다 줄이지는
+    않는다(이른 호출은 추정이 짧았다는 증거). 이른 호출 없이 받은 주기는 추정을 DELAY_DECAY_S 씩 줄여 보기만 한다 — 첫 호출 · 실패 뒤 받은 regDt 의
+    나이는 지연이 아니므로(그 regDt 가 언제 나왔는지 모른다) 추정을 늘리는 데 쓰지 않는다. 24시간 공급자 모형 시험: test_traffic_grid_job.
     """
 
     def __init__(self) -> None:
