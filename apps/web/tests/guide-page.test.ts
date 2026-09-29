@@ -280,6 +280,10 @@ describe("time examples", () => {
     const sec = /<section id="time"[\s\S]*?<\/section>/.exec(html)![0];
     // 표 칸 모양: KST 한 줄(머리글 "(KST)" — 화면 읽기에는 KST)
     expect(sec).toMatch(/<time dateTime="2026-09-29T14:22:11.000\+09:00" title="2026-09-29 14:22:11.000 KST" class="mono whitespace-nowrap">09-29 14:22:11<span class="sr-only"> KST<\/span><\/time>/);
+    // 한 시각은 줄바꿈하지 않는다 — 구간은 " – " 에서만(화면에서 "23:59 / KST" 로 갈라지던 것을 막는다)
+    expect(sec).toContain('<span class="whitespace-nowrap">09-28 00:00</span> – <span class="whitespace-nowrap">09-28 23:59 KST</span>');
+    expect(sec).toContain('<span class="whitespace-nowrap">09-28 09:00</span> – <span class="whitespace-nowrap">09-29 08:59 KST</span>');
+    expect(sec).toContain('<span class="mono whitespace-nowrap">2026-09-29 14:22:11.000 KST</span>');
     // 원문 토큰 밖에는 UTC 가 없다(설명서 전체)
     expect(htmlUtcLeaks(parseHtml(html))).toEqual([]);
   });

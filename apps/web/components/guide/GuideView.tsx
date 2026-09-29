@@ -45,6 +45,11 @@ const STATS_DAY_START = kstDayStartMs(STATS_DAY)!;
 /** 공급자 예산 날 예(수집기 예산 키의 날 — 매일 09:00 KST 에 새로 시작) */
 const BUDGET_DAY = "2026-09-28";
 const n0 = (n: number) => n.toLocaleString("en-US");
+/** 구간 글자 "a – b" — 쪽마다 줄바꿈 없이(좁은 칸에서는 " – " 에서만 바뀐다 — components/KstTime KstRange 와 같은 모양) */
+function RangeText({ text }: { text: string }) {
+  const [a, b] = text.split(" – ");
+  return b == null ? <span className="mono whitespace-nowrap">{a}</span> : <span className="mono"><span className="whitespace-nowrap">{a}</span> – <span className="whitespace-nowrap">{b}</span></span>;
+}
 
 /* 되풀이되는 요소의 모양은 globals.css 의 .g-* (설명서 블록) — 요소마다 긴 유틸리티 글자를 싣지 않는다(요청마다 렌더되는 화면) */
 function Kbd({ children }: { children: React.ReactNode }) {
@@ -423,11 +428,11 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               ["카드 · 문장", <KstTime key="i" v={EXAMPLE_AT} />, "날짜 · 초까지."],
               ["상태 바 · 지도 툴팁", <KstTime key="c" v={EXAMPLE_AT} date={false} seconds={false} />, "좁은 자리 — 분까지."],
               ["표 칸(머리글 “(KST)”)", <KstTime key="t" v={EXAMPLE_AT} variant="cell" />, "시간대는 머리글이 말합니다."],
-              ["마우스를 올리면", <span key="h" className="mono">{fmtTimeTitle(EXAMPLE_AT)}</span>, "연도 · ms 까지의 같은 순간."],
+              ["마우스를 올리면", <span key="h" className="mono whitespace-nowrap">{fmtTimeTitle(EXAMPLE_AT)}</span>, "연도 · ms 까지의 같은 순간."],
               [<span key="m">METAR 원문 <span className="mono" data-raw="bulletin">{metarToken ?? "—"}</span></span>, <KstTime key="m" v={METAR_AT} />, "원문 글자는 바꾸지 않습니다(일 · 시 · 분 + Z — 발표 형식) — 같은 순간을 KST 로 옆에 적습니다."],
               [<span key="k">기상청 tm <span className="mono">{KMA_TM}</span></span>, <KstTime key="k" v={kstWallMs(KMA_TM)} seconds={false} />, "기상청이 KST 로 준 값 그대로."],
-              [<span key="d">통계 날짜 <span className="mono">{STATS_DAY}</span>(KST 날짜)</span>, <span key="d" className="mono">{fmtKstRange(STATS_DAY_START, STATS_DAY_START + 86_400_000 - 60_000, { seconds: false })}</span>, "서버가 KST 날짜로 셉니다."],
-              ["공급자 예산 창", <span key="b" className="mono">{utcDayWindowKst(BUDGET_DAY) ?? "—"}</span>, "수집기 예산은 매일 09:00 KST 에 새로 시작 — 한 행 = 그 창(KST 날짜 하루가 아님)."],
+              [<span key="d">통계 날짜 <span className="mono">{STATS_DAY}</span>(KST 날짜)</span>, <RangeText key="d" text={fmtKstRange(STATS_DAY_START, STATS_DAY_START + 86_400_000 - 60_000, { seconds: false })} />, "서버가 KST 날짜로 셉니다."],
+              ["공급자 예산 창", <RangeText key="b" text={utcDayWindowKst(BUDGET_DAY) ?? "—"} />, "수집기 예산은 매일 09:00 KST 에 새로 시작 — 한 행 = 그 창(KST 날짜 하루가 아님)."],
               ["모르는 시각", <KstTime key="u" v={null} />, "— 만(시간대 글자 없음)."],
             ]} />
             <P>이 설명서의 스크린샷 캡처 시각도 같은 규칙입니다(예: <KstTime v={EXAMPLE_AT} year />).</P>
