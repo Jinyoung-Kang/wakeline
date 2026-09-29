@@ -168,6 +168,46 @@ async def test_r14_publisher_time_trim_on_real_redis_under_collector_acl(admin):
         await admin.execute_command("ACL", "DELUSER", user)
 
 
+async def test_restart_seeds_the_byte_budget_from_the_stream_on_real_redis_under_collector_acl(admin, monkeypatch):
+    """ADR-011 Redis 여유: 재시작한 Publisher 가 첫 XADD 전에 기존 항목을 되읽어(XREVRANGE 배타 경계 '(' 로 여러 쪽) 예산에 넣는다 —
+    수집기 ACL(+xrevrange)로 읽을 수 있고, 첫 발행 뒤 스트림 필드 길이 합이 예산 이하로 줄어든다."""
+    from wakeline_collector import publisher as pubmod
+    from wakeline_collector.publisher import SEED_PAGE, STREAM_AIRCRAFT, Publisher
+
+    budget = 200_000
+    monkeypatch.setitem(pubmod.STREAM_BUDGET_BYTES, STREAM_AIRCRAFT, budget)
+    user, pw = f"itest_col_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
+    await admin.execute_command(
+        "ACL",
+        "SETUSER",
+        user,
+        "reset",
+        "on",
+        f">{pw}",
+        *_start_sh_rules("COLLECTOR_KEYS", "PRODUCER_BASE", "COLLECTOR_CMDS"),
+        *(_start_sh_value(v) for v in ("COLLECTOR_SEL_SET", "COLLECTOR_SEL_DEL", "COLLECTOR_SEL_EXPIRE")),
+    )
+    kw = admin.connection_pool.connection_kwargs
+    col = Redis(host=kw["host"], port=kw["port"], username=user, password=pw, decode_responses=True)
+    await admin.delete(STREAM_AIRCRAFT)
+    try:
+        n_before = 3 * SEED_PAGE + 5  # 되읽기가 여러 쪽을 넘긴다
+        for _ in range(n_before):  # 재시작 전 발행자가 남긴 창 안 항목 — 합계가 예산의 두 배 남짓
+            await admin.xadd(STREAM_AIRCRAFT, {"payload": "x" * 8_000})
+        before = sum(len(k) + len(v) for _sid, f in await admin.xrange(STREAM_AIRCRAFT) for k, v in f.items())
+        assert before > 2 * budget
+        p = Publisher(col)  # type: ignore[arg-type]
+        assert await p.publish(STREAM_AIRCRAFT, {"payload": "y" * 8_000})
+        rows = await admin.xrange(STREAM_AIRCRAFT)
+        after = sum(len(k) + len(v) for _sid, f in rows for k, v in f.items())
+        assert after <= budget + 8_007, after  # MAXLEN ~ 은 노드(8 KB 항목은 거의 한 노드 한 항목) 단위라 한 항목 남짓 여유
+        assert p.budget_trims[STREAM_AIRCRAFT] == 1 and rows[-1][1]["payload"][0] == "y"
+    finally:
+        await admin.delete(STREAM_AIRCRAFT)
+        await col.aclose()
+        await admin.execute_command("ACL", "DELUSER", user)
+
+
 # ---- 계약 v5 §C2: 로그 싱크의 파이프라인 XADD(MAXLEN ~) · 권한 거부 때의 백오프 ------------------------------------------------
 async def test_v5_log_sink_pipeline_xadd_on_real_redis(admin):
     """실 redis.asyncio 파이프라인으로 XADD wakeline:logs MAXLEN ~ 3000 * e <json> — 가짜 Redis 가 흉내 내지 못하는 명령 모양 확인."""

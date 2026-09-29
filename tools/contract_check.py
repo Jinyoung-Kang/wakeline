@@ -582,6 +582,8 @@ def check_ships(env_v: Draft202012Validator) -> int:
             bad_status.append("last_msg_at != max")
         if status["bbox"] != "|".join(scopes):
             bad_status.append("bbox")
+    # 필드 계약(api ops/pipeline · 웹 PIPELINE 보존 창): 선박 스트림의 시간 트림 목표(초)·바이트 예산 — 정수 문자열
+    bad_status += [k for k in ("stream_retention_s", "stream_budget_bytes") if not str(status.get(k, "")).isdigit()]
     print(
         f"{'FAIL' if bad_status else 'ok  '} ais status shards/aggregates"
         + (f": {bad_status}" if bad_status else f": {len(view or [])} shards")

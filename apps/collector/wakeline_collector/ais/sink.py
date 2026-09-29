@@ -31,7 +31,15 @@ from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.logsink import sink_metrics
 from wakeline_collector.masking import mask
-from wakeline_collector.publisher import STREAM_BUDGET_BYTES, STREAM_RETENTION_S, STREAM_SHIPS, Publisher, StreamTrim, _size
+from wakeline_collector.publisher import (
+    STREAM_BUDGET_BYTES,
+    STREAM_RETENTION_S,
+    STREAM_SHIPS,
+    Publisher,
+    StreamTrim,
+    _size,
+    limit_fields,
+)
 
 log = logging.getLogger("ais.sink")
 
@@ -253,6 +261,8 @@ class AisSink:
             "last_publish_at": _iso(self.last_publish_at),
             "publish_errors": str(self.publish_errors),
             "stream_budget_trims": str(self._trim.budget_trims),  # R-14: 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수
+            # 선박 스트림의 보존 창 목표(초)·바이트 예산 — 이 sink 가 실제로 거는 설정값(api 가 첫 항목 나이와 견준다)
+            **limit_fields((self._trim.retention_s, self._trim.budget_bytes)),
             **self._log_metrics(),  # 계약 v5 §C2: log_sent · log_dropped · log_suppressed(로그 싱크, 기동 뒤 누계)
             "updated_at": iso_ms(self._wall()),
         }

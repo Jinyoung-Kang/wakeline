@@ -137,6 +137,144 @@ async def test_r14_byte_budget_bounds_memory_when_the_rate_is_unexpectedly_high(
     assert p.budget_trims[STREAM_AIRCRAFT] > 0  # 예산이 잘랐다는 사실을 셀 수 있다(heartbeat 로 노출)
 
 
+def _stream_bytes(r: FakeRedis, stream: str) -> int:
+    return sum(len(k) + len(v) for _sid, f in r.streams.get(stream, []) for k, v in f.items())
+
+
+async def test_restart_counts_entries_already_in_the_stream_toward_the_byte_budget(monkeypatch):
+    """리뷰(ADR-011 Redis 여유 계산): 새 프로세스의 예산 계산에 재시작 전 항목이 빠지면, 예산이 창을 줄일 만큼 발행량이 클 때
+    스트림이 최대 2.5 h 동안 예산의 두 배까지 남았다(두 스트림이 겹치면 maxmemory 256 MiB 를 넘는 최악). 첫 XADD 전에 스트림의
+    보존 창 안 항목을 되읽어 계산에 넣으므로 재시작 뒤에도 예산 + 한 항목을 넘지 않는다."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT
+
+    budget = 1_000_000
+    monkeypatch.setitem(pubmod.STREAM_BUDGET_BYTES, STREAM_AIRCRAFT, budget)
+    clk = [1_790_000_000.0]
+    r = FakeRedis(clock=lambda: clk[0])
+    before = Publisher(r)  # type: ignore[arg-type]
+    before._clock = lambda: clk[0]
+    for _ in range(50):  # 1 s 마다 100 KB — 예산이 창을 줄인다
+        await before.publish(STREAM_AIRCRAFT, {"payload": "x" * 100_000})
+        clk[0] += 1.0
+    assert _stream_bytes(r, STREAM_AIRCRAFT) <= budget
+    after = Publisher(r)  # type: ignore[arg-type] — 재시작(같은 스트림, 빈 계산)
+    after._clock = lambda: clk[0]
+    peak = 0
+    for _ in range(30):
+        await after.publish(STREAM_AIRCRAFT, {"payload": "y" * 100_000})
+        peak = max(peak, _stream_bytes(r, STREAM_AIRCRAFT))
+        clk[0] += 1.0
+    assert peak <= budget, peak  # 전에는 재시작 전 약 1 MB + 새 항목 — 두 배 가까이
+    assert after.budget_trims[STREAM_AIRCRAFT] > 0
+
+
+async def test_restart_does_not_count_entries_older_than_the_retention_window(monkeypatch):
+    """되읽기는 보존 창(MINID 기준) 안의 항목만 센다 — 더 오래된 것은 첫 XADD 의 MINID 가 지운다."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RETENTION_S
+
+    monkeypatch.setitem(pubmod.STREAM_BUDGET_BYTES, STREAM_AIRCRAFT, 1_000_000)
+    clk = [1_790_000_000.0]
+    r = FakeRedis(clock=lambda: clk[0])
+    before = Publisher(r)  # type: ignore[arg-type]
+    before._clock = lambda: clk[0]
+    for _ in range(9):
+        await before.publish(STREAM_AIRCRAFT, {"payload": "x" * 100_000})
+    clk[0] += STREAM_RETENTION_S + 60
+    after = Publisher(r)  # type: ignore[arg-type]
+    after._clock = lambda: clk[0]
+    await after.publish(STREAM_AIRCRAFT, {"payload": "y" * 100_000})
+    assert [f["payload"][0] for _sid, f in r.streams[STREAM_AIRCRAFT]] == ["y"]
+    assert after.budget_trims[STREAM_AIRCRAFT] == 0  # 창 밖 항목은 예산 계산에 들지 않았다(시간 트림)
+
+
+async def test_seeding_waits_for_redis_and_happens_once(monkeypatch):
+    """첫 발행 때 Redis 가 안 되면 발행은 로컬 큐로 가고, 되읽기는 Redis 가 돌아온 뒤 한 번만 한다."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT
+
+    monkeypatch.setitem(pubmod.STREAM_BUDGET_BYTES, STREAM_AIRCRAFT, 1_000_000)
+    clk = [1_790_000_000.0]
+    r = FakeRedis(clock=lambda: clk[0])
+    for _ in range(9):
+        await r.xadd(STREAM_AIRCRAFT, {"payload": "x" * 100_000})
+    reads: list[str] = []
+    real = r.xrevrange
+
+    async def counting(stream, *a, **kw):
+        reads.append(stream)
+        return await real(stream, *a, **kw)
+
+    r.xrevrange = counting  # type: ignore[method-assign]
+    p = Publisher(r)  # type: ignore[arg-type]
+    p._clock = lambda: clk[0]
+    r.down = True
+    assert await p.publish(STREAM_AIRCRAFT, {"payload": "y" * 100_000}) is None and p.queued == 1
+    r.down = False
+    for _ in range(3):
+        await p.publish(STREAM_AIRCRAFT, {"payload": "z" * 100_000})
+    assert _stream_bytes(r, STREAM_AIRCRAFT) <= 1_000_000
+    assert p.queued == 0 and reads.count(STREAM_AIRCRAFT) >= 1
+    n = len(reads)
+    await p.publish(STREAM_AIRCRAFT, {"payload": "w" * 100_000})
+    assert len(reads) == n  # 한 번 되읽었으면 다시 읽지 않는다
+
+
+async def test_seeding_denied_by_acl_logs_once_and_publishing_continues(monkeypatch, caplog):
+    """되읽기가 거부되면(NOPERM 등 ResponseError) 경고 한 번 뒤 예전처럼 이 프로세스가 보낸 것만 센다 — 발행은 막지 않는다."""
+    import logging
+
+    from redis.exceptions import NoPermissionError
+
+    from wakeline_collector.publisher import STREAM_AIRCRAFT
+
+    r = FakeRedis()
+
+    async def denied(*_a, **_kw):
+        raise NoPermissionError("NOPERM this user has no permissions to run the 'xrevrange' command")
+
+    r.xrevrange = denied  # type: ignore[method-assign]
+    p = Publisher(r)  # type: ignore[arg-type]
+    with caplog.at_level(logging.WARNING, logger="publisher"):
+        for i in range(3):
+            assert await p.publish(STREAM_AIRCRAFT, {"i": str(i)}) is not None
+    warns = [m for m in caplog.messages if "not counted" in m]
+    assert len(warns) == 1 and "NoPermissionError" in warns[0], caplog.messages
+    assert len(r.streams[STREAM_AIRCRAFT]) == 3
+
+
+async def test_seeding_reads_only_the_streams_this_process_publishes():
+    """수집기 Publisher 는 선박 스트림에 쓰지 않는다 — 되읽기도 발행하는 스트림에서만, 개수 트림 스트림은 되읽지 않는다."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RADAR
+
+    r = FakeRedis()
+    reads: list[str] = []
+    real = r.xrevrange
+
+    async def counting(stream, *a, **kw):
+        reads.append(stream)
+        return await real(stream, *a, **kw)
+
+    r.xrevrange = counting  # type: ignore[method-assign]
+    p = Publisher(r)  # type: ignore[arg-type]
+    await p.publish(STREAM_RADAR, {"i": "1"})
+    await p.publish(STREAM_AIRCRAFT, {"i": "1"})
+    assert reads == [STREAM_AIRCRAFT]
+
+
+def test_publisher_reports_the_trim_settings_it_uses_per_time_trimmed_stream():
+    """heartbeat stream_retention_s · stream_budget_bytes 의 원천: 이 Publisher 의 StreamTrim 설정(시간 트림 스트림만)."""
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_RADAR, STREAM_SHIPS
+
+    p = Publisher(None)  # type: ignore[arg-type]
+    assert p.stream_limits(STREAM_AIRCRAFT) == (9000.0, 80 * 2**20)
+    assert p.stream_limits(STREAM_SHIPS) == (9000.0, 32 * 2**20)
+    assert p.stream_limits(STREAM_RADAR) is None  # 개수 트리밍 스트림 — 보존 창·예산이 없다
+    assert pubmod.limit_fields(p.stream_limits(STREAM_AIRCRAFT)) == {
+        "stream_retention_s": "9000",
+        "stream_budget_bytes": "83886080",
+    }
+    assert pubmod.limit_fields(None) == {"stream_retention_s": "", "stream_budget_bytes": ""}  # 모름 — 0 이 아니다
+
+
 async def test_r14_other_streams_keep_count_trim():
     """SIGMET(300 s)·레이더(60 s)는 200개로 이미 2 h 를 넘게 담는다 — 개수 트리밍 그대로."""
     from wakeline_collector.publisher import MAXLEN, STREAM_RADAR

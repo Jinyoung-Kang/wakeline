@@ -134,6 +134,40 @@ async def test_r17_repeated_429_converges_instead_of_flapping_every_few_minutes(
 
 
 @pytest.mark.asyncio
+async def test_r17_primary_that_429s_right_after_every_recovery_is_probed_less_and_less(monkeypatch):
+    """2026-09-29 관찰: adsb.lol 은 복귀하고 약 1분 안에 다시 429 — 60분 미룸 뒤에도(복귀 11:29:34 KST → 429 11:30:33 → 60분 미룸 →
+    복귀 12:30:41). 이 모의에서 사다리가 60분에서 멈추면 하루 27번 429 를 받고, 360분까지 늘리면 10번이다. 폴백은 빈 주기 없이 맡는다."""
+    from types import SimpleNamespace
+
+    from wakeline_collector import fallback
+
+    clk = [10_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    st = FakeStatus()
+    chain = ProviderChain("region", {"lol": P("lol"), "fi": P("fi")}, st)
+    since_recovery: list[float] = []  # lol 이 복귀한 시각
+    n429 = served = 0
+    for _ in range(24 * 360):  # 10 s 주기 24 h
+        p = await chain.pick(["lol", "fi"])
+        if p is not None:
+            served += 1
+            if p.name == "lol":
+                if not since_recovery:
+                    since_recovery.append(clk[0])
+                if clk[0] - since_recovery[0] >= 55:  # 복귀 약 1분 뒤 429(관찰 모양 — 한도 수치는 모른다)
+                    n429 += 1
+                    chain.record_rate_limited("lol")
+                    since_recovery.clear()
+                else:
+                    chain.record_success("lol")
+            else:
+                chain.record_success("fi")
+        clk[0] += 10.0
+    assert n429 <= 10, n429  # 사다리 60분 상한이면 27
+    assert served == 24 * 360
+
+
+@pytest.mark.asyncio
 async def test_r17_held_primary_is_still_used_when_no_other_provider_is_available(monkeypatch):
     """이력은 '선호도'일 뿐 차단이 아니다: 2순위가 없으면 기본 백오프(최대 300 s)가 끝난 1순위를 쓴다."""
     run, st, result = _simulate_region(monkeypatch, hours=2, limit_calls=20, window_s=300, fi_down=True)

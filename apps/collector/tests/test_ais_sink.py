@@ -485,6 +485,44 @@ async def test_r14_ships_stream_keeps_a_two_hour_api_outage_then_trims_by_time()
     assert (clk[0] * 1000 - oldest_ms) / 1000 <= STREAM_RETENTION_S + 10
 
 
+# ---- 운영 관찰(2026-09-29): 선박 스트림 597항목 · MEMORY USAGE 16,825,126 B · 첫 항목 약 99분 — 예산 16 MiB 가 2.5 h 창을
+# 약 1.66 h 로 줄였다(ais stream_budget_trims 233). 실측 평균 항목 크기로 2.5 h(900항목)를 예산 트림 없이 담아야 한다.
+MEASURED_SHIP_ENTRY_B = 16_825_126 // 597  # 측정값(MEMORY USAGE ÷ XLEN, 약 28.2 KB) — 필드 길이 합은 이보다 조금 작다(안전 쪽)
+
+
+async def test_ships_budget_keeps_the_full_retention_window_at_the_measured_entry_size():
+    from wakeline_collector.publisher import STREAM_BUDGET_BYTES, STREAM_RETENTION_S
+
+    clk = [1_790_000_000.0]
+    r, _q, _book, _feed, _w, sink = _setup(r=FakeRedis(clock=lambda: clk[0]), wall=lambda: clk[0])
+    env = {"payload": "x" * (MEASURED_SHIP_ENTRY_B - len("payload"))}
+    for _ in range(int(STREAM_RETENTION_S // 10) + 60):  # 10 s 마다 한 항목, 보존 창보다 10분 더
+        await sink._xadd(env)
+        clk[0] += 10.0
+    assert sink._trim.budget_trims == 0  # 예산이 창을 줄이지 않았다
+    oldest_ms = min(int(sid.split("-")[0]) for sid, _ in r.streams[STREAM_SHIPS])
+    window_s = (clk[0] * 1000 - oldest_ms) / 1000
+    assert STREAM_RETENTION_S - 20 <= window_s <= STREAM_RETENTION_S + 10  # 창이 시간(2.5 h)으로만 잘린다
+    kept = sum(len(k) + len(v) for _sid, f in r.streams[STREAM_SHIPS] for k, v in f.items())
+    assert kept / STREAM_BUDGET_BYTES[STREAM_SHIPS] <= 0.8  # 선택값 32 MiB: 필요량(약 25.4 MB)이 예산의 약 76 %
+
+
+async def test_status_carries_the_ships_stream_retention_target_and_budget():
+    """필드 계약: wakeline:ais:status 에 선박 스트림의 시간 트림 목표(초)와 바이트 예산 — 이 sink 가 실제로 쓰는 값(정수 문자열)."""
+    r, _q, _book, _feed, _w, sink = _setup()
+    await sink.write_status()
+    h = r.kv[STATUS_KEY]
+    assert h["stream_retention_s"] == "9000" and h["stream_budget_bytes"] == str(32 * 2**20)
+    sink._trim.retention_s, sink._trim.budget_bytes = 7200.0, 1234  # 설정이 바뀌면 그 값을 싣는다(상수를 따로 적지 않는다)
+    assert (sink.status_fields()["stream_retention_s"], sink.status_fields()["stream_budget_bytes"]) == ("7200", "1234")
+
+
+async def test_ships_budget_is_32_mib_and_aircraft_stays_80_mib():
+    from wakeline_collector.publisher import STREAM_AIRCRAFT, STREAM_BUDGET_BYTES
+
+    assert STREAM_BUDGET_BYTES == {STREAM_AIRCRAFT: 80 * 2**20, STREAM_SHIPS: 32 * 2**20}
+
+
 # ---- 계약 v5 §C2: 로그 싱크의 자기 지표(log_sent · log_dropped · log_suppressed)가 상태 해시에 -----------------------------
 async def test_v5_status_carries_log_sink_counts_and_unknown_without_a_sink():
     r, _q, _book, _feed, _w, sink = _setup(log_metrics=lambda: {"log_sent": "12", "log_dropped": "3", "log_suppressed": "40"})

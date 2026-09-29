@@ -11,9 +11,13 @@
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
   목록 키도 이미지와 같은 TTL 을 갖는다(수집기가 멈추면 함께 만료). 각 항목에 expires_at 을 둔다.
 - 해석(gzip 해제·재투영·PNG)은 CPU 작업이라 스레드에서 돈다(이벤트 루프를 막지 않게).
-- 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류 — RETRY_ERRORS)는 실패한 호출마다 같은 주기 안에서 RETRY_DELAY_S 뒤 한 번 다시
-  부른다(예산 1 을 따로 예약한다). 다시 불러도 실패하면 그 주기를 끝낸다(남은 tm 은 다음 주기). 전날 목록은 덧붙이는 것이라 다시 부르지
-  않는다. HTTP 오류(ProviderHttpError — 403 활용신청 전 등)·속도 상한(Throttled)도 다시 부르지 않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다).
+- 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류 — retry.RETRY_ERRORS)는 실패한 호출마다 같은 주기 안에서 RETRY_DELAY_S 뒤 한 번 다시
+  부른다(예산 1 을 따로 예약한다 — 규칙은 retry.py, 기상 작업도 같은 것을 쓴다). 다시 불러도 실패하면 그 주기를 끝낸다(남은 tm 은 다음 주기).
+  전날 목록은 덧붙이는 것이라 다시 부르지 않는다. HTTP 오류(ProviderHttpError — 403 활용신청 전 등)·속도 상한(Throttled)도 다시 부르지
+  않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다). 보내지 않은 시도(연결 전 실패 · 연결 풀 대기 초과 · 속도 상한 — retry.NOT_SENT)는
+  예산 1 을 돌려준다(전날 목록 포함). 다시 부르기 예약에는 기상 작업과 달리 여유(headroom)를 두지 않는다 — 정규 호출 수가 주기마다
+  다르고(목록 1 + 바이너리 0–4, 상한 5 × 288 = 1,440 > 한도 1,000) 계속 실패하는 서버에서는 첫 호출이 두 번 실패하는 즉시 주기가 끝나
+  하루 최대 2 × 288 = 576 이다(설정값 계산).
 - 주기 길이(설정값으로 계산한 상한 — 잰 값이 아니다): 최악은 다시 부른 호출이 모두 첫 시도에서 전체 상한(KMA_TOTAL_S 40 s)을 채우고
   실패한 뒤 다시 40 s 걸려 성공하는 경우다 — 오늘 목록 (40 + 5 + 40) + 전날 목록 40(KST 00:00–00:14 만) + 바이너리 4 × (40 + 5 + 40) = 465 s.
   속도 상한 대기(호출마다 최대 DEFAULT_WAIT_S 10 s, 최대 11번)는 전체 상한 밖이라 더 붙을 수 있다(+110 s). 주기(300 s)를 넘을 수 있지만
@@ -45,6 +49,7 @@ from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
+from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
 
 log = logging.getLogger("job.kma_radar")
 KEY_META = "wakeline:radar_kr:meta"  # hash
@@ -56,10 +61,7 @@ FRAME_TTL_S = 3 * 3600
 MAX_BAD = 64  # 해석 불가로 건너뛴 tm 기억 상한
 MAX_NOT_READY_TRIES = 3  # 목록에 있으나 아직 받을 수 없는 tm 을 다시 시도하는 횟수(주기마다 1번 ≈ 15분)
 PREV_DAY_LIST_MIN = 15  # KST 00:00 부터 이 분 동안은 전날 목록도 조회
-RETRY_DELAY_S = 5.0  # 일시 오류 뒤 같은 주기 안에서 다시 부르기 전 기다림(선택값). 다시 부르기는 실패한 호출마다 한 번
-# 다시 불러 볼 만한 일시 오류. RequestTimedOut(전체 상한 초과)은 httpx.TimeoutException 하위라 여기 든다.
-RETRY_ERRORS: tuple[type[Exception], ...] = (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError)
-_sleep = asyncio.sleep  # 시험이 바꿔 끼운다
+_sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
 
 def _iso(dt: datetime) -> str:
@@ -91,15 +93,7 @@ class _BadFrame(Exception):
     """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류). 다시 받아도 같으므로 건너뛴다."""
 
 
-class _StepFailed(Exception):
-    """한 단계(목록 · 바이너리)의 호출 실패. error = 마지막 시도의 예외, elapsed_s = 그 시도에 걸린 시간(모르면 None),
-    first = 다시 불렀다면 첫 시도의 (예외, 걸린 시간)."""
-
-    def __init__(
-        self, step: str, error: Exception, elapsed_s: float | None, first: tuple[Exception, float] | None = None
-    ) -> None:
-        super().__init__(f"{step}: {type(error).__name__}")
-        self.step, self.error, self.elapsed_s, self.first = step, error, elapsed_s, first
+_StepFailed = CallFailed  # 한 단계(목록 · 바이너리 · 저장)의 실패 — retry.CallFailed(단계 · 걸린 시간 · 첫 시도)
 
 
 class KmaRadarJob:
@@ -155,13 +149,7 @@ class KmaRadarJob:
         e = f.error
         http_status = e.status if isinstance(e, ProviderHttpError) else None
         note = "활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기)" if http_status == 403 else f"{type(e).__name__}"
-        why = describe_error(e)  # 가린 한 줄(R-83: 응답 본문 앞부분이 실릴 수 있다)
-        took = f" · {f.elapsed_s:.1f} s 경과" if f.elapsed_s is not None else ""
-        retried = ""
-        if f.first is not None:
-            first_e, first_s = f.first
-            retried = f" · {RETRY_DELAY_S:.0f} s 뒤 1회 재시도(첫 시도 {type(first_e).__name__} · {first_s:.1f} s)"
-        detail = f"{why} · {f.step}{took}{retried}"
+        detail = f.detail()  # 가린 한 줄(R-83: 응답 본문 앞부분이 실릴 수 있다) · 단계 · 걸린 시간 · 첫 시도
         await self.ctx.status.failure(
             self.p.name, at=datetime.now(UTC), error=note if http_status == 403 else detail, http_status=http_status
         )
@@ -172,40 +160,20 @@ class KmaRadarJob:
         if http_status == 403:
             log.warning("kma radar: %s — %s", f.step, note)
             return
-        after = f" after {f.elapsed_s:.1f} s" if f.elapsed_s is not None else ""
-        again = ""
-        if f.first is not None:
-            first_e, first_s = f.first
-            again = f"; retried once after {RETRY_DELAY_S:.0f} s (first attempt: {type(first_e).__name__} after {first_s:.1f} s)"
-        log.warning("kma radar: %s — %s%s%s", f.step, why, after, again)
+        log.warning("kma radar: %s", f.log_text())
 
     async def _call(self, step: str, fn: Callable[[], Awaitable[ProviderResult]]) -> ProviderResult:
-        """step 호출. 실패는 모두 _StepFailed(단계·걸린 시간)로 올린다. 일시 오류(RETRY_ERRORS)면 예산 1 을 예약할 수 있을 때
-        RETRY_DELAY_S 뒤 한 번 다시 부른다(호출마다 한 번). HTTP 오류·속도 상한은 다시 부르지 않는다."""
-        t0 = time.monotonic()
-        try:
-            return await fn()
-        except RETRY_ERRORS as e:
-            first, first_s = e, time.monotonic() - t0
-        except Exception as e:  # noqa: BLE001 — 호출자가 종류별로 나눈다(해석 불가·아직 없음·실패)
-            raise _StepFailed(step, e, time.monotonic() - t0) from e
-        ok, used = await self.ctx.budget.reserve(self.p.name, 1)
-        if not ok:
-            log.info(
-                "kma radar: %s — %s after %.1f s; not retried (budget %s)",
-                step,
-                describe_error(first),
-                first_s,
-                "unavailable" if used == UNKNOWN else f"exhausted (used={used})",
-            )
-            raise _StepFailed(step, first, first_s) from first
-        log.info("kma radar: %s — %s after %.1f s — retrying once in %.0f s", step, describe_error(first), first_s, RETRY_DELAY_S)
-        await _sleep(RETRY_DELAY_S)
-        t1 = time.monotonic()
-        try:
-            return await fn()
-        except Exception as e:  # noqa: BLE001
-            raise _StepFailed(step, e, time.monotonic() - t1, first=(first, first_s)) from e
+        """step 호출. 실패는 모두 _StepFailed(단계·걸린 시간)로 올린다. 일시 오류면 예산 1 을 예약할 수 있을 때 5 s 뒤 한 번 다시
+        부른다(호출마다 한 번 — retry.call_retry_once). HTTP 오류·속도 상한은 다시 부르지 않는다."""
+        return await call_retry_once(
+            step,
+            fn,
+            reserve=lambda: self.ctx.budget.reserve(self.p.name, 1),
+            log=log,
+            label="kma radar",
+            sleep=lambda s: _sleep(s),
+            release=lambda: self.ctx.budget.release(self.p.name, 1),  # 보내지 않은 시도(연결 전 실패 · 속도 상한)는 돌려준다
+        )
 
     async def _reserve(self, started: datetime) -> bool:
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
@@ -255,6 +223,8 @@ class KmaRadarJob:
         try:
             prev = await self.p.file_list(prev_day)  # 덧붙이는 목록 — 다시 부르지 않는다(재시도는 오늘 목록·바이너리 몫)
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
+                await self.ctx.budget.release(self.p.name, 1)
             log.warning(
                 "kma radar: previous-day listing %s — %s after %.1f s — using today's only",
                 prev_day,
