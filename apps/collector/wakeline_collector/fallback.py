@@ -12,6 +12,8 @@
 재시작(R-17 보존): store(ChainStateStore)를 주면 429 이력(단계·마지막 429·쉼 끝·미룸 끝·조용함 기준)을 429 마다 Redis 에 벽시계 epoch 초로
 남기고(persist), 첫 선택 때 읽어 단조 시계로 바꿔 되살린다. 지난 기록(expires_at)·형식이 틀린 기록·상한보다 먼 미래를 가리키는 기록은
 버린다. Redis 가 안 되면 메모리 이력만 쓴다(선택을 막지 않는다). 되살린 쉼·미룸의 전환 사유에는 '(재시작 전 기록)'을 붙인다.
+읽기가 실패하면 읽힐 때까지 선택·429 마다 다시 읽는다. 그동안 받은 429 는 메모리에만 적고 저장하지 않는다(읽지 못한 기록을 1단계로
+덮지 않게) — 읽기가 되면 저장된 단계에 이어 센 것으로 맞추고(되살리기가 제때 됐을 때와 같게) 저장한다.
 
 전환 사유(set_active·switch_event 에 같은 글, 가린 뒤 REASON_MAX 자): 무엇을 왜 건너뛰었는지·왜 돌아왔는지를 적는다.
   "fallback — adsb_lol 429 쉼(60 s)" · "fallback — adsb_lol 429 반복 → 20분 뒤로 미룸" · "fallback — adsb_lol 3회 연속 실패(10분 쉼)" ·
@@ -250,8 +252,20 @@ class ProviderChain:
 
     def record_rate_limited(self, name: str) -> float:
         """429: 지수 백오프(60 → 120 → 240 → 300 s)로 쉬게 한다. 반환값은 쉬는 시간(초).
-        15분 안에 되풀이된 429 면 그 뒤로도 RATE_LIMIT_HOLD_S 만큼 뒤로 미룬다(R-17). 단계는 STAGE_MAX 에서 멈춘다."""
-        now = time.monotonic()
+        15분 안에 되풀이된 429 면 그 뒤로도 RATE_LIMIT_HOLD_S 만큼 뒤로 미룬다(R-17). 단계는 STAGE_MAX 에서 멈춘다.
+        저장하지 않는다 — 작업은 on_rate_limited(적고 저장)를 쓴다."""
+        return self._record_429(name, time.monotonic())
+
+    async def on_rate_limited(self, name: str) -> float:
+        """429 를 적고 저장한다. 반환값은 쉬는 시간(초). 저장된 이력을 아직 읽지 못했으면 먼저 다시 읽는다 —
+        읽지 못한 채 적으면 재시작 전 단계를 모르고 1단계부터 센다."""
+        if not self._restored:
+            await self._restore()
+        self._record_429(name, time.monotonic())
+        await self.persist(name)  # 여기서야 읽기가 되면 저장된 단계에 이어 센 값으로 맞춰진다
+        return _backoff_s(self._rate_limited[name])
+
+    def _record_429(self, name: str, now: float) -> float:
         if self._quiet(name, now):
             self._rate_limited[name] = 0  # 조용했던 뒤의 첫 429
         n = min(self._rate_limited.get(name, 0) + 1, STAGE_MAX)
@@ -259,7 +273,8 @@ class ProviderChain:
         self._last_429[name] = now
         wait = _backoff_s(n)
         hold = _hold_for(n)
-        self.mark_down(name, wait, why=_hold_text(hold) if hold else f"429 쉼({wait:.0f} s)")
+        self._down_until[name] = now + wait
+        self._down_why[name] = _hold_text(hold) if hold else f"429 쉼({wait:.0f} s)"
         self._backoff_until[name] = now + wait
         if hold:
             self._hold_until[name] = now + hold
@@ -271,8 +286,17 @@ class ProviderChain:
     # ---- 재시작 보존(ChainStateStore) ---------------------------------------------------------------------------------
     async def persist(self, name: str) -> None:
         """name 의 429 이력을 저장한다(429 를 기록한 뒤 부른다). 저장소가 없거나 이력이 없으면 아무것도 하지 않는다.
+        저장된 이력을 아직 읽지 못했으면 먼저 읽고(되면 맞춰서 저장한다), 여전히 못 읽으면 쓰지 않는다 — 읽지 못한 기록을 덮지 않는다.
         Redis 오류는 저장소가 삼킨다(메모리 이력으로 계속)."""
         if self._store is None or not self._rate_limited.get(name):
+            return
+        if not self._restored:
+            await self._restore()  # 읽기가 되면 메모리에만 있던 429 이력(이 공급자 포함)을 맞춰 저장한다
+            return
+        await self._write(name)
+
+    async def _write(self, name: str) -> None:
+        if self._store is None:
             return
         now_m, now_w = time.monotonic(), self._store.wall()
 
@@ -295,13 +319,18 @@ class ProviderChain:
         await self._store.save(self.job, name, fields)
 
     async def _restore(self) -> None:
-        """저장된 429 이력을 되살린다(한 번). Redis 가 안 되면 메모리 이력만 — 다시 시도하지 않는다(그사이 메모리가 더 새롭다)."""
-        self._restored = True
+        """저장된 429 이력을 되살린다. Redis 오류로 읽지 못하면 그대로 두고(_restored=False) 다음 선택·429 때 다시 읽는다.
+        읽기 전에 메모리에만 적은 429 는 저장된 단계에 이어 센 것으로 맞추고(_apply_saved) 저장한다."""
         store = self._store
         if store is None:
+            self._restored = True
             return
         rows = await store.load(self.job, list(self._providers))
+        if rows is None:
+            return  # 모름 — 다음에 다시 읽는다
+        self._restored = True
         now_m, now_w = time.monotonic(), store.wall()
+        unsaved = [n for n, k in self._rate_limited.items() if k and not self._quiet(n, now_m)]  # 읽기 전에 메모리에만 적은 429
         for name, row in rows.items():
             saved, why = parse_saved(row, now_w)
             if saved is None:
@@ -310,8 +339,12 @@ class ProviderChain:
                 await store.drop(self.job, name)
                 continue
             self._apply_saved(name, saved, now_m, now_w)
+        for name in unsaved:
+            await self._write(name)
 
     def _apply_saved(self, name: str, s: _Saved, now_m: float, now_w: float) -> None:
+        # 읽기 전에 메모리에만 적은 429(재시작 뒤 — 저장된 것보다 나중이고, 기록이 아직 지나지 않았으니 조용함도 없었다)
+        pending, last_mem = self._rate_limited.get(name, 0), self._last_429.get(name)
         off = now_m - now_w  # 벽시계 → 단조 시계
         self._rate_limited[name] = s.stage
         self._last_429[name] = s.last_429 + off
@@ -325,14 +358,18 @@ class ProviderChain:
         if s.backoff_until > now_w and s.backoff_until + off > self._down_until.get(name, 0.0):
             self._down_until[name] = s.backoff_until + off
             self._down_why[name] = (_hold_text(s.hold_s) if held else f"429 쉼({_backoff_s(s.stage):.0f} s)") + RESTORED
+        if pending and last_mem is not None:  # 되살리기가 제때 됐을 때처럼 저장된 단계에 이어 센다(쉼·미룸은 그 429 시각부터)
+            for _ in range(pending):
+                self._record_429(name, last_mem)
         log.info(
-            "%s: %s 429 history restored — stage %d, backoff %.0f s left, deferred %.0f s left (saved %.0f s ago)",
+            "%s: %s 429 history restored — stage %d, backoff %.0f s left, deferred %.0f s left (saved %.0f s ago%s)",
             self.job,
             name,
-            s.stage,
-            max(0.0, s.backoff_until - now_w),
-            max(0.0, s.hold_until - now_w),
+            self._rate_limited[name],
+            max(0.0, self._backoff_until[name] - now_m),
+            max(0.0, self._hold_until.get(name, 0.0) - now_m),
             max(0.0, now_w - s.last_429),
+            f"; {pending} 429 before the read counted on top" if pending else "",
         )
 
     def record_failure(self, name: str) -> bool:

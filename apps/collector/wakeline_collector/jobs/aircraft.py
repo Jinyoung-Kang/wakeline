@@ -188,8 +188,7 @@ class AircraftJob:
         await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
         ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
         if http_status == 429:
-            wait = self.chain.record_rate_limited(name)
-            await self.chain.persist(name)  # 재시작해도 쉼·미룸을 잇는다(Redis 오류는 삼킨다)
+            wait = await self.chain.on_rate_limited(name)  # 적고 저장 — 재시작해도 쉼·미룸을 잇는다(Redis 오류는 삼킨다)
             log.warning("%s: %s rate limited (429) — backing off %.0f s%s", self.scope, name, wait, await self._after_429(name))
         elif self.chain.record_failure(name):
             log.warning("%s: %s failed 3x — cooling down", self.scope, name)

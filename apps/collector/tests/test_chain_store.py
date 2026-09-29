@@ -305,3 +305,71 @@ def test_saved_hold_length_outside_the_known_range_is_malformed():
     assert fallback.parse_saved({**row, "hold_s": "-5"}, w) == (None, "format")
     saved, why = fallback.parse_saved({**row, "hold_s": "600"}, w)
     assert why == "" and saved is not None and saved.hold_s == 600
+
+
+# ---- 첫 읽기 실패(리뷰): 이전에는 한 번만 읽어서, 그 순간 Redis 가 흔들리면 재시작 전 미룸을 잊고 다음 429 가 기록을 1단계로 덮었다 ---------
+@pytest.mark.asyncio
+async def test_failed_first_read_is_retried_on_the_next_pick(monkeypatch):
+    clk = Clocks(monkeypatch)
+    r = FakeRedis()
+    chain, _ = _chain(r, clk)
+    await _repeated_429(chain, clk)  # 저장: 2단계 · 쉼 120 s · 미룸 600 s
+    clk.restart(downtime_s=30)
+    r.down = True
+    chain2, st2 = _chain(r, clk)
+    assert (await chain2.pick(["a", "b"])).name == "a"  # 읽지 못했다 — 메모리 이력만(모른다)
+    r.down = False
+    clk.advance(10)
+    assert (await chain2.pick(["a", "b"])).name == "b"  # 다음 선택에서 다시 읽어 미룸을 되살린다
+    assert st2.reasons[-1] == "fallback — a 429 반복 → 10분 뒤로 미룸(재시작 전 기록)"
+
+
+@pytest.mark.asyncio
+async def test_429_while_the_saved_history_is_unread_does_not_overwrite_it(monkeypatch):
+    """읽지 못한 채 받은 429 는 메모리에만 적고 저장하지 않는다. 읽기가 되면 저장된 단계에 이어 센 것으로 맞추고 저장한다."""
+    clk = Clocks(monkeypatch)
+    r = FakeRedis()
+    chain, _ = _chain(r, clk)
+    await _repeated_429(chain, clk)  # 저장: 2단계
+    clk.restart(downtime_s=30)
+    r.down = True
+    chain2, _st2 = _chain(r, clk)
+    assert (await chain2.pick(["a", "b"])).name == "a"
+    assert await chain2.on_rate_limited("a") == 60  # 아직 모른다 — 메모리 1단계
+    assert r.kv[KEY]["stage"] == "2"  # 읽지 못한 기록을 1단계로 덮지 않았다
+    at_429 = clk.wall
+    r.down = False
+    clk.advance(5)
+    assert (await chain2.pick(["a", "b"])).name == "b"
+    # 저장된 2단계 뒤의 429 였으므로 3단계(쉼 240 s · 미룸 20분) — 되살리기가 제때 됐을 때와 같다
+    assert chain2.hold_s("a") == 1200
+    saved = r.kv[KEY]
+    assert saved["stage"] == "3"
+    assert float(saved["hold_until"]) == pytest.approx(at_429 + 1200)
+    assert float(saved["backoff_until"]) == pytest.approx(at_429 + 240)
+
+
+@pytest.mark.asyncio
+async def test_on_rate_limited_reads_the_saved_history_first(monkeypatch):
+    """선택 때 읽기가 실패했어도 429 를 적기 전에 다시 읽는다 — 되면 저장된 단계에 이어 센다(재시작 전 2단계 → 3단계)."""
+    clk = Clocks(monkeypatch)
+    r = FakeRedis()
+    chain, _ = _chain(r, clk)
+    await _repeated_429(chain, clk)
+    clk.restart(downtime_s=30)
+    r.down = True
+    chain2, _st2 = _chain(r, clk)
+    assert (await chain2.pick(["a", "b"])).name == "a"
+    r.down = False
+    assert await chain2.on_rate_limited("a") == 240
+    assert r.kv[KEY]["stage"] == "3" and chain2.hold_s("a") == 1200
+
+
+@pytest.mark.asyncio
+async def test_load_reports_a_redis_error_as_unknown_not_empty():
+    r = FakeRedis()
+    r.down = True
+    store = ChainStateStore(r)  # type: ignore[arg-type]
+    assert await store.load("region", ["a"]) is None
+    r.down = False
+    assert await store.load("region", ["a"]) == {}

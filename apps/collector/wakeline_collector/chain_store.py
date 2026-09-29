@@ -9,6 +9,7 @@
 - TTL: 수집기 규칙은 EXPIRE 를 budget:* 에만 준다(R-86). 그래서 Redis TTL 대신 expires_at(= quiet_from + 15분 — 그 뒤에는 이력이
   초기화된 것과 같다)을 논리 TTL 로 두고, 읽을 때 지났거나 형식이 틀린 기록은 버리고 HDEL 로 지운다.
 - Redis 오류는 선택을 막지 않는다: 호출마다 AUX_TIMEOUT_S 로 끊고, 실패하면 메모리 이력만 쓴다. 경고는 장애마다 한 번(되살아나면 INFO).
+  읽기 실패는 None(모름)으로 돌려준다 — 체인은 읽힐 때까지 다시 읽고, 그동안 받은 429 는 저장하지 않는다(읽지 못한 기록을 덮지 않게).
 """
 
 from __future__ import annotations
@@ -50,8 +51,8 @@ class ChainStateStore:
             self._failing = False
             log.info("429 history store recovered — persisting again")
 
-    async def load(self, job: str, names: list[str]) -> dict[str, dict[str, str]]:
-        """{공급자: 저장된 해시}(빈 해시는 빼고). Redis 오류면 빈 dict — 메모리 이력만 쓴다."""
+    async def load(self, job: str, names: list[str]) -> dict[str, dict[str, str]] | None:
+        """{공급자: 저장된 해시}(빈 해시는 빼고). Redis 오류면 None(모름 — '저장된 것 없음'과 다르다: 체인이 다음에 다시 읽는다)."""
         if not names:
             return {}
         try:
@@ -62,7 +63,7 @@ class ChainStateStore:
                 rows = await pipe.execute()
         except Exception as e:  # noqa: BLE001 — 부가 기능: 선택을 막지 않는다
             self._fail("read", e)
-            return {}
+            return None
         self._ok()
         return {n: dict(row) for n, row in zip(names, rows, strict=True) if isinstance(row, dict) and row}
 
