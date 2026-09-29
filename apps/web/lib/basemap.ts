@@ -4,8 +4,13 @@
  *   찾아 그 층 id 에 paint 값을 넣는다. 스타일 판마다 층 id 가 다를 수 있어 이름을 외워 두지 않는다. 없는 층은 건너뛴다.
  *   우리 레이어(geojson 소스)는 source-layer 가 없어 건드리지 않는다.
  * - 목표(tests/basemap.test.ts 가 WCAG 2.x 대비를 계산해 확인):
- *   육지·바다 ≥ 1.5:1 이고 바다가 더 어둡다 · 물이 아닌 채움(건물·공항 구역 포함)은 육지보다 어둡지 않다 · 국경선 ≥ 3:1 · 해안선(물 채움 외곽선)은 바다 ≥ 3:1 · 지명 글자는 육지·바다·halo 모두 ≥ 4.5:1(AA) ·
+ *   육지·바다 ≥ 1.5:1 이고 바다가 더 어둡다 · 물이 아닌 채움(건물·공항 구역 포함)은 육지보다 어둡지 않다 · 국경선 ≥ 3:1 · 해안선은 바다 ≥ 3:1 · 지명 글자는 육지·바다·halo 모두 ≥ 4.5:1(AA) ·
  *   항공기 고도 색·SIGMET 선 색·선박 선종 색은 육지·바다(건물·공항 구역 포함) 모두 ≥ 3:1(WCAG 1.4.11 비텍스트 대비). 레이더는 바탕이 어두운 그대로라 색이 묻히지 않는다.
+ * - 해안선(2026-09-30 — 사용자 스크린샷의 "지도 툴바 아래 파란 1 px 가로선"): 전에는 물 채움의 외곽선(fill-outline-color)을 해안 색으로 칠했다. 채움 외곽선은
+ *   다각형의 모든 변을 긋기 때문에, 물 다각형끼리 맞닿는 안쪽 변(자료의 이음새 — 강원 앞바다 약 38.6°N 에서 해안부터 동쪽으로 뻗은 직선)도 바다 한가운데
+ *   해안 색 선으로 보였다(문서 스크린샷 01 · 06 에서 같은 자리, 외곽선을 넣기 전 판(70e9955)에는 없다). 이제 채움 외곽선은 물 색이고, 해안선은 물 채움 층마다
+ *   바로 아래에 같은 지물의 선 층(coastLayers)을 더해 1 px 바깥(육지 쪽 — line-offset 음수)으로 민다. 물 채움이 위에서 물 쪽을 덮으므로 이음새의 선은 가려지고
+ *   육지와 맞닿은 해안의 선만 남는다. 외부 요청은 늘지 않는다(같은 타일).
  */
 import type * as maplibregl from "maplibre-gl";
 
@@ -17,8 +22,13 @@ export const BASEMAP_LAND_DETAIL = "#31353c";
 export const BASEMAP_WATER = "#040a12";
 /** 도로·철도 — 육지보다 조금 밝게(바다·강보다 어두우면 물길처럼 보인다). 항공기·SIGMET 와 겨루지 않게 옅게 */
 export const BASEMAP_ROAD = "#3a3f47";
-/** 해안선(물 채움 외곽선, 1 px) */
+/** 해안선(물 채움 바로 아래의 선 층, 1 px — 육지 쪽으로 1 px 민다: coastLayers) */
 export const BASEMAP_COAST = "#56779c";
+/**
+ * 해안선을 미는 거리(px, MapLibre line-offset — 양수 = 선 방향의 오른쪽). 벡터 타일의 바깥 고리는 화면에서 시계 방향(안쪽이 오른쪽)이고 구멍(섬)은 반대라
+ * 음수면 둘 다 다각형 밖(육지 쪽)으로 간다. 1 px = 선 폭 1 px 이 물 채움의 경계 안티에일리어싱(±0.5 px) 바로 바깥에 놓이는 값(scratch 하네스로 확인한 선택).
+ */
+export const COAST_LINE_OFFSET_PX = -1;
 /** 국경(admin_level ≤ 2) */
 export const BASEMAP_BOUNDARY_COUNTRY = "#7a8492";
 /** 그 아래 행정 경계(주·도) — 국경보다 옅게 */
@@ -37,7 +47,9 @@ export const BOUNDARY_COLOR_EXPR = [
 ] as unknown as maplibregl.ExpressionSpecification;
 
 /** 스타일 층에서 쓰는 부분만 */
-export interface StyleLayerLike { id: string; type: string; "source-layer"?: string }
+export interface StyleLayerLike {
+  id: string; type: string; source?: string; "source-layer"?: string; filter?: unknown; minzoom?: number; maxzoom?: number; layout?: { visibility?: string };
+}
 export interface PaintOverride { id: string; prop: string; value: unknown }
 
 /** 육지로 칠할 지표 피복 층(숲·주거지·공원 등). 바다보다 어두운 옛 색이 남으면 육지·바다 구분이 무너진다. */
@@ -57,9 +69,9 @@ export function basemapOverrides(layers: readonly StyleLayerLike[]): PaintOverri
     if (l.type === "fill" && sl === "water") {
       set(l.id, "fill-color", BASEMAP_WATER);
       set(l.id, "fill-opacity", 1);
-      // 외곽선은 fill-antialias 가 켜져 있어야 그려진다
+      // 경계는 부드럽게(안티에일리어싱) 하되 외곽선은 물 색 — 물 다각형 안쪽의 이음새가 선으로 보이지 않게. 해안선은 coastLayers 가 따로 긋는다
       set(l.id, "fill-antialias", true);
-      set(l.id, "fill-outline-color", BASEMAP_COAST);
+      set(l.id, "fill-outline-color", BASEMAP_WATER);
     } else if (l.type === "fill" && LAND_LAYERS.has(sl)) {
       set(l.id, "fill-color", BASEMAP_LAND);
     } else if (l.type === "fill" && LAND_DETAIL_LAYERS.has(sl)) {
@@ -82,19 +94,57 @@ export function basemapOverrides(layers: readonly StyleLayerLike[]): PaintOverri
   return out;
 }
 
+/** 해안선 층 하나: 넣을 층과 그 위에 올 물 채움 층 id */
+export interface CoastLayer { beforeId: string; layer: maplibregl.LineLayerSpecification }
+
+/**
+ * 물 채움 층(OpenMapTiles source-layer water)마다 해안선 선 층 하나 — 같은 source · source-layer · filter · 줌 범위 · 보임(그 채움이 그리는 지물과 같게),
+ * 그 채움 바로 아래에. 선은 1 px 바깥(COAST_LINE_OFFSET_PX)으로 밀려 육지 쪽에 놓이고, 물 쪽(이음새 포함)은 위의 물 채움이 덮는다. source 가 없는 층은 건너뛴다.
+ */
+export function coastLayers(layers: readonly StyleLayerLike[]): CoastLayer[] {
+  const out: CoastLayer[] = [];
+  for (const l of layers) {
+    if (!l || typeof l.id !== "string" || l.type !== "fill" || l["source-layer"] !== "water" || typeof l.source !== "string") continue;
+    out.push({
+      beforeId: l.id,
+      layer: {
+        id: `wakeline-coast-${l.id}`, type: "line", source: l.source, "source-layer": "water",
+        ...(l.filter !== undefined ? { filter: l.filter as maplibregl.FilterSpecification } : {}),
+        ...(typeof l.minzoom === "number" ? { minzoom: l.minzoom } : {}),
+        ...(typeof l.maxzoom === "number" ? { maxzoom: l.maxzoom } : {}),
+        ...(l.layout?.visibility === "none" ? { layout: { visibility: "none" as const } } : {}),
+        paint: { "line-color": BASEMAP_COAST, "line-width": 1, "line-offset": COAST_LINE_OFFSET_PX },
+      },
+    });
+  }
+  return out;
+}
+
 /** 지도에서 쓰는 부분만(maplibregl.Map 이 맞는다 — 시험은 가짜로) */
 export interface BasemapTarget {
   getStyle(): { layers?: readonly unknown[] } | undefined;
   setPaintProperty(id: string, prop: string, value: unknown): unknown;
+  getLayer(id: string): unknown;
+  addLayer(layer: CoastLayer["layer"], beforeId?: string): unknown;
 }
 
-/** 지도에 적용(style.load 마다). 적용한 수를 돌려준다. 스타일을 읽을 수 없거나 층이 없으면 0. */
+/**
+ * 지도에 적용(style.load 마다): 알려진 층의 색을 바꾸고 해안선 층을 더한다(이미 있으면 더하지 않는다). 적용한 수를 돌려준다.
+ * 스타일을 읽을 수 없거나 층이 없으면 0. 거절된 속성 · 층은 건너뛴다(배경지도가 조금 덜 칠해질 뿐 지도는 계속 그려진다).
+ */
 export function applyBasemap(map: BasemapTarget): number {
   let layers: readonly StyleLayerLike[] = [];
   try { layers = (map.getStyle()?.layers ?? []) as readonly StyleLayerLike[]; } catch { return 0; }
   let n = 0;
   for (const o of basemapOverrides(layers)) {
     try { map.setPaintProperty(o.id, o.prop, o.value); n++; } catch { /* 그 층에 없는 속성 — 건너뛴다 */ }
+  }
+  for (const c of coastLayers(layers)) {
+    try {
+      if (map.getLayer(c.layer.id)) continue;
+      map.addLayer(c.layer, c.beforeId);
+      n++;
+    } catch { /* 그 스타일이 받지 않는 층 — 해안선 없이 그린다 */ }
   }
   return n;
 }
