@@ -469,14 +469,15 @@ async def test_r03_backfilling_an_older_hole_keeps_meta_on_the_latest_frame(kma_
     job = mod.KmaRadarJob(prov, ctx)
     await job.run_once()
     first = await r.hgetall(mod.KEY_META)
-    assert (first["latest_tm"], first["stations"], first["observed_cells"]) == ("202609272000", "S2000", "2000")
+    # stations 는 지점 수, station_ids 는 코드(ADR-021 — 전에는 stations 가 코드 목록이었다)
+    assert (first["latest_tm"], first["station_ids"], first["observed_cells"]) == ("202609272000", "S2000", "2000")
     prov.binaries.clear()
     await job.run_once()  # 목록이 아직 그대로인 다음 주기: 창 안의 오래된 빈 곳만 채운다
     assert prov.binaries == ["202609271930", "202609271935", "202609271940", hole]
     meta = await r.hgetall(mod.KEY_META)
     frames = orjson.loads(await r.get(mod.KEY_FRAMES))
     assert frames[-1]["tm"] == meta["latest_tm"] == "202609272000"
-    assert (meta["stations"], meta["observed_cells"]) == ("S2000", "2000")  # 최신 프레임의 헤더 값 그대로
+    assert (meta["station_ids"], meta["observed_cells"]) == ("S2000", "2000")  # 최신 프레임의 헤더 값 그대로
     assert meta["fetched_at"] == frames[-1]["fetched_at"] == first["fetched_at"]  # 옛 프레임을 받은 시각이 아니다
     assert meta["checked_at"] >= first["checked_at"] and meta["available"] == "1"
 

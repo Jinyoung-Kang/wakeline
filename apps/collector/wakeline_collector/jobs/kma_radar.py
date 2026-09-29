@@ -24,6 +24,10 @@
   run_periodic 은 한 주기가 끝난 뒤 주기만큼 쉬고 다음을 시작하므로 겹치지 않는다 — 다음 주기가 늦어질 뿐이고, 놓친 프레임은 보관 창
   안에서 채운다. 계속 실패하는 서버에서는 첫 호출이 두 번 실패하는 즉시 끝난다.
 - 실패 기록(상태 last_error · 실행 기록 · 경고 로그)에는 실패한 단계(목록 날짜 · 바이너리 tm)와 그 호출에 걸린 시간을 싣는다.
+- 부분 합성(ADR-021): 합성은 tm 마다 일찍 올라오고 레이더 지점이 보고하는 대로 채워진다(2026-09-29 관찰). 프레임마다 헤더 STN_LIST 의
+  지점 수(stations)·코드(station_ids)를 싣고, 기준(stations_ref) = 가장 새 저장 tm 에서 REF_WINDOW_S 안(경계 포함)의 저장된 프레임 중 가장
+  많은 지점 수(그 프레임 포함), partial = stations < stations_ref(annotate_partial — 저장할 때마다 다시 계산). 지점 수를 모르는 옛 항목은
+  세지 않고 판정도 두지 않는다(모름). 60분은 선택값이다.
 """
 
 from __future__ import annotations
@@ -61,7 +65,13 @@ FRAME_TTL_S = 3 * 3600
 MAX_BAD = 64  # 해석 불가로 건너뛴 tm 기억 상한
 MAX_NOT_READY_TRIES = 3  # 목록에 있으나 아직 받을 수 없는 tm 을 다시 시도하는 횟수(주기마다 1번 ≈ 15분)
 PREV_DAY_LIST_MIN = 15  # KST 00:00 부터 이 분 동안은 전날 목록도 조회
+REF_WINDOW_S = 60 * 60  # 기준 지점 수(stations_ref)를 세는 창 — 가장 새 저장 tm 에서 거꾸로(선택값, ADR-021)
+REFETCH_MAX_AGE_S = 30 * 60  # 부분 합성 프레임을 다시 받는 tm 나이 상한(선택값, ADR-021)
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
+
+
+def _now() -> datetime:  # 다시 받기 간격 · 예산 여유 계산의 시각 — 시험이 바꿔 끼운다
+    return datetime.now(UTC)
 
 
 def _iso(dt: datetime) -> str:
@@ -78,6 +88,70 @@ def select_candidates(
     return [tm for tm in window if tm not in have and tm not in bad][-MAX_PER_CYCLE:]
 
 
+def _tm_dt(tm: object) -> datetime | None:
+    """tm(YYYYMMDDHHMM, KST 벽시계) → 시간대 없는 datetime. 틀리면 None."""
+    if not isinstance(tm, str):
+        return None
+    try:
+        return datetime.strptime(tm, "%Y%m%d%H%M")
+    except ValueError:
+        return None
+
+
+def _site_count(f: dict) -> int | None:
+    """항목의 지점 수. 없거나 형식이 틀리면 None(모름 — 0 으로 보지 않는다)."""
+    v = f.get("stations")
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def annotate_partial(frames: list[dict]) -> list[dict]:
+    """stations_ref · partial 을 다시 계산한다(저장할 때마다 — 늦게 온 더 많은 지점의 프레임 · 다시 받아 늘어난 프레임이 반영된다).
+    기준 = 가장 새 tm 에서 REF_WINDOW_S 안(경계 포함)의 항목 중 가장 많은 지점 수(자기 자신 포함) — 창 안 항목 모두에 같은 값.
+    창보다 오래된 항목(보관 창에 공백이 있을 때만 생긴다)은 창 안에 있을 때 받은 값을 그대로 둔다.
+    지점 수를 모르는 항목은 세지 않고 stations_ref · partial 을 두지 않는다(모르는 값에서 판정을 만들지 않는다)."""
+    times = [(f, _tm_dt(f.get("tm"))) for f in frames]
+    newest = max((t for _f, t in times if t is not None), default=None)
+    if newest is None:
+        return frames
+    lo = newest - timedelta(seconds=REF_WINDOW_S)
+    window = [f for f, t in times if t is not None and t >= lo]
+    ref = max((n for f in window if (n := _site_count(f)) is not None), default=None)
+    for f in window:
+        n = _site_count(f)
+        if n is None or ref is None:
+            f.pop("stations_ref", None)
+            f.pop("partial", None)
+            continue
+        f["stations_ref"] = ref
+        f["partial"] = n < ref
+    for f, t in times:
+        if t is None or _site_count(f) is None:  # 창 밖이어도 모르는 값의 판정은 남기지 않는다
+            f.pop("stations_ref", None)
+            f.pop("partial", None)
+    return frames
+
+
+def _refetch_until(tm: str) -> str | None:
+    """이 tm 을 다시 받을 수 있는 마지막 순간(UTC ISO): tm(KST) + REFETCH_MAX_AGE_S. 웹이 '다시 받음'과 '끝까지 채워지지 않음'을 가른다."""
+    t = _tm_dt(tm)
+    return None if t is None else _iso((t - timedelta(hours=9)).replace(tzinfo=UTC) + timedelta(seconds=REFETCH_MAX_AGE_S))
+
+
+def _latest_station_fields(frames: list[dict]) -> dict[str, str]:
+    """meta 해시의 지점 필드 — latest_tm(목록의 마지막) 프레임을 설명한다. 모르면 빈 값(0 으로 채우지 않는다)."""
+    f = frames[-1] if frames else {}
+    n = _site_count(f)
+    ids = f.get("station_ids")
+    ref = f.get("stations_ref")
+    partial = f.get("partial")
+    return {
+        "stations": "" if n is None else str(n),
+        "station_ids": ",".join(ids) if n is not None and isinstance(ids, list) else "",
+        "stations_ref": str(ref) if isinstance(ref, int) and not isinstance(ref, bool) else "",
+        "partial": ("1" if partial else "0") if isinstance(partial, bool) else "",
+    }
+
+
 # 격자 해석(수십 MB numpy 버퍼)은 전용 스레드 하나에서만 — 공용 기본 풀(asyncio.to_thread, 최대 8)의 아무 스레드에서 돌면 스레드마다
 # glibc malloc 아레나가 최고점을 따로 쥐어 RSS 가 계단식으로 늘었다(리뷰 4단계 측정). 해석은 원래 한 번에 하나씩이라 처리량 차이는 없다.
 _DECODE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="kma-decode")
@@ -85,6 +159,15 @@ _DECODE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_
 
 def _decode(raw: bytes):
     header, grid = read_echo(raw)
+    png, meta = render_mercator_png(header, grid)
+    return header, png, meta
+
+
+def _decode_if_more(raw: bytes, have: int):
+    """다시 받은 자료: 헤더의 지점 수가 have 보다 많을 때만 PNG 를 만든다(아니면 (header, None, None) — 재투영을 하지 않는다)."""
+    header, grid = read_echo(raw)
+    if len(header.stations) <= have:
+        return header, None, None
     png, meta = render_mercator_png(header, grid)
     return header, png, meta
 
@@ -104,6 +187,10 @@ class KmaRadarJob:
         self._warned = False
         self._bad: dict[str, None] = {}  # 삽입 순서 유지(오래된 것부터 버림)
         self._not_ready: dict[str, int] = {}  # tm → '아직 없음' 응답 횟수(R-03)
+        # 부분 합성 누계(프로세스 기동 뒤 — heartbeat): 부분 합성으로 처음 저장한 프레임 · 다시 받기 시도 · 지점이 늘어 바꾼 수
+        self.partial_stored = 0
+        self.refetch_attempts = 0
+        self.upgrades = 0
 
     async def _frames(self) -> list[dict]:
         raw = await self.ctx.status.redis.get(KEY_FRAMES)
@@ -320,6 +407,22 @@ class KmaRadarJob:
         quality.append(("kma_radar_missing", None, {"tm": tm, "tries": tries, "error": str(e)[:200]}))
         log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, str(e)[:160])
 
+    def _header_meta(self, header, meta: dict, fetched_at: datetime) -> dict[str, str]:
+        """meta 해시의 헤더 값 · fetched_at — latest_tm 프레임을 설명할 때만 쓴다."""
+        return {
+            "product": header.product,
+            "cmp": self.p.cmp,
+            "coordinates": orjson.dumps(meta["coordinates"]).decode(),
+            "width": str(meta["width"]),
+            "height": str(meta["height"]),
+            "projection": meta["projection"],
+            "grid": orjson.dumps(meta["grid"]).decode(),
+            "legend": orjson.dumps(meta["legend"]).decode(),
+            "min_dbz": str(meta["min_dbz"]),
+            "observed_cells": str(meta["observed_cells"]),
+            "fetched_at": _iso(fetched_at),
+        }
+
     async def _store(self, tm: str, res) -> None:
         ctx = self.ctx
         raw_ref = await archive(ctx.raw, "kma_radar", res.raw, res.fetched_at)  # 이미 gzip → 그대로 .bin.gz(R-21)
@@ -331,19 +434,28 @@ class KmaRadarJob:
         now = datetime.now(UTC)
         await r.set(KEY_FRAME.format(tm=tm), base64.b64encode(png).decode("ascii"), ex=FRAME_TTL_S)
         frames = [f for f in await self._frames() if f["tm"] != tm]
-        frames.append(
-            {
-                "tm": tm,
-                "obs_tm": header.tm.strftime("%Y%m%d%H%M"),
-                "fetched_at": _iso(res.fetched_at),
-                "expires_at": _iso(now + timedelta(seconds=FRAME_TTL_S)),
-                "bytes": len(png),
-                "echo_cells": meta["echo_cells"],
-                "raw_ref": raw_ref,
-            }
-        )
+        entry: dict = {
+            "tm": tm,
+            "obs_tm": header.tm.strftime("%Y%m%d%H%M"),
+            "fetched_at": _iso(res.fetched_at),
+            "expires_at": _iso(now + timedelta(seconds=FRAME_TTL_S)),
+            "bytes": len(png),
+            "echo_cells": meta["echo_cells"],
+            "raw_ref": raw_ref,
+            "stations": len(header.stations),  # 헤더 STN_LIST 의 지점 코드 수(합성에 든 레이더)
+            "station_ids": list(header.stations),
+            "refetches": 0,  # 부분 합성이라 다시 받은 횟수 · 지점이 늘어 바꾼 횟수
+            "upgrades": 0,
+        }
+        until = _refetch_until(tm)
+        if until is not None:
+            entry["refetch_until"] = until
+        frames.append(entry)
         frames = sorted(frames, key=lambda f: f["tm"])
         dropped, frames = frames[:-KEEP_FRAMES], frames[-KEEP_FRAMES:]
+        annotate_partial(frames)
+        if entry.get("partial") is True:
+            self.partial_stored += 1
         await self._save_frames(frames)
         if dropped:
             await r.delete(*[KEY_FRAME.format(tm=f["tm"]) for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
@@ -353,29 +465,19 @@ class KmaRadarJob:
             "note": "",
             "latest_tm": frames[-1]["tm"],
             "checked_at": _iso(now),
+            **_latest_station_fields(frames),  # 기준이 바뀌면 최신 프레임의 판정도 바뀐다 — 저장할 때마다 최신 프레임 값으로
         }
         # 헤더 값·fetched_at 은 latest_tm 프레임을 설명한다. 보관 창 안의 오래된 빈 곳을 채운 경우(R-03)에는 그대로 둔다 —
         # 옛 프레임 값으로 덮으면 meta 가 latest_tm 과 다른 프레임을 설명하고, fetched_at 이 새로 보여 STALE 이 가려진다.
         if frames[-1]["tm"] == tm:
-            mapping |= {
-                "product": header.product,
-                "cmp": self.p.cmp,
-                "coordinates": orjson.dumps(meta["coordinates"]).decode(),
-                "width": str(meta["width"]),
-                "height": str(meta["height"]),
-                "projection": meta["projection"],
-                "grid": orjson.dumps(meta["grid"]).decode(),
-                "legend": orjson.dumps(meta["legend"]).decode(),
-                "min_dbz": str(meta["min_dbz"]),
-                "stations": ",".join(header.stations),
-                "observed_cells": str(meta["observed_cells"]),
-                "fetched_at": _iso(res.fetched_at),
-            }
+            mapping |= self._header_meta(header, meta, res.fetched_at)
         await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
         log.info(
-            "kma radar: tm=%s %s echo cells=%d png=%d B (%d frames)",
+            "kma radar: tm=%s %s stations=%d%s echo cells=%d png=%d B (%d frames)",
             tm,
             header.product,
+            len(header.stations),
+            f"/{entry['stations_ref']} partial" if entry.get("partial") else "",
             meta["echo_cells"],
             len(png),
             len(frames),
