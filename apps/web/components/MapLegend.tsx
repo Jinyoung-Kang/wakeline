@@ -8,6 +8,7 @@ import {
   ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
+import { BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST } from "@/lib/basemap";
 import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH, SHIP_SELECTED_STYLE, SHIP_TRACK_POINT_STYLE } from "@/lib/ship-layers";
 import { aisCoverageFeatures, type ShipCategory, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
@@ -86,9 +87,9 @@ function Row({ swatch, children, wide }: { swatch: React.ReactNode; children: Re
   return <li className="flex items-center gap-2 py-[1px]"><span className={`flex shrink-0 justify-center whitespace-nowrap ${wide ? "min-w-6" : "w-6"}`}>{swatch}</span><span>{children}</span></li>;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
   return (
-    <section className="border-t border-line px-2 py-1.5">
+    <section className="border-t border-line px-2 py-1.5" data-testid={testId}>
       <h3 className="label mb-1 text-[9px]">{title}</h3>
       <ul className="space-y-[1px]">{children}</ul>
     </section>
@@ -233,6 +234,12 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           </> : <li className="text-fg-3">레이더 프레임 없음</li>}
         </Section>
       ) : null}
+      {/* 바탕 지도 선(2026-09-30): 동해의 회색 원(섬 둘레)과 바다 위 회색 선이 무엇인지 — 타일 속성 admin_level 2 · maritime 1(해상 국경)을 확인했다 */}
+      <Section title="바탕 지도 선(OpenFreeMap · OpenMapTiles)" testId="legend-basemap">
+        <Row swatch={<span className="inline-block w-4" style={{ borderTop: `1.5px solid ${BASEMAP_BOUNDARY_COUNTRY}` }} />}>국경 — 육상 · 해상 국경(섬 둘레의 회색 원도 해상 국경, 예: 울릉도 · 독도)</Row>
+        <Row swatch={<span className="inline-block w-4" style={{ borderTop: `1px solid ${BASEMAP_BOUNDARY_STATE}` }} />}>행정 경계(시 · 도 등)</Row>
+        <Row swatch={<span className="inline-block w-4" style={{ borderTop: `1px solid ${BASEMAP_COAST}` }} />}>해안선(육지 쪽 1 px)</Row>
+      </Section>
       <Section title="표기">
         <Row wide swatch={<span className="badge est px-1 text-[9px]">추정</span>}>점선 테두리 = 추정·가정 값</Row>
         <Row swatch={<span className="mono text-fg">—</span>}>값 모름(채우지 않음)</Row>
