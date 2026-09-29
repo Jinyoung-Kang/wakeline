@@ -1,6 +1,6 @@
 import {
   callTimes, kstUtc, legText, portCallStatusText, portText, PORT_CALL_CAVEAT, PORT_CALL_MAX_ITEMS, PORT_CALL_PAGE_CAP, PORT_CALL_SOURCE, PORT_CALL_SOURCE_URL,
-  PORT_CALL_TITLE,
+  PORT_CALL_ERROR_WHERE, PORT_CALL_TITLE,
   reportedNameMismatches, windowText, type PortCall, type PortCallsInfo,
 } from "@/lib/portcalls";
 
@@ -54,7 +54,10 @@ export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | nu
           </div>
         )
         : calls.status !== "ok" ? (
-          <div className={`text-[11px] ${tone}`} role={calls.status === "error" ? "alert" : undefined} data-testid="port-calls-status">{status}</div>
+          <div className={`text-[11px] ${tone}`} role={calls.status === "error" ? "alert" : undefined} data-testid="port-calls-status">
+            {status}
+            {calls.status === "error" ? <span className="block text-[10px] text-fg-3" data-testid="port-calls-error-where">{PORT_CALL_ERROR_WHERE}</span> : null}
+          </div>
         ) : <PortCallTable calls={calls} aisName={aisName} />}
       {calls != null && calls.status !== "no_call_sign" ? (
         <div className="mt-0.5 text-[10px] text-fg-3" data-testid="port-calls-window">

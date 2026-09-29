@@ -151,6 +151,9 @@ export const PORT_CALL_ERROR_TEXT: Record<PortCallErrorKind, string> = {
   cache: "api 가 캐시를 읽지 못함",
 };
 
+/** 실패 원문의 자리 — 공개 화면에는 종류·코드만 싣는다(예산 수치 등 내부 사유를 내보내지 않는다) */
+export const PORT_CALL_ERROR_WHERE = "원문 사유는 운영 화면의 공급자 portmis 상태·시스템 로그에만 있습니다";
+
 /** 상태 한 줄(ok 가 아닐 때). ok 면 null. */
 export function portCallStatusText(p: PortCallsInfo): string | null {
   switch (p.status) {

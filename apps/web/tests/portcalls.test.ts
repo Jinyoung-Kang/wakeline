@@ -177,6 +177,7 @@ describe("PortCallsSection (server-rendered)", () => {
     const err = render(parsePortCalls(calls("ship_selected.port_calls_error")));
     expect(err).toContain('role="alert"');
     expect(text(err)).toContain("조회 실패 — PORT-MIS HTTP 오류 (503)");
+    expect(text(err)).toContain("원문 사유는 운영 화면의 공급자 portmis 상태·시스템 로그에만 있습니다");
     expect(text(err)).toContain("조회 09-29 12:00 KST (09-29 03:00 UTC)");
     const none = text(render(parsePortCalls(calls("ship_selected.static_only"))));
     expect(none).toContain("호출부호 없음 — 조회 불가");
