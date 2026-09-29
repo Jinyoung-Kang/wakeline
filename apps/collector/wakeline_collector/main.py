@@ -1,6 +1,6 @@
 """collector 진입점 — 주기 작업 8종(region·global·sigmet·radar·metar·maintenance·radar_kr·traffic_grid)과 수요 기반 추적(focus·hot,
-ADR-013)·선택 항공기 노선 조회(계약 v4 §A)·선택 선박 한국 항만 입출항 조회(ADR-022)를 하나의 이벤트 루프에서 돌린다.
-traffic_grid = 연안 교통량(ADR-023). 입출항 · 연안 교통량은 공공데이터포털 키 하나 · apis.data.go.kr 호스트 버킷 하나를 나눠 쓴다(키가 있을 때만).
+ADR-013)·선택 항공기 노선 조회(계약 v4 §A)·한국 항만 입출항 색인(portcalls_index — ADR-022 개정)을 하나의 이벤트 루프에서 돌린다.
+traffic_grid = 연안 교통량(ADR-023). 입출항 색인 · 연안 교통량은 공공데이터포털 키 하나 · apis.data.go.kr 호스트 버킷 하나를 나눠 쓴다(키가 있을 때만).
 
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
 외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
@@ -34,7 +34,7 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.demand import DemandProvider, DemandTracker
 from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
-from wakeline_collector.jobs.portcalls import PortCallJob, PortCallLookup
+from wakeline_collector.jobs.portcalls_index import STATE_FIXTURE, STATE_NO_KEY, PortCallIndexJob
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.jobs.traffic_grid import TrafficGridJob
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
@@ -137,7 +137,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     limits = build_limits(settings)
     publisher = Publisher(redis)
     tracker: DemandTracker | None = None
-    portcalls: PortCallLookup | None = None
+    portcalls: PortCallIndexJob | None = None
     logsink: LogSink | None = None
 
     def metrics() -> dict[str, str]:
@@ -152,7 +152,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             # api /status 의 demand.adsb_fi_rps_1m 원천: 최근 60 s 동안 실제로 보낸 adsb.fi 호출 수 / 60
             "adsb_fi_rps_1m": f"{limiter.rate_1m(ADSB_FI_HOST):.3f}",
             "adsbdb_rps_1m": f"{limiter.rate_1m(ADSBDB_HOST):.3f}",
-            # apis.data.go.kr 호스트 하나(입출항 · 해양교통 · 해양격자 합계 — ADR-022 · ADR-023)
+            # apis.data.go.kr 호스트 하나(입출항 색인 · 해양교통 · 해양격자 합계 — ADR-022 · ADR-023)
             "data_go_kr_rps_1m": f"{limiter.rate_1m(DATA_GO_KR_HOST):.3f}",
             "http_rps_1m": f"{limiter.rate_1m():.3f}",
             "http_throttled": str(limiter.throttled),
@@ -213,14 +213,13 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             ctx, DemandPoller(redis), DemandStatus(redis), demand_provider, limiter=None if fixture else limiter, routes=routes
         )
 
-    # 한국 항만 입출항(ADR-022): 선택한 선박의 호출부호만 PORT-MIS 에 묻는다. 키가 없거나 fixture 모드면 묻지 않고
-    # 요청된 호출부호에 status "disabled"(no_key · fixture)를 쓴다(화면이 "조회 중" 에 머물지 않게). 항공기 수요 추적과 따로 돈다.
+    # 한국 항만 입출항 색인(ADR-022 개정): 항만청 10곳의 최근 30일(KST) 입출항 신고를 날짜별로 모두 받아 DB 에 둔다 — 선택은 외부 호출을 만들지
+    # 않는다(api 가 색인을 호출부호로 찾는다). 키가 없거나 fixture 모드면 받지 않고 heartbeat 상태(no_key · fixture)로 알린다(api 가 '꺼짐' 을 말한다).
     portmis = None if fixture else PortMisProvider(http, settings.data_go_kr_service_key)
     if portmis is not None and not portmis.configured:
-        log.info("DATA_GO_KR_SERVICE_KEY not set — Korean port calls (PORT-MIS) disabled")
+        log.info("DATA_GO_KR_SERVICE_KEY not set — Korean port-call index (PORT-MIS) disabled")
         portmis = None
-    portcalls = PortCallLookup(redis, portmis, ctx.budget, ctx.status, off_reason="fixture" if fixture else "no_key")
-    portcall_job = PortCallJob(redis, portcalls)
+    portcalls = PortCallIndexJob(portmis, ctx, off_state=STATE_FIXTURE if fixture else STATE_NO_KEY)
 
     if stop is None:
         stop = asyncio.Event()
@@ -239,7 +238,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "metar": run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
             "maintenance": run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
             "radar_kr": run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
-            "portcalls": portcall_job.run(stop),
+            "portcalls_index": portcalls.run(stop),
             "traffic_grid": run_periodic(
                 "traffic_grid", traffic.run_once, lambda: settings.traffic_grid_tick_s, stop, initial_delay=12
             ),

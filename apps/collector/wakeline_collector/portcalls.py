@@ -1,21 +1,13 @@
-"""한국 항만 입출항 캐시 값(ADR-022) — 해양수산부_선박운항정보(PORT-MIS) Info5 XML 응답 → Redis 값.
+"""한국 항만 입출항(ADR-022 · 개정) — 해양수산부_선박운항정보(PORT-MIS) Info5 XML 응답 → 입출항 색인 행(DB port_call — V15).
 
 공급자: GET https://apis.data.go.kr/1192000/VsslEtrynd5/Info5 (serviceKey · prtAgCd · sde · ede · pageNo · numOfRows ≤ 50 · deGb · clsgn).
 응답은 JSON 을 요청해도 XML 이다: response/header/resultCode("00" = 정상)·resultMsg, body/items/item[], body/totalCount.
-- 읽는 필드는 2026-09-29 실제 응답·Swagger 로 확인한 이름뿐이다(fixtures/portmis_info5_busan_230025.xml). 모르는 요소는 무시하고, 없는 요소는 null.
-- 호출부호로 거른 응답도 믿지 않는다: item 의 clsgn 을 같은 규칙으로 정규화해 요청한 호출부호와 다르면 버리고 센다.
-- 입항·출항 시각은 details/detail 의 etryndNm(입항/출항)·etryptDt(+09:00)에서 읽는다. 같은 종류의 신고 시각이 서로 다르면 어느 것이
-  맞는지 고르지 않는다 — entry_at/exit_at 은 null 이고 신고(reports) 목록을 그대로 둔다(화면이 모두 보인다).
-- 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(route.clean_text). 코드는 모양만 검사한다. 추측해 채우지 않는다.
+- **clsgn(호출부호) 파라미터는 거르지 않는다**(배포 뒤 확인 — docs/review/evidence/public-data-apis-2026-09-29.txt 마지막 절). 그래서 선택한 선박마다
+  묻지 않고, 항만청 · KST 날짜 하루씩 모든 신고를 받아 색인한다(jobs/portcalls_index). api 가 AIS 호출부호로 색인을 찾는다.
+- 읽는 필드는 실제 응답으로 확인한 이름뿐이다(fixtures/portmis_info5_busan_V7A3884.xml — 전체 기록 · portmis_info5_empty.xml — 빈 응답).
+  모르는 요소는 무시하고, 없는 요소는 None. 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(route.clean_text). 코드는 모양만 검사한다.
 - 예외 메시지는 고정 문구 + 공급자가 준 resultCode·resultMsg(가린 뒤 · 자른 것) 또는 뜻밖의 XML 의 뿌리 이름·글(가린 뒤 · 자른 것)이다.
-값: {"v":1,"status":"ok"|"none"|"error"|"disabled","call_sign","fetched_at","window":{from,to,days}|null,"source","items":[…],
-"truncated"(MAX_ITEMS 넘게 있어 앞만 둠),"incomplete"(쪽 상한에 걸려 일부 항만청 기록을 다 받지 못함),"error"(error 사유 원문 — 가린 뒤),
-"error_kind"(공개용 종류: budget(하루 예산) · hourly_cap(해양수산부 시간 창 — providers/data_go_kr.MOF_*) · rate_limited · http · provider ·
-response · network · internal),"error_code"(HTTP 상태 · resultCode — 모양 검사),
-"reason"(disabled 사유: no_key · fixture · operator)}.
-화면(api → 웹)에는 error 원문을 보내지 않는다 — 예산 수치·내부 사유가 공개 화면에 나가지 않게 종류·코드만(원문은 운영 화면 공급자 상태·로그에).
-
-수요(api 가 유일한 작성자, 수집기는 읽기만): ZSET wakeline:demand:portcalls member = 호출부호(이 규칙으로 정규화한 값), score = 만료 epoch ms.
+- 호출부호 정규화(normalize_call_sign)는 api(PortCallReader.normalizeCallSign)와 같은 규칙이다 — 언어 간 벡터 schemas/vectors/call-sign-cases.v1.json.
 """
 
 from __future__ import annotations
@@ -24,24 +16,14 @@ import re
 import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 가 있는 문서는 파싱 전에 거절한다(아래 _refuse_dtd)
 from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime, timedelta, timezone
-from typing import Literal
-
-import orjson
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from wakeline_collector.masking import mask
 from wakeline_collector.route import clean_text
 
-PORTCALLS_KEY_PREFIX = "wakeline:portcalls:"
-DEMAND_KEY = "wakeline:demand:portcalls"
 SOURCE = "해양수산부 선박운항정보(PORT-MIS)"
-WINDOW_DAYS = 30
-MAX_ITEMS = 20  # 화면에 보이는 최근 건수(값에도 이만큼만 둔다)
-TTL_RESULT_S = 6 * 3600  # ok · none — 입출항 신고는 하루 몇 번 바뀌는 자료다(선택할 때마다 10회씩 부르지 않게)
-TTL_ERROR_S = 300  # error — 5분 뒤 다시 묻는다
-TTL_DISABLED_S = 120  # disabled(키 없음·fixture·운영자 스위치) — 켜면 2분 안에 묻는다
+WINDOW_DAYS = 30  # 색인이 늘 덮으려는 창: 오늘(KST) − 30일 ~ 오늘
 
-# AIS 호출부호 칸은 7자(schemas/ship_static.v1.json). 3자 미만은 조회하지 않는다(우리 입력 규칙 — ADR-022).
+# AIS 호출부호 칸은 7자(schemas/ship_static.v1.json). 3자 미만은 찾지 않는다(우리 입력 규칙 — ADR-022).
 CALL_SIGN_RE = re.compile(r"^[A-Z0-9]{3,7}$")
 _PORT_AUTHORITY_CODE_RE = re.compile(r"^[0-9]{3}$")
 _PORT_CODE_RE = re.compile(r"^[A-Z0-9]{2,10}$")
@@ -65,11 +47,6 @@ PORT_AUTHORITIES: tuple[tuple[str, str], ...] = (
 )
 
 KST = timedelta(hours=9)  # 한국 표준시는 UTC+9 고정(일광 절약 시간 없음)
-
-Status = Literal["ok", "none", "error", "disabled"]
-DisabledReason = Literal["no_key", "fixture", "operator"]
-ErrorKind = Literal["budget", "hourly_cap", "rate_limited", "http", "provider", "response", "network", "internal"]
-_ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
 class PortCallParseError(ValueError):
@@ -98,191 +75,8 @@ def normalize_call_sign(raw: object) -> str | None:
     return cs if CALL_SIGN_RE.fullmatch(cs) else None
 
 
-def portcalls_key(call_sign: str) -> str:
-    if not CALL_SIGN_RE.fullmatch(call_sign):
-        raise ValueError("invalid call sign")
-    return PORTCALLS_KEY_PREFIX + call_sign
-
-
-def query_window(now: datetime) -> tuple[date, date]:
-    """(sde, ede) = (오늘(KST) − 30일, 오늘(KST))."""
-    today = (now.astimezone(UTC) + KST).date()
-    return today - timedelta(days=WINDOW_DAYS), today
-
-
-# ---- 값 ------------------------------------------------------------------------------------------------------------
 def _iso(dt: datetime | None) -> str | None:
     return None if dt is None else dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-class Port(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    code: str | None = Field(default=None, pattern=r"^[A-Z0-9]{2,10}$")
-    name: str | None = Field(default=None, min_length=1, max_length=TEXT_MAX)
-
-
-class Report(BaseModel):
-    """입출항 신고 하나(details/detail): kind = etryndNm(입항·출항 — 원문), at = etryptDt(UTC), type = reqstSeNm(예: 최초)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: str | None = Field(default=None, max_length=TEXT_MAX)
-    at: datetime | None = None
-    type: str | None = Field(default=None, max_length=TEXT_MAX)
-
-    @field_serializer("at")
-    def _at(self, dt: datetime | None) -> str | None:
-        return _iso(dt)
-
-
-class PortCall(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    port_authority_code: str | None = Field(default=None, pattern=r"^[0-9]{3}$")
-    port_authority: str | None = Field(default=None, max_length=TEXT_MAX)
-    entry_at: datetime | None = None
-    exit_at: datetime | None = None
-    reports: tuple[Report, ...] = ()
-    purpose: str | None = Field(default=None, max_length=TEXT_MAX)
-    prev_port: Port | None = None
-    next_port: Port | None = None
-    dest_port: Port | None = None
-    reported_name: str | None = Field(default=None, max_length=TEXT_MAX)
-    kind: str | None = Field(default=None, max_length=TEXT_MAX)
-    nationality: str | None = Field(default=None, max_length=TEXT_MAX)
-    # 같은 입항의 식별(입항년도 etryptYear · 입항횟수 etryptCo) — 페이지 경계에서 겹쳐 온 기록을 한 번만 두는 데만 쓴다(값에 싣지 않는다)
-    call_year: str | None = Field(default=None, max_length=16, exclude=True)
-    call_no: str | None = Field(default=None, max_length=16, exclude=True)
-
-    @property
-    def call_id(self) -> tuple[str, str, str] | None:
-        """(항만청, 입항년도, 입항횟수) — 셋 다 있을 때만."""
-        if self.port_authority_code and self.call_year and self.call_no:
-            return self.port_authority_code, self.call_year, self.call_no
-        return None
-
-    @field_serializer("entry_at", "exit_at")
-    def _times(self, dt: datetime | None) -> str | None:
-        return _iso(dt)
-
-    @property
-    def latest_at(self) -> datetime | None:
-        """정렬 기준 = 신고 시각 중 가장 늦은 것(어느 신고가 맞는지 고르지 않는다). 없으면 None."""
-        ats = [r.at for r in self.reports if r.at is not None]
-        return max(ats) if ats else None
-
-
-class PortCallsValue(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    v: Literal[1] = 1
-    status: Status
-    call_sign: str = Field(pattern=r"^[A-Z0-9]{3,7}$")
-    fetched_at: datetime
-    window_from: date | None = None
-    window_to: date | None = None
-    source: str = SOURCE
-    items: tuple[PortCall, ...] = ()
-    truncated: bool = False
-    incomplete: bool = False
-    error: str | None = Field(default=None, max_length=ERROR_MAX)
-    error_kind: ErrorKind | None = None
-    error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_]{1,16}$")
-    reason: DisabledReason | None = None
-
-    def to_json(self) -> bytes:
-        doc = {
-            "v": self.v,
-            "status": self.status,
-            "call_sign": self.call_sign,
-            "fetched_at": self.fetched_at.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-            "window": None
-            if self.window_from is None or self.window_to is None
-            else {"from": self.window_from.isoformat(), "to": self.window_to.isoformat(), "days": WINDOW_DAYS},
-            "source": self.source,
-            "items": [i.model_dump(mode="json") for i in self.items],
-            "truncated": self.truncated,
-            "incomplete": self.incomplete,
-            "error": self.error,
-            "error_kind": self.error_kind,
-            "error_code": self.error_code,
-            "reason": self.reason,
-        }
-        return orjson.dumps(doc)
-
-    @property
-    def ttl_s(self) -> int:
-        if self.status == "error":
-            return TTL_ERROR_S
-        if self.status == "disabled":
-            return TTL_DISABLED_S
-        return TTL_RESULT_S
-
-
-def error(
-    call_sign: str, reason: str, fetched_at: datetime | None = None, *, kind: ErrorKind = "internal", code: str | None = None
-) -> PortCallsValue:
-    """reason = 원문(가려서 캐시에만) · kind·code = 화면에 가는 공개 값(code 는 모양이 맞을 때만 — HTTP 상태 · resultCode)."""
-    return PortCallsValue(
-        status="error",
-        call_sign=call_sign,
-        fetched_at=fetched_at or datetime.now(UTC),
-        error=_safe(reason) or None,
-        error_kind=kind,
-        error_code=code if code is not None and _ERROR_CODE_RE.fullmatch(code) else None,
-    )
-
-
-def disabled(call_sign: str, reason: DisabledReason, fetched_at: datetime | None = None) -> PortCallsValue:
-    """묻지 않았다: no_key(DATA_GO_KR_SERVICE_KEY 없음) · fixture(외부 호출 없음) · operator(운영자가 portmis 를 끔).
-    fetched_at = 그렇게 판단한 시각."""
-    return PortCallsValue(status="disabled", call_sign=call_sign, fetched_at=fetched_at or datetime.now(UTC), reason=reason)
-
-
-def build_value(
-    call_sign: str, fetched_at: datetime, window: tuple[date, date], items: list[PortCall], *, incomplete: bool = False
-) -> PortCallsValue:
-    """모은 기록 → 캐시 값. 같은 입항(항만청·입항년도·입항횟수가 모두 있을 때)은 한 번만, 최근 신고 순(시각 모름은 뒤), 최대 MAX_ITEMS.
-    incomplete = 쪽 상한 때문에 어떤 항만청의 기록을 다 받지 못했다(받은 것 안에서만 최근 순이다 — 화면이 밝힌다)."""
-    unique = _dedupe(items)
-    unique.sort(key=_sort_key)
-    return PortCallsValue(
-        status="ok" if unique else "none",
-        call_sign=call_sign,
-        fetched_at=fetched_at,
-        window_from=window[0],
-        window_to=window[1],
-        items=tuple(unique[:MAX_ITEMS]),
-        truncated=len(unique) > MAX_ITEMS,
-        incomplete=incomplete,
-    )
-
-
-def _sort_key(it: PortCall) -> tuple[int, float, str]:
-    at = it.latest_at
-    return (0 if at is not None else 1, -(at.timestamp() if at is not None else 0.0), it.port_authority_code or "")
-
-
-def _dedupe(items: list[PortCall]) -> list[PortCall]:
-    seen: set[tuple[str, str, str]] = set()
-    out: list[PortCall] = []
-    for it in items:
-        ident = it.call_id
-        if ident is not None:
-            if ident in seen:
-                continue
-            seen.add(ident)
-        out.append(it)
-    return out
-
-
-# ---- 파싱 ----------------------------------------------------------------------------------------------------------
-@dataclass(frozen=True)
-class ParsedPage:
-    total: int
-    items: list[PortCall]
-    mismatched: int  # 다른 호출부호(또는 호출부호 없음)라 버린 item 수
 
 
 _DTD_RE = re.compile(rb"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
@@ -329,41 +123,6 @@ def _time(v: str | None) -> datetime | None:
     return dt.astimezone(UTC) if dt.tzinfo is not None else None
 
 
-def _port(el: ET.Element, code_tag: str, name_tag: str) -> Port | None:
-    code, name = _code(el, code_tag, _PORT_CODE_RE), _text(el, name_tag)
-    return None if code is None and name is None else Port(code=code, name=name)
-
-
-def _single(reports: list[Report], kind: str) -> datetime | None:
-    ats = {r.at for r in reports if r.kind == kind}
-    if len(ats) != 1:
-        return None
-    return next(iter(ats))
-
-
-def _parse_item(el: ET.Element) -> PortCall:
-    reports = [
-        Report(kind=_text(d, "etryndNm"), at=_time(_text(d, "etryptDt", 64)), type=_text(d, "reqstSeNm"))
-        for d in _children(_child(el, "details"), "detail")
-    ]
-    return PortCall(
-        port_authority_code=_code(el, "prtAgCd", _PORT_AUTHORITY_CODE_RE),
-        port_authority=_text(el, "prtAgNm"),
-        entry_at=_single(reports, "입항"),
-        exit_at=_single(reports, "출항"),
-        reports=tuple(reports),
-        purpose=_text(el, "etryptPurpsNm"),
-        prev_port=_port(el, "prvsDpmprtNatPrtCd", "prvsDpmprtPrtNm"),
-        next_port=_port(el, "nxlnptNatPrtCd", "nxlnptPrtNm"),
-        dest_port=_port(el, "dstnNatPrtCd", "dstnPrtNm"),
-        reported_name=_text(el, "vsslNm"),
-        kind=_text(el, "vsslKndNm"),
-        nationality=_text(el, "vsslNltyNm"),
-        call_year=_text(el, "etryptYear", 16),
-        call_no=_text(el, "etryptCo", 16),
-    )
-
-
 def _refuse_dtd(body: bytes) -> None:
     """DOCTYPE·ENTITY 선언이 있는 문서는 읽지 않는다(엔티티 확장 · 외부 참조 — 확인한 응답에는 없다)."""
     if _DTD_RE.search(body):
@@ -373,37 +132,6 @@ def _refuse_dtd(body: bytes) -> None:
 def _leaf_text(root: ET.Element) -> str:
     parts = [t for t in (clean_text(e.text, _ERROR_TEXT_MAX) for e in root.iter()) if t]
     return " ".join(parts)[:_ERROR_TEXT_MAX]
-
-
-def parse_page(body: bytes, call_sign: str) -> ParsedPage:
-    """응답 한 쪽 → ParsedPage. resultCode 가 "00" 이 아니면 PortCallApiError, 모양이 다르면 PortCallParseError."""
-    _refuse_dtd(body)
-    try:
-        root = ET.fromstring(body)  # noqa: S314 — DTD 는 위에서 거절했다(expat ≥ 2.4 의 확장 폭탄 방어도 있다)
-    except ET.ParseError:
-        raise PortCallParseError("response is not XML") from None
-    if _local(root.tag) != "response":
-        text = _leaf_text(root)
-        raise PortCallParseError(_safe(f"unexpected response (root <{_local(root.tag)[:40]}>{': ' + text if text else ''})"))
-    header = _child(root, "header")
-    code = _text(header, "resultCode", 16)
-    if code is None:
-        raise PortCallParseError("resultCode missing")
-    if code != "00":
-        raise PortCallApiError(code, _text(header, "resultMsg", _ERROR_TEXT_MAX))
-    body_el = _child(root, "body")
-    total_raw = _text(body_el, "totalCount", 16)
-    if total_raw is None or not total_raw.isdigit():
-        raise PortCallParseError("totalCount missing or invalid")
-    items: list[PortCall] = []
-    mismatched = 0
-    for el in _children(_child(body_el, "items"), "item"):
-        c = _child(el, "clsgn")
-        if normalize_call_sign(c.text if c is not None else None) != call_sign:
-            mismatched += 1
-            continue
-        items.append(_parse_item(el))
-    return ParsedPage(total=int(total_raw), items=items, mismatched=mismatched)
 
 
 # ---- 입출항 색인(ADR-022 개정 — clsgn 이 거르지 않아 호출부호 없이 항만청 · 날짜별로 모두 받는다) ------------------------------------------

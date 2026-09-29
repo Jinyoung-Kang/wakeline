@@ -17,11 +17,13 @@ import pytest
 from portmis_observed import empty_bytes, full_record_bytes, real_item, response
 
 from wakeline_collector.portcalls import (
+    PORT_AUTHORITIES,
     Coverage,
     PortCallApiError,
     PortCallParseError,
     kst_date,
     merge_day,
+    normalize_call_sign,
     parse_index_page,
 )
 
@@ -190,19 +192,6 @@ def test_a_row_whose_entry_is_on_another_kst_day_is_kept_and_counted():
     assert len(p.rows) == 1 and p.date_mismatch == 1 and p.rows[0].listed_date == date(2026, 9, 25)
 
 
-def test_errors_are_the_same_as_for_lookup_pages():
-    with pytest.raises(PortCallApiError):
-        parse_index_page(
-            b"<response><header><resultCode>30</resultCode><resultMsg>SERVICE KEY IS NOT REGISTERED</resultMsg></header></response>",
-            "020",
-            DAY,
-        )
-    with pytest.raises(PortCallParseError):
-        parse_index_page(b"<response><header><resultCode>00</resultCode></header><body/></response>", "020", DAY)
-    with pytest.raises(PortCallParseError):
-        parse_index_page(b'<!DOCTYPE x [<!ENTITY a "b">]><response/>', "020", DAY)
-
-
 def test_kst_date_is_utc_plus_nine():
     assert kst_date(datetime(2026, 9, 23, 15, 0, tzinfo=UTC)) == date(2026, 9, 24)
     assert kst_date(datetime(2026, 9, 23, 14, 59, 59, tzinfo=UTC)) == date(2026, 9, 23)
@@ -231,3 +220,113 @@ def _d(n: int) -> date:
 )
 def test_merge_day(cov, day, reset, want):
     assert merge_day(cov, day, reset=reset) == want
+
+
+# ---- 호출부호 규칙 · 항만청 · 모양 검사(검색 방식이 바뀌어도 그대로인 규칙) ------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ("230025", "230025"),
+        (" d7ab2 ", "D7AB2"),
+        ("ABC", "ABC"),
+        ("ABCDEFG", "ABCDEFG"),
+        ("AB", None),  # 3자 미만
+        ("ABCDEFGH", None),  # AIS 호출부호 칸은 7자(schemas/ship_static.v1.json)
+        ("AB-12", None),
+        ("AB 12", None),  # 가운데 공백을 지워 다른 호출부호로 만들지 않는다
+        ("", None),
+        (None, None),
+        (230025, None),
+        ("ABı12", None),  # ASCII 가 아니면 거절(대문자 변환으로 모양이 바뀌지 않게)
+        ("\tabc12\r\n", "ABC12"),
+    ],
+)
+def test_normalize_call_sign(raw, want):
+    assert normalize_call_sign(raw) == want
+
+
+def test_call_sign_rule_matches_the_shared_vectors():
+    """api(PortCallReader.normalizeCallSign)가 같은 파일을 읽는다 — 색인에 넣는 호출부호와 찾는 호출부호가 같은 규칙이다."""
+    doc = json.loads((ROOT / "schemas" / "vectors" / "call-sign-cases.v1.json").read_text(encoding="utf-8"))
+    assert doc["version"] == 1 and len(doc["cases"]) >= 15
+    for c in doc["cases"]:
+        assert normalize_call_sign(c["input"]) == c["expected"], c
+
+
+def test_port_authorities_are_the_ten_verified_codes():
+    """nlic.go.kr 항만청코드 표(11행이라 적혀 있으나 10개) — 2026-09-29 API 로 각 코드가 이 이름(prtAgNm)을 돌려줌을 확인했다."""
+    assert PORT_AUTHORITIES == (
+        ("020", "부산"), ("030", "인천"), ("200", "동해"), ("300", "대산"), ("500", "군산"),
+        ("610", "목포"), ("620", "여수"), ("700", "포항"), ("810", "마산"), ("820", "울산"),
+    )  # fmt: skip
+
+
+def test_the_trimmed_230025_fixture_has_no_entry_count_so_its_day_cannot_be_indexed():
+    """portmis_info5_busan_230025.xml 은 값을 확인한 필드만 남긴 응답이다(입항년도 · 입항횟수 없음) — 자연 키를 짓지 않고 세기만 한다."""
+    p = parse_index_page((ROOT / "fixtures" / "portmis_info5_busan_230025.xml").read_bytes(), "020", date(2026, 9, 29))
+    assert (p.total, p.items, p.rows, p.unkeyed) == (1, 1, [], 1)
+
+
+def test_text_is_cleaned_and_capped_and_codes_are_shape_checked():
+    it = real_item()
+    for tag, value in (
+        ("vsslNm", "AZAMARA‮ PURSUIT​\t  "),
+        ("prvsDpmprtNatPrtCd", "jp smn"),
+        ("etryptPurpsNm", "여" * 200),
+        ("vsslNltyCd", "M-H"),
+    ):
+        el = it.find(tag)
+        assert el is not None
+        el.text = value
+    (row,) = parse_index_page(_page(it), "020", DAY).rows
+    assert row.vssl_nm == "AZAMARA PURSUIT"
+    assert row.prev_port_cd is None and row.prev_port_nm == "SAKAIMINATO"  # 모양이 틀린 코드는 버린다(이름은 남는다)
+    assert row.purpose_nm is not None and len(row.purpose_nm) == 80
+    assert row.nationality_cd is None and row.nationality_nm == "마샬 제도"
+
+
+@pytest.mark.parametrize("dt", ["2026-09-24T08:17:00", "2026-09-24", "yesterday", "", "2026-13-01T00:00:00+09:00"])
+def test_entry_times_without_offset_or_unreadable_are_unknown(dt):
+    it = _with_details([("최종", "입항", "etryptDt", dt)])
+    (row,) = parse_index_page(_page(it), "020", DAY).rows
+    assert (row.entry_at, row.entry_revision) == (None, None)
+
+
+def test_non_normal_result_code_is_an_api_error_with_a_masked_message():
+    body = b"<response><header><resultCode>99</resultCode><resultMsg>SOMETHING WRONG serviceKey=abc123XYZ</resultMsg></header></response>"
+    with pytest.raises(PortCallApiError) as e:
+        parse_index_page(body, "020", DAY)
+    assert e.value.code == "99"
+    assert str(e.value) == "resultCode 99 · SOMETHING WRONG serviceKey=***"
+
+
+@pytest.mark.parametrize(
+    ("body", "want"),
+    [
+        (b"not xml", "response is not XML"),
+        (b'{"response":{}}', "response is not XML"),
+        (
+            b"<OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE ERROR</errMsg></cmmMsgHeader></OpenAPI_ServiceResponse>",
+            "unexpected response (root <OpenAPI_ServiceResponse>: SERVICE ERROR)",
+        ),
+        (b"<response><body><totalCount>0</totalCount></body></response>", "resultCode missing"),
+        (
+            b"<response><header><resultCode>00</resultCode></header><body><items/></body></response>",
+            "totalCount missing or invalid",
+        ),
+        (
+            b"<response><header><resultCode>00</resultCode></header><body><totalCount>-1</totalCount></body></response>",
+            "totalCount missing or invalid",
+        ),
+    ],
+)
+def test_unexpected_shapes_are_parse_errors(body, want):
+    with pytest.raises(PortCallParseError) as e:
+        parse_index_page(body, "020", DAY)
+    assert str(e.value) == want
+
+
+def test_doctype_and_entities_are_refused_before_parsing():
+    bomb = b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><response>&a;</response>'
+    with pytest.raises(PortCallParseError, match="DOCTYPE"):
+        parse_index_page(bomb, "020", DAY)

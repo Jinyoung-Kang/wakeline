@@ -21,7 +21,7 @@ import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import asyncpg
@@ -29,6 +29,7 @@ import orjson
 
 from wakeline_collector.config import settings
 from wakeline_collector.masking import mask
+from wakeline_collector.portcalls import Coverage, PortCallRow, merge_day
 
 log = logging.getLogger("db")
 
@@ -92,6 +93,59 @@ _MARINE_GRID4_UPSERT = """INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, l
    ON CONFLICT (grid_no) DO UPDATE SET lat_min=EXCLUDED.lat_min, lon_min=EXCLUDED.lon_min, lat_max=EXCLUDED.lat_max,
        lon_max=EXCLUDED.lon_max, gid=EXCLUDED.gid, fetched_at=EXCLUDED.fetched_at"""
 _MARINE_GRID4_SELECT = "SELECT grid_no, lat_min, lon_min, lat_max, lon_max, gid FROM marine_grid4"
+
+
+# 한국 항만 입출항 색인(ADR-022 개정 · V15 port_call · port_call_coverage). 열 순서 = PortCallRow 의 필드 순서(키 넷 · listed_date · 나머지).
+_PORT_CALL_COLS = (
+    "prt_ag_cd", "clsgn", "etrypt_year", "etrypt_co", "listed_date", "prt_ag_nm", "vssl_nm", "nationality_cd", "nationality_nm", "kind_cd",
+    "kind_nm", "purpose_nm", "first_port_cd", "first_port_nm", "prev_port_cd", "prev_port_nm", "next_port_cd", "next_port_nm", "dest_port_cd",
+    "dest_port_nm", "entry_at", "entry_revision", "exit_at", "exit_revision", "berth",
+)  # fmt: skip
+# 값이 바뀐 행만 updated_at 을 바꾼다(fetched_at 은 받을 때마다) — updated_at = 신고가 마지막으로 고쳐진 것을 색인이 본 때.
+# 열 목록은 _PORT_CALL_COLS 와 같은 순서다(test_db_port_calls 가 확인한다).
+_PORT_CALL_UPSERT = """INSERT INTO port_call (prt_ag_cd, clsgn, etrypt_year, etrypt_co, listed_date, prt_ag_nm, vssl_nm, nationality_cd,
+       nationality_nm, kind_cd, kind_nm, purpose_nm, first_port_cd, first_port_nm, prev_port_cd, prev_port_nm, next_port_cd, next_port_nm,
+       dest_port_cd, dest_port_nm, entry_at, entry_revision, exit_at, exit_revision, berth, fetched_at, updated_at)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$26)
+   ON CONFLICT (prt_ag_cd, clsgn, etrypt_year, etrypt_co) DO UPDATE SET listed_date=EXCLUDED.listed_date, prt_ag_nm=EXCLUDED.prt_ag_nm,
+       vssl_nm=EXCLUDED.vssl_nm, nationality_cd=EXCLUDED.nationality_cd, nationality_nm=EXCLUDED.nationality_nm, kind_cd=EXCLUDED.kind_cd,
+       kind_nm=EXCLUDED.kind_nm, purpose_nm=EXCLUDED.purpose_nm, first_port_cd=EXCLUDED.first_port_cd, first_port_nm=EXCLUDED.first_port_nm,
+       prev_port_cd=EXCLUDED.prev_port_cd, prev_port_nm=EXCLUDED.prev_port_nm, next_port_cd=EXCLUDED.next_port_cd,
+       next_port_nm=EXCLUDED.next_port_nm, dest_port_cd=EXCLUDED.dest_port_cd, dest_port_nm=EXCLUDED.dest_port_nm, entry_at=EXCLUDED.entry_at,
+       entry_revision=EXCLUDED.entry_revision, exit_at=EXCLUDED.exit_at, exit_revision=EXCLUDED.exit_revision, berth=EXCLUDED.berth,
+       fetched_at=EXCLUDED.fetched_at,
+       updated_at=CASE WHEN (port_call.listed_date, port_call.prt_ag_nm, port_call.vssl_nm, port_call.nationality_cd, port_call.nationality_nm,
+                             port_call.kind_cd, port_call.kind_nm, port_call.purpose_nm, port_call.first_port_cd, port_call.first_port_nm,
+                             port_call.prev_port_cd, port_call.prev_port_nm, port_call.next_port_cd, port_call.next_port_nm,
+                             port_call.dest_port_cd, port_call.dest_port_nm, port_call.entry_at, port_call.entry_revision, port_call.exit_at,
+                             port_call.exit_revision, port_call.berth)
+                   IS DISTINCT FROM (EXCLUDED.listed_date, EXCLUDED.prt_ag_nm, EXCLUDED.vssl_nm, EXCLUDED.nationality_cd, EXCLUDED.nationality_nm,
+                             EXCLUDED.kind_cd, EXCLUDED.kind_nm, EXCLUDED.purpose_nm, EXCLUDED.first_port_cd, EXCLUDED.first_port_nm,
+                             EXCLUDED.prev_port_cd, EXCLUDED.prev_port_nm, EXCLUDED.next_port_cd, EXCLUDED.next_port_nm,
+                             EXCLUDED.dest_port_cd, EXCLUDED.dest_port_nm, EXCLUDED.entry_at, EXCLUDED.entry_revision, EXCLUDED.exit_at,
+                             EXCLUDED.exit_revision, EXCLUDED.berth)
+                   THEN EXCLUDED.updated_at ELSE port_call.updated_at END"""
+# 하루를 끝까지 받았으면 그 날 목록에 없는 행은 철회된 신고다 — 지운다(목록 날짜가 바뀐 행은 새 날짜로 이미 옮겨졌다)
+_PORT_CALL_DELETE_WITHDRAWN = """DELETE FROM port_call WHERE prt_ag_cd = $1 AND listed_date = $2
+   AND (clsgn, etrypt_year, etrypt_co) NOT IN (SELECT * FROM unnest($3::text[], $4::text[], $5::text[]))"""
+_PORT_CALL_COVERAGE_UPSERT = """INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, refreshed_at, updated_at)
+   VALUES ($1, $2, $3, $4, $5)
+   ON CONFLICT (prt_ag_cd) DO UPDATE SET covered_from=EXCLUDED.covered_from, covered_to=EXCLUDED.covered_to,
+       refreshed_at=EXCLUDED.refreshed_at, updated_at=EXCLUDED.updated_at"""
+
+
+@dataclass(frozen=True)
+class DayApplied:
+    """하루 적용 결과. applied False = 아무것도 바꾸지 않았다(suspect_empty: 저장된 행이 stored 개인데 원천이 0건 — 한 번 더 확인할 때까지 지우지 않는다).
+    merged False = 행은 적었지만 범위와 이어지지 않아 범위는 그대로(coverage 는 지금 범위)."""
+
+    applied: bool
+    coverage: Coverage | None
+    merged: bool = False
+    upserted: int = 0
+    deleted: int = 0
+    stored: int = 0
+    suspect_empty: bool = False
 
 
 @dataclass
@@ -498,3 +552,87 @@ class Db:
             self._warn("db: marine_grid4 read failed (%s) — geometry cache stays in memory", type(e).__name__)
             return None
         return [(r["grid_no"], r["lat_min"], r["lon_min"], r["lat_max"], r["lon_max"], r["gid"]) for r in rows]
+
+    # ---- 한국 항만 입출항 색인(ADR-022 개정 · V15) — 큐를 거치지 않는 직접 읽기 · 트랜잭션 ---------------------------------------------------------
+    async def read_port_call_coverage(self) -> dict[str, Coverage] | None:
+        """항만청 → 색인 범위. DB 에 닿지 못하면 None(모름 — 빈 dict 는 '아직 색인한 것이 없다')."""
+        pool = await self._ensure_pool()
+        if pool is None:
+            return None
+        try:
+            rows = await asyncio.wait_for(
+                pool.fetch("SELECT prt_ag_cd, covered_from, covered_to, refreshed_at FROM port_call_coverage"), OP_TIMEOUT_S
+            )
+        except Exception as e:  # noqa: BLE001
+            self.failures += 1
+            self._warn("db: port_call_coverage read failed (%s) — port-call index waits for the database", type(e).__name__)
+            return None
+        return {r["prt_ag_cd"]: Coverage(r["covered_from"], r["covered_to"], r["refreshed_at"]) for r in rows}
+
+    async def apply_port_call_day(
+        self,
+        pa: str,
+        day: date,
+        rows: list[PortCallRow],
+        fetched_at: datetime,
+        *,
+        reset: bool = False,
+        refreshed_at: datetime | None = None,
+        refuse_empty_over: int | None = None,
+    ) -> DayApplied | None:
+        """(항만청, 하루)를 끝까지 받은 결과를 한 트랜잭션으로: 행 upsert · 그 날 목록에서 빠진 행 삭제 · 범위 넓히기(merge_day — 이어질 때만) ·
+        refreshed_at(꼬리 갱신이 끝났을 때 — 범위가 이어졌을 때만). refuse_empty_over: 원천이 0건인데 저장된 행이 이 수 이상이면 바꾸지 않는다
+        (일시적인 빈 응답으로 색인을 지우지 않게 — 작업이 다시 확인한 뒤 None 으로 부른다). DB 에 닿지 못하거나 실패하면 None(아무것도 바뀌지 않았다)."""
+        pool = await self._ensure_pool()
+        if pool is None:
+            return None
+        args = [(*(getattr(r, c) for c in _PORT_CALL_COLS), fetched_at) for r in rows]
+        keys = ([r.clsgn for r in rows], [r.etrypt_year for r in rows], [r.etrypt_co for r in rows])
+
+        async def txn() -> DayApplied:
+            async with pool.acquire() as conn, conn.transaction():
+                cur = await conn.fetchrow(
+                    "SELECT covered_from, covered_to, refreshed_at FROM port_call_coverage WHERE prt_ag_cd = $1 FOR UPDATE", pa
+                )
+                cov = None if cur is None else Coverage(cur["covered_from"], cur["covered_to"], cur["refreshed_at"])
+                if not rows and refuse_empty_over is not None:
+                    stored = await conn.fetchval(
+                        "SELECT count(*) FROM port_call WHERE prt_ag_cd = $1 AND listed_date = $2", pa, day
+                    )
+                    if stored >= refuse_empty_over:
+                        return DayApplied(False, cov, stored=int(stored), suspect_empty=True)
+                if args:
+                    await conn.executemany(_PORT_CALL_UPSERT, args)
+                status = await conn.execute(_PORT_CALL_DELETE_WITHDRAWN, pa, day, *keys)
+                deleted = int(status.rsplit(" ", 1)[-1]) if isinstance(status, str) and status.startswith("DELETE") else 0
+                new = merge_day(cov, day, reset=reset)
+                if new is None:
+                    return DayApplied(True, cov, False, len(args), deleted)
+                if refreshed_at is not None:
+                    new = Coverage(new.covered_from, new.covered_to, refreshed_at)
+                await conn.execute(
+                    _PORT_CALL_COVERAGE_UPSERT, pa, new.covered_from, new.covered_to, new.refreshed_at, datetime.now(UTC)
+                )
+                return DayApplied(True, new, True, len(args), deleted)
+
+        try:
+            return await asyncio.wait_for(txn(), OP_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 — 되돌려졌다(트랜잭션): 이 날은 다음에 다시 받는다
+            self.failures += 1
+            self._warn("db: port_call day %s/%s not applied (%s: %s)", pa, day, type(e).__name__, (mask(str(e)) or "")[:160])
+            return None
+
+    def purge_port_calls(self, cutoff: date) -> None:
+        """보존(ADR-022 개정 — 목록 날짜 기준): cutoff 이전 행을 지우고, 범위의 시작을 cutoff 로 올린다(지운 날을 덮는다고 말하지 않게) — 한 트랜잭션.
+        범위 전체가 cutoff 이전이면 범위는 그대로 둔다(작업이 창 밖의 범위로 보고 새로 시작한다). 멱등(큐 — 재시도해도 같다)."""
+
+        async def fn(pool: Any) -> None:
+            async with pool.acquire() as conn, conn.transaction():
+                await conn.execute("DELETE FROM port_call WHERE listed_date < $1", cutoff)
+                await conn.execute(
+                    """UPDATE port_call_coverage SET covered_from = $1, updated_at = now()
+                       WHERE covered_from < $1 AND covered_to >= $1""",
+                    cutoff,
+                )
+
+        self._submit("port_call_retention", fn)

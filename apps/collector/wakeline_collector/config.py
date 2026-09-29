@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # 호스트는 api.adsbdb.com 만(HttpClient 허용 목록과 같다) — 다른 호스트는 보내지도 못하면서 예산·호출 수만 쓰게 된다
     adsbdb_base_url: str = Field(default="https://api.adsbdb.com", pattern=r"^https://api\.adsbdb\.com(:443)?/?$")
     # apis.data.go.kr 호스트 버킷 하나(burst 2)를 세 잡(portmis · komsa_traffic · mof_grid4)이 나눠 쓴다 — 나누는 규칙은 우선순위
-    # (교통 5분 폴링 PRIORITY_FIXED > 입출항 조회 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL). 상한 둘: 2 req/s 이하(포털 보호 — 선택값),
+    # (교통 5분 폴링 PRIORITY_FIXED > 입출항 색인 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL). 상한 둘: 2 req/s 이하(포털 보호 — 선택값),
     # 그리고 수집기 전체 버킷(http_global_rps)보다 작게(_data_go_kr_below_global — 같으면 세 잡이 기다릴 때마다 전체 버킷의 토큰을 모두 가져갈 수 있다)
     data_go_kr_rps: float = Field(default=1.0, gt=0, le=2.0)
     # 한국 항만 입출항(ADR-022): 호스트는 apis.data.go.kr 의 이 서비스 경로만(HttpClient 허용 목록과 같은 호스트)

@@ -35,7 +35,7 @@ ALLOWED_HOSTS = frozenset(
         "api.rainviewer.com",
         "apihub.kma.go.kr",
         "api.adsbdb.com",  # 노선 조회(계약 v4 §A) — 선택한 항공기의 콜사인만
-        "apis.data.go.kr",  # 공공데이터포털 — 선택 선박 항만 입출항(ADR-022 PORT-MIS) · 연안 교통량(ADR-023). 호스트 버킷 하나를 나눠 쓴다
+        "apis.data.go.kr",  # 공공데이터포털 — 한국 항만 입출항 색인(ADR-022 PORT-MIS) · 연안 교통량(ADR-023). 호스트 버킷 하나를 나눠 쓴다
     }
 )
 

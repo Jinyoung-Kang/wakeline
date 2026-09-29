@@ -182,13 +182,6 @@ ok "EXISTS wakeline:route:*"             "^1$"      "${K[@]}" exists wakeline:ro
 ok "GET wakeline:route:*"                "not_found" "${K[@]}" get wakeline:route:ZZX123
 ok "TTL wakeline:route:*(관리자로 확인)"  "^(1[0-7][0-9]{2}|1800)$" "${D[@]}" ttl wakeline:route:ZZX123
 ok "api GET wakeline:route:*(수집기가 쓴 값)" "not_found" "${A[@]}" get wakeline:route:ZZX123
-# ADR-022: 한국 항만 입출항 — 임대는 읽기(2 s 폴링), 캐시는 EXISTS 로 확인하고 SET EX 로 쓴다(ok·none 6 h · error 5분 · disabled 2분). 값은 합성 자료.
-ok "ZRANGEBYSCORE wakeline:demand:portcalls" "230025" "${K[@]}" zrangebyscore wakeline:demand:portcalls "$NOW_MS" +inf limit 0 64
-ok "EXISTS wakeline:portcalls:*(없음)"   "^0$"      "${K[@]}" exists wakeline:portcalls:230025
-ok "SET wakeline:portcalls:* EX 21600"   OK         "${K[@]}" set wakeline:portcalls:230025 '{"v":1,"status":"none","call_sign":"230025"}' ex 21600
-ok "EXISTS wakeline:portcalls:*"         "^1$"      "${K[@]}" exists wakeline:portcalls:230025
-ok "TTL wakeline:portcalls:*(관리자로 확인)" "^(21[0-5][0-9]{2}|21600)$" "${D[@]}" ttl wakeline:portcalls:230025
-ok "api GET wakeline:portcalls:*(수집기가 쓴 값)" "none" "${A[@]}" get wakeline:portcalls:230025
 
 ok "DEL wakeline:radar_kr:frames(목록 비움 — kma_radar._save_frames)" "^[01]$" "${K[@]}" del wakeline:radar_kr:frames
 # ADR-023: 연안 교통량 스냅샷(SET EX 1200)과 부정 캐시 해시(HSET · HGETALL). 값은 합성 자료.
@@ -293,12 +286,12 @@ denied "허용 목록 밖 wakeline:demand:*"      "${K[@]}" hgetall wakeline:dem
 denied "선박 스트림 wakeline:ships"          "${K[@]}" xadd wakeline:ships '*' payload x
 denied "AIS 상태 wakeline:ais:status"       "${K[@]}" hset wakeline:ais:status connected 1
 denied "노선 캐시와 비슷한 이름 wakeline:routes" "${K[@]}" set wakeline:routes x
-denied "ZADD wakeline:demand:portcalls(임대는 api 만)" "${K[@]}" zadd wakeline:demand:portcalls 9999999999999 ZZ9999
-denied "ZREM wakeline:demand:portcalls"      "${K[@]}" zrem wakeline:demand:portcalls 230025
-denied "DEL wakeline:demand:portcalls"       "${K[@]}" del wakeline:demand:portcalls
-denied "EXPIRE 입출항 캐시(SET EX 만)"         "${K[@]}" expire wakeline:portcalls:230025 1
-denied "DEL 입출항 캐시"                      "${K[@]}" del wakeline:portcalls:230025
-denied "입출항 캐시와 비슷한 이름 wakeline:portcalls" "${K[@]}" set wakeline:portcalls x
+# ADR-022 개정: 입출항은 DB 색인 — 예전 임대 · 캐시 이름(선택마다 묻던 설계)은 규칙이 없어 읽지도 쓰지도 못한다
+denied "예전 입출항 임대 읽기 wakeline:demand:portcalls" "${K[@]}" zrangebyscore wakeline:demand:portcalls 0 +inf
+denied "예전 입출항 임대 쓰기 wakeline:demand:portcalls" "${K[@]}" zadd wakeline:demand:portcalls 9999999999999 ZZ9999
+denied "예전 입출항 캐시 쓰기 wakeline:portcalls:*"   "${K[@]}" set wakeline:portcalls:230025 x ex 21600
+denied "예전 입출항 캐시 확인 EXISTS"               "${K[@]}" exists wakeline:portcalls:230025
+denied "예전 입출항 캐시 읽기 wakeline:portcalls:*"   "${K[@]}" get wakeline:portcalls:230025
 # ADR-023: 연안 교통량 키는 셀렉터로만 — 스냅샷은 SET, 부정 캐시는 HSET · HGETALL. 지우거나 만료를 바꾸거나 모양을 바꾸거나 비슷한 이름에 쓰지 못한다
 # (SET 에 EX 를 붙이게 강제하는 ACL 은 없다 — 수집기가 늘 EX 1200 을 붙이고, api 의 regDt 나이 판정이 실제 방어선이다)
 denied "DEL wakeline:traffic_grid"          "${K[@]}" del wakeline:traffic_grid

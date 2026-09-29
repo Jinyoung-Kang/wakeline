@@ -13,9 +13,9 @@
   24개이므로 어느 날 경계로 세어도 하루 360번 이하 — 포털 한도(500) 안. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다).
   예산은 엄격(Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
 - 격자 기하(budget:mof_grid4, UTC 날 6,000): 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
-  많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s — 교통 폴링 · 항만 입출항 조회(ADR-022)와 하나)과
-  가장 낮은 우선순위(PRIORITY_BACKFILL — 입출항 조회보다도 낮다)로. 교통 폴링은 PRIORITY_FIXED 라 입출항 조회가 이어져도 먼저 받는다.
-  호출마다 해양수산부 시간 창(budget:mof:h:{UTC 시} — 입출항 조회와 함께 센다, providers/data_go_kr.MOF_*)을 먼저 예약하되 입출항 조회 몫
+  많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s — 교통 폴링 · 항만 입출항 색인(ADR-022)과 하나)과
+  가장 낮은 우선순위(PRIORITY_BACKFILL — 입출항 색인보다도 낮다)로. 교통 폴링은 PRIORITY_FIXED 라 입출항 색인이 이어져도 먼저 받는다.
+  호출마다 해양수산부 시간 창(budget:mof:h:{UTC 시} — 입출항 색인과 함께 센다, providers/data_go_kr.MOF_*)을 먼저 예약하되 입출항 색인 몫
   (MOF_GRID4_HOURLY_HEADROOM)을 남긴다 — 어느 날 경계로 세어도 두 API 합계가 포털 한도(10,000) 안(검토 지적: UTC 날 예산만으로는 KST 하루에
   두 몫을 쓸 수 있었다). 창이나 하루 예산에 막히면 그 까닭을 실행 기록에 한 번 적고 다음 UTC 시 · 다음 UTC 날까지 채우지 않는다(틱마다 적지 않는다).
   채우기는 시간당 많아야 MOF_HOURLY_CAP − MOF_GRID4_HOURLY_HEADROOM(290)칸 — 첫 스냅샷(확인한 표본 5,099칸)은 약 18시간 이상 걸쳐 채워진다
@@ -618,7 +618,7 @@ class TrafficGridJob:
             if self._mono() - t0 > FILL_MAX_S:
                 break
             at = self._now()  # 보내는 때의 UTC 시 창에 센다(채우기가 정시를 넘겨도)
-            # 해양수산부 시간 창 먼저(입출항 조회 몫을 남기고) — 그다음 하루 예산. 하나라도 안 되면 부르지 않는다
+            # 해양수산부 시간 창 먼저(입출항 색인 몫을 남기고) — 그다음 하루 예산. 하나라도 안 되면 부르지 않는다
             ok, used, hour = await self.ctx.budget.reserve_hour(
                 w.name, MOF_HOURLY_CAP, w.cost, now=at, window=MOF_HOUR_WINDOW, headroom=MOF_GRID4_HOURLY_HEADROOM
             )
