@@ -54,7 +54,8 @@ export function yesterdayKst(nowMs: number): string {
 }
 
 /**
- * 빈 상태 문구. day = 조회한 날짜(KST, 최근 7일 묶음이면 null), today = 오늘(KST 날짜).
+ * 빈 상태 문구. day = 조회한 날짜(KST — 이 화면에서는 교통량만 날짜로 묻는다, 최근 7일 묶음이면 null), today = 오늘(KST 날짜).
+ * (따라잡기 창 밖의 SIGMET · 알림 날은 api 가 원본이 남은 만큼 채운다 — MaintenanceJobs.backfillStats. 이 화면은 그 계열을 최근 7일 묶음으로만 묻는다.)
  * 집계 전이면 채워질 때를 말하되, 따라잡기 범위 밖의 지난 날짜에는 "다음 집계"를 약속하지 않는다.
  * source = 원본이 UTC 날 파티션째 지워지는 계열의 보존(TRAFFIC_SOURCE — 원해상도 항적)과 지금 시각 — 주면 그날 첫 파티션이 다음 집계 시도(늦어도
  * STATS_CATCH_UP_EVERY_H 뒤)까지 남아 있을 때만 채워진다고 말한다(R-32). 이미 지워졌으면 채워지지 않는다고, 그 사이면 채워지지 않을 수 있다고 말한다.

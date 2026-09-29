@@ -166,6 +166,33 @@ class StatsAggregationDbTest {
         assertThat(admin.sql("SELECT to_regclass(:p) IS NOT NULL").param("p", part).query(Boolean.class).single()).isTrue();
     }
 
+    /**
+     * 리뷰(2026-09-30, low): V16 이 KST 날짜 표를 비운 뒤 따라잡기는 최근 7일만 다시 셌다 — 원본이 남아 있는 더 오래된 SIGMET(영구) · 알림(30일) 날은
+     * 다시 셀 수 있는데도 '집계되지 않음' 으로 남았다(/stats 는 92일 범위까지 받는다). 수정 전 이 시험이 실패했다. 이제 따라잡기가 그 날들을 채운다
+     * (교통량은 72 h 보존이라 다시 셀 수 없다 — 표식 없음 그대로).
+     */
+    @Test
+    void catchUpBackfillsOlderSigmetAndAlertDaysWhoseSourcesAreStillKept() {
+        LocalDate today = LocalDate.now(MaintenanceJobs.DAY_ZONE);
+        LocalDate twenty = today.minusDays(20), forty = today.minusDays(40);
+        sigmet("S_20", "FT20", twenty.atTime(12, 0).atZone(MaintenanceJobs.DAY_ZONE).toInstant());
+        sigmet("S_40", "FT40", forty.atTime(12, 0).atZone(MaintenanceJobs.DAY_ZONE).toInstant());
+        alert(1, "S_20", twenty.atTime(12, 30).atZone(MaintenanceJobs.DAY_ZONE).toInstant());
+        MaintenanceJobs jobs = jobs(Clock.systemUTC());
+        jobs.catchUp();
+        assertThat(count(twenty, "sigmet_by_fir")).isEqualTo(1);
+        assertThat(count(twenty, "alerts_by_kind")).isEqualTo(1);
+        assertThat(markers(twenty)).containsExactlyInAnyOrder("sigmet", "alerts"); // 교통량은 다시 셀 수 없다
+        assertThat(count(forty, "sigmet_by_fir")).isEqualTo(1);
+        assertThat(markers(forty)).containsExactly("sigmet"); // 알림 보존(30일) 밖
+        assertThat(markers(forty.minusDays(1))).as("before the first source day").isEmpty();
+        assertThat(jobs.backfillStats(today)).as("idempotent — every re-countable family is marked").isEmpty();
+    }
+
+    long count(LocalDate d, String metric) {
+        return admin.sql("SELECT coalesce(sum(value), 0)::bigint FROM stats_daily WHERE day = :d AND metric = :m").param("d", d).param("m", metric).query(Long.class).single();
+    }
+
     Map<String, Integer> trafficByHour(LocalDate d) {
         Map<String, Integer> m = new LinkedHashMap<>();
         for (var r : admin.sql("SELECT dim, value::int v FROM stats_daily WHERE day = :d AND metric = 'traffic_by_hour'").param("d", d).query().listOfRows())

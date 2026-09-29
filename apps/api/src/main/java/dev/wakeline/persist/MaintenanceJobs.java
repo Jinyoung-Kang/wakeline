@@ -28,7 +28,8 @@ import java.util.Map;
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
- * 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46).
+ * 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
+ * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
@@ -46,6 +47,8 @@ public class MaintenanceJobs {
     public static LocalDate today() { return LocalDate.now(DAY_ZONE); }
     static final int CATCH_UP_HOURS = 24;
     static final int CATCH_UP_DAYS = 7;
+    /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
+    static final int BACKFILL_MAX_DAYS = 92;
     /** 선박 위치 보존(계약 v2 §B3). 함수가 24 h ~ 30일 밖의 값을 거절한다(V5). */
     static final int SHIP_RETENTION_HOURS = 72;
     /** 체류 통계에 넣는 '확인된 이탈' 조건(V4 마이그레이션의 재계산과 같은 식 — 바꾸면 둘 다 바꾼다). */
@@ -190,7 +193,10 @@ public class MaintenanceJobs {
         try {
             List<Instant> hours = catchUpSummaries(Instant.now());
             List<LocalDate> days = catchUpStats(todayKst());
-            if (!hours.isEmpty() || !days.isEmpty()) log.info("catch-up: summarized hours {}, aggregated days {}", hours, days);
+            List<LocalDate> older = backfillStats(todayKst());
+            if (!hours.isEmpty() || !days.isEmpty() || !older.isEmpty())
+                log.info("catch-up: summarized hours {}, aggregated days {}, backfilled {} older days {}", hours, days, older.size(),
+                        older.isEmpty() ? "" : older.get(older.size() - 1) + ".." + older.get(0));
         } catch (RuntimeException e) {
             log.warn("catch-up failed (will retry): {}", e.toString());
         }
@@ -229,6 +235,32 @@ public class MaintenanceJobs {
             List<String> marked = db.sql("SELECT dim FROM stats_daily WHERE day = :d AND metric = :m").param("d", d).param("m", MARKER)
                     .query(String.class).list();
             if (!marked.containsAll(families(d))) {
+                aggregateDay(d);
+                done.add(d);
+            }
+        }
+        return done;
+    }
+
+    /**
+     * 따라잡기 창(최근 {@value #CATCH_UP_DAYS}일)보다 오래된 날 중, 원본이 남아 있어 다시 셀 수 있는 계열(SIGMET 영구 · 알림 보존 안 — 교통량은 72 h 라 없다)에
+     * 완료 표식이 없는 날을 최근 날부터 채운다. 한 번에 {@value #BACKFILL_MAX_DAYS}일까지(남으면 다음 따라잡기가 잇는다 — 기동 직후를 오래 붙잡지 않는다).
+     * V16 이 KST 날짜 표를 비운 뒤 이 날들은 다시 셀 수 있는데 7일 밖이라 '집계되지 않음' 으로 남았다(리뷰 2026-09-30 — /stats 는 92일 범위를 받는다).
+     * 범위의 시작 = 원본이 있는 가장 이른 KST 날짜(SIGMET 발표 · 알림 진입). 멱등 — 다 채운 뒤에는 최솟값 한 번 · 표식 한 번 읽고 끝난다. @return 집계한 날
+     */
+    List<LocalDate> backfillStats(LocalDate today) {
+        LocalDate last = today.minusDays(CATCH_UP_DAYS + 1);
+        LocalDate first = db.sql("""
+                SELECT (least((SELECT min(valid_from) FROM sigmet), (SELECT min(entered_at) FROM alert_event)) AT TIME ZONE :zone)::date""")
+                .param("zone", DAY_ZONE_ID).query(LocalDate.class).optional().orElse(null);
+        if (first == null || first.isAfter(last)) return List.of();
+        Map<LocalDate, List<String>> marked = new java.util.HashMap<>();
+        db.sql("SELECT day, dim FROM stats_daily WHERE metric = :m AND day BETWEEN :a AND :b").param("m", MARKER).param("a", first).param("b", last)
+                .query((rs, i) -> Map.entry(rs.getObject("day", LocalDate.class), rs.getString("dim"))).list()
+                .forEach(e -> marked.computeIfAbsent(e.getKey(), k -> new ArrayList<>()).add(e.getValue()));
+        List<LocalDate> done = new ArrayList<>();
+        for (LocalDate d = last; !d.isBefore(first) && done.size() < BACKFILL_MAX_DAYS; d = d.minusDays(1)) {
+            if (!marked.getOrDefault(d, List.of()).containsAll(families(d))) {
                 aggregateDay(d);
                 done.add(d);
             }
