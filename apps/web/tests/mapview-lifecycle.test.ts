@@ -7,7 +7,7 @@ import { FakeMap } from "./helpers/fake-maplibre";
 import { getData, resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
-import { fmtDualCompact } from "@/lib/time";
+import { fmtKstMinute } from "@/lib/time";
 
 const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[] }));
 
@@ -44,19 +44,22 @@ type Root = import("react-dom/client").Root;
 let React: R;
 let createRoot: typeof import("react-dom/client").createRoot;
 let MapView: typeof import("@/components/MapView").MapView;
+let LayerPanel: typeof import("@/components/LayerPanel").LayerPanel;
 const initialUi = useUi.getState();
 
 beforeAll(async () => {
   React = await import("react");
   ({ createRoot } = await import("react-dom/client"));
   ({ MapView } = await import("@/components/MapView"));
+  ({ LayerPanel } = await import("@/components/LayerPanel"));
 });
 afterAll(() => { dom.restore(); delete (globalThis as Record<string, unknown>).Worker; });
 
 let root: Root | null = null;
 async function mount() {
   root = createRoot(dom.container as never);
-  await React.act(async () => { root!.render(React.createElement(MapView)); });
+  // 상황판과 같은 조합: 지도 + 그 위 배치(LayerPanel — 배경지도 실패 알림은 그 왼쪽 상태 칸이 그린다)
+  await React.act(async () => { root!.render(React.createElement(React.Fragment, null, React.createElement(MapView), React.createElement(LayerPanel))); });
   return FakeMap.instances[FakeMap.instances.length - 1];
 }
 async function act(fn: () => void) { await React.act(async () => { fn(); }); }
@@ -151,7 +154,7 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     });
   });
 
-  it("the fallback banner sits at the top left under the zoom control, clear of the bottom-right credit line (R-01)", async () => {
+  it("the fallback banner sits in the overlay's left status column under the layer buttons — clear of the bottom-right credit line (R-01) and of the chips", async () => {
     const map = await mount();
     await act(() => map.fire("error", { type: "error", error: new Error("AJAXError: Failed to fetch (0)") }));
     const find = (n: MiniElement): MiniElement | null => {
@@ -159,11 +162,15 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
       for (const c of n.childNodes) { const f = c instanceof MiniElement ? find(c) : null; if (f) return f; }
       return null;
     };
-    const cls = find(dom.container)?.getAttribute("class")?.split(/\s+/) ?? [];
-    // 수정 전: absolute bottom-10 left-3 — 1440x900 에서 줄바꿈된 출처 표기(AttributionControl, 오른쪽 아래 · 최대 760 px)의 왼쪽을 가렸다
-    expect(cls.filter((c) => /^bottom-/.test(c))).toEqual([]);
-    // 줌 버튼(위 10 px + 29 px × 2 ≈ 70 px) 아래 · 지도 폭의 절반까지만(오른쪽 위 레이어 버튼·범례와 겹치지 않게 줄바꿈)
-    expect(cls).toEqual(expect.arrayContaining(["absolute", "top-20", "left-3", "max-w-[50%]"]));
+    const note = find(dom.container)!;
+    expect(useUi.getState().basemapFailed).toBe(true);
+    // 수정 전(1): absolute bottom-10 left-3 — 1440x900 에서 줄바꿈된 출처 표기(오른쪽 아래)의 왼쪽을 가렸다.
+    // 수정 전(2): absolute top-20 left-3 — 레이어 단추 줄이 두 줄이 되거나 선박 칩이 있으면 겹쳤다(2026-09-30). 이제 배치(LayerPanel) 안 왼쪽 칸의 맨 위
+    const cls = note.getAttribute("class")?.split(/\s+/) ?? [];
+    expect(cls.filter((c) => /^(absolute|bottom-|top-)/.test(c))).toEqual([]);
+    const chips = note.parentNode as MiniElement;
+    expect(chips.getAttribute("data-testid")).toBe("map-chips");
+    expect(chips.childNodes[0]).toBe(note);
   });
 
   it("the map credit is MapLibre's compact attribution (ⓘ) with every data source, added once on load (user request 2026-09-29)", async () => {
@@ -279,7 +286,7 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     await mountTimeline();
     // 수정 전: "—"와 "0 frames · 5 min · 기상청 HSR 500 m…"만 — 이유는 비활성 버튼의 title 에만 있었다
     const why = byTestId("radar-kr-unavailable");
-    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 10:31:00 KST · 01:31:00 UTC"); // 01:31:00Z 를 한국 표준시 먼저, UTC 함께
+    expect(why?.textContent).toBe("기상청 레이더 없음 — 활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기) · 마지막 수집 09-28 10:31:00 KST"); // 01:31:00Z 를 한국 표준시 먼저, UTC 함께
     expect(dom.container.textContent).not.toContain("0 frames · 5 min");
   });
 
@@ -323,8 +330,8 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     return out;
   };
 
-  /** 기한 표기(compact KST · UTC — lib/time, UTC 날짜가 다르면 UTC 쪽에 날짜). 지금 시각에 따라 달라 형식기로 만든다(형식은 tests/dual-time 이 본다) */
-  const dueOf = (iso: string) => fmtDualCompact(iso);
+  /** 기한 표기(분까지 KST — lib/time fmtKstMinute). 지금 시각에 따라 달라 형식기로 만든다(형식은 tests/kst-time 이 본다) */
+  const dueOf = (iso: string) => fmtKstMinute(iso);
 
   it("KMA timeline: the current frame's composite size, a warn marker for a partial frame and a per-frame strip (partial · at reference · no verdict)", async () => {
     useUi.setState({ radarSource: "kma" });
@@ -335,14 +342,14 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     const mark = byTestId("kr-frame-partial");
     expect(mark?.textContent).toBe("일부 합성");
     expect(mark?.getAttribute("title")).toBe(`일부 지점만 합성(7/15곳) — ${dueOf(until)}까지 다시 받기 대상(지점이 늘면 바꿈)`);
-    expect(mark?.getAttribute("title")).toMatch(/— \d\d:\d\d KST · (\d\d-\d\d )?\d\d:\d\dZ까지/);
+    expect(mark?.getAttribute("title")).toMatch(/— \d\d:\d\d KST까지/); // KST 만(계약 v5 §G20)
     const strip = byTestId("kr-frame-strip");
     expect(strip?.getAttribute("title")).toContain("기준 도달(지난 60분 최대와 같음 — 완전한지는 모름)");
     expect(strip?.getAttribute("title")).not.toContain("= 완전");
     const cells = findAll((n) => n.getAttribute?.("data-kr-frame") != null);
     expect(cells.map((c) => c.getAttribute("data-state"))).toEqual(["unknown", "at_ref", "partial"]);
-    expect(cells[0].getAttribute("title")).toBe("12:00 KST · 03:00Z · 합성 —"); // 기상청 tm(KST) 과 같은 순간의 UTC
-    expect(cells[2].getAttribute("title")).toContain("12:10 KST · 03:10Z · 합성 7/15곳 · 일부 지점만 합성(7/15곳)");
+    expect(cells[0].getAttribute("title")).toBe("12:00 KST · 합성 —"); // 기상청 tm(KST) 과 같은 순간의 UTC
+    expect(cells[2].getAttribute("title")).toContain("12:10 KST · 합성 7/15곳 · 일부 지점만 합성(7/15곳)");
     // 다른 프레임으로 옮기면 그 프레임의 값: 기준 도달 → 경고 없음, 옛 항목 → "—"
     await act(() => useUi.setState({ krFrameIndex: 1 }));
     expect(byTestId("kr-frame-composite")?.textContent).toBe("합성 15/15곳");

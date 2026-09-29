@@ -162,8 +162,6 @@ export function MapView() {
   /** 선택 선박 항적: REST 한 번 + WS ship_selected 로 연장(AIS 공백·15분 틈은 점선) */
   const shipTrack = useRef<ShipTrackRef>(emptyShipTrack(null));
   const [shipClock, setShipClock] = useState(0);
-  /** 배경지도 스타일(외부)을 받지 못해 로컬 최소 스타일로 그리는 중(R-01) */
-  const [basemapFailed, setBasemapFailed] = useState(false);
 
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
@@ -184,7 +182,8 @@ export function MapView() {
     const fallBack = () => {
       if (styleLoaded || noBasemap) return;
       noBasemap = true;
-      setBasemapFailed(true);
+      // 알림은 지도 위 왼쪽 상태 칸(MapChips — LayerPanel 의 배치 안)이 그린다: 레이어 단추 줄 · 칩과 겹치지 않게 한 배치로
+      useUi.getState().setBasemapFailed(true);
       map.setStyle(FALLBACK_STYLE, { diff: false });
     };
     // 오류 없이 멈춘 요청(패킷 DROP·DNS 블랙홀)도 STYLE_LOAD_TIMEOUT_MS 뒤에 같은 길로
@@ -406,6 +405,7 @@ export function MapView() {
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
+      useUi.getState().setBasemapFailed(false); // 떠난 지도의 상태를 남기지 않는다
       clearTimeout(styleTimer);
       if (moveTimer) clearTimeout(moveTimer);
       clearInterval(krTimer);
@@ -728,15 +728,5 @@ export function MapView() {
     if (appendTrackPoint(t.pts, p)) onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(t.pts)));
   }, [selectedInfo]);
 
-  return (
-    <>
-      <div ref={el} className="h-full w-full" data-testid="map" />
-      {/* 왼쪽 위 줌 버튼 아래(top-20 = 80 px, 버튼 끝 ≈ 70 px) — 오른쪽 아래 출처 표기(줄바꿈되면 왼쪽으로 넓어진다)를 가리지 않게(R-01) */}
-      {basemapFailed ? (
-        <div className="pointer-events-none absolute top-20 left-3 z-10 max-w-[50%] border border-line-2 bg-bg-1/90 px-2 py-1 text-[11px] text-warn" role="status" data-testid="basemap-failed">
-          배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)
-        </div>
-      ) : null}
-    </>
-  );
+  return <div ref={el} className="h-full w-full" data-testid="map" />;
 }

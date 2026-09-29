@@ -1,4 +1,4 @@
-import { DualTime } from "@/components/DualTime";
+import { KstTime } from "@/components/KstTime";
 import {
   gapText, legText, noExitTitle, portCallStatusText, portText, reportTime, PORT_CALL_AUTHORITIES, PORT_CALL_CAVEAT, PORT_CALL_INDEX_AS_OF_TITLE, PORT_CALL_MAX_ITEMS,
   PORT_CALL_SOURCE, PORT_CALL_SOURCE_URL, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS, reportedNameNotes, windowText,
@@ -6,8 +6,8 @@ import {
 } from "@/lib/portcalls";
 
 /**
- * 신고 시각 한 칸: 공유 형식기의 표 칸(DualTime cell — 첫 줄 KST · 둘째 줄 흐린 UTC, 머리글 "(KST · UTC)", title 에 원본 UTC — 계약 v5 §G13).
- * KST 00:00 신고는 날짜만 · "시각 미확인"(UTC 로 바꾸지 않는다 — ADR-022). 판(최종 · 최초)을 아래에 적는다. 모르면 "—" 만.
+ * 신고 시각 한 칸: 공유 형식기(KstTime — 머리글이 없는 자리라 " KST" 를 보이게, title 에 연도 · ms 까지 — 계약 v5 §G20).
+ * KST 00:00 신고는 날짜만 · "시각 미확인"(시각을 지어내지 않는다 — ADR-022). 판(최종 · 최초)을 아래에 적는다. 모르면 "—" 만.
  */
 function When({ at, revision, testId }: { at: string | null; revision: PortCallRevision | null; testId: string }) {
   const t = reportTime(at);
@@ -19,7 +19,7 @@ function When({ at, revision, testId }: { at: string | null; revision: PortCallR
           <span className="mono">{t.kst}</span>
           <span className="text-[10px] text-fg-3">시각 미확인(00:00 신고)</span>
         </span>
-      ) : <DualTime v={at} variant="cell" />}
+      ) : <KstTime v={at} />}
       {revision ? <span className="text-[10px] text-fg-3" title="PORT-MIS 신고의 판(최종 신고가 있으면 최종, 없으면 최초)">{revision} 신고</span> : null}
     </span>
   );
@@ -28,8 +28,8 @@ function When({ at, revision, testId }: { at: string | null; revision: PortCallR
 /**
  * 한국 항만 입출항(ADR-022 개정): 서버 수집기가 해양수산부 PORT-MIS 의 항만청 10곳 신고를 KST 날짜별로 모두 받아 둔 색인에서, 고른 선박의 AIS
  * 호출부호로 찾은 것(api 가 ship_selected.port_calls 로 보낸다 — 고를 때 외부에 묻지 않는다). 상태마다 문구(기록 없음 · 색인 불완전 — 어느 항만청이
- * 왜 · 꺼짐 · 호출부호를 아직 받지 않음 · 읽기 실패), 결과는 신고마다 블록(항만청 · 입항 · 출항 KST+UTC · 선석 · 목적 · 전출항지 → 차항지). 색인 상태 한 줄
- * ("색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>"). PORT-MIS 신고 선명이 AIS 선명과 다르면(둘 다 영문일 때만) 경고로 밝힌다.
+ * 왜 · 꺼짐 · 호출부호를 아직 받지 않음 · 읽기 실패), 결과는 신고마다 블록(항만청 · 입항 · 출항 KST · 선석 · 목적 · 전출항지 → 차항지). 색인 상태 한 줄
+ * ("색인: 10개 항만청 · 최근 30일 · 갱신 <KST>"). PORT-MIS 신고 선명이 AIS 선명과 다르면(둘 다 영문일 때만) 경고로 밝힌다.
  * calls 가 null(서버가 보내지 않음 · 형식 오류)이면 "—".
  */
 export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | null; aisName: string | null }) {
@@ -59,7 +59,7 @@ export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | nu
 }
 
 /**
- * "색인: 10개 항만청 · 최근 30일 · 갱신 <KST · UTC>" — 갱신 시각 = 10곳의 꼬리 갱신(최근 3일 다시 받기) 중 가장 오래된 것(모르면 "—"), 그리고 창(KST 날짜).
+ * "색인: 10개 항만청 · 최근 30일 · 갱신 <KST>" — 갱신 시각 = 10곳의 꼬리 갱신(최근 3일 다시 받기) 중 가장 오래된 것(모르면 "—"), 그리고 창(KST 날짜).
  * 그 시각이 말하는 것은 최근 3일뿐이다 — 더 오래된 날은 하루에 한 번쯤 다시 받으므로 그보다 이른 때까지의 신고일 수 있다(title 이 밝힌다).
  */
 function IndexLine({ calls }: { calls: PortCallsInfo }) {
@@ -68,7 +68,7 @@ function IndexLine({ calls }: { calls: PortCallsInfo }) {
     <div className="mt-0.5 text-[10px] text-fg-3" data-testid="port-calls-index">
       <span>색인: {PORT_CALL_AUTHORITIES}개 항만청 · 최근 {PORT_CALL_WINDOW_DAYS}일 · 갱신 </span>
       <span title={PORT_CALL_INDEX_AS_OF_TITLE}>
-        {ix.refreshed_at ? <DualTime v={ix.refreshed_at} seconds={false} /> : "—"}
+        {ix.refreshed_at ? <KstTime v={ix.refreshed_at} seconds={false} /> : "—"}
       </span>
       <span className="block" data-testid="port-calls-window">{windowText(calls)}{ix.complete ? "" : " · 색인 불완전"}</span>
     </div>
@@ -83,7 +83,7 @@ function GapList({ calls }: { calls: PortCallsInfo }) {
         <li key={g.port_authority_code} data-testid="port-calls-gap">
           {gapText(g)}
           {g.issues.includes("stale") ? (
-            <span className="text-fg-3"> · 마지막 갱신 {g.refreshed_at ? <DualTime v={g.refreshed_at} seconds={false} /> : "없음(아직 한 번도 끝나지 않음)"}</span>
+            <span className="text-fg-3"> · 마지막 갱신 {g.refreshed_at ? <KstTime v={g.refreshed_at} seconds={false} /> : "없음(아직 한 번도 끝나지 않음)"}</span>
           ) : null}
         </li>
       ))}
@@ -120,9 +120,9 @@ function PortCallTable({ calls, aisName }: { calls: PortCallsInfo; aisName: stri
               {c.port_authority_code ? <span className="mono font-normal text-fg-3" title="항만청 코드(PORT-MIS prtAgCd)"> · {c.port_authority_code}</span> : null}
             </div>
             <dl className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-2 gap-y-0.5">
-              <dt className="text-fg-3" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 00:00(KST) 신고는 날짜만">입항</dt>
+              <dt className="text-fg-3" title="한국 표준시(KST) — 00:00(KST) 신고는 날짜만">입항</dt>
               <dd><When at={c.entry_at} revision={c.entry_revision} testId="port-call-entry" /></dd>
-              <dt className="text-fg-3" title="첫 줄 한국 표준시(UTC+9) · 둘째 줄 UTC — 출항 신고가 없으면 —(아직 입항 중일 수 있다)">출항</dt>
+              <dt className="text-fg-3" title="한국 표준시(KST) — 출항 신고가 없으면 —(아직 입항 중일 수 있다)">출항</dt>
               <dd><Exit c={c} /></dd>
               <dt className="text-fg-3" title="입항 신고의 계류 시설(PORT-MIS laidupFcltyNm)">선석</dt>
               <dd className="break-keep">{c.berth ?? "—"}</dd>

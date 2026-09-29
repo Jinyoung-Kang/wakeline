@@ -10,7 +10,9 @@ import java.util.Map;
 
 /**
  * 통계 조회(stats_daily) — 집계는 MaintenanceJobs 가 일 1회(+ 따라잡기) 수행한다.
- * day 는 UTC 날짜 문자열 "YYYY-MM-DD" 로 낸다(R-45 — DB 가 만든다: JVM 기본 시간대의 자정 시각으로 바뀌지 않는다).
+ * day 는 KST 날짜(계약 v5 §G20 — {@link MaintenanceJobs#DAY_ZONE}) 문자열 "YYYY-MM-DD" 로 낸다(R-45 — DB 가 만든다: JVM 기본 시간대의 자정 시각으로
+ * 바뀌지 않는다). V16 전의 UTC 날짜 행은 보관 표(stats_daily_utc_legacy)에 있고 여기서 읽지 않는다 — 다른 하루를 KST 날짜로 내지 않는다
+ * (교통량만 V16 이 KST 날짜 · KST 시로 정확히 옮겨 실었다 — 시 하나가 옛 UTC 시 행 하나).
  * 집계를 마쳤는지는 계열별 완료 표식(MaintenanceJobs.MARKER)으로 밝힌다 — 행이 없는 날이 '자료 없음' 인지 '집계 전' 인지 구분한다.
  */
 @Repository
@@ -25,7 +27,7 @@ public class StatsRepository {
     }
 
     /**
-     * 시간대별 트래픽. items: dim = 시(00~23) — 'hour' 는 SQL 예약어라 별칭을 쓰지 않는다. 자료가 없는 시간은 행이 없다.
+     * 시간대별 트래픽. items: dim = KST 시(00~23 — 그 KST 날짜의 시) — 'hour' 는 SQL 예약어라 별칭을 쓰지 않는다. 자료가 없는 시간은 행이 없다.
      * region: 그날 집계가 센 관심 지역({center:[lat,lon], radius_nm, bbox:[lomin,lamin,lomax,lamax]}). bbox 는 집계가 실제로 쓴 사각형 —
      * 저장된 중심·반경에서 집계와 같은 식(RegionSettings.Region.bbox)으로 결정적으로 다시 만든다(DH-10: 화면이 '관심 지역' 이라고만 쓰지 않고
      * 센 범위를 밝힐 수 있게). 지역 기록이 없는 날(이 기능 전 집계 — 전세계 표본이 섞였을 수 있음)은 null.

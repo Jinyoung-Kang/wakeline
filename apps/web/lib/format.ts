@@ -134,7 +134,7 @@ function isoOf(v: string | number | null | undefined): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-// ---- 시각 표시는 lib/time.ts 한 곳에서(사용자 요청 2026-09-29 "UTC 와 KST 함께" — KST 를 먼저, UTC 를 함께, §G13) ----
+// ---- 시각 표시는 lib/time.ts 한 곳에서(계약 v5 §G20 — 화면은 KST 만, 화면 시간대는 lib/time DISPLAY_TZ) ----
 // 이 파일에는 시각 글자를 만드는 함수가 없다(tests/kst-dashboard.test.ts 가 lib/time · lib/kst 밖에서 시각 글자를 직접 만드는 모양을 찾는다).
 
 /** 경과 시간(초) — "42s", "3m 05s", "1h 12m", "2d 03h". 모르면 "—". */
@@ -153,12 +153,17 @@ export function ageS(v: string | number | null | undefined, nowMs: number): numb
   if (s == null || !nowMs) return null;
   return Math.max(0, (nowMs - Date.parse(s)) / 1000);
 }
+/** 짧은 경과(초) — "42s" · "8m" · "3h"(90 s · 90 min 에서 단위를 바꾼다 — 상태 바 칩처럼 좁은 자리). 모르면 "—" */
+export function fmtAgeS(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec)) return "—";
+  const s = Math.max(0, Math.round(sec));
+  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+}
 export function fmtAgo(iso: string | null | undefined, nowMs = Date.now()) {
   if (!iso) return "—";
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
-  const s = Math.max(0, Math.round((nowMs - t) / 1000));
-  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+  return fmtAgeS((nowMs - t) / 1000);
 }
 export function fmtEta(s: number | null | undefined) {
   if (s == null || !Number.isFinite(s)) return "—";

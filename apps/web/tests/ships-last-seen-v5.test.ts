@@ -33,14 +33,14 @@ describe("v5-G4 last reception of a ship that is not live", () => {
   });
 
   it("not-live text: 마지막 수신 then 마지막 저장, hh:mm KST · hh:mmZ (KST date when another KST day), — when unknown", () => {
-    expect(notLiveText({ lastSeenAt: "2026-09-28T02:59:00Z", lastPositionAt: "2026-09-28T02:40:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 11:59 KST · 02:59Z · 마지막 저장 11:40 KST · 02:40Z");
-    expect(notLiveText({ lastSeenAt: "2026-09-24T10:00:00Z", lastPositionAt: null }, NOW)).toBe("실시간 아님 · 마지막 수신 09-24 19:00 KST · 10:00Z · 마지막 저장 —");
+    expect(notLiveText({ lastSeenAt: "2026-09-28T02:59:00Z", lastPositionAt: "2026-09-28T02:40:00Z" }, NOW)).toBe("실시간 아님 · 마지막 수신 11:59 KST · 마지막 저장 11:40 KST");
+    expect(notLiveText({ lastSeenAt: "2026-09-24T10:00:00Z", lastPositionAt: null }, NOW)).toBe("실시간 아님 · 마지막 수신 09-24 19:00 KST · 마지막 저장 —");
     expect(notLiveText({ lastSeenAt: null, lastPositionAt: null }, NOW)).toBe("실시간 아님 · 마지막 수신 — · 마지막 저장 —");
   });
 
   it("choosing a stored-only ship from the search says when it was last heard", () => {
     const [stored] = parseShipSearchResponse({ items: [{ mmsi: "440999999", name: null, live: false, last_position_at: "2026-09-28T01:00:00Z", last_seen_at: "2026-09-28T01:05:00Z" }] });
-    expect(shipChoice(stored, null, NOW).message).toBe("MMSI 440999999 선택 — 실시간 아님 · 마지막 수신 10:05 KST · 01:05Z · 마지막 저장 10:00 KST · 01:00Z · 카드만(지도에 위치를 그리지 않음)");
+    expect(shipChoice(stored, null, NOW).message).toBe("MMSI 440999999 선택 — 실시간 아님 · 마지막 수신 10:05 KST · 마지막 저장 10:00 KST · 카드만(지도에 위치를 그리지 않음)");
   });
 
   it("search table: a not-live row shows 마지막 수신 and 저장 (— when unknown); the age sort uses the last reception", () => {
@@ -54,9 +54,9 @@ describe("v5-G4 last reception of a ship that is not live", () => {
     }));
     const r1 = /data-mmsi="440999999".*?<\/tr>/.exec(html)![0];
     expect(text(r1)).toContain("실시간 아님");
-    expect(text(r1)).toContain("마지막 수신 10:05 KST · 01:05Z");
-    expect(text(r1)).toContain("저장 10:00 KST · 01:00Z");
-    expect(r1).toContain('title="마지막 수신 09-28 10:05:00 KST · 01:05:00 UTC (원본 2026-09-28T01:05:00.000Z)');
+    expect(text(r1)).toContain("마지막 수신 10:05 KST");
+    expect(text(r1)).toContain("저장 10:00 KST");
+    expect(r1).toContain('title="마지막 수신 2026-09-28 10:05:00.000 KST');
     const r2 = /data-mmsi="440999998".*?<\/tr>/.exec(html)![0];
     expect(text(r2)).toContain("마지막 수신 —");
     expect(text(html)).toContain("마지막 수신·저장 시각은 KST");
@@ -65,7 +65,7 @@ describe("v5-G4 last reception of a ship that is not live", () => {
     const rows = [row("300000001", { last_position_at: "2026-09-28T01:00:00Z", last_seen_at: "2026-09-28T01:00:00Z" }), row("300000002", { last_position_at: "2026-09-28T01:00:00Z", last_seen_at: "2026-09-28T02:30:00Z" })];
     expect(sortShipRows(rows, { key: "age", dir: "asc" }, NOW).map((r) => r.mmsi)).toEqual(["300000002", "300000001"]);
     const plain = renderToStaticMarkup(createElement(ShipTable, { rows, now: NOW, sort: null, onSort: () => {}, onPick: () => {}, testId: "ship-list" }));
-    expect(text(plain)).toContain("마지막 수신 11:30 KST · 02:30Z");
+    expect(text(plain)).toContain("마지막 수신 11:30 KST");
   });
 
   it("ship card: a not-live ship shows the 마지막 수신 row (with the elapsed time) and the badge; — when the api gives none; a live ship has no such row", () => {
@@ -73,8 +73,8 @@ describe("v5-G4 last reception of a ship that is not live", () => {
     expect(detail.last_seen_at).toBe("2026-09-28T01:05:00Z");
     const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail, error: null, now: NOW }));
     const t = text(html);
-    expect(t).toContain("마지막 수신09-28 10:05:00 KST · 01:05:00 UTC (1h 55m 전)");
-    expect(t).toContain("실시간 아님 · 마지막 수신 10:05 KST · 01:05Z · 마지막 저장 10:00 KST · 01:00Z");
+    expect(t).toContain("마지막 수신09-28 10:05:00 KST (1h 55m 전)");
+    expect(t).toContain("실시간 아님 · 마지막 수신 10:05 KST · 마지막 저장 10:00 KST");
     expect(html).toMatch(/data-field="마지막 수신"/);
     const unknown = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: parseShipDetail("431011305", { state: null, static: null, last_seen_at: 7 }), error: null, now: NOW }));
     expect(text(unknown)).toContain("마지막 수신—");

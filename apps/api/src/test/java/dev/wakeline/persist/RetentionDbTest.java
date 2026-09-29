@@ -117,7 +117,7 @@ class RetentionDbTest {
 
     @Test
     void reaggregatingADayOutsideTheAlertRetentionKeepsItsAlertStats() {
-        LocalDate old = LocalDate.now(ZoneOffset.UTC).minusDays(40);
+        LocalDate old = MaintenanceJobs.today().minusDays(40);
         admin.sql("""
                 INSERT INTO stats_daily (day, metric, dim, value) VALUES
                   (:d, 'alerts_by_kind', 'OBSERVED', 120), (:d, 'alert_dwell_avg_s', 'OBSERVED', 640)""").param("d", old).update();

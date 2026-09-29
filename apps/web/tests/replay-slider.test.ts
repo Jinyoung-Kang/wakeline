@@ -75,7 +75,7 @@ describe("replay slider geometry does not depend on any text", () => {
 });
 
 describe("the loading signal is never the first thing clipped on a narrow row", () => {
-  // 재생 시각(KST · UTC, 약 38자)과 구간 라벨은 shrink-0 이라 휴대폰 폭에서는 줄을 거의 채운다 — "불러오는 중" 이 잘리는 글자의 꼬리에 있으면 먼저 사라졌다(리뷰 2026-09-29)
+  // 재생 시각(KST, 약 23자)과 구간 라벨은 shrink-0 이라 휴대폰 폭에서는 줄을 거의 채운다 — "불러오는 중" 이 잘리는 글자의 꼬리에 있으면 먼저 사라졌다(리뷰 2026-09-29)
   const range = { min: Date.parse("2026-08-30T00:00:00Z"), max: Date.parse("2026-09-29T05:00:00Z"), fullResFrom: Date.parse("2026-09-26T05:00:00Z") };
   const at = Date.parse("2026-09-29T04:50:00Z");
   const frame = (iso: string): R.ReplayFrame => ({ at: iso, aircraft: [], sigmets: [], source: "track_point" });
@@ -97,7 +97,7 @@ describe("the loading signal is never the first thing clipped on a narrow row", 
     // 잘리는 글자에는 더 이상 싣지 않는다(두 번 말하지 않는다)
     const frameAt = byTestId(root, "replay-frame-at")!;
     expect(textOf(frameAt)).not.toContain("불러오는 중");
-    expect(textOf(frameAt)).toContain("지도 2026-09-29 13:40:00 KST · 04:40:00 UTC"); // 지도가 아직 그린 시각
+    expect(textOf(frameAt)).toContain("지도 2026-09-29 13:40:00 KST"); // 지도가 아직 그린 시각
   });
   it("caught up (the map shows the replay time): no badge", async () => {
     expect(byTestId(await row(frame(new Date(at).toISOString())), "replay-loading")).toBeNull();

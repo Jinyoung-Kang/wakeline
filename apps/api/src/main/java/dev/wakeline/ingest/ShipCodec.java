@@ -7,6 +7,8 @@ import dev.wakeline.domain.ShipStatic;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * 선박 스트림 payload(스키마 검증을 통과한 JsonNode) → 도메인 레코드. 없는 값은 null 로 둔다(추정하지 않는다).
@@ -33,11 +35,29 @@ public final class ShipCodec {
         return v == null || LEGACY_GNSS.equals(v) ? null : v;
     }
 
-    public static ShipStatic stat(JsonNode n) {
+    /** 받은 필드를 모르는 정적 정보(payload 에 static_received 가 없는 이전 수집기 · 시험). */
+    public static ShipStatic stat(JsonNode n) { return stat(n, null); }
+
+    /** 정적 정보 한 건 + 그 MMSI 의 받은 필드(계약 v5 §G19 — {@link #received}, 모르면 null). */
+    public static ShipStatic stat(JsonNode n, Set<String> received) {
         return new ShipStatic(n.path("mmsi").asString(), Codec.text(n, "name"), Codec.text(n, "call_sign"), Codec.integer(n, "imo"),
                 Codec.integer(n, "ship_type"), Codec.integer(n, "dim_a"), Codec.integer(n, "dim_b"), Codec.integer(n, "dim_c"), Codec.integer(n, "dim_d"),
                 Codec.dbl(n, "draught_m"), Codec.text(n, "destination"), Codec.integer(n, "eta_month"), Codec.integer(n, "eta_day"),
-                Codec.integer(n, "eta_hour"), Codec.integer(n, "eta_minute"), Instant.parse(n.path("updated_at").asString()), n.path("provider").asString());
+                Codec.integer(n, "eta_hour"), Codec.integer(n, "eta_minute"), Instant.parse(n.path("updated_at").asString()), n.path("provider").asString(),
+                received);
+    }
+
+    /**
+     * ships payload 의 static_received(계약 v5 §G19 — MMSI → 수집기 레코드가 시작된 뒤 받은 정적 필드, 스키마가 이름을 검사했다)에서 이 MMSI 의 것.
+     * 키가 없으면(받은 필드를 싣지 않는 이전 수집기 — 배포 전환 중) 또는 이 MMSI 가 빠졌으면 null(모름 — 저장은 null 을 '받지 않음' 으로 본다).
+     */
+    public static Set<String> received(JsonNode map, String mmsi) {
+        if (map == null || !map.isObject()) return null;
+        JsonNode list = map.get(mmsi);
+        if (list == null || !list.isArray()) return null;
+        Set<String> out = new LinkedHashSet<>();
+        for (JsonNode f : list) out.add(f.asString());
+        return out;
     }
 
     /**

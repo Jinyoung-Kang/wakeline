@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
 import { useServerNow } from "@/lib/clock";
-import { fmtDual, fmtDualCompact, fmtUtcTitle, kstWallMs } from "@/lib/time";
+import { fmtKst, fmtKstMinute, fmtTimeTitle, kstWallMs } from "@/lib/time";
 import { KR_REF_WINDOW_MIN, krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
@@ -14,7 +14,7 @@ import { useUi } from "@/lib/ui-store";
  */
 function krUnavailableText(d: KrRadar | null): string {
   if (!d) return "기상청 레이더 없음 — 상태 수신 전";
-  const last = fmtDual(d.meta?.fetched_at);
+  const last = fmtKst(d.meta?.fetched_at);
   return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
 }
 
@@ -55,12 +55,12 @@ export function RadarTimeline() {
   const srvNow = useServerNow(30_000);
   const krFrames = kma && krAvailable && radarKr ? radarKr.frames : null;
   const comp = krFrames ? krComposite(krFrames[cur], srvNow) : null;
-  // 프레임 시각은 둘 다 "MM-DD HH:MM KST · HH:MMZ"(KST 먼저, UTC 함께 — lib/time): RainViewer 는 epoch 초(UTC 순간), 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
-  // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함(UTC 날짜가 다르면 UTC 쪽에도)
+  // 프레임 시각은 둘 다 "MM-DD HH:MM KST"(계약 v5 §G20 — lib/time): RainViewer 는 epoch 초(순간), 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
+  // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
   const frameMs = kma ? kstWallMs(krTm) : time ? time * 1000 : null;
-  const label = fmtDualCompact(frameMs, { date: true });
-  // 툴팁: RainViewer 는 원본 UTC ISO, 기상청은 tm 이 원래 KST 라 원본은 그 tm — 그렇다고 적는다
-  const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST(원본이 KST, UTC 는 계산)`) : fmtUtcTitle(frameMs);
+  const label = fmtKstMinute(frameMs, { date: true });
+  // 툴팁: RainViewer 는 연도 · ms 까지의 같은 순간(KST), 기상청은 tm 이 원래 KST — 그 원문 tm 을 그대로 적는다
+  const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST 그대로`) : fmtTimeTitle(frameMs);
   const [kr, setKr] = useState(false);
   return (
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
@@ -90,7 +90,7 @@ export function RadarTimeline() {
       {kma && !krAvailable
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}
-      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로">latest</button>
+      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로" data-testid="radar-latest">latest</button>
       <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
     </div>
   );

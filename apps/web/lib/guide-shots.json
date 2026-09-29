@@ -9,7 +9,7 @@
       "title": "상황판 — 한 화면의 구성",
       "alt": "상황판 전체 화면: 위쪽 상태 바와 통합 검색, 가운데 한반도 지도 위의 항공기·레이더·SIGMET, 지도 오른쪽 위 레이어 단추와 펼친 범례, 오른쪽 알림 패널, 아래쪽 레이더 타임라인과 출처 줄",
       "callouts": [
-        { "n": 1, "label": "상태 바", "text": "연결(WS) · 피드별 출처와 지연 · SIGMET · 레이더 상태. 경고 배지는 줄 앞쪽에 옵니다(2.10).", "target": "[data-testid=\"statusbar\"]", "anchor": "l" },
+        { "n": 1, "label": "상태 바", "text": "연결(WS) · 경고 · 피드마다 칩(상태 모양 · 지연 또는 경과). 출처 · 수집 시각 · 기준은 오른쪽 끝 ‘상세’ 표(2.10).", "target": "[data-testid=\"statusbar\"]", "anchor": "l" },
         { "n": 2, "label": "통합 검색", "text": "항공기와 선박을 한 입력에서 찾습니다. / 키로 바로 입력(2.4).", "target": "[data-testid=\"aircraft-search\"]", "anchor": "l" },
         { "n": 3, "label": "확대 · 축소", "text": "지도 확대·축소 단추. 휠 · 핀치 · 키보드(= / -)로도 됩니다(2.2).", "target": ".maplibregl-ctrl-zoom-in", "anchor": "r" },
         { "n": 4, "label": "지도 상태 칩", "text": "지금 지도가 선박을 어떻게 그리는지(개별 · 격자 · 0척의 이유)와 집중 추적 상태 — 서버가 보고한 값만.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" },
@@ -25,10 +25,10 @@
       "section": "dashboard-layers",
       "path": "/#7.2/35.2/128.6",
       "title": "연안 교통량(KOMSA) — 해양격자 칸별 선박 척수",
-      "alt": "연안 교통량 레이어를 켠 남해안 부근 상황판: 바다 위 0.025° 격자 칸이 척수에 따라 주황 계열로 칠해져 있고, 레이어 단추 아래 상태 줄(기준 시각 KST · UTC, 표시한 칸 / 전체, 위치 확인 중 칸 수)과 펼친 범례의 척수 구간",
+      "alt": "연안 교통량 레이어를 켠 남해안 부근 상황판: 바다 위 0.025° 격자 칸이 척수에 따라 주황 계열로 칠해져 있고, 레이어 단추 아래 상태 줄(기준 시각 KST, 표시한 칸 / 전체, 위치 확인 중 칸 수)과 펼친 범례의 척수 구간",
       "callouts": [
         { "n": 1, "label": "레이어 단추", "text": "연안 교통량(KOMSA)을 켜고 끕니다. 처음에는 꺼져 있고, 이 브라우저에 기억됩니다.", "target": "[data-testid=\"layer-traffic\"]", "anchor": "l" },
-        { "n": 2, "label": "상태 줄", "text": "기준 시각(KST · UTC) · 표시한 칸 / 전체 · 위치 확인 중 · 꺼짐 · 자료 멈춤의 이유.", "target": "[data-testid=\"traffic-status\"]", "anchor": "l" },
+        { "n": 2, "label": "상태 줄", "text": "기준 시각(KST) · 표시한 칸 / 전체 · 위치 확인 중 · 꺼짐 · 자료 멈춤의 이유.", "target": "[data-testid=\"traffic-status\"]", "anchor": "l" },
         { "n": 3, "label": "범례 — 척수 구간", "text": "칸 색 = 척수 구간(많을수록 밝은 주황, 0척 회색). 5분 집계 · 개별 선박 위치 아님.", "target": "[data-testid=\"legend-traffic-scale\"]", "anchor": "l" },
         { "n": 4, "label": "범례 — 뜻", "text": "격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님.", "target": "[data-testid=\"legend-traffic-note\"]", "anchor": "l" }
       ]
@@ -77,12 +77,12 @@
       "section": "dashboard-ship",
       "path": "/#10/35.08/129.05",
       "title": "선박 카드 — 한국 항만 입출항(해양수산부 PORT-MIS)",
-      "alt": "선박 카드의 한국 항만 입출항 절: 찾는 데 쓴 호출부호, 신고마다 항만청 · 입항 / 출항(KST · UTC · 신고의 판) · 선석 · 목적 · 항로(전출항지 → 차항지) 블록, 색인 상태(10개 항만청 · 최근 30일 · 갱신 시각)와 창, 호출부호로만 찾는다는 안내와 출처",
+      "alt": "선박 카드의 한국 항만 입출항 절: 찾는 데 쓴 호출부호, 신고마다 항만청 · 입항 / 출항(KST · 신고의 판) · 선석 · 목적 · 항로(전출항지 → 차항지) 블록, 색인 상태(10개 항만청 · 최근 30일 · 갱신 시각)와 창, 호출부호로만 찾는다는 안내와 출처",
       "callouts": [
         { "n": 1, "label": "입출항 절", "text": "고른 선박의 AIS 호출부호로 서버 색인(PORT-MIS 항만청 10곳 · 최근 30일)에서 찾은 입출항 신고.", "target": "[data-testid=\"port-calls\"]", "anchor": "tl" },
         { "n": 2, "label": "상태", "text": "기록 없음(색인이 완전할 때만) · 색인 불완전(항만청별 이유) · 꺼짐 · 호출부호를 아직 받지 않음 · 읽기 실패 — 결과가 없을 때 그 이유.", "target": "[data-testid=\"port-calls-status\"]", "anchor": "l" },
-        { "n": 3, "label": "신고 목록", "text": "신고마다 한 블록 — 항만청 · 입항 / 출항(KST · UTC — 00:00 신고는 날짜만 · 신고의 판) · 선석 · 목적 · 항로(전출항지 → 차항지).", "target": "[data-testid=\"port-calls-table\"]", "anchor": "tl" },
-        { "n": 4, "label": "색인 상태", "text": "색인: 10개 항만청 · 최근 30일 · 갱신 시각(KST · UTC)과 창(KST 날짜 · 입항일 기준).", "target": "[data-testid=\"port-calls-index\"]", "anchor": "l" },
+        { "n": 3, "label": "신고 목록", "text": "신고마다 한 블록 — 항만청 · 입항 / 출항(KST — 00:00 신고는 날짜만 · 신고의 판) · 선석 · 목적 · 항로(전출항지 → 차항지).", "target": "[data-testid=\"port-calls-table\"]", "anchor": "tl" },
+        { "n": 4, "label": "색인 상태", "text": "색인: 10개 항만청 · 최근 30일 · 갱신 시각(KST)과 창(KST 날짜 · 입항일 기준).", "target": "[data-testid=\"port-calls-index\"]", "anchor": "l" },
         { "n": 5, "label": "안내 · 출처", "text": "호출부호로만 찾는다는 한계와 출처(해양수산부 선박운항정보 · 공공데이터포털).", "target": "[data-testid=\"port-calls-caveat\"]", "anchor": "l" }
       ]
     },
@@ -139,8 +139,8 @@
       "callouts": [
         { "n": 1, "label": "FIR별 SIGMET", "text": "최근 7일 FIR별 발표 건수(상위 24).", "target": "main .grid > section:nth-of-type(1)", "anchor": "tl" },
         { "n": 2, "label": "위험 유형별", "text": "최근 7일 위험 유형별 발표 건수.", "target": "main .grid > section:nth-of-type(2)", "anchor": "tl" },
-        { "n": 3, "label": "시간대별 항공기", "text": "그 날짜(UTC 날짜)의 시간대별 고유 항공기 수 — 막대 이름은 KST 시각.", "target": "main .grid > section:nth-of-type(3)", "anchor": "tl" },
-        { "n": 4, "label": "집계 날짜", "text": "UTC 날짜로 고릅니다(오늘은 아직 집계 전).", "target": "input[aria-label=\"집계 날짜(UTC 날짜)\"]", "anchor": "l" },
+        { "n": 3, "label": "시간대별 항공기", "text": "그 날짜(KST 날짜 — 00:00–24:00 KST)의 시간대별 고유 항공기 수 — 막대 이름은 KST 시.", "target": "main .grid > section:nth-of-type(3)", "anchor": "tl" },
+        { "n": 4, "label": "집계 날짜", "text": "KST 날짜로 고릅니다(오늘은 아직 집계 전 — 매일 03:30 KST 에 전날을 셉니다).", "target": "input[aria-label=\"집계 날짜(KST)\"]", "anchor": "l" },
         { "n": 5, "label": "알림 통계", "text": "날짜 · 종류별 건수와 평균 체류.", "target": "main .grid > section:nth-of-type(4)", "anchor": "tl" }
       ]
     },
@@ -151,7 +151,7 @@
       "title": "공항 기상 이력 (RKSI)",
       "alt": "인천국제공항(RKSI) 기상 이력 화면: 최신 METAR 의 관측 시각과 원문, 비행 카테고리 배지, TAF 원문, 최근 24개 관측 표",
       "callouts": [
-        { "n": 1, "label": "METAR", "text": "관측 시각과 원문 — 원문은 발표된 그대로(안의 …Z 는 UTC).", "target": "main .grid > section:nth-of-type(1)", "anchor": "tl" },
+        { "n": 1, "label": "METAR", "text": "관측 시각(KST)과 원문 — 원문은 발표된 그대로(안의 …Z 시각은 KST 보다 9시간 이릅니다).", "target": "main .grid > section:nth-of-type(1)", "anchor": "tl" },
         { "n": 2, "label": "비행 카테고리", "text": "AWC 제공값이 먼저, 없을 때만 실링 · 시정으로 계산(‘계산’ 표시). 2시간 넘은 METAR 는 ‘오래됨’.", "target": "main .grid > section:nth-of-type(1) .badge", "anchor": "l" },
         { "n": 3, "label": "TAF", "text": "공항 예보 원문 그대로.", "target": "main .grid > section:nth-of-type(2)", "anchor": "tl" },
         { "n": 4, "label": "관측 이력", "text": "최근 24개 관측 — 바람 · 시정(원문) · 실링 · 기온.", "target": "main table", "anchor": "tl" }

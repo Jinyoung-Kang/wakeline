@@ -585,8 +585,10 @@ DEMAND_COUNTS: Schema = {  # /status demand — 수만(hex·셀 키를 공개하
     },
 }
 
-# R-45: 통계의 날짜는 UTC 날짜 "YYYY-MM-DD" 만(자정 시각 문자열 "…T00:00:00.000Z" 는 JVM 시간대에 따라 하루 밀렸다)
+# R-45: 통계의 날짜는 날짜 문자열 "YYYY-MM-DD" 만(자정 시각 문자열 "…T00:00:00.000Z" 는 JVM 시간대에 따라 하루 밀렸다).
+# 계약 v5 §G20: 그 날짜는 KST 날짜 — 응답이 day_zone "Asia/Seoul" 로 밝힌다(V16 전의 UTC 날짜 집계는 보관 표에만 있고 내지 않는다).
 STATS_DAY: Schema = {"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+STATS_DAY_ZONE: Schema = {"const": "Asia/Seoul"}
 STATS_ROW: Schema = {
     "type": "object",
     "required": ["day", "dim", "value"],
@@ -1060,9 +1062,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "stats_traffic": {
         "type": "object",
         # R-45: aggregated = 그날 집계를 마쳤는가(false 면 빈 items 는 '0 대' 가 아니라 '집계 전')
-        "required": ["day", "aggregated", "items", "meta"],
+        "required": ["day", "day_zone", "aggregated", "items", "meta"],
         "properties": {
             "day": STATS_DAY,
+            "day_zone": STATS_DAY_ZONE,
             "aggregated": BOOL,
             "scope": {"const": "region"},
             "region": {  # DH-10: 그날 집계가 센 지역과 실제로 쓴 사각형 — 모르면(옛 집계) scope·region 모두 없음
@@ -1081,8 +1084,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "stats_alerts": {
         "type": "object",
-        "required": ["items", "days", "meta"],
+        "required": ["items", "days", "day_zone", "meta"],
         "properties": {
+            "day_zone": STATS_DAY_ZONE,
             "items": {
                 "type": "array",
                 "items": {
@@ -1097,8 +1101,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "stats_sigmet": {
         "type": "object",
-        "required": ["items", "group", "days", "meta"],
+        "required": ["items", "group", "days", "day_zone", "meta"],
         "properties": {
+            "day_zone": STATS_DAY_ZONE,
             "items": {"type": "array", "items": STATS_ROW},
             "group": {"enum": ["fir", "hazard"]},
             "days": STATS_DAYS,
@@ -1275,6 +1280,8 @@ CHECKS = [
     Check("airport_wx", "airport_wx", 200, "application/json", True),
     Check("replay", "replay", 200, "application/json", True),
     Check("stats_traffic", "stats_traffic", 200, "application/json", True),
+    # 기록: stats_traffic 은 끝난 KST 날짜를 실제로 집계한 응답(행이 있다 — 리뷰 2026-09-30), 이것은 오늘(KST — 집계 전, aggregated false)
+    Check("stats_traffic_today", "stats_traffic", 200, "application/json", True, recorded_only=True),
     Check("stats_alerts", "stats_alerts", 200, "application/json", True),
     Check("stats_sigmet", "stats_sigmet", 200, "application/json", True),
     Check("problem_400", "problem", 400, "application/problem+json", False),
@@ -1760,9 +1767,19 @@ def _last_seen_errors(body: dict[str, Any]) -> list[str]:
     return []
 
 
+_HOUR_DIM = re.compile(r"^(?:[01][0-9]|2[0-3])$")
+
+
 def _stats_traffic(body: dict[str, Any]) -> list[str]:
-    days = {row["day"] for row in body.get("items") or []}
-    return [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
+    """그날(KST 날짜)의 행만, 시(dim)는 그 KST 날짜의 시 "00"–"23" 이고 시마다 한 행(계약 v5 §G20)."""
+    rows = body.get("items") or []
+    days = {row["day"] for row in rows}
+    errs = [] if days <= {body.get("day")} else [f"items carry other days than {body.get('day')}: {sorted(days)}"]
+    dims = [row.get("dim") for row in rows]
+    errs += [f"items dim {d!r} is not a KST hour 00-23" for d in dims if not isinstance(d, str) or not _HOUR_DIM.match(d)]
+    if len(set(dims)) != len(dims):
+        errs.append("an hour appears more than once")
+    return errs
 
 
 TRAFFIC_COUNTS = ("total", "rejected", "resolved", "unresolved", "pending", "not_found", "off_grid", "failed", "invalid_cells")

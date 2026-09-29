@@ -233,7 +233,8 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toMatch(/data-key="publish_dropped" data-tone="bad"/);
     expect(html).toMatch(/data-key="dropped_total" data-tone="muted"[^>]*>.*?—/);
     expect(html).toContain("wakeline:aircraft");
-    expect(html).toContain("09-28 10:00:00 – 09-28 10:02:00 KST · 01:00:00 – 01:02:00 UTC"); // 운영 화면은 KST 먼저 · UTC 함께
+    expect(html).toContain("09-28 10:00:00 – 09-28 10:02:00 KST"); // 운영 화면은 KST 만(계약 v5 §G20)
+    expect(html).not.toContain("UTC");
   });
   it("permanent losses (rejected rows, apply errors, listener errors) are loss rows too", () => {
     const rows = opsLib.pipelineRows({ ...resp, api: { ...resp.api, track_rows_failed: 2, ship_rows_failed: 0, stream_apply_errors: 1, listener_errors: 0 } });
@@ -274,7 +275,7 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     const badStart = { ...resp, api: { ...resp.api, last_stream_trim_loss: { stream: "wakeline:ships", from: "garbage", to: "2026-09-28T01:02:00Z" } } };
     const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: badStart }));
     expect(html).not.toContain("undefined");
-    expect(html).toContain('title="— – 원본 UTC 2026-09-28T01:02:00.000Z"');
+    expect(html).toContain('title="— – 2026-09-28 10:02:00.000 KST"');
     expect(html).toContain("wakeline:ships · — – 09-28 10:02:00 KST");
   });
 });
@@ -306,7 +307,7 @@ describe("R-39 narrow screens (390 px phone, 768 px tablet)", () => {
   });
   it("the layer buttons wrap inside the map (bounded on the left) instead of running off screen", () => {
     const html = renderToStaticMarkup(createElement(LayerPanel));
-    expect(html).toMatch(/class="[^"]*left-12[^"]*"/);
+    expect(html).toMatch(/class="[^"]*left-\[48px\][^"]*"/); // 줌 단추 옆에서 멈춘다(tests/dashboard-layout — 전에는 left-12 = 39 px 로 2 px 겹침)
     expect(html).toMatch(/class="[^"]*flex-wrap[^"]*"[^>]*data-testid="layer-panel"/);
   });
   it("buttons never break inside a Korean word; the legend starts closed on narrow screens", () => {
@@ -450,7 +451,7 @@ describe("R-31 legend and status bar on common laptop screens", () => {
     expect(html).toMatch(/class="pointer-events-none absolute[^"]*bottom-16/);
     expect(html).not.toMatch(/class="pointer-events-none absolute[^"]*bottom-3[ "]/);
   });
-  it("the KMA STALE badge sits at the front of the status bar, not past the scroll edge", () => {
+  it("the KMA STALE state is always in the status bar row (a pinned chip — never moved into '상세'; the row no longer scrolls)", () => {
     const kr: KrRadar = {
       available: true, latest_tm: "202609280130", georeferenced: true, coordinates: null, legend: null, frames: [{ tm: "202609280130", obs_tm: "202609280130", fetched_at: "x", echo_cells: 1, url: "/u" }],
       attribution: "기상청", meta: { fetched_at: "2026-09-27T16:33:40Z", stale: true },
@@ -458,15 +459,17 @@ describe("R-31 legend and status bar on common laptop screens", () => {
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr });
     const html = renderToStaticMarkup(createElement(StatusBar));
     expect(html.indexOf('data-testid="kr-radar-stale"')).toBeGreaterThan(-1);
-    expect(html.indexOf('data-testid="kr-radar-stale"')).toBeLessThan(html.indexOf('data-testid="aircraft-count"'));
+    // 경고인 칩은 줄에서 빼지 않는다(lib/statusbar fitChips) — 가로 스크롤 끝으로 밀려 보이지 않던 R-31 의 문제가 없다
+    expect(html).toMatch(/data-chip="kma" data-pinned="true"[^>]*data-health="bad"/);
+    expect(html).not.toMatch(/overflow-x-auto[^"]*" data-testid="statusbar/);
   });
 });
 
 describe("R-32 / R-45 statistics readable: labels, units, honest empty states, date-only days", () => {
-  it("day values: 'YYYY-MM-DD' as is; a UTC-midnight timestamp is read as that date; anything else is unknown (—), never shifted", async () => {
+  it("day values: 'YYYY-MM-DD' as is; anything else (incl. an old midnight timestamp — a UTC day) is unknown (—), never shifted", async () => {
     const stats = await import("@/lib/stats");
     expect(stats.statsDay("2026-09-27")).toBe("2026-09-27");
-    expect(stats.statsDay("2026-09-27T00:00:00.000Z")).toBe("2026-09-27"); // 옛 응답(UTC JVM)
+    expect(stats.statsDay("2026-09-27T00:00:00.000Z")).toBeNull(); // 옛 응답(UTC JVM 자정 = UTC 날짜) — KST 날짜로 읽지 않는다(계약 v5 §G20)
     expect(stats.statsDay("2026-09-26T15:00:00.000Z")).toBeNull(); // KST JVM 이 만든 자정 — 날짜를 단정하지 않는다
     expect(stats.statsDay(null)).toBeNull();
     expect(stats.statsDay("2026-02-30")).toBeNull();
@@ -477,17 +480,18 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
       { day: "2026-09-27", metric: "alerts_by_kind", dim: "OBSERVED", value: 19546 },
       { day: "2026-09-27", metric: "alert_dwell_avg_s", dim: "OBSERVED", value: 784.55 },
       { day: "2026-09-27", metric: "alerts_by_kind", dim: "PREDICTED", value: 120 },
-      { day: "2026-09-28", metric: "alerts_by_kind", dim: "OBSERVED", value: 10 },
+      { day: "2026-09-29", metric: "alerts_by_kind", dim: "OBSERVED", value: 10 }, // 수정일(KST 09-28) 다음 날
     ]);
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatchObject({ day: "2026-09-27", kind: "관측(경보 안)", count: "19,546건", dwell: "13m 05s", preFix: true });
     expect(rows[1]).toMatchObject({ kind: "예측(추정)", count: "120건", dwell: "—", preFix: false });
-    expect(rows[2]).toMatchObject({ day: "2026-09-28", dwell: "—", preFix: false });
+    expect(rows[2]).toMatchObject({ day: "2026-09-29", dwell: "—", preFix: false });
     const { AlertStatsTable } = await import("@/components/AlertStatsTable");
     const html = renderToStaticMarkup(createElement(AlertStatsTable, { rows }));
     expect(html).not.toMatch(/alert_dwell_avg_s|alerts_by_kind/);
     expect(html).toContain("평균 체류");
-    expect(html).toContain("날짜(UTC 날짜)"); // 집계 날짜는 UTC 날짜 그대로(KST 날짜로 옮기지 않는다)
+    expect(html).toContain("날짜(KST)"); // 서버가 KST 날짜로 센다(계약 v5 §G20)
+    expect(html).not.toContain("UTC");
   });
   it("rows whose day cannot be read stay separate ('—' each) instead of one row where one day's value overwrites another's", async () => {
     const stats = await import("@/lib/stats");
@@ -498,41 +502,50 @@ describe("R-32 / R-45 statistics readable: labels, units, honest empty states, d
       { day: null, metric: "alerts_by_kind", dim: "OBSERVED", value: 7 },
       { day: undefined, metric: "alerts_by_kind", dim: "OBSERVED", value: 9 },
     ]);
-    // 수정 전: 모두 "—|OBSERVED" 한 행으로 묶여 마지막 값(9건)만 남았다
+    // 수정 전: 모두 "—|OBSERVED" 한 행으로 묶여 마지막 값(9건)만 남았다(자정 시각 문자열은 날짜를 모르는 값 — "—")
     expect(rows.map((r) => [r.day, r.count, r.dwell])).toEqual([["—", "100건", "10m 00s"], ["—", "5건", "—"], ["—", "7건", "—"], ["—", "9건", "—"]]);
     expect(new Set(rows.map((r) => r.key)).size).toBe(rows.length); // 표의 React key 가 겹치지 않는다
   });
   it("empty states say whether the day was not aggregated yet, never aggregated, or aggregated with no data", async () => {
     const stats = await import("@/lib/stats");
     const today = "2026-09-28";
-    expect(stats.statsEmptyText(false, "2026-09-27", today)).toContain("다음 12:30 KST");
-    expect(stats.statsEmptyText(false, "2020-01-01", today)).not.toContain("다음 12:30");
+    expect(stats.statsEmptyText(false, "2026-09-27", today)).toContain("다음 03:30 KST");
+    expect(stats.statsEmptyText(false, "2020-01-01", today)).not.toContain("다음 03:30");
     expect(stats.statsEmptyText(false, "2020-01-01", today)).toContain("집계되지 않은 날짜");
     expect(stats.statsEmptyText(true, "2026-09-20", today)).toContain("자료가 없습니다");
     expect(stats.statsEmptyText(undefined, "2026-09-20", today)).toContain("구분할 수 없");
     expect(stats.aggregatedFlag({ aggregated: false })).toBe(false);
     expect(stats.aggregatedFlag({ aggregated: "no" })).toBeUndefined();
-    expect(stats.yesterdayUtc(Date.parse("2026-09-28T01:00:00Z"))).toBe("2026-09-27");
+    expect(stats.yesterdayKst(Date.parse("2026-09-28T01:00:00Z"))).toBe("2026-09-27"); // 10:00 KST 09-28
+    expect(stats.yesterdayKst(Date.parse("2026-09-28T16:00:00Z"))).toBe("2026-09-28"); // 01:00 KST 09-29 — UTC 로는 아직 09-28
+    expect(stats.todayKst(Date.parse("2026-09-28T16:00:00Z"))).toBe("2026-09-29");
   });
   it("traffic: a fill is promised only while the raw tracks (72 h) are still kept at the next aggregation attempt", async () => {
     const stats = await import("@/lib/stats");
-    // api: track-retention-hours 72 · MaintenanceJobs.families 는 그날 끝 > now − 72 h 일 때만 교통량을 다시 센다 · 따라잡기 3 h 마다
+    // api: track-retention-hours 72 · 항적은 UTC 날 파티션째 지워진다(V9) · MaintenanceJobs.families 는 그날 첫 순간(00:00 KST)이 든 UTC 파티션의
+    // 끝 > now − 72 h 일 때만 교통량을 다시 센다 · 따라잡기 3 h 마다
     const src = (iso: string) => ({ name: "원본 항적", retentionH: 72, nowMs: Date.parse(iso) });
     const today = "2026-09-28";
-    // 5일 전(09-23): 그날 끝(09-24 00Z) + 72 h = 09-27 00Z < 지금 → 원본이 없다. 수정 전: "다음 03:30 UTC(지금은 12:30 KST) 집계 뒤 채워집니다"
+    // 5일 전(09-23): 첫 파티션(UTC 09-22) 끝 09-23 00Z + 72 h = 09-26 00Z < 지금 → 원본이 없다
     const gone = stats.statsEmptyText(false, "2026-09-23", today, src("2026-09-28T01:00:00Z"));
-    expect(gone).not.toContain("다음 12:30");
+    expect(gone).not.toContain("다음 03:30");
     expect(gone).not.toMatch(/채워집니다/);
     expect(gone).toContain("채워지지 않습니다");
     expect(gone).toContain("72 h");
-    // 3일 전(09-25): 원본은 09-29 00Z 까지 — 01Z 에는 약속, 22Z 에는 다음 따라잡기(≤ 3 h) 전에 지워질 수 있어 약속하지 않는다
-    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T01:00:00Z"))).toContain("다음 12:30 KST");
-    const soon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T22:00:00Z"));
+    // 3일 전(09-25): 00:00–08:59 KST 는 UTC 09-24 파티션에 있다 — 그 끝(09-25 00Z) + 72 h = 09-28 00Z(09:00 KST)까지만 다시 센다.
+    // 리뷰 2026-09-30: 그날 끝(09-26 00:00 KST = 09-25 15Z)으로 셈해 09-28 15Z 까지 약속했다 — 그 사이의 재집계는 00–08시가 빠진 수를 남겼다(api 도 고침)
+    expect(stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-27T20:00:00Z"))).toContain("다음 03:30 KST"); // 05:00 KST — 4 h 남음
+    const soon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-27T22:00:00Z")); // 07:00 KST — 다음 따라잡기(≤ 3 h) 전에 지워질 수 있다
     expect(soon).not.toMatch(/채워집니다/);
     expect(soon).toContain("채워지지 않을 수 있습니다");
+    const afternoon = stats.statsEmptyText(false, "2026-09-25", today, src("2026-09-28T05:00:00Z")); // 14:00 KST — 앞 파티션이 이미 지워졌다
+    expect(afternoon).not.toMatch(/채워집니다/);
+    expect(afternoon).toContain("채워지지 않습니다");
+    expect(stats.trackPartitionEndMs(Date.parse("2026-09-24T15:00:00Z"))).toBe(Date.parse("2026-09-25T00:00:00Z"));
+    expect(stats.trackPartitionEndMs(Date.parse("2026-09-24T00:00:00Z"))).toBe(Date.parse("2026-09-25T00:00:00Z")); // 경계 순간은 그 날 파티션(FROM 포함)
     // 어제는 그대로 약속한다 · 원본 보존을 모르는(넘기지 않은) 계열은 기존 규칙(따라잡기 7일)
-    expect(stats.statsEmptyText(false, "2026-09-27", today, src("2026-09-28T23:59:00Z"))).toContain("다음 12:30 KST");
-    expect(stats.statsEmptyText(false, "2026-09-23", today)).toContain("다음 12:30 KST");
+    expect(stats.statsEmptyText(false, "2026-09-27", today, src("2026-09-28T14:59:00Z"))).toContain("다음 03:30 KST");
+    expect(stats.statsEmptyText(false, "2026-09-23", today)).toContain("다음 03:30 KST");
     // 교통량 차트가 이 원본 보존 규칙으로 빈 상태를 말한다
     expect(stats.TRAFFIC_SOURCE).toEqual({ name: "원본 항적", retentionH: 72 });
     expect(readFileSync(new URL("../app/stats/page.tsx", import.meta.url), "utf8")).toMatch(/statsEmptyText\(agg\.traffic, day, today, \{ \.\.\.TRAFFIC_SOURCE, nowMs: /);

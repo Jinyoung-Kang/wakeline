@@ -29,7 +29,7 @@ import orjson
 
 from wakeline_collector.config import settings
 from wakeline_collector.masking import mask
-from wakeline_collector.portcalls import Coverage, PortCallRow, merge_day
+from wakeline_collector.portcalls import Coverage, PortCallRow, kst_date, merge_day
 
 log = logging.getLogger("db")
 
@@ -382,12 +382,12 @@ class Db:
         quality: list[tuple[str, str | None, dict[str, Any]]] | None = None,
     ) -> None:
         """ingest_run 1행(+ 품질 사례·규칙별 건수)을 한 트랜잭션으로 기록한다.
-        규칙별 건수는 실행이 시작된 UTC 날짜에 싣는다(COL-6: 큐에서 자정을 넘겨 기록돼도 실행한 날로).
+        규칙별 건수는 실행이 시작된 KST 날짜에 싣는다(계약 v5 §G20 — 화면 · 통계와 같은 날 · COL-6: 큐에서 자정을 넘겨 기록돼도 실행한 날로).
         멱등(R-91): 실행마다 run_key(uuid4)를 한 번 만들고 재시도는 같은 키를 쓴다. INSERT … ON CONFLICT (run_key) DO NOTHING 이
         행을 돌려주지 않으면 앞선 시도가 이미 커밋된 것이다 — 품질 사례·규칙별 건수도 그 트랜잭션에 함께 커밋됐으므로 다시 넣지 않는다
         (다시 넣으면 사례가 겹치고 건수가 두 배가 된다). 그 run id 는 run_key 로 되찾아 로그에 남긴다."""
         finished_at = datetime.now(UTC)
-        day = started_at.astimezone(UTC).date()
+        day = kst_date(started_at)
         rows, per_rule = quality_rows(quality or [])
         err = mask(error_text)
         run_key = uuid.uuid4()  # 실행 하나 = 키 하나(재시도는 이 클로저를 다시 부르므로 같은 키)

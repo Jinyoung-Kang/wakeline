@@ -7,7 +7,7 @@ import { createPropertyExpression, latest, validateStyleMin } from "@maplibre/ma
 import { describe, expect, it } from "vitest";
 import {
   applyBasemap, BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST, BASEMAP_HALO, BASEMAP_LABEL, BASEMAP_LAND, BASEMAP_LAND_DETAIL, BASEMAP_ROAD, BASEMAP_WATER,
-  BASEMAP_WATER_LABEL, basemapOverrides, BOUNDARY_COLOR_EXPR, contrastRatio, relativeLuminance, type StyleLayerLike,
+  BASEMAP_WATER_LABEL, basemapOverrides, BOUNDARY_COLOR_EXPR, COAST_LINE_OFFSET_PX, coastLayers, contrastRatio, landFillsAboveWater, relativeLuminance, type StyleLayerLike,
 } from "@/lib/basemap";
 import { ALT_RAMP, ALT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR } from "@/lib/format";
 import { AIRCRAFT_COLOR_EXPR, COVERAGE_PAINT } from "@/lib/maplayers";
@@ -122,7 +122,8 @@ describe("basemap colours (contract v4 §E)", () => {
 /** SYNTHETIC: OpenMapTiles 스키마 모양의 어두운 스타일 층(값·id 는 지어낸 것) + 우리 geojson 레이어 */
 const SYNTHETIC_LAYERS = [
   { id: "background", type: "background", paint: { "background-color": "rgb(12,12,12)" } },
-  { id: "water", type: "fill", source: "openmaptiles", "source-layer": "water", paint: { "fill-color": "rgb(27,27,29)", "fill-antialias": false } },
+  { id: "water", type: "fill", source: "openmaptiles", "source-layer": "water", filter: ["!=", ["get", "brunnel"], "tunnel"], paint: { "fill-color": "rgb(27,27,29)", "fill-antialias": false } },
+  { id: "water_intermittent", type: "fill", source: "openmaptiles", "source-layer": "water", minzoom: 8, filter: ["==", ["get", "intermittent"], 1], paint: { "fill-color": "rgb(27,27,29)", "fill-opacity": 0.7 } },
   { id: "landcover_ice", type: "fill", source: "openmaptiles", "source-layer": "landcover", paint: { "fill-color": "#111", "fill-opacity": 0.5 } },
   { id: "landuse_residential", type: "fill", source: "openmaptiles", "source-layer": "landuse", paint: { "fill-color": "#0e0e0e" } },
   { id: "park", type: "fill", source: "openmaptiles", "source-layer": "park", paint: { "fill-color": "#101010" } },
@@ -145,7 +146,7 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
   it("touches only the known basemap layers; road labels and our own layers are left alone", () => {
     expect([...touched].sort()).toEqual([
       "aeroway_area", "background", "boundary_country", "boundary_state", "building", "highway_major", "landcover_ice", "landuse_residential", "park", "place_city",
-      "water", "water_name", "waterway",
+      "water", "water_intermittent", "water_name", "waterway",
     ]);
     for (const id of ["road_label", "sigmet-fill", "airport-label"]) expect(touched.has(id), id).toBe(false);
   });
@@ -166,11 +167,12 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
     expect(basemapOverrides([{ id: "only-water", type: "fill", "source-layer": "water" }]).every((o) => o.id === "only-water")).toBe(true);
     expect(basemapOverrides([null as never, { id: "x", type: "raster" }])).toEqual([]);
   });
-  it("sets the colours the contrast tests check, plus a visible water outline (coastline)", () => {
+  it("sets the colours the contrast tests check; the water fill's own outline is the water colour (the coastline is a separate line — below)", () => {
     const v = (id: string, prop: string) => overrides.find((o) => o.id === id && o.prop === prop)?.value;
     expect(v("background", "background-color")).toBe(BASEMAP_LAND);
     expect(v("water", "fill-color")).toBe(BASEMAP_WATER);
-    expect(v("water", "fill-outline-color")).toBe(BASEMAP_COAST);
+    // 채움 외곽선은 다각형의 모든 변을 긋는다 — 물 다각형 안쪽 이음새(동해 38.6°N 의 직선, 사용자 스크린샷 2026-09-30)도. 그래서 물 색으로
+    expect(v("water", "fill-outline-color")).toBe(BASEMAP_WATER);
     expect(v("water", "fill-antialias")).toBe(true);
     for (const id of ["landcover_ice", "landuse_residential", "park"]) expect(v(id, "fill-color")).toBe(BASEMAP_LAND);
     for (const id of ["building", "aeroway_area"]) expect(v(id, "fill-color")).toBe(BASEMAP_LAND_DETAIL);
@@ -184,6 +186,24 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
     }
     expect(v("boundary_state", "line-opacity")).toBe(1);
   });
+  it("coastline: one line per water fill, right below it, on the same features (source · source-layer · filter · zooms), pushed 1 px outward onto land", () => {
+    const c = coastLayers(SYNTHETIC_LAYERS as unknown as StyleLayerLike[]);
+    expect(c.map((x) => x.beforeId)).toEqual(["water", "water_intermittent"]);
+    expect(c[0].layer).toEqual({
+      id: "wakeline-coast-water", type: "line", source: "openmaptiles", "source-layer": "water", filter: ["!=", ["get", "brunnel"], "tunnel"],
+      paint: { "line-color": BASEMAP_COAST, "line-width": 1, "line-offset": COAST_LINE_OFFSET_PX },
+    });
+    expect(c[1].layer).toMatchObject({ id: "wakeline-coast-water_intermittent", minzoom: 8, filter: ["==", ["get", "intermittent"], 1] });
+    // 음수 = 선의 왼쪽 = 다각형 밖: 벡터 타일의 바깥 고리는 화면에서 시계 방향(안쪽이 오른쪽), 구멍(섬)은 반대 — 둘 다 육지 쪽으로 간다.
+    // 물 채움(위 층)이 물 쪽을 덮으므로 두 물 다각형이 맞닿는 이음새의 선은 가려지고 해안의 선만 남는다(scratch 하네스: MapLibre 6.11.2 · 합성 이음새 38°N).
+    expect(COAST_LINE_OFFSET_PX).toBe(-1);
+    // 물이 아닌 층 · 우리 geojson 층 · source 가 없는 층에는 만들지 않는다
+    expect(coastLayers([{ id: "only-water", type: "fill", "source-layer": "water" }])).toEqual([]);
+    expect(coastLayers([{ id: "sigmet-fill", type: "fill", source: "sigmets" } as StyleLayerLike, null as never])).toEqual([]);
+  });
+  it("the coastline still reaches 3:1 against the water it borders", () => {
+    expect(contrastRatio(BASEMAP_COAST, BASEMAP_WATER)).toBeGreaterThanOrEqual(3);
+  });
   it("border colour: admin_level ≤ 2 is a country border, anything else (or unknown) the fainter state colour", () => {
     const spec = "paint_line.line-color";
     expect(colorHex(evalExpr(BOUNDARY_COLOR_EXPR, spec, { admin_level: 2 }))).toBe(BASEMAP_BOUNDARY_COUNTRY);
@@ -193,6 +213,7 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
   it("the overridden style still validates against the MapLibre style spec", () => {
     const layers = SYNTHETIC_LAYERS.map((l) => ({ ...l, paint: { ...l.paint } })) as { id: string; paint: Record<string, unknown> }[];
     for (const o of overrides) layers.find((l) => l.id === o.id)!.paint[o.prop] = o.value;
+    for (const c of coastLayers(SYNTHETIC_LAYERS as unknown as StyleLayerLike[])) layers.splice(layers.findIndex((l) => l.id === c.beforeId), 0, c.layer as never);
     const style = {
       version: 8, glyphs: "https://example.invalid/{fontstack}/{range}.pbf",
       sources: {
@@ -204,18 +225,77 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
     };
     expect(validateStyleMin(style as never).map((e) => e.message)).toEqual([]);
   });
-  it("applyBasemap sets each override once, survives a rejected property and an unreadable style", () => {
+  it("applyBasemap sets each override once, adds each coastline once below its water fill, survives a rejected property or layer and an unreadable style", () => {
     const calls: [string, string, unknown][] = [];
-    const n = applyBasemap({
+    const added: [string, string | undefined][] = [];
+    const moved: [string, string | undefined][] = [];
+    const have = new Set<string>();
+    let rejectOnce = true;
+    const target = {
       getStyle: () => ({ layers: SYNTHETIC_LAYERS }) as never,
       setPaintProperty: ((id: string, prop: string, value: unknown) => {
         if (id === "park") throw new Error("rejected");
         calls.push([id, prop, value]);
       }) as never,
-    });
-    expect(n).toBe(overrides.length - 1);
+      getLayer: (id: string) => (have.has(id) ? { id } : undefined),
+      addLayer: ((l: { id: string }, before?: string) => {
+        if (l.id === "wakeline-coast-water_intermittent" && rejectOnce) { rejectOnce = false; throw new Error("rejected"); }
+        have.add(l.id); added.push([l.id, before]);
+      }) as never,
+      moveLayer: ((id: string, before?: string) => {
+        if (id === "building") throw new Error("rejected");
+        moved.push([id, before]);
+      }) as never,
+    };
+    const n = applyBasemap(target);
+    // 칠하기(park 거절) + 해안선 1(두 번째 거절) + 육지 채움 옮기기 4 중 building 거절(공항 구역은 옮기지 않는다)
+    expect(n).toBe(overrides.length - 1 + 1 + 3);
+    expect(moved).toEqual(["landcover_ice", "landuse_residential", "park"].map((id) => [id, "wakeline-coast-water"]));
     expect(calls.map((c) => `${c[0]}.${c[1]}`)).toEqual(overrides.filter((o) => o.id !== "park").map((o) => `${o.id}.${o.prop}`));
-    expect(applyBasemap({ getStyle: () => { throw new Error("no style"); }, setPaintProperty: (() => {}) as never })).toBe(0);
+    expect(added).toEqual([["wakeline-coast-water", "water"]]); // 거절된 층은 건너뛴다
+    // 다시 불러도(같은 스타일) 이미 있는 선은 더하지 않는다
+    applyBasemap(target);
+    expect(added).toEqual([["wakeline-coast-water", "water"], ["wakeline-coast-water_intermittent", "water_intermittent"]]);
+    applyBasemap(target);
+    expect(added).toHaveLength(2);
+    expect(applyBasemap({ ...target, getStyle: () => { throw new Error("no style"); } })).toBe(0);
+    // 해안선을 더하지 못했으면 육지 채움을 옮기지 않는다(스타일 순서 그대로)
+    moved.length = 0;
+    applyBasemap({ ...target, getLayer: () => undefined, addLayer: (() => { throw new Error("rejected"); }) as never });
+    expect(moved).toEqual([]);
+  });
+  /**
+   * 층 순서(통합 리뷰 2026-09-30): OpenFreeMap dark 는 물 채움보다 뒤에 육지 채움(주거지 · 숲 · 공원 · 건물 · 활주로 구역)을 그린다 — 해안선을 물 채움 바로 아래에만
+   * 두면 해안에 닿는 그 채움이 육지 쪽 1 px 의 해안선을 덮을 수 있었다(이 시험이 실패했다). 이제 지표 피복 · 토지 이용 · 공원 · 건물 채움은 해안선 아래,
+   * 물 위의 선 · 글자는 그대로 위. 공항 구역 채움은 제자리(그 아래의 유도로 선이 드러나지 않게 — 실제 타일 인천 z12).
+   */
+  it("after applyBasemap no landcover · landuse · park · building fill is drawn above a coastline; lines and labels stay above the water in their order", () => {
+    const order: string[] = SYNTHETIC_LAYERS.map((l) => l.id);
+    const at = (id: string) => order.indexOf(id);
+    const place = (id: string, before?: string) => { const i = order.indexOf(id); if (i >= 0) order.splice(i, 1); order.splice(before ? order.indexOf(before) : order.length, 0, id); };
+    const target = {
+      getStyle: () => ({ layers: SYNTHETIC_LAYERS }) as never,
+      setPaintProperty: (() => undefined) as never,
+      getLayer: (id: string) => (order.includes(id) ? { id } : undefined),
+      addLayer: ((l: { id: string }, before?: string) => place(l.id, before)) as never,
+      moveLayer: ((id: string, before?: string) => place(id, before)) as never,
+    };
+    applyBasemap(target);
+    const coasts = order.filter((id) => id.startsWith("wakeline-coast-"));
+    expect(coasts).toEqual(["wakeline-coast-water", "wakeline-coast-water_intermittent"]);
+    for (const c of coasts) expect(order[at(c) + 1], c).toBe(c.replace("wakeline-coast-", "")); // 해안선은 제 물 채움 바로 아래
+    const landFills = ["landcover_ice", "landuse_residential", "park", "building"];
+    for (const f of landFills) expect(at(f), `${f} below the first coastline`).toBeLessThan(at("wakeline-coast-water"));
+    expect(landFills.map(at)).toEqual([...landFills.map(at)].sort((a, b) => a - b)); // 서로의 순서는 그대로
+    for (const id of ["waterway", "highway_major", "boundary_state", "boundary_country", "water_name", "place_city", "road_label", "sigmet-fill", "airport-label"])
+      expect(at(id), `${id} above the water`).toBeGreaterThan(at("water_intermittent"));
+    const rest = order.filter((id) => !coasts.includes(id) && !landFills.includes(id));
+    expect(rest).toEqual(SYNTHETIC_LAYERS.map((l) => l.id).filter((id) => !landFills.includes(id))); // 나머지 층의 순서는 스타일 그대로
+    // 다시 불러도 같은 자리
+    const once = [...order];
+    applyBasemap(target);
+    expect(order).toEqual(once);
+    expect(landFillsAboveWater(order.map((id) => SYNTHETIC_LAYERS.find((l) => l.id === id) ?? { id, type: "line" }) as StyleLayerLike[])).toEqual([]);
   });
   it("both maps (dashboard and replay) apply it on every style.load", () => {
     for (const f of ["../components/MapView.tsx", "../components/ReplayMap.tsx"]) {

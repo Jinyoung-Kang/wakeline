@@ -11,6 +11,7 @@ import pytest
 
 from wakeline_collector import db as dbmod
 from wakeline_collector.db import Db, quality_rows
+from wakeline_collector.portcalls import kst_date
 
 
 class FakeConn:
@@ -98,7 +99,7 @@ async def test_writes_in_order_with_quality_in_same_run():
     tables = [t for t, _ in pool.log]
     assert tables == ["ingest_run", "quality_event", "quality_rule_count", "airport", "metar_obs"]
     assert len(pool.log[1][1]) == 20  # 규칙별 대표 사례 20건
-    assert pool.log[2][1] == [(now.date(), "no_position", 25)]  # 실행한 날(UTC)로 집계(COL-6)
+    assert pool.log[2][1] == [(kst_date(now), "no_position", 25)]  # 실행한 날(KST 날짜 — 계약 v5 §G20)로 집계(COL-6)
     metar_args = pool.log[4][1][0]
     assert metar_args[10] == "none"  # ceiling_state 가 11번째 인자
     await db.close()
@@ -307,7 +308,7 @@ def test_error_classification():
         assert classify_error(e) == "transient", e
 
 
-# ---- COL-6: 규칙별 건수는 실행한 날로 --------------------------------------------------------------------------------------
+# ---- COL-6: 규칙별 건수는 실행한 날로 — 그 날은 KST 날짜(계약 v5 §G20) ----------------------------------------------------------
 async def test_quality_count_booked_to_run_day_even_if_flushed_after_midnight():
     pool = FakePool()
     pool.up = False
@@ -317,13 +318,35 @@ async def test_quality_count_booked_to_run_day_even_if_flushed_after_midnight():
 
     db = Db(factory)
     db.start()
-    started = datetime(2026, 9, 27, 23, 59, 30, tzinfo=UTC)
+    started = datetime(2026, 9, 28, 14, 59, 30, tzinfo=UTC)  # 23:59:30 KST
     db.record_run("region", "adsb_lol", started, status="ok", quality=[("position_jump", "abcdef", {})])
     await asyncio.sleep(0.05)
-    pool.up = True  # 자정 이후에 기록된다고 가정 — 날짜는 SQL 의 CURRENT_DATE 가 아니라 인자로 간다
+    pool.up = True  # KST 자정 이후에 기록된다고 가정 — 날짜는 SQL 의 CURRENT_DATE 가 아니라 인자로 간다
     await _settle(db)
     rule_rows = [rows for t, rows in pool.log if t == "quality_rule_count"][0]
-    assert rule_rows == [(datetime(2026, 9, 27).date(), "position_jump", 1)]
+    assert rule_rows == [(datetime(2026, 9, 28).date(), "position_jump", 1)]
+    await db.close()
+
+
+async def test_quality_count_day_is_the_kst_date_of_the_run_start():
+    """계약 v5 §G20: 규칙별 건수의 날짜 = 실행이 시작된 KST 날짜 — 경계는 KST 자정(15:00 UTC). 수정 전에는 UTC 날짜라 KST 00:00–08:59 의
+    실행이 전날에 들어갔다(이 시험이 실패했다)."""
+    pool = FakePool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    for started in (
+        datetime(2026, 9, 28, 14, 59, 59, tzinfo=UTC),  # 09-28 23:59:59 KST
+        datetime(2026, 9, 28, 15, 0, 0, tzinfo=UTC),  # 09-29 00:00:00 KST(UTC 로는 아직 09-28)
+        datetime(2026, 9, 28, 23, 59, 0, tzinfo=UTC),  # 09-29 08:59 KST
+    ):
+        db.record_run("region", "adsb_lol", started, status="ok", quality=[("position_jump", "abcdef", {})])
+    await _settle(db)
+    days = [rows[0][0] for t, rows in pool.log if t == "quality_rule_count"]
+    assert days == [datetime(2026, 9, 28).date(), datetime(2026, 9, 29).date(), datetime(2026, 9, 29).date()]
     await db.close()
 
 
@@ -397,7 +420,7 @@ async def test_run_committed_then_timed_out_is_recorded_once_on_retry():
     counts = [r for t, rows in pool.committed if t == "quality_rule_count" for r in rows]
     assert len(runs) == 1, runs  # 재시도해도 실행 기록은 하나
     assert len(events) == 20 and all(e[0] == 1 for e in events)  # 대표 사례 20건, 첫 커밋의 run id 에 붙는다
-    assert counts == [(now.date(), "no_position", 25)]  # 규칙별 건수도 한 번만(두 배 집계 없음)
+    assert counts == [(kst_date(now), "no_position", 25)]  # 규칙별 건수도 한 번만(두 배 집계 없음)
     assert db.failures == 1 and db.written == 1 and db.dropped == 0 and db.pending == 0
     await db.close()
 

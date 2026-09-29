@@ -172,6 +172,24 @@ public final class DbTestSupport {
         }
     }
 
+    /**
+     * [from, to] 가 걸친 UTC 날마다 track_point 일 파티션(운영과 같은 이름 · 같은 소유자 wakeline_migrator)을 만든다 — 마이그레이션은 어제(UTC)부터만 만든다.
+     * KST 날짜 하루(전날 15:00 UTC 부터)의 자료를 넣는 시험이 쓴다(계약 v5 §G20).
+     */
+    public static void ensureTrackPartitions(java.time.Instant from, java.time.Instant to) { ensureTrackPartitions("wakeline", from, to); }
+
+    /** 같은 컨테이너의 다른 DB(통합 시험 스택 ItStack.DB 등)에 [from, to] 의 UTC 날 항적 파티션을 migrator 로 만든다(있으면 그대로). */
+    public static void ensureTrackPartitions(String db, java.time.Instant from, java.time.Instant to) {
+        start();
+        try (Connection c = DriverManager.getConnection(jdbcUrl(db), "wakeline_migrator", MIGRATOR_PW); Statement s = c.createStatement()) {
+            for (java.time.LocalDate d = java.time.LocalDate.ofInstant(from, java.time.ZoneOffset.UTC); !d.isAfter(java.time.LocalDate.ofInstant(to, java.time.ZoneOffset.UTC)); d = d.plusDays(1))
+                s.execute("CREATE TABLE IF NOT EXISTS track_point_" + d.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)
+                        + " PARTITION OF track_point FOR VALUES FROM ('" + d + "') TO ('" + d.plusDays(1) + "')");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** 테스트 사이 초기화: 쓰기 대상 테이블 비우기 + 런타임 설정을 V1 시드로. */
     public static void reset() {
         start();

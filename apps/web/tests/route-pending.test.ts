@@ -1,7 +1,7 @@
 /**
  * 항공기 카드 노선의 "노선 조회 중"이 진행 중으로 읽히게(사용자 요청 2026-09-29).
  * - 조회 중: role=status(한 번만 읽힘 — aria-busy 조상 밖에 두어 알림이 미뤄지지 않게) · 값이 채워질 자리(출발/도착 skeleton)만 aria-busy ·
- *   작은 회전 표시(움직임 줄이기 설정이면 멈춤) · 경과 초(시각만, 읽지 않음).
+ *   가는 진행 막대(움직임 줄이기 설정이면 멈춤 — 모양은 tests/route-loading.test.ts) · 경과 초(시각만, 읽지 않음).
  * - 보통 경로 계산값(api 노선 메모리 캐시 5 s + 선택 항공기 갱신(selected) 주기 약 5 s = 10 s)보다 오래 걸리면 한 번 더 알린다.
  *   이 수들은 서버 코드의 값을 읽어 확인한다(짐작한 값이 아니다) — 측정값이 아니라 계산값이라고 적는다(리뷰 2026-09-29: 수집기는 콜사인을 5 s 주기가 아니라
  *   다음 1 s 틱에 조회에 넘긴다 — 5 s 는 selected 가 오는 주기다). 상한은 말하지 않는다 — 수집기의 조회 대기열(동시 2개)은 기다림에 상한이 없다.
@@ -31,9 +31,9 @@ describe("pending route lookup reads as in progress", () => {
     expect(st.attrs.role).toBe("status");
     expect(ancestors(st).filter((a) => a.attrs["aria-busy"] === "true")).toEqual([]);
     expect(textOf(st)).toContain(ROUTE_STATUS_TEXT.pending);
-    const spin = findAll(st, (n) => classes(n).has("busy-spinner"));
-    expect(spin).toHaveLength(1);
-    expect(spin[0].attrs["aria-hidden"]).toBe("true");
+    // 움직이는 표시(진행 막대)는 화면 읽기 프로그램에서 숨긴다 — 상태는 글자가 말한다
+    const bar = byTestId(root, "route-progress")!;
+    expect(bar.attrs["aria-hidden"]).toBe("true");
   });
   it("placeholder rows for 출발 / 도착: the region to be filled is aria-busy, the bars are hidden from screen readers — no airport values are shown", () => {
     const root = render(PENDING, 3);
@@ -42,8 +42,8 @@ describe("pending route lookup reads as in progress", () => {
     expect(textOf(sk)).toContain("출발");
     expect(textOf(sk)).toContain("도착");
     const bars = findAll(sk, (n) => classes(n).has("skeleton"));
-    expect(bars.length).toBe(2);
-    for (const b of bars) expect(b.attrs["aria-hidden"]).toBe("true");
+    expect(bars.length).toBe(4); // 출발 · 도착마다 코드 줄 + 이름 줄(찾은 뒤의 AirportLine 모양)
+    for (const b of bars) expect([b, ...ancestors(b)].some((a) => a.attrs["aria-hidden"] === "true")).toBe(true);
     expect(textOf(root)).not.toContain("계산값");
   });
   it("elapsed seconds are shown but not announced (outside the live region); unknown elapsed shows nothing, not 0", () => {
@@ -74,23 +74,15 @@ describe("pending route lookup reads as in progress", () => {
     expect(ROUTE_PENDING_TITLE).toContain("계산값");
     expect(ROUTE_PENDING_TITLE).not.toContain("수집기 조회 주기"); // 수집기는 콜사인을 다음 1 s 틱에 넘긴다
   });
-  it("other statuses keep their wording, with no spinner, no skeleton and no aria-busy", () => {
+  it("other statuses keep their wording, with no progress bar, no skeleton and no aria-busy", () => {
     for (const status of ["not_found", "no_callsign", "unavailable", "disabled"] as const) {
       const root = render(parseRoute({ status, callsign: status === "no_callsign" ? null : "KAL081", source: "adsbdb" }), 30);
       expect(textOf(byTestId(root, "route-status")!), status).toContain(ROUTE_STATUS_TEXT[status]);
       expect(findAll(root, (n) => n.attrs["aria-busy"] === "true"), status).toEqual([]);
       expect(byTestId(root, "route-skeleton"), status).toBeNull();
-      expect(findAll(root, (n) => classes(n).has("busy-spinner")), status).toEqual([]);
+      expect(byTestId(root, "route-progress"), status).toBeNull();
+      expect(byTestId(root, "route-loading"), status).toBeNull();
     }
-  });
-  it("motion respects prefers-reduced-motion (spinner and skeleton stop)", () => {
-    const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-    // 움직임 줄이기 블록은 여럿일 수 있다 — 스피너 · 자리 표시 줄을 멈추는 블록이 있어야 한다
-    const blocks = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([^}]*\}[^}]*)\}/g)].map((m) => m[1]);
-    const block = blocks.find((b) => /\.busy-spinner/.test(b)) ?? "";
-    expect(block).toMatch(/\.busy-spinner/);
-    expect(block).toMatch(/\.skeleton/);
-    expect(block).toMatch(/animation:\s*none/);
   });
 });
 

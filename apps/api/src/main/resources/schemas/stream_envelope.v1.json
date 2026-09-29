@@ -42,6 +42,17 @@
       "properties": {
         "ships": { "type": "array", "maxItems": 5000, "items": { "$ref": "ship_state.v1.json" } },
         "static": { "type": "array", "maxItems": 5000, "items": { "$ref": "ship_static.v1.json" } },
+        "static_received": {
+          "type": "object",
+          "description": "계약 v5 §G19: static 의 MMSI → 수집기 레코드(ShipBook)가 시작된 뒤(ais 재시작 · 메모리 제거 뒤 새로) 실제로 받은 정적 필드(STATIC_FIELDS 순서). 메시지 5 = 14칸 모두 · 24A = name · 24B = call_sign · ship_type · dim_a–d(보조 선박 98MIDxxxx 는 크기 없음) · 19 = name · ship_type · dim_a–d. 받은 필드의 null 은 '빈 값으로 받음', 목록에 없는 필드의 null 은 '받지 않음' — api 는 저장 행에서 받은 필드만 덮는다. static 항목 밖에 두는 까닭: 항목(ship_static.v1)은 additionalProperties false 라 이전 api 가 메시지 전체를 거절한다. 이 키가 없으면(이전 수집기) api 는 값이 있는 필드만 덮는다",
+          "propertyNames": { "pattern": "^[0-9]{9}$" },
+          "additionalProperties": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 14,
+            "items": { "enum": ["name", "call_sign", "imo", "ship_type", "dim_a", "dim_b", "dim_c", "dim_d", "draught_m", "destination", "eta_month", "eta_day", "eta_hour", "eta_minute"] }
+          }
+        },
         "part": { "type": "integer", "minimum": 1, "description": "같은 발행 안의 순번(1부터)" },
         "parts": { "type": "integer", "minimum": 1, "description": "같은 발행의 엔트리 수" },
         "stats": {

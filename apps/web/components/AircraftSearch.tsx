@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { fmtDual, fmtKstTitle } from "@/lib/time";
+import { fmtKst, fmtKstTitle } from "@/lib/time";
 import { saveLayers } from "@/lib/prefs";
 import {
   isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
@@ -112,7 +112,7 @@ export function AircraftSearch() {
     }
     const name = h.callsign ?? h.hex;
     if (pos) { requestFlyTo(pos[0], pos[1], 8); setMsg(`${name} 선택 — 지도 이동`); }
-    else setMsg(`${name} 선택 — 현재 위치 없음(DB 기록만${h.last_seen ? `, 마지막 ${fmtDual(h.last_seen)}` : ""})`);
+    else setMsg(`${name} 선택 — 현재 위치 없음(DB 기록만${h.last_seen ? `, 마지막 ${fmtKst(h.last_seen)}` : ""})`);
   }, [select, requestFlyTo]);
 
   const chooseShip = useCallback((h: ShipHit) => {
@@ -161,6 +161,9 @@ export function AircraftSearch() {
   return (
     // 초점이 검색 영역(입력 · 결과의 정렬 단추) 밖으로 나갈 때만 닫는다 — Tab 으로 선박 표 머리글(정렬)에 갈 수 있게
     <div className="relative" data-testid="aircraft-search" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}>
+      {/* 자리 글자는 짧게(전에는 "항공기 호출부호·hex · 선박 선명·MMSI·IMO" 244 px 가 입력 안쪽 190 px 보다 길어 잘리고 "/" 표시와 겹쳤다 — 2026-09-30).
+          찾을 수 있는 값의 목록은 label(화면 읽기) · title(마우스). 오른쪽 안쪽 여백(pr-7!)은 "/" 표시 자리 — globals.css 의 input 규칙(층 밖)이
+          유틸리티보다 앞서므로 ! 로 */}
       <label htmlFor={`${uid}-input`} className="sr-only">통합 검색 — 항공기(호출부호·hex·등록번호) · 선박(선명·MMSI·IMO·호출부호)</label>
       <div className="flex items-center">
         <input
@@ -177,8 +180,9 @@ export function AircraftSearch() {
           spellCheck={false}
           maxLength={40}
           value={text}
-          placeholder="항공기 호출부호·hex · 선박 선명·MMSI·IMO"
-          className="mono h-[26px] w-64 text-[12px] uppercase placeholder:normal-case placeholder:text-fg-3"
+          placeholder="항공기 · 선박 검색"
+          title="항공기: 호출부호 · hex · 등록번호 / 선박: 선명 · MMSI · IMO · 호출부호 — / 키로 바로 입력"
+          className="mono h-[26px] w-64 pr-7! text-[12px] uppercase placeholder:normal-case placeholder:text-fg-3"
           onChange={(e) => {
             setText(e.target.value); setOpen(true); setActive(-1);
             if (!normalizeQuery(e.target.value)) setAircraft(IDLE);
@@ -272,7 +276,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
           listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}
-      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 수신·저장 시각은 KST · UTC(…Z) · 마지막 수신 = 이 서비스가 그 선박의 AIS 메시지를 마지막으로 받은 기록).</div> : null}
+      {rows.some((r) => !r.live) ? <div className="px-2 py-1 text-[10px] text-fg-3">실시간 아님 = 지금 AIS 목록에 없는 선박 — 고르면 카드만 열고 지도에 위치를 그리지 않습니다(마지막 수신·저장 시각은 KST · 마지막 수신 = 이 서비스가 그 선박의 AIS 메시지를 마지막으로 받은 기록).</div> : null}
     </div>
   );
 }

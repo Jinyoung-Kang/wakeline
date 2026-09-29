@@ -6,7 +6,7 @@
  *   (USCG NAVCEN 문서 2026-09-28 확인: 흘수 "0 = not available = default", 크기 "As default should A = B = C = D be set to '0'").
  * - 항해 상태 이름: USCG NAVCEN Class A 위치 보고 문서(2026-09-28 확인)의 0–15 표.
  */
-import { fmtDual, fmtDualDayMinute, fmtDualFrom, fmtDualRange, fmtDualSpan, fmtUtcTitle } from "./time";
+import { fmtKstDayMinute, fmtKstSpan } from "./time";
 import type { Tone } from "./tooltip";
 import { RX_FRESH_MS } from "./ws-protocol";
 
@@ -131,14 +131,22 @@ export const STORED_STATIC_LABEL = "저장된 AIS 정적 보고";
  * 그 메모리는 수집기가 다시 시작하면 비고, 30분 넘게 수신이 없거나(ttl_s 기본 1800 — ais/main.py 는 바꾸지 않는다) 선박 수 상한에 밀린 선박을 지운다 —
  * 그 뒤 같은 내용을 다시 받아도 새 시각이 기록된다(수집기 test_ais_book). 그 밖의 같은 내용 재수신은 기록하지 않는다(ShipWriter).
  * 그래서 첫 수신도 마지막 수신도 아니다 — 라벨은 어디에 기록된 무슨 시각인지만 말한다(리뷰 뒤 고침: '이 내용 첫 수신' 은 재시작 · 제거를 빠뜨린 추정이었다).
+ * 계약 v5 §G19: 저장 행은 받은 필드만 덮으므로 이 시각은 마지막으로 저장한 보고의 것이고, 그 보고가 싣지 않은 필드는 더 앞선 보고의 값이다.
  */
 export const STORED_STATIC_TIME_LABEL = "DB 기록 수신 시각";
 /** 카드 설명(title) — 왜 저장값인지 · 시각이 무엇이고 언제 새로 기록되는지(입출항은 조건이 있어 본문 한 줄 — storedPortCallsNote) */
 export const STORED_STATIC_TITLE =
   "실시간 선박 스트림(보존 최대 2.5 h — 서버가 다시 시작한 뒤처럼)에 이 선박의 정적 보고가 아직 없어, DB 에 저장된 마지막 AIS 정적 보고를 보입니다(실시간 값이 아님). "
-  + "시각은 DB(ship.updated_at)에 기록된 수신 시각 — 지금 저장된 내용을 DB 에 쓴 메시지를 받은 때입니다. 내용이 바뀔 때뿐 아니라 수집기가 다시 시작했거나 "
+  + "시각은 DB(ship.updated_at)에 기록된 수신 시각 — 이 행에 마지막으로 정적 보고를 저장한 메시지를 받은 때입니다. 그 메시지가 싣지 않은 부분(예: Class B 의 "
+  + "선명 조각만 받았을 때의 호출부호 · 선종 · 크기)은 그보다 앞서 저장된 보고의 값입니다. 내용이 바뀔 때뿐 아니라 수집기가 다시 시작했거나 "
   + "이 선박이 수집기 메모리에서 빠졌다가(30분 넘게 수신 없음 · 선박 수 상한) 다시 잡힐 때도 같은 내용이 새 시각으로 기록되고, 그 밖의 같은 내용 재수신은 기록하지 않으므로 "
   + "이 내용의 첫 수신도 마지막 수신도 아닙니다. 스트림에 정적 보고가 오면 실시간 값으로 바뀝니다";
+/**
+ * 저장 정적 보고 표시의 본문 한 줄(계약 v5 §G19 · 리뷰): 아래 필드는 DB 에 저장된 값이다. 저장 행은 받은 필드만 덮으므로 위 시각(마지막으로 저장한 보고)의
+ * 보고가 싣지 않은 필드는 그보다 앞서 저장된 보고의 값이다 — '이 보고의 값' 은 모든 필드가 그 시각의 한 보고인 것처럼 읽혔다.
+ */
+export const STORED_STATIC_FIELDS_TEXT =
+  "실시간 값이 아님 — 아래 선박명 · 호출부호 · IMO · 선종 · 크기 · 흘수 · 목적지 · ETA 는 DB 에 저장된 값이고, 위 시각의 보고가 싣지 않은 필드는 그보다 앞서 저장된 보고의 값";
 /** 저장 정적 보고 표시의 입출항 한 줄 — 아래 입출항(WS port_calls)을 이 호출부호로 찾았을 때만 */
 export const STORED_STATIC_PORT_CALLS_TEXT = "입출항도 이 호출부호로 찾음";
 /** 카드는 REST 로 읽은 저장 보고를 보이지만 서버(WS)는 선택 때 그 보고를 읽지 못했다 — 아래 입출항은 이 호출부호로 찾은 결과가 아니다 */
@@ -456,8 +464,8 @@ const p2 = (n: number) => String(n).padStart(2, "0");
 const MONTH_MAX_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /**
- * 선원 ETA(UTC 월·일·시·분) → 한국 표준시 "MM-DD HH:MM KST". 날짜는 달력으로만 넘긴다(+9 h 로 다음 날이면 그 달의 날 수로).
- * 2월 28일 15:00 UTC 이후는 연도(윤년)를 몰라 다음 날이 02-29 인지 03-01 인지 정할 수 없다 — 둘 다 적는다(고르지 않는다).
+ * 선원 ETA(월·일·시·분 — 입력 형식은 UTC 벽시계, 계약 v2 §B4) → 한국 표준시 "MM-DD HH:MM KST". 날짜는 달력으로만 넘긴다(+9 h 로 다음 날이면 그 달의 날 수로).
+ * 2월 28일 입력 15:00 이후(KST 로 다음 날)는 연도(윤년)를 몰라 다음 날이 02-29 인지 03-01 인지 정할 수 없다 — 둘 다 적는다(고르지 않는다).
  * 달력에 없는 날(04-31 등)·범위 밖 값은 null(바꾸지 않는다).
  */
 function etaKst(mo: number, d: number, h: number, mi: number): string | null {
@@ -471,15 +479,14 @@ function etaKst(mo: number, d: number, h: number, mi: number): string | null {
 }
 
 /**
- * ETA(계약 v2 §B4): 선원이 입력한 월·일·시·분(연도 없음, UTC — 계약 v2 §B4). 화면은 한국 표준시로 바꾸고 입력값을 그대로 함께 적는다:
- * "09-30 15:05 KST · 선원 입력 09-30 06:05 UTC · 연도 없음". 네 값이 모두 없으면 "—". 연도를 붙이거나 올해/내년을 추측하지 않는다.
- * 바꿀 수 없는 입력(달력에 없는 날)은 입력값 그대로 UTC 로만.
+ * ETA(계약 v2 §B4): 선원이 입력한 월·일·시·분(연도 없음 — 입력 형식은 UTC 벽시계). 화면은 한국 표준시로 바꿔 적는다(계약 v5 §G20 — 화면에 UTC 를
+ * 적지 않는다): "09-30 15:05 KST · 선원 입력 · 연도 없음". 네 값이 모두 없으면 "—". 연도를 붙이거나 올해/내년을 추측하지 않는다.
+ * 바꿀 수 없는 입력(달력에 없는 날 — 04-31 등)은 시각을 보이지 않고 그 입력 날짜만 밝힌다(KST 로 바꿀 수 없는 시각을 지어내지 않는다).
  */
 export function fmtShipEta(st: Pick<ShipStatic, "eta_month" | "eta_day" | "eta_hour" | "eta_minute"> | null | undefined): string {
   if (!st || st.eta_month == null || st.eta_day == null || st.eta_hour == null || st.eta_minute == null) return "—";
-  const raw = `${p2(st.eta_month)}-${p2(st.eta_day)} ${p2(st.eta_hour)}:${p2(st.eta_minute)} UTC`;
   const kst = etaKst(st.eta_month, st.eta_day, st.eta_hour, st.eta_minute);
-  return kst ? `${kst} · 선원 입력 ${raw} · 연도 없음` : `${raw} · 선원 입력값(달력에 없는 날 — KST 로 바꾸지 않음), 연도 없음`;
+  return kst ? `${kst} · 선원 입력 · 연도 없음` : `— (선원 입력 날짜 ${p2(st.eta_month)}-${p2(st.eta_day)} 이 달력에 없음 — KST 로 바꿀 수 없음, 연도 없음)`;
 }
 
 /**
@@ -827,7 +834,7 @@ export const AIS_GAP_SHOW_MS = 30 * 60_000;
 export const AIS_LAG_WARN_S = 120;
 
 /** 구역 하나의 연결 상태 문구(툴팁): 연결 · 끊김(재연결 중) · 연결 모름 — 수집기가 보고한 값만 */
-function shardConnText(sh: AisShard): string {
+export function shardConnText(sh: AisShard): string {
   if (sh.connected === true) return "연결";
   if (sh.connected === false) return `끊김${sh.state === "connecting" || sh.state === "backoff" ? "(재연결 중)" : ""}`;
   return "연결 모름";
@@ -839,10 +846,24 @@ function shardConnText(sh: AisShard): string {
  * 수집기 state(계약 v3 §A): disabled(키 없음) → 중립 "AIS 꺼짐 · 키 없음"(끊김·재연결이 아니다). 끊김은 "AIS 끊김" —
  * "재연결 중(지수 백오프)"은 state 가 connecting·backoff 일 때만 말한다(모르면 말하지 않는다).
  */
-export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): { text: string; tone: "ok" | "warn" | "bad" | "muted"; title: string } | null {
+export interface AisBadge {
+  text: string;
+  tone: "ok" | "warn" | "bad" | "muted";
+  title: string;
+  /** 상태 바 칩 · 상세 표(lib/statusbar)가 글자를 다시 짓지 않고 쓰는 값 — disabled 꺼짐(키 없음) · down 끊김 · partial 일부 구역 끊김 · live 받는 중(연결 모름 포함) */
+  kind: "disabled" | "down" | "partial" | "live";
+  /** 표시 지연(초, 위 규칙 — 연결이 실시간이 아니면 받은 뒤 경과를 더한 값). 모르면 null */
+  lag: number | null;
+  /** 초당 메시지(수집기 보고값). 모르면 null */
+  rate: number | null;
+  /** partial: 끊긴 구역 수 / 전체 구역 수 */
+  down?: number;
+  shards?: number;
+}
+export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): AisBadge | null {
   if (!ais) return null;
   if (ais.state === "disabled") {
-    return { text: "AIS 꺼짐 · 키 없음", tone: "muted", title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정 — 끊김이 아님)" };
+    return { text: "AIS 꺼짐 · 키 없음", tone: "muted", title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정 — 끊김이 아님)", kind: "disabled", lag: null, rate: null };
   }
   // 구역이 여럿이고 일부만 끊겼으면(계약 v4 §D: 합계 connected = 모든 구역 연결) 전체 끊김이라고 하지 않는다
   const shards = ais.shards && ais.shards.length > 1 ? ais.shards : null;
@@ -851,7 +872,7 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
   if (ais.connected === false && !partial) {
     const retrying = ais.state === "connecting" || ais.state === "backoff";
     const why = retrying ? " — 재연결 중(지수 백오프)" : ` — 수집기 상태 ${ais.state ?? "모름"}`;
-    return { text: "AIS 끊김", tone: "bad", title: `AIS 수집기가 aisstream.io 에 연결되어 있지 않음${why}` };
+    return { text: "AIS 끊김", tone: "bad", title: `AIS 수집기가 aisstream.io 에 연결되어 있지 않음${why}`, kind: "down", lag: null, rate: ais.msgs_per_s };
   }
   const elapsed = nowMs ? Math.max(0, (nowMs - ais.received_at) / 1000) : 0;
   const lag = ais.lag_s == null ? null : live && elapsed <= RX_FRESH_MS / 1000 ? ais.lag_s : ais.lag_s + elapsed;
@@ -863,10 +884,11 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
       text: `AIS 일부 끊김 ${down}/${shards!.length} 구역 · ${rate} · ${lagText}`,
       tone: "warn",
       title: `${title}\n${shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${shardConnText(sh)}`).join("\n")}`,
+      kind: "partial", lag, rate: ais.msgs_per_s, down, shards: shards!.length,
     };
   }
   const tone = ais.connected == null || lag == null || lag > AIS_LAG_WARN_S ? "warn" : "ok";
-  return { text: `AIS${ais.connected == null ? " 연결 모름" : ""} · ${rate} · ${lagText}`, tone, title };
+  return { text: `AIS${ais.connected == null ? " 연결 모름" : ""} · ${rate} · ${lagText}`, tone, title, kind: "live", lag, rate: ais.msgs_per_s };
 }
 
 /** 열린 공백이 있는 구역 수(구역이 둘 이상일 때만 — 하나면 합계와 같다) */
@@ -874,36 +896,6 @@ export function openGapShards(ais: Pick<AisStatus, "shards"> | null): { open: Ai
   const shards = ais?.shards;
   if (!shards || shards.length < 2) return null;
   return { open: shards.filter((sh) => sh.gap_open_since != null), total: shards.length };
-}
-
-/**
- * 상태 바 공백 배지(compact — KST 먼저, UTC 함께): 열린 공백 → "AIS 공백 08:40 KST · 23:40Z 부터 · 진행 중",
- * 30분 안에 끝난 공백 → "AIS 공백 08:20–08:25 KST · 23:20–23:25Z". 그 밖은 null. 툴팁은 날짜 포함 두 시간대와 원본 UTC.
- * 구역이 여럿이고 일부만 공백이면(계약 v4 §D) "AIS 공백 n/m 구역" — 툴팁에 공백 구역·시작 시각, 나머지 구역은 보고된 연결 상태 그대로
- * (연결·끊김·연결 모름 — 공백이 없다고 "수신 중"이라고 말하지 않는다).
- */
-export function aisGapBadge(ais: AisStatus | null, nowMs: number): { text: string; open: boolean; partial?: boolean; title: string } | null {
-  if (!ais) return null;
-  const sg = openGapShards(ais);
-  if (sg && sg.open.length > 0 && sg.open.length < sg.total) {
-    const lines = ais.shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${
-      sh.gap_open_since ? `공백 ${fmtDual(sh.gap_open_since)} 부터(${fmtUtcTitle(sh.gap_open_since) ?? "—"})` : `공백 없음 · ${shardConnText(sh)}`}`);
-    return {
-      text: `AIS 공백 ${sg.open.length}/${sg.total} 구역`, open: true, partial: true,
-      title: `${lines.join("\n")}\n공백 구역 안 선박 위치는 멈춰 있고, 재전송이 없어 그 구간은 비어 있게 됩니다`,
-    };
-  }
-  if (ais.gap_open_since) {
-    const all = sg && sg.open.length === sg.total ? ` · 모든 구역(${sg.total}개)` : "";
-    return { text: `AIS 공백 ${fmtDualFrom(ais.gap_open_since)} · 진행 중`, open: true, title: `AIS 수신이 ${fmtDual(ais.gap_open_since)} 부터 끊겨 있음(${fmtUtcTitle(ais.gap_open_since) ?? "—"})${all} — 재전송이 없어 이 구간 선박 위치는 비어 있게 됩니다` };
-  }
-  const g = ais.last_gap;
-  if (!g || !g.ended_at || !nowMs) return null;
-  const end = Date.parse(g.ended_at);
-  if (Number.isNaN(end) || nowMs - end > AIS_GAP_SHOW_MS) return null;
-  // 끝난 공백은 상태에 구역이 없다 — 구역이 여럿이면 그렇다고 적는다(모든 구역이라고 말하지 않는다)
-  const scope = sg ? ` · 어느 구역의 공백인지는 상태에 없음(구역 ${sg.total}개)` : "";
-  return { text: `AIS 공백 ${fmtDualSpan(g.started_at, g.ended_at)}`, open: false, title: `AIS 수신 공백 ${fmtDualRange(g.started_at, g.ended_at)}${g.reason ? ` (${g.reason})` : ""} — 이 구간 선박 위치 없음${scope} · 원본 UTC ${g.started_at} – ${g.ended_at}` };
 }
 
 // ---- 선택 선박 항적(REST + 실시간) ----
@@ -1181,8 +1173,8 @@ export function appendShipTrack(
 
 /**
  * 항적 → 지도 FeatureCollection: 구간(kind "track", 실선) + 구간 사이 연결(kind "gap", 회색 점선 + 라벨).
- * 연결 라벨(KST 먼저, UTC 함께 — fmtDualSpan): 두 구간 시각을 알고 그 사이에 선을 끊는 AIS 공백(60 s 이상·열린 공백)이 있으면
- * "AIS 공백 hh:mm–hh:mm KST · hh:mm–hh:mmZ", 시각만 알면 "기록 없음 …", 모르면 "기록 공백".
+ * 연결 라벨(KST — fmtKstSpan): 두 구간 시각을 알고 그 사이에 선을 끊는 AIS 공백(60 s 이상·열린 공백)이 있으면
+ * "AIS 공백 hh:mm–hh:mm KST", 시각만 알면 "기록 없음 …", 모르면 "기록 공백".
  */
 export function shipTrackFeatures(track: ShipTrack): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
@@ -1193,7 +1185,7 @@ export function shipTrackFeatures(track: ShipTrack): GeoJSON.FeatureCollection {
     const a = s.endMs, b = next.startMs;
     let label = "기록 공백";
     if (a != null && b != null) {
-      const span = fmtDualSpan(a, b);
+      const span = fmtKstSpan(a, b);
       label = gapBetween(track.gaps, a, b) ? `AIS 공백 ${span}` : `기록 없음 ${span}`;
     }
     features.push({ type: "Feature", properties: { kind: "gap", label }, geometry: { type: "LineString", coordinates: [s.pts[s.pts.length - 1], next.pts[0]] } });
@@ -1351,7 +1343,7 @@ export function shipsGapSuffix(ais: Pick<AisStatus, "gap_open_since" | "shards">
 }
 
 /**
- * 실시간이 아닌 선박(계약 v5 §B3 · §G4 — 검색 결과·카드): "실시간 아님 · 마지막 수신 hh:mm KST · hh:mmZ · 마지막 저장 …"(KST 먼저, UTC 함께).
+ * 실시간이 아닌 선박(계약 v5 §B3 · §G4 — 검색 결과·카드): "실시간 아님 · 마지막 수신 hh:mm KST · 마지막 저장 …"(KST — §G20).
  * 마지막 수신 = api last_seen_at(ship.last_seen — 어떤 AIS 메시지든 받은 기록, 저장 위치가 더 늦으면 그 시각 — 위치 보존 72 h 가 지나도 남는다),
  * 마지막 저장 = last_position_at(저장된 마지막 위치). 지금과 KST 날짜가 다르면 날짜도(어제 시각이 오늘처럼 보이지 않게). 모르면 "—".
  */
@@ -1362,9 +1354,9 @@ export function notLiveText(t: { lastSeenAt: string | null | undefined; lastPosi
 /** 마지막 수신 기록(§G4)의 뜻 — 카드·표의 설명(title) */
 export const LAST_SEEN_TITLE =
   "이 서비스가 이 선박의 AIS 메시지(위치·정적 정보)를 마지막으로 받은 기록(api last_seen_at). 위치로는 10분에 한 번만 기록하므로 저장된 위치가 더 늦으면 그 시각 — 실제 마지막 수신은 이보다 조금 늦을 수 있음";
-/** 저장 시각 "hh:mm KST · hh:mmZ"(지금과 KST 날짜가 다르면 KST 쪽에 "MM-DD", UTC 날짜가 다르면 UTC 쪽에도). 모르면 "—" */
+/** 저장 시각 "hh:mm KST"(지금과 KST 날짜가 다르면 "MM-DD hh:mm KST"). 모르면 "—" */
 export function fmtSavedAt(v: string | null | undefined, nowMs: number): string {
-  return fmtDualDayMinute(v, nowMs);
+  return fmtKstDayMinute(v, nowMs);
 }
 
 // ---- 선박 표(계약 v5 §B3 — 화면 안 목록 · 검색 결과가 같은 표) ----

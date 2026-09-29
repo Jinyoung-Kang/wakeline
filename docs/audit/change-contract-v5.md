@@ -202,7 +202,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     탭 설명: 빨간 값 = 0 이 아닌 손실 지표 · 주황 = 예산 때문에 짧아진 스트림 보존 창(손실 아님).
 
 ## G. 6차 개정(2026-09-29 · 레인 web-core-v6 · 사용자 요청 "상황판·재생·통계·공항 화면을 포함한 필요한 메뉴에 UTC 와 KST 함께 표시")
-- G13(§G10 · §G11) **KST 를 먼저, 같은 순간의 UTC 를 함께** — §G10 · §G11 의 "화면은 KST 만, 원본 UTC 는 툴팁" 과 §G11 의 예외(지도 툴팁 · 선 라벨 · 기상청 tm 은 KST 만)를 대신한다.
+- G13(§G10 · §G11) **KST 를 먼저, 같은 순간의 UTC 를 함께** — §G10 · §G11 의 "화면은 KST 만, 원본 UTC 는 툴팁" 과 §G11 의 예외(지도 툴팁 · 선 라벨 · 기상청 tm 은 KST 만)를 대신한다. **§G20(2026-09-30 사용자 결정 — 화면은 KST 만, UTC 는 지운다)이 이 절의 두 시간대 표시를 대신한다.**
   API · 저장 · 스트림은 UTC 그대로이고 웹 표시만 바꾼다. 오프셋 +09:00 고정(`lib/kst.ts`).
   - 한 곳: `lib/time.ts`(글자) · `components/DualTime.tsx`(그리기 — KST 는 보통 글자, UTC 는 흐리게, `<time dateTime>` 에 그 순간, title 에 원본 UTC ISO).
     화면 코드는 시각 글자를 직접 만들지 않는다 — `tests/kst-dashboard.test.ts` 가 lib/time · lib/kst 밖의 모양(`…Z` 템플릿 · getUTC* · toISOString 자르기 ·
@@ -380,3 +380,139 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     같을 때만 붙인다(`lib/ships.storedPortCallsNote`). WS 가 `stored_unavailable` 인데 REST 가 같은 행을 읽어 저장 보고를 보일 때는 '입출항은 이 호출부호로
     아직 찾지 않음 — 서버가 선택 때 저장된 보고를 읽지 못함' 을 적는다(리뷰: 조건 없이 붙이면 입출항 절의 '호출부호를 아직 받지 않음' 과 어긋난 채 틀린 말).
     설명서 2.6 이 한 문장으로 적는다.
+
+## G. 11차 개정(2026-09-30 · 레인 backend · VERIFICATION #51 '남은 것' — 선택 선박 조회가 WS 세션 우편함을 붙잡음, ADR-025)
+- G18(§G17 의 '대기 상한' 문장 · ADR-022 개정의 입출항 읽기 · ADR-008 세션 우편함) **선택 선박의 DB 조회는 세션 우편함 밖에서, 전용 읽기 풀로**.
+  - 관찰(코드 — `ShipSelectionLookupTest` 가 재현): `ShipFanout.runSelected` 는 세션 우편함(SerialOutbox — 한 번에 하나)에서 돌며 저장 정적 보고
+    (`StoredStaticReader.lookup`)와 입출항(`PortCallReader.forStatic` — Redis heartbeat + 문장 둘)을 그 자리에서 읽었다(공유 Hikari 풀 12 · 연결 대기 5 s +
+    공개 조회 문장 3 s). 풀에 연결이 없는 동안 선택 하나가 그 세션의 항공기 · 선박 diff · pong · heartbeat 를 저장 정적 보고 한 번에 최대 약 8 s, 입출항까지
+    최대 약 19 s(설정값의 합) 붙잡고, 실패 기억(15 s)이 끝날 때마다 되풀이했다.
+  - api(`ws.ShipLookups` · `ShipFanout`): 우편함은 읽는 쪽의 메모리 캐시만 본다(`StoredStaticReader.cached` · `PortCallReader.cachedForStatic` — I/O 없음).
+    다 답할 수 있으면 곧바로 보낸다(대부분의 다시 계산). 읽어야 하면 조회 실행기에 맡기고 돌아온다 — 스레드 = 읽기 풀 연결 수(4), 대기열 max(256,
+    `wakeline.ws-max-conn`), 가득 차면 그 읽기는 하지 않고 읽지 못함으로 답한다(`outcome=rejected` — 기억하지 않아 다음 다시 계산이 다시 읽는다). 결과는
+    SHIP_SELECTED 우편함 작업으로 돌아와, 그 조회가 세션의 지금 조회(세대 — `WsSession.shipLookup` 객체)이고 물음(선박 · 메모리 정적 정보가 있는가 · 그
+    호출부호)이 같을 때만 그때의 최신 선박 상태와 함께 보낸다. 선택이 바뀌었으면(다른 선박 · 해제) 버린다(답을 보내지 않은 조회 —
+    `wakeline_ws_ship_lookup_dropped_total`), 세션이 닫혔으면 작업이 실행되지 않는다. 캐시 수명(찾음 60 s · 실패 15 s · 입출항 15 s)은 그대로다.
+  - 리뷰 뒤 고침('답을 보냄' ≠ '읽는 중' — `ShipSelectionLookupTest` 가 재현: 마감 뒤 다시 계산마다 같은 호출부호를 다시 읽어 한 세션 · 한 선박이 조회 스레드
+    넷을, 같은 선박을 고른 세 세션이 한 읽기에 스레드 셋을 잡았다): (1) `ShipLookups.load` 는 answer(늦어도 마감)와 settled(그 조회의 읽기가 모두 끝남 —
+    마감과 무관)를 따로 준다. 세션은 settled 까지 조회를 들고 있어 같은 물음의 다시 계산(선박 이동 · 15 s 주기)은 새 읽기를 올리지 않고 캐시 또는 그 답과
+    최신 선박 상태로 보낸다. 마감 뒤에 끝난 읽기는 곧바로 다시 계산을 불러 실제 값을 보낸다. (2) 같은 키의 동시 읽기는 하나(`persist.SingleFlight` — 저장
+    정적 보고는 MMSI, 입출항은 정규화한 호출부호): 기다리는 쪽은 진행 중인 읽기의 future 에 이어 붙어 스레드를 잡지 않는다. (3) 한 세션의 다음 물음의 읽기는
+    앞 조회가 settled 된 뒤 시작하고, 그사이 물음이 또 바뀌면 그 읽기는 하지 않는다(`outcome=skipped`) — 한 세션이 실행기에 두는 작업은 늘 하나 이하, 그래서
+    대기열 max(256, WS 연결 상한)는 연결 상한 안에서 넘치지 않는다.
+  - 마감: 답은 늦어도 물음 뒤 `ReadPool.readBoundMs()` = 읽기 풀 연결 대기 2 s + 공개 조회 문장 3 s = **5 s**(설정값 — 잰 값 아님)에 나간다(앞 조회를 기다린
+    시간 포함). 그때까지 끝나지 않은 부분은 계약에 이미 있는 값으로 답한다 — static → `stored_unavailable`(static null · port_calls no_call_sign/not_received),
+    입출항 → `error`(색인을 읽지 못함 — '기록 없음' 이 아니다). 읽기는 계속돼 캐시를 채우고, 끝나면 곧바로 바뀐 값을 보낸다.
+  - 읽기 풀(`persist.ReadPool` — 이 두 읽기만 쓴다): `wakeline-read` · 크기 `wakeline.read-pool.size` 4(1–8) · 연결 대기
+    `wakeline.read-pool.connection-timeout-ms` 2,000(문장 상한 이하만 받는다 — 넘으면 기동하지 않는다) · 최소 유휴 0(DB 가 없는 동안 뒤에서 다시 맺지 않는다) ·
+    연결마다 서버 `statement_timeout=3s` · `default_transaction_read_only=on` · pgjdbc `socketTimeout=5`(문장 상한 + 2 s — 리뷰 뒤 고침: 두 문장 상한은 서버가
+    답할 때만 문장을 끝낸다. 서버가 멈췄거나 망이 끊기면 소켓에서 기다리는 읽기는 이것만 끝낸다 — `ReadPoolDbTest`, 고치기 전 8 s 뒤에도 막힘) ·
+    `connectTimeout` = 연결 대기를 초로 올림(2) · ApplicationName `wakeline-api-read` · Micrometer
+    `hikaricp_connections_*{pool="wakeline-read"}`. DB 연결 수: 역할별 상한 없음(`infra/db/init/01-roles.sh`), 서버 max_connections 기본 100(compose 가 바꾸지
+    않는다 — 슈퍼유저 예약 3) — api 공유 풀 12 + 읽기 풀 4 = 16, 수집기 프로세스는 각 2(`db.py`).
+  - 새 최악(설정값): 세션의 다른 메시지는 선택 조회를 기다리지 않는다. ship_selected 는 조회가 필요하면 물음 뒤 ≤ 5 s. 읽기 풀이 바닥나면 저장 정적 보고는
+    연결 대기 2 s 에 `stored_unavailable`(`StoredStaticIT` — 4 연결을 2.8 s 잡은 동안 1.8–2.8 s 에 답, 그동안 pong). 실행기 포화면 곧바로.
+    스레드 · 연결이 묶이는 시간(리뷰 뒤 고침 — 포화를 정하는 값): 문장 하나 ≤ 2 s + 3 s = 5 s(서버가 답할 때) · ≤ 2 s + 소켓 5 s = 7 s(서버가 멈출 때 —
+    `ReadPool.hardReadBoundMs`). 작업 하나가 스레드를 잡는 시간: 저장 정적 보고 ≤ 5 s(7 s) · 입출항 ≤ Redis 3 s(`spring.data.redis.timeout` — heartbeat 는
+    15 s 기억) + 문장 둘(범위 — 15 s 기억 · 호출부호) = 13 s(17 s). 한 조회가 settled 되기까지(두 작업이 차례로) ≤ 18 s(24 s). 같은 키는 읽기 하나 · 세션마다
+    작업 하나 이하라 스레드 넷이 모두 묶이려면 서로 다른 키를 읽는 세션이 넷 있어야 한다.
+  - WS 계약은 그대로(키 · 값 · 스키마 사본 · 웹 검증기 · 표본 변화 없음): ship_selected 가 조회를 기다리는 동안 늦게 나갈 뿐이다. 웹은 첫 ship_selected 전에는
+    입출항 절을 "—" 로 둔다(명시적 '조회 중' 상태를 새로 두지 않는다 — 계약 · 검증기 · 표본을 늘릴 만큼의 쓸모가 없다).
+  - 지표: `wakeline_ws_ship_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_ship_lookup_seconds`(물음 → 답) ·
+    `wakeline_ws_ship_lookup_queue` · `wakeline_ws_ship_lookup_dropped_total`(답을 보내지 않은 조회). 시험: `ShipSelectionLookupTest`(pong · diff 가 막힌 읽기를
+    기다리지 않음 · 마감의 읽지 못함 · 늦은 결과는 읽기가 끝나면 곧바로 · 입출항도 우편함 밖 · 늦게 온 결과 버리기 · 포화 · 같은 MMSI 한 번 읽기 · 스레드
+    하나와 캐시 · 마감 뒤 다시 계산 넷에 읽기 하나 · 한 세션이 선박 넷을 바꿔도 실행기 작업 하나) · `StoredStaticReaderTest` · `PortCallReaderTest`(future
+    합치기 · 거절은 표시를 남기지 않음) · `StoredStaticIT`(표 잠금 3 s 동안 pong < 1 s · 읽기 풀 소진 · 읽기 풀 연결의 서버 설정) · `ReadPoolTest` ·
+    `ReadPoolDbTest`(멈춘 서버 → 소켓 5 s).
+- G19(§G17 의 시각 열 문장 · ADR-014 의 정적 정보 저장) **정적 정보의 받은 필드 — 저장 행은 받은 필드만 덮는다**.
+  - 관찰(재현 — 수집기 `test_ais_static_received.py`, api `ShipPersistDbTest` · `StaticPartsIT`): ais 재시작이나 ShipBook 제거(ttl 30분 · 선박 수 상한) 뒤 레코드는
+    빈 것(14칸 None)에서 시작해 받은 조각만 채운다. Class B 는 24A(선명)와 24B(호출부호 · 선종 · 크기)가 따로 오는데, 둘이 다른 발행(10 s)에 들어가면 첫
+    발행의 static 은 call_sign · ship_type · dim_* 가 null 이고, 메시지는 '받지 않음' 과 '빈 값으로 받음' 을 구별하지 않았다 → api 의 STATIC_SQL 이 ship 행의
+    호출부호 · 선종 · 크기를 NULL 로 덮었다(24B 가 오기 전에 선박이 사라지면 영구히 — §G17 의 저장 정적 보고 · REST /ships/{mmsi} 가 호출부호 없는 행을 보였다).
+  - 어느 층의 일인가: '무엇을 받았는가' 는 AIS 조각을 보는 수집기만 알고, 저장값과 합치는 일은 행을 쓰는 api 저장 층이 한다 — 수집기는 받은 필드를 싣고
+    api 는 그 필드만 덮는다. api 메모리(ShipStore — 지도 목록 · 검색 · 선택의 live)는 받은 그대로 둔다(저장값을 섞지 않는다).
+  - 스트림(`stream_envelope.v1.json` `$defs/ships_payload` — 두 사본): `static_received` = static 의 MMSI → 수집기 레코드가 시작된 뒤 받은 정적 필드
+    (`parse.STATIC_FIELDS` 순서 · enum · 중복 없음). 메시지 5 = 14칸 모두 · 24A = name · 24B = call_sign · ship_type · dim_a–d(보조 선박 98MIDxxxx 는 크기 키를
+    싣지 않으므로 크기 없음) · 19 = name · ship_type · dim_a–d. 필드 목록이 아니라 조각 이름(5 · 24A · 24B)을 싣지 않은 까닭: 파서가 조각마다 실은 키를 이미
+    정하고(보조 선박 24B 예외 포함), 필드 목록이면 api 가 조각 → 열 표와 예외를 다시 가질 필요가 없다. static 항목(`ship_static.v1.json`) 밖에 두는 까닭: 항목은
+    additionalProperties false 라 이전 api 가 메시지 전체(위치 포함)를 거절한다. 받은 필드만 늘어도(값은 같은 null — 선박이 비워 보냄) 레코드는 '바뀜' 으로 새
+    시각과 함께 다시 발행된다.
+  - api(`ShipCodec.received` → `ShipStatic.received` · `written()` · `overlay()`, `ShipRepository.STATIC_SQL`): 있는 행은 받은 필드만 바꾸고(열마다
+    `CASE WHEN ? THEN EXCLUDED.col ELSE s.col END`) 나머지 열은 저장값을 둔다. 받은 부분 안의 빈 값은 덮는다(선박이 비워 보냈다). updated_at 단조 규칙 · 보고
+    범위 넓히기는 그대로. 한 배치 안의 같은 MMSI 는 updated_at 순으로 겹쳐 한 행(필드마다 가장 새 값, 받은 필드는 합). 매개변수가 VALUES 뒤에도 있어 pgjdbc 는
+    이 문장을 다중 VALUES 로 다시 쓰지 않는다(정적 정보는 드물다 — 배치의 문장마다).
+  - 배포 전환(어느 순서든 안전): 새 수집기 · 이전 api → 이전 api 는 모르는 payload 키를 무시한다(ships_payload 는 추가 키 허용) — 이전처럼 덮는다(지금의
+    결함 그대로, 새로 나빠지지 않는다). 이전 수집기 · 새 api → `static_received` 가 없으면 받은 필드를 모름으로 보고 **값이 있는 필드만** 덮는다(null 은
+    '받지 않음' — 저장값을 지우지 않는 쪽. 대가: 선박이 실제로 비운 값은 새 수집기가 받은 필드를 실을 때부터 반영된다). 그런 정적 정보는
+    `wakeline_ship_static_unknown_fields_total` 로 센다. 목록에서 빠진 MMSI 도 같다.
+  - 시각 열(§G17 문장 고침): `ship.updated_at` = 이 행에 **마지막으로 저장한** 정적 보고의 aisstream 수신 시각(DB 에 기록된 수신 시각) — 그 보고가 싣지 않은
+    필드(받지 않은 부분)는 그보다 앞서 저장된 보고의 값이다. 그 밖(재시작 · 제거 뒤 새 시각, 같은 내용 재수신은 저장하지 않음, 첫 수신도 마지막 수신도 아님)은
+    §G17 그대로. 수집기 쪽 updated_at 은 내용 또는 받은 필드가 바뀐 메시지의 시각(`ship_static.v1.json` 설명). 웹 카드의 보이는 줄(`lib/ships.STORED_STATIC_FIELDS_TEXT` — 아래 필드는 DB 에 저장된 값, 위 시각의 보고가
+    싣지 않은 필드는 앞선 보고의 값) · 설명(title — `STORED_STATIC_TITLE`) · 설명서 2.6 · WS 스키마 ship_selected 설명이 이 뜻을 적는다(리뷰 뒤 고침: 처음에는
+    title 만 고쳐 보이는 줄이 모든 필드를 '이 보고의 값' 이라 했다 — `static-source.test.ts` 가 보이는 글을 본다). 마이그레이션 없음.
+  - 계약 검사: `tools/contract_check.py`(실수신 fixture → 발행: 모든 part 의 static_received 가 그 part 의 MMSI 를 정확히 덮고, 필드는 그 MMSI 가 fixture 에서
+    실제로 보낸 조각의 키 합 · enum = STATIC_FIELDS 순서), `ShipStaticTest`(FIELDS = 스키마 enum = ship_static 정적 칸), `SchemaContractTest` · 수집기 시험
+    (같은 스키마 파일로 이름 · 키 · 중복 거절).
+## G. 12차 개정(2026-09-30 · 레인 kst · 사용자 결정 "[상황판·재생·통계·공항 화면]을 포함한 필요한(해당되는) 메뉴에 시각을 UTC 지우고, KST 표시") — 화면 시각은 KST 만
+같은 날 병행 레인(백엔드)이 11차 개정으로 §G18 · §G19 를 먼저 썼다 — 이 절은 그다음 번호 §G20 이다(합칠 때 11차 개정이 이 절 앞에 온다. 번호는 `tests/docs-contract-g11` 이 겹치지 않는지 본다).
+- G20(§G13 · §G11 · §G10 · §C7 · ADR-017 R-45) **화면의 시각은 한국 표준시(KST)만 — UTC 는 저장 · 전송 형식으로만 남는다** — §G13 의 "KST 먼저 · UTC 함께"
+  (두 시간대 · UTC 쪽 날짜 · 머리글 `(KST · UTC)` · compact `…Z` · 원본 UTC 툴팁)와 §G10 · §G11 의 "원본 UTC 는 툴팁" 을 대신한다. API · WS · DB · 서버 로그의 시각은 UTC ISO 그대로다.
+  - 한 곳: `lib/time.ts`(글자 — 화면 시간대는 `DISPLAY_TZ` 한 곳이 정한다: KST · Asia/Seoul · +09:00 고정) · `components/KstTime.tsx`(`<KstTime>` · `<KstRange>` —
+    `<time dateTime>` 에 ISO 8601 +09:00, title 에 연도 · ms 까지의 KST). 화면 코드는 시각 글자를 직접 만들지 않는다(§G13 의 소스 검사 그대로 — 예외는 복사 형식 ·
+    오류 화면 · 선박 ETA 뿐, 파일 · 줄 수까지 시험에 고정).
+  - 범위: 모든 화면 — 상황판(상태 바 · 알림 · 카드 · 목록 · 지도 툴팁 · 선 라벨 · 레이더 타임라인 · 기상청 패널 · 연안 교통량 · 입출항) · 재생 · 통계 · 공항 · 운영 ·
+    로그 · 출처·한계 · 설명서 · 오류 화면. 보이는 글자 · title · aria-label 어디에도 UTC 가 없다(원문 제외).
+  - 형식(lib/time 이 만드는 글자): inline `09-29 14:02:54 KST` · 날짜가 자명한 자리 `14:02:54 KST` · 좁은 자리(상태 바 — AIS 공백 칩 포함 · 지도 툴팁 · 선 라벨)
+    `14:02 KST` · hh:mm 구간 `08:40–08:45 KST` · 구간 `09-29 10:00:00 – 09-29 14:00:00 KST`(시간대는 끝에 한 번, 줄은 ` – ` 에서만 바뀐다) · 표 칸 `09-29 14:02:54`
+    (머리글 `(KST)`, 화면 읽기에는 " KST" 까지) · title `2026-09-29 14:02:54.000 KST` · 재생 시각은 연도까지 · 모르면 `—` 만(시간대 글자 없이).
+  - 원문: METAR · TAF · SIGMET 발표문 · 서버 로그 메시지 본문(예외 · 스택 · context 포함) · 수집기가 쓴 원본 레코드(격리 detail · DLQ payload head · 실행 오류 글자)는
+    글자 그대로 — 요소에 `data-raw`. 발표문 이름표는 `(원문 · 발표 그대로)`(lib/time `RAW_BULLETIN_LABEL`)이고 툴팁이 "안의 ‘…Z’ 시각은 발표 형식(KST = …Z + 9시간)" 이라 적는다.
+  - 기상청 레이더 tm 은 기상청이 준 KST 그대로(`HH:MM KST`). 선박 ETA(계약 v2 §B4 — 선원 입력 월 · 일 · 시 · 분, 입력 형식은 UTC 벽시계, 연도 없음)는 KST 로 바꿔
+    `09-30 15:05 KST · 선원 입력 · 연도 없음`(2월 28일 입력 15:00 뒤는 `02-29 또는 03-01 … KST(연도 없어 윤년 모름)`, 달력에 없는 날은 시각을 지어내지 않고
+    `— (선원 입력 날짜 04-31 이 달력에 없음 — KST 로 바꿀 수 없음, 연도 없음)`).
+  - 재생: 날짜 · 시각 입력(`재생 시각(KST)`) · 보이는 시각 · title 은 KST, api 요청의 `at` 은 그 순간의 UTC ISO(`…Z`) 그대로(전송 형식).
+  - 날짜로 센 집계(조사한 결과와 한 일):
+    - 우리 DB 가 세는 것은 KST 날짜로 센다(서버): api `stats_daily`(SIGMET 발표일 · 교통량 · 알림 — 하루 = [00:00 KST, 다음 날 00:00 KST), 교통량 `dim` = KST 시 00–23) ·
+      collector `quality_rule_count`(실행이 시작된 KST 날짜). 매일 03:30 KST 에 전날(KST 날짜)을 센다(api cron `zone = Asia/Seoul`), 따라잡기 · 보존 경계 · '오늘' 도
+      KST 날짜. REST `/stats/sigmet` · `/stats/alerts` · `/stats/traffic` 의 `day` = KST 날짜, 기본 날짜 · 범위 = KST 오늘, 응답에 늘 `day_zone: "Asia/Seoul"`
+      (`tools/rest_contract_check.py` 가 const 로 본다 — 교통량 `dim` 은 `00`–`23` 이고 시마다 한 행). `/ops/quality` 도 `day_zone`, `/ops/stats/aggregate` 는 KST 오늘 이전만.
+    - 옛 행(UTC 날짜로 센 것)은 KST 날짜로 이름만 바꾸지 않는다(다른 하루다): Flyway **V16** 이 `stats_daily_utc_legacy` · `quality_rule_count_utc_legacy` 로 옮기고
+      (서비스 역할 권한 없음 — 보관만, 머리 주석에 되돌리기 SQL) 같은 모양의 새 표를 만든다(권한은 옛 표와 같다). 통계는 api 따라잡기가 원본이 남은 계열을 KST
+      날짜로 다시 센다 — 최근 7일은 모든 계열, 그보다 오래된 날은 SIGMET(영구) · 알림(30일 안)을 한 번에 92일까지(`backfillStats`). 교통량은 그날 첫 순간
+      (00:00 KST)이 든 UTC 날 파티션이 보존(72 h) 안일 때만 다시 센다 — 항적은 UTC 날 파티션째 지워지고 00:00–08:59 KST 는 앞 UTC 날 파티션에 있어, 그날 끝으로
+      판단하면 00–08시가 빠진 수를 완료로 남긴다(리뷰).
+    - 교통량 이력은 V16 이 옛 행에서 정확히 옮겨 싣는다(통합 리뷰): 옛 `traffic_by_hour` 는 UTC 시마다 센 서로 다른 항공기 수이고 KST = UTC + 9 정시라 KST 날짜 D 의
+      h 시는 옛 행 하나 — h < 9 이면 (D − 1, h + 15), 아니면 (D, h − 9). 두 UTC 날이 모두 교통량 완료 표식을 가졌고 센 지역이 같은 KST 날만 시 · 지역 · 표식(늦은 쪽)을
+      싣고, 나머지 날은 싣지 않는다. 1분 요약(`track_point_1m`)으로는 세지 않는다 — 행에 센 지역이 없고 빠진 시간을 알 수 없다. SIGMET · 알림의 옛 행은 옮길 수 없다
+      (UTC 날 하루의 수가 KST 날짜 둘의 사건을 섞었다). 그래서 비는 것은 끝난 알림이 지워진 30일 밖 날의 알림 통계, 옮길 조건을 못 채웠고 항적도 지워진 날의 교통량,
+      V16 앞의 격리 수(실행마다의 규칙별 수는 그 표에만 있었다)뿐이고, 화면이 '집계되지 않은 날짜 — … KST 날짜 집계로 바꾸기 전 날짜' 로 말한다.
+    - 격리 수를 바꾼 날(통합 리뷰): V16 이 KST 날짜 셈을 시작한 순간을 `kst_day_cutover`(api 읽기만)에 남긴다. `/ops/quality` 가 그 순간을 `counted_since`(UTC ISO)로
+      내고 그 KST 날짜보다 앞 날짜의 행은 내지 않는다(배포 중 아직 돌던 이전 수집기가 UTC 날짜로 쓴 행뿐이다). 운영 화면은 그 날짜 칸에 `부분 · HH:MM KST 부터` 를 붙이고
+      title 에 그 앞 실행이 보관 표에 있다고 적는다 — 바꾼 날의 부분 값을 00:00–24:00 KST 하루치처럼 보이지 않는다.
+    - 배포(통합 리뷰): compose 는 `migrate` 가 끝날 때까지 이전 api · collector 를 돌려 둔다. 그 사이 이전 api 의 집계(03:30 UTC · 3시간마다 따라잡기)는 UTC 날 통계와
+      완료 표식을 새 `stats_daily` 에 쓸 수 있고(새 api 는 표식이 있는 날을 건너뛴다), 이전 collector 는 UTC 날짜 격리 수를 새 표에 쓴다(00:00–08:59 KST 배포면
+      전날 KST 날짜 — api 가 내지 않는다). 그래서 V16 을 싣는 배포는 먼저 쓰는 쪽을 멈춘다:
+      `tools/dc build && tools/dc stop api collector && make up`(`tools/dc` = 개발 스택의 `docker compose -f infra/compose.yml --env-file .env`).
+      멈추지 않고 배포했다면 배포 뒤 `/ops/stats/aggregate` 로 최근 7일(KST)을 다시 센다 — 원본이 남은 계열만 바로잡힌다.
+    - 경계가 UTC 날로 정해진 것 — 수집기 하루 예산 키(`budget:{공급자}:{yyyymmdd}`, 공급자 한도와 맞춘 UTC 날)와 그것을 옮긴 `provider_budget_day` — 는 바꾸지 않고,
+      화면이 그 창을 KST 로 적는다: `09-28 09:00 – 09-29 08:59 KST`(머리글 `budget window (KST)`, "매일 09:00 KST 에 새로 시작" — lib/time `utcDayWindowKst`).
+      `/ops/providers` 가 `budget_day_zone: "UTC"` 로 밝힌다. 시간 창 예산(`…:h:{yyyymmddHH}`)은 시 경계가 KST 와 같아 바꿀 것이 없다(화면에 나오지 않는다).
+    - 웹은 응답이 밝힌 기준만 믿는다: `day_zone` 이 `Asia/Seoul` 이 아닌 통계 · 격리 수 응답, `budget_day_zone` 이 `UTC` 가 아닌 예산 응답은 날짜 · 창을 그리지 않고
+      그렇다고 적는다(옛 api 와 새 웹이 섞인 배포 중에 UTC 날짜를 KST 날짜로 보이지 않게). 통계 날짜의 옛 "UTC 자정 시각" 문자열은 날짜로 읽지 않는다(`—`).
+  - 바꾸지 않는 것: API · WS · DB · 서버 로그의 시각(UTC ISO), 복사 · 내려받기 형식(텍스트 머리 줄 ISO `+09:00`, 항목 JSON · `.ndjson` 의 `ts` — 버튼 title 이 "서버 형식 ‘…Z’" 라 적는다), 원문.
+  - 성능: §G13 과 같다 — 고정 오프셋 산술(Intl 없음 — 형식기 생성 비용 · ICU 차이 없음), 같은 입력의 분해 결과 캐시(2,048개, 차면 비움, `TIME_CACHE_MAX`).
+  - 옮긴 이름(합친 뒤 지움): 다른 레인(대시보드 UX)이 같은 때 고치던 파일(StatusBar · AlertPanel · AircraftSearch · AircraftCard)과 그 레인의 새 코드
+    (lib/statusbar.ts · lib/ships.ts)를 위해 `DualTime` · `dualPair` · `fmtDual` · `dualParts` · `dualRangePair` · `fmtDualDayMinute` · `fmtDualSpan` 을
+    **KST 전용 별칭(@deprecated)** 으로 잠시 남겼다. 세 레인을 합친 뒤(integ) 호출부를 `KstTime` · `fmtKst` · `fmtKstClock` · `fmtTimeTitle` · `timeParts` ·
+    `fmtKstRange` 로 옮기고 별칭 · `components/DualTime.tsx` · 그 레인의 옛 상태 바 배지(`lib/ships.aisGapBadge` — `lib/statusbar.aisGapInfo` 가 대신한다)를 지웠다.
+    상단 검색 상자의 설명 한 줄은 그 레인이 "(마지막 수신·저장 시각은 KST · …)" 로 고쳤고(3c2ec90), 시험의 다른 레인 면제(`OTHER_LANE_PENDING` ·
+    `OTHER_LANE_KOREAN_UTC` · `DEPRECATED_USERS`)도 지웠다 — 화면 · 소스 검사는 면제 없이 모든 파일에 적용되고, 옛 이름을 쓰는 파일이 하나라도 있으면 실패한다
+    (`tests/kst-dashboard.test.ts` · `tests/kst-time.test.ts`).
+  - 회귀 막기: `tests/kst-time.test.ts`(형식 · 모름 · 캐시 · 컴포넌트) · `tests/helpers/kst-only.ts`(글자 · DOM 의 UTC 흔적 — data-raw 밖) · 화면마다 그 검사(상황판 전체
+    `tests/kst-dashboard.test.ts` · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서 · 오류 화면) · 소스 검사(lib/time 밖의 시각 글자 모양 · 한국어 화면 글의 UTC · 별칭을
+    쓰는 파일) · `tests/kst-only-screens.test.ts`(모든 경로가 이 검사에 들어 있는지) · api `StatsAggregationDbTest`(KST 자정 경계 · KST 시) · `MigrationDbTest` V16 ·
+    collector `test_db_writer`(KST 날짜) · `test_rest_contract_rules`(day_zone · KST 시).
+  - 설명서 그림은 합치는 사람이 다시 찍는다(`lib/guide-shots.json` 의 설명 · 대체 글과 통계 날짜 고르기 선택자만 바꿨다 — `public/guide` · `lib/guide-manifest.json` 은 그대로).
+    통합(2026-09-30): 찍는 스크립트는 실데이터 스택만 찍고(fixture 8701 은 멈춘다) 실데이터 스택(8700)은 아직 이 판이 아니라 다시 찍지 못했다. 13개 그림이 모두
+    UTC · 옛 상태 바를 보여 그림 설명(KST 만 · 칩 + 상세)과 어긋나므로 그림과 manifest 항목을 지웠다 — 설명서는 ‘스크린샷 준비 중’ 자리표시와 그 화면의 설명을 보인다.
+    배포 뒤 `node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>` 로 다시 찍는다.

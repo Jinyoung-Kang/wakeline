@@ -4,7 +4,7 @@ import {
   ageS, ALT_RAMP, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, HAZARD_COLORS, HAZARD_DEFAULT_COLOR, HAZARD_LEGEND,
   hazardColor, isMetarStale, metarAgeS,
 } from "@/lib/format";
-import { fmtDual, fmtDualClock } from "@/lib/time";
+import { fmtKst, fmtKstClock } from "@/lib/time";
 import { ALT_COLOR_EXPR, AIRPORT_FILL_EXPR, coverageTileUrl, frameDisplay, HAZARD_COLOR_EXPR } from "@/lib/maplayers";
 import { attributionText, CREDITS, mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { isTypingTarget, moveActive, normalizeQuery, parseSearchResponse } from "@/lib/search";
@@ -16,14 +16,14 @@ import type { SigmetProps } from "@/lib/types";
 const NOW = Date.parse("2026-09-27T09:00:00Z");
 
 describe("timestamps carry the date (GAP-26)", () => {
-  it("times carry the date (KST first with UTC — 사용자 요청 2026-09-29); the clock form is time only; unknown is —", () => {
-    expect(fmtDual("2026-09-27T08:44:33.912Z")).toBe("09-27 17:44:33 KST · 08:44:33 UTC");
-    expect(fmtDual("2026-09-26T23:59:59Z")).toBe("09-27 08:59:59 KST · 09-26 23:59:59 UTC"); // UTC 로는 전날 — UTC 쪽에 그 날짜
-    expect(fmtDual(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 17:44:33 KST · 08:44:33 UTC");
-    expect(fmtDualClock("2026-09-27T08:44:33Z")).toBe("17:44:33 KST · 08:44:33 UTC");
-    expect(fmtDual(null)).toBe("—");
-    expect(fmtDual("garbage")).toBe("—");
-    expect(fmtDual("")).toBe("—");
+  it("times carry the date (KST only — contract v5 §G20); the clock form is time only; unknown is —", () => {
+    expect(fmtKst("2026-09-27T08:44:33.912Z")).toBe("09-27 17:44:33 KST");
+    expect(fmtKst("2026-09-26T23:59:59Z")).toBe("09-27 08:59:59 KST"); // UTC 로는 전날 — KST 날짜만
+    expect(fmtKst(Date.parse("2026-09-27T08:44:33Z"))).toBe("09-27 17:44:33 KST");
+    expect(fmtKstClock("2026-09-27T08:44:33Z")).toBe("17:44:33 KST");
+    expect(fmtKst(null)).toBe("—");
+    expect(fmtKst("garbage")).toBe("—");
+    expect(fmtKst("")).toBe("—");
   });
   it("durations are compact and never negative", () => {
     expect(fmtDuration(42)).toBe("42s");
@@ -188,7 +188,7 @@ describe("hover tooltips (GAP-26)", () => {
   });
   it("airport: category, METAR age, stale, ceiling state", () => {
     const t = airportTip({ icao: "RKSI", flight_cat: "VFR", flight_cat_source: "awc", obs_time: "2026-09-27T06:00:00Z", ceiling_state: "none" }, NOW);
-    expect(Object.fromEntries(t.rows)).toMatchObject({ CAT: "VFR · AWC 제공", METAR: "09-27 15:00 KST · 06:00Z · 3h 00m 전", CEIL: "실링 없음" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ CAT: "VFR · AWC 제공", METAR: "09-27 15:00 KST · 3h 00m 전", CEIL: "실링 없음" });
     expect(t.flags.map((f) => f.text)).toContain("오래됨 · 2시간 초과");
     const none = airportTip({ icao: "RKXX" }, NOW);
     expect(Object.fromEntries(none.rows)).toMatchObject({ CAT: "—", METAR: "—", CEIL: "—" });
@@ -220,14 +220,14 @@ describe("charts and replay (GAP-17 / GAP-19 / GAP-25)", () => {
   it("replay radar label uses the returned frame, or says there is none", () => {
     expect(radarTimeMs(1790506200)).toBe(1790506200_000);
     expect(radarTimeMs("2026-09-27T08:40:00Z")).toBe(Date.parse("2026-09-27T08:40:00Z"));
-    expect(replayRadarLabel({ at: "2026-09-27T08:44:00Z", radar: { host: "h", path: "/p", time: "2026-09-27T08:40:00Z" } })).toBe("레이더 09-27 17:40:00 KST · 08:40:00 UTC (재생 시각 −4분)");
+    expect(replayRadarLabel({ at: "2026-09-27T08:44:00Z", radar: { host: "h", path: "/p", time: "2026-09-27T08:40:00Z" } })).toBe("레이더 09-27 17:40:00 KST (재생 시각 −4분)");
     expect(replayRadarLabel({ at: "2026-09-27T08:44:00Z", radar: null })).toContain("레이더 이력 없음");
   });
   it("replay aircraft without a recorded callsign shows the hex as the title, not in the callsign slot", () => {
     const t = replayAircraftTip({ hex: "71c081", lat: 1, lon: 1, alt_ft: null, ts: "2026-09-27T08:43:30Z", provider: "adsb_fi" }, "2026-09-27T08:44:00Z");
     expect(t.title).toBe("71c081");
     expect(t.subtitle).toBeUndefined();
-    expect(Object.fromEntries(t.rows)).toMatchObject({ ALT: "—", GS: "—", REC: "09-27 17:43:30 KST · 08:43:30 UTC (재생 시각 −30s)" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ ALT: "—", GS: "—", REC: "09-27 17:43:30 KST (재생 시각 −30s)" });
   });
 });
 

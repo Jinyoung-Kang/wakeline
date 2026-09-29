@@ -97,6 +97,20 @@ k6: `/aircraft` p95 4.6 ms · `/sigmets` p95 5.7 ms · `/status` p95 9.5 ms · W
 - 청크 비교 방법: 리뷰 v1 빌드의 청크(이름·크기가 review-final/lh_root.json 과 같음)와 지금 제공되는 청크의 Turbopack 모듈 id 를 대조(사실 확인 워크플로).
 - 재현: `CHROME_PATH=<playwright chromium> lighthouse http://localhost:8700/ --preset=desktop --only-categories=performance --chrome-flags="--headless=new --use-angle=swiftshader"` 의 `network-requests` 에서 resourceType Script 의 transferSize 합.
 
+## 9. Class B 받은 필드(계약 v5 §G19)의 api 메모리 — 통합 리뷰 뒤(2026-09-30 KST, 단독 측정 · 스택 아님)
+api 메모리(ShipStore)는 정적 정보를 최대 100,000건 쥐고, §G19 뒤로 정적 정보마다 받은 필드 집합(`ShipStatic.received`)을 함께 쥔다. 처음 판은 payload 에서 읽은
+새 문자열로 집합을 정적 정보마다 새로 만들었다(`Set.copyOf`). 지금은 필드 묶음마다 표준 집합 하나(원소는 `ShipStatic.FIELDS` 의 상수 문자열)를 모든 정적 정보가 함께 쓴다.
+
+| 정적 정보 30,000건(§1 의 "선박 약 3만 척" · §7 의 14,449–14,686척 중 위쪽) | 처음 판 | 표준 집합 |
+|---|---|---|
+| 14개 필드를 모두 받음 | 30.7 MB · 1,023 B/건 | **4.5 MB · 151 B/건** |
+| 1–4개 필드 묶음 네 가지 | 9.8 MB · 325 B/건 | **4.6 MB · 151 B/건** |
+
+- 151 B/건은 받은 필드와 상관없는 나머지(레코드 · MMSI 문자열 · 시각)다 — 받은 필드 몫이 건당 872 B(14개) · 174 B(1–4개)에서 0 이 되었다. 30,000건이면 약 26 MB,
+  상한 100,000건이면 약 87 MB 를 덜 쥔다. 배포된 스택의 api RSS 로는 아직 재지 않았다(이번 통합은 배포 전 — README 의 527 MiB 는 §G19 전 값).
+- 재현: JDK 25 · `-Xmx1g -XX:+UseSerialGC`, 정적 정보 N 건을 배열에 쥔 채 `System.gc()` 6회 뒤 `totalMemory − freeMemory` 의 차(받은 필드는 매번 `new String(…)` 으로 만든 이름 —
+  payload 에서 읽은 것과 같다). 처음 판은 통합 커밋 `ed4a0b2` 의 `ShipStatic.java`, 표준 집합은 그다음 판.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접

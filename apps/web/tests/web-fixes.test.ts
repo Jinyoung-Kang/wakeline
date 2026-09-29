@@ -129,10 +129,10 @@ describe("unknown heading is not drawn as north (DH-11)", () => {
     const t = replayAircraftTip(row, "2026-09-20T08:44:00Z");
     expect(t.flags[0].text).toContain("1분 평균");
     expect(t.flags.map((f) => f.text)).not.toContain("기록 위치 · 보간 없음");
-    expect(Object.fromEntries(t.rows)).toMatchObject({ REC: "09-20 17:43:00 – 09-20 17:44:00 KST · 08:43:00 – 08:44:00 UTC 평균", SRC: "1분 요약", TRK: "—" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ REC: "09-20 17:43:00 – 09-20 17:44:00 KST 평균", SRC: "1분 요약", TRK: "—" });
     const raw = { ...row, provider: "adsb_fi", ts: "2026-09-27T08:43:30Z" };
     expect(replayAircraftTip(raw, "2026-09-27T08:44:00Z").flags[0].text).toBe("기록 위치 · 보간 없음");
-    expect(replayRecLabel(raw, "2026-09-27T08:44:00Z")).toBe("09-27 17:43:30 KST · 08:43:30 UTC (재생 시각 −30s)");
+    expect(replayRecLabel(raw, "2026-09-27T08:44:00Z")).toBe("09-27 17:43:30 KST (재생 시각 −30s)");
   });
 });
 
@@ -161,7 +161,7 @@ describe("SIGMET not yet in force (DH-8)", () => {
   });
   it("tooltip says '발효 전' with the start time and how long until then", () => {
     const t = sigmetTip({ ...fc.features[1].properties, inside: true }, NOW);
-    expect(t.flags.map((x) => x.text)).toEqual(["발효 전 · 09-28 10:20 KST · 01:20Z부터 · 판정 전"]);
+    expect(t.flags.map((x) => x.text)).toEqual(["발효 전 · 09-28 10:20 KST부터 · 판정 전"]);
     expect(Object.fromEntries(t.rows)).toMatchObject({ STARTS: "20m 00s 뒤", LEFT: "4h 00m" });
     expect(sigmetTip(fc.features[0].properties, NOW).flags.map((x) => x.text)).not.toContain(expect.stringContaining("발효 전"));
   });
@@ -216,10 +216,12 @@ describe("small honesty fixes", () => {
   });
   it("OBSERVED alert stats on/before the hysteresis fix day carry the caveat", () => {
     expect(HYSTERESIS_FIX_AT).toBe("2026-09-27T15:10:00Z");
-    expect(preFixHysteresis({ day: "2026-09-27T00:00:00.000Z", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(true);
-    expect(preFixHysteresis({ day: "2026-09-26T00:00:00.000Z", metric: "alert_dwell_avg_s", dim: "OBSERVED" })).toBe(true);
-    expect(preFixHysteresis({ day: "2026-09-28T00:00:00.000Z", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(false);
-    expect(preFixHysteresis({ day: "2026-09-27T00:00:00.000Z", metric: "alerts_by_kind", dim: "PREDICTED" })).toBe(false);
+    // 통계 날짜는 KST 날짜(계약 v5 §G20): 수정 시각 15:10Z 09-27 = 00:10 KST 09-28 — KST 날짜 09-28 까지가 수정 전 판정을 (일부라도) 포함한다
+    expect(preFixHysteresis({ day: "2026-09-28", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(true);
+    expect(preFixHysteresis({ day: "2026-09-26", metric: "alert_dwell_avg_s", dim: "OBSERVED" })).toBe(true);
+    expect(preFixHysteresis({ day: "2026-09-29", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(false);
+    expect(preFixHysteresis({ day: "2026-09-28", metric: "alerts_by_kind", dim: "PREDICTED" })).toBe(false);
+    expect(preFixHysteresis({ day: "2026-09-27T00:00:00.000Z", metric: "alerts_by_kind", dim: "OBSERVED" })).toBe(false); // 날짜가 아닌 값
   });
   it("KMA radar STALE from the server flag or from the collection age via the server clock (REL-19)", () => {
     expect(isKrRadarStale({ meta: { stale: true, fetched_at: new Date(NOW).toISOString() } }, NOW)).toBe(true);
@@ -277,7 +279,7 @@ describe("rendered panels (server-side render, no DOM)", () => {
     expect(renderToStaticMarkup(createElement(StatusBar))).not.toContain("KMA STALE");
   });
   it("status bar: aircraft count is '—' while unknown (aircraft layer off / before the first snapshot), never a frozen number (review #17)", () => {
-    const count = () => /data-testid="aircraft-count"[^>]*>.*?<\/span>(.*?)<\/span>/.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
+    const count = () => /data-testid="aircraft-count".*?<span class="chip-v">([^<]*)</.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
     setData({ conn: "open", lastRxAt: Date.now(), aircraftCount: 42 });
     expect(count()).toBe("42");
     setData({ aircraftCount: null });
@@ -288,7 +290,9 @@ describe("rendered panels (server-side render, no DOM)", () => {
   it("status bar AIS badge: no key → neutral 'AIS 꺼짐 · 키 없음', not a red outage (review #15)", () => {
     setData({ conn: "open", lastRxAt: Date.now(), ais: { connected: false, lag_s: null, msgs_per_s: null, gap_open_since: null, last_gap: null, state: "disabled", coverage: null, received_at: Date.now() } });
     const html = renderToStaticMarkup(createElement(StatusBar));
-    expect(html).toMatch(/class="badge normal-case! " data-testid="ais-badge" data-tone="muted"[^>]*>AIS 꺼짐 · 키 없음</);
+    // 칩: 모름(□ · 회색 — 오류색이 아니다) · "AIS 꺼짐 키 없음"
+    expect(html).toMatch(/class="chip unknown"[^>]*data-health="unknown" data-testid="ais-badge"/);
+    expect(/data-testid="ais-badge".*?<\/span><\/span>/.exec(html)![0].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("AIS □ 꺼짐 키 없음");
     expect(html).not.toContain("재연결");
   });
 });

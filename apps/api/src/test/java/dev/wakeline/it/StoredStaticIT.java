@@ -2,6 +2,7 @@ package dev.wakeline.it;
 
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.persist.ReadPool;
 import dev.wakeline.persist.Sql;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -19,10 +20,12 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 선택 선박의 저장된 AIS 정적 보고(static-fallback) — 실제 PostgreSQL · Redis · api.
@@ -32,15 +35,34 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>재현: DB 에 5시간 전 정적 보고를 넣고 스트림에는 위치만 발행한다(재시작 뒤 스트림 보존 창에 정적 보고가 없는 상태) → WS select_ship.
  * 고침(계약 v5 §G17): 저장된 정적 보고를 static_source = stored · static_updated_at(저장 행의 updated_at)으로 밝혀 싣고 입출항은 그 호출부호로 찾는다 —
  * 메모리(ShipStore)에는 넣지 않는다. REST 상세도 같은 출처를 밝힌다. ship 표가 잠기면(문장 — 공개 조회 상한 3 s) static null · stored_unavailable · no_call_sign.
- * 연결을 얻지 못하는 경우(풀 소진 · DB 없음)는 Hikari 연결 대기(5 s)가 문장 상한에 더해진다 — 이 시험은 문장 상한만 본다(계약 v5 §G17).
+ * <p>우편함 밖 조회(계약 v5 §G18 · VERIFICATION #51 '남은 것'): 읽기는 세션 우편함 밖 조회 실행기에서, 선택 조회 전용 읽기 풀(ReadPool — 4 연결 · 연결 대기
+ * 2 s · 서버 statement_timeout 3 s · 읽기 전용)로 한다. 읽기가 막힌 동안에도 pong · 항공기 diff 는 곧바로 가고, 읽기 풀이 바닥나면 연결 대기 2 s(공유 풀은
+ * 5 s)에 끊겨 stored_unavailable 로 답한다.
  * MMSI 는 이 시험만 쓰는 값이다(컨텍스트를 함께 쓰는 다른 시험의 메모리 정적 정보와 섞이지 않게) — 이름 · 호출부호는 관찰된 선박의 값.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class StoredStaticIT extends IntegrationTest {
     static final Duration WAIT = Duration.ofSeconds(20);
-    static final String MMSI = "440700241", LOCKED = "440700242";
+    static final String MMSI = "440700241", LOCKED = "440700242", EXHAUSTED = "440700243";
 
     @Autowired ShipStore ships;
+    @Autowired ReadPool readPool;
+
+    /** 다음 ship_selected 까지 받은 것의 type 순서(ship_selected 가 마지막). */
+    static List<String> untilSelected(WsIT.Client c, Duration timeout) throws InterruptedException {
+        List<String> seen = new ArrayList<>();
+        long end = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < end) {
+            JsonNode n = c.messages.poll(50, TimeUnit.MILLISECONDS);
+            if (n == null) continue;
+            seen.add(n.path("type").asString());
+            if ("ship_selected".equals(n.path("type").asString())) {
+                c.messages.add(n); // 부르는 쪽이 next 로 다시 읽는다(순서상 마지막)
+                return seen;
+            }
+        }
+        throw new AssertionError("no ship_selected within " + timeout + " — seen " + seen);
+    }
 
     @AfterEach
     void clean() {
@@ -141,6 +163,11 @@ class StoredStaticIT extends IntegrationTest {
             st.execute("LOCK TABLE ship IN ACCESS EXCLUSIVE MODE"); // 저장 정적 보고 읽기가 이 잠금을 기다린다
             long t0 = System.nanoTime();
             c.send("{\"type\":\"select_ship\",\"mmsi\":\"" + LOCKED + "\"}");
+            c.send("{\"type\":\"ping\"}");
+            JsonNode pong = c.next("pong", Duration.ofSeconds(1));
+            long pongMs = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(pong).isNotNull();
+            assertThat(pongMs).as("the read runs off the session queue — pong does not wait for it").isLessThan(1_000);
             JsonNode sel = c.next("ship_selected", WAIT);
             long ms = (System.nanoTime() - t0) / 1_000_000;
             lock.rollback();
@@ -158,5 +185,47 @@ class StoredStaticIT extends IntegrationTest {
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * 선택 조회 전용 읽기 풀이 바닥나면(4 연결 모두 다른 읽기가 잡음) 연결 대기 2 s 에 끊겨 stored_unavailable 로 답한다 — 공유 풀의 5 s 가 아니다. 그동안
+     * 그 세션의 pong 은 곧바로 간다. 잡은 읽기(2.8 s)가 끝나기 전에 답이 오므로 stored_unavailable 자체가 '연결 대기에서 끊겼다' 는 증거다.
+     */
+    @Test
+    void whenTheReadPoolIsExhaustedTheSelectionIsCutByItsTwoSecondConnectionWait() throws Exception {
+        storeStatic(EXHAUSTED, "IT EXHAUSTED STORED", "D9EX", Instant.now().minus(4, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS));
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(EXHAUSTED, 35.3, 129.2, Instant.now())), List.of()));
+        await("live ship (position only)", WAIT, () -> ships.view().get(EXHAUSTED) != null);
+        assertThat(readPool.size()).isEqualTo(ReadPool.DEFAULT_SIZE);
+        WsIT.Client c = connect();
+        List<Thread> holders = new ArrayList<>();
+        try {
+            for (int i = 0; i < readPool.size(); i++)
+                holders.add(Thread.ofVirtual().start(() -> readPool.jdbc().sql("SELECT pg_sleep(2.8)").query((rs, n) -> 1).list()));
+            await("all read-pool connections taken", Duration.ofSeconds(5), () -> readPool.active() == readPool.size());
+            long t0 = System.nanoTime();
+            c.send("{\"type\":\"select_ship\",\"mmsi\":\"" + EXHAUSTED + "\"}");
+            c.send("{\"type\":\"ping\"}");
+            List<String> order = untilSelected(c, WAIT);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            JsonNode sel = c.next("ship_selected", WAIT);
+            assertThat(order).as("pong is not held by the pending lookup").contains("pong");
+            assertThat(sel.path("mmsi").asString()).isEqualTo(EXHAUSTED);
+            assertThat(sel.path("static_source").asString()).as("cut before the holders released a connection").isEqualTo("stored_unavailable");
+            assertThat(ms).as("the read pool's 2 s connection wait, not the shared pool's 5 s").isBetween(1_800L, 2_799L);
+        } finally {
+            for (Thread t : holders) t.join(5_000);
+            c.close();
+        }
+    }
+
+    /** 읽기 풀의 연결: 서버 statement_timeout = 공개 조회 상한(3 s) · 읽기 전용 · 이름 wakeline-api-read — 쓰기는 거절된다. */
+    @Test
+    void readPoolConnectionsCarryTheStatementLimitAndAreReadOnly() {
+        assertThat(readPool.jdbc().sql("SHOW statement_timeout").query(String.class).single()).isEqualTo(Sql.PUBLIC_READ_TIMEOUT_S + "s");
+        assertThat(readPool.jdbc().sql("SHOW default_transaction_read_only").query(String.class).single()).isEqualTo("on");
+        assertThat(readPool.jdbc().sql("SHOW application_name").query(String.class).single()).isEqualTo("wakeline-api-read");
+        assertThatThrownBy(() -> readPool.jdbc().sql("DELETE FROM ship WHERE mmsi = '000000000'").update())
+                .hasMessageContaining("read-only transaction");
     }
 }

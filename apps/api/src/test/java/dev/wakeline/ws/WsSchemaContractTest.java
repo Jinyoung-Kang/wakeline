@@ -260,7 +260,7 @@ class WsSchemaContractTest {
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
             index.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-20"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));
             index.rows.put("D7AB", java.util.Collections.nCopies(21, portCallRow("D7AB")));
-            k.shipFanout.setPortCallSource(new PortCallReader(index, List::of, PC_NOW::toEpochMilli)::forStatic);
+            k.shipFanout.setPortCallSource(ShipLookups.portCalls(new PortCallReader(index, List::of, PC_NOW::toEpochMilli)));
 
             // ---- 세션 1: 줌 7 · 선박 켬 — 개별 선박, lite 인코딩
             FakeWsSession p = k.connect("s-points", "10.0.0.1");
@@ -395,14 +395,14 @@ class WsSchemaContractTest {
             PortCallReader error = new PortCallReader(broken, List::of, PC_NOW::toEpochMilli);
             PortCallReader off = new PortCallReader(full, () -> List.of("no_key", PC_NOW.minusSeconds(20).toString()), PC_NOW::toEpochMilli);
             // 운영처럼 저장 정적 보고도 읽는다 — 위치만 받은 선박(440000008)은 DB 에도 없다(static_source none)
-            k.shipFanout.setStoredStaticSource(m -> StoredStaticReader.Lookup.NONE);
-            k.shipFanout.setPortCallSource(st -> {
+            k.shipFanout.setStoredStaticSource(ShipLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
+            k.shipFanout.setPortCallSource(ShipLookups.Source.memory(st -> {
                 String cs = st == null ? null : st.callSign();
                 if ("D7AC".equals(cs)) return error.forStatic(st);
                 if ("D7AD".equals(cs)) return off.forStatic(st);
                 if ("D7AF".equals(cs)) return incomplete.forStatic(st);
                 return ok.forStatic(st);
-            });
+            }));
             FakeWsSession c = k.connect("s-portcalls", "10.0.0.5");
             k.msg(c, "{\"type\":\"hello\",\"proto\":1}");
             k.msg(c, "{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
@@ -424,15 +424,15 @@ class WsSchemaContractTest {
             realStatus(k);
             ShipStatic kept = new ShipStatic("440000010", "SYNTH STORED", "D7AG", null, 60, null, null, null, null, null, "KRPUS", null, null, null, null,
                     now.minusSeconds(5 * 3600), "aisstream");
-            k.shipFanout.setStoredStaticSource(new StoredStaticReader(m -> switch (m) {
+            k.shipFanout.setStoredStaticSource(ShipLookups.stored(new StoredStaticReader(m -> switch (m) {
                 case "440000010" -> kept;
                 case "440000011" -> throw new org.springframework.dao.QueryTimeoutException("statement timeout");
                 default -> null;
-            }, now::toEpochMilli, k.meters)::lookup);
+            }, now::toEpochMilli, k.meters)));
             PortCallFixtures.FakeSource idx = new PortCallFixtures.FakeSource();
             idx.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-30"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));
             idx.rows.put("D7AG", List.of(portCallRow("D7AG")));
-            k.shipFanout.setPortCallSource(new PortCallReader(idx, List::of, PC_NOW::toEpochMilli)::forStatic);
+            k.shipFanout.setPortCallSource(ShipLookups.portCalls(new PortCallReader(idx, List::of, PC_NOW::toEpochMilli)));
             FakeWsSession c = k.connect("s-stored", "10.0.0.6");
             k.msg(c, "{\"type\":\"hello\",\"proto\":1}");
             k.msg(c, "{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");

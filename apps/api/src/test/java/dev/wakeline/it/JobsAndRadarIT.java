@@ -90,19 +90,21 @@ class JobsAndRadarIT extends IntegrationTest {
                 .query(Integer.class).single()).isEqualTo(2);
         assertThat(count("SELECT count(*) FROM track_point_1m WHERE hex = 'a1e0bb'")).isZero();
 
-        // 일 통계(어제): 관심 지역 안의 서로 다른 항공기 수 + 어느 지역을 셌는지
-        LocalDate y = today.minusDays(1);
-        Instant tenAm = y.atStartOfDay(ZoneOffset.UTC).toInstant().plusSeconds(10 * 3600);
-        track("a1e002", tenAm.plusSeconds(5), 36.0, 128.0);
-        track("a1e003", tenAm.plusSeconds(65), 36.1, 128.1);
+        // 일 통계(어제 — KST 날짜, 계약 v5 §G20): 관심 지역 안의 서로 다른 항공기 수 + 어느 지역을 셌는지. 시(dim)는 KST 시 —
+        // 20:00 KST 는 그 KST 날짜의 11:00 UTC 라 운영 파티션(어제 · 오늘 UTC)에 든다
+        LocalDate y = dev.wakeline.persist.MaintenanceJobs.today().minusDays(1);
+        Instant eightPm = y.atStartOfDay(dev.wakeline.persist.MaintenanceJobs.DAY_ZONE).toInstant().plusSeconds(20 * 3600);
+        track("a1e002", eightPm.plusSeconds(5), 36.0, 128.0);
+        track("a1e003", eightPm.plusSeconds(65), 36.1, 128.1);
         jobs.aggregate(y);
         JsonNode traffic = get("/api/v1/stats/traffic?day=" + y).json();
         assertThat(traffic.path("scope").asString()).isEqualTo("region");
         assertThat(traffic.path("region").path("radius_nm").asInt()).isPositive();
-        JsonNode ten = null;
-        for (JsonNode it : traffic.path("items")) if ("10".equals(it.path("dim").asString())) ten = it;
-        assertThat(ten).as("hour 10 bucket").isNotNull();
-        assertThat(ten.path("value").asInt()).isGreaterThanOrEqualTo(2);
+        assertThat(traffic.path("day_zone").asString()).isEqualTo("Asia/Seoul");
+        JsonNode twenty = null;
+        for (JsonNode it : traffic.path("items")) if ("20".equals(it.path("dim").asString())) twenty = it;
+        assertThat(twenty).as("KST hour 20 bucket").isNotNull();
+        assertThat(twenty.path("value").asInt()).isGreaterThanOrEqualTo(2);
     }
 
     static final String PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";

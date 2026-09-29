@@ -52,6 +52,24 @@ export class MiniElement extends MiniNode {
   getAttribute(k: string) { return this.attributes.get(k) ?? null; }
   hasAttribute(k: string) { return this.attributes.has(k); }
   removeAttribute(k: string) { this.attributes.delete(k); }
+  /** 속성 선택자만("[data-x]" · "[data-x=\"v\"]", 쉼표로 여럿) — 문서 순서 */
+  querySelectorAll(sel: string): MiniElement[] {
+    const parts = sel.split(",").map((x) => /^\s*\[([\w-]+)(?:="([^"]*)")?\]\s*$/.exec(x));
+    if (parts.some((p) => !p)) throw new Error(`mini-dom: unsupported selector ${sel}`);
+    const out: MiniElement[] = [];
+    const walk = (n: MiniNode) => {
+      for (const c of n.childNodes) {
+        if (c instanceof MiniElement) {
+          if (parts.some((p) => c.hasAttribute(p![1]) && (p![2] == null || c.getAttribute(p![1]) === p![2]))) out.push(c);
+          walk(c);
+        }
+      }
+    };
+    walk(this);
+    return out;
+  }
+  /** 초점(문서의 activeElement 만 옮긴다 — 초점 링 · 이벤트는 없다) */
+  focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   /** canvas 2D: 그리기 메서드는 아무것도 하지 않고, getImageData 는 빈 픽셀을 돌려준다(아이콘 SDF 를 만드는 코드가 끝까지 돈다) */
   getContext() {
     const props: Record<string, unknown> = {
