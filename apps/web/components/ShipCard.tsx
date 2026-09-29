@@ -8,7 +8,7 @@ import {
   fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
   SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
-  staticProvenance, storedPortCallsNote, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
+  staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
   STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT,
   type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic, type StaticSource,
 } from "@/lib/ships";
@@ -193,7 +193,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
               <DualTime v={prov.storedAt} />{storedAge != null ? <span className="mono text-fg-2"> ({fmtDuration(storedAge)} 전)</span> : null}
             </div>
             <div className="text-[10px] text-fg-3">
-              실시간 값이 아님 — 아래 선박명 · 호출부호 · IMO · 선종 · 크기 · 흘수 · 목적지 · ETA 는 이 보고의 값{storedCalls === "looked_up" ? `(${STORED_STATIC_PORT_CALLS_TEXT})` : null}
+              {STORED_STATIC_FIELDS_TEXT}{storedCalls === "looked_up" ? ` · ${STORED_STATIC_PORT_CALLS_TEXT}` : null}
             </div>
             {storedCalls === "not_looked_up" ? <div className="text-[10px] text-warn" data-testid="ship-static-stored-portcalls">{STORED_STATIC_PORT_CALLS_UNREAD_TEXT}</div> : null}
           </div>
