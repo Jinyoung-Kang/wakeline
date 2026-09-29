@@ -1,5 +1,6 @@
 package dev.wakeline.ws;
 
+import dev.wakeline.config.AppProperties;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.DestinationInfo;
 import dev.wakeline.domain.DestinationParser;
@@ -28,7 +29,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -56,8 +56,12 @@ import java.util.function.LongSupplier;
  *       (static null — 입출항은 no_call_sign · not_received).</li>
  *   <li>DB 조회는 우편함 밖(계약 v5 §G18 · ADR-025 — {@link ShipLookups}): 우편함은 캐시만 본다. 저장 정적 보고 · 입출항을 읽어야 하면 조회 실행기에 맡기고
  *       돌아온다 — 그동안 그 세션의 diff · pong · heartbeat 는 제때 간다. 결과는 우편함에 SHIP_SELECTED 작업으로 돌아와, 세션의 지금 물음(선박 · 메모리
- *       정적 정보의 유무 · 호출부호 — {@link Question})과 같을 때만 그때의 최신 상태와 함께 보낸다(선택이 바뀌었으면 버린다 — 세대 확인). 세션마다
- *       진행 중인 조회는 하나. ship_selected 는 늦어도 조회 마감(운영 5 s — 읽기 풀의 연결 대기 2 s + 문장 3 s) 뒤에 나간다.</li>
+ *       정적 정보의 유무 · 호출부호 — {@link Question})과 같을 때만 그때의 최신 상태와 함께 보낸다(선택이 바뀌었으면 버린다 — 세대 확인).
+ *       ship_selected 는 늦어도 조회 마감(운영 5 s — 읽기 풀의 연결 대기 2 s + 문장 3 s) 뒤에 나간다.</li>
+ *   <li>'답을 보냄' 과 '읽는 중' 은 다르다(리뷰 — §G18 개정): 마감에 읽지 못함으로 답해도 그 읽기는 계속 돈다. 세션은 그 읽기가 끝날 때까지 조회 표시를 들고
+ *       있어, 같은 물음의 다시 계산(선박 이동 · 주기 다시 보기)은 새 읽기를 올리지 않고 캐시 또는 그 답(읽지 못함)과 최신 선박 상태로 보낸다. 읽기가 끝나면
+ *       곧바로 다시 계산해 캐시에 든 값을 보낸다. 다른 물음의 읽기는 앞 읽기가 끝난 뒤 시작하고, 그사이 선택이 또 바뀌면 하지 않는다 — 한 세션이 조회
+ *       실행기에 두는 작업은 늘 하나 이하다(같은 키의 읽기는 세션을 가로질러 하나 — 읽는 쪽의 SingleFlight).</li>
  *   <li>port_calls(ADR-022 개정): static 의 호출부호로 DB 입출항 색인에서 찾은 한국 항만 입출항({@link PortCallReader} — 호출부호별
  *       {@value PortCallReader#TTL_MS} ms 캐시). 색인 갱신 · 오래됨(2시간) 판정은 선박 변화와 무관하므로 {@value #SELECTED_REFRESH_MS} ms 마다 선박을 고른
  *       세션의 ship_selected 를 다시 계산하고 값이 바뀌었을 때만 보낸다(incomplete → ok 등). 선택은 외부 호출도 Redis 임대도 만들지 않는다.</li>
@@ -110,13 +114,17 @@ public class ShipFanout implements SmartLifecycle {
 
     private record CachedJson(ShipStore.Ship ship, String json) {}
 
-    /** 운영: 조회 실행기 스레드 = 선택 조회 전용 읽기 풀의 연결 수, 조회 마감 = 그 풀의 한 번 읽기 상한(연결 대기 + 문장). */
+    /**
+     * 운영: 조회 실행기 스레드 = 선택 조회 전용 읽기 풀의 연결 수, 대기열 = WS 연결 상한 이상(세션마다 작업 하나 이하), 조회 마감 = 그 풀이 답하는 한 번
+     * 읽기의 상한(연결 대기 + 문장).
+     */
     @Autowired
     public ShipFanout(WsHub hub, ShipStore store, MeterRegistry meters, PortCallReader portCallReader, StoredStaticReader storedStaticReader,
-                      ReadPool readPool) {
+                      ReadPool readPool, AppProperties props) {
         this(hub, store, meters, Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ship-fanout").factory()),
                 System::currentTimeMillis);
-        useLookups(new ShipLookups(ShipLookups.boundedExecutor(readPool.size()), readPool.readBoundMs(), meters));
+        useLookups(new ShipLookups(ShipLookups.boundedExecutor(readPool.size(), ShipLookups.queueFor(props.wsMaxConn())), readPool.readBoundMs(),
+                meters));
         setPortCallSource(ShipLookups.portCalls(portCallReader));
         setStoredStaticSource(ShipLookups.stored(storedStaticReader));
         scheduleSelectedRefresh();
@@ -388,19 +396,28 @@ public class ShipFanout implements SmartLifecycle {
     }
 
     /**
-     * 세션의 진행 중인 선택 조회(우편함만 WsSession.shipLookup 을 바꾼다). result 는 조회가 끝나면 조회 · 마감 스레드가 쓴다 — 우편함은 이 객체가 세션의
-     * 지금 조회(세대)이고 물음이 같을 때만 읽는다. 앞 세대의 결과는 제 객체에 남아 읽히지 않는다(늦게 온 결과 버리기).
+     * 세션의 선택 조회(우편함만 WsSession.shipLookup 을 바꾼다 — 이 객체가 세대). result · settled 는 조회 · 마감 스레드가 쓴다 — 우편함은 이 객체가 세션의
+     * 지금 조회이고 물음이 같을 때만 읽는다. 앞 세대의 결과는 제 객체에 남아 읽히지 않는다(늦게 온 결과 버리기). 답(result)이 와도 읽기가 끝날 때(settled)까지
+     * 세션의 조회로 남는다 — 그동안 같은 물음은 새 읽기를 올리지 않는다.
      */
     static final class PendingLookup {
         final Question question;
+        /** 답: 읽은 값 또는 마감의 읽지 못함. */
         volatile ShipLookups.Resolved result;
+        /** 이 조회의 읽기가 모두 끝났다(마감과 무관). */
+        volatile boolean settled;
+        /** 우편함이 버렸다(선택 · 물음이 바뀜 · 해제) — 아직 올리지 않은 읽기는 하지 않고, 결과가 와도 다시 계산을 예약하지 않는다. */
+        volatile boolean superseded;
+        /** 우편함만: 이 조회가 세션의 조회인 동안 ship_selected 를 보냈다(버릴 때 '답을 보내지 않은 조회' 로 세지 않는다). */
+        boolean answered;
 
         PendingLookup(Question question) { this.question = question; }
     }
 
     /**
-     * ship_selected 계산(우편함 작업). 캐시만으로 답할 수 있으면 바로 보낸다. 읽어야 하면 조회를 맡기고 돌아온다 — 같은 물음을 이미 읽는 중이면 새로 맡기지
-     * 않는다. 조회가 끝나면 이 작업이 다시 예약돼 그 결과(와 그때의 선박 상태)로 보낸다. 선택 해제 · 물음이 바뀌면 진행 중인 조회의 결과는 쓰지 않는다.
+     * ship_selected 계산(우편함 작업). 캐시만으로 답할 수 있으면 바로 보낸다. 세션의 조회가 같은 물음이면 새 읽기를 올리지 않는다 — 답이 왔으면(마감의 읽지
+     * 못함 포함) 그것과 지금 선박 상태로 보내고, 아직이면 기다린다(늦어도 마감에 다시 온다). 조회가 없으면 맡긴다(세션의 앞 읽기가 끝난 뒤 시작한다). 읽기가
+     * 끝난 조회는 내려놓는다 — 다음 다시 계산은 캐시로. 선택 해제 · 물음이 바뀌면 진행 중인 조회의 결과는 쓰지 않는다.
      */
     void runSelected(WsSession s) {
         if (!s.ready() || !s.hello) return;
@@ -416,42 +433,53 @@ public class ShipFanout implements SmartLifecycle {
         ShipStatic live = ship != null ? ship.stat() : store.staticOf(mmsi);
         Question q = Question.of(mmsi, live);
         PendingLookup p = s.shipLookup;
-        boolean same = p != null && p.question.equals(q);
-        ShipLookups.Resolved r = same ? p.result : null; // 이 물음에 대해 끝난 조회
-        if (r == null) r = lookups.cached(mmsi, live);  // 캐시(I/O 없음)
-        if (r == null) {
-            if (same) return; // 같은 물음을 읽는 중 — 끝나면 다시 온다
+        if (p != null && !p.question.equals(q)) { // 다른 물음 — 그 답은 쓰지 않는다(그 읽기가 끝나야 이 세션의 다음 읽기가 시작한다)
             dropLookup(s);
-            startLookup(s, q, ship, live);
-            return;
+            p = null;
+        }
+        ShipLookups.Resolved r = lookups.cached(mmsi, live); // 캐시(I/O 없음) — 끝난 읽기의 값은 여기에 있다
+        if (r == null && p != null) r = p.result;           // 이 물음의 답(읽은 값 · 마감의 읽지 못함)
+        if (r == null) {
+            if (p == null) startLookup(s, q, ship, live);
+            return; // 답을 기다린다 — 오면(늦어도 마감) 다시 온다
         }
         if (p != null) {
-            s.shipLookup = null;
-            if (r != p.result) lookups.dropped(); // 다른 물음이었거나 캐시가 먼저 답했다
+            p.answered = true;
+            if (p.settled) s.shipLookup = null; // 읽기가 끝났다 — 다음 다시 계산은 캐시로(캐시가 지나면 새로 읽는다)
         }
         sendSelected(s, mmsi, ship, fit(r, live));
     }
 
     private void startLookup(WsSession s, Question q, ShipStore.Ship ship, ShipStatic live) {
         ShipLookups l = lookups;
-        CompletableFuture<ShipLookups.Resolved> f = l.load(q.mmsi(), live);
-        if (f.isDone()) { // 바로 실행하는 실행기(시험) — 기다릴 것이 없다
-            sendSelected(s, q.mmsi(), ship, fit(f.join(), live));
+        PendingLookup mine = new PendingLookup(q);
+        ShipLookups.Flight f = l.load(q.mmsi(), live, s.shipLookupTail, () -> !mine.superseded && !s.isClosing());
+        if (f.answer().isDone()) { // 바로 실행하는 실행기(시험) · 거절 — 읽기도 이미 끝났다(settled 가 답보다 먼저)
+            s.shipLookupTail = null;
+            sendSelected(s, q.mmsi(), ship, fit(f.answer().join(), live));
             return;
         }
-        PendingLookup mine = new PendingLookup(q);
         s.shipLookup = mine;
-        f.thenAccept(r -> {
+        s.shipLookupTail = f.settled();
+        f.settled().thenRun(() -> {
+            mine.settled = true;
+            // 마감에 답한 뒤 끝난 읽기: 곧바로 다시 계산해 캐시에 든 값을 보낸다(마감 안에 끝났으면 아래 답이 예약한다)
+            if (mine.result != null && !mine.superseded) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
+        });
+        f.answer().thenAccept(r -> {
             mine.result = r;
+            if (mine.superseded) return; // 버린 조회는 이미 셌다
             if (!s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s)) && s.isClosing()) l.dropped();
         });
     }
 
-    /** 진행 중인 조회를 버린다(결과가 와도 쓰지 않는다). */
+    /** 세션의 조회를 버린다(결과가 와도 쓰지 않고, 아직 올리지 않은 읽기는 하지 않는다). 답을 보내지 않은 조회만 센다. */
     private void dropLookup(WsSession s) {
-        if (s.shipLookup == null) return;
+        PendingLookup p = s.shipLookup;
+        if (p == null) return;
         s.shipLookup = null;
-        lookups.dropped();
+        p.superseded = true;
+        if (!p.answered) lookups.dropped();
     }
 
     /** 조회 결과를 지금의 메모리 정적 정보에 맞춘다: 물음이 같으면 입출항(같은 호출부호)은 그대로, 보일 정적 정보는 지금 메모리 값(live). */

@@ -60,6 +60,43 @@ class PortCallReaderTest {
         assertThat(index.queries).hasSize(1);
     }
 
+    /**
+     * 같은 호출부호의 동시 읽기는 하나(계약 v5 §G18 개정 · 리뷰 — 전에는 마감 뒤의 다시 계산마다 같은 호출부호를 다시 읽어 조회 스레드를 채웠다):
+     * forStaticAsync 는 진행 중인 읽기의 future 를 준다(스레드 · 작업을 더 쓰지 않는다 — 지표 hit). 읽을 것이 없으면(호출부호 없음 · 형식 밖 · 캐시) 곧바로.
+     * 거절은 표시를 남기지 않는다.
+     */
+    @Test void forStaticAsync_mergesConcurrentReadsOfOneCallSign() throws Exception {
+        fullFreshIndex();
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        PortCallReader r = new PortCallReader(index, heartbeat::get, clock::get, meters);
+        assertThat(r.forStaticAsync(stat(null), Runnable::run).join()).isEqualTo(PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED));
+        assertThat(r.forStaticAsync(stat("V7A 3884"), Runnable::run).join()).isEqualTo(PortCallsInfo.noCallSign(PortCallsInfo.UNUSABLE));
+        index.hold = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ThreadPoolExecutor one = new java.util.concurrent.ThreadPoolExecutor(1, 1, 60, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(4));
+        try {
+            var first = r.forStaticAsync(stat("V7A3884"), one);
+            var again = r.forStaticAsync(stat(" v7a3884 "), one); // 같은 정규화 호출부호
+            assertThat(again).isSameAs(first);
+            assertThat(one.getQueue()).isEmpty();
+            assertThat(r.inflight()).isEqualTo(1);
+            index.hold.countDown();
+            assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS).status()).isEqualTo(PortCallsInfo.NONE); // 창 전체가 색인됐고 행이 없다
+        } finally {
+            one.shutdownNow();
+        }
+        assertThat(index.queries).as("one index read").hasSize(1);
+        assertThat(r.inflight()).isZero();
+        assertThat(r.forStaticAsync(stat("V7A3884"), task -> { throw new IllegalStateException("not used — cached"); }).join().status())
+                .isEqualTo(PortCallsInfo.NONE);
+        assertThat(meters.counter("wakeline_cache_requests_total", "cache", "portcalls", "result", "hit").count()).as("the join + the cached answer")
+                .isEqualTo(2.0);
+        clock.addAndGet(PortCallReader.TTL_MS);
+        var refused = r.forStaticAsync(stat("V7A3884"), task -> { throw new java.util.concurrent.RejectedExecutionException("full"); });
+        assertThat(refused).isCompletedExceptionally();
+        assertThat(r.inflight()).isZero();
+    }
+
     // ---- 호출부호 -------------------------------------------------------------------------------------------------
 
     @Test void callSignRuleMatchesTheSharedVectors() throws Exception {

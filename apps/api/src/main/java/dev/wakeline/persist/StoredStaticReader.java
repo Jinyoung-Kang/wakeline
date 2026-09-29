@@ -10,7 +10,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.function.LongSupplier;
 
 /**
@@ -27,10 +29,12 @@ import java.util.function.LongSupplier;
  *       그래서 이 값은 지금 내용의 첫 수신도 마지막 수신도 아니고, 그렇게 말하지 않는다(ship.last_seen 은 위치 보고로도 넓혀진다).</li>
  *   <li>메모리 캐시(MMSI 별): 찾음 · 없음은 {@value #TTL_MS} ms, 읽기 실패(시간 초과 · 연결 없음 · 그 밖의 예외)는 {@value #ERROR_TTL_MS} ms — 선택 하나를
  *       되풀이해 다시 계산해도(선박 변화 · {@code ShipFanout} 주기 다시 보기) DB 는 MMSI 마다 이 간격에 한 번. 실패는 예외가 아니라 {@link Status#UNAVAILABLE}.
- *       같은 MMSI 의 동시 miss(그 선박을 고른 세션들 — 각자의 순서 큐)는 한 번만 읽고 결과를 함께 쓴다(리뷰: 공유 풀을 세션 수만큼 쓰지 않게).</li>
- *   <li>부르는 쪽(계약 v5 §G18 · ADR-025): {@link #cached} 는 세션 우편함(WsSession SerialOutbox)에서 — 메모리만 본다. {@link #lookup} 은 DB 를 읽을 수
- *       있어 우편함 밖 선택 조회 실행기(ShipFanout · ShipLookups)에서만 부른다 — 기다리는 동안에도 그 세션의 diff · pong 은 간다.
- *       DB 는 선택 조회 전용 풀({@link ReadPool} — 연결 대기 ≤ 문장 상한)로 읽는다: 한 번의 읽기 최악 = {@link ReadPool#readBoundMs()}(기본 2 s + 3 s).</li>
+ *       같은 MMSI 의 동시 miss(그 선박을 고른 세션들 · 한 세션의 되풀이 물음)는 한 번만 읽고 결과를 함께 쓴다({@link SingleFlight} — 기다리는 쪽은
+ *       future 에 이어 붙어 스레드를 잡지 않는다. 리뷰: 공유 풀 · 조회 스레드를 세션 수만큼 쓰지 않게).</li>
+ *   <li>부르는 쪽(계약 v5 §G18 · ADR-025): {@link #cached} 는 세션 우편함(WsSession SerialOutbox)에서 — 메모리만 본다. {@link #lookupAsync} 는 DB 를
+ *       우편함 밖 선택 조회 실행기(ShipFanout · ShipLookups)에서 읽는다 — 기다리는 동안에도 그 세션의 diff · pong 은 간다. {@link #lookup} 은 같은 읽기를
+ *       부른 스레드에서(시험 · 도구). DB 는 선택 조회 전용 풀({@link ReadPool} — 연결 대기 ≤ 문장 상한)로 읽는다: 한 번의 읽기 최악 =
+ *       {@link ReadPool#readBoundMs()}(기본 2 s + 3 s).</li>
  *   <li>로그에는 MMSI · 오류 종류만.</li>
  * </ul>
  */
@@ -64,8 +68,8 @@ public class StoredStaticReader {
     private final Source source;
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Memo> cache = new ConcurrentHashMap<>();
-    /** MMSI → 진행 중인 읽기. 같은 MMSI 의 동시 miss 는 이것을 기다린다(DB 를 한 번만 읽는다). */
-    private final ConcurrentHashMap<String, CompletableFuture<Lookup>> inflight = new ConcurrentHashMap<>();
+    /** MMSI → 진행 중인 읽기. 같은 MMSI 의 동시 miss 는 이것에 이어 붙는다(DB 를 한 번만 읽는다). */
+    private final SingleFlight<String, Lookup> inflight = new SingleFlight<>();
     private final Counter hit;
     private final Counter miss;
     private final Counter errors;
@@ -109,28 +113,31 @@ public class StoredStaticReader {
     }
 
     /**
-     * 이 MMSI 의 저장된 정적 보고(캐시 — 찾음 · 없음 {@value #TTL_MS} ms, 실패 {@value #ERROR_TTL_MS} ms). 같은 MMSI 를 이미 읽는 중이면 그 결과를 기다린다
-     * (지표 hit = DB 를 읽지 않았다 — 캐시 또는 진행 중인 읽기, miss = DB 읽기). 예외를 던지지 않는다.
+     * 이 MMSI 의 저장된 정적 보고(캐시 — 찾음 · 없음 {@value #TTL_MS} ms, 실패 {@value #ERROR_TTL_MS} ms)를 executor 에서 읽는다. 신선한 캐시면 곧바로
+     * 끝난 future. 같은 MMSI 를 이미 읽는 중이면 그 읽기의 future(스레드를 잡지 않는다). 지표 hit = DB 를 읽지 않았다(캐시 또는 진행 중인 읽기), miss = DB 읽기.
+     * DB 오류는 {@link Status#UNAVAILABLE} 값으로 끝난다. future 가 예외로 끝나는 것은 실행기가 거절했을 때(RejectedExecutionException — 기억하지 않는다)와
+     * 읽기의 결함(Error)뿐 — 부르는 쪽이 '읽지 못함' 으로 말한다.
      */
-    public Lookup lookup(String mmsi) {
+    public CompletableFuture<Lookup> lookupAsync(String mmsi, Executor executor) {
         Memo m = cache.get(mmsi);
         if (fresh(m, clock.getAsLong())) {
             hit.increment();
-            return m.value();
+            return CompletableFuture.completedFuture(m.value());
         }
-        CompletableFuture<Lookup> mine = new CompletableFuture<>();
-        CompletableFuture<Lookup> running = inflight.putIfAbsent(mmsi, mine);
-        if (running != null) {
-            hit.increment();
-            return running.join(); // 읽는 쪽은 늘 끝낸다(finally) — 그 읽기의 상한 안에 돌아온다
-        }
+        SingleFlight.Flight<Lookup> f = inflight.run(mmsi, () -> readThrough(mmsi), executor);
+        if (f.joined()) hit.increment();
+        return f.result();
+    }
+
+    /**
+     * {@link #lookupAsync} 를 부른 스레드에서(시험 · 도구 — 운영의 선택 조회는 우편함 밖 실행기에서 lookupAsync). 같은 MMSI 를 다른 스레드가 읽는 중이면 그 결과를
+     * 기다린다. 예외를 던지지 않는다(그 읽기가 결함으로 끝났으면 기다린 쪽은 모름 — UNAVAILABLE).
+     */
+    public Lookup lookup(String mmsi) {
         try {
-            Lookup v = readThrough(mmsi);
-            mine.complete(v);
-            return v;
-        } finally {
-            inflight.remove(mmsi, mine);
-            mine.complete(Lookup.UNAVAILABLE); // 읽기가 Error 로 끝났으면 기다린 쪽은 모름(이미 끝났으면 아무 일도 없다)
+            return lookupAsync(mmsi, Runnable::run).join();
+        } catch (CompletionException e) {
+            return Lookup.UNAVAILABLE;
         }
     }
 

@@ -1,6 +1,7 @@
 package dev.wakeline.portcalls;
 
 import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.persist.SingleFlight;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -22,7 +23,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -42,6 +45,8 @@ import java.util.regex.Pattern;
  *       operator_off 이면 disabled. heartbeat 가 없거나 오래됐으면 색인만 본다(색인이 오래되면 incomplete 가 된다).</li>
  *   <li>메모리 캐시 {@value #TTL_MS} ms: 범위(모든 선박이 같이) · heartbeat · 호출부호별 기록. 선박을 고른 세션이 여럿이어도 DB 는 호출부호마다
  *       이 간격에 한 번. DB 오류는 error(같은 간격 동안 둔다 — 다시 부딪히지 않게).</li>
+ *   <li>같은 호출부호의 동시 읽기는 하나({@link #forStaticAsync} — {@link SingleFlight}, 계약 v5 §G18 개정): 캐시가 비어 있는 동안 그 선박을 고른 세션들 ·
+ *       한 세션의 되풀이 물음(마감에 답한 뒤의 선박 이동 · 주기 다시 보기)은 진행 중인 읽기에 이어 붙는다 — 읽기 · 조회 스레드가 하나다.</li>
  *   <li>로그에는 호출부호 · 오류 종류만.</li>
  * </ul>
  */
@@ -81,6 +86,8 @@ public class PortCallReader {
     private final Supplier<List<Object>> heartbeat;
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Memo<PortCallsInfo>> cache = new ConcurrentHashMap<>();
+    /** 정규화한 호출부호 → 진행 중인 읽기(같은 호출부호의 동시 miss 는 이어 붙는다). */
+    private final SingleFlight<String, PortCallsInfo> inflight = new SingleFlight<>();
     private volatile Memo<List<PortCallIndex.Coverage>> coverageMemo;
     private volatile Memo<String> disabledMemo;
     private final Counter hit;
@@ -127,6 +134,20 @@ public class PortCallReader {
         if (!fresh(e, clock.getAsLong())) return null;
         hit.increment();
         return e.value();
+    }
+
+    /**
+     * {@link #forStatic} 을 executor 에서(WS 선택 조회 — 우편함 밖, 계약 v5 §G18). 읽지 않고 답할 수 있으면({@link #cachedForStatic}) 곧바로 끝난 future.
+     * 같은 호출부호를 이미 읽는 중이면 그 읽기의 future(스레드를 잡지 않는다 — 지표 hit). 색인 · heartbeat 오류는 값(error · 색인만 보기)으로 끝난다.
+     * future 가 예외로 끝나는 것은 실행기가 거절했을 때(RejectedExecutionException — 기억하지 않는다)와 읽기의 결함(Error)뿐 — 부르는 쪽이 error 로 말한다.
+     */
+    public CompletableFuture<PortCallsInfo> forStaticAsync(ShipStatic st, Executor executor) {
+        PortCallsInfo now = cachedForStatic(st);
+        if (now != null) return CompletableFuture.completedFuture(now);
+        String cs = normalizeCallSign(st.callSign()); // cachedForStatic 이 null 이면 형식에 맞는 호출부호가 있다
+        SingleFlight.Flight<PortCallsInfo> f = inflight.run(cs, () -> forCallSign(cs), executor);
+        if (f.joined()) hit.increment();
+        return f.result();
     }
 
     /** 정규화한 호출부호 → 입출항({@value #TTL_MS} ms 메모리 캐시). */
@@ -281,6 +302,8 @@ public class PortCallReader {
     }
 
     int cached() { return cache.size(); }
+
+    int inflight() { return inflight.size(); }
 
     /**
      * 호출부호 정규화(수집기 portcalls.normalize_call_sign 과 같다): ASCII 가 아니면 null(문자열 전체 — 앞뒤 공백 포함, 대문자 변환 전) →
