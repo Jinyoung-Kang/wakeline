@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -33,8 +34,12 @@ import java.util.regex.Pattern;
  *       되돌림은 행을 지우지 않고 revoked_at · revoked_by 를 채운다. 커밋(또는 실패) 뒤 캐시를 바로 버린다 — 쓴 운영자의 다음 조회가 바로 반영한다.</li>
  *   <li>읽기({@link #active}): 활성 해결 전체를 {@value #TTL_S} s 이하 캐시한다(로그 조회는 15 s 마다 · Redis 만 읽는 경로에 요청마다 DB 를 더하지 않게).
  *       캐시를 채우는 읽기와 겹친 쓰기는 세대 번호로 가려 옛 값이 캐시에 남지 않는다.</li>
- *   <li>DB 를 읽지 못하면(장애 · {@value ResolutionRepository#READ_TIMEOUT_S} s 초과) 마지막으로 읽은 값을 STALE 로, 한 번도 읽지 못했으면
- *       UNAVAILABLE(아무것도 가리지 않는다)로 돌려주고 {@value #RETRY_S} s 뒤에 다시 읽는다 — 로그 조회(Redis)는 DB 장애 중에도 된다.
+ *   <li>다시 읽기는 한 번에 하나다. 그동안 다른 요청은 기다리지 않고 같은 세대의 지난 값(만료된 캐시 — OK · STALE · UNAVAILABLE 그대로)을 받는다
+ *       (그 동안만 캐시 나이가 {@value #TTL_S} s 를 넘을 수 있다). 지난 값이 없거나(첫 읽기) 쓰기로 버려졌으면(읽기-쓰기 일관) 진행 중인 읽기가 끝나기를
+ *       기다렸다가 새로 읽는다.</li>
+ *   <li>DB 를 읽지 못하면(장애 · 느림) 마지막으로 읽은 값을 STALE 로, 한 번도 읽지 못했으면 UNAVAILABLE(아무것도 가리지 않는다)로 돌려주고
+ *       {@value #RETRY_S} s 뒤에 다시 읽는다 — 로그 조회(Redis)는 DB 장애 중에도 된다. 다시 읽는 요청 하나의 상한은 풀 연결 대기(hikari
+ *       connection-timeout 5 s) + 문장 {@value ResolutionRepository#READ_TIMEOUT_S} s 이고, 장애 중에는 {@value #RETRY_S} s 에 한 요청만 그만큼 기다린다.
  *       응답은 resolution_state 로 이를 알리고, 실패는 WARN(처음 · 그 뒤 {@value #WARN_EVERY_S} s 마다)으로 시스템 로그에 남는다.</li>
  * </ul>
  */
@@ -64,11 +69,12 @@ public class ResolutionService {
     private final Supplier<Instant> clock;
     private final LongSupplier nanos;
     private final AtomicLong gen = new AtomicLong();
-    private final Object loadLock = new Object();
+    /** 다시 읽기는 한 번에 하나(만료 순간 요청이 몰려도 DB 를 한 번만 부른다). */
+    private final ReentrantLock loadLock = new ReentrantLock();
     private volatile Entry entry;
-    /** 마지막으로 DB 에서 읽은 값(읽기 실패 때 STALE 로). loadLock 안에서만 쓴다. */
+    /** 마지막으로 DB 에서 읽은 값(읽기 실패 때 STALE 로). loadLock 을 쥔 채로만 쓴다. */
     private Resolutions lastGood;
-    /** 읽기 실패가 이어지는 동안 마지막 WARN 시각(nanos) — 없으면 null. loadLock 안에서만. */
+    /** 읽기 실패가 이어지는 동안 마지막 WARN 시각(nanos) — 없으면 null. loadLock 을 쥔 채로만. */
     private Long failingWarnedAt;
 
     @Autowired
@@ -204,11 +210,17 @@ public class ResolutionService {
         entry = null;
     }
 
-    /** 활성 해결({@value #TTL_S} s 이하 캐시 — 클래스 설명). 예외를 던지지 않는다. */
+    /** 활성 해결({@value #TTL_S} s 이하 캐시 · 다시 읽는 동안은 지난 값 — 클래스 설명). 예외를 던지지 않는다. */
     public Resolutions active() {
         Entry e = entry;
         if (fresh(e)) return e.value();
-        synchronized (loadLock) { // 한 번에 한 읽기 — 만료 순간 요청이 몰려도 DB 를 한 번만 부른다
+        if (!loadLock.tryLock()) {
+            // 다른 요청이 다시 읽는 중: 같은 세대의 지난 값이 있으면 기다리지 않는다(느린 DB 에 로그 조회가 줄 서지 않게)
+            Entry last = entry;
+            if (last != null && last.gen() == gen.get()) return last.value();
+            loadLock.lock(); // 첫 읽기 · 쓰기 뒤: 옛 값을 주지 않고 기다렸다가 새로 읽는다
+        }
+        try {
             e = entry;
             if (fresh(e)) return e.value();
             long g = gen.get();
@@ -233,6 +245,8 @@ public class ResolutionService {
             }
             if (gen.get() == g) entry = new Entry(g, expires, value); // 읽는 동안 쓰기가 있었으면 남기지 않는다
             return value;
+        } finally {
+            loadLock.unlock();
         }
     }
 

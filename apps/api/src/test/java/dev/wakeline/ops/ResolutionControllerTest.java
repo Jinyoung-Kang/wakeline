@@ -82,7 +82,7 @@ class ResolutionControllerTest {
     void theListIs503WhenResolutionsWereNeverReadable_andStaleWhenTheLastSnapshotIsServed() throws Exception {
         repo.fail = true;
         mvc.perform(get("/api/v1/ops/resolutions").principal(ALICE)).andExpect(status().isServiceUnavailable())
-                .andExpect(header().string("Retry-After", "10")).andExpect(jsonPath("$.code").value("UNAVAILABLE"));
+                .andExpect(header().string("Retry-After", "30")).andExpect(jsonPath("$.code").value("UNAVAILABLE")); // 다시 읽는 간격(30 s) — 10 s 뒤 재시도는 같은 503
         repo.fail = false;
         repo.insert("log_group", "0123456789abcdef", Instant.parse("2026-09-29T04:00:00Z"), "bob", "x");
         nanos.addAndGet(31_000_000_000L);

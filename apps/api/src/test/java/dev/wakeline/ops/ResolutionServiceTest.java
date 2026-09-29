@@ -14,6 +14,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -24,7 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * 해결 표시(계약 v5 §G13) — DB 없이: 요청 본문 규칙(400 BAD_RESOLUTION), 유효 해결(같은 key 는 upto 가 가장 늦은 행), 활성 해결 캐시
  * (5 s 이하 · 쓰기 뒤 바로 버림 · 쓰기와 겹친 읽기가 옛 값을 캐시에 남기지 않음), DB 를 읽지 못할 때(마지막으로 읽은 값 = stale,
- * 한 번도 못 읽었으면 unavailable — 아무것도 가리지 않는다, 30 s 뒤 다시). 트랜잭션 · 감사 · 권한은 ResolutionDbTest · OpsResolutionsIT.
+ * 한 번도 못 읽었으면 unavailable — 아무것도 가리지 않는다, 30 s 뒤 다시), 다시 읽는 동안 다른 요청은 지난 값(쓰기 뒤는 기다림).
+ * 트랜잭션 · 감사 · 권한은 ResolutionDbTest · OpsResolutionsIT.
  */
 class ResolutionServiceTest {
     static final Instant NOW = Instant.parse("2026-09-29T05:00:00.123456789Z");
@@ -232,6 +239,47 @@ class ResolutionServiceTest {
         svc.invalidate();
         svc.active();
         assertThat(repo.reads).hasValue(5);
+    }
+
+    /**
+     * 다시 읽는 동안(느린 DB · 장애 — 연결 대기까지 수 초) 다른 요청은 그 읽기를 기다리지 않고 같은 세대의 지난 값을 바로 받는다(로그 조회는 Redis 만
+     * 필요하다). 쓰기로 캐시가 버려졌으면(읽기-쓰기 일관) 지난 값을 주지 않고 새로 읽은 값을 기다린다.
+     */
+    @Test
+    void whileOneRequestReReadsOtherRequestsGetTheLastValueWithoutWaiting_butNotAfterAWrite() throws Exception {
+        repo.insert("log_group", FP, NOW, "ops", null);
+        Resolutions first = svc.active();
+        advance(Duration.ofSeconds(5)); // 만료 — 다음 요청이 다시 읽는다
+        CountDownLatch inRead = new CountDownLatch(1), release = new CountDownLatch(1);
+        repo.duringRead = () -> {
+            repo.duringRead = () -> { };
+            inRead.countDown();
+            try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        };
+        ExecutorService pool = Executors.newCachedThreadPool(); // 요청마다 제 스레드(공용 풀 크기에 기대지 않는다)
+        CompletableFuture<Resolutions> loader = CompletableFuture.supplyAsync(svc::active, pool);
+        CompletableFuture<Resolutions> afterWrite = null;
+        try {
+            assertThat(inRead.await(5, TimeUnit.SECONDS)).as("the re-read is in progress").isTrue();
+            Resolutions other = CompletableFuture.supplyAsync(svc::active, pool).get(2, TimeUnit.SECONDS);
+            assertThat(other).as("the previous value, at once").isSameAs(first);
+            assertThat(repo.reads).as("no second read while one is in progress").hasValue(2);
+
+            // 쓰기가 커밋되고 캐시를 버렸다: 그 뒤의 요청은 옛 값을 받지 않고 기다렸다가 새로 읽는다
+            repo.insert("provider_error", "awc", NOW, "ops", null);
+            svc.invalidate();
+            afterWrite = CompletableFuture.supplyAsync(svc::active, pool);
+            CompletableFuture<Resolutions> w = afterWrite;
+            assertThatThrownBy(() -> w.get(300, TimeUnit.MILLISECONDS)).as("waits for a read that starts after the write")
+                    .isInstanceOf(TimeoutException.class);
+            release.countDown(); // 진행 중이던 읽기가 끝난다
+            assertThat(loader.get(5, TimeUnit.SECONDS).provider("awc")).as("the in-progress read began before the write").isNull();
+            assertThat(afterWrite.get(5, TimeUnit.SECONDS).provider("awc")).as("read-your-writes").isNotNull();
+            assertThat(repo.reads).hasValue(3);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
     }
 
     // ---------------------------------------------------------------- 쓰기

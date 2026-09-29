@@ -219,7 +219,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     않는다) · note 는 앞뒤 공백을 뗀 200 글자(코드 포인트) 이하 한 줄(제어 문자 없음), 빈 글이면 null.
     웹은 upto 를 보내지 않거나(지금) 항목 · 묶음의 `ts` · `last_at`(서버 시계)을 보낸다 — 브라우저 시계로 만든 시각은 미래일 수 있다.
   - `GET /api/v1/ops/resolutions` → `{"items":[활성 해결, 최신 순(resolved_at, id 내림차순)], "resolution_state"}`. 해결 기록을 한 번도 읽지 못했으면
-    503 `UNAVAILABLE`(빈 목록으로 "해결 없음" 을 지어내지 않는다).
+    503 `UNAVAILABLE` + `Retry-After: 30`(다시 읽는 간격 — 실패한 읽기는 그동안 캐시되므로 §2 의 기본 10 s 뒤 재시도는 같은 503 을 받는다)(빈 목록으로 "해결 없음" 을
+    지어내지 않는다).
   - `DELETE /api/v1/ops/resolutions/{id}` → **204**(revoked_at = now() · revoked_by = 운영자, 행은 남는다). 없는 id · 이미 되돌린 행은 404(두 요청이 겹쳐도 한 번만).
   - 감사: `RESOLVE`(target `kind:key`, before null, after = 행) · `UNRESOLVE`(target `kind:key`, before = 행, after `{id, revoked_at, revoked_by}`) —
     **행과 같은 트랜잭션**(감사가 실패하면 해결 · 되돌림도 없다. OpsResolutionsIT 가 두 행의 xmin 이 같음을 본다).
@@ -244,10 +245,11 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     요약만 가려 두 답이 갈린다). finished_at 이 없는 실행(실패 시각을 모름)은 가리지 않는다. 공급자 오류는 `'error'` 만이다(collector 가 `status.failure` 로 `last_error` 를 쓰는 실행과 같다) — ok · throttled · budget_* 행은 그대로.
     실행 목록 `items` 는 증거라 가리지 않는다. 해결은 요약과 같은 문장에서 DB 로 읽는다(캐시 없이). `last_at` 표기는 지금과 같다(ms).
   - 캐시 · 장애: api 는 활성 해결 전체를 **5 s 이하** 캐시하고 쓰기(해결 · 되돌림) 뒤 바로 버린다 — 쓴 운영자의 다음 조회가 바로 반영한다. 캐시를 채우는 읽기와 겹친
-    쓰기는 세대 번호로 가려 옛 값이 남지 않는다. 읽기는 3 s 상한, 실패하면 위 `stale`/`unavailable` 로 답하고 30 s 뒤 다시 읽는다(요청마다 느린 DB 를 기다리지
-    않는다 — 로그 조회는 Redis 만으로 DB 장애 중에도 된다). 실패는 WARN(처음 · 그 뒤 60 s 마다)으로 시스템 로그에 남고 회복은 INFO. api 는 한 인스턴스다
+    쓰기는 세대 번호로 가려 옛 값이 남지 않는다. 다시 읽기는 한 번에 하나이고, 그동안 다른 요청은 기다리지 않고 같은 세대의 지난 값을 받는다(첫 읽기 · 쓰기 뒤에만
+    새 값을 기다린다 — 읽기-쓰기 일관). 다시 읽는 요청 하나의 상한은 풀 연결 대기(hikari `connection-timeout` 5 s) + 문장 3 s(`withQueryTimeout` — 문장만 덮는다)
+    이고, 실패하면 위 `stale`/`unavailable` 로 답하고 30 s 뒤 다시 읽는다 — DB 장애 중에는 30 s 에 한 요청만 그만큼 기다리고 나머지 로그 조회는 Redis 만으로 바로 된다. 실패는 WARN(처음 · 그 뒤 60 s 마다)으로 시스템 로그에 남고 회복은 INFO. api 는 한 인스턴스다
     (SingleInstanceGuard) — 여럿이면 다른 인스턴스는 5 s 안에 반영한다.
   - 시험: MigrationDbTest(V13 열 · 제약 · 권한 · 되돌리기 · 다시 적용) · RolePrivilegesDbTest(표 스냅샷 `SELECT,INSERT` + 열 UPDATE 스냅샷) · ResolutionServiceTest
-    (본문 규칙 · 유효 해결 · 캐시 5 s · 쓰기 뒤 버림 · 겹친 읽기 · stale/unavailable · 30 s) · ResolutionDbTest(감사와 한 트랜잭션 · 되돌림은 행을 남김 · 404) ·
-    LogReaderTest · LogsControllerTest(hide/show · 가린 수 · 쪽 크기 · 묶음 규칙 · 뒤늦게 실린 항목) · ResolutionControllerTest(201 · 415 · 400 · 404 · 503 · stale) ·
+    (본문 규칙 · 유효 해결 · 캐시 5 s · 쓰기 뒤 버림 · 겹친 읽기 · 다시 읽는 동안 다른 요청은 지난 값(쓰기 뒤는 기다림) · stale/unavailable · 30 s) · ResolutionDbTest(감사와 한 트랜잭션 · 되돌림은 행을 남김 · 404) ·
+    LogReaderTest · LogsControllerTest(hide/show · 가린 수 · 쪽 크기 · 묶음 규칙 · 뒤늦게 실린 항목) · ResolutionControllerTest(201 · 415 · 400 · 404 · 503 + Retry-After 30 · stale) ·
     OpsResolutionsIT(세션 · CSRF · 해결 → 재발 → 되돌림 · 공급자 · 실행 요약(upto 전에 시작해 뒤에 실패한 실행 · 실패 시각을 모르는 실행은 보임) · 같은 xmin). REST 계약 표본(rest_contract_check)은 운영 경로를 싣지 않는다(익명 404 표본만).

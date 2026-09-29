@@ -17,7 +17,10 @@ import java.util.List;
  */
 @Repository
 public class ResolutionRepository {
-    /** 활성 해결 읽기의 상한(초) — 로그 조회(Redis 만 필요)가 느린 DB 에 오래 묶이지 않게. 넘으면 예외 → 서비스가 마지막 값으로 버틴다. */
+    /**
+     * 활성 해결 읽기 문장의 상한(초) — 넘으면 예외 → 서비스가 마지막 값으로 버틴다. 문장만 덮는다: 풀에서 연결을 얻는 대기(hikari connection-timeout)는
+     * 따로다. 그 대기를 한 요청만 겪도록 서비스가 다시 읽기를 하나로 묶고 다른 요청에는 지난 값을 준다(ResolutionService).
+     */
     static final int READ_TIMEOUT_S = 3;
     private static final String COLUMNS = "id, kind, key, upto, resolved_at, resolved_by, note";
 
