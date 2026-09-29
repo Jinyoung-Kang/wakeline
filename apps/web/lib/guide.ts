@@ -38,7 +38,7 @@ export const GUIDE_TOC: readonly TocItem[] = [
     id: "ops", n: "6", title: "운영 · 로그 (운영자 전용)", children: [
       { id: "ops-login", n: "6.1", title: "로그인" },
       { id: "ops-dashboard", n: "6.2", title: "운영 화면 — 공급자 · 실행 · 파이프라인" },
-      { id: "ops-logs", n: "6.3", title: "로그 · 해결 처리" },
+      { id: "ops-logs", n: "6.3", title: "로그" },
     ],
   },
   { id: "time", n: "7", title: "시각 표기 (KST · UTC)" },

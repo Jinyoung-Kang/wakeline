@@ -321,7 +321,6 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>상세</B> — 전체 메시지 · 예외 · 스택 · 같은 지문 묶음 통계 · 같은 요청 id 의 다른 항목. 화면의 오류 문구에 붙은 요청 id 로 여기서 같은 요청을 찾습니다.</li>
                 <li><B>복사 · 내려받기</B> — 보이는 목록 복사, <span className="mono">.txt</span>(시각 KST), <span className="mono">.ndjson</span>(api 가 준 그대로 — ts 는 UTC).</li>
                 <li><B>새 항목</B> — 15 s 마다 확인해 ‘새 항목 N건’ 단추를 띄웁니다. 누를 때만 목록이 바뀝니다(읽는 중에 줄이 밀리지 않게).</li>
-                <li><B>해결 처리</B> — 원인을 고친 오류는 해결 처리해 목록에서 지울 수 있습니다(운영자만).</li>
                 <li><B>AIS 수신 공백</B> — 두 번째 탭. AIS 수신이 끊긴 구간의 기록.</li>
               </UL>
             </Sec>

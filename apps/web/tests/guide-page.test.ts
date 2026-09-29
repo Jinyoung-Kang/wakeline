@@ -5,11 +5,13 @@
  * - 번호: 그림 위 번호(HTML 겹침 — 이미지에 굽지 않음)마다 같은 번호의 설명 항목이 있고, 설명 목록은 1..n. 찍을 때 보이지 않은 번호는 목록에 그렇다고 적는다.
  * - 시각이 나오는 예는 KST 와 UTC 를 함께 적는다. 출처는 하단 출처 줄과 같은 목록(lib/attribution)에서.
  */
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
-import { flattenToc, parseManifest, PLAN, type GuideManifest } from "@/lib/guide";
+import { flattenToc, parseManifest, PLAN, tocItem, type GuideManifest } from "@/lib/guide";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
 vi.mock("next/link", () => ({
@@ -137,6 +139,34 @@ describe("screenshots", () => {
     const html = render(EMPTY, ["dashboard: file 이름이 …"]);
     expect(text(html)).toContain("dashboard: file 이름이 …");
     expect(html).toMatch(/role="alert"/);
+  });
+});
+
+/** 설명서 밖의 화면 코드(app · components · lib, guide 파일 제외) — 설명서가 없는 기능을 적지 않는지 대조한다 */
+const WEB = new URL("..", import.meta.url).pathname;
+const walk = (d: string): string[] => readdirSync(join(WEB, d)).flatMap((n) => {
+  const rel = join(d, n);
+  return statSync(join(WEB, rel)).isDirectory() ? (n === "guide" ? [] : walk(rel)) : /\.tsx?$/.test(n) && !/guide/.test(n) ? [rel] : [];
+});
+const SCREENS = ["app", "components", "lib"].flatMap(walk).map((f) => readFileSync(join(WEB, f), "utf8")).join("\n");
+
+describe("features the guide describes exist in the screens", () => {
+  // 오류 '해결' 표시(ADR-022 · 계약 §G13 — 지우지 않고 upto 까지 가림)는 api 에만 있고 화면(/ops/resolutions 호출 · hidden_resolved 표시)이 아직 없다.
+  // 화면이 들어오면 이 시험이 실패한다 — 그때 6.2 · 6.3 에 가림 · 가린 수 · 다시 보기 · 되돌리기 · 재발은 다시 보임을 적는다(지운다고 쓰지 않는다).
+  const RESOLVE_UI = /ops\/resolutions|hidden_resolved/.test(SCREENS);
+  it("resolving errors is described only when the ops/logs screens have it — and never as deleting", () => {
+    const html = render(EMPTY);
+    const logs = text(/<section[^>]*id="ops-logs"[\s\S]*?<\/section>/.exec(html)![0]);
+    const ops = text(/<section[^>]*id="ops"[\s\S]*?<\/section>\s*<\/section>/.exec(html)?.[0] ?? html);
+    expect(ops).not.toMatch(/지울 수|삭제/);
+    if (!RESOLVE_UI) {
+      expect(logs).not.toMatch(/해결/);
+      expect(tocItem("ops-logs").title).not.toMatch(/해결/);
+    } else {
+      expect(logs).toMatch(/해결/);
+      expect(logs).toMatch(/지우지 않/);
+      expect(logs).toMatch(/다시 보/);
+    }
   });
 });
 
