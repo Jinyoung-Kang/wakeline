@@ -461,6 +461,7 @@ const VALIDATORS: Record<ServerType, (m: Obj, d: Drops) => ServerMsg> = {
     const dest = part<Obj>(m, "destination_info", DEST_INFO, d);
     // 한국 항만 입출항(ADR-022 개정): 묶음 하나 — 틀리면 통째로 버리고 센다(카드는 "—")
     const calls = part<Obj>(m, "port_calls", PORT_CALLS, d);
+    const state = one("state", SHIP_STATE, parseShipState);
     const stat = one("static", SHIP_STATIC, parseShipStatic);
     // 정적 정보의 출처(계약 v5 §G17 — 스키마 anyOf): live · stored 는 static 이 있을 때만, 시각은 stored 일 때만. 어긋나면 그 값만 모름으로 두고 센다 —
     // 저장값에 실시간이라는 표시를 붙이거나 없는 정적 정보에 출처를 붙이지 않는다. 시각이 static.updated_at 과 같은지는 보지 않는다(api 시험 · contract_check)
@@ -469,7 +470,7 @@ const VALIDATORS: Record<ServerType, (m: Obj, d: Drops) => ServerMsg> = {
     let storedAt = part<string>(m, "static_updated_at", TIME, d);
     if (storedAt != null && source !== "stored") { d.drop("static_updated_at"); storedAt = null; }
     return {
-      type: "ship_selected", mmsi, state: one("state", SHIP_STATE, parseShipState), static: stat, static_source: source, static_updated_at: storedAt,
+      type: "ship_selected", mmsi, state, static: stat, static_source: source, static_updated_at: storedAt,
       destination_info: dest ? parseDestinationInfo(dest) : null, port_calls: calls ? parsePortCalls(calls) : null,
     };
   },
