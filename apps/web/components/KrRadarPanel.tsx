@@ -1,11 +1,11 @@
 "use client";
 import { useServerData } from "@/lib/store";
 import { useServerNow } from "@/lib/clock";
-import { fmtTimeKstLabel, isKrRadarStale, KR_RADAR_STALE_S, legendTextColor } from "@/lib/format";
+import { fmtKstTitle, fmtTimeKstLabel, fmtUtcTitle, isKrRadarStale, KR_RADAR_STALE_S, legendTextColor } from "@/lib/format";
 
 /**
  * 기상청 레이더 합성(FR-31) 범례·정합 정보. 좌표 정의는 서버가 문서 값(LCC 30/60·N38 E126·기준 격자점)으로 계산한다.
- * 시각은 한국 표준시(tm 은 기상청이 준 KST 그대로, 수신 시각은 " KST").
+ * 시각은 한국 표준시(tm 은 기상청이 준 KST 그대로 — 원본이 KST, 수신 시각은 " KST" · 마우스를 올리면 원본 UTC).
  * 수집이 15분 넘게 멈추면(서버 meta.stale 또는 수집 경과) 최신 tm 옆에 STALE(REL-19) — 3 h 프레임 보관 동안 현재처럼 보이지 않게.
  */
 export function KrRadarPanel({ onClose }: { onClose: () => void }) {
@@ -22,8 +22,8 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
             {(d.legend ?? []).map(([lo, c]) => <span key={lo} className="mono px-1" style={{ background: `rgb(${c[0]},${c[1]},${c[2]})`, color: legendTextColor(c) }}>{lo}</span>)}
             <span className="text-fg-3">dBZ 이상 (표시 최소 {d.min_dbz} dBZ · 색 구간은 표시용 선택)</span>
           </div>
-          {([["최신 tm(KST)", <>{d.latest_tm ?? "—"}{stale ? <span className="badge bad ml-1" data-testid="kr-panel-stale" title={`마지막 수집 ${fmtTimeKstLabel(d.meta?.fetched_at)} — ${KR_RADAR_STALE_S / 60}분 넘게 갱신 없음`}>STALE</span> : null}</>],
-            ["수신", fmtTimeKstLabel(latest?.fetched_at)], ["에코 셀", latest ? latest.echo_cells.toLocaleString() : "—"],
+          {([["최신 tm(KST)", <>{d.latest_tm ?? "—"}{stale ? <span className="badge bad ml-1" data-testid="kr-panel-stale" title={`마지막 수집 ${fmtKstTitle(d.meta?.fetched_at)} — ${KR_RADAR_STALE_S / 60}분 넘게 갱신 없음`}>STALE</span> : null}</>],
+            ["수신", <span key="rx" title={fmtUtcTitle(latest?.fetched_at)}>{fmtTimeKstLabel(latest?.fetched_at)}</span>], ["에코 셀", latest ? latest.echo_cells.toLocaleString() : "—"],
             ["격자", d.grid ? `${d.grid.nx}×${d.grid.ny} · ${d.grid.res_m} m · 기준점 (${d.grid.ref.join(", ")})` : "—"],
             ["투영", d.projection ?? "—"], ["레이더", d.stations ?? "—"]] as [string, React.ReactNode][]).map(([k, v]) => (
             <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="text-fg-3 shrink-0">{k}</span><span className="mono break-all text-right">{v}</span></div>

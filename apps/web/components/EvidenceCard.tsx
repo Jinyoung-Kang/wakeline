@@ -41,10 +41,10 @@ export function EvidenceCard({ a }: { a: Alert }) {
     if (ev.vrate_assumed_zero === true) rows.push(["가정", "수직속도 미상 → 0 ft/min 가정"]);
   } else {
     rows.push(["연속 확인", confirmations == null ? "—" : `${confirmations}회`]);
-    rows.push(["출처 / 관측", `${str(ev.provider) ?? "—"} · ${fmtTimeKstLabel(str(ev.seen_at))}`]);
+    rows.push(["출처 / 관측", <span key="seen">{str(ev.provider) ?? "—"} · <span className="mono" title={fmtUtcTitle(str(ev.seen_at))}>{fmtTimeKstLabel(str(ev.seen_at))}</span></span>]);
   }
   if (posAge != null) rows.push(["판정 시 위치 경과", `${fmtNum(posAge, " s", 0)}`]);
-  if (a.left_at) rows.push(["종료", `${fmtTimeKstLabel(a.left_at)} · ${closeReasonLabel(a.close_reason)}`]);
+  if (a.left_at) rows.push(["종료", <span key="left"><span className="mono" title={fmtUtcTitle(a.left_at)}>{fmtTimeKstLabel(a.left_at)}</span> · {closeReasonLabel(a.close_reason)}</span>]);
   const assumptions: string[] = [];
   if (src?.base_source === "assumed_surface") assumptions.push("하한 미발표 → 지상(SFC)부터로 가정");
   if (bandFt && (bandFt.top == null || src?.top_source === "unknown")) assumptions.push("상한 미발표 → 무제한으로 가정");

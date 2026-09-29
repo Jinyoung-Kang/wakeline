@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { ageS, fmtDuration, fmtKstTitle, fmtRangeKst, fmtSogDual, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
+import { ageS, fmtDuration, fmtKstTitle, fmtRangeKst, fmtSogDual, fmtTimeKstLabel, fmtUtcRangeTitle, fmtUtcTitle } from "@/lib/format";
 import {
   fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
   parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
@@ -205,7 +205,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
               {track.gaps.slice(-5).map((g) => {
                 const dur = gapDurationS(g);
                 return (
-                  <li key={`${g.started_at}-${g.ended_at ?? "open"}`} className="mono">
+                  <li key={`${g.started_at}-${g.ended_at ?? "open"}`} className="mono" title={fmtUtcRangeTitle(g.started_at, g.ended_at)}>
                     수신 공백 {fmtRangeKst(g.started_at, g.ended_at, "진행 중")}{dur != null ? ` · ${dur} s` : ""}{g.reason ? ` · ${g.reason}` : ""}
                   </li>
                 );
@@ -215,7 +215,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         </div>
         <div className="mt-2 text-[10px] text-fg-3">
           선박명·호출부호·크기·흘수·목적지·ETA 는 선박이 AIS 로 보낸 보고값(선원 입력)이며 검증하지 않았습니다. ETA 에는 연도가 없습니다(입력은 UTC — 한국 표준시로 바꿔 함께 보입니다).
-          시각은 한국 표준시(KST) — 시각에 마우스를 올리면 원본 UTC.
+          시각은 한국 표준시(KST) — 이 카드의 시각에 마우스를 올리면 원본 UTC(지도 항적 점 툴팁 안의 시각은 KST 만).
           출발지(보고)는 선원이 목적지 칸에 “A&gt;B” 로 적은 경우의 A 이고, 항구 이름·국가는 UN/LOCODE 코드 모양일 때만 풀이합니다.
           아이콘은 선수방위, 없으면 침로(점선 외곽), 둘 다 없으면 방향 없는 원입니다. 지도 위 선은 기록된 위치를 이은 것이고, 회색 점선은 그 사이 위치를 모르는 공백입니다.
         </div>

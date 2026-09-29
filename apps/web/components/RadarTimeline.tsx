@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
-import { fmtMinuteKst, fmtTimeKstLabel } from "@/lib/format";
+import { fmtMinuteKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
@@ -53,6 +53,8 @@ export function RadarTimeline() {
   const label = kma
     ? (krTm && /^\d{12}$/.test(krTm) ? `${krTm.slice(4, 6)}-${krTm.slice(6, 8)} ${krTm.slice(8, 10)}:${krTm.slice(10, 12)} KST` : "—")
     : time ? fmtMinuteKst(time * 1000) : "—";
+  // 툴팁: RainViewer 는 원본 UTC, 기상청은 tm 이 원래 KST 라 원본 UTC 가 없다 — 그렇다고 적는다
+  const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST 그대로(원본이 KST)`) : time ? fmtUtcTitle(time * 1000) : undefined;
   const [kr, setKr] = useState(false);
   return (
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
@@ -65,7 +67,7 @@ export function RadarTimeline() {
         aria-label={playing ? "레이더 애니메이션 정지" : "레이더 애니메이션 재생"}>{playing ? "정지" : "애니메이션 ▶"}</button>
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
-      <span className="mono text-[11px]" data-testid="radar-frame-time">{label}</span>
+      <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
       {kma && !krAvailable
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}

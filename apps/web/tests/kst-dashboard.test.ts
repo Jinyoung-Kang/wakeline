@@ -211,7 +211,7 @@ describe("dashboard components show KST (the UTC original stays in the tooltip)"
       aircraft: { hits: [{ hex: "71c081", callsign: "KAL081", registration: null, type_code: null, alt_ft: null, on_ground: null, lat: null, lon: null, live: false, last_seen: "2026-09-28T23:41:14Z" }], state: "done", msg: "1건" },
       ships: { hits: [{ mmsi: "300000002", name: "BRAVO", call_sign: null, imo: null, ship_type: null, category: "cargo", live: false, lat: null, lon: null, sog_kn: null, seen_at: null, last_position_at: "2026-09-28T15:30:00Z", last_seen_at: "2026-09-28T14:30:00Z" }], state: "done", msg: "1건", note: null, error: null },
     } as never));
-    expect(results).toContain('title="마지막 수신 09-29 08:41:14 KST"');
+    expect(results).toContain('title="마지막 수신 09-29 08:41:14 KST · 원본 UTC 2026-09-28T23:41:14.000Z"');
     expect(text(results)).toContain("마지막 수신·저장 시각은 KST");
     expect(text(results)).not.toMatch(UTC_LEFT);
   });
@@ -278,7 +278,7 @@ describe("map tooltips and text helpers in KST", () => {
   });
   it("focus-tracking chip: the start time in its tooltip is KST", () => {
     const d = parseDemand({ focus: { hex: "71c081", state: "active", interval_s: 5, since: "2026-09-28T23:40:00Z" } }, 0);
-    expect(focusChip(d, "71c081", NOW)!.title).toContain("시작 09-29 08:40:00 KST.");
+    expect(focusChip(d, "71c081", NOW)!.title).toContain("시작 09-29 08:40:00 KST · 원본 UTC 2026-09-28T23:40:00.000Z.");
   });
 });
 

@@ -5,7 +5,7 @@ import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { fmtClockKst, fmtEta, fmtTimeKstLabel, hazardColor } from "@/lib/format";
+import { fmtClockKst, fmtEta, fmtKstTitle, fmtUtcTitle, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
@@ -122,7 +122,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
       <span className="label mr-1">{ev.type}</span>
       <span className={ev.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[ev.type] ?? ev.type}</span>
       {" · "}<span className="mono">{ev.alert.callsign ?? ev.alert.hex}</span> · {ev.alert.hazard} {ev.alert.fir_id}
-      {" · "}<span className="mono text-fg-3" data-testid="alert-banner-time">수신 {fmtClockKst(serverNowMs(ev.at))}</span>
+      {" · "}<span className="mono text-fg-3" data-testid="alert-banner-time" title={fmtUtcTitle(serverNowMs(ev.at))}>수신 {fmtClockKst(serverNowMs(ev.at))}</span>
     </div>
   );
 }
@@ -142,7 +142,7 @@ function EtaBadge({ a, state }: { a: Alert; state: AlertListState }) {
   const judged = typeof a.evidence?.judged_at === "string" ? a.evidence.judged_at : null;
   const frozen = state !== "live";
   return (
-    <span className="badge est ml-auto" title={state === "live" ? `판정 ${fmtTimeKstLabel(judged)} · 현재 속도·방위 직선 외삽` : ETA_FROZEN_TITLE[state]} data-testid="alert-eta">
+    <span className="badge est ml-auto" title={state === "live" ? `판정 ${fmtKstTitle(judged)} · 현재 속도·방위 직선 외삽` : ETA_FROZEN_TITLE[state]} data-testid="alert-eta">
       추정 ETA {frozen ? "—" : fmtEta(now ? etaRemainingS(a, now) : a.eta_s)}
     </span>
   );

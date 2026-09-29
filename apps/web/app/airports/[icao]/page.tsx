@@ -45,6 +45,8 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <section className="panel p-3">
             <div className="label mb-1">METAR · <span className="mono" title={fmtUtcTitle(m.obs_time)}>{fmtTimeKstLabel(m.obs_time)}</span>{age != null ? ` · ${fmtDuration(age)} 전` : ""} · {m.provider ?? "—"}</div>
+            {/* 원문 이름표는 보이게(TAF · 공항 카드와 같게) — 위 줄의 KST 시각 바로 아래 "…Z" 가 UTC 라는 것이 툴팁 없이도 읽히도록 */}
+            <div className="label mt-1" title={RAW_TITLE}>METAR (원문 · UTC)</div>
             <pre className="mono whitespace-pre-wrap text-[11px]" title={RAW_TITLE}>{m.raw}</pre>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="badge" style={{ color: catColor, borderColor: catColor }}>{m.flight_cat ?? "—"}</span>

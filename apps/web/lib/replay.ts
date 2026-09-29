@@ -6,7 +6,7 @@
  * 시각은 한국 표준시(사용자 요청 2026-09-29): 고르는 입력 · 보이는 글자는 KST, api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
  */
 import { ApiError } from "./api";
-import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtRangeKst, fmtTimeKstLabel } from "./format";
+import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtRangeKst, fmtTimeKstLabel, fmtUtcRangeTitle, fmtUtcTitle } from "./format";
 import { isoKst, KST_OFFSET_MS } from "./kst";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
@@ -58,6 +58,12 @@ export function radarTimeMs(t: number | string | null | undefined): number | nul
   return null;
 }
 
+/** 재생 화면 레이더 문구의 툴팁: 그 프레임 시각의 원본 UTC. 프레임이 없으면 undefined(title 없음) */
+export function replayRadarTitle(frame: Pick<ReplayFrame, "at" | "radar"> | null): string | undefined {
+  const t = radarTimeMs(frame?.radar?.time);
+  return t == null ? undefined : fmtUtcTitle(t);
+}
+
 /** 재생 화면의 레이더 상태 문구 */
 export function replayRadarLabel(frame: Pick<ReplayFrame, "at" | "radar"> | null): string {
   if (!frame) return "—";
@@ -86,6 +92,17 @@ export function replayRecLabel(a: Pick<ReplayAircraft, "ts" | "provider">, at: s
   return `${fmtTimeKstLabel(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
 }
 
+/** 기록 시각 행의 이름 — 원해상도는 "기록 시각", 요약은 그 1분 구간이라 "기록 구간" */
+export const replayRecRowName = (a: Pick<ReplayAircraft, "provider">) => (isSummaryRow(a) ? "기록 구간" : "기록 시각");
+
+/** 기록 시각 행의 툴팁: 원본 UTC(요약은 그 1분 구간 "원본 UTC a – b"). 모르면 undefined(title 없음) */
+export function replayRecTitle(a: Pick<ReplayAircraft, "ts" | "provider">): string | undefined {
+  if (!a.ts) return undefined;
+  if (!isSummaryRow(a)) return fmtUtcTitle(a.ts);
+  const t0 = Date.parse(a.ts);
+  return Number.isNaN(t0) ? undefined : fmtUtcRangeTitle(t0, t0 + 60_000);
+}
+
 /** 재생 상세(inspector) 행 — 고도·지상속도는 두 단위(계약 v5 §A2). 요약 행은 "1분 평균"이라고 이름에 밝힌다(DH-11) */
 export function replayAircraftRows(a: ReplayAircraft, at: string): [string, string][] {
   const summary = isSummaryRow(a);
@@ -96,7 +113,7 @@ export function replayAircraftRows(a: ReplayAircraft, at: string): [string, stri
     [summary ? "지상속도(1분 평균)" : "지상속도", fmtGsDual(a.gs_kt)],
     ["방위", fmtNum(a.track_deg, "°")],
     ["지상", fmtBool(a.on_ground)],
-    [summary ? "기록 구간" : "기록 시각", summary ? replayRecLabel(a, at) : fmtTimeKstLabel(a.ts)],
+    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtTimeKstLabel(a.ts)],
     ["출처", summary ? "1분 요약(track_point_1m)" : a.provider ?? "—"],
   ];
 }

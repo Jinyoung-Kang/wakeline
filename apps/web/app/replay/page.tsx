@@ -2,14 +2,15 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { fmtIsoKst, fmtLatencyMs, fmtRangeKst, fmtUtcTitle } from "@/lib/format";
+import { fmtIsoKst, fmtLatencyMs, fmtUtcTitle } from "@/lib/format";
 import {
-  fromKstInput, isSummaryRow, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayAircraftRows, replayApiPath, replayAtLabel, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRange,
-  replayReduce, replaySigmetBand, ReplayLoader, replayZone, stepAt, SUMMARY_FLAG, toKstInput, type ReplayFrame, type ReplayRange,
+  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayFrameAtLabel, replayInspectorMiss, replayRadarLabel, replayRadarTitle, replayRange,
+  replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayFrame, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
 import { ReplayList } from "@/components/ReplayList";
+import { ReplayAircraftDetail, ReplaySigmetDetail } from "@/components/ReplayInspector";
 import { RequestIdCopy } from "@/components/logs/ErrorNote";
 
 const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
@@ -78,11 +79,11 @@ export default function ReplayPage() {
         <datalist id="replay-marks"><option value={range.fullResFrom} label="72 h" /></datalist>
         <span className="mono" data-testid="replay-at" title={at ? fmtUtcTitle(at) : undefined}>{replayAtLabel(at)}</span>
         {at && max ? <span className={replayZone(at, range) === "full" ? "text-fg-2" : "text-warn"} data-testid="replay-zone">{replayZone(at, range) === "full" ? "원해상도 구간(72 h 안)" : "1분 요약 구간(72 h 밖)"}</span> : null}
-        <span className={`mono ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title="지도에 그린 기록의 시각(응답 at — KST)">지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
+        <span className={`mono ${shown.behind ? "text-warn" : "text-fg-2"}`} data-testid="replay-frame-at" title={`지도에 그린 기록의 시각(응답 at — KST)${frame ? ` · ${fmtUtcTitle(frame.at) ?? "원본 UTC —"}` : ""}`}>지도 {shown.text}{shown.behind ? " · 불러오는 중" : ""}</span>
         <span className="mono text-fg-2" data-testid="replay-summary">{frame ? `${frame.aircraft.length} aircraft · ${frame.sigmets.length} SIGMET · ${SOURCE_LABEL[frame.source] ?? frame.source} · ${fmtLatencyMs(latency)}` : "—"}</span>
         <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
         <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
-        <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar">{replayRadarLabel(frame)}</span>
+        <span className={frame?.radar ? "text-fg-2" : "text-fg-3"} data-testid="replay-radar" title={replayRadarTitle(frame)}>{replayRadarLabel(frame)}</span>
         {err ? <span className="whitespace-normal text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
         {clamped ? <span className="whitespace-normal text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
         <span className="whitespace-normal text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
@@ -102,15 +103,10 @@ export default function ReplayPage() {
               <button className="btn" onClick={() => setPick(null)}>닫기</button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto px-2 py-1">
-              {pick.kind === "aircraft" ? (ac ? <>
-                {isSummaryRow(ac) ? <div className="py-1 text-[11px] text-warn" data-testid="replay-summary-row">{SUMMARY_FLAG}</div> : null}
-                {replayAircraftRows(ac, frame!.at).map(([k, v]) => <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right">{v}</span></div>)}
-              </> : <div className="py-2 text-fg-3" data-testid="replay-inspector-miss">{replayInspectorMiss(pick, frame, err)}</div>)
-                : sg ? <>
-                  {([["유형", `${sg.hazard}${sg.qualifier ? ` ${sg.qualifier}` : ""}`], ["FIR", sg.fir_name ?? sg.fir_id], ["고도대", replaySigmetBand(sg)], ["유효", fmtRangeKst(sg.valid_from, sg.valid_to)], ["판정", sg.excluded_reason ? `제외 (${sg.excluded_reason})` : "폴리곤·고도대·유효시간 검사"]] as [string, string][])
-                    .map(([k, v]) => <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>)}
-                  <pre className="mono mt-2 whitespace-pre-wrap border border-line bg-bg p-2 text-[10px] text-fg-2" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">{sg.raw_text}</pre>
-                </> : <div className="py-2 text-fg-3" data-testid="replay-inspector-miss">{replayInspectorMiss(pick, frame, err)}</div>}
+              {pick.kind === "aircraft" ? (ac ? <ReplayAircraftDetail ac={ac} at={frame!.at} />
+                : <div className="py-2 text-fg-3" data-testid="replay-inspector-miss">{replayInspectorMiss(pick, frame, err)}</div>)
+                : sg ? <ReplaySigmetDetail sg={sg} />
+                : <div className="py-2 text-fg-3" data-testid="replay-inspector-miss">{replayInspectorMiss(pick, frame, err)}</div>}
             </div>
           </div>
         ) : null}

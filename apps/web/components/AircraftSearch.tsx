@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { fmtTimeKstLabel } from "@/lib/format";
+import { fmtKstTitle, fmtTimeKstLabel } from "@/lib/format";
 import { saveLayers } from "@/lib/prefs";
 import {
   isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
@@ -258,7 +258,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
             <span className="mono w-[54px] shrink-0 text-fg-2">{h.hex}</span>
             <span className="mono w-[64px] shrink-0 text-fg-2" title="등록번호">{h.registration ?? "—"}</span>
             <span className="w-[74px] shrink-0 text-right" title="고도(ft · FL / m)">{h.on_ground === true ? <span className="mono">GND</span> : <AltStack ft={h.alt_ft} nowrap />}</span>
-            {h.live ? <span className="badge ok ml-auto">live</span> : <span className="badge ml-auto" title={h.last_seen ? `마지막 수신 ${fmtTimeKstLabel(h.last_seen)}` : "마지막 수신 시각 모름"}>db</span>}
+            {h.live ? <span className="badge ok ml-auto">live</span> : <span className="badge ml-auto" title={h.last_seen ? `마지막 수신 ${fmtKstTitle(h.last_seen)}` : "마지막 수신 시각 모름"}>db</span>}
           </li>
         ))}
       </ul>
