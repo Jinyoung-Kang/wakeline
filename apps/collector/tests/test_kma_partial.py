@@ -353,7 +353,7 @@ async def test_partial_frame_is_replaced_when_the_refetch_has_more_sites(env):
     assert f["echo_cells"] == 15000 and f["raw_ref"] == "raw/kma_radar/1"  # 새 원본만 보관한다
     assert f["fetched_at"] == f["refetched_at"] == _iso(clock["utc"])
     assert (f["refetches"], f["upgrades"]) == (1, 1)
-    assert f["expires_at"] > seeded[0]["expires_at"]
+    assert datetime.fromisoformat(f["expires_at"]) > datetime.fromisoformat(seeded[0]["expires_at"])  # 영상 TTL 을 새로
     assert await r.get(mod.KEY_FRAME.format(tm="202609291440")) != "old-202609291440"
     # 최신 프레임이 아니므로 meta 의 헤더 값 · fetched_at 은 그대로(latest_tm 을 설명한다)
     meta = await r.hgetall(mod.KEY_META)
