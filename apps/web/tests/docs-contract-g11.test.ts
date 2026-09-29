@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { pipelineRows, STREAM_WINDOW_SLACK_S } from "@/lib/ops";
-import { fmtDual, fmtDualCompact, dualCell } from "@/lib/time";
+import { fmtDual, fmtDualCompact, dualCell, fmtUtcDayDual, utcDayHours } from "@/lib/time";
 
 const repo = new URL("../../../", import.meta.url);
 const contract = readFileSync(new URL("docs/audit/change-contract-v5.md", repo), "utf8");
@@ -86,6 +86,9 @@ describe("contract v5 §G13 records KST first with UTC on every screen (user req
     expect(g13).toContain(c.kst);
     expect(g13).toContain(c.utc);
     expect(g12).not.toContain("DualTime"); // 절이 섞이지 않았다(추출 확인)
+    // 통계 시간대별 막대: 눈금 두 줄(KST 시 · UTC 시)과 설명 줄 — lib/time 이 만드는 글자 그대로
+    const h0 = utcDayHours("2026-09-28")[0];
+    for (const s of [`\`${h0.kst}\``, `\`${h0.utcTick}\``, h0.full, fmtUtcDayDual("2026-09-28")!]) expect(g13).toContain(s);
   });
   it("§G11's tooltip-only UTC sentence points to §G13", () => {
     const line = contract.split("\n").find((l) => l.includes("원본 UTC: 카드 · 표 · 목록 · 상태 바의 KST 시각은"));

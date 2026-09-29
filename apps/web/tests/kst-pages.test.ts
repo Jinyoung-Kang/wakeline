@@ -46,15 +46,28 @@ async function mount(el: React.ReactElement) {
 }
 
 describe("stats: UTC-day aggregates keep the UTC date; times of day are KST", () => {
-  it("hourly rows: bars stay in time order for the UTC day, labelled with the KST hour; the full label names both", () => {
+  it("hourly rows: bars stay in time order for the UTC day; each tick names the KST hour and, below it, the UTC hour; the full label names both", () => {
     const rows = hourlyRowsKst([{ hour: "00", value: 3 }, { hour: "15", value: 7 }], "2026-09-28");
     expect(rows).toHaveLength(24);
     expect(rows.map((r) => r.label)).toEqual(["09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "00", "01", "02", "03", "04", "05", "06", "07", "08"]);
-    expect(rows[0]).toEqual({ label: "09", value: 3, full: "09-28 09시 KST (UTC 00시)" });
-    expect(rows[15]).toEqual({ label: "00", value: 7, full: "09-29 00시 KST (UTC 15시)" }); // UTC 15시 = 다음 KST 날의 자정
-    expect(rows[1]).toEqual({ label: "10", value: null, full: "09-28 10시 KST (UTC 01시)" }); // 자료 없음은 null 그대로
-    // 날짜를 모르면 시각만(날짜를 지어내지 않는다)
-    expect(hourlyRowsKst([], null)[15].full).toBe("00시 KST (UTC 15시)");
+    expect(rows.map((r) => r.sub)).toEqual(Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}Z`)); // 둘째 줄 = 같은 순간의 UTC 시
+    expect(rows[0]).toEqual({ label: "09", sub: "00Z", value: 3, full: "09-28 09시 KST · 00시 UTC" });
+    expect(rows[15]).toEqual({ label: "00", sub: "15Z", value: 7, full: "09-29 00시 KST · 09-28 15시 UTC" }); // UTC 15시 = 다음 KST 날의 자정(UTC 날짜가 달라 UTC 쪽에 날짜)
+    expect(rows[1]).toEqual({ label: "10", sub: "01Z", value: null, full: "09-28 10시 KST · 01시 UTC" }); // 자료 없음은 null 그대로
+    // 날짜를 모르면(없음 · 형식 오류 · 달력에 없는 날) 시각만(날짜를 지어내지 않는다)
+    for (const d of [null, "2026-9-28", "2026-02-30"]) expect(hourlyRowsKst([], d)[15].full, String(d)).toBe("00시 KST · 15시 UTC");
+  });
+  it("BarChart draws the second tick line (UTC) under each label when rows have one; bars without it keep one line", async () => {
+    const { BarChart } = await import("@/components/BarChart");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const html = renderToStaticMarkup(createElement(BarChart, { id: "h", title: "t", rows: hourlyRowsKst([{ hour: "00", value: 3 }], "2026-09-28") }));
+    const ticks = [...html.matchAll(/<text[^>]*data-tick="(kst|utc)"[^>]*>(?:<title>[^<]*<\/title>)?([^<]*)<\/text>/g)].map((m) => [m[1], m[2]]);
+    expect(ticks.filter(([k]) => k === "kst").map(([, v]) => v)).toEqual(hourlyRowsKst([], "2026-09-28").map((r) => r.label));
+    expect(ticks.filter(([k]) => k === "utc").map(([, v]) => v)).toEqual(hourlyRowsKst([], "2026-09-28").map((r) => r.sub));
+    // 칸마다 KST 줄 바로 다음에 그 칸의 UTC 줄
+    for (let i = 0; i < 24; i++) expect([ticks[2 * i][0], ticks[2 * i + 1][0]]).toEqual(["kst", "utc"]);
+    const plain = renderToStaticMarkup(createElement(BarChart, { id: "p", title: "t", rows: [{ label: "A", value: 1 }] }));
+    expect(plain).not.toContain('data-tick="utc"');
   });
   it("empty-state text names the aggregation time in KST with UTC", () => {
     expect(statsEmptyText(false, "2026-09-27", "2026-09-28")).toContain("다음 12:30 KST · 03:30 UTC 집계");
@@ -72,17 +85,23 @@ describe("stats: UTC-day aggregates keep the UTC date; times of day are KST", ()
     const StatsPage = (await import("@/app/stats/page")).default;
     await mount(createElement(StatsPage));
     const t = dom.container.textContent;
-    expect(t).toContain("Distinct aircraft by hour (KST 시각 · UTC 날짜)");
+    expect(t).toContain("Distinct aircraft by hour (KST · UTC 시각, UTC 날짜)");
     const inputs = all((e) => e.tagName === "INPUT").map((e) => e.getAttribute("aria-label"));
     expect(inputs).toEqual(["집계 날짜(UTC 날짜)"]);
-    expect(byTestId("traffic-hours-note")!.textContent).toBe("UTC 날짜 2026-09-28 = KST 09-28 09:00 – 09-29 08:59 · 막대 = 한국 표준시 시각(09시 → 다음 날 08시)");
-    // 막대 라벨: 첫 칸 09(= UTC 00시), 16번째 칸 00(= UTC 15시 — 다음 KST 날)
+    expect(byTestId("traffic-hours-note")!.textContent).toBe("UTC 날짜 2026-09-28 = 09-28 09:00 – 09-29 08:59 KST · 09-28 00:00 – 09-28 23:59 UTC · 눈금 윗줄 KST 시 · 아랫줄 UTC 시(Z)");
+    // 막대 눈금: 칸마다 윗줄 KST 시 · 아랫줄 UTC 시 — 첫 칸 09 / 00Z, 16번째 칸 00 / 15Z(다음 KST 날)
     const svg = all((e) => e.tagName === "svg")[0];
-    const labels = all((e) => e.tagName === "text", svg).map((x) => x.childNodes.filter((c) => !(c instanceof MiniElement)).map((c) => c.textContent).join("")).filter((x) => /^\d\d$/.test(x));
-    expect(labels.slice(0, 2)).toEqual(["09", "10"]);
-    expect(labels[15]).toBe("00");
+    const own = (x: MiniElement) => x.childNodes.filter((c) => !(c instanceof MiniElement)).map((c) => c.textContent).join("");
+    const kst = all((e) => e.tagName === "text" && e.getAttribute("data-tick") === "kst", svg).map(own);
+    const utc = all((e) => e.tagName === "text" && e.getAttribute("data-tick") === "utc", svg).map(own);
+    expect(kst).toHaveLength(24);
+    expect(utc).toHaveLength(24);
+    expect(kst.slice(0, 2)).toEqual(["09", "10"]);
+    expect(utc.slice(0, 2)).toEqual(["00Z", "01Z"]);
+    expect([kst[15], utc[15]]).toEqual(["00", "15Z"]);
+    kst.forEach((k, i) => expect(Number(k), `slot ${i}`).toBe((Number(utc[i].slice(0, 2)) + 9) % 24)); // 칸마다 같은 순간의 두 시
     const srRows = all((e) => e.tagName === "TR").map((r) => all((e) => e.tagName === "TD", r).map((c) => c.textContent)).filter((c) => c.length === 2);
-    expect(srRows).toContainEqual(["09-29 00시 KST (UTC 15시)", "7"]);
+    expect(srRows).toContainEqual(["09-29 00시 KST · 09-28 15시 UTC", "7"]);
     // 알림 표: 날짜는 UTC 날짜 그대로 — KST 로 옮기지 않는다
     const heads = all((e) => e.tagName === "TH").map((h) => h.textContent);
     expect(heads).toContain("날짜(UTC 날짜)");

@@ -4,7 +4,7 @@ import { apiGet } from "@/lib/api";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
-import { HYSTERESIS_FIX_AT, hourlyRowsKst, trafficScopeLabel, utcDayInKst, type TrafficRegion } from "@/lib/chart";
+import { HYSTERESIS_FIX_AT, hourlyRowsKst, trafficScopeLabel, utcDayDual, type TrafficRegion } from "@/lib/chart";
 import { aggregatedFlag, alertStatsRows, STATS_RUN_KST, statsEmptyText, TRAFFIC_SOURCE, yesterdayUtc } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
 import { DualTime } from "@/components/DualTime";
@@ -18,7 +18,7 @@ type Agg = { fir?: boolean; haz?: boolean; traffic?: boolean; alerts?: boolean }
 /**
  * 통계(FR-24): FIR별 SIGMET · 시간대별 트래픽 · 알림 건수. stats_daily 는 매일 03:30 UTC(= 12:30 KST)에 전날(UTC 날짜)을 집계.
  * 시각은 KST 먼저 · UTC 함께(사용자 요청 2026-09-29, lib/time) — 단 집계 단위인 날짜는 UTC 날짜 그대로 "(UTC 날짜)" 라고 적는다(KST 날짜로 옮기면 다른 하루가 된다).
- * 시간대별 막대는 그 UTC 날짜의 시간 순서 그대로 KST 시로 이름 붙인다(09시 → 다음 날 08시).
+ * 시간대별 막대는 그 UTC 날짜의 시간 순서 그대로 — 눈금 윗줄 KST 시(09시 → 다음 날 08시), 아랫줄 같은 순간의 UTC 시(00Z → 23Z).
  * 행이 없는 시간대는 "자료 없음"(0 대로 그리지 않는다 — 수집 중단과 0 대를 구분할 수 없으므로).
  * 트래픽 제목은 서버가 준 범위(scope·region)를 그대로 — 범위 기록이 없는 날은 "범위 미확인"(DH-10).
  * 수정 전 히스테리시스로 판정된 관측 알림(≤ 2026-09-27)은 † 로 표시하고 비교할 수 없다고 밝힌다.
@@ -51,7 +51,7 @@ export default function StatsPage() {
   }, [day]);
   const top = (rows: Row[]) => { const m = new Map<string, number>(); for (const r of rows) m.set(r.dim, (m.get(r.dim) ?? 0) + Number(r.value)); return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 24); };
   const hours = hourlyRowsKst(traffic, day);
-  const dayKst = utcDayInKst(day);
+  const dayDual = utcDayDual(day);
   const scope = trafficScopeLabel(trafficScope.scope, trafficScope.region);
   const alertRows = alertStatsRows(alerts);
   const caveat = alertRows.some((r) => r.preFix);
@@ -64,10 +64,10 @@ export default function StatsPage() {
         <section className="panel p-3"><h2 className="label mb-2">SIGMET by FIR (7d, top 24)</h2>{fir.length ? <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={top(fir)} /> : <Empty text={statsEmptyText(agg.fir, null, today)} />}</section>
         <section className="panel p-3"><h2 className="label mb-2">SIGMET by hazard (7d)</h2>{haz.length ? <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={top(haz)} color="#f59e0b" /> : <Empty text={statsEmptyText(agg.haz, null, today)} />}</section>
         <section className="panel p-3">
-          <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST 시각 · UTC 날짜)</h2><input type="date" value={day} max={maxDay} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} aria-label="집계 날짜(UTC 날짜)" title="집계 날짜는 UTC 날짜 — 한국 표준시 날짜가 아니다" /></div>
+          <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST · UTC 시각, UTC 날짜)</h2><input type="date" value={day} max={maxDay} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} aria-label="집계 날짜(UTC 날짜)" title="집계 날짜는 UTC 날짜 — 한국 표준시 날짜가 아니다" /></div>
           {traffic.length ? <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid="traffic-scope">범위: {scope.text}</div> : null}
-          {traffic.length ? <BarChart id="chart-traffic" title={`${day}(UTC 날짜) 한국 표준시 시각별 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" /> : <Empty text={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })} />}
-          {traffic.length ? <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">UTC 날짜 {day}{dayKst ? ` = ${dayKst}` : ""} · 막대 = 한국 표준시 시각(09시 → 다음 날 08시)</div> : null}
+          {traffic.length ? <BarChart id="chart-traffic" title={`${day}(UTC 날짜) 시각별(KST · UTC) 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" /> : <Empty text={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })} />}
+          {traffic.length ? <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">UTC 날짜 {day}{dayDual ? ` = ${dayDual}` : ""} · 눈금 윗줄 KST 시 · 아랫줄 UTC 시(Z)</div> : null}
           {traffic.length ? <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div> : null}
         </section>
         <section className="panel p-3"><h2 className="label mb-2">Alerts by kind (7d) · avg dwell</h2>

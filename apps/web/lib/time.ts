@@ -150,6 +150,38 @@ export function dualCell(v: TimeIn, o: { ms?: boolean } = {}): { kst: string; ut
   return { kst: `${p.kst.md} ${c(p.kst)}`, utc: `${p.sameDate ? "" : `${p.utc.md} `}${c(p.utc)} UTC`, iso: p.iso };
 }
 
+/** "YYYY-MM-DD" 가 달력에 있는 UTC 날짜면 그날 00:00 UTC(epoch ms), 아니면 null(형식 오류 · 2월 30일 등 — 다른 날로 넘기지 않는다) */
+function utcDayMs(day: string | null | undefined): number | null {
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const t = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day ? t : null;
+}
+
+/** 통계 시간대별 막대 한 칸의 두 시: kst "09" · utcTick "00Z"(둘째 줄) · full "09-28 09시 KST · 00시 UTC"(툴팁 · 화면 읽기 표) */
+export interface UtcDayHour { kst: string; utcTick: string; full: string }
+
+/**
+ * UTC 날짜 하루(day "YYYY-MM-DD" — 통계 집계 단위)의 24개 시, UTC 00시 → 23시 순서(막대 순서). 칸마다 그 시의 KST 시와 같은 순간의 UTC 시.
+ * full 은 KST 날짜와 함께, UTC 날짜가 KST 날짜와 다르면(KST 00–08시) UTC 쪽에도 날짜("09-29 00시 KST · 09-28 15시 UTC").
+ * 날짜를 모르면(없음 · 형식 오류 · 달력에 없는 날) 시만("00시 KST · 15시 UTC") — 날짜를 지어내지 않는다. 시는 고정 오프셋이라 날짜와 상관없이 같다.
+ */
+export function utcDayHours(day: string | null | undefined): UtcDayHour[] {
+  const t0 = utcDayMs(day);
+  const h2 = (n: number) => String(n).padStart(2, "0");
+  return Array.from({ length: 24 }, (_, h) => {
+    const kh = h2((h + KST_OFFSET_MS / 3_600_000) % 24), uh = h2(h);
+    const p = t0 == null ? null : dualParts(t0 + h * 3_600_000);
+    const full = p ? `${p.kst.md} ${kh}시 KST · ${p.sameDate ? "" : `${p.utc.md} `}${uh}시 UTC` : `${kh}시 KST · ${uh}시 UTC`;
+    return { kst: kh, utcTick: `${uh}Z`, full };
+  });
+}
+
+/** UTC 날짜 하루가 두 시간대로 어디부터 어디까지인지(분까지, 끝 = 23:59 UTC): "09-28 09:00 – 09-29 08:59 KST · 09-28 00:00 – 09-28 23:59 UTC". 날짜를 모르면 null */
+export function fmtUtcDayDual(day: string | null | undefined): string | null {
+  const t0 = utcDayMs(day);
+  return t0 == null ? null : fmtDualRange(t0, t0 + 86_400_000 - 60_000, { seconds: false });
+}
+
 /** 기상청 tm(KST 벽시계 "YYYYMMDDHHMM" — 기상청이 한국 표준시로 준다) → 순간(epoch ms). 형식이 틀리거나 달력에 없으면 null */
 export function kstWallMs(tm: string | null | undefined): number | null {
   const m = typeof tm === "string" ? /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(tm) : null;
