@@ -168,10 +168,10 @@ function calendarDayMs(day: string | null | undefined): number | null {
   const t = Date.parse(`${day}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day ? t : null;
 }
-/** KST 날짜 "YYYY-MM-DD" 가 시작하는 순간(그날 00:00 KST, epoch ms). 달력에 없으면 null */
+/** KST 날짜 "YYYY-MM-DD" 가 시작하는 순간(그날 00:00 KST, epoch ms — 화면 시간대 DISPLAY_TZ 의 오프셋). 달력에 없으면 null */
 export function kstDayStartMs(day: string | null | undefined): number | null {
   const t = calendarDayMs(day);
-  return t == null ? null : t - KST_OFFSET_MS;
+  return t == null ? null : t - DISPLAY_TZ.offsetMs;
 }
 /** 달력에 있는 "YYYY-MM-DD" 인가 */
 export const isCalendarDay = (day: string | null | undefined): boolean => calendarDayMs(day) != null;
@@ -204,7 +204,7 @@ export function utcDayWindowKst(day: string | null | undefined): string | null {
   return t0 == null ? null : fmtKstRange(t0, t0 + 86_400_000 - 60_000, { seconds: false });
 }
 
-/** 기상청 tm(KST 벽시계 "YYYYMMDDHHMM" — 기상청이 한국 표준시로 준다) → 순간(epoch ms). 형식이 틀리거나 달력에 없으면 null */
+/** 기상청 tm(KST 벽시계 "YYYYMMDDHHMM" — 기상청이 한국 표준시로 준다, 화면 시간대와 무관해 KST_OFFSET_MS) → 순간(epoch ms). 형식이 틀리거나 달력에 없으면 null */
 export function kstWallMs(tm: string | null | undefined): number | null {
   const m = typeof tm === "string" ? /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(tm) : null;
   if (!m) return null;

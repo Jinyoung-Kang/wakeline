@@ -6,9 +6,8 @@
  * 시각: 고르는 입력 · 보이는 글자 · title 은 KST 만(계약 v5 §G20, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z — 저장 · 전송 형식) 그대로.
  */
 import { ApiError } from "./api";
-import { fmtKst, fmtKstRange, fmtRangeTitle, fmtTimeTitle, timeParts } from "./time";
+import { DISPLAY_TZ, fmtKst, fmtKstRange, fmtRangeTitle, fmtTimeTitle, timeParts } from "./time";
 import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum } from "./format";
-import { KST_OFFSET_MS } from "./kst";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
 
@@ -261,8 +260,9 @@ export function toKstInput(ms: number): string {
 }
 
 /**
- * "YYYY-MM-DDTHH:MM[:SS]" 를 한국 표준시(+09:00 고정)로 읽어 순간(epoch ms)으로. 없는 날짜(2월 30일 · 평년 2월 29일 등)·24시·형식 오류는 null.
- * 벽시계 값을 UTC 로 만든 뒤 9 h 를 빼므로 자정 · 달 · 해가 바뀌는 곳도 날짜가 어긋나지 않는다(브라우저 시간대와 무관).
+ * "YYYY-MM-DDTHH:MM[:SS]" 를 화면 시간대(DISPLAY_TZ — 한국 표준시 +09:00 고정)로 읽어 순간(epoch ms)으로. 없는 날짜(2월 30일 · 평년 2월 29일 등)·24시·형식 오류는 null.
+ * 벽시계 값을 UTC 로 만든 뒤 화면 시간대 오프셋(9 h)을 빼므로 자정 · 달 · 해가 바뀌는 곳도 날짜가 어긋나지 않는다(브라우저 시간대와 무관).
+ * 보이는 입력 값(toKstInput)과 같은 오프셋이다.
  */
 export function fromKstInput(v: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(v);
@@ -271,7 +271,7 @@ export function fromKstInput(v: string): number | null {
   const wall = Date.UTC(y, mo - 1, d, h, mi, se);
   const back = new Date(wall);
   const ok = back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d && back.getUTCHours() === h && back.getUTCMinutes() === mi && back.getUTCSeconds() === se;
-  return ok ? wall - KST_OFFSET_MS : null;
+  return ok ? wall - DISPLAY_TZ.offsetMs : null;
 }
 
 /** 시각 이동 버튼 [ms, 라벨] */

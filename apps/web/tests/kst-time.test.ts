@@ -9,6 +9,7 @@
  * - 모르면 "—" 만(시간대 글자 없이)
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(새 API 가 없었다).
  */
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -28,6 +29,20 @@ describe("the display zone is decided in one place", () => {
     expect(T.DISPLAY_TZ).toMatchObject({ label: "KST", iana: "Asia/Seoul", offsetMs: 9 * 3_600_000, isoOffset: "+09:00" });
     expect(T.timeParts(LATE)!.iso).toBe("2026-09-29T08:41:14.906+09:00"); // 벽시계 · <time dateTime> 도 DISPLAY_TZ 에서
     expect(T.fmtKst(NOON).endsWith(` ${T.DISPLAY_TZ.label}`)).toBe(true);
+  });
+  /**
+   * 리뷰(2026-09-30): 형식기는 DISPLAY_TZ.offsetMs 를 쓰는데 KST 날의 시작(kstDayStartMs)과 재생 입력(fromKstInput)은 KST_OFFSET_MS 를 따로 뺐다 —
+   * DISPLAY_TZ 를 바꾸면 입력 · 날 경계와 이름표가 어긋난다(수정 전 이 시험이 실패했다). 예외는 기상청 tm(기상청이 KST 로 준다 — 화면 시간대와 무관).
+   */
+  it("the KST day start and the replay input parser read the offset from DISPLAY_TZ too (only the KMA tm parser keeps KST_OFFSET_MS)", () => {
+    const uses = (f: string) => readFileSync(new URL(`../lib/${f}`, import.meta.url), "utf8").split("\n")
+      .filter((l) => /\bKST_OFFSET_MS\b/.test(l) && !/^\s*(\/\*|\*|\/\/|import )/.test(l)).map((l) => l.trim());
+    expect(uses("time.ts")).toEqual([
+      'export const DISPLAY_TZ = { label: "KST", name: "한국 표준시", iana: "Asia/Seoul", offsetMs: KST_OFFSET_MS, isoOffset: "+09:00" } as const;',
+      "return ok ? w - KST_OFFSET_MS : null;", // kstWallMs — 기상청 tm
+    ]);
+    expect(uses("replay.ts")).toEqual([]);
+    expect(T.kstDayStartMs("2026-09-29")).toBe(Date.parse("2026-09-29T00:00:00Z") - T.DISPLAY_TZ.offsetMs);
   });
 });
 
