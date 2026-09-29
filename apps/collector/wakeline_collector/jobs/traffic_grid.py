@@ -3,7 +3,8 @@
 
 틱(settings.traffic_grid_tick_s, 30 s)마다 부를 때가 됐는지만 본다 — 부르는 주기는 자료 시각(regDt)이 정한다:
 - 교통(budget:komsa_traffic, 하루 400 — 포털 500 안): 다음 regDt 가 나올 때(마지막 regDt + 5분 + PUBLISH_DELAY_S)까지 부르지 않는다
-  (regDt 가 바뀌지 않았으면 부를 까닭이 없다). 같은 regDt 가 오면(unchanged) 다시 싣지 않고 120 → 240 → 480 → 900 s 물러난다.
+  (regDt 가 바뀌지 않았으면 부를 까닭이 없다). 같은 regDt 가 오면(unchanged — 더 이른 regDt 도: 지난 자료로 되돌리지 않는다) 새로 해석해 싣지 않고
+  120 → 240 → 480 → 900 s 물러난다.
   실패는 60 → 120 → 240 → 480 → 900 s. 어떤 경우든 한 시간에 HOURLY_CAP(15)번을 넘지 않는다 — 어느 24시간이든 360번 이하라 포털 한도(하루
   500)가 UTC · KST 어느 날 경계로 세어져도 넘지 않는다. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다). 예산은 엄격
   (Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
@@ -400,7 +401,14 @@ class TrafficGridJob:
             return
         self._count_sent(now)
         quality: list[tuple[str, str | None, dict[str, Any]]] = [("traffic_grid_item_rejected", None, r) for r in snap.rejected]
-        if self.snapshot is not None and snap.reg_dt == self.snapshot.reg_dt:
+        if self.snapshot is not None and snap.reg_dt <= self.snapshot.reg_dt:
+            # 같은 regDt(새 자료 아님) — 또는 더 이른 regDt(공급자 쪽 서버가 뒤처진 응답): 지난 자료로 되돌리지 않는다
+            if snap.reg_dt < self.snapshot.reg_dt:
+                log.info(
+                    "traffic grid: regDt %s is older than the published %s — kept the newer one",
+                    iso_z(snap.reg_dt),
+                    iso_z(self.snapshot.reg_dt),
+                )
             self.schedule.on_unchanged(now)
             self.last_ok = resp.fetched_at
             self.ctx.db.record_run(

@@ -233,6 +233,16 @@ async def test_unchanged_reg_dt_backs_off_and_republishes_the_identical_value():
     assert job.schedule.next_due == clock.t + timedelta(seconds=240)
 
 
+async def test_an_older_reg_dt_never_replaces_the_newer_snapshot():
+    job, _k, _w, r, clock, db = setup(komsa_body("2026-09-29 18:10:05"), komsa_body("2026-09-29 18:05:05"))
+    await job.run_once()
+    first = r.kv[SNAPSHOT_KEY]
+    clock.t = job.schedule.next_due
+    await job.run_once()
+    assert statuses(db) == ["ok", "unchanged"]
+    assert snapshot(r)["reg_dt_kst"] == "2026-09-29T18:10:05+09:00" and r.kv[SNAPSHOT_KEY] == first
+
+
 async def test_no_more_than_the_hourly_cap_in_any_hour(monkeypatch):
     monkeypatch.setattr(tg, "UNCHANGED_BACKOFF_S", (0,))
     job, komsa, _w, _r, clock, _db = setup(komsa_body())
