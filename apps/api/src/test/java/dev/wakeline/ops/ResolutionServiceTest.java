@@ -109,7 +109,15 @@ class ResolutionServiceTest {
     @Test
     void badDraftsAre400BadResolution() {
         assertBad(() -> svc.parse(body("[]")), "JSON object");
-        assertBad(() -> svc.parse(null), "JSON object");
+        assertBad(() -> svc.parse((JsonNode) null), "JSON object");
+        // 본문 글자: 비었음 · JSON 아님 · 같은 키 두 번(어느 값인지 모호) · 뒤에 붙은 글자 · 너무 김
+        assertBad(() -> svc.parse((String) null), "JSON object");
+        assertBad(() -> svc.parse("  "), "JSON object");
+        assertBad(() -> svc.parse("kind=log_group"), "JSON object");
+        assertBad(() -> svc.parse("{\"kind\":\"log_group\",\"key\":\"" + FP + "\",\"key\":\"ffffffffffffffff\"}"), "repeated");
+        assertBad(() -> svc.parse("{\"kind\":\"log_group\",\"key\":\"" + FP + "\"} {}"), "JSON object");
+        assertBad(() -> svc.parse("{\"note\":\"" + "x".repeat(5000) + "\"}"), "4096");
+        assertThat(svc.parse("{\"kind\":\"log_group\",\"key\":\"" + FP + "\"}").key()).isEqualTo(FP);
         assertBad(() -> svc.parse(body("{\"key\":\"" + FP + "\"}")), "kind");
         assertBad(() -> svc.parse(body("{\"kind\":\"alert\",\"key\":\"x\"}")), "kind");
         assertBad(() -> svc.parse(body("{\"kind\":1,\"key\":\"x\"}")), "kind");

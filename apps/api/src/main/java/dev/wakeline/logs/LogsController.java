@@ -68,7 +68,7 @@ public class LogsController {
         if (cursor != null && !cursor.isBlank() && LogReader.parseCursor(cursor) == null)
             throw Problem.badRequest("BAD_CURSOR", "cursor must be the next_cursor of the previous page (server:<stream id> or client:<stream id>)");
         var f = filter(service, level, q, fp, rid, since, until);
-        boolean hide = hideResolved(resolved);
+        boolean hide = Resolutions.hide(resolved);
         return reader.list(f, cursor == null || cursor.isBlank() ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)), resolver(), hide);
     }
 
@@ -76,7 +76,7 @@ public class LogsController {
     public LogReader.Groups groups(@RequestParam(required = false) Instant since, @RequestParam(required = false) List<String> service,
                                    @RequestParam(required = false) List<String> level, @RequestParam(required = false) String resolved) {
         var f = filter(service, level, null, null, null, since, null);
-        return reader.groups(f, resolver(), hideResolved(resolved));
+        return reader.groups(f, resolver(), Resolutions.hide(resolved));
     }
 
     @GetMapping("/{id:\\d{1,20}-\\d{1,20}}")
@@ -103,16 +103,6 @@ public class LogsController {
         if (r != null && !LogEvents.REQUEST_ID.matcher(r).matches()) throw Problem.badRequest("BAD_RID", "rid must be 8-64 characters of [0-9A-Za-z-]");
         if (since != null && until != null && since.isAfter(until)) throw Problem.badRequest("BAD_RANGE", "since must not be after until");
         return new LogReader.Filter(services, levels, text, f, r, since, until);
-    }
-
-    /** resolved=hide(기본 — 없거나 빈 값) | show. 대소문자 · 앞뒤 공백은 가리지 않는다. */
-    static boolean hideResolved(String resolved) {
-        String v = resolved == null ? "" : resolved.trim().toLowerCase(Locale.ROOT);
-        return switch (v) {
-            case "", "hide" -> true;
-            case "show" -> false;
-            default -> throw Problem.badRequest("BAD_RESOLVED", "resolved must be hide or show");
-        };
     }
 
     /** 이 요청의 해결 기록(한 시점 모습) → fp 조회. */

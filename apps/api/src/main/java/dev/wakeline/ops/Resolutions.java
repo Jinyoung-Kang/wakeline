@@ -1,5 +1,7 @@
 package dev.wakeline.ops;
 
+import dev.wakeline.config.Problem;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +41,19 @@ public final class Resolutions {
             if (m != null) m.merge(r.key(), r, Resolutions::later);
         }
         return new Resolutions(List.copyOf(newestFirst), Map.copyOf(logs), Map.copyOf(prov), state);
+    }
+
+    /**
+     * 조회 매개변수 resolved=hide(기본 — 없거나 빈 값) | show → 가리는가. 대소문자 · 앞뒤 공백은 가리지 않는다. 그 밖은 400 BAD_RESOLVED
+     * (/ops/logs · /ops/logs/groups · /ops/runs 가 같은 규칙).
+     */
+    public static boolean hide(String resolved) {
+        String v = resolved == null ? "" : resolved.trim().toLowerCase(Locale.ROOT);
+        return switch (v) {
+            case "", "hide" -> true;
+            case "show" -> false;
+            default -> throw Problem.badRequest("BAD_RESOLVED", "resolved must be hide or show");
+        };
     }
 
     /** DB 를 한 번도 읽지 못했다: 아무것도 가리지 않는다. */

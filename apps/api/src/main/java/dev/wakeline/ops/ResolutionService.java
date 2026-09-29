@@ -8,7 +8,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -82,6 +85,24 @@ public class ResolutionService {
     }
 
     // ---------------------------------------------------------------- 요청 본문
+
+    /** 본문 JSON 읽기: 같은 키가 두 번이면 틀림(어느 값이 쓰였는지 모호하다). */
+    private static final JsonMapper BODY = JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
+    /** 본문 상한(글자) — 네 필드에 넉넉하다. */
+    static final int BODY_MAX = 4096;
+
+    /** POST 본문 글자 → {@link #parse(JsonNode)}. 비었거나 JSON 이 아니거나 {@value #BODY_MAX}자를 넘으면 400 BAD_RESOLUTION. */
+    public Draft parse(String body) {
+        if (body == null || body.isBlank()) throw bad("body must be a JSON object {kind, key, upto?, note?}");
+        if (body.length() > BODY_MAX) throw bad("body must be at most " + BODY_MAX + " characters");
+        JsonNode n;
+        try {
+            n = BODY.readTree(body);
+        } catch (JacksonException e) {
+            throw bad("body must be one JSON object {kind, key, upto?, note?} without repeated fields");
+        }
+        return parse(n);
+    }
 
     /**
      * POST 본문 {kind, key, upto?, note?} → {@link Draft}. 규칙(틀리면 400 BAD_RESOLUTION): 모르는 필드는 거절(오타가 조용히 기본값 — 지금까지
