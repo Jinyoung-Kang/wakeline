@@ -151,7 +151,7 @@ describe("v5-C7/C8 shell: top menu '로그' and the global error listeners", () 
 describe("v5-C8 screens show the request id of a failed call", () => {
   const OK: Record<string, unknown> = {
     "/api/v1/ops/session": { username: "op" },
-    "/api/v1/ops/runs?limit=50": { items: [], summary_24h: [] },
+    "/api/v1/ops/runs?limit=50&resolved=hide": { items: [], summary_24h: [] },
     "/api/v1/ops/quality": { rule_counts: [], recent: [] },
     "/api/v1/ops/settings": { items: [] },
     "/api/v1/ops/audit": { items: [] },
