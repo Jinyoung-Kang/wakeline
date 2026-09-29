@@ -501,3 +501,6 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     쓰는 파일) · `tests/kst-only-screens.test.ts`(모든 경로가 이 검사에 들어 있는지) · api `StatsAggregationDbTest`(KST 자정 경계 · KST 시) · `MigrationDbTest` V16 ·
     collector `test_db_writer`(KST 날짜) · `test_rest_contract_rules`(day_zone · KST 시).
   - 설명서 그림은 합치는 사람이 다시 찍는다(`lib/guide-shots.json` 의 설명 · 대체 글과 통계 날짜 고르기 선택자만 바꿨다 — `public/guide` · `lib/guide-manifest.json` 은 그대로).
+    통합(2026-09-30): 찍는 스크립트는 실데이터 스택만 찍고(fixture 8701 은 멈춘다) 실데이터 스택(8700)은 아직 이 판이 아니라 다시 찍지 못했다. 13개 그림이 모두
+    UTC · 옛 상태 바를 보여 그림 설명(KST 만 · 칩 + 상세)과 어긋나므로 그림과 manifest 항목을 지웠다 — 설명서는 ‘스크린샷 준비 중’ 자리표시와 그 화면의 설명을 보인다.
+    배포 뒤 `node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>` 로 다시 찍는다.
