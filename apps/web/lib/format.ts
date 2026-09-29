@@ -134,7 +134,7 @@ function isoOf(v: string | number | null | undefined): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-// ---- 시각 표시는 lib/time.ts 한 곳에서(사용자 요청 2026-09-29 "UTC 와 KST 함께" — KST 를 먼저, UTC 를 함께, §G13) ----
+// ---- 시각 표시는 lib/time.ts 한 곳에서(계약 v5 §G19 — 화면은 KST 만, 화면 시간대는 lib/time DISPLAY_TZ) ----
 // 이 파일에는 시각 글자를 만드는 함수가 없다(tests/kst-dashboard.test.ts 가 lib/time · lib/kst 밖에서 시각 글자를 직접 만드는 모양을 찾는다).
 
 /** 경과 시간(초) — "42s", "3m 05s", "1h 12m", "2d 03h". 모르면 "—". */
