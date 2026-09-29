@@ -29,7 +29,7 @@ import java.util.Map;
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
  * 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
- * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기).
+ * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기. 원해상도가 지워진 옛 날의 교통량은 V16 이 옛 UTC 시 행에서 옮겨 실었다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
@@ -245,7 +245,8 @@ public class MaintenanceJobs {
     /**
      * 따라잡기 창(최근 {@value #CATCH_UP_DAYS}일)보다 오래된 날 중, 원본이 남아 있어 다시 셀 수 있는 계열(SIGMET 영구 · 알림 보존 안 — 교통량은 72 h 라 없다)에
      * 완료 표식이 없는 날을 최근 날부터 채운다. 한 번에 {@value #BACKFILL_MAX_DAYS}일까지(남으면 다음 따라잡기가 잇는다 — 기동 직후를 오래 붙잡지 않는다).
-     * V16 이 KST 날짜 표를 비운 뒤 이 날들은 다시 셀 수 있는데 7일 밖이라 '집계되지 않음' 으로 남았다(리뷰 2026-09-30 — /stats 는 92일 범위를 받는다).
+     * V16 이 KST 날짜 표를 새로 연 뒤 이 날들은 다시 셀 수 있는데 7일 밖이라 '집계되지 않음' 으로 남았다(리뷰 2026-09-30 — /stats 는 92일 범위를 받는다).
+     * 교통량의 옛 날은 V16 이 옛 UTC 시 행에서 옮겨 실었다(KST = UTC + 9 정시 — 시 하나가 옛 행 하나, 두 UTC 날이 완료 · 같은 지역인 날만).
      * 범위의 시작 = 원본이 있는 가장 이른 KST 날짜(SIGMET 발표 · 알림 진입). 멱등 — 다 채운 뒤에는 최솟값 한 번 · 표식 한 번 읽고 끝난다. @return 집계한 날
      */
     List<LocalDate> backfillStats(LocalDate today) {

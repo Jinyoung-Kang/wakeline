@@ -816,14 +816,20 @@ class MigrationDbTest {
                 .isEqualTo("PRIMARY KEY (day, metric, dim)");
         assertThat(stage.sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'quality_rule_count'::regclass AND contype = 'p'").query(String.class).single())
                 .isEqualTo("PRIMARY KEY (day, rule)");
+        // 격리 수를 KST 날짜로 세기 시작한 순간 = 마이그레이션 시각(운영 화면이 그 KST 날짜를 '부분' 으로 적는다) — 행 하나, 방금 적용한 시각
+        assertThat(stage.sql("SELECT table_name FROM kst_day_cutover").query(String.class).list()).containsExactly("quality_rule_count");
+        assertThat(stage.sql("SELECT cut_at > now() - interval '5 minutes' AND cut_at <= now() FROM kst_day_cutover").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'kst_day_cutover'").query(String.class).single()).isEqualTo("wakeline_migrator");
 
         try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
             for (String sql : new String[]{"INSERT INTO stats_daily (day, metric, dim, value) VALUES ('2026-09-29', 'sigmet_by_fir', 'RKRR', 1)",
                     "UPDATE stats_daily SET value = 2", "SELECT * FROM stats_daily", "DELETE FROM stats_daily", "SELECT * FROM quality_rule_count",
                     "DELETE FROM quality_rule_count WHERE day < '2026-01-01'"})
                 assertThat(sqlState(c, sql)).as(sql).isNull();
+            assertThat(sqlState(c, "SELECT * FROM kst_day_cutover")).isNull();
             for (String sql : new String[]{"INSERT INTO quality_rule_count (day, rule, count) VALUES ('2026-09-29', 'r', 1)",
-                    "SELECT * FROM stats_daily_utc_legacy", "DELETE FROM stats_daily_utc_legacy", "SELECT * FROM quality_rule_count_utc_legacy"})
+                    "SELECT * FROM stats_daily_utc_legacy", "DELETE FROM stats_daily_utc_legacy", "SELECT * FROM quality_rule_count_utc_legacy",
+                    "UPDATE kst_day_cutover SET cut_at = now()", "DELETE FROM kst_day_cutover"})
                 assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
         }
         try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW)) {
@@ -831,14 +837,15 @@ class MigrationDbTest {
                     INSERT INTO quality_rule_count (day, rule, count) VALUES ('2026-09-29', 'seen_in_future', 1)
                     ON CONFLICT (day, rule) DO UPDATE SET count = quality_rule_count.count + EXCLUDED.count""")).isNull();
             for (String sql : new String[]{"DELETE FROM quality_rule_count", "SELECT * FROM stats_daily", "SELECT * FROM quality_rule_count_utc_legacy",
-                    "INSERT INTO quality_rule_count_utc_legacy (day, rule, count) VALUES ('2026-09-29', 'r', 1)"})
+                    "INSERT INTO quality_rule_count_utc_legacy (day, rule, count) VALUES ('2026-09-29', 'r', 1)", "SELECT * FROM kst_day_cutover"})
                 assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
         }
 
         // 되돌리기(머리 주석): 새 표(KST 날짜 행)를 지우고 보관 표를 원래 이름 · 권한으로 → V15 와 같은 스키마 · 옛 행 그대로. 그 뒤 다시 앞으로
         runAsMigrator(url, rollbackSql("V16__kst_day_aggregates.sql"));
         assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '16'").query(Long.class).single()).isZero();
-        assertThat(stage.sql("SELECT to_regclass('stats_daily_utc_legacy') IS NULL AND to_regclass('quality_rule_count_utc_legacy') IS NULL").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT to_regclass('stats_daily_utc_legacy') IS NULL AND to_regclass('quality_rule_count_utc_legacy') IS NULL "
+                + "AND to_regclass('kst_day_cutover') IS NULL").query(Boolean.class).single()).isTrue();
         assertThat(stage.sql("SELECT value::int FROM stats_daily WHERE metric = 'sigmet_by_fir'").query(Integer.class).single()).isEqualTo(3);
         assertThat(stage.sql("SELECT count FROM quality_rule_count WHERE rule = 'seen_in_future'").query(Long.class).single()).isEqualTo(7L);
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'stats_daily', 'INSERT') AND has_table_privilege('wakeline_collector', 'quality_rule_count', 'UPDATE')")
@@ -847,6 +854,68 @@ class MigrationDbTest {
         assertThat(stage.sql("SELECT count(*) FROM stats_daily_utc_legacy").query(Long.class).single()).isEqualTo(2L);
         assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'stats_daily_utc_legacy', 'SELECT')").query(Boolean.class).single()).isFalse();
     }
+
+    /**
+     * V16 교통량 옮겨 싣기(리뷰 2026-09-30): 옛 traffic_by_hour 는 UTC 시마다 센 서로 다른 항공기 수이고 KST = UTC + 9시간(정시)이라, KST 날짜 D 의 h 시는
+     * 옛 행 하나와 같다 — h < 9 이면 (D − 1, h + 15), h ≥ 9 이면 (D, h − 9). 두 UTC 날이 모두 교통량 완료 표식을 가졌고 센 지역이 같은 KST 날만 시 · 지역 ·
+     * 완료 표식(두 표식 중 늦은 값)을 싣는다. 한쪽 표식이 없거나 지역이 다르면 싣지 않는다(화면은 '집계되지 않은 날짜'). SIGMET · 알림은 옮기지 않는다.
+     */
+    @Test
+    void v16CarriesUtcHourTrafficToKstDaysOnlyWhereBothUtcDaysAreCompleteWithTheSameRegion() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_sixteen_traffic";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "15");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        java.util.function.BiConsumer<String, String> region = (day, r) -> {
+            String[] v = r.split(",");
+            stage.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d::date, 'traffic_region', 'center_lat', :a), (:d::date, 'traffic_region', 'center_lon', :b), "
+                    + "(:d::date, 'traffic_region', 'radius_nm', :c)").param("d", day).param("a", new java.math.BigDecimal(v[0]))
+                    .param("b", new java.math.BigDecimal(v[1])).param("c", new java.math.BigDecimal(v[2])).update();
+        };
+        java.util.function.BiConsumer<String, Long> marked = (day, at) -> stage.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d::date, 'aggregated_at', 'traffic', :v)")
+                .param("d", day).param("v", at).update();
+        TriConsumer hour = (day, h, n) -> stage.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d::date, 'traffic_by_hour', :h, :n)")
+                .param("d", day).param("h", h).param("n", n).update();
+        // UTC 09-25 · 09-26: 둘 다 완료 · 같은 지역 → KST 09-26 이 옮겨진다
+        marked.accept("2026-09-25", 1_758_850_000L);
+        region.accept("2026-09-25", "36.5,127.8,250");
+        hour.accept("2026-09-25", "03", 11);  // → KST 09-25 12시(앞 UTC 날 09-24 가 없어 싣지 않음)
+        hour.accept("2026-09-25", "15", 21);  // → KST 09-26 00시
+        hour.accept("2026-09-25", "23", 29);  // → KST 09-26 08시
+        marked.accept("2026-09-26", 1_758_940_000L);
+        region.accept("2026-09-26", "36.5,127.8,250");
+        hour.accept("2026-09-26", "00", 30);  // → KST 09-26 09시
+        hour.accept("2026-09-26", "14", 44);  // → KST 09-26 23시
+        hour.accept("2026-09-26", "15", 45);  // → KST 09-27 00시(09-27 은 지역이 달라 싣지 않음)
+        // UTC 09-27: 완료지만 센 지역이 다르다 → KST 09-27 · 09-28 은 싣지 않음
+        marked.accept("2026-09-27", 1_759_030_000L);
+        region.accept("2026-09-27", "37.0,128.0,200");
+        hour.accept("2026-09-27", "01", 51);
+        // UTC 09-28: 완료 표식 없음(집계가 끝나지 않은 날) → KST 09-28 · 09-29 는 싣지 않음
+        hour.accept("2026-09-28", "02", 62);
+        // UTC 09-29 · 09-30: 둘 다 완료 · 항적 없음(지역 · 시 행 없음) → KST 09-30 은 '집계됨 · 자료 없음' 그대로
+        marked.accept("2026-09-29", 1_759_200_000L);
+        marked.accept("2026-09-30", 1_759_290_000L);
+        // SIGMET · 알림은 UTC 날 하루의 수라 옮길 수 없다
+        stage.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES ('2026-09-26', 'sigmet_by_fir', 'RKRR', 3), ('2026-09-26', 'aggregated_at', 'sigmet', 1), "
+                + "('2026-09-26', 'alerts_by_kind', 'OBSERVED', 4), ('2026-09-26', 'aggregated_at', 'alerts', 1)").update();
+        long legacyRows = stage.sql("SELECT count(*) FROM stats_daily").query(Long.class).single();
+
+        migrateTo(url, "16");
+        assertThat(stage.sql("SELECT count(*) FROM stats_daily_utc_legacy").query(Long.class).single()).as("every old row kept aside").isEqualTo(legacyRows);
+        assertThat(stage.sql("SELECT day || ' ' || metric || ' ' || dim || ' ' || value FROM stats_daily ORDER BY day, metric, dim").query(String.class).list())
+                .containsExactly(
+                        "2026-09-26 aggregated_at traffic 1758940000",
+                        "2026-09-26 traffic_by_hour 00 21", "2026-09-26 traffic_by_hour 08 29",
+                        "2026-09-26 traffic_by_hour 09 30", "2026-09-26 traffic_by_hour 23 44",
+                        "2026-09-26 traffic_region center_lat 36.5", "2026-09-26 traffic_region center_lon 127.8", "2026-09-26 traffic_region radius_nm 250",
+                        "2026-09-30 aggregated_at traffic 1759290000");
+    }
+
+    @FunctionalInterface
+    interface TriConsumer { void accept(String day, String hour, int n); }
 
     /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다

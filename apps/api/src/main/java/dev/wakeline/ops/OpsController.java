@@ -169,10 +169,24 @@ public class OpsController {
     public Map<String, Object> quality(@RequestParam(defaultValue = "7") int days) {
         int d = Math.max(1, Math.min(days, 90));
         // day 는 KST 날짜 "YYYY-MM-DD"(계약 v5 §G20 — 수집기가 실행이 시작된 KST 날짜로 센다 · R-45 — JVM 시간대의 자정 시각이 아니다). 최근 d 일(KST 오늘 포함 d+1 개 날)
-        var counts = db.sql("SELECT to_char(day, 'YYYY-MM-DD') AS day, rule, count FROM quality_rule_count WHERE day >= :from ORDER BY 1 DESC, rule")
-                .param("from", dev.wakeline.persist.MaintenanceJobs.today().minusDays(d)).query().listOfRows();
+        // counted_since = V16 이 이 표를 KST 날짜 셈으로 바꾼 순간(kst_day_cutover, UTC ISO) — 그 KST 날짜의 수는 그 뒤 실행만 든 부분 값이다(화면이 '부분' 으로 적는다).
+        // 그보다 앞 KST 날짜의 행은 내지 않는다: 배포 중 아직 돌던 이전 수집기가 UTC 날짜로 쓴 행뿐이다(V16 앞의 수는 보관 표에 있다).
+        String zone = dev.wakeline.persist.MaintenanceJobs.DAY_ZONE_ID;
+        String since = db.sql("SELECT to_char(cut_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') FROM kst_day_cutover WHERE table_name = 'quality_rule_count'")
+                .query(String.class).optional().orElse(null);
+        var counts = db.sql("""
+                SELECT to_char(day, 'YYYY-MM-DD') AS day, rule, count FROM quality_rule_count
+                WHERE day >= :from
+                  AND day >= coalesce((SELECT (cut_at AT TIME ZONE :zone)::date FROM kst_day_cutover WHERE table_name = 'quality_rule_count'), day)
+                ORDER BY 1 DESC, rule""")
+                .param("from", dev.wakeline.persist.MaintenanceJobs.today().minusDays(d)).param("zone", zone).query().listOfRows();
         var recent = db.sql("SELECT id, run_id, rule, hex, detail::text detail, created_at FROM quality_event ORDER BY id DESC LIMIT 50").query().listOfRows();
-        return Map.of("rule_counts", counts, "recent", recent, "day_zone", dev.wakeline.persist.MaintenanceJobs.DAY_ZONE_ID);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("rule_counts", counts);
+        m.put("recent", recent);
+        m.put("day_zone", zone);
+        m.put("counted_since", since);
+        return m;
     }
 
     @GetMapping("/dlq")

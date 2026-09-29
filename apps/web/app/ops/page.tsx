@@ -6,7 +6,7 @@ import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, rebaseSetting, RequestOrder, SESSION_EXPIRED_NOTE, settingConflict,
-  settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
+  qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
@@ -24,7 +24,8 @@ interface Providers {
 }
 /** hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다) */
 interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; mode: ResolvedMode }
-interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown }
+/** counted_since = V16 이 격리 수를 KST 날짜로 세기 시작한 순간(UTC ISO) — 그 KST 날짜는 부분 값(lib/ops qualityPartialDay) */
+interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown; counted_since?: unknown }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
 type Tab = "providers" | "runs" | "quality" | "settings" | "audit" | "dlq" | "pipeline";
 const TABS: readonly Tab[] = ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"];
@@ -42,7 +43,7 @@ const RESOLVE_AFFECTS: readonly Tab[] = ["providers", "runs", "audit"];
 /** 응답 필드 → 시각 값(ISO 문자열 · epoch ms). 그 밖은 모름(null) */
 const at = (v: unknown): string | number | null => (typeof v === "string" || typeof v === "number" ? v : null);
 /** 격리 수 날짜 칸 머리글 — 수집기가 실행이 시작된 KST 날짜로 센다(db.py — 계약 v5 §G20, 응답 day_zone "Asia/Seoul") */
-const KST_DAY_TITLE = "KST 날짜 — 수집기가 실행이 시작된 한국 표준시 날짜(00:00–24:00 KST)마다 센다";
+const KST_DAY_TITLE = "KST 날짜 — 수집기가 실행이 시작된 한국 표준시 날짜(00:00–24:00 KST)마다 센다 · ‘부분’ 이 붙은 날은 KST 날짜로 세기 시작한 시각 뒤의 실행만 들었다";
 /** 응답이 밝힌 날짜 기준이 이 화면이 아는 것과 다를 때(옛 api 등) — 날짜를 KST 로 보이지 않고 그렇다고 말한다 */
 const QUALITY_ZONE_UNKNOWN = "격리 수 응답이 KST 날짜로 센 응답이 아님(day_zone 없음 — api 가 이 화면보다 옛 판일 수 있음) — 날짜를 보이지 않음";
 const BUDGET_ZONE_UNKNOWN = "예산 날의 기준을 응답이 밝히지 않음(budget_day_zone 없음 — api 가 이 화면보다 옛 판일 수 있음) — 창을 보이지 않음";
@@ -234,6 +235,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   };
   const switchMsg = liveNote(switchNote, prov?.provider_switch); // 주기 미러가 맞췄으면 경고를 내린다
   const differs = mirrorDiffers(prov?.provider_switch);
+  /** 격리 수를 KST 날짜로 세기 시작한 날(V16) — 그 날짜의 행에 '부분' 을 붙인다 */
+  const qualityPartial = quality?.day_zone === DISPLAY_TZ.iana ? qualityPartialDay(quality.counted_since) : null;
   return (
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
@@ -306,7 +309,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         {tab === "quality" && quality ? <>
           <div className="label mb-1">Quarantine counts by rule (7d)</div>
           {quality.rule_counts.length && quality.day_zone !== DISPLAY_TZ.iana ? <div className="mb-1 text-[11px] text-warn" role="alert" data-testid="quality-zone-unknown">{QUALITY_ZONE_UNKNOWN}</div> : null}
-          <table className="mb-4"><thead><tr><th title={KST_DAY_TITLE}>day (KST)</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => <tr key={i}><td className="mono">{(quality.day_zone === DISPLAY_TZ.iana ? statsDay(r.day) : null) ?? "—"}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>)}</tbody></table>
+          <table className="mb-4"><thead><tr><th title={KST_DAY_TITLE}>day (KST)</th><th>rule</th><th>count</th></tr></thead><tbody>{quality.rule_counts.map((r, i) => { const day = quality.day_zone === DISPLAY_TZ.iana ? statsDay(r.day) : null; const partial = day != null && qualityPartial?.day === day ? qualityPartial : null; return <tr key={i}><td className="mono">{day ?? "—"}{partial ? <span className="badge warn ml-1 whitespace-nowrap" title={partial.title} data-testid="quality-partial-day">{partial.text}</span> : null}</td><td>{String(r.rule)}</td><td className="mono">{String(r.count)}</td></tr>; })}</tbody></table>
           <div className="label mb-1">Recent quarantined records (not shown on map, kept in raw)</div>
           <table><thead><tr><th>at (KST)</th><th>run</th><th>rule</th><th>hex</th><th title={`격리 규칙이 남긴 detail JSON — ${RAW_RECORD_TITLE}`}>detail (raw)</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3" data-raw="record">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}

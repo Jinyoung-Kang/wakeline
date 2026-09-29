@@ -63,23 +63,42 @@ class StatsIT extends IntegrationTest {
         adm.sql("DELETE FROM stats_daily WHERE day IN (:a, :b, :c)").param("a", today).param("b", y).param("c", y2).update(); // 다른 테스트에 남기지 않는다
     }
 
-    /** 운영 화면의 날짜 열(품질 규칙 일별 수 — KST 날짜 · 공급자 예산 날 — UTC 날 예산 키)도 같은 형식이고, 어느 날짜인지 응답이 밝힌다. */
+    /**
+     * 운영 화면의 날짜 열(품질 규칙 일별 수 — KST 날짜 · 공급자 예산 날 — UTC 날 예산 키)도 같은 형식이고, 어느 날짜인지 응답이 밝힌다.
+     * 격리 수는 V16 이 KST 날짜로 세기 시작한 순간(counted_since — UTC ISO)을 함께 내고, 그 KST 날짜보다 앞 날짜의 행(배포 중 이전 수집기가 UTC 날짜로 쓴 것)은
+     * 내지 않는다(리뷰 2026-09-30 — 바꾼 날의 부분 값을 하루치처럼 보이지 않게).
+     */
     @Test
     void opsDayColumnsAreDateStringsWithTheirZone() {
-        JdbcClient col = JdbcClient.create(new DriverManagerDataSource(DbTestSupport.jdbcUrl(ItStack.DB), "wakeline_collector", DbTestSupport.COLLECTOR_PW));
-        col.sql("INSERT INTO quality_rule_count (day, rule, count) VALUES (CURRENT_DATE, 'r45_rule', 1) ON CONFLICT DO NOTHING").update();
-        col.sql("INSERT INTO provider_budget_day (provider, day, calls) VALUES ('r45_provider', CURRENT_DATE, 1) ON CONFLICT DO NOTHING").update();
-        OpsBrowser b = OpsBrowser.login(this, users, "it-stats-days", "stats-days-horse-battery");
-        JsonNode q = b.get("/api/v1/ops/quality?days=3").json();
-        assertThat(q.path("day_zone").asString()).isEqualTo("Asia/Seoul");
-        assertThat(q.path("rule_counts")).isNotEmpty();
-        for (JsonNode r : q.path("rule_counts")) assertThat(r.path("day").asString()).matches(DATE);
-        JsonNode p = b.get("/api/v1/ops/providers").json();
-        assertThat(p.path("budget_day_zone").asString()).isEqualTo("UTC");
-        assertThat(p.path("budget_days")).isNotEmpty();
-        for (JsonNode r : p.path("budget_days")) assertThat(r.path("day").asString()).matches(DATE);
-        admin().sql("DELETE FROM quality_rule_count WHERE rule = 'r45_rule'").update();
-        admin().sql("DELETE FROM provider_budget_day WHERE provider = 'r45_provider'").update();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        JdbcClient adm = admin();
+        String cut = adm.sql("SELECT cut_at::text FROM kst_day_cutover WHERE table_name = 'quality_rule_count'").query(String.class).single();
+        try {
+            // 바꾼 순간 = 오늘 00:05 KST(재현 가능한 값) — 오늘은 부분, 어제 날짜의 행은 이전 수집기의 것
+            adm.sql("UPDATE kst_day_cutover SET cut_at = (:d::date + time '00:05') AT TIME ZONE 'Asia/Seoul' WHERE table_name = 'quality_rule_count'").param("d", today).update();
+            JdbcClient col = JdbcClient.create(new DriverManagerDataSource(DbTestSupport.jdbcUrl(ItStack.DB), "wakeline_collector", DbTestSupport.COLLECTOR_PW));
+            col.sql("INSERT INTO quality_rule_count (day, rule, count) VALUES (:t, 'r45_rule', 1), (:y, 'r45_rule_old_collector', 1) ON CONFLICT DO NOTHING")
+                    .param("t", today).param("y", today.minusDays(1)).update();
+            col.sql("INSERT INTO provider_budget_day (provider, day, calls) VALUES ('r45_provider', CURRENT_DATE, 1) ON CONFLICT DO NOTHING").update();
+            OpsBrowser b = OpsBrowser.login(this, users, "it-stats-days", "stats-days-horse-battery");
+            JsonNode q = b.get("/api/v1/ops/quality?days=3").json();
+            assertThat(q.path("day_zone").asString()).isEqualTo("Asia/Seoul");
+            assertThat(q.path("counted_since").asString()).isEqualTo(today.atTime(0, 5).atZone(ZoneId.of("Asia/Seoul")).toInstant().toString().replace("Z", ".000Z"));
+            List<String> rows = new ArrayList<>();
+            for (JsonNode r : q.path("rule_counts")) {
+                assertThat(r.path("day").asString()).matches(DATE);
+                rows.add(r.path("day").asString() + " " + r.path("rule").asString());
+            }
+            assertThat(rows).contains(today + " r45_rule").noneMatch(r -> r.contains("r45_rule_old_collector"));
+            JsonNode p = b.get("/api/v1/ops/providers").json();
+            assertThat(p.path("budget_day_zone").asString()).isEqualTo("UTC");
+            assertThat(p.path("budget_days")).isNotEmpty();
+            for (JsonNode r : p.path("budget_days")) assertThat(r.path("day").asString()).matches(DATE);
+        } finally {
+            adm.sql("UPDATE kst_day_cutover SET cut_at = :c::timestamptz WHERE table_name = 'quality_rule_count'").param("c", cut).update();
+            adm.sql("DELETE FROM quality_rule_count WHERE rule IN ('r45_rule', 'r45_rule_old_collector')").update();
+            adm.sql("DELETE FROM provider_budget_day WHERE provider = 'r45_provider'").update();
+        }
     }
 
     static List<String> days(JsonNode body) {

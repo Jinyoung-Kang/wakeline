@@ -392,6 +392,53 @@ describe("ops day columns trust only the zone the api names (contract v5 §G20)"
   });
 });
 
+describe("the rule-count day V16 started counting in KST is marked partial (review 2026-09-30)", () => {
+  const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+    if (pred(from)) out.push(from);
+    for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);
+    return out;
+  };
+  const open = async (quality: unknown) => {
+    const data: Record<string, unknown> = { ...BODY, "/api/v1/ops/quality": quality };
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-30T06:00:00Z") });
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in data ? data[url] : { detail: "no such resource" }), { status: url in data ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    const b = byTestId("ops-tab-quality")!;
+    const k = Object.keys(b).find((x) => x.startsWith("__reactProps$"))!;
+    await React.act(async () => { (b as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
+    await settle();
+    return all((e) => e.tagName === "TR").map((r) => all((e) => e.tagName === "TD", r).map((c) => c.textContent)).filter((r) => r.length);
+  };
+  it("counted_since (UTC ISO) puts '부분 · HH:MM KST 부터' on its KST day only; the other days are whole days", async () => {
+    // 2026-09-29T15:05:12Z = 2026-09-30 00:05:12 KST → KST 날짜 09-30 이 부분
+    const rows = await open({
+      day_zone: "Asia/Seoul", counted_since: "2026-09-29T15:05:12.000Z", recent: [],
+      rule_counts: [{ day: "2026-09-30", rule: "seen_in_future", count: 2 }, { day: "2026-10-01", rule: "seen_in_future", count: 5 }],
+    });
+    expect(rows).toEqual([["2026-09-30부분 · 00:05 KST 부터", "seen_in_future", "2"], ["2026-10-01", "seen_in_future", "5"]]);
+    const badge = byTestId("quality-partial-day")!;
+    expect(badge.getAttribute("title")).toContain("2026-09-30 00:05:12.000 KST 뒤에 시작한 실행만");
+    expect(badge.getAttribute("title")).toContain("quality_rule_count_utc_legacy");
+    expect(domUtcLeaks(dom.container)).toEqual([]);
+  });
+  it("no counted_since, an unreadable one, or a response that does not name its KST day zone → no partial mark", async () => {
+    for (const q of [
+      { day_zone: "Asia/Seoul", recent: [], rule_counts: [{ day: "2026-09-30", rule: "r", count: 1 }] },
+      { day_zone: "Asia/Seoul", counted_since: "not a time", recent: [], rule_counts: [{ day: "2026-09-30", rule: "r", count: 1 }] },
+      { counted_since: "2026-09-29T15:05:12.000Z", recent: [], rule_counts: [{ day: "2026-09-30", rule: "r", count: 1 }] },
+    ]) {
+      await open(q);
+      expect(byTestId("quality-partial-day")).toBeNull();
+      if (root) { const r = root; root = null; await React.act(async () => { r.unmount(); }); }
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("the leftover-UTC guard catches every UTC form the old formatters or raw api strings produce", () => {
   it("…:SSZ · …:SS.mmmZ · …:SS+00:00 match; KST text does not", () => {
     for (const s of ["23:41:14Z", "23:41:14.906Z", "2026-09-28T23:41:14+00:00", "23:41:14.906-00:00"]) expect(s).toMatch(UTC_TIME);

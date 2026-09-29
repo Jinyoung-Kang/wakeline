@@ -2,6 +2,7 @@
 import { ApiError } from "./api";
 import { fmtDuration } from "./format";
 import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
+import { fmtKstMinute, fmtTimeTitle, kstDayOf } from "./time";
 
 export const OPS_SESSION_PATH = "/api/v1/ops/session";
 
@@ -330,4 +331,20 @@ export function parseSetting(key: string, raw: string): { ok: true; value: unkno
   if (spec.pattern && !spec.pattern.test(raw)) return { ok: false, error: `형식: ${spec.hint}` };
   const bad = spec.check?.(raw) ?? null;
   return bad ? { ok: false, error: bad } : { ok: true, value: raw };
+}
+
+/**
+ * 격리 수의 '부분' 날짜(리뷰 2026-09-30 — V16 · 계약 v5 §G20): api 의 counted_since(V16 이 격리 수를 KST 날짜로 세기 시작한 순간, UTC ISO)가 든 KST 날짜의
+ * 수는 그 순간 뒤 실행만 든 부분 값이다 — 하루치(00:00–24:00 KST)처럼 보이지 않게 그 날짜와 붙일 글자를 돌려준다. 값이 없거나 읽을 수 없으면 null(표시 없음).
+ */
+export function qualityPartialDay(since: unknown): { day: string; text: string; title: string } | null {
+  if (typeof since !== "string" || since === "") return null;
+  const day = kstDayOf(since);
+  const title = fmtTimeTitle(since);
+  if (!day || !title) return null;
+  return {
+    day,
+    text: `부분 · ${fmtKstMinute(since)} 부터`,
+    title: `부분 값 — 격리 수를 KST 날짜로 세기 시작한 ${title} 뒤에 시작한 실행만 들었다(V16). 그 앞의 실행은 V16 전 보관 표(quality_rule_count_utc_legacy — 운영자 psql)에 있다`,
+  };
 }

@@ -421,7 +421,9 @@ class RolePrivilegesDbTest {
                     java.util.Map.entry("port_call_coverage", "SELECT"),
                     // V16(계약 v5 §G20): UTC 날짜로 센 옛 일 집계의 보관 표 — 서비스 역할은 아무 권한 없음(읽는 코드 없음)
                     java.util.Map.entry("stats_daily_utc_legacy", ""),
-                    java.util.Map.entry("quality_rule_count_utc_legacy", "")));
+                    java.util.Map.entry("quality_rule_count_utc_legacy", ""),
+                    // V16: 격리 수를 KST 날짜로 세기 시작한 순간 — api 는 읽기만(운영 화면의 '부분' 날짜)
+                    java.util.Map.entry("kst_day_cutover", "SELECT")));
             assertThat(actual).isEqualTo(expected);
             // 열 단위 UPDATE 스냅샷(표 단위 권한이 없는 표만): api 가 고칠 수 있는 열은 이것뿐이다
             java.util.Map<String, String> columns = new java.util.TreeMap<>();
