@@ -122,6 +122,7 @@ public class ShipFanout implements SmartLifecycle {
                 .description("뷰포트 안 선박이 개별 표시 상한(줌 ≥ 7 은 5,000 척, 줌 4~6 은 1,500 척)을 넘어 격자로 대신 보낸 경우").register(meters);
         this.gridBuild = Timer.builder("wakeline_ship_grid_build_seconds").description("선박 격자(세 단계) 한 번 만들기 — ShipStore 버전당 한 번").register(meters);
         hub.setShipsHook(this::onInitial);
+        hub.setShipSelectedHook(this::recheckSelected);
     }
 
     /**
@@ -181,11 +182,24 @@ public class ShipFanout implements SmartLifecycle {
      */
     void refreshSelected() {
         try {
-            for (WsSession s : hub.sessionsView())
-                if (s.selectedMmsi != null && s.subscribed()) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
+            for (WsSession s : hub.sessionsView()) recheckSelected(s);
         } catch (RuntimeException e) {
             // 다음 주기에 다시
         }
+    }
+
+    /** 이 세션의 ship_selected 를 다시 계산하도록 예약한다(선박을 고른 구독 세션만 — 바뀐 것이 없으면 보내지 않는다). */
+    void recheckSelected(WsSession s) {
+        if (s.selectedMmsi != null && s.subscribed()) s.schedule(WsSession.Job.SHIP_SELECTED, () -> runSelected(s));
+    }
+
+    /**
+     * 캐시가 비어 있는(pending) 입출항인데 수요 서비스가 이 세션의 그 호출부호를 임대에 올리지 못했다(세션·IP 한도 · 서버 상한) → limited.
+     * 누구도 조회하지 않는데 '조회 중' 이라 하지 않게. 캐시에 결과가 있으면 결과가 먼저다.
+     */
+    static PortCallsInfo gated(PortCallsInfo calls, WsSession.PortCallGate gate) {
+        if (calls == null || gate == null || !PortCallsInfo.PENDING.equals(calls.status()) || !gate.callSign().equals(calls.callSign())) return calls;
+        return PortCallsInfo.limited(calls.callSign(), gate.limitedBy());
     }
 
     // ---- 이벤트(스트림 소비·만료 스레드 — 예약만) ----
@@ -352,7 +366,7 @@ public class ShipFanout implements SmartLifecycle {
         if (mmsi == null) { s.shipSelectedSent = null; return; }
         ShipStore.Ship ship = store.view().get(mmsi);
         ShipStatic stat = ship != null ? ship.stat() : store.staticOf(mmsi);
-        PortCallsInfo calls = portCalls.apply(stat);
+        PortCallsInfo calls = gated(portCalls.apply(stat), s.portCallGate);
         WsSession.ShipSelectedSent prev = s.shipSelectedSent;
         if (!force && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && prev.stat() == stat && Objects.equals(prev.portCalls(), calls))
             return;

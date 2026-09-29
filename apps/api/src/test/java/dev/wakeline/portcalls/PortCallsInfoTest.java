@@ -77,6 +77,31 @@ public class PortCallsInfoTest {
         assertThat(pending.has("items")).isFalse();
     }
 
+    /**
+     * api 만 아는 두 상태: limited(선박을 고른 세션의 조회가 한도에 걸려 임대에 오르지 않았다 — 조회 중이 아니다) · no_static(AIS 정적 정보를
+     * 아직 받지 못해 호출부호를 모른다 — '호출부호 없음' 과 다르다). 수집기는 이 상태를 쓰지 않는다 — 캐시에 있으면 읽을 수 없는 값.
+     */
+    @Test void limitedAndNoStaticAreApiStates_withOnlyTheirOwnFields() {
+        JsonNode lim = RouteInfoTest.JSON.valueToTree(PortCallsInfo.limited("230025", "session"));
+        assertThat(lim.path("status").asString()).isEqualTo("limited");
+        assertThat(lim.path("limited_by").asString()).isEqualTo("session");
+        assertThat(lim.path("call_sign").asString()).isEqualTo("230025");
+        assertThat(lim.path("window_days").asInt()).isEqualTo(30);
+        assertThat(lim.has("fetched_at")).isFalse();
+        assertThat(lim.has("items")).isFalse();
+        assertThat(lim.has("error_kind")).isFalse();
+        for (String by : new String[]{"session", "ip", "capacity"}) assertThat(PortCallsInfo.limited("230025", by).limitedBy()).isEqualTo(by);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> PortCallsInfo.limited("230025", "guess")).isInstanceOf(IllegalArgumentException.class);
+        JsonNode ns = RouteInfoTest.JSON.valueToTree(PortCallsInfo.noStatic());
+        assertThat(ns.path("status").asString()).isEqualTo("no_static");
+        assertThat(ns.has("call_sign")).isFalse();
+        assertThat(ns.has("limited_by")).isFalse();
+        assertThat(PortCallsInfo.noCallSign().limitedBy()).isNull();
+        assertThat(parse(sample().put("status", "limited").put("limited_by", "session"))).isEqualTo(PortCallsInfo.unreadable("230025"));
+        assertThat(parse(sample().put("status", "no_static"))).isEqualTo(PortCallsInfo.unreadable("230025"));
+        assertThat(parse(sample().put("limited_by", "session")).limitedBy()).as("the collector's value never carries limited_by").isNull();
+    }
+
     @Test void missingValueIsPending_unreadableValuesAreCacheErrors_neverNone() {
         assertThat(PortCallsInfo.fromCache("230025", null, RouteInfoTest.JSON).status()).isEqualTo("pending");
         for (String raw : new String[]{"", "{", "[]", "null", "x".repeat(PortCallsInfo.MAX_RAW + 1)}) {

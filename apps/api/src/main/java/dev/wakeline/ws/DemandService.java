@@ -43,6 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -67,8 +68,14 @@ import java.util.function.Supplier;
  *   <li>한국 항만 입출항(ADR-022): 선박을 선택한 구독 세션마다 그 선박의 호출부호(카드와 같은 정적 정보 · 수집기와 같은 정규화 —
  *       {@link PortCallReader#callSigns})를 임대 wakeline:demand:portcalls 에 올린다. 같은 호출부호는 세션끼리 나누고, 상한
  *       {@value #MAX_PORT_CALL_LEASES}개(세션 수 많은 순 → 먼저 요청된 순). hot·focus 와 따로 쓰고 따로 센다(한쪽 실패가 다른 쪽을 막지 않는다).
- *       남용 한도는 수집기 쪽(호스트 1 req/s · 하루 예산 · 6 h 캐시)이 정한다 — 세션이 선박을 바꿔 가며 골라도 호출 수는 그 상한을 넘지 않는다.
+ *       캐시에 결과가 있는 호출부호({@link PortCallReader#known})는 조회가 필요 없으므로 임대에 올리지 않고 한도에도 세지 않는다.
  *       아무도 선박을 고르지 않았고 직전 쓰기도 비었으면(성공) 다시 쓰지 않는다.</li>
+ *   <li>입출항 남용 한도(ADR-022 — 새 조회 하나 = PORT-MIS 요청 10회 이상, 하루 예산 3,000회를 모든 사용자가 나눈다): 새로 조회를 일으키는
+ *       호출부호(그 세션이 올린 것과 다르고 캐시에 결과가 없는 것)는 세션마다 {@value #PORT_CALL_SESSION_MAX}개/60 s(계약 v3 §C 와 같은 값),
+ *       접속 주소(IP)마다 모든 세션을 합쳐 {@value #PORT_CALL_IP_MAX}개/24시간(요청 약 600회 — 예산의 20 %)까지. 넘으면 그 세션의 직전 임대를
+ *       그대로 두고(새 호출부호 무시) 세션의 문(portCallGate)에 이유를 적는다 — 카드는 '조회 중' 대신 limited(session · ip)를 보인다. 임대 상한
+ *       밖이거나 IP 표가 가득 차면 capacity. 거절한 시도는 창에 기록하지 않는다 — 창이 비면 다음 계산(≤ 10 s)에 반영된다. 문이 바뀌면
+ *       그 세션의 ship_selected 를 바로 다시 계산한다(허브 알림).</li>
  * </ul>
  */
 @Profile("!cli & !migrate")
@@ -85,6 +92,17 @@ public class DemandService implements SmartLifecycle {
     public static final int MAX_FOCUS_HEXES = 50;
     /** 입출항 조회 임대 상한(수집기도 20개까지만 읽는다 — jobs/portcalls.MAX_LEASES). */
     public static final int MAX_PORT_CALL_LEASES = 20;
+    /** 입출항 세션 한도: 새로 조회를 일으키는 호출부호는 이 창(60 s)에 이 수(6)까지 — 계약 v3 §C 의 새 hex·셀 한도와 같은 값. */
+    public static final int PORT_CALL_SESSION_MAX = 6;
+    public static final long PORT_CALL_SESSION_WINDOW_MS = 60_000;
+    /** 입출항 접속 주소(IP) 한도: 같은 IP 의 모든 세션을 합쳐 24시간에 60개(조회 하나 ≈ 요청 10회 → 약 600회 = 하루 예산 3,000회의 20 %). */
+    public static final int PORT_CALL_IP_MAX = 60;
+    public static final long PORT_CALL_IP_WINDOW_MS = 24 * 3_600_000L;
+    /** IP 창 표 상한(메모리 — IP 하나 약 0.5 KB). 가득 차면 빈 창을 치우고, 그래도 가득이면 새 IP 의 새 조회는 capacity 로 막는다. */
+    static final int PORT_CALL_IP_TABLE_MAX = 4_096;
+    static final String LIMITED_SESSION = "session";
+    static final String LIMITED_IP = "ip";
+    static final String LIMITED_CAPACITY = "capacity";
     /** 세션 제한(계약 v3 §C): 새 hex·새 셀은 각각 이 창(60 s)에 이 수(6)까지. */
     public static final int SESSION_NEW_KEYS_MAX = 6;
     public static final long SESSION_NEW_KEYS_WINDOW_MS = 60_000;
@@ -108,6 +126,8 @@ public class DemandService implements SmartLifecycle {
     private final LongSupplier clock;
     /** MMSI → 입출항 조회 호출부호(모르면 null). */
     private final Function<String, String> callSigns;
+    /** 호출부호 → 캐시에 수집기의 결과가 있다(새 조회를 일으키지 않는다 — 한도에 세지 않고 임대에도 올리지 않는다). */
+    private final Predicate<String> portCallKnown;
     private final AtomicBoolean refreshQueued = new AtomicBoolean();
     private final Timer refreshTimer;
     private final Counter writeErrors;
@@ -115,34 +135,40 @@ public class DemandService implements SmartLifecycle {
     private final Counter refreshErrors;
     private final Counter portCallErrors;
     private final AtomicInteger portCallLeased = new AtomicInteger();
+    /** 입출항 조회가 한도에 걸려 '조회하지 않음'(limited)인 세션 수 — 운영 지표(한도가 실제로 쓰이는지). */
+    private final AtomicInteger portCallLimited = new AtomicInteger();
     private volatile boolean running;
     private ScheduledFuture<?> periodic;
     // ---- 수요 스레드 전용 ----
     private final Map<String, Long> hotFirstAt = new HashMap<>();
     private final Map<String, Long> focusFirstAt = new HashMap<>();
     private final Map<String, Long> portCallFirstAt = new HashMap<>();
+    /** 접속 주소(IP) → 새 입출항 조회 창(24시간). 세션이 모두 닫혀도 창이 빌 때까지 남는다(다시 접속해도 한도가 풀리지 않게). */
+    private final Map<String, SlidingWindowLimiter> portCallIpWindows = new HashMap<>();
     /** 마지막으로 성공한 입출항 임대 쓰기가 빈 목록이었나(아무도 선박을 고르지 않으면 매번 쓰지 않는다). */
     private boolean portCallsClear;
     private long lastWarnMs;
 
     @Autowired
     public DemandService(WsHub hub, RegionSettings region, SnapshotStore snapshots, ShipStore ships, DemandLeases leases, DemandStats stats,
-                         ObjectMapper json, MeterRegistry meters) {
+                         ObjectMapper json, MeterRegistry meters, PortCallReader portCalls) {
         this(hub, region::current, snapshots, leases, stats, json, meters,
                 Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("demand").factory()), System::currentTimeMillis,
-                PortCallReader.callSigns(ships));
+                PortCallReader.callSigns(ships), portCalls::known);
     }
 
     /** 테스트용: 실행기·시계·지역을 주입한다(선박 호출부호 없음 — 입출항 임대는 늘 비어 있다). */
     DemandService(WsHub hub, Supplier<RegionSettings.Region> region, SnapshotStore snapshots, DemandLeases leases, DemandStats stats,
                   ObjectMapper json, MeterRegistry meters, ScheduledExecutorService exec, LongSupplier clock) {
-        this(hub, region, snapshots, leases, stats, json, meters, exec, clock, mmsi -> null);
+        this(hub, region, snapshots, leases, stats, json, meters, exec, clock, mmsi -> null, cs -> false);
     }
 
-    /** 테스트용: MMSI → 호출부호도 주입한다. */
+    /** 테스트용: MMSI → 호출부호와 캐시 결과 유무도 주입한다. */
     DemandService(WsHub hub, Supplier<RegionSettings.Region> region, SnapshotStore snapshots, DemandLeases leases, DemandStats stats,
-                  ObjectMapper json, MeterRegistry meters, ScheduledExecutorService exec, LongSupplier clock, Function<String, String> callSigns) {
+                  ObjectMapper json, MeterRegistry meters, ScheduledExecutorService exec, LongSupplier clock, Function<String, String> callSigns,
+                  Predicate<String> portCallKnown) {
         this.callSigns = callSigns;
+        this.portCallKnown = portCallKnown;
         this.hub = hub;
         this.region = region;
         this.snapshots = snapshots;
@@ -157,6 +183,7 @@ public class DemandService implements SmartLifecycle {
         this.refreshErrors = Counter.builder("wakeline_demand_errors_total").tag("op", "refresh").register(meters);
         this.portCallErrors = Counter.builder("wakeline_demand_errors_total").tag("op", "port_calls").register(meters);
         meters.gauge("wakeline_demand_leases", List.of(io.micrometer.core.instrument.Tag.of("kind", "port_calls")), portCallLeased);
+        meters.gauge("wakeline_demand_limited_sessions", List.of(io.micrometer.core.instrument.Tag.of("kind", "port_calls")), portCallLimited);
         meters.gauge("wakeline_demand_leases", List.of(io.micrometer.core.instrument.Tag.of("kind", "hot")), stats, s -> s.counts().hotLeased());
         meters.gauge("wakeline_demand_leases", List.of(io.micrometer.core.instrument.Tag.of("kind", "focus")), stats, s -> s.counts().focusLeased());
         meters.gauge("wakeline_demand_wanted", List.of(io.micrometer.core.instrument.Tag.of("kind", "hot")), stats, s -> s.counts().hotWanted());
@@ -243,6 +270,8 @@ public class DemandService implements SmartLifecycle {
                 wants.add(want(s, reg, nowMs));
             } else {
                 s.demandHeld = null; // 보지 않는 세션은 임대에 아무것도 올리지 않는다(다시 보면 새 키로 센다)
+                s.portCallHeld = null;
+                s.portCallGate = null;
                 if (s.demandJson != null) {
                     // 일시정지(보지 않음) — 수요를 내지 않으므로 마지막 상태를 버린다: 다시 볼 때(resume) 초기 세트가 지난 'active' 를
                     // 되풀이하지 않고, 다음 계산의 새 상태를 바로 보낸다
@@ -311,12 +340,32 @@ public class DemandService implements SmartLifecycle {
     void refreshPortCalls(List<Want> wants, long nowMs) {
         try {
             Map<String, Integer> count = new LinkedHashMap<>();
+            Map<WsSession, WsSession.PortCallGate> gates = new HashMap<>();
             for (Want w : wants) {
-                String mmsi = w.session().selectedMmsi;
+                WsSession s = w.session();
+                String mmsi = s.selectedMmsi;
                 String cs = mmsi == null ? null : callSigns.apply(mmsi);
-                if (cs != null) count.merge(cs, 1, Integer::sum);
+                String refused = admitPortCall(s, cs, nowMs);
+                if (refused != null) gates.put(s, new WsSession.PortCallGate(cs, refused));
+                String held = s.portCallHeld;
+                if (held != null && !portCallKnown.test(held)) count.merge(held, 1, Integer::sum); // 결과가 캐시에 있으면 조회가 필요 없다
             }
             List<String> leased = choose(count, portCallFirstAt, MAX_PORT_CALL_LEASES, nowMs);
+            Set<String> leasedSet = Set.copyOf(leased);
+            int limitedSessions = 0;
+            for (Want w : wants) {
+                WsSession s = w.session();
+                WsSession.PortCallGate g = gates.get(s);
+                String held = s.portCallHeld;
+                if (g == null && held != null && count.containsKey(held) && !leasedSet.contains(held))
+                    g = new WsSession.PortCallGate(held, LIMITED_CAPACITY); // 임대 상한 밖 — 아무도 조회하지 않는다
+                if (g != null) limitedSessions++;
+                if (!java.util.Objects.equals(s.portCallGate, g)) {
+                    s.portCallGate = g;
+                    hub.shipSelectedChanged(s);
+                }
+            }
+            portCallLimited.set(limitedSessions);
             portCallLeased.set(leased.size());
             if (leased.isEmpty() && portCallsClear) return;
             leases.replacePortCalls(leased, nowMs + LEASE_TTL_MS);
@@ -327,6 +376,45 @@ public class DemandService implements SmartLifecycle {
             warn("port-call lease write failed (collector keeps the previous leases until they expire): {}", e);
         }
     }
+
+    /**
+     * 입출항 남용 한도(ADR-022): 세션이 고른 선박의 호출부호(cs — 없으면 null)를 세션의 임대(portCallHeld)에 반영한다. 받아들이면 null,
+     * 막으면 이유(session · ip · capacity) — 그때 직전 임대는 그대로 둔다. 같은 호출부호 유지 · 선택 해제는 언제나 반영하고, 캐시에 결과가 있는
+     * 호출부호는 조회를 일으키지 않으므로 세지 않는다. 한도는 세션 창과 IP 창을 모두 확인한 뒤에만 둘 다 기록한다(거절은 기록하지 않는다).
+     */
+    String admitPortCall(WsSession s, String cs, long nowMs) {
+        if (cs == null) {
+            s.portCallHeld = null;
+            return null;
+        }
+        if (cs.equals(s.portCallHeld)) return null;
+        if (portCallKnown.test(cs)) {
+            s.portCallHeld = cs;
+            return null;
+        }
+        long t = TimeUnit.MILLISECONDS.toNanos(nowMs);
+        if (!s.newPortCalls.available(t)) return LIMITED_SESSION;
+        SlidingWindowLimiter ip = portCallIpWindow(s.ip, t);
+        if (ip == null) return LIMITED_CAPACITY;
+        if (!ip.available(t)) return LIMITED_IP;
+        s.newPortCalls.tryAcquire(t);
+        ip.tryAcquire(t);
+        s.portCallHeld = cs;
+        return null;
+    }
+
+    /** 이 IP 의 창(없으면 만든다). 표가 가득 차면 빈 창을 치우고, 그래도 가득이면 null(새 IP 는 capacity). 수요 스레드에서만. */
+    private SlidingWindowLimiter portCallIpWindow(String ip, long nowNanos) {
+        SlidingWindowLimiter w = portCallIpWindows.get(ip);
+        if (w != null) return w;
+        if (portCallIpWindows.size() >= PORT_CALL_IP_TABLE_MAX) portCallIpWindows.values().removeIf(l -> l.idle(nowNanos));
+        if (portCallIpWindows.size() >= PORT_CALL_IP_TABLE_MAX) return null;
+        w = new SlidingWindowLimiter(PORT_CALL_IP_MAX, TimeUnit.MILLISECONDS.toNanos(PORT_CALL_IP_WINDOW_MS));
+        portCallIpWindows.put(ip, w);
+        return w;
+    }
+
+    int portCallIpWindowCount() { return portCallIpWindows.size(); }
 
     /** 세션 하나의 수요(계약 v2 §A1). */
     static Want want(WsSession s, RegionSettings.Region reg, long nowMs) {

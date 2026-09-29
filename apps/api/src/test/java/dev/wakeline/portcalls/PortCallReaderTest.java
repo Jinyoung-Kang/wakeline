@@ -51,7 +51,7 @@ class PortCallReaderTest {
     @Test void invalidCallSignIsNeverLookedUp() {
         assertThat(reader.forCallSign("AB")).isEqualTo(PortCallsInfo.noCallSign());
         assertThat(reader.forCallSign(null).status()).isEqualTo("no_call_sign");
-        assertThat(reader.forStatic(null).status()).as("static unknown — call sign unknown").isEqualTo("no_call_sign");
+        assertThat(reader.forStatic(null).status()).as("static not received yet — the call sign is unknown, not absent").isEqualTo("no_static");
         assertThat(gets).isEmpty();
     }
 
@@ -79,6 +79,29 @@ class PortCallReaderTest {
         redis.put("wakeline:portcalls:230025", "{broken");
         clock.addAndGet(PortCallReader.TTL_MS);
         assertThat(reader.forCallSign("230025").errorKind()).isEqualTo("cache");
+    }
+
+    /** 수요 한도(DemandService)가 세지 않는 호출부호 = 캐시에 수집기의 결과가 있다(새 조회를 일으키지 않는다). 캐시를 읽지 못하면 모른다(false). */
+    @Test void known_isTrueOnlyForACollectorResult() {
+        String key = "wakeline:portcalls:230025";
+        assertThat(reader.known("230025")).as("no value yet — a lookup is needed").isFalse();
+        String[] values = {
+                PortCallsInfoTest.sample().toString(),
+                PortCallsInfoTest.sample().put("status", "none").toString(),
+                PortCallsInfoTest.sample().put("status", "error").put("error_kind", "http").toString(),
+                PortCallsInfoTest.sample().put("status", "disabled").put("reason", "no_key").toString()};
+        for (String v : values) {
+            redis.put(key, v);
+            clock.addAndGet(PortCallReader.TTL_MS);
+            assertThat(reader.known("230025")).as(v).isTrue();
+        }
+        redis.put(key, "{broken");
+        clock.addAndGet(PortCallReader.TTL_MS);
+        assertThat(reader.known("230025")).as("unreadable value — unknown").isFalse();
+        down = true;
+        clock.addAndGet(PortCallReader.TTL_MS);
+        assertThat(reader.known("230025")).as("Redis down — unknown").isFalse();
+        assertThat(reader.known("AB")).as("not a call sign").isFalse();
     }
 
     @Test void cacheIsBounded() {

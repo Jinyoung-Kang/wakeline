@@ -727,12 +727,13 @@
       }
     },
     "port_calls": {
-      "description": "선택 선박의 한국 항만 입출항(ADR-022) — AIS 호출부호로 조회한 해양수산부 선박운항정보(PORT-MIS) 최근 30일(KST 날짜, 입항일 기준). status: ok · none(기록 없음) · pending(조회 전·조회 중) · error(error_kind · error_code — 원문 사유는 싣지 않는다) · disabled(disabled_reason) · no_call_sign(호출부호 없음 — 조회 불가). items 는 최근 순 · 최대 20건(더 있으면 truncated). incomplete = 쪽 상한 때문에 일부 항만청 기록을 다 받지 못했다.",
+      "description": "선택 선박의 한국 항만 입출항(ADR-022) — AIS 호출부호로 조회한 해양수산부 선박운항정보(PORT-MIS) 최근 30일(KST 날짜, 입항일 기준). status: ok · none(기록 없음 — incomplete 면 받은 기록 안에서만) · pending(조회 전·조회 중) · error(error_kind · error_code — 원문 사유는 싣지 않는다) · disabled(disabled_reason) · no_call_sign(정적 정보에 호출부호가 없거나 형식 밖 — 조회 불가) · no_static(AIS 정적 정보를 아직 받지 못해 호출부호를 모름) · limited(이 세션의 조회가 남용 한도에 걸려 조회하지 않고 있다 — limited_by session · ip · capacity. api 는 limited 에 늘 limited_by · call_sign 을 싣고 다른 상태에는 싣지 않는다 — 상태 간 규칙은 error_kind · disabled_reason 처럼 스키마가 아니라 api 시험과 웹 해석(parsePortCalls)이 지킨다). items 는 최근 순 · 최대 20건(더 있으면 truncated). incomplete = 쪽 상한 때문에 일부 항만청 기록을 다 받지 못했다.",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "window_days", "source"],
       "properties": {
-        "status": { "enum": ["ok", "none", "pending", "error", "disabled", "no_call_sign"] },
+        "status": { "enum": ["ok", "none", "pending", "error", "disabled", "no_call_sign", "no_static", "limited"] },
+        "limited_by": { "enum": ["session", "ip", "capacity"] },
         "call_sign": { "type": "string", "pattern": "^[A-Z0-9]{3,7}$" },
         "fetched_at": { "$ref": "#/$defs/date_time" },
         "window_days": { "const": 30 },

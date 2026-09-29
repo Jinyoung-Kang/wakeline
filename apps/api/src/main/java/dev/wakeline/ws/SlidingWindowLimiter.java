@@ -36,4 +36,16 @@ final class SlidingWindowLimiter {
         next = (next + 1) % accepted.length;
         return true;
     }
+
+    /** 지금 {@link #tryAcquire} 하면 받아들일까(기록하지 않는다) — 한도 여러 개를 모두 확인한 뒤에만 기록할 때. */
+    synchronized boolean available(long nowNanos) {
+        return count < accepted.length || nowNanos - accepted[next] >= windowNanos;
+    }
+
+    /** 창 안에 받아들인 것이 하나도 없다(가장 최근 것도 window 보다 오래됐다) — 표에서 치워도 한도가 풀리지 않는다. */
+    synchronized boolean idle(long nowNanos) {
+        if (count == 0) return true;
+        int newest = (next - 1 + accepted.length) % accepted.length;
+        return nowNanos - accepted[newest] >= windowNanos;
+    }
 }

@@ -355,13 +355,15 @@ class WsSchemaContractTest {
             all.addAll(q.sent);
             samples.add(new Sample("status.populated", first(q.sent, "status", n -> n.path("status").path("sources").has("ais"))));
         }
-        // ---- 세션 5(따로): 한국 항만 입출항의 다른 상태(ADR-022) — 조회 실패(종류·코드) · 꺼짐(키 없음) · 조회 중(캐시 없음)
+        // ---- 세션 5(따로): 한국 항만 입출항의 다른 상태(ADR-022) — 조회 실패(종류·코드) · 꺼짐(키 없음) · 조회 중(캐시 없음) ·
+        //      한도(수요 서비스가 이 세션의 호출부호를 임대에 올리지 못함 — 세션의 문) · 정적 정보 없음(위치만 받은 선박)
         try (WsTestKit k = new WsTestKit(json)) {
             List<ShipStatic> stats = new ArrayList<>();
-            for (String[] s : new String[][]{{"440000004", "D7AC"}, {"440000005", "D7AD"}, {"440000006", "D7AE"}})
+            for (String[] s : new String[][]{{"440000004", "D7AC"}, {"440000005", "D7AD"}, {"440000006", "D7AE"}, {"440000007", "D7AF"}})
                 stats.add(new ShipStatic(s[0], "SYNTH " + s[1], s[1], null, 70, null, null, null, null, null, null, null, null, null, null,
                         now.minusSeconds(600), "aisstream"));
-            ships(k, List.of(), stats, now.minusSeconds(5));
+            ships(k, List.of(pos("440000008", 35.3, 129.3, 6.0, 180.0, null, 0, null, "epfs", now.minusSeconds(20), "PositionReport", "A")), stats,
+                    now.minusSeconds(5));
             realStatus(k);
             Map<String, String> cache = new HashMap<>();
             cache.put("wakeline:portcalls:D7AC", PortCallsInfoTest.sample().put("call_sign", "D7AC").put("status", "error")
@@ -372,11 +374,16 @@ class WsSchemaContractTest {
             FakeWsSession c = k.connect("s-portcalls", "10.0.0.5");
             k.msg(c, "{\"type\":\"hello\",\"proto\":1}");
             k.msg(c, "{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
+            k.hub.sessionsView().stream().filter(x -> x.id.equals("s-portcalls")).findFirst().orElseThrow().portCallGate =
+                    new WsSession.PortCallGate("D7AF", "session");
             for (ShipStatic s : stats) k.msg(c, "{\"type\":\"select_ship\",\"mmsi\":\"" + s.mmsi() + "\"}");
+            k.msg(c, "{\"type\":\"select_ship\",\"mmsi\":\"440000008\"}");
             all.addAll(c.sent);
             samples.add(new Sample("ship_selected.port_calls_error", first(c.sent, "ship_selected", n -> "error".equals(n.path("port_calls").path("status").asString()))));
             samples.add(new Sample("ship_selected.port_calls_disabled", first(c.sent, "ship_selected", n -> "disabled".equals(n.path("port_calls").path("status").asString()))));
             samples.add(new Sample("ship_selected.port_calls_pending", first(c.sent, "ship_selected", n -> "pending".equals(n.path("port_calls").path("status").asString()))));
+            samples.add(new Sample("ship_selected.port_calls_limited", first(c.sent, "ship_selected", n -> "limited".equals(n.path("port_calls").path("status").asString()))));
+            samples.add(new Sample("ship_selected.port_calls_no_static", first(c.sent, "ship_selected", n -> "no_static".equals(n.path("port_calls").path("status").asString()))));
         }
         return new Run(all, samples);
     }
@@ -487,6 +494,8 @@ class WsSchemaContractTest {
         bad.put("port_calls unknown status", mutate(byName.get("ship_selected"), n -> ((ObjectNode) n.get("port_calls")).put("status", "guessing")));
         bad.put("port_calls raw error text", mutate(byName.get("ship_selected.port_calls_error"), n -> ((ObjectNode) n.get("port_calls")).put("error", "x")));
         bad.put("port_calls other window", mutate(byName.get("ship_selected"), n -> ((ObjectNode) n.get("port_calls")).put("window_days", 7)));
+        bad.put("port_calls limited unknown reason", mutate(byName.get("ship_selected.port_calls_limited"), n -> ((ObjectNode) n.get("port_calls")).put("limited_by", "mood")));
+
         bad.put("port_call guessed field", mutate(byName.get("ship_selected"),
                 n -> ((ObjectNode) ((ArrayNode) n.get("port_calls").get("items")).get(0)).put("ship_type_guess", "KTX")));
         bad.put("selected without route key", mutate(byName.get("selected.route_found"), n -> n.remove("route")));

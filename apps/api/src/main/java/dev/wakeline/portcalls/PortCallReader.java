@@ -62,9 +62,20 @@ public class PortCallReader {
         this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "portcalls").tag("result", "miss").register(meters);
     }
 
-    /** 이 선박 정적 정보의 호출부호로 읽은 입출항. 정적 정보가 없으면(호출부호를 모른다) no_call_sign. */
+    /** 이 선박 정적 정보의 호출부호로 읽은 입출항. 정적 정보를 아직 받지 못했으면 no_static(호출부호를 모른다 — '없음' 이 아니다). */
     public PortCallsInfo forStatic(ShipStatic st) {
-        return st == null ? PortCallsInfo.noCallSign() : forCallSign(st.callSign());
+        return st == null ? PortCallsInfo.noStatic() : forCallSign(st.callSign());
+    }
+
+    /**
+     * 캐시에 수집기의 결과(ok · none · error · disabled)가 있나 — 있으면 이 호출부호는 새 조회를 일으키지 않는다(수요 한도가 세지 않는다).
+     * 결과가 없거나(pending) 캐시를 읽지 못하면(error cache — 모른다) false. 같은 5 s 메모리 캐시를 쓴다.
+     */
+    public boolean known(String callSign) {
+        String cs = normalizeCallSign(callSign);
+        if (cs == null) return false;
+        PortCallsInfo info = forCallSign(cs);
+        return !PortCallsInfo.PENDING.equals(info.status()) && !PortCallsInfo.KIND_CACHE.equals(info.errorKind());
     }
 
     /** AIS 호출부호 → 입출항. 형식이 틀리면 no_call_sign(Redis 를 읽지 않는다). */

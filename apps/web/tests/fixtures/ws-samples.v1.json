@@ -7,7 +7,7 @@
     "message" : {
       "type" : "welcome",
       "session_id" : "s-points",
-      "server_time" : "2026-09-29T09:36:09.874446Z",
+      "server_time" : "2026-09-29T10:25:23.759709Z",
       "snapshot_version" : 4,
       "limits" : {
         "max_bbox_area" : 2500.0,
@@ -25,18 +25,18 @@
       "type" : "snapshot",
       "seq" : 1,
       "v" : 4,
-      "ts" : "2026-09-29T09:36:09.919095Z",
+      "ts" : "2026-09-29T10:25:23.790125Z",
       "sources" : {
         "region" : {
           "provider" : "adsb_lol",
-          "fetched_at" : "2026-09-29T09:36:07Z",
-          "lag_s" : 2.9,
+          "fetched_at" : "2026-09-29T10:25:21Z",
+          "lag_s" : 2.8,
           "stale" : false
         },
         "global" : {
           "provider" : "opensky",
-          "fetched_at" : "2026-09-29T09:35:59Z",
-          "lag_s" : 10.9,
+          "fetched_at" : "2026-09-29T10:25:13Z",
+          "lag_s" : 10.8,
           "stale" : false
         }
       },
@@ -52,7 +52,7 @@
         "vrate_fpm" : -640.0,
         "on_ground" : false,
         "squawk" : "1234",
-        "seen_at" : "2026-09-29T09:36:06Z",
+        "seen_at" : "2026-09-29T10:25:20Z",
         "provider" : "adsb_lol",
         "quality" : 0
       }, {
@@ -60,7 +60,7 @@
         "lat" : 37.4581,
         "lon" : 126.4452,
         "on_ground" : true,
-        "seen_at" : "2026-09-29T09:36:04Z",
+        "seen_at" : "2026-09-29T10:25:18Z",
         "provider" : "adsb_lol",
         "quality" : 1
       } ]
@@ -71,18 +71,18 @@
       "type" : "snapshot",
       "seq" : 1,
       "v" : 6,
-      "ts" : "2026-09-29T09:36:10.022037Z",
+      "ts" : "2026-09-29T10:25:23.865817Z",
       "sources" : {
         "region" : {
           "provider" : "adsb_lol",
-          "fetched_at" : "2026-09-29T09:36:08Z",
-          "lag_s" : 2.0,
+          "fetched_at" : "2026-09-29T10:25:22Z",
+          "lag_s" : 1.9,
           "stale" : false
         },
         "global" : {
           "provider" : "opensky",
-          "fetched_at" : "2026-09-29T09:35:59Z",
-          "lag_s" : 11.0,
+          "fetched_at" : "2026-09-29T10:25:13Z",
+          "lag_s" : 10.9,
           "stale" : false
         }
       },
@@ -97,7 +97,7 @@
         "track_deg" : 83.0,
         "on_ground" : false,
         "squawk" : "1234",
-        "seen_at" : "2026-09-29T09:36:08Z",
+        "seen_at" : "2026-09-29T10:25:22Z",
         "provider" : "adsb_lol"
       }, {
         "hex" : "a0b1c2",
@@ -108,7 +108,7 @@
         "gs_kt" : 451.3,
         "track_deg" : 270.4,
         "on_ground" : false,
-        "seen_at" : "2026-09-29T09:35:49Z",
+        "seen_at" : "2026-09-29T10:25:03Z",
         "provider" : "opensky"
       } ]
     }
@@ -118,7 +118,7 @@
       "type" : "diff",
       "seq" : 2,
       "v" : 6,
-      "ts" : "2026-09-29T09:36:09.992121Z",
+      "ts" : "2026-09-29T10:25:23.847320Z",
       "upsert" : [ {
         "hex" : "71c0a1",
         "callsign" : "SYN081",
@@ -130,7 +130,7 @@
         "vrate_fpm" : -512.0,
         "on_ground" : false,
         "squawk" : "1234",
-        "seen_at" : "2026-09-29T09:36:08Z",
+        "seen_at" : "2026-09-29T10:25:22Z",
         "provider" : "adsb_lol",
         "quality" : 0
       } ],
@@ -150,11 +150,11 @@
         "fir_id" : "RKRR",
         "hazard" : "TS",
         "qualifier" : "EMBD",
-        "entered_at" : "2026-09-29T09:34:09Z",
+        "entered_at" : "2026-09-29T10:23:23Z",
         "alt_ft" : 35000,
         "evidence" : {
-          "judged_at" : "2026-09-29T09:34:09Z",
-          "rule" : "observed_inside"
+          "rule" : "observed_inside",
+          "judged_at" : "2026-09-29T10:23:23Z"
         },
         "estimated" : false
       }, {
@@ -165,11 +165,11 @@
         "fir_id" : "RKRR",
         "hazard" : "TS",
         "qualifier" : "EMBD",
-        "entered_at" : "2026-09-29T09:35:39Z",
+        "entered_at" : "2026-09-29T10:24:53Z",
         "eta_s" : 300,
-        "eta_at" : "2026-09-29T09:40:39Z",
+        "eta_at" : "2026-09-29T10:29:53Z",
         "evidence" : {
-          "judged_at" : "2026-09-29T09:35:39Z"
+          "judged_at" : "2026-09-29T10:24:53Z"
         },
         "estimated" : true
       } ]
@@ -189,11 +189,11 @@
           "fir_id" : "RKRR",
           "hazard" : "TS",
           "qualifier" : "EMBD",
-          "entered_at" : "2026-09-29T09:35:39Z",
+          "entered_at" : "2026-09-29T10:24:53Z",
           "eta_s" : 300,
-          "eta_at" : "2026-09-29T09:40:39Z",
+          "eta_at" : "2026-09-29T10:29:53Z",
           "evidence" : {
-            "judged_at" : "2026-09-29T09:35:39Z"
+            "judged_at" : "2026-09-29T10:24:53Z"
           },
           "estimated" : true
         }
@@ -208,13 +208,13 @@
           "fir_id" : "RKRR",
           "hazard" : "TS",
           "qualifier" : "EMBD",
-          "entered_at" : "2026-09-29T09:34:09Z",
-          "left_at" : "2026-09-29T09:36:09Z",
+          "entered_at" : "2026-09-29T10:23:23Z",
+          "left_at" : "2026-09-29T10:25:23Z",
           "close_reason" : "sigmet_ended",
           "alt_ft" : 35000,
           "evidence" : {
-            "judged_at" : "2026-09-29T09:34:09Z",
             "rule" : "observed_inside",
+            "judged_at" : "2026-09-29T10:23:23Z",
             "end_cause" : "expired"
           },
           "estimated" : false
@@ -237,13 +237,13 @@
         "vrate_fpm" : -640.0,
         "on_ground" : false,
         "squawk" : "1234",
-        "seen_at" : "2026-09-29T09:36:06Z",
+        "seen_at" : "2026-09-29T10:25:20Z",
         "provider" : "adsb_lol",
         "quality" : 0,
         "registration" : "HL0001",
         "type_code" : "B77W",
         "category" : "A5",
-        "fetched_at" : "2026-09-29T09:36:08Z"
+        "fetched_at" : "2026-09-29T10:25:22Z"
       },
       "prediction" : {
         "available" : true
@@ -314,7 +314,7 @@
         "radius_nm" : 250,
         "state" : "active",
         "interval_s" : 5,
-        "last_success_at" : "2026-09-29T09:36:08.011Z"
+        "last_success_at" : "2026-09-29T10:25:21.859Z"
       },
       "focus" : null
     }
@@ -347,8 +347,8 @@
         "hex" : "71c0a1",
         "state" : "active",
         "interval_s" : 5,
-        "since" : "2026-09-29T09:34:40.011Z",
-        "last_success_at" : "2026-09-29T09:36:09.011Z"
+        "since" : "2026-09-29T10:23:53.859Z",
+        "last_success_at" : "2026-09-29T10:25:22.859Z"
       }
     }
   }, {
@@ -359,7 +359,7 @@
       "focus" : {
         "hex" : "71c0a1",
         "state" : "expired_session_cap",
-        "since" : "2026-09-29T09:06:10.011Z"
+        "since" : "2026-09-29T09:55:23.859Z"
       }
     }
   }, {
@@ -367,9 +367,9 @@
     "message" : {
       "type" : "sigmets",
       "v" : 1,
-      "fetched_at" : "2026-09-29T09:35:09Z",
+      "fetched_at" : "2026-09-29T10:24:23Z",
       "provider" : "awc_isigmet",
-      "computed_at" : "2026-09-29T09:36:09.938Z",
+      "computed_at" : "2026-09-29T10:25:23.806Z",
       "collection" : {
         "type" : "FeatureCollection",
         "features" : [ {
@@ -391,8 +391,8 @@
             "top_ft" : 38000,
             "base_source" : "json",
             "top_source" : "json",
-            "valid_from" : "2026-09-29T09:26:09Z",
-            "valid_to" : "2026-09-29T11:36:09Z",
+            "valid_from" : "2026-09-29T10:15:23Z",
+            "valid_to" : "2026-09-29T12:25:23Z",
             "active" : true,
             "expiring_soon" : false,
             "move_dir" : "NE",
@@ -400,7 +400,7 @@
             "chng" : "NC",
             "raw_text" : "RKRR SIGMET A1 VALID (synthetic)",
             "provider" : "awc_isigmet",
-            "fetched_at" : "2026-09-29T09:35:09Z"
+            "fetched_at" : "2026-09-29T10:24:23Z"
           }
         }, {
           "type" : "Feature",
@@ -414,14 +414,14 @@
             "base_ft" : 0,
             "base_source" : "assumed_surface",
             "top_source" : "unknown",
-            "valid_from" : "2026-09-29T09:26:09Z",
-            "valid_to" : "2026-09-29T11:36:09Z",
+            "valid_from" : "2026-09-29T10:15:23Z",
+            "valid_to" : "2026-09-29T12:25:23Z",
             "active" : true,
             "expiring_soon" : false,
             "excluded_reason" : "no_coordinates",
             "raw_text" : "RAW (synthetic)",
             "provider" : "awc_isigmet",
-            "fetched_at" : "2026-09-29T09:35:09Z"
+            "fetched_at" : "2026-09-29T10:24:23Z"
           }
         } ]
       }
@@ -439,7 +439,7 @@
         "time" : 1790000000,
         "path" : "/v2/radar/1790000000"
       } ],
-      "fetched_at" : "2026-09-29T09:35:39Z",
+      "fetched_at" : "2026-09-29T10:24:53Z",
       "provider" : "rainviewer"
     }
   }, {
@@ -447,7 +447,7 @@
     "message" : {
       "type" : "status",
       "status" : {
-        "server_time" : "2026-09-29T09:36:09.826031Z",
+        "server_time" : "2026-09-29T10:25:23.725175Z",
         "snapshot_version" : 4,
         "fixture_mode" : false,
         "collector_mode_known" : false,
@@ -456,29 +456,29 @@
           "radius_nm" : 250,
           "provider" : "adsb_lol",
           "aircraft" : 2,
-          "lag_s" : 2.8,
+          "lag_s" : 2.7,
           "stale" : false,
-          "fetched_at" : "2026-09-29T09:36:07Z"
+          "fetched_at" : "2026-09-29T10:25:21Z"
         },
         "global" : {
           "provider" : "opensky",
           "aircraft" : 1,
-          "lag_s" : 10.8,
+          "lag_s" : 10.7,
           "stale" : false,
-          "fetched_at" : "2026-09-29T09:35:59Z"
+          "fetched_at" : "2026-09-29T10:25:13Z"
         },
         "sigmet" : {
           "provider" : "awc_isigmet",
           "count" : 2,
           "active" : 2,
-          "fetched_at" : "2026-09-29T09:35:09Z",
-          "lag_s" : 60.8,
+          "fetched_at" : "2026-09-29T10:24:23Z",
+          "lag_s" : 60.7,
           "stale" : false
         },
         "radar" : {
           "provider" : "rainviewer",
           "frames" : 2,
-          "fetched_at" : "2026-09-29T09:35:39Z",
+          "fetched_at" : "2026-09-29T10:24:53Z",
           "stale" : false
         },
         "radar_kr" : { },
@@ -511,7 +511,7 @@
     "message" : {
       "type" : "ships_snapshot",
       "sseq" : 1,
-      "ts" : "2026-09-29T09:36:09.552Z",
+      "ts" : "2026-09-29T10:25:23.539Z",
       "ships" : [ {
         "mmsi" : "440000001",
         "lat" : 35.1,
@@ -521,14 +521,14 @@
         "heading_deg" : 44,
         "ship_type" : 70,
         "name" : "SYNTH ONE",
-        "seen_at" : "2026-09-29T09:36:01Z",
+        "seen_at" : "2026-09-29T10:25:15Z",
         "position_source" : "epfs",
         "nav_status" : 0
       }, {
         "mmsi" : "440000002",
         "lat" : 35.25,
         "lon" : 129.35,
-        "seen_at" : "2026-09-29T09:35:49Z"
+        "seen_at" : "2026-09-29T10:25:03Z"
       } ]
     }
   }, {
@@ -536,7 +536,7 @@
     "message" : {
       "type" : "ships_diff",
       "sseq" : 2,
-      "ts" : "2026-09-29T09:36:09.552Z",
+      "ts" : "2026-09-29T10:25:23.539Z",
       "upsert" : [ {
         "mmsi" : "440000001",
         "lat" : 35.13,
@@ -546,7 +546,7 @@
         "heading_deg" : 44,
         "ship_type" : 70,
         "name" : "SYNTH ONE",
-        "seen_at" : "2026-09-29T09:36:07Z",
+        "seen_at" : "2026-09-29T10:25:21Z",
         "position_source" : "epfs",
         "nav_status" : 0
       } ],
@@ -556,7 +556,7 @@
     "name" : "ships_grid",
     "message" : {
       "type" : "ships_grid",
-      "ts" : "2026-09-29T09:36:09.552Z",
+      "ts" : "2026-09-29T10:25:23.539Z",
       "cell_deg" : 2.0,
       "cells" : [ [ 35.0, 129.0, 1, "cargo", [ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ] ], [ 41.0, 129.0, 1, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 ] ] ]
     }
@@ -575,7 +575,7 @@
         "nav_status" : 0,
         "rot" : 3,
         "position_source" : "epfs",
-        "seen_at" : "2026-09-29T09:36:01Z",
+        "seen_at" : "2026-09-29T10:25:15Z",
         "provider" : "aisstream",
         "msg_type" : "PositionReport",
         "class" : "A"
@@ -596,7 +596,7 @@
         "eta_day" : 29,
         "eta_hour" : 6,
         "eta_minute" : 30,
-        "updated_at" : "2026-09-29T09:26:09Z",
+        "updated_at" : "2026-09-29T10:15:23Z",
         "provider" : "aisstream"
       },
       "destination_info" : {
@@ -681,7 +681,7 @@
         "mmsi" : "440000003",
         "name" : "ONLY STATIC",
         "ship_type" : 30,
-        "updated_at" : "2026-09-29T09:21:09Z",
+        "updated_at" : "2026-09-29T10:10:23Z",
         "provider" : "aisstream"
       },
       "destination_info" : null,
@@ -695,7 +695,7 @@
     "name" : "ships_grid.capped",
     "message" : {
       "type" : "ships_grid",
-      "ts" : "2026-09-29T09:36:10.059Z",
+      "ts" : "2026-09-29T10:25:23.896Z",
       "cell_deg" : 0.5,
       "cells" : [ [ 34.25, 128.25, 625, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 625 ] ], [ 34.25, 128.75, 321, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 321 ] ], [ 34.75, 128.25, 375, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 375 ] ], [ 34.75, 128.75, 180, "unknown", [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 180 ] ] ],
       "capped" : true
@@ -705,7 +705,7 @@
     "message" : {
       "type" : "status",
       "status" : {
-        "server_time" : "2026-09-29T09:36:11.144993Z",
+        "server_time" : "2026-09-29T10:25:24.719343Z",
         "snapshot_version" : 0,
         "fixture_mode" : false,
         "collector_mode_known" : true,
@@ -736,8 +736,8 @@
           "available" : true,
           "status" : "200",
           "latest_tm" : "202609290500",
-          "fetched_at" : "2026-09-29T09:34:09Z",
-          "checked_at" : "2026-09-29T09:35:39Z",
+          "fetched_at" : "2026-09-29T10:23:23Z",
+          "checked_at" : "2026-09-29T10:24:53Z",
           "stations" : 7,
           "stations_ref" : 15,
           "partial" : true
@@ -747,8 +747,8 @@
           "last_cycle_ms" : 0
         },
         "active_providers" : {
-          "global" : "opensky",
           "hot" : "adsb_fi",
+          "global" : "opensky",
           "region" : "adsb_lol"
         },
         "demand" : {
@@ -760,15 +760,15 @@
           "ais" : {
             "connected" : true,
             "state" : "receiving",
-            "lag_s" : 10.1,
+            "lag_s" : 9.7,
             "msgs_per_s" : 12.5,
             "last_gap" : {
-              "started_at" : "2026-09-29T09:21:09Z",
-              "ended_at" : "2026-09-29T09:22:09Z",
+              "started_at" : "2026-09-29T10:10:23Z",
+              "ended_at" : "2026-09-29T10:11:23Z",
               "reason" : "reconnect"
             },
             "provider" : "aisstream",
-            "last_msg_at" : "2026-09-29T09:36:08Z",
+            "last_msg_at" : "2026-09-29T10:25:22Z",
             "ships" : 1,
             "heartbeat_stale" : false
           }
@@ -786,7 +786,7 @@
         "name" : "SYNTH D7AC",
         "call_sign" : "D7AC",
         "ship_type" : 70,
-        "updated_at" : "2026-09-29T09:26:09Z",
+        "updated_at" : "2026-09-29T10:15:23Z",
         "provider" : "aisstream"
       },
       "destination_info" : null,
@@ -811,7 +811,7 @@
         "name" : "SYNTH D7AD",
         "call_sign" : "D7AD",
         "ship_type" : 70,
-        "updated_at" : "2026-09-29T09:26:09Z",
+        "updated_at" : "2026-09-29T10:15:23Z",
         "provider" : "aisstream"
       },
       "destination_info" : null,
@@ -834,13 +834,62 @@
         "name" : "SYNTH D7AE",
         "call_sign" : "D7AE",
         "ship_type" : 70,
-        "updated_at" : "2026-09-29T09:26:09Z",
+        "updated_at" : "2026-09-29T10:15:23Z",
         "provider" : "aisstream"
       },
       "destination_info" : null,
       "port_calls" : {
         "status" : "pending",
         "call_sign" : "D7AE",
+        "window_days" : 30,
+        "source" : "해양수산부 선박운항정보(PORT-MIS)"
+      }
+    }
+  }, {
+    "name" : "ship_selected.port_calls_limited",
+    "message" : {
+      "type" : "ship_selected",
+      "mmsi" : "440000007",
+      "state" : null,
+      "static" : {
+        "mmsi" : "440000007",
+        "name" : "SYNTH D7AF",
+        "call_sign" : "D7AF",
+        "ship_type" : 70,
+        "updated_at" : "2026-09-29T10:15:23Z",
+        "provider" : "aisstream"
+      },
+      "destination_info" : null,
+      "port_calls" : {
+        "status" : "limited",
+        "call_sign" : "D7AF",
+        "window_days" : 30,
+        "source" : "해양수산부 선박운항정보(PORT-MIS)",
+        "limited_by" : "session"
+      }
+    }
+  }, {
+    "name" : "ship_selected.port_calls_no_static",
+    "message" : {
+      "type" : "ship_selected",
+      "mmsi" : "440000008",
+      "state" : {
+        "mmsi" : "440000008",
+        "lat" : 35.3,
+        "lon" : 129.3,
+        "sog_kn" : 6.0,
+        "cog_deg" : 180.0,
+        "nav_status" : 0,
+        "position_source" : "epfs",
+        "seen_at" : "2026-09-29T10:25:03Z",
+        "provider" : "aisstream",
+        "msg_type" : "PositionReport",
+        "class" : "A"
+      },
+      "static" : null,
+      "destination_info" : null,
+      "port_calls" : {
+        "status" : "no_static",
         "window_days" : 30,
         "source" : "해양수산부 선박운항정보(PORT-MIS)"
       }

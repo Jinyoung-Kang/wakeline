@@ -20,7 +20,9 @@ import java.util.regex.Pattern;
  * 조회는 수집기만 한다(ADR-001). 수집기가 wakeline:portcalls:{호출부호} 에 쓴 값을 믿지 않고 다시 검사한다:
  * <ul>
  *   <li>status: ok · none(최근 30일 기록 없음) · pending(캐시 없음 — 조회 전·조회 중) · error(수집기 조회 실패, 또는 캐시를 읽을 수 없음 → error_kind cache) ·
- *       disabled(묻지 않음 — disabled_reason no_key · fixture · operator) · no_call_sign(호출부호 없음·형식 밖 — 조회하지 않는다).</li>
+ *       disabled(묻지 않음 — disabled_reason no_key · fixture · operator) · no_call_sign(정적 정보에 호출부호가 없거나 형식 밖 — 조회하지 않는다) ·
+ *       no_static(AIS 정적 정보를 아직 받지 못해 호출부호를 모른다 — 받으면 조회) · limited(캐시가 비었는데 이 세션의 조회가 남용 한도에 걸려
+ *       임대에 오르지 않았다 — limited_by session · ip · capacity. 조회 중이 아니다). 뒤의 세 상태는 api 만 안다(수집기 값에 있으면 읽을 수 없는 값).</li>
  *   <li>공개 화면에는 수집기의 오류 원문을 싣지 않는다 — 종류(error_kind)와 모양을 검사한 코드(error_code: HTTP 상태 · resultCode)만.
  *       원문(예산 수치 등)은 운영 화면 공급자 상태·로그에만 있다.</li>
  *   <li>items: 최근 신고 순(시각 모름은 뒤) · 최대 {@value #MAX_ITEMS}건. 코드는 모양만 검사하고, 문자열은 제어·서식 문자를 빼고 자른다
@@ -34,7 +36,7 @@ public record PortCallsInfo(String status, @JsonProperty("call_sign") String cal
                             @JsonProperty("window_days") int windowDays, @JsonProperty("window_from") String windowFrom,
                             @JsonProperty("window_to") String windowTo, String source, List<PortCall> items, Boolean truncated, Boolean incomplete,
                             @JsonProperty("error_kind") String errorKind, @JsonProperty("error_code") String errorCode,
-                            @JsonProperty("disabled_reason") String disabledReason) {
+                            @JsonProperty("disabled_reason") String disabledReason, @JsonProperty("limited_by") String limitedBy) {
     public static final String SOURCE = "해양수산부 선박운항정보(PORT-MIS)";
     public static final int WINDOW_DAYS = 30;
     public static final int MAX_ITEMS = 20;
@@ -49,6 +51,10 @@ public record PortCallsInfo(String status, @JsonProperty("call_sign") String cal
     public static final String ERROR = "error";
     public static final String DISABLED = "disabled";
     public static final String NO_CALL_SIGN = "no_call_sign";
+    public static final String NO_STATIC = "no_static";
+    public static final String LIMITED = "limited";
+    /** limited 의 이유: 세션 한도 · 접속 주소(IP) 한도 · 서버 상한(임대 20개 · IP 표). */
+    public static final Set<String> LIMITED_BY = Set.of("session", "ip", "capacity");
     /** api 가 캐시 값을 읽지 못함(Redis 오류 · 형식이 다른 값). 나머지는 수집기가 쓴 종류 그대로. */
     public static final String KIND_CACHE = "cache";
     static final Set<String> ERROR_KINDS = Set.of("budget", "rate_limited", "http", "provider", "response", "network", "internal", KIND_CACHE);
@@ -85,15 +91,24 @@ public record PortCallsInfo(String status, @JsonProperty("call_sign") String cal
 
     public static PortCallsInfo noCallSign() { return status(NO_CALL_SIGN, null, null); }
 
+    /** AIS 정적 정보를 아직 받지 못했다 — 호출부호를 모른다('없음' 이 아니다). */
+    public static PortCallsInfo noStatic() { return status(NO_STATIC, null, null); }
+
+    /** 캐시가 비었는데 이 세션의 조회가 남용 한도에 걸렸다(ADR-022) — 조회 중이 아니다. by ∈ {@link #LIMITED_BY}. */
+    public static PortCallsInfo limited(String callSign, String by) {
+        if (!LIMITED_BY.contains(by)) throw new IllegalArgumentException("unknown limit: " + by);
+        return new PortCallsInfo(LIMITED, callSign, null, WINDOW_DAYS, null, null, SOURCE, null, null, null, null, null, null, by);
+    }
+
     public static PortCallsInfo pending(String callSign) { return status(PENDING, callSign, null); }
 
     /** api 가 캐시 값을 읽지 못했다(Redis 오류 · 형식이 다른 값) — '기록 없음' 으로 말하지 않는다. */
     public static PortCallsInfo unreadable(String callSign) {
-        return new PortCallsInfo(ERROR, callSign, null, WINDOW_DAYS, null, null, SOURCE, null, null, null, KIND_CACHE, null, null);
+        return new PortCallsInfo(ERROR, callSign, null, WINDOW_DAYS, null, null, SOURCE, null, null, null, KIND_CACHE, null, null, null);
     }
 
     private static PortCallsInfo status(String status, String callSign, Instant fetchedAt) {
-        return new PortCallsInfo(status, callSign, fetchedAt, WINDOW_DAYS, null, null, SOURCE, null, null, null, null, null, null);
+        return new PortCallsInfo(status, callSign, fetchedAt, WINDOW_DAYS, null, null, SOURCE, null, null, null, null, null, null, null);
     }
 
     /**
@@ -125,22 +140,22 @@ public record PortCallsInfo(String status, @JsonProperty("call_sign") String cal
                 boolean more = items.size() > MAX_ITEMS || bool(n.get("truncated"));
                 yield new PortCallsInfo(OK, callSign, fetchedAt, WINDOW_DAYS, window[0], window[1], SOURCE,
                         List.copyOf(items.subList(0, Math.min(items.size(), MAX_ITEMS))), more ? Boolean.TRUE : null,
-                        bool(n.get("incomplete")) ? Boolean.TRUE : null, null, null, null);
+                        bool(n.get("incomplete")) ? Boolean.TRUE : null, null, null, null, null);
             }
             case NONE -> new PortCallsInfo(NONE, callSign, fetchedAt, WINDOW_DAYS, window[0], window[1], SOURCE, null, null,
-                    bool(n.get("incomplete")) ? Boolean.TRUE : null, null, null, null);
+                    bool(n.get("incomplete")) ? Boolean.TRUE : null, null, null, null, null);
             case ERROR -> {
                 String kind = RouteInfo.text(n.get("error_kind"), 32);
                 String code = RouteInfo.text(n.get("error_code"), 32);
                 yield new PortCallsInfo(ERROR, callSign, fetchedAt, WINDOW_DAYS, null, null, SOURCE, null, null, null,
                         kind != null && ERROR_KINDS.contains(kind) && !KIND_CACHE.equals(kind) ? kind : "internal",
-                        code != null && ERROR_CODE.matcher(code).matches() ? code : null, null);
+                        code != null && ERROR_CODE.matcher(code).matches() ? code : null, null, null);
             }
             case DISABLED -> {
                 String reason = RouteInfo.text(n.get("reason"), 32);
                 // 묻지 않았다 — 조회 결과가 아니므로 fetched_at 은 싣지 않는다(route 의 disabled 와 같다)
                 yield new PortCallsInfo(DISABLED, callSign, null, WINDOW_DAYS, null, null, SOURCE, null, null, null, null, null,
-                        reason != null && DISABLED_REASONS.contains(reason) ? reason : null);
+                        reason != null && DISABLED_REASONS.contains(reason) ? reason : null, null);
             }
             default -> unreadable(callSign);
         };

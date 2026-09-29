@@ -16,7 +16,8 @@
  */
 import { FOCUS_STATES, HOT_STATES, parseDemand, type FocusDemand, type HotDemand } from "./demand";
 import {
-  parsePortCalls, PORT_CALL_DISABLED_REASONS, PORT_CALL_ERROR_KINDS, PORT_CALL_SOURCE, PORT_CALL_STATUSES, PORT_CALL_WINDOW_DAYS, type PortCallsInfo,
+  parsePortCalls, PORT_CALL_DISABLED_REASONS, PORT_CALL_ERROR_KINDS, PORT_CALL_LIMITED_BY, PORT_CALL_SOURCE, PORT_CALL_STATUSES, PORT_CALL_WINDOW_DAYS,
+  type PortCallsInfo,
 } from "./portcalls";
 import { parseRoute, ROUTE_STATUSES, type RouteInfo } from "./route";
 import {
@@ -194,6 +195,7 @@ const PORT_CALLS = shape({
   status: oneOf(...PORT_CALL_STATUSES), call_sign: re(/^[A-Z0-9]{3,7}$/), fetched_at: TIME, window_days: oneOf(PORT_CALL_WINDOW_DAYS),
   window_from: DATE, window_to: DATE, source: oneOf(PORT_CALL_SOURCE), items: arrOf(PORT_CALL, 1, 20), truncated: oneOf(true), incomplete: oneOf(true),
   error_kind: oneOf(...PORT_CALL_ERROR_KINDS), error_code: re(/^[A-Za-z0-9_]{1,16}$/), disabled_reason: oneOf(...PORT_CALL_DISABLED_REASONS),
+  limited_by: oneOf(...PORT_CALL_LIMITED_BY),
 }, ["status", "window_days", "source"]);
 
 /** $defs/demand 의 hot · focus(계약 v2 §A3) */

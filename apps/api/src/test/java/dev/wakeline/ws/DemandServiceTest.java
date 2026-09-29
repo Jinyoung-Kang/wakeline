@@ -75,8 +75,13 @@ class DemandServiceTest {
         final AtomicLong clock = new AtomicLong(System.currentTimeMillis());
         final java.util.concurrent.atomic.AtomicInteger ips = new java.util.concurrent.atomic.AtomicInteger();
         final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor();
+        /** 수집기의 입출항 캐시(wakeline:portcalls:{호출부호}) — 운영처럼 카드(ShipFanout)와 수요 한도가 같은 읽기(PortCallReader)를 쓴다. */
+        final Map<String, String> portCallCache = new java.util.concurrent.ConcurrentHashMap<>();
+        final PortCallReader portCalls = new PortCallReader(portCallCache::get, WsTestKit.JSON, clock::get);
         final DemandService demand = new DemandService(k.hub, () -> new RegionSettings.Region(36.5, 127.8, 250), k.snapshots, leases, stats,
-                WsTestKit.JSON, k.meters, exec, clock::get, PortCallReader.callSigns(k.ships));
+                WsTestKit.JSON, k.meters, exec, clock::get, PortCallReader.callSigns(k.ships), portCalls::known);
+
+        Rig() { k.shipFanout.setPortCallSource(portCalls::forStatic); }
 
         long now() { return clock.get(); }
 
@@ -672,6 +677,162 @@ class DemandServiceTest {
             r.k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
             WsHubTest.await(() -> !r.leases.portCalls.isEmpty() && r.leases.portCalls.getLast().callSigns().equals(List.of("D7AB")));
             r.demand.stop();
+            assertThat(r.leases.portCalls.getLast().callSigns()).isEmpty();
+        }
+    }
+
+    // ---------------------------------------------------------------- 입출항 조회 남용 한도(ADR-022 · 계약 v3 §C 와 같은 방식)
+
+    static String selectShip(String mmsi) { return "{\"type\":\"select_ship\",\"mmsi\":\"" + mmsi + "\"}"; }
+
+    static JsonNode lastPortCalls(FakeWsSession f) { return ofType(f, "ship_selected").getLast().path("port_calls"); }
+
+    /** hello + TOKYO 구독, IP 를 정해서(같은 주소의 여러 세션). */
+    static FakeWsSession sessionAt(Rig r, String id, String ip) throws Exception {
+        FakeWsSession f = r.k.connect(id, ip);
+        r.k.msg(f, "{\"type\":\"hello\",\"proto\":1}");
+        r.k.msg(f, TOKYO);
+        return f;
+    }
+
+    /** 440200000+i · 호출부호 CS{i:03d} 인 선박 n 척(정적 정보만). */
+    static void numberedShips(Rig r, int n) {
+        List<String> spec = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            spec.add(String.valueOf(440_200_000 + i));
+            spec.add(String.format("CS%03d", i));
+        }
+        shipStatics(r, spec.toArray(String[]::new));
+    }
+
+    /**
+     * 리뷰 재현: 한 세션이 2 s 마다 선박을 바꿔 고른다. 새로 조회를 일으키는 호출부호는 60 s 에 6개까지 — 일곱 번째부터는 임대에 올리지 않고
+     * 직전 임대(CS005)를 유지하며, 카드는 '조회 중' 이 아니라 limited(session) 이다. 창이 비면(다음 계산) 지금 고른 선박이 올라간다.
+     */
+    @Test void portCalls_oneSessionRotatingShips_isLimitedToSixNewLookupsPerMinute() throws Exception {
+        try (Rig r = new Rig()) {
+            numberedShips(r, 8);
+            FakeWsSession f = r.session("s", TOKYO);
+            for (int i = 0; i < 8; i++) {
+                r.k.msg(f, selectShip(String.valueOf(440_200_000 + i)));
+                r.refresh();
+                if (i < DemandService.PORT_CALL_SESSION_MAX) {
+                    assertThat(r.leases.portCalls.getLast().callSigns()).as("ship " + i).containsExactly(String.format("CS%03d", i));
+                    assertThat(lastPortCalls(f).path("status").asString()).as("ship " + i).isEqualTo("pending");
+                }
+                r.clock.addAndGet(2_000);
+            }
+            assertThat(r.leases.portCalls.getLast().callSigns()).as("the previous lease is kept").containsExactly("CS005");
+            JsonNode lim = lastPortCalls(f);
+            assertThat(lim.path("status").asString()).isEqualTo("limited");
+            assertThat(lim.path("limited_by").asString()).isEqualTo("session");
+            assertThat(lim.path("call_sign").asString()).isEqualTo("CS007");
+            assertThat(r.k.meters.get("wakeline_demand_limited_sessions").tag("kind", "port_calls").gauge().value()).isEqualTo(1.0);
+
+            r.clock.addAndGet(DemandService.PORT_CALL_SESSION_WINDOW_MS); // 창이 비었다 — 다음 계산(10 s 주기)이 지금 고른 선박을 올린다
+            r.refresh();
+            assertThat(r.leases.portCalls.getLast().callSigns()).containsExactly("CS007");
+            assertThat(lastPortCalls(f).path("status").asString()).isEqualTo("pending");
+            assertThat(lastPortCalls(f).has("limited_by")).isFalse();
+            assertThat(r.k.meters.get("wakeline_demand_limited_sessions").tag("kind", "port_calls").gauge().value()).isZero();
+        }
+    }
+
+    /** 같은 접속 주소(IP)의 세션들은 하루 한도(24시간에 60척)를 함께 쓴다 — 연결을 늘려도 한도는 늘지 않는다. 다른 주소는 영향이 없다. */
+    @Test void portCalls_addressWindowIsSharedByAllSessionsOfOneIp() throws Exception {
+        try (Rig r = new Rig()) {
+            int n = DemandService.PORT_CALL_IP_MAX + 2;
+            numberedShips(r, n);
+            List<FakeWsSession> same = new ArrayList<>();
+            for (int i = 0; i < 5; i++) same.add(sessionAt(r, "ip" + i, "10.9.9.9"));
+            for (int i = 0; i <= DemandService.PORT_CALL_IP_MAX; i++) {
+                FakeWsSession f = same.get(i % same.size());
+                r.k.msg(f, selectShip(String.valueOf(440_200_000 + i)));
+                r.refresh();
+                r.clock.addAndGet(11_000); // 세션마다 55 s 에 한 번 — 세션 한도(60 s 에 6)는 걸리지 않는다
+            }
+            FakeWsSession last = same.get(DemandService.PORT_CALL_IP_MAX % same.size());
+            assertThat(lastPortCalls(last).path("status").asString()).isEqualTo("limited");
+            assertThat(lastPortCalls(last).path("limited_by").asString()).isEqualTo("ip");
+            assertThat(r.leases.portCalls.getLast().callSigns()).doesNotContain(String.format("CS%03d", DemandService.PORT_CALL_IP_MAX));
+
+            FakeWsSession other = sessionAt(r, "other", "10.9.9.10");
+            r.k.msg(other, selectShip(String.valueOf(440_200_000 + n - 1)));
+            r.refresh();
+            assertThat(lastPortCalls(other).path("status").asString()).as("another address is not affected").isEqualTo("pending");
+
+            r.clock.addAndGet(DemandService.PORT_CALL_IP_WINDOW_MS);
+            r.refresh();
+            assertThat(lastPortCalls(last).path("status").asString()).isEqualTo("pending");
+            assertThat(r.leases.portCalls.getLast().callSigns()).contains(String.format("CS%03d", DemandService.PORT_CALL_IP_MAX));
+        }
+    }
+
+    /**
+     * 캐시에 결과가 있는 호출부호는 조회를 일으키지 않는다 — 세지 않고 임대에도 올리지 않는다(되돌아가며 골라도 한도가 줄지 않는다). 결과가
+     * 만료돼 다시 조회가 필요해지면 그 세션이 이미 고른 선박이므로 새로 세지 않고 임대에 올린다.
+     */
+    @Test void portCalls_cachedResultsAreNeitherCountedNorLeased() throws Exception {
+        try (Rig r = new Rig()) {
+            numberedShips(r, 3);
+            r.portCallCache.put("wakeline:portcalls:CS000", dev.wakeline.portcalls.PortCallsInfoTest.sample().put("call_sign", "CS000").toString());
+            r.portCallCache.put("wakeline:portcalls:CS001", dev.wakeline.portcalls.PortCallsInfoTest.sample().put("call_sign", "CS001").toString());
+            FakeWsSession f = r.session("s", TOKYO);
+            for (int i = 0; i < DemandService.PORT_CALL_SESSION_MAX + 2; i++) { // 한도(6)보다 많이 — WS 수신 한도(10 s 에 20)는 넘지 않게
+                r.k.msg(f, selectShip(String.valueOf(440_200_000 + i % 2)));
+                r.refresh();
+                assertThat(r.leases.portCalls.getLast().callSigns()).as("cached — nothing to look up").isEmpty();
+                assertThat(lastPortCalls(f).path("status").asString()).isEqualTo("ok");
+            }
+            r.k.msg(f, selectShip("440200002")); // 캐시 없음 — 한도 안(세지 않았으므로)
+            r.refresh();
+            assertThat(r.leases.portCalls.getLast().callSigns()).containsExactly("CS002");
+
+            r.k.msg(f, selectShip("440200001"));
+            r.refresh();
+            r.portCallCache.remove("wakeline:portcalls:CS001"); // 결과가 만료됐다(6 h)
+            r.clock.addAndGet(PortCallReader.TTL_MS);
+            r.refresh();
+            assertThat(r.leases.portCalls.getLast().callSigns()).containsExactly("CS001");
+        }
+    }
+
+    /** 임대 상한(20) 밖의 호출부호를 고른 세션도 '조회 중' 이 아니다 — limited(capacity). */
+    @Test void portCalls_overTheLeaseCapIsLimitedByCapacity() throws Exception {
+        try (Rig r = new Rig()) {
+            int n = DemandService.MAX_PORT_CALL_LEASES + 1;
+            numberedShips(r, n);
+            List<FakeWsSession> sessions = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                FakeWsSession f = r.session("s" + i, TOKYO);
+                r.k.msg(f, selectShip(String.valueOf(440_200_000 + i)));
+                r.clock.addAndGet(1);
+                r.refresh();
+                sessions.add(f);
+            }
+            assertThat(r.leases.portCalls.getLast().callSigns()).hasSize(DemandService.MAX_PORT_CALL_LEASES);
+            assertThat(lastPortCalls(sessions.getLast()).path("status").asString()).isEqualTo("limited");
+            assertThat(lastPortCalls(sessions.getLast()).path("limited_by").asString()).isEqualTo("capacity");
+            assertThat(lastPortCalls(sessions.getFirst()).path("status").asString()).isEqualTo("pending");
+            r.k.msg(sessions.getFirst(), "{\"type\":\"select_ship\",\"mmsi\":null}"); // 자리가 났다
+            r.refresh();
+            assertThat(lastPortCalls(sessions.getLast()).path("status").asString()).isEqualTo("pending");
+        }
+    }
+
+    /** 일시정지한 세션은 임대에 아무것도 올리지 않고 문(gate)도 지운다. */
+    @Test void portCalls_pausedSessionHoldsNothing() throws Exception {
+        try (Rig r = new Rig()) {
+            numberedShips(r, 1);
+            FakeWsSession f = r.session("s", TOKYO);
+            r.k.msg(f, selectShip("440200000"));
+            r.refresh();
+            WsSession ws = r.k.hub.sessionsView().stream().filter(x -> x.id.equals("s")).findFirst().orElseThrow();
+            assertThat(ws.portCallHeld).isEqualTo("CS000");
+            r.k.msg(f, "{\"type\":\"pause\"}");
+            r.refresh();
+            assertThat(ws.portCallHeld).isNull();
+            assertThat(ws.portCallGate).isNull();
             assertThat(r.leases.portCalls.getLast().callSigns()).isEmpty();
         }
     }

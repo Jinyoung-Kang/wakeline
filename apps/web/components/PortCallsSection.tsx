@@ -1,12 +1,23 @@
 import {
-  callTimes, kstUtc, legText, portCallStatusText, portText, PORT_CALL_CAVEAT, PORT_CALL_MAX_ITEMS, PORT_CALL_PAGE_CAP, PORT_CALL_SOURCE, PORT_CALL_SOURCE_URL,
-  PORT_CALL_ERROR_WHERE, PORT_CALL_TITLE,
-  reportedNameMismatches, windowText, type PortCall, type PortCallsInfo,
+  callTimes, kstUtc, legText, portCallStatusText, portText, reportTime, PORT_CALL_CAVEAT, PORT_CALL_MAX_ITEMS, PORT_CALL_PAGE_CAP, PORT_CALL_SOURCE,
+  PORT_CALL_SOURCE_URL, PORT_CALL_ERROR_WHERE, PORT_CALL_TITLE,
+  reportedNameNotes, windowText, type PortCall, type PortCallsInfo,
 } from "@/lib/portcalls";
 
-/** 시각 한 칸: KST 위 · UTC 아래(같은 순간) · 툴팁 원본 UTC ISO. 모르면 "—" 만 */
+/**
+ * 신고 시각 한 칸: KST 위 · UTC 아래(같은 순간) · 툴팁 원본 UTC ISO. KST 00:00 신고는 날짜만 · "시각 미확인"(UTC 로 바꾸지 않는다 — ADR-022).
+ * 모르면 "—" 만.
+ */
 function When({ at }: { at: string | null }) {
-  const t = kstUtc(at);
+  const t = reportTime(at);
+  if (t.dateOnly) {
+    return (
+      <span className="flex flex-col" title={t.title} data-testid="port-call-date-only">
+        <span className="mono">{t.kst}</span>
+        <span className="text-[10px] text-fg-3">시각 미확인(00:00 신고)</span>
+      </span>
+    );
+  }
   if (t.utc == null) return <span className="text-fg-3">—</span>;
   return (
     <span className="flex flex-col" title={t.title}>
@@ -16,14 +27,18 @@ function When({ at }: { at: string | null }) {
   );
 }
 
-/** 입항·출항 한 칸: 정해진 시각 · 시각이 서로 다른 신고 여럿(모두 · "신고 n건") · 모름 */
+/** 입항·출항 한 칸: 정해진 시각 · 시각이 서로 다른 신고 여럿(모두) · 시각 없는 신고와 함께 온 시각 있는 신고 하나 · 모름 */
 function CallTime({ c, kind }: { c: PortCall; kind: "입항" | "출항" }) {
   const t = callTimes(c, kind);
   if (t.single) return <When at={t.single} />;
   if (t.reports.length) {
+    const undated = t.total - t.reports.length;
+    const label = t.reports.length > 1
+      ? `${kind} 신고 ${t.total}건 · 시각 다름${undated > 0 ? ` · 시각 없는 신고 ${undated}건` : ""}`
+      : `${kind} 신고 ${t.total}건 중 시각 있는 1건`;
     return (
       <span className="flex flex-col gap-0.5" data-testid="port-call-ambiguous">
-        <span className="text-[10px] text-warn">{kind} 신고 {t.reports.length}건 · 시각 다름</span>
+        <span className="text-[10px] text-warn">{label}</span>
         {t.reports.map((at) => <When key={at} at={at} />)}
       </span>
     );
@@ -39,7 +54,8 @@ function CallTime({ c, kind }: { c: PortCall; kind: "입항" | "출항" }) {
  */
 export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | null; aisName: string | null }) {
   const status = calls ? portCallStatusText(calls) : null;
-  const tone = calls?.status === "error" ? "text-bad" : calls?.status === "disabled" || calls?.status === "no_call_sign" ? "text-warn" : "text-fg-2";
+  const warn = calls != null && (calls.status === "disabled" || calls.status === "no_call_sign" || calls.status === "limited" || (calls.status === "none" && calls.incomplete));
+  const tone = calls?.status === "error" ? "text-bad" : warn ? "text-warn" : "text-fg-2";
   return (
     <section className="mt-2" data-testid="port-calls" data-status={calls?.status ?? "unknown"} aria-labelledby="port-calls-title">
       <div className="mb-0.5 flex items-center justify-between gap-2">
@@ -59,7 +75,7 @@ export function PortCallsSection({ calls, aisName }: { calls: PortCallsInfo | nu
             {calls.status === "error" ? <span className="block text-[10px] text-fg-3" data-testid="port-calls-error-where">{PORT_CALL_ERROR_WHERE}</span> : null}
           </div>
         ) : <PortCallTable calls={calls} aisName={aisName} />}
-      {calls != null && calls.status !== "no_call_sign" ? (
+      {calls != null && calls.status !== "no_call_sign" && calls.status !== "no_static" ? (
         <div className="mt-0.5 text-[10px] text-fg-3" data-testid="port-calls-window">
           {windowText(calls)}{calls.fetched_at ? <> · 조회 <FetchedAt at={calls.fetched_at} /></> : null}
         </div>
@@ -78,15 +94,21 @@ function FetchedAt({ at }: { at: string }) {
 }
 
 function PortCallTable({ calls, aisName }: { calls: PortCallsInfo; aisName: string | null }) {
-  const names = reportedNameMismatches(calls.items, aisName);
+  const names = reportedNameNotes(calls.items, aisName);
   const newest = calls.items[0];
+  const ais = aisName?.trim();
   return (
     <>
-      {names.map((n) => (
-        <div key={n} className="mb-0.5 text-[11px] text-warn" data-testid="port-calls-name-mismatch">
-          {aisName && aisName.trim() ? <>PORT-MIS 선명 {n} — AIS 선명({aisName.trim()})과 다름</> : <>PORT-MIS 선명 {n} — AIS 선명 없음(비교 불가)</>}
-        </div>
-      ))}
+      {names.map(({ name, note }) =>
+        note === "differs" ? (
+          <div key={name} className="mb-0.5 text-[11px] text-warn" data-testid="port-calls-name-mismatch">PORT-MIS 선명 {name} — AIS 선명({ais})과 다름</div>
+        ) : (
+          <div key={name} className="mb-0.5 text-[11px] text-fg-2" data-testid="port-calls-name-uncompared">
+            {note === "other_script"
+              ? <>PORT-MIS 선명 {name} — AIS 선명({ais})은 영문이라 표기 체계가 달라 비교하지 않음</>
+              : <>PORT-MIS 선명 {name} — AIS 선명 없음(비교 불가)</>}
+          </div>
+        ))}
       <div className="mb-0.5 text-[10px] text-fg-3" data-testid="port-calls-reported">
         최근 신고 선종 {newest.kind ?? "—"} · 국적 {newest.nationality ?? "—"}
       </div>
