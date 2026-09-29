@@ -8,6 +8,8 @@
 // - 실데이터 확인: 찍기 전과 다 찍은 뒤(manifest 를 쓰기 전) 두 번 /api/v1/status 를 읽어, 확실히 실데이터일 때만 진행한다 — FIXTURE MODE(가짜 자료)이거나
 //   수집 모드를 모르면(heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춘다. 모든 스크린샷(상황판 밖 재생 · 통계 · 공항 · 운영 · 로그 포함)에 적용된다(--allow-fixture 로만 무시).
 // - 조회 오류가 보이는 화면(오류 문구 · 요청 id)은 싣지 않는다 — 건너뛰고 이유를 보고한다.
+// - 가림(계획의 masks): 설명서는 로그인 없이 누구나 본다. 운영 · 로그 화면은 운영자 이름과 운영 정보 · 브라우저가 보낸 글자가 든 열(마지막 오류 · 전환 사유 ·
+//   로거 · 메시지 · 요청 id)을 회색 상자로 가려 찍고, 무엇을 가렸는지 캡처 조건에 적는다. 가릴 자리를 하나라도 찾지 못하면 그 스크린샷을 싣지 않는다.
 // - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
 // - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
 import { chromium } from "@playwright/test";
@@ -15,7 +17,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, hashedName, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
+  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -264,6 +266,36 @@ async function assertNoErrors() {
   }
 }
 
+/** 가림 상자 색(테마의 line-2 — 어두운 화면에서 '가린 자리'로 또렷이 보이되 튀지 않게) */
+const MASK_COLOR = "#333a43";
+
+/** 계획의 가릴 자리 → Playwright 가림 위치들. 하나라도 찾지 못하면 Skip — 가리지 못한 운영 화면을 싣지 않는다 */
+async function maskLocators(shot) {
+  const out = [];
+  for (const m of shot.masks ?? []) {
+    if (m.session_user) {
+      // 로그인한 이름은 서버에 묻는다(자격 증명 파일의 이름과 다른 세션일 수 있다) — 그 글자가 통째로 보이는 모든 자리를 가린다
+      const r = await page.request.get(`${BASE}/api/v1/ops/session`, { timeout: 10_000 }).catch(() => null);
+      const u = r && r.ok() ? (await r.json().catch(() => null))?.username : null;
+      if (typeof u !== "string" || !u.trim()) throw new Skip(`가림 "${m.label}": 로그인한 운영자 이름을 확인하지 못함`);
+      const loc = page.getByText(u, { exact: true });
+      if (!(await loc.count())) throw new Skip(`가림 "${m.label}": 화면에서 이름 자리를 찾지 못함`);
+      out.push(loc);
+      continue;
+    }
+    const heads = await page.locator(m.table).evaluateAll((ts) => ts.map((t) => [...t.querySelectorAll("thead th")].map((th) => th.textContent ?? "")));
+    let found = 0;
+    heads.forEach((h, i) => {
+      const col = findColumn(h, m.header);
+      if (col < 0) return;
+      out.push(page.locator(m.table).nth(i).locator(`tbody > tr > td:nth-child(${col + 1})`));
+      found++;
+    });
+    if (!found) throw new Skip(`가림 "${m.label}": ${m.table} 에서 머리글 "${m.header}" 열을 찾지 못함`);
+  }
+  return out;
+}
+
 /** 번호 대상 요소의 화면 사각형(보이지 않으면 null) */
 async function measure(callouts) {
   const rects = await page.evaluate((targets) => targets.map((sel) => {
@@ -308,11 +340,13 @@ for (const shot of fatal ? [] : shots) {
   try {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
     console.log(`… ${shot.id}`);
-    const variant = await recipe(shot);
+    const condition = await recipe(shot);
     await assertNoErrors();
+    const mask = await maskLocators(shot);
+    const variant = maskedVariant(condition, (shot.masks ?? []).map((m) => m.label));
     await page.evaluate(() => document.fonts?.ready);
     const positions = await measure(shot.callouts);
-    const png = await page.screenshot({ type: "png" });
+    const png = await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR });
     const enc = await encode(png);
     const file = hashedName(shot.id, enc.bytes, enc.format);
     writeFileSync(join(OUT, file), enc.bytes);

@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, hashedName, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
+  anchorPoint, checkLocalBase, credentialFileWarning, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
 } from "../scripts/guide-capture-lib.mjs";
 import { GUIDE_FILE_RE, parseManifest, PLAN } from "@/lib/guide";
 
@@ -53,6 +53,23 @@ describe("real-data guard (/api/v1/status, before and after the captures)", () =
     expect(realDataVerdict(0, null)).toMatch(/응답 없음/);
     expect(realDataVerdict(200, null)).toMatch(/객체가 아님/);
     expect(realDataVerdict(200, [real])).toMatch(/객체가 아님/);
+  });
+});
+
+describe("masks (operator-only screens)", () => {
+  it("finds a column by its exact header text (spaces normalised); a missing header is -1 so the shot fails closed", () => {
+    const heads = ["시각(KST)", "수준", "서비스", "로거", "메시지(첫 줄)", "억제", "요청 id"];
+    expect(findColumn(heads, "메시지(첫 줄)")).toBe(4);
+    expect(findColumn(["provider", " last\n error ", "switch"], "last error")).toBe(1);
+    expect(findColumn(heads, "요청")).toBe(-1); // 앞부분만 같으면 아니다
+    expect(findColumn([], "로거")).toBe(-1);
+  });
+  it("the capture condition says what was hidden (and stays within the 120 characters the page accepts)", () => {
+    expect(maskedVariant("providers 탭", ["운영자 이름", "공급자 마지막 오류"])).toBe("providers 탭 · 가림: 운영자 이름 · 공급자 마지막 오류");
+    expect(maskedVariant(null, ["운영자 이름"])).toBe("가림: 운영자 이름");
+    expect(maskedVariant("기간 24 h", [])).toBe("기간 24 h");
+    expect(maskedVariant(null, [])).toBeNull();
+    expect(() => maskedVariant("x".repeat(110), ["운영자 이름"])).toThrow(/120/);
   });
 });
 

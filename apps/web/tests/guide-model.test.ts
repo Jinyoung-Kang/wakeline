@@ -48,6 +48,22 @@ describe("capture plan (lib/guide-shots.json)", () => {
     const anc = clone(planJson); anc.shots[0].callouts[0].anchor = "middle";
     expect(() => parsePlan(anc)).toThrow(/anchor/);
   });
+  it("operator-only screens (/ops · /logs) are published only with masks: the signed-in name and the columns that carry operator or browser text", () => {
+    const labels = (id: string) => (PLAN.shots.find((s) => s.id === id)!.masks ?? []).map((m) => m.label);
+    expect(labels("ops")).toEqual(["운영자 이름", "공급자 마지막 오류", "전환 사유"]);
+    expect(labels("logs")).toEqual(["운영자 이름", "로거", "메시지", "요청 id"]);
+    for (const s of PLAN.shots) if (s.path === "/ops" || s.path === "/logs") expect(s.masks!.some((m) => m.session_user)).toBe(true);
+    for (const s of PLAN.shots) if (s.path !== "/ops" && s.path !== "/logs") expect(s.masks ?? []).toEqual([]);
+  });
+  it("rejects an operator-only shot without the name mask and a malformed mask", () => {
+    const at = planJson.shots.findIndex((s) => s.path === "/ops");
+    const noUser = clone(planJson) as typeof planJson; (noUser.shots[at] as { masks?: unknown[] }).masks = [];
+    expect(() => parsePlan(noUser)).toThrow(/운영자 전용.*session_user/);
+    for (const bad of [{ label: "x" }, { label: "", session_user: true }, { label: "x", table: "table" }, { label: "x", session_user: true, table: "t", header: "h" }]) {
+      const p = clone(planJson) as typeof planJson; (p.shots[at] as { masks?: unknown[] }).masks = [{ label: "운영자 이름", session_user: true }, bad];
+      expect(() => parsePlan(p)).toThrow(/masks\[1\]/);
+    }
+  });
 });
 
 const PNG_SHOT = (id: string, extra: Record<string, unknown> = {}) => ({

@@ -69,6 +69,23 @@ export function realDataVerdict(httpStatus, body) {
   return null;
 }
 
+/** 표 머리글 글자들에서 name 과 글자가 같은 열(공백은 하나로) — 없으면 -1(가릴 열을 못 찾으면 그 스크린샷을 싣지 않는다) */
+export function findColumn(headers, name) {
+  const norm = (t) => String(t ?? "").replace(/\s+/g, " ").trim();
+  return headers.findIndex((h) => norm(h) === norm(name));
+}
+
+/** 페이지(lib/guide parseManifest)가 받는 캡처 조건 길이 상한 */
+export const VARIANT_MAX = 120;
+
+/** 캡처 조건 + 무엇을 가렸는지("… · 가림: 운영자 이름 · 메시지"). 둘 다 없으면 null. 상한을 넘으면 던진다(페이지가 조용히 버리지 않게 찍을 때 드러낸다) */
+export function maskedVariant(variant, labels) {
+  const parts = [variant, labels.length ? `가림: ${labels.join(" · ")}` : null].filter((x) => x != null && x !== "");
+  const out = parts.length ? parts.join(" · ") : null;
+  if (out != null && out.length > VARIANT_MAX) throw new Error(`캡처 조건이 ${VARIANT_MAX}자를 넘음(${out.length}자): ${out}`);
+  return out;
+}
+
 /** 자격 증명 파일 내용 → { username, password }. 오류 문구에 값을 넣지 않는다(JSON.parse 의 문구도 원문 일부를 담을 수 있어 쓰지 않는다) */
 export function parseCredentials(text) {
   if (typeof text !== "string" || !text.trim()) throw new Error("자격 증명 파일이 비어 있음");

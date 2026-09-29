@@ -43,6 +43,15 @@ describe("capture plan selectors exist in the screens", () => {
   it("the error marks the capture script refuses to publish are rendered by some screen", () => {
     expect(ERROR_MARKS.filter((id) => !hasTestId(id))).toEqual([]);
   });
+  it("every masked column header and table the capture script hides is rendered by the screen (a renamed header would otherwise leave nothing hidden — the script then skips the shot)", () => {
+    const masks = PLAN.shots.flatMap((s) => (s.masks ?? []).filter((m) => m.table).map((m) => ({ where: `${s.id}: ${m.label}`, table: m.table!, header: m.header! })));
+    expect(masks.length).toBeGreaterThan(0);
+    const missing = masks.flatMap(({ where, table, header }) => [
+      ...[...table.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1]).filter((id) => !hasTestId(id)).map((id) => `${where}: table ${id}`),
+      ...(new RegExp(`<th\\b[^>]*>${header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</th>`).test(SRC) ? [] : [`${where}: header ${header}`]),
+    ]);
+    expect(missing).toEqual([]);
+  });
   it("MapLibre class targets exist in the bundled MapLibre", () => {
     const ml = readFileSync(join(WEB, "node_modules/maplibre-gl/dist/maplibre-gl.css"), "utf8");
     for (const { target } of targets) for (const m of target.matchAll(/\.(maplibregl-[a-z-]+)/g)) expect(ml).toContain(`.${m[1]}`);

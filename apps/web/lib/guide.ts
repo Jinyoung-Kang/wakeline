@@ -82,10 +82,18 @@ export const SHORTCUTS: readonly Shortcut[] = [
 export const ANCHORS = ["tl", "tr", "bl", "br", "c", "l", "r", "t", "b"] as const;
 export type Anchor = (typeof ANCHORS)[number];
 export interface GuideCallout { n: number; label: string; text: string; target: string; anchor: Anchor }
-export interface GuideShot { id: string; section: string; path: string; title: string; alt: string; callouts: GuideCallout[] }
+/**
+ * 찍을 때 가리는 자리(설명서는 로그인 없이 누구나 본다 — 운영자 전용 화면의 운영 정보 · 브라우저가 보낸 글자를 싣지 않는다).
+ * session_user: 로그인한 운영자 이름이 보이는 모든 자리. table + header: 그 표(CSS 선택자)에서 머리글 글자가 header 인 열의 모든 칸.
+ * 캡처 스크립트는 가릴 자리를 찾지 못하면 그 스크린샷을 싣지 않는다(가리지 못한 화면을 내보내지 않는다).
+ */
+export interface GuideMask { label: string; session_user?: true; table?: string; header?: string }
+export interface GuideShot { id: string; section: string; path: string; title: string; alt: string; callouts: GuideCallout[]; masks?: GuideMask[] }
 export interface GuidePlan { version: 1; viewport: { width: number; height: number }; shots: GuideShot[] }
 
 const ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** 운영자 전용 화면(로그인 뒤에만 보인다) — 이 경로의 스크린샷은 운영자 이름 가림(session_user)이 있어야 계획이 통과한다 */
+export const OPERATOR_PATHS: readonly string[] = ["/ops", "/logs"];
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 10_000;
@@ -125,6 +133,20 @@ export function parsePlan(raw: unknown): GuidePlan {
       if (!str(c.target)) errs.push(`${cat}.target: CSS 선택자가 비어 있음`);
       if (!(ANCHORS as readonly unknown[]).includes(c.anchor)) errs.push(`${cat}.anchor: ${ANCHORS.join("|")} 중 하나`);
     });
+    const ms = s.masks === undefined ? [] : Array.isArray(s.masks) ? s.masks : null;
+    if (ms == null) errs.push(`${at}.masks: 배열이 아님`);
+    (ms ?? []).forEach((m: unknown, j) => {
+      const mat = `${at}.masks[${j}]`;
+      if (!isObj(m)) { errs.push(`${mat}: 객체가 아님`); return; }
+      if (!str(m.label)) errs.push(`${mat}.label: 비어 있음(캡처 조건에 무엇을 가렸는지 적는다)`);
+      const user = m.session_user === true, col = str(m.table) && str(m.header);
+      if (user === col || (user && (m.table !== undefined || m.header !== undefined)) || (!user && m.session_user !== undefined)) {
+        errs.push(`${mat}: session_user: true 이거나 table + header(CSS 선택자 · 머리글 글자) 중 하나만`);
+      }
+    });
+    if (typeof s.path === "string" && OPERATOR_PATHS.includes(s.path) && !(ms ?? []).some((m: unknown) => isObj(m) && m.session_user === true)) {
+      errs.push(`${at}.masks: 운영자 전용 화면(${s.path})은 운영자 이름 가림(session_user)이 있어야 함`);
+    }
   });
   if (errs.length) throw new Error(`guide plan:\n${errs.join("\n")}`);
   return raw as unknown as GuidePlan;

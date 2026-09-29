@@ -135,7 +135,12 @@
       "section": "ops-dashboard",
       "path": "/ops",
       "title": "운영 — 공급자 상태와 켜고 끄기",
-      "alt": "운영 화면의 providers 탭: 위쪽 탭 줄과 마지막 갱신 시각, 공급자별 마지막 성공 · 지연 · 연속 실패 · 사용량 표와 켜고 끄기 단추",
+      "alt": "운영 화면의 providers 탭: 위쪽 탭 줄과 마지막 갱신 시각, 공급자별 마지막 성공 · 지연 · 연속 실패 · 사용량 표와 켜고 끄기 단추. 운영자 이름 · 마지막 오류 · 전환 사유 칸은 회색 상자로 가림",
+      "masks": [
+        { "label": "운영자 이름", "session_user": true },
+        { "label": "공급자 마지막 오류", "table": "[data-testid=\"ops-dashboard\"] table", "header": "last error" },
+        { "label": "전환 사유", "table": "[data-testid=\"ops-dashboard\"] table", "header": "reason" }
+      ],
       "callouts": [
         { "n": 1, "label": "운영 탭", "text": "providers · runs · quality · settings · audit · dlq · pipeline.", "target": "[aria-label=\"운영 탭\"]", "anchor": "l" },
         { "n": 2, "label": "갱신 시각", "text": "이 탭의 마지막 성공 응답 시각. 실패하면 탭에 ‘갱신 실패’.", "target": "[data-testid=\"ops-last-ok\"]", "anchor": "l" },
@@ -148,7 +153,13 @@
       "section": "ops-logs",
       "path": "/logs",
       "title": "시스템 로그",
-      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 시각 · 수준 · 서비스 · 메시지 목록",
+      "alt": "시스템 로그 화면: 로그 · AIS 수신 공백 탭, 서비스 · 수준 · 기간 · 검색 · 요청 id 필터, 목록 · 묶음 보기 단추, 시각 · 수준 · 서비스 목록. 운영자 이름 · 로거 · 메시지 · 요청 id 칸은 회색 상자로 가림",
+      "masks": [
+        { "label": "운영자 이름", "session_user": true },
+        { "label": "로거", "table": "[data-testid=\"log-grid\"]", "header": "로거" },
+        { "label": "메시지", "table": "[data-testid=\"log-grid\"]", "header": "메시지(첫 줄)" },
+        { "label": "요청 id", "table": "[data-testid=\"log-grid\"]", "header": "요청 id" }
+      ],
       "callouts": [
         { "n": 1, "label": "로그 탭", "text": "로그 / AIS 수신 공백.", "target": "[aria-label=\"로그 탭\"]", "anchor": "l" },
         { "n": 2, "label": "필터", "text": "서비스(여러 개) · 수준 · 기간 · 글자 검색 · 요청 id.", "target": "[data-testid=\"logs-filter-form\"]", "anchor": "tl" },
