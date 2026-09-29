@@ -5,6 +5,7 @@
 #  - schemas/vectors/masking-cases.v1.json:15 · :175 (커밋 1a5fe75 · e0a211e)  위와 같은 합성 HS256 토큰 — Java·Python 가림 규칙이 같은지 보는 공유 표본(계약 v5 §C5)
 #  - schemas/vectors/masking-cases.v1.json:67 (커밋 1a5fe75) · apps/collector/tests/test_masking.py:130 (커밋 ae22d59)  자리표시 키 ABCDEFGH12345(호스트 *.test) — URL 의 key= 가림 시험 입력
 # (2026-09-29 확인: 네 값 모두 .env 의 어떤 값과도 같지 않다 — 스크립트로 대조, 값은 출력하지 않음)
+#  - apps/web/tests/resolutions.test.ts:18 · :69–71 (커밋 1e17faa)  비밀값이 아니라 로그 지문 예 `0123456789abcdef` — 해결 API 의 key 필드(ADR-024), 이름이 key 라 규칙에 걸림
 # 새 항목은 값이 가짜임을 확인한 뒤 gitleaks 보고서의 Fingerprint 를 한 줄씩 더한다.
 5251859bac52838e622a55edd431727500aebb18:apps/collector/tests/test_ais_server.py:generic-api-key:35
 94ae84e2f28cfdc00835410d58b0780bccd791bd:apps/collector/tests/test_masking.py:jwt:12
@@ -12,3 +13,7 @@
 e0a211eaf195842aac3dd3e8beee39ef47916b96:schemas/vectors/masking-cases.v1.json:jwt:175
 1a5fe755abccc67a952bc972584caa2b27be245b:schemas/vectors/masking-cases.v1.json:generic-api-key:67
 ae22d59146f8a4b597762bf48027bf058a5f6abb:apps/collector/tests/test_masking.py:generic-api-key:130
+1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:18
+1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:69
+1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:70
+1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:71

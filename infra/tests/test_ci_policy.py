@@ -133,7 +133,7 @@ class CiPolicyTest(unittest.TestCase):
                 self.assertRegex(s, r'severity:\s*"HIGH,CRITICAL"')
 
     def test_gitleaks_allowlist_is_exact_fingerprints_only(self):
-        """허용 목록은 시험용 가짜 값 6건(값마다 가짜임을 확인 — .gitleaksignore 주석)의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
+        """허용 목록은 시험용 가짜 값 · 비밀이 아닌 예시 10건(값마다 가짜임을 확인 — .gitleaksignore 주석)의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
         ignore = ROOT / ".gitleaksignore"
         self.assertTrue(ignore.exists(), ".gitleaksignore 없음 — gitleaks 가 시험용 가짜 값에서 실패한다")
         entries = [ln.strip() for ln in ignore.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
@@ -147,6 +147,10 @@ class CiPolicyTest(unittest.TestCase):
             "e0a211eaf195842aac3dd3e8beee39ef47916b96:schemas/vectors/masking-cases.v1.json:jwt:175",
             "1a5fe755abccc67a952bc972584caa2b27be245b:schemas/vectors/masking-cases.v1.json:generic-api-key:67",
             "ae22d59146f8a4b597762bf48027bf058a5f6abb:apps/collector/tests/test_masking.py:generic-api-key:130",
+            "1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:18",
+            "1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:69",
+            "1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:70",
+            "1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:71",
         })
         self.assertFalse((ROOT / ".gitleaks.toml").exists(), "넓은 허용 규칙 파일을 두지 않는다")
 
