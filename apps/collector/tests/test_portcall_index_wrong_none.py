@@ -61,7 +61,6 @@ async def test_two_times_in_one_revision_neither_keep_a_timeless_revision_nor_st
     assert not any("database write failed" in (r.get("error_text") or "") for r in db.runs)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: one transient empty answer deletes a day with fewer than 3 stored rows")
 async def test_one_empty_answer_never_deletes_a_day_with_a_single_stored_row():
     fake = FlakyOnce([synthetic_item(pa="700", pa_name="포항", clsgn="D7POH", entry="2026-09-28T09:00:00+09:00", count="002")])
     job, db, _r, clock = _job(direct=fake)
