@@ -3,6 +3,8 @@
 Redis 장애 시 예약은 예외를 올리지 않는다(실시간 경로 보호). 한도가 엄격한 공급자(strict: OpenSky 크레딧 등)는
 예약할 수 없으면 호출하지 않고(fail closed), 나머지는 호출을 계속한다(fail open, 사용량은 기록되지 않음).
 headroom: 우선순위가 낮은 호출(focus·hot)은 한도에서 이만큼을 남겨 두고 멈춘다 — 저장되는 limit 은 그대로다.
+시간 창(reserve_hour): 키 budget:{provider}:h:{yyyymmddHH}(UTC 시 — KST 와 시 경계가 같다), 같은 Lua 로 예약한다. 프로세스 메모리가 아니라 Redis 에
+세므로 재기동 · 두 번째 수집기도 같은 창을 센다(연안 교통량 ADR-023 — 포털 하루 한도를 어느 날 경계로 세어도 넘지 않게).
 """
 
 from __future__ import annotations
@@ -41,6 +43,14 @@ def day_key(provider: str, now: datetime | None = None) -> str:
     return f"budget:{provider}:{d}"
 
 
+HOUR_TTL_S = 2 * 3600  # 시간 창 키는 그 시가 끝난 뒤 한 시간 더 남긴다(운영 확인용)
+
+
+def hour_key(provider: str, now: datetime | None = None) -> str:
+    """시간 창 예산 키(UTC 시). 하루 키 budget:{provider}:{yyyymmdd} 와 겹치지 않는다(':h:')."""
+    return f"budget:{provider}:h:{(now or datetime.now(UTC)).astimezone(UTC).strftime('%Y%m%d%H')}"
+
+
 def regular_headroom(schedule: Iterable[tuple[float, int]], now: datetime) -> int:
     """정규 주기가 예산 날(UTC — day_key)이 끝날 때까지 더 쓸 수 있는 최대 호출 수: Σ (남은 초 // 주기 + 1) × 주기당 호출 수.
     schedule = (주기 초, 주기당 호출 수) 목록 — 지금 주기 설정으로 계산한 상한이다(잰 값이 아니다). run_periodic 은 주기가 끝난 뒤
@@ -69,14 +79,14 @@ class Budget:
             self._last_log = now
             log.warning("budget %s failed (%s) — redis unavailable?", what, type(e).__name__)
 
-    async def _eval(self, key: str, cost: int, limit: int, headroom: int) -> tuple[int, int]:
+    async def _eval(self, key: str, cost: int, limit: int, headroom: int, ttl_s: int = 48 * 3600) -> tuple[int, int]:
         if self._sha is None:
             self._sha = await self._r.script_load(RESERVE_LUA)
         try:
-            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, 48 * 3600, headroom)
+            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, ttl_s, headroom)
         except Exception:  # noqa: BLE001 — NOSCRIPT 등: 재로드 후 1회 재시도
             self._sha = await self._r.script_load(RESERVE_LUA)
-            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, 48 * 3600, headroom)
+            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, ttl_s, headroom)
         return int(ok), int(used)
 
     async def reserve(self, provider: str, cost: int = 1, *, headroom: int = 0) -> tuple[bool, int]:
@@ -89,6 +99,27 @@ class Budget:
             self._sha = None
             self._warn("reserve", e)
             return provider not in self._strict, UNKNOWN
+
+    async def reserve_hour(
+        self, provider: str, limit: int, cost: int = 1, *, now: datetime | None = None
+    ) -> tuple[bool, int, str]:
+        """시간 창 예약: (허용 여부, 예약 후 사용량, 키). 되돌릴 때는 이 키를 release_key 에 준다(시 경계를 넘겨도 예약한 창에서 뺀다).
+        Redis 장애면 사용량 UNKNOWN — 엄격한 공급자는 거절(reserve 와 같은 규칙)."""
+        key = hour_key(provider, now)
+        try:
+            ok, used = await self._eval(key, cost, limit, 0, HOUR_TTL_S)
+            return bool(ok), used, key
+        except Exception as e:  # noqa: BLE001
+            self._sha = None
+            self._warn("reserve", e)
+            return provider not in self._strict, UNKNOWN, key
+
+    async def release_key(self, key: str, cost: int = 1) -> None:
+        """reserve_hour 로 예약했지만 호출하지 못한 몫을 그 키에서 되돌린다."""
+        try:
+            await self._r.hincrby(key, "used", -cost)
+        except Exception as e:  # noqa: BLE001
+            self._warn("release", e)
 
     async def release(self, provider: str, cost: int = 1) -> None:
         """예약했지만 호출하지 못한 몫을 되돌린다."""
