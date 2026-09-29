@@ -131,7 +131,8 @@ class JobsAndRadarIT extends IntegrationTest {
             assertThat(body.path("available").asBoolean()).isTrue();
             assertThat(body.path("georeferenced").asBoolean()).isTrue();
             assertThat(body.path("frames").size()).as("expired image and malformed tm are not listed").isEqualTo(1);
-            assertThat(body.path("frames").get(0).path("url").asString()).isEqualTo("/api/v1/radar/kr/" + live + ".png");
+            // 받은 시각이 영상 버전(ADR-021 — 다시 받아 바뀐 영상이 브라우저 캐시의 옛 영상으로 보이지 않게)
+            assertThat(body.path("frames").get(0).path("url").asString()).isEqualTo("/api/v1/radar/kr/" + live + ".png?v=" + Instant.parse(now).toEpochMilli());
             assertThat(body.path("image_size").get(0).asInt()).isEqualTo(640);
             assertThat(body.path("coordinates").size()).isEqualTo(4);
             assertThat(get("/api/v1/radar/kr", headers("If-None-Match", r.header("ETag"))).status()).isEqualTo(304);

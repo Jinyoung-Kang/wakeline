@@ -30,8 +30,8 @@ class RadarKrIT extends IntegrationTest {
         return Map.ofEntries(Map.entry("available", "1"), Map.entry("status", "200"), Map.entry("note", "internal note"), Map.entry("latest_tm", live),
                 Map.entry("product", "HSR"), Map.entry("cmp", "HSR"), Map.entry("coordinates", "[[121.8,39.9],[132.9,39.9],[132.9,31.6],[121.8,31.6]]"),
                 Map.entry("width", "640"), Map.entry("height", "480"), Map.entry("projection", "EPSG:3857"), Map.entry("grid", "{\"nx\":2305,\"ny\":2881}"),
-                Map.entry("legend", "[{\"dbz\":10,\"color\":\"#00c8ff\"}]"), Map.entry("min_dbz", "0.5"), Map.entry("stations", "KSN,GDK"),
-                Map.entry("observed_cells", "1234"), Map.entry("fetched_at", now), Map.entry("checked_at", now), Map.entry("secret_like", "should-not-leak"));
+                Map.entry("legend", "[{\"dbz\":10,\"color\":\"#00c8ff\"}]"), Map.entry("min_dbz", "0.5"), Map.entry("stations", "2"),
+                Map.entry("station_ids", "KSN,GDK"), Map.entry("stations_ref", "15"), Map.entry("partial", "1"), Map.entry("observed_cells", "1234"), Map.entry("fetched_at", now), Map.entry("checked_at", now), Map.entry("secret_like", "should-not-leak"));
     }
 
     @Test
@@ -43,7 +43,11 @@ class RadarKrIT extends IntegrationTest {
             JsonNode kr = get("/api/v1/status").json().path("radar_kr");
             List<String> keys = new ArrayList<>();
             kr.propertyNames().forEach(keys::add);
-            assertThat(keys).containsExactlyInAnyOrder("available", "status", "latest_tm", "fetched_at", "checked_at");
+            assertThat(keys).containsExactlyInAnyOrder("available", "status", "latest_tm", "fetched_at", "checked_at", "stations", "stations_ref", "partial");
+            assertThat(kr.path("stations").asInt()).isEqualTo(2); // ADR-021: 최신 프레임의 합성 지점 수 · 기준 · 부분 합성(검증한 값)
+            assertThat(kr.path("stations_ref").asInt()).isEqualTo(15);
+            assertThat(kr.path("partial").isBoolean() && kr.path("partial").asBoolean()).isTrue();
+            assertThat(kr.has("station_ids")).as("station codes are served by /radar/kr only").isFalse();
             assertThat(kr.path("available").isBoolean() && kr.path("available").asBoolean()).isTrue();
             assertThat(kr.path("status").asString()).isEqualTo("200");
             assertThat(kr.toString()).doesNotContain("should-not-leak").doesNotContain("internal note").doesNotContain("observed_cells");
@@ -93,6 +97,53 @@ class RadarKrIT extends IntegrationTest {
             assertThat(broken.status()).isEqualTo(200);
             assertThat(broken.json().path("frames").size()).isZero();
             assertThat(broken.json().path("available").asBoolean(true)).isFalse();
+        } finally {
+            ItStack.deleteKeys("wakeline:radar_kr:*");
+        }
+    }
+
+    /**
+     * ADR-021: 프레임마다 합성 지점 수 · 코드 · 기준 · partial · 다시 받기 기록을 /radar/kr 가 옮기고, 최상위는 최신 프레임의 값을 싣는다.
+     * 같은 tm 을 다시 받아 바꾸면(지점이 늘었다) 영상 URL 과 ETag 가 바뀐다 — 목록의 tm 이 같아도 304 로 옛 판정을 붙잡지 않는다.
+     */
+    @Test
+    void framesCarryTheCompositeSizeAndAnUpgradedFrameChangesUrlAndEtag() {
+        String t1 = "202609291440", t2 = "202609291445";
+        Instant f1 = Instant.parse("2026-09-29T05:43:44Z"), f2 = Instant.parse("2026-09-29T05:48:40Z"), again = Instant.parse("2026-09-29T05:53:41Z");
+        String partial = ("[{\"tm\":\"%s\",\"obs_tm\":\"%s\",\"fetched_at\":\"%s\",\"echo_cells\":8587,\"stations\":2,\"station_ids\":[\"KSN\",\"GDK\"],"
+                + "\"stations_ref\":3,\"partial\":true,\"refetches\":0,\"upgrades\":0,\"refetch_until\":\"2026-09-29T06:10:00Z\"},"
+                + "{\"tm\":\"%s\",\"obs_tm\":\"%s\",\"fetched_at\":\"%s\",\"echo_cells\":38000,\"stations\":3,\"station_ids\":[\"KSN\",\"GDK\",\"JNI\"],"
+                + "\"stations_ref\":3,\"partial\":false,\"refetches\":0,\"upgrades\":0}]").formatted(t1, t1, f1, t2, t2, f2);
+        String upgraded = partial.replace("\"fetched_at\":\"" + f1 + "\",\"echo_cells\":8587,\"stations\":2,\"station_ids\":[\"KSN\",\"GDK\"]",
+                        "\"fetched_at\":\"" + again + "\",\"echo_cells\":42275,\"stations\":3,\"station_ids\":[\"KSN\",\"GDK\",\"BRI\"]")
+                .replace("\"partial\":true,\"refetches\":0,\"upgrades\":0", "\"partial\":false,\"refetches\":1,\"upgrades\":1,\"refetched_at\":\"" + again + "\"");
+        try {
+            for (String tm : List.of(t1, t2)) ItStack.collector().opsForValue().set("wakeline:radar_kr:frame:" + tm, PNG_1X1);
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", meta(f2.toString(), t2));
+            ItStack.collector().opsForValue().set("wakeline:radar_kr:frames", partial);
+            Res r = get("/api/v1/radar/kr");
+            JsonNode body = r.json();
+            JsonNode first = body.path("frames").get(0);
+            assertThat(first.path("stations").asInt()).isEqualTo(2);
+            assertThat(first.path("station_ids").toString()).isEqualTo("[\"KSN\",\"GDK\"]");
+            assertThat(first.path("stations_ref").asInt()).isEqualTo(3);
+            assertThat(first.path("partial").asBoolean()).isTrue();
+            assertThat(first.path("refetch_until").asString()).isEqualTo("2026-09-29T06:10:00Z");
+            assertThat(first.path("url").asString()).isEqualTo("/api/v1/radar/kr/" + t1 + ".png?v=" + f1.toEpochMilli());
+            // 최상위 = 최신 프레임(목록의 마지막)
+            assertThat(body.path("stations").asInt()).isEqualTo(3);
+            assertThat(body.path("partial").asBoolean(true)).isFalse();
+            assertThat(body.path("station_ids").size()).isEqualTo(3);
+
+            ItStack.collector().opsForValue().set("wakeline:radar_kr:frames", upgraded); // 14:40 을 다시 받아 3곳 — tm 목록은 같다
+            Res after = get("/api/v1/radar/kr", headers("If-None-Match", r.header("ETag")));
+            assertThat(after.status()).as("same tm list, different frames — not 304").isEqualTo(200);
+            JsonNode up = after.json().path("frames").get(0);
+            assertThat(up.path("stations").asInt()).isEqualTo(3);
+            assertThat(up.path("partial").asBoolean(true)).isFalse();
+            assertThat(up.path("upgrades").asInt()).isEqualTo(1);
+            assertThat(up.path("url").asString()).isEqualTo("/api/v1/radar/kr/" + t1 + ".png?v=" + again.toEpochMilli());
+            assertThat(get(up.path("url").asString()).header("Content-Type")).isEqualTo("image/png"); // 버전 쿼리는 영상 응답을 바꾸지 않는다
         } finally {
             ItStack.deleteKeys("wakeline:radar_kr:*");
         }

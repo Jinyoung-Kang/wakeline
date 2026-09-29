@@ -111,4 +111,23 @@ class StatusServiceTest {
         assertThat(lp.get("base_source")).isNull(); // 출처를 모르는 이전 형식 — 추정해 채우지 않는다
         assertThat(lp.get("top_source")).isNull();
     }
+
+    /** ADR-021: 공개 radar_kr 에 최신 프레임의 합성 지점 수 · 기준 · 부분 합성 — 검증한 값만(틀리거나 서로 맞지 않으면 키 없음). */
+    @Test
+    void radarKrCarriesTheLatestFramesSiteCountsOnlyWhenValid() {
+        Map<String, Object> ok = StatusService.radarKr(Map.of("available", "1", "latest_tm", "202609291450", "stations", "7", "stations_ref", "15",
+                "partial", "1", "station_ids", "KSN,GDK"));
+        assertThat(ok).containsEntry("stations", 7).containsEntry("stations_ref", 15).containsEntry("partial", true)
+                .doesNotContainKey("station_ids"); // 코드 목록은 /radar/kr 에만
+        assertThat(StatusService.radarKr(Map.of("stations", "15", "stations_ref", "15", "partial", "0")))
+                .containsEntry("stations", 15).containsEntry("stations_ref", 15).containsEntry("partial", false);
+        // 옛 수집기(stations = 코드 목록) · 범위 밖 · 서로 맞지 않는 값 · 기준 없는 판정 → 모름
+        assertThat(StatusService.radarKr(Map.of("stations", "KSN,GDK", "partial", "1"))).doesNotContainKeys("stations", "partial");
+        assertThat(StatusService.radarKr(Map.of("stations", "49", "stations_ref", "-1"))).doesNotContainKeys("stations", "stations_ref");
+        assertThat(StatusService.radarKr(Map.of("stations", "16", "stations_ref", "15", "partial", "0"))).doesNotContainKeys("stations_ref", "partial")
+                .containsEntry("stations", 16);
+        assertThat(StatusService.radarKr(Map.of("stations", "7", "stations_ref", "15", "partial", "0"))).doesNotContainKey("partial");
+        assertThat(StatusService.radarKr(Map.of("stations", "7", "stations_ref", "15", "partial", "yes"))).doesNotContainKey("partial");
+        assertThat(StatusService.radarKr(Map.of("stations", "", "stations_ref", "", "partial", ""))).isEmpty();
+    }
 }

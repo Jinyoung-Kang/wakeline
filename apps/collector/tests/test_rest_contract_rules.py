@@ -105,6 +105,92 @@ def test_status_radar_kr_carries_only_validated_fields():
     assert list(v.iter_errors({**ok, "grid": '{"nx":1}'}))  # 원본 해시 필드
     assert list(v.iter_errors({**ok, "available": "1"}))  # 문자열 그대로
     assert list(v.iter_errors({**ok, "latest_tm": "12:10"}))
+    # ADR-021: 최신 프레임의 합성 지점 수 · 기준 · 부분 합성(코드 목록은 /radar/kr 에만)
+    assert not list(v.iter_errors({**ok, "stations": 7, "stations_ref": 15, "partial": True}))
+    assert list(v.iter_errors({**ok, "stations": "KSN,GDK"}))  # 옛 수집기의 코드 목록 그대로
+    assert list(v.iter_errors({**ok, "stations": 49}))
+    assert list(v.iter_errors({**ok, "station_ids": ["KSN"]}))
+    assert list(v.iter_errors({**ok, "partial": "1"}))
+    status = {"radar_kr": {**ok, "stations": 7, "stations_ref": 15}}
+    assert not rcc._radar_kr_status(status)
+    assert not rcc._radar_kr_status({"radar_kr": {**status["radar_kr"], "partial": True}})
+    assert rcc._radar_kr_status({"radar_kr": {**status["radar_kr"], "partial": False}})  # 7 < 15 인데 완전하다고 한다
+    assert rcc._radar_kr_status({"radar_kr": {"stations": 7, "partial": True}})  # 기준 없이 판정
+    assert rcc._radar_kr_status({"radar_kr": {"stations": 16, "stations_ref": 15}})  # 기준이 자기 지점 수보다 작다
+
+
+def kr_frame(**over):
+    f = {
+        "tm": "202609291440",
+        "obs_tm": "202609291440",
+        "fetched_at": "2026-09-29T05:43:44Z",
+        "echo_cells": 8587,
+        "url": "/api/v1/radar/kr/202609291440.png?v=1790142224000",
+        "stations": 7,
+        "station_ids": ["KSN", "GDK", "JNI", "MYN", "PSN", "GSN", "SSP"],
+        "stations_ref": 15,
+        "partial": True,
+        "refetches": 0,
+        "upgrades": 0,
+        "refetch_until": "2026-09-29T06:10:00Z",
+    }
+    return {**f, **over}
+
+
+def radar_kr(*frames, **over):
+    last = frames[-1] if frames else {}
+    top = {k: last[k] for k in ("stations", "station_ids", "stations_ref", "partial") if k in last}
+    body = {
+        "available": bool(frames),
+        "georeferenced": bool(frames),
+        "frames": list(frames),
+        "time_zone": "KST(UTC+9) for tm; fetched_at is UTC",
+        "attribution": "기상청",
+        "meta": {
+            "fetched_at": "2026-09-29T05:43:44Z",
+            "stale": False,
+            "generated_at": "2026-09-29T05:50:00Z",
+            "request_id": "req-12345678",
+        },
+        **top,
+    }
+    return {**body, **over}
+
+
+def test_radar_kr_frames_schema_and_cross_rules():
+    """ADR-021: /radar/kr 의 프레임마다 합성 지점 수 · 코드 · 기준 · partial · 다시 받기 기록, 최상위는 최신 프레임의 값."""
+    v = Draft202012Validator(rcc.SCHEMAS["radar_kr"], format_checker=rcc.FORMATS)
+    full = kr_frame(tm="202609291445", obs_tm="202609291445", url="/api/v1/radar/kr/202609291445.png?v=1", stations=15,
+                    station_ids=[f"K{i:02d}" for i in range(15)], partial=False)  # fmt: skip
+    legacy = {k: kr_frame()[k] for k in ("tm", "obs_tm", "fetched_at", "echo_cells")} | {
+        "url": "/api/v1/radar/kr/202609291440.png"
+    }
+    for body in (radar_kr(kr_frame(), full), radar_kr(legacy), radar_kr(), radar_kr(legacy, kr_frame())):
+        assert not list(v.iter_errors(body)), list(v.iter_errors(body))[:2]
+        assert rcc._radar_kr(body) == [], rcc._radar_kr(body)
+    for bad in (
+        kr_frame(stations=49),
+        kr_frame(station_ids=["K S"] * 7),
+        kr_frame(partial="1"),
+        kr_frame(refetches=-1),
+        kr_frame(refetch_until="soon"),
+        kr_frame(url="/api/v1/radar/kr/202609291440.png?v=abc"),
+        kr_frame(extra="x"),  # 목록 항목은 허용 목록만
+    ):
+        assert list(v.iter_errors(radar_kr(bad))), bad
+    for bad in (
+        kr_frame(partial=False),  # 7 < 15 인데 완전하다고 한다
+        kr_frame(stations_ref=5),  # 기준이 자기 지점 수보다 작다
+        kr_frame(station_ids=["KSN"]),  # 지점 수와 코드 수가 다르다
+        kr_frame(url="/api/v1/radar/kr/202609291435.png"),  # 다른 tm 의 영상
+        kr_frame(stations_ref=None, partial=True) | {"stations_ref": None},
+    ):
+        body = radar_kr({k: x for k, x in bad.items() if x is not None})
+        assert rcc._radar_kr(body), bad
+    # 최상위는 최신 프레임과 같아야 한다 — 이전 프레임 값으로 채우거나 다른 값을 싣지 않는다
+    assert rcc._radar_kr(radar_kr(kr_frame(), full, stations=7))
+    assert rcc._radar_kr(radar_kr(kr_frame(), legacy, stations=7))
+    assert rcc._radar_kr(radar_kr(available=True))  # 프레임 없이 쓸 수 있다고 한다
 
 
 def test_cursor_is_a_number_or_absent():

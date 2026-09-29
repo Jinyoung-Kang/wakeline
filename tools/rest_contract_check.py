@@ -91,6 +91,30 @@ META: Schema = {  # 9.1절: 모든 데이터 응답의 meta
     },
 }
 
+# 기상청 합성 레이더(ADR-021): 헤더 STN_LIST 는 48 자리 — 합성 지점 수 · 기준은 0–48, 코드는 영숫자 1–6자
+KR_SITES: Schema = {"type": "integer", "minimum": 0, "maximum": 48}
+KR_STATION_IDS: Schema = {"type": "array", "maxItems": 48, "items": {"type": "string", "pattern": "^[A-Za-z0-9]{1,6}$"}}
+KR_FRAME: Schema = {  # /radar/kr frames[] — 허용 목록만. 지점 필드가 없는 옛 항목은 모름(키 없음)
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["tm", "obs_tm", "fetched_at", "echo_cells", "url"],
+    "properties": {
+        "tm": {"type": "string", "pattern": "^[0-9]{12}$"},
+        "obs_tm": STR,
+        "fetched_at": STR,
+        "echo_cells": {"type": "integer", "minimum": 0},
+        "url": {"type": "string", "pattern": r"^/api/v1/radar/kr/[0-9]{12}\.png(\?v=[0-9]+)?$"},
+        "stations": KR_SITES,
+        "station_ids": KR_STATION_IDS,
+        "stations_ref": KR_SITES,
+        "partial": BOOL,
+        "refetches": {"type": "integer", "minimum": 0},
+        "upgrades": {"type": "integer", "minimum": 0},
+        "refetched_at": TS,
+        "refetch_until": TS,
+    },
+}
+
 # 계약 §1 항공기 인코딩 — 나열된 키만(추가 키 금지), 값이 없으면 키가 없다. 'estimated' 는 서버 값이 아니다(브라우저 보간만).
 LITE_PROPS: dict[str, Any] = {
     "hex": HEX,
@@ -703,6 +727,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "latest_tm": {"type": "string", "pattern": "^[0-9]{12}$"},
                     "fetched_at": TS,
                     "checked_at": TS,
+                    # ADR-021: 최신 프레임의 합성 지점 수 · 기준 · 부분 합성(코드 목록은 /radar/kr 에만)
+                    "stations": KR_SITES,
+                    "stations_ref": KR_SITES,
+                    "partial": BOOL,
                 },
             },
             "meta": META,
@@ -829,6 +857,30 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "object", "required": ["time", "path"], "properties": {"time": INT, "path": STR}},
             },
             "tile_template": STR,
+            "attribution": STR,
+            "meta": META,
+        },
+    },
+    "radar_kr": {  # FR-31 · ADR-012 · ADR-021: 기상청 합성 레이더 — 최상위 지점 필드는 최신 프레임의 값(교차 검사 _radar_kr)
+        "type": "object",
+        "required": ["available", "georeferenced", "frames", "time_zone", "attribution", "meta"],
+        "properties": {
+            "available": BOOL,
+            "georeferenced": BOOL,
+            "latest_tm": STR,
+            "coordinates": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": NUM},
+            },
+            "image_size": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}},
+            "frames": {"type": "array", "maxItems": 12, "items": KR_FRAME},
+            "stations": KR_SITES,
+            "station_ids": KR_STATION_IDS,
+            "stations_ref": KR_SITES,
+            "partial": BOOL,
+            "time_zone": STR,
             "attribution": STR,
             "meta": META,
         },
@@ -1154,6 +1206,7 @@ CHECKS = [
     Check("alerts", "alerts", 200, "application/json", True),
     Check("alerts_history", "alerts_history", 200, "application/json", True),
     Check("radar_frames", "radar_frames", 200, "application/json", True),
+    Check("radar_kr", "radar_kr", 200, "application/json", True),
     Check("airports", "airports", 200, "application/geo+json", True),
     Check("airport_wx", "airport_wx", 200, "application/json", True),
     Check("replay", "replay", 200, "application/json", True),
@@ -1217,6 +1270,7 @@ def live_paths(base: str) -> dict[str, str | None]:
         "alerts": "/api/v1/alerts",
         "alerts_history": "/api/v1/alerts/history",
         "radar_frames": "/api/v1/radar/frames",
+        "radar_kr": "/api/v1/radar/kr",
         "airports": airports_path,
         "replay": "/api/v1/replay?"
         + urllib.parse.urlencode({"at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "bbox": bbox}, safe=","),
@@ -1458,7 +1512,47 @@ def _status_ais_recorded(body: dict[str, Any]) -> list[str]:
 
 
 def _status(body: dict[str, Any]) -> list[str]:
-    return _ais_source_errors("sources.ais", (body.get("sources") or {}).get("ais"))
+    return _ais_source_errors("sources.ais", (body.get("sources") or {}).get("ais")) + _radar_kr_status(body)
+
+
+def _kr_site_errors(where: str, f: dict[str, Any]) -> list[str]:
+    """합성 지점 수 · 기준 · partial 사이(ADR-021): 기준 ≥ 지점 수, partial 은 두 수를 알 때만 stations < stations_ref 와 같게, 코드 수 = 지점 수."""
+    errs: list[str] = []
+    n, ref, partial, ids = f.get("stations"), f.get("stations_ref"), f.get("partial"), f.get("station_ids")
+    if isinstance(n, int) and isinstance(ref, int) and ref < n:
+        errs.append(f"{where}: stations_ref {ref} < stations {n} — the reference includes the frame itself")
+    if partial is not None:
+        if not (isinstance(n, int) and isinstance(ref, int)):
+            errs.append(f"{where}: partial without both site counts — nothing backs the flag")
+        elif partial != (n < ref):
+            errs.append(f"{where}: partial={partial} but stations {n} / reference {ref}")
+    if isinstance(ids, list) and isinstance(n, int) and len(ids) != n:
+        errs.append(f"{where}: {len(ids)} station_ids for {n} stations")
+    return errs
+
+
+def _radar_kr_status(body: dict[str, Any]) -> list[str]:
+    return _kr_site_errors("radar_kr", body.get("radar_kr") or {})
+
+
+KR_LATEST = ("stations", "station_ids", "stations_ref", "partial")
+
+
+def _radar_kr(body: dict[str, Any]) -> list[str]:
+    """/radar/kr: 프레임마다 지점 필드가 서로 맞고 영상 URL 이 그 tm 의 것, 최상위 지점 필드 = 최신(마지막) 프레임의 값, 쓸 수 있으면 프레임이 있다."""
+    errs: list[str] = []
+    frames = body.get("frames") or []
+    if body.get("available") and not frames:
+        errs.append("available without frames")
+    for i, f in enumerate(frames):
+        errs.extend(_kr_site_errors(f"frames[{i}]", f))
+        if not str(f.get("url", "")).startswith(f"/api/v1/radar/kr/{f.get('tm')}.png"):
+            errs.append(f"frames[{i}].url is not the image of tm {f.get('tm')}")
+    last = frames[-1] if frames else {}
+    for k in KR_LATEST:
+        if body.get(k) != last.get(k) or (k in body) != (k in last):
+            errs.append(f"top-level {k} {body.get(k)!r} is not the latest frame's {last.get(k)!r}")
+    return errs
 
 
 def _ship_track(body: dict[str, Any]) -> list[str]:
@@ -1599,6 +1693,7 @@ SCHEMAS["status_ais"] = {
 
 CROSS_CHECKS = {
     "status": _status,
+    "radar_kr": _radar_kr,
     "status_ais": _status_ais_recorded,
     "ships": _ships,
     "ship_detail": _ship_detail,

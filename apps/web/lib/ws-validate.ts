@@ -205,7 +205,8 @@ const STATUS_RULES: Record<string, Rule> = {
   global: shape({ provider: str(), aircraft: int(0), lag_s: num(), stale: isBool, fetched_at: TIME }),
   sigmet: shape({ provider: str(), count: int(0), active: int(0), fetched_at: TIME, lag_s: num(), stale: isBool }),
   radar: shape({ provider: str(), frames: int(0), fetched_at: TIME, stale: isBool }),
-  radar_kr: shape({ available: isBool, status: re(/^[1-5][0-9]{2}$/), latest_tm: re(/^[0-9]{12}$/), fetched_at: TIME, checked_at: TIME }),
+  radar_kr: shape({ available: isBool, status: re(/^[1-5][0-9]{2}$/), latest_tm: re(/^[0-9]{12}$/), fetched_at: TIME, checked_at: TIME,
+    stations: int(0, 48), stations_ref: int(0, 48), partial: isBool }), // ADR-021: 최신 프레임의 합성 지점 수 · 기준 · 부분 합성
   engine: shape({ index_polygons: int(0), last_cycle_ms: num(0) }),
   active_providers: mapOf(isStr),
   demand: shape({ hot_active: int(0), focus_active: int(0), adsb_fi_rps_1m: num(0) }),

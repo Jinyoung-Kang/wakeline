@@ -141,7 +141,8 @@ public class StatusService {
 
     /**
      * 공개 radar_kr(R-72 · ADR-017 §1): 수집기 해시 wakeline:radar_kr:meta 에서 검증한 필드만 — available(참·거짓, 수집기가 쓸 수 있다고 표시했는가),
-     * status(세 자리 HTTP 상태), latest_tm(YYYYMMDDHHMM, KST), fetched_at·checked_at(시간대 있는 ISO 시각). 틀리거나 없는 값은 키가 없다(모름).
+     * status(세 자리 HTTP 상태), latest_tm(YYYYMMDDHHMM, KST), fetched_at·checked_at(시간대 있는 ISO 시각), 최신 프레임의 stations(합성 지점 수)·
+     * stations_ref(기준)·partial(부분 합성 — ADR-021). 틀리거나 없는 값은 키가 없다(모름).
      * 해시의 다른 필드(격자·범례·오류 문구 등)는 싣지 않는다 — 수집기가 필드를 더해도 공개 응답에 저절로 나가지 않는다.
      */
     static Map<String, Object> radarKr(Map<String, Object> h) {
@@ -157,7 +158,23 @@ public class StatusService {
             Instant t = isoInstant(h.get(k));
             if (t != null) m.put(k, t);
         }
+        // ADR-021: 최신 프레임의 합성 지점 수 · 기준 · 부분 합성. 기준은 자기 지점 수 이상, partial 은 두 수를 알고 stations < stations_ref 와 같을 때만
+        Integer stations = siteCount(h.get("stations")), ref = siteCount(h.get("stations_ref"));
+        if (stations != null) m.put("stations", stations);
+        if (ref != null && (stations == null || ref >= stations)) m.put("stations_ref", ref);
+        else ref = null;
+        Object p = h.get("partial");
+        if (stations != null && ref != null && ("1".equals(p) || "0".equals(p)) && "1".equals(p) == (stations < ref)) m.put("partial", "1".equals(p));
         return m;
+    }
+
+    /** 수집기 해시의 지점 수(0–48 정수 문자열). 아니면 null — 옛 수집기의 코드 목록("KSN,GDK")도 모름이다. */
+    static Integer siteCount(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        if (!s.matches("^[0-9]{1,2}$")) return null;
+        int n = Integer.parseInt(s);
+        return n <= KrRadarFrames.MAX_STATIONS ? n : null;
     }
 
     /** 시간대가 있는 ISO 시각만. 아니면 null. */

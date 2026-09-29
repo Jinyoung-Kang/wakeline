@@ -696,7 +696,10 @@
           "status" : "200",
           "latest_tm" : "202609290500",
           "fetched_at" : "2026-09-28T21:21:29Z",
-          "checked_at" : "2026-09-28T21:22:59Z"
+          "checked_at" : "2026-09-28T21:22:59Z",
+          "stations" : 7,
+          "stations_ref" : 15,
+          "partial" : true
         },
         "engine" : {
           "index_polygons" : 0,
