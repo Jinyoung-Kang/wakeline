@@ -62,8 +62,8 @@ function Table({ head, rows, label }: { head: string[]; rows: React.ReactNode[][
   );
 }
 
-const P = ({ children }: { children: React.ReactNode }) => <p className="my-2 text-fg-2">{children}</p>;
-const UL = ({ children }: { children: React.ReactNode }) => <ul className="my-2 list-disc space-y-1 pl-5 text-fg-2 marker:text-fg-3">{children}</ul>;
+const P = ({ children }: { children: React.ReactNode }) => <p className="my-2 max-w-[860px] text-fg-2">{children}</p>;
+const UL = ({ children }: { children: React.ReactNode }) => <ul className="my-2 max-w-[860px] list-disc space-y-1 pl-5 text-fg-2 marker:text-fg-3">{children}</ul>;
 const B = ({ children }: { children: React.ReactNode }) => <b className="font-semibold text-fg">{children}</b>;
 
 export function GuideView({ manifest, dropped }: { manifest: GuideManifest; dropped: readonly string[] }) {
@@ -93,11 +93,12 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
     <div className="h-full overflow-y-auto" data-testid="guide">
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
-        <article className="min-w-0 max-w-[980px] pt-4 text-[13px] leading-relaxed">
+        {/* 글줄은 읽기 좋은 폭(860 px)까지, 그림 · 표는 더 넓게 — 스크린샷의 작은 글자가 덜 줄어들게 */}
+        <article className="min-w-0 max-w-[1120px] pt-4 text-[13px] leading-relaxed">
           <header className="mb-2 pb-4">
             <div className="label mb-1">Wakeline · 설명서</div>
             <h1 className="text-[22px] font-semibold tracking-tight">서비스 설명과 사용 방법</h1>
-            <p className="mt-2 max-w-[760px] text-fg-2">
+            <p className="mt-2 max-w-[860px] text-fg-2">
               무엇을 보여 주는지, 각 화면을 어떻게 쓰는지, 화면의 값을 어떻게 읽어야 하는지를 적었습니다. 스크린샷의 번호는 아래 번호 설명과 짝입니다.
               데이터 출처 · 라이선스 · 한계의 전체 목록은 <Link href="/about" prefetch={false} className="text-accent underline underline-offset-2">출처·한계</Link> 화면에 있습니다.
             </p>
