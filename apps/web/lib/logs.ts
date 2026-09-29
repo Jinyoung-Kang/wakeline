@@ -176,6 +176,21 @@ export function parseLogGroups(v: unknown): {
   };
 }
 
+/**
+ * 201 을 받은 해결을 묶음에 붙인다(낙관적 표시 — 201 뒤에만): 같은 지문이고 묶음의 마지막 항목이 upto 이하면 그 묶음 전체가 해결됐다.
+ * upto 가 마지막 항목보다 이르면(그 뒤 재발) 붙이지 않는다 — 다시 불러온 목록이 정한다.
+ */
+export function withGroupResolutions<G extends { groups: LogGroup[] }>(g: G, created: readonly { key: string; id: number; upto: string; resolved_by: string }[]): G {
+  const by = new Map(created.map((r) => [r.key, r]));
+  return {
+    ...g,
+    groups: g.groups.map((x) => {
+      const r = by.get(x.fp);
+      return r && x.last_at != null && Date.parse(x.last_at) <= Date.parse(r.upto) ? { ...x, resolved: { id: r.id, upto: r.upto, resolved_by: r.resolved_by } } : x;
+    }),
+  };
+}
+
 // ---- 요청(§C4) ----
 
 export interface LogFilter {

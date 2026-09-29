@@ -93,8 +93,19 @@ export function resolveErrorText(e: unknown, op: "resolve" | "revoke"): string {
   }
 }
 
+/** 확인 패널이 말하는 결과(무엇이 일어나고 무엇이 그대로인지) — kind 마다 한 곳 */
+export const RESOLVE_EFFECT: Record<ResolutionKind | "revoke", string> = {
+  log_group: "upto 이하의 이 지문 항목을 목록 · 묶음에서 숨깁니다(기본 보기). 지우지 않습니다 — '해결된 항목 보기'로 다시 보고 되돌릴 수 있습니다. "
+    + "upto 뒤에 같은 지문이 다시 나면 다시 보입니다. 감사 기록(RESOLVE)에 남습니다.",
+  provider_error: "upto 이하의 이 공급자 오류를 해결됨으로 표시합니다: 공급자 표의 last error 는 흐리게 '해결됨', 수집 실행 요약(24 h)의 error 행에서 빠집니다. "
+    + "지우지 않습니다 — 실행 기록 · 공급자 상태는 그대로이고 '해결된 오류 포함'으로 다시 봅니다. 그 뒤의 새 오류는 다시 보입니다. 감사 기록(RESOLVE)에 남습니다.",
+  revoke: "되돌리면 이 해결로 가렸던 오류가 다시 보입니다 — 같은 대상에 앞선 해결이 있으면 그 범위는 계속 가립니다. "
+    + "해결 기록은 지우지 않고 되돌린 사람 · 시각을 남깁니다(감사 UNRESOLVE).",
+};
+
 export interface BulkOutcome<D extends ResolutionDraft> {
-  done: { draft: D; res: Resolution }[];
+  /** 201 을 받은 해결 — 본문 형식을 읽지 못했으면 res = null(저장은 됐다) */
+  done: { draft: D; res: Resolution | null }[];
   failed: { draft: D; error: unknown }[];
   /** 멈춘 뒤 보내지 않은 수 */
   notTried: number;
@@ -107,7 +118,7 @@ export interface BulkOutcome<D extends ResolutionDraft> {
  * 400(그 묶음만의 문제 — 예: upto 형식)은 건너뛰고 계속한다. 그 밖의 실패(세션 · CSRF · 경로 없음 · DB · 네트워크)는 나머지도 같으므로
  * 새 요청을 멈추고(이미 떠난 요청만 끝낸다) 보내지 않은 수를 센다 — 실패를 수십 번 되풀이하지 않는다.
  */
-export async function resolveAll<D extends ResolutionDraft>(drafts: readonly D[], create: (d: D) => Promise<Resolution>, concurrency = BULK_CONCURRENCY): Promise<BulkOutcome<D>> {
+export async function resolveAll<D extends ResolutionDraft>(drafts: readonly D[], create: (d: D) => Promise<Resolution | null>, concurrency = BULK_CONCURRENCY): Promise<BulkOutcome<D>> {
   const out: BulkOutcome<D> = { done: [], failed: [], notTried: 0, stopped: null };
   let next = 0;
   const worker = async () => {
