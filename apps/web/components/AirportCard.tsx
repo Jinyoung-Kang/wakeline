@@ -5,9 +5,9 @@ import { apiGet } from "@/lib/api";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { fmtDual, fmtUtcTitle } from "@/lib/time";
 import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTempPair, fmtVisSm, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
 import { ErrorNote } from "./logs/ErrorNote";
+import { DualTime } from "./DualTime";
 
 interface Wx {
   airport: { icao: string; name?: string; country?: string; elev_ft?: number };
@@ -55,17 +55,17 @@ export function AirportCard({ icao }: { icao: string }) {
               <span className="text-[10px] text-fg-3">{catSourceLabel(m.flight_cat_source, m.flight_cat)}</span>
               {stale ? <span className="badge warn" data-testid="metar-stale" title="관측 후 2시간 초과 — 현재 기상으로 보지 마세요">오래됨</span> : null}
             </div>
-            {/* [이름, 값, 값의 title] — 시각은 KST 먼저 · UTC 함께(lib/time), title 에 원본 UTC ISO */}
+            {/* [이름, 값] — 시각은 <DualTime>(KST 먼저 · UTC 함께, 두 부분 사이에서만 줄바꿈, title 에 원본 UTC ISO) */}
             {([
-              ["관측", `${fmtDual(m.obs_time)}${age != null ? ` · ${fmtDuration(age)} 전` : ""}`, fmtUtcTitle(m.obs_time)],
+              ["관측", <><DualTime v={m.obs_time} />{age != null ? ` · ${fmtDuration(age)} 전` : ""}</>],
               ["바람", fmtWind(m.wind_dir, m.wind_kt)],
               ["시정", fmtVisSm(m.vis_raw)],
               ["실링", ceilingLabel(m.ceiling_state, m.ceiling_ft)],
               ["기온/이슬점", fmtTempPair(m.temp_c, m.dewp_c)],
               ["현상", m.wx_string ?? "—"],
-              ["출처", `${m.provider ?? "—"} · 수신 ${fmtDual(m.fetched_at)}`, fmtUtcTitle(m.fetched_at)],
-            ] as [string, string, string?][]).map(([k, v, title]) => (
-              <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right" title={title} data-testid={k === "실링" ? "airport-ceiling" : undefined}>{v}</span></div>
+              ["출처", <>{m.provider ?? "—"} · 수신 <DualTime v={m.fetched_at} /></>],
+            ] as [string, React.ReactNode][]).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right" data-testid={k === "실링" ? "airport-ceiling" : undefined}>{v}</span></div>
             ))}
             <div className="mt-2 label" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">METAR (원문 · UTC)</div>
             <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]">{m.raw}</pre>

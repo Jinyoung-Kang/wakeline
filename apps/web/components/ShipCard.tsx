@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
-import { fmtDualRange, fmtKstTitle, fmtUtcRangeTitle } from "@/lib/time";
+import { fmtKstTitle, fmtUtcRangeTitle } from "@/lib/time";
 import { ageS, fmtDuration, fmtSogDual } from "@/lib/format";
 import {
   fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
@@ -16,7 +16,7 @@ import { panIfOutside, shipPos } from "@/lib/focus";
 import { useUi } from "@/lib/ui-store";
 import { ShipTable } from "./ShipTable";
 import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
-import { DualTime } from "./DualTime";
+import { DualRange, DualTime } from "./DualTime";
 
 /**
  * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
@@ -208,7 +208,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
                 const dur = gapDurationS(g);
                 return (
                   <li key={`${g.started_at}-${g.ended_at ?? "open"}`} className="mono" title={fmtUtcRangeTitle(g.started_at, g.ended_at)}>
-                    수신 공백 {fmtDualRange(g.started_at, g.ended_at, { open: "진행 중" })}{dur != null ? ` · ${dur} s` : ""}{g.reason ? ` · ${g.reason}` : ""}
+                    수신 공백 <DualRange a={g.started_at} b={g.ended_at} open="진행 중" />{dur != null ? ` · ${dur} s` : ""}{g.reason ? ` · ${g.reason}` : ""}
                   </li>
                 );
               })}
