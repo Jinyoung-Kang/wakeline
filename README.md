@@ -150,7 +150,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 ```
 apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,domain,config} · Flyway V1–V12 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
-apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
+apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
 infra/           compose.yml · edge(nginx) · redis(ACL) · db(역할·pg_hba) · tests
 docs/            adr/ · audit/(감사·리뷰·변경 계약) · PERF.md · VERIFICATION.md · images/
@@ -163,6 +163,13 @@ perf/ tools/     k6 스크립트 · AIS 측정 · 장애 주입 · 계약 검사
 | ![근거 카드](docs/images/02-alert-evidence.png) 알림 근거 카드 | ![핫 리전](docs/images/04b-hot-region-tokyo.png) 핫 리전(도쿄, 관심 지역 밖) |
 | ![선박](docs/images/04d-ships-tokyo-bay.png) 선박(도쿄만) | ![세계](docs/images/05-world.png) 전세계 |
 | ![재생](docs/images/06-replay.png) 재생 | ![운영](docs/images/09-ops-providers.png) 운영 화면 |
+
+화면 안의 **설명서**(`/guide`, 메뉴 ‘설명서’)는 무엇을 보여 주는지 · 화면별 사용법 · 시각 표기(KST · UTC) · 표시 규칙 · 키보드 단축키를 스크린샷과 번호 설명으로 보여 줍니다. 스크린샷은 배포된 실데이터 스택에서 찍어 넣습니다.
+```bash
+cd apps/web
+node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>   # 파일: JSON {"username","password"} 또는 두 줄, chmod 600 — 값은 인자·환경 변수로 받지 않는다
+```
+1440×900 WebP(`public/guide/<id>.<내용 해시>.webp`)와 `lib/guide-manifest.json`(번호 위치 · 캡처 시각)을 쓰고 크기를 보고합니다. 커밋하고 web 을 다시 빌드하면 나옵니다. 로컬 스택만 찍고, FIXTURE MODE 스택(8701)이나 조회 오류가 보이는 화면은 싣지 않습니다(못 찍은 그림은 ‘스크린샷 준비 중’ 자리표시).
 
 ## 8. 한계와 다음 단계
 - 선박은 0~45°E(유럽·아프리카·중동 서부)를 받지 않는다. 키당 3연결 안에서 구역을 나누고 구역별 공백을 기록하면 넓힐 수 있다(ADR-014 후속 과제).
