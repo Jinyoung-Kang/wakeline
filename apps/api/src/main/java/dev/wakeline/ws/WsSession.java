@@ -5,6 +5,7 @@ import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.engine.PredictionAvailability;
 import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.portcalls.PortCallsInfo;
 import dev.wakeline.route.RouteInfo;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -39,8 +40,8 @@ public final class WsSession {
     /** 이 세션에 마지막으로 보낸 선박 표현: 없음 · 개별 선박(ships_snapshot/diff) · 격자(ships_grid, 줌 또는 선박 수 때문). */
     enum ShipsMode { OFF, POINTS, GRID }
 
-    /** 마지막으로 보낸 ship_selected(같은 객체면 다시 보내지 않는다). */
-    record ShipSelectedSent(String mmsi, ShipStore.Ship ship, ShipStatic stat) {}
+    /** 마지막으로 보낸 ship_selected(선박·정적 정보가 같은 객체이고 입출항이 같은 값이면 다시 보내지 않는다). */
+    record ShipSelectedSent(String mmsi, ShipStore.Ship ship, ShipStatic stat, PortCallsInfo portCalls) {}
 
     /** 구독 한 벌(bbox·줌·상세도)을 한 번에 바꾼다 — 필드별로 따로 읽어 섞이는 일이 없게. */
     record Sub(Bbox bbox, int zoom, String detail) {
@@ -110,6 +111,19 @@ public final class WsSession {
     long demandQueuedAtMs;
     /** 수요 스레드 전용: 이 세션이 지금 임대에 올린 수요(직전 임대, 없으면 null) — 새 키가 세션 제한에 걸리면 이것을 유지한다(계약 v3 §C). */
     DemandService.Held demandHeld;
+    /**
+     * 한국 항만 입출항 조회의 문(ADR-022): 이 세션이 고른 선박의 호출부호를 수요 서비스가 임대에 올리지 못한 이유 — limitedBy = session(세션 한도) ·
+     * ip(접속 주소 한도) · capacity(서버 상한). 올렸거나 고른 것이 없으면 null. 수요 스레드가 쓰고 선박 우편함(ship_selected)이 읽는다 —
+     * 캐시가 비어 있어도 '조회 중' 이라 하지 않게.
+     */
+    record PortCallGate(String callSign, String limitedBy) {}
+
+    volatile PortCallGate portCallGate;
+    /** 수요 스레드 전용: 이 세션이 입출항 조회 임대에 올린(또는 캐시에 결과가 있어 올릴 필요 없는) 호출부호 — 한도에 걸리면 이것을 유지한다. */
+    String portCallHeld;
+    /** 수요 스레드 전용: 새로 조회를 일으킨 호출부호(60 s 창에 6개까지 — 계약 v3 §C 와 같은 값). */
+    final SlidingWindowLimiter newPortCalls = new SlidingWindowLimiter(DemandService.PORT_CALL_SESSION_MAX,
+            TimeUnit.MILLISECONDS.toNanos(DemandService.PORT_CALL_SESSION_WINDOW_MS));
     /** 수요 스레드 전용: 새로 올린 집중 추적 hex · 핫 셀(각각 60 s 창에 6개까지). */
     final SlidingWindowLimiter newFocusKeys = new SlidingWindowLimiter(DemandService.SESSION_NEW_KEYS_MAX,
             TimeUnit.MILLISECONDS.toNanos(DemandService.SESSION_NEW_KEYS_WINDOW_MS));

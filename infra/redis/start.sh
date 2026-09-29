@@ -7,6 +7,7 @@
 #                    wakeline:settings 는 읽기 전용(%R~), 소비자 그룹 명령(XGROUP·XACK 등)·키 이름 열람(SCAN·RANDOMKEY)은 없음. 수집기가 뚫려도 운영 세션 위조·설정 변경·제한 초기화가 불가능하다.
 #                    수요 임대(ADR-013, 계약 v2 §A1·§C): wakeline:demand:{hot,focus}(+:meta)는 읽기 전용 — 임대는 api 만 만든다. 상태 wakeline:demand:status 만 쓴다.
 #                    노선 캐시(ADR-016, 계약 v4 §A): wakeline:route:{CALLSIGN} 을 SET EX 로 쓰고 EXISTS 로 확인한다(api 는 wakeline:* 로 읽는다). ais 에는 주지 않는다.
+#                    한국 항만 입출항(ADR-022): 임대 wakeline:demand:portcalls 는 읽기 전용, 캐시 wakeline:portcalls:{호출부호}는 SET EX · EXISTS. ais 에는 주지 않는다.
 #   wakeline_ais        비밀번호 REDIS_AIS_PASSWORD(ADR-014, 계약 v2 §C). 선박 스트림 wakeline:ships 와 wakeline:ais:* 만 쓰고 wakeline:settings 는 읽기 전용.
 #                    항공기 스트림·예산·수요 임대·세션에는 접근하지 못한다. 소비자 그룹 명령·키 이름 열람 금지는 수집기와 같다.
 #   시스템 로그(ADR-018, 계약 v5 §C3): collector·ais 는 wakeline:logs 에 XADD(MAXLEN ~ 3000)만 한다 — 키 규칙은 쓰기 전용 %W~.
@@ -55,17 +56,20 @@ COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:radar ~wakeline:ev
 COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:hot %R~wakeline:demand:focus %R~wakeline:demand:hot:meta %R~wakeline:demand:focus:meta ~wakeline:demand:status"
 # 노선 캐시(계약 v4 §A): 수집기가 유일한 작성자(adsbdb 조회 결과, TTL 만 — 약관상 다른 곳에 저장하지 않는다)
 COLLECTOR_KEYS="$COLLECTOR_KEYS ~wakeline:route:*"
+# 한국 항만 입출항(ADR-022): 수요 임대 wakeline:demand:portcalls(ZSET 호출부호 → 만료 ms)는 읽기만(api 가 유일한 작성자),
+# 캐시 wakeline:portcalls:{호출부호}는 수집기가 유일한 작성자(SET EX · EXISTS — api 는 wakeline:* 로 읽는다). ais 에는 주지 않는다
+COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:portcalls ~wakeline:portcalls:*"
 # 시스템 로그(계약 v5 §C3): 쓰기 전용 — XADD 만, 다른 서비스 로그는 읽지 못한다
 COLLECTOR_KEYS="$COLLECTOR_KEYS %W~wakeline:logs"
 # 생산자 공통: 접속(redis-py 8 은 HELLO 3 AUTH 로 붙는다)·헬스 체크(PING, health_check_interval)·클라이언트 정보만.
 # 소비자 그룹 명령(XGROUP·XREADGROUP·XACK …)·키 이름 열람(SCAN·RANDOMKEY·KEYS)·CLIENT TRACKING 은 목록에 없어서 거부된다.
 PRODUCER_BASE='resetchannels -@all +hello +ping +info +client|setinfo +client|setname +client|id'
 # 수집기가 쓰는 명령(wakeline_collector 코드 전체): 스트림 XADD(MAXLEN ~ · 로그 싱크 포함)·XREVRANGE, 해시 HSET·HGET·HGETALL·HMGET·HINCRBY·HDEL·HKEYS,
-# EXISTS·GET, 임대 ZRANGEBYSCORE, 예산 Lua SCRIPT LOAD + EVALSHA
+# EXISTS·GET, 임대 ZRANGEBYSCORE(focus·hot · 항만 입출항), 예산 Lua SCRIPT LOAD + EVALSHA
 COLLECTOR_CMDS='+xadd +xrevrange +hset +hget +hgetall +hmget +hincrby +hdel +hkeys +exists +get +zrangebyscore +script|load +evalsha'
-# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만,
+# 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선·항만 입출항 캐시 SET EX · 레이더 목록·이미지)에만, DEL 은 레이더 목록·이미지에만,
 # EXPIRE 는 예산 키(Lua)와 429 이력 해시에만
-COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +set)'
+COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:portcalls:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +set)'
 COLLECTOR_SEL_DEL='(~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +del)'
 COLLECTOR_SEL_EXPIRE='(~budget:* ~wakeline:provider:*:ratelimit:* +expire)'
 

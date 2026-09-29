@@ -25,6 +25,8 @@ export const CREDITS: Credit[] = [
   // 계약 v4 §F: 노선(콜사인 기준 등록 노선 — 선택한 항공기만, 저장하지 않음) · 선박 목적지 풀이용 항구 코드
   { role: "노선", label: "adsbdb.com", href: "https://www.adsbdb.com", note: "flight route data © David Taylor · Jim Mason" },
   { role: "항구 코드", label: "UN/LOCODE", href: "https://unece.org/trade/uncefact/unlocode", note: "UNECE, datasets/un-locode ODC-PDDL" },
+  // ADR-022: 선택한 선박의 한국 항만 입출항(호출부호 기준 — 수집기만 조회, Redis 6 h 캐시)
+  { role: "입출항", label: "해양수산부 선박운항정보(PORT-MIS)", href: "https://www.data.go.kr", note: "공공데이터포털" },
   { role: "Radar", label: "RainViewer", href: "https://www.rainviewer.com" },
   { role: "Radar (KR)", label: "기상청 API허브", href: "https://apihub.kma.go.kr" },
   { role: "Map", label: "OpenFreeMap", href: "https://openfreemap.org" },

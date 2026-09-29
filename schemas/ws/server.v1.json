@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://wakeline.invalid/schemas/ws/server.v1.json",
   "title": "WS 프로토콜 v1 — 서버 → 클라이언트 메시지 17종(계약 v5 §E1 · ADR-008 · ADR-020)",
-  "description": "api(/ws/v1)가 보내는 JSON 텍스트 메시지 하나. type 으로 나뉜 oneOf. 직렬화는 snake_case · non_null(값이 null 인 키는 보내지 않는다 = 모름) — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info · SIGMET geometry)는 키가 항상 있다. 항공기·선박 필드 제약은 schemas/aircraft_state.v1.json · ship_state.v1.json · ship_static.v1.json 과 같다(null 제외 — api 시험이 비교한다). 검증: api WsSchemaContractTest(networknt) · tools/contract_check.py(fixture) · 웹 lib/ws-validate.ts(손으로 쓴 같은 규칙 — fixture 시험으로 묶는다).",
+  "description": "api(/ws/v1)가 보내는 JSON 텍스트 메시지 하나. type 으로 나뉜 oneOf. 직렬화는 snake_case · non_null(값이 null 인 키는 보내지 않는다 = 모름) — 명시적으로 null 을 싣는 키(sources.global · selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info/port_calls · SIGMET geometry)는 키가 항상 있다. 항공기·선박 필드 제약은 schemas/aircraft_state.v1.json · ship_state.v1.json · ship_static.v1.json 과 같다(null 제외 — api 시험이 비교한다). 검증: api WsSchemaContractTest(networknt) · tools/contract_check.py(fixture) · 웹 lib/ws-validate.ts(손으로 쓴 같은 규칙 — fixture 시험으로 묶는다).",
   "type": "object",
   "required": ["type"],
   "properties": {
@@ -684,11 +684,75 @@
         "ambiguous": { "type": "boolean" }
       }
     },
-    "ship_selected": {
-      "description": "선택 선박(계약 v2 §B3 · v4 §B): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null).",
+    "port_ref": {
+      "description": "항구(ADR-022): 국가+항구 코드(PORT-MIS 원문 모양만 검사)와 이름. 둘 다 모르면 항구 자체가 없다.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "mmsi", "state", "static", "destination_info"],
+      "minProperties": 1,
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z0-9]{2,10}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "port_call": {
+      "description": "입출항 한 건(ADR-022, 해양수산부 PORT-MIS). 모르는 값은 키 없음. entry_at · exit_at 은 같은 종류의 신고 시각이 하나로 정해질 때만(아니면 reports 에 모두). reported_name 은 PORT-MIS 에 신고된 선명(AIS 선명과 다를 수 있다).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port_authority_code": { "type": "string", "pattern": "^[0-9]{3}$" },
+        "port_authority": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "entry_at": { "$ref": "#/$defs/date_time" },
+        "exit_at": { "$ref": "#/$defs/date_time" },
+        "reports": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "kind": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "at": { "$ref": "#/$defs/date_time" },
+              "type": { "type": "string", "minLength": 1, "maxLength": 80 }
+            }
+          }
+        },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "prev_port": { "$ref": "#/$defs/port_ref" },
+        "next_port": { "$ref": "#/$defs/port_ref" },
+        "dest_port": { "$ref": "#/$defs/port_ref" },
+        "reported_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "nationality": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "port_calls": {
+      "description": "선택 선박의 한국 항만 입출항(ADR-022) — AIS 호출부호로 조회한 해양수산부 선박운항정보(PORT-MIS) 최근 30일(KST 날짜, 입항일 기준). status: ok · none(기록 없음 — incomplete 면 받은 기록 안에서만) · pending(조회 전·조회 중) · error(error_kind · error_code — 원문 사유는 싣지 않는다) · disabled(disabled_reason) · no_call_sign(정적 정보에 호출부호가 없거나 형식 밖 — 조회 불가) · no_static(AIS 정적 정보를 아직 받지 못해 호출부호를 모름) · limited(이 세션의 조회가 남용 한도에 걸려 조회하지 않고 있다 — limited_by session · ip · capacity. api 는 limited 에 늘 limited_by · call_sign 을 싣고 다른 상태에는 싣지 않는다 — 상태 간 규칙은 error_kind · disabled_reason 처럼 스키마가 아니라 api 시험과 웹 해석(parsePortCalls)이 지킨다). items 는 최근 순 · 최대 20건(더 있으면 truncated). incomplete = 쪽 상한 때문에 일부 항만청 기록을 다 받지 못했다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "window_days", "source"],
+      "properties": {
+        "status": { "enum": ["ok", "none", "pending", "error", "disabled", "no_call_sign", "no_static", "limited"] },
+        "limited_by": { "enum": ["session", "ip", "capacity"] },
+        "call_sign": { "type": "string", "pattern": "^[A-Z0-9]{3,7}$" },
+        "fetched_at": { "$ref": "#/$defs/date_time" },
+        "window_days": { "const": 30 },
+        "window_from": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "window_to": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "source": { "const": "해양수산부 선박운항정보(PORT-MIS)" },
+        "items": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/port_call" } },
+        "truncated": { "const": true },
+        "incomplete": { "const": true },
+        "error_kind": { "enum": ["budget", "rate_limited", "http", "provider", "response", "network", "internal", "cache"] },
+        "error_code": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,16}$" },
+        "disabled_reason": { "enum": ["no_key", "fixture", "operator"] }
+      }
+    },
+    "ship_selected": {
+      "description": "선택 선박(계약 v2 §B3 · v4 §B · ADR-022): state 는 실시간 목록에 있을 때만, static 은 알고 있으면(각각 없으면 null — 키는 있다). destination_info 는 보고된 목적지의 결정적 풀이(모르면 null). port_calls 는 호출부호로 읽은 한국 항만 입출항(늘 객체 — 상태로 말한다. null 은 읽는 쪽이 없는 구성뿐).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "mmsi", "state", "static", "destination_info", "port_calls"],
       "properties": {
         "type": { "const": "ship_selected" },
         "mmsi": { "$ref": "#/$defs/mmsi" },
@@ -710,7 +774,8 @@
             },
             { "type": "null" }
           ]
-        }
+        },
+        "port_calls": { "anyOf": [ { "$ref": "#/$defs/port_calls" }, { "type": "null" } ] }
       }
     }
   }

@@ -22,8 +22,12 @@ from redis.exceptions import NoPermissionError
 from wakeline_collector.budget import Budget, day_key
 from wakeline_collector.chain_store import ChainStateStore
 from wakeline_collector.demand import FOCUS_KEY, FOCUS_META_KEY, HOT_KEY, HOT_META_KEY, STATUS_KEY, DemandPoller, DemandStatus
+from wakeline_collector.jobs.portcalls import PortCallJob, PortCallLookup
 from wakeline_collector.jobs.route import RouteLookup
+from wakeline_collector.portcalls import DEMAND_KEY as PORTCALL_DEMAND_KEY
+from wakeline_collector.portcalls import parse_page, portcalls_key
 from wakeline_collector.providers.adsbdb import RouteFetch
+from wakeline_collector.providers.portmis import PageFetch
 from wakeline_collector.route import not_found, route_key
 from wakeline_collector.status import ProviderStatus
 
@@ -39,6 +43,7 @@ async def admin():
     r = Redis.from_url(URL, decode_responses=True)
     keys = (HOT_KEY, HOT_META_KEY, FOCUS_KEY, FOCUS_META_KEY, STATUS_KEY, day_key("itest"), day_key("adsbdb"))
     keys += (route_key("ZZX123"), route_key("ZZX124"), "wakeline:provider:adsbdb")
+    keys += (PORTCALL_DEMAND_KEY, portcalls_key("230025"), day_key("portmis"), "wakeline:provider:portmis")
     await r.delete(*keys)
     yield r
     await r.delete(*keys)
@@ -109,6 +114,49 @@ async def test_route_cache_set_ex_and_exists_with_collector_acl(admin, collector
     for t in list(rl._tasks.values()):
         await t
     assert prov.calls == ["ZZX123"] and (await Budget(admin, {}).usage("adsbdb"))[0] == 1
+
+
+class _FixtureProvider:
+    """PORT-MIS 대신 저장소 fixture(부산 · 230025)를 돌려준다 — 외부 호출 없음."""
+
+    name, cost, host = "portmis", 1, "apis.data.go.kr"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def fetch_page(self, *, port_authority: str, call_sign: str, sde, ede, page_no: int, wait_s=15.0, before_send=None):
+        from portmis_synthetic import empty_page, fixture_bytes
+
+        self.calls.append((port_authority, call_sign))
+        if before_send is not None:
+            assert await before_send()
+        body = fixture_bytes() if port_authority == "020" else empty_page()
+        return PageFetch(parse_page(body, call_sign), 5, datetime.now(UTC))
+
+
+async def test_port_call_leases_are_read_only_and_cache_is_set_ex_under_collector_acl(admin, collector):
+    """ADR-022: 수집기 규칙으로 임대(ZRANGEBYSCORE LIMIT)를 읽고 캐시를 SET EX · EXISTS 로 쓴다. 임대는 쓰지 못한다."""
+    now = time.time() * 1000
+    await admin.zadd(PORTCALL_DEMAND_KEY, {"230025": now + 60_000, "DEAD01": now - 1})
+    prov = _FixtureProvider()
+    lk = PortCallLookup(collector, prov, Budget(collector, {"portmis": 3000}), ProviderStatus(collector))  # type: ignore[arg-type]
+    job = PortCallJob(collector, lk)
+    assert await job.wanted() == ["230025"]
+    assert await job.tick() == 1
+    for t in list(lk._tasks.values()):
+        await t
+    raw = await admin.get(portcalls_key("230025"))
+    assert raw is not None and orjson.loads(raw)["status"] == "ok"
+    assert 6 * 3600 - 10 < await admin.ttl(portcalls_key("230025")) <= 6 * 3600
+    assert len(prov.calls) == 10 and (await Budget(admin, {}).usage("portmis"))[0] == 10
+    lk.request(["230025"])  # 캐시가 있으면 묻지 않는다(EXISTS)
+    for t in list(lk._tasks.values()):
+        await t
+    assert len(prov.calls) == 10
+    with pytest.raises(NoPermissionError):
+        await collector.zadd(PORTCALL_DEMAND_KEY, {"FORGED1": now + 60_000})  # 임대는 api 만 쓴다
+    with pytest.raises(NoPermissionError):
+        await collector.expire(portcalls_key("230025"), 1)  # 캐시는 SET EX 만
 
 
 def _start_sh_value(name: str) -> str:

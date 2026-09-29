@@ -124,8 +124,11 @@ public record RouteInfo(String status, String callsign, Airline airline, Airport
         return Double.isFinite(d) && d >= -limit && d <= limit ? d : null;
     }
 
-    /** 문자열: 제어·서식 문자(방향 바꾸기 포함)를 빼고 앞뒤 공백을 지운 뒤 max 글자(코드포인트)로 자른다. 비면 null. */
-    static String text(JsonNode n, int max) {
+    /**
+     * 문자열: 제어·서식 문자(방향 바꾸기 포함)를 빼고 앞뒤 공백을 지운 뒤 max 글자(코드포인트)로 자른다. 비면 null.
+     * 수집기가 쓴 다른 캐시 값(한국 항만 입출항 — {@code dev.wakeline.portcalls.PortCallsInfo})도 같은 규칙으로 다시 검사한다.
+     */
+    public static String text(JsonNode n, int max) {
         if (n == null || !n.isString()) return null;
         String s = n.asString();
         StringBuilder b = new StringBuilder(Math.min(s.length(), max + 8));
@@ -139,7 +142,7 @@ public record RouteInfo(String status, String callsign, Airline airline, Airport
     }
 
     /** 시간대가 있는 ISO-8601 시각만. 틀리면 null(모름). */
-    static Instant time(JsonNode n) {
+    public static Instant time(JsonNode n) {
         if (n == null || !n.isString() || n.asString().length() > 40) return null;
         try {
             return OffsetDateTime.parse(n.asString()).toInstant();

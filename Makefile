@@ -3,7 +3,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose.yml --env-file .env
 # 격리 스택(E2E·데모): 프로젝트·포트·서브넷·볼륨이 개발 스택과 분리된다. fixture 모드라 외부 호출이 없다.
 # 외부 키는 빈 값으로 덮어쓴다(셸 환경이 --env-file 보다 우선) — 격리 스택 컨테이너에는 실제 키가 들어가지 않는다(fixture 모드와 이중 안전장치).
-ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY=
+ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY= DATA_GO_KR_SERVICE_KEY=
 ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file .env
 # 부하 시험 도구 — 버전+다이제스트 고정(latest 가 바뀌어 내부망에 붙는 도구가 조용히 달라지지 않게). Dependabot 대상 아님: 올릴 때 여기서 함께 바꾼다.
 K6_IMAGE := grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34

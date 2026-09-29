@@ -1,5 +1,5 @@
 {
- "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터. 가장자리 사례: Python re 의 \\s(U+001C–U+001F 포함) · \\w(글자·숫자 — '²' 같은 No 포함) · 유니코드 대소문자(U+017F · U+212A · U+0130 이 s · k · i 와 같다), 되짚기가 많은 모양(낱말 글자열 · 'eyJ' 반복 · ':' 로 이어진 URL).",
+ "$comment": "계약 v5 §C5 — 비밀값 모양 가림 규칙의 언어 간 시험 벡터. Python(apps/collector masking.py)과 Java(api LogMasker)가 input 을 가린 결과가 expected 와 글자 하나까지 같아야 한다. 설정 비밀값 값-치환은 여기 없다(프로세스마다 다름). 새 규칙: [?&](key|apikey|access_key)= 쿼리 파라미터. 가장자리 사례: Python re 의 \\s(U+001C–U+001F 포함) · \\w(글자·숫자 — '²' 같은 No 포함) · 유니코드 대소문자(U+017F · U+212A · U+0130 이 s · k · i 와 같다), 되짚기가 많은 모양(낱말 글자열 · 'eyJ' 반복 · ':' 로 이어진 URL). 공공데이터포털 serviceKey(ADR-022): 인코딩 키(%2B·%2F·%3D)·디코딩 키(+·/·=)·대소문자·JSON·파이썬 repr 모양.",
  "version": 1,
  "limit": 4000,
  "cases": [
@@ -22,6 +22,26 @@
   {
    "input": "url?serviceKey=SK123&type=json",
    "expected": "url?serviceKey=***&type=json"
+  },
+  {
+   "input": "HTTP Request: GET https://apis.data.go.kr/1192000/VsslEtrynd5/Info5?serviceKey=AbC%2Bdef%2Fgh%3D%3D&prtAgCd=020&sde=20260830 \"HTTP/1.1 200 OK\"",
+   "expected": "HTTP Request: GET https://apis.data.go.kr/1192000/VsslEtrynd5/Info5?serviceKey=***&prtAgCd=020&sde=20260830 \"HTTP/1.1 200 OK\""
+  },
+  {
+   "input": "GET /1192000/VsslEtrynd5/Info5?prtAgCd=020&clsgn=230025&serviceKey=AbC+def/gh== \"HTTP/1.1 500\"",
+   "expected": "GET /1192000/VsslEtrynd5/Info5?prtAgCd=020&clsgn=230025&serviceKey=*** \"HTTP/1.1 500\""
+  },
+  {
+   "input": "ServiceKey=abc123XYZ&x=1 SERVICEKEY=abc123XYZ",
+   "expected": "ServiceKey=***&x=1 SERVICEKEY=***"
+  },
+  {
+   "input": "{\"serviceKey\": \"AbC+def/gh==\", \"prtAgCd\": \"020\"}",
+   "expected": "{\"serviceKey\": \"***\", \"prtAgCd\": \"020\"}"
+  },
+  {
+   "input": "{'serviceKey': 'AbC%2Bdef%2Fgh%3D%3D', 'prtAgCd': '020'}",
+   "expected": "{'serviceKey': '***', 'prtAgCd': '020'}"
   },
   {
    "input": "rdr_cmp_file.php?tm=1&authKey=KMA_SECRET_1",

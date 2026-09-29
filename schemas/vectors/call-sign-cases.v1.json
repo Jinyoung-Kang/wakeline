@@ -1,0 +1,25 @@
+{
+ "$comment": "ADR-022 — 선박 호출부호 정규화의 언어 간 시험 벡터. Python(apps/collector portcalls.normalize_call_sign)과 Java(api PortCallReader.normalizeCallSign)가 input 을 정규화한 결과가 expected 와 같아야 한다(null = 조회하지 않는다). 규칙: 앞뒤 공백 제거 · ASCII 가 아니면 null(대문자 변환으로 모양이 바뀌지 않게) · 대문자 · ^[A-Z0-9]{3,7}$(AIS 호출부호 칸 7자). 가운데 공백·기호는 지우지 않는다(다른 호출부호로 바꿔 묻지 않는다).",
+ "version": 1,
+ "cases": [
+  {"input": "230025", "expected": "230025"},
+  {"input": " d7ab2 ", "expected": "D7AB2"},
+  {"input": "\tabc12\r\n", "expected": "ABC12"},
+  {"input": "ABC", "expected": "ABC"},
+  {"input": "ABCDEFG", "expected": "ABCDEFG"},
+  {"input": "AB", "expected": null},
+  {"input": "ABCDEFGH", "expected": null},
+  {"input": "AB-12", "expected": null},
+  {"input": "AB 12", "expected": null},
+  {"input": "", "expected": null},
+  {"input": "   ", "expected": null},
+  {"input": "AB\u013112", "expected": null},
+  {"input": "\u017fABC1", "expected": null},
+  {"input": "\u00a0ABC12", "expected": null},
+  {"input": "\u2003ABC12", "expected": null},
+  {"input": "\uff21\uff22\uff2312", "expected": null},
+  {"input": "\u001cABC12\u001f\u000b", "expected": "ABC12"},
+  {"input": "ABC\u000012", "expected": null},
+  {"input": null, "expected": null}
+ ]
+}

@@ -35,6 +35,7 @@ ALLOWED_HOSTS = frozenset(
         "api.rainviewer.com",
         "apihub.kma.go.kr",
         "api.adsbdb.com",  # 노선 조회(계약 v4 §A) — 선택한 항공기의 콜사인만
+        "apis.data.go.kr",  # 한국 항만 입출항(ADR-022, 공공데이터포털 PORT-MIS) — 선택한 선박의 호출부호만
     }
 )
 
@@ -94,7 +95,9 @@ def _retry_after_s(headers: dict[str, str]) -> float | None:
 
 class HttpClient:
     def __init__(self, limiter: RateLimiter | None = None) -> None:
-        self.limiter = limiter or default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps)
+        self.limiter = limiter or default_limiter(
+            settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.portmis_rps
+        )
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S),
             follow_redirects=False,

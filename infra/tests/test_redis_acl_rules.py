@@ -75,6 +75,17 @@ class RedisAclRulesTest(unittest.TestCase):
     def test_api_can_read_route_cache(self):
         self.assertIn("~wakeline:*", self.keys("wakeline_api"))
 
+    # --- ADR-022: 한국 항만 입출항 — 임대 wakeline:demand:portcalls(읽기 전용) · 캐시 wakeline:portcalls:{호출부호} ---
+    def test_collector_reads_port_call_leases_and_writes_the_port_call_cache(self):
+        keys = self.keys("wakeline_collector")
+        self.assertIn("%R~wakeline:demand:portcalls", keys, "임대는 api 만 쓴다 — 수집기는 ZRANGEBYSCORE 로 읽기만")
+        self.assertNotIn("~wakeline:demand:portcalls", keys)
+        self.assertIn("~wakeline:portcalls:*", keys, "수집기가 SET EX · EXISTS 로 입출항 캐시를 쓴다")
+        self.assertNotIn("~wakeline:demand:*", keys, "임대 키를 와일드카드로 넓히지 않는다")
+
+    def test_ais_has_no_port_call_access(self):
+        self.assertFalse([k for k in self.keys("wakeline_ais") if "portcalls" in k])
+
     def test_collector_key_rules_stay_narrow(self):
         keys = self.keys("wakeline_collector")
         for broad in ("~*", "~wakeline:*", "allkeys", "~wakeline:r*"):
@@ -109,7 +120,7 @@ class RedisAclRulesTest(unittest.TestCase):
     def test_collector_destructive_commands_are_scoped_to_the_keys_it_writes(self):
         sel = {tuple(sorted(c[1:] for c in s if c.startswith("+"))): sorted(k for k in s if k.startswith(("~", "%"))) for s in self.selectors("wakeline_collector")}
         self.assertEqual(sel, {
-            ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*"],
+            ("set",): ["~wakeline:portcalls:*", "~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*"],
             ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
             ("expire",): ["~budget:*", "~wakeline:provider:*:ratelimit:*"],
         }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만 — 스트림·다른 해시에는 닿지 않는다")
@@ -126,7 +137,7 @@ class RedisAclRulesTest(unittest.TestCase):
         self.assertTrue(hits("wakeline:provider:adsb_lol:ratelimit:region"))
         self.assertTrue(hits("wakeline:provider:adsb_fi:ratelimit:global"))
         for key in ("wakeline:provider:adsb_lol", "wakeline:provider:kma_radar", "wakeline:aircraft", "wakeline:collector",
-                    "wakeline:active", "wakeline:route:ZZX123", "wakeline:logs"):
+                    "wakeline:active", "wakeline:route:ZZX123", "wakeline:portcalls:230025", "wakeline:demand:portcalls", "wakeline:logs"):
             with self.subTest(key=key):
                 self.assertFalse(hits(key))
         self.assertEqual(self.selectors("wakeline_ais"), [], "ais 는 지우거나 덮어쓰는 명령이 필요 없다")
@@ -154,7 +165,7 @@ class RedisAclRulesTest(unittest.TestCase):
             "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
             "~wakeline:provider:*", "~wakeline:radar_kr:*", "%R~wakeline:settings", "~budget:*",
             "%R~wakeline:demand:hot", "%R~wakeline:demand:focus", "%R~wakeline:demand:hot:meta", "%R~wakeline:demand:focus:meta",
-            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs"]))
+            "~wakeline:demand:status", "~wakeline:route:*", "%R~wakeline:demand:portcalls", "~wakeline:portcalls:*", "%W~wakeline:logs"]))
         self.assertEqual(sorted(self.keys("wakeline_ais")), sorted([
             "~wakeline:ships", "~wakeline:ais:*", "%R~wakeline:settings", "%W~wakeline:logs"]))
 

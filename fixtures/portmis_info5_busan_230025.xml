@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 해양수산부_선박운항정보 GET /1192000/VsslEtrynd5/Info5 (prtAgCd=020, deGb=I, clsgn=230025) — 2026-09-29 사용자 키로 받은 응답의 구조와 값.
+     확인한 필드·값만 적었다: 값을 확인하지 못한 필드(etryptYear · etryptCo · 국적 · 선종 코드 · 목적 코드 · 최초출항지 · ibobprtNm · resultMsg)는 뺐다.
+     파서는 없는 필드를 null 로 읽는다(값을 지어 채우지 않는다). ADR-022. -->
+<response>
+  <header>
+    <resultCode>00</resultCode>
+  </header>
+  <body>
+    <items>
+      <item>
+        <prtAgCd>020</prtAgCd>
+        <prtAgNm>부산</prtAgNm>
+        <clsgn>230025</clsgn>
+        <vsslNm>부광9호</vsslNm>
+        <vsslKndNm>석유제품 운반선</vsslKndNm>
+        <etryptPurpsNm>양하</etryptPurpsNm>
+        <prvsDpmprtNatPrtCd>KRYOC</prvsDpmprtNatPrtCd>
+        <prvsDpmprtPrtNm>여천항</prvsDpmprtPrtNm>
+        <nxlnptNatPrtCd>KRYOC</nxlnptNatPrtCd>
+        <nxlnptPrtNm>여천항</nxlnptPrtNm>
+        <dstnNatPrtCd>KRYOC</dstnNatPrtCd>
+        <dstnPrtNm>여천항</dstnPrtNm>
+        <details>
+          <detail>
+            <reqstSeNm>최초</reqstSeNm>
+            <etryndNm>입항</etryndNm>
+            <etryptDt>2026-09-29T00:00:00+09:00</etryptDt>
+          </detail>
+        </details>
+      </item>
+    </items>
+    <totalCount>1</totalCount>
+  </body>
+</response>

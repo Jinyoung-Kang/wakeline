@@ -1,5 +1,5 @@
 """collector 진입점 — 주기 작업 7종(region·global·sigmet·radar·metar·maintenance·radar_kr)과 수요 기반 추적(focus·hot,
-ADR-013)·선택 항공기 노선 조회(계약 v4 §A)를 하나의 이벤트 루프에서 돌린다.
+ADR-013)·선택 항공기 노선 조회(계약 v4 §A)·선택 선박 한국 항만 입출항 조회(ADR-022)를 하나의 이벤트 루프에서 돌린다.
 
 실시간 경로(수집 → Redis 발행)는 DB 에 의존하지 않는다: DB 는 백그라운드 writer 가 연결·재연결하며, 기동 시 DB 를 기다리지 않는다.
 외부 호출은 모두 한 HttpClient(허용 호스트 · 수집기 전체/호스트별 속도 상한)를 지난다.
@@ -33,6 +33,7 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.demand import DemandProvider, DemandTracker
 from wakeline_collector.jobs.kma_radar import KmaRadarJob
 from wakeline_collector.jobs.maintenance import MaintenanceJob
+from wakeline_collector.jobs.portcalls import PortCallJob, PortCallLookup
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
 from wakeline_collector.logsink import LogSink, close_log_sink, sink_metrics, start_log_sink
@@ -43,6 +44,7 @@ from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.base import AircraftProvider
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
+from wakeline_collector.providers.portmis import PORTMIS_HOST, PortMisProvider, service_key_forms
 from wakeline_collector.providers.rainviewer import RainViewerProvider
 from wakeline_collector.providers.readsb import ADSB_FI_HOST, AdsbFiDemandProvider, adsb_fi, adsb_lol
 from wakeline_collector.publisher import STREAM_AIRCRAFT, Publisher, limit_fields
@@ -80,6 +82,7 @@ def build_limits(s: Settings) -> dict[str, int]:
         "rainviewer": s.budget_rainviewer,
         "kma_radar": s.budget_kma_radar,
         "adsbdb": s.budget_adsbdb,
+        "portmis": s.budget_portmis,
         "fixture": 0,
     }
 
@@ -108,17 +111,24 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
     fixture = settings.fixture_mode
     configure_logging(
-        [settings.kma_apihub_key, settings.opensky_client_secret, settings.redis_password, settings.db_collector_password]
+        [
+            settings.kma_apihub_key,
+            settings.opensky_client_secret,
+            settings.redis_password,
+            settings.db_collector_password,
+            *service_key_forms(settings.data_go_kr_service_key),  # 인코딩·디코딩 키 모두(ADR-022)
+        ]
     )
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
     redis = redis if redis is not None else make_redis(settings)
     db = db or Db()
     db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
-    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps)
+    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.portmis_rps)
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
     tracker: DemandTracker | None = None
+    portcalls: PortCallLookup | None = None
     logsink: LogSink | None = None
 
     def metrics() -> dict[str, str]:
@@ -133,6 +143,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             # api /status 의 demand.adsb_fi_rps_1m 원천: 최근 60 s 동안 실제로 보낸 adsb.fi 호출 수 / 60
             "adsb_fi_rps_1m": f"{limiter.rate_1m(ADSB_FI_HOST):.3f}",
             "adsbdb_rps_1m": f"{limiter.rate_1m(ADSBDB_HOST):.3f}",
+            "portmis_rps_1m": f"{limiter.rate_1m(PORTMIS_HOST):.3f}",
             "http_rps_1m": f"{limiter.rate_1m():.3f}",
             "http_throttled": str(limiter.throttled),
             # 계약 v5 §C2: 로그 싱크가 wakeline:logs 로 보낸 수 · 대기열 상한으로 버린 수(기동 뒤 누계, 끄면 빈 값)
@@ -140,6 +151,8 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         }
         if tracker is not None:
             m.update(tracker.metrics())
+        if portcalls is not None:
+            m.update(portcalls.metrics())
         return m
 
     ctx = JobContext(
@@ -187,6 +200,15 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             ctx, DemandPoller(redis), DemandStatus(redis), demand_provider, limiter=None if fixture else limiter, routes=routes
         )
 
+    # 한국 항만 입출항(ADR-022): 선택한 선박의 호출부호만 PORT-MIS 에 묻는다. 키가 없거나 fixture 모드면 묻지 않고
+    # 요청된 호출부호에 status "disabled"(no_key · fixture)를 쓴다(화면이 "조회 중" 에 머물지 않게). 항공기 수요 추적과 따로 돈다.
+    portmis = None if fixture else PortMisProvider(http, settings.data_go_kr_service_key)
+    if portmis is not None and not portmis.configured:
+        log.info("DATA_GO_KR_SERVICE_KEY not set — Korean port calls (PORT-MIS) disabled")
+        portmis = None
+    portcalls = PortCallLookup(redis, portmis, ctx.budget, ctx.status, off_reason="fixture" if fixture else "no_key")
+    portcall_job = PortCallJob(redis, portcalls)
+
     if stop is None:
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -204,6 +226,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "metar": run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
             "maintenance": run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
             "radar_kr": run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
+            "portcalls": portcall_job.run(stop),
         }
         if tracker is not None:
             jobs["demand"] = tracker.run(stop)

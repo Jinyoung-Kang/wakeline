@@ -5,7 +5,7 @@
  *   1) 메시지를 버린다({kind:"invalid"} — lib/ws.ts 가 보고하고 그 종류에 맞게 다시 받는다): 적용에 꼭 필요한 값 — type · seq/sseq · 원소 배열 ·
  *      알림 version · SIGMET collection · 레이더 host/generated/past · selected hex/prediction · ship_selected mmsi · error code · status 의 모든 값.
  *   2) 원소를 버린다: 배열 원소(항공기 · 선박 · 알림 · 배치 항목 · SIGMET · 레이더 프레임 · 격자 칸 · 삭제 목록)와 따로 버릴 수 있는 묶음
- *      (selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info · 스냅샷 sources.region/global · 격자 칸 선종별 수).
+ *      (selected.state/route · demand.hot/focus · ship_selected.state/static/destination_info/port_calls · 스냅샷 sources.region/global · 격자 칸 선종별 수).
  *   3) 그 값만 모름(null)으로: 화면이 참고로만 쓰는 값 — welcome 의 값 전부 · 메시지의 v/ts/fetched_at/provider/computed_at/sigmets_version ·
  *      ships_grid cell_deg/capped · error title/detail.
  * - 스키마보다 너그러운 곳은 "모름" 뿐이다: 없는 키 · null 값, 모르는 키(보지 않는다), 네 원소 격자 칸(구 서버 — 선종별 수 없음).
@@ -15,6 +15,10 @@
  * tests/ws-validate-v5.test.ts: api 가 실제 빌더로 만든 표본(tests/fixtures/ws-samples.v1.json)을 모두 받고, 스키마 위반 표본은 버리는지.
  */
 import { FOCUS_STATES, HOT_STATES, parseDemand, type FocusDemand, type HotDemand } from "./demand";
+import {
+  parsePortCalls, PORT_CALL_DISABLED_REASONS, PORT_CALL_ERROR_KINDS, PORT_CALL_LIMITED_BY, PORT_CALL_SOURCE, PORT_CALL_STATUSES, PORT_CALL_WINDOW_DAYS,
+  type PortCallsInfo,
+} from "./portcalls";
 import { parseRoute, ROUTE_STATUSES, type RouteInfo } from "./route";
 import {
   DEST_KINDS, isMmsi, parseDestinationInfo, parseGridCellsCounted, parseShipLite, parseShipState, parseShipStatic, SHIP_CATEGORIES,
@@ -45,6 +49,7 @@ export interface ShipsDiffMsg { type: "ships_diff"; sseq: number; ts: string | n
 export interface ShipsGridMsg { type: "ships_grid"; ts: string | null; cell_deg: number | null; capped: true | null; cells: ShipGridCell[] }
 export interface ShipSelectedMsg {
   type: "ship_selected"; mmsi: string; state: ShipState | null; static: ShipStatic | null; destination_info: DestinationInfo | null;
+  port_calls: PortCallsInfo | null;
 }
 export type ServerMsg = WelcomeMsg | SnapshotMsg | DiffMsg | AlertsMsg | AlertsBatchMsg | SelectedMsg | ErrorMsg | DemandMsg | SigmetsMsg
   | RadarMsg | StatusMsg | PingMsg | ShipsSnapshotMsg | ShipsDiffMsg | ShipsGridMsg | ShipSelectedMsg;
@@ -174,6 +179,24 @@ const ROUTE = shape({
 }, ["status"]);
 const PREDICTION_REASONS = ["turning", "slow", "on_ground", "no_track", "stale"] as const;
 const PREDICTION = shape({ available: isBool, reason: oneOf(...PREDICTION_REASONS) }, ["available"]);
+
+/** $defs/port_ref · port_call · port_calls(ADR-022 — 한국 항만 입출항) */
+const TEXT80 = str(1, 80);
+const PORT_REF_FIELDS = shape({ code: re(/^[A-Z0-9]{2,10}$/), name: TEXT80 });
+const PORT_REF: Rule = (v) => PORT_REF_FIELDS(v) && Object.keys(v).length >= 1; // minProperties 1
+const PORT_REPORT_FIELDS = shape({ kind: TEXT80, at: TIME, type: TEXT80 });
+const PORT_REPORT: Rule = (v) => PORT_REPORT_FIELDS(v) && Object.keys(v).length >= 1;
+const PORT_CALL = shape({
+  port_authority_code: re(/^[0-9]{3}$/), port_authority: TEXT80, entry_at: TIME, exit_at: TIME, reports: arrOf(PORT_REPORT, 0, 8), purpose: TEXT80,
+  prev_port: PORT_REF, next_port: PORT_REF, dest_port: PORT_REF, reported_name: TEXT80, kind: TEXT80, nationality: TEXT80,
+});
+const DATE = re(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
+const PORT_CALLS = shape({
+  status: oneOf(...PORT_CALL_STATUSES), call_sign: re(/^[A-Z0-9]{3,7}$/), fetched_at: TIME, window_days: oneOf(PORT_CALL_WINDOW_DAYS),
+  window_from: DATE, window_to: DATE, source: oneOf(PORT_CALL_SOURCE), items: arrOf(PORT_CALL, 1, 20), truncated: oneOf(true), incomplete: oneOf(true),
+  error_kind: oneOf(...PORT_CALL_ERROR_KINDS), error_code: re(/^[A-Za-z0-9_]{1,16}$/), disabled_reason: oneOf(...PORT_CALL_DISABLED_REASONS),
+  limited_by: oneOf(...PORT_CALL_LIMITED_BY),
+}, ["status", "window_days", "source"]);
 
 /** $defs/demand 의 hot · focus(계약 v2 §A3) */
 const HOT = shape({
@@ -425,9 +448,11 @@ const VALIDATORS: Record<ServerType, (m: Obj, d: Drops) => ServerMsg> = {
       return null;
     };
     const dest = part<Obj>(m, "destination_info", DEST_INFO, d);
+    // 한국 항만 입출항(ADR-022): 묶음 하나 — 틀리면 통째로 버리고 센다(카드는 "—")
+    const calls = part<Obj>(m, "port_calls", PORT_CALLS, d);
     return {
       type: "ship_selected", mmsi, state: one("state", SHIP_STATE, parseShipState), static: one("static", SHIP_STATIC, parseShipStatic),
-      destination_info: dest ? parseDestinationInfo(dest) : null,
+      destination_info: dest ? parseDestinationInfo(dest) : null, port_calls: calls ? parsePortCalls(calls) : null,
     };
   },
 };
