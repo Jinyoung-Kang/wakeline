@@ -2,12 +2,15 @@
 붙여 Redis wakeline:traffic_grid 에 싣는다. 개별 선박 위치가 아니라 0.025° 칸마다 척수 · 밀집도다.
 
 틱(settings.traffic_grid_tick_s, 30 s)마다 부를 때가 됐는지만 본다 — 부르는 주기는 자료 시각(regDt)이 정한다:
-- 교통(budget:komsa_traffic, 하루 400 — 포털 500 안): 다음 regDt 가 나올 때(마지막 regDt + 5분 + PUBLISH_DELAY_S)까지 부르지 않는다
-  (regDt 가 바뀌지 않았으면 부를 까닭이 없다). 같은 regDt 가 오면(unchanged — 더 이른 regDt 도: 지난 자료로 되돌리지 않는다) 새로 해석해 싣지 않고
-  120 → 240 → 480 → 900 s 물러난다.
-  실패는 60 → 120 → 240 → 480 → 900 s. 어떤 경우든 한 시간에 HOURLY_CAP(15)번을 넘지 않는다 — 어느 24시간이든 360번 이하라 포털 한도(하루
-  500)가 UTC · KST 어느 날 경계로 세어져도 넘지 않는다. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다). 예산은 엄격
-  (Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
+- 교통(budget:komsa_traffic, 하루 400 — 포털 500 안): 다음 regDt 가 나올 때(마지막 regDt + 5분 + 배운 발행 지연)까지 부르지 않는다
+  (regDt 가 바뀌지 않았으면 부를 까닭이 없다). 발행 지연(regDt 뒤 그 자료가 응답에 나오기까지)은 잰 적이 없어 관측으로 배운다(KomsaSchedule —
+  처음 추정 PUBLISH_DELAY_S, [DELAY_MIN_S, DELAY_MAX_S]) — 고정값이면 공급자가 65 s 넘게 늦을 때 주기마다 두 번 불러 시간 상한에 막히고
+  자료가 '멈춤'이 됐다(검토 지적). 배운 값은 heartbeat traffic_grid_publish_delay_s 에 싣고 재기동 뒤 다시 쓴다.
+  같은 regDt 가 오면(unchanged — 더 이른 regDt 도: 지난 자료로 되돌리지 않는다) 새로 해석해 싣지 않고 60 → 60 → 60 s(늦은 발행) 뒤
+  120 → 240 → 480 → 900 s(멈춘 공급자) 물러난다. 실패는 60 → 120 → 240 → 480 → 900 s.
+  상한 둘: 메모리 60분 창 HOURLY_CAP(15) · Redis 시간 창(budget:komsa_traffic:h:{UTC 시}, 같은 15 — 재기동 · 두 번째 수집기도 센다). KST 날은 UTC 시
+  24개이므로 어느 날 경계로 세어도 하루 360번 이하 — 포털 한도(500) 안. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다).
+  예산은 엄격(Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
 - 격자 기하(budget:mof_grid4, 하루 6,000 — 포털 10,000 안): 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
   많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s)과 가장 낮은 우선순위(PRIORITY_BACKFILL)로.
   첫 스냅샷(약 5,100칸)은 몇 시간에 걸쳐 채워진다 — 그동안 스냅샷 값의 resolved/unresolved 가 그대로 보인다.
@@ -22,9 +25,11 @@
 - 발행: 새 regDt 이거나 기하가 늘어 수가 바뀌면(PUBLISH_MIN_INTERVAL_S 에 한 번) SET wakeline:traffic_grid EX 1200. 값은 traffic_grid.build_payload.
   오래됨(regDt 15분 초과) 판정은 api 가 한다. 수집기가 멈추면 20분 뒤 키가 사라진다.
 - heartbeat(wakeline:collector): traffic_grid_at · traffic_grid_lag_s(regDt 나이) · traffic_grid_state(active · no_key · fixture ·
-  operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · 오늘 쓴 호출 수(두 예산).
+  operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · 오늘 쓴 호출 수(두 예산) ·
+  traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값).
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
-PUBLISH_DELAY_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일은 선택값이다(잰 값이 아니다).
+PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일은
+선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
 """
 
 from __future__ import annotations
@@ -55,12 +60,22 @@ log = logging.getLogger("job.traffic_grid")
 
 SNAPSHOT_KEY = "wakeline:traffic_grid"
 NEGATIVE_KEY = "wakeline:traffic_grid:negative"
+HEARTBEAT_KEY = "wakeline:collector"
+DELAY_FIELD = "traffic_grid_publish_delay_s"  # 배운 발행 지연(위쪽 끝 추정, 초) — 운영 확인 · 재기동 뒤 다시 쓴다
 SNAPSHOT_TTL_S = 1200
 PERIOD_S = 300  # 공급자 갱신 주기(확인: 5분마다 새 자료)
-PUBLISH_DELAY_S = 60  # 다음 regDt 예상 시각 뒤 이만큼 기다렸다가 부른다
+# 발행 지연(regDt 뒤 그 자료가 응답에 나오기까지) — 잰 적이 없어 관측으로 배운다. 아래 넷은 선택값이다.
+PUBLISH_DELAY_S = 60  # 처음 추정(배운 값이 없을 때)
+DELAY_MIN_S = 30  # 배운 값의 아래 끝
+# 위 끝: regDt + 주기 + 이 값 + 틱이 오래됨(900 s) 안에 들게. 이보다 늦게 나오는 공급자는 어차피 자주 '멈춤'이다
+DELAY_MAX_S = 540
+# 한 번에 받은 주기마다 추정을 이만큼 줄여 본다(공급자가 빨라지면 따라간다 — 틀리면 이른 호출 한 번으로 다시 잰다)
+DELAY_DECAY_S = 3
+# 이른 호출 뒤 받은 때까지의 폭이 이보다 넓으면 (아래 끝 + 이 값)으로 좁힌다(긴 물러나기 · 실패가 끼면 위쪽 끝이 헐겁다)
+LEARN_SLACK_S = 90
 MIN_SPACING_S = 120  # 새 regDt 를 받은 뒤 다음 호출까지 최소 간격
-HOURLY_CAP = 15  # 어느 한 시간이든 교통 호출 상한
-UNCHANGED_BACKOFF_S = (120, 240, 480, 900)
+HOURLY_CAP = 15  # 어느 한 시간이든(메모리 — 60분 창) · 어느 UTC 시든(Redis — 재기동을 넘어) 교통 호출 상한
+UNCHANGED_BACKOFF_S = (60, 60, 60, 120, 240, 480, 900)  # 같은 regDt: 처음 세 번은 짧게(발행이 늦을 뿐), 그 뒤는 멈춘 공급자
 FAIL_BACKOFF_S = (60, 120, 240, 480, 900)
 SKIP_RETRY_S = 600  # 예산 소진 · 예산 저장소 장애 뒤 다시 볼 때
 WFS_PER_TICK = 15
@@ -109,11 +124,19 @@ def _step(steps: tuple[int, ...], n: int) -> int:
 
 
 class KomsaSchedule:
-    """다음에 부를 시각(regDt 기준) · 물러나기 · 시간당 상한."""
+    """다음에 부를 시각(regDt + 주기 + 배운 발행 지연) · 물러나기 · 시간당 상한(메모리 60분 창 — Redis 시간 창은 작업이 따로 센다).
+
+    발행 지연 배우기: 이른 호출(같은 regDt — unchanged) 뒤 새 regDt 를 받으면 그 regDt 의 지연은 (마지막 이른 호출 − regDt, 받은 때 − regDt] 안이다.
+    위쪽 끝(받은 때 − regDt)을 쓰고, 폭이 LEARN_SLACK_S 보다 넓으면 아래 끝 + LEARN_SLACK_S 로 좁힌다. 이른 호출 없이 한 번에 받은 주기는 추정을
+    DELAY_DECAY_S 씩 줄여 본다(늘리지 않는다). 첫 호출 · 실패 뒤 받은 regDt 의 나이는 지연이 아니다(그 regDt 가 언제 나왔는지 모른다) — 배우지 않는다.
+    """
 
     def __init__(self) -> None:
         self.next_due: datetime | None = None  # None = 지금
         self.last_reg_dt: datetime | None = None
+        self.delay_s = float(PUBLISH_DELAY_S)
+        self.delay_learned = False  # 관측(이른 호출 뒤 받음)이나 재기동 전 값에서 왔는가 — 아니면 처음 추정(선택값)일 뿐
+        self._early_at: datetime | None = None  # 이 주기의 마지막 이른 호출(unchanged) 시각
         self._calls: deque[datetime] = deque()
         self._fails = 0
         self._unchanged = 0
@@ -129,15 +152,37 @@ class KomsaSchedule:
     def called(self, now: datetime) -> None:
         self._calls.append(now)
 
+    def restore_delay(self, value: float) -> bool:
+        """재기동 뒤 heartbeat 에 남은 배운 지연을 다시 쓴다. 범위 밖이면 쓰지 않는다."""
+        if DELAY_MIN_S <= value <= DELAY_MAX_S:
+            self.delay_s = float(value)
+            self.delay_learned = True
+            return True
+        return False
+
     def on_new(self, reg_dt: datetime, now: datetime) -> None:
+        reg = reg_dt.astimezone(UTC)
+        seen = (now - reg).total_seconds()  # 이 regDt 를 처음 본 나이 — 발행 지연의 위쪽 끝
+        if self.last_reg_dt is not None:
+            if self._early_at is not None:
+                # 이른 호출은 지금 추정이 짧았다는 증거 — 줄이지 않는다. 받은 regDt 가 기다리던 것보다 뒤의 것이면(상한 · 실패로 한 주기를 건너뜀)
+                # 아래 끝이 약하므로 max(아래 끝, 지금 추정) + LEARN_SLACK_S 로 좁힌다
+                low = max(0.0, (self._early_at - reg).total_seconds())  # 그때는 아직 없었다
+                est = min(seen, max(low, self.delay_s) + LEARN_SLACK_S)
+                self.delay_s = min(max(est, self.delay_s, float(DELAY_MIN_S)), float(DELAY_MAX_S))
+                self.delay_learned = True
+            else:
+                self.delay_s = max(float(DELAY_MIN_S), min(self.delay_s, seen) - DELAY_DECAY_S)
+        self._early_at = None
         self._fails = self._unchanged = 0
         self.last_reg_dt = reg_dt
-        expected = reg_dt.astimezone(UTC) + timedelta(seconds=PERIOD_S + PUBLISH_DELAY_S)
+        expected = reg + timedelta(seconds=PERIOD_S + self.delay_s)
         # 시계가 어긋나 regDt 가 미래이거나 아주 오래됐어도 [지금 + 최소 간격, 지금 + 주기 × 2] 안에서
         self.next_due = min(max(expected, now + timedelta(seconds=MIN_SPACING_S)), now + timedelta(seconds=2 * PERIOD_S))
 
     def on_unchanged(self, now: datetime) -> None:
         self._fails = 0
+        self._early_at = now
         self.next_due = now + timedelta(seconds=_step(UNCHANGED_BACKOFF_S, self._unchanged))
         self._unchanged += 1
 
@@ -145,8 +190,8 @@ class KomsaSchedule:
         self.next_due = now + timedelta(seconds=_step(FAIL_BACKOFF_S, self._fails))
         self._fails += 1
 
-    def on_skipped(self, now: datetime) -> None:
-        self.next_due = now + timedelta(seconds=SKIP_RETRY_S)
+    def on_skipped(self, now: datetime, until: datetime | None = None) -> None:
+        self.next_due = until if until is not None and until > now else now + timedelta(seconds=SKIP_RETRY_S)
 
 
 # ---- 격자 기하 ---------------------------------------------------------------------------------------------------------
@@ -291,6 +336,7 @@ class TrafficGridJob:
         self._db_loaded = False
         self._db_next_try: datetime | None = None
         self._neg_loaded = False
+        self._delay_loaded = False
         self._dirty = False
         self._published_at: datetime | None = None
         self._force_publish = False
@@ -324,6 +370,15 @@ class TrafficGridJob:
 
     # ---- 캐시 읽기 ------------------------------------------------------------------------------------------------
     async def _load(self, now: datetime) -> None:
+        if not self._delay_loaded:
+            self._delay_loaded = True  # 한 번만 본다(없거나 못 읽으면 처음 추정으로 — 다시 배운다)
+            try:
+                async with asyncio.timeout(REDIS_TIMEOUT_S):
+                    raw = await self.ctx.status.redis.hget(HEARTBEAT_KEY, DELAY_FIELD)
+                if raw and self.schedule.restore_delay(float(raw)):
+                    log.info("traffic grid: publication delay estimate %.0f s restored from the heartbeat", self.schedule.delay_s)
+            except Exception as e:  # noqa: BLE001 — 부가(없어도 다시 배운다)
+                log.info("traffic grid: publication delay estimate not restored (%s)", type(e).__name__)
         if not self._neg_loaded:
             try:
                 async with asyncio.timeout(REDIS_TIMEOUT_S):
@@ -355,8 +410,25 @@ class TrafficGridJob:
         if not self.schedule.due(now):
             return
         started = now
+        # 시간 창(Redis, UTC 시) 먼저 — 재기동 · 두 번째 수집기도 같은 창을 센다. 그다음 하루 예산. 하나라도 안 되면 부르지 않는다.
+        ok, used, hour = await self.ctx.budget.reserve_hour(p.name, HOURLY_CAP, p.cost, now=now)
+        if not ok:
+            unavailable = used == UNKNOWN
+            self.ctx.db.record_run(
+                self.job_name,
+                p.name,
+                started,
+                status="budget_unavailable" if unavailable else "budget_exhausted",
+                error_text="budget store unavailable (fail closed)"
+                if unavailable
+                else f"hourly cap reached (used={used} of {HOURLY_CAP} in UTC hour {hour.rsplit(':', 1)[-1]})",
+            )
+            nxt = now.astimezone(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            self.schedule.on_skipped(now, until=None if unavailable else nxt)
+            return
         ok, used = await self.ctx.budget.reserve(p.name, p.cost)
         if not ok:
+            await self.ctx.budget.release_key(hour, p.cost)
             unavailable = used == UNKNOWN
             self.ctx.db.record_run(
                 self.job_name,
@@ -376,14 +448,18 @@ class TrafficGridJob:
             sent = True
             return True
 
+        async def give_back() -> None:
+            await self.ctx.budget.release(p.name, p.cost)
+            await self.ctx.budget.release_key(hour, p.cost)
+
         try:
             resp, snap = await p.fetch(before_send=before_send)
         except asyncio.CancelledError:
             if not sent:
-                await asyncio.shield(self.ctx.budget.release(p.name, p.cost))
+                await asyncio.shield(give_back())
             raise
         except NOT_SENT as e:
-            await self.ctx.budget.release(p.name, p.cost)
+            await give_back()
             if isinstance(e, SendCancelled):
                 self.state = STATE_OPERATOR_OFF
             else:
@@ -634,5 +710,7 @@ class TrafficGridJob:
             "traffic_grid_pending": str(self.geometry.pending),
             "traffic_grid_calls_komsa": "" if used_k is None else str(used_k),
             "traffic_grid_calls_wfs": "" if used_w is None else str(used_w),
+            # 처음 추정(선택값)은 싣지 않는다 — 배운 값만
+            DELAY_FIELD: str(round(self.schedule.delay_s)) if self.schedule.delay_learned else "",
         }
         await self.ctx.status.heartbeat(self.job_name, lag_s=lag, fixture=self.ctx.fixture, extra=extra)

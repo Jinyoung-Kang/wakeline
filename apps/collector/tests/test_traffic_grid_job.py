@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -223,14 +224,16 @@ async def test_unchanged_reg_dt_backs_off_and_republishes_the_identical_value():
     job, komsa, _w, r, clock, db = setup(komsa_body())
     await job.run_once()
     first = r.kv[SNAPSHOT_KEY]
-    clock.t = job.schedule.next_due
-    await job.run_once()
-    assert komsa.calls == 2 and statuses(db) == ["ok", "unchanged"]
+    steps = []
+    for _ in range(len(tg.UNCHANGED_BACKOFF_S) + 1):
+        clock.t = job.schedule.next_due
+        await job.run_once()
+        steps.append(round((job.schedule.next_due - clock.t).total_seconds()))
+    assert statuses(db)[:2] == ["ok", "unchanged"]
     assert r.kv[SNAPSHOT_KEY] == first  # 같은 값(ETag 가 바뀌지 않는다) — TTL 만 늘었다
-    assert job.schedule.next_due == clock.t + timedelta(seconds=120)
-    clock.t = job.schedule.next_due
-    await job.run_once()
-    assert job.schedule.next_due == clock.t + timedelta(seconds=240)
+    # 한 주기 안에서는 짧게(발행이 늦은 것 — 늦은 만큼을 좁게 잰다), 그 뒤로는 공급자가 멈춘 것으로 보고 길게
+    assert steps == [*tg.UNCHANGED_BACKOFF_S, tg.UNCHANGED_BACKOFF_S[-1]]
+    assert steps[:3] == [60, 60, 60] and steps[-1] == 900
 
 
 async def test_an_older_reg_dt_never_replaces_the_newer_snapshot():
@@ -241,6 +244,171 @@ async def test_an_older_reg_dt_never_replaces_the_newer_snapshot():
     await job.run_once()
     assert statuses(db) == ["ok", "unchanged"]
     assert snapshot(r)["reg_dt_kst"] == "2026-09-29T18:10:05+09:00" and r.kv[SNAPSHOT_KEY] == first
+
+
+def simulate_provider(
+    lag_s: float,
+    *,
+    tick_s: float,
+    hours: float = 24,
+    jitter_s: float = 0,
+    seed: int = 1,
+    lag_after: tuple[float, float] | None = None,
+    schedule: tg.KomsaSchedule | None = None,
+) -> tuple[list[float], list[tuple[float, float]], tg.KomsaSchedule]:
+    """공급자 모형(잰 값이 아니다 — 모르는 발행 지연을 넓게 훑는다): regDt 가 300 s 마다(+0–2 s) 찍히고, 그 regDt 는 lag_s(± jitter_s) 뒤에야
+    응답에 나온다. 틱마다 실제 KomsaSchedule 로 부를지 정한다. lag_after = (이 초부터, 새 지연) — 공급자가 도중에 빨라지거나 느려진다.
+    (호출 시각 목록, (시각, 그때 싣고 있는 regDt 의 나이) 목록, 일정)."""
+    rnd = random.Random(seed)
+    t0 = datetime(2026, 9, 29, tzinfo=UTC)
+    regs: list[tuple[float, float]] = []
+    for k in range(-2, int(hours * 3600 / tg.PERIOD_S) + 4):
+        r = k * tg.PERIOD_S + 5 + rnd.uniform(0, 2)
+        lag = lag_s if lag_after is None or r < lag_after[0] else lag_after[1]
+        regs.append((r, r + max(0.0, lag + rnd.uniform(-jitter_s, jitter_s))))
+    s = schedule or tg.KomsaSchedule()
+    last: datetime | None = None
+    stamps: list[float] = []
+    ages: list[tuple[float, float]] = []
+    t = 0.0
+    while t < hours * 3600:
+        now = t0 + timedelta(seconds=t)
+        if s.due(now):
+            reg = t0 + timedelta(seconds=max(r for r, a in regs if a <= t))
+            s.called(now)
+            stamps.append(t)
+            if last is not None and reg <= last:
+                s.on_unchanged(now)
+            else:
+                last = reg
+                s.on_new(reg, now)
+        if last is not None:
+            ages.append((t, (now - last).total_seconds()))
+        t += tick_s
+    return stamps, ages, s
+
+
+def max_in_any_hour(stamps: list[float]) -> int:
+    best = j = 0
+    for i, t in enumerate(stamps):
+        while t - stamps[j] >= 3600:
+            j += 1
+        best = max(best, i - j + 1)
+    return best
+
+
+@pytest.mark.parametrize("tick_s", [30, 45])  # 45 s = 틱마다 채우기가 15 s 걸릴 때(run_periodic 은 끝난 뒤 30 s 쉰다)
+@pytest.mark.parametrize("lag_s", [0, 30, 60, 90, 120, 150, 185, 240, 300])
+@pytest.mark.parametrize("jitter_s", [0, 20])
+def test_schedule_learns_how_late_the_provider_publishes_and_stays_fresh_within_the_budget(tick_s, lag_s, jitter_s):
+    """검토 지적: 발행이 regDt 뒤 65 s 넘게 늦으면 주기마다 두 번 불러 시간당 상한에 막히고 하루 몇 시간씩 '멈춤'이 됐다(regDt 기준 고정 60 s).
+    이제 늦은 만큼을 관측으로 배운다 — 하루 평균 시간당 13회 이하, 어느 한 시간이든 상한 이하, 첫 한 시간 뒤로는 regDt 나이가 늘 900 s 미만."""
+    stamps, ages, s = simulate_provider(lag_s, tick_s=tick_s, jitter_s=jitter_s)
+    assert len(stamps) <= 13 * 24, f"{len(stamps)} calls/day"
+    assert max_in_any_hour(stamps) <= tg.HOURLY_CAP
+    worst = max(a for t, a in ages if t >= 3600)
+    assert worst < 900, f"regDt age reached {worst:.0f} s"
+    assert tg.DELAY_MIN_S <= s.delay_s <= tg.DELAY_MAX_S
+
+
+def test_the_learned_delay_comes_back_down_when_the_provider_speeds_up():
+    """느린 발행(300 s)을 배운 뒤 공급자가 빨라지면(30 s) 추정이 주기마다 조금씩 내려와 자료가 다시 빨리 보인다."""
+    stamps, ages, s = simulate_provider(300, tick_s=30, lag_after=(3 * 3600, 30))
+    assert s.delay_s <= tg.DELAY_MIN_S + tg.DELAY_DECAY_S
+    assert max(a for t, a in ages if t >= 20 * 3600) < 400
+    assert len(stamps) <= 13 * 24
+
+
+def test_zero_lag_keeps_one_call_per_period():
+    stamps, _ages, s = simulate_provider(0, tick_s=30)
+    assert len(stamps) <= 12 * 24 + 1 and s.delay_s == tg.DELAY_MIN_S
+
+
+def test_a_slow_first_answer_is_not_learned_as_the_delay():
+    """재기동 뒤 첫 호출 · 실패 뒤 받은 regDt 의 나이는 발행 지연이 아니다(그 regDt 가 언제 나왔는지 모른다) — 배우지 않는다."""
+    s = tg.KomsaSchedule()
+    reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
+    s.on_new(reg, reg + timedelta(seconds=280))
+    assert s.delay_s == tg.PUBLISH_DELAY_S
+    s.on_failure(reg + timedelta(seconds=400))
+    s.on_new(reg + timedelta(seconds=300), reg + timedelta(seconds=700))
+    assert s.delay_s == tg.PUBLISH_DELAY_S - tg.DELAY_DECAY_S  # 한 번에 받은 주기와 같게(줄여 볼 뿐 늘리지 않는다)
+
+
+def test_early_call_bounds_the_delay_tightly():
+    """이른 호출(unchanged) 뒤 새 regDt 를 받으면 발행 지연은 (마지막 이른 호출, 받은 때] 안이다 — 위쪽 끝을 쓰되 그 폭이 넓으면(긴 물러나기 ·
+    실패 사이) 아래 끝 + LEARN_SLACK_S 로 좁힌다(틀리면 다음 주기에 다시 짧게 잰다)."""
+    s = tg.KomsaSchedule()
+    reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
+    s.on_new(reg, reg + timedelta(seconds=70))
+    nxt = reg + timedelta(seconds=tg.PERIOD_S)
+    s.on_unchanged(nxt + timedelta(seconds=60))
+    s.on_new(nxt, nxt + timedelta(seconds=125))
+    assert s.delay_s == 125
+    assert s.next_due == nxt + timedelta(seconds=tg.PERIOD_S + 125)
+    s.on_unchanged(s.next_due)  # 이번에는 더 늦다: 이른 호출 뒤 한참(실패 · 긴 물러나기) 뒤에야 받았다
+    third = nxt + timedelta(seconds=tg.PERIOD_S)
+    s.on_new(third, third + timedelta(seconds=500))
+    assert s.delay_s == 125 + tg.LEARN_SLACK_S
+    s.on_unchanged(third + timedelta(seconds=tg.PERIOD_S + 900))
+    s.on_new(third + timedelta(seconds=tg.PERIOD_S), third + timedelta(seconds=tg.PERIOD_S + 2000))
+    assert s.delay_s == tg.DELAY_MAX_S  # 위 끝: regDt + 5분 + 이 값 + 틱이 오래됨(900 s) 안에
+
+
+async def test_the_learned_delay_survives_a_restart_via_the_heartbeat():
+    job, _k, _w, r, clock, _db = setup(komsa_body())
+    await job.run_once()
+    # 아직 배우지 않았다 — 처음 추정(선택값)을 싣지 않는다
+    assert r.kv["wakeline:collector"]["traffic_grid_publish_delay_s"] == ""
+    reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
+    job.schedule.on_unchanged(reg + timedelta(seconds=tg.PERIOD_S + 120))  # 이른 호출 → 새 regDt 를 185 s 에 받음
+    job.schedule.on_new(reg + timedelta(seconds=tg.PERIOD_S), reg + timedelta(seconds=tg.PERIOD_S + 185))
+    clock.advance(30)
+    await job.run_once()
+    assert r.kv["wakeline:collector"]["traffic_grid_publish_delay_s"] == "185"
+    again = TrafficGridJob(FakeKomsa(clock, komsa_body()), FakeWfs(), job.ctx, now=clock)
+    await again.run_once()
+    assert again.schedule.delay_s == 185.0
+    r.kv["wakeline:collector"]["traffic_grid_publish_delay_s"] = "99999"  # 범위 밖(손댄 값) — 쓰지 않는다
+    third = TrafficGridJob(FakeKomsa(clock, komsa_body()), FakeWfs(), job.ctx, now=clock)
+    await third.run_once()
+    assert third.schedule.delay_s == tg.PUBLISH_DELAY_S
+
+
+async def test_restarts_cannot_exceed_the_hourly_cap_because_it_is_counted_in_redis():
+    """재기동(또는 두 번째 수집기)마다 곧바로 부르더라도 Redis 시간 창(UTC 시 — KST 와 경계가 같다)이 막는다 → 어느 날 경계로 세어도 하루 360회 이하."""
+    r = FakeRedis()
+    clock = Clock()
+    ctx = make_ctx(r, limits={"komsa_traffic": 400, "mof_grid4": 6000})
+    ctx.db = TGDb([])  # type: ignore[assignment]
+    calls = 0
+    for _ in range(tg.HOURLY_CAP + 3):  # 30 s 마다 죽고 다시 뜨는 수집기
+        k = FakeKomsa(clock, komsa_body())
+        job = TrafficGridJob(k, FakeWfs(), ctx, now=clock)
+        await job.run_once()
+        calls += k.calls
+        clock.advance(30)
+    assert calls == tg.HOURLY_CAP
+    assert r.kv["budget:komsa_traffic:h:2026092909"]["used"] == str(tg.HOURLY_CAP)
+    assert r.kv["budget:komsa_traffic:20260929"]["used"] == str(tg.HOURLY_CAP)  # 거절된 호출은 하루 예산을 쓰지 않는다
+    refused = [kw for _j, _p, kw in ctx.db.runs if kw["status"] == "budget_exhausted"]  # type: ignore[attr-defined]
+    assert len(refused) == 3 and "hourly cap" in refused[0]["error_text"]
+    assert job.schedule.next_due == datetime(2026, 9, 29, 10, 0, tzinfo=UTC)  # 다음 시가 시작할 때 다시 본다
+
+
+async def test_a_call_not_sent_gives_back_both_the_day_and_the_hour():
+    job, komsa, _w, r, _c, _db = setup(Throttled("apis.data.go.kr", "no slot"))
+    await job.run_once()
+    assert komsa.calls == 0
+    assert r.kv["budget:komsa_traffic:20260929"]["used"] == "0" and r.kv["budget:komsa_traffic:h:2026092909"]["used"] == "0"
+
+
+async def test_day_budget_refusal_gives_the_hour_back():
+    job, komsa, _w, r, _c, db = setup(komsa_body(), limits={"komsa_traffic": 1, "mof_grid4": 6000})
+    r.kv["budget:komsa_traffic:20260929"] = {"used": "1", "limit": "1"}
+    await job.run_once()
+    assert komsa.calls == 0 and statuses(db) == ["budget_exhausted"]
+    assert r.kv["budget:komsa_traffic:h:2026092909"]["used"] == "0"
 
 
 async def test_no_more_than_the_hourly_cap_in_any_hour(monkeypatch):
