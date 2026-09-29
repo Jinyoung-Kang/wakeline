@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -109,10 +110,38 @@ class StreamWindowTest {
         assertThat(m.windowSeconds(StreamConsumer.S_AIRCRAFT, clock.get())).isNull();
         assertThat(gauge(meters, StreamConsumer.S_AIRCRAFT)).isNaN();
 
-        // 다음 측정에서 Redis 오류 → 모름(마지막 첫 엔트리를 지금 값처럼 두지 않는다)
-        when(ops.info(StreamConsumer.S_AIRCRAFT)).thenThrow(new RedisSystemException("down", new RuntimeException("down")));
+        // 측정이 다시 돌면 창이 돌아온다(첫 엔트리는 그대로 — 창은 그만큼 자랐다)
         m.refresh();
-        assertThat(m.windowSeconds(StreamConsumer.S_AIRCRAFT, clock.get())).isNull();
+        assertThat(m.windowSeconds(StreamConsumer.S_AIRCRAFT, clock.get())).isEqualTo(6270.0);
+    }
+
+    /**
+     * 좋은 측정 바로 다음(120 s 오래됨 한도 안쪽) 측정이 실패하면 그 자리에서 모름 — 오래됨 한도에 기대지 않는다. Redis 오류(항공기)와
+     * 사이에 지워진 스트림(선박, ERR no such key) 모두 직전 첫 엔트리를 지금 값처럼 두지 않는다.
+     */
+    @Test
+    void aFailedRefreshRightAfterAGoodOneForgetsTheFirstEntry() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        @SuppressWarnings("unchecked") StreamOperations<String, Object, Object> ops = mock(StreamOperations.class);
+        doReturn(ops).when(redis).opsForStream();
+        when(ops.groups(anyString())).thenReturn(StreamInfo.XInfoGroups.fromList(List.of()));
+        when(ops.info(StreamConsumer.S_AIRCRAFT)).thenReturn(xinfo(3, 10, (T0 - 6_120_000) + "-0"));
+        when(ops.info(StreamConsumer.S_SHIPS)).thenReturn(xinfo(2, 5, (T0 - 60_000) + "-0"));
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        StreamMetrics m = new StreamMetrics(redis, meters, clock::get);
+        m.refresh();
+        assertThat(m.windowSeconds(StreamConsumer.S_AIRCRAFT, clock.get())).isEqualTo(6120.0);
+        assertThat(m.windowSeconds(StreamConsumer.S_SHIPS, clock.get())).isEqualTo(60.0);
+
+        clock.addAndGet(30_000); // 다음 예약 측정 — 오래됨 한도(120 s)보다 한참 안쪽
+        doThrow(new RedisSystemException("down", new RuntimeException("down"))).when(ops).info(StreamConsumer.S_AIRCRAFT);
+        doThrow(new RedisSystemException("ERR no such key", new RuntimeException("ERR no such key"))).when(ops).info(StreamConsumer.S_SHIPS);
+        m.refresh();
+        for (String s : List.of(StreamConsumer.S_AIRCRAFT, StreamConsumer.S_SHIPS)) {
+            assertThat(m.windowSeconds(s, clock.get())).as(s + " window after a failed refresh").isNull();
+            assertThat(gauge(meters, s)).as(s + " gauge after a failed refresh").isNaN();
+            assertThat(m.sample(s).firstEntryMs()).as(s + " first entry after a failed refresh").isNaN();
+        }
     }
 
     @Test
