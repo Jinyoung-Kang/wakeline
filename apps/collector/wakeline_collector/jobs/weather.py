@@ -1,12 +1,21 @@
 """SIGMET(300 s) · 레이더 프레임(60 s) · METAR/TAF(600 s) 수집 작업.
 
 발행(Redis)이 먼저, DB 기록은 큐에 넣기만 한다(비동기 writer). 상태 기록의 Redis 오류는 삼킨다.
+
+일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류)는 공급자 호출마다 같은 주기 안에서 5 s 뒤 한 번 다시 부른다 — KMA 와 같은 규칙(retry.py):
+예산 1 을 따로 예약하고(fixture 모드는 예산을 쓰지 않는다), 다시 부른 호출도 속도 상한을 지난다. HTTP 오류(ProviderHttpError)·속도 상한
+(Throttled)·응답 모양 오류는 다시 부르지 않는다. 다시 불러 살리면 경고 없이 INFO 한 줄, 다시 불러도 실패하면 경고 한 번(단계 · 걸린 시간 ·
+첫 시도)과 같은 내용의 상태 last_error · 실행 기록. 5 s · 한 번은 선택값이다(2026-09-29 관찰: AWC SIGMET 호출 하나가 "ReadTimeout —
+read 제한 8 s 초과 (aviationweather.gov)" 로 실패해 그 주기를 잃었고 다음 주기는 성공했다 — 응답 시간을 재서 정한 값이 아니다).
+최악의 주기 길이(설정값으로 계산): 호출마다 전체 상한 30 s × 2 + 5 s — SIGMET 두 호출 130 s(주기 300 s), METAR 상자 둘 130 s(600 s),
+레이더 한 호출 65 s(60 s — run_periodic 은 주기가 끝난 뒤 쉬므로 겹치지 않고 다음 주기가 늦어질 뿐이다). 속도 상한 대기(호출마다 최대 10 s)는 밖이다.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,17 +28,31 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import Sigmet
 from wakeline_collector.publisher import STREAM_RADAR, STREAM_SIGMET, decode_payload
 from wakeline_collector.raw_store import archive
+from wakeline_collector.retry import CallFailed, call_retry_once
 from wakeline_collector.sigmet_parse import parse_airsigmet, parse_isigmet
 
 log = logging.getLogger("job.weather")
+_sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+async def _call[T](ctx: JobContext, job: str, provider: str, step: str, fn: Callable[[], Awaitable[T]]) -> T:
+    """공급자 호출 하나. 일시 오류면 5 s 뒤 한 번 다시 부른다(예산 1 추가 예약 · 속도 상한 통과 — retry.py). 실패는 모두 CallFailed."""
+
+    async def reserve() -> tuple[bool, int]:
+        if ctx.fixture:  # fixture 모드는 예산을 쓰지 않는다(_guard 와 같다)
+            return True, 0
+        return await ctx.budget.reserve(provider, 1)
+
+    return await call_retry_once(step, fn, reserve=reserve, log=log, label=f"{job}/{provider}", sleep=lambda s: _sleep(s))
+
+
 async def _guard(ctx: JobContext, job: str, provider: str, cost: int, coro_factory) -> tuple[datetime, Any | None]:
-    """예산 예약 → 호출 → 실패 기록. (started_at, result | None) 을 돌려준다."""
+    """예산 예약 → 호출(_call 로 감싼 것) → 실패 기록. (started_at, result | None) 을 돌려준다.
+    실패 기록(상태 last_error · 실행 기록 · 경고 한 번)에는 단계 · 걸린 시간 · 다시 불렀다면 첫 시도를 싣는다."""
     started = datetime.now(UTC)
     ok, used = (True, 0) if ctx.fixture or not cost else await ctx.budget.reserve(provider, cost)
     if not ok:
@@ -45,11 +68,12 @@ async def _guard(ctx: JobContext, job: str, provider: str, cost: int, coro_facto
     try:
         return started, await coro_factory()
     except Exception as e:  # noqa: BLE001
-        http_status = e.status if isinstance(e, ProviderHttpError) else None
-        why = describe_error(e)
+        f = e if isinstance(e, CallFailed) else CallFailed(job, e, None)  # 단계를 모르는 예상 밖 오류는 작업 이름으로
+        http_status = f.error.status if isinstance(f.error, ProviderHttpError) else None
+        why = f.detail()
         await ctx.status.failure(provider, at=datetime.now(UTC), error=why, http_status=http_status)
         ctx.db.record_run(job, provider, started, status="error", http_status=http_status, error_text=why)
-        log.warning("%s/%s failed: %s", job, provider, why)
+        log.warning("%s/%s failed: %s", job, provider, f.log_text())
         return started, None
 
 
@@ -214,12 +238,13 @@ class SigmetJob:
         )
 
     async def _fetch_both(self):
-        intl = await self.awc.isigmet()
+        ctx, name = self.ctx, self.awc.name
+        intl = await _call(ctx, "sigmet", name, "isigmet", self.awc.isigmet)  # 실패하면 _guard 가 기록한다(발행하지 않음)
         try:
-            us, err = await self.awc.airsigmet(), None
-        except Exception as e:  # noqa: BLE001 — 미국 경보 실패는 국제 경보를 막지 않는다(직전 미국 세트를 싣는다)
-            us, err = None, describe_error(e, limit=200)
-            log.warning("airsigmet failed: %s", err)
+            us, err = await _call(ctx, "sigmet", name, "airsigmet", self.awc.airsigmet), None
+        except CallFailed as f:  # 미국 경보 실패는 국제 경보를 막지 않는다(직전 미국 세트를 싣는다)
+            us, err = None, f.detail(limit=200)
+            log.warning("airsigmet failed: %s", f.log_text())
         return intl, us, err
 
 
@@ -231,7 +256,9 @@ class RadarJob:
 
     async def run_once(self) -> None:
         ctx = self.ctx
-        started, res = await _guard(ctx, "radar", self.rv.name, 1, self.rv.frames)
+        started, res = await _guard(
+            ctx, "radar", self.rv.name, 1, lambda: _call(ctx, "radar", self.rv.name, "frames", self.rv.frames)
+        )
         if res is None:
             return
         raw_ref = res.extra.get("raw_ref") or await archive(ctx.raw, "rainviewer", res.raw, res.fetched_at)
@@ -317,8 +344,14 @@ class MetarJob:
         got: list[tuple[datetime, Any]] = []
         boxes = boxes_around(lat, lon, radius)
         for lamin, lomin, lamax, lomax in boxes:
+            b = (lamin, lomin, lamax, lomax)
+            step = "metar bbox " + ",".join(f"{v:.2f}" for v in b)  # 상자 둘(날짜변경선)이면 어느 쪽이 실패했는지
             started_i, res_i = await _guard(
-                ctx, "metar", self.awc.name, 1, lambda b=(lamin, lomin, lamax, lomax): self.awc.metar_bbox(*b)
+                ctx,
+                "metar",
+                self.awc.name,
+                1,
+                lambda b=b, step=step: _call(ctx, "metar", self.awc.name, step, lambda: self.awc.metar_bbox(*b)),
             )
             if res_i is not None:
                 got.append((started_i, res_i))

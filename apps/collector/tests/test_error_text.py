@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 import pytest
@@ -99,9 +100,11 @@ async def test_weather_guard_failure_is_legible_in_status_run_and_log(caplog):
     runs = _runs(ctx)
     await RadarJob(Down(), ctx).run_once()
     want = "HTTP 503 Service Temporarily Unavailable"
-    assert (await r.hgetall("wakeline:provider:rainviewer"))["last_error"] == want
-    assert [x["error_text"] for x in runs] == [want]
-    assert f"radar/rainviewer failed: {want}" in caplog.messages
+    # 앞머리는 오류 문구 그대로, 뒤에 단계와 그 호출에 걸린 시간(retry.CallFailed — KMA 와 같은 모양, HTTP 오류는 다시 부르지 않는다)
+    last = (await r.hgetall("wakeline:provider:rainviewer"))["last_error"]
+    assert re.fullmatch(rf"{want} · frames · \d+\.\d s 경과", last), last
+    assert [x["error_text"] for x in runs] == [last]
+    assert any(re.fullmatch(rf"radar/rainviewer failed: frames — {want} after \d+\.\d s", m) for m in caplog.messages)
 
 
 async def test_kma_http_error_is_legible_in_status_and_run(caplog):
