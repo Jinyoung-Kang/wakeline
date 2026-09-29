@@ -3,12 +3,12 @@
  * API: GET /api/v1/replay?at=&bbox= → { at, aircraft, sigmets, source, radar: {host, path, time} | null }(계약서 §2).
  * 원해상도 보관(72 h) 밖은 1분 요약(track_point_1m)에서 온다 — 행의 위치·고도·속도는 그 1분 동안 관측의 평균이고 방위·지상 여부는 없다.
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
- * 시각: 고르는 입력은 KST(datetime-local), 보이는 글자는 KST 먼저 · UTC 함께(사용자 요청 2026-09-29, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
+ * 시각: 고르는 입력 · 보이는 글자 · title 은 KST 만(계약 v5 §G19, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z — 저장 · 전송 형식) 그대로.
  */
 import { ApiError } from "./api";
-import { fmtDual, fmtDualRange, fmtUtcRangeTitle, fmtUtcTitle } from "./time";
+import { fmtKst, fmtKstRange, fmtRangeTitle, fmtTimeTitle, timeParts } from "./time";
 import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum } from "./format";
-import { isoKst, KST_OFFSET_MS } from "./kst";
+import { KST_OFFSET_MS } from "./kst";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
 
@@ -59,10 +59,10 @@ export function radarTimeMs(t: number | string | null | undefined): number | nul
   return null;
 }
 
-/** 재생 화면 레이더 문구의 툴팁: 그 프레임 시각의 원본 UTC. 프레임이 없으면 undefined(title 없음) */
+/** 재생 화면 레이더 문구의 툴팁: 그 프레임 시각(연도 · ms 까지의 KST). 프레임이 없으면 undefined(title 없음) */
 export function replayRadarTitle(frame: Pick<ReplayFrame, "at" | "radar"> | null): string | undefined {
   const t = radarTimeMs(frame?.radar?.time);
-  return t == null ? undefined : fmtUtcTitle(t);
+  return t == null ? undefined : fmtTimeTitle(t);
 }
 
 /** 재생 화면의 레이더 상태 문구 */
@@ -72,7 +72,7 @@ export function replayRadarLabel(frame: Pick<ReplayFrame, "at" | "radar"> | null
   const t = radarTimeMs(r?.time);
   if (!r || t == null) return "레이더 이력 없음(RainViewer 보관 2 h 밖)";
   const d = Math.round((t - Date.parse(frame.at)) / 60000);
-  return `레이더 ${fmtDual(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
+  return `레이더 ${fmtKst(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
 }
 
 const bandSrc = (s: ReplaySigmet) => ({ base_source: s.base_source ?? null, top_source: s.top_source ?? null });
@@ -87,21 +87,21 @@ export function replayRecLabel(a: Pick<ReplayAircraft, "ts" | "provider">, at: s
   if (!a.ts) return "—";
   if (isSummaryRow(a)) {
     const t0 = Date.parse(a.ts);
-    return Number.isNaN(t0) ? "—" : `${fmtDualRange(t0, t0 + 60_000)} 평균`;
+    return Number.isNaN(t0) ? "—" : `${fmtKstRange(t0, t0 + 60_000)} 평균`;
   }
   const lag = (Date.parse(at) - Date.parse(a.ts)) / 1000;
-  return `${fmtDual(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
+  return `${fmtKst(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
 }
 
 /** 기록 시각 행의 이름 — 원해상도는 "기록 시각", 요약은 그 1분 구간이라 "기록 구간" */
 export const replayRecRowName = (a: Pick<ReplayAircraft, "provider">) => (isSummaryRow(a) ? "기록 구간" : "기록 시각");
 
-/** 기록 시각 행의 툴팁: 원본 UTC(요약은 그 1분 구간 "원본 UTC a – b"). 모르면 undefined(title 없음) */
+/** 기록 시각 행의 툴팁: 연도 · ms 까지의 KST(요약은 그 1분 구간 "a – b"). 모르면 undefined(title 없음) */
 export function replayRecTitle(a: Pick<ReplayAircraft, "ts" | "provider">): string | undefined {
   if (!a.ts) return undefined;
-  if (!isSummaryRow(a)) return fmtUtcTitle(a.ts);
+  if (!isSummaryRow(a)) return fmtTimeTitle(a.ts);
   const t0 = Date.parse(a.ts);
-  return Number.isNaN(t0) ? undefined : fmtUtcRangeTitle(t0, t0 + 60_000);
+  return Number.isNaN(t0) ? undefined : fmtRangeTitle(t0, t0 + 60_000);
 }
 
 /** 재생 상세(inspector) 행 — 고도·지상속도는 두 단위(계약 v5 §A2). 요약 행은 "1분 평균"이라고 이름에 밝힌다(DH-11) */
@@ -114,7 +114,7 @@ export function replayAircraftRows(a: ReplayAircraft, at: string): [string, stri
     [summary ? "지상속도(1분 평균)" : "지상속도", fmtGsDual(a.gs_kt)],
     ["방위", fmtNum(a.track_deg, "°")],
     ["지상", fmtBool(a.on_ground)],
-    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtDual(a.ts)],
+    [replayRecRowName(a), summary ? replayRecLabel(a, at) : fmtKst(a.ts)],
     ["출처", summary ? "1분 요약(track_point_1m)" : a.provider ?? "—"],
   ];
 }
@@ -142,7 +142,7 @@ export function replaySigmetTip(s: ReplaySigmet, at: string): Tip {
     subtitle: s.fir_id,
     rows: [
       ["BAND", band(s.base_ft, s.top_ft, bandSrc(s))],
-      ["VALID", fmtDualRange(s.valid_from, s.valid_to, { seconds: false })],
+      ["VALID", fmtKstRange(s.valid_from, s.valid_to, { seconds: false })],
       ["LEFT", Number.isFinite(left) && left > 0 ? `${fmtDuration(left)}(재생 시각 기준)` : "—"],
     ],
     flags: s.excluded_reason ? [{ text: `판정 제외: ${s.excluded_reason}`, tone: "muted" }] : [],
@@ -213,12 +213,12 @@ export function replayErrorText(e: unknown): string {
   return "서버에 연결할 수 없음 — 기록을 불러오지 못함";
 }
 
-/** 재생 시각 표시(KST 먼저, UTC 함께 — 날짜 포함) "YYYY-MM-DD HH:MM:SS KST · HH:MM:SS UTC" — 30일을 오가므로 연도까지(UTC 날짜가 다르면 UTC 쪽에도). 모르면(0 · 형식 오류) "—" */
+/** 재생 시각 표시(KST — 날짜 포함) "YYYY-MM-DD HH:MM:SS KST" — 30일을 오가므로 연도까지. 모르면(0 · 형식 오류) "—" */
 export function replayAtLabel(ms: number | string | null | undefined): string {
-  return ms ? fmtDual(ms, { year: true }) : "—";
+  return ms ? fmtKst(ms, { year: true }) : "—";
 }
 
-/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST · UTC 로. 요청 시각과 다르면(1 s 이상) 아직 새 프레임이 오지 않은 것 */
+/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST 로. 요청 시각과 다르면(1 s 이상) 아직 새 프레임이 오지 않은 것 */
 export function replayFrameAtLabel(frame: Pick<ReplayFrame, "at"> | null, wantAtMs: number): { text: string; behind: boolean } {
   if (!frame) return { text: "—", behind: false };
   const t = Date.parse(frame.at);
@@ -256,8 +256,8 @@ export function stepAt(at: number, deltaMs: number, r: Pick<ReplayRange, "min" |
 
 /** datetime-local 값(한국 표준시로 쓴다) "YYYY-MM-DDTHH:MM" — 순간 ms 를 KST 벽시계로. 모르면 "" */
 export function toKstInput(ms: number): string {
-  const s = Number.isFinite(ms) ? isoKst(ms) : null;
-  return s == null ? "" : s.slice(0, 16);
+  const p = timeParts(ms);
+  return p == null ? "" : p.iso.slice(0, 16);
 }
 
 /**

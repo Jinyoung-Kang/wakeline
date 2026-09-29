@@ -304,14 +304,12 @@ describe("only lib/time builds clock strings (one shared formatter)", () => {
    * 일부러 lib/time 밖에서 만드는 곳(계약 v5 §G13 "바꾸지 않는 것") — 파일마다 줄 수까지 고정해, 같은 파일에 새로 생겨도 걸린다.
    * - 복사 · 내려받기 형식(ISO +09:00): lib/log-line(머리 줄) · lib/logs(텍스트 · 파일 이름)
    * - 오류 화면 시각 칸(KST ISO 와 원본 UTC ISO 를 나란히 — 오류 경계 청크는 lib/kst · lib/log-line 만 싣는다, PERF §8)
-   * - 재생 datetime-local 입력 값(보이는 글자가 아니라 입력 값 "YYYY-MM-DDTHH:MM")
    * - 선박 ETA(선원 입력 월 · 일 · 시 · 분, 연도 없음 — 순간이 아니라 lib/time 에 넣을 수 없다)
    */
   const ALLOWED: Record<string, number> = {
     [join("lib", "log-line.ts")]: 1,
     [join("lib", "logs.ts")]: 2,
     [join("components", "logs", "ErrorScreen.tsx")]: 1,
-    [join("lib", "replay.ts")]: 1,
     [join("lib", "ships.ts")]: 5,
   };
   const root = new URL("..", import.meta.url).pathname;

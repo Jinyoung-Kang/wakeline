@@ -15,6 +15,7 @@ import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { resetData, setData } from "@/lib/store";
 import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
 import AboutPage from "@/app/about/page";
+import { domUtcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -211,35 +212,37 @@ describe("time labels on the radar timeline and the replay toolbar", () => {
     expect(label.getAttribute("title")).toBe("원본 UTC 2026-09-28T23:40:00.000Z");
     expect(missingUtc()).toEqual([]);
   });
-  it("replay radar frame: the tooltip gives the frame's original UTC", async () => {
+  it("replay radar frame: the tooltip gives the frame's full KST instant (no UTC original — contract v5 §G19)", async () => {
     const { replayRadarTitle } = await import("@/lib/replay");
-    expect(replayRadarTitle({ at: "2026-09-28T15:10:00Z", radar: { host: "h", path: "/p", time: Date.parse("2026-09-28T15:00:00Z") / 1000 } })).toBe("원본 UTC 2026-09-28T15:00:00.000Z");
+    expect(replayRadarTitle({ at: "2026-09-28T15:10:00Z", radar: { host: "h", path: "/p", time: Date.parse("2026-09-28T15:00:00Z") / 1000 } })).toBe("2026-09-29 00:00:00.000 KST");
     expect(replayRadarTitle({ at: "2026-09-28T15:10:00Z", radar: null })).toBeUndefined();
     expect(replayRadarTitle(null)).toBeUndefined();
   });
 });
 
-describe("replay inspector: record times and SIGMET validity carry the UTC original; the raw SIGMET is labelled", () => {
+describe("replay inspector: record times and SIGMET validity in KST only (title = the full KST instant); the raw SIGMET is labelled and kept as issued", () => {
   const sg = { id: "S", hazard: "TS", qualifier: null, fir_id: "RKRR", fir_name: "INCHEON", valid_from: "2026-09-28T14:00:00Z", valid_to: "2026-09-28T18:00:00Z",
     raw_text: "RKRR SIGMET 1 VALID 281400/281800 RKSI-", geometry: null };
-  it("SIGMET at that time: validity in KST with the UTC original, raw text under 'Raw (원문 · UTC)'", async () => {
+  it("SIGMET at that time: validity in KST, raw text under 'Raw (원문 · 발표 그대로)' exactly as issued", async () => {
     const { ReplaySigmetDetail } = await import("@/components/ReplayInspector");
     await mount(createElement(ReplaySigmetDetail, { sg } as never));
-    expect(dom.container.textContent).toContain("유효09-28 23:00:00 – 09-29 03:00:00 KST · 09-28 14:00:00 – 09-28 18:00:00 UTC");
+    expect(dom.container.textContent).toContain("유효09-28 23:00:00 – 09-29 03:00:00 KST");
     const labels = all((e) => /\blabel\b/.test(e.getAttribute("class") ?? "")).map((e) => e.textContent);
-    expect(labels).toContain("Raw (원문 · UTC)");
-    expect(all((e) => e.tagName === "PRE").map((p) => p.textContent)).toEqual([sg.raw_text]);
-    expect(missingUtc()).toEqual([]);
+    expect(labels).toContain("Raw (원문 · 발표 그대로)");
+    expect(all((e) => e.tagName === "PRE").map((p) => [p.textContent, p.getAttribute("data-raw")])).toEqual([[sg.raw_text, "bulletin"]]);
+    expect(all((e) => e.getAttribute("title") === "2026-09-28 23:00:00.000 KST – 2026-09-29 03:00:00.000 KST")).toHaveLength(1);
+    expect(domUtcLeaks(dom.container)).toEqual([]);
   });
   it("aircraft record: the record time (full resolution) and the record span (1-minute summary)", async () => {
     const { ReplayAircraftDetail } = await import("@/components/ReplayInspector");
     await mount(createElement(ReplayAircraftDetail, { ac: { hex: "71c081", lat: 36, lon: 127, ts: "2026-09-28T15:09:30Z", provider: "adsb_fi" }, at: "2026-09-28T15:10:00Z" } as never));
-    expect(dom.container.textContent).toContain("기록 시각09-29 00:09:30 KST · 09-28 15:09:30 UTC");
-    expect(missingUtc()).toEqual([]);
+    expect(dom.container.textContent).toContain("기록 시각09-29 00:09:30 KST");
+    expect(all((e) => e.getAttribute("title") === "2026-09-29 00:09:30.000 KST")).toHaveLength(1);
+    expect(domUtcLeaks(dom.container)).toEqual([]);
     await React.act(async () => { root!.render(createElement(ReplayAircraftDetail, { ac: { hex: "71c081", lat: 36, lon: 127, ts: "2026-09-28T14:59:00Z", provider: "1m_summary" }, at: "2026-09-28T15:10:00Z" } as never)); });
-    expect(dom.container.textContent).toContain("기록 구간09-28 23:59:00 – 09-29 00:00:00 KST · 09-28 14:59:00 – 09-28 15:00:00 UTC 평균");
+    expect(dom.container.textContent).toContain("기록 구간09-28 23:59:00 – 09-29 00:00:00 KST 평균");
     expect(dom.container.textContent).toContain("1분 평균"); // 요약 행 표시는 그대로
-    expect(missingUtc()).toEqual([]);
+    expect(domUtcLeaks(dom.container)).toEqual([]);
   });
 });
 

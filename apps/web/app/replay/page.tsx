@@ -18,8 +18,8 @@ const SPEEDS = [1, 5, 10, 30, 60];
 
 /**
  * 이력 재생(FR-23): 최근 30일(72 h 원해상도, 그 이전은 1분 요약) · 1×~60× · 그 시각 SIGMET · 레이더(있을 때만).
- * 시각은 한국 표준시(KST) 날짜·시각 입력, ±1분·±10분·±1 h 버튼, 슬라이더(72 h 경계 눈금)로 고른다(R-10). 보이는 시각은 KST 먼저 · UTC 함께 —
- * api 에는 그 순간을 UTC ISO(…Z)로 보낸다(lib/replay replayApiPath). SIGMET 원문은 발표된 그대로(안의 "…Z" 는 UTC).
+ * 시각은 한국 표준시(KST) 날짜·시각 입력, ±1분·±10분·±1 h 버튼, 슬라이더(72 h 경계 눈금)로 고른다(R-10). 보이는 시각은 KST 만(계약 v5 §G19) —
+ * api 에는 그 순간을 UTC ISO(…Z — 저장 · 전송 형식)로 보낸다(lib/replay replayApiPath). SIGMET 원문은 발표된 그대로.
  */
 export default function ReplayPage() {
   const [range, setRange] = useState<ReplayRange>({ min: 0, max: 0, fullResFrom: 0 });
@@ -77,7 +77,7 @@ export default function ReplayPage() {
           <div className="flex gap-1" role="group" aria-label="재생 속도">
             {SPEEDS.map((s) => <button key={s} className="btn" aria-pressed={speed === s} onClick={() => setSpeed(s)}>{s}×</button>)}
           </div>
-          <span className="label" aria-hidden title="한국 표준시(UTC+9) — api 에는 같은 순간을 UTC 로 보낸다">KST</span><input type="datetime-local" step={60} min={max ? toKstInput(min) : undefined} max={max ? toKstInput(max) : undefined} value={at ? toKstInput(at) : ""}
+          <span className="label" aria-hidden title="한국 표준시(KST)로 고르고 읽는다 — 서버에는 고른 순간을 그대로 보낸다">KST</span><input type="datetime-local" step={60} min={max ? toKstInput(min) : undefined} max={max ? toKstInput(max) : undefined} value={at ? toKstInput(at) : ""}
             onChange={(e) => { const t = fromKstInput(e.target.value); if (t != null && max) { setPlaying(false); setAt(stepAt(t, 0, range)); } }}
             aria-label="재생 시각(KST)" data-testid="replay-at-input" />
           <div className="flex gap-1" role="group" aria-label="재생 시각 이동">

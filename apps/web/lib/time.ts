@@ -203,6 +203,14 @@ export function kstWallMs(tm: string | null | undefined): number | null {
 
 // ---- 복사 형식 · 원문 모양(화면 시각이 아니다) ----
 
+/**
+ * 발표 원문(METAR · TAF · SIGMET)의 보이는 이름표와 설명 — 원문 글자는 발표된 그대로(바꾸지 않는다). 안의 "…Z" 시각은 발표 형식이라 화면의 KST 와
+ * 9시간 다르다는 것을 툴팁 없이도 읽히게 이름표를 단다(공항 카드 · 공항 화면 · SIGMET 카드 · 재생 상세가 같은 글자). 원문 요소에는 data-raw 를 단다
+ * (tests/kst-only-screens.test.ts 가 원문 밖에서 UTC 시각을 찾을 때 그 요소만 뺀다).
+ */
+export const RAW_BULLETIN_LABEL = "원문 · 발표 그대로";
+export const RAW_BULLETIN_TITLE = "발표된 원문 그대로(바꾸지 않음) — 안의 ‘…Z’ 시각은 발표 형식이다(KST = …Z + 9시간). 화면의 다른 시각은 모두 KST";
+
 /** 오프셋을 붙인 ISO 8601 "2026-09-29T08:41:14.906+09:00"(ms 유지 — 복사 텍스트 · 로그 상세). 모르면 "—" */
 export function fmtIsoKst(v: TimeIn): string {
   return timeParts(v)?.iso ?? "—";

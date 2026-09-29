@@ -220,14 +220,14 @@ describe("charts and replay (GAP-17 / GAP-19 / GAP-25)", () => {
   it("replay radar label uses the returned frame, or says there is none", () => {
     expect(radarTimeMs(1790506200)).toBe(1790506200_000);
     expect(radarTimeMs("2026-09-27T08:40:00Z")).toBe(Date.parse("2026-09-27T08:40:00Z"));
-    expect(replayRadarLabel({ at: "2026-09-27T08:44:00Z", radar: { host: "h", path: "/p", time: "2026-09-27T08:40:00Z" } })).toBe("레이더 09-27 17:40:00 KST · 08:40:00 UTC (재생 시각 −4분)");
+    expect(replayRadarLabel({ at: "2026-09-27T08:44:00Z", radar: { host: "h", path: "/p", time: "2026-09-27T08:40:00Z" } })).toBe("레이더 09-27 17:40:00 KST (재생 시각 −4분)");
     expect(replayRadarLabel({ at: "2026-09-27T08:44:00Z", radar: null })).toContain("레이더 이력 없음");
   });
   it("replay aircraft without a recorded callsign shows the hex as the title, not in the callsign slot", () => {
     const t = replayAircraftTip({ hex: "71c081", lat: 1, lon: 1, alt_ft: null, ts: "2026-09-27T08:43:30Z", provider: "adsb_fi" }, "2026-09-27T08:44:00Z");
     expect(t.title).toBe("71c081");
     expect(t.subtitle).toBeUndefined();
-    expect(Object.fromEntries(t.rows)).toMatchObject({ ALT: "—", GS: "—", REC: "09-27 17:43:30 KST · 08:43:30 UTC (재생 시각 −30s)" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ ALT: "—", GS: "—", REC: "09-27 17:43:30 KST (재생 시각 −30s)" });
   });
 });
 

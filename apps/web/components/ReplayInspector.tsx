@@ -1,11 +1,9 @@
 import { isSummaryRow, replayAircraftRows, replayRecRowName, replayRecTitle, replaySigmetBand, SUMMARY_FLAG, type ReplayAircraft, type ReplaySigmet } from "@/lib/replay";
-import { DualRange } from "./DualTime";
-
-/** 원문 칸의 설명 — 발표된 글자 그대로, 화면의 KST 로 바꾸지 않는다(SIGMET 카드 · 공항 화면과 같은 이름표) */
-const RAW_TITLE = "발표된 원문 그대로 — 안의 시각(…Z)은 UTC";
+import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
+import { KstRange } from "./KstTime";
 
 /**
- * 재생 상세(inspector) — 그 시각의 항공기 기록. 시각은 KST 먼저 · UTC 함께(lib/time), 기록 시각 행에 마우스를 올리면 원본 UTC ISO.
+ * 재생 상세(inspector) — 그 시각의 항공기 기록. 시각은 KST(lib/time), 기록 시각 행에 마우스를 올리면 연도 · ms 까지의 KST.
  * 1분 요약 행은 "1분 평균"이라고 먼저 밝힌다(DH-11).
  */
 export function ReplayAircraftDetail({ ac, at }: { ac: ReplayAircraft; at: string }) {
@@ -19,20 +17,20 @@ export function ReplayAircraftDetail({ ac, at }: { ac: ReplayAircraft; at: strin
 }
 
 /**
- * 재생 상세 — 그 시각의 SIGMET. 유효시간은 KST · UTC(마우스를 올리면 원본 UTC ISO), 원문은 발표된 그대로 — 보이는 이름표 "Raw (원문 · UTC)" 를 달아
- * KST 로 적은 유효시간 바로 아래의 "…Z" 가 UTC 라는 것이 툴팁 없이도 읽히게 한다(SIGMET 카드와 같게).
+ * 재생 상세 — 그 시각의 SIGMET. 유효시간은 KST, 원문은 발표된 그대로 — 보이는 이름표 "Raw (원문 · 발표 그대로)" 를 달아
+ * KST 로 적은 유효시간 바로 아래의 "…Z" 가 발표 형식(KST 와 9시간 차이)이라는 것이 읽히게 한다(SIGMET 카드와 같은 이름표 · lib/time).
  */
 export function ReplaySigmetDetail({ sg }: { sg: ReplaySigmet }) {
   const rows: [string, React.ReactNode][] = [
     ["유형", `${sg.hazard}${sg.qualifier ? ` ${sg.qualifier}` : ""}`],
     ["FIR", sg.fir_name ?? sg.fir_id],
     ["고도대", replaySigmetBand(sg)],
-    ["유효", <DualRange key="v" a={sg.valid_from} b={sg.valid_to} />],
+    ["유효", <KstRange key="v" a={sg.valid_from} b={sg.valid_to} />],
     ["판정", sg.excluded_reason ? `제외 (${sg.excluded_reason})` : "폴리곤·고도대·유효시간 검사"],
   ];
   return <>
     {rows.map(([k, v]) => <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="text-right">{v}</span></div>)}
-    <div className="mt-2 label" title={RAW_TITLE}>Raw (원문 · UTC)</div>
-    <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px] text-fg-2" title={RAW_TITLE}>{sg.raw_text}</pre>
+    <div className="mt-2 label" title={RAW_BULLETIN_TITLE}>Raw ({RAW_BULLETIN_LABEL})</div>
+    <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px] text-fg-2" title={RAW_BULLETIN_TITLE} data-raw="bulletin">{sg.raw_text}</pre>
   </>;
 }
