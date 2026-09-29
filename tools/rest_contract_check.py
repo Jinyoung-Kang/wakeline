@@ -1280,6 +1280,8 @@ CHECKS = [
     Check("airport_wx", "airport_wx", 200, "application/json", True),
     Check("replay", "replay", 200, "application/json", True),
     Check("stats_traffic", "stats_traffic", 200, "application/json", True),
+    # 기록: stats_traffic 은 끝난 KST 날짜를 실제로 집계한 응답(행이 있다 — 리뷰 2026-09-30), 이것은 오늘(KST — 집계 전, aggregated false)
+    Check("stats_traffic_today", "stats_traffic", 200, "application/json", True, recorded_only=True),
     Check("stats_alerts", "stats_alerts", 200, "application/json", True),
     Check("stats_sigmet", "stats_sigmet", 200, "application/json", True),
     Check("problem_400", "problem", 400, "application/problem+json", False),

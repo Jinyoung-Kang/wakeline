@@ -44,6 +44,8 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.route.RouteReader routes;
     /** 연안 교통량 읽기(ADR-023) — 5 s 메모. 기다림은 이것으로(REST 요청 제한을 쓰지 않게). */
     @Autowired dev.wakeline.rest.TrafficGridReader trafficGrid;
+    /** 일 통계 집계(계약 v5 §G20) — 끝난 KST 날짜를 실제로 집계해 통계 응답에 행이 있게 한다 */
+    @Autowired dev.wakeline.persist.MaintenanceJobs jobs;
 
     final Map<String, String> index = new LinkedHashMap<>();
     static final String ASIA_PACIFIC = "-90,45,90,180";
@@ -187,9 +189,47 @@ class RestSamplesIT extends IntegrationTest {
         record("airports", "/api/v1/airports", 200);
         record("airport_wx", "/api/v1/airports/RKSI/wx", 200);
         record("replay", "/api/v1/replay?at=" + Instant.now().minusSeconds(5).truncatedTo(ChronoUnit.SECONDS) + "&bbox=" + bbox, 200);
-        record("stats_traffic", "/api/v1/stats/traffic?day=" + day, 200);
-        record("stats_alerts", "/api/v1/stats/alerts", 200);
-        record("stats_sigmet", "/api/v1/stats/sigmet", 200);
+        // 통계(계약 v5 §G20 — 리뷰 2026-09-30): 오늘(KST)은 집계 전이라 items 가 비어, 교통량 KST 시 · 한 날짜 · 시마다 한 행 규칙이 실제 응답을 보지 못했다.
+        // 끝난 KST 날짜(어제)에 관심 지역 항적 — 00:30 KST(앞 UTC 날 파티션) · 23:30 KST(그 UTC 날 파티션) — · 그날 발표된 SIGMET · 그 안의 알림을 넣고
+        // 실제 집계(MaintenanceJobs.aggregateDay)를 돌린 뒤 기록한다. 오늘(집계 전)의 응답은 stats_traffic_today 로 따로 남긴다.
+        java.time.LocalDate statsDay = dev.wakeline.persist.MaintenanceJobs.today().minusDays(1);
+        Instant k0 = statsDay.atStartOfDay(dev.wakeline.persist.MaintenanceJobs.DAY_ZONE).toInstant();
+        String statsSigmet = "RKRR:IT-REST-STATS:" + System.currentTimeMillis();
+        var root = admin();
+        dev.wakeline.DbTestSupport.ensureTrackPartitions(ItStack.DB, k0, k0.plusSeconds(24 * 3600 - 1));
+        try {
+            for (var p : List.of(Map.entry("a1d0f1", k0.plusSeconds(30 * 60)), Map.entry("a1d0f2", k0.plusSeconds(23 * 3600 + 30 * 60))))
+                root.sql("""
+                        INSERT INTO track_point (hex, ts, geom, alt_ft, provider, fetched_at)
+                        VALUES (:h, :t, ST_SetSRID(ST_MakePoint(127.8, 36.5), 4326), 30000, 'adsb_lol', :t)""")
+                        .param("h", p.getKey()).param("t", java.sql.Timestamp.from(p.getValue())).update();
+            root.sql("""
+                    INSERT INTO sigmet (id, fir_id, series_id, hazard, valid_from, valid_to, raw_text, provider, fetched_at)
+                    VALUES (:id, 'RKRR', 'S1', 'TS', :f, :f::timestamptz + interval '4 hours', 'WSKR31 RKSI 290100', 'awc', now())""")
+                    .param("id", statsSigmet).param("f", java.sql.Timestamp.from(k0.plusSeconds(3600))).update();
+            root.sql("""
+                    INSERT INTO alert_event (hex, sigmet_id, kind, entered_at, left_at, close_reason, evidence)
+                    VALUES ('a1d0f1', :s, 'OBSERVED', :e, :e::timestamptz + interval '10 minutes', 'left', '{}'::jsonb)""")
+                    .param("s", statsSigmet).param("e", java.sql.Timestamp.from(k0.plusSeconds(3660))).update();
+            jobs.aggregateDay(statsDay);
+            record("stats_traffic", "/api/v1/stats/traffic?day=" + statsDay, 200);
+            record("stats_traffic_today", "/api/v1/stats/traffic?day=" + day, 200);
+            record("stats_alerts", "/api/v1/stats/alerts", 200);
+            record("stats_sigmet", "/api/v1/stats/sigmet", 200);
+        } finally { // 다른 시험(같은 DB)에 남기지 않는다
+            root.sql("DELETE FROM alert_event WHERE sigmet_id = :s").param("s", statsSigmet).update();
+            root.sql("DELETE FROM sigmet WHERE id = :s").param("s", statsSigmet).update();
+            root.sql("DELETE FROM track_point WHERE hex IN ('a1d0f1', 'a1d0f2') AND ts >= :a AND ts < :b")
+                    .param("a", java.sql.Timestamp.from(k0)).param("b", java.sql.Timestamp.from(k0.plusSeconds(24 * 3600))).update();
+            root.sql("DELETE FROM stats_daily WHERE day = :d").param("d", statsDay).update();
+        }
+        JsonNode traffic = Streams.JSON.readTree(Files.readString(OUT.resolve("stats_traffic.json"))).path("body");
+        assertThat(traffic.path("aggregated").asBoolean()).isTrue();
+        List<String> hours = new java.util.ArrayList<>();
+        for (JsonNode it : traffic.path("items")) hours.add(it.path("day").asString() + " " + it.path("dim").asString() + "=" + it.path("value").asInt());
+        assertThat(hours).as("KST hours of that KST day — 00:30 and 23:30 KST").containsExactly(statsDay + " 00=1", statsDay + " 23=1");
+        for (String f : List.of("stats_alerts", "stats_sigmet"))
+            assertThat(Streams.JSON.readTree(Files.readString(OUT.resolve(f + ".json"))).path("body").path("items")).as(f).isNotEmpty();
         record("problem_400", "/api/v1/aircraft?bbox=1,2,3", 400);
         record("problem_404", "/api/v1/ops/providers", 404);
 
