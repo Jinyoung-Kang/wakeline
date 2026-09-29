@@ -445,7 +445,8 @@ class ShipSelectionLookupTest {
             BlockingStored db = new BlockingStored();
             db.rows.put(fourth, stored(fourth, "D7FO"));
             db.hold = new CountDownLatch(1);
-            wire(k, lookups, 300, db, new AtomicLong(System.currentTimeMillis()));
+            // 마감 1 s: 네 번 바꾸기(수 ms)가 앞 물음의 마감보다 먼저 끝나게 — 바뀐 물음은 답하지 않는다는 단언이 시험 기계의 부하에 흔들리지 않게
+            wire(k, lookups, 1_000, db, new AtomicLong(System.currentTimeMillis()));
             FakeWsSession f = ready(k, "s");
             WsSession s = k.handler.session("s");
             for (String m : List.of(MMSI, OTHER, THIRD, fourth)) {
