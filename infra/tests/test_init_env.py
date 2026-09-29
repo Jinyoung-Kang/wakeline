@@ -66,6 +66,7 @@ class InitEnvTest(unittest.TestCase):
         # 외부 키는 만들지 않는다
         self.assertEqual(v.get("OPENSKY_CLIENT_SECRET"), "")
         self.assertEqual(v.get("KMA_APIHUB_KEY"), "")
+        self.assertEqual(v.get("DATA_GO_KR_SERVICE_KEY"), "")       # ADR-023 — 사람이 넣는 외부 키
         self.assertRegex(self.env.read_text(), r"(?m)^aisstream_key=$")
         self.assertNotIn("aisstream_key", init_env.INTERNAL)
         self.assertIn("ships layer", self.out.getvalue())       # 없으면 무엇이 꺼지는지 알려 준다(값은 출력하지 않음)

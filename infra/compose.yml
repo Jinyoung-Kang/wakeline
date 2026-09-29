@@ -168,6 +168,8 @@ services:
       OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
       OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
       KMA_APIHUB_KEY: ${KMA_APIHUB_KEY:-}
+      # 공공데이터포털 서비스 키(ADR-023 — 연안 교통량: 해양교통안전공단 실시간 해양교통정보 · 해양수산부 격자4단계 WFS). 없으면 그 레이어만 꺼진다
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
       HTTP_USER_AGENT: ${HTTP_USER_AGENT:-wakeline-dev/0.2}
       AIRCRAFT_PROVIDERS: ${AIRCRAFT_PROVIDERS:-adsb_lol,adsb_fi,opensky}
       REGION_CENTER: ${REGION_CENTER:-36.5,127.8}
