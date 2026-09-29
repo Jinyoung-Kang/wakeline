@@ -97,6 +97,10 @@ ok "XGROUP CREATE wakeline:ships"       OK         "${A[@]}" xgroup create wakel
 ok "HGETALL wakeline:ais:status(읽기)"  ""         "${A[@]}" hgetall wakeline:ais:status
 # 계약 v4 §A: 노선 캐시는 수집기가 쓰고 api 가 읽는다(값 확인은 수집기 절에서)
 ok "GET wakeline:route:*(읽기, 없음)"    ""         "${A[@]}" get wakeline:route:ZZX000
+# ADR-022: 한국 항만 입출항 — 선택 선박 호출부호 임대(api 가 유일한 작성자, 교체 Lua 의 DEL·ZADD·PEXPIREAT) · 캐시 읽기
+ok "ZADD wakeline:demand:portcalls(임대)" "^[01]$" "${A[@]}" zadd wakeline:demand:portcalls "$((NOW_MS + 60000))" 230025
+ok "PEXPIREAT wakeline:demand:portcalls" "^1$"    "${A[@]}" pexpireat wakeline:demand:portcalls "$((NOW_MS + 60000))"
+ok "GET wakeline:portcalls:*(읽기, 없음)" ""       "${A[@]}" get wakeline:portcalls:ZZ0000
 # 계약 v5 §C: api 는 자기 로그 · 브라우저 오류(client-errors)를 싣고 운영 조회로 읽는다(읽기 확인은 ais 절 뒤에)
 ok "XADD wakeline:logs MAXLEN ~ 3000(api 로그)" "^[0-9]+-[0-9]+$" "${A[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event api)"
 # 계약 v5 §G2: 브라우저 오류는 따로 자르는 스트림 — api 만 싣는다
@@ -178,6 +182,13 @@ ok "EXISTS wakeline:route:*"             "^1$"      "${K[@]}" exists wakeline:ro
 ok "GET wakeline:route:*"                "not_found" "${K[@]}" get wakeline:route:ZZX123
 ok "TTL wakeline:route:*(관리자로 확인)"  "^(1[0-7][0-9]{2}|1800)$" "${D[@]}" ttl wakeline:route:ZZX123
 ok "api GET wakeline:route:*(수집기가 쓴 값)" "not_found" "${A[@]}" get wakeline:route:ZZX123
+# ADR-022: 한국 항만 입출항 — 임대는 읽기(2 s 폴링), 캐시는 EXISTS 로 확인하고 SET EX 로 쓴다(ok·none 6 h · error 5분 · disabled 2분). 값은 합성 자료.
+ok "ZRANGEBYSCORE wakeline:demand:portcalls" "230025" "${K[@]}" zrangebyscore wakeline:demand:portcalls "$NOW_MS" +inf limit 0 64
+ok "EXISTS wakeline:portcalls:*(없음)"   "^0$"      "${K[@]}" exists wakeline:portcalls:230025
+ok "SET wakeline:portcalls:* EX 21600"   OK         "${K[@]}" set wakeline:portcalls:230025 '{"v":1,"status":"none","call_sign":"230025"}' ex 21600
+ok "EXISTS wakeline:portcalls:*"         "^1$"      "${K[@]}" exists wakeline:portcalls:230025
+ok "TTL wakeline:portcalls:*(관리자로 확인)" "^(21[0-5][0-9]{2}|21600)$" "${D[@]}" ttl wakeline:portcalls:230025
+ok "api GET wakeline:portcalls:*(수집기가 쓴 값)" "none" "${A[@]}" get wakeline:portcalls:230025
 
 ok "DEL wakeline:radar_kr:frames(목록 비움 — kma_radar._save_frames)" "^[01]$" "${K[@]}" del wakeline:radar_kr:frames
 # 계약 v5 §C2 · §C3: 로그 싱크 — XADD wakeline:logs MAXLEN ~ 3000 * e <json>
@@ -276,6 +287,12 @@ denied "허용 목록 밖 wakeline:demand:*"      "${K[@]}" hgetall wakeline:dem
 denied "선박 스트림 wakeline:ships"          "${K[@]}" xadd wakeline:ships '*' payload x
 denied "AIS 상태 wakeline:ais:status"       "${K[@]}" hset wakeline:ais:status connected 1
 denied "노선 캐시와 비슷한 이름 wakeline:routes" "${K[@]}" set wakeline:routes x
+denied "ZADD wakeline:demand:portcalls(임대는 api 만)" "${K[@]}" zadd wakeline:demand:portcalls 9999999999999 ZZ9999
+denied "ZREM wakeline:demand:portcalls"      "${K[@]}" zrem wakeline:demand:portcalls 230025
+denied "DEL wakeline:demand:portcalls"       "${K[@]}" del wakeline:demand:portcalls
+denied "EXPIRE 입출항 캐시(SET EX 만)"         "${K[@]}" expire wakeline:portcalls:230025 1
+denied "DEL 입출항 캐시"                      "${K[@]}" del wakeline:portcalls:230025
+denied "입출항 캐시와 비슷한 이름 wakeline:portcalls" "${K[@]}" set wakeline:portcalls x
 
 echo "[wakeline_ais — 허용]"
 ok "PING"                                PONG           "${S[@]}" ping
@@ -316,6 +333,9 @@ denied "수요 상태 wakeline:demand:status"   "${S[@]}" hset wakeline:demand:s
 denied "노선 캐시 쓰기 wakeline:route:*"      "${S[@]}" set wakeline:route:ZZX123 x ex 1800
 denied "노선 캐시 읽기 wakeline:route:*"      "${S[@]}" get wakeline:route:ZZX123
 denied "노선 캐시 확인 EXISTS"               "${S[@]}" exists wakeline:route:ZZX123
+denied "입출항 캐시 쓰기 wakeline:portcalls:*" "${S[@]}" set wakeline:portcalls:230025 x ex 21600
+denied "입출항 캐시 읽기 wakeline:portcalls:*" "${S[@]}" get wakeline:portcalls:230025
+denied "입출항 임대 읽기 wakeline:demand:portcalls" "${S[@]}" zrangebyscore wakeline:demand:portcalls 0 +inf
 denied "세션 읽기 wakeline:session:*"       "${S[@]}" hgetall wakeline:session:sessions:t
 denied "세션 위조 wakeline:session:*"       "${S[@]}" hset wakeline:session:sessions:forged sessionAttr:SPRING_SECURITY_CONTEXT x
 denied "요청 제한 rl:*"                    "${S[@]}" del rl:public:1.2.3.4:1
