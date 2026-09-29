@@ -21,7 +21,11 @@ test("guide: contents move to sections on wide and narrow screens; every figure 
       await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0), { timeout: 15_000 }).toBe(true);
     } else await expect(f.locator("[data-guide-placeholder]")).toContainText("스크린샷 준비 중");
   }
-  await page.evaluate(() => window.scrollTo(0, 0)); // 아래 목차 시험은 맨 위에서 시작한다(그림을 보려고 옮기기 전과 같게)
+  // 아래 목차 시험은 맨 위에서 시작한다(그림을 보려고 옮기기 전과 같게). 설명서는 창이 아니라 안쪽 상자([data-guide-scroll])가 스크롤한다 —
+  // window.scrollTo 는 아무것도 하지 않았다(통합 리뷰 2026-09-30)
+  const scroller = page.locator("[data-guide-scroll]");
+  await scroller.evaluate((el) => el.scrollTo(0, 0));
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(0);
   // 넓은 화면: 목차 링크 → 그 절, 목차에 지금 절 표시
   const nav = page.getByRole("navigation", { name: "설명서 목차" });
   await nav.getByRole("link", { name: /시각 표기/ }).click();
@@ -38,7 +42,6 @@ test("guide: contents move to sections on wide and narrow screens; every figure 
   // 맨 위로 돌아오면 첫 절 — 앞에서 본 절(마지막 절 포함)이 남지 않는다
   await nav.getByRole("link", { name: /키보드 단축키/ }).click();
   await expect(current).toHaveAttribute("href", "#shortcuts");
-  const scroller = page.locator("[data-guide-scroll]");
   await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(current).toHaveAttribute("href", "#overview");
   // 사용자가 스크롤하면 고정이 풀리고 그 위치의 절이 현재
@@ -54,7 +57,7 @@ test("guide: contents move to sections on wide and narrow screens; every figure 
   await expect(page).toHaveURL(/#stats$/);
   await expect(select).toHaveValue("stats");
   // 좁은 화면도 맨 위로 돌아오면 첫 절
-  await page.locator("[data-guide-scroll]").evaluate((el) => el.scrollTo(0, 0));
+  await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(select).toHaveValue("overview");
   expect(errors).toEqual([]);
 });
