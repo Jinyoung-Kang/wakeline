@@ -279,7 +279,7 @@ describe("rendered panels (server-side render, no DOM)", () => {
     expect(renderToStaticMarkup(createElement(StatusBar))).not.toContain("KMA STALE");
   });
   it("status bar: aircraft count is '—' while unknown (aircraft layer off / before the first snapshot), never a frozen number (review #17)", () => {
-    const count = () => /data-testid="aircraft-count"[^>]*>.*?<\/span>(.*?)<\/span>/.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
+    const count = () => /data-testid="aircraft-count".*?<span class="chip-v">([^<]*)</.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
     setData({ conn: "open", lastRxAt: Date.now(), aircraftCount: 42 });
     expect(count()).toBe("42");
     setData({ aircraftCount: null });
@@ -290,7 +290,9 @@ describe("rendered panels (server-side render, no DOM)", () => {
   it("status bar AIS badge: no key → neutral 'AIS 꺼짐 · 키 없음', not a red outage (review #15)", () => {
     setData({ conn: "open", lastRxAt: Date.now(), ais: { connected: false, lag_s: null, msgs_per_s: null, gap_open_since: null, last_gap: null, state: "disabled", coverage: null, received_at: Date.now() } });
     const html = renderToStaticMarkup(createElement(StatusBar));
-    expect(html).toMatch(/class="badge normal-case! " data-testid="ais-badge" data-tone="muted"[^>]*>AIS 꺼짐 · 키 없음</);
+    // 칩: 모름(□ · 회색 — 오류색이 아니다) · "AIS 꺼짐 키 없음"
+    expect(html).toMatch(/class="chip unknown"[^>]*data-health="unknown" data-testid="ais-badge"/);
+    expect(/data-testid="ais-badge".*?<\/span><\/span>/.exec(html)![0].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("AIS □ 꺼짐 키 없음");
     expect(html).not.toContain("재연결");
   });
 });

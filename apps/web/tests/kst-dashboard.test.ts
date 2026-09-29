@@ -16,7 +16,8 @@ import * as F from "@/lib/format";
 import * as T from "@/lib/time";
 import { htmlUtcLeaks, OTHER_LANE_MERGED, OTHER_LANE_PENDING, pendingOtherLane, utcLeaks, withoutOtherLane } from "./helpers/kst-only";
 import { parseHtml } from "./helpers/html-tree";
-import { resetData, setData } from "@/lib/store";
+import { getData, resetData, setData } from "@/lib/store";
+import { detailRows, statusInput } from "@/lib/statusbar";
 import { useUi } from "@/lib/ui-store";
 import { StatusBar } from "@/components/StatusBar";
 import { AlertPanel } from "@/components/AlertPanel";
@@ -32,7 +33,6 @@ import { ShipTable } from "@/components/ShipTable";
 import { SearchResultsView } from "@/components/AircraftSearch";
 import { SidePanelView } from "@/components/SidePanel";
 import { LayerPanel } from "@/components/LayerPanel";
-import { MapChips } from "@/components/MapChips";
 import { wsInvalidText } from "@/components/WsInvalidBadge";
 import { airportTip, shipTrackPointTip, sigmetTip } from "@/lib/tooltip";
 import { aisGapBadge, fmtSavedAt, fmtShipEta, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
@@ -110,21 +110,27 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
   beforeEach(() => resetData());
   afterEach(() => { resetData(); useUi.getState().setRadarSource("rainviewer"); });
 
-  it("status bar: region fetch time HH:MM:SS KST (title = full KST instant); KMA latest tm HH:MM KST; KMA STALE title in KST", () => {
-    setData({ conn: "open", lastRxAt: Date.now(), radarKr: KR, feeds: { region: { provider: "adsb_fi", fetched_at: "2026-09-28T23:41:14Z", lag_s: 2, stale: false, received_at: Date.now() }, global: null } });
+  it("status bar (KST 만 — 사용자 결정 2026-09-30): region fetch time HH:MM:SS KST in the details; KMA latest tm HH:MM KST; KMA STALE title in KST", () => {
+    const kr = {
+      available: true, latest_tm: "202609290840", georeferenced: true, coordinates: null, legend: null,
+      frames: [{ tm: "202609290840", obs_tm: "202609290840", fetched_at: "2026-09-28T23:41:00Z", echo_cells: 5, url: "/x" }],
+      attribution: "기상청", meta: { fetched_at: "2026-09-28T23:20:00Z", stale: true },
+    } as KrRadar;
+    setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr, feeds: { region: { provider: "adsb_fi", fetched_at: "2026-09-28T23:41:14Z", lag_s: 2, stale: false, received_at: Date.now() }, global: null } });
     const html = renderToStaticMarkup(createElement(StatusBar));
-    const region = /<span[^>]*data-testid="region-source".*?<\/time><\/span>/.exec(html)![0];
-    expect(text(region)).toBe("regionadsb_fi · 08:41:14 KST");
-    expect(region).toContain('title="2026-09-29 08:41:14.000 KST"');
-    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*최신 tm 첫 수집 2026-09-29 08:20:00.000 KST/);
-    expect(text(html)).toContain("KMA 1f 08:40 KST"); // 기상청 tm(KST) 그대로
+    // 오늘(KST 09-29)이 아닌 순간은 날짜와 함께 — 시계를 서버 시각으로 고정하지 않으므로 오늘이면 날짜가 없을 수 있다
+    const rows = () => { const now = Date.now(); return detailRows(statusInput(getData(), now, now)); };
+    expect(rows().find((r) => r.key === "region")!.source).toMatch(/^adsb_fi · 수집 (09-29 )?08:41:14 KST$/);
+    expect(html).toMatch(/data-testid="kr-radar-stale" title="[^"]*최신 tm 첫 수집 (09-29 )?08:20:00 KST/);
+    expect(rows().find((r) => r.key === "kma")!.value).toMatch(/^1f · 최신 tm (09-29 )?08:40 KST · /); // 기상청 tm 은 원래 KST
+    expect(text(html)).not.toContain("UTC");
     expect(leaks(html)).toEqual([]);
     // 최신 tm 을 모르면 "—" 만 — "undefined:undefinedK" 가 아니다
-    setData({ radarKr: { ...KR, latest_tm: null, meta: { fetched_at: null, stale: false } } });
-    expect(text(renderToStaticMarkup(createElement(StatusBar)))).toContain("KMA 1f —");
+    setData({ radarKr: { ...kr, latest_tm: null, meta: { fetched_at: null, stale: false } } });
+    expect(rows().find((r) => r.key === "kma")!.value).toMatch(/^1f · 최신 tm — · /);
   });
 
-  it("alert banner: received time in KST", () => {
+  it("alert banner: received time in KST only (사용자 결정 2026-09-30)", () => {
     const a = { id: 3, kind: "OBSERVED", hex: "a3", callsign: "CS3", sigmet_id: "S3", fir_id: "RKRR", hazard: "TS", entered_at: "2026-09-28T23:00:00Z", eta_s: null, alt_ft: 35000, evidence: {}, estimated: false } as unknown as Alert;
     setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: a, at: Date.parse("2026-09-28T23:02:03Z") } });
     const html = renderToStaticMarkup(createElement(AlertPanel));
@@ -237,6 +243,7 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
     } as never));
     expect(results).toContain('title="마지막 수신 2026-09-29 08:41:14.000 KST"');
     const t = text(results);
+    expect(t).toContain("마지막 수신·저장 시각은 KST ·"); // 검색 상자의 설명 줄은 KST 만(사용자 결정 2026-09-30 — 대시보드 UX 레인 3c2ec90)
     for (const p of OTHER_LANE_PENDING) expect(t).toContain(p);
     expect(utcLeaks(withoutOtherLane(t))).toEqual([]);
     expect(leaks(withoutOtherLane(results))).toEqual([]); // 그 한 줄 밖(글자 · title · aria-label)에는 UTC 가 없다
@@ -269,7 +276,8 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
       sigmets: { type: "FeatureCollection", features: [{ type: "Feature", properties: SIG, geometry: null }] } as never,
       selected: { hex: "71c081", received_at: 0, prediction: null, state: { hex: "71c081", lat: 36, lon: 127, seen_at: "2026-09-28T23:41:14Z", fetched_at: "2026-09-28T23:41:15Z", provider: "adsb_fi" } } as never,
     });
-    const parts = [StatusBar, LayerPanel, MapChips, RadarTimeline].map((c) => renderToStaticMarkup(createElement(c)));
+    // 지도 칩(MapChipsView)은 LayerPanel 이 레이어 단추 줄 아래 칸에 그린다(대시보드 UX 레인 0dce5e2)
+    const parts = [StatusBar, LayerPanel, RadarTimeline].map((c) => renderToStaticMarkup(createElement(c)));
     for (const panel of ["alerts", "aircraft", "ship", "sigmet", "airport"] as const) {
       parts.push(renderToStaticMarkup(createElement(SidePanelView, { panel, hex: "71c081", sigmet: panel === "sigmet" ? "S1" : null, airport: null })));
     }

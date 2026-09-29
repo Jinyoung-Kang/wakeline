@@ -15,7 +15,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krComposite, krLayerId, krPartialSummary } from "@/lib/kr-radar";
-import { resetData, setData } from "@/lib/store";
+import { getData, resetData, setData } from "@/lib/store";
+import { detailRows, statusInput } from "@/lib/statusbar";
 import { KrRadarPanel } from "@/components/KrRadarPanel";
 import { StatusBar } from "@/components/StatusBar";
 import { MapLegendView } from "@/components/MapLegend";
@@ -129,18 +130,21 @@ describe("KMA panel, status bar and legend never present a partial composite as 
     expect(old).toContain("부분 합성 프레임—");
     expect(old).not.toMatch(/—\s*곳/);
   });
-  it("status bar: KMA chip names the latest composite; a partial latest frame gets a warn badge with the sentence", () => {
+  it("status bar: the KMA chip warns on a partial latest frame (word + sentence); the details name the latest composite", () => {
+    // 상태 바는 칩(이름 · 모양 · 경과 · 낱말) + 상세 표(프레임 수 · 최신 tm · 합성 크기) — 사용자 요청 2026-09-30, lib/statusbar
+    const kmaRow = () => { const now = Date.now(); return detailRows(statusInput(getData(), now, now)).find((r) => r.key === "kma")!.value; };
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr([full("202609291405"), partial("202609291410")]) });
     const html = renderToStaticMarkup(createElement(StatusBar));
-    expect(text(html)).toContain("KMA 2f 14:10 KST · 합성 7/15곳");
-    expect(html).toMatch(/data-testid="kr-status-partial"[^>]*title="일부 지점만 합성\(7\/15곳\)[^"]*"/);
-    expect(text(html)).toContain("KMA 일부 합성");
+    expect(kmaRow()).toMatch(/^2f · 최신 tm (\d\d-\d\d )?14:10 KST · 합성 7\/15곳$/);
+    expect(html).toMatch(/data-testid="kr-status-partial" title="일부 지점만 합성\(7\/15곳\)[^"]*"/);
+    expect(text(html)).toContain("일부 합성");
+    expect(html).toMatch(/data-chip="kma" data-pinned="true"[^>]*data-health="warn"/);
     setData({ radarKr: kr([partial("202609291405"), full("202609291410")]) });
     const ok = renderToStaticMarkup(createElement(StatusBar));
-    expect(text(ok)).toContain("KMA 2f 14:10 KST · 합성 15/15곳");
+    expect(kmaRow()).toMatch(/^2f · 최신 tm (\d\d-\d\d )?14:10 KST · 합성 15\/15곳$/);
     expect(ok).not.toContain('data-testid="kr-status-partial"');
     setData({ radarKr: kr([legacy("202609291410")]) });
-    expect(text(renderToStaticMarkup(createElement(StatusBar)))).toContain("KMA 1f 14:10 KST · 합성 —");
+    expect(kmaRow()).toMatch(/^1f · 최신 tm (\d\d-\d\d )?14:10 KST · 합성 —$/);
   });
   it("legend (KMA): explains the composite size and the partial marker", () => {
     setData({ radarKr: kr([full("202609291405")]) });

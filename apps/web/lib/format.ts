@@ -153,12 +153,17 @@ export function ageS(v: string | number | null | undefined, nowMs: number): numb
   if (s == null || !nowMs) return null;
   return Math.max(0, (nowMs - Date.parse(s)) / 1000);
 }
+/** 짧은 경과(초) — "42s" · "8m" · "3h"(90 s · 90 min 에서 단위를 바꾼다 — 상태 바 칩처럼 좁은 자리). 모르면 "—" */
+export function fmtAgeS(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec)) return "—";
+  const s = Math.max(0, Math.round(sec));
+  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+}
 export function fmtAgo(iso: string | null | undefined, nowMs = Date.now()) {
   if (!iso) return "—";
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
-  const s = Math.max(0, Math.round((nowMs - t) / 1000));
-  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+  return fmtAgeS((nowMs - t) / 1000);
 }
 export function fmtEta(s: number | null | undefined) {
   if (s == null || !Number.isFinite(s)) return "—";

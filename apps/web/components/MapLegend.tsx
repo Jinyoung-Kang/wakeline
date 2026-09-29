@@ -188,7 +188,7 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
         </Section>
       ) : null}
       {layers.airports ? (
-        <Section title="공항 · 비행 카테고리(METAR, 줌 5.5+)">
+        <Section title="공항 · 비행 카테고리(METAR, 줌 5.5+ 원 · 7+ 라벨)">
           <li className="flex flex-wrap gap-x-3 gap-y-[2px] pb-1">
             {Object.entries(CAT_COLORS).map(([k, c]) => (
               <span key={k} className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: c }} /><span className="mono text-[10px]">{k}</span></span>
@@ -196,7 +196,9 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           </li>
           <Row swatch={<span className="mono text-[9px] text-fg-2">ICAO</span>} wide>줌 7 이상: 라벨에 카테고리 글자(예: RKSI IFR)</Row>
           <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_UNKNOWN_COLOR }} />}>카테고리 판정 불가(—)</Row>
-          <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_STALE_FILL, border: `1.5px solid ${CAT_STALE_STROKE}` }} />}>METAR 오래됨(&gt; {METAR_STALE_S / 3600} h) — 색 없음</Row>
+          <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_STALE_FILL, border: `1.5px solid ${CAT_STALE_STROKE}` }} />}>
+            <span data-testid="legend-airport-stale">METAR 오래됨(&gt; {METAR_STALE_S / 3600} h) — 속이 빈 회색 고리(카테고리 색 없음). 줌 7 아래에서는 라벨이 없어 원만 보인다</span>
+          </Row>
         </Section>
       ) : null}
       {layers.traffic ? (

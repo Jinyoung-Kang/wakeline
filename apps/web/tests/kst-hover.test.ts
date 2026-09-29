@@ -137,7 +137,9 @@ describe("dashboard cards: every time has the full KST instant on hover (no UTC 
     setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: a, at: Date.parse("2026-09-28T23:02:03Z") } });
     const { AlertPanel } = await import("@/components/AlertPanel");
     await mount(createElement(AlertPanel));
+    // 배너는 KST 만(사용자 결정 2026-09-30) — 날짜까지의 전체 문장은 배너 title
     expect(all((e) => e.getAttribute("data-testid") === "alert-banner-time")[0].textContent).toBe("수신 08:02:03 KST");
+    expect(all((e) => e.getAttribute("data-testid") === "alert-banner")[0].getAttribute("title")).toContain("수신 09-29 08:02:03 KST");
     expect(missingHover()).toEqual([]);
   });
   it("SIGMET card: the 'not yet valid' badge names the start as the full KST instant", async () => {
@@ -180,7 +182,11 @@ describe("tooltips that name a time name it in KST only", () => {
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr, feeds: { region: { provider: "adsb_fi", fetched_at: "2026-09-28T23:58:14Z", lag_s: 2, stale: false, received_at: Date.now() }, global: null } });
     const { StatusBar } = await import("@/components/StatusBar");
     await mount(createElement(StatusBar));
-    expect(all((e) => e.getAttribute("data-testid") === "kr-radar-stale")).toHaveLength(1);
+    const stale = all((e) => e.getAttribute("data-testid") === "kr-radar-stale");
+    expect(stale).toHaveLength(1);
+    // 상태 바는 KST 만(사용자 결정 2026-09-30 — 계약 v5 §G20 이 §G13 의 KST · UTC 함께를 대신함): 툴팁에도 UTC 를 붙이지 않는다
+    expect(stale[0].getAttribute("title")).toMatch(/최신 tm 첫 수집 (09-29 )?08:20:00 KST\)/);
+    expect(all((e) => /UTC/.test(e.getAttribute("title") ?? ""))).toEqual([]);
     expect(missingHover().filter((x) => x.startsWith("title: "))).toEqual([]);
   });
   it("search results: the 'db' badge of an aircraft that is not live, and the not-live ship rows", async () => {

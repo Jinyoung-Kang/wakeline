@@ -834,7 +834,7 @@ export const AIS_GAP_SHOW_MS = 30 * 60_000;
 export const AIS_LAG_WARN_S = 120;
 
 /** 구역 하나의 연결 상태 문구(툴팁): 연결 · 끊김(재연결 중) · 연결 모름 — 수집기가 보고한 값만 */
-function shardConnText(sh: AisShard): string {
+export function shardConnText(sh: AisShard): string {
   if (sh.connected === true) return "연결";
   if (sh.connected === false) return `끊김${sh.state === "connecting" || sh.state === "backoff" ? "(재연결 중)" : ""}`;
   return "연결 모름";
@@ -846,10 +846,24 @@ function shardConnText(sh: AisShard): string {
  * 수집기 state(계약 v3 §A): disabled(키 없음) → 중립 "AIS 꺼짐 · 키 없음"(끊김·재연결이 아니다). 끊김은 "AIS 끊김" —
  * "재연결 중(지수 백오프)"은 state 가 connecting·backoff 일 때만 말한다(모르면 말하지 않는다).
  */
-export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): { text: string; tone: "ok" | "warn" | "bad" | "muted"; title: string } | null {
+export interface AisBadge {
+  text: string;
+  tone: "ok" | "warn" | "bad" | "muted";
+  title: string;
+  /** 상태 바 칩 · 상세 표(lib/statusbar)가 글자를 다시 짓지 않고 쓰는 값 — disabled 꺼짐(키 없음) · down 끊김 · partial 일부 구역 끊김 · live 받는 중(연결 모름 포함) */
+  kind: "disabled" | "down" | "partial" | "live";
+  /** 표시 지연(초, 위 규칙 — 연결이 실시간이 아니면 받은 뒤 경과를 더한 값). 모르면 null */
+  lag: number | null;
+  /** 초당 메시지(수집기 보고값). 모르면 null */
+  rate: number | null;
+  /** partial: 끊긴 구역 수 / 전체 구역 수 */
+  down?: number;
+  shards?: number;
+}
+export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): AisBadge | null {
   if (!ais) return null;
   if (ais.state === "disabled") {
-    return { text: "AIS 꺼짐 · 키 없음", tone: "muted", title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정 — 끊김이 아님)" };
+    return { text: "AIS 꺼짐 · 키 없음", tone: "muted", title: "ais 수집기에 aisstream.io 키가 설정되지 않아 선박을 받지 않습니다(운영 설정 — 끊김이 아님)", kind: "disabled", lag: null, rate: null };
   }
   // 구역이 여럿이고 일부만 끊겼으면(계약 v4 §D: 합계 connected = 모든 구역 연결) 전체 끊김이라고 하지 않는다
   const shards = ais.shards && ais.shards.length > 1 ? ais.shards : null;
@@ -858,7 +872,7 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
   if (ais.connected === false && !partial) {
     const retrying = ais.state === "connecting" || ais.state === "backoff";
     const why = retrying ? " — 재연결 중(지수 백오프)" : ` — 수집기 상태 ${ais.state ?? "모름"}`;
-    return { text: "AIS 끊김", tone: "bad", title: `AIS 수집기가 aisstream.io 에 연결되어 있지 않음${why}` };
+    return { text: "AIS 끊김", tone: "bad", title: `AIS 수집기가 aisstream.io 에 연결되어 있지 않음${why}`, kind: "down", lag: null, rate: ais.msgs_per_s };
   }
   const elapsed = nowMs ? Math.max(0, (nowMs - ais.received_at) / 1000) : 0;
   const lag = ais.lag_s == null ? null : live && elapsed <= RX_FRESH_MS / 1000 ? ais.lag_s : ais.lag_s + elapsed;
@@ -870,10 +884,11 @@ export function aisBadge(ais: AisStatus | null, nowMs: number, live: boolean): {
       text: `AIS 일부 끊김 ${down}/${shards!.length} 구역 · ${rate} · ${lagText}`,
       tone: "warn",
       title: `${title}\n${shards!.map((sh, i) => `구역 ${i + 1} ${fmtShardScope(sh)} — ${shardConnText(sh)}`).join("\n")}`,
+      kind: "partial", lag, rate: ais.msgs_per_s, down, shards: shards!.length,
     };
   }
   const tone = ais.connected == null || lag == null || lag > AIS_LAG_WARN_S ? "warn" : "ok";
-  return { text: `AIS${ais.connected == null ? " 연결 모름" : ""} · ${rate} · ${lagText}`, tone, title };
+  return { text: `AIS${ais.connected == null ? " 연결 모름" : ""} · ${rate} · ${lagText}`, tone, title, kind: "live", lag, rate: ais.msgs_per_s };
 }
 
 /** 열린 공백이 있는 구역 수(구역이 둘 이상일 때만 — 하나면 합계와 같다) */

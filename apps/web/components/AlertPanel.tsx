@@ -5,12 +5,11 @@ import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCard } from "./EvidenceCard";
-import { fmtKstTitle } from "@/lib/time";
+import { dualPair, fmtKstTitle } from "@/lib/time";
 import { fmtEta, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
-import { DualTime } from "./DualTime";
 
 /**
  * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 행을 누르면 목록 안에서 근거 카드를 펼치고(선택하지 않음),
@@ -59,11 +58,15 @@ export function AlertPanel() {
         <div className="flex items-center gap-2">
           <button className="btn" aria-pressed={scope === "region"} onClick={() => setScope("region")} data-testid="alerts-scope-region">관심 지역</button>
           <button className="btn" aria-pressed={scope === "world"} onClick={() => setScope("world")} data-testid="alerts-scope-world">전세계 {alertsVersion != null ? all.length : "—"}</button>
-          <span className="mono text-[11px]"><span className="text-bad">{countsKnown ? observed : "—"}</span> inside · <span className="text-est">{countsKnown ? list.length - observed : "—"}</span> predicted</span>
         </div>
       </div>
-      {/* 새 이벤트를 스크린리더에 알린다(영역은 항상 있어야 변경이 읽힌다). 높이를 고정해 배너가 나타나거나 사라져도 목록이 밀리지 않는다(R-09) */}
-      <div role="status" aria-live="polite" aria-atomic="true" className="h-[26px] shrink-0 overflow-hidden border-b border-line">
+      {/* 수는 범위 단추 아래 자기 줄(380 px 패널에서 '전세계 731' 옆에 두면 어색하게 줄이 바뀌었다 — 사용자 스크린샷 2026-09-30) · 무엇을 센 수인지 범위를 함께 */}
+      <div className="flex items-center justify-between gap-2 border-b border-line px-2.5 py-1 text-[11px] whitespace-nowrap" data-testid="alerts-counts">
+        <span className="mono"><span className="text-bad">{countsKnown ? observed : "—"}</span> inside · <span className="text-est">{countsKnown ? list.length - observed : "—"}</span> predicted</span>
+        <span className="min-w-0 truncate text-fg-3">{scope === "world" ? "전세계" : `관심 지역 · 반경 ${status?.region?.radius_nm ?? "—"} NM`}</span>
+      </div>
+      {/* 새 이벤트를 스크린리더에 알린다(영역은 항상 있어야 변경이 읽힌다). 높이를 고정해(두 줄) 배너가 나타나거나 사라져도 목록이 밀리지 않는다(R-09) */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="h-[40px] shrink-0 overflow-hidden border-b border-line">
         {lastEvent ? <EventBanner key={lastEvent.at} ev={lastEvent} /> : null}
       </div>
       {listState !== "live" && (listState !== "waiting" || list.length > 0) ? (
@@ -113,18 +116,31 @@ export function AlertPanel() {
 }
 
 /**
- * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정 · KST · UTC)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 — 오래된 진입이 방금 일처럼 보이지 않게.
- * 시각은 고정 문자열이라 aria-live 영역이 1 s 마다 다시 읽히지 않는다(숨길 때 한 번만 바뀐다).
+ * 마지막 알림 이벤트 배너(R-23): 받은 시각(서버 시계 추정 · KST 만 — 사용자 결정 2026-09-30)을 붙이고, EVENT_BANNER_TTL_MS(5분)가 지나면 숨긴다 —
+ * 오래된 진입이 방금 일처럼 보이지 않게. 시각은 고정 문자열이라 aria-live 영역이 1 s 마다 다시 읽히지 않는다(숨길 때 한 번만 바뀐다).
+ * 두 줄(사용자 스크린샷 2026-09-30 — 한 줄이면 380 px 패널에서 받은 시각이 "수신 02:43:56 K…"로 잘렸다): 1 = 종류 · 호출부호, 2 = SIGMET · 받은 시각.
+ * 줄마다 끝만 줄임표로(그래도 넘치는 긴 값), 전체 문장은 title.
  */
 function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
   const now = useNow(1000);
   if (!eventBannerVisible(ev.at, now)) return null;
+  const a = ev.alert;
+  const at = serverNowMs(ev.at);
+  const who = a.callsign ?? a.hex;
+  const sigmet = `${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""} · ${a.fir_id}`;
+  const label = EVENT_LABEL[ev.type] ?? ev.type;
+  const full = `${ev.type} ${label} · ${who} · SIGMET ${sigmet}${a.sigmet_id ? `(${a.sigmet_id})` : ""} · 수신 ${dualPair(at, { date: true })?.kst ?? "—"}`;
   return (
-    <div className="flash truncate px-2 py-1 text-[11px] text-fg-2" data-testid="alert-banner" data-event={ev.type}>
-      <span className="label mr-1">{ev.type}</span>
-      <span className={ev.type === "LOST" ? "text-warn" : ""}>{EVENT_LABEL[ev.type] ?? ev.type}</span>
-      {" · "}<span className="mono">{ev.alert.callsign ?? ev.alert.hex}</span> · {ev.alert.hazard} {ev.alert.fir_id}
-      {" · "}<span className="text-fg-3" data-testid="alert-banner-time">수신 <DualTime v={serverNowMs(ev.at)} date={false} /></span>
+    <div className="flash flex h-full flex-col justify-center px-2 text-[11px] leading-[16px] text-fg-2" data-testid="alert-banner" data-event={ev.type} title={full}>
+      <div className="truncate" data-line="event">
+        <span className="label mr-1">{ev.type}</span>
+        <span className={ev.type === "LOST" ? "text-warn" : "text-fg"}>{label}</span>
+        {" · "}<span className="mono font-semibold text-fg">{who}</span>
+      </div>
+      <div className="truncate" data-line="sigmet">
+        <span className="label mr-1">SIGMET</span>{sigmet}
+        {" · "}<span className="text-fg-3" data-testid="alert-banner-time" title={dualPair(at, { year: true, ms: true })?.kst}>수신 {dualPair(at, { date: false })?.kst ?? "—"}</span>
+      </div>
     </div>
   );
 }

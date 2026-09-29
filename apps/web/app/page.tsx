@@ -1,7 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
 import { LayerPanel } from "@/components/LayerPanel";
-import { MapChips } from "@/components/MapChips";
 import { RadarTimeline } from "@/components/RadarTimeline";
 import { SidePanel } from "@/components/SidePanel";
 import { StatusBar } from "@/components/StatusBar";
@@ -21,7 +20,7 @@ export default function Dashboard() {
       <div className="flex min-h-0 flex-1 flex-col min-[900px]:flex-row">
         <div className="relative min-h-0 min-w-0 flex-1">
           <MapView />
-          <MapChips />
+          {/* 지도 위에 겹쳐 그리는 것(레이어 단추 · 상태 칩 · 배경지도 알림 · 교통량 상태 · 범례)은 LayerPanel 의 한 배치 안 — 서로 덮지 않게 */}
           <LayerPanel />
         </div>
         <aside id="side-panel" tabIndex={-1} aria-label="알림·상세 패널" className="flex h-[42%] w-full shrink-0 flex-col border-t border-line bg-bg-1 min-[900px]:h-auto min-[900px]:w-[380px] min-[900px]:border-t-0 min-[900px]:border-l">

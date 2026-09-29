@@ -307,7 +307,7 @@ describe("R-39 narrow screens (390 px phone, 768 px tablet)", () => {
   });
   it("the layer buttons wrap inside the map (bounded on the left) instead of running off screen", () => {
     const html = renderToStaticMarkup(createElement(LayerPanel));
-    expect(html).toMatch(/class="[^"]*left-12[^"]*"/);
+    expect(html).toMatch(/class="[^"]*left-\[48px\][^"]*"/); // 줌 단추 옆에서 멈춘다(tests/dashboard-layout — 전에는 left-12 = 39 px 로 2 px 겹침)
     expect(html).toMatch(/class="[^"]*flex-wrap[^"]*"[^>]*data-testid="layer-panel"/);
   });
   it("buttons never break inside a Korean word; the legend starts closed on narrow screens", () => {
@@ -451,7 +451,7 @@ describe("R-31 legend and status bar on common laptop screens", () => {
     expect(html).toMatch(/class="pointer-events-none absolute[^"]*bottom-16/);
     expect(html).not.toMatch(/class="pointer-events-none absolute[^"]*bottom-3[ "]/);
   });
-  it("the KMA STALE badge sits at the front of the status bar, not past the scroll edge", () => {
+  it("the KMA STALE state is always in the status bar row (a pinned chip — never moved into '상세'; the row no longer scrolls)", () => {
     const kr: KrRadar = {
       available: true, latest_tm: "202609280130", georeferenced: true, coordinates: null, legend: null, frames: [{ tm: "202609280130", obs_tm: "202609280130", fetched_at: "x", echo_cells: 1, url: "/u" }],
       attribution: "기상청", meta: { fetched_at: "2026-09-27T16:33:40Z", stale: true },
@@ -459,7 +459,9 @@ describe("R-31 legend and status bar on common laptop screens", () => {
     setData({ conn: "open", lastRxAt: Date.now(), radarKr: kr });
     const html = renderToStaticMarkup(createElement(StatusBar));
     expect(html.indexOf('data-testid="kr-radar-stale"')).toBeGreaterThan(-1);
-    expect(html.indexOf('data-testid="kr-radar-stale"')).toBeLessThan(html.indexOf('data-testid="aircraft-count"'));
+    // 경고인 칩은 줄에서 빼지 않는다(lib/statusbar fitChips) — 가로 스크롤 끝으로 밀려 보이지 않던 R-31 의 문제가 없다
+    expect(html).toMatch(/data-chip="kma" data-pinned="true"[^>]*data-health="bad"/);
+    expect(html).not.toMatch(/overflow-x-auto[^"]*" data-testid="statusbar/);
   });
 });
 
