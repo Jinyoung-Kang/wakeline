@@ -137,6 +137,10 @@ describe("status line: every state says why the map shows what it shows", () => 
     const l = trafficStatusLine(grid({ total: 5099, resolved: 4812, unresolved: 287, pending: 287 }), null);
     expect(l.text).toBe("기준 09-29 18:05:05 KST · 09-29 09:05:05 UTC · 격자 2 / 5,099칸 표시 · 위치 확인 중 287칸");
     expect(l.tone).toBe("muted");
+    // 모르는 수는 "—" 만(단위를 붙이지 않는다)
+    const unknownTotal = trafficStatusLine(grid({ total: undefined, pending: 0 }), null).text;
+    expect(unknownTotal).toContain("격자 2 / — 표시");
+    expect(unknownTotal).not.toMatch(/—칸|— 칸/);
     const done = trafficStatusLine(grid({ pending: 0, not_found: 1 }), null);
     expect(done.tone).toBe("ok");
     expect(done.detail).toBe("해양격자에 없음 1칸");

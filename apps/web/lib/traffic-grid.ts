@@ -132,6 +132,8 @@ export function trafficTimeText(utc: string | null | undefined): string {
 }
 
 const n = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString("en-US"));
+/** 수 + 단위. 모르면 "—" 만(단위를 붙이지 않는다) */
+const nu = (v: number | null | undefined, unit: string) => (v == null ? "—" : `${v.toLocaleString("en-US")}${unit}`);
 const pct = (v: number) => `${Number.isInteger(v) ? v : v.toFixed(1)} %`;
 
 /** 지도 툴팁(격자 한 칸) */
@@ -182,13 +184,13 @@ export function trafficStatusLine(g: TrafficGrid | null, error: string | null): 
       };
     default: {
       const shown = g.cells.length;
-      const parts = [`기준 ${trafficTimeText(g.reg_dt_utc)}`, `격자 ${n(shown)} / ${n(g.total)}칸 표시`];
-      if (g.pending) parts.push(`위치 확인 중 ${n(g.pending)}칸`);
+      const parts = [`기준 ${trafficTimeText(g.reg_dt_utc)}`, `격자 ${n(shown)} / ${nu(g.total, "칸")} 표시`];
+      if (g.pending) parts.push(`위치 확인 중 ${nu(g.pending, "칸")}`);
       const extra: string[] = [];
-      if (g.not_found) extra.push(`해양격자에 없음 ${n(g.not_found)}칸`);
-      if (g.off_grid) extra.push(`격자 검사 실패(격리) ${n(g.off_grid)}칸`);
+      if (g.not_found) extra.push(`해양격자에 없음 ${nu(g.not_found, "칸")}`);
+      if (g.off_grid) extra.push(`격자 검사 실패(격리) ${nu(g.off_grid, "칸")}`);
       if ((g.invalid_cells ?? 0) + g.dropped > 0) extra.push(`형식 오류로 뺀 칸 ${n((g.invalid_cells ?? 0) + g.dropped)}`);
-      const partial = g.partial ? `일부만 수신(${n(g.total)} / 공급자 ${n(g.total_count)}칸)` : null;
+      const partial = g.partial ? `일부만 수신(${n(g.total)} / 공급자 ${nu(g.total_count, "칸")})` : null;
       if (partial) extra.unshift(partial);
       const detail = extra.length ? extra.join(" · ") : null;
       return { text: parts.join(" · ") + err, tone: partial || error ? "warn" : g.pending ? "muted" : "ok", detail };
