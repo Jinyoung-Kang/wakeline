@@ -380,3 +380,33 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     같을 때만 붙인다(`lib/ships.storedPortCallsNote`). WS 가 `stored_unavailable` 인데 REST 가 같은 행을 읽어 저장 보고를 보일 때는 '입출항은 이 호출부호로
     아직 찾지 않음 — 서버가 선택 때 저장된 보고를 읽지 못함' 을 적는다(리뷰: 조건 없이 붙이면 입출항 절의 '호출부호를 아직 받지 않음' 과 어긋난 채 틀린 말).
     설명서 2.6 이 한 문장으로 적는다.
+
+## G. 11차 개정(2026-09-30 · 레인 backend · VERIFICATION #51 '남은 것' — 선택 선박 조회가 WS 세션 우편함을 붙잡음, ADR-025)
+- G18(§G17 의 '대기 상한' 문장 · ADR-022 개정의 입출항 읽기 · ADR-008 세션 우편함) **선택 선박의 DB 조회는 세션 우편함 밖에서, 전용 읽기 풀로**.
+  - 관찰(코드 — `ShipSelectionLookupTest` 가 재현): `ShipFanout.runSelected` 는 세션 우편함(SerialOutbox — 한 번에 하나)에서 돌며 저장 정적 보고
+    (`StoredStaticReader.lookup`)와 입출항(`PortCallReader.forStatic` — Redis heartbeat + 문장 둘)을 그 자리에서 읽었다(공유 Hikari 풀 12 · 연결 대기 5 s +
+    공개 조회 문장 3 s). 풀에 연결이 없는 동안 선택 하나가 그 세션의 항공기 · 선박 diff · pong · heartbeat 를 저장 정적 보고 한 번에 최대 약 8 s, 입출항까지
+    최대 약 19 s(설정값의 합) 붙잡고, 실패 기억(15 s)이 끝날 때마다 되풀이했다.
+  - api(`ws.ShipLookups` · `ShipFanout`): 우편함은 읽는 쪽의 메모리 캐시만 본다(`StoredStaticReader.cached` · `PortCallReader.cachedForStatic` — I/O 없음).
+    다 답할 수 있으면 곧바로 보낸다(대부분의 다시 계산). 읽어야 하면 조회 실행기에 맡기고 돌아온다 — 스레드 = 읽기 풀 연결 수(4), 대기열 256, 가득 차면 그
+    읽기는 하지 않고 읽지 못함으로 답한다(`outcome=rejected` — 기억하지 않아 다음 다시 계산이 다시 읽는다). 결과는 SHIP_SELECTED 우편함 작업으로 돌아와,
+    그 조회가 세션의 지금 조회(세대 — `WsSession.shipLookup` 객체)이고 물음(선박 · 메모리 정적 정보가 있는가 · 그 호출부호)이 같을 때만 그때의 최신 선박
+    상태와 함께 보낸다. 선택이 바뀌었거나(다른 선박 · 해제) 캐시가 먼저 답했으면 버린다(`wakeline_ws_ship_lookup_dropped_total`), 세션이 닫혔으면 작업이
+    실행되지 않는다. 세션마다 진행 중인 조회는 하나 — 같은 물음의 다시 계산(선박 이동 · 15 s 주기)은 새로 맡기지 않는다. 같은 MMSI 의 동시 읽기 한 번 ·
+    캐시 수명(찾음 60 s · 실패 15 s · 입출항 15 s)은 그대로다.
+  - 마감: 조회는 늦어도 `ReadPool.readBoundMs()` = 읽기 풀 연결 대기 2 s + 공개 조회 문장 3 s = **5 s**(설정값 — 잰 값 아님) 뒤 끝난다. 그때까지 끝나지 않은
+    부분은 계약에 이미 있는 값으로 답한다 — static → `stored_unavailable`(static null · port_calls no_call_sign/not_received), 입출항 → `error`(색인을 읽지
+    못함 — '기록 없음' 이 아니다). 읽기는 계속돼 캐시를 채우고 다음 다시 계산(선박 변화 · ≤ 15 s 주기)이 바뀐 값을 보낸다.
+  - 읽기 풀(`persist.ReadPool` — 이 두 읽기만 쓴다): `wakeline-read` · 크기 `wakeline.read-pool.size` 4(1–8) · 연결 대기
+    `wakeline.read-pool.connection-timeout-ms` 2,000(문장 상한 이하만 받는다 — 넘으면 기동하지 않는다) · 최소 유휴 0(DB 가 없는 동안 뒤에서 다시 맺지 않는다) ·
+    연결마다 서버 `statement_timeout=3s` · `default_transaction_read_only=on` · ApplicationName `wakeline-api-read` · Micrometer
+    `hikaricp_connections_*{pool="wakeline-read"}`. DB 연결 수: 역할별 상한 없음(`infra/db/init/01-roles.sh`), 서버 max_connections 기본 100(compose 가 바꾸지
+    않는다 — 슈퍼유저 예약 3) — api 공유 풀 12 + 읽기 풀 4 = 16, 수집기 프로세스는 각 2(`db.py`).
+  - 새 최악(설정값): 세션의 다른 메시지는 선택 조회를 기다리지 않는다. ship_selected 는 조회가 필요하면 물음 뒤 ≤ 5 s. 읽기 풀이 바닥나면 저장 정적 보고는
+    연결 대기 2 s 에 `stored_unavailable`(`StoredStaticIT` — 4 연결을 2.8 s 잡은 동안 1.8–2.8 s 에 답, 그동안 pong). 실행기 포화면 곧바로.
+  - WS 계약은 그대로(키 · 값 · 스키마 사본 · 웹 검증기 · 표본 변화 없음): ship_selected 가 조회를 기다리는 동안 늦게 나갈 뿐이다. 웹은 첫 ship_selected 전에는
+    입출항 절을 "—" 로 둔다(명시적 '조회 중' 상태를 새로 두지 않는다 — 계약 · 검증기 · 표본을 늘릴 만큼의 쓸모가 없다).
+  - 지표: `wakeline_ws_ship_lookups_total{outcome=ok|deadline|rejected|error}` · `wakeline_ws_ship_lookup_seconds`(물음 → 답) · `wakeline_ws_ship_lookup_queue` ·
+    `wakeline_ws_ship_lookup_dropped_total`. 시험: `ShipSelectionLookupTest`(pong · diff 가 막힌 읽기를 기다리지 않음 · 마감의 읽지 못함 · 늦은 결과는 다음
+    다시 보기 · 입출항도 우편함 밖 · 늦게 온 결과 버리기 · 포화 · 같은 MMSI 한 번 읽기와 캐시) · `StoredStaticIT`(표 잠금 3 s 동안 pong < 1 s · 읽기 풀 소진 ·
+    읽기 풀 연결의 서버 설정).
