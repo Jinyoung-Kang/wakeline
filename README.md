@@ -105,7 +105,7 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | 명령 | 내용 |
 |---|---|
 | `make test` | pytest · JUnit(+Testcontainers) · Vitest · 인프라 정책 |
-| `make e2e` | 격리된 fixture 스택(8701)을 띄워 Playwright 16건 → 스택·볼륨 삭제(개발 스택은 건드리지 않음) |
+| `make e2e` | 격리된 fixture 스택(8701)을 띄워 Playwright 17건 → 스택·볼륨 삭제(개발 스택은 건드리지 않음) |
 | `make contract` | Python 메시지 ↔ JSON Schema ↔ Java 사본 대조 + REST 응답 계약 + WS 메시지 표본(schemas/ws) |
 | `make ws-samples` | WS 메시지 표본 다시 만들기 — api 시험이 실제 빌더로 만든 17종을 `schemas/ws` 로 검증해 웹 fixture 로 쓴다(스키마·빌더를 바꿨을 때, 커밋) |
 | `make bench SHIPS=1` | k6 컨테이너로 api 층 직접 부하(측정 동안만 제한 상향, 끝나면 원복) |
