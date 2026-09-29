@@ -47,8 +47,8 @@ for (const size of SIZES) {
       await open(page);
       const bar = page.getByTestId("statusbar");
       const row = page.getByTestId("statusbar-row");
-      // 크기 관찰(ResizeObserver)이 한 번 돌 시간
-      await page.waitForTimeout(300);
+      // 줄을 한 번 잰 뒤(그 전에는 한 줄로 잘라 둔다)
+      await expect(row).toHaveAttribute("data-measured", "true");
       const m = await row.evaluate((el) => {
         const r = el.getBoundingClientRect();
         const kids = [...el.children].filter((c) => c.getAttribute("data-overflow") !== "true").map((c) => {

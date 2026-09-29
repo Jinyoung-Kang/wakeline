@@ -65,7 +65,8 @@ describe("alert panel first load (R-09)", () => {
 });
 
 describe("status bar connection badge (R-09)", () => {
-  const conn = () => /class="badge ([a-z]+)" data-testid="conn"/.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
+  // 연결 배지의 첫 클래스 뒤가 색(ok · warn · bad) — 나머지(shrink-0 · whitespace-nowrap)는 배치
+  const conn = () => /class="badge ([a-z]+)[^"]*" data-testid="conn"/.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
   it("a first connection in progress is neutral/warn, not the error colour; retries and closed are errors", () => {
     setData({ conn: "connecting", reconnectAttempt: 0 });
     expect(conn()).toBe("warn");

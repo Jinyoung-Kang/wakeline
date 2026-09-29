@@ -61,11 +61,13 @@ function ChipView({ chip, hidden }: { chip: Chip; hidden: boolean }) {
   );
 }
 
-/** 줄의 내용 폭(패딩 제외) · 칩 사이 간격 · 고정 항목(연결 · 경고 · 상세 단추) 폭을 읽어 옮길 칩을 고른다 — ResizeObserver 콜백 안에서만 부른다 */
-function measure(row: HTMLElement): Set<string> {
+/**
+ * 줄의 내용 폭(패딩 제외) · 칩 사이 간격 · 고정 항목(연결 · 경고 · 상세 단추) 폭을 읽어 옮길 칩을 고른다 — 칩 모음이 바뀐 커밋(layout effect)과
+ * ResizeObserver 콜백에서만 부른다. 배치 전 · 숨김(폭 0 — 레이아웃 없음)이면 null: 재지 않는다(모두 옮기면 '+N' 이 틀린다 — 크기가 생기면 다시 알린다).
+ */
+function measure(row: HTMLElement): Set<string> | null {
   const width = row.clientWidth;
-  // 배치 전 · 숨김(폭 0 — 레이아웃 없음)이면 옮기지 않는다: 모두 옮기면 '+N' 이 틀린다. 크기가 생기면 ResizeObserver 가 다시 알린다
-  if (!(width > 0)) return new Set();
+  if (!(width > 0)) return null;
   const cs = getComputedStyle(row);
   const gap = parseFloat(cs.columnGap) || 0;
   const inner = width - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
@@ -83,23 +85,28 @@ const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b
  * flushSync 로 그 자리에서 반영한다(다음 작업으로 미루면 한 프레임은 두 줄로 그려진다). 결과가 같으면 다시 그리지 않는다.
  * ResizeObserver 가 없으면(옛 브라우저) 칩 모음이 바뀔 때만 잰다 — 그래도 넘치면 줄이 넘어간다(flex-wrap). 서버 렌더에서는 재지 않는다.
  */
-function useOverflow(rowRef: React.RefObject<HTMLDivElement | null>, layoutKey: string): ReadonlySet<string> {
+function useOverflow(rowRef: React.RefObject<HTMLDivElement | null>, layoutKey: string): { hidden: ReadonlySet<string>; measured: boolean } {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(NONE);
+  const [measured, setMeasured] = useState(false);
   useLayoutEffect(() => {
     const row = rowRef.current;
     if (!row) return;
-    const first = measure(row);
-    setHidden((prev) => (sameSet(prev, first) ? prev : first));
+    const apply = (next: Set<string> | null) => {
+      if (!next) return;
+      setHidden((prev) => (sameSet(prev, next) ? prev : next));
+      setMeasured(true);
+    };
+    apply(measure(row));
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       const next = measure(row);
-      flushSync(() => setHidden((prev) => (sameSet(prev, next) ? prev : next)));
+      if (next) flushSync(() => apply(next));
     });
     ro.observe(row);
     for (const el of row.querySelectorAll("[data-chip], [data-pin]")) ro.observe(el);
     return () => ro.disconnect();
   }, [rowRef, layoutKey]);
-  return hidden;
+  return { hidden, measured };
 }
 
 /** 표시 부분(입력을 인자로 — 시험용). 스토어와 시계는 StatusBar 가 준다 */
@@ -115,7 +122,7 @@ export function StatusBarView({ input, inv }: { input: StatusInput; inv: WsInval
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const layoutKey = `${chips.map((x) => `${x.key}${x.pinned ? "!" : ""}`).join(",")}|${invAny ? "i" : ""}${fixture ? "f" : ""}${gapOpen ? "g" : ""}`;
-  const hiddenAll = useOverflow(rowRef, layoutKey);
+  const { hidden: hiddenAll, measured } = useOverflow(rowRef, layoutKey);
   // 옮김은 정상 · 모름 칩만(주의 · 경고는 늘 줄에) — 마지막 측정 뒤 pinned 가 된 칩은 다음 측정 전에도 보인다
   const hidden = chips.filter((x) => hiddenAll.has(x.key) && !x.pinned);
   useEffect(() => {
@@ -148,8 +155,11 @@ export function StatusBarView({ input, inv }: { input: StatusInput; inv: WsInval
   const hiddenNames = hidden.map((x) => x.label).join(" · ");
   return (
     <div className="relative shrink-0 border-b border-line bg-bg-1" data-testid="statusbar" role="group" aria-label="수집·연결 상태">
-      <div ref={rowRef} className="relative flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-[3px] text-[11px]" data-testid="statusbar-row">
-        <span className={`badge ${c.tone}`} data-testid="conn" title={c.title} data-pin="">{c.text}</span>
+      {/* 처음 잴 때까지(서버 HTML · 하이드레이션 전)는 한 줄로 자른다(flex-nowrap · overflow-hidden) — 좁은 창에서 두세 줄로 그렸다가 줄어드는 일이 없다.
+          잰 뒤에는 줄바꿈을 허용한다(주의 · 경고만으로 넘칠 때 — 잘리지 않게) */}
+      <div ref={rowRef} className={`relative flex min-h-8 items-center gap-x-2 gap-y-1 px-3 py-[3px] text-[11px] ${measured ? "flex-wrap" : "flex-nowrap overflow-hidden"}`}
+        data-testid="statusbar-row" data-measured={measured ? "true" : undefined}>
+        <span className={`badge ${c.tone} shrink-0 whitespace-nowrap`} data-testid="conn" title={c.title} data-pin="">{c.text}</span>
         {invAny ? <span className="flex shrink-0" data-pin=""><WsInvalidBadge inv={inv} /></span> : null}
         {fixture ? <span className="badge warn shrink-0 whitespace-nowrap" data-testid="fixture-badge" data-pin="" title="api 가 fixture 모드 — 외부 공급자를 부르지 않고 기록된 자료를 재생합니다">FIXTURE MODE · 외부 호출 없음</span> : null}
         {gapOpen ? (
