@@ -269,6 +269,13 @@ describe("R-18 ops pipeline tab: loss counters are visible, unknown is —", () 
     expect(html).toContain("09-28 10:02:00 KST");
     expect(opsLib.lastTrimLoss({ api: { last_stream_trim_loss: { stream: "wakeline:ships", from: 5, to: "x" } } })).toBeNull();
   });
+  it("a trim start that cannot be read is \"—\" in the text and the tooltip (never the word undefined)", () => {
+    const badStart = { ...resp, api: { ...resp.api, last_stream_trim_loss: { stream: "wakeline:ships", from: "garbage", to: "2026-09-28T01:02:00Z" } } };
+    const html = renderToStaticMarkup(createElement(pipelineView.OpsPipeline, { data: badStart }));
+    expect(html).not.toContain("undefined");
+    expect(html).toContain('title="— – 원본 UTC 2026-09-28T01:02:00.000Z"');
+    expect(html).toContain("wakeline:ships · — – 09-28 10:02:00 KST");
+  });
 });
 
 describe("R-35 settings: the version is taken when editing starts, so a refresh cannot defeat If-Match", () => {

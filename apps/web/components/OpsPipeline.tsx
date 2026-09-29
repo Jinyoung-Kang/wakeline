@@ -30,7 +30,7 @@ export function OpsPipeline({ data }: { data: unknown }) {
       <div className="mt-3 text-[11px]" data-testid="ops-pipeline-trim">
         <span className="label mr-2">마지막 트림 손실</span>
         {trim ? (
-          <span className="mono text-bad" title={`${trim.from ? fmtUtcTitle(trim.from) : "시작 모름"} – ${fmtUtcTitle(trim.to) ?? "—"}`}>
+          <span className="mono text-bad" title={`${trim.from ? fmtUtcTitle(trim.from) ?? "—" : "시작 모름"} – ${fmtUtcTitle(trim.to) ?? "—"}`}>
             {trim.stream} · {trim.from ? fmtTimeKstLabel(trim.from) : "시작 모름"} – {fmtTimeKstLabel(trim.to)}
           </span>
         ) : <span className="text-fg-3">기록 없음</span>}
