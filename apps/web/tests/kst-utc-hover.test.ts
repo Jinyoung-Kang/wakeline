@@ -77,28 +77,28 @@ const WX = {
   history: [{ obs_time: "2026-09-28T23:30:00Z", flight_cat: "VFR", wind_dir: 270, wind_kt: 10, vis_raw: "6+", ceiling_ft: null, temp_c: 18 }],
 };
 
-describe("airport: every KST time carries the original UTC; the raw METAR is labelled as UTC on both views", () => {
-  it("airport card: observation and reception rows have the original UTC on hover", async () => {
+describe("airport: every time is KST with the full KST instant on hover; the raw METAR is labelled on both views", () => {
+  it("airport card: observation and reception rows have the full KST instant on hover", async () => {
     at("2026-09-28T23:40:00Z");
     stub({ "/api/v1/airports/RKSI/wx": WX });
     const { AirportCard } = await import("@/components/AirportCard");
     await mount(createElement(AirportCard, { icao: "RKSI" }));
-    expect(dom.container.textContent).toContain("관측09-29 08:30:00 KST · 09-28 23:30:00 UTC");
-    expect(missingUtc()).toEqual([]);
+    expect(dom.container.textContent).toContain("관측09-29 08:30:00 KST");
+    expect(domUtcLeaks(dom.container)).toEqual([]);
     const titles = all((e) => e.getAttribute("title") != null).map((e) => e.getAttribute("title"));
-    expect(titles).toContain("원본 UTC 2026-09-28T23:30:00.000Z");
-    expect(titles).toContain("원본 UTC 2026-09-28T23:31:00.000Z");
+    expect(titles).toContain("2026-09-29 08:30:00.000 KST");
+    expect(titles).toContain("2026-09-29 08:31:00.000 KST");
   });
-  it("airport page: the raw METAR has a visible '(원문 · UTC)' label like the TAF next to it", async () => {
+  it("airport page: the raw METAR has a visible '(원문 · 발표 그대로)' label like the TAF next to it", async () => {
     at("2026-09-28T23:40:00Z");
     stub({ "/api/v1/airports/RKSI/wx": WX });
     const AirportPage = (await import("@/app/airports/[icao]/page")).default;
     await mount(createElement(AirportPage, { params: Promise.resolve({ icao: "rksi" }) }));
     const labels = all((e) => /\blabel\b/.test(e.getAttribute("class") ?? "")).map((e) => e.textContent);
-    expect(labels).toContain("METAR (원문 · UTC)");
-    expect(labels).toContain("TAF (원문 · UTC)");
+    expect(labels).toContain("METAR (원문 · 발표 그대로)");
+    expect(labels).toContain("TAF (원문 · 발표 그대로)");
     expect(all((e) => e.tagName === "PRE").map((p) => p.textContent)).toEqual([METAR, TAF]); // 원문은 글자 그대로
-    expect(missingUtc()).toEqual([]);
+    expect(domUtcLeaks(dom.container)).toEqual([]);
   });
 });
 
