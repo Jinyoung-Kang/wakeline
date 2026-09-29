@@ -200,3 +200,52 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     아니면 `ok`(시간 트림 `MINID ~` 은 대략이라 조금 짧은 것은 정상 — 웹 `STREAM_WINDOW_SLACK_S`) · w < t 이고 n = 0 → `muted` `채우는 중`(기동 직후 등).
   - `stream_budget_trims`(collector · ais)는 손실(loss)이 아니라 누계(count)로 보인다 — 빨간색이 아니고, pipeline 탭의 빨간 배지는 손실(loss) 지표만 센다.
     탭 설명: 빨간 값 = 0 이 아닌 손실 지표 · 주황 = 예산 때문에 짧아진 스트림 보존 창(손실 아님).
+
+## G. 6차 개정(2026-09-29 · 레인 api-resolve · 사용자 요청 "해결 완료된 [운영/로그] 메뉴에 있는 error 는 지우는 기능") — 해결 표시: 지우지 않고 가린다
+- G13(§C4 · §C7 · §D · ADR-022) **해결 표시** — 운영자가 로그 묶음(fp) · 공급자 오류를 "upto 까지 해결됨" 으로 적고, 조회가 그 이하를 가린다.
+  **증거는 지우지 않는다**: 로그 스트림(`wakeline:logs` · `wakeline:logs:client`) · `ingest_run` · 공급자 해시(`wakeline:provider:{name}`)는 그대로이고
+  지금처럼 나이 들어 사라진다(스트림 MAXLEN · 보존 정리 · 다음 실패가 덮어씀). 가린 것은 `resolved=show` 로 언제든 다시 본다.
+  - 원본 **V13** `ops_resolution(id bigserial PK, kind text CHECK IN ('log_group','provider_error'), key text NOT NULL, upto timestamptz NOT NULL,
+    resolved_at timestamptz NOT NULL DEFAULT now(), resolved_by text NOT NULL, note text(≤ 200자), revoked_at timestamptz NULL, revoked_by text NULL)`.
+    더한 제약: `log_group` 의 key 는 fp 모양(`^[0-9a-f]{16}$`) · key 1–64자 · resolved_by 빈 글 아님 · revoked_at 과 revoked_by 는 함께. 부분 인덱스
+    `ops_resolution_active (kind, key) WHERE revoked_at IS NULL`. 권한(V9 뒤 명시 GRANT): api 는 SELECT · INSERT 와 **`revoked_at` · `revoked_by` 열의 UPDATE 만**
+    (지우지 않고, 이미 적은 kind · key · upto · 메모 · 사람은 고치지 못한다 — 감사와 같은 증거) · 시퀀스 USAGE, collector 는 없음. 되돌리기 SQL 은 머리 주석
+    (`DROP TABLE ops_resolution` + 이력 행 — 가림이 없어져 모든 오류가 다시 보인다, 감사 행은 남는다).
+  - `POST /api/v1/ops/resolutions` 본문 `{"kind","key","upto"?,"note"?}`(JSON 만 — 그 밖 415) → **201** `{"id","kind","key","upto","resolved_at","resolved_by","note"}`
+    (note 가 없으면 명시적 null, resolved_by = 운영자 이름). 운영 세션 + CSRF(다른 운영 쓰기와 같다 — 익명 쓰기는 CSRF 가 먼저라 403, CSRF 쌍을 갖춘 익명은 404).
+    본문 규칙(틀리면 400 problem+json `BAD_RESOLUTION`): 모르는 필드 · 같은 키 두 번 · JSON 아님 · 4,096자 초과는 틀림(오타가 조용히 기본값 — "지금까지 모두" — 이
+    되지 않게) · kind 는 두 값 · key 는 kind 에 맞게(fp 16자리 소문자 16진 | 운영 공급자 이름 `StatusService.PROVIDERS`, 앞뒤 공백도 틀림) · upto 는 시간대가 있는
+    ISO 시각(없거나 null 이면 api 의 지금), **미래는 틀림** · 2000-01-01 이전은 틀림 · μs 로 자른다(DB 정밀도 — 발생 ts 는 μs 이하라 자르면서 덮던 발생을 놓치지
+    않는다) · note 는 앞뒤 공백을 뗀 200 글자(코드 포인트) 이하 한 줄(제어 문자 없음), 빈 글이면 null.
+    웹은 upto 를 보내지 않거나(지금) 항목 · 묶음의 `ts` · `last_at`(서버 시계)을 보낸다 — 브라우저 시계로 만든 시각은 미래일 수 있다.
+  - `GET /api/v1/ops/resolutions` → `{"items":[활성 해결, 최신 순(resolved_at, id 내림차순)], "resolution_state"}`. 해결 기록을 한 번도 읽지 못했으면
+    503 `UNAVAILABLE`(빈 목록으로 "해결 없음" 을 지어내지 않는다).
+  - `DELETE /api/v1/ops/resolutions/{id}` → **204**(revoked_at = now() · revoked_by = 운영자, 행은 남는다). 없는 id · 이미 되돌린 행은 404(두 요청이 겹쳐도 한 번만).
+  - 감사: `RESOLVE`(target `kind:key`, before null, after = 행) · `UNRESOLVE`(target `kind:key`, before = 행, after `{id, revoked_at, revoked_by}`) —
+    **행과 같은 트랜잭션**(감사가 실패하면 해결 · 되돌림도 없다. OpsResolutionsIT 가 두 행의 xmin 이 같음을 본다).
+  - 뜻: 항목(발생)은 그 key 의 **유효 해결**의 upto ≥ 발생 시각이면 해결됨이다. 유효 해결 = 그 kind · key 의 활성 행 중 upto 가 가장 늦은 행(같으면 id 가 큰 행) —
+    같은 key 에 활성 행이 여럿일 수 있고, 가장 최근 해결을 되돌리면 앞선 해결의 범위로 돌아간다(그 사이의 발생만 다시 보인다). **upto 뒤의 새 발생은 해결되지 않은
+    것**으로 다시 보인다(재발을 숨기지 않는다).
+  - 로그: `GET /api/v1/ops/logs` · `/ops/logs/groups` 에 `resolved=hide|show`(기본 hide, 대소문자 · 앞뒤 공백 무시, 그 밖 400 `BAD_RESOLVED`).
+    - 목록 항목마다 `"resolved": {"id","upto","resolved_by"} | null`(키는 늘 있다). hide 면 해결된 항목은 빠지고 응답 `"hidden_resolved"` = 이 쪽을 훑으며 가린 수
+      (다른 필터에 맞은 것만) — 가린 항목은 쪽 크기(limit)를 쓰지 않고 훑은 수(`scanned`)에는 든다(훑기 상한 4,200 은 그대로).
+    - 묶음은 보이는 항목만 센다(hide 면 재발한 묶음은 upto 뒤의 항목만 — count · first_at · suppressed, 모두 해결된 묶음은 없다). 묶음의 `resolved` = 그 묶음의
+      **모든** 항목이 해결됐을 때 그 해결, 아니면 null(hide 면 늘 null). 맨 위 항목 하나로 정하지 않는다 — 뒤늦게 실린 항목(§G9)은 스트림 순서와 ts 가 다를 수 있다.
+    - `GET /api/v1/ops/logs/{id}` 는 해결 여부와 무관하게 항목을 돌려주고 `resolved` 를 싣는다.
+    - 목록 · 묶음 응답에 `"resolution_state"`: `ok`(DB 에서 읽은 해결) · `stale`(DB 를 읽지 못해 마지막으로 읽은 해결로 가림) · `unavailable`(한 번도 읽지 못함 —
+      아무것도 가리지 않는다). 가림이 조용히 바뀌지 않게 웹이 ok 가 아니면 알린다.
+  - 공급자: `GET /api/v1/ops/providers` 의 `providers[]` 마다 `"last_error_resolution": {"id","upto","resolved_by"} | null`(키는 늘 있다 — 유효한 provider_error 해결,
+    지금 오류를 덮는지와 무관) · `"last_error_resolved"`: 유효 해결의 upto ≥ `last_error_at` 이면 true, 아니면 false(해결 없음 · `last_error_at` 없음 · 형식이 틀림 —
+    모르는 오류를 해결됨으로 보이지 않는다). 해시의 `last_error` 등은 그대로. 응답에 `"resolution_state"`.
+  - 실행: `GET /api/v1/ops/runs` 에 `resolved=hide|show`(기본 hide, 같은 400 규칙). hide 면 `summary_24h` 에서 유효한 provider_error 해결이 있는 공급자의
+    **status `'error'`** 실행 중 started_at ≤ upto 를 셈(n) · `last_at` · `avg_latency_ms` 에서 빼고 `"hidden_resolved_errors"`(뺀 실행 수, show 면 0)로 센다 —
+    n 이 0 이 된 행은 없다. 공급자 오류는 `'error'` 만이다(collector 가 `status.failure` 로 `last_error` 를 쓰는 실행과 같다) — ok · throttled · budget_* 행은 그대로.
+    실행 목록 `items` 는 증거라 가리지 않는다. 해결은 요약과 같은 문장에서 DB 로 읽는다(캐시 없이). `last_at` 표기는 지금과 같다(ms).
+  - 캐시 · 장애: api 는 활성 해결 전체를 **5 s 이하** 캐시하고 쓰기(해결 · 되돌림) 뒤 바로 버린다 — 쓴 운영자의 다음 조회가 바로 반영한다. 캐시를 채우는 읽기와 겹친
+    쓰기는 세대 번호로 가려 옛 값이 남지 않는다. 읽기는 3 s 상한, 실패하면 위 `stale`/`unavailable` 로 답하고 30 s 뒤 다시 읽는다(요청마다 느린 DB 를 기다리지
+    않는다 — 로그 조회는 Redis 만으로 DB 장애 중에도 된다). 실패는 WARN(처음 · 그 뒤 60 s 마다)으로 시스템 로그에 남고 회복은 INFO. api 는 한 인스턴스다
+    (SingleInstanceGuard) — 여럿이면 다른 인스턴스는 5 s 안에 반영한다.
+  - 시험: MigrationDbTest(V13 열 · 제약 · 권한 · 되돌리기 · 다시 적용) · RolePrivilegesDbTest(표 스냅샷 `SELECT,INSERT` + 열 UPDATE 스냅샷) · ResolutionServiceTest
+    (본문 규칙 · 유효 해결 · 캐시 5 s · 쓰기 뒤 버림 · 겹친 읽기 · stale/unavailable · 30 s) · ResolutionDbTest(감사와 한 트랜잭션 · 되돌림은 행을 남김 · 404) ·
+    LogReaderTest · LogsControllerTest(hide/show · 가린 수 · 쪽 크기 · 묶음 규칙 · 뒤늦게 실린 항목) · ResolutionControllerTest(201 · 415 · 400 · 404 · 503 · stale) ·
+    OpsResolutionsIT(세션 · CSRF · 해결 → 재발 → 되돌림 · 공급자 · 실행 요약 · 같은 xmin). REST 계약 표본(rest_contract_check)은 운영 경로를 싣지 않는다(익명 404 표본만).

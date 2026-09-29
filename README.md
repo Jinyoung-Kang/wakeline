@@ -19,7 +19,7 @@
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 3,100건(pytest 1,054 · JUnit 703 · Vitest 788 · Playwright E2E 16 · 인프라 정책 118 · 버리는 컨테이너 시험 421) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 45건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 520.6 KiB(리뷰 v1 뒤 497.7 → 계약 v5 의 통합 검색·선박 표·이중 단위·브라우저 오류 보고와 오류 화면·WS 검증으로 +22.9 KiB — 목표 400 KB 미충족, 목표 재설정은 사용자 결정 대기) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 21건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 22건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -81,7 +81,7 @@ flowchart LR
 - **최소 권한**: DB 역할 3개(migrator · api · collector), 파티션은 SECURITY DEFINER 함수로만, 슈퍼유저는 로컬 소켓 전용. Redis ACL 사용자 3개(키 패턴 제한 · collector·ais 는 실제로 쓰는 명령만 허용 목록 — 스트림 삭제·이름 변경 불가, `SCAN`·`CLIENT TRACKING` 금지 — 세션 키 이름 유출 경로 차단).
 - **망 분리**: web · api · db · redis 는 인터넷에 닿지 않는 internal 망에만 있고, 외부 호출은 collector · ais 만(egress 망). edge 는 게시 포트 때문에 일반 bridge 에 있어 설정(upstream api·web 뿐, resolver 없음 — 정책 시험)으로 외부 호출을 막는다.
 - **운영 API**: 세션 + CSRF 이중 제출 + If-Match 낙관적 잠금, 비인가는 404, 로그인 실패 잠금·감사 기록(변경과 감사가 한 트랜잭션). 세션은 로그인부터 8 h 절대 수명이고, 로그인 때 확인한 비밀번호에 묶여 비밀번호를 바꾸면 다음 요청에서 끝난다. 경로 판단은 인가 규칙과 같은 매처(인코딩한 경로로 우회 불가 — 시험으로 고정).
-- **시스템 로그**(ADR-018): 비밀값(키·토큰·비밀번호·URL 의 `key=` 등)은 Redis 에 싣기 전에 가린다 — Java 와 Python 이 같은 표본으로 결과가 같은지 시험. collector·ais 는 로그 스트림에 쓰기만 가능(ACL). 브라우저 오류는 IP당 제한 + 별도 스트림(`wakeline:logs:client`)이라 익명 입력이 서버 오류를 밀어내지 못한다. 조회는 운영자만.
+- **시스템 로그**(ADR-018): 비밀값(키·토큰·비밀번호·URL 의 `key=` 등)은 Redis 에 싣기 전에 가린다 — Java 와 Python 이 같은 표본으로 결과가 같은지 시험. collector·ais 는 로그 스트림에 쓰기만 가능(ACL). 브라우저 오류는 IP당 제한 + 별도 스트림(`wakeline:logs:client`)이라 익명 입력이 서버 오류를 밀어내지 못한다. 조회는 운영자만. 해결한 오류는 지우지 않고 가린다(ADR-022): 운영자가 로그 묶음(fp) · 공급자 오류를 "upto 까지 해결" 로 적으면 그 이하만 숨기고 가린 수를 알리며, upto 뒤의 재발은 다시 보인다 — 증거(스트림 · 실행 기록)는 그대로, 되돌리기 · 감사(한 트랜잭션) · `resolved=show` 로 다시 보기.
 - **컨테이너**: 비root · read-only 루트 · `cap_drop: ALL` · no-new-privileges · 메모리·PID 상한 · 이미지 다이제스트 고정. 화면은 CSP nonce.
 
 ## 4. 정직성(구현에 박힌 규칙)
