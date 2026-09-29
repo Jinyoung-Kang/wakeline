@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
+import { useServerNow } from "@/lib/clock";
 import { fmtMinuteKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
+import { krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
@@ -19,6 +21,8 @@ function krUnavailableText(d: KrRadar | null): string {
 /**
  * 레이더 타임라인(FR-06): 과거 2 h · 10분 간격 프레임. 지도는 현재 프레임만 받아 그리고(PERF-12), 재생 중에만 다음 프레임을 미리 받는다.
  * RainViewer 는 커버리지 밖을 회색으로 가려 "에코 없음"과 구분한다(GAP-15).
+ * 기상청(ADR-021): 지금 프레임의 합성 크기("합성 12/15곳")와 부분 합성 경고, 프레임 띠(프레임마다 완전 · 부분 합성 · 모름)를 함께 보인다 —
+ * 부분 합성 프레임은 실자료라 숨기지 않지만 완전한 것처럼 보이지 않게.
  */
 export function RadarTimeline() {
   const radar = useServerData((d) => d.radar);
@@ -48,6 +52,9 @@ export function RadarTimeline() {
   const time = kma ? undefined : radar?.past[cur]?.time;
   const krTm = kma ? radarKr?.frames[cur]?.tm : undefined;
   const krAvailable = !!radarKr?.available && (radarKr?.frames.length ?? 0) > 0;
+  const srvNow = useServerNow(30_000);
+  const krFrames = kma && krAvailable && radarKr ? radarKr.frames : null;
+  const comp = krFrames ? krComposite(krFrames[cur], srvNow) : null;
   // 프레임 시각은 둘 다 한국 표준시 "MM-DD HH:MM KST": RainViewer 는 epoch 초(UTC 순간)를 KST 로 바꾸고, 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
   // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
   const label = kma
@@ -68,6 +75,19 @@ export function RadarTimeline() {
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
       <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
+      {comp ? <span className={`mono text-[11px] ${comp.warn ? "text-warn" : "text-fg-2"}`} title={comp.title} data-testid="kr-frame-composite">{comp.label}</span> : null}
+      {comp?.warn ? <span className="badge warn normal-case!" title={comp.warn} data-testid="kr-frame-partial">일부 합성</span> : null}
+      {krFrames ? (
+        <span className="flex h-3 items-stretch gap-px" data-testid="kr-frame-strip" role="img" aria-label={`프레임별 합성 상태 — 부분 합성 ${krPartialSummary(krFrames)}`}
+          title={`프레임별 합성 상태(왼쪽이 오래된 프레임): 주황 = 일부 지점만 합성, 녹색 = 완전, 회색 = 모름 · 부분 합성 ${krPartialSummary(krFrames)}`}>
+          {krFrames.map((f, i) => {
+            const c = krComposite(f, srvNow);
+            const st = c.state === "full" ? "full" : c.state === "unknown" ? "unknown" : "partial";
+            return <span key={f.tm} data-kr-frame={f.tm} data-state={st} title={`${krTmClock(f.tm)} · ${c.label}${c.warn ? ` · ${c.warn}` : ""}`}
+              className={`w-1.5 ${st === "partial" ? "bg-warn" : st === "full" ? "bg-ok/60" : "bg-fg-3/40"} ${i === cur ? "outline outline-1 outline-fg" : ""}`} />;
+          })}
+        </span>
+      ) : null}
       {kma && !krAvailable
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}

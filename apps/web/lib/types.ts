@@ -156,6 +156,29 @@ export interface SigmetProps {
   pending?: boolean;
 }
 
+/**
+ * 기상청 합성 레이더 프레임(/api/v1/radar/kr frames[]). 합성 지점 필드(ADR-021)는 수집기가 기록한 값 그대로 — 없으면 모름(옛 프레임).
+ * stations = 헤더 STN_LIST 의 레이더 지점 수, stations_ref = 기준(지난 60분 저장 프레임 중 최대 — 수집기 선택값), partial = stations < stations_ref.
+ */
+export interface KrRadarFrame {
+  tm: string;
+  obs_tm: string;
+  fetched_at: string;
+  echo_cells: number;
+  /** 영상 URL — 받은 시각을 알면 ?v=<epoch ms>(다시 받아 바뀐 영상이 캐시의 옛 영상으로 보이지 않게) */
+  url: string;
+  stations?: number | null;
+  station_ids?: string[] | null;
+  stations_ref?: number | null;
+  partial?: boolean | null;
+  /** 부분 합성이라 다시 받은 횟수 · 지점이 늘어 바꾼 횟수 */
+  refetches?: number | null;
+  upgrades?: number | null;
+  refetched_at?: string | null;
+  /** 수집기가 이 프레임을 다시 받을 수 있는 마지막 순간(UTC ISO) — 지나면 '끝까지 채워지지 않음' */
+  refetch_until?: string | null;
+}
+
 export interface KrRadar {
   available: boolean;
   status?: string | null;
@@ -168,8 +191,12 @@ export interface KrRadar {
   grid?: { nx: number; ny: number; res_m: number; ref: number[] } | null;
   legend: [number, number[]][] | null;
   min_dbz?: string | null;
-  stations?: string | null;
-  frames: { tm: string; obs_tm: string; fetched_at: string; echo_cells: number; url: string }[];
+  /** 최신 프레임(frames 의 마지막)의 합성 지점 수 · 코드 · 기준 · 부분 합성(ADR-021) — 모르면 없음 */
+  stations?: number | null;
+  station_ids?: string[] | null;
+  stations_ref?: number | null;
+  partial?: boolean | null;
+  frames: KrRadarFrame[];
   attribution: string;
   meta: { fetched_at: string | null; stale: boolean };
 }

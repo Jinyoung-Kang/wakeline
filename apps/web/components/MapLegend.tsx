@@ -1,4 +1,5 @@
 "use client";
+import { KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
 import { saveShipCats } from "@/lib/prefs";
 import { useUi, type Layers } from "@/lib/ui-store";
@@ -202,6 +203,8 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
               </li>
               <Row swatch={<span className="legend-sw" style={{ background: "rgba(90,90,90,0.5)" }} />}>관측 범위 안 · 에코 없음</Row>
               <Row swatch={<span className="legend-sw border border-line-2" />}>관측 범위 밖(투명) — 자료 없음</Row>
+              <Row wide swatch={<span className="mono text-[9px] text-fg-2">N/M</span>}>합성 N/M곳 — 프레임 헤더의 레이더 지점 수 / 기준(지난 {KR_REF_WINDOW_MIN}분 저장 프레임 중 최대, 수집기 선택값). 모르면 —</Row>
+              <Row wide swatch={<span className="badge warn px-1 text-[9px]">일부</span>}>일부 합성 — 기상청이 아직 채우는 중인 프레임(실자료라 숨기지 않음). 수집기가 기한까지 다시 받아 지점이 늘면 바꾼다</Row>
             </> : <li className="text-fg-3">기상청 레이더 사용 불가</li>
           ) : hasRv ? <>
             <Row swatch={<span className="legend-sw" style={{ background: "#5a5a5a", opacity: 0.8 }} />}>커버리지 밖(회색) — 레이더 자료 없음</Row>
