@@ -25,8 +25,10 @@ public class StatusService {
     /**
      * 운영 화면 공급자(상태 해시 wakeline:provider:{name} · 켜고 끄기는 감사 기록과 함께 — OpsController). adsbdb = 선택 항공기 노선 조회
      * (계약 v4 §G A-2 — 끄면 수집기가 묻지 않고 노선 상태는 disabled). 해시에는 호출 시각·지연·건수·오류·예산만 있고 노선 내용은 없다(ADR-016).
+     * komsa_traffic · mof_grid4 = 연안 교통량(ADR-023 — 해양교통안전공단 실시간 해양교통정보 · 해양수산부 격자4단계 WFS). 끄면 그 부분만 멈춘다
+     * (교통을 끄면 /traffic/grid 가 disabled · operator_off, 격자를 끄면 모르는 칸을 채우지 않는다).
      */
-    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb", "fixture");
+    public static final List<String> PROVIDERS = List.of("adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "adsbdb", "komsa_traffic", "mof_grid4", "fixture");
     private final SnapshotStore snapshots;
     private final SigmetStore sigmets;
     private final RadarStore radar;
