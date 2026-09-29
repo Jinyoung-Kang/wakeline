@@ -126,6 +126,26 @@ class ShipPersistDbTest {
         assertThat(TrackWriter.isPermanent(raw)).isTrue();
     }
 
+    /**
+     * 재현(고치기 전): Class B 의 부분 정적 정보가 저장된 값을 지운다. 24A · 24B 를 모두 받아 저장한 선박(호출부호 BX12 · 선종 37 · 크기)이 ais 재시작 뒤
+     * 24A(선명)만 먼저 발행되면 — 수집기 ShipBook 이 빈 레코드에서 시작해 나머지 칸은 None — STATIC_SQL 이 모든 열을 덮어 호출부호 · 선종 · 크기가 NULL 이 된다
+     * (24B 가 오기 전에 선박이 사라지면 영구히). 고치기 전 관찰을 단언한다(xfail strict — 고칠 때 뒤집는다).
+     */
+    @Test void statics_aClassB24aAloneAfterARestart_erasesTheStoredCallSignAndSize_reproduction() {
+        ShipStatic both = new ShipStatic("440000071", "BLUE HOLE", "BX12", null, 37, 10, 5, 2, 3, null, null, null, null, null, null, W, "aisstream");
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(both, W)));
+        ShipStatic nameOnly = new ShipStatic("440000071", "BLUE HOLE", null, null, null, null, null, null, null, null, null, null, null, null, null,
+                W.plusSeconds(3600), "aisstream");
+        repo.upsertStatics(List.of(new ShipRepository.StaticRow(nameOnly, W.plusSeconds(3600))));
+        ShipStatic after = repo.find("440000071").stat();
+        assertThat(after.name()).isEqualTo("BLUE HOLE");
+        assertThat(after.updatedAt()).isEqualTo(W.plusSeconds(3600));
+        // 고치기 전(재현): 받지 않은 24B 부분이 NULL 로 덮였다
+        assertThat(after.callSign()).isNull();
+        assertThat(after.shipType()).isNull();
+        assertThat(after.dimA()).isNull();
+    }
+
     /** V7(계약 v3 §B): 위치 출처를 모르면 NULL 로 저장되고 NULL 로 읽힌다. */
     @Test void positions_unknownPositionSourceIsStoredAsNull() {
         ShipState p = pos("440000008", W.plusSeconds(5), 35.1);
