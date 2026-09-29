@@ -40,6 +40,8 @@ describe("alert banner: the key facts are readable (two lines), the full sentenc
     expect(textOf(lines[0])).toMatch(/PREDICTED\s*진입 예상\(추정\) · AAL2646/);
     expect(textOf(lines[1])).toContain("TS EMBD · MMEX");
     expect(textOf(byTestId(b, "alert-banner-time")!)).toBe("수신 02:43:56 KST");
+    // 보인 시각에 마우스를 올리면 같은 순간 전체(연도 · ms, KST) — KST 레인의 규칙(모든 보인 시각에 전체 순간)과 같은 모양
+    expect(byTestId(b, "alert-banner-time")!.attrs.title).toBe("2026-09-30 02:43:56.000 KST");
     expect(textOf(b)).not.toContain("UTC");
     // 줄 전체를 한 번에 자르지 않는다(전에는 banner 자체가 truncate)
     expect(classes(b).has("truncate")).toBe(false);

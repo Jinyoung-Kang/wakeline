@@ -94,6 +94,11 @@ export function kstAt(v: TimeIn, nowMs: number, o: { seconds?: boolean } = {}): 
   return dualPair(v, { date: !sameDay, seconds: o.seconds !== false })?.kst ?? "—";
 }
 
+/** 마우스를 올렸을 때의 같은 순간 전체 "2026-09-30 02:43:23.000 KST"(연도 · ms — KST 레인의 보인 시각 title 과 같은 모양). 모르면 undefined */
+const kstFull = (v: TimeIn): string | undefined => dualPair(v, { year: true, ms: true })?.kst;
+/** "앞말 + 전체 순간" title — 모르면 undefined(title 없음) */
+const fullTitle = (lead: string, v: TimeIn): string | undefined => { const f = kstFull(v); return f ? `${lead} ${f}` : undefined; };
+
 /** 초까지의 KST 구간 "09-29 10:00:00 – 09-29 10:00:42 KST"(날짜는 늘 — 상세 표 · 툴팁). 한쪽이라도 모르면 "—" */
 function kstSpan(a: TimeIn, b: TimeIn): string {
   const x = dualPair(a), y = dualPair(b);
@@ -320,6 +325,8 @@ export interface DetailRow {
   value: string;
   valueTitle?: string;
   source: string;
+  /** 출처 칸의 시각을 전체 순간(연도 · ms)으로 — 모르면 없음 */
+  sourceTitle?: string;
   rule: string;
 }
 
@@ -341,7 +348,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
     const chip = chips.get(k)!;
     rows.push({
       key: k, name, health: chip.health, state: stateOf(k), value: chip.value,
-      source: feed ? `${feed.provider ?? "공급자 —"} · 수집 ${kstAt(feed.fetched_at, i.srvNowMs)}` : "—",
+      source: feed ? `${feed.provider ?? "공급자 —"} · 수집 ${kstAt(feed.fetched_at, i.srvNowMs)}` : "—", sourceTitle: fullTitle("수집", feed?.fetched_at),
       rule: `경고 > ${limit} s(서버 판정 포함)`,
     });
   }
@@ -360,19 +367,20 @@ export function detailRows(i: StatusInput): DetailRow[] {
     state: g ? (g.open ? `진행 중${g.zones ? ` · ${g.zones.open}/${g.zones.total} 구역` : ""}` : "끝남") : i.ais ? "기록 없음" : "—",
     value: g ? fmtDuration(g.durationS) : "—", valueTitle: g?.title,
     source: g ? `${g.span}${g.reason ? ` · ${g.reason}` : ""}` : "—",
+    sourceTitle: g?.startedAt ? `${kstFull(g.startedAt) ?? "—"} – ${g.open ? "진행 중" : kstFull(g.endedAt) ?? "—"}` : undefined,
     rule: `줄에는 진행 중이거나 끝난 뒤 ${AIS_GAP_SHOW_MS / 60_000}분까지(계약 v2 §B4) · status 는 마지막 하나만 — 이력은 로그 메뉴의 AIS 수신 공백 탭`,
   });
   const sg = i.status?.sigmet;
   rows.push({
     key: "sigmet", name: "SIGMET", health: healthOf("sigmet"), state: stateOf("sigmet"),
     value: `${sg?.active == null ? "active —" : `${sg.active} active`} · ${chips.get("sigmet")!.value}`,
-    source: `${i.sigmetsProvider === "-" ? "공급자 —" : i.sigmetsProvider} · 수집 ${kstAt(i.sigmetsFetchedAt, i.srvNowMs)}`,
+    source: `${i.sigmetsProvider === "-" ? "공급자 —" : i.sigmetsProvider} · 수집 ${kstAt(i.sigmetsFetchedAt, i.srvNowMs)}`, sourceTitle: fullTitle("수집", i.sigmetsFetchedAt),
     rule: `오래됨 > ${SIGMET_STALE_S} s(api status)`,
   });
   rows.push({
     key: "radar", name: "레이더 · RainViewer", health: healthOf("radar"), state: stateOf("radar"),
     value: `${i.radar ? `${i.radar.past.length} frames` : "frames —"} · ${chips.get("radar")!.value}`,
-    source: `${i.radar?.provider ?? "rainviewer"} · 수집 ${kstAt(i.radar?.fetched_at, i.srvNowMs)}`,
+    source: `${i.radar?.provider ?? "rainviewer"} · 수집 ${kstAt(i.radar?.fetched_at, i.srvNowMs)}`, sourceTitle: fullTitle("수집", i.radar?.fetched_at),
     rule: `오래됨 > ${RADAR_STALE_S} s(api status)`,
   });
   const kr = i.radarKr;
@@ -381,7 +389,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
     rows.push({
       key: "kma", name: "레이더 · 기상청", health: healthOf("kma"), state: stateOf("kma"),
       value: `${kr.frames.length}f · 최신 tm ${kstAt(kstWallMs(kr.latest_tm), i.srvNowMs, { seconds: false })} · ${comp.label}`, valueTitle: comp.title,
-      source: `기상청 API허브 · 최신 tm 첫 수집 ${kstAt(kr.meta?.fetched_at, i.srvNowMs)}`,
+      source: `기상청 API허브 · 최신 tm 첫 수집 ${kstAt(kr.meta?.fetched_at, i.srvNowMs)}`, sourceTitle: fullTitle("최신 tm 첫 수집", kr.meta?.fetched_at),
       rule: `STALE > ${KR_RADAR_STALE_S / 60}분 · 합성 N/M곳(ADR-021)`,
     });
   } else {

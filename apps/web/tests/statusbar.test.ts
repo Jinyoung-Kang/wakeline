@@ -96,6 +96,17 @@ describe("the row: one chip per feed — name, state (colour and shape, a word w
     expect(all).not.toMatch(/UTC|\d\d:\d\dZ\b|\d\dZ\b/);
     expect(detailRows(i).find((r) => r.key === "region")!.source).toBe("adsb_fi · 수집 02:43:23 KST");
   });
+  it("상세 times carry the full KST instant on hover (year and ms) — the source column's title", () => {
+    const rows = Object.fromEntries(detailRows(input()).map((r) => [r.key, r]));
+    expect(rows.region.sourceTitle).toBe("수집 2026-09-30 02:43:23.000 KST");
+    expect(rows.world.sourceTitle).toBe("수집 2026-09-30 02:43:01.000 KST");
+    expect(rows.sigmet.sourceTitle).toBe("수집 2026-09-30 02:42:50.000 KST");
+    expect(rows.radar.sourceTitle).toBe("수집 2026-09-30 02:42:53.000 KST");
+    expect(rows.kma.sourceTitle).toBe("최신 tm 첫 수집 2026-09-30 02:35:32.000 KST");
+    expect(rows["ais-gap"].sourceTitle).toBe("2026-09-30 02:21:50.000 KST – 2026-09-30 02:22:32.000 KST");
+    // 모르면 title 없음(지어내지 않는다)
+    expect(detailRows(input({ sigmetsFetchedAt: null })).find((r) => r.key === "sigmet")!.sourceTitle).toBeUndefined();
+  });
 });
 
 describe("health thresholds are the existing ones (code and server), not new numbers", () => {

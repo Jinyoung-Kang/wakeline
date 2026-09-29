@@ -139,7 +139,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
       </div>
       <div className="truncate" data-line="sigmet">
         <span className="label mr-1">SIGMET</span>{sigmet}
-        {" · "}<span className="text-fg-3" data-testid="alert-banner-time">수신 {dualPair(at, { date: false })?.kst ?? "—"}</span>
+        {" · "}<span className="text-fg-3" data-testid="alert-banner-time" title={dualPair(at, { year: true, ms: true })?.kst}>수신 {dualPair(at, { date: false })?.kst ?? "—"}</span>
       </div>
     </div>
   );

@@ -205,7 +205,7 @@ function StatusDetails({ id, panelRef, rows, hiddenNames, onClose }: { id: strin
                 <span className={r.health && r.health !== "ok" && r.health !== "unknown" ? HEALTH_TEXT[r.health] : "text-fg-2"}>{r.state}</span>
               </td>
               <td className="mono" title={r.valueTitle} data-testid={r.key === "kma" ? "kr-status-composite" : undefined}>{r.value}</td>
-              <td className="text-fg-2">{r.source}</td>
+              <td className="text-fg-2" title={r.sourceTitle}>{r.source}</td>
               <td className="text-fg-3">{r.rule}</td>
             </tr>
           ))}
