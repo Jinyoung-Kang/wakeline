@@ -247,3 +247,61 @@ async def test_each_job_keeps_its_own_state(monkeypatch):
     clk.restart()
     glob2 = ProviderChain("global", {"a": g}, FakeStatus(), store=store)
     assert (await glob2.pick(["a"], need_global=True)).name == "a"  # 관심 지역의 429 이력은 전세계 체인에 옮지 않는다
+
+
+# ---- 단계 상한(리뷰): 이력이 재시작을 넘어 이어지므로 단계가 끝없이 커질 수 있었다(1025단계에서 60 × 2**1024 → OverflowError) --------
+def test_stage_is_capped_in_memory(monkeypatch):
+    """15분 조용함 없이 429 가 2000번 이어져도(다른 공급자 없음) 쉼·미룸은 상한(300 s · 60분)에 머물고 예외가 나지 않는다."""
+    clk = Clocks(monkeypatch)
+    chain = ProviderChain("region", {"a": P("a")}, FakeStatus())
+    for _ in range(2000):
+        assert chain.record_rate_limited("a") <= 300
+        clk.advance(1)
+    assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 3600
+    # 쉼(4단계 · 300 s)·미룸(5단계 · 60분)이 모두 상한에 닿는 단계
+    assert fallback.STAGE_MAX == len(fallback.RATE_LIMIT_HOLD_S) + 1
+    assert chain._rate_limited["a"] == fallback.STAGE_MAX
+
+
+@pytest.mark.asyncio
+async def test_restored_oversized_stage_is_clamped(monkeypatch, caplog):
+    """망가졌거나 상한 전 코드가 남긴 큰 단계(5000)도 선택·429 기록을 깨뜨리지 않는다 — 상한 단계로 되살린다."""
+    caplog.set_level(logging.INFO, logger="fallback")
+    clk = Clocks(monkeypatch)
+    r = FakeRedis()
+    w = clk.wall
+    r.kv[KEY] = {
+        "v": "1",
+        "stage": "5000",
+        "last_429_at": str(w),
+        "backoff_until": str(w + 100),
+        "hold_until": "",
+        "hold_s": "0",
+        "quiet_from": str(w + 100),
+        "expires_at": str(w + 100 + RATE_LIMIT_RESET_S),
+    }
+    chain, st = _chain(r, clk)
+    assert (await chain.pick(["a", "b"])).name == "b"
+    assert st.active == [("b", "initial — a 429 쉼(300 s)(재시작 전 기록)")]
+    assert any("stage 5," in m for m in caplog.messages)
+    assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 3600
+    await chain.persist("a")
+    assert r.kv[KEY]["stage"] == str(fallback.STAGE_MAX)
+
+
+def test_saved_hold_length_outside_the_known_range_is_malformed():
+    w = 1_790_000_000.0
+    row = {
+        "v": "1",
+        "stage": "2",
+        "last_429_at": str(w),
+        "backoff_until": str(w + 100),
+        "hold_until": str(w + 500),
+        "hold_s": "1e300",
+        "quiet_from": str(w + 500),
+        "expires_at": str(w + 500 + RATE_LIMIT_RESET_S),
+    }
+    assert fallback.parse_saved(row, w) == (None, "format")
+    assert fallback.parse_saved({**row, "hold_s": "-5"}, w) == (None, "format")
+    saved, why = fallback.parse_saved({**row, "hold_s": "600"}, w)
+    assert why == "" and saved is not None and saved.hold_s == 600

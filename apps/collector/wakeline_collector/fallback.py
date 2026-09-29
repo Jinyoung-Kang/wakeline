@@ -2,8 +2,8 @@
 
 429 이력(R-17): 429 가 RATE_LIMIT_RESET_S(15분) 안에 되풀이되면 백오프(최대 300 s)가 끝난 뒤에도 그 공급자를 한동안
 뒤로 미룬다(hold: 10 → 20 → 40 → 60분). 그동안 다음 순위가 같은 주기로 맡는다. hold 는 차단이 아니라 선호도라서, 다른 공급자가
-하나도 없으면 백오프가 끝난 공급자를 그대로 쓴다. 15분 동안 429 없이 쓰이면 단계가 초기화된다. 공급자의 실제 한도 수치는 모르므로
-호출 속도를 추정해 정하지 않는다.
+하나도 없으면 백오프가 끝난 공급자를 그대로 쓴다. 15분 동안 429 없이 쓰이면 단계가 초기화된다. 단계는 STAGE_MAX(5 — 쉼·미룸이
+모두 가장 긴 값인 단계)에서 멈춘다. 공급자의 실제 한도 수치는 모르므로 호출 속도를 추정해 정하지 않는다.
 
 체인은 작업(region·global)마다 따로지만, 공급자 객체에 붙은 paused_until(UTC)은 두 체인이 함께 본다
 (예: OpenSky 남은 크레딧이 예비분 아래로 내려가면 자정까지 어느 체인도 쓰지 않는다).
@@ -36,6 +36,9 @@ RATE_LIMIT_RESET_S = 900.0  # 마지막 429 로부터 이만큼 조용하면 백
 RATE_LIMIT_HOLD_S = (600.0, 1200.0, 2400.0, 3600.0)  # 15분 안에 되풀이된 429 뒤 복귀를 늦추는 시간(R-17)
 REASON_MAX = 120  # 전환 사유 글자 수 상한
 BACKOFF_MAX_S = 300.0
+# 단계 상한: 쉼(4단계에서 300 s)·미룸(5단계에서 60분)이 모두 가장 긴 값에 닿는 단계. 그 뒤로는 단계가 늘어도 동작이 같으므로 더 세지 않는다
+# (이력이 재시작을 넘어 이어지므로 상한이 없으면 끝없이 커져 60 × 2**1024 에서 OverflowError 가 났다).
+STAGE_MAX = len(RATE_LIMIT_HOLD_S) + 1
 # 저장된 이력이 가리킬 수 있는 가장 먼 미래: 가장 긴 미룸(60분) + 여유 60 s. 더 먼 값은 벽시계가 뒤로 갔거나 망가진 기록이다.
 SAVED_MAX_AHEAD_S = max(BACKOFF_MAX_S, *RATE_LIMIT_HOLD_S) + 60.0
 RESTORED = "(재시작 전 기록)"
@@ -58,8 +61,8 @@ def _hold_text(hold_s: float) -> str:
 
 
 def _backoff_s(stage: int) -> float:
-    """stage 번째 429 의 쉼(60 → 120 → 240 → 300 s)."""
-    return min(BACKOFF_MAX_S, 60.0 * (2 ** max(0, stage - 1)))
+    """stage 번째 429 의 쉼(60 → 120 → 240 → 300 s). 지수는 STAGE_MAX 에서 자른다(큰 단계에서도 넘치지 않게)."""
+    return min(BACKOFF_MAX_S, 60.0 * (2 ** (min(max(1, stage), STAGE_MAX) - 1)))
 
 
 def _hold_for(stage: int) -> float:
@@ -91,8 +94,9 @@ def parse_saved(row: dict[str, str], now_wall: float) -> tuple[_Saved | None, st
         hold_s = float(row.get("hold_s") or 0.0)
     except (KeyError, ValueError):
         return None, "format"
-    if stage < 1 or not all(math.isfinite(v) for v in (*vals, hold, hold_s)):
+    if stage < 1 or not all(math.isfinite(v) for v in (*vals, hold, hold_s)) or not 0.0 <= hold_s <= max(RATE_LIMIT_HOLD_S):
         return None, "format"
+    stage = min(stage, STAGE_MAX)  # 상한보다 큰 단계(망가진 기록 · 상한 전 코드가 남긴 기록)는 상한 단계와 동작이 같다
     last, backoff, quiet, expires = vals
     if expires <= now_wall:
         return None, "expired"
@@ -246,15 +250,15 @@ class ProviderChain:
 
     def record_rate_limited(self, name: str) -> float:
         """429: 지수 백오프(60 → 120 → 240 → 300 s)로 쉬게 한다. 반환값은 쉬는 시간(초).
-        15분 안에 되풀이된 429 면 그 뒤로도 RATE_LIMIT_HOLD_S 만큼 뒤로 미룬다(R-17)."""
+        15분 안에 되풀이된 429 면 그 뒤로도 RATE_LIMIT_HOLD_S 만큼 뒤로 미룬다(R-17). 단계는 STAGE_MAX 에서 멈춘다."""
         now = time.monotonic()
         if self._quiet(name, now):
             self._rate_limited[name] = 0  # 조용했던 뒤의 첫 429
-        n = self._rate_limited.get(name, 0)
-        self._rate_limited[name] = n + 1
+        n = min(self._rate_limited.get(name, 0) + 1, STAGE_MAX)
+        self._rate_limited[name] = n
         self._last_429[name] = now
-        wait = _backoff_s(n + 1)
-        hold = _hold_for(n + 1)
+        wait = _backoff_s(n)
+        hold = _hold_for(n)
         self.mark_down(name, wait, why=_hold_text(hold) if hold else f"429 쉼({wait:.0f} s)")
         self._backoff_until[name] = now + wait
         if hold:
