@@ -623,6 +623,65 @@ class MigrationDbTest {
     }
 
     /**
+     * V14(계약 v5 §G15 · ADR-023): marine_grid4 — 해양격자 4단계 칸의 기하 캐시(연안 교통량). V13(해결 표시) 다음에 적용되고(합친 순서 — 레인은
+     * 따로 만들었다), 이 저장소의 가장 높은 번호다. 열 · 한 칸 CHECK · grid_no 형식 CHECK, 권한은 collector SELECT · INSERT · UPDATE(upsert, 지우지 않음) ·
+     * api SELECT. 머리 주석의 되돌리기 SQL 로 표와 이력 행이 사라지고, 다시 적용된다.
+     */
+    @Test
+    void v14CreatesTheMarineGridCacheAfterV13WithCollectorUpsertAndApiReadGrants() throws Exception {
+        DbTestSupport.start();
+        assertThat(latestMigrationVersion()).as("latest migration on the classpath").isGreaterThanOrEqualTo(14);
+        String db = "wakeline_stage_fourteen";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "14");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        // V13 이 V14 보다 먼저(installed_rank) — 둘 다 migrator 가 적용
+        assertThat(stage.sql("SELECT version FROM flyway_schema_history WHERE version IN ('13', '14') AND success ORDER BY installed_rank").query(String.class).list())
+                .containsExactly("13", "14");
+        assertThat(stage.sql("SELECT installed_by FROM flyway_schema_history WHERE version = '14' AND success").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        assertThat(stage.sql("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'marine_grid4'").query(String.class).single())
+                .isEqualTo("wakeline_migrator");
+        Map<String, String> cols = new java.util.TreeMap<>();
+        for (var r : stage.sql("SELECT column_name, data_type || ':' || is_nullable t FROM information_schema.columns WHERE table_name = 'marine_grid4'")
+                .query().listOfRows()) cols.put(String.valueOf(r.get("column_name")), String.valueOf(r.get("t")));
+        assertThat(cols).isEqualTo(new java.util.TreeMap<>(Map.of("grid_no", "text:NO", "lat_min", "double precision:NO", "lon_min", "double precision:NO",
+                "lat_max", "double precision:NO", "lon_max", "double precision:NO", "gid", "integer:YES", "fetched_at", "timestamp with time zone:NO")));
+
+        String ok = "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, gid, fetched_at) VALUES ('GR4_F2K41_C3', 37.45, 126.6, 37.475, 126.625, 7, now())";
+        try (Connection c = DriverManager.getConnection(url, "wakeline_collector", DbTestSupport.COLLECTOR_PW)) {
+            assertThat(sqlState(c, ok)).isNull();
+            assertThat(sqlState(c, "UPDATE marine_grid4 SET gid = 8, fetched_at = now() WHERE grid_no = 'GR4_F2K41_C3'")).isNull();
+            assertThat(sqlState(c, "SELECT * FROM marine_grid4")).isNull();
+            for (String sql : new String[]{"DELETE FROM marine_grid4", "TRUNCATE marine_grid4"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+            // 한 칸(0.025° 정사각형, 격자점에서 1e-6° 안) · grid_no 형식이 아니면 거절 — 수집기 검사의 둘째 방어선
+            for (String bad : new String[]{
+                    "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_OFF', 37.4512, 126.6, 37.4762, 126.625, now())",
+                    "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_TWO', 37.45, 126.6, 37.5, 126.625, now())",
+                    "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4 bad', 37.45, 126.6, 37.475, 126.625, now())"})
+                assertThat(sqlState(c, bad)).as(bad).isEqualTo("23514");
+        }
+        try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
+            assertThat(sqlState(c, "SELECT count(*) FROM marine_grid4")).isNull();
+            for (String sql : new String[]{"UPDATE marine_grid4 SET gid = 1", "DELETE FROM marine_grid4",
+                    "INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, fetched_at) VALUES ('GR4_API', 37.45, 126.6, 37.475, 126.625, now())"})
+                assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
+        }
+
+        // 되돌리기(머리 주석): 표 삭제 + 이력 행 삭제 → V13 과 같은 스키마(파생 캐시 — 수집기가 다시 채운다). 그 뒤 다시 앞으로
+        runAsMigrator(url, rollbackSql("V14__marine_grid4.sql"));
+        assertThat(stage.sql("SELECT to_regclass('marine_grid4') IS NULL").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '14'").query(Long.class).single()).isZero();
+        assertThat(stage.sql("SELECT to_regclass('ops_resolution') IS NOT NULL").query(Boolean.class).single()).as("V13 untouched").isTrue();
+        migrateTo(url, "14");
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_collector', 'marine_grid4', 'UPDATE')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'marine_grid4', 'SELECT')").query(Boolean.class).single()).isTrue();
+        assertThat(stage.sql("SELECT has_table_privilege('wakeline_api', 'marine_grid4', 'INSERT')").query(Boolean.class).single()).isFalse();
+    }
+
+    /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다
      * (서비스 역할 소유 객체 없음). V5 파티션 함수는 SECURITY DEFINER 인데 PUBLIC 실행 권한이 없다.
      */
