@@ -305,3 +305,59 @@ async def test_a_day_with_two_times_in_one_revision_is_accepted_by_the_v15_check
     finally:
         await pool.execute("DELETE FROM port_call WHERE prt_ag_cd = $1", pa)
         await db.close(drain_s=2)
+
+
+async def test_hole_days_and_a_refused_day_on_the_v15_schema():
+    """빈 곳(hole_days): 끝까지 색인하지 못한 날은 지우지 않고 범위를 넓히며 그 날을 적는다 · 끝까지 색인하면 뺀다 · 보존 정리가 cutoff 앞의 것을
+    뺀다. DB 가 행을 거절하면(CHECK) None(장애)이 아니라 rejected — 트랜잭션은 되돌려진다."""
+    import random
+    from datetime import date, timedelta
+
+    from wakeline_collector.portcalls import Coverage, PortCallRow
+
+    pool = await asyncpg.create_pool(URL, min_size=1, max_size=2)
+
+    async def factory() -> Any:
+        return pool
+
+    db = Db(pool_factory=factory)
+    pa = f"{random.randint(900, 999)}"
+    tag = uuid.uuid4().hex[:4].upper()
+    d1, d2, d3 = date(2026, 9, 24), date(2026, 9, 25), date(2026, 9, 26)
+    at = datetime(2026, 9, 29, 13, 0, tzinfo=UTC)
+
+    def row(cs: str, day: date, **kw: Any) -> PortCallRow:
+        return PortCallRow(prt_ag_cd=pa, clsgn=cs, etrypt_year="2026", etrypt_co="001", listed_date=day, **kw)
+
+    a, b = f"A{tag}", f"B{tag}"
+    try:
+        res = await db.apply_port_call_day(pa, d1, [row(a, d1), row(b, d1)], at, reset=True)
+        assert res is not None and res.coverage == Coverage(d1, d1, None)
+        # d1 을 다시 받았는데 끝까지 색인하지 못했다(키 있는 a 만) — b 를 지우지 않고 d1 을 빈 곳으로
+        res = await db.apply_port_call_day(pa, d1, [row(a, d1)], at, hole=True, refuse_empty_over=1)
+        assert res is not None and res.applied and res.deleted == 0 and res.coverage == Coverage(d1, d1, None, frozenset({d1}))
+        assert await pool.fetchval("SELECT count(*) FROM port_call WHERE prt_ag_cd = $1", pa) == 2
+        res = await db.apply_port_call_day(pa, d2, [], at, hole=True)  # 빈 곳도 범위는 넓힌다
+        assert res is not None and res.coverage == Coverage(d1, d2, None, frozenset({d1, d2}))
+        res = await db.apply_port_call_day(pa, d3, [], at, refreshed_at=at)
+        assert res is not None and res.coverage == Coverage(d1, d3, at, frozenset({d1, d2}))
+        assert (await db.read_port_call_coverage() or {})[pa] == Coverage(d1, d3, at, frozenset({d1, d2}))
+        # d2 를 끝까지 색인했다 — 빈 곳에서 뺀다
+        res = await db.apply_port_call_day(pa, d2, [], at)
+        assert res is not None and res.coverage == Coverage(d1, d3, at, frozenset({d1}))
+        # DB 가 거절하는 행(형식 CHECK) — 장애가 아니라 rejected, 되돌려졌다(범위 · 행 그대로)
+        res = await db.apply_port_call_day(pa, d3, [row("bad-cs", d3)], at)
+        assert res is not None and res.rejected == "CheckViolationError" and not res.applied
+        assert (await db.read_port_call_coverage() or {})[pa] == Coverage(d1, d3, at, frozenset({d1}))
+        # 보존: cutoff 앞의 빈 곳도 뺀다
+        db.start()
+        db.purge_port_calls(d1 + timedelta(days=1))
+        for _ in range(300):
+            if db.pending == 0:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
+        assert (await db.read_port_call_coverage() or {})[pa] == Coverage(d2, d3, at, frozenset())
+    finally:
+        await pool.execute("DELETE FROM port_call WHERE prt_ag_cd = $1", pa)
+        await db.close(drain_s=2)

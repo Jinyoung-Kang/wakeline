@@ -5,8 +5,9 @@
 -- port_call: 입항 신고 한 건(자연 키 = 항만청 · 호출부호 · 입항년도 · 입항횟수). listed_date = 원천이 그 행을 올린 KST 날짜(sde = ede = 그 날 · deGb=I
 -- 입항일 기준으로 받았다). entry_at · exit_at 은 판(최종 → 최초) 순서로 고른 +09:00 신고 시각(모르면 NULL). fetched_at = 이 행을 마지막으로 받은 응답
 -- 시각, updated_at = 값이 마지막으로 바뀐 때. 보존은 listed_date 기준 60일(collector 유지보수 — 범위의 covered_from 도 함께 올린다).
--- port_call_coverage: 항만청마다 [covered_from, covered_to](KST 날짜)의 모든 날을 끝까지 받아 색인했다 · refreshed_at = 마지막으로 끝난 꼬리 갱신
--- (최근 3일)이 시작한 때. api 는 10곳이 모두 30일 창을 덮고 refreshed_at 이 2시간 안일 때만 '기록 없음' 이라 말한다.
+-- port_call_coverage: 항만청마다 [covered_from, covered_to](KST 날짜)의 모든 날을 받았다 — hole_days 에 든 날만 빼고 끝까지 색인했다 ·
+-- refreshed_at = 마지막으로 끝난 꼬리 갱신(최근 3일)이 시작한 때. api 는 10곳이 모두 30일 창을 덮고, 범위 끝이 오늘(KST)이고, 창 안에 빈 곳이
+-- 없고, refreshed_at 이 2시간 안일 때만 '기록 없음' 이라 말한다.
 --
 -- ==== 되돌리기(rollback) SQL — wakeline_migrator 로 실행하고 collector · api 코드도 되돌린다(이전 코드는 이 표를 쓰지 않는다) ====
 -- DROP TABLE port_call_coverage;
@@ -63,6 +64,10 @@ CREATE TABLE port_call_coverage (
   covered_from date NOT NULL,
   covered_to date NOT NULL,
   refreshed_at timestamptz NULL,
+  -- 빈 곳: 범위 안에서 받았지만 끝까지 색인하지 못한 날(색인할 수 없는 item · 쪽 사이 어긋남 · 다른 항만청 item · 쪽 상한 · DB 가 행을 거절). 범위는 그
+  -- 날을 넘어 이어지고(한 날이 그 항만청을 멈추지 않는다) 그 날의 키 있는 기록은 둘 수 있지만, 그 날 신고가 모두 있다고는 말할 수 없다 — api 는 창 안에
+  -- 빈 곳이 있으면 '기록 없음' 이라 말하지 않는다. 다시 받아 끝까지 색인하면 빠지고, 보존 정리가 covered_from 을 올릴 때 그 앞의 것도 빠진다
+  hole_days date[] NOT NULL DEFAULT '{}' CONSTRAINT port_call_coverage_hole_days_no_null CHECK (array_position(hole_days, NULL) IS NULL),
   updated_at timestamptz NOT NULL,
   CONSTRAINT port_call_coverage_range CHECK (covered_from <= covered_to)
 );

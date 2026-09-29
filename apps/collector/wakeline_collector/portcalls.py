@@ -343,20 +343,29 @@ def _checked_body(body: bytes) -> tuple[ET.Element | None, int]:
 # ---- 색인 범위(port_call_coverage — V15) -------------------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Coverage:
-    """항만청 하나의 색인 범위: [covered_from, covered_to](KST 날짜, 양끝 포함)의 모든 날을 쪽을 끝까지 받아 한 번 이상 색인했다.
-    refreshed_at = 마지막으로 끝난 꼬리 갱신(최근 3일 — 오늘 포함)이 시작한 때: 그 순간까지 올라온 신고는 covered_to 까지 모두 색인에 있다.
+    """항만청 하나의 색인 범위: [covered_from, covered_to](KST 날짜, 양끝 포함)의 모든 날을 받았다 — holes 에 든 날만 빼고 끝까지 색인했다.
+
+    holes = 범위 안에서 받았지만 끝까지 색인하지 못한 날(색인할 수 없는 item · 쪽 사이 어긋남 · 다른 항만청 item · 쪽 상한 · DB 가 거절 — 그 날의
+    신고가 색인에 모두 있다고 말할 수 없다). 범위는 그 날을 넘어 이어지고(뒤의 날을 계속 받는다 — 한 날이 그 항만청을 멈추지 않는다), api 는 창 안에
+    빈 곳이 있으면 'none' 을 말하지 않는다. 다시 받아 끝까지 색인하면 빠진다.
+    refreshed_at = 마지막으로 끝난 꼬리 갱신(최근 3일 — 오늘 포함)이 시작한 때: 최근 3일은 그 순간까지 올라온 신고가 색인에 있다(빈 곳 빼고).
+    그보다 오래된 날은 다시 받기(하루에 한 번쯤)로 늦게 붙는 신고를 따라잡는다 — 그 날들을 마지막으로 받은 때는 이 값보다 이를 수 있다.
     꼬리 갱신을 끝낸 적이 없으면 None."""
 
     covered_from: date
     covered_to: date
     refreshed_at: datetime | None = None
+    holes: frozenset[date] = frozenset()
 
 
-def merge_day(cov: Coverage | None, day: date, *, reset: bool = False) -> Coverage | None:
-    """하루(day)를 완전히 받았다 → 새 범위. 범위와 이어지거나 겹치면 넓히고(refreshed_at 은 그대로), 이어지지 않으면 None(범위는 그대로 — 받은
-    행은 둔다). 범위가 없거나 reset 이면 [day, day] 로 새로 시작한다(창 밖으로 오래된 범위를 버릴 때 — refreshed_at 은 None)."""
+def merge_day(cov: Coverage | None, day: date, *, reset: bool = False, hole: bool = False) -> Coverage | None:
+    """하루(day)를 받았다 → 새 범위. hole = 끝까지 색인하지 못했다(범위는 넓히되 그 날을 holes 에 넣는다), 아니면 그 날을 holes 에서 뺀다.
+    범위와 이어지거나 겹치면 넓히고(refreshed_at 은 그대로), 이어지지 않으면 None(범위는 그대로 — 받은 행은 둔다). 범위가 없거나 reset 이면
+    [day, day] 로 새로 시작한다(창 밖으로 오래된 범위를 버릴 때 — refreshed_at 은 None, 옛 holes 도 버린다)."""
+    mark = frozenset({day}) if hole else frozenset()
     if reset or cov is None:
-        return Coverage(day, day, None)
+        return Coverage(day, day, None, mark)
     if cov.covered_from - timedelta(days=1) <= day <= cov.covered_to + timedelta(days=1):
-        return Coverage(min(cov.covered_from, day), max(cov.covered_to, day), cov.refreshed_at)
+        holes = cov.holes | mark if hole else cov.holes - {day}
+        return Coverage(min(cov.covered_from, day), max(cov.covered_to, day), cov.refreshed_at, holes)
     return None

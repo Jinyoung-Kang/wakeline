@@ -723,7 +723,9 @@ class MigrationDbTest {
         for (var r : stage.sql("SELECT column_name, data_type || ':' || is_nullable t FROM information_schema.columns WHERE table_name = 'port_call_coverage'")
                 .query().listOfRows()) cov.put(String.valueOf(r.get("column_name")), String.valueOf(r.get("t")));
         assertThat(cov).isEqualTo(new java.util.TreeMap<>(Map.of("prt_ag_cd", "text:NO", "covered_from", "date:NO", "covered_to", "date:NO",
-                "refreshed_at", "timestamp with time zone:YES", "updated_at", "timestamp with time zone:NO")));
+                "refreshed_at", "timestamp with time zone:YES", "hole_days", "ARRAY:NO", "updated_at", "timestamp with time zone:NO")));
+        assertThat(stage.sql("SELECT udt_name FROM information_schema.columns WHERE table_name = 'port_call_coverage' AND column_name = 'hole_days'")
+                .query(String.class).single()).isEqualTo("_date");
 
         String row = "INSERT INTO port_call (prt_ag_cd, clsgn, etrypt_year, etrypt_co, listed_date, vssl_nm, entry_at, entry_revision, fetched_at, updated_at) "
                 + "VALUES ('020', 'V7A3884', '2026', '005', '2026-09-24', 'AZAMARA PURSUIT', '2026-09-23T23:17:00Z', '최종', now(), now())";
@@ -736,6 +738,10 @@ class MigrationDbTest {
             assertThat(sqlState(c, "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, refreshed_at, updated_at) "
                     + "VALUES ('020', '2026-08-30', '2026-09-29', now(), now())")).isNull();
             assertThat(sqlState(c, "UPDATE port_call_coverage SET covered_from = '2026-08-31', updated_at = now() WHERE prt_ag_cd = '020'")).isNull();
+            assertThat(stage.sql("SELECT cardinality(hole_days) FROM port_call_coverage WHERE prt_ag_cd = '020'").query(Integer.class).single())
+                    .as("no hole unless the collector says so").isZero();
+            assertThat(sqlState(c, "UPDATE port_call_coverage SET hole_days = ARRAY['2026-09-10'::date], updated_at = now() WHERE prt_ag_cd = '020'"))
+                    .as("a day fetched but not completely indexed").isNull();
             for (String sql : new String[]{"DELETE FROM port_call_coverage", "TRUNCATE port_call_coverage", "TRUNCATE port_call"})
                 assertThat(sqlState(c, sql)).as(sql).isEqualTo("42501");
             for (String bad : new String[]{
@@ -746,7 +752,9 @@ class MigrationDbTest {
                     row.replace("'2026-09-23T23:17:00Z'", "NULL").replace("'V7A3884'", "'V7A3887'"),
                     row.replace("'AZAMARA PURSUIT'", "'" + "A".repeat(81) + "'").replace("'V7A3884'", "'V7A3888'"),
                     "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('030', '2026-09-29', '2026-09-28', now())",
-                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('ABC', '2026-09-28', '2026-09-29', now())"})
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('ABC', '2026-09-28', '2026-09-29', now())",
+                    "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, hole_days, updated_at) "
+                            + "VALUES ('040', '2026-09-28', '2026-09-29', ARRAY[NULL]::date[], now())"})
                 assertThat(sqlState(c, bad)).as(bad).isEqualTo("23514");
         }
         try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {

@@ -1,7 +1,7 @@
 """입출항 색인 작업 시험용 DB — Db 의 색인 메서드(read_port_call_coverage · apply_port_call_day · purge_port_calls)를 메모리에서 같은 규칙으로.
 
 범위 합치기는 실제 코드(portcalls.merge_day)를 쓴다. 행은 (항만청, 호출부호, 입항년도, 입항횟수) → (PortCallRow, fetched_at, updated_at).
-V15 의 행 CHECK 도 같게 지킨다(v15_violation — 어긋난 행이 하나라도 있으면 그 날 전체가 되돌려진다. 실제 Db 처럼 None).
+V15 의 행 CHECK 도 같게 지킨다(v15_violation — 어긋난 행이 하나라도 있으면 그 날 전체가 되돌려진다. 실제 Db 처럼 rejected).
 실제 SQL 은 tests/test_db_pg_integration.py(선택 실행 — 버리는 PostgreSQL)가 확인한다.
 """
 
@@ -61,6 +61,7 @@ class FakeIndexDb(RecordingDb):
         self.down = False  # True = DB 에 닿지 못한다(읽기 · 쓰기 모두 None)
         self.applied: list[tuple[str, date]] = []
         self.refused: list[tuple[str, date]] = []  # V15 CHECK 로 되돌려진 날
+        self.holes_marked: list[tuple[str, date]] = []  # 빈 곳(끝까지 색인하지 못한 날)으로 적은 날
         self.reads = 0
         self.runs: list[dict] = []
 
@@ -78,30 +79,33 @@ class FakeIndexDb(RecordingDb):
         reset: bool = False,
         refreshed_at: datetime | None = None,
         refuse_empty_over: int | None = None,
+        hole: bool = False,
     ) -> DayApplied | None:
         if self.down:
             return None
         if any(v15_violation(r) for r in rows):
             self.refused.append((pa, day))
-            return None  # 실제 Db: CHECK 위반 → 트랜잭션이 되돌려지고 None(아무것도 바뀌지 않았다)
+            return DayApplied(False, None, rejected="CheckViolationError")  # 실제 Db: CHECK 위반 → 되돌려지고 rejected
         cur = self.cov.get(pa)
         stored = [k for k, (r, _f, _u) in self.rows.items() if k[0] == pa and r.listed_date == day]
-        if not rows and refuse_empty_over is not None and len(stored) >= refuse_empty_over:
+        if not rows and not hole and refuse_empty_over is not None and len(stored) >= refuse_empty_over:
             return DayApplied(False, cur, stored=len(stored), suspect_empty=True)
         for r in rows:
             old = self.rows.get(r.key)
             updated = fetched_at if old is None or old[0] != r else old[2]
             self.rows[r.key] = (r, fetched_at, updated)
         keep = {r.key for r in rows}
-        gone = [k for k in stored if k not in keep]
+        gone = [] if hole else [k for k in stored if k not in keep]  # 빈 곳인 날은 지우지 않는다
         for k in gone:
             del self.rows[k]
         self.applied.append((pa, day))
-        new = merge_day(cur, day, reset=reset)
+        if hole:
+            self.holes_marked.append((pa, day))
+        new = merge_day(cur, day, reset=reset, hole=hole)
         if new is None:
             return DayApplied(True, cur, False, len(rows), len(gone))
         if refreshed_at is not None:
-            new = Coverage(new.covered_from, new.covered_to, refreshed_at)
+            new = Coverage(new.covered_from, new.covered_to, refreshed_at, new.holes)
         self.cov[pa] = new
         return DayApplied(True, new, True, len(rows), len(gone))
 
@@ -111,7 +115,7 @@ class FakeIndexDb(RecordingDb):
             del self.rows[k]
         for pa, c in list(self.cov.items()):
             if c.covered_from < cutoff <= c.covered_to:
-                self.cov[pa] = Coverage(cutoff, c.covered_to, c.refreshed_at)
+                self.cov[pa] = Coverage(cutoff, c.covered_to, c.refreshed_at, frozenset(d for d in c.holes if d >= cutoff))
 
     def record_run(self, job: str, provider: str, started_at: datetime, **kw) -> None:  # type: ignore[override]
         self.runs.append({"job": job, "provider": provider, **kw})

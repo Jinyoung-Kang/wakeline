@@ -4,19 +4,24 @@
 설계는 거의 모든 선박에 틀린 "최근 30일 기록 없음" 을 보였다. 이제 선택은 외부 호출을 만들지 않고, api 가 이 색인(port_call)을 AIS 호출부호로 찾는다.
 
 단위 = (항만청, KST 날짜 하루): sde = ede = 그 날 · deGb=I(입항일 기준) · numOfRows 50 · totalCount 까지 모든 쪽(하루 MAX_PAGES_PER_DAY 쪽 상한).
-완전하게 받은 하루만 적는다(쪽마다 totalCount 가 같고 · 받은 item 수 = totalCount · 다른 항만청 item 없음 · 키를 만들 수 없는 item 없음 · 겹친 item 없음) —
-하나라도 어긋나면 그 날은 적지 않고(부분 결과를 '기록 없음' 처럼 보이지 않게) 그 항만청을 물러나게 한다. 적을 때는 한 트랜잭션으로 행 upsert ·
-그 날 목록에서 빠진 행(철회된 신고) 삭제 · 범위(port_call_coverage) 넓히기(db.apply_port_call_day). 저장된 행이 하나라도 있는 날이 0건으로
+완전한 하루(쪽마다 totalCount 가 같고 · 받은 item 수 = totalCount · 다른 항만청 item 없음 · 키를 만들 수 없는 item 없음 · 겹친 item 없음)는 한
+트랜잭션으로 행 upsert · 그 날 목록에서 빠진 행(철회된 신고) 삭제 · 범위(port_call_coverage) 넓히기(db.apply_port_call_day).
+응답은 받았는데 하나라도 어긋나면 그 날은 **빈 곳**(hole_days)으로 적는다: 범위는 그 날을 넘어 이어지고(뒤의 날을 계속 받는다 — 한 날이 그 항만청을
+멈추지 않는다), 아무것도 지우지 않으며, 응답이 서로 맞고 키 없는 item 만 문제면 키가 있는 기록은 둔다(찾을 수 있게). api 는 창 안에 빈 곳이 있으면
+'none' 을 말하지 않는다(부분 결과를 '기록 없음' 처럼 보이지 않게). 빈 곳은 꼬리 갱신 · 다시 받기가 다시 받아 끝까지 색인하면 빠진다. DB 가 그 날의 행을
+거절해도(CHECK · 자료형 — 해석기와 V15 가 어긋났다) 같다 — 행 없이 빈 곳으로 적는다(다시 보내도 같으므로 DB 장애처럼 모두를 멈추지 않는다). 저장된 행이 하나라도 있는 날이 0건으로
 오면 한 번에 지우지 않고 EMPTY_CONFIRM_S 넘게 지나 다시 받아 또 0건일 때 적는다(일시적인 빈 응답 하나로 색인을 지우지 않게 — 행이 1–2개인 날은
 포항 · 목포에서 흔하다. 그동안 그 항만청은 물러나고 꼬리 갱신이 끝나지 않으므로 범위가 그 빈 응답으로 '새것' 이 되지 않는다).
 
 순서(계획 plan — 매 단계 다시 계산, 앞의 것이 먼저):
 1. 꼬리(항만청마다): 범위가 없거나 창(오늘 KST − 30일) 밖이면 새로 시작 · covered_to 와 오늘 − 3일 사이가 비었으면 앞으로 채우기(gap) ·
    꼬리 갱신(최근 TAIL_DAYS = 3일, 오래된 날부터)이 필요하면(refreshed_at 이 없거나 REFRESH_S 넘게 지났거나 날짜가 바뀌었으면) 그 날들.
-   셋째 날까지 끝나면 refreshed_at = 그 갱신을 시작한 때(그 순간까지 올라온 신고는 covered_to 까지 모두 색인에 있다 — 보수적).
+   셋째 날까지 끝나면 refreshed_at = 그 갱신을 시작한 때(최근 3일은 그 순간까지 올라온 신고가 색인에 있다 — 보수적. 더 오래된 날은 아래 3 의
+   다시 받기가 하루에 한 번쯤 따라잡으므로, 그 날들을 마지막으로 받은 때는 이보다 이를 수 있다).
 2. 채우기(backfill): covered_from 이 창의 첫날보다 늦은 항만청의 covered_from − 1일(가장 덜 채운 항만청부터).
-3. 다시 받기(revisit): 꼬리보다 오래된 창 안의 날(출항 · 최종 신고가 늦게 붙는다) — 마지막으로 받은 지 REVISIT_S 가 지난 날(모르면 먼저, 같으면
-   최근 날 먼저)을 시간당 REVISIT_UNITS_PER_HOUR 개까지. 재기동 뒤에는 모두 '모름' 이라 같은 속도로 하루에 걸쳐 돈다.
+3. 다시 받기(revisit): 꼬리보다 오래된 창 안의 날(출항 · 최종 신고가 늦게 붙는다) — 끝까지 색인한 날은 마지막으로 받은 지 REVISIT_S, 빈 곳은
+   마지막 시도에서 RETRY_S 가 지난 것을 기준을 넘긴 비율이 큰 것부터(모르면 먼저, 같으면 최근 날 먼저) 시간당 REVISIT_UNITS_PER_HOUR 개까지(실패 ·
+   빈 곳도 센다). 끝내지 못한 시도는 RETRY_S 안에 다시 고르지 않는다. 재기동 뒤에는 모두 '모름' 이라 같은 속도로 하루에 걸쳐 돈다.
 
 예산 · 우선순위(apis.data.go.kr 한도 하나를 나눈다 — providers/data_go_kr):
 - 호스트 버킷 data_go_kr_rps(1 req/s) · 우선순위 PRIORITY_PORTCALL: 교통 5분 폴링(PRIORITY_FIXED)보다 낮고 격자 기하 채우기(PRIORITY_BACKFILL)보다 높다.
@@ -28,10 +33,12 @@
   꼬리 갱신 3일 ≈ 40–45회/시 · 다시 받기 ≈ 15–20회/시 → 약 60회/시 < 색인 몫 100. 하루 약 1,450회 + 처음 한 번의 채우기(31일 × 약 14 ≈ 430회)
   → 하루 예산 3,000 안. 채우기는 매시 남는 몫으로 — 격자 채우기가 창을 다 쓰는 최악에도 시간당 약 40회라 약 11시간이면 끝난다.
 - 실패: HTTP · 응답 모양 · resultCode · 연결 → 그 항만청만 60 → 120 → 300 → 900 s 물러남(공급자 상태 portmis 에 원문 — 가린 뒤). 속도 상한 대기 초과는
-  30 s 모두 쉼. DB 에 쓰지 못하면 DB_RETRY_S 모두 쉰다(받아도 둘 곳이 없으면 부르지 않는다 — 범위를 읽을 수 없어도 같다).
+  30 s 모두 쉼. DB 에 쓰지 못하면(연결 · 시간 초과) DB_RETRY_S 모두 쉰다(받아도 둘 곳이 없으면 부르지 않는다 — 범위를 읽을 수 없어도 같다).
+  DB 가 그 날의 행을 거절하면(rejected) 장애가 아니다 — 그 날을 빈 곳으로 적고 계속한다(위).
 - 꺼짐: 키 없음(no_key) · fixture 모드(fixture) · 운영자 스위치(operator_off — wakeline:provider:portmis disabled=1, 요청마다 보내기 직전에도 본다).
   heartbeat(wakeline:collector) portcalls_index_state · portcalls_index_at 으로 알린다 — api 가 이것으로 '꺼짐' 을 말한다(120 s 안의 heartbeat 만).
-- 실행 기록(ingest_run): 하루 단위마다 job portcalls_index · provider portmis · status ok · error · incomplete · budget_exhausted · budget_unavailable.
+- 실행 기록(ingest_run): 하루 단위마다 job portcalls_index · provider portmis · status ok · error · incomplete(빈 곳으로 적은 날 · 빈 응답 확인 대기) ·
+  budget_exhausted · budget_unavailable. heartbeat portcalls_index_hole_days = 창 안의 빈 곳 수(10곳 합).
 - 비밀값: serviceKey 는 요청 쿼리에만 있다. 로그 · 공급자 상태 · DB 에는 항만청 · 날짜 · 수 · 사유(가린 뒤)만 남는다.
 """
 
@@ -43,7 +50,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
@@ -80,7 +87,8 @@ JOB = "portcalls_index"
 TAIL_DAYS = 3  # 꼬리 갱신: 오늘과 앞의 이틀(KST)
 REFRESH_S = 3600  # 꼬리 갱신 주기(선택값 — 출항 · 최종 신고가 하루 몇 번 붙는다)
 REVISIT_S = 86400  # 꼬리보다 오래된 날을 다시 받는 간격(선택값)
-REVISIT_UNITS_PER_HOUR = 15  # 다시 받기 속도 상한(하루 단위 수/시간 — 선택값)
+REVISIT_UNITS_PER_HOUR = 15  # 다시 받기 속도 상한(하루 단위 수/시간 — 실패 · 빈 곳도 센다, 선택값)
+RETRY_S = 3600  # 끝내지 못한 날(빈 곳 · 실패)을 다시 받기로 다시 고르기까지(선택값 — 꼬리 갱신 주기와 같다)
 TAIL_HEADROOM = 50  # 채우기 · 다시 받기가 해양수산부 시간 창에서 꼬리 갱신 몫으로 남기는 수(선택값)
 MAX_PAGES_PER_DAY = (
     20  # 하루(항만청 하나)의 쪽 상한 = 1,000건(잰 부피 부산 하루 약 80건의 10배 넘게 — 넘으면 그 날은 적지 않는다)
@@ -154,8 +162,10 @@ class _Pass:
     done: set[date] = field(default_factory=set)
 
 
-@dataclass
+@dataclass(frozen=True)
 class _DayFetch:
+    """받은 하루. complete False = 응답은 받았지만 그 날을 끝까지 색인할 수 없다(why) — 빈 곳으로 적는다(rows 는 믿을 수 있는 키 있는 기록만 · 없으면 빈 목록)."""
+
     rows: list[PortCallRow]
     total: int
     pages: int
@@ -163,6 +173,8 @@ class _DayFetch:
     fetched_at: datetime
     unmatchable: int
     date_mismatch: int
+    complete: bool = True
+    why: str | None = None
 
 
 class _Stop(Exception):  # noqa: N818 — 단위를 멈춘 까닭(작업 흐름 — 예외로 나가지 않는다)
@@ -196,6 +208,9 @@ class PortCallIndexJob:
         self._coverage_at: float | None = None  # 마지막으로 DB 에서 범위를 읽은 때(단조 시계) — None = 아직
         self._passes: dict[str, _Pass] = {}
         self._fetched: dict[tuple[str, date], datetime] = {}  # 마지막으로 끝까지 받은 때(다시 받기 순서)
+        self._attempted: dict[
+            tuple[str, date], datetime
+        ] = {}  # 마지막으로 끝내지 못한 시도(빈 곳 · 실패 — 다시 받기가 RETRY_S 기다린다)
         self._revisits: deque[datetime] = deque()
         self._backoff: dict[str, tuple[datetime, int]] = {}  # 항만청 → (쉬는 끝, 연달아 실패 수)
         self._hold_all: datetime | None = None
@@ -206,6 +221,7 @@ class PortCallIndexJob:
         self.counts = {
             "requests": 0,
             "units_ok": 0,
+            "units_incomplete": 0,
             "units_failed": 0,
             "rows_upserted": 0,
             "rows_deleted": 0,
@@ -307,6 +323,9 @@ class PortCallIndexJob:
         return age >= REFRESH_S or age < -FUTURE_SKEW_S
 
     def _revisit_unit(self, today: date, floor: date, now: datetime, waiting: set[str]) -> Unit | None:
+        """꼬리보다 오래된 창 안의 날 하나. 끝까지 색인한 날은 마지막으로 받은 때에서 REVISIT_S, 빈 곳(holes)은 마지막 시도에서 RETRY_S 가 지난 것 —
+        기준을 넘긴 비율이 큰 것부터(모르면 먼저, 같으면 최근 날 먼저). 끝내지 못한 시도(실패)가 RETRY_S 안인 날은 고르지 않는다(다른 단위의 성공이
+        물러남을 풀어도 그 날을 60 s 마다 되풀이하지 않게). 시간당 REVISIT_UNITS_PER_HOUR 개까지 — 실패 · 빈 곳도 센다."""
         while self._revisits and (now - self._revisits[0]).total_seconds() >= 3600:
             self._revisits.popleft()
         if len(self._revisits) >= REVISIT_UNITS_PER_HOUR:
@@ -319,18 +338,28 @@ class PortCallIndexJob:
                 continue
             d = min(cov.covered_to, last_tail)
             while d >= max(cov.covered_from, floor):
-                at = self._fetched.get((pa, d))
-                age = math.inf if at is None else (now - at).total_seconds()
-                if age >= REVISIT_S:
-                    cand = (age, d.toordinal(), pa, d)  # 오래 받지 않은 날 먼저, 같으면 최근 날 먼저
+                tried = self._attempted.get((pa, d))
+                if d in cov.holes:
+                    ref, limit = tried, RETRY_S
+                elif tried is not None and (now - tried).total_seconds() < RETRY_S:
+                    d -= timedelta(days=1)
+                    continue
+                else:
+                    ref, limit = self._fetched.get((pa, d)), REVISIT_S
+                age = math.inf if ref is None else (now - ref).total_seconds()
+                if age >= limit:
+                    cand = (age / limit, d.toordinal(), pa, d)
                     if best is None or cand[:2] > best[:2]:
                         best = cand
                 d -= timedelta(days=1)
         return None if best is None else Unit(best[2], best[3], "revisit")
 
     def _forget(self, floor: date) -> None:
-        if len(self._fetched) > 2 * len(PORT_AUTHORITIES) * (WINDOW_DAYS + 1):
+        cap = 2 * len(PORT_AUTHORITIES) * (WINDOW_DAYS + 1)
+        if len(self._fetched) > cap:
             self._fetched = {k: v for k, v in self._fetched.items() if k[1] >= floor}
+        if len(self._attempted) > cap:
+            self._attempted = {k: v for k, v in self._attempted.items() if k[1] >= floor}
         self._suspect_empty = {k: v for k, v in self._suspect_empty.items() if k[1] >= floor}
 
     # ---- 하루 받기 --------------------------------------------------------------------------------------------------
@@ -343,15 +372,26 @@ class PortCallIndexJob:
         suspect_at = self._suspect_empty.get((u.pa, u.day))
         confirm = suspect_at is not None and (self._now() - suspect_at).total_seconds() >= EMPTY_CONFIRM_S
         pass_ = self._passes.get(u.pa) if u.kind == "tail" else None
+        refreshed = pass_.started_at if pass_ is not None and u.completes_pass else None
         res = await self.ctx.db.apply_port_call_day(
             u.pa,
             u.day,
             got.rows,
             got.fetched_at,
             reset=u.reset,
-            refreshed_at=pass_.started_at if pass_ is not None and u.completes_pass else None,
+            refreshed_at=refreshed,
             refuse_empty_over=None if confirm else EMPTY_GUARD,
+            hole=not got.complete,
         )
+        if res is not None and res.rejected is not None:
+            # DB 가 그 날의 행을 거절했다(CHECK · 자료형 — 해석기와 V15 가 어긋났다 · 되돌려졌다). 다시 보내도 같으므로 DB 장애처럼 모두를 멈추지
+            # 않는다: 행 없이 그 날을 빈 곳으로 적고 넘어간다(api 는 'none' 을 말하지 않는다 — 실행 기록 · 로그에 남는다)
+            got = replace(got, rows=[], complete=False, why=f"{u.pa} {u.day}: database refused the day's rows ({res.rejected})")
+            res = await self.ctx.db.apply_port_call_day(
+                u.pa, u.day, [], got.fetched_at, reset=u.reset, refreshed_at=refreshed, hole=True
+            )
+            if res is not None and res.rejected is not None:  # 행 없이도 거절 — 범위 행이 스키마와 어긋났다: 그 항만청만 물러난다
+                return self._fail_pa(u, started, "error", f"{got.why}; coverage refused too ({res.rejected})", got)
         if res is None:
             self._coverage_at = None  # 무엇이 적혔는지 모른다 — 다시 읽는다
             self._passes.pop(u.pa, None)
@@ -370,13 +410,18 @@ class PortCallIndexJob:
         return 0.0
 
     def _applied(self, u: Unit, res: DayApplied, got: _DayFetch, started: datetime) -> None:
+        now = self._now()  # 작업의 시계(다시 받기 간격을 같은 시계로 잰다)
         if res.coverage is not None:
             self.coverage[u.pa] = res.coverage
-        self._fetched[(u.pa, u.day)] = self._now()  # 작업의 시계(다시 받기 간격을 같은 시계로 잰다)
-        self._backoff.pop(u.pa, None)
+        if got.complete:
+            self._fetched[(u.pa, u.day)] = now
+            self._attempted.pop((u.pa, u.day), None)
+        else:
+            self._attempted[(u.pa, u.day)] = now  # 빈 곳 — 꼬리 갱신이나 RETRY_S 뒤의 다시 받기가 다시 받는다
+        self._backoff.pop(u.pa, None)  # 원천은 답했다 — 그 항만청 탓이 아니다
         if u.kind == "revisit":
-            self._revisits.append(self._now())
-        self.counts["units_ok"] += 1
+            self._revisits.append(now)
+        self.counts["units_ok" if got.complete else "units_incomplete"] += 1
         self.counts["rows_upserted"] += res.upserted
         self.counts["rows_deleted"] += res.deleted
         self.counts["unmatchable"] += got.unmatchable
@@ -420,14 +465,19 @@ class PortCallIndexJob:
             extra.append(
                 ("portcall_index_date_mismatch", None, {"prt_ag_cd": u.pa, "day": u.day.isoformat(), "rows": got.date_mismatch})
             )
+        error = None
+        if not got.complete:
+            error = f"{got.why} — recorded as not indexed (no 'none' while it lasts); retried by the tail refresh or a revisit"
+            log.warning("port-call index %s(%s) %s %s: %s", u.pa, PA_NAMES[u.pa], u.kind, u.day, error)
         self.ctx.db.record_run(
             JOB,
             "portmis",
             started,
-            status="ok",
+            status="ok" if got.complete else "incomplete",
             http_status=200,
             latency_ms=round(got.latency_ms / max(1, got.pages)),
             records_in=len(got.rows),
+            error_text=error,
             quality=extra,
         )
 
@@ -457,6 +507,9 @@ class PortCallIndexJob:
         wait = FAIL_BACKOFF_S[min(n, len(FAIL_BACKOFF_S) - 1)]
         self._backoff[u.pa] = (now + timedelta(seconds=wait), n + 1)
         self._passes.pop(u.pa, None)
+        self._attempted[(u.pa, u.day)] = now  # 다시 받기는 이 날을 RETRY_S 안에 다시 고르지 않는다
+        if u.kind == "revisit":
+            self._revisits.append(now)  # 실패한 다시 받기도 속도 상한에 센다
         self.counts["units_failed"] += 1
         self.ctx.db.record_run(
             JOB,
@@ -470,23 +523,21 @@ class PortCallIndexJob:
         return 0.0
 
     async def _fetch_day(self, p: PortCallIndexSource, u: Unit) -> _DayFetch:
-        """하루의 모든 쪽 → 완전하면 _DayFetch, 아니면 _Stop."""
+        """하루의 모든 쪽 → _DayFetch. 요청 · 응답이 실패하면 _Stop(그 항만청이 물러나거나 모두 쉰다 — 그 날은 적지 않는다).
+        응답은 받았는데 그 날을 끝까지 색인할 수 없으면 complete False(why) — 빈 곳으로 적는다. 그때 rows 는 응답이 서로 맞고(쪽마다 totalCount 같음 ·
+        받은 수 = totalCount · 다른 항만청 없음 · 겹침 없음) 키 없는 item 만 문제일 때의 키 있는 기록뿐이다 — 어긋난 응답의 행은 두지 않는다."""
         headroom = TAIL_HEADROOM if u.kind in ("backfill", "revisit") else 0
         first = await self._fetch_page(p, u, 1, headroom)
         total = first.page.total
         pages = max(1, math.ceil(total / NUM_OF_ROWS))
-        if pages > MAX_PAGES_PER_DAY:
-            raise _Stop(
-                "incomplete", f"{u.pa} {u.day}: totalCount {total} exceeds {MAX_PAGES_PER_DAY} pages — not indexed", scope="pa"
-            )
         fetched = [first]
+        if pages > MAX_PAGES_PER_DAY:
+            return self._incomplete(fetched, f"{u.pa} {u.day}: totalCount {total} exceeds {MAX_PAGES_PER_DAY} pages")
         for no in range(2, pages + 1):
             got = await self._fetch_page(p, u, no, headroom)
-            if got.page.total != total:
-                raise _Stop(
-                    "incomplete", f"{u.pa} {u.day}: totalCount changed while paging ({total} → {got.page.total})", scope="pa"
-                )
             fetched.append(got)
+            if got.page.total != total:
+                return self._incomplete(fetched, f"{u.pa} {u.day}: totalCount changed while paging ({total} → {got.page.total})")
         items = sum(f.page.items for f in fetched)
         foreign = sum(f.page.foreign for f in fetched)
         unkeyed = sum(f.page.unkeyed for f in fetched)
@@ -495,28 +546,41 @@ class PortCallIndexJob:
         for f in fetched:
             for r in f.page.rows:
                 rows[r.key] = r
+        duplicates = items - len(rows) - unmatchable - unkeyed
+        why, keep = None, True
         if foreign:
-            raise _Stop(
-                "incomplete", f"{u.pa} {u.day}: {foreign} item(s) of another port authority — response not trusted", scope="pa"
-            )
-        if unkeyed:
-            raise _Stop(
-                "incomplete", f"{u.pa} {u.day}: {unkeyed} item(s) without etryptYear/etryptCo — cannot be indexed", scope="pa"
-            )
-        if items != total:
-            raise _Stop("incomplete", f"{u.pa} {u.day}: {items} of totalCount {total} item(s) received", scope="pa")
-        if len(rows) + unmatchable != items:
-            raise _Stop(
-                "incomplete", f"{u.pa} {u.day}: {items - len(rows) - unmatchable} duplicate item(s) across pages", scope="pa"
-            )
+            why, keep = f"{foreign} item(s) of another port authority — response not trusted", False
+        elif items != total:
+            why, keep = f"{items} of totalCount {total} item(s) received", False
+        elif duplicates:
+            why, keep = f"{duplicates} duplicate item(s) across pages", False
+        elif unkeyed:
+            why = f"{unkeyed} item(s) without etryptYear/etryptCo — those cannot be indexed"
         return _DayFetch(
-            rows=list(rows.values()),
+            rows=list(rows.values()) if keep else [],
             total=total,
             pages=len(fetched),
             latency_ms=sum(f.latency_ms for f in fetched),
             fetched_at=max(f.fetched_at for f in fetched),
             unmatchable=unmatchable,
-            date_mismatch=sum(f.page.date_mismatch for f in fetched),
+            date_mismatch=sum(f.page.date_mismatch for f in fetched) if keep else 0,
+            complete=why is None,
+            why=None if why is None else f"{u.pa} {u.day}: {why}",
+        )
+
+    @staticmethod
+    def _incomplete(fetched: list[PageFetch], why: str) -> _DayFetch:
+        """쪽을 끝까지 받지 않은(받을 수 없는) 날 — 행은 두지 않는다."""
+        return _DayFetch(
+            rows=[],
+            total=fetched[0].page.total,
+            pages=len(fetched),
+            latency_ms=sum(f.latency_ms for f in fetched),
+            fetched_at=max(f.fetched_at for f in fetched),
+            unmatchable=0,
+            date_mismatch=0,
+            complete=False,
+            why=why,
         )
 
     async def _fetch_page(self, p: PortCallIndexSource, u: Unit, page_no: int, headroom: int) -> PageFetch:
@@ -655,11 +719,17 @@ class PortCallIndexJob:
         return max(0.0, (now - min(ats)).total_seconds())
 
     def _hb_fields(self, now: datetime) -> dict[str, str]:
-        floor = kst_date(now) - timedelta(days=WINDOW_DAYS)
-        covered = sum(1 for pa, _n in PORT_AUTHORITIES if (c := self.coverage.get(pa)) is not None and c.covered_from <= floor)
+        today = kst_date(now)
+        floor = today - timedelta(days=WINDOW_DAYS)
+        covs = [c for pa, _n in PORT_AUTHORITIES if (c := self.coverage.get(pa)) is not None]
+        covered = sum(1 for c in covs if c.covered_from <= floor)
+        holes = sum(1 for c in covs for d in c.holes if floor <= d <= today)
         return {
             "portcalls_index_state": self.state,
             "portcalls_index_window_authorities": f"{covered}/{len(PORT_AUTHORITIES)}",  # 30일 창을 모두 덮은 항만청 수(갱신 나이는 lag_s)
+            "portcalls_index_hole_days": str(
+                holes
+            ),  # 창 안에서 끝까지 색인하지 못한 날 수(10곳 합 — 0 이 아니면 api 는 'none' 을 말하지 않는다)
         }
 
     def metrics(self) -> dict[str, str]:
@@ -667,6 +737,7 @@ class PortCallIndexJob:
         return {
             "portcall_requests": str(self.counts["requests"]),
             "portcall_index_units_ok": str(self.counts["units_ok"]),
+            "portcall_index_units_incomplete": str(self.counts["units_incomplete"]),
             "portcall_index_units_failed": str(self.counts["units_failed"]),
             "portcall_index_rows_upserted": str(self.counts["rows_upserted"]),
             "portcall_index_rows_deleted": str(self.counts["rows_deleted"]),

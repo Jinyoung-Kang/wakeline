@@ -16,7 +16,6 @@ import copy
 from datetime import date, timedelta
 
 import httpx
-import pytest
 from portmis_observed import ObservedPortMis, empty_bytes, synthetic_item
 from test_portcalls_index_job import CODES, NOW, _drain, _job, _row_for
 
@@ -84,7 +83,6 @@ async def test_one_empty_answer_never_deletes_a_day_with_a_single_stored_row():
     assert db.by_call_sign("D7POH") == []
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: one un-indexable item freezes that authority's tail and coverage")
 async def test_an_unindexable_item_neither_freezes_its_authority_nor_lets_its_day_count_as_complete():
     fake = ObservedPortMis([])
     job, db, _r, clock = _job(direct=fake, limit=10**7)

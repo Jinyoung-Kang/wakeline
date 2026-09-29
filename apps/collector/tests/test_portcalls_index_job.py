@@ -20,6 +20,7 @@ from portcall_index_fakes import DirectSource, FakeIndexDb
 from portmis_observed import ObservedPortMis, full_record_bytes, real_item, response, synthetic_item
 
 from wakeline_collector.budget import hour_key
+from wakeline_collector.db import DayApplied
 from wakeline_collector.http import HttpClient
 from wakeline_collector.jobs import portcalls_index as ix
 from wakeline_collector.jobs.maintenance import PORT_CALL_RETENTION_DAYS, MaintenanceJob
@@ -35,6 +36,7 @@ SERVICE_KEY = "TESTONLYkey0123%2Babc%2Fdef%3D%3D"  # 시험용(실제 키 아님
 NOW = datetime(2026, 9, 29, 13, 0, tzinfo=UTC)  # 22:00 KST — 창 2026-08-30 ~ 2026-09-29
 TODAY = date(2026, 9, 29)
 FLOOR = date(2026, 8, 30)
+WINDOW = 30
 CODES = [c for c, _ in PORT_AUTHORITIES]
 
 
@@ -310,38 +312,140 @@ def _paged(pages: dict[tuple[str, str, int], bytes]):
         ),
     ],
 )
-async def test_an_inconsistent_day_is_not_indexed_and_only_that_authority_backs_off(pages, why, caplog):
+async def test_an_inconsistent_day_is_a_hole_its_rows_are_not_trusted_and_the_index_moves_on(pages, why, caplog):
+    """어긋난 응답의 날은 빈 곳(hole_days) — 행은 두지 않고(그 응답을 믿지 않는다) 아무것도 지우지 않는다. 범위 · 꼬리 갱신은 그 날을 넘어 이어지고
+    (한 날이 그 항만청을 멈추지 않는다), api 는 창 안에 빈 곳이 있으면 'none' 을 말하지 않는다. 원천은 답했으므로 물러나지 않는다."""
+    job, db, _r, _clock = _job(direct=_paged(pages))
+    await _drain(job)
+    assert ("020", TODAY) in db.holes_marked and why in caplog.text
+    assert [k for k in db.rows if k[0] == "020"] == []
+    assert db.cov["020"] == Coverage(FLOOR, TODAY, NOW, frozenset({TODAY}))
+    assert all(db.cov[c] == Coverage(FLOOR, TODAY, NOW) for c in CODES[1:])  # 다른 항만청은 계속
+    run = db.runs[[r["status"] for r in db.runs].index("incomplete")]
+    assert why in run["error_text"] and "recorded as not indexed" in run["error_text"]
+    assert "020" not in job._backoff and job.counts["units_incomplete"] == 1
+
+
+async def test_a_hole_is_cleared_when_the_next_tail_refresh_gets_the_whole_day():
+    pages = {
+        ("020", "20260929", 1): response([real_item() for _ in range(50)], 60, 1, 50),
+        ("020", "20260929", 2): response([real_item()], 61, 2, 50),  # 쪽을 넘기는 사이 신고가 하나 늘었다
+    }
     job, db, _r, clock = _job(direct=_paged(pages))
     await _drain(job)
-    assert ("020", TODAY) not in db.applied and why in caplog.text
-    assert db.cov["020"] == Coverage(date(2026, 9, 27), date(2026, 9, 28), None)  # 꼬리 갱신이 끝나지 않았다 — refreshed_at 없음
-    assert all(db.cov[c] == Coverage(FLOOR, TODAY, NOW) for c in CODES[1:])  # 다른 항만청은 계속
-    assert db.runs[[r["status"] for r in db.runs].index("incomplete")]["error_text"].endswith("retry in 60 s")
-    assert job._backoff["020"][0] == clock.now() + timedelta(seconds=60)
+    assert db.cov["020"].holes == frozenset({TODAY})
+    pages.clear()
+    pages[("020", "20260929", 1)] = response(
+        [synthetic_item(pa="020", clsgn="D7OK1", entry="2026-09-29T08:00:00+09:00", count="1")], 1, 1, 50
+    )
+    clock.advance(hours=1)
+    await _drain(job)
+    assert db.cov["020"] == Coverage(FLOOR, TODAY, clock.now())  # 빈 곳이 빠졌다
+    assert _row_for(db, "D7OK1").listed_date == TODAY
 
 
-async def test_an_item_without_entry_year_or_count_blocks_its_day_rather_than_guessing_a_key():
+async def test_an_item_without_entry_year_or_count_makes_its_day_a_hole_rather_than_guessing_a_key():
     it = real_item()
     it.remove(it.find("etryptCo"))  # type: ignore[arg-type]
-    job, db, _r, _clock = _job(direct=_paged({("020", "20260929", 1): response([it], 1, 1, 50)}))
+    keyed = synthetic_item(pa="020", clsgn="D7KEY", entry="2026-09-29T10:00:00+09:00", count="003")
+    job, db, _r, _clock = _job(direct=_paged({("020", "20260929", 1): response([it, keyed], 2, 1, 50)}))
     await _drain(job)
-    assert ("020", TODAY) not in db.applied
-    assert any("without etryptYear/etryptCo" in (r.get("error_text") or "") for r in db.runs)
+    assert db.cov["020"].holes == frozenset({TODAY})
+    assert _row_for(db, "D7KEY").listed_date == TODAY  # 응답은 서로 맞다 — 키가 있는 기록은 찾을 수 있게 둔다
+    assert db.by_call_sign("V7A3884") == []  # 키를 지어내지 않는다
+    assert any(r["status"] == "incomplete" and "without etryptYear/etryptCo" in (r.get("error_text") or "") for r in db.runs)
 
 
-async def test_too_many_pages_for_one_day_is_refused():
+async def test_too_many_pages_for_one_day_is_a_hole_after_the_first_page():
     body = response([], NUM_OF_ROWS * ix.MAX_PAGES_PER_DAY + 1, 1, 0)
-    seen: list[str] = []
+    seen: list[tuple[str, str, str]] = []
     paged = _paged({("020", "20260927", 1): body})
 
     def respond(req: httpx.Request) -> httpx.Response:
-        seen.append(_q(req)["prtAgCd"])
+        q = _q(req)
+        seen.append((q["prtAgCd"], q["sde"], q["pageNo"]))
         return paged(req)
 
     job, db, _r, _clock = _job(direct=respond)
     await _drain(job)
-    assert ("020", date(2026, 9, 27)) not in db.applied
-    assert seen.count("020") == 1  # 1쪽만 보고 멈춘다
+    assert [x for x in seen if x[:2] == ("020", "20260927")] == [("020", "20260927", "1")]  # 1쪽만 보고 멈춘다
+    assert db.cov["020"] == Coverage(FLOOR, TODAY, NOW, frozenset({date(2026, 9, 27)}))
+
+
+class _RefusingDb(FakeIndexDb):
+    """DB 가 거절하는 날(해석기와 V15 가 어긋난 경우를 흉내 낸다): refuse 호출부호의 행이 있으면 rejected · coverage_too 면 행 없이도."""
+
+    def __init__(self, refuse: str, *, coverage_too: bool = False) -> None:
+        super().__init__()
+        self.refuse, self.coverage_too = refuse, coverage_too
+
+    async def apply_port_call_day(self, pa, day, rows, fetched_at, **kw):  # type: ignore[override]
+        if any(r.clsgn == self.refuse for r in rows) or (self.coverage_too and pa == "020" and not rows):
+            self.refused.append((pa, day))
+            return DayApplied(False, None, rejected="CheckViolationError")
+        return await super().apply_port_call_day(pa, day, rows, fetched_at, **kw)
+
+
+async def test_a_day_the_database_refuses_is_a_hole_and_no_authority_is_held():
+    """리뷰 재현의 둘째 반: DB 가 그 날의 행을 거절하면(되돌려졌다) 장애가 아니다 — 모두를 멈추지 않고 그 날을 행 없이 빈 곳으로 적는다."""
+    fake = ObservedPortMis([synthetic_item(pa="020", clsgn="D7REF", entry="2026-09-28T10:00:00+09:00", count="001")])
+    db = _RefusingDb("D7REF")
+    job, _db, r, clock = _job(direct=fake, db=db)
+    await _drain(job)
+    assert db.refused == [("020", date(2026, 9, 28))] and job._hold_all is None
+    assert db.cov["020"] == Coverage(FLOOR, TODAY, NOW, frozenset({date(2026, 9, 28)})) and db.by_call_sign("D7REF") == []
+    assert all(db.cov[c] == Coverage(FLOOR, TODAY, NOW) for c in CODES[1:])
+    assert not any("database write failed" in (x.get("error_text") or "") for x in db.runs)
+    assert any("database refused the day's rows (CheckViolationError)" in (x.get("error_text") or "") for x in db.runs)
+    clock.advance(seconds=ix.HEARTBEAT_S)
+    await job.step()
+    assert r.kv["wakeline:collector"]["portcalls_index_hole_days"] == "1"
+
+
+async def test_a_refused_coverage_row_backs_off_only_that_authority():
+    db = _RefusingDb("D7REF", coverage_too=True)
+    fake = ObservedPortMis([synthetic_item(pa="020", clsgn="D7REF", entry="2026-09-27T10:00:00+09:00", count="001")])
+    job, _db, _r, clock = _job(direct=fake, db=db)
+    await _drain(job)
+    assert "020" not in db.cov and job._backoff["020"][1] == 1 and job._hold_all is None
+    assert all(db.cov[c] == Coverage(FLOOR, TODAY, NOW) for c in CODES[1:])
+    assert any("coverage refused too" in (x.get("error_text") or "") for x in db.runs)
+
+
+def test_revisits_prefer_overdue_holes_count_failures_and_never_retry_a_day_within_retry_s():
+    job, _db, _r, clock = _job()
+    hole = date(2026, 9, 20)
+    job.coverage = {c: Coverage(FLOOR, TODAY, NOW) for c in CODES}
+    job.coverage["020"] = Coverage(FLOOR, TODAY, NOW, frozenset({hole}))
+    for c in CODES:
+        for n in range(WINDOW + 1):
+            job._fetched[(c, FLOOR + timedelta(days=n))] = NOW - timedelta(
+                hours=25
+            )  # 끝까지 색인한 날은 모두 다시 받을 때가 됐다(25 h)
+    job._fetched.pop(("020", hole))
+    job._attempted[("020", hole)] = NOW - timedelta(minutes=59)
+    u = job.plan(NOW)
+    assert (
+        u is not None and u.kind == "revisit" and (u.pa, u.day) != ("020", hole)
+    )  # 빈 곳은 마지막 시도에서 아직 한 시간이 안 됐다
+    job._attempted[("020", hole)] = NOW - timedelta(hours=2)  # 기준(RETRY_S)의 두 배 — 25 h / 24 h 보다 더 늦었다
+    assert job.plan(NOW) == Unit("020", hole, "revisit")
+    # 실패한 다시 받기: 속도 상한에 세고, 그 항만청의 물러남이 풀려도(다른 날의 성공) RETRY_S 안에는 그 날을 다시 고르지 않는다
+    job._fail_pa(Unit("020", hole, "revisit"), NOW, "error", "prtAgCd 020 2026-09-20 page 1: HTTP 500", None)
+    assert len(job._revisits) == 1
+    job._backoff.pop("020")
+    u = job.plan(NOW + timedelta(minutes=1))
+    assert u is not None and (u.pa, u.day) != ("020", hole)
+    stale = date(2026, 9, 15)
+    job._attempted[("030", stale)] = NOW  # 끝까지 색인한 날의 실패도 같다
+    job._fetched[("030", stale)] = NOW - timedelta(days=3)  # 가장 늦었지만
+    u = job.plan(NOW + timedelta(minutes=1))
+    assert u is not None and (u.pa, u.day) not in (("030", stale), ("020", hole))
+    at = NOW + timedelta(seconds=ix.RETRY_S)
+    job.coverage = {
+        c: Coverage(v.covered_from, v.covered_to, at, v.holes) for c, v in job.coverage.items()
+    }  # 꼬리 갱신은 방금 끝났다
+    assert job.plan(at) == Unit("030", stale, "revisit")  # RETRY_S 가 지나면 — 3일 늦은 날이 한 시간 늦은 빈 곳보다 먼저(비율)
 
 
 # ---- 범위 계획 --------------------------------------------------------------------------------------------------------
@@ -594,6 +698,7 @@ def test_metrics_are_counts_only():
     assert set(job.metrics()) == {
         "portcall_requests",
         "portcall_index_units_ok",
+        "portcall_index_units_incomplete",
         "portcall_index_units_failed",
         "portcall_index_rows_upserted",
         "portcall_index_rows_deleted",
