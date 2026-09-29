@@ -687,3 +687,30 @@ describe("/logs list: a resolved row (shown) carries its own 되돌리기", () =
     expect(byTestId("logs-note")!.textContent).toContain("되돌림: 해결 #12");
   });
 });
+
+describe("/logs bulk: a failure every remaining request would share stops the run and says so", () => {
+  const six = Array.from({ length: 6 }, (_, i) => group(`00000000000001${i.toString(16).padStart(2, "0")}`, { last_at: `2026-09-29T01:0${i}:00Z` }));
+  for (const [status, body, lead] of [
+    [403, { detail: "invalid csrf token", code: "CSRF" }, "요청이 거부되었습니다(보안 토큰)"],
+    [503, { detail: "database unavailable", code: "UNAVAILABLE", request_id: "5030503050305030" }, "서버 오류(HTTP 503)"],
+  ] as const) {
+    it(`HTTP ${status}: no new request after it; the summary counts saved · failed · not sent, nothing is reloaded, and the same confirmation can be sent again`, async () => {
+      stub((m, url) => (m === "POST" ? { status, body } : logsRoutes(url, { groups: GROUPS(six) })));
+      await open();
+      await click(button("묶음(fp)"));
+      await click(button("보이는 묶음 모두 해결 처리"));
+      const before = calls.length;
+      await click(button("6개 해결 처리 확인", byTestId("resolve-confirm")!));
+      const posts = calls.slice(before).filter((c) => c.method === "POST").length;
+      expect(posts).toBe(4); // 동시에 떠난 4건만 — 실패 뒤로는 보내지 않는다
+      const panel = byTestId("resolve-confirm")!;
+      expect(byTestId("resolve-summary", panel)!.textContent).toBe("0개 해결됨 · 4개 실패 · 2개 보내지 않음(나머지도 같은 이유로 실패 — 멈춤)");
+      expect(byTestId("resolve-error", panel)!.textContent).toContain(lead);
+      expect(byTestId("resolve-error", panel)!.textContent).toContain(`HTTP ${status}`);
+      expect(button("6개 해결 처리 확인", panel)!.getAttribute("disabled")).toBeNull(); // 저장된 것이 없다 — 같은 6개를 다시 보낼 수 있다
+      expect(button("취소", panel)).not.toBeNull(); // 저장된 것이 없다 — "닫기"가 아니다
+      expect(calls.slice(before).some((c) => c.method === "GET" && c.url.startsWith("/api/v1/ops/logs"))).toBe(false);
+      expect(byTestId("logs-note")!.textContent).toBe("");
+    });
+  }
+});
