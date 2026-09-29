@@ -17,7 +17,7 @@
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
 | **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V16) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
-| **검증** | 자동 시험 3,960건(pytest 1,389 · JUnit 830 · Vitest 1,137 · Playwright E2E 33 · 인프라 정책 122 · 버리는 컨테이너 시험 449) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 57건([VERIFICATION](docs/VERIFICATION.md)) |
+| **검증** | 자동 시험 3,965건(pytest 1,389 · JUnit 832 · Vitest 1,140 · Playwright E2E 33 · 인프라 정책 122 · 버리는 컨테이너 시험 449) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 사용자 결정 대기, 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 57건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 520.6 KiB(리뷰 v1 뒤 497.7 → 계약 v5 의 통합 검색·선박 표·이중 단위·브라우저 오류 보고와 오류 화면·WS 검증으로 +22.9 KiB — 목표 400 KB 미충족, 목표 재설정은 사용자 결정 대기) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
 | **설계 기록** | ADR 25건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
@@ -118,6 +118,13 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | `bash tools/chaos.sh` | 장애 주입 6종(api·collector·redis 강제 종료, db 정지, 공급자 차단, ais 네트워크 단절) |
 | `make logs s=api` · `make down` · `make clean` | 로그 · 중지(데이터 보존) · 볼륨 포함 초기화 |
 | `make backup` · `make restore f=… confirm=wakeline` | PostgreSQL 백업(backups/, 0600) · 빈 새 볼륨에 복원(아래) |
+
+### 업그레이드 — V16(일 집계를 KST 날짜로) 을 처음 싣는 배포
+`make up` 은 `migrate` 가 끝날 때까지 이전 api · collector 를 돌려 둡니다. V16 은 일 통계 · 격리 수 표를 KST 날짜 표로 바꾸므로, 그 사이 이전 api 의 집계가 UTC 날 통계와 완료 표식을, 이전 collector 가 UTC 날짜 격리 수를 새 표에 쓸 수 있습니다. 그래서 이번 한 번은 쓰는 쪽을 먼저 멈춥니다(계약 v5 §G20 '배포'):
+```bash
+tools/dc build && tools/dc stop api collector && make up   # 빌드 뒤에 멈춰 멈춘 시간을 migrate + 기동으로 줄인다
+```
+멈추지 않고 배포했다면 배포 뒤 운영 API `POST /api/v1/ops/stats/aggregate?day=<KST 날짜>` 로 최근 7일을 다시 셉니다(원본이 남은 계열만 바로잡힙니다). 옛 UTC 날짜 행은 `stats_daily_utc_legacy` · `quality_rule_count_utc_legacy` 에 남고(서비스는 읽지 않음), 교통량 이력은 V16 이 KST 날짜 · KST 시로 옮겨 싣습니다.
 
 ### 백업·복원(PostgreSQL)
 영구 보존 자료(SIGMET·알림·통계·감사 로그·운영자·설정)는 db 볼륨 하나에만 있습니다. `make clean`, Docker Desktop 의 데이터 삭제, PostgreSQL 메이저 업그레이드 전에는 백업을 받으세요.
