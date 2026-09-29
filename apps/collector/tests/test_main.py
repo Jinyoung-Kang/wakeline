@@ -132,9 +132,23 @@ def test_every_budgeted_provider_is_snapshotted():
     } <= set(limits)
     assert limits["adsbdb"] == 2000  # 계약 v4 §A: 노선 조회 하루 2,000회
     # ADR-022 · ADR-023: 공공데이터포털 개발계정 한도(API 하나당 — PORT-MIS · 격자 WFS 하루 10,000 · 해양교통 하루 500) 안의 선택값.
-    # 해양수산부 두 API(portmis · mof_grid4)를 합쳐도 한 API 한도 안이다 — 한도가 기관 단위로 묶여 있더라도 넘지 않는다
     assert (limits["portmis"], limits["komsa_traffic"], limits["mof_grid4"]) == (3000, 400, 6000)
-    assert limits["portmis"] + limits["mof_grid4"] <= 10_000 and limits["komsa_traffic"] <= 500
+
+
+def test_portal_daily_limits_hold_on_any_day_boundary():
+    """포털이 하루를 어느 경계로 세는지(KST 자정 · UTC 자정 · 지난 24시간)와 해양수산부 두 API 의 한도가 기관 단위로 묶여 있는지는 확인하지 않았다.
+    UTC 날 예산만으로는 KST 하루가 두 UTC 날에 걸쳐 두 몫(portmis 3,000 × 2 + 첫 격자 채우기 약 5,100 ≈ 11,100)을 쓸 수 있었다(검토 지적).
+    어떤 24시간이든 UTC 시 창을 많아야 25개 걸친다 — 창 상한 × 25 가 한도 안이어야 어느 경계로 세어도 넘지 않는다."""
+    from wakeline_collector.jobs import traffic_grid as tg
+    from wakeline_collector.providers import data_go_kr as dg
+
+    worst_windows = 25  # 정시에 시작하지 않는 24시간은 UTC 시 창 25개에 걸친다
+    # 해양수산부: portmis · mof_grid4 가 창 하나(budget:mof:h:*)를 나눠 센다 — 합쳐도 한 API 한도(10,000) 안
+    assert dg.MOF_HOURLY_CAP * worst_windows <= 10_000
+    # 격자 채우기(가장 낮은 우선순위)는 입출항 조회 몫을 남긴다 — 0 이면 채우기가 매시 창을 다 쓸 수 있다
+    assert 0 < dg.MOF_GRID4_HOURLY_HEADROOM < dg.MOF_HOURLY_CAP
+    # 해양교통안전공단: 교통 폴링 시간 창(budget:komsa_traffic:h:*) — 하루 500 안
+    assert tg.HOURLY_CAP * worst_windows <= 500
 
 
 def test_adsbdb_settings_defaults_and_validation():

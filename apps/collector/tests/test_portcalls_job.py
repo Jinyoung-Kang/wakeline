@@ -235,6 +235,7 @@ async def test_switch_off_while_waiting_sends_nothing_more_and_releases_the_budg
     assert calls == 2
     assert _cached(r, "230025")["status"] == "disabled" and _cached(r, "230025")["reason"] == "operator"
     assert (await budget.usage("portmis"))[0] == 2  # 세 번째 예약은 되돌렸다
+    assert r.kv["budget:mof:h:2026092903"]["used"] == "2"  # 시간 창에서도
 
 
 # ---- 실패 ------------------------------------------------------------------------------------------------------------
@@ -300,6 +301,60 @@ async def test_daily_budget_exhausted_mid_lookup_is_error():
     assert _cached(r, "230025")["error_kind"] == "budget" and _cached(r, "230025")["error_code"] is None
 
 
+MOF_HOUR = "budget:mof:h:2026092903"  # NOW 의 UTC 시 — 해양수산부 두 서비스가 나눠 세는 시간 창(ADR-022 · ADR-023)
+
+
+async def test_every_request_is_counted_in_the_shared_mof_hour_window():
+    r = FakeRedis()
+    lk, _, _ = _lookup(r)
+    with respx.mock:
+        respx.get(URL).mock(side_effect=_responder({}))
+        lk.request(["230025"])
+        await _drain(lk)
+    assert r.kv[MOF_HOUR]["used"] == "10" and r.kv[MOF_HOUR]["limit"] == str(pj.MOF_HOURLY_CAP)
+
+
+async def test_full_mof_hour_window_sends_nothing_and_says_hourly_cap_not_daily_budget():
+    """검토 지적: UTC 날 예산만으로는 KST 하루에 두 몫을 쓸 수 있었다 — 시간 창이 차면 그 시에는 묻지 않는다. 화면이 '하루 예산 소진'으로
+    말하지 않게 종류를 따로 적는다(hourly_cap)."""
+    r = FakeRedis()
+    # 격자 채우기 · 다른 조회가 이 시를 다 썼다
+    r.kv[MOF_HOUR] = {"used": str(pj.MOF_HOURLY_CAP), "limit": str(pj.MOF_HOURLY_CAP)}
+    lk, _, budget = _lookup(r)
+    with respx.mock(assert_all_called=False) as m:
+        route = m.get(URL).mock(side_effect=_responder({}))
+        lk.request(["230025"])
+        await _drain(lk)
+    assert route.call_count == 0
+    v = _cached(r, "230025")
+    assert v["status"] == "error" and v["error_kind"] == "hourly_cap" and v["error_code"] is None
+    assert v["error"] == f"MOF hourly window full (used={pj.MOF_HOURLY_CAP} of {pj.MOF_HOURLY_CAP} in UTC hour 2026092903)"
+    assert (await budget.usage("portmis"))[0] == 0  # 하루 예산은 쓰지 않았다
+    assert r.kv[MOF_HOUR]["used"] == str(pj.MOF_HOURLY_CAP)
+
+
+async def test_mof_hour_window_filling_mid_lookup_stops_it_as_an_error():
+    r = FakeRedis()
+    r.kv[MOF_HOUR] = {"used": str(pj.MOF_HOURLY_CAP - 3), "limit": str(pj.MOF_HOURLY_CAP)}
+    lk, _, _ = _lookup(r)
+    with respx.mock:
+        route = respx.get(URL).mock(side_effect=_responder({}))
+        lk.request(["230025"])
+        await _drain(lk)
+    # 일부 항만청만으로 '기록 없음'이라 하지 않는다
+    assert route.call_count == 3 and _cached(r, "230025")["error_kind"] == "hourly_cap"
+
+
+async def test_day_budget_refusal_gives_the_hour_back():
+    r = FakeRedis()
+    lk, _, _ = _lookup(r, limit=4)
+    with respx.mock:
+        respx.get(URL).mock(side_effect=_responder({}))
+        lk.request(["230025"])
+        await _drain(lk)
+    assert _cached(r, "230025")["error_kind"] == "budget" and r.kv[MOF_HOUR]["used"] == "4"  # 보낸 넷만 창에 남는다
+
+
 async def test_rate_limit_wait_exceeded_is_error_and_budget_released():
     r = FakeRedis()
     limiter = RateLimiter(100, 100, {DATA_GO_KR_HOST: (0.01, 1)})
@@ -311,6 +366,7 @@ async def test_rate_limit_wait_exceeded_is_error_and_budget_released():
     assert route.call_count == 1  # 두 번째 요청은 토큰을 기다리다 포기
     assert _cached(r, "230025")["status"] == "error" and (await budget.usage("portmis"))[0] == 1
     assert _cached(r, "230025")["error_kind"] == "rate_limited"
+    assert r.kv[MOF_HOUR]["used"] == "1"  # 보내지 않은 요청은 시간 창에서도 되돌린다
 
 
 async def test_unexpected_body_is_a_response_error():
@@ -333,6 +389,7 @@ async def test_connection_failure_is_a_network_error_and_releases_the_budget():
         lk.request(["230025"])
         await _drain(lk)
     assert _cached(r, "230025")["error_kind"] == "network" and (await budget.usage("portmis"))[0] == 0
+    assert r.kv[MOF_HOUR]["used"] == "0"
 
 
 async def test_redis_unavailable_means_no_lookup():
@@ -385,6 +442,7 @@ async def test_shutdown_releases_the_budget_of_the_request_not_sent():
                 break
         await lk.aclose()
     assert (await budget.usage("portmis"))[0] == 1  # 첫 요청은 보냈고, 기다리던 두 번째는 되돌렸다
+    assert r.kv[MOF_HOUR]["used"] == "1"
     assert KEY.format("230025") not in r.kv
 
 

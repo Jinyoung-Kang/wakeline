@@ -12,10 +12,14 @@
   상한 둘: 메모리 60분 창 HOURLY_CAP(15) · Redis 시간 창(budget:komsa_traffic:h:{UTC 시}, 같은 15 — 재기동 · 두 번째 수집기도 센다). KST 날은 UTC 시
   24개이므로 어느 날 경계로 세어도 하루 360번 이하 — 포털 한도(500) 안. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다).
   예산은 엄격(Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
-- 격자 기하(budget:mof_grid4, 하루 6,000 — 포털 10,000 안): 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
+- 격자 기하(budget:mof_grid4, UTC 날 6,000): 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
   많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s — 교통 폴링 · 항만 입출항 조회(ADR-022)와 하나)과
   가장 낮은 우선순위(PRIORITY_BACKFILL — 입출항 조회보다도 낮다)로. 교통 폴링은 PRIORITY_FIXED 라 입출항 조회가 이어져도 먼저 받는다.
-  첫 스냅샷(약 5,100칸)은 몇 시간에 걸쳐 채워진다 — 그동안 스냅샷 값의 resolved/unresolved 가 그대로 보인다.
+  호출마다 해양수산부 시간 창(budget:mof:h:{UTC 시} — 입출항 조회와 함께 센다, providers/data_go_kr.MOF_*)을 먼저 예약하되 입출항 조회 몫
+  (MOF_GRID4_HOURLY_HEADROOM)을 남긴다 — 어느 날 경계로 세어도 두 API 합계가 포털 한도(10,000) 안(검토 지적: UTC 날 예산만으로는 KST 하루에
+  두 몫을 쓸 수 있었다). 창이나 하루 예산에 막히면 그 까닭을 실행 기록에 한 번 적고 다음 UTC 시 · 다음 UTC 날까지 채우지 않는다(틱마다 적지 않는다).
+  채우기는 시간당 많아야 MOF_HOURLY_CAP − MOF_GRID4_HOURLY_HEADROOM(300)칸 — 첫 스냅샷(확인한 표본 5,099칸)은 17시간 넘게 걸쳐 채워진다
+  (계산 — 잰 값이 아니다). 그동안 스냅샷 값의 resolved/unresolved 가 그대로 보인다.
   * found: 0.025° 격자 검사를 통과한 칸 → 메모리 + DB marine_grid4(V14 — 다시 시작해도 다시 묻지 않는다).
   * not_found(numberOfFeatures 0) · off_grid(격자 검사 실패 — 격리, 품질 사례 · 원본 보관): 부정 캐시 Redis wakeline:traffic_grid:negative
     (grid_no → {"reason","at"}) — NEGATIVE_TTL_S(7일) 뒤 다시 묻는다.
@@ -55,7 +59,7 @@ from wakeline_collector.errors import describe_error
 from wakeline_collector.http import BeforeSend, FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.marine_grid import CELL_DEG, SNAP_TOL_DEG, Cell, snap
-from wakeline_collector.providers.data_go_kr import WfsLookup
+from wakeline_collector.providers.data_go_kr import MOF_GRID4_HOURLY_HEADROOM, MOF_HOUR_WINDOW, MOF_HOURLY_CAP, WfsLookup
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT
 from wakeline_collector.traffic_grid import GRID_ID_RE, KomsaSnapshot, build_payload, iso_z
@@ -366,6 +370,7 @@ class TrafficGridJob:
         self._force_publish = False
         self._fill_pause_until: datetime | None = None
         self._fill_pauses = 0
+        self._fill_hold_until: datetime | None = None  # 시간 창 · 하루 예산이 다시 셀 때(다음 UTC 시 · 날)까지 채우지 않는다
         self._logged_disabled: str | None = None
         self._waiting_logged = False
         self.counts = {"komsa_calls": 0, "wfs_calls": 0, "published": 0}
@@ -592,6 +597,8 @@ class TrafficGridJob:
             return
         if self._fill_pause_until is not None and now < self._fill_pause_until:
             return
+        if self._fill_hold_until is not None and now < self._fill_hold_until:
+            return
         if await self.ctx.status.is_disabled(w.name):
             return
         batch = self.geometry.due(now, WFS_PER_TICK)
@@ -606,16 +613,40 @@ class TrafficGridJob:
         latency: list[int] = []
         started = now
         stop_reason: str | None = None
+        hold_until: datetime | None = None
         for g in batch:
             if self._mono() - t0 > FILL_MAX_S:
                 break
+            at = self._now()  # 보내는 때의 UTC 시 창에 센다(채우기가 정시를 넘겨도)
+            # 해양수산부 시간 창 먼저(입출항 조회 몫을 남기고) — 그다음 하루 예산. 하나라도 안 되면 부르지 않는다
+            ok, used, hour = await self.ctx.budget.reserve_hour(
+                w.name, MOF_HOURLY_CAP, w.cost, now=at, window=MOF_HOUR_WINDOW, headroom=MOF_GRID4_HOURLY_HEADROOM
+            )
+            if not ok:
+                if used == UNKNOWN:
+                    stop_reason = "budget store unavailable (fail closed)"
+                else:
+                    hold_until = at.astimezone(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                    stop_reason = (
+                        f"MOF hourly window: grid share used ({used} of {MOF_HOURLY_CAP} in UTC hour {hour.rsplit(':', 1)[-1]}, "
+                        f"{MOF_GRID4_HOURLY_HEADROOM} left for port calls)"
+                    )
+                break
             ok, used = await self.ctx.budget.reserve(w.name, w.cost)
             if not ok:
-                stop_reason = (
-                    "budget store unavailable (fail closed)" if used == UNKNOWN else f"daily budget exhausted (used={used})"
-                )
+                await self.ctx.budget.release_key(hour, w.cost)
+                if used == UNKNOWN:
+                    stop_reason = "budget store unavailable (fail closed)"
+                else:
+                    hold_until = at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                    stop_reason = f"daily budget exhausted (used={used})"
                 break
             sent = False
+
+            async def give_back(hour_key: str = hour) -> None:
+                """보내지 않은 호출: 두 예약(하루 · 시간 창)을 모두 되돌린다."""
+                await self.ctx.budget.release(w.name, w.cost)
+                await self.ctx.budget.release_key(hour_key, w.cost)
 
             async def before_send() -> bool:
                 nonlocal sent
@@ -628,10 +659,10 @@ class TrafficGridJob:
                 got = await w.lookup(g, before_send=before_send)
             except asyncio.CancelledError:
                 if not sent:
-                    await asyncio.shield(self.ctx.budget.release(w.name, w.cost))
+                    await asyncio.shield(give_back())
                 raise
             except NOT_SENT:
-                await self.ctx.budget.release(w.name, w.cost)
+                await give_back()
                 break
             except Exception as e:  # noqa: BLE001 — HTTP · 응답 모양(WfsError) · 읽기 시간 초과
                 calls += 1
@@ -688,17 +719,39 @@ class TrafficGridJob:
             self._fill_pauses = 0
         if gave_up:
             self._dirty = True  # pending → failed: 수가 바뀌었다
-        if stop_reason and not calls:
-            self.ctx.db.record_run(
-                self.geom_job_name,
-                w.name,
-                started,
-                status="budget_unavailable" if stop_reason.startswith("budget store") else "budget_exhausted",
-                error_text=stop_reason,
-            )
+        if calls:
+            await self._record_fill(w, started, calls, found, not_found, off_grid, latency, last_error, http_status, quality)
+        if stop_reason is None:
             return
-        if not calls:
-            return
+        if hold_until is not None:
+            # 다시 셀 때까지 채우지 않는다 — 까닭은 이번에 한 번만 적는다(전에는 틱(30 s)마다 같은 거절을 한 줄씩 쌓았다)
+            self._fill_hold_until = hold_until
+            stop_reason = f"{stop_reason} — geometry fill resumes at {iso_z(hold_until)}"
+            log.info("traffic grid: %s", stop_reason)
+        elif calls:
+            return  # 예산 저장소 장애 — 이번 틱은 보낸 호출만 적는다(다음 틱에 다시 본다)
+        self.ctx.db.record_run(
+            self.geom_job_name,
+            w.name,
+            started,
+            status="budget_unavailable" if hold_until is None else "budget_exhausted",
+            error_text=stop_reason,
+        )
+
+    async def _record_fill(
+        self,
+        w: WfsSource,
+        started: datetime,
+        calls: int,
+        found: list[Cell],
+        not_found: int,
+        off_grid: int,
+        latency: list[int],
+        last_error: str | None,
+        http_status: int | None,
+        quality: list[tuple[str, str | None, dict[str, Any]]],
+    ) -> None:
+        """보낸 호출이 있던 채우기 한 번의 실행 기록 · 공급자 상태."""
         succeeded = len(found) + not_found + off_grid
         self.ctx.db.record_run(
             self.geom_job_name,

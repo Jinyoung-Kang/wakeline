@@ -138,6 +138,9 @@ async def test_port_call_leases_are_read_only_and_cache_is_set_ex_under_collecto
     """ADR-022: 수집기 규칙으로 임대(ZRANGEBYSCORE LIMIT)를 읽고 캐시를 SET EX · EXISTS 로 쓴다. 임대는 쓰지 못한다."""
     now = time.time() * 1000
     await admin.zadd(PORTCALL_DEMAND_KEY, {"230025": now + 60_000, "DEAD01": now - 1})
+    from wakeline_collector.budget import hour_key
+
+    mof_hours = {hour_key("mof")}  # 해양수산부 시간 창(ADR-022 · ADR-023) — 조회가 정시를 넘길 수 있어 앞뒤 시를 함께 본다
     prov = _FixtureProvider()
     lk = PortCallLookup(collector, prov, Budget(collector, {"portmis": 3000}), ProviderStatus(collector))  # type: ignore[arg-type]
     job = PortCallJob(collector, lk)
@@ -149,6 +152,12 @@ async def test_port_call_leases_are_read_only_and_cache_is_set_ex_under_collecto
     assert raw is not None and orjson.loads(raw)["status"] == "ok"
     assert 6 * 3600 - 10 < await admin.ttl(portcalls_key("230025")) <= 6 * 3600
     assert len(prov.calls) == 10 and (await Budget(admin, {}).usage("portmis"))[0] == 10
+    mof_hours.add(hour_key("mof"))
+    try:
+        # 예산 Lua 가 수집기 ACL 로 창에도 센다
+        assert sum([int((await admin.hgetall(k)).get("used", 0)) for k in mof_hours]) == 10
+    finally:
+        await admin.delete(*mof_hours)
     lk.request(["230025"])  # 캐시가 있으면 묻지 않는다(EXISTS)
     for t in list(lk._tasks.values()):
         await t
@@ -177,6 +186,7 @@ async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin
         day_key("komsa_traffic"),
         day_key("mof_grid4"),
         hour_key("komsa_traffic", T0),
+        hour_key("mof", T0),
         "wakeline:provider:komsa_traffic",
         "wakeline:provider:mof_grid4",
     )
@@ -211,6 +221,9 @@ async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin
             await collector.xadd(SNAPSHOT_KEY, {"x": "y"})
         assert (await admin.hgetall(hour_key("komsa_traffic", T0)))["used"] == "1"
         assert 0 < await admin.ttl(hour_key("komsa_traffic", T0)) <= 7200
+        # 격자 WFS 세 번 — 해양수산부 시간 창(입출항 조회와 함께 센다)
+        assert (await admin.hgetall(hour_key("mof", T0)))["used"] == "3"
+        assert 0 < await admin.ttl(hour_key("mof", T0)) <= 7200
     finally:
         await admin.delete(*keys)
 

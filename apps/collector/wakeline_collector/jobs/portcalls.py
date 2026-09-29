@@ -15,11 +15,13 @@
   캐시에 쓰지 못하면 그 호출부호는 같은 TTL 동안 이 프로세스 안에서 다시 묻지 않는다(공급자 보호 — route 와 같다).
 - 한 요청이라도 실패하면(HTTP 오류 · resultCode ≠ 00 · 모양 이상 · 속도 상한 · 예산) 그 조회 전체를 error 로 적고 나머지 항만청은 묻지 않는다 —
   일부 항만청만 받은 결과를 "기록 없음" 처럼 보이지 않게.
-  error 값에는 원문 사유(가린 뒤 — 캐시·운영 화면·로그)와 공개용 error_kind(budget · rate_limited · http · provider · response · network ·
-  internal)·error_code(HTTP 상태 · resultCode)를 함께 적는다 — api 는 종류·코드만 화면에 보낸다.
+  error 값에는 원문 사유(가린 뒤 — 캐시·운영 화면·로그)와 공개용 error_kind(budget · hourly_cap · rate_limited · http · provider · response ·
+  network · internal)·error_code(HTTP 상태 · resultCode)를 함께 적는다 — api 는 종류·코드만 화면에 보낸다.
 - 꺼져 있으면 disabled: 키 없음(no_key) · fixture 모드(fixture) · 운영자 스위치(operator, wakeline:provider:portmis disabled=1 — 요청마다
   보내기 직전에 다시 본다).
-- 하루 예산(portmis)은 요청마다 보내기 전에 예약하고, 보내지 않은 요청은 되돌린다. portcall_requests 는 실제로 보낸 요청만 센다.
+- 예산은 요청마다 보내기 전에 둘을 예약한다: 해양수산부 시간 창(budget:mof:h:{UTC 시} — 격자 WFS 와 함께 센다, providers/data_go_kr.MOF_*)
+  먼저, 그다음 하루 예산(portmis, UTC 날). 창이 차면 hourly_cap(그 시에는 묻지 않는다 — 다음 정시에 다시 센다), 하루 예산이 다 되면 budget.
+  보내지 않은 요청은 둘 다 되돌린다. portcall_requests 는 실제로 보낸 요청만 센다.
 - 비밀값: serviceKey 는 요청 쿼리에만 있다. 로그·공급자 상태·캐시에는 호출부호·상태·사유(가린 뒤)만 남는다.
 """
 
@@ -62,6 +64,7 @@ from wakeline_collector.portcalls import (
     portcalls_key,
     query_window,
 )
+from wakeline_collector.providers.data_go_kr import MOF_HOUR_WINDOW, MOF_HOURLY_CAP
 from wakeline_collector.providers.portmis import NUM_OF_ROWS, PORTMIS_WAIT_S, PageFetch
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.status import ProviderStatus
@@ -290,14 +293,27 @@ class PortCallLookup:
     async def _fetch(
         self, p: PortCallProvider, cs: str, pa: str, window: tuple[date, date], page_no: int, started: datetime
     ) -> tuple[PageFetch, int] | _Failed:
-        """요청 하나: 예산 예약 → 속도 상한 → 보내기 직전 스위치 확인 → 파싱. 실패는 _Failed(이미 공급자 상태에 적었다)."""
+        """요청 하나: 예산 예약(해양수산부 시간 창 → 하루 예산) → 속도 상한 → 보내기 직전 스위치 확인 → 파싱.
+        실패는 _Failed(이미 공급자 상태에 적었다)."""
+        ok, used, hour = await self._budget.reserve_hour(p.name, MOF_HOURLY_CAP, p.cost, now=self._now(), window=MOF_HOUR_WINDOW)
+        if not ok:
+            if used == UNKNOWN:
+                return _Failed(pcv.error(cs, "budget store unavailable", started, kind="internal"), "budget store unavailable")
+            why = f"MOF hourly window full (used={used} of {MOF_HOURLY_CAP} in UTC hour {hour.rsplit(':', 1)[-1]})"
+            return _Failed(pcv.error(cs, why, started, kind="hourly_cap"), why)
         ok, used = await self._budget.reserve(p.name, p.cost)
         if not ok:
+            await self._budget.release_key(hour, p.cost)
             if used == UNKNOWN:
                 return _Failed(pcv.error(cs, "budget store unavailable", started, kind="internal"), "budget store unavailable")
             why = f"daily budget exhausted (used={used})"
             return _Failed(pcv.error(cs, why, started, kind="budget"), why)
         sent = False
+
+        async def give_back() -> None:
+            """보내지 않은 요청: 두 예약(하루 · 시간 창)을 모두 되돌린다."""
+            await self._budget.release(p.name, p.cost)
+            await self._budget.release_key(hour, p.cost)
 
         async def before_send() -> bool:
             """속도 상한 허가를 받은 뒤 보내기 직전: 기다리는 사이 운영자가 껐으면 보내지 않는다."""
@@ -322,13 +338,13 @@ class PortCallLookup:
             )
         except asyncio.CancelledError:  # 종료: 보내지 않았으면 예산을 되돌린다
             if not sent:
-                await asyncio.shield(self._budget.release(p.name, p.cost))
+                await asyncio.shield(give_back())
             raise
         except Throttled as e:  # 속도 상한 대기 초과·429 쿨다운 — 보내지 않았다
-            await self._budget.release(p.name, p.cost)
+            await give_back()
             return _Failed(pcv.error(cs, e.reason, started, kind="rate_limited"), e.reason)
         except SendCancelled:  # 기다리는 사이 운영자가 껐다 — 보내지 않았다
-            await self._budget.release(p.name, p.cost)
+            await give_back()
             return _Failed(pcv.disabled(cs, "operator", started), DISABLED_MSG["operator"])
         except ProviderHttpError as e:
             self.counts["requests"] += 1
@@ -343,7 +359,7 @@ class PortCallLookup:
             self.counts["requests"] += 1
             why, kind = describe_error(e), "response"
         except NOT_SENT_ERRORS as e:  # 허용 호스트 아님·연결 풀 대기 초과·연결 전 실패 — 보내지 않았다
-            await self._budget.release(p.name, p.cost)
+            await give_back()
             why, kind = describe_error(e), "internal" if isinstance(e, HostNotAllowed) else "network"
         except httpx.TransportError as e:  # 읽기 시간 초과 등(보낸 것으로 센다)
             self.counts["requests"] += 1

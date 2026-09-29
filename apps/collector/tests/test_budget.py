@@ -57,3 +57,21 @@ async def test_hour_window_follows_the_strict_policy_when_redis_is_down():
     assert (await b.reserve_hour("komsa_traffic", 15, now=t))[:2] == (False, UNKNOWN)  # 엄격: 부르지 않는다
     assert (await b.reserve_hour("adsb_fi", 15, now=t))[:2] == (True, UNKNOWN)
     await b.release_key("budget:komsa_traffic:h:2026092909")  # 예외 없음
+
+
+async def test_a_shared_hour_window_counts_several_providers_and_lets_the_lower_priority_one_leave_room():
+    """해양수산부 두 서비스(ADR-022 · ADR-023)는 한 시간 창(budget:mof:h:{UTC 시})을 나눠 센다. 격자 채우기는 headroom 만큼 남기고 멈추고,
+    입출항 조회는 창 끝까지 쓴다. 엄격함은 창이 아니라 부른 공급자로 정한다(portmis 는 느슨 · mof_grid4 는 엄격)."""
+    r = FakeRedis()
+    b = Budget(r, {})  # type: ignore[arg-type]
+    t = datetime(2026, 9, 29, 3, 30, tzinfo=UTC)
+    assert await b.reserve_hour("mof_grid4", 4, now=t, window="mof", headroom=1) == (True, 1, "budget:mof:h:2026092903")
+    assert (await b.reserve_hour("mof_grid4", 4, now=t, window="mof", headroom=1))[:2] == (True, 2)
+    assert (await b.reserve_hour("portmis", 4, now=t, window="mof"))[:2] == (True, 3)  # 두 공급자가 같은 창을 센다
+    assert (await b.reserve_hour("mof_grid4", 4, now=t, window="mof", headroom=1))[:2] == (False, 3)  # 1 을 남기고 멈춘다
+    assert (await b.reserve_hour("portmis", 4, now=t, window="mof"))[:2] == (True, 4)  # 남긴 몫은 입출항 조회가 쓴다
+    assert (await b.reserve_hour("portmis", 4, now=t, window="mof"))[:2] == (False, 4)
+    assert "budget:portmis:h:2026092903" not in r.kv and "budget:mof_grid4:h:2026092903" not in r.kv
+    r.down = True
+    assert (await b.reserve_hour("mof_grid4", 4, now=t, window="mof"))[:2] == (False, UNKNOWN)
+    assert (await b.reserve_hour("portmis", 4, now=t, window="mof"))[:2] == (True, UNKNOWN)

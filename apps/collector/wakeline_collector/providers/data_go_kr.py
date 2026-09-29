@@ -13,6 +13,8 @@
 모양 규칙 — 언어 간 벡터), 키 값 자체도 네 가지 형태(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩)를 값 치환 목록에 넣는다(service_key_forms — main).
 호출 속도는 HttpClient 의 RateLimiter 가 정한다: 호스트 apis.data.go.kr 버킷 하나(설정 data_go_kr_rps, burst 2) + 수집기 전체 버킷.
 세 잡은 우선순위로 나눈다 — 교통 5분 폴링 PRIORITY_FIXED > 선택 선박 입출항 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL(가장 낮다).
+하루 호출 수: 공급자마다 UTC 날 예산(budget:{공급자}:{yyyymmdd}) + 포털 하루 한도를 어느 날 경계로 세어도 지키는 Redis 시간 창 — 교통 폴링은
+budget:komsa_traffic:h:*(jobs/traffic_grid.HOURLY_CAP), 해양수산부 두 서비스(PORT-MIS · 격자 WFS)는 함께 세는 budget:mof:h:*(아래 MOF_*).
 """
 
 from __future__ import annotations
@@ -35,6 +37,17 @@ KOMSA_TOTAL_S = 30.0  # 요청 전체 상한(약 246 KB) — 선택값
 KOMSA_READ_S = 15.0
 WFS_TOTAL_S = 15.0
 WFS_WAIT_S = 5.0  # 속도 상한 대기 상한 — 못 받으면 이번 틱의 채우기를 멈춘다(보내지 않았으니 예산을 되돌린다)
+
+# 해양수산부 두 서비스(선박운항정보 PORT-MIS portmis · 격자4단계 WFS mof_grid4)가 함께 세는 Redis 시간 창 budget:mof:h:{UTC 시}(ADR-022 · ADR-023).
+# 확인한 것: 포털 개발계정 한도는 API 하나당 하루 10,000회. 확인하지 않은 것: 두 API 의 한도가 기관 단위로 묶여 있는지, 포털이 하루를 어느
+# 경계(KST 자정 · UTC 자정 · 지난 24시간)로 세는지. UTC 날 예산(3,000 · 6,000)만으로는 KST 하루가 두 UTC 날에 걸쳐 두 몫을 쓸 수 있었다(검토 지적 —
+# 입출항 3,000 × 2 + 첫 격자 채우기 약 5,100). 어떤 24시간이든 UTC 시 창을 많아야 25개 걸치므로 25 × MOF_HOURLY_CAP = 10,000 — 두 API 를 합쳐도,
+# 어느 경계로 세어도 넘지 않는다. 두 값 모두 선택값이다(잰 값이 아니다).
+MOF_HOUR_WINDOW = "mof"
+MOF_HOURLY_CAP = 400
+# 격자 채우기(가장 낮은 우선순위)는 창의 이만큼을 남기고 그 시의 채우기를 멈춘다 — 사람이 기다리는 입출항 조회(선박 하나 = 요청 10회 이상)가
+# 매시 적어도 이만큼을 쓸 수 있게. 채우기 몫은 시간당 많아야 MOF_HOURLY_CAP − 이 값(300칸)이다
+MOF_GRID4_HOURLY_HEADROOM = 100
 
 
 def decode_service_key(raw: str | None) -> str:

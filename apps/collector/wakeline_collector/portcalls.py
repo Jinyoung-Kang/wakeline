@@ -10,7 +10,8 @@
 - 예외 메시지는 고정 문구 + 공급자가 준 resultCode·resultMsg(가린 뒤 · 자른 것) 또는 뜻밖의 XML 의 뿌리 이름·글(가린 뒤 · 자른 것)이다.
 값: {"v":1,"status":"ok"|"none"|"error"|"disabled","call_sign","fetched_at","window":{from,to,days}|null,"source","items":[…],
 "truncated"(MAX_ITEMS 넘게 있어 앞만 둠),"incomplete"(쪽 상한에 걸려 일부 항만청 기록을 다 받지 못함),"error"(error 사유 원문 — 가린 뒤),
-"error_kind"(공개용 종류: budget · rate_limited · http · provider · response · network · internal),"error_code"(HTTP 상태 · resultCode — 모양 검사),
+"error_kind"(공개용 종류: budget(하루 예산) · hourly_cap(해양수산부 시간 창 — providers/data_go_kr.MOF_*) · rate_limited · http · provider ·
+response · network · internal),"error_code"(HTTP 상태 · resultCode — 모양 검사),
 "reason"(disabled 사유: no_key · fixture · operator)}.
 화면(api → 웹)에는 error 원문을 보내지 않는다 — 예산 수치·내부 사유가 공개 화면에 나가지 않게 종류·코드만(원문은 운영 화면 공급자 상태·로그에).
 
@@ -67,7 +68,7 @@ KST = timedelta(hours=9)  # 한국 표준시는 UTC+9 고정(일광 절약 시�
 
 Status = Literal["ok", "none", "error", "disabled"]
 DisabledReason = Literal["no_key", "fixture", "operator"]
-ErrorKind = Literal["budget", "rate_limited", "http", "provider", "response", "network", "internal"]
+ErrorKind = Literal["budget", "hourly_cap", "rate_limited", "http", "provider", "response", "network", "internal"]
 _ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 

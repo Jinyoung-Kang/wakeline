@@ -3,8 +3,11 @@
 Redis 장애 시 예약은 예외를 올리지 않는다(실시간 경로 보호). 한도가 엄격한 공급자(strict: OpenSky 크레딧 등)는
 예약할 수 없으면 호출하지 않고(fail closed), 나머지는 호출을 계속한다(fail open, 사용량은 기록되지 않음).
 headroom: 우선순위가 낮은 호출(focus·hot)은 한도에서 이만큼을 남겨 두고 멈춘다 — 저장되는 limit 은 그대로다.
-시간 창(reserve_hour): 키 budget:{provider}:h:{yyyymmddHH}(UTC 시 — KST 와 시 경계가 같다), 같은 Lua 로 예약한다. 프로세스 메모리가 아니라 Redis 에
-세므로 재기동 · 두 번째 수집기도 같은 창을 센다(연안 교통량 ADR-023 — 포털 하루 한도를 어느 날 경계로 세어도 넘지 않게).
+시간 창(reserve_hour): 키 budget:{창}:h:{yyyymmddHH}(UTC 시 — KST 와 시 경계가 같다), 같은 Lua 로 예약한다. 프로세스 메모리가 아니라 Redis 에
+세므로 재기동 · 두 번째 수집기도 같은 창을 센다. 창은 공급자 하나(교통 폴링 budget:komsa_traffic:h:*)이거나 여러 공급자가 나눠 세는 이름
+(해양수산부 두 서비스 budget:mof:h:* — ADR-022 · ADR-023)이다. 어떤 24시간이든 UTC 시 창을 많아야 25개 걸치므로, 창 상한 × 25 가 포털 하루
+한도 안이면 포털이 하루를 어느 경계(KST 자정 · UTC 자정 · 지난 24시간)로 세어도 넘지 않는다 — UTC 날 예산(day_key)만으로는 KST 하루가 두 UTC 날의
+몫을 쓸 수 있다.
 """
 
 from __future__ import annotations
@@ -101,13 +104,22 @@ class Budget:
             return provider not in self._strict, UNKNOWN
 
     async def reserve_hour(
-        self, provider: str, limit: int, cost: int = 1, *, now: datetime | None = None
+        self,
+        provider: str,
+        limit: int,
+        cost: int = 1,
+        *,
+        now: datetime | None = None,
+        window: str | None = None,
+        headroom: int = 0,
     ) -> tuple[bool, int, str]:
         """시간 창 예약: (허용 여부, 예약 후 사용량, 키). 되돌릴 때는 이 키를 release_key 에 준다(시 경계를 넘겨도 예약한 창에서 뺀다).
-        Redis 장애면 사용량 UNKNOWN — 엄격한 공급자는 거절(reserve 와 같은 규칙)."""
-        key = hour_key(provider, now)
+        window: 여러 공급자가 나눠 세는 창 이름(키 budget:{window}:h:…) — 없으면 공급자 이름. headroom > 0 이면 limit − headroom 을 넘는 예약을
+        거절한다(우선순위가 낮은 공급자가 높은 쪽 몫을 남긴다 — reserve 와 같은 규칙). 저장되는 limit 은 그대로다.
+        Redis 장애면 사용량 UNKNOWN — 엄격함은 창이 아니라 부른 공급자로 정한다(reserve 와 같은 규칙)."""
+        key = hour_key(window or provider, now)
         try:
-            ok, used = await self._eval(key, cost, limit, 0, HOUR_TTL_S)
+            ok, used = await self._eval(key, cost, limit, max(0, headroom), HOUR_TTL_S)
             return bool(ok), used, key
         except Exception as e:  # noqa: BLE001
             self._sha = None

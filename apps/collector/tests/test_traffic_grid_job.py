@@ -655,13 +655,63 @@ def test_failed_ids_survive_a_restart_with_their_own_shorter_ttl():
     assert g.observe([("GR4_A", 1), ("GR4_B", 1)], t + timedelta(hours=25)) == 1  # 기한이 지난 failed 만 다시 기다림에
 
 
-async def test_wfs_daily_budget_is_respected():
-    job, _k, wfs, _r, clock, db = setup(limits={"komsa_traffic": 400, "mof_grid4": 2})
+async def test_wfs_daily_budget_is_respected_and_the_fill_waits_for_the_next_utc_day_quietly():
+    job, _k, wfs, r, clock, db = setup(limits={"komsa_traffic": 400, "mof_grid4": 2})
     await job.run_once()
     assert len(wfs.asked) == 2
-    clock.advance(30)
-    await job.run_once()
+    assert statuses(db, "traffic_grid_geom") == ["ok", "budget_exhausted"]  # 멈춘 까닭을 한 번 적는다
+    runs = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"]
+    assert runs[-1]["error_text"] == "daily budget exhausted (used=2) — geometry fill resumes at 2026-09-30T00:00:00Z"
+    for _ in range(4):  # 틱마다 같은 거절을 실행 기록에 쌓지 않는다(전에는 30 s 마다 한 줄)
+        clock.advance(30)
+        await job.run_once()
     assert len(wfs.asked) == 2 and statuses(db, "traffic_grid_geom") == ["ok", "budget_exhausted"]
+    clock.t = datetime(2026, 9, 30, 0, 0, 5, tzinfo=UTC)  # 예산 날(UTC)이 바뀌었다
+    del r.kv[day_key("mof_grid4")]  # 하루 예산 키는 벽시계 날짜로 센다 — 새 날의 빈 키를 흉내 낸다
+    await job.run_once()
+    assert len(wfs.asked) == 3
+
+
+MOF_HOUR = "budget:mof:h:2026092909"  # T0 의 UTC 시 — 해양수산부 두 서비스(격자 WFS · PORT-MIS)가 나눠 세는 시간 창
+
+
+async def test_every_wfs_lookup_is_counted_in_the_shared_mof_hour_window():
+    job, _k, wfs, r, _c, _db = setup()
+    await job.run_once()
+    assert len(wfs.asked) == 3 and r.kv[MOF_HOUR]["used"] == "3"
+
+
+async def test_the_fill_leaves_the_port_call_share_of_the_mof_hour_window_and_resumes_next_hour():
+    """검토 지적: UTC 날 예산만으로는 KST 하루(두 UTC 날에 걸침)에 해양수산부 두 API 가 10,000 을 넘을 수 있었다(입출항 3,000 × 2 + 첫 채우기
+    약 5,100). 채우기는 시간 창에서 입출항 조회 몫(MOF_GRID4_HOURLY_HEADROOM)을 남기고 멈췄다가 다음 UTC 시에 다시 시작한다."""
+    job, _k, wfs, r, clock, db = setup()
+    grid_share = tg.MOF_HOURLY_CAP - tg.MOF_GRID4_HOURLY_HEADROOM
+    r.kv[MOF_HOUR] = {"used": str(grid_share - 1), "limit": str(tg.MOF_HOURLY_CAP)}
+    await job.run_once()
+    assert len(wfs.asked) == 1 and r.kv[MOF_HOUR]["used"] == str(grid_share)
+    assert r.kv[day_key("mof_grid4")]["used"] == "1"  # 창에 막힌 예약은 하루 예산을 쓰지 않는다
+    runs = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"]
+    assert [kw["status"] for kw in runs] == ["ok", "budget_exhausted"]
+    assert runs[-1]["error_text"] == (
+        f"MOF hourly window: grid share used ({grid_share} of {tg.MOF_HOURLY_CAP} in UTC hour 2026092909, "
+        f"{tg.MOF_GRID4_HOURLY_HEADROOM} left for port calls) — geometry fill resumes at 2026-09-29T10:00:00Z"
+    )
+    clock.advance(60)
+    await job.run_once()
+    assert len(wfs.asked) == 1 and len([1 for j, _p, _kw in db.runs if j == "traffic_grid_geom"]) == 2
+    # 입출항 조회는 남긴 몫을 쓸 수 있다(창 끝까지)
+    ok, used, _key = await job.ctx.budget.reserve_hour("portmis", tg.MOF_HOURLY_CAP, now=clock(), window="mof")
+    assert ok and used == grid_share + 1
+    clock.t = datetime(2026, 9, 29, 10, 0, 1, tzinfo=UTC)
+    await job.run_once()
+    assert len(wfs.asked) == 3 and r.kv["budget:mof:h:2026092910"]["used"] == "2"
+
+
+async def test_a_full_mof_hour_window_from_port_calls_stops_the_fill_too():
+    job, _k, wfs, r, _c, db = setup()
+    r.kv[MOF_HOUR] = {"used": str(tg.MOF_HOURLY_CAP), "limit": str(tg.MOF_HOURLY_CAP)}
+    await job.run_once()
+    assert wfs.asked == [] and statuses(db, "traffic_grid_geom") == ["budget_exhausted"]
 
 
 async def test_throttled_lookup_gives_the_budget_back_and_stops_the_tick():
@@ -669,6 +719,7 @@ async def test_throttled_lookup_gives_the_budget_back_and_stops_the_tick():
     job, _k, _w, r, _c, db = setup(wfs=wfs)
     await job.run_once()
     assert wfs.asked == [] and r.kv[day_key("mof_grid4")]["used"] == "0"
+    assert r.kv[MOF_HOUR]["used"] == "0"  # 시간 창에서도 되돌린다
     assert statuses(db, "traffic_grid_geom") == []
 
 
@@ -733,7 +784,7 @@ async def test_cancelled_lookup_before_sending_gives_the_budget_back():
     t.cancel()
     with pytest.raises(asyncio.CancelledError):
         await t
-    assert r.kv[day_key("mof_grid4")]["used"] == "0"
+    assert r.kv[day_key("mof_grid4")]["used"] == "0" and r.kv[MOF_HOUR]["used"] == "0"
 
 
 def test_geometry_queue_is_bounded(monkeypatch):
