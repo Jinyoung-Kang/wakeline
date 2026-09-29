@@ -7,14 +7,14 @@
  * - 이 파일이 상황판 전체(상태 바 · 레이어 · 칩 · 타임라인 · 오른쪽 패널의 모든 탭)를 그려 원문 밖의 UTC 흔적(tests/helpers/kst-only)이 없는지 본다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
 import * as T from "@/lib/time";
-import { htmlUtcLeaks, OTHER_LANE_PENDING, utcLeaks, withoutOtherLane } from "./helpers/kst-only";
+import { htmlUtcLeaks, OTHER_LANE_MERGED, OTHER_LANE_PENDING, pendingOtherLane, utcLeaks, withoutOtherLane } from "./helpers/kst-only";
 import { parseHtml } from "./helpers/html-tree";
 import { resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
@@ -242,6 +242,17 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
     expect(leaks(withoutOtherLane(results))).toEqual([]); // 그 한 줄 밖(글자 · title · aria-label)에는 UTC 가 없다
   });
 
+  /**
+   * 리뷰(2026-09-30): 두 레인 모두 검색 상자의 그 한 줄을 고치지 않아, 면제가 영구하면 합친 뒤에도 "KST · UTC(…Z)" 가 화면에 남은 채 시험이 통과한다
+   * (수정 전 이 시험이 실패했다 — 면제가 늘 켜져 있었다). 이제 면제는 그 레인이 합쳐지기 전까지만: 그 레인이 새로 더하는 lib/statusbar.ts 가 있으면 비고,
+   * 위 시험과 아래 소스 검사가 그 줄을 잡는다 — 합치는 사람이 "(마지막 수신·저장 시각은 KST · …)" 로 고친다.
+   */
+  it("the other lane's exemption expires once that lane is merged (its new lib/statusbar.ts exists)", () => {
+    expect(pendingOtherLane(true)).toEqual([]);
+    expect(pendingOtherLane(false)).toEqual(["(마지막 수신·저장 시각은 KST · UTC(…Z) ·"]);
+    expect(OTHER_LANE_PENDING).toEqual(pendingOtherLane(existsSync(new URL("../lib/statusbar.ts", import.meta.url))));
+  });
+
   it("WS format-error detail: the browser-clock time in KST", () => {
     const t = wsInvalidText({ elements: 1, messages: 0, errors: 0, last: "aircraft: bad lat", at: Date.parse("2026-09-28T23:41:14Z") });
     expect(t).toContain("마지막: aircraft: bad lat · 08:41:14 KST(브라우저 시계)");
@@ -360,8 +371,8 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
   /** 한국어 화면 글이 UTC 를 말하는 줄(주석 밖) — 계약 v5 §G20: 화면은 KST 만 */
   const KOREAN_UTC = /[\uAC00-\uD7A3][^"'`\n]*\bUTC\b|\bUTC\b[^"'`\n]*[\uAC00-\uD7A3]/;
   const code = (line: string) => (/^\s*(\*|\/\/|\/\*|\{\/\*)/.test(line) ? "" : line.replace(/\s\/\/ .*$/, "").replace(/\{\/\*.*?\*\/\}/g, ""));
-  /** 다른 레인(대시보드 UX)의 파일 — 이 레인은 고치지 않았다(open issue). 그 레인이 고치면 줄 수를 0 으로(아래 시험이 알린다) */
-  const OTHER_LANE_KOREAN_UTC: Record<string, number> = { [join("components", "AircraftSearch.tsx")]: 1 };
+  /** 다른 레인(대시보드 UX)의 파일 — 이 레인은 고치지 않았다(open issue). 면제는 그 레인이 합쳐지기 전까지만(helpers/kst-only OTHER_LANE_MERGED) */
+  const OTHER_LANE_KOREAN_UTC: Record<string, number> = OTHER_LANE_MERGED ? {} : { [join("components", "AircraftSearch.tsx")]: 1 };
   const root = new URL("..", import.meta.url).pathname;
   const walk = (d: string): string[] => readdirSync(join(root, d)).flatMap((n) => {
     const rel = join(d, n);

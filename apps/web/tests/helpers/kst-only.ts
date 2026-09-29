@@ -4,6 +4,7 @@
  * 원문(METAR · TAF · SIGMET 발표문 · 서버 로그 메시지 본문 · 수집기가 쓴 원본 레코드)은 발표 · 기록된 그대로라 뺀다 — 화면은 그 요소에 data-raw 를 단다
  * (DOM 검사 함수가 data-raw 요소의 아래를 건너뛴다). 글자만 넘기는 곳은 부르는 쪽이 원문을 빼고 넘긴다.
  */
+import { existsSync } from "node:fs";
 import type { HNode } from "./html-tree";
 import { MiniElement } from "./mini-dom";
 
@@ -26,10 +27,15 @@ export function utcLeaks(text: string): string[] {
 const ATTRS = ["title", "aria-label", "placeholder", "alt"];
 
 /**
- * 다른 레인(대시보드 UX)이 고치는 파일의 글자 — 이 레인은 그 파일(상단 검색 상자 components/AircraftSearch.tsx)을 고치지 않았다. 그 안의 설명 한 줄이
- * 아직 "KST · UTC(…Z)" 라고 쓴다. 쓰는 시험은 그 글자가 아직 있는지(toContain)도 본다 — 그 레인이 고치면 실패하므로 그때 이 목록을 비운다(합치는 사람의 할 일).
+ * 다른 레인(대시보드 UX)의 파일 글자 — 이 레인은 그 파일(상단 검색 상자 components/AircraftSearch.tsx)을 고치지 않았다(파일 나눔). 그 안의 설명 한 줄이
+ * 아직 "KST · UTC(…Z)" 라고 쓰고, 그 레인도 고치지 않았다(리뷰 2026-09-30). 그래서 면제는 그 레인이 합쳐지기 전까지만이다: 그 레인이 새로 더하는
+ * lib/statusbar.ts 가 있으면(합친 뒤) 비어, 화면 검사 · 소스 검사가 그 줄을 UTC 로 잡는다 — 합치는 사람이 "(마지막 수신·저장 시각은 KST · …)" 로 고친다.
+ * 면제 중에는 쓰는 시험이 그 글자가 아직 있는지(toContain)도 본다.
  */
-export const OTHER_LANE_PENDING = ["(마지막 수신·저장 시각은 KST · UTC(…Z) ·"];
+export const pendingOtherLane = (merged: boolean): string[] => (merged ? [] : ["(마지막 수신·저장 시각은 KST · UTC(…Z) ·"]);
+/** 다른 레인(대시보드 UX)이 합쳐졌는가 — 그 레인이 새로 더하는 lib/statusbar.ts 가 있으면 */
+export const OTHER_LANE_MERGED = existsSync(new URL("../../lib/statusbar.ts", import.meta.url));
+export const OTHER_LANE_PENDING = pendingOtherLane(OTHER_LANE_MERGED);
 /** 다른 레인의 글자를 뺀 html/글자 */
 export const withoutOtherLane = (s: string) => OTHER_LANE_PENDING.reduce((x, p) => x.split(p).join(""), s);
 
