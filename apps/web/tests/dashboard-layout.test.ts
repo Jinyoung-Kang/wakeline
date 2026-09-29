@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AlertPanel } from "@/components/AlertPanel";
 import { MapLegendView } from "@/components/MapLegend";
+import { MapChipsView } from "@/components/MapChips";
 import { resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import type { Alert, PublicStatus } from "@/lib/types";
@@ -88,6 +89,51 @@ describe("search box: the '/' key hint has its own space and the placeholder is 
     expect(ph).toBe("항공기 · 선박 검색");
     expect(input).toMatch(/title="[^"]*호출부호[^"]*MMSI[^"]*"/);
     expect(src).toContain("통합 검색 — 항공기(호출부호·hex·등록번호) · 선박(선명·MMSI·IMO·호출부호)");
+  });
+});
+
+describe("map overlays share one layout: toolbar row, then a left status column and a right legend column (no overlap)", () => {
+  // 하네스(1024 · 1280, 선박 켬)에서 레이어 단추 줄이 왼쪽 위 선박 칩("선박 53척 · 2° 격자 …")을 덮었다 — 둘이 따로 absolute 로 같은 자리(top-3)에 있었다.
+  it("the chips column lives inside the overlay under the toolbar row (not a separate absolute box at the same top)", async () => {
+    const { LayerPanelView } = await import("@/components/LayerPanel");
+    useUi.setState({ layers: { ...useUi.getState().layers, ships: true } });
+    setData({ conn: "open", lastRxAt: Date.now(), ships: { mode: "grid", version: 1, count: 2, total: 53, ts: null, cell_deg: 2, capped: false, grid: [] } });
+    const root = parseHtml(renderToStaticMarkup(createElement(LayerPanelView, { layers: useUi.getState().layers, shipCats: useUi.getState().shipCats, legendOpen: true })));
+    const toolbar = byTestId(root, "layer-panel")!;
+    const chips = byTestId(root, "map-chips")!;
+    const legend = byTestId(root, "map-legend")!;
+    const overlay = toolbar.parent!;
+    expect(classes(overlay).has("absolute")).toBe(true);
+    // 칩 · 범례는 단추 줄 뒤 같은 줄(두 칸)에 — 서로 다른 칸이다
+    const below = overlay.children.filter((c) => c.tag !== "#text");
+    expect(below.indexOf(toolbar)).toBe(0);
+    const cols = below[1];
+    expect(ancestors(chips)).toContain(cols);
+    expect(ancestors(legend)).toContain(cols);
+    const colOf = (n: typeof chips) => ancestors(n).find((a) => a.parent === cols)!;
+    expect(colOf(chips)).not.toBe(colOf(legend));
+    expect(classes(chips).has("absolute")).toBe(false);
+    expect(textOf(chips)).toContain("선박");
+    // 두 칸은 남은 높이를 채운다 — items-start 이면 범례 칸의 높이가 정해지지 않아 긴 범례가 지도 아래(타임라인 · 출처 줄)를 덮었다(하네스 1024 px)
+    expect(classes(cols).has("items-start")).toBe(false);
+    expect(["flex", "min-h-0", "flex-1"].every((c) => classes(cols).has(c))).toBe(true);
+    const legendCol = colOf(legend);
+    expect(["flex", "flex-col", "min-h-0"].every((c) => classes(legendCol).has(c))).toBe(true);
+    expect(["max-h-full", "overflow-y-auto"].every((c) => classes(legend).has(c))).toBe(true);
+    useUi.setState({ layers: { ...useUi.getState().layers, ships: false } });
+  });
+  it("the dashboard page renders the chips only through the overlay (once), and the basemap-failed notice joins the left column", () => {
+    const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+    expect(page).not.toMatch(/<MapChips\b/);
+    const map = readFileSync(new URL("../components/MapView.tsx", import.meta.url), "utf8");
+    expect(map).not.toContain('data-testid="basemap-failed"');
+    const html = renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: false, basemapFailed: true }));
+    expect(html).toContain('data-testid="basemap-failed"');
+    expect(html).toContain("배경지도를 불러오지 못함");
+    expect(renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: false }))).not.toContain("basemap-failed");
+    // LayerPanel 이 그 값을 스토어에서 읽어 넘긴다(MapView 가 스타일 실패 때 정한다)
+    expect(readFileSync(new URL("../components/LayerPanel.tsx", import.meta.url), "utf8")).toMatch(/basemapFailed=\{basemapFailed\}/);
+    expect(map).toMatch(/useUi\.getState\(\)\.setBasemapFailed\(true\)/);
   });
 });
 

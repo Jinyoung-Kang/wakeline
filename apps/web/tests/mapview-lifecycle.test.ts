@@ -44,19 +44,22 @@ type Root = import("react-dom/client").Root;
 let React: R;
 let createRoot: typeof import("react-dom/client").createRoot;
 let MapView: typeof import("@/components/MapView").MapView;
+let LayerPanel: typeof import("@/components/LayerPanel").LayerPanel;
 const initialUi = useUi.getState();
 
 beforeAll(async () => {
   React = await import("react");
   ({ createRoot } = await import("react-dom/client"));
   ({ MapView } = await import("@/components/MapView"));
+  ({ LayerPanel } = await import("@/components/LayerPanel"));
 });
 afterAll(() => { dom.restore(); delete (globalThis as Record<string, unknown>).Worker; });
 
 let root: Root | null = null;
 async function mount() {
   root = createRoot(dom.container as never);
-  await React.act(async () => { root!.render(React.createElement(MapView)); });
+  // 상황판과 같은 조합: 지도 + 그 위 배치(LayerPanel — 배경지도 실패 알림은 그 왼쪽 상태 칸이 그린다)
+  await React.act(async () => { root!.render(React.createElement(React.Fragment, null, React.createElement(MapView), React.createElement(LayerPanel))); });
   return FakeMap.instances[FakeMap.instances.length - 1];
 }
 async function act(fn: () => void) { await React.act(async () => { fn(); }); }
@@ -151,7 +154,7 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     });
   });
 
-  it("the fallback banner sits at the top left under the zoom control, clear of the bottom-right credit line (R-01)", async () => {
+  it("the fallback banner sits in the overlay's left status column under the layer buttons — clear of the bottom-right credit line (R-01) and of the chips", async () => {
     const map = await mount();
     await act(() => map.fire("error", { type: "error", error: new Error("AJAXError: Failed to fetch (0)") }));
     const find = (n: MiniElement): MiniElement | null => {
@@ -159,11 +162,15 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
       for (const c of n.childNodes) { const f = c instanceof MiniElement ? find(c) : null; if (f) return f; }
       return null;
     };
-    const cls = find(dom.container)?.getAttribute("class")?.split(/\s+/) ?? [];
-    // 수정 전: absolute bottom-10 left-3 — 1440x900 에서 줄바꿈된 출처 표기(AttributionControl, 오른쪽 아래 · 최대 760 px)의 왼쪽을 가렸다
-    expect(cls.filter((c) => /^bottom-/.test(c))).toEqual([]);
-    // 줌 버튼(위 10 px + 29 px × 2 ≈ 70 px) 아래 · 지도 폭의 절반까지만(오른쪽 위 레이어 버튼·범례와 겹치지 않게 줄바꿈)
-    expect(cls).toEqual(expect.arrayContaining(["absolute", "top-20", "left-3", "max-w-[50%]"]));
+    const note = find(dom.container)!;
+    expect(useUi.getState().basemapFailed).toBe(true);
+    // 수정 전(1): absolute bottom-10 left-3 — 1440x900 에서 줄바꿈된 출처 표기(오른쪽 아래)의 왼쪽을 가렸다.
+    // 수정 전(2): absolute top-20 left-3 — 레이어 단추 줄이 두 줄이 되거나 선박 칩이 있으면 겹쳤다(2026-09-30). 이제 배치(LayerPanel) 안 왼쪽 칸의 맨 위
+    const cls = note.getAttribute("class")?.split(/\s+/) ?? [];
+    expect(cls.filter((c) => /^(absolute|bottom-|top-)/.test(c))).toEqual([]);
+    const chips = note.parentNode as MiniElement;
+    expect(chips.getAttribute("data-testid")).toBe("map-chips");
+    expect(chips.childNodes[0]).toBe(note);
   });
 
   it("the map credit is MapLibre's compact attribution (ⓘ) with every data source, added once on load (user request 2026-09-29)", async () => {
