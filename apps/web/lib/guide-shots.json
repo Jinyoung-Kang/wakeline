@@ -11,7 +11,7 @@
       "callouts": [
         { "n": 1, "label": "상태 바", "text": "연결(WS) · 피드별 출처와 지연 · SIGMET · 레이더 상태. 경고 배지는 줄 앞쪽에 옵니다(2.10).", "target": "[data-testid=\"statusbar\"]", "anchor": "l" },
         { "n": 2, "label": "통합 검색", "text": "항공기와 선박을 한 입력에서 찾습니다. / 키로 바로 입력(2.4).", "target": "[data-testid=\"aircraft-search\"]", "anchor": "l" },
-        { "n": 3, "label": "확대 · 축소", "text": "지도 확대·축소 단추. 휠 · 핀치 · 키보드(+ / −)로도 됩니다(2.2).", "target": ".maplibregl-ctrl-zoom-in", "anchor": "r" },
+        { "n": 3, "label": "확대 · 축소", "text": "지도 확대·축소 단추. 휠 · 핀치 · 키보드(= / -)로도 됩니다(2.2).", "target": ".maplibregl-ctrl-zoom-in", "anchor": "r" },
         { "n": 4, "label": "지도 상태 칩", "text": "지금 지도가 선박을 어떻게 그리는지(개별 · 격자 · 0척의 이유)와 집중 추적 상태 — 서버가 보고한 값만.", "target": "[data-testid=\"ships-chip\"]", "anchor": "l" },
         { "n": 5, "label": "레이어 단추", "text": "레이더 · SIGMET · 항공기 · 선박 · 공항 · 항적 · 예측(추정)을 켜고 끕니다(2.3).", "target": "[data-testid=\"layer-panel\"]", "anchor": "l" },
         { "n": 6, "label": "범례", "text": "지도에 쓰인 기호 · 색의 뜻과 선종 필터(2.9).", "target": "[data-testid=\"map-legend\"]", "anchor": "tl" },
