@@ -171,6 +171,36 @@ export function lastTrimLoss(resp: unknown): { stream: string; from: string | nu
   return typeof t.stream === "string" && fromOk && typeof t.to === "string" ? { stream: t.stream, from: (t.from as string | null), to: t.to } : null;
 }
 
+// ---- 탭(엔드포인트)마다 응답 순서 ----
+
+/**
+ * 한 탭(엔드포인트)의 요청 순서 — 어떤 응답(성공 · 실패)을 화면에 반영할지 정한다.
+ * - begin(barrier): 떠나는 요청에 번호를 매긴다. barrier = 기준 요청(쓰기 뒤 다시 읽기 · 해결 표시 토글 · refresh 단추): 그 전에 떠난 요청의 응답은
+ *   이제 버린다 — 먼저 오든 늦게 오든 쓰기 전 값 · 다른 해결 표시의 요약이 화면에 오지 않는다.
+ * - settle(my): 응답이 오면 부른다. 반영할 응답 = 기준 요청 이후에 떠났고 이미 반영한 응답보다 새것. 새로고침 주기보다 느린 응답도
+ *   (더 새 응답이 아직 오지 않았으면) 반영한다 — 느려진 api 의 실패가 "다음 요청이 떠났다"는 이유로 조용히 사라지지 않게.
+ * - busy: 떠 있는 요청이 있는가 — 주기 새로고침은 그 탭을 건너뛴다(느려진 api 에 요청을 쌓지 않는다. 기준 요청은 늘 보낸다).
+ */
+export class RequestOrder {
+  private sent = 0;
+  private applied = 0;
+  private floor = 0;
+  private open = 0;
+  begin(barrier: boolean): number {
+    const my = ++this.sent;
+    if (barrier) this.floor = my;
+    this.open++;
+    return my;
+  }
+  settle(my: number): boolean {
+    this.open = Math.max(0, this.open - 1);
+    if (my < this.floor || my <= this.applied) return false;
+    this.applied = my;
+    return true;
+  }
+  get busy(): boolean { return this.open > 0; }
+}
+
 // ---- 공급자 마지막 오류의 해결(ADR-022 — /ops/providers 의 last_error_resolution · last_error_resolved) ----
 
 /**

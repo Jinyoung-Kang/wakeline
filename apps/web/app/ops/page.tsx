@@ -5,7 +5,7 @@ import { fmtDual, fmtDualClock, fmtUtcTitle } from "@/lib/time";
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, rebaseSetting, SESSION_EXPIRED_NOTE, settingConflict,
+  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, rebaseSetting, RequestOrder, SESSION_EXPIRED_NOTE, settingConflict,
   settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -35,6 +35,8 @@ const TAB_PATH: Record<Tab, string> = {
 };
 /** 실제 요청 경로 — 실행 요약은 해결 표시(resolved=hide|show, 기본 hide)를 늘 명시한다(ADR-022) */
 const tabPath = (t: Tab, runsMode: ResolvedMode) => (t === "runs" ? `${TAB_PATH.runs}&resolved=${runsMode}` : TAB_PATH[t]);
+/** 탭마다 요청 순서(lib/ops RequestOrder) — 대시보드마다 하나 */
+const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder()])) as Record<Tab, RequestOrder>;
 /** 해결 처리 뒤 다시 읽는 탭: 공급자(해결됨 표시) · 실행 요약(오류 행) · 감사(RESOLVE · UNRESOLVE) */
 const RESOLVE_AFFECTS: readonly Tab[] = ["providers", "runs", "audit"];
 /** 응답 필드 → 시각 값(ISO 문자열 · epoch ms). 그 밖은 모름(null) */
@@ -134,8 +136,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   /** 실행 요약의 해결 표시(ADR-022): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
   const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
   const runsModeRef = useRef<ResolvedMode>("hide");
-  /** 탭마다 마지막으로 떠난 요청 번호 — 늦게 온 이전 요청의 응답(성공 · 실패)은 버린다: 해결 쓰기 뒤 다시 읽은 값을 그 전에 떠난 주기 요청이 덮지 않게, 토글 전 해결 표시의 요약이 표에 오지 않게 */
-  const seq = useRef<Partial<Record<Tab, number>>>({});
+  /**
+   * 탭마다 요청 순서(lib/ops RequestOrder): 기준 요청(쓰기 뒤 · 해결 표시 토글 · refresh 단추) 전에 떠난 요청의 응답은 버리고 — 해결 쓰기 뒤 다시 읽은 값을
+   * 그 전에 떠난 주기 요청이 덮지 않게, 토글 전 해결 표시의 요약이 표에 오지 않게 — 새로고침보다 느린 응답(실패 포함)은 더 새 응답이 없으면 반영한다.
+   */
+  const order = useRef<Record<Tab, RequestOrder> | null>(null);
   /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
   const fail = useCallback((e: unknown) => {
     if (!isAuthMiss(e)) { setErr(e); return; }
@@ -147,20 +152,23 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
-  /** 탭 불러오기 — only 를 주면 그 탭만(해결 쓰기 뒤 · 해결 표시 토글), 없으면 모두(15 s 주기 · refresh 단추) */
-  const reload = useCallback((only?: readonly Tab[]) => {
+  /**
+   * 탭 불러오기 — only 를 주면 그 탭만(해결 쓰기 뒤 · 해결 표시 토글), 없으면 모두(15 s 주기 · refresh 단추).
+   * periodic = 15 s 주기: 기준 요청이 아니고, 요청이 아직 떠 있는 탭은 건너뛴다. 그 밖(처음 · refresh · 쓰기 뒤 · 토글)은 기준 요청이다.
+   */
+  const reload = useCallback((only?: readonly Tab[], periodic = false) => {
     if (!only) setErr(null);
     let authMiss = false; // 한 번의 새로고침에서 세션 확인은 한 번만
     const load = <T,>(t: Tab, set: (v: T, mode: ResolvedMode) => void) => {
       if (only && !only.includes(t)) return;
+      const ord = (order.current ??= newOrders())[t];
+      if (periodic && ord.busy) return;
       const mode = runsModeRef.current;
-      const my = (seq.current[t] ?? 0) + 1;
-      seq.current[t] = my;
-      const stale = () => seq.current[t] !== my;
+      const my = ord.begin(!periodic);
       void apiGet<T>(tabPath(t, mode)).then(
-        (v) => { if (stale()) return; set(v, mode); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
+        (v) => { if (!ord.settle(my)) return; set(v, mode); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
         (e: unknown) => {
-          if (stale()) return;
+          if (!ord.settle(my)) return;
           // 이 탭의 값은 마지막 성공 시각 기준으로 남는다 — 실패를 탭에 붙인다. 세션 만료면 로그인으로(확인은 한 번만)
           setTabErr((m) => ({ ...m, [t]: e }));
           if (!isAuthMiss(e) || authMiss) return;
@@ -177,7 +185,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     load<unknown>("pipeline", setPipeline);
   }, [onLeave]);
   const refresh = useCallback(() => reload(), [reload]);
-  useEffect(() => { const first = setTimeout(refresh, 0); const t = setInterval(refresh, 15_000); return () => { clearTimeout(first); clearInterval(t); }; }, [refresh]);
+  useEffect(() => {
+    const first = setTimeout(refresh, 0);
+    const t = setInterval(() => reload(undefined, true), 15_000);
+    return () => { clearTimeout(first); clearInterval(t); };
+  }, [refresh, reload]);
   const toggleRunsMode = () => {
     const next: ResolvedMode = runsModeRef.current === "show" ? "hide" : "show";
     runsModeRef.current = next;

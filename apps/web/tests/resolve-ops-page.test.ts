@@ -283,3 +283,106 @@ describe("/ops RUNS: resolved errors are left out of the summary unless asked", 
     expect(byTestId("runs-hidden-resolved")!.textContent).toBe("해결된 오류 포함(요약에서 빼지 않음)");
   });
 });
+
+describe("/ops tabs: an answer slower than the 15 s refresh", () => {
+  const providersGets = () => calls.filter((c) => c.method === "GET" && c.url === "/api/v1/ops/providers").length;
+  const tick = async () => { await React.act(async () => { vi.advanceTimersByTime(15_000); }); await settle(); };
+  it("a tab whose request takes longer than the refresh still shows what came back — a late 503 marks the tab 갱신 실패 with the error and request id", async () => {
+    const pending: (() => void)[] = [];
+    let n = 0;
+    stub({
+      "GET /api/v1/ops/providers": async () => {
+        if (++n === 1) return { status: 200, body: PROV([lol(), fi]) };
+        await new Promise<void>((r) => { pending.push(r); }); // 새로고침(15 s)보다 오래 걸린 뒤 503
+        return { status: 503, body: { detail: "db slow", code: "UNAVAILABLE", request_id: "5105105105105105" } };
+      },
+    });
+    await mount();
+    await tick();
+    await tick(); // 앞 요청이 아직 떠 있는 동안의 새로고침
+    expect(pending.length).toBeGreaterThanOrEqual(1);
+    await React.act(async () => { pending.shift()!(); });
+    await settle();
+    expect(byTestId("ops-tab-stale", byTestId("ops-tab-providers")!)).not.toBeNull();
+    const alert = find((e) => e.getAttribute?.("role") === "alert")!;
+    expect(alert.textContent).toContain("providers: db slow");
+    expect(alert.textContent).toContain("5105105105105105");
+    expect(byTestId("provider-last-error")).not.toBeNull(); // 값은 마지막 성공 기준으로 남는다
+  });
+  it("the refresh does not stack another request on a tab whose request is still in flight; the other tabs keep refreshing", async () => {
+    let release: (() => void) | null = null;
+    let n = 0;
+    stub({
+      "GET /api/v1/ops/providers": async () => {
+        if (++n === 2) await new Promise<void>((r) => { release = r; });
+        return { status: 200, body: PROV([lol(), fi]) };
+      },
+    });
+    await mount();
+    expect(providersGets()).toBe(1);
+    const runsGets = () => calls.filter((c) => c.url === RUNS_HIDE).length;
+    const runs0 = runsGets();
+    await tick(); // 2번째 요청이 떠나 기다린다
+    await tick();
+    await tick();
+    expect(providersGets()).toBe(2); // 떠 있는 동안에는 더 보내지 않는다
+    expect(runsGets()).toBe(runs0 + 3);
+    await React.act(async () => { release!(); });
+    await settle();
+    await tick();
+    expect(providersGets()).toBe(3);
+  });
+  it("a providers answer that left before a write and lands before the post-write re-read is dropped (no flash of the unresolved state)", async () => {
+    let resolved = false;
+    const held: (() => void)[] = [];
+    let hold = 0;
+    stub({
+      "GET /api/v1/ops/providers": async () => {
+        const body = PROV([resolved ? lol({ last_error_resolution: { id: 5, upto: ERR_AT, resolved_by: "op" }, last_error_resolved: true }) : lol(), fi]);
+        if (hold > 0) { hold--; await new Promise<void>((r) => { held.push(r); }); }
+        return { status: 200, body };
+      },
+      "POST /api/v1/ops/resolutions": () => { resolved = true; return { status: 201, body: { id: 5, kind: "provider_error", key: "adsb_lol", upto: ERR_AT, resolved_at: NOW, resolved_by: "op", note: null } }; },
+    });
+    await mount();
+    hold = 2;
+    await click(button("refresh")); // 해결 전 값을 싣고 기다리는 요청
+    await click(button("해결 처리", cell()));
+    await click(button("해결 처리 확인", byTestId("resolve-confirm")!)); // 쓰기 뒤 다시 읽기도 기다린다
+    expect(held).toHaveLength(2);
+    expect(byTestId("provider-error-resolved")).not.toBeNull(); // 201 뒤 낙관적 표시
+    await React.act(async () => { held.shift()!(); }); // 쓰기 전에 떠난 응답이 먼저 온다
+    await settle();
+    expect(byTestId("provider-error-resolved")).not.toBeNull();
+    await React.act(async () => { held.shift()!(); });
+    await settle();
+    expect(byTestId("provider-error-resolved")).not.toBeNull();
+  });
+  it("a summary asked for before the toggle that lands before the new mode's answer is dropped too", async () => {
+    const held: (() => void)[] = [];
+    let hold = false;
+    // 떠나 기다린 hide 응답은 수가 다르다(9) — 처음 받은 hide 응답(3)과 가려 본다
+    const gate = async (url: string) => {
+      if (!hold) return { status: 200, body: BASE[url] };
+      await new Promise<void>((r) => { held.push(r); });
+      return { status: 200, body: url === RUNS_HIDE ? { ...(BASE[url] as object), hidden_resolved_errors: 9 } : BASE[url] };
+    };
+    stub({
+      "GET /api/v1/ops/providers": { status: 200, body: PROV([fi]) },
+      [`GET ${RUNS_HIDE}`]: () => gate(RUNS_HIDE),
+      [`GET ${RUNS_SHOW}`]: () => gate(RUNS_SHOW),
+    });
+    await mount();
+    await click(byTestId("ops-tab-runs"));
+    hold = true;
+    await click(button("refresh")); // hide 요청이 떠나 기다린다
+    await click(button("해결된 오류 포함")); // show 요청도 기다린다
+    expect(held).toHaveLength(2);
+    await React.act(async () => { held.shift()!(); }); // hide 응답이 먼저 온다 — 버린다
+    await settle();
+    expect(byTestId("runs-hidden-resolved")!.textContent).not.toContain("9건");
+    await React.act(async () => { held.shift()!(); });
+    await settle();
+    expect(byTestId("runs-hidden-resolved")!.textContent).toBe("해결된 오류 포함(요약에서 빼지 않음)");
+  });
+});
