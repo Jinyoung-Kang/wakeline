@@ -13,6 +13,8 @@ const NAV = [
   { href: "/ops", label: "운영" },
   { href: "/logs", label: "로그" },
   { href: "/about", label: "출처·한계" },
+  // 서비스 설명 + 사용 방법(스크린샷 · 번호 설명) — 출처·한계 바로 뒤(사용자 요청 2026-09-29)
+  { href: "/guide", label: "설명서" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
