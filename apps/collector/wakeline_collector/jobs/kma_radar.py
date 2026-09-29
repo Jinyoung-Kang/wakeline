@@ -58,7 +58,7 @@ from wakeline_collector.config import settings
 from wakeline_collector.errors import describe_error
 from wakeline_collector.http import ProviderHttpError, ResponseTooLarge
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.kma_grid import read_echo, render_mercator_png
+from wakeline_collector.kma_grid import read_echo, read_header, render_mercator_png
 from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
@@ -210,12 +210,12 @@ def _decode(raw: bytes):
 
 
 def _decode_if_more(raw: bytes, have: int):
-    """다시 받은 자료: 헤더의 지점 수가 have 보다 많을 때만 PNG 를 만든다(아니면 (header, None, None) — 재투영을 하지 않는다)."""
-    header, grid = read_echo(raw)
+    """다시 받은 자료: 헤더의 지점 수가 have 보다 많을 때만 전체 해석 · PNG(아니면 (header, None, None)). 판정에는 헤더(앞 1,024 B)만 푼다 —
+    바꾸지 않는 흔한 경우에 자료 블록(해제 약 40 MB)을 풀고 버리지 않게(해석 스레드 · RSS)."""
+    header = read_header(raw)
     if len(header.stations) <= have:
         return header, None, None
-    png, meta = render_mercator_png(header, grid)
-    return header, png, meta
+    return _decode(raw)
 
 
 class _BadFrame(Exception):

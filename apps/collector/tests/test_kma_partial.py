@@ -13,13 +13,16 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import orjson
 import pytest
 
 KST = timedelta(hours=9)
+REAL_HEADER = Path(__file__).resolve().parents[3] / "fixtures" / "kma_rdr_cmp_head.bin"  # 실제 HSR 헤더(17곳)
 
 
 def _tm(t: str) -> datetime:
@@ -103,6 +106,60 @@ def test_unknown_site_counts_are_not_counted_and_get_no_reference_or_flag():
     assert "stations_ref" not in only_unknown[0] and "partial" not in only_unknown[0]
 
 
+# ---- 다시 받은 자료: 지점 수가 늘었을 때만 영상을 만든다(실제 _decode_if_more) ---------------------------------------------------
+@functools.cache
+def _rdr_gz(sites: int) -> bytes:
+    """실제 헤더의 STN_LIST 를 앞 sites 곳만 남긴 합성 파일(gzip). 자료 블록은 관측 반경 밖 + 35 dBZ 9×9 칸."""
+    import gzip
+
+    import numpy as np
+
+    from wakeline_collector.kma_grid import NULL_OUTSIDE, parse_header
+
+    head = bytearray(REAL_HEADER.read_bytes())
+    assert sites <= len(parse_header(bytes(head)).stations)
+    head[17] = sites  # num_stn
+    for i in range(sites, 48):
+        head[64 + 20 * i : 64 + 20 * (i + 1)] = b"\0" * 20
+    h = parse_header(bytes(head))
+    grid = np.full((h.ny, h.nx), NULL_OUTSIDE, dtype="<i2")
+    grid[1681:1690, 1121:1130] = 3500
+    return gzip.compress(bytes(head) + grid.tobytes(), compresslevel=1)
+
+
+def test_decode_if_more_renders_only_when_the_header_lists_more_sites_than_stored(monkeypatch):
+    """같거나 적으면 영상을 만들지 않고 자료 블록(해제 약 40 MB)도 풀지 않는다 — 헤더(앞 1,024 B)만 본다. 많을 때만 전체 해석 · 재투영."""
+    from wakeline_collector.jobs import kma_radar as mod
+
+    full = []
+    real_read_echo = mod.read_echo
+    monkeypatch.setattr(mod, "read_echo", lambda raw, *a, **k: full.append(len(raw)) or real_read_echo(raw, *a, **k))
+    gz = _rdr_gz(12)
+    for have in (12, 13, 17):
+        header, png, meta = mod._decode_if_more(gz, have)
+        assert (len(header.stations), png, meta) == (12, None, None), have
+        assert header.stations == parse_stations(REAL_HEADER)[:12]
+    assert full == []
+    header, png, meta = mod._decode_if_more(gz, 11)
+    assert len(header.stations) == 12 and png[:8] == b"\x89PNG\r\n\x1a\n" and meta["echo_cells"] == 9 * 9
+    assert full == [len(gz)]
+
+
+def test_decode_if_more_rejects_what_is_not_an_rdr_file():
+    from wakeline_collector.jobs.kma_radar import _decode_if_more
+
+    with pytest.raises(ValueError):
+        _decode_if_more(b"# file not exist (RDR_CMP_HSR_PUB_202609291440.bin.gz)", 7)
+    with pytest.raises(ValueError):
+        _decode_if_more(_rdr_gz(12)[:40], 7)  # 헤더도 다 오지 않았다
+
+
+def parse_stations(path: Path) -> list[str]:
+    from wakeline_collector.kma_grid import parse_header
+
+    return parse_header(path.read_bytes()).stations
+
+
 # ---- 저장: 프레임 항목과 meta 해시 --------------------------------------------------------------------------------------
 class _Hdr:
     def __init__(self, tm: str, n: int):
@@ -174,7 +231,7 @@ class CountingRaw:
 
 @pytest.fixture
 def env(monkeypatch):
-    """KST 벽시계(kst_now) · UTC 순간(_now) · 받은 시각을 한 시계로. 해석은 가짜(_decode · _decode_if_more)."""
+    """KST 벽시계(kst_now) · UTC 순간(_now) · 받은 시각을 한 시계로. 해석은 가짜(_decode · read_header) — 지점 수 비교는 실제 _decode_if_more."""
     from fakes import FakeRedis, make_ctx
 
     from wakeline_collector.jobs import kma_radar as mod
@@ -188,12 +245,7 @@ def env(monkeypatch):
     clock["set"] = set_kst
     set_kst("202609291455")
     monkeypatch.setattr(mod, "_decode", _decode_with_sites)
-
-    def decode_if_more(raw: bytes, have: int):
-        header, png, meta = _decode_with_sites(raw)
-        return (header, png, meta) if len(header.stations) > have else (header, None, None)
-
-    monkeypatch.setattr(mod, "_decode_if_more", decode_if_more)
+    monkeypatch.setattr(mod, "read_header", lambda raw: _decode_with_sites(raw)[0])
     monkeypatch.setattr(mod, "kst_now", lambda: clock["kst"])
     monkeypatch.setattr(mod, "_now", lambda: clock["utc"])
 
@@ -499,6 +551,95 @@ async def test_a_decode_error_on_refetch_keeps_the_stored_frame(env, monkeypatch
     f = (await _stored(mod, r))["202609291440"]
     assert (f["stations"], f["refetches"], f["upgrades"]) == (7, 1, 0)
     assert not [x for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+
+
+class _FramesFailing:
+    """job._frames 를 감싸 n 번째 호출(1 부터)에서 Redis 오류를 낸다: 1 prune · 2 다시 받기 고르기 · 3 시도 기록 · 4 끝난 뒤 세기."""
+
+    def __init__(self, job, fail_on: set[int]):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        self.real, self.fail_on, self.n, self.err = job._frames, fail_on, 0, RedisConnectionError
+        job._frames = self
+
+    async def __call__(self):
+        self.n += 1
+        if self.n in self.fail_on:
+            raise self.err("redis down (test)")
+        return await self.real()
+
+
+@pytest.mark.parametrize(
+    ("fail_on", "refetched", "partial_hb"),
+    [({2}, [], ""), ({3}, ["202609291440"], "1"), ({4}, ["202609291440"], "")],
+    ids=["reading-the-list-to-choose", "reading-the-list-to-record", "counting-afterwards"],
+)
+async def test_redis_errors_during_refetch_keep_the_cycle_ok(env, caplog, fail_on, refetched, partial_hb):
+    """다시 받기 중 목록을 못 읽으면: INFO 한 줄 · 주기는 'ok' · 공급자 실패 아님 · heartbeat 의 부분 합성 수는 모름(빈 값 — 0 이 아니다)."""
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 15), _entry("202609291450", 15)])
+    runs = _runs(ctx)
+    prov = SitesKma(clock, [e["tm"] for e in seeded], {"202609291440": [15]})
+    job = mod.KmaRadarJob(prov, ctx)
+    frames = _FramesFailing(job, fail_on)
+    await job.run_once()
+    assert frames.n >= max(fail_on)
+    assert prov.binaries == refetched
+    assert [run["status"] for run in runs] == ["ok"]
+    assert "last_error" not in await r.hgetall("wakeline:provider:kma_radar")
+    assert not [x for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+    assert (await r.hgetall("wakeline:collector"))["radar_kr_partial"] == partial_hb
+    if 3 in fail_on:  # 시도를 기록하지 못했다 — 저장본(영상 · 항목)을 그대로 둔다
+        assert await r.get(mod.KEY_FRAME.format(tm="202609291440")) == "old-202609291440"
+        assert (await _stored(mod, r))["202609291440"]["stations"] == 7 and job.upgrades == 0
+
+
+async def test_an_image_write_error_on_upgrade_keeps_the_stored_frame_and_the_cycle_ok(env, caplog):
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 15), _entry("202609291450", 15)])
+    runs = _runs(ctx)
+    real_set = r.set
+
+    async def set_failing_images(key, value, ex=None):
+        if key.startswith("wakeline:radar_kr:frame:"):
+            raise RedisConnectionError("redis down (test)")
+        return await real_set(key, value, ex=ex)
+
+    r.set = set_failing_images  # type: ignore[method-assign]
+    job = mod.KmaRadarJob(SitesKma(clock, [e["tm"] for e in seeded], {"202609291440": [15]}), ctx)
+    await job.run_once()
+    f = (await _stored(mod, r))["202609291440"]
+    assert (f["stations"], f["partial"], f["fetched_at"]) == (7, True, seeded[0]["fetched_at"])  # 항목은 옛 영상을 말한다
+    assert await r.get(mod.KEY_FRAME.format(tm="202609291440")) == "old-202609291440"
+    assert (job.refetch_attempts, job.upgrades) == (1, 0)
+    assert [run["status"] for run in runs] == ["ok"]
+    assert any("refetch tm=202609291440" in m and "kept the stored frame" in m for m in caplog.messages)
+    assert not [x for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+
+
+async def test_a_frame_dropped_from_the_list_while_refetching_is_not_written_back(env):
+    """다시 받는 사이 목록에서 빠진 프레임(보관 창에서 밀림 · 이미지 만료로 정리)은 영상도 항목도 다시 만들지 않는다 — 목록에 없는 영상을 두지 않는다."""
+    mod, r, ctx, clock = env
+    seeded = await _seed(mod, r, [_entry("202609291440", 7), _entry("202609291445", 15), _entry("202609291450", 15)])
+
+    class DroppingKma(SitesKma):
+        async def binary(self, tm):
+            kept = [f for f in orjson.loads(await r.get(mod.KEY_FRAMES)) if f["tm"] != tm]
+            await r.set(mod.KEY_FRAMES, orjson.dumps(kept).decode(), ex=mod.FRAME_TTL_S)
+            await r.delete(mod.KEY_FRAME.format(tm=tm))
+            return await super().binary(tm)
+
+    runs = _runs(ctx)
+    job = mod.KmaRadarJob(DroppingKma(clock, [e["tm"] for e in seeded], {"202609291440": [15]}), ctx)
+    await job.run_once()
+    assert "202609291440" not in await _stored(mod, r)
+    assert await r.get(mod.KEY_FRAME.format(tm="202609291440")) is None
+    assert (job.refetch_attempts, job.upgrades) == (1, 0)
+    assert [run["status"] for run in runs] == ["ok"]
 
 
 async def test_refetch_never_takes_the_regular_schedules_share_of_the_budget(env, caplog):
