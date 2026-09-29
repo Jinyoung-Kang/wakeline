@@ -1,7 +1,6 @@
 package dev.wakeline.ops;
 
 import dev.wakeline.config.Problem;
-import dev.wakeline.logs.LogEvents;
 import dev.wakeline.rest.StatusService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,7 +117,7 @@ public class ResolutionService {
         if (!Resolution.LOG_GROUP.equals(kind) && !Resolution.PROVIDER_ERROR.equals(kind)) throw bad("kind must be log_group or provider_error");
         String key = string(body, "key");
         if (key == null) throw bad("key is required (a log fingerprint or a provider name)");
-        if (Resolution.LOG_GROUP.equals(kind) && !LogEvents.FP.matcher(key).matches()) throw bad("key of a log_group must be 16 lowercase hex digits (fp)");
+        if (Resolution.LOG_GROUP.equals(kind) && !Resolution.FP.matcher(key).matches()) throw bad("key of a log_group must be 16 lowercase hex digits (fp)");
         if (Resolution.PROVIDER_ERROR.equals(kind) && !StatusService.PROVIDERS.contains(key))
             throw bad("key of a provider_error must be one of the providers: " + String.join(", ", StatusService.PROVIDERS));
         Instant now = clock.get();

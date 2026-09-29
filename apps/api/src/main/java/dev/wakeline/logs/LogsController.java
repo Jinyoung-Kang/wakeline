@@ -44,7 +44,7 @@ public class LogsController {
     static final Set<String> LEVELS = Set.of("ERROR", "WARN");
     static final int LIMIT_MAX = 200;
     static final int Q_MAX = 200;
-    static final Pattern FP = LogEvents.FP;
+    static final Pattern FP = Resolution.FP; // 해결 표시의 log_group key 와 같은 규칙(한 곳 — 의존은 logs → ops)
 
     private final LogReader reader;
     private final Supplier<Resolutions> resolutions;
