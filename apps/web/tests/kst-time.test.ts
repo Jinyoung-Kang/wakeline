@@ -131,11 +131,28 @@ describe("unknown values", () => {
       expect(T.fmtTimeTitle(v)).toBeUndefined();
     }
   });
-  it("the machine's time zone does not matter (no local-time reads)", () => {
+  /**
+   * 리뷰(2026-09-30): 전에는 LATE 한 값만 봤다 — 이 파일 앞에서 이미 캐시에 들어간 값이라 시간대를 바꾼 뒤에도 계산이 돌지 않았고, 개발 기계의
+   * 기본 시간대도 Asia/Seoul 이라 지역 시각으로 만든 구현도 통과했다(지역 시각 변형으로 확인 — 옛 시험 통과, 이 시험 실패). 이제 이 시험에서만 쓰는
+   * 순간(캐시에 없다)을 여러 시간대에서, KST 와 UTC 의 날짜가 갈리는 곳(UTC 15:00 전후 · 연말)까지 본다.
+   */
+  it("the machine's time zone does not matter (no local-time reads) — fresh instants, across KST/UTC date changes", () => {
     const before = process.env.TZ;
+    const cases: [string, string][] = [
+      ["2031-03-14T14:59:59.123Z", "2031-03-14 23:59:59.123 KST"], // UTC 와 같은 날짜의 끝
+      ["2031-03-14T15:00:00.456Z", "2031-03-15 00:00:00.456 KST"], // KST 로는 다음 날
+      ["2031-12-31T20:30:00.789Z", "2032-01-01 05:30:00.789 KST"], // KST 로는 다음 해
+    ];
     try {
-      process.env.TZ = "America/Los_Angeles";
-      expect(T.fmtKst(LATE)).toBe("09-29 08:41:14 KST");
+      for (const tz of ["America/Los_Angeles", "UTC", "Pacific/Kiritimati"]) {
+        process.env.TZ = tz;
+        for (const [iso, kst] of cases) {
+          const ms = Date.parse(iso) + tz.length; // 시간대마다 다른 순간(캐시에 없는 값) — 기대 글자는 ms 만 다르다
+          const want = kst.replace(/\.(\d{3}) KST$/, (_, f: string) => `.${String(Number(f) + tz.length).padStart(3, "0")} KST`);
+          expect(T.timeParts(ms)?.iso.slice(0, 10), `${tz} ${iso}`).toBe(want.slice(0, 10));
+          expect(T.fmtTimeTitle(ms), `${tz} ${iso}`).toBe(want);
+        }
+      }
     } finally { if (before === undefined) delete process.env.TZ; else process.env.TZ = before; }
   });
 });
