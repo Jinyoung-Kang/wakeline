@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, apiSend } from "@/lib/api";
 import { isAuthMiss } from "@/lib/ops";
 import {
@@ -23,6 +23,18 @@ export type ResolveTarget =
 export type ResolveResult =
   | { op: "resolve"; created: Resolution[]; saved: number; complete: boolean }
   | { op: "revoke"; id: number; complete: boolean };
+
+/**
+ * 확인 패널 자리(한 화면에 하나): 열 때마다 번호(n)를 새로 매긴다 — 부모는 n 을 패널의 key 로 준다.
+ * 같은 자리를 다시 열어도(예: 일부 실패 뒤 목록이 바뀐 다음 "보이는 묶음 모두" 다시) 패널이 새로 시작해 지난 시도의 남은 요청 · 오류를 쓰지 않는다.
+ */
+export function useResolveSlot() {
+  const [open, setOpen] = useState<{ at: string; target: ResolveTarget; n: number } | null>(null);
+  const seq = useRef(0);
+  const show = useCallback((at: string, target: ResolveTarget) => setOpen({ at, target, n: ++seq.current }), []);
+  const close = useCallback(() => setOpen(null), []);
+  return { open, show, close };
+}
 
 /**
  * 해결 처리 · 되돌리기 확인 패널(ADR-022) — 보내기 전에 대상 · 범위(upto) · 결과를 글로 말하고, 운영자가 확인해야 보낸다.

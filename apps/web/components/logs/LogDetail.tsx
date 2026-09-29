@@ -10,7 +10,7 @@ import { isAuthMiss } from "@/lib/ops";
 import { RESOLVE_EFFECT, uptoOf, type ResolvedMode } from "@/lib/resolutions";
 import { ErrorNote, RequestIdCopy } from "./ErrorNote";
 import { DualTime } from "../DualTime";
-import { ResolveConfirm, type ResolveResult, type ResolveTarget } from "../ResolveConfirm";
+import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "../ResolveConfirm";
 
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };
 /** 같은 요청 id 항목을 찾는 범위(요청은 짧다 — 스트림 보관 전체에 가깝게) */
@@ -32,7 +32,8 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   onResolveChanged: (r: ResolveResult) => void;
 }) {
   const [wrap, setWrap] = useState(true);
-  const [confirm, setConfirm] = useState<ResolveTarget | null>(null);
+  const { open: confirm, show, close } = useResolveSlot();
+  const setConfirm = (t: ResolveTarget) => show("entry", t);
   const [related, setRelated] = useState<{ items: LogEntry[]; more: boolean } | null>(null);
   const [relatedErr, setRelatedErr] = useState<unknown>(null);
   const [fpStats, setFpStats] = useState<{ g: LogGroup | null; scanTruncated: boolean | null } | null>(null);
@@ -111,8 +112,8 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
         </tbody>
       </table>
       {confirm ? (
-        <ResolveConfirm target={confirm} onClose={() => setConfirm(null)} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
-          onChanged={(r) => { if (r.complete) setConfirm(null); onResolveChanged(r); }} />
+        <ResolveConfirm key={confirm.n} target={confirm.target} onClose={close} onAuthMiss={onAuthMiss} onFilterRid={onFilterRid}
+          onChanged={(r) => { if (r.complete) close(); onResolveChanged(r); }} />
       ) : null}
       <div className="label mb-1">메시지</div>
       <pre className="mono mb-3 whitespace-pre-wrap break-words border border-line bg-bg p-2 text-[11px]">{entry.message || "—"}</pre>

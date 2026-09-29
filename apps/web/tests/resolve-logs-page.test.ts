@@ -407,6 +407,33 @@ describe("/logs groups: per group and bulk", () => {
     expect(calls.slice(mark).filter((c) => c.method === "POST").map((c) => (c.body as Record<string, string>).key)).toEqual([FP4]);
     expect(byTestId("resolve-confirm")).toBeNull();
   });
+  it("opening the bulk confirmation again starts from the groups now visible (not the drafts left from the last attempt)", async () => {
+    const FP5 = "00000000000000cc";
+    const G5 = group(FP5, { last_at: "2026-09-29T01:40:00Z" });
+    let list = [G1, G4];
+    stub(async (m, url, body) => {
+      if (m === "POST") {
+        if (body!.key === FP4) return { status: 400, body: { detail: "bad", code: "BAD_RESOLUTION" } };
+        list = [G4, G5]; // G1 은 해결돼 빠지고 새 묶음 G5 가 보인다
+        return created(body, 60);
+      }
+      return logsRoutes(url, { groups: GROUPS(list) });
+    });
+    await open();
+    await click(button("묶음(fp)"));
+    await click(button("보이는 묶음 모두 해결 처리"));
+    await click(button("2개 해결 처리 확인", byTestId("resolve-confirm")!));
+    expect(byTestId("resolve-summary")!.textContent).toBe("1개 해결됨 · 1개 실패");
+    expect(allByTestId("log-group").map((r) => find((e) => e.tagName === "TD", r)!.textContent)).toEqual([FP4, FP5]); // 다시 불러온 묶음
+    await click(button("보이는 묶음 모두 해결 처리"));
+    const panel = byTestId("resolve-confirm")!;
+    expect(panel.textContent).toContain("보이는 묶음 2개를 해결 처리합니다");
+    expect(byTestId("resolve-summary", panel)).toBeNull();
+    expect(byTestId("resolve-error", panel)).toBeNull();
+    const mark = calls.length;
+    await click(button("2개 해결 처리 확인", panel));
+    expect(calls.slice(mark).filter((c) => c.method === "POST").map((c) => (c.body as Record<string, string>).key).sort()).toEqual([FP4, FP5].sort());
+  });
   it("with nothing to resolve the bulk action is disabled and says why", async () => {
     await groupsView([G2, G3]);
     const b = button("보이는 묶음 모두 해결 처리")!;
