@@ -1,0 +1,61 @@
+# KMA 부분 합성 대응 배포(2026-09-29 07:27Z, HEAD 298624c) 뒤 40분 관찰 — Redis 프레임 목록 · 수집기 heartbeat · 로그(읽기 전용)
+# 배포 전 저장된 프레임은 지점 수가 없어 None(화면 '합성 —'). 이 창의 새 프레임은 모두 tm 약 8분 뒤에 받아 15/15곳 — 부분 합성이 없어 다시 받기는 돌지 않았다(heartbeat 0 0 0 0).
+
+== 07:27:51Z
+heartbeat: 0 0 0 0
+  tm 1545 KST sites None / None partial None echo 55832 refetches None upgrades None
+  tm 1550 KST sites None / None partial None echo 57358 refetches None upgrades None
+  tm 1555 KST sites None / None partial None echo 60217 refetches None upgrades None
+  tm 1600 KST sites None / None partial None echo 55964 refetches None upgrades None
+  tm 1605 KST sites None / None partial None echo 61867 refetches None upgrades None
+  tm 1610 KST sites None / None partial None echo 65558 refetches None upgrades None
+  tm 1615 KST sites None / None partial None echo 67790 refetches None upgrades None
+  tm 1620 KST sites None / None partial None echo 65309 refetches None upgrades None
+== 07:37:51Z
+heartbeat: 0 0 0 0
+  tm 1550 KST sites None / None partial None echo 57358 refetches None upgrades None
+  tm 1555 KST sites None / None partial None echo 60217 refetches None upgrades None
+  tm 1600 KST sites None / None partial None echo 55964 refetches None upgrades None
+  tm 1605 KST sites None / None partial None echo 61867 refetches None upgrades None
+  tm 1610 KST sites None / None partial None echo 65558 refetches None upgrades None
+  tm 1615 KST sites None / None partial None echo 67790 refetches None upgrades None
+  tm 1620 KST sites None / None partial None echo 65309 refetches None upgrades None
+  tm 1625 KST sites 15 / 15 partial None echo 66031 refetches 0 upgrades 0
+== 07:47:51Z
+heartbeat: 0 0 0 0
+  tm 1600 KST sites None / None partial None echo 55964 refetches None upgrades None
+  tm 1605 KST sites None / None partial None echo 61867 refetches None upgrades None
+  tm 1610 KST sites None / None partial None echo 65558 refetches None upgrades None
+  tm 1615 KST sites None / None partial None echo 67790 refetches None upgrades None
+  tm 1620 KST sites None / None partial None echo 65309 refetches None upgrades None
+  tm 1625 KST sites 15 / 15 partial False echo 66031 refetches 0 upgrades 0
+  tm 1630 KST sites 15 / 15 partial False echo 62248 refetches 0 upgrades 0
+  tm 1635 KST sites 15 / 15 partial False echo 60130 refetches 0 upgrades 0
+== 07:57:52Z
+heartbeat: 0 0 0 0
+  tm 1610 KST sites None / None partial None echo 65558 refetches None upgrades None
+  tm 1615 KST sites None / None partial None echo 67790 refetches None upgrades None
+  tm 1620 KST sites None / None partial None echo 65309 refetches None upgrades None
+  tm 1625 KST sites 15 / 15 partial False echo 66031 refetches 0 upgrades 0
+  tm 1630 KST sites 15 / 15 partial False echo 62248 refetches 0 upgrades 0
+  tm 1635 KST sites 15 / 15 partial False echo 60130 refetches 0 upgrades 0
+  tm 1640 KST sites 15 / 15 partial False echo 58752 refetches 0 upgrades 0
+  tm 1645 KST sites 15 / 15 partial False echo 54523 refetches 0 upgrades 0
+== 08:07:52Z
+heartbeat: 0 0 0 0
+  tm 1620 KST sites None / None partial None echo 65309 refetches None upgrades None
+  tm 1625 KST sites 15 / 15 partial False echo 66031 refetches 0 upgrades 0
+  tm 1630 KST sites 15 / 15 partial False echo 62248 refetches 0 upgrades 0
+  tm 1635 KST sites 15 / 15 partial False echo 60130 refetches 0 upgrades 0
+  tm 1640 KST sites 15 / 15 partial False echo 58752 refetches 0 upgrades 0
+  tm 1645 KST sites 15 / 15 partial False echo 54523 refetches 0 upgrades 0
+  tm 1650 KST sites 15 / 15 partial False echo 53285 refetches 0 upgrades 0
+  tm 1655 KST sites 15 / 15 partial False echo 51338 refetches 0 upgrades 0
+== collector kma lines
+2026-09-29 07:32:52,455 INFO job.kma_radar: kma radar: tm=202609291625 HSR stations=15 echo cells=66031 png=23734 B (12 frames)
+2026-09-29 07:37:53,301 INFO job.kma_radar: kma radar: tm=202609291630 HSR stations=15 echo cells=62248 png=23177 B (12 frames)
+2026-09-29 07:42:53,928 INFO job.kma_radar: kma radar: tm=202609291635 HSR stations=15 echo cells=60130 png=23216 B (12 frames)
+2026-09-29 07:47:58,024 INFO job.kma_radar: kma radar: tm=202609291640 HSR stations=15 echo cells=58752 png=22721 B (12 frames)
+2026-09-29 07:52:59,072 INFO job.kma_radar: kma radar: tm=202609291645 HSR stations=15 echo cells=54523 png=22735 B (12 frames)
+2026-09-29 07:57:59,819 INFO job.kma_radar: kma radar: tm=202609291650 HSR stations=15 echo cells=53285 png=21939 B (12 frames)
+2026-09-29 08:03:04,589 INFO job.kma_radar: kma radar: tm=202609291655 HSR stations=15 echo cells=51338 png=21697 B (12 frames)

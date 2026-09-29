@@ -294,14 +294,26 @@
 - **수정** 날씨 작업(METAR · TAF · SIGMET · RainViewer)도 일시 오류는 실패한 호출마다 5 s 뒤 한 번 다시 부른다(속도 상한 · 예산을 지나고, 정규 일정이 남은 하루에 쓸 몫은 건드리지 않는다 — 보내지 못한 시도는 예산을 돌려준다, ADR-011).
   HTTP 오류 · 속도 상한은 다시 부르지 않는다. **회귀** 수집기 시험(하루 모의: 연결 실패가 이어져도 예산 소진 없음).
 
-## 자동 검사 현황(2026-09-29 KST, 계약 v5 · 운영 화면 보강 · 상황판 KST 뒤)
+## #44 기상청 레이더 프레임의 절반가량이 일부 지점만 합성된 이른 판 — 상황판에서 에코가 깜박임
+- **증상** 저장된 KMA 프레임의 에코 셀 수가 이웃 프레임 사이에서 37,764 → 8,924 → 37,623 → 8,366 → 17,243 → 7,766 으로 오르내렸다(5분 간격 강수 면적으로는 있을 수 없는 변화).
+- **원인** 저장한 원본(raw_ref)을 다시 해석하니 낮은 프레임은 헤더의 레이더 지점이 5 · 7 · 7 · 9 · 7곳(이웃은 12–15곳)이었다. 기상청은 합성을 일찍 내고 지점 자료가 들어오는 대로
+  채운다 — tm 약 3.5분 뒤에 받은 판은 일부, 8분 넘어 받은 판은 거의 전부였다. 같은 tm(14:40 · 14:50 KST)을 약 17분 뒤 다시 받으니 7곳 → 15곳(8,587 → 42,275 셀) · 7곳 → 12곳(7,950 → 38,652 셀).
+  수집기는 tm 마다 한 번만 받아 이른 판을 그대로 보였다([review/evidence/dashboard-kst-followup-observation.txt](review/evidence/dashboard-kst-followup-observation.txt)).
+- **수정**(ADR-021) 프레임마다 헤더의 지점 수 · 목록과 기준(지난 60분 저장 프레임 중 최대, 지지 프레임 2개 이상)을 싣고, 기준보다 적으면 "일부 합성"으로 표시한다. 일부 합성 프레임은
+  tm 뒤 30분까지 4분 간격으로 한 주기에 2개까지 다시 받아 지점이 늘었을 때만 바꾼다(정규 일정 몫의 예산은 남긴다). 화면은 `합성 N/M곳` 과 "일부 지점만 합성" 경고를 보이고, 완전하다고는
+  말하지 않는다(기준 도달 = 최근 최대와 같음 — 기상청 합성이 완전한지는 자료에 없다). 60분 · 30분 · 4분 · 2개는 고른 값이다.
+- **확인**([review/evidence/kma-partial-observation.txt](review/evidence/kma-partial-observation.txt)) 배포 뒤 40분: 새 프레임 7개 모두 `stations 15 / 15`, 화면 `합성 15/15곳`(툴팁에 지점 목록).
+  이 창에서는 수집 주기가 tm 약 8분 뒤에 걸려 부분 합성이 없었고 다시 받기는 돌지 않았다 — 다시 받기 경로는 수집기 시험(선택 · 교체 · 예산 · 오류)으로 확인했고, 실제 동작은 heartbeat 의
+  `radar_kr_partial` · `radar_kr_refetches` · `radar_kr_upgrades` 로 본다.
+
+## 자동 검사 현황(2026-09-29 KST, 계약 v5 · 운영 화면 보강 · 상황판 KST · KMA 부분 합성 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,021 통과(12 건너뜀 — 실 Redis 10건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 696 · JaCoCo LINE 96.3 % · BRANCH 84.7 %(하한 95 / 80) |
-| web 단위 | Vitest | 770 · 커버리지(소스 전체) Lines 88.5 % · Branches 78.3 % |
+| collector · ais 단위·통합 | pytest | 1,054 통과(12 건너뜀 — 실 Redis 10건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 2건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 % |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 703 · JaCoCo LINE 96.3 % · BRANCH 84.9 %(하한 95 / 80) |
+| web 단위 | Vitest | 788 · 커버리지(소스 전체) Lines 88.6 % · Branches 78.6 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본(서버 27 · 클라이언트 15) + 가림 · 억제 벡터 |
-| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 31종 |
+| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 32종 |
 | 인프라 정책 | infra/tests(unittest) | 118 |
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 265 · 36 · 48 · 27 · 10 |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 16 |
