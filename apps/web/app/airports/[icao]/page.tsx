@@ -3,7 +3,7 @@ import { use, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTimeKst, fmtTimeKstLabel, fmtUtcTitle, isMetarStale, metarAgeS } from "@/lib/format";
+import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTimeKst, fmtTimeKstLabel, fmtUtcTitle, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 
 interface Latest {
@@ -60,7 +60,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
             <tbody>{wx.history.map((h) => <tr key={h.obs_time}>
               <td className="mono whitespace-nowrap" title={fmtUtcTitle(h.obs_time)}>{fmtTimeKst(h.obs_time)}</td>
               <td style={{ color: h.flight_cat ? CAT_COLORS[h.flight_cat] : undefined }}>{h.flight_cat ?? "—"}</td>
-              <td className="mono">{h.wind_dir ?? "—"}° {h.wind_kt ?? "—"} kt</td>
+              <td className="mono whitespace-nowrap">{fmtWind(h.wind_dir, h.wind_kt)}</td>
               <td className="mono">{h.vis_raw ?? (h.vis_sm != null ? <span title="원문(vis_raw) 없음 — 파싱한 숫자라 “6+” 같은 하한 표기를 잃었을 수 있음">{h.vis_sm}*</span> : "—")}</td>
               <td className="mono">{h.ceiling_ft ?? "—"}</td>
               <td className="mono">{h.temp_c ?? "—"}</td>

@@ -5,7 +5,7 @@ import { apiGet } from "@/lib/api";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTimeKstLabel, fmtVisSm, isMetarStale, metarAgeS } from "@/lib/format";
+import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTempPair, fmtTimeKstLabel, fmtVisSm, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
 import { ErrorNote } from "./logs/ErrorNote";
 
 interface Wx {
@@ -56,10 +56,10 @@ export function AirportCard({ icao }: { icao: string }) {
             </div>
             {([
               ["관측", `${fmtTimeKstLabel(m.obs_time)}${age != null ? ` · ${fmtDuration(age)} 전` : ""}`],
-              ["바람", m.wind_dir != null ? `${m.wind_dir}° ${m.wind_kt ?? "—"} kt` : m.wind_kt != null ? `— ${m.wind_kt} kt` : "—"],
+              ["바람", fmtWind(m.wind_dir, m.wind_kt)],
               ["시정", fmtVisSm(m.vis_raw)],
               ["실링", ceilingLabel(m.ceiling_state, m.ceiling_ft)],
-              ["기온/이슬점", `${m.temp_c ?? "—"} / ${m.dewp_c ?? "—"} °C`],
+              ["기온/이슬점", fmtTempPair(m.temp_c, m.dewp_c)],
               ["현상", m.wx_string ?? "—"],
               ["출처", `${m.provider ?? "—"} · 수신 ${fmtTimeKstLabel(m.fetched_at)}`],
             ] as [string, string][]).map(([k, v]) => (

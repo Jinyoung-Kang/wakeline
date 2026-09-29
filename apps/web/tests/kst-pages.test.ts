@@ -114,6 +114,7 @@ describe("airport weather: observation and reception times in KST; raw METAR/TAF
     const cells = all((e) => e.tagName === "TD").map((c) => c.textContent);
     expect(cells).toContain("09-29 08:30:00");
     expect(cells).toContain("09-28 23:30:00"); // 14:30Z = 같은 날 KST 23:30
+    expect(t).not.toMatch(/—°|— kt/); // 바람을 모르는 행은 "—" 만(단위 없이)
     const pres = all((e) => e.tagName === "PRE").map((p) => p.textContent);
     expect(pres).toEqual([METAR, TAF]); // 원문은 글자 그대로(282330Z 등 UTC 그대로)
     expect([METAR, TAF].reduce((x, raw) => x.split(raw).join(""), t)).not.toMatch(UTC_LEFT);
