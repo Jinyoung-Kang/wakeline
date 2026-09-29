@@ -1,7 +1,7 @@
 /**
  * 연안 교통량(ADR-023) — 한국해양교통안전공단 5분 집계 격자별 선박 척수를 해양격자 4단계 칸(0.025°)에 칠한다(개별 선박 위치가 아니다).
  * 응답 검증(틀린 칸은 버린다 · ok 가 아니면 칸 없음) · 칸 → 정사각형 · 색 구간(범례와 지도가 같은 표 · MapLibre 스타일 규격) · 툴팁(격자 번호 · 척수 ·
- * 밀집도 % · 기준 KST · UTC) · 상태 줄(모든 상태의 이유를 글로) · ETag 조회(304 · 같은 ETag 면 다시 그리지 않음) · 레이어 토글 기억 · 범례 · 출처.
+ * 밀집도 % · 기준 KST) · 상태 줄(모든 상태의 이유를 글로) · ETag 조회(304 · 같은 ETag 면 다시 그리지 않음) · 레이어 토글 기억 · 범례 · 출처.
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -19,7 +19,7 @@ import { useUi } from "@/lib/ui-store";
 import { MapLegendView } from "@/components/MapLegend";
 import { LayerPanelView } from "@/components/LayerPanel";
 import AboutPage from "@/app/about/page";
-import { fmtDual, fmtDualCompact } from "@/lib/time";
+import { fmtKst } from "@/lib/time";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<");
 
@@ -110,23 +110,23 @@ describe("cells → map squares, colour scale shared by map and legend", () => {
   });
 });
 
-describe("tooltip and time text: KST with UTC alongside, unknown is — without a unit", () => {
-  it("time text is the shared inline form (lib/time fmtDual — contract v5 §G13): the UTC date only when it differs", () => {
-    expect(trafficTimeText("2026-09-29T09:05:05Z")).toBe("09-29 18:05:05 KST · 09:05:05 UTC");
-    expect(trafficTimeText("2026-09-29T09:05:05Z")).toBe(fmtDual("2026-09-29T09:05:05Z"));
-    expect(trafficTimeText("2026-09-29T15:30:00Z")).toBe("09-30 00:30:00 KST · 09-29 15:30:00 UTC"); // KST 로는 다음 날
+describe("tooltip and time text: KST only, unknown is — without a unit", () => {
+  it("time text is the shared inline form (lib/time fmtKst — contract v5 §G20)", () => {
+    expect(trafficTimeText("2026-09-29T09:05:05Z")).toBe("09-29 18:05:05 KST");
+    expect(trafficTimeText("2026-09-29T09:05:05Z")).toBe(fmtKst("2026-09-29T09:05:05Z"));
+    expect(trafficTimeText("2026-09-29T15:30:00Z")).toBe("09-30 00:30:00 KST"); // KST 로는 다음 날
     for (const v of [null, undefined, "", "bad"]) expect(trafficTimeText(v)).toBe("—");
   });
-  it("cell tooltip: grid number, ship count, density %, reference time (KST · UTC), and that it is not a ship position", () => {
+  it("cell tooltip: grid number, ship count, density %, reference time (KST), and that it is not a ship position", () => {
     const tip = trafficGridTip({ g: "GR4_F2K41_C3", v: 12, d: 34 }, grid())!;
     expect(tip.title).toBe("연안 교통량 격자");
     expect(tip.subtitle).toBe("GR4_F2K41_C3");
     expect(tip.rows).toEqual([
-      ["척수", "12척"], ["밀집도", "34 %"], ["기준", "18:05:05 KST · 09:05:05Z"], ["격자", "0.025° 칸(약 2.2×2.8 km)"],
+      ["척수", "12척"], ["밀집도", "34 %"], ["기준", "18:05:05 KST"], ["격자", "0.025° 칸(약 2.2×2.8 km)"],
     ]);
-    // 지도 툴팁은 §G13 compact(lib/time fmtDualCompact — 초까지: regDt 는 초 단위 원천 값). 칸은 15분 안의 자료만 그리므로 날짜가 자명하다
-    expect(tip.rows[2][1]).toBe(fmtDualCompact(REG, { seconds: true }));
-    expect(trafficGridTip({ g: "GR4_A", v: 1, d: 0 }, { reg_dt_utc: "2026-09-29T15:30:00Z" })!.rows[2][1]).toBe("00:30:00 KST · 09-29 15:30:00Z");
+    // 지도 툴팁은 초까지(lib/time fmtKst — regDt 는 초 단위 원천 값, 계약 v5 §G20). 칸은 15분 안의 자료만 그리므로 날짜가 자명하다
+    expect(tip.rows[2][1]).toBe(fmtKst(REG, { date: false }));
+    expect(trafficGridTip({ g: "GR4_A", v: 1, d: 0 }, { reg_dt_utc: "2026-09-29T15:30:00Z" })!.rows[2][1]).toBe("00:30:00 KST");
     expect(tip.flags.map((f) => f.text)).toEqual(["5분 집계 · 개별 선박 위치 아님"]);
     expect(trafficGridTip({ g: "GR4_A", v: 3, d: 12.25 }, grid())!.rows[1][1]).toBe("12.3 %");
     const unknown = trafficGridTip({ g: "GR4_A" }, null)!;
@@ -142,7 +142,7 @@ describe("status line: every state says why the map shows what it shows", () => 
   });
   it("ok: reference time, cells shown / total, geometry still being resolved", () => {
     const l = trafficStatusLine(grid({ total: 5099, resolved: 4812, unresolved: 287, pending: 287 }), null);
-    expect(l.text).toBe("기준 09-29 18:05:05 KST · 09:05:05 UTC · 격자 2 / 5,099칸 표시 · 위치 확인 중 287칸");
+    expect(l.text).toBe("기준 09-29 18:05:05 KST · 격자 2 / 5,099칸 표시 · 위치 확인 중 287칸");
     expect(l.tone).toBe("muted");
     // 모르는 수는 "—" 만(단위를 붙이지 않는다)
     const unknownTotal = trafficStatusLine(grid({ total: undefined, pending: 0 }), null).text;
@@ -163,7 +163,7 @@ describe("status line: every state says why the map shows what it shows", () => 
   });
   it("an ok answer that has aged past stale_after_s on this clock reads '자료 멈춤' (the api cannot say so when polls fail)", () => {
     const stale = trafficStatusLine(grid({ pending: 0 }), "HTTP 503", REG_MS + 901_000);
-    expect(stale.text).toBe("자료 멈춤 — 마지막 기준 09-29 18:05:05 KST · 09:05:05 UTC · 15분 넘게 새 자료 없음 · 표시 안 함 · 조회 실패(HTTP 503) — 마지막 값");
+    expect(stale.text).toBe("자료 멈춤 — 마지막 기준 09-29 18:05:05 KST · 15분 넘게 새 자료 없음 · 표시 안 함 · 조회 실패(HTTP 503) — 마지막 값");
     expect(stale.tone).toBe("warn");
     expect(trafficStatusLine(grid({ pending: 0 }), null, REG_MS + 899_000).text).toMatch(/^기준 /);
     expect(trafficStatusLine(grid({ pending: 0 }), null, 0).text).toMatch(/^기준 /); // 시각을 아직 모른다(첫 렌더) — api 판정 그대로
@@ -176,7 +176,7 @@ describe("status line: every state says why the map shows what it shows", () => 
   });
   it("stale · disabled (each reason) · no data · invalid · a failed refresh keeps the last value and says so", () => {
     expect(trafficStatusLine(grid({ status: "stale", available: false, age_s: 1000 }), null).text)
-      .toBe("자료 멈춤 — 마지막 기준 09-29 18:05:05 KST · 09:05:05 UTC · 15분 넘게 새 자료 없음 · 표시 안 함");
+      .toBe("자료 멈춤 — 마지막 기준 09-29 18:05:05 KST · 15분 넘게 새 자료 없음 · 표시 안 함");
     const dis = (r: string) => trafficStatusLine(grid({ status: "disabled", available: false, disabled_reason: r, ...NOW_UNKNOWN }), null).text;
     expect(dis("no_key")).toBe("꺼짐 — 공공데이터포털 서비스 키 없음(수집기 설정)");
     expect(dis("fixture")).toBe("꺼짐 — fixture 모드 — 외부 호출 없음");
@@ -331,7 +331,7 @@ describe("layer toggle, legend, sources", () => {
     expect(off).not.toContain("traffic-status");
     setData({ trafficGrid: { data: grid({ pending: 0 }), etag: '"ta"', error: null, version: 1, checkedAt: 1 } });
     const on = text(renderToStaticMarkup(createElement(LayerPanelView, { layers: { ...layers, traffic: true }, shipCats: [], legendOpen: false })));
-    expect(on).toContain("기준 09-29 18:05:05 KST · 09:05:05 UTC · 격자 2 / 3칸 표시");
+    expect(on).toContain("기준 09-29 18:05:05 KST · 격자 2 / 3칸 표시");
   });
 
   it("the legend shows the scale and says it is a 5-minute count per cell, not ship positions — only when the layer is on", () => {
@@ -341,7 +341,7 @@ describe("layer toggle, legend, sources", () => {
     expect(TRAFFIC_LEGEND_NOTE).toBe("격자 약 2.2×2.8 km · 5분 집계 · 선박 척수 — 개별 선박 위치 아님");
     for (const b of TRAFFIC_BINS) expect(on).toContain(b.label);
     expect(on).toContain("0척");
-    expect(on).toContain("기준 시각(KST · UTC)");
+    expect(on).toContain("기준 시각(KST)");
     const off = text(renderToStaticMarkup(createElement(MapLegendView, { id: "l", layers, radarSource: "rainviewer" })));
     expect(off).not.toContain(TRAFFIC_LEGEND_NOTE);
   });
@@ -353,6 +353,6 @@ describe("layer toggle, legend, sources", () => {
     const about = text(renderToStaticMarkup(createElement(AboutPage)));
     expect(about).toContain("연안 교통량(격자)");
     expect(about).toContain("개별 선박 위치가 아닙니다");
-    expect(about).toContain("KST 와 UTC 를 함께");
+    expect(about).toContain("기준 시각은 KST 로 적고");
   });
 });

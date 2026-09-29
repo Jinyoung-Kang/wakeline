@@ -1,5 +1,5 @@
 import { RESOLVE_EFFECT, type ResolvedRef } from "@/lib/resolutions";
-import { DualTime } from "../DualTime";
+import { KstTime } from "../KstTime";
 import type { ResolveTarget } from "../ResolveConfirm";
 
 /**
@@ -9,13 +9,13 @@ import type { ResolveTarget } from "../ResolveConfirm";
 export function resolveLogGroup(fp: string, upto: string, why: string): ResolveTarget {
   return {
     op: "resolve", drafts: [{ kind: "log_group", key: fp, upto }], effect: RESOLVE_EFFECT.log_group,
-    subject: <>지문 묶음 <span className="mono">{fp}</span> · upto <DualTime v={upto} /> <span className="text-fg-3">({why})</span></>,
+    subject: <>지문 묶음 <span className="mono">{fp}</span> · upto <KstTime v={upto} /> <span className="text-fg-3">({why})</span></>,
   };
 }
 
 export function revokeLogGroup(res: ResolvedRef, fp: string | null): ResolveTarget {
   return {
     op: "revoke", ref: res, effect: RESOLVE_EFFECT.revoke,
-    subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{fp ?? "—"}</span> · upto <DualTime v={res.upto} /> · {res.resolved_by}</>,
+    subject: <>해결 #{res.id} · 지문 묶음 <span className="mono">{fp ?? "—"}</span> · upto <KstTime v={res.upto} /> · {res.resolved_by}</>,
   };
 }

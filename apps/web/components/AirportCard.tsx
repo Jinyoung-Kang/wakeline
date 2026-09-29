@@ -7,7 +7,8 @@ import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
 import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTempPair, fmtVisSm, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
 import { ErrorNote } from "./logs/ErrorNote";
-import { DualTime } from "./DualTime";
+import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
+import { KstTime } from "./KstTime";
 
 interface Wx {
   airport: { icao: string; name?: string; country?: string; elev_ft?: number };
@@ -22,7 +23,7 @@ interface Wx {
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).
  * METAR 가 2 시간보다 오래되면 "오래됨" — 지도에서도 회색 고리로 그린다(GAP-14).
- * 관측·수신 시각은 KST 먼저 · UTC 함께(lib/time, 마우스를 올리면 원본 UTC ISO) — METAR · TAF 원문은 발표된 그대로(안의 "…Z" 는 UTC).
+ * 관측·수신 시각은 KST 만(계약 v5 §G20 · lib/time, 마우스를 올리면 연도 · ms 까지) — METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
  * 시정은 AWC 원문 값(vis_raw, 법정마일)에 단위 SM 을 붙이고 "6+" 는 "6 SM 이상"(DH-7) — km 로 읽히지 않게.
  */
 export function AirportCard({ icao }: { icao: string }) {
@@ -55,22 +56,22 @@ export function AirportCard({ icao }: { icao: string }) {
               <span className="text-[10px] text-fg-3">{catSourceLabel(m.flight_cat_source, m.flight_cat)}</span>
               {stale ? <span className="badge warn" data-testid="metar-stale" title="관측 후 2시간 초과 — 현재 기상으로 보지 마세요">오래됨</span> : null}
             </div>
-            {/* [이름, 값] — 시각은 <DualTime>(KST 먼저 · UTC 함께, 두 부분 사이에서만 줄바꿈, title 에 원본 UTC ISO) */}
+            {/* [이름, 값] — 시각은 <KstTime>(KST, 한 시각은 줄바꿈 없이, title 에 연도 · ms 까지의 KST) */}
             {([
-              ["관측", <><DualTime v={m.obs_time} />{age != null ? ` · ${fmtDuration(age)} 전` : ""}</>],
+              ["관측", <><KstTime v={m.obs_time} />{age != null ? ` · ${fmtDuration(age)} 전` : ""}</>],
               ["바람", fmtWind(m.wind_dir, m.wind_kt)],
               ["시정", fmtVisSm(m.vis_raw)],
               ["실링", ceilingLabel(m.ceiling_state, m.ceiling_ft)],
               ["기온/이슬점", fmtTempPair(m.temp_c, m.dewp_c)],
               ["현상", m.wx_string ?? "—"],
-              ["출처", <>{m.provider ?? "—"} · 수신 <DualTime v={m.fetched_at} /></>],
+              ["출처", <>{m.provider ?? "—"} · 수신 <KstTime v={m.fetched_at} /></>],
             ] as [string, React.ReactNode][]).map(([k, v]) => (
               <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="text-fg-3">{k}</span><span className="mono text-right" data-testid={k === "실링" ? "airport-ceiling" : undefined}>{v}</span></div>
             ))}
-            <div className="mt-2 label" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">METAR (원문 · UTC)</div>
-            <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]">{m.raw}</pre>
-            <div className="mt-2 label" title="발표된 원문 그대로 — 안의 시각(…Z)은 UTC">TAF (원문 · UTC)</div>
-            <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]">{m.taf_raw ?? "—"}</pre>
+            <div className="mt-2 label" title={RAW_BULLETIN_TITLE}>METAR ({RAW_BULLETIN_LABEL})</div>
+            <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]" data-raw="bulletin">{m.raw}</pre>
+            <div className="mt-2 label" title={RAW_BULLETIN_TITLE}>TAF ({RAW_BULLETIN_LABEL})</div>
+            <pre className="mono whitespace-pre-wrap border border-line bg-bg p-2 text-[10px]" data-raw="bulletin">{m.taf_raw ?? "—"}</pre>
           </> : <div className="text-fg-3">METAR 없음</div>}
         </> : null}
       </div>

@@ -1,6 +1,6 @@
 /**
  * 한국 표준시(KST, UTC+09:00) 변환의 핵심 — 모든 화면(상황판 · 재생 · 통계 · 공항 · 운영 · 로그)과 로그 복사 텍스트가 쓴다.
- * 의존성 없음: 오류 경계 청크가 lib/log-line 을 거쳐 첫 로드에 싣는다(PERF §8 · tests/error-chunk-graph.test.ts). 표시 형식은 lib/format 의 fmt*Kst.
+ * 의존성 없음: 오류 경계 청크가 lib/log-line 을 거쳐 첫 로드에 싣는다(PERF §8 · tests/error-chunk-graph.test.ts). 화면 표시 형식은 lib/time(계약 v5 §G20 — KST 만).
  * 오프셋은 +09:00 고정 — tz 데이터베이스(Asia/Seoul)에서 +09:00 이 아닌 때는 1987·1988 여름(일광 절약)뿐이고
  * tests/kst-format.test.ts 가 2000–2040 을 Intl(Asia/Seoul)과 대조한다. 고정이라 보는 사람의 컴퓨터 시간대·ICU 자료와 상관없이 같은 글자가 나온다.
  */

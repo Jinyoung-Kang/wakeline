@@ -2,7 +2,7 @@
 import { Fragment } from "react";
 import { exceptionTypeText, firstLine, type LogGroup } from "@/lib/logs";
 import { BULK_CONCURRENCY, RESOLVE_EFFECT, uptoOf } from "@/lib/resolutions";
-import { DualTime } from "../DualTime";
+import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { resolveLogGroup, revokeLogGroup } from "./logGroupTargets";
 
@@ -59,7 +59,7 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
       <table>
         <thead className="sticky top-0 bg-bg-1"><tr>
           <th scope="col">지문(fp)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거 · 예외 종류</th><th scope="col">표본 메시지</th>
-          <th scope="col">항목</th><th scope="col" title="같은 지문으로 보내지 않은 건수의 합">억제 합</th><th scope="col">처음(KST · UTC)</th><th scope="col">마지막(KST · UTC)</th>
+          <th scope="col">항목</th><th scope="col" title="같은 지문으로 보내지 않은 건수의 합">억제 합</th><th scope="col">처음(KST)</th><th scope="col">마지막(KST)</th>
           <th scope="col" title="해결 처리(ADR-024): 지문 묶음을 upto(마지막 항목 시각)까지 해결로 적는다 — 지우지 않고 가린다, upto 뒤 재발은 다시 보인다">해결</th><th scope="col"></th>
         </tr></thead>
         <tbody>{groups.map((g) => {
@@ -72,14 +72,14 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
                 <td>{g.level ? <span className={LEVEL_BADGE[g.level] ?? "badge"}>{g.level}</span> : "—"}</td>
                 <td className="mono">{g.service ?? "—"}</td>
                 <td className="max-w-[280px]"><div className="mono truncate" title={g.logger ?? ""}>{g.logger ?? "—"}</div><div className="mono truncate text-fg-3" title={g.exception_type === "" ? "예외 종류 모름(브라우저 오류는 종류를 보내지 않음)" : undefined}>{exceptionTypeText(g.exception_type)}</div></td>
-                <td className="max-w-[420px] truncate" title={g.sample_message ?? ""}>{g.sample_message ? firstLine(g.sample_message) : "—"}</td>
+                <td className="max-w-[420px] truncate">{g.sample_message ? <span title={g.sample_message} data-raw="log">{firstLine(g.sample_message)}</span> : "—"}</td>
                 <td className="mono text-right">{g.count ?? "—"}</td>
                 <td className="mono text-right">{g.suppressed ?? "—"}</td>
-                <td className="whitespace-nowrap"><DualTime v={g.first_at} variant="cell" /></td>
-                <td className="whitespace-nowrap"><DualTime v={g.last_at} variant="cell" /></td>
+                <td className="whitespace-nowrap"><KstTime v={g.first_at} variant="cell" /></td>
+                <td className="whitespace-nowrap"><KstTime v={g.last_at} variant="cell" /></td>
                 {/* 해결 · 되돌리기는 같은 자리의 단추 하나(같은 DOM 요소) — 해결 뒤 초점이 그 행의 "되돌리기"에 남는다 */}
                 <td className="min-w-[140px]">
-                  {res ? <span data-testid="group-resolved-mark" className="mr-1">해결됨 · <span className="mono">{res.resolved_by}</span> · <DualTime v={res.upto} /></span> : null}
+                  {res ? <span data-testid="group-resolved-mark" className="mr-1">해결됨 · <span className="mono">{res.resolved_by}</span> · <KstTime v={res.upto} /></span> : null}
                   <button type="button" className={res ? "btn px-1.5! py-0! normal-case!" : "btn"} disabled={!res && !upto} {...openerProps(g.fp)}
                     aria-label={res ? `되돌리기: 지문 ${g.fp} 해결 #${res.id}` : `해결 처리: 지문 ${g.fp}`}
                     title={res ? undefined : upto ? "이 묶음의 마지막 항목 시각까지 해결로 적는다 — 확인 창이 먼저 범위를 말한다" : "마지막 시각 모름 — 해결 범위(upto)를 정할 수 없음"}

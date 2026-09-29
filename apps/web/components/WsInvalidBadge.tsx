@@ -1,7 +1,7 @@
 "use client";
 import { useId, useState } from "react";
 import { copyText } from "@/lib/copy";
-import { fmtDualClock } from "@/lib/time";
+import { fmtKstClock } from "@/lib/time";
 import type { WsInvalid } from "@/lib/store";
 
 /**
@@ -17,7 +17,7 @@ export function wsInvalidText(inv: WsInvalid): string {
     "다시 받기: 항공기 · 선박은 스냅샷 재동기(resync). 알림 · SIGMET · 레이더는 그 목록 전체를 다시 요청한다(알림 수는 전체 목록을 받을 때까지 \"—\"). "
       + "status 는 30 s 안의 다음 heartbeat, 선택한 항공기 · 선박과 수요 표시는 그 값이 바뀔 때 다시 온다.",
     "버린 메시지와 처리 예외는 브라우저 오류로 보고한다(같은 문구 60 s 에 1번 · 분당 5번 이하 — 운영 로그 메뉴).",
-    `마지막: ${inv.last ?? "—"}${inv.at != null ? ` · ${fmtDualClock(inv.at)}(브라우저 시계)` : ""}`,
+    `마지막: ${inv.last ?? "—"}${inv.at != null ? ` · ${fmtKstClock(inv.at)}(브라우저 시계)` : ""}`,
   ].join("\n");
 }
 

@@ -4,7 +4,7 @@
  */
 import { seenAtMs, STALE_AFTER_S, thresholds } from "./interpolate";
 import type { AircraftState } from "./types";
-import { fmtDualSpan } from "./time";
+import { fmtKstSpan } from "./time";
 
 /**
  * 항적 조회 실패(계약 v5 §G5) → 화면 문구와 요청 id. 요청 id 는 ApiError 가 problem+json(또는 X-Request-Id)에서 이미 형식을 확인해 둔 값만 —
@@ -71,7 +71,7 @@ export function trackGapMs(a: string | null | undefined, b: string | null | unde
 
 /**
  * 항적 → 지도 FeatureCollection: 관측 선분(kind "track", 선분마다 끝점 고도 — 고도색 실선) +
- * 수신 공백 연결(kind "gap", 회색 점선 + "수신 없음 hh:mm–hh:mm KST · hh:mm–hh:mmZ"(KST 먼저, UTC 함께) 라벨 — 선박 항적의 공백 표시와 같은 모양).
+ * 수신 공백 연결(kind "gap", 회색 점선 + "수신 없음 hh:mm–hh:mm KST" 라벨(계약 v5 §G20) — 선박 항적의 공백 표시와 같은 모양).
  */
 export function trackFeatureCollection(pts: TrackPt[]): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
@@ -79,7 +79,7 @@ export function trackFeatureCollection(pts: TrackPt[]): GeoJSON.FeatureCollectio
     const a = pts[i - 1], b = pts[i];
     const coordinates = [[a.lon, a.lat], [b.lon, b.lat]];
     features.push(b.ts - a.ts > trackGapMs(a.provider, b.provider)
-      ? { type: "Feature", properties: { kind: "gap", label: `수신 없음 ${fmtDualSpan(a.ts, b.ts)}` }, geometry: { type: "LineString", coordinates } }
+      ? { type: "Feature", properties: { kind: "gap", label: `수신 없음 ${fmtKstSpan(a.ts, b.ts)}` }, geometry: { type: "LineString", coordinates } }
       : { type: "Feature", properties: { kind: "track", alt_ft: b.alt_ft }, geometry: { type: "LineString", coordinates } });
   }
   return { type: "FeatureCollection", features };

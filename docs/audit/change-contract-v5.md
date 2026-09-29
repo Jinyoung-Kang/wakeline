@@ -202,7 +202,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     탭 설명: 빨간 값 = 0 이 아닌 손실 지표 · 주황 = 예산 때문에 짧아진 스트림 보존 창(손실 아님).
 
 ## G. 6차 개정(2026-09-29 · 레인 web-core-v6 · 사용자 요청 "상황판·재생·통계·공항 화면을 포함한 필요한 메뉴에 UTC 와 KST 함께 표시")
-- G13(§G10 · §G11) **KST 를 먼저, 같은 순간의 UTC 를 함께** — §G10 · §G11 의 "화면은 KST 만, 원본 UTC 는 툴팁" 과 §G11 의 예외(지도 툴팁 · 선 라벨 · 기상청 tm 은 KST 만)를 대신한다.
+- G13(§G10 · §G11) **KST 를 먼저, 같은 순간의 UTC 를 함께** — §G10 · §G11 의 "화면은 KST 만, 원본 UTC 는 툴팁" 과 §G11 의 예외(지도 툴팁 · 선 라벨 · 기상청 tm 은 KST 만)를 대신한다. **§G20(2026-09-30 사용자 결정 — 화면은 KST 만, UTC 는 지운다)이 이 절의 두 시간대 표시를 대신한다.**
   API · 저장 · 스트림은 UTC 그대로이고 웹 표시만 바꾼다. 오프셋 +09:00 고정(`lib/kst.ts`).
   - 한 곳: `lib/time.ts`(글자) · `components/DualTime.tsx`(그리기 — KST 는 보통 글자, UTC 는 흐리게, `<time dateTime>` 에 그 순간, title 에 원본 UTC ISO).
     화면 코드는 시각 글자를 직접 만들지 않는다 — `tests/kst-dashboard.test.ts` 가 lib/time · lib/kst 밖의 모양(`…Z` 템플릿 · getUTC* · toISOString 자르기 ·
@@ -453,3 +453,49 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 계약 검사: `tools/contract_check.py`(실수신 fixture → 발행: 모든 part 의 static_received 가 그 part 의 MMSI 를 정확히 덮고, 필드는 그 MMSI 가 fixture 에서
     실제로 보낸 조각의 키 합 · enum = STATIC_FIELDS 순서), `ShipStaticTest`(FIELDS = 스키마 enum = ship_static 정적 칸), `SchemaContractTest` · 수집기 시험
     (같은 스키마 파일로 이름 · 키 · 중복 거절).
+## G. 12차 개정(2026-09-30 · 레인 kst · 사용자 결정 "[상황판·재생·통계·공항 화면]을 포함한 필요한(해당되는) 메뉴에 시각을 UTC 지우고, KST 표시") — 화면 시각은 KST 만
+같은 날 병행 레인(백엔드)이 11차 개정으로 §G18 · §G19 를 먼저 썼다 — 이 절은 그다음 번호 §G20 이다(합칠 때 11차 개정이 이 절 앞에 온다. 번호는 `tests/docs-contract-g11` 이 겹치지 않는지 본다).
+- G20(§G13 · §G11 · §G10 · §C7 · ADR-017 R-45) **화면의 시각은 한국 표준시(KST)만 — UTC 는 저장 · 전송 형식으로만 남는다** — §G13 의 "KST 먼저 · UTC 함께"
+  (두 시간대 · UTC 쪽 날짜 · 머리글 `(KST · UTC)` · compact `…Z` · 원본 UTC 툴팁)와 §G10 · §G11 의 "원본 UTC 는 툴팁" 을 대신한다. API · WS · DB · 서버 로그의 시각은 UTC ISO 그대로다.
+  - 한 곳: `lib/time.ts`(글자 — 화면 시간대는 `DISPLAY_TZ` 한 곳이 정한다: KST · Asia/Seoul · +09:00 고정) · `components/KstTime.tsx`(`<KstTime>` · `<KstRange>` —
+    `<time dateTime>` 에 ISO 8601 +09:00, title 에 연도 · ms 까지의 KST). 화면 코드는 시각 글자를 직접 만들지 않는다(§G13 의 소스 검사 그대로 — 예외는 복사 형식 ·
+    오류 화면 · 선박 ETA 뿐, 파일 · 줄 수까지 시험에 고정).
+  - 범위: 모든 화면 — 상황판(상태 바 · 알림 · 카드 · 목록 · 지도 툴팁 · 선 라벨 · 레이더 타임라인 · 기상청 패널 · 연안 교통량 · 입출항) · 재생 · 통계 · 공항 · 운영 ·
+    로그 · 출처·한계 · 설명서 · 오류 화면. 보이는 글자 · title · aria-label 어디에도 UTC 가 없다(원문 제외).
+  - 형식(lib/time 이 만드는 글자): inline `09-29 14:02:54 KST` · 날짜가 자명한 자리 `14:02:54 KST` · 좁은 자리(상태 바 · 지도 툴팁 · 선 라벨 · AIS 공백 배지)
+    `14:02 KST` · hh:mm 구간 `08:40–08:45 KST` · 구간 `09-29 10:00:00 – 09-29 14:00:00 KST`(시간대는 끝에 한 번, 줄은 ` – ` 에서만 바뀐다) · 표 칸 `09-29 14:02:54`
+    (머리글 `(KST)`, 화면 읽기에는 " KST" 까지) · title `2026-09-29 14:02:54.000 KST` · 재생 시각은 연도까지 · 모르면 `—` 만(시간대 글자 없이).
+  - 원문: METAR · TAF · SIGMET 발표문 · 서버 로그 메시지 본문(예외 · 스택 · context 포함) · 수집기가 쓴 원본 레코드(격리 detail · DLQ payload head · 실행 오류 글자)는
+    글자 그대로 — 요소에 `data-raw`. 발표문 이름표는 `(원문 · 발표 그대로)`(lib/time `RAW_BULLETIN_LABEL`)이고 툴팁이 "안의 ‘…Z’ 시각은 발표 형식(KST = …Z + 9시간)" 이라 적는다.
+  - 기상청 레이더 tm 은 기상청이 준 KST 그대로(`HH:MM KST`). 선박 ETA(계약 v2 §B4 — 선원 입력 월 · 일 · 시 · 분, 입력 형식은 UTC 벽시계, 연도 없음)는 KST 로 바꿔
+    `09-30 15:05 KST · 선원 입력 · 연도 없음`(2월 28일 입력 15:00 뒤는 `02-29 또는 03-01 … KST(연도 없어 윤년 모름)`, 달력에 없는 날은 시각을 지어내지 않고
+    `— (선원 입력 날짜 04-31 이 달력에 없음 — KST 로 바꿀 수 없음, 연도 없음)`).
+  - 재생: 날짜 · 시각 입력(`재생 시각(KST)`) · 보이는 시각 · title 은 KST, api 요청의 `at` 은 그 순간의 UTC ISO(`…Z`) 그대로(전송 형식).
+  - 날짜로 센 집계(조사한 결과와 한 일):
+    - 우리 DB 가 세는 것은 KST 날짜로 센다(서버): api `stats_daily`(SIGMET 발표일 · 교통량 · 알림 — 하루 = [00:00 KST, 다음 날 00:00 KST), 교통량 `dim` = KST 시 00–23) ·
+      collector `quality_rule_count`(실행이 시작된 KST 날짜). 매일 03:30 KST 에 전날(KST 날짜)을 센다(api cron `zone = Asia/Seoul`), 따라잡기 · 보존 경계 · '오늘' 도
+      KST 날짜. REST `/stats/sigmet` · `/stats/alerts` · `/stats/traffic` 의 `day` = KST 날짜, 기본 날짜 · 범위 = KST 오늘, 응답에 늘 `day_zone: "Asia/Seoul"`
+      (`tools/rest_contract_check.py` 가 const 로 본다 — 교통량 `dim` 은 `00`–`23` 이고 시마다 한 행). `/ops/quality` 도 `day_zone`, `/ops/stats/aggregate` 는 KST 오늘 이전만.
+    - 옛 행(UTC 날짜로 센 것)은 KST 날짜로 이름만 바꾸지 않는다(다른 하루다): Flyway **V16** 이 `stats_daily_utc_legacy` · `quality_rule_count_utc_legacy` 로 옮기고
+      (서비스 역할 권한 없음 — 보관만, 머리 주석에 되돌리기 SQL) 같은 모양의 새 표를 만든다(권한은 옛 표와 같다). 통계는 api 따라잡기가 원본이 남은 계열을 KST
+      날짜로 다시 센다 — 최근 7일은 모든 계열, 그보다 오래된 날은 SIGMET(영구) · 알림(30일 안)을 한 번에 92일까지(`backfillStats`). 교통량은 그날 첫 순간
+      (00:00 KST)이 든 UTC 날 파티션이 보존(72 h) 안일 때만 다시 센다 — 항적은 UTC 날 파티션째 지워지고 00:00–08:59 KST 는 앞 UTC 날 파티션에 있어, 그날 끝으로
+      판단하면 00–08시가 빠진 수를 완료로 남긴다(리뷰). 원본이 사라진 교통량 · 알림 날과 격리 수(실행마다의 규칙별 수는 이 표에만 있다)는 다시 셀 수 없어
+      비어 있고, 화면이 '집계되지 않은 날짜 — … KST 날짜 집계로 바꾸기 전 날짜' 로 말한다.
+    - 경계가 UTC 날로 정해진 것 — 수집기 하루 예산 키(`budget:{공급자}:{yyyymmdd}`, 공급자 한도와 맞춘 UTC 날)와 그것을 옮긴 `provider_budget_day` — 는 바꾸지 않고,
+      화면이 그 창을 KST 로 적는다: `09-28 09:00 – 09-29 08:59 KST`(머리글 `budget window (KST)`, "매일 09:00 KST 에 새로 시작" — lib/time `utcDayWindowKst`).
+      `/ops/providers` 가 `budget_day_zone: "UTC"` 로 밝힌다. 시간 창 예산(`…:h:{yyyymmddHH}`)은 시 경계가 KST 와 같아 바꿀 것이 없다(화면에 나오지 않는다).
+    - 웹은 응답이 밝힌 기준만 믿는다: `day_zone` 이 `Asia/Seoul` 이 아닌 통계 · 격리 수 응답, `budget_day_zone` 이 `UTC` 가 아닌 예산 응답은 날짜 · 창을 그리지 않고
+      그렇다고 적는다(옛 api 와 새 웹이 섞인 배포 중에 UTC 날짜를 KST 날짜로 보이지 않게). 통계 날짜의 옛 "UTC 자정 시각" 문자열은 날짜로 읽지 않는다(`—`).
+  - 바꾸지 않는 것: API · WS · DB · 서버 로그의 시각(UTC ISO), 복사 · 내려받기 형식(텍스트 머리 줄 ISO `+09:00`, 항목 JSON · `.ndjson` 의 `ts` — 버튼 title 이 "서버 형식 ‘…Z’" 라 적는다), 원문.
+  - 성능: §G13 과 같다 — 고정 오프셋 산술(Intl 없음 — 형식기 생성 비용 · ICU 차이 없음), 같은 입력의 분해 결과 캐시(2,048개, 차면 비움, `TIME_CACHE_MAX`).
+  - 옮기는 중인 이름: 다른 레인(대시보드 UX)이 같은 때 고치는 파일(StatusBar · AlertPanel · AircraftSearch · AircraftCard)은 이 레인이 건드리지 않았다 — 그 파일과
+    그 레인의 새 코드(lib/statusbar.ts · lib/ships.ts)가 쓰는 `DualTime` · `dualPair` · `fmtDual` · `dualParts` · `dualRangePair` · `fmtDualDayMinute` · `fmtDualSpan` 을
+    **KST 전용 별칭(@deprecated)** 으로 남겼다(UTC 쪽 필드 없음 — 그 레인도 이미 KST 만 그린다). 합친 뒤 호출부를 `KstTime` · `fmtKst` · `timeParts` · `fmtKstRange` ·
+    `fmtKstDayMinute` · `fmtKstSpan` 으로 옮기고 별칭을 지운다. 상단 검색 상자의 설명 한 줄("… KST · UTC(…Z) …")이 남아 있다(두 레인 모두 고치지 않았다) — 시험(`tests/helpers/kst-only` OTHER_LANE_PENDING)의
+    면제는 그 레인이 합쳐지기 전까지만(그 레인의 새 lib/statusbar.ts 가 있으면 끝난다): 합치면 화면 · 소스 검사가 그 줄을 잡고, 합치는 사람이 "KST · …" 로 고친다.
+  - 회귀 막기: `tests/kst-time.test.ts`(형식 · 모름 · 캐시 · 컴포넌트) · `tests/helpers/kst-only.ts`(글자 · DOM 의 UTC 흔적 — data-raw 밖) · 화면마다 그 검사(상황판 전체
+    `tests/kst-dashboard.test.ts` · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서 · 오류 화면) · 소스 검사(lib/time 밖의 시각 글자 모양 · 한국어 화면 글의 UTC · 별칭을
+    쓰는 파일) · `tests/kst-only-screens.test.ts`(모든 경로가 이 검사에 들어 있는지) · api `StatsAggregationDbTest`(KST 자정 경계 · KST 시) · `MigrationDbTest` V16 ·
+    collector `test_db_writer`(KST 날짜) · `test_rest_contract_rules`(day_zone · KST 시).
+  - 설명서 그림은 합치는 사람이 다시 찍는다(`lib/guide-shots.json` 의 설명 · 대체 글과 통계 날짜 고르기 선택자만 바꿨다 — `public/guide` · `lib/guide-manifest.json` 은 그대로).

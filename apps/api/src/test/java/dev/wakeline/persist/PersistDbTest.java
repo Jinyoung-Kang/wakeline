@@ -25,7 +25,6 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -373,8 +372,9 @@ class PersistDbTest {
 
     @Test
     void dailyStatsCountRegionTrafficIssueDaySigmetsAndHonestDwell() {
-        LocalDate day = LocalDate.now(ZoneOffset.UTC).minusDays(1);
-        Instant d0 = day.atStartOfDay(ZoneOffset.UTC).toInstant();
+        LocalDate day = MaintenanceJobs.today().minusDays(1); // KST 날짜(계약 v5 §G20)
+        Instant d0 = day.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant();
+        DbTestSupport.ensureTrackPartitions(d0, d0.plusSeconds(26 * 3600));
         sigmets.upsert(sig("X", "awc_isigmet", "X", d0.plusSeconds(20 * 3600), d0.plusSeconds(26 * 3600)));  // 그날 발표, 다음날까지
         sigmets.upsert(sig("Y", "awc_isigmet", "Y", d0.minusSeconds(2 * 3600), d0.plusSeconds(4 * 3600)));   // 전날 발표 → 그날 세지 않는다
         insertAlert(1, "b00001", "X", "OBSERVED", d0.plusSeconds(3600), d0.plusSeconds(3600 + 600));
@@ -431,7 +431,7 @@ class PersistDbTest {
         assertThat(admin.sql("SELECT count(*) FROM track_point_1m").query(Long.class).single()).isEqualTo(before + 1);
         assertThat(jobs.catchUpSummaries(now)).isEmpty(); // 멱등
 
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate today = MaintenanceJobs.today();
         // 이미 집계를 마친 날(R-46: 계열마다 완료 표식) — 따라잡기가 다시 세지 않는다
         admin.sql("INSERT INTO stats_daily (day, metric, dim, value) VALUES (:d, 'alerts_by_kind', 'OBSERVED', 1), "
                 + "(:d, 'aggregated_at', 'sigmet', 1), (:d, 'aggregated_at', 'traffic', 1), (:d, 'aggregated_at', 'alerts', 1)").param("d", today.minusDays(2)).update();

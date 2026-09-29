@@ -10,10 +10,10 @@
  *   모르는 값은 "—"(단위도 붙이지 않는다) — 추측해 채우지 않는다.
  * - 호출부호로만 찾는다(선명으로 찾지 않는다). PORT-MIS 신고 선명이 AIS 선명과 다르면 밝힌다 — 같은 선박인지는 판정하지 않는다. 두 이름이 모두 영문일
  *   때만 비교한다(한글 · 영문처럼 표기 체계가 다른 것은 다름의 신호가 아니다 — 로마자 표기를 짐작하지 않는다).
- * - 신고 시각은 KST 와 UTC 를 함께(공유 형식기 lib/time · components/DualTime, 계약 v5 §G13). 단 KST 00:00:00 은 날짜만 신고했는지 자정인지 원천이
- *   구분하지 않으므로 날짜만 보이고 UTC 로 바꾸지 않는다(reportTime). 색인 갱신 시각 · 읽은 시각은 우리 시각이라 늘 KST+UTC.
+ * - 신고 시각은 KST(공유 형식기 lib/time · components/KstTime, 계약 v5 §G20). 단 KST 00:00:00 은 날짜만 신고했는지 자정인지 원천이
+ *   구분하지 않으므로 날짜만 보인다(reportTime — 시각을 지어내지 않는다). 색인 갱신 시각 · 읽은 시각도 KST.
  */
-import { dualParts, fmtIsoKst, fmtKstDateOnly, isKstMidnight } from "./time";
+import { fmtKst, fmtKstDateOnly, fmtTimeTitle, isKstMidnight, timeParts } from "./time";
 
 export const PORT_CALL_STATUSES = ["ok", "none", "incomplete", "disabled", "no_call_sign", "error"] as const;
 export type PortCallStatus = (typeof PORT_CALL_STATUSES)[number];
@@ -202,7 +202,7 @@ const GAP_DAYS_SHOWN = 5;
 export const PORT_CALL_INDEX_AS_OF_TITLE =
   "항만청 10곳의 최근 3일(오늘 포함) 다시 받기 중 가장 오래된 것 — 최근 3일은 이 시각까지 올라온 신고가 색인에 있다. 더 오래된 날은 하루에 한 번쯤 다시 받으므로 그보다 이른 때까지의 신고다";
 export const PORT_CALL_CAVEAT =
-  "AIS 호출부호로만 찾습니다 — 선박이 보낸 호출부호가 틀리거나 같은 호출부호를 쓰는 다른 선박이 있으면 다른 선박의 신고일 수 있습니다. 서버가 항만청 10곳의 신고를 날짜별로 미리 모은 색인에서 찾으며(고를 때 외부에 묻지 않습니다), 색인은 한 시간마다 최근 3일을, 그보다 오래된 날은 하루에 한 번쯤 다시 받습니다. 입출항 시각은 PORT-MIS 신고 시각입니다 — 00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보이고 UTC 로 바꾸지 않습니다.";
+  "AIS 호출부호로만 찾습니다 — 선박이 보낸 호출부호가 틀리거나 같은 호출부호를 쓰는 다른 선박이 있으면 다른 선박의 신고일 수 있습니다. 서버가 항만청 10곳의 신고를 날짜별로 미리 모은 색인에서 찾으며(고를 때 외부에 묻지 않습니다), 색인은 한 시간마다 최근 3일을, 그보다 오래된 날은 하루에 한 번쯤 다시 받습니다. 입출항 시각은 PORT-MIS 신고 시각(KST)입니다 — 00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아 날짜만 보입니다(시각을 지어내지 않습니다).";
 
 /** 상태 한 줄(ok 가 아닐 때). ok 면 null. */
 export function portCallStatusText(p: PortCallsInfo): string | null {
@@ -217,7 +217,7 @@ export function portCallStatusText(p: PortCallsInfo): string | null {
 }
 
 /**
- * 빈 곳 한 줄의 글자(시각은 화면이 DualTime 으로 따로 그린다): "부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터) · 색인 갱신이 오래됨".
+ * 빈 곳 한 줄의 글자(시각은 화면이 KstTime 으로 따로 그린다): "부산(020) — 창 앞쪽 일부만 색인됨(2026-09-12부터) · 색인 갱신이 오래됨".
  * behind 는 색인한 마지막 날(covered_to), unindexed_days 는 그 날짜들(많으면 앞의 5개와 "외 N일") — 모르면 문구만.
  */
 export function gapText(g: PortCallGap): string {
@@ -236,14 +236,14 @@ export function gapText(g: PortCallGap): string {
 
 /**
  * PORT-MIS 신고 시각 한 칸. 원천 시각은 +09:00 이고, 확인한 실제 응답의 값(2026-09-29T00:00:00+09:00)이 날짜만 신고한 것인지 자정인지 원천이
- * 구분하지 않는다(ADR-022). 그래서 KST 00:00:00.000 인 시각은 날짜만(dateOnly — 시각 미확인, lib/time fmtKstDateOnly) 보이고 UTC 로 바꾸지 않는다
- * (바꾸면 모르는 시각이 전날 15:00 UTC 처럼 보인다). 그 밖의 시각은 시각이 있는 신고 — { dateOnly: false } 이고 화면은 공유 형식기(DualTime 표 칸)로
- * KST 와 UTC 를 함께 그린다. 모르면 null(화면은 "—" 만).
+ * 구분하지 않는다(ADR-022). 그래서 KST 00:00:00.000 인 시각은 날짜만(dateOnly — 시각 미확인, lib/time fmtKstDateOnly) 보인다(자정으로 적으면
+ * 모르는 시각을 지어낸다). 그 밖의 시각은 시각이 있는 신고 — { dateOnly: false } 이고 화면은 공유 형식기(KstTime 표 칸)로 KST 를 그린다.
+ * 모르면 null(화면은 "—" 만).
  */
 export function reportTime(v: string | null | undefined): { dateOnly: true; kst: string; title: string } | { dateOnly: false } | null {
-  if (dualParts(v) == null) return null;
+  if (timeParts(v) == null) return null;
   if (isKstMidnight(v)) {
-    return { dateOnly: true, kst: fmtKstDateOnly(v), title: `PORT-MIS 신고 ${fmtIsoKst(v)} — 날짜만 신고했는지 자정인지 원천이 구분하지 않음` };
+    return { dateOnly: true, kst: fmtKstDateOnly(v), title: `PORT-MIS 신고 ${fmtTimeTitle(v)} — 날짜만 신고했는지 자정인지 원천이 구분하지 않음` };
   }
   return { dateOnly: false };
 }
@@ -264,7 +264,7 @@ export function legText(c: PortCall): string {
 /** 출항 칸이 비었을 때의 설명(title) — 출항이 없다는 것만 안다(아직 입항 중이거나, 색인이 이 기록을 마지막으로 읽은 뒤 출항했을 수 있다). */
 export function noExitTitle(c: PortCall): string {
   return c.read_at
-    ? `출항 신고가 색인에 없음 — 아직 입항 중이거나, 색인이 이 기록을 마지막으로 읽은 ${fmtIsoKst(c.read_at)} 뒤에 출항했을 수 있음`
+    ? `출항 신고가 색인에 없음 — 아직 입항 중이거나, 색인이 이 기록을 마지막으로 읽은 ${fmtKst(c.read_at)} 뒤에 출항했을 수 있음`
     : "출항 신고가 색인에 없음";
 }
 

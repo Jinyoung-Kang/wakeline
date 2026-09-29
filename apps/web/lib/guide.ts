@@ -6,7 +6,7 @@
  *   항목 단위로 검증해 틀린 항목은 버리고 이유를 남긴다 — 버린 · 없는 스크린샷은 화면에서 "스크린샷 준비 중" 자리표시가 된다(깨진 이미지를 보이지 않는다).
  *   캡처 조건 · 번호 위치 하나만 틀리면 그것만 버리고 그림은 보인다(ManifestDrop.effect 가 어느 쪽인지 말한다).
  * 번호 위치는 추정하지 않는다: 찍을 때 그 요소가 화면에 보였을 때만 기록하고, 없으면 번호 목록에 "이 스크린샷에는 보이지 않음"이라고 적는다.
- * 시각은 제 형식기를 두지 않는다 — 화면(components/guide)이 공유 형식기(lib/time · components/DualTime, 계약 v5 §G13)를 쓴다(7장의 예가 화면과
+ * 시각은 제 형식기를 두지 않는다 — 화면(components/guide)이 공유 형식기(lib/time · components/KstTime, 계약 v5 §G20)를 쓴다(7장의 예가 화면과
  *   글자까지 같게). 의존성 없음 — 서버 컴포넌트가 불러오고, 시험이 그대로 부른다.
  */
 import planJson from "./guide-shots.json";
@@ -42,7 +42,7 @@ export const GUIDE_TOC: readonly TocItem[] = [
       { id: "ops-logs", n: "6.3", title: "로그" },
     ],
   },
-  { id: "time", n: "7", title: "시각 표기 (KST · UTC)" },
+  { id: "time", n: "7", title: "시각 표기 (KST)" },
   { id: "rules", n: "8", title: "표시 규칙 — 모르는 값 · 추정 · 보고값" },
   { id: "shortcuts", n: "9", title: "키보드 단축키" },
 ];

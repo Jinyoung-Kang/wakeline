@@ -162,7 +162,7 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           {layers.tracks ? <>
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "solid", borderTopColor: "#dbe4ee" }} />}>선박 항적(기록 · 60 s 에 1점 + 실시간) · 기간 6/12/24 h(선박 카드)</Row>
             <Row swatch={<span className="inline-block rounded-full!" style={{ width: SHIP_TRACK_POINT_STYLE.radius * 2, height: SHIP_TRACK_POINT_STYLE.radius * 2, background: SHIP_TRACK_POINT_STYLE.color }} />}>
-              항적 점 — 마우스를 올리면 시각(KST · UTC)·속력·침로·항해 상태
+              항적 점 — 마우스를 올리면 시각(KST)·속력·침로·항해 상태
             </Row>
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: "#8a929d" }} />}>공백 — AIS 끊김·15분 넘는 기록 없음(그 사이 위치 모름)</Row>
           </> : null}
@@ -207,7 +207,7 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           </li>
           <Row swatch={<span className="legend-sw" style={{ background: TRAFFIC_ZERO_COLOR, opacity: TRAFFIC_FILL_OPACITY }} />}>0척 — 공급자가 보고한 빈 칸</Row>
           <li className="pt-0.5 text-[10px] text-fg-2" data-testid="legend-traffic-note">{TRAFFIC_LEGEND_NOTE}</li>
-          <li className="text-[10px] text-fg-3">색 구간은 표시용 선택 · 칸에 마우스를 올리면 격자 번호 · 척수 · 밀집도 % · 기준 시각(KST · UTC)</li>
+          <li className="text-[10px] text-fg-3">색 구간은 표시용 선택 · 칸에 마우스를 올리면 격자 번호 · 척수 · 밀집도 % · 기준 시각(KST)</li>
         </Section>
       ) : null}
       {layers.radar ? (

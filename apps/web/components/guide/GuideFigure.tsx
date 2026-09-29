@@ -1,4 +1,4 @@
-import { DualTime } from "@/components/DualTime";
+import { KstTime } from "@/components/KstTime";
 import type { GuideShot, ShotView } from "@/lib/guide";
 
 /**
@@ -39,7 +39,7 @@ export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotVie
       </div>
       <figcaption className="g-cap">
         {view.kind === "image"
-          ? <>캡처 <DualTime v={view.capturedAt} year className="text-fg-2" /> · {view.format === "webp" ? "WebP" : "PNG"} · {view.width}×{view.height} · {Math.max(1, Math.round(view.bytes / 1024))} KB{view.variant ? <> · 조건: <span className="text-fg-2">{view.variant}</span></> : null}</>
+          ? <>캡처 <KstTime v={view.capturedAt} year className="text-fg-2" /> · {view.format === "webp" ? "WebP" : "PNG"} · {view.width}×{view.height} · {Math.max(1, Math.round(view.bytes / 1024))} KB{view.variant ? <> · 조건: <span className="text-fg-2">{view.variant}</span></> : null}</>
           : <>이 자리에는 배포된 서비스에서 찍은 화면이 들어갑니다(캡처 스크립트). 아래 번호 설명은 지금도 그대로 쓸 수 있습니다.</>}
       </figcaption>
       <ol className="g-callouts" aria-label={`그림 ${no} 번호 설명`}>

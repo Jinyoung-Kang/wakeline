@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DualTime } from "@/components/DualTime";
+import { KstTime } from "@/components/KstTime";
 import { creditGroups } from "@/lib/attribution";
 import { KR_RADAR_STALE_S, METAR_STALE_S } from "@/lib/format";
 import {
@@ -19,7 +19,7 @@ import {
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
 import { STATS_RUN_KST } from "@/lib/stats";
-import { fmtUtcDayDual, fmtZuluToken, kstWallMs } from "@/lib/time";
+import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_BULLETIN_LABEL, utcDayWindowKst } from "@/lib/time";
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
 import { GLOBAL_STALE_S, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "@/lib/ws-protocol";
 import { GuideFigure } from "./GuideFigure";
@@ -28,21 +28,28 @@ import { GuideToc } from "./GuideToc";
 /*
  * 설명서(/guide) 본문 — 서버 컴포넌트(정적 내용, 데이터 요청 없음). 클라이언트 코드는 목차(GuideToc)뿐.
  * 숫자 · 문구는 가능한 한 화면 코드가 쓰는 상수를 그대로 가져온다(lib/*) — 동작이 바뀌면 설명도 같이 바뀐다.
- * 출처 목록은 하단 출처 줄과 같은 lib/attribution 에서. 시각은 화면 전체의 공유 형식기(lib/time · components/DualTime — 계약 v5 §G13)로만 그린다
+ * 출처 목록은 하단 출처 줄과 같은 lib/attribution 에서. 시각은 화면 전체의 공유 형식기(lib/time · components/KstTime — 계약 v5 §G20, KST 만)로만 그린다
  * (7장의 예가 화면과 글자까지 같다). 예는 정해 둔 순간(아래 상수)에서 계산한다.
  */
 
 /** 시각 예의 기준 순간 — 2026-09-29 14:22:11 KST */
 const EXAMPLE_AT = "2026-09-29T05:22:11Z";
-/** KST 로는 다음 날(05:30 KST) — UTC 날짜가 다른 예 */
-const NIGHT_AT = "2026-09-29T20:30:00Z";
 /** METAR 원문 예의 순간(290500Z) */
 const METAR_AT = "2026-09-29T05:00:00Z";
 /** 기상청 tm 예(KST 벽시계 — 기상청이 준 모양) */
 const KMA_TM = "202609291420";
-/** 통계 날짜 예(UTC 날짜) */
+/** 통계 날짜 예(KST 날짜 — 서버가 KST 날짜로 센다) */
 const STATS_DAY = "2026-09-28";
+/** 그날 KST 00:00 – 23:59 */
+const STATS_DAY_START = kstDayStartMs(STATS_DAY)!;
+/** 공급자 예산 날 예(수집기 예산 키의 날 — 매일 09:00 KST 에 새로 시작) */
+const BUDGET_DAY = "2026-09-28";
 const n0 = (n: number) => n.toLocaleString("en-US");
+/** 구간 글자 "a – b" — 쪽마다 줄바꿈 없이(좁은 칸에서는 " – " 에서만 바뀐다 — components/KstTime KstRange 와 같은 모양) */
+function RangeText({ text }: { text: string }) {
+  const [a, b] = text.split(" – ");
+  return b == null ? <span className="mono whitespace-nowrap">{a}</span> : <span className="mono"><span className="whitespace-nowrap">{a}</span> – <span className="whitespace-nowrap">{b}</span></span>;
+}
 
 /* 되풀이되는 요소의 모양은 globals.css 의 .g-* (설명서 블록) — 요소마다 긴 유틸리티 글자를 싣지 않는다(요청마다 렌더되는 화면) */
 function Kbd({ children }: { children: React.ReactNode }) {
@@ -122,7 +129,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             <div className="mono mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-fg-3">
               <span>절 {GUIDE_TOC.length}개 · 소절 {flattenToc().length - GUIDE_TOC.length}개</span>
               <span className={ready < PLAN.shots.length ? "text-warn" : undefined}>스크린샷 {ready}/{PLAN.shots.length}{ready < PLAN.shots.length ? " — 나머지는 준비 중(자리표시에 그 화면의 설명)" : ""}</span>
-              <span>시각 표기: KST 기본 · UTC 병기(7장)</span>
+              <span>시각 표기: 모두 KST(7장)</span>
             </div>
           </header>
 
@@ -204,9 +211,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   색 구간은 {TRAFFIC_BINS.map((b) => b.label).join(" · ")}척(표시용 선택 — 많을수록 밝은 주황), 0척은 회색.</li>
                 <li><B>칸의 위치</B> — 해양수산부 해양격자 4단계에서 칸마다 한 번 받아 0.025° 격자에 맞는지 서버가 확인한 칸만 그립니다. 칸 번호의 글자로 위치를 짐작하지 않으므로,
                   칸 조회는 시간당 많아야 290칸(항만 입출항 색인과 나눠 쓰는 해양수산부 호출 상한)이라 처음 약 18시간 이상(계산)은 확인한 칸만 보이고 상태 줄{ref("traffic", 2)}이 ‘위치 확인 중 N칸’을 적습니다(거듭 실패한 칸은 ‘위치 조회 실패 N칸’, 해양격자에 없는 칸 · 격자 검사에 실패한 칸도 따로 셉니다).</li>
-                <li><B>상태 줄</B> — 기준 시각(KST · UTC) · 표시한 칸 / 전체, 또는 꺼짐(이유 — 공공데이터포털 키 없음 · fixture 모드 · 운영자가 끔) · 자료 없음 · 검증 실패 · 조회 실패.
+                <li><B>상태 줄</B> — 기준 시각(KST) · 표시한 칸 / 전체, 또는 꺼짐(이유 — 공공데이터포털 키 없음 · fixture 모드 · 운영자가 끔) · 자료 없음 · 검증 실패 · 조회 실패.
                   레이어가 켜져 있고 탭이 보일 때만 {TRAFFIC_POLL_MS / 1000} s 마다 조회합니다. 기준 시각이 15분 넘게 지나면(조회가 실패해도 이 브라우저 시계로) 칸을 지우고 ‘자료 멈춤’이라고 적습니다.</li>
-                <li><B>툴팁</B> — 칸에 마우스를 올리면 격자 번호 · 척수 · 밀집도 % · 기준 시각(KST · UTC).</li>
+                <li><B>툴팁</B> — 칸에 마우스를 올리면 격자 번호 · 척수 · 밀집도 % · 기준 시각(KST).</li>
               </UL>
             </Sec>
             <Sec id="dashboard-search" sub>
@@ -234,7 +241,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>고르기</B> — 지도의 선박 기호, ship 탭의 ‘화면 안 선박’ 표(머리글 정렬 · 이름/MMSI 거르기){ref("ship", 1)}, 통합 검색.</li>
                 <li><B>보고값</B> — 이름 · 크기 · 흘수 · 목적지 · ETA 는 선원이 입력한 값 그대로입니다(ETA 는 연도 없음). AIS 에는 출발지 항목이 없고, 목적지 문자열은 정해진 규칙(“A&gt;B” · “&gt;B” · “A&lt;&gt;B”)으로만 풀며 UN/LOCODE 항구 코드 모양일 때만 이름 · 국가를 붙입니다.</li>
                 <li><B>{STORED_STATIC_LABEL}</B> — 서버가 다시 시작한 직후처럼 실시간 선박 스트림(최대 2.5 h)에 그 선박의 정적 보고가 아직 없으면 DB 에 저장된 마지막 AIS 정적 보고를 대신 보이고,
-                  카드의 정적 필드 위에 ‘{STORED_STATIC_LABEL} · {STORED_STATIC_TIME_LABEL} (KST · UTC)’로 밝힙니다 — 실시간 값이 아니고, 시각은 DB 에 기록된 수신 시각(내용이 바뀔 때,
+                  카드의 정적 필드 위에 ‘{STORED_STATIC_LABEL} · {STORED_STATIC_TIME_LABEL} (KST)’로 밝힙니다 — 실시간 값이 아니고, 시각은 DB 에 기록된 수신 시각(내용이 바뀔 때,
                   그리고 수집기가 다시 시작했거나 그 선박을 30분 넘게 받지 못했다가 다시 받을 때 새로 기록 — 그 내용의 첫 수신도 마지막 수신도 아님)입니다. 저장 행은 받은 필드만 덮으므로 그 시각의 보고가 싣지 않은 필드(예: Class B 의 선명 조각만 받았을 때의 호출부호 · 선종 · 크기)는 그보다 앞서 저장된 보고의 값입니다. 서버가 선택 때 그 보고를 읽었으면 입출항도 그 호출부호로 찾고, 읽지 못했으면 카드가 찾지 않았다고 적습니다.</li>
                 <li><B>항적</B> — 기간 {SHIP_TRACK_HOURS.join(" / ")} h 단추{ref("ship", 3)}. 기록(60 s 에 1점) + 실시간 관측. 수신이 끊긴 구간은 되살릴 수 없어 <B>회색 점선(공백)</B>으로 남기고, 공백 횟수 · 합계를 카드에 적습니다.</li>
                 <li><B>기호</B> — 선수방위 방향으로 회전, 선수방위가 없으면 침로 기준(점선 외곽), 둘 다 없으면 방향 없는 원. ‘추측항법 · 수동 입력’으로 보고된 위치는 배지로 구분합니다.</li>
@@ -247,11 +254,11 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   KST 날짜별로 모두 받아 <B>색인</B>해 두고, 선박을 고르면 그 선박이 AIS 로 보낸 <B>호출부호로만</B> 색인에서 최근 {PORT_CALL_WINDOW_DAYS}일(KST 날짜 · 입항일 기준) 기록을 찾습니다.
                   고를 때 외부에 묻지 않습니다(원천의 호출부호 검색이 거르지 않아 — 선박마다 틀린 ‘기록 없음’이 나왔습니다 — 색인으로 바꿨습니다). 선명으로는 찾지 않습니다 — 호출부호가 틀리거나
                   같은 호출부호를 쓰는 다른 선박이 있으면 다른 선박의 신고일 수 있습니다.</li>
-                <li><B>결과 표</B>{ref("port-calls", 3)} — 항만청 · 입항 · 출항(KST · UTC, 그 신고의 판 — 최종 · 최초) · 선석 · 목적 · 전출항지 → 차항지, 최근 {PORT_CALL_MAX_ITEMS}건까지.
+                <li><B>결과 표</B>{ref("port-calls", 3)} — 항만청 · 입항 · 출항(KST, 그 신고의 판 — 최종 · 최초) · 선석 · 목적 · 전출항지 → 차항지, 최근 {PORT_CALL_MAX_ITEMS}건까지.
                   출항 신고가 색인에 없으면 —(아직 입항 중이거나 색인이 그 뒤를 다시 읽지 않았을 수 있습니다). 00:00(KST)으로 온 신고는 날짜만 신고했는지 자정인지 원천이 구분하지 않아
-                  날짜만 보이고 ‘시각 미확인’이라고 적습니다(UTC 로 바꾸지 않습니다). PORT-MIS 에 신고된 선명이 AIS 선명과 다르면 경고로 밝히고 같은 선박인지 판정하지 않습니다 —
+                  날짜만 보이고 ‘시각 미확인’이라고 적습니다. PORT-MIS 에 신고된 선명이 AIS 선명과 다르면 경고로 밝히고 같은 선박인지 판정하지 않습니다 —
                   두 이름이 모두 영문일 때만 견줍니다(한글 신고 선명은 비교하지 않고 그렇다고만 적습니다).</li>
-                <li><B>색인 상태</B>{ref("port-calls", 4)} — ‘색인: {PORT_CALL_AUTHORITIES}개 항만청 · 최근 {PORT_CALL_WINDOW_DAYS}일 · 갱신 (KST · UTC)’. 수집기는 한 시간마다 항만청마다 최근 3일을
+                <li><B>색인 상태</B>{ref("port-calls", 4)} — ‘색인: {PORT_CALL_AUTHORITIES}개 항만청 · 최근 {PORT_CALL_WINDOW_DAYS}일 · 갱신 (KST)’. 수집기는 한 시간마다 항만청마다 최근 3일을
                   다시 받고(출항 · 최종 신고가 뒤에 붙습니다) 그보다 오래된 날은 하루에 한 번쯤 다시 받습니다. 갱신 시각은 {PORT_CALL_AUTHORITIES}곳의 최근 3일 다시 받기 중 가장 오래된 것 —
                   <B>최근 3일</B>은 그 시각까지 올라온 신고가 색인에 있고, 더 오래된 날은 마지막으로 다시 받은 때(하루 안쪽 — 서버가 다시 시작하면 그 시각을 모릅니다)까지의 신고입니다.</li>
                 <li><B>상태</B>{ref("port-calls", 2)} — <B>기록 없음</B>은 {PORT_CALL_AUTHORITIES}곳 모두 창 전체를 오늘(KST) 목록까지 빈 곳 없이 색인했고 {PORT_CALL_STALE_AFTER_S / 3600}시간 안에 갱신됐을 때만 말합니다.
@@ -322,7 +329,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               <li><B>지도</B> — 그 시각의 항공기 · SIGMET. 레이더는 RainViewer 가 보관하는 최근 2 h 안일 때만 나옵니다. 응답이 늦으면 지도 시각 옆에 ‘불러오는 중’{ref("replay", 5)}.</li>
               <li><B>목록</B>{ref("replay", 6)} — 그 시각의 SIGMET · 항공기 단추로 상세를 엽니다(지도를 누르지 않고 키보드로).</li>
               <li><B>넓은 화면</B> — 조회 면적 상한({n0(REPLAY_MAX_AREA_SQDEG)} sq°)을 넘으면 가운데 점선 상자만 조회하고 그렇다고 적습니다. 확대하면 전체.</li>
-              <li><B>시각</B> — 입력과 표시는 KST 이고, 서버에는 같은 순간을 UTC 로 보냅니다.</li>
+              <li><B>시각</B> — 입력과 표시는 모두 KST 입니다(서버에는 고른 순간을 그대로 보냅니다).</li>
             </UL>
           </Sec>
 
@@ -330,9 +337,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           <Sec id="stats">
             {fig("stats")}
             <UL>
-              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(UTC 날짜)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(UTC 날짜)입니다.</li>
+              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.</li>
               <li><B>SIGMET</B> — 최근 7일 FIR별(상위 24) · 위험 유형별 발표 건수.</li>
-              <li><B>시간대별 고유 항공기</B> — 날짜는 UTC 날짜(09:00 KST = 00:00 UTC 에 바뀜)이고, 막대 이름은 KST 시각이라 09시부터 다음 날 08시 순서입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
+              <li><B>시간대별 고유 항공기</B> — 날짜는 KST 날짜이고 막대 이름은 그날의 KST 시(00시 → 23시)입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
               <li><B>알림</B> — 날짜 · 종류별 건수와 평균 체류. † 표시 행은 수정 전 기준으로 판정된 관측 알림이라 이후 날짜와 비교할 수 없습니다.</li>
               <li><B>비어 있을 때</B> — ‘집계 전’ · ‘집계됨(자료 없음)’ · ‘모름’을 구분해 적습니다.</li>
             </UL>
@@ -343,7 +350,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             {fig("airport")}
             <UL>
               <li><B>여는 법</B> — 상황판 지도의 공항 원을 누르거나 airport 탭 목록에서 고르면 공항 카드가 열리고, 카드의 ‘이력’ 단추가 이 화면(<span className="mono">/airports/ICAO</span>, 예: <span className="mono">/airports/RKSI</span>)을 엽니다.</li>
-              <li><B>METAR</B>{ref("airport", 1)} — 관측 시각과 경과, 원문. 원문은 발표된 그대로이고 안의 “…Z” 는 UTC 입니다.</li>
+              <li><B>METAR</B>{ref("airport", 1)} — 관측 시각과 경과, 원문. 원문은 발표된 그대로입니다(안의 “…Z” 시각은 발표 형식 — KST 보다 9시간 이릅니다).</li>
               <li><B>비행 카테고리</B>{ref("airport", 2)} — AWC 제공값을 먼저 쓰고, 없을 때만 실링 · 시정 규칙으로 계산해 ‘계산’이라고 적습니다. 실링이나 시정을 모르면 계산하지 않고 —(판정 불가).</li>
               <li><B>실링</B> — ‘실링 없음’(구름 자료 있음 · 실링층 없음)과 —(높이 모름 · 자료 없음)을 구분합니다. <B>시정</B>은 AWC 원문(법정마일, “6+” = 6 SM 이상).</li>
               <li><B>오래된 METAR</B> — 관측 후 {METAR_STALE_S / 3600}시간이 넘으면 ‘오래됨’ — 지도의 공항 원도 색을 빼고 회색 고리로 그립니다.</li>
@@ -363,7 +370,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             <Sec id="ops-dashboard" sub>
               {fig("ops")}
               <Table label="운영 탭" head={["탭", "보는 것"]} rows={[
-                ["providers", "공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 일별 사용량(UTC 날짜)."],
+                ["providers", "공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음)."],
                 ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류)."],
                 ["quality", "규칙별 격리 건수(7일)와 최근 격리."],
                 ["settings · audit · dlq", "운영 설정(판 번호로 충돌 확인), 운영 행동 감사 기록, 처리하지 못한 메시지."],
@@ -390,7 +397,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>필터</B>{ref("logs", 2)} — 서비스({LOG_SERVICES.join(" · ")}, 여러 개) · 수준({LOG_LEVELS.join(" · ")}) · 기간({Object.values(LOG_PERIOD_LABEL).join(" · ")}) · 글자 검색(Enter 로 적용) · 요청 id.</li>
                 <li><B>보기</B>{ref("logs", 3)} — 목록(최신 순) / 묶음(같은 지문 fp 끼리, 건수 · 처음 · 마지막).</li>
                 <li><B>상세</B> — 전체 메시지 · 예외 · 스택 · 같은 지문 묶음 통계 · 같은 요청 id 의 다른 항목. 화면의 오류 문구에 붙은 요청 id 로 여기서 같은 요청을 찾습니다.</li>
-                <li><B>복사 · 내려받기</B> — 보이는 목록 복사, <span className="mono">.txt</span>(시각 KST), <span className="mono">.ndjson</span>(api 가 준 그대로 — ts 는 UTC).</li>
+                <li><B>복사 · 내려받기</B> — 보이는 목록 복사, <span className="mono">.txt</span>(시각 KST), <span className="mono">.ndjson</span>(api 가 준 그대로 — ts 는 서버 형식 “…Z”).</li>
                 <li><B>새 항목</B> — 15 s 마다 확인해 ‘새 항목 N건’ 단추를 띄웁니다. 누를 때만 목록이 바뀝니다(읽는 중에 줄이 밀리지 않게).</li>
                 <li><B>AIS 수신 공백</B> — 두 번째 탭. AIS 수신이 끊긴 구간의 기록.</li>
               </UL>
@@ -409,26 +416,26 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           {/* ---------------- 7 ---------------- */}
           <Sec id="time">
             <UL>
-              <li>화면의 시각은 <B>한국 표준시(KST, UTC+9)를 먼저</B>, <B>같은 순간의 UTC 를 함께</B> 적습니다(계약 v5 §G13 — 모든 화면이 같은 형식기 하나를 씁니다).
-                시각에 마우스를 올리면 원본 UTC(ISO, ms 까지)가 보입니다.</li>
-              <li><B>UTC 날짜</B>는 KST 날짜와 다를 때만(KST 00:00–08:59) UTC 쪽에 붙입니다. <B>모르는 시각</B>은 — 만 적습니다(KST · UTC 글자도 붙이지 않습니다).</li>
-              <li><B>발표 원문</B>(METAR · TAF · SIGMET)은 글자 그대로 둡니다 — 안의 “…Z” 는 UTC 입니다.</li>
-              <li><B>기상청 레이더 tm</B> 은 기상청이 KST 로 준 값입니다 — 같은 순간의 UTC 는 그 값에서 계산합니다.</li>
-              <li><B>통계 날짜 · 운영 화면의 일 단위 집계</B>는 UTC 날짜입니다 — 09:00 KST(00:00 UTC)에 날짜가 바뀝니다.</li>
-              <li><B>선박 ETA</B> 는 선원이 UTC 로 입력한 값(연도 없음)이라 KST 로 바꿔 입력값과 함께 적습니다. <B>항만 입출항 신고</B>의 00:00(KST)은 날짜만 적습니다(2.6).</li>
-              <li><B>서버 · API</B> 는 UTC 로 주고받습니다(내려받은 .ndjson 의 ts 도 UTC). 복사 · 내려받기 텍스트의 머리 줄은 ISO(+09:00) 그대로입니다.</li>
+              <li>화면의 시각은 모두 <B>한국 표준시(KST)</B>입니다(계약 v5 §G20 — 모든 화면이 같은 형식기 하나를 씁니다). 시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST)이 보입니다.</li>
+              <li><B>모르는 시각</B>은 — 만 적습니다(KST 글자도 붙이지 않습니다).</li>
+              <li><B>발표 원문</B>(METAR · TAF · SIGMET)은 글자 그대로 둡니다 — 안의 “…Z” 시각은 발표 형식이라 KST 보다 9시간 이릅니다(KST = …Z + 9시간). 원문에는 ‘{RAW_BULLETIN_LABEL}’ 이름표를 답니다.</li>
+              <li><B>기상청 레이더 tm</B> 은 기상청이 KST 로 준 값 그대로입니다.</li>
+              <li><B>통계 날짜 · 운영 화면의 격리 수 날짜</B>는 KST 날짜(00:00–24:00 KST)입니다 — 서버가 그 날짜로 셉니다. <B>공급자 예산</B>은 수집기가 매일 09:00 KST 에 새로 시작하는 창이라 그 창을 KST 로 적습니다(예산 날을 KST 날짜로 이름만 바꾸지 않습니다).</li>
+              <li><B>선박 ETA</B> 는 선원이 입력한 월 · 일 · 시 · 분(연도 없음)을 KST 로 바꿔 적습니다. <B>항만 입출항 신고</B>의 00:00(KST)은 날짜만 적습니다(2.6).</li>
+              <li>복사 · 내려받기 텍스트의 머리 줄은 ISO(+09:00)입니다. JSON 복사 · 내려받은 .ndjson 은 서버가 준 그대로라 ts 가 서버 형식(“…Z”)입니다.</li>
             </UL>
             <Table label="시각 표기 예" head={["자리", "모양", "설명"]} rows={[
-              ["카드 · 문장", <DualTime key="i" v={EXAMPLE_AT} />, "KST 를 먼저, UTC 를 흐리게 함께 — 9시간 차이의 같은 순간."],
-              ["상태 바 · 지도 툴팁", <DualTime key="c" v={EXAMPLE_AT} variant="compact" />, "좁은 자리 — 분까지, UTC 는 “…Z”."],
-              ["표 칸(머리글 “(KST · UTC)”)", <DualTime key="t" v={EXAMPLE_AT} variant="cell" />, "첫 줄 KST · 둘째 줄 UTC — 칸이 넓어지지 않게."],
-              ["UTC 날짜가 다를 때", <DualTime key="n" v={NIGHT_AT} />, "KST 로는 다음 날(KST 00:00–08:59) — UTC 쪽에 날짜를 붙입니다."],
-              [<span key="m">METAR 원문 <span className="mono">{metarToken ?? "—"}</span></span>, <DualTime key="m" v={METAR_AT} />, "원문 글자는 바꾸지 않습니다(일 · 시 · 분 + Z = UTC) — 같은 순간을 KST · UTC 로 옆에 적습니다."],
-              [<span key="k">기상청 tm <span className="mono">{KMA_TM}</span></span>, <DualTime key="k" v={kstWallMs(KMA_TM)} seconds={false} />, "기상청이 KST 로 준 값 — UTC 는 그 값에서 계산합니다."],
-              [<span key="d">통계 날짜 <span className="mono">{STATS_DAY}</span>(UTC 날짜)</span>, <span key="d" className="mono">{fmtUtcDayDual(STATS_DAY) ?? "—"}</span>, "집계 단위는 UTC 날짜 — KST 날짜로 옮기지 않습니다."],
-              ["모르는 시각", <DualTime key="u" v={null} />, "— 만(시간대 글자 없음)."],
+              ["카드 · 문장", <KstTime key="i" v={EXAMPLE_AT} />, "날짜 · 초까지."],
+              ["상태 바 · 지도 툴팁", <KstTime key="c" v={EXAMPLE_AT} date={false} seconds={false} />, "좁은 자리 — 분까지."],
+              ["표 칸(머리글 “(KST)”)", <KstTime key="t" v={EXAMPLE_AT} variant="cell" />, "시간대는 머리글이 말합니다."],
+              ["마우스를 올리면", <span key="h" className="mono whitespace-nowrap">{fmtTimeTitle(EXAMPLE_AT)}</span>, "연도 · ms 까지의 같은 순간."],
+              [<span key="m">METAR 원문 <span className="mono" data-raw="bulletin">{metarToken ?? "—"}</span></span>, <KstTime key="m" v={METAR_AT} />, "원문 글자는 바꾸지 않습니다(일 · 시 · 분 + Z — 발표 형식) — 같은 순간을 KST 로 옆에 적습니다."],
+              [<span key="k">기상청 tm <span className="mono">{KMA_TM}</span></span>, <KstTime key="k" v={kstWallMs(KMA_TM)} seconds={false} />, "기상청이 KST 로 준 값 그대로."],
+              [<span key="d">통계 날짜 <span className="mono">{STATS_DAY}</span>(KST 날짜)</span>, <RangeText key="d" text={fmtKstRange(STATS_DAY_START, STATS_DAY_START + 86_400_000 - 60_000, { seconds: false })} />, "서버가 KST 날짜로 셉니다."],
+              ["공급자 예산 창", <RangeText key="b" text={utcDayWindowKst(BUDGET_DAY) ?? "—"} />, "수집기 예산은 매일 09:00 KST 에 새로 시작 — 한 행 = 그 창(KST 날짜 하루가 아님)."],
+              ["모르는 시각", <KstTime key="u" v={null} />, "— 만(시간대 글자 없음)."],
             ]} />
-            <P>이 설명서의 스크린샷 캡처 시각도 같은 규칙입니다(예: <DualTime v={EXAMPLE_AT} year />).</P>
+            <P>이 설명서의 스크린샷 캡처 시각도 같은 규칙입니다(예: <KstTime v={EXAMPLE_AT} year />).</P>
           </Sec>
 
           {/* ---------------- 8 ---------------- */}
@@ -439,7 +446,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               ["계산값", <span key="c" className="mono">… · 계산값</span>, "공급자가 주지 않아 정해진 규칙으로 계산한 값 — 노선 경로와의 거리, AWC 값이 없을 때의 비행 카테고리(‘계산’)."],
               ["보고값", <span key="r" className="mono">보고값</span>, "보낸 쪽이 입력한 그대로 — 선박 이름 · 크기 · 흘수 · 목적지 · ETA(선원 입력), 기종 · 등록번호(공급자 값 — 추정하지 않음)."],
               ["오래된 값", <span key="s"><span className="badge warn">STALE</span> <span className="badge warn">오래됨</span></span>, "새 값이 들어오지 않는 동안 마지막 값을 남기되 그렇다고 표시합니다. 공급자가 모두 실패하면 마지막 스냅샷을 STALE 로 유지합니다."],
-              ["원문", <span key="o" className="mono">(원문 · UTC)</span>, "발표된 글자 그대로 — 화면 시각(KST)으로 바꾸지 않습니다."],
+              ["원문", <span key="o" className="mono">({RAW_BULLETIN_LABEL})</span>, "발표된 글자 그대로 — 화면 시각(KST)으로 바꾸지 않습니다(안의 “…Z” 시각은 KST 보다 9시간 이릅니다)."],
               ["서버 보고 상태", <span key="d" className="badge normal-case!">집중 추적 · N s</span>, "칩의 상태 · 주기는 서버가 보고한 값만. 연결이 실시간이 아니면 ‘모름’이라고 적습니다."],
               ["판정 제외", <span key="x" className="mono">제외 (사유)</span>, "판정할 수 없는 자료(폴리곤을 만들 수 없는 SIGMET 등)는 빼고 사유를 적습니다."],
             ]} />

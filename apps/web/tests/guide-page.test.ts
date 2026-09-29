@@ -3,7 +3,7 @@
  * - 목차(넓은 화면 목록 · 좁은 화면 선택 상자)의 앵커와 절 id 가 같다(순서까지).
  * - 스크린샷: 결과(manifest)가 있으면 <img>(대체 글 · width · height · loading=lazy · decoding=async), 없으면 "스크린샷 준비 중" 자리표시.
  * - 번호: 그림 위 번호(HTML 겹침 — 이미지에 굽지 않음)마다 같은 번호의 설명 항목이 있고, 설명 목록은 1..n. 찍을 때 보이지 않은 번호는 목록에 그렇다고 적는다.
- * - 시각이 나오는 예는 KST 와 UTC 를 함께 적는다. 출처는 하단 출처 줄과 같은 목록(lib/attribution)에서.
+ * - 시각이 나오는 예는 KST 만 적는다(계약 v5 §G20 — 공유 형식기 lib/time 의 글자, 원문 토큰만 발표 그대로). 출처는 하단 출처 줄과 같은 목록(lib/attribution)에서.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +16,9 @@ import { flattenToc, parseManifest, PLAN, type GuideManifest, type ManifestDrop 
 import { PORT_CALL_AUTHORITIES, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS } from "@/lib/portcalls";
 import { RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
 import { STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL } from "@/lib/ships";
-import { fmtDual, fmtDualCompact, fmtUtcDayDual } from "@/lib/time";
+import { fmtKst, fmtKstMinute, utcDayWindowKst } from "@/lib/time";
+import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
+import { parseHtml } from "./helpers/html-tree";
 import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
@@ -133,11 +135,12 @@ describe("screenshots", () => {
       expect(text(f)).toContain(`그림 ${i + 1}`);
     });
   });
-  it("capture meta follows the time rule (KST with UTC alongside) and names the capture condition", () => {
+  it("capture meta follows the time rule (KST only, with the year) and names the capture condition", () => {
     const f = figures(render(FULL))[0];
     const t = text(f);
-    expect(t).toContain("2026-09-29 14:22:11 KST · 05:22:11 UTC"); // 다른 화면과 같은 모양(KST · UTC, 같은 날이면 UTC 날짜 생략)
-    expect(f).toMatch(/<time dateTime="2026-09-29T05:22:11.000Z"/);
+    expect(t).toContain("캡처 2026-09-29 14:22:11 KST"); // 다른 화면과 같은 모양(계약 v5 §G20 — KST 만)
+    expect(utcLeaks(t)).toEqual([]);
+    expect(f).toMatch(/<time dateTime="2026-09-29T14:22:11.000\+09:00"/);
     expect(t).toContain("한반도 #6.3/36.1/127.9");
     expect(t).toMatch(/WebP · 1440×900 · 88 KB/);
   });
@@ -217,7 +220,7 @@ describe("features the guide describes exist in the screens", () => {
   });
   it("2.6 says when the card shows a stored static report and how it is labelled (static-fallback, contract v5 §G17)", () => {
     const ship = section(render(EMPTY), "dashboard-ship");
-    expect(ship).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} (KST · UTC)`);
+    expect(ship).toContain(`${STORED_STATIC_LABEL} · ${STORED_STATIC_TIME_LABEL} (KST)`);
     expect(ship).toMatch(/실시간 선박 스트림\(최대 2\.5 h\)에 그 선박의 정적 보고가 아직 없으면 DB 에 저장된 마지막 AIS 정적 보고/);
     expect(ship).toMatch(/실시간 값이 아니고/);
     expect(ship).toMatch(/DB 에 기록된 수신 시각[^.]*첫 수신도 마지막 수신도 아님/);
@@ -264,19 +267,27 @@ describe("rules the guide states match the code", () => {
 });
 
 describe("time examples", () => {
-  it("section 7 states the §G13 rule with the shared formatter's own output (inline · compact · table cell · other UTC date · originals)", () => {
+  it("section 7 states the §G20 rule (KST only) with the shared formatter's own output (inline · minute · table cell · tooltip · raw token · KST day · budget window)", () => {
     const html = render(EMPTY);
     const t = section(html, "time");
-    expect(t).toContain(fmtDual("2026-09-29T05:22:11Z")); // 09-29 14:22:11 KST · 05:22:11 UTC
-    expect(t).toContain("09-29 14:22:11 KST · 05:22:11 UTC");
-    expect(t).toContain(fmtDualCompact("2026-09-29T05:22:11Z")); // 14:22 KST · 05:22Z
-    expect(t).toContain("09-30 05:30:00 KST · 09-29 20:30:00 UTC"); // UTC 날짜가 다르면 UTC 쪽에 날짜
-    expect(t).toContain("290500Z"); // 원문은 발표 그대로
-    expect(t).toContain(fmtUtcDayDual("2026-09-28")!);
-    expect(t).toMatch(/§G13/);
-    expect(text(html)).toMatch(/12:30 KST · 03:30 UTC/);
-    // 표 칸 모양: 첫 줄 KST · 둘째 줄 UTC(DualTime cell — 화면 읽기에는 KST · UTC 로)
-    expect(/<section id="time"[\s\S]*?<\/section>/.exec(html)![0]).toMatch(/<time dateTime="2026-09-29T05:22:11.000Z" class="block">09-29 14:22:11/);
+    expect(t).toContain(fmtKst("2026-09-29T05:22:11Z")); // 09-29 14:22:11 KST
+    expect(t).toContain("09-29 14:22:11 KST");
+    expect(t).toContain(fmtKstMinute("2026-09-29T05:22:11Z")); // 14:22 KST
+    expect(t).toContain("2026-09-29 14:22:11.000 KST"); // 마우스를 올리면(연도 · ms)
+    expect(t).toContain("290500Z"); // 원문은 발표 그대로(data-raw)
+    expect(t).toContain("09-28 00:00 – 09-28 23:59 KST"); // 통계 날짜 = KST 날짜
+    expect(t).toContain(utcDayWindowKst("2026-09-28")!); // 공급자 예산 창 "09-28 09:00 – 09-29 08:59 KST"
+    expect(t).toMatch(/§G20/);
+    expect(text(html)).toMatch(/매일 03:30 KST 에 전날/); // 통계 집계 시각(api 03:30 KST — 계약 v5 §G20)
+    const sec = /<section id="time"[\s\S]*?<\/section>/.exec(html)![0];
+    // 표 칸 모양: KST 한 줄(머리글 "(KST)" — 화면 읽기에는 KST)
+    expect(sec).toMatch(/<time dateTime="2026-09-29T14:22:11.000\+09:00" title="2026-09-29 14:22:11.000 KST" class="mono whitespace-nowrap">09-29 14:22:11<span class="sr-only"> KST<\/span><\/time>/);
+    // 한 시각은 줄바꿈하지 않는다 — 구간은 " – " 에서만(화면에서 "23:59 / KST" 로 갈라지던 것을 막는다)
+    expect(sec).toContain('<span class="whitespace-nowrap">09-28 00:00</span> – <span class="whitespace-nowrap">09-28 23:59 KST</span>');
+    expect(sec).toContain('<span class="whitespace-nowrap">09-28 09:00</span> – <span class="whitespace-nowrap">09-29 08:59 KST</span>');
+    expect(sec).toContain('<span class="mono whitespace-nowrap">2026-09-29 14:22:11.000 KST</span>');
+    // 원문 토큰 밖에는 UTC 가 없다(설명서 전체)
+    expect(htmlUtcLeaks(parseHtml(html))).toEqual([]);
   });
   it("unknown values are shown as — without a unit", () => {
     const t = text(render(EMPTY));

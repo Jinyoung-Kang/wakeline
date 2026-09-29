@@ -6,7 +6,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
-import { unpairedKst } from "./helpers/dual-time";
+import { utcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -105,11 +105,11 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
       "POST /api/v1/ops/resolutions": () => { resolved = true; return { status: 201, body: { id: 5, kind: "provider_error", key: "adsb_lol", upto: ERR_AT, resolved_at: NOW, resolved_by: "op", note: null } }; },
     });
     await mount();
-    expect(byTestId("provider-last-error-text")!.textContent).toBe("rate limited (429) 09-29 08:40:21 KST · 09-28 23:40:21 UTC");
+    expect(byTestId("provider-last-error-text")!.textContent).toBe("rate limited (429) 09-29 08:40:21 KST");
     await click(button("해결 처리", cell()));
     const panel = byTestId("resolve-confirm")!;
     expect(panel.textContent).toContain("공급자 adsb_lol 의 마지막 오류");
-    expect(panel.textContent).toContain("upto 09-29 08:40:21 KST · 09-28 23:40:21 UTC");
+    expect(panel.textContent).toContain("upto 09-29 08:40:21 KST");
     expect(panel.textContent).toContain("실행 기록 · 공급자 상태는 그대로");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
     const before = calls.length;
@@ -121,12 +121,12 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
     const after = calls.slice(before).filter((c) => c.method === "GET").map((c) => c.url);
     expect(after).toEqual(expect.arrayContaining(["/api/v1/ops/providers", RUNS_HIDE, "/api/v1/ops/audit"]));
     expect(byTestId("resolve-confirm")).toBeNull();
-    expect(byTestId("provider-error-resolved")!.textContent).toBe("해결됨 · op · 09-29 08:40:21 KST · 09-28 23:40:21 UTC");
+    expect(byTestId("provider-error-resolved")!.textContent).toBe("해결됨 · op · 09-29 08:40:21 KST");
     expect(cell().getAttribute("class")).toContain("text-fg-3");
     expect(button("해결 처리", cell())).toBeNull();
     expect(button("되돌리기", cell())).not.toBeNull();
     expect(statusText()).toContain("해결 처리됨: 공급자 adsb_lol");
-    expect(unpairedKst(byTestId("ops-dashboard")!.textContent)).toEqual([]);
+    expect(utcLeaks(byTestId("ops-dashboard")!.textContent)).toEqual([]);
   });
   it("a providers response that left before the write and lands after the post-write reload is dropped (the older answer never wins)", async () => {
     let resolved = false;
@@ -158,7 +158,7 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
       "DELETE /api/v1/ops/resolutions/5": () => { revoked = true; return { status: 204 }; },
     });
     await mount();
-    expect(byTestId("provider-error-resolved")!.textContent).toBe("해결됨 · kim · 09-29 08:40:21 KST · 09-28 23:40:21 UTC");
+    expect(byTestId("provider-error-resolved")!.textContent).toBe("해결됨 · kim · 09-29 08:40:21 KST");
     await click(button("되돌리기", cell()));
     expect(byTestId("resolve-confirm")!.textContent).toContain("해결 #5");
     const before = calls.length;
@@ -175,7 +175,7 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
   it("a new error after the resolution is shown as a recurrence and can be resolved again", async () => {
     stub({ "GET /api/v1/ops/providers": { status: 200, body: PROV([lol({ last_error_resolution: { id: 5, upto: "2026-09-28T23:00:00Z", resolved_by: "op" }, last_error_resolved: false }), fi]) } });
     await mount();
-    expect(byTestId("provider-error-recurred")!.textContent).toBe("이전 해결 #5(upto 09-29 08:00:00 KST · 09-28 23:00:00 UTC) 뒤 다시 남");
+    expect(byTestId("provider-error-recurred")!.textContent).toBe("이전 해결 #5(upto 09-29 08:00:00 KST) 뒤 다시 남");
     expect(byTestId("provider-error-resolved")).toBeNull();
     expect(button("해결 처리", cell())).not.toBeNull();
   });
@@ -184,7 +184,7 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
     await mount();
     expect(byTestId("provider-error-recurred")).toBeNull();
     expect(byTestId("provider-error-resolved")).toBeNull();
-    expect(byTestId("provider-error-undecided")!.textContent).toBe("해결 #5(upto 09-29 08:00:00 KST · 09-28 23:00:00 UTC) 있음 — 이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음");
+    expect(byTestId("provider-error-undecided")!.textContent).toBe("해결 #5(upto 09-29 08:00:00 KST) 있음 — 이 오류의 시각을 몰라 그 해결이 덮는지 알 수 없음");
     expect(button("해결 처리", cell())!.getAttribute("disabled")).not.toBeNull();
   });
   it("no last error → no action; a last_error_at the web cannot read as an instant → the action is disabled and says why", async () => {
