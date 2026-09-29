@@ -109,7 +109,7 @@ class RedisAclRulesTest(unittest.TestCase):
     def test_collector_destructive_commands_are_scoped_to_the_keys_it_writes(self):
         sel = {tuple(sorted(c[1:] for c in s if c.startswith("+"))): sorted(k for k in s if k.startswith(("~", "%"))) for s in self.selectors("wakeline_collector")}
         self.assertEqual(sel, {
-            ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*"],
+            ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*", "~wakeline:traffic_grid"],
             ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
             ("expire",): ["~budget:*", "~wakeline:provider:*:ratelimit:*"],
         }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만 — 스트림·다른 해시에는 닿지 않는다")
@@ -154,7 +154,7 @@ class RedisAclRulesTest(unittest.TestCase):
             "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
             "~wakeline:provider:*", "~wakeline:radar_kr:*", "%R~wakeline:settings", "~budget:*",
             "%R~wakeline:demand:hot", "%R~wakeline:demand:focus", "%R~wakeline:demand:hot:meta", "%R~wakeline:demand:focus:meta",
-            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs"]))
+            "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs", "~wakeline:traffic_grid", "~wakeline:traffic_grid:negative"]))
         self.assertEqual(sorted(self.keys("wakeline_ais")), sorted([
             "~wakeline:ships", "~wakeline:ais:*", "%R~wakeline:settings", "%W~wakeline:logs"]))
 
@@ -180,6 +180,25 @@ class RedisAclRulesTest(unittest.TestCase):
                 # %W~wakeline:logs 는 정확한 이름 — 뚫린 수집기가 익명 입력 스트림을 채우거나 읽지 못한다
                 self.assertEqual(covers(user, "wakeline:logs:client"), [])
                 self.assertEqual(covers(user, "wakeline:logs"), ["%W~wakeline:logs"])
+
+    # --- ADR-023: 연안 교통량 스냅샷 wakeline:traffic_grid(SET EX) · 부정 캐시 wakeline:traffic_grid:negative(해시) ---
+    def test_collector_writes_only_the_two_traffic_grid_keys(self):
+        import fnmatch
+
+        keys = self.keys("wakeline_collector")
+        self.assertEqual([k for k in keys if "traffic" in k], ["~wakeline:traffic_grid", "~wakeline:traffic_grid:negative"], "정확한 이름 둘 · 와일드카드 없음")
+        (set_sel,) = [s for s in self.selectors("wakeline_collector") if "+set" in s]
+        self.assertIn("~wakeline:traffic_grid", set_sel, "스냅샷은 SET EX 로 쓴다")
+        self.assertNotIn("~wakeline:traffic_grid:negative", set_sel, "부정 캐시 해시는 SET 으로 덮어쓰지 못한다")
+        for sel in self.selectors("wakeline_collector"):
+            if "+del" in sel or "+expire" in sel:
+                pats = [k.split("~", 1)[1] for k in sel if k.startswith("~")]
+                for key in ("wakeline:traffic_grid", "wakeline:traffic_grid:negative"):
+                    self.assertFalse(any(fnmatch.fnmatchcase(key, p) for p in pats), f"{key} 는 지우거나 만료시키지 못한다(TTL 은 SET EX 로만)")
+
+    def test_ais_has_no_traffic_grid_access_and_api_reads_it(self):
+        self.assertFalse([k for k in self.keys("wakeline_ais") if "traffic" in k])
+        self.assertIn("~wakeline:*", self.keys("wakeline_api"))
 
     def test_api_rules_unchanged(self):
         self.assertIn("+@all", self.users["wakeline_api"])

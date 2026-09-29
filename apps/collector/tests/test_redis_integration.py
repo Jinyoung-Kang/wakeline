@@ -111,6 +111,53 @@ async def test_route_cache_set_ex_and_exists_with_collector_acl(admin, collector
     assert prov.calls == ["ZZX123"] and (await Budget(admin, {}).usage("adsbdb"))[0] == 1
 
 
+async def test_traffic_grid_publish_and_negative_cache_under_collector_acl(admin, collector):
+    """ADR-023: 수집기 규칙으로 스냅샷 SET EX 1200 · 부정 캐시 HSET/HGETALL · 예산 Lua · 상태 해시가 되고, 지우기(DEL)는 거부된다."""
+    from test_traffic_grid_job import CELLS, Clock, FakeKomsa, FakeWfs, TGDb, komsa_body
+
+    from wakeline_collector.jobs.context import JobContext
+    from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, SNAPSHOT_KEY, TrafficGridJob
+    from wakeline_collector.marine_grid import WfsResult
+    from wakeline_collector.publisher import Publisher
+    from wakeline_collector.runtime_settings import RuntimeSettings
+
+    keys = (
+        SNAPSHOT_KEY,
+        NEGATIVE_KEY,
+        day_key("komsa_traffic"),
+        day_key("mof_grid4"),
+        "wakeline:provider:komsa_traffic",
+        "wakeline:provider:mof_grid4",
+    )
+    await admin.delete(*keys)
+    try:
+        answers = {g: WfsResult("found", cell=c) for g, c in CELLS.items()}
+        answers["GR4_F2K41_C4"] = WfsResult("not_found")
+        ctx = JobContext(
+            budget=Budget(collector, {"komsa_traffic": 400, "mof_grid4": 6000}),
+            db=TGDb([]),
+            publisher=Publisher(collector),
+            raw=__import__("fakes").FakeRaw(),
+            status=ProviderStatus(collector),
+            rt=RuntimeSettings(collector),
+            fixture=False,
+        )
+        clock = Clock()
+        job = TrafficGridJob(FakeKomsa(clock, komsa_body()), FakeWfs(answers), ctx, now=clock)  # type: ignore[arg-type]
+        await job.run_once()
+        raw = await admin.get(SNAPSHOT_KEY)
+        assert raw is not None and orjson.loads(raw)["resolved"] == 2 and orjson.loads(raw)["not_found"] == 1
+        assert 1190 < await admin.ttl(SNAPSHOT_KEY) <= 1200
+        assert orjson.loads((await admin.hgetall(NEGATIVE_KEY))["GR4_F2K41_C4"])["reason"] == "not_found"
+        assert (await admin.hgetall("wakeline:collector"))["traffic_grid_state"] == "active"
+        with pytest.raises(NoPermissionError):
+            await collector.delete(SNAPSHOT_KEY)
+        with pytest.raises(NoPermissionError):
+            await collector.set(NEGATIVE_KEY, "x")
+    finally:
+        await admin.delete(*keys)
+
+
 def _start_sh_value(name: str) -> str:
     """infra/redis/start.sh 의 규칙 변수 값(손으로 옮긴 목록이 어긋나지 않게). `X="$X …"` 로 이어 붙인 줄도 순서대로 합친다."""
     import re
