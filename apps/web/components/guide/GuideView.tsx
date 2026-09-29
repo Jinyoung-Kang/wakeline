@@ -190,7 +190,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             <Sec id="dashboard-search" sub>
               {fig("search")}
               <UL>
-                <li><B>항공기</B> — 호출부호 · hex · 등록번호 앞부분(영문 · 숫자 2–10자). <B>선박</B> — 선명 · 호출부호 앞부분, MMSI, IMO(2–40자, 영문 · 숫자 · 공백 . - /).</li>
+                <li><B>항공기</B> — 호출부호 · hex · 등록번호 앞부분(영문 · 숫자 · - 2–10자, 공백은 빼고 찾음). <B>선박</B> — 선명 · 호출부호 앞부분, MMSI, IMO(2–40자, 영문 · 숫자 · 공백 . - /).</li>
                 <li><Kbd>/</Kbd> 로 입력에 초점, <Kbd>↑</Kbd><Kbd>↓</Kbd> 이동, <Kbd>Enter</Kbd> 선택, <Kbd>Esc</Kbd> 닫기.</li>
                 <li>항공기를 고르면 카드를 열고 지도를 그 위치로 옮깁니다. 지금 위치가 없으면(DB 기록만) 그렇다고 적고 옮기지 않습니다.</li>
                 <li>선박을 고르면 선박 레이어를 켜고 카드 · 항적을 엽니다. 실시간 목록에 없는 선박은 카드만 열고 마지막 수신 · 저장 시각을 적습니다 — 위치를 지어내지 않습니다.</li>

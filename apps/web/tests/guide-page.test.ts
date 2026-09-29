@@ -11,6 +11,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
+import { normalizeQuery, normalizeShipQuery } from "@/lib/search";
 import { flattenToc, parseManifest, PLAN, tocItem, type GuideManifest, type ManifestDrop } from "@/lib/guide";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
@@ -176,6 +177,26 @@ describe("features the guide describes exist in the screens", () => {
       expect(logs).toMatch(/지우지 않/);
       expect(logs).toMatch(/다시 보/);
     }
+  });
+});
+
+describe("rules the guide states match the code", () => {
+  it("2.4 search input rules are what lib/search accepts (length bounds and characters)", () => {
+    const sec = text(/<section[^>]*id="dashboard-search"[\s\S]*?<\/section>/.exec(render(EMPTY))![0]);
+    const air = /항공기[^(]*\(([^)]*?)(\d+)–(\d+)자[^)]*\)/.exec(sec)!;
+    const [lo, hi] = [Number(air[2]), Number(air[3])];
+    expect(normalizeQuery("A".repeat(lo))).not.toBeNull();
+    expect(normalizeQuery("A".repeat(lo - 1))).toBeNull();
+    expect(normalizeQuery("A".repeat(hi))).not.toBeNull();
+    expect(normalizeQuery("A".repeat(hi + 1))).toBeNull();
+    expect(air[1].includes("-")).toBe(normalizeQuery("HL-8123") != null); // 등록번호의 '-'
+    const ship = /선박[^(]*\((\d+)–(\d+)자, ([^)]*)\)/.exec(sec)!;
+    expect(normalizeShipQuery("A".repeat(Number(ship[1])))).not.toBeNull();
+    expect(normalizeShipQuery("A".repeat(Number(ship[1]) - 1))).toBeNull();
+    expect(normalizeShipQuery("A".repeat(Number(ship[2])))).not.toBeNull();
+    expect(normalizeShipQuery("A".repeat(Number(ship[2]) + 1))).toBeNull();
+    for (const ch of [" ", ".", "-", "/"]) expect(normalizeShipQuery(`A${ch}B`)).not.toBeNull();
+    expect(ship[3]).toMatch(/공백 \. - \//);
   });
 });
 
