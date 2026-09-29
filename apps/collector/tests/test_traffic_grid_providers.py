@@ -92,7 +92,7 @@ async def test_komsa_request_carries_the_key_once_encoded_and_parses():
         )
         resp, snap = await p.fetch()
     q = parse_qs(urlsplit(str(route.calls.last.request.url)).query)
-    assert q["serviceKey"] == [DECODED] and q["pageNo"] == ["1"] and q["numOfRows"] == ["6000"] and q["dataType"] == ["JSON"]
+    assert q["serviceKey"] == [DECODED] and q["pageNo"] == ["1"] and q["numOfRows"] == ["10000"] and q["dataType"] == ["JSON"]
     assert "%252B" not in str(route.calls.last.request.url)
     assert resp.status == 200 and len(snap.items) == 3
     await c.aclose()

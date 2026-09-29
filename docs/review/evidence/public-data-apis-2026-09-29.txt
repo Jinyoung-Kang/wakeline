@@ -41,3 +41,8 @@ EPSG:5179(TM · GRS80 · lat0 38 · lon0 127.5 · k0 0.9996 · FE 1,000,000 · F
   clsgn=V7A3884, 2026-09-24~09-29 → totalCount 0
   clsgn 없음, 2026-09-24~09-29 → totalCount 494, 1쪽에 clsgn 'V7A3884' · vsslNm 'AZAMARA PURSUIT' · 입항 2026-09-24T08:17:00+09:00 · 출항 tkoffDt 2026-09-25T14:24:00+09:00
 → 명세에 있는 clsgn 파라미터로는 찾을 수 없다. 이 항목 전체를 fixtures/portmis_info5_busan_V7A3884.xml 로 둔다(출항 시각은 출항 detail 의 tkoffDt).
+
+== 2026-09-30(KST) 배포 뒤 확인 — KOMSA 격자 수 증가
+수집기 로그: 'traffic grid: page holds 6000 of totalCount 6422 — published as partial'
+numOfRows=10000 한 번(수집기 컨테이너에서, 키는 출력하지 않음) → HTTP 200 · 309,602 B · resultCode "200" NORMAL_SERVICE · totalCount 6422 · numOfRows 6422 · items 6422 · 접두어 GR4_ 만
+→ KOMSA_ROWS 를 10000 으로(VERIFICATION #58).

@@ -13,9 +13,10 @@ ADR-006(요청 중 외부 호출 없음) · ADR-014(AIS) · ADR-017 R-72(수집�
 (응답을 확인하지 않았다).
 
 ## 확인한 형식(2026-09-29, 사용자 키 — 이 레인은 외부를 부르지 않았고 시험은 이 표본으로 만든 fixture 만 쓴다)
-- **A. 한국해양교통안전공단 실시간 해양교통정보**: `GET https://apis.data.go.kr/B554035/realtime/get_realtime?serviceKey=&pageNo=1&numOfRows=6000&dataType=JSON`.
+- **A. 한국해양교통안전공단 실시간 해양교통정보**: `GET https://apis.data.go.kr/B554035/realtime/get_realtime?serviceKey=&pageNo=1&numOfRows=10000&dataType=JSON`(2026-09-30 개정 — 아래).
   JSON `response.header.resultCode`("200" 정상) · `resultMsg`, `response.body.items.item[]` = `{grid_id(예 "GR4_F2K41_C3"), vmtc(선박 척수), dnsty(밀집도 %)}`,
   `body.totalCount`, `body.regDt`("2026-09-29 18:05:05" — KST, 생성 시각). numOfRows=6000 한 번에 전체 스냅샷(5,099건, 245,985 B, vmtc 1–102 · dnsty 0–100).
+  **2026-09-30 개정**: 격자가 6,422건으로 늘어 6000 이 모자랐다(배포 뒤 로그 'page holds 6000 of totalCount 6422 — published as partial'). numOfRows=10000 한 번으로 전체 6,422건(309,602 B)을 받는 것을 실제 호출로 확인하고 10000 으로 올렸다(VERIFICATION #58). 넘치면 여전히 partial 로 표시한다.
   5분마다 새 자료. 포털 개발계정 한도 하루 500회.
 - **B. 해양수산부 격자4단계 WFS**: `GET https://apis.data.go.kr/1192000/apVhdService_G4s/getOpnG4sWFS?ServiceKey=&grid_no=<id>&maxFeatures=1`(bbox 도 받지만 쓰지
   않는다). GML 3.1.1: `wfs:FeatureCollection numberOfFeatures`, 지물 `ofbd-DB:opn_grid_4_step_a` 의 `gid` · `grid_no` · `geom` → `gml:MultiSurface srsName="EPSG:5179"` →
@@ -53,7 +54,7 @@ ADR-006(요청 중 외부 호출 없음) · ADR-014(AIS) · ADR-017 R-72(수집�
    칸은 새 칸 뒤), 틱마다 15개 · 15 s 안. 호출마다 해양수산부 시간 창(위 1)을 하루 예산보다 먼저 예약하되 **입출항 조회 몫 100 을 남긴다**
    (`MOF_GRID4_HOURLY_HEADROOM` — 사람이 기다리는 조회가 매시 적어도 100회) — 채우기는 시간당 많아야 290칸이다. 창이나 하루 예산에 막히면 까닭을
    실행 기록에 한 번 적고("… — geometry fill resumes at <다음 UTC 시 · 날>") 그때까지 채우지 않는다(틱마다 같은 거절을 쌓지 않는다). 첫 스냅샷
-   (확인한 표본 5,099칸)은 **약 18시간 이상**(5,099 ÷ 290 ≈ 17.6) 걸쳐 채워진다(계산 — 잰 값이 아니다; 입출항 조회가 창을 쓰거나 호스트 버킷 1 req/s · 응답 시간에 따라 더
+   (확인한 표본 5,099칸 — 2026-09-30 에는 6,422칸이라 약 22시간 이상(6,422 ÷ 290 ≈ 22.1))은 **약 18시간 이상**(5,099 ÷ 290 ≈ 17.6) 걸쳐 채워진다(계산 — 잰 값이 아니다; 입출항 조회가 창을 쓰거나 호스트 버킷 1 req/s · 응답 시간에 따라 더
    걸린다 — 처음 구현의 "약 4–5시간"(시간당 약 1,200칸)은 시간 창을 두기 전 값이다). 그동안 화면은
    확인한 칸만 그리고 "위치 확인 중 N칸"을 적는다. **칸 번호의 글자로 위치를 짐작하지 않는다**(번호 체계는 확인하지 않았다 — 위치는 WFS 기하에서만).
    - found → 메모리 + DB `marine_grid4`(Flyway V14 — 다시 시작해도 다시 묻지 않는다). not_found(`numberOfFeatures` 0) · off_grid(아래 검사 실패 — 격리,

@@ -2,7 +2,7 @@
 
 응답(2026-09-29 사용자 키로 확인): response.header.resultCode("200" 정상) · resultMsg, response.body.items.item[] =
 {grid_id(예: "GR4_F2K41_C3"), vmtc(선박 척수), dnsty(밀집도 %)}, body.totalCount, body.regDt("2026-09-29 18:05:05" — KST, 생성 시각).
-한 번(numOfRows=6000)에 전체(5,099건)가 왔다. 5분마다 새 자료.
+한 번에 전체가 온다(2026-09-29 numOfRows=6000 → 5,099건 · 2026-09-30 격자가 6,422건으로 늘어 10000 으로 — providers/data_go_kr.KOMSA_ROWS). 5분마다 새 자료.
 
 - 모양이 다른 응답도 읽는다: item 이 객체 하나(항목 1건) · items 가 빈 글자/없음(0건) · items 가 바로 목록. 숫자는 JSON 수 또는 숫자 글자.
   이것은 형식의 관용이지 값의 짐작이 아니다 — 값의 범위(척수 0 이상 정수 · 밀집도 0–100)는 확인한 범위 그대로 검사한다.

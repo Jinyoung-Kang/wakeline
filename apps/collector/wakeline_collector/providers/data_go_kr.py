@@ -2,7 +2,7 @@
 
 세 서비스(ADR-022 해양수산부 선박운항정보 PORT-MIS — providers/portmis.py · 아래 둘)는 키 · 키 모양 가림(service_key_forms) · 호스트 버킷 하나를 나눠 쓴다.
 
-- 한국해양교통안전공단 실시간 해양교통정보: GET /B554035/realtime/get_realtime?serviceKey=&pageNo=1&numOfRows=6000&dataType=JSON
+- 한국해양교통안전공단 실시간 해양교통정보: GET /B554035/realtime/get_realtime?serviceKey=&pageNo=1&numOfRows=10000&dataType=JSON
   (2026-09-29 확인: 한 번에 전체 5,099건 · 245,985 B). 해석은 traffic_grid.parse_komsa.
 - 해양수산부 격자4단계 WFS: GET /1192000/apVhdService_G4s/getOpnG4sWFS?ServiceKey=&grid_no=<id>&maxFeatures=1 → GML 3.1.1.
   해석은 marine_grid.parse_wfs. 키 파라미터 이름의 대소문자가 두 서비스에서 다르다(serviceKey · ServiceKey — 확인한 그대로).
@@ -30,10 +30,10 @@ from wakeline_collector.traffic_grid import GRID_ID_RE, KomsaSnapshot, parse_kom
 DATA_GO_KR_HOST = "apis.data.go.kr"
 KOMSA_URL = f"https://{DATA_GO_KR_HOST}/B554035/realtime/get_realtime"
 WFS_URL = f"https://{DATA_GO_KR_HOST}/1192000/apVhdService_G4s/getOpnG4sWFS"
-KOMSA_ROWS = (
-    6000  # 확인: 한 번에 전체(5,099건)가 온다. totalCount 가 이보다 많으면 스냅샷에 partial 로 표시(다음 쪽은 받지 않는다)
-)
-KOMSA_TOTAL_S = 30.0  # 요청 전체 상한(약 246 KB) — 선택값
+# 확인: 2026-09-29 6000 → 전체 5,099건. 2026-09-30 격자가 6,422건으로 늘어 6000 이 모자랐다(스냅샷 partial) — 10000 → 한 번에 전체 6,422건(310 KB).
+# totalCount 가 이보다 많으면 스냅샷에 partial 로 표시(다음 쪽은 받지 않는다 — 시간당 호출 예산 안에서 5분마다 한 번)
+KOMSA_ROWS = 10000
+KOMSA_TOTAL_S = 30.0  # 요청 전체 상한(2026-09-30 응답 약 310 KB) — 선택값
 KOMSA_READ_S = 15.0
 WFS_TOTAL_S = 15.0
 WFS_WAIT_S = 5.0  # 속도 상한 대기 상한 — 못 받으면 이번 틱의 채우기를 멈춘다(보내지 않았으니 예산을 되돌린다)
