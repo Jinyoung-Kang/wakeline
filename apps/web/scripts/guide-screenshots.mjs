@@ -62,13 +62,13 @@ const encoder = await ctx.newPage(); // PNG → WebP 변환 전용(about:blank)
 
 // ---- 공통 동작 ----
 
-const DASH = "#6.3/36.1/127.9";
+/** 항공기 목록을 볼 영역(한반도 — 상황판 스크린샷의 지도 위치와 같은 곳) */
 const KOREA_BBOX = "124,33,132,39";
 
-/** 상황판을 새로 연다(해시만 다른 goto 는 같은 문서 안 이동이라 선택 상태가 남는다 — 빈 페이지를 거친다). 실시간 연결이 열려야 찍는다 */
-async function openMap(hash) {
+/** 상황판을 새로 연다(path = "/#줌/위도/경도" — 해시만 다른 goto 는 같은 문서 안 이동이라 선택 상태가 남아 빈 페이지를 거친다). 실시간 연결이 열려야 찍는다 */
+async function openMap(path) {
   await page.goto("about:blank");
-  await page.goto(BASE + "/" + hash);
+  await page.goto(BASE + path);
   try { await page.getByTestId("conn").filter({ hasText: /open/i }).waitFor({ timeout: 30_000 }); }
   catch { throw new Skip("상황판 실시간 연결(WS open)이 30 s 안에 열리지 않음"); }
   if (!args.allowFixture && await page.getByTestId("fixture-badge").count()) {
@@ -108,18 +108,18 @@ async function login() {
   loggedIn = true;
 }
 
-// ---- 스크린샷별 준비(계획의 id 마다). 돌려주는 값 = 캡처 조건(설명서 그림 아래에 적힌다) ----
+// ---- 스크린샷별 준비(계획의 id 마다 — 경로는 계획의 path). 돌려주는 값 = 캡처 조건(설명서 그림 아래에 적힌다) ----
 
 const RECIPES = {
-  async dashboard() {
-    await openMap(DASH);
+  async dashboard(shot) {
+    await openMap(shot.path);
     await setPressed("layer-ships", true);
     await setLegend(true);
     await wait(10_000); // 스냅샷 · 레이더 타일 · 선박 격자
-    return `한반도 ${DASH}`;
+    return `한반도 ${shot.path.slice(1)}`;
   },
-  async search() {
-    await openMap(DASH);
+  async search(shot) {
+    await openMap(shot.path);
     await setPressed("layer-ships", false);
     await setLegend(false);
     // 검색어 = 지금 지도의 호출부호에서 가장 많은 앞 3자(실제 자료에서 고른다 — 없으면 찍지 않는다)
@@ -137,8 +137,8 @@ const RECIPES = {
     await wait(1200);
     return `검색어 “${q}” — 지금 지도의 호출부호에서 가장 많은 앞 3자`;
   },
-  async aircraft() {
-    await openMap(DASH);
+  async aircraft(shot) {
+    await openMap(shot.path);
     await setPressed("layer-ships", false);
     await setLegend(false);
     const list = (await koreaAircraft()).filter((p) => p.hex && p.callsign && p.on_ground !== true && (p.alt_ft ?? 0) > 6000);
@@ -152,10 +152,11 @@ const RECIPES = {
     await wait(9_000); // 지도 이동 · 상세 · 노선 · 집중 추적 첫 보고
     return `${String(t.callsign).trim()} (${t.hex}) — 한반도 영역에서 가장 높이 나는 항공기`;
   },
-  async ship() {
-    const candidates = [["#10/35.08/129.05", "부산항 부근"], ["#10.6/35.45/139.78", "도쿄만"]];
-    for (const [hash, label] of candidates) {
-      await openMap(hash);
+  async ship(shot) {
+    // 계획의 위치(부산항 부근)에 선박이 없으면 수신국이 많은 도쿄만으로 — 어디서 찍었는지 조건에 적는다
+    const candidates = [[shot.path, "부산항 부근"], ["/#10.6/35.45/139.78", "도쿄만"]];
+    for (const [path, label] of candidates) {
+      await openMap(path);
       await setPressed("layer-ships", true);
       await setLegend(false);
       await wait(15_000);
@@ -166,12 +167,12 @@ const RECIPES = {
       await item.click();
       await page.getByTestId("ship-card").waitFor();
       await wait(6_000); // 항적
-      return `${label} ${hash}`;
+      return `${label} ${path.slice(1)}`;
     }
     throw new Skip("후보 해역(부산항 부근 · 도쿄만)에 선박 없음");
   },
-  async alerts() {
-    await openMap(DASH);
+  async alerts(shot) {
+    await openMap(shot.path);
     await setPressed("layer-ships", false);
     await setLegend(false);
     await wait(8_000);
@@ -188,8 +189,8 @@ const RECIPES = {
     await wait(1500);
     return `알림 범위 ${scope}`;
   },
-  async radar() {
-    await openMap(DASH);
+  async radar(shot) {
+    await openMap(shot.path);
     await setPressed("layer-ships", false);
     await setLegend(false);
     await wait(6_000);
@@ -200,8 +201,8 @@ const RECIPES = {
     await wait(5_000);
     return useKma ? "기상청 HSR" : "RainViewer(기상청 프레임 없음)";
   },
-  async replay() {
-    await page.goto(BASE + "/replay");
+  async replay(shot) {
+    await page.goto(BASE + shot.path);
     const sum = page.getByTestId("replay-summary");
     const loaded = await sum.filter({ hasText: /aircraft/ }).waitFor({ timeout: 25_000 }).then(() => true, () => false);
     if (!loaded) throw new Skip("재생 기록 응답 없음");
@@ -209,29 +210,29 @@ const RECIPES = {
     await wait(3_000);
     return `지도 시각 ${(await page.getByTestId("replay-frame-at").innerText()).replace(/^지도\s*/, "").trim()}`;
   },
-  async stats() {
-    await page.goto(BASE + "/stats");
+  async stats(shot) {
+    await page.goto(BASE + shot.path);
     await page.locator("main .grid > section").first().waitFor();
     await wait(4_000);
     return null;
   },
-  async airport() {
-    await page.goto(BASE + "/airports/RKSI");
+  async airport(shot) {
+    await page.goto(BASE + shot.path);
     await page.locator("main pre").first().waitFor({ timeout: 15_000 }).catch(() => { throw new Skip("RKSI METAR 없음"); });
     await wait(1_500);
-    return "RKSI";
+    return shot.path.split("/").pop();
   },
-  async ops() {
+  async ops(shot) {
     await login();
-    await page.goto(BASE + "/ops");
+    await page.goto(BASE + shot.path);
     await page.getByTestId("ops-dashboard").waitFor();
     await page.locator('[data-testid="ops-dashboard"] table').first().waitFor({ timeout: 15_000 }).catch(() => {});
     await wait(2_000);
     return "providers 탭";
   },
-  async logs() {
+  async logs(shot) {
     await login();
-    await page.goto(BASE + "/logs");
+    await page.goto(BASE + shot.path);
     await page.getByTestId("logs-dashboard").waitFor();
     await Promise.race([page.getByTestId("log-grid").waitFor(), page.getByTestId("logs-empty").waitFor()]).catch(() => {});
     await wait(1_500);
@@ -293,7 +294,7 @@ for (const shot of shots) {
   try {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
     console.log(`… ${shot.id}`);
-    const variant = await recipe();
+    const variant = await recipe(shot);
     await assertNoErrors();
     await page.evaluate(() => document.fonts?.ready);
     const positions = await measure(shot.callouts);
