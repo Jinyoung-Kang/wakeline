@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { fmtIso, fmtIsoKst, fmtTimeKstLabel, fmtUtcTitle } from "@/lib/format";
 import {
-  DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, logGroupsUrl, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY,
+  DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, fmtLogTime, groupCountText, logGroupsUrl, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY,
   LOG_STREAM_LABEL, logsUrl, logText, parseLogGroups, parseLogPage, type LogEntry, type LogGroup, type LogPeriod,
 } from "@/lib/logs";
 import { isAuthMiss } from "@/lib/ops";
@@ -103,7 +103,7 @@ export function LogDetail({ entry, period, onClose, onOpen, onFilterFp, onFilter
           : !fpStats ? <span className="text-fg-3">불러오는 중…</span>
           : !fpStats.g ? <span className="text-fg-3">이 기간의 묶음에 없음{fpStats.scanTruncated ? "(스캔 상한에서 잘림)" : ""}</span>
           : <span className="mono">
-              항목 {fpStats.g.count ?? "—"}건 · 억제 합 {fpStats.g.suppressed ?? "—"} · 처음 <span title={fmtUtcTitle(fpStats.g.first_at)}>{fmtTimeKstLabel(fpStats.g.first_at)}</span> · 마지막 <span title={fmtUtcTitle(fpStats.g.last_at)}>{fmtTimeKstLabel(fpStats.g.last_at)}</span>
+              항목 {groupCountText(fpStats.g.count)} · 억제 합 {fpStats.g.suppressed ?? "—"} · 처음 <span title={fmtUtcTitle(fpStats.g.first_at)}>{fmtTimeKstLabel(fpStats.g.first_at)}</span> · 마지막 <span title={fmtUtcTitle(fpStats.g.last_at)}>{fmtTimeKstLabel(fpStats.g.last_at)}</span>
               {fpStats.scanTruncated ? <span className="ml-1 text-warn">(스캔 상한에서 잘림 — 일부만 셈)</span> : null}
             </span>}
       </div>

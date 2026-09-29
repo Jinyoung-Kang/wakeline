@@ -38,6 +38,17 @@ describe("KST in /logs copy text and export (lib/logs · lib/log-line · ErrorSc
     expect(L.groupText(g, [], { truncated: false }).split("\n")[0]).toBe(
       "[묶음 fp=8dee472131af8d17 WARN collector/job.aircraft] 항목 5건 · 억제 합 0 · 처음 2026-09-29T08:06:00.698+09:00 · 마지막 2026-09-29T08:41:14.906+09:00");
   });
+  it("group text: an unknown count is \"—\" alone — no unit after it (\"—건\" reads like a measured count)", async () => {
+    const L = await import("@/lib/logs");
+    const g = L.parseLogGroups({ groups: [{ fp: "0123456789abcdef", service: "api", level: "ERROR", logger: "x", exception_type: null, sample_message: null, count: null, suppressed: null, first_at: "2026-09-28T23:00:00Z", last_at: USER_TS, last_id: "1790638875284-0" }] }).groups[0];
+    expect(g.count).toBeNull();
+    const head = L.groupText(g, [], { truncated: false }).split("\n")[0];
+    expect(head).toBe("[묶음 fp=0123456789abcdef ERROR api/x] 항목 — · 억제 합 — · 처음 2026-09-29T08:00:00.000+09:00 · 마지막 2026-09-29T08:41:14.906+09:00");
+    expect(head).not.toContain("—건");
+    expect(L.groupCountText(null)).toBe("—");
+    expect(L.groupCountText(0)).toBe("0건");
+    expect(L.groupCountText(12)).toBe("12건");
+  });
   it(".ndjson and JSON copy stay the stored entry as the api gave it (ts in UTC); the file name carries the KST offset", async () => {
     const L = await import("@/lib/logs");
     const items = L.parseLogPage({ items: [userEntry()] }).items;

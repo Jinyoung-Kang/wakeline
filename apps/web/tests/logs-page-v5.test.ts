@@ -185,6 +185,18 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
     expect(last.get("rid")).toBe("5f2c9a0e1b7d4c3a");
     expect((find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "요청 id") as unknown as { value: string }).value).toBe("5f2c9a0e1b7d4c3a");
   });
+  it("the detail's same-fingerprint line shows an unknown group count as \"—\" alone (not \"—건\")", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/v1/ops/logs/groups?")) return { status: 200, body: { groups: [{ fp: "0123456789abcdef", service: "api", level: "ERROR", logger: "x", exception_type: null, sample_message: "failure", count: null, suppressed: null, first_at: "2026-09-29T01:00:00Z", last_at: "2026-09-29T01:59:00Z", last_id: T(1) }], scanned: 900, scan_truncated: false } };
+      if (url.startsWith("/api/v1/ops/logs?")) return { status: 200, body: FIRST };
+      return undefined;
+    });
+    await open();
+    await click(allByTestId("log-row")[0]);
+    const fp = byTestId("log-fp-stats")!.textContent;
+    expect(fp).toContain("항목 — · 억제 합 — · 처음 09-29 10:00:00 KST");
+    expect(fp).not.toContain("—건");
+  });
   it("after '이전 항목 더 보기' the skipped counts say they are sums over the loaded pages (api and screen alike)", async () => {
     const OLDER = { items: [entry(`${NOW - 600_000}-0`), { junk: true }], next_cursor: null, scanned: 90, scan_truncated: false, invalid: 4 };
     stubFetch((url) => (url.includes("cursor=") ? { status: 200, body: OLDER } : url.startsWith("/api/v1/ops/logs?") ? { status: 200, body: { ...FIRST, invalid: 1 } } : undefined));

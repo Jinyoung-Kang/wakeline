@@ -303,9 +303,12 @@ export function logsFileName(ext: "txt" | "ndjson", nowMs: number): string {
   return `wakeline-logs-${s ? `${s.slice(0, 19).replace(/[-:]/g, "")}+0900` : "time-unknown"}.${ext}`;
 }
 
+/** 묶음의 항목 수: "12건". 모르면 "—" 만 — 단위를 붙인 "—건" 은 센 값처럼 읽힌다(지연의 "— ms" 와 같은 규칙) */
+export const groupCountText = (count: number | null): string => (count == null ? "—" : `${count}건`);
+
 /** 묶음 전체 텍스트: 묶음 머리(건수 · 억제 합 · 처음 · 마지막) + 붙인 항목이 묶음의 전부인지 + 항목들 */
 export function groupText(g: LogGroup, items: readonly LogEntry[], meta: { truncated: boolean }): string {
-  const head = `[묶음 fp=${g.fp} ${g.level ?? "—"} ${g.service ?? "—"}/${g.logger ?? "—"}] 항목 ${g.count ?? "—"}건 · 억제 합 ${g.suppressed ?? "—"} · 처음 ${isoText(g.first_at)} · 마지막 ${isoText(g.last_at)}`;
+  const head = `[묶음 fp=${g.fp} ${g.level ?? "—"} ${g.service ?? "—"}/${g.logger ?? "—"}] 항목 ${groupCountText(g.count)} · 억제 합 ${g.suppressed ?? "—"} · 처음 ${isoText(g.first_at)} · 마지막 ${isoText(g.last_at)}`;
   const lines = [head, `예외 종류 ${exceptionTypeText(g.exception_type)}`, `표본 메시지 ${g.sample_message ?? "—"}`,
     `아래 항목 ${items.length}건${meta.truncated ? " — 묶음의 일부만(목록 상한 또는 스캔 잘림)" : ""}`];
   return [lines.join("\n"), ...items.map(logText)].join("\n\n");
