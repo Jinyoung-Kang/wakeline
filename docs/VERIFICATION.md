@@ -367,8 +367,9 @@
   고친 뒤 약 5 s 에 `SocketTimeoutException`.
 - **회귀** `ShipSelectionLookupTest` · `StoredStaticIT`(`ship` 표를 잠근 동안 pong < 1 s · 읽기 풀 4 연결을 2.8 s 잡은 동안 답이 1.8–2.8 s — 공유 풀의 5 s 가 아니라
   읽기 풀의 연결 대기 2 s) · `ReadPoolDbTest` · `ReadPoolTest`.
-- **남은 것** 항공기 선택의 노선 조회(Redis — 상한 3 s · 캐시 5 s)는 같은 모양으로 아직 우편함에서 돈다(ADR-025 범위 밖). 배포된 스택의 조회 지표
-  (`wakeline_ws_ship_lookups_total` · `wakeline_ws_ship_lookup_seconds`)는 아직 보지 않았다.
+- **남은 것** 항공기 선택의 노선 조회(Redis — 상한 3 s · 캐시 5 s)는 같은 모양으로 아직 우편함에서 돈다(ADR-025 범위 밖). 배포된 스택의 조회 지표는
+  2026-09-30 배포 뒤 확인했다: `wakeline_ws_ship_lookups_total{outcome=ok}` 15 · deadline · error · rejected 0, `wakeline_ws_ship_lookup_seconds` 합 0.502 s / 15건(최대 16 ms),
+  두 풀 연결 대기 시간 초과 0(`wakeline-read` 최대 4 · 공유 풀 12). 같은 때 AZAMARA PURSUIT 선택이 저장 정적 보고(V7A3884) · 입출항 ok 로 왔다(WS 실수신).
 
 ## #53 Class B 선박의 부분 정적 보고가 저장된 호출부호 · 선종 · 크기를 지움
 - **증상**(재현 — 수집기 `test_ais_static_received` · api `ShipPersistDbTest` · `StaticPartsIT`) ais 재시작이나 수집기 메모리 제거(30분 무수신 · 선박 수 상한) 뒤
@@ -481,16 +482,27 @@
 - **수정** numOfRows=10000 한 번에 전체 6,422칸(309,602 B)이 오는 것을 실제 호출로 확인하고(docs/review/evidence/public-data-apis-2026-09-29.txt 끝) 10000 으로 올렸다.
   호출 수는 그대로(5분마다 1회). 넘치면 여전히 partial. 격자 위치 첫 채우기 계산은 약 22 h 이상(6,422 ÷ 290)으로 늘었다(ADR-023 개정 — 계산값).
 
-## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 · 통합 리뷰(#57) 뒤 — 세션 우편함 · 읽기 풀(#52) · Class B 받은 필드(#53) · 화면 KST 만 · V16(#54 · #57) · 상태 바 · 지도 배치(#55 · #57))
+## #59 재생 목록이 패널 밖으로 넘쳐 아래 SOURCES 줄 위에 겹침
+- **증상**(2026-09-30 설명서 캡처) 재생 화면 왼쪽 목록(항공기 95대)이 지도 영역 아래 SOURCES 줄 위까지 그려졌다.
+- **원인** 목록 패널은 `max-h` 만 있는 flex 열이고, 안쪽 목록의 `max-h-full`(100 %)은 높이가 정해지지 않은 부모에서 풀리지 않아 목록이 줄지 않았다.
+- **수정** 목록을 flex 자식으로 줄게(`min-h-0 flex-1`) 하고 패널은 `overflow-hidden` — 목록 칸만 스크롤. **회귀** `e2e/replay-layout.spec.ts`(1,024×560) —
+  고치기 전 실서비스 빌드에서 스크롤 칸 아래 끝 1,844 px > 패널 484 px 로 실패, 고친 뒤 통과.
+
+## #60 동해의 회색 원 · 바다 위 회색 선이 무엇인지 범례에 없었음
+- **확인** 줌 6–7 에서 울릉도 · 독도 둘레에 보이는 회색 원과 바다 위 회색 선은 우리 층이 아니라 바탕 지도(OpenFreeMap · OpenMapTiles) boundary 층이다 —
+  그 자리 타일(z7 110/49)을 풀어 속성 `admin_level 2 · maritime 1 · adm0_r KOR`(해상 국경)을 확인했다. 작은 속 빈 원(공항, METAR 2 h 넘음)과는 다르다.
+- **수정** 범례에 '바탕 지도 선' 묶음(국경 — 육상 · 해상, 섬 둘레의 원 포함 · 행정 경계 · 해안선)을 실제 칠 색으로. **회귀** `tests/legend-basemap.test.ts`.
+
+## 자동 검사 현황(2026-09-30 KST, 배포 뒤 — 세 레인 통합(#52–#57) · KOMSA 요청 크기(#58) · 재생 목록 배치(#59) · 바탕 지도 범례(#60))
 | 층 | 도구 | 수 |
 |---|---|---|
 | collector · ais 단위·통합 | pytest | 1,389 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 %(앞 회차 값 — 이번 리뷰에서 수집기 코드는 바뀌지 않았다) |
 | api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 832 · JaCoCo LINE 96.5 % · BRANCH 85.3 %(하한 95 / 80) |
-| web 단위 | Vitest | 1,140(75 파일) · 커버리지(소스 전체) Lines 91.0 % · Branches 81.6 % |
+| web 단위 | Vitest | 1,142(76 파일) · 커버리지(소스 전체) Lines 91.0 % · Branches 81.6 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15) + 가림 · 억제 벡터 — PASSED |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 34종(통계 표본은 실제로 집계한 KST 날짜 — #57, 오늘 응답 `stats_traffic_today` 추가) |
 | 인프라 정책 | infra/tests(unittest) | 122 |
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · **48** · 27 · 12(백업·복원은 이 판 — V16 포함 16개 마이그레이션 · 복원본의 표 수 · ACL 비교 — 으로 다시 돌렸다(#57), 나머지는 마이그레이션을 쓰지 않아 앞 회차 값) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 33 통과(설명서 그림은 모두 자리표시 — #57) |
-| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | 앞 회차 PASS(db · k6 는 보고만) — 이번 통합에서는 돌리지 않았다 |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 회차 230건 · 14종, 형식 오류 0건(#32 · docs/review/evidence/v5-ws-live-check.txt) — 이번 통합은 배포 전 |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 34 통과(재생 목록 배치 시험 추가 — #59 · 설명서 그림 13장은 배포 뒤 다시 찍음: 11장 실서비스(ko-KR) · 운영 · 로그는 격리 스택, 운영자 정보 가림) |
+| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(2026-09-30 배포 전 빌드 — gitleaks · Trivy 자체 이미지 3종 · 제3자, db · k6 는 보고만) |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 이번 배포 뒤 228건 · 14종, 형식 오류 0건(korea 세션의 저장 정적 보고 ship_selected 포함 — docs/review/evidence/v5-ws-live-check-2026-09-30.txt) |
