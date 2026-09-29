@@ -176,7 +176,9 @@ class ShipsIT extends IntegrationTest {
             for (JsonNode s : snap.path("ships")) if (m.equals(s.path("mmsi").asString())) has = true;
             assertThat(has).isTrue();
             Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(m, 34.6, 128.5, seen.plusSeconds(10))), List.of()));
-            // 팬아웃은 10 s 에 한 번으로 모은다 — 창을 세 주기로(20 s = 두 주기는 호스트 부하 때 한 번 모자랐다: 리뷰 4단계 최종 측정, 조용할 때 3/3 통과)
+            // 두 지연을 나눠 기다린다: 스트림 소비(호스트 부하에 따라 늘어난다 — 빈으로 확인)와 팬아웃(10 s 에 한 번으로 모은다 — 반영 뒤 세 주기).
+            // 전에는 둘을 30 s 하나로 기다려, 부하가 큰 전체 실행에서 가끔 모자랐고 어느 쪽이 늦었는지 알 수 없었다.
+            await("second position applied", WAIT, () -> ships.view().get(m) != null && ships.view().get(m).state().lat() == 34.6);
             JsonNode diff = c.next("ships_diff", Duration.ofSeconds(30));
             assertThat(diff.path("sseq").asInt()).isEqualTo(2);
             assertThat(diff.path("upsert").get(0).path("lat").asDouble()).isEqualTo(34.6);

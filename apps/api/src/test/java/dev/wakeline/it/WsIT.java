@@ -71,11 +71,14 @@ class WsIT extends IntegrationTest {
 
         JsonNode next(String type, Duration timeout) throws InterruptedException {
             long end = System.nanoTime() + timeout.toNanos();
+            java.util.Map<String, Integer> skipped = new java.util.TreeMap<>(); // 실패하면 그사이 무엇이 왔는지 보인다(예: diff 대신 snapshot · grid)
             while (System.nanoTime() < end) {
                 JsonNode n = messages.poll(50, TimeUnit.MILLISECONDS);
-                if (n != null && type.equals(n.path("type").asString())) return n;
+                if (n == null) continue;
+                if (type.equals(n.path("type").asString())) return n;
+                skipped.merge(n.path("type").asString(), 1, Integer::sum);
             }
-            throw new AssertionError("no '" + type + "' message within " + timeout);
+            throw new AssertionError("no '" + type + "' message within " + timeout + " — skipped meanwhile: " + skipped);
         }
 
         /** snapshot·diff 만 순서대로(시간 안에 온 것 전부). */
