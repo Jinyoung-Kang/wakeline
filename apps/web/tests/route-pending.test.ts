@@ -17,6 +17,9 @@ import { parseRoute, ROUTE_NORMAL_PATH_S, ROUTE_PENDING_TITLE, ROUTE_SLOW_AFTER_
 import { ancestors, byTestId, classes, findAll, parseHtml, textOf } from "./helpers/html-tree";
 import { installMiniDom } from "./helpers/mini-dom";
 
+// 최소 DOM 은 파일에 하나(describe 마다 설치하면 앞 describe 의 restore 가 뒤 describe 의 전역을 되돌린다)
+const dom = installMiniDom();
+afterAll(() => dom.restore());
 const PENDING = parseRoute({ status: "pending", callsign: "KAL081", source: "adsbdb" })!;
 const render = (route: RouteInfo | null, pendingForS: number | null = null) =>
   parseHtml(renderToStaticMarkup(createElement(RouteSection, { route, pos: null, callsign: "KAL081", pendingForS })));
@@ -109,9 +112,39 @@ describe("the 10 s threshold comes from the server's route path (read from the c
   });
 });
 
+describe("one live region stays mounted while the route status changes (so the first \"노선 조회 중\" is announced)", () => {
+  it("null → pending → found → pending → unavailable: the same role=status node, only its text changes", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { MiniElement } = await import("./helpers/mini-dom");
+    const find = (from: InstanceType<typeof MiniElement>, pred: (e: InstanceType<typeof MiniElement>) => boolean): InstanceType<typeof MiniElement> | null => {
+      if (pred(from)) return from;
+      for (const c of from.childNodes) if (c instanceof MiniElement) { const x = find(c, pred); if (x) return x; }
+      return null;
+    };
+    const region = () => find(dom.container as never, (e) => e.getAttribute?.("role") === "status");
+    const root = createRoot(dom.container as never);
+    const show = async (route: RouteInfo | null) => { await React.act(async () => { root.render(createElement(RouteSection, { route, pos: null, callsign: "KAL081", pendingForS: 1 })); }); return region(); };
+    const FOUND = parseRoute({ status: "found", callsign: "KAL081", source: "adsbdb", fetched_at: "2026-09-29T05:00:00Z",
+      origin: { icao: "ZZAA", iata: null, name: "Synthetic Alpha", city: null, country: null, country_iso: null, lat: 1, lon: 2 },
+      destination: { icao: "ZZBB", iata: null, name: "Synthetic Beta", city: null, country: null, country_iso: null, lat: 3, lon: 4 } })!;
+    const first = await show(null);
+    expect(first).not.toBeNull(); // 경로를 모를 때("—")부터 live 영역이 있다
+    expect(first!.textContent).toBe("—");
+    const seq: [RouteInfo | null, string][] = [
+      [PENDING, ROUTE_STATUS_TEXT.pending], [FOUND, "노선 찾음"], [parseRoute({ status: "pending", callsign: "KAL082", source: "adsbdb" }), ROUTE_STATUS_TEXT.pending],
+      [parseRoute({ status: "unavailable", callsign: "KAL082", source: "adsbdb" }), ROUTE_STATUS_TEXT.unavailable],
+    ];
+    for (const [route, text] of seq) {
+      const r = await show(route);
+      expect(r, route?.status).toBe(first); // 새로 만들지 않는다 — 화면 읽기 프로그램은 이미 있던 영역의 바뀐 글자를 읽는다
+      expect(r!.textContent, route?.status).toContain(text);
+    }
+    await React.act(async () => { root.unmount(); });
+  });
+});
+
 describe("the card tracks how long it has seen 'pending' for this aircraft and callsign", () => {
-  const dom = installMiniDom();
-  afterAll(() => dom.restore());
   it("starts at the first pending render, resets when the callsign changes or the lookup ends", async () => {
     const React = await import("react");
     const { createRoot } = await import("react-dom/client");
