@@ -6,6 +6,7 @@ import { dualCell, dualPair, dualPairCompact, dualRangePair, fmtDualRange, fmtUt
  * - compact: "08:41 KST · 09-28 23:41Z"(상태 바 등 좁은 줄) — seconds · date 로 늘린다
  * - cell: 첫 줄 KST · 둘째 줄 흐린 UTC(표 칸 — 머리글 "(KST · UTC)"). 화면 읽기 프로그램에는 "… KST · … UTC" 로 읽힌다(숨긴 글자)
  * <time dateTime> 에 그 순간(UTC ISO), title 에 원본 UTC ISO(ms 까지). 모르면 "—" 만(title · time 없음).
+ * 좁은 카드에서는 KST 와 UTC 사이(" · ")에서만 줄이 바뀐다 — 각 부분은 whitespace-nowrap(한 시각이 두 줄로 쪼개지지 않게).
  */
 export function DualTime({ v, variant = "inline", date, year, seconds, ms, className, testId }: {
   v: TimeIn; variant?: "inline" | "compact" | "cell"; date?: boolean; year?: boolean; seconds?: boolean; ms?: boolean; className?: string; testId?: string;
@@ -26,8 +27,8 @@ export function DualTime({ v, variant = "inline", date, year, seconds, ms, class
   if (!x) return <span className={cls} data-testid={testId}>—</span>;
   return (
     <span className={cls} title={fmtUtcTitle(v)} data-testid={testId}>
-      <time dateTime={x.iso}>{x.kst}</time>
-      <span className="text-fg-3"> · {x.utc}</span>
+      <time dateTime={x.iso} className="whitespace-nowrap">{x.kst}</time>
+      <span className="text-fg-3"> · <span className="whitespace-nowrap">{x.utc}</span></span>
     </span>
   );
 }
@@ -38,7 +39,7 @@ export function DualRange({ a, b, open, seconds, className, testId }: { a: TimeI
   const x = dualRangePair(a, b, { seconds });
   return (
     <span className={cls} title={fmtUtcRangeTitle(a, b)} data-testid={testId}>
-      {x ? <>{x.kst}<span className="text-fg-3"> · {x.utc}</span></> : fmtDualRange(a, b, { open, seconds })}
+      {x ? <><span className="whitespace-nowrap">{x.kst}</span><span className="text-fg-3"> · <span className="whitespace-nowrap">{x.utc}</span></span></> : fmtDualRange(a, b, { open, seconds })}
     </span>
   );
 }

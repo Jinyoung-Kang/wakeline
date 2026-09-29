@@ -12,7 +12,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import * as T from "@/lib/time";
-import { DualTime } from "@/components/DualTime";
+import { DualRange, DualTime } from "@/components/DualTime";
 import { byTestId, parseHtml, textOf } from "./helpers/html-tree";
 
 /** UTC 자정 직전(09-28) — KST 로는 다음 날(09-29) 아침: UTC 날짜가 다르다 */
@@ -141,8 +141,16 @@ describe("<DualTime>", () => {
     const t = byTestId(root, "t")!;
     expect(textOf(t)).toBe("09-29 08:41:14 KST · 09-28 23:41:14 UTC");
     expect(t.attrs.title).toBe("원본 UTC 2026-09-28T23:41:14.906Z");
-    expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).toContain('<time dateTime="2026-09-28T23:41:14.906Z">');
-    expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).toMatch(/<span class="text-fg-3"> · 09-28 23:41:14 UTC<\/span>/);
+    expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).toContain('<time dateTime="2026-09-28T23:41:14.906Z"');
+    expect(renderToStaticMarkup(createElement(DualTime, { v: LATE }))).toMatch(/<span class="text-fg-3"> · <span class="whitespace-nowrap">09-28 23:41:14 UTC<\/span><\/span>/);
+  });
+  it("a narrow card wraps between the KST and UTC parts, never inside one (each part is nowrap, the separator is not)", () => {
+    const s = renderToStaticMarkup(createElement(DualTime, { v: LATE }));
+    expect(s).toContain('<time dateTime="2026-09-28T23:41:14.906Z" class="whitespace-nowrap">09-29 08:41:14 KST</time>');
+    const r = renderToStaticMarkup(createElement(DualRange, { a: "2026-09-28T22:00:00Z", b: "2026-09-29T02:00:00Z" }));
+    expect(r).toContain('<span class="whitespace-nowrap">09-29 07:00:00 – 09-29 11:00:00 KST</span>');
+    expect(r).toContain('<span class="text-fg-3"> · <span class="whitespace-nowrap">09-28 22:00:00 – 09-29 02:00:00 UTC</span></span>');
+    expect(r.replace(/<[^>]+>/g, "")).toBe("09-29 07:00:00 – 09-29 11:00:00 KST · 09-28 22:00:00 – 09-29 02:00:00 UTC");
   });
   it("cell: two lines; screen readers hear both zones", () => {
     const root = html(createElement(DualTime, { v: LATE, variant: "cell", testId: "c" }));
