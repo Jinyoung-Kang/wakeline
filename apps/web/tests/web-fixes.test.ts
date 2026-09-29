@@ -129,10 +129,10 @@ describe("unknown heading is not drawn as north (DH-11)", () => {
     const t = replayAircraftTip(row, "2026-09-20T08:44:00Z");
     expect(t.flags[0].text).toContain("1분 평균");
     expect(t.flags.map((f) => f.text)).not.toContain("기록 위치 · 보간 없음");
-    expect(Object.fromEntries(t.rows)).toMatchObject({ REC: "09-20 08:43:00Z – 08:44:00Z 평균", SRC: "1분 요약", TRK: "—" });
+    expect(Object.fromEntries(t.rows)).toMatchObject({ REC: "09-20 17:43:00 – 09-20 17:44:00 KST 평균", SRC: "1분 요약", TRK: "—" });
     const raw = { ...row, provider: "adsb_fi", ts: "2026-09-27T08:43:30Z" };
     expect(replayAircraftTip(raw, "2026-09-27T08:44:00Z").flags[0].text).toBe("기록 위치 · 보간 없음");
-    expect(replayRecLabel(raw, "2026-09-27T08:44:00Z")).toBe("09-27 08:43:30Z (재생 시각 −30s)");
+    expect(replayRecLabel(raw, "2026-09-27T08:44:00Z")).toBe("09-27 17:43:30 KST (재생 시각 −30s)");
   });
 });
 

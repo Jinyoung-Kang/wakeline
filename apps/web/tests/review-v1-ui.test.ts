@@ -141,15 +141,15 @@ describe("R-08 alert row: expand stays, selection moves the map", () => {
 });
 
 describe("R-10 replay time can be picked precisely across the 30-day summary window", () => {
-  it("the toolbar has a UTC date-time input and ±1 min / ±10 min / ±1 h steps besides the slider", () => {
+  it("the toolbar has a KST date-time input and ±1 min / ±10 min / ±1 h steps besides the slider", () => {
     const html = renderToStaticMarkup(createElement(ReplayPage));
-    expect(html).toMatch(/<input[^>]*type="datetime-local"[^>]*aria-label="재생 시각\(UTC\)"|<input[^>]*aria-label="재생 시각\(UTC\)"[^>]*type="datetime-local"/);
+    expect(html).toMatch(/<input[^>]*type="datetime-local"[^>]*aria-label="재생 시각\(KST\)"|<input[^>]*aria-label="재생 시각\(KST\)"[^>]*type="datetime-local"/);
     for (const t of ["−1h", "−10m", "−1m", "+1m", "+10m", "+1h"]) expect(html).toContain(`>${t}</button>`);
     expect(html).toContain('role="group" aria-label="재생 시각 이동"');
   });
-  it("the UTC basis is visible next to the date-time input (browsers render it in their own locale format)", () => {
+  it("the KST basis is visible next to the date-time input (browsers render it in their own locale format)", () => {
     const html = renderToStaticMarkup(createElement(ReplayPage));
-    expect(html).toMatch(/>UTC<\/span><input type="datetime-local"/);
+    expect(html).toMatch(/>KST<\/span><input type="datetime-local"/);
   });
   it("the range reaches back 30 days (1-minute summary) and marks the 72 h full-resolution boundary", () => {
     const now = Date.parse("2026-09-28T06:00:00Z");
@@ -160,12 +160,12 @@ describe("R-10 replay time can be picked precisely across the 30-day summary win
     expect(replayLib.replayZone(now - 3600_000, r)).toBe("full");
     expect(replayLib.replayZone(now - 4 * 86400_000, r)).toBe("summary");
   });
-  it("UTC input round-trips and steps are clamped to the range", () => {
+  it("KST input round-trips and steps are clamped to the range (midnight cases: tests/kst-replay.test.ts)", () => {
     const r = replayLib.replayRange(Date.parse("2026-09-28T06:00:00Z"));
-    expect(replayLib.toUtcInput(Date.parse("2026-09-28T03:05:40Z"))).toBe("2026-09-28T03:05");
-    expect(replayLib.fromUtcInput("2026-09-28T03:05")).toBe(Date.parse("2026-09-28T03:05:00Z"));
-    expect(replayLib.fromUtcInput("")).toBeNull();
-    expect(replayLib.fromUtcInput("2026-02-30T03:05")).toBeNull();
+    expect(replayLib.toKstInput(Date.parse("2026-09-28T03:05:40Z"))).toBe("2026-09-28T12:05");
+    expect(replayLib.fromKstInput("2026-09-28T12:05")).toBe(Date.parse("2026-09-28T03:05:00Z"));
+    expect(replayLib.fromKstInput("")).toBeNull();
+    expect(replayLib.fromKstInput("2026-02-30T03:05")).toBeNull();
     expect(replayLib.stepAt(r.max - 30_000, 3600_000, r)).toBe(r.max);
     expect(replayLib.stepAt(r.min + 1000, -600_000, r)).toBe(r.min);
     expect(replayLib.stepAt(Date.parse("2026-09-28T03:05:00Z"), 60_000, r)).toBe(Date.parse("2026-09-28T03:06:00Z"));

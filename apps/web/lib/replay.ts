@@ -3,9 +3,11 @@
  * API: GET /api/v1/replay?at=&bbox= → { at, aircraft, sigmets, source, radar: {host, path, time} | null }(계약서 §2).
  * 원해상도 보관(72 h) 밖은 1분 요약(track_point_1m)에서 온다 — 행의 위치·고도·속도는 그 1분 동안 관측의 평균이고 방위·지상 여부는 없다.
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
+ * 시각은 한국 표준시(사용자 요청 2026-09-29): 고르는 입력 · 보이는 글자는 KST, api 요청(at)은 그 순간의 UTC ISO(…Z) 그대로.
  */
 import { ApiError } from "./api";
-import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtTime } from "./format";
+import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtRangeKst, fmtTimeKstLabel } from "./format";
+import { isoKst, KST_OFFSET_MS } from "./kst";
 import type { Tip } from "./tooltip";
 import type { Bbox } from "./viewport";
 
@@ -63,7 +65,7 @@ export function replayRadarLabel(frame: Pick<ReplayFrame, "at" | "radar"> | null
   const t = radarTimeMs(r?.time);
   if (!r || t == null) return "레이더 이력 없음(RainViewer 보관 2 h 밖)";
   const d = Math.round((t - Date.parse(frame.at)) / 60000);
-  return `레이더 ${fmtTime(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
+  return `레이더 ${fmtTimeKstLabel(t)} (재생 시각 ${d >= 0 ? "+" : "−"}${Math.abs(d)}분)`;
 }
 
 const bandSrc = (s: ReplaySigmet) => ({ base_source: s.base_source ?? null, top_source: s.top_source ?? null });
@@ -73,15 +75,15 @@ export const SUMMARY_PROVIDER = "1m_summary";
 export const isSummaryRow = (a: Pick<ReplayAircraft, "provider">) => a.provider === SUMMARY_PROVIDER;
 export const SUMMARY_FLAG = "1분 평균 위치·고도·속도(요약) · 방위 없음";
 
-/** 기록 시각 표시: 원해상도는 관측 시각, 요약은 그 1분 구간(ts = 구간 시작) */
+/** 기록 시각 표시(KST): 원해상도는 관측 시각, 요약은 그 1분 구간(ts = 구간 시작) */
 export function replayRecLabel(a: Pick<ReplayAircraft, "ts" | "provider">, at: string): string {
   if (!a.ts) return "—";
   if (isSummaryRow(a)) {
     const t0 = Date.parse(a.ts);
-    return Number.isNaN(t0) ? "—" : `${fmtTime(t0)} – ${fmtTime(t0 + 60_000).slice(6)} 평균`;
+    return Number.isNaN(t0) ? "—" : `${fmtRangeKst(t0, t0 + 60_000)} 평균`;
   }
   const lag = (Date.parse(at) - Date.parse(a.ts)) / 1000;
-  return `${fmtTime(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
+  return `${fmtTimeKstLabel(a.ts)}${Number.isFinite(lag) ? ` (재생 시각 −${fmtDuration(lag)})` : ""}`;
 }
 
 /** 재생 상세(inspector) 행 — 고도·지상속도는 두 단위(계약 v5 §A2). 요약 행은 "1분 평균"이라고 이름에 밝힌다(DH-11) */
@@ -94,7 +96,7 @@ export function replayAircraftRows(a: ReplayAircraft, at: string): [string, stri
     [summary ? "지상속도(1분 평균)" : "지상속도", fmtGsDual(a.gs_kt)],
     ["방위", fmtNum(a.track_deg, "°")],
     ["지상", fmtBool(a.on_ground)],
-    [summary ? "기록 구간" : "기록 시각", summary ? replayRecLabel(a, at) : fmtTime(a.ts)],
+    [summary ? "기록 구간" : "기록 시각", summary ? replayRecLabel(a, at) : fmtTimeKstLabel(a.ts)],
     ["출처", summary ? "1분 요약(track_point_1m)" : a.provider ?? "—"],
   ];
 }
@@ -122,7 +124,7 @@ export function replaySigmetTip(s: ReplaySigmet, at: string): Tip {
     subtitle: s.fir_id,
     rows: [
       ["BAND", band(s.base_ft, s.top_ft, bandSrc(s))],
-      ["VALID", `${fmtTime(s.valid_from)} – ${fmtTime(s.valid_to)}`],
+      ["VALID", fmtRangeKst(s.valid_from, s.valid_to)],
       ["LEFT", Number.isFinite(left) && left > 0 ? `${fmtDuration(left)}(재생 시각 기준)` : "—"],
     ],
     flags: s.excluded_reason ? [{ text: `판정 제외: ${s.excluded_reason}`, tone: "muted" }] : [],
@@ -193,12 +195,24 @@ export function replayErrorText(e: unknown): string {
   return "서버에 연결할 수 없음 — 기록을 불러오지 못함";
 }
 
-/** 지도에 그린 프레임의 시각(응답 at) 표시. 요청 시각과 다르면 아직 새 프레임이 오지 않은 것 */
+/** 재생 시각 표시(KST, 날짜 포함) "YYYY-MM-DD HH:MM:SS KST" — 30일을 오가므로 연도까지. 모르면(0 · 형식 오류) "—" */
+export function replayAtLabel(ms: number | string | null | undefined): string {
+  if (!ms) return "—";
+  const s = isoKst(ms);
+  return s == null ? "—" : `${s.slice(0, 10)} ${s.slice(11, 19)} KST`;
+}
+
+/** 지도에 그린 프레임의 시각(응답 at — UTC ISO)을 KST 로. 요청 시각과 다르면 아직 새 프레임이 오지 않은 것 */
 export function replayFrameAtLabel(frame: Pick<ReplayFrame, "at"> | null, wantAtMs: number): { text: string; behind: boolean } {
   if (!frame) return { text: "—", behind: false };
   const t = Date.parse(frame.at);
   if (Number.isNaN(t)) return { text: "—", behind: false };
-  return { text: `${new Date(t).toISOString().replace("T", " ").slice(0, 19)}Z`, behind: Math.abs(t - wantAtMs) >= 1000 };
+  return { text: replayAtLabel(t), behind: Math.abs(t - wantAtMs) >= 1000 };
+}
+
+/** 재생 api 경로 — at 은 고른 KST 시각의 순간을 UTC ISO(…Z)로 보낸다(api 계약은 UTC) */
+export function replayApiPath(r: { at: number; bbox: string }): string {
+  return `/api/v1/replay?at=${encodeURIComponent(new Date(r.at).toISOString())}&bbox=${encodeURIComponent(r.bbox)}`;
 }
 
 // ---- 재생 시각 고르기(R-10) ----
@@ -224,19 +238,24 @@ export function stepAt(at: number, deltaMs: number, r: Pick<ReplayRange, "min" |
   return Math.min(r.max, Math.max(r.min, at + deltaMs));
 }
 
-/** datetime-local 값(UTC 로 해석) "YYYY-MM-DDTHH:MM" */
-export function toUtcInput(ms: number): string {
-  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 16) : "";
+/** datetime-local 값(한국 표준시로 쓴다) "YYYY-MM-DDTHH:MM" — 순간 ms 를 KST 벽시계로. 모르면 "" */
+export function toKstInput(ms: number): string {
+  const s = Number.isFinite(ms) ? isoKst(ms) : null;
+  return s == null ? "" : s.slice(0, 16);
 }
 
-/** "YYYY-MM-DDTHH:MM[:SS]" 를 UTC 로 읽는다. 없는 날짜(2월 30일 등)·형식 오류는 null */
-export function fromUtcInput(v: string): number | null {
+/**
+ * "YYYY-MM-DDTHH:MM[:SS]" 를 한국 표준시(+09:00 고정)로 읽어 순간(epoch ms)으로. 없는 날짜(2월 30일 · 평년 2월 29일 등)·24시·형식 오류는 null.
+ * 벽시계 값을 UTC 로 만든 뒤 9 h 를 빼므로 자정 · 달 · 해가 바뀌는 곳도 날짜가 어긋나지 않는다(브라우저 시간대와 무관).
+ */
+export function fromKstInput(v: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(v);
   if (!m) return null;
   const [y, mo, d, h, mi, se] = m.slice(1).map((x) => (x == null ? 0 : Number(x)));
-  const t = Date.UTC(y, mo - 1, d, h, mi, se);
-  const back = new Date(t);
-  return back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d && back.getUTCHours() === h && back.getUTCMinutes() === mi ? t : null;
+  const wall = Date.UTC(y, mo - 1, d, h, mi, se);
+  const back = new Date(wall);
+  const ok = back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d && back.getUTCHours() === h && back.getUTCMinutes() === mi && back.getUTCSeconds() === se;
+  return ok ? wall - KST_OFFSET_MS : null;
 }
 
 /** 시각 이동 버튼 [ms, 라벨] */
