@@ -161,6 +161,9 @@ export function AircraftSearch() {
   return (
     // 초점이 검색 영역(입력 · 결과의 정렬 단추) 밖으로 나갈 때만 닫는다 — Tab 으로 선박 표 머리글(정렬)에 갈 수 있게
     <div className="relative" data-testid="aircraft-search" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}>
+      {/* 자리 글자는 짧게(전에는 "항공기 호출부호·hex · 선박 선명·MMSI·IMO" 244 px 가 입력 안쪽 190 px 보다 길어 잘리고 "/" 표시와 겹쳤다 — 2026-09-30).
+          찾을 수 있는 값의 목록은 label(화면 읽기) · title(마우스). 오른쪽 안쪽 여백(pr-7!)은 "/" 표시 자리 — globals.css 의 input 규칙(층 밖)이
+          유틸리티보다 앞서므로 ! 로 */}
       <label htmlFor={`${uid}-input`} className="sr-only">통합 검색 — 항공기(호출부호·hex·등록번호) · 선박(선명·MMSI·IMO·호출부호)</label>
       <div className="flex items-center">
         <input
@@ -177,8 +180,9 @@ export function AircraftSearch() {
           spellCheck={false}
           maxLength={40}
           value={text}
-          placeholder="항공기 호출부호·hex · 선박 선명·MMSI·IMO"
-          className="mono h-[26px] w-64 text-[12px] uppercase placeholder:normal-case placeholder:text-fg-3"
+          placeholder="항공기 · 선박 검색"
+          title="항공기: 호출부호 · hex · 등록번호 / 선박: 선명 · MMSI · IMO · 호출부호 — / 키로 바로 입력"
+          className="mono h-[26px] w-64 pr-7! text-[12px] uppercase placeholder:normal-case placeholder:text-fg-3"
           onChange={(e) => {
             setText(e.target.value); setOpen(true); setActive(-1);
             if (!normalizeQuery(e.target.value)) setAircraft(IDLE);

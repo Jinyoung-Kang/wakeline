@@ -135,8 +135,9 @@ describe("dashboard cards: the times the review found without a UTC original", (
     setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: a, at: Date.parse("2026-09-28T23:02:03Z") } });
     const { AlertPanel } = await import("@/components/AlertPanel");
     await mount(createElement(AlertPanel));
-    expect(all((e) => e.getAttribute("data-testid") === "alert-banner-time")[0].textContent).toBe("수신 08:02:03 KST · 09-28 23:02:03 UTC");
-    expect(missingUtc()).toEqual([]);
+    // 배너는 KST 만(사용자 결정 2026-09-30) — 날짜까지의 전체 문장은 배너 title
+    expect(all((e) => e.getAttribute("data-testid") === "alert-banner-time")[0].textContent).toBe("수신 08:02:03 KST");
+    expect(all((e) => e.getAttribute("data-testid") === "alert-banner")[0].getAttribute("title")).toContain("수신 09-29 08:02:03 KST");
   });
   it("SIGMET card: the 'not yet valid' badge names the start in KST and UTC", async () => {
     at("2026-09-28T22:00:00Z"); // 발효 1 h 전

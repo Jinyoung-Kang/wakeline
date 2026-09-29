@@ -105,12 +105,13 @@ describe("dashboard components show KST first with UTC (the ISO original stays i
     expect(rows().find((r) => r.key === "kma")!.value).toMatch(/^1f · 최신 tm — · /);
   });
 
-  it("alert banner: received time in KST", () => {
+  it("alert banner: received time in KST only (사용자 결정 2026-09-30)", () => {
     const a = { id: 3, kind: "OBSERVED", hex: "a3", callsign: "CS3", sigmet_id: "S3", fir_id: "RKRR", hazard: "TS", entered_at: "2026-09-28T23:00:00Z", eta_s: null, alt_ft: 35000, evidence: {}, estimated: false } as unknown as Alert;
     setData({ conn: "open", alertsVersion: 1, lastEvent: { type: "ENTERED", alert: a, at: Date.parse("2026-09-28T23:02:03Z") } });
-    const t = text(renderToStaticMarkup(createElement(AlertPanel)));
-    expect(t).toContain("수신 08:02:03 KST · 09-28 23:02:03 UTC");
-    expect(unpairedKst(t)).toEqual([]);
+    const h = renderToStaticMarkup(createElement(AlertPanel));
+    const banner = /data-testid="alert-banner".*?<\/div><\/div><\/div>/.exec(h)![0];
+    expect(text(banner)).toContain("수신 08:02:03 KST");
+    expect(banner).not.toContain("UTC");
   });
 
   it("evidence card: validity range, judged time, observation and end in KST", () => {
