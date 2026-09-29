@@ -348,6 +348,39 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
       delete proto.clientWidth;
     }
   });
+  it("no two-line flash: a new chip set is measured before paint (layout effect), and a size change is applied synchronously from the ResizeObserver callback (review finding)", async () => {
+    // 하네스(검토): 자료가 칩을 더할 때마다 줄이 먼저 두 줄(52 px)로 그려지고 약 260 ms 뒤에 칩이 상세로 옮겨졌다 — 측정이 그린 뒤의 useEffect ·
+    // ResizeObserver 콜백의 setState(다음 작업)에서만 돌았다. 여기서는 ResizeObserver 가 알리기 전에도 이미 옮겨져 있어야 한다.
+    const observers: { cb: () => void; targets: unknown[] }[] = [];
+    vi.stubGlobal("ResizeObserver", class { targets: unknown[] = []; constructor(public cb: () => void) { observers.push(this); } observe(t: unknown) { this.targets.push(t); } unobserve() {} disconnect() { this.targets = []; } });
+    let rowW = 700;
+    const W: Record<string, number> = { conn: 70, "statusbar-details-toggle": 80, aircraft: 80, region: 90, world: 90, ais: 80, "ais-gap": 120, sigmet: 100, radar: 100, kma: 100 };
+    const size = (e: MiniElement) => W[e.getAttribute("data-chip") ?? e.getAttribute("data-testid") ?? ""] ?? 0;
+    const proto = MiniElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, "offsetWidth", { configurable: true, get(this: MiniElement) { return size(this); } });
+    Object.defineProperty(proto, "clientWidth", { configurable: true, get(this: MiniElement) { return this.getAttribute("data-testid") === "statusbar-row" ? rowW : 0; } });
+    vi.stubGlobal("getComputedStyle", () => ({ columnGap: "8px", paddingLeft: "12px", paddingRight: "12px" }));
+    const moved = () => ["lag-badge", "global-lag-badge", "ais-badge", "sigmet-chip", "radar-chip", "kr-status"].filter((id) => byId(id)?.getAttribute("data-overflow") === "true");
+    try {
+      // 기상청 칩이 없는 자료로 시작 → 첫 커밋에서 이미 잰다(ResizeObserver 콜백 없이)
+      const rerender = await mount(input({ radarKr: null }));
+      expect(moved()).toEqual(["sigmet-chip", "radar-chip"]);
+      // 새 칩(기상청)이 생기는 자료 — 같은 커밋 안에서 다시 잰다
+      await rerender(input());
+      expect(moved()).toEqual(["sigmet-chip", "radar-chip", "kr-status"]);
+      expect(byId("statusbar-details-toggle")!.textContent).toContain("+3");
+      // 창이 넓어짐(크기 변화) → ResizeObserver 콜백 안에서 바로 반영(act 밖 — 다음 작업을 기다리지 않는다)
+      rowW = 2000;
+      const g = globalThis as Record<string, unknown>;
+      const prevAct = g.IS_REACT_ACT_ENVIRONMENT;
+      g.IS_REACT_ACT_ENVIRONMENT = false;
+      try { observers[observers.length - 1].cb(); } finally { g.IS_REACT_ACT_ENVIRONMENT = prevAct; }
+      expect(moved()).toEqual([]);
+    } finally {
+      delete proto.offsetWidth;
+      delete proto.clientWidth;
+    }
+  });
 });
 
 describe("performance: the bar subscribes to the fields it shows, not the whole store", () => {

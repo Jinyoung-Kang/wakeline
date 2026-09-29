@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { serverNowMs, useServerData, type WsInvalid } from "@/lib/store";
 import { useNow } from "@/lib/clock";
 import {
@@ -15,8 +16,9 @@ const NONE: ReadonlySet<string> = new Set();
  *   핵심 수 하나, 정상이 아니면 낱말) → 오른쪽 끝 '상세' 단추. 표시 모델은 lib/statusbar(순수 함수 — 기준은 모두 기존 값).
  * - 폭이 모자라면 정상 · 모름 칩만 뒤에서부터 상세 표로 옮기고 단추에 '+N'(무엇을 옮겼는지 title) — 잘리지 않는다. 주의 · 경고 칩은 빼지 않는다.
  *   그래도 넘치면(좁은 화면의 경고들) 줄이 다음 줄로 넘어간다(flex-wrap) — 잘리지 않는다.
- * - 줄 폭은 ResizeObserver 가 크기 변화를 알릴 때만 잰다(1 s 시계 틱마다 재지 않는다 — 레이아웃 강제 없음). 옮긴 칩은 보이지 않게 겹쳐 두어(invisible ·
- *   absolute) 계속 잴 수 있고 화면 읽기 프로그램에서는 숨긴다(값은 상세 표에 있다).
+ * - 줄 폭은 칩 모음이 바뀔 때(그리기 전 — layout effect)와 ResizeObserver 가 크기 변화를 알릴 때만 잰다(1 s 시계 틱마다 재지 않는다). 둘 다 그리기
+ *   전에 반영한다 — 자료가 칩을 더할 때 줄이 두 줄로 먼저 그려졌다가 줄어드는 일이 없다(검토 하네스: 전에는 약 260 ms 동안 두 줄). 옮긴 칩은 보이지
+ *   않게 겹쳐 두어(invisible · absolute) 계속 잴 수 있고 화면 읽기 프로그램에서는 숨긴다(값은 상세 표에 있다).
  * - 상세: 단추(aria-expanded · aria-controls) — 누름 · Enter · Space 로 열고 닫고, Esc(초점이 상세 안 · 단추에 있거나 아무 데도 없을 때 — 단추로 초점을
  *   돌린다) · 바깥 누르기 · 초점이 밖으로 나감(초점은 그대로)으로 닫힌다. 다른 입력의 Esc 는 그 입력의 것. 열려 있을 때만 그린다.
  * - 스토어는 보이는 값만 골라 구독한다(전체 스토어가 아니라) — 항공기 diff 마다 모든 값을 다시 계산하지 않는다.
@@ -61,27 +63,37 @@ function ChipView({ chip, hidden }: { chip: Chip; hidden: boolean }) {
 
 /** 줄의 내용 폭(패딩 제외) · 칩 사이 간격 · 고정 항목(연결 · 경고 · 상세 단추) 폭을 읽어 옮길 칩을 고른다 — ResizeObserver 콜백 안에서만 부른다 */
 function measure(row: HTMLElement): Set<string> {
+  const width = row.clientWidth;
+  // 배치 전 · 숨김(폭 0 — 레이아웃 없음)이면 옮기지 않는다: 모두 옮기면 '+N' 이 틀린다. 크기가 생기면 ResizeObserver 가 다시 알린다
+  if (!(width > 0)) return new Set();
   const cs = getComputedStyle(row);
   const gap = parseFloat(cs.columnGap) || 0;
-  const inner = row.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+  const inner = width - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
   let reserved = 0;
   for (const el of row.querySelectorAll<HTMLElement>("[data-pin]")) reserved += el.offsetWidth + gap;
   const boxes = [...row.querySelectorAll<HTMLElement>("[data-chip]")].map((el) => ({ key: el.getAttribute("data-chip") ?? "", width: el.offsetWidth, pinned: el.getAttribute("data-pinned") === "true" }));
   return fitChips(boxes, inner, reserved, gap);
 }
 
+const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...b].every((k) => a.has(k));
+
 /**
- * 줄에서 옮길 칩(ResizeObserver): 줄 · 칩 · 고정 항목의 크기가 바뀔 때만 다시 잰다. layoutKey(어떤 칩이 있고 무엇이 pinned 인지)가 바뀌면 다시 관찰한다
- * — 관찰을 시작하면 ResizeObserver 가 곧바로 한 번 알린다. ResizeObserver 가 없으면(서버 렌더 · 옛 브라우저) 옮기지 않고 줄이 넘어간다(flex-wrap).
+ * 줄에서 옮길 칩. layoutKey(어떤 칩이 있고 무엇이 pinned 인지)가 바뀌면 그 커밋 안에서(useLayoutEffect — 그리기 전) 한 번 재고 다시 관찰한다.
+ * 그 밖에는 ResizeObserver 가 줄 · 칩 · 고정 항목의 크기 변화(창 폭 · 값 글자 폭)를 알릴 때만 잰다 — 콜백은 레이아웃 뒤 · 그리기 전에 오므로
+ * flushSync 로 그 자리에서 반영한다(다음 작업으로 미루면 한 프레임은 두 줄로 그려진다). 결과가 같으면 다시 그리지 않는다.
+ * ResizeObserver 가 없으면(옛 브라우저) 칩 모음이 바뀔 때만 잰다 — 그래도 넘치면 줄이 넘어간다(flex-wrap). 서버 렌더에서는 재지 않는다.
  */
 function useOverflow(rowRef: React.RefObject<HTMLDivElement | null>, layoutKey: string): ReadonlySet<string> {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(NONE);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const row = rowRef.current;
-    if (!row || typeof ResizeObserver === "undefined") return;
+    if (!row) return;
+    const first = measure(row);
+    setHidden((prev) => (sameSet(prev, first) ? prev : first));
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       const next = measure(row);
-      setHidden((prev) => (prev.size === next.size && [...next].every((k) => prev.has(k)) ? prev : next));
+      flushSync(() => setHidden((prev) => (sameSet(prev, next) ? prev : next)));
     });
     ro.observe(row);
     for (const el of row.querySelectorAll("[data-chip], [data-pin]")) ro.observe(el);
