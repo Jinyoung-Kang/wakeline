@@ -209,6 +209,8 @@ describe("first-screen JS budget guard (ADR-026)", () => {
     const over = runCheck(dir, total - 1);
     expect(over.code).toBe(1);
     expect(over.err).toMatch(/1 B 넘었습니다/);
+    // 조각으로 옮기라고만 말하지 않는다 — 첫 그리기에 보이는 화면을 옮기면 첫 화면은 그대로인데 검사만 통과한다
+    expect(over.err).toMatch(/클릭 · 탭 · 펼치기 · 검색 뒤에만 보이는 화면만.*첫 그리기에 보이는 화면을 옮기면/);
     expect(over.out).toContain("합계"); // 넘었을 때도 무엇이 실렸는지 표를 보인다
     // 압축기를 적는다: 웹 이미지 안이면 그 이미지(예산의 기준), 아니면 이 호스트의 Node(기준과 다를 수 있다고 말한다)
     expect(ok.out).toContain(`압축기: ${compressorLabel()}`);
@@ -238,5 +240,11 @@ describe("first-screen JS budget guard (ADR-026)", () => {
     expect(check).toHaveLength(1);
     expect(check[0]).toBeGreaterThan(build); // 운영 빌드(.next · public/maplibre) 뒤
     expect(steps[check[0]]).not.toMatch(/continue-on-error|^\s*if:/m); // 조건 없이 늘 돌고, 실패하면 job 이 실패한다
+    // 빌드 결과 검사가 세지 못하는 것(import() 조각이 첫 그리기에 쓰임)을 브라우저로 맞춰 본다 — 두 창 크기, 파일 목록이 빌드 결과와 같아야 한다
+    const browser = steps.flatMap((s, i) => (/npm run measure:first-js -- --serve 879\d\b/.test(s) ? [i] : []));
+    expect(browser).toHaveLength(1);
+    expect(browser[0]).toBeGreaterThan(build);
+    expect(steps[browser[0]]).toMatch(/npx playwright install --with-deps chromium/);
+    expect(steps[browser[0]]).not.toMatch(/continue-on-error|^\s*if:/m);
   });
 });

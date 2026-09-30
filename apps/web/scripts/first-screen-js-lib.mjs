@@ -292,7 +292,11 @@ export function runCheck(webDir, budget = FIRST_SCREEN_JS_BUDGET, { image = null
   const total = summarize(rows).body;
   const verdict = budgetVerdict(total, budget);
   if (verdict) {
-    return { code: 1, out, err: `${verdict} — 표에서 새로 실린 것을 찾아 상호작용 뒤로 미루거나(components/DashboardParts), 예산을 바꾸려면 ADR-026 절차(측정 · 근거)를 따르세요.` };
+    return {
+      code: 1, out,
+      err: `${verdict} — 표에서 새로 실린 것을 찾으세요. 클릭 · 탭 · 펼치기 · 검색 뒤에만 보이는 화면만 나중에 받는 조각(components/DashboardParts — 까닭을 tests/first-screen-lazy.test.ts 에)으로 옮깁니다. `
+        + "첫 그리기에 보이는 화면을 옮기면 첫 화면은 줄지 않고 이 검사만 통과합니다(브라우저 측정 measure:first-js -- --serve 가 빌드 목록과 다르다고 실패). 예산을 바꾸려면 ADR-026 절차(측정 · 근거)를 따르세요.",
+    };
   }
   return { code: 0, out: `${out}\n\n예산 ${budget} B (${fmtKiB(budget)}) 안 — 남은 여유 ${budget - total} B`, err: "" };
 }
