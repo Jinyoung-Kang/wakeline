@@ -1,7 +1,7 @@
 == 2026-10-01(KST) 02:58–03:05 호스트(Mac) 재시작 — 운영/로그 화면의 AIS 공백 · Hikari WARN 의 원인 확인(오케스트레이터 · 읽기 전용, 비밀값 없음)
 last reboot / last shutdown (wtmp):
 reboot time                                Thu Oct  1 03:03
-
+shutdown time                              Thu Oct  1 03:02
 sysctl kern.boottime: { sec = 1790791384, usec = 7324 } Thu Oct  1 03:03:04 2026
 macOS DiagnosticReports: shutdown_stall_2026-10-01-030214 (바이너리 spindump — 내용은 읽지 않음)
 pmset -g log: 2026-10-01 03:03:47 powerd process is started · 03:03:49 Display is turned on
