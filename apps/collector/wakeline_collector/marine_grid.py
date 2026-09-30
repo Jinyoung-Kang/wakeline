@@ -10,6 +10,10 @@
   0.025° 격자에 맞았다) 다각형 하나.
   다른 srsName(축 순서가 다를 수 있는 URN 등) · 없는 srsName 은 오류(짐작하지 않는다). 요청한 grid_no 와 다른 지물은 오류(다른 칸의 기하를 받지 않는다).
   DOCTYPE·ENTITY 가 있으면 해석하지 않는다(외부 엔티티·확장 공격), 본문 256 KiB 초과도 해석하지 않는다(지물 하나는 수 KB).
+- bbox 타일(ADR-023 2026-10-01 bbox 개정 — parse_wfs_tile): 한 응답에 여러 지물. 지물마다 한 칸 조회와 같은 검사(_feature)를 하고, 나쁜 지물은
+  그 지물만 뺀다(격자 밖 → off_grid · 모양 오류 → rejected). 모든 지물이 모양 오류면 응답 전체가 오류다(빈 타일로 끝났다고 하지 않는다).
+  지물 수가 maxFeatures 에 닿았거나 numberOfFeatures 와 다르면 잘렸을 수 있다(truncation — 작업이 타일을 나눈다). 크기 상한은 따로
+  MAX_WFS_TILE_BYTES(계산은 아래 상수 설명).
 """
 
 from __future__ import annotations
@@ -33,6 +37,17 @@ FN = 2_000_000.0
 CELL_DEG = 0.025  # 격자 4단계 칸 크기(도) — 확인한 표본의 모서리 간격
 SNAP_TOL_DEG = 1e-6  # 모서리가 격자점에서 벗어나도 되는 한도(약 0.1 m)
 MAX_WFS_BYTES = 256 * 1024
+GRID_ID_RE = re.compile(
+    r"^[A-Za-z0-9_]{1,32}$"
+)  # 칸 번호의 형식(해양교통안전공단 grid_id · WFS grid_no · V14 CHECK 와 같다) — 글자로 위치를 읽지 않는다
+# bbox 타일(ADR-023 2026-10-01 bbox 개정). 잰 것(2026-10-01, 실제 호출 두 번): 10 km 상자 28지물 18,635 B · 50 km 상자 450지물 289,093 B —
+# 지물 하나 (289,093 − 18,635) ÷ (450 − 28) ≈ 641 B(확인한 한 칸 응답의 지물도 641 B), 봉투 약 700 B. 32 km 타일(jobs 의 TILE_M)은 칸이 빈틈없이
+# 깔렸다고 본 모형(두 호출을 28 · 450 으로 재현 — tests/wfs_tiles)으로 176–201지물 · 113–129 KB. 상한 384 KiB(393,216 B ≈ 612지물)는 그 약 3배이고
+# 확인한 가장 큰 응답보다 크다 — 넘으면 해석하지 않고(WfsTooLarge) 작업이 타일을 넷으로 나눈다.
+MAX_WFS_TILE_BYTES = 384 * 1024
+# 요청의 maxFeatures — 실제 호출에서 받아들인 값(1000 을 주었을 때 450지물이 다 왔다). 이 값의 상한 · 서버 쪽 숨은 상한은 확인하지 않았다: 450 보다
+# 적게 자르는 서버 상한은 없다(450 이 왔다). 32 km 타일은 그 절반 아래다
+TILE_MAX_FEATURES = 1000
 EXPECTED_SRS = "http://www.opengis.net/gml/srs/epsg.xml#5179"  # 실제 응답의 표기(축 순서 동거 · 북거) — 처음 구현은 짐작한 "EPSG:5179" 를 기대해 모든 조회가 실패했다
 
 _N = F / (2 - F)
@@ -193,6 +208,10 @@ class WfsError(ValueError):
     """응답이 확인한 모양이 아니다(오류 문서 · 다른 좌표계 · 형식 오류). 메시지는 응답에서 온 짧은 글(가려서 싣는다 — 호출자)."""
 
 
+class WfsTooLarge(WfsError):
+    """본문이 크기 상한을 넘어 해석하지 않았다 — bbox 타일이면 작업이 타일을 나눈다(더 작은 상자 = 더 적은 지물)."""
+
+
 @dataclass(frozen=True)
 class WfsResult:
     kind: Literal["found", "not_found", "off_grid"]
@@ -249,10 +268,10 @@ def _pos_list(text: str) -> list[tuple[float, float]]:
     return [(vals[i], vals[i + 1]) for i in range(0, len(vals), 2)]
 
 
-def parse_wfs(body: bytes, grid_no: str) -> WfsResult:
-    """getOpnG4sWFS 응답 하나(grid_no=…&maxFeatures=1) → found · not_found · off_grid. 그 밖은 WfsError."""
-    if len(body) > MAX_WFS_BYTES:
-        raise WfsError(f"response too large ({len(body)} bytes)")
+def _collection(body: bytes, limit: int) -> ET.Element:
+    """본문 → FeatureCollection 뿌리. 크기 상한 · DOCTYPE · ENTITY 는 해석 전에 거절하고, 오류 문서 · 다른 뿌리는 WfsError."""
+    if len(body) > limit:
+        raise WfsTooLarge(f"response too large ({len(body)} bytes > {limit})")
     head = body[:4096].upper()
     if b"<!DOCTYPE" in head or b"<!ENTITY" in body.upper():
         raise WfsError("DOCTYPE/ENTITY in response — refused")
@@ -267,6 +286,46 @@ def parse_wfs(body: bytes, grid_no: str) -> WfsResult:
         raise WfsError(err[:300])
     if _local(root.tag) != "FeatureCollection":
         raise WfsError(f"unexpected root element {_local(root.tag)[:40]}")
+    return root
+
+
+Extent = tuple[float, float, float, float]  # EPSG:5179 (동거 최소, 북거 최소, 동거 최대, 북거 최대) — 받은 꼭짓점 그대로
+
+
+def _feature(f: ET.Element, grid_no: str) -> tuple[WfsResult, Extent | None]:
+    """지물 하나(grid_no · geom 자식이 있다) → found(칸과 받은 꼭짓점 범위) · off_grid. 모양이 확인한 것과 다르면 WfsError."""
+    gid_text = _text(_child_local(f, "gid"))
+    gid = int(gid_text) if re.fullmatch(r"-?\d{1,9}", gid_text) else None
+    geom = _child_local(f, "geom")
+    if geom is None:
+        raise WfsError("feature without geom")
+    srs = {e.get("srsName") for e in geom.iter() if e.get("srsName") is not None}
+    if srs != {EXPECTED_SRS}:
+        raise WfsError(f"unexpected srsName {sorted(s or '' for s in srs) or 'missing'} (expected {EXPECTED_SRS})")
+    polygons = _find_local(geom, "Polygon")
+    if len(polygons) != 1:
+        return WfsResult("off_grid", detail=f"{len(polygons)} polygons, expected 1"), None
+    if _find_local(polygons[0], "interior"):
+        return WfsResult("off_grid", detail="polygon has interior rings"), None
+    exterior = _find_local(polygons[0], "exterior")
+    pos = _find_local(exterior[0], "posList") if exterior else []
+    if len(pos) != 1:
+        raise WfsError("exterior ring without exactly one posList")
+    dim = pos[0].get("srsDimension")
+    if dim not in (None, "2"):
+        raise WfsError(f"posList srsDimension {dim[:4]} (expected 2)")
+    ring = _pos_list(_text(pos[0]))
+    try:
+        cell = cell_from_ring(grid_no, gid, ring)
+    except OffGrid as e:
+        return WfsResult("off_grid", detail=str(e)), None
+    xs, ys = [p[0] for p in ring], [p[1] for p in ring]
+    return WfsResult("found", cell=cell), (min(xs), min(ys), max(xs), max(ys))
+
+
+def parse_wfs(body: bytes, grid_no: str) -> WfsResult:
+    """getOpnG4sWFS 응답 하나(grid_no=…&maxFeatures=1) → found · not_found · off_grid. 그 밖은 WfsError."""
+    root = _collection(body, MAX_WFS_BYTES)
     features = [f for f in root.iter() if _child_local(f, "grid_no") is not None and _child_local(f, "geom") is not None]
     declared = root.get("numberOfFeatures")
     if not features:
@@ -279,27 +338,84 @@ def parse_wfs(body: bytes, grid_no: str) -> WfsResult:
     got = _text(_child_local(f, "grid_no"))
     if got != grid_no:
         raise WfsError(f"grid_no mismatch: asked {grid_no}, got {got[:40]}")
-    gid_text = _text(_child_local(f, "gid"))
-    gid = int(gid_text) if re.fullmatch(r"-?\d{1,9}", gid_text) else None
-    geom = _child_local(f, "geom")
-    assert geom is not None  # 위에서 골랐다
-    srs = {e.get("srsName") for e in geom.iter() if e.get("srsName") is not None}
-    if srs != {EXPECTED_SRS}:
-        raise WfsError(f"unexpected srsName {sorted(s or '' for s in srs) or 'missing'} (expected {EXPECTED_SRS})")
-    polygons = _find_local(geom, "Polygon")
-    if len(polygons) != 1:
-        return WfsResult("off_grid", detail=f"{len(polygons)} polygons, expected 1")
-    if _find_local(polygons[0], "interior"):
-        return WfsResult("off_grid", detail="polygon has interior rings")
-    exterior = _find_local(polygons[0], "exterior")
-    pos = _find_local(exterior[0], "posList") if exterior else []
-    if len(pos) != 1:
-        raise WfsError("exterior ring without exactly one posList")
-    dim = pos[0].get("srsDimension")
-    if dim not in (None, "2"):
-        raise WfsError(f"posList srsDimension {dim[:4]} (expected 2)")
-    ring = _pos_list(_text(pos[0]))
-    try:
-        return WfsResult("found", cell=cell_from_ring(grid_no, gid, ring))
-    except OffGrid as e:
-        return WfsResult("off_grid", detail=str(e))
+    return _feature(f, grid_no)[0]
+
+
+@dataclass(frozen=True, slots=True)
+class TileCell:
+    cell: Cell
+    extent: Extent  # 받은 외곽선의 EPSG:5179 범위 — 타일 가장자리에 닿는지(이웃 타일) 판정에 쓴다. 칸 번호에서 계산하지 않는다
+
+
+@dataclass(frozen=True)
+class WfsTile:
+    """bbox 응답 하나. cells = 검사를 통과한 칸(번호마다 하나) · off_grid = (번호, 까닭) — 격자 검사 실패(격리) · rejected = (번호 또는 None,
+    까닭) — 모양 오류 · 번호 형식 오류 · 같은 번호의 다른 기하. declared = numberOfFeatures · members = 본문의 지물 수."""
+
+    cells: tuple[TileCell, ...]
+    off_grid: tuple[tuple[str, str], ...]
+    rejected: tuple[tuple[str | None, str], ...]
+    declared: int
+    members: int
+    max_features: int
+
+    @property
+    def truncation(self) -> str | None:
+        """잘렸을 수 있으면 그 까닭, 아니면 None. 서버가 maxFeatures 보다 적게 조용히 자르면(numberOfFeatures 도 같이 줄면) 알 수 없다 — 확인한
+        것은 450지물까지 다 왔다는 것뿐이다(ADR-023 개정 — 타일 크기가 그 아래에 머무는 까닭)."""
+        if self.members >= self.max_features:
+            return f"{self.members} features = maxFeatures {self.max_features} — more may exist"
+        if self.declared != self.members:
+            return f"numberOfFeatures {self.declared} but {self.members} features in the body"
+        return None
+
+
+_MEMBERS = ("featureMembers", "featureMember")
+
+
+def parse_wfs_tile(body: bytes, max_features: int = TILE_MAX_FEATURES) -> WfsTile:
+    """getOpnG4sWFS bbox 응답(bbox=…&srs=EPSG:5179&maxFeatures=…) → WfsTile. 응답 전체가 확인한 모양이 아니면 WfsError(크기 초과는 WfsTooLarge).
+    한 칸 조회와 달리 '없는 칸'을 말하지 않는다 — 상자에 없는 번호는 묻지 않았다."""
+    root = _collection(body, MAX_WFS_TILE_BYTES)
+    declared_text = root.get("numberOfFeatures")
+    if declared_text is None or re.fullmatch(r"\d{1,9}", declared_text) is None:
+        raise WfsError(
+            f"numberOfFeatures {'missing' if declared_text is None else repr(declared_text[:12])} — cannot tell a complete tile"
+        )
+    members = [m for e in root.iter() if _local(e.tag) in _MEMBERS for m in e]
+    inside = {id(m) for m in members}
+    if any(
+        id(f) not in inside for f in root.iter() if _child_local(f, "grid_no") is not None and _child_local(f, "geom") is not None
+    ):
+        raise WfsError("feature outside featureMember(s)")
+    outcome: dict[str, list[tuple[WfsResult, Extent | None]]] = {}
+    rejected: list[tuple[str | None, str]] = []
+    for m in members:
+        g_el = _child_local(m, "grid_no")
+        if g_el is None or _child_local(m, "geom") is None:
+            rejected.append((None, "feature without grid_no and geom"))
+            continue
+        g = _text(g_el)
+        if GRID_ID_RE.fullmatch(g) is None:
+            rejected.append((None, f"grid_no {g[:40]!r} is not a grid id"))
+            continue
+        try:
+            got = _feature(m, g)
+        except WfsError as e:
+            rejected.append((g, str(e)[:200]))
+            continue
+        outcome.setdefault(g, []).append(got)
+    cells: list[TileCell] = []
+    off_grid: list[tuple[str, str]] = []
+    for g, seen in outcome.items():
+        if any(r != seen[0] for r in seen[1:]):
+            rejected.append((g, f"appears {len(seen)} times with different geometry"))
+            continue
+        res, ext = seen[0]
+        if res.kind == "found" and res.cell is not None and ext is not None:
+            cells.append(TileCell(res.cell, ext))
+        else:
+            off_grid.append((g, res.detail or "off grid"))
+    if members and not cells and not off_grid:
+        raise WfsError(f"all {len(members)} features rejected — first: {rejected[0][1]}"[:300])
+    return WfsTile(tuple(cells), tuple(off_grid), tuple(rejected), int(declared_text), len(members), max_features)
