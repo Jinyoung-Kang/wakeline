@@ -100,10 +100,12 @@ RainViewer ConnectTimeout 과 함께라 호스트 망 문제로 보고 이 부�
 **결정.**
 1. `max_queue` 64 · keepalive 20 s/20 s 는 그대로 둔다(이름 붙인 상수 `WS_MAX_QUEUE` · `PING_*`). 키우면 메모리 상한만 커지고 1011 은 줄지 않는다(위 표).
    무거운 작업을 루프 밖으로 옮기는 것도 하지 않는다 — 잰 최악이 0.1 s 대라 근거가 없다. 루프 지연 측정이 다른 것을 보이면 다시 본다.
-2. **진단**(`ais/diag.py`): 이벤트 루프 지연(0.5 s 틱이 늦게 깬 만큼), websockets 수신 버퍼에 남은 프레임(구역별), 원문 대기열에 머문 시간 · 깊이, keepalive
-   왕복(구역별) — 최근 60 s 최댓값. 상태 해시(`loop_lag_max_s` · `loop_stalls_total` · `queue_wait_max_s` · `queue_depth_max` · `ws_queue_max` · `ws_queue_limit` ·
-   `ping_rtt_max_s` · `ping_timeout_s` · `diag_window_s`, `shards[]` 의 `ping_rtt_max_s` · `ws_queue_max`), `GET /api/v1/ops/pipeline` 의 `ais.*`, 운영 PIPELINE 탭,
-   그리고 끊김 로그 한 줄의 맥락(+ 직전 발행 창의 공급자 지연 p50)에 싣는다. 다음 1011 을 읽는 법:
+2. **진단**(`ais/diag.py`): 이벤트 루프 지연(0.5 s 틱이 늦게 깬 만큼), websockets 수신 버퍼에 남은 프레임(구역별), 원문 대기열에 머문 시간(지금 맨 앞에서
+   기다리는 원문 포함 — 정리 태스크가 멈춰도 모름이 되지 않게) · 깊이, keepalive 왕복(구역별) — 최근 60 s 최댓값. 상태 해시(`loop_lag_max_s` · `loop_stalls_total` ·
+   `queue_wait_max_s` · `queue_depth_max` · `ws_queue_max` · `ping_rtt_max_s`, `shards[]` 의 `ping_rtt_max_s` · `ws_queue_max`), `GET /api/v1/ops/pipeline` 의 `ais.*`,
+   운영 PIPELINE 탭, 그리고 끊김 로그 한 줄의 맥락(+ 원문 대기열 깊이/상한 · 직전 발행 창의 공급자 지연 p50)에 싣는다. 고른 값도 상태 해시에 실어(`diag_window_s` ·
+   `ws_queue_limit` · `queue_limit` · `ping_timeout_s` · `loop_tick_s` · `loop_stall_s` · `loop_warn_s` · `loop_warn_every_s` · `reconnect_quick_window_s` ·
+   `reconnect_warn_count` · `reconnect_warn_window_s`) api 가 그대로 옮기고 웹은 설명의 숫자를 응답에서 채운다 — 수집기가 바꾸면 화면이 따라간다. 다음 1011 을 읽는 법:
    - 루프 지연이 시간 초과 이상(한 구역만 끊겼어도) → 루프 · 프로세스 멈춤.
    - 수신 버퍼가 상한(64) 이상 → 그때 소켓 읽기가 잠시 멈춰 있었다. 그 자체는 결함이 아니다 — 루프 지연이 작으면 한꺼번에 받은 묶음(공급자 적체 해소 ·
      망이 잠깐 끊겼다 이어짐), 크면 루프 멈춤 뒤다. 버퍼 값만으로는 둘을 가르지 못한다(루프 지연과 함께 본다). 1011 과 겹칠 때만 원인 후보다.
