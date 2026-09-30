@@ -545,10 +545,17 @@ class WsHubTest {
             assertThat(ofType(far, "diff")).isEmpty(); // 화면 밖이라 항공기 diff 는 없다
             assertThat(ofType(near, "selected")).hasSize(4); // 팬아웃과 selected 작업이 같은 관측을 두 번 보내지 않는다
             assertThat(ofType(near, "diff")).hasSize(3);
-            // 같은 관측(새 fetched_at 이지만 seen_at 같음) — 새 상태 객체라 selected 는 다시 간다(집중 추적 갱신마다)
+            // 같은 보고를 다시 실어 온 focus 메시지(새 상태 객체지만 보이는 값이 모두 같다) — 클라이언트가 볼 것이 없어 보내지 않는다(사용자 보고 2026-09-30:
+            // 같은 내용의 selected 두 번). 고치기 전에는 새 객체라 다시 갔다.
             Instant t3 = now.plusSeconds(15);
-            k.publishFocus(now.plusSeconds(20), ac("ddd001", 40, -39.97, 36000, t3, "adsb_fi"));
+            k.publishFocus(now.plusSeconds(20), ac("ddd001", 40, -40 + 3 * 0.01, 36000, t3, "adsb_fi"));
+            assertThat(ofType(far, "selected")).hasSize(4);
+            // seen_at 은 같지만 공급자에서 새로 받았다(fetched_at — full 인코딩에 있다) — 보이는 값이 바뀌어 보낸다(집중 추적 갱신마다)
+            k.publishFocus(now.plusSeconds(25), new AircraftState("ddd001", "CSddd", null, null, null, 40, -40 + 3 * 0.01, 36000, 400.0, 90.0, 0.0,
+                    false, null, t3, "adsb_fi", now.plusSeconds(25), 0, false));
             assertThat(ofType(far, "selected")).hasSize(5);
+            List<JsonNode> last2 = ofType(far, "selected").subList(3, 5);
+            assertThat(last2.get(1).path("state").path("fetched_at").asString()).isNotEqualTo(last2.get(0).path("state").path("fetched_at").asString());
         }
     }
 

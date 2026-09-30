@@ -173,21 +173,19 @@ public class WakelineWsHandler extends TextWebSocketHandler {
 
     /**
      * 선택(계약 §1) — 선택은 집중 추적 수요가 된다(계약 v2 §A1). 같은 hex 를 다시 선택해도 선택 시각을 새로 잡는다
-     * (30분 상한 뒤 "다시 선택하면 이어진다"). 시각을 먼저 쓰고 hex 를 쓴다(WsSession.selectedAtMs 참고).
+     * (30분 상한 뒤 "다시 선택하면 이어진다"). hex · 시각 · 답 차례는 한 객체로 한 번에 쓴다(WsSession.Selection — 우편함 · 수요 스레드가 어긋나게 읽지 않는다).
      */
     private void select(WsSession s, JsonNode m) {
         JsonNode h = m.get("hex");
         if (h == null || h.isNull()) {
-            s.selectedHex = null;
-            s.selectedAtMs = 0;
+            s.selection = null;
             hub.demandChanged();
             return;
         }
         String hex = h.isString() ? h.asString().toLowerCase(Locale.ROOT) : "";
         if (!HEX.matcher(hex).matches()) { hub.error(s, "BAD_HEX", "hex must be 6 hex digits or null"); return; }
-        s.selectedAtMs = System.currentTimeMillis();
-        s.selectedHex = hex;
-        hub.requestSelected(s); // 바로 한 번, 이후 스냅샷마다 바뀌면
+        s.selection = new WsSession.Selection(hex, System.currentTimeMillis());
+        hub.requestSelected(s); // 바로 한 번(앞선 작업이 이 select 에 이미 답했으면 바뀐 것만 — Selection.claimAnswer), 이후 스냅샷마다 바뀌면
         hub.demandChanged();
     }
 
@@ -218,7 +216,7 @@ public class WakelineWsHandler extends TextWebSocketHandler {
 
     /**
      * 선박 선택(계약 v2 §B3): 바로 ship_selected 한 번, 이후 그 선박이 바뀔 때마다. null 은 선택 해제(응답 없음). 수요는 바꾸지 않는다 — 한국 항만
-     * 입출항은 DB 색인을 읽을 뿐이라 임대가 없다(ADR-022 개정). 수요(DemandService.want)는 항공기 선택(selectedHex)만 본다.
+     * 입출항은 DB 색인을 읽을 뿐이라 임대가 없다(ADR-022 개정). 수요(DemandService.want)는 항공기 선택(selection)만 본다.
      */
     private void selectShip(WsSession s, JsonNode m) {
         JsonNode v = m.get("mmsi");

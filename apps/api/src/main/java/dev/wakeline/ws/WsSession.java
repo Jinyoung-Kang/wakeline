@@ -51,8 +51,38 @@ public final class WsSession {
         WsMessages.Encoding encoding() { return WsMessages.encodingFor(detail, world()); }
     }
 
-    /** 마지막으로 보낸 "selected" — 바뀐 경우에만 다시 보낸다(노선 상태가 바뀌어도 — 예: 조회 중 → 찾음). */
-    record SelectedSent(String hex, AircraftState state, PredictionAvailability prediction, RouteInfo route) {}
+    /**
+     * 마지막으로 보낸 "selected" — 바뀐 경우에만 다시 보낸다(노선 상태가 바뀌어도 — 예: 조회 중 → 찾음). json 은 보낸 글자 그대로다: 다시 계산한 selected 가
+     * 이것과 같으면 클라이언트가 볼 것이 없어 보내지 않는다(사용자 보고 2026-09-30 — 같은 내용의 selected 두 번, WsHub.sendSelected).
+     */
+    record SelectedSent(String hex, AircraftState state, PredictionAvailability prediction, RouteInfo route, String json) {}
+
+    /**
+     * 선택 항공기 하나(계약 §1 select) — select 마다 새 객체를 만들어 {@link #selection} 에 한 번에 쓴다. hex · 선택 시각 · '이 select 에 아직 답하지 않음'이 한
+     * 객체라, 우편함 · 수요 스레드가 한 번 읽으면 늘 같은 select 의 값을 함께 본다. 따로 쓴 필드(hex · 답 표시)를 읽는 작업은 두 쓰기 사이에 돌면 새 hex 를
+     * 표시 없이 보고 selected 를 보낸 뒤, 뒤이은 SELECTED 작업이 표시를 보고 같은 글자를 또 보냈다(리뷰 2026-09-30 — 두 문장 사이의 좁은 경합).
+     */
+    static final class Selection {
+        final String hex;
+        /**
+         * 이 hex 를 (다시) 선택한 시각(epoch ms) — 집중 추적 30분 상한과 demand.focus.since 의 기준(ADR-013). 같은 hex 를 다시 선택해도 새 객체라 새로
+         * 시작한다("다시 선택하면 이어진다").
+         */
+        final long atMs;
+        private final AtomicBoolean answered = new AtomicBoolean();
+
+        Selection(String hex, long atMs) {
+            this.hex = hex;
+            this.atMs = atMs;
+        }
+
+        /**
+         * 이 select 에 답할 차례를 가져간다 — selected 를 계산하는 작업(SELECTED · 초기 세트 · 팬아웃 · focus 관측 · 노선 답) 가운데 처음 부르는 쪽만 true.
+         * 그 작업은 바뀌지 않았어도 한 번 보낸다(select 마다 답 하나: 웹은 해제 때 selected 를 지운다). 예전 select 를 읽은 작업은 새 select 의 차례를 가져가지
+         * 못한다.
+         */
+        boolean claimAnswer() { return answered.compareAndSet(false, true); }
+    }
 
     final String id;
     final String ip;
@@ -67,13 +97,14 @@ public final class WsSession {
     volatile boolean hello;
     volatile boolean paused;
     volatile Sub sub;
-    volatile String selectedHex;
-    /**
-     * 이 hex 를 (다시) 선택한 시각(epoch ms) — 집중 추적 30분 상한과 demand.focus.since 의 기준(ADR-013). 같은 hex 를 다시 선택해도
-     * 새로 시작한다("다시 선택하면 이어진다"). 핸들러는 이 값을 먼저 쓰고 selectedHex 를 쓴다(수요 스레드가 hex 를 읽은 뒤 이 값을 읽으면
-     * 적어도 그 선택의 시각을 본다).
-     */
-    volatile long selectedAtMs;
+    /** 선택 항공기(없으면 null) — 핸들러가 select 마다 새 {@link Selection} 하나를 쓴다(한 번의 쓰기). */
+    volatile Selection selection;
+
+    /** 선택 항공기 hex(없으면 null). */
+    String selectedHex() {
+        Selection x = selection;
+        return x == null ? null : x.hex;
+    }
     /** 치명적 프로토콜 오류로 닫는 중 — 이후 수신 메시지는 무시한다. */
     volatile boolean inboundBlocked;
     /** 답 없는 ping 수(heartbeat 가 올리고 pong 이 0 으로) */

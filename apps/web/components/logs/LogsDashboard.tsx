@@ -334,7 +334,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           <button type="button" className="btn" aria-pressed={tab === "gaps"} onClick={() => setTab("gaps")}>AIS 수신 공백</button>
         </div>
         {tab === "logs" ? <>
-          <button type="button" className="btn" onClick={() => void load(view, filter)} disabled={loading}>새로 고침</button>
+          <button type="button" className="btn" onClick={() => void load(view, filter)} disabled={loading}>새로고침</button>
           <span className="mono text-[11px] text-fg-3" title={`마지막 성공 응답 시각(KST) — 15 s 마다 새 항목을 확인(목록은 단추를 눌러야 바뀜)${lastOk ? ` · ${fmtTimeTitle(lastOk)}` : ""}`} data-testid="logs-last-ok">갱신 {fmtKstClock(lastOk)} · 15 s 확인</span>
         </> : null}
         {err && tab === "logs" ? <span className="text-[11px] text-bad" role="alert"><ErrorNote error={err} onFilterRid={filterRid} /></span> : null}
