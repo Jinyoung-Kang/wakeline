@@ -227,7 +227,7 @@ async def test_focus_budget_share_exhausted_is_throttled_not_called(monkeypatch)
     assert st["state"] == "throttled" and "daily budget share exhausted" in st["last_error"]
     assert st["last_success_at"]  # 직전 성공 시각은 그대로 보인다
     assert ctx.db.names[-1] == "ingest_run(focus)"  # type: ignore[attr-defined]
-    ok, _ = await ctx.budget.reserve("adsb_fi")  # 관심 지역 폴백은 여전히 예약할 수 있다
+    ok, _ = await ctx.budget.reserve("adsb_fi")  # 관심 지역(adsb.fi 기본 1순위 — 계약 v5 §G25)은 여전히 예약할 수 있다
     assert ok
 
 

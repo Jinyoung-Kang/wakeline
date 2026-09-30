@@ -309,7 +309,10 @@ describe("time examples", () => {
     expect(ops).toMatch(/quarantined/);
     expect(ops).toMatch(/마지막 성공을 갱신하지 않습니다/);
     expect(ops).toMatch(/kma_radar 행 아래/);
-    expect(ops).toContain(`${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’`);
+    // 계약 v5 §G26: 긴 연속은 늘린 간격(수집기 선택값)으로 확인 — '확인 멈춤' 기준은 확인 간격 × 3(아래로 15분)
+    expect(ops).toContain(`확인 간격 × 3(아래로 ${KR_MISSING_CHECK_STALE_MIN}분)을 넘으면 ‘확인 멈춤’`);
+    expect(ops).toMatch(/15분마다 확인/);
+    expect(ops).toMatch(/waiting/);
     expect(ops).not.toMatch(/최근 60 s/); // 창 길이는 수집기 설정 — 설명서가 숫자를 들고 있지 않다
   });
   it("unknown values are shown as — without a unit", () => {

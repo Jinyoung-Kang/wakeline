@@ -39,6 +39,13 @@ OPTIONAL_EXTERNAL = {
     "aisstream_key": "ships layer",
 }
 OWNER_ONLY = 0o600
+# 기본값이 바뀐 비밀 아닌 설정 → (옛 기본값, 근거). `.env` 가 옛 기본값 그대로면(옛 .env.example 을 복사한 것) 알리기만 한다 —
+# 이미 있는 값은 바꾸지 않는다. 새 기본값은 .env.example 에서 읽는다. 이 값들은 비밀이 아니라 출력해도 된다.
+RETIRED_DEFAULTS = {
+    # 관심 지역 순서 adsb_fi 먼저(계약 v5 §G25 · ADR-011 2026-09-30 저녁). 수집기는 운영 설정 미러(Redis wakeline:settings)가 없을 때
+    # 이 값을 쓴다 — 옛 값이 남아 있으면 그때마다 adsb_lol 이 1순위가 된다.
+    "AIRCRAFT_PROVIDERS": ("adsb_lol,adsb_fi,opensky", "contract v5 §G25, ADR-011"),
+}
 
 
 def fill_secrets(text: str, keys: list[str] = INTERNAL) -> tuple[str, list[str]]:
@@ -55,6 +62,26 @@ def fill_secrets(text: str, keys: list[str] = INTERNAL) -> tuple[str, list[str]]
             text = text[: m.start()] + f"{key}={secrets.token_urlsafe(24)}" + text[m.end():]
             generated.append(key)
     return text, generated
+
+
+def _plain_value(text: str, key: str) -> str | None:
+    """`KEY=value` 줄의 값(앞뒤 공백 · 감싼 따옴표 제거). 줄이 없거나 주석이면 None."""
+    m = re.search(rf"^{re.escape(key)}=(.*)$", text, re.M)
+    return m.group(1).strip().strip("'\"").strip() if m else None
+
+
+def retired_default_notices(text: str, example_text: str, env_name: str = ".env") -> list[str]:
+    """`.env` 에 옛 기본값이 그대로 남은 설정마다 알림 한 줄. 운영자가 고른 다른 값 · 새 기본값 · 줄 없음은 알리지 않는다."""
+    notes = []
+    for key, (old, ref) in RETIRED_DEFAULTS.items():
+        new = _plain_value(example_text, key)
+        if _plain_value(text, key) == old and new and new != old:
+            notes.append(
+                f"{key} in {env_name} is the old default {old}; the new default is {new} ({ref}). "
+                f"The collector uses this line when the runtime setting is not mirrored — "
+                f"change it to {new} or delete it, then run make up (value left unchanged)"
+            )
+    return notes
 
 
 def write_private(path: Path, text: str) -> None:
@@ -90,6 +117,8 @@ def ensure_env(env: Path = ENV, example: Path = EXAMPLE, out=sys.stdout) -> list
     if missing:
         off = sorted({OPTIONAL_EXTERNAL[k] for k in missing})
         print(f"optional external keys not set ({', '.join(off)} stays off):", ", ".join(missing), file=out)
+    for note in retired_default_notices(text, example.read_text(), env.name):
+        print(note, file=out)
     print(f"{env.name} ready", file=out)
     return generated
 

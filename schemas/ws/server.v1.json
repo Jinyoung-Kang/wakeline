@@ -511,7 +511,7 @@
                 "stations_ref": { "type": "integer", "minimum": 0, "maximum": 48 },
                 "partial": { "type": "boolean" },
                 "missing": {
-                  "description": "기상청 내려받기 '파일 없음' 연속(2026-09-30): 목록에는 있는데 내려받기가 없다고 답한 첫 tm · 마지막 tm(KST 벽시계 그대로) · 서로 다른 tm 수 · 마지막 확인 · 답의 파일 이름 · 목록 종류. 연속이 없으면 키가 없다",
+                  "description": "기상청 내려받기 '파일 없음' 연속(2026-09-30): 목록에는 있는데 내려받기가 없다고 답한 첫 tm · 마지막 tm(KST 벽시계 그대로) · 서로 다른 tm 수 · 마지막 확인 · 답의 파일 이름 · 목록 종류 · 수집기의 지금 확인 간격(초 — 계약 v5 §G26, 옛 수집기면 없다). 연속이 없으면 키가 없다",
                   "type": "object",
                   "additionalProperties": false,
                   "required": ["since_tm", "last_tm", "tms", "checked_at"],
@@ -521,7 +521,8 @@
                     "tms": { "type": "integer", "minimum": 1 },
                     "checked_at": { "$ref": "#/$defs/date_time" },
                     "file": { "type": "string", "pattern": "^RDR_CMP_[A-Z]+_[A-Z]+_[0-9]{12}\\.bin\\.gz$" },
-                    "listed": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "pattern": "^[A-Z]{1,8}$" } }
+                    "listed": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "pattern": "^[A-Z]{1,8}$" } },
+                    "probe_every_s": { "type": "integer", "minimum": 1, "maximum": 86400 }
                   }
                 }
               }

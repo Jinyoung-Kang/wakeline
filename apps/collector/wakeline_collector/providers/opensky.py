@@ -1,7 +1,7 @@
 """OpenSky Network — OAuth2 client credentials(토큰 30분), 전세계 1회 4크레딧. 계정이 없으면 비활성.
 
 전세계(global) 전용이다. 관심 지역 폴백에 쓰면 10 s 주기 × 4크레딧으로 일일 한도를 몇 시간 만에 소진해
-전세계 화면이 하루 종일 죽는다(GAP-5/REL-14). 관심 지역은 adsb_lol → adsb_fi 만 쓰고, 둘 다 안 되면 stale 로 둔다(FR-19).
+전세계 화면이 하루 종일 죽는다(GAP-5/REL-14). 관심 지역은 adsb_fi → adsb_lol(기본 순서 — 계약 v5 §G25) 만 쓰고, 둘 다 안 되면 stale 로 둔다(FR-19).
 """
 
 from __future__ import annotations

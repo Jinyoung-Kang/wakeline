@@ -16,9 +16,11 @@ import java.util.regex.Pattern;
  *   <li>since_tm · last_tm: 없다는 답을 받은 가장 이른 · 가장 새 tm(YYYYMMDDHHMM, 기상청 KST 벽시계 그대로 — last_tm ≥ since_tm)</li>
  *   <li>tms: 없다는 답을 받은 서로 다른 tm 수(1 이상) · checked_at: 수집기가 마지막으로 확인한 순간(시간대 있는 시각)</li>
  *   <li>file: 기상청 답이 없다고 적은 파일 이름(RDR_CMP_…_&lt;tm&gt;.bin.gz — 답 그대로) · listed: 목록이 그 tm 에 싣는 파일 종류(["EXT"] — 목록 그대로)</li>
+ *   <li>probe_every_s: 수집기의 지금 확인 간격(초 — 5분마다면 주기 300, 연속이 60분을 넘으면 늦춘 900, 둘 다 수집기 선택값. 계약 v5 §G26 · 2026-09-30 저녁)</li>
  * </ul>
  * 수집기 값을 믿지 않는다(R-72): since_tm 이 비었거나 없으면 연속이 없다(키 없음 — 세지 않는다). 핵심 값(since_tm · last_tm · tms · checked_at)이
- * 하나라도 틀리면 연속 전체를 모름(null)으로 두고 "missing" 으로 센다 — 일부만 보여 까닭을 틀리게 말하지 않는다. file · listed 가 틀리면 그 키만 뺀다.
+ * 하나라도 틀리면 연속 전체를 모름(null)으로 두고 "missing" 으로 센다 — 일부만 보여 까닭을 틀리게 말하지 않는다. file · listed · probe_every_s 가 틀리면 그 키만 뺀다
+ * (비었으면 — 옛 수집기 — 키가 없고 세지 않는다).
  */
 final class KrRadarMissing {
     private static final Pattern TM = Pattern.compile("^\\d{12}$");
@@ -26,6 +28,8 @@ final class KrRadarMissing {
     private static final Pattern KIND = Pattern.compile("^[A-Z]{1,8}$");
     /** 목록 종류 수 상한(파일 이름의 한 마디 — 여러 개여도 몇 개다) */
     private static final int MAX_KINDS = 8;
+    /** 확인 간격의 상한(초) — 하루. 그보다 긴 간격은 수집기가 고르지 않는다(틀린 값) */
+    static final int MAX_PROBE_EVERY_S = 86_400;
 
     private KrRadarMissing() { }
 
@@ -53,6 +57,12 @@ final class KrRadarMissing {
             List<String> kinds = kinds(listed);
             if (kinds != null) m.put("listed", kinds);
             else parseError.accept("missing_listed");
+        }
+        String every = text(h.get("missing_probe_every_s"));
+        if (!every.isEmpty()) {
+            Integer s = positive(every);
+            if (s != null && s <= MAX_PROBE_EVERY_S) m.put("probe_every_s", s);
+            else parseError.accept("missing_probe_every_s");
         }
         return m;
     }

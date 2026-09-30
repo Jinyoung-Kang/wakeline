@@ -16,7 +16,7 @@
  */
 import { jobProvider, noProviderLine } from "./active-provider";
 import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./format";
-import { KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, krComposite, krMissing } from "./kr-radar";
+import { krComposite, krMissing } from "./kr-radar";
 import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
 import type { ConnState, ServerData } from "./store";
 import { fmtKst, fmtKstRange, fmtTimeTitle, kstWallMs, timeParts, type TimeIn } from "./time";
@@ -432,8 +432,8 @@ export function detailRows(i: StatusInput): DetailRow[] {
       value: `tm ${miss.range} · 확인한 tm ${miss.tms}개 ${miss.tms === 1 ? "" : "모두 "}없음`, valueTitle: miss.title,
       source: `기상청 답: ${miss.file ? `${miss.file} 없음` : "파일 없음(파일 이름 모름)"}${miss.listed ? ` · 목록에는 ${miss.listed}` : ""} · 마지막 확인 ${kstAt(miss.checkedAt, i.srvNowMs)}`,
       sourceTitle: fullTitle("마지막 확인", miss.checkedAt),
-      rule: `목록에 있는 tm 을 내려받기가 '파일 없음'으로 답하는 동안 — 수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인`
-        + ` · 파일이 다시 오면 이 행은 사라짐 · 마지막 확인이 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 확인 멈춤(수집기 선택값)`,
+      rule: `목록에 있는 tm 을 내려받기가 '파일 없음'으로 답하는 동안 — ${miss.cadence}`
+        + ` · 파일이 다시 오면 이 행은 사라짐 · 마지막 확인이 ${miss.staleMin}분을 넘으면 확인 멈춤(수집기 선택값)`,
     });
   }
   const en = i.status?.engine;

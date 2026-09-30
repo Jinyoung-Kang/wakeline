@@ -191,7 +191,7 @@ public final class DbTestSupport {
         }
     }
 
-    /** 테스트 사이 초기화: 쓰기 대상 테이블 비우기 + 런타임 설정을 V1 시드로. */
+    /** 테스트 사이 초기화: 쓰기 대상 테이블 비우기 + 런타임 설정을 시드로(V1 · V6 · V17 — 관심 지역 순서는 V17 의 adsb_fi 먼저). */
     public static void reset() {
         start();
         exec("wakeline", """
@@ -200,7 +200,7 @@ public final class DbTestSupport {
                          port_call, port_call_coverage RESTART IDENTITY CASCADE;
                 UPDATE app_setting SET version = 1, updated_by = NULL, value = CASE key
                   WHEN 'region_poll_s' THEN '10' WHEN 'global_poll_s' THEN '120' WHEN 'sigmet_poll_s' THEN '300' WHEN 'radar_poll_s' THEN '60'
-                  WHEN 'metar_poll_s' THEN '600' WHEN 'aircraft_providers' THEN '"adsb_lol,adsb_fi,opensky"' WHEN 'region_center' THEN '"36.5,127.8"'
+                  WHEN 'metar_poll_s' THEN '600' WHEN 'aircraft_providers' THEN '"adsb_fi,adsb_lol,opensky"' WHEN 'region_center' THEN '"36.5,127.8"'
                   WHEN 'region_radius_nm' THEN '250' WHEN 'global_enabled' THEN 'true'
                   WHEN 'ais_bboxes' THEN '""' END::jsonb;""");
     }

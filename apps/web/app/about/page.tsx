@@ -4,8 +4,8 @@ export const metadata: Metadata = { title: "출처·한계" };
 
 export default function AboutPage() {
   const rows: [string, string, string][] = [
-    ["항공기 (1순위)", "adsb.lol — readsb v2 API", "ODbL 1.0 · 출처 표기 · 429 시 백오프 후 adsb.fi 폴백"],
-    ["항공기 (2순위)", "adsb.fi opendata", "개인·비상업 · 초당 1회(토큰 버킷) · 출처 표기"],
+    ["항공기 (1순위)", "adsb.fi opendata", "개인·비상업 · 초당 1회(토큰 버킷) · 출처 표기 · 3회 연속 실패 · 429 · 운영자 끔이면 adsb.lol 폴백"],
+    ["항공기 (2순위 — 폴백)", "adsb.lol — readsb v2 API", "ODbL 1.0 · 출처 표기 · 폴백으로 쓸 때도 429 면 백오프 · 되풀이되면 뒤로 미룸(최대 6 h) · 순서는 운영 설정"],
     ["항공기 (전세계)", "OpenSky Network (OAuth2)", "연구·비상업 · 하루 4,000 크레딧 · 계정 없으면 비활성"],
     ["항공기 (정밀 추적)", "adsb.fi opendata — hex 묶음 조회 · 반경 조회", "사람이 보는 곳만: 선택 항공기(집중 추적)·확대한 화면(핫 리전) · 수집기 전체 호출 상한 안에서 · 화면에는 서버가 보고한 주기·상태만"],
     ["선박 (AIS)", "aisstream.io — WebSocket 스트림", "API 키는 서버 ais 수집기에만 · 재전송 없음 → 끊긴 구간은 공백으로 기록·표시 · 구독 영역은 운영 설정 · 구역별 연결(최대 3)"],

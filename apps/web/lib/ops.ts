@@ -367,7 +367,7 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   metar_poll_s: { kind: "int", min: 300, max: 7200, unit: "초" },
   region_radius_nm: { kind: "int", min: 50, max: 500, unit: "NM" },
   global_enabled: { kind: "bool" },
-  aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_lol · adsb_fi · opensky 를 쉼표로(예: adsb_lol,adsb_fi)" },
+  aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_fi · adsb_lol · opensky 를 쉼표로 — 앞이 먼저(기본 adsb_fi,adsb_lol,opensky · opensky 는 전세계만)" },
   region_center: {
     kind: "text", pattern: LAT_LON, hint: "위도,경도(예: 36.5,127.8) · |위도| ≤ 85",
     check: (v) => { const [la, lo] = v.split(",").map((x) => Number(x.trim())); return Math.abs(la) > 85 || Math.abs(lo) > 180 ? "위도는 ±85, 경도는 ±180 안이어야 합니다." : null; },
@@ -422,10 +422,12 @@ export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   quarantined: "새 tm 을 받았으나 해석할 수 없어 격리 — 저장한 프레임 없음(원본은 raw 에 남는다)",
   // 기상청 429(운영 로그 2026-09-30 — jobs/kma_radar.py) · 수집기 속도 상한(jobs/aircraft.py) — 계약 v5 §G14: 공급자 오류는 'error' 만
   throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",
+  // 계약 v5 §G26(jobs/kma_radar.py _wait): 기상청 '파일 없음' 연속이 60분을 넘으면 15분마다만 확인한다 — 그 사이 주기
+  waiting: "대기 — 기상청 '파일 없음' 연속이 길어 수집기가 확인 간격을 늘렸고(수집기 선택값 — 간격과 마지막 확인 뒤 지난 분은 오류 글자) 이 주기는 기상청을 부르지 않음. 공급자 오류가 아니다(공급자 last success · last error 를 바꾸지 않는다)",
 };
 
 /**
- * 실행 상태 글자색: ok 초록 · missing · quarantined · throttled 주황(자료가 오지 않았지만 공급자 오류는 아니다) · 그 밖(error · budget_* …)은 전과 같이
+ * 실행 상태 글자색: ok 초록 · missing · quarantined · throttled · waiting 주황(자료가 오지 않았지만 공급자 오류는 아니다) · 그 밖(error · budget_* …)은 전과 같이
  * 요약(summary) 주황 · 최근 실행(item) 빨강.
  */
 export function runStatusClass(status: unknown, where: "summary" | "item"): string {
@@ -456,8 +458,9 @@ export function providerMissing(p: Record<string, unknown>, nowMs: number): KrMi
   const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
   if (!str("missing_since_tm")) return null;
   const tms = /^\d{1,6}$/.test(str("missing_tms")) ? Number(str("missing_tms")) : NaN;
+  const every = /^\d{1,6}$/.test(str("missing_probe_every_s")) ? Number(str("missing_probe_every_s")) : null; // 계약 v5 §G26 — 모르면 null
   return krMissing({
     since_tm: str("missing_since_tm"), last_tm: str("missing_last_tm"), tms, checked_at: str("missing_checked_at"),
-    file: str("missing_file") || null, listed: str("missing_listed") ? str("missing_listed").split(",") : null,
+    file: str("missing_file") || null, listed: str("missing_listed") ? str("missing_listed").split(",") : null, probe_every_s: every,
   }, nowMs);
 }

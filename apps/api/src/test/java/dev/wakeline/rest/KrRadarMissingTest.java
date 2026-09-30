@@ -63,4 +63,28 @@ class KrRadarMissingTest {
         assertThat(KrRadarMissing.from(hash(Map.of("missing_file", "", "missing_listed", "")), none::add)).doesNotContainKeys("file", "listed");
         assertThat(none).as("unknown (empty) is not wrong").isEmpty();
     }
+
+    /**
+     * 계약 v5 §G26(2026-09-30 저녁): 수집기가 지금 확인 간격(초)을 missing_probe_every_s 로 싣는다 — 5분마다(300) 또는 긴 연속에서 늦춘 15분(900, 수집기 선택값).
+     * 공개 missing 에 probe_every_s(정수 초)로 그대로. 비었으면(옛 수집기) 키가 없고 세지 않는다. 틀리면(수 아님 · 0 · 하루 넘음) 그 키만 빼고 센다 — 웹이 간격을
+     * 모르면 'N분마다'를 적지 않고 '확인 멈춤' 기준도 전처럼 15분으로 둔다. 고치기 전(키를 읽지 않음)에는 이 시험이 실패했다.
+     */
+    @Test
+    void theProbeIntervalPassesThroughInSecondsAndAWrongValueDropsOnlyThatKey() {
+        List<String> errors = new ArrayList<>();
+        Map<String, Object> m = KrRadarMissing.from(hash(Map.of("missing_probe_every_s", "900")), errors::add);
+        assertThat(errors).isEmpty();
+        assertThat(m).containsEntry("probe_every_s", 900);
+        assertThat(new ArrayList<>(m.keySet())).containsExactly("since_tm", "last_tm", "tms", "checked_at", "file", "listed", "probe_every_s");
+        assertThat(KrRadarMissing.from(hash(Map.of("missing_probe_every_s", "300")), errors::add)).containsEntry("probe_every_s", 300);
+        assertThat(KrRadarMissing.from(hash(Map.of("missing_probe_every_s", "")), errors::add)).doesNotContainKey("probe_every_s");
+        assertThat(KrRadarMissing.from(hash(Map.of()), errors::add)).doesNotContainKey("probe_every_s");
+        assertThat(errors).as("unknown (empty or absent) is not wrong").isEmpty();
+        for (String bad : List.of("15min", "0", "-900", "86401", "9.5")) {
+            List<String> e = new ArrayList<>();
+            Map<String, Object> w = KrRadarMissing.from(hash(Map.of("missing_probe_every_s", bad)), e::add);
+            assertThat(w).as(bad).containsKeys("since_tm", "tms").doesNotContainKey("probe_every_s");
+            assertThat(e).as(bad).containsExactly("missing_probe_every_s");
+        }
+    }
 }
