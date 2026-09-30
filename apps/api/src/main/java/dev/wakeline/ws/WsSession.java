@@ -149,8 +149,8 @@ public final class WsSession {
      * 선택 선박 조회(우편함 밖 — 계약 v5 §G18, ShipFanout). 이 객체가 지금 세대다 — 결과가 와도 이 객체이고 물음이 같을 때만 쓴다. 답이 와도 그 읽기가
      * 끝날 때까지 남는다(같은 물음은 새 읽기를 올리지 않는다). null = 없음.
      */
-    ShipFanout.PendingLookup shipLookup;
-    /** 이 세션의 마지막 조회의 읽기가 끝남(ShipLookups.Flight.settled) — 다음 조회의 읽기는 이것 뒤에 시작한다(세션마다 조회 실행기 작업 하나 이하). */
+    SelectionLookups.Pending<ShipFanout.Question, ShipLookups.Resolved> shipLookup;
+    /** 이 세션의 마지막 조회의 읽기가 끝남(SelectionLookups.Flight.settled) — 다음 조회의 읽기는 이것 뒤에 시작한다(세션마다 조회 실행기 작업 하나 이하). */
     CompletableFuture<Void> shipLookupTail;
     /** 다음 ship_selected 는 바뀌지 않았어도 보낸다 — shipSelectedForce(select_ship · resume)를 조회가 끝날 때까지 들고 있는다. */
     boolean shipSelectedForcePending;

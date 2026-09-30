@@ -395,8 +395,8 @@ class WsSchemaContractTest {
             PortCallReader error = new PortCallReader(broken, List::of, PC_NOW::toEpochMilli);
             PortCallReader off = new PortCallReader(full, () -> List.of("no_key", PC_NOW.minusSeconds(20).toString()), PC_NOW::toEpochMilli);
             // 운영처럼 저장 정적 보고도 읽는다 — 위치만 받은 선박(440000008)은 DB 에도 없다(static_source none)
-            k.shipFanout.setStoredStaticSource(ShipLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
-            k.shipFanout.setPortCallSource(ShipLookups.Source.memory(st -> {
+            k.shipFanout.setStoredStaticSource(SelectionLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
+            k.shipFanout.setPortCallSource(SelectionLookups.Source.memory(st -> {
                 String cs = st == null ? null : st.callSign();
                 if ("D7AC".equals(cs)) return error.forStatic(st);
                 if ("D7AD".equals(cs)) return off.forStatic(st);
