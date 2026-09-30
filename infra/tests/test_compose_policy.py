@@ -26,7 +26,6 @@ init_env = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
 _spec.loader.exec_module(init_env)
 
-ENTRYPOINT_CAPS = {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}
 LONG_RUNNING = ["edge", "web", "api", "collector", "ais", "redis", "db"]
 # 시험용 .env 에 넣는 가짜 외부 키(사용자 .env 의 이름 그대로 — 소문자 aisstream_key). 실제 키가 아니다.
 FAKE_EXTERNAL = {
@@ -119,13 +118,22 @@ class ComposePolicyTest(unittest.TestCase):
                     self.assertNotIn("privileged", s)
                     self.assertNotIn("env_file", s, "필요한 값만 environment 로 넘긴다")
 
-    def test_only_db_keeps_entrypoint_caps(self):
+    def test_no_service_adds_capabilities(self):
+        """R-63 · ADR-004 재결정 뒤: db 도 처음부터 postgres(999)로 돌아(이미지 USER — 엔트리포인트의 root → gosu 경로 없음) 추가 권한이 없다."""
         for name, s in self.dev["services"].items():
             with self.subTest(service=name):
-                if name == "db":
-                    self.assertEqual(set(s.get("cap_add", [])), ENTRYPOINT_CAPS)
-                else:
-                    self.assertFalse(s.get("cap_add"), "db 외에는 추가 권한이 없다")
+                self.assertFalse(s.get("cap_add"), "어느 서비스도 추가 권한이 없다")
+
+    def test_db_image_is_built_here_and_runs_as_postgres_without_gosu(self):
+        """R-63: db 는 infra/db/Dockerfile 로 직접 빌드 — 공식 postgres 기반 다이제스트 고정 · PostGIS 3.6 고정 · gosu 삭제 · USER postgres."""
+        db = self.svc("db")
+        self.assertEqual(db.get("image"), "wakeline-db:local")
+        self.assertTrue(str(db.get("build", {}).get("context", "")).endswith("db"))
+        df = (ROOT / "infra" / "db" / "Dockerfile").read_text()
+        self.assertRegex(df, r"(?m)^FROM postgres:18-trixie@sha256:[0-9a-f]{64}\s*$", "공식 이미지 · 다이제스트 고정")
+        self.assertIn("'postgresql-18-postgis-3=3.6.*'", df, "PostGIS 부 버전 고정")
+        self.assertIn("rm -f /usr/local/bin/gosu", df)
+        self.assertRegex(df, r"(?m)^USER postgres\s*$")
 
     def test_edge_and_redis_run_as_non_root(self):
         self.assertEqual(self.svc("edge").get("user"), "101:101")

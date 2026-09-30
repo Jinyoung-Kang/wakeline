@@ -27,7 +27,7 @@ verdict gitleaks "$rc" 1
 trivy_db_update || exit 2
 echo "== trivy 자체 이미지 (HIGH·CRITICAL, 고칠 수 있는 것만, 차단)"
 # SECURITY_OWN_IMAGES 로 다른 태그를 볼 수 있다(예: 방금 빌드한 :review-check). 기본은 compose 가 붙이는 태그.
-for img in ${SECURITY_OWN_IMAGES:-wakeline-api:local wakeline-collector:local wakeline-web:local}; do
+for img in ${SECURITY_OWN_IMAGES:-wakeline-api:local wakeline-collector:local wakeline-web:local wakeline-db:local}; do
   if ! docker image inspect "$img" >/dev/null 2>&1; then echo "FAIL  $img 이미지 없음 — make build 먼저"; fail=1; continue; fi
   rc=0; trivy_image "$img" "$WORK" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table || rc=$?
   verdict "trivy $img" "$rc" 1

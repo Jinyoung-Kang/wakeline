@@ -57,6 +57,7 @@ ops-user: init ## 운영자 계정 생성/갱신 (make ops-user u=admin) — 비
 test: test-collector test-api test-web test-infra ## 전체 테스트
 
 test-api: ## Java 단위·통합 테스트 + JaCoCo 커버리지 보고서·검증 + REST 계약 검사 (로컬 JDK 25 + Docker 필요)
+	docker build -q -t wakeline-db:local infra/db >/dev/null   # DB 통합 테스트가 운영과 같은 db 이미지를 쓴다(R-63 — 레지스트리에 없다)
 	cd apps/api && ./gradlew test jacocoTestReport jacocoTestCoverageVerification
 	$(MAKE) -s contract-rest
 
@@ -69,12 +70,14 @@ test-web: ## 프론트 단위 테스트
 test-infra: ## 인프라 정책 시험(.env 생성 · compose 해석(개발·격리): 권한 축소·ACL 사용자·비밀값 분리·다이제스트 고정 · CI 스캔 범위) — 컨테이너를 띄우지 않는다
 	python3 -m unittest discover -s infra/tests -v
 
-infra-docker-test: ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체) 동작 시험 — 개발 스택은 건드리지 않는다
+infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체 · 이전 이미지 → 새 이미지 교체) 동작 시험 — 개발 스택은 건드리지 않는다
+	$(COMPOSE) build db   # R-63: db 이미지는 infra/db 에서 직접 빌드한다(레지스트리에 없다) — db 시험이 이 태그를 쓴다
 	bash infra/tests/edge_test.sh
 	bash infra/tests/redis_acl_test.sh
 	bash infra/tests/db_hardening_test.sh
 	bash infra/tests/db_backup_test.sh
 	bash infra/tests/db_rotate_test.sh
+	bash infra/tests/db_image_swap_test.sh
 
 # 원격 CI 가 없어도 ci.yml 의 security·third-party-images 와 같은 기준으로 막는다(R-07). 스캐너는 다이제스트 고정·네트워크 없음·docker.sock 없음(tools/scan_lib.sh).
 security: ## 보안 게이트: gitleaks(git 이력) + trivy(자체 이미지 차단 · 제3자는 ci.yml 행렬대로) — 이미지는 먼저 make build · SCAN_OFFLINE=1 이면 DB 캐시만
@@ -131,6 +134,9 @@ fixtures: ## 실응답 스냅샷 갱신 (외부 한도 소모 주의)
 	cd apps/collector && uv run python -m wakeline_collector.tools.snapshot
 
 # SEC-R3: initdb 스크립트(infra/db/init/02-…)는 새 볼륨에서만 돈다 — 이미 있는 개발 볼륨에는 이것으로 한 번 적용한다(멱등, 재시작 없음).
+db-postgis-update: ## db 이미지의 PostGIS 부 버전이 오른 뒤 한 번: ALTER EXTENSION postgis UPDATE (3.6.x 안에서만 · 멱등 · 격리 스택: P=wakeline-e2e)
+	@WAKELINE_PROJECT='$(or $(P),wakeline)' bash tools/db-postgis-update.sh
+
 db-superuser-local-only: ## 기존 db 볼륨에 '슈퍼유저 postgres 는 로컬 소켓만' 적용 (pg_hba reject + reload, 멱등 · 격리 스택: P=wakeline-e2e)
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' bash tools/db-superuser-local-only.sh
 

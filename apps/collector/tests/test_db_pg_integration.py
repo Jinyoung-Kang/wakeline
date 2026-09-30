@@ -5,7 +5,7 @@
 실행 기록 · 품질 사례 · 규칙별 건수를 한 번만 남긴다는 것. api 쪽 MigrationDbTest 는 V12 의 제약을 손으로 쓴 문장으로 확인한다 — 이 시험은 db.py 자체를 돌린다.
 실행(버리는 컨테이너 — 개발 스택의 DB 가 아니다. 시험 행은 지우지 않는다: 수집기 계정에는 DELETE 권한이 없다):
   docker run --rm -d --name wl-pgtest -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=root -e DB_MIGRATOR_PASSWORD=mig \
-      -e DB_API_PASSWORD=api -e DB_COLLECTOR_PASSWORD=col -v "$PWD/infra/db/init:/docker-entrypoint-initdb.d:ro" imresamu/postgis:18-3.6
+      -e DB_API_PASSWORD=api -e DB_COLLECTOR_PASSWORD=col -v "$PWD/infra/db/init:/docker-entrypoint-initdb.d:ro" wakeline-db:local   # make build(또는 docker build -t wakeline-db:local infra/db) 뒤
   (cd apps/api && DB_HOST=127.0.0.1 DB_PORT=55432 DB_NAME=wakeline DB_MIGRATOR_PASSWORD=mig ./gradlew -q bootRun --args=--migrate)
   WAKELINE_TEST_PG_URL=postgresql://wakeline_collector:col@127.0.0.1:55432/wakeline uv run pytest tests/test_db_pg_integration.py
 """

@@ -27,9 +27,9 @@ updates:
     groups:
       api-minor-patch: { update-types: [minor, patch] }
 
-  # 각 앱 Dockerfile 의 기반 이미지
+  # 각 앱 Dockerfile 의 기반 이미지 · db(infra/db — 공식 postgres 다이제스트, R-63)
   - package-ecosystem: docker
-    directories: [/apps/api, /apps/web, /apps/collector]
+    directories: [/apps/api, /apps/web, /apps/collector, /infra/db]
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
     cooldown: { default-days: 7 }

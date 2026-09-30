@@ -3,7 +3,7 @@
 | 항목 | 설계서 | 구현 | 이유 |
 |---|---|---|---|
 | 명령 도구 | justfile | Makefile | 기존 포트폴리오와 동일, `just` 미설치 |
-| DB 이미지 | postgis/postgis:18-3.6 + platform amd64 | imresamu/postgis:18-3.6 (arm64) | 에뮬레이션 회피(ADR-004) |
+| DB 이미지 | postgis/postgis:18-3.6 + platform amd64 | 직접 빌드 wakeline-db(공식 postgres:18-trixie + PGDG PostGIS 3.6, arm64 · amd64 — 2026-09-30, 그 전 imresamu/postgis:18-3.6) | 에뮬레이션 회피 · 유지되는 기반 이미지(ADR-004 개정) |
 | Redis DB 분리(db0/db1) | 스트림·예산 / 캐시·세션 | 단일 DB, `maxmemory-policy noeviction` | LRU 는 인스턴스 전체에 적용되므로 DB 분리로 보호되지 않음. 스트림 MAXLEN·캐시 TTL 로 상한 |
 | 스트림 payload | gzip JSON | gzip + base64 문자열 | 문자열 필드로 두 언어 클라이언트 모두 단순하게(320 KB → 430 KB, 120 s 주기라 무시 가능) |
 | 공항 목록 | AWC airport API 일 1회 | METAR bbox 응답의 관측소로 생성 | AWC airport bbox 가 한국 공항 1곳만 반환(실측) |

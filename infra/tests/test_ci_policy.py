@@ -124,7 +124,7 @@ class CiPolicyTest(unittest.TestCase):
         self.assertRegex(st[build], r"(?m)^\s+if:\s*\$\{\{\s*!cancelled\(\)\s*\}\}\s*$",
                          "build 에 if 가 없으면 gitleaks 실패 시 skipped 가 되고 trivy 3단계도 모두 건너뛴다")
         trivy = [s for s in st if "aquasecurity/trivy-action@" in s]
-        self.assertEqual(len(trivy), 3)
+        self.assertEqual(len(trivy), 4)  # api · collector · web · db(R-63 — 자체 빌드)
         for s in trivy:
             with self.subTest(step=s.splitlines()[0]):
                 self.assertIn("steps.build.outcome == 'success'", s)

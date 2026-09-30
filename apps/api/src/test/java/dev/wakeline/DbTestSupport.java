@@ -33,7 +33,8 @@ import java.util.Map;
  * 테스트는 운영과 같은 DML 전용 계정(wakeline_api)으로 접속한다.
  */
 public final class DbTestSupport {
-    public static final String IMAGE = "imresamu/postgis:18-3.6";
+    /** 운영과 같은 db 이미지(R-63 · ADR-004 재결정 — infra/db/Dockerfile 로 직접 빌드, 레지스트리에 없다). make test-api · CI 가 먼저 빌드한다. */
+    public static final String IMAGE = System.getenv().getOrDefault("WAKELINE_DB_IMAGE", "wakeline-db:local");
     public static final String MIGRATOR_PW = "migrator-test-pw";
     public static final String API_PW = "api-test-pw";
     public static final ObjectMapper JSON = JsonMapper.builder()

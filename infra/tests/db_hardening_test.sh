@@ -31,7 +31,7 @@ fi
 run_db() { # run_db <볼륨> [추가 docker run 인자...]
   local vol=$1; shift
   docker run -d --name "$ID" --network "$NET" \
-    --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
+    --cap-drop ALL \
     --security-opt no-new-privileges:true --read-only --tmpfs /var/run/postgresql --tmpfs /tmp --shm-size 256m \
     -e POSTGRES_PASSWORD=root-test-pw -e DB_MIGRATOR_PASSWORD=mig-test-pw -e DB_API_PASSWORD=api-test-pw -e DB_COLLECTOR_PASSWORD=col-test-pw "$@" \
     -v "$vol:/var/lib/postgresql" -v "$ROOT/infra/db/init:/docker-entrypoint-initdb.d:ro" "$IMAGE" ${DB_CMD[@]+"${DB_CMD[@]}"} >/dev/null

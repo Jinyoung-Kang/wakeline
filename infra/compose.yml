@@ -279,19 +279,18 @@ services:
       retries: 10
 
   db:
-    # 다이제스트 갱신(R-63): docker buildx imagetools inspect imresamu/postgis:18-3.6 --format '{{.Manifest.Digest}}' 로 새 값을 보고,
-    #   `postgres --version` 이 18.x · PostGIS 3.6 인지 확인한 뒤 바꾼다(같은 메이저면 기존 볼륨 그대로). 메이저가 바뀌면 make backup → 새 볼륨 → make restore.
-    #   2026-09-28 기준 이 태그(Debian trixie)는 2026-02-09 이후 재빌드가 없어 새 다이제스트가 없다. 재빌드되는 -alpine 변형은 문자열 정렬(glibc → musl)이
-    #   달라 이 볼륨에 그대로 쓸 수 없다 — 이미지 교체는 ADR-004 재결정 사항이다.
-    image: imresamu/postgis:18-3.6@sha256:b5766ee720aca09c61b9a868abefbf273348a4b90ad4cf146b4f8c9ac85d48e4   # 공식 postgis/postgis 18-3.6 은 amd64 뿐이라 arm64 네이티브 빌드를 쓴다 (ADR-004)
+    # R-63 · ADR-004 재결정(2026-09-30): 직접 빌드한 이미지(infra/db/Dockerfile) — 공식 postgres:18-trixie(다이제스트 고정 · Dependabot /infra/db) +
+    #   PGDG PostGIS 3.6 · gosu 없음 · postgres(999)로 실행. 이전 imresamu/postgis:18-3.6 은 2026-02 이후 재빌드가 없어 CVE 가 쌓였다.
+    #   같은 Debian 13 · 같은 메이저 18 · PostGIS 3.6 이라 기존 볼륨 그대로. PostGIS 부 버전이 오르면 한 번 `make db-postgis-update`.
+    build: { context: ./db }
+    image: wakeline-db:local
     read_only: true
     tmpfs: ["/var/run/postgresql", "/tmp"]
     # R-24(ADR-017 §4): 기본값(체크포인트 5분·WAL 1GB·압축 없음)이면 WAL 의 약 86 % 가 전체 페이지 이미지였다(약 16 GB/일).
     # 체크포인트 15분·WAL 상한 2GB·WAL 압축(pglz)·공유 버퍼 256MB(메모리 한도 1g). 대가: 비정상 종료 뒤 복구 재생이 최대 15분 분량. 되돌리기: 이 줄 삭제
     command: ["postgres", "-c", "checkpoint_timeout=15min", "-c", "max_wal_size=2GB", "-c", "wal_compression=on", "-c", "shared_buffers=256MB"]
+    # 이미지가 처음부터 postgres(999)로 돈다(USER — 엔트리포인트의 root → gosu 경로 없음) — 추가 권한이 필요 없다(이전: CHOWN · DAC_OVERRIDE · FOWNER · SETGID · SETUID)
     cap_drop: ["ALL"]
-    # 엔트리포인트(root)가 데이터 디렉터리 소유권·권한을 맞추고 gosu 로 postgres(999)가 되는 데 필요한 것만
-    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
     security_opt: ["no-new-privileges:true"]
     logging: *logging
     environment:

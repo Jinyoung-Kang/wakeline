@@ -27,7 +27,7 @@ login() {
 docker volume create "$ID-data" >/dev/null
 docker network create "$NET" >/dev/null
 docker run -d --name "$ID" --network "$NET" \
-  --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
+  --cap-drop ALL \
   --security-opt no-new-privileges:true --read-only --tmpfs /var/run/postgresql --tmpfs /tmp --shm-size 256m \
   -e POSTGRES_PASSWORD=root-test-pw -e DB_MIGRATOR_PASSWORD=mig-test-pw -e DB_API_PASSWORD=api-test-pw -e DB_COLLECTOR_PASSWORD=col-test-pw \
   -e WAKELINE_PG_SUPERUSER_TCP=reject \
