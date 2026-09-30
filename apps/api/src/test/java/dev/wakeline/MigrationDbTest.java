@@ -918,6 +918,59 @@ class MigrationDbTest {
     interface TriConsumer { void accept(String day, String hour, int n); }
 
     /**
+     * V17(계약 v5 §G25 · ADR-011 개정 2026-09-30 저녁): 관심 지역 공급자 순서의 기본값 adsb_lol,adsb_fi,opensky → adsb_fi,adsb_lol,opensky.
+     * 운영자가 바꾼 적 없는 값(updated_by NULL · 'env' — SettingsService.seedFromEnv 와 같은 뜻)이고 옛 기본값 그대로일 때만 바꾸고, 같은 문장에서 감사 기록
+     * (시스템 — user_id NULL)을 남긴다. 운영자가 /ops 에서 고른 값은 옛 기본값과 같은 글자여도 그대로다. 머리 주석의 되돌리기 SQL 로 옛 기본값에 돌아가고 다시 적용된다.
+     * 고치기 전(V17 없음)에는 기본값이 adsb_lol 먼저라 이 시험이 실패했다.
+     */
+    @Test
+    void v17MovesTheRegionProviderDefaultToAdsbFiFirstOnlyWhereTheOperatorNeverChoseAnOrder() throws Exception {
+        DbTestSupport.start();
+        String oldDefault = "\"adsb_lol,adsb_fi,opensky\"", newDefault = "\"adsb_fi,adsb_lol,opensky\"";
+        Map<String, String[]> cases = new java.util.LinkedHashMap<>();
+        // DB 이름 → { 그 전 값, 그 전 updated_by(null = 시드 그대로), 기대 값 }
+        cases.put("wakeline_stage_seventeen_seed", new String[]{oldDefault, null, newDefault});
+        cases.put("wakeline_stage_seventeen_env", new String[]{oldDefault, "env", newDefault});
+        cases.put("wakeline_stage_seventeen_ops_same", new String[]{oldDefault, "ops", oldDefault}); // 운영자가 옛 순서를 골랐다 — 그대로
+        cases.put("wakeline_stage_seventeen_ops_other", new String[]{"\"adsb_lol,opensky\"", "ops", "\"adsb_lol,opensky\""});
+        for (var e : cases.entrySet()) {
+            String db = e.getKey();
+            String[] c = e.getValue();
+            DbTestSupport.createDatabase(db);
+            String url = DbTestSupport.jdbcUrl(db);
+            migrateTo(url, "16");
+            JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+            stage.sql("UPDATE app_setting SET value = :v::jsonb, updated_by = :by WHERE key = 'aircraft_providers'")
+                    .param("v", c[0]).param("by", c[1]).update();
+            int versionBefore = stage.sql("SELECT version FROM app_setting WHERE key = 'aircraft_providers'").query(Integer.class).single();
+            assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).as(db).isZero();
+            Map<String, Object> row = stage.sql("SELECT value::text v, version, updated_by FROM app_setting WHERE key = 'aircraft_providers'").query().singleRow();
+            assertThat(row.get("v")).as(db).isEqualTo(c[2]);
+            var audit = stage.sql("SELECT user_id, action, target, before::text b, after::text a FROM audit_log").query().listOfRows();
+            if (c[2].equals(c[0])) {
+                assertThat(row.get("version")).as(db + " untouched").isEqualTo(versionBefore);
+                assertThat(row.get("updated_by")).as(db).isEqualTo(c[1]);
+                assertThat(audit).as(db + " no audit row when nothing changed").isEmpty();
+            } else {
+                assertThat(row.get("version")).as(db + " optimistic lock bumped").isEqualTo(versionBefore + 1);
+                assertThat(row.get("updated_by")).as(db + " still not an operator's choice").isEqualTo(c[1]);
+                assertThat(audit).hasSize(1);
+                assertThat(audit.get(0)).containsEntry("action", "SETTING_DEFAULT_V17").containsEntry("target", "aircraft_providers")
+                        .containsEntry("b", oldDefault).containsEntry("a", newDefault);
+                assertThat(audit.get(0).get("user_id")).isNull();
+            }
+        }
+        // 되돌리기(머리 주석): 옛 기본값 · 이력 행 삭제 → 다시 앞으로
+        String url = DbTestSupport.jdbcUrl("wakeline_stage_seventeen_seed");
+        JdbcClient seed = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        runAsMigrator(url, rollbackSql("V17__region_provider_order_adsb_fi_first.sql"));
+        assertThat(seed.sql("SELECT value::text FROM app_setting WHERE key = 'aircraft_providers'").query(String.class).single()).isEqualTo(oldDefault);
+        assertThat(seed.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '17'").query(Long.class).single()).isZero();
+        migrateTo(url, "17");
+        assertThat(seed.sql("SELECT value::text FROM app_setting WHERE key = 'aircraft_providers'").query(String.class).single()).isEqualTo(newDefault);
+    }
+
+    /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다
      * (서비스 역할 소유 객체 없음). V5 파티션 함수는 SECURITY DEFINER 인데 PUBLIC 실행 권한이 없다.
      */

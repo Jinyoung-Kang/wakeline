@@ -693,3 +693,118 @@ def test_only_the_aircraft_chain_calls_adsb_lol():
             make[rel] = n
     assert url == {"http.py": 1, "providers/readsb.py": 1}
     assert make == {"main.py": 1, "providers/readsb.py": 1, "tools/snapshot.py": 1}  # readsb.py 는 정의(def adsb_lol(…))
+
+
+# ---- 관심 지역 순서 adsb_fi → adsb_lol(ADR-011 개정 2026-09-30 저녁 · 계약 v5 §G25) ----------------------------------------------
+# 운영/로그 2026-09-30: adsb.lol 은 미룸이 끝나 체인이 돌아올 때마다 1–2분 안에 429 였다(05:46 · 11:48 · 12:16/12:22 · 18:24 KST) — adsb.fi 는 그날
+# 관심 지역을 하루 내내 맡았다(ok 7,797). 기본 순서를 adsb_fi 먼저로 바꾼다 — adsb.lol 은 폴백으로만, 그때의 429 쉼 · 미룸(R-17)은 그대로.
+# 이 절의 시험은 FakeRt(이 파일의 다른 시험이 쓰는 옛 순서) 대신 실제 RuntimeSettings(설정 해시가 빈 경우 — 기본값)를 쓴다.
+async def _default_order_ctx(r):
+    from wakeline_collector.runtime_settings import RuntimeSettings
+
+    ctx = make_ctx(r)
+    ctx.rt = RuntimeSettings(r)  # type: ignore[assignment] — wakeline:settings 가 비었다(api 미러 전) → 설정 기본값
+    await ctx.rt.refresh()
+    return ctx
+
+
+async def test_the_default_region_chain_is_adsb_fi_then_adsb_lol():
+    """고치기 전: 기본값 adsb_lol,adsb_fi,opensky — 첫 주기에 adsb.lol 을 불렀다."""
+    from wakeline_collector.runtime_settings import RuntimeSettings
+
+    assert Settings().provider_order == ["adsb_fi", "adsb_lol", "opensky"]
+    rt = RuntimeSettings(FakeRedis())  # type: ignore[arg-type]
+    await rt.refresh()
+    assert rt.provider_order == ["adsb_fi", "adsb_lol", "opensky"]
+
+
+async def test_default_order_starts_on_adsb_fi_falls_back_to_adsb_lol_and_returns(monkeypatch):
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = await _default_order_ctx(r)
+    lol, fi, osky = FakeReadsb("adsb_lol"), FakeReadsb("adsb_fi"), FakeOpenSky()
+    # main.py 의 사전 순서 그대로 — 순위는 설정(aircraft_providers)이 정한다
+    providers = {"adsb_lol": lol, "adsb_fi": fi, "opensky": osky}
+    job = AircraftJob("region", ProviderChain("region", providers, ctx.status), ctx)
+    await job.run_once()
+    assert (fi.calls, lol.calls) == (1, 0)
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_fi", "initial")
+    fi.fail = True
+    for _ in range(3):  # adsb_fi 3회 연속 실패 → 10분 쉼
+        clk[0] += 10
+        await job.run_once()
+    clk[0] += 10
+    await job.run_once()  # adsb.lol 이 폴백으로 맡는다
+    assert (fi.calls, lol.calls) == (4, 1)
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_lol", "fallback — adsb_fi 3회 연속 실패(10분 쉼)")
+    fi.fail = False
+    clk[0] += 600
+    await job.run_once()  # 쉼 끝 — 1순위로 돌아온다
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_fi", "recovery — adsb_fi 쉼 끝(1순위 복귀)")
+    assert (fi.calls, lol.calls, osky.calls) == (5, 1, 0)
+    ev = [(f["from"], f["to"]) for _id, f in r.streams["wakeline:events"]]
+    assert ev == [("adsb_fi", "adsb_lol"), ("adsb_lol", "adsb_fi")]
+
+
+async def test_adsb_lol_as_fallback_keeps_its_429_backoff_and_deferral(monkeypatch, caplog):
+    """폴백으로 쓰일 때도 adsb.lol 의 429 쉼(60 → 120 … 300 s)과 15분 안에 되풀이되면 미룸(10 → … 360분 — R-17)은 그대로다.
+    adsb_fi 가 돌아오면(운영자 켬) 1순위로 돌아가고, adsb.lol 의 미룸 이력은 남는다(그 뒤 폴백이 필요하면 미룸이 끝났는지 본다)."""
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = await _default_order_ctx(r)
+    lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi")
+    chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    await r.hset("wakeline:provider:adsb_fi", mapping={"disabled": "1"})  # 운영자가 adsb_fi 를 껐다 → adsb.lol 이 맡는다
+    await job.run_once()
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; "
+        "next: 'adsb_lol again after the backoff (no other provider)'"
+    )
+    clk[0] += 61
+    await job.run_once()  # 15분 안에 되풀이 → 120 s 쉬고 10분 미룸
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; "
+        "next: 'adsb_lol again after the backoff (no other provider — deferral not applied)'"
+    )
+    assert chain.hold_s("adsb_lol") == 600
+    await r.hset("wakeline:provider:adsb_fi", mapping={"disabled": "0"})
+    clk[0] += 121  # adsb.lol 의 쉼(120 s)은 끝났고 미룸(10분)은 남았다
+    await job.run_once()
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_fi", "recovery — adsb_fi 운영자 켬(1순위 복귀)")
+    assert fi.calls == 1 and lol.calls == 2
+    assert chain.hold_s("adsb_lol") == 600  # 미룸은 그대로(폴백 순위에서도 되풀이된 429 는 늦게 돌아온다)
+
+
+async def test_the_global_chain_is_unaffected_by_the_region_order():
+    """전세계는 OpenSky 만 지원한다 — 순서를 바꿔도 전세계 체인은 readsb 공급자를 부르지 않는다."""
+    r = FakeRedis()
+    ctx = await _default_order_ctx(r)
+    lol, fi, osky = FakeReadsb("adsb_lol"), FakeReadsb("adsb_fi"), FakeOpenSky()
+    job = AircraftJob("global", ProviderChain("global", {"adsb_lol": lol, "adsb_fi": fi, "opensky": osky}, ctx.status), ctx)
+    await job.run_once()
+    assert (osky.calls, fi.calls, lol.calls) == (1, 0, 0)
+    act = await r.hgetall("wakeline:active")
+    assert (act["global"], act["global_reason"]) == ("opensky", "initial")
+
+
+def test_the_startup_line_names_the_region_chain_in_its_real_order():
+    """기동 로그 한 줄은 순서를 박아 두지 않고(전에는 'region chain uses adsb_lol → adsb_fi' 고정 글) 설정의 실제 순서에서 관심 지역을 지원하는 공급자만 적는다."""
+    from wakeline_collector.main import region_chain_line
+
+    providers = {"adsb_lol": adsb_lol(None), "adsb_fi": adsb_fi(None), "opensky": OpenSkyProvider(None, "", "")}  # type: ignore[arg-type]
+    assert region_chain_line(Settings().provider_order, providers, 2880) == (
+        "region chain uses adsb_fi → adsb_lol (aircraft_providers: runtime setting, else .env); "
+        "opensky is global-only (daily cap 2880 credits)"
+    )
+    assert region_chain_line(["adsb_lol", "adsb_fi"], providers, 2880) == (
+        "region chain uses adsb_lol → adsb_fi (aircraft_providers: runtime setting, else .env)"
+    )
+    assert region_chain_line(["opensky"], providers, 2880).startswith("region chain uses no provider ")

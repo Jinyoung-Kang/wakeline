@@ -103,6 +103,16 @@ def build_limits(s: Settings) -> dict[str, int]:
     }
 
 
+def region_chain_line(order: list[str], providers: dict[str, Any], opensky_cap: int) -> str:
+    """기동 로그 한 줄: 관심 지역 체인의 실제 순서 — 설정 순서(운영 설정 aircraft_providers, 없으면 .env)에서 관심 지역을 지원하는 공급자만.
+    전에는 'adsb_lol → adsb_fi' 를 글자로 박아 두어 설정 순서와 어긋나도 그렇게 적었다(계약 v5 §G25 — 기본 순서가 adsb_fi 먼저로 바뀌었다)."""
+    region = [n for n in order if getattr(providers.get(n), "supports_region", False)]
+    line = f"region chain uses {' → '.join(region) or 'no provider'} (aircraft_providers: runtime setting, else .env)"
+    if "opensky" in order:
+        line += f"; opensky is global-only (daily cap {opensky_cap} credits)"
+    return line
+
+
 def snapshot_providers(limits: dict[str, int], *, fixture: bool) -> list[str]:
     """일별 예산 스냅샷 대상. 실시간 모드에서는 fixture 공급자를 빼 'fixture|0|0' 행이 쌓이지 않게 한다(R-19)."""
     return [p for p in limits if fixture or p != "fixture"]
@@ -190,10 +200,6 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         demand_provider = AdsbFiDemandProvider(http)
         if not opensky.configured:
             log.info("opensky credentials not set — global view disabled")
-        if "opensky" in settings.provider_order:
-            log.info(
-                "opensky is global-only; region chain uses adsb_lol → adsb_fi (daily cap %d credits)", settings.budget_opensky
-            )
 
     chain_store = ChainStateStore(redis)  # 429 이력(R-17)을 재시작 뒤에도 잇는다 — wakeline:provider:{name}:ratelimit:{job}
     region = AircraftJob("region", ProviderChain("region", aircraft_providers, ctx.status, store=chain_store), ctx)
@@ -229,6 +235,8 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     logsink = start_log_sink("collector", redis, enabled=settings.log_sink_enabled)  # MaskFilter(configure_logging) 뒤에 붙인다
     try:
         await ctx.rt.refresh()
+        if not fixture:  # 운영 설정(Redis 미러)을 읽은 뒤 — 실제로 쓸 순서
+            log.info("%s", region_chain_line(ctx.rt.provider_order, aircraft_providers, settings.budget_opensky))
         jobs = {
             "region": run_periodic("region", region.run_once, lambda: ctx.rt.region_poll_s, stop, ctx.rt.refresh),
             "global": run_periodic("global", global_.run_once, lambda: ctx.rt.global_poll_s, stop, initial_delay=5),

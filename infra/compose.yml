@@ -174,7 +174,8 @@ services:
       # (ADR-022 해양수산부 선박운항정보 PORT-MIS · ADR-023 해양교통안전공단 실시간 해양교통정보 · 해양수산부 격자4단계 WFS)
       DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
       HTTP_USER_AGENT: ${HTTP_USER_AGENT:-wakeline-dev/0.2}
-      AIRCRAFT_PROVIDERS: ${AIRCRAFT_PROVIDERS:-adsb_lol,adsb_fi,opensky}
+      # 관심 지역 adsb_fi 먼저 · adsb_lol 폴백(계약 v5 §G25). 운영 설정(Redis wakeline:settings — api 가 DB 에서 미러)이 있으면 그 값이 먼저다
+      AIRCRAFT_PROVIDERS: ${AIRCRAFT_PROVIDERS:-adsb_fi,adsb_lol,opensky}
       REGION_CENTER: ${REGION_CENTER:-36.5,127.8}
       REGION_RADIUS_NM: ${REGION_RADIUS_NM:-250}
       REGION_POLL_S: ${REGION_POLL_S:-10}
