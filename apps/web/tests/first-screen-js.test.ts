@@ -10,7 +10,8 @@ import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  budgetVerdict, FIRST_SCREEN_PUBLIC_SCRIPTS, firstScreenFiles, formatReport, GZIP_THRESHOLD, groupOfPath, isScriptResponse, measureFiles, parseMeasureArgs, servedBytes, summarize,
+  budgetVerdict, FIRST_SCREEN_JS_BUDGET, FIRST_SCREEN_PUBLIC_SCRIPTS, firstScreenFiles, formatReport, GZIP_THRESHOLD, groupOfPath, isScriptResponse, measureFiles, parseMeasureArgs,
+  runCheck, servedBytes, summarize,
 } from "../scripts/first-screen-js-lib.mjs";
 
 const ROOT = resolve(__dirname, "..");
@@ -116,5 +117,47 @@ describe("browser measurement helpers", () => {
     for (const bad of [[], ["--serve", "8080"], ["--serve", "8800"], ["http://localhost:8700", "--serve", "8790"], ["ftp://x"], ["not a url"], ["--budget", "-1", "http://x"], ["--what"], ["http://a", "http://b"]]) {
       expect(() => parseMeasureArgs(bad)).toThrow(/사용법/);
     }
+  });
+});
+
+describe("first-screen JS budget guard (ADR-026)", () => {
+  it("the budget is one number, the same in the guard, PERF §10 and ADR-026 (a chosen value — its evidence is written next to it)", () => {
+    expect(Number.isInteger(FIRST_SCREEN_JS_BUDGET)).toBe(true);
+    const n = FIRST_SCREEN_JS_BUDGET.toLocaleString("en-US");
+    const perf = readFileSync(join(ROOT, "../../docs/PERF.md"), "utf8");
+    const adr = readFileSync(join(ROOT, "../../docs/adr/ADR-026-first-screen-js-budget.md"), "utf8");
+    expect(perf).toContain(`예산 ${n} B`);
+    expect(adr).toContain(`${n} B`);
+    // 바닥(MapLibre + Next · React 실행 코드)보다 커야 의미가 있다 — 바닥 아래 예산은 지도를 버리라는 뜻이다
+    expect(FIRST_SCREEN_JS_BUDGET).toBeGreaterThan(436_883);
+  });
+  it("check: 0 under the budget, 1 over it (with the overrun), 2 when the build output cannot be read — never a silent pass", () => {
+    const dir = fakeBuild();
+    const total = summarize(measureFiles(firstScreenFiles(dir))).body;
+    const ok = runCheck(dir, total);
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain("남은 여유 0 B");
+    const over = runCheck(dir, total - 1);
+    expect(over.code).toBe(1);
+    expect(over.err).toMatch(/1 B 넘었습니다/);
+    expect(over.out).toContain("합계"); // 넘었을 때도 무엇이 실렸는지 표를 보인다
+    const broken = runCheck(mkdtempSync(join(tmpdir(), "fsjs-none-")), total);
+    expect(broken.code).toBe(2);
+    expect(broken.err).toMatch(/계산하지 못했습니다/);
+  });
+  it("npm exposes both tools, and the CI web job runs the check after the production build, unconditionally", () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts["check:first-js"]).toBe("node scripts/check-first-screen-js.mjs");
+    expect(pkg.scripts["measure:first-js"]).toBe("node scripts/measure-first-screen-js.mjs");
+    // .github/workflows/ci.yml 의 web job(2칸 들여쓴 job 이름 ~ 다음 job) — 단계는 6칸 들여쓴 '- '
+    const ci = readFileSync(join(ROOT, "../../.github/workflows/ci.yml"), "utf8");
+    const web = /^ {2}web:\s*$([\s\S]*?)(?=^ {2}[A-Za-z0-9_-]+:\s*$)/m.exec(ci)?.[1] ?? "";
+    const steps = web.split(/^ {6}- /m).slice(1);
+    const build = steps.findIndex((s) => s.includes("npm run build"));
+    const check = steps.flatMap((s, i) => (s.includes("npm run check:first-js") ? [i] : []));
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(check).toHaveLength(1);
+    expect(check[0]).toBeGreaterThan(build); // 운영 빌드(.next · public/maplibre) 뒤
+    expect(steps[check[0]]).not.toMatch(/continue-on-error|^\s*if:/m); // 조건 없이 늘 돌고, 실패하면 job 이 실패한다
   });
 });

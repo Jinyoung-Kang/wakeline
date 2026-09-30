@@ -93,7 +93,7 @@ k6: `/aircraft` p95 4.6 ms · `/sigmets` p95 5.7 ms · `/status` p95 9.5 ms · W
   나머지는 기존 청크가 커진 것이다: 머리글·공용 청크 묶음 15.0 · 14.2 · 7.5 → 12.1 · 23.3 · 10.7 KiB(+9.2), 지도와 함께 동적으로 받는 청크는 WS 검증기로 +4.8 KiB(`next build` 의 `/` entry 에는 없지만
   Lighthouse 는 첫 로드 중에 받는다), `/` 페이지 청크는 오류 배지 · 선박 카드 등으로 +3.6 KiB, 그 밖의 청크 합 −0.5 KiB.
 - 오류 화면 두 청크는 오류가 없어도 첫 로드에 받는데, 머리 한 줄 형식 함수 하나 때문에 로그 화면 모듈(lib/logs) 전체를 실었다. 그 함수를 `lib/log-line.ts` 로 옮겨 두 청크가 `global-error` 3.0 · `error` 2.9 KiB 가 되었고
-  첫 화면 JS 는 526.3 → 520.6 KiB(시험 `tests/error-chunk-graph.test.ts` 가 두 오류 경계의 import 그래프에 lib/logs 가 없는지 본다). NFR-04(400 KB)는 리뷰 v1 때부터 미충족이며 목표를 다시 정할지는 사용자 결정으로 남아 있다.
+  첫 화면 JS 는 526.3 → 520.6 KiB(시험 `tests/error-chunk-graph.test.ts` 가 두 오류 경계의 import 그래프에 lib/logs 가 없는지 본다). NFR-04(400 KB)는 리뷰 v1 때부터 미충족이며 목표를 다시 정할지는 사용자 결정으로 남아 있다(→ 2026-09-30 결정: §10 · ADR-026).
 - 청크 비교 방법: 리뷰 v1 빌드의 청크(이름·크기가 review-final/lh_root.json 과 같음)와 지금 제공되는 청크의 Turbopack 모듈 id 를 대조(사실 확인 워크플로).
 - 재현: `CHROME_PATH=<playwright chromium> lighthouse http://localhost:8700/ --preset=desktop --only-categories=performance --chrome-flags="--headless=new --use-angle=swiftshader"` 의 `network-requests` 에서 resourceType Script 의 transferSize 합.
 
@@ -138,10 +138,33 @@ api 메모리(ShipStore)는 정적 정보를 최대 100,000건 쥐고, §G19 뒤
   §8 의 "파일 16개" 와 같은 수). 남는 4,497 B 는 17건의 응답 머리로 보인다(건당 약 265 B — 추정, Lighthouse transferSize 는 머리를 포함한다).
   그 뒤 이 브랜치 시작까지 커밋들이 **+25,702 B** 를 더했다(첫 로드 청크 10 → 13개 — 어느 커밋이 얼마인지는 나눠 재지 않았다). 배포 스택은 이 레인에서 재지 않았다(실행 중인 스택을 건드리지 않는다).
 
+**첫 화면에서 뺀 뒤(상호작용 뒤에만 보이는 카드 · 목록 · 상세를 처음 쓸 때 받는다 — ADR-026) — 18개 파일 · 539,430 B(−14,869 B), 두 도구 같은 값**
+
+| 묶음 | 파일 | gzip 본문 | 무엇 |
+|---|---|---|---|
+| MapLibre GL 6.11.2 | 3 | 303,421 B | 그대로 |
+| Next 첫 로드 청크(`entry`) | 12 | 208,703 B | 순수 Next · React · Turbopack 청크 4개 129,922 B(청크 나눔이 바뀌어 Next 코드 일부가 머리글 청크로 옮겨 갔다) + 페이지(상태 바 · 알림 목록 · 범례 · 레이더 줄) 19.2 KiB 등 |
+| `/` 의 next/dynamic(지도 컴포넌트) | 2 | 23,848 B | 지도 · WS 클라이언트 · 검증기 15.3 KiB + 툴팁 · 노선 · 입출항 해석 8.0 KiB(노선 · 입출항 해석은 기준선에서 첫 로드 청크에 있었다 — 묶음 사이를 옮긴 것은 합계를 바꾸지 않는다) |
+| 보간 워커(public) | 1 | 3,458 B | 그대로 |
+| **합계** | **18** | **539,430 B (526.8 KiB)** | |
+
+- 나중에 받는 조각 9개(항공기 · 선박 · SIGMET · 공항 카드와 목록, 알림 근거, 기상청 범례·정합, 검색 선박 표)는 Chromium 으로 로컬 standalone 서버에서 눌러 보며
+  확인했다: 탭 · 패널을 처음 열 때 청크 하나씩 받고, 검색창에 초점이 오면 선박 표 청크를 받는다. 청크를 2.5 s 늦추면 "SIGMET 목록 불러오는 중"
+  줄과 진행 막대, 끊으면 "공항 목록 — 화면 코드를 받지 못했습니다" + 까닭(ChunkLoadError) + 다시 시도 → 다시 받아 목록을 그린다.
+- 바닥: MapLibre 303,421 B + 순수 Next 청크 129,922 B = **433,343 B**(청크 나눔이 바뀌어 기준선 계산 436,883 B 와 다르다 — 어느 쪽이든 400 KB 위).
+- **참고(잰 값, 도입 결정 아님) — brotli**: 같은 18개 파일을 brotli 품질 11(미리 압축)로 만들면 457,695 B · 품질 6 은 504,802 B(gzip 수준 9 는 537,984 B).
+  바닥(위 7개 파일)은 brotli 11 로 363,713 B. brotli 로도 지금 코드 전체는 400 KB 를 넘는다.
+
+**결정(ADR-026 — 사용자가 권장안으로 맡김)**: 400 KB 는 지도 라이브러리를 첫 화면에서 빼야만 닿는다. NFR-04 의 JS 항목을 **예산 550,000 B**(gzip 본문, 응답 머리 제외)로
+바꾼다 — **선택값**: 결정 때 잰 539,430 B + 여유 10,570 B(약 2 %). CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js`(빌드 결과에서 계산 — 스택 없이)로
+넘으면 실패시키고(`apps/web/tests/first-screen-js.test.ts` 가 순서를 본다), 배포 스택은 `npm run measure:first-js -- http://localhost:8700` 으로 잰다(이 레인에서는 재지 않았다 —
+본문 바이트가 같아야 하는 까닭은 위 '바이트 단위').
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
 make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 전용)
+(cd apps/web && npm run build && npm run check:first-js)                    # 첫 화면 JS 예산(빌드 결과에서 계산 — CI 와 같다)
 (cd apps/web && npm run build && npm run measure:first-js -- --serve 8790)   # 첫 화면 JS(브라우저 측정, 운영 빌드를 127.0.0.1:8790 에)
 (cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)

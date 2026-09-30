@@ -89,6 +89,9 @@ jobs:
         with: { node-version: 24, cache: npm, cache-dependency-path: apps/web/package-lock.json }
       - run: npm ci
       - run: npx eslint . && npx tsc --noEmit && npx vitest run && npm run build
+      # 첫 화면 JS 예산(NFR-04 · ADR-026): 방금 만든 운영 빌드에서 `/` 가 처음 받는 스크립트의 gzip 본문 바이트를 계산한다(스택 없이). 넘으면 실패
+      - name: first-screen JS budget (npm run check:first-js — ADR-026)
+        run: npm run check:first-js
       - name: dependency audit (npm audit, High 이상 0 건 — NFR-10)
         run: npm audit --audit-level=high
 

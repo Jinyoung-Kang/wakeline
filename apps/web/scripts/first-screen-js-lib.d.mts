@@ -8,6 +8,7 @@ export interface MeasureArgs { baseUrl: string; serve: number | null; settleMs: 
 export const GZIP_LEVEL: number;
 export const GZIP_THRESHOLD: number;
 export const KIB: number;
+export const FIRST_SCREEN_JS_BUDGET: number;
 export const FIRST_SCREEN_PUBLIC_SCRIPTS: readonly string[];
 export function servedBytes(buf: Uint8Array): number;
 export function fmtKiB(b: number): string;
@@ -20,3 +21,4 @@ export function isScriptResponse(resourceType: string, contentType: string | nul
 export function groupOfPath(pathname: string): "maplibre" | "next" | "public";
 export const MEASURE_USAGE: string;
 export function parseMeasureArgs(argv: string[]): MeasureArgs;
+export function runCheck(webDir: string, budget?: number): { code: 0 | 1 | 2; out: string; err: string };

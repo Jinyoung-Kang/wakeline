@@ -15,6 +15,13 @@ export const GZIP_LEVEL = 6;
 export const GZIP_THRESHOLD = 1024;
 export const KIB = 1024;
 
+/**
+ * 첫 화면 JS 예산(NFR-04 개정 — ADR-026): gzip 본문 바이트. **선택값**(잰 값이 아니다) = 이 값을 정할 때 잰 539,430 B(docs/PERF.md §10 — 카드 · 목록을
+ * 나중에 받게 한 뒤) + 여유 10,570 B(약 2 %). 바닥(MapLibre 303,421 B + Next · React 실행 코드 133,462 B = 436,883 B)이 옛 목표 400 KB 를 넘어
+ * 400 KB 는 지도 라이브러리를 버리지 않고는 닿을 수 없다. 올리려면 ADR-026 의 절차(무엇이 늘었는지 측정 · 근거)를 따른다.
+ */
+export const FIRST_SCREEN_JS_BUDGET = 550_000;
+
 /** 지도 컴포넌트가 첫 화면에 띄우는 public 의 워커(components/MapView.tsx 의 new Worker("/…") — tests/first-screen-js.test.ts 가 맞춰 본다) */
 export const FIRST_SCREEN_PUBLIC_SCRIPTS = ["interpolate.worker.js"];
 
@@ -172,4 +179,24 @@ export function parseMeasureArgs(argv) {
     out.baseUrl = u.origin;
   } else out.baseUrl = `http://127.0.0.1:${out.serve}`;
   return out;
+}
+
+/**
+ * 예산 검사(scripts/check-first-screen-js.mjs 의 본체 — 시험이 가짜 빌드로 부른다). code: 0 = 예산 안, 1 = 넘음(표 + 넘은 바이트),
+ * 2 = 빌드 결과를 읽지 못함(조용히 통과시키지 않는다).
+ */
+export function runCheck(webDir, budget = FIRST_SCREEN_JS_BUDGET) {
+  let rows;
+  try {
+    rows = measureFiles(firstScreenFiles(webDir));
+  } catch (e) {
+    return { code: 2, out: "", err: `첫 화면 JS 를 계산하지 못했습니다: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const out = formatReport(rows, "첫 화면 JS(`/`) — 빌드 결과에서 계산(gzip 수준 6 = Next 내장 압축, 응답 머리 제외)");
+  const total = summarize(rows).body;
+  const verdict = budgetVerdict(total, budget);
+  if (verdict) {
+    return { code: 1, out, err: `${verdict} — 표에서 새로 실린 것을 찾아 상호작용 뒤로 미루거나(components/DashboardParts), 예산을 바꾸려면 ADR-026 절차(측정 · 근거)를 따르세요.` };
+  }
+  return { code: 0, out: `${out}\n\n예산 ${budget} B (${fmtKiB(budget)}) 안 — 남은 여유 ${budget - total} B`, err: "" };
 }
