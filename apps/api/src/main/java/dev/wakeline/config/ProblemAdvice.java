@@ -140,23 +140,32 @@ public class ProblemAdvice {
     }
 
     /**
-     * 로그의 첫 마디 — 예외가 스스로 말하는 원인만(SQLSTATE · 예외 종류). 호출부가 알려 준 적 없는 한도나 까닭은 적지 않는다: 57014 는 공개 조회의 3 s
-     * 쿼리 한도일 수도, 서버의 statement_timeout 30 s 일 수도 있다(어느 쪽인지는 뒤따르는 원인 메시지 'due to user request' · 'due to statement
-     * timeout' 과 elapsed_ms 가 말한다). CannotGetJdbcConnectionException 은 풀 대기 초과일 수도 DB 연결 실패일 수도 있다(원인 메시지가 말한다).
+     * 로그의 첫 마디 — 예외가 스스로 말하는 원인만(SQLSTATE · 예외 종류). 호출부가 알려 준 적 없는 한도나 까닭은 적지 않는다: 57014 는 문장마다 거는
+     * JDBC 쿼리 한도(공개 조회 3 s — pgjdbc 가 취소를 보내면 'due to user request')일 수도, 서버의 statement_timeout('due to statement timeout' —
+     * 공유 풀 연결은 30 s, 선택 조회 읽기 풀(ReadPool) 연결은 3 s)일 수도 있다. 어느 쪽인지는 뒤따르는 원인 메시지와 elapsed_ms 가 말한다.
+     * CannotGetJdbcConnectionException 은 풀 대기 초과일 수도 DB 연결 실패일 수도 있다(원인 메시지 · SQLSTATE 가 말한다).
+     * CannotCreateTransactionException 은 트랜잭션(운영 쓰기의 TransactionTemplate)용 연결을 열지 못한 것 — 풀 대기 초과도 이렇게 온다.
+     * 그 밖의 SQLSTATE(예: 교착 40P01 — Spring 은 부류 40 을 잠금 실패로 번역한다)는 저장소가 '없다' 고 하지 않고 그 SQLSTATE 로 적는다.
      */
     static String cause(Throwable e) {
         String state = sqlState(e);
         if (QUERY_CANCELED.equals(state)) return "statement cancelled (SQLSTATE " + QUERY_CANCELED + ")";
         if (LOCK_NOT_AVAILABLE.equals(state)) return "lock not available (SQLSTATE " + LOCK_NOT_AVAILABLE + ")";
-        if (e instanceof CannotGetJdbcConnectionException) return "could not get a DB connection";
-        if (e instanceof QueryTimeoutException) return "query timeout"; // SQLSTATE 없음 — 예: Redis 명령 시간 초과
+        String withState = state == null ? "" : " (SQLSTATE " + state + ")";
+        if (e instanceof CannotGetJdbcConnectionException) return "could not get a DB connection" + withState;
+        if (e instanceof CannotCreateTransactionException) return "could not open a DB connection for a transaction" + withState;
+        if (e instanceof QueryTimeoutException) return "query timeout" + withState; // SQLSTATE 없음 — 예: Redis 명령 시간 초과
+        if (state != null) return "DB error (SQLSTATE " + state + ")";
         return "data store unavailable";
     }
 
-    /** 원인 사슬에서 처음 만난 SQLSTATE(없으면 null). */
+    /** SQLSTATE 모양(영숫자 대문자 5자) — 로그에 싣는 값을 이 모양으로만. */
+    private static final java.util.regex.Pattern SQLSTATE = java.util.regex.Pattern.compile("[0-9A-Z]{5}");
+
+    /** 원인 사슬에서 처음 만난 SQLSTATE(없거나 모양이 아니면 null). */
     static String sqlState(Throwable e) {
         for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
-            if (c instanceof SQLException s && s.getSQLState() != null) return s.getSQLState();
+            if (c instanceof SQLException s && s.getSQLState() != null) return SQLSTATE.matcher(s.getSQLState()).matches() ? s.getSQLState() : null;
         }
         return null;
     }

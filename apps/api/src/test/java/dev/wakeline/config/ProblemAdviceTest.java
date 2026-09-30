@@ -57,6 +57,20 @@ class ProblemAdviceTest {
         @GetMapping("/redis-timeout") String redisTimeout() {
             throw new QueryTimeoutException("Redis command timed out", new RuntimeException("Command timed out after 3 second(s)"));
         }
+        // TransactionTemplate(운영 쓰기)이 풀에서 연결을 얻지 못함 — DataSourceTransactionManager.doBegin 이 Hikari 의 풀 대기 초과를 감싼다
+        @GetMapping("/tx-pool") String txPool() {
+            throw new org.springframework.transaction.CannotCreateTransactionException("Could not open JDBC Connection for transaction",
+                    new SQLTransientConnectionException("HikariPool-1 - Connection is not available, request timed out after 5000ms"));
+        }
+        // 교착(40P01): Spring 은 부류 40 을 비관적 잠금 실패로 번역한다 — 저장소가 '없는' 것이 아니다
+        @GetMapping("/deadlock") String deadlock() {
+            throw new org.springframework.dao.PessimisticLockingFailureException("PreparedStatementCallback; SQL [UPDATE x]; ERROR: deadlock detected",
+                    new SQLException("ERROR: deadlock detected", "40P01"));
+        }
+        // 연결 실패(08001)를 감싼 연결 얻기 실패 — 예외 종류로 말하고 SQLSTATE 를 곁들인다
+        @GetMapping("/refused") String refused() {
+            throw new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection", new SQLException("Connection to db:5432 refused", "08001"));
+        }
         @GetMapping("/unavailable") String unavailable() { throw Problem.unavailable("try later"); }
         @GetMapping("/limited") String limited() { throw Problem.tooManyRequests("slow down", 42); }
         @GetMapping("/boom") String boom() { throw new IllegalStateException("bug"); }
@@ -112,6 +126,25 @@ class ProblemAdviceTest {
                 .doesNotContain("SQLSTATE");
         org.assertj.core.api.Assertions.assertThat(lines.get(4)).contains("data store unavailable request_id=- path=/redis-down elapsed_ms=- → 503: ");
         org.assertj.core.api.Assertions.assertThat(out.getAll()).doesNotContain("unhandled error");
+    }
+
+    /**
+     * 리뷰 2026-10-01: 첫 마디가 'data store unavailable' 로 뭉개지던 나머지 — 트랜잭션용 연결을 열지 못함(CannotCreateTransactionException, 운영 쓰기의
+     * TransactionTemplate 이 풀 대기 초과를 이렇게 감싼다)은 그 예외 종류로, 그 밖의 SQLSTATE(교착 40P01 등)는 그 SQLSTATE 로 적는다. SQLSTATE 가 없는
+     * 저장소 장애만 'data store unavailable'.
+     */
+    @Test
+    void transactionOpenFailuresAndOtherSqlStatesAreNamedNotCalledUnavailable(CapturedOutput out) throws Exception {
+        mvc.perform(get("/tx-pool")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
+        mvc.perform(get("/deadlock")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
+        mvc.perform(get("/refused")).andExpect(status().isServiceUnavailable());
+        List<String> lines = warnLines(out);
+        org.assertj.core.api.Assertions.assertThat(lines).hasSize(3);
+        org.assertj.core.api.Assertions.assertThat(lines.get(0)).contains("could not open a DB connection for a transaction request_id=- path=/tx-pool")
+                .contains("Connection is not available, request timed out after 5000ms");
+        org.assertj.core.api.Assertions.assertThat(lines.get(1)).contains("DB error (SQLSTATE 40P01) request_id=- path=/deadlock").contains("deadlock detected");
+        org.assertj.core.api.Assertions.assertThat(lines.get(2)).contains("could not get a DB connection (SQLSTATE 08001) request_id=- path=/refused");
+        org.assertj.core.api.Assertions.assertThat(lines).noneMatch(l -> l.contains("data store unavailable"));
     }
 
     /** 다른 SQLSTATE 의 분류되지 않은 SQL 예외는 여전히 결함이다 — 500 + ERROR(503 으로 삼키지 않는다). */
