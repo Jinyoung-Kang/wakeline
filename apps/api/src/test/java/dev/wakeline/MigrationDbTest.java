@@ -920,7 +920,7 @@ class MigrationDbTest {
     /**
      * V17(계약 v5 §G25 · ADR-011 개정 2026-09-30 저녁): 관심 지역 공급자 순서의 기본값 adsb_lol,adsb_fi,opensky → adsb_fi,adsb_lol,opensky.
      * 운영자가 바꾼 적 없는 값(updated_by NULL · 'env' — SettingsService.seedFromEnv 와 같은 뜻)이고 옛 기본값 그대로일 때만 바꾸고, 같은 문장에서 감사 기록
-     * (시스템 — user_id NULL)을 남긴다. 운영자가 /ops 에서 고른 값은 옛 기본값과 같은 글자여도 그대로다. 머리 주석의 되돌리기 SQL 로 옛 기본값에 돌아가고 다시 적용된다.
+     * (시스템 — user_id NULL)을 남긴다. 운영자가 /ops 에서 고른 값은 옛 기본값과 같은 글자여도 그대로다. 머리 주석의 되돌리기 SQL 로 옛 기본값에 돌아가고, 그 뒤의 migrate 가 V17 을 다시 적용하지 않는다(이력 행을 지우지 않는다).
      * 고치기 전(V17 없음)에는 기본값이 adsb_lol 먼저라 이 시험이 실패했다.
      */
     @Test
@@ -960,14 +960,18 @@ class MigrationDbTest {
                 assertThat(audit.get(0).get("user_id")).isNull();
             }
         }
-        // 되돌리기(머리 주석): 옛 기본값 · 이력 행 삭제 → 다시 앞으로
+        // 되돌리기(머리 주석): 옛 기본값 · 감사 한 줄, 이력 행은 그대로 → 다음 migrate(make up 마다 도는 migrate 서비스와 같은 경로)가 V17 을 다시 적용하지 않는다.
+        // 리뷰 2026-09-30 밤: 전의 되돌리기 SQL 은 이력 행까지 지워, 다음 migrate 가 V17 을 다시 적용해 순서가 조용히 adsb_fi 먼저로 돌아갔다(이 시험이 실패했다)
         String url = DbTestSupport.jdbcUrl("wakeline_stage_seventeen_seed");
         JdbcClient seed = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
         runAsMigrator(url, rollbackSql("V17__region_provider_order_adsb_fi_first.sql"));
         assertThat(seed.sql("SELECT value::text FROM app_setting WHERE key = 'aircraft_providers'").query(String.class).single()).isEqualTo(oldDefault);
-        assertThat(seed.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '17'").query(Long.class).single()).isZero();
-        migrateTo(url, "17");
-        assertThat(seed.sql("SELECT value::text FROM app_setting WHERE key = 'aircraft_providers'").query(String.class).single()).isEqualTo(newDefault);
+        assertThat(seed.sql("SELECT count(*) FROM flyway_schema_history WHERE version = '17' AND success").query(Long.class).single()).isEqualTo(1);
+        assertThat(WakelineApplication.migrate(DbTestSupport.env("wakeline_stage_seventeen_seed"))).isZero();
+        assertThat(seed.sql("SELECT value::text FROM app_setting WHERE key = 'aircraft_providers'").query(String.class).single())
+                .as("the rollback lasts across the next migrate").isEqualTo(oldDefault);
+        assertThat(seed.sql("SELECT action FROM audit_log ORDER BY id").query(String.class).list())
+                .containsExactly("SETTING_DEFAULT_V17", "SETTING_DEFAULT_V17_ROLLBACK");
     }
 
     /**

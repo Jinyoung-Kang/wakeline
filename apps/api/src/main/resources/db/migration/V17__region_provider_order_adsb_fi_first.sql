@@ -10,6 +10,11 @@
 -- updated_by 는 그대로 둔다 — 여전히 운영자가 고른 값이 아니다. api 가 기동 때와 60 s 마다 DB → Redis wakeline:settings 로 미러하고 수집기는 다음
 -- 주기에 따른다(StartupMirror).
 --
+-- 되돌리기: 보통은 /ops 설정에서 순서를 adsb_lol,adsb_fi,opensky 로 고른다(updated_by = 운영자 · 감사 기록 — V17 같은 기본값 마이그레이션은 운영자가 고른 값을 건드리지 않는다).
+-- 아래 SQL 은 값만 옛 기본값으로 돌리고 flyway_schema_history 의 V17 행은 **지우지 않는다** — 지우면 `make up` 마다 도는 migrate 서비스가 V17 을 다시
+-- 적용해(updated_by 는 여전히 NULL · env, 값은 다시 옛 기본값) 순서가 조용히 adsb_fi 먼저로 돌아가고 감사 행이 하나 더 생긴다(리뷰 2026-09-30 밤 —
+-- MigrationDbTest 가 되돌린 뒤 다시 migrate 해도 옛 값인지 본다). 이 파일을 이미 적용한 DB 가 있으면 글자를 고치지 않는다(주석도 체크섬에 든다 —
+-- validateOnMigrate 가 뒤의 migrate 를 모두 멈춘다).
 -- ==== 되돌리기(rollback) SQL — wakeline_migrator 로 실행한다(코드는 되돌리지 않아도 된다 — 순서는 운영 설정 값이다. 수집기 · compose 기본값은 설정이 없을 때만 쓰인다) ====
 -- WITH back AS (
 --   UPDATE app_setting SET value = '"adsb_lol,adsb_fi,opensky"', version = version + 1, updated_at = now()
@@ -17,7 +22,6 @@
 --   RETURNING key)
 -- INSERT INTO audit_log (user_id, action, target, before, after)
 --   SELECT NULL, 'SETTING_DEFAULT_V17_ROLLBACK', key, '"adsb_fi,adsb_lol,opensky"'::jsonb, '"adsb_lol,adsb_fi,opensky"'::jsonb FROM back;
--- DELETE FROM flyway_schema_history WHERE version = '17';
 -- ==== 되돌리기 끝 ====
 WITH moved AS (
   UPDATE app_setting SET value = '"adsb_fi,adsb_lol,opensky"', version = version + 1, updated_at = now()
