@@ -9,6 +9,7 @@ class FakeStatus:
         self.switches = []
         self.reasons = []
         self.disabled = set()
+        self.none = []
 
     async def is_disabled(self, name):
         return name in self.disabled
@@ -19,6 +20,9 @@ class FakeStatus:
     async def switch_event(self, job, frm, to, reason):
         self.switches.append((frm, to))
         self.reasons.append(reason)
+
+    async def set_none(self, job, *, since, reason, next_at):
+        self.none.append((job, reason, next_at))
 
 
 class P:
@@ -330,3 +334,174 @@ async def test_reason_is_masked_and_at_most_120_chars(monkeypatch):
     r = st.reasons[-1]
     assert len(r) <= 120 and "abcdef" not in r and r.startswith("fallback — ppp")
     assert st.active[-1] == ("b", r)
+
+
+# ---- 운영 로그 2026-09-30 KST: 관심 지역 '공급자 없음'(12:16:32 · 12:22:28) -------------------------------------------------------
+# 12:14:50 adsb_fi 'failed 3x — cooling down'(ConnectError SSLEOFError, opendata.adsb.fi) → 10분 쉼. adsb_lol(429 미룸 중)이 맡았다가 12:16:22 · 12:22:18 에
+# 429 → 'backing off 300 s … no other provider — deferral not applied'. 고치기 전에는 adsb_lol 이 쉬는 동안 adsb_fi 를 쉼이 끝나는 12:24:50 까지 다시
+# 시도하지 않아 관심 지역에 공급자가 없었다: (12:21:22 − 12:16:22) + (12:24:50 − 12:22:18) = 300 + 152 = 452 s(설정값 — 쉼 600 s · 429 쉼 300 s — 과
+# 로그 시각으로 계산). '3회 연속 실패' 쉼은 다음 순위에게 넘기려는 선호도다(429 미룸과 같다) — 다른 공급자가 없으면 주기 그대로 다시 시도한다.
+
+
+def _held_lol_and_failed_fi(clk, st):
+    """로그의 상태: lol 은 429 미룸 중(단계 4 — 쉼 300 s · 미룸 40분, 쉼은 끝남), fi 가 맡다가 3회 연속 실패로 10분 쉼."""
+    chain = ProviderChain("region", {"lol": P("lol"), "fi": P("fi")}, st)
+    t0 = clk[0]
+    clk[0] = t0 - 1000
+    for _ in range(4):
+        chain.record_rate_limited("lol")
+    clk[0] = t0
+    return chain
+
+
+@pytest.mark.asyncio
+async def test_failed_provider_is_retried_when_every_other_provider_is_out(monkeypatch):
+    clk = _clocked(monkeypatch)
+    st = FakeStatus()
+    chain = _held_lol_and_failed_fi(clk, st)
+    order = ["lol", "fi"]
+    assert (await chain.pick(order)).name == "fi"  # lol 미룸 중 — fi 가 맡는다
+    for _ in range(3):
+        chain.record_failure("fi")
+    assert (await chain.pick(order)).name == "lol"  # 다른 공급자 없음 — 미룸 중인 lol(전과 같다)
+    chain.record_rate_limited("lol")  # 12:16:22 — 300 s 쉼
+    clk[0] += 10
+    p = await chain.pick(order)
+    assert p is not None and p.name == "fi"  # 고치기 전: None('no provider available')
+    assert (
+        st.reasons[-1] == "fallback — lol 429 반복 → 60분 뒤로 미룸 · fi 다시 시도 — 3회 연속 실패(10분 쉼) 중, 다른 공급자 없음"
+    )
+    assert st.none == []
+    until = chain._down_until["fi"]
+    assert chain.record_failure("fi") is False  # 쉬는 중 다시 시도가 실패 — 새 '3회' 를 세지 않고(WARN 없음) 쉼 끝도 그대로
+    assert chain._down_until["fi"] == until
+    clk[0] += 10
+    assert st.switches == [("fi", "lol"), ("lol", "fi")]
+    assert (await chain.pick(order)).name == "fi" and len(st.switches) == 2  # 같은 공급자 — 전환 기록을 쌓지 않는다
+    chain.record_success("fi")  # 회복 — 쉼을 끝낸다
+    clk[0] += 300  # lol 쉼이 끝나도(미룸 중) fi 가 정상 후보다
+    assert (await chain.pick(order)).name == "fi" and chain.probing("fi") is False
+
+
+@pytest.mark.asyncio
+async def test_two_failed_providers_are_retried_in_turn(monkeypatch):
+    """둘 다 3회 연속 실패로 쉬면 오래 시도하지 않은 쪽부터 번갈아 — 한쪽만 되풀이해 다른 쪽의 회복을 놓치지 않게."""
+    clk = _clocked(monkeypatch)
+    st = FakeStatus()
+    chain = ProviderChain("region", {"a": P("a"), "b": P("b")}, st)
+    order = ["a", "b"]
+    await chain.pick(order)
+    for name in ("a", "b"):
+        for _ in range(3):
+            chain.record_failure(name)
+    seen = []
+    for _ in range(4):
+        clk[0] += 10
+        p = await chain.pick(order)
+        seen.append(p.name)
+        chain.record_failure(p.name)
+    assert seen == ["a", "b", "a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_failed_provider_switched_off_by_the_operator_is_not_retried(monkeypatch):
+    clk = _clocked(monkeypatch)
+    st = FakeStatus()
+    chain = _held_lol_and_failed_fi(clk, st)
+    order = ["lol", "fi"]
+    await chain.pick(order)
+    for _ in range(3):
+        chain.record_failure("fi")
+    await chain.pick(order)
+    chain.record_rate_limited("lol")
+    st.disabled.add("fi")
+    clk[0] += 10
+    assert await chain.pick(order) is None
+
+
+@pytest.mark.asyncio
+async def test_no_provider_is_an_explicit_state_with_reasons_and_the_next_known_time(monkeypatch):
+    """공급자가 하나도 없으면 상태(set_none: 까닭 · 다음으로 풀리는 때)와 전환 기록(lol → none)을 남긴다 — 전에는 wakeline:active 가 그대로
+    'region: lol' 이라 운영 화면이 초록 배지로 쓰던 공급자를 보였다. 다시 고르면 none → lol 전환과 공백 길이."""
+    from datetime import UTC, datetime
+
+    clk = _clocked(monkeypatch)
+    st = FakeStatus()
+    chain = ProviderChain("region", {"lol": P("lol"), "fi": P("fi")}, st)
+    order = ["lol", "fi"]
+    st.disabled.add("fi")
+    assert (await chain.pick(order)).name == "lol"
+    chain.record_rate_limited("lol")  # 60 s 쉼
+    before = datetime.now(UTC)
+    assert await chain.pick(order) is None
+    job, reason, next_at = st.none[-1]
+    assert job == "region" and reason == "lol 429 쉼(60 s) · fi 운영자 끔"
+    assert 55 <= (next_at - before).total_seconds() <= 61  # lol 쉼 끝(체인 상태에서 정해진 값)
+    assert st.switches[-1] == ("lol", "none") and st.reasons[-1] == "none — lol 429 쉼(60 s) · fi 운영자 끔"
+    assert chain.none_since is not None
+    clk[0] += 30
+    assert await chain.pick(order) is None and len(st.none) == 1  # 같은 공백 — 한 번만
+    clk[0] += 31
+    assert (await chain.pick(order)).name == "lol"
+    assert st.switches[-1] == ("none", "lol") and st.reasons[-1] == "recovery — 공급자 없음 61 s 끝 · lol 쉼 끝"
+    assert st.active[-1] == ("lol", "recovery — 공급자 없음 61 s 끝 · lol 쉼 끝") and chain.none_since is None
+
+
+@pytest.mark.asyncio
+async def test_no_provider_next_time_is_unknown_when_nothing_is_time_bound(monkeypatch):
+    _clocked(monkeypatch)
+    st = FakeStatus()
+    st.disabled.update({"lol", "fi"})
+    chain = ProviderChain("region", {"lol": P("lol"), "fi": P("fi")}, st)
+    assert await chain.pick(["lol", "fi"]) is None
+    assert st.none == [("region", "lol 운영자 끔 · fi 운영자 끔", None)]  # 운영자가 켜야 풀린다 — 때를 짓지 않는다
+    assert st.switches == []  # 쓰던 공급자가 없었다(첫 선택) — 전환 기록 없음
+
+
+async def _replay_2026_09_30(monkeypatch, fi_ok_at: float) -> tuple[float, float | None, list[str]]:
+    """10 s 주기로 로그의 흐름을 되풀이한다. t = 0 이 12:14:50 KST(adsb_fi 세 번째 실패). lol 은 돌아올 때마다 로그처럼 9번째(12:15:00–12:16:22) ·
+    6번째(12:21:2x–12:22:18) 호출에서 429, 그 뒤로도 6번째마다(가정 — 시험에서만). fi 는 fi_ok_at 전까지 연결 실패(가정 — 언제 풀렸는지는 로그에 없다).
+    돌려주는 값: 공급자가 없던 초 · fi 가 처음 성공한 t · 고른 공급자 이름들."""
+    clk = _clocked(monkeypatch, start=0.0)
+    st = FakeStatus()
+    chain = _held_lol_and_failed_fi(clk, st)
+    for _ in range(3):
+        chain.record_failure("fi")
+    order = ["lol", "fi"]
+    limits = [9, 6]
+    lol_run = n429 = 0
+    none_s, fi_first, picked = 0.0, None, []
+    for t in range(10, 901, 10):
+        clk[0] = float(t)
+        p = await chain.pick(order)
+        if p is None:
+            none_s += 10
+            picked.append("-")
+            continue
+        picked.append(p.name)
+        if p.name == "lol":
+            lol_run += 1
+            if lol_run >= limits[min(n429, len(limits) - 1)]:
+                lol_run, n429 = 0, n429 + 1
+                chain.record_rate_limited("lol")
+            else:
+                chain.record_success("lol")
+        elif t < fi_ok_at:
+            chain.record_failure("fi")
+        else:
+            fi_first = fi_first if fi_first is not None else float(t)
+            chain.record_success("fi")
+    return none_s, fi_first, picked
+
+
+@pytest.mark.asyncio
+async def test_observed_2026_09_30_sequence_leaves_no_provider_less_gap(monkeypatch):
+    """고치기 전: 같은 흐름에서 fi 가 쉼 끝(t = 600) 전에 풀려도 공급자 없음이 약 7분(10 s 격자로 440 s — 로그 시각으로는 452 s)이었고 fi 는 t = 600
+    에야 다시 시도했다. 고친 뒤: lol 이 쉬는 동안 fi 를 주기마다 다시 시도한다 — 공급자 없음 0, fi 가 풀린 주기에 곧바로 받는다."""
+    none_s, fi_first, picked = await _replay_2026_09_30(monkeypatch, fi_ok_at=150.0)
+    assert none_s == 0, picked
+    assert fi_first == 150.0
+    none_s, fi_first, _ = await _replay_2026_09_30(
+        monkeypatch, fi_ok_at=10_000.0
+    )  # fi 가 끝내 풀리지 않아도 '공급자 없음'이 아니라 다시 시도 중
+    assert none_s == 0 and fi_first is None

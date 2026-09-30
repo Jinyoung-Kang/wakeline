@@ -55,13 +55,24 @@ class AircraftJob:
         if need_global and not ctx.rt.global_enabled:
             return
         order = ["fixture"] if ctx.fixture else ctx.rt.provider_order
+        none_s = self.chain.none_elapsed_s()  # 공급자 없음이 이어지던 시간(고르면 체인이 비운다)
         prov = await self.chain.pick(order, need_global=need_global)
         if prov is None:
             await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture, extra=self._hb_extra())
-            if not self._warned_no_provider:
-                log.warning("%s: no provider available (not configured, disabled, cooling down or paused)", self.scope)
+            if not self._warned_no_provider:  # 공백마다 한 번 — 바뀌는 글은 따옴표 안(로그 지문이 한 묶음)
+                nxt = self.chain.none_next
+                log.warning(
+                    "%s: no provider available — skipped: '%s'; next: '%s'",
+                    self.scope,
+                    self.chain.none_reason,
+                    f"{nxt[0]} after {nxt[1]:.0f} s"
+                    if nxt
+                    else "none known (switched off, paused without an end, or not configured)",
+                )
                 self._warned_no_provider = True
             return
+        if self._warned_no_provider or none_s is not None:
+            log.info("%s: a provider is available again after %.0f s without one — '%s'", self.scope, none_s or 0.0, prov.name)
         self._warned_no_provider = False
         lat, lon, radius = ctx.rt.region
         cost = prov.global_cost if need_global else prov.region_cost
@@ -185,6 +196,7 @@ class AircraftJob:
         if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
             await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
         why = describe_error(e)
+        retried = self.chain.probing(name)  # 3회 연속 실패로 쉬는 중이지만 다른 공급자가 없어 다시 시도한 호출
         await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
         ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
         if http_status == 429:
@@ -199,6 +211,13 @@ class AircraftJob:
             )
         elif self.chain.record_failure(name):
             log.warning("%s: %s failed 3x — cooling down", self.scope, name)
+        elif retried:  # 쉼마다 WARN 은 한 번(위) — 다시 시도의 실패는 INFO(공급자 상태 · 실행 기록에는 그대로 남는다)
+            log.info(
+                "%s: %s failed again while cooling down — retried because no other provider is available (%s)",
+                self.scope,
+                name,
+                why,
+            )
         else:
             log.info("%s: %s failed (%s)", self.scope, name, why)
 

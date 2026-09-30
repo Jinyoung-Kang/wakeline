@@ -20,6 +20,8 @@ from wakeline_collector.masking import mask
 log = logging.getLogger("status")
 KEY_COLLECTOR = "wakeline:collector"
 AUX_TIMEOUT_S = 1.5  # 부가 경로(상태·heartbeat·전환 이벤트·수요 상태) Redis 호출 하나의 상한
+# wakeline:active 의 공급자 없음 필드({job}_none_since · {job}_none_reason · {job}_none_next — 계약 v5 §G24)
+NONE_FIELDS = ("none_since", "none_reason", "none_next")
 
 
 def _iso(dt: datetime | None) -> str:
@@ -110,7 +112,24 @@ class ProviderStatus:
             return 0
 
     async def set_active(self, job: str, name: str, *, reason: str) -> None:
-        await self.hset_meta("wakeline:active", {job: name, f"{job}_since": _iso(datetime.now(UTC)), f"{job}_reason": reason})
+        """작업이 쓰는 공급자 · 그때 · 까닭. 공급자 없음 필드({job}_none_*)를 비운다(fallback.py — 공급자 없음이 끝났다)."""
+        await self.hset_meta(
+            "wakeline:active",
+            {job: name, f"{job}_since": _iso(datetime.now(UTC)), f"{job}_reason": reason}
+            | {f"{job}_{k}": "" for k in NONE_FIELDS},
+        )
+
+    async def set_none(self, job: str, *, since: datetime, reason: str, next_at: datetime | None) -> None:
+        """작업에 쓸 공급자가 하나도 없다(fallback.py): {job}_none_since(UTC ISO) · {job}_none_reason(건너뛴 공급자와 까닭) · {job}_none_next
+        (가장 먼저 풀리는 때 — 체인 상태로 정해진 값, 모르면 빈 값). {job}(마지막으로 쓴 공급자)은 그대로 둔다."""
+        await self.hset_meta(
+            "wakeline:active",
+            {
+                f"{job}_none_since": _iso(since),
+                f"{job}_none_reason": (mask(reason) or "")[:200],
+                f"{job}_none_next": _iso(next_at),
+            },
+        )
 
     async def switch_event(self, job: str, frm: str, to: str, reason: str) -> None:
         try:
