@@ -259,6 +259,16 @@ describe("features the guide describes exist in the screens", () => {
     expect(ship).toMatch(/창의 일부만 셈/);
     expect(ship).toMatch(/이 화면에 관측 수신 칸 N개/);
     expect(ship).toMatch(/부터만 셈/); // 창을 다 세지 못했으면 칩 · 0척 알림도 센 구간을 적는다(리뷰 2026-09-30)
+    // 서버가 기동 때 못 읽은 시(계약 v5 §G27 개정 — 2026-09-30 22:49 KST 배포 직후): 다시 읽기 대기와 다음 시각 · 끝내 포기한 시
+    expect(ship).toMatch(/빈 시 N시간\(… KST\) 다시 읽기 대기 — 까닭 · 다음 … KST/);
+    expect(ship).toMatch(/포기 — 까닭 · api 재시작 전까지 빈 시/);
+  });
+  it("4 says each stats panel is loading or failed on its own — the empty-state text is only for an answer that came back (2026-09-30 22:49 KST capture)", () => {
+    const stats = section(render(EMPTY), "stats");
+    expect(stats).toMatch(/받는 중 · 받지 못함/);
+    expect(stats).toContain("‘불러오는 중’");
+    expect(stats).toMatch(/그 패널만 ‘조회 실패’와 HTTP 상태 · 요청 id · 다시 시도/);
+    expect(stats).toMatch(/응답을 받은 패널에만/);
     expect(section(render(EMPTY), "dashboard-layers")).toContain(RECEPTION_LAYER_LABEL);
     expect(section(render(EMPTY), "dashboard-legend")).toContain("관측 수신 범위");
   });
