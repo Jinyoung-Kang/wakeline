@@ -158,7 +158,8 @@ resultCode 오류 · 포털 XML 오류 · regDt · 항목별 거절 · 겹침 ·
 `rest_contract_check` · `RolePrivilegesDbTest`(V14) · `LogMaskerTest`(같은 벡터) · OpenAPI 스냅샷, 인프라 `test_redis_acl_rules.py`(셀렉터 모양) ·
 `redis_acl_test.sh`(HDEL · HINCRBY · XADD · HSET · GET 거부) · `test_compose_policy.py`, 웹 `tests/traffic-grid.test.ts`(시계로 본 오래됨 · 다시 보일 때 조회 ·
 위치 조회 실패) · `tests/mapview-traffic-grid.test.ts`(조회 실패 뒤 오래된 값 안 그림 · 오래되는 순간 비움).
-2026-10-01 개정: 수집기 `tests/test_traffic_grid_fill.py`(아래 개정 절의 시험).
+2026-10-01 개정: 수집기 `tests/test_traffic_grid_fill.py`(스냅샷 줄 · 채우기 요약 줄 · heartbeat · 부정 캐시 상한 · 재기동 · 한정된 칸 모형에서 수렴) ·
+`tests/test_db_pg_integration.py`(실제 WFS 응답을 해석한 칸이 V14 에 저장되고 다음 기동이 되살림 — 선택 실행), 웹 `tests/ops-traffic-grid-fill.test.ts`.
 
 ## 개정(2026-10-01) — 격자 위치 채우기: 끝나는 때를 말하지 않는다 · 스냅샷 줄이 무엇을 세는지 · 채우기마다 요약(운영 로그)
 운영 질문: 채우기가 수렴하는가. 아래 '잰 것'은 운영 스택의 수집기 · api · db 표준 출력(2026-09-30 UTC, 오케스트레이터가 읽어 넘김)이고,
@@ -204,6 +205,9 @@ resultCode 오류 · 포털 XML 오류 · regDt · 항목별 거절 · 겹침 ·
   6000 (UTC day); <stopped: … — geometry fill resumes at … | paused: … | stopped: mof_grid4 switched off by the operator | queue empty — … | nothing due — …>`.
   시간 창 · 하루 예산으로 쉬면 시간마다 한 줄이다(따로 적던 '… resumes at …' 줄을 합쳤다). 시각은 로그가 늘 쓰는 UTC 'Z' 그대로.
   수렴은 이렇게 읽는다: 줄마다 C 가 f 만큼 늘고, A ÷ N 이 오르고, W · q 가 줄면 따라잡는 중 — W 가 늘고 q 가 쌓이면 새 칸이 조회보다 빨리 나타난다.
+- 운영 화면 providers 탭 한 줄 '연안 교통량 격자 위치'(heartbeat 그대로 — 웹은 수를 만들지 않는다, 모르면 "—", 시각은 KST): 그려지는 칸 / 스냅샷 칸 ·
+  위치 확인 · 조회 대기 · 대기열 가득 차 못 넣음(주황) · 해양격자에 없음 · 격자 검사 실패 · 위치 조회 실패 · 오늘 조회 · 상태와 다음 때(시간 몫 · 하루 예산은
+  계획한 쉼이라 흐린 색, 연달아 오류 · 운영자 끔은 주황) · 마지막 채우기 한 번(웹 `tests/ops-traffic-grid-fill.test.ts`).
 - heartbeat(`/ops/providers` 의 collector 해시): 위 결정 5 목록의 채우기 진행 필드. `traffic_grid_fill_state` = filling · idle · retry_wait · waiting_db ·
   hour_window · daily_budget · breaker · operator_off, `…_resume_at` = 다음에 움직이는 때(없으면 빈 값), `…_fill_pass_*` = 이 프로세스에서 마지막으로 끝난 채우기.
 - 버린 대안: **최신 스냅샷의 칸 먼저 묻기** — 지금 그려질 칸을 먼저 채우지만, 한 번 보이고 사라지는 칸에 조회를 쓴다. 잰 근거가 없어 순서는 그대로
