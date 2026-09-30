@@ -116,6 +116,12 @@ describe("the KMA chip, 상세, the KMA panel and the ops row say the listing ha
     expect(RUN_STATUS_TITLE.missing).toContain("목록에도 새 tm 이 없던 확인");
     expect(RUN_STATUS_TITLE.missing).toContain("nothing to probe");
   });
+  it("run status missing also covers a listing stall outside a streak (collector lane kma 8th pass) — named in its explanation", () => {
+    // 수집기(jobs/kma_radar.py _ListIdle): 연속이 없어도 저장한 최신 tm 을 처음 저장한 뒤 15분 넘게 목록에 그보다 새 tm 이 없으면 'missing'
+    expect(RUN_STATUS_TITLE.missing).toContain("연속이 없어도");
+    expect(RUN_STATUS_TITLE.missing).toContain("the KMA listing … has no tm after");
+    expect(RUN_STATUS_TITLE.missing).toContain("15분");
+  });
 });
 
 describe("WS status: radar_kr.missing list_tm · list_newer pass the validator; wrong ones drop the message", () => {
