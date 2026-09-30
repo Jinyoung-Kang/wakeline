@@ -61,7 +61,7 @@ ais CPU 평균 4.5 %(순간 45 %) · 메모리 41–67 MiB, api 637–675 MiB, R
 **되돌리기(V8).** `DROP INDEX ingest_gap_source_scope_started_uq; ALTER TABLE ingest_gap ADD CONSTRAINT ingest_gap_source_started UNIQUE (source, started_at); ALTER TABLE ingest_gap DROP COLUMN scope; DELETE FROM flyway_schema_history WHERE version = '8';`
 (scope 가 다른 같은 시각 공백이 있으면 먼저 하나만 남긴다.) 설정값에서 `|` 를 `;` 로 바꾸면 한 연결로 돌아간다.
 
-## 부록 C — keepalive 1011 끊김: 가설 시험 · 진단 · 로그 수준(2026-09-30)
+## 부록 C — keepalive 1011 끊김: 가설 시험 · 진단 · 로그 수준(2026-09-30, 계약 v5 §G23)
 **증상.** 로그 화면에 `ais shard 1 disconnected: client closed (1011 keepalive ping timeout) — reconnecting in 0.9 s` 가 08:41:56 · 08:51:01 KST 에 올랐다
 (ais 컨테이너 07:09 KST 기동 뒤 2시간에 2번, 구역 1만). 재연결마다 짧은 수신 공백이 남았다(상태 바 11 s). 06:43 KST 에 두 구역이 함께 끊긴 일은 같은 분의
 RainViewer ConnectTimeout 과 함께라 호스트 망 문제로 보고 이 부록에서 다루지 않는다.

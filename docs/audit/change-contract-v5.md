@@ -577,9 +577,9 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     그 안에, 다시 풀면 found) · `RouteReaderTest`(대기열의 읽기에 붙은 REST 는 명령 상한에 unavailable · 운영 생성자가 속성에서 상한을 읽음) · 웹
     `route-pending.test.ts`. ADR-025 '개정' 절.
 
-## G. 13차 개정(2026-09-30 · 레인 kma · 운영/로그 스크린샷 — 기상청 레이더 '파일 없음'이 로그를 채우고 운영은 '성공'으로 보였다)
-병행 레인이 같은 날 §G21 을 먼저 썼다면 합칠 때 이 절의 번호를 다음으로 옮긴다(`tests/docs-contract-g11` 이 번호가 겹치지 않는지 본다).
-- G21(FR-31 · R-03 · R-72 · §G20) **기상청 내려받기 '파일 없음' 연속을 이름 붙여 싣는다 — 로그는 연속마다 WARN 한 번, 실행은 'missing', 화면은 까닭을 적는다**.
+## G. 14차 개정(2026-09-30 · 레인 kma · 운영/로그 스크린샷 — 기상청 레이더 '파일 없음'이 로그를 채우고 운영은 '성공'으로 보였다)
+레인에서는 13차 · §G21 로 썼다 — 세 레인을 합칠 때(integ, 2026-09-30) 노선 조회(13차 · §G21) 다음으로 옮겼다: 14차 · §G22(`tests/docs-contract-g11` 이 번호가 겹치지 않는지 본다).
+- G22(FR-31 · R-03 · R-72 · §G20) **기상청 내려받기 '파일 없음' 연속을 이름 붙여 싣는다 — 로그는 연속마다 WARN 한 번, 실행은 'missing', 화면은 까닭을 적는다**.
   확인(오케스트레이터가 실제 호출로, 2026-09-30 09:50 KST 무렵): 목록 API `rdr_cmp_file_list.php?cmp=HSR&tm=20260930`(기본 ext=Y)은 `RDR_CMP_HSR_EXT_*` 를,
   ext=K 는 EXT 와 `RDR_CMP_HSR_KMA_*` 를 09:50 KST 까지 싣는데 내려받기 API `rdr_cmp_file.php?tm=…&data=bin&cmp=HSR` 는 202609300815 부터 모든 tm 에 HTTP 200
   `# file not exist (RDR_CMP_HSR_PUB_<tm>.bin.gz)` 로 답했다(0800 · 0810 은 gzip). 내려받기에 ext=Y · ext=K 를 붙여도 PUB 를 찾고, 문서에는 tm · data · cmp · authKey 와
@@ -621,9 +621,9 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT`(ETag · /status) · `RestSamplesIT` · `WsSchemaContractTest` · web `tests/kma-missing.test.ts` ·
     `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색).
 
-## G. 13차 개정(2026-09-30 · 레인 ais · 로그 화면의 keepalive 1011 두 건) — ais 수신 진단 필드 · 끊김 로그 수준
-같은 날 병행 레인이 먼저 13차 · §G21 을 썼다면 합칠 때 번호만 뒤로 민다(내용은 겹치지 않는다).
-- G21(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
+## G. 15차 개정(2026-09-30 · 레인 ais · 로그 화면의 keepalive 1011 두 건) — ais 수신 진단 필드 · 끊김 로그 수준
+레인에서는 13차 · §G21 로 썼다 — 세 레인을 합칠 때(integ, 2026-09-30) 번호만 뒤로 밀었다: 15차 · §G23(내용은 §G21 · §G22 와 겹치지 않는다).
+- G23(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
   - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
     `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
     구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
