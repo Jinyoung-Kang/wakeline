@@ -454,9 +454,8 @@ class FillPass:
         0  # DB(marine_grid4) 쓰기 큐에 넣은 칸 — 새 칸 · 기하가 바뀐 칸(쓰기는 비동기 — 버려지면 heartbeat db_dropped)
     )
     tile_splits: int = 0  # 잘렸을 수 있어 넷으로 나눈 타일
-    tile_incomplete: int = (
-        0  # 잘렸을 수 있지만 더 나누지 않고 incomplete 로 둔 타일(가장 작은 4 km · 부모보다 적은 지물로도 여전히)
-    )
+    # 잘렸을 수 있지만 더 나누지 않고 incomplete 로 둔 타일(가장 작은 4 km · 부모보다 적은 지물로도 여전히)
+    tile_incomplete: int = 0
     tile_errors: int = 0
 
 
