@@ -720,3 +720,16 @@ def test_ship_coverage_schema_rejects(over):
 )
 def test_ship_coverage_cross_rules_catch(body):
     assert rcc._ship_coverage(body), body
+
+
+def test_ship_coverage_fetched_at_is_clamped_to_generated_at_when_a_report_is_ahead_of_the_api_clock():
+    """리뷰(2026-09-30): 수집기 시계가 빨라 마지막 수신이 응답 시각보다 미래면(5분까지 센다) api 는 meta.fetched_at 을 generated_at 으로 내린다 —
+    Meta 가 음수 지연을 stale 로 보지 않게. 규칙: fetched_at = min(가장 늦은 마지막 수신, generated_at). 수정 전(= 가장 늦은 마지막 수신만 허용) 실패."""
+    ahead = "2026-09-30T09:42:00Z"  # generated_at 09:40:12.345 보다 2분 미래
+    cells = [[126.0, 37.0, 0.5, 3, 3, ahead]]
+    meta = {**coverage()["meta"], "fetched_at": "2026-09-30T09:40:12.345Z"}
+    body = coverage(cells=cells, cell_count=1, positions=3, meta=meta)
+    assert rcc._ship_coverage(body) == [], rcc._ship_coverage(body)
+    # 미래 값 그대로는 틀렸다(api 가 내리지 않았다)
+    raw = coverage(cells=cells, cell_count=1, positions=3, meta={**meta, "fetched_at": ahead})
+    assert rcc._ship_coverage(raw)

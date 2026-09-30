@@ -1990,7 +1990,8 @@ def _utc(v: str) -> datetime:
 def _ship_coverage(body: dict[str, Any]) -> list[str]:
     """계약 v5 §G27 /ships/coverage: 창 = 지금 시의 시작 − 24 h ~ generated_at, since = max(창의 시작, min(부트스트랩이 이어 읽은 곳, 셈 시작)) —
     covered 는 그것으로 정해진다(full ⇔ since = 창의 시작), 셈 시작 = api 시작을 분으로 내린 것, 칸은 0.5° 격자점 · 남 → 북 · 서 → 동 · 한 번씩 ·
-    선박 ≤ 위치 · 마지막 수신은 초로 내린 값이고 창 안(수집기 시계 5분까지 앞선 값 허용), 합계 · 잘림 · 상한이 칸과 맞다, meta.fetched_at = 가장 늦은 마지막 수신."""
+    선박 ≤ 위치 · 마지막 수신은 초로 내린 값이고 창 안(수집기 시계 5분까지 앞선 값 허용), 합계 · 잘림 · 상한이 칸과 맞다,
+    meta.fetched_at = min(가장 늦은 마지막 수신, generated_at)."""
     errs: list[str] = []
     w = body.get("window") or {}
     to, gen = _utc(w["to"]), _utc(body["generated_at"])
@@ -2049,8 +2050,10 @@ def _ship_coverage(body: dict[str, Any]) -> list[str]:
     fetched = (body.get("meta") or {}).get("fetched_at")
     if newest is None and fetched is not None:
         errs.append("meta.fetched_at without any cell")
-    if newest is not None and (fetched is None or _utc(fetched) != newest):
-        errs.append(f"meta.fetched_at {fetched} != newest last_seen {newest.isoformat()}")
+    # 수집기 시계가 빨라 가장 늦은 마지막 수신이 응답보다 미래면 api 는 generated_at 으로 내린다(음수 지연을 stale 로 보지 않게)
+    want_fetched = None if newest is None else min(newest, gen)
+    if want_fetched is not None and (fetched is None or _utc(fetched) != want_fetched):
+        errs.append(f"meta.fetched_at {fetched} != min(newest last_seen, generated_at) {want_fetched.isoformat()}")
     return errs
 
 

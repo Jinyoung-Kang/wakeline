@@ -752,7 +752,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `covered`(full · partial · since_api_start) · `api_started_at` · `live_from` · `bootstrap{state(pending · running · done · failed), hours_loaded, hours_total, rows,
     loaded_from}`(+ `error` — failed 일 때만, 종류 statement_timeout · connection · read_timeout · deadline · stopped · error, 서버 글자 없음 · `finished_at` — done ·
     failed 일 때만) · `generated_at` · `cells` · `cell_count` · `positions` · `truncated` · `dropped_positions` · `limits{max_cells, max_ship_cells}` ·
-    `sampling`("first_fix_per_60s") · `note` · `time_zone` · `meta`(provider = 마지막으로 센 보고의 공급자, fetched_at = 가장 늦은 마지막 수신 — 칸이 없으면 둘 다 키 없음,
+    `sampling`("first_fix_per_60s") · `note` · `time_zone` · `meta`(provider = 마지막으로 센 보고의 공급자, fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 stale 로 잘못
+    보이지 않게, 칸이 없으면 둘 다 키 없음,
     stale 기준 900 s).
   - `cells[]` = `[lon0, lat0, 0.5, 선박 수, 위치 수, 마지막 수신]`: 칸 [lon0, lon0 + 0.5) × [lat0, lat0 + 0.5)(floor — 180°E · 90°N 은 마지막 칸), 남 → 북 · 서 → 동 순,
     선박 수 = 창 안 서로 다른 MMSI(≥ 1), 위치 수 = 저장과 같은 표본(MMSI 별 60 s 창의 첫 보고 — `IngestEvents.ShipsSampled` — 파이프라인 이벤트, ≥ 선박 수), 마지막 수신 = 그 칸의 가장 늦은
@@ -764,7 +765,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 부트스트랩(한 번 · api 시작 `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) 뒤 · 가장 최근 시부터 · 시 하나에 문장 하나 · 연결 하나(공유 풀 · 선택 조회 풀 아님) ·
     읽기 전용 · statement_timeout 10 s · socketTimeout 12 s · connectTimeout 2 s · loginTimeout 5 s · 전체 마감 180 s — 멈추면 이어 읽은 부분만).
   - 검사: `tools/rest_contract_check.py` `ship_coverage`(스키마 + `_ship_coverage` — 창의 시작 · to = generated_at · live_from 이 api 시작의 분 · since/covered 식 ·
-    격자점 · 순서 · 중복 없음 · 선박 ≤ 위치 · 마지막 수신이 창 안이고 초로 내림 · 합계 · 잘림 ⇔ 빠진 위치 · 상한 · meta.fetched_at = 가장 늦은 마지막 수신), 표본은
+    격자점 · 순서 · 중복 없음 · 선박 ≤ 위치 · 마지막 수신이 창 안이고 초로 내림 · 합계 · 잘림 ⇔ 빠진 위치 · 상한 · meta.fetched_at = min(가장 늦은 마지막 수신, generated_at)), 표본은
     RestSamplesIT, 규칙 시험은 collector `tests/test_rest_contract_rules.py`. OpenAPI 스냅숏에 `shipCoverage`.
   - 웹: 레이어 키 `reception`(선택 필드 — 없으면 끔 · 이 브라우저에 기억), 단추 '관측 수신 범위(최근 24 h)'(선박 옆). 켤 때 받는 조각(ADR-026 — `components/ReceptionLayer` ·
     `lib/reception`, `tests/first-screen-lazy.test.ts` 목록에 까닭과 함께): 조회 120 s · ETag · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만, 칸은 옅은 파랑

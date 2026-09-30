@@ -120,6 +120,27 @@ class ShipCoverageControllerTest {
         assertThat(ctrl.cellRows(next)).as("a new snapshot builds its own rows").isNotSameAs(rows).isEqualTo(rows);
     }
 
+    /**
+     * 리뷰(2026-09-30): meta.fetched_at 은 가장 늦은 마지막 수신인데, 수집기 시계가 빠르면(계약이 5분까지 허용) 응답 시각보다 미래다 — Meta 가 lag < 0 을
+     * '모름'으로 보고 stale=true · lag_s 없음으로 냈다(가장 새 자료를 오래됐다고). 이제 fetched_at = min(가장 늦은 마지막 수신, 스냅숏 시각). 칸의 마지막 수신은
+     * 받은 그대로다. 수정 전 실패.
+     */
+    @Test
+    void aReportAheadOfTheApiClockIsNotStale_fetchedAtIsClampedToTheSnapshotTime() throws Exception {
+        long now = System.currentTimeMillis(); // Meta 는 벽시계로 lag 를 잰다
+        AtomicLong clock = new AtomicLong(now);
+        ShipCoverage c = ShipCoverageFixtures.coverage(clock, ShipCoverageFixtures.empty());
+        long ahead = now + 120_000; // 수집기 시계 2분 빠름(5분 안 — 센다)
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.46, 126.44, ahead))));
+        ShipCoverage.Snapshot s = c.snapshotNow();
+        mvc(c).perform(get("/api/v1/ships/coverage"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cells[0][5]").value(Instant.ofEpochMilli(ahead).truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString()))
+                .andExpect(jsonPath("$.meta.fetched_at").value(s.generatedAt().toString()))
+                .andExpect(jsonPath("$.meta.stale").value(false))
+                .andExpect(jsonPath("$.meta.lag_s").isNumber());
+    }
+
     @Test
     void anEmptyGridHasNoFetchedAt_andIsStale() throws Exception {
         ShipCoverage c = ShipCoverageFixtures.coverage(new AtomicLong(START), ShipCoverageFixtures.empty());

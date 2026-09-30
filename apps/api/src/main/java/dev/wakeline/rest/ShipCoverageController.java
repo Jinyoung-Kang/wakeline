@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
  *       partial(기동 때 DB 부트스트랩이 일부만) · since_api_start(부트스트랩 전 · 실패 — api 시작 뒤 셈만). 창 전체인 척하지 않는다.</li>
  *   <li>bootstrap: state(pending · running · done · failed) · hours_loaded / hours_total · rows · loaded_from · error(failed 일 때 종류만) · finished_at.</li>
  *   <li>truncated = 메모리 상한 때문에 창 안에서 세지 못한 위치가 있다(dropped_positions) · limits = 그 상한.</li>
+ *   <li>meta.fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 stale 로 잘못 보이지 않게(칸의 값은 받은 그대로).</li>
  *   <li>캐시: public, max-age=60 — 스냅숏은 60 s 마다 새로 만든다. ETag = 스냅숏마다 다르다(If-None-Match → 304). 요청 제한은 /api/** 공통.</li>
  * </ul>
  */
@@ -92,7 +93,10 @@ public class ShipCoverageController {
         m.put("sampling", "first_fix_per_60s");
         m.put("note", NOTE);
         m.put("time_zone", TIME_ZONE);
+        // fetched_at = 가장 늦은 마지막 수신 — 수집기 시계가 빨라 스냅숏 시각보다 미래면(5분까지 센다) 스냅숏 시각으로: Meta 는 음수 지연을 '모름'(stale)으로 보므로
+        // 가장 새 자료가 오래됐다고 나가지 않게. 칸의 마지막 수신은 받은 그대로다.
         Instant newest = s.newestSeen() == null ? null : seconds(s.newestSeen().toEpochMilli());
+        if (newest != null && newest.isAfter(s.generatedAt())) newest = s.generatedAt();
         Map<String, Object> meta = Meta.of(req, s.provider(), newest, STALE_AFTER_S);
         meta.values().removeIf(java.util.Objects::isNull); // 모르는 값은 키가 없다(단독 MockMvc 에서도 같게)
         m.put("meta", meta);
