@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from wakeline_collector.config import settings
+from wakeline_collector.config import Settings, settings
 from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
@@ -114,11 +114,15 @@ def _retry_after_s(headers: dict[str, str], now: datetime | None = None) -> floa
     return left if left > 0 else None
 
 
+def build_limiter(s: Settings) -> RateLimiter:
+    """설정의 속도 상한(수집기 전체 · 호스트 버킷)으로 만든 RateLimiter — 수집기 main() 과 HttpClient() 의 기본값이 같은 함수를 쓴다
+    (리뷰 2026-09-30: main.py 가 kma_apihub_rps 를 넘기지 않아 설정을 바꿔도 기본 0.5 였다)."""
+    return default_limiter(s.http_global_rps, s.adsb_fi_rps, s.adsbdb_rps, s.data_go_kr_rps, s.kma_apihub_rps)
+
+
 class HttpClient:
     def __init__(self, limiter: RateLimiter | None = None) -> None:
-        self.limiter = limiter or default_limiter(
-            settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.data_go_kr_rps, settings.kma_apihub_rps
-        )
+        self.limiter = limiter or build_limiter(settings)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S),
             follow_redirects=False,

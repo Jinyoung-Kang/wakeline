@@ -124,8 +124,43 @@ async def test_default_limiter_has_a_kma_apihub_bucket():
     assert lim.global_rps == 2.0 and lim.host_rps("opendata.adsb.fi") == 0.8
     assert Settings().kma_apihub_rps == 0.5
     http = HttpClient()
-    assert http.limiter.host_rps(KMA_HOST) == 0.5  # 운영 클라이언트가 설정을 쓴다
+    assert http.limiter.host_rps(KMA_HOST) == 0.5  # 기본값 — 설정을 바꾼 경우는 아래 시험
     await http.aclose()
+
+
+async def test_the_running_collector_builds_its_limiter_from_the_kma_setting(monkeypatch):
+    """설정 kma_apihub_rps 를 바꾸면 main() 이 만드는 운영 속도 상한에 그대로 걸린다(리뷰 2026-09-30: main.py 가 이 설정을 넘기지 않아
+    KMA_APIHUB_RPS 를 바꿔도 늘 0.5 였다 — 고치기 전 이 시험은 0.5 로 실패했다). HttpClient() 의 기본 상한도 같은 함수로 만든다."""
+    from wakeline_collector import http as http_mod
+    from wakeline_collector import main as col_main
+
+    class Built(Exception):
+        pass
+
+    seen: dict = {}
+
+    def spy(limiter=None):
+        seen["limiter"] = limiter
+        raise Built  # 속도 상한을 만든 곳에서 멈춘다(작업을 띄우지 않는다)
+
+    class NoDb:
+        def start(self) -> None:
+            return None
+
+    tuned = col_main.settings.model_copy(update={"kma_apihub_rps": 0.25, "data_go_kr_rps": 0.75, "adsbdb_rps": 0.4})
+    monkeypatch.setattr(col_main, "settings", tuned)
+    monkeypatch.setattr(col_main, "configure_logging", lambda *_a, **_k: None)
+    monkeypatch.setattr(col_main, "HttpClient", spy)
+    with pytest.raises(Built):
+        await col_main.main(stop=None, redis=object(), db=NoDb())
+    lim = seen["limiter"]
+    assert lim.host_rps(KMA_HOST) == 0.25
+    assert lim.host_rps("apis.data.go.kr") == 0.75 and lim.host_rps("api.adsbdb.com") == 0.4
+    assert lim.global_rps == tuned.http_global_rps and lim.host_rps("opendata.adsb.fi") == tuned.adsb_fi_rps
+    monkeypatch.setattr(http_mod, "settings", tuned)
+    client = http_mod.HttpClient()
+    assert client.limiter.host_rps(KMA_HOST) == 0.25
+    await client.aclose()
 
 
 async def test_recovery_backlog_is_paced_by_the_kma_host_bucket(kma):
