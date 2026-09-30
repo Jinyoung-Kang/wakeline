@@ -63,3 +63,13 @@ data=img cmp=cmb → 200 PNG 646×631(30,440 B): '레이더 PPI0(QC) 2026.09.30.
 == 2026-09-30(KST) adsb.lol 429 — 문서와 관찰
 github.com/adsblol/api README: "Rate limits are dynamic based on the environment load." — 숫자 없음.
 관심 지역 체인 adsb_lol → adsb_fi 에서 adsb.lol 429: 05:46 · 11:48 · 12:16/12:22 · 18:24 KST — 매번 미룸(최대 6 h)이 끝나 돌아온 뒤 약 1–2분 안.
+
+== 2026-10-01(KST) 06:3x 해양수산부 격자4단계 WFS 의 bbox 조회(수집기 컨테이너에서 호출, 키는 출력하지 않음 — 두 번)
+문서(data.go.kr 15074709): 개발계정 트래픽 10,000/일. 포털 페이지의 표는 WMS(getOpnG4sWMS)만 적는다 — srs(EPSG:5179 지원) · bbox(xmin,ymin,xmax,ymax 순서, 필수).
+WFS 명세는 첨부 '격자4단계_기술문서.docx'(읽지 않았다). 아래는 실제 응답:
+GET getOpnG4sWFS?ServiceKey=***&bbox=916000,1935000,926000,1945000&srs=EPSG:5179&maxFeatures=100
+  → 200 text/xml; subtype=gml/3.1.1 · 18,635 B · FeatureCollection numberOfFeatures 28 · grid_no+geom 지물 28(서로 다른 28) · GR4_F2K41_C3(한 칸 조회로 확인한 칸) 포함
+GET getOpnG4sWFS?ServiceKey=***&bbox=896000,1915000,946000,1965000&srs=EPSG:5179&maxFeatures=1000
+  → 200 · 289,093 B · numberOfFeatures 450 · 지물 450(서로 다른 450) · GR4_F2K41_C3 포함
+→ bbox 한 번에 그 안의 칸을 모두(적어도 450까지) 같은 GML 로 준다 — 한 칸 조회(maxFeatures=1)의 수백 배. 지물 하나 약 640 B.
+  상한(maxFeatures 의 최댓값 · 응답 크기 상한)은 확인하지 않았다.
