@@ -59,3 +59,14 @@ heartbeat: 0 0 0 0
 2026-09-29 07:52:59,072 INFO job.kma_radar: kma radar: tm=202609291645 HSR stations=15 echo cells=54523 png=22735 B (12 frames)
 2026-09-29 07:57:59,819 INFO job.kma_radar: kma radar: tm=202609291650 HSR stations=15 echo cells=53285 png=21939 B (12 frames)
 2026-09-29 08:03:04,589 INFO job.kma_radar: kma radar: tm=202609291655 HSR stations=15 echo cells=51338 png=21697 B (12 frames)
+
+== 2026-09-30(KST) 기상청 HSR 공개 파일(PUB) 없음 — 공급자 쪽 중단(수집기 컨테이너에서 호출, 키는 출력하지 않음, 09:5x KST)
+로그: 08:29 KST 부터 5분마다 'kma radar: tm=… still unavailable after 3 tries — skipped: not gzip: '# file not exist (RDR_CMP_HSR_PUB_<tm>.bin.gz)''
+목록 API rdr_cmp_file_list.php?cmp=HSR&tm=20260930(기본 ext=Y) → HTTP 200 · 파일 119개 · 종류 EXT 만 · 마지막 RDR_CMP_HSR_EXT_202609300950
+목록 API 같은 날 ext=K → 238개 · 종류 EXT · KMA · 마지막 RDR_CMP_HSR_KMA_202609300950
+내려받기 API rdr_cmp_file.php?tm=…&data=bin&cmp=HSR:
+  202609300800 → gzip 362,920 B · 202609300810 → gzip 386,813 B
+  202609300815 → 200 '# file not exist (RDR_CMP_HSR_PUB_202609300815.bin.gz)' · 202609300940 → 같은 응답
+  202609300940 에 ext=Y · ext=K 를 붙여도 같은 응답(PUB 만 찾는다)
+문서(apihub.kma.go.kr apiList.do?seqApi=5): 목록 API 에 ext(Y 유관기관 포함 · K 기상청만) 인자가 있고, 내려받기 API 는 tm · data(bin/img) · cmp · authKey 와 PUB 파일 이름만 적는다.
+→ 기상청이 08:15 KST 부터 공개(PUB) 합성 파일을 내지 않는다(목록에는 EXT · KMA 파일만) — 우리 해석 문제가 아니다.
