@@ -148,7 +148,8 @@ is "권한이 원본과 같다(public 의 모든 표·시퀀스 ACL, 권한 단�
 is "기본 권한(ALTER DEFAULT PRIVILEGES)이 원본과 같다" \
   "$(sql "$DST" -c "SELECT string_agg(defaclrole::regrole::text || ':' || defaclobjtype::text || ':' || defaclacl::text, ',' ORDER BY 1) FROM pg_default_acl")" \
   "$(sql "$SRC" -c "SELECT string_agg(defaclrole::regrole::text || ':' || defaclobjtype::text || ':' || defaclacl::text, ',' ORDER BY 1) FROM pg_default_acl")"
-is "서비스 계정 로그인(wakeline_api, 새 볼륨의 역할)" "$(as_role "$DST" wakeline_api api-test-pw -c 'SELECT count(*) FROM audit_log')" 1
+# 시험 행만 센다 — 새 DB 에는 마이그레이션이 남긴 시스템 감사 기록도 있다(V17 SETTING_DEFAULT_V17: V1 시드의 옛 관심 지역 순서를 옮긴다, 계약 v5 §G25)
+is "서비스 계정 로그인(wakeline_api, 새 볼륨의 역할)" "$(as_role "$DST" wakeline_api api-test-pw -c "SELECT count(*) FROM audit_log WHERE request_id = 'bktest'")" 1
 is "PostGIS geometry 복원" "$(sql "$DST" -c "SELECT ST_AsText(geom) FROM track_point_1m LIMIT 1")" "POINT(127 37)"
 rc=0; out="$(bash "$ROOT/tools/db-restore.sh" --container "$DST" --file "$f1" --confirm "$DST" 2>&1)" || rc=$?
 [ "$rc" -ne 0 ]; check "두 번째 복원(이제 비어 있지 않음) → 거부" $? "rc=$rc $out"

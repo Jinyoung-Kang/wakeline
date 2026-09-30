@@ -23,6 +23,8 @@ import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { isMetarStale } from "@/lib/format";
 import { krLayerId } from "@/lib/kr-radar";
+import { layerTip, onReady, setDashboardMap } from "@/lib/map-ready";
+import { RECEPTION_FILL_LAYER } from "@/lib/reception-meta";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
@@ -35,8 +37,12 @@ const SIGMET_EXPIRY_CHECK_MS = 30_000;
 /** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다. */
 const AIRPORTS_REFRESH_MS = 300_000;
 const AIRPORTS_RECHECK_MS = 60_000;
-/** 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET > 연안 교통량 격자(ADR-023) */
-const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-track-point", "ship-grid-circle", "airport-circle", "sigmet-fill", "traffic-grid-fill"] as const;
+/**
+ * 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET > 연안 교통량 격자(ADR-023) >
+ * 관측 수신 칸(ADR-027 — 켤 때 받는 조각이 레이어 · 툴팁을 붙인다, lib/map-ready)
+ */
+const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-track-point", "ship-grid-circle", "airport-circle", "sigmet-fill", "traffic-grid-fill",
+  RECEPTION_FILL_LAYER] as const;
 /** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
 const SHIP_STALE_CHECK_MS = 30_000;
 /** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
@@ -93,24 +99,6 @@ function syncFrames(map: maplibregl.Map, prev: string[], frames: Frame[], displa
   return wanted;
 }
 
-/** load 전에 요청된 그리기 — 키마다 마지막 것만 둔다(데이터는 스타일과 무관하게 오므로(R-01) 스타일이 늦거나 오지 않아도 쌓이지 않는다) */
-const deferredDraws = new WeakMap<maplibregl.Map, Map<string, () => void>>();
-/**
- * 기본 레이어(addBaseLayers)가 준비됐으면 바로, 아니면 load 뒤에 실행(같은 key 는 마지막 요청만 — 각 그리기는 그 레이어의 전체 상태를 쓴다).
- * isStyleLoaded() 는 타일을 받는 동안 false 라 갱신을 잃는다. 대기열의 load 처리기는 지도 생성 effect 의 load 처리기(기본 레이어 추가) 뒤에 등록된다.
- */
-function onReady(map: maplibregl.Map, key: string, fn: () => void) {
-  if (map.getSource("aircraft")) { fn(); return; }
-  let queue = deferredDraws.get(map);
-  if (!queue) {
-    const q = new Map<string, () => void>();
-    deferredDraws.set(map, q);
-    map.once("load", () => { deferredDraws.delete(map); for (const f of q.values()) f(); });
-    queue = q;
-  }
-  queue.delete(key);
-  queue.set(key, fn);
-}
 function geo(map: maplibregl.Map, id: string) {
   return map.getSource(id) as maplibregl.GeoJSONSource | undefined;
 }
@@ -178,6 +166,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     });
     map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
+    setDashboardMap(map); // 켤 때 받는 레이어 조각(관측 수신 범위)이 이 지도에 그린다
     let styleLoaded = false;
     let noBasemap = false;
     // R-01: 배경지도 스타일(외부 호스트)을 받지 못하면 load 가 오지 않아 우리 레이어도 그려지지 않는다 → 로컬 최소 스타일로 바꾸고 화면에 알린다.
@@ -337,6 +326,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
           if (ap) tip = airportTip(ap.properties, now);
         } else if (f.layer.id === "traffic-grid-fill") {
           tip = trafficGridTip(p, getData().trafficGrid.data);
+        } else if (layerTip(f.layer.id)) {
+          tip = layerTip(f.layer.id)!(p); // 켤 때 받는 레이어 조각이 등록한 툴팁(관측 수신 칸)
         } else {
           const sg = getData().sigmets?.features.find((x) => x.properties.id === p.id);
           if (sg) tip = sigmetTip({ ...sg.properties, inside: p.inside === true }, now);
@@ -418,6 +409,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       popup.remove();
       client.close();
       worker.terminate();
+      setDashboardMap(null); // 지우기 전에 — 조각이 지운 지도에 그리지 않게
       map.remove();
       mapRef.current = null;
       workerRef.current = null;

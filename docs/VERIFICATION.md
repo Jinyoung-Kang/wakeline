@@ -759,18 +759,147 @@
 - **설명서** 13장 다시 찍음 — 운영 화면의 '새로고침' 단추가 보인다. 레이더 그림은 기상청 공개 파일이 없는 동안이라 RainViewer.
 - 배포 뒤 api · collector · ais 로그에 WARN · ERROR 없음.
 
-## 자동 검사 현황(2026-09-30 KST, 세 레인(ui · collector · js) 통합과 통합 마무리 리뷰(#76) 뒤 · 배포 전 — select 하나에 selected 하나(#70) · 새로고침(#71) · 기상청 호스트 버킷 · 'throttled'(#72) · AIS keepalive 40 s(#73) · 관심 지역 공급자 없음(#74) · 첫 화면 JS 예산(#75) · 마무리 리뷰 수정(#76) · 앞서 main 에 들어간 db 이미지 직접 빌드(#69) 포함)
+## #78 관심 지역 기본 순서 adsb.fi → adsb.lol — adsb.lol 은 체인이 돌아올 때마다 1–2분 안에 429
+- **본 것**(사용자 운영/로그 화면 2026-09-30 · 증거 `docs/review/evidence/public-data-apis-2026-09-29.txt` '2026-09-30(KST) adsb.lol 429') 관심 지역 체인 adsb_lol → adsb_fi 에서
+  adsb.lol 429 가 05:46 · 11:48 · 12:16/12:22 · 18:24 KST — 매번 미룸(최대 6 h, R-17)이 끝나 체인이 adsb.lol 로 돌아온 뒤 약 1–2분 안. 2026-09-29 의 11:29:34 복귀 →
+  11:30:33 429(#42)와 같은 모양이다. adsb.lol 의 한도는 문서(github.com/adsblol/api README)에 'dynamic based on the environment load' 뿐 — 숫자가 없다. adsb.fi 는 그날
+  관심 지역을 맡았다(운영 RUNS `region adsb_fi ok 7,797`, 오류는 12:14 TLS 묶음뿐 — #74).
+- **같은 시 비교**(리뷰 2026-09-30 저녁이 운영 DB `ingest_run` 을 읽기 전용으로 잰 값 — SQL 은 ADR-011 '공급자 운용 보강 3') 두 공급자가 각각 5번 이상 돈 49시간, 실행당
+  항공기 수 adsb.fi 92 · adsb.lol 86. 같은 순간이 아니라 같은 시 안의 비교다. 이 통합은 운영 스택을 건드리지 않는 규칙이라 다시 재지 않았다.
+- **수정**(계약 v5 §G25 · ADR-011 '공급자 운용 보강 3' · ADR-009 · ADR-005) 기본 순서 `adsb_fi,adsb_lol,opensky` — 수집기 설정 기본값 · `.env.example` · compose 기본값
+  (`${AIRCRAFT_PROVIDERS:-adsb_fi,adsb_lol,opensky}`) · 운영 DB(V17 — #79)가 같은 순서다. adsb.lol 은 폴백으로만(adsb.fi 3회 연속 실패 · 429 · 운영자 끔). 폴백일 때의 429 쉼
+  (60 → 300 s) · 되풀이 미룸(10 → 360분) · 전환 사유 · 공급자 없음 상태(§G24) · adsb.fi 호스트 버킷 0.8 req/s · 하루 예산 40,000 과 관심 지역 몫 8,640 은 그대로 — 새 숫자 없음.
+  기동 로그의 체인 줄은 설정의 실제 순서를 적는다(`region chain uses adsb_fi → adsb_lol (aircraft_providers: runtime setting, else .env)` — 전에는 `adsb_lol → adsb_fi` 글자
+  고정). `make init` 은 `.env` 에 옛 순서 `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 가 그대로 있으면 한 줄로 알리고 값은 바꾸지 않는다. /about 의 1 · 2순위 줄도 바꿨다.
+  설계서 v0.2 가 adsb.lol 을 1순위로 둔 세 까닭(레이트리밋 없음 · ODbL 모두에게 공개 · 'P0 비교 후 1순위 확정'이라 적은 잠정 순서)과 지금의 판단은 ADR-011 '보강 3'.
+- **시험** collector `test_aircraft_job` 34 → 리뷰 뒤 37(기본 순서 · adsb_fi 먼저 → 3회 실패면 adsb.lol 폴백 → 쉼 끝에 복귀 · 폴백 adsb.lol 의 429 쉼 · 미룸 · 기동 줄) · infra
+  `test_compose_policy` 35(+1 — 네 곳이 같은 순서) · `test_init_env` 11(+3 — 옛 순서 알림 · 따옴표 · 새 값 · 고른 값 · 주석 · 줄 없음은 알리지 않음).
+- **리뷰 뒤(2026-09-30 밤) — 같은 호스트의 수요 추적** focus · hot 이 opendata.adsb.fi 에서 받은 429 는 호출 제한기가 호스트 전체를 막는다(30 → 60 → 120 → 300 s).
+  관심 지역은 그 쿨다운을 쉼으로 적어 adsb.lol 로 갔었다 — 순서를 바꾼 뒤로는 수요 쪽 429 하나마다 전환 둘 · adsb.lol 호출(리뷰 프로브: 30 s 에 adsb.lol 2번).
+  이제 쿨다운 + 주기 2번 ≤ 60 s(api 관심 지역 끊김 기준)면 같은 공급자로 기다린다(주기마다 실행 `throttled`, 전환 없음), 되풀이된 429(60 s 이상)는 전처럼 폴백.
+  시험 `test_aircraft_job` +4(기본 순서 · adsb.lol 쓸 수 있음 → adsb.lol 0회 · 전환 0 · 실행 ok, throttled ×3, ok / 되풀이 429 → 폴백과 복귀 · 주기 30 s 는 기다리지 않음 /
+  수집기 60 s = api `REGION_FEED_STALE_S` / 기존 제한기 시험은 이제 쉬지 않고 기다린다) — 규칙을 빼면 셋이 실패한다.
+- **리뷰 뒤 — 순서가 바뀌는 순간의 전환 사유** V17 배포 창(api 가 새 순서를 Redis 로 미러하는 동안 수집기는 그대로) · /ops 순서 변경 때 체인은 쉰 적 없는 adsb_fi 를
+  `recovery — adsb_fi 쉼 끝(1순위 복귀)` 로 적었다(리뷰 프로브). 체인이 지난 선택의 순위와 건너뛴 공급자를 기억해, 순서 때문에 고른 공급자는
+  `order — 공급자 순서 변경(aircraft_providers — adsb_fi 1순위)`(공급자 없음 끝이면 `recovery — 공급자 없음 … 끝 · adsb_fi 공급자 순서 변경(…)`). 쉬었다 돌아온 공급자는
+  그대로 recovery. 시험 `test_fallback` +1(바꿈 · 되돌림 · 같은 순서의 쉼 끝 · 쉬는 중 순서 변경 · 공급자 없음 끝 — 수정 전 실패).
+- **남은 것** 배포 전 — adsb.lol 429 WARN · 전환이 adsb.fi 가 실패할 때만 나는지는 배포 뒤 운영 로그로 본다. 수요 호출이 429 를 받는 빈도는 재지 않았다 — 배포 뒤
+  운영 RUNS 의 region `throttled`(오류 글 'cooling down') 수와 사유 '호출 제한기 429' 인 adsb_fi → adsb_lol 전환 수로 본다. 개발 스택 `.env` 의 순서 줄은 이 통합이 읽지 않았다(규칙) —
+  `make up` 이 먼저 부르는 `make init` 이 옛 값이면 알린다(README '업그레이드 — V17').
+
+## #79 V17 — 운영 DB 의 관심 지역 순서는 운영자가 고르지 않았을 때만 옮긴다 · 새로 만든 DB 에도 시스템 감사 기록 한 줄
+- **무엇**(계약 v5 §G25) 순서의 원본은 운영 설정 `aircraft_providers`(DB `app_setting` → api 가 Redis `wakeline:settings` 로 미러 → 수집기가 주기마다 읽는다). V17 은
+  `updated_by` 가 NULL(V1 시드) · `env` 이고 값이 옛 기본값 그대로일 때만 새 기본값으로 바꾸고, 같은 문장에서 감사 기록 `SETTING_DEFAULT_V17`(user_id NULL) · version + 1.
+  운영자가 /ops 에서 고른 순서는 옛 기본값과 같은 글자여도 그대로다. 되돌리기는 /ops 설정에서 옛 순서를 고르는 것이 기본이고(운영자 값 — 뒤의 migrate 가
+  건드리지 않는다), 머리 주석의 SQL 은 값만 돌리고 감사 `SETTING_DEFAULT_V17_ROLLBACK` 을 남긴다 — flyway 이력 행은 **지우지 않는다**(아래 '리뷰 뒤').
+- **시험** api `MigrationDbTest.v17…`(Testcontainers — V16 까지 올린 DB 넷: 시드 그대로 → 바뀜 · `env` → 바뀜 · 운영자가 옛 순서를 고름 → 그대로 · 운영자가 다른 순서 → 그대로,
+  바뀐 경우에만 감사 한 줄 · version + 1 · updated_by 그대로, 되돌리기 SQL → 옛 값 · 이력 행 그대로 → 다시 migrate 해도 옛 값 · 감사는 V17 · ROLLBACK 두 줄뿐).
+- **리뷰 뒤(2026-09-30 밤)** 처음 머리 주석의 되돌리기 SQL 은 `DELETE FROM flyway_schema_history WHERE version = '17'` 로 끝났다. 코드를 되돌리지 않는 되돌리기라서
+  V17 파일은 이미지에 남고, `make up` 마다 도는 migrate 서비스(api 가 `service_completed_successfully` 로 기다린다)가 V17 을 다시 적용한다 — 되돌린 값의
+  updated_by 는 여전히 NULL · env 이고 값은 옛 기본값이라 조건에 다시 들어, 순서가 조용히 adsb_fi 먼저로 돌아가고 감사 행이 하나 더 생겼다(전의 시험이 바로 그 다시
+  적용을 확인하고 있었다). 이력 행 삭제를 뺐고 /ops 설정을 먼저 적었다. 시험은 되돌린 뒤 `WakelineApplication.migrate`(migrate 서비스와 같은 경로)를 다시 불러
+  옛 값이 남는지 본다 — 전의 SQL 로는 실패한다. V17 은 아직 어느 운영 DB 에도 적용되지 않았다(main 에 없는 파일) — 적용된 뒤에는 주석도 체크섬에 들어
+  고칠 수 없다(validateOnMigrate).
+- **통합에서 드러난 것** `make infra-docker-test` 의 백업 · 복원 시험이 1건 실패했다: `서비스 계정 로그인(wakeline_api, 새 볼륨의 역할) → 2 (기대: 1)`. V1 이
+  `aircraft_providers` 를 옛 순서(updated_by NULL)로 시드하므로 새로 만든 DB 는 모두 마이그레이션 때 V17 의 조건에 든다(위 '시드 그대로' 경우와 같은 조건) — 시험은
+  audit_log 의 **모든** 행을 셌고, 2 는 시험이 넣은 행 1 + V17 의 한 줄로 맞는다(그 행의 내용을 따로 조회하지는 않았다). 결함이 아니라 시험의 전제라서 시험이 넣은 행
+  (`request_id = 'bktest'`)만 세게 고쳤다 → 48 통과. 다른 버리는 컨테이너 시험 · E2E(새 DB) 는 audit_log 행 수를 보지 않는다.
+- **남은 것** 운영 DB 의 지금 값(운영자가 고른 적이 있는지)은 이 통합이 읽지 않았다 — 배포 뒤 /ops 설정 `aircraft_providers` 와 감사 기록에서 본다.
+
+## #80 기상청 '파일 없음' 긴 연속은 15분마다 확인 — 5분마다 확인하면 하루 호출이 한도 1,000 을 넘을 수 있었다
+- **본 것**(운영 화면 · 로그 — ADR-011 '보강 3' 표 · 증거 파일 '2026-09-30(KST) 기상청 레이더') 08:15 KST 부터 모든 바이너리 합성(HSR · HSP · CMX · PPI · CPP PUB)이
+  'file not exist' — 18:30 KST tm 을 수집기 컨테이너에서 한 번씩 확인해도 hsp · cmx · ppi · cpp 모두 없음, 그림(data=img)만 답함. 기상청 API허브 2026-09 공지에 레이더
+  관련 공지는 없었다. `budget:kma_radar` 18:34 KST 에 417 / 1,000(09:00 KST 에 시작한 UTC 날).
+- **계산**(설정값 — `streak_calls_per_day`, 잰 값이 아니다) 기본 주기 300 s · 확인하는 주기의 정규 호출 3(목록 1 + 확인 ≤ 2): 연속만 이어지는 UTC 하루 86,400 / 300 = 288 주기
+  × 3 = **864**(일시 오류 다시 부르기까지 최악 1,728 — 한도 1,000 을 넘는다). 연속의 나이 60분(`MISSING_SLOW_AFTER_S`) 뒤 15분(`MISSING_SLOW_EVERY_S`)마다면 86,400 / 900 =
+  96 × 3 = **288**(최악 576). 늦추기 전 60분(12 주기 × 3 = 36)이 그 하루에 들면 더한다. 본 속도(417 / 약 9.6 h ≈ 시간당 44)와 864/일(시간당 36)의 차이는 나눠 재지 않았다.
+- **수정**(계약 v5 §G26 · ADR-011 '보강 3') 연속의 나이가 60분 이상이면 15분마다만 확인한다(둘 다 **고른 값**). 그 사이 주기는 기상청을 부르지 않고 실행 기록 `waiting`
+  (http 없음 — 'missing' 은 기상청이 없다고 답한 주기에만). 확인 간격은 해시 `missing_probe_every_s` → api `missing.probe_every_s`(1–86,400 · `/radar/kr` · `/status` · WS
+  `status.radar_kr.missing`) → 웹 한 줄 끝 `· 15분마다 확인`(간격을 알 때만). '확인 멈춤' · 수집기 재시작 뒤 이어받기 기준 = 확인 간격 × 3(`MISSING_STALE_PROBES`, 아래로
+  15분) — 늦춘 연속은 45분. 대가: 기상청이 돌아온 뒤 알아채기까지 최대 약 15분(늦게 생기는 파일이면 + 10분) — 그동안 레이더는 RainViewer.
+- **WS 표본** 모양이 바뀐 곳(`radar_kr` 의 `missing.probe_every_s`)은 레인이 `make ws-samples` 로 다시 만든 표본에 있다. 통합 뒤 같은 경로
+  (`./gradlew --offline test --tests 'dev.wakeline.ws.WsSchemaContractTest' -PupdateWsSamples`)로 다시 만들어 견주니 시각 · `lag_s` 밖의 차이 0건 — 커밋한 표본을 그대로 두었다.
+- **시험** collector `test_kma_missing` 34(15분마다 확인 · 그 사이 'waiting' · 해시 간격 · 늦출 때 INFO 한 번 · 예산 산수와 모의 하루 · 늦춘 확인에서 회복 뒤 5분마다 ·
+  재시작 뒤 이어받기 45분 · 기다림 · 버림) · api `KrRadarMissingTest` 5 · `RestSamplesIT`(표본 `probe_every_s` 300) · web `kma-missing.test.ts` 21 · `ws-schema-sweep-v5` 3 ·
+  `guide-page` 20 · E2E `kma-missing.spec.ts`.
+- **리뷰 뒤(2026-09-30 밤)** ① 알리는 간격은 max(900, 주기)였는데 기다림은 '마지막 확인 뒤 900 s 미만이면 기다린다'라, 주기가 15분을 나누지 못하면(예 600 s) 실제로는
+  1,200 s 마다 확인하면서 웹은 '15분마다 확인', 예산 계산은 하루 96번이었다(기본 300 s · compose 는 KMA_RADAR_POLL_S 를 넘기지 않아 기본값에서는 나지 않는다).
+  `slow_probe_every_s` = 900 s 이상인 주기의 가장 작은 배수 — 알리는 간격 · 확인 멈춤 기준 · `streak_calls_per_day` 가 이 값이다(`test_kma_missing` +6 — 스케줄러를 흉내 내
+  300 · 600 · 400 · 450 · 1,800 · 60 s 의 실제 간격 = 알리는 간격, 전의 식이면 600 · 400 s 가 실패). ② 웹 글: 상태 바 모듈 설명(고정 15분) · `KR_MISSING_CHECK_STALE_MIN`
+  설명(5분마다)이 §G26 과 달랐고, 운영 'waiting' 설명은 지난 시간을 '마지막 확인 뒤'라 했으나 수집기는 마지막으로 기상청을 부른 주기(목록이 실패한 주기 포함)부터 센다 —
+  kma_radar 공급자의 '마지막 확인'과 다를 수 있다고 적었다.
+- **남은 것** 배포 전 — 기상청 공개 파일이 없는 동안 배포하면 `budget:kma_radar` 가 하루 한도 아래에 머무는지 · 운영 RUNS 에 'waiting' 이 주기마다 남는지를 운영 화면으로 본다.
+  늦추기 전에 본 속도(시간당 약 44)와 설정값 계산(36)의 차이는 이번에도 나눠 재지 않았다(운영 스택을 건드리지 않는 규칙) — 배포 뒤 `budg:kma_radar` 와 운영 RUNS 의
+  상태별 수(missing · waiting · error — 다시 부르기)로 나눠 본다.
+
+## #81 한국 연안이 비어 보이는 까닭 — 받은 위치로 센 '관측 수신 범위(최근 24 h)' 레이어(ADR-027)
+- **본 것**(개발 스택 DB `ship_position` 최근 24 h — 2026-09-30 18:57 KST 까지, 증거 `docs/review/evidence/public-data-apis-2026-09-29.txt` '한국 해역에 선박이 거의 없는 이유')
+  한국 서 · 남해 상자(124–129.5E · 33–38.5N) 304척 · 위치 31,718, 동해 상자(129.5–132E · 35–38.6N) 0척 · 위치 1, 규슈 · 세토 430척(17,803), 대만 1,386척(84,175), 도쿄만
+  769척(133,187). 한국 상자(124–132E · 33–39N)를 1° 칸으로 나누면 **304척 모두 37–38N · 126–127E 한 칸(인천 · 경기만)**, 시간당 80–130척 — 부산 · 남해안 · 동해 칸은 0.
+  AIS 구독 영역(운영 설정 ais_bboxes `-90,-180,90,0|-90,45,90,180`)은 한국을 포함한다 → 구독이 아니라 공급자(aisstream.io — 육상 수신국이 받은 것만, ADR-014) 쪽 수신 분포다.
+- **공개 대안**(같은 증거) 공공데이터포털 해양수산부_선박위치정보(연안AIS) 통계정보(15084033)는 시간 단위 집계, 선박 AIS 동적정보(15129186)는 2022 파일, 한국해양교통안전공단
+  _여객선 운항상태 정보(15142304)에는 위치 필드가 없고, MTIS Open API 목록에도 실시간 개별 위치 API 가 보이지 않았다. 한국 연안에는 격자별 척수(개별 위치 아님)의 연안
+  교통량 레이어가 이미 있다(ADR-023).
+- **수정**(계약 v5 §G27 · ADR-027) api 가 선박 저장기가 고른 위치(MMSI 별 60 s 창의 첫 보고 — `IngestEvents.ShipsSampled`, 파이프라인 이벤트라 격자 리스너의 예외는 그 리스너에
+  갇힌다)를 0.5° 칸 · 최근 24 h(시 칸 25개)로 세고, 기동 30 s 뒤 한 번 `ship_position` 을 시 하나에 문장 하나로 거꾸로 읽어 채운다(제 연결 하나 · 읽기 전용 · statement_timeout
+  10 s · 전체 마감 180 s — 멈추면 이어 읽은 부분만 덮었다고 밝힌다). `GET /api/v1/ships/coverage` 는 메모리 스냅숏(60 s · ETag · 요청 중 DB · 외부 호출 없음). 칸 16,000 ·
+  칸별 선박 항목 200,000 은 **고른 값**(넘친 보고는 `dropped_positions` · `truncated`). 웹 레이어 '관측 수신 범위(최근 24 h)'(기본 끔 · 켤 때 받는 조각), 상태 줄 · 툴팁은 KST 만,
+  창을 다 세지 못했으면 '창의 일부만 셈 — <KST> 부터(까닭)'. 선박 칩 설명 · 0척 알림의 '이 화면에 관측 수신 칸 N개'는 창 전체를 셌고 조회가 성공했을 때만 '(최근 24 h)',
+  아니면 실제로 센 구간을 적는다.
+- **통합 뒤 잰 값**(첫 화면 JS — PERF §10 '두 레인 통합 뒤') 웹 이미지의 Node 로 18개 **542,767 B · 여유 7,233 B** — #76 뒤 540,955 B 보다 +1,812 B(entry +1,525 · dynamic +287,
+  MapLibre · 워커 그대로. 두 레인의 몫은 나눠 재지 않았다 — 레인 coverage 는 제 브랜치에서 호스트 zlib +1,651 B 를 쟀다). 레이어 조각이 첫 화면 뒤 미리 받기 목록에 들어
+  미리 받은 조각이 9개 49,185 B → 10개 56,246 B(호스트 zlib, 예산 밖).
+- **시험**(리뷰 뒤 수) api `CoverageGridTest` 12(GC 뒤 남은 힙 ≤ ADR-027 의 바이트 상한 포함) · `IntIntMapTest` 4 · `ShipCoverageTest` 20 · `CoverageBootstrapDbTest` 5(Testcontainers) ·
+  `ShipCoverageControllerTest` 5 · `ShipCoverageIT` 1 · `ShipWriterTest` 9 · `EtagsTest` 1(#82) · `PipelineEventMulticasterTest` 4(ShipsSampled 격리) · `OpenApiSnapshotIT` · REST 표본 `ship_coverage` +
+  `tools/rest_contract_check.py` 교차 규칙(collector `test_rest_contract_rules.py` 98 — 이 규칙 포함), web `reception.test.ts` 13 · `reception-layer.test.ts` 6 ·
+  `reception-wiring.test.ts` 8 · `ships-v4.test.ts` 40 · `first-screen-lazy.test.ts` 18 · `guide-page` 20 · E2E `ship-coverage.spec.ts` 1(응답을 route 로 — 결정적).
+- **리뷰 뒤(2026-09-30 밤)**
+  - 범례: 늘 '빈 곳 = 최근 24 h 에 받은 위치 없음' · '척(칸마다 · 최근 24 h …)'이라, api 재시작 직후(since_api_start — 부트스트랩이 실패하면 25 h 까지)나 메모리 상한에서도
+    바로 위 상태 줄('창의 일부만 셈')과 어긋났다(§G27 '창 전체인 척하지 않는다'). 범례가 `receptionInView`(첫 화면 스토어 — 조각이 truncated 도 싣는다)를 읽어 full 이면
+    '최근 24 h', 아니면 '<since KST> 부터'(주황), 자료 전이면 '센 구간(상태 줄)', 메모리 상한 · 조회 실패 줄을 적는다(`reception-wiring` +1 — 수정 전 실패, E2E
+    `ship-coverage` 가 일부만 센 응답에서 범례 줄을 본다, E2E 겹침 검사는 이제 교통량 · 관측 수신을 켜고 두 상태 줄도 잰다).
+  - 툴팁 · 설명서: '위치 N건(선박마다 60 s 창의 첫 보고 — 많아야 1건)' · '마지막 표본 수신'(같은 창의 뒤 보고는 표본에 없어 실제 마지막 수신이 60 s 안쪽으로 늦을 수
+    있다), 칩에서는 설명(마우스)과 0척 알림 글자에 붙는다(§G27 대로 — 설명서가 칩 글자에 붙는다고 했다). `window.hours` 가 24 가 아니면 웹이 응답을 받지 않는다(모든 글이 24 h).
+  - 부트스트랩: 기동 30 s 에 고정이라, 긴 정지 뒤 스트림 백로그(셈 시작 앞 보고)를 쓰는 데 30 s 넘게 걸리면 그 시를 읽은 뒤에 저장된 행을 어디서도 세지 않았고 covered 는
+    그래도 full 이었다. 이제 셈 시작 앞 보고가 10 s 동안 오지 않고 그때까지 저장기 큐에 넣은 행이 모두 끝난 뒤에 읽는다(상한 grace + 300 s, WARN 한 줄 — 둘 다 고른 값).
+    저장기는 고른 위치를 알린 **뒤에** 큐에 넣도록 바꿔, 부트스트랩이 그 시를 다 읽은 뒤 도착한 셈 시작 앞 보고는 실시간으로 센다(그 읽기에 없었다 — 두 번 세지 않는다,
+    지표 `late_counted_total`), 읽는 중에 도착한 것은 세지 않고 `ignored_total{reason=during_read}` 로 센다. 시험 `ShipCoverageTest` +2(기다림과 상한 · 늦은 보고) ·
+    `ShipWriterTest` +1(알린 뒤 큐 · 큐 번호).
+  - 시험 둘: `CoverageGridTest` 의 식을 식과 견주던 시험을 지우고 운영 상한의 바이트 상한 = ADR-027 의 14,592,000 B 인지 보는 시험으로 바꿨다. 부트스트랩 중 스냅숏의
+    '주장 ≤ 자료' 시험은 동시에 돌리며 바랐을 뿐이라(수정 전에도 대개 통과) 두 읽기 사이의 창구에서 부트스트랩이 한 시를 더 합치게 해 결정적으로 본다(읽기 순서를
+    되돌리면 실패하는 것을 확인했다).
+  - ETag: #82.
+- **남은 것** 레이어는 받은 곳을 보일 뿐 빈 곳을 채우지 못한다 — 한국 연안의 개별 선박 위치를 주는 공개 실시간 API 는 찾지 못했다. 운영 DB 에서의 기동 부트스트랩 시간 ·
+  한 시 치 행 수 · 백로그를 기다린 시간은 아직 재지 않았다(레인은 격리 DB 로만 쟀다 — ADR-027). 설명서 그림은 다시 찍지 않았다 — 상황판 그림(설명 5 = 레이어 단추)은
+  이 레이어 전에 찍어 '관측 수신 범위(최근 24 h)' 단추가 없고, 이 레이어의 그림(`lib/guide-shots.json` 의 'reception' — 연안 교통량의 'traffic' 처럼 단추 · 상태 줄 ·
+  범례 견본 · 범례 문구)이 없으며, 레이더 · 운영 그림은 '15분마다 확인' · 'waiting' 전이다 — 배포한 스택에서 `scripts/guide-screenshots.mjs` 로 찍는다(이 통합은 운영
+  스택을 건드리지 않는 규칙). 배포 전.
+
+## #82 edge 가 gzip 으로 약하게 바꾼 ETag 는 304 를 받지 못했다 — If-None-Match 를 글자 그대로 견줬다
+- **본 것**(리뷰 2026-09-30 밤 — 코드 · 설정 읽기) edge `infra/edge/nginx.conf` 는 1,024 B 이상의 JSON 을 gzip 으로 줄이고(`gzip_min_length 1024`), nginx 는 줄인 응답의
+  강한 ETag 를 약한 것(`W/"…"`)으로 바꿔 보낸다. 브라우저 · 웹 조회기(`lib/etag-poller` — 연안 교통량 · 관측 수신 범위)는 받은 값을 `If-None-Match` 로 되돌려 보내는데,
+  api 의 ETag 엔드포인트(항공기 · 선박 · SIGMET · 기상 · 연안 교통량 · 관측 수신 — 7곳)는 `etag.equals(If-None-Match)` 로 견줘 edge 를 거친 조건부 요청은 늘 200 이었다.
+  api 에 직접 보낸 시험(`ShipCoverageIT` 등)은 gzip 이 없어 이것을 보지 못했다.
+- **수정** `rest.Etags.notModified` — RFC 9110 의 약한 비교(W/ 떼기 · 쉼표 목록 · `*`)를 일곱 곳이 함께 쓴다.
+- **시험** api `EtagsTest` 1 · `ShipCoverageControllerTest`(W/ · 목록 → 304, 다른 태그 → 200) · E2E `edge-limits`(격리 스택의 edge 를 거쳐: fixture 항공기 목록의 ETag 가
+  `W/"` 로 오고, 그 값으로 다시 물으면 304 — 두 요청 사이 fixture 가 바뀌면 다시 한다).
+- **관측 수신의 304 는 드물다 — 두는 까닭** 관측 수신의 ETag 는 스냅숏(60 s)마다 바뀌고 웹은 120 s 마다 묻는다 — 운영에서는 AIS 가 10 s 마다 와서 칸의 위치 수 ·
+  마지막 수신이 스냅숏마다 바뀌므로 리뷰가 권한 '내용 기반 ETag'로도 같지 않다(응답의 generated_at · window.to 도 바뀐다). 304 는 같은 스냅숏을 다시 물을 때(탭이 다시
+  보일 때 등)만이라고 ADR-027 8 에 적었다.
+
+## 자동 검사 현황(2026-09-30 KST, 두 레인(collector · coverage) 통합 뒤 · 통합 리뷰(2026-09-30 밤)의 수정 뒤 · 배포 전 — 관심 지역 순서 adsb.fi 먼저(#78) · V17(#79) · 기상청 긴 연속 15분마다(#80) · 관측 AIS 수신 범위(#81) · 약한 ETag(#82))
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,489 통과(19 건너뜀 — 실 Redis 13건은 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 이번에 따로 돌려 13 통과, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — 이번에도 돌리지 않았다) · 커버리지(`--cov=wakeline_collector`) 97 %(9,162문 중 246 빠짐) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `infra/db` 로 빌드한 `wakeline-db:local`) | 874(이 라운드는 api 코드를 바꾸지 않았다 — `make test-api` 로 다시 돌림) · JaCoCo LINE 96.6 %(8,681줄 중 299 빠짐) · BRANCH 85.6 %(6,295 중 906 빠짐 · 하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,250(86 파일) · 커버리지(소스 전체) Lines 91.38 % · Branches 82.1 % |
-| 정적 검사 · 빌드 | ruff check · ruff format --check(통합에서 바뀐 collector .py 18개 + 마무리에서 바뀐 6개) · mypy(collector 77 파일) · tsc --noEmit · eslint · next build | 모두 통과 |
-| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15 · 17/17 · 10/10 종 — 통합 뒤 `make ws-samples` 경로로 다시 만들어 시각 · `lag_s` 밖 차이 0건, 커밋한 표본 그대로) + 가림 54 · 억제 11 벡터 — PASSED |
-| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 35종 — PASSED |
-| 인프라 정책 | infra/tests(unittest) | 125(#76 — 수집기 설정이 collector 에 닿음 · `KMA_APIHUB_RPS` 2 더함) |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 11 · 13 — 모두 #76 뒤에 다시 돌렸다(`make infra-docker-test` + `infra/tests/collector_redis_test.sh` — 상태 쓰기가 썼는지 돌려주는 판을 실 Redis ACL 아래에서) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 37 통과(9 파일 · 2.3 분 — #76 뒤 `make e2e`, 끝난 뒤 스택 · 볼륨 삭제 확인) |
-| 첫 화면 JS 예산 | `npm run check:first-js`(웹 이미지의 Node) · `measure:first-js -- --serve 8790`(Chromium 두 창) | 540,955 B / 550,000 B(여유 9,045 B — `wakeline-web:local` 의 Node 24.21.0 · linux/arm64, #76 뒤. 통합 직후 540,774 B) · 두 창 모두 빌드 결과 목록과 같은 18개 파일 · 호스트 zlib 538,673 B |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh`(gitleaks · Trivy 자체 이미지 4종 · 제3자 이미지) | PASS(2026-09-30 17:43 KST, #76 의 수정을 `make build` 로 빌드한 뒤 — 이 표를 적는 커밋 전) — gitleaks 755 커밋 누출 0 · 자체 api · collector · web · **db**(R-63 뒤 직접 빌드 — 차단, #69) 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis 차단 PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) · Trivy DB 는 오프라인 캐시(2026-09-29 13:11 UTC 판) |
+| collector · ais 단위·통합 | pytest | 1,550 통과(+10 — 관심 지역 기다림 3 · 순서 변경 사유 1 · 기상청 늦춘 간격 6. 19 건너뜀 = 실 Redis 13(아래 줄에서 따로 돌림) · 실 PostgreSQL 6(test_db_pg_integration.py — 손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 97 %(9,232문 중 242 빠짐) |
+| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너 — CI collector job 과 같다) | 13 통과(이 통합 끝 판에서 — 새 해시 필드 `missing_probe_every_s` · 'waiting' 실행 포함) |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `infra/db` 로 빌드한 `wakeline-db:local`) | 927 통과(+4 — `EtagsTest` 1 · `ShipCoverageTest` +2 · `ShipWriterTest` +1, 바꾼 것: V17 되돌리기 · 결정적 스냅숏 시험 · 식을 식과 견주던 시험 → 운영 상한 시험. `make test-api`) · JaCoCo LINE 96.6 %(9,163줄 중 307 빠짐) · BRANCH 85.9 %(6,544 중 921 빠짐 · 하한 95 / 80 — 검증 통과) |
+| web 단위 | Vitest | 1,289(89 파일 — +2: 범례의 센 구간 1 · 창 24 h 아닌 응답 1) · 커버리지(소스 전체) Lines 91.61 % · Branches 82.31 % |
+| 정적 검사 · 빌드 | ruff check · ruff format --check(main 뒤 바뀐 collector .py 13개) · mypy(collector 77 파일) · tsc --noEmit · eslint · next build | 모두 통과 — main 뒤 바뀐 `infra/tests` · `tools` 의 .py 4개는 CI 의 ruff 범위 밖이고 main 판에서도 같은 7건 · 3 파일이 걸린다(이 통합이 만든 것이 아니다). |
+| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본 + 가림 · 억제 벡터 — PASSED(WS 모양은 이 수정으로 바뀌지 않았다) |
+| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 36종 — PASSED |
+| 인프라 정책 | infra/tests(unittest) | 129 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 291 · 36 · 48 · 27 · 11 = 448 — `make infra-docker-test` 모두 통과 |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 39 통과(10 파일 · 2.2 분 — +1: edge 를 거친 약한 ETag 의 304(#82). 겹침 검사는 이제 교통량 · 관측 수신을 켜고 두 상태 줄도 잰다. `make e2e`, 끝난 뒤 스택 · 볼륨 삭제 확인) |
+| 첫 화면 JS 예산 | `npm run check:first-js`(웹 이미지의 Node) | 543,138 B / 550,000 B(여유 6,862 B — `make build` 한 `wakeline-web:local` 의 Node · linux/arm64 · 18개 파일, 범례가 센 구간을 읽는 몫 entry +371 B) · 호스트 zlib 540,833 B. 브라우저 측정(`measure:first-js`)은 이번에 돌리지 않았다 |
+| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh`(gitleaks · Trivy 자체 이미지 4종 · 제3자 이미지) | PASS(2026-09-30 22:38 KST, `make build` 뒤 — 이 표를 적는 커밋 전) — gitleaks 799 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis 차단 PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) · Trivy DB 는 오프라인 캐시 |
 | 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 배포 뒤 207건 · 14종, 형식 오류 0건(#68) — 이 통합은 아직 배포하지 않았다 |

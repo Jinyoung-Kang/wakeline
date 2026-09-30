@@ -6,6 +6,7 @@ import type { PortCallsInfo } from "./portcalls";
 import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipState, ShipStatic, StaticSource } from "./ships";
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
 import { TRAFFIC_POLL_NONE, type TrafficPollState } from "./traffic-grid";
+import type { ReceptionPollState } from "./reception";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
 
@@ -102,6 +103,22 @@ export interface ServerData {
   wsInvalid: WsInvalid;
   /** 연안 교통량(ADR-023) 조회 상태 — 레이어가 켜져 있을 때만 갱신. 지도는 version 이 바뀔 때만 다시 그린다 */
   trafficGrid: TrafficPollState;
+  /** 관측 수신 범위(ADR-027) 조회 상태 — 레이어 조각(components/ReceptionLayer)이 켜져 있을 때만 쓴다. null = 이 페이지에서 아직 켠 적 없음 */
+  reception: ReceptionPollState | null;
+  /**
+   * 관측 수신 범위 자료가 있을 때 지금 보이는 화면(mapBounds)과 겹치는 관측 칸 수 — 선박 칩 · 0척 알림이 적는다. null = 레이어 꺼짐 · 자료 없음(적지 않는다)
+   */
+  receptionInView: ReceptionInView | null;
+}
+
+/**
+ * 이 화면의 관측 수신 칸(ADR-027): cells = 칸 수, covered = 창을 다 셌는가(full) · since = 빠짐없이 센 시작 · to = 창 끝(응답 시각) — 다 세지 못했으면
+ * 칩 · 0척 알림 · 범례가 센 구간을 적는다. stale = 마지막 조회가 실패했다(값은 그 전 응답).
+ */
+export interface ReceptionInView {
+  cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean;
+  /** 메모리 상한 때문에 세지 못한 위치가 있다(api truncated) — 빈 칸이 '받은 적 없음'이 아닐 수 있다(범례) */
+  truncated?: boolean;
 }
 
 /**
@@ -143,6 +160,8 @@ const initial: ServerData = {
   mapBounds: null,
   wsInvalid: WS_INVALID_NONE,
   trafficGrid: TRAFFIC_POLL_NONE,
+  reception: null,
+  receptionInView: null,
 };
 let data: ServerData = initial;
 

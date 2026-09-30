@@ -65,7 +65,7 @@ public class AircraftController {
         SnapshotStore.View view = snapshots.view(now);
         String etag = "\"v" + view.version() + "-" + Long.toString(view.recheckAtMs(), 36) + "\"";
         CacheControl cc = CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic();
-        if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
+        if (Etags.notModified(etag, req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         List<Map<String, Object>> features = new ArrayList<>();
         for (AircraftState a : view.states().values()) {
             if (!b.contains(a.lat(), a.lon())) continue;

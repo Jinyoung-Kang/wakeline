@@ -740,3 +740,114 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     adsb_fi 가 풀린 주기에 받음 · 다시 시도의 429 · 쿨다운이 실패 쉼을 줄이지 않음 · Redis 가 떨군 상태 쓰기를 다음 주기에 다시 씀) · infra `test_compose_policy`(수집기 설정이
     collector 에 닿음 · `KMA_APIHUB_RPS` 기본 0.5) · `test_aircraft_job`(해시 · 전환 기록 · 로그 · 다시 시도 중 공급자 없음과 그 끝 · 전세계를 끄면 비움 · adsb.lol 을 부르는 곳은 항공기 체인뿐),
     web `tests/region-no-provider.test.ts`. 특성 시험 둘(`test_without_the_host_bucket_…` · `test_takeover_calls_adsb_lol_once_per_cycle…`)은 기록이지 회귀 막기가 아니다.
+
+## G. 17차 개정(2026-09-30 저녁 · 레인 collector · 운영/로그 스크린샷 — adsb.lol 429 되풀이 · 기상청 '파일 없음' 긴 연속의 예산)
+- G25(FR-16 폴백 · R-17 · §G24 · ADR-009 · ADR-011 개정 2026-09-30 저녁) **관심 지역 기본 순서 adsb.fi → adsb.lol — adsb.lol 은 폴백으로만**.
+  - 까닭(운영/로그 2026-09-30): adsb.lol 은 미룸이 끝나 체인이 돌아올 때마다 약 1–2분 안에 429 였다(05:46 · 11:48 · 12:16/12:22 · 18:24 KST — 2026-09-29 의 11:29:34 복귀 →
+    11:30:33 429 와 같은 모양, ADR-011). 돌아올 때마다 WARN 한 줄 · 전환 둘 · 곧 거절할 공급자에게 몇 분. adsb.fi 는 그날 관심 지역을 하루 내내 맡았다(운영 RUNS
+    `region adsb_fi ok 7,797`, 오류는 12:14 TLS 묶음뿐 — §G24 의 '공급자 없음' 상태가 다뤘다). adsb.lol 한도 수치는 없다(README 'dynamic') — 속도를 추정해 바꾸지 않는다.
+  - adsb.lol 이 1순위였던 까닭(설계서 v0.2 3.1 · 3.3 · 16절 — ADR-011 '보강 3')과 지금: ① 한도 — '현재 레이트리밋 없음'이 전제였다 → 되풀이되는 429 로 더는 맞지 않는다.
+    ② 이용 조건 — adsb.lol 'ODbL 1.0, 모두에게 공개' · adsb.fi '개인·비상업, 출처 표기' → 이 서비스는 비상업이라 adsb.fi 조건을 지키고, 출처 표기는 둘 다 늘 한다.
+    ③ 수신 범위 — 설계서가 '같은 시각 … 1시간 비교해 1순위를 확정', 'P0 비교 후 1순위 확정'이라 적은 잠정 순서였다 → 같은 시 비교(리뷰가 운영 DB `ingest_run` 을
+    읽기 전용으로 잰 값: `job='region'` · `status='ok'` 3일, 두 공급자가 각각 5번 이상 돈 49시간 — 실행당 항공기 수 adsb.fi 92 · adsb.lol 86)에서 adsb.fi 가 같거나
+    많다. 같은 순간이 아니라 같은 시 안의 비교다. 다시 잴 SQL 은 ADR-011 에 있다.
+  - 배포(운영자가 할 일): 옛 `.env.example` 을 복사한 `.env` 의 `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 는 compose 기본값을 덮고, 수집기는 운영 설정 미러가
+    없을 때(Redis 재기동 뒤 api 가 다시 미러하기까지 60 s 안 등) 이 값을 쓴다 — 그 줄을 `adsb_fi,adsb_lol,opensky` 로 바꾸거나 지우고 `make up`. `make init` 이 옛 값을
+    찾으면 한 줄로 알린다(`tools/init_env.py` `RETIRED_DEFAULTS` — 값은 바꾸지 않는다). /ops 에서 고른 순서는 V17 이 두므로 /ops 설정도 확인한다.
+  - 순서(운영 설정 `aircraft_providers` — DB `app_setting` 이 원본, api 가 Redis `wakeline:settings` 로 미러, 수집기가 주기마다 읽는다): 기본값 `adsb_fi,adsb_lol,opensky`.
+    수집기 설정 기본값 · `.env.example` · compose 기본값(`${AIRCRAFT_PROVIDERS:-adsb_fi,adsb_lol,opensky}`)이 같다(infra `test_region_chain_default_is_adsb_fi_first_everywhere`).
+    **V17**(`V17__region_provider_order_adsb_fi_first.sql`)이 운영 DB 의 값을 옮긴다 — 운영자가 바꾼 적 없고(`updated_by` NULL · `env`) 옛 기본값 그대로일 때만,
+    같은 문장에서 감사 기록(`SETTING_DEFAULT_V17`, 시스템 — user_id NULL) · version + 1. 운영자가 고른 순서는 옛 기본값과 같은 글자여도 그대로다. 되돌리기는 /ops 설정(운영자 값)이 먼저이고, 머리 주석의 SQL 은 값만
+    돌린다 — flyway 이력 행은 지우지 않는다(지우면 다음 migrate 가 V17 을 다시 적용한다 — 리뷰 2026-09-30 밤).
+  - 같은 호스트의 수요 추적(리뷰 2026-09-30 밤): focus · hot 이 받은 429 로 호출 제한기가 opendata.adsb.fi 를 막으면, 관심 지역은 쿨다운 + 주기 2번 ≤ 60 s(api 의
+    관심 지역 끊김 기준)일 때 같은 공급자로 기다린다 — 그 주기는 실행 `throttled`, 전환 없음. 더 길면(15분 안에 되풀이된 429 — 60 → 300 s) 전처럼 남은 쿨다운만
+    다음 순위가 맡는다(`jobs/aircraft._waits_out` · ADR-011 '보강 3').
+  - 순서 변경의 전환 사유(리뷰 2026-09-30 밤): 운영 설정의 순서가 바뀌어(V17 배포 창 · /ops) 지난 선택 때 건너뛰지 않은 공급자를 고르면
+    `order — 공급자 순서 변경(aircraft_providers — <공급자> N순위)`(공급자 없음 끝이면 `recovery — 공급자 없음 … 끝 · <공급자> 공급자 순서 변경(…)`) — 전에는 쉰 적
+    없는 공급자를 `recovery — … 쉼 끝(1순위 복귀)` 로 적었다(`fallback._reason` · `test_fallback`).
+  - 바꾸지 않는 것: 폴백으로 쓰일 때의 adsb.lol 429 쉼(60 → 300 s) · 되풀이 미룸(10 → 360분, R-17) · 이력 보존 · 전환 사유 · '공급자 없음' 상태(§G24) · 전세계 체인
+    (OpenSky 만 지원) · 출처 표기(두 공급자 모두 늘 — `lib/attribution.ts`) · adsb.fi 호스트 버킷 0.8 req/s · 하루 예산 40,000 과 관심 지역 몫 8,640 · 새 숫자 없음.
+    adsb.fi 조건(개인 · 비상업 · 초당 1회)은 이 서비스가 이미 지키고 있다 — 상업 · 공개 배포라면 순서를 운영 설정으로 되돌리거나 adsb.fi 를 끈다(ADR-011 '보강 3').
+  - 로그: 기동 줄이 설정의 실제 순서를 적는다 — `region chain uses adsb_fi → adsb_lol (aircraft_providers: runtime setting, else .env); opensky is global-only (daily cap 2880
+    credits)`(전에는 `adsb_lol → adsb_fi` 고정 글). 웹: /about 의 1 · 2순위 줄 · 운영 설정 `aircraft_providers` 안내(앞이 먼저 · 기본값).
+  - 회귀 막기: collector `test_aircraft_job`(기본 순서 · adsb_fi 먼저 → 3회 실패면 adsb.lol 폴백 → 쉼 끝에 1순위 복귀 · 폴백 adsb.lol 의 429 쉼 · 미룸 · 전세계 체인은 그대로 ·
+    기동 줄), api `MigrationDbTest.v17…`(바꾸는 경우 · 두지 않는 경우 · 감사 기록 · 되돌리기), infra `test_compose_policy`(네 곳이 같은 순서) ·
+    `test_init_env`(옛 순서를 든 .env 는 알리고 값은 두기 · 새 값 · 고른 값 · 주석 · 줄 없음은 알리지 않기).
+- G26(§G22 · §G24 · R-03 · 계약 v2 §A2 예산 · ADR-011 개정 2026-09-30 저녁) **기상청 '파일 없음' 긴 연속은 15분마다 확인 — 그 사이 주기는 부르지 않고 'waiting'**.
+  - 까닭(운영 2026-09-30): 기상청이 08:15 KST 부터 모든 바이너리 합성(HSR · HSP · CMX · PPI · CPP PUB)에 'file not exist' 로 답했다(영상 data=img 만 답함) — 알리지 않은
+    공급자 장애, 길이 모름. 연속 동안에도 5분마다 목록 1 + 확인 ≤ 2(+ 목록 ReadTimeout 다시 부르기)를 불러 18:34 KST 에 `budget:kma_radar` 417 / 1,000(09:00 KST 에
+    시작한 UTC 날 — 시간당 약 44, 하루가 끝나기 전에 1,000 을 넘을 속도).
+  - 수집기(`jobs/kma_radar.py`): 연속의 나이(첫 tm 부터 지금까지, KST 벽시계)가 `MISSING_SLOW_AFTER_S`(60분 — 선택값) 이상이면 `MISSING_SLOW_EVERY_S`(15분 — 선택값)
+    이상인 주기의 가장 작은 배수(`slow_probe_every_s` — 기본 300 s 면 15분, 600 s 면 20분 — 알리는 간격이 실제 간격, 리뷰 2026-09-30 밤)마다만 확인한다. 확인하는 주기는 전과 같다 — 목록 1 + 가장 새 tm · 10분 넘은 가장 새 tm(§G22 의 둘째 확인은 늦게 생기는 파일로 회복을 보려는
+    것이라 늦춘 뒤에도 둔다 — 추천안의 '확인 하나'는 그 회복을 다시 잃는다). 간격은 마지막으로 기상청을 부른 주기(목록 예약부터 — 실패한 목록 포함)에서 센다. 파일이
+    다시 오면 연속이 닫히고 다음 주기부터 5분마다(보관 창의 빈 곳 R-03)다. 늦출 때 INFO 한 줄, 연속을 여는 WARN · 한 시간마다 WARN 에 간격을 적는다(두 WARN 의 로그
+    지문이 이 변경에서 한 번 바뀐다 — 간격 숫자만 다른 줄은 같은 지문, 로그 화면의 옛 지문 `e017086c4d14ac52` 묶음에는 더 쌓이지 않는다).
+  - 기다리는 주기(실행 기록 — 주기마다 하나는 그대로): `ingest_run.status` = **`waiting`**, http 없음, records_in 0, 오류 글자 `not called — probing every 15 min (chosen)
+    while the KMA download has no file (since tm=…, 1 h 0 min of tms); last probe 5 min before this cycle`. 'missing' 은 쓰지 않는다 — 그 주기에 기상청이 '파일 없음'으로
+    답했다는 뜻이다. 공급자 해시(last_success · last_error · 예산)와 meta `checked_at` · 연속의 `missing_checked_at` 은 바꾸지 않는다(확인하지 않았다). 연속 발행 ·
+    heartbeat 는 그대로. 웹 실행 상태 `waiting` 은 주황과 뜻(title — `RUN_STATUS_TITLE`).
+  - 필드: 두 해시(`wakeline:radar_kr:meta` · `wakeline:provider:kma_radar`)에 `missing_probe_every_s`(지금 확인 간격, 정수 초 문자열 — 5분마다면 주기 `300`, 늦춘 뒤
+    `900`, 닫으면 빈 값). api `KrRadarMissing` → `missing.probe_every_s`(정수 1–86,400, 비었으면 키 없음 · 틀리면 그 키만 빼고 `wakeline_radar_kr_parse_errors_total
+    {field="missing_probe_every_s"}`) — `/radar/kr` · `/status` · WS `status.radar_kr.missing`(`schemas/ws/server.v1.json` · `tools/rest_contract_check.py` `KR_MISSING` ·
+    `lib/ws-validate` `KR_MISSING` · WS 표본 다시 만듦). `/ops/providers` 는 공급자 해시를 그대로 싣는다.
+  - '확인 멈춤' · 이어받기: 기준 = 확인 간격 × `MISSING_STALE_PROBES`(3 — 선택값, 전의 15분 = 5분 × 3 과 같은 규칙), 아래로는 `MISSING_CARRY_S`(15분) — 늦춘 연속은
+    45분(`missing_carry_s`). 웹(`lib/kr-radar krMissing` — 상황판 칩 · 상세 · 운영 공급자 줄)이 같은 기준을 쓰고(간격을 모르면 15분 — 전과 같다), 수집기를 다시 띄우면 마지막
+    확인이 그 안인 연속만 이어받고 마지막 확인에서 간격을 센다(곧바로 부르지 않는다). 고정 15분이었다면 늦춘 뒤 확인마다 '확인 멈춤'이 깜박였고, 15분 넘게 멈췄다 다시 띄운
+    수집기는 연속을 버리고 R-03 을 처음부터 해 나중 tm 에서 새 연속을 열었다(운영 로그의 `since tm=202609301310` 과 같은 모양).
+  - 웹 글자(KST 만 · 값은 api 그대로): 한 줄 끝에 `· 15분마다 확인`(간격을 알 때만), title · 상세 규칙 `수집기가 15분마다 목록의 가장 새 tm 과 10분 넘게 앞선 가장 새 tm 만
+    확인(수집기 선택값 — 연속이 60분을 넘으면 15분마다로 늘린다)`, 확인 멈춤 `— 45분 넘게 다시 확인하지 않음(확인 멈춤)`. 숫자 60 · 15 · 3 은 웹 상수
+    (`KR_MISSING_SLOW_AFTER_MIN` · `KR_MISSING_SLOW_EVERY_MIN` · `KR_MISSING_STALE_PROBES`)이고 시험이 수집기 소스와 견준다. 설명서(/guide) 레이더 · 운영 절.
+  - 예산(설정값 계산 — `streak_calls_per_day`, 잰 값이 아니다): 연속만 이어지는 UTC 하루 — 전 5분마다 288 × 3 = **864**(다시 부르기 최악 1,728 — 한도 1,000 을 넘는다),
+    뒤 15분마다 96 × 3 = **288**(최악 576). 늦추기 전 60분(12 주기 × 3 = 36)이 그 하루에 들면 더한다. 모의 하루(12:15 부터 파일 없음)에서 늦춘 뒤 시간마다 12 —
+    24 × 12 = 288(`test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence`).
+  - 대가: 기상청이 돌아온 뒤 알아채기까지 최대 약 15분 + 늦게 생기는 파일이면 10분(전 5분) — 그동안 RainViewer 가 레이더를 맡는다(상태 바 KMA 칩 '파일 없음').
+  - 바꾸지 않는 것: 연속을 여는 규칙(R-03 세 번) · 확인할 tm 고르기(`streak_probes`) · 한 시간마다 WARN · 알린 공백 · 실행 상태 'missing' 의 뜻 · 429 'throttled'(§G24) ·
+    STALE 기준(900 s) · 부분 합성 다시 받기.
+  - 회귀 막기: collector `test_kma_missing`(15분마다 확인 · 그 사이 'waiting' · 해시 간격 · 늦출 때 INFO 한 번 · 예산 산수와 모의 하루 · 늦춘 확인에서 회복 뒤 5분마다 ·
+    다시 띄운 수집기 — 이어받기 45분 · 기다림 · 버림), api `KrRadarMissingTest`(간격 · 틀린 값) · `RestSamplesIT` · `WsSchemaContractTest`(표본), web `tests/kma-missing.test.ts`
+    (한 줄 · 기준 45분 · 모름 · 수집기 상수 · 상세 규칙 · 운영 줄 · 'waiting' 색) · `ws-schema-sweep-v5`(검증기 = 스키마) · `guide-page`.
+
+## G. 18차 개정(2026-09-30 저녁 · 레인 coverage · 사용자 질문 "대한민국 영해에 선박 정보가 안 떠 있는 이유" — ADR-027) — 관측 AIS 수신 범위
+같은 저녁 레인 collector 가 17차 개정으로 §G25 · §G26 을 먼저 썼다 — 이 절은 그다음 번호 §G27 이다(처음에 §G26 으로 적어 겹쳤다 — 리뷰 2026-09-30 에서
+고쳤다. 합칠 때 17차 개정이 이 절 앞에 오고, 번호는 web `tests/docs-contract-g11.test.ts` 가 겹치지 않는지 본다).
+- G27 **관측 수신 범위 계약**(api · web · 도구 — 근거 · 고른 값 · 상한의 계산은 ADR-027):
+  - 뜻: 이 서비스가 최근 24 h 에 실제로 받은 선박 위치를 0.5° 칸으로 센 것 — 구독 범위(운영 설정 ais_bboxes · 계약 v3 §A 의 점선)가 아니다. aisstream.io 는
+    육상 수신국이 받은 것만 보내므로(ADR-014) 구독 범위 안이어도 칸이 없을 수 있다. 수신국 목록 · 반경은 짓지 않는다.
+  - REST `GET /api/v1/ships/coverage`(공개 · `Cache-Control: public, max-age=60` · ETag 스냅숏마다(`"o<순번>-<시각>"`) → `If-None-Match` 304 · 요청 제한 공통 ·
+    요청 중 DB · 외부 호출 없음 — 메모리 스냅숏, 60 s 마다 새로 만든다). 늘 있는 키: `cell_deg`(0.5) · `window{hours: 24, bucket_s: 3600, from, to}` · `since` ·
+    `covered`(full · partial · since_api_start) · `api_started_at` · `live_from` · `bootstrap{state(pending · running · done · failed), hours_loaded, hours_total, rows,
+    loaded_from}`(+ `error` — failed 일 때만, 종류 statement_timeout · connection · read_timeout · deadline · stopped · error, 서버 글자 없음 · `finished_at` — done ·
+    failed 일 때만) · `generated_at` · `cells` · `cell_count` · `positions` · `truncated` · `dropped_positions` · `limits{max_cells, max_ship_cells}` ·
+    `sampling`("first_fix_per_60s") · `note` · `time_zone` · `meta`(provider = 마지막으로 센 보고의 공급자, fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 stale 로 잘못
+    보이지 않게, 칸이 없으면 둘 다 키 없음,
+    stale 기준 900 s).
+  - `cells[]` = `[lon0, lat0, 0.5, 선박 수, 위치 수, 마지막 수신]`: 칸 [lon0, lon0 + 0.5) × [lat0, lat0 + 0.5)(floor — 180°E · 90°N 은 마지막 칸), 남 → 북 · 서 → 동 순,
+    선박 수 = 창 안 서로 다른 MMSI(≥ 1), 위치 수 = 저장과 같은 표본(MMSI 별 60 s 창의 첫 보고 — `IngestEvents.ShipsSampled` — 파이프라인 이벤트, ≥ 선박 수), 마지막 수신 = 그 칸의 가장 늦은
+    seen_at(UTC ISO, 초로 내림 — 수집기 시계가 빠르면 generated_at 보다 5분까지 늦을 수 있다). 칸 상한 16,000 · 칸별 선박 항목 상한 200,000(고른 값) — 넘친 보고는
+    세지 않고 `dropped_positions`(창 안) · `truncated` 로 밝힌다.
+  - 창 · 덮음: `window.from` = generated_at 이 든 UTC 시의 시작 − 24 h, `window.to` = generated_at. `live_from` = api_started_at 을 분(60 s 창)으로 내린 것 — 실시간
+    셈은 seen_at ≥ live_from, 기동 때 부트스트랩은 ship_position 의 ts < live_from(두 번 세지 않는다). `since` = max(window.from, min(bootstrap.loaded_from, live_from)) ·
+    `covered` = full ⇔ since = window.from, 아니면 loaded_from < live_from 이면 partial, 아니면 since_api_start.
+  - 부트스트랩(한 번 · api 시작 `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) 뒤 · 가장 최근 시부터 · 시 하나에 문장 하나 · 연결 하나(공유 풀 · 선택 조회 풀 아님) ·
+    읽기 전용 · statement_timeout 10 s · socketTimeout 12 s · connectTimeout 2 s · loginTimeout 5 s · 전체 마감 180 s — 멈추면 이어 읽은 부분만).
+  - 검사: `tools/rest_contract_check.py` `ship_coverage`(스키마 + `_ship_coverage` — 창의 시작 · to = generated_at · live_from 이 api 시작의 분 · since/covered 식 ·
+    격자점 · 순서 · 중복 없음 · 선박 ≤ 위치 · 마지막 수신이 창 안이고 초로 내림 · 합계 · 잘림 ⇔ 빠진 위치 · 상한 · meta.fetched_at = min(가장 늦은 마지막 수신, generated_at)), 표본은
+    RestSamplesIT, 규칙 시험은 collector `tests/test_rest_contract_rules.py`. OpenAPI 스냅숏에 `shipCoverage`.
+  - 웹: 레이어 키 `reception`(선택 필드 — 없으면 끔 · 이 브라우저에 기억), 단추 '관측 수신 범위(최근 24 h)'(선박 옆). 켤 때 받는 조각(ADR-026 — `components/ReceptionLayer` ·
+    `lib/reception`, `tests/first-screen-lazy.test.ts` 목록에 까닭과 함께): 조회 120 s · ETag · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만, 칸은 옅은 파랑
+    (`#5fb4e0`) · 채움 불투명도 = 선박 수 구간 1–2 · 3–9 · 10–29 · 30–99 · 100+(0.10 · 0.16 · 0.23 · 0.30 · 0.38 — 표시용 선택), 연안 교통량 아래. 툴팁: 칸 범위 ·
+    선박 · 위치(선박마다 60 s 에 1건) · 마지막 수신 · 창(KST 만). 상태 줄: 칸 수 · 이 화면의 칸 수 · 창(KST), covered 가 full 이 아니면 '창의 일부만 셈 — <since KST> 부터(까닭)'
+    (api 시작 뒤 · 기동 전 기록 읽는 중 N/M시간 · 일부만 읽음 · 읽기 실패 — 종류), 상한 · 형식 오류로 뺀 칸 · 조회 실패. 범례 절: "잰 값: 이 서비스가 최근 24 h 에
+    실제로 선박 위치를 받은 0.5° 칸 … — 구독 범위(점선)가 아니다", 구간 견본은 지도와 같은 불투명도를 어두운 바다 색(`BASEMAP_WATER`) 위에. 자료가 있으면
+    선박 칩 설명(title)과 0척 알림 글자에 '이 화면에 관측 수신 칸 N개' + 센 구간 — covered = full 이고 조회가 성공했을 때만 '(최근 24 h)', 아니면 실제로 센 구간
+    '(<since KST> 부터만 셈)', 마지막 조회가 실패했으면 '(… · 조회 실패 — 마지막 값)'(창 전체인 척하지 않는다 — 리뷰 2026-09-30). AIS 꺼짐(키 없음)이면 덧붙이지 않는다. 설명서 선박 절 · 레이어 단추 · 범례 표. 운영 · 파이프라인 화면은 바꾸지 않았다.
+  - 회귀 막기: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest` · `CoverageBootstrapDbTest`(Testcontainers) · `ShipCoverageControllerTest` · `ShipCoverageIT` ·
+    `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest` · `OpenApiSnapshotIT`, web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4.test.ts` ·
+    `guide-page.test.ts` · `e2e-inject.test.ts` · `e2e/ship-coverage.spec.ts`.
+  - 리뷰 뒤(2026-09-30 밤): ① `If-None-Match` 는 약한 비교(`rest.Etags` — W/ · 목록 · `*`) — edge 가 1,024 B 넘는 JSON 을 gzip 으로 줄이며 ETag 를 W/"…" 로 바꾸므로
+    모든 ETag 엔드포인트(항공기 · 선박 · SIGMET · 연안 교통량 · 관측 수신)가 edge 를 거친 조건부 요청에 304 를 주지 못했다(E2E `edge-limits`). 304 는 같은 스냅숏(60 s 안)을
+    다시 물을 때만이다 — 칸의 위치 수 · 마지막 수신이 스냅숏마다 바뀌므로 내용 기반 ETag 는 두지 않았다(ADR-027 8). ② 부트스트랩은 grace 뒤, 셈 시작 앞 보고가 10 s 동안
+    오지 않고 그때까지 저장기 큐에 넣은 행이 모두 끝난 뒤에 읽는다(상한 grace + 300 s — 고른 값). 부트스트랩이 그 시를 다 읽은 뒤 도착한 셈 시작 앞 보고는 실시간으로
+    센다(저장기가 알린 뒤에 큐에 넣는다 — 그 읽기에 없었다), 읽는 중에 도착한 것은 `ignored_total{reason=during_read}`. ③ 웹 범례의 구간: covered = full 이면 '최근 24 h',
+    아니면 '<since KST> 부터'(주황), 자료 전이면 '센 구간(상태 줄)', 메모리 상한 · 조회 실패 줄. 툴팁: '위치 N건(선박마다 60 s 창의 첫 보고 — 많아야 1건)' ·
+    '마지막 표본 수신'(실제 마지막 수신은 60 s 안쪽으로 늦을 수 있음). `window.hours` 가 24 가 아니면 웹이 응답을 받지 않는다(형식 오류 — 마지막 값).

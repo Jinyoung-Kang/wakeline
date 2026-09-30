@@ -5,7 +5,8 @@
  *   정상이 아닌 칩(주의 · 경고)은 줄에서 빼지 않는다(pinned). 폭이 모자라면 정상 · 모름 칩만 뒤에서부터 '상세 +N' 으로 옮긴다(fitChips) — 잘리지 않는다.
  * - 상세 표(detailRows): 출처 · 수집 시각 · 속도 · 기상청 프레임 · 합성 지점 · 엔진 · 판 · AIS 공백 기록 · 기준 — 줄에서 뺀 것도 모두 여기에 있다.
  * - 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api radar/kr missing): KMA 칩에 "파일 없음"(주의 — 까닭 문장은 title) · 상세에 행 하나.
- *   마지막 확인이 15분(수집기 선택값)을 넘으면 "파일 없음 · 확인 멈춤" — 지금도 그런지 모른다.
+ *   마지막 확인이 확인 간격 × 3(lib/kr-radar KR_MISSING_STALE_PROBES — 아래로 15분, 긴 연속을 15분마다 확인하면 45분 — 계약 v5 §G26)을 넘으면
+ *   "파일 없음 · 확인 멈춤" — 지금도 그런지 모른다.
  *   보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다(나이 STALE 만으로는 까닭을 모른다).
  * - 기준은 모두 이미 있는 값: 지역 60 s · 전세계 300 s(ws-protocol · api StatusService), AIS 120 s(ships), 기상청 900 s(format — api meta),
  *   SIGMET 900 s · 레이더 600 s(api StatusService 의 status.*.stale — SIGMET_STALE_S · RADAR_STALE_S 는 그 값을 옮겨 적은 것, 시험이 서버 코드와 견준다).
@@ -16,7 +17,7 @@
  */
 import { jobProvider, noProviderLine } from "./active-provider";
 import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./format";
-import { KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, krComposite, krMissing } from "./kr-radar";
+import { krComposite, krMissing } from "./kr-radar";
 import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
 import type { ConnState, ServerData } from "./store";
 import { fmtKst, fmtKstRange, fmtTimeTitle, kstWallMs, timeParts, type TimeIn } from "./time";
@@ -432,8 +433,8 @@ export function detailRows(i: StatusInput): DetailRow[] {
       value: `tm ${miss.range} · 확인한 tm ${miss.tms}개 ${miss.tms === 1 ? "" : "모두 "}없음`, valueTitle: miss.title,
       source: `기상청 답: ${miss.file ? `${miss.file} 없음` : "파일 없음(파일 이름 모름)"}${miss.listed ? ` · 목록에는 ${miss.listed}` : ""} · 마지막 확인 ${kstAt(miss.checkedAt, i.srvNowMs)}`,
       sourceTitle: fullTitle("마지막 확인", miss.checkedAt),
-      rule: `목록에 있는 tm 을 내려받기가 '파일 없음'으로 답하는 동안 — 수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인`
-        + ` · 파일이 다시 오면 이 행은 사라짐 · 마지막 확인이 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 확인 멈춤(수집기 선택값)`,
+      rule: `목록에 있는 tm 을 내려받기가 '파일 없음'으로 답하는 동안 — ${miss.cadence}`
+        + ` · 파일이 다시 오면 이 행은 사라짐 · 마지막 확인이 ${miss.staleMin}분을 넘으면 확인 멈춤(수집기 선택값)`,
     });
   }
   const en = i.status?.engine;

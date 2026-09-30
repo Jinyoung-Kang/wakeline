@@ -61,7 +61,7 @@ public class WeatherController {
         Instant now = Instant.now();
         SigmetStore.State st = sigmets.state();
         String etag = "\"s" + st.version() + "-" + (active ? 1 : 0) + "\"";
-        if (bbox == null && hazard == null && etag.equals(req.getHeader("If-None-Match")))
+        if (bbox == null && hazard == null && Etags.notModified(etag, req.getHeader("If-None-Match")))
             return ResponseEntity.status(304).eTag(etag).cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).build();
         Bbox b = bbox == null ? null : Bbox.parse(bbox, 0);
         List<SigmetRecord> list = new ArrayList<>();
@@ -116,7 +116,7 @@ public class WeatherController {
         RadarStore.Frames f = radar.frames();
         String etag = "\"r" + f.generated() + "-" + Long.toString(f.fetchedAt().toEpochMilli(), 36) + "\"";
         CacheControl cc = CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic();
-        if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
+        if (Etags.notModified(etag, req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("host", f.host());
         m.put("generated", f.generated());
@@ -163,7 +163,7 @@ public class WeatherController {
         String etag = "\"k" + Integer.toHexString(java.util.Objects.hash(h.get("fetched_at"), h.get("latest_tm"), h.get("available"), h.get("status"),
                 h.get("coordinates"), h.get("width"), h.get("height"), frames, missing)) + "\"";
         CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
-        if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
+        if (Etags.notModified(etag, req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("available", available);
         m.put("status", h.get("status"));

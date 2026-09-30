@@ -11,6 +11,7 @@
  *   0척 칸은 회색. 밀집도 %는 공급자 값 그대로 툴팁에.
  * - 시각: 기준(regDt)은 KST 로 적는다(공급자 원본도 KST 벽시계) — 공유 형식기 lib/time(계약 v5 §G20): 상태 줄은 날짜 · 초까지, 지도 툴팁은 초까지.
  */
+import { EtagPoller, POLL_NONE, watchVisible, type Fetcher, type PollState, type WatchVisible } from "./etag-poller";
 import { fmtKst } from "./time";
 import type { Tip } from "./tooltip";
 
@@ -225,84 +226,25 @@ export function trafficStatusLine(g: TrafficGrid | null, error: string | null, n
 
 // ---- 조회(ETag) -------------------------------------------------------------------------------------------------------
 
-export interface TrafficPollState { data: TrafficGrid | null; etag: string | null; error: string | null; version: number; checkedAt: number | null }
-export const TRAFFIC_POLL_NONE: TrafficPollState = { data: null, etag: null, error: null, version: 0, checkedAt: null };
-
-type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
-
-type WatchVisible = (onVisible: () => void) => () => void;
-
-/** 탭이 다시 보일 때(visibilitychange → 보임) 알린다. 되돌리는 함수로 듣기를 멈춘다 */
-const watchVisible: WatchVisible = (onVisible) => {
-  if (typeof document === "undefined" || typeof document.addEventListener !== "function") return () => {};
-  const h = () => { if (!document.hidden) onVisible(); };
-  document.addEventListener("visibilitychange", h);
-  return () => document.removeEventListener("visibilitychange", h);
-};
+export type TrafficPollState = PollState<TrafficGrid>;
+export const TRAFFIC_POLL_NONE: TrafficPollState = POLL_NONE;
 
 /**
- * 레이어가 켜져 있는 동안만 도는 조회기. 지도는 version 이 바뀔 때만 다시 그린다 — 304 · 같은 ETag · 같은 본문이면 version 을 올리지 않는다.
- * 숨긴 탭에서는 부르지 않고, 다시 보이면 곧바로 부른다(마지막 확인이 TRAFFIC_VISIBLE_MIN_GAP_MS 안이면 빼고). 동시에 두 번 부르지 않는다.
+ * 레이어가 켜져 있는 동안만 도는 조회기(lib/etag-poller — 관측 수신 범위와 같은 틀). 지도는 version 이 바뀔 때만 다시 그린다 — 304 · 같은 ETag ·
+ * 같은 본문이면 version 을 올리지 않는다. 숨긴 탭에서는 부르지 않고, 다시 보이면 곧바로 부른다(마지막 확인이 TRAFFIC_VISIBLE_MIN_GAP_MS 안이면 빼고).
+ * 동시에 두 번 부르지 않는다.
  */
-export class TrafficGridPoller {
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private unwatch: (() => void) | null = null;
-  private inflight = false;
-  private state: TrafficPollState;
-
+export class TrafficGridPoller extends EtagPoller<TrafficGrid> {
   constructor(
-    private readonly publish: (s: TrafficPollState) => void,
+    publish: (s: TrafficPollState) => void,
     initial: TrafficPollState = TRAFFIC_POLL_NONE,
-    private readonly fetcher: Fetcher = (u, i) => fetch(u, i),
-    private readonly hidden: () => boolean = () => typeof document !== "undefined" && document.hidden,
-    private readonly now: () => number = () => Date.now(),
-    private readonly intervalMs = TRAFFIC_POLL_MS,
-    private readonly watch: WatchVisible = watchVisible,
+    fetcher: Fetcher = (u, i) => fetch(u, i),
+    hidden: () => boolean = () => typeof document !== "undefined" && document.hidden,
+    now: () => number = () => Date.now(),
+    intervalMs = TRAFFIC_POLL_MS,
+    watch: WatchVisible = watchVisible,
   ) {
-    this.state = initial;
-  }
-
-  start(): void {
-    if (this.timer) return;
-    void this.poll();
-    this.timer = setInterval(() => { if (!this.hidden()) void this.poll(); }, this.intervalMs);
-    this.unwatch = this.watch(() => {
-      const last = this.state.checkedAt;
-      if (last == null || this.now() - last >= TRAFFIC_VISIBLE_MIN_GAP_MS) void this.poll();
-    });
-  }
-
-  stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    this.unwatch?.();
-    this.unwatch = null;
-  }
-
-  async poll(): Promise<void> {
-    if (this.inflight) return;
-    this.inflight = true;
-    try {
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (this.state.etag && this.state.data) headers["If-None-Match"] = this.state.etag;
-      const res = await this.fetcher(TRAFFIC_URL, { headers, credentials: "same-origin" });
-      if (res.status === 304) { this.set({ error: null, checkedAt: this.now() }, false); return; }
-      if (!res.ok) { this.set({ error: `HTTP ${res.status}`, checkedAt: this.now() }, false); return; }
-      const etag = res.headers.get("ETag");
-      const parsed = parseTrafficGrid(await res.json());
-      if (!parsed) { this.set({ error: "응답 형식 오류", checkedAt: this.now() }, false); return; }
-      const same = etag != null && etag === this.state.etag;
-      this.set({ data: same ? this.state.data : parsed, etag, error: null, checkedAt: this.now() }, !same);
-    } catch (e) {
-      this.set({ error: e instanceof Error ? e.message : String(e), checkedAt: this.now() }, false);
-    } finally {
-      this.inflight = false;
-    }
-  }
-
-  private set(patch: Partial<TrafficPollState>, changed: boolean): void {
-    this.state = { ...this.state, ...patch, version: this.state.version + (changed ? 1 : 0) };
-    this.publish(this.state);
+    super({ url: TRAFFIC_URL, parse: parseTrafficGrid, intervalMs, visibleMinGapMs: TRAFFIC_VISIBLE_MIN_GAP_MS }, publish, initial, fetcher, hidden, now, watch);
   }
 }
 

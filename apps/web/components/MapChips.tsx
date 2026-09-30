@@ -49,13 +49,15 @@ export function MapChipsView({ hex, shipsOn, shipCats = SHIP_CATEGORIES, basemap
   const ships = useServerData((d) => d.ships);
   const ais = useServerData((d) => d.ais);
   const viewport = useServerData((d) => d.viewport);
+  // 관측 수신 범위(ADR-027) 레이어가 자료를 받았을 때만 — 이 화면의 관측 칸 수를 0척 알림 · 칩 설명에
+  const observed = useServerData((d) => d.receptionInView);
   const now = useServerNow(1000);
   const wall = useNow(1000);
   // 끊김·일시정지·수신 없음이면 서버 임대가 곧 만료된다 — 마지막 상태를 "진행 중"처럼 보이지 않는다
   const chip = isRxFresh(conn, lastRxAt, wall) ? mapDemandChip(demand, hex, now) : null;
   // 레이어를 켰는데 아직 서버에 알리기 전(mode off)이면 수신 대기로 본다
   const ship = shipsOn
-    ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, filter: chipFilter(ships, shipCats) })
+    ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, filter: chipFilter(ships, shipCats), observed })
     : null;
   if (!chip && !ship && !basemapFailed) return null;
   return (

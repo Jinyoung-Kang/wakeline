@@ -130,6 +130,37 @@ class InitEnvTest(unittest.TestCase):
         self.assertEqual(v["DB_ROOT_PASSWORD"], "x")
         self.assertTrue(v["REDIS_API_PASSWORD"])
 
+    def test_old_region_order_in_env_is_reported_and_kept(self):
+        """계약 v5 §G25: 관심 지역 기본 순서가 adsb_fi 먼저로 바뀌었다. 옛 .env.example 을 복사한 .env 는 옛 순서를 그대로 들고 있어
+        compose 기본값을 덮는다(수집기는 운영 설정 미러가 없을 때 이 값을 쓴다) — 조용히 남지 않게 알리고, 값은 바꾸지 않는다."""
+        self.env.write_text("DB_ROOT_PASSWORD=x\nAIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky\n")
+        init_env.ensure_env(self.env, self.example, out=self.out)
+        printed = self.out.getvalue()
+        self.assertIn("AIRCRAFT_PROVIDERS", printed)
+        self.assertIn("old default adsb_lol,adsb_fi,opensky", printed)
+        self.assertIn("adsb_fi,adsb_lol,opensky", printed)          # 새 기본값(.env.example)
+        self.assertIn("§G25", printed)
+        self.assertEqual(values(self.env.read_text())["AIRCRAFT_PROVIDERS"], "adsb_lol,adsb_fi,opensky")  # 이미 있는 값은 그대로
+
+    def test_old_region_order_quoted_is_reported(self):
+        self.env.write_text('DB_ROOT_PASSWORD=x\nAIRCRAFT_PROVIDERS="adsb_lol,adsb_fi,opensky"  \n')
+        init_env.ensure_env(self.env, self.example, out=self.out)
+        self.assertIn("AIRCRAFT_PROVIDERS", self.out.getvalue())
+
+    def test_new_chosen_or_absent_region_order_is_not_reported(self):
+        for line in ("AIRCRAFT_PROVIDERS=adsb_fi,adsb_lol,opensky\n",   # 새 기본값
+                     "AIRCRAFT_PROVIDERS=adsb_fi,opensky\n",            # 운영자가 고른 값
+                     "# AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky\n",  # 주석
+                     ""):                                                 # 줄 없음(compose 기본값)
+            out = io.StringIO()
+            self.env.write_text("DB_ROOT_PASSWORD=x\n" + line)
+            init_env.ensure_env(self.env, self.example, out=out)
+            self.assertNotIn("AIRCRAFT_PROVIDERS", out.getvalue(), line)
+        out = io.StringIO()
+        self.env.unlink()
+        init_env.ensure_env(self.env, self.example, out=out)  # .env.example 에서 새로 만든 .env
+        self.assertNotIn("AIRCRAFT_PROVIDERS", out.getvalue())
+
     def test_no_temp_files_left_behind(self):
         init_env.ensure_env(self.env, self.example, out=self.out)
         leftovers = [p.name for p in self.dir.iterdir() if p.name.endswith(".tmp")]

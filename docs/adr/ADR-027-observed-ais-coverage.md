@@ -1,0 +1,99 @@
+# ADR-027 관측 AIS 수신 범위 — 받은 위치로 센 0.5° 칸(최근 24 h), 기동 때 한 번의 DB 부트스트랩, 켤 때 받는 지도 레이어
+
+**상태** 채택 · 2026-09-30 · 사용자 질문("대한민국 영해에 선박 정보가 안 떠 있는 이유 — API 가 제공을 안 하는 것인가, 기술적으로 불가능한가") · ADR-006(요청 중
+외부 호출 없음) · ADR-014(AIS — 육상 수신국 기반) · ADR-023(연안 교통량 격자) · ADR-025(읽기 격벽) · ADR-026(첫 화면 JS 예산) · 계약 v5 §G27(18차 개정 — 같은 저녁
+레인 collector 의 17차 §G25 · §G26 다음 번호)
+
+## 맥락
+- 상황판의 선박 위치는 aisstream.io 하나다(ADR-014). aisstream.io 는 육상 AIS 수신국이 받은 것만 보낸다 — 문서의 표현으로 "Our global network of Automatic
+  Identification System (AIS) stations". 수신국이 없는 해역은 구독해도 비어 있다.
+- 실DB 측정(2026-09-30, ship_position 최근 24 h — 18:57 KST 까지, 이 작업을 맡긴 쪽이 잰 값): 한국 상자(124–132E · 33–39N)의 서로 다른 선박 304척이 **모두
+  1° 칸 하나**(37–38N · 126–127E — 인천 · 경기만)에 있었고 시간당 80–130척, 동해 상자는 위치 1건. 견줘 보면 대만 1,386척 · 도쿄만 769척 · 규슈–세토 430척.
+  즉 한국 연안이 비어 보이는 것은 우리 쪽 필터나 결함이 아니라 공급자가 그 해역의 위치를 보내지 않은 것이다.
+- 개별 선박의 실시간 위치를 주는 한국 공개 API 는 없었다(작업 지시의 확인 — 공공데이터포털의 해양수산부 · 한국해양교통안전공단 · 인천항만공사 자료, 해양교통안전공단
+  MTIS 의 여객선 운항 현황은 위치가 없다 — 이 레인이 다시 확인하지는 않았다). 한국 연안에는 격자별 척수(개별 위치 아님)의 연안 교통량 레이어가 이미 있다(ADR-023).
+- 지도는 구독 범위(운영 설정 ais_bboxes — 점선)와 0척일 때의 문구(계약 v4 §C)는 보였지만 **실제로 어디서 위치가 오는지**는 보이지 않아, 한국 연안의 빈 곳이
+  결함처럼 보였다.
+
+## 결정
+1. **잰 값으로 보인다 — 받은 위치를 센다.** api 가 이미 소비하는 선박 스트림에서 받은 위치를 0.5° 칸 · 최근 24 h 로 센 '관측 수신 범위'를 만든다(수신국 목록이나
+   추정 반경을 짓지 않는다). 칸마다 선박 수(창 안 서로 다른 MMSI) · 위치 수 · 마지막 수신. REST `GET /api/v1/ships/coverage`(계약 v5 §G27)와 지도 레이어
+   '관측 수신 범위(최근 24 h)'(기본 끔).
+2. **표본은 저장과 같다.** 실시간 셈은 선박 저장기가 고른 위치(`IngestEvents.ShipsSampled` — MMSI 별 60 s 창의 첫 보고, ship_position 에 쓰는 것과 같은 선택)를 센다. 스트림 소비 스레드의
+   파이프라인 이벤트라 격자 리스너의 예외는 그 리스너에 갇힌다(API-CONC-2 — 저장기 실패로 세지 않는다).
+   그래서 기동 때 DB(ship_position)에서 읽은 부분과 그 뒤 실시간으로 센 부분의 '위치 수'가 같은 뜻이다. 저장 성공과는 무관하다(받은 것의 표본 — 쓰기가 실패한
+   행은 실시간 셈에는 있고 다음 기동의 부트스트랩에는 없다).
+3. **칸 · 창(고른 값 — 잰 값 아님).** 칸 0.5°: 1° 칸이면 위 측정의 한국 수신 전체가 칸 하나라 구별이 없고, 0.5° 면 그 칸이 넷으로 나뉜다. 지구 전체는
+   720 × 360 = 259,200칸이라 칸 상한(아래)으로 막을 수 있다. DB 와 같은 식(floor(lon · 2) · floor(lat · 2) — 2 를 곱하는 것은 부동소수에서 정확하다). 창: 시(UTC)
+   칸 25개 = 지금 시(진행 중) + 앞선 24 시 → 늘 최근 24 h 이상(24–25 h) — 응답이 창의 시작 · 끝을 밝힌다. 한 시가 지나면 가장 오래된 시를 통째로 비운다.
+4. **메모리 상한(고른 값) · 넘치면 센다.** 칸 16,000 · 칸별 선박 항목 200,000. 계산한 바이트 상한(64 비트 JVM · 압축 포인터 — 잰 값 아님): 칸 하나 ≤ 512 B
+   (칸 객체 · 시별 int[25] 둘 · MMSI → 마지막 시 표와 처음 배열 · HashMap 항목), 칸별 선박 항목 하나 ≤ 32 B(열린 주소 int 표, 채움 1/4 이상) →
+   16,000 × 512 + 200,000 × 32 = 14,592,000 B(약 13.9 MiB, api 힙 상한(compose 1 GiB × MaxRAMPercentage 40 — NMT 의 Java Heap reserved 429,916,160 B)의 3.4 %). 기본 구독(18–46N · 105–150E)은 칸이 많아야 5,040개다. 넘친 보고는
+   세지 않고 그 시의 '빠진 위치'로 센다(응답 truncated · dropped_positions · 지표 · 시마다 WARN 한 번) — 한 보고를 칸에는 넣고 선박에는 넣지 않는 일은 없다.
+   바이트 값이 실제 객체 크기를 덮는지는 시험이 잰다(`CoverageGridTest` — 8,000칸 × 칸마다 선박 1 · 5, GC 뒤 남은 힙 ≤ 상한. 식만 견주던 시험은 실패할 수 없었다 —
+   리뷰 2026-09-30).
+5. **기동 때 한 번의 부트스트랩 — 요청 경로 밖, 제 연결 하나.** api 시작 30 s 뒤(고른 값), 그리고 재시작 때 밀린 스트림 백로그가 저장된 뒤 가상 스레드
+   하나가 창 안의 ship_position 을 **가장 최근 시부터 거꾸로, 시 하나에 문장 하나**로 읽는다(칸 · MMSI 로 묶은 행 — 위치 수 · 가장 늦은 ts).
+   - 백로그를 기다린다(리뷰 2026-09-30 밤 — 전에는 기동 30 s 에 고정이라, 긴 정지 뒤 백로그를 쓰는 데 30 s 넘게 걸리면 그 시를 읽은 뒤에 저장된 행을 어디서도
+     세지 않았고 응답은 그래도 full 이었다. 스트림 보존은 2.5 h — 정지가 길수록 백로그가 크다): 셈 시작 앞 보고가 10 s 동안 오지 않았고(고른 값 — 스트림 소비는
+     빈 읽기에서 2 s 막힌다) 그때까지 저장기 큐에 넣은 행이 모두 끝났을 때(`ShipWriter.enqueuedSeq` · `settledSeq` — 뒤따르는 실시간 행은 기다리지 않는다) 읽는다.
+     상한 grace + 300 s(고른 값) — 넘으면 WARN 한 줄과 함께 읽는다. 기다리는 동안 응답의 bootstrap.state 는 pending 이다.
+   - 연결: DriverManager 로 연결 하나(부트스트랩이 끝나면 닫는다). 공유 풀(기록기 · REST)은 몇 분 잡지 않게, ADR-025 의 선택 조회 풀은 '스레드마다 연결 하나 —
+     풀 안에서 서로 기다리지 않는다'가 깨지지 않게 쓰지 않는다. DB 연결 수: 기동 몇 분 동안 12 + 4 + 1.
+   - 상한(ADR-025 의 읽기 규칙과 같은 모양 · 값은 이 일에 맞춰 고름): 서버 statement_timeout 10 s(시 하나 치 집계는 공개 조회 3 s 보다 무겁다) · JDBC 문장 상한
+     같은 값 · pgjdbc socketTimeout 12 s(서버가 멈추거나 망이 끊겨도 끝난다) · connectTimeout 2 s · loginTimeout 5 s · 읽기 전용(default_transaction_read_only +
+     setReadOnly) · 커서로 5,000행씩. 전체 마감 180 s(고른 값).
+   - 멈추면(오류 · 마감 · 종료) 셈 시작부터 거꾸로 **이어 읽은 부분만** 덮었다고 밝힌다(since). 실패는 종류만(statement_timeout · connection · read_timeout ·
+     deadline · stopped · error — 서버 글자는 싣지 않는다) 응답과 로그 한 줄에 — 실패 · 마감은 WARN, 종료로 멈춤(stopped)은 INFO(api 재시작마다 나는 운영
+     동작이라 [로그] 화면의 WARN 이 아니다 — 리뷰 2026-09-30 전에는 같은 멈춤이 WARN 두 줄이었다).
+6. **두 번 세지 않는다 — 셈 시작(live_from).** live_from = api 시작 시각을 60 s 창의 시작으로 내린 것. 실시간 셈은 seen_at ≥ live_from 만, 부트스트랩은
+   ts < live_from 만 — 두 구간이 겹치지 않는다. 부트스트랩이 그 시를 **다 읽은 뒤** 도착한 셈 시작 앞 보고는 실시간으로 센다 — 저장기가 고른 위치를
+   알린 뒤에 큐에 넣으므로(리뷰 2026-09-30 밤에 순서를 바꿨다) 그 행은 그 읽기에 없었다(지표 `wakeline_ship_coverage_late_counted_total`). 적게 셀 수 있는 곳(적는다):
+   api 시작 분(≤ 60 s)에 앞선 프로세스만 받은 보고, 그 시를 **읽는 동안** 도착한 셈 시작 앞 보고(그 읽기에 있었는지 모른다 — 세지 않고
+   `ignored_total{reason=during_read}` 로 센다 — 위 기다림 뒤라 드물다). 5분 넘게 미래인 보고는 세지 않는다(ShipStore · ShipWriter 와 같은 5분).
+7. **창 전체인 척하지 않는다.** since = max(창의 시작, min(부트스트랩이 이어 읽은 곳, live_from)), covered = full(since = 창의 시작) · partial(부트스트랩이 일부만) ·
+   since_api_start(부트스트랩 전 · 실패). api 가 25 h 넘게 돌면 부트스트랩 없이도 full 이다(그만큼 셈이 이어졌다). 웹의 상태 줄 · 툴팁이 '창의 일부만 셈 — … 부터'와
+   까닭을 적는다.
+8. **REST 는 메모리에서만.** 스냅숏을 60 s 마다 새로 만든다(요청이 올 때 — 지난 것이 60 s 안이면 그대로. 지난 뒤 동시에 온 요청은 잠금 안에서 다시 보아 한 번만
+   만든다). 스냅숏은 부트스트랩 상태를 격자 복사보다 먼저 읽는다 — 부트스트랩은 시 조각을 합친 뒤에 loaded_from 을 올리므로 스냅숏이 '셌다'고 말하는 시는 늘 그
+   복사본에 있다. 칸 줄은 스냅숏마다 한 번 만든다. meta.fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 가장 새 응답이 stale 로
+   나가지 않게. `Cache-Control: public, max-age=60` · ETag(스냅숏마다) → 304 — 같은 스냅숏(60 s 안)을 다시 물을 때만이다(탭이 다시 보일 때 등). 웹의 120 s
+   조회는 보통 새 스냅숏을 받는다 — 운영에서는 AIS 가 10 s 마다 오므로 칸의 위치 수 · 마지막 수신이 스냅숏마다 바뀌어, 내용으로 ETag 를 만들어도 같지 않다
+   (리뷰 2026-09-30 밤이 내용 기반 ETag 를 권했으나 이 까닭으로 두지 않았다 — 응답의 generated_at · window.to 도 스냅숏마다 바뀐다). If-None-Match 는 약한 비교다
+   (`rest.Etags` — edge 가 1,024 B 넘는 JSON 을 gzip 으로 줄이며 ETag 를 W/"…" 로 바꾼다. 전에는 글자 그대로 견줘 edge 를 거친 조건부 요청이 304 를 받지 못했다 —
+   모든 ETag 엔드포인트, E2E `edge-limits` 가 edge 를 거쳐 304 를 본다). 요청 중 DB · 외부 호출 없음(ADR-006).
+9. **웹은 켤 때 받는다(ADR-026).** 레이어 코드(응답 검증 · 조회 · 칸 · 툴팁 · 상태 줄 — `lib/reception.ts` · `components/ReceptionLayer.tsx`)는 `DashboardParts` 의 조각
+   으로 레이어 단추를 켤 때 받는다(첫 화면 뒤 한가할 때 미리 받기 목록에도 든다). 조각이 상황판 지도에 그리도록 지도 한 곳 · 준비된 뒤 그리기 · 레이어 툴팁 등록을
+   `lib/map-ready.ts` 로 뺐다(MapView 의 onReady 를 그대로 옮김). 첫 화면에 남는 것: 단추 · 범례 절 · 칩 문구 · 지도 창구(이 브랜치 사본, 호스트 zlib — 기준 커밋
+   538,673 B → 540,145 B, +1,472 B · 리뷰 수정(칩의 센 구간 · 범례 견본) 뒤 540,324 B, +1,651 B, 예산 550,000 B). 조각 청크는 gzip 약 6.8 KB. 칸의 채움 불투명도는 선박 수 구간(1–2 · 3–9 · 10–29 · 30–99 · 100+ — 표시용 선택)이다.
+   범례 견본은 지도와 같은 불투명도를 어두운 바다 색 위에 그린다. 선박 칩 설명과 0척 알림은 자료가 있을 때 '이 화면에 관측 수신 칸 N개'와 센 구간을 덧붙인다 —
+   창 전체를 셌고 조회가 성공했을 때만 '(최근 24 h)', 아니면 '(<since KST> 부터만 셈)', 마지막 조회가 실패했으면 '(… · 조회 실패 — 마지막 값)'(리뷰 2026-09-30 —
+   전에는 api 재시작 직후 몇 분을 센 수에도 '(최근 24 h)' 를 붙였다).
+
+## 대안과 기각 이유
+- **수신국 목록 · 추정 반경을 그린다**: 공급자가 수신국 위치를 주지 않는다 — 지은 값이 된다(사용자 규칙: 추측한 값을 자료처럼 보이지 않는다).
+- **요청마다 DB 에서 24 h 를 묶는다**: 응답마다 수십만 행 집계(요청 제한 120/분 · 여러 뷰어) — 공개 조회 상한(3 s)에 걸리고 기록기와 연결을 다툰다.
+- **수집기(ais)가 세어 Redis 에 싣는다**: 수집기는 60 s 표본 전의 모든 보고를 보지만, 재시작 뒤 24 h 를 채우려면 어차피 DB 를 읽어야 하고 새 키 · ACL · 스키마가
+  는다. api 는 이미 스트림과 저장 표본을 가진다.
+- **서로 다른 선박 수를 HyperLogLog 로**: 메모리는 작지만 추정값이다 — 칸마다 정확한 수를 보인다.
+- **ADR-025 의 읽기 풀을 쓴다**: 풀 크기 = 조회 실행기 스레드 수라서 부트스트랩이 연결 하나를 잡으면 선택 조회가 연결을 기다린다(격벽이 깨진다).
+- **부트스트랩 없이 실시간만**: 재시작마다 24 h 동안 레이어가 비거나 작아진다 — 부트스트랩이 실패했을 때의 동작으로만 남기고 그렇다고 밝힌다.
+- **시 조각이 상한에 걸리면 더 잘게 나눠 다시 읽는다**: 한 시 치가 10 s 를 넘을 만큼 커지는 구독(전세계)에서만 쓸모가 있다 — 지금은 멈추고 이어 읽은 부분만
+  밝힌다(남은 일).
+
+## 결과
+- 코드: api `coverage.CoverageGrid`(격자 — 칸 · 시 · 상한) · `IntIntMap` · `ShipCoverage`(실시간 셈 · 부트스트랩 · 스냅숏 · 생명주기) · `CoverageSource` ·
+  `JdbcCoverageSource` · `rest.ShipCoverageController` · `ingest.IngestEvents.ShipsSampled`(발행 `persist.ShipWriter`). web `lib/reception.ts` · `lib/reception-meta.ts` · `lib/map-ready.ts` ·
+  `lib/etag-poller.ts`(연안 교통량과 같이 쓰는 ETag 조회기 — 옮김) · `components/ReceptionLayer.tsx`.
+- 설정: `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) — application.yml. 나머지 상한은 코드 상수(위 결정 — 고른 값).
+- 지표: `wakeline_ship_coverage_cells` · `wakeline_ship_coverage_ship_cells`(게이지) · `wakeline_ship_coverage_dropped_total{reason=cells|ship_cells}` ·
+  `wakeline_ship_coverage_ignored_total{reason=before_live|during_read|future|mmsi}` · `wakeline_ship_coverage_late_counted_total` · `wakeline_ship_coverage_bootstrap_rows_total`.
+- 시험: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest`(셈 시작 · 미래 보고 · 부트스트랩 순서 · 시 경계 · 문장 상한 · 연결 실패 · 마감 · 종료 · 캐시 ·
+  상한 · 생명주기 · 결과마다 로그 한 줄 · 만료 뒤 동시 요청은 한 번 만듦 · 부트스트랩 중 스냅숏의 주장 ≤ 자료(두 읽기 사이 창구로 결정적) · 백로그 저장을 기다림과
+  그 상한 · 읽은 시의 늦은 보고는 실시간으로 · 읽는 중이면 during_read) · `CoverageBootstrapDbTest`(Testcontainers — 실제 PostGIS · 같은 마이그레이션 · api 계정: 시 조각 문장 · 격자로 옮김 · 셈 시작 뒤 행은 읽지
+  않음 · 읽기 전용 · 잠금 대기를 끝내는 문장 상한 · 닫힌 포트) · `ShipCoverageControllerTest` · `ShipCoverageIT`(스트림 → 저장 표본 → 격자 → REST · ETag 304) ·
+  `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest`(ShipsSampled 격리) · `RestSamplesIT`(표본 ship_coverage) · `tools/rest_contract_check.py`(스키마 + `_ship_coverage` 교차 규칙 — collector
+  `tests/test_rest_contract_rules.py`). web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4`(칩) · `guide-page`(선박 절) ·
+  `first-screen-lazy`(조각 목록) · `e2e/ship-coverage.spec.ts`(응답을 route 로 — 결정적).
+- 되돌리기: 이 레인의 커밋을 되돌린다 — 스키마 · 데이터 변화 없음(읽기만). 웹 레이어 키 `reception` 은 선택 필드라 남은 저장값은 무시된다.
+- 남은 것: 시 조각이 문장 상한에 걸리면 더 잘게 다시 읽기(위 대안) · 운영에서 부트스트랩 시간과 한 시 치 행 수 재기(PERF — 이 레인은 격리 DB 로만 쟀다).

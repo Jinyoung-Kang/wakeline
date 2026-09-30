@@ -513,6 +513,25 @@
         "tags" : [ "ship-controller" ]
       }
     },
+    "/api/v1/ships/coverage" : {
+      "get" : {
+        "operationId" : "shipCoverage",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "ship-coverage-controller" ]
+      }
+    },
     "/api/v1/ships/search" : {
       "get" : {
         "operationId" : "shipSearch",

@@ -22,6 +22,7 @@ import { fmtKst, fmtKstMinute, utcDayWindowKst } from "@/lib/time";
 import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
 import { parseHtml } from "./helpers/html-tree";
 import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
+import { RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
 vi.mock("next/link", () => ({
@@ -250,6 +251,17 @@ describe("features the guide describes exist in the screens", () => {
     expect(layers).toMatch(/자료 멈춤/);
     expect(section(render(EMPTY), "dashboard-legend")).toContain("연안 교통량");
   });
+  it("2.6 explains the observed reception layer (ADR-027): measured cells, not the subscription area, the partial-window notice and the chip count", () => {
+    const ship = section(render(EMPTY), "dashboard-ship");
+    expect(ship).toContain(RECEPTION_LAYER_LABEL);
+    expect(ship).toMatch(/실제로 선박 위치를 받은 0\.5° 칸/);
+    expect(ship).toMatch(/점선[^.]*구독[^.]*잰 값/);
+    expect(ship).toMatch(/창의 일부만 셈/);
+    expect(ship).toMatch(/이 화면에 관측 수신 칸 N개/);
+    expect(ship).toMatch(/부터만 셈/); // 창을 다 세지 못했으면 칩 · 0척 알림도 센 구간을 적는다(리뷰 2026-09-30)
+    expect(section(render(EMPTY), "dashboard-layers")).toContain(RECEPTION_LAYER_LABEL);
+    expect(section(render(EMPTY), "dashboard-legend")).toContain("관측 수신 범위");
+  });
   it("2.8 explains the KMA composite size '합성 N/M곳'", () => {
     expect(section(render(EMPTY), "dashboard-radar")).toMatch(/합성 N\/M곳/);
   });
@@ -309,7 +321,10 @@ describe("time examples", () => {
     expect(ops).toMatch(/quarantined/);
     expect(ops).toMatch(/마지막 성공을 갱신하지 않습니다/);
     expect(ops).toMatch(/kma_radar 행 아래/);
-    expect(ops).toContain(`${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’`);
+    // 계약 v5 §G26: 긴 연속은 늘린 간격(수집기 선택값)으로 확인 — '확인 멈춤' 기준은 확인 간격 × 3(아래로 15분)
+    expect(ops).toContain(`확인 간격 × 3(아래로 ${KR_MISSING_CHECK_STALE_MIN}분)을 넘으면 ‘확인 멈춤’`);
+    expect(ops).toMatch(/15분마다 확인/);
+    expect(ops).toMatch(/waiting/);
     expect(ops).not.toMatch(/최근 60 s/); // 창 길이는 수집기 설정 — 설명서가 숫자를 들고 있지 않다
   });
   it("unknown values are shown as — without a unit", () => {

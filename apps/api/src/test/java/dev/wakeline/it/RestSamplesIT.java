@@ -44,6 +44,8 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.route.RouteReader routes;
     /** 연안 교통량 읽기(ADR-023) — 5 s 메모. 기다림은 이것으로(REST 요청 제한을 쓰지 않게). */
     @Autowired dev.wakeline.rest.TrafficGridReader trafficGrid;
+    /** 관측 수신 범위(계약 v5 §G27 · ADR-027) — 스냅숏(60 s 캐시)을 새로 만들어 기다린다(REST 요청 제한을 쓰지 않게) */
+    @Autowired dev.wakeline.coverage.ShipCoverage coverage;
     /** 일 통계 집계(계약 v5 §G20) — 끝난 KST 날짜를 실제로 집계해 통계 응답에 행이 있게 한다 */
     @Autowired dev.wakeline.persist.MaintenanceJobs jobs;
 
@@ -94,10 +96,14 @@ class RestSamplesIT extends IntegrationTest {
                 Map.entry("fetched_at", at.minusSeconds(300).toString()), Map.entry("checked_at", at.toString()));
     }
 
-    /** 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — 수집기 missing_*): 14:50 부터 5 tm 이 목록에는 EXT 로 있고 내려받기는 없음으로 답했다 */
+    /**
+     * 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — 수집기 missing_*): 14:50 부터 5 tm 이 목록에는 EXT 로 있고 내려받기는 없음으로 답했다.
+     * 확인 간격 300 s(5분마다 — 연속이 60분을 넘으면 수집기가 900 으로 늦춘다, 계약 v5 §G26).
+     */
     static Map<String, String> krMissing(Instant at) {
         return Map.of("missing_since_tm", "202609291450", "missing_last_tm", "202609291510", "missing_tms", "5",
-                "missing_checked_at", at.toString(), "missing_file", "RDR_CMP_HSR_PUB_202609291510.bin.gz", "missing_listed", "EXT");
+                "missing_checked_at", at.toString(), "missing_file", "RDR_CMP_HSR_PUB_202609291510.bin.gz", "missing_listed", "EXT",
+                "missing_probe_every_s", "300");
     }
 
     @Test
@@ -279,6 +285,12 @@ class RestSamplesIT extends IntegrationTest {
         record("ship_search_db", "/api/v1/ships/search?q=it%20stored", 200);
         record("ship_detail_stored", "/api/v1/ships/440700199", 200); // 실시간 아님 — 마지막 수신 기록 last_seen_at(계약 v5 §G4)
         record("problem_bad_ship_query", "/api/v1/ships/search?q=a", 400);
+        // 관측 수신 범위(계약 v5 §G27): 셈은 api 시작 분부터 — 지금 시각의 보고 하나(부산 앞바다 129.0 · 35.0 칸)가 칸이 되기를 기다린다
+        Instant seenCov = Instant.now();
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState("440700102", 35.15, 129.2, seenCov)), List.of()));
+        await("observed coverage cell", WAIT, () -> coverage.snapshotNow().cells().stream()
+                .anyMatch(c -> c.lon0() == 129.0 && c.lat0() == 35.0 && c.lastSeenMs() >= seenCov.toEpochMilli()));
+        record("ship_coverage", "/api/v1/ships/coverage", 200);
 
         // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.
         // 수집기 heartbeat 는 다른 테스트(수집기 없음 → adsb_fi_rps_1m 모름)에 남지 않게 기록 뒤 지운다.
@@ -360,6 +372,7 @@ class RestSamplesIT extends IntegrationTest {
         JsonNode krMissing = Streams.JSON.readTree(Files.readString(OUT.resolve("radar_kr_missing.json"))).path("body");
         assertThat(krMissing.path("missing").path("since_tm").asString()).isEqualTo("202609291450");
         assertThat(krMissing.path("missing").path("tms").asInt()).isEqualTo(5);
+        assertThat(krMissing.path("missing").path("probe_every_s").asInt()).as("the collector's probe interval (§G26)").isEqualTo(300);
         assertThat(krMissing.path("frames").size()).as("stored frames are still served").isEqualTo(2);
         JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
         assertThat(st.path("radar_kr").path("stations").asInt()).isEqualTo(7);
@@ -387,6 +400,9 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(shipTrack.path("properties").path("gap_break_min_s").asInt()).isEqualTo(60);
         assertThat(shipTrack.path("properties").path("gaps_truncated").asBoolean(true)).isFalse();
         assertThat(st.path("demand").path("adsb_fi_rps_1m").asDouble()).isEqualTo(0.417); // 수집기 값(0.4167)을 api 가 소수 셋째 자리로
+        JsonNode cov = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_coverage.json"))).path("body");
+        assertThat(cov.path("cells").size()).isPositive();
+        assertThat(cov.path("cell_deg").asDouble()).isEqualTo(0.5);
         JsonNode shipHit = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_search.json"))).path("body").path("items").get(0);
         assertThat(shipHit.path("mmsi").asString()).isEqualTo(mmsi);
         assertThat(shipHit.path("live").asBoolean()).isTrue();

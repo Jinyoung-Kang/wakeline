@@ -20,9 +20,19 @@
   missing_gap_* 에도 남겨 다시 띄운 수집기도 읽는다 — 끝 tm 이 3 h 넘으면 버린다). 더 새 파일은 받았는데(같은 주기에 받은 것 포함) 한 tm 만
   없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
   연속은 meta 해시와 공급자 해시(wakeline:provider:kma_radar)의 missing_* 에 싣고(api /radar/kr · /status · /ops/providers), 닫으면 빈 값으로
-  지운다. 수집기를 다시 띄우면 마지막 확인이 MISSING_CARRY_S(15분, 선택값) 안인 연속만 이어받는다(아니면 지운다 — 옛 연속을 지금처럼 보이지 않게).
-  KMA_APIHUB_KEY 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 수집기가 아예 멈추면 지울 주체가 없다 — 웹이 마지막 확인의 나이로
-  '확인 멈춤'을 적는다(MISSING_CARRY_S 와 같은 15분). 연속의 tm 수(missing_tms)는 없다는 답을 받은 서로 다른 tm 수 — 확인하지 않은 tm 은 세지 않는다.
+  지운다. 수집기를 다시 띄우면 마지막 확인이 MISSING_CARRY_S(15분, 선택값 — 늦춘 연속은 확인 간격 × 3, 아래 '긴 연속의 확인 간격') 안인 연속만
+  이어받는다(아니면 지운다 — 옛 연속을 지금처럼 보이지 않게). KMA_APIHUB_KEY 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 수집기가 아예
+  멈추면 지울 주체가 없다 — 웹이 마지막 확인의 나이로 '확인 멈춤'을 적는다(이어받기와 같은 기준 — 5분마다면 15분, 늦춘 연속은 45분). 연속의 tm 수(missing_tms)는 없다는 답을 받은 서로 다른 tm 수 — 확인하지 않은 tm 은 세지 않는다.
+- 긴 연속의 확인 간격(운영 2026-09-30 — 기상청이 08:15 KST 부터 모든 바이너리 합성에 'file not exist' 로 답했고 언제 돌아올지 알리지 않았다. 연속 동안에도
+  5분마다 목록 1 + 확인 2 를 불러 18:34 KST 에 예산 417 / 1,000 — 하루가 끝나기 전에 한도를 넘을 속도였다): 연속의 나이(첫 tm 부터 지금까지, KST 벽시계)가
+  MISSING_SLOW_AFTER_S(60분, 선택값) 이상이면 MISSING_SLOW_EVERY_S(15분, 선택값) 이상인 주기의 가장 작은 배수(slow_probe_every_s)마다만 확인한다. 확인하는 주기는 전과 같다(목록 1 +
+  확인 ≤ 2 — 둘째 확인을 두는 까닭은 위 '늦게 생기는 tm' 그대로다). 그 사이 주기는 기상청을 부르지 않고 실행 'waiting'(http 없음 · 오류 글자에 확인 간격과
+  마지막으로 기상청을 부른 주기 뒤 지난 분 — 목록이 실패한 주기도 센다)을 남긴다 — 'missing' 은 기상청이 그 주기에 '파일 없음'으로 답했다는 뜻이라 쓰지 않는다. 확인 간격은 마지막으로 기상청을 부른
+  주기(목록 예약 — 실패한 목록 포함)부터 센다. 지금 확인 간격은 연속 해시의 missing_probe_every_s(초 — 5분마다면 주기)로 싣는다(웹이 'N분마다 확인'을 적는다).
+  파일이 다시 오면(확인하는 주기의 gzip) 연속이 닫히고 다음 주기부터 전처럼 5분마다다. '확인 멈춤'과 이어받기 상한은 확인 간격 × MISSING_STALE_PROBES
+  (3, 선택값 — 전의 15분 = 5분 × 3 과 같은 규칙, 아래로는 MISSING_CARRY_S): 늦춘 연속은 45분(missing_carry_s). 이어받은 연속은 마지막 확인에서 간격을
+  센다(다시 띄워도 곧바로 부르지 않는다). 예산(설정값 계산 — streak_calls_per_day): 연속만 이어지는 UTC 하루 5분마다 288 × 3 = 864(다시 부르기 최악 1,728),
+  늦춘 뒤 96 × 3 = 288(최악 576) — 한도 1,000.
 - 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
   거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
@@ -80,6 +90,7 @@ import base64
 import concurrent.futures
 import functools
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -126,9 +137,26 @@ MISSING_REMIND_S = 60 * 60
 MISSING_RECHECK_S = 10 * 60
 # 다시 띄운 수집기가 Redis 의 연속을 이어받는 상한 — 마지막 확인이 이만큼 안일 때만(선택값, 주기 5분의 3배)
 MISSING_CARRY_S = 15 * 60
+# 긴 연속의 확인 간격(모듈 설명 '긴 연속의 확인 간격'): 연속의 나이(첫 tm 부터 지금까지)가 이 이상이면(선택값 — 짧은 공백은 5분마다 보아 빨리 잡고,
+# 긴 공백은 예산을 아낀다. 잰 값이 아니다)
+MISSING_SLOW_AFTER_S = 60 * 60
+# 그때의 확인 간격(선택값 — 기본 주기 5분의 3배. 주기가 이보다 길면 주기). 그 사이 주기는 기상청을 부르지 않는다(실행 'waiting')
+MISSING_SLOW_EVERY_S = 15 * 60
+# 마지막 확인이 확인 간격 × 이 수보다 오래되면 연속을 '확인 멈춤'으로 본다(웹) · 다시 띄운 수집기가 이어받지 않는다(선택값 — 전의 15분 = 5분 × 3)
+MISSING_STALE_PROBES = 3
+# 연속 동안 확인하는 주기의 정규 호출: 목록 1 + 확인 ≤ 2(streak_probes)
+STREAK_CALLS_PER_PROBE = 3
 # 연속이 센 tm 을 기억하는 범위(마지막 tm 에서 거꾸로 3 h — 확인하는 tm 은 늘 그 안이다, 선택값)
 MISSING_SEEN_KEEP_S = FRAME_TTL_S
-MISSING_KEYS = ("missing_since_tm", "missing_last_tm", "missing_tms", "missing_checked_at", "missing_file", "missing_listed")
+MISSING_KEYS = (
+    "missing_since_tm",
+    "missing_last_tm",
+    "missing_tms",
+    "missing_checked_at",
+    "missing_file",
+    "missing_listed",
+    "missing_probe_every_s",  # 지금 확인 간격(초 — 선택값에서 정해진 값, 계약 v5 §G26)
+)
 # 알린 공백(닫은 연속 [첫 tm, 파일이 다시 온 tm)) — meta 해시에만(수집기 내부 값: api 는 싣지 않는다). 다시 띄운 수집기가 그 안의 빈 tm 을 포기할 때
 # 다시 WARN 하지 않게(리뷰 2026-09-30). 끝 tm 이 MISSING_GAP_KEEP_S 보다 오래되면 버린다 — 그보다 옛 tm 은 보관 창(최근 12 tm)에 들지 않는다
 GAP_KEYS = ("missing_gap_from", "missing_gap_to")
@@ -160,6 +188,35 @@ def streak_probes(
     cut = (now - timedelta(seconds=MISSING_RECHECK_S)).strftime("%Y%m%d%H%M") if now is not None else ""
     older = max((tm for tm in open_tms if since_tm <= tm <= cut), default=None)
     return sorted({max(open_tms)} | ({older} if older is not None else set()))
+
+
+def slow_probe_every_s(poll_s: int) -> int:
+    """늦춘 확인 간격(초) = MISSING_SLOW_EVERY_S 이상인 주기의 가장 작은 배수. 스케줄러는 실행 뒤 주기 + 지터(≥ 0)를 쉬므로 확인은 마지막 확인에서 15분이
+    지난 뒤 첫 주기에 된다 — 주기가 15분을 나누지 못하면 15분보다 길다(600 s → 1,200 s · 400 s → 1,200 s). 웹의 'N분마다 확인' · 예산 계산이 실제 간격과
+    같게 이 값을 쓴다(리뷰 2026-09-30 밤 — 전에는 max(900, 주기)라 600 s 주기에서 '15분마다'라 적고 실제로는 20분마다였다). 기본 300 s 는 900 그대로."""
+    poll = max(1, poll_s)
+    return math.ceil(MISSING_SLOW_EVERY_S / poll) * poll
+
+
+def streak_probe_every_s(since_tm: str, now_kst: datetime, poll_s: int) -> int:
+    """'파일 없음' 연속의 확인 간격(초): 연속의 나이(첫 tm 부터 now_kst 까지, KST 벽시계)가 MISSING_SLOW_AFTER_S 이상이면 slow_probe_every_s(주기의 배수 —
+    주기가 15분보다 길면 주기), 아니면 주기(poll_s). 첫 tm 을 읽지 못하면 주기(늦추지 않는다)."""
+    since = _tm_dt(since_tm)
+    if since is None or (now_kst.replace(tzinfo=None) - since).total_seconds() < MISSING_SLOW_AFTER_S:
+        return poll_s
+    return slow_probe_every_s(poll_s)
+
+
+def missing_carry_s(every_s: int) -> float:
+    """연속을 이어받는 상한 · '확인 멈춤' 기준(초): 확인 간격 × MISSING_STALE_PROBES, 아래로는 MISSING_CARRY_S(전의 고정 15분 — 5분마다 확인할 때와 같다)."""
+    return float(max(MISSING_CARRY_S, MISSING_STALE_PROBES * every_s))
+
+
+def streak_calls_per_day(poll_s: int, *, slow: bool, retries: bool = False) -> int:
+    """연속만 이어지는 UTC 하루의 정규 호출 상한(설정값 계산 — 잰 값이 아니다): 확인하는 주기 수(하루 ÷ 확인 간격) × STREAK_CALLS_PER_PROBE.
+    slow = 늦춘 확인 간격(slow_probe_every_s — 주기의 배수), 아니면 주기마다. retries = 일시 오류 다시 부르기(호출마다 한 번)까지 — 최악 두 배."""
+    every = slow_probe_every_s(poll_s) if slow else poll_s
+    return (86_400 // every) * STREAK_CALLS_PER_PROBE * (2 if retries else 1)
 
 
 def _tm_span(a: str, b: str) -> str:
@@ -198,6 +255,8 @@ class MissingStreak:
     seen: set[str] = field(default_factory=set)
     # 이어받은 연속의 [첫 tm, 마지막 tm] — 앞 프로세스가 그 안의 무엇을 셌는지 모르므로 다시 세지 않는다(적게 셀 수는 있어도 두 번 세지 않는다)
     carried: tuple[str, str] | None = None
+    # 지금 확인 간격(초 — streak_probe_every_s, 0 = 아직 모름 → 빈 값)
+    every_s: int = 0
 
     def count(self, tm: str) -> None:
         """없다는 답을 받은 tm 을 센다(처음 확인한 tm 만) · 범위를 넓힌다."""
@@ -220,6 +279,7 @@ class MissingStreak:
             "missing_checked_at": _iso(self.checked_at),
             "missing_file": self.file,
             "missing_listed": self.listed,
+            "missing_probe_every_s": str(self.every_s) if self.every_s > 0 else "",
         }
 
 
@@ -414,6 +474,8 @@ class KmaRadarJob:
         # 마지막으로 닫은 연속 [첫 tm, 파일이 다시 있던 tm) — 그 안의 빈 곳을 포기할 때는 INFO(이미 알렸다)
         self._closed_gap: tuple[str, str] | None = None
         self._loaded = False  # Redis 의 연속을 읽었는가(첫 주기 한 번)
+        # 마지막으로 기상청을 부른 주기의 시작(_now — UTC). 늦춘 연속은 여기서 확인 간격을 센다. 이어받은 연속이면 앞 프로세스의 마지막 확인
+        self._probe_at: datetime | None = None
         self._published: dict[str, str] = dict.fromkeys(MISSING_KEYS, "")  # 해시에 마지막으로 쓴 missing_*
         self._published_gap: dict[str, str] = dict.fromkeys(GAP_KEYS, "")  # meta 해시에 마지막으로 쓴 알린 공백
         # 부분 합성 누계(프로세스 기동 뒤 — heartbeat): 부분 합성으로 처음 저장한 프레임 · 다시 받기 시도 · 지점이 늘어 바꾼 수
@@ -601,6 +663,11 @@ class KmaRadarJob:
         stored = await self.prune()
         if not self._loaded:
             await self._load_missing()
+        now = _now()
+        if self.missing is not None and self._waiting(now):
+            await self._wait(now)
+            return
+        self._probe_at = now  # 이 주기는 기상청을 부른다(목록 예약부터 — 실패해도 확인 간격은 여기서 센다)
         started = datetime.now(UTC)
         if not await self._reserve(started):
             return
@@ -722,10 +789,13 @@ class KmaRadarJob:
         await self._publish_missing()
         if not stored_n:
             await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
-        await ctx.status.heartbeat(
+        await self._heartbeat(partial_now)
+
+    async def _heartbeat(self, partial_now: int | None) -> None:
+        await self.ctx.status.heartbeat(
             self.job_name,
             lag_s=None,  # 재지 않은 값은 0 이 아니라 모름(R-20)
-            fixture=ctx.fixture,
+            fixture=self.ctx.fixture,
             extra={  # 부분 합성(ADR-021): 지금 목록의 부분 합성 수(모르면 빈 값) · 기동 뒤 누계
                 "radar_kr_partial": "" if partial_now is None else str(partial_now),
                 "radar_kr_partial_stored": str(self.partial_stored),
@@ -733,6 +803,41 @@ class KmaRadarJob:
                 "radar_kr_upgrades": str(self.upgrades),
             },
         )
+
+    def _waiting(self, now: datetime) -> bool:
+        """열린 연속의 확인 간격을 정하고(늦출 때 INFO 한 번) 이 주기가 기다리는 주기인가 — 늦춘 간격이고 마지막으로 부른 주기가 그만큼 지나지 않았다."""
+        s = self.missing
+        assert s is not None
+        poll = settings.kma_radar_poll_s
+        every = streak_probe_every_s(s.since_tm, kst_now(), poll)
+        if every != s.every_s:
+            if every > poll and s.every_s <= poll:
+                log.info(
+                    "kma radar: the missing-file streak since tm=%s has lasted %s of tms — probing every %d min from now on "
+                    "(chosen, after %d min); the %d min cadence resumes when a file comes back",
+                    s.since_tm,
+                    _tm_span(s.since_tm, kst_now().strftime("%Y%m%d%H%M")),
+                    every // 60,
+                    MISSING_SLOW_AFTER_S // 60,
+                    poll // 60,
+                )
+            s.every_s = every
+        return every > poll and self._probe_at is not None and (now - self._probe_at).total_seconds() < every
+
+    async def _wait(self, now: datetime) -> None:
+        """늦춘 연속의 기다리는 주기: 기상청을 부르지 않는다 — 실행 'waiting'(http 없음 · 확인 간격과 마지막으로 부른 뒤 지난 분), 연속 발행(확인 간격이
+        바뀌었으면), heartbeat. 마지막 확인(missing_checked_at) · meta checked_at 은 옮기지 않는다(확인하지 않았다)."""
+        s = self.missing
+        assert s is not None and self._probe_at is not None
+        text = (
+            f"not called — probing every {s.every_s // 60} min (chosen) while the KMA download has no file "
+            f"(since tm={s.since_tm}, {_tm_span(s.since_tm, kst_now().strftime('%Y%m%d%H%M'))} of tms); "
+            f"last probe {(now - self._probe_at).total_seconds() / 60:.0f} min before this cycle"
+        )
+        self.ctx.db.record_run(self.job_name, self.p.name, datetime.now(UTC), status="waiting", records_in=0, error_text=text)
+        log.info("kma radar: %s", text)
+        await self._publish_missing()
+        await self._heartbeat(await self._partial_count())
 
     async def _refetch_partial(self) -> tuple[int | None, _StepFailed | None]:
         """정규 후보 뒤: 부분 합성 프레임을 다시 받는다(select_refetch). 예산이 정규 주기 몫을 남기지 못하면 멈춘다.
@@ -927,12 +1032,13 @@ class KmaRadarJob:
         s = MissingStreak(first.tm, first.tm, 1, now, now, m.group(0) if m else "", listed, answer, seen={first.tm})
         for tm in sorted({x.tm for x in opening} | {t for t, n in self._not_ready.items() if n >= 1 and t > newest}):
             s.count(tm)
+        s.every_s = streak_probe_every_s(s.since_tm, kst_now(), settings.kma_radar_poll_s)
         self.missing = s
         since_kinds = kinds.get(s.since_tm)
         log.warning(
             "kma radar: KMA download has no file from tm=%s on — %d tms answered missing (newest tm=%s); the listing has tm=%s (%s); "
             "tm=%s answered %d times: %s; probing only the newest listed tm and the newest one at least %d min old once per cycle, "
-            "reminder every %d min (chosen)",
+            "every %d min once the gap is %d min old, reminder every %d min (chosen)",
             s.since_tm,
             s.tms,
             s.last_tm,
@@ -942,6 +1048,8 @@ class KmaRadarJob:
             first.tries,
             first.answer,
             MISSING_RECHECK_S // 60,
+            MISSING_SLOW_EVERY_S // 60,
+            MISSING_SLOW_AFTER_S // 60,
             MISSING_REMIND_S // 60,
         )
 
@@ -961,12 +1069,13 @@ class KmaRadarJob:
         s.warned_at = s.checked_at
         log.warning(
             "kma radar: KMA download still has no file — since tm=%s, %d tms answered missing, newest tm=%s (%s), %s of tms; "
-            "last answer: %s",
+            "probing every %d min (chosen); last answer: %s",
             s.since_tm,
             s.tms,
             s.last_tm,
             _listed_text(s.listed),
             _tm_span(s.since_tm, s.last_tm),
+            max(s.every_s, settings.kma_radar_poll_s) // 60,
             s.answer,
         )
 
@@ -1015,7 +1124,10 @@ class KmaRadarJob:
         now = _now()
         if _tm_dt(since) is None or _tm_dt(last) is None or checked is None or n < 1:
             return
-        if not 0 <= (now - checked).total_seconds() <= MISSING_CARRY_S:
+        # 앞 프로세스의 확인 간격(없거나 틀리면 주기 — 늦추기 전 수집기가 남긴 연속). 이어받는 상한 = 간격 × MISSING_STALE_PROBES(아래로 MISSING_CARRY_S)
+        raw_every = self._published["missing_probe_every_s"]
+        every = int(raw_every) if raw_every.isdigit() and 0 < int(raw_every) <= 86_400 else settings.kma_radar_poll_s
+        if not 0 <= (now - checked).total_seconds() <= missing_carry_s(every):
             log.info(
                 "kma radar: dropped the missing-file streak since tm=%s left in Redis — last checked %s", since, _iso(checked)
             )
@@ -1030,7 +1142,9 @@ class KmaRadarJob:
             self._published["missing_listed"],
             "",
             carried=(since, last),
+            every_s=every,
         )
+        self._probe_at = checked  # 늦춘 연속이면 마지막 확인에서 간격을 센다(다시 띄워도 곧바로 부르지 않는다)
         log.info("kma radar: carried over the missing-file streak since tm=%s (%d tms, last checked %s)", since, n, _iso(checked))
 
     async def _drop_missing(self) -> None:

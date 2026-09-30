@@ -136,6 +136,16 @@ describe("contract v5 amendment numbers are unique", () => {
     // 레인 collector(2026-09-30 오후): 기상청 429 · 관심 지역 '공급자 없음' — 16차 · §G24
     expect(heading(24)).toMatch(/^## G\. 16차 개정\(2026-09-30 오후 · 레인 collector /);
     expect(amendment(24)).toContain("관심 지역 '공급자 없음'은 이름 붙인 상태");
-    expect(amendment(25)).toBe("");
+    // 레인 collector(2026-09-30 저녁): 관심 지역 순서 adsb.fi → adsb.lol — 17차 · §G25
+    expect(heading(25)).toMatch(/^## G\. 17차 개정\(2026-09-30 저녁 · 레인 collector /);
+    expect(amendment(25)).toContain("관심 지역 기본 순서 adsb.fi → adsb.lol");
+    expect(heading(26)).toMatch(/^## G\. 17차 개정\(2026-09-30 저녁 · 레인 collector /); // 같은 개정의 두 번째 항목
+    expect(amendment(26)).toContain("기상청 '파일 없음' 긴 연속은 15분마다 확인");
+    // 레인 coverage(2026-09-30 저녁): 관측 수신 범위 — 18차 · §G27. 레인에서는 처음 §G26 으로 적어 collector 레인의 §G26 과 겹쳤다(리뷰 2026-09-30) —
+    // 통합(integ 2026-09-30)에서 17차 §G25 · §G26 뒤에 18차 §G27 로 합쳤다.
+    expect(heading(27)).toMatch(/^## G\. 18차 개정\(2026-09-30 저녁 · 레인 coverage /);
+    expect(amendment(27)).toContain("관측 수신 범위 계약");
+    expect(amendment(26)).not.toContain("관측 수신 범위");
+    expect(amendment(28)).toBe("");
   });
 });

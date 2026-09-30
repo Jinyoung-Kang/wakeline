@@ -287,6 +287,20 @@ class ComposePolicyTest(unittest.TestCase):
             if name != "collector":
                 self.assertNotIn("KMA_APIHUB_RPS", sorted(svc.get("environment") or {}), name)
 
+    def test_region_chain_default_is_adsb_fi_first_everywhere(self):
+        """계약 v5 §G25(ADR-011 개정 2026-09-30 저녁): 관심 지역 기본 순서 adsb_fi → adsb_lol → (opensky 는 전세계 전용). .env.example · compose 기본값 ·
+        수집기 설정 기본값 · 운영 설정을 옮기는 마이그레이션(V17)이 같은 순서다 — 하나만 바뀌면 .env 유무 · 운영 설정 미러 유무에 따라 순서가 달라진다."""
+        want = "adsb_fi,adsb_lol,opensky"
+        self.assertEqual(self.svc("collector")["environment"]["AIRCRAFT_PROVIDERS"], want, ".env.example 의 값")
+        m = re.search(r"AIRCRAFT_PROVIDERS: \$\{AIRCRAFT_PROVIDERS:-([^}]*)\}", COMPOSE.read_text(encoding="utf-8"))
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), want, "compose 기본값(.env 에 없을 때)")
+        config = (ROOT / "apps/collector/wakeline_collector/config.py").read_text(encoding="utf-8")
+        self.assertIn(f'aircraft_providers: str = "{want}"', config)
+        v17 = next((ROOT / "apps/api/src/main/resources/db/migration").glob("V17__*.sql"), None)
+        self.assertIsNotNone(v17, "운영 설정(app_setting)을 옮기는 마이그레이션")
+        self.assertIn(f"SET value = '\"{want}\"'", v17.read_text(encoding="utf-8"))
+
     # --- SEC-7: WS Origin 허용 목록 ---
     def test_api_allowed_origins_follow_published_port(self):
         self.assertEqual(self.svc("api")["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")

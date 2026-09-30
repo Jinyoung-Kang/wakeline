@@ -156,31 +156,34 @@ async def test_outage_warns_once_then_reminds_per_interval_and_recovery_is_info(
         "kma radar: KMA download has no file from tm=202609271215 on — 3 tms answered missing (newest tm=202609271225); "
         "the listing has tm=202609271215 (EXT); tm=202609271215 answered 3 times: "
         "not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'; probing only the newest listed tm and the newest one "
-        "at least 10 min old once per cycle, reminder every 60 min (chosen)"
+        "at least 10 min old once per cycle, every 15 min once the gap is 60 min old, reminder every 60 min (chosen)"
     )
-    assert warns[1].startswith(
-        "kma radar: KMA download still has no file — since tm=202609271215, 15 tms answered missing, newest tm=202609271325"
+    # 첫 tm 부터 60분(13:15)이 넘은 뒤로는 15분마다 확인한다(계약 v5 §G26) — 13:15 · 13:20 · 13:30 · 13:35 는 기다린 주기라 세지 않는다(전에는 15 tms)
+    assert warns[1] == (
+        "kma radar: KMA download still has no file — since tm=202609271215, 14 tms answered missing, newest tm=202609271325 (EXT), "
+        "1 h 10 min of tms; probing every 15 min (chosen); last answer: not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271325.bin.gz)'"
     )
     assert mod.MISSING_REMIND_S == 60 * 60
     caplog.clear()
     clock["now"] = "202609271340"
-    await job.run_once()  # 파일이 다시 있다
+    await job.run_once()  # 확인하는 주기 — 파일이 다시 있다
     assert _warns(caplog) == []
     assert (
         "kma radar: KMA download has the file again at tm=202609271340 — the gap from tm=202609271215 is 1 h 25 min of tms "
-        "(17 tms answered missing, the newest tm=202609271335); normal retries resume"
+        "(15 tms answered missing, the newest tm=202609271330); normal retries resume"
     ) in _infos(caplog)
 
 
 async def test_while_the_streak_lasts_only_two_tms_are_probed_per_cycle(env):
-    """연속 동안은 옛 tm 마다 세 번씩이 아니라 가장 새 tm 과 10분(선택값) 넘게 앞선 가장 새 tm 만 — 첫 tm 보다 옛 tm 은 보지 않는다."""
+    """연속 동안은 옛 tm 마다 세 번씩이 아니라 가장 새 tm 과 10분(선택값) 넘게 앞선 가장 새 tm 만 — 첫 tm 보다 옛 tm 은 보지 않는다.
+    첫 tm 부터 60분까지(13:10)는 주기마다 — 그 뒤의 15분 간격은 아래 '긴 연속의 확인 간격'(계약 v5 §G26)."""
     mod, r, ctx, clock, runs = env
     prov = OutageKma(clock, down_from="202609271215")
     job = await _steady(mod, ctx, clock, prov)
     await _cycles(job, clock, "202609271225")  # 12:25 에 12:15 가 세 번째 — 연속 시작
     assert job.missing is not None and job.missing.since_tm == "202609271215"
     assert mod.MISSING_RECHECK_S == 10 * 60
-    for t in _tms("202609271400", "202609271230"):
+    for t in _tms("202609271310", "202609271230"):
         clock["now"] = t
         prov.binaries.clear()
         before = (await ctx.budget.usage("kma_radar"))[0]
@@ -188,8 +191,8 @@ async def test_while_the_streak_lasts_only_two_tms_are_probed_per_cycle(env):
         assert prov.binaries == [_plus(t, -10), t]  # 옛 tm 마다 세 번씩이 아니라 둘만(12:15 보다 옛 tm 은 없다)
         used = (await ctx.budget.usage("kma_radar"))[0]
         assert used - before == 3  # 목록 1 + 확인 2(전에는 목록 1 + 바이너리 4) — 하루 864 < 1,000
-    assert job.missing.tms == 3 + len(_tms("202609271400", "202609271230"))
-    assert job.missing.last_tm == "202609271400"
+    assert job.missing.tms == 3 + len(_tms("202609271310", "202609271230"))
+    assert job.missing.last_tm == "202609271310"
 
 
 def test_streak_probes_stay_at_or_after_the_first_missing_tm():
@@ -660,3 +663,179 @@ async def test_a_call_failure_later_in_the_cycle_still_reports_the_tm_given_up(e
         "kma radar: tm=202609271215 still unavailable after 3 tries — skipped: not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'"
     ]
     assert job.missing is None
+
+
+# ---- 긴 연속의 확인 간격(계약 v5 §G26 · ADR-011 개정 2026-09-30 저녁) ---------------------------------------------------------
+# 운영 2026-09-30: 기상청이 08:15 KST 부터 모든 바이너리 합성(HSR · HSP · CMX · PPI · CPP PUB)에 'file not exist' 로 답했고 언제 돌아올지 알리지 않았다.
+# 연속 동안에도 5분마다 목록 1 + 확인 2(+ 목록 ReadTimeout 다시 부르기)를 불러 18:34 KST 에 예산 417 / 1,000(09:00 KST 에 시작한 UTC 날) — 하루가
+# 끝나기 전에 1,000 을 넘을 속도였다(시간당 약 44). 이제 연속의 나이(첫 tm 부터)가 MISSING_SLOW_AFTER_S(60분 — 선택값)를 넘으면 MISSING_SLOW_EVERY_S
+# (15분 — 선택값)마다만 확인하고, 그 사이 주기는 기상청을 부르지 않고 실행 'waiting' 으로 남긴다. 파일이 다시 오면 다음 주기부터 전처럼 5분마다.
+# 이 절의 시험은 고치기 전 코드에서 실패했다(모든 주기가 목록 1 + 확인 2 를 불렀다 · 해시에 확인 간격이 없었다 · 15분 넘게 멈췄다 다시 띄운 수집기는 연속을 버렸다).
+def _used(ctx):
+    async def used() -> int:
+        return (await ctx.budget.usage("kma_radar"))[0] or 0
+
+    return used
+
+
+async def test_a_long_streak_is_probed_every_15_min_and_the_cycles_between_are_recorded_waiting(env, caplog):
+    mod, r, ctx, clock, runs = env
+    assert (mod.MISSING_SLOW_AFTER_S, mod.MISSING_SLOW_EVERY_S) == (60 * 60, 15 * 60)
+    prov = OutageKma(clock, down_from="202609271215")
+    job = await _steady(mod, ctx, clock, prov)
+    await _cycles(job, clock, "202609271310")  # 연속은 12:25 에 열렸다 — 첫 tm 12:15 부터 55분: 아직 5분마다
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["missing_probe_every_s"] == "300"
+    used = _used(ctx)
+    runs.clear()
+    caplog.clear()
+    calls: list[tuple[str, int, list[str]]] = []
+    for t in _tms("202609271410", "202609271315"):
+        clock["now"] = t
+        prov.binaries.clear()
+        before = await used()
+        await job.run_once()
+        calls.append((t, await used() - before, list(prov.binaries)))
+    probing = [t for t, n, _b in calls if n]
+    assert probing == ["202609271325", "202609271340", "202609271355", "202609271410"]  # 13:10 의 확인 뒤 15분마다
+    assert all(n == 3 and len(b) == 2 for _t, n, b in calls if n)  # 목록 1 + 확인 2 — 확인하는 주기는 전과 같다
+    assert all(n == 0 and b == [] for _t, n, b in calls if not n)  # 그 사이 주기는 기상청을 부르지 않는다
+    statuses = [run["status"] for run in runs]
+    assert statuses == ["waiting", "waiting", "missing"] * 4
+    waiting = [run for run in runs if run["status"] == "waiting"]
+    assert all(run.get("http_status") is None and run.get("records_in") == 0 for run in waiting)
+    assert waiting[0]["error_text"] == (
+        "not called — probing every 15 min (chosen) while the KMA download has no file (since tm=202609271215, 1 h 0 min of tms); "
+        "last probe 5 min before this cycle"
+    )
+    meta, prov_h = await r.hgetall(mod.KEY_META), await r.hgetall("wakeline:provider:kma_radar")
+    assert meta["missing_probe_every_s"] == prov_h["missing_probe_every_s"] == "900"
+    assert meta["missing_checked_at"] == "2026-09-27T05:10:00Z"  # 기다린 주기는 확인이 아니다
+    switch = [m for m in _infos(caplog) if "probing every 15 min from now on" in m]
+    assert switch == [
+        "kma radar: the missing-file streak since tm=202609271215 has lasted 1 h 0 min of tms — probing every 15 min from now on "
+        "(chosen, after 60 min); the 5 min cadence resumes when a file comes back"
+    ]
+    assert not [m for m in _warns(caplog) if "has no file from" in m]  # 새 연속이 아니다
+
+
+@pytest.mark.parametrize(("poll", "every"), [(300, 900), (600, 1200), (400, 1200), (450, 900), (1800, 1800), (60, 900)])
+def test_the_published_slow_interval_is_the_cadence_the_cycles_actually_reach(poll, every):
+    """리뷰 2026-09-30 밤: 확인 간격은 max(900, 주기)로 알렸지만 기다림은 '마지막 확인 뒤 900 s 미만이면 기다린다'라 주기가 15분을 나누지 못하면(600 s)
+    실제로는 1,200 s 마다 확인했다 — 웹은 '15분마다 확인', 예산 계산은 하루 96번. 알리는 값 = 실제 간격: 주기(쉼 ≥ 주기)를 거듭해 처음 900 s 이상이 되는 때."""
+    from wakeline_collector.jobs import kma_radar as mod
+
+    assert mod.slow_probe_every_s(poll) == every
+    since = datetime(2026, 9, 27, 10, 0)
+    assert mod.streak_probe_every_s("202609271000", since + timedelta(minutes=61), poll) == every
+    t, probes = 0, [0]
+    while t < 6 * 3600:  # 스케줄러: 실행 뒤 poll(+ 지터 ≥ 0)을 쉰다 — 지터 0 이 가장 이른 경우
+        t += poll
+        if t - probes[-1] >= every:  # _waiting 과 같은 비교(간격 미만이면 기다린다)
+            probes.append(t)
+    assert {b - a for a, b in zip(probes, probes[1:], strict=False)} == {every}
+
+
+async def test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence(env):
+    """설정값 계산(잰 값이 아니다): 연속만 이어지는 UTC 하루의 정규 호출 = 확인하는 주기 수 × (목록 1 + 확인 ≤ 2). 다시 부르기(일시 오류 — 호출마다 한 번)는
+    최악 두 배. 전: 5분마다 288 × 3 = 864(최악 1,728 — 한도 1,000 을 넘는다). 뒤: 60분 넘은 연속은 15분마다 96 × 3 = 288(최악 576).
+    모의 하루(12:15 부터 파일 없음)로 같은 수를 센다 — 늦춘 뒤 한 시간마다 목록 1 + 확인 2 를 네 번(12)."""
+    from wakeline_collector.config import Settings
+
+    mod, r, ctx, clock, runs = env
+    assert mod.STREAK_CALLS_PER_PROBE == 3
+    assert mod.streak_calls_per_day(300, slow=False) == 864
+    assert mod.streak_calls_per_day(300, slow=False, retries=True) == 1728 > Settings().budget_kma_radar
+    assert mod.streak_calls_per_day(300, slow=True) == 288
+    assert mod.streak_calls_per_day(300, slow=True, retries=True) == 576 < Settings().budget_kma_radar
+    assert mod.streak_calls_per_day(1800, slow=True) == 48 * 3  # 주기가 15분보다 길면 주기마다(늦추지 않는다)
+    assert mod.streak_calls_per_day(600, slow=True) == 72 * 3  # 15분을 나누지 못하는 주기 — 실제 간격 20분(아래 시험)
+    prov = OutageKma(clock, down_from="202609271215")
+    job = await _steady(mod, ctx, clock, prov)
+    used = _used(ctx)
+    per_hour: dict[str, int] = {}
+    for t in _tms("202609272355", "202609271215"):
+        clock["now"] = t
+        before = await used()
+        await job.run_once()
+        per_hour[t[8:10]] = per_hour.get(t[8:10], 0) + await used() - before
+    # 12:15 목록 1 + 새 tm 1 · 12:20 목록 1 + 2 · 12:25 목록 1 + 3(R-03 — 연속을 여는 주기) · 12:30–12:55 여섯 주기 × (목록 1 + 확인 2)
+    assert per_hour["12"] == 2 + 3 + 4 + 6 * 3
+    assert per_hour["13"] == 3 * 3 + 3 * 3  # 13:00–13:10 5분마다 · 13:15 부터 늦춤(13:25 · 13:40 · 13:55)
+    assert {h: n for h, n in per_hour.items() if h >= "14"} == {f"{h:02d}": 12 for h in range(14, 24)}
+    assert 24 * per_hour["14"] == mod.streak_calls_per_day(300, slow=True)
+
+
+async def test_a_file_during_slow_probing_closes_the_streak_and_the_5_min_cadence_resumes(env, caplog):
+    mod, r, ctx, clock, runs = env
+    prov = OutageKma(clock, down_from="202609271215", up_from="202609271400")
+    job = await _steady(mod, ctx, clock, prov)
+    await _cycles(job, clock, "202609271405")  # 13:55 확인(없음) · 14:00 · 14:05 기다림
+    assert job.missing is not None and runs[-1]["status"] == "waiting"
+    clock["now"] = "202609271410"
+    prov.binaries.clear()
+    await job.run_once()  # 확인하는 주기 — 14:00 · 14:10 파일이 있다
+    assert prov.binaries == ["202609271400", "202609271410"]
+    assert job.missing is None and runs[-1]["status"] == "ok"
+    back = [m for m in _infos(caplog) if "has the file again" in m]
+    assert back and back[0].startswith(
+        "kma radar: KMA download has the file again at tm=202609271400 — the gap from tm=202609271215 is 1 h 45 min"
+    )
+    assert (await r.hgetall(mod.KEY_META))["missing_probe_every_s"] == ""
+    runs.clear()
+    prov.binaries.clear()
+    clock["now"] = "202609271415"
+    await job.run_once()  # 다음 주기부터 전처럼 — 보관 창의 빈 tm 을 다시 시도한다
+    assert [run["status"] for run in runs] != ["waiting"] and len(prov.binaries) == 4
+
+
+async def test_a_restart_mid_streak_keeps_the_slow_cadence_its_first_tm_and_no_second_warning(env, caplog):
+    """늦춘 뒤 마지막 확인은 15분까지 지날 수 있다 — 전의 이어받기 상한(15분 고정)이면 다시 띄운 수집기가 연속을 버리고 R-03 을 처음부터 해(주기마다
+    목록 1 + 바이너리 4 를 세 주기) 나중 tm 에서 새 연속을 열었다(WARN 한 번 더 · 첫 tm 이 늦음 — 운영 로그의 'since tm=202609301310'). 이제 이어받는 상한 =
+    확인 간격 × MISSING_STALE_PROBES(3 — 선택값, 전의 15분 = 5분 × 3 과 같은 규칙): 늦춘 연속은 45분. 이어받은 연속은 마지막 확인에서 15분을 센다."""
+    mod, r, ctx, clock, runs = env
+    assert (
+        mod.MISSING_STALE_PROBES == 3 and mod.missing_carry_s(900) == 45 * 60 and mod.missing_carry_s(300) == mod.MISSING_CARRY_S
+    )
+    prov = OutageKma(clock, down_from="202609271215")
+    job = await _steady(mod, ctx, clock, prov)
+    await _cycles(job, clock, "202609271325")  # 13:25 에 확인(늦춘 뒤 첫 확인)
+    assert (await r.hgetall(mod.KEY_META))["missing_checked_at"] == "2026-09-27T04:25:00Z"
+    caplog.clear()
+    runs.clear()
+    again = mod.KmaRadarJob(prov, ctx)  # 13:35 에 다시 띄운 수집기
+    clock["now"] = "202609271335"
+    prov.binaries.clear()
+    await again.run_once()
+    assert again.missing is not None and again.missing.since_tm == "202609271215"
+    assert prov.binaries == [] and [run["status"] for run in runs] == ["waiting"]  # 마지막 확인 뒤 10분 — 기다린다
+    clock["now"] = "202609271340"
+    await again.run_once()
+    assert prov.binaries == ["202609271330", "202609271340"] and runs[-1]["status"] == "missing"
+    assert not [m for m in _warns(caplog) if "has no file from" in m]
+    # 30분 멈췄다 다시 띄움(13:40 확인 → 14:10): 상한 45분 안 — 이어받고 곧바로 확인한다
+    third = mod.KmaRadarJob(prov, ctx)
+    clock["now"] = "202609271410"
+    prov.binaries.clear()
+    await third.run_once()
+    assert third.missing is not None and third.missing.since_tm == "202609271215" and len(prov.binaries) == 2
+    # 50분 멈췄다 다시 띄움(14:10 확인 → 15:00): 상한 밖 — 옛 연속을 지금처럼 보이지 않게 버린다(전과 같은 규칙)
+    fourth = mod.KmaRadarJob(prov, ctx)
+    clock["now"] = "202609271500"
+    await fourth.run_once()
+    assert any(m.startswith("kma radar: dropped the missing-file streak since tm=202609271215") for m in _infos(caplog))
+    assert fourth.missing is None
+
+
+@pytest.mark.parametrize(("every", "carried"), [("900", True), ("99999999", False), ("x", False), ("", False)])
+async def test_the_carry_bound_trusts_only_a_sane_probe_interval_from_redis(env, every, carried):
+    """이어받기 상한은 앞 프로세스가 남긴 확인 간격 × 3 — 하루를 넘거나 수가 아닌 값(망가진 기록)은 믿지 않고 주기(5분 → 15분 상한)로 본다."""
+    mod, r, ctx, clock, runs = env
+    await r.hset(
+        mod.KEY_META, mapping=_STREAK_IN_REDIS | {"missing_checked_at": "2026-09-27T01:40:00Z", "missing_probe_every_s": every}
+    )
+    job = mod.KmaRadarJob(OutageKma(clock, down_from="202609271015"), ctx)  # 기상청은 여전히 '파일 없음'
+    clock["now"] = "202609271100"  # 마지막 확인(10:40 KST) 뒤 20분
+    await job.run_once()
+    assert (job.missing is not None) is carried
+    assert (job.missing is not None and job.missing.since_tm == "202609271015") is carried  # 이어받았으면 첫 tm 그대로

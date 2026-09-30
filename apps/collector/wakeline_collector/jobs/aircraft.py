@@ -30,6 +30,10 @@ from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.aircraft")
 
+# api 가 관심 지역 피드를 끊겼다고 보는 기준(EngineService.REGION_FEED_STALE_S · StatusService 의 region stale — 60 s). 다른 작업(focus · hot)이 받은 429 로
+# 호출 제한기가 막은 호스트를 관심 지역이 기다려 줄지 이 값으로 정한다(_waits_out — 계약 v5 §G25 · ADR-011 '보강 3').
+REGION_FEED_STALE_S = 60
+
 
 def next_utc_midnight(now: datetime | None = None) -> datetime:
     now = now or datetime.now(UTC)
@@ -255,10 +259,22 @@ class AircraftJob:
 
     async def _on_throttled(self, name: str, cost: int, started: datetime, e: Throttled) -> None:
         """속도 상한이 막아 호출하지 않았다 — 공급자 실패가 아니다. 3회 규칙·공급자 상태 해시에 넣지 않는다.
-        429 쿨다운 때문이면(다른 작업이 받은 429 포함) 그 남은 시간만 이 공급자를 건너뛴다(다음 순위로 폴백할 수 있게)."""
+        429 쿨다운 때문이면(다른 작업이 받은 429 포함): 관심 지역은 짧은 쿨다운을 같은 공급자로 기다린다(_waits_out — 전환 없음, 그동안의 주기는 실행 기록
+        'throttled'), 길면 그 남은 시간만 이 공급자를 건너뛴다(다음 순위로 폴백할 수 있게)."""
         if cost:
             await self.ctx.budget.release(name, cost)
         self.ctx.db.record_run(self.job_name, name, started, status="throttled", error_text=describe_error(e))
+        if e.cooldown_s > 0 and self._waits_out(e.cooldown_s):
+            log.info("%s: %s not called (%s) — waiting it out on the same provider, no switch", self.scope, name, e.reason)
+            return
         if e.cooldown_s > 0:
             self.chain.mark_down(name, e.cooldown_s, why=f"호출 제한기 429 쿨다운({e.cooldown_s:.0f} s)")
         log.info("%s: %s not called (%s)", self.scope, name, e.reason)
+
+    def _waits_out(self, cooldown_s: float) -> bool:
+        """관심 지역이 호출 제한기 쿨다운(다른 작업이 받은 429 — 관심 지역 자신의 429 는 체인이 제한기 쿨다운보다 오래(60 → 300 s) 쉬게 해 여기 오지 않는다)을 같은 공급자로 기다리는가.
+        기다려도 관심 지역 자료가 api 의 끊김 기준(REGION_FEED_STALE_S)을 넘지 않을 때만 — 쿨다운 + 주기 2번(마지막 성공이 한 주기 전일 수 있고, 쿨다운이
+        끝난 뒤 한 주기 안에 부른다) ≤ 60 s. 기본 10 s 주기면 첫 429 의 30 s 쿨다운은 기다리고, 15분 안에 되풀이된 60 → 300 s 쿨다운은 폴백한다.
+        고른 규칙(계약 v5 §G25 · ADR-011 '보강 3'): 관심 지역 1순위가 adsb.fi 라 focus · hot 이 받은 429 하나로 30 s 동안 adsb.lol 로 갔다 오면(전환 둘 ·
+        폴백의 429 위험) 끊기지 않는 짧은 공백보다 비싸다. 전세계는 기다리지 않는다(주기 120 s)."""
+        return self.scope == "region" and cooldown_s + 2 * self.ctx.rt.region_poll_s <= REGION_FEED_STALE_S

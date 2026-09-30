@@ -154,7 +154,7 @@ class WsSchemaContractTest {
                         // 기상청 내려받기 '파일 없음' 연속(2026-09-30)
                         Map.entry("missing_since_tm", "202609290505"), Map.entry("missing_last_tm", "202609290525"), Map.entry("missing_tms", "5"),
                         Map.entry("missing_checked_at", now.minusSeconds(30).toString()), Map.entry("missing_file", "RDR_CMP_HSR_PUB_202609290525.bin.gz"),
-                        Map.entry("missing_listed", "EXT,KMA")),
+                        Map.entry("missing_listed", "EXT,KMA"), Map.entry("missing_probe_every_s", "900")), // 계약 v5 §G26 — 늦춘 확인 간격
                 "wakeline:active", Map.of("region", "adsb_lol", "global", "opensky", "hot", "adsb_fi"),
                 AisStatus.KEY, Map.of("provider", "aisstream", "connected", "1", "state", "receiving", "updated_at", now.minusSeconds(3).toString(),
                         "last_msg_at", now.minusSeconds(1).toString(), "msgs_per_s", "12.5",

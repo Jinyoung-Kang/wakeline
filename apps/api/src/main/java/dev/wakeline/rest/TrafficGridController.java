@@ -36,7 +36,7 @@ public class TrafficGridController {
     @GetMapping("/traffic/grid")
     public ResponseEntity<Map<String, Object>> grid(HttpServletRequest req) {
         TrafficGridReader.View v = reader.read();
-        if (v.etag().equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(v.etag()).cacheControl(CACHE).build();
+        if (Etags.notModified(v.etag(), req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(v.etag()).cacheControl(CACHE).build();
         return ResponseEntity.ok().eTag(v.etag()).cacheControl(CACHE).body(body(v, req, Instant.now()));
     }
 

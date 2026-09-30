@@ -73,6 +73,48 @@ class ShipWriterTest {
         assertThat(s.receivedAt()).as("no envelope time → the static's own time").isEqualTo(T.plusSeconds(300));
     }
 
+    /**
+     * 관측 수신 격자(ADR-027 · 계약 v5 §G27)는 저장과 같은 표본을 센다: 이 저장기가 고른 위치(MMSI 별 60 s 창의 첫 보고)를 {@link IngestEvents.ShipsSampled}
+     * 로 알린다 — 부트스트랩이 읽는 ship_position 과 실시간 셈이 같은 뜻이 되게. 정적 정보 · 버린 보고는 싣지 않는다. 고른 것이 없으면 알리지 않는다.
+     */
+    @Test void keptPositionsArePublishedAsSampled_theSameFirstFixPerWindowThatIsStored() {
+        List<Object> events = new ArrayList<>();
+        ShipWriter w = new ShipWriter(new FakeRepo(), null, new SimpleMeterRegistry(), 1, 1, events::add);
+        w.onShips(new IngestEvents.ShipsUpdated(T, "aisstream", List.of(pos("440000001", T.plusSeconds(1)), pos("440000001", T.plusSeconds(30)),
+                pos("440000001", T.plusSeconds(61)), pos("440000002", T.plusSeconds(2))), List.of(stat("440000001", T)), Set.of(), Set.of(), Receipt.NONE));
+        assertThat(events).hasSize(1);
+        IngestEvents.ShipsSampled s = (IngestEvents.ShipsSampled) events.getFirst();
+        assertThat(s.positions()).extracting(ShipState::mmsi, ShipState::seenAt).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("440000001", T.plusSeconds(1)), org.assertj.core.groups.Tuple.tuple("440000001", T.plusSeconds(61)),
+                org.assertj.core.groups.Tuple.tuple("440000002", T.plusSeconds(2)));
+        // 같은 창의 재전달 · 정적 정보만 — 고른 위치가 없으면 알리지 않는다
+        w.onShips(new IngestEvents.ShipsUpdated(T, "aisstream", List.of(pos("440000001", T.plusSeconds(62))), List.of(stat("440000003", T)), Set.of(), Set.of(),
+                Receipt.NONE));
+        assertThat(events).hasSize(1);
+    }
+
+    /**
+     * 리뷰 2026-09-30 밤: 고른 위치를 알린 <b>뒤에</b> 큐에 넣는다 — 알림을 받은 관측 수신 격자가 본 행은 그 뒤에 저장되므로, 부트스트랩이 이미 읽은 시의 늦은
+     * 보고를 두 번 세지 않고 실시간으로 셀 수 있다. 큐 번호(넣은 · 끝난)는 격자가 밀린 행이 저장되기를 기다릴 때 쓴다.
+     */
+    @Test void theSampleIsPublishedBeforeItsRowsAreQueued_andTheQueueSaysWhatIsSettled() throws Exception {
+        long[] queuedAtEvent = {-1};
+        ShipWriter[] w = new ShipWriter[1];
+        w[0] = new ShipWriter(new FakeRepo(), null, new SimpleMeterRegistry(), 1, 1, e -> queuedAtEvent[0] = w[0].enqueuedSeq());
+        w[0].start();
+        try {
+            w[0].onShips(new IngestEvents.ShipsUpdated(T, "aisstream", List.of(pos("440000001", T.plusSeconds(1)), pos("440000002", T.plusSeconds(2))), List.of(),
+                    Set.of(), Set.of(), Receipt.NONE));
+            assertThat(queuedAtEvent[0]).as("nothing queued yet when the sample is published").isZero();
+            assertThat(w[0].enqueuedSeq()).isEqualTo(2);
+            long until = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+            while (w[0].settledSeq() < 2 && System.nanoTime() < until) Thread.sleep(10);
+            assertThat(w[0].settledSeq()).isEqualTo(2);
+        } finally {
+            w[0].stop();
+        }
+    }
+
     /** 계약 v5 §G19: 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 값이 있는 필드만 덮는다)는 센다 — 배포 전환이 끝났는지 지표로 보인다. */
     @Test void staticsWithoutReceivedFieldsAreCounted() {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();

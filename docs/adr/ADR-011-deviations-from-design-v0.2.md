@@ -12,7 +12,7 @@
 | 공개 포트 | 8080 | 8700 | 8080 은 SmartCollab 사용 |
 | 통계 차트 | Recharts | 의존성 없는 SVG 막대 | 번들 크기·의존성 최소화 |
 | CSRF 헤더 | X-CSRF-Token | X-CSRF-Token(쿠키 WAKELINE_CSRF) | Spring Security `csrf.spa()` 에 이름만 지정 |
-| 429 처리 | 지수 백오프 2→300 s | 60→120→240→300 s 후 폴백. 15분 안에 되풀이되면 10→20→40→60→120→240→360분 뒤로 미룸(R-17, 상한 6 h — 아래 '수집기 여유 보강'), 이력은 재시작 뒤에도 이어 감(아래) | adsb.lol 이 10 s 주기에서 실제로 429 를 돌려줌(실측) |
+| 429 처리 | 지수 백오프 2→300 s | 60→120→240→300 s 후 폴백(관심 지역 순서는 2026-09-30 저녁부터 adsb.fi → adsb.lol — 아래 '공급자 운용 보강 3'). 15분 안에 되풀이되면 10→20→40→60→120→240→360분 뒤로 미룸(R-17, 상한 6 h — 아래 '수집기 여유 보강'), 이력은 재시작 뒤에도 이어 감(아래) | adsb.lol 이 10 s 주기에서 실제로 429 를 돌려줌(실측) |
 | 부하 도구 | k6 | k6 스크립트 + `perf/quick_*.py`(k6 미설치 시) | 로컬에 k6 가 없어 같은 시나리오를 Python 으로도 제공 |
 | 서비스 이름 | SkyWx | Wakeline | 항공기·선박·기상을 함께 다루게 되어 이름을 넓혔다(ADR-015). DB·역할·Redis 키·볼륨을 데이터 손실 없이 옮김 |
 | 컨테이너 | 6개 | 상시 7개(edge·web·api·collector·ais·redis·db) + 일회성 migrate | DDL 비밀번호를 api 에서 빼려고 migrate 분리, AIS 푸시 수신을 항공기 폴링과 격벽으로 분리(ADR-014) |
@@ -203,3 +203,96 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
   다음(다시 시도 포함). 다시 시도한 공급자가 답하면 그 주기에 끝난다. 운영 배지는 빨강 `region: 공급자 없음 · HH:MM:SS KST 부터[ · adsb_fi 다시 시도 중]`, 상태 바 region 칩에
   `공급자 없음`. 작업을 끄면(전세계 끔) 필드를 비운다(꺼진 작업이 빨강으로 남지 않게). 이 필드 쓰기(set_none · set_active · 비우기)가 Redis 오류로 실패하면 다음 주기에 다시
   쓴다(통합 마무리 리뷰 2026-09-30: 공백마다 한 번만 쓰고 오류는 삼키므로, 전에는 쓰기 한 번(1.5 s 상한)이 실패하면 공백 내내 초록 배지 · 회복 쓰기가 실패하면 빨간 배지가 남았다).
+
+## 공급자 운용 보강 3(2026-09-30 저녁 · 운영/로그 스크린샷 — 계약 v5 §G25 · §G26)
+
+본 것(사용자의 운영/로그 화면 · 오케스트레이터가 정리한 운영 스택 값 — 이 레인은 망 접근이 없어 다시 재지 않았다), 계산한 것(설정값 · 로그 시각으로 —
+잰 값이 아니다), 고른 것(선택값)을 나눠 적는다.
+
+### 관심 지역 순서: adsb.fi → adsb.lol(§G25)
+
+| 무엇 | 값 | 출처 |
+|---|---|---|
+| adsb.lol 429 | 05:46 · 11:48 · 12:16/12:22 · 18:24 KST — 매번 미룸이 끝나 체인이 돌아온 뒤 약 1–2분 안 | 로그 화면(18:24 `region: adsb_lol rate limited (429) — backing off 300 s, deferred 360 min; next: 'adsb_fi takes over'`) · 전환 기록 |
+| 같은 모양의 앞선 관찰 | 60분 미룸 뒤 복귀 11:29:34 → 429 11:30:33(2026-09-29) | 이 문서 '수집기 여유 보강' 측정 표 |
+| adsb.fi | 그날 관심 지역을 하루 내내 맡음 — 운영 RUNS `region adsb_fi ok 7,797`, 오류는 12:14 의 TLS 묶음뿐(그때는 §G24 의 '공급자 없음' 상태가 다뤘다) | 운영 화면 RUNS |
+| adsb.lol 한도 | 수치 없음 — README 'Rate limits are dynamic based on the environment load'(github.com/adsblol/api) | 위 '공급자 운용 보강' 인용 |
+| 같은 시(時)의 수신 범위 | 두 공급자가 각각 5번 이상 돈 49시간(그때까지 3일) — 실행당 항공기 수 adsb.fi 92 · adsb.lol 86 | 리뷰(2026-09-30 저녁)가 운영 DB `ingest_run` 을 읽기 전용으로 잰 값(아래 SQL) |
+| 설계서 v0.2 의 순서 | adsb.lol 1순위(레이트리밋 없음 · ODbL 모두에게 공개) · adsb.fi 2순위(초당 1회 · 개인·비상업) — 'P0 비교 후 1순위 확정' | 설계서 3.1 · 3.3 · 16절(아래) |
+
+- 계산: adsb.lol 이 돌아올 때마다 WARN 한 줄 · 전환 둘(adsb_fi → adsb_lol → adsb_fi) · 곧 거절할 공급자에게 1–2분(관심 지역 10 s 주기로 6–12번 호출).
+  미룸 사다리(R-17 — 10 → … → 360분)는 이 되풀이를 줄였지만 없애지 못했다(1순위가 돌아오는 것이 규칙이라서).
+- 고른 것: **관심 지역 기본 순서 `adsb_fi,adsb_lol,opensky`** — adsb.lol 은 폴백으로만 쓴다. 쓸 때의 429 쉼(60 → 300 s) · 15분 안에 되풀이되면 미룸(10 → 360분) ·
+  이력 보존(재시작) · 전환 사유 · '공급자 없음' 상태(§G24)는 그대로다. 전세계 체인은 OpenSky 만 지원하므로 바뀌지 않는다. 새 숫자는 없다.
+- 어디에 걸리나: 순서는 운영 설정 `aircraft_providers`(DB `app_setting` → api 가 기동 때 · 60 s 마다 Redis `wakeline:settings` 로 미러 → 수집기가 주기마다 읽는다)다.
+  수집기 설정 기본값(`config.py`) · `.env.example` · compose 기본값은 그 미러가 없을 때만 쓰인다 — 넷을 같은 순서로 바꾸고(인프라 시험이 견준다),
+  운영 DB 는 **V17** 이 옮긴다: 운영자가 바꾼 적 없는 값(`updated_by` NULL · `env`)이 옛 기본값 그대로일 때만, 감사 기록 `SETTING_DEFAULT_V17`(시스템)과
+  함께(`MigrationDbTest`). 운영자가 /ops 에서 고른 순서는 그대로 둔다 — 옛 순서가 필요하면 /ops 설정에서 `adsb_lol,adsb_fi,opensky` 로 되돌린다.
+  기동 로그의 체인 줄은 이제 설정의 실제 순서를 적는다(전에는 `adsb_lol → adsb_fi` 를 글자로 박아 두었다).
+- adsb.lol 이 1순위였던 까닭 — 설계서 v0.2(`docs/SkyWx_설계서_로컬개발용_v0.2.pdf`, 2026-09-27 · 저장소가 추적하지 않는 파일이라 이 레인은 원 작업 폴더의 것을
+  읽기만 했다):
+  1. 한도 — 3.1 표: adsb.lol 1순위 '현재 레이트리밋 없음(향후 피더 API 키 예정)', adsb.fi 2순위 '초당 1회'. 3.3 예산표: adsb.lol 8,640회(10 s) · 한도 '명시 없음',
+     adsb.fi 는 '(폴백) ≤ 8,640회'.
+  2. 이용 조건 — 3.1 표: adsb.lol 'ODbL 1.0, 모두에게 공개', adsb.fi '개인·비상업, 출처 표기'.
+  3. 수신 범위 — 설계서는 순서를 재서 정하라고 적었다: '같은 시각 두 API의 결과 수를 1시간 비교해 1순위를 확정하세요'(그 글에서 견줄 두 API 는 adsb.lol · OpenSky),
+     리스크 표 '한반도 커버리지 부족 — P0 비교 후 1순위 확정'. 곧 adsb.lol 1순위는 잰 값으로 확정하기 전의 잠정 순서였다.
+- 그 까닭이 지금 어떤가(순서를 바꿔도 지키는 것):
+  1. 한도의 전제는 더는 맞지 않는다 — adsb.lol 은 체인이 돌아올 때마다 429 다(위 표). 설계서도 README('없음')와 제3자 관측('동적 제한')이 다르다고 적고 '429 처리를
+     전제로 설계'했다. adsb.fi 초당 1회는 호스트 버킷 0.8 req/s 안이다(관심 지역 10 s = 0.1 req/s — 수요 추적이 이 몫을 이미 빼고 계획한다, `jobs/demand._plan`).
+     하루 예산 40,000 에서 관심 지역 몫 8,640(10 s × 하루 — `demand_budget_reserve_region`)은 이미 잡혀 있다.
+  2. 이용 조건은 지킨다 — adsb.fi '개인·비상업'은 이 서비스(설계서 표지 '개인 학습·포트폴리오·비상업')가 이미 지키고 있었다(adsb.fi 는 수요 추적과 그날 관심 지역을
+     맡았다). 출처 표기는 순서와 상관없이 둘 다 화면 하단 · /about 에 늘 적는다(`lib/attribution.ts` CREDITS — README §9). ODbL 의 '모두에게 공개'가 필요해지는
+     때는 상업 · 공개 배포다 — 그때는 운영 설정으로 순서를 되돌리거나 adsb.fi 를 끈다(ADR-009 의 OpenSky 와 같은 성격).
+  3. 수신 범위는 adsb.fi 가 같거나 많다 — 같은 시(時) 비교, 리뷰(2026-09-30 저녁)가 운영 DB `ingest_run` 을 읽기 전용으로 잰 값: `job='region'` · `status='ok'`
+     그때까지 3일, 두 공급자가 각각 5번 이상 돈 시만 — **49시간, 실행당 평균 항공기 수(`records_in`) adsb.fi 92 · adsb.lol 86**. 한계: 같은 시 안이지 같은 순간이
+     아니다(두 공급자가 한 시 안에서 번갈아 맡은 시들이다). 이 레인은 운영 스택을 건드리지 않는 규칙이라 다시 재지 않았다.
+     다시 잴 때의 SQL(이 레인이 쓴 글 — 리뷰가 돌린 글과 같다고 보장하지 않는다. 버리는 컨테이너에서 가짜 행으로 동작만 확인했다):
+     ```sql
+     WITH h AS (
+       SELECT date_trunc('hour', started_at) AS hr, provider, count(*) AS runs, sum(records_in) AS recs
+       FROM ingest_run
+       WHERE job = 'region' AND status = 'ok' AND provider IN ('adsb_fi', 'adsb_lol')
+         AND started_at >= now() - interval '3 days'
+       GROUP BY 1, 2),
+     shared AS (SELECT hr FROM h WHERE runs >= 5 GROUP BY hr HAVING count(*) = 2)
+     SELECT provider, count(*) AS hours, sum(runs) AS runs, round(sum(recs)::numeric / sum(runs), 1) AS records_in_per_run
+     FROM h JOIN shared USING (hr) GROUP BY provider ORDER BY provider;
+     ```
+- 같은 호스트의 수요 추적(리뷰 2026-09-30 밤): focus · hot 도 opendata.adsb.fi 를 부른다. 그 호출이 429 를 받으면 호출 제한기가 **호스트 전체**를 막는다(Retry-After,
+  없으면 30 → 60 → 120 → 300 s — `ratelimit.penalize`). 전에는 관심 지역이 그 쿨다운을 '쉼'으로 적어 남은 시간 동안 다음 순위(adsb.lol)로 갔다 — 순서를 바꾼 뒤로는
+  수요 쪽 429 하나마다 전환 둘 · adsb.lol 호출(프로브로 확인: 30 s 쿨다운이면 adsb.lol 2번 · 'fallback — adsb_fi 호출 제한기 429 쿨다운(29 s)'). 고른 규칙:
+  관심 지역은 **쿨다운 + 주기 2번 ≤ 60 s**(api 의 관심 지역 끊김 기준 — `EngineService.REGION_FEED_STALE_S`, 수집기 `REGION_FEED_STALE_S` 가 같은 값인지 시험이
+  본다)이면 같은 공급자로 기다린다 — 그 주기들은 부르지 않고 실행 `throttled`(오류 글 'cooling down N s after HTTP 429'), 전환 · 공급자 없음 상태 없음, 쿨다운이
+  5 s 안으로 줄면 제한기 대기(`REGION_WAIT_S`) 안에서 부른다. 기본 10 s 주기면 15분 안의 첫 429(30 s)는 기다리고, 되풀이된 429(60 → 300 s)는 전처럼 남은
+  쿨다운만 다음 순위가 맡는다(기다리면 자료가 끊김 기준을 넘는다). 전세계는 기다리지 않는다. 수요 호출이 429 를 얼마나 자주 받는지는 재지 않았다 — 배포 뒤
+  운영 RUNS 의 region `throttled`(오류 글 'cooling down') 수와 전환 기록 중 사유 '호출 제한기 429' 인 adsb_fi → adsb_lol 수로 본다(`test_aircraft_job` —
+  기본 순서 · adsb.lol 쓸 수 있음에서 adsb.lol 호출 0 · 되풀이 429 는 폴백).
+- 순서가 바뀌는 순간(V17 배포 창 — api 가 새 순서를 미러하는 동안 수집기는 그대로 · /ops 변경): 체인은 지난 선택의 순위와 건너뛴 공급자를 기억해, 건너뛴 적 없는
+  공급자를 순서 때문에 고르면 전환 사유를 `order — 공급자 순서 변경(aircraft_providers — adsb_fi 1순위)` 로 적는다(전에는 `recovery — adsb_fi 쉼 끝(1순위 복귀)` —
+  쉰 적이 없는데 쉼이 끝났다고 적었다, 리뷰 2026-09-30 밤).
+- 배포(운영자가 할 일 — 저장소는 `.env` 를 추적하지 않는다): `make up` 이 V17 을 싣고 운영 설정을 옮긴다. 옛 `.env.example` 을 복사한 `.env` 에는
+  `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 가 남아 compose 기본값을 덮는다 — 수집기는 운영 설정 미러(Redis `wakeline:settings`)가 없을 때 이 값을 쓴다
+  (`runtime_settings.provider_order` — Redis 를 다시 띄운 뒤 api 가 다시 미러하기까지 60 s 안 등). 그 줄을 `AIRCRAFT_PROVIDERS=adsb_fi,adsb_lol,opensky` 로 바꾸거나 지우고
+  `make up`(바뀐 환경으로 collector 를 다시 만든다). `make init`(make up · ps · logs 가 먼저 부른다)이 옛 값을 찾으면 한 줄로 알린다(`tools/init_env.py`
+  `RETIRED_DEFAULTS` — 값은 바꾸지 않는다, SEC-13 규칙). /ops 에서 순서를 고른 적이 있으면 V17 은 그 값을 두므로 /ops 설정도 확인한다.
+
+### 기상청 '파일 없음' 긴 연속의 확인 간격(§G26)
+
+| 무엇 | 값 | 출처 |
+|---|---|---|
+| 기상청 내려받기 | 08:15 KST 부터 모든 바이너리 합성(HSR · HSP · CMX · PPI · CPP PUB)이 'file not exist' — 영상(data=img)만 답함. 알림 없음, 길이 모름 | 오케스트레이터 확인 · 로그 화면(`last answer: not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609301725.bin.gz)'`) |
+| `budget:kma_radar` | 18:34 KST 에 417 / 1,000 — 09:00 KST 에 시작한 UTC 날 | 운영 화면 BUDGET |
+| 목록 ReadTimeout | 18:06 · 18:38 KST `listing 20260930 — ReadTimeout — read 제한 15 s 초과 … retried once after 5 s` | 로그 화면 |
+
+- 계산: 417 ÷ 약 9.6 h ≈ 시간당 44 — 24 h 면 약 1,050 으로 한도를 넘는다. 설정값으로 본 연속의 정규 호출: 5분마다 목록 1 + 확인 ≤ 2 = 하루 864, 다시 부르기(일시 오류 —
+  호출마다 한 번)까지 최악 1,728. 본 속도(44/h)와 36/h(864/일)의 차이는 나눠 재지 않았다 — 코드로 더해질 수 있는 것은 일시 오류 다시 부르기(실패한 호출마다 1 — 목록 ReadTimeout 이 그날 보였다)와 재기동 뒤 연속을 이어받지 못한 주기의 R-03(목록 1 + 바이너리 ≤ 4)이다.
+- 고른 것: 연속의 나이(첫 tm 부터)가 **60분**(`MISSING_SLOW_AFTER_S`) 이상이면 **15분**(`MISSING_SLOW_EVERY_S` — 기본 주기의 3배)마다만 확인한다. 둘 다 선택값이다 —
+  60분은 짧은 공백(R-03 의 늦게 생기는 파일 · 몇 주기짜리 장애)을 5분마다 보아 빨리 잡고, 긴 공백만 늦추려고, 15분은 늦춘 뒤 하루 288(최악 576)로 한도의 30 % 아래가
+  되도록 골랐다. 확인하는 주기는 전과 같이 목록 1 + 확인 둘이다 — 추천안은 '가장 새 tm 하나'였으나, §G22 가 둘째 확인(10분 넘은 가장 새 tm)을 둔 까닭(목록이 먼저
+  싣고 파일은 늦게 생기면 가장 새 tm 만 보는 확인은 회복 뒤에도 연속을 닫지 못한다 — 리뷰)이 늦춘 주기에서도 그대로라 둘 다 둔다(하루 288 대 192 — 둘 다 한도 안).
+  그 사이 주기는 기상청을 부르지 않고 실행 `waiting`(새 상태 — 'missing' 은 그 주기에 기상청이 없다고 답했다는 뜻이라 쓰지 않는다)을 남긴다. 실행 기록이 주기마다
+  하나라는 계약(§G22)과 운영 RUNS 요약(상태별 수)이 그대로 맞는다 — 행이 없으면 멈춘 작업과 기다리는 작업이 같아 보인다.
+- 따라 바뀐 것: '확인 멈춤'(웹) · 이어받기(수집기 재시작) 기준 = 확인 간격 × 3(선택값, 전의 15분 = 5분 × 3 과 같은 규칙 · 아래로 15분) — 늦춘 연속은 45분. 확인 간격은
+  해시 `missing_probe_every_s` → api `missing.probe_every_s` 로 웹에 닿고, 웹이 'N분마다 확인'을 적는다(모르면 쓰지 않는다 — 옛 api).
+- 대가: 기상청이 돌아온 뒤 알아채기까지 최대 약 15분(늦게 생기는 파일이면 + 10분 — 전에는 5분 + 10분). 그동안 레이더는 RainViewer 다.
+- 목록 ReadTimeout WARN(18:06 · 18:38)은 이 변경의 대상이 아니다 — 한 번 다시 불러도 실패한 주기의 경고로 전과 같다(늦춘 뒤에는 목록 호출 자체가 1/3 이 된다).

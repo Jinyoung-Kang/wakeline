@@ -6,7 +6,9 @@ import {
   flattenToc, GUIDE_TOC, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest, type ManifestDrop,
 } from "@/lib/guide";
 import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";
-import { KR_MISSING_CHECK_STALE_MIN, KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
+import {
+  KR_MISSING_CHECK_STALE_MIN, KR_MISSING_SLOW_AFTER_MIN, KR_MISSING_SLOW_EVERY_MIN, KR_MISSING_STALE_PROBES, KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN,
+} from "@/lib/kr-radar";
 import { LOG_LEVELS, LOG_PERIOD_LABEL, LOG_SERVICES } from "@/lib/logs";
 import {
   PORT_CALL_AUTHORITIES, PORT_CALL_MAX_ITEMS, PORT_CALL_SOURCE, PORT_CALL_STALE_AFTER_S, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS,
@@ -23,6 +25,7 @@ import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutio
 import { STATS_RUN_KST } from "@/lib/stats";
 import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_BULLETIN_LABEL, utcDayWindowKst } from "@/lib/time";
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
+import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
 import { GLOBAL_STALE_S, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "@/lib/ws-protocol";
 import { GuideFigure } from "./GuideFigure";
 import { GuideToc } from "./GuideToc";
@@ -202,7 +205,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             </Sec>
             <Sec id="dashboard-layers" sub>
               <UL>
-                <li><B>레이어 단추</B>{ref("dashboard", 5)} — 레이더 · SIGMET · 항공기 · 선박 · 공항 · 항적 · 예측(추정) · {TRAFFIC_LAYER_LABEL}. 켜진 단추는 파란 테두리입니다. 선박과 연안 교통량은 처음에 꺼져 있습니다.</li>
+                <li><B>레이어 단추</B>{ref("dashboard", 5)} — 레이더 · SIGMET · 항공기 · 선박 · {RECEPTION_LAYER_LABEL} · 공항 · 항적 · 예측(추정) · {TRAFFIC_LAYER_LABEL}. 켜진 단추는 파란 테두리입니다. 선박 · 관측 수신 범위 · 연안 교통량은 처음에 꺼져 있습니다.</li>
                 <li><B>선종 필터</B> — 선박을 켜면 <span className="mono">선종 필터 N/M</span> 단추가 생깁니다. 누르면 범례가 펼쳐지고, 범례의 선종 항목을 눌러 켜고 끕니다(‘모두 켜기’). 일부만 켜면 단추가 주황색이고, 지도 칩과 선박 목록이 걸러진 수를 따로 적습니다.</li>
                 <li><B>저장</B> — 레이어 · 범례 열림 · 선종 필터는 이 브라우저에만 저장됩니다(다른 기기 · 브라우저와 공유되지 않음). 범례는 폭 {n0(LEGEND_OPEN_MIN_WIDTH)} px 이상 화면에서 처음부터 펼쳐집니다.</li>
               </UL>
@@ -251,6 +254,14 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>기호</B> — 선수방위 방향으로 회전, 선수방위가 없으면 침로 기준(점선 외곽), 둘 다 없으면 방향 없는 원. ‘추측항법 · 수동 입력’으로 보고된 위치는 배지로 구분합니다.</li>
                 <li><B>개별 · 격자</B> — {SHIPS_RULE_TEXT}. 격자 원의 크기 = 선박 수, 색 = 가장 많은 선종.</li>
                 <li><B>선박이 안 보일 때</B> — 지도 칩{ref("ship", 4)}이 이유를 적습니다. 예: ‘{SHIPS_ZERO_TEXT}’ · ‘{SHIPS_OUT_OF_COVERAGE_TEXT}’ · ‘{SHIPS_ZERO_AIS_DOWN_TEXT}’.</li>
+                <li><B>{RECEPTION_LAYER_LABEL}</B> — 레이어 단추(처음에 꺼짐). 이 서비스가 최근 24 h 에 실제로 선박 위치를 받은 0.5° 칸을 옅은 파랑으로 칠합니다 —
+                  칸이 진할수록 그 칸에서 받은 서로 다른 선박이 많습니다(구간 {RECEPTION_BINS.map((b) => b.label).join(" · ")}척, 표시용 선택). 선박 레이어의 점선(수신 범위 · 운영 설정)은
+                  구독한 영역이고 이 칸은 잰 값입니다 — aisstream 은 육상 수신국이 받은 것만 보내므로 점선 안이어도 수신국이 없는 해역은 칸이 없습니다.
+                  칸에 마우스를 올리면 선박 수 · 위치 수(선박마다 60 s 창의 첫 보고 — 많아야 1건, 저장과 같은 표본) · 마지막 표본 수신(KST — 그 창의 첫 보고라 실제 마지막 수신보다
+                  60 s 안쪽으로 이를 수 있음) · 창. 서버가 다시 시작한 직후처럼 창을 다 세지 못했으면 상태 줄이 ‘창의 일부만 셈 — … 부터’와 까닭(기동 전 기록을 읽는 중 · 일부만 읽음 ·
+                  읽기 실패)을 적고, 범례도 ‘최근 24 h’ 대신 실제로 센 구간(‘… KST 부터’)을 적습니다(메모리 상한으로 세지 못한 위치가 있으면 그것도). 켜 두면 선박 칩의 설명(마우스를
+                  올리면)과 0척 알림 글자에 ‘이 화면에 관측 수신 칸 N개(최근 24 h)’가 붙습니다 — 창을 다 세지 못했으면 ‘(… KST 부터만 셈)’처럼 실제로 센 구간을, 조회가 실패했으면
+                  마지막 값이라고 적습니다.</li>
               </UL>
               {fig("port-calls")}
               <UL>
@@ -295,7 +306,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li>기상청 프레임이 {KR_RADAR_STALE_S / 60}분 넘게 새로 오지 않으면 상태 바의 기상청 칩이 경고로 바뀝니다: <span className="mono text-bad">KMA {HEALTH_MARK.bad} age …m STALE</span>(칩 설명에 최신 프레임을 처음 받은 시각).</li>
                 <li>기상청이 목록에는 tm 을 올렸는데 내려받기가 ‘파일 없음’으로 답하면(수집기가 확인 — 2026-09-30 관찰) 칩에 <span className="text-warn">파일 없음</span>이 붙고,
                   칩 설명 · 상세 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 표가 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수(그 사이 확인하지 않은 tm 은 세지 않음) · 기상청 답의 파일 이름 · 목록의 파일 종류 · 마지막 확인(KST)을 적습니다 — 나이(STALE)만으로는 까닭을 모릅니다.
-                  마지막 확인이 {KR_MISSING_CHECK_STALE_MIN}분(수집기 선택값)을 넘으면 <span className="text-warn">파일 없음 · 확인 멈춤</span> — 지금도 그런지는 모릅니다.</li>
+                  연속이 {KR_MISSING_SLOW_AFTER_MIN}분을 넘으면 수집기가 {KR_MISSING_SLOW_EVERY_MIN}분마다만 확인합니다(예산 — 설명에 ‘{KR_MISSING_SLOW_EVERY_MIN}분마다 확인’, 그 사이 실행은 waiting).
+                  마지막 확인이 확인 간격 × {KR_MISSING_STALE_PROBES}(아래로 {KR_MISSING_CHECK_STALE_MIN}분 — 늘린 뒤에는 {KR_MISSING_SLOW_EVERY_MIN * KR_MISSING_STALE_PROBES}분, 모두 수집기 선택값)을 넘으면 <span className="text-warn">파일 없음 · 확인 멈춤</span> — 지금도 그런지는 모릅니다.</li>
               </UL>
             </Sec>
             <Sec id="dashboard-legend" sub>
@@ -306,6 +318,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 ["SIGMET", "색 = 위험 유형. 30분 안에 만료 = 점선, 발효 전 = 잔 점선 · 연한 채움(판정 안 함). 안에 항공기가 있으면 관측 알림."],
                 ["공항", "색 = 비행 카테고리. 판정할 수 없으면 —. METAR 가 오래되면 회색 고리. 줌 7 이상에서 라벨에 카테고리 글자."],
                 ["레이더", "dBZ 색 구간. 커버리지 밖 · 관측 범위 안 에코 없음 · 일부 합성 표시."],
+                ["관측 수신 범위", `칸 진하기 = 최근 24 h 에 그 0.5° 칸에서 위치를 받은 선박 수 구간(${RECEPTION_BINS.map((b) => b.label).join(" · ")}척). 잰 값 — 구독 범위(점선)가 아님(레이어를 켰을 때만 보임).`],
                 ["연안 교통량", `칸 색 = 척수 구간(${TRAFFIC_BINS.map((b) => b.label).join(" · ")}척 — 많을수록 밝은 주황), 0척은 회색. 5분 집계 · 개별 선박 위치 아님(레이어를 켰을 때만 보임).`],
                 ["공통", "점선 테두리 = 추정 · 가정 값. — = 값 모름(채우지 않음)."],
               ]} />
@@ -381,8 +394,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             <Sec id="ops-dashboard" sub>
               {fig("ops")}
               <Table label="운영 탭" head={["탭", "보는 것"]} rows={[
-                ["providers", `공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음). 위쪽 작업 배지는 작업이 쓰는 공급자 — 쓸 공급자가 하나도 없으면 빨강 ‘region: 공급자 없음 · 시작 시각(KST) 부터’ — 다른 공급자가 없어 쉬는 공급자를 다시 시도하는 동안에도 빨강이고 ‘· adsb_fi 다시 시도 중’이 붙습니다(건너뛴 공급자와 까닭 · 가장 먼저 풀리는 때는 마우스를 올리면). 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 kma_radar 행 아래에 주황 줄 — 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수 · 마지막 확인(KST). 마지막 확인이 서버 시각으로 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’.`],
-                ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류). 상태 missing(새 tm 이 있었으나 기상청이 ‘파일 없음’ — 저장한 프레임 없음) · quarantined(받았으나 해석할 수 없어 격리)는 주황 — 호출 실패는 아니지만 공급자의 마지막 성공을 갱신하지 않습니다. throttled(속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 잠시 멈춤, 비었으면 수집기가 보내지 않음)도 주황 — 공급자 오류가 아닙니다(뜻은 상태에 마우스를 올리면)."],
+                ["providers", `공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음). 위쪽 작업 배지는 작업이 쓰는 공급자 — 쓸 공급자가 하나도 없으면 빨강 ‘region: 공급자 없음 · 시작 시각(KST) 부터’ — 다른 공급자가 없어 쉬는 공급자를 다시 시도하는 동안에도 빨강이고 ‘· adsb_fi 다시 시도 중’이 붙습니다(건너뛴 공급자와 까닭 · 가장 먼저 풀리는 때는 마우스를 올리면). 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 kma_radar 행 아래에 주황 줄 — 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수 · 마지막 확인(KST). 연속이 ${KR_MISSING_SLOW_AFTER_MIN}분을 넘으면 ‘${KR_MISSING_SLOW_EVERY_MIN}분마다 확인’. 마지막 확인이 서버 시각으로 확인 간격 × ${KR_MISSING_STALE_PROBES}(아래로 ${KR_MISSING_CHECK_STALE_MIN}분)을 넘으면 ‘확인 멈춤’.`],
+                ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류). 상태 missing(새 tm 이 있었으나 기상청이 ‘파일 없음’ — 저장한 프레임 없음) · quarantined(받았으나 해석할 수 없어 격리)는 주황 — 호출 실패는 아니지만 공급자의 마지막 성공을 갱신하지 않습니다. throttled(속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 잠시 멈춤, 비었으면 수집기가 보내지 않음) · waiting(기상청 ‘파일 없음’ 연속이 길어 확인 간격을 늘린 사이 — 그 주기는 기상청을 부르지 않음)도 주황 — 공급자 오류가 아닙니다(뜻은 상태에 마우스를 올리면)."],
                 ["quality", "규칙별 격리 건수(7일)와 최근 격리."],
                 ["settings · audit · dlq", "운영 설정(판 번호로 충돌 확인), 운영 행동 감사 기록, 처리하지 못한 메시지."],
                 ["pipeline", "파이프라인 손실 지표 — 0 이 아닌 손실 지표가 있으면 탭에 ● 수. AIS 수신 진단(keepalive 왕복 · 이벤트 루프 지연 · 멈춤 · WS 수신 버퍼 · 원문 대기 시간 · 깊이 · 짧은 재연결)도 여기 — 최근 창의 최댓값과 누적 수이고 손실 수가 아니라 색으로 판정하지 않습니다. 창 · 상한 · 시간 초과는 수집기가 고른 값을 응답에서 읽어 ‘수집기 설정’으로 적습니다."],

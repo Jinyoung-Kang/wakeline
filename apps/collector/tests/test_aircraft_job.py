@@ -11,7 +11,6 @@ from types import SimpleNamespace
 
 import httpx
 import orjson
-import pytest
 import respx
 from fakes import FakeRedis, make_ctx
 
@@ -263,7 +262,8 @@ async def test_throttled_call_releases_budget_and_is_not_a_failure():
 
 async def test_limiter_cooldown_from_another_call_does_not_take_region_offline(monkeypatch):
     """리뷰 2026-09-28b #0: focus·hot 이 받은 429 로 제한기가 막은 관심 지역 호출은 보내지 않은 것이다.
-    3회 규칙(10분 쿨다운)·공급자 실패 기록에 넣지 않고, 제한기 쿨다운이 남은 동안만 그 공급자를 건너뛴다."""
+    3회 규칙(10분 쿨다운)·공급자 실패 기록에 넣지 않는다. 짧은 쿨다운(30 s)은 같은 공급자로 기다린다(리뷰 2026-09-30 밤 — 주기마다 'throttled',
+    공급자 없음 상태 없음 · 전환 없음)."""
     clk = [1000.0]
     monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
     r = FakeRedis()
@@ -271,19 +271,20 @@ async def test_limiter_cooldown_from_another_call_does_not_take_region_offline(m
     runs = _spy_runs(ctx)
     http = HttpClient(RateLimiter(2.0, 2, {"opendata.adsb.fi": (0.8, 1)}, clock=lambda: clk[0]))
     chain = ProviderChain("region", {"adsb_lol": adsb_lol(http), "adsb_fi": adsb_fi(http)}, ctx.status)
-    chain.mark_down("adsb_lol", 600)  # 1순위가 쉬는 중 → 관심 지역이 adsb.fi 폴백에 기댄다
+    chain.mark_down("adsb_lol", 600)  # adsb.lol 이 쉬는 중 → 관심 지역은 adsb.fi 에만 기댄다
     job = AircraftJob("region", chain, ctx)
     assert http.limiter.penalize("opendata.adsb.fi") == 30.0  # 다른 작업의 429
     with respx.mock:  # 모의 경로 없음 → 실제로 보내면 실패
         for dt in (1, 11, 21):
             clk[0] = 1000 + dt
             await job.run_once()
-    assert chain._down_until["adsb_fi"] == pytest.approx(1030.0)  # 제한기 쿨다운 끝까지만(전: 600 s)
+    assert "adsb_fi" not in chain._down_until  # 쉬게 하지 않는다 — 기다린다(전: 제한기 쿨다운 끝까지 건너뜀 → 공급자 없음)
+    assert chain.none_since is None and job._warned_no_provider is False
     assert chain._fails.get("adsb_fi", 0) == 0
     h = await r.hgetall("wakeline:provider:adsb_fi")
     assert "consecutive_failures" not in h and "last_error" not in h
     assert (await ctx.budget.usage("adsb_fi"))[0] == 0
-    assert [x["status"] for x in runs] == ["throttled"]  # 건너뛴 주기는 호출도 기록도 없다
+    assert [x["status"] for x in runs] == ["throttled"] * 3  # 기다린 주기마다 실행 기록(부르지 않음)
 
     clk[0] = 1031.0  # 쿨다운이 끝나면 바로 돌아온다
     body = {"now": datetime.now(UTC).timestamp() * 1000, "ac": [{"hex": "71c0a1", "lat": 37.0, "lon": 127.0, "seen_pos": 1}]}
@@ -295,6 +296,99 @@ async def test_limiter_cooldown_from_another_call_does_not_take_region_offline(m
     assert route.call_count == 1 and len(r.streams[STREAM_AIRCRAFT]) == 1
     assert (await r.hgetall("wakeline:provider:adsb_fi"))["consecutive_failures"] == "0"
     await http.aclose()
+
+
+def _adsb_body() -> dict:
+    return {"now": datetime.now(UTC).timestamp() * 1000, "ac": [{"hex": "71c0a1", "lat": 37.0, "lon": 127.0, "seen_pos": 1}]}
+
+
+async def test_default_order_waits_out_a_demand_429_on_adsb_fi_instead_of_cycling_to_adsb_lol(monkeypatch):
+    """리뷰 2026-09-30 밤: 관심 지역 1순위가 adsb.fi 라(계약 v5 §G25) focus · hot 이 opendata.adsb.fi 에서 받은 429(제한기가 호스트 전체를 30 s 막는다)가
+    전에는 관심 지역을 adsb.lol 로 보냈다 — 전환 둘 · 이 변경이 피하려던 adsb.lol 을 30 s 동안 부름(전에는 'fallback — adsb_fi 호출 제한기 429 쿨다운'
+    · adsb.lol 호출 2번). 기본 순서 · adsb.lol 쓸 수 있음: 첫 429 의 30 s 는 같은 공급자로 기다린다(자료 나이 ≤ 30 + 2 × 10 s < api 끊김 기준 60 s)."""
+    clk = [1000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_lol": 0, "adsb_fi": 100})
+    ctx.rt.provider_order = ["adsb_fi", "adsb_lol", "opensky"]  # 기본 순서(config · compose · V17)
+    runs = _spy_runs(ctx)
+    http = HttpClient(RateLimiter(2.0, 2, {"opendata.adsb.fi": (0.8, 1)}, clock=lambda: clk[0]))
+    chain = ProviderChain("region", {"adsb_lol": adsb_lol(http), "adsb_fi": adsb_fi(http)}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    with respx.mock:
+        fi = respx.get(url__startswith="https://opendata.adsb.fi/api/v3/lat/").mock(
+            return_value=httpx.Response(200, json=_adsb_body())
+        )
+        lol = respx.get(url__startswith="https://api.adsb.lol/").mock(return_value=httpx.Response(200, json=_adsb_body()))
+        await job.run_once()  # 처음: adsb.fi
+        assert fi.call_count == 1
+        assert http.limiter.penalize("opendata.adsb.fi") == 30.0  # focus · hot 이 받은 429(15분 안의 첫 번째)
+        for dt in (1, 11, 21):
+            clk[0] = 1000 + dt
+            await job.run_once()
+        assert lol.call_count == 0 and fi.call_count == 1
+        clk[0] = 1031.0  # 쿨다운이 끝나면 같은 공급자
+        await job.run_once()
+        assert fi.call_count == 2 and lol.call_count == 0
+    active = await r.hgetall("wakeline:active")
+    assert active["region"] == "adsb_fi"
+    assert "wakeline:events" not in r.streams or not [
+        f for _id, f in r.streams["wakeline:events"] if f.get("type") == "provider_switch"
+    ]
+    assert [x["status"] for x in runs] == ["ok", "throttled", "throttled", "throttled", "ok"]
+    assert "cooling down" in runs[1]["error_text"]
+    await http.aclose()
+
+
+async def test_a_repeated_demand_429_still_falls_back_because_waiting_would_stale_the_region(monkeypatch):
+    """15분 안에 되풀이된 429 는 제한기가 60 s 막는다 — 기다리면 관심 지역 자료가 api 끊김 기준(60 s)을 넘으므로 전처럼 다음 순위가 남은 쿨다운만 맡는다
+    (전환 사유에 '호출 제한기 429 쿨다운'). 주기가 길면(30 s) 첫 429 의 30 s 도 기다리지 않는다(30 + 2 × 30 > 60)."""
+    clk = [1000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_lol": 0, "adsb_fi": 100})
+    ctx.rt.provider_order = ["adsb_fi", "adsb_lol", "opensky"]
+    http = HttpClient(RateLimiter(2.0, 2, {"opendata.adsb.fi": (0.8, 1)}, clock=lambda: clk[0]))
+    chain = ProviderChain("region", {"adsb_lol": adsb_lol(http), "adsb_fi": adsb_fi(http)}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    with respx.mock:
+        fi = respx.get(url__startswith="https://opendata.adsb.fi/api/v3/lat/").mock(
+            return_value=httpx.Response(200, json=_adsb_body())
+        )
+        lol = respx.get(url__startswith="https://api.adsb.lol/").mock(return_value=httpx.Response(200, json=_adsb_body()))
+        await job.run_once()
+        http.limiter.penalize("opendata.adsb.fi")
+        assert http.limiter.penalize("opendata.adsb.fi") == 60.0  # 되풀이 — 두 번째 단계
+        clk[0] = 1001.0
+        await job.run_once()  # adsb.fi 는 부르지 않고 건너뜀
+        clk[0] = 1011.0
+        await job.run_once()  # adsb.lol 이 맡는다
+        assert lol.call_count == 1 and fi.call_count == 1
+        clk[0] = 1061.0
+        await job.run_once()  # 쿨다운 끝 → 1순위 복귀
+        assert fi.call_count == 2
+    ev = [(f["from"], f["to"], f["reason"]) for _id, f in r.streams["wakeline:events"]]
+    assert ev[0][:2] == ("adsb_fi", "adsb_lol") and "호출 제한기 429 쿨다운" in ev[0][2]
+    assert ev[1][:2] == ("adsb_lol", "adsb_fi")
+
+    ctx.rt.region_poll_s = 30
+    assert job._waits_out(30.0) is False  # 30 + 2 × 30 > 60
+    ctx.rt.region_poll_s = 10
+    assert job._waits_out(30.0) is True and job._waits_out(40.0) is True and job._waits_out(41.0) is False
+    assert AircraftJob("global", chain, ctx)._waits_out(1.0) is False  # 전세계는 기다리지 않는다
+    await http.aclose()
+
+
+def test_region_feed_stale_limit_matches_the_api():
+    """_waits_out 가 기대는 60 s 는 api 의 관심 지역 끊김 기준이다 — 한쪽만 바뀌면 기다림이 끊김 표시를 넘긴다."""
+    import re
+    from pathlib import Path
+
+    from wakeline_collector.jobs import aircraft as mod
+
+    java = (Path(__file__).resolve().parents[3] / "apps/api/src/main/java/dev/wakeline/engine/EngineService.java").read_text()
+    m = re.search(r"REGION_FEED_STALE_S\s*=\s*(\d+);", java)
+    assert m and int(m.group(1)) == mod.REGION_FEED_STALE_S
 
 
 async def test_real_provider_errors_keep_three_strike_rule():
@@ -693,3 +787,118 @@ def test_only_the_aircraft_chain_calls_adsb_lol():
             make[rel] = n
     assert url == {"http.py": 1, "providers/readsb.py": 1}
     assert make == {"main.py": 1, "providers/readsb.py": 1, "tools/snapshot.py": 1}  # readsb.py 는 정의(def adsb_lol(…))
+
+
+# ---- 관심 지역 순서 adsb_fi → adsb_lol(ADR-011 개정 2026-09-30 저녁 · 계약 v5 §G25) ----------------------------------------------
+# 운영/로그 2026-09-30: adsb.lol 은 미룸이 끝나 체인이 돌아올 때마다 1–2분 안에 429 였다(05:46 · 11:48 · 12:16/12:22 · 18:24 KST) — adsb.fi 는 그날
+# 관심 지역을 하루 내내 맡았다(ok 7,797). 기본 순서를 adsb_fi 먼저로 바꾼다 — adsb.lol 은 폴백으로만, 그때의 429 쉼 · 미룸(R-17)은 그대로.
+# 이 절의 시험은 FakeRt(이 파일의 다른 시험이 쓰는 옛 순서) 대신 실제 RuntimeSettings(설정 해시가 빈 경우 — 기본값)를 쓴다.
+async def _default_order_ctx(r):
+    from wakeline_collector.runtime_settings import RuntimeSettings
+
+    ctx = make_ctx(r)
+    ctx.rt = RuntimeSettings(r)  # type: ignore[assignment] — wakeline:settings 가 비었다(api 미러 전) → 설정 기본값
+    await ctx.rt.refresh()
+    return ctx
+
+
+async def test_the_default_region_chain_is_adsb_fi_then_adsb_lol():
+    """고치기 전: 기본값 adsb_lol,adsb_fi,opensky — 첫 주기에 adsb.lol 을 불렀다."""
+    from wakeline_collector.runtime_settings import RuntimeSettings
+
+    assert Settings().provider_order == ["adsb_fi", "adsb_lol", "opensky"]
+    rt = RuntimeSettings(FakeRedis())  # type: ignore[arg-type]
+    await rt.refresh()
+    assert rt.provider_order == ["adsb_fi", "adsb_lol", "opensky"]
+
+
+async def test_default_order_starts_on_adsb_fi_falls_back_to_adsb_lol_and_returns(monkeypatch):
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = await _default_order_ctx(r)
+    lol, fi, osky = FakeReadsb("adsb_lol"), FakeReadsb("adsb_fi"), FakeOpenSky()
+    # main.py 의 사전 순서 그대로 — 순위는 설정(aircraft_providers)이 정한다
+    providers = {"adsb_lol": lol, "adsb_fi": fi, "opensky": osky}
+    job = AircraftJob("region", ProviderChain("region", providers, ctx.status), ctx)
+    await job.run_once()
+    assert (fi.calls, lol.calls) == (1, 0)
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_fi", "initial")
+    fi.fail = True
+    for _ in range(3):  # adsb_fi 3회 연속 실패 → 10분 쉼
+        clk[0] += 10
+        await job.run_once()
+    clk[0] += 10
+    await job.run_once()  # adsb.lol 이 폴백으로 맡는다
+    assert (fi.calls, lol.calls) == (4, 1)
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_lol", "fallback — adsb_fi 3회 연속 실패(10분 쉼)")
+    fi.fail = False
+    clk[0] += 600
+    await job.run_once()  # 쉼 끝 — 1순위로 돌아온다
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_fi", "recovery — adsb_fi 쉼 끝(1순위 복귀)")
+    assert (fi.calls, lol.calls, osky.calls) == (5, 1, 0)
+    ev = [(f["from"], f["to"]) for _id, f in r.streams["wakeline:events"]]
+    assert ev == [("adsb_fi", "adsb_lol"), ("adsb_lol", "adsb_fi")]
+
+
+async def test_adsb_lol_as_fallback_keeps_its_429_backoff_and_deferral(monkeypatch, caplog):
+    """폴백으로 쓰일 때도 adsb.lol 의 429 쉼(60 → 120 … 300 s)과 15분 안에 되풀이되면 미룸(10 → … 360분 — R-17)은 그대로다.
+    adsb_fi 가 돌아오면(운영자 켬) 1순위로 돌아가고, adsb.lol 의 미룸 이력은 남는다(그 뒤 폴백이 필요하면 미룸이 끝났는지 본다)."""
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = await _default_order_ctx(r)
+    lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi")
+    chain = ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    await r.hset("wakeline:provider:adsb_fi", mapping={"disabled": "1"})  # 운영자가 adsb_fi 를 껐다 → adsb.lol 이 맡는다
+    await job.run_once()
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; "
+        "next: 'adsb_lol again after the backoff (no other provider)'"
+    )
+    clk[0] += 61
+    await job.run_once()  # 15분 안에 되풀이 → 120 s 쉬고 10분 미룸
+    assert _warnings(caplog)[-1] == (
+        "region: adsb_lol rate limited (429) — backing off 120 s, deferred 10 min; "
+        "next: 'adsb_lol again after the backoff (no other provider — deferral not applied)'"
+    )
+    assert chain.hold_s("adsb_lol") == 600
+    await r.hset("wakeline:provider:adsb_fi", mapping={"disabled": "0"})
+    clk[0] += 121  # adsb.lol 의 쉼(120 s)은 끝났고 미룸(10분)은 남았다
+    await job.run_once()
+    act = await r.hgetall("wakeline:active")
+    assert (act["region"], act["region_reason"]) == ("adsb_fi", "recovery — adsb_fi 운영자 켬(1순위 복귀)")
+    assert fi.calls == 1 and lol.calls == 2
+    assert chain.hold_s("adsb_lol") == 600  # 미룸은 그대로(폴백 순위에서도 되풀이된 429 는 늦게 돌아온다)
+
+
+async def test_the_global_chain_is_unaffected_by_the_region_order():
+    """전세계는 OpenSky 만 지원한다 — 순서를 바꿔도 전세계 체인은 readsb 공급자를 부르지 않는다."""
+    r = FakeRedis()
+    ctx = await _default_order_ctx(r)
+    lol, fi, osky = FakeReadsb("adsb_lol"), FakeReadsb("adsb_fi"), FakeOpenSky()
+    job = AircraftJob("global", ProviderChain("global", {"adsb_lol": lol, "adsb_fi": fi, "opensky": osky}, ctx.status), ctx)
+    await job.run_once()
+    assert (osky.calls, fi.calls, lol.calls) == (1, 0, 0)
+    act = await r.hgetall("wakeline:active")
+    assert (act["global"], act["global_reason"]) == ("opensky", "initial")
+
+
+def test_the_startup_line_names_the_region_chain_in_its_real_order():
+    """기동 로그 한 줄은 순서를 박아 두지 않고(전에는 'region chain uses adsb_lol → adsb_fi' 고정 글) 설정의 실제 순서에서 관심 지역을 지원하는 공급자만 적는다."""
+    from wakeline_collector.main import region_chain_line
+
+    providers = {"adsb_lol": adsb_lol(None), "adsb_fi": adsb_fi(None), "opensky": OpenSkyProvider(None, "", "")}  # type: ignore[arg-type]
+    assert region_chain_line(Settings().provider_order, providers, 2880) == (
+        "region chain uses adsb_fi → adsb_lol (aircraft_providers: runtime setting, else .env); "
+        "opensky is global-only (daily cap 2880 credits)"
+    )
+    assert region_chain_line(["adsb_lol", "adsb_fi"], providers, 2880) == (
+        "region chain uses adsb_lol → adsb_fi (aircraft_providers: runtime setting, else .env)"
+    )
+    assert region_chain_line(["opensky"], providers, 2880).startswith("region chain uses no provider ")
