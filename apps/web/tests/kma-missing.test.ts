@@ -59,7 +59,7 @@ describe("krMissing: the collector's missing-file streak in words (KST, values a
     expect(krMissing(MISS, Date.parse("2026-10-01T01:00:00Z"))!.text).toContain("tm 09-30 08:15 KST 부터");
   });
   it("a wrong or missing core value → no streak (null), not a partial sentence", () => {
-    for (const bad of [null, undefined, "x", {}, { ...MISS, since_tm: "08:15" }, { ...MISS, tms: 0 }, { ...MISS, tms: "20" }, { ...MISS, checked_at: "yesterday" },
+    for (const bad of [null, undefined, "x", {}, { ...MISS, since_tm: "08:15" }, { ...MISS, tms: 0 }, { ...MISS, tms: "20" }, { ...MISS, checked_at: "yesterday" }, { ...MISS, checked_at: "2026-09-30T00:50:31" } /* 시간대 없음 — 해석이 갈린다 */,
       { ...MISS, last_tm: "202609300810" }]) {
       expect(krMissing(bad, NOW), JSON.stringify(bad)).toBeNull();
     }

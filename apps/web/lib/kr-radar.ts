@@ -124,7 +124,8 @@ export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
   const since = typeof o.since_tm === "string" && TM.test(o.since_tm) ? o.since_tm : null;
   const last = typeof o.last_tm === "string" && TM.test(o.last_tm) ? o.last_tm : null;
   const tms = typeof o.tms === "number" && Number.isInteger(o.tms) && o.tms >= 1 ? o.tms : null;
-  const checkedMs = typeof o.checked_at === "string" && timeParts(o.checked_at) ? Date.parse(o.checked_at) : NaN;
+  // 마지막 확인은 시간대가 있는 ISO 만(없으면 브라우저 시간대로 읽혀 다른 순간이 된다 — api 는 늘 붙인다)
+  const checkedMs = typeof o.checked_at === "string" && /(Z|[+-]\d\d:\d\d)$/.test(o.checked_at) && timeParts(o.checked_at) ? Date.parse(o.checked_at) : NaN;
   const sinceMs = kstWallMs(since), lastMs = kstWallMs(last);
   if (since == null || last == null || tms == null || !Number.isFinite(checkedMs) || sinceMs == null || lastMs == null || lastMs < sinceMs) return null;
   const checkedAt = o.checked_at as string;
