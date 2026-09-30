@@ -594,7 +594,9 @@ def check_ships(env_v: Draft202012Validator) -> int:
     # 프레임·건수 정수, 모르면 빈 값(fixture 재생: 연결·루프 측정 없음). shards[] 는 초 수·정수 또는 null
     secs = re.compile(r"\d+\.\d{2}")
     bad_status += [
-        k for k in ("diag_window_s", "ws_queue_limit", "ping_timeout_s", "loop_stalls_total") if not status.get(k, "").isdigit()
+        k
+        for k in ("diag_window_s", "ws_queue_limit", "ping_timeout_s", "loop_stalls_total", "reconnects_quick_total")
+        if not status.get(k, "").isdigit()
     ]
     bad_status += [k for k in ("loop_lag_max_s", "queue_wait_max_s", "ping_rtt_max_s") if not secs.fullmatch(status.get(k, ""))]
     bad_status += [k for k in ("queue_depth_max", "ws_queue_max") if not status.get(k, "").isdigit()]

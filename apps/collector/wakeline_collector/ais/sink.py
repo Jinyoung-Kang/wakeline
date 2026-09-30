@@ -8,6 +8,7 @@
   진단(ADR-014 부록 C · diag.py): 최근 diag_window_s(60) 초의 최댓값 — loop_lag_max_s(이벤트 루프 지연) · queue_wait_max_s(원문 대기열에 머문 시간) ·
   queue_depth_max · ws_queue_max(websockets 수신 버퍼에 남은 프레임, 상한 ws_queue_limit 를 넘으면 소켓 읽기 멈춤) · ping_rtt_max_s(keepalive
   왕복, 시간 초과 ping_timeout_s) + loop_stalls_total(지연 ≥ 1 s 표본 수, 누적). 상한·창·시간 초과는 고른 설정값(잰 값 아님). 모르면 빈 값.
+  reconnects_quick_total: 받던 연결이 끊겼다가 30 s 안에 다시 받은 횟수(누적) — 그 끊김은 INFO 로만 남기므로(reconnect.py) 여기서 센다.
 
 Redis 장애: 선박 변경분은 쌓지 않고 ShipBook 에 '바뀜' 표시를 되돌린다 — 복구 뒤 첫 발행이 그때의 최신값을 싣는다(메모리는 선박 수 상한 안).
 공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).
@@ -289,6 +290,7 @@ class AisSink:
             "ws_queue_limit": str(WS_MAX_QUEUE),
             "ping_rtt_max_s": _secs(sh.ping_rtt_max_s),
             "ping_timeout_s": f"{PING_TIMEOUT_S:g}",
+            "reconnects_quick_total": str(sh.reconnects_quick),
             "shards": orjson.dumps(sh.shards_view()).decode(),
             "published_ships_total": str(self.published_ships),
             "last_publish_at": _iso(self.last_publish_at),

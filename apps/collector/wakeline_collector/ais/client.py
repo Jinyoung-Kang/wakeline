@@ -7,6 +7,8 @@
   공백을 닫거나 last_msg_at·msgs_total·수신 상태·idle 기한을 바꾸지 않는다(오류만 받고 끊기는 반복은 '회복' 이 아니다).
 - 데이터 메시지가 idle_timeout_s(기본 120 s) 동안 없으면 조용히 멈춘 연결로 보고 다시 붙는다(서버가 close 프레임 없이 끊는 사례 실측).
 - 끊기면 FeedState 가 공백을 열고, Backoff(1→60 s, ±20 %, 60 s 정상 연결 뒤에만 초기화) 만큼 쉬었다가 다시 붙는다.
+  로그 수준은 ReconnectLog(reconnect.py)가 정한다: 받던 연결이 끊겼다가 30 s 안에 다시 받으면 INFO(누적 수), 되풀이(30 분에 3번째부터)·
+  데이터 없이 끝난 연결·30 s 안에 회복하지 못함은 WARN. 공백 기록은 수준과 상관없이 그대로다.
 - 구독 영역이 바뀌면(BboxState) 같은 연결에서 구독을 다시 보낸다 — 5 s 에 한 번까지, 마지막 값만.
 - 진단(diag.py · ADR-014 부록 C): 메시지를 꺼낼 때마다 websockets 수신 버퍼에 남은 프레임 수와 keepalive 왕복(latency 가 바뀌면)을
   구역의 FeedState 에 남기고, 끊기면 로그에 최근 60 s 최댓값(keepalive 왕복 · 수신 버퍼 · 이벤트 루프 지연 · 대기열 머문 시간)과
@@ -38,6 +40,7 @@ from wakeline_collector.ais.diag import DIAG_WINDOW_S
 from wakeline_collector.ais.feed import FeedState
 from wakeline_collector.ais.parse import SUBSCRIBED_TYPES, is_provider_error
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.reconnect import RECOVER_WINDOW_S, REPEAT_WARN_COUNT, REPEAT_WINDOW_S, ReconnectLog
 from wakeline_collector.masking import mask
 
 log = logging.getLogger("ais.client")
@@ -126,6 +129,9 @@ class AisStreamClient:
         tag: int = 0,
         label: str = "",
         loop_lag: Callable[[], float | None] | None = None,
+        recover_window_s: float = RECOVER_WINDOW_S,
+        repeat_window_s: float = REPEAT_WINDOW_S,
+        repeat_warn_count: int = REPEAT_WARN_COUNT,
     ) -> None:
         check_url(url)
         if not api_key:
@@ -153,6 +159,14 @@ class AisStreamClient:
         self.name = f"ais {label}" if label else "ais"  # 로그용
         self.redact = make_redactor(api_key)
         self._loop_lag = loop_lag  # 프로세스의 이벤트 루프 지연 최근 최댓값(diag.LoopLag.max_s) — 없으면 모름
+        self.reconnects = ReconnectLog(
+            self.name,
+            feed,
+            recover_window_s=recover_window_s,
+            repeat_window_s=repeat_window_s,
+            repeat_warn_count=repeat_warn_count,
+            wall=wall,
+        )
 
     def subscription(self, boxes: tuple[BBox, ...]) -> str:
         return orjson.dumps(
@@ -160,6 +174,12 @@ class AisStreamClient:
         ).decode()
 
     async def run(self, stop: asyncio.Event) -> None:
+        try:
+            await self._run(stop)
+        finally:
+            self.reconnects.close()  # 멈춘 뒤에 '회복하지 못함' 경고가 나오지 않게
+
+    async def _run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             session = asyncio.create_task(self._session())
             stopper = asyncio.create_task(stop.wait())
@@ -182,7 +202,7 @@ class AisStreamClient:
                 log.info("%s connection was healthy for %.0f s — backoff reset", self.name, healthy or 0)
             delay = self.backoff.next_delay()
             self.feed.on_backoff(delay)
-            log.warning("%s disconnected: %s — reconnecting in %.1f s (%s)", self.name, reason, delay, self.diagnosis())
+            self.reconnects.disconnected(reason, delay, had_data=healthy is not None, context=self.diagnosis())
             try:
                 await asyncio.wait_for(stop.wait(), timeout=delay)
             except TimeoutError:
@@ -242,6 +262,7 @@ class AisStreamClient:
         put, on_message, wall, tag = self.queue.put, self.feed.on_message, self._wall, self.tag
         frames, buffer, rtt = ws_frames(ws), self.feed.ws_buffer, self.feed.ping_rtt
         latency = ws.latency  # 첫 pong 전에는 0.0 — 바뀔 때만 표본
+        first = True
         async with asyncio.timeout_at(loop.time() + self.idle_timeout_s) as deadline:
             async for msg in ws:
                 put(msg, tag)
@@ -254,6 +275,9 @@ class AisStreamClient:
                     continue  # 데이터가 아니다(모듈 설명)
                 deadline.reschedule(loop.time() + self.idle_timeout_s)
                 on_message(wall())
+                if first:  # 이 연결의 첫 데이터 — 끊긴 뒤라면 회복 로그(공백은 on_message 가 닫았다)
+                    first = False
+                    self.reconnects.first_data()
 
     async def _resubscriber(self, ws: ClientConnection, version: int, limiter: SubscribeLimiter) -> None:
         while True:

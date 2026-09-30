@@ -132,6 +132,7 @@ class ShardSet:
         self.retired_msgs_total = 0
         self.retired_sessions_ended = 0
         self.retired_subscribe_updates = 0
+        self.retired_reconnects_quick = 0
         self.retired_last_gap: dict[str, str] | None = None
         self.restored_last_gap: dict[str, str] | None = None  # 이전 실행의 '마지막 닫힌 공백'(합계)
         # 재시작 때 같은 구역이 없어 이어받은 구역 없는(모든 선박에 적용) 공백 — 어느 구역에도 붙이지 않고,
@@ -217,6 +218,7 @@ class ShardSet:
         self.retired_msgs_total += f.msgs_total
         self.retired_sessions_ended += f.sessions_ended
         self.retired_subscribe_updates += f.subscribe_updates
+        self.retired_reconnects_quick += f.reconnects_quick
         self.retired_last_gap = _later(self.retired_last_gap, f.gaps.last)
         self.retired_pending.extend(f.gaps.pending)
         f.gaps.pending.clear()
@@ -291,6 +293,11 @@ class ShardSet:
     @property
     def subscribe_updates(self) -> int:
         return self.retired_subscribe_updates + sum(s.feed.subscribe_updates for s in self._all())
+
+    @property
+    def reconnects_quick(self) -> int:
+        """끊긴 뒤 회복 창 안에 다시 받은 횟수(누적, 없앤 구역 포함 — INFO 로만 남은 끊김을 세어 보인다)."""
+        return self.retired_reconnects_quick + sum(s.feed.reconnects_quick for s in self._all())
 
     def pending_queues(self) -> list[deque[dict[str, str]]]:
         """보낼 닫힌 공백 대기열들(구역마다 순서대로). 없앤 구역 것이 먼저(더 오래됐다)."""
