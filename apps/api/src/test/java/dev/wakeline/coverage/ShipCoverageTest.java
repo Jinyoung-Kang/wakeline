@@ -2,8 +2,13 @@ package dev.wakeline.coverage;
 
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.persist.ShipWriter;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.net.SocketTimeoutException;
 import java.sql.SQLException;
@@ -60,6 +65,22 @@ class ShipCoverageTest {
                 public void close() { closed.incrementAndGet(); }
             };
         }
+    }
+
+    /** 이 클래스의 로그(부트스트랩 멈춤 줄)를 모은다 — 시험이 끝나면 떼어 낸다. */
+    static ListAppender<ILoggingEvent> captureLogs() {
+        ListAppender<ILoggingEvent> app = new ListAppender<>();
+        app.start();
+        ((Logger) LoggerFactory.getLogger(ShipCoverage.class)).addAppender(app);
+        return app;
+    }
+
+    static void release(ListAppender<ILoggingEvent> app) {
+        ((Logger) LoggerFactory.getLogger(ShipCoverage.class)).detachAppender(app);
+    }
+
+    static List<ILoggingEvent> stopLines(ListAppender<ILoggingEvent> app) {
+        return app.list.stream().filter(e -> e.getFormattedMessage().contains("bootstrap stopped")).toList();
     }
 
     static ShipCoverage coverage(FakeSource src, AtomicLong clock) {
@@ -163,6 +184,34 @@ class ShipCoverageTest {
         assertThat(s.covered()).isEqualTo("partial");
         assertThat(s.since()).as("current hour + two whole hours before it").isEqualTo(Instant.ofEpochMilli(HOUR0 - 2 * H));
         assertThat(s.bootstrap().loadedFrom()).isEqualTo(Instant.ofEpochMilli(HOUR0 - 2 * H));
+    }
+
+    /**
+     * 리뷰(2026-09-30): 멈춤 하나가 WARN 두 줄이었다(catch 에서 한 번, 끝에서 'stopped' · 'deadline' 으로 또 한 번) — 로그 화면([로그])에 같은 멈춤이 둘로 보였고,
+     * api 를 다시 시작할 때마다(종료가 읽기를 깨움) WARN 이 떴다. 이제 결과마다 한 줄: 실패 · 마감은 WARN, 종료로 멈춤은 INFO(운영 동작이지 문제가 아니다). 수정 전 실패.
+     */
+    @Test
+    void eachBootstrapOutcomeIsLoggedOnce_failuresAsWarn() {
+        ListAppender<ILoggingEvent> logs = captureLogs();
+        try {
+            AtomicLong clock = new AtomicLong(START + 30_000);
+            FakeSource src = new FakeSource();
+            src.failAtRead = 3;
+            src.readError = new SQLException("canceling statement due to statement timeout", "57014");
+            coverage(src, clock).runBootstrap();
+            assertThat(stopLines(logs)).hasSize(1);
+            assertThat(stopLines(logs).getFirst().getLevel()).isEqualTo(Level.WARN);
+            assertThat(stopLines(logs).getFirst().getFormattedMessage()).contains("statement_timeout").contains("SQLException").contains("3/25");
+            logs.list.clear();
+            FakeSource slow = new FakeSource();
+            slow.onRead = () -> clock.addAndGet(ShipCoverage.BOOTSTRAP_DEADLINE_MS / 2 + 1);
+            coverage(slow, clock).runBootstrap();
+            assertThat(stopLines(logs)).hasSize(1);
+            assertThat(stopLines(logs).getFirst().getLevel()).isEqualTo(Level.WARN);
+            assertThat(stopLines(logs).getFirst().getFormattedMessage()).contains("deadline");
+        } finally {
+            release(logs);
+        }
     }
 
     @Test
@@ -282,6 +331,30 @@ class ShipCoverageTest {
         while (!"failed".equals(c.snapshotNow().bootstrap().state()) && System.nanoTime() < until) Thread.sleep(20);
         assertThat(c.snapshotNow().bootstrap().error()).isEqualTo("stopped");
         assertThat(c.snapshotNow().bootstrap().hoursLoaded()).isEqualTo(1);
+    }
+
+    /** 종료가 읽는 중인 부트스트랩을 깨우면 한 줄(INFO) — 같은 멈춤을 WARN 두 줄로 적지 않는다(리뷰 2026-09-30, 수정 전 실패). */
+    @Test
+    void aBootstrapStoppedByShutdownIsOneInfoLine_notTwoWarnings() throws Exception {
+        ListAppender<ILoggingEvent> logs = captureLogs();
+        try {
+            FakeSource src = new FakeSource();
+            ShipCoverage[] holder = new ShipCoverage[1];
+            src.failAtRead = 1;
+            src.readError = new SQLException("An I/O error occurred while sending to the backend.", "08006");
+            src.onRead = () -> { if (src.reads.size() == 2) holder[0].stop(); };
+            ShipCoverage c = new ShipCoverage(src, System::currentTimeMillis, new SimpleMeterRegistry(), 0, 100, 1_000);
+            holder[0] = c;
+            c.start();
+            long until = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+            while (!"failed".equals(c.snapshotNow().bootstrap().state()) && System.nanoTime() < until) Thread.sleep(20);
+            Thread.sleep(50); // 상태를 쓴 뒤의 로그까지
+            assertThat(stopLines(logs)).hasSize(1);
+            assertThat(stopLines(logs).getFirst().getLevel()).isEqualTo(Level.INFO);
+            assertThat(stopLines(logs).getFirst().getFormattedMessage()).contains("(stopped");
+        } finally {
+            release(logs);
+        }
     }
 
     @Test

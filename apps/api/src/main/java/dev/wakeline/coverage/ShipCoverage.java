@@ -195,6 +195,7 @@ public class ShipCoverage implements SmartLifecycle {
         bootstrap = new Bootstrap("running", 0, total, 0, Instant.ofEpochMilli(loadedFrom), null, null);
         log.info("ship coverage bootstrap: reading {} hours of ship_position before {} (live counting since then)", total, Instant.ofEpochMilli(liveFromMs));
         String error = null;
+        String cause = null;
         try (CoverageSource.Session s = source.open()) {
             for (long[] c : chunks) {
                 if (stopRequested) { error = "stopped"; break; }
@@ -211,18 +212,21 @@ public class ShipCoverage implements SmartLifecycle {
         } catch (SQLException | RuntimeException e) {
             // 종료가 읽는 중인 가상 스레드를 깨우면 소켓이 닫혀 연결 오류로 온다 — 까닭은 종료다
             error = stopRequested ? "stopped" : errorKind(e);
-            log.warn("ship coverage bootstrap stopped after {}/{} hours ({}: {}) — counted since {}", loaded, total, error, e.getClass().getSimpleName(),
-                    Instant.ofEpochMilli(loadedFrom));
+            cause = e.getClass().getSimpleName();
         }
         Instant done = Instant.ofEpochMilli(clock.getAsLong());
         if (error == null) {
             bootstrap = new Bootstrap("done", loaded, total, rows, Instant.ofEpochMilli(loadedFrom), null, done);
             log.info("ship coverage bootstrap: {} hours, {} rows in {} ms", loaded, rows, done.toEpochMilli() - t0);
-        } else {
-            if ("deadline".equals(error) || "stopped".equals(error))
-                log.warn("ship coverage bootstrap stopped after {}/{} hours ({}) — counted since {}", loaded, total, error, Instant.ofEpochMilli(loadedFrom));
-            bootstrap = new Bootstrap("failed", loaded, total, rows, Instant.ofEpochMilli(loadedFrom), error, done);
+            return;
         }
+        bootstrap = new Bootstrap("failed", loaded, total, rows, Instant.ofEpochMilli(loadedFrom), error, done);
+        // 결과마다 한 줄 — 종료로 멈춤은 운영 동작이라 INFO, 실패 · 마감은 WARN(로그 화면에 뜬다). 응답도 같은 까닭(bootstrap.error)을 싣는다
+        String kind = cause == null ? error : error + ": " + cause;
+        if ("stopped".equals(error))
+            log.info("ship coverage bootstrap stopped after {}/{} hours ({}) — counted since {}", loaded, total, kind, Instant.ofEpochMilli(loadedFrom));
+        else
+            log.warn("ship coverage bootstrap stopped after {}/{} hours ({}) — counted since {}", loaded, total, kind, Instant.ofEpochMilli(loadedFrom));
     }
 
     private void merge(List<CoverageSource.Row> rows, long hour) {
