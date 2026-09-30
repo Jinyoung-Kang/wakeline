@@ -2,12 +2,12 @@
   "version": 1,
   "shots": {
     "dashboard": {
-      "file": "dashboard.e97add4dd0.webp",
+      "file": "dashboard.803ad6779e.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 141136,
-      "captured_at": "2026-09-30T04:41:43.705Z",
+      "bytes": 168164,
+      "captured_at": "2026-09-30T08:52:46.602Z",
       "variant": "한반도 #6.3/36.1/127.9",
       "callouts": [
         {
@@ -58,12 +58,12 @@
       ]
     },
     "traffic": {
-      "file": "traffic.5ea4727588.webp",
+      "file": "traffic.1ef1191ced.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 166140,
-      "captured_at": "2026-09-30T04:41:48.879Z",
+      "bytes": 191036,
+      "captured_at": "2026-09-30T08:52:51.919Z",
       "variant": "연안 교통량 #7.2/35.2/128.6",
       "callouts": [
         {
@@ -89,12 +89,12 @@
       ]
     },
     "search": {
-      "file": "search.02d060e736.webp",
+      "file": "search.41e7a4d5ae.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 137030,
-      "captured_at": "2026-09-30T04:41:51.805Z",
+      "bytes": 155932,
+      "captured_at": "2026-09-30T08:52:54.426Z",
       "variant": "검색어 “KAL” — 지금 지도의 호출부호에서 가장 많은 앞 3자",
       "callouts": [
         {
@@ -110,7 +110,7 @@
         {
           "n": 3,
           "x": 41.6,
-          "y": 97.3
+          "y": 91.4
         },
         {
           "n": 4,
@@ -120,13 +120,13 @@
       ]
     },
     "aircraft": {
-      "file": "aircraft.d200e0a3bc.webp",
+      "file": "aircraft.616f7ad0fd.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 146820,
-      "captured_at": "2026-09-30T04:42:02.384Z",
-      "variant": "B68888 (899069) — 한반도 영역에서 가장 높이 나는 항공기",
+      "bytes": 134352,
+      "captured_at": "2026-09-30T08:53:05.358Z",
+      "variant": "FIN79 (461f56) — 한반도 영역에서 가장 높이 나는 항공기",
       "callouts": [
         {
           "n": 1,
@@ -151,12 +151,12 @@
       ]
     },
     "ship": {
-      "file": "ship.7d21db052f.webp",
+      "file": "ship.d780cd2104.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 180346,
-      "captured_at": "2026-09-30T04:42:49.732Z",
+      "bytes": 185684,
+      "captured_at": "2026-09-30T08:53:53.056Z",
       "variant": "도쿄만 #10.6/35.45/139.78",
       "callouts": [
         {
@@ -182,23 +182,23 @@
       ]
     },
     "port-calls": {
-      "file": "port-calls.c1a85fdfd7.webp",
+      "file": "port-calls.0ea458e104.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 130626,
-      "captured_at": "2026-09-30T04:44:55.994Z",
-      "variant": "선박 검색 “AZAMARA PURSUIT” 첫 결과 — 부산항 부근 · 도쿄만 후보 8척에 입출항 결과 없음",
+      "bytes": 184338,
+      "captured_at": "2026-09-30T08:55:20.968Z",
+      "variant": "도쿄만 #10.6/35.45/139.78 · 선박 목록 5번째(입출항 결과가 있는 첫 선박)",
       "callouts": [
         {
           "n": 1,
           "x": 75,
-          "y": 57
+          "y": 58.6
         },
         {
           "n": 3,
           "x": 75,
-          "y": 60.7
+          "y": 62.3
         },
         {
           "n": 4,
@@ -208,18 +208,18 @@
         {
           "n": 5,
           "x": 75,
-          "y": 85.3
+          "y": 85.2
         }
       ]
     },
     "alerts": {
-      "file": "alerts.415bc2ccf1.webp",
+      "file": "alerts.3390813897.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 169694,
-      "captured_at": "2026-09-30T04:45:08.201Z",
-      "variant": "알림 범위 전세계",
+      "bytes": 184802,
+      "captured_at": "2026-09-30T08:55:31.460Z",
+      "variant": "알림 범위 관심 지역",
       "callouts": [
         {
           "n": 1,
@@ -249,12 +249,12 @@
       ]
     },
     "radar": {
-      "file": "radar.80350ac0b6.webp",
+      "file": "radar.01053969d6.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 147326,
-      "captured_at": "2026-09-30T04:45:19.906Z",
+      "bytes": 180988,
+      "captured_at": "2026-09-30T08:55:43.134Z",
       "variant": "RainViewer(기상청 프레임 없음)",
       "callouts": [
         {
@@ -280,12 +280,12 @@
       ]
     },
     "replay": {
-      "file": "replay.d6d128fd8e.webp",
+      "file": "replay.54350040d2.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 138590,
-      "captured_at": "2026-09-30T04:45:24.090Z",
+      "bytes": 139816,
+      "captured_at": "2026-09-30T08:55:47.382Z",
       "variant": "지도 시각 = 재생 시각",
       "callouts": [
         {
@@ -326,7 +326,7 @@
       "width": 1440,
       "height": 900,
       "bytes": 70716,
-      "captured_at": "2026-09-30T04:45:28.359Z",
+      "captured_at": "2026-09-30T08:55:51.693Z",
       "variant": null,
       "callouts": [
         {
@@ -357,12 +357,12 @@
       ]
     },
     "airport": {
-      "file": "airport.e64280d4b5.webp",
+      "file": "airport.bb09507f16.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 74326,
-      "captured_at": "2026-09-30T04:45:30.107Z",
+      "bytes": 73846,
+      "captured_at": "2026-09-30T08:55:53.399Z",
       "variant": "RKSI",
       "callouts": [
         {
@@ -384,6 +384,78 @@
           "n": 4,
           "x": 2.5,
           "y": 27.3
+        }
+      ]
+    },
+    "ops": {
+      "file": "ops.53623a730b.webp",
+      "format": "webp",
+      "width": 1440,
+      "height": 900,
+      "bytes": 68084,
+      "captured_at": "2026-09-30T08:57:25.959Z",
+      "variant": "격리 fixture 스택(가짜 자료) · providers 탭 · 가림: 운영자 이름 · 공급자 마지막 오류 · 전환 사유",
+      "callouts": [
+        {
+          "n": 1,
+          "x": 7.9,
+          "y": 5.6
+        },
+        {
+          "n": 2,
+          "x": 47.9,
+          "y": 5.6
+        },
+        {
+          "n": 3,
+          "x": 1.5,
+          "y": 16
+        },
+        {
+          "n": 4,
+          "x": 80.9,
+          "y": 19.8
+        }
+      ]
+    },
+    "logs": {
+      "file": "logs.88412fd420.webp",
+      "format": "webp",
+      "width": 1440,
+      "height": 900,
+      "bytes": 49080,
+      "captured_at": "2026-09-30T08:57:28.031Z",
+      "variant": "격리 fixture 스택 · 목록의 1건은 캡처용 시험 보고(실제 오류 아님) · 기간 24 h · 가림: 운영자 이름 · 로거 · 메시지 · 요청 id",
+      "callouts": [
+        {
+          "n": 1,
+          "x": 8.4,
+          "y": 5.6
+        },
+        {
+          "n": 2,
+          "x": 1.5,
+          "y": 8.9
+        },
+        {
+          "n": 3,
+          "x": 90.7,
+          "y": 13
+        },
+        {
+          "n": 4,
+          "x": 1.5,
+          "y": 24.4
+        },
+        {
+          "n": 5,
+          "x": 52.6,
+          "y": 9.7
+        },
+        {
+          "n": 6,
+          "x": 11.9,
+          "y": 17
         }
       ]
     }
