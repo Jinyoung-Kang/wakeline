@@ -318,6 +318,15 @@ export function fitChips(boxes: readonly ChipBox[], rowWidth: number, reserved: 
   return out;
 }
 
+/**
+ * 옮길 수 있는 칩을 모두 옮겨도(고정 폭 + 늘 보일 칩만) 줄 폭을 넘는가 — 그때만 줄을 넘긴다(flex-wrap, 잘리지 않게). 아니면 한 줄(nowrap)로 둔다:
+ * 줄 높이가 칩 옮기기에 따라 바뀌지 않게(아래 지도의 ResizeObserver 가 같은 프레임에 두 번 크기 변화를 받는 되먹임 — 2026-09-30). fitChips 와 같은 셈.
+ */
+export function pinnedOverflow(boxes: readonly ChipBox[], rowWidth: number, reserved: number, gap: number): boolean {
+  const pinnedW = boxes.filter((b) => b.pinned).reduce((s, b) => s + b.width + gap, 0);
+  return rowWidth - reserved - pinnedW < 0;
+}
+
 // ---- 상세 표 ----
 
 export interface DetailRow {
