@@ -94,10 +94,14 @@ class RestSamplesIT extends IntegrationTest {
                 Map.entry("fetched_at", at.minusSeconds(300).toString()), Map.entry("checked_at", at.toString()));
     }
 
-    /** 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — 수집기 missing_*): 14:50 부터 5 tm 이 목록에는 EXT 로 있고 내려받기는 없음으로 답했다 */
+    /**
+     * 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — 수집기 missing_*): 14:50 부터 5 tm 이 목록에는 EXT 로 있고 내려받기는 없음으로 답했다.
+     * 확인 간격 300 s(5분마다 — 연속이 60분을 넘으면 수집기가 900 으로 늦춘다, 계약 v5 §G26).
+     */
     static Map<String, String> krMissing(Instant at) {
         return Map.of("missing_since_tm", "202609291450", "missing_last_tm", "202609291510", "missing_tms", "5",
-                "missing_checked_at", at.toString(), "missing_file", "RDR_CMP_HSR_PUB_202609291510.bin.gz", "missing_listed", "EXT");
+                "missing_checked_at", at.toString(), "missing_file", "RDR_CMP_HSR_PUB_202609291510.bin.gz", "missing_listed", "EXT",
+                "missing_probe_every_s", "300");
     }
 
     @Test
@@ -360,6 +364,7 @@ class RestSamplesIT extends IntegrationTest {
         JsonNode krMissing = Streams.JSON.readTree(Files.readString(OUT.resolve("radar_kr_missing.json"))).path("body");
         assertThat(krMissing.path("missing").path("since_tm").asString()).isEqualTo("202609291450");
         assertThat(krMissing.path("missing").path("tms").asInt()).isEqualTo(5);
+        assertThat(krMissing.path("missing").path("probe_every_s").asInt()).as("the collector's probe interval (§G26)").isEqualTo(300);
         assertThat(krMissing.path("frames").size()).as("stored frames are still served").isEqualTo(2);
         JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
         assertThat(st.path("radar_kr").path("stations").asInt()).isEqualTo(7);

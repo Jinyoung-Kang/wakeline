@@ -128,6 +128,8 @@ KR_MISSING: Schema = {
         "checked_at": TS,
         "file": {"type": "string", "pattern": r"^RDR_CMP_[A-Z]+_[A-Z]+_[0-9]{12}\.bin\.gz$"},
         "listed": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "pattern": "^[A-Z]{1,8}$"}},
+        # 계약 v5 §G26: 수집기의 지금 확인 간격(초 — 5분마다면 주기, 긴 연속에서 늦춘 15분). 옛 수집기면 없다
+        "probe_every_s": {"type": "integer", "minimum": 1, "maximum": 86400},
     },
 }
 
