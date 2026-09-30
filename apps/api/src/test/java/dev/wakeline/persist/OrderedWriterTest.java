@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.jdbc.UncategorizedSQLException;
 
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
@@ -70,11 +71,37 @@ class OrderedWriterTest {
         assertThat(count("alert", "dropped")).isEqualTo(3.0); // 멈춘 뒤 들어온 것은 처리될 수 없다 — 조용히 잃지 않고 센다
     }
 
+    /**
+     * 조사 2026-10-01: 잠금 대기 한도(lock_timeout 5 s → SQLSTATE 55P03 lock_not_available)는 잠시 뒤 되는 일이다. Spring 의 기본 번역은 부류 55 를
+     * 몰라 UncategorizedSQLException 으로 준다(DbTimeoutsIT 가 실제 DB 로 확인) — 예전에는 '영구 오류' 로 세어 3회 뒤 알림 · SIGMET 쓰기를 버리고 ACK 했다.
+     * 이제 일시 장애처럼 같은 작업을 다시 시도한다(뒤 작업이 앞지르지 않는다).
+     */
+    @Test
+    void aLockTimeoutIsRetriedLikeAnOutageNotDroppedAsPermanent() throws Exception {
+        OrderedWriter w = new OrderedWriter(meters, 1, 2);
+        AtomicInteger waits = new AtomicInteger(OrderedWriter.PERMANENT_ATTEMPTS + 2);
+        List<String> done = Collections.synchronizedList(new ArrayList<>());
+        w.submit(OrderedWriter.task("alert", () -> {
+            if (waits.getAndDecrement() > 0)
+                throw new UncategorizedSQLException("PreparedStatementCallback", "UPDATE alert_event ...", new SQLException("canceling statement due to lock timeout", "55P03"));
+            done.add("first");
+        }));
+        w.submit(OrderedWriter.task("alert", () -> done.add("second")));
+        w.start();
+        await(() -> done.size() == 2);
+        w.stop();
+        assertThat(done).containsExactly("first", "second");
+        assertThat(count("alert", "failed")).isZero();
+        assertThat(count("alert", "ok")).isEqualTo(2.0);
+    }
+
     @Test
     void transientClassification() {
         assertThat(OrderedWriter.isTransient(new CannotGetJdbcConnectionException("x"))).isTrue();
         assertThat(OrderedWriter.isTransient(new RuntimeException(new SQLException("conn", "08006")))).isTrue();
         assertThat(OrderedWriter.isTransient(new RuntimeException(new SQLException("deadlock", "40P01")))).isTrue();
+        assertThat(OrderedWriter.isTransient(new UncategorizedSQLException("x", "UPDATE", new SQLException("lock timeout", "55P03")))).isTrue();
+        assertThat(OrderedWriter.isTransient(new UncategorizedSQLException("x", "UPDATE", new SQLException("object not in state", "55000")))).isFalse();
         assertThat(OrderedWriter.isTransient(new DataIntegrityViolationException("fk", new SQLException("fk", "23503")))).isFalse();
         assertThat(TrackWriter.isPermanent(new RuntimeException(new SQLException("no partition", "23514")))).isTrue();
         assertThat(TrackWriter.isPermanent(new RuntimeException(new SQLException("cannot affect row a second time", "21000")))).isTrue();

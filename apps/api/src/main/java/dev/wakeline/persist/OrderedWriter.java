@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
  * 이전에는 배치마다 새 스레드를 띄워, 나중 배치의 LEFT/CLEARED UPDATE 가 앞 배치의 INSERT 보다 먼저 실행될 수 있었다.
  * <ul>
  *   <li>제출은 기다리지 않는다(offer). 큐(50,000)가 가득 차면 새 작업을 버리고 wakeline_persist_tasks_total{result="dropped"} 로 센다.</li>
- *   <li>일시 장애(연결 실패·풀 대기 초과·타임아웃)는 같은 작업을 백오프(1 s → 30 s)로 계속 재시도한다 — 뒤 작업이 앞지르지 않는다.</li>
+ *   <li>일시 장애(연결 실패·풀 대기 초과·타임아웃·잠금 대기 한도)는 같은 작업을 백오프(1 s → 30 s)로 계속 재시도한다 — 뒤 작업이 앞지르지 않는다.</li>
  *   <li>그 밖의 오류(제약 위반 등)는 짧은 경합을 넘기도록 3회까지 재시도한 뒤 버리고 result="failed" 로 센다.</li>
  *   <li>종료: 스트림 소비·WS 가 멈춘 뒤(phase) 남은 작업을 최대 6 s 동안 한 번씩 시도하고, 못 쓴 것은 dropped 로 센다.</li>
  *   <li>영수증(API-CONC-8): 작업이 스트림 메시지의 결과면(SIGMET 세트) 쓰였거나 영구 오류로 버렸을 때 놓는다 → 그 메시지를 ACK.
@@ -173,7 +173,7 @@ public class OrderedWriter implements SmartLifecycle {
                     log.warn("{} persist failed during shutdown, dropped: {}", t.kind(), e.toString());
                     return false;
                 }
-                if (transientError) log.warn("{} persist failed (data store unavailable), retry in {} ms: {}", t.kind(), backoff, e.toString());
+                if (transientError) log.warn("{} persist failed (transient error), retry in {} ms: {}", t.kind(), backoff, e.toString());
                 else log.info("{} persist failed (attempt {}/{}), retry in {} ms: {}", t.kind(), permanentFailures, PERMANENT_ATTEMPTS, backoff, e.toString());
                 sleepWhileRunning(backoff);
                 backoff = Math.min(backoffMaxMs, backoff * 2);
@@ -218,7 +218,8 @@ public class OrderedWriter implements SmartLifecycle {
     }
 
     /**
-     * 기다리면 나을 오류인가: 연결 실패·풀 대기 초과·타임아웃·교착/직렬화 실패, 또는 SQLState 08(연결)·53(자원 부족)·57P(관리자 종료)·40(롤백).
+     * 기다리면 나을 오류인가: 연결 실패·풀 대기 초과·타임아웃·교착/직렬화 실패, 또는 SQLState 08(연결)·53(자원 부족)·57P(관리자 종료)·40(롤백)·
+     * 55P03(lock_not_available — lock_timeout 5 s. Spring 의 기본 번역이 부류 55 를 몰라 UncategorizedSQLException 으로 온다 — 조사 2026-10-01).
      * 제약 위반·권한·문법 오류는 기다려도 같다.
      */
     static boolean isTransient(Throwable e) {
@@ -228,7 +229,7 @@ public class OrderedWriter implements SmartLifecycle {
         for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
             if (c instanceof SQLException s && s.getSQLState() != null) {
                 String st = s.getSQLState();
-                if (st.startsWith("08") || st.startsWith("53") || st.startsWith("57P") || st.startsWith("40")) return true;
+                if (st.startsWith("08") || st.startsWith("53") || st.startsWith("57P") || st.startsWith("40") || st.equals("55P03")) return true;
             }
         }
         return false;
