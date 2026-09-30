@@ -46,7 +46,7 @@ export const SESSION_EXPIRED_NOTE = "세션이 만료되었습니다 — 다시 
 // ---- 파이프라인 손실 지표(R-18) — GET /api/v1/ops/pipeline ----
 
 export type PipelineGroup = "collector" | "ais" | "api";
-type Kind = "loss" | "queue" | "quarantine" | "age" | "count" | "window";
+type Kind = "loss" | "queue" | "quarantine" | "age" | "count" | "window" | "diag";
 /** 예산 트림의 뜻 — 손실이 아니다(공유 필드 계약: 보존 창이 짧아질 뿐, 읽기 전에 잘렸을 때만 api 가 손실로 센다) */
 const TRIM_NOT_LOSS = "손실 아님: 스트림에 남는 구간(api 가 멈췄다 돌아와 다시 읽을 수 있는 창)이 짧아질 뿐이다. 읽히기 전에 잘린 구간만 api 의 스트림 트림 손실(stream_trim_loss_events)로 센다 — 아래 보존 창 행 참고";
 /**
@@ -70,6 +70,13 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["ais", "quarantined_total", "AIS 격리", "quarantine", "품질 규칙으로 걸러낸 메시지(지도에 표시 안 함) — 누적"],
   ["ais", "stream_budget_trims", "선박 스트림 예산 트림", "count", `바이트 예산 때문에 선박 스트림을 보존 목표(시간)보다 일찍 자른 발행 수 — 누적. ${TRIM_NOT_LOSS}`],
   ["ais", "stream_window_s.ships", "선박 스트림 보존 창", "window", ""],
+  // 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 창 최댓값은 aisDiagRow 가 창 · 상한 · 시간 초과(수집기 설정)와 함께 적는다
+  ["ais", "reconnects_quick_total", "짧은 재연결", "count", "받던 연결이 끊겼다가 30 s(수집기 고른 값) 안에 다시 받은 횟수 — 누적(ais 시작 이후). 끊김마다 AIS 수신 공백은 그대로 기록된다(선박 패널 · 공백 목록). 이 끊김은 INFO 로만 남아 로그 화면에 오르지 않고, 같은 연결이 30분에 3번째로 끊김 · 데이터 없이 끝난 재연결 · 30 s 안에 회복하지 못함은 WARN 으로 오른다. 손실 수가 아니다(공백이 손실 구간)"],
+  ["ais", "ping_rtt_max_s", "keepalive 왕복", "diag", "keepalive ping 을 보내고 pong 을 받기까지(websockets latency) — 시간 초과를 넘으면 수집기가 1011 로 끊고 다시 붙는다. 이 값과 공급자 지연이 커지는데 루프 지연 · 수신 버퍼가 작으면 공급자 쪽(연결별 전달 적체)이 늦은 것이다. 시간 초과를 넘은 ping 은 왕복을 잴 수 없어 여기에 들지 않는다"],
+  ["ais", "loop_lag_max_s", "이벤트 루프 지연", "diag", "수집기 이벤트 루프가 0.5 s 잠든 뒤 늦게 깬 만큼 — 그동안 소켓을 읽지 못한다. keepalive 시간 초과에 가까우면 ping 이 나가 있던 연결이 1011 로 끊긴다(두 구역이 함께)"],
+  ["ais", "loop_stalls_total", "이벤트 루프 멈춤", "count", "이벤트 루프가 1 s(수집기 고른 값) 이상 늦게 깬 횟수 — 누적(ais 시작 이후). 5 s 이상이면 수집기가 WARN 을 남긴다(분당 1번)"],
+  ["ais", "ws_queue_max", "WS 수신 버퍼", "diag", "메시지를 꺼낸 뒤 websockets 수신 버퍼에 남은 프레임 수 — 수신 태스크가 늦게 돈 만큼 쌓인다. 상한을 넘으면 소켓 읽기를 멈춰 pong 도 읽지 못한다(주황)"],
+  ["ais", "queue_wait_max_s", "원문 대기 시간", "diag", "받은 원문이 처리 대기열에 머문 시간(수신 → 파싱) — 정리 태스크가 밀리는지 본다. 이 대기열은 소켓 읽기를 막지 않는다(가득 차면 오래된 것부터 버리고 AIS 큐 드롭으로 센다)"],
   ["ais", "log_sent", "시스템 로그 전송", "count", "시스템 로그 스트림(wakeline:logs)에 실은 WARN·ERROR 항목 — 누적"],
   ["ais", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["api", "track_queue_dropped", "항적 저장 큐 넘침", "loss", "DB 저장 대기열 상한으로 버린 항적 행 — 누적(api 시작 이후)"],
@@ -104,6 +111,7 @@ export function pipelineRows(resp: unknown): PipelineRow[] {
   const r = obj(resp);
   return PIPELINE_SPEC.map(([group, key, label, kind, title]) => {
     if (kind === "window") return streamWindowRow(r, group, key, label);
+    if (kind === "diag") return aisDiagRow(r, group, key, label, title);
     const value = count(obj(r[group])[key]);
     const text = value == null ? "—" : kind === "age" ? fmtDuration(value) : value.toLocaleString("en-US");
     const tone = kind !== "loss" || value == null ? "muted" : value > 0 ? "bad" : "ok";
@@ -163,6 +171,34 @@ function streamWindowRow(r: Record<string, unknown>, group: PipelineGroup, key: 
     + `바이트 예산 ${fmtMiB(budget)}(수집기 설정 stream_budget_bytes)이 먼저 차면 목표보다 짧아진다. 손실 아님 — 읽히기 전에 잘린 구간만 api 스트림 트림 손실로 센다. `
     + `주황 = 예산 트림이 있고 목표보다 ${STREAM_WINDOW_SLACK_S / 60}분 넘게 짧음 · 채우는 중 = 트림 없이 아직 목표만큼 쌓이지 않음(기동 직후 등)`;
   return { group, key, label, title, value: win, text: fmtSpan(win), tone, kind: "window", detail, state };
+}
+
+/** 초 값 "0.31 s"(소수 2자리 — 수집기가 싣는 자릿수). 모르면 "—" */
+const fmtSecs = (v: number | null): string => (v == null ? "—" : `${v.toFixed(2)} s`);
+/** 창 · 시간 초과 같은 설정 초 "60"(정수면 정수로). 모르면 "—" */
+const fmtSetting = (v: number | null): string => (v == null ? "—" : String(Number.isInteger(v) ? v : Number(v.toFixed(2))));
+
+/**
+ * ais 수신 진단 행(ADR-014 부록 C): 최근 diag_window_s 초의 최댓값. 창 · ws 수신 버퍼 상한 · keepalive 시간 초과는 수집기가 고른 값이라 응답에서 읽어
+ * detail 에 "수집기 설정" 으로 적는다(웹이 숫자를 지어내지 않는다). 판정은 사실 하나만: 수신 버퍼가 상한을 넘었으면(소켓 읽기가 멈췄다) warn.
+ * 그 밖의 값에는 임계값을 두지 않는다(muted — 운영자가 시간 초과와 견준다). 모르면 "—".
+ */
+function aisDiagRow(r: Record<string, unknown>, group: PipelineGroup, key: string, label: string, title: string): PipelineRow {
+  const src = obj(r[group]);
+  const value = count(src[key]);
+  const win = `최근 ${fmtSetting(count(src.diag_window_s))} s 최대`;
+  let detail = win, text = fmtSecs(value), tone: PipelineRow["tone"] = "muted", state: string | null = null;
+  if (key === "ws_queue_max") {
+    const limit = count(src.ws_queue_limit);
+    text = value == null ? "—" : value.toLocaleString("en-US");
+    detail = `${win} · 상한 ${limit == null ? "—" : limit.toLocaleString("en-US")} 프레임 — 수집기 설정`;
+    if (value != null && limit != null && value > limit) { tone = "warn"; state = "상한 넘음 — 소켓 읽기 멈춤"; }
+  } else if (key === "ping_rtt_max_s") {
+    detail = `${win} · 시간 초과 ${fmtSetting(count(src.ping_timeout_s))} s — 수집기 설정`;
+  } else if (key === "loop_lag_max_s") {
+    detail = `${win} · keepalive 시간 초과 ${fmtSetting(count(src.ping_timeout_s))} s — 수집기 설정`;
+  }
+  return { group, key, label, title, value, text, tone, kind: "diag", detail, state };
 }
 
 /** 마지막으로 감지한 스트림 트림 손실 구간. from 은 모르면 null(api 가 null 로 보낸다 — 손실 자체는 보인다). 없거나 형식이 틀리면 null */
