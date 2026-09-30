@@ -42,7 +42,8 @@
 - heartbeat(wakeline:collector): traffic_grid_at · traffic_grid_lag_s(regDt 나이) · traffic_grid_state(active · no_key · fixture ·
   operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · pending · failed · 오늘 쓴 호출 수(두 예산) ·
   traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값) · 채우기 진행(ADR-023 2026-10-01 개정 — DB 없이 수렴을 본다):
-  traffic_grid_not_found · traffic_grid_off_grid(유효한 부정 캐시) · traffic_grid_not_queued(대기열이 가득 차 넣지 못한 칸, 기동 뒤 누계) ·
+  traffic_grid_not_found · traffic_grid_off_grid(유효한 부정 캐시) · traffic_grid_not_queued(마지막으로 읽은 스냅샷의 칸 가운데
+  대기열이 가득 차 넣지 못한 칸 — 서로 다른 칸 수, 누계가 아니다. 읽기 전 빈 값) ·
   traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · hour_window · daily_budget · breaker · operator_off) ·
   traffic_grid_fill_resume_at(다음에 움직이는 때 — 없으면 빈 값) · traffic_grid_fill_pass_at 과 _lookups · _found · _not_found · _off_grid ·
   _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값).
@@ -251,7 +252,9 @@ class GridGeometry:
         self.negative: dict[str, Negative] = {}
         self._pending: dict[str, _Pending] = {}
         self._seq = itertools.count()
-        self.dropped = 0  # MAX_TRACKED 를 넘어 대기열에 넣지 못한 칸 수(누계 — 다음에 보일 때 자리가 있으면 넣는다)
+        # 마지막 observe(스냅샷 한 번 읽기 — 새 regDt 든 같은 regDt 든)에서 대기열이 가득 차(MAX_TRACKED) 넣지 못한 서로 다른 칸 수. 읽은 적이
+        # 없으면 None. 누계가 아니다(검토 지적: 예전 dropped 는 부를 때마다 거절을 더해 '칸'이 아니라 '거절 횟수'였다) — 다음에 보일 때 자리가 있으면 넣는다
+        self.not_queued: int | None = None
 
     @property
     def pending(self) -> int:
@@ -265,14 +268,16 @@ class GridGeometry:
         """스냅샷의 (grid_id, 척수) — 기하도 유효한 부정 캐시도 없고 대기열에도 없는 칸을 대기열에 넣는다(척수가 많은 칸 먼저 번호).
         새로 넣은 수 — '처음 본 칸'이 아니라 '이 프로세스가 새로 넣은 칸'이다(재기동하면 대기열이 비어 다시 센다)."""
         added = 0
+        refused: set[str] = set()
         for g, _v in sorted(items, key=lambda t: (-t[1], t[0])):
             if g in self.cells or g in self._pending or self._negative_valid(g, now):
                 continue
             if len(self._pending) >= MAX_TRACKED:
-                self.dropped += 1
+                refused.add(g)
                 continue
             self._pending[g] = _Pending(next(self._seq))
             added += 1
+        self.not_queued = len(refused)
         return added
 
     def due(self, now: datetime, limit: int) -> list[str]:
@@ -887,7 +892,7 @@ class TrafficGridJob:
         self._pass, self._last_pass = None, (at, ps)
         used, limit = await self.ctx.budget.usage(self.wfs.name)
         retrying, _ = self.geometry.retries()
-        nq = self.geometry.dropped
+        nq = self.geometry.not_queued
         log.info(
             "traffic grid: geometry fill pass %s → %s — %d lookups: %d found, %d not in the MOF grid, %d off grid, %d errors "
             "(%d set aside as failed); %d cells known, %d ids waiting (%d after an error)%s; mof_grid4 today %s of %d (UTC day); %s",
@@ -902,7 +907,7 @@ class TrafficGridJob:
             len(self.geometry.cells),
             self.geometry.pending,
             retrying,
-            f", {nq} not queued since start — queue full at {MAX_TRACKED}" if nq else "",
+            f", {nq} of the latest snapshot's cells not queued (queue limit {MAX_TRACKED})" if nq else "",
             "—" if used is None else used,
             limit,
             how,
@@ -1015,11 +1020,11 @@ class TrafficGridJob:
             "traffic_grid_cells_known": str(len(self.geometry.cells)),
             "traffic_grid_pending": str(self.geometry.pending),
             "traffic_grid_failed": str(neg["failed"]),
-            # 수렴을 DB 없이 보게(ADR-023 2026-10-01 개정): 유효한 부정 캐시(까닭별) · 대기열이 가득 차 넣지 못한 칸(기동 뒤 누계) ·
+            # 수렴을 DB 없이 보게(ADR-023 2026-10-01 개정): 유효한 부정 캐시(까닭별) · 마지막 스냅샷에서 대기열이 가득 차 넣지 못한 칸 ·
             # 채우기 상태와 다음에 움직이는 때 · 이 프로세스에서 마지막으로 끝난 채우기 한 번(끝난 때 · 조회 수 · 결과)
             "traffic_grid_not_found": str(neg["not_found"]),
             "traffic_grid_off_grid": str(neg["off_grid"]),
-            "traffic_grid_not_queued": str(self.geometry.dropped),
+            "traffic_grid_not_queued": "" if self.geometry.not_queued is None else str(self.geometry.not_queued),
             "traffic_grid_fill_state": fill_state,
             "traffic_grid_fill_resume_at": resume_at,
             "traffic_grid_fill_pass_at": iso_z(lp[0]) if lp else "",

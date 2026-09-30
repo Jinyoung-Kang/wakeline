@@ -84,6 +84,42 @@ async def test_a_full_queue_is_not_silent(monkeypatch, caplog):
     assert r.kv[HB]["traffic_grid_not_queued"] == "1"
 
 
+async def test_not_queued_counts_distinct_cells_of_the_latest_snapshot_not_sightings(monkeypatch, caplog):
+    """검토 지적: 예전 수(GridGeometry.dropped)는 넣지 못한 '칸'이라 적었지만 observe 를 부를 때마다(새 스냅샷 · 같은 regDt 의 unchanged 호출도)
+    거절을 1씩 더했다 — 대기열이 차 있는 동안 (거절한 칸 × 호출 수)로 불어나 곧 있는 칸 수보다 커졌다. 이제 heartbeat · 요약 줄 · 스냅샷 줄 모두
+    '마지막으로 읽은 스냅샷의 칸 가운데 대기열이 가득 차 넣지 못한 칸'(서로 다른 칸 수)이다."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    monkeypatch.setattr(tg, "MAX_TRACKED", 3)
+    items = [("GR4_Q1", 50, 1), ("GR4_Q2", 40, 1), ("GR4_Q3", 30, 1), ("GR4_Q4", 20, 1), ("GR4_Q5", 10, 1)]
+    wfs = FakeWfs({g: WfsResult("found", cell=cell(g, 35.0, 129.0 + i * 0.025)) for i, (g, _v, _d) in enumerate(items)})
+    same, later = komsa_body(items=items), komsa_body("2026-09-29 18:10:05", items)
+    job, komsa, _w, r, clock, _db = setup(same, same, same, same, later, later, later, wfs=wfs)
+    share = tg.MOF_HOURLY_CAP - tg.MOF_GRID4_HOURLY_HEADROOM
+    r.kv[MOF_HOUR] = {"used": str(share - 1), "limit": str(tg.MOF_HOURLY_CAP)}  # 이 시에 남은 채우기 몫 1 — 그 뒤 정시까지 쉰다
+    await job.run_once()
+    assert wfs.asked == ["GR4_Q1"]
+    (line,) = lines(caplog, "geometry fill pass")
+    assert (
+        "; 1 cells known, 2 ids waiting (0 after an error), 2 of the latest snapshot's cells not queued (queue limit 3); " in line
+    )
+    assert r.kv[HB]["traffic_grid_not_queued"] == "2"  # Q4 · Q5
+    for _ in range(6):  # 같은 regDt(unchanged) 세 번 · 새 regDt 한 번 · 다시 unchanged — 채우기는 정시까지 쉰다
+        clock.t = max(job.schedule.next_due or clock.t, clock.t + timedelta(seconds=30))
+        await job.run_once()
+    assert komsa.calls == 7 and wfs.asked == ["GR4_Q1"]
+    # 칸 하나(Q1)를 찾아 빈 자리에 Q4 가 들어갔고 Q5 하나만 넣지 못했다 — 부른 횟수만큼 불어나지 않는다(예전 수: 2 + 6 = 8)
+    assert job.geometry.pending == 3
+    assert r.kv[HB]["traffic_grid_not_queued"] == "1"
+    snap_lines = lines(caplog, "traffic grid: regDt")
+    assert len(snap_lines) == 2 and ", 1 not queued — queue full at 3); lookup queue 3" in snap_lines[-1]
+
+
+async def test_not_queued_is_unknown_before_any_snapshot(monkeypatch):
+    job, _k, _w, r, _c, _db = setup(ProviderHttpError(502, "bad gateway"))
+    await job.run_once()
+    assert r.kv[HB]["traffic_grid_not_queued"] == ""  # 스냅샷을 읽은 적이 없다 — 0 으로 채우지 않는다
+
+
 # ---- 채우기 한 번(pass)마다 INFO 요약 한 줄 ----------------------------------------------------------------------------
 
 
