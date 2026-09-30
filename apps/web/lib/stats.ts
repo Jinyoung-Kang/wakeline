@@ -79,6 +79,27 @@ export function statsEmptyText(aggregated: boolean | undefined, day: string | nu
   return `자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 매일 ${STATS_RUN_KST}).`;
 }
 
+// ---- 패널마다의 받기 상태 ----
+
+/**
+ * 통계 패널 하나의 요청 상태(패널마다 따로 — 한 요청의 실패가 다른 패널을 비우지 않는다). 2026-09-30 22:49 KST 배포 직후 설명서 캡처: api 재시작 6분 뒤
+ * DB 가 바쁠 때 네 패널이 모두 '자료 없음 — … 구분할 수 없습니다'로 찍혔다(받기 전 · 실패를 빈 응답처럼 보였다). 빈 상태 문구(statsEmptyText)는 loaded 에만 쓴다.
+ */
+export type StatsLoad<T = unknown> = { status: "loading" } | { status: "loaded"; resp: T } | { status: "failed"; error: unknown };
+/** 패널의 data-state(시험 · 설명서 캡처가 읽는다): 받는 중 · 그릴 행이 있음 · 받았지만 그릴 것이 없음 · 받지 못함 */
+export type StatsPanelState = "loading" | "ready" | "empty" | "error";
+export function statsPanelState(load: StatsLoad, drawable: boolean): StatsPanelState {
+  return load.status === "loading" ? "loading" : load.status === "failed" ? "error" : drawable ? "ready" : "empty";
+}
+/** 받는 동안의 글자(공유 진행 표시 — lib/busy) */
+export const STATS_LOADING_TEXT = "불러오는 중";
+/** 받지 못했을 때의 머리말 — 뒤에 서버 문구 · HTTP 상태 · 요청 id(ErrorNote) */
+export const STATS_FAILED_TEXT = "조회 실패";
+/** 받지 못했을 때 덧붙이는 뜻 — '자료 없음'이 아니다 */
+export const STATS_FAILED_NOTE = "응답을 받지 못해 자료가 있는지 알 수 없습니다(‘자료 없음’이 아님).";
+/** KST 날짜로 셌다고 밝히지 않은 응답(옛 api)의 패널 — 받았지만 그리지 않는다(위 알림 STATS_ZONE_ERROR 가 까닭을 말한다) */
+export const STATS_ZONE_PANEL = "그리지 않음 — KST 날짜로 센 응답이 아님(위 알림)";
+
 // ---- 알림 통계 표 ----
 
 export interface AlertStatsInput { day?: unknown; metric?: unknown; dim?: unknown; value?: unknown }

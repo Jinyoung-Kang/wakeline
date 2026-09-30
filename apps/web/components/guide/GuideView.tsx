@@ -22,7 +22,7 @@ import {
   AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
-import { STATS_RUN_KST } from "@/lib/stats";
+import { STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST } from "@/lib/stats";
 import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_BULLETIN_LABEL, utcDayWindowKst } from "@/lib/time";
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
 import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
@@ -366,7 +366,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               <li><B>SIGMET</B> — 최근 7일 FIR별(상위 24) · 위험 유형별 발표 건수.</li>
               <li><B>시간대별 고유 항공기</B> — 날짜는 KST 날짜이고 막대 이름은 그날의 KST 시(00시 → 23시)입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
               <li><B>알림</B> — 날짜 · 종류별 건수와 평균 체류. † 표시 행은 수정 전 기준으로 판정된 관측 알림이라 이후 날짜와 비교할 수 없습니다.</li>
-              <li><B>비어 있을 때</B> — ‘집계 전’ · ‘집계됨(자료 없음)’ · ‘모름’을 구분해 적습니다.</li>
+              <li><B>비어 있을 때</B> — ‘집계 전’ · ‘집계됨(자료 없음)’ · ‘모름’을 구분해 적습니다. 이 문구는 응답을 받은 패널에만 적습니다.</li>
+              <li><B>받는 중 · 받지 못함</B> — 패널마다 따로입니다. 받는 동안은 ‘{STATS_LOADING_TEXT}’(가는 진행 막대 — {BUSY_APPEAR_DELAY_MS / 1000} s 안에 끝나면 나타나지 않음),
+                받지 못하면 그 패널만 ‘{STATS_FAILED_TEXT}’와 HTTP 상태 · 요청 id · <B>다시 시도</B>(그 패널만 다시 받음)를 보입니다 — 받는 중 · 실패를 ‘자료 없음’으로 적지 않습니다.</li>
             </UL>
           </Sec>
 
