@@ -50,3 +50,29 @@ describe("e2e WS injections are valid messages", () => {
     expect(validateServerMessage(m)).toMatchObject({ kind: "ok", dropped: 0 });
   });
 });
+
+describe("e2e REST injections read as intended (e2e/rest-inject)", () => {
+  it("the KMA streak added to /radar/kr is a valid, fresh streak in KST (not 확인 멈춤)", async () => {
+    const { krMissing } = await import("@/lib/kr-radar");
+    const { kstTm, krMissingStreak } = await import("../e2e/rest-inject");
+    const now = Date.parse("2026-09-30T00:52:31Z");
+    expect(kstTm(now)).toBe("202609300950");
+    const m = krMissingStreak(now);
+    expect(m).toMatchObject({ since_tm: "202609300855", last_tm: "202609300950", tms: 12, file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", listed: ["EXT"] });
+    const info = krMissing(m, now)!;
+    expect(info.stale).toBe(false);
+    expect(info.text).toContain("tm 08:55–09:50 KST · 확인한 tm 12개 모두 없음 · 목록에는 EXT");
+  });
+  it("the ops bodies read as the spec expects: diag rows from the response's chosen values, and the KMA line is stale by the server's time", async () => {
+    const { pipelineRows, providerMissing, providersNowMs } = await import("@/lib/ops");
+    const { opsPipeline, opsProviders } = await import("../e2e/rest-inject");
+    const now = Date.parse("2026-09-30T00:52:31Z");
+    const rows = pipelineRows(opsPipeline(now));
+    const r = (k: string) => rows.find((x) => x.group === "ais" && x.key === k)!;
+    expect(r("ping_rtt_max_s").detail).toBe("최근 90 s 최대 · 시간 초과 25 s — 수집기 설정");
+    expect(r("ws_queue_max").state).toContain("상한 도달");
+    expect(r("reconnects_quick_total").title).toContain("60분에 4번째부터");
+    const prov = opsProviders(now);
+    expect(providerMissing(prov.providers[0], providersNowMs(prov))?.stale).toBe(true);
+  });
+});

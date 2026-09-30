@@ -11,6 +11,9 @@ import { expect, test, type Page } from "@playwright/test";
  * 모두 지난다 — 자료가 없어 칩이 작은 스택에서도 경계가 800 아래에 있다) window 의 'error' 이벤트를 모아 ResizeObserver 오류가 없는지 본다. 줄은 여전히 가로로 넘치지 않고 '+N' 은 옮긴 칩 수와 같다(자리 흔들림 없이 끝난다). 브라우저 오류 보고기는 그대로다 — 이 메시지를 거르지
  * 않는다(원인을 없앴다). 외부 타일 요청은 막는다(상태 바만 본다 — 결과가 네트워크에 달리지 않게).
  * WS 가 열리지 않아도(자료 없음 — 칩이 모두 '모름') 돈다: 줄을 한 번 잰 뒤(data-measured)부터 본다.
+ * 줄 높이(통합 리뷰 2026-09-30 — 전에는 단위 시험만 보았다): 끄는 동안 프레임마다(requestAnimationFrame) 줄 높이 · 줄바꿈 여부 · 상세 단추 높이를 적어 두고,
+ * 줄바꿈이 아닌 모든 프레임에서 줄 높이가 한 줄 높이(1440 에서 잰 값)와 같고 상세 단추 높이가 늘 같은지 본다 — 두 줄로 번쩍이거나 오가지 않는다.
+ * 줄바꿈(고정 항목 · 경고 칩만으로도 넘칠 때 — 잘리지 않게)은 제품 동작이라 그 프레임은 높이를 견주지 않는다.
  */
 
 const WIDTHS = [1440, 1280, 1024, 800] as const;
@@ -47,7 +50,21 @@ test.describe("status bar resize", () => {
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       }
     }
-    // 창을 끄는 것처럼 촘촘히(8 px) — 칩 경계를 모두 지난다
+    // 창을 끄는 것처럼 촘촘히(8 px) — 칩 경계를 모두 지난다. 그동안 프레임마다 줄 높이를 적는다
+    await page.setViewportSize({ width: 1440, height });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.evaluate(() => {
+      const w = window as unknown as { __wlRow: { h: number; wrap: boolean; btn: number; width: number }[]; __wlRowStop: boolean };
+      w.__wlRow = [];
+      w.__wlRowStop = false;
+      const tick = () => {
+        const row = document.querySelector<HTMLElement>('[data-testid="statusbar-row"]');
+        const btn = document.querySelector<HTMLElement>('[data-testid="statusbar-details-toggle"]');
+        if (row && btn) w.__wlRow.push({ h: row.getBoundingClientRect().height, wrap: row.classList.contains("flex-wrap"), btn: btn.getBoundingClientRect().height, width: innerWidth });
+        if (!w.__wlRowStop) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
     for (let w = 1440; w >= SWEEP_MIN; w -= 8) {
       await page.setViewportSize({ width: w, height });
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
@@ -58,6 +75,13 @@ test.describe("status bar resize", () => {
     }
     await page.waitForTimeout(300);
     expect(await roErrors(page)).toEqual([]);
+    const samples = await page.evaluate(() => { const w = window as unknown as { __wlRow: { h: number; wrap: boolean; btn: number; width: number }[]; __wlRowStop: boolean }; w.__wlRowStop = true; return w.__wlRow; });
+    expect(samples.length).toBeGreaterThan(100); // 끄는 동안 프레임마다
+    const flat = samples.filter((x) => !x.wrap);
+    expect(flat.length).toBeGreaterThan(0);
+    const one = flat[0].h; // 1440 에서 한 줄
+    expect(flat.filter((x) => Math.abs(x.h - one) > 0.5).map((x) => `${x.width}px ${x.h}`)).toEqual([]);
+    expect(new Set(samples.map((x) => x.btn)).size).toBe(1); // 상세 단추('+N' 이 있어도 없어도) 높이 고정
 
     // 끝난 뒤에도 줄은 맞다(각 끝값에서): 가로 스크롤 없음 · 옮긴 칩 수 = '+N'
     for (const w of WIDTHS) {
