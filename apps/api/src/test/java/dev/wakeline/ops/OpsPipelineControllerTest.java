@@ -87,6 +87,61 @@ class OpsPipelineControllerTest {
         assertThat(p.ais().streamBudgetBytes()).isNull();
     }
 
+    /** ais 수신 진단(ADR-014 부록 C): 최근 창 최댓값 · 고른 상한·시간 초과 · 누적 수를 해시 값 그대로(초는 소수, 수는 정수). */
+    static void putDiagnostics(Map<Object, Object> h) {
+        h.put("diag_window_s", "60");
+        h.put("loop_lag_max_s", "0.03");
+        h.put("loop_stalls_total", "1");
+        h.put("queue_wait_max_s", "0.25");
+        h.put("ws_queue_max", "3");
+        h.put("ws_queue_limit", "64");
+        h.put("ping_rtt_max_s", "0.31");
+        h.put("ping_timeout_s", "20");
+        h.put("reconnects_quick_total", "2");
+    }
+
+    @Test
+    void passesThroughAisReceiveDiagnosticsWhileTheHeartbeatIsFresh() {
+        ais.put("updated_at", NOW.minusSeconds(2).toString());
+        putDiagnostics(ais);
+        OpsPipelineController.AisSignals a = controller(metrics()).pipeline().ais();
+        assertThat(a.diagWindowS()).isEqualTo(60L);
+        assertThat(a.loopLagMaxS()).isEqualTo(0.03);
+        assertThat(a.loopStallsTotal()).isEqualTo(1L);
+        assertThat(a.queueWaitMaxS()).isEqualTo(0.25);
+        assertThat(a.wsQueueMax()).isEqualTo(3L);
+        assertThat(a.wsQueueLimit()).isEqualTo(64L);
+        assertThat(a.pingRttMaxS()).isEqualTo(0.31);
+        assertThat(a.pingTimeoutS()).isEqualTo(20.0);
+        assertThat(a.reconnectsQuickTotal()).isEqualTo(2L);
+    }
+
+    @Test
+    void emptyMalformedOrStaleDiagnosticsAreUnknown() {
+        ais.put("updated_at", NOW.minusSeconds(2).toString());
+        putDiagnostics(ais);
+        // 수집기가 아직 표본이 없으면 빈 값(모름) · 형식이 틀리면 모름 — 0 으로 채우지 않는다
+        ais.put("loop_lag_max_s", "");
+        ais.put("queue_wait_max_s", "-0.5");
+        ais.put("ping_rtt_max_s", "NaN");
+        ais.put("ping_timeout_s", "1e400");
+        ais.put("ws_queue_max", "3.5");
+        OpsPipelineController.AisSignals a = controller(metrics()).pipeline().ais();
+        assertThat(a.loopLagMaxS()).isNull();
+        assertThat(a.queueWaitMaxS()).isNull();
+        assertThat(a.pingRttMaxS()).isNull();
+        assertThat(a.pingTimeoutS()).isNull();
+        assertThat(a.wsQueueMax()).isNull();
+        assertThat(a.reconnectsQuickTotal()).isEqualTo(2L);
+
+        putDiagnostics(ais);
+        ais.put("updated_at", NOW.minusSeconds(600).toString()); // 멈춘 ais 의 마지막 값은 지금 값이 아니다
+        a = controller(metrics()).pipeline().ais();
+        assertThat(a.loopLagMaxS()).isNull();
+        assertThat(a.reconnectsQuickTotal()).isNull();
+        assertThat(a.diagWindowS()).isNull();
+    }
+
     @Test
     void windowIsUnknownWithoutStreamMetrics() {
         OpsPipelineController.Pipeline p = controller(null).pipeline();
