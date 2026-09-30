@@ -12,8 +12,8 @@
   멈춰도 모름이 되지 않게). 고른 설정값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다): diag_window_s · ws_queue_limit · ping_timeout_s ·
   queue_limit(원문 대기열 건수 상한) · loop_tick_s · loop_stall_s · loop_warn_s · loop_warn_every_s(루프 측정이 없으면 빈 값) ·
   reconnect_quick_window_s · reconnect_warn_count · reconnect_warn_window_s(reconnect.py). 초는 지수 없는 십진수. 모르면 빈 값.
-  reconnects_quick_total: 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 30 s 안에 닫힌 횟수(누적) — 그 끊김은 INFO 로만 남기므로
-  (reconnect.py) 여기서 센다.
+  reconnects_quick_total: 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 30 s 안에 닫힌 횟수(누적) — 로그 수준과 상관없이 공백 길이로
+  센다(reconnect.py: 회복 줄은 INFO, 되풀이 끊김 줄 · 데이터 없이 끝난 재연결 시도는 WARN 이어도 공백이 창 안에 닫히면 센다).
 
 Redis 장애: 선박 변경분은 쌓지 않고 ShipBook 에 '바뀜' 표시를 되돌린다 — 복구 뒤 첫 발행이 그때의 최신값을 싣는다(메모리는 선박 수 상한 안).
 공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).

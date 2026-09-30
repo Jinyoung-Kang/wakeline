@@ -286,3 +286,41 @@ def test_status_counts_quick_reconnects_including_removed_shards():
     shards.begin_closing(b)
     shards.retire(b)
     assert sink.status_fields()["reconnects_quick_total"] == "3"  # 없앤 구역 것도 줄지 않는다
+
+
+async def test_quick_reconnects_are_counted_by_gap_length_whatever_the_log_level(caplog):
+    """리뷰(2026-09-30 · 통합): 운영 '짧은 재연결' 설명은 이 끊김이 INFO 로만 남는다고 했지만, 되풀이(창 안 N번째부터) 끊김은 끊김 줄이 WARN 이고
+    공백이 창 안에 닫히면 수에 든다 — 그 사이 데이터 없이 끝난 재연결 시도(WARN)도 마찬가지다. 수는 로그 수준이 아니라 공백 길이로 센다(이 시험이
+    그 뜻을 고정한다 — 설명은 이렇게 고쳤다). 창을 넘은 공백만 세지 않는다."""
+    caplog.set_level(logging.INFO, logger="ais.client")
+    t = [1000.0]
+    feed = FeedState("aisstream", wall=lambda: t[0], mono=lambda: t[0])
+    rl = ReconnectLog("ais shard 1", feed, mono=lambda: t[0], wall=lambda: t[0])
+    feed.on_subscribed("18,105,46,150", deflate=True)
+
+    def drop(no_data_attempt: bool = False, gap_s: float = 5.0) -> None:
+        feed.on_message(t[0])
+        t[0] += 1
+        feed.on_disconnected("server closed (1011 keepalive ping timeout)")
+        rl.disconnected("server closed (1011 keepalive ping timeout)", 1.0, had_data=True, context="-")
+        if no_data_attempt:
+            rl.disconnected("handshake rejected: HTTP 503", 2.0, had_data=False, context="-")
+        t[0] += gap_s
+        feed.on_subscribed("18,105,46,150", deflate=True)
+        feed.on_message(t[0])
+        rl.first_data()
+        t[0] += 60
+
+    for _ in range(REPEAT_WARN_COUNT):
+        drop()
+    levels = [(r.levelno, r.getMessage()) for r in caplog.records if r.name == "ais.client"]
+    disc = [lv for lv, m in levels if "disconnected" in m and "without data" not in m]
+    assert disc == [logging.INFO] * (REPEAT_WARN_COUNT - 1) + [logging.WARNING]  # N번째'부터' WARN
+    assert [lv for lv, m in levels if "recovered" in m] == [logging.INFO] * REPEAT_WARN_COUNT
+    assert feed.reconnects_quick == REPEAT_WARN_COUNT  # WARN 으로 오른 되풀이 끊김도 공백이 창 안에 닫혔으면 센다
+    caplog.clear()
+    drop(no_data_attempt=True)
+    assert any(r.levelno == logging.WARNING and "ended without data" in r.getMessage() for r in caplog.records)
+    assert feed.reconnects_quick == REPEAT_WARN_COUNT + 1  # 데이터 없이 끝난 시도가 끼어도 공백이 창 안이면 센다
+    drop(gap_s=RECOVER_WINDOW_S + 5)  # 창을 넘은 공백 — 세지 않는다(회복 줄 WARN)
+    assert feed.reconnects_quick == REPEAT_WARN_COUNT + 1

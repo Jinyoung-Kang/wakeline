@@ -13,7 +13,8 @@
 - 프로세스 재시작: 종료할 때 마지막 메시지 시각으로 공백을 열어 상태 해시에 남기고, 다음 기동이 그것(같은 공급자일 때만)을 이어받는다.
 - 진단(diag.py · ADR-014 부록 C): 연결마다 keepalive 왕복(ping_rtt)·websockets 수신 버퍼 깊이(ws_buffer)의 최근 최댓값, 발행 태스크가
   창마다 넣어 주는 공급자 지연 중앙값(lag_p50_s) — 끊김 로그의 맥락과 상태 해시에 쓴다. 끊겨 열린 공백(마지막 데이터부터)이 회복 창
-  (reconnect.RECOVER_WINDOW_S) 안에 닫힌 횟수(reconnects_quick — 그 끊김은 INFO 로만 남으므로 상태 해시 reconnects_quick_total 로 센다).
+  (reconnect.RECOVER_WINDOW_S) 안에 닫힌 횟수(reconnects_quick — 로그 수준과 상관없이 공백 길이로 센다: 대개 INFO 뿐이라 로그 화면에 없는
+  끊김이지만 되풀이 끊김 줄 · 데이터 없이 끝난 재연결 시도는 WARN 이어도 센다. 상태 해시 reconnects_quick_total).
 - 구역(계약 v4 §D): 연결마다 FeedState 하나. 공백에는 그 구역의 정규화한 상자 문자열(scope)을 **공백이 열린 순간** 값으로 붙인다 —
   데이터가 끊긴 곳이 그 영역이다(열린 사이 설정이 바뀌어도 바꾸지 않는다). fixture 재생은 구독 영역이 없어 scope 를 붙이지 않는다.
 """

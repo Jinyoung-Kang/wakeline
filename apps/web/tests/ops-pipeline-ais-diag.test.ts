@@ -2,13 +2,15 @@
  * /ops PIPELINE 탭의 ais 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기, GET /api/v1/ops/pipeline 의 ais.*):
  * - 최근 창 최댓값: loop_lag_max_s(이벤트 루프 지연) · queue_wait_max_s(원문 대기열에 머문 시간 — 지금 기다리는 맨 앞 원문 포함) ·
  *   queue_depth_max(원문 대기열 깊이) · ws_queue_max(websockets 수신 버퍼에 남은 프레임) · ping_rtt_max_s(keepalive 왕복).
- * - 누적: loop_stalls_total · reconnects_quick_total(끊겨 열린 공백이 회복 창 안에 닫힌 끊김 — 수집기는 INFO 로만 남기므로 여기서 센다).
+ * - 누적: loop_stalls_total · reconnects_quick_total(끊겨 열린 공백이 회복 창 안에 닫힌 끊김 — 로그 수준과 상관없이 공백 길이로 센다: 회복 줄은 INFO,
+ *   되풀이(창 안 N번째부터) 끊김 줄 · 데이터 없이 끝난 재연결 시도는 WARN 이어도 공백이 창 안에 닫히면 센다 — 리뷰 2026-09-30).
  * - 숫자로 된 수집기 설정(창 · 상한 · 시간 초과 · 회복 창 · 되풀이 WARN 기준 · 루프 틱 · 멈춤 · WARN 문턱)은 모두 응답에서 읽는다 — 웹이 들고 있지 않다.
  *   모르면 "—".
  * - 수신 버퍼가 상한 이상이면(꺼낸 뒤 남은 수라 상한과 같아도 그때 읽기가 멈춰 있었다) 그 사실만 적는다 — 한꺼번에 받은 묶음에서도 생기는 일이라
  *   결함 표시(주황)를 하지 않는다. 그 밖에도 판정하지 않는다(임계값을 지어내지 않는다).
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다(상한과 같은 값을 '아직 읽는다' 로 봄 · 주황 · 설명의 숫자 고정 · 깊이 행 없음).
  */
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -70,10 +72,13 @@ describe("ais receive diagnostics rows", () => {
   it("the chosen numbers in the explanations come from the response (labelled as the collector's choice) — none is hard-coded", () => {
     const quick = row(resp(), "reconnects_quick_total").title;
     expect(quick).toContain("30 s(수집기 고른 값)");
-    expect(quick).toContain("30분에 3번째");
+    expect(quick).toContain("30분에 3번째부터"); // 수집기는 N번째 '부터' WARN 한다(reconnect.py n >= repeat_warn_count)
+    // 되풀이 끊김은 끊김 줄이 WARN 이어도 공백이 창 안에 닫히면 센다 — 'INFO 로만' 이라고 하지 않는다(리뷰 2026-09-30)
+    expect(quick).not.toContain("INFO 로만");
+    expect(quick).toContain("로그 수준과 상관없이 공백 길이로 센다");
     const quick2 = row(resp({ reconnect_quick_window_s: 45, reconnect_warn_window_s: 3600, reconnect_warn_count: 5 }), "reconnects_quick_total").title;
     expect(quick2).toContain("45 s(수집기 고른 값)");
-    expect(quick2).toContain("60분에 5번째");
+    expect(quick2).toContain("60분에 5번째부터");
     expect(quick2).not.toContain("30 s");
     const stalls = row(resp({ loop_stall_s: 2, loop_warn_s: 8, loop_warn_every_s: 120 }), "loop_stalls_total").title;
     expect(stalls).toContain("2 s(수집기 고른 값)");
@@ -98,5 +103,22 @@ describe("ais receive diagnostics rows", () => {
     for (const k of ["loop_lag_max_s", "loop_stalls_total", "queue_wait_max_s", "queue_depth_max", "ws_queue_max", "ping_rtt_max_s", "reconnects_quick_total"]) expect(html).toContain(`data-key="${k}"`);
     expect(html).toMatch(/data-key="ws_queue_max" data-tone="muted"/);
     expect(html).toContain("상한 도달 — 그때 소켓 읽기가 잠시 멈춤");
+  });
+  it("the log_dropped rows name the log sinks' own limits — pinned to logsink.py and LogSink.java so a changed limit fails here (review 2026-09-30)", () => {
+    // 이 두 행(수집기 · ais — logsink.py, api — LogSink)의 숫자는 응답에 없어 글자로 적는다. 보내는 쪽 상수와 같은지 여기서 본다(글자만 남아 틀리지 않게)
+    const py = readFileSync(new URL("../../collector/wakeline_collector/logsink.py", import.meta.url), "utf8");
+    const java = readFileSync(new URL("../../api/src/main/java/dev/wakeline/logs/LogSink.java", import.meta.url), "utf8");
+    expect(py).toMatch(/^QUEUE_MAX = 500$/m);
+    expect(py).toMatch(/^QUEUE_MAX_BYTES = 2 \* 1024 \* 1024$/m);
+    expect(py).toMatch(/^ENTRY_MAX_BYTES = 8 \* 1024$/m);
+    expect(java).toMatch(/static final int QUEUE_MAX = 500;/);
+    expect(java).toMatch(/static final long QUEUE_MAX_BYTES = 2L \* 1024 \* 1024;/);
+    const rows = pipelineRows(resp());
+    for (const g of ["collector", "ais"] as const) {
+      const t = rows.find((r) => r.group === g && r.key === "log_dropped")!.title;
+      expect(t).toContain("대기열 상한(500건 · 2 MiB)");
+      expect(t).toContain("8 KiB 에 맞추지 못함");
+    }
+    expect(rows.find((r) => r.group === "api" && r.key === "log_dropped")!.title).toContain("대기열 상한(500건 · 2 MiB)");
   });
 });
