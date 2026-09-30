@@ -79,6 +79,66 @@ describe("traffic grid fill line (lib)", () => {
     expect(trafficGridFill({ ...HB, traffic_grid_fill_state: "idle", traffic_grid_fill_resume_at: "" }, NOW)!.state.text).toBe("물을 칸 없음");
   });
 
+  it("shows bbox tile progress from the collector's own fields (ADR-023 2026-10-01 bbox amendment) and nothing when a collector has no tiles", () => {
+    const tiles = {
+      ...HB,
+      traffic_grid_tiles_done: "147", traffic_grid_tiles_queued: "12",
+      traffic_grid_fill_pass_tiles: "151", traffic_grid_fill_pass_tile_cells: "29980", traffic_grid_fill_pass_tile_new: "17083",
+      traffic_grid_fill_pass_tile_stored: "17090",
+      traffic_grid_fill_pass_tile_splits: "1", traffic_grid_fill_pass_tile_errors: "0",
+    };
+    const v = trafficGridFill(tiles, NOW)!;
+    expect(v.items.find((i) => i.key === "tiles")).toMatchObject({ label: "bbox 타일", text: "끝 147 · 대기 12", tone: "muted" });
+    expect(v.items.find((i) => i.key === "tiles")!.title).toContain("32 km");
+    expect(v.pass.text).toBe(
+      "마지막 채우기 10-01 03:18:17 KST 끝 — 조회 290 → 찾음 268 · 해양격자에 없음 15 · 격자 밖 2 · 오류 5 · 타일 151 → 칸 29,980(새 17,083 · DB 저장 요청 17,090) · 나눔 1 · 오류 0",
+    );
+    // 타일 공급자가 없는 수집기(빈 값) · 예전 수집기(필드 없음)는 타일 항목 · 절을 싣지 않는다 — 0 으로 채우지 않는다
+    for (const hb of [HB, { ...HB, traffic_grid_tiles_done: "", traffic_grid_tiles_queued: "", traffic_grid_fill_pass_tiles: "" }]) {
+      const w = trafficGridFill(hb, NOW)!;
+      expect(w.items.find((i) => i.key === "tiles")).toBeUndefined();
+      expect(w.pass.text).not.toContain("타일");
+    }
+    expect(trafficGridFill({ ...tiles, traffic_grid_tiles_queued: "x" }, NOW)!.items.find((i) => i.key === "tiles")!.text).toBe("끝 147 · 대기 —");
+    expect(trafficGridFill({ ...tiles, traffic_grid_fill_state: "waiting_tiles", traffic_grid_fill_resume_at: "" }, NOW)!.state).toMatchObject({
+      text: "타일 진행 기록 읽기를 기다림", tone: "muted",
+    });
+    for (const t of texts(v)) expect(utcLeaks(t)).toEqual([]);
+  });
+
+  it("says 'done even after a restart' only when the collector reports that tile states are saved, and shows a paused tile breaker and incomplete tiles", () => {
+    // 검토 지적(2026-10-01): '끝 = 재기동 뒤에도 다시 묻지 않는 타일'은 redis 를 새 ACL 로 다시 띄우기 전(NOPERM)에는 거짓이었다 — 수집기가
+    // traffic_grid_tiles_persisted 로 알린 대로만 말한다
+    const base = { ...HB, traffic_grid_tiles_done: "147", traffic_grid_tiles_queued: "12", traffic_grid_fill_pass_tiles: "151",
+      traffic_grid_fill_pass_tile_cells: "29980", traffic_grid_fill_pass_tile_new: "17083", traffic_grid_fill_pass_tile_stored: "17090",
+      traffic_grid_fill_pass_tile_splits: "1", traffic_grid_fill_pass_tile_errors: "0" };
+    const tile = (hb: Record<string, string>) => trafficGridFill(hb, NOW)!.items.find((i) => i.key === "tiles")!;
+    const yes = tile({ ...base, traffic_grid_tiles_persisted: "yes" });
+    expect(yes).toMatchObject({ text: "끝 147 · 대기 12", tone: "muted" });
+    expect(yes.title).toContain("재기동 뒤에도");
+    const no = tile({ ...base, traffic_grid_tiles_persisted: "no" });
+    expect(no).toMatchObject({ text: "끝 147 · 대기 12 · 진행 기록 저장 안 됨", tone: "warn" });
+    expect(no.title).not.toContain("재기동 뒤에도");
+    expect(no.title).toContain("재기동하면 다시 묻는다");
+    for (const hb of [base, { ...base, traffic_grid_tiles_persisted: "" }]) expect(tile(hb).title).not.toContain("재기동 뒤에도"); // 모르면 말하지 않는다
+    // 타일만 쉬는 차단기(한 칸 조회는 계속) — 채우기 상태는 '조회 중'이어도 타일 항목이 알린다
+    const paused = tile({ ...base, traffic_grid_tiles_persisted: "yes", traffic_grid_fill_state: "filling", traffic_grid_tiles_resume_at: "2026-09-30T19:05:00Z" });
+    expect(paused).toMatchObject({ text: "끝 147 · 대기 12 · 연달아 오류로 쉼 · 다음 10-01 04:05 KST", tone: "warn" });
+    const v = trafficGridFill({ ...base, traffic_grid_fill_pass_tile_incomplete: "4" }, NOW)!;
+    expect(v.pass.text).toContain(" · 나눔 1 · 미완 4 · 오류 0");
+    expect(trafficGridFill(base, NOW)!.pass.text).toContain(" · 나눔 1 · 오류 0"); // 예전 수집기(필드 없음) — 0 으로 채우지 않는다
+    for (const t of [...texts(v), paused.text, paused.title, no.title]) expect(utcLeaks(t)).toEqual([]);
+  });
+
+  it("retry_wait and breaker titles cover tiles as well as ids", () => {
+    const retry = trafficGridFill({ ...HB, traffic_grid_fill_state: "retry_wait", traffic_grid_fill_resume_at: "2026-09-30T19:05:00Z" }, NOW)!.state;
+    expect(retry.title).toContain("타일");
+    expect(retry.title).not.toContain("남은 칸은 모두 조회 오류가 났던 칸이다");
+    const br = trafficGridFill({ ...HB, traffic_grid_fill_state: "breaker", traffic_grid_fill_resume_at: "2026-09-30T19:05:00Z" }, NOW)!.state;
+    expect(br.title).toContain("bbox 타일");
+    expect(br.title).not.toContain("채우기 전체를");
+  });
+
   it("a stale heartbeat (a stopped or crashed collector) shows its last time, not the dead process's state and numbers", () => {
     // 120 s 는 api(TrafficGridReader.HEARTBEAT_MAX_AGE_S)와 같은 선이다 — 딱 120 s 는 아직 지금 값
     expect(trafficGridFill(HB, Date.parse("2026-09-30T18:57:40Z"))!.items).toHaveLength(8);

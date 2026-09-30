@@ -23,17 +23,18 @@ export const HEARTBEAT_MAX_AGE_S = 120;
 
 export const FILL_LABEL = "연안 교통량 격자 위치";
 export const FILL_TITLE =
-  "해양교통안전공단 격자 번호의 위치(기하)를 해양수산부 격자 WFS 로 한 칸씩 묻는 수집기 작업(traffic_grid) — 수집기 heartbeat 값 그대로. " +
-  "배가 있는 칸은 스냅샷마다 바뀌어 새 칸이 계속 나타나므로 끝나는 때는 적지 않는다(ADR-023 2026-10-01 개정)";
+  "해양교통안전공단 격자 번호의 위치(기하)를 해양수산부 격자 WFS 로 묻는 수집기 작업(traffic_grid) — bbox 타일(32 km 상자 하나에 칸 수백 개)을 먼저, " +
+  "타일이 주지 않은 칸만 한 칸씩. 수집기 heartbeat 값 그대로. 배가 있는 칸은 스냅샷마다 바뀌어 새 칸이 계속 나타나므로 끝나는 때는 적지 않는다(ADR-023 2026-10-01 개정)";
 
 const STATE: Record<string, Omit<FillItem, "key" | "label">> = {
-  filling: { text: "조회 중", title: "위치도 부정 캐시 결과도 없는 칸을 묻는 중", tone: "ok" },
-  idle: { text: "물을 칸 없음", title: "대기열이 비었다 — 이 프로세스가 본 칸은 모두 위치를 알거나 부정 캐시(해양격자에 없음 · 격자 검사 실패 · 조회 실패)에 있다. 새 칸이 보이면 다시 묻는다", tone: "ok" },
-  retry_wait: { text: "오류 뒤 다시 물을 때를 기다림", title: "남은 칸은 모두 조회 오류가 났던 칸이다 — 칸마다 물러났다가 다시 묻고, 거듭 실패하면 한동안 '위치 조회 실패'로 뺀다(수집기 설정)", tone: "muted" },
+  filling: { text: "조회 중", title: "bbox 타일 · 위치도 부정 캐시 결과도 없는 칸을 묻는 중", tone: "ok" },
+  idle: { text: "물을 칸 없음", title: "대기열이 비었다 — 물을 타일이 없고, 이 프로세스가 본 칸은 모두 위치를 알거나 부정 캐시(해양격자에 없음 · 격자 검사 실패 · 조회 실패)에 있다. 새 칸이 보이면 다시 묻는다", tone: "ok" },
+  retry_wait: { text: "오류 뒤 다시 물을 때를 기다림", title: "남은 칸 · bbox 타일은 모두 조회 오류가 났던 것이다 — 칸 · 타일마다 물러났다가 다시 묻고, 거듭 실패한 칸은 한동안 '위치 조회 실패'로, 타일은 하루 동안 뺀다(수집기 설정)", tone: "muted" },
   waiting_db: { text: "위치 캐시(DB) 읽기를 기다림", title: "기동 뒤 marine_grid4 를 읽기 전에는 묻지 않는다(이미 아는 칸을 다시 묻지 않게) — 한동안 못 읽으면 DB 없이 묻는다", tone: "muted" },
+  waiting_tiles: { text: "타일 진행 기록 읽기를 기다림", title: "기동 뒤 Redis 의 bbox 타일 상태(wakeline:traffic_grid:tiles)를 읽기 전에는 묻지 않는다(끝난 타일을 다시 묻지 않게) — 한동안 못 읽으면 메모리로만 묻는다(수집기 로그 WARN 에 까닭)", tone: "muted" },
   hour_window: { text: "이 시의 채우기 몫을 다 씀", title: "해양수산부 시간 창(항만 입출항 색인과 함께 센다)에서 채우기 몫을 다 써 다음 정시까지 쉰다 — 계획한 속도 제한이지 공급자 오류가 아니다", tone: "muted" },
   daily_budget: { text: "하루 예산을 다 씀", title: "mof_grid4 하루 예산(매일 09:00 KST 에 새로 센다)을 다 써 쉰다 — 계획한 한도", tone: "muted" },
-  breaker: { text: "연달아 오류 — 잠시 쉼", title: "한 번에 WFS 조회 오류가 연달아 나 채우기 전체를 잠시 쉰다(키 · 서비스 장애에 예산을 쓰지 않게). 까닭은 공급자 표 mof_grid4 의 last error", tone: "warn" },
+  breaker: { text: "연달아 오류 — 잠시 쉼", title: "WFS 호출 오류가 연달아 나 그 종류(bbox 타일 · 한 칸 조회 — 차단기는 따로)를 잠시 쉬고, 지금은 쉬지 않는 쪽에도 물을 것이 없다(키 · 서비스 장애에 예산을 쓰지 않게). 까닭은 공급자 표 mof_grid4 의 last error", tone: "warn" },
   operator_off: { text: "운영자가 끔(mof_grid4)", title: "공급자 표에서 mof_grid4 가 꺼져 있어 묻지 않는다", tone: "warn" },
 };
 
@@ -105,14 +106,37 @@ export function trafficGridFill(collector: Record<string, unknown> | null | unde
     item("not_found", "해양격자에 없음", num(count(c[`${P}not_found`])), "WFS 가 0건으로 답한 칸 — 부정 캐시(기한이 지나 다시 보이면 다시 묻는다)"),
     item("off_grid", "격자 검사 실패", num(count(c[`${P}off_grid`])), "받은 기하가 격자 한 칸이 아니라 격리한 칸 — 부정 캐시"),
     item("failed", "위치 조회 실패", num(count(c[`${P}failed`])), "조회가 거듭 실패해 한동안 묻지 않는 칸"),
-    item("calls", "오늘 조회", num(count(c[`${P}calls_wfs`])), "mof_grid4 가 이 예산 날(매일 09:00 KST 에 새로 센다)에 쓴 호출"),
+    item("calls", "오늘 조회", num(count(c[`${P}calls_wfs`])), "mof_grid4 가 이 예산 날(매일 09:00 KST 에 새로 센다)에 쓴 호출 — bbox 타일 하나 · 한 칸 조회 하나가 각각 1"),
   ];
+  // bbox 타일(ADR-023 2026-10-01 bbox 개정) — 수집기가 두 값 가운데 하나라도 수로 알렸을 때만(타일 공급자가 없거나 예전 수집기면 싣지 않는다)
+  const tilesDone = count(c[`${P}tiles_done`]), tilesQueued = count(c[`${P}tiles_queued`]);
+  if (tilesDone != null || tilesQueued != null) {
+    // '끝'이 재기동을 넘는지는 수집기가 알린 대로만(검토 지적 2026-10-01 — 상태를 적지 못하는 동안 '재기동 뒤에도'는 거짓이었다). 모르면 말하지 않는다
+    const persisted = c[`${P}tiles_persisted`];
+    const done = persisted === "yes"
+      ? "끝 = 다시 묻지 않는 타일(재기동 뒤에도 — 진행 기록을 Redis 에 적는다)"
+      : persisted === "no"
+        ? "끝 = 이 수집기 프로세스에서는 다시 묻지 않는 타일 — 진행 기록(wakeline:traffic_grid:tiles)을 읽거나 적지 못해 재기동하면 다시 묻는다(수집기 로그에 까닭)"
+        : "끝 = 다시 묻지 않는 타일";
+    const pausedUntil = at(`${P}tiles_resume_at`);
+    const text = `끝 ${num(tilesDone)} · 대기 ${num(tilesQueued)}` + (persisted === "no" ? " · 진행 기록 저장 안 됨" : "") +
+      (pausedUntil ? ` · 연달아 오류로 쉼 · 다음 ${fmtKst(pausedUntil, { seconds: false })}` : "");
+    items.splice(2, 0, item("tiles", "bbox 타일", text,
+      `32 km 상자(EPSG:5179) 하나를 한 번에 묻는다 — 칸 수백 개. ${done}, 대기 = 물을 타일(아는 칸 · 한 칸 조회로 찾은 칸 · ` +
+      "받은 타일 가장자리의 모르던 칸이 가리킨 곳 — 칸 번호로 위치를 짐작하지 않는다). 잘렸을 수 있으면 넷으로 나눠 다시 묻는다" +
+      (pausedUntil ? `. 타일 호출이 연달아 실패해 타일만 ${fmtKst(pausedUntil)}까지 쉰다 — 한 칸 조회는 계속한다` : ""),
+      persisted === "no" || pausedUntil ? "warn" : "muted"));
+  }
   const passAt = at(`${P}fill_pass_at`);
   const n = (k: string) => num(count(c[`${P}fill_pass_${k}`]));
+  const tilePart = count(c[`${P}fill_pass_tiles`]) == null
+    ? ""
+    : ` · 타일 ${n("tiles")} → 칸 ${n("tile_cells")}(새 ${n("tile_new")} · DB 저장 요청 ${n("tile_stored")}) · 나눔 ${n("tile_splits")}` +
+      (count(c[`${P}fill_pass_tile_incomplete`]) == null ? "" : ` · 미완 ${n("tile_incomplete")}`) + ` · 오류 ${n("tile_errors")}`;
   const pass: FillItem = passAt
     ? {
       key: "pass", label: "마지막 채우기",
-      text: `마지막 채우기 ${fmtKst(passAt)} 끝 — 조회 ${n("lookups")} → 찾음 ${n("found")} · 해양격자에 없음 ${n("not_found")} · 격자 밖 ${n("off_grid")} · 오류 ${n("errors")}`,
+      text: `마지막 채우기 ${fmtKst(passAt)} 끝 — 조회 ${n("lookups")} → 찾음 ${n("found")} · 해양격자에 없음 ${n("not_found")} · 격자 밖 ${n("off_grid")} · 오류 ${n("errors")}${tilePart}`,
       title: "채우기 한 번 = 다시 시작한 때부터 멈춘 때(시간 창 · 하루 예산 · 연달아 오류 · 끔 · 물을 칸 없음)까지. 수집기 로그의 'geometry fill pass' 줄과 같은 수(로그 시각은 발행한 그대로)",
       tone: "muted",
     }

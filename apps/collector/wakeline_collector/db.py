@@ -95,6 +95,11 @@ _MARINE_GRID4_UPSERT = """INSERT INTO marine_grid4 (grid_no, lat_min, lon_min, l
 _MARINE_GRID4_SELECT = "SELECT grid_no, lat_min, lon_min, lat_max, lon_max, gid FROM marine_grid4"
 
 
+def _marine_grid4_tuples(rows: Any) -> list[tuple[str, float, float, float, float, int | None]]:
+    """marine_grid4 행(Record) → tuple — 스레드에서 부른다(read_marine_grid4)."""
+    return [(r["grid_no"], r["lat_min"], r["lon_min"], r["lat_max"], r["lon_max"], r["gid"]) for r in rows]
+
+
 # 한국 항만 입출항 색인(ADR-022 개정 · V15 port_call · port_call_coverage). 열 순서 = PortCallRow 의 필드 순서(키 넷 · listed_date · 나머지).
 _PORT_CALL_COLS = (
     "prt_ag_cd", "clsgn", "etrypt_year", "etrypt_co", "listed_date", "prt_ag_nm", "vssl_nm", "nationality_cd", "nationality_nm", "kind_cd",
@@ -560,7 +565,9 @@ class Db:
             self.failures += 1
             self._warn("db: marine_grid4 read failed (%s) — geometry cache stays in memory", type(e).__name__)
             return None
-        return [(r["grid_no"], r["lat_min"], r["lon_min"], r["lat_max"], r["lon_max"], r["gid"]) for r in rows]
+        # 아는 칸이 연안 전체(10만)로 늘면 Record → tuple 만 약 46 ms(검토 지적 2026-10-01, 잰 값) — 이벤트 루프 밖에서. asyncpg 의 행 해독 자체는
+        # fetch 안(루프 위)에 남는다 — 기동 때 한 번
+        return await asyncio.to_thread(_marine_grid4_tuples, rows)
 
     # ---- 한국 항만 입출항 색인(ADR-022 개정 · V15) — 큐를 거치지 않는 직접 읽기 · 트랜잭션 ---------------------------------------------------------
     async def read_port_call_coverage(self) -> dict[str, Coverage] | None:

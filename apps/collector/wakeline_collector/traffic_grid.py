@@ -25,12 +25,11 @@ from typing import Any
 
 import orjson
 
-from wakeline_collector.marine_grid import CELL_DEG, Cell
+from wakeline_collector.marine_grid import CELL_DEG, GRID_ID_RE, Cell
 
-__all__ = ["CELL_DEG", "KST", "KomsaApiError", "KomsaSnapshot", "TrafficItem", "build_payload", "parse_komsa"]
+__all__ = ["CELL_DEG", "GRID_ID_RE", "KST", "KomsaApiError", "KomsaSnapshot", "TrafficItem", "build_payload", "parse_komsa"]
 
 KST = timezone(timedelta(hours=9))
-GRID_ID_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
 VMTC_MAX = 100_000  # 칸 하나의 척수 상한(형식 검사 — 확인한 최대 102)
 REG_DT_FORMAT = "%Y-%m-%d %H:%M:%S"
 _XML_TAG = re.compile(rb"<(returnReasonCode|returnAuthMsg|errMsg)>([^<]{0,120})</\1>")

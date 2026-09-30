@@ -264,6 +264,41 @@ def test_doctype_and_entities_are_refused_before_parsing():
         parse_wfs(body, "GR4_F2K41_C3")
 
 
+def _never_parsed(monkeypatch):
+    from wakeline_collector import marine_grid
+
+    def boom(*_a, **_k):
+        raise AssertionError("the XML parser was reached")
+
+    monkeypatch.setattr(marine_grid.ET, "fromstring", boom)
+
+
+def test_a_utf16_body_is_refused_before_parsing_so_its_dtd_never_reaches_expat(monkeypatch):
+    """검토 지적(2026-10-01): DOCTYPE · ENTITY 거절이 원본 바이트만 훑어 UTF-16 본문('<\\0!\\0E\\0N…')은 지나갔고 expat 가 그 DTD 를 풀었다
+    (10단 엔티티 1.7 KB → 51 MB · 380 ms, expat 자체 상한에서 멈춤). 확인한 응답은 UTF-8 이다 — UTF-8 이 아니거나 NUL 이 있으면 해석하지 않는다."""
+    lol = "".join(f'<!ENTITY l{i} "{("&l" + str(i - 1) + ";") * 10}">' for i in range(1, 10))
+    doc = f'<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY l0 "lol">{lol}]><x>&l9;</x>'
+    _never_parsed(monkeypatch)
+    for body in (doc.encode("utf-16"), doc.encode("utf-16-le"), FIX.read_text().encode("utf-16")):
+        with pytest.raises(WfsError, match="not UTF-8|NUL"):
+            parse_wfs(body, "GR4_F2K41_C3")
+
+
+def test_a_doctype_after_the_first_4_kib_is_refused_too(monkeypatch):
+    """DOCTYPE 는 앞 4 KiB 만 찾았다 — 긴 주석 뒤의 DOCTYPE(외부 DTD)은 해석까지 갔다. 본문 전체를 본다."""
+    real = FIX.read_text()
+    head, rest = real.split("?>", 1)
+    body = f'{head}?><!--{"x" * 5000}--><!DOCTYPE x SYSTEM "http://127.0.0.1:9/evil.dtd">{rest}'.encode()
+    _never_parsed(monkeypatch)
+    with pytest.raises(WfsError, match="DOCTYPE"):
+        parse_wfs(body, "GR4_F2K41_C3")
+
+
+def test_the_real_utf8_response_still_parses_and_a_utf8_bom_is_fine():
+    assert parse_wfs(FIX.read_bytes(), "GR4_F2K41_C3").kind == "found"
+    assert parse_wfs(b"\xef\xbb\xbf" + FIX.read_bytes(), "GR4_F2K41_C3").kind == "found"
+
+
 def test_oversized_body_is_refused():
     with pytest.raises(WfsError, match="too large"):
         parse_wfs(b"<a>" + b" " * (300 * 1024) + b"</a>", "GR4_F2K41_C3")
@@ -273,3 +308,54 @@ def test_bad_gid_is_unknown_not_invented():
     body = FIX.read_text().replace("<ofbd-DB:gid>167305</ofbd-DB:gid>", "<ofbd-DB:gid>x1</ofbd-DB:gid>").encode()
     r = parse_wfs(body, "GR4_F2K41_C3")
     assert r.kind == "found" and r.cell is not None and r.cell.gid is None
+
+
+# ---- 아는 칸 지도의 메모리(ADR-023 2026-10-01 bbox 개정) -------------------------------------------------------------------------
+# bbox 타일은 한 번에 수백 칸을 준다 — 아는 칸이 스냅샷 크기(수천)가 아니라 연안 전체(시뮬레이션 약 10만)로 는다. 수집기 한도는 512 MiB 다.
+
+
+def test_snapped_lattice_values_are_shared_objects():
+    """같은 격자점은 같은 float 객체 하나 — 칸 10만 개가 위도 · 경도 값 수백 개를 나눠 쓴다(칸마다 float 넷을 새로 만들지 않는다)."""
+    a, b = snap(37.45), snap(37.4500000004)
+    assert a == b == 37.45 and a is b
+    assert snap(126.6) is snap(126.5999999996)
+
+
+def test_the_known_cell_map_stays_compact_at_100k_cells():
+    """잰 값(tracemalloc, 합성 칸 — 행을 DB 에서 온 것처럼 재는 창 안에서 새 문자열 · 새 정수로 만들고, 읽은 뒤 버린다): 10만 칸에 남는 것
+    약 203 B/칸(20.3 MB), 읽는 동안 최고 약 404 B/칸(40 MB — asyncpg Record 는 빼고), 2만 칸이면 약 187 B/칸. 예전 시험은 행(번호 문자열 53 B ·
+    gid 정수 28 B)을 재기 전에 만들어 그 둘을 세지 않았다 — 약 119 B/칸(고치기 전 254 B/칸도 같은 방법의 값)으로 적었다(검토 지적 2026-10-01).
+    상한 240 B/칸 · 최고 480 B/칸은 잰 값 위의 여유(파이썬 판 차이). 수집기 한도 512 MiB."""
+    import gc
+    import tracemalloc
+
+    from wakeline_collector.jobs.traffic_grid import GridGeometry
+
+    n = 20_000
+    gc.collect()
+    tracemalloc.start()
+    try:
+        g = GridGeometry()
+        rows = [
+            (
+                f"GR4_S{i:06d}",
+                32.0 + (i // 250) * 0.025,
+                124.0 + (i % 250) * 0.025,
+                32.025 + (i // 250) * 0.025,
+                124.025 + (i % 250) * 0.025,
+                100_000 + i,
+            )
+            for i in range(n)
+        ]
+        ok, bad = g.load_cells(rows)
+        del rows
+        gc.collect()
+        used, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert (ok, bad) == (n, 0)
+    assert used / ok < 240, f"{used / ok:.0f} B per known cell"
+    assert peak / ok < 480, f"peak {peak / ok:.0f} B per known cell"
+    c = g.cells["GR4_S000000"]
+    assert not hasattr(c, "__dict__")
+    assert c.lat_max is g.cells["GR4_S000250"].lat_min  # 이웃 칸의 경계 값도 같은 객체

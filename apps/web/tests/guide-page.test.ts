@@ -252,11 +252,14 @@ describe("features the guide describes exist in the screens", () => {
     expect(section(render(EMPTY), "dashboard-legend")).toContain("연안 교통량");
     // ADR-023 2026-10-01 개정: 배가 있는 칸이 바뀌어 새 칸이 계속 나타난다 — 채우기가 끝나는 때(예전 '처음 약 18시간 이상')를 말하지 않고 속도 한도만
     expect(layers).not.toMatch(/18시간/);
-    expect(layers).toMatch(/시간당 많아야 290칸[^.]*하루 6,000칸[^.]*모든 칸이 보이게 되는 때는 적지 않습니다/);
+    expect(layers).toMatch(/시간당 많아야 290번[^.]*하루 6,000번[^.]*모든 칸이 보이게 되는 때는 적지 않습니다/);
+    // 2026-10-01 bbox 개정: 칸마다 한 번이 아니라 상자(bbox) 하나에 칸 수백 개 — 남은 칸만 한 칸씩. 위치는 여전히 WFS 기하에서만
+    expect(layers).toMatch(/상자\(bbox\) 하나에 그 안의 칸을 모두[^.]*상자가 주지 않은 칸만 한 칸씩/);
+    expect(layers).not.toMatch(/칸마다 한 번 받아/);
   });
   it("the ops providers tab explains the traffic-grid fill row and that a stale heartbeat shows no numbers", () => {
     const ops = section(render(EMPTY), "ops-dashboard");
-    expect(ops).toMatch(/‘연안 교통량 격자 위치’ 줄[^.]*heartbeat 그대로[^.]*끝나는 때는 적지 않음/);
+    expect(ops).toMatch(/‘연안 교통량 격자 위치’ 줄[^.]*heartbeat 그대로[^.]*bbox 타일\(끝 · 대기\)[^.]*끝나는 때는 적지 않음/);
     expect(ops).toMatch(/120 s 넘게 지났으면 수 대신 ‘heartbeat 오래됨 — 마지막 …’/);
   });
   it("2.6 explains the observed reception layer (ADR-027): measured cells, not the subscription area, the partial-window notice and the chip count", () => {

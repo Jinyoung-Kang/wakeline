@@ -452,3 +452,68 @@ async def test_kma_missing_streak_reads_and_writes_under_the_collector_acl(admin
         assert meta["latest_tm"] == "202609271240" and await admin.exists(mod.KEY_FRAME.format(tm="202609271240")) == 1
     finally:
         await admin.delete(*keys, mod.KEY_FRAME.format(tm="202609271240"))
+
+
+async def test_traffic_grid_tile_states_under_collector_acl(admin, collector):
+    """ADR-023 2026-10-01 bbox 개정: 수집기 규칙으로 bbox 타일 상태 해시(wakeline:traffic_grid:tiles)를 HSET · HGETALL 하고(재기동 뒤 다시 묻지
+    않는다), 지우기(DEL · HDEL) · 덮어쓰기(SET)는 거부된다. 합성 서버(tests/wfs_tiles — 가정)로 타일 하나를 받는다."""
+    from test_traffic_grid_job import Clock, FakeKomsa, komsa_body
+    from test_traffic_grid_tile_job import A, CallDb, GridWfs, home
+    from wfs_tiles import FakeGrid
+
+    from wakeline_collector.budget import hour_key
+    from wakeline_collector.jobs.context import JobContext
+    from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, SNAPSHOT_KEY, TILES_KEY, TrafficGridJob
+    from wakeline_collector.publisher import Publisher
+    from wakeline_collector.runtime_settings import RuntimeSettings
+
+    clock = Clock()
+    keys = (
+        SNAPSHOT_KEY,
+        NEGATIVE_KEY,
+        TILES_KEY,
+        day_key("komsa_traffic"),
+        day_key("mof_grid4"),
+        hour_key("komsa_traffic", clock()),
+        hour_key("mof", clock()),
+        "wakeline:provider:komsa_traffic",
+        "wakeline:provider:mof_grid4",
+    )
+    await admin.delete(*keys)
+    try:
+        grid = FakeGrid()
+        ids = home(grid, A)
+        store = {ids[0]: grid.cell(ids[0])}  # marine_grid4 흉내 — 두 프로세스가 나눠 쓴다
+
+        def make() -> tuple[TrafficGridJob, GridWfs]:
+            ctx = JobContext(
+                budget=Budget(collector, {"komsa_traffic": 400, "mof_grid4": 6000}),
+                db=CallDb(store),
+                publisher=Publisher(collector),
+                raw=__import__("fakes").FakeRaw(),
+                status=ProviderStatus(collector),
+                rt=RuntimeSettings(collector),
+                fixture=False,
+            )
+            wfs = GridWfs(grid)
+            body = komsa_body(items=[(g, 5, 1.0) for g in ids[1:4]])
+            return TrafficGridJob(FakeKomsa(clock, body), wfs, ctx, tiles=wfs, now=clock), wfs  # type: ignore[arg-type]
+
+        job, wfs = make()
+        await job.run_once()
+        assert wfs.boxes == [A.box]
+        assert orjson.loads((await admin.hgetall(TILES_KEY))[A.key])["status"] == "done"
+        assert (await admin.hgetall(hour_key("mof", clock())))["used"] == "1"
+        again, wfs2 = make()  # 다시 시작 — 끝난 타일도, 그 타일이 준 칸도 다시 묻지 않는다
+        await again.run_once()
+        assert wfs2.boxes == [] and wfs2.asked == []
+        for call in (
+            collector.delete(TILES_KEY),
+            collector.hdel(TILES_KEY, A.key),
+            collector.set(TILES_KEY, "x"),
+            collector.expire(TILES_KEY, 1),
+        ):
+            with pytest.raises(NoPermissionError):
+                await call
+    finally:
+        await admin.delete(*keys)

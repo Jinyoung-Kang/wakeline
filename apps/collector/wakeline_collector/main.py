@@ -64,6 +64,12 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
 
 
+def traffic_grid_job(http: HttpClient, key: str, ctx: JobContext) -> TrafficGridJob:
+    """연안 교통량(ADR-023). 격자 기하는 bbox 타일을 먼저 묻는다 — 한 칸 조회와 같은 공급자 · 같은 예산(mof_grid4 · 해양수산부 시간 창), 2026-10-01 bbox 개정."""
+    grid = Grid4WfsProvider(http, key)
+    return TrafficGridJob(KomsaTrafficProvider(http, key), grid, ctx, tiles=grid)
+
+
 def secret_values(s: Settings) -> list[str | None]:
     """값으로 가릴 설정 비밀값(R-83). 공공데이터포털 키는 모양 네 가지 모두(원문 · 디코딩 · 퍼센트 인코딩 · + 인코딩 — service_key_forms,
     ADR-022 · ADR-023: 세 서비스 공통 · 응답이 어느 형태로 되돌려 줘도 가린다)."""
@@ -209,7 +215,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
     # 연안 교통량(ADR-023): fixture 모드는 외부 호출이 없으므로 키를 넘기지 않는다(작업이 state fixture 로 알린다)
     dgk = "" if fixture else settings.data_go_kr_service_key
-    traffic = TrafficGridJob(KomsaTrafficProvider(http, dgk), Grid4WfsProvider(http, dgk), ctx)
+    traffic = traffic_grid_job(http, dgk, ctx)
     if settings.demand_enabled:
         # 노선(계약 v4 §A · G A-2): 선택한 항공기의 콜사인만 adsbdb 에 묻는다. fixture 모드는 외부 호출이 없으므로 묻지 않고
         # 요청된 콜사인에 status "disabled" 를 쓴다(화면이 "노선 조회 중" 에 머물지 않게).

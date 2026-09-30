@@ -126,8 +126,8 @@ class RedisAclRulesTest(unittest.TestCase):
             ("set",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames", "~wakeline:route:*", "~wakeline:traffic_grid"],
             ("del",): ["~wakeline:radar_kr:frame:*", "~wakeline:radar_kr:frames"],
             ("expire",): ["~budget:*", "~wakeline:provider:*:ratelimit:*"],
-            ("hgetall", "hset"): ["~wakeline:traffic_grid:negative"],
-        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만, 연안 교통량 부정 캐시는 HSET·HGETALL 만 — "
+            ("hgetall", "hset"): ["~wakeline:traffic_grid:negative", "~wakeline:traffic_grid:tiles"],
+        }, "SET 은 문자열 키에만, DEL 은 레이더 프레임에만, EXPIRE 는 예산 키(Lua)·429 이력 해시에만, 연안 교통량 부정 캐시 · 타일 상태는 HSET·HGETALL 만 — "
            "스트림·다른 해시에는 닿지 않는다")
 
     def test_collector_expire_reaches_only_the_429_history_among_provider_keys(self):
@@ -197,8 +197,9 @@ class RedisAclRulesTest(unittest.TestCase):
                 self.assertEqual(covers(user, "wakeline:logs:client"), [])
                 self.assertEqual(covers(user, "wakeline:logs"), ["%W~wakeline:logs"])
 
-    # --- ADR-023: 연안 교통량 스냅샷 wakeline:traffic_grid(SET) · 부정 캐시 wakeline:traffic_grid:negative(HSET · HGETALL) ---
-    def test_collector_reaches_the_two_traffic_grid_keys_only_through_selectors(self):
+    # --- ADR-023: 연안 교통량 스냅샷 wakeline:traffic_grid(SET) · 부정 캐시 wakeline:traffic_grid:negative · bbox 타일 상태
+    #     wakeline:traffic_grid:tiles(2026-10-01 bbox 개정)(HSET · HGETALL) ---
+    def test_collector_reaches_the_traffic_grid_keys_only_through_selectors(self):
         """루트 키 목록에 두면 루트 명령 전부(HDEL · HINCRBY · XADD …)가 그 키에 닿는다(검토 지적) — 셀렉터로 쓰는 명령만 준다.
         SET 에 EX 를 붙이게 강제하는 ACL 은 없다: 수집기가 늘 EX 1200 을 붙이고, 실제 방어선은 api 의 regDt 나이 판정(stale)이다."""
         import fnmatch
@@ -208,12 +209,12 @@ class RedisAclRulesTest(unittest.TestCase):
         traffic = [s for s in sels if any("traffic" in k for k in s)]
         self.assertEqual(sorted(sorted(s) for s in traffic), sorted([
             sorted(["~wakeline:route:*", "~wakeline:radar_kr:frames", "~wakeline:radar_kr:frame:*", "~wakeline:traffic_grid", "+set"]),
-            sorted(["~wakeline:traffic_grid:negative", "+hset", "+hgetall"]),
-        ]), "스냅샷은 SET 만, 부정 캐시는 HSET · HGETALL 만 — 정확한 이름(와일드카드 없음)")
+            sorted(["~wakeline:traffic_grid:negative", "~wakeline:traffic_grid:tiles", "+hset", "+hgetall"]),
+        ]), "스냅샷은 SET 만, 부정 캐시 · 타일 상태는 HSET · HGETALL 만 — 정확한 이름(와일드카드 없음)")
         for sel in sels:
             pats = [k.split("~", 1)[1] for k in sel if k.startswith("~")]
             cmds = {c for c in sel if c.startswith("+")}
-            for key in ("wakeline:traffic_grid", "wakeline:traffic_grid:negative"):
+            for key in ("wakeline:traffic_grid", "wakeline:traffic_grid:negative", "wakeline:traffic_grid:tiles"):
                 if any(fnmatch.fnmatchcase(key, p) for p in pats):
                     self.assertFalse(cmds & {"+del", "+expire", "+hdel", "+hincrby", "+xadd", "+get"}, f"{key}: {cmds}")
 
