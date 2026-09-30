@@ -525,29 +525,38 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   `# file not exist (RDR_CMP_HSR_PUB_<tm>.bin.gz)` 로 답했다(0800 · 0810 은 gzip). 내려받기에 ext=Y · ext=K 를 붙여도 PUB 를 찾고, 문서에는 tm · data · cmp · authKey 와
   PUB 파일 이름만 있다 — 공급자 쪽에서 내려받기 파일이 멈춘 것이고 우리 해석 문제가 아니다. 결함 셋: tm 마다 3번 뒤 WARN(5분마다 같은 지문 — 로그 화면이 그것으로 찼다),
   저장한 프레임이 없는 주기도 실행 'ok' · 공급자 LAST SUCCESS 갱신(RECORDS 0 · FAILS 0), 까닭이 어디에도 없음(KMA 칩은 나이로 STALE 만).
-  - 수집기(`jobs/kma_radar.py`): tm 이 R-03 의 3번 모두 없다고 답했고 그보다 새 프레임을 저장하지 못했으면 연속(`MissingStreak` — 첫 tm · 없다고 답한 서로 다른 tm 수 ·
-    마지막 확인 · 답에 적힌 파일 이름 · 목록이 그 tm 에 싣는 종류)을 연다. 연 순간 WARN 한 번, 그 뒤로는 `MISSING_REMIND_S`(60분 — 선택값)마다 한 번만, gzip 이 다시 오면
-    INFO(공백 길이 — 첫 tm 부터 다시 온 tm 까지). 연속 동안은 목록의 가장 새 tm(저장 안 됨 · 해석 불가 아님) 하나만 주기마다 확인한다(예산 `budget:kma_radar` 목록 1 + 확인 1 —
-    전에는 목록 1 + 바이너리 4 = 하루 1,440 > 한도 1,000). 회복 뒤에는 보관 창의 빈 곳을 전처럼 다시 시도하고, 알린 공백 안의 tm 을 포기할 때는 INFO.
-    더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번). 목록 줄의 종류(EXT · KMA …)는 공급자가 파일 이름에서 읽어 tm 마다 싣는다
+  - 수집기(`jobs/kma_radar.py`): tm 이 R-03 의 3번 모두 없다고 답했고 그보다 새 프레임을 저장하지 못했으면 연속(`MissingStreak` — 첫 tm · 마지막 tm · 없다고 답한
+    서로 다른 tm 수(확인한 tm 마다 한 번 — 확인하지 않은 tm 은 세지 않는다) · 마지막 확인 · 답에 적힌 파일 이름 · 목록이 그 tm 에 싣는 종류)을 연다. 연 순간 WARN 한 번,
+    그 뒤로는 `MISSING_REMIND_S`(60분 — 선택값)마다 주기 끝에 한 번만, gzip 이 다시 오면 INFO(공백 길이 — 첫 tm 부터 다시 온 tm 까지). 연속 동안은 주기마다 두 tm 만
+    확인한다(`streak_probes` — 저장 안 됨 · 해석 불가 아님): 목록의 가장 새 tm 과, 첫 tm 이후이면서 `MISSING_RECHECK_S`(10분 — 선택값, R-03 의 마지막 시도 나이) 넘게
+    앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03 — 2026-09-28 첫 시도에 182 중 14 tm) 때문이다: 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은
+    아직 없어서 연속이 닫히지 않았다(리뷰). 예산 `budget:kma_radar` 주기당 목록 1 + 확인 2 = 하루 864 < 한도 1,000(전에는 목록 1 + 바이너리 4 = 하루 1,440).
+    회복 뒤에는 보관 창의 빈 곳을 전처럼 다시 시도하고, 알린 공백 안의 tm 을 포기할 때는 INFO — 알린 공백은 meta 해시에도 남겨 다시 띄운 수집기도 읽는다
+    (끝 tm 이 `MISSING_GAP_KEEP_S` 3 h 를 넘으면 버린다). 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
+    `KMA_APIHUB_KEY` 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 연속 중 목록 호출이 실패하면 실행 'error', 연속과 마지막 확인은 그대로다. 목록 줄의 종류(EXT · KMA …)는 공급자가 파일 이름에서 읽어 tm 마다 싣는다
     (`parse_file_kinds` — 목록 글자 그대로). 수집기를 다시 띄우면 마지막 확인이 `MISSING_CARRY_S`(15분 — 선택값) 안인 연속만 이어받고, 아니면 지운다.
-  - 실행 기록(`ingest_run.status`): 프레임을 저장했거나 새로 받을 tm 이 없으면 `ok`, 새 tm 이 있었는데 저장한 프레임이 없고 '파일 없음' 답이 있었으면 `missing`,
-    해석 불가만이면 `quarantined`(오류 글자 = 마지막 답 · 연속 요약). `ok` 가 아닌 주기는 공급자 해시의 `last_success_at` · `last_records` 를 갱신하지 않는다
+  - 실행 기록(`ingest_run.status`, 주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 `ok`, 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
+    거절돼 멈췄으면 `budget_exhausted`(· `budget_unavailable`), '파일 없음' 답이 있었으면 `missing`, 해석 불가만이면 `quarantined`(오류 글자 = 마지막 답 · 연속 요약). `ok` 가 아닌 주기는 공급자 해시의 `last_success_at` · `last_records` 를 갱신하지 않는다
     (예산 사용량은 쓴다 · `consecutive_failures` 는 호출 실패만 센다 — 그대로).
   - 수집기 해시: `wakeline:radar_kr:meta` 와 `wakeline:provider:kma_radar` 에 `missing_since_tm` · `missing_last_tm` · `missing_tms` · `missing_checked_at`(UTC ISO) ·
-    `missing_file` · `missing_listed`("EXT,KMA") — 닫으면 빈 값. 쓰기에 실패하면 다음 주기에 다시 쓴다.
+    `missing_file` · `missing_listed`("EXT,KMA") — 닫으면 빈 값. 쓰기에 실패하면 다음 주기에 다시 쓴다. meta 해시에만 알린 공백 `missing_gap_from` · `missing_gap_to`
+    (수집기 내부 값 — api 는 싣지 않는다).
   - api(R-72 — `KrRadarMissing`): `/radar/kr` 와 `/status` · WS `status` 의 `radar_kr` 에 `missing {since_tm, last_tm, tms, checked_at, file?, listed?}` — 연속이 없으면 키가 없다.
     핵심 값(since_tm · last_tm ≥ since_tm · tms ≥ 1 · 시간대 있는 checked_at)이 하나라도 틀리면 연속 전체를 빼고 센다(`wakeline_radar_kr_parse_errors_total{field="missing"}`),
     파일 이름(`RDR_CMP_…_<tm>.bin.gz`) · 종류(`[A-Z]{1,8}` 최대 8개)만 틀리면 그 키만 뺀다. `/radar/kr` 의 ETag 에 든다 — 프레임이 그대로여도 연속이 바뀌면 304 가 아니다.
     `/ops/providers` 는 공급자 해시를 그대로 싣는다(웹이 형식을 본다).
   - 계약 검사: `schemas/ws/server.v1.json` `status.radar_kr.missing` · `tools/rest_contract_check.py` `KR_MISSING`(교차 검사: last_tm ≥ since_tm, 파일 이름의 tm 은 그 사이) ·
     기록 표본 `radar_kr_missing`(연속 중 — missing 필수) · `status_ais`(missing 필수) · 웹 검증기 `lib/ws-validate` `KR_MISSING`(웹 표본 `ws-samples.v1.json` 을 다시 만들었다).
-  - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): 한 줄 `기상청 내려받기 파일(PUB) 없음 — tm 08:15 KST 부터 20개(마지막 tm 09:50 KST) ·
-    목록에는 EXT · 마지막 확인 09:50:31 KST`(PUB 는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다). KMA 칩 낱말 `파일 없음`(주의 이상 · 줄에 고정, 문장은 title) ·
+  - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): 잰 것만 — 한 줄 `기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST ·
+    확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST`(구간 = 없다는 답을 받은 가장 이른 · 가장 새 tm, 수 = 확인한 서로 다른 tm — 구간의 tm 이 모두
+    그만큼이라고 하지 않는다. PUB 는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다). 마지막 확인이 `KR_MISSING_CHECK_STALE_MIN`(15분 = 수집기 `MISSING_CARRY_S`,
+    시험이 견준다)을 넘으면(서버 기준 지금) `확인 멈춤`을 붙인다 — 수집기가 멈추면 연속을 지울 주체가 없다. 나이 경계는 웹이 둔다(운영 표는 api 가 검증하지 않는 공급자
+    해시를 읽으므로 한 곳 — `isKrRadarStale` 의 나이 쪽과 같은 방식). KMA 칩 낱말 `파일 없음`(`파일 없음 · 확인 멈춤`, 주의 이상 · 줄에 고정, 문장은 title) ·
     상세 행 `기상청 내려받기 파일` · 레이더 패널 · 범례 · 타임라인(쓸 수 있으면 `파일 없음` 표시, 보관 프레임이 만료됐으면 `기상청 레이더 없음 — …`) · 운영 공급자 표
     (kma_radar 행 아래 주의 줄) · 실행 상태 `missing` · `quarantined` 는 주황과 뜻(title). 보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다.
   - 바꾸지 않는 것: 영상 · 목록 일관성(REL-19), STALE 기준(900 s — meta.fetched_at), 연속이 아닐 때의 R-03 3번 시도, 부분 합성 다시 받기(ADR-021), 원문(로그 메시지 본문 ·
     실행 오류 글자 — 기상청 답 앞부분 그대로).
-  - 회귀 막기: collector `tests/test_kma_missing.py`(WARN 수 · 확인 1개 · 예산 · 회복 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기) · `test_rest_contract_rules` · api
+  - 회귀 막기: collector `tests/test_kma_missing.py`(WARN 수 · 확인 2개 · 예산 · 회복 · 늦게 생기는 파일의 회복 · 예산 멈춤 실행 하나 · 알린 공백의 재기동 ·
+    서로 다른 tm 수 · 키 없음 지우기 · 목록 실패 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기) · `test_rest_contract_rules` · api
     `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT`(ETag · /status) · `RestSamplesIT` · `WsSchemaContractTest` · web `tests/kma-missing.test.ts` ·
     `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색).
