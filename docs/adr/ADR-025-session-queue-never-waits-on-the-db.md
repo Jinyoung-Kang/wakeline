@@ -144,6 +144,11 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
    전처럼 제 스레드에서 한 번 읽는다(≤ 명령 상한). 또 `SelectionLookups.close`(WsHub.stop)의 `shutdownNow` 가 대기열에서 버린 읽기는 돌지 않아 그 future 가
    끝나지 않고 표시가 남았다 — 같은 콜사인의 REST 가 끝나지 않는 future 에 붙었다(WsHub 는 Tomcat 의 우아한 종료보다 먼저 멈춘다). 버린 읽기는
    `SingleFlight.abandon` 으로 거절처럼 끝내고 표시를 지운다(선박 조회도 같은 틀이라 같이 고쳐졌다).
+8. **(사용자 보고 뒤) select 하나에 selected 하나, 같은 글자는 다시 보내지 않는다.** 항공기를 고르면 "노선 조회 중" selected 가 같은 내용으로 두 번 나갔다:
+   select 가 우편함에서 초기 세트 · 팬아웃 작업 뒤에 서면 그 작업이 새 selectedHex 로 pending 을 먼저 보내고, SELECTED 작업이 늘(ALWAYS) 또 보냈다(수집기가
+   아직 쓰지 않은 노선의 읽기는 곧바로 pending 으로 끝나 같은 글자). 이제 select 는 '답 한 번' 표시(`WsSession.selectedForce`)를 올리고 먼저 도는 작업이
+   한 번 답한다. 그 밖에는 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다(초기 세트의 force — resume · 재동기 — 만 늘). 첫 pending 은 늦어지지
+   않고 found · unavailable · 상태 변화는 글자가 달라 그대로 나간다(계약 v5 §G21 의 같은 날 항목 · `SelectedOnceTest`).
 
 ### 새 최악(설정값에서 — 잰 값 아님)
 | 경우 | 전 | 후 |
@@ -171,6 +176,7 @@ providers — HGETALL)이 각 명령 상한 3 s 를 기다릴 수 있다(설정�
   명령 상한을 읽는 곳이 모두 `RedisConfig.COMMAND_TIMEOUT` · 닫을 때 버린 읽기는 거절로 끝나고 REST 가 곧바로 제가 읽음) · `WsIntegrationTest`(스프링이 만든
   허브의 마감 = 속성 2500ms) · `RedisConfigTest`(식 · 해석 · Lettuce 명령 상한) · `RoutePausedRedisTest`(Testcontainers Redis 를 docker pause — pong · diff ·
   heartbeat 각 < 500 ms, 시험이 고른 명령 상한 1.5 s 에 unavailable, 같은 동안 REST 도 그 안에 unavailable, 다시 풀면 found) · `RouteReaderTest`(캐시만 읽기 ·
-  한 읽기 · 거절은 기억하지 않음 · 캐시 시각 · 대기열의 읽기에 붙은 REST 는 명령 상한에 unavailable · 운영 생성자가 속성에서 상한을 읽음).
+  한 읽기 · 거절은 기억하지 않음 · 캐시 시각 · 대기열의 읽기에 붙은 REST 는 명령 상한에 unavailable · 운영 생성자가 속성에서 상한을 읽음) · `SelectedOnceTest`(결정 8 —
+  우편함 순서를 고정해 select 하나에 selected 하나, 뒤이은 found 는 그대로).
 - 되돌리기: 이 개정의 커밋(route 조회 이동 · 웹 설명 · 문서)을 되돌린다 — 노선 읽기가 우편함으로 돌아온다(스키마 · 데이터 · 설정 변화 없음). 공통 틀
   (`SelectionLookups` 추출)은 선박 조회만으로도 그대로 쓸 수 있다.

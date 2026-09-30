@@ -558,6 +558,25 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     답하며 센다(`wakeline_route_read_wait_timeouts_total` — 그 읽기는 그대로 둬 제 값으로 캐시를 채운다). REST 가 표시를 얻었으면 전처럼 제 스레드에서 한 번
     읽는다. `WsHub.stop` 이 조회 실행기를 `shutdownNow` 로 닫을 때 대기열에서 버린 읽기는 `SingleFlight.abandon` 으로 거절처럼 끝내고 표시를 지운다(그러지
     않으면 그 future 가 끝나지 않아 같은 콜사인의 REST 가 붙었다 — 선박 조회도 같은 틀).
+  - select 하나에 selected 하나 · 같은 글자는 다시 보내지 않는다(사용자 보고 2026-09-30 "항공기를 고르면 '노선 조회 중' 메시지가 같은 내용으로 두 번
+    나갑니다" — 실서비스에서 872841(APJ705) 선택에 selected 두 건이 모두 +0.07 s · route pending, 11.0 s 에 found). 원인(코드 — `SelectedOnceTest` 가 고치기
+    전 코드에서 두 순서로 재현): 핸들러는 select 를 받으면 selectedHex 를 먼저 쓰고 SELECTED 작업을 예약한다. 그 세션 우편함에 이미 초기 세트(바로 앞의
+    subscribe — hello · subscribe · select 를 한꺼번에 보낼 때)나 팬아웃(스냅샷 · 수요) 작업이 있으면 그 작업이 먼저 돌며 새 selectedHex 로 selected 를 보내고
+    (이 세션에 보낸 selected 가 없거나 다른 항공기라 '바뀜' — route pending, 조회 시작), 뒤이은 SELECTED 작업이 늘(ALWAYS) 다시 보냈다. 수집기가 아직 쓰지 않은
+    노선의 Redis 읽기는 곧바로 '아직 없음'(pending)으로 끝나 두 건이 같은 글자다(Redis 읽기는 한 번 — 시험이 센다). 반대로 SELECTED 작업이 우편함에 먼저
+    있던 focus 관측 작업(같은 종류라 합쳐진다)에 묻히면 select 의 답이 '같은 관측' 규칙에 걸려 나가지 않을 수 있었다(해제 뒤 같은 항공기를 다시 고를 때 — 웹은
+    해제 때 selected 를 지운다).
+    - 이제 select 는 '답 한 번' 표시(`WsSession.selectedForce` — 선박 `shipSelectedForce` 와 같은 방식)를 올리고, selected 를 계산하는 작업 중 먼저 도는 것이
+      (SELECTED · 초기 세트 · 팬아웃 · focus 관측 · 노선 답 어느 것이든) 같은 내용이어도 한 번 보낸다 — select 마다 답 하나, 첫 pending 은 늦어지지 않는다.
+      표시는 selectedHex 다음에 올리고 우편함은 표시를 먼저 읽는다(표시를 본 작업은 그 select 의 hex 를 본다).
+    - 그 밖에는 이 세션에 마지막으로 보낸 selected 와 **글자까지 같으면 보내지 않는다**(`WsHub.sendSelected` — 보낸 글자를 `SelectedSent.json` 에 둔다). 같은
+      보고를 새 객체로 실어 온 focus 관측도 같다 — 계약 v2 §A3 의 '집중 추적 갱신마다' 는 보이는 값이 바뀐 갱신이다(fetched_at 만 바뀌어도 full 인코딩에
+      있어 보낸다). SELECTED 작업은 합쳐진 focus 관측을 대신할 수 있어 '새 관측' 규칙이다. 초기 세트의 force(resume · 재동기)만 전처럼 늘 보낸다.
+    - 막지 않는 것: 노선 상태(pending → found · unavailable) · 상태 · 예측 · 다른 항공기는 글자가 달라 그대로 나간다. WS 계약(키 · 값 · 스키마) · 지표 ·
+      마감 · 우편함 밖 읽기는 그대로다.
+    - 시험: `SelectedOnceTest`(세션 우편함 실행기를 붙잡아 순서를 고정 — 초기 세트 뒤의 select · 팬아웃 뒤의 select 는 selected 한 건(고치기 전 같은 pending
+      두 건), 캐시가 지나 다시 읽은 found 는 그대로 · focus 관측과 합쳐진 다시 선택도 답 한 건(고치기 전 0건) · select 마다 답 · resume 은 다시 보냄) ·
+      `WsHubTest`(같은 보고를 실어 온 focus 관측은 보내지 않고, fetched_at 이 바뀐 관측은 보낸다 — 고치기 전에는 새 객체라 보냈다).
   - 새 최악(설정값 — 잰 값 아님): 세션의 pong · diff · heartbeat ping 은 노선 읽기를 기다리지 않는다. 첫 selected 는 곧바로(pending), api 가 노선의 답을
     정하는 때 ≤ 3 s(화면에 닿는 때는 우편함 차례). REST 항공기 상세의 노선 ≤ 3 s(제가 읽든 붙든 — 공유 연결을 맺어야 하는 제 읽기는 연결 맺기가 더해진다).
     스레드 하나를 잡는 시간 ≤ 3 s(서버가 답하지 않을 때) · 곧바로(끊긴 것을 아는 연결) · 공유 연결을 아직 맺지 못했을 때는 연결 맺기(시도마다 ≤ 10 s, 잠금

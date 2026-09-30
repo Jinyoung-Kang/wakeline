@@ -68,9 +68,12 @@ import java.util.function.Supplier;
  *       다시 계산해도 Redis 조회는 콜사인당 5 s 에 한 번이다. 노선 상태가 바뀌면(조회 중 → 찾음) 상태가 그대로여도 다시 보낸다.
  *       Redis 읽기는 우편함 밖(계약 v5 §G21 · ADR-025 개정 — {@link RouteLookups}): 우편함은 캐시만 보고, 읽어야 하면 조회 실행기에 맡긴 뒤 selected 를 곧바로
  *       pending("노선 조회 중" — 이 세션에 이미 보낸 같은 물음의 값이 있으면 그 값)으로 보낸다. 답이 오면(늦어도 Redis 명령 상한 3 s — 설정값, 읽지 못하면
- *       unavailable) SELECTED_ROUTE 작업이 다시 계산해 바뀌었으면 보낸다. 그동안 그 세션의 pong · diff · heartbeat 는 노선 읽기를 기다리지 않는다.</li>
+ *       unavailable) SELECTED_ROUTE 작업이 다시 계산해 바뀌었으면 보낸다. 그동안 그 세션의 pong · diff · heartbeat 는 노선 읽기를 기다리지 않는다.
+ *       select 마다 답은 하나(먼저 도는 작업이 — {@link WsSession#selectedForce}), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지
+ *       않는다(사용자 보고 2026-09-30 — 같은 pending 두 번).</li>
  *   <li>수요 스코프(hot·focus, 계약 v2 §A3) 메시지는 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 세션에만 팬아웃한다 — 전체 팬아웃은
- *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측을 두 번 보내지 않는다).</li>
+ *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측 · 보이는 값이 같은 관측은 두 번
+ *       보내지 않는다).</li>
  *   <li>수요(demand) 메시지는 DemandService 가 계산해 {@link #pushDemand} 로 예약한다. 구독·선택·일시정지·연결 종료는 {@link #demandChanged} 로 알린다.</li>
  *   <li>레이어(계약 v2 §B3): 항공기를 끈 세션에는 항공기 snapshot/diff 를 보내지 않는다(다시 켜면 seq 1 스냅샷부터). 선박 메시지는 {@link ShipFanout} 이
  *       같은 우편함에서 보낸다 — 초기 세트(구독·resume·백프레셔)의 끝에서 {@link #setShipsHook 선박 훅}을 불러 선박 전체를 이어서 보낸다.</li>
@@ -395,7 +398,11 @@ public class WsHub implements SmartLifecycle {
         s.schedule(WsSession.Job.SELECTED, () -> runSelected(s));
     }
 
-    /** selected 를 언제 보내는가: 늘(선택 · 초기 세트의 force) · 바뀌었을 때(팬아웃 · 노선 답) · 새 관측이면(focus — 이미 보낸 바로 그 상태 객체는 다시 보내지 않는다). */
+    /**
+     * selected 를 언제 보내는가: 늘(초기 세트의 force — resume · 재동기) · 바뀌었을 때(팬아웃 · 노선 답 · 초기 세트) · 새 관측이면(focus 관측 · select 작업 —
+     * 이미 보낸 바로 그 상태 객체는 다시 보내지 않는다. select 작업은 합쳐진 focus 관측을 대신할 수 있어 이 규칙이다). select 의 답은 따로
+     * ({@link WsSession#selectedForce} — 어느 작업이든 먼저 도는 것이 한 번), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다.
+     */
     enum Resend { ALWAYS, CHANGED, NEW_OBSERVATION }
 
     // ---- 이벤트(스트림 소비·엔진 스레드 — 예약만 하고 돌아간다) ----
@@ -613,9 +620,13 @@ public class WsHub implements SmartLifecycle {
         if (send(s, p.json())) s.radarSent = p.frames();
     }
 
+    /**
+     * select 를 받았다: 답은 {@link WsSession#selectedForce} 가 보장한다 — 앞선 작업(초기 세트 · 팬아웃)이 이미 답했으면 여기서는 바뀐 것만(같은 pending 을 두 번
+     * 보내지 않는다 — 사용자 보고 2026-09-30). 같은 종류라 합쳐진 focus 관측을 대신할 수 있어 새 관측이면 보낸다.
+     */
     private void runSelected(WsSession s) {
         if (!s.ready() || !s.hello) return;
-        sendSelected(s, snapshots.merged(), Resend.ALWAYS);
+        sendSelected(s, snapshots.merged(), Resend.NEW_OBSERVATION);
     }
 
     /**
@@ -690,8 +701,19 @@ public class WsHub implements SmartLifecycle {
         return true;
     }
 
-    /** "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부 + 등록 노선. ALWAYS 가 아니면 바뀐 경우에만(NEW_OBSERVATION 은 새 관측이면). */
+    /**
+     * "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부 + 등록 노선. 보내는 때:
+     * <ul>
+     *   <li>select 의 답({@link WsSession#selectedForce}): select 뒤 selected 를 처음 계산하는 작업이 — 어느 작업이든 — 같은 내용이어도 한 번 보낸다.</li>
+     *   <li>ALWAYS(초기 세트의 force — resume · 재동기): 늘.</li>
+     *   <li>그 밖: 바뀌었을 때만(NEW_OBSERVATION 은 새 관측이면). 그리고 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다 — 클라이언트가
+     *       볼 것이 없다(사용자 보고 2026-09-30: select 가 우편함에서 초기 세트 · 팬아웃 뒤에 서면 그 작업이 먼저 pending 을 보내고 SELECTED 작업이 같은
+     *       pending 을 또 보냈다. 같은 보고를 새 객체로 실어 온 focus 관측도 같다). 노선 상태(found · unavailable) · 상태 · 예측이 하나라도 바뀌면 글자가
+     *       달라 그대로 나간다.</li>
+     * </ul>
+     */
     private void sendSelected(WsSession s, Map<String, AircraftState> states, Resend when) {
+        boolean force = s.selectedForce.getAndSet(false) | when == Resend.ALWAYS; // 표시를 selectedHex 보다 먼저 읽는다(핸들러는 hex 를 먼저 쓴다)
         String hex = s.selectedHex;
         if (hex == null) {
             s.selectedSent = null;
@@ -702,10 +724,12 @@ public class WsHub implements SmartLifecycle {
         PredictionAvailability p = prediction.apply(a);
         RouteInfo r = selectedRoute(s, hex, a);
         WsSession.SelectedSent prev = s.selectedSent;
-        if (when != Resend.ALWAYS && prev != null && hex.equals(prev.hex()) && Objects.equals(prev.prediction(), p) && Objects.equals(prev.route(), r)
+        if (!force && prev != null && hex.equals(prev.hex()) && Objects.equals(prev.prediction(), p) && Objects.equals(prev.route(), r)
                 && (when == Resend.NEW_OBSERVATION ? prev.state() == a && a != null : sameSelected(prev.state(), a))) return;
         String state = a == null ? null : fragments.get(a, WsMessages.Encoding.FULL);
-        if (send(s, toJson(new WsMessages.SelectedMsg("selected", hex, state, p, r)))) s.selectedSent = new WsSession.SelectedSent(hex, a, p, r);
+        String msg = toJson(new WsMessages.SelectedMsg("selected", hex, state, p, r));
+        if (!force && prev != null && msg.equals(prev.json())) return; // 보이는 것이 모두 같다 — 같은 내용을 두 번 보내지 않는다
+        if (send(s, msg)) s.selectedSent = new WsSession.SelectedSent(hex, a, p, r, msg);
     }
 
     /**

@@ -187,7 +187,8 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         if (!HEX.matcher(hex).matches()) { hub.error(s, "BAD_HEX", "hex must be 6 hex digits or null"); return; }
         s.selectedAtMs = System.currentTimeMillis();
         s.selectedHex = hex;
-        hub.requestSelected(s); // 바로 한 번, 이후 스냅샷마다 바뀌면
+        s.selectedForce.set(true); // hex 다음에 — 먼저 도는 우편함 작업이 이 select 에 한 번 답한다(WsSession.selectedForce)
+        hub.requestSelected(s);    // 바로 한 번(앞선 작업이 이미 답했으면 바뀐 것만), 이후 스냅샷마다 바뀌면
         hub.demandChanged();
     }
 

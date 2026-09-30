@@ -51,8 +51,11 @@ public final class WsSession {
         WsMessages.Encoding encoding() { return WsMessages.encodingFor(detail, world()); }
     }
 
-    /** 마지막으로 보낸 "selected" — 바뀐 경우에만 다시 보낸다(노선 상태가 바뀌어도 — 예: 조회 중 → 찾음). */
-    record SelectedSent(String hex, AircraftState state, PredictionAvailability prediction, RouteInfo route) {}
+    /**
+     * 마지막으로 보낸 "selected" — 바뀐 경우에만 다시 보낸다(노선 상태가 바뀌어도 — 예: 조회 중 → 찾음). json 은 보낸 글자 그대로다: 다시 계산한 selected 가
+     * 이것과 같으면 클라이언트가 볼 것이 없어 보내지 않는다(사용자 보고 2026-09-30 — 같은 내용의 selected 두 번, WsHub.sendSelected).
+     */
+    record SelectedSent(String hex, AircraftState state, PredictionAvailability prediction, RouteInfo route, String json) {}
 
     final String id;
     final String ip;
@@ -96,6 +99,12 @@ public final class WsSession {
     final AtomicBoolean shipsForce = new AtomicBoolean();
     /** 다음 ship_selected 는 바뀌지 않았어도 보낸다 — select_ship·resume. */
     final AtomicBoolean shipSelectedForce = new AtomicBoolean();
+    /**
+     * select 에 아직 답하지 않았다 — selected 를 계산하는 다음 작업(SELECTED · 초기 세트 · 팬아웃 · focus 관측 · 노선 답 — 어느 것이든 먼저 도는 것)이 바뀌지
+     * 않았어도 한 번 보내고 내린다(select 마다 답 하나: 웹은 해제 때 selected 를 지운다). 핸들러는 selectedHex 를 먼저 쓰고 이것을 올린다 — 우편함은 이것을 먼저
+     * 읽고 selectedHex 를 읽으므로, 올린 표시를 본 작업은 그 select 의 hex 를 본다.
+     */
+    final AtomicBoolean selectedForce = new AtomicBoolean();
     /**
      * 다음 알림 · SIGMET · 레이더 작업은 버전과 무관하게 전체 목록을 보낸다 — 클라이언트 {type:"resync", scope}(계약 v5 §E2: 웹이 형식 오류 ·
      * 처리 예외로 그 메시지를 버렸다). 핸들러가 올리고 우편함이 보낼 때 내린다.
