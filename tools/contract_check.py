@@ -27,6 +27,7 @@ from referencing import Registry, Resource  # noqa: E402
 
 from wakeline_collector.ais.bbox import SCOPE_RE, format_bboxes, parse_shards  # noqa: E402
 from wakeline_collector.ais.book import STATE_FIELDS, ShipBook  # noqa: E402
+from wakeline_collector.ais.diag import LoopLag  # noqa: E402
 from wakeline_collector.ais.parse import (  # noqa: E402
     POSITION_CLASS,
     POSITION_SOURCE,
@@ -482,19 +483,24 @@ def check_ships(env_v: Draft202012Validator) -> int:
     ops = parse_shards("-90,-180,90,0|-90,45,90,180")
     scopes = [format_bboxes(x) for x in ops]
 
-    async def run() -> tuple[list[dict[str, str]], Worker, dict[str, str], list[dict[str, str]]]:
+    async def run() -> tuple[list[dict[str, str]], Worker, dict[str, str], list[dict[str, str]], dict[str, str]]:
         cap = _CaptureRedis()
         q, book, shards = RawQueue(), ShipBook("aisstream"), ShardSet("aisstream")
         a, b = (shards.add(sc) for sc in scopes)
         w = Worker(q, book)
-        sink = AisSink(cap, book=book, shards=shards, worker=w, queue=q, provider="aisstream", raw_ref="-")  # type: ignore[arg-type]
+        lag = LoopLag()  # 진단(ADR-014 부록 C): 루프 지연 표본 하나
+        lag.observe(0.02)
+        sink = AisSink(cap, book=book, shards=shards, worker=w, queue=q, provider="aisstream", raw_ref="-", loop_lag=lag)  # type: ignore[arg-type]
         now = datetime.now(UTC).timestamp()
         for sh, sc in ((a, scopes[0]), (b, scopes[1])):
             sh.feed.on_subscribed(sc, deflate=True)
-        for d in lines:
+        for d in lines:  # 수신 경로처럼 대기열을 거친다(머문 시간 · 깊이)
             d = {**d, "MetaData": {**d["MetaData"], "time_utc": go_time(now + d.get("_recv_offset_s", 0) - 90)}}
-            w.handle(json.dumps(d).encode(), a.id)
+            q.put(json.dumps(d).encode(), a.id)
             a.feed.on_message(now)
+        w.drain_nowait(len(lines))
+        a.feed.ping_rtt.add(0.31)  # 구역 1: keepalive pong 을 받았다 · 구역 2: 모름
+        a.feed.ws_buffer.add(2)
         b.feed.on_message(now - 60)
         b.feed.on_disconnected("server closed (1006)")
         b.feed.on_subscribed(scopes[1], deflate=True)
@@ -513,9 +519,9 @@ def check_ships(env_v: Draft202012Validator) -> int:
         fx.feed.on_disconnected("ais process restart")
         fx.feed.on_message(now)
         await fsink.publish_gaps()
-        return cap.entries, w, status, fcap.entries
+        return cap.entries, w, status, fcap.entries, fsink.status_fields()
 
-    entries, w, status, fixture_entries = asyncio.run(run())
+    entries, w, status, fixture_entries, fx_status = asyncio.run(run())
     rejected = {
         k: v
         for k, v in w.counts.items()
@@ -584,6 +590,24 @@ def check_ships(env_v: Draft202012Validator) -> int:
             bad_status.append("bbox")
     # 필드 계약(api ops/pipeline · 웹 PIPELINE 보존 창): 선박 스트림의 시간 트림 목표(초)·바이트 예산 — 정수 문자열
     bad_status += [k for k in ("stream_retention_s", "stream_budget_bytes") if not str(status.get(k, "")).isdigit()]
+    # 진단(ADR-014 부록 C · api ops/pipeline · 웹 PIPELINE): 고른 창·상한·시간 초과와 누적 수는 정수 문자열, 최근 최댓값은 초 소수 2자리 ·
+    # 프레임·건수 정수, 모르면 빈 값(fixture 재생: 연결·루프 측정 없음). shards[] 는 초 수·정수 또는 null
+    secs = re.compile(r"\d+\.\d{2}")
+    bad_status += [
+        k for k in ("diag_window_s", "ws_queue_limit", "ping_timeout_s", "loop_stalls_total") if not status.get(k, "").isdigit()
+    ]
+    bad_status += [k for k in ("loop_lag_max_s", "queue_wait_max_s", "ping_rtt_max_s") if not secs.fullmatch(status.get(k, ""))]
+    bad_status += [k for k in ("queue_depth_max", "ws_queue_max") if not status.get(k, "").isdigit()]
+    bad_status += [
+        f"fixture {k}"
+        for k in ("loop_lag_max_s", "loop_stalls_total", "ping_rtt_max_s", "ws_queue_max")
+        if fx_status.get(k, "?") != ""
+    ]
+    if isinstance(view, list) and len(view) == 2:
+        if [(v["ping_rtt_max_s"], v["ws_queue_max"]) for v in view] != [(0.31, 2), (None, None)]:
+            bad_status.append("shards[] ping_rtt_max_s/ws_queue_max")
+        if status.get("ping_rtt_max_s") != "0.31" or status.get("ws_queue_max") != "2":
+            bad_status.append("ping_rtt_max_s/ws_queue_max != max over shards")
     print(
         f"{'FAIL' if bad_status else 'ok  '} ais status shards/aggregates"
         + (f": {bad_status}" if bad_status else f": {len(view or [])} shards")

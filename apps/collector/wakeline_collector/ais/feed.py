@@ -11,6 +11,8 @@
 - 데이터 시각 기준의 구멍은 이보다 길 수 있다: 공급자 쪽 지연(상태 lag_p50_s = 처리 시각 - time_utc)이 끊기기 전에 컸다면
   그만큼 앞선 구간도 받지 못했다. 그 차이는 추정해 넓히지 않는다(계약 v3 §A).
 - 프로세스 재시작: 종료할 때 마지막 메시지 시각으로 공백을 열어 상태 해시에 남기고, 다음 기동이 그것(같은 공급자일 때만)을 이어받는다.
+- 진단(diag.py · ADR-014 부록 C): 연결마다 keepalive 왕복(ping_rtt)·websockets 수신 버퍼 깊이(ws_buffer)의 최근 최댓값, 발행 태스크가
+  창마다 넣어 주는 공급자 지연 중앙값(lag_p50_s) — 끊김 로그의 맥락과 상태 해시에 쓴다.
 - 구역(계약 v4 §D): 연결마다 FeedState 하나. 공백에는 그 구역의 정규화한 상자 문자열(scope)을 **공백이 열린 순간** 값으로 붙인다 —
   데이터가 끊긴 곳이 그 영역이다(열린 사이 설정이 바뀌어도 바꾸지 않는다). fixture 재생은 구독 영역이 없어 scope 를 붙이지 않는다.
 """
@@ -23,6 +25,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 
+from wakeline_collector.ais.diag import WindowMax
 from wakeline_collector.ais.parse import iso_ms
 
 REASON_MAX = 200
@@ -145,6 +148,10 @@ class FeedState:
         self.gaps = GapTracker()
         self.changed = changed if changed is not None else asyncio.Event()
         self._session_first: float | None = None
+        # 진단(값을 바꿔도 changed 를 켜지 않는다 — 상태 해시는 5 s 마다 싣는다)
+        self.ping_rtt = WindowMax(mono=mono)  # keepalive ping → pong 왕복(초, websockets latency)
+        self.ws_buffer = WindowMax(mono=mono)  # 메시지를 꺼낸 뒤 websockets 수신 버퍼에 남은 프레임 수
+        self.lag_p50_s: float | None = None  # 직전 발행 창의 공급자 지연 중앙값(처리 시각 − time_utc) — sink 가 넣는다
 
     def _mark(self) -> None:
         self.changed.set()

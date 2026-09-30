@@ -5,6 +5,9 @@
 - 닫힌 공백은 다음 틱(≤ 1 s)에 XADD(kind "ais_gap"). 구역 연결의 공백은 payload scope(그 구역의 정규화한 상자 문자열)를 싣는다(계약 v4 §D).
 - 상태 해시 `wakeline:ais:status` 는 5 s 마다 + 상태가 바뀔 때. updated_at 은 프로세스가 살아 있다는 heartbeat(헬스체크가 본다).
   구역이 여럿이면 합계 필드 + shards(JSON 배열) — 합계의 의미는 shards.py 설명.
+  진단(ADR-014 부록 C · diag.py): 최근 diag_window_s(60) 초의 최댓값 — loop_lag_max_s(이벤트 루프 지연) · queue_wait_max_s(원문 대기열에 머문 시간) ·
+  queue_depth_max · ws_queue_max(websockets 수신 버퍼에 남은 프레임, 상한 ws_queue_limit 를 넘으면 소켓 읽기 멈춤) · ping_rtt_max_s(keepalive
+  왕복, 시간 초과 ping_timeout_s) + loop_stalls_total(지연 ≥ 1 s 표본 수, 누적). 상한·창·시간 초과는 고른 설정값(잰 값 아님). 모르면 빈 값.
 
 Redis 장애: 선박 변경분은 쌓지 않고 ShipBook 에 '바뀜' 표시를 되돌린다 — 복구 뒤 첫 발행이 그때의 최신값을 싣는다(메모리는 선박 수 상한 안).
 공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).
@@ -25,6 +28,8 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from wakeline_collector.ais.book import ShipBook
+from wakeline_collector.ais.client import PING_TIMEOUT_S, WS_MAX_QUEUE
+from wakeline_collector.ais.diag import DIAG_WINDOW_S, LoopLag
 from wakeline_collector.ais.parse import iso_ms
 from wakeline_collector.ais.queue import RawQueue
 from wakeline_collector.ais.shards import ShardSet
@@ -55,6 +60,14 @@ def _iso(epoch: float | None) -> str:
     return iso_ms(epoch) if epoch is not None else ""
 
 
+def _secs(v: float | None) -> str:
+    return "" if v is None else f"{v:.2f}"
+
+
+def _int(v: int | None) -> str:
+    return "" if v is None else str(v)
+
+
 class AisSink:
     def __init__(
         self,
@@ -71,6 +84,7 @@ class AisSink:
         wall: Callable[[], float] = time.time,
         mono: Callable[[], float] = time.monotonic,
         log_metrics: Callable[[], dict[str, str]] | None = None,
+        loop_lag: LoopLag | None = None,
     ) -> None:
         self._r = redis
         self.book, self.shards, self.worker, self.queue = book, shards, worker, queue
@@ -90,6 +104,7 @@ class AisSink:
         self.status_errors = 0
         self.last_publish_at: float | None = None
         self._gap_lock = asyncio.Lock()  # 발행 루프와 final() 이 같은 공백을 동시에 보내지 않게
+        self._loop_lag = loop_lag  # 이벤트 루프 지연 측정(main 이 띄운다) — 없으면 진단 값은 모름
 
     def _warn(self, msg: str, *args: object) -> None:
         now = self._mono()
@@ -111,7 +126,7 @@ class AisSink:
             t0, m0 = s.window
             s.window = (now, s.feed.msgs_total)
             s.msgs_per_s = (s.feed.msgs_total - m0) / max(1e-3, now - t0)
-            s.lag_p50_s = lags.get(s.id)
+            s.lag_p50_s = s.feed.lag_p50_s = lags.get(s.id)  # feed 쪽은 끊김 로그의 맥락(client.diagnosis)
         return {
             "msgs": msgs,
             "msgs_per_s": round(msgs / span, 2),
@@ -264,6 +279,16 @@ class AisSink:
             "ships_tracked": str(len(self.book)),
             "evicted_total": str(self.book.evicted),
             "lag_p50_s": "" if lag is None else f"{lag:.1f}",
+            # 진단(ADR-014 부록 C): 최근 diag_window_s 초 최댓값 + 고른 상한·시간 초과
+            "diag_window_s": f"{DIAG_WINDOW_S:g}",
+            "loop_lag_max_s": _secs(self._loop_lag.max_s()) if self._loop_lag is not None else "",
+            "loop_stalls_total": str(self._loop_lag.stalls) if self._loop_lag is not None else "",
+            "queue_wait_max_s": _secs(self.queue.wait_max_s()),
+            "queue_depth_max": _int(self.queue.depth_max()),
+            "ws_queue_max": _int(sh.ws_queue_max),
+            "ws_queue_limit": str(WS_MAX_QUEUE),
+            "ping_rtt_max_s": _secs(sh.ping_rtt_max_s),
+            "ping_timeout_s": f"{PING_TIMEOUT_S:g}",
             "shards": orjson.dumps(sh.shards_view()).decode(),
             "published_ships_total": str(self.published_ships),
             "last_publish_at": _iso(self.last_publish_at),
