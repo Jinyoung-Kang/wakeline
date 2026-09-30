@@ -728,7 +728,12 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     전환 기록은 다시 쓰지 않는다(한 번의 사건). `{job}`(마지막으로 쓴 공급자)은 그대로 남는다(기록). 전환 기록(`wakeline:events` provider_switch): 시작 때 `<쓰던 공급자> → none`(사유
     `none — …[ · <공급자> 다시 시도 중]`), 끝날 때 `none → <공급자>`(사유 `recovery — 공급자 없음 N s 끝 · …` — 다시 시도가 답했으면 `· <공급자> 다시 시도 성공`). 로그: 공백마다
     WARN 한 번 `region: no provider available — skipped: '…'; next: '<공급자> retried each cycle while cooling down (no other provider); <공급자> after N s'`(바뀌는 글은
-    따옴표 안 — 지문 하나), 끝나면 INFO. api 는 이 해시를 그대로 싣는다(`/status` · WS `status` 의 `active_providers` — 문자열 맵, 스키마 그대로 · `/ops/providers`
+    따옴표 안 — 지문 하나), 끝나면 INFO. (2026-10-01 · 레인 kma 7차 — 조사 errors F2 · 도전) 끝에 마지막 호출 실패를 따옴표 밖에 붙인다: `; last error (<공급자>): <오류 글>`
+    (그 작업이 성공한 뒤 실패가 없었으면 `; last error: none since the last success or start`) — '3회 연속 실패' WARN 도 `region: adsb_fi failed 3x — cooling down;
+    last error: <오류 글>`. 오류 글(`errors.describe_error`)의 앞머리가 종류라 지문은 오류 종류마다 한 묶음이다(숫자는 지문에서 지워진다 — weather `_guard` ·
+    kma `_fail` 과 같은 규칙. 따옴표 안에 두면 ReadTimeout · ConnectError · HTTP 502 가 한 묶음이 되어 로그 화면 · 해결 표시(ADR-024 — 지문 단위)가 가르지 못한다).
+    전에는 로그 화면에 오는 이 두 WARN 에 까닭이 없었다(한 번의 실패는 INFO — 운영 2026-09-30 17:57:43 · 17:58:01 UTC `region: adsb_fi failed (ReadTimeout …)`).
+    시험 `test_aircraft_job`(+3 — 고치기 전 실패: 까닭 · 종류마다 지문 · 성공 뒤 '없음', 기존 공급자 없음 두 시험의 글자 · 지문). api 는 이 해시를 그대로 싣는다(`/status` · WS `status` 의 `active_providers` — 문자열 맵, 스키마 그대로 · `/ops/providers`
     의 `active`) — api 코드 변경 없음.
   - 웹(`lib/active-provider` — KST 만, 값 그대로, 모르면 쓰지 않는다): 운영 공급자 탭 위쪽 작업 배지가 공급자 없음이면 빨강 `region: 공급자 없음 · 12:16:32 KST 부터`(다시 시도
     중이면 뒤에 `· adsb_fi 다시 시도 중`, title 앞머리에도 `adsb_fi 다시 시도 중(쉬는 공급자 — 다른 공급자가 없어 주기마다)` · title =
@@ -834,7 +839,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     - KST 자정 넘김: 자정 직후 창(00:00–00:14)의 전날 목록 규칙은 그대로다 — 창 안의 확인 주기는 전날 목록을 합쳐 전날 tm 을 확인한다. 늦춘 확인은 창을 건너뛸 수 있고
       (확인 간격 15분 + 주기 · 지터), 창 뒤에도 새 날 목록이 비어 있을 수 있다(이날 00:50 까지). 그래서 연속의 last_tm 이 전날 이전이고 새 날 목록이 답했으나 아직 그
       시각 이하의 tm 을 싣지 않았으면(빈 답) 확인하는 주기가 전날 목록도 읽는다(`_streak_needs_prev_day` — 창 안이어도). 이 전날 목록은 덧붙이는 목록이 아니라 확인에
-      필요한 목록이다(리뷰 2026-10-01): 호출이 실패하면(504 · 시간 초과 — 다시 부르지 않는다) `error`(전날 목록 단계 · 공급자 오류 · WARN), 예산 예약이 거절되면 예산
+      필요한 목록이다(리뷰 2026-10-01): 호출이 실패하면(504 · 시간 초과 — 시간 초과 · 연결 실패는 5 s 뒤 한 번 다시 부른 뒤: 아래 '전날 목록 다시 부르기')
+      `error`(전날 목록 단계 · 공급자 오류 · WARN), 예산 예약이 거절되면 예산
       상태 — 둘 다 마지막 확인 · 목록 필드를 옮기지 않는다(처음 구현은 오늘(빈) 목록만으로 이어가 확인할 tm 이 없는 `missing` 으로 마지막 확인을 옮겼다 — 몇 시간 동안
       아무 tm 도 묻지 않았는데 '확인 멈춤'이 뜨지 않았다). 새 날 목록 자체가 504 · 시간 초과면 전날 목록을 읽지 않는다 — 목록이 실패한 주기(`error` · 아무것도
       옮기지 않는다 · 확인 간격 × 3 뒤 '확인 멈춤')다. 그때 확인은 전날의 가장 새 tm 하나다(지금 − 10분이 전날 tm 을 모두 넘어 둘째 확인이 첫째와 같다) — 목록 2 + 확인 1
@@ -843,10 +849,90 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
       그저께 이전이면 '마지막 tm 뒤로 새 tm 없음'은 모른다(`missing_list_newer` 빈 값).
     - 연속이 없을 때의 KST 자정 넘김(배포 2026-10-01 02:07 KST 에 본 것): 다시 띄운 수집기가 옛 판의 거짓 '확인 멈춤'으로 마지막 확인이 00:05 에 머문 연속을 이어받기
       상한(45분) 밖이라 버렸고, 연속이 없으니 창 밖에서는 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — 주기마다 `ok`, 연속이 다시 열리지 않았다. 이제 연속이 없어도 새 날
-      목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고 저장한 프레임이 전날 끝(23:55)에 닿지 않았으면 전날 목록을 **덧붙여** 읽는다(`_behind_prev_day` — 자정 직후
+      목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고 저장한 프레임이 전날 끝(23:55)에 닿지 않았으면(레인 kma 8차부터 저장했거나 받아 본 가장 새 tm — meta
+      `latest_tm` 포함: 아래 '전날 끝에 닿았는가') 전날 목록을 **덧붙여** 읽는다(`_behind_prev_day` — 자정 직후
       창과 같은 덧붙이는 목록: 실패하면 WARN 한 줄 · 예산이 없으면 INFO · 오늘 목록으로 계속). 그러면 전날의 보관 창 tm 을 받으려 하고, 없으면 R-03 세 번 뒤 연속이
       다시 열린다(모의: 두 주기 × 호출 6 = 목록 2 + 받기 4, 그 뒤 15분마다 3). 전날 끝까지 받았으면 읽지 않는다 — 새 날 목록이 하루 내내 비어도 5분마다 호출을 늘리지
       않는다. 시험 `test_kma_list_idle.py` +2(다시 띄운 수집기가 연속을 다시 연다 — 고치기 전 실패 · 전날 끝까지 받았으면 새 날 목록만).
+      - **개정(2026-10-01 · 레인 kma 7차 · 운영 02:23:54 KST — 조사 F1 · F5)**: 위 '덧붙여 · 실패하면 WARN 한 줄 · 예산이 없으면 INFO · 오늘 목록으로 계속'을 고친다.
+        `_behind_prev_day` 가 참이면 새 날 목록에 그 시각 이하의 tm 이 없으므로 그 주기가 읽을 것은 전날 목록뿐이다 — 그것을 잃으면 받을 tm 이 없어 주기가 `ok` ·
+        공급자 성공(`last_success_at` · `consecutive_failures` 0) · heartbeat 로 끝났다(운영 02:23:54 KST: WARN `previous-day listing 20260930 — ReadTimeout …
+        using today's only` 뒤 RUNS `ok`). §G22 가 없앤 모양('ok' + LAST SUCCESS · RECORDS 0 인데 프레임은 멈춤) 그대로다. 또 이어받기 상한(45분) 밖에서 다시 뜬
+        수집기가 전날 목록 장애 중이면 연속을 버린 뒤 5분마다 `ok` 만 남겨 장애를 가렸다(모의: 01:00–02:00 `ok` 13번 · consecutive_failures 0). 이제 이 전날 목록은
+        연속의 확인에 필요한 전날 목록과 같은 **필요한 목록**이다: 호출이 실패하면(504 · 시간 초과) `error`(전날 목록 단계 · 공급자 last_error · consecutive_failures+1 ·
+        WARN · 성공도 heartbeat 도 없음), 예산 예약이 거절되면 예산 상태(`budget_exhausted` · `budget_unavailable` — 오류 글자 `… — previous-day listing <날> not
+        read: the listing <오늘> lists no tm yet and no stored frame reaches tm=<전날>2355 (…) — nothing else to fetch this cycle`, WARN 은 예산 쪽 한 줄), 429 ·
+        속도 상한은 전처럼 `throttled`. 다시 부르지 않는다(아래 '전날 목록 다시 부르기' — 새 날 목록이 하루 내내 빌 수 있어 5분마다 다시 부르면 설정값 계산 최악
+        4 × 288 = 1,152 > 한도 1,000). 자정 직후 창(00:00–00:14)의 전날 목록은 새 날 목록에 그 시각 이하의 tm 이 있거나 23:55 까지 저장했을 때만 덧붙이는 목록으로 남는다
+        (WARN 한 줄 · 오늘 목록으로 계속 — 새 날 목록이 비었고 23:55 를 아직 받지 못한 자정 직후(기상청이 00:00 을 싣기 전 몇 분)는 이제 `error` 다: 그 주기가 읽을 수
+        있던 유일한 목록이 실패했다). 호출 수 · 예산은 그대로(주기마다 전날 목록 1).
+        함께 고친 것: 이어받기 상한 밖이라 버린 연속은 그 주기 첫머리에 두 해시에서 지운다(`_publish_missing` — 전에는 주기 끝의 발행이 지웠는데, `error` · 예산 상태
+        주기는 발행하지 않아 목록 장애 동안 버린 연속이 남았다: 이 프로세스가 더는 확인하지 않는 연속을 웹이 '파일 없음 · 확인 멈춤'으로 적었다 — 리뷰 2026-10-01 도전).
+        웹에는 KMA STALE(meta `fetched_at` 이 오래됐다)과 운영 RUNS `error` 가 보인다. 시험 `test_kma_list_idle.py` +5(고치기 전 실패 — 새 날 목록이 빈 주기의 전날
+        목록 504 · ReadTimeout → `error` 네 번 · 회복하면 R-03 으로 연속, 예산 거절 → `budget_exhausted`, 자정 직후 00:02 · 23:55 를 받지 못했으면 `error`, 이어받기 상한 밖
+        다시 띄움 + 전날 목록 장애 → `error` 13번 · 버린 연속 지움 — 23:55 까지 받았으면 `ok` 는 전처럼), `test_kma_throttle`(새 날 목록이 빈 전날 목록 429 — 전처럼
+        `throttled`).
+      - **전날 목록 다시 부르기 · 잴 수 있게 · 예산 다시 셈(2026-10-01 · 레인 kma 7차 — 조사 F2 · 도전)**: 연속의 확인에 필요한 전날 목록
+        (`_streak_needs_prev_day`)은 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류)면 5 s 뒤 한 번 다시 부른다 — 오늘 목록 · 바이너리와 같은 `_call`
+        (`retry.call_retry_once`: 다시 부르기 예산 1 을 따로 예약, 거절되면 INFO `not retried (budget …)` 뒤 `error`, 보내지 않은 시도는 돌려준다, HTTP 오류 ·
+        429 · 속도 상한은 다시 부르지 않는다). 위 '다시 부르지 않는다'를 고친다: 그 규칙의 까닭('덧붙이는 목록' — ADR-011)은 이 목록이 확인할 tm 을 싣게 된 뒤로
+        맞지 않았다(같은 주기의 빈 오늘 목록은 다시 부르고 확인할 tm 을 싣는 전날 목록은 부르지 않아 한 번 멈추면 확인 하나 — 15분 — 를 잃었다). 결함 고침이 아니라
+        설계 다듬기이고, 얼마나 살리는지는 모른다(보인 저장 1건 — VERIFICATION #39 의 작은 목록 — 과 두 시도 모두 실패한 큰 목록 3건). 그래서 함께 **잴 수 있게** 했다:
+        전날 목록을 읽을 때마다 INFO 한 줄 `kma radar: previous-day listing <날> read for <the streak check | frames short of the previous day's end | the KST
+        00:00–00:14 window> — N tms, HTTP n ms, step n ms (host-bucket wait and any retry included)`(성공도 — 실패는 전처럼 WARN · INFO 에 단계 시간). 실행 기록의
+        `latency_ms` 는 오늘 목록만이다(RUNS 평균의 뜻을 바꾸지 않으려고 싣지 않았다). 하루 이상 INFO `previous-day listing … retrying once in 5 s` 와 WARN
+        `… retried once after 5 s` 를 세어 다시 부르기가 살리는지 본다 — 거의 못 살리면 다음 5분 주기에 다시 확인하는 쪽(§G26 '실패한 목록도 간격에 센다'를 바꾸는
+        결정)이나 목록만 읽기 제한을 늘리는 쪽(조사 F2b — 25–30 s, 전체 상한 40 s 안)을 그 값으로 고른다. 새 날 목록이 빈 주기(`_behind_prev_day`)와 자정 직후 창의
+        덧붙이는 전날 목록은 다시 부르지 않는다. 목록 캐시는 두지 않는다(조사 F2c — `list_tm` · `list_newer` 는 그 확인에서 읽은 목록이다).
+        예산(설정값 계산 — `streak_calls_per_day`) 다시 셈: 다시 부르기 최악은 호출마다 한 번(두 배) 그대로 — 확인에 필요한 전날 목록이 든 확인 주기도 (오늘 목록 1 + 1)
+        + (전날 목록 1 + 1) + (확인 1 + 1) = 6 = 3 × 2. 빠져 있던 것은 KST 자정 직후 창(00:00–00:14 — UTC 하루에 한 번, 15:00Z)의 확인 주기가 전날 목록을 더 읽고
+        확인도 둘일 수 있다는 것(목록 2 + 확인 2 = 4 — 00:00–00:09 는 지금 − 10분이 아직 전날 tm 을 다 넘지 않았다): 창 안의 확인 주기(⌈15분 ÷ 확인 간격⌉)마다 +1.
+        그래서 5분마다 288 × 3 + 3 = **867**(최악 1,734 — 한도를 넘는 것은 전과 같다, 연속의 첫 60분만), 15분마다 96 × 3 + 1 = **289**(최악 **578** < 1,000). 위의 864 ·
+        288 · 576 을 이 값으로 고친다. 모의(첫 시도마다 ReadTimeout · 다시 부른 시도는 답한다 · KST 자정을 넘는 UTC 하루)는 576 호출 · 자정 뒤 확인 36번을 하나도 잃지
+        않았다. 주기 길이 상한은 그대로(545 s — 이 주기는 확인이 둘 이하라 85 + 85 + 2 × 85 + 80 = 420 s). 시험 `test_kma_list_idle.py` +5(고치기 전 실패 — 시간 초과 뒤
+        다시 불러 확인 · 다시 부르기 예산 거절은 `error` · 429 는 다시 부르지 않음 · INFO 한 줄 · UTC 하루 모의)와 기존 시험 셋에 호출 수 단언(504 는 한 번 · 새 날
+        목록이 빈 주기와 자정 직후 창은 한 번), `test_kma_missing`(예산 산수 867 · 289 · 578).
+      - **목록이 멈췄는데 파일은 있을 때 — 옛 tm(2026-10-01 · 레인 kma 7차 — 도전 'missed')**: 영상 TTL(3 h)이 지나 만료된 옛 프레임을 보관 창에서 다시 골라 받고 meta
+        `fetched_at`(STALE 시계 — api `meta.stale` · 웹 KMA STALE)을 지금으로 옮기던 것을 막는다: 지금에서 3 h 넘은 tm 중 이미 파일이 있던 tm(meta `latest_tm` 이하 ·
+        받아 본 옛 tm 이하)은 고르지 않고, gzip 을 받은 옛 tm(연속의 확인)은 연속을 닫되 저장하지 않으며(INFO `tm=… has a file but is older than the 3 h image retention —
+        not stored`), `fetched_at` 은 앞선 `latest_tm` 보다 새 tm 을 저장할 때만 옮긴다. api · 웹 · 스키마 변경 없음(값의 뜻 그대로 — '최신 tm 첫 수집'). 받아 본 적 없는
+        옛 tm 은 전처럼 고른다(연속을 다시 여는 R-03). 시험 `test_kma_list_idle.py` +3(고치기 전 실패 — 19:55–03:00 다시 받기 24번 · 최신 tm 을 다시 받아 옮긴 STALE 시계 ·
+        5 h 지난 tm 의 gzip 을 새 latest_tm 으로 저장).
+        - **'옛 tm' 의 뜻과 웹이 실제로 보이는 것(2026-10-01 · 레인 kma 8차 — 리뷰)**: '옛 tm' 은 지금(KST 벽시계)에서 **영상 보관 3 h(`FRAME_TTL_S`) 넘게 지난 tm**
+          이다 — 그보다 짧게 지난 tm 은 옛 tm 이 아니다. 목록이 멈춘 뒤 파일이 돌아와 3 h 안의 tm(예: 22:35 에 19:50 — 2 h 45 min 전)이 새 `latest_tm` 이 되면 저장해
+          보이고(제때 받았어도 아직 보였을 나이), `fetched_at` 은 그 저장 시각이다 — 그 tm 을 처음 저장한 때가 그때라 '최신 tm 첫 수집'이 그대로 적는다. 그래서 그 뒤
+          15분은 KMA 칩 나이가 0 부터이고 STALE 이 없다(그 뒤 STALE · 아래 '목록 멈춤' `missing` 이 함께). 고르지 않은 수: 그런 tm 에서 앞선 `fetched_at` 을 두기 —
+          '최신 tm 첫 수집'이 그 tm 을 받은 적 없는 시각(앞선 latest_tm 의 저장 시각)을 말하게 된다(짓는 값). 3 h 를 넘은 tm 은 저장하지 않는다(위). 시험
+          `test_kma_list_idle.py` +1(경계를 못 박는다 — 22:35 에 19:50 저장 · `fetched_at` 22:35 · 22:40 에 19:45 만 · 22:55 `missing`).
+          앞 절의 '웹(값 그대로 — STALE 은 이제 제때 뜬다)'은 프레임이 남은 처음 3 h 에만 맞았다. 프레임이 모두 만료되면(`available` 0 · 연속 없음) 상태 바의 KMA 칩은
+          STALE 과 함께 사라지고(`lib/statusbar` — 프레임이나 '파일 없음' 연속이 있을 때만 칩, 바꾸지 않았다) 패널은 `사용 불가 — 아직 수집되지 않음 (HTTP 200)` 이었다 —
+          아래 '연속 밖의 목록 멈춤'이 까닭을 note 로 싣는다.
+      - **전날 끝에 닿았는가 — 저장했거나 받아 본 tm(2026-10-01 · 레인 kma 8차 — 리뷰)**: `_behind_prev_day` 의 '저장한 프레임이 전날 끝(23:55)에 닿지 않았다'를 Redis 에
+        남은 프레임만으로 보던 것을 고친다 — 프레임은 저장 3 h 뒤 만료되고 옛 tm 은 다시 받지 않으므로(앞 절), 23:55 까지 받은 뒤 새 날 목록이 빈 채 03:00 이 지나면
+        주기마다 받을 것이 없는 전날 목록(모든 tm ≤ latest_tm 23:55 · 3 h 넘음)을 필요한 목록으로 읽었고 그 목록이 한 번 멈추면 `error`(WARN · 공급자 실패)였다(리뷰 모의
+        00:00–06:00 · 전날 목록 ReadTimeout 두 번: 전날 목록 41번 · `error` 2 · WARN 2 — 레인 7차 앞 판은 5번). 이제 이 작업이 저장했거나 파일을 받아 본 가장 새 tm(남은 프레임 · meta `latest_tm` — 프레임이
+        만료돼도 남는다 · 받아 본 옛 tm)으로 본다. 다시 띄운 수집기가 버린 연속을 다시 여는 길은 그대로(latest_tm 13:05 < 23:55). 예산 거절 오류 글자는 `… (newest
+        stored tm=<latest_tm>)`(프레임이 만료됐어도 — 전에는 `none stored`). 시험 `test_kma_list_idle.py` +1(고치기 전 실패 — 02:55 부터 전날 목록 · `error`).
+      - **연속 밖의 목록 멈춤 — `missing` · meta note(2026-10-01 · 레인 kma 8차 — 리뷰)**: '파일 없음' 연속이 없고(파일은 받을 수 있다), 읽은 목록(그 시각 이하)이 이
+        작업이 저장했거나 파일을 받아 본 가장 새 tm 뒤로 새 tm 을 싣지 않은 채 meta `fetched_at`(그 latest_tm 을 처음 저장한 시각 — STALE 시계)이 900 s(`LIST_IDLE_AFTER_S`
+        — 웹 · api 의 KMA STALE 기준과 같은 값, 선택값) 넘게 지났으면 받을 새 tm 이 없는 주기도 `ok` 가 아니라 `missing` 이다: 오류 글자 `no new frame stored — the KMA
+        listing <날[+날]> has no tm after tm=<tm> (newest listed tm=<tm> | no tm listed); newest frame tm=<latest_tm> first stored N min ago`(받아 본 옛 tm 이면 `; tm=… has
+        a file but is older than the 3 h image retention — not stored` 를 붙인다), http 200 · 기록 0 · 공급자 성공 아님(`last_success_at` 그대로 — 예산 사용량만).
+        meta `note` = `기상청 목록에 tm <tm>(KST) 뒤 새 tm 없음`(tm 만 — 주기마다 바뀌는 값은 넣지 않는다), 목록이 다시 자라면 빈 값. WARN 은 멈춤마다 한 번 `kma radar:
+        no new frame — …` + 60분(`MISSING_REMIND_S`)마다 `kma radar: still no new frame — …`, 끝나면 INFO `the KMA listing has a tm after tm=… again`. 목록 실패 ·
+        429 · 예산으로 멈춘 주기는 판정하지 않는다. 전에는 목록이 멈추고 파일은 있는 동안 주기마다 `ok` · 기록 0 · 공급자 성공 · WARN 없음이었다(리뷰 모의 19:50 멈춤 →
+        다음 날 12:00: 194 주기 모두 `ok` · WARN 0 · note 빈 값 · 23:00 뒤 `available` 1 인 주기 0 — §G22 가 연속 안에서 없앤 모양).
+        - api: `/radar/kr` 의 ETag 에 `note` 를 넣는다(`WeatherController.radarKr`) — 전에는 note 만 바뀌면(프레임은 이미 만료 · status 200 · latest_tm 그대로) 304 라
+          웹(fetch 기본 캐시 — 브라우저가 If-None-Match 로 다시 확인)이 옛 까닭을 붙잡았다. 응답 필드 · 스키마 변경 없음. 시험 `RadarKrIT.aChangedNoteAloneChangesTheEtag`
+          (고치기 전 실패 — 304).
+        - 웹이 실제로 보이는 것(값은 api 그대로 — 웹 코드는 운영 설명 한 줄만 바꿨다): 프레임이 남은 동안(저장 뒤 3 h) 상태 바 KMA 칩 `age …` + STALE(`fetched_at` 나이
+          > 15분)와 패널 STALE. 프레임이 모두 만료되면(`available` false · 연속 없음) 상태 바에는 KMA 칩이 없고(`lib/statusbar` 규칙 그대로 — 프레임이나 연속이 있을
+          때만), 레이더 패널은 `사용 불가 — 기상청 목록에 tm 202609301950(KST) 뒤 새 tm 없음 (HTTP 200)`, 상세 표의 `레이더 · 기상청` 행은 상태 `사용 불가` · 출처 칸에 같은
+          note, 범례는 `기상청 레이더 사용 불가`(까닭 없음 — 범례는 '파일 없음' 연속만 적는다). 운영: RUNS `missing`(설명 `RUN_STATUS_TITLE.missing` 에 이 경우를 더했다) ·
+          공급자 LAST SUCCESS 가 멈춤 · /logs WARN. 칩을 까닭과 함께 남길지는 웹 규칙을 바꾸는 제품 결정이라 이 레인에서 하지 않았다.
+        - 시험: collector `test_kma_list_idle.py` +1 · 기존 2 고침(고치기 전 실패 — 19:55–03:00 `ok` 3 뒤 `missing` · 20:05 뒤 공급자 성공 없음 · WARN 1 + 알림 6 · 만료 뒤
+          note · 목록이 자라면 `ok` · note 지움, 빈 새 날 목록은 23:55 첫 저장 뒤 15분까지만 `ok`, 옛 tm 의 gzip 로 연속이 닫힌 뒤 주기는 멈춤 `missing`), api
+          `RadarKrIT` +1, web `tests/kma-list-idle.test.ts` +1(운영 설명).
     - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): `list_newer` 가 0 이면 한 줄에 `기상청 목록에도 19:50 KST 뒤 새 tm 없음`(마지막 tm 이
       지금과 다른 KST 날이면 `09-30 19:50 KST`) — KMA 칩 title · 상세 행 값 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 줄(`providerMissing` 이 해시 글자를 본다). title 에
       목록의 가장 새 tm(없으면 '읽은 목록에 tm 없음'). 모르거나 서로 맞지 않으면 적지 않는다. '확인 멈춤' 기준은 그대로(확인 간격 × 3, 아래로 15분) — 수집기가 목록만 읽은

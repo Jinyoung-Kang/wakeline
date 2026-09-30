@@ -621,12 +621,18 @@ async def test_region_without_any_provider_is_explicit_in_redis_events_and_the_l
     nxt = datetime.fromisoformat(act["region_none_next"].replace("Z", "+00:00"))
     assert abs((since - before).total_seconds()) < 5 and 55 <= (nxt - before).total_seconds() <= 61
     warns = _warnings(caplog)
-    assert (
-        warns[-1]
-        == "region: no provider available — skipped: 'adsb_lol 429 쉼(60 s) · adsb_fi 운영자 끔'; next: 'adsb_lol after 60 s'"
+    assert warns[-1] == (
+        "region: no provider available — skipped: 'adsb_lol 429 쉼(60 s) · adsb_fi 운영자 끔'; next: 'adsb_lol after 60 s'; "
+        "last error (adsb_lol): HTTP 429 Too Many Requests — too many"
     )
-    other = "region: no provider available — skipped: 'adsb_lol 운영자 끔'; next: 'none known — an operator must switch one on'"
+    # 따옴표 안(건너뛴 까닭 · 다음)만 다르면 한 지문, 마지막 오류의 종류가 다르면 다른 지문(오류 글자는 따옴표 밖 — errors.py: 앞머리가 종류)
+    other = (
+        "region: no provider available — skipped: 'adsb_lol 운영자 끔'; next: 'none known — an operator must switch one on'; "
+        "last error (adsb_lol): HTTP 429 Too Many Requests — too many"
+    )
     assert fingerprint("collector", "job.aircraft", "", warns[-1]) == fingerprint("collector", "job.aircraft", "", other)
+    timeout = other.replace("HTTP 429 Too Many Requests — too many", "ReadTimeout — read 제한 8 s 초과 (api.adsb.lol)")
+    assert fingerprint("collector", "job.aircraft", "", warns[-1]) != fingerprint("collector", "job.aircraft", "", timeout)
     await job.run_once()  # 같은 공백 — 다시 WARN 하지 않는다
     assert len([w for w in _warnings(caplog) if "no provider" in w]) == 1
     clk[0] += 61
@@ -718,11 +724,15 @@ async def test_retrying_a_cooling_provider_is_shown_as_no_provider_until_it_answ
     assert snaps[-1]["region_none_reason"] == "adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(60 s)"
     assert snaps[-1]["region"] == "adsb_lol"  # 마지막으로 쓴 공급자(기록)
     gap = [w for w in _warnings(caplog) if "no provider available" in w]
-    assert gap == [
-        "region: no provider available — skipped: 'adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(60 s)'; "
-        "next: 'adsb_fi retried each cycle while cooling down (no other provider); adsb_lol after 50 s'"
-    ]
-    other = "region: no provider available — skipped: 'adsb_lol 운영자 끔'; next: 'none known'"
+    assert (
+        gap
+        == [
+            "region: no provider available — skipped: 'adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(60 s)'; "
+            "next: 'adsb_fi retried each cycle while cooling down (no other provider); adsb_lol after 50 s'; "
+            "last error (adsb_lol): HTTP 429 Too Many Requests — too many"  # WARN 은 공백의 첫 주기에 다시 시도하기 전 — 가장 새 실패는 adsb_lol 의 429
+        ]
+    )
+    other = "region: no provider available — skipped: 'adsb_lol 운영자 끔'; next: 'none known'; last error (adsb_lol): HTTP 429 Too Many Requests — too many"
     assert fingerprint("collector", "job.aircraft", "", gap[0]) == fingerprint("collector", "job.aircraft", "", other)  # 한 묶음
     fi.fail = False
     await job.run_once()  # adsb_fi 가 답했다
@@ -902,3 +912,101 @@ def test_the_startup_line_names_the_region_chain_in_its_real_order():
         "region chain uses adsb_lol → adsb_fi (aircraft_providers: runtime setting, else .env)"
     )
     assert region_chain_line(["opensky"], providers, 2880).startswith("region chain uses no provider ")
+
+
+# ---- region WARN 에 까닭(조사 errors F2 · 도전 — 레인 kma 7차) --------------------------------------------------------------------
+# 운영 2026-09-30 17:57:43 · 17:58:01 UTC: 'region: adsb_fi failed (ReadTimeout — read 제한 8 s 초과 (opendata.adsb.fi))' 는 INFO(로그 화면에 오지 않는다)이고, 로그 화면에
+# 오는 WARN 은 'failed 3x — cooling down' 과 'no provider available' 뿐인데 둘 다 까닭(오류)을 싣지 않았다. 이제 마지막 오류를 따옴표 밖에 싣는다 — weather.py _guard ·
+# kma_radar _fail 과 같다: 오류 글자의 앞머리가 종류라(errors.py) 로그 지문이 오류 종류마다 한 묶음(숫자는 지문에서 지워진다 — 같은 종류는 한 묶음).
+class ErrSeq(FakeReadsb):
+    """정해 둔 오류를 차례로 던지고, 다 쓰면 답한다."""
+
+    def __init__(self, name: str, errors: list[BaseException]):
+        super().__init__(name)
+        self.errors = errors
+
+    async def fetch_region(self, lat, lon, radius):
+        if self.errors:
+            self.calls += 1
+            raise self.errors.pop(0)
+        return await super().fetch_region(lat, lon, radius)
+
+
+def _read_timeout(read_s: float) -> httpx.ReadTimeout:
+    e = httpx.ReadTimeout("")
+    e.request = httpx.Request(
+        "GET",
+        "https://opendata.adsb.fi/api/v2/lat/37.5/lon/127/dist/250",
+        extensions={"timeout": {"connect": 4.0, "read": read_s, "write": 8.0, "pool": 8.0}},
+    )
+    return e
+
+
+def _http_502():
+    from wakeline_collector.http import ProviderHttpError
+
+    return ProviderHttpError(502, "<html><head><title>502 Bad Gateway</title></head></html>")
+
+
+def _timed_out(total_s: int):
+    from wakeline_collector.http import RequestTimedOut
+
+    return RequestTimedOut(f"opendata.adsb.fi: no complete response within {total_s} s")
+
+
+async def _cooldown_warning(monkeypatch, caplog, make_error) -> str:
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    ctx = make_ctx(FakeRedis())
+    ctx.rt.provider_order = ["adsb_fi", "adsb_lol"]
+    fi = ErrSeq("adsb_fi", [make_error() for _ in range(3)])
+    job = AircraftJob("region", ProviderChain("region", {"adsb_fi": fi, "adsb_lol": FakeReadsb("adsb_lol")}, ctx.status), ctx)
+    caplog.clear()
+    for _ in range(3):
+        await job.run_once()
+        clk[0] += 10
+    warns = [w for w in _warnings(caplog) if "failed 3x" in w]
+    assert len(warns) == 1
+    return warns[0]
+
+
+async def test_the_cooldown_warning_carries_the_last_error_unquoted(monkeypatch, caplog):
+    """고치기 전: 'region: adsb_fi failed 3x — cooling down' — 무엇이 실패했는지는 INFO · 실행 기록 · 덮어쓰는 last_error 에만 있었다."""
+    w = await _cooldown_warning(monkeypatch, caplog, lambda: _read_timeout(8.0))
+    assert w == "region: adsb_fi failed 3x — cooling down; last error: ReadTimeout — read 제한 8 s 초과 (opendata.adsb.fi)"
+
+
+async def test_cooldown_warnings_group_per_error_kind(monkeypatch, caplog):
+    """종류가 다른 두 오류 → 지문 둘. 종류가 같고 숫자(읽기 제한 · 전체 상한 초)만 다르면 → 지문 하나."""
+    from wakeline_collector.logsink import fingerprint
+
+    def fp(msg: str) -> str:
+        return fingerprint("collector", "job.aircraft", "", msg)
+
+    timeout8 = await _cooldown_warning(monkeypatch, caplog, lambda: _read_timeout(8.0))
+    timeout15 = await _cooldown_warning(monkeypatch, caplog, lambda: _read_timeout(15.0))
+    bad_gateway = await _cooldown_warning(monkeypatch, caplog, _http_502)
+    total30 = await _cooldown_warning(monkeypatch, caplog, lambda: _timed_out(30))
+    total40 = await _cooldown_warning(monkeypatch, caplog, lambda: _timed_out(40))
+    assert timeout8 != timeout15 and fp(timeout8) == fp(timeout15)
+    assert total30 != total40 and fp(total30) == fp(total40)
+    assert len({fp(timeout8), fp(bad_gateway), fp(total30)}) == 3
+    assert bad_gateway.endswith("; last error: HTTP 502 Bad Gateway")
+
+
+async def test_the_no_provider_warning_says_none_when_nothing_failed_since_the_last_success(monkeypatch, caplog):
+    """성공 뒤 실패 없이 공급자가 없어졌으면(운영자가 모두 끔) 마지막 오류는 '없음'이다 — 앞선 오류를 지금 까닭처럼 싣지 않는다."""
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    ctx.rt.provider_order = ["adsb_fi", "adsb_lol"]
+    fi = ErrSeq("adsb_fi", [_read_timeout(8.0)])
+    job = AircraftJob("region", ProviderChain("region", {"adsb_fi": fi, "adsb_lol": FakeReadsb("adsb_lol")}, ctx.status), ctx)
+    await job.run_once()  # 실패 한 번(INFO)
+    await job.run_once()  # 성공 — 마지막 오류를 비운다
+    for name in ("adsb_fi", "adsb_lol"):
+        await r.hset(f"wakeline:provider:{name}", mapping={"disabled": "1"})
+    await job.run_once()
+    gap = [w for w in _warnings(caplog) if "no provider available" in w]
+    assert len(gap) == 1 and gap[0].endswith("; last error: none since the last success or start")

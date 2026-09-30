@@ -489,22 +489,120 @@ def test_plan_prefers_every_tail_over_any_backfill_and_the_least_backfilled_auth
 
 
 # ---- 예산 · 우선순위 ----------------------------------------------------------------------------------------------------
+# 잰 부피(2026-09-29: 10곳 최근 3일 957건 — 선택값의 근거, 잰 값은 부피뿐)
+_THREE_DAYS = {"020": 344, "820": 208, "030": 139, "620": 86, "300": 62, "810": 52, "500": 27, "200": 23, "610": 13, "700": 3}
+
+
 def test_priority_and_budget_arithmetic_are_the_documented_choices():
-    """색인 요청은 교통 폴링보다 낮고 격자 채우기보다 높다. 시간 창 몫: 격자 채우기가 100 을 남기고, 색인의 채우기 · 다시 받기가 그 중 50 을
-    꼬리 갱신에 남긴다. 잰 부피(2026-09-29: 10곳 최근 3일 957건 — 부산 344 · 울산 208 · 인천 139 · 여수 86 · 대산 62 · 마산 52 · 군산 27 · 동해 23 ·
-    목포 13 · 포항 3)로 계산한 꼬리 갱신 요청 수 + 다시 받기가 색인 몫 안이고, 하루 합계가 portmis 하루 예산 안이다(선택값 — 잰 값은 부피뿐)."""
+    """색인 요청은 교통 폴링보다 낮고 격자 채우기보다 높다. 시간 창: 격자 채우기는 합계 290(= 390 − 100) 미만에서만, 색인의 채우기 · 다시 받기는 340
+    (= 390 − TAIL_HEADROOM)까지, 꼬리는 390 까지 예약한다. 잰 부피로 하루치 요청 13회(부산 3쪽 · 울산 2쪽 · 나머지 1쪽) → 꼬리 한 바퀴 39회.
+    리뷰 2026-10-01(조사 budget PC-2 · 도전): 전에는 '꼬리 39 + 다시 받기 30 ≤ 색인 몫 100' 을 셌는데 묶이는 선은 그것이 아니다 — 격자가 먼저 290 을 채운 시
+    (운영 2026-09-30 은 매시)에는 채우기 · 다시 받기가 290–340 띠(50)만 쓰고, 꼬리 한 바퀴가 격자 뒤에 돌면 그 띠에서 먼저 39 를 써 11회만 남는다.
+    따라잡는 다시 받기(시간당 15 단위)는 그보다 많다 → 그 시에 'low' budget_exhausted 한 번 · 다음 UTC 정시로 미룸(아래 모의가 흐름을 지킨다)."""
     assert PRIORITY_FIXED < PRIORITY_PORTCALL < PRIORITY_BACKFILL
     assert 0 < ix.TAIL_HEADROOM < MOF_GRID4_HOURLY_HEADROOM < MOF_HOURLY_CAP
-    three_days = {"020": 344, "820": 208, "030": 139, "620": 86, "300": 62, "810": 52, "500": 27, "200": 23, "610": 13, "700": 3}
-    per_day = {pa: n / 3 for pa, n in three_days.items()}
+    per_day = {pa: n / 3 for pa, n in _THREE_DAYS.items()}
     day_requests = sum(max(1, math.ceil(n / NUM_OF_ROWS)) for n in per_day.values())
+    assert day_requests == 3 + 2 + 8 * 1 == 13
     tail_per_hour = ix.TAIL_DAYS * day_requests
-    # 다시 받는 하루는 대개 한 쪽이다(가장 붐비는 부산 하루 약 115건 = 3쪽은 드물다) — 넉넉히 두 배로 센다
+    grid_stop = MOF_HOURLY_CAP - MOF_GRID4_HOURLY_HEADROOM  # 격자 채우기가 멈추는 창 합계
+    low_stop = MOF_HOURLY_CAP - ix.TAIL_HEADROOM  # 색인의 채우기 · 다시 받기가 멈추는 창 합계
+    assert (grid_stop, low_stop) == (290, 340)
+    # 꼬리는 340–390 이 늘 남는다 — 격자 · 다시 받기가 먼저 써도 한 바퀴가 끝난다
+    assert tail_per_hour == 39 <= MOF_HOURLY_CAP - low_stop
+    # 격자가 먼저 차고 꼬리 한 바퀴가 그 뒤에 돈 시에 채우기 · 다시 받기가 쓸 수 있는 요청(실제 상한 — 꼬리가 앞서 돌았으면 50)
+    after_grid_and_tail = low_stop - grid_stop - tail_per_hour
+    assert after_grid_and_tail == 11 < ix.REVISIT_UNITS_PER_HOUR
+    # 다시 받기: 날마다 10곳 × (창 31일 − 꼬리 3일) = 280 단위(시간당 약 11.7) — 상한 15 단위/시는 재기동 뒤 따라잡기(프로세스 기억만)
+    assert 10 * (ix.WINDOW_DAYS + 1 - ix.TAIL_DAYS) == 280 and ix.REVISIT_S == 86400
+    # 하루 예산: 다시 받는 하루는 대개 한 쪽 — 넉넉히 단위마다 두 쪽으로 센다. 처음 한 번의 채우기 31일 × 13
     revisit_per_hour = ix.REVISIT_UNITS_PER_HOUR * 2
-    assert tail_per_hour <= ix.TAIL_HEADROOM
-    assert tail_per_hour + revisit_per_hour <= MOF_GRID4_HOURLY_HEADROOM
     backfill_once = (ix.WINDOW_DAYS + 1) * day_requests
-    assert 24 * (tail_per_hour + revisit_per_hour) + backfill_once <= 3000  # budget_portmis
+    assert 24 * (tail_per_hour + revisit_per_hour) + backfill_once == 2059 <= 3000  # budget_portmis
+    # 채우기의 최악(격자가 매시 먼저 차고 꼬리가 늘 그 뒤): 시간당 11회 → 403회에 약 37시간(전에 적은 '시간당 약 40회 · 약 11시간'은 이 띠를 보지 않았다)
+    assert math.ceil(backfill_once / after_grid_and_tail) == 37
+
+
+class _MeasuredMix:
+    """잰 부피의 하루 건수(부산 약 115 · 울산 약 69 …)로 답하는 Info5 — 하루치 요청이 13회(쪽 수를 섞은 실제 모양). log = (시각, 항만청, 날)."""
+
+    def __init__(self, clock: Clock):
+        self.clock = clock
+        self.log: list[tuple[datetime, str, str]] = []
+        self._days: dict[tuple[str, str], list] = {}
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        q = _q(req)
+        pa, ymd = q["prtAgCd"], q["sde"]
+        self.log.append((self.clock.at, pa, ymd))
+        if (pa, ymd) not in self._days:
+            d = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:8]}"
+            n = round(_THREE_DAYS[pa] / 3)
+            self._days[(pa, ymd)] = [
+                synthetic_item(pa=pa, clsgn=f"M{pa}{k:03d}"[:7], entry=f"{d}T09:00:00+09:00", count=f"{ymd}{k:03d}")
+                for k in range(n)
+            ]
+        hits = self._days[(pa, ymd)]
+        page = int(q["pageNo"])
+        chunk = hits[(page - 1) * NUM_OF_ROWS : page * NUM_OF_ROWS]
+        return httpx.Response(
+            200, content=response([copy.deepcopy(i) for i in chunk], len(hits), page, NUM_OF_ROWS if chunk else 0)
+        )
+
+
+async def test_after_the_grid_fills_the_hour_revisits_get_what_the_tail_leaves_below_340():
+    """리뷰 2026-10-01(조사 budget PC-2 · 도전 — 동작은 바꾸지 않는다, 흐름을 지킨다): 08:30Z 에 다시 띄운 수집기 — 격자 채우기가 이 시의 몫(290)을 이미 다 썼고,
+    꼬리 갱신이 막 돌아올 때다. 격자 모형: 매 정시부터 30 s 마다 15 칸씩 290 까지(운영 INFO 'grid share used' 의 모양 — 속도는 모형 값).
+    - 08시: 꼬리 한 바퀴 39회(290 → 329)가 끝나고, 다시 받기는 340 까지 11회만 — 'low' budget_exhausted 한 번('… (50 kept for the tail refresh) — resumes at 09:00Z').
+    - 미룬 다시 받기는 다음 정시 직후(09:00:00 — 격자가 차기 전, 290 몫 안)에 나간다. 한 시간 뒤 같은 모양(재기동의 따라잡기 뒤 첫 꼬리)이 한 번 더 멈출 수 있다.
+    - 그 뒤 시각이 그대로면 다시 멈추지 않는다: 다시 받기가 정시 직후로 옮겨 간다. 창은 어느 시에도 340 을 넘지 않고(꼬리 몫 50 은 남는다) 꼬리는 매시 39회."""
+    start = datetime(2026, 9, 30, 8, 30, tzinfo=UTC)  # 17:30 KST
+    clock = Clock(start)
+    today = kst_date(start)
+    fake = _MeasuredMix(clock)
+    job, db, r, _clock = _job(clock=clock, direct=fake, limit=30_000)
+    db.cov = {
+        c: Coverage(today - timedelta(days=WINDOW), today, start - timedelta(hours=1)) for c in CODES
+    }  # 꼬리가 지금 돌아온다
+    r.kv[hour_key("mof", start)] = {"used": str(MOF_HOURLY_CAP - MOF_GRID4_HOURLY_HEADROOM), "limit": "390"}
+    peak: dict[str, int] = {}
+    while clock.at < start + timedelta(hours=5, minutes=30):
+        k = hour_key("mof", clock.at)
+        h = r.kv.setdefault(k, {"used": "0", "limit": "390"})
+        h["used"] = str(max(int(h["used"]), min(290, int(h["used"]) + 15)))  # 격자 모형
+        await _drain(job)
+        peak[f"{clock.at:%H}"] = int(r.kv[k]["used"])
+        clock.advance(seconds=30)
+    tail_from = (today - timedelta(days=ix.TAIL_DAYS - 1)).strftime("%Y%m%d")
+
+    def per_hour(revisit: bool) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for at, _pa, ymd in fake.log:
+            if (ymd < tail_from) is revisit:
+                out[f"{at:%H}"] = out.get(f"{at:%H}", 0) + 1
+        return out
+
+    refusals: dict[str, list[str]] = {}
+    for run in db.runs:
+        if run["status"] == "budget_exhausted":
+            hour = run["error_text"].split("UTC hour ")[1][8:10]
+            refusals.setdefault(hour, []).append(run["error_text"])
+    assert refusals["08"] == [
+        "MOF hourly window: 340 of 390 used in UTC hour 2026093008 (50 kept for the tail refresh) — resumes at 2026-09-30T09:00:00Z"
+    ]
+    assert all(len(v) == 1 for v in refusals.values())  # 한 UTC 시에 많아야 한 번(_hold_low)
+    assert set(refusals) <= {"08", "09"}  # 재기동 시와 그다음 시 — 그 뒤로는 멈추지 않는다
+    assert per_hour(revisit=True)["08"] == 340 - 290 - 39 == 11  # 실제 상한
+    assert {h: n for h, n in per_hour(revisit=False).items() if h != "14"} == {
+        h: 39 for h in ("08", "09", "10", "11", "12", "13")
+    }
+    first_revisit = {}
+    for at, _pa, ymd in fake.log:
+        if ymd < tail_from:
+            first_revisit.setdefault(f"{at:%H}", at)
+    assert first_revisit["09"] == datetime(2026, 9, 30, 9, 0, tzinfo=UTC)  # 미룬 단위는 다음 정시 직후
+    assert all(first_revisit[h].minute == 0 for h in ("10", "11", "12", "13"))  # 다시 받기가 정시 직후로 옮겨 갔다
+    assert max(peak.values()) <= 340  # 채우기 · 다시 받기는 340 에서 멈춘다 — 꼬리 몫 50 은 늘 남는다
 
 
 async def test_the_backfill_leaves_the_tail_its_share_of_the_mof_hour_window(caplog):

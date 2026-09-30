@@ -152,6 +152,31 @@ class RadarKrIT extends IntegrationTest {
     }
 
     /**
+     * 수집기 meta note(까닭 한 줄 — 연속 밖의 목록 멈춤 '기상청 목록에 tm … 뒤 새 tm 없음'(2026-10-01 · 레인 kma 8차) · 403 활용신청 · 목록 실패의 종류)만 바뀌어도
+     * ETag 가 바뀐다. 전에는 note 가 ETag 에 없어 프레임이 만료된 '사용 불가' 동안 다른 필드가 그대로면 웹이 304 로 옛 까닭('아직 수집되지 않음')을 붙잡았다
+     * (웹은 fetch 기본 캐시 — 브라우저가 If-None-Match 로 다시 확인한다).
+     */
+    @Test
+    void aChangedNoteAloneChangesTheEtag() {
+        String live = "202609301950", note = "기상청 목록에 tm 202609301950(KST) 뒤 새 tm 없음";
+        try {
+            Map<String, String> m = new java.util.HashMap<>(meta("2026-09-30T10:50:02Z", live));
+            m.put("available", "0"); // 프레임은 모두 만료됐다
+            m.put("note", "");
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", m);
+            Res r = get("/api/v1/radar/kr");
+            assertThat(r.json().path("available").asBoolean(true)).isFalse();
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", Map.of("note", note));
+            Res after = get("/api/v1/radar/kr", headers("If-None-Match", r.header("ETag")));
+            assertThat(after.status()).as("same frames and fields, new note — not 304").isEqualTo(200);
+            assertThat(after.json().path("note").asString()).isEqualTo(note);
+            assertThat(get("/api/v1/radar/kr", headers("If-None-Match", after.header("ETag"))).status()).isEqualTo(304);
+        } finally {
+            ItStack.deleteKeys("wakeline:radar_kr:*");
+        }
+    }
+
+    /**
      * ADR-021: 프레임마다 합성 지점 수 · 코드 · 기준 · partial · 다시 받기 기록을 /radar/kr 가 옮기고, 최상위는 최신 프레임의 값을 싣는다.
      * 같은 tm 을 다시 받아 바꾸면(지점이 늘었다) 영상 URL 과 ETag 가 바뀐다 — 목록의 tm 이 같아도 304 로 옛 판정을 붙잡지 않는다.
      */

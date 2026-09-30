@@ -419,7 +419,8 @@ export function qualityPartialDay(since: unknown): { day: string; text: string; 
  */
 export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   // 계약 v5 §G26 개정(2026-10-01): '파일 없음' 연속 중 목록만 읽은 확인(확인할 새 tm 이 없다)도 'missing' — 전에는 'ok' 로 공급자 성공을 갱신했다
-  missing: "저장한 프레임 없음 — 새 tm 이 목록에 있었으나 기상청 내려받기가 '파일 없음'으로 답함, 또는 '파일 없음' 연속 중 목록에도 새 tm 이 없던 확인(오류 글자 'nothing to probe: …' — 수집기가 목록만 읽었고 마지막 확인은 옮겼다). 호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다",
+  // 수집기 레인 kma 8차(2026-10-01): 연속이 없어도 목록이 멈췄으면(파일은 있다) — 전에는 'ok' · 공급자 성공이었고 3 h 뒤 프레임이 만료되면 까닭 없이 '사용 불가'
+  missing: "저장한 프레임 없음 — 새 tm 이 목록에 있었으나 기상청 내려받기가 '파일 없음'으로 답함, 또는 '파일 없음' 연속 중 목록에도 새 tm 이 없던 확인(오류 글자 'nothing to probe: …' — 수집기가 목록만 읽었고 마지막 확인은 옮겼다), 또는 연속이 없어도 저장한 최신 tm 을 처음 저장한 뒤 15분(KMA STALE 기준) 넘게 기상청 목록에 그보다 새 tm 이 없던 주기(오류 글자 'no new frame stored — the KMA listing … has no tm after tm=…' — 까닭은 레이더 패널 · 상세 표에도). 호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다",
   quarantined: "새 tm 을 받았으나 해석할 수 없어 격리 — 저장한 프레임 없음(원본은 raw 에 남는다)",
   // 기상청 429(운영 로그 2026-09-30 — jobs/kma_radar.py) · 수집기 속도 상한(jobs/aircraft.py) — 계약 v5 §G14: 공급자 오류는 'error' 만
   throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",

@@ -72,14 +72,16 @@ async def test_r21_raw_archive_runs_off_the_event_loop_for_every_job():
     await SigmetJob(FakeAwc(FIX), ctx).run_once()
     await RadarJob(FakeRainViewer(), ctx).run_once()
     await MetarJob(FakeAwcMetar(), ctx).run_once()
-    real_decode = kma_mod._decode
+    real_decode, real_kst_now = kma_mod._decode, kma_mod.kst_now
     try:
         from test_kma_radar import _fake_decode
 
         kma_mod._decode = _fake_decode
+        # 기상청 시계를 목록의 tm 에 맞춘다 — 벽시계면 이 tm 은 영상 보관(3 h)보다 오래된 옛 tm 이라 저장(보관 · gzip)하지 않는다(레인 kma 7차)
+        kma_mod.kst_now = lambda now_utc=None: datetime(2026, 9, 27, 20, 2)  # type: ignore[assignment]
         await kma_mod.KmaRadarJob(FakeKma(_tms("202609272000")[-1:]), ctx).run_once()
     finally:
-        kma_mod._decode = real_decode
+        kma_mod._decode, kma_mod.kst_now = real_decode, real_kst_now
     assert len(raw.threads) >= 6  # region · isigmet · airsigmet · radar · metar · kma
     assert loop_thread not in raw.threads  # 어느 작업도 이벤트 루프 스레드에서 gzip 하지 않는다
 
