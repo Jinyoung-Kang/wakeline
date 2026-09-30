@@ -93,13 +93,19 @@ export default function ReplayPage() {
         </div>
         <ReplayStatusRow at={at} range={range} frame={frame} latencyMs={latency} />
         <div className="flex flex-wrap gap-x-3 px-3 pb-1 leading-snug">
-          {err ? <span className="text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
-          {clamped ? <span className="text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
           <span className="text-fg-3">항적 원해상도 72 h · 1분 요약 30일(관심 지역, 1분 평균 위치·방위 없음) · 보간 없음 · 슬라이더 눈금 = 72 h 경계</span>
         </div>
       </div>
       <div className="relative min-h-0 flex-1">
         <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />
+        {/* 오고 가는 알림(조회 실패 · 면적 상한)은 지도 위에 띄운다 — 위 줄에 넣으면 줄이 접혀 지도 높이가 바뀌고, 바뀐 영역으로 다시 조회했다
+            (E2E 2026-10-01: 503 알림이 뜨고 사라질 때마다 bbox 가 33.243 ↔ 33.234 로 흔들려 같은 시각을 새로 조회). 오른쪽 아래 출처 표시는 가리지 않는다. */}
+        {err || clamped ? (
+          <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[min(560px,calc(100%-7rem))] flex-col items-start gap-1 leading-snug" data-testid="replay-notes">
+            {err ? <span className="panel pointer-events-auto px-2 py-1 text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
+            {clamped ? <span className="panel pointer-events-auto px-2 py-1 text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
+          </div>
+        ) : null}
         {/* 키보드 경로(R-40): 지도 클릭 없이 그 시각의 SIGMET·항공기를 고른다 */}
         {showList ? (
           <div id="replay-list" className="panel absolute top-3 left-12 z-10 flex max-h-[calc(100%-1.5rem)] w-[260px] max-w-[calc(100%-4rem)] flex-col overflow-hidden" role="region" aria-label="재생 항목 목록" data-testid="replay-list">
