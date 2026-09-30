@@ -1029,3 +1029,25 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     원천 — 시간 초과 뒤 다시 읽어 성공 · 포기 · 곧바로 포기 · 연결 실패 · 차례 마감 · 늘 느린 최근 시 뒤의 시를 다음 차례에 먼저 읽음 · 끝내 조회하지 못한 시는 deadline · 0번 ·
     창 밖으로 나간 빈 시 · 기다리는 중 종료) · `CoverageBootstrapDbTest`(잠금을 기다리다 상한에 걸린 시를 잠금이 풀린 뒤 다시 읽음 · 30 s) · `ShipCoverageControllerTest`, collector
     `tests/test_rest_contract_rules.py`, web `tests/reception.test.ts` · `e2e-inject.test.ts` · `guide-page.test.ts` · `e2e/ship-coverage.spec.ts`.
+
+## G. 19차 개정(2026-10-01 · 레인 bbox · 운영 로그 — 한 칸 조회는 새 칸(시간당 약 5,000)을 따라잡지 못한다, ADR-023 '개정(2026-10-01 bbox)')
+- G28(§G15 의 격자 기하 부분 · ADR-023 결정 3) **격자 기하는 bbox 타일 먼저 — 한 칸 조회는 타일이 주지 않은 칸만**. 근거 · 계산 · 시뮬레이션 · 확인하지 않은 것은 ADR-023.
+  - 외부: 같은 `getOpnG4sWFS` 에 `ServiceKey`(한 칸 조회와 같은 인코딩) · `bbox=xmin,ymin,xmax,ymax`(EPSG:5179 m 정수 — 쉼표 · 쌍점을 인코딩하지 않는다, 기록한 호출 그대로) ·
+    `srs=EPSG:5179` · `maxFeatures=1000`. 공급자 · 예산은 `mof_grid4` 그대로 — **호출 하나 = 1**(하루 6,000 · 해양수산부 시간 창 `budget:mof:h:*` 390 중 채우기 몫 290,
+    한 칸 조회와 같이 예약 · 반환). 우선순위 `PRIORITY_BACKFILL`. 응답 상한 384 KiB(넘으면 해석하지 않고 타일을 넷으로), 한 칸 조회 상한 256 KiB 그대로.
+  - 타일: EPSG:5179 원점에 고정한 32 km 정사각형, 잘렸을 수 있으면(지물 수 ≥ maxFeatures · numberOfFeatures ≠ 지물 수 · 크기 초과) 16 → 8 → 4 km 로 나눈다. 어디를
+    묻는지는 받은 기하에서만(아는 칸 중심 · 한 칸 조회로 찾은 칸 · 지금 스냅샷에서 모르던 가장자리 칸의 꼭짓점) — 칸 번호로 위치를 계산하지 않는다. 타일은 어느
+    번호도 '해양격자에 없음'으로 적지 않는다.
+  - Redis(collector 가 쓰고 api 는 `~wakeline:*` 로 읽을 수 있다 — 읽지 않는다): `wakeline:traffic_grid:tiles` 해시(키 `level/ix/iy` → `{"status":"done"|"split"|"incomplete"|
+    "failed","at","cells"}` — done · split 기한 없음, incomplete · failed 1일, 항목의 `at` 으로 논리 만료). ACL: §G15 의 부정 캐시 셀렉터에 정확한 이름으로 더한다 —
+    `(~wakeline:traffic_grid:negative ~wakeline:traffic_grid:tiles +hset +hgetall)`, 루트 키 목록에는 없다(DEL · HDEL · SET · EXPIRE 거부). redis 를 다시 띄워야 적용된다.
+  - heartbeat `wakeline:collector` 필드 더함(타일 공급자가 없으면 빈 값): `traffic_grid_tiles_done` · `traffic_grid_tiles_queued` · `traffic_grid_fill_pass_{tiles,tile_cells,
+    tile_new,tile_splits,tile_errors}`. `traffic_grid_fill_state` 에 `waiting_tiles`(기동 뒤 타일 상태 해시를 읽기 전 — 10분 뒤에는 메모리로만). 기존 필드 · 의미는 그대로
+    (`traffic_grid_fill_pass_lookups` 등은 한 칸 조회만 센다). DB(V14 marine_grid4) · REST · WS 스키마는 바뀌지 않는다.
+  - 품질 사례 규칙 더함: `traffic_grid_tile_feature_rejected` · `traffic_grid_tile_incomplete` · `traffic_grid_tile_failed` · `traffic_grid_tile_missing_cell`(한 칸 조회가 끝난 타일
+    안에서 찾은 칸을 다시 받은 타일도 주지 않았다). 타일의 격자 밖 지물은 기존 `traffic_grid_off_grid`(+ `tile`).
+  - 웹 /ops providers 탭 '연안 교통량 격자 위치' 줄: 'bbox 타일 끝 N · 대기 M' · 마지막 채우기에 '타일 n → 칸 c(새 k) · 나눔 s · 오류 e' — heartbeat 가 수로 알렸을 때만
+    (0 으로 채우지 않는다), 시각은 KST 만(§G20). 설명서 · /about 의 '칸마다 한 번'을 고쳤다.
+  - 회귀 막기: collector `tests/test_traffic_grid_tile_{parse,plan,job,sim}.py` · `test_traffic_grid_providers.py` · `test_traffic_grid_geo.py` · `test_traffic_grid_db.py` ·
+    `test_redis_integration.py`, infra `test_redis_acl_rules.py` · `redis_acl_test.sh`, web `tests/ops-traffic-grid-fill.test.ts` · `tests/guide-page.test.ts`.
+

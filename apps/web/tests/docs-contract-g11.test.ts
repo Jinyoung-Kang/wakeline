@@ -146,6 +146,9 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(heading(27)).toMatch(/^## G\. 18차 개정\(2026-09-30 저녁 · 레인 coverage /);
     expect(amendment(27)).toContain("관측 수신 범위 계약");
     expect(amendment(26)).not.toContain("관측 수신 범위");
-    expect(amendment(28)).toBe("");
+    // 레인 bbox(2026-10-01): 격자 기하는 bbox 타일 먼저(ADR-023 개정) — 19차 · §G28
+    expect(heading(28)).toMatch(/^## G\. 19차 개정\(2026-10-01 · 레인 bbox /);
+    expect(amendment(28)).toContain("격자 기하는 bbox 타일 먼저");
+    expect(amendment(29)).toBe("");
   });
 });
