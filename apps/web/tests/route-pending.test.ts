@@ -131,6 +131,13 @@ describe("'조회 중' also covers the api's own read of the collector's result 
     expect(ROUTE_PENDING_TITLE).toContain("설정값");
     expect(ROUTE_PENDING_TITLE).toContain(`“${ROUTE_STATUS_TEXT.unavailable}”`);
   });
+  // 리뷰(2026-09-30 · lane-route #4): 3 s 는 api 가 답을 정하는 상한이지 화면에 닿는 상한이 아니다 — 답은 그 연결의 전송 차례(세션 우편함)로 나가고,
+  // Redis 가 멈춘 동안에는 같은 연결의 상태 메시지(heartbeat · 초기 세트의 status — 아직 우편함에서 Redis 를 읽는다, 계약 v5 §G21 '남은 것')가 먼저 기다린다.
+  it("the bound is when the api decides the answer, not when it reaches the screen — delivery can take longer while Redis is stalled", () => {
+    expect(ROUTE_PENDING_TITLE).toContain(`늦어도 ${ROUTE_API_READ_BOUND_S} s(api 의 Redis 명령 상한 — 설정값) 안에 정하고`);
+    expect(ROUTE_PENDING_TITLE).not.toContain(`늦어도 ${ROUTE_API_READ_BOUND_S} s(api 의 Redis 명령 상한 — 설정값)에 답하고`);
+    expect(ROUTE_PENDING_TITLE).toContain("Redis 가 멈춘 동안에는 그 답이 화면에 닿기까지 더 걸릴 수 있습니다");
+  });
 });
 
 describe("one live region stays mounted while the route status changes (so the first \"노선 조회 중\" is announced)", () => {
