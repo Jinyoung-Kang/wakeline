@@ -159,9 +159,10 @@ public class WeatherController {
         int[] imageSize = imageSize(h.get("width"), h.get("height"));
         boolean available = "1".equals(h.get("available")) && !frames.isEmpty() && coordinates != null && imageSize != null;
         Map<String, Object> missing = KrRadarMissing.from(h, this::radarParseError);
-        // 프레임은 tm 뿐 아니라 내용 전체(받은 시각 · 지점 수 · partial · URL 버전) — 같은 tm 을 다시 받아 바꿔도 304 로 옛 값을 붙잡지 않는다(ADR-021)
+        // 프레임은 tm 뿐 아니라 내용 전체(받은 시각 · 지점 수 · partial · URL 버전) — 같은 tm 을 다시 받아 바꿔도 304 로 옛 값을 붙잡지 않는다(ADR-021).
+        // note(수집기가 적은 까닭 — 목록 멈춤 · 403 · 목록 실패 종류)도: 프레임이 만료된 '사용 불가' 동안 까닭만 바뀌어도 304 로 옛 까닭을 붙잡지 않는다(2026-10-01)
         String etag = "\"k" + Integer.toHexString(java.util.Objects.hash(h.get("fetched_at"), h.get("latest_tm"), h.get("available"), h.get("status"),
-                h.get("coordinates"), h.get("width"), h.get("height"), frames, missing)) + "\"";
+                h.get("note"), h.get("coordinates"), h.get("width"), h.get("height"), frames, missing)) + "\"";
         CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
         if (Etags.notModified(etag, req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
