@@ -560,3 +560,33 @@ async def test_takeover_calls_adsb_lol_once_per_cycle_and_never_retries_a_429_wi
         clk[0] += 10
     await job.run_once()  # 넘겨받은 첫 주기 — adsb_lol 한 번(429)
     assert lol.calls == 1
+
+
+async def test_region_429_warning_names_the_cooling_provider_that_is_retried_next(monkeypatch, caplog):
+    """12:16:22 KST 의 429 경고는 'adsb_lol again after the backoff (no other provider …)' 였다. 이제 다음 주기에 3회 연속 실패로 쉬는 adsb_fi 를 다시
+    시도하므로 그렇게 적는다 — 'takes over' 가 아니다(쉬는 공급자를 다시 시도하는 것). 따옴표 안만 달라 지문은 같다."""
+    from wakeline_collector.logsink import fingerprint
+
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi", fail=True)
+    job = AircraftJob("region", ProviderChain("region", {"adsb_lol": lol, "adsb_fi": fi}, ctx.status), ctx)
+    await r.hset("wakeline:provider:adsb_lol", mapping={"disabled": "1"})  # 그동안 adsb_fi 가 맡는다
+    for _ in range(3):  # adsb_fi 3회 연속 실패 → 쉼
+        await job.run_once()
+        clk[0] += 10
+    await r.hset("wakeline:provider:adsb_lol", mapping={"disabled": "0"})
+    await job.run_once()  # adsb_lol 429
+    w = _warnings(caplog)[-1]
+    assert (
+        w
+        == "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; next: 'adsb_fi retried while cooling down (no other provider)'"
+    )
+    old = "region: adsb_lol rate limited (429) — backing off 60 s, deferred 0 min; next: 'adsb_fi takes over'"
+    assert fingerprint("collector", "job.aircraft", "", w) == fingerprint("collector", "job.aircraft", "", old)
+    clk[0] += 10
+    await job.run_once()
+    assert fi.calls == 4  # 다음 주기에 다시 시도했다

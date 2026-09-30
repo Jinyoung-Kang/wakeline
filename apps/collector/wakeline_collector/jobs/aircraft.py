@@ -226,6 +226,8 @@ class AircraftJob:
         바뀌는 글은 따옴표 안에만 둔다: 로그 지문(logsink.message_template)이 따옴표 안·숫자를 지워 한 429 계열이 한 묶음이 된다."""
         order = ["fixture"] if self.ctx.fixture else self.ctx.rt.provider_order
         nxt = await self.chain.peek(order, need_global=self.scope == "global")
+        if nxt is not None and nxt != name and self.chain.probing(nxt):  # 3회 연속 실패로 쉬지만 다른 공급자가 없어 다시 시도한다
+            return f"{nxt} retried while cooling down (no other provider)"
         if nxt is None or nxt == name:  # 미룸은 선호도일 뿐 — 대안이 없으면 쉼이 끝난 뒤 같은 공급자를 쓴다
             why = "no other provider — deferral not applied" if self.chain.hold_s(name) else "no other provider"
             return f"{name} again after the backoff ({why})"
