@@ -222,9 +222,12 @@ class Negative:
     reason: str  # not_found · off_grid(NEGATIVE_TTL_S) · failed(FAILED_TTL_S)
     at: datetime
 
+    @property
+    def expires(self) -> datetime:
+        return self.at + timedelta(seconds=FAILED_TTL_S if self.reason == "failed" else NEGATIVE_TTL_S)
+
     def valid(self, now: datetime) -> bool:
-        ttl = FAILED_TTL_S if self.reason == "failed" else NEGATIVE_TTL_S
-        return (now - self.at).total_seconds() < ttl
+        return now < self.expires
 
 
 class GridGeometry:
@@ -270,9 +273,14 @@ class GridGeometry:
         self.negative.pop(cell.grid_no, None)
 
     def mark_negative(self, grid_no: str, reason: str, now: datetime) -> None:
+        """부정 결과는 잊지 않는다: 메모리 상한(MAX_TRACKED)에 닿으면 기한이 지난 항목을, 없으면 가장 먼저 끝나는 항목을 비우고 적는다.
+        (전에는 상한에서 적지 않고 대기열에서만 뺐다 — 다음 스냅샷이 다시 넣어 볼 때마다 다시 물었다.)"""
         self._pending.pop(grid_no, None)
-        if len(self.negative) < MAX_TRACKED or grid_no in self.negative:
-            self.negative[grid_no] = Negative(reason, now)
+        if grid_no not in self.negative and len(self.negative) >= MAX_TRACKED:
+            expired = [g for g, n in self.negative.items() if not n.valid(now)]
+            for g in expired or [min(self.negative, key=lambda k: self.negative[k].expires)]:
+                del self.negative[g]
+        self.negative[grid_no] = Negative(reason, now)
 
     def failed(self, grid_no: str, now: datetime) -> bool:
         """조회 오류 한 번. ID_MAX_FAILURES 번째면 failed 로 옮기고 True(호출자가 Redis 에 적는다), 아니면 물러나기만."""
