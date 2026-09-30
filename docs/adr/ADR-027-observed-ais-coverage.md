@@ -42,7 +42,8 @@
      풀 안에서 서로 기다리지 않는다'가 깨지지 않게 쓰지 않는다. DB 연결 수: 기동 몇 분 동안 12 + 4 + 1.
    - 상한(ADR-025 의 읽기 규칙과 같은 모양 · 값은 이 일에 맞춰 고름): 서버 statement_timeout 10 s(시 하나 치 집계는 공개 조회 3 s 보다 무겁다) · JDBC 문장 상한
      같은 값 · pgjdbc socketTimeout 12 s(서버가 멈추거나 망이 끊겨도 끝난다) · connectTimeout 2 s · loginTimeout 5 s · 읽기 전용(default_transaction_read_only +
-     setReadOnly) · 커서로 5,000행씩. 전체 마감 180 s(고른 값).
+     setReadOnly) · 커서로 5,000행씩. 전체 마감 180 s(고른 값). → 개정(아래 '개정' 2026-09-30 22:49 KST 배포 뒤): 문장 상한 30 s(socketTimeout 32 s) ·
+     마감은 한 차례마다 · 못 읽은 시는 멈추지 않고 나중에 다시 읽는다.
    - 멈추면(오류 · 마감 · 종료) 셈 시작부터 거꾸로 **이어 읽은 부분만** 덮었다고 밝힌다(since). 실패는 종류만(statement_timeout · connection · read_timeout ·
      deadline · stopped · error — 서버 글자는 싣지 않는다) 응답과 로그 한 줄에 — 실패 · 마감은 WARN, 종료로 멈춤(stopped)은 INFO(api 재시작마다 나는 운영
      동작이라 [로그] 화면의 WARN 이 아니다 — 리뷰 2026-09-30 전에는 같은 멈춤이 WARN 두 줄이었다).

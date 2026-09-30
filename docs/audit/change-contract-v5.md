@@ -829,7 +829,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     셈은 seen_at ≥ live_from, 기동 때 부트스트랩은 ship_position 의 ts < live_from(두 번 세지 않는다). `since` = max(window.from, min(bootstrap.loaded_from, live_from)) ·
     `covered` = full ⇔ since = window.from, 아니면 loaded_from < live_from 이면 partial, 아니면 since_api_start.
   - 부트스트랩(한 번 · api 시작 `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) 뒤 · 가장 최근 시부터 · 시 하나에 문장 하나 · 연결 하나(공유 풀 · 선택 조회 풀 아님) ·
-    읽기 전용 · statement_timeout 10 s · socketTimeout 12 s · connectTimeout 2 s · loginTimeout 5 s · 전체 마감 180 s — 멈추면 이어 읽은 부분만).
+    읽기 전용 · statement_timeout 10 s · socketTimeout 12 s · connectTimeout 2 s · loginTimeout 5 s · 전체 마감 180 s — 멈추면 이어 읽은 부분만). → 아래
+    '2026-09-30 22:49 KST 배포 뒤' 줄이 바꾼다(30 s · 32 s · 마감은 한 차례마다 · 못 읽은 시는 다시 읽음).
   - 검사: `tools/rest_contract_check.py` `ship_coverage`(스키마 + `_ship_coverage` — 창의 시작 · to = generated_at · live_from 이 api 시작의 분 · since/covered 식 ·
     격자점 · 순서 · 중복 없음 · 선박 ≤ 위치 · 마지막 수신이 창 안이고 초로 내림 · 합계 · 잘림 ⇔ 빠진 위치 · 상한 · meta.fetched_at = min(가장 늦은 마지막 수신, generated_at)), 표본은
     RestSamplesIT, 규칙 시험은 collector `tests/test_rest_contract_rules.py`. OpenAPI 스냅숏에 `shipCoverage`.
