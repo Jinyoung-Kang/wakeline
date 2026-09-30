@@ -166,6 +166,28 @@ async def test_an_empty_listing_during_the_streak_says_nothing_is_listed_after_t
     assert (meta["missing_list_tm"], meta["missing_list_newer"]) == ("", "0")
 
 
+async def test_a_streak_whose_last_tm_is_two_days_back_checks_both_read_listings_but_does_not_claim_nothing_newer(env):
+    """수집기는 전날 · 오늘 목록만 읽는다. 연속의 마지막 tm(09-30 19:50)이 그저께가 된 10-02 00:20 — 두 목록이 모두 답했고(빈 답) 확인할 tm 이 없다:
+    목록만 읽은 확인이다(마지막 확인을 옮기고 'missing') — 다만 읽은 목록이 마지막 tm 의 날을 덮지 못했으니 '마지막 tm 뒤로 새 tm 없음'은 모른다(빈 값)."""
+    mod, r, ctx, clock, runs = env
+    prov, job = await _stalled_streak(mod, ctx, clock)
+    await _run(job, clock, _walk("202610010000", "202610020015"))
+    runs.clear()
+    prov.days.clear()
+    prov.binaries.clear()
+    clock["now"] = "202610020020"
+    await job.run_once()
+    assert sorted(prov.days) == ["20261001", "20261002"] and prov.binaries == []
+    assert [run["status"] for run in runs] == ["missing"]
+    assert runs[0]["error_text"].startswith(
+        "no new frame stored — nothing to probe: the KMA listing 20261001+20261002 lists no tm "
+        "(tm=202609301950 is on 20260930 — that listing was not read); KMA download has no file since tm=202609301310"
+    )
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["missing_checked_at"] == _utc("202610020020")
+    assert (meta["missing_list_tm"], meta["missing_list_newer"]) == ("", "")
+
+
 # ---- 목록 실패는 확인이 아니다 --------------------------------------------------------------------------------------------------
 def _list_errors():
     import httpx
