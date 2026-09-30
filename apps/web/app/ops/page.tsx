@@ -271,7 +271,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>
           {/* 연안 교통량 격자 위치 채우기 진행(ADR-023 2026-10-01 개정) — 수렴을 DB · 컨테이너 로그 없이 본다(수집기 heartbeat 그대로) */}
-          <TrafficGridFill collector={prov.collector} />
+          <TrafficGridFill collector={prov.collector} nowMs={providersNowMs(prov)} />
           <div role="status" aria-live="polite">{switchMsg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="switch-ok">{switchMsg.text}</div> : null}</div>
           {switchMsg && !switchMsg.ok ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-unmirrored">{switchMsg.text}</div> : null}
           {differs.length ? (
