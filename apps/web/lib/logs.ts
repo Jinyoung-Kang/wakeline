@@ -257,7 +257,7 @@ export const logLinkHash = (e: Pick<LogEntry, "id" | "stream">) => `#id=${encode
 /** 화면에서 항목을 가르는 값(React key · 선택 · 겹침 검사): "stream:id" — stream 을 모르면(§G2 전 api) 서버 스트림 */
 export const entryKey = (e: Pick<LogEntry, "id" | "stream">) => `${e.stream ?? "server"}:${e.id}`;
 
-// ---- 새 항목(자동 새로 고침 — 보던 줄이 움직이지 않게) ----
+// ---- 새 항목(자동 새로고침 — 보던 줄이 움직이지 않게) ----
 
 /** 스트림 id 비교(ms, 그다음 순번) */
 export function streamIdCmp(a: string, b: string): number {

@@ -1,6 +1,6 @@
 /**
  * /ops 탭마다 어떤 응답을 화면에 반영하는가(lib/ops RequestOrder) — 늦게 온 이전 응답은 버리되, 새로고침(15 s)보다 느린 응답과 그 실패는 버리지 않는다.
- * 기준 요청(쓰기 뒤 · 해결 표시 토글 · refresh 단추)은 그 전에 떠난 요청의 응답을 모두 버린다.
+ * 기준 요청(쓰기 뒤 · 해결 표시 토글 · 새로고침 단추)은 그 전에 떠난 요청의 응답을 모두 버린다.
  */
 import { describe, expect, it } from "vitest";
 import { RequestOrder } from "@/lib/ops";
@@ -20,7 +20,7 @@ describe("RequestOrder: which answer a tab applies", () => {
     expect(o.settle(b)).toBe(true);
     expect(o.settle(a)).toBe(false);
   });
-  it("a barrier (after a write · a mode toggle · the refresh button) drops every answer from requests that left before it, even if it lands first", () => {
+  it("a barrier (after a write · a mode toggle · the 새로고침 button) drops every answer from requests that left before it, even if it lands first", () => {
     const o = new RequestOrder();
     const before = o.begin(false);
     const barrier = o.begin(true);

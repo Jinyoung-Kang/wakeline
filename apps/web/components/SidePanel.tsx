@@ -1,11 +1,6 @@
 "use client";
 import { AlertPanel } from "./AlertPanel";
-import { AircraftCard } from "./AircraftCard";
-import { AirportCard } from "./AirportCard";
-import { AirportList } from "./AirportList";
-import { ShipPanel } from "./ShipCard";
-import { SigmetCard } from "./SigmetCard";
-import { SigmetList } from "./SigmetList";
+import { AircraftCardPart, AirportCardPart, AirportListPart, ShipPanelPart, SigmetCardPart, SigmetListPart } from "./DashboardParts";
 import { useUi, type UiPanel } from "@/lib/ui-store";
 
 /** 상황판 오른쪽 패널(탭 + 내용) */
@@ -20,6 +15,7 @@ export function SidePanel() {
 /**
  * 표시 부분(선택·탭을 인자로 — 서버 렌더 시험용).
  * 알림 목록은 다른 탭을 보는 동안에도 숨긴 채 남겨 둔다(R-08) — 항공기를 골라도 펼친 근거·스크롤·범위 선택이 사라지지 않는다.
+ * 알림 밖의 탭 내용(카드 · 목록)은 처음 열 때 받는다(DashboardParts — 첫 화면 JS 에서 뺐다, ADR-026). 받는 동안 진행 표시 · 실패하면 다시 시도.
  */
 export function SidePanelView({ panel, hex, sigmet, airport }: { panel: UiPanel; hex: string | null; sigmet: string | null; airport: string | null }) {
   const setPanel = useUi((s) => s.setPanel);
@@ -32,11 +28,11 @@ export function SidePanelView({ panel, hex, sigmet, airport }: { panel: UiPanel;
       </div>
       <div className="min-h-0 flex-1">
         <div className="h-full" hidden={panel !== "alerts"}><AlertPanel /></div>
-        {panel === "aircraft" ? (hex ? <AircraftCard hex={hex} /> : <div className="p-3 text-[11px] text-fg-3">지도에서 항공기를 클릭하거나, 상단 검색(/ 키)·알림 목록에서 고르세요.</div>) : null}
-        {panel === "ship" ? <ShipPanel /> : null}
+        {panel === "aircraft" ? (hex ? <AircraftCardPart hex={hex} /> : <div className="p-3 text-[11px] text-fg-3">지도에서 항공기를 클릭하거나, 상단 검색(/ 키)·알림 목록에서 고르세요.</div>) : null}
+        {panel === "ship" ? <ShipPanelPart /> : null}
         {/* 선택이 없으면 목록 — 지도 클릭 없이 키보드로 고른다(R-40) */}
-        {panel === "sigmet" ? (sigmet ? <SigmetCard id={sigmet} /> : <SigmetList />) : null}
-        {panel === "airport" ? (airport ? <AirportCard icao={airport} /> : <AirportList />) : null}
+        {panel === "sigmet" ? (sigmet ? <SigmetCardPart id={sigmet} /> : <SigmetListPart />) : null}
+        {panel === "airport" ? (airport ? <AirportCardPart icao={airport} /> : <AirportListPart />) : null}
       </div>
     </>
   );

@@ -100,6 +100,7 @@ RainViewer ConnectTimeout 과 함께라 호스트 망 문제로 보고 이 부�
 **결정.**
 1. `max_queue` 64 · keepalive 20 s/20 s 는 그대로 둔다(이름 붙인 상수 `WS_MAX_QUEUE` · `PING_*`). 키우면 메모리 상한만 커지고 1011 은 줄지 않는다(위 표).
    무거운 작업을 루프 밖으로 옮기는 것도 하지 않는다 — 잰 최악이 0.1 s 대라 근거가 없다. 루프 지연 측정이 다른 것을 보이면 다시 본다.
+   (→ 개정 2026-09-30 오후: keepalive 시간 초과 40 s — 아래 '개정' · VERIFICATION #73. `max_queue` 64 · ping 간격 20 s 는 그대로)
 2. **진단**(`ais/diag.py`): 이벤트 루프 지연(0.5 s 틱이 늦게 깬 만큼), websockets 수신 버퍼에 남은 프레임(구역별), 원문 대기열에 머문 시간(지금 맨 앞에서
    기다리는 원문 포함 — 정리 태스크가 멈춰도 모름이 되지 않게) · 깊이, keepalive 왕복(구역별) — 최근 60 s 최댓값. 상태 해시(`loop_lag_max_s` · `loop_stalls_total` ·
    `queue_wait_max_s` · `queue_depth_max` · `ws_queue_max` · `ping_rtt_max_s`, `shards[]` 의 `ping_rtt_max_s` · `ws_queue_max`), `GET /api/v1/ops/pipeline` 의 `ais.*`,
@@ -126,3 +127,23 @@ RainViewer ConnectTimeout 과 함께라 호스트 망 문제로 보고 이 부�
 - 기억하는 끊김 시각 256개: 메모리 상한. 백오프(60 s 정상 연결 뒤에만 초기화) 때문에 30분에 이만큼 끊길 수 없어 수는 정확하다.
 - 수신 버퍼 깊이는 websockets 17.x 의 내부 속성(`recv_messages.frames`)을 읽는다. 판을 올려 없어지면 모름(빈 값)으로 두고 한 번 경고하며, 고정한 판에서 읽히는지는
   `test_ais_diag` 가 지킨다.
+
+**개정(2026-09-30 오후 — 운영 진단으로 가른 원인 · keepalive 시간 초과 20 → 40 s, 계약 v5 §G23 개정).**
+- 진단(운영 스택, 위 2의 필드 — 사용자 운영/로그 화면): 13:58 KST `ping_rtt_max_s` 12.30 s(60 s 창)일 때 `loop_lag_max_s` 0.02 s · `ws_queue_max` 45/64.
+  14:03–14:05 KST 다섯 표본: keepalive 왕복 0.58–1.86 s · 루프 지연 0.01 s · 수신 버퍼 14–16/64 · 구역별 `lag_p50_s` 1.8–7.8 s. 위 '다음 1011 을 읽는 법'의 셋째 —
+  **공급자 쪽 연결별 전달 적체**(pong 이 데이터 뒤에 줄 선다)다. 루프(기제 1)도 수신 버퍼(기제 2)도 아니다. 08:41 · 08:51 KST 의 1011 두 번은 공백 5–6 s 를 남겼고,
+  재연결은 공급자 쪽에 쌓여 있던 전달분을 버린다(재전송 없음).
+- 결정: `PING_TIMEOUT_S` 20 → **40 s**(고른 값 — 잰 한도가 아니다), `PING_INTERVAL_S` 20 s 그대로. 근거는 오늘 잰 keepalive 왕복 최대 12.30 s(그때 루프 지연
+  0.02 s · 수신 버퍼 45/64 — 공급자 쪽 적체)이고 40 s 는 그 약 3.3배다. 참고 값: 부록 A 10분 재측정의 가장 큰 데이터 지연 23.1 s(수신 − time_utc — pong 왕복이
+  아니라 공급자에서 우리까지의 전달 지연, 연결 하나일 때)는 20 s 를 넘은 한 번이었고 그때 20 s 시간 초과가 끊었다(keepalive 재연결 — 스스로 회복한 값이 아니다).
+  40 s 는 그보다 약 1.7배 위다(리뷰 2026-09-30 에서 이 값의 이름을 바로잡았다 — 전에는 '스스로 회복한 가장 큰 지연'이라 적었다). 부록 A 결정 3 의 방향(적체가 계속 커지면 다시 붙어 끊는다)은
+  그대로이고 문턱만 옮겼다 — 40 s 보다 늦은 pong 은 여전히 1011 로 끊는다(`test_pong_later_than_the_operating_timeout_still_reconnects`).
+- 반쯤 열린 연결(데이터도 pong 도 오지 않음)을 끊기까지의 최악: 마지막 pong 뒤 ping 간격 20 + 시간 초과 40 + close 대기 3 = **63 s**(`HALF_OPEN_DETECT_MAX_S`,
+  전에는 43 s — websockets 17.1 keepalive 는 pong 뒤 `interval − 왕복` 을 쉬고 ping 을 보낸 뒤 시간 초과를 기다린다). 데이터 생존은 따로 idle 기한
+  (`ais_idle_timeout_s` 기본 120 s — pong 은 오는데 데이터가 없는 연결)이 지킨다. 공백은 마지막 데이터부터 기록되므로(`test_idle_connection_is_recycled_and_gap_starts_at_last_message`)
+  늦게 알아채도 공백이 가려지지 않는다 — 반쯤 열린 경우 공백이 최대 20 s 길어질 뿐이다.
+- 따라 바뀐 것: 상태 해시 `ping_timeout_s` 가 "40" 이 되고 운영 PIPELINE 설명이 응답에서 그 숫자를 채운다(웹 · api 코드 변경 없음). 진단 창 60 s 는 이제 keepalive 한 번
+  (20 + 40)과 같다 — 왕복 표본은 pong 이 온 순간 남으므로 40 s 늦은 pong 도 창에 60 s 남는다. 루프 WARN 5 s 는 그대로(1011 문턱이 아니라 루프 건강 신호).
+- 시험: `test_ais_keepalive` 5절 — 운영 값을 `SCALE` 0.02 로 줄여 같은 관계를 본다: pong 을 가장 큰 데이터 지연(23.1 s)만큼 늦춰도 끊지 않음(고치기 전 1011 로 실패 —
+  pong 이 데이터와 같은 줄에 선다는 위 진단을 시험에서 흉내 낸다) · 50 s 늦은 pong 은
+  1011 · 반쯤 열린 연결은 63 s(× SCALE) 안에 1011.

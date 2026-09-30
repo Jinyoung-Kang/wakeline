@@ -26,8 +26,20 @@
 - 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
   거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
+- 속도 상한(운영 로그 2026-09-30 — 기상청 HTTP 429 '현재 요청을 처리할 수 없습니다' 네 번, 모두 같은 주기의 앞선 요청 0.1–0.5 s 뒤): KMA 호출은 모두
+  호스트 버킷(ratelimit.KMA_APIHUB_RPS 0.5 req/s · burst 1 — 선택값)을 지나 2 s 간격으로 나간다('파일 없음' 연속이 닫힌 뒤 보관 창의 빈 곳을 이어 받는
+  묶음 포함). 429 는 HttpClient 가 그 호스트를 멈추고(Retry-After — 초 · HTTP-date — 가 있으면 따른다, 없으면 30 → 60 → 120 → 300 s) 이 작업은 그 주기의
+  KMA 호출을 멈춘다(남은 tm · 다시 받기는 다음 주기). 실행은 'throttled'(http 429 · 쉰 초 · Retry-After 를 오류 글자에) — 공급자 오류가 아니므로
+  공급자 last_error 에 적지 않는다(계약 v5 §G14: 공급자 오류는 'error' 만). WARN 한 줄. 쉼 때문에 보내지 않은 호출(속도 상한 Throttled — 다음 주기가
+  쉼 안일 때)도 'throttled' · INFO(이미 알렸다) · 예산을 돌려준다. 그 밖의 속도 상한(대기 상한 · 대기열 상한)은 'throttled' · WARN.
+  바이너리 중 멈춰도 주기 끝은 그대로 지난다(리뷰 2026-09-30): 이미 포기한 tm 의 품질 이벤트 · 격리 수는 그 실행 기록에, 프레임을 저장했으면 공급자
+  성공, 같은 주기에 열고 닫은 '파일 없음' 연속의 발행, heartbeat. 정규 부분에 다른 까닭('파일 없음' 등)이 있었으면 오류 글자에 함께 싣는다.
+  다시 받기(아래)의 429 도 같다 — WARN 한 줄 · 남은 다시 받기를 멈추고, 정규 부분이 'ok' 면 실행은 'throttled'(http 429), 아니면 그 상태 그대로
+  오류 글자에 덧붙인다. 목록이 답했으니 정규 부분이 'ok' 면 공급자 성공은 적는다.
 - KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다). 덧붙이는 목록이라 예산이 없거나
-  실패하면 오늘 목록만으로 주기를 계속한다.
+  실패하면 오늘 목록만으로 주기를 계속한다. 다만 429 · 속도 상한이면 목록의 429 와 같다(리뷰 2026-09-30 — 전에는 WARN 한 줄뿐이고 실행 기록은
+  새 tm 이 없으면 'ok' · http 200, 있으면 쉼 때문에 보내지 않은 바이너리의 'throttled' · http 없음이었다): 이 주기의 KMA 호출(바이너리 · 다시 받기)을
+  멈추고 실행은 'throttled'(http 429 · 쉰 초 · Retry-After — 그 전날 목록 단계로)다.
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
   목록 키도 이미지와 같은 TTL 을 갖는다(수집기가 멈추면 함께 만료). 각 항목에 expires_at 을 둔다.
 - 해석(gzip 해제·재투영·PNG)은 CPU 작업이라 스레드에서 돈다(이벤트 루프를 막지 않게).
@@ -58,7 +70,7 @@
   시도(refetches · refetched_at)와 바꾼 수(upgrades)는 항목에 남는다. 예산은 한 번에 1 을 예약하되 남은 하루(UTC)의 정규 주기 몫(주기당
   REGULAR_CALLS_PER_CYCLE = 목록 1 + 새 프레임 1 + 일시 오류 다시 부르기 1)을 남기고만(budget.regular_headroom — 기상 작업의 다시 부르기와
   같은 규칙). 오류는 INFO 한 줄 — 주기를 끝내지 않고, 다시 부르지 않고, 공급자 실패로 기록하지 않는다(보내지 않은 시도는 예산 1 을
-  돌려준다). 30분 · 4분 · 2개 · 3은 선택값이다(잰 값이 아니다).
+  돌려준다). 429 · 속도 상한만은 위 '속도 상한'처럼 WARN · 실행 상태로 올린다. 30분 · 4분 · 2개 · 3은 선택값이다(잰 값이 아니다).
 """
 
 from __future__ import annotations
@@ -85,6 +97,7 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, read_header, render_mercator_png
 from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
+from wakeline_collector.ratelimit import KMA_APIHUB_HOST as KMA_HOST
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
@@ -375,6 +388,11 @@ def _outcome(stored_n: int, missing_n: int, quality: list[tuple[str, str | None,
     return "quarantined", f"no new frame stored — could not read {bad}"
 
 
+def _throttle(e: BaseException) -> bool:
+    """429(공급자가 거절) 또는 속도 상한(Throttled — 보내지 않았다)."""
+    return isinstance(e, Throttled) or (isinstance(e, ProviderHttpError) and e.status == 429)
+
+
 class _BadFrame(Exception):
     """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류). 다시 받아도 같으므로 건너뛴다."""
 
@@ -402,6 +420,8 @@ class KmaRadarJob:
         self.partial_stored = 0
         self.refetch_attempts = 0
         self.upgrades = 0
+        # 이 주기 전날 목록(_listing)의 429 · 속도 상한 — 주기가 KMA 호출을 멈추고 'throttled' 로 적는다(run_once)
+        self._prev_day_throttle: _StepFailed | None = None
 
     async def _frames(self) -> list[dict]:
         raw = await self.ctx.status.redis.get(KEY_FRAMES)
@@ -460,6 +480,30 @@ class KmaRadarJob:
             return
         log.warning("kma radar: %s", f.log_text())
 
+    @staticmethod
+    def _throttle_text(f: _StepFailed) -> tuple[str, int | None]:
+        """429 · 속도 상한(모듈 설명 '속도 상한')의 로그 한 줄과 (실행 기록 오류 글자, http 상태). 공급자 last_error · consecutive_failures 에는 적지
+        않는다(공급자 오류가 아니다). 429 는 WARN(HttpClient 가 호스트를 멈춘 초 · Retry-After), 그 쉼 때문에 보내지 않은 호출은 INFO(429 가 이미
+        알렸다), 그 밖의 속도 상한은 WARN. 목록 · 바이너리 · 다시 받기 모두 같은 글이다."""
+        e = f.error
+        if isinstance(e, ProviderHttpError):
+            ra = str(e.headers.get("retry-after", "")).strip()[:40]
+            given = (f"Retry-After {ra} s" if ra.isdigit() else f"Retry-After '{ra}'") if ra else "no Retry-After — step backoff"
+            paused = "pause unknown" if e.pause_s is None else f"paused {e.pause_s:.0f} s"
+            note = f"{KMA_HOST} {paused} ({given})"
+            log.warning("kma radar: %s — %s — %s; no more KMA calls this cycle", f.step, describe_error(e), note)
+            return f"{f.detail()} · {note}", e.status
+        level = logging.INFO if isinstance(e, Throttled) and e.cooldown_s > 0 else logging.WARNING  # 쉼은 429 가 이미 알렸다
+        log.log(level, "kma radar: %s — not called (%s)", f.step, describe_error(e))
+        return f"{f.detail()} · not called — rate limiter", None
+
+    async def _throttled(self, started: datetime, f: _StepFailed) -> None:
+        """목록이 429 · 속도 상한으로 멈췄다: 실행 'throttled' 하나(이 주기에 한 일이 아직 없다 — 바이너리 · 다시 받기는 주기 끝에서 함께 적는다)."""
+        text, http_status = self._throttle_text(f)
+        self.ctx.db.record_run(
+            self.job_name, self.p.name, started, status="throttled", http_status=http_status, records_in=0, error_text=text
+        )
+
     async def _call(self, step: str, fn: Callable[[], Awaitable[ProviderResult]]) -> ProviderResult:
         """step 호출. 실패는 모두 _StepFailed(단계·걸린 시간)로 올린다. 일시 오류면 예산 1 을 예약할 수 있을 때 5 s 뒤 한 번 다시
         부른다(호출마다 한 번 — retry.call_retry_once). HTTP 오류·속도 상한은 다시 부르지 않는다."""
@@ -507,7 +551,9 @@ class KmaRadarJob:
 
     async def _listing(self):
         """오늘(KST) 목록. 자정 직후에는 전날 목록도 합친다. 첫 결과(오늘)를 돌려준다.
-        전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다)."""
+        전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다).
+        429 · 속도 상한이면 그 실패를 self._prev_day_throttle 에 남긴다 — run_once 가 이 주기의 KMA 호출을 멈추고 'throttled' 로 적는다(로그도 그때 한 줄)."""
+        self._prev_day_throttle = None
         now_kst = kst_now()
         day = now_kst.strftime("%Y%m%d")
         today = await self._call(f"listing {day}", lambda: self.p.file_list(day))
@@ -527,6 +573,10 @@ class KmaRadarJob:
         except Exception as e:  # noqa: BLE001
             if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
                 await self.ctx.budget.release(self.p.name, 1)
+            # 기상청이 호스트를 멈췄다(429) · 속도 상한 — 목록의 429 와 같게 주기가 적는다(WARN · INFO 는 _throttle_text)
+            if _throttle(e):
+                self._prev_day_throttle = _StepFailed(f"previous-day listing {prev_day}", e, time.monotonic() - t0)
+                return today
             log.warning(
                 "kma radar: previous-day listing %s — %s after %.1f s — using today's only",
                 prev_day,
@@ -557,7 +607,10 @@ class KmaRadarJob:
         try:
             listing = await self._listing()
         except _StepFailed as f:
-            await self._fail(started, f)
+            if _throttle(f.error):
+                await self._throttled(started, f)
+            else:
+                await self._fail(started, f)
             return
         except Exception as e:  # noqa: BLE001 — 목록 호출 밖(예: 전날 목록 준비)의 예상 밖 오류도 주기 실패로
             await self._fail(started, _StepFailed("listing", e, None))
@@ -580,6 +633,12 @@ class KmaRadarJob:
         note = ""
         quality: list[tuple[str, str | None, dict]] = []
         budget_stop: tuple[str, str] | None = None  # 바이너리 예약이 거절돼 멈췄다(상태 · 오류 글자)
+        # 429(기상청이 거절 — 호스트를 멈췄다) · 속도 상한(보내지 않았다)으로 이 주기의 KMA 호출을 멈췄다. 곧바로 끝내지 않고 주기 끝(품질 이벤트 ·
+        # 공급자 성공 · 연속 발행 · heartbeat)을 그대로 지난다 — 리뷰 2026-09-30: 전에는 return 해서 이미 포기한 tm 의 품질 이벤트와 같은 주기에
+        # 열고 닫은 연속의 발행을 잃었다(Retry-After 가 길면 다음 주기도 멈춰 10분까지)
+        throttle: _StepFailed | None = self._prev_day_throttle
+        if throttle is not None:  # 전날 목록이 429 · 속도 상한 — 바이너리 · 다시 받기도 이번 주기에는 부르지 않는다
+            candidates = []
         # 끝내 없던 tm 은 후보를 모두 본 뒤에 가린다 — 목록 · 바이너리 오류로 주기가 중간에 끝나도(포기한 tm 을 조용히 잊지 않게)
         try:
             for tm in candidates:
@@ -595,7 +654,10 @@ class KmaRadarJob:
                         missing_n += 1
                         listed = kinds.get(tm)
                         note = self._not_ready_or_missing(tm, err, quality, ",".join(listed) if listed else "", exhausted)
-                    elif isinstance(err, ProviderHttpError | httpx.HTTPError | OSError | Throttled):  # Throttled: 429 쿨다운 등
+                    elif _throttle(err):
+                        throttle = f  # 이 주기의 KMA 호출을 멈춘다(남은 tm · 다시 받기는 다음 주기) — 기록은 주기 끝에서
+                        break
+                    elif isinstance(err, ProviderHttpError | httpx.HTTPError | OSError):
                         await self._fail(started, f)
                         return
                     else:
@@ -617,17 +679,31 @@ class KmaRadarJob:
             settled = self._settle_exhausted(exhausted, newest, kinds)
         note = settled or note
         self._remind_missing()  # 주기에 한 번 — 이 주기의 확인을 모두 센 뒤(확인이 둘이라 첫 확인 뒤에 알리면 요약이 한 tm 늦다)
-        partial_now = await self._refetch_partial()
+        if throttle is None:
+            partial_now, refetch_stop = await self._refetch_partial()
+        else:  # 호스트가 멈췄다 — 다시 받기도 이번 주기에는 하지 않는다(부분 합성 수만 센다)
+            partial_now, refetch_stop = await self._partial_count(), None
         status, error_text = _outcome(stored_n, missing_n, quality, note)
         # 새 tm 이 있었는데 예산이 없어 하나도 저장하지 못했다 — 성공이 아니다(리뷰 2026-09-30)
         if budget_stop is not None and not stored_n:
             status, error_text = budget_stop[0], budget_stop[1] + (f" — {note}" if note else "")
+        # 공급자 성공: 프레임을 저장했거나, 정규 부분이 멈추지 않고 'ok' 로 끝났다(다시 받기의 429 는 목록 · 정규 부분의 답을 지우지 않는다)
+        succeeded = stored_n > 0 or (status == "ok" and throttle is None)
+        http_status = listing.http_status
+        stop = throttle or refetch_stop
+        if stop is not None:
+            text, stop_http = self._throttle_text(stop)
+            if throttle is not None or status == "ok":  # 정규 부분이 멈췄거나 다른 문제가 없었다 — 주기의 답은 'throttled'
+                error_text = text if error_text is None else f"{text} · {status}: {error_text}"
+                status, http_status = "throttled", stop_http
+            else:  # 정규 부분의 상태('파일 없음' 등)가 주기의 답이다 — 다시 받기의 429 는 덧붙인다
+                error_text = f"{error_text} · {text}"
         ctx.db.record_run(
             self.job_name,
             self.p.name,
             started,
             status=status,
-            http_status=listing.http_status,
+            http_status=http_status,
             latency_ms=listing.latency_ms,
             records_in=stored_n,
             records_quarantined=len(quality),
@@ -635,7 +711,7 @@ class KmaRadarJob:
             quality=quality,
         )
         used, limit = await ctx.budget.usage(self.p.name)
-        if status == "ok":
+        if succeeded:
             await ctx.status.success(
                 self.p.name, at=datetime.now(UTC), latency_ms=listing.latency_ms, records=stored_n, used=used, limit=limit
             )
@@ -658,15 +734,18 @@ class KmaRadarJob:
             },
         )
 
-    async def _refetch_partial(self) -> int | None:
+    async def _refetch_partial(self) -> tuple[int | None, _StepFailed | None]:
         """정규 후보 뒤: 부분 합성 프레임을 다시 받는다(select_refetch). 예산이 정규 주기 몫을 남기지 못하면 멈춘다.
-        무엇이 실패해도 주기를 끝내지 않는다(INFO 한 줄). 돌려주는 값: 끝난 뒤 목록의 부분 합성 프레임 수(Redis 를 못 읽으면 None)."""
+        429 · 속도 상한이면 남은 다시 받기를 멈추고 그 실패를 돌려준다 — 부르는 쪽이 WARN · 실행 상태 'throttled' 로 적는다(리뷰 2026-09-30: 전에는
+        INFO 로 삼켜 실행이 'ok' 였다). 그 밖의 실패는 주기를 끝내지 않는다(INFO 한 줄).
+        돌려주는 값: (끝난 뒤 목록의 부분 합성 프레임 수 — Redis 를 못 읽으면 None, 멈추게 한 429 · 속도 상한 — 없으면 None)."""
         try:
             frames = await self._frames()
             todo = select_refetch(frames, kst_now(), _now())
         except Exception as e:  # noqa: BLE001 — 다시 받기는 덧붙이는 일이다
             log.info("kma radar: refetch of partial frames skipped — %s", describe_error(e))
-            return None
+            return None, None
+        stop: _StepFailed | None = None
         for tm in todo:
             ok, used = await self.ctx.budget.reserve(self.p.name, 1, headroom=refetch_headroom(_now()))
             if not ok:
@@ -678,24 +757,35 @@ class KmaRadarJob:
             self.refetch_attempts += 1
             try:
                 await self._refetch_one(tm, frames)
+            except _StepFailed as f:  # 429 · 속도 상한 — 이 주기의 KMA 호출을 멈춘다
+                stop = f
+                break
             except Exception as e:  # noqa: BLE001 — 저장 중 예상 밖 오류도 주기를 끝내지 않는다
                 log.info("kma radar: refetch tm=%s — %s — kept the stored frame", tm, describe_error(e))
+        return await self._partial_count(), stop
+
+    async def _partial_count(self) -> int | None:
+        """목록의 부분 합성 프레임 수(Redis 를 못 읽으면 None — 모름)."""
         try:
             return sum(1 for f in await self._frames() if f.get("partial") is True)
         except Exception:  # noqa: BLE001
             return None
 
     async def _refetch_one(self, tm: str, frames: list[dict]) -> None:
-        """한 프레임을 다시 받는다(다시 부르지 않는다). 지점 수가 늘었을 때만 바꾸고, 시도는 항상 항목에 남긴다."""
+        """한 프레임을 다시 받는다(다시 부르지 않는다). 지점 수가 늘었을 때만 바꾸고, 시도는 항상 항목에 남긴다.
+        429 · 속도 상한은 _StepFailed('refetch tm=…')로 올린다(_refetch_partial 이 남은 다시 받기를 멈춘다)."""
         have = next((_site_count(f) for f in frames if f.get("tm") == tm), None) or 0
         at = _now()
         t0 = time.monotonic()
         try:
             res = await self.p.binary(tm)
             header, png, meta = await asyncio.get_running_loop().run_in_executor(_DECODE_POOL, _decode_if_more, res.raw, have)
-        except Exception as e:  # noqa: BLE001 — 오류는 INFO(경고를 쌓지 않는다) · 저장본을 그대로 둔다
+        except Exception as e:  # noqa: BLE001 — 오류는 INFO(경고를 쌓지 않는다) · 저장본을 그대로 둔다. 429 · 속도 상한만 올린다
             if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
                 await self.ctx.budget.release(self.p.name, 1)
+            if _throttle(e):
+                await self._note_refetch(tm, at)
+                raise _StepFailed(f"refetch tm={tm}", e, time.monotonic() - t0) from e
             log.info(
                 "kma radar: refetch tm=%s — %s after %.1f s — kept the stored frame (%d sites)",
                 tm,

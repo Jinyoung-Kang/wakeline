@@ -263,6 +263,30 @@ class ComposePolicyTest(unittest.TestCase):
         self.assertEqual(custom["services"]["api"]["environment"]["WAKELINE_COOKIE_SECURE"], "true")
         self.assertEqual(custom["services"]["api"]["environment"]["WAKELINE_ALERT_RETENTION_DAYS"], "45")
 
+    # --- 계약 v5 §G24 · 리뷰 2026-09-30: .env 에 적는 수집기 설정은 collector 컨테이너에 닿는다 ---
+    # collector 는 .env 전체(env_file)를 받지 않고 compose 가 명시한 값만 받는다(Settings env_file=None) — 여기 빠진 설정은 .env 에 적어도 조용히
+    # 기본값이 된다(KMA_APIHUB_RPS 가 그랬다: 문서는 운영 설정이라 했지만 compose 가 넘기지 않아 늘 0.5).
+    def test_every_collector_setting_in_env_example_reaches_the_collector(self):
+        body = (ROOT / "apps/collector/wakeline_collector/config.py").read_text(encoding="utf-8").split("class Settings(BaseSettings):", 1)[1]
+        fields = set(re.findall(r"^    ([a-z_][a-z0-9_]*)\s*:", body, re.M))
+        keys = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)=", (ROOT / ".env.example").read_text(encoding="utf-8"), re.M)
+        documented = [k for k in keys if k.lower() in fields]
+        self.assertIn("KMA_APIHUB_RPS", documented)
+        for cfg in (self.dev, self.iso):
+            env = self.svc("collector", cfg)["environment"]
+            for k in documented:
+                with self.subTest(project=cfg["name"], key=k):
+                    # 이름만 비교한다(실패 글에 비밀값이 찍히지 않게)
+                    self.assertIn(k, sorted(env), f".env.example 의 {k} 는 수집기 설정({k.lower()})인데 collector 에 넘기지 않는다")
+
+    def test_kma_apihub_rps_passes_through_with_the_chosen_default(self):
+        self.assertEqual(self.svc("collector")["environment"]["KMA_APIHUB_RPS"], "0.5", ".env.example 의 고른 값")
+        custom = self._config({"KMA_APIHUB_RPS": "1.0"})
+        self.assertEqual(custom["services"]["collector"]["environment"]["KMA_APIHUB_RPS"], "1.0")
+        for name, svc in self.dev["services"].items():
+            if name != "collector":
+                self.assertNotIn("KMA_APIHUB_RPS", sorted(svc.get("environment") or {}), name)
+
     # --- SEC-7: WS Origin 허용 목록 ---
     def test_api_allowed_origins_follow_published_port(self):
         self.assertEqual(self.svc("api")["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")

@@ -395,7 +395,7 @@ class DemandServiceTest {
             FakeWsSession f = r.session("s", TOKYO);
             r.k.msg(f, "{\"type\":\"select\",\"hex\":\"abc123\"}");
             WsSession s = r.k.handler.session("s");
-            long selectedAt = s.selectedAtMs;
+            long selectedAt = s.selection.atMs;
             r.clock.set(selectedAt + DemandService.FOCUS_SESSION_CAP_MS - 1);
             r.refresh();
             assertThat(r.leases.last().focus()).hasSize(1);
@@ -409,7 +409,7 @@ class DemandServiceTest {
             assertThat(d.get("hot").isNull()).isTrue();
             // 다시 선택하면(같은 hex) 새로 시작
             r.k.msg(f, "{\"type\":\"select\",\"hex\":\"abc123\"}");
-            r.clock.set(s.selectedAtMs + 1_000);
+            r.clock.set(s.selection.atMs + 1_000);
             r.refresh();
             assertThat(r.leases.last().focus()).extracting(DemandLeases.Lease::member).containsExactly("abc123");
             assertThat(lastDemand(f).path("focus").path("state").asString()).isEqualTo("pending");
@@ -418,7 +418,7 @@ class DemandServiceTest {
             r.refresh();
             assertThat(r.leases.last().focus()).isEmpty();
             assertThat(r.leases.last().hot()).extracting(DemandLeases.Lease::member).containsExactly(TOKYO_CELL);
-            assertThat(s.selectedAtMs).isZero();
+            assertThat(s.selection).isNull();
         }
     }
 

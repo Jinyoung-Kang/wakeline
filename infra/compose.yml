@@ -168,6 +168,8 @@ services:
       OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
       OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
       KMA_APIHUB_KEY: ${KMA_APIHUB_KEY:-}
+      # 기상청 API허브 호스트 요청 속도(req/s) — 고른 값 0.5 · 상한 1.0(계약 v5 §G24 · ADR-011 개정 2026-09-30). 넘기지 않으면 .env 값이 수집기에 닿지 않는다
+      KMA_APIHUB_RPS: ${KMA_APIHUB_RPS:-0.5}
       # 공공데이터포털 인증키 — 이 컨테이너에만. 비면 조회하지 않는다. apis.data.go.kr 호스트 한도 하나를 세 잡이 나눠 쓴다
       # (ADR-022 해양수산부 선박운항정보 PORT-MIS · ADR-023 해양교통안전공단 실시간 해양교통정보 · 해양수산부 격자4단계 WFS)
       DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}

@@ -17,9 +17,9 @@
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
 | **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V16) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
-| **검증** | 자동 시험 4,111건(pytest 1,453 · JUnit 868 · Vitest 1,181 · Playwright E2E 37 · 인프라 정책 122 · 버리는 컨테이너 시험 450 — Redis ACL · collector 실 Redis 는 이번에, 나머지는 앞 회차 값) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 70건([VERIFICATION](docs/VERIFICATION.md)) |
-| **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 520.6 KiB(리뷰 v1 뒤 497.7 → 계약 v5 의 통합 검색·선박 표·이중 단위·브라우저 오류 보고와 오류 화면·WS 검증으로 +22.9 KiB — 목표 400 KB 미충족, 목표 재설정은 사용자 결정 대기) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 25건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **검증** | 자동 시험 4,236건(pytest 1,489 · JUnit 874 · Vitest 1,250 · Playwright E2E 37 · 인프라 정책 125 · 버리는 컨테이너 시험 461 — 2026-09-30 세 레인 통합과 마무리 리뷰 수정 뒤 모두 실행) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 77건([VERIFICATION](docs/VERIFICATION.md)) |
+| **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 540,955 B(gzip 본문 · 워커 포함 · 웹 이미지의 Node 로 압축 — 클릭 뒤에만 보이는 카드·목록과 그 선박 표시 함수를 첫 화면 뒤로 옮겨 556,719 → 539,966 B, 세 레인 통합 뒤 540,774 B, 통합 마무리 뒤 540,955 B. 예산 550,000 B, ADR-026: 400 KB 는 MapLibre 약 305 KB + Next·React 약 130 KB 인 바닥 때문에 지도를 빼야만 닿는다 · CI 가 빌드 결과를 웹 이미지의 Node 로, 첫 화면 파일 목록을 브라우저로 검사) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
+| **설계 기록** | ADR 26건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -181,7 +181,7 @@ perf/ tools/     k6 스크립트 · AIS 측정 · 장애 주입 · 계약 검사
 cd apps/web
 node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>   # 파일: JSON {"username","password"} 또는 두 줄, chmod 600 — 값은 인자·환경 변수로 받지 않는다
 ```
-지금(2026-09-30 통합)은 13개 그림 모두 ‘스크린샷 준비 중’ 자리표시입니다 — 화면 시각을 KST 만으로 바꾸기(계약 v5 §G20) 전에 찍은 그림이 UTC 와 옛 상태 바를 보여 그림 설명과 어긋나서 지웠고, 이 판을 배포한 실데이터 스택에서 위 명령으로 다시 찍습니다(위 표의 `docs/images` 스크린샷도 §G20 전 — 2026-09-28).
+지금(2026-09-30 세 레인 통합 뒤)은 11개 그림이 있고(2026-09-30 13:4x KST 에 찍음) 운영 · 로그 두 그림은 ‘스크린샷 준비 중’ 자리표시입니다 — 두 그림이 옛 단추 글자(운영 `REFRESH` · 로그 `새로 고침`)를 보여 설명의 ‘새로고침’(#71)과 어긋나서 지웠고(§G20 때와 같은 규칙: 그림이 설명과 어긋나면 싣지 않는다), 이 판을 배포한 스택에서 위 명령으로 다시 찍습니다(위 표의 `docs/images` 스크린샷은 §G20 전 — 2026-09-28).
 1440×900 WebP(`public/guide/<id>.<내용 해시>.webp`)와 `lib/guide-manifest.json`(번호 위치 · 캡처 시각)을 쓰고 크기를 보고합니다. 커밋하고 web 을 다시 빌드하면 나옵니다. 로컬 스택만 찍습니다. 찍기 전과 다 찍은 뒤 두 번 `/api/v1/status` 로 실데이터인지(`fixture_mode=false` · 수집 모드 확인됨) 확인하고, 아니면(FIXTURE MODE 스택 8701 · 수집기 heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춥니다 — 모든 스크린샷에 적용. 조회 오류가 보이는 화면도 싣지 않습니다(못 찍은 그림은 ‘스크린샷 준비 중’ 자리표시). 설명서는 로그인 없이 보이므로 운영 · 로그 화면은 운영자 이름과 마지막 오류 · 전환 사유 · 로거 · 메시지 · 요청 id 열을 회색 상자로 가려 찍고(가릴 자리를 못 찾으면 싣지 않음), 가린 것을 그림 아래 캡처 조건에 적습니다. `/guide` 자체는 정적 페이지가 아닙니다: 모든 화면처럼 요청마다 CSP nonce 를 새로 붙여 렌더하므로(`app/layout.tsx` 의 `connection()`) 캐시되지 않습니다(no-store). CSP 를 약하게 하지 않고, 되풀이되는 모양을 CSS(`.g-*`)로 옮겨 요청마다의 HTML · RSC 크기를 줄였습니다.
 
 ## 8. 한계와 다음 단계

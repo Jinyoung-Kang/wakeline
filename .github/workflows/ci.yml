@@ -92,6 +92,14 @@ jobs:
         with: { node-version: 24, cache: npm, cache-dependency-path: apps/web/package-lock.json }
       - run: npm ci
       - run: npx eslint . && npx tsc --noEmit && npx vitest run && npm run build
+      # 첫 화면 JS 예산(NFR-04 · ADR-026): 방금 만든 운영 빌드에서 `/` 가 처음 받는 스크립트의 gzip 본문 바이트를 계산한다(스택 없이). 넘으면 실패.
+      # 바이트는 웹 이미지(Dockerfile 실행 단계의 고정 node 이미지)의 Node 로 만든다 — 배포 스택이 보내는 본문과 같은 압축기(러너의 Node 는 zlib 판이 다를 수 있다)
+      - name: first-screen JS budget (npm run check:first-js -- --in-image — ADR-026)
+        run: npm run check:first-js -- --in-image
+      # 위 검사는 빌드 결과의 첫 로드 목록만 센다 — import() 조각이 첫 그리기에 쓰이면 세지 못한다. 운영 빌드를 127.0.0.1:8790 에 띄워 Chromium 으로 두 창 크기
+      # (1350 · 범례가 처음부터 펼쳐지는 1700)에서 첫 화면에 받는 스크립트가 빌드 결과 목록과 같은지 본다(다르면 실패). 바이트는 러너의 Node 가 압축해 참고용이다
+      - name: first-screen files in a browser = the build list (npm run measure:first-js -- --serve 8790 — ADR-026)
+        run: npx playwright install --with-deps chromium && npm run measure:first-js -- --serve 8790
       - name: dependency audit (npm audit, High 이상 0 건 — NFR-10)
         run: npm audit --audit-level=high
 

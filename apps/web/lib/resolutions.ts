@@ -97,7 +97,7 @@ export function resolveErrorText(e: unknown, op: "resolve" | "revoke"): string {
   if (!(e instanceof ApiError)) return `${lead} — 서버에 연결할 수 없습니다(네트워크) — 연결을 확인한 뒤 다시 시도하세요.`;
   switch (e.status) {
     case 400: return `${lead} — 서버가 요청을 거절함: ${e.message}`;
-    case 403: return `${lead} — 요청이 거부되었습니다(보안 토큰) — 페이지를 새로 고친 뒤 다시 시도하세요.`;
+    case 403: return `${lead} — 요청이 거부되었습니다(보안 토큰) — 페이지를 새로고침한 뒤 다시 시도하세요.`;
     case 404: return op === "revoke" ? `${lead} — 이미 되돌렸거나 없는 해결입니다(다른 운영자 · 다른 탭) — 목록을 다시 불러옵니다.`
       : `${lead} — 해결 API 를 찾지 못함 — api 가 해결 표시(ADR-024)를 지원하는 버전인지 확인하세요.`;
     case 429: return `${lead} — 요청이 너무 많습니다 — 잠시 뒤 다시 시도하세요.`;

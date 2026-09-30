@@ -7,12 +7,8 @@ import { createPropertyExpression, latest, validateStyleMin } from "@maplibre/ma
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  aisBadge, aisCoverageFeatures, appendShipTrack, fmtCount, fmtCourse, fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary,
-  gridFeatures, imoField, mergeStatusGaps, navStatusLabel, normalizeGaps, parseAisCoverage, parseAisStatus, parseCategory, parseGridCells, parseShipLite,
-  parseShipState, parseShipStatic, positionBadge, positionSourceLabel, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, shipCategory, shipFeatures, shipList,
-  shipRotation, shipTrackFeatures, shipTrackFromRest, type AisBox, type AisGap, type AisStatus, type ShipLite, type ShipTrack,
-} from "@/lib/ships";
+import { aisBadge, aisCoverageFeatures, appendShipTrack, fmtCount, fmtCourse, gridFeatures, mergeStatusGaps, navStatusLabel, normalizeGaps, parseAisCoverage, parseAisStatus, parseCategory, parseGridCells, parseShipLite, parseShipState, parseShipStatic, positionBadge, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, shipCategory, shipFeatures, shipRotation, shipTrackFeatures, shipTrackFromRest, type AisBox, type AisGap, type AisStatus, type ShipLite, type ShipTrack } from "@/lib/ships";
+import { fmtDraught, fmtShipEta, fmtShipSize, fmtShipType, gapSummary, imoField, positionSourceLabel, shipList } from "@/lib/ship-card";
 import {
   addShipLayers, SHIP_COLOR_EXPR, SHIP_GRID_RADIUS_EXPR, SHIP_ICON_EXPR, SHIP_IMAGES, SHIP_LAYERS, SHIP_OPACITY_EXPR, SHIP_ROTATE_EXPR,
 } from "@/lib/ship-layers";

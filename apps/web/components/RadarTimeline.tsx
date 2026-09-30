@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { KrRadarPanel } from "./KrRadarPanel";
+import { KrRadarPanelPart } from "./DashboardParts";
 import { useServerNow } from "@/lib/clock";
 import { fmtKst, fmtKstMinute, fmtTimeTitle, kstWallMs } from "@/lib/time";
 import { KR_REF_WINDOW_MIN, krComposite, krMissing, krPartialSummary, krTmClock, type KrMissingInfo } from "@/lib/kr-radar";
@@ -66,7 +66,8 @@ export function RadarTimeline() {
   const [kr, setKr] = useState(false);
   return (
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
-      {kr ? <KrRadarPanel onClose={() => setKr(false)} /> : null}
+      {/* 범례·정합 패널은 단추를 누른 뒤에 받는다(DashboardParts — ADR-026) */}
+      {kr ? <KrRadarPanelPart onClose={() => setKr(false)} /> : null}
       <span className="label">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
       <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : krMiss?.text || radarKr?.note || "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>

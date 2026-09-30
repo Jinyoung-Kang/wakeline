@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # (교통 5분 폴링 PRIORITY_FIXED > 입출항 색인 PRIORITY_PORTCALL > 격자 채우기 PRIORITY_BACKFILL). 상한 둘: 2 req/s 이하(포털 보호 — 선택값),
     # 그리고 수집기 전체 버킷(http_global_rps)보다 작게(_data_go_kr_below_global — 같으면 세 잡이 기다릴 때마다 전체 버킷의 토큰을 모두 가져갈 수 있다)
     data_go_kr_rps: float = Field(default=1.0, gt=0, le=2.0)
+    # 기상청 API허브(apihub.kma.go.kr) 호스트 버킷(burst 1) — 선택값 0.5 req/s(요청 사이 2 s). 근거와 계산은 ratelimit.KMA_APIHUB_RPS(ADR-011 개정 2026-09-30).
+    # 상한 1 req/s: 429 가 난 간격(0.1–0.5 s)보다 넉넉히 길게만 바꿀 수 있게
+    kma_apihub_rps: float = Field(default=0.5, gt=0, le=1.0)
     # 한국 항만 입출항(ADR-022): 호스트는 apis.data.go.kr 의 이 서비스 경로만(HttpClient 허용 목록과 같은 호스트)
     portmis_base_url: str = Field(
         default="https://apis.data.go.kr/1192000/VsslEtrynd5",

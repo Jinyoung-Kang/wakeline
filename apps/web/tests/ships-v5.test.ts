@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createPropertyExpression, featureFilter, latest } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   appendShipTrack, filterGridCells, gridFeatures, notLiveText, parseGridCells, SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, sortShipRows, type ShipRow, type ShipSortKey, SHIP_TRACK_HOURS, shipTrackFromRest, shipTrackPointFeatures, type ShipCategory,
 } from "@/lib/ships";
@@ -22,6 +22,7 @@ import { SearchResultsView, searchListIds } from "@/components/AircraftSearch";
 import { normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, shipChoice } from "@/lib/search";
 import { MapChipsView } from "@/components/MapChips";
 import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
+import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
 
@@ -32,6 +33,9 @@ const without = (...c: ShipCategory[]) => { const s = all(); for (const x of c) 
 /** 선종별 수 배열(순서 = SHIP_CATEGORIES) */
 const counts = (o: Partial<Record<ShipCategory, number>>) => SHIP_CATEGORIES.map((c) => o[c] ?? 0);
 
+
+// 탭 내용 · 검색 결과 표 · 범례·정합은 나중에 받는 조각(ADR-026) — 내용을 보려면 미리 받는다(tests/helpers/dashboard-parts)
+beforeAll(preloadDashboardParts);
 describe("ship category order (contract v5 §B2)", () => {
   it("SHIP_CATEGORIES is the contract order", () => {
     expect([...SHIP_CATEGORIES]).toEqual(CONTRACT_ORDER);

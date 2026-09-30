@@ -1,7 +1,8 @@
 """외부 호출 속도 상한 — 프로세스 안 토큰 버킷(수집기는 단일 인스턴스, ADR-013 §3 · 계약 v2 §A2).
 
 - 모든 외부 HTTP 호출은 수집기 전체 버킷(기본 2.0 req/s, burst 2)을, 호스트 버킷이 정의된 호스트는 그것도(adsb.fi 0.8 req/s,
-  burst 1 — 공식 초당 1회의 80 % · adsbdb 0.5 req/s, burst 2 — 계약 v4 §A · apis.data.go.kr 1 req/s, burst 2 — ADR-022 · ADR-023) 함께 통과해야 한다.
+  burst 1 — 공식 초당 1회의 80 % · adsbdb 0.5 req/s, burst 2 — 계약 v4 §A · apis.data.go.kr 1 req/s, burst 2 — ADR-022 · ADR-023 ·
+  apihub.kma.go.kr 0.5 req/s, burst 1 — 선택값, ADR-011 개정 2026-09-30) 함께 통과해야 한다.
   HttpClient 가 호출 직전에 받으므로 새 코드도 우회할 수 없다.
 - 기다리는 호출은 우선순위(0 고정 관심 지역·기타 주기 작업(연안 교통량 5분 폴링 포함) > 1 focus > 2 hot > 3 노선 조회 > 4 항만 입출항 색인 >
   5 격자 기하 채우기) · 도착 순으로 줄 선다.
@@ -241,13 +242,27 @@ class RateLimiter:
 
 ADSBDB_BURST = 2
 DATA_GO_KR_BURST = 2
+# 기상청 API허브(apihub.kma.go.kr) 호스트 버킷 — 선택값(잰 한도가 아니다, ADR-011 개정 2026-09-30). 기상청은 초당 한도를 밝히지 않았다(우리가 확인한
+# 문서 없음). 근거는 운영 로그뿐이다: 429('현재 요청을 처리할 수 없습니다') 네 번이 모두 같은 주기의 앞선 KMA 요청 0.1–0.5 s 뒤였다 — 이 버킷이 없어
+# 수집기 전체 버킷(2 req/s · burst 2)만 지났다. 2 s 간격(0.5 req/s)은 그 가장 긴 간격(0.5 s)의 4배이고, 한 주기의 최대 호출(목록 1 + 전날 목록 1 +
+# 바이너리 4 + 다시 부르기 5 + 다시 받기 2 = 13)을 모두 줄 세워도 약 24 s — 주기(300 s)의 8 % 다. burst 1: 쉬던 뒤의 첫 호출만 곧바로.
+KMA_APIHUB_HOST = "apihub.kma.go.kr"
+KMA_APIHUB_RPS = 0.5
+KMA_APIHUB_BURST = 1
 
 
-def default_limiter(global_rps: float, adsb_fi_rps: float, adsbdb_rps: float = 0.5, data_go_kr_rps: float = 1.0) -> RateLimiter:
+def default_limiter(
+    global_rps: float,
+    adsb_fi_rps: float,
+    adsbdb_rps: float = 0.5,
+    data_go_kr_rps: float = 1.0,
+    kma_rps: float = KMA_APIHUB_RPS,
+) -> RateLimiter:
     """계약 v2 §A2: 수집기 전체 2.0 req/s(burst 2) · opendata.adsb.fi 0.8 req/s(burst 1).
     계약 v4 §A: api.adsbdb.com 0.5 req/s(burst 2) — 공급자 문서에 한도가 없어 보수적으로 둔다.
     ADR-022 · ADR-023: apis.data.go.kr 1 req/s(burst 2) 하나를 세 서비스(항만 입출항 · 해양교통 · 해양격자)가 우선순위로 나눠 쓴다 —
-    전체 버킷(2 req/s)의 절반까지만 써서 조회가 이어져도 다른 작업 몫을 남긴다. 선택값(포털의 초당 한도를 재지 않았다)."""
+    전체 버킷(2 req/s)의 절반까지만 써서 조회가 이어져도 다른 작업 몫을 남긴다. 선택값(포털의 초당 한도를 재지 않았다).
+    ADR-011 개정(2026-09-30): apihub.kma.go.kr 0.5 req/s(burst 1) — 선택값(KMA_APIHUB_RPS 의 근거)."""
     return RateLimiter(
         global_rps,
         2,
@@ -255,5 +270,6 @@ def default_limiter(global_rps: float, adsb_fi_rps: float, adsbdb_rps: float = 0
             "opendata.adsb.fi": (adsb_fi_rps, 1),
             "api.adsbdb.com": (adsbdb_rps, ADSBDB_BURST),
             "apis.data.go.kr": (data_go_kr_rps, DATA_GO_KR_BURST),
+            KMA_APIHUB_HOST: (kma_rps, KMA_APIHUB_BURST),
         },
     )

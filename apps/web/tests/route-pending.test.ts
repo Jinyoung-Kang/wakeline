@@ -75,6 +75,11 @@ describe("pending route lookup reads as in progress", () => {
     expect(ROUTE_PENDING_TITLE).toContain("약 5 s");
     expect(ROUTE_PENDING_TITLE).toContain("계산값");
     expect(ROUTE_PENDING_TITLE).not.toContain("수집기 조회 주기"); // 수집기는 콜사인을 다음 1 s 틱에 넘긴다
+    // 서버는 관측마다 selected 를 다시 계산하고, 보이는 값이 바뀌었을 때만 보낸다(같은 글자는 다시 보내지 않는다 — 계약 v5 §G21, 사용자 보고 2026-09-30).
+    // "관측마다 온다" 는 더 이상 참이 아니다(리뷰 2026-09-30).
+    expect(ROUTE_PENDING_TITLE).toContain("집중 추적 관측마다(약 5 s) 다시 계산되고");
+    expect(ROUTE_PENDING_TITLE).toContain("노선 상태나 다른 보이는 값이 바뀌었을 때 옵니다");
+    expect(ROUTE_PENDING_TITLE).not.toContain("관측마다(약 5 s) 옵니다");
   });
   it("other statuses keep their wording, with no progress bar, no skeleton and no aria-busy", () => {
     for (const status of ["not_found", "no_callsign", "unavailable", "disabled"] as const) {
@@ -96,9 +101,15 @@ describe("the 10 s threshold comes from the server's route path (read from the c
     const focus = Number(/^FOCUS_INTERVAL_S = (\d+(?:\.\d+)?)/m.exec(demand)![1]);
     const tick = Number(/^TICK_S = (\d+(?:\.\d+)?)/m.exec(demand)![1]);
     const apiCacheMs = Number(/TTL_MS = ([\d_]+);/.exec(src("apps/api/src/main/java/dev/wakeline/route/RouteReader.java"))![1].replace(/_/g, ""));
-    // 5 s 는 selected 가 오는 주기: 수집기의 집중 추적 관측이 FOCUS_INTERVAL_S 마다(_focus_due) → WsHub 가 그 관측마다 selected 를 보낸다(≈ 5 s)
+    // 5 s 는 selected 를 다시 계산하는 주기: 수집기의 집중 추적 관측이 FOCUS_INTERVAL_S 마다(_focus_due) → WsHub 가 그 관측마다 selected 를 다시
+    // 계산한다(≈ 5 s — 캐시가 지났으면 노선을 다시 묻는다). 노선이 pending → found 로 바뀌면 글자가 달라 보낸다 — 같은 글자만 건너뛴다(§G21).
     expect(demand).toMatch(/self\._focus_due = now \+ FOCUS_INTERVAL_S/);
-    expect(src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java")).toMatch(/focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다\(≈ 5 s/);
+    const hub = src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java");
+    expect(hub).toMatch(/focus 관측이 오면 그 hex 를 선택한 세션의 selected 를 다시 계산한다\(≈ 5 s/);
+    // 노선 다시 묻기는 '바뀌지 않았으면 건너뛴다' 보다 앞이다 — 같은 글자를 건너뛰어도 노선은 관측마다 다시 계산된다
+    const body = hub.slice(hub.indexOf("private void sendSelected("));
+    expect(body.indexOf("RouteInfo r = selectedRoute(s, hex, a);")).toBeGreaterThan(0);
+    expect(body.indexOf("RouteInfo r = selectedRoute(s, hex, a);")).toBeLessThan(body.indexOf("if (!force && prev != null"));
     // 노선 조회에 넘기는 것은 틱마다(TICK_S) — 처음 보는 콜사인은 곧바로(FOCUS_INTERVAL_S 는 같은 콜사인을 다시 넘기기까지의 간격일 뿐)
     expect(tick).toBeLessThan(focus);
     expect(demand).toMatch(/self\._request_routes\(demand, now\)/);

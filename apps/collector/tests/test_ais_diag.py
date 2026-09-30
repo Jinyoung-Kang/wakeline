@@ -293,7 +293,8 @@ def test_status_fields_carry_diagnostics_and_unknown_is_empty():
     st = sink.status_fields()
     for k in ("loop_lag_max_s", "queue_wait_max_s", "queue_depth_max", "ws_queue_max", "ping_rtt_max_s"):
         assert st[k] == "", k  # 아직 표본이 없다 — 모름
-    assert (st["diag_window_s"], st["ws_queue_limit"], st["ping_timeout_s"]) == ("60", "64", "20")
+    # 시간 초과 40 s — ADR-014 부록 C 개정(2026-09-30 오후)
+    assert (st["diag_window_s"], st["ws_queue_limit"], st["ping_timeout_s"]) == ("60", "64", "40")
     assert st["loop_stalls_total"] == "0"
     lag.observe(0.034)
     q.put(b"x")

@@ -142,7 +142,7 @@ describe("/ops PROVIDERS: the LAST ERROR cell", () => {
     });
     await mount();
     hold = true;
-    await click(button("refresh")); // 해결 전 값을 싣고 기다리는 요청
+    await click(button("새로고침")); // 해결 전 값을 싣고 기다리는 요청
     await click(button("해결 처리", cell()));
     await click(button("해결 처리 확인", byTestId("resolve-confirm")!));
     expect(byTestId("provider-error-resolved")).not.toBeNull();
@@ -282,7 +282,7 @@ describe("/ops RUNS: resolved errors are left out of the summary unless asked", 
     await mount();
     await tab("runs");
     gate = true;
-    await click(button("refresh")); // hide 요청이 떠나 기다린다
+    await click(button("새로고침")); // hide 요청이 떠나 기다린다
     await click(button("해결된 오류 포함")); // show 요청은 바로 온다
     expect(summary()).toHaveLength(2);
     await React.act(async () => { release!(); });
@@ -354,7 +354,7 @@ describe("/ops tabs: an answer slower than the 15 s refresh", () => {
     });
     await mount();
     hold = 2;
-    await click(button("refresh")); // 해결 전 값을 싣고 기다리는 요청
+    await click(button("새로고침")); // 해결 전 값을 싣고 기다리는 요청
     await click(button("해결 처리", cell()));
     await click(button("해결 처리 확인", byTestId("resolve-confirm")!)); // 쓰기 뒤 다시 읽기도 기다린다
     expect(held).toHaveLength(2);
@@ -383,7 +383,7 @@ describe("/ops tabs: an answer slower than the 15 s refresh", () => {
     await mount();
     await click(byTestId("ops-tab-runs"));
     hold = true;
-    await click(button("refresh")); // hide 요청이 떠나 기다린다
+    await click(button("새로고침")); // hide 요청이 떠나 기다린다
     await click(button("해결된 오류 포함")); // show 요청도 기다린다
     expect(held).toHaveLength(2);
     await React.act(async () => { held.shift()!(); }); // hide 응답이 먼저 온다 — 버린다

@@ -44,6 +44,7 @@ class AircraftJob:
         self.ctx = ctx
         self.gate = AircraftGate()
         self._warned_no_provider = False
+        self._stood_down = False  # 작업이 꺼져(전세계 끔) 공급자 없음 필드를 비웠다 — 꺼진 동안 비울 때까지(비우면 한 번)
 
     @property
     def job_name(self) -> str:
@@ -53,16 +54,24 @@ class AircraftJob:
         ctx = self.ctx
         need_global = self.scope == "global"
         if need_global and not ctx.rt.global_enabled:
+            if not self._stood_down:  # 꺼진 작업이 '공급자 없음'으로 남지 않게(앞선 프로세스가 남긴 값 포함 — 리뷰 2026-09-30)
+                was = self.chain.none_elapsed_s()
+                cleared = await self.chain.stand_down()  # 비우지 못했으면(Redis 오류) 다음 주기에 다시
+                if was is not None:
+                    log.info("%s: switched off — no-provider state cleared after %.0f s", self.scope, was)
+                self._stood_down, self._warned_no_provider = cleared, False
             return
+        self._stood_down = False
         order = ["fixture"] if ctx.fixture else ctx.rt.provider_order
+        none_s = self.chain.none_elapsed_s()  # 공급자 없음이 이어지던 시간(고르면 체인이 비운다)
         prov = await self.chain.pick(order, need_global=need_global)
+        if self.chain.none_since is not None:  # 고를 공급자가 없거나 쉬는 공급자를 다시 시도한다 — 일하는 공급자가 없다
+            self._warn_no_provider()
+        elif self._warned_no_provider or none_s is not None:
+            self._available_again(none_s or 0.0, prov.name if prov is not None else "—")
         if prov is None:
             await ctx.status.heartbeat(self.job_name, lag_s=None, fixture=ctx.fixture, extra=self._hb_extra())
-            if not self._warned_no_provider:
-                log.warning("%s: no provider available (not configured, disabled, cooling down or paused)", self.scope)
-                self._warned_no_provider = True
             return
-        self._warned_no_provider = False
         lat, lon, radius = ctx.rt.region
         cost = prov.global_cost if need_global else prov.region_cost
         started = datetime.now(UTC)
@@ -121,7 +130,9 @@ class AircraftJob:
         await ctx.status.heartbeat(  # lag_s = 발행한 가장 새 관측의 나이(R-20, 처리 시간이 아니다)
             self.job_name, lag_s=newest_age_s(st.seen_at for st in gate.kept), fixture=ctx.fixture, extra=self._hb_extra()
         )
-        self.chain.record_success(prov.name)
+        gap = await self.chain.succeeded(prov.name)  # 다시 시도한 공급자가 답했으면 공급자 없음이 끝난다
+        if gap is not None:
+            self._available_again(gap, prov.name)
         if remaining is not None and remaining < settings.opensky_reserve_credits and hasattr(prov, "paused_until"):
             # 공급자 객체에 건다 → region·global 두 체인이 모두 건너뛴다
             prov.paused_until = next_utc_midnight()
@@ -172,6 +183,26 @@ class AircraftJob:
         )
         return results, gate, fields
 
+    def _warn_no_provider(self) -> None:
+        """공백마다 WARN 한 번 — 바뀌는 글은 따옴표 안(로그 지문이 한 묶음). next: 다시 시도하는 쉬는 공급자 · 가장 먼저 풀리는 공급자(체인 상태)."""
+        if self._warned_no_provider:
+            return
+        nxt, retry = self.chain.none_next, self.chain.none_retry
+        parts = [f"{retry} retried each cycle while cooling down (no other provider)"] if retry else []
+        if nxt and nxt[0] != retry:
+            parts.append(f"{nxt[0]} after {nxt[1]:.0f} s")
+        log.warning(
+            "%s: no provider available — skipped: '%s'; next: '%s'",
+            self.scope,
+            self.chain.none_reason,
+            "; ".join(parts) or "none known (switched off, paused without an end, or not configured)",
+        )
+        self._warned_no_provider = True
+
+    def _available_again(self, gap_s: float, name: str) -> None:
+        log.info("%s: a provider is available again after %.0f s without one — '%s'", self.scope, gap_s, name)
+        self._warned_no_provider = False
+
     def _hb_extra(self) -> dict[str, str] | None:
         """관심 지역 heartbeat 에 실제 주기를 함께 싣는다 — 헬스체크 기준이 주기를 따른다(COL-5)."""
         return {"region_poll_s": str(self.ctx.rt.region_poll_s)} if self.scope == "region" else None
@@ -185,6 +216,7 @@ class AircraftJob:
         if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
             await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
         why = describe_error(e)
+        retried = self.chain.probing(name)  # 3회 연속 실패로 쉬는 중이지만 다른 공급자가 없어 다시 시도한 호출
         await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
         ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
         if http_status == 429:
@@ -199,6 +231,13 @@ class AircraftJob:
             )
         elif self.chain.record_failure(name):
             log.warning("%s: %s failed 3x — cooling down", self.scope, name)
+        elif retried:  # 쉼마다 WARN 은 한 번(위) — 다시 시도의 실패는 INFO(공급자 상태 · 실행 기록에는 그대로 남는다)
+            log.info(
+                "%s: %s failed again while cooling down — retried because no other provider is available (%s)",
+                self.scope,
+                name,
+                why,
+            )
         else:
             log.info("%s: %s failed (%s)", self.scope, name, why)
 
@@ -207,6 +246,8 @@ class AircraftJob:
         바뀌는 글은 따옴표 안에만 둔다: 로그 지문(logsink.message_template)이 따옴표 안·숫자를 지워 한 429 계열이 한 묶음이 된다."""
         order = ["fixture"] if self.ctx.fixture else self.ctx.rt.provider_order
         nxt = await self.chain.peek(order, need_global=self.scope == "global")
+        if nxt is not None and nxt != name and self.chain.probing(nxt):  # 3회 연속 실패로 쉬지만 다른 공급자가 없어 다시 시도한다
+            return f"{nxt} retried while cooling down (no other provider)"
         if nxt is None or nxt == name:  # 미룸은 선호도일 뿐 — 대안이 없으면 쉼이 끝난 뒤 같은 공급자를 쓴다
             why = "no other provider — deferral not applied" if self.chain.hold_s(name) else "no other provider"
             return f"{name} again after the backoff ({why})"

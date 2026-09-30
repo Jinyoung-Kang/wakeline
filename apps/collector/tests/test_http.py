@@ -68,7 +68,6 @@ async def test_429_penalizes_host_with_retry_after():
 
 async def test_http_error_without_penalty_and_retry_after_parse():
     assert httpmod._retry_after_s({"retry-after": "12"}) == 12.0
-    assert httpmod._retry_after_s({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}) is None
     assert httpmod._retry_after_s({}) is None
     c = _client()
     with respx.mock:
@@ -76,6 +75,35 @@ async def test_http_error_without_penalty_and_retry_after_parse():
         with pytest.raises(ProviderHttpError) as ei:
             await c.get("https://aviationweather.gov/api/data/x")
     assert ei.value.status == 503 and c.limiter.cooldown_remaining("aviationweather.gov") == 0
+    await c.aclose()
+
+
+def test_retry_after_http_date_is_honoured():
+    """RFC 9110 §10.2.3: Retry-After 는 초(delay-seconds) 또는 HTTP-date. 고치기 전에는 날짜 모양을 버리고 단계 백오프(30 s …)만 썼다
+    (기상청 429 대응 — 2026-09-30). 지난 날짜 · 틀린 모양은 None(단계 백오프)."""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 10, 21, 7, 26, 0, tzinfo=UTC)
+    assert httpmod._retry_after_s({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}, now=now) == 120.0
+    assert httpmod._retry_after_s({"retry-after": "Wed, 21 Oct 2026 07:20:00 GMT"}, now=now) is None  # 지난 시각
+    assert httpmod._retry_after_s({"retry-after": "soon"}, now=now) is None
+    assert httpmod._retry_after_s({"retry-after": "-5"}, now=now) is None
+
+
+async def test_429_with_an_http_date_retry_after_pauses_the_host_until_then(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+
+    c = _client(apihub_kma_go_kr=(100.0, 5))
+    until = format_datetime(datetime.now(UTC) + timedelta(seconds=200), usegmt=True)
+    with respx.mock:
+        respx.get("https://apihub.kma.go.kr/api/typ01/url/x").mock(
+            return_value=httpx.Response(429, headers={"Retry-After": until})
+        )
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get("https://apihub.kma.go.kr/api/typ01/url/x")
+    assert 190 <= c.limiter.cooldown_remaining("apihub.kma.go.kr") <= 200
+    assert ei.value.pause_s is not None and 190 <= ei.value.pause_s <= 200  # 호출자가 로그 · 실행 기록에 적는 쉼
     await c.aclose()
 
 

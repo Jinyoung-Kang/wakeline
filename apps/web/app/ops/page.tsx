@@ -14,6 +14,7 @@ import { OpsLogin } from "@/components/OpsLogin";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
+import { activeJobs, jobBadgeText, jobBadgeTitle } from "@/lib/active-provider";
 import { KstTime } from "@/components/KstTime";
 
 type Any = Record<string, unknown>;
@@ -152,7 +153,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
   const runsModeRef = useRef<ResolvedMode>("hide");
   /**
-   * 탭마다 요청 순서(lib/ops RequestOrder): 기준 요청(쓰기 뒤 · 해결 표시 토글 · refresh 단추) 전에 떠난 요청의 응답은 버리고 — 해결 쓰기 뒤 다시 읽은 값을
+   * 탭마다 요청 순서(lib/ops RequestOrder): 기준 요청(쓰기 뒤 · 해결 표시 토글 · 새로고침 단추) 전에 떠난 요청의 응답은 버리고 — 해결 쓰기 뒤 다시 읽은 값을
    * 그 전에 떠난 주기 요청이 덮지 않게, 토글 전 해결 표시의 요약이 표에 오지 않게 — 새로고침보다 느린 응답(실패 포함)은 더 새 응답이 없으면 반영한다.
    */
   const order = useRef<Record<Tab, RequestOrder> | null>(null);
@@ -168,8 +169,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     return k;
   }, [onLeave]);
   /**
-   * 탭 불러오기 — only 를 주면 그 탭만(해결 쓰기 뒤 · 해결 표시 토글), 없으면 모두(15 s 주기 · refresh 단추).
-   * periodic = 15 s 주기: 기준 요청이 아니고, 요청이 아직 떠 있는 탭은 건너뛴다. 그 밖(처음 · refresh · 쓰기 뒤 · 토글)은 기준 요청이다.
+   * 탭 불러오기 — only 를 주면 그 탭만(해결 쓰기 뒤 · 해결 표시 토글), 없으면 모두(15 s 주기 · 새로고침 단추).
+   * periodic = 15 s 주기: 기준 요청이 아니고, 요청이 아직 떠 있는 탭은 건너뛴다. 그 밖(처음 · 새로고침 단추 · 쓰기 뒤 · 토글)은 기준 요청이다.
    */
   const reload = useCallback((only?: readonly Tab[], periodic = false) => {
     if (!only) setErr(null);
@@ -249,7 +250,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtKstClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
           </button>
         ))}</div>
-        <button className="btn" onClick={refresh}>refresh</button>
+        <button className="btn" onClick={refresh} title="모든 탭을 지금 다시 받는다(15 s 주기와 따로)">새로고침</button>
         <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${tabPath(tab, runsMode)})의 마지막 성공 응답 시각(KST) — 15 s 마다 다시 요청${lastOk[tab] ? ` · ${fmtTimeTitle(lastOk[tab])}` : ""}`} data-testid="ops-last-ok">갱신 {fmtKstClock(lastOk[tab])}</span>
         {err || TABS.some((t) => tabErr[t]) ? (
           <span className="text-[11px] text-bad" role="alert">
@@ -262,7 +263,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
       <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]">
         {tab === "providers" && prov ? <>
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
-            {Object.entries(prov.active ?? {}).filter(([k]) => !k.includes("_")).map(([job, name]) => <span key={job} className="badge ok">{job}: {name}</span>)}
+            {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
+            {activeJobs(prov.active).map((j) => <span key={j.job} className={`badge ${j.none ? "bad" : "ok"}`} title={jobBadgeTitle(j, providersNowMs(prov))} data-testid={`ops-active-${j.job}`}>{jobBadgeText(j, providersNowMs(prov))}</span>)}
             {Object.entries(prov.collector ?? {}).filter(([k]) => k.endsWith("_at")).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>

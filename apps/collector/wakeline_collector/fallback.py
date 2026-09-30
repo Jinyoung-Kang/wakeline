@@ -1,5 +1,25 @@
 """공급자 폴백 체인(FR-16): 1순위 3회 연속 실패 → 다음 순위, 10분 뒤 복귀 시도. 전환은 provider_switch 이벤트로 기록.
 
+관심 지역에서는 '3회 연속 실패' 쉼도 차단이 아니라 선호도다(운영 로그 2026-09-30 — 아래 429 미룸과 같은 규칙): 쓸 수 있는 공급자가 하나도 없으면
+(미룸 중인 공급자도 없으면) 쉬는 공급자를 작업 주기 그대로 다시 시도한다(여럿이면 오래 시도하지 않은 것부터). 다시 시도가 실패해도 쉼 끝을 늘리지
+않고 새 '3회'를 세지 않는다(WARN 되풀이 없음) — 답하면(succeeded) 쉼을 끝낸다. 운영자가 끈 · 일시정지 · 설정 안 된 공급자는 다시 시도하지 않는다.
+다시 시도가 받은 짧은 쉼(429 · 호출 제한기 쿨다운 · 예산)은 실패 쉼 위에 얹힌다 — 그동안은 부르지 않고, 끝나면 남은 실패 쉼이 이어진다(짧은 쉼이
+600 s 쉼을 덮어 줄이지 않는다 — 리뷰 2026-09-30: 전에는 다시 시도의 429 가 쉼 끝을 60 s 로 바꿔 그 뒤 정상 공급자로 골랐다 · '쉼 끝' 회복).
+전에는 adsb_fi 가 연결 실패(SSLEOFError) 3번으로 10분 쉬는 동안 adsb_lol 까지 429 로 쉬면 관심 지역에 공급자가 없었다 — 12:16:22 → 12:21:22 ·
+12:22:18 → 12:24:50 KST, 합 452 s(쉼 600 s · 429 쉼 300 s 와 로그 시각으로 계산) — 그동안 adsb_fi 가 풀려도 12:24:50 까지 부르지 않았다.
+전세계 체인은 다시 시도하지 않는다(FR-16 의 10분 쉼 그대로 — 리뷰 2026-09-30): 전세계를 지원하는 공급자는 OpenSky 하나이고 호출마다 크레딧을
+쓴다(실패한 호출도 예산에 남는다 — 연결 실패만 돌려준다). 전세계는 선택 기능이다(ADR-009).
+
+공급자 없음은 이름 붙인 상태다 — 일하는 공급자가 없다: 고를 공급자가 없거나, 쉬는 공급자를 다시 시도하는 중이다(리뷰 2026-09-30: 다시 시도를
+공급자로 적으면 운영 배지가 초록 'region: adsb_fi' 로 그 상태를 가렸다). 처음 없어진 순간 set_none(시작 시각 · 건너뛴 까닭 · 체인 상태로 정해지는
+가장 이른 풀림 시각 — 운영자가 켜야 하거나 설정이 없어 때를 모르면 없음 · 다시 시도하는 공급자 — 없으면 빈 값)과 전환 기록(쓰던 공급자 → none)을
+남긴다. 다시 시도하는 공급자가 바뀌면 필드를 다시 쓴다(시작 시각은 그대로). 끝나는 때: 정상 후보를 고르거나(pick) 다시 시도한 공급자가 답했다
+(succeeded) — none → 공급자 전환('recovery — 공급자 없음 N s 끝 · …')과 set_active(없음 필드를 비운다). 작업이 꺼지면(stand_down) 필드만 비운다.
+쓰던 공급자 이름(wakeline:active 의 {job})은 마지막으로 쓴 것으로 남는다 — 지금 상태는 {job}_none_* 가 말한다.
+이 필드 쓰기(set_none · set_active · clear_none)가 Redis 오류로 실패하면(ProviderStatus 가 삼키고 False) 다음 주기에 다시 쓴다 — 공백마다 한 번만
+쓰므로, 전에는 쓰기 한 번이 실패하면 공백 내내(최대 10분) 운영 배지가 초록 · 상태 바에 '공급자 없음' 없음, 회복 쓰기가 실패하면 빨간 배지가 다음
+전환까지 남았다(리뷰 2026-09-30). 전환 기록(switch_event)은 다시 쓰지 않는다(한 번의 사건).
+
 429 이력(R-17): 429 가 RATE_LIMIT_RESET_S(15분) 안에 되풀이되면 백오프(최대 300 s)가 끝난 뒤에도 그 공급자를 한동안
 뒤로 미룬다(hold: 10 → 20 → 40 → 60 → 120 → 240 → 360분, 상한 6 h). 그동안 다음 순위가 같은 주기로 맡는다. hold 는 차단이 아니라
 선호도라서, 다른 공급자가 하나도 없으면 백오프가 끝난 공급자를 그대로 쓴다. 15분 동안 429 없이 쓰이면 단계가 초기화된다. 단계는
@@ -28,7 +48,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wakeline_collector.chain_store import VERSION, ChainStateStore
@@ -109,6 +129,17 @@ def parse_saved(row: dict[str, str], now_wall: float) -> tuple[_Saved | None, st
     return _Saved(stage, last, backoff, hold, hold_s or _hold_for(stage), quiet, expires), ""
 
 
+@dataclass(frozen=True)
+class _Choice:
+    """_evaluate 의 결과: 고를 공급자(없으면 None) · 건너뛴 [(이름, 종류, 까닭)](고른 것 제외) · 고른 방식(None 정상 · "held" 429 미룸 중이나
+    다른 공급자 없음 · "probe" 3회 연속 실패로 쉬는 중이나 다른 공급자 없음 — 공급자 없음 상태) · probe 면 그 공급자를 포함한 건너뛴 목록(순위 순)."""
+
+    name: str | None
+    skipped: list[tuple[str, str, str]]
+    mode: str | None = None
+    full: tuple[tuple[str, str, str], ...] = ()
+
+
 class ProviderChain:
     def __init__(
         self,
@@ -138,12 +169,43 @@ class ProviderChain:
         self._hold_len: dict[str, float] = {}
         self._last_skip: dict[str, str] = {}  # 마지막으로 건너뛴 까닭의 종류(돌아올 때의 말)
         self._backoff_until: dict[str, float] = {}  # 429 쉼의 끝(mark_down 의 다른 쉼과 따로 — 저장용)
+        # 쉬는 까닭의 종류: "fail"(3회 연속 실패 — 다른 공급자가 없으면 다시 시도한다) · "429" · "other"(예산 · 속도 상한 쿨다운 등)
+        self._down_kind: dict[str, str] = {}
+        # 3회 연속 실패 쉼(FR-16)의 끝 · 까닭 — 그 위에 짧은 쉼(429 · 속도 상한 쿨다운 · 예산)이 얹혀도 따로 남는다(_rest)
+        self._fail_until: dict[str, float] = {}
+        self._fail_why: dict[str, str] = {}
+        self._probed_at: dict[str, float] = {}  # 쉬는 중 다시 시도한 마지막 때(여럿이면 오래된 것부터)
         self._current: str | None = None
+        self._none_since: float | None = None  # 공급자 없음이 시작된 때(단조 시계) — 없으면 None
+        self._none_at: datetime | None = None  # 같은 때(UTC 벽시계 — set_none 에 싣는다)
+        self._none_retry: str | None = None  # 공급자 없음 동안 다시 시도하는 쉬는 공급자(없으면 None)
+        self.none_reason = ""  # 공급자 없음의 까닭(건너뛴 공급자와 까닭, 가린 글)
+        self.none_next: tuple[str, float] | None = None  # (가장 먼저 풀리는 공급자, 그때까지 초) — 체인 상태로 정해진 값만
+        # wakeline:active 에 지금 상태를 썼는가(False = 마지막 쓰기가 Redis 오류 — 다음 선택 때 다시 쓴다) · 다시 쓸 set_active 의 (그때, 까닭)
+        self._state_saved = True
+        self._active_at: datetime | None = None
+        self._active_reason = ""
 
-    def mark_down(self, name: str, seconds: float, *, why: str | None = None) -> None:
-        """name 을 seconds 동안 쉬게 한다. why 는 전환 사유에 실리는 짧은 글(없으면 '쉼(N s)')."""
-        self._down_until[name] = time.monotonic() + seconds
-        self._down_why[name] = why or f"쉼({_dur(seconds)})"
+    def mark_down(self, name: str, seconds: float, *, why: str | None = None, kind: str = "other") -> None:
+        """name 을 seconds 동안 쉬게 한다. why 는 전환 사유에 실리는 짧은 글(없으면 '쉼(N s)'). kind 는 쉼의 종류(record_failure 는 "fail").
+        3회 연속 실패 쉼 중에 얹힌 다른 쉼은 그 쉼을 지우지 않는다 — 끝나면 남은 실패 쉼이 이어진다(_rest)."""
+        until, text = time.monotonic() + seconds, why or f"쉼({_dur(seconds)})"
+        self._down_until[name] = until
+        self._down_why[name] = text
+        self._down_kind[name] = kind
+        if kind == "fail":
+            self._fail_until[name], self._fail_why[name] = until, text
+
+    def _rest(self, name: str, now: float) -> tuple[float, str, str] | None:
+        """지금 걸린 쉼 (끝, 종류, 까닭) — 없으면 None. 짧은 쉼(다시 시도가 받은 429 · 호출 제한기 쿨다운 · 예산)이 3회 연속 실패 쉼 안에
+        얹히면 그 쉼이 먼저이고, 끝나면 실패 쉼이 남은 만큼 이어진다(종류 "fail" — 다른 공급자가 없으면 다시 시도한다)."""
+        until = self._down_until.get(name, 0.0)
+        if until > now:
+            return until, self._down_kind.get(name, "other"), self._down_why.get(name, "쉼")
+        fail = self._fail_until.get(name, 0.0)
+        if fail > now:
+            return fail, "fail", self._fail_why.get(name, "쉼")
+        return None
 
     @staticmethod
     def paused(p: Any, now: datetime | None = None) -> bool:
@@ -159,41 +221,69 @@ class ProviderChain:
                 out.append(name)
         return out
 
-    async def _evaluate(self, order: list[str], need_global: bool) -> tuple[str | None, list[tuple[str, str, str]], bool]:
-        """(고를 공급자 | None, 건너뛴 [(이름, 종류, 까닭)], 미룸 중인 공급자를 대안이 없어 골랐는가). 상태를 바꾸지 않는다
-        (처음 한 번은 저장된 429 이력을 되살린다)."""
+    async def _evaluate(self, order: list[str], need_global: bool) -> _Choice:
+        """고를 공급자와 건너뛴 [(이름, 종류, 까닭)]. 상태를 바꾸지 않는다(처음 한 번은 저장된 429 이력을 되살린다).
+        까닭의 순서: 설정 안 됨 → 운영자 끔 → 일시정지 → 쉼(429 · 실패 · 예산 …) → 429 미룸. 모두 건너뛰면 미룸 중인 공급자(mode "held"),
+        그것도 없으면 3회 연속 실패로 쉬는 공급자(mode "probe" — 오래 시도하지 않은 것부터, 관심 지역만)를 고른다."""
         if not self._restored:
             await self._restore()
         now = time.monotonic()
         skipped: list[tuple[str, str, str]] = []
         held: list[str] = []
-        for name in self._candidates(order, need_global):
+        probes: list[str] = []
+        ranked = self._candidates(order, need_global)
+        for name in ranked:
             p = self._providers[name]
             if getattr(p, "configured", True) is False:
                 skipped.append((name, "config", "설정 안 됨"))
                 continue
-            if self._down_until.get(name, 0.0) > now:
-                in_hold = self._hold_until.get(name, 0.0) > now
-                skipped.append((name, "hold" if in_hold else "down", self._down_why.get(name, "쉼")))
+            if await self._status.is_disabled(name):
+                skipped.append((name, "disabled", "운영자 끔"))
                 continue
             if self.paused(p):
                 skipped.append((name, "paused", "일시정지(크레딧/예산)"))
                 continue
-            if await self._status.is_disabled(name):
-                skipped.append((name, "disabled", "운영자 끔"))
+            rest = self._rest(name, now)
+            if rest is not None:
+                in_hold = self._hold_until.get(name, 0.0) > now
+                skipped.append((name, "hold" if in_hold else "down", rest[2]))
+                # 3회 연속 실패 쉼 — 다른 공급자가 하나도 없을 때만 다시 시도(전세계는 쉼 그대로 — 모듈 설명). 그 위에 얹힌 짧은 쉼 동안은 부르지 않는다
+                if rest[1] == "fail" and not need_global:
+                    probes.append(name)
                 continue
             if self._hold_until.get(name, 0.0) > now:
                 held.append(name)  # 되풀이된 429 — 다른 공급자가 없을 때만
                 skipped.append((name, "hold", self._hold_why.get(name, "429 반복 → 뒤로 미룸")))
                 continue
-            return name, skipped, False
+            return _Choice(name, skipped)
         if held:
-            return held[0], [s for s in skipped if s[0] != held[0]], True
-        return None, skipped, False
+            return _Choice(held[0], [x for x in skipped if x[0] != held[0]], "held")
+        if probes:
+            name = min(probes, key=lambda n: (self._probed_at.get(n, -math.inf), ranked.index(n)))
+            return _Choice(name, [x for x in skipped if x[0] != name], "probe", tuple(skipped))
+        return _Choice(None, skipped)
 
     async def peek(self, order: list[str], *, need_global: bool = False) -> str | None:
         """다음 pick 이 고를 공급자 이름(상태·사유를 기록하지 않는다). 로그에 '다음에 무엇을 하는지'를 적을 때 쓴다."""
-        return (await self._evaluate(order, need_global))[0]
+        return (await self._evaluate(order, need_global)).name
+
+    def probing(self, name: str) -> bool:
+        """name 이 3회 연속 실패로 쉬는 중인가(그 위에 얹힌 짧은 쉼은 없다) — 그래도 불렸다면 다른 공급자가 없어 다시 시도한 것이다."""
+        rest = self._rest(name, time.monotonic())
+        return rest is not None and rest[1] == "fail"
+
+    @property
+    def none_since(self) -> float | None:
+        """공급자 없음이 시작된 때(단조 시계). 공급자가 있으면 None."""
+        return self._none_since
+
+    @property
+    def none_retry(self) -> str | None:
+        """공급자 없음 동안 다시 시도하는 쉬는 공급자 — 없으면 None."""
+        return self._none_retry
+
+    def none_elapsed_s(self) -> float | None:
+        return None if self._none_since is None else time.monotonic() - self._none_since
 
     def hold_s(self, name: str) -> float:
         """name 에 걸린 429 미룸의 길이(초). 미룸이 없거나 끝났으면 0."""
@@ -202,21 +292,91 @@ class ProviderChain:
         return self._hold_len.get(name, 0.0)
 
     async def pick(self, order: list[str], *, need_global: bool = False) -> Any | None:
-        name, skipped, from_held = await self._evaluate(order, need_global)
-        for n, kind, _why in skipped:
+        """이번 주기에 부를 공급자(없으면 None). 쉬는 공급자를 다시 시도하는 것(mode "probe")도 돌려주지만 상태는 '공급자 없음'이다 —
+        그 공급자가 답하면(succeeded) 끝난다."""
+        c = await self._evaluate(order, need_global)
+        for n, kind, _why in c.skipped:
             self._last_skip[n] = kind
-        if name is None:
+        if c.name is None:
+            await self._enter_none(c.skipped, None)
             return None
-        if self._current != name:
-            reason = self._reason(name, self._candidates(order, need_global), skipped, from_held)
-            await self._use(name, reason)
-        return self._providers[name]
+        if c.mode == "probe":
+            self._probed_at[c.name] = time.monotonic()
+            self._last_skip[c.name] = "down"
+            await self._enter_none(list(c.full), c.name)  # 일하는 공급자가 없다 — 쉬는 c.name 을 다시 시도하는 중
+            return self._providers[c.name]
+        if self._none_since is not None or self._current != c.name:
+            reason = self._reason(c, self._candidates(order, need_global))
+            await self._use(c.name, reason)
+        elif not self._state_saved:  # 앞선 set_active 가 Redis 오류로 실패했다 — 같은 값(그때 · 까닭)으로 다시 쓴다
+            saved = await self._status.set_active(self.job, c.name, reason=self._active_reason, since=self._active_at)
+            self._state_saved = saved is not False
+        return self._providers[c.name]
 
-    def _reason(self, name: str, ranked: list[str], skipped: list[tuple[str, str, str]], from_held: bool) -> str:
+    async def succeeded(self, name: str) -> float | None:
+        """name 이 답했다(record_success). 공급자 없음 동안 다시 시도하던 공급자면 그 공백을 끝낸다 — none → name 전환 · set_active(없음 필드를
+        비운다). 돌려주는 값: 끝낸 공백의 길이(초) — 끝낸 공백이 없으면 None."""
+        self.record_success(name)
+        if self._none_since is None or self._none_retry != name:
+            return None
+        gap = time.monotonic() - self._none_since
+        await self._use(name, f"recovery — 공급자 없음 {_dur(round(gap))} 끝 · {name} 다시 시도 성공")
+        return gap
+
+    async def stand_down(self) -> bool:
+        """작업이 꺼졌다(운영 설정 — 예: 전세계 끔): 공급자 없음 상태를 버리고 wakeline:active 의 {job}_none_* 를 비운다 — 꺼진 작업이 '공급자 없음'
+        으로 남지 않게(리뷰 2026-09-30). 앞선 프로세스가 남긴 값도 지운다(부르는 쪽이 꺼진 동안 비울 때까지 부른다). 돌려주는 값: 비웠는가."""
+        self._none_since = self._none_at = self._none_retry = None
+        self.none_reason, self.none_next = "", None
+        return await self._status.clear_none(self.job) is not False
+
+    async def _enter_none(self, skipped: list[tuple[str, str, str]], retry: str | None) -> None:
+        """공급자 없음의 시작(같은 공백에는 한 번): set_none(시작 · 까닭 · 가장 이른 풀림 시각 · 다시 시도하는 공급자)과 전환 기록(쓰던 공급자 → none).
+        같은 공백 안에서 다시 시도하는 공급자가 바뀌면(생김 · 바뀜 · 없어짐) 필드만 다시 쓴다 — 시작 시각은 그대로, 전환 기록은 쌓지 않는다.
+        앞선 set_none 이 Redis 오류로 실패했으면 이번 주기에 다시 쓴다(시작 시각 그대로)."""
+        now_m, now_w = time.monotonic(), datetime.now(UTC)
+        starting = self._none_since is None or self._none_at is None
+        if not starting and retry == self._none_retry and self._state_saved:
+            return
+        if starting:
+            self._none_since, self._none_at = now_m, now_w
+        since = self._none_at or now_w
+        self._none_retry = retry
+        text = " · ".join(f"{n} {w}" for n, _k, w in skipped) or "이 범위를 지원하는 공급자가 순서에 없음"
+        self.none_reason = (mask(text, None) or "")[:REASON_MAX]
+        self.none_next = self._next_release(skipped, now_m, now_w)
+        next_at = now_w + timedelta(seconds=self.none_next[1]) if self.none_next else None
+        saved = await self._status.set_none(self.job, since=since, reason=self.none_reason, next_at=next_at, retry=retry or "")
+        self._state_saved = saved is not False
+        if starting and self._current is not None:
+            tail = f" · {retry} 다시 시도 중" if retry else ""
+            await self._status.switch_event(self.job, self._current, "none", f"none — {self.none_reason}{tail}"[:REASON_MAX])
+
+    def _next_release(self, skipped: list[tuple[str, str, str]], now_m: float, now_w: datetime) -> tuple[str, float] | None:
+        """건너뛴 공급자 중 가장 먼저 풀리는 것과 남은 초 — 쉼 끝 · 일시정지 끝(체인 상태 그대로). 운영자 끔 · 설정 안 됨은 때가 없다(None)."""
+        best: tuple[str, float] | None = None
+        for n, kind, _w in skipped:
+            left: float | None = None
+            if kind in ("down", "hold"):
+                rest = self._rest(n, now_m)
+                left = rest[0] - now_m if rest else None
+            elif kind == "paused":
+                until = getattr(self._providers[n], "paused_until", None)
+                left = (until - now_w).total_seconds() if isinstance(until, datetime) else None
+            if left is not None and left > 0 and (best is None or left < best[1]):
+                best = (n, left)
+        return best
+
+    def _reason(self, c: _Choice, ranked: list[str]) -> str:
+        name, skipped = c.name, c.skipped
+        assert name is not None
         prev = self._current
         why = {n: w for n, _k, w in skipped}
-        if from_held:
-            tail = f"{name} 429 미룸 중이나 다른 공급자 없음"
+        tail = f"{name} 429 미룸 중이나 다른 공급자 없음" if c.mode == "held" else ""
+        if self._none_since is not None:  # 공급자 없음이 끝났다
+            back = tail or f"{name} {_RECOVERED.get(self._last_skip.get(name, ''), '쉼 끝')}"
+            return f"recovery — 공급자 없음 {_dur(round(time.monotonic() - self._none_since))} 끝 · {back}"
+        if tail:
             head = "initial" if prev is None else "fallback"
             return f"{head} — {prev} {why[prev]} · {tail}" if prev in why else f"{head} — {tail}"
         if prev is None:
@@ -233,10 +393,13 @@ class ProviderChain:
         return f"fallback — {prev} → {name}"
 
     async def _use(self, name: str, reason: str) -> None:
-        prev = self._current
+        prev = "none" if self._none_since is not None else self._current
         text = (mask(reason, None) or "")[:REASON_MAX]  # 두 곳에 같은 글
         self._current = name
-        await self._status.set_active(self.job, name, reason=text)
+        self._none_since, self._none_at, self._none_retry, self.none_reason, self.none_next = None, None, None, "", None
+        self._active_at, self._active_reason = datetime.now(UTC), text
+        # 공급자 없음 필드도 비운다. 실패하면(Redis 오류) 다음 선택 때 같은 값으로 다시 쓴다(pick)
+        self._state_saved = await self._status.set_active(self.job, name, reason=text, since=self._active_at) is not False
         if prev is not None:
             await self._status.switch_event(self.job, prev, name, text)
 
@@ -247,6 +410,12 @@ class ProviderChain:
 
     def record_success(self, name: str) -> None:
         self._fails[name] = 0
+        if self._fail_until.pop(name, None) is not None:  # 3회 연속 실패 쉼 중 다시 시도가 성공 — 쉼을 끝낸다
+            self._fail_why.pop(name, None)
+            if self._down_kind.get(name) == "fail":
+                self._down_until.pop(name, None)
+                self._down_why.pop(name, None)
+                self._down_kind.pop(name, None)
         # 성공 한 번으로 단계를 초기화하면 60 s 마다 429 ↔ 복귀가 반복된다(실측). 15분 조용해야 초기화.
         if self._quiet(name, time.monotonic()):
             self._rate_limited[name] = 0
@@ -277,6 +446,7 @@ class ProviderChain:
         hold = _hold_for(n)
         self._down_until[name] = now + wait
         self._down_why[name] = _hold_text(hold) if hold else f"429 쉼({wait:.0f} s)"
+        self._down_kind[name] = "429"
         self._backoff_until[name] = now + wait
         if hold:
             self._hold_until[name] = now + hold
@@ -361,6 +531,7 @@ class ProviderChain:
         if s.backoff_until > now_w and s.backoff_until + off > self._down_until.get(name, 0.0):
             self._down_until[name] = s.backoff_until + off
             self._down_why[name] = (_hold_text(s.hold_s) if held else f"429 쉼({_backoff_s(s.stage):.0f} s)") + RESTORED
+            self._down_kind[name] = "429"
         if pending and last_mem is not None:  # 되살리기가 제때 됐을 때처럼 저장된 단계에 이어 센다(쉼·미룸은 그 429 시각부터)
             for _ in range(pending):
                 self._record_429(name, last_mem)
@@ -376,12 +547,15 @@ class ProviderChain:
         )
 
     def record_failure(self, name: str) -> bool:
-        """True 면 임계치 도달 → 쿨다운 진입(다음 pick 에서 전환)."""
+        """True 면 임계치 도달 → 쿨다운 진입(다음 pick 에서 전환). 쉬는 중 다시 시도(다른 공급자가 없어 부름)가 실패하면 False —
+        쉼 끝을 늘리지 않고 새 '3회'를 세지 않는다(쉼마다 WARN 한 번 — 전과 같다)."""
+        if self.probing(name):
+            return False
         n = self._fails.get(name, 0) + 1
         self._fails[name] = n
         if n >= self._threshold:
             self._fails[name] = 0
-            self.mark_down(name, self._cooldown, why=f"{n}회 연속 실패({_dur(self._cooldown)} 쉼)")
+            self.mark_down(name, self._cooldown, why=f"{n}회 연속 실패({_dur(self._cooldown)} 쉼)", kind="fail")
             return True
         return False
 

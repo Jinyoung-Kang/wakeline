@@ -28,7 +28,7 @@ from wakeline_collector.config import Settings, settings
 from wakeline_collector.db import Db
 from wakeline_collector.demand import DemandPoller, DemandStatus
 from wakeline_collector.fallback import ProviderChain
-from wakeline_collector.http import HttpClient
+from wakeline_collector.http import HttpClient, build_limiter
 from wakeline_collector.jobs.aircraft import AircraftJob
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.demand import DemandProvider, DemandTracker
@@ -51,7 +51,6 @@ from wakeline_collector.providers.portmis import PortMisProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
 from wakeline_collector.providers.readsb import ADSB_FI_HOST, AdsbFiDemandProvider, adsb_fi, adsb_lol
 from wakeline_collector.publisher import STREAM_AIRCRAFT, Publisher, limit_fields
-from wakeline_collector.ratelimit import default_limiter
 from wakeline_collector.raw_store import RawStore
 from wakeline_collector.redis_retry import REDIS_SOCKET_TIMEOUT_S, short_retry
 from wakeline_collector.runtime_settings import RuntimeSettings
@@ -132,7 +131,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     redis = redis if redis is not None else make_redis(settings)
     db = db or Db()
     db.start()  # 연결은 writer 가 백그라운드에서(실패해도 수집·발행은 계속)
-    limiter = default_limiter(settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.data_go_kr_rps)
+    limiter = build_limiter(settings)  # 설정의 호스트 버킷 모두(kma_apihub_rps 포함) — HttpClient() 기본값과 같은 함수
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)

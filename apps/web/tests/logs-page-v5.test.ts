@@ -312,6 +312,28 @@ describe("v5-C7 /logs: list, auto refresh, keyboard, detail, copy", () => {
   });
 });
 
+describe("/logs: the reload buttons read 새로고침 (user request 2026-09-30 — the same word as /ops)", () => {
+  it("'새로고침' reloads the log list and, on the AIS 수신 공백 tab, the gaps", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/v1/ais/gaps?")) return { status: 200, body: { from: "2026-09-29T01:00:00Z", to: "2026-09-29T02:00:00Z", truncated: false, open: null, items: [] } };
+      if (url.startsWith("/api/v1/ops/logs?")) return { status: 200, body: FIRST };
+      return undefined;
+    });
+    await open();
+    expect(button("새로 고침")).toBeNull();
+    const logReads = () => calls.filter((c) => c.startsWith("GET /api/v1/ops/logs?")).length;
+    const before = logReads();
+    await click(button("새로고침"));
+    expect(logReads()).toBe(before + 1);
+    await click(button("AIS 수신 공백"));
+    const gapReads = () => calls.filter((c) => c.startsWith("GET /api/v1/ais/gaps?")).length;
+    expect(gapReads()).toBe(1);
+    expect(button("새로 고침", byTestId("ais-gaps")!)).toBeNull();
+    await click(button("새로고침", byTestId("ais-gaps")!));
+    expect(gapReads()).toBe(2);
+  });
+});
+
 describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
   const GROUPS = { groups: [{ fp: "0123456789abcdef", service: "api", level: "ERROR", logger: "dev.wakeline.ingest.StreamConsumer", exception_type: "java.lang.IllegalStateException", sample_message: "failure x", count: 17, suppressed: 40, first_at: "2026-09-29T01:00:00Z", last_at: "2026-09-29T01:59:00Z", last_id: T(1) }], scanned: 900, scan_truncated: true };
   it("groups show fp, count, suppressed, first/last; copying a group fetches its entries; opening one filters the list by fp", async () => {

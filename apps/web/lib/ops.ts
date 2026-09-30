@@ -238,7 +238,7 @@ export function lastTrimLoss(resp: unknown): { stream: string; from: string | nu
 
 /**
  * 한 탭(엔드포인트)의 요청 순서 — 어떤 응답(성공 · 실패)을 화면에 반영할지 정한다.
- * - begin(barrier): 떠나는 요청에 번호를 매긴다. barrier = 기준 요청(쓰기 뒤 다시 읽기 · 해결 표시 토글 · refresh 단추): 그 전에 떠난 요청의 응답은
+ * - begin(barrier): 떠나는 요청에 번호를 매긴다. barrier = 기준 요청(쓰기 뒤 다시 읽기 · 해결 표시 토글 · 새로고침 단추): 그 전에 떠난 요청의 응답은
  *   이제 버린다 — 먼저 오든 늦게 오든 쓰기 전 값 · 다른 해결 표시의 요약이 화면에 오지 않는다.
  * - settle(my): 응답이 오면 부른다. 반영할 응답 = 기준 요청 이후에 떠났고 이미 반영한 응답보다 새것. 새로고침 주기보다 느린 응답도
  *   (더 새 응답이 아직 오지 않았으면) 반영한다 — 느려진 api 의 실패가 "다음 요청이 떠났다"는 이유로 조용히 사라지지 않게.
@@ -344,7 +344,7 @@ export function loginErrorText(e: unknown): string {
   switch (e.status) {
     case 400: return "입력 형식이 올바르지 않습니다 — 아이디를 입력하고 비밀번호는 8자 이상이어야 합니다.";
     case 401: return "아이디 또는 비밀번호가 올바르지 않습니다(5회 실패 시 15분 잠금).";
-    case 403: return "요청이 거부되었습니다(보안 토큰) — 페이지를 새로 고친 뒤 다시 시도하세요.";
+    case 403: return "요청이 거부되었습니다(보안 토큰) — 페이지를 새로고침한 뒤 다시 시도하세요.";
     case 429: return e.retryAfterS != null ? `로그인 시도가 너무 많습니다 — ${e.retryAfterS}초 뒤 다시 시도하세요.` : "로그인 시도가 너무 많습니다 — 잠시 뒤 다시 시도하세요.";
     case 503: return "서버를 일시적으로 사용할 수 없습니다 — 잠시 뒤 다시 시도하세요.";
     default: return e.status >= 500 ? `서버 오류(HTTP ${e.status}) — 잠시 뒤 다시 시도하세요.` : `로그인하지 못했습니다(HTTP ${e.status}).`;
@@ -420,10 +420,12 @@ export function qualityPartialDay(since: unknown): { day: string; text: string; 
 export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   missing: "새 tm 이 목록에 있었으나 저장한 프레임 없음 — 기상청 내려받기가 '파일 없음'으로 답함(호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다)",
   quarantined: "새 tm 을 받았으나 해석할 수 없어 격리 — 저장한 프레임 없음(원본은 raw 에 남는다)",
+  // 기상청 429(운영 로그 2026-09-30 — jobs/kma_radar.py) · 수집기 속도 상한(jobs/aircraft.py) — 계약 v5 §G14: 공급자 오류는 'error' 만
+  throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",
 };
 
 /**
- * 실행 상태 글자색: ok 초록 · missing · quarantined 주황(자료가 오지 않았지만 호출 실패는 아니다) · 그 밖(error · throttled · budget_* …)은 전과 같이
+ * 실행 상태 글자색: ok 초록 · missing · quarantined · throttled 주황(자료가 오지 않았지만 공급자 오류는 아니다) · 그 밖(error · budget_* …)은 전과 같이
  * 요약(summary) 주황 · 최근 실행(item) 빨강.
  */
 export function runStatusClass(status: unknown, where: "summary" | "item"): string {

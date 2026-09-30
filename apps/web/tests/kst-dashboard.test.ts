@@ -11,7 +11,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
 import * as T from "@/lib/time";
 import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
@@ -35,19 +35,24 @@ import { SidePanelView } from "@/components/SidePanel";
 import { LayerPanel } from "@/components/LayerPanel";
 import { wsInvalidText } from "@/components/WsInvalidBadge";
 import { airportTip, shipTrackPointTip, sigmetTip } from "@/lib/tooltip";
-import { fmtSavedAt, fmtShipEta, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
+import { fmtSavedAt, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
+import { fmtShipEta } from "@/lib/ship-card";
 import { trackFeatureCollection } from "@/lib/track";
 import { focusChip, parseDemand } from "@/lib/demand";
 import { parseRoute } from "@/lib/route";
 import { krTmClock } from "@/lib/kr-radar";
 import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
 import AboutPage from "@/app/about/page";
+import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 /** UTC 자정 직전 — KST 로는 다음 날 아침(UTC 날짜가 다른 때 — 예전 두 시간대 표시가 날짜를 둘 붙이던 자리) */
 const LATE = "2026-09-28T23:41:14.906Z";
 /** html 에서 원문(data-raw) 밖의 UTC 흔적 — 글자 · title · aria-label */
 const leaks = (html: string) => htmlUtcLeaks(parseHtml(html));
 
+
+// 탭 내용 · 검색 결과 표 · 범례·정합은 나중에 받는 조각(ADR-026) — 내용을 보려면 미리 받는다(tests/helpers/dashboard-parts)
+beforeAll(preloadDashboardParts);
 describe("dashboard time formatters (lib/time): KST only", () => {
   it("minute form for radar frames: MM-DD HH:MM KST, across the KST and UTC date changes", () => {
     expect(T.fmtKstMinute(LATE, { date: true })).toBe("09-29 08:41 KST");
@@ -271,6 +276,7 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
     parts.push(renderToStaticMarkup(createElement(SidePanelView, { panel: "sigmet", hex: null, sigmet: null, airport: null }))); // SIGMET 목록
     for (const html of parts) expect(leaks(html)).toEqual([]);
     expect(parts.join("")).toContain("KST"); // 시각이 실제로 그려졌다(빈 화면을 통과시키지 않는다)
+    expect(parts.join("")).not.toContain('data-testid="lazy-loading"'); // 탭 내용이 '불러오는 중' 자리가 아니라 실제 카드 · 목록이다(ADR-026)
   });
 });
 
@@ -345,13 +351,13 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
    * 일부러 lib/time 밖에서 만드는 곳 — 파일마다 줄 수까지 고정해, 같은 파일에 새로 생겨도 걸린다.
    * - 복사 · 내려받기 형식(ISO +09:00): lib/log-line(머리 줄) · lib/logs(텍스트 · 파일 이름)
    * - 오류 화면 시각 칸(KST ISO — 오류 경계 청크는 lib/kst · lib/log-line 만 싣는다, PERF §8)
-   * - 선박 ETA(선원 입력 월 · 일 · 시 · 분, 연도 없음 — 순간이 아니라 lib/time 에 넣을 수 없다 — "MM-DD HH:MM KST" 네 줄)
+   * - 선박 ETA(선원 입력 월 · 일 · 시 · 분, 연도 없음 — 순간이 아니라 lib/time 에 넣을 수 없다 — "MM-DD HH:MM KST" 네 줄, lib/ship-card)
    */
   const ALLOWED: Record<string, number> = {
     [join("lib", "log-line.ts")]: 1,
     [join("lib", "logs.ts")]: 2,
     [join("components", "logs", "ErrorScreen.tsx")]: 1,
-    [join("lib", "ships.ts")]: 4,
+    [join("lib", "ship-card.ts")]: 4, // 선박 ETA — lib/ships 에서 카드 전용 모듈로 옮겼다(ADR-026)
   };
   /** 한국어 화면 글이 UTC 를 말하는 줄(주석 밖) — 계약 v5 §G20: 화면은 KST 만 */
   const KOREAN_UTC = /[\uAC00-\uD7A3][^"'`\n]*\bUTC\b|\bUTC\b[^"'`\n]*[\uAC00-\uD7A3]/;

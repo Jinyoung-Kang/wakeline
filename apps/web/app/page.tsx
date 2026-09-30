@@ -1,5 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
+import { prefetchDashboardPartsWhenIdle } from "@/components/DashboardParts";
 import { LayerPanel } from "@/components/LayerPanel";
 import { RadarTimeline } from "@/components/RadarTimeline";
 import { SidePanel } from "@/components/SidePanel";
@@ -19,7 +20,8 @@ export default function Dashboard() {
       {/* 900 px 미만: 지도 위 · 패널 아래로 쌓는다(R-39) — 고정 380 px 열이 지도를 10 px 로 줄이지 않게 */}
       <div className="flex min-h-0 flex-1 flex-col min-[900px]:flex-row">
         <div className="relative min-h-0 min-w-0 flex-1">
-          <MapView />
+          {/* 지도가 처음 다 그려지면(첫 화면 끝) 한가할 때 카드 · 목록 조각을 미리 받는다(ADR-026 — 첫 화면 JS 에 들지 않는다) */}
+          <MapView onFirstLoad={prefetchDashboardPartsWhenIdle} />
           {/* 지도 위에 겹쳐 그리는 것(레이어 단추 · 상태 칩 · 배경지도 알림 · 교통량 상태 · 범례)은 LayerPanel 의 한 배치 안 — 서로 덮지 않게 */}
           <LayerPanel />
         </div>
