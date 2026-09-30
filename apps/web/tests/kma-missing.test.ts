@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, krMissing } from "@/lib/kr-radar";
-import { providerMissing, runStatusClass, RUN_STATUS_TITLE } from "@/lib/ops";
+import { providerMissing, providersNowMs, runStatusClass, RUN_STATUS_TITLE } from "@/lib/ops";
 import { getData, resetData, setData } from "@/lib/store";
 import { detailRows, statusChips, statusInput } from "@/lib/statusbar";
 import { KrRadarPanel } from "@/components/KrRadarPanel";
@@ -174,6 +174,12 @@ describe("운영: the provider hash streak and the run status colours", () => {
     expect(providerMissing({ ...P, missing_since_tm: "", missing_last_tm: "", missing_tms: "", missing_checked_at: "" }, NOW)).toBeNull();
     expect(providerMissing({ name: "adsb_lol" }, NOW)).toBeNull();
     expect(providerMissing({ ...P, missing_tms: "many" }, NOW)).toBeNull();
+  });
+  it("providersNowMs: the server's generated_at (with an offset) is 'now' for the ops row — unknown is 0, never the browser clock", () => {
+    expect(providersNowMs({ generated_at: "2026-09-30T00:52:00.123Z" })).toBe(Date.parse("2026-09-30T00:52:00.123Z"));
+    expect(providersNowMs({ generated_at: "2026-09-30T09:52:00+09:00" })).toBe(Date.parse("2026-09-30T00:52:00Z"));
+    for (const bad of [{}, null, { generated_at: "2026-09-30T00:52:00" }, { generated_at: 1790000000000 }, { generated_at: "yesterday" }]) expect(providersNowMs(bad)).toBe(0);
+    expect(providerMissing(P, providersNowMs({}))?.stale).toBe(false); // 모르면 판정하지 않는다
   });
   it("run status: ok green, missing · quarantined amber with an explanation, other statuses as before", () => {
     expect(runStatusClass("ok", "item")).toBe("text-ok");

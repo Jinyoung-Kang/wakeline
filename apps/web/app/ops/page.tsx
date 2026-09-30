@@ -5,7 +5,7 @@ import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, rebaseSetting, RequestOrder, RUN_STATUS_TITLE,
+  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting, RequestOrder, RUN_STATUS_TITLE,
   runStatusClass, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -21,6 +21,8 @@ type Any = Record<string, unknown>;
 /** resolution_state = 해결 기록의 상태(ok | stale | unavailable — ADR-024). providers[] 마다 last_error_resolution · last_error_resolved */
 interface Providers {
   providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; budget_day_zone?: unknown; provider_switch?: SwitchState[]; resolution_state?: unknown;
+  /** 응답을 만든 서버 시각(UTC ISO) — '파일 없음' 줄의 '확인 멈춤'을 서버 기준 지금으로 판정한다(providersNowMs) */
+  generated_at?: unknown;
 }
 /** hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다) */
 interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; mode: ResolvedMode }
@@ -275,7 +277,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           {(() => { const s = parseResolutionState(prov.resolution_state); return s && s !== "ok" ? <div className="mb-2 text-[11px] text-warn" data-testid="ops-resolution-state">{RESOLUTION_STATE_TEXT[s]}</div> : null; })()}
           <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th title={LAST_ERROR_TITLE}>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1";
-              const miss = providerMissing(p, lastOk.providers ?? 0); return <Fragment key={String(p.name)}><tr>
+              const miss = providerMissing(p, providersNowMs(prov)); return <Fragment key={String(p.name)}><tr>
               <td className="mono">{String(p.name)}{off ? <span className="badge bad ml-1" title={sw?.disabled != null ? "원본(DB) 기준" : "Redis 미러 기준(원본 행 없음)"}>disabled</span> : null}</td>
               <TimeCell v={p.last_success_at} /><td className={NUM_CELL}>{fmtLatencyMs(p.last_latency_ms)}</td><td className={NUM_CELL}>{String(p.last_records ?? "—")}</td>
               <td className={`${NUM_CELL} ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>

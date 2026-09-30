@@ -607,13 +607,14 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - api(R-72 — `KrRadarMissing`): `/radar/kr` 와 `/status` · WS `status` 의 `radar_kr` 에 `missing {since_tm, last_tm, tms, checked_at, file?, listed?}` — 연속이 없으면 키가 없다.
     핵심 값(since_tm · last_tm ≥ since_tm · tms ≥ 1 · 시간대 있는 checked_at)이 하나라도 틀리면 연속 전체를 빼고 센다(`wakeline_radar_kr_parse_errors_total{field="missing"}`),
     파일 이름(`RDR_CMP_…_<tm>.bin.gz`) · 종류(`[A-Z]{1,8}` 최대 8개)만 틀리면 그 키만 뺀다. `/radar/kr` 의 ETag 에 든다 — 프레임이 그대로여도 연속이 바뀌면 304 가 아니다.
-    `/ops/providers` 는 공급자 해시를 그대로 싣는다(웹이 형식을 본다).
+    `/ops/providers` 는 공급자 해시를 그대로 싣고(웹이 형식을 본다) 응답을 만든 서버 시각 `generated_at`(UTC ISO)을 더한다(통합 리뷰 2026-09-30 — 운영 줄의
+    `확인 멈춤`을 서버 기준 지금으로 잰다).
   - 계약 검사: `schemas/ws/server.v1.json` `status.radar_kr.missing` · `tools/rest_contract_check.py` `KR_MISSING`(교차 검사: last_tm ≥ since_tm, 파일 이름의 tm 은 그 사이) ·
     기록 표본 `radar_kr_missing`(연속 중 — missing 필수) · `status_ais`(missing 필수) · 웹 검증기 `lib/ws-validate` `KR_MISSING`(웹 표본 `ws-samples.v1.json` 을 다시 만들었다).
   - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): 잰 것만 — 한 줄 `기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST ·
     확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST`(구간 = 없다는 답을 받은 가장 이른 · 가장 새 tm, 수 = 확인한 서로 다른 tm — 구간의 tm 이 모두
     그만큼이라고 하지 않는다. PUB 는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다). 마지막 확인이 `KR_MISSING_CHECK_STALE_MIN`(15분 = 수집기 `MISSING_CARRY_S`,
-    시험이 견준다)을 넘으면(서버 기준 지금) `확인 멈춤`을 붙인다 — 수집기가 멈추면 연속을 지울 주체가 없다. 나이 경계는 웹이 둔다(운영 표는 api 가 검증하지 않는 공급자
+    시험이 견준다)을 넘으면(서버 기준 지금 — 상황판은 서버 시계 보정, 운영 표는 `/ops/providers` 의 `generated_at` · 없으면 판정하지 않는다) `확인 멈춤`을 붙인다 — 수집기가 멈추면 연속을 지울 주체가 없다. 나이 경계는 웹이 둔다(운영 표는 api 가 검증하지 않는 공급자
     해시를 읽으므로 한 곳 — `isKrRadarStale` 의 나이 쪽과 같은 방식). KMA 칩 낱말 `파일 없음`(`파일 없음 · 확인 멈춤`, 주의 이상 · 줄에 고정, 문장은 title) ·
     상세 행 `기상청 내려받기 파일` · 레이더 패널 · 범례 · 타임라인(쓸 수 있으면 `파일 없음` 표시, 보관 프레임이 만료됐으면 `기상청 레이더 없음 — …`) · 운영 공급자 표
     (kma_radar 행 아래 주의 줄) · 실행 상태 `missing` · `quarantined` 는 주황과 뜻(title). 보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다.
@@ -623,7 +624,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     서로 다른 tm 수 · 키 없음 지우기 · 목록 실패 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기 · 같은 주기의 늦은 파일은 한 tm · 연속 중 재기동의 첫 tm · 주기가 중간에
     끝나도 포기한 tm 을 알림) · `test_redis_integration`(수집기 ACL 아래 HGETALL meta · HSET missing_* · 알린 공백 — 실 Redis) · `test_rest_contract_rules` · api
     `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT`(ETag · /status) · `RestSamplesIT` · `WsSchemaContractTest` · web `tests/kma-missing.test.ts` ·
-    `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색).
+    `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색 · 서버 시각 기준 `확인 멈춤`) · api `StatsIT`(`generated_at`).
 
 ## G. 15차 개정(2026-09-30 · 레인 ais · 로그 화면의 keepalive 1011 두 건) — ais 수신 진단 필드 · 끊김 로그 수준
 레인에서는 13차 · §G21 로 썼다 — 세 레인을 합칠 때(integ, 2026-09-30) 번호만 뒤로 밀었다: 15차 · §G23(내용은 §G21 · §G22 와 겹치지 않는다).

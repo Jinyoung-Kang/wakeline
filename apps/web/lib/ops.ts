@@ -434,8 +434,21 @@ export function runStatusClass(status: unknown, where: "summary" | "item"): stri
 }
 
 /**
+ * /ops/providers 응답을 만든 서버 시각(generated_at — 시간대가 있는 ISO 만) → ms. 없거나 틀리면 0(모름 — providerMissing 이 '확인 멈춤'을 판정하지 않는다).
+ * 공급자 해시의 시각(수집기 missing_checked_at)의 나이를 브라우저 시계가 아니라 서버 기준 지금으로 잰다(계약 v5 §G22 — 브라우저 시계가 15분 넘게
+ * 틀려도 상황판 칩과 같은 판정, 통합 리뷰 2026-09-30). 응답은 15 s 마다 새로 받는다 — 그 사이 지난 시간은 더하지 않는다(다음 응답이 다시 잰다).
+ */
+export function providersNowMs(resp: unknown): number {
+  const v = obj(resp).generated_at;
+  if (typeof v !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d)$/.test(v)) return 0;
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+/**
  * 공급자 해시(수집기 wakeline:provider:kma_radar — /ops/providers 가 그대로 싣는다)의 missing_* 문자열 → 기상청 내려받기 '파일 없음' 연속(lib/kr-radar
  * krMissing 과 같은 글자). 빈 값 = 닫힌 연속 · 다른 공급자 → null. 해시 값은 api 가 검증하지 않은 수집기 글자라 여기서 형식을 본다(틀리면 null).
+ * nowMs = 서버 기준 지금(providersNowMs — 응답의 generated_at). 모르면 0 을 준다 — '확인 멈춤'을 판정하지 않는다(브라우저 시계로 짐작하지 않는다).
  */
 export function providerMissing(p: Record<string, unknown>, nowMs: number): KrMissingInfo | null {
   const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");

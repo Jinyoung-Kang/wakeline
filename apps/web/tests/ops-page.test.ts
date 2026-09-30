@@ -369,7 +369,7 @@ describe("운영: 기상청 내려받기 '파일 없음' 연속(운영 로그 20
     missing_checked_at: "2026-09-30T00:50:31Z", missing_file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", missing_listed: "EXT" };
   const DATA: Record<string, unknown> = {
     ...BODY,
-    "/api/v1/ops/providers": { providers: [kma, { name: "awc", last_success_at: "2026-09-30T00:50:00Z" }], active: {}, collector: {}, switches: [], budget_days: [], budget_day_zone: "UTC" },
+    "/api/v1/ops/providers": { providers: [kma, { name: "awc", last_success_at: "2026-09-30T00:50:00Z" }], active: {}, collector: {}, switches: [], budget_days: [], budget_day_zone: "UTC", generated_at: "2026-09-30T00:52:00.123Z" },
     "/api/v1/ops/runs?limit=50&resolved=hide": {
       items: [{ id: 9, job: "radar_kr", provider: "kma_radar", started_at: "2026-09-30T00:50:00Z", status: "missing", http_status: 200, latency_ms: 300, records_in: 0,
         records_quarantined: 0, raw_ref: null, error_text: "no new frame stored — KMA download has no file since tm=202609300815" }],
@@ -405,6 +405,45 @@ describe("운영: 기상청 내려받기 '파일 없음' 연속(운영 로그 20
       expect(c.getAttribute("class")).toBe("text-warn");
       expect(c.getAttribute("title")).toContain("저장한 프레임 없음");
     }
+  });
+});
+
+describe("운영: '파일 없음' 줄의 '확인 멈춤'은 서버 기준 지금(/ops/providers generated_at)으로 판정한다 — 브라우저 시계가 아니다(계약 v5 §G22, 통합 리뷰 2026-09-30)", () => {
+  const kma = { name: "kma_radar", last_success_at: "2026-09-29T23:15:31Z", missing_since_tm: "202609300815", missing_last_tm: "202609300950", missing_tms: "20",
+    missing_checked_at: "2026-09-30T00:50:31Z", missing_file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", missing_listed: "EXT" };
+  const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+    if (pred(from)) out.push(from);
+    for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);
+    return out;
+  };
+  const line = async (browserNow: string, generatedAt: string | undefined) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(browserNow) });
+    const data: Record<string, unknown> = {
+      "/api/v1/ops/session": { username: "op" },
+      "/api/v1/ops/providers": { providers: [kma], active: {}, collector: {}, switches: [], budget_days: [], budget_day_zone: "UTC", ...(generatedAt ? { generated_at: generatedAt } : {}) },
+    };
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in data ? data[url] : { detail: "no such resource" }), { status: url in data ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    const rows = all((e) => e.getAttribute?.("data-testid") === "provider-missing");
+    expect(rows).toHaveLength(1);
+    return rows[0].textContent ?? "";
+  };
+  it("a browser clock 1 h ahead does not mark a fresh check stale (server 2 min after the check)", async () => {
+    const t = await line("2026-09-30T01:52:00Z", "2026-09-30T00:52:00Z");
+    expect(t).not.toContain("확인 멈춤");
+    expect(t).toContain("tm 08:15–09:50 KST"); // 서버 기준 오늘 — 날짜를 붙이지 않는다
+  });
+  it("a browser clock close to the check does not hide a stopped check (server 30 min after the check)", async () => {
+    const t = await line("2026-09-30T00:52:00Z", "2026-09-30T01:20:31Z");
+    expect(t).toContain("15분 넘게 다시 확인하지 않음(확인 멈춤)");
+  });
+  it("without the server's time the row makes no staleness judgement (no guess from the browser clock)", async () => {
+    const t = await line("2026-09-30T03:00:00Z", undefined);
+    expect(t).not.toContain("확인 멈춤");
+    expect(t).toContain("기상청 내려받기 파일(PUB) 없음");
   });
 });
 
