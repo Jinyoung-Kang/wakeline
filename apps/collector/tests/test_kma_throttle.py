@@ -390,3 +390,41 @@ async def test_kma_429_on_the_refetch_after_a_missing_cycle_keeps_the_missing_st
     assert run["status"] == "missing" and run["http_status"] == 200
     assert run["error_text"].startswith("no new frame stored") and f"refetch tm={tms[-3]}" in run["error_text"]
     assert "HTTP 429" in run["error_text"]
+
+
+@pytest.mark.parametrize("today_listed", [False, True])
+async def test_kma_429_on_the_previous_day_listing_is_a_throttled_cycle(kma, caplog, today_listed):
+    """KST 00:00–00:14 의 전날 목록(덧붙이는 목록)이 429 — 리뷰 2026-09-30: 전에는 WARN 한 줄뿐이고 실행 기록은 새 tm 이 없으면 'ok' · http 200,
+    있으면 쉼 때문에 보내지 않은 바이너리의 'throttled' · http 없음 · 'not called — rate limiter' 였다(계약 §G24 는 http 429 · 쉰 초 · Retry-After).
+    이제 목록의 429 와 같다: 이 주기의 KMA 호출(바이너리 · 다시 받기)을 멈추고 실행 'throttled'(http 429), 공급자 오류가 아니다, WARN 한 줄."""
+    mod, r, ctx, clock, runs = kma
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    clock["now"] = "202609270005"  # 00:05 KST — 전날 목록도 본다
+    http = HttpClient(default_limiter(100.0, 0.8, kma_rps=50.0))
+    server = KmaServer(clock)
+    today = _tms("202609270005", since="202609270000") if today_listed else []
+
+    def listing(req: httpx.Request) -> httpx.Response:
+        tm = req.url.params["tm"]
+        server.calls.append((time.monotonic(), "list", tm))
+        if tm == "20260926":
+            return httpx.Response(429, headers={"Retry-After": "120"}, content=BODY_429.encode("utf-8"))
+        return httpx.Response(200, content="".join(f"RDR_CMP_HSR_EXT_{t}.bin.gz,=\n" for t in today).encode())
+
+    with respx.mock:
+        respx.get(LIST_URL).mock(side_effect=listing)
+        respx.get(FILE_URL).mock(side_effect=server.binary)
+        await mod.KmaRadarJob(KmaRadarProvider(http, "k" * 12), ctx).run_once()
+    # 429 뒤로 바이너리를 부르지 않는다
+    assert [(c[1], c[2]) for c in server.calls] == [("list", "20260927"), ("list", "20260926")]
+    assert http.limiter.cooldown_remaining(KMA_HOST) >= 110
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["status"] == "throttled" and run["http_status"] == 429 and run["records_in"] == 0
+    assert "previous-day listing 20260926" in run["error_text"] and "paused 120 s" in run["error_text"]
+    assert "Retry-After 120 s" in run["error_text"] and "not called" not in run["error_text"]
+    h = await r.hgetall("wakeline:provider:kma_radar")
+    assert "last_error" not in h and "last_success_at" not in h  # 공급자 오류도, 성공도 아니다(바이너리를 받지 않았다)
+    warns = [x.getMessage() for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+    assert len(warns) == 1 and "previous-day listing 20260926" in warns[0] and "HTTP 429" in warns[0]
+    await http.aclose()
