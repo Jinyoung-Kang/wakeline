@@ -33,7 +33,11 @@ import java.util.function.Consumer;
  *   <li>큐 상한 100,000 행 — 넘치면 오래된 것부터 버리고 result=dropped 로 센다. 실패는 TrackWriter 와 같다: 일시 장애는 같은 배치를 백오프(2 s → 30 s)로
  *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
- *   <li>종료: 스트림 소비·WS 뒤(phase) 남은 행을 최대 6 s 동안 쓰고, 못 쓴 행의 메시지는 ACK 하지 않는다(다음 기동에서 다시 처리 — 쓰기는 멱등).</li>
+ *   <li>종료: 스트림 소비·WS 뒤(phase) 워커가 진행 중 배치를 끝내고 <b>스스로</b> 남은 행을 쓴다(DB 를 쓰는 스레드는 종료 때도 하나 — 조사 2026-10-01
+ *       종료 F3: 예전에는 stop 이 2 s 기다린 뒤 다른 스레드가 flush 해, 느린 쓰기와 같은 배치를 동시에 쓰고 쓰지 못한 배치의 영수증을 놓을 수 있었다).
+ *       stop 요청 뒤 8 s 가 지나면 새 배치를 쓰기 시작하지 않고, stop 은 최대 9 s 기다린다(lifecycle 단계 한도 10 s 안). 못 쓴 행의 메시지는 ACK 하지
+ *       않는다(다음 기동에서 다시 처리 — 쓰기는 멱등). stop 요청 뒤 실패한 쓰기는 기다리지 않고 종료 flush 가 한 번 더 쓴다. 워커가 오류(Error)로
+ *       죽었으면 ERROR 한 줄을 남기고, 남은 행은 stop 이 쓴다(그때 쓰는 스레드는 stop 하나).</li>
  *   <li>고른 위치(60 s 창의 첫 보고)를 {@link IngestEvents.ShipsSampled} 로 알린다(소비 스레드, 동기 — 파이프라인 이벤트라 리스너 예외는 그 리스너에 갇힌다,
  *       API-CONC-2) — 관측 수신 격자(ADR-027 · coverage.ShipCoverage)가 DB 의 ship_position 과 같은 표본을 센다(부트스트랩이 읽는 행과 실시간 셈이 같은 뜻).</li>
  * </ul>
@@ -44,12 +48,25 @@ public class ShipWriter implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(ShipWriter.class);
     static final int QUEUE_MAX = 100_000;
     static final int BATCH = 2_000;
-    /** 풀리지 않은 표식 상한 — 스트림 보존(MAXLEN ~200)보다 훨씬 크다. 넘으면 가장 오래된 것부터 놓는다(wakeline_ship_receipts_forced_total). */
-    static final int MAX_MARKS = 1_000;
+    /**
+     * 풀리지 않은 표식(= ACK 를 기다리는 선박 메시지) 상한. 넘으면 가장 오래된 것부터 놓는다(wakeline_ship_receipts_forced_total) — DB 가 오래 죽어
+     * 있을 때 표식과 PEL 이 끝없이 늘지 않게. 상한으로 놓는 것이 이미 스트림에서 지워진 메시지뿐이도록 보존 창에 들 수 있는 메시지 수 이상으로 잡는다:
+     * wakeline:ships 는 시간으로 자른다(MINID ~ 지금 − 2.5 h = 9,000 s, collector publisher.py STREAM_RETENTION_S — 바이트 예산은 창을 줄일 뿐이다).
+     * ais 는 ais_flush_s(기본 10 s, 설정 하한 1 s — ais/config.py)마다 XADD 한 번(바뀐 선박 · 정적 정보가 CHUNK 5,000 건을 넘을 때만 나눈다 —
+     * 장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다. 실패한 XADD 는 다음 flush 에 다시 싣고 따로 쌓아 재전송하지 않는다) →
+     * 9,000 s 에 기본 900개, 하한에서 ≤ 9,002개(창 양 끝 · 종료 때의 마지막 flush 포함). 그래서 10,000(조사 2026-10-01: 예전 1,000 은
+     * 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간 트리밍 뒤로는 기본 주기에서 여유가 약 11 % 였고, 주기를 9 s 아래로 줄이면 스트림에 아직 있는
+     * 메시지를 놓았다). DB 장애가 길면 대개 큐 상한(QUEUE_MAX 행)이 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로
+     * 센다). 이 계산은 tools/contract_check.py(receipt_mark_bounds)가 수집기 상수로 다시 한다 — 상수가 바뀌어 상한을 넘으면 그 검사가 실패한다.
+     */
+    static final int MAX_MARKS = 10_000;
     static final int PERMANENT_ATTEMPTS = 3;
     static final long BACKOFF_START_MS = 2_000;
     static final long BACKOFF_MAX_MS = 30_000;
-    static final long FLUSH_DEADLINE_MS = 6_000;
+    /** stop() 이 워커(진행 중 쓰기 + 마지막 flush)를 기다리는 상한 — lifecycle 단계 한도 10 s(application.yml timeout-per-shutdown-phase) 안. */
+    static final long STOP_WAIT_MS = 9_000;
+    /** 마지막 flush 는 stop 요청 뒤 (기다림 상한 − 이 값)이 지나면 새 배치를 쓰기 시작하지 않는다 — 마지막으로 시작한 배치가 커밋될 여유. */
+    static final long LAST_BATCH_MARGIN_MS = 1_000;
     /** ship.last_seen 을 위치로 넓히는 단위(분). */
     static final long TOUCH_WINDOW_MIN = 10;
     /**
@@ -89,9 +106,13 @@ public class ShipWriter implements SmartLifecycle {
     private final long backoffMaxMs;
     /** 고른 위치의 알림(운영: 애플리케이션 이벤트 — {@link IngestEvents.ShipsSampled}). */
     private final Consumer<Object> publish;
+    /** stop() 의 기다림 상한(테스트가 줄인다). */
+    long stopWaitMs = STOP_WAIT_MS;
     private volatile boolean running;
+    /** stop 을 요청한 시각(epoch ms, 없으면 0) — 마지막 flush 의 마감 기준. */
+    private volatile long stopRequestedAtMs;
     private Thread worker;
-    /** 실패해서 다시 쓸 배치. 워커 스레드에서만(종료 flush 는 워커가 멈춘 뒤). */
+    /** 실패해서 다시 쓸 배치. 워커 스레드에서만(종료 flush 도 워커가 한다). */
     private volatile ReceiptBatchQueue.Batch<Item> pending;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -199,20 +220,55 @@ public class ShipWriter implements SmartLifecycle {
         if (a.forced() > 0) forced.increment(a.forced());
     }
 
-    @Override public void start() { running = true; worker = Thread.ofVirtual().name("ship-writer").start(this::loop); }
+    @Override
+    public void start() {
+        stopRequestedAtMs = 0;
+        running = true;
+        worker = Thread.ofVirtual().name("ship-writer").start(this::run);
+    }
 
+    /** 워커: 쓰기 루프 → 종료 flush. DB 를 쓰는 스레드는 이것 하나다(ShipRepository.POSITION_SQL 의 창 가드가 기대는 것). */
+    private void run() {
+        try {
+            loop();
+            flush();
+        } catch (Error err) {
+            // 예외가 아닌 오류(OOM · StackOverflowError 등)로 끝났다 — 조용히 죽지 않는다. 그 뒤 쌓이는 행은 stop 이 쓴다(쓰는 스레드가 그때는 stop 하나)
+            log.error("ship writer thread died ({}) — nothing writes ship rows until shutdown; stop() then writes what is queued", err.toString(), err);
+        }
+    }
+
+    /**
+     * 워커가 진행 중 배치와 마지막 flush 를 끝내기를 최대 {@link #stopWaitMs} 기다린다 — 이 스레드는 쓰지 않는다. 그 안에 끝나지 않으면(쓰기 하나가
+     * DB 에서 돌아오지 않음) 그렇다고 남기고 돌아간다: 워커는 마감 뒤 새 배치를 쓰기 시작하지 않고, 쓰지 않은 행의 메시지는 ACK 되지 않는다.
+     */
     @Override
     public void stop() {
-        running = false;
-        if (worker != null) {
-            try { worker.join(2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        requestStop();
+        Thread w = worker;
+        if (w == null) { // 시작한 적 없다 — 같이 쓰는 스레드가 없다
+            flush();
+            return;
         }
+        try { w.join(stopWaitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        if (w.isAlive()) {
+            log.warn("ship writer still busy {} ms after stop (a DB write has not returned) — shutdown continues; the writer starts no new batch and logs"
+                    + " its own result, and rows it has not written keep their stream messages unacknowledged (re-processed on restart)", stopWaitMs);
+            return;
+        }
+        // 워커는 끝났다 — 보통은 스스로 flush 했으므로 남은 것이 없다(빈 flush 는 아무것도 남기지 않는다). 오류로 죽었다면(run) 남은 행을 여기서 쓴다:
+        // 쓰는 스레드는 이제 이것 하나다(리뷰 2026-10-01 — 예전에는 죽은 워커 뒤로 flush · WARN · dropped 가 없었다)
         flush();
+    }
+
+    private void requestStop() {
+        if (stopRequestedAtMs == 0) stopRequestedAtMs = System.currentTimeMillis();
+        running = false;
     }
 
     @Override
     public void stop(Runnable callback) {
-        running = false;
+        requestStop();
         Thread.ofVirtual().name("ship-writer-stop").start(() -> {
             try { stop(); } finally { callback.run(); }
         });
@@ -241,6 +297,13 @@ public class ShipWriter implements SmartLifecycle {
                 return;
             } catch (RuntimeException e) {
                 int n = pending == null ? 0 : pending.items().size();
+                if (!running) {
+                    // stop 이 이미 요청됐다 — 기다려 다시 시도하지 않는다: 루프를 나가 곧바로 종료 flush 가 이 배치부터 쓴다(마감 안이면). 'retry in …' 은
+                    // 일어나지 않는 기다림이었다(리뷰 2026-10-01 — 2026-09-30 17:58:51 호스트 종료 로그)
+                    log.warn("ship batch ({} rows) failed while stopping — the shutdown flush tries it once more before its deadline (queue {}): {}",
+                            n, queue.size(), e.toString());
+                    continue;
+                }
                 if (!TrackWriter.isPermanent(e)) {
                     log.warn("ship batch ({} rows) failed, retry in {} ms (queue {}): {}", n, backoff, queue.size(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
@@ -281,7 +344,10 @@ public class ShipWriter implements SmartLifecycle {
         staticWritten.increment(stats.size());
     }
 
-    /** 종료 시: 재시도 중이던 배치 + 큐를 마감 안에서 순서대로 쓴다. 앞에서부터 이어서 쓴 행까지만 영수증을 놓는다. */
+    /**
+     * 종료 시(워커 — 시작한 적 없으면 stop 을 부른 스레드): 재시도 중이던 배치 + 큐를 마감(stop 요청 + 기다림 상한 − 여유) 안에서 순서대로 쓴다.
+     * 앞에서부터 이어서 쓴 행까지만 영수증을 놓는다.
+     */
     void flush() {
         List<ReceiptBatchQueue.Batch<Item>> rest = new ArrayList<>();
         ReceiptBatchQueue.Batch<Item> p = pending;
@@ -289,7 +355,8 @@ public class ShipWriter implements SmartLifecycle {
         if (p != null) rest.add(p);
         ReceiptBatchQueue.Batch<Item> b;
         while ((b = queue.poll()) != null) rest.add(b);
-        long deadline = System.currentTimeMillis() + FLUSH_DEADLINE_MS;
+        long stopAt = stopRequestedAtMs;
+        long deadline = (stopAt > 0 ? stopAt : System.currentTimeMillis()) + stopWaitMs - LAST_BATCH_MARGIN_MS;
         int done = 0, total = 0;
         boolean contiguous = true;
         for (ReceiptBatchQueue.Batch<Item> x : rest) {

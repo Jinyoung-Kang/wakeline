@@ -17,6 +17,21 @@ class RequestIdFilterTest {
         return r;
     }
 
+    /** 걸린 시간(조사 2026-10-01 오류 F3): 필터가 요청 시작 시각을 남겨, 503 WARN 이 그 요청이 얼마나 걸렸는지 적을 수 있다. 필터를 거치지 않았으면 null. */
+    @Test
+    void theFilterRecordsWhenTheRequestStartedSoLogsCanSayHowLongItTook() throws Exception {
+        MockHttpServletRequest req = from("203.0.113.9", null);
+        assertThat(RequestIdFilter.elapsedMs(req)).as("not filtered — unknown, not 0").isNull();
+        long[] seen = {-1};
+        RequestIdFilter f = new RequestIdFilter(new AppProperties(EDGE, "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
+                120, java.util.List.of()));
+        f.doFilter(req, new org.springframework.mock.web.MockHttpServletResponse(), (rq, rs) -> {
+            try { Thread.sleep(30); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            seen[0] = RequestIdFilter.elapsedMs((jakarta.servlet.http.HttpServletRequest) rq);
+        });
+        assertThat(seen[0]).isBetween(30L, 5_000L);
+    }
+
     @Test
     void edgeIdIsAdoptedOnlyFromTheTrustedProxy() {
         assertThat(RequestIdFilter.resolve(from(EDGE, EDGE_ID), EDGE)).isEqualTo(EDGE_ID);

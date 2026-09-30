@@ -32,7 +32,8 @@ public class ShipRepository {
 
     /**
      * 위치 한 점. 60 s 창(에포크 정렬) 안에 이미 저장된 점이 있으면 쓰지 않는다 — 메모리 필터(ShipWriter)가 재시작으로 비었거나 재처리가 늦게 와도
-     * '창마다 첫 보고 하나' 가 DB 에서 지켜진다(쓰는 스레드는 하나뿐이라 경합이 없다). 같은 (mmsi, ts) 는 PK 충돌로 무시.
+     * '창마다 첫 보고 하나' 가 DB 에서 지켜진다(쓰는 스레드는 ShipWriter 워커 하나뿐 — 종료 flush 도 그 워커가 한다 — 이라 경합이 없다). 같은 (mmsi, ts) 는
+     * PK 충돌로 무시.
      */
     private static final String POSITION_SQL = """
             INSERT INTO ship_position (mmsi, ts, geom, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider)
@@ -180,7 +181,7 @@ public class ShipRepository {
      * (계약 v3 §D — 예전에는 오래된 것부터 잘라 최근 공백이 빠졌다).
      */
     public List<AisGap> gaps(Instant from, Instant to, int limit) {
-        return Sql.publicRead(db, """
+        return Sql.publicRead(db, "ais.gaps", """
                 SELECT started_at, ended_at, reason, provider, scope FROM (
                   SELECT started_at, ended_at, reason, provider, scope FROM ingest_gap
                   WHERE source = :src AND started_at < :to AND ended_at > :from
@@ -195,7 +196,7 @@ public class ShipRepository {
      * 짧은 공백이 많아 그 목록이 잘려도 끊기 판정은 영향을 받지 않는다(계약 v3 §D).
      */
     public List<AisGap> gapsAtLeast(Instant from, Instant to, long minS, int limit) {
-        return Sql.publicRead(db, """
+        return Sql.publicRead(db, "ais.gaps_at_least", """
                 SELECT started_at, ended_at, reason, provider, scope FROM ingest_gap
                 WHERE source = :src AND started_at < :to AND ended_at > :from AND extract(epoch FROM ended_at - started_at) >= :min
                 ORDER BY started_at LIMIT :lim""")
@@ -230,7 +231,7 @@ public class ShipRepository {
 
     /** MMSI 하나의 저장 행(공개 조회 상한) — 주어진 연결 출처로(REST 는 공유 풀, 선택 조회는 {@link ReadPool}). */
     public static StoredShip find(JdbcClient db, String mmsi) {
-        return Sql.publicRead(db, "SELECT " + STATIC_COLUMNS + ", s.first_seen, s.last_seen FROM ship s WHERE s.mmsi = :m").param("m", mmsi)
+        return Sql.publicRead(db, "ship.find", "SELECT " + STATIC_COLUMNS + ", s.first_seen, s.last_seen FROM ship s WHERE s.mmsi = :m").param("m", mmsi)
                 .query((rs, i) -> new StoredShip(staticRow(rs), rs.getObject("first_seen", java.time.OffsetDateTime.class).toInstant(),
                         rs.getObject("last_seen", java.time.OffsetDateTime.class).toInstant()))
                 .optional().orElse(null);
@@ -272,7 +273,7 @@ public class ShipRepository {
             case MMSI_PREFIX_OR_IMO, IMO -> "coalesce(s.imo = :imo, false) DESC, ";
             case NAME_OR_CALL_SIGN -> "coalesce(upper(s.name) = :q OR upper(s.call_sign) = :q, false) DESC, ";
         };
-        JdbcClient.StatementSpec st = Sql.publicRead(db, "SELECT " + STATIC_COLUMNS + ", s.last_seen FROM ship s WHERE " + where
+        JdbcClient.StatementSpec st = Sql.publicRead(db, "ship.search", "SELECT " + STATIC_COLUMNS + ", s.last_seen FROM ship s WHERE " + where
                 + " ORDER BY " + exact + "s.last_seen DESC, s.mmsi LIMIT :n").param("n", limit);
         switch (q.kind()) {
             case MMSI -> st = st.param("q", q.text());
@@ -295,7 +296,7 @@ public class ShipRepository {
     public Map<String, Known> lookup(Collection<String> mmsis) {
         if (mmsis.isEmpty()) return Map.of();
         Map<String, Known> out = new LinkedHashMap<>();
-        Sql.publicRead(db, """
+        Sql.publicRead(db, "ship.lookup", """
                 SELECT u.m AS q_mmsi, s.mmsi, s.name, s.call_sign, s.imo, s.ship_type, s.dim_a, s.dim_b, s.dim_c, s.dim_d, s.draught_m, s.destination,
                        s.eta_month, s.eta_day, s.eta_hour, s.eta_minute, s.updated_at, s.provider,
                        (SELECT p.ts FROM ship_position p WHERE p.mmsi = u.m ORDER BY p.ts DESC LIMIT 1) AS last_position_at
@@ -311,7 +312,7 @@ public class ShipRepository {
 
     /** 저장된 마지막 위치의 시각(보존 72 h 안, 없으면 null) — (mmsi, ts) PK 색인을 파티션마다 거꾸로 한 번씩 본다. */
     public Instant lastPositionAt(String mmsi) {
-        return Sql.publicRead(db, "SELECT ts FROM ship_position WHERE mmsi = :m ORDER BY ts DESC LIMIT 1").param("m", mmsi)
+        return Sql.publicRead(db, "ship.last_position", "SELECT ts FROM ship_position WHERE mmsi = :m ORDER BY ts DESC LIMIT 1").param("m", mmsi)
                 .query(java.time.OffsetDateTime.class).optional().map(java.time.OffsetDateTime::toInstant).orElse(null);
     }
 
@@ -321,7 +322,7 @@ public class ShipRepository {
 
     /** [from, to] 의 저장 위치(시간순, 최대 limit 점). */
     public List<TrackPoint> track(String mmsi, Instant from, Instant to, int limit) {
-        return Sql.publicRead(db, """
+        return Sql.publicRead(db, "ship.track", """
                 SELECT ts, ST_X(geom) lon, ST_Y(geom) lat, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider
                 FROM ship_position WHERE mmsi = :m AND ts BETWEEN :from AND :to ORDER BY ts LIMIT :lim""")
                 .param("m", mmsi).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)

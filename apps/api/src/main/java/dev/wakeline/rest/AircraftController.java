@@ -2,6 +2,7 @@ package dev.wakeline.rest;
 
 import dev.wakeline.config.AppProperties;
 import dev.wakeline.config.Problem;
+import dev.wakeline.config.ProblemAdvice;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.Bbox;
@@ -82,7 +83,7 @@ public class AircraftController {
 
     /**
      * 검색(계약 §2): 병합 뷰(관심 지역 + 전세계)에서 hex · 호출부호 · 등록기호 앞부분 일치, 최대 20건. 모자라면 DB(과거에 본 기체의
-     * 정적 정보 — 현재 위치가 아니다, last_seen 포함)로 채운다. DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true.
+     * 정적 정보 — 현재 위치가 아니다, last_seen 포함)로 채운다. DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true(WARN 한 줄).
      */
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam String q, HttpServletRequest req) {
@@ -116,6 +117,7 @@ public class AircraftController {
                     out.add(item);
                 }
             } catch (DataAccessException e) {
+                ProblemAdvice.answeredWithoutStore(e, req); // WARN 한 줄 — 결함(문법 · 권한)이면 그대로 던진다(500)
                 dbUnavailable = true;
             }
         }
@@ -126,7 +128,8 @@ public class AircraftController {
 
     /**
      * 상세: 실시간 상태는 메모리에서, 정적 정보는 DB 에서. DB 가 없어도 실시간 상태가 있으면 200 — static = null, meta.db_unavailable = true
-     * (계약 §2: 실시간 경로는 DB 에 의존하지 않는다). 실시간 상태도 없고 DB 도 없으면 있는지 알 수 없으므로 503.
+     * (계약 §2: 실시간 경로는 DB 에 의존하지 않는다). 실시간 상태도 없고 DB 도 없으면 있는지 알 수 없으므로 503. 두 경우 모두 WARN 한 줄
+     * (ProblemAdvice — 원인 · 경로 · 걸린 시간). DB 결함(문법 · 권한 — 저장소 장애가 아닌 DataAccessException)은 500.
      * route(계약 v4 §A): 실시간 상태의 콜사인으로 읽은 등록 노선(Redis 캐시 — 조회는 수집기가 선택된 항공기에 대해서만 한다).
      * 실시간 상태가 없으면 콜사인을 모르므로 키 없음.
      */
@@ -139,7 +142,9 @@ public class AircraftController {
         try {
             stat = aircraft.find(h);
         } catch (DataAccessException e) {
-            if (a == null) throw Problem.unavailable("aircraft history store unavailable");
+            // 저장소를 못 쓰면 WARN 한 줄(원인 · 경로 · 걸린 시간) — 결함(문법 · 권한)은 삼키지 않는다(500 + ERROR)
+            if (a == null) throw ProblemAdvice.storeUnavailable(e, req, "aircraft history store unavailable");
+            ProblemAdvice.answeredWithoutStore(e, req);
             dbUnavailable = true;
         }
         if (a == null && stat == null) throw Problem.notFound("aircraft " + h + " not seen");

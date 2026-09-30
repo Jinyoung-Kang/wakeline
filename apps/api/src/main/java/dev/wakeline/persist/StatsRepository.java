@@ -22,7 +22,7 @@ public class StatsRepository {
     public StatsRepository(JdbcClient db) { this.db = db; }
 
     public List<Map<String, Object>> sigmet(LocalDate from, LocalDate to, String group) {
-        return Sql.publicRead(db, "SELECT to_char(day, 'YYYY-MM-DD') AS day, dim, value FROM stats_daily WHERE metric = :m AND day BETWEEN :f AND :t ORDER BY 1, dim")
+        return Sql.publicRead(db, "stats.sigmet", "SELECT to_char(day, 'YYYY-MM-DD') AS day, dim, value FROM stats_daily WHERE metric = :m AND day BETWEEN :f AND :t ORDER BY 1, dim")
                 .param("m", "sigmet_by_" + group).param("f", from).param("t", to).query().listOfRows();
     }
 
@@ -36,10 +36,10 @@ public class StatsRepository {
     public record Traffic(List<Map<String, Object>> items, Map<String, Object> region, boolean aggregated) {}
 
     public Traffic traffic(LocalDate day) {
-        var items = Sql.publicRead(db, "SELECT to_char(day, 'YYYY-MM-DD') AS day, dim, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = :d ORDER BY dim")
+        var items = Sql.publicRead(db, "stats.traffic_by_hour", "SELECT to_char(day, 'YYYY-MM-DD') AS day, dim, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = :d ORDER BY dim")
                 .param("d", day).query().listOfRows();
         Map<String, Number> reg = new LinkedHashMap<>();
-        for (var r : Sql.publicRead(db, "SELECT dim, value FROM stats_daily WHERE metric = 'traffic_region' AND day = :d").param("d", day).query().listOfRows())
+        for (var r : Sql.publicRead(db, "stats.traffic_region", "SELECT dim, value FROM stats_daily WHERE metric = 'traffic_region' AND day = :d").param("d", day).query().listOfRows())
             reg.put(String.valueOf(r.get("dim")), (Number) r.get("value"));
         Map<String, Object> region = null;
         if (reg.containsKey("center_lat") && reg.containsKey("center_lon") && reg.containsKey("radius_nm")) {
@@ -51,13 +51,13 @@ public class StatsRepository {
             region.put("radius_nm", r.radiusNm());
             region.put("bbox", List.of(b.lomin(), b.lamin(), b.lomax(), b.lamax()));
         }
-        boolean aggregated = Boolean.TRUE.equals(Sql.publicRead(db, "SELECT EXISTS (SELECT 1 FROM stats_daily WHERE day = :d AND metric = :m AND dim = :f)")
+        boolean aggregated = Boolean.TRUE.equals(Sql.publicRead(db, "stats.traffic_aggregated", "SELECT EXISTS (SELECT 1 FROM stats_daily WHERE day = :d AND metric = :m AND dim = :f)")
                 .param("d", day).param("m", MaintenanceJobs.MARKER).param("f", MaintenanceJobs.FAMILY_TRAFFIC).query(Boolean.class).single());
         return new Traffic(items, region, aggregated);
     }
 
     public List<Map<String, Object>> alerts(LocalDate from, LocalDate to) {
-        return Sql.publicRead(db, "SELECT to_char(day, 'YYYY-MM-DD') AS day, metric, dim, value FROM stats_daily WHERE metric IN ('alerts_by_kind','alert_dwell_avg_s') AND day BETWEEN :f AND :t ORDER BY 1, metric, dim")
+        return Sql.publicRead(db, "stats.alerts", "SELECT to_char(day, 'YYYY-MM-DD') AS day, metric, dim, value FROM stats_daily WHERE metric IN ('alerts_by_kind','alert_dwell_avg_s') AND day BETWEEN :f AND :t ORDER BY 1, metric, dim")
                 .param("f", from).param("t", to).query().listOfRows();
     }
 
@@ -66,7 +66,7 @@ public class StatsRepository {
      * '집계 전'(false — 오늘, 아직 돌지 않은 날, 원본이 사라지기 전에 집계하지 못한 날)인지 구분한다(R-45).
      */
     public List<Map<String, Object>> days(LocalDate from, LocalDate to, String family) {
-        return Sql.publicRead(db, """
+        return Sql.publicRead(db, "stats.days", """
                 SELECT to_char(d, 'YYYY-MM-DD') AS day,
                        EXISTS (SELECT 1 FROM stats_daily s WHERE s.day = d::date AND s.metric = :m AND s.dim = :f) AS aggregated
                 FROM generate_series(:from::date, :to::date, interval '1 day') d ORDER BY d""")

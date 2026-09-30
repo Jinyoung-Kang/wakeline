@@ -2,6 +2,7 @@ package dev.wakeline.rest;
 
 import dev.wakeline.config.AppProperties;
 import dev.wakeline.config.Problem;
+import dev.wakeline.config.ProblemAdvice;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.DestinationParser;
@@ -150,7 +151,8 @@ public class ShipController {
      *       저장된 마지막 위치가 더 늦으면 그 시각({@link #lastSeenAt}). 위치 보존(72 h)이 지나도 남는다. 실시간 선박은 null(seen_at 이 마지막 수신).</li>
      * </ol>
      * 항목은 계약의 13개 키를 늘 싣는다 — 모르는 값은 JSON null(실시간이 아니면 lat · lon · sog_kn · seen_at 이 null, 위치를 지어내지 않는다).
-     * 분류(category)는 선종 코드의 결정적 변환(없으면 unknown). DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true.
+     * 분류(category)는 선종 코드의 결정적 변환(없으면 unknown). DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true(WARN 한 줄 —
+     * ProblemAdvice.answeredWithoutStore. DB 결함은 500).
      */
     @GetMapping("/ships/search")
     public ResponseEntity<Map<String, Object>> shipSearch(@RequestParam(required = false) String q,
@@ -213,6 +215,7 @@ public class ShipController {
                 for (Hit h : dbLive) if (hits.size() < limit) hits.add(h); // 실시간 먼저
                 for (Hit h : dbOnly) if (hits.size() < limit) hits.add(h);
             } catch (DataAccessException e) {
+                ProblemAdvice.answeredWithoutStore(e, req); // WARN 한 줄 — 결함(문법 · 권한)이면 그대로 던진다(500)
                 dbUnavailable = true;
             }
         }
@@ -221,6 +224,7 @@ public class ShipController {
             try {
                 known = repo.lookup(hits.stream().map(Hit::mmsi).toList());
             } catch (DataAccessException e) {
+                ProblemAdvice.answeredWithoutStore(e, req);
                 dbUnavailable = true;
             }
         }
@@ -281,7 +285,7 @@ public class ShipController {
      * + last_seen_at(실시간 목록에 없을 때만 — 마지막 수신 기록, {@link #lastSeenAt}, 계약 v5 §G4 — 검색과 같은 값. 실시간이면 state.seen_at)
      * + destination_info(static 의 보고 목적지를 결정적 규칙으로 푼 것, 계약 v4 §B — 목적지를 모르면 키 없음).
      * DB 가 없어도 실시간 위치가 있으면 200(static = 메모리 값 또는 null, meta.db_unavailable = true). 둘 다 없으면 404, 실시간도 없고
-     * DB 도 없으면 있는지 알 수 없으므로 503.
+     * DB 도 없으면 있는지 알 수 없으므로 503. DB 없이 답하면 WARN 한 줄(ProblemAdvice — 원인 · 경로 · 걸린 시간), DB 결함(문법 · 권한)은 500.
      */
     @GetMapping("/ships/{mmsi}")
     public ResponseEntity<Map<String, Object>> shipDetail(@PathVariable String mmsi, HttpServletRequest req) {
@@ -297,7 +301,9 @@ public class ShipController {
             stored = repo.find(m);
             if (stored != null) lastPosition = repo.lastPositionAt(m);
         } catch (DataAccessException e) {
-            if (live == null && stat == null) throw Problem.unavailable("ship history store unavailable");
+            // 저장소를 못 쓰면 WARN 한 줄(원인 · 경로 · 걸린 시간) — 결함(문법 · 권한)은 삼키지 않는다(500 + ERROR)
+            if (live == null && stat == null) throw ProblemAdvice.storeUnavailable(e, req, "ship history store unavailable");
+            ProblemAdvice.answeredWithoutStore(e, req);
             dbUnavailable = true;
         }
         if (stat == null && stored != null && stored.stat() != null) {

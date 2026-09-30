@@ -9,7 +9,12 @@ import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.persist.ShipRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -29,8 +34,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 선박 REST(계약 v2 §B3): 입력 검증(MMSI·bbox·기간), 실시간 목록(ETag·상한·meta), 상세(메모리 → DB 폴백, DB 장애 시 실시간은 200),
- * 항적 끊기(AIS 공백·15분), 공백 목록.
+ * 항적 끊기(AIS 공백·15분), 공백 목록. DB 없이 답한 요청(503 · db_unavailable)도 WARN 한 줄, DB 결함은 500.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class ShipControllerTest {
     static final Instant T = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
 
@@ -47,14 +53,17 @@ class ShipControllerTest {
 
         FakeRepo() { super(null, null); }
 
+        /** DB 장애 때 던지는 예외(기본: 연결을 얻지 못함). */
+        volatile java.util.function.Supplier<RuntimeException> error = () -> new CannotGetJdbcConnectionException("down");
+
         @Override public StoredShip find(String mmsi) {
-            if (down) throw new CannotGetJdbcConnectionException("down");
+            if (down) throw error.get();
             if (stored == null) return null;
             return mmsi.equals(stored.stat() != null ? stored.stat().mmsi() : storedMmsi) ? stored : null;
         }
 
         @Override public Instant lastPositionAt(String mmsi) {
-            if (down) throw new CannotGetJdbcConnectionException("down");
+            if (down) throw error.get();
             return points.isEmpty() ? null : points.getLast().ts();
         }
 
@@ -79,7 +88,7 @@ class ShipControllerTest {
         @Override public List<SearchRow> search(dev.wakeline.domain.ShipQuery q, int limit) {
             searchCalls++;
             lastSearchLimit = limit;
-            if (down) throw new CannotGetJdbcConnectionException("down");
+            if (down) throw error.get();
             return rows.stream().filter(r -> q.matches(r.mmsi(), r.stat()))
                     .sorted(java.util.Comparator.comparing((SearchRow r) -> !q.exact(r.mmsi(), r.stat()))
                             .thenComparing(SearchRow::lastSeen, java.util.Comparator.reverseOrder()).thenComparing(SearchRow::mmsi))
@@ -88,7 +97,7 @@ class ShipControllerTest {
 
         @Override public java.util.Map<String, Known> lookup(java.util.Collection<String> mmsis) {
             lookupCalls++;
-            if (down || lookupDown) throw new CannotGetJdbcConnectionException("down");
+            if (down || lookupDown) throw error.get();
             java.util.Map<String, Known> out = new java.util.HashMap<>();
             for (String m : mmsis) {
                 ShipStatic st = rows.stream().filter(r -> r.mmsi().equals(m)).map(SearchRow::stat).filter(java.util.Objects::nonNull).findFirst().orElse(null);
@@ -824,5 +833,46 @@ class ShipControllerTest {
         repo.searchCalls = 0;
         assertThat(search("OLDNAME", "1").path("items").size()).isZero();
         assertThat(repo.searchCalls).isEqualTo(ShipController.SEARCH_DB_ATTEMPTS);
+    }
+
+    /**
+     * 리뷰 2026-10-01: 상세 · 검색이 DB 오류를 잡아 503 · meta.db_unavailable 로 답할 때도 WARN 한 줄(원인 · 경로 + 쿼리 · 걸린 시간 · 무엇으로 답했는지)
+     * — 예전에는 아무 줄도 없었다. 검색이 검색 문장에서 실패하면 lookup 은 묻지 않는다: 요청 하나에 한 줄.
+     */
+    @Test void dbOutageAnswersAreLoggedOncePerRequest(CapturedOutput out) throws Exception {
+        repo.down = true;
+        repo.error = () -> new QueryTimeoutException("PreparedStatementCallback; SQL [SELECT ts FROM ship_position]; ERROR: canceling statement due to user request",
+                new java.sql.SQLException("ERROR: canceling statement due to user request", "57014"));
+        mvc.perform(get("/api/v1/ships/440000098")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"))
+                .andExpect(jsonPath("$.detail").value("ship history store unavailable"));
+        mvc.perform(get("/api/v1/ships/440000002")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
+        mvc.perform(get("/api/v1/ships/search").queryParam("q", "HANJIN")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
+        List<String> lines = AircraftControllerTest.warnLines(out);
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/ships/440000098 elapsed_ms=- → 503: ");
+        assertThat(lines.get(1)).contains("path=/api/v1/ships/440000002 elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        assertThat(lines.get(2)).contains("path=/api/v1/ships/search query=\"q=HANJIN\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        // 검색 문장은 됐고 lookup 에서 끊긴 경우도 한 줄
+        repo.down = false;
+        repo.lookupDown = true;
+        repo.error = () -> new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection", new java.sql.SQLTransientConnectionException("pool timeout"));
+        assertThat(search("HANJIN", null).path("meta").path("db_unavailable").asBoolean()).isTrue();
+        lines = AircraftControllerTest.warnLines(out);
+        assertThat(lines).hasSize(4);
+        assertThat(lines.get(3)).contains("could not get a DB connection request_id=- path=/api/v1/ships/search").contains("pool timeout");
+    }
+
+    /** DB 결함(문법 · 권한)은 저장소가 잠시 없는 것이 아니다 — 503 · db_unavailable 로 삼키지 않고 500 + ERROR. */
+    @Test void aDefectInTheShipLookupIs500NotDbUnavailable(CapturedOutput out) throws Exception {
+        repo.down = true;
+        repo.error = () -> new BadSqlGrammarException("PreparedStatementCallback", "SELECT mmsi FROM ship", new java.sql.SQLException("ERROR: permission denied", "42501"));
+        mvc.perform(get("/api/v1/ships/440000002")).andExpect(status().isInternalServerError());
+        mvc.perform(get("/api/v1/ships/440000098")).andExpect(status().isInternalServerError()).andExpect(header().doesNotExist("Retry-After"));
+        mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN")).andExpect(status().isInternalServerError());
+        repo.down = false;
+        repo.lookupDown = true;
+        mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN")).andExpect(status().isInternalServerError());
+        assertThat(out.getAll().lines().filter(l -> l.contains("unhandled error")).count()).isEqualTo(4);
+        assertThat(AircraftControllerTest.warnLines(out)).isEmpty();
     }
 }

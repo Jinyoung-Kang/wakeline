@@ -36,8 +36,11 @@ import java.util.concurrent.locks.ReentrantLock;
  *       (배치 또는 넘침으로 버림), 배치는 한 번에 하나씩 끝나므로 "여기까지의 행은 모두 끝났다"(resolvedUpTo)를 셀 수 있다. 표식의 seq 가
  *       그 안에 들면 영수증을 놓는다 → 스트림 메시지 ACK. 커밋 전에 프로세스가 죽으면 ACK 되지 않은 메시지가 PEL 에 남아 재처리된다.
  *       넘침으로 버린 행·영구 오류 행은 '끝난' 것으로 친다(되살릴 수 없다 — 지표로 센다).</li>
- *   <li>종료: 스트림 소비·WS going_away 뒤에(phase) 남은 행을 최대 6 s 동안 쓰고, 못 쓴 행은 dropped 로 센다. 못 쓴 행의 메시지는
- *       ACK 하지 않는다(다음 기동에서 PEL 로 다시 온다).</li>
+ *   <li>종료: 스트림 소비·WS going_away 뒤에(phase) 워커가 진행 중 배치를 끝내고 <b>스스로</b> 남은 행을 쓴다(DB 를 쓰는 스레드는 종료 때도
+ *       하나 — 조사 2026-10-01: 예전에는 stop 이 2 s 기다린 뒤 다른 스레드가 flush 해 느린 쓰기와 같은 배치를 동시에 썼다). stop 요청 뒤 8 s 가
+ *       지나면 새 배치를 쓰기 시작하지 않고, stop 은 최대 9 s 기다린다(lifecycle 단계 한도 10 s 안). 못 쓴 행은 dropped 로 센다. 못 쓴 행의 메시지는
+ *       ACK 하지 않는다(다음 기동에서 PEL 로 다시 온다). stop 요청 뒤 실패한 쓰기는 기다리지 않고 종료 flush 가 한 번 더 쓴다. 워커가 오류(Error)로
+ *       죽었으면 ERROR 한 줄을 남기고, 남은 행은 stop 이 쓴다(그때 쓰는 스레드는 stop 하나).</li>
  * </ul>
  * (hex, ts) PK 에 ON CONFLICT DO NOTHING 이라 재처리·재시도로 같은 행이 와도 중복되지 않는다.
  */
@@ -50,16 +53,28 @@ public class TrackWriter implements SmartLifecycle {
     static final int PERMANENT_ATTEMPTS = 3;
     static final long BACKOFF_START_MS = 2_000;
     static final long BACKOFF_MAX_MS = 30_000;
-    /** 종료 flush 마감 — 워커 정지 대기(≤2 s)와 합쳐 lifecycle 단계 한도(10 s) 안에 끝난다. */
-    static final long FLUSH_DEADLINE_MS = 6_000;
+    /** stop() 이 워커(진행 중 쓰기 + 마지막 flush)를 기다리는 상한 — lifecycle 단계 한도 10 s(application.yml timeout-per-shutdown-phase) 안. */
+    static final long STOP_WAIT_MS = 9_000;
+    /** 마지막 flush 는 stop 요청 뒤 (기다림 상한 − 이 값)이 지나면 새 배치를 쓰기 시작하지 않는다 — 마지막으로 시작한 배치가 커밋될 여유. */
+    static final long LAST_BATCH_MARGIN_MS = 1_000;
     /** 정적 정보 갱신 대기열: 스냅샷(컬렉션 참조) 몇 벌만 — 더 쌓이면 가장 오래된 것을 버린다(다음 스냅샷이 같은 hex 를 다시 준다). */
     static final int STATIC_INBOX_MAX = 4;
     /**
-     * 풀리지 않은 표식(= ACK 를 기다리는 메시지) 상한. 스트림 보존(MAXLEN ~200, 항공기·SIGMET·레이더 합쳐)보다 훨씬 크다 — 이보다 오래된
-     * 메시지는 스트림에서 이미 지워져 PEL 로 되살릴 수 없으므로, DB 가 오래 죽어 있을 때 표식이 끝없이 쌓이지 않게 가장 오래된 것부터 놓는다
-     * (wakeline_track_receipts_forced_total 로 센다).
+     * 풀리지 않은 표식(= ACK 를 기다리는 항공기 메시지) 상한. 넘으면 가장 오래된 것부터 놓는다(wakeline_track_receipts_forced_total 로 센다) — DB 가
+     * 오래 죽어 있을 때 표식과 PEL 이 끝없이 늘지 않게. 상한으로 놓는 것이 이미 스트림에서 지워져 PEL 로 되살릴 수 없는 메시지뿐이도록, 보존 창에 들 수
+     * 있는 메시지 수 이상으로 잡는다. wakeline:aircraft 는 시간으로 자른다(MINID ~ 지금 − 2.5 h = 9,000 s, collector publisher.py — 바이트 예산은
+     * 창을 줄일 뿐이다). 9,000 s 의 메시지 수를 설정의 가장 짧은 주기로 세면(수집기 코드의 상수):
+     * 관심 지역 ≤ 1,801(region_poll_s 하한 5 s — runtime_settings.py REGION_POLL_RANGE_S; 기본 10 s 면 900) · 전세계 ≤ 151(하한 60 s; 기본 120 s 면 75) ·
+     * focus ≤ 2,882(정기 5 s + 새 hex 의 빠른 첫 조회 — 앞 조회 2 s 뒤부터, 빠른 것끼리 5 s; 지금 상수로는 7 s 에 2번 = 2,572 지만 상수가 바뀌어도
+     * 맞는 식으로 센다. 한 번에 hex ≤ 50 = 메시지 1개 — jobs/demand.py) · hot ≤ 2,408(창 30 s 마다 그때 있던 셀 ≤ 6 개가 한 번 + 새 셀의 즉시 첫 조회
+     * 30 s 에 2번) · 수집기 Publisher 의 재전송 큐 ≤ 1,000(QUEUE_MAX — Redis 장애 뒤 새 ID 로 다시 XADD. 못 보낸 발행을 대신하므로 보통은 늘지
+     * 않지만 보수적으로 더한다) = 8,242. 그래서 10,000.
+     * 조사 2026-10-01: 예전 1,000 은 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간 트리밍 뒤로는 기본 주기의 관심 지역 · 전세계(975)만으로 여유가
+     * 약 3 % 였고, focus 임대가 하나라도 있으면(5 s 마다 → 1,800 더) 스트림에 아직 있는 메시지를 놓았다. DB 장애가 길면 대개 큐 상한(50,000 행)이
+     * 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로 센다). 이 계산은 tools/contract_check.py(receipt_mark_bounds)가
+     * 수집기 상수로 다시 한다 — 상수가 바뀌어 상한을 넘으면 그 검사가 실패한다.
      */
-    static final int MAX_MARKS = 1_000;
+    static final int MAX_MARKS = 10_000;
     static final long STATIC_BACKOFF_MS = 30_000;
     private static final String SQL = """
             INSERT INTO track_point (hex, ts, geom, alt_ft, gs_kt, track_deg, vrate_fpm, on_ground, squawk, provider, fetched_at, quality)
@@ -93,9 +108,13 @@ public class TrackWriter implements SmartLifecycle {
     private final Counter writtenRows;
     private final Counter staticRows;
     private final Counter forcedReceipts;
+    /** stop() 의 기다림 상한(테스트가 줄인다). */
+    long stopWaitMs = STOP_WAIT_MS;
     private volatile boolean running;
+    /** stop 을 요청한 시각(epoch ms, 없으면 0) — 마지막 flush 의 마감 기준. */
+    private volatile long stopRequestedAtMs;
     private Thread worker;
-    /** 실패해서 다시 쓸 배치(가장 오래된 행들). 워커 스레드에서만 만진다(종료 flush 는 워커가 멈춘 뒤). */
+    /** 실패해서 다시 쓸 배치(가장 오래된 행들). 워커 스레드에서만 만진다(종료 flush 도 워커가 한다). */
     private volatile Batch pending;
     private long staticRetryAtMs;
     private final long backoffStartMs;
@@ -222,21 +241,56 @@ public class TrackWriter implements SmartLifecycle {
         done.forEach(Receipt::release);
     }
 
-    @Override public void start() { running = true; worker = Thread.ofVirtual().name("track-writer").start(this::loop); }
+    @Override
+    public void start() {
+        stopRequestedAtMs = 0;
+        running = true;
+        worker = Thread.ofVirtual().name("track-writer").start(this::run);
+    }
 
+    /** 워커: 쓰기 루프 → 종료 flush. track_point · aircraft 를 쓰는 스레드는 이것 하나다. */
+    private void run() {
+        try {
+            loop();
+            flush();
+        } catch (Error err) {
+            // 예외가 아닌 오류(OOM · StackOverflowError 등)로 끝났다 — 조용히 죽지 않는다. 그 뒤 쌓이는 행은 stop 이 쓴다(쓰는 스레드가 그때는 stop 하나)
+            log.error("track writer thread died ({}) — nothing writes track rows until shutdown; stop() then writes what is queued", err.toString(), err);
+        }
+    }
+
+    /**
+     * 워커가 진행 중 배치와 마지막 flush 를 끝내기를 최대 {@link #stopWaitMs} 기다린다 — 이 스레드는 쓰지 않는다. 그 안에 끝나지 않으면(쓰기 하나가
+     * DB 에서 돌아오지 않음) 그렇다고 남기고 돌아간다: 워커는 마감 뒤 새 배치를 쓰기 시작하지 않고, 쓰지 않은 행의 메시지는 ACK 되지 않는다.
+     */
     @Override
     public void stop() {
-        running = false;
-        if (worker != null) {
-            try { worker.join(2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        requestStop();
+        Thread w = worker;
+        if (w == null) { // 시작한 적 없다 — 같이 쓰는 스레드가 없다
+            flush();
+            return;
         }
+        try { w.join(stopWaitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        if (w.isAlive()) {
+            log.warn("track writer still busy {} ms after stop (a DB write has not returned) — shutdown continues; the writer starts no new batch and logs"
+                    + " its own result, and rows it has not written keep their stream messages unacknowledged (re-processed on restart)", stopWaitMs);
+            return;
+        }
+        // 워커는 끝났다 — 보통은 스스로 flush 했으므로 남은 것이 없다(빈 flush 는 아무것도 남기지 않는다). 오류로 죽었다면(run) 남은 행을 여기서 쓴다:
+        // 쓰는 스레드는 이제 이것 하나다(리뷰 2026-10-01 — 예전에는 죽은 워커 뒤로 flush · WARN · dropped 가 없었다)
         flush();
+    }
+
+    private void requestStop() {
+        if (stopRequestedAtMs == 0) stopRequestedAtMs = System.currentTimeMillis();
+        running = false;
     }
 
     /** 같은 phase 의 순서 큐 비우기와 동시에 하도록 비동기로 멈춘다(Spring 이 콜백을 기다린다). */
     @Override
     public void stop(Runnable callback) {
-        running = false;
+        requestStop();
         Thread.ofVirtual().name("track-writer-stop").start(() -> {
             try { stop(); } finally { callback.run(); }
         });
@@ -265,6 +319,12 @@ public class TrackWriter implements SmartLifecycle {
                 Thread.currentThread().interrupt();
                 return;
             } catch (RuntimeException e) {
+                if (!running) {
+                    // stop 이 이미 요청됐다 — 기다려 다시 시도하지 않는다: 루프를 나가 곧바로 종료 flush 가 이 배치부터 쓴다(마감 안이면)
+                    log.warn("track batch ({} rows) failed while stopping — the shutdown flush tries it once more before its deadline (queue {}): {}",
+                            pending == null ? 0 : pending.rows().size(), queued(), e.toString());
+                    continue;
+                }
                 if (!isPermanent(e)) {
                     log.warn("track batch ({} rows) failed, retry in {} ms (queue {}): {}", pending == null ? 0 : pending.rows().size(), backoff, queued(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
@@ -300,8 +360,9 @@ public class TrackWriter implements SmartLifecycle {
     }
 
     /**
-     * 종료 시: 재시도 중이던 배치 + 큐를 마감 안에서 한 번씩 순서대로 쓴다. 못 쓴 행은 dropped 로 센다.
-     * 영수증은 앞에서부터 이어서 쓴 행까지만 놓는다 — 그 뒤(실패·마감)의 메시지는 ACK 하지 않아 다음 기동에서 다시 처리된다.
+     * 종료 시(워커 — 시작한 적 없으면 stop 을 부른 스레드): 재시도 중이던 배치 + 큐를 마감(stop 요청 + 기다림 상한 − 여유) 안에서 한 번씩 순서대로
+     * 쓴다. 못 쓴 행은 dropped 로 센다. 영수증은 앞에서부터 이어서 쓴 행까지만 놓는다 — 그 뒤(실패·마감)의 메시지는 ACK 하지 않아 다음 기동에서
+     * 다시 처리된다.
      */
     void flush() {
         List<Batch> rest = new ArrayList<>();
@@ -314,7 +375,8 @@ public class TrackWriter implements SmartLifecycle {
         } catch (RuntimeException e) {
             log.warn("flush drain failed: {}", e.toString());
         }
-        long deadline = System.currentTimeMillis() + FLUSH_DEADLINE_MS;
+        long stopAt = stopRequestedAtMs;
+        long deadline = (stopAt > 0 ? stopAt : System.currentTimeMillis()) + stopWaitMs - LAST_BATCH_MARGIN_MS;
         int written = 0, total = 0;
         boolean contiguous = true;
         for (Batch x : rest) {

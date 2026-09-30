@@ -75,7 +75,8 @@ public final class PlanCapture {
     }
 
     private void explain(Connection conn, String sql, List<Call> params) throws Exception {
-        String head = sql.stripLeading().toUpperCase(Locale.ROOT);
+        // 공개 조회의 앞 주석(Sql.tag — 문장 이름표)은 건너뛰고 본다
+        String head = sql.stripLeading().replaceFirst("^/\\*.*?\\*/\\s*", "").toUpperCase(Locale.ROOT);
         boolean undo = mode == Mode.ANALYZE && !head.startsWith("SELECT") && !head.startsWith("WITH");
         boolean auto = conn.getAutoCommit();
         Savepoint sp = null;
