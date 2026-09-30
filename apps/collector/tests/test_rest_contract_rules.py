@@ -510,3 +510,40 @@ def test_traffic_grid_schema_rejects(over):
 )
 def test_traffic_grid_cross_rules_catch(over):
     assert rcc._traffic_grid(traffic(**over)), over
+
+
+def test_radar_kr_missing_file_streak_rules():
+    """기상청 내려받기 '파일 없음' 연속(2026-09-30): /status radar_kr · /radar/kr 의 missing — 핵심 값 넷은 늘 함께, 파일 이름 · 목록 종류는 있을 때만,
+    tm 순서(since ≤ 파일의 tm ≤ last)는 교차 검사. 기록 표본 radar_kr_missing · status_ais 는 missing 을 싣는다."""
+    m = {
+        "since_tm": "202609300815",
+        "last_tm": "202609300950",
+        "tms": 20,
+        "checked_at": "2026-09-30T00:50:31Z",
+        "file": "RDR_CMP_HSR_PUB_202609300950.bin.gz",
+        "listed": ["EXT"],
+    }
+    for schema in (rcc.SCHEMAS["status"]["properties"]["radar_kr"], rcc.SCHEMAS["radar_kr"]["properties"]):
+        v = Draft202012Validator(schema if "properties" in schema else {"properties": schema}, format_checker=rcc.FORMATS)
+        assert not list(v.iter_errors({"missing": m}))
+        assert not list(v.iter_errors({"missing": {k: x for k, x in m.items() if k not in ("file", "listed")}}))
+        for bad in (
+            {"tms": 0},
+            {"since_tm": "08:15"},
+            {"checked_at": "2026-09-30T00:50:31"},
+            {"file": "<html>"},
+            {"listed": ["ext"]},
+            {"listed": []},
+            {"note": "x"},
+        ):
+            assert list(v.iter_errors({"missing": {**m, **bad}})), bad
+        assert list(v.iter_errors({"missing": {k: x for k, x in m.items() if k != "last_tm"}}))
+    assert not rcc._radar_kr_status({"radar_kr": {"missing": m}})
+    assert rcc._radar_kr_status({"radar_kr": {"missing": {**m, "last_tm": "202609300810"}}})  # 첫 tm 보다 이르다
+    assert rcc._radar_kr_status(
+        {"radar_kr": {"missing": {**m, "file": "RDR_CMP_HSR_PUB_202609301000.bin.gz"}}}
+    )  # 범위 밖 tm 의 파일
+    assert rcc._radar_kr({"available": False, "frames": [], "missing": {**m, "last_tm": "202609300810"}})
+    assert any(c.name == "radar_kr_missing" and c.recorded_only for c in rcc.CHECKS)
+    assert list(Draft202012Validator(rcc.SCHEMAS["radar_kr_missing"]).iter_errors({}))  # required missing
+    assert "missing" in str(rcc.SCHEMAS["status_ais"]["allOf"])

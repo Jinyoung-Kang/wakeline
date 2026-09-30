@@ -362,6 +362,91 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
   });
 });
 
+describe("운영: 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) — 공급자 표 아래 까닭, 실행 상태 missing 은 주황", () => {
+  const NOW = "2026-09-30T00:52:00Z";
+  const kma = { name: "kma_radar", last_success_at: "2026-09-29T23:15:31Z", last_latency_ms: "310", last_records: "1", consecutive_failures: "0",
+    budget_used: "412", budget_limit: "1000", missing_since_tm: "202609300815", missing_last_tm: "202609300950", missing_tms: "20",
+    missing_checked_at: "2026-09-30T00:50:31Z", missing_file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", missing_listed: "EXT" };
+  const DATA: Record<string, unknown> = {
+    ...BODY,
+    "/api/v1/ops/providers": { providers: [kma, { name: "awc", last_success_at: "2026-09-30T00:50:00Z" }], active: {}, collector: {}, switches: [], budget_days: [], budget_day_zone: "UTC", generated_at: "2026-09-30T00:52:00.123Z" },
+    "/api/v1/ops/runs?limit=50&resolved=hide": {
+      items: [{ id: 9, job: "radar_kr", provider: "kma_radar", started_at: "2026-09-30T00:50:00Z", status: "missing", http_status: 200, latency_ms: 300, records_in: 0,
+        records_quarantined: 0, raw_ref: null, error_text: "no new frame stored — KMA download has no file since tm=202609300815" }],
+      summary_24h: [{ job: "radar_kr", provider: "kma_radar", status: "missing", n: 20, avg_latency_ms: 300, last_at: "2026-09-30T00:50:00Z" }],
+    },
+  };
+  const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+    if (pred(from)) out.push(from);
+    for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);
+    return out;
+  };
+  it("the kma_radar row carries a warn line with the streak (KST); other providers none; the runs tab paints missing amber with its meaning", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(NOW) });
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in DATA ? DATA[url] : { detail: "no such resource" }), { status: url in DATA ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    const rows = all((e) => e.getAttribute?.("data-testid") === "provider-missing");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toBe("▲ 기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST · 확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST"
+      + " — 그동안 수집 실행은 'missing'(저장한 프레임 없음), last success 는 프레임을 저장했거나 새 tm 이 없던 마지막 주기");
+    const td = all((e) => e.tagName === "TD", rows[0])[0];
+    expect(td.getAttribute("title")).toContain("기상청 답의 파일: RDR_CMP_HSR_PUB_202609300950.bin.gz");
+    expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);
+    const b = byTestId("ops-tab-runs")!;
+    const k = Object.keys(b).find((x) => x.startsWith("__reactProps$"))!;
+    await React.act(async () => { (b as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
+    await settle();
+    const cells = all((e) => e.tagName === "TD" && e.textContent === "missing");
+    expect(cells).toHaveLength(2); // 요약 · 최근 실행
+    for (const c of cells) {
+      expect(c.getAttribute("class")).toBe("text-warn");
+      expect(c.getAttribute("title")).toContain("저장한 프레임 없음");
+    }
+  });
+});
+
+describe("운영: '파일 없음' 줄의 '확인 멈춤'은 서버 기준 지금(/ops/providers generated_at)으로 판정한다 — 브라우저 시계가 아니다(계약 v5 §G22, 통합 리뷰 2026-09-30)", () => {
+  const kma = { name: "kma_radar", last_success_at: "2026-09-29T23:15:31Z", missing_since_tm: "202609300815", missing_last_tm: "202609300950", missing_tms: "20",
+    missing_checked_at: "2026-09-30T00:50:31Z", missing_file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", missing_listed: "EXT" };
+  const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+    if (pred(from)) out.push(from);
+    for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);
+    return out;
+  };
+  const line = async (browserNow: string, generatedAt: string | undefined) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(browserNow) });
+    const data: Record<string, unknown> = {
+      "/api/v1/ops/session": { username: "op" },
+      "/api/v1/ops/providers": { providers: [kma], active: {}, collector: {}, switches: [], budget_days: [], budget_day_zone: "UTC", ...(generatedAt ? { generated_at: generatedAt } : {}) },
+    };
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in data ? data[url] : { detail: "no such resource" }), { status: url in data ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    const rows = all((e) => e.getAttribute?.("data-testid") === "provider-missing");
+    expect(rows).toHaveLength(1);
+    return rows[0].textContent ?? "";
+  };
+  it("a browser clock 1 h ahead does not mark a fresh check stale (server 2 min after the check)", async () => {
+    const t = await line("2026-09-30T01:52:00Z", "2026-09-30T00:52:00Z");
+    expect(t).not.toContain("확인 멈춤");
+    expect(t).toContain("tm 08:15–09:50 KST"); // 서버 기준 오늘 — 날짜를 붙이지 않는다
+  });
+  it("a browser clock close to the check does not hide a stopped check (server 30 min after the check)", async () => {
+    const t = await line("2026-09-30T00:52:00Z", "2026-09-30T01:20:31Z");
+    expect(t).toContain("15분 넘게 다시 확인하지 않음(확인 멈춤)");
+  });
+  it("without the server's time the row makes no staleness judgement (no guess from the browser clock)", async () => {
+    const t = await line("2026-09-30T03:00:00Z", undefined);
+    expect(t).not.toContain("확인 멈춤");
+    expect(t).toContain("기상청 내려받기 파일(PUB) 없음");
+  });
+});
+
 describe("ops day columns trust only the zone the api names (contract v5 §G20)", () => {
   const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
     if (pred(from)) out.push(from);

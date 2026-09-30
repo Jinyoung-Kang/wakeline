@@ -6,7 +6,7 @@ import {
   flattenToc, GUIDE_TOC, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest, type ManifestDrop,
 } from "@/lib/guide";
 import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";
-import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
+import { KR_MISSING_CHECK_STALE_MIN, KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
 import { LOG_LEVELS, LOG_PERIOD_LABEL, LOG_SERVICES } from "@/lib/logs";
 import {
   PORT_CALL_AUTHORITIES, PORT_CALL_MAX_ITEMS, PORT_CALL_SOURCE, PORT_CALL_STALE_AFTER_S, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS,
@@ -293,6 +293,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>프레임 띠</B>{ref("radar", 5)} — 왼쪽이 오래된 프레임. 주황 = 일부 합성, 파랑 = 기준 도달, 빈 칸 = 판정 없음, 테두리 = 지금 프레임.</li>
                 <li><B>애니메이션</B>{ref("radar", 2)} — 프레임을 차례로 보여 줍니다. 슬라이더로 한 프레임을 고르면 멈추고, ‘latest’ 는 최신 프레임으로.</li>
                 <li>기상청 프레임이 {KR_RADAR_STALE_S / 60}분 넘게 새로 오지 않으면 상태 바의 기상청 칩이 경고로 바뀝니다: <span className="mono text-bad">KMA {HEALTH_MARK.bad} age …m STALE</span>(칩 설명에 최신 프레임을 처음 받은 시각).</li>
+                <li>기상청이 목록에는 tm 을 올렸는데 내려받기가 ‘파일 없음’으로 답하면(수집기가 확인 — 2026-09-30 관찰) 칩에 <span className="text-warn">파일 없음</span>이 붙고,
+                  칩 설명 · 상세 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 표가 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수(그 사이 확인하지 않은 tm 은 세지 않음) · 기상청 답의 파일 이름 · 목록의 파일 종류 · 마지막 확인(KST)을 적습니다 — 나이(STALE)만으로는 까닭을 모릅니다.
+                  마지막 확인이 {KR_MISSING_CHECK_STALE_MIN}분(수집기 선택값)을 넘으면 <span className="text-warn">파일 없음 · 확인 멈춤</span> — 지금도 그런지는 모릅니다.</li>
               </UL>
             </Sec>
             <Sec id="dashboard-legend" sub>
@@ -321,7 +324,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 ["지역 · 전세계", <span key="r" className="mono">region {HEALTH_MARK.ok} lag Ns · world {HEALTH_MARK.ok} lag Ns</span>, <>서버가 보고한 지연. 지역 {REGION_STALE_S} s · 전세계 {GLOBAL_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA. 공급자 · 수집 시각은 상세.</>],
                 ["AIS", <span key="s" className="mono">AIS {HEALTH_MARK.ok} lag Ns · AIS {HEALTH_MARK.bad} 끊김 · 끊김 n/m 구역</span>, <>선박 스트림 연결과 지연({AIS_LAG_WARN_S} s 를 넘으면 주의). 초당 메시지는 상세.</>],
                 ["AIS 공백", <span key="p" className="mono">AIS 공백 N s · HH:MM KST 끝남</span>, <>끝난 공백은 길이와 끝난 시각 — 끝난 뒤 {AIS_GAP_SHOW_MS / 60_000}분까지 줄에(주의), 그 뒤로는 상세에만. 상세에서도 끝난 지 {AIS_GAP_SHOW_MS / 60_000}분이 지난 공백은 주의 표시 없이 기록으로만 보입니다. 1분이 안 되는 공백도 초로 적습니다.</>],
-                ["SIGMET · 레이더", <span key="g" className="mono">sigmet {HEALTH_MARK.ok} age Ns · radar {HEALTH_MARK.ok} age Ns · KMA {HEALTH_MARK.ok} age Nm</span>, <>마지막 수집 뒤 경과. SIGMET {SIGMET_STALE_S} s · RainViewer {RADAR_STALE_S} s(서버 기준과 같음) · 기상청 {KR_RADAR_STALE_S / 60}분을 넘으면 STALE. 기상청은 최신 프레임이 일부 합성이면 ‘일부 합성’.</>],
+                ["SIGMET · 레이더", <span key="g" className="mono">sigmet {HEALTH_MARK.ok} age Ns · radar {HEALTH_MARK.ok} age Ns · KMA {HEALTH_MARK.ok} age Nm</span>, <>마지막 수집 뒤 경과. SIGMET {SIGMET_STALE_S} s · RainViewer {RADAR_STALE_S} s(서버 기준과 같음) · 기상청 {KR_RADAR_STALE_S / 60}분을 넘으면 STALE. 기상청은 최신 프레임이 일부 합성이면 ‘일부 합성’, 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 ‘파일 없음’.</>],
                 ["상세", <span key="d" className="mono">상세 +N ▾</span>, "눌러서(또는 Enter · Space) 표를 엽니다: 항목마다 상태 · 값 · 출처와 수집 시각 · 기준 — 공급자 · 초당 메시지 · 유효 SIGMET 수 · 레이더 프레임 수 · 기상청 최신 tm · 합성 N/M곳 · 엔진(폴리곤 수 · 주기) · 스냅샷 판 · 마지막 AIS 공백. Esc(초점이 상세 표나 단추에 있을 때 — 초점은 단추로 돌아옵니다) · 바깥 누르기 · 닫기로 닫고, 초점이 밖으로 나가면(예: / 로 검색) 닫힙니다(초점은 옮겨 간 곳에 그대로 — 검색의 Esc 는 검색만 닫습니다)."],
               ]} />
             </Sec>
@@ -377,11 +380,11 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             <Sec id="ops-dashboard" sub>
               {fig("ops")}
               <Table label="운영 탭" head={["탭", "보는 것"]} rows={[
-                ["providers", "공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음)."],
-                ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류)."],
+                ["providers", `공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음). 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 kma_radar 행 아래에 주황 줄 — 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수 · 마지막 확인(KST). 마지막 확인이 서버 시각으로 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’.`],
+                ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류). 상태 missing(새 tm 이 있었으나 기상청이 ‘파일 없음’ — 저장한 프레임 없음) · quarantined(받았으나 해석할 수 없어 격리)는 주황 — 호출 실패는 아니지만 공급자의 마지막 성공을 갱신하지 않습니다(뜻은 상태에 마우스를 올리면)."],
                 ["quality", "규칙별 격리 건수(7일)와 최근 격리."],
                 ["settings · audit · dlq", "운영 설정(판 번호로 충돌 확인), 운영 행동 감사 기록, 처리하지 못한 메시지."],
-                ["pipeline", "파이프라인 손실 지표 — 0 이 아닌 지표가 있으면 탭에 ● 수."],
+                ["pipeline", "파이프라인 손실 지표 — 0 이 아닌 손실 지표가 있으면 탭에 ● 수. AIS 수신 진단(keepalive 왕복 · 이벤트 루프 지연 · 멈춤 · WS 수신 버퍼 · 원문 대기 시간 · 깊이 · 짧은 재연결)도 여기 — 최근 창의 최댓값과 누적 수이고 손실 수가 아니라 색으로 판정하지 않습니다. 창 · 상한 · 시간 초과는 수집기가 고른 값을 응답에서 읽어 ‘수집기 설정’으로 적습니다."],
               ]} />
               <P>15 s 마다 모든 탭을 다시 받습니다. 탭마다 마지막 성공 시각{ref("ops", 2)}을 따로 두고, 한 탭만 실패해도 그 탭에 ‘갱신 실패’와 이유가 붙습니다.
                 공공데이터포털 공급자 셋(portmis — 항만 입출항 · komsa_traffic · mof_grid4 — 연안 교통량)도 여기서 상태를 보고 켜고 끕니다.</P>

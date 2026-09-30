@@ -1,18 +1,28 @@
 package dev.wakeline.route;
 
+import dev.wakeline.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
+import dev.wakeline.persist.SingleFlight;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
@@ -23,7 +33,17 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>콜사인 = 항공기 상태의 콜사인을 trim → ASCII 가 아니면 콜사인 없음 → 대문자, {@code ^[A-Z0-9]{3,8}$} 가 아니면 no_callsign(묻지 않는다).
  *       수집기(route.normalize_callsign)와 같은 규칙이고(계약 v4 §G A-1), 집중 추적 임대 메타의 callsign 도 이 값이다.</li>
- *   <li>콜사인별 5 s 메모리 캐시(WS 세션·REST 가 같은 값을 쓴다). Redis 오류는 unavailable 로 같은 5 s 동안 둔다(장애 중에 매번 묻지 않는다).</li>
+ *   <li>콜사인별 5 s 메모리 캐시(WS 세션·REST 가 같은 값을 쓴다). Redis 오류는 unavailable 로 같은 5 s 동안 둔다(장애 중에 매번 묻지 않는다).
+ *       캐시 시각은 읽기가 끝난 때다(느린 읽기 뒤에도 5 s 를 온전히 쓴다).</li>
+ *   <li>같은 콜사인의 동시 읽기는 하나({@link SingleFlight} — 계약 v5 §G21): 그 항공기를 고른 세션들 · REST 가 캐시가 빈 동안 함께 불러도 Redis 는 한 번 읽고,
+ *       기다리는 쪽은 진행 중인 읽기의 future 에 이어 붙는다(WS 조회 스레드를 잡지 않는다).</li>
+ *   <li>부르는 쪽(계약 v5 §G21 · ADR-025 개정): {@link #cached} 는 WS 세션 우편함에서 — 메모리만 본다. {@link #loadAsync} 는 Redis 를 우편함 밖 노선 조회
+ *       실행기(ws.RouteLookups)에서 읽는다 — 기다리는 동안에도 그 세션의 pong · diff 는 간다. {@link #forCallsign} 은 같은 읽기를 부른 스레드에서(REST 항공기
+ *       상세 · 시험). 한 번의 읽기 상한은 Redis 명령 상한({@link RedisConfig#COMMAND_TIMEOUT} — 운영 3 s, 설정값 · 잰 값 아님). 공유 연결을 아직 맺지 못했으면
+ *       그 연결을 맺는 동안(Lettuce 기본 연결 상한 10 s — RedisConfig)이 더해진다. 끊긴 것을 아는 연결에서는 기다리지 않고 곧바로 실패한다(REJECT_COMMANDS).</li>
+ *   <li>REST 의 기다림에도 상한(리뷰 2026-09-30): {@link #forCallsign} 이 다른 스레드의 읽기에 붙으면 그 읽기가 WS 노선 조회 실행기의 대기열에 있을 수 있다
+ *       (Redis 가 멈춰 스레드가 모두 잡힘 — 대기열 순서만큼 늦는다). 그래서 붙은 쪽은 Redis 명령 상한까지만 기다리고, 그때까지 끝나지 않으면 unavailable 로
+ *       답하고 센다(wakeline_route_read_wait_timeouts_total — 진행 중인 읽기는 건드리지 않는다: 끝나면 제 값으로 캐시를 채운다).</li>
  *   <li>로그에는 콜사인·오류 종류만(노선 내용은 쓰지 않는다).</li>
  * </ul>
  */
@@ -42,53 +62,127 @@ public class RouteReader {
     private final ObjectMapper json;
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Entry> cache = new ConcurrentHashMap<>();
-    /** 5 s 메모리 캐시 적중률(R-53). */
+    /** 콜사인 → 진행 중인 Redis 읽기. 같은 콜사인의 동시 miss 는 이것에 이어 붙는다(Redis 를 한 번만 읽는다). */
+    private final SingleFlight<String, RouteInfo> inflight = new SingleFlight<>();
+    /** 5 s 메모리 캐시 적중률(R-53) — hit 는 Redis 를 읽지 않은 것(캐시 · 진행 중인 읽기에 붙음), miss 는 Redis 읽기. */
     private final Counter hit;
     private final Counter miss;
+    /** {@link #forCallsign} 이 붙은 읽기를 명령 상한까지 기다렸지만 끝나지 않아 unavailable 로 답한 수. */
+    private final Counter waitTimeouts;
+    /** Redis 명령 상한(ms) — {@link #forCallsign} 이 다른 스레드의 읽기를 기다리는 상한. */
+    private final long commandTimeoutMs;
 
+    /** 운영: 기본 Redis 연결(RedisConfig)의 GET · 명령 상한은 그 연결과 같은 설정 식({@link RedisConfig#COMMAND_TIMEOUT}). */
     @Autowired
-    public RouteReader(StringRedisTemplate redis, ObjectMapper json, MeterRegistry meters) {
-        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, meters);
+    public RouteReader(StringRedisTemplate redis, ObjectMapper json, MeterRegistry meters, @Value(RedisConfig.COMMAND_TIMEOUT) String commandTimeout) {
+        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, meters, RedisConfig.commandTimeout(commandTimeout));
     }
 
-    /** 지표 없이(테스트 컨텍스트). */
+    /** 지표 없이(테스트 컨텍스트) — 명령 상한은 기본값({@link RedisConfig#DEFAULT_COMMAND_TIMEOUT}). */
     public RouteReader(StringRedisTemplate redis, ObjectMapper json) {
-        this(redis, json, new SimpleMeterRegistry());
+        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, new SimpleMeterRegistry(), RedisConfig.DEFAULT_COMMAND_TIMEOUT);
     }
 
-    /** 테스트용(다른 패키지의 컨트롤러·WS 시험도 쓴다): Redis GET 과 시계를 주입한다. */
+    /** 테스트용(다른 패키지의 컨트롤러·WS 시험도 쓴다): Redis GET 과 시계를 주입한다 — 명령 상한은 기본값. */
     public RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock) {
-        this(get, json, clock, new SimpleMeterRegistry());
+        this(get, json, clock, new SimpleMeterRegistry(), RedisConfig.DEFAULT_COMMAND_TIMEOUT);
     }
 
     RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock, MeterRegistry meters) {
+        this(get, json, clock, meters, RedisConfig.DEFAULT_COMMAND_TIMEOUT);
+    }
+
+    /** 테스트용(다른 패키지의 WS 시험도 쓴다): 명령 상한도 주입한다(시험이 고른 Lettuce 명령 상한과 맞출 때). 0 이하는 받지 않는다. */
+    public RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock, MeterRegistry meters, Duration commandTimeout) {
+        if (commandTimeout == null || commandTimeout.isNegative() || commandTimeout.isZero())
+            throw new IllegalArgumentException("the Redis command timeout must be positive, got " + commandTimeout);
         this.get = get;
         this.json = json;
         this.clock = clock;
+        this.commandTimeoutMs = commandTimeout.toMillis();
         this.hit = Counter.builder("wakeline_cache_requests_total").tag("cache", "route").tag("result", "hit").register(meters);
         this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "route").tag("result", "miss").register(meters);
+        this.waitTimeouts = Counter.builder("wakeline_route_read_wait_timeouts_total")
+                .description("REST 노선 읽기가 같은 콜사인의 진행 중 읽기(WS 노선 조회 실행기 — 대기열에 있을 수 있다)를 Redis 명령 상한까지 기다렸지만 끝나지 않아 "
+                        + "unavailable 로 답한 수")
+                .register(meters);
     }
+
+    /** Redis 명령 상한 — {@link #forCallsign} 이 붙은 읽기를 기다리는 상한(운영: {@link RedisConfig#COMMAND_TIMEOUT}). */
+    public Duration commandTimeout() { return Duration.ofMillis(commandTimeoutMs); }
 
     /** 이 항공기의 노선(상태가 없으면 null — 콜사인을 모른다). */
     public RouteInfo forAircraft(AircraftState a) {
         return a == null ? null : forCallsign(a.callsign());
     }
 
-    /** 공급자 콜사인 → 노선. 형식이 틀리면 no_callsign. */
+    /**
+     * 공급자 콜사인 → 노선(부른 스레드에서 읽는다 — REST · 시험). 형식이 틀리면 no_callsign. 진행 중 표시를 얻으면 여기서 읽는다(읽기 한 번 — 명령 상한).
+     * 같은 콜사인을 다른 스레드가 읽는 중이면(WS 노선 조회 실행기 — 아직 대기열에 있을 수 있다) 그 결과를 Redis 명령 상한까지만 기다리고, 그때까지 끝나지
+     * 않으면 unavailable(센다 — 그 읽기는 그대로 둔다: 끝나면 제 값으로 캐시를 채우고, 기다린 다른 쪽도 제 값을 받는다). 예외를 던지지 않는다.
+     */
     public RouteInfo forCallsign(String raw) {
         String cs = normalizeCallsign(raw);
         if (cs == null) return RouteInfo.noCallsign();
-        long now = clock.getAsLong();
+        CompletableFuture<RouteInfo> f = loadAsync(cs, Runnable::run);
+        try {
+            return f.get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            waitTimeouts.increment();
+            log.debug("route read for {} still running after {} ms — answered unavailable", cs, commandTimeoutMs);
+            return RouteInfo.unavailable(cs);
+        } catch (ExecutionException | CancellationException e) { // 그 읽기가 거절(실행기 종료) · 결함(Error)으로 끝났다 — 기다린 쪽은 모름
+            return RouteInfo.unavailable(cs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return RouteInfo.unavailable(cs);
+        }
+    }
+
+    /**
+     * 캐시에만 묻는다(Redis 를 읽지 않는다 — WS 세션 우편함에서 불러도 된다). callsign 은 {@link #normalizeCallsign} 을 거친 값. 신선하면(5 s 안) 그 값
+     * (지표 hit), 아니면 null — 부르는 쪽이 {@link #loadAsync} 를 우편함 밖에서 부른다.
+     */
+    public RouteInfo cached(String callsign) {
+        Entry e = cache.get(callsign);
+        if (!fresh(e, clock.getAsLong())) return null;
+        hit.increment();
+        return e.route();
+    }
+
+    /**
+     * 이 콜사인(정규화한 값)의 노선을 executor 에서 읽는다(WS 선택 조회 — 우편함 밖). 신선한 캐시면 곧바로 끝난 future. 같은 콜사인을 이미 읽는 중이면 그
+     * 읽기의 future(스레드를 잡지 않는다 — 지표 hit). Redis 오류는 unavailable 값으로 끝난다. future 가 예외로 끝나는 것은 실행기가 거절했을 때
+     * (RejectedExecutionException — 기억하지 않는다)와 읽기의 결함(Error)뿐 — 부르는 쪽이 '조회 실패' 로 말한다.
+     */
+    public CompletableFuture<RouteInfo> loadAsync(String callsign, Executor executor) {
+        Entry e = cache.get(callsign);
+        if (fresh(e, clock.getAsLong())) {
+            hit.increment();
+            return CompletableFuture.completedFuture(e.route());
+        }
+        SingleFlight.Flight<RouteInfo> f = inflight.run(callsign, () -> readThrough(callsign), executor);
+        if (f.joined()) hit.increment();
+        return f.result();
+    }
+
+    /** 진행 중 표시를 얻은 쪽만: 그사이 다른 읽기가 캐시를 채웠으면 그것, 아니면 Redis 를 읽어 캐시에 넣는다(시각 = 읽기가 끝난 때). */
+    private RouteInfo readThrough(String cs) {
         Entry e = cache.get(cs);
-        if (e != null && now >= e.atMs() && now - e.atMs() < TTL_MS) {
+        if (fresh(e, clock.getAsLong())) {
             hit.increment();
             return e.route();
         }
         miss.increment();
         RouteInfo r = read(cs);
+        long now = clock.getAsLong();
         if (cache.size() >= MAX_ENTRIES) prune(now);
         cache.put(cs, new Entry(r, now));
         return r;
+    }
+
+    private static boolean fresh(Entry e, long now) {
+        return e != null && now >= e.atMs() && now - e.atMs() < TTL_MS;
     }
 
     private RouteInfo read(String cs) {
@@ -105,11 +199,13 @@ public class RouteReader {
     }
 
     private void prune(long now) {
-        cache.values().removeIf(e -> now < e.atMs() || now - e.atMs() >= TTL_MS);
+        cache.values().removeIf(e -> !fresh(e, now));
         if (cache.size() >= MAX_ENTRIES) cache.clear();
     }
 
-    int cached() { return cache.size(); }
+    int cachedEntries() { return cache.size(); }
+
+    int inflight() { return inflight.size(); }
 
     /**
      * 계약 v4 §G A-1: 앞뒤 공백 제거 → ASCII 가 아니면 null → 대문자 → {@code ^[A-Z0-9]{3,8}$} 이면 그 값, 아니면 null.

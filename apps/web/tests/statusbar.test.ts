@@ -20,7 +20,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { StatusBarView } from "@/components/StatusBar";
 import { WS_INVALID_NONE } from "@/lib/store";
 import {
-  chipState, connChip, detailRows, fitChips, HEALTH_MARK, openGapWarning, RADAR_STALE_S, SIGMET_STALE_S, statusChips, type StatusInput,
+  chipState, connChip, detailRows, fitChips, HEALTH_MARK, pinnedOverflow, openGapWarning, RADAR_STALE_S, SIGMET_STALE_S, statusChips, type StatusInput,
 } from "@/lib/statusbar";
 import { AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, parseAisStatus } from "@/lib/ships";
 import { KR_RADAR_STALE_S } from "@/lib/format";
@@ -216,6 +216,11 @@ describe("fitting the row: hide ok/unknown chips from the end, never a pinned on
     expect([...fitChips(boxes, 600, 200, 8)]).toEqual(["sigmet", "radar"]);
   });
   it("no room at all → only pinned chips stay", () => expect([...fitChips(boxes, 250, 200, 8)]).toEqual(["aircraft", "world", "ais", "sigmet", "radar"]));
+  it("the row wraps only when even the fixed items and the pinned chips do not fit (then nothing more can move out)", () => {
+    expect(pinnedOverflow(boxes, 1000, 200, 8)).toBe(false);
+    expect(pinnedOverflow(boxes, 298, 200, 8)).toBe(false); // 고정 200 + region 98 = 298 — 딱 맞다
+    expect(pinnedOverflow(boxes, 297, 200, 8)).toBe(true);
+  });
 });
 
 describe("details disclosure: a button with aria-expanded; opens and closes by mouse and keyboard (Escape, click outside)", () => {
@@ -347,8 +352,15 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
       const rerender = await mount();
       expect(observers).toHaveLength(1);
       const row = byId("statusbar-row")!;
-      expect(observers[0].targets.includes(row)).toBe(true);
-      expect(observers[0].targets.length).toBeGreaterThan(8); // 줄 + 칩 + 고정 항목
+      const probe = byId("statusbar-width")!;
+      // 줄 자체는 보지 않는다(브라우저 오류 'ResizeObserver loop completed with undelivered notifications.' — 사용자 로그 2026-09-30): 줄의 높이는
+      // 칩을 옮기면 바뀐다(두 줄 → 한 줄) — 콜백 안에서 관찰 중인 상자의 크기를 바꾸면 브라우저가 그 알림을 그 프레임에 전하지 못한다.
+      // 폭은 줄 폭 그대로이고 높이가 0 인 탐침(absolute · inset-x-0 · h-0)을 본다 — 내용이 바꿀 수 없는 상자
+      expect(observers[0].targets.includes(row)).toBe(false);
+      expect(observers[0].targets.includes(probe)).toBe(true);
+      expect(probe.getAttribute("aria-hidden")).toBe("true");
+      for (const c of ["absolute", "inset-x-0", "top-0", "h-0"]) expect(probe.getAttribute("class")!.split(/\s+/)).toContain(c);
+      expect(observers[0].targets.length).toBeGreaterThan(8); // 폭 탐침 + 칩 + 고정 항목
       await React.act(async () => { observers[0].cb(); });
       // 700 − 24 − 고정(연결 78 + 상세 88) − 늘 보일 칩(끝난 AIS 공백 128) = 382: aircraft 88 · region 98 · world 98 · ais 88 = 372 → sigmet · radar · kma 를 뺀다
       const over = ["sigmet-chip", "radar-chip", "kr-status"].map(byId);
@@ -364,6 +376,67 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
       await rerender(input({ nowMs: NOW + 1000, srvNowMs: NOW + 1000 }));
       await rerender(input({ nowMs: NOW + 2000, srvNowMs: NOW + 2000 }));
       expect(reads).toBe(before);
+    } finally {
+      delete proto.offsetWidth;
+      delete proto.clientWidth;
+    }
+  });
+  it("the 상세 button keeps one box whatever '+N' says — the count cannot grow its line box (it is observed; the count comes from the measurement)", () => {
+    // 하네스(Playwright, 수정 전): '상세 ▾' 84 × 21.75 → '상세 +1 ▾' 84 × 22.75 — 고정폭 글꼴의 줄 상자가 단추를 1 px 키웠고 줄도 1 px 커졌다
+    const btn = byTestId(bar(), "statusbar-details-toggle")!;
+    expect(btn.attrs.class).toMatch(/(^|\s)h-\[22px\](\s|$)/);
+    expect(btn.attrs.class).toMatch(/(^|\s)min-w-\[84px\](\s|$)/);
+    const src = readFileSync(new URL("../components/StatusBar.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/<span className="mono leading-none text-warn"> \+\{hidden\.length\}<\/span>/);
+  });
+  it("a second change inside one frame waits for the next frame — the bar never flips between two layouts within a frame", async () => {
+    const observers: { cb: () => void; targets: unknown[] }[] = [];
+    vi.stubGlobal("ResizeObserver", class { targets: unknown[] = []; constructor(public cb: () => void) { observers.push(this); } observe(t: unknown) { this.targets.push(t); } unobserve() {} disconnect() { this.targets = []; } });
+    let rowW = 2000;
+    const W: Record<string, number> = { conn: 70, "statusbar-details-toggle": 80, aircraft: 80, region: 90, world: 90, ais: 80, "ais-gap": 120, sigmet: 100, radar: 100, kma: 100 };
+    const size = (e: MiniElement) => W[e.getAttribute("data-chip") ?? e.getAttribute("data-testid") ?? ""] ?? 0;
+    const proto = MiniElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, "offsetWidth", { configurable: true, get(this: MiniElement) { return size(this); } });
+    Object.defineProperty(proto, "clientWidth", { configurable: true, get(this: MiniElement) { return this.getAttribute("data-testid") === "statusbar-row" ? rowW : 0; } });
+    vi.stubGlobal("getComputedStyle", () => ({ columnGap: "8px", paddingLeft: "12px", paddingRight: "12px" }));
+    const moved = () => ["lag-badge", "global-lag-badge", "ais-badge", "sigmet-chip", "radar-chip", "kr-status"].filter((id) => byId(id)?.getAttribute("data-overflow") === "true");
+    const g = globalThis as Record<string, unknown>;
+    const outsideAct = (fn: () => void) => { const prev = g.IS_REACT_ACT_ENVIRONMENT; g.IS_REACT_ACT_ENVIRONMENT = false; try { fn(); } finally { g.IS_REACT_ACT_ENVIRONMENT = prev; } };
+    try {
+      await mount();
+      expect(moved()).toEqual([]);
+      const ro = observers[observers.length - 1];
+      rowW = 700;
+      outsideAct(() => ro.cb()); // 이 프레임의 첫 변화 — 그 자리에서(그리기 전)
+      expect(moved()).toEqual(["sigmet-chip", "radar-chip", "kr-status"]);
+      rowW = 2000;
+      outsideAct(() => ro.cb()); // 같은 프레임의 두 번째 변화 — 다음 프레임에(그 사이 되돌아가도 한 프레임 안에서 오가지 않는다)
+      expect(moved()).toEqual(["sigmet-chip", "radar-chip", "kr-status"]);
+      await React.act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+      expect(moved()).toEqual([]);
+      rowW = 700;
+      outsideAct(() => ro.cb()); // 다음 프레임 — 다시 그 자리에서
+      expect(moved()).toEqual(["sigmet-chip", "radar-chip", "kr-status"]);
+    } finally {
+      delete proto.offsetWidth;
+      delete proto.clientWidth;
+    }
+  });
+  it("a row first mounted without layout (width 0) is marked measured by the first ResizeObserver measure even when nothing has to move (review 2026-09-30)", async () => {
+    const observers: { cb: () => void; targets: unknown[] }[] = [];
+    vi.stubGlobal("ResizeObserver", class { targets: unknown[] = []; constructor(public cb: () => void) { observers.push(this); } observe(t: unknown) { this.targets.push(t); } unobserve() {} disconnect() { this.targets = []; } });
+    let rowW = 0; // display:none 조상 안에 붙은 상태 — 첫 측정(layout effect)은 재지 않는다
+    const proto = MiniElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, "offsetWidth", { configurable: true, get() { return 60; } });
+    Object.defineProperty(proto, "clientWidth", { configurable: true, get(this: MiniElement) { return this.getAttribute("data-testid") === "statusbar-row" ? rowW : 0; } });
+    vi.stubGlobal("getComputedStyle", () => ({ columnGap: "8px", paddingLeft: "12px", paddingRight: "12px" }));
+    try {
+      await mount();
+      expect(byId("statusbar-row")!.getAttribute("data-measured")).toBeNull();
+      rowW = 4000; // 보이게 됐다 — 넉넉해서 옮길 칩이 없다(옮김 결과는 처음과 같다)
+      await React.act(async () => { observers[observers.length - 1].cb(); });
+      expect(byId("statusbar-row")!.getAttribute("data-measured")).toBe("true");
+      expect(byId("statusbar-details-toggle")!.textContent).not.toContain("+");
     } finally {
       delete proto.offsetWidth;
       delete proto.clientWidth;
@@ -398,13 +471,15 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
     vi.stubGlobal("getComputedStyle", () => ({ columnGap: "8px", paddingLeft: "12px", paddingRight: "12px" }));
     const moved = () => ["lag-badge", "global-lag-badge", "ais-badge", "sigmet-chip", "radar-chip", "kr-status"].filter((id) => byId(id)?.getAttribute("data-overflow") === "true");
     try {
-      // 기상청 칩이 없는 자료로 시작 → 첫 커밋에서 이미 잰다(ResizeObserver 콜백 없이) — 잰 뒤에는 줄바꿈 허용(경고만으로 넘칠 때), 자르지 않는다
+      // 기상청 칩이 없는 자료로 시작 → 첫 커밋에서 이미 잰다(ResizeObserver 콜백 없이). 옮길 칩을 옮기면 한 줄에 들어가므로 한 줄로 둔다(nowrap) —
+      // 창이 좁아지는 순간(옮기기 전) 줄이 두 줄로 넘어가 상태 바 높이가 바뀌면 아래 지도의 ResizeObserver(MapLibre)가 그 프레임에 크기 변화를 받고, 곧이어
+      // 옮기기가 한 줄로 되돌려 지도 크기가 또 바뀐다 — 그 알림을 브라우저가 전하지 못한다('ResizeObserver loop' — 사용자 로그 2026-09-30, 하네스 632 px)
       const rerender = await mount(input({ radarKr: null }));
       expect(moved()).toEqual(["sigmet-chip", "radar-chip"]);
       const rowEl = byId("statusbar-row")!;
       expect(rowEl.getAttribute("data-measured")).toBe("true");
-      expect(rowEl.getAttribute("class")).toContain("flex-wrap");
-      expect(rowEl.getAttribute("class")).not.toContain("overflow-hidden");
+      expect(rowEl.getAttribute("class")).toContain("flex-nowrap");
+      expect(rowEl.getAttribute("class")).toContain("overflow-hidden");
       // 새 칩(기상청)이 생기는 자료 — 같은 커밋 안에서 다시 잰다
       await rerender(input());
       expect(moved()).toEqual(["sigmet-chip", "radar-chip", "kr-status"]);
@@ -416,6 +491,20 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
       g.IS_REACT_ACT_ENVIRONMENT = false;
       try { observers[observers.length - 1].cb(); } finally { g.IS_REACT_ACT_ENVIRONMENT = prevAct; }
       expect(moved()).toEqual([]);
+      // 고정 항목 · 경고 칩만으로도 넘치면(좁은 화면의 경고들) 그때만 줄바꿈 — 잘리지 않는다. 줄 높이가 바뀌는 일이라 다음 프레임에(그 자리가 아니라)
+      await React.act(async () => { await new Promise((r) => setTimeout(r, 50)); }); // 다음 프레임(그 자리 반영은 한 프레임에 한 번)
+      rowW = 150;
+      g.IS_REACT_ACT_ENVIRONMENT = false;
+      try { observers[observers.length - 1].cb(); } finally { g.IS_REACT_ACT_ENVIRONMENT = prevAct; }
+      expect(moved().length).toBeGreaterThan(0); // 칩 옮기기는 그 자리에서
+      await React.act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+      expect(rowEl.getAttribute("class")).toContain("flex-wrap");
+      expect(rowEl.getAttribute("class")).not.toContain("overflow-hidden");
+      rowW = 2000;
+      g.IS_REACT_ACT_ENVIRONMENT = false;
+      try { observers[observers.length - 1].cb(); } finally { g.IS_REACT_ACT_ENVIRONMENT = prevAct; }
+      await React.act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+      expect(rowEl.getAttribute("class")).toContain("flex-nowrap");
     } finally {
       delete proto.offsetWidth;
       delete proto.clientWidth;

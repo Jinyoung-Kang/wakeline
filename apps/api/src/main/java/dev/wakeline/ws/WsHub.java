@@ -1,6 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.config.AppProperties;
+import dev.wakeline.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.Bbox;
@@ -24,6 +25,7 @@ import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
@@ -63,7 +65,10 @@ import java.util.function.Supplier;
  *   <li>항공기 JSON 조각·SIGMET·알림·레이더·status 페이로드는 버전마다 한 번만 직렬화해 모든 세션이 같은 String 을 쓴다(PERF-8/PERF-9/SEC-2).</li>
  *   <li>알림은 버전(배치마다 +1)을 달고, 세션마다 반영한 버전을 기억해 빠진 배치를 순서대로(없으면 전체 목록) 보낸다 — 일시정지·백프레셔 뒤에도 어긋나지 않는다(COR-7/GAP-3).</li>
  *   <li>selected 에는 선택 항공기의 등록 노선(route, 계약 v4 §A)을 싣는다 — 콜사인별 5 s 캐시({@link RouteReader})라 팬아웃·focus 관측마다
- *       다시 읽어도 Redis 조회는 콜사인당 5 s 에 한 번이다. 노선 상태가 바뀌면(조회 중 → 찾음) 상태가 그대로여도 다시 보낸다.</li>
+ *       다시 계산해도 Redis 조회는 콜사인당 5 s 에 한 번이다. 노선 상태가 바뀌면(조회 중 → 찾음) 상태가 그대로여도 다시 보낸다.
+ *       Redis 읽기는 우편함 밖(계약 v5 §G21 · ADR-025 개정 — {@link RouteLookups}): 우편함은 캐시만 보고, 읽어야 하면 조회 실행기에 맡긴 뒤 selected 를 곧바로
+ *       pending("노선 조회 중" — 이 세션에 이미 보낸 같은 물음의 값이 있으면 그 값)으로 보낸다. 답이 오면(늦어도 Redis 명령 상한 3 s — 설정값, 읽지 못하면
+ *       unavailable) SELECTED_ROUTE 작업이 다시 계산해 바뀌었으면 보낸다. 그동안 그 세션의 pong · diff · heartbeat 는 노선 읽기를 기다리지 않는다.</li>
  *   <li>수요 스코프(hot·focus, 계약 v2 §A3) 메시지는 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 세션에만 팬아웃한다 — 전체 팬아웃은
  *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측을 두 번 보내지 않는다).</li>
  *   <li>수요(demand) 메시지는 DemandService 가 계산해 {@link #pushDemand} 로 예약한다. 구독·선택·일시정지·연결 종료는 {@link #demandChanged} 로 알린다.</li>
@@ -86,6 +91,8 @@ public class WsHub implements SmartLifecycle {
     static final int GLOBAL_STALE_S = 300;
     /** ping 뒤 pong 이 없는 heartbeat 가 이 수를 넘으면 닫는다 — 연속 2회 무응답(설계 9.5). */
     static final int MAX_MISSED_PONGS = 2;
+    /** 시험 생성자의 노선 조회 마감(바로 실행하는 실행기라 쓰이지 않는다 — 운영은 spring.data.redis.timeout). */
+    static final long DIRECT_LOOKUP_DEADLINE_MS = 3_000;
     private static final String PING = "{\"type\":\"ping\"}";
 
     private final Map<String, WsSession> sessions = new ConcurrentHashMap<>();
@@ -133,13 +140,18 @@ public class WsHub implements SmartLifecycle {
     private final Counter statusHit;
     private final Counter statusMiss;
 
+    /**
+     * 운영: 노선 조회는 {@link #useRouteReader} — 답의 마감 = Redis 명령 상한. 기본 연결(RedisConfig)의 Lettuce 명령 상한 · REST 노선 기다림(RouteReader)과 같은
+     * 설정 식 {@link RedisConfig#COMMAND_TIMEOUT}(spring.data.redis.timeout, 없으면 3s — 설정값) · 같은 해석. 해석할 수 없거나 0 이하면 기동하지 않는다.
+     */
     @Autowired
     public WsHub(ObjectMapper json, AppProperties props, SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar,
-                 StatusService status, EngineService engine, MeterRegistry meters, RouteReader routes) {
+                 StatusService status, EngineService engine, MeterRegistry meters, RouteReader routes,
+                 @Value(RedisConfig.COMMAND_TIMEOUT) String redisCommandTimeout) {
         this(json, props, snapshots, sigmets, radar, status::publicStatus, () -> engine.activeAlerts(null), engine::predictionAvailability,
                 meters, Executors.newVirtualThreadPerTaskExecutor(),
                 Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ws-timer").factory()), HELLO_TIMEOUT_MS);
-        setRouteSource(routes::forAircraft);
+        useRouteReader(routes, RedisConfig.commandTimeout(redisCommandTimeout));
     }
 
     /** 테스트용: 실행기·타이머·데이터 출처를 주입한다. */
@@ -158,6 +170,7 @@ public class WsHub implements SmartLifecycle {
         this.pool = pool;
         this.timer = timer;
         this.helloTimeoutMs = helloTimeoutMs;
+        this.routeLookups = new RouteLookups(Runnable::run, DIRECT_LOOKUP_DEADLINE_MS, meters);
         this.fragments = new AircraftJsonCache(json, meters);
         this.meters = meters;
         // 캐시 적중률(R-53): 공유 status 페이로드(REST /status 도 쓴다)
@@ -210,6 +223,7 @@ public class WsHub implements SmartLifecycle {
         for (WsSession s : sessions.values()) { closeAsync(s, CloseStatus.GOING_AWAY.withReason("server shutting down")); n++; }
         sessions.clear();
         timer.shutdownNow();
+        routeLookups.close();
         if (pool instanceof ExecutorService es) {
             es.shutdown();
             try {
@@ -254,14 +268,37 @@ public class WsHub implements SmartLifecycle {
 
     void setDemandListener(Runnable r) { demandListener = r == null ? () -> { } : r; }
 
-    // ---- 등록 노선(RouteReader) ----
-    private volatile Function<AircraftState, RouteInfo> routeSource = a -> null;
+    // ---- 등록 노선(RouteReader — 우편함 밖 조회, 계약 v5 §G21) ----
+    /** 선택 항공기 노선 조회(Redis — 우편함 밖). 시험은 바로 실행하는 것을 쓰거나 바꿔 넣는다({@link #useRouteLookups}). */
+    private volatile RouteLookups routeLookups;
 
-    /** selected 의 route 출처(운영: RouteReader). 테스트는 가짜를 넣는다 — 없으면 route 는 null. */
-    void setRouteSource(Function<AircraftState, RouteInfo> f) { routeSource = f == null ? a -> null : f; }
+    /**
+     * 노선 조회가 답하는 물음: 선택 항공기(hex)와 그 상태의 콜사인(정규화한 값 — 조회 키). 둘 중 하나가 바뀌면(다른 항공기 선택 · 콜사인 바뀜) 진행 중인
+     * 조회의 답은 쓰지 않는다(세대 확인 — {@link SelectionLookups.Pending}).
+     */
+    record RouteQuestion(String hex, String callsign) {}
 
-    /** 상태의 노선(상태가 없으면 null — 콜사인을 모른다). */
-    private RouteInfo route(AircraftState a) { return a == null ? null : routeSource.apply(a); }
+    /** 조회 묶음을 바꾼다(운영 생성자 · 시험 — 출처는 바꾼 뒤에 넣는다). 이전 것의 실행기는 닫는다. */
+    void useRouteLookups(RouteLookups l) {
+        RouteLookups old = routeLookups;
+        routeLookups = l;
+        if (old != null) old.close();
+    }
+
+    RouteLookups routeLookups() { return routeLookups; }
+
+    /** selected 의 route 출처(운영: {@link RouteLookups#of} — RouteReader 의 캐시 · 읽기). 테스트는 가짜를 넣는다 — null 이면 route 는 null. */
+    void setRouteSource(SelectionLookups.Source<String, RouteInfo> s) { routeLookups.setSource(s); }
+
+    /**
+     * 운영 배선(운영 생성자): 노선 조회 실행기 스레드 {@value RouteLookups#THREADS}(고른 값 — 잰 값 아님) · 대기열 = WS 연결 상한 이상(세션마다 작업 하나
+     * 이하 — 넘치지 않는다), 답의 마감 = Redis 명령 상한(한 번의 GET 이 서버를 기다리는 상한 — 운영 application.yml 3 s).
+     */
+    void useRouteReader(RouteReader routes, Duration redisCommandTimeout) {
+        long deadlineMs = RouteLookups.deadlineMs(redisCommandTimeout);
+        useRouteLookups(new RouteLookups(RouteLookups.boundedExecutor(RouteLookups.THREADS, SelectionLookups.queueFor(props.wsMaxConn())), deadlineMs, meters));
+        setRouteSource(RouteLookups.of(routes));
+    }
 
     // ---- 선박(ShipFanout) ----
     private volatile java.util.function.Consumer<WsSession> shipsHook = s -> { };
@@ -357,6 +394,9 @@ public class WsHub implements SmartLifecycle {
     void requestSelected(WsSession s) {
         s.schedule(WsSession.Job.SELECTED, () -> runSelected(s));
     }
+
+    /** selected 를 언제 보내는가: 늘(선택 · 초기 세트의 force) · 바뀌었을 때(팬아웃 · 노선 답) · 새 관측이면(focus — 이미 보낸 바로 그 상태 객체는 다시 보내지 않는다). */
+    enum Resend { ALWAYS, CHANGED, NEW_OBSERVATION }
 
     // ---- 이벤트(스트림 소비·엔진 스레드 — 예약만 하고 돌아간다) ----
 
@@ -502,7 +542,7 @@ public class WsHub implements SmartLifecycle {
         if (st != null && !send(s, st)) return;
         String dj = s.demandJson; // 수요 상태(계산된 적이 있으면) — resume·백프레셔 재동기 뒤에도 화면이 추적 상태를 잃지 않게
         if (dj != null && !send(s, dj)) return;
-        if (s.selectedHex != null) sendSelected(s, view.states(), force);
+        if (s.selectedHex != null) sendSelected(s, view.states(), force ? Resend.ALWAYS : Resend.CHANGED);
         shipsHook.accept(s);
     }
 
@@ -532,7 +572,7 @@ public class WsHub implements SmartLifecycle {
                     else s.needsResync = true; // sent 는 이미 바뀌었다 → 다음에 스냅샷
                 }
             }
-            if (s.selectedHex != null || s.selectedSent != null) sendSelected(s, view.states(), false);
+            if (s.selectedHex != null || s.selectedSent != null) sendSelected(s, view.states(), Resend.CHANGED);
         } finally {
             fanoutTimer.record(Duration.ofNanos(System.nanoTime() - t0));
         }
@@ -575,21 +615,21 @@ public class WsHub implements SmartLifecycle {
 
     private void runSelected(WsSession s) {
         if (!s.ready() || !s.hello) return;
-        sendSelected(s, snapshots.merged(), true);
+        sendSelected(s, snapshots.merged(), Resend.ALWAYS);
     }
 
     /**
      * focus 관측이 왔다(계약 v2 §A3: 집중 추적 갱신마다 selected). 이미 이 세션에 보낸 바로 그 상태 객체면(팬아웃이 먼저 보냄) 다시 보내지 않는다.
      */
     private void runSelectedObservation(WsSession s) {
+        if (!s.ready() || !s.hello || s.selectedHex == null) return;
+        sendSelected(s, snapshots.merged(), Resend.NEW_OBSERVATION);
+    }
+
+    /** 노선 조회의 답이 왔거나 마감 뒤에 그 읽기가 끝났다(SELECTED_ROUTE): 다시 계산해 바뀌었으면 보낸다. 선택이 바뀌었으면 그 조회는 여기서 버려진다. */
+    private void runSelectedRoute(WsSession s) {
         if (!s.ready() || !s.hello) return;
-        String hex = s.selectedHex;
-        if (hex == null) return;
-        AircraftState a = snapshots.merged().get(hex);
-        WsSession.SelectedSent prev = s.selectedSent;
-        if (prev != null && hex.equals(prev.hex()) && prev.state() == a && a != null && Objects.equals(prev.prediction(), prediction.apply(a))
-                && Objects.equals(prev.route(), route(a))) return;
-        sendSelected(s, snapshots.merged(), true);
+        sendSelected(s, snapshots.merged(), Resend.CHANGED);
     }
 
     private void runDemand(WsSession s) {
@@ -650,18 +690,88 @@ public class WsHub implements SmartLifecycle {
         return true;
     }
 
-    /** "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부 + 등록 노선. force 가 아니면 바뀐 경우에만. */
-    private void sendSelected(WsSession s, Map<String, AircraftState> states, boolean force) {
+    /** "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부 + 등록 노선. ALWAYS 가 아니면 바뀐 경우에만(NEW_OBSERVATION 은 새 관측이면). */
+    private void sendSelected(WsSession s, Map<String, AircraftState> states, Resend when) {
         String hex = s.selectedHex;
-        if (hex == null) { s.selectedSent = null; return; }
+        if (hex == null) {
+            s.selectedSent = null;
+            dropRouteLookup(s);
+            return;
+        }
         AircraftState a = states.get(hex);
         PredictionAvailability p = prediction.apply(a);
-        RouteInfo r = route(a);
+        RouteInfo r = selectedRoute(s, hex, a);
         WsSession.SelectedSent prev = s.selectedSent;
-        if (!force && prev != null && hex.equals(prev.hex()) && sameSelected(prev.state(), a) && Objects.equals(prev.prediction(), p)
-                && Objects.equals(prev.route(), r)) return;
+        if (when != Resend.ALWAYS && prev != null && hex.equals(prev.hex()) && Objects.equals(prev.prediction(), p) && Objects.equals(prev.route(), r)
+                && (when == Resend.NEW_OBSERVATION ? prev.state() == a && a != null : sameSelected(prev.state(), a))) return;
         String state = a == null ? null : fragments.get(a, WsMessages.Encoding.FULL);
         if (send(s, toJson(new WsMessages.SelectedMsg("selected", hex, state, p, r)))) s.selectedSent = new WsSession.SelectedSent(hex, a, p, r);
+    }
+
+    /**
+     * selected 의 route(우편함 — I/O 없음, 계약 v5 §G21). 상태가 없으면 null(콜사인을 모른다), 콜사인이 형식 밖이면 no_callsign(묻지 않는다). 캐시
+     * (RouteReader — 콜사인별 5 s)에 있으면 그 값. 없으면 세션의 조회(같은 물음)의 답(읽은 값 · 마감의 unavailable), 그것도 아직이면 — 조회가 없으면 맡기고
+     * (세션의 앞 조회가 끝난 뒤 읽는다) — 지금은 {@link #interimRoute} 로 답한다. 답이 오면 SELECTED_ROUTE 작업이 다시 부른다. 읽기가 끝난 조회는 내려놓는다
+     * (다음 다시 계산은 캐시로, 캐시가 지나면 새로 읽는다). 물음이 바뀌면 진행 중인 조회의 답은 쓰지 않는다.
+     */
+    private RouteInfo selectedRoute(WsSession s, String hex, AircraftState a) {
+        RouteLookups l = routeLookups;
+        if (a == null || !l.enabled()) {
+            dropRouteLookup(s);
+            return null;
+        }
+        String cs = RouteReader.normalizeCallsign(a.callsign());
+        if (cs == null) {
+            dropRouteLookup(s);
+            return RouteInfo.noCallsign();
+        }
+        RouteQuestion q = new RouteQuestion(hex, cs);
+        SelectionLookups.Pending<RouteQuestion, RouteInfo> p = s.routeLookup;
+        if (p != null && !p.question.equals(q)) { // 다른 물음 — 그 답은 쓰지 않는다(그 읽기가 끝나야 이 세션의 다음 읽기가 시작한다)
+            dropRouteLookup(s);
+            p = null;
+        }
+        RouteInfo r = l.cached(cs);                 // 캐시(I/O 없음) — 끝난 읽기의 값은 여기에 있다
+        if (r == null && p != null) r = p.result;   // 이 물음의 답(읽은 값 · 마감의 unavailable)
+        if (r == null) return p == null ? startRouteLookup(s, l, q) : interimRoute(s, q);
+        if (p != null) {
+            p.answered = true;
+            if (p.settled) s.routeLookup = null;    // 읽기가 끝났다 — 다음 다시 계산은 캐시로
+        }
+        return r;
+    }
+
+    private RouteInfo startRouteLookup(WsSession s, RouteLookups l, RouteQuestion q) {
+        SelectionLookups.Pending<RouteQuestion, RouteInfo> mine = new SelectionLookups.Pending<>(q);
+        SelectionLookups.Flight<RouteInfo> f = l.load(q.callsign(), s.routeLookupTail, () -> mine.wanted(s));
+        if (f.answer().isDone()) { // 바로 실행하는 실행기(시험) · 거절 — 읽기도 이미 끝났다(settled 가 답보다 먼저)
+            s.routeLookupTail = null;
+            return f.answer().join();
+        }
+        s.routeLookup = mine;
+        s.routeLookupTail = f.settled();
+        // 답이 오면(늦어도 마감) · 마감 뒤에 읽기가 끝나면 다시 계산한다(세션이 닫혀 예약하지 못한 답은 센다)
+        mine.follow(f, s, () -> s.schedule(WsSession.Job.SELECTED_ROUTE, () -> runSelectedRoute(s)), l::dropped);
+        return interimRoute(s, q);
+    }
+
+    /**
+     * 답을 기다리는 동안의 route: 이 세션에 이미 보낸 같은 물음(같은 항공기 · 같은 콜사인)의 노선이면 그 값 — 캐시(5 s)가 지나 다시 읽는 중이다(화면이 보던
+     * 값을 그대로 두고, 바뀌었으면 답이 올 때 보낸다 — 5 s 마다 "조회 중" 으로 깜박이지 않는다). 처음 묻는 것이면 pending("노선 조회 중" — 계약 v4 §A 의 값,
+     * 이제 'api 가 수집기의 결과를 읽는 중' 도 포함한다 — §G21).
+     */
+    private static RouteInfo interimRoute(WsSession s, RouteQuestion q) {
+        WsSession.SelectedSent prev = s.selectedSent;
+        RouteInfo shown = prev == null || !q.hex().equals(prev.hex()) ? null : prev.route();
+        return shown != null && q.callsign().equals(shown.callsign()) ? shown : RouteInfo.pending(q.callsign());
+    }
+
+    /** 세션의 노선 조회를 버린다(결과가 와도 쓰지 않고, 아직 올리지 않은 읽기는 하지 않는다). 답을 보내지 않은 조회만 센다. */
+    private void dropRouteLookup(WsSession s) {
+        SelectionLookups.Pending<RouteQuestion, RouteInfo> p = s.routeLookup;
+        if (p == null) return;
+        s.routeLookup = null;
+        p.supersede(routeLookups::dropped);
     }
 
     /** 새 보고(seen_at)나 표시 값 변화가 없으면 같은 것으로 본다. */

@@ -6,6 +6,8 @@
  *   이 수들은 서버 코드의 값을 읽어 확인한다(짐작한 값이 아니다) — 측정값이 아니라 계산값이라고 적는다(리뷰 2026-09-29: 수집기는 콜사인을 5 s 주기가 아니라
  *   다음 1 s 틱에 조회에 넘긴다 — 5 s 는 selected 가 오는 주기다). 상한은 말하지 않는다 — 수집기의 조회 대기열(동시 2개)은 기다림에 상한이 없다.
  * - 실패 · 없음 · 꺼짐 문구는 그대로(계약 v4 §A).
+ * - 계약 v5 §G21(2026-09-30): api 가 수집기의 결과(Redis)를 읽는 동안도 "조회 중"이다(읽기는 세션 우편함 밖) — 설명이 그 읽기와 상한(Redis 명령 상한,
+ *   서버 설정 application.yml 에서 읽어 확인)을 적는다.
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { readFileSync } from "node:fs";
@@ -13,7 +15,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, describe, expect, it } from "vitest";
 import { RouteSection } from "@/components/AircraftCard";
-import { parseRoute, ROUTE_NORMAL_PATH_S, ROUTE_PENDING_TITLE, ROUTE_SLOW_AFTER_S, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, routePendingPhase, type RouteInfo } from "@/lib/route";
+import { parseRoute, ROUTE_API_READ_BOUND_S, ROUTE_NORMAL_PATH_S, ROUTE_PENDING_TITLE, ROUTE_SLOW_AFTER_S, ROUTE_SLOW_TEXT, ROUTE_STATUS_TEXT, routePendingPhase, type RouteInfo } from "@/lib/route";
 import { ancestors, byTestId, classes, findAll, parseHtml, textOf } from "./helpers/html-tree";
 import { installMiniDom } from "./helpers/mini-dom";
 
@@ -103,6 +105,38 @@ describe("the 10 s threshold comes from the server's route path (read from the c
     expect(demand).toMatch(/now - self\._route_asked\.get\(cs, -math\.inf\) >= FOCUS_INTERVAL_S/);
     expect(ROUTE_NORMAL_PATH_S).toBe(apiCacheMs / 1000 + focus);
     expect(ROUTE_SLOW_AFTER_S).toBe(ROUTE_NORMAL_PATH_S);
+  });
+});
+
+describe("'조회 중' also covers the api's own read of the collector's result (contract v5 §G21 — off the session mailbox)", () => {
+  const repo = new URL("../../../", import.meta.url);
+  const src = (p: string) => readFileSync(new URL(p, repo), "utf8");
+  it("the bound is the api's Redis command timeout, read from the server config (a configured value, not a measurement)", () => {
+    const yml = src("apps/api/src/main/resources/application.yml");
+    const m = /^ {4}redis:\n(?: {6}.*\n)*? {6}timeout: (\d+)s$/m.exec(yml);
+    expect(m).not.toBeNull();
+    expect(ROUTE_API_READ_BOUND_S).toBe(Number(m![1]));
+    // 설정 식은 한 곳(RedisConfig.COMMAND_TIMEOUT — 없으면 3s)이고, api 가 그 값을 selected.route 답의 마감(WsHub → RouteLookups.deadlineMs)과 REST 노선
+    // 기다림(RouteReader)에 쓴다 — api 쪽 JVM 시험(RouteSelectionLookupTest · WsIntegrationTest · RedisConfigTest)이 배선을 확인한다
+    const redisConfig = src("apps/api/src/main/java/dev/wakeline/config/RedisConfig.java");
+    expect(redisConfig).toContain('COMMAND_TIMEOUT = "${spring.data.redis.timeout:" + DEFAULT_COMMAND_TIMEOUT_TEXT + "}"');
+    expect(redisConfig).toContain(`DEFAULT_COMMAND_TIMEOUT_TEXT = "${ROUTE_API_READ_BOUND_S}s"`);
+    expect(src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java")).toContain("@Value(RedisConfig.COMMAND_TIMEOUT) String redisCommandTimeout");
+    expect(src("apps/api/src/main/java/dev/wakeline/route/RouteReader.java")).toContain("@Value(RedisConfig.COMMAND_TIMEOUT) String commandTimeout");
+    expect(src("apps/api/src/main/java/dev/wakeline/ws/RouteLookups.java")).toMatch(/static long deadlineMs\(Duration redisCommandTimeout\)/);
+  });
+  it("the title says so: reading the result, answered within that bound, otherwise the failure text", () => {
+    expect(ROUTE_PENDING_TITLE).toContain("api 가 그 결과(Redis)를 읽는 중");
+    expect(ROUTE_PENDING_TITLE).toContain(`늦어도 ${ROUTE_API_READ_BOUND_S} s`);
+    expect(ROUTE_PENDING_TITLE).toContain("설정값");
+    expect(ROUTE_PENDING_TITLE).toContain(`“${ROUTE_STATUS_TEXT.unavailable}”`);
+  });
+  // 리뷰(2026-09-30 · lane-route #4): 3 s 는 api 가 답을 정하는 상한이지 화면에 닿는 상한이 아니다 — 답은 그 연결의 전송 차례(세션 우편함)로 나가고,
+  // Redis 가 멈춘 동안에는 같은 연결의 상태 메시지(heartbeat · 초기 세트의 status — 아직 우편함에서 Redis 를 읽는다, 계약 v5 §G21 '남은 것')가 먼저 기다린다.
+  it("the bound is when the api decides the answer, not when it reaches the screen — delivery can take longer while Redis is stalled", () => {
+    expect(ROUTE_PENDING_TITLE).toContain(`늦어도 ${ROUTE_API_READ_BOUND_S} s(api 의 Redis 명령 상한 — 설정값) 안에 정하고`);
+    expect(ROUTE_PENDING_TITLE).not.toContain(`늦어도 ${ROUTE_API_READ_BOUND_S} s(api 의 Redis 명령 상한 — 설정값)에 답하고`);
+    expect(ROUTE_PENDING_TITLE).toContain("Redis 가 멈춘 동안에는 그 답이 화면에 닿기까지 더 걸릴 수 있습니다");
   });
 });
 

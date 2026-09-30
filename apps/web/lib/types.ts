@@ -180,6 +180,20 @@ export interface KrRadarFrame {
   refetch_until?: string | null;
 }
 
+/**
+ * 기상청 내려받기 '파일 없음' 연속(/api/v1/radar/kr missing — api KrRadarMissing · 수집기 확인, 2026-09-30): 목록에는 tm 이 있는데 내려받기가
+ * "file not exist" 로 답한 첫 tm · 마지막 tm(기상청 KST 벽시계 그대로) · 서로 다른 tm 수 · 마지막 확인(UTC ISO — 화면은 KST) · 답의 파일 이름 · 목록 종류.
+ * 연속이 없으면 없다. 형식은 lib/kr-radar krMissing 이 다시 본다(REST 는 검증기를 거치지 않는다).
+ */
+export interface KrRadarMissing {
+  since_tm: string;
+  last_tm: string;
+  tms: number;
+  checked_at: string;
+  file?: string | null;
+  listed?: string[] | null;
+}
+
 export interface KrRadar {
   available: boolean;
   status?: string | null;
@@ -197,6 +211,8 @@ export interface KrRadar {
   station_ids?: string[] | null;
   stations_ref?: number | null;
   partial?: boolean | null;
+  /** 기상청 내려받기 '파일 없음' 연속 — 없으면 없음 */
+  missing?: KrRadarMissing | null;
   frames: KrRadarFrame[];
   attribution: string;
   meta: { fetched_at: string | null; stale: boolean };

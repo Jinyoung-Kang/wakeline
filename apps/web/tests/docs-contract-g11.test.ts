@@ -5,6 +5,7 @@
  * - README: 시각 기준을 운영 · 로그만이 아니라 모든 화면으로 적는다.
  * - §G13(사용자 요청 2026-09-29 "UTC 와 KST 함께"): KST 를 먼저, UTC 를 함께 — §G11 의 "원본 UTC 는 툴팁" 규칙을 대신했다.
  * - §G20(사용자 결정 2026-09-30 "UTC 지우고 KST"): 화면은 KST 만 — §G13 을 대신한다. 예시 글자는 lib/time 에서 만들어 견준다. README 의 시각 줄도 §G20 을 따른다.
+ * - 개정 번호가 겹치지 않는다(§G21 노선 조회 · §G22 기상청 '파일 없음' · §G23 ais 수신 진단 — 세 레인을 합칠 때 나눴다).
  * 수정 전 문서에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { readFileSync } from "node:fs";
@@ -116,5 +117,21 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(nums.filter((n, i) => nums.indexOf(n) !== i)).toEqual([]);
     expect(amendment(20)).toContain("화면의 시각은 한국 표준시(KST)만");
     expect(amendment(19)).not.toContain("화면의 시각은 한국 표준시(KST)만");
+  });
+  /**
+   * 통합(integ 2026-09-30): 세 레인(노선 조회 · 기상청 '파일 없음' · ais 수신 진단)이 모두 13차 · §G21 로 썼다 — 합치며 13차 §G21 · 14차 §G22 · 15차 §G23 으로
+   * 나눴다. 수정 전(세 절 모두 G21)에는 위 시험과 이 시험이 실패했다.
+   */
+  it("each 'N차 개정' heading appears once, and §G21–§G23 are the route, KMA and AIS amendments in that order", () => {
+    const rounds = [...contract.matchAll(/^## G\. (\d+)차 /gm)].map((m) => Number(m[1]));
+    expect(rounds.filter((n, i) => rounds.indexOf(n) !== i)).toEqual([]);
+    const heading = (n: number) => contract.slice(0, contract.search(new RegExp(`^- G${n}\\b`, "m"))).split("\n").filter((l) => l.startsWith("## ")).pop() ?? "";
+    expect(heading(21)).toMatch(/^## G\. 13차 개정\(2026-09-30 · 레인 route /);
+    expect(amendment(21)).toContain("선택 항공기 노선의 Redis 읽기는 세션 우편함 밖에서");
+    expect(heading(22)).toMatch(/^## G\. 14차 개정\(2026-09-30 · 레인 kma /);
+    expect(amendment(22)).toContain("기상청 내려받기 '파일 없음' 연속");
+    expect(heading(23)).toMatch(/^## G\. 15차 개정\(2026-09-30 · 레인 ais /);
+    expect(amendment(23)).toContain("ais 수신 진단");
+    expect(amendment(24)).toBe("");
   });
 });

@@ -92,6 +92,9 @@ class StatsIT extends IntegrationTest {
             assertThat(rows).contains(today + " r45_rule").noneMatch(r -> r.contains("r45_rule_old_collector"));
             JsonNode p = b.get("/api/v1/ops/providers").json();
             assertThat(p.path("budget_day_zone").asString()).isEqualTo("UTC");
+            // 서버 시각(운영 화면의 '확인 멈춤' 판정 기준 — 계약 v5 §G22): 시간대가 있는 ISO, 지금 근처
+            java.time.Instant gen = java.time.Instant.parse(p.path("generated_at").asString());
+            assertThat(java.time.Duration.between(gen, java.time.Instant.now()).abs()).isLessThan(java.time.Duration.ofMinutes(1));
             assertThat(p.path("budget_days")).isNotEmpty();
             for (JsonNode r : p.path("budget_days")) assertThat(r.path("day").asString()).matches(DATE);
         } finally {

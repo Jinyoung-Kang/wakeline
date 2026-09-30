@@ -81,7 +81,8 @@ public class OpsController {
      * provider_error 해결 {id, upto, resolved_by} | null(키는 늘 있다), last_error_resolved = 그 해결의 upto ≥ last_error_at(시각을 모르거나
      * 형식이 틀리면 false — 모르는 오류를 해결됨으로 보이지 않는다). 해시의 오류 값은 그대로 둔다(증거). resolution_state 는 해결 기록의 상태.
      * budget_days 는 수집기의 하루 예산 키(budget.py day_key)를 옮긴 것이라 그 day 는 UTC 날 — budget_day_zone "UTC" 로 밝힌다(계약 v5 §G20: 화면은
-     * 그 날짜를 KST 날짜로 이름만 바꾸지 않고 창 "09:00 KST 부터 24 h" 로 적는다). 최근 8개 UTC 날.
+     * 그 날짜를 KST 날짜로 이름만 바꾸지 않고 창 "09:00 KST 부터 24 h" 로 적는다). 최근 8개 UTC 날. generated_at = 응답을 만든 서버 시각(UTC ISO) —
+     * 운영 화면이 수집기 해시의 시각(기상청 '파일 없음' 연속의 마지막 확인)을 서버 기준 지금과 견준다(계약 v5 §G22 — 브라우저 시계가 틀려도 같은 판정).
      */
     @GetMapping("/providers")
     public Map<String, Object> providers() {
@@ -100,8 +101,10 @@ public class OpsController {
         } catch (RuntimeException ignored) { }
         var budgets = db.sql("SELECT provider, to_char(day, 'YYYY-MM-DD') AS day, calls, limit_value FROM provider_budget_day WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7 ORDER BY 2 DESC, provider").query().listOfRows();
         // provider_switch: 켜고 끄기의 원본(DB)과 collector 가 따르는 Redis 미러를 공급자마다 나란히(R-94) — providers 의 disabled 는 미러 값이다
+        // generated_at: 이 응답을 만든 서버 시각 — 운영 화면이 수집기 시각(missing_checked_at 등)의 나이를 브라우저 시계가 아니라 서버 기준으로 잰다(계약 v5 §G22)
         return Map.of("providers", list, "active", status.publicStatus().get("active_providers"), "collector", status.collectorHeartbeat(),
-                "switches", switchEvents, "budget_days", budgets, "budget_day_zone", "UTC", "provider_switch", switches.states(), "resolution_state", res.state().label());
+                "switches", switchEvents, "budget_days", budgets, "budget_day_zone", "UTC", "provider_switch", switches.states(), "resolution_state", res.state().label(),
+                "generated_at", Instant.now());
     }
 
     /**

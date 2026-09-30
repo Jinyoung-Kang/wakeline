@@ -516,3 +516,143 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     통합(2026-09-30): 찍는 스크립트는 실데이터 스택만 찍고(fixture 8701 은 멈춘다) 실데이터 스택(8700)은 아직 이 판이 아니라 다시 찍지 못했다. 13개 그림이 모두
     UTC · 옛 상태 바를 보여 그림 설명(KST 만 · 칩 + 상세)과 어긋나므로 그림과 manifest 항목을 지웠다 — 설명서는 ‘스크린샷 준비 중’ 자리표시와 그 화면의 설명을 보인다.
     배포 뒤 `node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>` 로 다시 찍는다.
+## G. 13차 개정(2026-09-30 · 레인 route · 사용자 요청 "항공기 노선 조회도 권장 방안으로 진행해" — ADR-025 개정) — 선택 항공기 노선 조회도 세션 우편함 밖으로
+- G21(§G18 이 남긴 일 · 계약 v4 §A 의 selected.route · ADR-008 세션 우편함) **선택 항공기 노선의 Redis 읽기는 세션 우편함 밖에서 — selected 는 곧바로 pending,
+  답은 늦어도 Redis 명령 상한에**.
+  - 관찰(코드 — `RouteSelectionLookupTest` 의 첫 시험이 옛 API 로 먼저 재현: GET 을 막은 동안 pong · diff 가 5 s 안에 오지 않음): `WsHub.sendSelected`(우편함
+    작업)가 `RouteReader.forAircraft` 로 Redis GET `wakeline:route:{CALLSIGN}` 을 그 자리에서 읽었다(명령 상한 `spring.data.redis.timeout` 3 s, 콜사인별 5 s
+    캐시 — 실패도 5 s). Redis 가 느리거나 답하지 않는 동안 선택 항공기 하나가 그 세션의 pong · 항공기 · 선박 diff · heartbeat 를 읽기마다 최대 명령 상한 3 s
+    붙잡고, 캐시가 지날 때마다 되풀이했다.
+  - Redis 연결이 기다리는 방식(`config.RedisConfig` 에서 확인 — 설정값 · 라이브러리 기본값, 잰 값 아님): 기본 연결은 `RedisConfig` 가 만든 팩토리라 Boot 의
+    Redis 자동 구성이 물러난다(`@ConditionalOnMissingBean(RedisConnectionFactory)`) — `RedisConfig` 가 읽지 않는 `spring.data.redis.*` 키(예: `connect-timeout`)는
+    효과가 없다. 명령 상한 = `spring.data.redis.timeout`(3 s): 서버가 답하지 않거나 끊긴 줄 모르는 연결에서 명령마다 이만큼. 끊긴 것을 아는 연결에서는
+    `REJECT_COMMANDS` 라 곧바로 실패. 연결 맺기 상한은 설정하지 않아 lettuce-core 7.5.2 기본 10 s(`SocketOptions.DEFAULT_CONNECT_TIMEOUT`) — 공유 연결을 처음
+    맺을 때(맺지 못했으면 다음 명령이 다시)만, 시도는 팩토리 잠금 안에서 하나씩.
+  - api(`ws.RouteLookups` · `WsHub.selectedRoute` · `route.RouteReader`): 우편함은 `RouteReader.cached`(메모리 — I/O 없음)만 본다. 없으면 세션의 조회(같은
+    물음)의 답, 그것도 없으면 노선 조회 실행기에 맡기고 돌아온다 — 데몬 스레드 4(`route-lookup-N`, **고른 값 — 잰 값 아님**: Lettuce 는 연결 하나를 여러
+    스레드가 나눠 쓴다), 대기열 max(256, `wakeline.ws-max-conn`), 가득 차면 읽지 않고 곧바로 unavailable(`outcome=rejected` — 기억하지 않아 다음 다시 계산이
+    다시 읽는다). 선박 조회 실행기(§G18 — 스레드 = DB 읽기 풀 연결 수)와 따로다: Redis 가 멈춰도 DB 조회 스레드를 잡지 않는다. 결과는 `SELECTED_ROUTE` 우편함
+    작업으로 돌아와 다시 계산하고 바뀌었으면 보낸다.
+  - 틀은 선박 조회와 같은 `ws.SelectionLookups`(§G18 의 `ShipLookups` 에서 선박에 매이지 않은 부분 — 출처 · 답/끝남(Flight) · 차례 · 마감 · 거절/예외 표시 ·
+    지표 · 세션 쪽 세대(Pending) — 을 옮겨 일반화했다. 복사하지 않은 까닭: settled 가 답보다 먼저 · 마감 뒤 끝남이 다시 계산을 부름 · 답을 보내지 않은 조회만
+    셈 같은 순서가 두 벌로 갈라지지 않게). `ShipLookups` 는 선박의 두 단계 사슬과 그 '읽지 못함' 값만 남고 동작 · 지표 이름은 그대로다.
+  - selected(WS — 키 · 값 · 스키마 그대로): 물음(hex · 정규화한 콜사인)의 답이 캐시에 없으면 selected 를 **곧바로** route pending("노선 조회 중")으로 보내고,
+    답이 오면 다시 보낸다. 5 s 캐시가 지나 같은 물음을 다시 읽는 동안은 이 세션에 이미 보낸 값을 그대로 싣는다(found 가 5 s 마다 "조회 중" 으로 깜박이지
+    않는다 — 바뀌었으면 답이 올 때 보낸다). 그래서 **pending 의 뜻이 넓어진다**(계약 v4 §A "캐시 없음(선택 직후)"): 수집기가 아직 쓰지 않았거나, api 가 그
+    결과를 읽는 중(≤ 아래 마감). 웹의 "노선 조회 중" 설명(title — `lib/route.ROUTE_PENDING_TITLE`)이 api 의 읽기와 그 상한을 적는다(`ROUTE_API_READ_BOUND_S`
+    = 3 — `tests/route-pending.test.ts` 가 application.yml 의 값과 대조). 보통 경로 계산값 10 s(웹 `lib/route.ROUTE_NORMAL_PATH_S`)는 그대로다(api 의 다시 읽기 시간은 잰 값이 없어
+    셈에 넣지 않는다 — 상한만 적는다).
+  - 마감: api 는 늦어도 물음 뒤 Redis 명령 상한(운영 **3 s** — 설정값)에 답을 정한다. 설정 식은 한 곳 `RedisConfig.COMMAND_TIMEOUT`
+    (`${spring.data.redis.timeout:3s}`)이고 `RedisConfig.commandTimeout`(Boot 의 Duration 해석과 같은 `DurationStyle` — 단위가 없으면 ms)으로 읽는다 — 기본
+    연결의 Lettuce 명령 상한 · 이 마감(`WsHub`) · REST 기다림(`RouteReader`)이 같은 식이다. 해석할 수 없거나 0 이하면 기동하지 않는다. 그때까지 끝나지
+    않았으면 unavailable("노선 조회 실패" — 계약 v4 §A 에 이미 있는 'Redis 오류'). 읽기는 계속돼 캐시를 채우고, 끝나면 곧바로 다시 계산해 실제 값을 보낸다 —
+    실패를 붙잡아 두지 않는다. 앞 조회를 기다린 시간도 마감에 든다. 정한 답은 `SELECTED_ROUTE` 우편함 작업으로 나가므로 화면에 닿는 때는 그 세션 우편함의
+    차례다(Redis 가 멈춘 동안은 앞선 status 작업이 먼저 기다릴 수 있다 — 아래 '남은 것', 상한은 말하지 않는다). 웹 title 도 그렇게 적는다.
+  - 세대 · 단일 비행(§G18 과 같음): 다른 항공기 · 선택 해제 · 같은 항공기의 콜사인 바뀜 · 세션 닫힘이면 진행 중인 조회의 답은 버린다(답을 보내지 않은 조회 —
+    `wakeline_ws_route_lookup_dropped_total`). 세션은 settled 까지 조회를 들고 있어 같은 물음의 다시 계산(항공기 이동 · focus 관측)은 새 읽기를 올리지 않고,
+    다음 물음의 읽기는 앞 조회가 settled 된 뒤 시작한다(그사이 또 바뀌면 읽지 않는다 — `outcome=skipped`) — 세션마다 실행기 작업 하나 이하. 같은 콜사인은
+    세션을 가로질러 Redis 읽기 하나(`RouteReader` 의 `persist.SingleFlight` — REST `/aircraft/{hex}` 도 붙는다, 기다림은 아래 상한까지). 캐시 시각은 읽기가 끝난 때(느린 읽기 뒤에도
+    5 s 를 온전히).
+  - REST 의 기다림 · 닫기(리뷰 2026-09-30): `SingleFlight` 는 진행 중 표시를 실행기에 올리기 전에 두므로 REST(`RouteReader.forCallsign`)가 아직 대기열에 있는
+    WS 읽기에 붙을 수 있다 — 고치기 전에는 Redis 가 멈춘 동안 대기열 순서만큼 상한 없이 기다렸다. 이제 붙은 쪽은 Redis 명령 상한까지만 기다리고 unavailable 로
+    답하며 센다(`wakeline_route_read_wait_timeouts_total` — 그 읽기는 그대로 둬 제 값으로 캐시를 채운다). REST 가 표시를 얻었으면 전처럼 제 스레드에서 한 번
+    읽는다. `WsHub.stop` 이 조회 실행기를 `shutdownNow` 로 닫을 때 대기열에서 버린 읽기는 `SingleFlight.abandon` 으로 거절처럼 끝내고 표시를 지운다(그러지
+    않으면 그 future 가 끝나지 않아 같은 콜사인의 REST 가 붙었다 — 선박 조회도 같은 틀).
+  - 새 최악(설정값 — 잰 값 아님): 세션의 pong · diff · heartbeat ping 은 노선 읽기를 기다리지 않는다. 첫 selected 는 곧바로(pending), api 가 노선의 답을
+    정하는 때 ≤ 3 s(화면에 닿는 때는 우편함 차례). REST 항공기 상세의 노선 ≤ 3 s(제가 읽든 붙든 — 공유 연결을 맺어야 하는 제 읽기는 연결 맺기가 더해진다).
+    스레드 하나를 잡는 시간 ≤ 3 s(서버가 답하지 않을 때) · 곧바로(끊긴 것을 아는 연결) · 공유 연결을 아직 맺지 못했을 때는 연결 맺기(시도마다 ≤ 10 s, 잠금
+    안에서 하나씩) + 3 s. Redis 가 멈춘 동안의 처리량 = 스레드 4 / 3 s — 넘치는 물음은 대기열에서 기다리고(세션마다 하나) 답은 여전히 마감에 나간다.
+  - 남은 것(범위 밖 — 같은 종류): heartbeat · 초기 세트의 status 메시지는 여전히 우편함에서 Redis 를 읽는다 — `WsHub.statusPayload`(3 s 캐시)가 허브 전체 잠금
+    (`statusLock`) 안에서 `StatusService.publicStatus` 를 부르고 그 안의 `safeHash` 셋(HGETALL — collector heartbeat · radar_kr meta · active providers)이 각
+    명령 상한 3 s 를 기다릴 수 있다(합 ≤ 9 s — 설정값의 합). Redis 가 멈춘 동안은 heartbeat 주기(30 s)마다 한 세션이 그만큼 만들고 다른 세션은 그 잠금을
+    기다린다. 연결 맺기 상한도 `RedisConfig` 가 설정하지 않는다(Lettuce 기본 10 s — 공유 연결을 맺을 때만). `spring.data.redis.connect-timeout` 을 적어도
+    효과가 없다(`RedisConfig` 가 읽지 않는다 — 바꾸려면 `RedisConfig` 의 `SocketOptions` 로).
+  - 지표: `wakeline_ws_route_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_route_lookup_seconds`(물음 → 답) ·
+    `wakeline_ws_route_lookup_queue` · `wakeline_ws_route_lookup_dropped_total` · `wakeline_cache_requests_total{cache=route,result=hit}`(진행 중인 읽기에 붙은
+    것 포함 — miss 는 실제 Redis 읽기) · `wakeline_route_read_wait_timeouts_total`(REST 가 붙은 읽기를 명령 상한까지 기다렸지만 끝나지 않음). 시험:
+    `RouteSelectionLookupTest`(가짜 Redis 가 GET 을 막음 — pending 동안 pong · diff · heartbeat 주기 · 마감의 unavailable 과 늦은 실제 값 · 마감 뒤 다시 계산은
+    새 읽기 없음 · 늦은 답 버리기 · 포화 · 세션을 가로지른 한 읽기 · 항공기를 바꿔도 작업 하나 · 다시 읽는 동안 깜박이지 않음 · 운영 배선 · 명령 상한을 읽는
+    곳이 모두 한 식 · 닫을 때 버린 읽기는 거절로 끝남) · `WsIntegrationTest`(스프링이 만든 허브의 마감 = 속성 2500ms) · `RedisConfigTest` ·
+    `RoutePausedRedisTest`(Testcontainers redis:8-alpine 을 docker pause — 각 500 ms 미만을 단언, 시험이 고른 명령 상한 1.5 s 에 unavailable, 같은 동안 REST 도
+    그 안에, 다시 풀면 found) · `RouteReaderTest`(대기열의 읽기에 붙은 REST 는 명령 상한에 unavailable · 운영 생성자가 속성에서 상한을 읽음) · 웹
+    `route-pending.test.ts`. ADR-025 '개정' 절.
+
+## G. 14차 개정(2026-09-30 · 레인 kma · 운영/로그 스크린샷 — 기상청 레이더 '파일 없음'이 로그를 채우고 운영은 '성공'으로 보였다)
+레인에서는 13차 · §G21 로 썼다 — 세 레인을 합칠 때(integ, 2026-09-30) 노선 조회(13차 · §G21) 다음으로 옮겼다: 14차 · §G22(`tests/docs-contract-g11` 이 번호가 겹치지 않는지 본다).
+- G22(FR-31 · R-03 · R-72 · §G20) **기상청 내려받기 '파일 없음' 연속을 이름 붙여 싣는다 — 로그는 연속마다 WARN 한 번, 실행은 'missing', 화면은 까닭을 적는다**.
+  확인(오케스트레이터가 실제 호출로, 2026-09-30 09:50 KST 무렵): 목록 API `rdr_cmp_file_list.php?cmp=HSR&tm=20260930`(기본 ext=Y)은 `RDR_CMP_HSR_EXT_*` 를,
+  ext=K 는 EXT 와 `RDR_CMP_HSR_KMA_*` 를 09:50 KST 까지 싣는데 내려받기 API `rdr_cmp_file.php?tm=…&data=bin&cmp=HSR` 는 202609300815 부터 모든 tm 에 HTTP 200
+  `# file not exist (RDR_CMP_HSR_PUB_<tm>.bin.gz)` 로 답했다(0800 · 0810 은 gzip). 내려받기에 ext=Y · ext=K 를 붙여도 PUB 를 찾고, 문서에는 tm · data · cmp · authKey 와
+  PUB 파일 이름만 있다 — 공급자 쪽에서 내려받기 파일이 멈춘 것이고 우리 해석 문제가 아니다. 결함 셋: tm 마다 3번 뒤 WARN(5분마다 같은 지문 — 로그 화면이 그것으로 찼다),
+  저장한 프레임이 없는 주기도 실행 'ok' · 공급자 LAST SUCCESS 갱신(RECORDS 0 · FAILS 0), 까닭이 어디에도 없음(KMA 칩은 나이로 STALE 만).
+  - 수집기(`jobs/kma_radar.py`): tm 이 R-03 의 3번 모두 없다고 답했고 그보다 새 파일이 없으면(저장된 프레임 · 같은 주기에 받은 파일 — 주기의 후보를 모두 본 뒤에
+    가린다: 후보는 오래된 것부터라 한 tm 씩 바로 가리면 뒤이어 온 늦은 파일을 보기 전에 연속을 열고 닫았다, 통합 리뷰 2026-09-30) 연속(`MissingStreak` — 첫 tm · 마지막 tm · 없다고 답한
+    서로 다른 tm 수(확인한 tm 마다 한 번 — 확인하지 않은 tm 은 세지 않는다) · 마지막 확인 · 답에 적힌 파일 이름 · 목록이 그 tm 에 싣는 종류)을 연다. 첫 tm · 수에는 이
+    프로세스에서 없다는 답을 받은, 파일이 있던 가장 새 tm 보다 새 tm 을 모두 넣는다(세 번을 채우기 전에 후보에서 밀려난 tm 포함 — 연속 한가운데서 다시 띄운 수집기의
+    첫 tm 이 늦지 않게. 그 프로세스가 연속 전에 한 번도 묻지 않은 tm 은 받은 답이 없어 세지 않는다). 연 순간 WARN 한 번,
+    그 뒤로는 `MISSING_REMIND_S`(60분 — 선택값)마다 주기 끝에 한 번만, gzip 이 다시 오면 INFO(공백 길이 — 첫 tm 부터 다시 온 tm 까지). 연속 동안은 주기마다 두 tm 만
+    확인한다(`streak_probes` — 저장 안 됨 · 해석 불가 아님): 목록의 가장 새 tm 과, 첫 tm 이후이면서 `MISSING_RECHECK_S`(10분 — 선택값, R-03 의 마지막 시도 나이) 넘게
+    앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03 — 2026-09-28 첫 시도에 182 중 14 tm) 때문이다: 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은
+    아직 없어서 연속이 닫히지 않았다(리뷰). 예산 `budget:kma_radar` 주기당 목록 1 + 확인 2 = 하루 864 < 한도 1,000(전에는 목록 1 + 바이너리 4 = 하루 1,440).
+    회복 뒤에는 보관 창의 빈 곳을 전처럼 다시 시도하고, 알린 공백 안의 tm 을 포기할 때는 INFO — 알린 공백은 meta 해시에도 남겨 다시 띄운 수집기도 읽는다
+    (끝 tm 이 `MISSING_GAP_KEEP_S` 3 h 를 넘으면 버린다). 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
+    `KMA_APIHUB_KEY` 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 연속 중 목록 호출이 실패하면 실행 'error', 연속과 마지막 확인은 그대로다. 목록 줄의 종류(EXT · KMA …)는 공급자가 파일 이름에서 읽어 tm 마다 싣는다
+    (`parse_file_kinds` — 목록 글자 그대로). 수집기를 다시 띄우면 마지막 확인이 `MISSING_CARRY_S`(15분 — 선택값) 안인 연속만 이어받고, 아니면 지운다.
+  - 실행 기록(`ingest_run.status`, 주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 `ok`, 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
+    거절돼 멈췄으면 `budget_exhausted`(· `budget_unavailable`), '파일 없음' 답이 있었으면 `missing`, 해석 불가만이면 `quarantined`(오류 글자 = 마지막 답 · 연속 요약). `ok` 가 아닌 주기는 공급자 해시의 `last_success_at` · `last_records` 를 갱신하지 않는다
+    (예산 사용량은 쓴다 · `consecutive_failures` 는 호출 실패만 센다 — 그대로).
+  - 수집기 해시: `wakeline:radar_kr:meta` 와 `wakeline:provider:kma_radar` 에 `missing_since_tm` · `missing_last_tm` · `missing_tms` · `missing_checked_at`(UTC ISO) ·
+    `missing_file` · `missing_listed`("EXT,KMA") — 닫으면 빈 값. 쓰기에 실패하면 다음 주기에 다시 쓴다. meta 해시에만 알린 공백 `missing_gap_from` · `missing_gap_to`
+    (수집기 내부 값 — api 는 싣지 않는다).
+  - api(R-72 — `KrRadarMissing`): `/radar/kr` 와 `/status` · WS `status` 의 `radar_kr` 에 `missing {since_tm, last_tm, tms, checked_at, file?, listed?}` — 연속이 없으면 키가 없다.
+    핵심 값(since_tm · last_tm ≥ since_tm · tms ≥ 1 · 시간대 있는 checked_at)이 하나라도 틀리면 연속 전체를 빼고 센다(`wakeline_radar_kr_parse_errors_total{field="missing"}`),
+    파일 이름(`RDR_CMP_…_<tm>.bin.gz`) · 종류(`[A-Z]{1,8}` 최대 8개)만 틀리면 그 키만 뺀다. `/radar/kr` 의 ETag 에 든다 — 프레임이 그대로여도 연속이 바뀌면 304 가 아니다.
+    `/ops/providers` 는 공급자 해시를 그대로 싣고(웹이 형식을 본다) 응답을 만든 서버 시각 `generated_at`(UTC ISO)을 더한다(통합 리뷰 2026-09-30 — 운영 줄의
+    `확인 멈춤`을 서버 기준 지금으로 잰다).
+  - 계약 검사: `schemas/ws/server.v1.json` `status.radar_kr.missing` · `tools/rest_contract_check.py` `KR_MISSING`(교차 검사: last_tm ≥ since_tm, 파일 이름의 tm 은 그 사이) ·
+    기록 표본 `radar_kr_missing`(연속 중 — missing 필수) · `status_ais`(missing 필수) · 웹 검증기 `lib/ws-validate` `KR_MISSING`(웹 표본 `ws-samples.v1.json` 을 다시 만들었다).
+  - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): 잰 것만 — 한 줄 `기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST ·
+    확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST`(구간 = 없다는 답을 받은 가장 이른 · 가장 새 tm, 수 = 확인한 서로 다른 tm — 구간의 tm 이 모두
+    그만큼이라고 하지 않는다. PUB 는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다). 마지막 확인이 `KR_MISSING_CHECK_STALE_MIN`(15분 = 수집기 `MISSING_CARRY_S`,
+    시험이 견준다)을 넘으면(서버 기준 지금 — 상황판은 서버 시계 보정, 운영 표는 `/ops/providers` 의 `generated_at` · 없으면 판정하지 않는다) `확인 멈춤`을 붙인다 — 수집기가 멈추면 연속을 지울 주체가 없다. 나이 경계는 웹이 둔다(운영 표는 api 가 검증하지 않는 공급자
+    해시를 읽으므로 한 곳 — `isKrRadarStale` 의 나이 쪽과 같은 방식). KMA 칩 낱말 `파일 없음`(`파일 없음 · 확인 멈춤`, 주의 이상 · 줄에 고정, 문장은 title) ·
+    상세 행 `기상청 내려받기 파일` · 레이더 패널 · 범례 · 타임라인(쓸 수 있으면 `파일 없음` 표시, 보관 프레임이 만료됐으면 `기상청 레이더 없음 — …`) · 운영 공급자 표
+    (kma_radar 행 아래 주의 줄) · 실행 상태 `missing` · `quarantined` 는 주황과 뜻(title). 보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다.
+  - 바꾸지 않는 것: 영상 · 목록 일관성(REL-19), STALE 기준(900 s — meta.fetched_at), 연속이 아닐 때의 R-03 3번 시도, 부분 합성 다시 받기(ADR-021), 원문(로그 메시지 본문 ·
+    실행 오류 글자 — 기상청 답 앞부분 그대로).
+  - 회귀 막기: collector `tests/test_kma_missing.py`(WARN 수 · 확인 2개 · 예산 · 회복 · 늦게 생기는 파일의 회복 · 예산 멈춤 실행 하나 · 알린 공백의 재기동 ·
+    서로 다른 tm 수 · 키 없음 지우기 · 목록 실패 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기 · 같은 주기의 늦은 파일은 한 tm · 연속 중 재기동의 첫 tm · 주기가 중간에
+    끝나도 포기한 tm 을 알림) · `test_redis_integration`(수집기 ACL 아래 HGETALL meta · HSET missing_* · 알린 공백 — 실 Redis) · `test_rest_contract_rules` · api
+    `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT`(ETag · /status) · `RestSamplesIT` · `WsSchemaContractTest` · web `tests/kma-missing.test.ts` ·
+    `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색 · 서버 시각 기준 `확인 멈춤`) · api `StatsIT`(`generated_at`).
+
+## G. 15차 개정(2026-09-30 · 레인 ais · 로그 화면의 keepalive 1011 두 건) — ais 수신 진단 필드 · 끊김 로그 수준
+레인에서는 13차 · §G21 로 썼다 — 세 레인을 합칠 때(integ, 2026-09-30) 번호만 뒤로 밀었다: 15차 · §G23(내용은 §G21 · §G22 와 겹치지 않는다).
+- G23(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
+  - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
+    `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
+    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
+    (받던 연결이 끊겨 열린 공백 — 마지막 데이터 → 다시 받은 데이터 — 이 30 s 안에 닫힌 횟수, 없앤 구역 포함). `queue_wait_max_s` 에는 지금 맨 앞에서 기다리는 원문의
+    머문 시간도 든다(정리 태스크가 멈춰도 모름이 되지 않게). 수집기가 고른 값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다, 초는 지수 없는 십진수):
+    `queue_limit`(원문 대기열 건수 상한) · `loop_tick_s`(0.5) · `loop_stall_s`(1) · `loop_warn_s`(5) · `loop_warn_every_s`(60 — 루프 측정이 없는 수집기면 넷 다 빈 값) ·
+    `reconnect_quick_window_s`(30) · `reconnect_warn_count`(3) · `reconnect_warn_window_s`(1800). fixture 재생은 연결이 없어 `ws_queue_max` · `ping_rtt_max_s` 만 빈 값이다
+    (루프 지연 · 원문 대기열은 두 모드 모두 잰다 — `main.py`).
+  - `shards[]` 원소에 `ping_rtt_max_s`(초 수 또는 null) · `ws_queue_max`(정수 또는 null)를 끝에 더한다 — 원소 필드 순서는 `SHARD_FIELDS`(contract_check 가 본다).
+    api `AisStatus` 는 이 둘을 읽지 않는다(지금 필드만 검사 — 더한 필드가 있어도 구역 정보를 버리지 않는다, `AisStatusTest` · `RestSamplesIT` 표본에 실었다).
+  - `GET /api/v1/ops/pipeline` 의 `ais` 에 같은 이름(snake_case)으로 싣는다: `reconnects_quick_total` · `loop_lag_max_s` · `loop_stalls_total` · `queue_wait_max_s` ·
+    `queue_depth_max` · `queue_limit` · `ws_queue_max` · `ws_queue_limit` · `ping_rtt_max_s` · `ping_timeout_s` · `diag_window_s` · `reconnect_quick_window_s` ·
+    `reconnect_warn_count` · `reconnect_warn_window_s` · `loop_tick_s` · `loop_stall_s` · `loop_warn_s` · `loop_warn_every_s`. 같은 신선도 규칙(updated_at 30 s)이고 초는
+    부호 · 지수 없는 십진수만, 수 · 상한은 정수만 — 그 밖은 null. `diag_window_s` 도 초다(수집기 `_setting` · contract_check 와 같이 — 통합 리뷰 2026-09-30 에
+    api 만 정수로 읽던 것을 고쳤다: 창이 60.5 처럼 소수가 되면 조용히 null 이었다). 운영 PIPELINE 탭은 창 · 상한 · 시간 초과를 detail 에 "수집기 설정" 으로 적고, 설명의 고른 숫자
+    (회복 창 · 되풀이 WARN 기준 · 루프 틱 · 멈춤 · WARN 문턱과 간격)를 응답에서 채운다(모르면 "—"). 색으로 판정하지 않는다: 수신 버퍼가 상한 이상이면
+    "상한 도달 — 그때 소켓 읽기가 잠시 멈춤(한꺼번에 받은 묶음 또는 루프 멈춤 — 결함 아님 …)" 을 적을 뿐이다(꺼낸 뒤 남은 수라 상한과 같아도 멈춰 있었다).
+    어느 것도 손실 수가 아니다(손실 배지에 들지 않는다).
+  - 끊김 로그 수준(수집기, 계약 v5 §C2 의 WARN · ERROR 싣기와 함께 읽는다): 받던 연결이 끊겨 열린 공백(마지막 데이터부터)이 30 s 안에 닫히면 INFO(로그
+    화면에 오르지 않는다 — `reconnects_quick_total` 로 센다). 창은 끊긴 순간이 아니라 공백 길이로 잰다. 같은 연결이 30분에 3번째부터 끊김 · 끊길 때 공백이 이미
+    30 s 를 넘음(idle 끊김 등) · 데이터 없이 끝난 연결 · 공백이 30 s 를 넘도록 다시 받지 못함(과 그 뒤 늦은 회복)은 WARN.
+    `reconnects_quick_total` 은 로그 수준이 아니라 공백 길이로 센다: 되풀이 끊김(끊김 줄 WARN) · 그 사이 데이터 없이 끝난 재연결 시도(WARN)가 있었어도 공백이
+    30 s 안에 닫히면 센다(회복 줄은 INFO) — 운영 "짧은 재연결" 설명도 그렇게 적는다('INFO 로만 남는 끊김' 이 아니다, 통합 리뷰 2026-09-30).
+    공백(`ais_gap` · AIS 수신 공백 목록 · 상태 해시 `gap_*`)은 로그 수준과 상관없이 그대로 기록한다. 끊김 로그 한 줄에 최근 60 s 최댓값과 공급자 지연 p50 을 붙인다.
+  - 회귀 막기: collector `test_ais_keepalive`(1011 기제 재현 — 루프 멈춤은 두 콜백 순서를 각각 고정) · `test_ais_diag`(한꺼번에 받은 묶음 · 멈춘 소비자 ·
+    고른 값 싣기) · `test_ais_reconnect_log`(공백 길이로 재는 회복 창) · `tools/contract_check.py`(새 필드 모양 · main.py 처럼 만든 fixture 의 모름 · 구역 최댓값),
+    api `OpsPipelineControllerTest` · `OpsPipelineIT`, 웹 `tests/ops-pipeline-ais-diag.test.ts`(설명에 숫자를 적지 않음 포함).

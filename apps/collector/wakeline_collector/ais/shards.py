@@ -9,8 +9,9 @@
 - 계약이 정하지 않은 합계는 한 구역일 때 v4 이전과 같게 두고, 여럿이면 좋게 말하지 않는 쪽으로 정한다:
   state = 가장 나쁜 구역의 상태(STATE_RANK) · connected_since = 모두 연결된 뒤로(연결 시각 최댓값) · deflate = 하나라도 아니면 0 ·
   last_error·provider_error = 가장 최근 것 · 누적 수(msgs_total·sessions_ended 등) = 구역 합(없앤 구역 포함 — 줄어들지 않게).
-- shards = JSON 배열(≤ 3) [{scope, state, connected, last_msg_at, msgs_per_s, lag_p50_s, gap_open_since, gap_reason, sessions_ended}].
-  모르는 값은 null(추정하지 않는다).
+- shards = JSON 배열(≤ 3) [{scope, state, connected, last_msg_at, msgs_per_s, lag_p50_s, gap_open_since, gap_reason, sessions_ended,
+  ping_rtt_max_s, ws_queue_max}]. 뒤의 둘은 진단(ADR-014 부록 C): 최근 60 s 의 keepalive 왕복 최댓값(초) · websockets 수신 버퍼에 남은 프레임
+  최댓값. 모르는 값은 null(추정하지 않는다). 합계 ping_rtt_max_s · ws_queue_max = 구역 최댓값.
 
 - shards[].scope 는 열린 공백이 있으면 **그 공백의 scope**(공백이 열린 순간 구독하던 상자, 구역 없는 공백이면 null)다 — 끊긴 사이
   상자가 바뀌어도 만료 멈춤·항적 끊기·재시작 이어받기가 공백이 난 영역을 따른다. 공백이 없으면 지금 구독 문자열.
@@ -60,6 +61,8 @@ SHARD_FIELDS = (
     "gap_open_since",
     "gap_reason",
     "sessions_ended",
+    "ping_rtt_max_s",
+    "ws_queue_max",
 )
 
 
@@ -129,6 +132,7 @@ class ShardSet:
         self.retired_msgs_total = 0
         self.retired_sessions_ended = 0
         self.retired_subscribe_updates = 0
+        self.retired_reconnects_quick = 0
         self.retired_last_gap: dict[str, str] | None = None
         self.restored_last_gap: dict[str, str] | None = None  # 이전 실행의 '마지막 닫힌 공백'(합계)
         # 재시작 때 같은 구역이 없어 이어받은 구역 없는(모든 선박에 적용) 공백 — 어느 구역에도 붙이지 않고,
@@ -214,6 +218,7 @@ class ShardSet:
         self.retired_msgs_total += f.msgs_total
         self.retired_sessions_ended += f.sessions_ended
         self.retired_subscribe_updates += f.subscribe_updates
+        self.retired_reconnects_quick += f.reconnects_quick
         self.retired_last_gap = _later(self.retired_last_gap, f.gaps.last)
         self.retired_pending.extend(f.gaps.pending)
         f.gaps.pending.clear()
@@ -288,6 +293,11 @@ class ShardSet:
     @property
     def subscribe_updates(self) -> int:
         return self.retired_subscribe_updates + sum(s.feed.subscribe_updates for s in self._all())
+
+    @property
+    def reconnects_quick(self) -> int:
+        """끊겨 열린 공백이 회복 창 안에 닫힌 횟수(누적, 없앤 구역 포함 — 로그 수준과 상관없이 공백 길이로 센다: 되풀이 WARN 끊김도 창 안에 닫히면 든다)."""
+        return self.retired_reconnects_quick + sum(s.feed.reconnects_quick for s in self._all())
 
     def pending_queues(self) -> list[deque[dict[str, str]]]:
         """보낼 닫힌 공백 대기열들(구역마다 순서대로). 없앤 구역 것이 먼저(더 오래됐다)."""
@@ -385,6 +395,18 @@ class ShardSet:
         lags = [s.lag_p50_s for s in self.active if s.lag_p50_s is not None]
         return max(lags) if lags else None
 
+    @property
+    def ping_rtt_max_s(self) -> float | None:
+        """구역들의 최근 keepalive 왕복 최댓값(초). 어느 구역도 pong 을 받지 않았으면 None."""
+        vals = [v for f in self.feeds() if (v := f.ping_rtt.value()) is not None]
+        return max(vals) if vals else None
+
+    @property
+    def ws_queue_max(self) -> int | None:
+        """구역들의 최근 websockets 수신 버퍼 최댓값(프레임). 모르면 None."""
+        vals = [v for f in self.feeds() if (v := f.ws_buffer.value()) is not None]
+        return int(max(vals)) if vals else None
+
     def shards_view(self) -> list[dict[str, Any]]:
         out = []
         for s in self.active:
@@ -400,6 +422,8 @@ class ShardSet:
                     "gap_open_since": _iso(g.open_since),
                     "gap_reason": (g.reason or None) if g.open_since is not None else None,
                     "sessions_ended": f.sessions_ended,
+                    "ping_rtt_max_s": None if (rtt := f.ping_rtt.value()) is None else round(rtt, 2),
+                    "ws_queue_max": None if (buf := f.ws_buffer.value()) is None else int(buf),
                 }
             )
         return out

@@ -356,6 +356,9 @@ class ShipSelectionLookupTest {
             FakeWsSession a = ready(k, "a"), b = ready(k, "b"), c = ready(k, "c");
             for (FakeWsSession f : List.of(a, b, c)) k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"" + MMSI + "\"}");
             for (String id : List.of("a", "b", "c")) await(() -> k.handler.session(id).shipLookup != null && k.handler.session(id).idle());
+            // 읽기가 DB 에서 기다리기 시작할 때까지(2026-09-30 기준 실행에서 1/834 로 흔들렸다: 새 작업 스레드가 첫 작업을 잡기 전의 짧은 틈에는 활성 수가 0 이고
+            // 대기열도 비어 있다 — 세는 시점의 문제이지 스레드 수의 문제가 아니다)
+            await(() -> db.reads.size() == 1);
             // 고친 뒤(재현을 뒤집음 — 전에는 스레드 셋: 하나는 읽고 둘은 join 으로 기다렸다): 세 조회가 한 읽기에 붙고 스레드는 하나
             assertThat(lookups.getActiveCount()).as("one lookup thread for one DB read").isEqualTo(1);
             assertThat(lookups.getQueue()).isEmpty();
@@ -483,8 +486,8 @@ class ShipSelectionLookupTest {
     @Test void aThrowingSource_isAnsweredAsUnavailable_andCounted() {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         ShipLookups l = new ShipLookups(Runnable::run, 1_000, meters);
-        l.setStored(ShipLookups.Source.blocking(m -> null, m -> { throw new IllegalStateException("defect"); }));
-        ShipLookups.Flight f = l.load(MMSI, null, null, WANTED);
+        l.setStored(SelectionLookups.Source.blocking(m -> null, m -> { throw new IllegalStateException("defect"); }));
+        SelectionLookups.Flight<ShipLookups.Resolved> f = l.load(MMSI, null, null, WANTED);
         assertThat(f.answer()).isDone();
         assertThat(f.settled()).isDone();
         assertThat(f.answer().join().sel()).isEqualTo(ShipLookups.UNAVAILABLE);
@@ -492,8 +495,8 @@ class ShipSelectionLookupTest {
         assertThat(meters.counter("wakeline_ws_ship_lookups_total", "outcome", "error").count()).isEqualTo(1.0);
 
         ShipLookups closed = new ShipLookups(r -> { throw new RejectedExecutionException("shut down"); }, 1_000, meters);
-        closed.setStored(ShipLookups.Source.blocking(m -> null, m -> StoredStaticReader.Lookup.NONE));
-        closed.setPortCalls(ShipLookups.Source.blocking(st -> null, st -> PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED)));
+        closed.setStored(SelectionLookups.Source.blocking(m -> null, m -> StoredStaticReader.Lookup.NONE));
+        closed.setPortCalls(SelectionLookups.Source.blocking(st -> null, st -> PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED)));
         ShipLookups.Resolved r = closed.load(MMSI, null, null, WANTED).answer().join();
         assertThat(r.sel()).isEqualTo(ShipLookups.UNAVAILABLE);
         assertThat(r.calls()).as("unread and nothing cached for a null static").isNull();
@@ -504,7 +507,7 @@ class ShipSelectionLookupTest {
         assertThat(live.calls()).isEqualTo(PortCallsInfo.error("D7AB"));
         // 읽는 쪽이 거절을 future 로 알려도(운영 SingleFlight) 같다
         ShipLookups async = new ShipLookups(Runnable::run, 1_000, meters);
-        async.setStored(ShipLookups.Source.of(m -> null, (m, ex) -> CompletableFuture.failedFuture(new RejectedExecutionException("full"))));
+        async.setStored(SelectionLookups.Source.of(m -> null, (m, ex) -> CompletableFuture.failedFuture(new RejectedExecutionException("full"))));
         assertThat(async.load(MMSI, null, null, WANTED).answer().join().sel()).isEqualTo(ShipLookups.UNAVAILABLE);
         assertThat(meters.counter("wakeline_ws_ship_lookups_total", "outcome", "rejected").count()).isEqualTo(3.0);
     }
@@ -517,11 +520,11 @@ class ShipSelectionLookupTest {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         List<String> reads = new CopyOnWriteArrayList<>();
         ShipLookups l = new ShipLookups(Runnable::run, 60_000, meters);
-        l.setStored(ShipLookups.Source.blocking(m -> null, m -> { reads.add(m); return StoredStaticReader.Lookup.NONE; }));
+        l.setStored(SelectionLookups.Source.blocking(m -> null, m -> { reads.add(m); return StoredStaticReader.Lookup.NONE; }));
         CompletableFuture<Void> previous = new CompletableFuture<>();
-        ShipLookups.Flight waiting = l.load(MMSI, null, previous, WANTED);
+        SelectionLookups.Flight<ShipLookups.Resolved> waiting = l.load(MMSI, null, previous, WANTED);
         boolean[] wanted = {true};
-        ShipLookups.Flight dropped = l.load(OTHER, null, waiting.settled(), () -> wanted[0]);
+        SelectionLookups.Flight<ShipLookups.Resolved> dropped = l.load(OTHER, null, waiting.settled(), () -> wanted[0]);
         assertThat(reads).as("nothing is read before the previous read ends").isEmpty();
         assertThat(waiting.answer()).isNotDone();
         wanted[0] = false; // 세션이 다른 선박으로 바꿨다
@@ -540,7 +543,7 @@ class ShipSelectionLookupTest {
         CountDownLatch hold = new CountDownLatch(1);
         try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
             ShipLookups l = new ShipLookups(ex, 100, meters);
-            l.setStored(ShipLookups.Source.blocking(m -> null, m -> {
+            l.setStored(SelectionLookups.Source.blocking(m -> null, m -> {
                 try {
                     hold.await(10, TimeUnit.SECONDS);
                 } catch (InterruptedException e) {
@@ -548,7 +551,7 @@ class ShipSelectionLookupTest {
                 }
                 return StoredStaticReader.Lookup.NONE;
             }));
-            ShipLookups.Flight f = l.load(MMSI, null, null, WANTED);
+            SelectionLookups.Flight<ShipLookups.Resolved> f = l.load(MMSI, null, null, WANTED);
             assertThat(f.answer().get(5, TimeUnit.SECONDS).sel()).isEqualTo(ShipLookups.UNAVAILABLE);
             assertThat(f.settled()).as("the read still runs after the deadline answer").isNotDone();
             hold.countDown();
@@ -562,10 +565,10 @@ class ShipSelectionLookupTest {
     @Test void cachedAnswers_withoutIo() {
         ShipLookups l = new ShipLookups(Runnable::run, 1_000, new SimpleMeterRegistry());
         assertThat(l.cached(MMSI, null)).isEqualTo(new ShipLookups.Resolved(ShipLookups.UNKNOWN, null));
-        l.setStored(ShipLookups.Source.blocking(m -> null, m -> StoredStaticReader.Lookup.NONE));
+        l.setStored(SelectionLookups.Source.blocking(m -> null, m -> StoredStaticReader.Lookup.NONE));
         assertThat(l.cached(MMSI, null)).as("the stored part needs a read").isNull();
-        l.setStored(ShipLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
-        l.setPortCalls(ShipLookups.Source.blocking(st -> st == null ? PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED) : null, st -> null));
+        l.setStored(SelectionLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
+        l.setPortCalls(SelectionLookups.Source.blocking(st -> st == null ? PortCallsInfo.noCallSign(PortCallsInfo.NOT_RECEIVED) : null, st -> null));
         assertThat(l.cached(MMSI, null).sel().source()).isEqualTo("none");
         assertThat(l.cached(MMSI, ShipFanoutTest.stat(MMSI, "LIVE", 70))).as("the port-call part needs a read").isNull();
         assertThat(ShipLookups.selected(null)).isSameAs(ShipLookups.UNKNOWN);

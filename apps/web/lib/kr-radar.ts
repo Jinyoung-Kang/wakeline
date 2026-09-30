@@ -6,7 +6,7 @@
  * 어디에도 '완전'이라고 하지 않는다: partial=false 는 "기준 도달"(지난 60분 저장 프레임 중 최대와 같음)일 뿐, 기상청 합성이 완전한지는 자료에 없다.
  * 기준이 그 프레임 하나뿐이면 수집기가 판정을 두지 않는다(REF_MIN_SUPPORT) — "판정 —".
  */
-import { fmtKstMinute, kstWallMs } from "./time";
+import { fmtKst, fmtKstMinute, fmtKstRange, fmtKstSpan, fmtTimeTitle, kstWallMs, timeParts } from "./time";
 import type { KrRadarFrame } from "./types";
 
 /** 기준 지점 수를 세는 창(분) — 수집기 jobs/kma_radar.py REF_WINDOW_S(선택값)와 같다(tests/kma-partial 이 견준다). 설명 글자에만 쓴다. */
@@ -90,4 +90,93 @@ export function krLayerId(f: Pick<KrRadarFrame, "tm" | "url">): string {
 /** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST"(계약 v5 §G20). 틀리면 "—". */
 export function krTmClock(tm: string | null | undefined): string {
   return fmtKstMinute(kstWallMs(tm));
+}
+
+// ---- 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) ----
+
+/** 연속 동안 수집기가 가장 새 tm 과 함께 다시 확인하는 tm 의 나이 하한(분) — 수집기 jobs/kma_radar.py MISSING_RECHECK_S(선택값)와 같다(tests/kma-missing 이 견준다). 설명 글자에만 쓴다. */
+export const KR_MISSING_RECHECK_MIN = 10;
+/**
+ * 마지막 확인이 이보다(분) 오래되면 '확인 멈춤' — 수집기 MISSING_CARRY_S(다시 띄운 수집기가 연속을 이어받는 상한, 선택값)와 같다(tests/kma-missing 이 견준다).
+ * 연속 동안 수집기는 5분마다 확인한다 — 그보다 오래 확인이 없으면 수집기가 멈췄거나 목록 호출이 실패하는 중이라 연속이 지금도 맞는지 모른다(리뷰 2026-09-30).
+ */
+export const KR_MISSING_CHECK_STALE_MIN = 15;
+
+/** 연속 한 건(krMissing) — 칩 낱말 · 한 줄 · 여러 줄 설명과 그 조각(상세 행). 값은 모두 api(수집기 확인) 그대로 */
+export interface KrMissingInfo {
+  /** 마지막 확인이 KR_MISSING_CHECK_STALE_MIN 분을 넘었으면 "파일 없음 · 확인 멈춤" */
+  word: "파일 없음" | "파일 없음 · 확인 멈춤";
+  /** "기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST · 확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST" */
+  text: string;
+  /** 여러 줄: 무엇 · 첫/마지막 tm 과 센 것 · 기상청 답의 파일 · 목록 종류 · 마지막 확인(전체 순간) · 수집기가 하는 일 · (확인 멈춤) */
+  title: string;
+  /** 없다는 답을 받은 가장 이른 · 가장 새 tm "08:15–09:50 KST"(하나면 "09:50 KST") */
+  range: string;
+  since: string;
+  last: string;
+  /** 확인해서 없다는 답을 받은 서로 다른 tm 수(수집기가 센 것 — 그 사이 확인하지 않은 tm 은 들지 않는다) */
+  tms: number;
+  checkedAt: string;
+  /** 마지막 확인이 KR_MISSING_CHECK_STALE_MIN 분을 넘었다(지금을 모르면 false — 판정하지 않는다) */
+  stale: boolean;
+  /** 기상청 답의 파일 이름(모르면 null) · 목록 종류 "EXT/KMA"(모르면 null) */
+  file: string | null;
+  listed: string | null;
+}
+
+const MISSING_FILE = /^RDR_CMP_[A-Z]+_([A-Z]+)_\d{12}\.bin\.gz$/;
+const TM = /^\d{12}$/;
+
+/** 두 tm 의 구간 "08:15–09:50 KST" — 지금과 KST 날짜가 다르면 "09-30 08:15–09:50 KST", 날짜를 넘으면 "09-29 23:50 – 09-30 00:10 KST" */
+function tmRange(sinceMs: number, lastMs: number, today: string | undefined): string {
+  const a = timeParts(sinceMs)!, b = timeParts(lastMs)!;
+  if (sinceMs === lastMs) return fmtKstMinute(sinceMs, { date: a.wall.ymd !== today });
+  if (a.wall.ymd === b.wall.ymd) return a.wall.ymd !== today ? `${a.wall.md} ${fmtKstSpan(sinceMs, lastMs)}` : fmtKstSpan(sinceMs, lastMs);
+  return fmtKstRange(sinceMs, lastMs, { seconds: false });
+}
+
+/**
+ * api 의 missing(기상청 내려받기 '파일 없음' 연속) → 글자. 핵심 값(첫 tm · 마지막 tm · 수 · 마지막 확인)이 틀리면 null — 일부만으로 까닭을 말하지 않는다.
+ * 잰 것만 말한다(리뷰 2026-09-30): 없다는 답을 받은 가장 이른 · 가장 새 tm 의 구간과 "확인한 tm N개 모두 없음" — 그 구간의 tm 이 모두 N개라거나 모두
+ * 없다고 하지 않는다(수집기는 연속 동안 주기마다 두 tm 만 확인한다).
+ * 파일 이름 · 목록 종류는 기상청 글자 그대로일 때만 쓰고, 모르면 쓰지 않는다(짓지 않는다). 파일 종류(PUB 등)는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다.
+ * tm 은 기상청 KST 벽시계라 그대로 "HH:MM KST"(지금과 KST 날짜가 다르면 날짜도), 마지막 확인은 "HH:MM:SS KST"(마우스를 올리면 연도 · ms).
+ * 마지막 확인이 KR_MISSING_CHECK_STALE_MIN 분을 넘으면(서버 기준 지금 — 모르면 판정하지 않는다) '확인 멈춤'을 붙인다: 수집기가 멈추면 연속을 지울 주체가 없다.
+ */
+export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
+  if (!m || typeof m !== "object") return null;
+  const o = m as Record<string, unknown>;
+  const since = typeof o.since_tm === "string" && TM.test(o.since_tm) ? o.since_tm : null;
+  const last = typeof o.last_tm === "string" && TM.test(o.last_tm) ? o.last_tm : null;
+  const tms = typeof o.tms === "number" && Number.isInteger(o.tms) && o.tms >= 1 ? o.tms : null;
+  // 마지막 확인은 시간대가 있는 ISO 만(없으면 브라우저 시간대로 읽혀 다른 순간이 된다 — api 는 늘 붙인다)
+  const checkedMs = typeof o.checked_at === "string" && /(Z|[+-]\d\d:\d\d)$/.test(o.checked_at) && timeParts(o.checked_at) ? Date.parse(o.checked_at) : NaN;
+  const sinceMs = kstWallMs(since), lastMs = kstWallMs(last);
+  if (since == null || last == null || tms == null || !Number.isFinite(checkedMs) || sinceMs == null || lastMs == null || lastMs < sinceMs) return null;
+  const checkedAt = o.checked_at as string;
+  const file = typeof o.file === "string" && MISSING_FILE.test(o.file) ? o.file : null;
+  const kind = file ? MISSING_FILE.exec(file)![1] : null;
+  const kinds = Array.isArray(o.listed) && o.listed.length > 0 && o.listed.every((k) => typeof k === "string" && /^[A-Z]{1,8}$/.test(k)) ? (o.listed as string[]) : null;
+  const listed = kinds ? kinds.join("/") : null;
+  const today = nowMs > 0 ? timeParts(nowMs)?.wall.ymd : undefined;
+  const clock = (ms: number) => fmtKstMinute(ms, { date: timeParts(ms)?.wall.ymd !== today });
+  const checked = fmtKst(checkedMs, { date: timeParts(checkedMs)?.wall.ymd !== today, seconds: true });
+  const stale = nowMs > 0 && nowMs - checkedMs > KR_MISSING_CHECK_STALE_MIN * 60_000;
+  const range = tmRange(sinceMs, lastMs, today);
+  const head = `기상청 내려받기 파일${kind ? `(${kind})` : ""} 없음`;
+  const counted = `확인한 tm ${tms}개 ${tms === 1 ? "" : "모두 "}없음`;
+  const text = `${head} — tm ${range} · ${counted}${listed ? ` · 목록에는 ${listed}` : ""} · 마지막 확인 ${checked}`
+    + (stale ? ` — ${KR_MISSING_CHECK_STALE_MIN}분 넘게 다시 확인하지 않음(확인 멈춤)` : "");
+  const title = [
+    `${head} — 기상청 목록에는 tm 이 있는데 내려받기가 '파일 없음'으로 답함(수집기 확인)`,
+    `첫 tm ${clock(sinceMs)} · 마지막 tm ${clock(lastMs)}(없다는 답을 받은 가장 이른 · 가장 새 tm) · 확인한 서로 다른 tm ${tms}개 ${tms === 1 ? "" : "모두 "}없음 — 확인하지 않은 tm 은 세지 않음`,
+    file ? `기상청 답의 파일: ${file}` : "기상청 답의 파일 이름 모름",
+    kinds ? `목록의 파일 종류: ${kinds.join(", ")}` : "목록의 파일 종류 모름",
+    `마지막 확인 ${fmtTimeTitle(checkedMs) ?? "—"}`,
+    `그동안 수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인(수집기 선택값) — 파일이 다시 오면 이 표시는 사라짐`,
+    ...(stale ? [`마지막 확인 뒤 ${KR_MISSING_CHECK_STALE_MIN}분 넘게 확인 없음 — 지금도 없는지는 모름(수집기가 멈췄거나 목록 호출이 실패하는 중일 수 있다 · 기준은 수집기 선택값과 같다)`] : []),
+  ].join("\n");
+  return {
+    word: stale ? "파일 없음 · 확인 멈춤" : "파일 없음", text, title, range, since: clock(sinceMs), last: clock(lastMs), tms, checkedAt, stale, file, listed,
+  };
 }

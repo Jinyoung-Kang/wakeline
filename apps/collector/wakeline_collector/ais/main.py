@@ -5,6 +5,8 @@
   정리  worker: 파싱·검증·게이트 → ShipBook(MMSI 별 최신값, 바뀐 선박 표시)
   발행  sink: 10 s 마다 바뀐 선박 XADD wakeline:ships · 닫힌 공백 XADD · 상태 해시 wakeline:ais:status
   설정  BboxWatcher: wakeline:settings.ais_bboxes 30 s 마다(실시간 모드만) — 구역 수·상자가 바뀌면 pool 이 연결을 맞춘다
+  진단  LoopLag: 0.5 s 마다 이벤트 루프 지연을 잰다(ADR-014 부록 C — 상태 해시 loop_lag_max_s, 끊김 로그의 맥락). 이 태스크가 끝나도 수신은
+        계속한다(진단이 수집을 멈추지 않게 — 표본 오류는 ERROR 로 남기고 계속 잰다).
 키가 없으면(실시간 모드) 수신하지 않고 상태를 disabled 로 둔다 — 프로세스는 살아서 이유를 보여 준다. 이때 구역은 구역 없는(scope null)
 항목 하나뿐이다: 구독하지 않은 영역을 수신 범위처럼 싣지 않는다(계약 v4 G D-2).
 구역(과 이전 실행에서 이어받은 공백)은 발행·정리 태스크보다 먼저 만든다 — 첫 상태 쓰기가 이어받은 공백을 지우지 않게(G D-3).
@@ -35,6 +37,7 @@ from wakeline_collector.ais.bbox import ShardsState, format_shards, parse_shards
 from wakeline_collector.ais.book import ShipBook
 from wakeline_collector.ais.client import make_redactor
 from wakeline_collector.ais.config import AisSettings
+from wakeline_collector.ais.diag import LoopLag
 from wakeline_collector.ais.pool import AisStreamPool
 from wakeline_collector.ais.queue import RawQueue
 from wakeline_collector.ais.replay import FIXTURE_NAME, FixtureReplayer
@@ -118,6 +121,7 @@ async def _run(
 
     queue = RawQueue(s.ais_queue_max)
     shards = ShardSet(provider)
+    loop_lag = LoopLag()
     book = ShipBook(provider, max_ships=s.ais_max_ships)
     worker = Worker(queue, book, on_provider_error=lambda tag, text: shards.on_provider_error(tag, redact(text)))
     sink = AisSink(
@@ -131,6 +135,7 @@ async def _run(
         flush_s=s.ais_flush_s,
         redact=redact,
         log_metrics=lambda: sink_metrics(logsink),  # 계약 v5 §C2: 상태 해시의 log_sent · log_dropped · log_suppressed
+        loop_lag=loop_lag,
     )
     shards.load_previous(await sink.read_previous_status())
 
@@ -149,6 +154,7 @@ async def _run(
         shards.restore_leftover()
     else:
         kw = dict(client_kw or {})
+        kw.setdefault("loop_lag", loop_lag.max_s)  # 끊김 로그의 맥락
         backoff_factory = kw.pop("backoff_factory", Backoff)
         desired = ShardsState(default_shards)
         pool = AisStreamPool(
@@ -174,6 +180,7 @@ async def _run(
         pool.start()  # 발행 태스크보다 먼저 — 첫 상태 쓰기에 이어받은 공백이 있게
         sources += [pool.run(stop), watcher.run(stop)]
 
+    lag_task = asyncio.create_task(loop_lag.run(), name="ais-loop-lag")
     worker_task = asyncio.create_task(worker.run(), name="ais-worker")
     sink_task = asyncio.create_task(sink.run(stop), name="ais-sink")
     src_tasks = [asyncio.create_task(c) for c in sources]
@@ -207,7 +214,7 @@ async def _run(
         except Exception:  # noqa: BLE001 — 예상 밖 오류도 나머지 정리(연결 닫기)를 막지 않게
             log.exception("ais shutdown: final publish failed")
     finally:
-        for t in (stopper, worker_task, sink_task, *src_tasks):
+        for t in (stopper, lag_task, worker_task, sink_task, *src_tasks):
             t.cancel()
-        await asyncio.gather(stopper, worker_task, sink_task, *src_tasks, return_exceptions=True)
+        await asyncio.gather(stopper, lag_task, worker_task, sink_task, *src_tasks, return_exceptions=True)
     return 1 if crashed else 0

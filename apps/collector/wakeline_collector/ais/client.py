@@ -7,7 +7,12 @@
   공백을 닫거나 last_msg_at·msgs_total·수신 상태·idle 기한을 바꾸지 않는다(오류만 받고 끊기는 반복은 '회복' 이 아니다).
 - 데이터 메시지가 idle_timeout_s(기본 120 s) 동안 없으면 조용히 멈춘 연결로 보고 다시 붙는다(서버가 close 프레임 없이 끊는 사례 실측).
 - 끊기면 FeedState 가 공백을 열고, Backoff(1→60 s, ±20 %, 60 s 정상 연결 뒤에만 초기화) 만큼 쉬었다가 다시 붙는다.
+  로그 수준은 ReconnectLog(reconnect.py)가 정한다: 받던 연결이 끊겨 열린 공백(마지막 데이터부터)이 30 s 안에 닫히면 INFO(누적 수),
+  되풀이(30 분에 3번째부터)·데이터 없이 끝난 연결·공백이 30 s 를 넘음(끊기기 전부터 조용했던 idle 끊김 포함)은 WARN. 공백 기록은 수준과 상관없이 그대로다.
 - 구독 영역이 바뀌면(BboxState) 같은 연결에서 구독을 다시 보낸다 — 5 s 에 한 번까지, 마지막 값만.
+- 진단(diag.py · ADR-014 부록 C): 메시지를 꺼낼 때마다 websockets 수신 버퍼에 남은 프레임 수와 keepalive 왕복(latency 가 바뀌면)을
+  구역의 FeedState 에 남기고, 끊기면 로그에 최근 60 s 최댓값(keepalive 왕복 · 수신 버퍼 · 이벤트 루프 지연 · 원문 대기열 깊이 · 머문 시간)과
+  공급자 지연을 함께 적는다 — 1011 이 루프 멈춤인지, 읽기 멈춤인지, 서버의 늦은 pong 인지 가른다.
 - 이 클래스는 연결(구역) 하나다. 구역이 여럿이면 AisStreamPool(pool.py)이 구역마다 하나씩 띄운다 — Backoff·FeedState·idle 기한·
   재구독 제한은 연결마다 따로, 대기열은 함께(원문에 구역 번호 tag 를 붙인다, 계약 v4 §D).
 
@@ -20,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sized
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,9 +36,11 @@ from websockets.extensions.permessage_deflate import PerMessageDeflate
 
 from wakeline_collector.ais.backoff import Backoff, SubscribeLimiter
 from wakeline_collector.ais.bbox import BBox, BboxState, format_bboxes, to_subscription
+from wakeline_collector.ais.diag import DIAG_WINDOW_S
 from wakeline_collector.ais.feed import FeedState
 from wakeline_collector.ais.parse import SUBSCRIBED_TYPES, is_provider_error
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.reconnect import RECOVER_WINDOW_S, REPEAT_WARN_COUNT, REPEAT_WINDOW_S, ReconnectLog
 from wakeline_collector.masking import mask
 
 log = logging.getLogger("ais.client")
@@ -42,6 +49,35 @@ logging.getLogger("websockets").setLevel(logging.WARNING)  # DEBUG 는 구독 �
 AIS_URL = "wss://stream.aisstream.io/v0/stream"
 MAX_MESSAGE_BYTES = 1 << 20
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+# keepalive(고른 값, ADR-014 부록 A 결정 3): 공급자 쪽 지연이 20 s 를 넘으면 다시 붙어 지연을 끊는다.
+PING_INTERVAL_S = 20.0
+PING_TIMEOUT_S = 20.0
+# websockets 수신 버퍼 상한(프레임 수, 고른 값): 넣은 뒤 이 수를 넘으면 소켓 읽기를 멈춘다(pause_reading — 16 이하로 줄면 다시 읽음). 한 번 읽은
+# 바이트(asyncio 최대 256 KiB)에 든 프레임은 모두 버퍼에 들어가므로 한꺼번에 받은 묶음(공급자 적체 해소 · 망이 잠깐 끊겼다 이어짐)이나 이벤트 루프
+# 멈춤 뒤에는 상한을 넘는다 — 그 자체는 결함이 아니고 읽기가 잠시 멈췄다는 뜻이다(수신 태스크가 꺼내자마자 대기열에 넣고 기다리지 않으므로 곧 비운다
+# — 소비자 적체로는 차지 않는다, test_ais_diag · test_ais_keepalive). 키워도 루프 멈춤 1011 은 줄지 않고 메모리 상한만 커진다(프레임 ≤ 1 MiB).
+# 부록 C 측정: 꺼낸 뒤 남은 프레임 수의 최댓값 = 상태 해시 ws_queue_max. 꺼내기 전에는 하나 더 있었으므로 ws_queue_max ≥ 상한이면 그때 읽기가
+# 멈춰 있었다(websockets 는 '> 상한' 에서 멈춘다).
+WS_MAX_QUEUE = 64
+
+_warned_no_frames = False
+
+
+def ws_frames(ws: object) -> Sized | None:
+    """websockets 수신 버퍼(프레임 큐). 17.x 의 내부 속성(recv_messages.frames)이라 공개 API 가 아니다 — 판을 올려 없어지면 None(모름)으로
+    두고 한 번 경고한다(깊이를 0 으로 채우지 않는다). 고정한 판에서 읽히는지는 test_ais_diag 가 지킨다."""
+    global _warned_no_frames
+    frames = getattr(getattr(ws, "recv_messages", None), "frames", None)
+    if frames is not None and hasattr(frames, "__len__"):
+        return frames  # type: ignore[no-any-return]
+    if not _warned_no_frames:
+        _warned_no_frames = True
+        log.warning("websockets receive buffer depth unavailable (library internals changed) — ws_queue_max stays unknown")
+    return None
+
+
+def _num(v: float | None, unit: str = " s") -> str:
+    return "—" if v is None else f"{v:.2f}{unit}"
 
 
 def check_url(url: str) -> None:
@@ -89,12 +125,16 @@ class AisStreamClient:
         idle_timeout_s: float = 120.0,
         resubscribe_min_s: float = 5.0,
         open_timeout_s: float = 10.0,
-        ping_interval_s: float = 20.0,
-        ping_timeout_s: float = 20.0,
+        ping_interval_s: float = PING_INTERVAL_S,
+        ping_timeout_s: float = PING_TIMEOUT_S,
         close_timeout_s: float = 3.0,
         wall: Callable[[], float] = time.time,
         tag: int = 0,
         label: str = "",
+        loop_lag: Callable[[], float | None] | None = None,
+        recover_window_s: float = RECOVER_WINDOW_S,
+        repeat_window_s: float = REPEAT_WINDOW_S,
+        repeat_warn_count: int = REPEAT_WARN_COUNT,
     ) -> None:
         check_url(url)
         if not api_key:
@@ -115,12 +155,21 @@ class AisStreamClient:
             "close_timeout": close_timeout_s,
             "proxy": None,  # 환경변수 프록시를 따라가지 않는다(키가 실린 연결의 경로를 고정)
             "user_agent_header": user_agent,
-            "max_queue": 64,
+            "max_queue": WS_MAX_QUEUE,
         }
         self._wall = wall
         self.tag = tag  # 대기열에 넣는 원문의 구역 번호
         self.name = f"ais {label}" if label else "ais"  # 로그용
         self.redact = make_redactor(api_key)
+        self._loop_lag = loop_lag  # 프로세스의 이벤트 루프 지연 최근 최댓값(diag.LoopLag.max_s) — 없으면 모름
+        self.reconnects = ReconnectLog(
+            self.name,
+            feed,
+            recover_window_s=recover_window_s,
+            repeat_window_s=repeat_window_s,
+            repeat_warn_count=repeat_warn_count,
+            wall=wall,
+        )
 
     def subscription(self, boxes: tuple[BBox, ...]) -> str:
         return orjson.dumps(
@@ -128,6 +177,12 @@ class AisStreamClient:
         ).decode()
 
     async def run(self, stop: asyncio.Event) -> None:
+        try:
+            await self._run(stop)
+        finally:
+            self.reconnects.close()  # 멈춘 뒤에 '회복하지 못함' 경고가 나오지 않게
+
+    async def _run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             session = asyncio.create_task(self._session())
             stopper = asyncio.create_task(stop.wait())
@@ -150,7 +205,7 @@ class AisStreamClient:
                 log.info("%s connection was healthy for %.0f s — backoff reset", self.name, healthy or 0)
             delay = self.backoff.next_delay()
             self.feed.on_backoff(delay)
-            log.warning("%s disconnected: %s — reconnecting in %.1f s", self.name, reason, delay)
+            self.reconnects.disconnected(reason, delay, had_data=healthy is not None, context=self.diagnosis())
             try:
                 await asyncio.wait_for(stop.wait(), timeout=delay)
             except TimeoutError:
@@ -194,16 +249,39 @@ class AisStreamClient:
         except WebSocketException as e:
             return f"websocket error: {type(e).__name__}"
 
+    def diagnosis(self) -> str:
+        """끊김 로그에 붙이는 맥락(모르는 값은 —): 최근 창(diag.DIAG_WINDOW_S)의 최댓값과 직전 발행 창의 공급자 지연."""
+        f = self.feed
+        buf, depth = f.ws_buffer.value(), self.queue.depth_max()
+        loop_lag = self._loop_lag() if self._loop_lag is not None else None
+        return (
+            f"last {DIAG_WINDOW_S:g} s max: keepalive rtt {_num(f.ping_rtt.value())} · ws buffer "
+            f"{'—' if buf is None else int(buf)}/{self._connect_kw['max_queue']} frames · loop lag {_num(loop_lag)} · "
+            f"queue {'—' if depth is None else depth}/{self.queue.maxsize} msgs, wait {_num(self.queue.wait_max_s())}; "
+            f"provider lag p50 {_num(f.lag_p50_s)}"
+        )
+
     async def _read(self, ws: ClientConnection) -> None:
         loop = asyncio.get_running_loop()
         put, on_message, wall, tag = self.queue.put, self.feed.on_message, self._wall, self.tag
+        frames, buffer, rtt = ws_frames(ws), self.feed.ws_buffer, self.feed.ping_rtt
+        latency = ws.latency  # 첫 pong 전에는 0.0 — 바뀔 때만 표본
+        first = True
         async with asyncio.timeout_at(loop.time() + self.idle_timeout_s) as deadline:
             async for msg in ws:
                 put(msg, tag)
+                if frames is not None:
+                    buffer.add(len(frames))  # 꺼내고 남은 프레임 = 수신 태스크가 늦게 돈 만큼 쌓인 것
+                if ws.latency != latency:
+                    latency = ws.latency
+                    rtt.add(latency)
                 if is_provider_error(msg):
                     continue  # 데이터가 아니다(모듈 설명)
                 deadline.reschedule(loop.time() + self.idle_timeout_s)
                 on_message(wall())
+                if first:  # 이 연결의 첫 데이터 — 끊긴 뒤라면 회복 로그(공백은 on_message 가 닫았다)
+                    first = False
+                    self.reconnects.first_data()
 
     async def _resubscriber(self, ws: ClientConnection, version: int, limiter: SubscribeLimiter) -> None:
         while True:

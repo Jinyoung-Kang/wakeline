@@ -148,9 +148,13 @@ class WsSchemaContractTest {
         HashOperations<String, Object, Object> hash = mock(HashOperations.class);
         Map<String, Map<Object, Object>> h = Map.of(
                 "wakeline:collector", Map.of("fixture", "0", "adsb_fi_rps_1m", "0.2667", "region_at", now.minusSeconds(5).toString()),
-                "wakeline:radar_kr:meta", Map.of("available", "1", "status", "200", "latest_tm", "202609290500",
-                        "fetched_at", now.minusSeconds(120).toString(), "checked_at", now.minusSeconds(30).toString(),
-                        "stations", "7", "stations_ref", "15", "partial", "1", "station_ids", "KSN,GDK,JNI,MYN,PSN,GSN,SSP"), // ADR-021
+                "wakeline:radar_kr:meta", Map.ofEntries(Map.entry("available", "1"), Map.entry("status", "200"), Map.entry("latest_tm", "202609290500"),
+                        Map.entry("fetched_at", now.minusSeconds(120).toString()), Map.entry("checked_at", now.minusSeconds(30).toString()),
+                        Map.entry("stations", "7"), Map.entry("stations_ref", "15"), Map.entry("partial", "1"), Map.entry("station_ids", "KSN,GDK,JNI,MYN,PSN,GSN,SSP"), // ADR-021
+                        // 기상청 내려받기 '파일 없음' 연속(2026-09-30)
+                        Map.entry("missing_since_tm", "202609290505"), Map.entry("missing_last_tm", "202609290525"), Map.entry("missing_tms", "5"),
+                        Map.entry("missing_checked_at", now.minusSeconds(30).toString()), Map.entry("missing_file", "RDR_CMP_HSR_PUB_202609290525.bin.gz"),
+                        Map.entry("missing_listed", "EXT,KMA")),
                 "wakeline:active", Map.of("region", "adsb_lol", "global", "opensky", "hot", "adsb_fi"),
                 AisStatus.KEY, Map.of("provider", "aisstream", "connected", "1", "state", "receiving", "updated_at", now.minusSeconds(3).toString(),
                         "last_msg_at", now.minusSeconds(1).toString(), "msgs_per_s", "12.5",
@@ -167,7 +171,7 @@ class WsSchemaContractTest {
         Map<String, Object> st = new StatusService(k.snapshots, k.sigmets, k.radar, engine, redis, new RegionSettings(redis, null, null, k.props), demand, ais)
                 .publicStatus();
         assertThat(((Map<?, ?>) st.get("sources")).get("ais")).as("sources.ais").isNotNull();
-        assertThat(((Map<String, Object>) st.get("radar_kr")).keySet()).as("radar_kr").contains("available", "status", "latest_tm", "stations", "stations_ref", "partial");
+        assertThat(((Map<String, Object>) st.get("radar_kr")).keySet()).as("radar_kr").contains("available", "status", "latest_tm", "stations", "stations_ref", "partial", "missing");
         assertThat(((Map<?, ?>) st.get("demand")).get("adsb_fi_rps_1m")).as("demand.adsb_fi_rps_1m").isNotNull();
         return st;
     }
@@ -255,7 +259,7 @@ class WsSchemaContractTest {
             realStatus(k);
             Map<String, String> routeCache = new HashMap<>();
             routeCache.put("wakeline:route:SYN081", RouteInfoTest.found("SYN081").toString());
-            k.hub.setRouteSource(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)::forAircraft);
+            k.hub.setRouteSource(RouteLookups.of(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)));
             // 한국 항만 입출항(ADR-022 개정): 색인에 수집기가 실제 전체 기록으로 만든 행(호출부호만 이 선박의 것으로) 21건 — 20건 + 잘림. 색인은 완전 · 새것
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
             index.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-20"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));
@@ -395,8 +399,8 @@ class WsSchemaContractTest {
             PortCallReader error = new PortCallReader(broken, List::of, PC_NOW::toEpochMilli);
             PortCallReader off = new PortCallReader(full, () -> List.of("no_key", PC_NOW.minusSeconds(20).toString()), PC_NOW::toEpochMilli);
             // 운영처럼 저장 정적 보고도 읽는다 — 위치만 받은 선박(440000008)은 DB 에도 없다(static_source none)
-            k.shipFanout.setStoredStaticSource(ShipLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
-            k.shipFanout.setPortCallSource(ShipLookups.Source.memory(st -> {
+            k.shipFanout.setStoredStaticSource(SelectionLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
+            k.shipFanout.setPortCallSource(SelectionLookups.Source.memory(st -> {
                 String cs = st == null ? null : st.callSign();
                 if ("D7AC".equals(cs)) return error.forStatic(st);
                 if ("D7AD".equals(cs)) return off.forStatic(st);
