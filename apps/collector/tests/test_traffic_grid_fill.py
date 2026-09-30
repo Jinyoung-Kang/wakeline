@@ -262,6 +262,64 @@ async def test_a_restart_in_a_full_hour_says_so_once_as_a_pass_without_lookups(c
     )
 
 
+async def test_the_daily_budget_stop_ends_a_pass_and_the_heartbeat_says_daily_budget_until_the_next_utc_day(caplog):
+    """/ops 가 '하루 예산을 다 씀'으로 그리는 상태(traffic_grid_fill_state=daily_budget)와 다음 UTC 날 — 검토 지적: 이 값이 시험에 묶이지 않아
+    'hour_window' 로 바꿔도 시험이 모두 통과했다."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    job, _k, wfs, r, clock, _db = setup(limits={"komsa_traffic": 400, "mof_grid4": 2})
+    await job.run_once()
+    assert len(wfs.asked) == 2
+    (line,) = lines(caplog, "geometry fill pass")
+    assert (
+        "— 2 lookups: 2 found, 0 not in the MOF grid, 0 off grid, 0 errors (0 set aside as failed); 2 cells known, 1 ids waiting"
+        in line
+    )
+    assert line.endswith(
+        "mof_grid4 today 2 of 2 (UTC day); stopped: daily budget exhausted (used=2) — geometry fill resumes at 2026-09-30T00:00:00Z"
+    )
+    hb = r.kv[HB]
+    assert (hb["traffic_grid_fill_state"], hb["traffic_grid_fill_resume_at"]) == ("daily_budget", "2026-09-30T00:00:00Z")
+    clock.advance(3600)  # 다음 UTC 시가 와도 하루 예산은 다음 UTC 날까지다(시간 창과 다르다)
+    await job.run_once()
+    assert len(wfs.asked) == 2 and r.kv[HB]["traffic_grid_fill_state"] == "daily_budget"
+
+
+async def test_the_heartbeat_says_waiting_db_until_the_marine_grid4_cache_is_read_or_the_wait_ends():
+    job, _k, wfs, r, clock, db = setup()
+    db.rows = None  # DB 에 닿지 못한다
+    await job.run_once()
+    assert wfs.asked == []
+    assert (r.kv[HB]["traffic_grid_fill_state"], r.kv[HB]["traffic_grid_fill_resume_at"]) == ("waiting_db", "")
+    clock.advance(tg.DB_WAIT_S)
+    await job.run_once()  # 기다림이 끝났다 — DB 없이 묻는다
+    assert len(wfs.asked) == 3 and r.kv[HB]["traffic_grid_fill_state"] == "idle"
+
+
+async def test_a_pass_line_counts_an_id_set_aside_after_repeated_failures(caplog):
+    """ID_MAX_FAILURES 번 연달아 실패한 칸은 failed 로 뺀다 — 그 채우기의 요약 줄이 '(1 set aside as failed)' 라고 적는다(검토 지적: 0 만 시험했다)."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    wfs = FakeWfs(
+        {
+            "GR4_F2K41_D3": ProviderHttpError(502, "bad gateway"),
+            "GR4_F2K41_C3": WfsResult("found", cell=CELLS["GR4_F2K41_C3"]),
+            "GR4_F2K41_C4": WfsResult("found", cell=CELLS["GR4_F2K41_C4"]),
+        }
+    )
+    job, _k, _w, r, clock, _db = setup(wfs=wfs)
+    await job.run_once()
+    for step in tg.ID_RETRY_S[: tg.ID_MAX_FAILURES - 1]:
+        clock.advance(step)
+        await job.run_once()
+    assert wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES
+    got = passes(caplog)
+    assert [p[7] for p in got] == ["0"] * (tg.ID_MAX_FAILURES - 1) + ["1"]  # 다섯 번째 실패의 채우기에서 뺐다
+    assert got[-1][2:7] == ("1", "0", "0", "0", "1")
+    assert lines(caplog, "geometry fill pass")[-1].endswith(
+        "queue empty — every queued id has geometry or a negative-cache entry"
+    )
+    assert r.kv[HB]["traffic_grid_failed"] == "1"
+
+
 async def test_switching_the_wfs_off_ends_an_open_pass(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger=LOGGER)
     monkeypatch.setattr(tg, "WFS_PER_TICK", 1)
