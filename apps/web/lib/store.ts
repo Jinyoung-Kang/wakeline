@@ -111,8 +111,11 @@ export interface ServerData {
   receptionInView: ReceptionInView | null;
 }
 
-/** 이 화면의 관측 수신 칸(ADR-027): cells = 칸 수, covered = 창을 다 셌는가(full) — 아니면 칩 설명이 그렇다고 적는다 */
-export interface ReceptionInView { cells: number; covered: "full" | "partial" | "since_api_start" }
+/**
+ * 이 화면의 관측 수신 칸(ADR-027): cells = 칸 수, covered = 창을 다 셌는가(full) · since = 빠짐없이 센 시작 · to = 창 끝(응답 시각) — 다 세지 못했으면
+ * 칩 · 0척 알림이 센 구간을 적는다. stale = 마지막 조회가 실패했다(값은 그 전 응답).
+ */
+export interface ReceptionInView { cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean }
 
 /**
  * elements = 버린 원소(형식이 틀린 항공기 · 선박 · 알림 · SIGMET · 격자 칸 · 선택 상태 등 — 메시지의 나머지는 적용했다),

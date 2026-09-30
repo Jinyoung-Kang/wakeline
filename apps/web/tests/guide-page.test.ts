@@ -258,6 +258,7 @@ describe("features the guide describes exist in the screens", () => {
     expect(ship).toMatch(/점선[^.]*구독[^.]*잰 값/);
     expect(ship).toMatch(/창의 일부만 셈/);
     expect(ship).toMatch(/이 화면에 관측 수신 칸 N개/);
+    expect(ship).toMatch(/부터만 셈/); // 창을 다 세지 못했으면 칩 · 0척 알림도 센 구간을 적는다(리뷰 2026-09-30)
     expect(section(render(EMPTY), "dashboard-layers")).toContain(RECEPTION_LAYER_LABEL);
     expect(section(render(EMPTY), "dashboard-legend")).toContain("관측 수신 범위");
   });

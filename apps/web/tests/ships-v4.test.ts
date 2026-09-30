@@ -138,14 +138,12 @@ describe("ships chip wording follows the contract v4 §C rule", () => {
     expect(shipsChip(view({ count: 0 }), ctx())!.warn).toBe(false);
   });
   it("with the observed reception layer loaded (ADR-027): the zero notice and every chip title say how many observed cells are in view", () => {
-    const zero = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 0, covered: "full" } }))!;
+    const FULL = { covered: "full" as const, since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12Z", stale: false };
+    const zero = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 0, ...FULL } }))!;
     expect(zero.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 0개(최근 24 h)`);
     expect(zero.title).toContain("이 화면에 관측 수신 칸 0개");
     expect(zero.title).toContain("구독 범위 아님");
-    const some = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 12, covered: "since_api_start" } }))!;
-    expect(some.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 12개(최근 24 h)`);
-    expect(some.title).toContain("창의 일부만 셈");
-    const pts = shipsChip(view({ count: 40 }), ctx({ observed: { cells: 3, covered: "full" } }))!;
+    const pts = shipsChip(view({ count: 40 }), ctx({ observed: { cells: 3, ...FULL } }))!;
     expect(pts.text).toBe("선박 40척 · 화면 안 · AIS"); // 칩 글자는 그대로 — 설명(title)에만
     expect(pts.title).toContain("이 화면에 관측 수신 칸 3개");
     expect(pts.title).not.toContain("창의 일부만 셈");
@@ -153,8 +151,30 @@ describe("ships chip wording follows the contract v4 §C rule", () => {
     expect(shipsChip(view({ count: 0 }), ctx({ observed: null }))!.text).toBe(SHIPS_ZERO_TEXT);
     expect(shipsChip(view({ count: 0 }), ctx())!.title).not.toContain("관측 수신");
     // AIS 꺼짐(키 없음)이면 덧붙이지 않는다 — 받지 않는 까닭이 따로 있다
-    expect(shipsChip(view({ count: 0 }), ctx({ ais: aisOf({ state: "disabled", connected: false }), observed: { cells: 5, covered: "full" } }))!.text)
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: aisOf({ state: "disabled", connected: false }), observed: { cells: 5, ...FULL } }))!.text)
       .toBe("선박 없음 · AIS 꺼짐(키 없음)");
+  });
+  /**
+   * 리뷰(2026-09-30): 창을 다 세지 못했을 때(api 재시작 직후 — covered since_api_start · partial) 보이는 글자가 늘 "(최근 24 h)" 였다 — 몇 분을 센 수를
+   * 24 h 잰 값처럼 보였다(설명(title)만 '창의 일부만 셈'). 이제 글자에 실제로 센 구간(KST)을 적고, 조회가 실패해 마지막 값이면 그것도 적는다. 수정 전 실패.
+   */
+  it("when the window is only partly counted, or the last fetch failed, the visible notice says the counted span (KST), never '(최근 24 h)'", () => {
+    const since = "2026-09-30T09:37:00Z"; // 18:37 KST
+    const to = "2026-09-30T09:40:12Z"; // 18:40 KST
+    const part = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 12, covered: "since_api_start", since, to, stale: false } }))!;
+    expect(part.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 12개(09-30 18:37 KST 부터만 셈)`);
+    expect(part.text).not.toContain("최근 24 h");
+    expect(part.title).toContain("창의 일부만 셈 — 09-30 18:37 KST 부터");
+    expect(part.title).not.toContain("최근 24 h");
+    const partial = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 2, covered: "partial", since: "2026-09-30T07:00:00Z", to, stale: false } }))!;
+    expect(partial.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 2개(09-30 16:00 KST 부터만 셈)`);
+    // 조회가 실패해 마지막 값 — 창 끝(KST)과 실패를 적는다
+    const staleFull = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 3, covered: "full", since: "2026-09-29T09:00:00Z", to, stale: true } }))!;
+    expect(staleFull.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 3개(09-30 18:40 KST 까지 24 h · 조회 실패 — 마지막 값)`);
+    const stalePart = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 1, covered: "since_api_start", since, to, stale: true } }))!;
+    expect(stalePart.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 1개(09-30 18:37 – 09-30 18:40 KST 만 셈 · 조회 실패 — 마지막 값)`);
+    expect(stalePart.title).toContain("조회 실패");
+    for (const c of [part, partial, staleFull, stalePart]) expect(c.text + c.title).not.toContain("UTC");
   });
   it("zero ships while AIS is not connected or its state is unknown: says only that — never blames receiver stations (contract v4 §G C-1)", () => {
     expect(SHIPS_ZERO_AIS_DOWN_TEXT).toBe("화면 안 선박 0척 — AIS 연결 안 됨");

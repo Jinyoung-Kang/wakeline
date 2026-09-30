@@ -86,7 +86,7 @@ describe("layer button, part slot, legend and chip", () => {
       ships: { mode: "points", version: 1, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] },
       ais: { connected: true, state: "receiving", coverage: [{ s: 18, w: 105, n: 46, e: 150 }], shards: null } as never,
       viewport: { bbox: [124, 33, 132, 39], zoom: 8 },
-      receptionInView: { cells: 4, covered: "full" },
+      receptionInView: { cells: 4, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12Z", stale: false },
     });
     const chip = renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: true }));
     expect(text(chip)).toContain(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 4개(최근 24 h)`);

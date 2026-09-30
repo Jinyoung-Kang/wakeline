@@ -6,7 +6,7 @@
  *   (USCG NAVCEN 문서 2026-09-28 확인: 흘수 "0 = not available = default", 크기 "As default should A = B = C = D be set to '0'").
  * - 항해 상태 이름: USCG NAVCEN Class A 위치 보고 문서(2026-09-28 확인)의 0–15 표.
  */
-import { fmtKstDayMinute, fmtKstSpan } from "./time";
+import { fmtKstDayMinute, fmtKstMinute, fmtKstRange, fmtKstSpan } from "./time";
 import type { Tone } from "./tooltip";
 import { RX_FRESH_MS } from "./ws-protocol";
 
@@ -1119,15 +1119,29 @@ export function shipsChip(
   const o = ctx.observed;
   if (!c || !o || ctx.ais?.state === "disabled") return c;
   const seen = `이 화면에 관측 수신 칸 ${n0(o.cells)}개`;
-  const title = `${c.title} 관측 수신 범위(최근 24 h — 레이어): ${seen} — 이 서비스가 실제로 선박 위치를 받은 0.5° 칸(구독 범위 아님)${o.covered === "full" ? "" : " · 창의 일부만 셈(레이어 상태 줄)"}.`;
-  return { ...c, text: v.mode !== "waiting" && (v.mode === "points" ? v.count : v.total) === 0 ? `${c.text} · ${seen}(최근 24 h)` : c.text, title };
+  const span = observedSpan(o);
+  const part = o.covered === "full" ? "" : ` · 창의 일부만 셈 — ${fmtKstMinute(o.since, { date: true })} 부터(까닭은 레이어 상태 줄)`;
+  const failed = o.stale ? ` · 조회 실패 — ${fmtKstMinute(o.to, { date: true })} 까지의 마지막 값` : "";
+  const title = `${c.title} 관측 수신 범위(레이어): ${seen}${span} — 이 서비스가 실제로 선박 위치를 받은 0.5° 칸(구독 범위 아님)${part}${failed}.`;
+  return { ...c, text: v.mode !== "waiting" && (v.mode === "points" ? v.count : v.total) === 0 ? `${c.text} · ${seen}${span}` : c.text, title };
 }
 
 /**
- * 관측 수신 범위(ADR-027 — 레이어를 켜고 자료를 받았을 때만): 지금 화면과 겹치는 관측 칸 수 · 창을 다 셌는가. 0척 알림 글자와 칩 설명에 덧붙는다 —
- * 0척인 화면에 관측 칸이 0개면 최근 24 h 에 이 서비스가 그곳 위치를 받은 적이 없다는 잰 값이다.
+ * 관측 칸 수 뒤의 구간(KST): 창을 다 셌으면 "(최근 24 h)", 아니면(api 재시작 직후 등) 실제로 센 구간 "(09-30 18:37 KST 부터만 셈)" — 몇 분을 센 수를 24 h 잰 값처럼
+ * 적지 않는다. 조회가 실패해 마지막 값이면 창 끝과 실패를 함께.
  */
-export interface ShipsChipObserved { cells: number; covered: "full" | "partial" | "since_api_start" }
+function observedSpan(o: ShipsChipObserved): string {
+  const fail = " · 조회 실패 — 마지막 값";
+  if (o.covered === "full") return o.stale ? `(${fmtKstMinute(o.to, { date: true })} 까지 24 h${fail})` : "(최근 24 h)";
+  return o.stale ? `(${fmtKstRange(o.since, o.to, { seconds: false })} 만 셈${fail})` : `(${fmtKstMinute(o.since, { date: true })} 부터만 셈)`;
+}
+
+/**
+ * 관측 수신 범위(ADR-027 — 레이어를 켜고 자료를 받았을 때만): 지금 화면과 겹치는 관측 칸 수 · 창을 다 셌는가(covered) · 빠짐없이 센 시작(since) ·
+ * 창 끝(to = 응답 시각) · 마지막 조회가 실패했는가(stale — 값은 그 전 응답). 0척 알림 글자와 칩 설명에 덧붙는다 —
+ * 0척인 화면에 관측 칸이 0개면 센 구간 동안 이 서비스가 그곳 위치를 받은 적이 없다는 잰 값이다.
+ */
+export interface ShipsChipObserved { cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean }
 
 function chipBody(
   v: ShipsChipInput,
