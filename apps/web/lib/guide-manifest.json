@@ -414,12 +414,12 @@
       ]
     },
     "ops": {
-      "file": "ops.dd33562286.webp",
+      "file": "ops.1477bd21aa.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 45802,
-      "captured_at": "2026-09-30T17:09:11.208Z",
+      "bytes": 45660,
+      "captured_at": "2026-09-30T21:13:45.807Z",
       "variant": "격리 fixture 스택(가짜 자료) · providers 탭 · 가림: 운영자 이름 · 공급자 마지막 오류 · 전환 사유",
       "callouts": [
         {
@@ -445,12 +445,12 @@
       ]
     },
     "logs": {
-      "file": "logs.64e9ef6972.webp",
+      "file": "logs.1d8b8350a4.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 49082,
-      "captured_at": "2026-09-30T17:09:13.210Z",
+      "bytes": 49060,
+      "captured_at": "2026-09-30T21:13:47.589Z",
       "variant": "격리 fixture 스택 · 목록의 1건은 캡처용 시험 보고(실제 오류 아님) · 기간 24 h · 서비스 전체 · 가림: 운영자 이름 · 로거 · 메시지 · 요청 id",
       "callouts": [
         {
