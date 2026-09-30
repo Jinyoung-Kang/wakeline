@@ -825,18 +825,19 @@ class KmaRadarJob:
         )
 
     def _file_back(self, tm: str) -> None:
-        """gzip 을 받았다: 열린 연속의 첫 tm 이후면 연속을 닫는다(INFO — 공백 길이). 다음 주기부터 보관 창의 빈 곳을 전처럼 다시 시도한다."""
+        """gzip 을 받았다: 열린 연속의 첫 tm 이후면 연속을 닫는다(INFO — 공백 = 첫 tm 부터 다시 온 tm 앞까지). 다시 온 tm 보다 새 tm 이 '없음'으로
+        답했을 수 있다(10분 넘은 tm 이 먼저 돌아오면 — 아직 생기지 않은 tm) — 공백에 넣지 않고 다음 주기부터 전처럼 다시 시도한다."""
         s = self.missing
         if s is None or tm < s.since_tm:
             return
         log.info(
-            "kma radar: KMA download has the file again at tm=%s — missing from tm=%s to tm=%s (%d tms answered missing, %s of tms); "
-            "normal retries resume",
+            "kma radar: KMA download has the file again at tm=%s — the gap from tm=%s is %s of tms "
+            "(%d tms answered missing, the newest tm=%s); normal retries resume",
             tm,
             s.since_tm,
-            s.last_tm,
-            s.tms,
             _tm_span(s.since_tm, tm),
+            s.tms,
+            s.last_tm,
         )
         self._closed_gap = (s.since_tm, tm)
         self.missing = None

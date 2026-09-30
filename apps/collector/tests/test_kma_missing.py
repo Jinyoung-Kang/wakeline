@@ -165,8 +165,8 @@ async def test_outage_warns_once_then_reminds_per_interval_and_recovery_is_info(
     await job.run_once()  # 파일이 다시 있다
     assert _warns(caplog) == []
     assert (
-        "kma radar: KMA download has the file again at tm=202609271340 — missing from tm=202609271215 to tm=202609271335 "
-        "(17 tms answered missing, 1 h 25 min of tms); normal retries resume"
+        "kma radar: KMA download has the file again at tm=202609271340 — the gap from tm=202609271215 is 1 h 25 min of tms "
+        "(17 tms answered missing, the newest tm=202609271335); normal retries resume"
     ) in _infos(caplog)
 
 
@@ -410,6 +410,11 @@ async def test_recovery_is_seen_when_the_newest_tm_is_not_downloadable_yet(env, 
     assert job.missing is not None and job.missing.since_tm == "202609271215"
     await _cycles(job, clock, "202609271310")  # 13:00 부터 파일이 다시 있다(late 분 늦게)
     assert job.missing is None
+    # 다시 온 tm(13:00)보다 새 tm 이 '없음'으로 답했을 수 있다(아직 생기지 않았다) — 공백은 다시 온 tm 까지로 말한다
+    back = [m for m in _infos(caplog) if "has the file again" in m]
+    assert len(back) == 1 and back[0].startswith(
+        "kma radar: KMA download has the file again at tm=202609271300 — the gap from tm=202609271215 is 45 min of tms ("
+    )
     assert "202609271300" in [f["tm"] for f in await job._frames()]
     runs.clear()
     await _cycles(job, clock, "202609271320")
