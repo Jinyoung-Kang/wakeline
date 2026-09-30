@@ -71,6 +71,13 @@ const encoder = await ctx.newPage(); // PNG → WebP 변환 전용(about:blank)
 /** 항공기 목록을 볼 영역(한반도 — 상황판 스크린샷의 지도 위치와 같은 곳) */
 const KOREA_BBOX = "124,33,132,39";
 
+/**
+ * 지도 위에 겹쳐 그리는 레이어(연안 교통량 · 관측 수신 — 처음에 꺼짐). 켜짐은 이 브라우저에 기억되고(lib/prefs LAYERS_KEY — LayerPanel 이 열 때 읽는다) 캡처는
+ * 한 문맥으로 모두 찍으므로, 앞 그림이 켠 것이 뒤 그림에 남았다(2026-09-30 22:49 KST 배포 직후 캡처 · 리뷰 2026-10-01 — traffic 의 교통량이 reception · search ·
+ * aircraft · ship 에, reception 의 관측 칸이 port-calls · alerts · radar 에). openMap 이 모두 끄고 시작하고, 필요한 레시피만 제 것을 켠다.
+ */
+const OVERLAY_LAYERS = ["layer-traffic", "layer-reception"];
+
 /** 상황판을 새로 연다(path = "/#줌/위도/경도" — 해시만 다른 goto 는 같은 문서 안 이동이라 선택 상태가 남아 빈 페이지를 거친다). 실시간 연결이 열려야 찍는다 */
 async function openMap(path) {
   await page.goto("about:blank");
@@ -79,6 +86,8 @@ async function openMap(path) {
   catch { throw new Skip("상황판 실시간 연결(WS open)이 30 s 안에 열리지 않음"); }
   // 실데이터 판단은 assertRealData(/api/v1/status)가 한다 — 배지는 status 메시지가 늦게 오면 아직 없어 판단에 쓰지 않는다(보이면 덧붙여 멈출 뿐)
   if (!args.allowFixture && await page.getByTestId("fixture-badge").count()) throw new Fatal("FIXTURE MODE 배지가 보임 — 가짜 자료가 설명서에 실리지 않게 멈춤");
+  // 연결이 열린 뒤(LayerPanel 이 저장된 켜짐을 읽은 뒤) 끈다 — 앞 그림이 켠 레이어를 이 그림에 남기지 않는다
+  for (const id of OVERLAY_LAYERS) await setPressed(id, false);
 }
 /** 실데이터 스택인지 /api/v1/status 로 확인(찍기 전 · 다 찍은 뒤). 아니면 전체를 멈춘다 */
 async function assertRealData(when) {
@@ -153,8 +162,7 @@ const RECIPES = {
     // 관측 수신 범위(ADR-027 · 계약 v5 §G27): 레이어를 켜고 상태 줄이 '불러오는 중'을 벗어나 칸을 그린 뒤 찍는다 — 센 구간을 캡처 조건에 적는다
     await openMap(shot.path);
     await setPressed("layer-ships", true);
-    // 연안 교통량은 끈다 — 앞 그림(traffic)이 켠 것이 이 브라우저에 기억되어 켜진 채 해안을 덮었다(2026-09-30 22:49 KST 배포 직후 캡처)
-    await setPressed("layer-traffic", false);
+    // 연안 교통량은 openMap 이 껐다 — 앞 그림(traffic)이 켠 것이 이 브라우저에 기억되어 켜진 채 해안을 덮었다(2026-09-30 22:49 KST 배포 직후 캡처)
     await setPressed("layer-reception", true);
     await setLegend(true);
     const status = page.getByTestId("reception-status-text");

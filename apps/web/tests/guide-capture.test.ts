@@ -209,13 +209,45 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
     expect(r).toMatch(/throw new Skip\(/);
     expect(src).toMatch(/import \{[^}]*statsPanelsVerdict[^}]*\} from "\.\/guide-capture-lib\.mjs"/);
   });
-  it("reception: the coastal traffic layer is turned off and the legend's reception section is scrolled into view before the callouts are measured", () => {
+  it("reception: the coastal traffic layer is off (openMap) and the legend's reception section is scrolled into view before the callouts are measured", () => {
     const r = recipe("reception");
-    expect(r).toMatch(/setPressed\("layer-traffic", false\)/);
+    expect(r.indexOf("await openMap(")).toBeGreaterThanOrEqual(0);
+    expect(r.indexOf("await openMap(")).toBeLessThan(r.indexOf('setPressed("layer-reception", true)'));
+    expect(r).not.toMatch(/setPressed\("layer-traffic", true\)/);
     const scroll = r.search(/getByTestId\("legend-reception"\)\.scrollIntoViewIfNeeded\(/);
     expect(scroll).toBeGreaterThan(0);
     expect(scroll).toBeLessThan(r.lastIndexOf("return ")); // 번호는 레시피가 돌아온 뒤에 잰다(measure) — 그 전에 굴린다
-    expect(r.indexOf('setPressed("layer-traffic", false)')).toBeLessThan(r.indexOf('setPressed("layer-reception", true)'));
+  });
+  /**
+   * 리뷰 2026-10-01: 레이어 켜짐은 이 브라우저에 기억되고(lib/prefs LAYERS_KEY — LayerPanel 이 열 때 읽는다) 캡처는 한 문맥으로 모두 찍는다. reception 이 켠 관측
+   * 수신 칸이 뒤의 port-calls · alerts · radar 에, traffic 이 켠 연안 교통량이 search · aircraft · ship 에 남았다. 이제 openMap 이 겹쳐 그리는 레이어를 모두 끄고
+   * 시작한다 — 레시피 하나를 고치는 대신. 수정 전 실패.
+   */
+  it("openMap turns every overlay layer off once the map is open, so a layer an earlier shot turned on is not carried into the next shot", () => {
+    const at = src.indexOf("async function openMap(");
+    expect(at).toBeGreaterThan(0);
+    const open = src.slice(at, src.indexOf("\n}\n", at));
+    const list = /const OVERLAY_LAYERS = \[([^\]]*)\]/.exec(src);
+    expect(list, "OVERLAY_LAYERS").not.toBeNull();
+    const overlays = [...list![1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(overlays).toEqual(expect.arrayContaining(["layer-traffic", "layer-reception"]));
+    expect(open).toMatch(/for \(const id of OVERLAY_LAYERS\) await setPressed\(id, false\)/);
+    // 실시간 연결이 열린 뒤(LayerPanel 이 저장된 켜짐을 읽은 뒤) 끈다 — 그 전이면 저장값이 다시 켠다
+    expect(open.indexOf("OVERLAY_LAYERS")).toBeGreaterThan(open.indexOf('getByTestId("conn")'));
+  });
+  it("a recipe turns on only the ships layer (set by every map recipe) or an overlay that openMap resets — traffic only in 'traffic', reception only in 'reception'", () => {
+    const list = /const OVERLAY_LAYERS = \[([^\]]*)\]/.exec(src);
+    const overlays = [...(list?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const ids = [...src.matchAll(/^ {2}async (?:"([\w-]+)"|(\w+))\(shot\) \{/gm)].map((m) => m[1] ?? m[2]);
+    expect(ids).toEqual(expect.arrayContaining(["traffic", "reception", "search", "aircraft", "ship", "port-calls", "alerts", "radar"]));
+    for (const id of ids) {
+      const r = recipe(id);
+      const on = [...r.matchAll(/setPressed\("([\w-]+)", true\)/g)].map((m) => m[1]);
+      for (const layer of on) expect(layer === "layer-ships" || overlays.includes(layer), `${id} turns ${layer} on`).toBe(true);
+      if (r.includes("openMap(")) expect(r, `${id} sets the ships layer explicitly`).toMatch(/setPressed\("layer-ships", (true|false)\)/);
+      expect(on.includes("layer-traffic"), `${id}: traffic`).toBe(id === "traffic");
+      expect(on.includes("layer-reception"), `${id}: reception`).toBe(id === "reception");
+    }
   });
   it("the other recipes are unchanged in what they wait for (traffic still turns its own layer on)", () => {
     expect(recipe("traffic")).toMatch(/setPressed\("layer-traffic", true\)/);
