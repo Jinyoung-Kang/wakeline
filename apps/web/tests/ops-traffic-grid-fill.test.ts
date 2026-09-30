@@ -79,6 +79,32 @@ describe("traffic grid fill line (lib)", () => {
     expect(trafficGridFill({ ...HB, traffic_grid_fill_state: "idle", traffic_grid_fill_resume_at: "" }, NOW)!.state.text).toBe("물을 칸 없음");
   });
 
+  it("shows bbox tile progress from the collector's own fields (ADR-023 2026-10-01 bbox amendment) and nothing when a collector has no tiles", () => {
+    const tiles = {
+      ...HB,
+      traffic_grid_tiles_done: "147", traffic_grid_tiles_queued: "12",
+      traffic_grid_fill_pass_tiles: "151", traffic_grid_fill_pass_tile_cells: "29980", traffic_grid_fill_pass_tile_new: "17083",
+      traffic_grid_fill_pass_tile_splits: "1", traffic_grid_fill_pass_tile_errors: "0",
+    };
+    const v = trafficGridFill(tiles, NOW)!;
+    expect(v.items.find((i) => i.key === "tiles")).toMatchObject({ label: "bbox 타일", text: "끝 147 · 대기 12", tone: "muted" });
+    expect(v.items.find((i) => i.key === "tiles")!.title).toContain("32 km");
+    expect(v.pass.text).toBe(
+      "마지막 채우기 10-01 03:18:17 KST 끝 — 조회 290 → 찾음 268 · 해양격자에 없음 15 · 격자 밖 2 · 오류 5 · 타일 151 → 칸 29,980(새 17,083) · 나눔 1 · 오류 0",
+    );
+    // 타일 공급자가 없는 수집기(빈 값) · 예전 수집기(필드 없음)는 타일 항목 · 절을 싣지 않는다 — 0 으로 채우지 않는다
+    for (const hb of [HB, { ...HB, traffic_grid_tiles_done: "", traffic_grid_tiles_queued: "", traffic_grid_fill_pass_tiles: "" }]) {
+      const w = trafficGridFill(hb, NOW)!;
+      expect(w.items.find((i) => i.key === "tiles")).toBeUndefined();
+      expect(w.pass.text).not.toContain("타일");
+    }
+    expect(trafficGridFill({ ...tiles, traffic_grid_tiles_queued: "x" }, NOW)!.items.find((i) => i.key === "tiles")!.text).toBe("끝 147 · 대기 —");
+    expect(trafficGridFill({ ...tiles, traffic_grid_fill_state: "waiting_tiles", traffic_grid_fill_resume_at: "" }, NOW)!.state).toMatchObject({
+      text: "타일 진행 기록 읽기를 기다림", tone: "muted",
+    });
+    for (const t of texts(v)) expect(utcLeaks(t)).toEqual([]);
+  });
+
   it("a stale heartbeat (a stopped or crashed collector) shows its last time, not the dead process's state and numbers", () => {
     // 120 s 는 api(TrafficGridReader.HEARTBEAT_MAX_AGE_S)와 같은 선이다 — 딱 120 s 는 아직 지금 값
     expect(trafficGridFill(HB, Date.parse("2026-09-30T18:57:40Z"))!.items).toHaveLength(8);
