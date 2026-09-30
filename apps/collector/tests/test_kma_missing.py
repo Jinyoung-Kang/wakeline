@@ -449,3 +449,33 @@ async def test_a_budget_stop_at_the_download_step_is_one_run_and_ok_only_with_a_
     assert [(run["status"], run.get("records_in", 0)) for run in runs] == [want]
     after = (await r.hgetall("wakeline:provider:kma_radar"))["last_success_at"]
     assert (after == before) == (want[0] != "ok")
+
+
+async def test_a_restart_right_after_recovery_keeps_the_reported_gap_quiet(env, caplog):
+    """리뷰(낮음): 알린 공백(닫은 연속)은 프로세스 메모리에만 있었다 — 회복 직후 수집기를 다시 띄우면(이 수정을 배포하는 때가 바로 그렇다) 보관 창 안의
+    빈 tm 마다 세 번 뒤 WARN 이 다시 났다(12:15–13:40 공백, 13:45 재기동 → WARN 5건). 이제 meta 해시에 남겨 다시 읽는다."""
+    mod, r, ctx, clock, runs = env
+    prov = OutageKma(clock, down_from="202609271215", up_from="202609271340")
+    job = await _steady(mod, ctx, clock, prov)
+    await _cycles(job, clock, "202609271340")
+    assert job.missing is None
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["missing_gap_from"], meta["missing_gap_to"]) == ("202609271215", "202609271340")
+    assert "missing_gap_from" not in await r.hgetall("wakeline:provider:kma_radar")  # 수집기 내부 값 — 운영 표에는 싣지 않는다
+    caplog.clear()
+    again = mod.KmaRadarJob(prov, ctx)  # 새 프로세스
+    await _cycles(again, clock, "202609271420")
+    assert _warns(caplog) == []
+    assert any("still unavailable after 3 tries — skipped (inside the gap reported" in m for m in _infos(caplog))
+
+
+async def test_an_old_reported_gap_is_not_carried_over(env):
+    mod, r, ctx, clock, runs = env
+    await r.hset(mod.KEY_META, mapping={"missing_gap_from": "202609270615", "missing_gap_to": "202609270740"})
+    prov = OutageKma(clock, down_from="209912312355")
+    job = mod.KmaRadarJob(prov, ctx)
+    clock["now"] = "202609271100"  # 공백 끝 tm 이 보관할 수 있는 나이(영상 TTL 3 h)보다 오래됐다
+    await job.run_once()
+    assert job._closed_gap is None
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["missing_gap_from"], meta["missing_gap_to"]) == ("", "")

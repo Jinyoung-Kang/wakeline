@@ -13,7 +13,9 @@
   MISSING_RECHECK_S(10분, 선택값 — R-03 의 마지막 시도 나이) 넘게 앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03)
   때문이다 — 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은 아직 없어서 연속이 닫히지 않았다(리뷰 2026-09-30). 예산: 목록 1 + 확인 2 = 주기당 3,
   하루 3 × 288 = 864 < 한도 1,000(설정값 계산 — 전에는 목록 1 + 바이너리 4). 둘 중 어느 것이든 gzip 을 받으면 INFO(공백 길이)로 닫고
-  다음 주기부터 전처럼 보관 창의 빈 곳을 다시 시도한다 — 그 공백 안의 tm 을 포기할 때는 이미 알렸으므로 INFO. 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
+  다음 주기부터 전처럼 보관 창의 빈 곳을 다시 시도한다 — 그 공백 안의 tm 을 포기할 때는 이미 알렸으므로 INFO(알린 공백은 meta 해시
+  missing_gap_* 에도 남겨 다시 띄운 수집기도 읽는다 — 끝 tm 이 3 h 넘으면 버린다). 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다
+  (전처럼 그 tm 에 WARN 한 번).
   연속은 meta 해시와 공급자 해시(wakeline:provider:kma_radar)의 missing_* 에 싣고(api /radar/kr · /status · /ops/providers), 닫으면 빈 값으로
   지운다. 수집기를 다시 띄우면 마지막 확인이 MISSING_CARRY_S(15분, 선택값) 안인 연속만 이어받는다(아니면 지운다 — 옛 연속을 지금처럼 보이지 않게).
 - 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
@@ -107,6 +109,10 @@ MISSING_RECHECK_S = 10 * 60
 # 다시 띄운 수집기가 Redis 의 연속을 이어받는 상한 — 마지막 확인이 이만큼 안일 때만(선택값, 주기 5분의 3배)
 MISSING_CARRY_S = 15 * 60
 MISSING_KEYS = ("missing_since_tm", "missing_last_tm", "missing_tms", "missing_checked_at", "missing_file", "missing_listed")
+# 알린 공백(닫은 연속 [첫 tm, 파일이 다시 온 tm)) — meta 해시에만(수집기 내부 값: api 는 싣지 않는다). 다시 띄운 수집기가 그 안의 빈 tm 을 포기할 때
+# 다시 WARN 하지 않게(리뷰 2026-09-30). 끝 tm 이 MISSING_GAP_KEEP_S 보다 오래되면 버린다 — 그보다 옛 tm 은 보관 창(최근 12 tm)에 들지 않는다
+GAP_KEYS = ("missing_gap_from", "missing_gap_to")
+MISSING_GAP_KEEP_S = FRAME_TTL_S  # 영상 TTL 3 h — 보관 창(약 1 h)보다 넉넉한 상한(선택값)
 _MISSING_FILE = re.compile(r"RDR_CMP_[A-Z]+_[A-Z]+_\d{12}\.bin\.gz")  # '파일 없음' 답에 기상청이 적은 파일 이름
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
@@ -168,6 +174,12 @@ class MissingStreak:
             "missing_file": self.file,
             "missing_listed": self.listed,
         }
+
+
+def _gap_expired(to_tm: str) -> bool:
+    """알린 공백의 끝 tm(KST 벽시계)이 MISSING_GAP_KEEP_S 보다 오래됐는가(형식이 틀려도 참 — 버린다)."""
+    t = _tm_dt(to_tm)
+    return t is None or (kst_now().replace(tzinfo=None) - t).total_seconds() > MISSING_GAP_KEEP_S
 
 
 def _listed_text(listed: str) -> str:
@@ -349,6 +361,7 @@ class KmaRadarJob:
         self._closed_gap: tuple[str, str] | None = None
         self._loaded = False  # Redis 의 연속을 읽었는가(첫 주기 한 번)
         self._published: dict[str, str] = dict.fromkeys(MISSING_KEYS, "")  # 해시에 마지막으로 쓴 missing_*
+        self._published_gap: dict[str, str] = dict.fromkeys(GAP_KEYS, "")  # meta 해시에 마지막으로 쓴 알린 공백
         # 부분 합성 누계(프로세스 기동 뒤 — heartbeat): 부분 합성으로 처음 저장한 프레임 · 다시 받기 시도 · 지점이 늘어 바꾼 수
         self.partial_stored = 0
         self.refetch_attempts = 0
@@ -810,8 +823,9 @@ class KmaRadarJob:
         self.missing = None
 
     async def _load_missing(self) -> None:
-        """첫 주기: 앞선 프로세스가 meta 해시에 남긴 연속을 읽는다. 마지막 확인이 MISSING_CARRY_S 안이면 이어받고(WARN 은 앞 프로세스가 했다),
-        아니면 옛 값이라 이 주기 끝에 지운다(_publish_missing). Redis 를 못 읽으면 다음 주기에 다시 읽는다."""
+        """첫 주기: 앞선 프로세스가 meta 해시에 남긴 연속과 알린 공백을 읽는다. 연속은 마지막 확인이 MISSING_CARRY_S 안이면 이어받고(WARN 은 앞
+        프로세스가 했다), 아니면 옛 값이라 이 주기 끝에 지운다(_publish_missing). 알린 공백은 끝 tm 이 MISSING_GAP_KEEP_S 안이면 이어받는다.
+        Redis 를 못 읽으면 다음 주기에 다시 읽는다."""
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
                 h = await self.ctx.status.redis.hgetall(KEY_META)
@@ -820,6 +834,10 @@ class KmaRadarJob:
             return
         self._loaded = True
         self._published = {k: str(h.get(k) or "") for k in MISSING_KEYS}
+        self._published_gap = {k: str(h.get(k) or "") for k in GAP_KEYS}
+        g_from, g_to = self._published_gap["missing_gap_from"], self._published_gap["missing_gap_to"]
+        if _tm_dt(g_from) is not None and _tm_dt(g_to) is not None and g_from < g_to and not _gap_expired(g_to):
+            self._closed_gap = (g_from, g_to)
         since, last = self._published["missing_since_tm"], self._published["missing_last_tm"]
         checked = _parse_iso(self._published["missing_checked_at"])
         try:
@@ -840,20 +858,25 @@ class KmaRadarJob:
         log.info("kma radar: carried over the missing-file streak since tm=%s (%d tms, last checked %s)", since, n, _iso(checked))
 
     async def _publish_missing(self) -> None:
-        """연속(없으면 빈 값)을 meta 해시와 공급자 해시에 싣는다 — 마지막으로 쓴 값과 다를 때만. 쓰기에 실패하면 다음 주기에 다시 쓴다
-        (닫은 연속을 지우지 못한 채 '쓴 것'으로 기억하면 화면에 옛 연속이 남는다)."""
+        """연속(없으면 빈 값)을 meta 해시와 공급자 해시에, 알린 공백(없거나 오래되면 빈 값)을 meta 해시에만 싣는다 — 마지막으로 쓴 값과 다를 때만.
+        쓰기에 실패하면 다음 주기에 다시 쓴다(닫은 연속을 지우지 못한 채 '쓴 것'으로 기억하면 화면에 옛 연속이 남는다)."""
         fields = self.missing.fields() if self.missing is not None else dict.fromkeys(MISSING_KEYS, "")
-        if fields == self._published:
+        if self._closed_gap is not None and _gap_expired(self._closed_gap[1]):
+            self._closed_gap = None
+        g = self._closed_gap
+        gap = dict(zip(GAP_KEYS, g, strict=True)) if g is not None else dict.fromkeys(GAP_KEYS, "")
+        if fields == self._published and gap == self._published_gap:
             return
         r = self.ctx.status.redis
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
-                await r.hset(KEY_META, mapping=fields)  # type: ignore[arg-type]
-                await r.hset(self.ctx.status.key(self.p.name), mapping=fields)  # type: ignore[arg-type]
+                await r.hset(KEY_META, mapping=fields | gap)  # type: ignore[arg-type]
+                if fields != self._published:
+                    await r.hset(self.ctx.status.key(self.p.name), mapping=fields)  # type: ignore[arg-type]
         except Exception as e:  # noqa: BLE001 — 부가 기능
             log.info("kma radar: could not write the missing-file streak — %s (written again next cycle)", describe_error(e))
             return
-        self._published = fields
+        self._published, self._published_gap = fields, gap
 
     def _header_meta(self, header, meta: dict) -> dict[str, str]:
         """meta 해시의 헤더 값 — latest_tm 프레임을 설명할 때만 쓴다. fetched_at(STALE 시계)은 여기 없다 — 새 latest_tm 을 저장할 때만(_store)."""
