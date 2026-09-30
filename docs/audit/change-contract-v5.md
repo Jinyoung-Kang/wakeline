@@ -585,8 +585,11 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   `# file not exist (RDR_CMP_HSR_PUB_<tm>.bin.gz)` 로 답했다(0800 · 0810 은 gzip). 내려받기에 ext=Y · ext=K 를 붙여도 PUB 를 찾고, 문서에는 tm · data · cmp · authKey 와
   PUB 파일 이름만 있다 — 공급자 쪽에서 내려받기 파일이 멈춘 것이고 우리 해석 문제가 아니다. 결함 셋: tm 마다 3번 뒤 WARN(5분마다 같은 지문 — 로그 화면이 그것으로 찼다),
   저장한 프레임이 없는 주기도 실행 'ok' · 공급자 LAST SUCCESS 갱신(RECORDS 0 · FAILS 0), 까닭이 어디에도 없음(KMA 칩은 나이로 STALE 만).
-  - 수집기(`jobs/kma_radar.py`): tm 이 R-03 의 3번 모두 없다고 답했고 그보다 새 프레임을 저장하지 못했으면 연속(`MissingStreak` — 첫 tm · 마지막 tm · 없다고 답한
-    서로 다른 tm 수(확인한 tm 마다 한 번 — 확인하지 않은 tm 은 세지 않는다) · 마지막 확인 · 답에 적힌 파일 이름 · 목록이 그 tm 에 싣는 종류)을 연다. 연 순간 WARN 한 번,
+  - 수집기(`jobs/kma_radar.py`): tm 이 R-03 의 3번 모두 없다고 답했고 그보다 새 파일이 없으면(저장된 프레임 · 같은 주기에 받은 파일 — 주기의 후보를 모두 본 뒤에
+    가린다: 후보는 오래된 것부터라 한 tm 씩 바로 가리면 뒤이어 온 늦은 파일을 보기 전에 연속을 열고 닫았다, 통합 리뷰 2026-09-30) 연속(`MissingStreak` — 첫 tm · 마지막 tm · 없다고 답한
+    서로 다른 tm 수(확인한 tm 마다 한 번 — 확인하지 않은 tm 은 세지 않는다) · 마지막 확인 · 답에 적힌 파일 이름 · 목록이 그 tm 에 싣는 종류)을 연다. 첫 tm · 수에는 이
+    프로세스에서 없다는 답을 받은, 파일이 있던 가장 새 tm 보다 새 tm 을 모두 넣는다(세 번을 채우기 전에 후보에서 밀려난 tm 포함 — 연속 한가운데서 다시 띄운 수집기의
+    첫 tm 이 늦지 않게. 그 프로세스가 연속 전에 한 번도 묻지 않은 tm 은 받은 답이 없어 세지 않는다). 연 순간 WARN 한 번,
     그 뒤로는 `MISSING_REMIND_S`(60분 — 선택값)마다 주기 끝에 한 번만, gzip 이 다시 오면 INFO(공백 길이 — 첫 tm 부터 다시 온 tm 까지). 연속 동안은 주기마다 두 tm 만
     확인한다(`streak_probes` — 저장 안 됨 · 해석 불가 아님): 목록의 가장 새 tm 과, 첫 tm 이후이면서 `MISSING_RECHECK_S`(10분 — 선택값, R-03 의 마지막 시도 나이) 넘게
     앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03 — 2026-09-28 첫 시도에 182 중 14 tm) 때문이다: 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은
@@ -617,7 +620,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 바꾸지 않는 것: 영상 · 목록 일관성(REL-19), STALE 기준(900 s — meta.fetched_at), 연속이 아닐 때의 R-03 3번 시도, 부분 합성 다시 받기(ADR-021), 원문(로그 메시지 본문 ·
     실행 오류 글자 — 기상청 답 앞부분 그대로).
   - 회귀 막기: collector `tests/test_kma_missing.py`(WARN 수 · 확인 2개 · 예산 · 회복 · 늦게 생기는 파일의 회복 · 예산 멈춤 실행 하나 · 알린 공백의 재기동 ·
-    서로 다른 tm 수 · 키 없음 지우기 · 목록 실패 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기) · `test_rest_contract_rules` · api
+    서로 다른 tm 수 · 키 없음 지우기 · 목록 실패 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기 · 같은 주기의 늦은 파일은 한 tm · 연속 중 재기동의 첫 tm · 주기가 중간에
+    끝나도 포기한 tm 을 알림) · `test_redis_integration`(수집기 ACL 아래 HGETALL meta · HSET missing_* · 알린 공백 — 실 Redis) · `test_rest_contract_rules` · api
     `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT`(ETag · /status) · `RestSamplesIT` · `WsSchemaContractTest` · web `tests/kma-missing.test.ts` ·
     `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색).
 
