@@ -15,7 +15,7 @@
   연속 동안은 옛 tm 마다 세 번씩 부르지 않고 주기마다 두 tm 만 확인한다(streak_probes — 저장 안 됨 · 해석 불가 아님): 목록의 가장 새 tm 과
   MISSING_RECHECK_S(10분, 선택값 — R-03 의 마지막 시도 나이) 넘게 앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03)
   때문이다 — 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은 아직 없어서 연속이 닫히지 않았다(리뷰 2026-09-30). 예산: 목록 1 + 확인 2 = 주기당 3,
-  하루 3 × 288 = 864 < 한도 1,000(설정값 계산 — 전에는 목록 1 + 바이너리 4). 둘 중 어느 것이든 gzip 을 받으면 INFO(공백 길이)로 닫고
+  하루 3 × 288 = 864(+ KST 자정 직후 창 3 — streak_calls_per_day) < 한도 1,000(설정값 계산 — 전에는 목록 1 + 바이너리 4). 둘 중 어느 것이든 gzip 을 받으면 INFO(공백 길이)로 닫고
   다음 주기부터 전처럼 보관 창의 빈 곳을 다시 시도한다 — 그 공백 안의 tm 을 포기할 때는 이미 알렸으므로 INFO(알린 공백은 meta 해시
   missing_gap_* 에도 남겨 다시 띄운 수집기도 읽는다 — 끝 tm 이 3 h 넘으면 버린다). 더 새 파일은 받았는데(같은 주기에 받은 것 포함) 한 tm 만
   없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
@@ -31,8 +31,10 @@
   주기(목록 예약 — 실패한 목록 포함)부터 센다. 지금 확인 간격은 연속 해시의 missing_probe_every_s(초 — 5분마다면 주기)로 싣는다(웹이 'N분마다 확인'을 적는다).
   파일이 다시 오면(확인하는 주기의 gzip) 연속이 닫히고 다음 주기부터 전처럼 5분마다다. '확인 멈춤'과 이어받기 상한은 확인 간격 × MISSING_STALE_PROBES
   (3, 선택값 — 전의 15분 = 5분 × 3 과 같은 규칙, 아래로는 MISSING_CARRY_S): 늦춘 연속은 45분(missing_carry_s). 이어받은 연속은 마지막 확인에서 간격을
-  센다(다시 띄워도 곧바로 부르지 않는다). 예산(설정값 계산 — streak_calls_per_day): 연속만 이어지는 UTC 하루 5분마다 288 × 3 = 864(다시 부르기 최악 1,728),
-  늦춘 뒤 96 × 3 = 288(최악 576) — 한도 1,000.
+  센다(다시 띄워도 곧바로 부르지 않는다). 예산(설정값 계산 — streak_calls_per_day): 연속만 이어지는 UTC 하루 5분마다 288 × 3 + 3 = 867(다시 부르기 최악 1,734),
+  늦춘 뒤 96 × 3 + 1 = 289(최악 578) — 한도 1,000. +3 · +1 은 KST 자정 직후 창(00:00–00:14)의 확인 주기마다 하나 — 전날 목록을 더 읽고 확인도 둘일 수 있다
+  (목록 2 + 확인 2 — 레인 kma 7차가 빠진 것을 더했다. 전에는 864 · 288(최악 576)이라 적었다). 최악은 호출마다 일시 오류 뒤 한 번 다시 부르기(확인에 필요한
+  전날 목록 포함 — 아래 '일시 오류')다.
 - 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
   거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
@@ -60,7 +62,8 @@
   목록이 비어 있는 동안 last_tm 뒤를 싣는 목록은 전날 것이다. 빈 새 날 목록을 '파일 없음'으로 세지 않는다 — 연속의 tm 수 · 마지막 tm 은 답을 받은 tm 만).
   새 날 목록 자체가 504 · 시간 초과면 전날 목록을 읽지 않는다 — 목록이 실패한 주기('error' · 아무것도 옮기지 않는다, 확인 간격 × 3 뒤 '확인 멈춤')다. 그때
   확인은 전날의 가장 새 tm 하나다(지금 −10분이 전날 tm 을 모두 넘어 둘째 확인이 첫째와 같다) — 목록 2 + 확인 1 = 주기당 3 그대로. 이 전날 목록은
-  확인에 필요한 목록이라(자정 직후 창 안이어도) 호출이 실패하면(504 · 시간 초과 — 다시 부르지 않는다) 'error'(전날 목록 단계 · 공급자 오류 · WARN), 예산이
+  확인에 필요한 목록이라(자정 직후 창 안이어도) 호출이 실패하면(504 · 시간 초과 — 시간 초과 · 연결 실패는 5 s 뒤 한 번 다시 부른 뒤, 아래 '일시 오류')
+  'error'(전날 목록 단계 · 공급자 오류 · WARN), 예산이
   없으면 예산 상태 — 둘 다 마지막 확인 · 목록 필드를 옮기지 않는다(리뷰 2026-10-01 — 전에는 오늘 목록만으로 이어가 확인할 tm 이 없는 'missing' 으로 마지막
   확인을 옮겼다: 수집기가 몇 시간 동안 아무 tm 도 묻지 않았는데 '확인 멈춤'이 뜨지 않았다). 연속이 없어도 새 날 목록이 답했으나 비었고 저장한 프레임이
   전날 끝(23:55)에 닿지 않았으면 전날 목록을 읽는다(_behind_prev_day — 다시 띄운 수집기가 버린 연속을 R-03 으로 다시 연다). 그 주기가 읽을 것은 전날
@@ -75,14 +78,19 @@
 - 해석(gzip 해제·재투영·PNG)은 CPU 작업이라 스레드에서 돈다(이벤트 루프를 막지 않게).
 - 일시 오류(시간 초과 · 연결 실패 · 프로토콜 오류 — retry.RETRY_ERRORS)는 실패한 호출마다 같은 주기 안에서 RETRY_DELAY_S 뒤 한 번 다시
   부른다(예산 1 을 따로 예약한다 — 규칙은 retry.py, 기상 작업도 같은 것을 쓴다). 다시 불러도 실패하면 그 주기를 끝낸다(남은 tm 은 다음 주기).
-  전날 목록은 덧붙이는 것이라 다시 부르지 않는다. HTTP 오류(ProviderHttpError — 403 활용신청 전 등)·속도 상한(Throttled)도 다시 부르지
-  않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다). 보내지 않은 시도(연결 전 실패 · 연결 풀 대기 초과 · 속도 상한 — retry.NOT_SENT)는
+  전날 목록은 연속의 확인에 필요한 것(_streak_needs_prev_day)만 다시 부른다(조사 F2 2026-10-01 — 전에는 '덧붙이는 것'이라 다시 부르지 않았는데, 연속의
+  확인에서는 그 목록이 확인할 tm 을 싣는다: 한 번 멈추면 확인 하나(15분)를 잃었다. 같은 주기의 빈 오늘 목록은 다시 불렀다). 새 날 목록이 빈 주기
+  (_behind_prev_day — 하루 내내 이어질 수 있어 5분마다 다시 부르면 최악 (1 + 1) × 2 × 288 = 1,152 > 한도)와 자정 직후 창의 덧붙이는 전날 목록은 다시
+  부르지 않는다. 전날 목록을 읽을 때마다 INFO 한 줄(날 · 무엇에 필요한지 · tm 수 · HTTP ms · 단계 ms — 실행 기록의 latency_ms 는 오늘 목록만이다) —
+  다시 부르기가 얼마나 살리는지(INFO 'retrying once' 뒤 이 줄 · WARN 'retried once after 5 s')를 운영 로그로 센다. HTTP 오류(ProviderHttpError — 403
+  활용신청 전 등)·속도 상한(Throttled)도 다시 부르지 않는다. 5 s·1회는 선택값이다(재어서 정한 값이 아니다). 보내지 않은 시도(연결 전 실패 · 연결 풀 대기 초과 · 속도 상한 — retry.NOT_SENT)는
   예산 1 을 돌려준다(전날 목록 포함). 다시 부르기 예약에는 기상 작업과 달리 여유(headroom)를 두지 않는다 — 정규 호출 수가 주기마다
   다르고(목록 1 + 바이너리 0–4, 상한 5 × 288 = 1,440 > 한도 1,000) 계속 실패하는 서버에서는 첫 호출이 두 번 실패하는 즉시 주기가 끝나
   하루 최대 2 × 288 = 576 이다(설정값 계산).
 - 주기 길이(설정값으로 계산한 상한 — 잰 값이 아니다): 최악은 다시 부른 호출이 모두 첫 시도에서 전체 상한(KMA_TOTAL_S 40 s)을 채우고
-  실패한 뒤 다시 40 s 걸려 성공하는 경우다 — 오늘 목록 (40 + 5 + 40) + 전날 목록 40(KST 00:00–00:14 만) + 바이너리 4 × (40 + 5 + 40)
-  + 부분 합성 다시 받기 2 × 40(다시 부르지 않는다, ADR-021) = 545 s. 속도 상한 대기(호출마다 최대 DEFAULT_WAIT_S 10 s, 최대 13번)는 전체 상한
+  실패한 뒤 다시 40 s 걸려 성공하는 경우다 — 오늘 목록 (40 + 5 + 40) + 전날 목록 40(KST 00:00–00:14 · 새 날 목록이 빈 주기) + 바이너리 4 × (40 + 5 + 40)
+  + 부분 합성 다시 받기 2 × 40(다시 부르지 않는다, ADR-021) = 545 s. 연속의 확인에 필요한 전날 목록은 다시 불러 85 s 일 수 있지만 그 주기는 확인이 둘
+  이하라 85 + 85 + 2 × 85 + 80 = 420 s 로 위 상한 안이다. 속도 상한 대기(호출마다 최대 DEFAULT_WAIT_S 10 s, 최대 13번)는 전체 상한
   밖이라 더 붙을 수 있다(+130 s). 주기(300 s)를 넘을 수 있지만
   run_periodic 은 한 주기가 끝난 뒤 주기만큼 쉬고 다음을 시작하므로 겹치지 않는다 — 다음 주기가 늦어질 뿐이고, 놓친 프레임은 보관 창
   안에서 채운다. 계속 실패하는 서버에서는 첫 호출이 두 번 실패하는 즉시 끝난다.
@@ -237,10 +245,15 @@ def missing_carry_s(every_s: int) -> float:
 
 
 def streak_calls_per_day(poll_s: int, *, slow: bool, retries: bool = False) -> int:
-    """연속만 이어지는 UTC 하루의 정규 호출 상한(설정값 계산 — 잰 값이 아니다): 확인하는 주기 수(하루 ÷ 확인 간격) × STREAK_CALLS_PER_PROBE.
-    slow = 늦춘 확인 간격(slow_probe_every_s — 주기의 배수), 아니면 주기마다. retries = 일시 오류 다시 부르기(호출마다 한 번)까지 — 최악 두 배."""
+    """연속만 이어지는 UTC 하루의 정규 호출 상한(설정값 계산 — 잰 값이 아니다): 확인하는 주기 수(하루 ÷ 확인 간격) × STREAK_CALLS_PER_PROBE
+    + KST 자정 직후 창(PREV_DAY_LIST_MIN 분 — UTC 하루에 한 번, 15:00Z) 안의 확인 주기(⌈창 ÷ 확인 간격⌉)마다 1: 그 주기는 전날 목록을 더 읽고 확인도 둘일
+    수 있다(목록 2 + 확인 2 = 4 — 지금 − 10분이 아직 전날 tm 을 다 넘지 않았다). 창 밖에서 확인에 필요한 전날 목록을 읽는 주기는 확인이 하나라 3 그대로다
+    (_streak_needs_prev_day). slow = 늦춘 확인 간격(slow_probe_every_s — 주기의 배수), 아니면 주기마다. retries = 일시 오류 다시 부르기(호출마다 한 번 —
+    확인에 필요한 전날 목록 포함, 레인 kma 7차)까지 — 최악 두 배. 기본 300 s: 5분마다 288 × 3 + 3 = 867(최악 1,734), 늦춘 뒤 96 × 3 + 1 = 289(최악 578 < 1,000).
+    (전에는 창의 +1 · +3 을 빠뜨려 864 · 288(최악 576)이라 적었다 — 리뷰 2026-10-01.)"""
     every = slow_probe_every_s(poll_s) if slow else poll_s
-    return (86_400 // every) * STREAK_CALLS_PER_PROBE * (2 if retries else 1)
+    midnight = math.ceil(PREV_DAY_LIST_MIN * 60 / every)
+    return ((86_400 // every) * STREAK_CALLS_PER_PROBE + midnight) * (2 if retries else 1)
 
 
 def _tm_span(a: str, b: str) -> str:
@@ -689,7 +702,8 @@ class KmaRadarJob:
         """연속의 확인에 전날 목록이 필요한가(자정 직후 창 안이어도): 연속의 last_tm 이 전날 이전이고 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지
         않았다. 운영 2026-10-01: 00:15 KST 뒤 확인은 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — last_tm 뒤를 싣는 목록은 전날 것이다. 이때 확인은 전날의
         가장 새 tm 하나만 본다(현재 시각 −10분이 전날 tm 을 모두 넘는다 — 둘째 확인이 첫째와 같다): 목록 2 + 확인 1 = 주기당 3(STREAK_CALLS_PER_PROBE
-        그대로). 참이면 전날 목록은 덧붙이는 목록이 아니다 — 읽지 못하면 확인이 아니다(_listing)."""
+        그대로 — 자정 직후 00:00–00:09 만 확인 둘일 수 있다: streak_calls_per_day 의 +1). 참이면 전날 목록은 덧붙이는 목록이 아니다 — 읽지 못하면 확인이
+        아니다(_listing — 일시 오류면 한 번 다시 부른다)."""
         s = self.missing
         return s is not None and s.last_tm[:8] < day and not any(tm <= now_tm for tm in today)
 
@@ -759,10 +773,22 @@ class KmaRadarJob:
                     "unavailable" if used == UNKNOWN else f"exhausted (used={used})",
                 )
                 return today
+        purpose = (
+            "the streak check" if needed else "frames short of the previous day's end" if behind else "the KST 00:00–00:14 window"
+        )
         t0 = time.monotonic()
         try:
-            # 다시 부르지 않는다(재시도는 오늘 목록·바이너리 몫 — 확인에 필요한 전날 목록은 다음 확인 주기에 다시 읽는다)
-            prev = await self.p.file_list(prev_day)
+            if needed:
+                # 연속의 확인에 필요한 목록 — 일시 오류면 5 s 뒤 한 번 다시 부른다(_call: 예산 1 을 따로 예약 · 보내지 않은 시도는 돌려준다 · HTTP 오류 · 429 ·
+                # 속도 상한은 다시 부르지 않는다 — 조사 F2 2026-10-01). 새 날 목록이 빈 주기 · 자정 직후 창의 전날 목록은 다시 부르지 않는다(모듈 설명)
+                prev = await self._call(step, lambda: self.p.file_list(prev_day))
+            else:
+                prev = await self.p.file_list(prev_day)
+        except _StepFailed as f:  # _call 의 실패(확인에 필요한 목록)
+            if _throttle(f.error):  # 429 · 속도 상한 — 목록의 429 와 같게 주기가 적는다
+                self._prev_day_throttle = f
+                return today
+            raise
         except Exception as e:  # noqa: BLE001
             if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
                 await self.ctx.budget.release(self.p.name, 1)
@@ -779,6 +805,16 @@ class KmaRadarJob:
                 time.monotonic() - t0,
             )
             return today
+        # 잴 수 있게(조사 F2 · 도전 2026-10-01): 전날 목록은 실행 기록의 latency_ms(오늘 목록)에 들지 않는다 — 읽을 때마다 한 줄. HTTP = 답한 시도의 응답
+        # 시간, step = 호스트 버킷 대기 · 다시 부르기(5 s 포함)까지 이 단계 전체(실패 로그의 'after N s' 와 같은 셈)
+        log.info(
+            "kma radar: previous-day listing %s read for %s — %d tms, HTTP %d ms, step %d ms (host-bucket wait and any retry included)",
+            prev_day,
+            purpose,
+            len(prev.data),
+            prev.latency_ms,
+            round((time.monotonic() - t0) * 1000),
+        )
         self._list_days = (prev_day, day)
         today.data = sorted({*prev.data, *today.data})
         kinds = {**(prev.extra.get("kinds") or {}), **(today.extra.get("kinds") or {})}

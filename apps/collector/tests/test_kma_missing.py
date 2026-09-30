@@ -744,17 +744,19 @@ def test_the_published_slow_interval_is_the_cadence_the_cycles_actually_reach(po
 async def test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence(env):
     """설정값 계산(잰 값이 아니다): 연속만 이어지는 UTC 하루의 정규 호출 = 확인하는 주기 수 × (목록 1 + 확인 ≤ 2). 다시 부르기(일시 오류 — 호출마다 한 번)는
     최악 두 배. 전: 5분마다 288 × 3 = 864(최악 1,728 — 한도 1,000 을 넘는다). 뒤: 60분 넘은 연속은 15분마다 96 × 3 = 288(최악 576).
-    모의 하루(12:15 부터 파일 없음)로 같은 수를 센다 — 늦춘 뒤 한 시간마다 목록 1 + 확인 2 를 네 번(12)."""
+    여기에 KST 자정 직후 창(00:00–00:14 — UTC 하루에 한 번)의 확인 주기마다 1(전날 목록 + 확인 둘 — 레인 kma 7차가 빠진 것을 더했다): 5분마다 +3 → 867
+    (최악 1,734), 15분마다 +1 → 289(최악 578 < 1,000 — 모의는 test_kma_list_idle 의 UTC 하루).
+    모의 하루(12:15 부터 파일 없음 — 자정을 넘지 않는다)로 같은 수를 센다 — 늦춘 뒤 한 시간마다 목록 1 + 확인 2 를 네 번(12)."""
     from wakeline_collector.config import Settings
 
     mod, r, ctx, clock, runs = env
-    assert mod.STREAK_CALLS_PER_PROBE == 3
-    assert mod.streak_calls_per_day(300, slow=False) == 864
-    assert mod.streak_calls_per_day(300, slow=False, retries=True) == 1728 > Settings().budget_kma_radar
-    assert mod.streak_calls_per_day(300, slow=True) == 288
-    assert mod.streak_calls_per_day(300, slow=True, retries=True) == 576 < Settings().budget_kma_radar
-    assert mod.streak_calls_per_day(1800, slow=True) == 48 * 3  # 주기가 15분보다 길면 주기마다(늦추지 않는다)
-    assert mod.streak_calls_per_day(600, slow=True) == 72 * 3  # 15분을 나누지 못하는 주기 — 실제 간격 20분(아래 시험)
+    assert mod.STREAK_CALLS_PER_PROBE == 3 and mod.PREV_DAY_LIST_MIN == 15
+    assert mod.streak_calls_per_day(300, slow=False) == 288 * 3 + 3 == 867
+    assert mod.streak_calls_per_day(300, slow=False, retries=True) == 1734 > Settings().budget_kma_radar
+    assert mod.streak_calls_per_day(300, slow=True) == 96 * 3 + 1 == 289
+    assert mod.streak_calls_per_day(300, slow=True, retries=True) == 578 < Settings().budget_kma_radar
+    assert mod.streak_calls_per_day(1800, slow=True) == 48 * 3 + 1  # 주기가 15분보다 길면 주기마다(늦추지 않는다)
+    assert mod.streak_calls_per_day(600, slow=True) == 72 * 3 + 1  # 15분을 나누지 못하는 주기 — 실제 간격 20분(아래 시험)
     prov = OutageKma(clock, down_from="202609271215")
     job = await _steady(mod, ctx, clock, prov)
     used = _used(ctx)
@@ -768,7 +770,9 @@ async def test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence(e
     assert per_hour["12"] == 2 + 3 + 4 + 6 * 3
     assert per_hour["13"] == 3 * 3 + 3 * 3  # 13:00–13:10 5분마다 · 13:15 부터 늦춤(13:25 · 13:40 · 13:55)
     assert {h: n for h, n in per_hour.items() if h >= "14"} == {f"{h:02d}": 12 for h in range(14, 24)}
-    assert 24 * per_hour["14"] == mod.streak_calls_per_day(300, slow=True)
+    assert 24 * per_hour["14"] + 1 == mod.streak_calls_per_day(
+        300, slow=True
+    )  # + KST 자정 직후 창의 확인 하나(이 모의는 자정을 넘지 않는다)
 
 
 async def test_a_file_during_slow_probing_closes_the_streak_and_the_5_min_cadence_resumes(env, caplog):
