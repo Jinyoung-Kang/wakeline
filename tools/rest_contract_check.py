@@ -1021,7 +1021,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "loaded_from": TS,
                     "error": {"enum": COVERAGE_ERRORS},
                     "finished_at": TS,
-                    # 창 안의 못 읽은 시(오래된 것부터) — retry = 다시 읽기 대기 · given_up = 포기. attempts = 그 시를 읽지 못한 차례 수
+                    # 창 안의 못 읽은 시(오래된 것부터) — retry = 다시 읽기 대기 · given_up = 포기. attempts = 그 시를 읽으려다 실패한 차례 수(차례 마감으로
+                    # 조회하지 않고 미룬 차례는 세지 않는다 — 리뷰 2026-10-01)
                     "missing": {
                         "type": "array",
                         "maxItems": 25,
@@ -1040,7 +1041,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     },
                     "retry_backoff_s": {"const": COVERAGE_RETRY_BACKOFF_S},
                     "next_retry_at": TS,
+                    # 그 차례가 몇 번째 다시 읽기인지(1 ~ 다시 읽기 횟수) — next_retry_at 과 함께만
+                    "next_retry": {"type": "integer", "minimum": 1, "maximum": len(COVERAGE_RETRY_BACKOFF_S)},
                 },
+                "dependentRequired": {"next_retry_at": ["next_retry"], "next_retry": ["next_retry_at"]},
                 "allOf": [
                     # 실패만 종류를 싣고(서버 글자 없이), 끝난 상태만 끝난 시각을 싣는다
                     {
@@ -2090,11 +2094,15 @@ def _ship_coverage(body: dict[str, Any]) -> list[str]:
 
 def _coverage_missing(b: dict[str, Any], frm: datetime, live: datetime, loaded: datetime, started: datetime) -> list[str]:
     """계약 v5 §G27 부트스트랩의 빈 시(2026-09-30 22:49 KST 배포 뒤 — 못 읽은 시는 나중에 다시 읽는다): 한 시 안의 조각 · 창의 시작 ~ 셈 시작 안 · 오래된 것부터 겹치지
-    않게 · 이어 읽은 곳(loaded_from) 앞(빈 시를 건너 이어 읽었다고 하지 않는다) · retry 는 1 ~ 다시 읽기 횟수, given_up 은 0 ~ 첫 읽기 + 다시 읽기 횟수 ·
-    다시 읽기를 기다리는 시는 도는 부트스트랩에만 · next_retry_at 은 기다리는 시가 있을 때만(api 시작 뒤) · pending · done 에는 빈 시가 없다 · 읽은 시 + 빈 시 ≤ 읽을 시."""
+    않게 · 이어 읽은 곳(loaded_from) 앞(빈 시를 건너 이어 읽었다고 하지 않는다) · attempts(읽으려다 실패한 차례 수)는 0 ~ 첫 읽기 + 다시 읽기 횟수, 다시 읽기를
+    기다리는 시는 그 차례까지 있었던 차례 수(첫 차례 중이면 1, 다음 다시 읽기가 n 번째면 n + 1 — 그 차례가 도는 중일 수 있다)를 넘지 않는다 · 0번(조회하지 않음)의
+    까닭은 차례 마감(deadline) · 종료(stopped)뿐이고 deadline 은 0번에만(리뷰 2026-10-01 — 마감으로 미룬 차례는 못 읽은 횟수가 아니다) · 다시 읽기를 기다리는
+    시는 도는 부트스트랩에만 · next_retry_at 은 기다리는 시가 있을 때만(api 시작 뒤) · pending · done 에는 빈 시가 없다 · 읽은 시 + 빈 시 ≤ 읽을 시."""
     errs: list[str] = []
     missing = b.get("missing") or []
     retries = len(b.get("retry_backoff_s") or [])
+    nth = b.get("next_retry")
+    passes = nth + 1 if isinstance(nth, int) else 1  # 다시 읽기를 기다리는 시가 있었을 수 있는 차례 수
     prev_to: datetime | None = None
     waiting = False
     for i, m in enumerate(missing):
@@ -2110,13 +2118,19 @@ def _coverage_missing(b: dict[str, Any], frm: datetime, live: datetime, loaded: 
         if prev_to is not None and mf < prev_to:
             errs.append(f"bootstrap.missing[{i}] is not after the previous one (oldest first, no overlap)")
         prev_to = mt
-        attempts = m.get("attempts", 0)
+        attempts, error = m.get("attempts", 0), m.get("error")
         if m.get("state") == "retry":
             waiting = True
-            if not 1 <= attempts <= retries:
-                errs.append(f"bootstrap.missing[{i}] waits for a retry after {attempts} attempts (1–{retries})")
+            if not 0 <= attempts <= min(passes, retries + 1):
+                errs.append(f"bootstrap.missing[{i}] waits for a retry after {attempts} failed reads (0–{min(passes, retries + 1)} by retry {nth or 0})")
+            if error == "stopped":
+                errs.append(f"bootstrap.missing[{i}] waits for a retry although the bootstrap was stopped")
         elif not 0 <= attempts <= retries + 1:
-            errs.append(f"bootstrap.missing[{i}] was given up after {attempts} attempts (0–{retries + 1})")
+            errs.append(f"bootstrap.missing[{i}] was given up after {attempts} failed reads (0–{retries + 1})")
+        if attempts == 0 and error not in ("deadline", "stopped"):
+            errs.append(f"bootstrap.missing[{i}] was never queried but names {error} (only deadline · stopped)")
+        if error == "deadline" and attempts != 0:
+            errs.append(f"bootstrap.missing[{i}] names deadline after {attempts} failed reads (deadline = never queried)")
     state = b.get("state")
     if waiting and state != "running":
         errs.append(f"bootstrap {state} but hours still wait to be read again")
