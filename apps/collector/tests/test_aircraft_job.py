@@ -590,3 +590,81 @@ async def test_region_429_warning_names_the_cooling_provider_that_is_retried_nex
     clk[0] += 10
     await job.run_once()
     assert fi.calls == 4  # 다음 주기에 다시 시도했다
+
+
+async def test_retrying_a_cooling_provider_is_shown_as_no_provider_until_it_answers(monkeypatch, caplog):
+    """운영 로그 2026-09-30 의 모양(adsb_fi 연결 실패 3회로 쉼 · adsb_lol 429 쉼): 다른 공급자가 없어 adsb_fi 를 주기마다 다시 시도하는 동안에도
+    '공급자 없음'이다 — wakeline:active 의 region_none_*(+ region_none_retry = adsb_fi), 전환 기록 adsb_lol → none, 공백마다 WARN 한 번.
+    리뷰 2026-09-30: 고친 뒤 첫 판은 이 상태를 비워 두었다 — 운영 배지 초록 'region: adsb_fi', 상태 바에 '공급자 없음' 없음, 다시 시도의 실패는 INFO
+    (로그 화면은 WARN 이상). adsb_fi 가 답하면 그 주기에 끝난다(none → adsb_fi · INFO)."""
+    from wakeline_collector.logsink import fingerprint
+
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    clk = [80_000.0]
+    monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    ctx.rt.provider_order = ["adsb_fi", "adsb_lol"]  # 로그 때처럼 adsb_fi 가 맡고 있었다(adsb_lol 은 429 미룸 중이었다)
+    lol, fi = RL429("adsb_lol"), FakeReadsb("adsb_fi", fail=True)
+    job = AircraftJob("region", ProviderChain("region", {"adsb_fi": fi, "adsb_lol": lol}, ctx.status), ctx)
+    for _ in range(3):  # 12:14:50 — adsb_fi 3회 연속 실패 → 10분 쉼
+        await job.run_once()
+        clk[0] += 10
+    await job.run_once()  # adsb_lol 이 맡아 429 → 60 s 쉼
+    clk[0] += 10
+    snaps = []
+    for _ in range(3):  # adsb_lol 쉼 안: adsb_fi 다시 시도(실패)
+        await job.run_once()
+        clk[0] += 10
+        snaps.append(await r.hgetall("wakeline:active"))
+    assert fi.calls == 6
+    assert all(a["region_none_since"] for a in snaps) and len({a["region_none_since"] for a in snaps}) == 1
+    assert {a["region_none_retry"] for a in snaps} == {"adsb_fi"}
+    assert snaps[-1]["region_none_reason"] == "adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(60 s)"
+    assert snaps[-1]["region"] == "adsb_lol"  # 마지막으로 쓴 공급자(기록)
+    gap = [w for w in _warnings(caplog) if "no provider available" in w]
+    assert gap == [
+        "region: no provider available — skipped: 'adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(60 s)'; "
+        "next: 'adsb_fi retried each cycle while cooling down (no other provider); adsb_lol after 50 s'"
+    ]
+    other = "region: no provider available — skipped: 'adsb_lol 운영자 끔'; next: 'none known'"
+    assert fingerprint("collector", "job.aircraft", "", gap[0]) == fingerprint("collector", "job.aircraft", "", other)  # 한 묶음
+    fi.fail = False
+    await job.run_once()  # adsb_fi 가 답했다
+    act = await r.hgetall("wakeline:active")
+    assert act["region"] == "adsb_fi" and act["region_none_since"] == "" and act["region_none_retry"] == ""
+    assert act["region_reason"] == "recovery — 공급자 없음 30 s 끝 · adsb_fi 다시 시도 성공"
+    ev = [(f["from"], f["to"]) for _id, f in r.streams["wakeline:events"]]
+    assert ev == [("adsb_fi", "adsb_lol"), ("adsb_lol", "none"), ("none", "adsb_fi")]
+    infos = [x.getMessage() for x in caplog.records if x.name == "job.aircraft" and x.levelno == logging.INFO]
+    assert "region: a provider is available again after 30 s without one — 'adsb_fi'" in infos
+    clk[0] += 10
+    await job.run_once()
+    assert len([w for w in _warnings(caplog) if "no provider available" in w]) == 1
+
+
+async def test_switching_global_off_clears_its_no_provider_state(monkeypatch, caplog):
+    """리뷰 2026-09-30: 전세계가 켜진 동안 '공급자 없음'(예: OpenSky 설정 안 됨)을 쓴 뒤 운영자가 전세계를 끄면 run_once 가 공급자를 고르기 전에
+    돌아가 아무도 지우지 않았다 — 운영 배지가 빨강 'global: 공급자 없음'으로 계속 남았다. 앞선 프로세스가 남긴 값도 같다."""
+    caplog.set_level(logging.INFO, logger="job.aircraft")
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    osky = FakeOpenSky()
+    osky._id = ""  # 설정 안 됨
+    assert osky.configured is False
+    job = AircraftJob("global", ProviderChain("global", {"opensky": osky}, ctx.status), ctx)
+    await job.run_once()
+    assert (await r.hgetall("wakeline:active"))["global_none_since"]
+    ctx.rt.global_enabled = False
+    await job.run_once()
+    act = await r.hgetall("wakeline:active")
+    assert act["global_none_since"] == "" and act["global_none_reason"] == "" and act["global_none_next"] == ""
+    assert job.chain.none_since is None
+    # 다시 띄운 수집기: 앞선 프로세스가 남긴 값도 지운다(끈 동안 한 번)
+    await r.hset("wakeline:active", mapping={"global_none_since": "2026-09-30T03:16:32Z", "global_none_reason": "x"})
+    job2 = AircraftJob("global", ProviderChain("global", {"opensky": osky}, ctx.status), ctx)
+    await job2.run_once()
+    assert (await r.hgetall("wakeline:active"))["global_none_since"] == ""
+    await r.hset("wakeline:active", mapping={"global_none_since": "2026-09-30T03:16:32Z"})
+    await job2.run_once()  # 끈 동안은 한 번만 쓴다
+    assert (await r.hgetall("wakeline:active"))["global_none_since"] == "2026-09-30T03:16:32Z"
