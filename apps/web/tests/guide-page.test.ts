@@ -22,6 +22,7 @@ import { fmtKst, fmtKstMinute, utcDayWindowKst } from "@/lib/time";
 import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
 import { parseHtml } from "./helpers/html-tree";
 import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
+import { RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
 vi.mock("next/link", () => ({
@@ -249,6 +250,16 @@ describe("features the guide describes exist in the screens", () => {
     expect(layers).toMatch(/위치 확인 중/);
     expect(layers).toMatch(/자료 멈춤/);
     expect(section(render(EMPTY), "dashboard-legend")).toContain("연안 교통량");
+  });
+  it("2.6 explains the observed reception layer (ADR-027): measured cells, not the subscription area, the partial-window notice and the chip count", () => {
+    const ship = section(render(EMPTY), "dashboard-ship");
+    expect(ship).toContain(RECEPTION_LAYER_LABEL);
+    expect(ship).toMatch(/실제로 선박 위치를 받은 0\.5° 칸/);
+    expect(ship).toMatch(/점선[^.]*구독[^.]*잰 값/);
+    expect(ship).toMatch(/창의 일부만 셈/);
+    expect(ship).toMatch(/이 화면에 관측 수신 칸 N개/);
+    expect(section(render(EMPTY), "dashboard-layers")).toContain(RECEPTION_LAYER_LABEL);
+    expect(section(render(EMPTY), "dashboard-legend")).toContain("관측 수신 범위");
   });
   it("2.8 explains the KMA composite size '합성 N/M곳'", () => {
     expect(section(render(EMPTY), "dashboard-radar")).toMatch(/합성 N\/M곳/);

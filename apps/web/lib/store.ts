@@ -6,6 +6,7 @@ import type { PortCallsInfo } from "./portcalls";
 import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipState, ShipStatic, StaticSource } from "./ships";
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
 import { TRAFFIC_POLL_NONE, type TrafficPollState } from "./traffic-grid";
+import type { ReceptionPollState } from "./reception";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
 
@@ -102,7 +103,16 @@ export interface ServerData {
   wsInvalid: WsInvalid;
   /** 연안 교통량(ADR-023) 조회 상태 — 레이어가 켜져 있을 때만 갱신. 지도는 version 이 바뀔 때만 다시 그린다 */
   trafficGrid: TrafficPollState;
+  /** 관측 수신 범위(ADR-027) 조회 상태 — 레이어 조각(components/ReceptionLayer)이 켜져 있을 때만 쓴다. null = 이 페이지에서 아직 켠 적 없음 */
+  reception: ReceptionPollState | null;
+  /**
+   * 관측 수신 범위 자료가 있을 때 지금 보이는 화면(mapBounds)과 겹치는 관측 칸 수 — 선박 칩 · 0척 알림이 적는다. null = 레이어 꺼짐 · 자료 없음(적지 않는다)
+   */
+  receptionInView: ReceptionInView | null;
 }
+
+/** 이 화면의 관측 수신 칸(ADR-027): cells = 칸 수, covered = 창을 다 셌는가(full) — 아니면 칩 설명이 그렇다고 적는다 */
+export interface ReceptionInView { cells: number; covered: "full" | "partial" | "since_api_start" }
 
 /**
  * elements = 버린 원소(형식이 틀린 항공기 · 선박 · 알림 · SIGMET · 격자 칸 · 선택 상태 등 — 메시지의 나머지는 적용했다),
@@ -143,6 +153,8 @@ const initial: ServerData = {
   mapBounds: null,
   wsInvalid: WS_INVALID_NONE,
   trafficGrid: TRAFFIC_POLL_NONE,
+  reception: null,
+  receptionInView: null,
 };
 let data: ServerData = initial;
 

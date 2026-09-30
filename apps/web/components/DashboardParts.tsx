@@ -20,10 +20,18 @@ export const KrRadarPanelPart = lazyPart("기상청 레이더 범례·정합", (
 });
 /** 통합 검색 결과의 선박 표 — 검색창에 초점이 오면 미리 받는다(components/AircraftSearch) */
 export const ShipTablePart = lazyPart("선박 표", () => import("./ShipTable").then((m) => m.ShipTable), { frameClassName: "px-2 py-1.5 text-[11px]" });
+/**
+ * 관측 수신 범위 레이어(ADR-027) — 레이어 단추를 켠 동안만 그린다(기본 끔). 상태 줄 자리(LayerPanel 오른쪽 칸)에 진행 표시, 받은 뒤에는 조회 · 지도 칸 · 툴팁까지
+ * 이 조각이 맡는다(lib/reception).
+ */
+export const ReceptionStatusPart = lazyPart("관측 수신 범위", () => import("./ReceptionLayer").then((m) => m.ReceptionStatus), {
+  frameClassName: "pointer-events-auto panel max-w-full px-2 py-1 text-[11px] sm:max-w-[440px]",
+});
 
 /** 모든 조각(시험이 미리 받을 때 · 목록 점검) */
 export const DASHBOARD_PARTS = [
   AircraftCardPart, ShipPanelPart, SigmetCardPart, SigmetListPart, AirportCardPart, AirportListPart, EvidenceCardPart, KrRadarPanelPart, ShipTablePart,
+  ReceptionStatusPart,
 ] as const;
 
 /**

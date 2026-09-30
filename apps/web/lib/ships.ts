@@ -1113,6 +1113,24 @@ export function countShipsIn(ships: Iterable<ShipLite>, enabled: ReadonlySet<Shi
  */
 export function shipsChip(
   v: ShipsChipInput,
+  ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis; filter?: ShipsChipFilter | null; observed?: ShipsChipObserved | null },
+): { text: string; title: string; warn: boolean } | null {
+  const c = chipBody(v, ctx);
+  const o = ctx.observed;
+  if (!c || !o || ctx.ais?.state === "disabled") return c;
+  const seen = `이 화면에 관측 수신 칸 ${n0(o.cells)}개`;
+  const title = `${c.title} 관측 수신 범위(최근 24 h — 레이어): ${seen} — 이 서비스가 실제로 선박 위치를 받은 0.5° 칸(구독 범위 아님)${o.covered === "full" ? "" : " · 창의 일부만 셈(레이어 상태 줄)"}.`;
+  return { ...c, text: v.mode !== "waiting" && (v.mode === "points" ? v.count : v.total) === 0 ? `${c.text} · ${seen}(최근 24 h)` : c.text, title };
+}
+
+/**
+ * 관측 수신 범위(ADR-027 — 레이어를 켜고 자료를 받았을 때만): 지금 화면과 겹치는 관측 칸 수 · 창을 다 셌는가. 0척 알림 글자와 칩 설명에 덧붙는다 —
+ * 0척인 화면에 관측 칸이 0개면 최근 24 h 에 이 서비스가 그곳 위치를 받은 적이 없다는 잰 값이다.
+ */
+export interface ShipsChipObserved { cells: number; covered: "full" | "partial" | "since_api_start" }
+
+function chipBody(
+  v: ShipsChipInput,
   ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis; filter?: ShipsChipFilter | null },
 ): { text: string; title: string; warn: boolean } | null {
   if (v.mode === "off") return null;

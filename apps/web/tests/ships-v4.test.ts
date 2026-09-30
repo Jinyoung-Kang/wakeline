@@ -137,6 +137,25 @@ describe("ships chip wording follows the contract v4 §C rule", () => {
     expect(shipsChip(view({ count: 0 }), ctx({ ais: aisOf({ state: "disabled", connected: false }) }))!.text).toBe("선박 없음 · AIS 꺼짐(키 없음)");
     expect(shipsChip(view({ count: 0 }), ctx())!.warn).toBe(false);
   });
+  it("with the observed reception layer loaded (ADR-027): the zero notice and every chip title say how many observed cells are in view", () => {
+    const zero = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 0, covered: "full" } }))!;
+    expect(zero.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 0개(최근 24 h)`);
+    expect(zero.title).toContain("이 화면에 관측 수신 칸 0개");
+    expect(zero.title).toContain("구독 범위 아님");
+    const some = shipsChip(view({ count: 0 }), ctx({ observed: { cells: 12, covered: "since_api_start" } }))!;
+    expect(some.text).toBe(`${SHIPS_ZERO_TEXT} · 이 화면에 관측 수신 칸 12개(최근 24 h)`);
+    expect(some.title).toContain("창의 일부만 셈");
+    const pts = shipsChip(view({ count: 40 }), ctx({ observed: { cells: 3, covered: "full" } }))!;
+    expect(pts.text).toBe("선박 40척 · 화면 안 · AIS"); // 칩 글자는 그대로 — 설명(title)에만
+    expect(pts.title).toContain("이 화면에 관측 수신 칸 3개");
+    expect(pts.title).not.toContain("창의 일부만 셈");
+    // 레이어가 꺼졌거나 자료가 없으면(null) 아무것도 덧붙이지 않는다
+    expect(shipsChip(view({ count: 0 }), ctx({ observed: null }))!.text).toBe(SHIPS_ZERO_TEXT);
+    expect(shipsChip(view({ count: 0 }), ctx())!.title).not.toContain("관측 수신");
+    // AIS 꺼짐(키 없음)이면 덧붙이지 않는다 — 받지 않는 까닭이 따로 있다
+    expect(shipsChip(view({ count: 0 }), ctx({ ais: aisOf({ state: "disabled", connected: false }), observed: { cells: 5, covered: "full" } }))!.text)
+      .toBe("선박 없음 · AIS 꺼짐(키 없음)");
+  });
   it("zero ships while AIS is not connected or its state is unknown: says only that — never blames receiver stations (contract v4 §G C-1)", () => {
     expect(SHIPS_ZERO_AIS_DOWN_TEXT).toBe("화면 안 선박 0척 — AIS 연결 안 됨");
     expect(SHIPS_ZERO_AIS_UNKNOWN_TEXT).toBe("화면 안 선박 0척 — AIS 연결 상태 모름");

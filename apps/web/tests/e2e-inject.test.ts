@@ -76,3 +76,23 @@ describe("e2e REST injections read as intended (e2e/rest-inject)", () => {
     expect(providerMissing(prov.providers[0], providersNowMs(prov))?.stale).toBe(true);
   });
 });
+
+describe("e2e REST injection for the observed reception layer (contract v5 §G26)", () => {
+  it("the routed /ships/coverage body is read by the web parser as meant — 3 cells, partial window since api start, bootstrap reading", async () => {
+    const { shipCoverageBody } = await import("../e2e/rest-inject");
+    const { parseReception, receptionStatusLine, cellsInView } = await import("@/lib/reception");
+    const now = Date.parse("2026-09-30T09:40:12.345Z");
+    const r = parseReception(shipCoverageBody(now))!;
+    expect(r).not.toBeNull();
+    expect(r.cells).toHaveLength(3);
+    expect(r.dropped).toBe(0);
+    expect(r.covered).toBe("since_api_start");
+    expect(r.since).toBe("2026-09-30T09:35:00.000Z");
+    expect(r.from).toBe("2026-09-29T09:00:00.000Z");
+    // 상황판 첫 화면(한반도 · 줌 6)에는 한반도 두 칸만
+    expect(cellsInView(r.cells, [120, 32.5, 135.5, 40.5])).toBe(2);
+    const line = receptionStatusLine(r, null, 2);
+    expect(line.text).toBe("칸 3개(0.5°) · 이 화면 2개 · 창 09-29 18:00 – 09-30 18:40 KST");
+    expect(line.detail).toBe("창의 일부만 셈 — 09-30 18:35 KST 부터(api 시작 뒤 · 기동 전 기록 읽는 중 0/25시간)");
+  });
+});

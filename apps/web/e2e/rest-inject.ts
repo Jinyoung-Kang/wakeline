@@ -54,3 +54,31 @@ export function opsProviders(nowMs: number) {
     generated_at: new Date(nowMs).toISOString(),
   };
 }
+
+/**
+ * /api/v1/ships/coverage(계약 v5 §G26) — 관측 수신 범위의 결정적 응답: api 가 방금(5분 전) 시작해 기동 전 기록을 읽는 중(0/25시간)이라 창의 일부(셈 시작부터)만
+ * 셌다. 칸 셋: 인천 앞바다 · 부산 앞바다(상황판 첫 화면 안) · 대서양(화면 밖). 시각은 UTC ISO(api 형식 — 화면은 KST).
+ */
+export function shipCoverageBody(nowMs: number) {
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const hour = 3_600_000;
+  const started = nowMs - 5 * 60_000;
+  const liveFrom = Math.floor(started / 60_000) * 60_000;
+  const last = Math.floor((nowMs - 30_000) / 1000) * 1000;
+  return {
+    cell_deg: 0.5,
+    window: { hours: 24, bucket_s: 3600, from: iso(Math.floor(nowMs / hour) * hour - 24 * hour), to: iso(nowMs) },
+    since: iso(liveFrom), covered: "since_api_start", api_started_at: iso(started), live_from: iso(liveFrom),
+    bootstrap: { state: "running", hours_loaded: 0, hours_total: 25, rows: 0, loaded_from: iso(liveFrom) },
+    generated_at: iso(nowMs),
+    cells: [
+      [-30.0, 40.0, 0.5, 2, 3, iso(last - 60_000)],
+      [129.0, 35.0, 0.5, 14, 55, iso(last - 120_000)],
+      [126.0, 37.0, 0.5, 121, 900, iso(last)],
+    ],
+    cell_count: 3, positions: 958, truncated: false, dropped_positions: 0, limits: { max_cells: 16000, max_ship_cells: 200000 },
+    sampling: "first_fix_per_60s", note: "관측 수신 — 이 서비스가 받은 AIS 위치의 칸별 집계(구독 범위 아님 · 수신국이 없는 해역은 비어 있다)",
+    time_zone: "all times are UTC ISO-8601; window.from is the start of the current UTC hour minus 24 h",
+    meta: { provider: "aisstream", fetched_at: iso(last), lag_s: 30, stale: false, generated_at: iso(nowMs), request_id: "e2e-coverage-0001" },
+  };
+}
