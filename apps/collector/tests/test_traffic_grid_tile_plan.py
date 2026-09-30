@@ -184,3 +184,19 @@ def test_states_survive_a_restart_and_expired_failures_reopen():
     assert q.covered(Tile(0, 1, 1), later) and q.covered(Tile(0, 2, 2), later)
     assert not q.covered(Tile(1, 4, 4), later) and not q.covered(Tile(0, 3, 3), later)
     assert orjson.loads(fields["0/1/1"]) == {"status": "done", "at": "2026-10-01T06:00:00Z", "cells": 7}
+
+
+def test_children_of_a_loaded_split_are_queued_again_unless_they_have_a_result():
+    """split 은 기한 없이 남고 자식 대기열은 메모리다 — 기동 때 결과(유효한 상태) 없는 자식을 다시 넣는다(검토 지적 2026-10-01). 기한이 지난
+    incomplete 자식도 다시, 끝난 자식 · 나눈 자식(그 자식은 그 자식의 split 이 맡는다)은 넣지 않는다. 가장 작은 타일의 split 은 없다."""
+    p = TilePlan()
+    top = Tile(0, 28, 60)
+    a, b, c, d = top.children()
+    p.states[top] = gt.TileState("split", T0, 0)
+    p.states[a] = gt.TileState("done", T0, 40)
+    p.states[b] = gt.TileState("split", T0, 0)
+    p.states[c] = gt.TileState("incomplete", T0 - timedelta(days=2), 30)
+    later = T0 + timedelta(hours=1)
+    assert p.resume_splits(later) == 2 + 4  # c(기한 지남) · d, 그리고 b 의 자식 넷
+    assert set(p.queued_tiles()) == {c, d, *b.children()}
+    assert p.next_due(later) in {c, d, *b.children()} and p.resume_splits(later) == 0  # 두 번 넣지 않는다

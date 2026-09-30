@@ -16,7 +16,8 @@
   DB 쓰기를 잃었거나 서버가 조용히 잘랐다) 그 타일을 이 프로세스에서 한 번 다시 묻는다(recheck — 되풀이하지 않는다. 다시 받은 답에도 없으면 작업이
   잘렸을 수 있다고 보고 나눈다).
 - 상태는 작업이 Redis 해시 wakeline:traffic_grid:tiles(키 → {"status","at","cells"})에 적고 기동 때 읽는다(load) — 재기동해도 끝난 타일을 다시 묻지 않는다.
-  대기열(무엇을 물을지)은 메모리다 — 다시 시작하면 아는 칸에서 다시 만든다(끝난 타일은 빠진다).
+  대기열(무엇을 물을지)은 메모리다 — 다시 시작하면 아는 칸에서 다시 만들고(끝난 타일은 빠진다), 읽은 split 타일의 결과 없는 자식을 다시 넣는다
+  (resume_splits — 나눈 뒤 자식을 묻기 전에 재기동해도 그 상자를 잃지 않는다).
 TILE_M · MAX_LEVEL · 물러나기 단계 · 연달아 실패 5번 · 1일은 선택값이다(잰 값이 아니다).
 """
 
@@ -216,6 +217,15 @@ class TilePlan:
 
     def rechecking(self, t: Tile) -> str | None:
         return self._rechecked.get(t)
+
+    def resume_splits(self, now: datetime) -> int:
+        """읽은 split 타일의 자식 가운데 유효한 결과도 대기 자리도 없는 것을 다시 넣는다(source split) — split 은 기한 없이 남지만 자식 대기열은
+        메모리라, 나눈 뒤 자식을 묻기 전에 재기동하면 아는 칸이 없는 자식을 잃었다(검토 지적 2026-10-01). 넣은 수."""
+        added = 0
+        for t, s in list(self.states.items()):
+            if s.status == "split" and t.level < MAX_LEVEL:
+                added += sum(1 for c in t.children() if self.add(c, "split", now))
+        return added
 
     def load(self, fields: dict[Any, Any]) -> int:
         """Redis 해시(키 → {"status","at","cells"}) → 상태. 형식이 틀린 항목은 버린다(그 타일은 다시 물으면 된다). 읽은 수."""

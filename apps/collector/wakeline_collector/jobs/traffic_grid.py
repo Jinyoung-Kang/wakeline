@@ -640,14 +640,17 @@ class TrafficGridJob:
             return
         n = self.tiles.load(fields or {})
         self._tiles_loaded = True
+        resumed = self.tiles.resume_splits(now)  # 나눈 뒤 묻지 못한 자식(대기열은 메모리였다)
         by = Counter(s.status for s in self.tiles.states.values() if s.valid(now))
         log.info(
-            "traffic grid: bbox tiles — %d tile states loaded (%d done, %d split, %d incomplete, %d failed still valid)",
+            "traffic grid: bbox tiles — %d tile states loaded (%d done, %d split, %d incomplete, %d failed still valid); "
+            "%d children of split tiles queued again",
             n,
             by["done"],
             by["split"],
             by["incomplete"],
             by["failed"],
+            resumed,
         )
 
     def _tiles_ready(self, now: datetime) -> bool:

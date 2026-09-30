@@ -418,8 +418,30 @@ async def test_finished_tiles_survive_a_restart_and_are_not_fetched_again(caplog
     await second.run_once()
     assert wfs2.boxes == [] and wfs2.asked == []  # 끝난 타일도, 그 타일이 준 칸도 다시 묻지 않는다
     assert lines(caplog, "tile states loaded")[-1] == (
-        "traffic grid: bbox tiles — 1 tile states loaded (1 done, 0 split, 0 incomplete, 0 failed still valid)"
+        "traffic grid: bbox tiles — 1 tile states loaded (1 done, 0 split, 0 incomplete, 0 failed still valid); "
+        "0 children of split tiles queued again"
     )
+
+
+async def test_split_children_are_queued_again_after_a_restart(caplog):
+    """검토 지적(2026-10-01): split 은 Redis 에 기한 없이 남지만 일을 넘겨받은 자식은 메모리 대기열에만 있었다 — 나눈 뒤 자식을 묻기 전에 재기동하면
+    (시간 창 · 하루 예산이 나눈 직후 채우기를 멈추면 흔하다) 아는 칸이 없는 자식은 다시 묻지 않았다. 기동 때 읽은 split 타일의 자식 가운데 결과가
+    없는 것을 다시 넣는다."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    grid = FakeGrid()
+    r, clock = FakeRedis(), Clock()
+    known = [home(grid, A)[0]]
+    big = GridWfs(grid, answers={A.box: WfsTooLarge("response too large (500000 bytes > 393216)")})
+    first, wfs1, _r, _c, _db = start(grid, [home(grid, A)[0]], known=known, r=r, clock=clock, wfs=big)
+    r.kv[MOF_HOUR] = {"used": str(SHARE - 1), "limit": str(tg.MOF_HOURLY_CAP)}
+    await first.run_once()
+    assert wfs1.boxes == [A.box]
+    assert {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()} == {"0/28/60": "split"}
+    clock.advance(3600)
+    second, wfs2, _r, _c, _db = start(grid, [home(grid, A)[0]], known=known, r=r, clock=clock)
+    await second.run_once()
+    assert sorted(wfs2.boxes) == sorted(k.box for k in A.children())
+    assert lines(caplog, "tile states loaded")[-1].endswith("; 4 children of split tiles queued again")
 
 
 async def test_the_tile_map_is_awaited_then_the_fill_goes_on_without_it_and_says_why(caplog):
