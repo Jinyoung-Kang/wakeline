@@ -263,6 +263,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   올리면)과 0척 알림 글자에 ‘이 화면에 관측 수신 칸 N개(최근 24 h)’가 붙습니다 — 창을 다 세지 못했으면 ‘(… KST 부터만 셈)’처럼 실제로 센 구간을, 조회가 실패했으면
                   마지막 값이라고 적습니다.</li>
               </UL>
+              {fig("reception")}
               {fig("port-calls")}
               <UL>
                 <li><B>{PORT_CALL_TITLE}</B>{ref("port-calls", 1)} — 서버 수집기가 공공데이터포털의 {PORT_CALL_SOURCE}에서 항만청 {PORT_CALL_AUTHORITIES}곳의 입출항 신고를

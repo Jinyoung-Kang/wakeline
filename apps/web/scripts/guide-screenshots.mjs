@@ -148,6 +148,19 @@ const RECIPES = {
     await wait(4_000); // 칸 그리기
     return `연안 교통량 ${shot.path.slice(1)}`;
   },
+  async reception(shot) {
+    // 관측 수신 범위(ADR-027 · 계약 v5 §G27): 레이어를 켜고 상태 줄이 '불러오는 중'을 벗어나 칸을 그린 뒤 찍는다 — 센 구간을 캡처 조건에 적는다
+    await openMap(shot.path);
+    await setPressed("layer-ships", true);
+    await setPressed("layer-reception", true);
+    await setLegend(true);
+    const status = page.getByTestId("reception-status-text");
+    await status.waitFor({ timeout: 15_000 }).catch(() => { throw new Skip("관측 수신 범위 상태 줄이 나오지 않음"); });
+    await page.waitForFunction(() => !/불러오는 중|받는 중/.test(document.querySelector('[data-testid="reception-status-text"]')?.textContent ?? ""), null, { timeout: 20_000 }).catch(() => {});
+    const line = (await status.innerText()).trim().replace(/\s+/g, " ");
+    await wait(4_000); // 칸 그리기
+    return `관측 수신 범위 ${shot.path.slice(1)} · ${line.slice(0, 60)}`;
+  },
   async search(shot) {
     await openMap(shot.path);
     await setPressed("layer-ships", false);
