@@ -83,7 +83,7 @@ describe("observed reception layer part", () => {
       expect(map.getLayer(id)?.layout.visibility).toBe("visible");
       expect(map.getLayer(id)?.before).toBe("traffic-grid-fill");
     }
-    expect(getData().receptionInView).toEqual({ cells: 1, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z", stale: false });
+    expect(getData().receptionInView).toEqual({ cells: 1, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z", stale: false, truncated: false });
     const tip = layerTip(RECEPTION_FILL_LAYER)!({ g: "37,126", s: 304, n: 5120, t: "2026-09-30T09:40:01Z" });
     expect(tip?.title).toBe("관측 수신 칸");
     const text = dom.container.textContent;
@@ -92,7 +92,7 @@ describe("observed reception layer part", () => {
     expect(text).not.toContain("UTC");
     // 화면을 옮기면 이 화면의 칸 수도 바뀐다
     await React.act(async () => { setData({ mapBounds: [100, -50, 179, 60] }); });
-    expect(getData().receptionInView).toEqual({ cells: 2, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z", stale: false });
+    expect(getData().receptionInView).toEqual({ cells: 2, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z", stale: false, truncated: false });
   });
 
   it("before the map's first load the layers wait for load (no draw on a map without base layers)", async () => {
@@ -161,7 +161,7 @@ describe("observed reception layer part", () => {
       await settle();
       await settle();
       expect(getData().reception?.error).toBe("HTTP 503");
-      expect(getData().receptionInView).toEqual({ cells: 1, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z", stale: true });
+      expect(getData().receptionInView).toEqual({ cells: 1, covered: "full", since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z", stale: true, truncated: false });
     } finally {
       globalThis.fetch = ok;
       vi.useRealTimers();

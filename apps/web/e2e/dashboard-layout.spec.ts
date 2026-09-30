@@ -181,7 +181,11 @@ for (const size of SIZES) {
     });
 
     test("alert counts, search placeholder and map overlays do not wrap, clip or overlap", async ({ page }) => {
-      await page.addInitScript(() => { try { localStorage.setItem("wakeline.layers", JSON.stringify({ ships: true })); localStorage.setItem("wakeline.legend", "1"); } catch { /* 저장소 없음 */ } });
+      // 지도 위에 올라오는 것을 모두 켠다 — 선박(칩) · 연안 교통량과 관측 수신 범위(오른쪽 칸의 상태 줄 둘) · 범례(리뷰 2026-09-30 밤: 전에는 선박만 켜
+      // 교통량 상태 줄은 선택자에 있어도 그려지지 않았고, 관측 수신 범위의 상태 줄은 선택자에 없었다)
+      await page.addInitScript(() => {
+        try { localStorage.setItem("wakeline.layers", JSON.stringify({ ships: true, traffic: true, reception: true })); localStorage.setItem("wakeline.legend", "1"); } catch { /* 저장소 없음 */ }
+      });
       await open(page);
       // 알림 수: 자기 줄 · 한 줄
       const counts = page.getByTestId("alerts-counts");
@@ -205,8 +209,11 @@ for (const size of SIZES) {
       // 지도 위: 레이어 단추 · 칩 · 교통량 상태 · 범례가 서로 겹치지 않고, 범례는 지도 안에서 끝난다
       await expect(page.getByTestId("ships-chip")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("map-legend")).toBeVisible();
-      const boxes = await page.evaluate(() => [...document.querySelectorAll('[data-testid="layer-panel"] > button, [data-testid="map-chips"] > *, [data-testid="traffic-status"], [data-testid="map-legend"]')]
+      await expect(page.getByTestId("traffic-status")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("reception-status")).toBeVisible({ timeout: 30_000 }); // 레이어를 켤 때 받는 조각
+      const boxes = await page.evaluate(() => [...document.querySelectorAll('[data-testid="layer-panel"] > button, [data-testid="map-chips"] > *, [data-testid="traffic-status"], [data-testid="reception-status"], [data-testid="map-legend"]')]
         .map((e) => { const b = e.getBoundingClientRect(); return { id: e.getAttribute("data-testid") ?? e.textContent?.slice(0, 10) ?? "", l: b.left, r: b.right, t: b.top, b: b.bottom }; }));
+      expect(boxes.map((b) => b.id)).toEqual(expect.arrayContaining(["traffic-status", "reception-status", "map-legend", "layer-reception"]));
       const overlaps: string[] = [];
       for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
         const a = boxes[i], c = boxes[j];

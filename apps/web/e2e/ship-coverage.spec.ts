@@ -43,6 +43,9 @@ test("observed reception layer: off by default, one routed fetch when turned on,
   const legend = page.getByTestId("legend-reception");
   await expect(legend).toBeVisible();
   await expect(page.getByTestId("legend-reception-note")).toContainText("구독 범위(점선)가 아니다");
+  // 창의 일부만 셌다 — 범례도 '최근 24 h' 가 아니라 센 구간(리뷰 2026-09-30 밤 · 계약 v5 §G27)
+  await expect(page.getByTestId("legend-reception-empty")).toContainText(/빈 곳 = \d\d-\d\d \d\d:\d\d KST 부터 받은 위치 없음\(창의 일부만 셈/);
+  await expect(legend).not.toContainText("최근 24 h 에 받은");
 
   await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "false");

@@ -113,9 +113,13 @@ export interface ServerData {
 
 /**
  * 이 화면의 관측 수신 칸(ADR-027): cells = 칸 수, covered = 창을 다 셌는가(full) · since = 빠짐없이 센 시작 · to = 창 끝(응답 시각) — 다 세지 못했으면
- * 칩 · 0척 알림이 센 구간을 적는다. stale = 마지막 조회가 실패했다(값은 그 전 응답).
+ * 칩 · 0척 알림 · 범례가 센 구간을 적는다. stale = 마지막 조회가 실패했다(값은 그 전 응답).
  */
-export interface ReceptionInView { cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean }
+export interface ReceptionInView {
+  cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean;
+  /** 메모리 상한 때문에 세지 못한 위치가 있다(api truncated) — 빈 칸이 '받은 적 없음'이 아닐 수 있다(범례) */
+  truncated?: boolean;
+}
 
 /**
  * elements = 버린 원소(형식이 틀린 항공기 · 선박 · 알림 · SIGMET · 격자 칸 · 선택 상태 등 — 메시지의 나머지는 적용했다),

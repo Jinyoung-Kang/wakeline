@@ -68,10 +68,11 @@ export function ReceptionStatus() {
   const covered = r?.covered ?? null;
   const since = r?.since ?? null;
   const to = r?.to ?? null;
-  const stale = poll.error != null; // 조회 실패 — 칸은 마지막 응답 그대로(칩 · 0척 알림이 그렇다고 적는다)
+  const stale = poll.error != null; // 조회 실패 — 칸은 마지막 응답 그대로(칩 · 0척 알림 · 범례가 그렇다고 적는다)
+  const truncated = r?.truncated === true;
   useEffect(() => {
-    setData({ receptionInView: covered != null && since != null && to != null && inView != null ? { cells: inView, covered, since, to, stale } : null });
-  }, [covered, since, to, stale, inView]);
+    setData({ receptionInView: covered != null && since != null && to != null && inView != null ? { cells: inView, covered, since, to, stale, truncated } : null });
+  }, [covered, since, to, stale, inView, truncated]);
   useEffect(() => () => setData({ receptionInView: null }), []);
 
   const line = receptionStatusLine(r, poll.error, inView);

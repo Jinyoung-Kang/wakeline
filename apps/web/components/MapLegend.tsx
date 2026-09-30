@@ -2,7 +2,8 @@
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krMissing } from "@/lib/kr-radar";
 import { useServerNow } from "@/lib/clock";
 import { TRAFFIC_BINS, TRAFFIC_FILL_OPACITY, TRAFFIC_LEGEND_NOTE, TRAFFIC_ZERO_COLOR } from "@/lib/traffic-grid";
-import { RECEPTION_BINS, RECEPTION_COLOR, RECEPTION_LEGEND_NOTE } from "@/lib/reception-meta";
+import { RECEPTION_BINS, RECEPTION_COLOR, RECEPTION_LEGEND_NOTE, receptionLegendSpan } from "@/lib/reception-meta";
+import { fmtKstMinute } from "@/lib/time";
 import { useServerData } from "@/lib/store";
 import { saveShipCats } from "@/lib/prefs";
 import { useUi, type Layers } from "@/lib/ui-store";
@@ -117,6 +118,9 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
   const hasRv = useServerData((d) => (d.radar?.past.length ?? 0) > 0);
   // 경계선이 실제로 그려질 때만(전 해역 구독이면 그릴 경계가 없다)
   const hasCoverage = useServerData((d) => aisCoverageFeatures(d.ais?.coverage ?? null).features.length > 0);
+  // 관측 수신 범위: 창을 다 셌는가 · 센 구간 · 메모리 상한 · 조회 실패(레이어 조각이 채운다 — 없으면 아직 모름) — 범례가 '최근 24 h'인 척하지 않게
+  const observed = useServerData((d) => d.receptionInView);
+  const rx = receptionLegendSpan(observed, observed ? fmtKstMinute(observed.since, { date: true }) : null);
   const grad = `linear-gradient(90deg, ${ALT_RAMP.map(([ft, c]) => `${c} ${(ft / ALT_MAX) * 100}%`).join(", ")})`;
   return (
     <div id={id} className="panel max-h-full w-[264px] max-w-full overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
@@ -218,10 +222,11 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
                 </span>{b.label}
               </span>
             ))}
-            <span className="ml-1 text-[10px] text-fg-3">척(칸마다 · 최근 24 h 서로 다른 MMSI)</span>
+            <span className="ml-1 text-[10px] text-fg-3" data-testid="legend-reception-span">척(칸마다 · {rx.span} 서로 다른 MMSI)</span>
           </li>
           <li className="pt-0.5 text-[10px] text-fg-2" data-testid="legend-reception-note">{RECEPTION_LEGEND_NOTE}</li>
-          <li className="text-[10px] text-fg-3">빈 곳 = 최근 24 h 에 받은 위치 없음(구독 범위 안이어도) · 칸에 마우스를 올리면 선박 수 · 위치 수 · 마지막 수신(KST) · 창.
+          {rx.warn.map((w) => <li key={w} className="text-[10px] text-warn" data-testid="legend-reception-warn">{w}</li>)}
+          <li className={`text-[10px] ${observed && observed.covered !== "full" ? "text-warn" : "text-fg-3"}`} data-testid="legend-reception-empty">{rx.empty} · 칸에 마우스를 올리면 선박 수 · 위치 수 · 마지막 표본 수신(KST) · 창.
             채움 진하기 구간은 표시용 선택 · 견본은 지도와 같은 진하기(어두운 바다 위)</li>
         </Section>
       ) : null}

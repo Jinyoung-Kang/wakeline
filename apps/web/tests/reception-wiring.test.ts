@@ -87,6 +87,31 @@ describe("layer button, part slot, legend and chip", () => {
     expect(ships).toContain(RECEPTION_LAYER_LABEL); // 수신 범위(운영 설정) 줄의 설명(title)
   });
 
+  it("the legend writes the span actually counted — not '최근 24 h' while the api counted part of the window, and names the memory cap and a failed fetch", () => {
+    // 리뷰 2026-09-30 밤(계약 v5 §G27 '창 전체인 척하지 않는다'): 범례는 늘 '최근 24 h'였다 — 바로 위 상태 줄이 '창의 일부만 셈'이라 적는 동안에도. 수정 전 실패
+    const layers = { ...useUi.getState().layers, reception: true };
+    const legend = () => text(renderToStaticMarkup(createElement(MapLegendView, { id: "l", layers, radarSource: "rainviewer" })));
+    const view = { cells: 4, covered: "full" as const, since: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12Z", stale: false };
+    expect(legend()).toContain("빈 곳 = 센 구간(상태 줄의 창) 동안 받은 위치 없음"); // 자료 전(조각이 받는 중) — 구간을 모른다
+    expect(legend()).toContain("척(칸마다 · 센 구간 서로 다른 MMSI)");
+    setData({ receptionInView: view });
+    expect(legend()).toContain("빈 곳 = 최근 24 h 에 받은 위치 없음");
+    expect(legend()).toContain("척(칸마다 · 최근 24 h 서로 다른 MMSI)");
+    expect(legend()).not.toContain("메모리 상한");
+    setData({ receptionInView: { ...view, covered: "since_api_start", since: "2026-09-30T09:37:00Z" } }); // api 재시작 직후
+    const partial = legend();
+    expect(partial).toContain("빈 곳 = 09-30 18:37 KST 부터 받은 위치 없음(창의 일부만 셈 — 까닭은 상태 줄");
+    expect(partial).toContain("척(칸마다 · 09-30 18:37 KST 부터 서로 다른 MMSI)");
+    expect(partial).not.toContain("최근 24 h 에 받은");
+    expect(partial).not.toContain("최근 24 h 서로 다른");
+    expect(partial).not.toContain("UTC");
+    setData({ receptionInView: { ...view, covered: "partial", since: "2026-09-30T02:00:00Z", truncated: true, stale: true } });
+    const capped = legend();
+    expect(capped).toContain("09-30 11:00 KST 부터 받은 위치 없음");
+    expect(capped).toContain("메모리 상한 — 세지 못한 위치가 있어 빈 칸이 '받은 적 없음'이 아닐 수 있음");
+    expect(capped).toContain("조회 실패 — 마지막 값");
+  });
+
   it("the ships chip carries the observed cells in view once the layer data is loaded", () => {
     setData({
       ships: { mode: "points", version: 1, count: 0, total: 0, ts: null, cell_deg: null, capped: false, grid: [] },

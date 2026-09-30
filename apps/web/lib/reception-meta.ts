@@ -22,5 +22,23 @@ export const RECEPTION_BINS: readonly { min: number; label: string; opacity: num
   { min: 30, label: "30–99", opacity: 0.3 },
   { min: 100, label: "100+", opacity: 0.38 },
 ];
+/** 범례가 읽는 관측 수신 상태(lib/store ReceptionInView 의 부분 — 레이어 조각이 채운다) */
+export interface ReceptionLegendState { covered: "full" | "partial" | "since_api_start"; since: string; stale: boolean; truncated?: boolean }
+
+/**
+ * 범례의 센 구간 글(리뷰 2026-09-30 밤 — 계약 v5 §G27 '창 전체인 척하지 않는다'): 전에는 범례가 늘 '최근 24 h'라 적어, api 재시작 직후처럼 창의 일부만 셌을 때
+ * 바로 위 상태 줄('창의 일부만 셈 — … 부터')과 어긋났다. span = 척 수 설명의 구간 · empty = 빈 곳의 뜻 · warn = 따로 알릴 것(메모리 상한 · 조회 실패).
+ * 자료를 아직 모르면(레이어 조각이 받는 중) '센 구간(상태 줄)'. since 는 KST 글자로 받는다(부르는 쪽이 lib/time 으로 만든다).
+ */
+export function receptionLegendSpan(o: ReceptionLegendState | null, sinceKst: string | null): { span: string; empty: string; warn: string[] } {
+  const warn: string[] = [];
+  if (o?.truncated) warn.push("메모리 상한 — 세지 못한 위치가 있어 빈 칸이 '받은 적 없음'이 아닐 수 있음(상태 줄)");
+  if (o?.stale) warn.push("조회 실패 — 마지막 값(상태 줄)");
+  if (!o) return { span: "센 구간", empty: "빈 곳 = 센 구간(상태 줄의 창) 동안 받은 위치 없음(구독 범위 안이어도)", warn };
+  if (o.covered === "full") return { span: "최근 24 h", empty: "빈 곳 = 최근 24 h 에 받은 위치 없음(구독 범위 안이어도)", warn };
+  const from = `${sinceKst ?? "—"} 부터`;
+  return { span: from, empty: `빈 곳 = ${from} 받은 위치 없음(창의 일부만 셈 — 까닭은 상태 줄 · 구독 범위 안이어도)`, warn };
+}
+
 export const RECEPTION_LEGEND_NOTE =
   "잰 값: 이 서비스가 최근 24 h 에 실제로 선박 위치를 받은 0.5° 칸(aisstream 은 육상 수신국이 받은 것만 보낸다) — 구독 범위(점선)가 아니다";
