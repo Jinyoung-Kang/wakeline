@@ -13,8 +13,9 @@ interface RunsPage { items: Any[]; next_cursor?: unknown }
 const RAW_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수집기가 쓴 형식 그대로(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
 
 /**
- * 운영 RUNS 요약 행을 연 목록(errors F1): 그 job · provider · status 의 실행을 최신순으로 50건씩 — since = 요약 응답의 summary_since(요약과 같은 24 h 창,
- * 연 때의 값 그대로 — 머리글이 그 시각을 KST 로 적는다), 모르면 기간 제한 없이(그렇다고 적는다). next_cursor 가 있으면 '더 보기'.
+ * 운영 RUNS 요약 행을 연 목록(errors F1): 그 job · provider · status 의 실행을 최신순으로 50건씩 — since = 연 때 받은 요약 응답의 summary_since(그때의
+ * 24 h 창 — 요약은 15 s 마다 창이 앞으로 가지만 이 목록은 그대로라 머리글은 '연 때의 요약 창' 이라 하고 그 시각을 KST 로 적는다), 모르면 기간 제한 없이
+ * (그렇다고 적는다). next_cursor 가 있으면 '더 보기'.
  * 목록은 증거라 해결 처리와 상관없이 모두 싣는다(요약의 n 은 해결 표시를 따른다 — 수가 다를 수 있다). 15 s 새로고침과 따로 — 연 때와 '다시 불러오기' 때만 부른다.
  * 실패는 패널에 요청 id 와 함께(몇 건인지 모르면 수를 적지 않는다). 401/404 는 세션 확인(onAuthMiss).
  */
@@ -62,8 +63,8 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
     <div id={id} role="region" aria-label={`실행 목록: ${label}`} className="border-l-2 border-line-2 py-1 pl-2" data-testid="runs-drill">
       <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
         <span className="label normal-case!">Runs · <span className="mono">{k.job} · {k.provider} · </span><span className={`mono ${runStatusClass(k.status, "item")}`} title={RUN_STATUS_TITLE[k.status]}>{k.status}</span></span>
-        <span className="text-fg-3" data-testid="runs-drill-window">
-          {since ? <>요약과 같은 24 h 창 — <KstTime v={since} /> 뒤에 시작한 실행</> : "기간 제한 없음(응답에 요약 창의 시작 summary_since 가 없음 — api 가 이 화면보다 옛 판일 수 있음)"}
+        <span className="text-fg-3" data-testid="runs-drill-window" title={since ? "요약은 15 s 마다 새로 받아 창이 앞으로 가지만, 이 목록의 창은 연 때 그대로다(다시 불러오기도 같은 창) — 닫고 다시 열면 그때의 창" : undefined}>
+          {since ? <>연 때의 요약 창(24 h) — <KstTime v={since} /> 뒤에 시작한 실행</> : "기간 제한 없음(응답에 요약 창의 시작 summary_since 가 없음 — api 가 이 화면보다 옛 판일 수 있음)"}
           {" · 최신순 · 해결 처리와 상관없이 모두(증거 — 요약의 n 은 해결 표시를 따른다)"}
         </span>
         {items ? <span className="mono text-fg-2" data-testid="runs-drill-count">{items.length.toLocaleString("en-US")}건 · {next != null ? "더 있음" : "끝"}</span> : null}

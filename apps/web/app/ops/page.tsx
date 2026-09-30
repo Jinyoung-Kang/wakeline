@@ -17,7 +17,7 @@ import { statsDay } from "@/lib/stats";
 import { activeJobs, jobBadgeText, jobBadgeTitle } from "@/lib/active-provider";
 import { KstTime } from "@/components/KstTime";
 import { OpsRunsDrill } from "@/components/OpsRunsDrill";
-import { runKeyId, runKeyOf, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
+import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
 
 type Any = Record<string, unknown>;
 /** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
@@ -29,9 +29,11 @@ interface Providers {
 }
 /**
  * hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다).
- * summary_since = 요약 창의 시작(UTC ISO — 계약 v5 §G14 개정 2026-10-01): 행을 열면 그 값을 since 로 보낸다(요약과 같은 창)
+ * summary_since = 요약 창의 시작(UTC ISO — 계약 v5 §G14 개정 2026-10-01): 행을 열면 그 값을 since 로 보낸다(연 때의 요약 창)
  */
 interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; summary_since?: unknown; mode: ResolvedMode }
+/** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
+interface Drill { k: RunKey; since: string | null }
 /** counted_since = V16 이 격리 수를 KST 날짜로 세기 시작한 순간(UTC ISO) — 그 KST 날짜는 부분 값(lib/ops qualityPartialDay) */
 interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown; counted_since?: unknown }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
@@ -71,7 +73,7 @@ const RAW_RECORD_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각�
 const SUMMARY_LAST_ERROR_TITLE = "이 행의 가장 최근 실행(last (KST) 의 실행 — 해결 처리로 요약에서 뺀 실행은 고르지 않는다)의 http 와 오류 글자. "
   + "글자는 수집기가 가려 저장한 원본 그대로(안의 ‘…Z’ 는 KST 보다 9시간 이르다). ok 행은 비운다. 앞선 실행의 글자는 행을 열어(runs) 본다";
 /** 요약 행을 여는 단추 칸 */
-const SUMMARY_OPEN_TITLE = "행을 열면 그 job · provider · status 의 실행을 요약과 같은 24 h 창에서 최신순으로 50건씩(더 보기) — 해결 처리와 상관없이 모두";
+const SUMMARY_OPEN_TITLE = "행을 열면 그 job · provider · status 의 실행을 지금 요약의 24 h 창(연 때의 창 — 목록은 15 s 새로고침을 따라가지 않는다)에서 최신순으로 50건씩(더 보기) — 해결 처리와 상관없이 모두";
 /** 열린 요약 행의 목록 패널 id(한 번에 하나) */
 const RUNS_DRILL_ID = "runs-drill-panel";
 
@@ -164,7 +166,12 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   /** 실행 요약의 해결 표시(ADR-024): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
   const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
   /** 연 요약 행(한 번에 하나) — k 는 연 때 만든 객체 그대로(목록이 15 s 새로고침마다 다시 부르지 않게), since 는 연 때의 summary_since */
-  const [drill, setDrill] = useState<{ k: RunKey; since: string | null } | null>(null);
+  const [drill, setDrillState] = useState<Drill | null>(null);
+  /** 연 행이 새로 받은 요약에서 빠져 닫은 목록(알림 — 그 응답의 해결 표시와 함께). 행을 열거나 닫거나 알림을 닫으면 지운다 */
+  const [drillGone, setDrillGone] = useState<{ k: RunKey; mode: ResolvedMode } | null>(null);
+  /** 연 행 — 요약 응답을 받을 때 본다(reload 는 한 번 만든 콜백이라 state 대신 ref 로 지금 값을 읽는다) */
+  const drillRef = useRef<Drill | null>(null);
+  const setDrill = useCallback((d: Drill | null) => { drillRef.current = d; setDrillState(d); setDrillGone(null); }, []);
   const runsModeRef = useRef<ResolvedMode>("hide");
   /**
    * 탭마다 요청 순서(lib/ops RequestOrder): 기준 요청(쓰기 뒤 · 해결 표시 토글 · 새로고침 단추) 전에 떠난 요청의 응답은 버리고 — 해결 쓰기 뒤 다시 읽은 값을
@@ -207,7 +214,12 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         });
     };
     load<Providers>("providers", setProv);
-    load<Omit<Runs, "mode">>("runs", (v, mode) => setRuns({ ...v, mode }));
+    load<Omit<Runs, "mode">>("runs", (v, mode) => {
+      setRuns({ ...v, mode });
+      // 연 행이 새 요약에 없으면(창 밖 · 해결로 모두 가려짐) 목록을 닫고 알린다 — 말없이 사라졌다가 행이 돌아오면 저절로 다시 열려 다시 부르지 않게(리뷰 2026-10-01)
+      const d = drillRef.current;
+      if (d && !summaryHasKey(v.summary_24h, d.k)) { drillRef.current = null; setDrillState(null); setDrillGone({ k: d.k, mode }); }
+    });
     load<Quality>("quality", setQuality);
     load<Settings>("settings", setSettings);
     load<{ items: Any[] }>("audit", setAudit);
@@ -323,6 +335,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               {runs.mode === "show" ? "해결된 오류 포함(요약에서 빼지 않음)" : `해결 처리로 요약에서 뺀 오류 실행 ${hiddenText(hiddenCount(runs.hidden_resolved_errors))} · 아래 실행 기록(Recent runs)은 가리지 않음`}
             </span>
           </div>
+          {drillGone ? <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-2" role="status" data-testid="runs-drill-gone">
+            <span>{drillGoneText(drillGone.k, drillGone.mode)}</span>
+            <button className={SMALL_BTN} onClick={() => setDrillGone(null)}>알림 닫기</button>
+          </div> : null}
           <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST)</th><th title={SUMMARY_LAST_ERROR_TITLE}>last error (raw)</th><th title={SUMMARY_OPEN_TITLE}>runs</th></tr></thead>
             <tbody>{runs.summary_24h.map((s, i) => {
               const key = runKeyOf(s);

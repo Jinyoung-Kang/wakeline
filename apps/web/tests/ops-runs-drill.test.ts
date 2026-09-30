@@ -2,13 +2,14 @@
  * 운영 RUNS 가 오래된 오류 실행의 까닭을 보인다(errors F1 — 운영 2026-09-30: region adsb_fi error 13 중 공급자 해시에 남은 마지막 하나의 글자만 보였다.
  * 'Recent runs' 는 모든 작업의 최근 50건이라 약 6분 뒤면 밀려났고, 화면은 필터 · 다음 쪽을 쓰지 않았다).
  * - 24 h 요약: ok 가 아닌 행마다 가장 최근 실행의 오류 글자(원문 그대로 — data-raw) · http(api 의 last_error_text · last_http_status).
- * - 행을 열면 그 job · provider · status 의 실행을 요약과 같은 창(since = 응답의 summary_since)으로 50건씩 — next_cursor 로 '더 보기'. 해결 처리와 상관없이 모두.
+ * - 행을 열면 그 job · provider · status 의 실행을 연 때의 요약 창(since = 응답의 summary_since)으로 50건씩 — next_cursor 로 '더 보기'. 해결 처리와 상관없이 모두.
+ * - 연 행이 새로 받은 요약에서 빠지면 목록을 닫고 까닭을 적는다 — 행이 돌아와도 저절로 다시 열리지 않는다(리뷰 2026-10-01).
  * - 화면 시각은 KST 만(원문 글자 안의 'Z' 는 그대로).
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { domUtcLeaks } from "./helpers/kst-only";
-import { appendRunsPage, runKeyOf, runsDrillPath, summaryLastError, summarySince } from "@/lib/ops-runs";
+import { appendRunsPage, drillGoneText, runKeyOf, runsDrillPath, summaryHasKey, summaryLastError, summarySince } from "@/lib/ops-runs";
 
 describe("lib/ops-runs: the drill-down request and the summary's last error", () => {
   const k = { job: "region", provider: "adsb_fi", status: "error" };
@@ -35,6 +36,19 @@ describe("lib/ops-runs: the drill-down request and the summary's last error", ()
     expect(summaryLastError({ last_error_text: null, last_http_status: 200 })).toEqual({ known: true, text: null, http: 200 });
     expect(summaryLastError({})).toEqual({ known: false, text: null, http: null });
     expect(summaryLastError({ last_error_text: 7, last_http_status: "x" })).toEqual({ known: true, text: null, http: null });
+  });
+  it("an opened row that left the summary: found by its three strings; the note says why without guessing", () => {
+    expect(summaryHasKey([{ job: "region", provider: "adsb_fi", status: "error", n: 1 }], k)).toBe(true);
+    expect(summaryHasKey([{ job: "region", provider: "adsb_fi", status: "ok", n: 1 }], k)).toBe(false);
+    expect(summaryHasKey(undefined, k)).toBe(false);
+    // 요약에서 행이 빠지는 길은 둘뿐(IngestRunRepository.summary — n 이 0): 창 안에 실행이 없거나, hide 에서 error 실행이 모두 해결로 가려졌거나
+    const hide = drillGoneText(k, "hide");
+    expect(hide).toContain("region · adsb_fi · error");
+    expect(hide).toContain("24 h 창 안에 그 실행이 더 없거나");
+    expect(hide).toContain("해결 처리");
+    expect(drillGoneText(k, "show")).not.toContain("해결 처리"); // show 는 가리지 않는다
+    expect(drillGoneText({ ...k, status: "budget_exhausted" }, "hide")).not.toContain("해결 처리"); // 해결은 error 만 가린다
+    expect(drillGoneText({ ...k, status: "budget_exhausted" }, "hide")).toContain("24 h 창 안에 그 실행이 더 없다");
   });
   it("pages append in order and an id already shown is not repeated", () => {
     expect(appendRunsPage([{ id: 9 }, { id: 8 }], [{ id: 8 }, { id: 7 }])).toEqual([{ id: 9 }, { id: 8 }, { id: 7 }]);
@@ -136,7 +150,7 @@ describe("ops RUNS: the 24 h summary shows each non-ok row's last error; a row o
     expect(byTestId("runs-last-error-unknown", rows[3])!.getAttribute("title")).toContain("api 가 이 화면보다 옛 판");
     expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);
 
-    // 행 열기 → 그 행의 실행(요약과 같은 창)
+    // 행 열기 → 그 행의 실행(연 때의 요약 창)
     const open = byTestId("runs-drill-open", rows[0])!;
     expect(open.getAttribute("aria-expanded")).toBe("false");
     await click(open);
@@ -145,6 +159,9 @@ describe("ops RUNS: the 24 h summary shows each non-ok row's last error; a row o
     expect(panel).not.toBeNull();
     expect(byTestId("runs-drill-open", all((e) => e.getAttribute?.("data-testid") === "runs-summary-row")[0])!.getAttribute("aria-expanded")).toBe("true");
     expect(byTestId("runs-drill-window", panel)!.textContent).toContain("09-30 03:05:00 KST 뒤에 시작한 실행"); // 18:05:00Z 전날 = 09-30 03:05 KST
+    // 리뷰 2026-10-01: 요약은 15 s 마다 창이 앞으로 가고 이 목록은 연 때의 창 그대로 — '요약과 같은 창' 이라고 하면 곧 틀린다
+    expect(byTestId("runs-drill-window", panel)!.textContent).toContain("연 때의 요약 창");
+    expect(byTestId("runs-drill-window", panel)!.textContent).not.toContain("요약과 같은");
     expect(byTestId("runs-drill-window", panel)!.textContent).toContain("해결 처리와 상관없이 모두");
     const texts = () => all((e) => e.getAttribute?.("data-testid") === "runs-drill-error", panel).map((e) => e.textContent);
     expect(texts()).toEqual([TIMEOUT, TIMEOUT]);
@@ -172,6 +189,54 @@ describe("ops RUNS: the 24 h summary shows each non-ok row's last error; a row o
     // 닫기
     await click(byTestId("runs-drill-close", byTestId("runs-drill")!)!);
     expect(byTestId("runs-drill")).toBeNull();
+  });
+
+  it("when the opened row leaves the refreshed summary the panel closes with a note, and it does not reopen or refetch when the row comes back", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(NOW) });
+    const summaryUrl = "/api/v1/ops/runs?limit=50&resolved=hide";
+    const full = DATA[summaryUrl] as { summary_24h: Record<string, unknown>[] };
+    let summary: unknown = full;
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      seen.push(url);
+      const body = url === summaryUrl ? summary : DATA[url];
+      return new Response(JSON.stringify(body ?? { detail: "no such resource" }), { status: body ? 200 : 404, headers: { "Content-Type": "application/json" } });
+    });
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    await click(byTestId("ops-tab-runs")!);
+    await click(byTestId("runs-drill-open", all((e) => e.getAttribute?.("data-testid") === "runs-summary-row")[0])!);
+    expect(byTestId("runs-drill")).not.toBeNull();
+    const drillAsks = () => seen.filter((u) => u.startsWith(drill)).length;
+    const asked0 = drillAsks();
+
+    // 15 s 뒤의 요약에 그 행이 없다(창 밖으로 나갔거나 해결로 모두 가려짐) — 패널을 닫고 까닭을 적는다(말없이 사라지지 않는다)
+    summary = { ...full, summary_24h: full.summary_24h.filter((r) => r.status !== "error" || r.job !== "region") };
+    await React.act(async () => { vi.advanceTimersByTime(15_000); });
+    await settle();
+    expect(byTestId("runs-drill")).toBeNull();
+    const note = byTestId("runs-drill-gone")!;
+    expect(note).not.toBeNull();
+    expect(note.getAttribute("role")).toBe("status");
+    expect(note.textContent).toContain("region · adsb_fi · error");
+    expect(note.textContent).toContain("해결 처리");
+
+    // 행이 돌아와도 저절로 다시 열리지 않고 다시 부르지 않는다(사용자가 열 때만)
+    summary = full;
+    await React.act(async () => { vi.advanceTimersByTime(15_000); });
+    await settle();
+    expect(byTestId("runs-drill")).toBeNull();
+    expect(drillAsks()).toBe(asked0);
+    const row0 = all((e) => e.getAttribute?.("data-testid") === "runs-summary-row")[0];
+    expect(byTestId("runs-drill-open", row0)!.getAttribute("aria-expanded")).toBe("false");
+    // 사용자가 다시 열면 알림은 지우고 새로 부른다
+    await click(byTestId("runs-drill-open", row0)!);
+    expect(byTestId("runs-drill")).not.toBeNull();
+    expect(byTestId("runs-drill-gone")).toBeNull();
+    expect(drillAsks()).toBe(asked0 + 1);
+    expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);
   });
 
   it("a failed drill-down request is named on the panel with its request id; nothing is invented", async () => {

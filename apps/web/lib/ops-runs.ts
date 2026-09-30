@@ -4,6 +4,8 @@
  * 없으면 null · ok 행은 늘 null — 키가 없으면 옛 api), 응답의 summary_since(요약 창의 시작 — UTC ISO), 목록 필터 job · provider · status · since · cursor.
  */
 
+import type { ResolvedMode } from "@/lib/resolutions";
+
 /** 요약 행 하나를 가리키는 열쇠 */
 export interface RunKey { job: string; provider: string; status: string }
 
@@ -20,7 +22,7 @@ export function runKeyOf(row: Record<string, unknown>): RunKey | null {
 export const runKeyId = (k: RunKey): string => JSON.stringify([k.job, k.provider, k.status]);
 
 /**
- * 그 행의 실행 목록 경로. since = 응답의 summary_since 그대로(요약과 같은 창 — 브라우저 시계로 만들지 않는다), 모르면 빼고(기간 제한 없음 — 화면이 그렇게 말한다).
+ * 그 행의 실행 목록 경로. since = 연 때 받은 응답의 summary_since 그대로(그때의 요약 창 — 브라우저 시계로 만들지 않는다), 모르면 빼고(기간 제한 없음 — 화면이 그렇게 말한다).
  * cursor = 앞 쪽의 next_cursor(더 보기).
  */
 export function runsDrillPath(k: RunKey, since: string | null, cursor: number | null): string {
@@ -29,6 +31,26 @@ export function runsDrillPath(k: RunKey, since: string | null, cursor: number | 
   q.set("limit", String(RUNS_DRILL_LIMIT));
   if (cursor != null) q.set("cursor", String(cursor));
   return `/api/v1/ops/runs?${q.toString()}`;
+}
+
+/** 요약 행들에 그 열쇠의 행이 있는가(세 글자가 모두 같을 때만 — 배열이 아니면 없다) */
+export function summaryHasKey(rows: unknown, k: RunKey): boolean {
+  return Array.isArray(rows) && rows.some((r) => {
+    const rk = typeof r === "object" && r !== null ? runKeyOf(r as Record<string, unknown>) : null;
+    return rk != null && rk.job === k.job && rk.provider === k.provider && rk.status === k.status;
+  });
+}
+
+/**
+ * 연 행이 새로 받은 요약에서 빠져 목록을 닫았다는 알림(리뷰 2026-10-01 — 전에는 패널이 말없이 사라졌다가 행이 돌아오면 저절로 다시 열려 다시 불렀다).
+ * 요약에서 행이 빠지는 길은 둘뿐이다(api 가 n = 0 인 행을 뺀다): 창 안에 그 실행이 없거나, hide 에서 error 실행이 모두 해결 처리로 가려졌거나 —
+ * 해결은 error 만 · hide 에서만 가리므로 그 밖에는 앞의 것만 적는다(둘 중 어느 쪽인지는 응답으로 알 수 없어 짐작하지 않는다).
+ */
+export function drillGoneText(k: RunKey, mode: ResolvedMode): string {
+  const why = k.status === "error" && mode === "hide"
+    ? "24 h 창 안에 그 실행이 더 없거나, 남은 실행이 모두 해결 처리로 요약에서 빠졌다"
+    : "24 h 창 안에 그 실행이 더 없다";
+  return `열어 둔 실행 목록(${k.job} · ${k.provider} · ${k.status})을 닫음 — 그 행이 새로 받은 24 h 요약에 없다(${why}). 행이 다시 보이면 ‘실행’으로 다시 연다`;
 }
 
 /** 응답의 summary_since — 시간대가 있는 ISO 순간일 때만(그 밖은 모름 — null) */

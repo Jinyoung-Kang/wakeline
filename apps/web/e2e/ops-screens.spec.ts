@@ -54,7 +54,7 @@ test("ops: PIPELINE shows the AIS receive diagnostics with the collector's chose
 
 /**
  * 운영 RUNS(errors F1 — 운영 2026-09-30: region adsb_fi error 13 중 마지막 하나의 까닭만 보였다): 요약의 ok 가 아닌 행에 가장 최근 실행의 오류 글자(원문),
- * 행을 열면 그 job · provider · status 의 실행을 요약과 같은 창(since = summary_since)으로 50건씩 · next_cursor 로 '더 보기'. 예산 거절은 제 중립 색.
+ * 행을 열면 그 job · provider · status 의 실행을 연 때의 요약 창(since = summary_since)으로 50건씩 · next_cursor 로 '더 보기'. 예산 거절은 주황 · 제 뜻(title).
  * 운영 API 응답은 이 시험이 준다(e2e/rest-inject 와 같은 까닭 — fixture 스택에 운영 계정이 없다). 화면 시각은 KST 만(원문의 'Z' 는 data-raw 안).
  */
 test("ops RUNS: a summary row shows its last error and opens its own runs, paged by the cursor", async ({ page }) => {
@@ -116,6 +116,7 @@ test("ops RUNS: a summary row shows its last error and opens its own runs, paged
   await expect(panel.getByTestId("runs-drill-error")).toHaveCount(2);
   await expect(panel.getByTestId("runs-drill-count")).toHaveText("2건 · 더 있음");
   await expect(panel.getByTestId("runs-drill-window")).toContainText("KST 뒤에 시작한 실행");
+  await expect(panel.getByTestId("runs-drill-window")).toContainText("연 때의 요약 창");
   await panel.getByTestId("runs-drill-more").click();
   await expect(panel.getByTestId("runs-drill-error")).toHaveCount(3);
   await expect(panel.getByTestId("runs-drill-count")).toHaveText("3건 · 끝");
