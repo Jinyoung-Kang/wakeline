@@ -100,7 +100,7 @@ export function shipCoverageRetryBody(nowMs: number) {
     bootstrap: {
       state: "running", hours_loaded: 24, hours_total: 25, rows: 4210, loaded_from: iso(h0 - 2 * hour),
       missing: [{ from: iso(h0 - 3 * hour), to: iso(h0 - 2 * hour), state: "retry", attempts: 1, error: "statement_timeout" }],
-      retry_backoff_s: [60, 120, 300, 600], next_retry_at: iso(nowMs + 40_000),
+      retry_backoff_s: [60, 120, 300, 600], next_retry_at: iso(nowMs + 40_000), next_retry: 1,
     },
   };
 }

@@ -28,7 +28,10 @@ export const RECEPTION_LAYERS = [RECEPTION_FILL_LAYER, RECEPTION_LINE_LAYER] as 
 export type ReceptionCovered = "full" | "partial" | "since_api_start";
 export type ReceptionBootstrapState = "pending" | "running" | "done" | "failed";
 export type ReceptionError = "statement_timeout" | "connection" | "read_timeout" | "deadline" | "stopped" | "error";
-/** api 가 기동 때 못 읽은 시 하나(bootstrap.missing): [from, to) · 다시 읽기 대기(retry) · 포기(given_up) · 읽지 못한 차례 수 · 마지막 실패의 종류 */
+/**
+ * api 가 기동 때 못 읽은 시 하나(bootstrap.missing): [from, to) · 다시 읽기 대기(retry) · 포기(given_up) · attempts = 읽으려다 실패한 차례 수(차례 마감으로 조회하지
+ * 않고 미룬 차례는 세지 않는다 — 0 이면 조회하지 않았다: error 는 deadline · stopped) · 마지막 실패의 종류
+ */
 export interface ReceptionMissing { from: string; to: string; state: "retry" | "given_up"; attempts: number; error: ReceptionError }
 /** [lon0, lat0, 크기(°), 선박 수, 위치 수, 마지막 수신(ISO UTC — 화면에는 KST)] */
 export type ReceptionCell = [number, number, number, number, number, string];
@@ -41,8 +44,14 @@ export interface Reception {
   since: string;
   covered: ReceptionCovered;
   liveFrom: string;
-  /** missing = 못 읽은 시(오래된 것부터 — 옛 api 는 없음 = []) · nextRetryAt = 다음 다시 읽기(모르면 null) · retries = 다시 읽기 횟수(retry_backoff_s 의 길이 — 모르면 null) */
-  bootstrap: { state: ReceptionBootstrapState; hoursLoaded: number; hoursTotal: number; error: ReceptionError | null; missing: ReceptionMissing[]; nextRetryAt: string | null; retries: number | null };
+  /**
+   * missing = 못 읽은 시(오래된 것부터 — 옛 api 는 없음 = []) · nextRetryAt = 다음 다시 읽기(모르면 null) · nextRetry = 그 차례가 몇 번째 다시 읽기인지(api 의
+   * next_retry — 다음 시각과 함께만, 모르면 null: attempts 로 짐작하지 않는다) · retries = 다시 읽기 횟수(retry_backoff_s 의 길이 — 모르면 null)
+   */
+  bootstrap: {
+    state: ReceptionBootstrapState; hoursLoaded: number; hoursTotal: number; error: ReceptionError | null; missing: ReceptionMissing[];
+    nextRetryAt: string | null; nextRetry: number | null; retries: number | null;
+  };
   cells: ReceptionCell[];
   positions: number;
   truncated: boolean;
@@ -101,9 +110,11 @@ export function parseReception(x: unknown): Reception | null {
   const error = b.state === "failed" ? (typeof b.error === "string" && ERRORS.has(b.error) ? (b.error as ReceptionError) : "error") : null;
   const missing = Array.isArray(b.missing) ? b.missing.map(missingOf).filter((m): m is ReceptionMissing => m != null) : [];
   const retries = Array.isArray(b.retry_backoff_s) && b.retry_backoff_s.every((x) => count(x) != null) ? b.retry_backoff_s.length : null;
+  const nextRetryAt = time(b.next_retry_at), nth = count(b.next_retry);
+  const nextRetry = nextRetryAt != null && nth != null && nth >= 1 && (retries == null || nth <= retries) ? nth : null;
   return {
     cellDeg: RECEPTION_CELL_DEG, windowHours: hours, from, to, since, covered: o.covered as ReceptionCovered, liveFrom,
-    bootstrap: { state: b.state as ReceptionBootstrapState, hoursLoaded: loaded, hoursTotal: total, error, missing, nextRetryAt: time(b.next_retry_at), retries },
+    bootstrap: { state: b.state as ReceptionBootstrapState, hoursLoaded: loaded, hoursTotal: total, error, missing, nextRetryAt, nextRetry, retries },
     cells, positions: count(o.positions) ?? 0, truncated: o.truncated, droppedPositions: count(o.dropped_positions) ?? 0, maxCells, dropped,
   };
 }
@@ -226,11 +237,33 @@ function missingSpans(ms: readonly ReceptionMissing[]): string {
   const shown = spans.slice(0, 2).map(([a, b]) => fmtKstRange(a, b, { seconds: false })).join(", ");
   return spans.length > 2 ? `${shown} 외 ${spans.length - 2}곳` : shown;
 }
-const kindsText = (ms: readonly ReceptionMissing[]) => [...new Set(ms.map((m) => ERROR_TEXT[m.error]))].join(" · ");
+/**
+ * 빈 시의 실제 길이(조각마다 to − from 의 합 — 가장 최근 조각은 셈 시작에서 끊긴 한 시 안이라 1시간보다 짧다): '37분' · '3시간' · '3시간 30분'. 조각 수를
+ * '시간'으로 적지 않는다(리뷰 2026-10-01 — 전에는 09:00–09:37 조각을 '1시간'이라 적었다). 조각은 분 경계라 분으로 딱 떨어진다.
+ */
+function missingLength(ms: readonly ReceptionMissing[]): string {
+  const min = Math.round(ms.reduce((a, m) => a + (Date.parse(m.to) - Date.parse(m.from)), 0) / 60_000);
+  const h = Math.floor(min / 60), m = min % 60;
+  return h && m ? `${h}시간 ${m}분` : h ? `${h}시간` : `${m}분`;
+}
+/** 다시 읽기를 기다리는 시의 까닭(나온 순서) — 차례 마감(deadline)은 조회하지 않았다는 뜻이다 */
+const retryKinds = (ms: readonly ReceptionMissing[]) =>
+  [...new Set(ms.map((m) => (m.error === "deadline" ? "차례 마감으로 아직 조회하지 않음" : ERROR_TEXT[m.error])))].join(" · ");
+/** 포기한 시의 까닭과 까닭마다 못 읽은 횟수(api 의 attempts 그대로 — 다르면 'a–b번'). 조회하지 않은 시(0번)는 횟수를 적지 않는다 */
+function goneKinds(ms: readonly ReceptionMissing[]): string {
+  const by = new Map<ReceptionError, number[]>();
+  for (const m of ms) by.set(m.error, [...(by.get(m.error) ?? []), m.attempts]);
+  return [...by].map(([k, a]) => {
+    if (k === "deadline") return "차례 마감으로 한 번도 조회하지 못함";
+    const lo = Math.min(...a), hi = Math.max(...a);
+    return hi > 0 ? `${ERROR_TEXT[k]}(${lo > 0 && lo < hi ? `${lo}–${hi}` : hi}번 못 읽음)` : ERROR_TEXT[k];
+  }).join(" · ");
+}
 
 /**
- * 못 읽은 시(api 가 기동 때 읽다 실패한 시 — 계약 v5 §G27): 다시 읽기를 기다리는 시와 포기한 시를 따로 — 구간(KST) · 까닭 · 다음 다시 읽기(아직 정하지 않았으면
- * '이 차례 뒤', 시각이 지났으면 '다시 읽는 중') · 포기한 시는 몇 번 못 읽었는지와 다음 재시작 전까지 비어 있다는 것. 없으면 null.
+ * 못 읽은 시(api 가 기동 때 읽다 실패한 시 — 계약 v5 §G27): 다시 읽기를 기다리는 시와 포기한 시를 따로 — 실제 길이 · 구간(KST) · 까닭 · 다음 다시 읽기(아직 정하지
+ * 않았으면 '이 차례 뒤', 시각이 지났으면 '다시 읽는 중' — 몇 번째인지는 api 가 준 번호만) · 포기한 시는 몇 번 못 읽었는지(조회하지 않은 시는 그렇다고)와 다음 재시작
+ * 전까지 비어 있다는 것. 없으면 null.
  */
 function missingText(r: Reception): string | null {
   const b = r.bootstrap;
@@ -239,13 +272,10 @@ function missingText(r: Reception): string | null {
   if (retry.length) {
     const next = b.nextRetryAt == null ? "이 차례 뒤 다시 읽음"
       : Date.parse(b.nextRetryAt) > Date.parse(r.to) ? `다음 ${fmtKstMinute(b.nextRetryAt)}` : "다시 읽는 중";
-    const nth = b.retries != null ? `(다시 읽기 ${Math.max(...retry.map((m) => m.attempts))}/${b.retries})` : "";
-    parts.push(`빈 시 ${retry.length}시간(${missingSpans(retry)}) 다시 읽기 대기 — ${kindsText(retry)} · ${next}${b.nextRetryAt == null ? "" : nth}`);
+    const nth = b.nextRetry != null && b.retries != null ? `(다시 읽기 ${b.nextRetry}/${b.retries})` : "";
+    parts.push(`빈 시 ${missingLength(retry)}(${missingSpans(retry)}) 다시 읽기 대기 — ${retryKinds(retry)} · ${next}${nth}`);
   }
-  if (gone.length) {
-    const times = Math.max(...gone.map((m) => m.attempts));
-    parts.push(`빈 시 ${gone.length}시간(${missingSpans(gone)}) 포기 — ${kindsText(gone)}${times > 0 ? ` · ${times}번 못 읽음` : ""} · api 재시작 전까지 빈 시`);
-  }
+  if (gone.length) parts.push(`빈 시 ${missingLength(gone)}(${missingSpans(gone)}) 포기 — ${goneKinds(gone)} · api 재시작 전까지 빈 시`);
   return parts.length ? parts.join(" · ") : null;
 }
 

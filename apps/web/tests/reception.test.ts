@@ -38,7 +38,7 @@ describe("parseReception: the api answer, checked again (bad cells are dropped a
     expect(r.since).toBe("2026-09-29T09:00:00Z");
     expect(r.covered).toBe("full");
     expect(r.liveFrom).toBe("2026-09-30T09:37:00Z");
-    expect(r.bootstrap).toEqual({ state: "done", hoursLoaded: 25, hoursTotal: 25, error: null, missing: [], nextRetryAt: null, retries: null });
+    expect(r.bootstrap).toEqual({ state: "done", hoursLoaded: 25, hoursTotal: 25, error: null, missing: [], nextRetryAt: null, nextRetry: null, retries: null });
     expect(r.cells).toEqual([[139.5, 35.0, 0.5, 12, 40, "2026-09-30T08:59:59Z"], [126.0, 37.0, 0.5, 304, 5120, "2026-09-30T09:40:01Z"]]);
     expect(r.positions).toBe(5160);
     expect(r.truncated).toBe(false);
@@ -197,24 +197,29 @@ describe("tooltip and status line — KST only, the reason in words", () => {
  * 2026-09-30 22:49 KST 배포 직후 부트스트랩이 statement_timeout 하나로 멈췄다(5/25시간) — 이제 api 는 못 읽은 시를 나중에 다시 읽고(1 · 2 · 5 · 10분 뒤 — 고른 값)
  * 그동안 나머지 시를 읽는다(계약 v5 §G27 개정). 응답의 bootstrap.missing(빈 시 — 다시 읽기 대기 · 포기) · next_retry_at · retry_backoff_s 를 읽어, 상태 줄이 어느 시를
  * 셌고 어느 시가 빠졌는지(KST) · 까닭 · 다음 다시 읽기 시각을 적는다. 수정 전 실패(읽지 않았다).
+ * 리뷰 2026-10-01: 빈 시의 길이는 조각 수가 아니라 실제 길이(09:00–09:37 은 37분 — 전에는 '1시간'), 차례 마감(deadline)은 '조회하지 않음'(전에는 '한 차례 마감 초과 ·
+ * 5번 못 읽음' — 조회하지 않은 시를 다섯 번 못 읽었다고 했다), '다시 읽기 n/4' 는 api 가 준 번호(next_retry — attempts 에서 짐작하지 않는다).
  */
 describe("bootstrap: hours not read yet are named — waiting to be read again, or given up with the reason", () => {
   const MISS = { from: "2026-09-30T06:00:00Z", to: "2026-09-30T07:00:00Z", state: "retry", attempts: 1, error: "statement_timeout" };
   const boot = (over: Record<string, unknown> = {}) => ({ state: "running", hours_loaded: 24, hours_total: 25, rows: 40, loaded_from: "2026-09-30T07:00:00Z",
-    missing: [MISS], retry_backoff_s: [60, 120, 300, 600], next_retry_at: "2026-09-30T09:41:10Z", ...over });
+    missing: [MISS], retry_backoff_s: [60, 120, 300, 600], next_retry_at: "2026-09-30T09:41:10Z", next_retry: 1, ...over });
   const waiting = (over: Record<string, unknown> = {}) => rec({ covered: "partial", since: "2026-09-30T07:00:00Z", bootstrap: boot(over) });
 
   it("parses the missing hours, the next retry time and how many retries there are; an older api without them has none", () => {
     const b = waiting().bootstrap;
     expect(b.missing).toEqual([{ from: MISS.from, to: MISS.to, state: "retry", attempts: 1, error: "statement_timeout" }]);
     expect(b.nextRetryAt).toBe("2026-09-30T09:41:10Z");
+    expect(b.nextRetry).toBe(1);
     expect(b.retries).toBe(4);
-    expect(rec().bootstrap).toEqual({ state: "done", hoursLoaded: 25, hoursTotal: 25, error: null, missing: [], nextRetryAt: null, retries: null });
+    expect(rec().bootstrap).toEqual({ state: "done", hoursLoaded: 25, hoursTotal: 25, error: null, missing: [], nextRetryAt: null, nextRetry: null, retries: null });
+    // 번호는 다음 시각과 함께만 · 1 ~ 다시 읽기 횟수 — 아니면 모름(null — 짐작하지 않는다)
+    for (const x of [{ next_retry: 0 }, { next_retry: 5 }, { next_retry: "1" }, { next_retry: 1.5 }, { next_retry_at: undefined }]) expect(waiting(x).bootstrap.nextRetry, JSON.stringify(x)).toBeNull();
     // 읽을 수 없는 빈 시는 버린다(지어내지 않는다) · 모르는 종류는 'error'(서버 글자를 보이지 않는다)
     const odd = waiting({ missing: [{ from: "x", to: MISS.to, state: "retry", attempts: 1, error: "statement_timeout" }, { ...MISS, state: "later" },
       { ...MISS, attempts: -1 }, { ...MISS, error: "<script>" }, "x"] }).bootstrap;
     expect(odd.missing).toEqual([{ ...MISS, error: "error" }]);
-    expect(waiting({ retry_backoff_s: "x", next_retry_at: 5 }).bootstrap).toMatchObject({ retries: null, nextRetryAt: null });
+    expect(waiting({ retry_backoff_s: "x", next_retry_at: 5 }).bootstrap).toMatchObject({ retries: null, nextRetryAt: null, nextRetry: null });
   });
 
   it("status line while an hour waits: the hours read, the missing hour in KST, the reason and the next retry time (KST only)", () => {
@@ -224,12 +229,14 @@ describe("bootstrap: hours not read yet are named — waiting to be read again, 
       + "DB 문장 상한 초과 · 다음 18:41 KST(다시 읽기 1/4))");
     // 다시 읽는 차례가 도는 중(다음 시각이 지났다) · 첫 차례가 도는 중(다음 시각을 아직 정하지 않았다)
     expect(receptionStatusLine(waiting({ next_retry_at: "2026-09-30T09:39:10Z" }), null, 1).detail).toContain("다시 읽기 대기 — DB 문장 상한 초과 · 다시 읽는 중(다시 읽기 1/4)");
-    expect(receptionStatusLine(waiting({ next_retry_at: undefined }), null, 1).detail).toContain("다시 읽기 대기 — DB 문장 상한 초과 · 이 차례 뒤 다시 읽음");
-    // 가장 최근 시가 빠졌으면 셈 시작부터만(api 시작 뒤)
+    expect(receptionStatusLine(waiting({ next_retry_at: undefined, next_retry: undefined }), null, 1).detail).toContain("다시 읽기 대기 — DB 문장 상한 초과 · 이 차례 뒤 다시 읽음");
+    // 옛 api(번호 없음): 번호를 짐작하지 않고 뺀다 — 전에는 attempts 로 셌다
+    expect(receptionStatusLine(waiting({ next_retry: undefined, missing: [{ ...MISS, attempts: 3 }] }), null, 1).detail).toContain("DB 문장 상한 초과 · 다음 18:41 KST)");
+    // 가장 최근 시가 빠졌으면 셈 시작부터만(api 시작 뒤) — 빈 시의 길이는 그 조각의 실제 길이(37분)
     const newest = rec({ covered: "since_api_start", since: "2026-09-30T09:37:00Z", bootstrap: boot({ loaded_from: "2026-09-30T09:37:00Z",
       missing: [{ ...MISS, from: "2026-09-30T09:00:00Z", to: "2026-09-30T09:37:00Z" }] }) });
     expect(receptionStatusLine(newest, null, 1).detail).toBe("창의 일부만 셈 — 09-30 18:37 KST 부터(api 시작 뒤 · 기동 전 기록 24/25시간 읽음 · "
-      + "빈 시 1시간(09-30 18:00 – 09-30 18:37 KST) 다시 읽기 대기 — DB 문장 상한 초과 · 다음 18:41 KST(다시 읽기 1/4))");
+      + "빈 시 37분(09-30 18:00 – 09-30 18:37 KST) 다시 읽기 대기 — DB 문장 상한 초과 · 다음 18:41 KST(다시 읽기 1/4))");
     for (const x of [l, receptionStatusLine(newest, null, 1)]) expect(`${x.text} ${x.detail}`).not.toContain("UTC");
   });
 
@@ -237,7 +244,18 @@ describe("bootstrap: hours not read yet are named — waiting to be read again, 
     const l = receptionStatusLine(rec({ covered: "partial", since: "2026-09-30T07:00:00Z", bootstrap: boot({ state: "failed", error: "statement_timeout",
       finished_at: "2026-09-30T09:59:00Z", next_retry_at: undefined, missing: [{ ...MISS, state: "given_up", attempts: 5 }] }) }), null, 1);
     expect(l.detail).toBe("창의 일부만 셈 — 09-30 16:00 KST 부터(기동 전 기록 24/25시간 읽음 · 빈 시 1시간(09-30 15:00 – 09-30 16:00 KST) 포기 — "
-      + "DB 문장 상한 초과 · 5번 못 읽음 · api 재시작 전까지 빈 시)");
+      + "DB 문장 상한 초과(5번 못 읽음) · api 재시작 전까지 빈 시)");
+  });
+
+  it("an hour pushed back by the pass deadline was never queried: it says so — waiting, or given up with no count of failed reads", () => {
+    const deferred = { ...MISS, from: "2026-09-30T05:00:00Z", to: "2026-09-30T06:00:00Z", attempts: 0, error: "deadline" };
+    const w = receptionStatusLine(waiting({ loaded_from: "2026-09-30T07:00:00Z", hours_loaded: 23, missing: [deferred, { ...MISS, attempts: 2 }], next_retry: 2 }), null, 1);
+    expect(w.detail).toContain("빈 시 2시간(09-30 14:00 – 09-30 16:00 KST) 다시 읽기 대기 — 차례 마감으로 아직 조회하지 않음 · DB 문장 상한 초과 · 다음 18:41 KST(다시 읽기 2/4)");
+    const g = receptionStatusLine(rec({ covered: "partial", since: "2026-09-30T07:00:00Z", bootstrap: boot({ state: "failed", error: "statement_timeout",
+      finished_at: "2026-09-30T09:59:00Z", next_retry_at: undefined, next_retry: undefined, hours_loaded: 23,
+      missing: [{ ...deferred, state: "given_up" }, { ...MISS, state: "given_up", attempts: 4 }, { ...MISS, from: "2026-09-30T07:00:00Z", to: "2026-09-30T08:00:00Z", state: "given_up", attempts: 5 }] }) }), null, 1);
+    expect(g.detail).toContain("빈 시 3시간(09-30 14:00 – 09-30 17:00 KST) 포기 — 차례 마감으로 한 번도 조회하지 못함 · DB 문장 상한 초과(4–5번 못 읽음) · api 재시작 전까지 빈 시");
+    expect(g.detail).not.toMatch(/마감[^·]*번 못 읽음/);
   });
 
   it("several missing hours: touching hours make one span, at most two spans are written then '외 N곳'; waiting and given-up hours are told apart", () => {
@@ -245,14 +263,15 @@ describe("bootstrap: hours not read yet are named — waiting to be read again, 
     const l = receptionStatusLine(waiting({ missing: [
       h("2026-09-30T01:00:00Z", "2026-09-30T02:00:00Z", { state: "given_up", error: "error" }),
       h("2026-09-30T03:00:00Z", "2026-09-30T04:00:00Z", { attempts: 2 }),
-      h("2026-09-30T04:00:00Z", "2026-09-30T05:00:00Z", { attempts: 2, error: "deadline" }),
-      h("2026-09-30T05:30:00Z", "2026-09-30T06:00:00Z", { attempts: 2, error: "deadline" }),
+      h("2026-09-30T04:00:00Z", "2026-09-30T05:00:00Z", { attempts: 0, error: "deadline" }),
+      h("2026-09-30T05:30:00Z", "2026-09-30T06:00:00Z", { attempts: 0, error: "deadline" }),
       h("2026-09-30T06:00:00Z", "2026-09-30T07:00:00Z", { attempts: 2 }),
-    ] }), null, 1);
-    expect(l.detail).toContain("빈 시 4시간(09-30 12:00 – 09-30 14:00 KST, 09-30 14:30 – 09-30 16:00 KST) 다시 읽기 대기 — DB 문장 상한 초과 · 한 차례 마감 초과 · 다음 18:41 KST(다시 읽기 2/4)");
-    expect(l.detail).toContain("빈 시 1시간(09-30 10:00 – 09-30 11:00 KST) 포기 — DB 오류 · 1번 못 읽음 · api 재시작 전까지 빈 시");
+    ], next_retry: 2 }), null, 1);
+    // 길이 = 조각의 실제 길이의 합(1 + 1 + 0.5 + 1 = 3시간 30분 — 조각 수 4 가 아니다)
+    expect(l.detail).toContain("빈 시 3시간 30분(09-30 12:00 – 09-30 14:00 KST, 09-30 14:30 – 09-30 16:00 KST) 다시 읽기 대기 — DB 문장 상한 초과 · 차례 마감으로 아직 조회하지 않음 · 다음 18:41 KST(다시 읽기 2/4)");
+    expect(l.detail).toContain("빈 시 1시간(09-30 10:00 – 09-30 11:00 KST) 포기 — DB 오류(1번 못 읽음) · api 재시작 전까지 빈 시");
     const many = receptionStatusLine(waiting({ missing: ["01", "03", "05"].map((x) => h(`2026-09-30T${x}:00:00Z`, `2026-09-30T${x}:30:00Z`)) }), null, 1);
-    expect(many.detail).toContain("빈 시 3시간(09-30 10:00 – 09-30 10:30 KST, 09-30 12:00 – 09-30 12:30 KST 외 1곳)");
+    expect(many.detail).toContain("빈 시 1시간 30분(09-30 10:00 – 09-30 10:30 KST, 09-30 12:00 – 09-30 12:30 KST 외 1곳)");
   });
 });
 
