@@ -121,7 +121,7 @@ public class AlertRepository {
      * 쓰이는 일반 계획이 hex 인덱스를 쓰지 못해 기간 안의 행을 모두 훑는다. hex 비교는 char(6) 끼리(인덱스 alert_event_hex_id (hex, id DESC)).
      */
     public Page history(Instant from, Instant to, String hex, Long cursor, int limit) {
-        var q = Sql.publicRead(db, """
+        var q = Sql.publicRead(db, "alerts.history", """
                 SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
                        CASE WHEN e.kind = 'PREDICTED' AND e.eta_s IS NOT NULL AND e.evidence->>'entry' IS NOT NULL AND e.evidence->>'judged_at' IS NOT NULL
                             THEN (e.evidence->>'judged_at')::timestamptz + make_interval(secs => e.eta_s) END eta_at,

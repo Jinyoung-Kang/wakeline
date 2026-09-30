@@ -61,8 +61,10 @@ class DbTimeoutsIT extends IntegrationTest {
             assertThat(ms).as("cut by the 3 s public read timeout (not the 5 s lock timeout, not the lock holder)").isBetween(2_500L, 4_900L);
             // pgjdbc 가 3 s 쿼리 한도로 취소를 보내면 서버는 57014 'canceling statement due to user request' 로 답한다 — 로그는 그 SQLSTATE 만 말한다
             String line = warnLine(out, r.header("X-Request-Id"));
+            // 어느 문장이 끊겼는지와 그 문장의 한도는 호출부가 붙인 이름표(Sql.publicRead)에서 — 실제 Spring 예외 메시지를 거쳐
             assertThat(line).contains("statement cancelled (SQLSTATE 57014)")
                     .contains("path=/api/v1/replay query=\"" + query + "\"")
+                    .contains(" statement=replay.radar_frame statement_limit_s=3 → 503: ")
                     .contains("canceling statement due to user request")
                     .doesNotContain("data store unavailable");
             assertThat(elapsedMs(line)).as("elapsed time of the request, measured by the api").isBetween(2_500L, ms);

@@ -35,7 +35,7 @@ public class PortCallIndex implements PortCallReader.Source {
     /** 항만청별 색인 범위와 빈 곳(행이 없는 항만청은 아직 색인하지 않았다). 배열(hole_days)은 연결을 돌려주기 전에 행 안에서 풀어 둔다. */
     @Override
     public List<Coverage> coverage() {
-        return Sql.publicRead(db, "SELECT prt_ag_cd, covered_from, covered_to, refreshed_at, hole_days FROM port_call_coverage")
+        return Sql.publicRead(db, "portcalls.coverage", "SELECT prt_ag_cd, covered_from, covered_to, refreshed_at, hole_days FROM port_call_coverage")
                 .query((rs, n) -> new Coverage(rs.getString("prt_ag_cd"), date(rs.getObject("covered_from")), date(rs.getObject("covered_to")),
                         TrackRepository.toInstant(rs.getObject("refreshed_at")), dates(rs.getArray("hole_days"))))
                 .list();
@@ -62,7 +62,7 @@ public class PortCallIndex implements PortCallReader.Source {
      */
     @Override
     public List<Row> byCallSign(String callSign, LocalDate from, LocalDate to, int limit) {
-        return Sql.publicRead(db, """
+        return Sql.publicRead(db, "portcalls.by_call_sign", """
                 SELECT prt_ag_cd, prt_ag_nm, clsgn, listed_date, vssl_nm, nationality_nm, kind_nm, purpose_nm,
                        first_port_cd, first_port_nm, prev_port_cd, prev_port_nm, next_port_cd, next_port_nm, dest_port_cd, dest_port_nm,
                        entry_at, entry_revision, exit_at, exit_revision, berth, fetched_at

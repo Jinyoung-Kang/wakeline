@@ -203,7 +203,7 @@ public class SigmetRepository {
      * 위치를 모르므로 뺄 수 없어 남긴다. base/top 출처는 계약 값만 내보내고 DB 전용 'unknown' 하한은 null.
      */
     public List<Map<String, Object>> validAt(Instant at, Bbox b) {
-        return Sql.publicRead(db, """
+        return Sql.publicRead(db, "replay.sigmet", """
                 SELECT id, fir_id, fir_name, hazard, qualifier, base_ft, top_ft, base_source, top_source, valid_from, valid_to, withdrawn_at,
                        excluded_reason, raw_text, provider, ST_AsGeoJSON(geom)::text geometry
                 FROM sigmet WHERE valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t

@@ -34,12 +34,16 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.net.URI;
 import java.sql.SQLException;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 모든 오류를 application/problem+json(RFC 9457)으로. 확장 필드 code · request_id. 스택·내부 메시지는 싣지 않는다.
  * <ul>
  *   <li>DB·Redis 연결 실패·풀 대기 초과·일시 오류 → 503 + Retry-After: 10 (5.1절 'DB 종료·느림', 계약 §2). WARN 한 줄(스택 없음) — 원인은 예외가
- *       스스로 말하는 것(SQLSTATE · 예외 종류)만, 그리고 경로 + 쿼리 문자열(가림 규칙을 거쳐) · 걸린 시간을 싣는다(조사 2026-10-01 오류 F3).
+ *       스스로 말하는 것(SQLSTATE · 예외 종류)만, 그리고 경로 + 쿼리 문자열(가림 규칙을 거쳐) · 걸린 시간 · 공개 조회면 끊긴 문장의 이름과 그 한도
+ *       (호출부의 이름표 — Sql.publicRead)를 싣는다(조사 2026-10-01 오류 F3). 컨트롤러가 DB 없이 답하는 길(503 · meta.db_unavailable)도 같은 줄을
+ *       남긴다({@link #storeUnavailable} · {@link #answeredWithoutStore}).
  *       잠금 대기 한도(SQLSTATE 55P03)는 Spring 의 기본 번역이 모르는 부류라 UncategorizedSQLException 으로 오지만 같은 503 이다(예전: 500 + ERROR).</li>
  *   <li>Spring MVC 가 이미 상태를 아는 예외(405·406·415 등, {@link ErrorResponse}) → 그 상태 그대로, 헤더(Allow 등) 유지.
  *       4xx 는 INFO 한 줄 — 익명 요청으로 ERROR 스택을 쏟아내게 할 수 없다(SEC-10).</li>
@@ -123,11 +127,32 @@ public class ProblemAdvice {
         return Problem.unavailable(detail);
     }
 
-    /** 저장소를 못 써서 503 또는 DB 없이 답한 요청의 WARN 한 줄(스택 없음). */
+    /**
+     * 저장소를 못 써서 503 또는 DB 없이 답한 요청의 WARN 한 줄(스택 없음):
+     * {원인} request_id=… path=… [query="…"] elapsed_ms=… [statement=… statement_limit_s=…] → {무엇으로 답했는지}: {예외 종류 ← 가장 안쪽 원인: 메시지}.
+     */
     static void warnUnavailable(Throwable e, HttpServletRequest req, String answered) {
         Long elapsed = RequestIdFilter.elapsedMs(req);
-        log.warn("{} request_id={} path={}{} elapsed_ms={} → {}: {}", cause(e), RequestIdFilter.current(req), req.getRequestURI(), query(req),
-                elapsed == null ? "-" : elapsed, answered, brief(e));
+        log.warn("{} request_id={} path={}{} elapsed_ms={}{} → {}: {}", cause(e), RequestIdFilter.current(req), req.getRequestURI(), query(req),
+                elapsed == null ? "-" : elapsed, statement(e), answered, brief(e));
+    }
+
+    /** Sql.tag 가 SQL 앞 주석으로 싣는 문장 이름표(이름 · 그 문장의 한도). Spring 은 실패한 문장의 SQL 을 예외 메시지('SQL [...]')에 싣는다. */
+    private static final Pattern STATEMENT_TAG = Pattern.compile("/\\* wakeline ([a-z0-9_.]{1,64}) limit_s=([0-9]{1,4}) \\*/");
+
+    /**
+     * 로그용: 실패한 문장의 이름과 그 문장에 걸린 한도 — 호출부가 붙인 이름표(Sql.publicRead)에서만 읽는다(조사 2026-10-01 오류 F3 · 도전 better_fix).
+     * 한도는 그 문장의 설정값이다(끊긴 까닭이 그 한도라는 뜻은 아니다 — 원인 메시지와 elapsed_ms 가 말한다). 이름표가 없으면(연결을 얻기 전의 실패,
+     * 공개 조회가 아닌 문장) 빈 글자 — 짐작해 적지 않는다.
+     */
+    public static String statement(Throwable e) {
+        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
+            String m = c.getMessage();
+            if (m == null) continue;
+            Matcher x = STATEMENT_TAG.matcher(m);
+            if (x.find()) return " statement=" + x.group(1) + " statement_limit_s=" + x.group(2);
+        }
+        return "";
     }
 
     /**
@@ -160,7 +185,7 @@ public class ProblemAdvice {
     }
 
     /** SQLSTATE 모양(영숫자 대문자 5자) — 로그에 싣는 값을 이 모양으로만. */
-    private static final java.util.regex.Pattern SQLSTATE = java.util.regex.Pattern.compile("[0-9A-Z]{5}");
+    private static final Pattern SQLSTATE = Pattern.compile("[0-9A-Z]{5}");
 
     /** 원인 사슬에서 처음 만난 SQLSTATE(없거나 모양이 아니면 null). */
     static String sqlState(Throwable e) {

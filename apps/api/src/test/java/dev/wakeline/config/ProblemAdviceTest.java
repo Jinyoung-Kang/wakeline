@@ -71,6 +71,11 @@ class ProblemAdviceTest {
         @GetMapping("/refused") String refused() {
             throw new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection", new SQLException("Connection to db:5432 refused", "08001"));
         }
+        // 공개 조회(Sql.publicRead)는 SQL 앞 주석에 이름과 그 문장의 한도를 싣는다 — Spring 은 실패한 SQL 을 예외 메시지에 그대로 싣는다
+        @GetMapping("/labelled") String labelled() {
+            throw new QueryTimeoutException("PreparedStatementCallback; SQL [/* wakeline replay.radar_frame limit_s=3 */ SELECT frame_time FROM radar_frame];"
+                    + " ERROR: canceling statement due to user request", new SQLException("ERROR: canceling statement due to user request", "57014"));
+        }
         @GetMapping("/unavailable") String unavailable() { throw Problem.unavailable("try later"); }
         @GetMapping("/limited") String limited() { throw Problem.tooManyRequests("slow down", 42); }
         @GetMapping("/boom") String boom() { throw new IllegalStateException("bug"); }
@@ -145,6 +150,20 @@ class ProblemAdviceTest {
         org.assertj.core.api.Assertions.assertThat(lines.get(1)).contains("DB error (SQLSTATE 40P01) request_id=- path=/deadlock").contains("deadlock detected");
         org.assertj.core.api.Assertions.assertThat(lines.get(2)).contains("could not get a DB connection (SQLSTATE 08001) request_id=- path=/refused");
         org.assertj.core.api.Assertions.assertThat(lines).noneMatch(l -> l.contains("data store unavailable"));
+    }
+
+    /**
+     * 조사 2026-10-01 오류 F3(도전 better_fix): 재생은 3 s 상한 문장 3~4개를 차례로 낸다 — WARN 은 어느 문장이 끊겼는지와 그 문장에 걸린 한도를 적는다.
+     * 둘 다 호출부가 준 것(Sql.publicRead 의 이름표)만: 이름표가 없는 문장(공개 조회가 아닌 것 — 한도가 연결 설정뿐)은 문장도 한도도 적지 않는다.
+     */
+    @Test
+    void aLabelledPublicReadNamesItsStatementAndLimit_anUnlabelledOneNamesNeither(CapturedOutput out) throws Exception {
+        mvc.perform(get("/labelled")).andExpect(status().isServiceUnavailable());
+        mvc.perform(get("/cancelled")).andExpect(status().isServiceUnavailable());
+        List<String> lines = warnLines(out);
+        org.assertj.core.api.Assertions.assertThat(lines.get(0))
+                .contains("statement cancelled (SQLSTATE 57014) request_id=- path=/labelled elapsed_ms=- statement=replay.radar_frame statement_limit_s=3 → 503: ");
+        org.assertj.core.api.Assertions.assertThat(lines.get(1)).contains("elapsed_ms=- → 503: ").doesNotContain("statement=").doesNotContain("limit");
     }
 
     /** 다른 SQLSTATE 의 분류되지 않은 SQL 예외는 여전히 결함이다 — 500 + ERROR(503 으로 삼키지 않는다). */
