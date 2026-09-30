@@ -728,7 +728,12 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     전환 기록은 다시 쓰지 않는다(한 번의 사건). `{job}`(마지막으로 쓴 공급자)은 그대로 남는다(기록). 전환 기록(`wakeline:events` provider_switch): 시작 때 `<쓰던 공급자> → none`(사유
     `none — …[ · <공급자> 다시 시도 중]`), 끝날 때 `none → <공급자>`(사유 `recovery — 공급자 없음 N s 끝 · …` — 다시 시도가 답했으면 `· <공급자> 다시 시도 성공`). 로그: 공백마다
     WARN 한 번 `region: no provider available — skipped: '…'; next: '<공급자> retried each cycle while cooling down (no other provider); <공급자> after N s'`(바뀌는 글은
-    따옴표 안 — 지문 하나), 끝나면 INFO. api 는 이 해시를 그대로 싣는다(`/status` · WS `status` 의 `active_providers` — 문자열 맵, 스키마 그대로 · `/ops/providers`
+    따옴표 안 — 지문 하나), 끝나면 INFO. (2026-10-01 · 레인 kma 7차 — 조사 errors F2 · 도전) 끝에 마지막 호출 실패를 따옴표 밖에 붙인다: `; last error (<공급자>): <오류 글>`
+    (그 작업이 성공한 뒤 실패가 없었으면 `; last error: none since the last success or start`) — '3회 연속 실패' WARN 도 `region: adsb_fi failed 3x — cooling down;
+    last error: <오류 글>`. 오류 글(`errors.describe_error`)의 앞머리가 종류라 지문은 오류 종류마다 한 묶음이다(숫자는 지문에서 지워진다 — weather `_guard` ·
+    kma `_fail` 과 같은 규칙. 따옴표 안에 두면 ReadTimeout · ConnectError · HTTP 502 가 한 묶음이 되어 로그 화면 · 해결 표시(ADR-024 — 지문 단위)가 가르지 못한다).
+    전에는 로그 화면에 오는 이 두 WARN 에 까닭이 없었다(한 번의 실패는 INFO — 운영 2026-09-30 17:57:43 · 17:58:01 UTC `region: adsb_fi failed (ReadTimeout …)`).
+    시험 `test_aircraft_job`(+3 — 고치기 전 실패: 까닭 · 종류마다 지문 · 성공 뒤 '없음', 기존 공급자 없음 두 시험의 글자 · 지문). api 는 이 해시를 그대로 싣는다(`/status` · WS `status` 의 `active_providers` — 문자열 맵, 스키마 그대로 · `/ops/providers`
     의 `active`) — api 코드 변경 없음.
   - 웹(`lib/active-provider` — KST 만, 값 그대로, 모르면 쓰지 않는다): 운영 공급자 탭 위쪽 작업 배지가 공급자 없음이면 빨강 `region: 공급자 없음 · 12:16:32 KST 부터`(다시 시도
     중이면 뒤에 `· adsb_fi 다시 시도 중`, title 앞머리에도 `adsb_fi 다시 시도 중(쉬는 공급자 — 다른 공급자가 없어 주기마다)` · title =

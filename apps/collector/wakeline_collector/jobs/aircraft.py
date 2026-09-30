@@ -49,6 +49,8 @@ class AircraftJob:
         self.gate = AircraftGate()
         self._warned_no_provider = False
         self._stood_down = False  # 작업이 꺼져(전세계 끔) 공급자 없음 필드를 비웠다 — 꺼진 동안 비울 때까지(비우면 한 번)
+        # 이 작업의 마지막 호출 실패(공급자 · describe_error 글) — 성공하면 비운다. '공급자 없음' WARN 이 까닭으로 싣는다(속도 상한이 막은 호출은 실패가 아니다)
+        self._last_error: tuple[str, str] | None = None
 
     @property
     def job_name(self) -> str:
@@ -134,6 +136,7 @@ class AircraftJob:
         await ctx.status.heartbeat(  # lag_s = 발행한 가장 새 관측의 나이(R-20, 처리 시간이 아니다)
             self.job_name, lag_s=newest_age_s(st.seen_at for st in gate.kept), fixture=ctx.fixture, extra=self._hb_extra()
         )
+        self._last_error = None
         gap = await self.chain.succeeded(prov.name)  # 다시 시도한 공급자가 답했으면 공급자 없음이 끝난다
         if gap is not None:
             self._available_again(gap, prov.name)
@@ -188,18 +191,24 @@ class AircraftJob:
         return results, gate, fields
 
     def _warn_no_provider(self) -> None:
-        """공백마다 WARN 한 번 — 바뀌는 글은 따옴표 안(로그 지문이 한 묶음). next: 다시 시도하는 쉬는 공급자 · 가장 먼저 풀리는 공급자(체인 상태)."""
+        """공백마다 WARN 한 번. 건너뛴 까닭 · next(다시 시도하는 쉬는 공급자 · 가장 먼저 풀리는 공급자 — 체인 상태)는 따옴표 안(지문에서 지워진다), 마지막 호출
+        실패(공급자 · 오류 글)는 따옴표 밖 — 오류 글의 앞머리가 종류라(errors.py) 로그 지문이 오류 종류마다 한 묶음이다(weather._guard · kma_radar._fail 과 같다 —
+        조사 errors F2 · 도전 2026-10-01: 전에는 로그 화면에 오는 이 WARN 에 까닭이 없었다). 성공 뒤 실패가 없었으면 '없음'(앞선 오류를 지금 까닭처럼 싣지 않는다)."""
         if self._warned_no_provider:
             return
         nxt, retry = self.chain.none_next, self.chain.none_retry
         parts = [f"{retry} retried each cycle while cooling down (no other provider)"] if retry else []
         if nxt and nxt[0] != retry:
             parts.append(f"{nxt[0]} after {nxt[1]:.0f} s")
+        last = (
+            f" ({self._last_error[0]}): {self._last_error[1]}" if self._last_error else ": none since the last success or start"
+        )
         log.warning(
-            "%s: no provider available — skipped: '%s'; next: '%s'",
+            "%s: no provider available — skipped: '%s'; next: '%s'; last error%s",
             self.scope,
             self.chain.none_reason,
             "; ".join(parts) or "none known (switched off, paused without an end, or not configured)",
+            last,
         )
         self._warned_no_provider = True
 
@@ -220,6 +229,7 @@ class AircraftJob:
         if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
             await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
         why = describe_error(e)
+        self._last_error = (name, why)
         retried = self.chain.probing(name)  # 3회 연속 실패로 쉬는 중이지만 다른 공급자가 없어 다시 시도한 호출
         await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
         ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
@@ -234,7 +244,9 @@ class AircraftJob:
                 await self._after_429(name),
             )
         elif self.chain.record_failure(name):
-            log.warning("%s: %s failed 3x — cooling down", self.scope, name)
+            # 마지막 오류는 따옴표 밖 — 로그 지문이 오류 종류마다 한 묶음(위 _warn_no_provider 와 같은 규칙, 운영 2026-09-30 17:57–17:58 UTC 의 adsb_fi
+            # ReadTimeout 은 INFO 라 로그 화면에 까닭이 없었다)
+            log.warning("%s: %s failed 3x — cooling down; last error: %s", self.scope, name, why)
         elif retried:  # 쉼마다 WARN 은 한 번(위) — 다시 시도의 실패는 INFO(공급자 상태 · 실행 기록에는 그대로 남는다)
             log.info(
                 "%s: %s failed again while cooling down — retried because no other provider is available (%s)",
