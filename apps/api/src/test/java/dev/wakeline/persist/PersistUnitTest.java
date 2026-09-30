@@ -116,6 +116,26 @@ class PersistUnitTest {
         return new dev.wakeline.domain.AircraftState(hex, null, null, null, null, 36, 127, 30000, null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false);
     }
 
+    /**
+     * 표식 상한(MAX_MARKS)으로 놓는 영수증은 이미 스트림에서 지워진 메시지뿐이어야 한다 — 상한이 보존 창에 들 수 있는 메시지 수 이상이어야 한다.
+     * 보존 창과 발행 주기는 수집기 코드의 상수다(이 값들이 바뀌면 여기와 MAX_MARKS 설명을 같이 고친다):
+     * collector publisher.py STREAM_RETENTION_S = 2.5 h(MINID, 항공기 · 선박) · ais/config.py ais_flush_s 하한 1 s(XADD 한 번 — CHUNK 5,000 건 이하) ·
+     * runtime_settings.py REGION_POLL_RANGE_S 하한 5 s · 전세계 하한 60 s · jobs/demand.py focus(5 s 마다 + 빠른 첫 조회 5 s 에 한 번 · 앞 조회
+     * 2 s 뒤 → 7 s 에 최대 2번, hex ≤ 50 = 메시지 1개) · hot(셀 ≤ 6 × 30 s 마다 + 새 셀의 즉시 조회 30 s 에 2번).
+     * 조사 2026-10-01: 예전 1,000 은 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간 트리밍 뒤로는 focus 임대 하나만 있어도 모자랐다.
+     */
+    @Test
+    void receiptMarkCapsCoverTheStreamRetentionAtTheShortestPublishIntervals() {
+        long retentionS = (long) (2.5 * 3600);
+        long ships = retentionS / 1;
+        long region = retentionS / 5, global = retentionS / 60, focus = (2 * retentionS + 6) / 7, hot = (6 + 2) * retentionS / 30;
+        assertThat(region + global + focus + hot).isEqualTo(6_922);
+        assertThat(ShipWriter.MAX_MARKS).as("ship messages in the retention window").isGreaterThanOrEqualTo((int) ships);
+        assertThat(TrackWriter.MAX_MARKS).as("aircraft messages in the retention window").isGreaterThanOrEqualTo((int) (region + global + focus + hot));
+        // 기본 주기(관심 지역 10 s · 전세계 120 s)에 focus 임대 하나(5 s 마다)만으로도 예전 1,000 을 넘는다
+        assertThat(retentionS / 10 + retentionS / 120 + retentionS / 5).isEqualTo(2_775);
+    }
+
     /** DB 가 오래 죽어 있으면 ACK 를 기다리는 표식은 상한(MAX_MARKS)에서 가장 오래된 것부터 놓는다 — 그 메시지는 스트림에서 이미 지워졌다. */
     @Test
     void pendingReceiptMarksAreBounded() throws Exception {
