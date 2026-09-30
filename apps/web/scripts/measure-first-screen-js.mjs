@@ -13,7 +13,7 @@ import http from "node:http";
 import https from "node:https";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { join, resolve } from "node:path";
-import { fmtKiB, groupOfPath, isScriptResponse, MEASURE_USAGE, parseMeasureArgs, budgetVerdict } from "./first-screen-js-lib.mjs";
+import { budgetVerdict, compressorLabel, fmtKiB, groupOfPath, isScriptResponse, MEASURE_USAGE, parseMeasureArgs } from "./first-screen-js-lib.mjs";
 
 const WEB = resolve(import.meta.dirname, "..");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -150,7 +150,11 @@ try {
   rows.sort((a, b) => b.body - a.body || a.file.localeCompare(b.file));
   const sum = (k) => rows.reduce((s, r) => s + r[k], 0);
   const w = Math.max(10, ...rows.map((r) => r.file.length));
-  const lines = [`첫 화면 JS — 브라우저 측정 ${args.baseUrl}/ (빈 캐시, ${new Date().toISOString()})`, ""];
+  // 바이트를 만든 쪽은 서버의 압축기다 — --serve 는 이 호스트의 Node, 기준 주소는 그 서버(배포 스택이면 웹 이미지의 Node)
+  const compressor = args.serve !== null
+    ? `${compressorLabel()} (이 호스트의 Node 로 띄운 standalone 서버 — 예산의 기준인 웹 이미지의 Node 와 zlib 이 다르면 바이트가 조금 다르다)`
+    : "그 서버의 Node(배포 스택이면 웹 이미지의 Node — 예산의 기준)";
+  const lines = [`첫 화면 JS — 브라우저 측정 ${args.baseUrl}/ (빈 캐시, ${new Date().toISOString()})`, `압축기: ${compressor}`, ""];
   lines.push(`${"묶음".padEnd(9)} ${"파일".padEnd(w)} ${"종류".padEnd(7)} ${"요청".padStart(4)} ${"인코딩".padEnd(8)} ${"풀린 크기".padStart(11)} ${"gzip 본문".padStart(11)}`);
   for (const r of rows) lines.push(`${r.group.padEnd(9)} ${r.file.padEnd(w)} ${r.type.padEnd(7)} ${String(r.times).padStart(4)} ${r.encoding.padEnd(8)} ${fmtKiB(r.raw).padStart(11)} ${fmtKiB(r.body).padStart(11)}`);
   for (const f of failed) lines.push(`실패      ${f.file} — ${f.why}`);
@@ -159,7 +163,7 @@ try {
   lines.push(`  gzip 본문 합 ${fmtKiB(body)} (${body} B) · 응답 머리 합(대략, 이 서버 기준) ${headers} B · 풀린 크기 합 ${fmtKiB(sum("raw"))}`);
   lines.push(`  지도 캔버스 ${mapCanvas ? "있음" : "없음"} · 워커 ${workers.length ? workers.join(", ") : "없음"}`);
   console.log(lines.join("\n"));
-  if (args.json) writeFileSync(args.json, JSON.stringify({ base: args.baseUrl, measuredAt: new Date().toISOString(), rows, failed, mapCanvas, workers, body, headers }, null, 2) + "\n");
+  if (args.json) writeFileSync(args.json, JSON.stringify({ base: args.baseUrl, measuredAt: new Date().toISOString(), compressor, rows, failed, mapCanvas, workers, body, headers }, null, 2) + "\n");
   if (failed.length) { console.error("실패한 스크립트 요청이 있습니다 — 첫 화면이 온전히 뜨지 않았습니다"); code = 2; }
   if (!mapCanvas) { console.error("지도 캔버스가 없습니다 — 지도(MapLibre · 워커)가 만들어지지 않아 측정이 모자랍니다"); code = 2; }
   if (code === 0 && args.budget !== null) {

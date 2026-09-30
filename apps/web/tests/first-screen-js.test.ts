@@ -10,8 +10,8 @@ import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  budgetVerdict, FIRST_SCREEN_JS_BUDGET, FIRST_SCREEN_PUBLIC_SCRIPTS, firstScreenFiles, formatReport, GZIP_THRESHOLD, groupOfPath, isScriptResponse, measureFiles, parseMeasureArgs,
-  runCheck, servedBytes, summarize,
+  budgetVerdict, compressorLabel, dockerExitCode, FIRST_SCREEN_JS_BUDGET, FIRST_SCREEN_PUBLIC_SCRIPTS, firstScreenFiles, formatReport, GZIP_THRESHOLD, groupOfPath, inImageArgs,
+  isScriptResponse, measureFiles, parseCheckArgs, parseMeasureArgs, runCheck, servedBytes, summarize, webImageNode,
 } from "../scripts/first-screen-js-lib.mjs";
 
 const ROOT = resolve(__dirname, "..");
@@ -48,6 +48,43 @@ describe("bytes: the same gzip the web server sends", () => {
     expect(servedBytes(big)).toBeLessThan(big.length);
     const small = Buffer.alloc(GZIP_THRESHOLD - 1, 65);
     expect(servedBytes(small)).toBe(small.length);
+  });
+});
+
+describe("bytes depend on the zlib build — the unit is the web image's Node (ADR-026)", () => {
+  // 같은 파일도 zlib 구현마다 gzip 결과가 조금 다르다(측정: macOS 시스템 zlib 1.2.12 가 웹 이미지 Node 의 내장 zlib 보다 0.44 % 작게 만든다).
+  // 그래서 모든 표에 압축기를 적고, 예산은 웹 이미지(Dockerfile 의 고정 node 이미지)의 Node 로 잰 값으로 읽는다.
+  it("every report names the compressor that produced its bytes (Node · zlib · platform/arch)", () => {
+    expect(compressorLabel({ version: "v24.21.0", versions: { zlib: "1.3.2.1-motley-8002e91" }, platform: "linux", arch: "arm64" }))
+      .toBe("Node v24.21.0 · zlib 1.3.2.1-motley-8002e91 · linux/arm64");
+    expect(compressorLabel()).toContain(`zlib ${process.versions.zlib}`);
+  });
+  it("the reference compressor is the Node of the web image's final stage, pinned by digest in the Dockerfile", () => {
+    const real = webImageNode(readFileSync(join(ROOT, "Dockerfile"), "utf8"));
+    expect(real).toMatch(/^node:[\w.-]+@sha256:[0-9a-f]{64}$/);
+    const pin = (tag: string) => `node:${tag}@sha256:${"a".repeat(64)}`;
+    expect(webImageNode(`FROM ${pin("24-alpine")} AS deps\nRUN x\nFROM ${pin("24-alpine")} AS build\n# FROM nope\nFROM ${pin("24-slim")}\nCMD ["node"]\n`)).toBe(pin("24-slim"));
+    expect(() => webImageNode("FROM node:24-alpine\n")).toThrow(/다이제스트/); // 태그만 — 판이 옮겨 갈 수 있다
+    expect(() => webImageNode(`FROM ${pin("24-alpine")} AS b\nFROM nginx@sha256:${"b".repeat(64)}\n`)).toThrow(/node/);
+    expect(() => webImageNode("RUN true\n")).toThrow(/FROM/);
+  });
+  it("--in-image runs the same check inside that image: read-only, no network, the web dir mounted read-only", () => {
+    const img = `node:24-alpine@sha256:${"c".repeat(64)}`;
+    expect(inImageArgs("/repo/apps/web", img)).toEqual([
+      "run", "--rm", "--network", "none", "--read-only", "-v", "/repo/apps/web:/w:ro", "-w", "/w", "-e", `FIRST_JS_IMAGE=${img}`,
+      "--entrypoint", "node", img, "scripts/check-first-screen-js.mjs",
+    ]);
+    expect(parseCheckArgs([])).toEqual({ inImage: false, image: null });
+    expect(parseCheckArgs(["--in-image"])).toEqual({ inImage: true, image: null });
+    expect(parseCheckArgs(["--in-image", "--image", "wakeline-web:local"])).toEqual({ inImage: true, image: "wakeline-web:local" });
+    for (const bad of [["--image"], ["--image", "x"], ["--what"], ["extra"]]) expect(() => parseCheckArgs(bad)).toThrow(/사용법/);
+  });
+  it("docker's own failures (cannot pull or start: 125–127, a signal) are a failed check, never a pass", () => {
+    expect(dockerExitCode(0, null)).toBe(0);
+    expect(dockerExitCode(1, null)).toBe(1);
+    expect(dockerExitCode(2, null)).toBe(2);
+    for (const s of [125, 126, 127, 3]) expect(dockerExitCode(s, null)).toBe(2);
+    expect(dockerExitCode(null, "SIGKILL")).toBe(2);
   });
 });
 
@@ -141,6 +178,14 @@ describe("first-screen JS budget guard (ADR-026)", () => {
     expect(over.code).toBe(1);
     expect(over.err).toMatch(/1 B 넘었습니다/);
     expect(over.out).toContain("합계"); // 넘었을 때도 무엇이 실렸는지 표를 보인다
+    // 압축기를 적는다: 웹 이미지 안이면 그 이미지(예산의 기준), 아니면 이 호스트의 Node(기준과 다를 수 있다고 말한다)
+    expect(ok.out).toContain(`압축기: ${compressorLabel()}`);
+    expect(ok.out).toMatch(/이 호스트의 Node — 예산의 기준은 웹 이미지의 Node.*--in-image/);
+    const inImage = runCheck(dir, total, { image: "node:24-alpine@sha256:abc", reference: "node:24-alpine@sha256:abc" });
+    expect(inImage.out).toContain("웹 이미지 node:24-alpine@sha256:abc 의 Node — 예산의 기준");
+    // --image 로 다른 이미지를 고르면 기준이라고 말하지 않는다(같은 Node 판인지는 이 도구가 모른다)
+    const other = runCheck(dir, total, { image: "wakeline-web:local", reference: "node:24-alpine@sha256:abc" });
+    expect(other.out).toContain("지정한 이미지 wakeline-web:local 의 Node — 예산의 기준은 Dockerfile 의 node:24-alpine@sha256:abc");
     const broken = runCheck(mkdtempSync(join(tmpdir(), "fsjs-none-")), total);
     expect(broken.code).toBe(2);
     expect(broken.err).toMatch(/계산하지 못했습니다/);
@@ -155,6 +200,8 @@ describe("first-screen JS budget guard (ADR-026)", () => {
     const steps = web.split(/^ {6}- /m).slice(1);
     const build = steps.findIndex((s) => s.includes("npm run build"));
     const check = steps.flatMap((s, i) => (s.includes("npm run check:first-js") ? [i] : []));
+    // 예산의 단위(웹 이미지의 Node 가 만든 gzip)로 잰다 — 러너의 Node(setup-node)는 zlib 판이 다를 수 있다
+    expect(steps[check[0]]).toMatch(/npm run check:first-js -- --in-image\b/);
     expect(build).toBeGreaterThanOrEqual(0);
     expect(check).toHaveLength(1);
     expect(check[0]).toBeGreaterThan(build); // 운영 빌드(.next · public/maplibre) 뒤

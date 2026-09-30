@@ -1,24 +1,28 @@
 // 첫 화면 JS(NFR-04 — 상황판 `/` 를 처음 열 때 받는 스크립트)의 순수 부분. 두 도구가 함께 쓴다(tests/first-screen-js.test.ts):
-//  - scripts/check-first-screen-js.mjs  : 빌드 결과(.next · public/maplibre)만으로 계산 — 스택 없이 CI 에서 돈다.
+//  - scripts/check-first-screen-js.mjs  : 빌드 결과(.next · public/maplibre)만으로 계산 — 스택 없이 CI 에서 돈다(웹 이미지의 Node 안에서: --in-image).
 //  - scripts/measure-first-screen-js.mjs: 실제 브라우저(Playwright)로 페이지를 열어 받은 스크립트를 센다 — 배포 스택 · 로컬 standalone 서버.
 //
-// 바이트 단위(예산이 쓰는 값): **gzip 본문 바이트**(Content-Encoding 이 붙은 채 전송된 본문, 응답 머리 제외).
+// 바이트 단위(예산이 쓰는 값): **gzip 본문 바이트**(Content-Encoding 이 붙은 채 전송된 본문, 응답 머리 제외) — **웹 이미지의 Node 가 압축한 값**.
 //  - 웹 서버(Next standalone server.js)가 압축한다: Next 내장 compression(gzip · deflate 만, brotli 없음) · zlib 기본 수준 6 · 1 KiB 미만은 압축 안 함.
-//  - edge(infra/edge/nginx.conf 의 gzip on)는 이미 Content-Encoding 이 붙은 응답을 다시 압축하지 않는다 → 배포 스택의 본문 바이트 = 웹 서버의 본문 바이트.
+//  - edge(infra/edge/nginx.conf 의 gzip on)는 이미 Content-Encoding 이 붙은 응답을 다시 압축하지 않는다 → 배포 스택이 보내는 본문은 웹 이미지
+//    (Dockerfile 마지막 단계의 node 이미지 — 다이제스트 고정)의 Node 가 만든 gzip 이다.
+//  - gzip 결과는 zlib 구현마다 조금 다르다(같은 파일을 macOS Homebrew Node 의 시스템 zlib 1.2.12 는 웹 이미지 Node 의 내장 zlib 보다 약 0.44 % 작게 만든다 —
+//    docs/PERF.md §10). 그래서 모든 표에 압축기(Node · zlib · 플랫폼/아키텍처)를 적고, CI 는 웹 이미지 안에서 잰다(inImageArgs).
 //  - 응답 머리는 뺀다: edge 가 보안 헤더 · Cache-Control 을 붙여 경로(edge · 직접)마다 다르다. Lighthouse 의 transferSize(PERF §7·§8 의 옛 값)는 머리를 포함한다.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
-/** Next 내장 압축과 같은 설정 — compression 패키지 기본값(zlib 기본 수준 6 · 문턱 1 KiB) */
+/** Next 내장 압축과 같은 설정 — compression 패키지 기본값(zlib 기본 수준 6 · 문턱 1 KiB). 결과 바이트는 이 Node 의 zlib 이 정한다(compressorLabel) */
 export const GZIP_LEVEL = 6;
 export const GZIP_THRESHOLD = 1024;
 export const KIB = 1024;
 
 /**
- * 첫 화면 JS 예산(NFR-04 개정 — ADR-026): gzip 본문 바이트. **선택값**(잰 값이 아니다) = 이 값을 정할 때 잰 539,430 B(docs/PERF.md §10 — 카드 · 목록을
- * 나중에 받게 한 뒤) + 여유 10,570 B(약 2 %). 바닥(MapLibre 303,421 B + Next · React 실행 코드 133,462 B = 436,883 B)이 옛 목표 400 KB 를 넘어
- * 400 KB 는 지도 라이브러리를 버리지 않고는 닿을 수 없다. 올리려면 ADR-026 의 절차(무엇이 늘었는지 측정 · 근거)를 따른다.
+ * 첫 화면 JS 예산(NFR-04 개정 — ADR-026): gzip 본문 바이트(웹 이미지의 Node 로 압축). **선택값**(잰 값이 아니다) = 처음 정할 때 호스트 zlib 으로 잰
+ * 539,430 B(카드 · 목록을 나중에 받게 한 뒤)에 약 2 % 를 더한 값 — 기준 압축기로는 541,820 B · 여유 8,180 B(docs/PERF.md §10). 바닥(MapLibre 304,573 B +
+ * Next · React 실행 코드 133,532 B = 438,105 B — 기준 커밋, 웹 이미지의 Node)이 옛 목표 400 KB 를 넘어 400 KB 는 지도 라이브러리를 버리지 않고는 닿을 수 없다.
+ * 올리려면 ADR-026 의 절차(무엇이 늘었는지 측정 · 근거)를 따른다.
  */
 export const FIRST_SCREEN_JS_BUDGET = 550_000;
 
@@ -31,6 +35,58 @@ export function servedBytes(buf) {
 }
 
 export const fmtKiB = (b) => `${(b / KIB).toFixed(1)} KiB`;
+
+/** 이 바이트를 만든 압축기 — 표마다 적는다(zlib 판 · 구현이 다르면 같은 파일도 gzip 크기가 다르다) */
+export function compressorLabel(p = process) {
+  return `Node ${p.version} · zlib ${p.versions.zlib} · ${p.platform}/${p.arch}`;
+}
+
+/**
+ * 예산의 기준 압축기: 웹 이미지 마지막 단계(실행 단계)의 node 이미지. 다이제스트로 고정되어 있어야 한다(태그는 다른 Node 로 옮겨 갈 수 있다).
+ * Dockerfile 이 바뀌어 형식이 다르면 조용히 다른 이미지를 쓰지 않고 Error.
+ */
+export function webImageNode(dockerfile) {
+  const froms = [...dockerfile.matchAll(/^FROM\s+(\S+)(?:\s+AS\s+\S+)?\s*$/gim)].map((m) => m[1]);
+  if (froms.length === 0) throw new Error("Dockerfile 에 FROM 이 없습니다");
+  const last = froms[froms.length - 1];
+  if (!/^node:/.test(last)) throw new Error(`웹 이미지 실행 단계가 node 이미지가 아닙니다: ${last}`);
+  if (!/^node:[\w.-]+@sha256:[0-9a-f]{64}$/.test(last)) throw new Error(`웹 이미지의 node 이미지가 다이제스트로 고정되어 있지 않습니다: ${last}`);
+  return last;
+}
+
+/** 같은 검사를 웹 이미지의 Node 로: 읽기 전용 · 네트워크 없음 · 웹 폴더는 읽기 전용으로만 붙인다(docker run 인자) */
+export function inImageArgs(webDir, image) {
+  return [
+    "run", "--rm", "--network", "none", "--read-only", "-v", `${webDir}:/w:ro`, "-w", "/w", "-e", `FIRST_JS_IMAGE=${image}`,
+    "--entrypoint", "node", image, "scripts/check-first-screen-js.mjs",
+  ];
+}
+
+export const CHECK_USAGE =
+  "사용법: node scripts/check-first-screen-js.mjs [--in-image [--image <이미지>]]\n" +
+  "  --in-image: 웹 이미지(Dockerfile 실행 단계의 고정 node 이미지)의 Node 로 잰다 — 예산의 기준(CI). --image 로 다른 이미지(예: 이미 받은 wakeline-web:local)의 Node 를 쓴다.";
+
+/** 검사 스크립트 인자. 틀리면 Error(문구에 사용법) */
+export function parseCheckArgs(argv) {
+  const out = { inImage: false, image: null };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--in-image") out.inImage = true;
+    else if (a === "--image") {
+      const v = argv[++i];
+      if (!v || v.startsWith("-")) throw new Error(`--image 뒤에 이미지 이름\n${CHECK_USAGE}`);
+      out.image = v;
+    } else throw new Error(`알 수 없는 인자 ${a}\n${CHECK_USAGE}`);
+  }
+  if (out.image !== null && !out.inImage) throw new Error(`--image 는 --in-image 와 함께\n${CHECK_USAGE}`);
+  return out;
+}
+
+/** docker run 의 종료를 검사 결과로: 0 · 1 · 2 는 검사가 낸 값, 그 밖(125–127 = docker 가 이미지를 받거나 띄우지 못함 · 신호)은 2 — 통과로 읽지 않는다 */
+export function dockerExitCode(status, signal) {
+  if (signal != null || status == null) return 2;
+  return status === 0 || status === 1 || status === 2 ? status : 2;
+}
 
 /**
  * 빌드 결과에서 `/` 첫 화면에 받는 파일 목록. 세 묶음:
@@ -183,16 +239,22 @@ export function parseMeasureArgs(argv) {
 
 /**
  * 예산 검사(scripts/check-first-screen-js.mjs 의 본체 — 시험이 가짜 빌드로 부른다). code: 0 = 예산 안, 1 = 넘음(표 + 넘은 바이트),
- * 2 = 빌드 결과를 읽지 못함(조용히 통과시키지 않는다).
+ * 2 = 빌드 결과를 읽지 못함(조용히 통과시키지 않는다). image = 이미지 안에서 도는 경우 그 이미지(--in-image 가 FIRST_JS_IMAGE 로 넘긴다),
+ * reference = Dockerfile 의 고정 node 이미지(webImageNode) — 둘이 같을 때만 '예산의 기준'이라고 적는다.
  */
-export function runCheck(webDir, budget = FIRST_SCREEN_JS_BUDGET) {
+export function runCheck(webDir, budget = FIRST_SCREEN_JS_BUDGET, { image = null, reference = null } = {}) {
   let rows;
   try {
     rows = measureFiles(firstScreenFiles(webDir));
   } catch (e) {
     return { code: 2, out: "", err: `첫 화면 JS 를 계산하지 못했습니다: ${e instanceof Error ? e.message : String(e)}` };
   }
-  const out = formatReport(rows, "첫 화면 JS(`/`) — 빌드 결과에서 계산(gzip 수준 6 = Next 내장 압축, 응답 머리 제외)");
+  const who = !image
+    ? "이 호스트의 Node — 예산의 기준은 웹 이미지의 Node 다(zlib 이 다르면 바이트가 조금 다르다: npm run check:first-js -- --in-image)"
+    : image === reference
+      ? `웹 이미지 ${image} 의 Node — 예산의 기준`
+      : `지정한 이미지 ${image} 의 Node — 예산의 기준은 Dockerfile 의 ${reference ?? "(Dockerfile 을 읽지 못함)"}`;
+  const out = formatReport(rows, `첫 화면 JS(\`/\`) — 빌드 결과에서 계산(gzip 수준 6 = Next 내장 압축, 응답 머리 제외)\n압축기: ${compressorLabel()} (${who})`);
   const total = summarize(rows).body;
   const verdict = budgetVerdict(total, budget);
   if (verdict) {

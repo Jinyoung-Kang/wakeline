@@ -21,4 +21,10 @@ export function isScriptResponse(resourceType: string, contentType: string | nul
 export function groupOfPath(pathname: string): "maplibre" | "next" | "public";
 export const MEASURE_USAGE: string;
 export function parseMeasureArgs(argv: string[]): MeasureArgs;
-export function runCheck(webDir: string, budget?: number): { code: 0 | 1 | 2; out: string; err: string };
+export function runCheck(webDir: string, budget?: number, opts?: { image?: string | null; reference?: string | null }): { code: 0 | 1 | 2; out: string; err: string };
+export function compressorLabel(p?: { version: string; versions: { zlib?: string }; platform: string; arch: string }): string;
+export function webImageNode(dockerfile: string): string;
+export function inImageArgs(webDir: string, image: string): string[];
+export const CHECK_USAGE: string;
+export function parseCheckArgs(argv: string[]): { inImage: boolean; image: string | null };
+export function dockerExitCode(status: number | null, signal: string | null): 0 | 1 | 2;
