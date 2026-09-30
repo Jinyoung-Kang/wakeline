@@ -279,23 +279,26 @@ async def test_switching_the_wfs_off_ends_an_open_pass(monkeypatch, caplog):
 # ---- 부정 캐시 -------------------------------------------------------------------------------------------------------
 
 
-def test_a_full_negative_cache_never_forgets_a_result(monkeypatch):
+def test_a_full_negative_cache_forgets_only_expired_entries(monkeypatch):
     """전에는 부정 캐시(메모리)가 MAX_TRACKED 에 닿으면 새 not_found 를 적지 않고 대기열에서만 뺐다 — 다음 스냅샷에서 다시 넣어 볼 때마다 다시
-    물었다(끝없는 예산 낭비). 이제 기한이 지난 항목부터, 없으면 가장 먼저 끝나는 항목을 비우고 적는다."""
+    물었다. 첫 고침은 기한이 지난 항목이 없으면 가장 먼저 끝나는 유효한 항목을 비웠다(검토 지적: 그 칸은 다음에 보일 때 다시 묻는다 — '잊지
+    않는다'가 아니었다). 이제 기한이 지난 항목만 모두 비우고, 유효한 항목은 상한을 넘어도 남긴다 — 크기는 Redis 해시만큼이다(기동 때도 상한
+    없이 읽는다). 운영에서는 닿지 않는 경로다(2026-09-30 기동 때 502항목 — 상한 20,000)."""
     monkeypatch.setattr(tg, "MAX_TRACKED", 2)
     g = tg.GridGeometry()
     g.observe([("GR4_A", 1), ("GR4_B", 1)], T0)
     g.mark_negative("GR4_A", "not_found", T0)
-    g.mark_negative("GR4_B", "failed", T0)  # 1일 — 먼저 끝난다
+    g.mark_negative("GR4_B", "failed", T0)  # 1일 — 먼저 끝나지만 아직 유효하다
     g.observe([("GR4_C", 1)], T0)
     g.mark_negative("GR4_C", "not_found", T0)
-    assert g.observe([("GR4_C", 1)], T0 + timedelta(hours=1)) == 0  # 다시 묻지 않는다
-    assert set(g.negative) == {"GR4_A", "GR4_C"}  # 가장 먼저 끝나는 failed 를 비웠다
+    assert set(g.negative) == {"GR4_A", "GR4_B", "GR4_C"}  # 유효한 결과는 하나도 잊지 않는다
+    assert g.observe([("GR4_A", 1), ("GR4_B", 1), ("GR4_C", 1)], T0 + timedelta(hours=1)) == 0  # 다시 묻지 않는다
     old = T0 - timedelta(seconds=tg.NEGATIVE_TTL_S + 1)
     g.negative["GR4_A"] = tg.Negative("not_found", old)  # 기한이 지났다
+    g.negative["GR4_C"] = tg.Negative("off_grid", old)  # 기한이 지났다
     g.observe([("GR4_D", 1)], T0)
     g.mark_negative("GR4_D", "off_grid", T0)
-    assert set(g.negative) == {"GR4_C", "GR4_D"}  # 기한이 지난 항목부터
+    assert set(g.negative) == {"GR4_B", "GR4_D"}  # 기한이 지난 항목은 한 번에 모두 비운다
 
 
 async def test_the_negative_cache_load_line_tells_valid_entries_from_expired_ones(caplog):

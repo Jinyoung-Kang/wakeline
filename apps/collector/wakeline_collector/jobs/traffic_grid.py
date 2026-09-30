@@ -25,8 +25,8 @@
   모두 '새로 넣은 칸'으로 센다(같은 칸을 다시 묻는 것이 아니다 — 결과가 있는 칸은 넣지 않는다).
   * found: 0.025° 격자 검사를 통과한 칸 → 메모리 + DB marine_grid4(V14 — 다시 시작해도 다시 묻지 않는다).
   * not_found(numberOfFeatures 0) · off_grid(격자 검사 실패 — 격리, 품질 사례 · 원본 보관): 부정 캐시 Redis wakeline:traffic_grid:negative
-    (grid_no → {"reason","at"}) — NEGATIVE_TTL_S(7일) 뒤 다시 묻는다. 메모리 상한(MAX_TRACKED)에 닿으면 기한이 지난 항목, 없으면 가장 먼저
-    끝나는 항목을 비우고 적는다(결과를 잊지 않는다). Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 덮어쓴다).
+    (grid_no → {"reason","at"}) — NEGATIVE_TTL_S(7일) 뒤 다시 묻는다. 메모리가 MAX_TRACKED 에 닿으면 기한이 지난 항목만 비운다(유효한
+    결과는 잊지 않는다 — 크기는 Redis 해시만큼). Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 덮어쓴다).
   * 오류(HTTP · 응답 모양 · 시간 초과): 그 칸만 5분 → 30분 → 2시간 → 6시간 뒤 다시. ID_MAX_FAILURES(5)번 연달아 실패하면 failed —
     부정 캐시에 적고(FAILED_TTL_S, 1일 뒤 처음부터 다시) 스냅샷에 pending 이 아니라 failed 로 센다(품질 사례 traffic_grid_lookup_failed).
     실패한 적이 있는 칸은 새 칸 뒤에 묻는다. 한 틱에서 연달아 FILL_BREAKER_ERRORS(3)번 실패하면 채우기 전체를 5분 → 10분 → 30분 → 1시간
@@ -108,7 +108,7 @@ ID_MAX_FAILURES = 5  # 한 칸이 연달아 이만큼 실패하면 failed — FA
 NEGATIVE_TTL_S = 7 * 86400
 FAILED_TTL_S = 86400
 NEGATIVE_REASONS = ("not_found", "off_grid", "failed")
-MAX_TRACKED = 20_000  # 기다리는 칸 · 부정 캐시 상한(메모리 · Redis 해시)
+MAX_TRACKED = 20_000  # 조회 대기열 상한 · 부정 캐시(메모리)가 이만큼이면 기한이 지난 항목을 비운다(유효한 항목은 남긴다)
 DB_RETRY_S = 60
 DB_WAIT_S = 600
 PUBLISH_MIN_INTERVAL_S = 30
@@ -314,12 +314,13 @@ class GridGeometry:
         self.negative.pop(cell.grid_no, None)
 
     def mark_negative(self, grid_no: str, reason: str, now: datetime) -> None:
-        """부정 결과는 잊지 않는다: 메모리 상한(MAX_TRACKED)에 닿으면 기한이 지난 항목을, 없으면 가장 먼저 끝나는 항목을 비우고 적는다.
-        (전에는 상한에서 적지 않고 대기열에서만 뺐다 — 다음 스냅샷이 다시 넣어 볼 때마다 다시 물었다.)"""
+        """부정 결과는 늘 적는다. 메모리가 MAX_TRACKED 에 닿으면 기한이 지난 항목만 모두 비운다(보이면 어차피 다시 묻는다) — 유효한 항목은 상한을
+        넘어도 남긴다: 크기는 Redis 해시만큼이다(load_negative 도 상한 없이 읽는다). 전에는 상한에서 적지 않고 대기열에서만 뺐고(다음에 보일
+        때마다 다시 물었다), 첫 고침은 가장 먼저 끝나는 유효한 항목을 비웠다(그 칸을 다시 물었다). 운영에서는 닿지 않는 경로다
+        (2026-09-30 기동 때 502항목 — ADR-023 2026-10-01 개정)."""
         self._pending.pop(grid_no, None)
         if grid_no not in self.negative and len(self.negative) >= MAX_TRACKED:
-            expired = [g for g, n in self.negative.items() if not n.valid(now)]
-            for g in expired or [min(self.negative, key=lambda k: self.negative[k].expires)]:
+            for g in [g for g, n in self.negative.items() if not n.valid(now)]:
                 del self.negative[g]
         self.negative[grid_no] = Negative(reason, now)
 
