@@ -16,7 +16,7 @@ class FakeStatus:
     async def is_disabled(self, name):
         return name in self.disabled
 
-    async def set_active(self, job, name, *, reason):
+    async def set_active(self, job, name, *, reason, since=None):
         self.active.append((name, reason))
 
     async def switch_event(self, job, frm, to, reason):
@@ -393,6 +393,49 @@ async def test_failed_provider_is_retried_when_every_other_provider_is_out(monke
 
 
 @pytest.mark.asyncio
+async def test_a_retry_that_gets_a_429_or_a_limiter_cooldown_does_not_shorten_the_failure_rest(monkeypatch):
+    """리뷰 2026-09-30: 쉬는 공급자를 다시 시도한 호출이 429(또는 호출 제한기 쿨다운 — aircraft._on_throttled 의 mark_down)를 받으면 그 짧은 쉼이
+    600 s 쉼을 덮어 약 60 s 뒤 fi 를 정상 공급자로 골랐다('recovery — 공급자 없음 61 s 끝 · fi 쉼 끝') — 연결에 실패하던 공급자가 답한 적도 없이,
+    그 뒤 실패는 새 '3회'로 셌다. 짧은 쉼은 실패 쉼 위에 얹힌다: 그동안은 부르지 않고, 끝나면 남은 실패 쉼(다시 시도 · 공급자 없음)이 이어진다."""
+    from datetime import UTC, datetime
+
+    clk = _clocked(monkeypatch)
+    st = FakeStatus()
+    chain = ProviderChain("region", {"fi": P("fi"), "lol": P("lol")}, st)
+    order = ["fi", "lol"]
+    assert (await chain.pick(order)).name == "fi"
+    for _ in range(3):
+        chain.record_failure("fi")  # 연결 실패 3번 → 600 s 쉼
+    fail_until = chain._fail_until["fi"]
+    st.disabled.add("lol")  # 다른 공급자 없음
+    clk[0] += 10
+    assert (await chain.pick(order)).name == "fi" and chain.none_retry == "fi"  # 쉬는 fi 를 다시 시도 — 공급자 없음
+    assert chain.record_rate_limited("fi") == 60.0  # 그 다시 시도가 429
+    clk[0] += 30
+    before = datetime.now(UTC)
+    assert await chain.pick(order) is None  # 429 쉼 동안은 fi 도 부르지 않는다
+    job, reason, next_at, retry = st.none[-1]
+    assert reason == "fi 429 쉼(60 s) · lol 운영자 끔" and retry == ""
+    assert 25 <= (next_at - before).total_seconds() <= 31  # 가장 이른 풀림 = 429 쉼 끝(실패 쉼 끝 약 570 s 가 아니라)
+    clk[0] += 31  # 429 쉼 끝 — 실패 쉼(600 s)은 아직
+    p = await chain.pick(order)
+    # 다시 시도 — 여전히 공급자 없음
+    assert p is not None and p.name == "fi" and chain.none_since is not None and chain.none_retry == "fi"
+    assert ("none", "fi") not in st.switches and not any("쉼 끝" in r for r in st.reasons)  # 고치기 전: 'recovery — … fi 쉼 끝'
+    # 새 '3회'를 세지 않는다
+    assert chain.probing("fi") and chain.record_failure("fi") is False and chain._fails.get("fi", 0) == 0
+    chain.mark_down("fi", 15, why="호출 제한기 429 쿨다운(15 s)")  # 다시 시도가 제한기 쿨다운에 막혔다(aircraft._on_throttled)
+    clk[0] += 5
+    assert await chain.pick(order) is None and st.none[-1][1] == "fi 호출 제한기 429 쿨다운(15 s) · lol 운영자 끔"
+    clk[0] += 11
+    assert (await chain.pick(order)).name == "fi" and chain.none_retry == "fi" and chain.probing("fi")
+    assert chain._fail_until["fi"] == fail_until  # 쉼 끝은 처음 그대로(늘리지도 줄이지도 않는다)
+    assert await chain.succeeded("fi") is not None  # 답했다 — 쉼과 공급자 없음을 끝낸다
+    assert st.switches[-1] == ("none", "fi") and st.reasons[-1].endswith("fi 다시 시도 성공")
+    assert "fi" not in chain._fail_until and chain.probing("fi") is False
+
+
+@pytest.mark.asyncio
 async def test_two_failed_providers_are_retried_in_turn(monkeypatch):
     """둘 다 3회 연속 실패로 쉬면 오래 시도하지 않은 쪽부터 번갈아 — 한쪽만 되풀이해 다른 쪽의 회복을 놓치지 않게."""
     clk = _clocked(monkeypatch)
@@ -566,3 +609,65 @@ async def test_stand_down_clears_the_no_provider_state_of_a_job_that_is_switched
     assert await chain.pick(["osky"], need_global=True) is None and chain.none_since is not None
     await chain.stand_down()
     assert chain.none_since is None and st.none[-1] == ("global", None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_a_no_provider_or_recovery_write_that_redis_drops_is_written_again_next_cycle(monkeypatch):
+    """리뷰 2026-09-30: 공급자 없음 필드는 공백마다 한 번 쓰고, ProviderStatus 는 Redis 오류를 삼킨다(경고는 분당 1회) — 그 한 번이 실패하면
+    공백 내내(최대 10분) 운영 배지가 초록 · 상태 바에 '공급자 없음' 없음, 회복 쓰기가 실패하면 빨간 배지가 다음 전환까지 남았다.
+    실패한 쓰기는 다음 선택 때 다시 쓴다(시작 시각 · 회복 시각은 처음 그대로). 전환 기록은 다시 쓰지 않는다."""
+    from fakes import FakeRedis
+
+    from wakeline_collector.status import ProviderStatus
+
+    class DropsHset(FakeRedis):
+        drop = 0
+
+        async def hset(self, *a, **kw):
+            if self.drop:
+                self.drop -= 1
+                raise ConnectionError("redis timeout")
+            return await super().hset(*a, **kw)
+
+    clk = _clocked(monkeypatch)
+    r = DropsHset()
+    chain = ProviderChain("region", {"lol": P("lol")}, ProviderStatus(r))  # type: ignore[arg-type]
+    active = lambda: r.kv.get("wakeline:active", {})  # noqa: E731
+    order = ["lol"]
+    assert (await chain.pick(order)).name == "lol"
+    chain.record_rate_limited("lol")  # 60 s 쉼 — 다른 공급자 없음
+    r.drop = 1
+    assert await chain.pick(order) is None
+    assert active().get("region_none_since", "") == ""  # 이 쓰기가 사라졌다
+    clk[0] += 10
+    assert await chain.pick(order) is None
+    since = active()["region_none_since"]
+    assert since and active()["region_none_reason"] == "lol 429 쉼(60 s)"  # 고치기 전: 공백 내내 비어 있었다
+    events = len(r.streams.get("wakeline:events", []))
+    clk[0] += 51
+    r.drop = 1
+    assert (await chain.pick(order)).name == "lol"  # 회복 — set_active 가 사라졌다
+    assert active()["region_none_since"] == since
+    clk[0] += 10
+    assert (await chain.pick(order)).name == "lol"
+    assert active()["region_none_since"] == "" and active()["region"] == "lol"
+    assert active()["region_reason"] == "recovery — 공급자 없음 61 s 끝 · lol 쉼 끝"
+    assert len(r.streams.get("wakeline:events", [])) == events + 1  # 전환 기록은 회복 한 번뿐(다시 쓰지 않는다)
+    clk[0] += 10
+    r.drop = 1  # 쓸 것이 없는 주기 — hset 을 부르지 않는다(떨굴 쓰기가 남는다)
+    assert (await chain.pick(order)).name == "lol" and r.drop == 1
+
+
+@pytest.mark.asyncio
+async def test_stand_down_says_whether_it_cleared_the_fields(monkeypatch):
+    from fakes import FakeRedis
+
+    from wakeline_collector.status import ProviderStatus
+
+    _clocked(monkeypatch)
+    r = FakeRedis()
+    chain = ProviderChain("global", {"opensky": P("opensky")}, ProviderStatus(r))  # type: ignore[arg-type]
+    r.down = True
+    assert await chain.stand_down() is False  # 부르는 쪽(aircraft)이 다음 주기에 다시 부른다
+    r.down = False
+    assert await chain.stand_down() is True

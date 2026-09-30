@@ -44,7 +44,7 @@ class AircraftJob:
         self.ctx = ctx
         self.gate = AircraftGate()
         self._warned_no_provider = False
-        self._stood_down = False  # 작업이 꺼져(전세계 끔) 공급자 없음 필드를 비웠다 — 꺼진 동안 한 번만
+        self._stood_down = False  # 작업이 꺼져(전세계 끔) 공급자 없음 필드를 비웠다 — 꺼진 동안 비울 때까지(비우면 한 번)
 
     @property
     def job_name(self) -> str:
@@ -56,10 +56,10 @@ class AircraftJob:
         if need_global and not ctx.rt.global_enabled:
             if not self._stood_down:  # 꺼진 작업이 '공급자 없음'으로 남지 않게(앞선 프로세스가 남긴 값 포함 — 리뷰 2026-09-30)
                 was = self.chain.none_elapsed_s()
-                await self.chain.stand_down()
+                cleared = await self.chain.stand_down()  # 비우지 못했으면(Redis 오류) 다음 주기에 다시
                 if was is not None:
                     log.info("%s: switched off — no-provider state cleared after %.0f s", self.scope, was)
-                self._stood_down, self._warned_no_provider = True, False
+                self._stood_down, self._warned_no_provider = cleared, False
             return
         self._stood_down = False
         order = ["fixture"] if ctx.fixture else ctx.rt.provider_order

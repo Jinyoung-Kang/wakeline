@@ -55,12 +55,16 @@ class ProviderStatus:
             self._last_log = now
             log.warning("status %s failed (%s) — continuing without it", what, type(e).__name__)
 
-    async def hset_meta(self, key: str, fields: dict[str, str]) -> None:
+    async def hset_meta(self, key: str, fields: dict[str, str]) -> bool:
+        """해시에 쓴다. 돌려주는 값: 썼는가 — 오류는 삼키므로(경고는 분당 1회) 한 번 쓰는 상태(공급자 없음 필드 · 쓰는 공급자)는 이 값으로
+        다음 주기에 다시 쓴다(fallback.ProviderChain — 리뷰 2026-09-30)."""
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
                 await self._r.hset(key, mapping=fields)  # type: ignore[arg-type]
         except Exception as e:  # noqa: BLE001
             self._warn("hset", e)
+            return False
+        return True
 
     def key(self, name: str) -> str:
         return f"wakeline:provider:{name}"
@@ -111,19 +115,20 @@ class ProviderStatus:
             self._warn("failure", e)
             return 0
 
-    async def set_active(self, job: str, name: str, *, reason: str) -> None:
-        """작업이 쓰는 공급자 · 그때 · 까닭. 공급자 없음 필드({job}_none_*)를 비운다(fallback.py — 공급자 없음이 끝났다)."""
-        await self.hset_meta(
+    async def set_active(self, job: str, name: str, *, reason: str, since: datetime | None = None) -> bool:
+        """작업이 쓰는 공급자 · 그때(since — 없으면 지금) · 까닭. 공급자 없음 필드({job}_none_*)를 비운다(fallback.py — 공급자 없음이 끝났다).
+        돌려주는 값: 썼는가."""
+        return await self.hset_meta(
             "wakeline:active",
-            {job: name, f"{job}_since": _iso(datetime.now(UTC)), f"{job}_reason": reason}
+            {job: name, f"{job}_since": _iso(since or datetime.now(UTC)), f"{job}_reason": reason}
             | {f"{job}_{k}": "" for k in NONE_FIELDS},
         )
 
-    async def set_none(self, job: str, *, since: datetime, reason: str, next_at: datetime | None, retry: str = "") -> None:
+    async def set_none(self, job: str, *, since: datetime, reason: str, next_at: datetime | None, retry: str = "") -> bool:
         """작업에 일하는 공급자가 없다(fallback.py): {job}_none_since(UTC ISO) · {job}_none_reason(건너뛴 공급자와 까닭) · {job}_none_next
         (가장 먼저 풀리는 때 — 체인 상태로 정해진 값, 모르면 빈 값) · {job}_none_retry(그동안 다시 시도하는 쉬는 공급자 — 없으면 빈 값).
-        {job}(마지막으로 쓴 공급자)은 그대로 둔다."""
-        await self.hset_meta(
+        {job}(마지막으로 쓴 공급자)은 그대로 둔다. 돌려주는 값: 썼는가."""
+        return await self.hset_meta(
             "wakeline:active",
             {
                 f"{job}_none_since": _iso(since),
@@ -133,9 +138,9 @@ class ProviderStatus:
             },
         )
 
-    async def clear_none(self, job: str) -> None:
-        """공급자 없음 필드를 비운다 — 작업이 꺼졌을 때(fallback.stand_down). 다시 고르면 set_active 가 비운다."""
-        await self.hset_meta("wakeline:active", {f"{job}_{k}": "" for k in NONE_FIELDS})
+    async def clear_none(self, job: str) -> bool:
+        """공급자 없음 필드를 비운다 — 작업이 꺼졌을 때(fallback.stand_down). 다시 고르면 set_active 가 비운다. 돌려주는 값: 썼는가."""
+        return await self.hset_meta("wakeline:active", {f"{job}_{k}": "" for k in NONE_FIELDS})
 
     async def switch_event(self, job: str, frm: str, to: str, reason: str) -> None:
         try:
