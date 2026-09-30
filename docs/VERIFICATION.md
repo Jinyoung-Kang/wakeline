@@ -608,6 +608,18 @@
 - **로그 버림 행의 숫자**(낮음, 통합 전부터). collector · ais · api 의 '시스템 로그 버림' 설명의 500건 · 2 MiB · 8 KiB 를 `logsink.py` · `LogSink.java` 상수와 견주는 Vitest 를
   더했다(글자만 남아 틀리지 않게 — 상태 해시에 싣는 것은 하지 않았다).
 
+## #68 배포 뒤 확인(2026-09-30 13:28 KST 배포) — 노선 조회 · 기상청 연속 · AIS 진단 · 보안 게이트의 시험용 키
+- **노선 조회**(#63) 실서비스에서 항공기(APJ705) 선택: `selected` 가 0.07 s 에 `route.status=pending`, 수집기가 노선을 받은 뒤 11.0 s 에 `found`(KIX).
+  `wakeline_ws_route_lookups_total{outcome=ok}` 2 · deadline · error · rejected 0, 읽기 최대 19 ms.
+- **기상청 연속**(#64) 다시 띄운 수집기가 tm 13:10 부터 세 번씩 확인한 뒤 13:39:12 KST 에 WARN 한 줄로 연속을 열었다(그 전 줄은 INFO) — 전에는 tm 마다 WARN.
+  상황판 KMA 칩: `KMA ✕ age 5h STALE 파일 없음`, 상세: "기상청 내려받기 파일 없음 tm 13:10–13:35 KST · 확인한 tm 6개 모두 없음 · 목록에는 EXT".
+  범위가 13:10 부터인 것은 다시 띄운 프로세스가 본 것만 세기 때문이다(#67 · §G22 — 08:15 부터의 중단은 넘겨받을 기록이 없었다).
+- **AIS 진단**(#66) 배포 직후 값: 이벤트 루프 지연 최대 0.01 s · 멈춤 0 · WS 수신 버퍼 최대 16/64 · keepalive 왕복 최대 0.91 s(상한 20 s) · 대기열 최대 17.
+  다음 1011 이 오면 이 값들로 원인을 가른다.
+- **WS 실메시지** 150 s · 세 세션 207건 · 14종, 형식 오류 0건(docs/review/evidence/v5-ws-live-check-2026-09-30.txt 와 같은 스크립트).
+- **보안 게이트** gitleaks 가 AIS keepalive 시험의 가짜 aisstream 키(`test-ais-key-keepalive-…`, 커밋 9598eef)에서 실패 — `.env` 의 어떤 값과도 같지 않음을
+  스크립트로 확인(값은 출력하지 않음)하고 정확한 지문 한 줄만 허용 목록에 더했다(`infra/tests/test_ci_policy` 가 먼저 실패하게 고친 뒤). 다시 돌려 PASS.
+
 ## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 · 통합 리뷰 수정 뒤 · 배포 전 — 노선 조회 우편함 밖(#63) · 기상청 '파일 없음'(#64) · 상태 바 ResizeObserver(#65) · AIS 수신 진단 · 끊김 로그 수준(#66) · 통합 리뷰(#67))
 | 층 | 도구 | 수 |
 |---|---|---|
@@ -619,5 +631,5 @@
 | 인프라 정책 | infra/tests(unittest) | 122 |
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · **291** · 36 · 48 · 27 · **13** — Redis ACL · collector 실 Redis 는 #67 에서 다시 돌렸다(수집기의 Redis 사용이 늘었다 — 연속 시험 1건 더함). 나머지 넷은 앞 회차 값(#57 — 인프라 · 마이그레이션 파일은 바뀌지 않았다) |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 37 통과(9 파일 — 상태 바 창 크기 시험 `statusbar-resize.spec.ts` #65 · 프레임마다 줄 높이, 기상청 '파일 없음' `kma-missing.spec.ts` · 운영 진단 행 `ops-screens.spec.ts` #67) |
-| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | 앞 회차 PASS(2026-09-30 배포 전 빌드) — 이번 통합에서는 돌리지 않았다(의존성 · Dockerfile 은 바뀌지 않았다) |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 배포 뒤 228건 · 14종, 형식 오류 0건(docs/review/evidence/v5-ws-live-check-2026-09-30.txt) — 이번 통합은 아직 배포하지 않았다 |
+| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(2026-09-30 13:2x KST 배포 전 빌드 — gitleaks 는 시험용 가짜 키 지문 1건을 더한 뒤, #68) |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 이번 배포 뒤 207건 · 14종, 형식 오류 0건(#68 — 앞 배포 뒤 228건 · 0건, docs/review/evidence/v5-ws-live-check-2026-09-30.txt) |
