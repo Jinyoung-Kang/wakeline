@@ -323,11 +323,11 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
       frames: [{ tm: "202609280110", obs_tm: "202609280110", fetched_at: "x", echo_cells: 1, url: "/u" }] } as never });
     await mountTimeline();
     const badge = byTestId("kr-frame-missing");
-    expect(badge?.textContent).toBe("파일 없음");
-    expect(badge?.getAttribute("title")).toMatch(/^기상청 내려받기 파일\(PUB\) 없음 — tm (\d\d-\d\d )?01:15 KST 부터 3개/);
+    expect(badge?.textContent).toBe("파일 없음 · 확인 멈춤"); // 마지막 확인(09-28)이 지금(실제 시계)보다 15분 넘게 앞섰다 — 낱말은 krMissing 그대로
+    expect(badge?.getAttribute("title")).toMatch(/^기상청 내려받기 파일\(PUB\) 없음 — tm (\d\d-\d\d )?01:15–01:25 KST · 확인한 tm 3개 모두 없음/);
     await act(() => setData({ radarKr: unavailable({ note: "", missing }) as never }));
     expect(byTestId("kr-frame-missing")).toBeNull();
-    expect(byTestId("radar-kr-unavailable")?.textContent).toMatch(/^기상청 레이더 없음 — 기상청 내려받기 파일\(PUB\) 없음 — tm (\d\d-\d\d )?01:15 KST 부터 3개\(마지막 tm (\d\d-\d\d )?01:25 KST\) · 목록에는 EXT · 마지막 확인 (\d\d-\d\d )?10:25:31 KST · 마지막 수집 09-28 10:31:00 KST$/);
+    expect(byTestId("radar-kr-unavailable")?.textContent).toMatch(/^기상청 레이더 없음 — 기상청 내려받기 파일\(PUB\) 없음 — tm (\d\d-\d\d )?01:15–01:25 KST · 확인한 tm 3개 모두 없음 · 목록에는 EXT · 마지막 확인 (\d\d-\d\d )?10:25:31 KST — 15분 넘게 다시 확인하지 않음\(확인 멈춤\) · 마지막 수집 09-28 10:31:00 KST$/);
     await act(() => setData({ radarKr: unavailable({ note: "" }) as never })); // 연속이 닫힘 — 까닭 없음(전과 같다)
     expect(byTestId("radar-kr-unavailable")?.textContent).toBe("기상청 레이더 없음 · 마지막 수집 09-28 10:31:00 KST");
   });

@@ -78,7 +78,7 @@ export function RadarTimeline() {
       <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
       {comp ? <span className={`mono text-[11px] ${comp.warn ? "text-warn" : "text-fg-2"}`} title={comp.title} data-testid="kr-frame-composite">{comp.label}</span> : null}
       {comp?.warn ? <span className="badge warn normal-case!" title={comp.warn} data-testid="kr-frame-partial">일부 합성</span> : null}
-      {miss && krAvailable ? <span className="badge warn normal-case!" data-testid="kr-frame-missing" title={`${miss.text}\n${miss.title}`}>파일 없음</span> : null}
+      {miss && krAvailable ? <span className="badge warn normal-case!" data-testid="kr-frame-missing" title={`${miss.text}\n${miss.title}`}>{miss.word}</span> : null}
       {krFrames ? (
         <span className="flex h-3 items-stretch gap-px" data-testid="kr-frame-strip" role="img" aria-label={`프레임별 합성 상태 — 부분 합성 ${krPartialSummary(krFrames)}`}
           title={`프레임별 합성 상태(왼쪽이 오래된 프레임): 주황 = 일부 지점만 합성(기준 미만), 파랑 = 기준 도달(지난 ${KR_REF_WINDOW_MIN}분 최대와 같음 — 완전한지는 모름), 빈 칸 = 판정 없음 · 부분 합성 ${krPartialSummary(krFrames)}`}>

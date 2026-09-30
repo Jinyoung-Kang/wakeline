@@ -390,8 +390,8 @@ describe("운영: 기상청 내려받기 '파일 없음' 연속(운영 로그 20
     await settle();
     const rows = all((e) => e.getAttribute?.("data-testid") === "provider-missing");
     expect(rows).toHaveLength(1);
-    expect(rows[0].textContent).toBe("▲ 기상청 내려받기 파일(PUB) 없음 — tm 08:15 KST 부터 20개(마지막 tm 09:50 KST) · 목록에는 EXT · 마지막 확인 09:50:31 KST"
-      + " — 그동안 수집 실행은 'missing', last success 는 마지막으로 프레임을 저장한 주기");
+    expect(rows[0].textContent).toBe("▲ 기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST · 확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST"
+      + " — 그동안 수집 실행은 'missing'(저장한 프레임 없음), last success 는 프레임을 저장했거나 새 tm 이 없던 마지막 주기");
     const td = all((e) => e.tagName === "TD", rows[0])[0];
     expect(td.getAttribute("title")).toContain("기상청 답의 파일: RDR_CMP_HSR_PUB_202609300950.bin.gz");
     expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);

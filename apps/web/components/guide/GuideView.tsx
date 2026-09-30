@@ -6,7 +6,7 @@ import {
   flattenToc, GUIDE_TOC, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest, type ManifestDrop,
 } from "@/lib/guide";
 import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";
-import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
+import { KR_MISSING_CHECK_STALE_MIN, KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
 import { LOG_LEVELS, LOG_PERIOD_LABEL, LOG_SERVICES } from "@/lib/logs";
 import {
   PORT_CALL_AUTHORITIES, PORT_CALL_MAX_ITEMS, PORT_CALL_SOURCE, PORT_CALL_STALE_AFTER_S, PORT_CALL_TITLE, PORT_CALL_WINDOW_DAYS,
@@ -294,7 +294,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>애니메이션</B>{ref("radar", 2)} — 프레임을 차례로 보여 줍니다. 슬라이더로 한 프레임을 고르면 멈추고, ‘latest’ 는 최신 프레임으로.</li>
                 <li>기상청 프레임이 {KR_RADAR_STALE_S / 60}분 넘게 새로 오지 않으면 상태 바의 기상청 칩이 경고로 바뀝니다: <span className="mono text-bad">KMA {HEALTH_MARK.bad} age …m STALE</span>(칩 설명에 최신 프레임을 처음 받은 시각).</li>
                 <li>기상청이 목록에는 tm 을 올렸는데 내려받기가 ‘파일 없음’으로 답하면(수집기가 확인 — 2026-09-30 관찰) 칩에 <span className="text-warn">파일 없음</span>이 붙고,
-                  칩 설명 · 상세 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 표가 첫 tm · 없다고 답한 tm 수 · 기상청 답의 파일 이름 · 목록의 파일 종류 · 마지막 확인(KST)을 적습니다 — 나이(STALE)만으로는 까닭을 모릅니다.</li>
+                  칩 설명 · 상세 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 표가 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수(그 사이 확인하지 않은 tm 은 세지 않음) · 기상청 답의 파일 이름 · 목록의 파일 종류 · 마지막 확인(KST)을 적습니다 — 나이(STALE)만으로는 까닭을 모릅니다.
+                  마지막 확인이 {KR_MISSING_CHECK_STALE_MIN}분(수집기 선택값)을 넘으면 <span className="text-warn">파일 없음 · 확인 멈춤</span> — 지금도 그런지는 모릅니다.</li>
               </UL>
             </Sec>
             <Sec id="dashboard-legend" sub>
