@@ -9,7 +9,8 @@
 - GML: 요소의 지역 이름(네임스페이스 무시)으로 읽는다. 받는 것은 확인한 모양뿐이다: 실제 응답(2026-09-29)의 srsName="http://www.opengis.net/gml/srs/epsg.xml#5179" 인 posList(동거 북거 순 — 확인한 꼭짓점이
   0.025° 격자에 맞았다) 다각형 하나.
   다른 srsName(축 순서가 다를 수 있는 URN 등) · 없는 srsName 은 오류(짐작하지 않는다). 요청한 grid_no 와 다른 지물은 오류(다른 칸의 기하를 받지 않는다).
-  DOCTYPE·ENTITY 가 있으면 해석하지 않는다(외부 엔티티·확장 공격), 본문 256 KiB 초과도 해석하지 않는다(지물 하나는 수 KB).
+  본문이 엄격한 UTF-8 이 아니거나(NUL 포함) 본문 어디든 DOCTYPE·ENTITY 가 있으면 해석하지 않는다(외부 엔티티·확장 공격 — 푼 글자 그대로 보고 그 글자를
+  해석한다: _collection), 본문 256 KiB 초과도 해석하지 않는다(지물 하나는 수 KB).
 - bbox 타일(ADR-023 2026-10-01 bbox 개정 — parse_wfs_tile): 한 응답에 여러 지물. 지물마다 한 칸 조회와 같은 검사(_feature)를 하고, 나쁜 지물은
   그 지물만 뺀다(격자 밖 → off_grid · 모양 오류 → rejected). 모든 지물이 모양 오류면 응답 전체가 오류다(빈 타일로 끝났다고 하지 않는다).
   지물 수가 maxFeatures 에 닿았거나 numberOfFeatures 와 다르면 잘렸을 수 있다(truncation — 작업이 타일을 나눈다). 크기 상한은 따로
@@ -21,7 +22,7 @@ from __future__ import annotations
 import functools
 import math
 import re
-import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 를 먼저 거절하고, 크기 상한을 둔 뒤에만 해석한다(parse_wfs)
+import xml.etree.ElementTree as ET  # noqa: S405 — UTF-8 · DOCTYPE·ENTITY 를 먼저 거절하고, 크기 상한을 둔 뒤에만 해석한다(_collection)
 from dataclasses import dataclass
 from typing import Literal
 
@@ -269,16 +270,26 @@ def _pos_list(text: str) -> list[tuple[float, float]]:
 
 
 def _collection(body: bytes, limit: int) -> ET.Element:
-    """본문 → FeatureCollection 뿌리. 크기 상한 · DOCTYPE · ENTITY 는 해석 전에 거절하고, 오류 문서 · 다른 뿌리는 WfsError."""
+    """본문 → FeatureCollection 뿌리. 크기 상한 · UTF-8 · DOCTYPE · ENTITY 는 해석 전에 거절하고, 오류 문서 · 다른 뿌리는 WfsError.
+
+    거절은 **해석할 글자 그대로** 본다(검토 지적 2026-10-01: 예전에는 원본 바이트를 훑어 UTF-16 본문의 DTD 가 expat 까지 갔고, DOCTYPE 은 앞
+    4 KiB 만 찾았다): 확인한 응답은 UTF-8 이므로 엄격한 UTF-8 로 풀리지 않거나 NUL 이 있으면 거절하고, 푼 글자 전체에서 DOCTYPE · ENTITY 를 찾은 뒤
+    그 글자(str)를 해석한다 — ElementTree 는 str 을 선언과 상관없이 UTF-8 로 넘기므로 훑은 것과 해석하는 것이 같다."""
     if len(body) > limit:
         raise WfsTooLarge(f"response too large ({len(body)} bytes > {limit})")
-    head = body[:4096].upper()
-    if b"<!DOCTYPE" in head or b"<!ENTITY" in body.upper():
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise WfsError(f"response is not UTF-8 (byte {e.start}) — refused before parsing") from None
+    if "\x00" in text:
+        raise WfsError("NUL in response (UTF-16?) — refused before parsing")
+    up = text.upper()
+    if "<!DOCTYPE" in up or "<!ENTITY" in up:
         raise WfsError("DOCTYPE/ENTITY in response — refused")
-    if not body.strip():
+    if not text.strip():
         raise WfsError("empty response")
     try:
-        root = ET.fromstring(body)  # noqa: S314 — DOCTYPE·ENTITY 거절 · 크기 상한 뒤(모듈 설명)
+        root = ET.fromstring(text)  # noqa: S314 — UTF-8 · DOCTYPE·ENTITY 거절 · 크기 상한 뒤(위)
     except ET.ParseError as e:
         raise WfsError(f"not XML (line {e.position[0]})") from None
     err = _error_document(root)

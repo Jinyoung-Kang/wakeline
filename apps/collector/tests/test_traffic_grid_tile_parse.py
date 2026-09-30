@@ -186,6 +186,25 @@ def test_doctype_error_documents_and_non_gml_are_errors():
             parse_wfs_tile(bad)
 
 
+def test_a_utf16_tile_or_a_late_doctype_is_refused_before_parsing(monkeypatch):
+    """bbox 상한(384 KiB)은 한 칸 조회보다 커서 같은 구멍으로 더 큰 본문이 들어올 수 있었다 — UTF-8 이 아니면(28칸 타일을 UTF-16 으로 바꾼 것도)
+    · 본문 어디든 DOCTYPE 이 있으면 해석하지 않는다."""
+    from wakeline_collector import marine_grid
+
+    ok = body_of(grid_feats(28))
+    assert len(parse_wfs_tile(ok).cells) == 28
+    late = ok.replace(b"?>", b"?><!--" + b"x" * 5000 + b'--><!DOCTYPE x SYSTEM "http://127.0.0.1:9/e.dtd">', 1)
+
+    def boom(*_a, **_k):
+        raise AssertionError("the XML parser was reached")
+
+    monkeypatch.setattr(marine_grid.ET, "fromstring", boom)
+    with pytest.raises(WfsError, match="not UTF-8|NUL"):
+        parse_wfs_tile(ok.decode().encode("utf-16"))
+    with pytest.raises(WfsError, match="DOCTYPE"):
+        parse_wfs_tile(late)
+
+
 def test_a_feature_outside_feature_members_is_an_error():
     body = FIX.read_text().replace("<gml:featureMembers>", "").replace("</gml:featureMembers>", "").encode()
     with pytest.raises(WfsError, match="outside"):

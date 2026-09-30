@@ -264,6 +264,41 @@ def test_doctype_and_entities_are_refused_before_parsing():
         parse_wfs(body, "GR4_F2K41_C3")
 
 
+def _never_parsed(monkeypatch):
+    from wakeline_collector import marine_grid
+
+    def boom(*_a, **_k):
+        raise AssertionError("the XML parser was reached")
+
+    monkeypatch.setattr(marine_grid.ET, "fromstring", boom)
+
+
+def test_a_utf16_body_is_refused_before_parsing_so_its_dtd_never_reaches_expat(monkeypatch):
+    """검토 지적(2026-10-01): DOCTYPE · ENTITY 거절이 원본 바이트만 훑어 UTF-16 본문('<\\0!\\0E\\0N…')은 지나갔고 expat 가 그 DTD 를 풀었다
+    (10단 엔티티 1.7 KB → 51 MB · 380 ms, expat 자체 상한에서 멈춤). 확인한 응답은 UTF-8 이다 — UTF-8 이 아니거나 NUL 이 있으면 해석하지 않는다."""
+    lol = "".join(f'<!ENTITY l{i} "{("&l" + str(i - 1) + ";") * 10}">' for i in range(1, 10))
+    doc = f'<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY l0 "lol">{lol}]><x>&l9;</x>'
+    _never_parsed(monkeypatch)
+    for body in (doc.encode("utf-16"), doc.encode("utf-16-le"), FIX.read_text().encode("utf-16")):
+        with pytest.raises(WfsError, match="not UTF-8|NUL"):
+            parse_wfs(body, "GR4_F2K41_C3")
+
+
+def test_a_doctype_after_the_first_4_kib_is_refused_too(monkeypatch):
+    """DOCTYPE 는 앞 4 KiB 만 찾았다 — 긴 주석 뒤의 DOCTYPE(외부 DTD)은 해석까지 갔다. 본문 전체를 본다."""
+    real = FIX.read_text()
+    head, rest = real.split("?>", 1)
+    body = f'{head}?><!--{"x" * 5000}--><!DOCTYPE x SYSTEM "http://127.0.0.1:9/evil.dtd">{rest}'.encode()
+    _never_parsed(monkeypatch)
+    with pytest.raises(WfsError, match="DOCTYPE"):
+        parse_wfs(body, "GR4_F2K41_C3")
+
+
+def test_the_real_utf8_response_still_parses_and_a_utf8_bom_is_fine():
+    assert parse_wfs(FIX.read_bytes(), "GR4_F2K41_C3").kind == "found"
+    assert parse_wfs(b"\xef\xbb\xbf" + FIX.read_bytes(), "GR4_F2K41_C3").kind == "found"
+
+
 def test_oversized_body_is_refused():
     with pytest.raises(WfsError, match="too large"):
         parse_wfs(b"<a>" + b" " * (300 * 1024) + b"</a>", "GR4_F2K41_C3")
