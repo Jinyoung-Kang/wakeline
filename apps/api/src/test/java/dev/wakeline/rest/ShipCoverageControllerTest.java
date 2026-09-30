@@ -81,6 +81,10 @@ class ShipCoverageControllerTest {
         String etag = r.getResponse().getHeader("ETag");
         mvc(c).perform(get("/api/v1/ships/coverage").header("If-None-Match", etag)).andExpect(status().isNotModified())
                 .andExpect(header().string("ETag", etag)).andExpect(header().string("Cache-Control", "max-age=60, public"));
+        // edge 가 gzip 으로 줄이며 약하게 바꾼 ETag(W/"…")를 브라우저가 되돌려 보내도 304(리뷰 2026-09-30 밤 — 전에는 글자 그대로 견줘 200)
+        mvc(c).perform(get("/api/v1/ships/coverage").header("If-None-Match", "W/" + etag)).andExpect(status().isNotModified());
+        mvc(c).perform(get("/api/v1/ships/coverage").header("If-None-Match", "\"other\", W/" + etag)).andExpect(status().isNotModified());
+        mvc(c).perform(get("/api/v1/ships/coverage").header("If-None-Match", "W/\"other\"")).andExpect(status().isOk());
     }
 
     @Test

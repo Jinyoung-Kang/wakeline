@@ -27,7 +27,8 @@ import java.util.concurrent.TimeUnit;
  *   <li>bootstrap: state(pending · running · done · failed) · hours_loaded / hours_total · rows · loaded_from · error(failed 일 때 종류만) · finished_at.</li>
  *   <li>truncated = 메모리 상한 때문에 창 안에서 세지 못한 위치가 있다(dropped_positions) · limits = 그 상한.</li>
  *   <li>meta.fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 stale 로 잘못 보이지 않게(칸의 값은 받은 그대로).</li>
- *   <li>캐시: public, max-age=60 — 스냅숏은 60 s 마다 새로 만든다. ETag = 스냅숏마다 다르다(If-None-Match → 304). 요청 제한은 /api/** 공통.</li>
+ *   <li>캐시: public, max-age=60 — 스냅숏은 60 s 마다 새로 만든다. ETag = 스냅숏마다 다르다(같은 스냅숏의 If-None-Match → 304, 약한 비교 — {@link Etags}).
+ *       요청 제한은 /api/** 공통.</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -53,7 +54,7 @@ public class ShipCoverageController {
     @GetMapping("/ships/coverage")
     public ResponseEntity<Map<String, Object>> shipCoverage(HttpServletRequest req) {
         ShipCoverage.Snapshot s = coverage.snapshot();
-        if (s.etag().equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(s.etag()).cacheControl(CACHE).build();
+        if (Etags.notModified(s.etag(), req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(s.etag()).cacheControl(CACHE).build();
         return ResponseEntity.ok().eTag(s.etag()).cacheControl(CACHE).body(body(s, cellRows(s), req));
     }
 

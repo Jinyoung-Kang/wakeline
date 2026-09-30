@@ -99,7 +99,7 @@ public class ShipController {
         Map<String, Object> aisView = ais.publicView(System.currentTimeMillis());
         String etag = etag(v.version(), meta, aisView);
         CacheControl cc = CacheControl.maxAge(10, TimeUnit.SECONDS).cachePublic();
-        if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
+        if (Etags.notModified(etag, req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         List<Map<String, Object>> features = new ArrayList<>();
         int[] total = {0};
         v.forEachIn(b, s -> {
