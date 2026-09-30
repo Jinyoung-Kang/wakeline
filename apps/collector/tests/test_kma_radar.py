@@ -405,10 +405,17 @@ async def test_r03_missing_frame_gives_up_after_bounded_tries(kma_env):
     gone = listing[-1]
     prov = NotYetKma(listing, {gone: 99})  # 끝내 생기지 않는 프레임
     job = mod.KmaRadarJob(prov, ctx)
-    for _ in range(mod.MAX_NOT_READY_TRIES + 2):
+    for _ in range(mod.MAX_NOT_READY_TRIES):
         await job.run_once()
-    assert prov.binaries.count(gone) == mod.MAX_NOT_READY_TRIES  # 예산을 무한히 쓰지 않는다
+    assert prov.binaries.count(gone) == mod.MAX_NOT_READY_TRIES
     assert gone in job._bad
+    # 세 번 뒤 포기하고(품질 이벤트 한 번) '파일 없음' 연속을 연다 — 그 뒤로는 주기마다 목록의 가장 새 tm 하나만 확인한다(예산을 무한히 쓰지 않는다:
+    # 주기마다 목록 1 + 확인 1 — test_kma_missing)
+    assert job.missing is not None and job.missing.since_tm == gone
+    for _ in range(2):
+        prov.binaries.clear()
+        await job.run_once()
+        assert prov.binaries == [gone]
     rules = [q[0] for run in runs for q in (run.get("quality") or [])]
     assert rules.count("kma_radar_missing") == 1 and "kma_radar_parse" not in rules
 
