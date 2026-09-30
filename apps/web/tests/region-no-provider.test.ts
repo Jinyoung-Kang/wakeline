@@ -6,7 +6,7 @@
  * 수정 전 코드에서 실패하는 것을 먼저 확인한 뒤 고쳤다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { activeJobs, jobProvider, noProviderLine } from "@/lib/active-provider";
+import { activeJobs, jobBadgeText, jobProvider, noProviderLine } from "@/lib/active-provider";
 import { RUN_STATUS_TITLE, runStatusClass } from "@/lib/ops";
 import { detailRows, statusChips, type StatusInput } from "@/lib/statusbar";
 import { domUtcLeaks, utcLeaks } from "./helpers/kst-only";
@@ -21,20 +21,34 @@ const NONE = {
   global_none_since: "", global_none_reason: "", global_none_next: "",
 };
 const LINE = "공급자 없음 · 12:16:32 KST 부터 — 건너뜀: adsb_lol 429 반복 → 240분 뒤로 미룸 · adsb_fi 운영자 끔 · 가장 먼저 풀리는 때 12:21:22 KST(수집기 체인 상태) · 마지막으로 쓴 공급자 adsb_lol";
+/** 쉬는 공급자를 다시 시도하는 공급자 없음(수집기 region_none_retry) */
+const RETRY = {
+  ...NONE, region_none_reason: "adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(300 s)", region_none_retry: "adsb_fi",
+};
+const RETRY_LINE = "공급자 없음 · 12:16:32 KST 부터 · adsb_fi 다시 시도 중(쉬는 공급자 — 다른 공급자가 없어 주기마다) — 건너뜀: adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(300 s) · 가장 먼저 풀리는 때 12:21:22 KST(수집기 체인 상태) · 마지막으로 쓴 공급자 adsb_lol";
 
 describe("the collector's wakeline:active fields, as they are", () => {
   it("a job without any provider is a named state with its reason and the earliest known release (KST)", () => {
     const r = jobProvider(NONE, "region")!;
     expect(r.name).toBe("adsb_lol");
-    expect(r.none).toEqual({ since: "2026-09-30T03:16:32Z", reason: "adsb_lol 429 반복 → 240분 뒤로 미룸 · adsb_fi 운영자 끔", next: "2026-09-30T03:21:22Z" });
+    expect(r.none).toEqual({ since: "2026-09-30T03:16:32Z", reason: "adsb_lol 429 반복 → 240분 뒤로 미룸 · adsb_fi 운영자 끔", next: "2026-09-30T03:21:22Z", retry: null });
     expect(noProviderLine(r, NOW)).toBe(LINE);
     expect(utcLeaks(noProviderLine(r, NOW))).toEqual([]);
     expect(jobProvider(NONE, "global")!.none).toBeNull(); // 빈 값 = 공급자가 있다
   });
   it("no release time known (switched off · not configured) is said, not invented; a malformed start time is unknown", () => {
     const r = jobProvider({ region: "adsb_lol", region_none_since: "yesterday", region_none_reason: "adsb_lol 운영자 끔 · adsb_fi 운영자 끔", region_none_next: "" }, "region")!;
-    expect(r.none).toEqual({ since: null, reason: "adsb_lol 운영자 끔 · adsb_fi 운영자 끔", next: null });
+    expect(r.none).toEqual({ since: null, reason: "adsb_lol 운영자 끔 · adsb_fi 운영자 끔", next: null, retry: null });
     expect(noProviderLine(r, NOW)).toBe("공급자 없음 · 시작 시각 모름 — 건너뜀: adsb_lol 운영자 끔 · adsb_fi 운영자 끔 · 풀리는 때 모름(운영자가 켜거나 설정해야 한다) · 마지막으로 쓴 공급자 adsb_lol");
+  });
+  it("a cooling provider retried because nothing else is usable is still 공급자 없음, and the line names it (review 2026-09-30)", () => {
+    // 운영 로그의 모양: adsb_fi 연결 실패 3회로 쉬는 중 · adsb_lol 429 쉼 — 수집기가 adsb_fi 를 주기마다 다시 시도한다. 고치기 전 첫 판은 이 동안
+    // wakeline:active 에 공급자 없음을 적지 않아 운영 배지가 초록 'region: adsb_fi' 였다
+    const r = jobProvider(RETRY, "region")!;
+    expect(r.none).toEqual({ since: "2026-09-30T03:16:32Z", reason: "adsb_fi 3회 연속 실패(10분 쉼) · adsb_lol 429 쉼(300 s)", next: "2026-09-30T03:21:22Z", retry: "adsb_fi" });
+    expect(noProviderLine(r, NOW)).toBe(RETRY_LINE);
+    expect(utcLeaks(RETRY_LINE)).toEqual([]);
+    expect(jobBadgeText(r, NOW)).toBe("region: 공급자 없음 · 12:16:32 KST 부터 · adsb_fi 다시 시도 중");
   });
   it("jobs are the keys without an underscore, in the collector's order; an absent map is empty", () => {
     expect(activeJobs(NONE).map((j) => [j.job, j.name, j.none != null])).toEqual([["region", "adsb_lol", true], ["global", "opensky", false]]);
@@ -65,6 +79,12 @@ describe("status bar: the region chip says 공급자 없음 (not only STALE by a
     const row = detailRows(input(NONE)).find((r) => r.key === "region")!;
     expect(row.state).toBe("공급자 없음");
     expect(row.valueTitle).toBe(LINE);
+  });
+  it("while the collector retries a cooling provider the chip still says 공급자 없음 and the title names the retried provider", () => {
+    const c = statusChips(input(RETRY)).find((x) => x.key === "region")!;
+    expect(c.words.map((w) => w.text)).toEqual(["공급자 없음"]);
+    expect(c.words[0].title).toBe(RETRY_LINE);
+    expect(c.health).toBe("bad");
   });
   it("with a provider the chip is as before", () => {
     const c = statusChips(input({ region: "adsb_fi", region_none_since: "" })).find((x) => x.key === "region")!;

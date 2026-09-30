@@ -4,7 +4,9 @@
  * 모르는 값은 짓지 않는다. 시각은 KST 만.
  * - {job}: 마지막으로 쓴 공급자 — 공급자 없음이어도 남는다(기록). 그래서 이것만 보면 쓰던 공급자가 지금도 도는 것처럼 보였다(초록 배지).
  * - {job}_none_since(UTC ISO — 공급자 없음이 시작된 때) · {job}_none_reason(건너뛴 공급자와 까닭, 수집기 글 그대로) · {job}_none_next(가장 먼저 풀리는
- *   때 — 수집기 체인 상태로 정해진 값, 운영자가 켜야 하거나 설정이 없으면 빈 값). none_since 가 비어 있으면 공급자가 있다.
+ *   때 — 수집기 체인 상태로 정해진 값, 운영자가 켜야 하거나 설정이 없으면 빈 값) · {job}_none_retry(그동안 수집기가 주기마다 다시 시도하는 쉬는
+ *   공급자 — 다른 공급자가 없어서, 없으면 빈 값). none_since 가 비어 있으면 공급자가 있다. 다시 시도 중이어도 공급자 없음이다(일하는 공급자가 없다 —
+ *   리뷰 2026-09-30: 수집기 첫 판은 이때 상태를 비워 초록 'region: adsb_fi' 였다).
  * 수집기가 멈추면 이 값을 지울 주체가 없다 — 지역 피드의 나이(STALE)가 함께 보인다.
  */
 import { fmtKst, timeParts } from "./time";
@@ -15,6 +17,8 @@ export interface NoProvider {
   reason: string;
   /** 가장 먼저 풀리는 때 — 모르면 null */
   next: string | null;
+  /** 그동안 수집기가 주기마다 다시 시도하는 쉬는 공급자 — 없으면 null */
+  retry: string | null;
 }
 export interface JobProvider {
   job: string;
@@ -38,7 +42,9 @@ export function jobProvider(active: Record<string, string> | null | undefined, j
   if (!active || (!(job in active) && !noneRaw)) return null; // 한 번도 고르지 못한 작업(예: 전세계 — OpenSky 설정 안 됨)도 공급자 없음이면 있다
   return {
     job, name: str(active[job]) || null, reason: str(active[`${job}_reason`]), since: iso(active[`${job}_since`]),
-    none: noneRaw ? { since: iso(noneRaw), reason: str(active[`${job}_none_reason`]), next: iso(active[`${job}_none_next`]) } : null,
+    none: noneRaw
+      ? { since: iso(noneRaw), reason: str(active[`${job}_none_reason`]), next: iso(active[`${job}_none_next`]), retry: str(active[`${job}_none_retry`]) || null }
+      : null,
   };
 }
 
@@ -53,21 +59,27 @@ export function activeJobs(active: Record<string, string> | null | undefined): J
   return jobs.map((j) => jobProvider(active, j)!);
 }
 
-/** 공급자 없음의 한 줄(title · 상세): "공급자 없음 · 12:16:32 KST 부터 — 건너뜀: … · 가장 먼저 풀리는 때 12:21:22 KST(수집기 체인 상태) · 마지막으로 쓴 공급자 adsb_lol" */
+/**
+ * 공급자 없음의 한 줄(title · 상세): "공급자 없음 · 12:16:32 KST 부터[ · adsb_fi 다시 시도 중(…)] — 건너뜀: … · 가장 먼저 풀리는 때 12:21:22 KST(수집기 체인 상태)
+ * · 마지막으로 쓴 공급자 adsb_lol"
+ */
 export function noProviderLine(p: JobProvider, nowMs: number): string {
   const n = p.none;
   if (!n) return "";
   const at = (v: string) => kstAt(v, nowMs);
+  const retry = n.retry ? ` · ${n.retry} 다시 시도 중(쉬는 공급자 — 다른 공급자가 없어 주기마다)` : "";
   return [
-    `공급자 없음 · ${n.since ? `${at(n.since)} 부터` : "시작 시각 모름"} — 건너뜀: ${n.reason || "—"}`,
+    `공급자 없음 · ${n.since ? `${at(n.since)} 부터` : "시작 시각 모름"}${retry} — 건너뜀: ${n.reason || "—"}`,
     n.next ? `가장 먼저 풀리는 때 ${at(n.next)}(수집기 체인 상태)` : "풀리는 때 모름(운영자가 켜거나 설정해야 한다)",
     p.name ? `마지막으로 쓴 공급자 ${p.name}` : null,
   ].filter(Boolean).join(" · ");
 }
 
-/** 배지 글자: "region: 공급자 없음 · 12:16:32 KST 부터" · "region: adsb_fi" */
+/** 배지 글자: "region: 공급자 없음 · 12:16:32 KST 부터[ · adsb_fi 다시 시도 중]" · "region: adsb_fi" */
 export function jobBadgeText(p: JobProvider, nowMs: number): string {
-  if (p.none) return `${p.job}: 공급자 없음${p.none.since ? ` · ${kstAt(p.none.since, nowMs)} 부터` : ""}`;
+  if (p.none) {
+    return `${p.job}: 공급자 없음${p.none.since ? ` · ${kstAt(p.none.since, nowMs)} 부터` : ""}${p.none.retry ? ` · ${p.none.retry} 다시 시도 중` : ""}`;
+  }
   return `${p.job}: ${p.name ?? "—"}`;
 }
 
