@@ -420,10 +420,12 @@ export function qualityPartialDay(since: unknown): { day: string; text: string; 
 export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   missing: "새 tm 이 목록에 있었으나 저장한 프레임 없음 — 기상청 내려받기가 '파일 없음'으로 답함(호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다)",
   quarantined: "새 tm 을 받았으나 해석할 수 없어 격리 — 저장한 프레임 없음(원본은 raw 에 남는다)",
+  // 기상청 429(운영 로그 2026-09-30 — jobs/kma_radar.py) · 수집기 속도 상한(jobs/aircraft.py) — 계약 v5 §G14: 공급자 오류는 'error' 만
+  throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",
 };
 
 /**
- * 실행 상태 글자색: ok 초록 · missing · quarantined 주황(자료가 오지 않았지만 호출 실패는 아니다) · 그 밖(error · throttled · budget_* …)은 전과 같이
+ * 실행 상태 글자색: ok 초록 · missing · quarantined · throttled 주황(자료가 오지 않았지만 공급자 오류는 아니다) · 그 밖(error · budget_* …)은 전과 같이
  * 요약(summary) 주황 · 최근 실행(item) 빨강.
  */
 export function runStatusClass(status: unknown, where: "summary" | "item"): string {

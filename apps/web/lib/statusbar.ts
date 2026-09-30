@@ -14,6 +14,7 @@
  *   fmtTimeTitle)가 만든다 — 여기서 시각 글자를 직접 짓지 않는다.
  * - AIS 공백 모델(aisGapInfo)도 여기에 있다(ships.ts 의 옛 상태 바 배지 aisGapBadge 를 대신한다 — 합친 뒤 지웠다).
  */
+import { jobProvider, noProviderLine } from "./active-provider";
 import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./format";
 import { KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, krComposite, krMissing } from "./kr-radar";
 import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
@@ -225,12 +226,13 @@ export function statusChips(i: StatusInput): Chip[] {
 
   const region = feedLag(i.feeds.region, i.nowMs, live, REGION_STALE_S);
   const rTone = lagTone(region, i.conn, i.reconnectAttempt);
+  const rNone = regionNoProvider(i);
   push({
     key: "region", label: "region", testId: "lag-badge",
     value: region.lag == null ? "NO DATA" : `lag ${fmtAgeS(region.lag)}`,
-    words: word(region.lag != null && region.stale ? "STALE" : null),
-    health: rTone,
-    title: `지역 피드(${i.feeds.region?.provider ?? "공급자 —"}) 지연 — 서버가 보고한 값(연결이 실시간이 아니면 받은 뒤 경과를 더함) · 경고 > ${REGION_STALE_S} s(서버 판정 포함)`,
+    words: [...word(region.lag != null && region.stale ? "STALE" : null), ...(rNone ? [{ text: "공급자 없음", testId: "region-no-provider", title: rNone }] : [])],
+    health: rNone ? "bad" : rTone,
+    title: `지역 피드(${i.feeds.region?.provider ?? "공급자 —"}) 지연 — 서버가 보고한 값(연결이 실시간이 아니면 받은 뒤 경과를 더함) · 경고 > ${REGION_STALE_S} s(서버 판정 포함)${rNone ? `\n${rNone}` : ""}`,
   });
 
   const world = i.feeds.global ? feedLag(i.feeds.global, i.nowMs, live, GLOBAL_STALE_S) : null;
@@ -290,6 +292,16 @@ export function statusChips(i: StatusInput): Chip[] {
     });
   }
   return chips;
+}
+
+/**
+ * 관심 지역에 쓸 공급자가 하나도 없음(수집기 wakeline:active — lib/active-provider, 운영 로그 2026-09-30). 한 줄(title) 또는 null.
+ * 나이(STALE)만으로는 까닭을 모른다 — 수집기가 적은 건너뛴 공급자 · 풀리는 때를 그대로 보인다. 전세계 칩에는 싣지 않는다(OpenSky 는 선택 기능 —
+ * 자격증명이 없으면 늘 공급자 없음이다, ADR-009 · 운영 화면 배지에는 보인다).
+ */
+function regionNoProvider(i: StatusInput): string | null {
+  const p = jobProvider(i.status?.active_providers, "region");
+  return p?.none ? noProviderLine(p, i.srvNowMs || i.nowMs) : null;
 }
 
 /** 열린 AIS 공백 — 줄 앞쪽 경고(R-31: 경고는 앞에). 없으면 null */
@@ -360,8 +372,9 @@ export function detailRows(i: StatusInput): DetailRow[] {
   rows.push({ key: "aircraft", name: "항공기 수", health: null, state: "—", value: i.aircraftCount == null ? "—" : String(i.aircraftCount), source: "지도 영역(구독 bbox) 안 · STALE 포함", rule: "—" });
   for (const [k, name, feed, limit] of [["region", "항공기 · 지역 피드", i.feeds.region, REGION_STALE_S], ["world", "항공기 · 전세계 피드", i.feeds.global, GLOBAL_STALE_S]] as const) {
     const chip = chips.get(k)!;
+    const none = k === "region" ? regionNoProvider(i) : null;
     rows.push({
-      key: k, name, health: chip.health, state: stateOf(k), value: chip.value,
+      key: k, name, health: chip.health, state: stateOf(k), value: chip.value, ...(none ? { valueTitle: none } : {}),
       source: feed ? `${feed.provider ?? "공급자 —"} · 수집 ${kstAt(feed.fetched_at, i.srvNowMs)}` : "—", sourceTitle: fullTitle("수집", feed?.fetched_at),
       rule: `경고 > ${limit} s(서버 판정 포함)`,
     });
