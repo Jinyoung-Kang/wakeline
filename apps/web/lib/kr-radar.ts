@@ -101,10 +101,20 @@ export const KR_MISSING_RECHECK_MIN = 10;
  * 연속 동안 수집기는 5분마다 확인한다 — 그보다 오래 확인이 없으면 수집기가 멈췄거나 목록 호출이 실패하는 중이라 연속이 지금도 맞는지 모른다(리뷰 2026-09-30).
  */
 export const KR_MISSING_CHECK_STALE_MIN = 15;
+/**
+ * 긴 연속의 확인 간격(계약 v5 §G26 — 수집기 MISSING_SLOW_AFTER_S · MISSING_SLOW_EVERY_S · MISSING_STALE_PROBES, 선택값 — tests/kma-missing 이 견준다):
+ * 연속이 SLOW_AFTER 분을 넘으면 수집기가 SLOW_EVERY 분마다만 확인한다. '확인 멈춤'은 마지막 확인이 확인 간격(api missing.probe_every_s) × STALE_PROBES 를
+ * 넘을 때(아래로는 KR_MISSING_CHECK_STALE_MIN) — 고정 15분이면 늦춘 뒤 확인마다 '확인 멈춤'이 깜박였다. 간격을 모르면(옛 api) 15분. 설명 글자에도 쓴다.
+ */
+export const KR_MISSING_SLOW_AFTER_MIN = 60;
+export const KR_MISSING_SLOW_EVERY_MIN = 15;
+export const KR_MISSING_STALE_PROBES = 3;
+/** api 가 싣는 확인 간격의 상한(초 — 하루, api KrRadarMissing.MAX_PROBE_EVERY_S) */
+const MAX_PROBE_EVERY_S = 86_400;
 
 /** 연속 한 건(krMissing) — 칩 낱말 · 한 줄 · 여러 줄 설명과 그 조각(상세 행). 값은 모두 api(수집기 확인) 그대로 */
 export interface KrMissingInfo {
-  /** 마지막 확인이 KR_MISSING_CHECK_STALE_MIN 분을 넘었으면 "파일 없음 · 확인 멈춤" */
+  /** 마지막 확인이 '확인 멈춤' 기준(staleMin)을 넘었으면 "파일 없음 · 확인 멈춤" */
   word: "파일 없음" | "파일 없음 · 확인 멈춤";
   /** "기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST · 확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST" */
   text: string;
@@ -117,15 +127,25 @@ export interface KrMissingInfo {
   /** 확인해서 없다는 답을 받은 서로 다른 tm 수(수집기가 센 것 — 그 사이 확인하지 않은 tm 은 들지 않는다) */
   tms: number;
   checkedAt: string;
-  /** 마지막 확인이 KR_MISSING_CHECK_STALE_MIN 분을 넘었다(지금을 모르면 false — 판정하지 않는다) */
+  /** 마지막 확인이 staleMin 분을 넘었다(지금을 모르면 false — 판정하지 않는다) */
   stale: boolean;
   /** 기상청 답의 파일 이름(모르면 null) · 목록 종류 "EXT/KMA"(모르면 null) */
   file: string | null;
   listed: string | null;
+  /** 수집기의 지금 확인 간격(초 — api probe_every_s, 모르면 null) · '확인 멈춤' 기준(분) */
+  everyS: number | null;
+  staleMin: number;
+  /** 수집기가 연속 동안 하는 일(설명 한 문장 — title · 상태 바 상세 규칙) */
+  cadence: string;
 }
 
 const MISSING_FILE = /^RDR_CMP_[A-Z]+_([A-Z]+)_\d{12}\.bin\.gz$/;
 const TM = /^\d{12}$/;
+
+/** "15분" · "300 s"(분으로 떨어지지 않으면 초) */
+function everyText(s: number): string {
+  return s % 60 === 0 ? `${s / 60}분` : `${s} s`;
+}
 
 /** 두 tm 의 구간 "08:15–09:50 KST" — 지금과 KST 날짜가 다르면 "09-30 08:15–09:50 KST", 날짜를 넘으면 "09-29 23:50 – 09-30 00:10 KST" */
 function tmRange(sinceMs: number, lastMs: number, today: string | undefined): string {
@@ -141,7 +161,8 @@ function tmRange(sinceMs: number, lastMs: number, today: string | undefined): st
  * 없다고 하지 않는다(수집기는 연속 동안 주기마다 두 tm 만 확인한다).
  * 파일 이름 · 목록 종류는 기상청 글자 그대로일 때만 쓰고, 모르면 쓰지 않는다(짓지 않는다). 파일 종류(PUB 등)는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다.
  * tm 은 기상청 KST 벽시계라 그대로 "HH:MM KST"(지금과 KST 날짜가 다르면 날짜도), 마지막 확인은 "HH:MM:SS KST"(마우스를 올리면 연도 · ms).
- * 마지막 확인이 KR_MISSING_CHECK_STALE_MIN 분을 넘으면(서버 기준 지금 — 모르면 판정하지 않는다) '확인 멈춤'을 붙인다: 수집기가 멈추면 연속을 지울 주체가 없다.
+ * 마지막 확인이 확인 간격 × KR_MISSING_STALE_PROBES(아래로 KR_MISSING_CHECK_STALE_MIN 분 — 간격을 모르면 그것)를 넘으면(서버 기준 지금 — 모르면 판정하지 않는다)
+ * '확인 멈춤'을 붙인다: 수집기가 멈추면 연속을 지울 주체가 없다. 확인 간격(probe_every_s — 계약 v5 §G26)을 알면 한 줄에 'N분마다 확인'을 적는다.
  */
 export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
   if (!m || typeof m !== "object") return null;
@@ -161,22 +182,32 @@ export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
   const today = nowMs > 0 ? timeParts(nowMs)?.wall.ymd : undefined;
   const clock = (ms: number) => fmtKstMinute(ms, { date: timeParts(ms)?.wall.ymd !== today });
   const checked = fmtKst(checkedMs, { date: timeParts(checkedMs)?.wall.ymd !== today, seconds: true });
-  const stale = nowMs > 0 && nowMs - checkedMs > KR_MISSING_CHECK_STALE_MIN * 60_000;
+  // 수집기의 지금 확인 간격(계약 v5 §G26) — 정수 초 1 … 하루만(틀리면 모름: 전과 같은 글 · 15분 기준)
+  const everyS = typeof o.probe_every_s === "number" && Number.isInteger(o.probe_every_s) && o.probe_every_s >= 1 && o.probe_every_s <= MAX_PROBE_EVERY_S
+    ? o.probe_every_s : null;
+  const staleS = Math.max(KR_MISSING_CHECK_STALE_MIN * 60, everyS == null ? 0 : KR_MISSING_STALE_PROBES * everyS);
+  const staleMin = Math.round(staleS / 60);
+  const stale = nowMs > 0 && nowMs - checkedMs > staleS * 1000;
   const range = tmRange(sinceMs, lastMs, today);
   const head = `기상청 내려받기 파일${kind ? `(${kind})` : ""} 없음`;
   const counted = `확인한 tm ${tms}개 ${tms === 1 ? "" : "모두 "}없음`;
   const text = `${head} — tm ${range} · ${counted}${listed ? ` · 목록에는 ${listed}` : ""} · 마지막 확인 ${checked}`
-    + (stale ? ` — ${KR_MISSING_CHECK_STALE_MIN}분 넘게 다시 확인하지 않음(확인 멈춤)` : "");
+    + (everyS != null ? ` · ${everyText(everyS)}마다 확인` : "")
+    + (stale ? ` — ${staleMin}분 넘게 다시 확인하지 않음(확인 멈춤)` : "");
+  const cadence = everyS != null
+    ? `수집기가 ${everyText(everyS)}마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인(수집기 선택값 — 연속이 ${KR_MISSING_SLOW_AFTER_MIN}분을 넘으면 ${KR_MISSING_SLOW_EVERY_MIN}분마다로 늘린다)`
+    : `수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인(수집기 선택값)`;
   const title = [
     `${head} — 기상청 목록에는 tm 이 있는데 내려받기가 '파일 없음'으로 답함(수집기 확인)`,
     `첫 tm ${clock(sinceMs)} · 마지막 tm ${clock(lastMs)}(없다는 답을 받은 가장 이른 · 가장 새 tm) · 확인한 서로 다른 tm ${tms}개 ${tms === 1 ? "" : "모두 "}없음 — 확인하지 않은 tm 은 세지 않음`,
     file ? `기상청 답의 파일: ${file}` : "기상청 답의 파일 이름 모름",
     kinds ? `목록의 파일 종류: ${kinds.join(", ")}` : "목록의 파일 종류 모름",
     `마지막 확인 ${fmtTimeTitle(checkedMs) ?? "—"}`,
-    `그동안 수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인(수집기 선택값) — 파일이 다시 오면 이 표시는 사라짐`,
-    ...(stale ? [`마지막 확인 뒤 ${KR_MISSING_CHECK_STALE_MIN}분 넘게 확인 없음 — 지금도 없는지는 모름(수집기가 멈췄거나 목록 호출이 실패하는 중일 수 있다 · 기준은 수집기 선택값과 같다)`] : []),
+    `그동안 ${cadence} — 파일이 다시 오면 이 표시는 사라짐`,
+    ...(stale ? [`마지막 확인 뒤 ${staleMin}분 넘게 확인 없음 — 지금도 없는지는 모름(수집기가 멈췄거나 목록 호출이 실패하는 중일 수 있다 · 기준은 수집기 선택값과 같다 — 확인 간격 × ${KR_MISSING_STALE_PROBES}, 아래로 ${KR_MISSING_CHECK_STALE_MIN}분)`] : []),
   ].join("\n");
   return {
     word: stale ? "파일 없음 · 확인 멈춤" : "파일 없음", text, title, range, since: clock(sinceMs), last: clock(lastMs), tms, checkedAt, stale, file, listed,
+    everyS, staleMin, cadence,
   };
 }

@@ -9,7 +9,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, krMissing } from "@/lib/kr-radar";
+import {
+  KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, KR_MISSING_SLOW_AFTER_MIN, KR_MISSING_SLOW_EVERY_MIN, KR_MISSING_STALE_PROBES, krMissing,
+} from "@/lib/kr-radar";
 import { providerMissing, providersNowMs, runStatusClass, RUN_STATUS_TITLE } from "@/lib/ops";
 import { getData, resetData, setData } from "@/lib/store";
 import { detailRows, statusChips, statusInput } from "@/lib/statusbar";
@@ -189,5 +191,67 @@ describe("운영: the provider hash streak and the run status colours", () => {
     expect(runStatusClass("error", "summary")).toBe("text-warn");
     expect(RUN_STATUS_TITLE.missing).toContain("저장한 프레임 없음");
     expect(RUN_STATUS_TITLE.quarantined).toContain("격리");
+  });
+});
+
+/**
+ * 계약 v5 §G26(2026-09-30 저녁): 긴 연속에서 수집기가 확인 간격을 늘린다(연속이 60분을 넘으면 15분마다 — 수집기 선택값) — 기상청이 모든 바이너리 합성을
+ * 멈춘 날, 5분마다 확인해 예산 1,000 을 하루 안에 넘을 속도였다. api missing.probe_every_s(초 — 수집기 해시 missing_probe_every_s 그대로)로 화면이 'N분마다
+ * 확인'을 적고, '확인 멈춤' 기준도 그 간격 × 3(수집기 MISSING_STALE_PROBES — 아래로는 15분)을 따른다 — 고정 15분이면 늦춘 뒤 확인마다 '확인 멈춤'이
+ * 깜박였다. 간격을 모르면(옛 api · 틀린 값) 전과 같다. 고치기 전 코드에서 실패하는 것을 먼저 확인했다.
+ */
+describe("§G26: the collector's probe interval says 'N분마다 확인' and sets the 확인 멈춤 bound", () => {
+  const SLOW: KrRadarMissing = { ...MISS, probe_every_s: 900 };
+  it("one line names the interval; the tooltip states the collector's rule", () => {
+    const m = krMissing(SLOW, NOW)!;
+    expect(m.text).toBe(`${LINE} · 15분마다 확인`);
+    expect(m.title).toContain(`그동안 수집기가 15분마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인(수집기 선택값 — 연속이 ${KR_MISSING_SLOW_AFTER_MIN}분을 넘으면 ${KR_MISSING_SLOW_EVERY_MIN}분마다로 늘린다)`);
+    expect(krMissing({ ...MISS, probe_every_s: 300 }, NOW)!.text).toBe(`${LINE} · 5분마다 확인`);
+    expect(m.everyS).toBe(900);
+  });
+  it("확인 멈춤 after three intervals — 45 min when every 15 min, never below 15 min", () => {
+    const at = Date.parse(MISS.checked_at);
+    expect(krMissing(SLOW, at + 20 * 60_000)!.stale).toBe(false); // 전에는 15분에서 '확인 멈춤' — 늦춘 뒤 확인마다 깜박였다
+    expect(krMissing(SLOW, at + 45 * 60_000)!.stale).toBe(false);
+    const old = krMissing(SLOW, at + 45 * 60_000 + 1000)!;
+    expect(old.stale).toBe(true);
+    expect(old.staleMin).toBe(45);
+    expect(old.text).toBe(`${LINE} · 15분마다 확인 — 45분 넘게 다시 확인하지 않음(확인 멈춤)`);
+    expect(old.title).toContain("마지막 확인 뒤 45분 넘게 확인 없음 — 지금도 없는지는 모름");
+    expect(krMissing({ ...MISS, probe_every_s: 300 }, at + 15 * 60_000 + 1000)!.stale).toBe(true);
+    expect(krMissing({ ...MISS, probe_every_s: 60 }, at + 15 * 60_000)!.stale).toBe(false); // 아래로는 15분
+  });
+  it("an unknown or wrong interval is left out — the old wording and the 15 min bound", () => {
+    for (const bad of [undefined, null, 0, -900, 1.5, "900", 86_401]) {
+      const m = krMissing({ ...MISS, probe_every_s: bad as unknown as number }, NOW)!;
+      expect(m.text, String(bad)).toBe(LINE);
+      expect(m.everyS).toBeNull();
+      expect(m.staleMin).toBe(KR_MISSING_CHECK_STALE_MIN);
+      expect(m.title).toContain(`수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인`);
+    }
+  });
+  it("the numbers are the collector's choices (MISSING_SLOW_AFTER_S · MISSING_SLOW_EVERY_S · MISSING_STALE_PROBES)", () => {
+    const py = readFileSync(new URL("../../collector/wakeline_collector/jobs/kma_radar.py", import.meta.url), "utf8");
+    expect(Number(/^MISSING_SLOW_AFTER_S = (\d+) \* 60\b/m.exec(py)?.[1])).toBe(KR_MISSING_SLOW_AFTER_MIN);
+    expect(Number(/^MISSING_SLOW_EVERY_S = (\d+) \* 60\b/m.exec(py)?.[1])).toBe(KR_MISSING_SLOW_EVERY_MIN);
+    expect(Number(/^MISSING_STALE_PROBES = (\d+)\b/m.exec(py)?.[1])).toBe(KR_MISSING_STALE_PROBES);
+  });
+  it("status bar 상세 rule and the ops row follow the interval", () => {
+    resetData();
+    setData({ radarKr: kr({ missing: SLOW }) });
+    const row = detailRows(statusInput(getData(), NOW, NOW)).find((r) => r.key === "kma-missing")!;
+    expect(row.rule).toContain("수집기가 15분마다 목록의 가장 새 tm 과");
+    expect(row.rule).toContain("마지막 확인이 45분을 넘으면 확인 멈춤(수집기 선택값)");
+    resetData();
+    const P = { name: "kma_radar", missing_since_tm: "202609300815", missing_last_tm: "202609300950", missing_tms: "20",
+      missing_checked_at: "2026-09-30T00:50:31Z", missing_file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", missing_listed: "EXT", missing_probe_every_s: "900" };
+    expect(providerMissing(P, NOW)?.text).toBe(`${LINE} · 15분마다 확인`);
+    expect(providerMissing(P, Date.parse("2026-09-30T01:20:00Z"))?.stale).toBe(false); // 29분 — 늦춘 간격의 기준(45분) 안
+    expect(providerMissing({ ...P, missing_probe_every_s: "" }, NOW)?.text).toBe(LINE);
+  });
+  it("run status waiting (the collector did not call KMA in that cycle): amber with its meaning", () => {
+    expect(runStatusClass("waiting", "item")).toBe("text-warn");
+    expect(RUN_STATUS_TITLE.waiting).toContain("기상청을 부르지 않음");
+    expect(RUN_STATUS_TITLE.waiting).toContain("공급자 오류가 아니다");
   });
 });
