@@ -540,9 +540,9 @@
   `radar_kr.missing`(/radar/kr · /status · WS status) → 웹 KMA 칩 `파일 없음` · 상세 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 표. 웹은 받은 것만 적는다(없다는 답을
   받은 첫 · 마지막 tm, 확인한 서로 다른 tm 수 — 구간의 tm 이 모두 그만큼이라고 하지 않는다, 기상청 답의 파일 이름, 목록의 종류, 마지막 확인 KST). 마지막 확인이
   15분(수집기 `MISSING_CARRY_S` — 고른 값, 시험이 견준다)을 넘으면 `확인 멈춤`.
-- **회귀** collector `test_kma_missing.py`(23 — 먼저 써서 옛 코드에서 실패: 17주기 중단에 WARN 15건(이제 2건) · 모든 실행 'ok' · 5분마다 last_success_at 갱신,
+- **회귀** collector `test_kma_missing.py`(26 — #67 에서 3 더함. 먼저 써서 옛 코드에서 실패: 17주기 중단에 WARN 15건(이제 2건) · 모든 실행 'ok' · 5분마다 last_success_at 갱신,
   레인 커밋 e2300d7) · `test_rest_contract_rules` · api `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT` · `RestSamplesIT`(표본 `radar_kr_missing` — REST 계약 35종) ·
-  `WsSchemaContractTest`(WS 표본은 세 레인을 합친 뒤 다시 만들었다) · web `kma-missing.test.ts`(14 — 화면의 분이 수집기 상수와 같은지) · `ops-page` · `mapview-lifecycle`.
+  `WsSchemaContractTest`(WS 표본은 세 레인을 합친 뒤 다시 만들었다) · web `kma-missing.test.ts`(15 — 화면의 분이 수집기 상수와 같은지) · `ops-page` · `mapview-lifecycle`.
 - **남은 것** 이번 통합은 배포 전이라 실제 중단에서 WARN 수 · 화면은 아직 보지 않았다. 공개 파일이 언제 돌아올지는 모른다(공급자 쪽).
 
 ## #65 창 크기를 바꾸는 동안 브라우저 오류 'ResizeObserver loop completed with undelivered notifications.'
@@ -556,7 +556,7 @@
 - **수정** 줄 대신 폭 탐침(`data-testid="statusbar-width"` — absolute · inset-x-0 · h-0, 줄 폭 그대로 · 높이 0)을 본다. 상세 단추는 높이 고정(h-[22px]), 줄은 옮길 칩을
   옮기면 들어가는 동안 한 줄(nowrap)이고 고정 항목 · 주의 이상 칩만으로도 넘칠 때만 다음 프레임에 줄을 넘긴다(`pinnedOverflow`). 그 자리 반영은 한 프레임에 한 번.
   오류 보고기는 그대로다(이 메시지를 거르지 않는다 — 원인을 없앴다).
-- **회귀** `tests/statusbar.test.ts`(27) · E2E `statusbar-resize.spec.ts` — 레인은 `next dev`(자료 없음)에서만 돌렸고, 이번 통합의 `make e2e` 에서 격리된 fixture 스택
+- **회귀** `tests/statusbar.test.ts`(28 — #67 에서 1 더함) · E2E `statusbar-resize.spec.ts` — 레인은 `next dev`(자료 없음)에서만 돌렸고, 이번 통합의 `make e2e` 에서 격리된 fixture 스택
   (자료 있음 — 칩이 더 많다)으로 처음 돌려 통과(15.6 s). 같은 실행에서 `dashboard-layout.spec.ts`(1440×900 · 1280×800 · 1024×768 — 줄 안 넘침 · '+N' · 상세)도 통과.
 
 ## #66 AIS keepalive 1011 끊김 두 건 — 원인은 밝히지 못했다, 다음번을 가를 진단과 끊김 로그 수준
@@ -573,20 +573,51 @@
   → 운영 PIPELINE 행(고른 값은 응답에서 읽어 '수집기 설정' 으로 적고, 색으로 판정하지 않는다 — 어느 것도 손실 수가 아니다). 끊김 로그 수준: 받던 연결이 끊겨 열린
   공백이 30 s 안에 닫히면 INFO + 누적 수(`reconnects_quick_total` — 운영 '짧은 재연결'), 같은 연결의 30분에 3번째 끊김 · 끊길 때 이미 30 s 넘은 공백 · 데이터 없이
   끝난 연결 · 30 s 넘게 다시 받지 못함은 WARN. 공백 기록(`ais_gap` · AIS 수신 공백 목록 · 상태 해시)은 로그 수준과 상관없이 그대로다(시험이 단언).
-- **회귀** collector `test_ais_keepalive`(11) · `test_ais_diag`(15) · `test_ais_reconnect_log`(10) · `tools/contract_check.py`(새 필드 모양 · fixture 의 모름 · 구역 최댓값) ·
-  api `OpsPipelineControllerTest` · `OpsPipelineIT` · web `ops-pipeline-ais-diag.test.ts`(7).
+- **회귀** collector `test_ais_keepalive`(11) · `test_ais_diag`(15) · `test_ais_reconnect_log`(11 — #67 에서 1 더함) · `tools/contract_check.py`(새 필드 모양 · fixture 의 모름 · 구역 최댓값) ·
+  api `OpsPipelineControllerTest` · `OpsPipelineIT` · web `ops-pipeline-ais-diag.test.ts`(8 — #67 에서 1 더함).
 - **남은 것** 다음 1011 이 나면 끊김 로그 한 줄의 맥락(루프 지연 · 수신 버퍼 · keepalive 왕복 · 공급자 지연 p50)으로 후보를 가른다. 배포 전이라 운영 값은 아직 없다.
 
-## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 · 배포 전 — 노선 조회 우편함 밖(#63) · 기상청 '파일 없음'(#64) · 상태 바 ResizeObserver(#65) · AIS 수신 진단 · 끊김 로그 수준(#66))
+## #67 통합 리뷰(2026-09-30 · 세 레인 통합 뒤) — 기상청 연속을 가르는 때 · 다시 띄운 수집기의 첫 tm · 짧은 재연결 설명 · 운영 '확인 멈춤'의 시계 · 창 설정의 형식
+리뷰(api · 수집기 · 웹 두 갈래)가 찾은 것을 먼저 재현하고 고쳤다. 배포 전이라 운영 값은 아직 없다.
+- **기상청 '파일 없음' — 한 tm 과 연속을 너무 일찍 갈랐다**(낮음). 재현(`test_kma_missing` — 고치기 전 코드에서 실패): 12:15 는 끝내 없고 뒤 tm 의 파일은 한 주기 늦게 생길 때,
+  12:15 의 세 번째 시도에서 저장된 가장 새 tm(주기 전 12:10)보다 새 파일이 없다고 보고 연속을 열어 WARN('연속 시작') → 같은 주기에 12:20 파일을 받아 곧바로 닫음(INFO '5 min
+  공백'). 원인: 후보는 오래된 것부터인데 끝내 없는 tm 을 그 자리에서 갈랐다. 수정: 후보를 모두 본 뒤(주기가 오류로 중간에 끝나도) 파일이 있던 가장 새 tm(저장된 것 · 이 주기에
+  받은 것)과 견준다 — 이제 전처럼 'tm=12:15 still unavailable after 3 tries — skipped' WARN 하나.
+- **다시 띄운 수집기의 연속 첫 tm 이 늦었다**(낮음). 재현: 12:10 뒤 멈췄다가 12:45 에 다시 띄우면(Redis 에 이어받을 연속 없음) 보관 창의 빈 tm 중 최신 4개만 고르므로 12:30 ·
+  12:35 는 한두 번 묻고 밀려났다 → 연속은 12:40 에서 열리고(4 tm) 회복 뒤 12:30 · 12:35 가 알린 공백 밖이라 tm 마다 WARN. 수정: 연속을 열 때 이 프로세스에서 없다는 답을 받은,
+  파일이 있던 가장 새 tm 보다 새 tm 을 모두 센다(첫 tm 12:30 · 6 tm) — 문서의 정의('없다는 답을 받은 가장 이른 tm')와 같다. 남은 것: 그 프로세스가 연속 전에 한 번도 묻지
+  않은 tm(이 재현에서 12:25)은 받은 답이 없어 세지 않고, 회복 뒤 보관 창에서 세 번을 채우면 그 tm 하나로 WARN 할 수 있다(시험이 그렇게 적는다 — 짐작해 넓히지 않았다).
+- **실 Redis · ACL 로 돌리지 않았다**(누락). 수집기의 Redis 사용이 늘었다(첫 주기 HGETALL `wakeline:radar_kr:meta` · `wakeline:provider:kma_radar` 의 HSET missing_* · AIS 상태
+  해시의 새 필드). `test_redis_integration.py` 에 수집기 ACL(start.sh 규칙) 아래 연속을 열고 · 다시 띄워 이어받고 · 닫아 알린 공백을 쓰는 시험을 더했고,
+  `infra/tests/collector_redis_test.sh`(버리는 컨테이너 — 13 통과) · `redis_acl_test.sh`(291 통과)를 이번에 다시 돌렸다.
+- **'짧은 재연결' 설명이 틀렸다**(중간). 운영 PIPELINE 행 · 수집기 · api 주석이 '이 끊김은 INFO 로만 남는다' 고 했지만 같은 연결의 N번째'부터'(`n >= repeat_warn_count`) 끊김은
+  끊김 줄이 WARN 이고, 공백이 창 안에 닫히면 수에 든다(그 사이 데이터 없이 끝난 재연결 시도의 WARN 도). 수는 로그 수준이 아니라 공백 길이로 센다 — 계약 §G23 의 필드 정의가
+  그렇다. 설명 · 주석 · ADR-014 부록 C · 계약을 그렇게 고치고 '번째로' → '번째부터'. `test_ais_reconnect_log` 에 가짜 시계로 되풀이 · 데이터 없는 시도 · 창을 넘은 공백을 고정했다.
+- **운영 '파일 없음' 줄의 '확인 멈춤'이 브라우저 시계로 판정됐다**(낮음). 계약 §G22 는 서버 기준 지금이다. `/api/v1/ops/providers` 에 `generated_at`(응답을 만든 서버 시각)을
+  더하고 운영 화면이 그것으로 잰다 — 없으면 판정하지 않는다(브라우저 시계로 짐작하지 않는다). `ops-page.test.ts`: 브라우저 시계 1 h 앞 · 멈춘 확인 · 서버 시각 없음.
+- **`diag_window_s` 를 api 만 정수로 읽었다**(낮음). 수집기는 고른 초(소수 셋째 자리까지)로 쓰고 contract_check 도 초로 본다 — 60.5 같은 창이면 `/ops/pipeline` 이 조용히 null.
+  다른 고른 초와 같이 초(Double)로 읽는다(`OpsPipelineControllerTest`).
+- **상태 바가 '잰 줄'이 되지 않을 수 있었다**(낮음, 잠재). 첫 측정이 폭 0(숨긴 조상 안)이고 ResizeObserver 가 옮길 칩이 없다고 재면 `data-measured` 가 칩 모음이 바뀔 때까지
+  없고 경고 칩 줄바꿈도 막혔다. 콜백이 잴 수 있으면 잰 줄로 둔다(`statusbar.test.ts` — 고치기 전 판에서 실패 확인).
+- **설명서 6.2 가 이번 통합의 운영 화면을 말하지 않았다**(누락). PIPELINE 의 AIS 수신 진단(손실 수 아님 · 색 판정 없음 · 고른 값은 '수집기 설정'), 실행 상태 missing ·
+  quarantined(주황 · 마지막 성공을 갱신하지 않음), kma_radar '파일 없음' 줄(서버 시각 기준 '확인 멈춤')을 적었다(`guide-page.test.ts`).
+- **E2E 가 보지 않던 것**(누락): `statusbar-resize.spec.ts` 가 끄는 동안 프레임마다 줄 높이를 적어 줄바꿈이 아닌 모든 프레임이 한 줄 높이 · 상세 단추 높이 고정인지 본다.
+  `kma-missing.spec.ts` — fixture 스택의 `/radar/kr` 응답에 연속만 덧붙여 KMA 칩 `파일 없음` · 상세 행(KST 만). `ops-screens.spec.ts` — fixture 스택에 운영 계정이 없어 운영 API
+  응답을 시험이 주고(e2e/rest-inject — 값은 계약 모양, `tests/e2e-inject.test.ts` 가 먼저 해석을 본다) 빌드된 앱이 진단 행의 고른 값을 응답에서 읽고 '확인 멈춤'을 서버
+  시각으로 판정하는지 본다. `make e2e` 37 통과.
+- **로그 버림 행의 숫자**(낮음, 통합 전부터). collector · ais · api 의 '시스템 로그 버림' 설명의 500건 · 2 MiB · 8 KiB 를 `logsink.py` · `LogSink.java` 상수와 견주는 Vitest 를
+  더했다(글자만 남아 틀리지 않게 — 상태 해시에 싣는 것은 하지 않았다).
+
+## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 · 통합 리뷰 수정 뒤 · 배포 전 — 노선 조회 우편함 밖(#63) · 기상청 '파일 없음'(#64) · 상태 바 ResizeObserver(#65) · AIS 수신 진단 · 끊김 로그 수준(#66) · 통합 리뷰(#67))
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,449 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 %(이번 통합에서 잼 — 8,912문 중 246 빠짐) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 867 · JaCoCo LINE 96.6 % · BRANCH 85.6 %(하한 95 / 80) |
-| web 단위 | Vitest | 1,172(78 파일) · 커버리지(소스 전체) Lines 91.1 % · Branches 81.9 % |
+| collector · ais 단위·통합 | pytest | 1,453 통과(19 건너뜀 — 실 Redis 13건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 %(#67 수정 뒤 잼 — 8,941문 중 246 빠짐) |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 868 · JaCoCo LINE 96.5 % · BRANCH 85.6 %(하한 95 / 80) |
+| web 단위 | Vitest | 1,181(78 파일) · 커버리지(소스 전체) Lines 91.15 % · Branches 81.9 % |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15 — 세 레인을 합친 뒤 `make ws-samples` 경로로 다시 만듦) + 가림 · 억제 벡터 — PASSED |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 35종(기상청 '파일 없음' 연속 표본 `radar_kr_missing` 추가 — #64) — PASSED |
 | 인프라 정책 | infra/tests(unittest) | 122 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 12 — 앞 회차 값(#57), 이번 통합에서는 돌리지 않았다(인프라 · 마이그레이션 파일은 바뀌지 않았다) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 35 통과(상태 바 창 크기 시험 `statusbar-resize.spec.ts` 추가 — #65) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · **291** · 36 · 48 · 27 · **13** — Redis ACL · collector 실 Redis 는 #67 에서 다시 돌렸다(수집기의 Redis 사용이 늘었다 — 연속 시험 1건 더함). 나머지 넷은 앞 회차 값(#57 — 인프라 · 마이그레이션 파일은 바뀌지 않았다) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 37 통과(9 파일 — 상태 바 창 크기 시험 `statusbar-resize.spec.ts` #65 · 프레임마다 줄 높이, 기상청 '파일 없음' `kma-missing.spec.ts` · 운영 진단 행 `ops-screens.spec.ts` #67) |
 | 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | 앞 회차 PASS(2026-09-30 배포 전 빌드) — 이번 통합에서는 돌리지 않았다(의존성 · Dockerfile 은 바뀌지 않았다) |
 | 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 배포 뒤 228건 · 14종, 형식 오류 0건(docs/review/evidence/v5-ws-live-check-2026-09-30.txt) — 이번 통합은 아직 배포하지 않았다 |
