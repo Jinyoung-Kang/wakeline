@@ -53,7 +53,7 @@ class RestSamplesIT extends IntegrationTest {
     /** ais 상태 해시 shards 원소(계약 v4 §D 필드 그대로 — 합성 값). */
     static String shard(String scope, Instant hb) {
         return "{\"scope\":\"" + scope + "\",\"state\":\"receiving\",\"connected\":true,\"last_msg_at\":\"" + hb + "\",\"msgs_per_s\":2.1,"
-                + "\"lag_p50_s\":1.9,\"gap_open_since\":null,\"gap_reason\":null,\"sessions_ended\":0}";
+                + "\"lag_p50_s\":1.9,\"gap_open_since\":null,\"gap_reason\":null,\"sessions_ended\":0,\"ping_rtt_max_s\":0.31,\"ws_queue_max\":2}";
     }
 
     void record(String name, String path, int expectedStatus) throws IOException {
