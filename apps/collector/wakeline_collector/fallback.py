@@ -39,6 +39,7 @@ STAGE_MAX(8 — 쉼·미룸이 모두 가장 긴 값인 단계)에서 멈춘다.
 전환 사유(set_active·switch_event 에 같은 글, 가린 뒤 REASON_MAX 자): 무엇을 왜 건너뛰었는지·왜 돌아왔는지를 적는다.
   "fallback — adsb_lol 429 쉼(60 s)" · "fallback — adsb_lol 429 반복 → 20분 뒤로 미룸" · "fallback — adsb_lol 3회 연속 실패(10분 쉼)" ·
   "fallback — adsb_lol 운영자 끔" · "fallback — adsb_lol 일시정지(크레딧/예산)" · "recovery — adsb_lol 쉼 끝(1순위 복귀)" ·
+  "order — 공급자 순서 변경(aircraft_providers — adsb_fi 1순위)"(운영 설정의 순서가 바뀌어 고른 공급자 — 지난 선택 때 건너뛰지 않았다) ·
   "initial" (처음 고른 것이 1순위가 아니면 "initial — <건너뛴 공급자> <사유>"). 순위는 이 작업 범위(관심 지역·전세계)를 지원하는 공급자 사이의 순서다.
 """
 
@@ -175,6 +176,9 @@ class ProviderChain:
         self._fail_until: dict[str, float] = {}
         self._fail_why: dict[str, str] = {}
         self._probed_at: dict[str, float] = {}  # 쉬는 중 다시 시도한 마지막 때(여럿이면 오래된 것부터)
+        # 지난 선택의 순위(이 범위를 지원하는 공급자 순서)와 그때 건너뛴 공급자 — 순서가 바뀌어 고른 공급자를 '쉼 끝'으로 적지 않게(_reason)
+        self._ranked: list[str] | None = None
+        self._skipped_prev: frozenset[str] = frozenset()
         self._current: str | None = None
         self._none_since: float | None = None  # 공급자 없음이 시작된 때(단조 시계) — 없으면 None
         self._none_at: datetime | None = None  # 같은 때(UTC 벽시계 — set_none 에 싣는다)
@@ -295,6 +299,10 @@ class ProviderChain:
         """이번 주기에 부를 공급자(없으면 None). 쉬는 공급자를 다시 시도하는 것(mode "probe")도 돌려주지만 상태는 '공급자 없음'이다 —
         그 공급자가 답하면(succeeded) 끝난다."""
         c = await self._evaluate(order, need_global)
+        ranked = self._candidates(order, need_global)
+        reordered = self._ranked is not None and ranked != self._ranked
+        prev_skipped = self._skipped_prev
+        self._ranked, self._skipped_prev = ranked, frozenset(n for n, _k, _w in (c.full or c.skipped))
         for n, kind, _why in c.skipped:
             self._last_skip[n] = kind
         if c.name is None:
@@ -306,8 +314,9 @@ class ProviderChain:
             await self._enter_none(list(c.full), c.name)  # 일하는 공급자가 없다 — 쉬는 c.name 을 다시 시도하는 중
             return self._providers[c.name]
         if self._none_since is not None or self._current != c.name:
-            reason = self._reason(c, self._candidates(order, need_global))
-            await self._use(c.name, reason)
+            # 지난 선택 때 건너뛰지 않았는데 순서가 바뀌어 이번에 고른 공급자 — 쉬었다 돌아온 것이 아니다(리뷰 2026-09-30 밤)
+            by_order = reordered and c.name not in prev_skipped
+            await self._use(c.name, self._reason(c, ranked, by_order))
         elif not self._state_saved:  # 앞선 set_active 가 Redis 오류로 실패했다 — 같은 값(그때 · 까닭)으로 다시 쓴다
             saved = await self._status.set_active(self.job, c.name, reason=self._active_reason, since=self._active_at)
             self._state_saved = saved is not False
@@ -367,14 +376,19 @@ class ProviderChain:
                 best = (n, left)
         return best
 
-    def _reason(self, c: _Choice, ranked: list[str]) -> str:
+    def _reason(self, c: _Choice, ranked: list[str], by_order: bool = False) -> str:
+        """by_order: 운영 설정(aircraft_providers)의 순서가 지난 선택 뒤 바뀌었고, 고른 공급자는 지난 선택 때 건너뛰지 않았다 — '쉼 끝 · 복귀'가 아니라
+        'order — 공급자 순서 변경'으로 적는다(전에는 V17 배포 · /ops 변경 때 쉰 적 없는 adsb_fi 를 'recovery — adsb_fi 쉼 끝(1순위 복귀)'로 적었다)."""
         name, skipped = c.name, c.skipped
         assert name is not None
         prev = self._current
         why = {n: w for n, _k, w in skipped}
         tail = f"{name} 429 미룸 중이나 다른 공급자 없음" if c.mode == "held" else ""
+        changed = f"공급자 순서 변경(aircraft_providers — {name} {ranked.index(name) + 1}순위)"
         if self._none_since is not None:  # 공급자 없음이 끝났다
-            back = tail or f"{name} {_RECOVERED.get(self._last_skip.get(name, ''), '쉼 끝')}"
+            back = tail or (
+                f"{name} {changed}" if by_order else f"{name} {_RECOVERED.get(self._last_skip.get(name, ''), '쉼 끝')}"
+            )
             return f"recovery — 공급자 없음 {_dur(round(time.monotonic() - self._none_since))} 끝 · {back}"
         if tail:
             head = "initial" if prev is None else "fallback"
@@ -387,6 +401,8 @@ class ProviderChain:
         if prev not in ranked:
             return f"order — {prev} 이(가) 공급자 순서에 없음"
         rank = ranked.index(name)
+        if by_order:
+            return f"order — {changed}"
         if rank < ranked.index(prev):
             back = _RECOVERED.get(self._last_skip.get(name, ""), "쉼 끝")
             return f"recovery — {name} {back}({rank + 1}순위 복귀)"

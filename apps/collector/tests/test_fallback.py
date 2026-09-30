@@ -216,6 +216,42 @@ async def test_reason_429_backoff_then_recovery(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reason_a_runtime_order_change_is_an_order_change_not_a_rest_that_ended(monkeypatch):
+    """리뷰 2026-09-30 밤: V17 배포 창(api 가 새 순서를 Redis 로 미러하는 동안 수집기는 그대로) · /ops 순서 변경 때 체인이 쉰 적 없는 adsb_fi 를
+    'recovery — adsb_fi 쉼 끝(1순위 복귀)'로 적었다. 순서가 바뀌어 고른 공급자는 'order — 공급자 순서 변경(…)'이다. 쉬었다 돌아온 것은 그대로 recovery."""
+    clk = _clocked(monkeypatch)
+    st = FakeStatus()
+    chain = ProviderChain("region", {"adsb_lol": P("adsb_lol"), "adsb_fi": P("adsb_fi")}, st)
+    assert (await chain.pick(["adsb_lol", "adsb_fi"])).name == "adsb_lol"
+    assert (await chain.pick(["adsb_fi", "adsb_lol"])).name == "adsb_fi"  # 운영 설정의 순서가 바뀌었다
+    assert st.switches == [("adsb_lol", "adsb_fi")]
+    assert st.reasons == ["order — 공급자 순서 변경(aircraft_providers — adsb_fi 1순위)"]
+    assert st.active[-1] == ("adsb_fi", st.reasons[-1])
+    assert (await chain.pick(["adsb_lol", "adsb_fi"])).name == "adsb_lol"  # 되돌림도 같은 말
+    assert st.reasons[-1] == "order — 공급자 순서 변경(aircraft_providers — adsb_lol 1순위)"
+    # 같은 순서에서 쉬었다 돌아오면 전처럼 recovery
+    chain.record_rate_limited("adsb_lol")
+    assert (await chain.pick(["adsb_lol", "adsb_fi"])).name == "adsb_fi"
+    clk[0] += 61
+    assert (await chain.pick(["adsb_lol", "adsb_fi"])).name == "adsb_lol"
+    assert st.reasons[-1] == "recovery — adsb_lol 쉼 끝(1순위 복귀)"
+    # 쉬는 중에 순서가 바뀌어 쉬던 공급자가 뒤로 가면 전환은 없고, 쉼이 끝나 돌아오는 공급자는 recovery(지난 선택 때 건너뛰었다)
+    chain.record_rate_limited("adsb_lol")
+    assert (await chain.pick(["adsb_lol", "adsb_fi"])).name == "adsb_fi"
+    n = len(st.reasons)
+    assert (await chain.pick(["adsb_fi", "adsb_lol"])).name == "adsb_fi" and len(st.reasons) == n
+    # 공급자 없음 뒤 새 순서에 든 공급자가 끝내면 그 말도 순서 변경
+    chain2 = ProviderChain("region", {"adsb_lol": P("adsb_lol"), "adsb_fi": P("adsb_fi")}, st)
+    await chain2.pick(["adsb_lol"])
+    chain2.mark_down("adsb_lol", 600)  # 쉰다 — 순서에 다른 공급자가 없다 → 공급자 없음
+    assert await chain2.pick(["adsb_lol"]) is None
+    assert (await chain2.pick(["adsb_lol", "adsb_fi"])).name == "adsb_fi"
+    assert st.reasons[-1].startswith("recovery — 공급자 없음") and st.reasons[-1].endswith(
+        "adsb_fi 공급자 순서 변경(aircraft_providers — adsb_fi 2순위)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_reason_repeated_429_says_how_long_it_is_deferred(monkeypatch):
     clk = _clocked(monkeypatch)
     st = FakeStatus()
