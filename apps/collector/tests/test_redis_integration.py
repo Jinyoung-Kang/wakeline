@@ -403,3 +403,52 @@ async def test_chain_429_history_store_under_collector_acl(admin, collector, cap
             await collector.expire("wakeline:provider:itest", 1)
     finally:
         await admin.delete(key, "wakeline:provider:itest")
+
+
+async def test_kma_missing_streak_reads_and_writes_under_the_collector_acl(admin, collector, monkeypatch):
+    """계약 v5 §G22(리뷰 2026-09-30 — 통합 뒤 실 Redis · ACL 로 돌리지 않았다): 기상청 '파일 없음' 연속은 첫 주기의 HGETALL wakeline:radar_kr:meta
+    (이어받기) · meta 와 공급자 해시 wakeline:provider:kma_radar 의 HSET missing_* · 닫은 뒤 알린 공백 missing_gap_* 를 쓴다 — 수집기 규칙(start.sh)으로
+    모두 되는지 실제 Redis 에서 본다. 외부 호출 없음(가짜 공급자 — test_kma_missing 의 OutageKma)."""
+    from fakes import make_ctx
+    from test_kma_missing import KST, OutageKma, _fake_decode
+
+    from wakeline_collector.jobs import kma_radar as mod
+
+    clock = {"now": "202609271215"}
+    wall = lambda: datetime.strptime(clock["now"], "%Y%m%d%H%M")  # noqa: E731
+    monkeypatch.setattr(mod, "_decode", _fake_decode)
+    monkeypatch.setattr(mod, "kst_now", wall)
+    monkeypatch.setattr(mod, "_now", lambda: (wall() - KST).replace(tzinfo=UTC))
+    keys = (mod.KEY_META, mod.KEY_FRAMES, "wakeline:provider:kma_radar", day_key("kma_radar"), "wakeline:collector")
+    await admin.delete(*keys)
+
+    def ctx_for():
+        ctx = make_ctx(collector, limits={"kma_radar": 1000})
+        ctx.budget = Budget(collector, {"kma_radar": 1000})
+        ctx.status = ProviderStatus(collector)
+        return ctx
+
+    prov = OutageKma(clock, down_from="202609270000", up_from="202609271240")
+    try:
+        job = mod.KmaRadarJob(prov, ctx_for())
+        for t in ("202609271215", "202609271220", "202609271225"):
+            clock["now"] = t
+            await job.run_once()
+        assert job.missing is not None
+        meta, prov_h = await admin.hgetall(mod.KEY_META), await admin.hgetall("wakeline:provider:kma_radar")
+        assert meta["missing_since_tm"] == prov_h["missing_since_tm"] == job.missing.since_tm
+        assert meta["missing_tms"] == str(job.missing.tms) and meta["missing_listed"] == "EXT"
+        again = mod.KmaRadarJob(prov, ctx_for())  # 다시 띄운 수집기 — HGETALL 로 이어받는다
+        clock["now"] = "202609271230"
+        await again.run_once()
+        assert again.missing is not None and again.missing.since_tm == job.missing.since_tm
+        for t in ("202609271235", "202609271240"):
+            clock["now"] = t
+            await again.run_once()
+        assert again.missing is None  # 12:40 의 파일 — 닫았다
+        meta, prov_h = await admin.hgetall(mod.KEY_META), await admin.hgetall("wakeline:provider:kma_radar")
+        assert all(meta[k] == "" for k in mod.MISSING_KEYS) and all(prov_h[k] == "" for k in mod.MISSING_KEYS)
+        assert (meta["missing_gap_from"], meta["missing_gap_to"]) == (job.missing.since_tm, "202609271240")
+        assert meta["latest_tm"] == "202609271240" and await admin.exists(mod.KEY_FRAME.format(tm="202609271240")) == 1
+    finally:
+        await admin.delete(*keys, mod.KEY_FRAME.format(tm="202609271240"))

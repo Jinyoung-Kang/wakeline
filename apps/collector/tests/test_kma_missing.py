@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -152,7 +153,8 @@ async def test_outage_warns_once_then_reminds_per_interval_and_recovery_is_info(
     # 전에는 tm 마다 3번 뒤 WARN 하나씩(12:15 … 13:25 — 15건). 이제 연속이 시작될 때 한 번 + 60분(선택값)마다 한 번
     assert len(warns) == 2, warns
     assert warns[0] == (
-        "kma radar: KMA download has no file from tm=202609271215 on — the listing has it (EXT), the download answered "
+        "kma radar: KMA download has no file from tm=202609271215 on — 3 tms answered missing (newest tm=202609271225); "
+        "the listing has tm=202609271215 (EXT); tm=202609271215 answered 3 times: "
         "not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'; probing only the newest listed tm and the newest one "
         "at least 10 min old once per cycle, reminder every 60 min (chosen)"
     )
@@ -570,3 +572,91 @@ async def test_a_listing_failure_during_a_streak_keeps_the_streak_and_its_last_c
     assert [run["status"] for run in runs] == ["missing"]
     assert (await r.hgetall(mod.KEY_META))["missing_checked_at"] == "2026-09-27T03:40:00Z"
     assert not any("has no file" in m for m in _warns(caplog))
+
+
+# ---- 리뷰(2026-09-30 · 통합) 후속: 연속인지는 주기의 후보를 모두 본 뒤에 가린다 -------------------------------------------------
+async def test_a_missing_tm_followed_by_a_late_file_in_the_same_cycle_is_one_skipped_tm_not_an_outage(env, caplog):
+    """리뷰(낮음): 후보는 오래된 것부터인데 끝내 없는 tm 을 그 자리에서 가렸다 — 12:15 가 세 번째도 없던 주기에 저장된 가장 새 tm 은 12:10 이라 연속을
+    열고(WARN '연속 시작'), 같은 주기에 뒤이어 12:20 파일(R-03 — 한 주기 늦게 생김)을 받아 곧바로 닫았다(INFO '5 min 공백'). 이제 주기 끝에 가린다:
+    그 tm 하나만 빠졌다(전처럼 WARN 한 번), 연속 · 공백 INFO · 알린 공백은 없다."""
+    mod, r, ctx, clock, runs = env
+
+    class HoleLate(LateKma):
+        def _down(self, tm):
+            return tm == "202609271215" or super()._down(tm)
+
+    prov = HoleLate(clock, down_from="209912312355", late=5)
+    job = await _steady(mod, ctx, clock, prov)
+    runs.clear()
+    await _cycles(job, clock, "202609271240")
+    assert _warns(caplog) == [
+        "kma radar: tm=202609271215 still unavailable after 3 tries — skipped: not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'"
+    ]
+    assert not [m for m in _infos(caplog) if "has the file again" in m]
+    assert job.missing is None and job._closed_gap is None
+    assert (await r.hgetall(mod.KEY_META)).get("missing_since_tm", "") == ""
+    # 12:20 주기만 새 프레임 없음(12:15 는 없고 12:20 은 아직 — 늦게 생김). 12:25 주기에 12:20 을 받는다 — 전에는 이 주기도 'missing'(연속을 열고 닫았다)
+    assert [run["status"] for run in runs] == ["ok", "missing", "ok", "ok", "ok", "ok"]
+
+
+async def test_a_restart_inside_an_outage_starts_the_streak_at_the_first_tm_it_asked(env, caplog):
+    """리뷰(낮음): 연속 한가운데서 다시 띄운 수집기(Redis 에 이어받을 연속 없음 — 15분 넘게 멈췄다)는 보관 창의 빈 tm 중 최신 4개만 고르므로 옛 tm 은
+    한두 번 묻고 후보에서 밀려났다. 전에는 처음으로 세 번을 채운 tm(12:40)에서 연속을 열어 첫 tm · 수가 줄었고, 앞서 없다고 답한 12:30 · 12:35 는 회복 뒤
+    알린 공백 밖이라 tm 마다 WARN 했다. 이제 이 프로세스에서 없다는 답을 받은, 파일이 있던 가장 새 tm(12:10)보다 새 tm 을 모두 센다(첫 tm 12:30).
+    이 프로세스가 연속 전에 한 번도 묻지 않은 tm(12:15–12:25)은 받은 답이 없어 세지 않는다 — 회복 뒤 보관 창에서 세 번을 채우면 그 tm 하나로 WARN 할 수 있다."""
+    mod, r, ctx, clock, runs = env
+    prov = OutageKma(clock, down_from="202609271215", up_from="202609271300")
+    await _steady(mod, ctx, clock, prov)
+    caplog.clear()
+    prov.binaries.clear()
+    job = mod.KmaRadarJob(prov, ctx)  # 12:10 뒤 멈췄다가 12:45 에 다시 띄운 수집기
+    clock["now"] = "202609271245"
+    await job.run_once()
+    assert prov.binaries == ["202609271230", "202609271235", "202609271240", "202609271245"]  # 보관 창의 빈 tm 중 최신 4개
+    opened_at = None
+    for t in _tms("202609271400", "202609271250"):
+        clock["now"] = t
+        await job.run_once()
+        if job.missing is not None and opened_at is None:
+            opened_at = t
+            asked = {tm for tm in prov.binaries if tm < "202609271300"}
+            assert job.missing.since_tm == "202609271230" == min(asked)  # 전에는 202609271240
+            assert job.missing.tms == len(asked)  # 전에는 4
+    assert opened_at == "202609271255"
+    warns = _warns(caplog)
+    assert len([m for m in warns if "has no file from" in m]) == 1
+    assert "has no file from tm=202609271230 on" in warns[0]
+    skipped = [m for m in warns if "still unavailable" in m]
+    # 알린 공백의 tm 은 WARN 하지 않는다(INFO)
+    assert all(re.search(r"tm=(\d{12})", m).group(1) < "202609271230" for m in skipped), skipped
+    inside = "(inside the gap reported from tm=202609271230"
+    assert any("tm=202609271235 still unavailable after" in m and inside in m for m in _infos(caplog))
+
+
+async def test_a_call_failure_later_in_the_cycle_still_reports_the_tm_given_up(env, caplog):
+    """주기가 중간에 끝나도(뒤 tm 의 HTTP 오류) 이 주기에 포기한 tm 은 가린다 — 품질 이벤트만 남고 로그가 조용해지지 않게."""
+    from wakeline_collector.http import ProviderHttpError
+
+    mod, r, ctx, clock, runs = env
+
+    class HoleThenError(OutageKma):
+        def _down(self, tm):
+            return tm == "202609271215"
+
+        async def binary(self, tm):
+            if tm == "202609271225":
+                self.binaries.append(tm)
+                raise ProviderHttpError(500, "internal error")
+            return await super().binary(tm)
+
+    prov = HoleThenError(clock, down_from="")
+    job = await _steady(mod, ctx, clock, prov)
+    runs.clear()
+    await _cycles(job, clock, "202609271225")  # 12:25 주기: 12:15 세 번째(없음) → 12:25 HTTP 500 으로 주기 끝
+    assert [run["status"] for run in runs] == ["missing", "ok", "error"]
+    warns = _warns(caplog)
+    assert warns[0].startswith("kma radar: binary tm=202609271225 — HTTP 500")  # 주기를 끝낸 오류
+    assert warns[1:] == [  # 그 뒤 — 이 주기에 포기한 tm(더 새 파일 12:20 이 있다 — 한 tm)
+        "kma radar: tm=202609271215 still unavailable after 3 tries — skipped: not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'"
+    ]
+    assert job.missing is None
