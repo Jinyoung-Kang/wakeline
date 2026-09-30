@@ -799,3 +799,41 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 회귀 막기: collector `test_kma_missing`(15분마다 확인 · 그 사이 'waiting' · 해시 간격 · 늦출 때 INFO 한 번 · 예산 산수와 모의 하루 · 늦춘 확인에서 회복 뒤 5분마다 ·
     다시 띄운 수집기 — 이어받기 45분 · 기다림 · 버림), api `KrRadarMissingTest`(간격 · 틀린 값) · `RestSamplesIT` · `WsSchemaContractTest`(표본), web `tests/kma-missing.test.ts`
     (한 줄 · 기준 45분 · 모름 · 수집기 상수 · 상세 규칙 · 운영 줄 · 'waiting' 색) · `ws-schema-sweep-v5`(검증기 = 스키마) · `guide-page`.
+
+## G. 18차 개정(2026-09-30 저녁 · 레인 coverage · 사용자 질문 "대한민국 영해에 선박 정보가 안 떠 있는 이유" — ADR-027) — 관측 AIS 수신 범위
+같은 저녁 레인 collector 가 17차 개정으로 §G25 · §G26 을 먼저 썼다 — 이 절은 그다음 번호 §G27 이다(처음에 §G26 으로 적어 겹쳤다 — 리뷰 2026-09-30 에서
+고쳤다. 합칠 때 17차 개정이 이 절 앞에 오고, 번호는 web `tests/docs-contract-g11.test.ts` 가 겹치지 않는지 본다).
+- G27 **관측 수신 범위 계약**(api · web · 도구 — 근거 · 고른 값 · 상한의 계산은 ADR-027):
+  - 뜻: 이 서비스가 최근 24 h 에 실제로 받은 선박 위치를 0.5° 칸으로 센 것 — 구독 범위(운영 설정 ais_bboxes · 계약 v3 §A 의 점선)가 아니다. aisstream.io 는
+    육상 수신국이 받은 것만 보내므로(ADR-014) 구독 범위 안이어도 칸이 없을 수 있다. 수신국 목록 · 반경은 짓지 않는다.
+  - REST `GET /api/v1/ships/coverage`(공개 · `Cache-Control: public, max-age=60` · ETag 스냅숏마다(`"o<순번>-<시각>"`) → `If-None-Match` 304 · 요청 제한 공통 ·
+    요청 중 DB · 외부 호출 없음 — 메모리 스냅숏, 60 s 마다 새로 만든다). 늘 있는 키: `cell_deg`(0.5) · `window{hours: 24, bucket_s: 3600, from, to}` · `since` ·
+    `covered`(full · partial · since_api_start) · `api_started_at` · `live_from` · `bootstrap{state(pending · running · done · failed), hours_loaded, hours_total, rows,
+    loaded_from}`(+ `error` — failed 일 때만, 종류 statement_timeout · connection · read_timeout · deadline · stopped · error, 서버 글자 없음 · `finished_at` — done ·
+    failed 일 때만) · `generated_at` · `cells` · `cell_count` · `positions` · `truncated` · `dropped_positions` · `limits{max_cells, max_ship_cells}` ·
+    `sampling`("first_fix_per_60s") · `note` · `time_zone` · `meta`(provider = 마지막으로 센 보고의 공급자, fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 stale 로 잘못
+    보이지 않게, 칸이 없으면 둘 다 키 없음,
+    stale 기준 900 s).
+  - `cells[]` = `[lon0, lat0, 0.5, 선박 수, 위치 수, 마지막 수신]`: 칸 [lon0, lon0 + 0.5) × [lat0, lat0 + 0.5)(floor — 180°E · 90°N 은 마지막 칸), 남 → 북 · 서 → 동 순,
+    선박 수 = 창 안 서로 다른 MMSI(≥ 1), 위치 수 = 저장과 같은 표본(MMSI 별 60 s 창의 첫 보고 — `IngestEvents.ShipsSampled` — 파이프라인 이벤트, ≥ 선박 수), 마지막 수신 = 그 칸의 가장 늦은
+    seen_at(UTC ISO, 초로 내림 — 수집기 시계가 빠르면 generated_at 보다 5분까지 늦을 수 있다). 칸 상한 16,000 · 칸별 선박 항목 상한 200,000(고른 값) — 넘친 보고는
+    세지 않고 `dropped_positions`(창 안) · `truncated` 로 밝힌다.
+  - 창 · 덮음: `window.from` = generated_at 이 든 UTC 시의 시작 − 24 h, `window.to` = generated_at. `live_from` = api_started_at 을 분(60 s 창)으로 내린 것 — 실시간
+    셈은 seen_at ≥ live_from, 기동 때 부트스트랩은 ship_position 의 ts < live_from(두 번 세지 않는다). `since` = max(window.from, min(bootstrap.loaded_from, live_from)) ·
+    `covered` = full ⇔ since = window.from, 아니면 loaded_from < live_from 이면 partial, 아니면 since_api_start.
+  - 부트스트랩(한 번 · api 시작 `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) 뒤 · 가장 최근 시부터 · 시 하나에 문장 하나 · 연결 하나(공유 풀 · 선택 조회 풀 아님) ·
+    읽기 전용 · statement_timeout 10 s · socketTimeout 12 s · connectTimeout 2 s · loginTimeout 5 s · 전체 마감 180 s — 멈추면 이어 읽은 부분만).
+  - 검사: `tools/rest_contract_check.py` `ship_coverage`(스키마 + `_ship_coverage` — 창의 시작 · to = generated_at · live_from 이 api 시작의 분 · since/covered 식 ·
+    격자점 · 순서 · 중복 없음 · 선박 ≤ 위치 · 마지막 수신이 창 안이고 초로 내림 · 합계 · 잘림 ⇔ 빠진 위치 · 상한 · meta.fetched_at = min(가장 늦은 마지막 수신, generated_at)), 표본은
+    RestSamplesIT, 규칙 시험은 collector `tests/test_rest_contract_rules.py`. OpenAPI 스냅숏에 `shipCoverage`.
+  - 웹: 레이어 키 `reception`(선택 필드 — 없으면 끔 · 이 브라우저에 기억), 단추 '관측 수신 범위(최근 24 h)'(선박 옆). 켤 때 받는 조각(ADR-026 — `components/ReceptionLayer` ·
+    `lib/reception`, `tests/first-screen-lazy.test.ts` 목록에 까닭과 함께): 조회 120 s · ETag · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만, 칸은 옅은 파랑
+    (`#5fb4e0`) · 채움 불투명도 = 선박 수 구간 1–2 · 3–9 · 10–29 · 30–99 · 100+(0.10 · 0.16 · 0.23 · 0.30 · 0.38 — 표시용 선택), 연안 교통량 아래. 툴팁: 칸 범위 ·
+    선박 · 위치(선박마다 60 s 에 1건) · 마지막 수신 · 창(KST 만). 상태 줄: 칸 수 · 이 화면의 칸 수 · 창(KST), covered 가 full 이 아니면 '창의 일부만 셈 — <since KST> 부터(까닭)'
+    (api 시작 뒤 · 기동 전 기록 읽는 중 N/M시간 · 일부만 읽음 · 읽기 실패 — 종류), 상한 · 형식 오류로 뺀 칸 · 조회 실패. 범례 절: "잰 값: 이 서비스가 최근 24 h 에
+    실제로 선박 위치를 받은 0.5° 칸 … — 구독 범위(점선)가 아니다", 구간 견본은 지도와 같은 불투명도를 어두운 바다 색(`BASEMAP_WATER`) 위에. 자료가 있으면
+    선박 칩 설명(title)과 0척 알림 글자에 '이 화면에 관측 수신 칸 N개' + 센 구간 — covered = full 이고 조회가 성공했을 때만 '(최근 24 h)', 아니면 실제로 센 구간
+    '(<since KST> 부터만 셈)', 마지막 조회가 실패했으면 '(… · 조회 실패 — 마지막 값)'(창 전체인 척하지 않는다 — 리뷰 2026-09-30). AIS 꺼짐(키 없음)이면 덧붙이지 않는다. 설명서 선박 절 · 레이어 단추 · 범례 표. 운영 · 파이프라인 화면은 바꾸지 않았다.
+  - 회귀 막기: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest` · `CoverageBootstrapDbTest`(Testcontainers) · `ShipCoverageControllerTest` · `ShipCoverageIT` ·
+    `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest` · `OpenApiSnapshotIT`, web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4.test.ts` ·
+    `guide-page.test.ts` · `e2e-inject.test.ts` · `e2e/ship-coverage.spec.ts`.

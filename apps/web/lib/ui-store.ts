@@ -15,6 +15,11 @@ export interface Layers {
    * 선택 필드: 이 필드 전에 만든 레이어 객체(저장된 설정 · 시험의 리터럴)도 그대로 '끔'으로 읽힌다(undefined = 끔).
    */
   traffic?: boolean;
+  /**
+   * 관측 수신 범위(ADR-027 — 이 서비스가 최근 24 h 에 실제로 선박 위치를 받은 0.5° 칸, 구독 범위 아님) — 기본 끔. 켜면 /api/v1/ships/coverage 를 조회하는
+   * 조각(components/ReceptionLayer)을 받는다. 선택 필드(없으면 끔 — traffic 과 같다).
+   */
+  reception?: boolean;
 }
 
 export type UiPanel = "alerts" | "aircraft" | "ship" | "sigmet" | "airport";
@@ -62,7 +67,7 @@ interface UiState {
 }
 
 export const useUi = create<UiState>((set) => ({
-  layers: { radar: true, sigmet: true, aircraft: true, ships: false, airports: true, tracks: true, prediction: true, traffic: false },
+  layers: { radar: true, sigmet: true, aircraft: true, ships: false, airports: true, tracks: true, prediction: true, traffic: false, reception: false },
   toggleLayer: (k) => set((s) => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
   radarOpacity: 0.6,

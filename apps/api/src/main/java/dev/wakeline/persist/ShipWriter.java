@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * 선박 저장(ADR-014 · 계약 v2 §B3): 위치(ship_position) · 정적 정보(ship) · 수신 공백(ingest_gap). 스트림 소비 스레드는 거르고 큐에 넣기만 하고
@@ -32,6 +34,8 @@ import java.util.Map;
  *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
  *   <li>종료: 스트림 소비·WS 뒤(phase) 남은 행을 최대 6 s 동안 쓰고, 못 쓴 행의 메시지는 ACK 하지 않는다(다음 기동에서 다시 처리 — 쓰기는 멱등).</li>
+ *   <li>고른 위치(60 s 창의 첫 보고)를 {@link IngestEvents.ShipsSampled} 로 알린다(소비 스레드, 동기 — 파이프라인 이벤트라 리스너 예외는 그 리스너에 갇힌다,
+ *       API-CONC-2) — 관측 수신 격자(ADR-027 · coverage.ShipCoverage)가 DB 의 ship_position 과 같은 표본을 센다(부트스트랩이 읽는 행과 실시간 셈이 같은 뜻).</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -83,18 +87,26 @@ public class ShipWriter implements SmartLifecycle {
     private final Counter forced;
     private final long backoffStartMs;
     private final long backoffMaxMs;
+    /** 고른 위치의 알림(운영: 애플리케이션 이벤트 — {@link IngestEvents.ShipsSampled}). */
+    private final Consumer<Object> publish;
     private volatile boolean running;
     private Thread worker;
     /** 실패해서 다시 쓸 배치. 워커 스레드에서만(종료 flush 는 워커가 멈춘 뒤). */
     private volatile ReceiptBatchQueue.Batch<Item> pending;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters) {
-        this(repo, ordered, meters, BACKOFF_START_MS, BACKOFF_MAX_MS);
+    public ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, ApplicationEventPublisher events) {
+        this(repo, ordered, meters, BACKOFF_START_MS, BACKOFF_MAX_MS, events::publishEvent);
     }
 
-    /** 테스트용: 재시도 간격을 줄인다. */
+    /** 테스트용: 재시도 간격을 줄인다(고른 위치는 알리지 않는다). */
     ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
+        this(repo, ordered, meters, backoffStartMs, backoffMaxMs, e -> {});
+    }
+
+    /** 테스트용: 고른 위치의 알림을 받는다. */
+    ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, long backoffStartMs, long backoffMaxMs, Consumer<Object> publish) {
+        this.publish = publish;
         this.repo = repo;
         this.ordered = ordered;
         this.backoffStartMs = backoffStartMs;
@@ -122,7 +134,11 @@ public class ShipWriter implements SmartLifecycle {
     @EventListener
     public void onShips(IngestEvents.ShipsUpdated e) {
         if (e.states().isEmpty() && e.statics().isEmpty()) return; // 만료·부트스트랩 — 저장할 보고 없음
-        enqueue(select(e.states(), e.statics(), e.fetchedAt()), e.receipt());
+        List<Item> items = select(e.states(), e.statics(), e.fetchedAt());
+        enqueue(items, e.receipt());
+        List<ShipState> kept = new ArrayList<>(items.size());
+        for (Item it : items) if (it instanceof Pos p) kept.add(p.state());
+        if (!kept.isEmpty()) publish.accept(new IngestEvents.ShipsSampled(List.copyOf(kept)));
     }
 
     /** 공백은 드물고 순서가 중요하지 않지만 재시도·영수증 규칙이 같은 순서 큐로 보낸다. */

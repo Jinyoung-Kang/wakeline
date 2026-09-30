@@ -2,6 +2,7 @@
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krMissing } from "@/lib/kr-radar";
 import { useServerNow } from "@/lib/clock";
 import { TRAFFIC_BINS, TRAFFIC_FILL_OPACITY, TRAFFIC_LEGEND_NOTE, TRAFFIC_ZERO_COLOR } from "@/lib/traffic-grid";
+import { RECEPTION_BINS, RECEPTION_COLOR, RECEPTION_LEGEND_NOTE } from "@/lib/reception-meta";
 import { useServerData } from "@/lib/store";
 import { saveShipCats } from "@/lib/prefs";
 import { useUi, type Layers } from "@/lib/ui-store";
@@ -9,7 +10,7 @@ import {
   ALT_RAMP, ALT_UNKNOWN_COLOR, altM, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_LEGEND, legendTextColor, METAR_STALE_S,
 } from "@/lib/format";
 import { NODIR_PATH, PLANE_PATH, RADAR_COLOR_SCHEME } from "@/lib/maplayers";
-import { BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST } from "@/lib/basemap";
+import { BASEMAP_BOUNDARY_COUNTRY, BASEMAP_BOUNDARY_STATE, BASEMAP_COAST, BASEMAP_WATER } from "@/lib/basemap";
 import { HULL_COG_DASH, HULL_COG_INNER, HULL_COG_STROKE, HULL_PATH, SHIP_COVERAGE_COLOR, SHIP_GRID_STYLE, SHIP_NODIR_PATH, SHIP_SELECTED_STYLE, SHIP_TRACK_POINT_STYLE } from "@/lib/ship-layers";
 import { aisCoverageFeatures, type ShipCategory, SHIP_CATEGORIES, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, SHIP_STALE_S, SHIPS_RULE, SHIPS_RULE_TEXT } from "@/lib/ships";
 
@@ -160,7 +161,7 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           </Row>
           {hasCoverage ? (
             <Row swatch={<span className="legend-line" style={{ borderTopStyle: "dashed", borderTopColor: SHIP_COVERAGE_COLOR }} />}>
-              <span data-testid="legend-ship-coverage" title="AIS 수집기가 구독하는 영역(운영 설정 ais_bboxes) — 점선 밖의 선박은 받지 않습니다">선박 수신 범위(운영 설정)</span>
+              <span data-testid="legend-ship-coverage" title="AIS 수집기가 구독하는 영역(운영 설정 ais_bboxes) — 점선 밖의 선박은 받지 않습니다. 점선 안이어도 육상 수신국이 없는 해역은 비어 있습니다 — 실제로 받은 곳은 레이어 '관측 수신 범위(최근 24 h)'">선박 수신 범위(운영 설정)</span>
             </Row>
           ) : null}
           {layers.tracks ? <>
@@ -203,6 +204,25 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           <Row swatch={<span className="inline-block h-2.5 w-2.5 rounded-full!" style={{ background: CAT_STALE_FILL, border: `1.5px solid ${CAT_STALE_STROKE}` }} />}>
             <span data-testid="legend-airport-stale">METAR 오래됨(&gt; {METAR_STALE_S / 3600} h) — 속이 빈 회색 고리(카테고리 색 없음). 줌 7 아래에서는 라벨이 없어 원만 보인다</span>
           </Row>
+        </Section>
+      ) : null}
+      {layers.reception ? (
+        <Section title="관측 수신 범위 · 칸 선박 수(채움 진하기)" testId="legend-reception">
+          <li className="flex flex-wrap items-center gap-[2px] pb-1" role="img"
+            aria-label={`칸 선박 수 구간: ${RECEPTION_BINS.map((b) => b.label).join(", ")}척 — 많을수록 진하게`} data-testid="legend-reception-scale">
+            {RECEPTION_BINS.map((b) => (
+              <span key={b.label} className="mono inline-flex items-center gap-1 px-1 text-[10px]">
+                {/* 지도와 같은 진하기: 같은 색 · 같은 불투명도를 어두운 바다 색 위에(칸은 대개 바다 위다) */}
+                <span className="legend-sw border border-line-2" style={{ background: BASEMAP_WATER }}>
+                  <span className="block h-full w-full" style={{ background: RECEPTION_COLOR, opacity: b.opacity }} />
+                </span>{b.label}
+              </span>
+            ))}
+            <span className="ml-1 text-[10px] text-fg-3">척(칸마다 · 최근 24 h 서로 다른 MMSI)</span>
+          </li>
+          <li className="pt-0.5 text-[10px] text-fg-2" data-testid="legend-reception-note">{RECEPTION_LEGEND_NOTE}</li>
+          <li className="text-[10px] text-fg-3">빈 곳 = 최근 24 h 에 받은 위치 없음(구독 범위 안이어도) · 칸에 마우스를 올리면 선박 수 · 위치 수 · 마지막 수신(KST) · 창.
+            채움 진하기 구간은 표시용 선택 · 견본은 지도와 같은 진하기(어두운 바다 위)</li>
         </Section>
       ) : null}
       {layers.traffic ? (

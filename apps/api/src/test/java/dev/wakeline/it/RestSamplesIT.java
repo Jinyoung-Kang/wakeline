@@ -44,6 +44,8 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.route.RouteReader routes;
     /** 연안 교통량 읽기(ADR-023) — 5 s 메모. 기다림은 이것으로(REST 요청 제한을 쓰지 않게). */
     @Autowired dev.wakeline.rest.TrafficGridReader trafficGrid;
+    /** 관측 수신 범위(계약 v5 §G27 · ADR-027) — 스냅숏(60 s 캐시)을 새로 만들어 기다린다(REST 요청 제한을 쓰지 않게) */
+    @Autowired dev.wakeline.coverage.ShipCoverage coverage;
     /** 일 통계 집계(계약 v5 §G20) — 끝난 KST 날짜를 실제로 집계해 통계 응답에 행이 있게 한다 */
     @Autowired dev.wakeline.persist.MaintenanceJobs jobs;
 
@@ -283,6 +285,12 @@ class RestSamplesIT extends IntegrationTest {
         record("ship_search_db", "/api/v1/ships/search?q=it%20stored", 200);
         record("ship_detail_stored", "/api/v1/ships/440700199", 200); // 실시간 아님 — 마지막 수신 기록 last_seen_at(계약 v5 §G4)
         record("problem_bad_ship_query", "/api/v1/ships/search?q=a", 400);
+        // 관측 수신 범위(계약 v5 §G27): 셈은 api 시작 분부터 — 지금 시각의 보고 하나(부산 앞바다 129.0 · 35.0 칸)가 칸이 되기를 기다린다
+        Instant seenCov = Instant.now();
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState("440700102", 35.15, 129.2, seenCov)), List.of()));
+        await("observed coverage cell", WAIT, () -> coverage.snapshotNow().cells().stream()
+                .anyMatch(c -> c.lon0() == 129.0 && c.lat0() == 35.0 && c.lastSeenMs() >= seenCov.toEpochMilli()));
+        record("ship_coverage", "/api/v1/ships/coverage", 200);
 
         // 상태(계약 v2 §A3·§B3): ais 수집기 heartbeat → status.sources.ais, 수집기 heartbeat 의 adsb_fi_rps_1m → status.demand.
         // 수집기 heartbeat 는 다른 테스트(수집기 없음 → adsb_fi_rps_1m 모름)에 남지 않게 기록 뒤 지운다.
@@ -392,6 +400,9 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(shipTrack.path("properties").path("gap_break_min_s").asInt()).isEqualTo(60);
         assertThat(shipTrack.path("properties").path("gaps_truncated").asBoolean(true)).isFalse();
         assertThat(st.path("demand").path("adsb_fi_rps_1m").asDouble()).isEqualTo(0.417); // 수집기 값(0.4167)을 api 가 소수 셋째 자리로
+        JsonNode cov = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_coverage.json"))).path("body");
+        assertThat(cov.path("cells").size()).isPositive();
+        assertThat(cov.path("cell_deg").asDouble()).isEqualTo(0.5);
         JsonNode shipHit = Streams.JSON.readTree(Files.readString(OUT.resolve("ship_search.json"))).path("body").path("items").get(0);
         assertThat(shipHit.path("mmsi").asString()).isEqualTo(mmsi);
         assertThat(shipHit.path("live").asBoolean()).isTrue();

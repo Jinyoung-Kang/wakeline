@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """REST 계약 검사(설계 14.1 — Java → Python 방향): Java api 가 만든 REST 응답이 웹·도구가 읽는 필드 계약(계약서 §1·§2,
-계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색, ADR-023 연안 교통량)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
+계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색, ADR-023 연안 교통량, 계약 v5 §G27 관측 수신 범위)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
 한쪽만 고치면 이 검사가 깨진다.
 
 두 가지 입력:
@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -692,6 +692,8 @@ SHIP_SEARCH_ITEM: Schema = {
 }
 SHIP_SEARCH_Q: Schema = {"type": "string", "pattern": "^[A-Z0-9 .\\-/]{2,40}$"}  # 정규화(trim · 대문자)한 검색어
 
+COVERAGE_CELL_DEG = 0.5  # api CoverageGrid.CELL_DEG
+
 SCHEMAS: dict[str, dict[str, Any]] = {
     "status": {
         "type": "object",
@@ -963,6 +965,106 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "note": {"const": "5분 집계 — 격자별 선박 척수(개별 위치 아님)"},
                 },
             },
+            "time_zone": STR,
+            "meta": META,
+        },
+    },
+    # 계약 v5 §G27 · ADR-027: 관측 수신 범위 — 이 서비스가 받은 AIS 위치의 0.5° 칸별 집계(최근 24 h, 구독 범위 아님). 교차 검사 _ship_coverage
+    "ship_coverage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "cell_deg",
+            "window",
+            "since",
+            "covered",
+            "api_started_at",
+            "live_from",
+            "bootstrap",
+            "generated_at",
+            "cells",
+            "cell_count",
+            "positions",
+            "truncated",
+            "dropped_positions",
+            "limits",
+            "sampling",
+            "note",
+            "time_zone",
+            "meta",
+        ],
+        "properties": {
+            "cell_deg": {"const": COVERAGE_CELL_DEG},
+            "window": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["hours", "bucket_s", "from", "to"],
+                "properties": {"hours": {"const": 24}, "bucket_s": {"const": 3600}, "from": TS, "to": TS},
+            },
+            "since": TS,
+            "covered": {"enum": ["full", "partial", "since_api_start"]},
+            "api_started_at": TS,
+            "live_from": TS,
+            "bootstrap": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["state", "hours_loaded", "hours_total", "rows", "loaded_from"],
+                "properties": {
+                    "state": {"enum": ["pending", "running", "done", "failed"]},
+                    "hours_loaded": {"type": "integer", "minimum": 0, "maximum": 25},
+                    "hours_total": {"type": "integer", "minimum": 0, "maximum": 25},
+                    "rows": {"type": "integer", "minimum": 0},
+                    "loaded_from": TS,
+                    "error": {"enum": ["statement_timeout", "connection", "read_timeout", "deadline", "stopped", "error"]},
+                    "finished_at": TS,
+                },
+                "allOf": [
+                    # 실패만 종류를 싣고(서버 글자 없이), 끝난 상태만 끝난 시각을 싣는다
+                    {
+                        "if": {"properties": {"state": {"const": "failed"}}},
+                        "then": {"required": ["error", "finished_at"]},
+                        "else": {"not": {"required": ["error"]}},
+                    },
+                    {
+                        "if": {"properties": {"state": {"enum": ["pending", "running"]}}},
+                        "then": {"not": {"required": ["finished_at"]}},
+                        "else": {"required": ["finished_at"]},
+                    },
+                ],
+            },
+            "generated_at": TS,
+            "cells": {
+                "type": "array",
+                "maxItems": 16000,
+                "items": {  # [lon0, lat0, 크기, 선박 수, 위치 수, 마지막 수신]
+                    "type": "array",
+                    "prefixItems": [
+                        {"type": "number", "minimum": -180, "maximum": 179.5},
+                        {"type": "number", "minimum": -90, "maximum": 89.5},
+                        {"const": COVERAGE_CELL_DEG},
+                        {"type": "integer", "minimum": 1},
+                        {"type": "integer", "minimum": 1},
+                        TS,
+                    ],
+                    "items": False,
+                    "minItems": 6,
+                },
+            },
+            "cell_count": {"type": "integer", "minimum": 0},
+            "positions": {"type": "integer", "minimum": 0},
+            "truncated": BOOL,
+            "dropped_positions": {"type": "integer", "minimum": 0},
+            "limits": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["max_cells", "max_ship_cells"],
+                "properties": {
+                    "max_cells": {"type": "integer", "minimum": 1},
+                    "max_ship_cells": {"type": "integer", "minimum": 1},
+                },
+            },
+            "sampling": {"const": "first_fix_per_60s"},
+            "note": STR,
             "time_zone": STR,
             "meta": META,
         },
@@ -1321,6 +1423,8 @@ CHECKS = [
     # 실시간 아닌 선박의 상세 — 마지막 수신 기록 last_seen_at(계약 v5 §G4)
     Check("ship_detail_stored", "ship_detail", 200, "application/json", True, recorded_only=True),
     Check("problem_bad_ship_query", "problem", 400, "application/problem+json", False),
+    # 관측 수신 범위(계약 v5 §G27) — 실행 중 스택도 같은 경로
+    Check("ship_coverage", "ship_coverage", 200, "application/json", True),
     Check("status_ais", "status_ais", 200, "application/json", True, recorded_only=True),
 ]
 
@@ -1398,6 +1502,7 @@ def live_paths(base: str) -> dict[str, str | None]:
     paths["ship_track"] = f"/api/v1/ships/{mmsi}/track" if mmsi else None
     paths["ship_search"] = f"/api/v1/ships/search?q={mmsi}" if mmsi else None
     paths["problem_bad_ship_query"] = "/api/v1/ships/search?q=a"
+    paths["ship_coverage"] = "/api/v1/ships/coverage"
     return paths
 
 
@@ -1877,6 +1982,83 @@ def _traffic_grid(body: dict[str, Any]) -> list[str]:
     return errs
 
 
+COVERAGE_FUTURE_SKEW_S = 300  # api ShipCoverage.FUTURE_SKEW_MS — 수집기 시계가 조금 빠른 보고의 마지막 수신
+
+
+def _utc(v: str) -> datetime:
+    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def _ship_coverage(body: dict[str, Any]) -> list[str]:
+    """계약 v5 §G27 /ships/coverage: 창 = 지금 시의 시작 − 24 h ~ generated_at, since = max(창의 시작, min(부트스트랩이 이어 읽은 곳, 셈 시작)) —
+    covered 는 그것으로 정해진다(full ⇔ since = 창의 시작), 셈 시작 = api 시작을 분으로 내린 것, 칸은 0.5° 격자점 · 남 → 북 · 서 → 동 · 한 번씩 ·
+    선박 ≤ 위치 · 마지막 수신은 초로 내린 값이고 창 안(수집기 시계 5분까지 앞선 값 허용), 합계 · 잘림 · 상한이 칸과 맞다,
+    meta.fetched_at = min(가장 늦은 마지막 수신, generated_at)."""
+    errs: list[str] = []
+    w = body.get("window") or {}
+    to, gen = _utc(w["to"]), _utc(body["generated_at"])
+    if to != gen:
+        errs.append(f"window.to {w['to']} != generated_at {body['generated_at']}")
+    frm = _utc(w["from"])
+    expected_from = gen.replace(minute=0, second=0, microsecond=0) - timedelta(hours=24)
+    if frm != expected_from:
+        errs.append(f"window.from {w['from']} is not the start of the generated hour minus 24 h ({expected_from.isoformat()})")
+    live, started = _utc(body["live_from"]), _utc(body["api_started_at"])
+    if live.second or live.microsecond or not (live <= started < live + timedelta(seconds=60)):
+        errs.append(f"live_from {body['live_from']} is not api_started_at {body['api_started_at']} floored to the minute")
+    b = body.get("bootstrap") or {}
+    loaded = _utc(b["loaded_from"])
+    if loaded > live:
+        errs.append(f"bootstrap.loaded_from {b['loaded_from']} is after live_from")
+    if b.get("hours_loaded", 0) > b.get("hours_total", 0):
+        errs.append("bootstrap.hours_loaded > hours_total")
+    if b.get("state") == "done" and b.get("hours_loaded") != b.get("hours_total"):
+        errs.append("bootstrap done without every hour loaded")
+    since = _utc(body["since"])
+    want = max(frm, min(loaded, live))
+    if since != want:
+        errs.append(f"since {body['since']} != max(window.from, min(loaded_from, live_from)) = {want.isoformat()}")
+    covered = "full" if since == frm else "partial" if min(loaded, live) < live else "since_api_start"
+    if body.get("covered") != covered:
+        errs.append(f"covered {body.get('covered')!r} but since/window/bootstrap say {covered!r}")
+    cells = body.get("cells") or []
+    keys: list[tuple[float, float]] = []
+    newest: datetime | None = None
+    for i, c in enumerate(cells):
+        lon0, lat0, ships, positions, last = c[0], c[1], c[3], c[4], c[5]
+        if abs(lon0 * 2 - round(lon0 * 2)) > 1e-9 or abs(lat0 * 2 - round(lat0 * 2)) > 1e-9:
+            errs.append(f"cells[{i}] corner {lon0},{lat0} is off the 0.5° lattice")
+        if ships > positions:
+            errs.append(f"cells[{i}] has {ships} ships but only {positions} positions")
+        t = _utc(last)
+        if t.microsecond:
+            errs.append(f"cells[{i}] last_seen {last} is not floored to the second")
+        if t < frm or t > gen + timedelta(seconds=COVERAGE_FUTURE_SKEW_S):
+            errs.append(f"cells[{i}] last_seen {last} is outside the window")
+        newest = t if newest is None or t > newest else newest
+        keys.append((lat0, lon0))
+    if keys != sorted(keys):
+        errs.append("cells are not ordered south→north, then west→east")
+    if len(set(keys)) != len(keys):
+        errs.append("duplicate cell")
+    if body.get("cell_count") != len(cells):
+        errs.append(f"cell_count {body.get('cell_count')} != {len(cells)} cells")
+    if body.get("positions") != sum(c[4] for c in cells):
+        errs.append("positions is not the sum of the cells")
+    if bool(body.get("truncated")) != (body.get("dropped_positions", 0) > 0):
+        errs.append("truncated must be true exactly when dropped_positions > 0")
+    if len(cells) > (body.get("limits") or {}).get("max_cells", 0):
+        errs.append("more cells than limits.max_cells")
+    fetched = (body.get("meta") or {}).get("fetched_at")
+    if newest is None and fetched is not None:
+        errs.append("meta.fetched_at without any cell")
+    # 수집기 시계가 빨라 가장 늦은 마지막 수신이 응답보다 미래면 api 는 generated_at 으로 내린다(음수 지연을 stale 로 보지 않게)
+    want_fetched = None if newest is None else min(newest, gen)
+    if want_fetched is not None and (fetched is None or _utc(fetched) != want_fetched):
+        errs.append(f"meta.fetched_at {fetched} != min(newest last_seen, generated_at) {want_fetched.isoformat()}")
+    return errs
+
+
 SCHEMAS["status_ais"] = {
     **SCHEMAS["status"],
     "allOf": [
@@ -1897,6 +2079,7 @@ CROSS_CHECKS = {
     "radar_kr": _radar_kr,
     "radar_kr_missing": _radar_kr,
     "traffic_grid": _traffic_grid,
+    "ship_coverage": _ship_coverage,
     "status_ais": _status_ais_recorded,
     "ships": _ships,
     "ship_detail": _ship_detail,

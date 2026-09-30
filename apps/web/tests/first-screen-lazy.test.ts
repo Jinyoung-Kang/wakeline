@@ -25,11 +25,13 @@ const LAZY_PARTS: Record<string, string> = {
   "components/EvidenceCard.tsx": "알림 행을 펼친 뒤",
   "components/KrRadarPanel.tsx": "레이더 줄의 '범례·정합' 단추",
   "components/ShipTable.tsx": "통합 검색 결과(선박) · 선박 카드 안",
+  "components/ReceptionLayer.tsx": "레이어 단추 '관측 수신 범위(최근 24 h)'를 켠 뒤(기본 끔 — 이 브라우저에 켜 둔 선택이 남아 있으면 처음부터 받는다)",
 };
 /** 조각과 함께만 오는 모듈(첫 화면의 정적 그래프에 없어야 한다) */
 const CARRIED_BY_PARTS: Record<string, string> = {
   "components/PortCallsSection.tsx": "선박 카드 안",
   "lib/ship-card.ts": "선박 카드 · 선박 표의 표시 함수와 문구(저장 정적 보고 문구 · ETA · 크기 · 흘수 · 목적지 줄 · 공백 요약 · 선박 목록)",
+  "lib/reception.ts": "관측 수신 범위 레이어 조각(응답 검증 · 조회 · 칸 그리기 · 화면 안 칸 수 · 툴팁 · 상태 줄)",
 };
 
 /**

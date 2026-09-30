@@ -66,6 +66,13 @@ public final class IngestEvents {
     }
 
     /**
+     * 선박 저장기(persist.ShipWriter)가 한 ships 메시지에서 저장하려고 고른 위치(MMSI 별 60 s 창의 첫 보고 · 저장 범위 안 — ship_position 에 쓰는 것과 같은 표본).
+     * 저장 성공과는 무관하다(받은 것의 표본). 관측 수신 격자(ADR-027 · coverage.ShipCoverage)가 센다 — 부트스트랩이 읽는 ship_position 과 실시간 셈이 같은 뜻.
+     * 스트림 소비 스레드에서 ShipsUpdated 처리 중에 발행되는 파이프라인 이벤트라 리스너 예외는 그 리스너에 가둔다(API-CONC-2 — 저장기로 새지 않는다).
+     */
+    public record ShipsSampled(List<ShipState> positions) {}
+
+    /**
      * AIS 수신 공백 하나가 끝났다(kind ais_gap) — 저장기가 ingest_gap 에 남긴다(영구, 중복은 (source, 구역(scope), started_at) 으로 무시 — V8).
      * 같은 시각에 시작해도 구역이 다르면 다른 공백이다.
      */

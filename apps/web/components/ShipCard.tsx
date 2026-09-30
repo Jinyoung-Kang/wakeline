@@ -284,6 +284,7 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const view = useServerData((x) => x.ships);
   const ais = useServerData((x) => x.ais);
   const viewport = useServerData((x) => x.viewport);
+  const observed = useServerData((x) => x.receptionInView); // 관측 수신 범위(ADR-027) — 켜져 있고 자료가 있을 때만
   const aisOff = ais?.state === "disabled";
   const selectShip = useUi((s) => s.selectShip);
   const [q, setQ] = useState("");
@@ -300,7 +301,7 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
     );
   }
   // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐 · 연결 안 됨 · 상태 모름)
-  const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais });
+  const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, observed });
   // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
   const filtered = shipCats.length < SHIP_CATEGORIES.length;
   const { items, total, hidden } = shipList(shipStates.values(), q, Infinity, filtered ? new Set(shipCats) : null);
