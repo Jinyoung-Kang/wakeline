@@ -54,7 +54,7 @@
   traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · waiting_tiles · hour_window · daily_budget · breaker · operator_off) ·
   traffic_grid_fill_resume_at(다음에 움직이는 때 — 없으면 빈 값) · traffic_grid_fill_pass_at 과 _lookups · _found · _not_found · _off_grid ·
   _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값) · bbox 타일(타일 공급자가 없으면 빈 값): traffic_grid_tiles_done ·
-  traffic_grid_tiles_queued · traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_splits · _tile_errors.
+  traffic_grid_tiles_queued · traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_stored · _tile_splits · _tile_errors.
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
 PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 연달아 실패 5번 · failed 1일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
@@ -441,6 +441,9 @@ class FillPass:
     tiles: int = 0  # 보낸 타일 호출
     tile_cells: int = 0  # 타일 응답이 준 칸(검사 통과 — 겹치는 타일의 같은 칸은 두 번 센다)
     tile_new: int = 0  # 그 가운데 처음 안 칸
+    tile_stored: int = (
+        0  # DB(marine_grid4) 쓰기 큐에 넣은 칸 — 새 칸 · 기하가 바뀐 칸(쓰기는 비동기 — 버려지면 heartbeat db_dropped)
+    )
     tile_splits: int = 0  # 잘렸을 수 있어 나눈(가장 작은 타일이면 incomplete 로 적은) 타일
     tile_errors: int = 0
 
@@ -458,6 +461,7 @@ class _Tick:
     tiles: int = 0
     tile_cells: int = 0
     tile_new: int = 0
+    tile_stored: int = 0
     tile_off_grid: int = 0
     tile_splits: int = 0
     tile_errors: int = 0
@@ -508,9 +512,8 @@ class TrafficGridJob:
         self._tiles_warned = False
         self._tiles_error = ""  # 타일 상태를 읽지 못한 마지막 까닭(예외 이름)
         self._tile_write_error = ""  # 타일 상태를 쓰지 못한 마지막 까닭(성공하면 비운다)
-        self._snapshot_ids: frozenset[str] = (
-            frozenset()
-        )  # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
+        # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
+        self._snapshot_ids: frozenset[str] = frozenset()
         self._now, self._mono = now, mono
         self.schedule = KomsaSchedule()
         self.geometry = GridGeometry()
@@ -958,6 +961,7 @@ class TrafficGridJob:
             ps.tiles += tk.tiles
             ps.tile_cells += tk.tile_cells
             ps.tile_new += tk.tile_new
+            ps.tile_stored += tk.tile_stored
             ps.tile_splits += tk.tile_splits
             ps.tile_errors += tk.tile_errors
         if tk.stop_reason is None:
@@ -1189,6 +1193,7 @@ class TrafficGridJob:
             self.tiles.seed_at(x, y, "edge", now)
         tk.tile_cells += len(res.cells)
         tk.tile_new += new
+        tk.tile_stored += len(stored)
         why = res.truncation
         if why is not None:
             tk.tile_splits += 1
@@ -1274,7 +1279,8 @@ class TrafficGridJob:
             ""
             if self.tile_src is None
             else (
-                f"{ps.tiles} tiles: {ps.tile_cells} cells listed ({ps.tile_new} new), {ps.tile_splits} split as possibly truncated, "
+                f"{ps.tiles} tiles: {ps.tile_cells} cells listed ({ps.tile_new} new, {ps.tile_stored} queued for marine_grid4), "
+                f"{ps.tile_splits} split as possibly truncated, "
                 f"{ps.tile_errors} errors; tiles queued {self.tiles.queued}, done {self.tiles.done_count()}; "
             )
         )
@@ -1433,6 +1439,7 @@ class TrafficGridJob:
             "traffic_grid_fill_pass_tiles": str(lp[1].tiles) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_cells": str(lp[1].tile_cells) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_new": str(lp[1].tile_new) if lp and not tl else "",
+            "traffic_grid_fill_pass_tile_stored": str(lp[1].tile_stored) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_splits": str(lp[1].tile_splits) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_errors": str(lp[1].tile_errors) if lp and not tl else "",
             "traffic_grid_calls_komsa": "" if used_k is None else str(used_k),

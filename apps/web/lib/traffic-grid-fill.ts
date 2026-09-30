@@ -119,7 +119,7 @@ export function trafficGridFill(collector: Record<string, unknown> | null | unde
   const n = (k: string) => num(count(c[`${P}fill_pass_${k}`]));
   const tilePart = count(c[`${P}fill_pass_tiles`]) == null
     ? ""
-    : ` · 타일 ${n("tiles")} → 칸 ${n("tile_cells")}(새 ${n("tile_new")}) · 나눔 ${n("tile_splits")} · 오류 ${n("tile_errors")}`;
+    : ` · 타일 ${n("tiles")} → 칸 ${n("tile_cells")}(새 ${n("tile_new")} · DB 저장 요청 ${n("tile_stored")}) · 나눔 ${n("tile_splits")} · 오류 ${n("tile_errors")}`;
   const pass: FillItem = passAt
     ? {
       key: "pass", label: "마지막 채우기",

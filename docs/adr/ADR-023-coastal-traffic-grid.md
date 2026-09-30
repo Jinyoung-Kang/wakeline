@@ -310,12 +310,12 @@ heartbeat 의 채우기 상태(daily_budget · waiting_db 포함) · failed 로 
    모형에서는 육지 칸도, 위 끝: 32–39 N × 124–132 E 상자 609타일 × 약 200 ≈ 12만). 잰 값(tracemalloc, 합성 칸 10만): 고치기 전 25.4 MB(254 B/칸) →
    Cell 을 slots 로 · 격자점 float 을 공유해 11.9 MB(119 B/칸). 수집기 한도 512 MiB. marine_grid4 읽기(10만 행 약 0.3 s — 잰 값)와 아는 칸의 타일 셈
    (칸마다 투영 약 3 µs — 잰 값)은 스레드에서.
-9. **관측**: 채우기 요약 줄에 타일 절 — `…; t tiles: c cells listed (k new), x split as possibly truncated, y errors; tiles queued q, done d; …`(타일 공급자가
+9. **관측**: 채우기 요약 줄에 타일 절 — `…; t tiles: c cells listed (k new, s queued for marine_grid4), x split as possibly truncated, y errors; tiles queued q, done d; …`(타일 공급자가
    있을 때만), 끝 까닭에 `; no tile queued (d done)` · `nothing due — n ids and t tiles waiting for a retry …`. 기동 줄 `bbox tiles — N tile states loaded (…)` ·
    `bbox tiles — N tiles queued from K known cells (d tiles done)` — **운영의 실제 타일 수는 이 줄이 말한다**. 나눔 INFO `tile … possibly truncated (…) — split
    into 4`, incomplete · failed · 빠진 칸은 WARN. heartbeat `traffic_grid_tiles_done` · `traffic_grid_tiles_queued` · `traffic_grid_fill_pass_{tiles,tile_cells,
-   tile_new,tile_splits,tile_errors}`(타일 공급자가 없으면 빈 값), 채우기 상태에 `waiting_tiles`. /ops 줄(웹 `lib/traffic-grid-fill.ts` — 값 그대로): 'bbox 타일 끝 N ·
-   대기 M' 과 마지막 채우기의 '타일 n → 칸 c(새 k) · 나눔 s · 오류 e' — 수로 알렸을 때만(0 으로 채우지 않는다). 설명서 · /about 은 '칸마다 한 번'을 '약
+   tile_new,tile_stored,tile_splits,tile_errors}`(타일 공급자가 없으면 빈 값), 채우기 상태에 `waiting_tiles`. /ops 줄(웹 `lib/traffic-grid-fill.ts` — 값 그대로): 'bbox 타일 끝 N ·
+   대기 M' 과 마지막 채우기의 '타일 n → 칸 c(새 k · DB 저장 요청 s) · 나눔 x · 오류 e' — 수로 알렸을 때만(0 으로 채우지 않는다). 설명서 · /about 은 '칸마다 한 번'을 '약
    32 km 상자 하나에 그 안의 칸을 모두 — 상자가 주지 않은 칸만 한 칸씩'으로, 한도는 '시간당 290번 · 하루 6,000번'으로 고쳤고 여전히 끝나는 때는 적지 않는다.
 
 **시뮬레이션(잰 값이 아니다 — `apps/collector/tests/test_traffic_grid_tile_sim.py`, 합성 분포 `tests/coast_sim.py`: 한반도 해안을 손으로 찍은 점 몇 개로

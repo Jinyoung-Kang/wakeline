@@ -1042,11 +1042,11 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     "failed","at","cells"}` — done · split 기한 없음, incomplete · failed 1일, 항목의 `at` 으로 논리 만료). ACL: §G15 의 부정 캐시 셀렉터에 정확한 이름으로 더한다 —
     `(~wakeline:traffic_grid:negative ~wakeline:traffic_grid:tiles +hset +hgetall)`, 루트 키 목록에는 없다(DEL · HDEL · SET · EXPIRE 거부). redis 를 다시 띄워야 적용된다.
   - heartbeat `wakeline:collector` 필드 더함(타일 공급자가 없으면 빈 값): `traffic_grid_tiles_done` · `traffic_grid_tiles_queued` · `traffic_grid_fill_pass_{tiles,tile_cells,
-    tile_new,tile_splits,tile_errors}`. `traffic_grid_fill_state` 에 `waiting_tiles`(기동 뒤 타일 상태 해시를 읽기 전 — 10분 뒤에는 메모리로만). 기존 필드 · 의미는 그대로
+    tile_new,tile_stored,tile_splits,tile_errors}`. `traffic_grid_fill_state` 에 `waiting_tiles`(기동 뒤 타일 상태 해시를 읽기 전 — 10분 뒤에는 메모리로만). 기존 필드 · 의미는 그대로
     (`traffic_grid_fill_pass_lookups` 등은 한 칸 조회만 센다). DB(V14 marine_grid4) · REST · WS 스키마는 바뀌지 않는다.
   - 품질 사례 규칙 더함: `traffic_grid_tile_feature_rejected` · `traffic_grid_tile_incomplete` · `traffic_grid_tile_failed` · `traffic_grid_tile_missing_cell`(한 칸 조회가 끝난 타일
     안에서 찾은 칸을 다시 받은 타일도 주지 않았다). 타일의 격자 밖 지물은 기존 `traffic_grid_off_grid`(+ `tile`).
-  - 웹 /ops providers 탭 '연안 교통량 격자 위치' 줄: 'bbox 타일 끝 N · 대기 M' · 마지막 채우기에 '타일 n → 칸 c(새 k) · 나눔 s · 오류 e' — heartbeat 가 수로 알렸을 때만
+  - 웹 /ops providers 탭 '연안 교통량 격자 위치' 줄: 'bbox 타일 끝 N · 대기 M' · 마지막 채우기에 '타일 n → 칸 c(새 k · DB 저장 요청 s) · 나눔 x · 오류 e' — heartbeat 가 수로 알렸을 때만
     (0 으로 채우지 않는다), 시각은 KST 만(§G20). 설명서 · /about 의 '칸마다 한 번'을 고쳤다.
   - 회귀 막기: collector `tests/test_traffic_grid_tile_{parse,plan,job,sim}.py` · `test_traffic_grid_providers.py` · `test_traffic_grid_geo.py` · `test_traffic_grid_db.py` ·
     `test_redis_integration.py`, infra `test_redis_acl_rules.py` · `redis_acl_test.sh`, web `tests/ops-traffic-grid-fill.test.ts` · `tests/guide-page.test.ts`.

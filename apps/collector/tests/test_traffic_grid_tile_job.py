@@ -382,15 +382,18 @@ async def test_the_pass_summary_and_the_heartbeat_count_tiles(caplog):
     grid = FakeGrid()
     wfs = GridWfs(grid, answers={A.box: grid.body(A.box, extra_declared=3)})
     known = [home(grid, A)[0], home(grid, FAR)[0]]
-    job, wfs, r, _c, _db = start(grid, [home(grid, A)[3], home(grid, FAR)[4]], known=known, wfs=wfs)
+    job, wfs, r, _c, db = start(grid, [home(grid, A)[3], home(grid, FAR)[4]], known=known, wfs=wfs)
     await job.run_once()
     (line,) = lines(caplog, "geometry fill pass")
     n_cells = len(grid.cells_in(A.box)) + sum(len(grid.cells_in(k.box)) for k in A.children()) + len(grid.cells_in(FAR.box))
     assert "— 0 lookups: 0 found, 0 not in the MOF grid, 0 off grid, 0 errors (0 set aside as failed); 6 tiles: " in line
+    new = int(r.kv[HB]["traffic_grid_cells_known"]) - 2
+    # 새 칸만 DB 에 보낸다(이미 같은 기하로 아는 칸 · 겹치는 타일이 다시 준 칸은 보내지 않는다) — 'queued' 는 쓰기 큐에 넣었다는 뜻(쓰기는 비동기)
     assert (
-        f"6 tiles: {n_cells} cells listed (" in line
-        and "1 split as possibly truncated, 0 errors; tiles queued 0, done 5; " in line
+        f"6 tiles: {n_cells} cells listed ({new} new, {sum(db.calls)} queued for marine_grid4), 1 split as possibly truncated, 0 errors; "
+        in line
     )
+    assert "; tiles queued 0, done 5; " in line and sum(db.calls) == new
     assert line.endswith("queue empty — every queued id has geometry or a negative-cache entry; no tile queued (5 done)")
     hb = r.kv[HB]
     assert (
@@ -400,6 +403,7 @@ async def test_the_pass_summary_and_the_heartbeat_count_tiles(caplog):
     ) == ("6", "1", "0")
     assert hb["traffic_grid_fill_pass_tile_cells"] == str(n_cells)
     assert int(hb["traffic_grid_fill_pass_tile_new"]) == int(hb["traffic_grid_cells_known"]) - 2
+    assert hb["traffic_grid_fill_pass_tile_stored"] == str(sum(db.calls))
     assert (hb["traffic_grid_tiles_done"], hb["traffic_grid_tiles_queued"]) == ("5", "0")
     assert r.kv["wakeline:provider:mof_grid4"]["last_records"] == str(n_cells)
 
@@ -409,7 +413,7 @@ async def test_without_a_tile_source_the_heartbeat_tile_fields_are_empty():
 
     job, _k, _w, r, _c, _db = setup()
     await job.run_once()
-    for f in ("tiles_done", "tiles_queued", "fill_pass_tiles", "fill_pass_tile_cells"):
+    for f in ("tiles_done", "tiles_queued", "fill_pass_tiles", "fill_pass_tile_cells", "fill_pass_tile_stored"):
         assert r.kv[HB][f"traffic_grid_{f}"] == ""
 
 
