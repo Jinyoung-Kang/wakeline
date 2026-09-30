@@ -45,7 +45,8 @@ export const ROUTE_STATUS_TEXT: Record<Exclude<RouteStatus, "found">, string> = 
 };
 /**
  * "조회 중"이 보통 경로보다 길어졌는가(사용자 요청 2026-09-29). 보통 경로 계산값(측정값이 아니다) = api 노선 메모리 캐시(RouteReader.TTL_MS 5 s —
- * 콜사인을 처음 읽을 때 "조회 중"이면 그 값을 5 s 동안 그대로 준다) + 다음 selected 전송(WsHub 는 수집기의 집중 추적 관측마다 selected 를 보낸다 —
+ * 콜사인을 처음 읽을 때 "조회 중"이면 그 값을 5 s 동안 그대로 준다) + 다음 selected 전송(WsHub 는 수집기의 집중 추적 관측마다 selected 를 다시 계산하고
+ * — 캐시가 지났으면 노선을 다시 묻는다 — 보이는 값이 바뀌었을 때 보낸다. 노선이 "조회 중"에서 바뀌면 글자가 달라 나간다(같은 글자만 건너뛴다 — 계약 v5 §G21) —
  * 관측 주기 collector jobs/demand FOCUS_INTERVAL_S 5 s, WsHub "≈ 5 s") = 10 s. 수집기는 임대에 적힌 콜사인을 다음 틱(TICK_S 1 s)에 곧바로 노선 조회에
  * 넘기므로(FOCUS_INTERVAL_S 는 같은 콜사인을 다시 넘기기까지의 간격), 조회가 캐시 5 s 안에 끝나면 결과는 이 계산값 안에 보인다. adsbdb 응답 시간은 잰 값이 없어
  * 셈에 넣지 않았다. 캐시가 지난 뒤 api 가 Redis 를 다시 읽는 시간도 잰 값이 없어 넣지 않았다(계약 v5 §G21 — 우편함 밖에서 읽고 답이 오는 즉시 selected 를
@@ -67,7 +68,8 @@ export const ROUTE_PENDING_TITLE = "수집기가 선택한 항공기의 콜사�
   + `api 는 그 읽기의 답을 늦어도 ${ROUTE_API_READ_BOUND_S} s(api 의 Redis 명령 상한 — 설정값) 안에 정하고, 읽지 못하면 “${ROUTE_STATUS_TEXT.unavailable}”로 바뀝니다. `
   + "Redis 가 멈춘 동안에는 그 답이 화면에 닿기까지 더 걸릴 수 있습니다(같은 연결의 상태 메시지가 먼저 Redis 를 기다립니다). "
   + "api 가 “조회 중”을 5 s 동안 캐시하고, "
-  + "선택 항공기 갱신(selected)은 집중 추적 관측마다(약 5 s) 옵니다 — 조회가 그 사이에 끝나면 결과는 10 s 안에 보입니다(서버 설정으로 셈한 계산값, 측정값 아님). "
+  + "선택 항공기 갱신(selected)은 집중 추적 관측마다(약 5 s) 다시 계산되고, 노선 상태나 다른 보이는 값이 바뀌었을 때 옵니다 — "
+  + "조회가 그 사이에 끝나면 결과는 10 s 안에 보입니다(서버 설정으로 셈한 계산값, 측정값 아님). "
   + "수집기는 adsbdb 호출 한도(0.5 req/s, 대기 최대 10 s)와 응답(읽기 제한 8 s)을 기다릴 수 있고, 부르지 못하거나 실패하면 “노선 조회 실패”로 바뀝니다.";
 export type RoutePendingPhase = "normal" | "slow";
 /** 조회 중 경과(초, 카드가 처음 "조회 중"을 본 때부터 — 모르면 null) → 단계 */

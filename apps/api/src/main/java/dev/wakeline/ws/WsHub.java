@@ -72,8 +72,9 @@ import java.util.function.Supplier;
  *       select 마다 답은 하나(먼저 도는 작업이 — {@link WsSession.Selection#claimAnswer}), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지
  *       않는다(사용자 보고 2026-09-30 — 같은 pending 두 번).</li>
  *   <li>수요 스코프(hot·focus, 계약 v2 §A3) 메시지는 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 세션에만 팬아웃한다 — 전체 팬아웃은
- *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측 · 보이는 값이 같은 관측은 두 번
- *       보내지 않는다).</li>
+ *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션의 selected 를 다시 계산한다(≈ 5 s — 캐시가 지났으면 노선도 다시 묻는다).
+ *       보이는 값이 바뀌었으면 보낸다 — 같은 관측 · 보이는 값이 같은 관측은 두 번 보내지 않는다(웹 "노선 조회 중" 설명의 근거 —
+ *       apps/web/tests/route-pending.test.ts 가 이 문장을 대조한다).</li>
  *   <li>수요(demand) 메시지는 DemandService 가 계산해 {@link #pushDemand} 로 예약한다. 구독·선택·일시정지·연결 종료는 {@link #demandChanged} 로 알린다.</li>
  *   <li>레이어(계약 v2 §B3): 항공기를 끈 세션에는 항공기 snapshot/diff 를 보내지 않는다(다시 켜면 seq 1 스냅샷부터). 선박 메시지는 {@link ShipFanout} 이
  *       같은 우편함에서 보낸다 — 초기 세트(구독·resume·백프레셔)의 끝에서 {@link #setShipsHook 선박 훅}을 불러 선박 전체를 이어서 보낸다.</li>
