@@ -496,3 +496,72 @@ async def test_the_streak_counts_every_distinct_tm_that_answered_missing(env):
     assert "202609271230" in checked  # 12:40 의 10분 넘은 확인 — 12:35 보다 옛 tm
     assert job.missing.tms == len(checked)
     assert (await r.hgetall(mod.KEY_META))["missing_tms"] == str(len(checked))
+
+
+_STREAK_IN_REDIS = {
+    "missing_since_tm": "202609271015",
+    "missing_last_tm": "202609271055",
+    "missing_tms": "9",
+    "missing_checked_at": "2026-09-27T01:55:00Z",
+    "missing_file": "RDR_CMP_HSR_PUB_202609271055.bin.gz",
+    "missing_listed": "EXT",
+}
+
+
+async def test_a_streak_left_in_redis_is_cleared_when_the_key_is_not_set(env, caplog):
+    """리뷰(낮음): KMA_APIHUB_KEY 가 없으면 run_once 가 연속을 읽기도 지우기도 전에 끝나서, 앞서 남은 missing_* 가 TTL 없이 두 해시에 남았다 —
+    KMA 칩이 옛 '파일 없음'을 지금 것처럼 보였다. 이제 수집하지 않는 동안에는 연속 · 알린 공백을 지운다(한 번, 실패하면 다음 주기에)."""
+    mod, r, ctx, clock, runs = env
+    await r.hset(mod.KEY_META, mapping=_STREAK_IN_REDIS | {"missing_gap_from": "202609270915", "missing_gap_to": "202609270940"})
+    await r.hset("wakeline:provider:kma_radar", mapping=_STREAK_IN_REDIS)
+    prov = OutageKma(clock, down_from="209912312355")
+    prov.configured = False
+    job = mod.KmaRadarJob(prov, ctx)
+    clock["now"] = "202609271100"  # 마지막 확인 뒤 5분 — 이어받을 수 있는 나이지만 수집하지 않는다
+    await job.run_once()
+    await job.run_once()
+    meta, prov_h = await r.hgetall(mod.KEY_META), await r.hgetall("wakeline:provider:kma_radar")
+    assert all(meta[k] == "" for k in (*mod.MISSING_KEYS, *mod.GAP_KEYS))
+    assert all(prov_h[k] == "" for k in mod.MISSING_KEYS)
+    assert job.missing is None and prov.binaries == [] and runs == []
+    assert _warns(caplog) == []
+
+
+async def test_a_listing_failure_during_a_streak_keeps_the_streak_and_its_last_check(env, caplog, monkeypatch):
+    """누락 요구(리뷰): 연속 중 목록 호출이 실패하면 — 주기는 'error'(호출 실패), 연속은 그대로(닫지도 새로 열지도 않는다), 마지막 확인은 옮기지 않는다
+    (확인하지 않았다 — 웹은 마지막 확인의 나이로 '확인 멈춤'을 판단한다). 다음 주기에 목록이 되면 연속을 이어 간다(WARN 을 다시 내지 않는다)."""
+    import httpx
+
+    mod, r, ctx, clock, runs = env
+
+    async def no_wait(_s):
+        return None
+
+    monkeypatch.setattr(mod, "_sleep", no_wait)
+    prov = OutageKma(clock, down_from="202609271215")
+    job = await _steady(mod, ctx, clock, prov)
+    await _cycles(job, clock, "202609271230")
+    assert job.missing is not None
+    before = await r.hgetall(mod.KEY_META)
+    caplog.clear()
+    runs.clear()
+    real = prov.file_list
+
+    async def down(day):
+        raise httpx.ConnectTimeout("connect timed out")
+
+    prov.file_list = down
+    clock["now"] = "202609271235"
+    await job.run_once()
+    assert [run["status"] for run in runs] == ["error"]
+    assert job.missing is not None and job.missing.since_tm == "202609271215"
+    after = await r.hgetall(mod.KEY_META)
+    assert {k: after[k] for k in mod.MISSING_KEYS} == {k: before[k] for k in mod.MISSING_KEYS}  # 마지막 확인도 그대로
+    assert not any("has no file" in m for m in _warns(caplog))
+    prov.file_list = real
+    runs.clear()
+    clock["now"] = "202609271240"
+    await job.run_once()
+    assert [run["status"] for run in runs] == ["missing"]
+    assert (await r.hgetall(mod.KEY_META))["missing_checked_at"] == "2026-09-27T03:40:00Z"
+    assert not any("has no file" in m for m in _warns(caplog))

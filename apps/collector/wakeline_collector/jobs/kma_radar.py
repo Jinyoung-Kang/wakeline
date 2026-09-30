@@ -18,6 +18,8 @@
   (전처럼 그 tm 에 WARN 한 번).
   연속은 meta 해시와 공급자 해시(wakeline:provider:kma_radar)의 missing_* 에 싣고(api /radar/kr · /status · /ops/providers), 닫으면 빈 값으로
   지운다. 수집기를 다시 띄우면 마지막 확인이 MISSING_CARRY_S(15분, 선택값) 안인 연속만 이어받는다(아니면 지운다 — 옛 연속을 지금처럼 보이지 않게).
+  KMA_APIHUB_KEY 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 수집기가 아예 멈추면 지울 주체가 없다 — 웹이 마지막 확인의 나이로
+  '확인 멈춤'을 적는다(MISSING_CARRY_S 와 같은 15분). 연속의 tm 수(missing_tms)는 없다는 답을 받은 서로 다른 tm 수 — 확인하지 않은 tm 은 세지 않는다.
 - 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
   거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
@@ -529,6 +531,7 @@ class KmaRadarJob:
             if not self._warned:
                 log.info("kma radar: KMA_APIHUB_KEY not set — disabled")
                 self._warned = True
+            await self._drop_missing()  # 수집하지 않는 동안 앞서 남은 연속을 지금 것처럼 두지 않는다(리뷰 2026-09-30)
             return
         stored = await self.prune()
         if not self._loaded:
@@ -838,10 +841,10 @@ class KmaRadarJob:
         self._closed_gap = (s.since_tm, tm)
         self.missing = None
 
-    async def _load_missing(self) -> None:
+    async def _load_missing(self, carry: bool = True) -> None:
         """첫 주기: 앞선 프로세스가 meta 해시에 남긴 연속과 알린 공백을 읽는다. 연속은 마지막 확인이 MISSING_CARRY_S 안이면 이어받고(WARN 은 앞
         프로세스가 했다), 아니면 옛 값이라 이 주기 끝에 지운다(_publish_missing). 알린 공백은 끝 tm 이 MISSING_GAP_KEEP_S 안이면 이어받는다.
-        Redis 를 못 읽으면 다음 주기에 다시 읽는다."""
+        carry=False 면 읽기만 한다(해시에 무엇이 있는지 — 지울 때). Redis 를 못 읽으면 다음 주기에 다시 읽는다."""
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
                 h = await self.ctx.status.redis.hgetall(KEY_META)
@@ -851,6 +854,8 @@ class KmaRadarJob:
         self._loaded = True
         self._published = {k: str(h.get(k) or "") for k in MISSING_KEYS}
         self._published_gap = {k: str(h.get(k) or "") for k in GAP_KEYS}
+        if not carry:
+            return
         g_from, g_to = self._published_gap["missing_gap_from"], self._published_gap["missing_gap_to"]
         if _tm_dt(g_from) is not None and _tm_dt(g_to) is not None and g_from < g_to and not _gap_expired(g_to):
             self._closed_gap = (g_from, g_to)
@@ -880,6 +885,15 @@ class KmaRadarJob:
             carried=(since, last),
         )
         log.info("kma radar: carried over the missing-file streak since tm=%s (%d tms, last checked %s)", since, n, _iso(checked))
+
+    async def _drop_missing(self) -> None:
+        """수집하지 않는 동안(KMA_APIHUB_KEY 없음): 해시에 남은 연속 · 알린 공백을 지운다 — 없으면 쓰지 않는다. 실패하면 다음 주기에 다시."""
+        if not self._loaded:
+            await self._load_missing(carry=False)
+            if not self._loaded:
+                return
+        self.missing = self._closed_gap = None
+        await self._publish_missing()
 
     async def _publish_missing(self) -> None:
         """연속(없으면 빈 값)을 meta 해시와 공급자 해시에, 알린 공백(없거나 오래되면 빈 값)을 meta 해시에만 싣는다 — 마지막으로 쓴 값과 다를 때만.
