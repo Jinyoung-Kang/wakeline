@@ -18,11 +18,15 @@
   호출마다 해양수산부 시간 창(budget:mof:h:{UTC 시} — 입출항 색인과 함께 센다, providers/data_go_kr.MOF_*)을 먼저 예약하되 입출항 색인 몫
   (MOF_GRID4_HOURLY_HEADROOM)을 남긴다 — 어느 날 경계로 세어도 두 API 합계가 포털 한도(10,000) 안(검토 지적: UTC 날 예산만으로는 KST 하루에
   두 몫을 쓸 수 있었다). 창이나 하루 예산에 막히면 그 까닭을 실행 기록에 한 번 적고 다음 UTC 시 · 다음 UTC 날까지 채우지 않는다(틱마다 적지 않는다).
-  채우기는 시간당 많아야 MOF_HOURLY_CAP − MOF_GRID4_HOURLY_HEADROOM(290)칸 — 첫 스냅샷(확인한 표본 5,099칸)은 약 18시간 이상 걸쳐 채워진다
-  (계산 — 잰 값이 아니다). 그동안 스냅샷 값의 resolved/unresolved 가 그대로 보인다.
+  채우기는 시간당 많아야 MOF_HOURLY_CAP − MOF_GRID4_HOURLY_HEADROOM(290)칸 · UTC 날 6,000칸(24 × 290 = 6,960 — 쉬지 않고 채우면 UTC 날마다
+  하루 예산에서도 멈춘다). 끝나는 때는 말하지 않는다(ADR-023 2026-10-01 개정): 배가 있는 칸은 스냅샷마다 바뀌어, 2026-09-30 에 이미 확인한
+  칸(7,303) + 부정 캐시(502)가 스냅샷 하나(많아야 6,422칸)보다 많았다 — 배가 들어설 수 있는 칸 전체의 수는 잰 적이 없다.
+  대기열(_pending)은 메모리다 — 다시 시작하면 비고, 결과(칸 → DB · 부정 → Redis)만 남는다. 그래서 재기동 뒤 첫 스냅샷은 결과가 없는 칸을
+  모두 '새로 넣은 칸'으로 센다(같은 칸을 다시 묻는 것이 아니다 — 결과가 있는 칸은 넣지 않는다).
   * found: 0.025° 격자 검사를 통과한 칸 → 메모리 + DB marine_grid4(V14 — 다시 시작해도 다시 묻지 않는다).
   * not_found(numberOfFeatures 0) · off_grid(격자 검사 실패 — 격리, 품질 사례 · 원본 보관): 부정 캐시 Redis wakeline:traffic_grid:negative
-    (grid_no → {"reason","at"}) — NEGATIVE_TTL_S(7일) 뒤 다시 묻는다.
+    (grid_no → {"reason","at"}) — NEGATIVE_TTL_S(7일) 뒤 다시 묻는다. 메모리가 MAX_TRACKED 에 닿으면 기한이 지난 항목만 비운다(유효한
+    결과는 잊지 않는다 — 크기는 Redis 해시만큼). Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 덮어쓴다).
   * 오류(HTTP · 응답 모양 · 시간 초과): 그 칸만 5분 → 30분 → 2시간 → 6시간 뒤 다시. ID_MAX_FAILURES(5)번 연달아 실패하면 failed —
     부정 캐시에 적고(FAILED_TTL_S, 1일 뒤 처음부터 다시) 스냅샷에 pending 이 아니라 failed 로 센다(품질 사례 traffic_grid_lookup_failed).
     실패한 적이 있는 칸은 새 칸 뒤에 묻는다. 한 틱에서 연달아 FILL_BREAKER_ERRORS(3)번 실패하면 채우기 전체를 5분 → 10분 → 30분 → 1시간
@@ -30,11 +34,19 @@
   * 보내지 않은 호출(속도 상한 · 운영자 끔 · 연결 전 실패 · 종료 취소)은 예산을 돌려주고 그 틱의 채우기를 멈춘다.
   * DB 캐시를 아직 읽지 못했으면 기동 뒤 DB_WAIT_S(10분)까지는 채우지 않는다(이미 아는 칸을 다시 묻지 않게). 그 뒤에는 DB 없이 채우고, DB 가
     돌아오면 읽어 합친다(실시간 경로는 DB 에 의존하지 않는다).
+  * 로그(INFO — /logs 에는 WARN 이상만 오른다): 새 regDt 마다 한 줄 — 스냅샷의 몇 칸에 기하가 있는가 · 없는 칸의 까닭(대기 · 해양격자에 없음 ·
+    격자 밖 · 조회 실패 · 대기열이 가득 차 넣지 못함) · 대기열 크기와 앞 줄 뒤에 새로 넣은 수(같은 regDt 호출에서 넣은 칸 포함). 채우기 한 번(다시 시작한 틱 → 멈춘 틱: 시간 창 · 하루 예산 ·
+    차단기 · 운영자 끔 · 물을 칸이 없음)마다 요약 한 줄 — 조회 수 · 결과 · 아는 칸 · 기다리는 칸 · 오늘 쓴 호출 · 멈춘 까닭과 다시 시작하는 때.
 - 발행: 새 regDt 이거나 기하가 늘어 수가 바뀌면(PUBLISH_MIN_INTERVAL_S 에 한 번) SET wakeline:traffic_grid EX 1200. 값은 traffic_grid.build_payload.
   오래됨(regDt 15분 초과) 판정은 api 가 한다. 수집기가 멈추면 20분 뒤 키가 사라진다.
 - heartbeat(wakeline:collector): traffic_grid_at · traffic_grid_lag_s(regDt 나이) · traffic_grid_state(active · no_key · fixture ·
   operator_off) · traffic_grid_last_ok · traffic_grid_reg_dt · resolved/unresolved · 알고 있는 칸 수 · pending · failed · 오늘 쓴 호출 수(두 예산) ·
-  traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값).
+  traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값) · 채우기 진행(ADR-023 2026-10-01 개정 — DB 없이 수렴을 본다):
+  traffic_grid_not_found · traffic_grid_off_grid(유효한 부정 캐시) · traffic_grid_not_queued(마지막으로 읽은 스냅샷의 칸 가운데
+  대기열이 가득 차 넣지 못한 칸 — 서로 다른 칸 수, 누계가 아니다. 읽기 전 빈 값) ·
+  traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · hour_window · daily_budget · breaker · operator_off) ·
+  traffic_grid_fill_resume_at(다음에 움직이는 때 — 없으면 빈 값) · traffic_grid_fill_pass_at 과 _lookups · _found · _not_found · _off_grid ·
+  _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값).
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
 PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 연달아 실패 5번 · failed 1일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
@@ -96,7 +108,7 @@ ID_MAX_FAILURES = 5  # 한 칸이 연달아 이만큼 실패하면 failed — FA
 NEGATIVE_TTL_S = 7 * 86400
 FAILED_TTL_S = 86400
 NEGATIVE_REASONS = ("not_found", "off_grid", "failed")
-MAX_TRACKED = 20_000  # 기다리는 칸 · 부정 캐시 상한(메모리 · Redis 해시)
+MAX_TRACKED = 20_000  # 조회 대기열 상한 · 부정 캐시(메모리)가 이만큼이면 기한이 지난 항목을 비운다(유효한 항목은 남긴다)
 DB_RETRY_S = 60
 DB_WAIT_S = 600
 PUBLISH_MIN_INTERVAL_S = 30
@@ -222,21 +234,27 @@ class Negative:
     reason: str  # not_found · off_grid(NEGATIVE_TTL_S) · failed(FAILED_TTL_S)
     at: datetime
 
+    @property
+    def expires(self) -> datetime:
+        return self.at + timedelta(seconds=FAILED_TTL_S if self.reason == "failed" else NEGATIVE_TTL_S)
+
     def valid(self, now: datetime) -> bool:
-        ttl = FAILED_TTL_S if self.reason == "failed" else NEGATIVE_TTL_S
-        return (now - self.at).total_seconds() < ttl
+        return now < self.expires
 
 
 class GridGeometry:
     """grid_id → 칸. 모르는 칸은 처음 본 순서로 기다리고(실패한 적이 있는 칸은 뒤로), 없는 칸 · 격자에 맞지 않는 칸은 부정 캐시(기한
-    NEGATIVE_TTL_S), 조회가 ID_MAX_FAILURES 번 연달아 실패한 칸은 failed(기한 FAILED_TTL_S — 확인 중으로 세지 않는다)."""
+    NEGATIVE_TTL_S), 조회가 ID_MAX_FAILURES 번 연달아 실패한 칸은 failed(기한 FAILED_TTL_S — 확인 중으로 세지 않는다).
+    대기열(_pending)은 이 프로세스의 메모리다 — 다시 시작하면 비고, 결과(칸 → DB marine_grid4, 부정 → Redis)만 남는다."""
 
     def __init__(self) -> None:
         self.cells: dict[str, Cell] = {}
         self.negative: dict[str, Negative] = {}
         self._pending: dict[str, _Pending] = {}
         self._seq = itertools.count()
-        self.dropped = 0  # MAX_TRACKED 를 넘어 기다리지 못한 칸 수(누계)
+        # 마지막 observe(스냅샷 한 번 읽기 — 새 regDt 든 같은 regDt 든)에서 대기열이 가득 차(MAX_TRACKED) 넣지 못한 서로 다른 칸 수. 읽은 적이
+        # 없으면 None. 누계가 아니다(검토 지적: 예전 dropped 는 부를 때마다 거절을 더해 '칸'이 아니라 '거절 횟수'였다) — 다음에 보일 때 자리가 있으면 넣는다
+        self.not_queued: int | None = None
 
     @property
     def pending(self) -> int:
@@ -247,16 +265,19 @@ class GridGeometry:
         return n is not None and n.valid(now)
 
     def observe(self, items: Iterable[tuple[str, int]], now: datetime) -> int:
-        """스냅샷의 (grid_id, 척수) — 모르는 칸을 기다림에 넣는다(척수가 많은 칸 먼저 번호). 새로 넣은 수."""
+        """스냅샷의 (grid_id, 척수) — 기하도 유효한 부정 캐시도 없고 대기열에도 없는 칸을 대기열에 넣는다(척수가 많은 칸 먼저 번호).
+        새로 넣은 수 — '처음 본 칸'이 아니라 '이 프로세스가 새로 넣은 칸'이다(재기동하면 대기열이 비어 다시 센다)."""
         added = 0
+        refused: set[str] = set()
         for g, _v in sorted(items, key=lambda t: (-t[1], t[0])):
             if g in self.cells or g in self._pending or self._negative_valid(g, now):
                 continue
             if len(self._pending) >= MAX_TRACKED:
-                self.dropped += 1
+                refused.add(g)
                 continue
             self._pending[g] = _Pending(next(self._seq))
             added += 1
+        self.not_queued = len(refused)
         return added
 
     def due(self, now: datetime, limit: int) -> list[str]:
@@ -264,15 +285,44 @@ class GridGeometry:
         ready = [(p.failures, p.seq, g) for g, p in self._pending.items() if p.next_try is None or p.next_try <= now]
         return [g for _f, _s, g in sorted(ready)[:limit]]
 
+    def has_due(self, now: datetime) -> bool:
+        return any(p.next_try is None or p.next_try <= now for p in self._pending.values())
+
+    def retries(self) -> tuple[int, datetime | None]:
+        """오류 뒤 다시 물을 차례를 기다리는 칸 수와 그중 가장 이른 때."""
+        waits = [p.next_try for p in self._pending.values() if p.failures and p.next_try is not None]
+        return sum(1 for p in self._pending.values() if p.failures), min(waits, default=None)
+
+    def coverage(self, grid_ids: Iterable[str], now: datetime) -> dict[str, int]:
+        """스냅샷 칸들을 나눈다: cells(기하 있음) · pending(대기열) · not_found · off_grid · failed(유효한 부정 캐시) ·
+        not_queued(대기열이 가득 차 넣지 못함)."""
+        out = dict.fromkeys(("cells", "pending", "not_found", "off_grid", "failed", "not_queued"), 0)
+        for g in grid_ids:
+            if g in self.cells:
+                out["cells"] += 1
+            elif g in self._pending:
+                out["pending"] += 1
+            elif (n := self.negative.get(g)) is not None and n.valid(now):
+                out[n.reason] += 1
+            else:
+                out["not_queued"] += 1
+        return out
+
     def resolved(self, cell: Cell) -> None:
         self.cells[cell.grid_no] = cell
         self._pending.pop(cell.grid_no, None)
         self.negative.pop(cell.grid_no, None)
 
     def mark_negative(self, grid_no: str, reason: str, now: datetime) -> None:
+        """부정 결과는 늘 적는다. 메모리가 MAX_TRACKED 에 닿으면 기한이 지난 항목만 모두 비운다(보이면 어차피 다시 묻는다) — 유효한 항목은 상한을
+        넘어도 남긴다: 크기는 Redis 해시만큼이다(load_negative 도 상한 없이 읽는다). 전에는 상한에서 적지 않고 대기열에서만 뺐고(다음에 보일
+        때마다 다시 물었다), 첫 고침은 가장 먼저 끝나는 유효한 항목을 비웠다(그 칸을 다시 물었다). 운영에서는 닿지 않는 경로다
+        (2026-09-30 기동 때 502항목 — ADR-023 2026-10-01 개정)."""
         self._pending.pop(grid_no, None)
-        if len(self.negative) < MAX_TRACKED or grid_no in self.negative:
-            self.negative[grid_no] = Negative(reason, now)
+        if grid_no not in self.negative and len(self.negative) >= MAX_TRACKED:
+            for g in [g for g, n in self.negative.items() if not n.valid(now)]:
+                del self.negative[g]
+        self.negative[grid_no] = Negative(reason, now)
 
     def failed(self, grid_no: str, now: datetime) -> bool:
         """조회 오류 한 번. ID_MAX_FAILURES 번째면 failed 로 옮기고 True(호출자가 Redis 에 적는다), 아니면 물러나기만."""
@@ -286,8 +336,16 @@ class GridGeometry:
         p.next_try = now + timedelta(seconds=_step(ID_RETRY_S, p.failures - 1))
         return False
 
+    def negative_counts(self, now: datetime) -> dict[str, int]:
+        """유효한 부정 캐시 — 까닭별 수(not_found · off_grid · failed)."""
+        out = dict.fromkeys(NEGATIVE_REASONS, 0)
+        for n in self.negative.values():
+            if n.valid(now):
+                out[n.reason] += 1
+        return out
+
     def failed_count(self, now: datetime) -> int:
-        return sum(1 for n in self.negative.values() if n.reason == "failed" and n.valid(now))
+        return self.negative_counts(now)["failed"]
 
     def reasons(self, now: datetime) -> dict[str, str]:
         return {g: n.reason for g, n in self.negative.items() if n.valid(now)}
@@ -336,6 +394,19 @@ class GridGeometry:
         return n
 
 
+@dataclass
+class FillPass:
+    """채우기 한 번 — 다시 시작한 틱부터 멈춘 틱(시간 창 · 하루 예산 · 차단기 · 운영자 끔 · 물을 칸이 없음)까지 보낸 조회와 결과."""
+
+    started: datetime
+    lookups: int = 0
+    found: int = 0
+    not_found: int = 0
+    off_grid: int = 0
+    errors: int = 0
+    set_aside: int = 0  # 연달아 ID_MAX_FAILURES 번 실패해 failed 로 뺀 칸
+
+
 # ---- 작업 ----------------------------------------------------------------------------------------------------------
 
 
@@ -371,6 +442,11 @@ class TrafficGridJob:
         self._fill_pause_until: datetime | None = None
         self._fill_pauses = 0
         self._fill_hold_until: datetime | None = None  # 시간 창 · 하루 예산이 다시 셀 때(다음 UTC 시 · 날)까지 채우지 않는다
+        self._fill_hold_kind = ""  # hour_window · daily_budget
+        self._pass: FillPass | None = None  # 열린 채우기 한 번
+        self._last_pass: tuple[datetime, FillPass] | None = None  # 이 프로세스에서 마지막으로 끝난 채우기(끝난 때)
+        self._new_snapshots = 0  # 이 프로세스가 받은 새 regDt 수(첫 스냅샷 줄에만 대기열이 남지 않는다는 설명을 붙인다)
+        self._queued_unlogged = 0  # 같은 regDt 호출에서 대기열에 넣은 칸 — 다음 스냅샷 줄의 +K 에 더한다
         self._logged_disabled: str | None = None
         self._waiting_logged = False
         self.counts = {"komsa_calls": 0, "wfs_calls": 0, "published": 0}
@@ -415,7 +491,17 @@ class TrafficGridJob:
                 n = self.geometry.load_negative(fields or {})
                 self._neg_loaded = True
                 if n:
-                    log.info("traffic grid: %d negative-cached grid ids loaded", n)
+                    # Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 같은 칸을 덮어쓴다): 기한이 지난 항목도 실려 있다
+                    valid = self.geometry.negative_counts(now)
+                    log.info(
+                        "traffic grid: negative cache — %d entries loaded: %d not in the MOF grid, %d off grid, %d failed still valid; "
+                        "%d expired (asked again when seen)",
+                        n,
+                        valid["not_found"],
+                        valid["off_grid"],
+                        valid["failed"],
+                        n - sum(valid.values()),
+                    )
             except Exception as e:  # noqa: BLE001 — 다음 틱에 다시(부정 캐시는 부가 — 없어도 동작)
                 log.info("traffic grid: negative cache not readable yet (%s)", type(e).__name__)
         if self._db_loaded or (self._db_next_try is not None and now < self._db_next_try):
@@ -542,14 +628,17 @@ class TrafficGridJob:
             self.ctx.db.record_run(
                 self.job_name, p.name, started, status="unchanged", http_status=resp.status, latency_ms=resp.latency_ms
             )
-            self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now)  # 부정 캐시 기한이 지난 칸을 다시 기다림에
+            # 부정 캐시 기한이 지난 칸 · 채우기가 비운 자리에 넣지 못했던 칸을 다시 기다림에 — 넣은 수는 다음 스냅샷 줄이 센다
+            self._queued_unlogged += self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now)
             self._dirty = True  # 같은 값을 다시 실어 TTL 만 늘린다 — api 가 regDt 나이로 '멈춤'을 밝힌다(값이 같아 ETag 도 같다)
             await self._success(resp, len(snap.items))
             return
         raw_ref = await archive(self.ctx.raw, p.name, resp.body, resp.fetched_at)
         self.snapshot, self.fetched_at, self.last_ok = snap, resp.fetched_at, resp.fetched_at
         self.schedule.on_new(snap.reg_dt, now)
-        added = self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now)
+        self._new_snapshots += 1
+        added = self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now) + self._queued_unlogged
+        self._queued_unlogged = 0
         self._dirty = True
         self._force_publish = True
         self.ctx.db.record_run(
@@ -567,12 +656,38 @@ class TrafficGridJob:
         await self._success(resp, len(snap.items))
         if snap.total_count is not None and snap.total_count > len(snap.items) + len(snap.rejected) + snap.duplicates:
             log.warning("traffic grid: page holds %d of totalCount %d — published as partial", len(snap.items), snap.total_count)
+        self._log_snapshot(snap, added, now)
+
+    def _log_snapshot(self, snap: KomsaSnapshot, added: int, now: datetime) -> None:
+        """새 regDt 한 줄: 이 스냅샷의 몇 칸에 기하가 있는가(지도에 그려지는 칸)와 없는 칸의 까닭, 조회 대기열. 대기열 증가(+K)는 '처음 본 칸'이
+        아니라 '이 프로세스가 앞 스냅샷 줄 뒤에 새로 넣은 칸'이다(그 사이 같은 regDt 호출에서 넣은 칸 포함 — 줄마다 더하면 이 프로세스가 넣은 칸 수).
+        대기열은 메모리라 재기동 뒤 첫 스냅샷은 결과(DB · 부정 캐시)가 없는 칸을 모두 다시 센다(운영 2026-09-30: 예전 줄 'N new unknown ids' 가
+        재기동 직후 1,372 · 그 뒤 스냅샷마다 340–450)."""
+        c = self.geometry.coverage((i.grid_id for i in snap.items), now)
+        without = len(snap.items) - c["cells"]
+        full = f", {c['not_queued']} not queued — queue full at {MAX_TRACKED}" if c["not_queued"] else ""
+        note = (
+            " — first snapshot since this process started: the queue is not kept across restarts, "
+            "so ids queued before a restart are counted again"
+            if self._new_snapshots == 1
+            else ""
+        )
         log.info(
-            "traffic grid: regDt %s — %d cells (%d rejected, %d new unknown ids)",
+            "traffic grid: regDt %s — %d cells (%d rejected): %d with geometry, %d without (%d waiting for a lookup, "
+            "%d not in the MOF grid, %d off grid, %d lookup failed%s); lookup queue %d (+%d newly queued%s)",
             iso_z(snap.reg_dt),
             len(snap.items),
             len(snap.rejected),
+            c["cells"],
+            without,
+            c["pending"],
+            c["not_found"],
+            c["off_grid"],
+            c["failed"],
+            full,
+            self.geometry.pending,
             added,
+            note,
         )
 
     def _count_sent(self, now: datetime) -> None:
@@ -586,11 +701,17 @@ class TrafficGridJob:
         )
 
     # ---- 격자 기하 채우기 ---------------------------------------------------------------------------------------------
+    def _waiting_for_db(self, now: datetime) -> bool:
+        return not self._db_loaded and self._started is not None and (now - self._started).total_seconds() < DB_WAIT_S
+
     async def _fill(self, now: datetime) -> None:
         w = self.wfs
-        if not w.configured or not self.geometry.pending:
+        if not w.configured:
             return
-        if not self._db_loaded and self._started is not None and (now - self._started).total_seconds() < DB_WAIT_S:
+        if not self.geometry.pending:
+            await self._end_pass(self._idle_reason(now))
+            return
+        if self._waiting_for_db(now):
             if not self._waiting_logged:
                 self._waiting_logged = True
                 log.info("traffic grid: waiting up to %d s for the marine_grid4 cache before WFS lookups", DB_WAIT_S)
@@ -600,9 +721,11 @@ class TrafficGridJob:
         if self._fill_hold_until is not None and now < self._fill_hold_until:
             return
         if await self.ctx.status.is_disabled(w.name):
+            await self._end_pass("stopped: mof_grid4 switched off by the operator")
             return
         batch = self.geometry.due(now, WFS_PER_TICK)
         if not batch:
+            await self._end_pass(self._idle_reason(now))
             return
         t0 = self._mono()
         found: list[Cell] = []
@@ -614,6 +737,8 @@ class TrafficGridJob:
         started = now
         stop_reason: str | None = None
         hold_until: datetime | None = None
+        hold_kind = ""
+        paused = False
         for g in batch:
             if self._mono() - t0 > FILL_MAX_S:
                 break
@@ -627,6 +752,7 @@ class TrafficGridJob:
                     stop_reason = "budget store unavailable (fail closed)"
                 else:
                     hold_until = at.astimezone(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                    hold_kind = "hour_window"
                     stop_reason = (
                         f"MOF hourly window: grid share used ({used} of {MOF_HOURLY_CAP} in UTC hour {hour.rsplit(':', 1)[-1]}, "
                         f"{MOF_GRID4_HOURLY_HEADROOM} left for port calls)"
@@ -639,6 +765,7 @@ class TrafficGridJob:
                     stop_reason = "budget store unavailable (fail closed)"
                 else:
                     hold_until = at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                    hold_kind = "daily_budget"
                     stop_reason = f"daily budget exhausted (used={used})"
                 break
             sent = False
@@ -685,6 +812,7 @@ class TrafficGridJob:
                 if errors_in_row >= FILL_BREAKER_ERRORS:
                     self._fill_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._fill_pauses))
                     self._fill_pauses += 1
+                    paused = True
                     log.warning(
                         "traffic grid: %d WFS errors in a row — geometry fill paused until %s (last: %s)",
                         errors_in_row,
@@ -721,13 +849,28 @@ class TrafficGridJob:
             self._dirty = True  # pending → failed: 수가 바뀌었다
         if calls:
             await self._record_fill(w, started, calls, found, not_found, off_grid, latency, last_error, http_status, quality)
+        if calls or hold_until is not None:
+            ps = self._pass = self._pass or FillPass(started)
+            ps.lookups += calls
+            ps.found += len(found)
+            ps.not_found += not_found
+            ps.off_grid += off_grid
+            ps.errors += calls - len(found) - not_found - off_grid
+            ps.set_aside += gave_up
         if stop_reason is None:
-            return
+            if paused:
+                await self._end_pass(
+                    f"paused: {errors_in_row} WFS errors in a row — geometry fill resumes at "
+                    f"{iso_z(self._fill_pause_until or now)}"
+                )
+            elif not self.geometry.has_due(self._now()):
+                await self._end_pass(self._idle_reason(self._now()))
+            return  # 그 밖(틱의 상한 · 시간 상한 · 속도 상한으로 보내지 못함)은 다음 틱에 이어서 — 같은 채우기다
         if hold_until is not None:
-            # 다시 셀 때까지 채우지 않는다 — 까닭은 이번에 한 번만 적는다(전에는 틱(30 s)마다 같은 거절을 한 줄씩 쌓았다)
-            self._fill_hold_until = hold_until
+            # 다시 셀 때까지 채우지 않는다 — 까닭은 이번에 한 번만, 이 채우기의 요약 줄에 적는다(전에는 틱(30 s)마다 같은 거절을 한 줄씩 쌓았다)
+            self._fill_hold_until, self._fill_hold_kind = hold_until, hold_kind
             stop_reason = f"{stop_reason} — geometry fill resumes at {iso_z(hold_until)}"
-            log.info("traffic grid: %s", stop_reason)
+            await self._end_pass(f"stopped: {stop_reason}")
         elif calls:
             return  # 예산 저장소 장애 — 이번 틱은 보낸 호출만 적는다(다음 틱에 다시 본다)
         self.ctx.db.record_run(
@@ -737,6 +880,62 @@ class TrafficGridJob:
             status="budget_unavailable" if hold_until is None else "budget_exhausted",
             error_text=stop_reason,
         )
+
+    def _idle_reason(self, now: datetime) -> str:
+        if not self.geometry.pending:
+            return "queue empty — every queued id has geometry or a negative-cache entry"
+        n, nxt = self.geometry.retries()
+        return f"nothing due — {n} waiting for a retry after an error (next at {iso_z(nxt) if nxt else '—'})"
+
+    async def _end_pass(self, how: str) -> None:
+        """열린 채우기를 닫고 INFO 한 줄(운영자가 DB 없이 수렴을 본다 — 틱마다가 아니라 채우기 한 번에 한 줄). 열린 채우기가 없으면 아무것도 하지 않는다.
+        시각은 로그가 늘 쓰는 UTC 'Z' 그대로다(화면은 heartbeat 의 *_at 을 KST 로 보인다)."""
+        ps = self._pass
+        if ps is None:
+            return
+        at = self._now()
+        self._pass, self._last_pass = None, (at, ps)
+        used, limit = await self.ctx.budget.usage(self.wfs.name)
+        retrying, _ = self.geometry.retries()
+        nq = self.geometry.not_queued
+        log.info(
+            "traffic grid: geometry fill pass %s → %s — %d lookups: %d found, %d not in the MOF grid, %d off grid, %d errors "
+            "(%d set aside as failed); %d cells known, %d ids waiting (%d after an error)%s; mof_grid4 today %s of %d (UTC day); %s",
+            iso_z(ps.started),
+            iso_z(at),
+            ps.lookups,
+            ps.found,
+            ps.not_found,
+            ps.off_grid,
+            ps.errors,
+            ps.set_aside,
+            len(self.geometry.cells),
+            self.geometry.pending,
+            retrying,
+            f", {nq} of the latest snapshot's cells not queued (queue limit {MAX_TRACKED})" if nq else "",
+            "—" if used is None else used,
+            limit,
+            how,
+        )
+
+    async def _fill_state(self, now: datetime) -> tuple[str, str]:
+        """(상태, 다음에 움직이는 때 ISO — 모르면 빈 값). heartbeat traffic_grid_fill_state · traffic_grid_fill_resume_at."""
+        if not self.wfs.configured:
+            return "", ""
+        if await self.ctx.status.is_disabled(self.wfs.name):
+            return "operator_off", ""
+        if self._fill_hold_until is not None and now < self._fill_hold_until:
+            return self._fill_hold_kind, iso_z(self._fill_hold_until)
+        if self._fill_pause_until is not None and now < self._fill_pause_until:
+            return "breaker", iso_z(self._fill_pause_until)
+        if not self.geometry.pending:
+            return "idle", ""
+        if self._waiting_for_db(now):
+            return "waiting_db", ""
+        if not self.geometry.has_due(now):
+            _n, nxt = self.geometry.retries()
+            return "retry_wait", iso_z(nxt) if nxt else ""
+        return "filling", ""
 
     async def _record_fill(
         self,
@@ -814,6 +1013,9 @@ class TrafficGridJob:
         if s is not None:
             resolved = sum(1 for i in s.items if i.grid_id in self.geometry.cells)
             unresolved = len(s.items) - resolved
+        neg = self.geometry.negative_counts(now)
+        fill_state, resume_at = await self._fill_state(now)
+        lp = self._last_pass
         extra = {
             "traffic_grid_state": self.state,
             "traffic_grid_last_ok": iso_z(self.last_ok) if self.last_ok else "",
@@ -822,7 +1024,20 @@ class TrafficGridJob:
             "traffic_grid_unresolved": "" if unresolved is None else str(unresolved),
             "traffic_grid_cells_known": str(len(self.geometry.cells)),
             "traffic_grid_pending": str(self.geometry.pending),
-            "traffic_grid_failed": str(self.geometry.failed_count(now)),
+            "traffic_grid_failed": str(neg["failed"]),
+            # 수렴을 DB 없이 보게(ADR-023 2026-10-01 개정): 유효한 부정 캐시(까닭별) · 마지막 스냅샷에서 대기열이 가득 차 넣지 못한 칸 ·
+            # 채우기 상태와 다음에 움직이는 때 · 이 프로세스에서 마지막으로 끝난 채우기 한 번(끝난 때 · 조회 수 · 결과)
+            "traffic_grid_not_found": str(neg["not_found"]),
+            "traffic_grid_off_grid": str(neg["off_grid"]),
+            "traffic_grid_not_queued": "" if self.geometry.not_queued is None else str(self.geometry.not_queued),
+            "traffic_grid_fill_state": fill_state,
+            "traffic_grid_fill_resume_at": resume_at,
+            "traffic_grid_fill_pass_at": iso_z(lp[0]) if lp else "",
+            "traffic_grid_fill_pass_lookups": str(lp[1].lookups) if lp else "",
+            "traffic_grid_fill_pass_found": str(lp[1].found) if lp else "",
+            "traffic_grid_fill_pass_not_found": str(lp[1].not_found) if lp else "",
+            "traffic_grid_fill_pass_off_grid": str(lp[1].off_grid) if lp else "",
+            "traffic_grid_fill_pass_errors": str(lp[1].errors) if lp else "",
             "traffic_grid_calls_komsa": "" if used_k is None else str(used_k),
             "traffic_grid_calls_wfs": "" if used_w is None else str(used_w),
             # 처음 추정(선택값)은 싣지 않는다 — 배운 값만

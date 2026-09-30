@@ -201,6 +201,42 @@ async def test_marine_grid4_upsert_and_read_on_the_v14_schema():
         await db.close(drain_s=2)
 
 
+async def test_a_cell_parsed_from_the_real_wfs_response_is_stored_and_restored_by_the_next_start(fixtures_dir):
+    """ADR-023 개정(2026-10-01) — '찾은 칸이 marine_grid4 에 남아 다음 기동이 다시 묻지 않는가': 실제 WFS 응답(바이트 그대로의 fixture)을 해석한 값이
+    V14 CHECK 를 통과해 저장되고, 다음 기동의 읽기(GridGeometry.load_cells — 격자 검사를 다시 한다)가 같은 칸으로 되살린다. 시험 행은 지우지
+    않으므로 칸 번호만 새 이름으로 바꾼다(값은 해석한 그대로)."""
+    from wakeline_collector.jobs.traffic_grid import GridGeometry
+    from wakeline_collector.marine_grid import Cell, parse_wfs
+
+    got = parse_wfs((fixtures_dir / "mof_grid4_wfs_GR4_F2K41_C3.xml").read_bytes(), "GR4_F2K41_C3")
+    assert got.kind == "found" and got.cell is not None
+    c = got.cell
+    g = f"GR4_W{uuid.uuid4().hex[:8]}"
+    pool = await asyncpg.create_pool(URL, min_size=1, max_size=2)
+
+    async def factory() -> Any:
+        return pool
+
+    db = Db(pool_factory=factory)
+    db.start()
+    try:
+        db.upsert_marine_grid4([Cell(g, c.lat_min, c.lon_min, c.lat_max, c.lon_max, c.gid)], datetime.now(UTC))
+        for _ in range(300):
+            if db.pending == 0:
+                break
+            await asyncio.sleep(0.02)
+        rows = await db.read_marine_grid4()
+        assert rows is not None and db.dropped == 0
+        mine = [r for r in rows if r[0] == g]
+        assert mine == [(g, c.lat_min, c.lon_min, c.lat_max, c.lon_max, c.gid)]
+        restored = GridGeometry()
+        assert restored.load_cells(mine) == (1, 0)
+        assert restored.cells[g] == Cell(g, 37.45, 126.6, 37.475, 126.625, 167305)
+        assert restored.observe([(g, 3)], datetime.now(UTC)) == 0  # 다음 기동은 이 칸을 대기열에 넣지 않는다(다시 묻지 않는다)
+    finally:
+        await db.close(drain_s=2)
+
+
 async def test_port_call_day_upsert_withdraw_and_coverage_on_the_v15_schema():
     """ADR-022 개정: db.py 의 하루 적용(upsert · 철회된 신고 삭제 · 범위 넓히기 · refreshed_at · 빈 날 확인)과 보존 정리가 V15 스키마와 수집기
     권한으로 돈다. 값이 바뀐 행만 updated_at 이 바뀐다. 시험 행은 지운다(수집기 계정에 port_call DELETE 가 있다 — 범위 행은 못 지우므로 매번 새 코드)."""

@@ -791,4 +791,6 @@ def test_geometry_queue_is_bounded(monkeypatch):
     monkeypatch.setattr(tg, "MAX_TRACKED", 2)
     g = tg.GridGeometry()
     assert g.observe([("A", 1), ("B", 2), ("C", 3)], T0) == 2
-    assert g.dropped == 1 and g.due(T0, 10) == ["C", "B"]
+    assert g.not_queued == 1 and g.due(T0, 10) == ["C", "B"]
+    assert g.observe([("A", 1), ("A", 1), ("B", 2), ("C", 3)], T0) == 0
+    assert g.not_queued == 1  # 같은 칸을 몇 번 보아도(같은 스냅샷을 다시 읽어도) 한 칸이다 — 누계가 아니다
