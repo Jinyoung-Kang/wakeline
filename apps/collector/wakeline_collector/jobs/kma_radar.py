@@ -45,13 +45,22 @@
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
 - 목록만 읽은 확인(운영 2026-10-01 00:50 KST — 계약 v5 §G26 개정): '파일 없음' 연속 중 확인하는 주기에 목록은 답했는데 확인할 tm 이 없으면(목록이 자라지 않고
   빈 새 날 목록만 읽었다 등) 그것도 확인이다 — 연속의 마지막 확인을 옮기고, 실행은 'ok' 가 아니라 'missing'(오류 글자 'nothing to probe: the KMA listing …' —
-  목록이 보인 것 · 연속 요약)이다(저장한 프레임이 없고 기상청에 새 파일도 없다 — 공급자 성공으로 적지 않는다). 연속 밖의 '새로 받을 tm 없음'은 전처럼 'ok'.
+  목록이 보인 것 · 연속 요약)이다(저장한 프레임이 없고 기상청에 새 파일도 없다 — 공급자 성공으로 적지 않는다). 연속 밖의 '새로 받을 tm 없음'은 'ok' —
+  다만 아래 '연속 밖의 목록 멈춤'이 되면 'missing'.
   전에는 'ok' · http 200 · 마지막 확인 그대로라 웹이 '확인 멈춤'을 잘못 붙였고 운영 LAST SUCCESS 가 프레임 없이 갱신됐다. 확인마다(목록만 읽은 확인 · '파일 없음'
   답을 받은 확인) 목록이 보인 것을 연속에 싣는다: missing_list_tm(읽은 목록의 가장 새 tm — 그 시각 이하, 없으면 빈 값) · missing_list_newer(확인 전 last_tm
   뒤로 실은 tm 수 — 0 이면 목록도 자라지 않았다: 로그 · 오류 글자 · 웹이 '목록에도 … 뒤 새 tm 없음'을 적는다. 읽은 목록이 last_tm 의 날을 덮지 못했으면 빈 값 —
   짓지 않는다). 연속을 여는 주기는 둘 다 빈 값(첫 확인이 채운다). 목록 호출이 실패한 주기(504 · 시간 초과 — 오늘 목록, 그리고 확인에 필요한 전날 목록:
   아래 'KST 자정 직후')는 'error' — 확인하지 않았으니 둘 다 · 마지막 확인도 그대로다(그러면 '확인 멈춤'이 맞다). 확인에 필요한 전날 목록의 예산 예약이
   거절된 주기는 예산 상태('budget_exhausted' · 'budget_unavailable'), 전날 목록이 429 · 속도 상한이면 'throttled' — 둘 다 확인으로 치지 않는다.
+- 연속 밖의 목록 멈춤(_ListIdle — 리뷰 2026-10-01 · 레인 kma 8차, 계약 v5 §G26): '파일 없음' 연속이 없고, 읽은 목록(그 시각 이하)이 이 작업이 저장했거나 파일을
+  받아 본 가장 새 tm(meta latest_tm · 받아 본 옛 tm) 뒤로 새 tm 을 싣지 않은 채 meta fetched_at(latest_tm 을 처음 저장한 시각 — 웹 · api 의 STALE 시계)이
+  LIST_IDLE_AFTER_S(900 s — STALE 기준과 같은 값, 선택값) 넘게 지났으면, 받을 새 tm 이 없는 주기도 'ok' 가 아니라 'missing'(오류 글자 'no new frame stored —
+  the KMA listing <날> has no tm after tm=<tm> (newest listed tm=… | no tm listed); newest frame tm=<latest_tm> first stored N min ago') — 공급자 성공으로 적지
+  않는다. meta note 에 '기상청 목록에 tm <tm>(KST) 뒤 새 tm 없음'(tm 만 — 주기마다 바뀌는 값은 넣지 않는다)을 싣는다: 프레임이 모두 만료되면(저장 3 h 뒤 —
+  옛 tm 은 다시 받지 않는다) 웹 패널 · 상세 표가 '사용 불가 — <note>'로 까닭을 적는다(전에는 '아직 수집되지 않음'). WARN 은 멈춤마다 한 번('no new frame —
+  …') + MISSING_REMIND_S(60분)마다 한 번('still no new frame — …'), 목록이 그 tm 뒤를 다시 실으면 INFO 한 줄 · note 를 지운다. 전에는 목록이 멈추고 파일은
+  있는 동안 주기마다 'ok' · 기록 0 · 공급자 성공 · WARN 없음이었다(§G22 가 연속 안에서 없앤 모양). 목록 실패 · 429 · 예산으로 멈춘 주기는 판정하지 않는다.
 - 속도 상한(운영 로그 2026-09-30 — 기상청 HTTP 429 '현재 요청을 처리할 수 없습니다' 네 번, 모두 같은 주기의 앞선 요청 0.1–0.5 s 뒤): KMA 호출은 모두
   호스트 버킷(ratelimit.KMA_APIHUB_RPS 0.5 req/s · burst 1 — 선택값)을 지나 2 s 간격으로 나간다('파일 없음' 연속이 닫힌 뒤 보관 창의 빈 곳을 이어 받는
   묶음 포함). 429 는 HttpClient 가 그 호스트를 멈추고(Retry-After — 초 · HTTP-date — 가 있으면 따른다, 없으면 30 → 60 → 120 → 300 s) 이 작업은 그 주기의
@@ -180,6 +189,9 @@ MISSING_SLOW_EVERY_S = 15 * 60
 MISSING_STALE_PROBES = 3
 # 연속 동안 확인하는 주기의 정규 호출: 목록 1 + 확인 ≤ 2(streak_probes)
 STREAK_CALLS_PER_PROBE = 3
+# 연속 밖의 목록 멈춤(_ListIdle — 리뷰 2026-10-01 · 레인 kma 8차): 저장한 최신 tm 을 처음 저장한 뒤(meta fetched_at — STALE 시계) 이만큼 넘게 목록이 그보다 새 tm 을
+# 싣지 않으면 'ok' 가 아니다(선택값 — 웹 · api 의 KMA STALE 기준 REL-19 meta.stale 900 s 와 같은 값: 웹이 STALE 을 적는 때부터 실행도 'missing')
+LIST_IDLE_AFTER_S = 15 * 60
 # 연속이 센 tm 을 기억하는 범위(마지막 tm 에서 거꾸로 3 h — 확인하는 tm 은 늘 그 안이다, 선택값)
 MISSING_SEEN_KEEP_S = FRAME_TTL_S
 MISSING_KEYS = (
@@ -363,6 +375,33 @@ class _ListCheck:
             return f"the KMA listing has no tm after tm={last_tm} either ({shown})"
         has = f"has newest tm={self.newest}" if self.newest else "lists no tm"
         return f"the KMA listing {days} {has} (tm={last_tm} is on {last_tm[:8]} — that listing was not read)"
+
+
+@dataclass(frozen=True)
+class _ListIdle:
+    """연속 밖의 목록 멈춤(리뷰 2026-10-01 · 레인 kma 8차 — 계약 v5 §G26): 읽은 목록이 tm 뒤로 새 tm 을 싣지 않고, 저장한 최신 tm 을 처음 저장한 뒤(meta
+    fetched_at — STALE 시계) LIST_IDLE_AFTER_S 넘게 지났다. 값은 모두 읽은 목록 · meta 해시에서 온다(짓지 않는다)."""
+
+    tm: str  # 이 작업이 저장했거나 파일을 받아 본 가장 새 tm — 목록이 그 뒤로 새 tm 을 싣지 않는다
+    newest: str  # 읽은 목록의 가장 새 tm(그 시각 이하 — 없으면 빈 값)
+    days: tuple[str, ...]  # 읽은 목록의 날
+    latest: str  # meta latest_tm(저장한 가장 새 tm)
+    age_s: float  # meta fetched_at(latest 를 처음 저장한 시각) 뒤 지난 초
+
+    def text(self) -> str:
+        """실행 오류 글자 · WARN 한 줄(목록 · meta 가 보인 것만)."""
+        shown = f"newest listed tm={self.newest}" if self.newest else "no tm listed"
+        s = (
+            f"the KMA listing {'+'.join(self.days)} has no tm after tm={self.tm} ({shown}); "
+            f"newest frame tm={self.latest} first stored {self.age_s / 60:.0f} min ago"
+        )
+        if self.tm > self.latest:
+            s += f"; tm={self.tm} has a file but is older than the {FRAME_TTL_S // 3600} h image retention — not stored"
+        return s
+
+    def note(self) -> str:
+        """meta note(웹 패널 · 상세 표가 '사용 불가 — <note>' 로 싣는다). tm 만 싣는다 — 주기마다 바뀌는 값(분)은 넣지 않는다."""
+        return f"기상청 목록에 tm {self.tm}(KST) 뒤 새 tm 없음"
 
 
 def _gap_expired(to_tm: str) -> bool:
@@ -589,6 +628,8 @@ class KmaRadarJob:
         self._prev_day_throttle: _StepFailed | None = None
         # 이 주기에 읽은 목록의 날(오름차순 — _listing: 연속의 확인이 목록이 무엇을 덮었는지 싣는다)
         self._list_days: tuple[str, ...] = ()
+        # 연속 밖의 목록 멈춤(_ListIdle)을 알린 것: (목록이 그 뒤로 싣지 않는 tm, 마지막 WARN — _now). 멈춤마다 WARN 한 번 + MISSING_REMIND_S 마다 한 번
+        self._idle: tuple[str, datetime] | None = None
 
     async def _frames(self) -> list[dict]:
         raw = await self.ctx.status.redis.get(KEY_FRAMES)
@@ -877,8 +918,9 @@ class KmaRadarJob:
         started = datetime.now(UTC)
         if not await self._reserve(started):
             return
-        # meta latest_tm — 프레임이 모두 만료돼도 남는다: 전날 끝에 닿았는가(_behind_prev_day) · 옛 tm(select_candidates known)
-        latest = await self._latest_stored()
+        # meta latest_tm — 프레임이 모두 만료돼도 남는다: 전날 끝에 닿았는가(_behind_prev_day) · 옛 tm(select_candidates known) · 목록 멈춤(_ListIdle —
+        # fetched_at 은 그 tm 을 처음 저장한 시각, STALE 시계)
+        latest, fetched = await self._latest_stored()
         try:
             listing = await self._listing([f["tm"] for f in stored], latest)
         except _StepFailed as f:
@@ -1000,6 +1042,15 @@ class KmaRadarJob:
         # 새 tm 이 있었는데 예산이 없어 하나도 저장하지 못했다 — 성공이 아니다(리뷰 2026-09-30)
         if budget_stop is not None and not stored_n:
             status, error_text = budget_stop[0], budget_stop[1] + (f" — {note}" if note else "")
+        # 연속 밖의 목록 멈춤(리뷰 2026-10-01 · 레인 kma 8차 — 계약 v5 §G26): 주기를 끝까지 보았으면(429 · 예산으로 멈추지 않았다) 목록이 저장했거나 받아 본 가장
+        # 새 tm 뒤로 새 tm 을 싣는지 본다. LIST_IDLE_AFTER_S 넘게 없으면 받을 새 tm 이 없는 주기도 'ok'(공급자 성공)가 아니라 'missing' — 전에는 목록이 멈추고 파일은
+        # 있는 동안 'ok' · 기록 0 · 공급자 성공이었고, 3 h 뒤 프레임이 만료되면 웹은 KMA 칩을 숨기고 '아직 수집되지 않음'이라 적었다(까닭은 meta note — 아래)
+        idle = None
+        if throttle is None and budget_stop is None:
+            idle = self._list_idle(listing.data, now_tm, latest, fetched)
+            self._note_idle(idle, listing.data, now_tm)
+        if idle is not None and status == "ok" and not stored_n:
+            status, error_text = "missing", f"no new frame stored — {idle.text()}"
         # 공급자 성공: 프레임을 저장했거나, 정규 부분이 멈추지 않고 'ok' 로 끝났다(다시 받기의 429 는 목록 · 정규 부분의 답을 지우지 않는다)
         succeeded = stored_n > 0 or (status == "ok" and throttle is None)
         http_status = listing.http_status
@@ -1033,14 +1084,57 @@ class KmaRadarJob:
                 ctx.status.key(self.p.name), {"budget_limit": str(limit)} | ({} if used is None else {"budget_used": str(used)})
             )
         await self._publish_missing()
+        idle_note = idle.note() if idle is not None else ""  # 목록 멈춤의 까닭(웹 '사용 불가 — <note>') — 아니면 지운다
         if not stored_n:
-            await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
+            await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": idle_note})
+        elif idle_note:  # 멈춘 동안 보관 창의 빈 곳을 채웠다(_store 가 note 를 지웠다) — 목록은 여전히 멈춤
+            await ctx.status.hset_meta(KEY_META, {"note": idle_note})
         await self._heartbeat(partial_now)
 
-    async def _latest_stored(self) -> str:
-        """meta 해시의 latest_tm(이 작업이 저장한 가장 새 tm — 프레임이 모두 만료돼도 남는다, 다시 띄워도 읽는다). 없거나 틀리면 빈 글자."""
-        v = await self.ctx.status.redis.hget(KEY_META, "latest_tm")
-        return v if isinstance(v, str) and _tm_dt(v) is not None else ""
+    async def _latest_stored(self) -> tuple[str, datetime | None]:
+        """meta 해시의 (latest_tm — 이 작업이 저장한 가장 새 tm, 프레임이 모두 만료돼도 남는다 · 다시 띄워도 읽는다, fetched_at — 그 tm 을 처음 저장한
+        시각 = STALE 시계). 없거나 틀리면 (빈 글자, None)."""
+        v, f = await self.ctx.status.redis.hmget(KEY_META, "latest_tm", "fetched_at")
+        latest = v if isinstance(v, str) and _tm_dt(v) is not None else ""
+        return latest, _parse_iso(f) if latest else None
+
+    def _list_idle(self, listing: list[str], now_tm: str, latest: str, fetched: datetime | None) -> _ListIdle | None:
+        """연속 밖의 목록 멈춤인가(_ListIdle): 연속이 없고, 읽은 목록(그 시각 이하)이 이 작업이 저장했거나 파일을 받아 본 가장 새 tm 뒤로 새 tm 을 싣지 않고,
+        meta fetched_at(latest 를 처음 저장한 시각)이 LIST_IDLE_AFTER_S 넘게 지났다. 저장한 것이 없거나 시각을 모르면(음수 — 시계가 어긋났다 포함) None."""
+        if self.missing is not None or not latest or fetched is None:
+            return None
+        seen = max(latest, self._old_seen)
+        listed = [tm for tm in listing if tm <= now_tm]
+        age = (_now() - fetched).total_seconds()
+        if any(tm > seen for tm in listed) or not LIST_IDLE_AFTER_S < age:
+            return None
+        return _ListIdle(seen, max(listed, default=""), self._list_days, latest, age)
+
+    def _note_idle(self, idle: _ListIdle | None, listing: list[str], now_tm: str) -> None:
+        """목록 멈춤의 로그: 시작에 WARN 한 번, 그 뒤 MISSING_REMIND_S 마다 한 번(선택값 — '파일 없음' 연속의 알림과 같은 간격), 목록이 다시 자라면 INFO 한 줄.
+        주기를 끝까지 본 주기만 부른다(목록 실패 · 429 · 예산으로 멈춘 주기는 모른다 — 알린 것을 그대로 둔다)."""
+        now = _now()
+        if idle is None:
+            if self._idle is not None and self.missing is None:
+                newest = max((tm for tm in listing if tm <= now_tm), default="")
+                log.info(
+                    "kma radar: the KMA listing has a tm after tm=%s again (newest listed tm=%s)", self._idle[0], newest or "none"
+                )
+            self._idle = None
+            return
+        if self._idle is None:
+            log.warning(
+                "kma radar: no new frame — %s; stored frames expire %d h after they were stored; reminder every %d min (chosen)",
+                idle.text(),
+                FRAME_TTL_S // 3600,
+                MISSING_REMIND_S // 60,
+            )
+            self._idle = (idle.tm, now)
+        elif (now - self._idle[1]).total_seconds() >= MISSING_REMIND_S:
+            log.warning("kma radar: still no new frame — %s", idle.text())
+            self._idle = (idle.tm, now)
+        else:
+            self._idle = (idle.tm, self._idle[1])
 
     async def _heartbeat(self, partial_now: int | None) -> None:
         await self.ctx.status.heartbeat(

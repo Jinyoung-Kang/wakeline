@@ -71,6 +71,12 @@ class StalledKma(OutageKma):
         tms = [t for t in _day(day) if t <= top]
         return ProviderResult(self.name, b"", datetime.now(UTC), 200, 5, data=tms, extra={"kinds": {t: ["EXT"] for t in tms}})
 
+    async def binary(self, tm):
+        """받은 시각(ProviderResult.fetched_at → meta fetched_at — STALE 시계)도 가짜 시계로: 수집기가 그 나이를 _now(가짜 시계)로 잰다."""
+        res = await super().binary(tm)
+        res.fetched_at = (datetime.strptime(self.clock["now"], "%Y%m%d%H%M") - KST).replace(tzinfo=UTC)
+        return res
+
 
 async def _run(job, clock, tms: list[str]) -> None:
     for t in tms:
@@ -324,18 +330,25 @@ async def test_the_streak_closes_when_the_listing_grows_again_with_a_file(env, c
     assert any("has the file again at tm=202610010040 — the gap from tm=202609301310" in m for m in _infos(caplog))
 
 
-async def test_outside_a_streak_an_empty_new_day_listing_is_ok_and_opens_nothing(env):
-    """연속이 없으면 전처럼: 자정 직후 창이 지나 새 날 목록이 비어 있어도 새로 받을 tm 이 없는 주기 — 'ok', 전날 목록은 읽지 않는다, 연속을 열지 않는다."""
+async def test_outside_a_streak_an_empty_new_day_listing_opens_nothing_and_is_ok_only_until_the_stale_limit(env):
+    """연속이 없으면: 새 날 목록이 비어 있어도 연속을 열지 않고, 전날 끝(23:55)까지 받았으니 자정 직후 창 뒤로 전날 목록은 읽지 않는다. 새로 받을 tm 이 없는
+    주기는 23:55 를 처음 저장한 뒤(23:55) 15분까지 'ok' 이고, 그 뒤는 목록 멈춤 'missing'(리뷰 2026-10-01 · 레인 kma 8차 — 전에는 하루 내내 'ok' · 공급자 성공)."""
     mod, r, ctx, clock, runs = env
     prov = StalledKma(clock, down_from="209912312355", list_until="202609302355")
     job = mod.KmaRadarJob(prov, ctx)
-    await _run(job, clock, _walk("202609302300", "202610010030"))
-    prov.days.clear()
+    await _run(job, clock, _walk("202609302300", "202610010005"))
     runs.clear()
+    clock["now"] = "202610010010"  # 23:55 를 처음 저장한 뒤 15분 — 아직 STALE 기준 안
+    await job.run_once()
+    prov.days.clear()
     clock["now"] = "202610010035"
     await job.run_once()
     assert prov.days == ["20261001"] and prov.binaries[-1] == "202609302355"
-    assert [run["status"] for run in runs] == ["ok"] and job.missing is None
+    assert [run["status"] for run in runs] == ["ok", "missing"] and job.missing is None
+    assert runs[1]["error_text"] == (
+        "no new frame stored — the KMA listing 20261001 has no tm after tm=202609302355 (no tm listed); "
+        "newest frame tm=202609302355 first stored 40 min ago"
+    )
     assert (await r.hgetall(mod.KEY_META)).get("missing_since_tm", "") == ""
 
 
@@ -829,6 +842,16 @@ async def test_a_file_back_for_a_tm_older_than_the_image_retention_closes_the_st
     assert (meta["latest_tm"], meta["fetched_at"]) == (before["latest_tm"], before["fetched_at"])
     assert meta["available"] == "0" and all(meta[k] == "" for k in mod.MISSING_KEYS)
     assert any("tm=202609301950 has a file but is older than the 3 h image retention — not stored" in m for m in _infos(caplog))
+    # 연속은 닫혔지만 목록은 여전히 19:50 에서 멈춤 — 'ok' 가 아니라 목록 멈춤(레인 kma 8차): 받아 본 옛 tm 19:50 뒤로 새 tm 이 없다
+    statuses = [run["status"] for run in runs]
+    # 앞의 'waiting' 은 늦춘 연속의 기다림
+    assert "ok" not in statuses and set(statuses[statuses.index("missing") :]) == {"missing"}
+    assert runs[-1]["error_text"].startswith(
+        "no new frame stored — the KMA listing 20260930+20261001 has no tm after tm=202609301950 (newest listed tm=202609301950); "
+        "newest frame tm=202609301305 first stored "
+    )
+    assert runs[-1]["error_text"].endswith("; tm=202609301950 has a file but is older than the 3 h image retention — not stored")
+    assert meta["note"] == "기상청 목록에 tm 202609301950(KST) 뒤 새 tm 없음"
 
 
 # ---- 전날 끝까지 받은 뒤 프레임이 만료돼도 전날 목록은 필요한 목록이 아니다(리뷰 2026-10-01 · 레인 kma 8차) -----------------------------------------
@@ -867,3 +890,69 @@ async def test_frames_expired_after_reaching_the_previous_day_end_never_make_the
     assert "error" not in [run["status"] for run in runs]
     assert not [m for m in _warns(caplog) if "previous-day listing" in m]
     assert prov.binaries[-1] == "202609302355"  # 옛 tm 을 다시 받지 않았다
+
+
+# ---- 연속 밖의 목록 멈춤 — 'ok' 가 아니라 'missing' · 까닭은 meta note(리뷰 2026-10-01 · 레인 kma 8차) ---------------------------------------------------
+# 리뷰가 본 것(레인 7차 코드): 목록이 멈추고 파일은 받을 수 있으면 '파일 없음' 연속이 열리지 않는다. 옛 tm 을 다시 받지 않게 고친 뒤로는 멈춘 지 약 3 h 에
+# 프레임이 모두 만료돼(available 0) 웹 상태 바의 KMA 칩이 STALE 과 함께 사라지고(statusbar — 프레임이나 연속이 있을 때만 칩) 패널은 '사용 불가 — 아직 수집되지
+# 않음 (HTTP 200)' 이었다. 그동안 주기는 모두 'ok' · 기록 0 · 공급자 성공(last_success_at 5분마다) · WARN 없음 — §G22 가 없앤 모양이 연속 밖에 남았다.
+# 이제: 저장한 최신 tm 을 처음 저장한 뒤(meta fetched_at — 웹 · api 의 STALE 시계) LIST_IDLE_AFTER_S(900 s — STALE 기준과 같은 값) 넘게 목록에 그보다 새 tm 이 없으면
+# 실행 'missing'(오류 글자 'the KMA listing … has no tm after tm=…') · 공급자 성공 아님 · meta note(웹 패널 · 상세 표가 '사용 불가 — <note>' 로 싣는다) ·
+# WARN 한 번 + 60분마다 한 번. 목록이 다시 자라면 INFO 한 줄 · note 를 지운다.
+async def test_a_stalled_listing_without_a_streak_is_a_missing_run_with_the_reason_in_the_meta_note(env, caplog):
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="209912312355", list_until="202609301950")  # 파일은 늘 있다 — 목록만 19:50 에서 멈춘다
+    job = mod.KmaRadarJob(prov, ctx)
+    stored_at: dict[str, str] = {}
+    gone: set[str] = set()
+    for t in _walk("202609301700", "202609301950"):
+        clock["now"] = t
+        await job.run_once()
+        _track_images(mod, r, stored_at, gone, t)
+    runs.clear()
+    caplog.clear()
+    succeeded: list[str] = []  # 공급자 성공을 적은 주기(가짜 시계)
+    real_success = ctx.status.success
+
+    async def success(name, **kw):
+        succeeded.append(clock["now"])
+        await real_success(name, **kw)
+
+    ctx.status.success = success
+    at: list[str] = []
+    for t in _walk("202609301955", "202610010300"):
+        clock["now"] = t
+        _expire_due(mod, r, stored_at, gone, t)
+        await job.run_once()
+        _track_images(mod, r, stored_at, gone, t)
+        at.append(t)
+    status = dict(zip(at, [run["status"] for run in runs], strict=True))
+    # 19:50 을 처음 저장한 19:50 부터 15분까지는 '새로 받을 tm 없음'(전처럼 'ok'), 20:10 부터 'missing'
+    assert [status[t] for t in ("202609301955", "202609302000", "202609302005")] == ["ok"] * 3
+    assert {status[t] for t in at if t >= "202609302010"} == {"missing"}
+    late = [run for t, run in zip(at, runs, strict=True) if t >= "202609302010"]
+    assert late[0]["error_text"].startswith(
+        "no new frame stored — the KMA listing 20260930 has no tm after tm=202609301950 (newest listed tm=202609301950)"
+    )
+    assert all(run["http_status"] == 200 and run["records_in"] == 0 for run in late)
+    assert succeeded == ["202609301955", "202609302000", "202609302005"]  # 20:10 뒤로 공급자 성공을 적지 않는다
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["available"] == "0" and meta["latest_tm"] == "202609301950"  # 프레임은 만료됐다(3 h)
+    assert meta["note"] == "기상청 목록에 tm 202609301950(KST) 뒤 새 tm 없음"  # 패널 · 상세 표의 '사용 불가 — <note>'
+    assert meta["status"] == "200" and all(meta.get(k, "") == "" for k in mod.MISSING_KEYS)  # '파일 없음' 연속이 아니다
+    warns = [m for m in _warns(caplog) if "no new frame" in m]
+    assert len([m for m in warns if m.startswith("kma radar: no new frame — ")]) == 1  # 멈춤마다 한 번
+    assert (
+        len([m for m in warns if m.startswith("kma radar: still no new frame — ")]) == 6
+    )  # 21:10 · 22:10 · … · 02:10 — 60분마다
+    # 목록이 다시 자란다 — 새 프레임 · 'ok' · note 를 지운다 · INFO 한 줄
+    prov.list_until = "209912312355"
+    runs.clear()
+    caplog.clear()
+    clock["now"] = "202610010305"
+    await job.run_once()
+    assert [run["status"] for run in runs] == ["ok"] and runs[0]["records_in"] == 4 and succeeded[-1] == "202610010305"
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["latest_tm"], meta["note"], meta["available"]) == ("202610010305", "", "1")
+    assert any(m.startswith("kma radar: the KMA listing has a tm after tm=202609301950 again") for m in _infos(caplog))
+    assert not _warns(caplog)
