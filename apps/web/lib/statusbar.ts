@@ -7,7 +7,8 @@
  * - 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api radar/kr missing): KMA 칩에 "파일 없음"(주의 — 까닭 문장은 title) · 상세에 행 하나.
  *   마지막 확인이 확인 간격 × 3(lib/kr-radar KR_MISSING_STALE_PROBES — 아래로 15분, 긴 연속을 15분마다 확인하면 45분 — 계약 v5 §G26)을 넘으면
  *   "파일 없음 · 확인 멈춤" — 지금도 그런지 모른다.
- *   보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다(나이 STALE 만으로는 까닭을 모른다).
+ *   보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다(나이 STALE 만으로는 까닭을 모른다). 연속이 없어도 한 번이라도 받은 적이
+ *   있으면(meta.fetched_at) 칩을 남긴다 — STALE 과 api 의 까닭(note)을 title 에(2026-10-01: 목록 정체 · 공급자 오류로 멈춘 출처가 줄에서 사라졌다).
  * - 기준은 모두 이미 있는 값: 지역 60 s · 전세계 300 s(ws-protocol · api StatusService), AIS 120 s(ships), 기상청 900 s(format — api meta),
  *   SIGMET 900 s · 레이더 600 s(api StatusService 의 status.*.stale — SIGMET_STALE_S · RADAR_STALE_S 는 그 값을 옮겨 적은 것, 시험이 서버 코드와 견준다).
  *   새로 지은 수는 없다(칩 순서 · 폭 계산은 표시 규칙).
@@ -276,7 +277,9 @@ export function statusChips(i: StatusInput): Chip[] {
 
   const kr = i.radarKr;
   const miss = krMissing(kr?.missing, i.srvNowMs);
-  if (kr && (kr.available || miss)) {
+  // 한 번이라도 받은 적이 있으면(최신 tm 첫 수집 시각이 있다) 프레임이 모두 만료돼도 칩을 남긴다 — 목록 정체 · 공급자 오류로 멈춘 출처를
+  // 상태 바에서 지우지 않는다(2026-10-01). 받은 적이 없으면(키 없음 등) 전처럼 칩을 싣지 않는다.
+  if (kr && (kr.available || miss || kr.meta?.fetched_at)) {
     const stale = isKrRadarStale(kr, i.srvNowMs);
     const comp = krComposite(kr.available ? kr.frames[kr.frames.length - 1] : null, i.srvNowMs);
     const age = i.srvNowMs ? ageS(kr.meta?.fetched_at, i.srvNowMs) : null;
@@ -423,7 +426,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
     });
   } else {
     rows.push({
-      key: "kma", name: "레이더 · 기상청", health: miss ? healthOf("kma") : "unknown", state: kr ? (miss ? `사용 불가 · ${stateOf("kma")}` : "사용 불가") : "—", value: "—",
+      key: "kma", name: "레이더 · 기상청", health: chips.has("kma") ? healthOf("kma") : "unknown", state: kr ? (chips.has("kma") ? `사용 불가 · ${stateOf("kma")}` : "사용 불가") : "—", value: "—",
       source: kr?.note || (kr ? "기상청 API허브" : "상태 수신 전"), rule: `STALE > ${KR_RADAR_STALE_S / 60}분`,
     });
   }
