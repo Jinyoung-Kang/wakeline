@@ -1,5 +1,6 @@
 package dev.wakeline.route;
 
+import dev.wakeline.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.persist.SingleFlight;
 import io.micrometer.core.instrument.Counter;
@@ -8,15 +9,20 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
@@ -33,8 +39,11 @@ import java.util.regex.Pattern;
  *       기다리는 쪽은 진행 중인 읽기의 future 에 이어 붙는다(WS 조회 스레드를 잡지 않는다).</li>
  *   <li>부르는 쪽(계약 v5 §G21 · ADR-025 개정): {@link #cached} 는 WS 세션 우편함에서 — 메모리만 본다. {@link #loadAsync} 는 Redis 를 우편함 밖 노선 조회
  *       실행기(ws.RouteLookups)에서 읽는다 — 기다리는 동안에도 그 세션의 pong · diff 는 간다. {@link #forCallsign} 은 같은 읽기를 부른 스레드에서(REST 항공기
- *       상세 · 시험). 한 번의 읽기 상한은 Redis 명령 상한 spring.data.redis.timeout(3 s — 설정값, 잰 값 아님) — 연결을 새로 맺어야 하면 Lettuce 연결 상한
- *       (spring.data.redis.connect-timeout 이 없으면 라이브러리 기본 10 s)이 더해진다.</li>
+ *       상세 · 시험). 한 번의 읽기 상한은 Redis 명령 상한({@link RedisConfig#COMMAND_TIMEOUT} — 운영 3 s, 설정값 · 잰 값 아님). 공유 연결을 아직 맺지 못했으면
+ *       그 연결을 맺는 동안(Lettuce 기본 연결 상한 10 s — RedisConfig)이 더해진다. 끊긴 것을 아는 연결에서는 기다리지 않고 곧바로 실패한다(REJECT_COMMANDS).</li>
+ *   <li>REST 의 기다림에도 상한(리뷰 2026-09-30): {@link #forCallsign} 이 다른 스레드의 읽기에 붙으면 그 읽기가 WS 노선 조회 실행기의 대기열에 있을 수 있다
+ *       (Redis 가 멈춰 스레드가 모두 잡힘 — 대기열 순서만큼 늦는다). 그래서 붙은 쪽은 Redis 명령 상한까지만 기다리고, 그때까지 끝나지 않으면 unavailable 로
+ *       답하고 센다(wakeline_route_read_wait_timeouts_total — 진행 중인 읽기는 건드리지 않는다: 끝나면 제 값으로 캐시를 채운다).</li>
  *   <li>로그에는 콜사인·오류 종류만(노선 내용은 쓰지 않는다).</li>
  * </ul>
  */
@@ -58,42 +67,74 @@ public class RouteReader {
     /** 5 s 메모리 캐시 적중률(R-53) — hit 는 Redis 를 읽지 않은 것(캐시 · 진행 중인 읽기에 붙음), miss 는 Redis 읽기. */
     private final Counter hit;
     private final Counter miss;
+    /** {@link #forCallsign} 이 붙은 읽기를 명령 상한까지 기다렸지만 끝나지 않아 unavailable 로 답한 수. */
+    private final Counter waitTimeouts;
+    /** Redis 명령 상한(ms) — {@link #forCallsign} 이 다른 스레드의 읽기를 기다리는 상한. */
+    private final long commandTimeoutMs;
 
+    /** 운영: 기본 Redis 연결(RedisConfig)의 GET · 명령 상한은 그 연결과 같은 설정 식({@link RedisConfig#COMMAND_TIMEOUT}). */
     @Autowired
-    public RouteReader(StringRedisTemplate redis, ObjectMapper json, MeterRegistry meters) {
-        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, meters);
+    public RouteReader(StringRedisTemplate redis, ObjectMapper json, MeterRegistry meters, @Value(RedisConfig.COMMAND_TIMEOUT) String commandTimeout) {
+        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, meters, RedisConfig.commandTimeout(commandTimeout));
     }
 
-    /** 지표 없이(테스트 컨텍스트). */
+    /** 지표 없이(테스트 컨텍스트) — 명령 상한은 기본값({@link RedisConfig#DEFAULT_COMMAND_TIMEOUT}). */
     public RouteReader(StringRedisTemplate redis, ObjectMapper json) {
-        this(redis, json, new SimpleMeterRegistry());
+        this(key -> redis.opsForValue().get(key), json, System::currentTimeMillis, new SimpleMeterRegistry(), RedisConfig.DEFAULT_COMMAND_TIMEOUT);
     }
 
-    /** 테스트용(다른 패키지의 컨트롤러·WS 시험도 쓴다): Redis GET 과 시계를 주입한다. */
+    /** 테스트용(다른 패키지의 컨트롤러·WS 시험도 쓴다): Redis GET 과 시계를 주입한다 — 명령 상한은 기본값. */
     public RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock) {
-        this(get, json, clock, new SimpleMeterRegistry());
+        this(get, json, clock, new SimpleMeterRegistry(), RedisConfig.DEFAULT_COMMAND_TIMEOUT);
     }
 
     RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock, MeterRegistry meters) {
+        this(get, json, clock, meters, RedisConfig.DEFAULT_COMMAND_TIMEOUT);
+    }
+
+    /** 테스트용(다른 패키지의 WS 시험도 쓴다): 명령 상한도 주입한다(시험이 고른 Lettuce 명령 상한과 맞출 때). 0 이하는 받지 않는다. */
+    public RouteReader(Function<String, String> get, ObjectMapper json, LongSupplier clock, MeterRegistry meters, Duration commandTimeout) {
+        if (commandTimeout == null || commandTimeout.isNegative() || commandTimeout.isZero())
+            throw new IllegalArgumentException("the Redis command timeout must be positive, got " + commandTimeout);
         this.get = get;
         this.json = json;
         this.clock = clock;
+        this.commandTimeoutMs = commandTimeout.toMillis();
         this.hit = Counter.builder("wakeline_cache_requests_total").tag("cache", "route").tag("result", "hit").register(meters);
         this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "route").tag("result", "miss").register(meters);
+        this.waitTimeouts = Counter.builder("wakeline_route_read_wait_timeouts_total")
+                .description("REST 노선 읽기가 같은 콜사인의 진행 중 읽기(WS 노선 조회 실행기 — 대기열에 있을 수 있다)를 Redis 명령 상한까지 기다렸지만 끝나지 않아 "
+                        + "unavailable 로 답한 수")
+                .register(meters);
     }
+
+    /** Redis 명령 상한 — {@link #forCallsign} 이 붙은 읽기를 기다리는 상한(운영: {@link RedisConfig#COMMAND_TIMEOUT}). */
+    public Duration commandTimeout() { return Duration.ofMillis(commandTimeoutMs); }
 
     /** 이 항공기의 노선(상태가 없으면 null — 콜사인을 모른다). */
     public RouteInfo forAircraft(AircraftState a) {
         return a == null ? null : forCallsign(a.callsign());
     }
 
-    /** 공급자 콜사인 → 노선(부른 스레드에서 읽는다 — REST · 시험). 형식이 틀리면 no_callsign. 같은 콜사인을 다른 스레드가 읽는 중이면 그 결과를 기다린다. */
+    /**
+     * 공급자 콜사인 → 노선(부른 스레드에서 읽는다 — REST · 시험). 형식이 틀리면 no_callsign. 진행 중 표시를 얻으면 여기서 읽는다(읽기 한 번 — 명령 상한).
+     * 같은 콜사인을 다른 스레드가 읽는 중이면(WS 노선 조회 실행기 — 아직 대기열에 있을 수 있다) 그 결과를 Redis 명령 상한까지만 기다리고, 그때까지 끝나지
+     * 않으면 unavailable(센다 — 그 읽기는 그대로 둔다: 끝나면 제 값으로 캐시를 채우고, 기다린 다른 쪽도 제 값을 받는다). 예외를 던지지 않는다.
+     */
     public RouteInfo forCallsign(String raw) {
         String cs = normalizeCallsign(raw);
         if (cs == null) return RouteInfo.noCallsign();
+        CompletableFuture<RouteInfo> f = loadAsync(cs, Runnable::run);
         try {
-            return loadAsync(cs, Runnable::run).join();
-        } catch (CompletionException e) { // 그 읽기가 결함(Error)으로 끝났다 — 기다린 쪽은 모름
+            return f.get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            waitTimeouts.increment();
+            log.debug("route read for {} still running after {} ms — answered unavailable", cs, commandTimeoutMs);
+            return RouteInfo.unavailable(cs);
+        } catch (ExecutionException | CancellationException e) { // 그 읽기가 거절(실행기 종료) · 결함(Error)으로 끝났다 — 기다린 쪽은 모름
+            return RouteInfo.unavailable(cs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return RouteInfo.unavailable(cs);
         }
     }

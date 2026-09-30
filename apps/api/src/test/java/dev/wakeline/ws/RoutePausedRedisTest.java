@@ -3,6 +3,7 @@ package dev.wakeline.ws;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -17,9 +18,11 @@ import tools.jackson.databind.JsonNode;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static dev.wakeline.ws.RouteSelectionLookupTest.await;
@@ -35,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 곧바로 pending 으로, 늦어도 마감(= 명령 상한)에 unavailable 로 나간다. 다시 풀면 캐시가 지난 뒤 실제 노선을 보낸다.
  * <p>명령 상한은 이 시험이 고른 1.5 s(시험 시간을 줄이려고 — 운영은 application.yml spring.data.redis.timeout 3 s). 마감은 운영 배선과 같게 그 값에서 온다.
  * heartbeat 의 status 는 WsTestKit 의 가짜라 Redis 를 읽지 않는다(운영의 status 는 우편함에서 Redis 를 읽는다 — §G21 '남은 것').
+ * <p>같은 동안 REST 항공기 상세의 노선 읽기(RouteReader.forCallsign — 진행 중인 WS 읽기에 붙는다)도 명령 상한 안에 unavailable 로 답한다(리뷰 2026-09-30 #1).
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class RoutePausedRedisTest {
@@ -75,7 +79,8 @@ class RoutePausedRedisTest {
         StringRedisTemplate redis = new StringRedisTemplate(factory);
         redis.opsForValue().set("wakeline:route:SYN736", RouteInfoTest.found("SYN736").toString());
         AtomicLong clock = new AtomicLong(1_000_000);
-        RouteReader reader = new RouteReader(key -> redis.opsForValue().get(key), RouteInfoTest.JSON, clock::get); // 실제 Lettuce GET
+        RouteReader reader = new RouteReader(key -> redis.opsForValue().get(key), RouteInfoTest.JSON, clock::get, new SimpleMeterRegistry(),
+                COMMAND_TIMEOUT); // 실제 Lettuce GET · 운영처럼 명령 상한이 REST 기다림의 상한
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
         ThreadPoolExecutor lookups = RouteLookups.boundedExecutor(2, SelectionLookups.DEFAULT_QUEUE);
         try (WsTestKit k = new WsTestKit(pool, 5_000, 200, 5)) {
@@ -95,6 +100,11 @@ class RoutePausedRedisTest {
                 await(() -> !ofType(f, "selected").isEmpty());
                 assertThat((System.nanoTime() - t0) / 1_000_000).as("selected at once").isLessThan(500);
                 assertThat(route(ofType(f, "selected").getFirst())).isEqualTo(RouteInfo.PENDING);
+                long tRest = System.nanoTime(); // REST 항공기 상세가 같은 콜사인을 묻는다 — 진행 중인 WS 읽기에 붙는다
+                CompletableFuture<long[]> rest = CompletableFuture.supplyAsync(() -> {
+                    RouteInfo r = reader.forCallsign("SYN736");
+                    return new long[] {RouteInfo.UNAVAILABLE.equals(r.status()) ? 1 : 0, (System.nanoTime() - tRest) / 1_000_000};
+                }, pool);
                 for (int i = 1; i <= 3; i++) { // Redis 가 멈춘 동안에도 주기가 그대로
                     int pongs = ofType(f, "pong").size(), diffs = ofType(f, "diff").size(), pings = ofType(f, "ping").size();
                     long ti = System.nanoTime();
@@ -112,6 +122,9 @@ class RoutePausedRedisTest {
                         .isBetween(COMMAND_TIMEOUT.toMillis() - 100, COMMAND_TIMEOUT.toMillis() + 2_000);
                 assertThat(RouteSelectionLookupTest.outcome(k, "deadline") + RouteSelectionLookupTest.outcome(k, "ok"))
                         .as("one answer — at the deadline or by the command timeout, whichever came first").isEqualTo(1.0);
+                long[] r = rest.get(5, TimeUnit.SECONDS);
+                assertThat(r[0]).as("REST answered unavailable").isEqualTo(1);
+                assertThat(r[1]).as("REST within the Redis command timeout (%d ms)", COMMAND_TIMEOUT.toMillis()).isLessThan(COMMAND_TIMEOUT.toMillis() + 1_000);
             } finally {
                 unpause();
             }
