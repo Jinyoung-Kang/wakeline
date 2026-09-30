@@ -12,12 +12,12 @@
   연속 동안은 옛 tm 마다 세 번씩 부르지 않고 주기마다 두 tm 만 확인한다(streak_probes — 저장 안 됨 · 해석 불가 아님): 목록의 가장 새 tm 과
   MISSING_RECHECK_S(10분, 선택값 — R-03 의 마지막 시도 나이) 넘게 앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03)
   때문이다 — 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은 아직 없어서 연속이 닫히지 않았다(리뷰 2026-09-30). 예산: 목록 1 + 확인 2 = 주기당 3,
-  하루 3 × 288 = 864 < 한도 1,000(설정값 계산 — 전에는 목록 1 + 바이너리 4). 둘 중 어느 것이든 gzip 을 받으면 INFO(공백 길이)로 닫고 다음 주기부터 전처럼 보관 창의 빈 곳을 다시 시도한다 — 그 공백 안의 tm 을 포기할
-  때는 이미 알렸으므로 INFO. 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
+  하루 3 × 288 = 864 < 한도 1,000(설정값 계산 — 전에는 목록 1 + 바이너리 4). 둘 중 어느 것이든 gzip 을 받으면 INFO(공백 길이)로 닫고
+  다음 주기부터 전처럼 보관 창의 빈 곳을 다시 시도한다 — 그 공백 안의 tm 을 포기할 때는 이미 알렸으므로 INFO. 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
   연속은 meta 해시와 공급자 해시(wakeline:provider:kma_radar)의 missing_* 에 싣고(api /radar/kr · /status · /ops/providers), 닫으면 빈 값으로
   지운다. 수집기를 다시 띄우면 마지막 확인이 MISSING_CARRY_S(15분, 선택값) 안인 연속만 이어받는다(아니면 지운다 — 옛 연속을 지금처럼 보이지 않게).
-- 실행 기록 상태: 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없고 '파일 없음' 답이 있었으면
-  'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
+- 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
+  거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
 - KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다). 덧붙이는 목록이라 예산이 없거나
   실패하면 오늘 목록만으로 주기를 계속한다.
@@ -424,19 +424,23 @@ class KmaRadarJob:
             release=lambda: self.ctx.budget.release(self.p.name, 1),  # 보내지 않은 시도(연결 전 실패 · 속도 상한)는 돌려준다
         )
 
-    async def _reserve(self, started: datetime) -> bool:
+    async def _try_reserve(self) -> tuple[str, str] | None:
+        """예산 1 을 예약한다. 되면 None, 안 되면 (실행 상태, 오류 글자)와 WARN 한 줄 — 실행 기록은 부르는 쪽이 남긴다(한 주기 = 기록 하나)."""
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
-        if not ok:
-            unavailable = used == UNKNOWN
-            self.ctx.db.record_run(
-                self.job_name,
-                self.p.name,
-                started,
-                status="budget_unavailable" if unavailable else "budget_exhausted",
-                error_text="budget store unavailable (fail closed)" if unavailable else f"daily budget exhausted (used={used})",
-            )
-            log.warning("kma radar: budget %s", "unavailable" if unavailable else f"exhausted (used={used})")
-        return ok
+        if ok:
+            return None
+        unavailable = used == UNKNOWN
+        log.warning("kma radar: budget %s", "unavailable" if unavailable else f"exhausted (used={used})")
+        if unavailable:
+            return "budget_unavailable", "budget store unavailable (fail closed)"
+        return "budget_exhausted", f"daily budget exhausted (used={used})"
+
+    async def _reserve(self, started: datetime) -> bool:
+        """주기 첫 예약(목록): 안 되면 예산 상태의 실행 기록을 남기고 False(주기를 끝낸다)."""
+        refused = await self._try_reserve()
+        if refused is not None:
+            self.ctx.db.record_run(self.job_name, self.p.name, started, status=refused[0], error_text=refused[1])
+        return refused is None
 
     def _mark_bad(self, tm: str, why: str) -> None:
         self._not_ready.pop(tm, None)
@@ -521,8 +525,9 @@ class KmaRadarJob:
         stored_n = missing_n = 0
         note = ""
         quality: list[tuple[str, str | None, dict]] = []
+        budget_stop: tuple[str, str] | None = None  # 바이너리 예약이 거절돼 멈췄다(상태 · 오류 글자)
         for tm in candidates:
-            if not await self._reserve(started):
+            if (budget_stop := await self._try_reserve()) is not None:
                 break
             try:
                 res = await self._call(f"binary tm={tm}", functools.partial(self.p.binary, tm))
@@ -555,6 +560,9 @@ class KmaRadarJob:
         self._remind_missing()  # 주기에 한 번 — 이 주기의 확인을 모두 센 뒤(확인이 둘이라 첫 확인 뒤에 알리면 요약이 한 tm 늦다)
         partial_now = await self._refetch_partial()
         status, error_text = _outcome(stored_n, missing_n, quality, note)
+        # 새 tm 이 있었는데 예산이 없어 하나도 저장하지 못했다 — 성공이 아니다(리뷰 2026-09-30)
+        if budget_stop is not None and not stored_n:
+            status, error_text = budget_stop[0], budget_stop[1] + (f" — {note}" if note else "")
         ctx.db.record_run(
             self.job_name,
             self.p.name,

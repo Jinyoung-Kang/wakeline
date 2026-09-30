@@ -417,3 +417,35 @@ async def test_recovery_is_seen_when_the_newest_tm_is_not_downloadable_yet(env, 
     assert {"202609271300", "202609271305", _plus("202609271320", -late)} <= stored
     assert {run["status"] for run in runs} == {"ok"}
     assert [m for m in _warns(caplog) if "has no file" in m] == [_warns(caplog)[0]]  # 연 순간 WARN 한 번뿐
+
+
+def _refuse_after(ctx, allowed: int) -> None:
+    """예산 예약을 allowed 번만 허용하고 그 뒤로는 한도 초과(1,000)로 답한다."""
+    real = ctx.budget.reserve
+    n = {"calls": 0}
+
+    async def reserve(provider, cost=1, *, headroom=0):
+        n["calls"] += 1
+        if n["calls"] > allowed:
+            return False, 1000
+        return await real(provider, cost, headroom=headroom)
+
+    ctx.budget.reserve = reserve
+
+
+@pytest.mark.parametrize(("allowed", "want"), [(1, ("budget_exhausted", 0)), (2, ("ok", 1))])
+async def test_a_budget_stop_at_the_download_step_is_one_run_and_ok_only_with_a_stored_frame(env, allowed, want):
+    """리뷰(낮음): 목록 예약 뒤 바이너리 예약이 거절되면 'budget_exhausted' 실행을 남기고도 주기가 이어져 'ok'(records 0)를 한 번 더 남기고
+    last_success_at 을 갱신했다 — 새 tm 이 목록에 있었는데 저장한 프레임이 없는데도. 이제 한 주기 = 실행 기록 하나: 프레임을 저장하지 못했으면
+    예산 상태만(성공으로 적지 않는다), 저장했으면 'ok'."""
+    mod, r, ctx, clock, runs = env
+    prov = OutageKma(clock, down_from="209912312355")
+    job = await _steady(mod, ctx, clock, prov)
+    before = (await r.hgetall("wakeline:provider:kma_radar"))["last_success_at"]
+    runs.clear()
+    _refuse_after(ctx, allowed)  # 목록 1(+ 바이너리 allowed − 1)
+    clock["now"] = "202609271220"  # 새 tm 둘(12:15 · 12:20)
+    await job.run_once()
+    assert [(run["status"], run.get("records_in", 0)) for run in runs] == [want]
+    after = (await r.hgetall("wakeline:provider:kma_radar"))["last_success_at"]
+    assert (after == before) == (want[0] != "ok")
