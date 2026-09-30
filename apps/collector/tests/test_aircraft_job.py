@@ -548,8 +548,9 @@ async def test_region_without_any_provider_is_explicit_in_redis_events_and_the_l
 
 async def test_takeover_calls_adsb_lol_once_per_cycle_and_never_retries_a_429_within_the_cycle(monkeypatch):
     """(운영 로그 질문 2) 넘겨받은 직후 우리 쪽 adsb.lol 호출 속도: 관심 지역 주기마다 한 번 — 넘겨받을 때 몰아 부르지 않고, 429 를 같은 주기에
-    다시 부르지 않는다(adsb.lol 을 부르는 작업은 이것뿐 — 수요 추적은 adsb.fi, 노선은 adsbdb). 저장소가 인용한 adsb.lol 한도 수치는 없다(README:
-    'dynamic based on the environment load' — ADR-011) — 그래서 속도를 추정해 늦추지 않는다. 고치기 전후 모두 통과하는 특성 시험이다."""
+    다시 부르지 않는다. 저장소가 인용한 adsb.lol 한도 수치는 없다(README: 'dynamic based on the environment load' — ADR-011) — 그래서 속도를 추정해
+    늦추지 않는다. 고치기 전후 모두 통과하는 특성 시험이다 — 이 작업의 호출 수만 센다(회귀 방지가 아니다, 리뷰 2026-09-30). 'adsb.lol 을 부르는
+    작업은 관심 지역 체인뿐'은 아래 test_only_the_aircraft_chain_calls_adsb_lol 이 소스에서 지킨다."""
     clk = [80_000.0]
     monkeypatch.setattr(fallback, "time", SimpleNamespace(monotonic=lambda: clk[0]))
     ctx = make_ctx(FakeRedis())
@@ -668,3 +669,27 @@ async def test_switching_global_off_clears_its_no_provider_state(monkeypatch, ca
     await r.hset("wakeline:active", mapping={"global_none_since": "2026-09-30T03:16:32Z"})
     await job2.run_once()  # 끈 동안은 한 번만 쓴다
     assert (await r.hgetall("wakeline:active"))["global_none_since"] == "2026-09-30T03:16:32Z"
+
+
+def test_only_the_aircraft_chain_calls_adsb_lol():
+    """'넘겨받은 직후 adsb.lol 호출은 관심 지역 주기마다 한 번'이 수집기 전체의 속도가 되려면 adsb.lol 을 부르는 곳이 항공기 체인뿐이어야 한다(리뷰
+    2026-09-30: 전에는 코드 검색으로만 확인했다). 수집기 소스에서 adsb.lol 주소는 공급자 정의 · 호스트 허용 목록에만, 공급자를 만드는 곳은 main.py 의
+    항공기 공급자(관심 지역 · 전세계 체인 — adsb_lol 은 관심 지역만 지원)와 수동 도구 tools/snapshot.py(운영 작업이 아니다)뿐이다."""
+    import re
+    from pathlib import Path
+
+    import wakeline_collector
+
+    root = Path(wakeline_collector.__file__).parent
+    url, make = {}, {}
+    for f in sorted(root.rglob("*.py")):
+        rel = f.relative_to(root).as_posix()
+        code = "\n".join(line.split("#", 1)[0] for line in f.read_text(encoding="utf-8").splitlines())
+        code = re.sub(r'"""[\s\S]*?"""', "", code)  # 설명 글은 빼고 코드만
+        if "api.adsb.lol" in code:
+            url[rel] = code.count("api.adsb.lol")
+        n = len(re.findall(r"\badsb_lol\(", code))
+        if n:
+            make[rel] = n
+    assert url == {"http.py": 1, "providers/readsb.py": 1}
+    assert make == {"main.py": 1, "providers/readsb.py": 1, "tools/snapshot.py": 1}  # readsb.py 는 정의(def adsb_lol(…))

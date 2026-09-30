@@ -195,7 +195,9 @@ async def test_recovery_backlog_is_paced_by_the_kma_host_bucket(kma):
 
 
 async def test_without_the_host_bucket_the_backlog_went_out_back_to_back(kma):
-    """고치기 전과 같은 한도(전체 2 req/s · burst 2 · 호스트 버킷 없음): 같은 묶음의 첫 요청 사이는 0.5 s 보다 짧다 — 429 가 난 간격(0.1–0.5 s)."""
+    """고치기 전과 같은 한도(전체 2 req/s · burst 2 · 호스트 버킷 없음): 같은 묶음의 첫 요청 사이는 0.5 s 보다 짧다 — 429 가 난 간격(0.1–0.5 s).
+    고치기 전 한도를 이 시험이 직접 만들므로 어느 코드에서나 통과한다 — 회귀 방지가 아니라 고치기 전 간격의 기록이다(리뷰 2026-09-30). 회귀 방지는
+    test_the_running_collector_builds_its_limiter_from_the_kma_setting(운영 속도 상한) · test_recovery_backlog_is_paced_by_the_kma_host_bucket."""
     mod, r, ctx, clock, runs = kma
     http = HttpClient(RateLimiter(2.0, 2))
     server = KmaServer(clock)
