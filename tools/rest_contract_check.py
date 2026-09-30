@@ -115,6 +115,22 @@ KR_FRAME: Schema = {  # /radar/kr frames[] — 허용 목록만. 지점 필드�
     },
 }
 
+# 기상청 내려받기 '파일 없음' 연속(2026-09-30 — 목록은 EXT 로 싣는데 내려받기가 RDR_CMP_HSR_PUB_<tm>.bin.gz 없음): 핵심 값 넷은 늘 함께(api 는
+# 하나라도 틀리면 연속 전체를 뺀다), 파일 이름 · 목록 종류는 기상청 글자 그대로일 때만. tm 순서는 교차 검사(_kr_missing_errors)
+KR_MISSING: Schema = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["since_tm", "last_tm", "tms", "checked_at"],
+    "properties": {
+        "since_tm": {"type": "string", "pattern": "^[0-9]{12}$"},
+        "last_tm": {"type": "string", "pattern": "^[0-9]{12}$"},
+        "tms": {"type": "integer", "minimum": 1},
+        "checked_at": TS,
+        "file": {"type": "string", "pattern": r"^RDR_CMP_[A-Z]+_[A-Z]+_[0-9]{12}\.bin\.gz$"},
+        "listed": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "pattern": "^[A-Z]{1,8}$"}},
+    },
+}
+
 # 계약 §1 항공기 인코딩 — 나열된 키만(추가 키 금지), 값이 없으면 키가 없다. 'estimated' 는 서버 값이 아니다(브라우저 보간만).
 LITE_PROPS: dict[str, Any] = {
     "hex": HEX,
@@ -733,6 +749,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "stations": KR_SITES,
                     "stations_ref": KR_SITES,
                     "partial": BOOL,
+                    "missing": KR_MISSING,
                 },
             },
             "meta": META,
@@ -882,6 +899,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "station_ids": KR_STATION_IDS,
             "stations_ref": KR_SITES,
             "partial": BOOL,
+            "missing": KR_MISSING,
             "time_zone": STR,
             "attribution": STR,
             "meta": META,
@@ -1275,6 +1293,8 @@ CHECKS = [
     Check("alerts_history", "alerts_history", 200, "application/json", True),
     Check("radar_frames", "radar_frames", 200, "application/json", True),
     Check("radar_kr", "radar_kr", 200, "application/json", True),
+    # 기록: 기상청 내려받기 '파일 없음' 연속 중(저장된 프레임은 그대로 · missing 이 까닭을 말한다)
+    Check("radar_kr_missing", "radar_kr_missing", 200, "application/json", True, recorded_only=True),
     Check("traffic_grid", "traffic_grid", 200, "application/json", True),
     Check("airports", "airports", 200, "application/geo+json", True),
     Check("airport_wx", "airport_wx", 200, "application/json", True),
@@ -1622,8 +1642,23 @@ def _kr_site_errors(where: str, f: dict[str, Any]) -> list[str]:
     return errs
 
 
+def _kr_missing_errors(where: str, m: object) -> list[str]:
+    """'파일 없음' 연속: since_tm ≤ last_tm, 파일 이름의 tm 은 그 사이(마지막으로 확인한 tm 의 답)."""
+    if not isinstance(m, dict):
+        return []
+    since, last, file = m.get("since_tm"), m.get("last_tm"), m.get("file")
+    errs: list[str] = []
+    if isinstance(since, str) and isinstance(last, str) and last < since:
+        errs.append(f"{where}.missing: last_tm {last} is before since_tm {since}")
+    tm = re.search(r"_(\d{12})\.bin\.gz$", file) if isinstance(file, str) else None
+    if tm and isinstance(since, str) and isinstance(last, str) and not since <= tm.group(1) <= last:
+        errs.append(f"{where}.missing: file {file} is outside tm {since}–{last}")
+    return errs
+
+
 def _radar_kr_status(body: dict[str, Any]) -> list[str]:
-    return _kr_site_errors("radar_kr", body.get("radar_kr") or {})
+    kr = body.get("radar_kr") or {}
+    return _kr_site_errors("radar_kr", kr) + _kr_missing_errors("radar_kr", kr.get("missing"))
 
 
 KR_LATEST = ("stations", "station_ids", "stations_ref", "partial")
@@ -1643,7 +1678,7 @@ def _radar_kr(body: dict[str, Any]) -> list[str]:
     for k in KR_LATEST:
         if body.get(k) != last.get(k) or (k in body) != (k in last):
             errs.append(f"top-level {k} {body.get(k)!r} is not the latest frame's {last.get(k)!r}")
-    return errs
+    return errs + _kr_missing_errors("radar_kr", body.get("missing"))
 
 
 def _ship_track(body: dict[str, Any]) -> list[str]:
@@ -1845,14 +1880,20 @@ SCHEMAS["status_ais"] = {
     "allOf": [
         {"required": ["sources", "demand"]},
         {"properties": {"sources": {"required": ["ais"]}, "demand": {"required": ["adsb_fi_rps_1m"]}}},
+        # 기록은 기상청 내려받기 '파일 없음' 연속 중인 수집기 해시 — radar_kr.missing 이 실려야 한다
+        {"properties": {"radar_kr": {"required": ["missing"]}}},
         # 기록(RestSamplesIT)은 구역 둘로 나눈 수집기 상태(계약 v4 §D) — 구역 상태와 그 합의 수신 범위가 실려야 한다
         {"properties": {"sources": {"properties": {"ais": {"required": ["shards", "coverage"]}}}}},
     ],
 }
 
+# 기록: 기상청 내려받기 '파일 없음' 연속 중인 /radar/kr — missing 이 실려야 한다
+SCHEMAS["radar_kr_missing"] = {**SCHEMAS["radar_kr"], "allOf": [{"required": ["missing"]}]}
+
 CROSS_CHECKS = {
     "status": _status,
     "radar_kr": _radar_kr,
+    "radar_kr_missing": _radar_kr,
     "traffic_grid": _traffic_grid,
     "status_ais": _status_ais_recorded,
     "ships": _ships,

@@ -103,6 +103,55 @@ class RadarKrIT extends IntegrationTest {
     }
 
     /**
+     * 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — 목록은 EXT 로 싣는데 내려받기가 RDR_CMP_HSR_PUB_&lt;tm&gt;.bin.gz 없음으로 답함):
+     * /radar/kr 와 /status 의 radar_kr 가 수집기 missing_* 를 검증해 missing 으로 싣는다. 연속이 갱신되면(마지막 확인 · tm 수) 프레임이 그대로여도
+     * ETag 가 바뀐다 — 304 로 옛 까닭을 붙잡지 않는다. 연속이 닫히면(빈 값) 키가 없다.
+     */
+    @Test
+    void theMissingFileStreakIsServedAndChangesTheEtag() {
+        String live = "202609300810";
+        Instant f = Instant.parse("2026-09-29T23:13:40Z");
+        try {
+            ItStack.collector().opsForValue().set("wakeline:radar_kr:frame:" + live, PNG_1X1);
+            ItStack.collector().opsForValue().set("wakeline:radar_kr:frames",
+                    "[{\"tm\":\"%s\",\"obs_tm\":\"%s\",\"fetched_at\":\"%s\",\"echo_cells\":12}]".formatted(live, live, f));
+            Map<String, String> m = new java.util.HashMap<>(meta(f.toString(), live));
+            m.putAll(Map.of("missing_since_tm", "202609300815", "missing_last_tm", "202609300945", "missing_tms", "19",
+                    "missing_checked_at", "2026-09-30T00:45:31Z", "missing_file", "RDR_CMP_HSR_PUB_202609300945.bin.gz", "missing_listed", "EXT"));
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", m);
+            Res r = get("/api/v1/radar/kr");
+            JsonNode miss = r.json().path("missing");
+            assertThat(miss.path("since_tm").asString()).isEqualTo("202609300815");
+            assertThat(miss.path("last_tm").asString()).isEqualTo("202609300945");
+            assertThat(miss.path("tms").asInt()).isEqualTo(19);
+            assertThat(miss.path("checked_at").asString()).isEqualTo("2026-09-30T00:45:31Z");
+            assertThat(miss.path("file").asString()).isEqualTo("RDR_CMP_HSR_PUB_202609300945.bin.gz");
+            assertThat(miss.path("listed").toString()).isEqualTo("[\"EXT\"]");
+            assertThat(r.json().path("available").asBoolean()).as("the stored frame is still served").isTrue();
+
+            // 다음 확인(09:50) — 프레임 · 목록은 그대로
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", Map.of("missing_last_tm", "202609300950", "missing_tms", "20",
+                    "missing_checked_at", "2026-09-30T00:50:31Z", "missing_file", "RDR_CMP_HSR_PUB_202609300950.bin.gz"));
+            Res after = get("/api/v1/radar/kr", headers("If-None-Match", r.header("ETag")));
+            assertThat(after.status()).as("same frames, newer streak — not 304").isEqualTo(200);
+            assertThat(after.json().path("missing").path("tms").asInt()).isEqualTo(20);
+            await("status cache refreshed", Duration.ofSeconds(10), () -> hub.status().get("radar_kr") instanceof Map<?, ?> k
+                    && k.get("missing") instanceof Map<?, ?> mm && Integer.valueOf(20).equals(mm.get("tms")));
+            JsonNode st = get("/api/v1/status").json().path("radar_kr").path("missing");
+            assertThat(st.path("since_tm").asString()).isEqualTo("202609300815");
+            assertThat(st.path("last_tm").asString()).isEqualTo("202609300950");
+
+            // 연속이 닫힘(수집기가 빈 값으로 지운다) → 키 없음
+            Map<String, String> cleared = new java.util.HashMap<>();
+            for (String k : List.of("missing_since_tm", "missing_last_tm", "missing_tms", "missing_checked_at", "missing_file", "missing_listed")) cleared.put(k, "");
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", cleared);
+            assertThat(get("/api/v1/radar/kr").json().has("missing")).isFalse();
+        } finally {
+            ItStack.deleteKeys("wakeline:radar_kr:*");
+        }
+    }
+
+    /**
      * ADR-021: 프레임마다 합성 지점 수 · 코드 · 기준 · partial · 다시 받기 기록을 /radar/kr 가 옮기고, 최상위는 최신 프레임의 값을 싣는다.
      * 같은 tm 을 다시 받아 바꾸면(지점이 늘었다) 영상 URL 과 ETag 가 바뀐다 — 목록의 tm 이 같아도 304 로 옛 판정을 붙잡지 않는다.
      */

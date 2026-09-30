@@ -4,6 +4,9 @@
  * - 줄: 연결 · 경고(FIXTURE · 열린 AIS 공백) · 피드마다 칩 하나 = 이름 + 상태(색과 모양 ■ ▲ ✕ □ · 정상이 아니면 낱말) + 핵심 수 하나(지연 또는 경과).
  *   정상이 아닌 칩(주의 · 경고)은 줄에서 빼지 않는다(pinned). 폭이 모자라면 정상 · 모름 칩만 뒤에서부터 '상세 +N' 으로 옮긴다(fitChips) — 잘리지 않는다.
  * - 상세 표(detailRows): 출처 · 수집 시각 · 속도 · 기상청 프레임 · 합성 지점 · 엔진 · 판 · AIS 공백 기록 · 기준 — 줄에서 뺀 것도 모두 여기에 있다.
+ * - 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api radar/kr missing): KMA 칩에 "파일 없음"(주의 — 까닭 문장은 title) · 상세에 행 하나.
+ *   마지막 확인이 15분(수집기 선택값)을 넘으면 "파일 없음 · 확인 멈춤" — 지금도 그런지 모른다.
+ *   보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다(나이 STALE 만으로는 까닭을 모른다).
  * - 기준은 모두 이미 있는 값: 지역 60 s · 전세계 300 s(ws-protocol · api StatusService), AIS 120 s(ships), 기상청 900 s(format — api meta),
  *   SIGMET 900 s · 레이더 600 s(api StatusService 의 status.*.stale — SIGMET_STALE_S · RADAR_STALE_S 는 그 값을 옮겨 적은 것, 시험이 서버 코드와 견준다).
  *   새로 지은 수는 없다(칩 순서 · 폭 계산은 표시 규칙).
@@ -12,7 +15,7 @@
  * - AIS 공백 모델(aisGapInfo)도 여기에 있다(ships.ts 의 옛 상태 바 배지 aisGapBadge 를 대신한다 — 합친 뒤 지웠다).
  */
 import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./format";
-import { krComposite } from "./kr-radar";
+import { KR_MISSING_CHECK_STALE_MIN, KR_MISSING_RECHECK_MIN, krComposite, krMissing } from "./kr-radar";
 import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
 import type { ConnState, ServerData } from "./store";
 import { fmtKst, fmtKstRange, fmtTimeTitle, kstWallMs, timeParts, type TimeIn } from "./time";
@@ -269,18 +272,21 @@ export function statusChips(i: StatusInput): Chip[] {
   });
 
   const kr = i.radarKr;
-  if (kr?.available) {
+  const miss = krMissing(kr?.missing, i.srvNowMs);
+  if (kr && (kr.available || miss)) {
     const stale = isKrRadarStale(kr, i.srvNowMs);
-    const comp = krComposite(kr.frames[kr.frames.length - 1], i.srvNowMs);
+    const comp = krComposite(kr.available ? kr.frames[kr.frames.length - 1] : null, i.srvNowMs);
     const age = i.srvNowMs ? ageS(kr.meta?.fetched_at, i.srvNowMs) : null;
     const staleTitle = `기상청 레이더에 ${KR_RADAR_STALE_S / 60}분 넘게 새 프레임 없음(최신 tm 첫 수집 ${kstAt(kr.meta?.fetched_at, i.srvNowMs)})`;
     const words: ChipWord[] = [];
     if (stale) words.push({ text: "STALE", testId: "kr-radar-stale", title: staleTitle });
     if (comp.warn) words.push({ text: "일부 합성", testId: "kr-status-partial", title: comp.warn });
+    if (miss) words.push({ text: miss.word, testId: "kr-status-missing", title: `${miss.text}\n${miss.title}` });
     push({
       key: "kma", label: "KMA", testId: "kr-status", value: `age ${fmtAgeS(age)}`, words,
-      health: stale ? "bad" : comp.warn ? "warn" : age == null ? "unknown" : "ok",
-      title: [`기상청 레이더 최신 tm 첫 수집(${kstAt(kr.meta?.fetched_at, i.srvNowMs)}) 뒤 경과 — STALE > ${KR_RADAR_STALE_S / 60}분 · ${comp.label}`, stale ? staleTitle : null, comp.warn].filter(Boolean).join("\n"),
+      health: stale ? "bad" : comp.warn || miss ? "warn" : age == null ? "unknown" : "ok",
+      title: [kr.available ? `기상청 레이더 최신 tm 첫 수집(${kstAt(kr.meta?.fetched_at, i.srvNowMs)}) 뒤 경과 — STALE > ${KR_RADAR_STALE_S / 60}분 · ${comp.label}`
+        : `기상청 레이더 사용 불가${kr.note ? ` — ${kr.note}` : ""}`, stale ? staleTitle : null, comp.warn, miss?.text].filter(Boolean).join("\n"),
     });
   }
   return chips;
@@ -311,6 +317,15 @@ export function fitChips(boxes: readonly ChipBox[], rowWidth: number, reserved: 
     out.add(b.key);
   }
   return out;
+}
+
+/**
+ * 옮길 수 있는 칩을 모두 옮겨도(고정 폭 + 늘 보일 칩만) 줄 폭을 넘는가 — 그때만 줄을 넘긴다(flex-wrap, 잘리지 않게). 아니면 한 줄(nowrap)로 둔다:
+ * 줄 높이가 칩 옮기기에 따라 바뀌지 않게(아래 지도의 ResizeObserver 가 같은 프레임에 두 번 크기 변화를 받는 되먹임 — 2026-09-30). fitChips 와 같은 셈.
+ */
+export function pinnedOverflow(boxes: readonly ChipBox[], rowWidth: number, reserved: number, gap: number): boolean {
+  const pinnedW = boxes.filter((b) => b.pinned).reduce((s, b) => s + b.width + gap, 0);
+  return rowWidth - reserved - pinnedW < 0;
 }
 
 // ---- 상세 표 ----
@@ -383,6 +398,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
     rule: `오래됨 > ${RADAR_STALE_S} s(api status)`,
   });
   const kr = i.radarKr;
+  const miss = krMissing(kr?.missing, i.srvNowMs);
   if (kr?.available) {
     const comp = krComposite(kr.frames[kr.frames.length - 1], i.srvNowMs);
     rows.push({
@@ -392,7 +408,20 @@ export function detailRows(i: StatusInput): DetailRow[] {
       rule: `STALE > ${KR_RADAR_STALE_S / 60}분 · 합성 N/M곳(ADR-021)`,
     });
   } else {
-    rows.push({ key: "kma", name: "레이더 · 기상청", health: "unknown", state: kr ? "사용 불가" : "—", value: "—", source: kr?.note ?? (kr ? "기상청 API허브" : "상태 수신 전"), rule: `STALE > ${KR_RADAR_STALE_S / 60}분` });
+    rows.push({
+      key: "kma", name: "레이더 · 기상청", health: miss ? healthOf("kma") : "unknown", state: kr ? (miss ? `사용 불가 · ${stateOf("kma")}` : "사용 불가") : "—", value: "—",
+      source: kr?.note || (kr ? "기상청 API허브" : "상태 수신 전"), rule: `STALE > ${KR_RADAR_STALE_S / 60}분`,
+    });
+  }
+  if (miss) {
+    rows.push({
+      key: "kma-missing", name: "기상청 내려받기 파일", health: "warn", state: miss.stale ? "없음 · 확인 멈춤" : "없음",
+      value: `tm ${miss.range} · 확인한 tm ${miss.tms}개 ${miss.tms === 1 ? "" : "모두 "}없음`, valueTitle: miss.title,
+      source: `기상청 답: ${miss.file ? `${miss.file} 없음` : "파일 없음(파일 이름 모름)"}${miss.listed ? ` · 목록에는 ${miss.listed}` : ""} · 마지막 확인 ${kstAt(miss.checkedAt, i.srvNowMs)}`,
+      sourceTitle: fullTitle("마지막 확인", miss.checkedAt),
+      rule: `목록에 있는 tm 을 내려받기가 '파일 없음'으로 답하는 동안 — 수집기가 주기마다 목록의 가장 새 tm 과 ${KR_MISSING_RECHECK_MIN}분 넘게 앞선 가장 새 tm 만 확인`
+        + ` · 파일이 다시 오면 이 행은 사라짐 · 마지막 확인이 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 확인 멈춤(수집기 선택값)`,
+    });
   }
   const en = i.status?.engine;
   rows.push({

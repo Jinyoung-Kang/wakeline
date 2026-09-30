@@ -6,6 +6,23 @@
   창 안의 빈 프레임(늦게 생긴 프레임·일시 오류로 놓친 프레임)은 채우고, 창보다 오래된 프레임은 받지 않는다.
 - 목록에 있으나 바이너리가 아직 없는 tm("file not exist" 등 gzip 아닌 응답)은 일시 상태다. tm 마다 MAX_NOT_READY_TRIES 번까지
   다음 주기에 다시 받고, 그래도 없으면 품질 이벤트(kma_radar_missing)를 남기고 건너뛴다. 해석 불가(_BadFrame·크기 초과)만 바로 제외한다.
+- '파일 없음' 연속(운영 로그 2026-09-30 — 목록은 EXT 로 계속 싣는데 내려받기는 08:15 KST 부터 모든 tm 에 "file not exist (RDR_CMP_HSR_PUB_…)"):
+  tm 이 MAX_NOT_READY_TRIES 번 없다고 답했고 그보다 새 프레임을 저장하지 못했으면 연속(MissingStreak — 첫 tm · 없다는 답을 받은 tm 수 ·
+  마지막 확인 · 답의 파일 이름 · 목록의 종류)을 연다. 연 순간 WARN 한 번, 그 뒤로는 MISSING_REMIND_S(60분, 선택값)마다 한 번만 WARN.
+  연속 동안은 옛 tm 마다 세 번씩 부르지 않고 주기마다 두 tm 만 확인한다(streak_probes — 저장 안 됨 · 해석 불가 아님): 목록의 가장 새 tm 과
+  MISSING_RECHECK_S(10분, 선택값 — R-03 의 마지막 시도 나이) 넘게 앞선 가장 새 tm. 뒤의 것은 목록이 먼저 싣고 파일은 늦게 생기는 tm(R-03)
+  때문이다 — 가장 새 tm 하나만 보면 회복 뒤에도 그 tm 은 아직 없어서 연속이 닫히지 않았다(리뷰 2026-09-30). 예산: 목록 1 + 확인 2 = 주기당 3,
+  하루 3 × 288 = 864 < 한도 1,000(설정값 계산 — 전에는 목록 1 + 바이너리 4). 둘 중 어느 것이든 gzip 을 받으면 INFO(공백 길이)로 닫고
+  다음 주기부터 전처럼 보관 창의 빈 곳을 다시 시도한다 — 그 공백 안의 tm 을 포기할 때는 이미 알렸으므로 INFO(알린 공백은 meta 해시
+  missing_gap_* 에도 남겨 다시 띄운 수집기도 읽는다 — 끝 tm 이 3 h 넘으면 버린다). 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다
+  (전처럼 그 tm 에 WARN 한 번).
+  연속은 meta 해시와 공급자 해시(wakeline:provider:kma_radar)의 missing_* 에 싣고(api /radar/kr · /status · /ops/providers), 닫으면 빈 값으로
+  지운다. 수집기를 다시 띄우면 마지막 확인이 MISSING_CARRY_S(15분, 선택값) 안인 연속만 이어받는다(아니면 지운다 — 옛 연속을 지금처럼 보이지 않게).
+  KMA_APIHUB_KEY 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 수집기가 아예 멈추면 지울 주체가 없다 — 웹이 마지막 확인의 나이로
+  '확인 멈춤'을 적는다(MISSING_CARRY_S 와 같은 15분). 연속의 tm 수(missing_tms)는 없다는 답을 받은 서로 다른 tm 수 — 확인하지 않은 tm 은 세지 않는다.
+- 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
+  거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
+  (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
 - KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다). 덧붙이는 목록이라 예산이 없거나
   실패하면 오늘 목록만으로 주기를 계속한다.
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
@@ -48,8 +65,10 @@ import base64
 import concurrent.futures
 import functools
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -66,6 +85,7 @@ from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
+from wakeline_collector.status import AUX_TIMEOUT_S
 
 log = logging.getLogger("job.kma_radar")
 KEY_META = "wakeline:radar_kr:meta"  # hash
@@ -83,6 +103,21 @@ REFETCH_MAX_AGE_S = 30 * 60  # 부분 합성 프레임을 다시 받는 tm 나�
 REFETCH_SPACING_S = 4 * 60  # 같은 프레임의 마지막 시도(처음 받기 포함) 뒤 이만큼은 기다린다(선택값)
 REFETCH_MAX_PER_CYCLE = 2  # 주기마다 다시 받는 프레임 수 상한(선택값)
 REGULAR_CALLS_PER_CYCLE = 3  # 다시 받기가 남겨 둘 정규 주기 몫: 목록 1 + 새 프레임 바이너리 1 + 일시 오류 다시 부르기 1(선택값)
+# '파일 없음' 연속 동안 WARN 을 다시 남기는 간격(선택값 — 잰 값이 아니다. 로그 화면을 5분마다 채우지 않게)
+MISSING_REMIND_S = 60 * 60
+# 연속 동안 가장 새 tm 과 함께 다시 확인하는 tm 의 나이 하한(선택값 — R-03 이 기본 주기 300 s 로 한 tm 을 마지막(MAX_NOT_READY_TRIES 번째)으로
+# 시도하는 나이와 같게 골랐다. 잰 값이 아니다). 목록이 먼저 싣고 파일은 늦게 생기는 tm 도 회복을 알린다
+MISSING_RECHECK_S = 10 * 60
+# 다시 띄운 수집기가 Redis 의 연속을 이어받는 상한 — 마지막 확인이 이만큼 안일 때만(선택값, 주기 5분의 3배)
+MISSING_CARRY_S = 15 * 60
+# 연속이 센 tm 을 기억하는 범위(마지막 tm 에서 거꾸로 3 h — 확인하는 tm 은 늘 그 안이다, 선택값)
+MISSING_SEEN_KEEP_S = FRAME_TTL_S
+MISSING_KEYS = ("missing_since_tm", "missing_last_tm", "missing_tms", "missing_checked_at", "missing_file", "missing_listed")
+# 알린 공백(닫은 연속 [첫 tm, 파일이 다시 온 tm)) — meta 해시에만(수집기 내부 값: api 는 싣지 않는다). 다시 띄운 수집기가 그 안의 빈 tm 을 포기할 때
+# 다시 WARN 하지 않게(리뷰 2026-09-30). 끝 tm 이 MISSING_GAP_KEEP_S 보다 오래되면 버린다 — 그보다 옛 tm 은 보관 창(최근 12 tm)에 들지 않는다
+GAP_KEYS = ("missing_gap_from", "missing_gap_to")
+MISSING_GAP_KEEP_S = FRAME_TTL_S  # 영상 TTL 3 h — 보관 창(약 1 h)보다 넉넉한 상한(선택값)
+_MISSING_FILE = re.compile(r"RDR_CMP_[A-Z]+_[A-Z]+_\d{12}\.bin\.gz")  # '파일 없음' 답에 기상청이 적은 파일 이름
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
 
@@ -92,6 +127,84 @@ def _now() -> datetime:  # 다시 받기 간격 · 예산 여유 계산의 시�
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def streak_probes(
+    listing: list[str], stored: list[str], now_tm: str, since_tm: str, skip: set[str] | frozenset[str] = frozenset()
+) -> list[str]:
+    """'파일 없음' 연속 동안 주기마다 확인할 tm(오름차순, 최대 2개): 현재 시각 이하 목록에서 저장되지 않은 tm(skip — 해석 불가 — 제외) 중
+    ① 가장 새 tm ② 연속의 첫 tm(since_tm) 이후이면서 now_tm 보다 MISSING_RECHECK_S 이상 앞선 가장 새 tm. ②는 목록이 먼저 싣고 파일은 몇 분 뒤에
+    생기는 tm(R-03)을 위한 것이다 — 회복 직후에도 가장 새 tm 은 아직 받을 수 없어서 ①만 보면 연속이 닫히지 않았다(리뷰 2026-09-30).
+    ②를 첫 tm 이후로 두는 까닭: 그보다 옛 tm 의 gzip 은 연속을 닫지 않고(_file_back), 보관 창 밖이면 받자마자 밀려난다. 없으면 []."""
+    have = set(stored)
+    open_tms = [tm for tm in listing if tm <= now_tm and tm not in have and tm not in skip]
+    if not open_tms:
+        return []
+    now = _tm_dt(now_tm)
+    cut = (now - timedelta(seconds=MISSING_RECHECK_S)).strftime("%Y%m%d%H%M") if now is not None else ""
+    older = max((tm for tm in open_tms if since_tm <= tm <= cut), default=None)
+    return sorted({max(open_tms)} | ({older} if older is not None else set()))
+
+
+def _tm_span(a: str, b: str) -> str:
+    """두 tm(KST 벽시계) 사이 길이 "1 h 25 min". 틀리면 "—"."""
+    ta, tb = _tm_dt(a), _tm_dt(b)
+    if ta is None or tb is None:
+        return "—"
+    m = max(0, int((tb - ta).total_seconds() // 60))
+    return f"{m // 60} h {m % 60} min" if m >= 60 else f"{m} min"
+
+
+@dataclass
+class MissingStreak:
+    """목록에는 있는데 기상청 내려받기가 '파일 없음'(gzip 아닌 답)으로 답하는 연속. tm 은 기상청 KST 벽시계, 시각은 UTC.
+    값은 모두 기상청 답 · 목록에서 읽은 것이다 — 파일 이름을 답에서 읽지 못하거나 목록 종류를 모르면 빈 값(짓지 않는다)."""
+
+    since_tm: str  # 없다는 답을 받은 가장 이른 tm
+    last_tm: str  # 없다는 답을 받은 가장 새 tm
+    tms: int  # 없다는 답을 받은 서로 다른 tm 수(확인한 tm 마다 한 번 — 같은 tm 을 다시 확인하면 세지 않는다)
+    checked_at: datetime  # 마지막 확인(UTC)
+    warned_at: datetime  # 마지막 WARN(UTC) — MISSING_REMIND_S
+    file: str = ""  # 마지막 답이 없다고 적은 파일 이름(RDR_CMP_HSR_PUB_<tm>.bin.gz)
+    listed: str = ""  # 목록이 그 tm 에 싣는 종류("EXT" · "EXT,KMA")
+    answer: str = ""  # 마지막 답 앞부분(원문 — 로그에만)
+    # 이 프로세스가 센 tm(last_tm 에서 MISSING_SEEN_KEEP_S 안만 — 확인은 늘 가장 새 tm 근처다)
+    seen: set[str] = field(default_factory=set)
+    # 이어받은 연속의 [첫 tm, 마지막 tm] — 앞 프로세스가 그 안의 무엇을 셌는지 모르므로 다시 세지 않는다(적게 셀 수는 있어도 두 번 세지 않는다)
+    carried: tuple[str, str] | None = None
+
+    def count(self, tm: str) -> None:
+        """없다는 답을 받은 tm 을 센다(처음 확인한 tm 만) · 범위를 넓힌다."""
+        self.since_tm, self.last_tm = min(self.since_tm, tm), max(self.last_tm, tm)
+        c = self.carried
+        if tm in self.seen or (c is not None and c[0] <= tm <= c[1]):
+            return
+        self.seen.add(tm)
+        self.tms += 1
+        last = _tm_dt(self.last_tm)
+        if last is not None:  # 기억 상한 — 확인하는 tm 은 가장 새 tm 과 MISSING_RECHECK_S 남짓 앞선 tm 뿐이다
+            keep = (last - timedelta(seconds=MISSING_SEEN_KEEP_S)).strftime("%Y%m%d%H%M")
+            self.seen = {t for t in self.seen if t >= keep}
+
+    def fields(self) -> dict[str, str]:
+        return {
+            "missing_since_tm": self.since_tm,
+            "missing_last_tm": self.last_tm,
+            "missing_tms": str(self.tms),
+            "missing_checked_at": _iso(self.checked_at),
+            "missing_file": self.file,
+            "missing_listed": self.listed,
+        }
+
+
+def _gap_expired(to_tm: str) -> bool:
+    """알린 공백의 끝 tm(KST 벽시계)이 MISSING_GAP_KEEP_S 보다 오래됐는가(형식이 틀려도 참 — 버린다)."""
+    t = _tm_dt(to_tm)
+    return t is None or (kst_now().replace(tzinfo=None) - t).total_seconds() > MISSING_GAP_KEEP_S
+
+
+def _listed_text(listed: str) -> str:
+    return listed.replace(",", "/") if listed else "kinds unknown"
 
 
 def select_candidates(
@@ -238,6 +351,17 @@ def _decode_if_more(raw: bytes, have: int):
     return _decode(raw)
 
 
+def _outcome(stored_n: int, missing_n: int, quality: list[tuple[str, str | None, dict]], note: str) -> tuple[str, str | None]:
+    """실행 기록의 (상태, 오류 글자): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok'. 새 tm 이 있었는데 하나도 저장하지 못했으면 —
+    '파일 없음' 답이 있었으면 'missing'(note = 마지막 답의 한 줄), 해석 불가만이면 'quarantined'."""
+    if stored_n or (not missing_n and not quality):
+        return "ok", None
+    if missing_n:
+        return "missing", f"no new frame stored — {note}"
+    bad = "; ".join(f"tm={d.get('tm')} {rule}: {d.get('error', '')}" for rule, _hex, d in quality)
+    return "quarantined", f"no new frame stored — could not read {bad}"
+
+
 class _BadFrame(Exception):
     """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류). 다시 받아도 같으므로 건너뛴다."""
 
@@ -251,8 +375,14 @@ class KmaRadarJob:
     def __init__(self, provider: KmaRadarProvider, ctx: JobContext):
         self.p, self.ctx = provider, ctx
         self._warned = False
-        self._bad: dict[str, None] = {}  # 삽입 순서 유지(오래된 것부터 버림)
+        self._bad: dict[str, str] = {}  # tm → 까닭("parse" 해석 불가 · "missing" 끝내 없음). 삽입 순서 유지(오래된 것부터 버림)
         self._not_ready: dict[str, int] = {}  # tm → '아직 없음' 응답 횟수(R-03)
+        self.missing: MissingStreak | None = None  # '파일 없음' 연속(열려 있을 때만)
+        # 마지막으로 닫은 연속 [첫 tm, 파일이 다시 있던 tm) — 그 안의 빈 곳을 포기할 때는 INFO(이미 알렸다)
+        self._closed_gap: tuple[str, str] | None = None
+        self._loaded = False  # Redis 의 연속을 읽었는가(첫 주기 한 번)
+        self._published: dict[str, str] = dict.fromkeys(MISSING_KEYS, "")  # 해시에 마지막으로 쓴 missing_*
+        self._published_gap: dict[str, str] = dict.fromkeys(GAP_KEYS, "")  # meta 해시에 마지막으로 쓴 알린 공백
         # 부분 합성 누계(프로세스 기동 뒤 — heartbeat): 부분 합성으로 처음 저장한 프레임 · 다시 받기 시도 · 지점이 늘어 바꾼 수
         self.partial_stored = 0
         self.refetch_attempts = 0
@@ -328,23 +458,27 @@ class KmaRadarJob:
             release=lambda: self.ctx.budget.release(self.p.name, 1),  # 보내지 않은 시도(연결 전 실패 · 속도 상한)는 돌려준다
         )
 
-    async def _reserve(self, started: datetime) -> bool:
+    async def _try_reserve(self) -> tuple[str, str] | None:
+        """예산 1 을 예약한다. 되면 None, 안 되면 (실행 상태, 오류 글자)와 WARN 한 줄 — 실행 기록은 부르는 쪽이 남긴다(한 주기 = 기록 하나)."""
         ok, used = await self.ctx.budget.reserve(self.p.name, 1)
-        if not ok:
-            unavailable = used == UNKNOWN
-            self.ctx.db.record_run(
-                self.job_name,
-                self.p.name,
-                started,
-                status="budget_unavailable" if unavailable else "budget_exhausted",
-                error_text="budget store unavailable (fail closed)" if unavailable else f"daily budget exhausted (used={used})",
-            )
-            log.warning("kma radar: budget %s", "unavailable" if unavailable else f"exhausted (used={used})")
-        return ok
+        if ok:
+            return None
+        unavailable = used == UNKNOWN
+        log.warning("kma radar: budget %s", "unavailable" if unavailable else f"exhausted (used={used})")
+        if unavailable:
+            return "budget_unavailable", "budget store unavailable (fail closed)"
+        return "budget_exhausted", f"daily budget exhausted (used={used})"
 
-    def _mark_bad(self, tm: str) -> None:
+    async def _reserve(self, started: datetime) -> bool:
+        """주기 첫 예약(목록): 안 되면 예산 상태의 실행 기록을 남기고 False(주기를 끝낸다)."""
+        refused = await self._try_reserve()
+        if refused is not None:
+            self.ctx.db.record_run(self.job_name, self.p.name, started, status=refused[0], error_text=refused[1])
+        return refused is None
+
+    def _mark_bad(self, tm: str, why: str) -> None:
         self._not_ready.pop(tm, None)
-        self._bad[tm] = None
+        self._bad[tm] = why
         while len(self._bad) > MAX_BAD:
             self._bad.pop(next(iter(self._bad)))
 
@@ -386,6 +520,9 @@ class KmaRadarJob:
             )
             return today
         today.data = sorted({*prev.data, *today.data})
+        kinds = {**(prev.extra.get("kinds") or {}), **(today.extra.get("kinds") or {})}
+        if kinds:
+            today.extra["kinds"] = kinds
         return today
 
     async def run_once(self) -> None:
@@ -394,8 +531,11 @@ class KmaRadarJob:
             if not self._warned:
                 log.info("kma radar: KMA_APIHUB_KEY not set — disabled")
                 self._warned = True
+            await self._drop_missing()  # 수집하지 않는 동안 앞서 남은 연속을 지금 것처럼 두지 않는다(리뷰 2026-09-30)
             return
         stored = await self.prune()
+        if not self._loaded:
+            await self._load_missing()
         started = datetime.now(UTC)
         if not await self._reserve(started):
             return
@@ -408,11 +548,21 @@ class KmaRadarJob:
             await self._fail(started, _StepFailed("listing", e, None))
             return
         now_tm = kst_now().strftime("%Y%m%d%H%M")
-        candidates = select_candidates(listing.data, [f["tm"] for f in stored], now_tm, frozenset(self._bad))
-        stored_n = 0
+        kinds: dict = listing.extra.get("kinds") or {}
+        have = [f["tm"] for f in stored]
+        if self.missing is not None:
+            # '파일 없음' 연속: 옛 tm 마다 세 번씩 부르지 않고 가장 새 tm 과 MISSING_RECHECK_S 넘은 가장 새 tm 만 확인한다(회복하면 다음 주기부터 전처럼)
+            parse_bad = {tm for tm, why in self._bad.items() if why == "parse"}
+            candidates = streak_probes(listing.data, have, now_tm, self.missing.since_tm, parse_bad)
+        else:
+            candidates = select_candidates(listing.data, have, now_tm, frozenset(self._bad))
+        newest = max(have, default="")  # 저장된 가장 새 tm — 이보다 오래된 tm 만 없으면 연속이 아니다
+        stored_n = missing_n = 0
+        note = ""
         quality: list[tuple[str, str | None, dict]] = []
+        budget_stop: tuple[str, str] | None = None  # 바이너리 예약이 거절돼 멈췄다(상태 · 오류 글자)
         for tm in candidates:
-            if not await self._reserve(started):
+            if (budget_stop := await self._try_reserve()) is not None:
                 break
             try:
                 res = await self._call(f"binary tm={tm}", functools.partial(self.p.binary, tm))
@@ -421,13 +571,16 @@ class KmaRadarJob:
                 if isinstance(err, ResponseTooLarge):
                     self._skip_bad(tm, err, quality)
                 elif isinstance(err, ValueError):
-                    self._not_ready_or_missing(tm, err, quality)
+                    missing_n += 1
+                    listed = kinds.get(tm)
+                    note = self._not_ready_or_missing(tm, err, quality, ",".join(listed) if listed else "", newest)
                 elif isinstance(err, ProviderHttpError | httpx.HTTPError | OSError | Throttled):  # Throttled: 429 쿨다운 등
                     await self._fail(started, f)
                     return
                 else:
                     raise err from None  # 예상 밖 — 스케줄러가 기록한다(이전과 같다)
                 continue
+            self._file_back(tm)  # gzip 을 받았다 — '파일 없음' 연속이 있으면 닫는다(해석은 그다음 일)
             try:
                 await self._store(tm, res)
             except _BadFrame as e:
@@ -438,22 +591,35 @@ class KmaRadarJob:
                 return
             self._not_ready.pop(tm, None)
             stored_n += 1
+            newest = max(newest, tm)
+        self._remind_missing()  # 주기에 한 번 — 이 주기의 확인을 모두 센 뒤(확인이 둘이라 첫 확인 뒤에 알리면 요약이 한 tm 늦다)
         partial_now = await self._refetch_partial()
+        status, error_text = _outcome(stored_n, missing_n, quality, note)
+        # 새 tm 이 있었는데 예산이 없어 하나도 저장하지 못했다 — 성공이 아니다(리뷰 2026-09-30)
+        if budget_stop is not None and not stored_n:
+            status, error_text = budget_stop[0], budget_stop[1] + (f" — {note}" if note else "")
         ctx.db.record_run(
             self.job_name,
             self.p.name,
             started,
-            status="ok",
+            status=status,
             http_status=listing.http_status,
             latency_ms=listing.latency_ms,
             records_in=stored_n,
             records_quarantined=len(quality),
+            error_text=error_text,
             quality=quality,
         )
         used, limit = await ctx.budget.usage(self.p.name)
-        await ctx.status.success(
-            self.p.name, at=datetime.now(UTC), latency_ms=listing.latency_ms, records=stored_n, used=used, limit=limit
-        )
+        if status == "ok":
+            await ctx.status.success(
+                self.p.name, at=datetime.now(UTC), latency_ms=listing.latency_ms, records=stored_n, used=used, limit=limit
+            )
+        else:  # 저장한 프레임이 없다 — 성공(last_success_at)으로 적지 않는다. 예산 사용량은 적는다(운영 공급자 표)
+            await ctx.status.hset_meta(
+                ctx.status.key(self.p.name), {"budget_limit": str(limit)} | ({} if used is None else {"budget_used": str(used)})
+            )
+        await self._publish_missing()
         if not stored_n:
             await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
         await ctx.status.heartbeat(
@@ -572,19 +738,184 @@ class KmaRadarJob:
 
     def _skip_bad(self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]]) -> None:
         """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류) — 다시 받아도 같으므로 기억해 두고 건너뛴다."""
-        self._mark_bad(tm)
+        self._mark_bad(tm, "parse")
         quality.append(("kma_radar_parse", None, {"tm": tm, "error": str(e)[:200]}))
         log.warning("kma radar: tm=%s skipped — %s", tm, str(e)[:160])
 
-    def _not_ready_or_missing(self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]]) -> None:
-        """gzip 아닌 응답("file not exist" 등): 목록에는 있으나 바이너리가 아직 없다 — 다음 주기에 다시 받는다(R-03)."""
+    def _not_ready_or_missing(
+        self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]], listed: str, newest: str
+    ) -> str:
+        """gzip 아닌 응답("file not exist" 등): 목록에는 있으나 바이너리가 없다. 실행 기록에 실을 한 줄을 돌려준다.
+        - 연속 중: 연속만 갱신한다(tm 마다 포기하지 않는다 · INFO). 선택한 간격마다의 WARN 은 주기 끝에 한 번(_remind_missing).
+        - 아니면 R-03: MAX_NOT_READY_TRIES 번까지 다음 주기에 다시 받는다(INFO). 끝내 없으면 포기(품질 이벤트) — 저장된 더 새 프레임이 있으면
+          그 tm 하나만 빠진 것(WARN 한 번, 이미 알린 공백 안이면 INFO), 없으면 연속을 연다(WARN 한 번)."""
         tries = self._not_ready_again(tm)
+        answer = str(e)[:160]
+        if self.missing is not None:
+            s = self._saw_missing(tm, answer, listed)
+            log.info("kma radar: tm=%s has no file either — missing since tm=%s (%d tms)", tm, s.since_tm, s.tms)
+            return self._missing_note()
         if tries < MAX_NOT_READY_TRIES:
             log.info("kma radar: tm=%s not available yet (try %d/%d)", tm, tries, MAX_NOT_READY_TRIES)
-            return
-        self._mark_bad(tm)
+            return f"tm={tm} not available yet (try {tries}/{MAX_NOT_READY_TRIES}): {answer}"
+        self._mark_bad(tm, "missing")
         quality.append(("kma_radar_missing", None, {"tm": tm, "tries": tries, "error": str(e)[:200]}))
-        log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, str(e)[:160])
+        if tm < newest:  # 더 새 프레임은 받았다 — 이 tm 하나만 빠졌다(연속이 아니다)
+            gap = self._closed_gap
+            if gap is not None and gap[0] <= tm < gap[1]:
+                log.info(
+                    "kma radar: tm=%s still unavailable after %d tries — skipped (inside the gap reported from tm=%s to tm=%s): %s",
+                    tm,
+                    tries,
+                    gap[0],
+                    gap[1],
+                    answer,
+                )
+            else:
+                log.warning("kma radar: tm=%s still unavailable after %d tries — skipped: %s", tm, tries, answer)
+            return f"tm={tm} still unavailable after {tries} tries — skipped: {answer}"
+        self._open_missing(tm, answer, listed)
+        return self._missing_note()
+
+    def _missing_note(self) -> str:
+        s = self.missing
+        assert s is not None
+        return (
+            f"KMA download has no file since tm={s.since_tm} ({s.tms} tms answered missing, newest tm={s.last_tm}); "
+            f"last answer: {s.answer}"
+        )
+
+    def _open_missing(self, tm: str, answer: str, listed: str) -> None:
+        now = _now()
+        m = _MISSING_FILE.search(answer)
+        self.missing = MissingStreak(tm, tm, 1, now, now, m.group(0) if m else "", listed, answer, seen={tm})
+        log.warning(
+            "kma radar: KMA download has no file from tm=%s on — the listing has it (%s), the download answered %s; "
+            "probing only the newest listed tm and the newest one at least %d min old once per cycle, reminder every %d min (chosen)",
+            tm,
+            _listed_text(listed),
+            answer,
+            MISSING_RECHECK_S // 60,
+            MISSING_REMIND_S // 60,
+        )
+
+    def _saw_missing(self, tm: str, answer: str, listed: str) -> MissingStreak:
+        """연속 중 또 '파일 없음' — 처음 확인한 tm 만 센다(MissingStreak.count). 마지막 확인 · 답 · 파일 이름 · 목록 종류는 이 답의 것."""
+        s = self.missing
+        assert s is not None
+        s.count(tm)
+        m = _MISSING_FILE.search(answer)
+        s.checked_at, s.answer, s.file, s.listed = _now(), answer, m.group(0) if m else "", listed
+        return s
+
+    def _remind_missing(self) -> None:
+        s = self.missing
+        if s is None or (s.checked_at - s.warned_at).total_seconds() < MISSING_REMIND_S:
+            return
+        s.warned_at = s.checked_at
+        log.warning(
+            "kma radar: KMA download still has no file — since tm=%s, %d tms answered missing, newest tm=%s (%s), %s of tms; "
+            "last answer: %s",
+            s.since_tm,
+            s.tms,
+            s.last_tm,
+            _listed_text(s.listed),
+            _tm_span(s.since_tm, s.last_tm),
+            s.answer,
+        )
+
+    def _file_back(self, tm: str) -> None:
+        """gzip 을 받았다: 열린 연속의 첫 tm 이후면 연속을 닫는다(INFO — 공백 = 첫 tm 부터 다시 온 tm 앞까지). 다시 온 tm 보다 새 tm 이 '없음'으로
+        답했을 수 있다(10분 넘은 tm 이 먼저 돌아오면 — 아직 생기지 않은 tm) — 공백에 넣지 않고 다음 주기부터 전처럼 다시 시도한다."""
+        s = self.missing
+        if s is None or tm < s.since_tm:
+            return
+        log.info(
+            "kma radar: KMA download has the file again at tm=%s — the gap from tm=%s is %s of tms "
+            "(%d tms answered missing, the newest tm=%s); normal retries resume",
+            tm,
+            s.since_tm,
+            _tm_span(s.since_tm, tm),
+            s.tms,
+            s.last_tm,
+        )
+        self._closed_gap = (s.since_tm, tm)
+        self.missing = None
+
+    async def _load_missing(self, carry: bool = True) -> None:
+        """첫 주기: 앞선 프로세스가 meta 해시에 남긴 연속과 알린 공백을 읽는다. 연속은 마지막 확인이 MISSING_CARRY_S 안이면 이어받고(WARN 은 앞
+        프로세스가 했다), 아니면 옛 값이라 이 주기 끝에 지운다(_publish_missing). 알린 공백은 끝 tm 이 MISSING_GAP_KEEP_S 안이면 이어받는다.
+        carry=False 면 읽기만 한다(해시에 무엇이 있는지 — 지울 때). Redis 를 못 읽으면 다음 주기에 다시 읽는다."""
+        try:
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                h = await self.ctx.status.redis.hgetall(KEY_META)
+        except Exception as e:  # noqa: BLE001 — 부가 기능
+            log.info("kma radar: could not read the missing-file streak — %s (read again next cycle)", describe_error(e))
+            return
+        self._loaded = True
+        self._published = {k: str(h.get(k) or "") for k in MISSING_KEYS}
+        self._published_gap = {k: str(h.get(k) or "") for k in GAP_KEYS}
+        if not carry:
+            return
+        g_from, g_to = self._published_gap["missing_gap_from"], self._published_gap["missing_gap_to"]
+        if _tm_dt(g_from) is not None and _tm_dt(g_to) is not None and g_from < g_to and not _gap_expired(g_to):
+            self._closed_gap = (g_from, g_to)
+        since, last = self._published["missing_since_tm"], self._published["missing_last_tm"]
+        checked = _parse_iso(self._published["missing_checked_at"])
+        try:
+            n = int(self._published["missing_tms"])
+        except ValueError:
+            n = 0
+        now = _now()
+        if _tm_dt(since) is None or _tm_dt(last) is None or checked is None or n < 1:
+            return
+        if not 0 <= (now - checked).total_seconds() <= MISSING_CARRY_S:
+            log.info(
+                "kma radar: dropped the missing-file streak since tm=%s left in Redis — last checked %s", since, _iso(checked)
+            )
+            return
+        self.missing = MissingStreak(
+            since,
+            last,
+            n,
+            checked,
+            now,
+            self._published["missing_file"],
+            self._published["missing_listed"],
+            "",
+            carried=(since, last),
+        )
+        log.info("kma radar: carried over the missing-file streak since tm=%s (%d tms, last checked %s)", since, n, _iso(checked))
+
+    async def _drop_missing(self) -> None:
+        """수집하지 않는 동안(KMA_APIHUB_KEY 없음): 해시에 남은 연속 · 알린 공백을 지운다 — 없으면 쓰지 않는다. 실패하면 다음 주기에 다시."""
+        if not self._loaded:
+            await self._load_missing(carry=False)
+            if not self._loaded:
+                return
+        self.missing = self._closed_gap = None
+        await self._publish_missing()
+
+    async def _publish_missing(self) -> None:
+        """연속(없으면 빈 값)을 meta 해시와 공급자 해시에, 알린 공백(없거나 오래되면 빈 값)을 meta 해시에만 싣는다 — 마지막으로 쓴 값과 다를 때만.
+        쓰기에 실패하면 다음 주기에 다시 쓴다(닫은 연속을 지우지 못한 채 '쓴 것'으로 기억하면 화면에 옛 연속이 남는다)."""
+        fields = self.missing.fields() if self.missing is not None else dict.fromkeys(MISSING_KEYS, "")
+        if self._closed_gap is not None and _gap_expired(self._closed_gap[1]):
+            self._closed_gap = None
+        g = self._closed_gap
+        gap = dict(zip(GAP_KEYS, g, strict=True)) if g is not None else dict.fromkeys(GAP_KEYS, "")
+        if fields == self._published and gap == self._published_gap:
+            return
+        r = self.ctx.status.redis
+        try:
+            async with asyncio.timeout(AUX_TIMEOUT_S):
+                await r.hset(KEY_META, mapping=fields | gap)  # type: ignore[arg-type]
+                if fields != self._published:
+                    await r.hset(self.ctx.status.key(self.p.name), mapping=fields)  # type: ignore[arg-type]
+        except Exception as e:  # noqa: BLE001 — 부가 기능
+            log.info("kma radar: could not write the missing-file streak — %s (written again next cycle)", describe_error(e))
+            return
+        self._published, self._published_gap = fields, gap
 
     def _header_meta(self, header, meta: dict) -> dict[str, str]:
         """meta 해시의 헤더 값 — latest_tm 프레임을 설명할 때만 쓴다. fetched_at(STALE 시계)은 여기 없다 — 새 latest_tm 을 저장할 때만(_store)."""

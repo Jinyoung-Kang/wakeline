@@ -94,6 +94,12 @@ class RestSamplesIT extends IntegrationTest {
                 Map.entry("fetched_at", at.minusSeconds(300).toString()), Map.entry("checked_at", at.toString()));
     }
 
+    /** 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — 수집기 missing_*): 14:50 부터 5 tm 이 목록에는 EXT 로 있고 내려받기는 없음으로 답했다 */
+    static Map<String, String> krMissing(Instant at) {
+        return Map.of("missing_since_tm", "202609291450", "missing_last_tm", "202609291510", "missing_tms", "5",
+                "missing_checked_at", at.toString(), "missing_file", "RDR_CMP_HSR_PUB_202609291510.bin.gz", "missing_listed", "EXT");
+    }
+
     @Test
     void recordsRestResponsesForThePythonContractCheck() throws Exception {
         // 자료: SIGMET 1(관측 판정 대상) + 관심 지역 3대(1대는 SIGMET 안) + 전세계 1대 + 레이더 프레임 + 공항·METAR
@@ -174,6 +180,8 @@ class RestSamplesIT extends IntegrationTest {
             ItStack.collector().opsForValue().set("wakeline:radar_kr:frames", krFrames(krPartial, krFull, krAt));
             ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", krMeta(krFull, krAt));
             record("radar_kr", "/api/v1/radar/kr", 200);
+            ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", krMissing(krAt));
+            record("radar_kr_missing", "/api/v1/radar/kr", 200); // 저장된 프레임은 그대로 · 새 프레임은 기상청 파일이 없어 오지 않는다
         } finally {
             ItStack.deleteKeys("wakeline:radar_kr:*");
         }
@@ -284,12 +292,13 @@ class RestSamplesIT extends IntegrationTest {
             ItStack.hset(ItStack.collector(), "wakeline:collector", Map.of("adsb_fi_rps_1m", "0.4167", "demand_at", hb.toString()));
             Map<String, String> kr = new java.util.HashMap<>(krMeta(krPartial, krAt));
             kr.putAll(Map.of("stations", "7", "stations_ref", "15", "partial", "1", "station_ids", "KWK,GDK,GNG,KSN,JNI,MYN,PSN"));
+            kr.putAll(krMissing(krAt));
             ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", kr);
             await("status sources.ais, demand rate and radar_kr sites", WAIT, () -> {
                 Map<String, Object> st = status.status();
                 return st.get("sources") instanceof Map<?, ?> src && src.get("ais") instanceof Map<?, ?> ais && Boolean.TRUE.equals(ais.get("connected"))
                         && st.get("demand") instanceof Map<?, ?> d && d.get("adsb_fi_rps_1m") != null
-                        && st.get("radar_kr") instanceof Map<?, ?> k && k.get("partial") != null;
+                        && st.get("radar_kr") instanceof Map<?, ?> k && k.get("partial") != null && k.get("missing") != null;
             });
             record("status_ais", "/api/v1/status", 200);
         } finally {
@@ -347,9 +356,15 @@ class RestSamplesIT extends IntegrationTest {
         assertThat(krBody.path("frames").get(0).path("partial").asBoolean()).isTrue();
         assertThat(krBody.path("frames").get(0).path("stations").asInt()).isEqualTo(7);
         assertThat(krBody.path("stations").asInt()).as("top level = the latest frame").isEqualTo(15);
+        assertThat(krBody.has("missing")).as("no streak in the collector hash — no key").isFalse();
+        JsonNode krMissing = Streams.JSON.readTree(Files.readString(OUT.resolve("radar_kr_missing.json"))).path("body");
+        assertThat(krMissing.path("missing").path("since_tm").asString()).isEqualTo("202609291450");
+        assertThat(krMissing.path("missing").path("tms").asInt()).isEqualTo(5);
+        assertThat(krMissing.path("frames").size()).as("stored frames are still served").isEqualTo(2);
         JsonNode st = Streams.JSON.readTree(Files.readString(OUT.resolve("status_ais.json"))).path("body");
         assertThat(st.path("radar_kr").path("stations").asInt()).isEqualTo(7);
         assertThat(st.path("radar_kr").path("partial").asBoolean()).isTrue();
+        assertThat(st.path("radar_kr").path("missing").path("listed").toString()).isEqualTo("[\"EXT\"]");
         assertThat(st.path("sources").path("ais").path("msgs_per_s").asDouble()).isEqualTo(4.2);
         assertThat(st.path("sources").path("ais").path("state").asString()).isEqualTo("receiving");
         assertThat(st.path("sources").path("ais").path("coverage").toString()).isEqualTo("[[-90.0,-180.0,90.0,0.0],[-90.0,45.0,90.0,180.0]]");

@@ -3,7 +3,7 @@ import { useServerData } from "@/lib/store";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtTimeTitle, kstWallMs } from "@/lib/time";
 import { isKrRadarStale, KR_RADAR_STALE_S, legendTextColor } from "@/lib/format";
-import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
+import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krComposite, krMissing, krPartialSummary, krTmClock } from "@/lib/kr-radar";
 import { KstTime } from "./KstTime";
 
 /**
@@ -13,6 +13,7 @@ import { KstTime } from "./KstTime";
  * STALE 시계 meta.fetched_at 은 최신 tm 을 처음 받은 시각이다(부분 합성을 다시 받아 바꿔도 옮기지 않는다 — ADR-021). "수신"은 보이는 영상을 받은 시각.
  * 합성 크기(ADR-021): 최신 프레임의 "합성 N/M곳"(헤더의 레이더 지점 수 / 기준), 부분 합성이면 경고 표시와 문장을 화면에(툴팁만이 아니라),
  * 보관 중인 프레임의 부분 합성 수, 지점 코드. 모르면 "—".
+ * 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api missing): 새 프레임이 오지 않는 까닭을 주의 문장으로(보관 프레임이 만료돼 '사용 불가'일 때도).
  */
 export function KrRadarPanel({ onClose }: { onClose: () => void }) {
   const d = useServerData((s) => s.radarKr);
@@ -20,6 +21,7 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
   const stale = d?.available ? isKrRadarStale(d, now) : false;
   const latest = d?.frames[d.frames.length - 1];
   const comp = krComposite(latest, now);
+  const miss = krMissing(d?.missing, now);
   const ids = Array.isArray(latest?.station_ids) ? latest.station_ids : [];
   return (
     <div className="panel absolute bottom-full left-3 z-10 mb-3 w-[380px] max-w-[calc(100vw-1.5rem)] text-[11px]" data-testid="kr-radar-panel">
@@ -40,9 +42,11 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
             <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="text-fg-3 shrink-0">{k}</span><span className="mono break-all text-right">{v}</span></div>
           ))}
           {comp.warn ? <div className="mt-1 text-warn" data-testid="kr-panel-partial-note">{comp.warn}</div> : null}
+          {miss ? <div className="mt-1 text-warn" data-testid="kr-panel-missing" title={miss.title}>{miss.text} — 새 프레임이 오지 않는 까닭</div> : null}
           <div className="mt-1 text-fg-3">합성 N/M곳 = 그 프레임 헤더의 레이더 지점 수 / 기준(지난 {KR_REF_WINDOW_MIN}분 저장 프레임 중 최대 — 수집기 선택값). N &lt; M 이면 일부 합성, N = M 이면 기준 도달 — 기준에 닿은 프레임이 {KR_REF_MIN_SUPPORT}개 이상일 때만이고(아니면 판정 —), 기상청 합성이 완전하다는 뜻은 아니다. 기상청 합성은 일찍 올라와 나중에 채워지기도 한다(2026-09-29 관찰) — 부분 합성 프레임은 실자료라 그대로 보이고, 수집기가 기한까지 다시 받기 대상으로 두어 지점이 늘면 바꾼다.</div>
           <div className="mt-1 text-fg-3">관측 반경 안은 연한 회색, 밖은 투명. LCC 격자를 서버에서 웹 메르카토르로 최근접 재투영한 영상(≤ 250 m 격자 관습 오차).</div>
-        </> : <div className="text-warn">사용 불가 — {d.note || "아직 수집되지 않음"}{d.status ? ` (HTTP ${d.status})` : ""}</div>}
+        </> : miss ? <div className="text-warn" data-testid="kr-panel-missing" title={miss.title}>사용 불가 — {miss.text}{d.note ? ` · ${d.note}` : ""}</div>
+          : <div className="text-warn">사용 불가 — {d.note || "아직 수집되지 않음"}{d.status ? ` (HTTP ${d.status})` : ""}</div>}
         <div className="mt-1 text-fg-3">{d?.attribution ?? "기상청 API허브"}</div>
       </div>
     </div>

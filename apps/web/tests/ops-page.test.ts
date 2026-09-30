@@ -362,6 +362,52 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
   });
 });
 
+describe("운영: 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) — 공급자 표 아래 까닭, 실행 상태 missing 은 주황", () => {
+  const NOW = "2026-09-30T00:52:00Z";
+  const kma = { name: "kma_radar", last_success_at: "2026-09-29T23:15:31Z", last_latency_ms: "310", last_records: "1", consecutive_failures: "0",
+    budget_used: "412", budget_limit: "1000", missing_since_tm: "202609300815", missing_last_tm: "202609300950", missing_tms: "20",
+    missing_checked_at: "2026-09-30T00:50:31Z", missing_file: "RDR_CMP_HSR_PUB_202609300950.bin.gz", missing_listed: "EXT" };
+  const DATA: Record<string, unknown> = {
+    ...BODY,
+    "/api/v1/ops/providers": { providers: [kma, { name: "awc", last_success_at: "2026-09-30T00:50:00Z" }], active: {}, collector: {}, switches: [], budget_days: [], budget_day_zone: "UTC" },
+    "/api/v1/ops/runs?limit=50&resolved=hide": {
+      items: [{ id: 9, job: "radar_kr", provider: "kma_radar", started_at: "2026-09-30T00:50:00Z", status: "missing", http_status: 200, latency_ms: 300, records_in: 0,
+        records_quarantined: 0, raw_ref: null, error_text: "no new frame stored — KMA download has no file since tm=202609300815" }],
+      summary_24h: [{ job: "radar_kr", provider: "kma_radar", status: "missing", n: 20, avg_latency_ms: 300, last_at: "2026-09-30T00:50:00Z" }],
+    },
+  };
+  const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
+    if (pred(from)) out.push(from);
+    for (const c of from.childNodes) if (c instanceof MiniElement) all(pred, c, out);
+    return out;
+  };
+  it("the kma_radar row carries a warn line with the streak (KST); other providers none; the runs tab paints missing amber with its meaning", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse(NOW) });
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in DATA ? DATA[url] : { detail: "no such resource" }), { status: url in DATA ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    const rows = all((e) => e.getAttribute?.("data-testid") === "provider-missing");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toBe("▲ 기상청 내려받기 파일(PUB) 없음 — tm 08:15–09:50 KST · 확인한 tm 20개 모두 없음 · 목록에는 EXT · 마지막 확인 09:50:31 KST"
+      + " — 그동안 수집 실행은 'missing'(저장한 프레임 없음), last success 는 프레임을 저장했거나 새 tm 이 없던 마지막 주기");
+    const td = all((e) => e.tagName === "TD", rows[0])[0];
+    expect(td.getAttribute("title")).toContain("기상청 답의 파일: RDR_CMP_HSR_PUB_202609300950.bin.gz");
+    expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);
+    const b = byTestId("ops-tab-runs")!;
+    const k = Object.keys(b).find((x) => x.startsWith("__reactProps$"))!;
+    await React.act(async () => { (b as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
+    await settle();
+    const cells = all((e) => e.tagName === "TD" && e.textContent === "missing");
+    expect(cells).toHaveLength(2); // 요약 · 최근 실행
+    for (const c of cells) {
+      expect(c.getAttribute("class")).toBe("text-warn");
+      expect(c.getAttribute("title")).toContain("저장한 프레임 없음");
+    }
+  });
+});
+
 describe("ops day columns trust only the zone the api names (contract v5 §G20)", () => {
   const all = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container, out: MiniElement[] = []): MiniElement[] => {
     if (pred(from)) out.push(from);

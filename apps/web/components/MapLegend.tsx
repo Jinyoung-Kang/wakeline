@@ -1,5 +1,6 @@
 "use client";
-import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN } from "@/lib/kr-radar";
+import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krMissing } from "@/lib/kr-radar";
+import { useServerNow } from "@/lib/clock";
 import { TRAFFIC_BINS, TRAFFIC_FILL_OPACITY, TRAFFIC_LEGEND_NOTE, TRAFFIC_ZERO_COLOR } from "@/lib/traffic-grid";
 import { useServerData } from "@/lib/store";
 import { saveShipCats } from "@/lib/prefs";
@@ -110,6 +111,8 @@ export function MapLegend({ id }: { id: string }) {
 /** 표시 부분(레이어·레이더 출처·선종 필터를 인자로 — 서버 렌더 시험용) */
 export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGORIES }: { id: string; layers: Layers; radarSource: "rainviewer" | "kma"; shipCats?: readonly ShipCategory[] }) {
   const kr = useServerData((d) => d.radarKr);
+  const srvNow = useServerNow(30_000);
+  const krMiss = radarSource === "kma" && layers.radar ? krMissing(kr?.missing, srvNow) : null; // 기상청 내려받기 '파일 없음' 연속(2026-09-30)
   const hasRv = useServerData((d) => (d.radar?.past.length ?? 0) > 0);
   // 경계선이 실제로 그려질 때만(전 해역 구독이면 그릴 경계가 없다)
   const hasCoverage = useServerData((d) => aisCoverageFeatures(d.ais?.coverage ?? null).features.length > 0);
@@ -226,7 +229,8 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
               <Row wide swatch={<span className="mono text-[9px] text-fg-2">N/M</span>}>합성 N/M곳 — 프레임 헤더의 레이더 지점 수 / 기준(지난 {KR_REF_WINDOW_MIN}분 저장 프레임 중 최대, 수집기 선택값). 모르면 —</Row>
               <Row wide swatch={<span className="badge warn px-1 text-[9px]">일부</span>}>일부 합성(N &lt; M) — 기준보다 적은 지점만 합성된 프레임(실자료라 숨기지 않음). 수집기가 기한까지 다시 받기 대상으로 두어 지점이 늘면 바꾼다</Row>
               <Row wide swatch={<span className="inline-block h-3 w-1.5 bg-accent/70" />}>기준 도달(N = M) — 지난 {KR_REF_WINDOW_MIN}분 최대와 같음(기준에 닿은 프레임 {KR_REF_MIN_SUPPORT}개 이상일 때만). 완전한지는 모름 · 판정 — = 비교할 프레임 없음</Row>
-            </> : <li className="text-fg-3">기상청 레이더 사용 불가</li>
+              {krMiss ? <li className="pt-0.5 text-[10px] text-warn" data-testid="legend-kr-missing" title={krMiss.title}>{krMiss.text} — 그동안 새 프레임 없음</li> : null}
+            </> : <li className="text-fg-3">기상청 레이더 사용 불가{krMiss ? <span className="text-warn" data-testid="legend-kr-missing" title={krMiss.title}> — {krMiss.text}</span> : null}</li>
           ) : hasRv ? <>
             <Row swatch={<span className="legend-sw" style={{ background: "#5a5a5a", opacity: 0.8 }} />}>커버리지 밖(회색) — 레이더 자료 없음</Row>
             <Row swatch={<span className="legend-sw border border-line-2" />}>커버리지 안 · 에코 없음(투명)</Row>

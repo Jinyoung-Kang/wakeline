@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { KrRadarPanel } from "./KrRadarPanel";
 import { useServerNow } from "@/lib/clock";
 import { fmtKst, fmtKstMinute, fmtTimeTitle, kstWallMs } from "@/lib/time";
-import { KR_REF_WINDOW_MIN, krComposite, krPartialSummary, krTmClock } from "@/lib/kr-radar";
+import { KR_REF_WINDOW_MIN, krComposite, krMissing, krPartialSummary, krTmClock, type KrMissingInfo } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
 import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
@@ -12,10 +12,10 @@ import { useUi } from "@/lib/ui-store";
  * 기상청을 골랐는데 쓸 수 있는 프레임이 없을 때(R-11) — 지도에 레이더가 없는 이유를 타임라인에 쓴다.
  * 서버가 준 note 와 마지막 수집 시각(meta.fetched_at)만 붙인다(모르면 붙이지 않는다).
  */
-function krUnavailableText(d: KrRadar | null): string {
+function krUnavailableText(d: KrRadar | null, miss: KrMissingInfo | null): string {
   if (!d) return "기상청 레이더 없음 — 상태 수신 전";
   const last = fmtKst(d.meta?.fetched_at);
-  return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
+  return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${miss ? ` — ${miss.text}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
 }
 
 /**
@@ -55,6 +55,8 @@ export function RadarTimeline() {
   const srvNow = useServerNow(30_000);
   const krFrames = kma && krAvailable && radarKr ? radarKr.frames : null;
   const comp = krFrames ? krComposite(krFrames[cur], srvNow) : null;
+  const krMiss = krMissing(radarKr?.missing, srvNow); // 기상청 내려받기 '파일 없음' 연속(2026-09-30) — 새 프레임이 오지 않는 까닭
+  const miss = kma ? krMiss : null;
   // 프레임 시각은 둘 다 "MM-DD HH:MM KST"(계약 v5 §G20 — lib/time): RainViewer 는 epoch 초(순간), 기상청 tm 은 원래 KST(YYYYMMDDHHMM) —
   // 날짜가 바뀌는 자정 부근도 알 수 있게 월-일 포함
   const frameMs = kma ? kstWallMs(krTm) : time ? time * 1000 : null;
@@ -67,7 +69,7 @@ export function RadarTimeline() {
       {kr ? <KrRadarPanel onClose={() => setKr(false)} /> : null}
       <span className="label">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
-      <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : radarKr?.note ?? "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
+      <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : krMiss?.text || radarKr?.note || "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
       {/* '재생' 은 상단 메뉴(이력 재생 화면)의 이름이다 — 레이더 애니메이션은 다른 말로(R-60) */}
       <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing} data-testid="radar-play"
         aria-label={playing ? "레이더 애니메이션 정지" : "레이더 애니메이션 재생"}>{playing ? "정지" : "애니메이션 ▶"}</button>
@@ -76,6 +78,7 @@ export function RadarTimeline() {
       <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
       {comp ? <span className={`mono text-[11px] ${comp.warn ? "text-warn" : "text-fg-2"}`} title={comp.title} data-testid="kr-frame-composite">{comp.label}</span> : null}
       {comp?.warn ? <span className="badge warn normal-case!" title={comp.warn} data-testid="kr-frame-partial">일부 합성</span> : null}
+      {miss && krAvailable ? <span className="badge warn normal-case!" data-testid="kr-frame-missing" title={`${miss.text}\n${miss.title}`}>{miss.word}</span> : null}
       {krFrames ? (
         <span className="flex h-3 items-stretch gap-px" data-testid="kr-frame-strip" role="img" aria-label={`프레임별 합성 상태 — 부분 합성 ${krPartialSummary(krFrames)}`}
           title={`프레임별 합성 상태(왼쪽이 오래된 프레임): 주황 = 일부 지점만 합성(기준 미만), 파랑 = 기준 도달(지난 ${KR_REF_WINDOW_MIN}분 최대와 같음 — 완전한지는 모름), 빈 칸 = 판정 없음 · 부분 합성 ${krPartialSummary(krFrames)}`}>
@@ -88,7 +91,7 @@ export function RadarTimeline() {
         </span>
       ) : null}
       {kma && !krAvailable
-        ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr)}</span>
+        ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr, miss)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}
       <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로" data-testid="radar-latest">latest</button>
       <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>

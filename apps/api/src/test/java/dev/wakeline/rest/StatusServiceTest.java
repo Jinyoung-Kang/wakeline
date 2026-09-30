@@ -130,4 +130,15 @@ class StatusServiceTest {
         assertThat(StatusService.radarKr(Map.of("stations", "7", "stations_ref", "15", "partial", "yes"))).doesNotContainKey("partial");
         assertThat(StatusService.radarKr(Map.of("stations", "", "stations_ref", "", "partial", ""))).isEmpty();
     }
+
+    /** 기상청 내려받기 '파일 없음' 연속(2026-09-30): 공개 radar_kr 에도 검증한 missing — 없으면(빈 값) 키가 없다. */
+    @Test
+    void radarKrCarriesTheMissingFileStreakWhenValid() {
+        Map<String, Object> on = StatusService.radarKr(Map.of("available", "1", "missing_since_tm", "202609300815", "missing_last_tm", "202609300950",
+                "missing_tms", "20", "missing_checked_at", "2026-09-30T00:50:31Z", "missing_file", "RDR_CMP_HSR_PUB_202609300950.bin.gz", "missing_listed", "EXT"));
+        assertThat(on.get("missing")).isEqualTo(Map.of("since_tm", "202609300815", "last_tm", "202609300950", "tms", 20,
+                "checked_at", Instant.parse("2026-09-30T00:50:31Z"), "file", "RDR_CMP_HSR_PUB_202609300950.bin.gz", "listed", List.of("EXT")));
+        assertThat(StatusService.radarKr(Map.of("available", "1", "missing_since_tm", ""))).doesNotContainKey("missing");
+        assertThat(StatusService.radarKr(Map.of("missing_since_tm", "202609300815", "missing_tms", "20"))).doesNotContainKey("missing"); // 핵심 값이 없다
+    }
 }
