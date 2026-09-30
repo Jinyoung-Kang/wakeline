@@ -444,7 +444,7 @@ async def test_without_a_streak_a_previous_day_listing_the_cycle_needs_without_b
     assert [(run["status"], run.get("http_status")) for run in runs] == [("budget_exhausted", None)]
     assert runs[0]["error_text"] == (
         "daily budget exhausted (used=1000) — previous-day listing 20260930 not read: the listing 20261001 lists no tm yet and "
-        "no stored frame reaches tm=202609302355 (none stored) — nothing else to fetch this cycle"
+        "no stored frame reaches tm=202609302355 (newest stored tm=202609301305) — nothing else to fetch this cycle"
     )
     after = await r.hgetall("wakeline:provider:kma_radar")
     assert after["last_success_at"] == before["last_success_at"]
@@ -671,6 +671,8 @@ async def test_every_previous_day_listing_read_is_one_info_line_with_its_day_tm_
     assert [m.split(" — ")[0] for m in _read_lines(caplog, "20260930")] == [
         "kma radar: previous-day listing 20260930 read for the KST 00:00–00:14 window"
     ]
+    _expire_frames(mod, r)  # 다른 수집기 · 다른 날(아래) — 위 주기가 남긴 프레임 · meta latest_tm(00:05)을 이어받지 않는다
+    await r.delete(mod.KEY_META)
     prov2, job2 = await _restarted_without_a_streak(mod, r, ctx, clock)
     caplog.clear()
     await _run(job2, clock, ["202610010215"])
@@ -827,3 +829,41 @@ async def test_a_file_back_for_a_tm_older_than_the_image_retention_closes_the_st
     assert (meta["latest_tm"], meta["fetched_at"]) == (before["latest_tm"], before["fetched_at"])
     assert meta["available"] == "0" and all(meta[k] == "" for k in mod.MISSING_KEYS)
     assert any("tm=202609301950 has a file but is older than the 3 h image retention — not stored" in m for m in _infos(caplog))
+
+
+# ---- 전날 끝까지 받은 뒤 프레임이 만료돼도 전날 목록은 필요한 목록이 아니다(리뷰 2026-10-01 · 레인 kma 8차) -----------------------------------------
+# 리뷰가 본 것(레인 7차 코드): _behind_prev_day 가 '전날 끝(23:55)에 닿았는가'를 Redis 에 남은 프레임(have — 3 h 뒤 만료)으로만 보았다. 옛 tm 을 다시 받지 않게
+# 고친 뒤로는 만료된 프레임이 다시 채워지지 않아, 새 날 목록이 빈 채로 03:00 이 지나면 주기마다 전날 목록을 '필요한 목록'으로 읽었다 — 그 목록이 싣는 tm 은 모두
+# latest_tm(23:55) 이하 · 3 h 넘은 tm 이라 받을 것이 없는데도, 그 목록이 한 번 멈추면 'error'(공급자 실패 · WARN) 였다.
+async def test_frames_expired_after_reaching_the_previous_day_end_never_make_the_previous_day_listing_required(env, caplog):
+    """전날 22:00–23:55 저장 · 목록은 23:55 에서 끝나고 새 날 목록은 빈 답 · 파일은 있다. 영상은 저장 3 h 뒤 만료(가짜 시계). 00:15 뒤 전날 목록은 늘
+    ReadTimeout — 고치기 전: 02:55 부터 주기마다 전날 목록을 읽고(필요한 목록) 모두 'error'. 이제 전날 끝까지 받았으니(meta latest_tm 23:55) 오늘 목록만 읽는다."""
+    import httpx
+
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="209912312355", list_until="202609302355")
+    job = mod.KmaRadarJob(prov, ctx)
+    stored_at: dict[str, str] = {}
+    gone: set[str] = set()
+    for t in _walk("202609302200", "202609302355"):
+        clock["now"] = t
+        await job.run_once()
+        _track_images(mod, r, stored_at, gone, t)
+    assert (await r.hget(mod.KEY_META, "latest_tm")) == "202609302355"
+    runs.clear()
+    caplog.clear()
+    reads: dict[str, list[str]] = {}
+    for t in _walk("202610010000", "202610010600"):
+        clock["now"] = t
+        _expire_due(mod, r, stored_at, gone, t)
+        if t >= "202610010015":
+            prov.fail["20260930"] = httpx.ReadTimeout("read timed out")
+        prov.days.clear()
+        await job.run_once()
+        _track_images(mod, r, stored_at, gone, t)
+        reads[t] = list(prov.days)
+    assert (await r.hget(mod.KEY_META, "available")) == "0"  # 전날 프레임은 모두 만료됐다
+    assert {t: d for t, d in reads.items() if t >= "202610010015" and d != ["20261001"]} == {}  # 전날 목록을 읽지 않는다
+    assert "error" not in [run["status"] for run in runs]
+    assert not [m for m in _warns(caplog) if "previous-day listing" in m]
+    assert prov.binaries[-1] == "202609302355"  # 옛 tm 을 다시 받지 않았다
