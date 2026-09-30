@@ -23,6 +23,10 @@ def _tms(until: str, since: str = "202609270000") -> list[str]:
     return [t for t in day if since <= t <= until]
 
 
+def _plus(tm: str, minutes: int) -> str:
+    return (datetime.strptime(tm, "%Y%m%d%H%M") + timedelta(minutes=minutes)).strftime("%Y%m%d%H%M")
+
+
 def _fake_decode(raw: bytes):
     from test_kma_radar import _fake_decode as decode
 
@@ -149,8 +153,8 @@ async def test_outage_warns_once_then_reminds_per_interval_and_recovery_is_info(
     assert len(warns) == 2, warns
     assert warns[0] == (
         "kma radar: KMA download has no file from tm=202609271215 on — the listing has it (EXT), the download answered "
-        "not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'; probing only the newest listed tm once per cycle, "
-        "reminder every 60 min (chosen)"
+        "not gzip: '# file not exist (RDR_CMP_HSR_PUB_202609271215.bin.gz)'; probing only the newest listed tm and the newest one "
+        "at least 10 min old once per cycle, reminder every 60 min (chosen)"
     )
     assert warns[1].startswith(
         "kma radar: KMA download still has no file — since tm=202609271215, 15 tms answered missing, newest tm=202609271325"
@@ -166,21 +170,36 @@ async def test_outage_warns_once_then_reminds_per_interval_and_recovery_is_info(
     ) in _infos(caplog)
 
 
-async def test_while_the_streak_lasts_only_the_newest_listed_tm_is_probed_once_per_cycle(env):
+async def test_while_the_streak_lasts_only_two_tms_are_probed_per_cycle(env):
+    """연속 동안은 옛 tm 마다 세 번씩이 아니라 가장 새 tm 과 10분(선택값) 넘게 앞선 가장 새 tm 만 — 첫 tm 보다 옛 tm 은 보지 않는다."""
     mod, r, ctx, clock, runs = env
     prov = OutageKma(clock, down_from="202609271215")
     job = await _steady(mod, ctx, clock, prov)
     await _cycles(job, clock, "202609271225")  # 12:25 에 12:15 가 세 번째 — 연속 시작
     assert job.missing is not None and job.missing.since_tm == "202609271215"
+    assert mod.MISSING_RECHECK_S == 10 * 60
     for t in _tms("202609271400", "202609271230"):
         clock["now"] = t
         prov.binaries.clear()
         before = (await ctx.budget.usage("kma_radar"))[0]
         await job.run_once()
-        assert prov.binaries == [t]  # 옛 tm 마다 세 번씩이 아니라 가장 새 tm 하나만
-        assert (await ctx.budget.usage("kma_radar"))[0] - before == 2  # 목록 1 + 확인 1(전에는 목록 1 + 바이너리 4)
+        assert prov.binaries == [_plus(t, -10), t]  # 옛 tm 마다 세 번씩이 아니라 둘만(12:15 보다 옛 tm 은 없다)
+        used = (await ctx.budget.usage("kma_radar"))[0]
+        assert used - before == 3  # 목록 1 + 확인 2(전에는 목록 1 + 바이너리 4) — 하루 864 < 1,000
     assert job.missing.tms == 3 + len(_tms("202609271400", "202609271230"))
     assert job.missing.last_tm == "202609271400"
+
+
+def test_streak_probes_stay_at_or_after_the_first_missing_tm():
+    from wakeline_collector.jobs.kma_radar import streak_probes
+
+    listing = _tms("202609271230", "202609271100")
+    stored = _tms("202609271205", "202609271100")
+    assert streak_probes(listing, stored, "202609271230", "202609271215") == ["202609271220", "202609271230"]
+    # 첫 tm 이 10분 안이면 가장 새 tm 하나 — 보관 창 밖의 옛 빈 tm(11:00 전)을 받지 않는다
+    assert streak_probes(_tms("202609271230"), stored, "202609271230", "202609271225") == ["202609271230"]
+    assert streak_probes(listing, listing, "202609271230", "202609271215") == []
+    assert streak_probes(listing, stored, "202609271230", "202609271215", {"202609271230"}) == ["202609271220", "202609271225"]
 
 
 async def test_recovery_resumes_normal_retries_and_holes_of_the_reported_gap_are_info(env, caplog):
@@ -295,7 +314,7 @@ async def test_a_restarted_collector_carries_a_recent_streak_over_without_a_seco
     prov.binaries.clear()
     await again.run_once()
     assert again.missing is not None and again.missing.since_tm == "202609271215"
-    assert prov.binaries == ["202609271245"]
+    assert prov.binaries == ["202609271235", "202609271245"]
     assert _warns(caplog) == []
     assert any(m.startswith("kma radar: carried over the missing-file streak since tm=202609271215") for m in _infos(caplog))
 
@@ -363,3 +382,38 @@ async def test_a_failed_clear_of_the_streak_is_written_again_next_cycle(env):
     await job.run_once()
     assert (await r.hgetall(mod.KEY_META))["missing_since_tm"] == ""
     assert (await r.hgetall("wakeline:provider:kma_radar"))["missing_since_tm"] == ""
+
+
+# ---- 리뷰(2026-09-30) 후속 -------------------------------------------------------------------------------------------------
+class LateKma(OutageKma):
+    """R-03 의 늦게 생기는 파일(2026-09-28: 첫 시도에 182 중 14 tm 이 '파일 없음', 다음 주기에 받음): 목록은 tm 을 먼저 싣고 내려받기는
+    tm + late 분부터 된다. [down_from, up_from) 의 tm 은 끝내 없다."""
+
+    def __init__(self, clock: dict, down_from: str, up_from: str | None = None, late: int = 5):
+        super().__init__(clock, down_from, up_from)
+        self.late = late
+
+    def _down(self, tm: str) -> bool:
+        return super()._down(tm) or self.clock["now"] < _plus(tm, self.late)
+
+
+@pytest.mark.parametrize("late", [5, 10])
+async def test_recovery_is_seen_when_the_newest_tm_is_not_downloadable_yet(env, caplog, late):
+    """리뷰(중간): 연속 동안 가장 새 tm 하나만 확인하면, 회복 뒤에도 가장 새 tm 은 아직 받을 수 없어서(목록이 먼저 싣는다 — R-03) 한 주기 늦게
+    받을 수 있게 된 tm 을 다시 보지 않았다 — 연속이 닫히지 않고 프레임도 저장되지 않았다(고치기 전: 두 시간 뒤에도 'missing').
+    이제 R-03 의 마지막 시도와 같은 나이(10분 — 설정값 계산)를 넘은 가장 새 tm 도 주기마다 다시 확인한다."""
+    mod, r, ctx, clock, runs = env
+    prov = LateKma(clock, down_from="202609271215", up_from="202609271300", late=late)
+    job = await _steady(mod, ctx, clock, prov)
+    assert job.missing is None  # 늦게 생기는 파일만으로는 연속이 아니다(R-03)
+    await _cycles(job, clock, "202609271255")
+    assert job.missing is not None and job.missing.since_tm == "202609271215"
+    await _cycles(job, clock, "202609271310")  # 13:00 부터 파일이 다시 있다(late 분 늦게)
+    assert job.missing is None
+    assert "202609271300" in [f["tm"] for f in await job._frames()]
+    runs.clear()
+    await _cycles(job, clock, "202609271320")
+    stored = {f["tm"] for f in await job._frames()}
+    assert {"202609271300", "202609271305", _plus("202609271320", -late)} <= stored
+    assert {run["status"] for run in runs} == {"ok"}
+    assert [m for m in _warns(caplog) if "has no file" in m] == [_warns(caplog)[0]]  # 연 순간 WARN 한 번뿐
