@@ -549,6 +549,33 @@ def test_radar_kr_missing_file_streak_rules():
     assert "missing" in str(rcc.SCHEMAS["status_ais"]["allOf"])
 
 
+def test_radar_kr_missing_listing_fields():
+    """계약 v5 §G26 개정(2026-10-01 — 운영 00:50 KST: 기상청 목록이 19:50 에서 멈췄고 새 날 목록은 비었다): 마지막 확인에서 읽은 목록의 가장 새 tm(list_tm)과
+    그 목록이 확인 전 last_tm 뒤로 실은 tm 수(list_newer — 0 이면 목록도 자라지 않았다). 둘 다 있을 때만(모르면 키 없음). 교차 검사: list_newer 가 0 이면
+    list_tm 은 last_tm 이하다(0 은 last_tm 뒤로 싣지 않았다는 뜻 — api 는 맞지 않으면 list_newer 를 뺀다)."""
+    m = {
+        "since_tm": "202609301310",
+        "last_tm": "202609301950",
+        "tms": 58,
+        "checked_at": "2026-09-30T15:50:11Z",
+        "probe_every_s": 900,
+        "list_tm": "202609301950",
+        "list_newer": 0,
+    }
+    for schema in (rcc.SCHEMAS["status"]["properties"]["radar_kr"], rcc.SCHEMAS["radar_kr"]["properties"]):
+        v = Draft202012Validator(schema if "properties" in schema else {"properties": schema}, format_checker=rcc.FORMATS)
+        assert not list(v.iter_errors({"missing": m}))
+        assert not list(v.iter_errors({"missing": {k: x for k, x in m.items() if k not in ("list_tm", "list_newer")}}))
+        assert not list(v.iter_errors({"missing": {**m, "list_newer": 3}}))
+        for bad in ({"list_tm": "19:50"}, {"list_tm": ""}, {"list_newer": -1}, {"list_newer": "0"}, {"list_newer": 1.5}):
+            assert list(v.iter_errors({"missing": {**m, **bad}})), bad
+    assert not rcc._radar_kr_status({"radar_kr": {"missing": m}})
+    # 목록이 last_tm 보다 짧다 — 맞다
+    assert not rcc._radar_kr_status({"radar_kr": {"missing": {**m, "list_tm": "202609301945"}}})
+    assert rcc._radar_kr_status({"radar_kr": {"missing": {**m, "list_tm": "202609301955"}}})  # 0 인데 last_tm 뒤의 tm 을 실었다
+    assert not rcc._radar_kr_status({"radar_kr": {"missing": {**m, "list_tm": "202609301955", "list_newer": 1}}})
+
+
 # ---- 관측 수신 범위(계약 v5 §G27 · ADR-027) — GET /api/v1/ships/coverage ----
 
 

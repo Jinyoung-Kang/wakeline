@@ -1334,7 +1334,9 @@
             "checked_at" : "2026-09-30T10:34:36Z",
             "file" : "RDR_CMP_HSR_PUB_202609290525.bin.gz",
             "listed" : [ "EXT", "KMA" ],
-            "probe_every_s" : 900
+            "probe_every_s" : 900,
+            "list_tm" : "202609290525",
+            "list_newer" : 0
           }
         },
         "engine" : {

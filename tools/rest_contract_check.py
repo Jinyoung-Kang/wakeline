@@ -130,6 +130,10 @@ KR_MISSING: Schema = {
         "listed": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "pattern": "^[A-Z]{1,8}$"}},
         # 계약 v5 §G26: 수집기의 지금 확인 간격(초 — 5분마다면 주기, 긴 연속에서 늦춘 15분). 옛 수집기면 없다
         "probe_every_s": {"type": "integer", "minimum": 1, "maximum": 86400},
+        # 계약 v5 §G26 개정(2026-10-01): 마지막 확인에서 읽은 목록의 가장 새 tm(목록이 비었으면 없다) · 그 목록이 확인 전 last_tm 뒤로 실은 tm 수(0 = 목록도
+        # 자라지 않았다 — 읽은 목록이 last_tm 의 날을 덮지 못했으면 없다). 교차 검사(_kr_missing_errors): 0 이면 list_tm ≤ last_tm
+        "list_tm": {"type": "string", "pattern": "^[0-9]{12}$"},
+        "list_newer": {"type": "integer", "minimum": 0, "maximum": 999999},
     },
 }
 
@@ -1782,7 +1786,8 @@ def _kr_site_errors(where: str, f: dict[str, Any]) -> list[str]:
 
 
 def _kr_missing_errors(where: str, m: object) -> list[str]:
-    """'파일 없음' 연속: since_tm ≤ last_tm, 파일 이름의 tm 은 그 사이(마지막으로 확인한 tm 의 답)."""
+    """'파일 없음' 연속: since_tm ≤ last_tm, 파일 이름의 tm 은 그 사이(마지막으로 확인한 tm 의 답). list_newer 가 0(목록이 last_tm 뒤로 싣지 않았다)이면
+    list_tm ≤ last_tm(계약 v5 §G26 개정 2026-10-01)."""
     if not isinstance(m, dict):
         return []
     since, last, file = m.get("since_tm"), m.get("last_tm"), m.get("file")
@@ -1792,6 +1797,9 @@ def _kr_missing_errors(where: str, m: object) -> list[str]:
     tm = re.search(r"_(\d{12})\.bin\.gz$", file) if isinstance(file, str) else None
     if tm and isinstance(since, str) and isinstance(last, str) and not since <= tm.group(1) <= last:
         errs.append(f"{where}.missing: file {file} is outside tm {since}–{last}")
+    list_tm = m.get("list_tm")
+    if m.get("list_newer") == 0 and isinstance(list_tm, str) and isinstance(last, str) and list_tm > last:
+        errs.append(f"{where}.missing: list_newer 0 but list_tm {list_tm} is after last_tm {last}")
     return errs
 
 

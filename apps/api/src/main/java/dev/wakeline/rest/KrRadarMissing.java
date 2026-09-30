@@ -17,9 +17,12 @@ import java.util.regex.Pattern;
  *   <li>tms: 없다는 답을 받은 서로 다른 tm 수(1 이상) · checked_at: 수집기가 마지막으로 확인한 순간(시간대 있는 시각)</li>
  *   <li>file: 기상청 답이 없다고 적은 파일 이름(RDR_CMP_…_&lt;tm&gt;.bin.gz — 답 그대로) · listed: 목록이 그 tm 에 싣는 파일 종류(["EXT"] — 목록 그대로)</li>
  *   <li>probe_every_s: 수집기의 지금 확인 간격(초 — 5분마다면 주기 300, 연속이 60분을 넘으면 늦춘 900, 둘 다 수집기 선택값. 계약 v5 §G26 · 2026-09-30 저녁)</li>
+ *   <li>list_tm · list_newer(계약 v5 §G26 개정 2026-10-01 — 운영 00:50 KST: 기상청 목록이 19:50 에서 멈추고 새 날 목록이 비어 확인할 tm 이 없었다): 마지막 확인에서
+ *       읽은 기상청 목록의 가장 새 tm(그 시각 이하 — 목록이 비었으면 키 없음) · 그 목록이 확인 전 last_tm 뒤로 실은 tm 수(0 = 목록도 last_tm 뒤로 자라지 않았다 —
+ *       읽은 목록이 last_tm 의 날을 덮지 못했으면 키 없음). 0 인데 list_tm 이 last_tm 보다 새로우면 서로 맞지 않는다 — list_newer 를 뺀다</li>
  * </ul>
  * 수집기 값을 믿지 않는다(R-72): since_tm 이 비었거나 없으면 연속이 없다(키 없음 — 세지 않는다). 핵심 값(since_tm · last_tm · tms · checked_at)이
- * 하나라도 틀리면 연속 전체를 모름(null)으로 두고 "missing" 으로 센다 — 일부만 보여 까닭을 틀리게 말하지 않는다. file · listed · probe_every_s 가 틀리면 그 키만 뺀다
+ * 하나라도 틀리면 연속 전체를 모름(null)으로 두고 "missing" 으로 센다 — 일부만 보여 까닭을 틀리게 말하지 않는다. file · listed · probe_every_s · list_tm · list_newer 가 틀리면 그 키만 뺀다
  * (비었으면 — 옛 수집기 — 키가 없고 세지 않는다).
  */
 final class KrRadarMissing {
@@ -64,6 +67,17 @@ final class KrRadarMissing {
             if (s != null && s <= MAX_PROBE_EVERY_S) m.put("probe_every_s", s);
             else parseError.accept("missing_probe_every_s");
         }
+        String listTm = text(h.get("missing_list_tm"));
+        if (TM.matcher(listTm).matches()) m.put("list_tm", listTm);
+        else if (!listTm.isEmpty()) parseError.accept("missing_list_tm");
+        String newer = text(h.get("missing_list_newer"));
+        if (!newer.isEmpty()) {
+            Integer n = nonNegative(newer);
+            // 0 = 목록이 last_tm 뒤로 싣지 않았다 — 목록의 가장 새 tm 이 last_tm 보다 새로우면 서로 맞지 않는다(웹이 '새 tm 없음'을 틀리게 말하지 않게)
+            boolean contradicts = n != null && n == 0 && m.containsKey("list_tm") && listTm.compareTo(last) > 0;
+            if (n != null && !contradicts) m.put("list_newer", n);
+            else parseError.accept("missing_list_newer");
+        }
         return m;
     }
 
@@ -79,9 +93,12 @@ final class KrRadarMissing {
     }
 
     private static Integer positive(String s) {
-        if (!s.matches("^[0-9]{1,6}$")) return null;
-        int n = Integer.parseInt(s);
-        return n >= 1 ? n : null;
+        Integer n = nonNegative(s);
+        return n != null && n >= 1 ? n : null;
+    }
+
+    private static Integer nonNegative(String s) {
+        return s.matches("^[0-9]{1,6}$") ? Integer.valueOf(Integer.parseInt(s)) : null;
     }
 
     private static String text(Object v) { return v == null ? "" : String.valueOf(v).trim(); }
