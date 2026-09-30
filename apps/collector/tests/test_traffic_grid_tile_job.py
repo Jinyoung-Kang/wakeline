@@ -267,6 +267,71 @@ async def test_the_smallest_tile_still_truncated_is_incomplete_and_said_loudly(m
     assert snapshot(r)["resolved"] == 2  # 받은 칸은 그대로 쓴다(지물마다 검사를 통과한 실제 기하)
 
 
+def deep_in(grid: FakeGrid, t: Tile, margin: float = 1_800.0) -> list[str]:
+    """칸 전체가 타일 t 의 자식 하나 안에 드는(가장자리에서 margin m 넘게) 칸 — 받은 기하(합성 서버의 꼭짓점)로만 고른다."""
+    out = []
+    for g in grid.cells_in(t.box):
+        ex = extent(*grid.where[g])
+        for k in t.children():
+            x0, y0, x1, y1 = k.box
+            if ex[0] > x0 + margin and ex[2] < x1 - margin and ex[1] > y0 + margin and ex[3] < y1 - margin:
+                out.append(g)
+    return out
+
+
+async def test_known_cells_inside_the_box_missing_from_the_answer_do_not_let_the_tile_finish(caplog):
+    """검토 지적(2026-10-01): 타일은 수(numberOfFeatures · maxFeatures)만 보고 끝났다 — 상자 안의 아는 칸이 답에 없어도(서버가 조용히 잘랐거나
+    빠뜨렸다) done(기한 없음). 아는 칸(marine_grid4) 가운데 칸 전체가 상자 안인 칸이 답에 없으면 잘렸을 수 있다고 보고 나눈다 — 수로 잡지 못하는
+    '조용한 상한'을 이미 가진 자료로 잡는다. 빠진 칸이 든 자식이 부모보다 적은 지물로도 여전히 빠뜨리면(상한으로 설명되지 않는다) incomplete."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    grid = FakeGrid()
+    deep = deep_in(grid, A)
+    hidden = {deep[0], deep[-1]}
+    wfs = GridWfs(grid, hidden=hidden)
+    job, wfs, r, _c, db = start(grid, [home(grid, A)[1]], known=[*hidden, home(grid, A)[2]], wfs=wfs)
+    await job.run_once()
+    states = {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()}
+    assert states["0/28/60"] == "split" and wfs.boxes[:5] == [A.box, *[k.box for k in A.children()]]
+    holding = {k.key for k in A.children() if any(tile_at(*cell_xy(grid.cell(g)), 1) == k for g in hidden)}
+    assert {k: v for k, v in states.items() if k in holding} == dict.fromkeys(holding, "incomplete")
+    assert all(v == "done" for k, v in states.items() if k not in holding and k != "0/28/60")
+    q = [q for run in db.runs if run[0] == "traffic_grid_geom" for q in run[2].get("quality") or []]
+    assert [x[2]["tile"] for x in q if x[0] == "traffic_grid_tile_missing_cell"][0] == "0/28/60"
+    (split_line,) = lines(caplog, "0/28/60 possibly truncated")
+    assert "known cells inside the box missing from the answer" in split_line
+
+
+async def test_a_quiet_server_cap_is_caught_by_known_cells_and_split_until_complete():
+    """확인하지 않은 경우(ADR-023): 서버가 maxFeatures 보다 적게 조용히 자르고 numberOfFeatures 도 같이 줄인다(합성 상한 60). 수로는 알 수 없지만 상자
+    안의 아는 칸이 빠져 나눈다 — 나눈 상자는 상한 아래라 모두 온다: 한 칸 조회 없이 스냅샷의 칸이 풀리고 incomplete 는 없다."""
+    grid = FakeGrid()
+
+    class Capped(GridWfs):
+        async def bbox(self, box, *, wait_s=5.0, before_send=None):
+            self.answers[box] = self.grid.body(box, max_features=60)  # numberOfFeatures = 준 수(조용한 상한)
+            return await super().bbox(box, wait_s=wait_s, before_send=before_send)
+
+    order = grid.cells_in(A.box)
+    beyond = [g for g in deep_in(grid, A) if order.index(g) >= 60]
+    wfs = Capped(grid)
+    job, wfs, r, _c, _db = start(grid, beyond[2:6], known=beyond[:2], wfs=wfs)
+    await job.run_once()
+    states = {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()}
+    assert states["0/28/60"] == "split" and "incomplete" not in states.values()
+    assert wfs.asked == [] and snapshot(r)["resolved"] == 4
+
+
+async def test_an_answer_about_another_place_does_not_finish_the_tile():
+    """검토 지적(2026-10-01): 먼 타일의 칸만 담은 답도 A 를 끝냈다(그 칸들을 A 의 답으로 적었다). 이제 그런 답은 오류 — A 는 물러났다가 다시."""
+    grid = FakeGrid()
+    wfs = GridWfs(grid, answers={A.box: grid.body(FAR.box)})
+    job, wfs, r, _c, _db = start(grid, [home(grid, A)[1]], known=[home(grid, A)[0]], wfs=wfs)
+    await job.run_once()
+    assert wfs.boxes[0] == A.box and "0/28/60" not in r.kv.get(TILES_KEY, {})
+    assert not set(grid.cells_in(FAR.box)) & set(job.geometry.cells)
+    assert A in job.tiles.queued_tiles() and job.tiles.retries()[0] == 1
+
+
 async def test_an_oversized_tile_is_split_not_counted_as_an_error():
     grid = FakeGrid()
     wfs = GridWfs(grid, answers={A.box: WfsTooLarge("response too large (500000 bytes > 393216)")})
@@ -400,18 +465,25 @@ async def test_a_tile_off_grid_feature_writes_no_negative_and_the_one_id_lookup_
 
 
 async def test_a_lookup_that_finds_a_cell_a_done_tile_did_not_list_rechecks_that_tile_once(caplog):
-    """done 타일 안에서 한 칸 조회가 칸을 찾으면(타일 응답에 없던 칸 — 서버가 조용히 뺐거나 DB 쓰기를 잃었다) 그 타일을 한 번 다시 묻는다. 다시 받아도
-    없으면 WARN 한 줄(bbox 응답이 칸을 빠뜨릴 수 있다는 증거) — 되풀이하지 않는다."""
+    """done 타일 안에서 한 칸 조회가 칸을 찾으면(타일 응답에 없던 칸 — 서버가 조용히 뺐거나 DB 쓰기를 잃었다) 그 타일을 한 번 다시 묻는다. 다시
+    받아도 없으면 그 답은 잘렸을 수 있다(빠진 아는 칸 — 품질 사례 traffic_grid_tile_missing_cell): 넷으로 나누고, 그 칸이 든 자식이 부모보다 적은
+    지물로도 여전히 빠뜨리면 incomplete · WARN 한 줄(bbox 응답이 칸을 빠뜨릴 수 있다는 증거 — 그 칸은 한 칸 조회가 맡는다). 되풀이하지 않는다."""
     caplog.set_level(logging.INFO, logger=LOGGER)
     grid = FakeGrid()
     ids = home(grid, A)
     hidden = ids[7]
     wfs = GridWfs(grid, hidden={hidden})
-    job, wfs, r, _c, _db = start(grid, [ids[1], hidden], known=[ids[0]], wfs=wfs)
+    job, wfs, r, _c, db = start(grid, [ids[1], hidden], known=[ids[0]], wfs=wfs)
     await job.run_once()
-    assert wfs.boxes == [A.box, A.box] and wfs.asked == [hidden]
+    assert wfs.boxes[:2] == [A.box, A.box] and wfs.asked == [hidden]
+    assert wfs.boxes[2:] == [k.box for k in A.children()]
+    states = {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()}
+    holder = tile_at(*cell_xy(grid.cell(hidden)), 1)
+    assert states == {"0/28/60": "split", **{k.key: "incomplete" if k == holder else "done" for k in A.children()}}
     (warn,) = [x.getMessage() for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING]
-    assert "0/28/60" in warn and hidden in warn and "still not listed" in warn
+    assert holder.key in warn and hidden in warn and "incomplete" in warn
+    q = [q for run in db.runs if run[0] == "traffic_grid_geom" for q in run[2].get("quality") or []]
+    assert [x[2]["tile"] for x in q if x[0] == "traffic_grid_tile_missing_cell"] == ["0/28/60", holder.key]
     assert snapshot(r)["resolved"] == 2
 
 

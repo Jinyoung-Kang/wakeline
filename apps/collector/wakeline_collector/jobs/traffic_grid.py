@@ -16,7 +16,9 @@
   조회의 수백 배). 물을 타일이 있으면 채우기 몫을 타일에 먼저 쓰고(호출 하나 = 예산 1 — 하루 예산과 해양수산부 시간 창 모두, 한 칸 조회와 같다),
   타일이 준 칸은 한 칸 조회 대기열에서 빠진다. 타일은 아는 칸(marine_grid4) · 한 칸 조회로 찾은 칸 · 받은 타일의 가장자리에 걸친(지금 스냅샷에서
   모르던) 칸의 기하에서만 정한다 — 칸 번호로 위치를 짐작하지 않는다. 잘렸을 수 있는 응답(maxFeatures 에 닿음 · numberOfFeatures 와 다름 · 크기 상한
-  초과)은 넷으로 나눠 다시(가장 작은 4 km 도 그러면 incomplete — 1일 뒤). 타일은 어느 번호도 부정 캐시에 적지 않는다 — '해양격자에 없음'(묻지 않은
+  초과 · 칸 전체가 상자 안인 아는 칸이나 이 타일 안에서 한 칸 조회가 찾은 칸이 답에 없음 — 2026-10-01 검토 지적: 수만 보면 조용한 상한을 끝났다고
+  적는다)은 넷으로 나눠 다시(가장 작은 4 km 도 그러면 incomplete — 1일 뒤. 부모보다 적은 지물로도 여전히 그러면 상한 탓이 아니므로 더 나누지 않고
+  incomplete). 타일은 어느 번호도 부정 캐시에 적지 않는다 — '해양격자에 없음'(묻지 않은
   번호다)도, '격자 밖'도(타일의 격자 밖 지물은 품질 사례 · 원본만 남기고 그 번호는 한 칸 조회가 판정한다 — 2026-10-01 검토 지적).
   끝난 타일은 Redis wakeline:traffic_grid:tiles 에 적어 재기동 뒤 다시 묻지 않는다(읽지 못하면 DB 캐시처럼 DB_WAIT_S 기다린 뒤 메모리로만 — WARN).
   한 타일의 칸은 DB 쓰기 한 번(쓰기 큐의 작업 하나). 해석은 공급자가 스레드에서, 아는 칸 읽기 · 타일 셈도 스레드에서(이벤트 루프를 막지 않는다).
@@ -131,6 +133,10 @@ DB_RETRY_S = 60
 DB_WAIT_S = 600
 PUBLISH_MIN_INTERVAL_S = 30
 REDIS_TIMEOUT_S = 3.0
+# 타일 답이 온전한지 아는 칸으로 본다(ADR-023 2026-10-01 bbox 개정 · 검토 지적): 중심이 상자 가장자리에서 이만큼 넘게 안쪽인 아는 칸은 칸 전체가
+# 상자 안이다 — 0.025° 칸의 EPSG:5179 반폭은 동서 ≤ 1.24 km · 남북 ≤ 1.45 km(33–39 N, 중앙 경선에서 ±5° 의 자오선 수렴 포함 — 계산). 그런 칸은
+# 서버가 '겹치는 칸'을 주든 '안에 든 칸'만 주든 답에 있어야 한다. 선택값(계산한 반폭 위의 여유)
+KNOWN_MARGIN_M = 1_600
 STATE_ACTIVE, STATE_NO_KEY, STATE_FIXTURE, STATE_OPERATOR_OFF = "active", "no_key", "fixture", "operator_off"
 
 
@@ -515,6 +521,8 @@ class TrafficGridJob:
         self._tile_write_error = ""  # 타일 상태를 쓰지 못한 마지막 까닭(성공하면 비운다)
         # 타일이 격자 밖으로 준 번호(이 프로세스) — 한 칸 조회가 그 번호를 찾아도 타일을 다시 묻지 않는다(타일은 그 번호를 주었다 — 기하가 다를 뿐)
         self._tile_off_grid_ids: set[str] = set()
+        # 아는 칸 → 중심이 든 level 0 타일(받은 기하에서만). 타일 답에서 빠진 아는 칸을 찾는 데 쓴다(_known_inside) — 번호 참조만(칸 10만에 약 1 MB)
+        self._known_at: dict[Tile, list[str]] = {}
         # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
         self._snapshot_ids: frozenset[str] = frozenset()
         self._now, self._mono = now, mono
@@ -665,13 +673,38 @@ class TrafficGridJob:
         now = self._now()
         plan = self.tiles
         any_state = bool(plan.states)
+        index: dict[Tile, list[str]] = {}
         for c in list(self.geometry.cells.values()):
-            t = plan.leaf(*cell_xy(c))
+            xy = cell_xy(c)
+            index.setdefault(gt.tile_at(*xy), []).append(c.grid_no)  # 아는 칸 색인도 같은 투영으로(따로 한 번 더 돌지 않는다)
+            t = plan.leaf(*xy)
             if plan.covered(t, now):
                 continue
             if any_state and any(plan.finished(plan.leaf(x, y), now) for x, y in cell_corners_xy(c)):
                 continue
             out[t] += 1
+        self._known_at = index
+        return out
+
+    def _index(self, grid_no: str, x: float, y: float) -> None:
+        """새로 알게 된 칸(또는 기하가 바뀐 칸)을 색인에 — (x, y) 는 받은 기하의 중심(EPSG:5179). 옛 자리는 지우지 않는다(_known_inside 가 지금 기하로 다시 본다)."""
+        if self.tile_src is not None:
+            self._known_at.setdefault(gt.tile_at(x, y), []).append(grid_no)
+
+    def _known_inside(self, tile: Tile) -> set[str]:
+        """아는 칸 가운데 칸 전체가 이 타일 상자 안인 칸(중심이 가장자리에서 KNOWN_MARGIN_M 넘게 안쪽) — 이 타일의 답에 있어야 한다. 후보는 level 0
+        조상의 색인(많아야 약 200칸)이고 칸마다 투영 한 번(약 3 µs)."""
+        x0, y0, x1, y1 = tile.box
+        m = KNOWN_MARGIN_M
+        root = Tile(0, tile.ix >> tile.level, tile.iy >> tile.level)
+        out: set[str] = set()
+        for g in self._known_at.get(root, ()):
+            c = self.geometry.cells.get(g)
+            if c is None or g in out:
+                continue
+            x, y = cell_xy(c)
+            if x0 + m < x < x1 - m and y0 + m < y < y1 - m:
+                out.add(g)
         return out
 
     async def _seed_known_tiles(self, now: datetime) -> None:
@@ -1101,6 +1134,8 @@ class TrafficGridJob:
         if r.kind == "found" and r.cell is not None:
             self.geometry.resolved(r.cell)
             tk.found.append(r.cell)
+            if self.tile_src is not None:
+                self._index(r.cell.grid_no, *cell_xy(r.cell))
             self._tile_from_lookup(r.cell, now)
         elif r.kind == "not_found":
             tk.not_found += 1
@@ -1142,7 +1177,7 @@ class TrafficGridJob:
                 tk.calls += 1
                 tk.errors_in_row = 0
                 tk.tile_splits += 1
-                await self._split(tile, str(e), 0, now, tk)
+                await self._split(tile, str(e), 0, None, now, tk)
                 return True
             tk.tile_errors += 1
             return await self._tile_failed(tile, e, now, tk)
@@ -1159,17 +1194,19 @@ class TrafficGridJob:
             tk.latency.append(got.latency_ms)
         res = got.result
         x0, y0, x1, y1 = tile.box
+        expected = self._known_inside(tile)  # 이 답 전에 알던 칸 가운데 칸 전체가 상자 안인 칸 — 답에 있어야 한다
         stored: list[Cell] = []
         edge: list[tuple[float, float]] = []
         new = 0
         for tc in res.cells:
             c = tc.cell
             prev = self.geometry.cells.get(c.grid_no)
+            ex0, ey0, ex1, ey1 = tc.extent
             if prev != c:
                 stored.append(c)
+                self._index(c.grid_no, (ex0 + ex1) / 2, (ey0 + ey1) / 2)
             if prev is None:
                 new += 1
-                ex0, ey0, ex1, ey1 = tc.extent
                 # 이웃 타일은 받은 기하에서만: 지금 스냅샷에서 위치를 모르던 칸이 이 타일의 가장자리에 걸치면 그 꼭짓점이 든 타일
                 if c.grid_no in self._snapshot_ids and (ex0 <= x0 or ey0 <= y0 or ex1 >= x1 or ey1 >= y1):
                     edge.extend(((ex0, ey0), (ex0, ey1), (ex1, ey0), (ex1, ey1)))
@@ -1201,32 +1238,49 @@ class TrafficGridJob:
         tk.tile_cells += len(res.cells)
         tk.tile_new += new
         tk.tile_stored += len(stored)
+        # 답이 온전한가 — 수(maxFeatures · numberOfFeatures)와, 이미 가진 자료: 칸 전체가 상자 안인 아는 칸 · 이 타일 안에서 한 칸 조회가 찾은 칸
+        # (recheck)이 답에 없으면 잘렸을 수 있다(검토 지적 2026-10-01: 수가 맞는 조용한 상한 · 빠뜨림을 done 으로 적었다). 격자 밖 · 거절로라도
+        # 답에 나온 번호는 빠진 것이 아니다(서버는 그 칸을 주었다 — 기하가 다를 뿐)
+        lost = self.tiles.rechecking(tile)
+        if lost is not None:
+            expected.add(lost)
+        listed = {tc.cell.grid_no for tc in res.cells} | {g for g, _d in res.off_grid} | {g for g, _d in res.rejected if g}
+        missing = sorted(expected - listed)
         why = res.truncation
+        if missing:
+            tk.quality.append(
+                ("traffic_grid_tile_missing_cell", None, {"tile": tile.key, "missing": len(missing), "grid_nos": missing[:5]})
+            )
+            gone = f"{len(missing)} known cells inside the box missing from the answer, e.g. {missing[0]}"
+            why = gone if why is None else f"{why}; {gone}"
         if why is not None:
             tk.tile_splits += 1
-            await self._split(tile, why, len(res.cells), now, tk)
+            await self._split(tile, why, len(res.cells), res.members, now, tk)
             return True
-        lost = self.tiles.rechecking(tile)
         state = self.tiles.finish(tile, "done", len(res.cells), now)
         await self._store_tile(tile, state)
-        if lost is not None and lost not in {tc.cell.grid_no for tc in res.cells}:
-            log.warning(
-                "traffic grid: tile %s asked again after a lookup found %s inside it — %s still not listed; bbox answers may "
-                "miss cells (the one-id lookup keeps covering such ids)",
-                tile.key,
-                lost,
-                lost,
-            )
-            tk.quality.append(("traffic_grid_tile_missing_cell", None, {"tile": tile.key, "grid_no": lost}))
         return True
 
-    async def _split(self, tile: Tile, why: str, cells: int, now: datetime, tk: _Tick) -> None:
+    async def _split(self, tile: Tile, why: str, cells: int, members: int | None, now: datetime, tk: _Tick) -> None:
         """잘렸을 수 있는 타일: 넷으로 나눠 그 부분을 묻는다(받은 칸은 이미 썼다 — 지물마다 검사를 통과한 실제 기하). 가장 작은 타일이면 incomplete —
-        TILE_FAILED_TTL_S 뒤 다시(그 사이 그 안의 칸은 한 칸 조회가 맡는다). 어느 쪽이든 어느 번호도 '없음'으로 적지 않는다."""
-        if tile.level < gt.MAX_LEVEL:
+        TILE_FAILED_TTL_S 뒤 다시(그 사이 그 안의 칸은 한 칸 조회가 맡는다). 어느 쪽이든 어느 번호도 '없음'으로 적지 않는다.
+
+        나누기의 값을 묶는다(검토 지적 2026-10-01: numberOfFeatures 의 뜻이 다르면 32 km 타일 하나가 4 km 까지 85번을 썼다): 나눈 부모가 검사를
+        통과한 칸 N 개를 주었는데 이 자식의 답은 지물이 N 개보다 적은데도 여전히 잘렸을 수 있으면, 그것은 서버 상한 탓일 수 없다(같은 상한이 부모에게는
+        더 많이 주었다) — 더 나눠도 나아지지 않으니 incomplete 로 둔다."""
+        parent = tile.parent()
+        ps = self.tiles.states.get(parent) if parent is not None else None
+        not_a_cap = members is not None and ps is not None and ps.status == "split" and members < ps.cells
+        if tile.level < gt.MAX_LEVEL and not not_a_cap:
             state = self.tiles.finish(tile, "split", cells, now)
             log.info("traffic grid: tile %s possibly truncated (%s) — split into 4", tile.key, why)
         else:
+            if not_a_cap:
+                assert parent is not None and ps is not None
+                why = (
+                    f"{why}; the parent tile {parent.key} gave {ps.cells} cells and this answer only {members} features, "
+                    "so a server cap cannot explain it — splitting further would not help"
+                )
             state = self.tiles.finish(tile, "incomplete", cells, now)
             log.warning(
                 "traffic grid: tile %s (%d m) still possibly truncated (%s) — marked incomplete for %d h; ids inside go on by one-id lookup",
@@ -1235,7 +1289,7 @@ class TrafficGridJob:
                 why,
                 gt.TILE_FAILED_TTL_S // 3600,
             )
-            tk.quality.append(("traffic_grid_tile_incomplete", None, {"tile": tile.key, "detail": why[:200]}))
+            tk.quality.append(("traffic_grid_tile_incomplete", None, {"tile": tile.key, "detail": why[:300]}))
         await self._store_tile(tile, state)
 
     async def _tile_failed(self, tile: Tile, e: Exception, now: datetime, tk: _Tick) -> bool:
