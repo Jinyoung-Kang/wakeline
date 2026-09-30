@@ -195,4 +195,30 @@ describe("stats panels: loading, loaded and failed are told apart — a slow or 
     expect(states().traffic).toBe("empty");
     expect(byTestId("stats-empty", panel("traffic"))!.textContent).toBe(statsEmptyText(true, other, "2026-09-29"));
   });
+
+  /**
+   * 리뷰 2026-10-01: 위 순서(이전 날짜가 먼저 옴)는 열쇠 비교만으로도 걸러져, 늦게 온 응답을 버리는 가드(useLoad 의 live)를 지워도 통과했다. 새 날짜의 응답이 먼저
+   * 오고 이전 날짜의 응답이 그 뒤에 오면, 가드가 없을 때 이전 응답이 끝난 결과(done)를 이전 열쇠로 덮어 교통량 패널이 '받는 중'에 머문다.
+   */
+  it("a previous day's answer arriving after the new day's answer does not overwrite it — the panel stays on the new day", async () => {
+    const other = "2026-09-27";
+    let releaseOld: (r: Response) => void = () => {};
+    let releaseNew: (r: Response) => void = () => {};
+    stub({
+      ...OK,
+      [TRAFFIC(DAY)]: () => new Promise<Response>((r) => { releaseOld = r; }),
+      [TRAFFIC(other)]: () => new Promise<Response>((r) => { releaseNew = r; }),
+    });
+    await mount();
+    const input = all((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "집계 날짜(KST)")[0];
+    await React.act(async () => { propsOf(input).onChange({ target: { value: other } }); });
+    await settle();
+    await React.act(async () => { releaseNew(json({ day: other, items: [], aggregated: true, scope: null, region: null, ...Z })); });
+    await settle();
+    expect(states().traffic).toBe("empty");
+    await React.act(async () => { releaseOld(json(OK[TRAFFIC(DAY)])); });
+    await settle();
+    expect(states().traffic).toBe("empty");
+    expect(byTestId("stats-empty", panel("traffic"))!.textContent).toBe(statsEmptyText(true, other, "2026-09-29"));
+  });
 });
