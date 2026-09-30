@@ -146,9 +146,12 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
    `SingleFlight.abandon` 으로 거절처럼 끝내고 표시를 지운다(선박 조회도 같은 틀이라 같이 고쳐졌다).
 8. **(사용자 보고 뒤) select 하나에 selected 하나, 같은 글자는 다시 보내지 않는다.** 항공기를 고르면 "노선 조회 중" selected 가 같은 내용으로 두 번 나갔다:
    select 가 우편함에서 초기 세트 · 팬아웃 작업 뒤에 서면 그 작업이 새 selectedHex 로 pending 을 먼저 보내고, SELECTED 작업이 늘(ALWAYS) 또 보냈다(수집기가
-   아직 쓰지 않은 노선의 읽기는 곧바로 pending 으로 끝나 같은 글자). 이제 select 는 '답 한 번' 표시(`WsSession.selectedForce`)를 올리고 먼저 도는 작업이
-   한 번 답한다. 그 밖에는 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다(초기 세트의 force — resume · 재동기 — 만 늘). 첫 pending 은 늦어지지
-   않고 found · unavailable · 상태 변화는 글자가 달라 그대로 나간다(계약 v5 §G21 의 같은 날 항목 · `SelectedOnceTest`).
+   아직 쓰지 않은 노선의 읽기는 곧바로 pending 으로 끝나 같은 글자). 이제 select 는 hex · 선택 시각 · 답 차례를 한 객체(`WsSession.Selection`)로 한 번에
+   쓰고, selected 를 계산하는 작업 중 먼저 도는 것이 그 객체의 답 차례를 가져가 한 번 답한다(`Selection.claimAnswer`). 처음 고침은 hex 와 '답 한 번' 표시를
+   따로 써서, 두 쓰기 사이에 돈 작업이 새 hex 를 표시 없이 보고 보낸 뒤 SELECTED 작업이 같은 글자를 또 보낼 수 있었다(리뷰 — probe 로 재현: 2건, 글자까지
+   같음). 한 번의 쓰기라 작업은 예전 select 나 새 select 를 통째로 본다. 그 밖에는 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다(초기 세트의
+   force — resume · 재동기 — 만 늘). 첫 pending 은 늦어지지 않고 found · unavailable · 상태 변화는 글자가 달라 그대로 나간다(계약 v5 §G21 의 같은 날 항목 ·
+   `SelectedOnceTest`).
 
 ### 새 최악(설정값에서 — 잰 값 아님)
 | 경우 | 전 | 후 |
@@ -177,6 +180,6 @@ providers — HGETALL)이 각 명령 상한 3 s 를 기다릴 수 있다(설정�
   허브의 마감 = 속성 2500ms) · `RedisConfigTest`(식 · 해석 · Lettuce 명령 상한) · `RoutePausedRedisTest`(Testcontainers Redis 를 docker pause — pong · diff ·
   heartbeat 각 < 500 ms, 시험이 고른 명령 상한 1.5 s 에 unavailable, 같은 동안 REST 도 그 안에 unavailable, 다시 풀면 found) · `RouteReaderTest`(캐시만 읽기 ·
   한 읽기 · 거절은 기억하지 않음 · 캐시 시각 · 대기열의 읽기에 붙은 REST 는 명령 상한에 unavailable · 운영 생성자가 속성에서 상한을 읽음) · `SelectedOnceTest`(결정 8 —
-  우편함 순서를 고정해 select 하나에 selected 하나, 뒤이은 found 는 그대로).
+  우편함 순서를 고정해 select 하나에 selected 하나, 뒤이은 found 는 그대로 · 예전 select 를 계산 중인 팬아웃은 새 select 의 답을 가져가지 않음).
 - 되돌리기: 이 개정의 커밋(route 조회 이동 · 웹 설명 · 문서)을 되돌린다 — 노선 읽기가 우편함으로 돌아온다(스키마 · 데이터 · 설정 변화 없음). 공통 틀
   (`SelectionLookups` 추출)은 선박 조회만으로도 그대로 쓸 수 있다.

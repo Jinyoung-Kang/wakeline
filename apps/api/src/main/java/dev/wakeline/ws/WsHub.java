@@ -69,7 +69,7 @@ import java.util.function.Supplier;
  *       Redis 읽기는 우편함 밖(계약 v5 §G21 · ADR-025 개정 — {@link RouteLookups}): 우편함은 캐시만 보고, 읽어야 하면 조회 실행기에 맡긴 뒤 selected 를 곧바로
  *       pending("노선 조회 중" — 이 세션에 이미 보낸 같은 물음의 값이 있으면 그 값)으로 보낸다. 답이 오면(늦어도 Redis 명령 상한 3 s — 설정값, 읽지 못하면
  *       unavailable) SELECTED_ROUTE 작업이 다시 계산해 바뀌었으면 보낸다. 그동안 그 세션의 pong · diff · heartbeat 는 노선 읽기를 기다리지 않는다.
- *       select 마다 답은 하나(먼저 도는 작업이 — {@link WsSession#selectedForce}), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지
+ *       select 마다 답은 하나(먼저 도는 작업이 — {@link WsSession.Selection#claimAnswer}), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지
  *       않는다(사용자 보고 2026-09-30 — 같은 pending 두 번).</li>
  *   <li>수요 스코프(hot·focus, 계약 v2 §A3) 메시지는 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 세션에만 팬아웃한다 — 전체 팬아웃은
  *       region(10 s)·global 이 계속 한다. focus 관측이 오면 그 hex 를 선택한 세션에 selected 를 보낸다(≈ 5 s, 같은 관측 · 보이는 값이 같은 관측은 두 번
@@ -401,7 +401,7 @@ public class WsHub implements SmartLifecycle {
     /**
      * selected 를 언제 보내는가: 늘(초기 세트의 force — resume · 재동기) · 바뀌었을 때(팬아웃 · 노선 답 · 초기 세트) · 새 관측이면(focus 관측 · select 작업 —
      * 이미 보낸 바로 그 상태 객체는 다시 보내지 않는다. select 작업은 합쳐진 focus 관측을 대신할 수 있어 이 규칙이다). select 의 답은 따로
-     * ({@link WsSession#selectedForce} — 어느 작업이든 먼저 도는 것이 한 번), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다.
+     * ({@link WsSession.Selection#claimAnswer} — 어느 작업이든 먼저 도는 것이 한 번), 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다.
      */
     enum Resend { ALWAYS, CHANGED, NEW_OBSERVATION }
 
@@ -427,13 +427,13 @@ public class WsHub implements SmartLifecycle {
             if (!s.subscribed()) continue;
             WsSession.Sub sub = s.sub;
             if (area != null && sub != null && s.layerAircraft && sub.bbox().intersects(area)) requestFanout(s);
-            String sel = s.selectedHex;
+            String sel = s.selectedHex();
             if (focus && sel != null && e.current().states().containsKey(sel)) s.schedule(WsSession.Job.SELECTED, () -> runSelectedObservation(s));
         }
     }
 
     /** 항공기 팬아웃이 필요한 세션인가: 항공기 레이어를 켰거나 선택 항공기가 있다(선택은 레이어와 무관한 명시적 선택). */
-    static boolean wantsAircraft(WsSession s) { return s.layerAircraft || s.selectedHex != null || s.selectedSent != null; }
+    static boolean wantsAircraft(WsSession s) { return s.layerAircraft || s.selection != null || s.selectedSent != null; }
 
     /** 위치들을 감싸는 bbox(없으면 null). */
     static Bbox envelope(Collection<AircraftState> a, Collection<AircraftState> b) {
@@ -549,7 +549,7 @@ public class WsHub implements SmartLifecycle {
         if (st != null && !send(s, st)) return;
         String dj = s.demandJson; // 수요 상태(계산된 적이 있으면) — resume·백프레셔 재동기 뒤에도 화면이 추적 상태를 잃지 않게
         if (dj != null && !send(s, dj)) return;
-        if (s.selectedHex != null) sendSelected(s, view.states(), force ? Resend.ALWAYS : Resend.CHANGED);
+        if (s.selection != null) sendSelected(s, view.states(), force ? Resend.ALWAYS : Resend.CHANGED);
         shipsHook.accept(s);
     }
 
@@ -579,7 +579,7 @@ public class WsHub implements SmartLifecycle {
                     else s.needsResync = true; // sent 는 이미 바뀌었다 → 다음에 스냅샷
                 }
             }
-            if (s.selectedHex != null || s.selectedSent != null) sendSelected(s, view.states(), Resend.CHANGED);
+            if (s.selection != null || s.selectedSent != null) sendSelected(s, view.states(), Resend.CHANGED);
         } finally {
             fanoutTimer.record(Duration.ofNanos(System.nanoTime() - t0));
         }
@@ -621,7 +621,7 @@ public class WsHub implements SmartLifecycle {
     }
 
     /**
-     * select 를 받았다: 답은 {@link WsSession#selectedForce} 가 보장한다 — 앞선 작업(초기 세트 · 팬아웃)이 이미 답했으면 여기서는 바뀐 것만(같은 pending 을 두 번
+     * select 를 받았다: 답은 {@link WsSession.Selection#claimAnswer} 가 보장한다 — 앞선 작업(초기 세트 · 팬아웃)이 이미 답했으면 여기서는 바뀐 것만(같은 pending 을 두 번
      * 보내지 않는다 — 사용자 보고 2026-09-30). 같은 종류라 합쳐진 focus 관측을 대신할 수 있어 새 관측이면 보낸다.
      */
     private void runSelected(WsSession s) {
@@ -633,7 +633,7 @@ public class WsHub implements SmartLifecycle {
      * focus 관측이 왔다(계약 v2 §A3: 집중 추적 갱신마다 selected). 이미 이 세션에 보낸 바로 그 상태 객체면(팬아웃이 먼저 보냄) 다시 보내지 않는다.
      */
     private void runSelectedObservation(WsSession s) {
-        if (!s.ready() || !s.hello || s.selectedHex == null) return;
+        if (!s.ready() || !s.hello || s.selection == null) return;
         sendSelected(s, snapshots.merged(), Resend.NEW_OBSERVATION);
     }
 
@@ -704,7 +704,9 @@ public class WsHub implements SmartLifecycle {
     /**
      * "selected": 선택 항공기의 FULL 상태(범위 밖이어도) + 예측 가능 여부 + 등록 노선. 보내는 때:
      * <ul>
-     *   <li>select 의 답({@link WsSession#selectedForce}): select 뒤 selected 를 처음 계산하는 작업이 — 어느 작업이든 — 같은 내용이어도 한 번 보낸다.</li>
+     *   <li>select 의 답({@link WsSession.Selection#claimAnswer}): select 뒤 selected 를 처음 계산하는 작업이 — 어느 작업이든 — 같은 내용이어도 한 번 보낸다.
+     *       hex 와 답 차례는 한 객체라 한 번 읽는다 — 새 hex 를 본 작업은 그 select 의 차례도 보고, 예전 select 를 읽은 작업은 새 select 의 차례를 가져가지
+     *       못한다(리뷰 2026-09-30: 따로 쓴 두 필드 사이에 돈 작업이 같은 pending 을 한 번 더 보냈다).</li>
      *   <li>ALWAYS(초기 세트의 force — resume · 재동기): 늘.</li>
      *   <li>그 밖: 바뀌었을 때만(NEW_OBSERVATION 은 새 관측이면). 그리고 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다 — 클라이언트가
      *       볼 것이 없다(사용자 보고 2026-09-30: select 가 우편함에서 초기 세트 · 팬아웃 뒤에 서면 그 작업이 먼저 pending 을 보내고 SELECTED 작업이 같은
@@ -713,13 +715,14 @@ public class WsHub implements SmartLifecycle {
      * </ul>
      */
     private void sendSelected(WsSession s, Map<String, AircraftState> states, Resend when) {
-        boolean force = s.selectedForce.getAndSet(false) | when == Resend.ALWAYS; // 표시를 selectedHex 보다 먼저 읽는다(핸들러는 hex 를 먼저 쓴다)
-        String hex = s.selectedHex;
-        if (hex == null) {
+        WsSession.Selection sel = s.selection; // 한 번 읽는다 — hex 와 답 차례가 같은 select 의 것이다(WsSession.Selection)
+        if (sel == null) {
             s.selectedSent = null;
             dropRouteLookup(s);
             return;
         }
+        String hex = sel.hex;
+        boolean force = sel.claimAnswer() | when == Resend.ALWAYS; // | — ALWAYS 로 보내도 이 select 의 답 차례를 가져간다
         AircraftState a = states.get(hex);
         PredictionAvailability p = prediction.apply(a);
         RouteInfo r = selectedRoute(s, hex, a);

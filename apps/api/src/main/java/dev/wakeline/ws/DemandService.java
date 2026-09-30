@@ -274,11 +274,10 @@ public class DemandService implements SmartLifecycle {
 
     /** 세션 하나의 수요(계약 v2 §A1). */
     static Want want(WsSession s, RegionSettings.Region reg, long nowMs) {
-        String hex = s.selectedHex;
-        if (hex != null) {
-            long since = s.selectedAtMs;
-            if (since <= 0) since = nowMs; // 선택 시각을 모르는 경우(이론상) — 지금부터 센다
-            return new Want(s, nowMs - since >= FOCUS_SESSION_CAP_MS ? Kind.FOCUS_CAPPED : Kind.FOCUS, hex, null, since);
+        WsSession.Selection sel = s.selection; // 한 번 읽는다 — hex 와 선택 시각이 같은 select 의 것이다
+        if (sel != null) {
+            long since = sel.atMs;
+            return new Want(s, nowMs - since >= FOCUS_SESSION_CAP_MS ? Kind.FOCUS_CAPPED : Kind.FOCUS, sel.hex, null, since);
         }
         WsSession.Sub sub = s.sub;
         // 항공기 레이어를 끈 세션은 항공기를 보고 있지 않다 — 핫 리전 호출을 쓰지 않는다(선택 항공기의 집중 추적은 명시적 선택이라 위에서 그대로)

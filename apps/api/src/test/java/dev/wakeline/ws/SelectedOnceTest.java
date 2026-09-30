@@ -10,10 +10,13 @@ import tools.jackson.databind.JsonNode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static dev.wakeline.ws.RouteSelectionLookupTest.BlockingRedis;
@@ -34,8 +37,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * selectedHex 를 보고 selected 를 보낸다(이 세션에 보낸 selected 가 없거나 다른 항공기라 '바뀜' — 노선은 pending, 조회 시작). 뒤이은 SELECTED 작업은 늘(ALWAYS)
  * 다시 보냈다 — 노선 읽기가 곧바로 '아직 없음'(pending)으로 끝나 같은 내용이다. 반대로 SELECTED 작업이 focus 관측 작업과 합쳐지면(같은 종류 — 단일 비행)
  * select 의 답이 '같은 관측' 규칙에 걸려 나가지 않을 수 있었다(해제 뒤 같은 항공기를 다시 고를 때 — 웹은 해제 때 selected 를 지운다).
- * <p>고침: select 는 '답을 한 번 보낼 것' 표시(WsSession.selectedForce — 선박의 shipSelectedForce 와 같은 방식)를 올리고, selected 를 계산하는 어느 작업이든
- * 처음 보는 쪽이 그 답을 보낸다. 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다(초기 세트의 force — resume · 재동기 — 만 예외).
+ * <p>고침: select 는 hex · 시각 · '답 차례'를 한 객체로 한 번에 쓰고(WsSession.Selection), selected 를 계산하는 어느 작업이든 처음 보는 쪽이 그 답을
+ * 보낸다(Selection.claimAnswer). 그 밖에는 이 세션에 마지막으로 보낸 selected 와 글자까지 같으면 보내지 않는다(초기 세트의 force — resume · 재동기 — 만 예외).
  * <p>시험은 세션 우편함 실행기를 잠시 붙잡아(GatedExecutor) 운영에서 가상 스레드가 늦게 돌 때의 순서 — 메시지를 먼저 다 받고 우편함 작업이 뒤에 도는 순서 —
  * 를 고정한다.
  */
@@ -217,6 +220,57 @@ class SelectedOnceTest {
             k.msg(f, "{\"type\":\"resume\"}");
             assertThat(selected(f)).isEqualTo(2);
             assertThat(ofType(f, "selected").get(0).toString()).isEqualTo(ofType(f, "selected").get(1).toString());
+        }
+    }
+
+    /**
+     * 경합(리뷰 2026-09-30): select 는 hex · 시각 · 답 차례를 한 객체로 한 번에 쓴다(WsSession.Selection). 고치기 전에는 hex 와 '답 한 번' 표시를 따로
+     * 썼고(hex → 표시), 우편함은 표시 → hex 순으로 읽었다 — 두 쓰기 사이에 돈 팬아웃이 새 hex 를 표시 없이 보고 pending 을 보낸 뒤 SELECTED 작업이 표시를 보고
+     * 같은 글자를 또 보냈다(핸들러의 문장을 그 순서로 돌리고 사이에 팬아웃을 넣은 probe: selected 2건, 글자까지 같음). 이제 두 쓰기 사이가 없다 — 작업은
+     * 예전 select 나 새 select 를 통째로 본다. 여기서는 예전 select 를 읽고 계산 중인(예측 계산에서 붙잡힌) 팬아웃 뒤에 새 select 가 도착한다: 그 팬아웃은
+     * 예전 항공기의 바뀐 상태만 보내고 새 select 의 답 차례를 가져가지 않으며, 새 select 는 SELECTED 작업이 한 번 답한다. 같은 글자가 잇달아 나가지 않는다.
+     */
+    @Test void aFanoutStillComputingThePreviousSelect_doesNotTakeTheNewSelectsReply() throws Exception {
+        ThreadPoolExecutor lookups = RouteLookups.boundedExecutor(2, SelectionLookups.DEFAULT_QUEUE);
+        try (WsTestKit k = new WsTestKit(Executors.newVirtualThreadPerTaskExecutor(), 5_000, 200, 5)) {
+            BlockingRedis redis = new BlockingRedis(); // 수집기가 아직 쓰지 않음 — 두 항공기 모두 pending
+            wire(k, lookups, 5_000, redis, new AtomicLong(1_000_000));
+            Instant now = Instant.now();
+            AircraftState kal = plane("71c001", "KAL123", 36.0, 128.0, now);
+            k.publish("region", now, plane("872841", "APJ705", 35.5, 129.5, now), kal);
+            FakeWsSession f = RouteSelectionLookupTest.ready(k, "s");
+            WsSession s = k.handler.session("s");
+            k.msg(f, "{\"type\":\"select\",\"hex\":\"872841\"}");
+            settle(s);
+            assertThat(selectedOf(f, "872841")).hasSize(1);
+
+            // 다음 팬아웃의 872841 예측 계산에서 붙잡는다 — 그 작업은 이미 872841 의 select 를 읽었다
+            CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+            AtomicBoolean gate = new AtomicBoolean(true);
+            var base = k.prediction;
+            k.prediction = a -> {
+                if (a != null && "872841".equals(a.hex()) && gate.getAndSet(false)) {
+                    entered.countDown();
+                    try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }
+                return base.apply(a);
+            };
+            k.publish("region", now.plusSeconds(10), plane("872841", "APJ705", 35.6, 129.5, now.plusSeconds(10)), kal);
+            assertThat(entered.await(5, TimeUnit.SECONDS)).as("the fanout is computing the previous select").isTrue();
+            k.msg(f, "{\"type\":\"select\",\"hex\":\"71c001\"}"); // 새 select — SELECTED 작업은 팬아웃 뒤에 선다
+            release.countDown();
+            await(() -> selectedOf(f, "71c001").size() == 1);
+            settle(s);
+
+            assertThat(selectedOf(f, "71c001")).as("the new select is answered once").hasSize(1);
+            assertThat(route(selectedOf(f, "71c001").getFirst())).isEqualTo(RouteInfo.PENDING);
+            List<JsonNode> old = selectedOf(f, "872841");
+            assertThat(old).as("the running fanout sent only the previous aircraft's change").hasSize(2);
+            assertThat(old.getLast().path("state").path("lat").asDouble()).isEqualTo(35.6);
+            List<JsonNode> all = ofType(f, "selected");
+            for (int i = 1; i < all.size(); i++) assertThat(all.get(i).toString()).as("selected #%d repeats #%d", i, i - 1).isNotEqualTo(all.get(i - 1).toString());
+        } finally {
+            lookups.shutdownNow();
         }
     }
 }
