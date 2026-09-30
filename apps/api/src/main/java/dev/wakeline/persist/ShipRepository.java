@@ -32,7 +32,8 @@ public class ShipRepository {
 
     /**
      * 위치 한 점. 60 s 창(에포크 정렬) 안에 이미 저장된 점이 있으면 쓰지 않는다 — 메모리 필터(ShipWriter)가 재시작으로 비었거나 재처리가 늦게 와도
-     * '창마다 첫 보고 하나' 가 DB 에서 지켜진다(쓰는 스레드는 하나뿐이라 경합이 없다). 같은 (mmsi, ts) 는 PK 충돌로 무시.
+     * '창마다 첫 보고 하나' 가 DB 에서 지켜진다(쓰는 스레드는 ShipWriter 워커 하나뿐 — 종료 flush 도 그 워커가 한다 — 이라 경합이 없다). 같은 (mmsi, ts) 는
+     * PK 충돌로 무시.
      */
     private static final String POSITION_SQL = """
             INSERT INTO ship_position (mmsi, ts, geom, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider)

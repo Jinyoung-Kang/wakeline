@@ -55,6 +55,67 @@ class PersistUnitTest {
         assertThat(r.get("stale")).isNull(); // 관측이 없으면 '오래됨' 도 '최신' 도 아니다
     }
 
+    /**
+     * 조사 2026-10-01(종료): 항적 저장기도 종료 flush 를 워커가 한다 — 워커의 쓰기가 stop 의 예전 기다림(2 s)보다 오래 걸려도 다른 스레드가 같은 배치를
+     * 동시에 쓰지 않는다(쓰는 스레드는 하나). 첫 쓰기(A)는 문이 열릴 때까지 막혔다가 커밋하고, 그 뒤 쓰기(B)는 실패한다(DB 가 죽었다).
+     */
+    @Test
+    void trackShutdownKeepsASingleWriterAndDoesNotAckTheUnwrittenBatch() throws Exception {
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1), gate = new java.util.concurrent.CountDownLatch(1),
+                second = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger(),
+                active = new java.util.concurrent.atomic.AtomicInteger(), maxActive = new java.util.concurrent.atomic.AtomicInteger();
+        org.springframework.jdbc.core.JdbcTemplate jdbc = new org.springframework.jdbc.core.JdbcTemplate() {
+            @Override
+            public <T> int[][] batchUpdate(String sql, java.util.Collection<T> args, int batchSize,
+                                           org.springframework.jdbc.core.ParameterizedPreparedStatementSetter<T> pss) {
+                maxActive.accumulateAndGet(active.incrementAndGet(), Math::max);
+                try {
+                    if (calls.incrementAndGet() == 1) {
+                        entered.countDown();
+                        try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                        return new int[0][];
+                    }
+                    second.countDown();
+                    throw new org.springframework.dao.DataAccessResourceFailureException("db down");
+                } finally {
+                    active.decrementAndGet();
+                }
+            }
+        };
+        AircraftRepository aircraft = new AircraftRepository(null, null) {
+            @Override public int touch(java.util.Collection<dev.wakeline.domain.AircraftState> states) { return states.size(); }
+        };
+        var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        TrackWriter tw = new TrackWriter(jdbc, aircraft, meters, 5, 10);
+        tw.start();
+        java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger(), ackB = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.ingest.Receipt(ackB::incrementAndGet);
+        tw.enqueue(java.util.List.of(ac("a00001")), ra);
+        ra.release();
+        assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).as("the worker is writing batch A").isTrue();
+        tw.enqueue(java.util.List.of(ac("a00002")), rb);
+        rb.release();
+        Thread stopper = Thread.ofVirtual().start(tw::stop);
+        boolean overlapped = second.await(3, java.util.concurrent.TimeUnit.SECONDS); // 예전 코드: 2 s 뒤 flush 가 A 를 다시 쓰기 시작한다
+        gate.countDown();
+        stopper.join(15_000);
+        org.assertj.core.api.SoftAssertions.assertSoftly(s -> {
+            s.assertThat(stopper.isAlive()).isFalse();
+            s.assertThat(overlapped).as("a second write started while the worker's write was still in flight").isFalse();
+            s.assertThat(maxActive.get()).as("threads writing at the same time").isEqualTo(1);
+            s.assertThat(ackA.get()).isEqualTo(1);
+            s.assertThat(ackB.get()).as("B was never written").isZero();
+            s.assertThat(tw.pendingMarks()).isEqualTo(1);
+            s.assertThat(meters.counter("wakeline_track_rows_total", "result", "dropped").count()).isEqualTo(1.0);
+            s.assertThat(meters.counter("wakeline_track_rows_total", "result", "written").count()).as("A counted once, not twice").isEqualTo(1.0);
+        });
+    }
+
+    static dev.wakeline.domain.AircraftState ac(String hex) {
+        return new dev.wakeline.domain.AircraftState(hex, null, null, null, null, 36, 127, 30000, null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false);
+    }
+
     /** DB 가 오래 죽어 있으면 ACK 를 기다리는 표식은 상한(MAX_MARKS)에서 가장 오래된 것부터 놓는다 — 그 메시지는 스트림에서 이미 지워졌다. */
     @Test
     void pendingReceiptMarksAreBounded() throws Exception {
