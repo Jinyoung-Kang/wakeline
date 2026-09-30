@@ -1,7 +1,7 @@
 """keepalive 1011(ping 시간 초과) 재현 — 로그 화면의 'ais shard 1 disconnected: client closed (1011 keepalive ping timeout)'(2026-09-30).
 
-가설을 가정하지 않고 시험한다(가짜 서버 websockets.serve 127.0.0.1, 외부 호출 없음). ping 20 s · 시간 초과 20 s 를 PING_S · TIMEOUT_S(0.2 s · 0.8 s)로 줄여
-같은 기제를 본다. 멈춤은 STALL_S(시간 초과의 두 배) — 시험 기계가 바빠도 결과가 바뀌지 않게 여유를 둔다.
+가설을 가정하지 않고 시험한다(가짜 서버 websockets.serve 127.0.0.1, 외부 호출 없음). 1–4절은 keepalive 를 PING_S · TIMEOUT_S(0.2 s · 0.8 s)로 줄여
+같은 기제를 본다(운영 값의 비율과는 다르다 — 운영 값 그대로의 관계는 5절이 SCALE 로 본다: ping 20 s · 시간 초과 40 s, ADR-014 부록 C 개정 2026-09-30 오후). 멈춤은 STALL_S(시간 초과의 두 배) — 시험 기계가 바빠도 결과가 바뀌지 않게 여유를 둔다.
 - websockets 의 수신 버퍼(max_queue 64 프레임)가 상한을 넘으면 소켓 읽기를 멈추고(pause_reading), 그동안 pong 도 읽히지 않는다. **소켓을 읽는 쪽(recv 를
   부르는 코드)** 이 시간 초과보다 오래 멈추면 1011. 우리 수신 태스크(client._read)는 받은 원문을 대기열(RawQueue)에 넣기만 하고 기다리지 않으므로
   정리(파싱 → ShipBook)·발행(Redis)이 밀려도 소켓 읽기는 멈추지 않는다 — 소비자 적체는 1011 의 원인이 될 수 없다.
@@ -36,7 +36,7 @@ from wakeline_collector.ais.parse import go_time
 from wakeline_collector.ais.queue import RawQueue
 
 KEY = "test-ais-key-keepalive-0123456789"
-PING_S, TIMEOUT_S = 0.2, 0.8  # 운영 20 s · 20 s 를 줄인 값(같은 기제)
+PING_S, TIMEOUT_S = 0.2, 0.8  # 기제 시험용으로 줄인 값(운영 20 s · 40 s 의 비율이 아니다 — 5절)
 STALL_S = 2 * TIMEOUT_S  # 멈춤 길이 — 시간 초과의 두 배
 RATE_HZ = 400  # 가짜 서버가 보내는 프레임 수/초 — 0.2 s 만 멈춰도 64 프레임을 넘친다
 KEEPALIVE_1011 = "client closed (1011 keepalive ping timeout)"
@@ -350,5 +350,100 @@ async def test_server_delaying_pongs_below_the_timeout_keeps_the_connection():
     try:
         await _run_for(c, 2.0)
         assert feed.sessions_ended == 0 and feed.connected, feed.last_error
+    finally:
+        server.close()
+
+
+# ── 5. 운영 keepalive 값(ADR-014 부록 C 개정 2026-09-30 오후 · 계약 v5 §G23) — 공급자 적체로 늦은 pong 에 끊지 않는다 ─────────────
+# 근거(운영 스택 진단, ADR-014 부록 C): 13:58 KST ping_rtt_max_s 12.30 s(60 s 창) — 그때 loop_lag_max_s 0.02 s · ws_queue_max 45/64. 14:03–14:05 KST 다섯 표본
+# ping RTT 0.58–1.86 s · 루프 지연 0.01 s · 수신 버퍼 14–16/64 · 구역별 lag_p50_s 1.8–7.8 s. pong 을 늦춘 것은 공급자 쪽 연결별 전달 적체(데이터 뒤에 선 pong)다 —
+# 루프(기제 1)도 수신 버퍼(기제 2)도 아니다. 08:41 · 08:51 KST 의 1011 두 번은 공백 5–6 s 를 남기고 공급자 쪽에 쌓인 전달분을 버렸다(재전송 없음).
+# 운영 값을 SCALE 로 줄여 같은 관계(간격 · 시간 초과 · 늦은 pong)를 본다 — websockets keepalive 는 두 값과 pong 도착 시각의 관계로만 판정한다.
+SCALE = 0.02
+# 이 공급자에서 잰 가장 큰 전달 지연 중 스스로 회복한 것(ADR-014 부록 A 10분 재측정 최대 23.1 s — 연결 하나일 때). 20 s 시간 초과는 이만큼 늦은 pong 에 끊었다
+PROVIDER_LAG_RECOVERED_MAX_S = 23.1
+
+
+def _operating_client(url: str) -> tuple[AisStreamClient, RawQueue, FeedState]:
+    """운영 기본값(PING_INTERVAL_S · PING_TIMEOUT_S · CLOSE_TIMEOUT_S)을 SCALE 로 줄인 클라이언트."""
+    from wakeline_collector.ais.client import CLOSE_TIMEOUT_S, PING_INTERVAL_S, PING_TIMEOUT_S
+
+    c, q, feed = _client(url)
+    c._connect_kw.update(
+        ping_interval=PING_INTERVAL_S * SCALE, ping_timeout=PING_TIMEOUT_S * SCALE, close_timeout=CLOSE_TIMEOUT_S * SCALE
+    )
+    return c, q, feed
+
+
+async def test_pong_as_late_as_the_largest_recovered_provider_lag_keeps_the_connection():
+    """고치기 전(시간 초과 20 s)에는 23.1 s 늦은 pong 에 1011 로 끊었다 — 공백 5–6 s + 공급자 쪽 적체분 손실. 데이터는 그동안 계속 왔다."""
+    server, url = await _serve(Server(pong_hook=_delay_pongs(PROVIDER_LAG_RECOVERED_MAX_S * SCALE)))
+    c, q, feed = _operating_client(url)
+    try:
+        await _run_for(c, 2.5)  # 운영 시간으로 약 125 s — keepalive 여러 번
+        assert feed.sessions_ended == 0 and feed.connected, feed.last_error
+        assert feed.msgs_total > 100
+    finally:
+        server.close()
+
+
+async def test_pong_later_than_the_operating_timeout_still_reconnects():
+    """적체가 시간 초과보다 커지면(운영 40 s) 여전히 다시 붙어 지연을 끊는다 — ADR-014 부록 A 결정 3 의 방향은 그대로, 문턱만 옮겼다."""
+    from wakeline_collector.ais.client import PING_TIMEOUT_S
+
+    server, url = await _serve(Server(pong_hook=_delay_pongs((PING_TIMEOUT_S + 10.0) * SCALE)))
+    c, q, feed = _operating_client(url)
+    try:
+        await _run_for(c, 3.0)
+        assert feed.sessions_ended == 1 and feed.last_error == KEEPALIVE_1011
+    finally:
+        server.close()
+
+
+async def test_half_open_connection_is_detected_within_interval_plus_timeout_plus_close():
+    """반쯤 열린 연결(데이터도 pong 도 오지 않음): keepalive 가 마지막 pong 뒤 ping 간격 + 시간 초과(+ close 대기) 안에 끊는다 —
+    운영 20 + 40 + 3 = 63 s(HALF_OPEN_DETECT_MAX_S). 데이터 생존은 따로 idle 기한(ais_idle_timeout_s 기본 120 s)이 지킨다(test_ais_server
+    test_idle_connection_is_recycled_and_gap_starts_at_last_message) — keepalive 가 더 빠른 쪽으로 남는다."""
+    from wakeline_collector.ais.client import CLOSE_TIMEOUT_S, HALF_OPEN_DETECT_MAX_S, PING_INTERVAL_S, PING_TIMEOUT_S
+    from wakeline_collector.ais.config import AisSettings
+
+    assert HALF_OPEN_DETECT_MAX_S == PING_INTERVAL_S + PING_TIMEOUT_S + CLOSE_TIMEOUT_S == 63.0
+    assert HALF_OPEN_DETECT_MAX_S < AisSettings().ais_idle_timeout_s
+
+    frozen: list[float] = []
+
+    class HalfOpen(Server):
+        """첫 pong 뒤 조용해진다 — 데이터를 보내지 않고 pong 도 보내지 않는다(연결은 닫지 않는다)."""
+
+        async def handler(self, ws: ServerConnection) -> None:
+            await asyncio.wait_for(ws.recv(), 1.0)
+            original = ws.protocol.send_frame
+
+            def send_frame(frame):
+                if frame.opcode is Opcode.PONG:
+                    if frozen:
+                        return None
+                    frozen.append(time.monotonic())
+                return original(frame)
+
+            ws.protocol.send_frame = send_frame
+            frames = _frames()
+            i = 0
+            try:
+                while not frozen:
+                    await ws.send(frames[i % len(frames)])
+                    i += 1
+                    await asyncio.sleep(1 / RATE_HZ)
+                await ws.wait_closed()
+            except ConnectionClosed:
+                pass
+
+    server, url = await _serve(HalfOpen())
+    c, q, feed = _operating_client(url)
+    try:
+        await _run_for(c, 4.0)
+        ended = time.monotonic()
+        assert frozen and feed.sessions_ended == 1 and feed.last_error == KEEPALIVE_1011
+        assert ended - frozen[0] <= HALF_OPEN_DETECT_MAX_S * SCALE + 0.5  # 시험 기계 여유 0.5 s(운영 25 s 에 해당 — 상한 검사만)
     finally:
         server.close()

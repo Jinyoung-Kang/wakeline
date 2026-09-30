@@ -631,7 +631,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G23(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
   - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
     `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
-    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
+    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(40 — 2026-09-30 오후 개정, 전에는 20. 아래 '개정'), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
     (받던 연결이 끊겨 열린 공백 — 마지막 데이터 → 다시 받은 데이터 — 이 30 s 안에 닫힌 횟수, 없앤 구역 포함). `queue_wait_max_s` 에는 지금 맨 앞에서 기다리는 원문의
     머문 시간도 든다(정리 태스크가 멈춰도 모름이 되지 않게). 수집기가 고른 값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다, 초는 지수 없는 십진수):
     `queue_limit`(원문 대기열 건수 상한) · `loop_tick_s`(0.5) · `loop_stall_s`(1) · `loop_warn_s`(5) · `loop_warn_every_s`(60 — 루프 측정이 없는 수집기면 넷 다 빈 값) ·
@@ -656,3 +656,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 회귀 막기: collector `test_ais_keepalive`(1011 기제 재현 — 루프 멈춤은 두 콜백 순서를 각각 고정) · `test_ais_diag`(한꺼번에 받은 묶음 · 멈춘 소비자 ·
     고른 값 싣기) · `test_ais_reconnect_log`(공백 길이로 재는 회복 창) · `tools/contract_check.py`(새 필드 모양 · main.py 처럼 만든 fixture 의 모름 · 구역 최댓값),
     api `OpsPipelineControllerTest` · `OpsPipelineIT`, 웹 `tests/ops-pipeline-ais-diag.test.ts`(설명에 숫자를 적지 않음 포함).
+  - **개정(2026-09-30 오후 · 레인 collector — 운영 진단으로 원인을 가름)**: keepalive 시간 초과 20 → 40 s(`ais/client.py` `PING_TIMEOUT_S` — 고른 값), ping 간격 20 s 그대로.
+    근거는 이 절의 진단 필드가 운영 스택에서 보인 값이다: 13:58 KST `ping_rtt_max_s` 12.30 s 일 때 `loop_lag_max_s` 0.02 s · `ws_queue_max` 45/64, 14:03–14:05 KST
+    다섯 표본 왕복 0.58–1.86 s · 루프 0.01 s · 버퍼 14–16/64 · `lag_p50_s` 1.8–7.8 s — 공급자 쪽 연결별 적체(데이터 뒤에 선 pong)이고, 1011(08:41 · 08:51 KST)은
+    공백 5–6 s 와 적체분 손실을 남겼다. 반쯤 열린 연결의 최악 감지 20 + 40 + 3(close) = 63 s(전 43 s) — 데이터 생존은 idle 기한 120 s 가 따로 지킨다. 상태 해시
+    `ping_timeout_s` 가 "40" 이 된다(필드 · 모양 · api · 웹 코드는 그대로 — 설명의 숫자는 응답에서 채운다). 자세한 계산은 ADR-014 부록 C '개정'.
