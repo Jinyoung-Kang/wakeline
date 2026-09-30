@@ -12,8 +12,8 @@
   그만큼 앞선 구간도 받지 못했다. 그 차이는 추정해 넓히지 않는다(계약 v3 §A).
 - 프로세스 재시작: 종료할 때 마지막 메시지 시각으로 공백을 열어 상태 해시에 남기고, 다음 기동이 그것(같은 공급자일 때만)을 이어받는다.
 - 진단(diag.py · ADR-014 부록 C): 연결마다 keepalive 왕복(ping_rtt)·websockets 수신 버퍼 깊이(ws_buffer)의 최근 최댓값, 발행 태스크가
-  창마다 넣어 주는 공급자 지연 중앙값(lag_p50_s) — 끊김 로그의 맥락과 상태 해시에 쓴다. 끊긴 뒤 회복 창(reconnect.RECOVER_WINDOW_S) 안에
-  다시 받은 횟수(reconnects_quick — 그 끊김은 INFO 로만 남으므로 상태 해시 reconnects_quick_total 로 센다).
+  창마다 넣어 주는 공급자 지연 중앙값(lag_p50_s) — 끊김 로그의 맥락과 상태 해시에 쓴다. 끊겨 열린 공백(마지막 데이터부터)이 회복 창
+  (reconnect.RECOVER_WINDOW_S) 안에 닫힌 횟수(reconnects_quick — 그 끊김은 INFO 로만 남으므로 상태 해시 reconnects_quick_total 로 센다).
 - 구역(계약 v4 §D): 연결마다 FeedState 하나. 공백에는 그 구역의 정규화한 상자 문자열(scope)을 **공백이 열린 순간** 값으로 붙인다 —
   데이터가 끊긴 곳이 그 영역이다(열린 사이 설정이 바뀌어도 바꾸지 않는다). fixture 재생은 구독 영역이 없어 scope 를 붙이지 않는다.
 """
@@ -153,7 +153,7 @@ class FeedState:
         self.ping_rtt = WindowMax(mono=mono)  # keepalive ping → pong 왕복(초, websockets latency)
         self.ws_buffer = WindowMax(mono=mono)  # 메시지를 꺼낸 뒤 websockets 수신 버퍼에 남은 프레임 수
         self.lag_p50_s: float | None = None  # 직전 발행 창의 공급자 지연 중앙값(처리 시각 − time_utc) — sink 가 넣는다
-        self.reconnects_quick = 0  # 누적: 받던 연결이 끊긴 뒤 회복 창 안에 다시 받은 횟수(client.ReconnectLog 가 센다)
+        self.reconnects_quick = 0  # 누적: 끊겨 열린 공백이 회복 창 안에 닫힌 횟수(reconnect.ReconnectLog 가 센다)
 
     def _mark(self) -> None:
         self.changed.set()

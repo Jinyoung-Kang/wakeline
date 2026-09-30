@@ -1,9 +1,10 @@
 """끊김 로그 수준(로그 화면의 'ais shard 1 disconnected: client closed (1011 keepalive ping timeout)' 2026-09-30).
 
-- 받던 연결이 끊겼다가 회복 창(30 s) 안에 다시 받으면 INFO(누적 수와 함께) — 로그 화면(WARN·ERROR 만)에 매번 오르지 않는다.
+- 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 회복 창(30 s) 안에 닫히면 INFO(누적 수와 함께) — 로그 화면(WARN·ERROR 만)에 매번 오르지 않는다.
+  창은 끊긴 순간이 아니라 공백 길이로 잰다: idle 끊김처럼 끊기기 전부터 조용했으면 재연결이 빨라도 WARN.
   **공백은 그대로 기록한다**(AIS 수신 공백 목록·상태 해시 — 로그 수준만 바뀐다).
-- WARN: 같은 연결이 30 분 안에 3번째로 끊김(되풀이) · 데이터 없이 끝난 연결(재연결 실패 · 오류만 받음) · 회복 창 안에 다시 받지 못함(한 번),
-  그 뒤 늦게 회복하면 그 회복도 WARN(로그 화면에서 이야기가 닫히게).
+- WARN: 같은 연결이 30 분 안에 3번째로 끊김(되풀이) · 끊길 때 공백이 이미 창을 넘음 · 데이터 없이 끝난 연결(재연결 실패 · 오류만 받음) ·
+  공백이 창을 넘도록 다시 받지 못함(한 번), 그 뒤 늦게 회복하면 그 회복도 WARN(로그 화면에서 이야기가 닫히게).
 """
 
 from __future__ import annotations
@@ -93,6 +94,64 @@ async def test_quick_reconnect_is_info_with_a_counter_and_the_gap_is_still_recor
     assert list(feed.gaps.pending) == [feed.gaps.last]
 
 
+async def test_a_long_silence_before_a_fast_reconnect_is_not_quick(caplog):
+    """조용히 멈춘 서버(데이터 없이 연결만 유지) → idle 끊김 → 곧바로 다시 받음. 끊긴 뒤 회복은 빠르지만 기록되는 공백(마지막 데이터부터)은 회복 창보다
+    길다 — '짧은 재연결' 이 아니다. 끊김 줄부터 WARN(로그 화면), 회복도 WARN, reconnects_quick 에 세지 않는다. 공백은 그대로 기록한다."""
+    caplog.set_level(logging.INFO)
+
+    async def script(idx, ws, srv):
+        for f in frames(5):
+            await ws.send(f)
+        await asyncio.sleep(10)  # 첫 연결: 5개 뒤 조용히 멈춘다(닫지 않음) · 다음 연결: 5개 받고 유지
+
+    server, url = await start(FakeAis(script))
+    c, feed = _client(url, recover_window_s=0.5)
+    c.idle_timeout_s = 1.5
+    try:
+        await _run(c, lambda: feed.gaps.last is not None, timeout=6.0)
+    finally:
+        server.close()
+    warns = _records(caplog, logging.WARNING)
+    disc = [m for m in warns if "disconnected" in m]
+    assert len(disc) == 1 and "idle 1.5 s — no messages" in disc[0] and "over the 0.5 s quick-recovery window" in disc[0], warns
+    rec = [m for m in warns if "recovered" in m]
+    assert len(rec) == 1 and "over the 0.5 s quick-recovery window" in rec[0], warns
+    assert not [m for m in _records(caplog, logging.INFO) if "recovered" in m or "disconnected" in m]
+    assert feed.reconnects_quick == 0
+    assert feed.gaps.last["reason"] == "idle 1.5 s — no messages"  # 공백은 그대로
+
+
+async def test_a_gap_that_outgrows_the_window_warns_even_when_the_reconnect_itself_is_fast(caplog):
+    """끊기기 0.7 s 전부터 데이터가 없었고(끊길 때 공백은 아직 창 1 s 안 — 끊김 줄은 INFO) 다시 붙은 뒤 0.5 s 만에 받음: 끊긴 뒤 회복까지는 창 안이지만
+    공백은 창보다 길다 → 공백이 창을 넘는 순간 WARN 한 번, 회복도 WARN."""
+    caplog.set_level(logging.INFO)
+
+    async def script(idx, ws, srv):
+        if idx == 0:
+            for f in frames(5):
+                await ws.send(f)
+            await asyncio.sleep(0.7)
+            await ws.close(1011, "keepalive ping timeout")
+        else:
+            await asyncio.sleep(0.5)
+            await ws.send(frames(1)[0])
+            await asyncio.sleep(10)
+
+    server, url = await start(FakeAis(script))
+    c, feed = _client(url, recover_window_s=1.0)
+    try:
+        await _run(c, lambda: feed.gaps.last is not None)
+    finally:
+        server.close()
+    infos, warns = _records(caplog, logging.INFO), _records(caplog, logging.WARNING)
+    assert len([m for m in infos if "disconnected" in m]) == 1, infos  # 끊긴 순간 공백은 창 안
+    late = [m for m in warns if "not receiving" in m]
+    assert len(late) == 1 and "ais shard 1 not receiving 1 s after the last message" in late[0], warns
+    rec = [m for m in warns if "recovered" in m]
+    assert len(rec) == 1 and "over the 1 s quick-recovery window" in rec[0], warns
+    assert feed.reconnects_quick == 0
+
+
 async def test_the_third_disconnect_within_the_repeat_window_warns(caplog):
     caplog.set_level(logging.INFO)
 
@@ -166,9 +225,9 @@ async def test_not_recovered_within_the_window_warns_once_and_the_late_recovery_
         server.close()
     warns = _records(caplog, logging.WARNING)
     late = [m for m in warns if "not receiving" in m]
-    assert len(late) == 1 and "ais shard 1 not receiving 0.25 s after the disconnect" in late[0], warns
+    assert len(late) == 1 and "ais shard 1 not receiving 0.25 s after the last message" in late[0], warns
     rec = [m for m in warns if "recovered" in m]
-    assert len(rec) == 1 and "(not within 0.25 s)" in rec[0]
+    assert len(rec) == 1 and "over the 0.25 s quick-recovery window" in rec[0]
     assert feed.reconnects_quick == 0
     assert not [m for m in _records(caplog, logging.INFO) if "recovered" in m]
 

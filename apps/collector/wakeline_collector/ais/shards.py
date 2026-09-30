@@ -296,7 +296,7 @@ class ShardSet:
 
     @property
     def reconnects_quick(self) -> int:
-        """끊긴 뒤 회복 창 안에 다시 받은 횟수(누적, 없앤 구역 포함 — INFO 로만 남은 끊김을 세어 보인다)."""
+        """끊겨 열린 공백이 회복 창 안에 닫힌 횟수(누적, 없앤 구역 포함 — INFO 로만 남은 끊김을 세어 보인다)."""
         return self.retired_reconnects_quick + sum(s.feed.reconnects_quick for s in self._all())
 
     def pending_queues(self) -> list[deque[dict[str, str]]]:

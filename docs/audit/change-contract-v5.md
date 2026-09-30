@@ -523,15 +523,16 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
     `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
     구역 최댓값), 고른 값 `ws_queue_limit`(64 — 넘으면 소켓 읽기 멈춤) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
-    (받던 연결이 끊겼다가 30 s 안에 다시 받은 횟수, 없앤 구역 포함). fixture 재생은 연결이 없어 `ws_queue_max` · `ping_rtt_max_s` 가 빈 값이다.
+    (받던 연결이 끊겨 열린 공백 — 마지막 데이터 → 다시 받은 데이터 — 이 30 s 안에 닫힌 횟수, 없앤 구역 포함). fixture 재생은 연결이 없어 `ws_queue_max` · `ping_rtt_max_s` 가 빈 값이다.
   - `shards[]` 원소에 `ping_rtt_max_s`(초 수 또는 null) · `ws_queue_max`(정수 또는 null)를 끝에 더한다 — 원소 필드 순서는 `SHARD_FIELDS`(contract_check 가 본다).
     api `AisStatus` 는 이 둘을 읽지 않는다(지금 필드만 검사 — 더한 필드가 있어도 구역 정보를 버리지 않는다, `AisStatusTest` · `RestSamplesIT` 표본에 실었다).
   - `GET /api/v1/ops/pipeline` 의 `ais` 에 같은 이름(snake_case)으로 싣는다: `reconnects_quick_total` · `loop_lag_max_s` · `loop_stalls_total` · `queue_wait_max_s` ·
     `ws_queue_max` · `ws_queue_limit` · `ping_rtt_max_s` · `ping_timeout_s` · `diag_window_s`. 같은 신선도 규칙(updated_at 30 s)이고 초는 부호 · 지수 없는 십진수만 —
     그 밖은 null. 운영 PIPELINE 탭은 창 · 상한 · 시간 초과를 응답에서 읽어 "수집기 설정" 으로 적고, 수신 버퍼가 상한을 넘었을 때만 주황(소켓 읽기 멈춤 — 사실)이다.
     어느 것도 손실 수가 아니다(손실 배지에 들지 않는다).
-  - 끊김 로그 수준(수집기, 계약 v5 §C2 의 WARN · ERROR 싣기와 함께 읽는다): 받던 연결이 끊겼다가 30 s 안에 다시 받으면 INFO(로그 화면에 오르지 않는다 —
-    `reconnects_quick_total` 로 센다). 같은 연결이 30분에 3번째로 끊김 · 데이터 없이 끝난 연결 · 30 s 안에 회복하지 못함(과 그 뒤 늦은 회복)은 WARN.
+  - 끊김 로그 수준(수집기, 계약 v5 §C2 의 WARN · ERROR 싣기와 함께 읽는다): 받던 연결이 끊겨 열린 공백(마지막 데이터부터)이 30 s 안에 닫히면 INFO(로그
+    화면에 오르지 않는다 — `reconnects_quick_total` 로 센다). 창은 끊긴 순간이 아니라 공백 길이로 잰다. 같은 연결이 30분에 3번째로 끊김 · 끊길 때 공백이 이미
+    30 s 를 넘음(idle 끊김 등) · 데이터 없이 끝난 연결 · 공백이 30 s 를 넘도록 다시 받지 못함(과 그 뒤 늦은 회복)은 WARN.
     공백(`ais_gap` · AIS 수신 공백 목록 · 상태 해시 `gap_*`)은 로그 수준과 상관없이 그대로 기록한다. 끊김 로그 한 줄에 최근 60 s 최댓값과 공급자 지연 p50 을 붙인다.
   - 회귀 막기: collector `test_ais_keepalive`(1011 기제 재현) · `test_ais_diag` · `test_ais_reconnect_log` · `tools/contract_check.py`(새 필드 모양 · fixture 의 모름 ·
     구역 최댓값), api `OpsPipelineControllerTest` · `OpsPipelineIT`, 웹 `tests/ops-pipeline-ais-diag.test.ts`.
