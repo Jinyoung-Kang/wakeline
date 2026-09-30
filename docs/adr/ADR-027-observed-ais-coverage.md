@@ -32,8 +32,12 @@
    세지 않고 그 시의 '빠진 위치'로 센다(응답 truncated · dropped_positions · 지표 · 시마다 WARN 한 번) — 한 보고를 칸에는 넣고 선박에는 넣지 않는 일은 없다.
    바이트 값이 실제 객체 크기를 덮는지는 시험이 잰다(`CoverageGridTest` — 8,000칸 × 칸마다 선박 1 · 5, GC 뒤 남은 힙 ≤ 상한. 식만 견주던 시험은 실패할 수 없었다 —
    리뷰 2026-09-30).
-5. **기동 때 한 번의 부트스트랩 — 요청 경로 밖, 제 연결 하나.** api 시작 30 s 뒤(고른 값 — 재시작 때 밀린 스트림 백로그를 저장기가 먼저 쓰는 여유) 가상 스레드
+5. **기동 때 한 번의 부트스트랩 — 요청 경로 밖, 제 연결 하나.** api 시작 30 s 뒤(고른 값), 그리고 재시작 때 밀린 스트림 백로그가 저장된 뒤 가상 스레드
    하나가 창 안의 ship_position 을 **가장 최근 시부터 거꾸로, 시 하나에 문장 하나**로 읽는다(칸 · MMSI 로 묶은 행 — 위치 수 · 가장 늦은 ts).
+   - 백로그를 기다린다(리뷰 2026-09-30 밤 — 전에는 기동 30 s 에 고정이라, 긴 정지 뒤 백로그를 쓰는 데 30 s 넘게 걸리면 그 시를 읽은 뒤에 저장된 행을 어디서도
+     세지 않았고 응답은 그래도 full 이었다. 스트림 보존은 2.5 h — 정지가 길수록 백로그가 크다): 셈 시작 앞 보고가 10 s 동안 오지 않았고(고른 값 — 스트림 소비는
+     빈 읽기에서 2 s 막힌다) 그때까지 저장기 큐에 넣은 행이 모두 끝났을 때(`ShipWriter.enqueuedSeq` · `settledSeq` — 뒤따르는 실시간 행은 기다리지 않는다) 읽는다.
+     상한 grace + 300 s(고른 값) — 넘으면 WARN 한 줄과 함께 읽는다. 기다리는 동안 응답의 bootstrap.state 는 pending 이다.
    - 연결: DriverManager 로 연결 하나(부트스트랩이 끝나면 닫는다). 공유 풀(기록기 · REST)은 몇 분 잡지 않게, ADR-025 의 선택 조회 풀은 '스레드마다 연결 하나 —
      풀 안에서 서로 기다리지 않는다'가 깨지지 않게 쓰지 않는다. DB 연결 수: 기동 몇 분 동안 12 + 4 + 1.
    - 상한(ADR-025 의 읽기 규칙과 같은 모양 · 값은 이 일에 맞춰 고름): 서버 statement_timeout 10 s(시 하나 치 집계는 공개 조회 3 s 보다 무겁다) · JDBC 문장 상한
@@ -43,15 +47,21 @@
      deadline · stopped · error — 서버 글자는 싣지 않는다) 응답과 로그 한 줄에 — 실패 · 마감은 WARN, 종료로 멈춤(stopped)은 INFO(api 재시작마다 나는 운영
      동작이라 [로그] 화면의 WARN 이 아니다 — 리뷰 2026-09-30 전에는 같은 멈춤이 WARN 두 줄이었다).
 6. **두 번 세지 않는다 — 셈 시작(live_from).** live_from = api 시작 시각을 60 s 창의 시작으로 내린 것. 실시간 셈은 seen_at ≥ live_from 만, 부트스트랩은
-   ts < live_from 만 — 두 구간이 겹치지 않는다. 적게 셀 수 있는 곳(적는다): api 시작 분(≤ 60 s)에 앞선 프로세스만 받은 보고, 부트스트랩이 그 시를 읽은 뒤에야
-   저장된 백로그(재시작 전 시각의 보고). 5분 넘게 미래인 보고는 세지 않는다(ShipStore · ShipWriter 와 같은 5분).
+   ts < live_from 만 — 두 구간이 겹치지 않는다. 부트스트랩이 그 시를 **다 읽은 뒤** 도착한 셈 시작 앞 보고는 실시간으로 센다 — 저장기가 고른 위치를
+   알린 뒤에 큐에 넣으므로(리뷰 2026-09-30 밤에 순서를 바꿨다) 그 행은 그 읽기에 없었다(지표 `wakeline_ship_coverage_late_counted_total`). 적게 셀 수 있는 곳(적는다):
+   api 시작 분(≤ 60 s)에 앞선 프로세스만 받은 보고, 그 시를 **읽는 동안** 도착한 셈 시작 앞 보고(그 읽기에 있었는지 모른다 — 세지 않고
+   `ignored_total{reason=during_read}` 로 센다 — 위 기다림 뒤라 드물다). 5분 넘게 미래인 보고는 세지 않는다(ShipStore · ShipWriter 와 같은 5분).
 7. **창 전체인 척하지 않는다.** since = max(창의 시작, min(부트스트랩이 이어 읽은 곳, live_from)), covered = full(since = 창의 시작) · partial(부트스트랩이 일부만) ·
    since_api_start(부트스트랩 전 · 실패). api 가 25 h 넘게 돌면 부트스트랩 없이도 full 이다(그만큼 셈이 이어졌다). 웹의 상태 줄 · 툴팁이 '창의 일부만 셈 — … 부터'와
    까닭을 적는다.
 8. **REST 는 메모리에서만.** 스냅숏을 60 s 마다 새로 만든다(요청이 올 때 — 지난 것이 60 s 안이면 그대로. 지난 뒤 동시에 온 요청은 잠금 안에서 다시 보아 한 번만
    만든다). 스냅숏은 부트스트랩 상태를 격자 복사보다 먼저 읽는다 — 부트스트랩은 시 조각을 합친 뒤에 loaded_from 을 올리므로 스냅숏이 '셌다'고 말하는 시는 늘 그
    복사본에 있다. 칸 줄은 스냅숏마다 한 번 만든다. meta.fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 가장 새 응답이 stale 로
-   나가지 않게. `Cache-Control: public, max-age=60` · ETag(스냅숏마다) → 304. 요청 중 DB · 외부 호출 없음(ADR-006).
+   나가지 않게. `Cache-Control: public, max-age=60` · ETag(스냅숏마다) → 304 — 같은 스냅숏(60 s 안)을 다시 물을 때만이다(탭이 다시 보일 때 등). 웹의 120 s
+   조회는 보통 새 스냅숏을 받는다 — 운영에서는 AIS 가 10 s 마다 오므로 칸의 위치 수 · 마지막 수신이 스냅숏마다 바뀌어, 내용으로 ETag 를 만들어도 같지 않다
+   (리뷰 2026-09-30 밤이 내용 기반 ETag 를 권했으나 이 까닭으로 두지 않았다 — 응답의 generated_at · window.to 도 스냅숏마다 바뀐다). If-None-Match 는 약한 비교다
+   (`rest.Etags` — edge 가 1,024 B 넘는 JSON 을 gzip 으로 줄이며 ETag 를 W/"…" 로 바꾼다. 전에는 글자 그대로 견줘 edge 를 거친 조건부 요청이 304 를 받지 못했다 —
+   모든 ETag 엔드포인트, E2E `edge-limits` 가 edge 를 거쳐 304 를 본다). 요청 중 DB · 외부 호출 없음(ADR-006).
 9. **웹은 켤 때 받는다(ADR-026).** 레이어 코드(응답 검증 · 조회 · 칸 · 툴팁 · 상태 줄 — `lib/reception.ts` · `components/ReceptionLayer.tsx`)는 `DashboardParts` 의 조각
    으로 레이어 단추를 켤 때 받는다(첫 화면 뒤 한가할 때 미리 받기 목록에도 든다). 조각이 상황판 지도에 그리도록 지도 한 곳 · 준비된 뒤 그리기 · 레이어 툴팁 등록을
    `lib/map-ready.ts` 로 뺐다(MapView 의 onReady 를 그대로 옮김). 첫 화면에 남는 것: 단추 · 범례 절 · 칩 문구 · 지도 창구(이 브랜치 사본, 호스트 zlib — 기준 커밋
@@ -77,9 +87,10 @@
   `lib/etag-poller.ts`(연안 교통량과 같이 쓰는 ETag 조회기 — 옮김) · `components/ReceptionLayer.tsx`.
 - 설정: `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) — application.yml. 나머지 상한은 코드 상수(위 결정 — 고른 값).
 - 지표: `wakeline_ship_coverage_cells` · `wakeline_ship_coverage_ship_cells`(게이지) · `wakeline_ship_coverage_dropped_total{reason=cells|ship_cells}` ·
-  `wakeline_ship_coverage_ignored_total{reason=before_live|future|mmsi}` · `wakeline_ship_coverage_bootstrap_rows_total`.
+  `wakeline_ship_coverage_ignored_total{reason=before_live|during_read|future|mmsi}` · `wakeline_ship_coverage_late_counted_total` · `wakeline_ship_coverage_bootstrap_rows_total`.
 - 시험: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest`(셈 시작 · 미래 보고 · 부트스트랩 순서 · 시 경계 · 문장 상한 · 연결 실패 · 마감 · 종료 · 캐시 ·
-  상한 · 생명주기 · 결과마다 로그 한 줄 · 만료 뒤 동시 요청은 한 번 만듦 · 부트스트랩 중 스냅숏의 주장 ≤ 자료) · `CoverageBootstrapDbTest`(Testcontainers — 실제 PostGIS · 같은 마이그레이션 · api 계정: 시 조각 문장 · 격자로 옮김 · 셈 시작 뒤 행은 읽지
+  상한 · 생명주기 · 결과마다 로그 한 줄 · 만료 뒤 동시 요청은 한 번 만듦 · 부트스트랩 중 스냅숏의 주장 ≤ 자료(두 읽기 사이 창구로 결정적) · 백로그 저장을 기다림과
+  그 상한 · 읽은 시의 늦은 보고는 실시간으로 · 읽는 중이면 during_read) · `CoverageBootstrapDbTest`(Testcontainers — 실제 PostGIS · 같은 마이그레이션 · api 계정: 시 조각 문장 · 격자로 옮김 · 셈 시작 뒤 행은 읽지
   않음 · 읽기 전용 · 잠금 대기를 끝내는 문장 상한 · 닫힌 포트) · `ShipCoverageControllerTest` · `ShipCoverageIT`(스트림 → 저장 표본 → 격자 → REST · ETag 304) ·
   `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest`(ShipsSampled 격리) · `RestSamplesIT`(표본 ship_coverage) · `tools/rest_contract_check.py`(스키마 + `_ship_coverage` 교차 규칙 — collector
   `tests/test_rest_contract_rules.py`). web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4`(칩) · `guide-page`(선박 절) ·

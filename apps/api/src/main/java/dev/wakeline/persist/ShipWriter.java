@@ -135,11 +135,19 @@ public class ShipWriter implements SmartLifecycle {
     public void onShips(IngestEvents.ShipsUpdated e) {
         if (e.states().isEmpty() && e.statics().isEmpty()) return; // 만료·부트스트랩 — 저장할 보고 없음
         List<Item> items = select(e.states(), e.statics(), e.fetchedAt());
-        enqueue(items, e.receipt());
         List<ShipState> kept = new ArrayList<>(items.size());
         for (Item it : items) if (it instanceof Pos p) kept.add(p.state());
+        // 알린 뒤에 큐에 넣는다: 그래서 알림을 받은 쪽(관측 수신 격자)이 본 행은 그 알림 뒤에 저장된다 — 부트스트랩이 이미 읽은 시의 늦은 보고를 두 번 세지
+        // 않고 실시간으로 셀 수 있다(ShipCoverage.onSampled — 리뷰 2026-09-30 밤)
         if (!kept.isEmpty()) publish.accept(new IngestEvents.ShipsSampled(List.copyOf(kept)));
+        enqueue(items, e.receipt());
     }
+
+    /** 큐에 넣은 마지막 행 번호(관측 수신 격자가 밀린 행이 저장되기를 기다릴 때 — ShipCoverage.backlogWritten). */
+    public long enqueuedSeq() { return queue.lastAddedSeq(); }
+
+    /** 이 번호까지의 행은 끝났다(쓰기 커밋 · 영구 실패 · 넘쳐 버림 — 번호 순서로 끝난다). */
+    public long settledSeq() { return queue.settledUpTo(); }
 
     /** 공백은 드물고 순서가 중요하지 않지만 재시도·영수증 규칙이 같은 순서 큐로 보낸다. */
     @EventListener

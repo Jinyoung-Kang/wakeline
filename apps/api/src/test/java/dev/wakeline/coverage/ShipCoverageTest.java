@@ -311,23 +311,109 @@ class ShipCoverageTest {
 
     /**
      * 리뷰(2026-09-30): 스냅숏이 격자를 복사한 뒤에 부트스트랩 상태를 읽었다 — 그 사이 부트스트랩이 한 시를 합치고 loaded_from 을 올리면 복사본에 없는 시까지
-     * '셌다'(since · covered)고 말할 수 있었다. 이제 상태를 먼저 읽는다(합친 뒤에 올리므로 읽은 상태는 뒤의 복사본에 늘 들어 있다). 그 틈은 잠금을 푼 뒤 volatile 을
-     * 읽기까지 몇 ns 라 결정적으로 되살릴 수 없다 — 이 시험은 동시에 돌리며 '주장 ≤ 자료'를 본다(수정 전에도 대개 통과한다 — 불변식의 기록).
+     * '셌다'(since · covered)고 말할 수 있었다. 이제 상태를 먼저 읽는다(합친 뒤에 올리므로 읽은 상태는 뒤의 복사본에 늘 들어 있다). 리뷰 2026-09-30 밤: 전의 시험은
+     * 동시에 돌리며 바랐을 뿐이라(수정 전에도 대개 통과) 두 읽기 사이의 창구(beforeGridCopy)에서 부트스트랩이 한 시를 더 합치게 해 결정적으로 본다 — 두 읽기의
+     * 순서를 되돌리면 '2시간을 셌다 · 칸에는 1시간' 으로 실패한다.
      */
     @Test
     void aSnapshotNeverClaimsHoursItsCellsDoNotHold_whileTheBootstrapRuns() throws Exception {
-        for (int round = 0; round < 20; round++) {
-            FakeSource src = new FakeSource();
-            ShipCoverage c = new ShipCoverage(src, System::currentTimeMillis, new SimpleMeterRegistry(), 0, 100, 1_000);
-            Thread boot = new Thread(c::runBootstrap);
-            boot.start();
-            while (boot.isAlive()) {
-                ShipCoverage.Snapshot s = c.snapshotNow();
-                int ships = s.cells().stream().mapToInt(CoverageGrid.CellView::ships).sum(); // 시 조각마다 서로 다른 선박 하나
-                assertThat(ships).as("round %d: %d hours claimed", round, s.bootstrap().hoursLoaded()).isGreaterThanOrEqualTo(s.bootstrap().hoursLoaded());
-            }
-            boot.join();
+        AtomicLong clock = new AtomicLong(START + 40_000);
+        FakeSource src = new FakeSource();
+        CountDownLatch secondReading = new CountDownLatch(1), releaseSecond = new CountDownLatch(1);
+        src.onRead = () -> {
+            if (src.reads.size() != 2) return;
+            secondReading.countDown();
+            try { releaseSecond.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        };
+        ShipCoverage c = new ShipCoverage(src, clock::get, new SimpleMeterRegistry(), 0, 100, 1_000, START);
+        Thread boot = new Thread(c::runBootstrap);
+        boot.start();
+        assertThat(secondReading.await(5, TimeUnit.SECONDS)).isTrue(); // 첫 시를 합치고 1시간을 셌다고 적은 뒤, 둘째 시를 읽는 중
+        c.beforeGridCopy = () -> { // 스냅숏이 한쪽을 읽은 뒤 다른 쪽을 읽기 전에 둘째 시를 합치고 적게 한다
+            releaseSecond.countDown();
+            long until = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            while (c.bootstrapState().hoursLoaded() < 2 && System.nanoTime() < until) Thread.onSpinWait();
+        };
+        ShipCoverage.Snapshot s = c.snapshotNow();
+        c.beforeGridCopy = () -> {};
+        boot.join(5_000);
+        int ships = s.cells().stream().mapToInt(CoverageGrid.CellView::ships).sum(); // 시 조각마다 서로 다른 선박 하나
+        assertThat(c.bootstrapState().hoursLoaded()).as("the second hour was merged between the two reads").isGreaterThanOrEqualTo(2);
+        assertThat(ships).as("%d hours claimed", s.bootstrap().hoursLoaded()).isGreaterThanOrEqualTo(s.bootstrap().hoursLoaded());
+    }
+
+    /**
+     * 리뷰 2026-09-30 밤: 부트스트랩은 기동 30 s 뒤에 고정이라, 긴 정지 뒤 스트림 백로그(셈 시작 앞 보고)를 저장하는 데 30 s 넘게 걸리면 그 시를 읽은 뒤에 저장된
+     * 행을 어디서도 세지 않았다(응답은 그래도 full). 이제 셈 시작 앞 보고가 10 s 동안 오지 않고, 그때까지 저장기 큐에 넣은 행이 모두 끝난 뒤에 읽는다(뒤따르는
+     * 실시간 행은 기다리지 않는다) — 상한 grace + 300 s 뒤에는 WARN 한 줄과 함께 읽는다.
+     */
+    @Test
+    void theBootstrapWaitsForTheStreamBacklogBeforeLiveFromToBeWritten_withAnUpperBound() {
+        AtomicLong clock = new AtomicLong(START + 31_000), queued = new AtomicLong(), settled = new AtomicLong();
+        ShipCoverage.WriterProgress w = new ShipCoverage.WriterProgress() {
+            @Override public long enqueued() { return queued.get(); }
+
+            @Override public long settled() { return settled.get(); }
+        };
+        ShipCoverage c = new ShipCoverage(new FakeSource(), clock::get, new SimpleMeterRegistry(), 30_000, 100, 1_000, START, w);
+        assertThat(c.backlogWritten(START + 30_000)).as("no backlog seen, queue settled").isTrue();
+        queued.set(500);
+        settled.set(100);
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.2, 126.2, CUT - 1)))); // +31 s: 재시작 전 보고가 아직 온다
+        assertThat(c.backlogWritten(START + 35_000)).as("reports before live_from still arriving").isFalse();
+        queued.set(700);
+        assertThat(c.backlogWritten(START + 41_000)).as("quiet for 10 s, rows up to 700 not written yet").isFalse();
+        queued.set(900); // 실시간 행은 계속 온다 — 기다릴 번호는 조용해진 때의 700 이다
+        settled.set(699);
+        assertThat(c.backlogWritten(START + 42_000)).isFalse();
+        settled.set(700);
+        assertThat(c.backlogWritten(START + 43_000)).isTrue();
+
+        ListAppender<ILoggingEvent> logs = captureLogs();
+        try {
+            clock.set(START + 31_000);
+            ShipCoverage stuck = new ShipCoverage(new FakeSource(), clock::get, new SimpleMeterRegistry(), 30_000, 100, 1_000, START, w);
+            settled.set(0);
+            stuck.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.2, 126.2, CUT - 1))));
+            assertThat(stuck.backlogWritten(START + 30_000 + ShipCoverage.BACKLOG_WAIT_MAX_MS - 1)).isFalse();
+            assertThat(stuck.backlogWritten(START + 30_000 + ShipCoverage.BACKLOG_WAIT_MAX_MS)).isTrue();
+            assertThat(stuck.backlogWritten(START + 30_000 + ShipCoverage.BACKLOG_WAIT_MAX_MS + 1_000)).isTrue();
+            List<ILoggingEvent> warn = logs.list.stream().filter(e -> e.getFormattedMessage().contains("still being written")).toList();
+            assertThat(warn).hasSize(1);
+            assertThat(warn.getFirst().getLevel()).isEqualTo(Level.WARN);
+        } finally {
+            release(logs);
         }
+    }
+
+    /**
+     * 리뷰 2026-09-30 밤: 부트스트랩이 그 시를 다 읽은 뒤 도착한 셈 시작 앞 보고는 전에는 어디서도 세지 않았다. 저장기는 알린 뒤에 큐에 넣으므로 그 행은 그 읽기에
+     * 없었다 — 실시간으로 센다(두 번 세지 않는다). 읽는 중인 시에 도착한 보고는 그 읽기에 있었는지 모르므로 세지 않고 '세지 못했을 수 있음'으로 센다.
+     */
+    @Test
+    void aBacklogReportArrivingAfterItsHourWasReadIsCountedLive_andOneArrivingWhileItIsReadIsNamed() {
+        AtomicLong clock = new AtomicLong(START + 40_000);
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        FakeSource src = new FakeSource();
+        ShipCoverage[] holder = new ShipCoverage[1];
+        src.onRead = () -> { // 둘째 시(08:00–09:00)를 읽는 동안 그 시의 보고가 도착한다
+            if (src.reads.size() == 2) holder[0].onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000077", 37.2, 126.2, HOUR0 - H + 5_000))));
+        };
+        ShipCoverage c = new ShipCoverage(src, clock::get, meters, 0, 100, 1_000, START);
+        holder[0] = c;
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000066", 37.2, 126.2, CUT - 1)))); // 부트스트랩 전 — 그 몫
+        c.runBootstrap();
+        ShipCoverage.Snapshot before = c.snapshotNow();
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(
+                pos("440000088", 37.2, 126.2, CUT - 10_000),                  // 다 읽은 첫 시(09:00–09:37) — 늦게 저장된 백로그: 실시간으로 센다
+                pos("440000099", 37.2, 126.2, before.windowFrom().toEpochMilli() - 1)))); // 창보다 오래됨 — 세지 않는다
+        ShipCoverage.Snapshot after = c.snapshotNow();
+        assertThat(after.cells().getFirst().ships()).isEqualTo(before.cells().getFirst().ships() + 1);
+        assertThat(after.cells().getFirst().positions()).isEqualTo(before.cells().getFirst().positions() + 1);
+        assertThat(meters.counter("wakeline_ship_coverage_late_counted_total").count()).isEqualTo(1.0);
+        assertThat(meters.counter("wakeline_ship_coverage_ignored_total", "reason", "during_read").count()).isEqualTo(1.0);
+        assertThat(meters.counter("wakeline_ship_coverage_ignored_total", "reason", "before_live").count()).isEqualTo(2.0);
+        assertThat(after.covered()).isEqualTo("full");
     }
 
     @Test

@@ -93,6 +93,28 @@ class ShipWriterTest {
         assertThat(events).hasSize(1);
     }
 
+    /**
+     * 리뷰 2026-09-30 밤: 고른 위치를 알린 <b>뒤에</b> 큐에 넣는다 — 알림을 받은 관측 수신 격자가 본 행은 그 뒤에 저장되므로, 부트스트랩이 이미 읽은 시의 늦은
+     * 보고를 두 번 세지 않고 실시간으로 셀 수 있다. 큐 번호(넣은 · 끝난)는 격자가 밀린 행이 저장되기를 기다릴 때 쓴다.
+     */
+    @Test void theSampleIsPublishedBeforeItsRowsAreQueued_andTheQueueSaysWhatIsSettled() throws Exception {
+        long[] queuedAtEvent = {-1};
+        ShipWriter[] w = new ShipWriter[1];
+        w[0] = new ShipWriter(new FakeRepo(), null, new SimpleMeterRegistry(), 1, 1, e -> queuedAtEvent[0] = w[0].enqueuedSeq());
+        w[0].start();
+        try {
+            w[0].onShips(new IngestEvents.ShipsUpdated(T, "aisstream", List.of(pos("440000001", T.plusSeconds(1)), pos("440000002", T.plusSeconds(2))), List.of(),
+                    Set.of(), Set.of(), Receipt.NONE));
+            assertThat(queuedAtEvent[0]).as("nothing queued yet when the sample is published").isZero();
+            assertThat(w[0].enqueuedSeq()).isEqualTo(2);
+            long until = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+            while (w[0].settledSeq() < 2 && System.nanoTime() < until) Thread.sleep(10);
+            assertThat(w[0].settledSeq()).isEqualTo(2);
+        } finally {
+            w[0].stop();
+        }
+    }
+
     /** 계약 v5 §G19: 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 값이 있는 필드만 덮는다)는 센다 — 배포 전환이 끝났는지 지표로 보인다. */
     @Test void staticsWithoutReceivedFieldsAreCounted() {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();

@@ -82,6 +82,26 @@ final class ReceiptBatchQueue<T> {
         return new Added(dropped, forced);
     }
 
+    /** 넣은 마지막 행 번호(없으면 0). */
+    long lastAddedSeq() {
+        lock.lock();
+        try {
+            return nextSeq - 1;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 이 번호까지의 행은 모두 끝났다(진행 중 배치의 첫 번호 − 1, 없으면 떠난 마지막 번호 — 영수증을 놓는 기준과 같다). */
+    long settledUpTo() {
+        lock.lock();
+        try {
+            return outstandingFrom > 0 ? outstandingFrom - 1 : left;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** 잠금 안에서: 모든 행이 끝난 표식의 영수증을 꺼낸다. */
     private List<Receipt> takeResolved() {
         long upTo = outstandingFrom > 0 ? outstandingFrom - 1 : left;

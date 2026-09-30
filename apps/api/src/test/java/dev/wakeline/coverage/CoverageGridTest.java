@@ -159,17 +159,15 @@ class CoverageGridTest {
         assertThat(g.shipCells()).isEqualTo(2);
     }
 
+    /** 운영 상한(ShipCoverage.MAX_CELLS · MAX_SHIP_CELLS)의 바이트 상한이 ADR-027 의 값(14,592,000 B — 16 MiB 아래)이다 — 상한을 올리면 ADR 과 함께 고친다. */
     @Test
-    void theMemoryBoundFormulaIsTheSumOfTheCaps_arithmeticOnly() {
-        // 셈만 본다(ADR-027 — 칸 하나 · 칸별 선박 하나의 바이트 상한을 곱한 합). 그 바이트 값이 실제 객체 크기를 덮는지는 아래 잰 시험이 본다
-        long b = CoverageGrid.memoryBoundBytes(16_000, 200_000);
-        assertThat(b).isEqualTo(16_000L * CoverageGrid.CELL_BYTES_MAX + 200_000L * CoverageGrid.SHIP_CELL_BYTES_MAX);
-        assertThat(b).isLessThan(16L * 1024 * 1024);
+    void theProductionCapsKeepTheAdrBound() {
+        assertThat(CoverageGrid.memoryBoundBytes(ShipCoverage.MAX_CELLS, ShipCoverage.MAX_SHIP_CELLS)).isEqualTo(14_592_000L).isLessThan(16L * 1024 * 1024);
     }
 
     /**
-     * 리뷰(2026-09-30): 위 시험은 식을 식과 견줄 뿐이라 실패할 수 없었다 — 칸 512 B · 칸별 선박 32 B 라는 ADR-027 의 값이 실제 객체 크기를 덮는지는 아무도 보지
-     * 않았다(Cell 에 필드를 늘려도 모른다). 여기서는 격자를 채운 뒤 GC 뒤 힙 사용량의 차이(남아 있는 바이트)를 재어 상한과 견준다. 모양 둘: 칸마다 선박 1(칸 쪽이 큼) ·
+     * 리뷰(2026-09-30): 전의 시험은 식을 식과 견줄 뿐이라 실패할 수 없었다(리뷰 2026-09-30 밤에 지웠다) — 칸 512 B · 칸별 선박 32 B 라는 ADR-027 의 값이 실제 객체
+     * 크기를 덮는지는 아무도 보지 않았다(Cell 에 필드를 늘려도 모른다). 여기서는 격자를 채운 뒤 GC 뒤 힙 사용량의 차이(남아 있는 바이트)를 재어 상한과 견준다. 모양 둘: 칸마다 선박 1(칸 쪽이 큼) ·
      * 칸마다 선박 5(MMSI 표가 8 → 16 칸으로 넓어진 직후 — 칸별 선박 쪽이 큼). 잡음(다른 스레드)은 세 번 재어 가장 작은 값으로 줄이고, 잰 값이 격자를 보았는지
      * (상한의 1/4 이상)도 본다. JOL 은 새 의존성이라 쓰지 않았다.
      */
