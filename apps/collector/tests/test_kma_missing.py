@@ -479,3 +479,20 @@ async def test_an_old_reported_gap_is_not_carried_over(env):
     assert job._closed_gap is None
     meta = await r.hgetall(mod.KEY_META)
     assert (meta["missing_gap_from"], meta["missing_gap_to"]) == ("", "")
+
+
+async def test_the_streak_counts_every_distinct_tm_that_answered_missing(env):
+    """리뷰(낮음): tms 는 범위를 넓힌 답만 셌다 — 확인이 둘이 된 뒤로는 범위 안의 처음 확인한 tm(늦은 주기가 건너뛴 tm)을 세지 않았다. 웹은 이 수를
+    '확인한 tm N개'로 적으므로 확인한 서로 다른 tm 수와 같아야 한다(같은 tm 을 다시 확인하면 세지 않는다)."""
+    mod, r, ctx, clock, runs = env
+    prov = OutageKma(clock, down_from="202609271215")
+    job = await _steady(mod, ctx, clock, prov)
+    prov.binaries.clear()
+    await _cycles(job, clock, "202609271225")  # 연속 시작(12:15 · 12:20 · 12:25)
+    for t in ("202609271235", "202609271240", "202609271300", "202609271305"):  # 늦은 주기 — 12:30 · 12:45 … 는 건너뛴다
+        clock["now"] = t
+        await job.run_once()
+    checked = {tm for tm in prov.binaries if tm >= "202609271215"}
+    assert "202609271230" in checked  # 12:40 의 10분 넘은 확인 — 12:35 보다 옛 tm
+    assert job.missing.tms == len(checked)
+    assert (await r.hgetall(mod.KEY_META))["missing_tms"] == str(len(checked))

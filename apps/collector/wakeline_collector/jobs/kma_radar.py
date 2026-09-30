@@ -66,7 +66,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -108,6 +108,8 @@ MISSING_REMIND_S = 60 * 60
 MISSING_RECHECK_S = 10 * 60
 # 다시 띄운 수집기가 Redis 의 연속을 이어받는 상한 — 마지막 확인이 이만큼 안일 때만(선택값, 주기 5분의 3배)
 MISSING_CARRY_S = 15 * 60
+# 연속이 센 tm 을 기억하는 범위(마지막 tm 에서 거꾸로 3 h — 확인하는 tm 은 늘 그 안이다, 선택값)
+MISSING_SEEN_KEEP_S = FRAME_TTL_S
 MISSING_KEYS = ("missing_since_tm", "missing_last_tm", "missing_tms", "missing_checked_at", "missing_file", "missing_listed")
 # 알린 공백(닫은 연속 [첫 tm, 파일이 다시 온 tm)) — meta 해시에만(수집기 내부 값: api 는 싣지 않는다). 다시 띄운 수집기가 그 안의 빈 tm 을 포기할 때
 # 다시 WARN 하지 않게(리뷰 2026-09-30). 끝 tm 이 MISSING_GAP_KEEP_S 보다 오래되면 버린다 — 그보다 옛 tm 은 보관 창(최근 12 tm)에 들지 않는다
@@ -158,12 +160,29 @@ class MissingStreak:
 
     since_tm: str  # 없다는 답을 받은 가장 이른 tm
     last_tm: str  # 없다는 답을 받은 가장 새 tm
-    tms: int  # 없다는 답을 받은 서로 다른 tm 수(범위를 넓힌 답만 센다 — 같은 tm 을 다시 확인하면 세지 않는다)
+    tms: int  # 없다는 답을 받은 서로 다른 tm 수(확인한 tm 마다 한 번 — 같은 tm 을 다시 확인하면 세지 않는다)
     checked_at: datetime  # 마지막 확인(UTC)
     warned_at: datetime  # 마지막 WARN(UTC) — MISSING_REMIND_S
     file: str = ""  # 마지막 답이 없다고 적은 파일 이름(RDR_CMP_HSR_PUB_<tm>.bin.gz)
     listed: str = ""  # 목록이 그 tm 에 싣는 종류("EXT" · "EXT,KMA")
     answer: str = ""  # 마지막 답 앞부분(원문 — 로그에만)
+    # 이 프로세스가 센 tm(last_tm 에서 MISSING_SEEN_KEEP_S 안만 — 확인은 늘 가장 새 tm 근처다)
+    seen: set[str] = field(default_factory=set)
+    # 이어받은 연속의 [첫 tm, 마지막 tm] — 앞 프로세스가 그 안의 무엇을 셌는지 모르므로 다시 세지 않는다(적게 셀 수는 있어도 두 번 세지 않는다)
+    carried: tuple[str, str] | None = None
+
+    def count(self, tm: str) -> None:
+        """없다는 답을 받은 tm 을 센다(처음 확인한 tm 만) · 범위를 넓힌다."""
+        self.since_tm, self.last_tm = min(self.since_tm, tm), max(self.last_tm, tm)
+        c = self.carried
+        if tm in self.seen or (c is not None and c[0] <= tm <= c[1]):
+            return
+        self.seen.add(tm)
+        self.tms += 1
+        last = _tm_dt(self.last_tm)
+        if last is not None:  # 기억 상한 — 확인하는 tm 은 가장 새 tm 과 MISSING_RECHECK_S 남짓 앞선 tm 뿐이다
+            keep = (last - timedelta(seconds=MISSING_SEEN_KEEP_S)).strftime("%Y%m%d%H%M")
+            self.seen = {t for t in self.seen if t >= keep}
 
     def fields(self) -> dict[str, str]:
         return {
@@ -766,7 +785,7 @@ class KmaRadarJob:
     def _open_missing(self, tm: str, answer: str, listed: str) -> None:
         now = _now()
         m = _MISSING_FILE.search(answer)
-        self.missing = MissingStreak(tm, tm, 1, now, now, m.group(0) if m else "", listed, answer)
+        self.missing = MissingStreak(tm, tm, 1, now, now, m.group(0) if m else "", listed, answer, seen={tm})
         log.warning(
             "kma radar: KMA download has no file from tm=%s on — the listing has it (%s), the download answered %s; "
             "probing only the newest listed tm and the newest one at least %d min old once per cycle, reminder every %d min (chosen)",
@@ -778,13 +797,10 @@ class KmaRadarJob:
         )
 
     def _saw_missing(self, tm: str, answer: str, listed: str) -> MissingStreak:
-        """연속 중 또 '파일 없음' — 범위를 넓힌 tm 만 센다. 마지막 확인 · 답 · 파일 이름 · 목록 종류는 이 답의 것."""
+        """연속 중 또 '파일 없음' — 처음 확인한 tm 만 센다(MissingStreak.count). 마지막 확인 · 답 · 파일 이름 · 목록 종류는 이 답의 것."""
         s = self.missing
         assert s is not None
-        if tm > s.last_tm:
-            s.last_tm, s.tms = tm, s.tms + 1
-        elif tm < s.since_tm:
-            s.since_tm, s.tms = tm, s.tms + 1
+        s.count(tm)
         m = _MISSING_FILE.search(answer)
         s.checked_at, s.answer, s.file, s.listed = _now(), answer, m.group(0) if m else "", listed
         return s
@@ -853,7 +869,15 @@ class KmaRadarJob:
             )
             return
         self.missing = MissingStreak(
-            since, last, n, checked, now, self._published["missing_file"], self._published["missing_listed"], ""
+            since,
+            last,
+            n,
+            checked,
+            now,
+            self._published["missing_file"],
+            self._published["missing_listed"],
+            "",
+            carried=(since, last),
         )
         log.info("kma radar: carried over the missing-file streak since tm=%s (%d tms, last checked %s)", since, n, _iso(checked))
 
