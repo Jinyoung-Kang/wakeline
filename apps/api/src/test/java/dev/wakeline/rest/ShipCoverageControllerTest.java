@@ -99,10 +99,71 @@ class ShipCoverageControllerTest {
                 .andExpect(jsonPath("$.bootstrap.state").value("failed"))
                 .andExpect(jsonPath("$.bootstrap.error").value("connection"))
                 .andExpect(jsonPath("$.bootstrap.finished_at").exists())
+                // 다시 읽기(1 · 2 · 5 · 10분 뒤)에도 연결되지 않아 포기한 시 — 창 안의 25시간 모두, 오래된 것부터
+                .andExpect(jsonPath("$.bootstrap.missing.length()").value(25))
+                .andExpect(jsonPath("$.bootstrap.missing[0].from").value("2026-09-29T09:00:00Z"))
+                .andExpect(jsonPath("$.bootstrap.missing[0].to").value("2026-09-29T10:00:00Z"))
+                .andExpect(jsonPath("$.bootstrap.missing[0].state").value("given_up"))
+                .andExpect(jsonPath("$.bootstrap.missing[0].attempts").value(5))
+                .andExpect(jsonPath("$.bootstrap.missing[0].error").value("connection"))
+                .andExpect(jsonPath("$.bootstrap.missing[24].to").value("2026-09-30T09:37:00Z"))
+                .andExpect(jsonPath("$.bootstrap.retry_backoff_s", contains(60, 120, 300, 600)))
+                .andExpect(jsonPath("$.bootstrap.next_retry_at").doesNotExist())
                 .andExpect(jsonPath("$.covered").value("since_api_start"))
                 .andExpect(jsonPath("$.truncated").value(true))
                 .andExpect(jsonPath("$.dropped_positions").value(1))
                 .andExpect(jsonPath("$.limits.max_cells").value(1));
+    }
+
+    /**
+     * 2026-09-30 22:49 KST 배포 직후 부트스트랩이 statement_timeout 하나로 멈췄다 — 이제 그 시는 나중에 다시 읽는다. 기다리는 동안 응답은 빈 시(retry · 읽지 못한 차례 수 ·
+     * 종류)와 다음 다시 읽기 시각, 고른 간격을 싣고, since · covered 는 빈 시 앞까지만 셌다고 말한다. 수정 전 실패(멈췄고 키가 없었다).
+     */
+    @Test
+    void anHourWaitingToBeReadAgainIsServedAsMissing_withTheNextRetryTime() throws Exception {
+        AtomicLong clock = new AtomicLong(START + 30_000);
+        long hour0 = Instant.parse("2026-09-30T09:00:00Z").toEpochMilli();
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        CoverageSource once = () -> new CoverageSource.Session() {
+            @Override
+            public void read(long fromMs, long toMs, java.util.function.Consumer<CoverageSource.Row> sink) throws SQLException {
+                if (reads.incrementAndGet() == 2) throw new SQLException("canceling statement due to statement timeout", "57014");
+            }
+
+            @Override public void close() {}
+        };
+        ShipCoverage c = ShipCoverageFixtures.coverage(clock, once);
+        MvcResult[] during = new MvcResult[1];
+        ShipCoverageFixtures.onRetryWait(c, clock, () -> {
+            if (during[0] != null) return;
+            try { during[0] = mvc(c).perform(get("/api/v1/ships/coverage")).andReturn(); } catch (Exception e) { throw new IllegalStateException(e); }
+        });
+        ShipCoverageFixtures.bootstrap(c);
+        String body = during[0].getResponse().getContentAsString();
+        org.springframework.test.web.servlet.ResultMatcher[] m = {
+                jsonPath("$.bootstrap.state").value("running"),
+                jsonPath("$.bootstrap.hours_loaded").value(24),
+                jsonPath("$.bootstrap.missing.length()").value(1),
+                jsonPath("$.bootstrap.missing[0].from").value(Instant.ofEpochMilli(hour0 - 3_600_000).toString()),
+                jsonPath("$.bootstrap.missing[0].to").value(Instant.ofEpochMilli(hour0).toString()),
+                jsonPath("$.bootstrap.missing[0].state").value("retry"),
+                jsonPath("$.bootstrap.missing[0].attempts").value(1),
+                jsonPath("$.bootstrap.missing[0].error").value("statement_timeout"),
+                jsonPath("$.bootstrap.next_retry_at").value("2026-09-30T09:38:55.500Z"),
+                jsonPath("$.bootstrap.retry_backoff_s", contains(60, 120, 300, 600)),
+                jsonPath("$.bootstrap.error").doesNotExist(),
+                jsonPath("$.bootstrap.finished_at").doesNotExist(),
+                jsonPath("$.since").value("2026-09-30T09:00:00Z"),
+                jsonPath("$.covered").value("partial"),
+        };
+        for (var x : m) x.match(during[0]);
+        assertThat(body).contains("\"missing\"");
+        // 다시 읽은 뒤: 빈 시 없음 · 다음 시각 키 없음 · 창 전체
+        mvc(c).perform(get("/api/v1/ships/coverage"))
+                .andExpect(jsonPath("$.bootstrap.state").value("done"))
+                .andExpect(jsonPath("$.bootstrap.missing.length()").value(0))
+                .andExpect(jsonPath("$.bootstrap.next_retry_at").doesNotExist())
+                .andExpect(jsonPath("$.covered").value("full"));
     }
 
     /**

@@ -96,7 +96,7 @@ wakeline:
     size: 4
     connection-timeout-ms: 2000
   # 관측 수신 범위(계약 v5 §G27 · ADR-027 · coverage.ShipCoverage): 기동 때 한 번 ship_position 을 읽어 최근 24 h 칸을 채우는 부트스트랩을
-  # api 시작 뒤 이만큼 기다렸다 시작한다(저장기가 재시작 때 밀린 행을 먼저 쓰는 여유 — 고른 값, 잰 값 아님). 연결 하나 · 읽기 전용 · 문장 10 s 상한(JdbcCoverageSource).
+  # api 시작 뒤 이만큼 기다렸다 시작한다(저장기가 재시작 때 밀린 행을 먼저 쓰는 여유 — 고른 값, 잰 값 아님). 연결 하나 · 읽기 전용 · 문장 30 s 상한(JdbcCoverageSource) · 못 읽은 시는 1 · 2 · 5 · 10분 뒤 다시 읽는다(ShipCoverage).
   ship-coverage:
     bootstrap-grace-ms: 30000
   logs:

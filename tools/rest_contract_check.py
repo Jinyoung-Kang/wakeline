@@ -693,6 +693,10 @@ SHIP_SEARCH_ITEM: Schema = {
 SHIP_SEARCH_Q: Schema = {"type": "string", "pattern": "^[A-Z0-9 .\\-/]{2,40}$"}  # 정규화(trim · 대문자)한 검색어
 
 COVERAGE_CELL_DEG = 0.5  # api CoverageGrid.CELL_DEG
+# api ShipCoverage.errorKind — 부트스트랩 실패의 종류(서버 글자 없음)
+COVERAGE_ERRORS = ["statement_timeout", "connection", "read_timeout", "deadline", "stopped", "error"]
+# api ShipCoverage.RETRY_BACKOFF_MS(초) — 못 읽은 시를 다시 읽기 전 기다림(고른 값, 계약 v5 §G27 — 2026-09-30 22:49 KST 배포 뒤 개정)
+COVERAGE_RETRY_BACKOFF_S = [60, 120, 300, 600]
 
 SCHEMAS: dict[str, dict[str, Any]] = {
     "status": {
@@ -1008,15 +1012,34 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "bootstrap": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["state", "hours_loaded", "hours_total", "rows", "loaded_from"],
+                "required": ["state", "hours_loaded", "hours_total", "rows", "loaded_from", "missing", "retry_backoff_s"],
                 "properties": {
                     "state": {"enum": ["pending", "running", "done", "failed"]},
                     "hours_loaded": {"type": "integer", "minimum": 0, "maximum": 25},
                     "hours_total": {"type": "integer", "minimum": 0, "maximum": 25},
                     "rows": {"type": "integer", "minimum": 0},
                     "loaded_from": TS,
-                    "error": {"enum": ["statement_timeout", "connection", "read_timeout", "deadline", "stopped", "error"]},
+                    "error": {"enum": COVERAGE_ERRORS},
                     "finished_at": TS,
+                    # 창 안의 못 읽은 시(오래된 것부터) — retry = 다시 읽기 대기 · given_up = 포기. attempts = 그 시를 읽지 못한 차례 수
+                    "missing": {
+                        "type": "array",
+                        "maxItems": 25,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["from", "to", "state", "attempts", "error"],
+                            "properties": {
+                                "from": TS,
+                                "to": TS,
+                                "state": {"enum": ["retry", "given_up"]},
+                                "attempts": {"type": "integer", "minimum": 0},
+                                "error": {"enum": COVERAGE_ERRORS},
+                            },
+                        },
+                    },
+                    "retry_backoff_s": {"const": COVERAGE_RETRY_BACKOFF_S},
+                    "next_retry_at": TS,
                 },
                 "allOf": [
                     # 실패만 종류를 싣고(서버 글자 없이), 끝난 상태만 끝난 시각을 싣는다
@@ -1029,6 +1052,11 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "if": {"properties": {"state": {"enum": ["pending", "running"]}}},
                         "then": {"not": {"required": ["finished_at"]}},
                         "else": {"required": ["finished_at"]},
+                    },
+                    # 다음 다시 읽기 시각은 도는 동안만
+                    {
+                        "if": {"properties": {"state": {"const": "running"}}},
+                        "else": {"not": {"required": ["next_retry_at"]}},
                     },
                 ],
             },
@@ -2014,6 +2042,7 @@ def _ship_coverage(body: dict[str, Any]) -> list[str]:
         errs.append("bootstrap.hours_loaded > hours_total")
     if b.get("state") == "done" and b.get("hours_loaded") != b.get("hours_total"):
         errs.append("bootstrap done without every hour loaded")
+    errs += _coverage_missing(b, frm, live, loaded, started)
     since = _utc(body["since"])
     want = max(frm, min(loaded, live))
     if since != want:
@@ -2056,6 +2085,50 @@ def _ship_coverage(body: dict[str, Any]) -> list[str]:
     want_fetched = None if newest is None else min(newest, gen)
     if want_fetched is not None and (fetched is None or _utc(fetched) != want_fetched):
         errs.append(f"meta.fetched_at {fetched} != min(newest last_seen, generated_at) {want_fetched.isoformat()}")
+    return errs
+
+
+def _coverage_missing(b: dict[str, Any], frm: datetime, live: datetime, loaded: datetime, started: datetime) -> list[str]:
+    """계약 v5 §G27 부트스트랩의 빈 시(2026-09-30 22:49 KST 배포 뒤 — 못 읽은 시는 나중에 다시 읽는다): 한 시 안의 조각 · 창의 시작 ~ 셈 시작 안 · 오래된 것부터 겹치지
+    않게 · 이어 읽은 곳(loaded_from) 앞(빈 시를 건너 이어 읽었다고 하지 않는다) · retry 는 1 ~ 다시 읽기 횟수, given_up 은 0 ~ 첫 읽기 + 다시 읽기 횟수 ·
+    다시 읽기를 기다리는 시는 도는 부트스트랩에만 · next_retry_at 은 기다리는 시가 있을 때만(api 시작 뒤) · pending · done 에는 빈 시가 없다 · 읽은 시 + 빈 시 ≤ 읽을 시."""
+    errs: list[str] = []
+    missing = b.get("missing") or []
+    retries = len(b.get("retry_backoff_s") or [])
+    prev_to: datetime | None = None
+    waiting = False
+    for i, m in enumerate(missing):
+        mf, mt = _utc(m["from"]), _utc(m["to"])
+        if not (mf < mt <= mf + timedelta(hours=1)) or mf.replace(minute=0, second=0, microsecond=0) != (
+            mt - timedelta(microseconds=1)
+        ).replace(minute=0, second=0, microsecond=0):
+            errs.append(f"bootstrap.missing[{i}] {m['from']}–{m['to']} is not a piece of one UTC hour")
+        if mf < frm or mt > live:
+            errs.append(f"bootstrap.missing[{i}] {m['from']}–{m['to']} is outside window.from–live_from")
+        if mt > loaded:
+            errs.append(f"bootstrap.missing[{i}] ends after loaded_from — the contiguous part cannot pass a missing hour")
+        if prev_to is not None and mf < prev_to:
+            errs.append(f"bootstrap.missing[{i}] is not after the previous one (oldest first, no overlap)")
+        prev_to = mt
+        attempts = m.get("attempts", 0)
+        if m.get("state") == "retry":
+            waiting = True
+            if not 1 <= attempts <= retries:
+                errs.append(f"bootstrap.missing[{i}] waits for a retry after {attempts} attempts (1–{retries})")
+        elif not 0 <= attempts <= retries + 1:
+            errs.append(f"bootstrap.missing[{i}] was given up after {attempts} attempts (0–{retries + 1})")
+    state = b.get("state")
+    if waiting and state != "running":
+        errs.append(f"bootstrap {state} but hours still wait to be read again")
+    if "next_retry_at" in b:
+        if not waiting:
+            errs.append("bootstrap.next_retry_at without an hour waiting to be read again")
+        if _utc(b["next_retry_at"]) < started:
+            errs.append(f"bootstrap.next_retry_at {b['next_retry_at']} is before api_started_at")
+    if state in ("pending", "done") and missing:
+        errs.append(f"bootstrap {state} with missing hours")
+    if b.get("hours_loaded", 0) + len(missing) > b.get("hours_total", 0):
+        errs.append("bootstrap.hours_loaded + missing hours > hours_total")
     return errs
 
 

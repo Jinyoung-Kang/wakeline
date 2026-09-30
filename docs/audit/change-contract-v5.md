@@ -851,3 +851,22 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     센다(저장기가 알린 뒤에 큐에 넣는다 — 그 읽기에 없었다), 읽는 중에 도착한 것은 `ignored_total{reason=during_read}`. ③ 웹 범례의 구간: covered = full 이면 '최근 24 h',
     아니면 '<since KST> 부터'(주황), 자료 전이면 '센 구간(상태 줄)', 메모리 상한 · 조회 실패 줄. 툴팁: '위치 N건(선박마다 60 s 창의 첫 보고 — 많아야 1건)' ·
     '마지막 표본 수신'(실제 마지막 수신은 60 s 안쪽으로 늦을 수 있음). `window.hours` 가 24 가 아니면 웹이 응답을 받지 않는다(형식 오류 — 마지막 값).
+  - 2026-09-30 22:49 KST 배포 뒤 — **부트스트랩의 못 읽은 시는 나중에 다시 읽는다**(위 '부트스트랩' 줄의 상한 · 멈춤을 바꾼다): 배포 직후 부트스트랩이 5/25시간을 29 s 에
+    읽고 여섯째 시에서 statement_timeout 으로 멈춰(재시작 직후의 DB 경합 — 같은 한 시 문장은 한가한 DB 에서 0.44 s, EXPLAIN ANALYZE: ship_position_<날>_ts_idx 비트맵 스캔
+    약 168k 행) 다음 재시작까지 레이어가 일부만 셌다. 이제 ① 시간 초과 · 일시적 실패(statement_timeout · read_timeout · connection · deadline · SQLSTATE 40 · 53 · 55 · 57)인 시는
+    빈 시로 두고 나머지 시를 이어 읽는다. 한 차례가 끝나면 빈 시만 1 · 2 · 5 · 10분 뒤(고른 값 — 재시작 직후 경합은 몇 분이면 지나간다) 다시 읽고, 네 번 다시 읽고도 못 읽은
+    시 · 일시적이지 않은 실패(권한 · 형식 — 곧바로)는 포기한다(다음 재시작 전까지 빈 시). ② 연결은 한 차례에만(기다리는 동안 잡지 않는다) · 문장 상한이 아닌 실패 뒤에는 새
+    연결 · 연결을 열지 못하면 그 차례의 남은 시를 모두 미룬다. 마감 180 s 는 **한 차례마다**(넘으면 남은 시를 다음 차례로 — 까닭 deadline). ③ 배경 읽기의 문장 상한
+    10 s → **30 s**(socketTimeout 32 s): 경합 중 평균(약 5.8 s/시)의 두 배도 안 되던 10 s 는 취소된 문장의 일을 버리고 다시 하게 해 경합 중 DB 일을 늘렸다 — 30 s 는
+    이 api 의 다른 배경 문장(공유 풀 statement_timeout 30 s)과 같다. 풀은 그대로 제 연결 하나(공유 풀 · 선택 조회 풀 아님 — 사용자 조회 3 s 를 굶기지 않는다) · 한 번에
+    문장 하나. ④ 응답 `bootstrap` 에 늘 `missing`([{from, to, state(retry · given_up), attempts, error}] — 창 안의 못 읽은 시, 오래된 것부터 · attempts = 그 시를 읽지
+    못한 차례 수, 종료로 멈춘 때 아직 읽지 않은 시는 0 · error = 위 종류) · `retry_backoff_s`([60, 120, 300, 600]), 다음 차례가 정해졌으면 `next_retry_at`(도는 동안만).
+    `hours_total` 은 읽기 전에 창 밖으로 나간 빈 시를 뺀 수(그 시는 더 읽지 않고 응답에서도 뺀다). since · covered 식은 그대로 — loaded_from 은 빈 시를 건너지 않는다.
+    failed 의 `error` = 가장 최근의 포기한 시의 종류. 로그: 다시 읽기를 기다리는 차례마다 WARN 한 줄(많아야 네 번) · 포기 WARN 한 줄 · 다 읽음 INFO(다시 읽은 횟수) ·
+    종료 INFO. 검사: `rest_contract_check.py` 스키마(missing · retry_backoff_s 필수 · next_retry_at 은 running 에만) + `_coverage_missing`(한 UTC 시 안의 조각 · 창의 시작 ~
+    live_from · 오래된 것부터 겹치지 않게 · loaded_from 앞 · retry 는 1 ~ 다시 읽기 횟수, given_up 은 0 ~ 첫 읽기 + 다시 읽기 횟수 · 다시 읽기 대기는 running 에만 ·
+    next_retry_at 은 기다리는 시가 있을 때만(api 시작 뒤) · pending · done 에 빈 시 없음 · 읽은 시 + 빈 시 ≤ 읽을 시). 웹 상태 줄: '기동 전 기록 N/M시간 읽음 · 빈 시 k시간
+    (<구간 KST>) 다시 읽기 대기 — <까닭> · 다음 <HH:MM KST>(다시 읽기 n/4)'(다음 차례가 아직 없으면 '이 차례 뒤 다시 읽음', 도는 중이면 '다시 읽는 중') · '포기 — <까닭> ·
+    n번 못 읽음 · api 재시작 전까지 빈 시'. 회귀 막기: api `ShipCoverageTest`(가짜 원천 — 시간 초과 뒤 다시 읽어 성공 · 포기 · 곧바로 포기 · 연결 실패 · 차례 마감 · 창 밖으로
+    나간 빈 시 · 기다리는 중 종료) · `CoverageBootstrapDbTest`(잠금을 기다리다 상한에 걸린 시를 잠금이 풀린 뒤 다시 읽음 · 30 s) · `ShipCoverageControllerTest`, collector
+    `tests/test_rest_contract_rules.py`, web `tests/reception.test.ts` · `e2e-inject.test.ts` · `guide-page.test.ts` · `e2e/ship-coverage.spec.ts`.
