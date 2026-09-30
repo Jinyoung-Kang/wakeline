@@ -951,19 +951,19 @@
   연속이 다시 열리고 15분마다 3. 시험 `test_kma_list_idle.py` +2(14 — 다시 띄운 수집기 · 고치기 전 실패, 전날 끝까지 받았으면 새 날 목록만).
 - **남은 것** 기상청 공개 파일 · 목록이 돌아오는 것은 기상청 쪽이다 — 이 수정은 '확인 멈춤' 거짓 경보를 없애고 '목록에도 새 tm 없음'을 보일 뿐 레이더는 그동안 RainViewer.
 
-## 자동 검사 현황(2026-09-30 KST, 두 레인(collector · coverage) 통합 뒤 · 통합 리뷰(2026-09-30 밤)의 수정 뒤 · 배포 전 — 관심 지역 순서 adsb.fi 먼저(#78) · V17(#79) · 기상청 긴 연속 15분마다(#80) · 관측 AIS 수신 범위(#81) · 약한 ETag(#82))
+## 자동 검사 현황(2026-10-01 KST, 레인 kma 통합 뒤 · 배포 뒤 수정(#87 '배포에서 드러난 것') 뒤 — 통계 패널 상태(#83) · 관측 수신 다시 읽기(#84) · 설명서 캡처(#85) · 기상청 목록만 읽은 확인(#87))
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,550 통과(+10 — 관심 지역 기다림 3 · 순서 변경 사유 1 · 기상청 늦춘 간격 6. 19 건너뜀 = 실 Redis 13(아래 줄에서 따로 돌림) · 실 PostgreSQL 6(test_db_pg_integration.py — 손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 97 %(9,232문 중 242 빠짐) |
-| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너 — CI collector job 과 같다) | 13 통과(이 통합 끝 판에서 — 새 해시 필드 `missing_probe_every_s` · 'waiting' 실행 포함) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `infra/db` 로 빌드한 `wakeline-db:local`) | 927 통과(+4 — `EtagsTest` 1 · `ShipCoverageTest` +2 · `ShipWriterTest` +1, 바꾼 것: V17 되돌리기 · 결정적 스냅숏 시험 · 식을 식과 견주던 시험 → 운영 상한 시험. `make test-api`) · JaCoCo LINE 96.6 %(9,163줄 중 307 빠짐) · BRANCH 85.9 %(6,544 중 921 빠짐 · 하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,289(89 파일 — +2: 범례의 센 구간 1 · 창 24 h 아닌 응답 1) · 커버리지(소스 전체) Lines 91.61 % · Branches 82.31 % |
-| 정적 검사 · 빌드 | ruff check · ruff format --check(main 뒤 바뀐 collector .py 13개) · mypy(collector 77 파일) · tsc --noEmit · eslint · next build | 모두 통과 — main 뒤 바뀐 `infra/tests` · `tools` 의 .py 4개는 CI 의 ruff 범위 밖이고 main 판에서도 같은 7건 · 3 파일이 걸린다(이 통합이 만든 것이 아니다). |
-| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본 + 가림 · 억제 벡터 — PASSED(WS 모양은 이 수정으로 바뀌지 않았다) |
+| collector · ais 단위·통합 | pytest | 1,601 통과(+51 — 관측 수신 계약 규칙 · 기상청 목록만 읽은 확인 14 등. 19 건너뜀 = 실 Redis 13(아래 줄에서 따로 돌림) · 실 PostgreSQL 6(손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`, 마지막 수정 전 1,599 판) 97 %(9,305문 중 241 빠짐) |
+| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너 — CI collector job 과 같다) | 13 통과(레인 kma 통합 뒤 main 에서) |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `wakeline-db:local`) | 939 통과(+12 — 관측 수신 다시 읽기 · `KrRadarMissingTest` 등, 레인 kma 브랜치 = main 과 같은 api 코드) · JaCoCo 하한(LINE 95 · BRANCH 80) 검증 통과 |
+| web 단위 | Vitest | 1,320(91 파일 — +31: 통계 패널 상태 · 관측 수신 다시 읽기 글 · 설명서 캡처 · 기상청 '목록에도 … 없음' 10, main 에서) |
+| 정적 검사 · 빌드 | ruff check · ruff format --check(collector 전체 — CI 와 같은 범위) · mypy(collector 77 파일) · tsc --noEmit · eslint · next build | 모두 통과 — `ruff format --check .` 은 #84 통합 뒤 main 에서 실패하고 있었다(#87 '통합에서 드러난 것' — 고침) |
+| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본 — PASSED(WS `radar_kr.missing` 에 `list_tm` · `list_newer`) |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 36종 — PASSED |
 | 인프라 정책 | infra/tests(unittest) | 129 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 291 · 36 · 48 · 27 · 11 = 448 — `make infra-docker-test` 모두 통과 |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 39 통과(10 파일 · 2.2 분 — +1: edge 를 거친 약한 ETag 의 304(#82). 겹침 검사는 이제 교통량 · 관측 수신을 켜고 두 상태 줄도 잰다. `make e2e`, 끝난 뒤 스택 · 볼륨 삭제 확인) |
-| 첫 화면 JS 예산 | `npm run check:first-js`(웹 이미지의 Node) | 543,138 B / 550,000 B(여유 6,862 B — `make build` 한 `wakeline-web:local` 의 Node · linux/arm64 · 18개 파일, 범례가 센 구간을 읽는 몫 entry +371 B) · 호스트 zlib 540,833 B. 브라우저 측정(`measure:first-js`)은 이번에 돌리지 않았다 |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh`(gitleaks · Trivy 자체 이미지 4종 · 제3자 이미지) | PASS(2026-09-30 22:38 KST, `make build` 뒤 — 이 표를 적는 커밋 전) — gitleaks 799 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis 차단 PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) · Trivy DB 는 오프라인 캐시 |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 배포 뒤 207건 · 14종, 형식 오류 0건(#68) — 이 통합은 아직 배포하지 않았다 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 448 — 이번 판에서는 다시 돌리지 않았다(인프라 · db 이미지 변경 없음 — 2026-09-30 판의 값) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 41 통과(2.4 분 — `make e2e`, 끝난 뒤 스택 · 볼륨 삭제) |
+| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image`(웹 이미지의 Node) | 543,497 B / 550,000 B(여유 6,503 B — 18개 파일, 기상청 '목록에도 … 없음' 글 +359 B) |
+| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 02:05 KST, `make build` 뒤) — gitleaks 839 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) |
+| 배포 뒤 실메시지 | 공개 `/api/v1/status` · `/api/v1/radar/kr` | #87 '배포에서 드러난 것' |
