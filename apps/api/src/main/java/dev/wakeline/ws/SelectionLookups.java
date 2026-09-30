@@ -254,7 +254,7 @@ final class SelectionLookups implements AutoCloseable {
     }
 
     /**
-     * 실행기를 멈춘다(WsHub.stop · 조회 묶음 바꾸기). 도는 읽기는 인터럽트되고(읽는 쪽이 오류 값으로 끝낸다), 대기열에서 버린 읽기는 거절로 끝낸다
+     * 실행기를 멈춘다(WsHub.stop · 조회 묶음 바꾸기). 도는 읽기에는 인터럽트를 보낸다(끝나면 읽는 쪽이 제 값 · 오류 값으로 끝낸다). 대기열에서 버린 읽기는 거절로 끝낸다
      * ({@link SingleFlight#abandon} — 리뷰 2026-09-30: 그러지 않으면 그 future 가 끝나지 않아 읽는 쪽의 진행 중 표시가 남고, 같은 키를 묻는 REST 가 끝나지 않는
      * future 에 붙었다). 운영의 읽는 쪽(RouteReader · StoredStaticReader · PortCallReader)은 모두 SingleFlight 로 올린다 — 그 밖의 작업(시험의
      * {@link Source#blocking})은 끝낼 수 없지만 그 조회의 답은 마감에 나간다.

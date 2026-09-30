@@ -23,8 +23,9 @@ import java.util.function.BooleanSupplier;
  *       않았거나 읽지 못했으면 unavailable("노선 조회 실패" — 계약 v4 §A 에 이미 있는 값: Redis 오류). 읽기는 계속돼 캐시를 채운다.</li>
  *   <li>실행기(운영): 스레드 {@value #THREADS}(고른 값 — 잰 값 아님. Lettuce 는 연결 하나를 여러 스레드가 나눠 쓰므로 스레드 수는 Redis 연결 수와 무관하다.
  *       Redis 가 답하지 않으면(멈춤 · 끊긴 줄 모르는 연결) 한 읽기가 스레드를 명령 상한 3 s 잡으므로 그동안 처리량은 스레드 수 / 3 s 다. 공유 연결을 아직
- *       맺지 못했으면 그 읽기가 연결을 맺는 동안 — Lettuce 기본 연결 상한 10 s, RedisConfig 가 설정하지 않는다 — 더 잡는다. 끊긴 것을 아는 연결에서는 곧바로
- *       실패한다(REJECT_COMMANDS). 어느 쪽이든 답은 마감에 나간다), 대기열 {@link SelectionLookups#queueFor}(WS 연결 상한 이상 — 세션마다 작업 하나 이하).
+ *       맺지 못했으면 연결을 맺는 동안 — 시도마다 Lettuce 기본 연결 상한 10 s(RedisConfig 가 설정하지 않는다), 시도는 팩토리 잠금 안에서 하나씩 — 더
+ *       잡는다. 끊긴 것을 아는 연결에서는 곧바로 실패한다(REJECT_COMMANDS). 어느 쪽이든 답은 마감에 나간다), 대기열 {@link SelectionLookups#queueFor}
+ *       (WS 연결 상한 이상 — 세션마다 작업 하나 이하).
  *       선박 조회 실행기(스레드 = DB 읽기 풀 연결 수)와 나눈다 — Redis 가 느려도 DB 조회 스레드를 잡지 않는다.</li>
  *   <li>지표: wakeline_ws_route_lookups_total{outcome=ok|deadline|rejected|error|skipped} · wakeline_ws_route_lookup_seconds ·
  *       wakeline_ws_route_lookup_queue · wakeline_ws_route_lookup_dropped_total.</li>
