@@ -359,6 +359,131 @@ async def test_a_restart_that_dropped_a_stale_streak_reopens_it_from_the_previou
     assert _utc("202610010230") <= meta["missing_checked_at"] <= _utc("202610010330")
 
 
+# ---- 연속이 없을 때도 필요한 전날 목록(리뷰 2026-10-01 · 운영 02:23:54 KST) --------------------------------------------------------------
+# 운영 02:23:54 KST: 연속이 없고(다시 띄운 수집기가 이어받기 상한 밖이라 버렸다) 프레임은 만료됐고 새 날 목록은 비었다 — 그 주기가 읽을 것은 전날 목록뿐인데
+# 'previous-day listing 20260930 — ReadTimeout … — using today's only' WARN 뒤 실행은 'ok' · 공급자 성공(last_success_at · consecutive_failures 0)이었다.
+# 기상청에 쓸 만한 것을 하나도 묻지 못한 주기가 §G22 가 없앤 모양('ok' + LAST SUCCESS · RECORDS 0)으로 남았다. 이제 그 전날 목록(_behind_prev_day)은 연속의
+# 확인에 필요한 전날 목록과 같다 — 실패하면 'error', 예산이 없으면 예산 상태, 429 · 속도 상한이면 'throttled'(test_kma_throttle — 새 날 목록이 빈 경우).
+# 자정 직후 창(00:00–00:14)의 전날 목록은 새 날 목록에 tm 이 있거나 저장한 프레임이 23:55 에 닿았으면 전처럼 덧붙이는 목록이다.
+def _expire_frames(mod, r) -> None:
+    """저장한 프레임을 모두 만료시킨다(영상 TTL 3 h — FakeRedis 는 실제 시계라 손으로)."""
+    for k in [k for k in r.kv if k.startswith("wakeline:radar_kr:frame:")] + [mod.KEY_FRAMES]:
+        r.expire_now(k)
+
+
+async def _restarted_without_a_streak(mod, r, ctx, clock):
+    """운영 02:18 KST 의 모양: 09-30 11:00–13:05 저장(공급자 성공) → 13:10 부터 '파일 없음' · 목록은 19:50 에서 멈춤 → 10-01 02:15 에 연속 없이 새 수집기,
+    프레임은 만료됐다."""
+    prov = StalledKma(clock, down_from="202609301310", list_until="202609301950")
+    await _run(mod.KmaRadarJob(prov, ctx), clock, _walk("202609301100", "202609301305"))
+    _expire_frames(mod, r)
+    return prov, mod.KmaRadarJob(prov, ctx)
+
+
+@pytest.mark.parametrize("error", _list_errors(), ids=lambda e: type(e).__name__)
+async def test_without_a_streak_a_failed_previous_day_listing_the_cycle_needs_is_an_error_run(env, caplog, error):
+    """고치기 전: 네 주기 모두 'ok' · 공급자 last_success_at 이 새로 적히고 consecutive_failures 0 · last_error 없음(WARN 'using today's only' 뿐)."""
+    mod, r, ctx, clock, runs = env
+    prov, job = await _restarted_without_a_streak(mod, r, ctx, clock)
+    before = await r.hgetall("wakeline:provider:kma_radar")
+    assert before["last_success_at"] and before.get("consecutive_failures", "0") == "0"
+    prov.fail["20260930"] = error
+    runs.clear()
+    caplog.clear()
+    prov.binaries.clear()
+    await _run(job, clock, _walk("202610010215", "202610010230"))
+    assert prov.binaries == []  # 받을 tm 을 모른다 — 한 tm 도 묻지 않았다
+    assert [run["status"] for run in runs] == ["error"] * 4
+    http = getattr(error, "status", None)
+    assert all(run["http_status"] == http and "previous-day listing 20260930" in run["error_text"] for run in runs)
+    after = await r.hgetall("wakeline:provider:kma_radar")
+    assert after["last_success_at"] == before["last_success_at"]  # 성공이 아니다
+    assert after["consecutive_failures"] == "4" and "previous-day listing 20260930" in after["last_error"]
+    assert len([m for m in _warns(caplog) if m.startswith("kma radar: previous-day listing 20260930 — ")]) == 4
+    assert not [m for m in _warns(caplog) if "using today's only" in m]
+    # 전날 목록이 다시 답하면 전처럼 전날 보관 창의 tm 을 받으려 하고(R-03), '파일 없음' 세 번이면 연속이 열린다 — 그동안 'ok' 는 없다
+    del prov.fail["20260930"]
+    runs.clear()
+    await _run(job, clock, _walk("202610010235", "202610010245"))
+    assert [run["status"] for run in runs] == ["missing"] * 3
+    assert job.missing is not None and job.missing.last_tm == "202609301950"
+
+
+async def test_without_a_streak_a_previous_day_listing_the_cycle_needs_without_budget_is_a_budget_run(env):
+    """같은 모양에서 전날 목록의 예산 예약이 거절됐다. 고치기 전: INFO 'previous-day listing skipped' 뒤 'ok' · 공급자 성공."""
+    from test_kma_missing import _refuse_after
+
+    mod, r, ctx, clock, runs = env
+    prov, job = await _restarted_without_a_streak(mod, r, ctx, clock)
+    before = await r.hgetall("wakeline:provider:kma_radar")
+    _refuse_after(ctx, 1)  # 오늘 목록 1 만 — 전날 목록 예약부터 거절
+    runs.clear()
+    prov.days.clear()
+    prov.binaries.clear()
+    clock["now"] = "202610010215"
+    await job.run_once()
+    assert prov.days == ["20261001"] and prov.binaries == []  # 전날 목록은 부르지 않았다
+    assert [(run["status"], run.get("http_status")) for run in runs] == [("budget_exhausted", None)]
+    assert runs[0]["error_text"] == (
+        "daily budget exhausted (used=1000) — previous-day listing 20260930 not read: the listing 20261001 lists no tm yet and "
+        "no stored frame reaches tm=202609302355 (none stored) — nothing else to fetch this cycle"
+    )
+    after = await r.hgetall("wakeline:provider:kma_radar")
+    assert after["last_success_at"] == before["last_success_at"]
+    assert after.get("last_error", "") == before.get("last_error", "")  # 예산은 공급자 오류가 아니다
+
+
+@pytest.mark.parametrize("stored_2355", [True, False])
+async def test_a_failed_previous_day_listing_at_kst_midnight_is_additive_only_with_something_else(env, caplog, stored_2355):
+    """00:02 KST · 새 날 목록은 아직 빈 답 · 전날 목록이 ReadTimeout. 23:55 까지 저장했으면 전날 목록은 덧붙이는 목록이다 — WARN 한 줄 · 'ok'(새로 받을
+    것이 없다). 23:55 를 아직 받지 못했으면(목록이 23:57 에야 실었다) 그 주기가 읽을 것은 전날 목록뿐이다 — 'error'(고치기 전: 'ok' · 공급자 성공)."""
+    import httpx
+
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="209912312355", list_until="202609302355")
+    job = mod.KmaRadarJob(prov, ctx)
+    await _run(job, clock, _walk("202609302300", "202609302355" if stored_2355 else "202609302350"))
+    assert ("202609302355" in prov.binaries) is stored_2355
+    prov.fail["20260930"] = httpx.ReadTimeout("read timed out")
+    runs.clear()
+    caplog.clear()
+    clock["now"] = "202610010002"
+    await job.run_once()
+    assert sorted(prov.days[-2:]) == ["20260930", "20261001"]
+    if stored_2355:
+        assert [run["status"] for run in runs] == ["ok"]
+        assert [m for m in _warns(caplog) if "previous-day listing 20260930" in m and "using today's only" in m]
+    else:
+        assert [run["status"] for run in runs] == ["error"] and "previous-day listing 20260930" in runs[0]["error_text"]
+        assert (await r.hgetall("wakeline:provider:kma_radar"))["consecutive_failures"] == "1"
+
+
+async def test_a_restart_past_the_carry_bound_in_a_previous_day_listing_outage_is_error_and_clears_the_streak(env, caplog):
+    """리뷰 2026-10-01(도전): 연속이 전날 목록 장애 중(00:05 부터)이고 수집기가 01:00 에 다시 떴다 — 마지막 확인 23:50 뒤 70분이라 이어받기 상한(45분) 밖으로
+    버린다. 고치기 전: 01:00–02:00 이 모두 'ok'(13번) · consecutive_failures 0 · 연속은 'ok' 주기의 발행으로 지워졌다. 'error' 만 고치면 발행이 없는
+    주기라 버린 연속이 두 해시에 남아 웹이 이 프로세스가 더는 다루지 않는 연속을 '파일 없음 · 확인 멈춤'으로 적는다. 이제 'error' 이고, 버린 연속은
+    그 주기에 지운다(발행 — 주기가 어떻게 끝나든)."""
+    mod, r, ctx, clock, runs = env
+    prov, job = await _stalled_streak(mod, ctx, clock)
+    # 00:05 확인부터 전날 목록이 실패한다(일시 오류 RETRY_ERRORS 가 아닌 종류 — 다시 부르지 않는다)
+    prov.fail["20260930"] = TimeoutError("read timed out")
+    await _run(job, clock, _walk("202610010000", "202610010055"))
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["missing_since_tm"] == "202609301310" and meta["missing_checked_at"] == _utc("202609302350")
+    before = await r.hgetall("wakeline:provider:kma_radar")
+    again = mod.KmaRadarJob(prov, ctx)  # 01:00 에 다시 띄운 수집기
+    runs.clear()
+    caplog.clear()
+    await _run(again, clock, _walk("202610010100", "202610010200"))
+    assert again.missing is None and "dropped the missing-file streak since tm=202609301310" in " ".join(_infos(caplog))
+    assert [run["status"] for run in runs] == ["error"] * 13
+    after = await r.hgetall("wakeline:provider:kma_radar")
+    assert after["last_success_at"] == before["last_success_at"]
+    assert int(after["consecutive_failures"]) == int(before["consecutive_failures"]) + 13
+    meta = await r.hgetall(mod.KEY_META)
+    assert all(meta[k] == "" for k in mod.MISSING_KEYS) and all(after[k] == "" for k in mod.MISSING_KEYS)
+
+
 async def test_outside_a_streak_frames_up_to_the_previous_day_end_read_only_the_new_day_listing(env):
     """덧붙이는 전날 목록은 저장한 프레임이 전날 끝(23:55)에 닿지 않았을 때만 — 받은 프레임이 이미 23:55 까지면 전날 목록에 새로 받을 것이 없다
     (새 날 목록이 하루 내내 비어 있어도 5분마다 목록 호출을 하나 더 쓰지 않는다)."""
