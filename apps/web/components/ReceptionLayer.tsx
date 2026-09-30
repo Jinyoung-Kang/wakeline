@@ -19,7 +19,7 @@ function source(map: maplibregl.Map) {
 }
 
 /**
- * 관측 수신 범위 레이어(ADR-027 · 계약 v5 §G26) — 레이어 단추를 켤 때 받는 조각(ADR-026 — components/DashboardParts). 켜져 있는(그려진) 동안:
+ * 관측 수신 범위 레이어(ADR-027 · 계약 v5 §G27) — 레이어 단추를 켤 때 받는 조각(ADR-026 — components/DashboardParts). 켜져 있는(그려진) 동안:
  * - /api/v1/ships/coverage 를 ETag 로 조회(lib/reception — 120 s · 숨긴 탭 제외 · 다시 보이면 곧바로)해 스토어 reception 에 둔다.
  * - 상황판 지도(lib/map-ready)에 칸을 싣는다: 소스 하나 · 채움(선박 수 구간의 옅은 불투명도) · 테두리, 연안 교통량 아래. 내용이 바뀔 때(version)만 다시 싣는다.
  * - 이 화면과 겹치는 칸 수를 스토어 receptionInView 에(창을 다 셌는가 · 센 구간 · 마지막 조회 실패와 함께) — 선박 칩 · 0척 알림이 "이 화면에 관측 수신 칸 N개"

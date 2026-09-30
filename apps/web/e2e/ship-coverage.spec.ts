@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { shipCoverageBody } from "./rest-inject";
 
 /**
- * 관측 수신 범위 레이어(계약 v5 §G26 · ADR-027) — /api/v1/ships/coverage 를 이 시험이 대신 답한다(route — 스택의 수신 상태와 무관하게 결정적).
+ * 관측 수신 범위 레이어(계약 v5 §G27 · ADR-027) — /api/v1/ships/coverage 를 이 시험이 대신 답한다(route — 스택의 수신 상태와 무관하게 결정적).
  * 빌드된 앱에서: 기본 끔(조회 없음) → 단추(선박 옆)를 켜면 조각을 받아 한 번 조회하고 상태 줄이 칸 수 · 이 화면의 칸 수 · 창(KST 만)과 '창의 일부만 셈'의
  * 까닭을 적는다 → 범례 절이 '구독 범위가 아니다'를 말한다 → 끄면 상태 줄이 사라지고 더 묻지 않는다. 외부 타일은 막는다(결과가 네트워크에 달리지 않게).
  */

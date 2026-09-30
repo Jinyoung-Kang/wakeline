@@ -136,6 +136,12 @@ describe("contract v5 amendment numbers are unique", () => {
     // 레인 collector(2026-09-30 오후): 기상청 429 · 관심 지역 '공급자 없음' — 16차 · §G24
     expect(heading(24)).toMatch(/^## G\. 16차 개정\(2026-09-30 오후 · 레인 collector /);
     expect(amendment(24)).toContain("관심 지역 '공급자 없음'은 이름 붙인 상태");
+    // 레인 coverage(2026-09-30 저녁): 관측 수신 범위 — 18차 · §G27. 같은 저녁 레인 collector 가 17차 개정으로 §G25 · §G26 을 썼다(리뷰 2026-09-30 —
+    // 이 레인이 처음 쓴 §G26 이 그것과 겹쳤다). 이 레인에는 아직 §G25 · §G26 이 없다 — 합칠 때 collector 레인의 두 항목이 이 절 앞에 온다.
     expect(amendment(25)).toBe("");
+    expect(amendment(26)).toBe("");
+    expect(heading(27)).toMatch(/^## G\. 18차 개정\(2026-09-30 저녁 · 레인 coverage /);
+    expect(amendment(27)).toContain("관측 수신 범위 계약");
+    expect(amendment(28)).toBe("");
   });
 });

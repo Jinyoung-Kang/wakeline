@@ -742,8 +742,9 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     web `tests/region-no-provider.test.ts`. 특성 시험 둘(`test_without_the_host_bucket_…` · `test_takeover_calls_adsb_lol_once_per_cycle…`)은 기록이지 회귀 막기가 아니다.
 
 ## G. 18차 개정(2026-09-30 저녁 · 레인 coverage · 사용자 질문 "대한민국 영해에 선박 정보가 안 떠 있는 이유" — ADR-027) — 관측 AIS 수신 범위
-레인 안 번호다 — 같은 날 다른 레인(collector)이 §G25 를 쓸 수 있어 §G26 으로 적었고, 통합 때 다시 매길 수 있다.
-- G26 **관측 수신 범위 계약**(api · web · 도구 — 근거 · 고른 값 · 상한의 계산은 ADR-027):
+같은 저녁 레인 collector 가 17차 개정으로 §G25 · §G26 을 먼저 썼다 — 이 절은 그다음 번호 §G27 이다(처음에 §G26 으로 적어 겹쳤다 — 리뷰 2026-09-30 에서
+고쳤다. 합칠 때 17차 개정이 이 절 앞에 오고, 번호는 web `tests/docs-contract-g11.test.ts` 가 겹치지 않는지 본다).
+- G27 **관측 수신 범위 계약**(api · web · 도구 — 근거 · 고른 값 · 상한의 계산은 ADR-027):
   - 뜻: 이 서비스가 최근 24 h 에 실제로 받은 선박 위치를 0.5° 칸으로 센 것 — 구독 범위(운영 설정 ais_bboxes · 계약 v3 §A 의 점선)가 아니다. aisstream.io 는
     육상 수신국이 받은 것만 보내므로(ADR-014) 구독 범위 안이어도 칸이 없을 수 있다. 수신국 목록 · 반경은 짓지 않는다.
   - REST `GET /api/v1/ships/coverage`(공개 · `Cache-Control: public, max-age=60` · ETag 스냅숏마다(`"o<순번>-<시각>"`) → `If-None-Match` 304 · 요청 제한 공통 ·

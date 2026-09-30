@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 관측 AIS 수신 격자(ADR-027 · 계약 v5 §G26): 이 서비스가 실제로 받은 선박 위치를 0.5° 칸 · 시 단위로 센다. 구독 범위(운영 설정 ais_bboxes)가 아니라
+ * 관측 AIS 수신 격자(ADR-027 · 계약 v5 §G27): 이 서비스가 실제로 받은 선박 위치를 0.5° 칸 · 시 단위로 센다. 구독 범위(운영 설정 ais_bboxes)가 아니라
  * '어디서 위치가 왔는가'다 — aisstream.io 는 육상 AIS 수신국이 받은 것만 보내므로 수신국이 없는 해역은 구독해도 비어 있다.
  * <ul>
  *   <li>칸: 경도 · 위도를 {@value #CELL_DEG}° 로 내림(floor) — 칸 [lon0, lon0 + 0.5) × [lat0, lat0 + 0.5). 180°E · 90°N 은 마지막 칸(범위 안으로 붙인다).

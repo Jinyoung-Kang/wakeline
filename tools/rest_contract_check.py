@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """REST 계약 검사(설계 14.1 — Java → Python 방향): Java api 가 만든 REST 응답이 웹·도구가 읽는 필드 계약(계약서 §1·§2,
-계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색, ADR-023 연안 교통량, 계약 v5 §G26 관측 수신 범위)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
+계약 v2 §A3 수요·§B3 선박, 계약 v5 §B1 선박 검색, ADR-023 연안 교통량, 계약 v5 §G27 관측 수신 범위)을 지키는지 JSON Schema(Draft 2020-12)와 몇 가지 교차 검사(스키마로 못 쓰는 값 사이 관계)로 확인한다.
 한쪽만 고치면 이 검사가 깨진다.
 
 두 가지 입력:
@@ -967,7 +967,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "meta": META,
         },
     },
-    # 계약 v5 §G26 · ADR-027: 관측 수신 범위 — 이 서비스가 받은 AIS 위치의 0.5° 칸별 집계(최근 24 h, 구독 범위 아님). 교차 검사 _ship_coverage
+    # 계약 v5 §G27 · ADR-027: 관측 수신 범위 — 이 서비스가 받은 AIS 위치의 0.5° 칸별 집계(최근 24 h, 구독 범위 아님). 교차 검사 _ship_coverage
     "ship_coverage": {
         "type": "object",
         "additionalProperties": False,
@@ -1421,7 +1421,7 @@ CHECKS = [
     # 실시간 아닌 선박의 상세 — 마지막 수신 기록 last_seen_at(계약 v5 §G4)
     Check("ship_detail_stored", "ship_detail", 200, "application/json", True, recorded_only=True),
     Check("problem_bad_ship_query", "problem", 400, "application/problem+json", False),
-    # 관측 수신 범위(계약 v5 §G26) — 실행 중 스택도 같은 경로
+    # 관측 수신 범위(계약 v5 §G27) — 실행 중 스택도 같은 경로
     Check("ship_coverage", "ship_coverage", 200, "application/json", True),
     Check("status_ais", "status_ais", 200, "application/json", True, recorded_only=True),
 ]
@@ -1988,7 +1988,7 @@ def _utc(v: str) -> datetime:
 
 
 def _ship_coverage(body: dict[str, Any]) -> list[str]:
-    """계약 v5 §G26 /ships/coverage: 창 = 지금 시의 시작 − 24 h ~ generated_at, since = max(창의 시작, min(부트스트랩이 이어 읽은 곳, 셈 시작)) —
+    """계약 v5 §G27 /ships/coverage: 창 = 지금 시의 시작 − 24 h ~ generated_at, since = max(창의 시작, min(부트스트랩이 이어 읽은 곳, 셈 시작)) —
     covered 는 그것으로 정해진다(full ⇔ since = 창의 시작), 셈 시작 = api 시작을 분으로 내린 것, 칸은 0.5° 격자점 · 남 → 북 · 서 → 동 · 한 번씩 ·
     선박 ≤ 위치 · 마지막 수신은 초로 내린 값이고 창 안(수집기 시계 5분까지 앞선 값 허용), 합계 · 잘림 · 상한이 칸과 맞다, meta.fetched_at = 가장 늦은 마지막 수신."""
     errs: list[str] = []

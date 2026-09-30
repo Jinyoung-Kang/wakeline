@@ -18,7 +18,7 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 관측 수신 범위(ADR-027 · 계약 v5 §G26)의 주인: 실시간 셈(저장기가 고른 60 s 표본 — 셈 시작 시각 이전 보고는 부트스트랩 몫), 기동 때 한 번의 DB 부트스트랩
+ * 관측 수신 범위(ADR-027 · 계약 v5 §G27)의 주인: 실시간 셈(저장기가 고른 60 s 표본 — 셈 시작 시각 이전 보고는 부트스트랩 몫), 기동 때 한 번의 DB 부트스트랩
  * (가장 최근 시부터 거꾸로 · 시 하나에 문장 하나 · 멈추면 이어진 부분까지만 '덮음'), 응답 스냅숏(창 · since · 덮음 상태 · 캐시). 시계 · DB 는 가짜.
  */
 class ShipCoverageTest {

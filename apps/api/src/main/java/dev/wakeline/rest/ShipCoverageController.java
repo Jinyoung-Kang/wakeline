@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 관측 AIS 수신 범위 REST(계약 v5 §G26 · ADR-027) — GET /api/v1/ships/coverage. 이 서비스가 최근 24 h 에 실제로 받은 선박 위치를 0.5° 칸으로 센 것
+ * 관측 AIS 수신 범위 REST(계약 v5 §G27 · ADR-027) — GET /api/v1/ships/coverage. 이 서비스가 최근 24 h 에 실제로 받은 선박 위치를 0.5° 칸으로 센 것
  * ({@link ShipCoverage}) — 구독 범위(운영 설정)가 아니다. 메모리에서만 답한다(요청 중 DB · 외부 호출 없음 — ADR-006).
  * <ul>
  *   <li>cells: [lon0, lat0, 크기(°), 선박 수(창 안 서로 다른 MMSI), 위치 수(60 s 창마다 첫 보고), 마지막 수신(ISO — 초로 내림)] — 남 → 북 · 서 → 동.</li>

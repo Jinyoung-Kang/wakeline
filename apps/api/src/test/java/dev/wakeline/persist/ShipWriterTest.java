@@ -74,7 +74,7 @@ class ShipWriterTest {
     }
 
     /**
-     * 관측 수신 격자(ADR-027 · 계약 v5 §G26)는 저장과 같은 표본을 센다: 이 저장기가 고른 위치(MMSI 별 60 s 창의 첫 보고)를 {@link ShipWriter.Sampled}
+     * 관측 수신 격자(ADR-027 · 계약 v5 §G27)는 저장과 같은 표본을 센다: 이 저장기가 고른 위치(MMSI 별 60 s 창의 첫 보고)를 {@link ShipWriter.Sampled}
      * 로 알린다 — 부트스트랩이 읽는 ship_position 과 실시간 셈이 같은 뜻이 되게. 정적 정보 · 버린 보고는 싣지 않는다. 고른 것이 없으면 알리지 않는다.
      */
     @Test void keptPositionsArePublishedAsSampled_theSameFirstFixPerWindowThatIsStored() {

@@ -56,7 +56,7 @@ export function opsProviders(nowMs: number) {
 }
 
 /**
- * /api/v1/ships/coverage(계약 v5 §G26) — 관측 수신 범위의 결정적 응답: api 가 방금(5분 전) 시작해 기동 전 기록을 읽는 중(0/25시간)이라 창의 일부(셈 시작부터)만
+ * /api/v1/ships/coverage(계약 v5 §G27) — 관측 수신 범위의 결정적 응답: api 가 방금(5분 전) 시작해 기동 전 기록을 읽는 중(0/25시간)이라 창의 일부(셈 시작부터)만
  * 셌다. 칸 셋: 인천 앞바다 · 부산 앞바다(상황판 첫 화면 안) · 대서양(화면 밖). 시각은 UTC ISO(api 형식 — 화면은 KST).
  */
 export function shipCoverageBody(nowMs: number) {

@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 관측 수신 범위 REST(계약 v5 §G26 · ADR-027) — GET /api/v1/ships/coverage: 칸 [lon0, lat0, 크기, 선박 수, 위치 수, 마지막 수신] · 창 · since · 덮음 상태 ·
+ * 관측 수신 범위 REST(계약 v5 §G27 · ADR-027) — GET /api/v1/ships/coverage: 칸 [lon0, lat0, 크기, 선박 수, 위치 수, 마지막 수신] · 창 · since · 덮음 상태 ·
  * 부트스트랩 · 상한, 공개 캐시 60 s · ETag → 304. 모르는 값은 키가 없다(부트스트랩 오류 · 끝난 시각).
  */
 class ShipCoverageControllerTest {

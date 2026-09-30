@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.function.LongSupplier;
 
 /**
- * 관측 AIS 수신 범위(ADR-027 · 계약 v5 §G26 — GET /api/v1/ships/coverage): '선박 위치가 실제로 어디서 왔는가'를 0.5° 칸 · 최근 24 h 로 센다.
+ * 관측 AIS 수신 범위(ADR-027 · 계약 v5 §G27 — GET /api/v1/ships/coverage): '선박 위치가 실제로 어디서 왔는가'를 0.5° 칸 · 최근 24 h 로 센다.
  * 구독 범위(운영 설정)와 다르다 — aisstream.io 는 육상 수신국이 받은 것만 보내므로(ADR-014) 구독해도 수신국이 없는 해역은 비어 있다.
  * <ul>
  *   <li><b>실시간 셈</b>: 선박 저장기가 고른 위치({@link ShipWriter.Sampled} — MMSI 별 60 s 창의 첫 보고, ship_position 과 같은 표본)를 격자에 넣는다.

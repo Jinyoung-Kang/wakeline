@@ -77,7 +77,7 @@ describe("e2e REST injections read as intended (e2e/rest-inject)", () => {
   });
 });
 
-describe("e2e REST injection for the observed reception layer (contract v5 §G26)", () => {
+describe("e2e REST injection for the observed reception layer (contract v5 §G27)", () => {
   it("the routed /ships/coverage body is read by the web parser as meant — 3 cells, partial window since api start, bootstrap reading", async () => {
     const { shipCoverageBody } = await import("../e2e/rest-inject");
     const { parseReception, receptionStatusLine, cellsInView } = await import("@/lib/reception");

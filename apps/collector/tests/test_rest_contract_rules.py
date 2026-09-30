@@ -549,7 +549,7 @@ def test_radar_kr_missing_file_streak_rules():
     assert "missing" in str(rcc.SCHEMAS["status_ais"]["allOf"])
 
 
-# ---- 관측 수신 범위(계약 v5 §G26 · ADR-027) — GET /api/v1/ships/coverage ----
+# ---- 관측 수신 범위(계약 v5 §G27 · ADR-027) — GET /api/v1/ships/coverage ----
 
 
 def coverage(**over):
