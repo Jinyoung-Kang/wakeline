@@ -109,6 +109,7 @@ class ShipCoverageControllerTest {
                 .andExpect(jsonPath("$.bootstrap.missing[24].to").value("2026-09-30T09:37:00Z"))
                 .andExpect(jsonPath("$.bootstrap.retry_backoff_s", contains(60, 120, 300, 600)))
                 .andExpect(jsonPath("$.bootstrap.next_retry_at").doesNotExist())
+                .andExpect(jsonPath("$.bootstrap.next_retry").doesNotExist())
                 .andExpect(jsonPath("$.covered").value("since_api_start"))
                 .andExpect(jsonPath("$.truncated").value(true))
                 .andExpect(jsonPath("$.dropped_positions").value(1))
@@ -150,6 +151,7 @@ class ShipCoverageControllerTest {
                 jsonPath("$.bootstrap.missing[0].attempts").value(1),
                 jsonPath("$.bootstrap.missing[0].error").value("statement_timeout"),
                 jsonPath("$.bootstrap.next_retry_at").value("2026-09-30T09:38:55.500Z"),
+                jsonPath("$.bootstrap.next_retry").value(1),
                 jsonPath("$.bootstrap.retry_backoff_s", contains(60, 120, 300, 600)),
                 jsonPath("$.bootstrap.error").doesNotExist(),
                 jsonPath("$.bootstrap.finished_at").doesNotExist(),
@@ -163,6 +165,7 @@ class ShipCoverageControllerTest {
                 .andExpect(jsonPath("$.bootstrap.state").value("done"))
                 .andExpect(jsonPath("$.bootstrap.missing.length()").value(0))
                 .andExpect(jsonPath("$.bootstrap.next_retry_at").doesNotExist())
+                .andExpect(jsonPath("$.bootstrap.next_retry").doesNotExist())
                 .andExpect(jsonPath("$.covered").value("full"));
     }
 

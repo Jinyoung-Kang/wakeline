@@ -41,7 +41,10 @@ import java.util.function.LongSupplier;
  *       <b>못 읽은 시는 나중에 다시 읽는다</b>(2026-09-30 22:49 KST 배포 직후 — 재시작 직후의 DB 경합에서 여섯째 시가 문장 상한을 넘자 부트스트랩이 멈췄고 다음 재시작까지
  *       레이어가 일부만 셌다): 시간 초과 · 일시적 실패인 시는 빈 시로 두고 나머지 시를 이어 읽은 뒤, 한 차례가 끝나고 {@link #RETRY_BACKOFF_MS}(1 · 2 · 5 · 10분 — 고른 값)
  *       뒤에 빈 시만 다시 읽는다. 네 번 다시 읽고도 못 읽은 시 · 일시적이지 않은 실패(권한 · 형식 — {@link #retryable})인 시는 포기하고 까닭과 함께 밝힌다(다음
- *       재시작 전까지 빈 시). 한 차례의 마감 {@value #BOOTSTRAP_DEADLINE_MS} ms(고른 값) — 넘으면 남은 시를 다음 차례로 미룬다(까닭 deadline). 기다리는 동안 연결을
+ *       재시작 전까지 빈 시). 한 차례의 마감 {@value #BOOTSTRAP_DEADLINE_MS} ms(고른 값) — 넘으면 남은 시를 조회하지 않고 다음 차례로 미룬다(까닭 deadline —
+ *       못 읽은 횟수 attempts 에 세지 않는다). 다시 읽는 차례는 <b>적게 조회한 시부터</b>(마감으로 미룬 시가 먼저, 같으면 최근 시부터 — 리뷰 2026-10-01: 늘 느린 최근 시가
+ *       차례마다 마감을 다 써서 뒤의 시를 한 번도 조회하지 못한 채 '다섯 번 못 읽음'으로 포기했다). 차례마다 적어도 한 시는 조회하고 문장은 상한 안에 끝나므로 뒤로 밀린
+ *       시도 곧 차례가 온다 — 끝내 조회하지 못한 시는 'deadline · 0번'으로 포기한다. 기다리는 동안 연결을
  *       잡지 않는다(차례마다 열고 닫는다). 기다리는 사이 창 밖으로 나간 빈 시는 더 읽지 않는다(읽을 시 수 hours_total 에서 뺀다).
  *       응답은 셈 시작부터 빈 시 없이 이어진 부분만 '덮음'으로 밝히고(since) 빈 시를 하나씩 싣는다(missing — 다시 읽기 대기 · 포기, 차례 수 · 종류) — 창 전체인 척하지 않는다.</li>
  *   <li><b>응답</b>: since = 이 시각부터 창 끝까지 빠짐없이 셌다(창의 시작 · 부트스트랩이 이어 읽은 가장 오래된 시 · 셈 시작 중 늦은 것),
@@ -80,22 +83,24 @@ public class ShipCoverage implements SmartLifecycle {
     /**
      * 부트스트랩 상태. loadedFrom = 셈 시작부터 거꾸로 빈 시 없이 이어 읽은 가장 오래된 순간(읽은 것이 없으면 셈 시작). hoursTotal = 읽을 시 조각 수(읽기 전에 창 밖으로
      * 나간 시는 뺀다). missing = 창 안의 못 읽은 시(오래된 것부터 — 다시 읽기 대기 · 포기). nextRetryAt = 다시 읽기를 기다리는 시의 다음 차례 시각(첫 차례가 도는
-     * 동안은 아직 없다 — 그 차례가 끝난 뒤 정한다. 다시 읽는 차례가 도는 동안은 지난 시각).
+     * 동안은 아직 없다 — 그 차례가 끝난 뒤 정한다. 다시 읽는 차례가 도는 동안은 지난 시각) · nextRetry = 그 차례가 몇 번째 다시 읽기인지(1 ~ {@link #RETRY_BACKOFF_MS} 의
+     * 길이 — nextRetryAt 과 함께만).
      */
     public record Bootstrap(String state, int hoursLoaded, int hoursTotal, long rows, Instant loadedFrom, String error, Instant finishedAt,
-                            List<Missing> missing, Instant nextRetryAt) {
+                            List<Missing> missing, Instant nextRetryAt, Integer nextRetry) {
         /** 창 안의 빈 시만(창 밖으로 나간 시는 더 말하지 않는다) — 다시 읽기를 기다리는 시가 남지 않으면 다음 시각도 없다. */
         Bootstrap inWindow(long windowFromMs) {
             if (missing.stream().allMatch(m -> m.to().toEpochMilli() > windowFromMs)) return this;
             List<Missing> in = missing.stream().filter(m -> m.to().toEpochMilli() > windowFromMs).toList();
-            Instant next = in.stream().anyMatch(m -> Missing.RETRY.equals(m.state())) ? nextRetryAt : null;
-            return new Bootstrap(state, hoursLoaded, hoursTotal, rows, loadedFrom, error, finishedAt, in, next);
+            boolean waiting = in.stream().anyMatch(m -> Missing.RETRY.equals(m.state()));
+            return new Bootstrap(state, hoursLoaded, hoursTotal, rows, loadedFrom, error, finishedAt, in, waiting ? nextRetryAt : null, waiting ? nextRetry : null);
         }
     }
 
     /**
-     * 못 읽은 시 조각 하나: [from, to) · state(retry = 다시 읽기 대기 · given_up = 포기) · attempts = 이 시를 읽지 못한 차례 수(문장 실패 · 연결 실패 · 차례 마감 —
-     * 종료로 멈춘 때 아직 읽지 않은 시는 0) · error = 마지막 실패의 종류(서버 글자 없음).
+     * 못 읽은 시 조각 하나: [from, to) · state(retry = 다시 읽기 대기 · given_up = 포기) · attempts = 이 시를 읽으려다 실패한 차례 수(보낸 문장이 실패 · 그 차례의 연결을
+     * 열지 못함 — 차례 마감으로 조회하지 않고 미룬 차례는 세지 않는다) · error = 마지막 실패의 종류(서버 글자 없음). attempts 0 = 한 번도 조회하지 않았다: error 는
+     * deadline(차례 마감으로 미룸) 또는 stopped(종료). 한 번 넘게 못 읽은 뒤 마감으로 미룬 시는 제 실패 종류를 그대로 둔다.
      */
     public record Missing(Instant from, Instant to, String state, int attempts, String error) {
         public static final String RETRY = "retry";
@@ -210,7 +215,7 @@ public class ShipCoverage implements SmartLifecycle {
         this.liveFromMs = Math.floorDiv(startMs, LIVE_ALIGN_MS) * LIVE_ALIGN_MS;
         this.newestHour = Math.floorDiv(liveFromMs - 1, CoverageGrid.HOUR_MS);
         this.grid = new CoverageGrid(maxCells, maxShipCells, clock.getAsLong());
-        this.bootstrap = new Bootstrap("pending", 0, 0, 0, Instant.ofEpochMilli(liveFromMs), null, null, List.of(), null);
+        this.bootstrap = new Bootstrap("pending", 0, 0, 0, Instant.ofEpochMilli(liveFromMs), null, null, List.of(), null, null);
         Gauge.builder("wakeline_ship_coverage_cells", this, c -> c.cellsGauge).description("관측 수신 격자의 칸 수(0.5°, 최근 24 h)").register(meters);
         Gauge.builder("wakeline_ship_coverage_ship_cells", this, c -> c.shipCellsGauge).description("관측 수신 격자의 칸별 선박 항목 수").register(meters);
         droppedCells = Counter.builder("wakeline_ship_coverage_dropped_total").tag("reason", "cells").description("칸 상한 때문에 세지 못한 위치").register(meters);
@@ -321,7 +326,8 @@ public class ShipCoverage implements SmartLifecycle {
 
     /**
      * 창 안의 저장된 위치를 셈 시작 앞까지 가장 최근 시부터 거꾸로 읽는다(부르는 스레드에서 — 운영은 {@link #start} 의 가상 스레드). 한 번만 의미가 있다.
-     * 첫 차례는 모든 시를, 그 뒤 차례는 못 읽은 시(다시 읽기 대기)만 — 차례 사이에 {@link #RETRY_BACKOFF_MS} 만큼 기다린다(연결은 닫혀 있다).
+     * 첫 차례는 모든 시를(가장 최근 시부터), 그 뒤 차례는 못 읽은 시(다시 읽기 대기)만 적게 조회한 시부터({@link #pending}) — 차례 사이에 {@link #RETRY_BACKOFF_MS}
+     * 만큼 기다린다(연결은 닫혀 있다). 첫 차례 + 다시 읽기 {@link #RETRY_BACKOFF_MS} 의 길이만큼 — 그 뒤 남은 시는 포기한다.
      */
     void runBootstrap() {
         long t0 = clock.getAsLong();
@@ -365,6 +371,7 @@ public class ShipCoverage implements SmartLifecycle {
             long waitMs = RETRY_BACKOFF_MS.get(retries);
             long due = clock.getAsLong() + waitMs;
             run.nextRetryAt = Instant.ofEpochMilli(due);
+            run.nextRetry = retries + 1;
             Bootstrap b = publish(run, "running", null, null);
             // 차례마다 한 줄(많아야 네 번) — 어느 시를 셌고 몇 시가 빠졌는지, 언제 다시 읽는지
             log.warn("ship coverage bootstrap: {}/{} hours read, {} not read ({}) — retrying them in {} s (retry {}/{}); counted since {}",
@@ -380,6 +387,7 @@ public class ShipCoverage implements SmartLifecycle {
         int loaded;
         long rows;
         Instant nextRetryAt;
+        int nextRetry;
         /** 이 차례의 실패 종류별 수 · 마지막 실패의 예외 이름(로그 — 서버 글자는 싣지 않는다). */
         final Map<String, Integer> kinds = new LinkedHashMap<>();
         String cause;
@@ -408,7 +416,7 @@ public class ShipCoverage implements SmartLifecycle {
                 if (stopRequested) return true;
                 if (expire(i)) continue;
                 if (tried > 0 && clock.getAsLong() - start > BOOTSTRAP_DEADLINE_MS) {
-                    for (int j = k; j < order.size(); j++) if (!expire(order.get(j))) failed(order.get(j), "deadline", true, run);
+                    for (int j = k; j < order.size(); j++) if (!expire(order.get(j))) deferred(order.get(j), run);
                     break;
                 }
                 tried++;
@@ -473,7 +481,7 @@ public class ShipCoverage implements SmartLifecycle {
         }
     }
 
-    /** 조각 i 를 이 차례에 읽지 못했다 — 다시 읽을 실패면 대기(UNREAD), 아니면 곧바로 포기. */
+    /** 조각 i 를 이 차례에 읽으려다 실패했다(문장 · 연결) — 다시 읽을 실패면 대기(UNREAD), 아니면 곧바로 포기. */
     private void failed(int i, String kind, boolean again, Run run) {
         synchronized (lock) {
             chunkFails[i]++;
@@ -483,11 +491,27 @@ public class ShipCoverage implements SmartLifecycle {
         run.kinds.merge(kind, 1, Integer::sum);
     }
 
-    /** 다시 읽기를 기다리는 조각(가장 최근 시부터). */
+    /**
+     * 조각 i 를 차례 마감 때문에 이 차례에 조회하지 않았다 — 다음 차례로 미룬다. 못 읽은 횟수(attempts)에 세지 않는다(문장을 보내지 않았다). 한 번도 못 읽은 적이
+     * 없으면 까닭은 deadline, 있으면 그 실패 종류를 그대로 둔다.
+     */
+    private void deferred(int i, Run run) {
+        synchronized (lock) {
+            if (chunkFails[i] == 0) chunkError[i] = "deadline";
+        }
+        run.kinds.merge("deadline", 1, Integer::sum);
+    }
+
+    /**
+     * 다시 읽기를 기다리는 조각(실패했거나 마감으로 미룬 시 — chunkError 가 있다): <b>적게 조회한 시부터</b>(못 읽은 횟수가 적은 것 — 마감으로 미룬 시(0)가 먼저),
+     * 같으면 가장 최근 시부터. 늘 느린 시가 차례마다 마감을 다 써도 뒤의 시가 다음 차례에 먼저 읽힌다(리뷰 2026-10-01).
+     */
     private List<Integer> pending() {
         List<Integer> out = new ArrayList<>();
         synchronized (lock) {
-            for (int i = 0; i < chunkState.length; i++) if (chunkState[i] == UNREAD && chunkFails[i] > 0) out.add(i);
+            for (int i = 0; i < chunkState.length; i++) if (chunkState[i] == UNREAD && chunkError[i] != null) out.add(i);
+            int[] fails = chunkFails.clone();
+            out.sort(java.util.Comparator.comparingInt(i -> fails[i])); // 안정 정렬 — 같은 횟수는 가장 최근 시부터
         }
         return out;
     }
@@ -513,6 +537,7 @@ public class ShipCoverage implements SmartLifecycle {
     private void finish(Run run, boolean stopped, int retries, long t0) {
         Instant done = Instant.ofEpochMilli(clock.getAsLong());
         run.nextRetryAt = null;
+        run.nextRetry = 0;
         if (stopped) {
             synchronized (lock) { // 아직 읽지 않은 시(다시 읽기 대기 포함)는 종료로 포기
                 for (int i = 0; i < chunkState.length; i++) {
@@ -527,7 +552,7 @@ public class ShipCoverage implements SmartLifecycle {
             return;
         }
         String error = null;
-        int givenUp = 0, attempts = 0;
+        int givenUp = 0, attempts = 0, neverQueried = 0;
         Map<String, Integer> kinds = new LinkedHashMap<>();
         synchronized (lock) {
             for (int i = 0; i < chunkState.length; i++) {
@@ -535,6 +560,7 @@ public class ShipCoverage implements SmartLifecycle {
                 if (error == null) error = chunkError[i]; // 가장 최근의 포기한 시의 까닭
                 givenUp++;
                 attempts = Math.max(attempts, chunkFails[i]);
+                if (chunkFails[i] == 0) neverQueried++;
                 kinds.merge(chunkError[i], 1, Integer::sum);
             }
         }
@@ -548,8 +574,9 @@ public class ShipCoverage implements SmartLifecycle {
         StringBuilder why = new StringBuilder();
         kinds.forEach((k, n) -> why.append(why.isEmpty() ? "" : ", ").append(k).append(" x").append(n));
         if (run.cause != null) why.append(": ").append(run.cause);
-        log.warn("ship coverage bootstrap gave up on {}/{} hours after up to {} attempts ({}) — {} hours read, counted since {}; "
-                + "the hours given up stay uncounted until the api restarts", givenUp, b.hoursTotal(), attempts, why, run.loaded, b.loadedFrom());
+        log.warn("ship coverage bootstrap gave up on {}/{} hours after up to {} failed reads per hour ({}){} — {} hours read, counted since {}; "
+                + "the hours given up stay uncounted until the api restarts", givenUp, b.hoursTotal(), attempts, why,
+                neverQueried == 0 ? "" : ", " + neverQueried + " of them never queried (each pass reached its deadline first)", run.loaded, b.loadedFrom());
     }
 
     /** 지금 조각 상태로 응답의 부트스트랩 상태를 만들어 싣는다(합친 뒤에 부른다 — 스냅숏이 주장하는 시는 격자에 있다). */
@@ -569,14 +596,15 @@ public class ShipCoverage implements SmartLifecycle {
             boolean waiting = false;
             for (int i = n - 1; i >= 0; i--) { // 오래된 것부터
                 byte st = chunkState[i];
-                boolean retry = (st == UNREAD || st == READING) && chunkFails[i] > 0;
+                boolean retry = (st == UNREAD || st == READING) && chunkError[i] != null; // 실패했거나 마감으로 미룬 시(첫 차례에 읽는 중인 시는 아니다)
                 if (!retry && st != GIVEN_UP) continue;
                 waiting |= retry;
                 missing.add(new Missing(Instant.ofEpochMilli(chunkFrom[i]), Instant.ofEpochMilli(chunkTo[i]), retry ? Missing.RETRY : Missing.GIVEN_UP,
                         chunkFails[i], chunkError[i]));
             }
+            boolean next = waiting && run.nextRetryAt != null;
             b = new Bootstrap(state, run.loaded, n - expired, run.rows, Instant.ofEpochMilli(loadedFrom), error, finishedAt, List.copyOf(missing),
-                    waiting ? run.nextRetryAt : null);
+                    next ? run.nextRetryAt : null, next ? run.nextRetry : null);
         }
         bootstrap = b;
         return b;

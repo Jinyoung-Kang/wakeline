@@ -51,6 +51,8 @@ class ShipCoverageTest {
         volatile SQLException readError;
         /** 이 시각에 시작하는 조각은 읽을 때마다 실패한다(readError) — Long.MIN_VALUE 면 없음. */
         volatile long failFrom = Long.MIN_VALUE;
+        /** 이 조건에 맞는 시각에 시작하는 조각은 읽을 때마다 실패한다(readError). */
+        volatile java.util.function.LongPredicate failIf = from -> false;
         volatile Runnable onRead = () -> {};
 
         @Override
@@ -62,7 +64,7 @@ class ShipCoverageTest {
                 public void read(long fromMs, long toMs, Consumer<Row> sink) throws SQLException {
                     reads.add(new long[]{fromMs, toMs});
                     onRead.run();
-                    if (reads.size() - 1 == failAtRead || fromMs == failFrom) throw readError;
+                    if (reads.size() - 1 == failAtRead || fromMs == failFrom || failIf.test(fromMs)) throw readError;
                     // 조각마다: 인천 앞바다 칸(126.0 · 37.0 → 색인 252 · 74)에 선박 하나(조각 시작 + 1 s 마지막 보고, 위치 3)
                     sink.accept(new Row(252, 74, 440_000_000 + reads.size(), 3, fromMs + 1_000));
                 }
@@ -217,6 +219,7 @@ class ShipCoverageTest {
         assertThat(w.bootstrap().missing()).containsExactly(new ShipCoverage.Missing(Instant.ofEpochMilli(HOUR0 - 3 * H), Instant.ofEpochMilli(HOUR0 - 2 * H),
                 "retry", 1, "statement_timeout"));
         assertThat(w.bootstrap().nextRetryAt()).isEqualTo(Instant.ofEpochMilli(START + 30_000 + 60_000));
+        assertThat(w.bootstrap().nextRetry()).isEqualTo(1);
         assertThat(w.covered()).isEqualTo("partial");
         assertThat(w.since()).as("counted without a gap back to the missing hour").isEqualTo(Instant.ofEpochMilli(HOUR0 - 2 * H));
         assertThat(w.bootstrap().loadedFrom()).isEqualTo(Instant.ofEpochMilli(HOUR0 - 2 * H));
@@ -233,6 +236,7 @@ class ShipCoverageTest {
         assertThat(s.bootstrap().hoursTotal()).isEqualTo(25);
         assertThat(s.bootstrap().missing()).isEmpty();
         assertThat(s.bootstrap().nextRetryAt()).isNull();
+        assertThat(s.bootstrap().nextRetry()).isNull();
         assertThat(s.bootstrap().error()).isNull();
         assertThat(s.covered()).isEqualTo("full");
         assertThat(s.cells().getFirst().ships()).as("25 hours of one ship each + the late report").isEqualTo(26);
@@ -446,12 +450,92 @@ class ShipCoverageTest {
         c.runBootstrap();
         ShipCoverage.Snapshot w = during.get();
         assertThat(w.bootstrap().hoursLoaded()).isEqualTo(2);
-        assertThat(w.bootstrap().missing()).hasSize(23).allSatisfy(m -> assertThat(m).extracting(ShipCoverage.Missing::state, ShipCoverage.Missing::error)
-                .containsExactly("retry", "deadline"));
+        assertThat(w.bootstrap().missing()).hasSize(23).allSatisfy(m -> assertThat(m).extracting(ShipCoverage.Missing::state, ShipCoverage.Missing::attempts,
+                ShipCoverage.Missing::error).containsExactly("retry", 0, "deadline")); // 조회하지 않았다 — 못 읽은 횟수에 세지 않는다
         assertThat(w.covered()).isEqualTo("partial");
         assertThat(w.since()).isEqualTo(Instant.ofEpochMilli(HOUR0 - H));
         assertThat(src.reads).hasSize(25);
         assertThat(c.snapshotNow().bootstrap().state()).isEqualTo("done");
+    }
+
+    /**
+     * 리뷰 2026-10-01: 다시 읽는 차례가 늘 가장 최근 시부터 읽었고, 차례 마감으로 미룬 시도 '못 읽은 차례'로 셌다. 늘 느린 가장 최근 시 여섯(읽을 때마다 30 s 문장
+     * 상한에 걸림)이 차례마다 마감(180 s)을 다 써서, 한 번도 조회하지 않은 시 열아홉(한가하면 0.44 s)이 다섯 차례 뒤 'deadline · 5번 못 읽음'으로 포기됐다.
+     * 이제 다시 읽는 차례는 적게 조회한 시부터(마감으로 미룬 시가 먼저) 읽고, 마감으로 미룬 차례는 attempts 에 세지 않는다(조회하지 않았다). 수정 전 실패.
+     */
+    @Test
+    void hoursDeferredByTheDeadlineAreReadBeforeHoursThatTimedOut_andADeferralIsNotCountedAsAFailedRead() {
+        // api 시작 09:00:30Z(셈 시작 09:00 — 시 조각 24개, 모두 한 시). 다섯 차례와 기다림(약 33분)이 10:00 전에 끝나 창이 넘어가지 않는다
+        AtomicLong clock = new AtomicLong(HOUR0 + 30_000);
+        FakeSource src = new FakeSource();
+        long slow = HOUR0 - 6 * H; // 가장 최근 여섯 시(03 ~ 08시)는 읽을 때마다 30 s 상한에 걸린다
+        src.failIf = from -> from >= slow;
+        src.readError = TIMEOUT;
+        src.onRead = () -> clock.addAndGet(src.reads.getLast()[0] >= slow ? 30_001 : 440);
+        ShipCoverage c = coverage(src, clock);
+        AtomicReference<ShipCoverage.Snapshot> first = new AtomicReference<>();
+        List<Long> waits = new ArrayList<>();
+        c.sleeper = ms -> { if (first.get() == null) first.set(c.snapshotNow()); waits.add(ms); clock.addAndGet(ms); };
+        c.runBootstrap();
+
+        // 첫 차례: 느린 여섯을 읽다 마감 — 나머지 열여덟은 조회하지 않았다(attempts 0 · deadline), 느린 여섯은 한 번 못 읽었다
+        ShipCoverage.Bootstrap b1 = first.get().bootstrap();
+        assertThat(b1.missing()).hasSize(24);
+        assertThat(b1.missing().stream().filter(m -> m.error().equals("deadline"))).hasSize(18).allSatisfy(m -> assertThat(m.attempts()).isZero());
+        assertThat(b1.missing().stream().filter(m -> m.error().equals("statement_timeout"))).hasSize(6).allSatisfy(m -> assertThat(m.attempts()).isEqualTo(1));
+        assertThat(b1.nextRetry()).as("the first of four retries").isEqualTo(1);
+        // 다시 읽는 차례는 마감으로 미룬 시부터 — 한가한 시는 모두 한 번씩 조회해 읽었다
+        for (long from = HOUR0 - 24 * H; from < slow; from += H) {
+            long f = from;
+            assertThat(src.reads.stream().filter(r -> r[0] == f)).as("hour %s", Instant.ofEpochMilli(f)).hasSize(1);
+        }
+        assertThat(waits).containsExactly(60_000L, 120_000L, 300_000L, 600_000L);
+        ShipCoverage.Snapshot s = c.snapshotNow();
+        assertThat(s.bootstrap().state()).isEqualTo("failed");
+        assertThat(s.bootstrap().hoursLoaded()).isEqualTo(18);
+        assertThat(s.bootstrap().hoursTotal()).isEqualTo(24);
+        assertThat(s.bootstrap().error()).isEqualTo("statement_timeout");
+        assertThat(s.bootstrap().missing()).hasSize(6).allSatisfy(m -> assertThat(m).extracting(ShipCoverage.Missing::state, ShipCoverage.Missing::attempts,
+                ShipCoverage.Missing::error).containsExactly("given_up", 5, "statement_timeout"));
+        assertThat(s.bootstrap().missing().getFirst().from()).as("oldest first").isEqualTo(Instant.ofEpochMilli(slow));
+        // 가장 최근 시가 비어 있으므로 셈 시작부터 이어 읽은 시는 없다 — api 시작 뒤만 이어 셌다고 말한다(읽은 열여덟 시는 격자에 있다)
+        assertThat(s.covered()).isEqualTo("since_api_start");
+        assertThat(s.since()).isEqualTo(Instant.ofEpochMilli(HOUR0));
+        assertThat(s.cells().getFirst().ships()).isEqualTo(18);
+    }
+
+    /**
+     * 차례마다 마감에 걸려 끝내 한 번도 조회하지 못한 시는 '마감(deadline) · 0번'으로 포기한다 — 조회하지 않은 시를 '다섯 번 못 읽었다'고 하지 않는다. 한 번 못 읽은 뒤
+     * 마감으로 미룬 시는 제 실패 종류와 횟수를 그대로 둔다(마감이 덮지 않는다). 수정 전 실패.
+     */
+    @Test
+    void anHourNeverQueriedBecauseOfTheDeadlineIsGivenUpAsDeadlineWithZeroAttempts_andAnEarlierFailureIsKept() {
+        AtomicLong clock = new AtomicLong(HOUR0 + 30_000); // 시 조각 24개 — 다섯 차례와 기다림(약 33분)이 10:00 전에 끝난다
+        FakeSource src = new FakeSource();
+        src.failAtRead = 0; // 가장 최근 조각은 첫 읽기에서 한 번 시간 초과
+        src.readError = TIMEOUT;
+        // 읽기마다 마감을 넘긴다(가짜 — 운영의 문장은 30 s 상한 안에 끝난다): 차례마다 한 시만 조회한다
+        src.onRead = () -> clock.addAndGet(ShipCoverage.BOOTSTRAP_DEADLINE_MS + 1);
+        ShipCoverage c = coverage(src, clock);
+        ListAppender<ILoggingEvent> logs = captureLogs();
+        try {
+            c.runBootstrap();
+        } finally {
+            release(logs);
+        }
+        assertThat(lines(logs, "gave up on 20/24 hours").getFirst().getFormattedMessage())
+                .contains("after up to 1 failed reads per hour").contains("deadline x19").contains("19 of them never queried");
+        assertThat(src.reads).as("one statement per pass, five passes").hasSize(5);
+        ShipCoverage.Snapshot s = c.snapshotNow();
+        assertThat(s.bootstrap().state()).isEqualTo("failed");
+        assertThat(s.bootstrap().hoursLoaded()).isEqualTo(4);
+        List<ShipCoverage.Missing> gone = s.bootstrap().missing();
+        assertThat(gone).hasSize(20).allSatisfy(m -> assertThat(m.state()).isEqualTo("given_up"));
+        assertThat(gone.getLast()).as("the newest hour timed out once, then waited behind the deadline")
+                .extracting(ShipCoverage.Missing::from, ShipCoverage.Missing::attempts, ShipCoverage.Missing::error)
+                .containsExactly(Instant.ofEpochMilli(HOUR0 - H), 1, "statement_timeout");
+        assertThat(gone.subList(0, 19)).allSatisfy(m -> assertThat(m).extracting(ShipCoverage.Missing::attempts, ShipCoverage.Missing::error)
+                .containsExactly(0, "deadline"));
     }
 
     /**
