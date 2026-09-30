@@ -18,6 +18,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
+  statsPanelsVerdict,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -152,6 +153,8 @@ const RECIPES = {
     // 관측 수신 범위(ADR-027 · 계약 v5 §G27): 레이어를 켜고 상태 줄이 '불러오는 중'을 벗어나 칸을 그린 뒤 찍는다 — 센 구간을 캡처 조건에 적는다
     await openMap(shot.path);
     await setPressed("layer-ships", true);
+    // 연안 교통량은 끈다 — 앞 그림(traffic)이 켠 것이 이 브라우저에 기억되어 켜진 채 해안을 덮었다(2026-09-30 22:49 KST 배포 직후 캡처)
+    await setPressed("layer-traffic", false);
     await setPressed("layer-reception", true);
     await setLegend(true);
     const status = page.getByTestId("reception-status-text");
@@ -159,6 +162,8 @@ const RECIPES = {
     await page.waitForFunction(() => !/불러오는 중|받는 중/.test(document.querySelector('[data-testid="reception-status-text"]')?.textContent ?? ""), null, { timeout: 20_000 }).catch(() => {});
     const line = (await status.innerText()).trim().replace(/\s+/g, " ");
     await wait(4_000); // 칸 그리기
+    // 범례의 관측 수신 절을 범례 창(세로 스크롤) 안으로 — 아래로 밀려 있으면 번호 3(legend-reception)을 잴 수 없다(보이지 않는 번호는 기록하지 않는다)
+    await page.getByTestId("legend-reception").scrollIntoViewIfNeeded({ timeout: 10_000 }).catch(() => { throw new Skip("범례의 관측 수신 절이 나오지 않음"); });
     return `관측 수신 범위 ${shot.path.slice(1)} · ${line.slice(0, 60)}`;
   },
   async search(shot) {
@@ -310,9 +315,20 @@ const RECIPES = {
     return `지도 시각 ${(await page.getByTestId("replay-frame-at").innerText()).replace(/^지도\s*/, "").trim()}`;
   },
   async stats(shot) {
+    // 패널마다의 data-state(app/stats/page.tsx — loading · ready · empty · error)가 모두 loading 을 벗어나거나 하나가 실패할 때까지 기다린다(상한 30 s — 고른 값).
+    // 전의 고정 4 s 는 api 재시작 직후 DB 가 바쁠 때 받는 중인 패널을 찍었다(2026-09-30 22:49 KST 배포 직후 — 그때 화면은 '자료 없음'으로 보였다).
+    // 실패한 패널이 있거나 끝까지 받는 중이면 까닭과 함께 건너뛴다(statsPanelsVerdict — 실패 · 자료 전 화면을 싣지 않는다)
     await page.goto(BASE + shot.path);
     await page.locator("main .grid > section").first().waitFor();
-    await wait(4_000);
+    await page.waitForFunction(() => {
+      const st = [...document.querySelectorAll("[data-stats-panel]")].map((e) => e.getAttribute("data-state"));
+      return st.length > 0 && (st.includes("error") || !st.includes("loading"));
+    }, null, { timeout: 30_000 }).catch(() => {});
+    const panels = await page.locator("[data-stats-panel]").evaluateAll((els) => els.map((e) => ({ id: e.getAttribute("data-stats-panel"), state: e.getAttribute("data-state"), text: e.innerText })));
+    const v = statsPanelsVerdict(panels);
+    if (v.skip) throw new Skip(v.skip);
+    if (v.wait) throw new Skip(`통계 패널이 30 s 안에 받기를 끝내지 않음(${panels.filter((p) => p.state === "loading").map((p) => p.id).join(", ")} 받는 중)`);
+    await wait(1_000); // 막대 그리기
     return null;
   },
   async airport(shot) {

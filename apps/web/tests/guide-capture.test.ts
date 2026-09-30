@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   anchorPoint, checkLocalBase, credentialFileWarning, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
+  statsPanelsVerdict,
 } from "../scripts/guide-capture-lib.mjs";
 import { GUIDE_FILE_RE, parseManifest, PLAN } from "@/lib/guide";
 
@@ -170,3 +171,55 @@ describe("capture recipes (scripts/guide-screenshots.mjs)", () => {
     expect(logs.callouts.map((c) => c.target)).toEqual(expect.arrayContaining(['[aria-label="해결 표시"]', '[data-testid="logs-hidden-resolved"]']));
   });
 });
+
+/**
+ * 2026-09-30 22:49 KST 배포 직후 캡처에서 본 두 결함(수정 전 실패를 먼저 확인했다):
+ * - stats: 4 s 만 기다려, api 재시작 직후 DB 가 바쁠 때 네 패널이 받는 중인 채로(그때는 '자료 없음'으로 보였다) 찍혔다. 이제 패널마다의 data-state 가 모두
+ *   loading 을 벗어날 때까지 기다리고, 오류 패널이 있으면 그 까닭과 함께 건너뛴다(자료 전 · 실패 화면이 설명서에 실리지 않게).
+ * - reception: 앞 그림(traffic)이 켠 연안 교통량 레이어가 이 브라우저에 기억되어 켜진 채 해안을 덮었고, 범례의 관측 수신 절이 범례 창 아래로 밀려 번호 3
+ *   ([data-testid="legend-reception"])이 기록되지 않았다. 이제 연안 교통량을 끄고, 번호를 재기 전에 그 절을 범례 창 안으로 굴린다.
+ */
+describe("capture recipes: stats waits for every panel; reception turns the coastal traffic layer off and brings the legend section into view", () => {
+  const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
+  const recipe = (id: string) => {
+    const i = src.search(new RegExp(`^ {2}async (?:"${id}"|${id})\\(shot\\) \\{`, "m"));
+    expect(i, id).toBeGreaterThan(0);
+    return src.slice(i, src.indexOf("\n  },\n", i));
+  };
+  it("statsPanelsVerdict: waits while any panel is loading, skips with the panel and its reason on error or a missing panel, else shoots", () => {
+    const p = (id: string, state: string, text = "") => ({ id, state, text });
+    expect(statsPanelsVerdict([p("fir", "ready"), p("hazard", "loading"), p("traffic", "ready"), p("alerts", "empty")])).toEqual({ wait: true, skip: null });
+    expect(statsPanelsVerdict([p("fir", "ready"), p("hazard", "empty"), p("traffic", "ready"), p("alerts", "empty")])).toEqual({ wait: false, skip: null });
+    const err = statsPanelsVerdict([p("fir", "ready"), p("hazard", "empty"), p("traffic", "ready"), p("alerts", "error", "조회 실패 — stats unavailable(HTTP 503)\n다시 시도")]);
+    expect(err.wait).toBe(false);
+    expect(err.skip).toContain("alerts");
+    expect(err.skip).toContain("조회 실패 — stats unavailable(HTTP 503)");
+    // 오류가 받는 중보다 먼저 — 하나라도 실패했으면 기다리지 않고 건너뛴다
+    expect(statsPanelsVerdict([p("fir", "loading"), p("hazard", "error", "조회 실패"), p("traffic", "ready"), p("alerts", "empty")]).skip).toContain("hazard");
+    // 네 패널이 다 있지 않으면(화면이 바뀜 · 다른 판) 찍지 않는다 — 모양을 추정하지 않는다
+    expect(statsPanelsVerdict([p("fir", "ready")]).skip).toMatch(/패널 1개/);
+    expect(statsPanelsVerdict([p("fir", "ready"), p("hazard", "odd"), p("traffic", "ready"), p("alerts", "empty")]).skip).toMatch(/hazard.*odd/);
+  });
+  it("stats: waits on the panels' data-state (not a fixed 4 s) and skips with the reason when a panel failed", () => {
+    const r = recipe("stats");
+    expect(r).not.toMatch(/wait\(4_000\)/);
+    expect(r).toContain("data-stats-panel");
+    expect(r).toContain("data-state");
+    expect(r).toMatch(/statsPanelsVerdict\(/);
+    expect(r).toMatch(/throw new Skip\(/);
+    expect(src).toMatch(/import \{[^}]*statsPanelsVerdict[^}]*\} from "\.\/guide-capture-lib\.mjs"/);
+  });
+  it("reception: the coastal traffic layer is turned off and the legend's reception section is scrolled into view before the callouts are measured", () => {
+    const r = recipe("reception");
+    expect(r).toMatch(/setPressed\("layer-traffic", false\)/);
+    const scroll = r.search(/getByTestId\("legend-reception"\)\.scrollIntoViewIfNeeded\(/);
+    expect(scroll).toBeGreaterThan(0);
+    expect(scroll).toBeLessThan(r.lastIndexOf("return ")); // 번호는 레시피가 돌아온 뒤에 잰다(measure) — 그 전에 굴린다
+    expect(r.indexOf('setPressed("layer-traffic", false)')).toBeLessThan(r.indexOf('setPressed("layer-reception", true)'));
+  });
+  it("the other recipes are unchanged in what they wait for (traffic still turns its own layer on)", () => {
+    expect(recipe("traffic")).toMatch(/setPressed\("layer-traffic", true\)/);
+    expect(recipe("dashboard")).toMatch(/wait\(10_000\)/);
+  });
+});
+
