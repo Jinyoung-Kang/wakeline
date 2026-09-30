@@ -1,7 +1,7 @@
 """수신 진단(1011 keepalive 원인 가리기): 최근 최댓값 창 · 이벤트 루프 지연 · 원문 대기열 대기 시간 · websockets 수신 버퍼 · keepalive 왕복.
 
 다음에 끊겼을 때 원인을 가를 수 있게 잰다(test_ais_keepalive 가 보인 세 기제):
-- 이벤트 루프 멈춤 → loop_lag_max_s 가 시간 초과만큼 커진다(두 구역이 함께).
+- 이벤트 루프 멈춤 → loop_lag_max_s 가 시간 초과만큼 커진다(프로세스에 하나 — 1011 은 콜백 순서에 따라 한 구역만 날 수도 있다).
 - 소켓을 읽는 쪽이 멈춤 → ws 수신 버퍼가 max_queue(64)를 넘는다(루프 지연은 작다).
 - 서버·망이 pong 을 늦게 보냄 → keepalive 왕복(ping_rtt)과 공급자 지연이 커지고 루프 지연·버퍼는 작다.
 모르는 값은 None(상태 해시 "") — 0 으로 채우지 않는다.
@@ -16,7 +16,18 @@ import time
 
 import pytest
 from fakes import FakeRedis
-from test_ais_keepalive import STALL_S, TIMEOUT_S, Server, _client, _connected, _delay_pongs, _run_for, _serve, _stall_once
+from test_ais_keepalive import (
+    STALL_S,
+    TIMEOUT_S,
+    RemoteServer,
+    Server,
+    _client,
+    _connected,
+    _delay_pongs,
+    _run_for,
+    _serve,
+    _stall_client,
+)
 
 from wakeline_collector.ais import client as client_mod
 from wakeline_collector.ais.book import ShipBook
@@ -165,18 +176,18 @@ async def test_missing_ws_buffer_is_unknown_and_logged_once(caplog):
 @pytest.mark.parametrize("cause", ["loop_stall", "late_pong"])
 async def test_disconnect_log_tells_a_loop_stall_from_a_late_server_pong(cause, caplog):
     """1011 의 로그 한 줄로 원인을 가른다: 루프 멈춤이면 loop lag 가 시간 초과만큼, 서버의 늦은 pong 이면 loop lag 는 작고 keepalive 왕복은
-    잰 적이 없다(—) — 데이터는 계속 받았다."""
+    잰 적이 없다(—) — 데이터는 계속 받았다. 서버는 별도 스레드(원격 공급자처럼), 루프 멈춤은 1011 이 나는 순서로 고정한다(test_ais_keepalive §3)."""
     caplog.set_level(logging.INFO, logger="ais.client")
+    loop = asyncio.get_running_loop()
     lag = LoopLag(tick_s=0.05)
     lag_task = asyncio.create_task(lag.run())
-    hook = _stall_once(STALL_S, on_loop=True) if cause == "loop_stall" else _delay_pongs(TIMEOUT_S + 0.3)
-    server, url = await _serve(Server(pong_hook=hook))
-    c, q, feed = _client(url)
-    c._loop_lag = lag.max_s
+    hook = _stall_client(loop, STALL_S, on_loop=True) if cause == "loop_stall" else _delay_pongs(TIMEOUT_S + 0.3)
     try:
-        await _run_for(c, STALL_S + 1.5)
+        with RemoteServer(Server(pong_hook=hook)) as url:
+            c, q, feed = _client(url)
+            c._loop_lag = lag.max_s
+            await _run_for(c, STALL_S + 2.0)
     finally:
-        server.close()
         lag_task.cancel()
         await asyncio.gather(lag_task, return_exceptions=True)
     line = next(r.getMessage() for r in caplog.records if "disconnected" in r.getMessage())

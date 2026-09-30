@@ -1,7 +1,8 @@
 """수신 진단 — keepalive 1011(ping 시간 초과) 끊김의 원인을 다음번에 가릴 수 있게 재는 값(ADR-014 부록 C).
 
 1011 을 내는 기제는 셋이다(tests/test_ais_keepalive.py 로 재현):
-  1. 이벤트 루프 멈춤(루프 위 CPU 작업 · 프로세스가 멈춤) — 버퍼 크기와 상관없다. → LoopLag(loop_lag_max_s · loop_stalls_total)
+  1. 이벤트 루프 멈춤(루프 위 CPU 작업 · 프로세스가 멈춤) — ping 이 나가 있는 동안 시간 초과보다 길면 1011 이 날 수 있다(버퍼 크기와 상관없다).
+     늘 나지는 않는다: 멈춤이 끝난 뒤 pong 을 읽는 콜백과 시간 초과 콜백의 순서에 달린다(연결마다 다를 수 있다). → LoopLag(loop_lag_max_s · loop_stalls_total)
   2. 소켓을 읽는 코드가 멈춤 — websockets 수신 버퍼가 max_queue 를 넘으면 읽기를 멈춰 pong 도 못 읽는다. 우리 수신 태스크는 기다리지 않으므로
      정상이면 버퍼가 작다. → 구역별 ws 수신 버퍼 깊이(ws_queue_max, client._read) · 원문 대기열 머문 시간(queue_wait_max_s, RawQueue)
   3. 서버·망이 pong 을 늦게 보냄(공급자 쪽 연결별 적체 — VERIFICATION #17) → 구역별 keepalive 왕복(ping_rtt_max_s) · 공급자 지연(lag_p50_s)
@@ -95,7 +96,7 @@ class LoopLag:
                 self._last_warn = now
                 log.warning(
                     "ais event loop was blocked for %.1f s — nothing was read meanwhile; a keepalive ping outstanding across a stall "
-                    "longer than its timeout ends in 1011 (%d stall(s) >= %.0f s since start)",
+                    "longer than its timeout can end in 1011 (%d stall(s) >= %g s since start)",
                     lag_s,
                     self.stalls,
                     self.stall_s,
