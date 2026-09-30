@@ -103,8 +103,8 @@ class WsIntegrationTest {
                 Map.entry("wakeline.max-bbox-area-sqdeg", "2500"), Map.entry("wakeline.fixture-mode", "0"),
                 Map.entry("wakeline.schemas-dir", "classpath:schemas"), Map.entry("wakeline.track-retention-hours", "72"),
                 Map.entry("wakeline.summary-retention-days", "30"),
-                // 노선 조회의 답 마감(계약 v5 §G21) = Redis 명령 상한 — 운영 application.yml 과 같은 값
-                Map.entry("spring.data.redis.timeout", "3s"),
+                // 노선 조회의 답 마감(계약 v5 §G21) = Redis 명령 상한(RedisConfig.COMMAND_TIMEOUT). 운영(3s)과 다른 값으로 스프링 배선이 그 값을 쓰는지 본다
+                Map.entry("spring.data.redis.timeout", "2500ms"),
                 // ws-resync-world-interval-s 는 비워 @DefaultValue(120) 를 확인한다. 목록은 WAKELINE_ALLOWED_ORIGINS 처럼 쉼표 문자열.
                 Map.entry("wakeline.allowed-origins", "http://localhost:8700, http://127.0.0.1:8700/"))));
         ctx.register(Beans.class, WsHub.class, ShipFanout.class, WakelineWsHandler.class, WebSocketConfig.class);
@@ -181,6 +181,16 @@ class WsIntegrationTest {
         var nativeSession = ((NativeWebSocketSession) s.raw()).getNativeSession(jakarta.websocket.Session.class);
         assertThat(nativeSession.getUserProperties().get(WakelineWsHandler.TOMCAT_BLOCKING_SEND_TIMEOUT)).isEqualTo(5000L);
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "bye").get(5, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 리뷰(2026-09-30 · lane-route #5): 스프링이 만든 허브의 노선 답 마감은 spring.data.redis.timeout(RedisConfig.COMMAND_TIMEOUT)에서 온다 — 운영 값(3 s)과
+     * 다른 2,500 ms 로 확인한다(상수로 바꾸면 실패한다). 노선 조회 실행기도 운영 것(대기열 길이 지표가 있는 고정 크기 실행기)이다.
+     */
+    @Test void theSpringWiredHub_takesTheRouteDeadlineFromTheRedisCommandTimeoutProperty() {
+        WsHub hub = ctx.getBean(WsHub.class);
+        assertThat(hub.routeLookups().deadlineMs()).isEqualTo(2_500);
+        assertThat(hub.routeLookups().enabled()).isTrue();
     }
 
     @Test void foreignOrigin_isRejectedAtHandshake() {

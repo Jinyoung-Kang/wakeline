@@ -116,8 +116,13 @@ describe("'조회 중' also covers the api's own read of the collector's result 
     const m = /^ {4}redis:\n(?: {6}.*\n)*? {6}timeout: (\d+)s$/m.exec(yml);
     expect(m).not.toBeNull();
     expect(ROUTE_API_READ_BOUND_S).toBe(Number(m![1]));
-    // api 가 그 값을 selected.route 답의 마감으로 쓴다(WsHub → RouteLookups.deadlineMs)
-    expect(src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java")).toContain('@Value("${spring.data.redis.timeout}") String redisCommandTimeout');
+    // 설정 식은 한 곳(RedisConfig.COMMAND_TIMEOUT — 없으면 3s)이고, api 가 그 값을 selected.route 답의 마감(WsHub → RouteLookups.deadlineMs)과 REST 노선
+    // 기다림(RouteReader)에 쓴다 — api 쪽 JVM 시험(RouteSelectionLookupTest · WsIntegrationTest · RedisConfigTest)이 배선을 확인한다
+    const redisConfig = src("apps/api/src/main/java/dev/wakeline/config/RedisConfig.java");
+    expect(redisConfig).toContain('COMMAND_TIMEOUT = "${spring.data.redis.timeout:" + DEFAULT_COMMAND_TIMEOUT_TEXT + "}"');
+    expect(redisConfig).toContain(`DEFAULT_COMMAND_TIMEOUT_TEXT = "${ROUTE_API_READ_BOUND_S}s"`);
+    expect(src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java")).toContain("@Value(RedisConfig.COMMAND_TIMEOUT) String redisCommandTimeout");
+    expect(src("apps/api/src/main/java/dev/wakeline/route/RouteReader.java")).toContain("@Value(RedisConfig.COMMAND_TIMEOUT) String commandTimeout");
     expect(src("apps/api/src/main/java/dev/wakeline/ws/RouteLookups.java")).toMatch(/static long deadlineMs\(Duration redisCommandTimeout\)/);
   });
   it("the title says so: reading the result, answered within that bound, otherwise the failure text", () => {

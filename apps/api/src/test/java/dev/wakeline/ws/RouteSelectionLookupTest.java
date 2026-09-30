@@ -556,12 +556,16 @@ class RouteSelectionLookupTest {
         assertThat(meters.counter("wakeline_ws_route_lookups_total", "outcome", "ok").count()).isEqualTo(2.0);
     }
 
-    /** 답의 마감은 Redis 명령 상한(spring.data.redis.timeout)에서 온다 — 0 이하(상한 없음)는 기동하지 않는다. application.yml 의 값은 3 s. */
+    /**
+     * 답의 마감은 Redis 명령 상한(RedisConfig.COMMAND_TIMEOUT — spring.data.redis.timeout, 기본 3s)에서 온다 — 해석할 수 없거나 0 이하(상한 없음)면 기동하지
+     * 않는다. application.yml 의 값은 3 s.
+     */
     @Test void theDeadlineComesFromTheRedisCommandTimeout() throws Exception {
-        assertThat(RouteLookups.deadlineMs(RouteLookups.duration("3s"))).as("as Boot binds the property").isEqualTo(3_000);
-        assertThat(RouteLookups.duration("2500")).as("no unit = ms, like Boot").isEqualTo(Duration.ofMillis(2_500));
-        assertThatThrownBy(() -> RouteLookups.duration("${spring.data.redis.timeout}")).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("spring.data.redis.timeout");
+        assertThat(RouteLookups.deadlineMs(dev.wakeline.config.RedisConfig.commandTimeout("3s"))).as("as Boot binds a Duration property").isEqualTo(3_000);
+        assertThat(dev.wakeline.config.RedisConfig.commandTimeout("2500")).as("no unit = ms, like Boot").isEqualTo(Duration.ofMillis(2_500));
+        for (String bad : new String[] {"${spring.data.redis.timeout}", "0s", "-1s"})
+            assertThatThrownBy(() -> dev.wakeline.config.RedisConfig.commandTimeout(bad)).as(bad).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("spring.data.redis.timeout");
         assertThat(RouteLookups.deadlineMs(Duration.ofSeconds(3))).isEqualTo(3_000);
         assertThat(RouteLookups.deadlineMs(Duration.ofMillis(1_500))).isEqualTo(1_500);
         for (Duration bad : new Duration[] {null, Duration.ZERO, Duration.ofSeconds(-1)})
@@ -570,6 +574,34 @@ class RouteSelectionLookupTest {
         String yml = new String(getClass().getResourceAsStream("/application.yml").readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         assertThat(yml).as("the configured Redis command timeout the docs and the web title state").containsPattern("(?m)^      timeout: 3s$");
         assertThat(new RouteLookups(Runnable::run, 3_000, new SimpleMeterRegistry()).deadlineMs()).isEqualTo(3_000);
+    }
+
+    /**
+     * 리뷰(2026-09-30 · lane-route #5): Redis 명령 상한을 읽는 곳은 모두 같은 설정 식(RedisConfig.COMMAND_TIMEOUT — 기본값 3s 포함)을 쓴다 — 기본 연결의 Lettuce
+     * 명령 상한(RedisConfig) · WS 노선 답의 마감(WsHub 운영 생성자) · REST 노선 기다림(RouteReader 운영 생성자). 고치기 전 WsHub 는 기본값 없는
+     * "${spring.data.redis.timeout}" 을 읽어, 그 속성이 없는 구성(Redis 는 기본 3 s 로 도는)에서 허브가 기동하지 못했다.
+     */
+    @Test void everyReaderOfTheRedisCommandTimeout_usesTheOneConfigExpression() throws Exception {
+        assertThat(valueOf(WsHub.class.getConstructors())).as("WsHub").isEqualTo(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT);
+        assertThat(valueOf(RouteReader.class.getConstructors())).as("RouteReader").isEqualTo(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT);
+        java.lang.reflect.Method factory = dev.wakeline.config.RedisConfig.class.getDeclaredMethod("redisConnectionFactory",
+                String.class, int.class, String.class, String.class, String.class);
+        assertThat(java.util.Arrays.stream(factory.getParameters()).map(p -> p.getAnnotation(org.springframework.beans.factory.annotation.Value.class))
+                .filter(java.util.Objects::nonNull).map(org.springframework.beans.factory.annotation.Value::value).toList())
+                .as("RedisConfig — the Lettuce command timeout").contains(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT);
+        assertThat(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT).isEqualTo("${spring.data.redis.timeout:3s}");
+    }
+
+    /** @Autowired 생성자에서 spring.data.redis.timeout 을 읽는 @Value 의 식. */
+    static String valueOf(java.lang.reflect.Constructor<?>[] ctors) {
+        for (java.lang.reflect.Constructor<?> c : ctors) {
+            if (!c.isAnnotationPresent(org.springframework.beans.factory.annotation.Autowired.class)) continue;
+            for (java.lang.reflect.Parameter p : c.getParameters()) {
+                org.springframework.beans.factory.annotation.Value v = p.getAnnotation(org.springframework.beans.factory.annotation.Value.class);
+                if (v != null && v.value().contains("spring.data.redis.timeout")) return v.value();
+            }
+        }
+        return null;
     }
 
     /** 운영 실행기: 스레드 수 · 대기열 상한 · 넘치면 거절 · 데몬 이름 · 대기열 길이 지표. 닫으면 멈춘다. 선박 조회 실행기와 따로다(이름 · 지표). */

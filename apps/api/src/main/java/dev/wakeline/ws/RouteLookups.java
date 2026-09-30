@@ -6,7 +6,6 @@ import dev.wakeline.ws.SelectionLookups.Flight;
 import dev.wakeline.ws.SelectionLookups.Reads;
 import dev.wakeline.ws.SelectionLookups.Source;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.springframework.boot.convert.DurationStyle;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
@@ -61,18 +60,6 @@ final class RouteLookups implements AutoCloseable {
         if (redisCommandTimeout == null || redisCommandTimeout.isNegative() || redisCommandTimeout.isZero())
             throw new IllegalStateException("spring.data.redis.timeout must be positive — it bounds the WS selected.route answer, got " + redisCommandTimeout);
         return redisCommandTimeout.toMillis();
-    }
-
-    /**
-     * 설정 글자(spring.data.redis.timeout — 예 "3s") → 길이. Boot 가 이 속성을 Lettuce 명령 상한으로 묶을 때와 같은 해석(DurationStyle — 단위가 없으면 ms)이다.
-     * 해석할 수 없으면 기동하지 않는다.
-     */
-    static Duration duration(String raw) {
-        try {
-            return DurationStyle.detectAndParse(raw);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("spring.data.redis.timeout is not a duration: " + raw, e);
-        }
     }
 
     /** 노선의 출처(운영: {@link #of}). null 이면 노선을 싣지 않는다(시험 구성 — selected.route null). */

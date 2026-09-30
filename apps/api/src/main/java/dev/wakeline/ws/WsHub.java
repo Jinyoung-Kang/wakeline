@@ -1,6 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.config.AppProperties;
+import dev.wakeline.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.Bbox;
@@ -139,15 +140,18 @@ public class WsHub implements SmartLifecycle {
     private final Counter statusHit;
     private final Counter statusMiss;
 
-    /** 운영: 노선 조회는 {@link #useRouteReader}(Redis 명령 상한 spring.data.redis.timeout 이 답의 마감 — 설정값, 0 이하면 기동하지 않는다). */
+    /**
+     * 운영: 노선 조회는 {@link #useRouteReader} — 답의 마감 = Redis 명령 상한. 기본 연결(RedisConfig)의 Lettuce 명령 상한 · REST 노선 기다림(RouteReader)과 같은
+     * 설정 식 {@link RedisConfig#COMMAND_TIMEOUT}(spring.data.redis.timeout, 없으면 3s — 설정값) · 같은 해석. 해석할 수 없거나 0 이하면 기동하지 않는다.
+     */
     @Autowired
     public WsHub(ObjectMapper json, AppProperties props, SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar,
                  StatusService status, EngineService engine, MeterRegistry meters, RouteReader routes,
-                 @Value("${spring.data.redis.timeout}") String redisCommandTimeout) {
+                 @Value(RedisConfig.COMMAND_TIMEOUT) String redisCommandTimeout) {
         this(json, props, snapshots, sigmets, radar, status::publicStatus, () -> engine.activeAlerts(null), engine::predictionAvailability,
                 meters, Executors.newVirtualThreadPerTaskExecutor(),
                 Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ws-timer").factory()), HELLO_TIMEOUT_MS);
-        useRouteReader(routes, RouteLookups.duration(redisCommandTimeout));
+        useRouteReader(routes, RedisConfig.commandTimeout(redisCommandTimeout));
     }
 
     /** 테스트용: 실행기·타이머·데이터 출처를 주입한다. */
