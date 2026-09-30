@@ -261,10 +261,56 @@ async def test_the_smallest_tile_still_truncated_is_incomplete_and_said_loudly(m
     await job.run_once()
     states = {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()}
     assert states == {"0/28/60": "split", **{k.key: "incomplete" for k in A.children()}}
+    # WARN 은 채우기 한 번에 하나(검토 지적: 타일 147개가 incomplete 면 WARN 9,408줄이 /logs 상한 약 3,000을 넘쳤다) — 나머지는 INFO, 요약 줄이 센다
     warns = [x for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING and "incomplete" in x.getMessage()]
-    assert len(warns) == 4
-    assert [q for q in db.runs[-1][2]["quality"] if q[0] == "traffic_grid_tile_incomplete"]
+    assert len(warns) == 1 and "further incomplete tiles in this fill pass" in warns[0].getMessage()
+    assert len(lines(caplog, "marked incomplete")) == 4
+    assert len([q for q in db.runs[-1][2]["quality"] if q[0] == "traffic_grid_tile_incomplete"]) == 4
+    (summary,) = lines(caplog, "geometry fill pass")
+    assert " 1 split and 4 left incomplete as possibly truncated, " in summary
     assert snapshot(r)["resolved"] == 2  # 받은 칸은 그대로 쓴다(지물마다 검사를 통과한 실제 기하)
+    assert r.kv[HB]["traffic_grid_fill_pass_tile_incomplete"] == "4" and r.kv[HB]["traffic_grid_fill_pass_tile_splits"] == "1"
+
+
+async def test_a_server_that_always_declares_one_more_costs_five_calls_per_tile_not_85(caplog):
+    """검토 지적(2026-10-01): numberOfFeatures 의 뜻이 다르면(서버가 늘 하나 더 적는다) 32 km 타일 하나가 4 km 까지 1 + 4 + 16 + 64 = 85번을 쓰고
+    incomplete WARN 64줄을 냈다. 자식의 답이 부모가 준 칸보다 적은 지물로도 여전히 어긋나면 상한 탓이 아니다 — 더 나누지 않는다: 5번 · WARN 한 줄."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    grid = FakeGrid()
+
+    class PlusOne(GridWfs):
+        async def bbox(self, box, *, wait_s=5.0, before_send=None):
+            self.answers[box] = self.grid.body(box, extra_declared=1)
+            return await super().bbox(box, wait_s=wait_s, before_send=before_send)
+
+    job, wfs, r, _c, _db = start(grid, [home(grid, A)[1]], known=[home(grid, A)[0]], wfs=PlusOne(grid))
+    await job.run_once()
+    assert wfs.boxes == [A.box, *[k.box for k in A.children()]] and wfs.asked == []
+    states = {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()}
+    assert states == {"0/28/60": "split", **{k.key: "incomplete" for k in A.children()}}
+    warns = [x.getMessage() for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING]
+    assert len(warns) == 1 and "a server cap cannot explain it" in warns[0]
+
+
+async def test_a_server_ignoring_the_bbox_is_split_once_then_the_too_large_parts_are_errors():
+    """검토 지적(2026-10-01): 상자를 무시하고 늘 큰 본문을 주는 서버에는 타일 하나가 16 km · 8 km 까지 21번을 쓰고서야 오류가 됐다. 칸이 0.025°
+    정사각형이면 32 km 상자에는 약 200칸(≈ 130 KB)뿐이라 384 KiB 를 넘는 16 km 답은 나눠서 나아지지 않는다 — 크기 초과는 level 0 에서만 한 번
+    나누고, 나눈 상자가 또 넘으면 오류(타일 물러나기)."""
+    grid = FakeGrid()
+
+    class Huge(GridWfs):
+        async def bbox(self, box, *, wait_s=5.0, before_send=None):
+            self.answers[box] = WfsTooLarge("response too large (459859 bytes > 393216)")
+            return await super().bbox(box, wait_s=wait_s, before_send=before_send)
+
+    job, wfs, r, _c, db = start(grid, [home(grid, A)[1]], known=[home(grid, A)[0]], wfs=Huge(grid))
+    await job.run_once()
+    assert wfs.boxes[0] == A.box and all(b in [k.box for k in A.children()] for b in wfs.boxes[1:])
+    states = {k: orjson.loads(v)["status"] for k, v in r.kv[TILES_KEY].items()}
+    assert states == {"0/28/60": "split"}
+    assert all(q.failures >= 1 for t, q in job.tiles._queued.items() if t.box in wfs.boxes[1:])
+    runs = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"]
+    assert "still too large after a split" in runs[-1]["error_text"]
 
 
 def deep_in(grid: FakeGrid, t: Tile, margin: float = 1_800.0) -> list[str]:
@@ -503,7 +549,7 @@ async def test_the_pass_summary_and_the_heartbeat_count_tiles(caplog):
     new = int(r.kv[HB]["traffic_grid_cells_known"]) - 2
     # 새 칸만 DB 에 보낸다(이미 같은 기하로 아는 칸 · 겹치는 타일이 다시 준 칸은 보내지 않는다) — 'queued' 는 쓰기 큐에 넣었다는 뜻(쓰기는 비동기)
     assert (
-        f"6 tiles: {n_cells} cells listed ({new} new, {sum(db.calls)} queued for marine_grid4), 1 split as possibly truncated, 0 errors; "
+        f"6 tiles: {n_cells} cells listed ({new} new, {sum(db.calls)} queued for marine_grid4), 1 split and 0 left incomplete as possibly truncated, 0 errors; "
         in line
     )
     assert "; tiles queued 0, done 5; " in line and sum(db.calls) == new
@@ -526,7 +572,14 @@ async def test_without_a_tile_source_the_heartbeat_tile_fields_are_empty():
 
     job, _k, _w, r, _c, _db = setup()
     await job.run_once()
-    for f in ("tiles_done", "tiles_queued", "fill_pass_tiles", "fill_pass_tile_cells", "fill_pass_tile_stored"):
+    for f in (
+        "tiles_done",
+        "tiles_queued",
+        "fill_pass_tiles",
+        "fill_pass_tile_cells",
+        "fill_pass_tile_stored",
+        "fill_pass_tile_incomplete",
+    ):
         assert r.kv[HB][f"traffic_grid_{f}"] == ""
 
 

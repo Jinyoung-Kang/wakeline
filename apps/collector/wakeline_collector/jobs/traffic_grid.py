@@ -57,7 +57,7 @@
   traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · waiting_tiles · hour_window · daily_budget · breaker · operator_off) ·
   traffic_grid_fill_resume_at(다음에 움직이는 때 — 없으면 빈 값) · traffic_grid_fill_pass_at 과 _lookups · _found · _not_found · _off_grid ·
   _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값) · bbox 타일(타일 공급자가 없으면 빈 값): traffic_grid_tiles_done ·
-  traffic_grid_tiles_queued · traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_stored · _tile_splits · _tile_errors.
+  traffic_grid_tiles_queued · traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_stored · _tile_splits · _tile_incomplete · _tile_errors.
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
 PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 연달아 실패 5번 · failed 1일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
@@ -451,7 +451,10 @@ class FillPass:
     tile_stored: int = (
         0  # DB(marine_grid4) 쓰기 큐에 넣은 칸 — 새 칸 · 기하가 바뀐 칸(쓰기는 비동기 — 버려지면 heartbeat db_dropped)
     )
-    tile_splits: int = 0  # 잘렸을 수 있어 나눈(가장 작은 타일이면 incomplete 로 적은) 타일
+    tile_splits: int = 0  # 잘렸을 수 있어 넷으로 나눈 타일
+    tile_incomplete: int = (
+        0  # 잘렸을 수 있지만 더 나누지 않고 incomplete 로 둔 타일(가장 작은 4 km · 부모보다 적은 지물로도 여전히)
+    )
     tile_errors: int = 0
 
 
@@ -471,6 +474,7 @@ class _Tick:
     tile_stored: int = 0
     tile_off_grid: int = 0
     tile_splits: int = 0
+    tile_incomplete: int = 0
     tile_errors: int = 0
     errors_in_row: int = 0
     last_error: str | None = None
@@ -523,6 +527,7 @@ class TrafficGridJob:
         self._tile_off_grid_ids: set[str] = set()
         # 아는 칸 → 중심이 든 level 0 타일(받은 기하에서만). 타일 답에서 빠진 아는 칸을 찾는 데 쓴다(_known_inside) — 번호 참조만(칸 10만에 약 1 MB)
         self._known_at: dict[Tile, list[str]] = {}
+        self._pass_warned: set[str] = set()  # 이 채우기에서 이미 WARN 한 종류(incomplete) — 채우기가 끝나면 비운다
         # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
         self._snapshot_ids: frozenset[str] = frozenset()
         self._now, self._mono = now, mono
@@ -999,6 +1004,7 @@ class TrafficGridJob:
             ps.tile_new += tk.tile_new
             ps.tile_stored += tk.tile_stored
             ps.tile_splits += tk.tile_splits
+            ps.tile_incomplete += tk.tile_incomplete
             ps.tile_errors += tk.tile_errors
         if tk.stop_reason is None:
             if tk.paused:
@@ -1172,15 +1178,19 @@ class TrafficGridJob:
             got = await self._send(self.wfs, hour, lambda bs: src.bbox(tile.box, before_send=bs))
         except WfsTooLarge as e:
             tk.tiles += 1
-            if tile.level < gt.MAX_LEVEL:
-                # 크기 상한을 넘은 응답은 해석하지 않았다 — 오류가 아니라 '더 작은 상자로'(지물이 모형보다 많거나 크다)
+            if tile.level == 0:
+                # 크기 상한을 넘은 응답은 해석하지 않았다 — 오류가 아니라 '더 작은 상자로'(지물이 모형보다 많거나 크다). 한 번만: 0.025° 칸이면 32 km
+                # 상자에 약 200칸(≈ 130 KB — 계산)뿐이라 나눈 16 km 상자가 또 넘으면 서버가 상자를 무시하거나 다른 것을 준다(검토 지적 2026-10-01 —
+                # 예전에는 4 km 까지 21번을 쓰고서야 오류였다)
                 tk.calls += 1
                 tk.errors_in_row = 0
-                tk.tile_splits += 1
                 await self._split(tile, str(e), 0, None, now, tk)
                 return True
             tk.tile_errors += 1
-            return await self._tile_failed(tile, e, now, tk)
+            still = WfsTooLarge(
+                f"{e} — still too large after a split ({tile.size} m box); the answer is not what the grid holds in this box"
+            )
+            return await self._tile_failed(tile, still, now, tk)
         except Exception as e:  # noqa: BLE001 — HTTP · 응답 모양(WfsError) · 읽기 시간 초과
             tk.tiles += 1
             tk.tile_errors += 1
@@ -1254,7 +1264,6 @@ class TrafficGridJob:
             gone = f"{len(missing)} known cells inside the box missing from the answer, e.g. {missing[0]}"
             why = gone if why is None else f"{why}; {gone}"
         if why is not None:
-            tk.tile_splits += 1
             await self._split(tile, why, len(res.cells), res.members, now, tk)
             return True
         state = self.tiles.finish(tile, "done", len(res.cells), now)
@@ -1272,9 +1281,11 @@ class TrafficGridJob:
         ps = self.tiles.states.get(parent) if parent is not None else None
         not_a_cap = members is not None and ps is not None and ps.status == "split" and members < ps.cells
         if tile.level < gt.MAX_LEVEL and not not_a_cap:
+            tk.tile_splits += 1
             state = self.tiles.finish(tile, "split", cells, now)
             log.info("traffic grid: tile %s possibly truncated (%s) — split into 4", tile.key, why)
         else:
+            tk.tile_incomplete += 1
             if not_a_cap:
                 assert parent is not None and ps is not None
                 why = (
@@ -1282,12 +1293,19 @@ class TrafficGridJob:
                     "so a server cap cannot explain it — splitting further would not help"
                 )
             state = self.tiles.finish(tile, "incomplete", cells, now)
-            log.warning(
-                "traffic grid: tile %s (%d m) still possibly truncated (%s) — marked incomplete for %d h; ids inside go on by one-id lookup",
+            # WARN 은 채우기 한 번에 하나(검토 지적 2026-10-01: 타일마다 WARN 이면 /logs 상한을 넘친다) — 나머지는 INFO, 요약 줄이 센다
+            first = "incomplete" not in self._pass_warned
+            self._pass_warned.add("incomplete")
+            log.log(
+                logging.WARNING if first else logging.INFO,
+                "traffic grid: tile %s (%d m) still possibly truncated (%s) — marked incomplete for %d h; ids inside go on by one-id lookup%s",
                 tile.key,
                 tile.size,
                 why,
                 gt.TILE_FAILED_TTL_S // 3600,
+                " (further incomplete tiles in this fill pass are logged at INFO and counted in its summary line)"
+                if first
+                else "",
             )
             tk.quality.append(("traffic_grid_tile_incomplete", None, {"tile": tile.key, "detail": why[:300]}))
         await self._store_tile(tile, state)
@@ -1333,6 +1351,7 @@ class TrafficGridJob:
             return
         at = self._now()
         self._pass, self._last_pass = None, (at, ps)
+        self._pass_warned.clear()
         used, limit = await self.ctx.budget.usage(self.wfs.name)
         retrying, _ = self.geometry.retries()
         nq = self.geometry.not_queued
@@ -1341,7 +1360,7 @@ class TrafficGridJob:
             if self.tile_src is None
             else (
                 f"{ps.tiles} tiles: {ps.tile_cells} cells listed ({ps.tile_new} new, {ps.tile_stored} queued for marine_grid4), "
-                f"{ps.tile_splits} split as possibly truncated, "
+                f"{ps.tile_splits} split and {ps.tile_incomplete} left incomplete as possibly truncated, "
                 f"{ps.tile_errors} errors; tiles queued {self.tiles.queued}, done {self.tiles.done_count()}; "
             )
         )
@@ -1502,6 +1521,7 @@ class TrafficGridJob:
             "traffic_grid_fill_pass_tile_new": str(lp[1].tile_new) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_stored": str(lp[1].tile_stored) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_splits": str(lp[1].tile_splits) if lp and not tl else "",
+            "traffic_grid_fill_pass_tile_incomplete": str(lp[1].tile_incomplete) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_errors": str(lp[1].tile_errors) if lp and not tl else "",
             "traffic_grid_calls_komsa": "" if used_k is None else str(used_k),
             "traffic_grid_calls_wfs": "" if used_w is None else str(used_w),
