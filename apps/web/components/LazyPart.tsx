@@ -1,5 +1,5 @@
 "use client";
-import { Component, createRef, lazy, Suspense, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { Component, createRef, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { checkChunk, chunkCheckText, chunkUrlOf, type ChunkCheck } from "@/lib/chunk-probe";
 import { describeThrown, reportClientError } from "@/lib/errorReport";
 
@@ -14,6 +14,9 @@ import { describeThrown, reportClientError } from "@/lib/errorReport";
  *   (lib/errorReport — 같은 메시지 60 s 에 1번). 청크가 서버에 없으면(404 · 410 — 페이지를 연 뒤 새 판이 배포되어 옛 청크가 사라짐) '다시 시도'로는 받을 수
  *   없으므로 '페이지 새로고침'만, 그 밖에는 '다시 시도'(새 lazy 로 다시 받는다)를 보인다. 다시 시도가 또 실패하면 두 단추를 함께 보인다.
  *   받은 조각 자신의 그리기 오류는 삼키지 않는다 — 경계가 다시 던져 위(app/error.tsx)가 받는다.
+ * - 못 받은 뒤 다른 경로(미리 받기 · 같은 조각의 다른 자리의 다시 시도)로 받으면: 누르지 않아도 오류 자리가 조각으로 바뀐다(리뷰 2026-09-30 — 전에는 실패한
+ *   lazy 와 경계의 오류가 '다시 시도'를 누를 때까지 남았다). 받았는지는 useLoaded() 로 구독한다 — 조각이 아직 없을 때 그 안의 요소(예: 검색 선박 listbox)를
+ *   가리키지 않게 부르는 쪽도 쓴다(components/AircraftSearch).
  * - 다시 시도 뒤의 초점: 누른 단추가 사라지므로, 초점이 문서로 떨어졌으면 불러온 조각의 첫 요소(또 실패하면 새 오류의 첫 단추)로 옮긴다 —
  *   키보드 · 화면 읽기 사용자가 패널 안의 자리를 잃지 않게. 사용자가 이미 다른 곳으로 옮겼으면 건드리지 않는다.
  */
@@ -45,6 +48,8 @@ export interface LazyPartComponent<P extends object> {
   (props: P): ReactNode;
   /** 모듈을 미리 받는다(한 번만 — 실패하면 다음 호출이 다시 받는다). 시험 · 의도가 보일 때 미리 받기에 쓴다 */
   preload(): Promise<void>;
+  /** 모듈을 받았는가(구독 — 받으면 다시 그린다). 서버 렌더와 받기 전에는 false */
+  useLoaded(): boolean;
   readonly label: string;
 }
 
@@ -60,20 +65,36 @@ export function lazyPart<P extends object>(label: string, load: () => Promise<Co
   const frame = opts.frameClassName ?? DEFAULT_FRAME;
   let loaded: ComponentType<P> | null = null;
   let pending: Promise<ComponentType<P>> | null = null;
+  const listeners = new Set<() => void>();
   const fetchOnce = (): Promise<ComponentType<P>> => (pending ??= load().then(
-    (C) => { loaded = C; return C; },
+    (C) => {
+      loaded = C;
+      if (slot.failed) retry(); // 지금 lazy 가 실패를 기억한다 — 새로 그리는 자리가 그것을 쓰지 않게(받은 모듈을 곧바로 주는 새 lazy)
+      for (const l of listeners) l();
+      return C;
+    },
     (e: unknown) => { pending = null; throw new LazyLoadError(label, e); },
   ));
-  const makeLazy = () => lazy<ComponentType<P>>(() => (loaded ? settled<Module<P>>({ default: loaded }) : fetchOnce().then((C) => ({ default: C }))));
+  const makeLazy = (): ReturnType<typeof lazy<ComponentType<P>>> => {
+    const L = lazy<ComponentType<P>>(() => (loaded ? settled<Module<P>>({ default: loaded }) : fetchOnce().then(
+      (C) => ({ default: C }),
+      (e: unknown) => { if (slot.current === L) slot.failed = true; throw e; },
+    )));
+    return L;
+  };
   // 조각마다 lazy 하나(다시 시도하면 새것 — 실패한 lazy 는 실패를 기억한다). 그리기에서 만들지 않는다(같은 형식이어야 상태가 유지된다)
-  const slot = { current: makeLazy() };
-  const retry = () => { slot.current = makeLazy(); };
+  const slot = { current: makeLazy(), failed: false };
+  const retry = () => { slot.current = makeLazy(); slot.failed = false; };
+  const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
+  const isLoaded = () => loaded != null;
+  const useLoaded = () => useSyncExternalStore(subscribe, isLoaded, () => false);
 
   function Part(props: P) {
     const [attempt, setAttempt] = useState(0);
+    const ready = useLoaded();
     const Lazy = slot.current;
     return (
-      <LoadBoundary key={attempt} label={label} frame={frame} attempt={attempt} onRetry={() => { retry(); setAttempt((n) => n + 1); }}>
+      <LoadBoundary key={attempt} label={label} frame={frame} attempt={attempt} ready={ready} onRetry={() => { retry(); setAttempt((n) => n + 1); }}>
         <Suspense fallback={<PartLoading label={label} frame={frame} />}>
           {attempt > 0 ? <FocusAfterRetry /> : null}
           <Lazy {...props} />
@@ -81,7 +102,7 @@ export function lazyPart<P extends object>(label: string, load: () => Promise<Co
       </LoadBoundary>
     );
   }
-  return Object.assign(Part, { preload: () => fetchOnce().then(() => undefined), label });
+  return Object.assign(Part, { preload: () => fetchOnce().then(() => undefined), useLoaded, label });
 }
 
 /** 초점이 문서로 떨어졌는가(누른 단추가 사라지면 브라우저는 body 로 옮긴다 — 떼어 낸 요소를 가리키는 환경도 같게 본다) */
@@ -124,7 +145,8 @@ function PartLoading({ label, frame }: { label: string; frame: string }) {
   );
 }
 
-interface BoundaryProps { label: string; frame: string; attempt: number; onRetry: () => void; children: ReactNode }
+/** ready = 조각의 모듈을 (다른 경로로라도) 받았다 — 받지 못함을 보이던 경계는 누르지 않아도 다시 그린다 */
+interface BoundaryProps { label: string; frame: string; attempt: number; ready: boolean; onRetry: () => void; children: ReactNode }
 
 /** 페이지 새로고침(새 판의 HTML · 청크를 받는다) */
 function reloadPage() { window.location.reload(); }
@@ -134,9 +156,16 @@ class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: Chu
   private mounted = false;
   private alertRef = createRef<HTMLDivElement>();
   static getDerivedStateFromError(error: unknown) { return { error }; }
-  componentDidMount() { this.mounted = true; }
+  componentDidMount() { this.mounted = true; this.recoverIfLoaded(); }
+  /** 받지 못함을 보이는 동안 조각이 다른 경로(미리 받기 · 다른 자리의 다시 시도)로 왔다 — 다시 시도와 같게 새로 그린다(초점 규칙도 같다) */
+  private recoverIfLoaded(): boolean {
+    if (!(this.state.error instanceof LazyLoadError) || !this.props.ready) return false;
+    this.props.onRetry();
+    return true;
+  }
   /** 다시 시도가 또 실패해 오류가 다시 보일 때(또는 확인 결과로 단추가 바뀔 때) 초점이 떨어졌으면 첫 단추로 */
   componentDidUpdate() {
+    if (this.recoverIfLoaded()) return;
     if (this.props.attempt === 0 || this.state.error == null || !focusLost()) return;
     this.alertRef.current?.querySelectorAll<HTMLButtonElement>("[data-lazy-action]")[0]?.focus();
   }

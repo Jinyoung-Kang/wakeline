@@ -136,12 +136,16 @@ export function AircraftSearch() {
     setMsg(c.message);
   }, [selectShip, requestFlyTo, now]);
 
+  // 선박 표 조각(ShipTablePart)이 아직 오지 않았거나 받지 못했으면 선박 listbox · option 이 DOM 에 없다 — 그동안 선박 줄은 키보드 이동 · Enter ·
+  // aria-controls · aria-activedescendant 에 넣지 않는다(보이지 않는 줄을 고르거나 없는 id 를 가리키지 않게 — 리뷰 2026-09-30). 받으면 다시 그린다.
+  const shipTableReady = ShipTablePart.useLoaded();
   const rows = shipRows(ships.hits, shipSort, now);
-  const total = aircraft.hits.length + rows.length;
+  const navRows = shipTableReady ? rows : [];
+  const total = aircraft.hits.length + navRows.length;
   const pick = (i: number) => {
     if (i < 0) return;
     if (i < aircraft.hits.length) { if (aircraft.state === "done") void chooseAircraft(aircraft.hits[i]); return; }
-    const r = rows[i - aircraft.hits.length];
+    const r = navRows[i - aircraft.hits.length];
     const h = r ? ships.hits.find((x) => x.mmsi === r.mmsi) : undefined;
     if (h && ships.state === "done") chooseShip(h);
   };
@@ -161,10 +165,10 @@ export function AircraftSearch() {
 
   const onShipSort = (k: ShipSortKey) => setShipSort((cur) => (cur?.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
   const showList = open && (qa != null || qs != null);
-  const activeId = showList && active >= 0 && active < total ? optionId(uid, active < aircraft.hits.length ? `a-${aircraft.hits[active].hex}` : `s-${rows[active - aircraft.hits.length].mmsi}`) : undefined;
-  // 팝업 = 두 listbox(항공기 · 선박 — 묶음 제목이 이름). 선박 listbox 는 결과가 있을 때만 그린다(없는 id 를 가리키지 않게)
+  const activeId = showList && active >= 0 && active < total ? optionId(uid, active < aircraft.hits.length ? `a-${aircraft.hits[active].hex}` : `s-${navRows[active - aircraft.hits.length].mmsi}`) : undefined;
+  // 팝업 = 두 listbox(항공기 · 선박 — 묶음 제목이 이름). 선박 listbox 는 결과가 있고 선박 표 조각을 받았을 때만 있다(없는 id 를 가리키지 않게)
   const lists = searchListIds(uid);
-  const controls = rows.length ? `${lists.aircraft} ${lists.ships}` : lists.aircraft;
+  const controls = navRows.length ? `${lists.aircraft} ${lists.ships}` : lists.aircraft;
   const hint = text.trim().length > 0 && !qa && !qs ? "영문·숫자 2자 이상(선박은 공백 . - / 포함 40자까지)" : "";
   return (
     // 초점이 검색 영역(입력 · 결과의 정렬 단추) 밖으로 나갈 때만 닫는다 — Tab 으로 선박 표 머리글(정렬)에 갈 수 있게

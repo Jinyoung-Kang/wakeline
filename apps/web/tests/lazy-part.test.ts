@@ -157,6 +157,38 @@ describe("mounted (react-dom/client)", () => {
     expect(byId("lazy-reload")).not.toBeNull();
   });
 
+  it("a part that failed recovers by itself once a later preload succeeds — no '다시 시도' needed (review 2026-09-30); a fresh mount uses the loaded module", async () => {
+    // 전에는 실패한 lazy(slot)와 경계의 오류가 '다시 시도'를 누를 때까지 남았다 — 예: 검색창에 다시 초점이 와서 선박 표 미리 받기가 성공해도 '받지 못했습니다'
+    let fail = true;
+    const Table = () => createElement("table", { "data-testid": "table" });
+    const Part = lazyPart("선박 표", async () => { if (fail) throw new Error("Failed to load chunk /_next/static/chunks/t.js"); return Table; });
+    await mount(createElement("div", null, createElement(Part), createElement(Part)));
+    await settle();
+    expect(byId("lazy-error")).not.toBeNull();
+    expect(byId("table")).toBeNull();
+    fail = false;
+    await React.act(async () => { await Part.preload(); });
+    await settle();
+    expect(byId("lazy-error")).toBeNull();
+    expect(byId("table")).not.toBeNull();
+    expect(reports).toHaveLength(2); // 실패는 자리마다 한 번씩 보고됐다(그 뒤 회복은 보고하지 않는다)
+    await React.act(async () => { root!.render(createElement("section", null, createElement(Part))); }); // 새로 그리는 자리 — 실패한 lazy 를 쓰지 않는다
+    expect(byId("lazy-error")).toBeNull();
+    expect(byId("table")).not.toBeNull();
+  });
+
+  it("useLoaded() is false until the module arrives and re-renders its caller when it does", async () => {
+    let resolve!: (c: ComponentType) => void;
+    const Part = lazyPart("선박 표", () => new Promise<ComponentType>((r) => { resolve = r; }));
+    const Probe = () => createElement("output", { "data-testid": "probe" }, Part.useLoaded() ? "loaded" : "not yet");
+    expect(renderToStaticMarkup(createElement(Probe))).toContain("not yet"); // 서버 렌더는 받기 전 값
+    await mount(createElement(Probe));
+    expect(byId("probe")?.textContent).toBe("not yet");
+    void Part.preload();
+    await React.act(async () => { resolve(() => null); });
+    expect(byId("probe")?.textContent).toBe("loaded");
+  });
+
   describe("keyboard focus after '다시 시도' (the pressed button disappears)", () => {
     const failing = (label: string, state: { fail: boolean }) => {
       const Card = () => createElement("section", { "data-testid": "card" }, createElement("button", null, "닫기"));
