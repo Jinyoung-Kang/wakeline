@@ -168,7 +168,7 @@ public class AisStatus {
 
     /**
      * 상태 해시의 shards(계약 v4 §D: JSON 배열 ≤ 3, 원소 {scope, state, connected, last_msg_at, msgs_per_s, lag_p50_s, gap_open_since, gap_reason,
-     * sessions_ended}) → 검증한 구역 목록. api 가 쓰는 필드만 읽는다. 없거나 빈 배열이면 null(구역 정보 없음 — 합계 필드만 쓴다).
+     * sessions_ended, ping_rtt_max_s, ws_queue_max} — 뒤의 둘은 수신 진단(ADR-014 부록 C, ops/pipeline 은 합계를 읽는다)) → 검증한 구역 목록. api 가 쓰는 필드만 읽는다. 없거나 빈 배열이면 null(구역 정보 없음 — 합계 필드만 쓴다).
      * 배열이 아니거나 3개를 넘거나, 원소가 객체가 아니거나 scope 가 구역 규칙({@link AisScope#parse})에 맞지 않으면 전체를 null(모름).
      * 원소의 다른 필드는 하나씩 검사해 틀리면 그 값만 null.
      */

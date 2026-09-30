@@ -57,6 +57,8 @@ def test_one_shard_aggregates_are_that_shard():
         "gap_open_since": iso_ms(T0_EPOCH + 1),
         "gap_reason": "server closed (1006)",
         "sessions_ended": 1,
+        "ping_rtt_max_s": None,  # 진단(ADR-014 부록 C): pong 을 받은 적이 없다 — 모름
+        "ws_queue_max": None,
     }
 
 

@@ -620,3 +620,31 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     서로 다른 tm 수 · 키 없음 지우기 · 목록 실패 · 실행 상태 · 해시 · 이어받기 · 다시 쓰기) · `test_rest_contract_rules` · api
     `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT`(ETag · /status) · `RestSamplesIT` · `WsSchemaContractTest` · web `tests/kma-missing.test.ts` ·
     `tests/mapview-lifecycle.test.ts`(타임라인) · `tests/ops-page.test.ts`(공급자 줄 · 실행 상태 색).
+
+## G. 13차 개정(2026-09-30 · 레인 ais · 로그 화면의 keepalive 1011 두 건) — ais 수신 진단 필드 · 끊김 로그 수준
+같은 날 병행 레인이 먼저 13차 · §G21 을 썼다면 합칠 때 번호만 뒤로 민다(내용은 겹치지 않는다).
+- G21(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
+  - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
+    `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
+    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
+    (받던 연결이 끊겨 열린 공백 — 마지막 데이터 → 다시 받은 데이터 — 이 30 s 안에 닫힌 횟수, 없앤 구역 포함). `queue_wait_max_s` 에는 지금 맨 앞에서 기다리는 원문의
+    머문 시간도 든다(정리 태스크가 멈춰도 모름이 되지 않게). 수집기가 고른 값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다, 초는 지수 없는 십진수):
+    `queue_limit`(원문 대기열 건수 상한) · `loop_tick_s`(0.5) · `loop_stall_s`(1) · `loop_warn_s`(5) · `loop_warn_every_s`(60 — 루프 측정이 없는 수집기면 넷 다 빈 값) ·
+    `reconnect_quick_window_s`(30) · `reconnect_warn_count`(3) · `reconnect_warn_window_s`(1800). fixture 재생은 연결이 없어 `ws_queue_max` · `ping_rtt_max_s` 만 빈 값이다
+    (루프 지연 · 원문 대기열은 두 모드 모두 잰다 — `main.py`).
+  - `shards[]` 원소에 `ping_rtt_max_s`(초 수 또는 null) · `ws_queue_max`(정수 또는 null)를 끝에 더한다 — 원소 필드 순서는 `SHARD_FIELDS`(contract_check 가 본다).
+    api `AisStatus` 는 이 둘을 읽지 않는다(지금 필드만 검사 — 더한 필드가 있어도 구역 정보를 버리지 않는다, `AisStatusTest` · `RestSamplesIT` 표본에 실었다).
+  - `GET /api/v1/ops/pipeline` 의 `ais` 에 같은 이름(snake_case)으로 싣는다: `reconnects_quick_total` · `loop_lag_max_s` · `loop_stalls_total` · `queue_wait_max_s` ·
+    `queue_depth_max` · `queue_limit` · `ws_queue_max` · `ws_queue_limit` · `ping_rtt_max_s` · `ping_timeout_s` · `diag_window_s` · `reconnect_quick_window_s` ·
+    `reconnect_warn_count` · `reconnect_warn_window_s` · `loop_tick_s` · `loop_stall_s` · `loop_warn_s` · `loop_warn_every_s`. 같은 신선도 규칙(updated_at 30 s)이고 초는
+    부호 · 지수 없는 십진수만, 수 · 상한은 정수만 — 그 밖은 null. 운영 PIPELINE 탭은 창 · 상한 · 시간 초과를 detail 에 "수집기 설정" 으로 적고, 설명의 고른 숫자
+    (회복 창 · 되풀이 WARN 기준 · 루프 틱 · 멈춤 · WARN 문턱과 간격)를 응답에서 채운다(모르면 "—"). 색으로 판정하지 않는다: 수신 버퍼가 상한 이상이면
+    "상한 도달 — 그때 소켓 읽기가 잠시 멈춤(한꺼번에 받은 묶음 또는 루프 멈춤 — 결함 아님 …)" 을 적을 뿐이다(꺼낸 뒤 남은 수라 상한과 같아도 멈춰 있었다).
+    어느 것도 손실 수가 아니다(손실 배지에 들지 않는다).
+  - 끊김 로그 수준(수집기, 계약 v5 §C2 의 WARN · ERROR 싣기와 함께 읽는다): 받던 연결이 끊겨 열린 공백(마지막 데이터부터)이 30 s 안에 닫히면 INFO(로그
+    화면에 오르지 않는다 — `reconnects_quick_total` 로 센다). 창은 끊긴 순간이 아니라 공백 길이로 잰다. 같은 연결이 30분에 3번째로 끊김 · 끊길 때 공백이 이미
+    30 s 를 넘음(idle 끊김 등) · 데이터 없이 끝난 연결 · 공백이 30 s 를 넘도록 다시 받지 못함(과 그 뒤 늦은 회복)은 WARN.
+    공백(`ais_gap` · AIS 수신 공백 목록 · 상태 해시 `gap_*`)은 로그 수준과 상관없이 그대로 기록한다. 끊김 로그 한 줄에 최근 60 s 최댓값과 공급자 지연 p50 을 붙인다.
+  - 회귀 막기: collector `test_ais_keepalive`(1011 기제 재현 — 루프 멈춤은 두 콜백 순서를 각각 고정) · `test_ais_diag`(한꺼번에 받은 묶음 · 멈춘 소비자 ·
+    고른 값 싣기) · `test_ais_reconnect_log`(공백 길이로 재는 회복 창) · `tools/contract_check.py`(새 필드 모양 · main.py 처럼 만든 fixture 의 모름 · 구역 최댓값),
+    api `OpsPipelineControllerTest` · `OpsPipelineIT`, 웹 `tests/ops-pipeline-ais-diag.test.ts`(설명에 숫자를 적지 않음 포함).

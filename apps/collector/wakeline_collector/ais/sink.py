@@ -5,6 +5,15 @@
 - 닫힌 공백은 다음 틱(≤ 1 s)에 XADD(kind "ais_gap"). 구역 연결의 공백은 payload scope(그 구역의 정규화한 상자 문자열)를 싣는다(계약 v4 §D).
 - 상태 해시 `wakeline:ais:status` 는 5 s 마다 + 상태가 바뀔 때. updated_at 은 프로세스가 살아 있다는 heartbeat(헬스체크가 본다).
   구역이 여럿이면 합계 필드 + shards(JSON 배열) — 합계의 의미는 shards.py 설명.
+  진단(ADR-014 부록 C · diag.py): 최근 diag_window_s(60) 초의 최댓값 — loop_lag_max_s(이벤트 루프 지연) · queue_wait_max_s(원문 대기열에 머문 시간) ·
+  queue_depth_max · ws_queue_max(websockets 수신 버퍼에 남은 프레임 — 상한 ws_queue_limit 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은
+  묶음이나 루프 멈춤 뒤, 결함 아님) · ping_rtt_max_s(keepalive
+  왕복, 시간 초과 ping_timeout_s) + loop_stalls_total(지연 ≥ 1 s 표본 수, 누적). queue_wait_max_s 에는 지금 맨 앞 원문이 기다린 시간도 든다(정리가
+  멈춰도 모름이 되지 않게). 고른 설정값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다): diag_window_s · ws_queue_limit · ping_timeout_s ·
+  queue_limit(원문 대기열 건수 상한) · loop_tick_s · loop_stall_s · loop_warn_s · loop_warn_every_s(루프 측정이 없으면 빈 값) ·
+  reconnect_quick_window_s · reconnect_warn_count · reconnect_warn_window_s(reconnect.py). 초는 지수 없는 십진수. 모르면 빈 값.
+  reconnects_quick_total: 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 30 s 안에 닫힌 횟수(누적) — 그 끊김은 INFO 로만 남기므로
+  (reconnect.py) 여기서 센다.
 
 Redis 장애: 선박 변경분은 쌓지 않고 ShipBook 에 '바뀜' 표시를 되돌린다 — 복구 뒤 첫 발행이 그때의 최신값을 싣는다(메모리는 선박 수 상한 안).
 공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).
@@ -25,8 +34,11 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from wakeline_collector.ais.book import ShipBook
+from wakeline_collector.ais.client import PING_TIMEOUT_S, WS_MAX_QUEUE
+from wakeline_collector.ais.diag import DIAG_WINDOW_S, LoopLag
 from wakeline_collector.ais.parse import iso_ms
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.reconnect import RECOVER_WINDOW_S, REPEAT_WARN_COUNT, REPEAT_WINDOW_S
 from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.logsink import sink_metrics
@@ -55,6 +67,19 @@ def _iso(epoch: float | None) -> str:
     return iso_ms(epoch) if epoch is not None else ""
 
 
+def _secs(v: float | None) -> str:
+    return "" if v is None else f"{v:.2f}"
+
+
+def _int(v: int | None) -> str:
+    return "" if v is None else str(v)
+
+
+def _setting(v: float) -> str:
+    """고른 설정값(초 · 수) — 지수 표기 없는 십진수, 소수 3자리까지("0.5" · "20" · "1800")."""
+    return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
 class AisSink:
     def __init__(
         self,
@@ -71,6 +96,7 @@ class AisSink:
         wall: Callable[[], float] = time.time,
         mono: Callable[[], float] = time.monotonic,
         log_metrics: Callable[[], dict[str, str]] | None = None,
+        loop_lag: LoopLag | None = None,
     ) -> None:
         self._r = redis
         self.book, self.shards, self.worker, self.queue = book, shards, worker, queue
@@ -90,6 +116,7 @@ class AisSink:
         self.status_errors = 0
         self.last_publish_at: float | None = None
         self._gap_lock = asyncio.Lock()  # 발행 루프와 final() 이 같은 공백을 동시에 보내지 않게
+        self._loop_lag = loop_lag  # 이벤트 루프 지연 측정(main 이 띄운다) — 없으면 진단 값은 모름
 
     def _warn(self, msg: str, *args: object) -> None:
         now = self._mono()
@@ -111,7 +138,7 @@ class AisSink:
             t0, m0 = s.window
             s.window = (now, s.feed.msgs_total)
             s.msgs_per_s = (s.feed.msgs_total - m0) / max(1e-3, now - t0)
-            s.lag_p50_s = lags.get(s.id)
+            s.lag_p50_s = s.feed.lag_p50_s = lags.get(s.id)  # feed 쪽은 끊김 로그의 맥락(client.diagnosis)
         return {
             "msgs": msgs,
             "msgs_per_s": round(msgs / span, 2),
@@ -232,6 +259,7 @@ class AisSink:
         last = sh.last_gap() or {}
         opened = sh.gap_open()
         deflate, backoff, rate, lag = sh.deflate, sh.backoff_s, sh.msgs_per_s, sh.lag_p50_s
+        mon = self._loop_lag  # 이벤트 루프 지연 측정(없으면 그 값 · 설정은 모름)
         return {
             "provider": self.provider,
             "fixture": "1" if self.provider == "fixture" else "0",
@@ -264,6 +292,25 @@ class AisSink:
             "ships_tracked": str(len(self.book)),
             "evicted_total": str(self.book.evicted),
             "lag_p50_s": "" if lag is None else f"{lag:.1f}",
+            # 진단(ADR-014 부록 C): 최근 diag_window_s 초 최댓값 + 고른 상한·시간 초과
+            "diag_window_s": _setting(DIAG_WINDOW_S),
+            "loop_lag_max_s": _secs(mon.max_s()) if mon is not None else "",
+            "loop_stalls_total": str(mon.stalls) if mon is not None else "",
+            "loop_tick_s": _setting(mon.tick_s) if mon is not None else "",
+            "loop_stall_s": _setting(mon.stall_s) if mon is not None else "",
+            "loop_warn_s": _setting(mon.warn_s) if mon is not None else "",
+            "loop_warn_every_s": _setting(mon.warn_every_s) if mon is not None else "",
+            "queue_wait_max_s": _secs(self.queue.wait_max_s()),
+            "queue_depth_max": _int(self.queue.depth_max()),
+            "queue_limit": str(self.queue.maxsize),
+            "ws_queue_max": _int(sh.ws_queue_max),
+            "ws_queue_limit": str(WS_MAX_QUEUE),
+            "ping_rtt_max_s": _secs(sh.ping_rtt_max_s),
+            "ping_timeout_s": _setting(PING_TIMEOUT_S),
+            "reconnects_quick_total": str(sh.reconnects_quick),
+            "reconnect_quick_window_s": _setting(RECOVER_WINDOW_S),
+            "reconnect_warn_count": str(REPEAT_WARN_COUNT),
+            "reconnect_warn_window_s": _setting(REPEAT_WINDOW_S),
             "shards": orjson.dumps(sh.shards_view()).decode(),
             "published_ships_total": str(self.published_ships),
             "last_publish_at": _iso(self.last_publish_at),

@@ -177,7 +177,8 @@ class AisStatusTest {
     static String shard(String scope, String state, Object connected, String gapOpenSince, String gapReason) {
         return "{\"scope\":\"" + scope + "\",\"state\":\"" + state + "\",\"connected\":" + connected + ",\"last_msg_at\":\"2026-09-28T02:59:59Z\","
                 + "\"msgs_per_s\":40.5,\"lag_p50_s\":1.9,\"gap_open_since\":" + (gapOpenSince == null ? "null" : "\"" + gapOpenSince + "\"")
-                + ",\"gap_reason\":" + (gapReason == null ? "null" : "\"" + gapReason + "\"") + ",\"sessions_ended\":0}";
+                + ",\"gap_reason\":" + (gapReason == null ? "null" : "\"" + gapReason + "\"") + ",\"sessions_ended\":0"
+                + ",\"ping_rtt_max_s\":0.31,\"ws_queue_max\":2}"; // 진단(ADR-014 부록 C) — api 는 읽지 않는다
     }
 
     static Map<Object, Object> sharded(Instant updatedAt, String... shards) {
@@ -270,7 +271,7 @@ class AisStatusTest {
         noScope.put("connected", "0");
         noScope.put("bbox", "");
         noScope.put("shards", "[{\"scope\":null,\"state\":\"disabled\",\"connected\":false,\"last_msg_at\":null,\"msgs_per_s\":null,"
-                + "\"lag_p50_s\":null,\"gap_open_since\":null,\"gap_reason\":null,\"sessions_ended\":0}]");
+                + "\"lag_p50_s\":null,\"gap_open_since\":null,\"gap_reason\":null,\"sessions_ended\":0,\"ping_rtt_max_s\":null,\"ws_queue_max\":null}]");
         st.update(noScope);
         assertThat(st.current().shards()).isNull();
         assertThat(st.publicView(NOW_MS)).containsEntry("state", "disabled").containsEntry("connected", false)
