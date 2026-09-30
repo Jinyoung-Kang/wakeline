@@ -101,6 +101,25 @@ class ShipCoverageControllerTest {
                 .andExpect(jsonPath("$.limits.max_cells").value(1));
     }
 
+    /**
+     * 리뷰(2026-09-30): 200 응답마다 칸 목록(최대 16,000개의 List.of · Instant 문자열)을 다시 만들었다. 이제 스냅숏(ETag)마다 한 번 — meta.request_id 만 요청마다.
+     * 수정 전에는 이 창구가 없었다(컴파일 실패).
+     */
+    @Test
+    void theCellRowsAreBuiltOncePerSnapshot_notPerRequest() {
+        AtomicLong clock = new AtomicLong(START);
+        ShipCoverage c = ShipCoverageFixtures.coverage(clock, ShipCoverageFixtures.empty());
+        c.onSampled(new ShipWriter.Sampled(List.of(pos("440000001", 37.46, 126.44, START + 1_000))));
+        ShipCoverageController ctrl = new ShipCoverageController(c);
+        ShipCoverage.Snapshot s = c.snapshotNow();
+        List<List<Object>> rows = ctrl.cellRows(s);
+        assertThat(rows).hasSize(1);
+        assertThat(ctrl.cellRows(s)).as("same snapshot → same rows").isSameAs(rows);
+        clock.addAndGet(1_000);
+        ShipCoverage.Snapshot next = c.snapshotNow();
+        assertThat(ctrl.cellRows(next)).as("a new snapshot builds its own rows").isNotSameAs(rows).isEqualTo(rows);
+    }
+
     @Test
     void anEmptyGridHasNoFetchedAt_andIsStale() throws Exception {
         ShipCoverage c = ShipCoverageFixtures.coverage(new AtomicLong(START), ShipCoverageFixtures.empty());

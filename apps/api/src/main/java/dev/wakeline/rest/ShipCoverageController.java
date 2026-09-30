@@ -40,6 +40,10 @@ public class ShipCoverageController {
     static final String TIME_ZONE = "all times are UTC ISO-8601; window.from is the start of the current UTC hour minus 24 h";
 
     private final ShipCoverage coverage;
+    /** 마지막 스냅숏의 칸 줄(불변) — 스냅숏(ETag)마다 한 번 만든다. 요청마다 다른 것은 meta(request_id · generated_at · lag_s)뿐이다. */
+    private volatile Rows rows;
+
+    private record Rows(String etag, List<List<Object>> cells) {}
 
     public ShipCoverageController(ShipCoverage coverage) {
         this.coverage = coverage;
@@ -49,10 +53,22 @@ public class ShipCoverageController {
     public ResponseEntity<Map<String, Object>> shipCoverage(HttpServletRequest req) {
         ShipCoverage.Snapshot s = coverage.snapshot();
         if (s.etag().equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(s.etag()).cacheControl(CACHE).build();
-        return ResponseEntity.ok().eTag(s.etag()).cacheControl(CACHE).body(body(s, req));
+        return ResponseEntity.ok().eTag(s.etag()).cacheControl(CACHE).body(body(s, cellRows(s), req));
     }
 
-    static Map<String, Object> body(ShipCoverage.Snapshot s, HttpServletRequest req) {
+    /** 스냅숏의 칸 줄 — 같은 스냅숏이면 앞서 만든 것(두 요청이 겹치면 둘 다 만들 수 있다 — 같은 내용이라 괜찮다). */
+    List<List<Object>> cellRows(ShipCoverage.Snapshot s) {
+        Rows r = rows;
+        if (r != null && r.etag().equals(s.etag())) return r.cells();
+        List<List<Object>> cells = new ArrayList<>(s.cells().size());
+        for (CoverageGrid.CellView c : s.cells())
+            cells.add(List.of(c.lon0(), c.lat0(), CoverageGrid.CELL_DEG, c.ships(), c.positions(), seconds(c.lastSeenMs()).toString()));
+        List<List<Object>> frozen = List.copyOf(cells);
+        rows = new Rows(s.etag(), frozen);
+        return frozen;
+    }
+
+    static Map<String, Object> body(ShipCoverage.Snapshot s, List<List<Object>> cells, HttpServletRequest req) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("cell_deg", CoverageGrid.CELL_DEG);
         Map<String, Object> window = new LinkedHashMap<>();
@@ -67,9 +83,6 @@ public class ShipCoverageController {
         m.put("live_from", s.liveFrom());
         m.put("bootstrap", bootstrap(s.bootstrap()));
         m.put("generated_at", s.generatedAt());
-        List<List<Object>> cells = new ArrayList<>(s.cells().size());
-        for (CoverageGrid.CellView c : s.cells())
-            cells.add(List.of(c.lon0(), c.lat0(), CoverageGrid.CELL_DEG, c.ships(), c.positions(), seconds(c.lastSeenMs()).toString()));
         m.put("cells", cells);
         m.put("cell_count", cells.size());
         m.put("positions", s.positions());
