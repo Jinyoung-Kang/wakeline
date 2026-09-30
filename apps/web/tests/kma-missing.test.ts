@@ -140,6 +140,28 @@ describe("status bar: the KMA chip and 상세 say why no new frame comes", () =>
   });
 });
 
+describe("KMA chip after the frames expired without a streak (listing stall · provider error)", () => {
+  beforeEach(() => resetData());
+  afterEach(() => resetData());
+  const find = () => statusChips(statusInput(getData(), NOW, NOW)).find((c) => c.key === "kma");
+  it("once collected, the chip stays with STALE and the api's reason — a stalled source is not hidden (2026-10-01)", () => {
+    setData({ radarKr: kr({ available: false, frames: [], missing: undefined, note: "기상청 목록이 16분 넘게 새 tm 을 싣지 않음" }) });
+    const c = find();
+    expect(c).toBeDefined();
+    expect(c!.words.map((w) => w.text)).toEqual(["STALE"]);
+    expect(c!.health).toBe("bad");
+    expect(c!.title).toContain("기상청 레이더 사용 불가 — 기상청 목록이 16분 넘게 새 tm 을 싣지 않음");
+    const row = detailRows(statusInput(getData(), NOW, NOW)).find((r) => r.key === "kma")!;
+    expect(row.health).toBe("bad"); // 칩과 같은 판정(전에는 'unknown')
+    expect(row.state).toBe("사용 불가 · STALE");
+  });
+  it("never collected (no first-fetch time — e.g. no key) → no chip, as before", () => {
+    setData({ radarKr: kr({ available: false, frames: [], missing: undefined, meta: {} as KrRadar["meta"], note: "" }) });
+    expect(find()).toBeUndefined();
+    expect(detailRows(statusInput(getData(), NOW, NOW)).find((r) => r.key === "kma")!.health).toBe("unknown");
+  });
+});
+
 describe("KMA panel, legend and radar timeline name the reason", () => {
   beforeEach(() => resetData());
   afterEach(() => { resetData(); useUi.setState({ radarSource: "rainviewer" }); });
