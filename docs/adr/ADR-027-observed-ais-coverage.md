@@ -19,7 +19,8 @@
 1. **잰 값으로 보인다 — 받은 위치를 센다.** api 가 이미 소비하는 선박 스트림에서 받은 위치를 0.5° 칸 · 최근 24 h 로 센 '관측 수신 범위'를 만든다(수신국 목록이나
    추정 반경을 짓지 않는다). 칸마다 선박 수(창 안 서로 다른 MMSI) · 위치 수 · 마지막 수신. REST `GET /api/v1/ships/coverage`(계약 v5 §G27)와 지도 레이어
    '관측 수신 범위(최근 24 h)'(기본 끔).
-2. **표본은 저장과 같다.** 실시간 셈은 선박 저장기가 고른 위치(`ShipWriter.Sampled` — MMSI 별 60 s 창의 첫 보고, ship_position 에 쓰는 것과 같은 선택)를 센다.
+2. **표본은 저장과 같다.** 실시간 셈은 선박 저장기가 고른 위치(`IngestEvents.ShipsSampled` — MMSI 별 60 s 창의 첫 보고, ship_position 에 쓰는 것과 같은 선택)를 센다. 스트림 소비 스레드의
+   파이프라인 이벤트라 격자 리스너의 예외는 그 리스너에 갇힌다(API-CONC-2 — 저장기 실패로 세지 않는다).
    그래서 기동 때 DB(ship_position)에서 읽은 부분과 그 뒤 실시간으로 센 부분의 '위치 수'가 같은 뜻이다. 저장 성공과는 무관하다(받은 것의 표본 — 쓰기가 실패한
    행은 실시간 셈에는 있고 다음 기동의 부트스트랩에는 없다).
 3. **칸 · 창(고른 값 — 잰 값 아님).** 칸 0.5°: 1° 칸이면 위 측정의 한국 수신 전체가 칸 하나라 구별이 없고, 0.5° 면 그 칸이 넷으로 나뉜다. 지구 전체는
@@ -65,7 +66,7 @@
 
 ## 결과
 - 코드: api `coverage.CoverageGrid`(격자 — 칸 · 시 · 상한) · `IntIntMap` · `ShipCoverage`(실시간 셈 · 부트스트랩 · 스냅숏 · 생명주기) · `CoverageSource` ·
-  `JdbcCoverageSource` · `rest.ShipCoverageController` · `persist.ShipWriter.Sampled`. web `lib/reception.ts` · `lib/reception-meta.ts` · `lib/map-ready.ts` ·
+  `JdbcCoverageSource` · `rest.ShipCoverageController` · `ingest.IngestEvents.ShipsSampled`(발행 `persist.ShipWriter`). web `lib/reception.ts` · `lib/reception-meta.ts` · `lib/map-ready.ts` ·
   `lib/etag-poller.ts`(연안 교통량과 같이 쓰는 ETag 조회기 — 옮김) · `components/ReceptionLayer.tsx`.
 - 설정: `wakeline.ship-coverage.bootstrap-grace-ms`(30,000) — application.yml. 나머지 상한은 코드 상수(위 결정 — 고른 값).
 - 지표: `wakeline_ship_coverage_cells` · `wakeline_ship_coverage_ship_cells`(게이지) · `wakeline_ship_coverage_dropped_total{reason=cells|ship_cells}` ·
@@ -73,7 +74,7 @@
 - 시험: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest`(셈 시작 · 미래 보고 · 부트스트랩 순서 · 시 경계 · 문장 상한 · 연결 실패 · 마감 · 종료 · 캐시 ·
   상한 · 생명주기) · `CoverageBootstrapDbTest`(Testcontainers — 실제 PostGIS · 같은 마이그레이션 · api 계정: 시 조각 문장 · 격자로 옮김 · 셈 시작 뒤 행은 읽지
   않음 · 읽기 전용 · 잠금 대기를 끝내는 문장 상한 · 닫힌 포트) · `ShipCoverageControllerTest` · `ShipCoverageIT`(스트림 → 저장 표본 → 격자 → REST · ETag 304) ·
-  `ShipWriterTest`(Sampled) · `RestSamplesIT`(표본 ship_coverage) · `tools/rest_contract_check.py`(스키마 + `_ship_coverage` 교차 규칙 — collector
+  `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest`(ShipsSampled 격리) · `RestSamplesIT`(표본 ship_coverage) · `tools/rest_contract_check.py`(스키마 + `_ship_coverage` 교차 규칙 — collector
   `tests/test_rest_contract_rules.py`). web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4`(칩) · `guide-page`(선박 절) ·
   `first-screen-lazy`(조각 목록) · `e2e/ship-coverage.spec.ts`(응답을 route 로 — 결정적).
 - 되돌리기: 이 레인의 커밋을 되돌린다 — 스키마 · 데이터 변화 없음(읽기만). 웹 레이어 키 `reception` 은 선택 필드라 남은 저장값은 무시된다.

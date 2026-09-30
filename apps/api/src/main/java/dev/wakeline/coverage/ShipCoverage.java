@@ -1,8 +1,8 @@
 package dev.wakeline.coverage;
 
 import dev.wakeline.domain.ShipState;
+import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.persist.ShipRepository;
-import dev.wakeline.persist.ShipWriter;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -25,7 +25,7 @@ import java.util.function.LongSupplier;
  * 관측 AIS 수신 범위(ADR-027 · 계약 v5 §G27 — GET /api/v1/ships/coverage): '선박 위치가 실제로 어디서 왔는가'를 0.5° 칸 · 최근 24 h 로 센다.
  * 구독 범위(운영 설정)와 다르다 — aisstream.io 는 육상 수신국이 받은 것만 보내므로(ADR-014) 구독해도 수신국이 없는 해역은 비어 있다.
  * <ul>
- *   <li><b>실시간 셈</b>: 선박 저장기가 고른 위치({@link ShipWriter.Sampled} — MMSI 별 60 s 창의 첫 보고, ship_position 과 같은 표본)를 격자에 넣는다.
+ *   <li><b>실시간 셈</b>: 선박 저장기가 고른 위치({@link IngestEvents.ShipsSampled} — MMSI 별 60 s 창의 첫 보고, ship_position 과 같은 표본)를 격자에 넣는다.
  *       셈 시작(live_from) = api 시작 시각을 60 s 창의 시작으로 내린 것 — 그 앞의 보고(재시작 때 밀린 백로그)는 세지 않는다(DB 부트스트랩의 몫 — 두 번 세지
  *       않는다). 그래서 api 시작 분(≤ 60 s)에 앞선 프로세스만 받은 보고는 빠질 수 있다(적게 셀 수는 있어도 두 번 세지 않는다). 5분 넘게 미래인 보고는 세지 않는다.</li>
  *   <li><b>부트스트랩</b>(기동 때 한 번, 요청 경로 밖 가상 스레드): api 시작 {@code wakeline.ship-coverage.bootstrap-grace-ms}(기본 30 s — 저장기가 밀린 행을 쓰는
@@ -128,7 +128,7 @@ public class ShipCoverage implements SmartLifecycle {
     // ---- 실시간 셈 ----
 
     @EventListener
-    public void onSampled(ShipWriter.Sampled e) {
+    public void onSampled(IngestEvents.ShipsSampled e) {
         long now = clock.getAsLong();
         synchronized (lock) {
             grid.roll(now);

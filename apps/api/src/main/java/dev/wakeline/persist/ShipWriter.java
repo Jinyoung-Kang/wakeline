@@ -34,8 +34,8 @@ import java.util.function.Consumer;
  *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
  *   <li>종료: 스트림 소비·WS 뒤(phase) 남은 행을 최대 6 s 동안 쓰고, 못 쓴 행의 메시지는 ACK 하지 않는다(다음 기동에서 다시 처리 — 쓰기는 멱등).</li>
- *   <li>고른 위치(60 s 창의 첫 보고)를 {@link Sampled} 로 알린다(소비 스레드, 동기) — 관측 수신 격자(ADR-027 · coverage.ShipCoverage)가 DB 의
- *       ship_position 과 같은 표본을 센다(부트스트랩이 읽는 행과 실시간 셈이 같은 뜻).</li>
+ *   <li>고른 위치(60 s 창의 첫 보고)를 {@link IngestEvents.ShipsSampled} 로 알린다(소비 스레드, 동기 — 파이프라인 이벤트라 리스너 예외는 그 리스너에 갇힌다,
+ *       API-CONC-2) — 관측 수신 격자(ADR-027 · coverage.ShipCoverage)가 DB 의 ship_position 과 같은 표본을 센다(부트스트랩이 읽는 행과 실시간 셈이 같은 뜻).</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -68,9 +68,6 @@ public class ShipWriter implements SmartLifecycle {
 
     record Stat(ShipStatic stat, Instant receivedAt) implements Item {}
 
-    /** 한 메시지에서 저장하려고 고른 위치(MMSI 별 60 s 창의 첫 보고 · 저장 범위 안) — 저장 성공과는 무관하다(받은 것의 표본). */
-    public record Sampled(List<ShipState> positions) {}
-
     private final ShipRepository repo;
     private final OrderedWriter ordered;
     private final ReceiptBatchQueue<Item> queue = new ReceiptBatchQueue<>(QUEUE_MAX, MAX_MARKS, BATCH);
@@ -90,7 +87,7 @@ public class ShipWriter implements SmartLifecycle {
     private final Counter forced;
     private final long backoffStartMs;
     private final long backoffMaxMs;
-    /** 고른 위치의 알림(운영: 애플리케이션 이벤트 — {@link Sampled}). */
+    /** 고른 위치의 알림(운영: 애플리케이션 이벤트 — {@link IngestEvents.ShipsSampled}). */
     private final Consumer<Object> publish;
     private volatile boolean running;
     private Thread worker;
@@ -141,7 +138,7 @@ public class ShipWriter implements SmartLifecycle {
         enqueue(items, e.receipt());
         List<ShipState> kept = new ArrayList<>(items.size());
         for (Item it : items) if (it instanceof Pos p) kept.add(p.state());
-        if (!kept.isEmpty()) publish.accept(new Sampled(List.copyOf(kept)));
+        if (!kept.isEmpty()) publish.accept(new IngestEvents.ShipsSampled(List.copyOf(kept)));
     }
 
     /** 공백은 드물고 순서가 중요하지 않지만 재시도·영수증 규칙이 같은 순서 큐로 보낸다. */

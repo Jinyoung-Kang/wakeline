@@ -1,7 +1,7 @@
 package dev.wakeline.coverage;
 
 import dev.wakeline.domain.ShipState;
-import dev.wakeline.persist.ShipWriter;
+import dev.wakeline.ingest.IngestEvents;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -95,7 +95,7 @@ class ShipCoverageTest {
         AtomicLong clock = new AtomicLong(START);
         ShipCoverage c = coverage(new FakeSource(), clock);
         assertThat(c.liveFromMs()).isEqualTo(CUT);
-        c.onSampled(new ShipWriter.Sampled(List.of(
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(
                 pos("440000001", 37.2, 126.2, CUT - 1),                   // 재시작 전 백로그 — DB 몫(두 번 세지 않는다)
                 pos("440000002", 37.2, 126.2, CUT),                       // 셈 시작의 첫 순간
                 pos("440000003", 37.2, 126.2, START + 6 * 60_000),        // 5분 넘게 미래 — 세지 않는다
@@ -261,7 +261,7 @@ class ShipCoverageTest {
         AtomicLong clock = new AtomicLong(START + 1_000);
         ShipCoverage c = coverage(new FakeSource(), clock);
         ShipCoverage.Snapshot a = c.snapshot();
-        c.onSampled(new ShipWriter.Sampled(List.of(pos("440000002", 37.2, 126.2, START))));
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000002", 37.2, 126.2, START))));
         clock.addAndGet(ShipCoverage.SNAPSHOT_MS - 1);
         ShipCoverage.Snapshot b = c.snapshot();
         assertThat(b).as("same snapshot within 60 s").isSameAs(a);
@@ -335,7 +335,7 @@ class ShipCoverageTest {
         AtomicLong clock = new AtomicLong(START);
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         ShipCoverage c = new ShipCoverage(new FakeSource(), clock::get, meters, 0, 1, 1_000);
-        c.onSampled(new ShipWriter.Sampled(List.of(pos("440000002", 37.2, 126.2, START), pos("440000003", 10.2, 10.2, START))));
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000002", 37.2, 126.2, START), pos("440000003", 10.2, 10.2, START))));
         ShipCoverage.Snapshot s = c.snapshotNow();
         assertThat(s.dropped()).isEqualTo(1);
         assertThat(s.maxCells()).isEqualTo(1);

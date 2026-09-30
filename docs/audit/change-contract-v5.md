@@ -755,7 +755,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `sampling`("first_fix_per_60s") · `note` · `time_zone` · `meta`(provider = 마지막으로 센 보고의 공급자, fetched_at = 가장 늦은 마지막 수신 — 칸이 없으면 둘 다 키 없음,
     stale 기준 900 s).
   - `cells[]` = `[lon0, lat0, 0.5, 선박 수, 위치 수, 마지막 수신]`: 칸 [lon0, lon0 + 0.5) × [lat0, lat0 + 0.5)(floor — 180°E · 90°N 은 마지막 칸), 남 → 북 · 서 → 동 순,
-    선박 수 = 창 안 서로 다른 MMSI(≥ 1), 위치 수 = 저장과 같은 표본(MMSI 별 60 s 창의 첫 보고 — `ShipWriter.Sampled`, ≥ 선박 수), 마지막 수신 = 그 칸의 가장 늦은
+    선박 수 = 창 안 서로 다른 MMSI(≥ 1), 위치 수 = 저장과 같은 표본(MMSI 별 60 s 창의 첫 보고 — `IngestEvents.ShipsSampled` — 파이프라인 이벤트, ≥ 선박 수), 마지막 수신 = 그 칸의 가장 늦은
     seen_at(UTC ISO, 초로 내림 — 수집기 시계가 빠르면 generated_at 보다 5분까지 늦을 수 있다). 칸 상한 16,000 · 칸별 선박 항목 상한 200,000(고른 값) — 넘친 보고는
     세지 않고 `dropped_positions`(창 안) · `truncated` 로 밝힌다.
   - 창 · 덮음: `window.from` = generated_at 이 든 UTC 시의 시작 − 24 h, `window.to` = generated_at. `live_from` = api_started_at 을 분(60 s 창)으로 내린 것 — 실시간
@@ -774,5 +774,5 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     실제로 선박 위치를 받은 0.5° 칸 … — 구독 범위(점선)가 아니다". 자료가 있으면 선박 칩 설명(title)과 0척 알림 글자에 '이 화면에 관측 수신 칸 N개(최근 24 h)'
     (AIS 꺼짐(키 없음)이면 덧붙이지 않는다). 설명서 선박 절 · 레이어 단추 · 범례 표. 운영 · 파이프라인 화면은 바꾸지 않았다.
   - 회귀 막기: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest` · `CoverageBootstrapDbTest`(Testcontainers) · `ShipCoverageControllerTest` · `ShipCoverageIT` ·
-    `ShipWriterTest`(Sampled) · `OpenApiSnapshotIT`, web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4.test.ts` ·
+    `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest` · `OpenApiSnapshotIT`, web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4.test.ts` ·
     `guide-page.test.ts` · `e2e-inject.test.ts` · `e2e/ship-coverage.spec.ts`.

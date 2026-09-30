@@ -5,7 +5,7 @@ import dev.wakeline.coverage.CoverageSource;
 import dev.wakeline.coverage.ShipCoverage;
 import dev.wakeline.coverage.ShipCoverageFixtures;
 import dev.wakeline.domain.ShipState;
-import dev.wakeline.persist.ShipWriter;
+import dev.wakeline.ingest.IngestEvents;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -43,7 +43,7 @@ class ShipCoverageControllerTest {
         AtomicLong clock = new AtomicLong(START);
         ShipCoverage c = ShipCoverageFixtures.coverage(clock, ShipCoverageFixtures.empty());
         clock.set(START + 10_000);
-        c.onSampled(new ShipWriter.Sampled(List.of(pos("440000001", 37.46, 126.44, START + 1_234), pos("440000002", 37.1, 126.01, START + 2_000))));
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.46, 126.44, START + 1_234), pos("440000002", 37.1, 126.01, START + 2_000))));
         MvcResult r = mvc(c).perform(get("/api/v1/ships/coverage"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Cache-Control", "max-age=60, public"))
@@ -89,7 +89,7 @@ class ShipCoverageControllerTest {
         CoverageSource failing = () -> { throw new SQLException("Connection refused", "08001"); };
         ShipCoverage c = ShipCoverageFixtures.coverage(clock, failing, 1);
         ShipCoverageFixtures.bootstrap(c);
-        c.onSampled(new ShipWriter.Sampled(List.of(pos("440000001", 37.46, 126.44, START + 1_000), pos("440000002", 1.1, 1.1, START + 1_000))));
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.46, 126.44, START + 1_000), pos("440000002", 1.1, 1.1, START + 1_000))));
         mvc(c).perform(get("/api/v1/ships/coverage"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bootstrap.state").value("failed"))
@@ -109,7 +109,7 @@ class ShipCoverageControllerTest {
     void theCellRowsAreBuiltOncePerSnapshot_notPerRequest() {
         AtomicLong clock = new AtomicLong(START);
         ShipCoverage c = ShipCoverageFixtures.coverage(clock, ShipCoverageFixtures.empty());
-        c.onSampled(new ShipWriter.Sampled(List.of(pos("440000001", 37.46, 126.44, START + 1_000))));
+        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.46, 126.44, START + 1_000))));
         ShipCoverageController ctrl = new ShipCoverageController(c);
         ShipCoverage.Snapshot s = c.snapshotNow();
         List<List<Object>> rows = ctrl.cellRows(s);
