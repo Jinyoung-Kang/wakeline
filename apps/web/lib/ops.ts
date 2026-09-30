@@ -414,8 +414,8 @@ export function qualityPartialDay(since: unknown): { day: string; text: string; 
 // ---- 수집 실행 상태 · 기상청 '파일 없음' 연속(운영 로그 2026-09-30) ----
 
 /**
- * 실행 기록 상태의 설명(title) — 수집기가 정한 것만(jobs/kma_radar.py _outcome). ok · error 등 옛 상태는 이름 그대로 읽힌다.
- * missing = 새 tm 이 목록에 있었으나 저장한 프레임이 없고 기상청 내려받기가 '파일 없음'으로 답한 주기 · quarantined = 받은 자료를 해석할 수 없어 격리만 한 주기.
+ * 실행 기록 상태의 설명(title) — 수집기가 실행 기록(ingest_run.status)에 쓰는 ok · error 밖의 상태마다(tests/ops-run-status 가 수집기 소스와 견준다).
+ * 사실만 적는다: 까닭 · 한도 · 재개 시각은 그 실행의 오류 글자(원문)에 있고, 여기서 작업 이름이나 글자로 '계획된' 등을 짐작하지 않는다.
  */
 export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   // 계약 v5 §G26 개정(2026-10-01): '파일 없음' 연속 중 목록만 읽은 확인(확인할 새 tm 이 없다)도 'missing' — 전에는 'ok' 로 공급자 성공을 갱신했다
@@ -425,17 +425,39 @@ export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",
   // 계약 v5 §G26(jobs/kma_radar.py _wait): 기상청 '파일 없음' 연속이 60분을 넘으면 15분마다만 확인한다 — 그 사이 주기
   waiting: "대기 — 기상청 '파일 없음' 연속이 길어 수집기가 확인 간격을 늘렸고(수집기 선택값 — 간격과 마지막으로 기상청을 부른 주기 뒤 지난 분은 오류 글자. 목록이 실패한 주기도 세므로 kma_radar 공급자의 '마지막 확인'과 다를 수 있다) 이 주기는 기상청을 부르지 않음. 공급자 오류가 아니다(공급자 last success · last error 를 바꾸지 않는다)",
+  // ADR-023(jobs/traffic_grid.py): 같은 regDt(또는 더 이른 regDt)면 다시 해석 · 발행하지 않는다
+  unchanged: "새 자료 아님 — 연안 교통량 호출은 성공했으나 공급자 자료의 기준 시각(regDt)이 이미 발행한 것보다 새롭지 않아 다시 해석 · 발행하지 않았다(같은 값을 다시 실어 보존 시간만 늘린다). 공급자 오류가 아니다(공급자 last success 를 갱신한다) — 오래 이어지면 공급자 자료가 갱신되지 않은 것이다(상황판 연안 교통량 층의 상태 줄이 regDt 나이로 '자료 멈춤'을 밝힌다)",
+  // WEB-1(조사 2026-10-01): 예산 거절은 error 와 같게 보였다 — 수집기가 보내지 않은 호출이다(budget.py · 작업마다 record_run)
+  budget_exhausted: "예산 거절 — 하루 예산 · 시간 창 · 작업 몫 중 하나가 예약을 거절해 수집기가 호출을 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다). 어느 한도인지는 오류 글자에 있다 — 다시 시작하는 때는 수집기가 적은 경우에만('resumes at …', 원문 시각). 하루 예산은 매일 09:00 KST, 시간 창은 매 정시에 새로 센다",
+  budget_unavailable: "예산 저장소 장애 — 수집기가 예산 저장소(Redis)에 예약하지 못해 한도를 모르는 채 호출을 보내지 않았다(fail closed). 공급자 오류는 아니지만 수집기 쪽 고장이다 — 저장소가 돌아올 때까지 이 작업은 자료를 받지 않는다",
 };
 
 /**
- * 실행 상태 글자색: ok 초록 · missing · quarantined · throttled · waiting 주황(자료가 오지 않았지만 공급자 오류는 아니다) · 그 밖(error · budget_* …)은 전과 같이
- * 요약(summary) 주황 · 최근 실행(item) 빨강.
+ * 실행 상태의 성격 — 색은 이것으로 정한다(뜻 글자가 있는지와 떼어 둔다): ok · nodata(자료가 오지 않았지만 공급자 오류는 아니다 — missing · quarantined ·
+ * throttled · waiting · unchanged) · budget(예산 거절 — 수집기가 보내지 않았다, 고장이 아니다) · fault(error · budget_unavailable · 모르는 상태).
+ */
+export type RunStatusTone = "ok" | "nodata" | "budget" | "fault";
+const NODATA = new Set(["missing", "quarantined", "throttled", "waiting", "unchanged"]);
+
+export function runStatusTone(status: unknown): RunStatusTone {
+  const s = String(status);
+  if (s === "ok") return "ok";
+  if (NODATA.has(s)) return "nodata";
+  if (s === "budget_exhausted") return "budget";
+  return "fault";
+}
+
+/**
+ * 실행 상태 글자색: ok 초록 · nodata 주황 · 예산 거절 중립(회색 — 제 색, 뜻은 title · 어느 한도인지는 오류 글자) · 고장(error · budget_unavailable · 모르는
+ * 상태)은 전과 같이 요약(summary) 주황 · 최근 실행(item) 빨강.
  */
 export function runStatusClass(status: unknown, where: "summary" | "item"): string {
-  const s = String(status);
-  if (s === "ok") return "text-ok";
-  if (s in RUN_STATUS_TITLE) return "text-warn";
-  return where === "summary" ? "text-warn" : "text-bad";
+  switch (runStatusTone(status)) {
+    case "ok": return "text-ok";
+    case "nodata": return "text-warn";
+    case "budget": return "text-fg-2";
+    default: return where === "summary" ? "text-warn" : "text-bad";
+  }
 }
 
 /**
