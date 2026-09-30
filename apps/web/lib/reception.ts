@@ -19,6 +19,8 @@ export const RECEPTION_URL = "/api/v1/ships/coverage";
 export const RECEPTION_POLL_MS = 120_000;
 export const RECEPTION_VISIBLE_MIN_GAP_MS = 10_000;
 export const RECEPTION_CELL_DEG = 0.5;
+/** 창 길이(시간) — 화면의 모든 '최근 24 h' 글(레이어 이름 · 범례 · 칩)이 이 값이다. api 의 window.hours 가 다르면 응답을 받지 않는다(형식 오류 — 마지막 값) */
+export const RECEPTION_WINDOW_H = 24;
 export const RECEPTION_SOURCE = "reception";
 export const RECEPTION_LAYERS = [RECEPTION_FILL_LAYER, RECEPTION_LINE_LAYER] as const;
 
@@ -75,6 +77,8 @@ export function parseReception(x: unknown): Reception | null {
   const limits = o.limits as Record<string, unknown> | null | undefined;
   const maxCells = typeof limits === "object" && limits !== null ? count(limits.max_cells) : null;
   if (hours == null || from == null || to == null || since == null || liveFrom == null || loaded == null || total == null || maxCells == null) return null;
+  // 글은 모두 '24 h' — 다른 창을 24 h 라 적지 않게(리뷰 2026-09-30 밤: windowHours 를 받아 두기만 했다)
+  if (hours !== RECEPTION_WINDOW_H) return null;
   if (typeof o.covered !== "string" || !COVERED.has(o.covered) || typeof b.state !== "string" || !STATES.has(b.state)) return null;
   if (!Array.isArray(o.cells) || typeof o.truncated !== "boolean") return null;
   const cells: ReceptionCell[] = [];
@@ -174,6 +178,7 @@ export function receptionTip(p: Record<string, unknown>, r: Reception | null): T
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   const s = typeof p.s === "number" ? p.s : null;
   const n = typeof p.n === "number" ? p.n : null;
+  const last = fmtKst(typeof p.t === "string" ? p.t : null);
   const flags: Tip["flags"] = [{ text: "받은 위치의 집계 — 구독 범위 아님", tone: "muted" }];
   if (r && r.covered !== "full")
     flags.push({ text: `${fmtKstMinute(r.since, { date: true })} 부터만 셈(${r.covered === "partial" ? "기동 전 기록 일부" : "api 시작 뒤"})`, tone: "warn" });
@@ -182,8 +187,9 @@ export function receptionTip(p: Record<string, unknown>, r: Reception | null): T
     subtitle: `${latSpan(lat)} · ${lonSpan(lon)}`,
     rows: [
       ["선박", s == null ? "—" : `${n0(s)}척`],
-      ["위치", n == null ? "—" : `${n0(n)}건(선박마다 60 s 에 1건)`],
-      ["마지막 수신", fmtKst(typeof p.t === "string" ? p.t : null)],
+      ["위치", n == null ? "—" : `${n0(n)}건(선박마다 60 s 창의 첫 보고 — 많아야 1건)`],
+      // 표본(60 s 창의 첫 보고)의 가장 늦은 시각 — 같은 창의 뒤 보고는 표본에 없으므로 실제 마지막 수신보다 60 s 안쪽으로 이를 수 있다(리뷰 2026-09-30 밤)
+      ["마지막 표본 수신", last === "—" ? last : `${last}(60 s 창의 첫 보고 — 실제 마지막 수신은 60 s 안쪽으로 늦을 수 있음)`],
       ["창", windowText(r)],
     ],
     flags,

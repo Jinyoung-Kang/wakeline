@@ -47,6 +47,11 @@ describe("parseReception: the api answer, checked again (bad cells are dropped a
     expect(r.dropped).toBe(0);
   });
 
+  it("refuses a window other than 24 h — every text on screen says 24 h (the last value stays, the poller says 응답 형식 오류)", () => {
+    expect(parseReception(body({ window: { hours: 48, bucket_s: 3600, from: "2026-09-28T09:00:00Z", to: "2026-09-30T09:40:12.345Z" } }))).toBeNull();
+    expect(parseReception(body({ window: { hours: 24, bucket_s: 3600, from: "2026-09-29T09:00:00Z", to: "2026-09-30T09:40:12.345Z" } }))).not.toBeNull();
+  });
+
   it("drops malformed cells and counts them — off lattice, out of range, zero ships, more ships than positions, bad time, wrong size", () => {
     const r = rec({
       cells: [
@@ -137,15 +142,17 @@ describe("tooltip and status line — KST only, the reason in words", () => {
     expect(tip.subtitle).toBe("37.0–37.5°N · 126.0–126.5°E");
     expect(tip.rows).toEqual([
       ["선박", "304척"],
-      ["위치", "5,120건(선박마다 60 s 에 1건)"], // 칸마다가 아니라 선박마다(리뷰 2026-09-30 — '60 s 창마다 1건'은 칸에 1건으로 읽혔다)
-      ["마지막 수신", "09-30 18:40:01 KST"],
+      // 칸마다가 아니라 선박마다(리뷰 2026-09-30 — '60 s 창마다 1건'은 칸에 1건으로 읽혔다) · 고정 속도가 아니라 창의 첫 보고 — 많아야 1건(리뷰 2026-09-30 밤)
+      ["위치", "5,120건(선박마다 60 s 창의 첫 보고 — 많아야 1건)"],
+      // 표본의 가장 늦은 시각 — 같은 창의 뒤 보고는 표본에 없어 실제 마지막 수신보다 이를 수 있다(리뷰 2026-09-30 밤 — 전에는 '마지막 수신')
+      ["마지막 표본 수신", "09-30 18:40:01 KST(60 s 창의 첫 보고 — 실제 마지막 수신은 60 s 안쪽으로 늦을 수 있음)"],
       ["창", "09-29 18:00 – 09-30 18:40 KST"],
     ]);
     expect(tip.flags).toEqual([{ text: "받은 위치의 집계 — 구독 범위 아님", tone: "muted" }]);
     expect(JSON.stringify(tip)).not.toContain("UTC");
     const south = receptionTip({ g: "-34,-151.5", s: 1, n: 1, t: "x" }, null)!;
     expect(south.subtitle).toBe("34.0–33.5°S · 151.5–151.0°W");
-    expect(south.rows[2]).toEqual(["마지막 수신", "—"]);
+    expect(south.rows[2]).toEqual(["마지막 표본 수신", "—"]);
     expect(south.rows[3]).toEqual(["창", "—"]);
     expect(receptionTip({}, rec())).toBeNull();
   });
