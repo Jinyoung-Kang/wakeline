@@ -1,6 +1,7 @@
-"""readsb v2 호환 공급자 — adsb.lol(1순위) · adsb.fi(2순위, 공개 한도 초당 1회).
+"""readsb v2 호환 공급자 — adsb.fi(공개 한도 초당 1회) · adsb.lol. 관심 지역 순서는 운영 설정 aircraft_providers 가 정한다
+(기본 adsb_fi → adsb_lol — adsb.lol 은 폴백, 계약 v5 §G25).
 
-호출 속도는 공급자가 아니라 HttpClient 의 RateLimiter 가 정한다(adsb.fi 호스트 버킷 0.8 req/s 를 관심 지역 폴백·focus·hot 이
+호출 속도는 공급자가 아니라 HttpClient 의 RateLimiter 가 정한다(adsb.fi 호스트 버킷 0.8 req/s 를 관심 지역·focus·hot 이
 함께 쓴다, 계약 v2 §A2). 관심 지역은 우선순위 0 으로 기다린다.
 
 AdsbFiDemandProvider(ADR-013): 수요 기반 정밀 추적 전용.

@@ -271,7 +271,7 @@ async def test_limiter_cooldown_from_another_call_does_not_take_region_offline(m
     runs = _spy_runs(ctx)
     http = HttpClient(RateLimiter(2.0, 2, {"opendata.adsb.fi": (0.8, 1)}, clock=lambda: clk[0]))
     chain = ProviderChain("region", {"adsb_lol": adsb_lol(http), "adsb_fi": adsb_fi(http)}, ctx.status)
-    chain.mark_down("adsb_lol", 600)  # 1순위가 쉬는 중 → 관심 지역이 adsb.fi 폴백에 기댄다
+    chain.mark_down("adsb_lol", 600)  # adsb.lol 이 쉬는 중 → 관심 지역은 adsb.fi 에만 기댄다(순서와 무관)
     job = AircraftJob("region", chain, ctx)
     assert http.limiter.penalize("opendata.adsb.fi") == 30.0  # 다른 작업의 429
     with respx.mock:  # 모의 경로 없음 → 실제로 보내면 실패
