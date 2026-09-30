@@ -14,6 +14,8 @@ import java.util.function.Supplier;
  *   <li>진행 중 표시는 읽기가 끝나면(정상 · 예외) 결과를 알리기 전에 지운다 — 결과는 읽는 쪽의 캐시가 맡는다.</li>
  *   <li>실행기가 거절하면(대기열 가득 · 종료) 표시를 지우고 {@link RejectedExecutionException} 으로 끝난 future 를 준다 — 기억하지 않는다(다음 물음이
  *       다시 올린다). 부르는 쪽이 '읽지 못함' 으로 답하고 센다.</li>
+ *   <li>실행기가 받아 둔 읽기를 돌리지 않고 버리면(shutdownNow 가 돌려준 대기열) 실행기 주인이 {@link #abandon} 으로 넘긴다 — 거절과 같게 끝내고 표시를
+ *       지운다(리뷰 2026-09-30: 그러지 않으면 그 future 가 끝나지 않아 표시가 남고, 같은 키에 붙는 쪽이 영영 기다린다).</li>
  * </ul>
  */
 public final class SingleFlight<K, V> {
@@ -28,24 +30,57 @@ public final class SingleFlight<K, V> {
         CompletableFuture<V> running = inflight.putIfAbsent(key, mine);
         if (running != null) return new Flight<>(running, true);
         try {
-            executor.execute(() -> {
-                V v;
-                try {
-                    v = read.get();
-                } catch (Throwable e) {
-                    inflight.remove(key, mine);
-                    mine.completeExceptionally(e);
-                    if (e instanceof Error err) throw err;
-                    return;
-                }
-                inflight.remove(key, mine);
-                mine.complete(v);
-            });
+            executor.execute(new Read<>(inflight, key, read, mine));
         } catch (RejectedExecutionException e) {
             inflight.remove(key, mine);
             mine.completeExceptionally(e);
         }
         return new Flight<>(mine, false);
+    }
+
+    /**
+     * 실행기가 돌리지 않고 버린 작업(ExecutorService.shutdownNow 가 돌려준 목록의 하나)을 넘긴다: SingleFlight 의 읽기면 {@link RejectedExecutionException}
+     * 으로 끝내고 진행 중 표시를 지운다(그 future 에 붙은 쪽이 곧바로 끝난다 — 부르는 쪽은 거절처럼 '읽지 못함' 으로 답한다). 다른 작업이면 false.
+     */
+    public static boolean abandon(Runnable discarded) {
+        if (!(discarded instanceof Read<?, ?> r)) return false;
+        r.abandon();
+        return true;
+    }
+
+    /** 실행기에 올린 읽기 하나 — 돌면 결과(또는 예외)로, 버려지면({@link #abandon}) 거절로 끝나고, 어느 쪽이든 먼저 표시를 지운다. */
+    private static final class Read<K, V> implements Runnable {
+        private final ConcurrentHashMap<K, CompletableFuture<V>> inflight;
+        private final K key;
+        private final Supplier<V> read;
+        private final CompletableFuture<V> mine;
+
+        Read(ConcurrentHashMap<K, CompletableFuture<V>> inflight, K key, Supplier<V> read, CompletableFuture<V> mine) {
+            this.inflight = inflight;
+            this.key = key;
+            this.read = read;
+            this.mine = mine;
+        }
+
+        @Override
+        public void run() {
+            V v;
+            try {
+                v = read.get();
+            } catch (Throwable e) {
+                inflight.remove(key, mine);
+                mine.completeExceptionally(e);
+                if (e instanceof Error err) throw err;
+                return;
+            }
+            inflight.remove(key, mine);
+            mine.complete(v);
+        }
+
+        void abandon() {
+            inflight.remove(key, mine);
+            mine.completeExceptionally(new RejectedExecutionException("the executor shut down before this read started"));
+        }
     }
 
     /** 진행 중인 읽기 수(시험 · 진단). */

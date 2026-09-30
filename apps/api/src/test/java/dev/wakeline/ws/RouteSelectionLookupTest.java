@@ -604,6 +604,46 @@ class RouteSelectionLookupTest {
         return null;
     }
 
+    /**
+     * 리뷰(2026-09-30 · lane-route #2): 닫을 때(WsHub.stop → close → shutdownNow) 대기열에서 버린 읽기는 돌지 않는다. 고치기 전에는 그 future 가 끝나지 않아
+     * RouteReader 의 진행 중 표시가 남았고, 그 뒤 같은 콜사인을 묻는 REST 는 끝나지 않는 future 에 붙었다(그 조회의 settled 도 끝나지 않았다). 버린 읽기는
+     * 거절(RejectedExecutionException)로 끝내고 표시를 지운다 — 조회는 곧바로 unavailable(outcome=rejected), 붙은 쪽도 곧바로 끝나고, 다음 REST 는 제가 읽는다.
+     */
+    @Test void closingTheExecutor_endsTheDiscardedQueuedReads_soNoJoinerWaitsForever() throws Exception {
+        BlockingRedis redis = new BlockingRedis();
+        CountDownLatch stall = new CountDownLatch(1);
+        redis.hold = stall; // 멈춘 Redis — 스레드 하나를 잡는다
+        RouteReader reader = new RouteReader(redis::get, RouteInfoTest.JSON, System::currentTimeMillis);
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ThreadPoolExecutor ex = RouteLookups.boundedExecutor(1, 4);
+        RouteLookups l = new RouteLookups(ex, 3_000, meters);
+        l.setSource(RouteLookups.of(reader));
+        try {
+            SelectionLookups.Flight<RouteInfo> busy = l.load("SYN1", null, WANTED);
+            await(() -> redis.reads.size() == 1);
+            SelectionLookups.Flight<RouteInfo> queued = l.load("SYN2", null, WANTED); // 대기열에서 기다린다
+            CompletableFuture<RouteInfo> joined = reader.loadAsync("SYN2", Runnable::run); // 같은 진행 중 읽기에 붙은 쪽(다른 세션 · REST)
+            assertThat(ex.getQueue()).hasSize(1);
+            l.close(); // 운영: WsHub.stop
+            assertThat(queued.settled()).as("the discarded read ends").succeedsWithin(Duration.ofSeconds(1));
+            assertThat(queued.answer().join()).isEqualTo(RouteInfo.unavailable("SYN2"));
+            assertThat(meters.counter("wakeline_ws_route_lookups_total", "outcome", "rejected").count()).isEqualTo(1.0);
+            assertThat(joined).as("the joiner ends too").failsWithin(Duration.ofSeconds(1))
+                    .withThrowableOfType(java.util.concurrent.ExecutionException.class).withCauseInstanceOf(RejectedExecutionException.class);
+            redis.hold = null; // 새 읽기는 막히지 않는다(SYN1 의 읽기는 여전히 멈춰 있다)
+            long t0 = System.nanoTime();
+            assertThat(reader.forCallsign("SYN2")).as("REST reads it itself — no in-flight marker was left").isEqualTo(RouteInfo.pending("SYN2"));
+            assertThat((System.nanoTime() - t0) / 1_000_000).as("not the 3 s wait on a dead future").isLessThan(1_000);
+            assertThat(redis.reads).containsExactly(SYN1_KEY, "wakeline:route:SYN2");
+            assertThat(busy.settled()).as("the running read is interrupted by shutdownNow and ends as a Redis error").succeedsWithin(Duration.ofSeconds(5));
+        } finally {
+            stall.countDown();
+            ex.shutdownNow();
+        }
+    }
+
+    static final String SYN1_KEY = "wakeline:route:SYN1";
+
     /** 운영 실행기: 스레드 수 · 대기열 상한 · 넘치면 거절 · 데몬 이름 · 대기열 길이 지표. 닫으면 멈춘다. 선박 조회 실행기와 따로다(이름 · 지표). */
     @Test void theBoundedExecutor_isSmall_separateFromTheShipLookups_andRejectsWhenFull() throws Exception {
         ThreadPoolExecutor ex = RouteLookups.boundedExecutor(RouteLookups.THREADS, SelectionLookups.queueFor(200));
