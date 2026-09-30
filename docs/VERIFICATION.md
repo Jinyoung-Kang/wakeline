@@ -953,19 +953,88 @@
   주기로, 모의(세 번째)보다 한 주기 늦었다. 까닭(전날 목록 한 번의 실패 등)은 운영 로그를 읽지 않아 보지 않았다.
 - **남은 것** 기상청 공개 파일 · 목록이 돌아오는 것은 기상청 쪽이다 — 이 수정은 '확인 멈춤' 거짓 경보를 없애고 '목록에도 새 tm 없음'을 보일 뿐 레이더는 그동안 RainViewer.
 
-## 자동 검사 현황(2026-10-01 KST, 레인 kma 통합 뒤 · 배포 뒤 수정(#87 '배포에서 드러난 것') 뒤 — 통계 패널 상태(#83) · 관측 수신 다시 읽기(#84) · 설명서 캡처(#85) · 기상청 목록만 읽은 확인(#87))
+## #88 02:58–03:05 KST 의 AIS 공백 7분 · Hikari WARN — 호스트(Mac) 재시작이었다(결함 아님, 증거 `docs/review/evidence/host-restart-2026-10-01.txt`)
+- **본 것**(사용자 운영/로그 화면 2026-10-01 03:12 KST) AIS 수신 공백 두 구역 02:58:43 → 03:05:53(7분 10초, 'ais process stopped'), api `HikariPool-1 - Failed to validate connection …
+  (This connection has been closed.)` WARN 4건(02:58:43–46), region adsb_fi error(02:58:01).
+- **확인**(오케스트레이터 · 읽기 전용) wtmp `shutdown time 03:02` · `reboot time 03:03`, macOS `shutdown_stall_2026-10-01-030214`, 모든 wakeline 컨테이너 StartedAt 03:05:45 KST
+  (RestartCount 0 · OOMKilled false). db 는 깨끗한 빠른 종료(종료 체크포인트 0.36 s · 기동 때 'was shut down at 17:58:45 UTC' — 충돌 복구 없음) → db stop_grace_period 는 바꾸지
+  않았다. api 의 Hikari WARN 은 db 종료 뒤 쉬던 풀 연결의 확인이다(주기적 불일치가 아니다 — 설정 조사 결과). ais 는 공백을 이어받아 03:05:53 에 닫았다(경계 · 사유 맞음).
+  adsb_fi 두 번의 오류는 02:57:43 · 02:58:01 의 ReadTimeout(8 s — INFO, 뒤이어 성공).
+- **그 밖에 찾은 것** 이 조사가 ShipWriter 의 종료 경합(#91)과 /ops 에서 옛 오류의 까닭을 볼 수 없는 틈(#92)을 찾았다.
+
+## #89 기상청: 연속이 없을 때 필요한 전날 목록의 실패가 'ok' · 만료된 프레임을 다시 받아 STALE 을 가림 · 목록 정체를 'ok' 로(계약 v5 §G26 개정 · ADR-011)
+- **본 것**(운영 RUNS 02:23:54 KST `radar_kr ok` — 같은 때 WARN 'previous-day listing 20260930 — ReadTimeout … using today's only') 새 날 목록이 비고 저장 프레임이 전날 끝에
+  닿지 않은 주기(#87 의 `_behind_prev_day`)는 전날 목록이 유일한 내용인데, 그 목록이 실패하거나 예산이 없으면 오늘(빈) 목록으로 이어가 `ok` · 공급자 성공(LAST SUCCESS · 연속 실패 0)이었다.
+- **수정**(레인 kma — 고칠 때마다 먼저 실패하는 시험)
+  - 그 전날 목록은 필요한 목록이다: 실패 → `error`(공급자 오류 · WARN), 예산 거절 → 예산 실행, 429 → `throttled`. 자정 직후 창의 덧붙이는 전날 목록은 그대로. 이어받기 상한으로 버린
+    연속은 그 주기 처음에 두 해시에서 지운다. '전날 끝에 닿았나'는 남은 프레임이 아니라 저장했거나 파일을 본 가장 새 tm(meta latest_tm — 만료 뒤에도 남는다)으로 본다(리뷰: 프레임이
+    3 h 뒤 만료되면 쓸모없는 전날 목록을 5분마다 필수로 읽었다).
+  - 연속 확인에 필요한 전날 목록은 5 s 뒤 한 번 다시 부른다(_call — 전날 목록 실패 2/6 을 본 뒤). 전날 목록을 읽을 때마다 INFO 한 줄(날 · tm 수 · HTTP ms · 단계 ms). 연속 예산 다시 셈:
+    15분마다 289/UTC 날(다시 부르기 최악 578), 5분마다 867 — 한도 1,000 아래(전의 576 은 자정 직후 창의 목록 하나를 빼먹었다).
+  - **리뷰가 찾은 실제 결함**: 목록이 멈췄는데 파일은 받을 수 있으면, 3 h 이미지 TTL 로 프레임이 만료된 뒤 목록의 옛 tm 을 다시 받아(시험: 19:55–03:00 에 24번) `meta.fetched_at` 을
+    지금으로 옮겼다 — 웹 STALE 기준이 그 시각이라 3 h 넘은 프레임이 새것처럼 보였다. 이제 이미 받았던(또는 더 새 tm 을 받은) 3 h 넘은 tm 은 다시 받지 않고, fetched_at 은 더 새 tm 을
+    저장할 때만 움직인다.
+  - 연속이 없어도 목록이 가장 새 tm 첫 저장 뒤 900 s(웹 · api STALE 과 같은 값) 넘게 새 tm 을 싣지 않으면 가져올 것이 없는 주기는 `missing`(오류 글 · meta note '기상청 목록에 tm …
+    뒤 새 tm 없음' · 멈춤마다 WARN 한 번 + 60분마다). api: note 만 바뀌어도 /radar/kr ETag 가 바뀐다(전에는 304 로 옛 글이 남았다 — RadarKrIT 가 고치기 전 304 를 확인).
+  - 웹(통합): 한 번이라도 받은 적이 있으면(`meta.fetched_at`) 프레임이 모두 만료돼도 KMA 칩을 남긴다 — STALE 과 api note 를 title 에, 상세 행 판정도 칩과 같게(전에는 연속이
+    없으면 칩이 사라졌다 — 멈춘 출처가 상태 바에서 조용히 빠짐). 받은 적이 없으면(키 없음 등) 전처럼 칩 없음.
+- **시험** collector `test_kma_list_idle.py`(02:23 모양 504 · ReadTimeout → error · 예산 거절 · 자정 00:02 두 경우 · 이어받기 상한 뒤 연속 지움 · 23:55 뒤 만료 · 목록 정체) ·
+  만료 뒤 다시 받기 없음 · fetched_at(같은 파일) · `test_kma_missing.py` · `test_weather_jobs.py`(R-21 보관 시험의 KMA 시계 고정) · api `RadarKrIT`(note → ETag) · web `kma-missing.test.ts`(칩이 남음 · 받은 적 없음 — 고치기 전 실패).
+- **배포 뒤**(2026-10-01 06:02 KST) 수집기가 연속(since 19:35)을 이어받아 곧바로 확인: `previous-day listing 20260930 read for the streak check — 239 tms, HTTP 95 ms, step 1912 ms
+  (host-bucket wait and any retry included)` → 19:50 여전히 없음. 배포 뒤 10분 WARN · ERROR 0.
+
+## #90 연안 교통량 격자 위치 채우기 — 스냅샷마다 '새 모르는 id 340–450' 은 무엇이었나(ADR-023 개정 2026-10-01)
+- **본 것**(수집기 로그) 두 번의 기동(02:18 · 03:05 KST)에서 `7303 grid cells loaded` 가 같았고, 스냅샷 줄은 하루 내내 `… (0 rejected, 3xx–4xx new unknown ids)`, 채우기는 시간 몫
+  290 을 다 썼다 — 채우기가 수렴하는지 로그로는 알 수 없었다.
+- **수정**(레인 grid) 스냅샷 줄이 무엇을 세는지 적는다(기하 있음 · 없음(조회 대기 · 해양격자에 없음 · 격자 밖 · 조회 실패) · 조회 대기열 · 새로 넣은 수), 채우기 차례마다 INFO 요약
+  한 줄(조회 · 찾음 · 없음 · 오류 · 알려진 칸 · 대기 · 오늘 사용량 · 멈춘 까닭), heartbeat 필드와 /ops 공급자 탭의 '연안 교통량 격자 위치' 줄(heartbeat 가 120 s 안일 때만 수).
+  고친 것: '넣지 못한 칸'은 거절 횟수가 아니라 마지막 스냅샷의 서로 다른 칸 수, 'unchanged' 폴링이 넣은 id 도 센다, 가득 찬 메모리 음성 캐시가 유효한 결과를 버리지 않는다(잠재 결함 —
+  원인은 아니었다). 설명서 · README 의 '처음 약 18시간 이상' 약속을 지웠다(끝나는 때를 적지 않는다).
+- **배포 뒤 잰 값**(2026-10-01 06:02–06:12 KST) 스냅샷 21:10Z: 4,232칸 — 기하 있음 2,834 · 없음 1,398(조회 대기 1,380 · 해양격자에 없음 18), 대기열 2,160(+444). 5분마다 새로 넣은 id
+  +427 · +444 — 처음 보는 칸이 시간에 약 5,000개 나타나는데 조회는 시간 290 · 하루 6,000(고른 값 — MOF 몫)이다. 채우기 한 차례: 조회 190 — 찾음 188 · 해양격자에 없음 2, 알려진 칸
+  7,303(02:18) → 8,028(06:02) → 8,216(06:12), mof_grid4 오늘 5,852 / 6,000(UTC 날). → 채우기는 헛돌지 않고 수렴 중이지만 호출 몫이 한계다(찾은 기하는 marine_grid4 에 남는다).
+- **남은 것** 호출 수를 크게 줄일 길은 bbox 한 번에 여러 칸(ADR-023 '버린 대안' — 응답을 확인하지 않았다). 다음 후보.
+
+## #91 api 쓰기 종료 경합 · 503 의 까닭 — ShipWriter 가 쓰지 않은 행의 영수증을 ACK 할 수 있었다
+- **찾은 것**(#88 조사 · 적대적 확인) stop() 의 2 s join 뒤 늦게 끝난 워커 커밋이 종료 flush 가 가져갔지만 쓰지 못한 행의 영수증까지 풀어(XACK) 조용히 잃을 수 있었고, 그때 WARN 은
+  '대기로 남는다'고 틀리게 적었다. join 시간 초과 뒤에는 flush 와 워커가 동시에 썼다(한 작성자 불변식 위반). 이번 재시작에서 이 경합이 났는지는 로그로 알 수 없다(로그는 '31행 대기').
+- **수정**(레인 writer) poll() 은 영수증 경계를 옮기지 않고, 종료 flush 는 워커 스레드가 한다(ShipWriter · TrackWriter 둘 다). 멈추는 중 실패는 그렇다고 적고, Error 로 죽은 워커는 ERROR.
+  영수증 표시 상한 1,000 → 10,000(스트림은 MINID 로 약 2.5 h 보관 — 'MAXLEN ~200' 근거가 낡았다; `tools/contract_check.py` 가 수집기 상수로 다시 셈: 선박 ≤ 9,002 · 항공기 ≤ 8,242).
+  503 WARN 은 예외가 밝히는 까닭만(57014 문장 취소 · 55P03 잠금 · 연결 없음 · 트랜잭션 열기 실패 · 그 밖 SQLSTATE), 경로 + 가린 질의 + elapsed_ms, 공개 읽기 문장 이름과 상한
+  (`statement=replay.radar_frame statement_limit_s=3` — 27곳). 잠금 시간 초과는 500 이 아니라 503, OrderedWriter 는 55P03 을 영구 실패로 버리지 않고 다시 한다.
+  항공기 · 선박 상세 · 검색은 DB 결함(권한 · 문법)이면 500 + ERROR(전에는 조용히 200 · 503).
+- **시험** api `ShipWriterTest`(DB 죽은 채 종료 · 늦은 커밋 경합 — 고치기 전 실패) · `PersistUnitTest`(TrackWriter 마감) · `ProblemAdviceTest` · 컨트롤러 시험 · `DbTimeoutsIT`(실 PostgreSQL
+  잠금으로 문장 이름) · contract_check §8 receipt_mark_bounds.
+
+## #92 /ops RUNS — 옛 오류의 까닭을 볼 수 없었다 · budget_exhausted 가 오류처럼 보였다 · 재생 503
+- **본 것** 24 h 요약 행은 수와 마지막 시각뿐이라 region adsb_fi error 13건 가운데 마지막 것 말고는 까닭을 볼 수 없었고(api 는 필터가 없었다), budget_exhausted 는 설명 없이 오류 색이었다.
+- **수정**(레인 opsui) GET /ops/runs 에 provider · since 거르기, 요약 행에 가장 최근 실행의 오류 글자 · http(ok 행은 null — 계약 v5 §G14 개정). 웹: ok 가 아닌 요약 행에 마지막 오류,
+  '실행' 단추로 그 작업 · 공급자 · 상태의 실행을 50건씩(커서). budget_exhausted 는 제 뜻(수집기가 한도 · 시간 창 · 몫에 막혀 보내지 않음 — 공급자 오류 아님)과 주황, budget_unavailable 은
+  고장 색. incomplete 도 뜻이 생겼다. 요약 질의는 행 번호 창 대신 한 번의 해시 집계(버린 판 50–121 ms → 7.8–8.8 ms, 전 7.6–10.6 ms — 버리는 PostgreSQL 에서 잰 값).
+  재생 503 은 '데이터 저장소를 잠시 사용할 수 없음(HTTP 503) — N초 뒤 다시 시도'(Retry-After 가 있을 때만 N) 뒤 한 번 다시 부른다.
+- **통합에서 드러난 것**(E2E `replay-503`) 알림이 위 줄에 들어가 줄이 접히면 지도 높이가 바뀌고 바뀐 bbox 로 같은 시각을 새로 조회했다(bbox 33.243 ↔ 33.234 — 한 영역을 세 번). 조회 실패 ·
+  면적 상한 알림을 지도 위(왼쪽 아래)로 옮겼다 — 스펙이 알림이 있는 동안 지도 캔버스 크기가 같은지도 본다(3번 되풀이 통과).
+- **시험** api `OpsRunsIT` · `IngestRunRepositoryDbTest`(창 정렬 계획 금지) · web `ops-runs-drill.test.ts` · `ops-run-status.test.ts` · E2E `ops-screens` · `replay-503`.
+  통합에서 두 레인이 겹친 시험 하나를 고쳤다: 실행 상태 목록 시험이 traffic_grid 의 fill_state 값('filling' 등 — heartbeat)을 실행 상태로 읽었다 → `return "x", …` 는 kma_radar 에서만.
+
+## #93 관심 지역 WARN 의 까닭 · 항만 색인 시간 창 산수
+- region 'failed 3x — cooling down' · 'no provider available' WARN 끝에 마지막 오류(따옴표 없이 — /logs 가 오류 종류마다 묶는다). 시험: 종류 둘 → 지문 둘, 같은 종류 · 다른 수 → 하나.
+- portcalls_index: 격자가 시간 몫 290 을 먼저 쓰면 되찾기 · 채우기는 340 − 290 − (그 띠에서 이미 보낸 꼬리) = 11 까지(문서의 ~40/h 가 틀렸다). 재시작 · 꼬리 밀림 때 한 시간에 'low'
+  budget_exhausted 하나가 날 수 있다(09-30 17:51 의 1건과 같은 모양) — 동작은 바꾸지 않고 docstring · ADR-022 · 산수 시험을 고쳤다.
+
+## 자동 검사 현황(2026-10-01 06:00 KST, 네 레인(kma · grid · writer · opsui) 통합 뒤 · 통합에서 고친 것(KMA 칩 · 상태 목록 시험 · 재생 알림) 뒤 — #88–#93)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,601 통과(+51 — 관측 수신 계약 규칙 · 기상청 목록만 읽은 확인 14 등. 19 건너뜀 = 실 Redis 13(아래 줄에서 따로 돌림) · 실 PostgreSQL 6(손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`, 마지막 수정 전 1,599 판) 97 %(9,305문 중 241 빠짐) |
-| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너 — CI collector job 과 같다) | 13 통과(레인 kma 통합 뒤 main 에서) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `wakeline-db:local`) | 939 통과(+12 — 관측 수신 다시 읽기 · `KrRadarMissingTest` 등, 레인 kma 브랜치 = main 과 같은 api 코드) · JaCoCo 하한(LINE 95 · BRANCH 80) 검증 통과 |
-| web 단위 | Vitest | 1,320(91 파일 — +31: 통계 패널 상태 · 관측 수신 다시 읽기 글 · 설명서 캡처 · 기상청 '목록에도 … 없음' 10, main 에서) |
-| 정적 검사 · 빌드 | ruff check · ruff format --check(collector 전체 — CI 와 같은 범위) · mypy(collector 77 파일) · tsc --noEmit · eslint · next build | 모두 통과 — `ruff format --check .` 은 #84 통합 뒤 main 에서 실패하고 있었다(#87 '통합에서 드러난 것' — 고침) |
-| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture + WS 표본 — PASSED(WS `radar_kr.missing` 에 `list_tm` · `list_newer`) |
-| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 36종 — PASSED |
+| collector · ais 단위·통합 | pytest | 1,641 통과(+40 — 기상청 목록 · 오래된 tm · 격자 채우기 · 관심 지역 WARN · 항만 산수. 20 건너뜀 = 실 Redis 13(아래 줄) · 실 PostgreSQL 7(손으로만 돌리는 선택 시험 — 격자 기하 저장 · 복원 1 포함, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 97 %(9,517문 중 245 빠짐) |
+| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너) | 13 통과 |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `wakeline-db:local`) | 968 통과(+29 — 쓰기 종료 경합 · 503 까닭 · 문장 이름 · /ops/runs 오류 글자 · ETag 에 note) · JaCoCo LINE 97.1 %(9,493줄 중 277 빠짐) · BRANCH 86.3 %(6,804 중 929 빠짐 · 하한 95 / 80 — 검증 통과) |
+| web 단위 | Vitest | 1,365(95 파일 — +45: /ops RUNS 드릴 · 상태 뜻 · 격자 채우기 줄 · 재생 503 · KMA 칩) |
+| 정적 검사 · 빌드 | ruff check · ruff format --check(collector 전체) · mypy(77 파일) · tsc --noEmit · eslint · next build | 모두 통과 |
+| 언어 간 계약 | tools/contract_check.py | PASSED — 새 §8 영수증 표시 상한(수집기 상수로 다시 셈) 포함 |
+| REST 계약 | tools/rest_contract_check.py | 36종 PASSED |
 | 인프라 정책 | infra/tests(unittest) | 129 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 448 — 이번 판에서는 다시 돌리지 않았다(인프라 · db 이미지 변경 없음 — 2026-09-30 판의 값) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 41 통과(2.4 분 — `make e2e`, 끝난 뒤 스택 · 볼륨 삭제) |
-| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image`(웹 이미지의 Node) | 543,497 B / 550,000 B(여유 6,503 B — 18개 파일, 기상청 '목록에도 … 없음' 글 +359 B) |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 02:05 KST `make build` 뒤, 수집기 · 웹 이미지를 다시 빌드한 뒤 02:55 KST 에 다시 — 배포한 이미지) — gitleaks 842 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) |
-| 배포 뒤 확인 | 공개 `/api/v1/status` · `/api/v1/radar/kr` · 설명서 | #87 '배포에서 드러난 것'(02:49 KST 확인에서 `list_tm` 202609301950 · `list_newer` 0 → 칩 '기상청 목록에도 09-30 19:50 KST 뒤 새 tm 없음') · 설명서 14장 모두 배포 스택에서 불러와짐(자리표시 0) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 448 — 이번에도 다시 돌리지 않았다(인프라 변경 없음 — 2026-09-30 판의 값) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(+2 — `ops-screens` 드릴 · `replay-503`. 처음 통합 판은 `replay-503` 1건 실패 → 재생 알림을 지도 위로(#92) 뒤 43 통과, `replay-503` · `replay-layout` 3번씩 되풀이 통과) |
+| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` | 543,507 B / 550,000 B(여유 6,493 B — 통합 빌드) |
+| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 06:0x KST, 배포한 이미지) — gitleaks 890 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
+| 배포 뒤 확인 | 수집기 · api 로그(사용자가 `docker logs` 읽기를 허용 — 2026-10-01) | 06:02 KST 배포(api · collector · web — ais 는 코드 변경 없어 그대로) 뒤 10분 WARN · ERROR 0, 기상청 연속 이어받기 · 전날 목록 측정 줄, 격자 채우기 요약(#90) |
