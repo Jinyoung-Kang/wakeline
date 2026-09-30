@@ -139,6 +139,8 @@ describe("contract v5 amendment numbers are unique", () => {
     // 레인 collector(2026-09-30 저녁): 관심 지역 순서 adsb.fi → adsb.lol — 17차 · §G25
     expect(heading(25)).toMatch(/^## G\. 17차 개정\(2026-09-30 저녁 · 레인 collector /);
     expect(amendment(25)).toContain("관심 지역 기본 순서 adsb.fi → adsb.lol");
-    expect(amendment(26)).toBe("");
+    expect(heading(26)).toMatch(/^## G\. 17차 개정\(2026-09-30 저녁 · 레인 collector /); // 같은 개정의 두 번째 항목
+    expect(amendment(26)).toContain("기상청 '파일 없음' 긴 연속은 15분마다 확인");
+    expect(amendment(27)).toBe("");
   });
 });

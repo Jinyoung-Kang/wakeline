@@ -757,3 +757,36 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     credits)`(전에는 `adsb_lol → adsb_fi` 고정 글). 웹: /about 의 1 · 2순위 줄 · 운영 설정 `aircraft_providers` 안내(앞이 먼저 · 기본값).
   - 회귀 막기: collector `test_aircraft_job`(기본 순서 · adsb_fi 먼저 → 3회 실패면 adsb.lol 폴백 → 쉼 끝에 1순위 복귀 · 폴백 adsb.lol 의 429 쉼 · 미룸 · 전세계 체인은 그대로 ·
     기동 줄), api `MigrationDbTest.v17…`(바꾸는 경우 · 두지 않는 경우 · 감사 기록 · 되돌리기), infra `test_compose_policy`(네 곳이 같은 순서).
+- G26(§G22 · §G24 · R-03 · 계약 v2 §A2 예산 · ADR-011 개정 2026-09-30 저녁) **기상청 '파일 없음' 긴 연속은 15분마다 확인 — 그 사이 주기는 부르지 않고 'waiting'**.
+  - 까닭(운영 2026-09-30): 기상청이 08:15 KST 부터 모든 바이너리 합성(HSR · HSP · CMX · PPI · CPP PUB)에 'file not exist' 로 답했다(영상 data=img 만 답함) — 알리지 않은
+    공급자 장애, 길이 모름. 연속 동안에도 5분마다 목록 1 + 확인 ≤ 2(+ 목록 ReadTimeout 다시 부르기)를 불러 18:34 KST 에 `budget:kma_radar` 417 / 1,000(09:00 KST 에
+    시작한 UTC 날 — 시간당 약 44, 하루가 끝나기 전에 1,000 을 넘을 속도).
+  - 수집기(`jobs/kma_radar.py`): 연속의 나이(첫 tm 부터 지금까지, KST 벽시계)가 `MISSING_SLOW_AFTER_S`(60분 — 선택값) 이상이면 `MISSING_SLOW_EVERY_S`(15분 — 선택값,
+    주기가 더 길면 주기)마다만 확인한다. 확인하는 주기는 전과 같다 — 목록 1 + 가장 새 tm · 10분 넘은 가장 새 tm(§G22 의 둘째 확인은 늦게 생기는 파일로 회복을 보려는
+    것이라 늦춘 뒤에도 둔다 — 추천안의 '확인 하나'는 그 회복을 다시 잃는다). 간격은 마지막으로 기상청을 부른 주기(목록 예약부터 — 실패한 목록 포함)에서 센다. 파일이
+    다시 오면 연속이 닫히고 다음 주기부터 5분마다(보관 창의 빈 곳 R-03)다. 늦출 때 INFO 한 줄, 연속을 여는 WARN · 한 시간마다 WARN 에 간격을 적는다(두 WARN 의 로그
+    지문이 이 변경에서 한 번 바뀐다 — 간격 숫자만 다른 줄은 같은 지문, 로그 화면의 옛 지문 `e017086c4d14ac52` 묶음에는 더 쌓이지 않는다).
+  - 기다리는 주기(실행 기록 — 주기마다 하나는 그대로): `ingest_run.status` = **`waiting`**, http 없음, records_in 0, 오류 글자 `not called — probing every 15 min (chosen)
+    while the KMA download has no file (since tm=…, 1 h 0 min of tms); last probe 5 min before this cycle`. 'missing' 은 쓰지 않는다 — 그 주기에 기상청이 '파일 없음'으로
+    답했다는 뜻이다. 공급자 해시(last_success · last_error · 예산)와 meta `checked_at` · 연속의 `missing_checked_at` 은 바꾸지 않는다(확인하지 않았다). 연속 발행 ·
+    heartbeat 는 그대로. 웹 실행 상태 `waiting` 은 주황과 뜻(title — `RUN_STATUS_TITLE`).
+  - 필드: 두 해시(`wakeline:radar_kr:meta` · `wakeline:provider:kma_radar`)에 `missing_probe_every_s`(지금 확인 간격, 정수 초 문자열 — 5분마다면 주기 `300`, 늦춘 뒤
+    `900`, 닫으면 빈 값). api `KrRadarMissing` → `missing.probe_every_s`(정수 1–86,400, 비었으면 키 없음 · 틀리면 그 키만 빼고 `wakeline_radar_kr_parse_errors_total
+    {field="missing_probe_every_s"}`) — `/radar/kr` · `/status` · WS `status.radar_kr.missing`(`schemas/ws/server.v1.json` · `tools/rest_contract_check.py` `KR_MISSING` ·
+    `lib/ws-validate` `KR_MISSING` · WS 표본 다시 만듦). `/ops/providers` 는 공급자 해시를 그대로 싣는다.
+  - '확인 멈춤' · 이어받기: 기준 = 확인 간격 × `MISSING_STALE_PROBES`(3 — 선택값, 전의 15분 = 5분 × 3 과 같은 규칙), 아래로는 `MISSING_CARRY_S`(15분) — 늦춘 연속은
+    45분(`missing_carry_s`). 웹(`lib/kr-radar krMissing` — 상황판 칩 · 상세 · 운영 공급자 줄)이 같은 기준을 쓰고(간격을 모르면 15분 — 전과 같다), 수집기를 다시 띄우면 마지막
+    확인이 그 안인 연속만 이어받고 마지막 확인에서 간격을 센다(곧바로 부르지 않는다). 고정 15분이었다면 늦춘 뒤 확인마다 '확인 멈춤'이 깜박였고, 15분 넘게 멈췄다 다시 띄운
+    수집기는 연속을 버리고 R-03 을 처음부터 해 나중 tm 에서 새 연속을 열었다(운영 로그의 `since tm=202609301310` 과 같은 모양).
+  - 웹 글자(KST 만 · 값은 api 그대로): 한 줄 끝에 `· 15분마다 확인`(간격을 알 때만), title · 상세 규칙 `수집기가 15분마다 목록의 가장 새 tm 과 10분 넘게 앞선 가장 새 tm 만
+    확인(수집기 선택값 — 연속이 60분을 넘으면 15분마다로 늘린다)`, 확인 멈춤 `— 45분 넘게 다시 확인하지 않음(확인 멈춤)`. 숫자 60 · 15 · 3 은 웹 상수
+    (`KR_MISSING_SLOW_AFTER_MIN` · `KR_MISSING_SLOW_EVERY_MIN` · `KR_MISSING_STALE_PROBES`)이고 시험이 수집기 소스와 견준다. 설명서(/guide) 레이더 · 운영 절.
+  - 예산(설정값 계산 — `streak_calls_per_day`, 잰 값이 아니다): 연속만 이어지는 UTC 하루 — 전 5분마다 288 × 3 = **864**(다시 부르기 최악 1,728 — 한도 1,000 을 넘는다),
+    뒤 15분마다 96 × 3 = **288**(최악 576). 늦추기 전 60분(12 주기 × 3 = 36)이 그 하루에 들면 더한다. 모의 하루(12:15 부터 파일 없음)에서 늦춘 뒤 시간마다 12 —
+    24 × 12 = 288(`test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence`).
+  - 대가: 기상청이 돌아온 뒤 알아채기까지 최대 약 15분 + 늦게 생기는 파일이면 10분(전 5분) — 그동안 RainViewer 가 레이더를 맡는다(상태 바 KMA 칩 '파일 없음').
+  - 바꾸지 않는 것: 연속을 여는 규칙(R-03 세 번) · 확인할 tm 고르기(`streak_probes`) · 한 시간마다 WARN · 알린 공백 · 실행 상태 'missing' 의 뜻 · 429 'throttled'(§G24) ·
+    STALE 기준(900 s) · 부분 합성 다시 받기.
+  - 회귀 막기: collector `test_kma_missing`(15분마다 확인 · 그 사이 'waiting' · 해시 간격 · 늦출 때 INFO 한 번 · 예산 산수와 모의 하루 · 늦춘 확인에서 회복 뒤 5분마다 ·
+    다시 띄운 수집기 — 이어받기 45분 · 기다림 · 버림), api `KrRadarMissingTest`(간격 · 틀린 값) · `RestSamplesIT` · `WsSchemaContractTest`(표본), web `tests/kma-missing.test.ts`
+    (한 줄 · 기준 45분 · 모름 · 수집기 상수 · 상세 규칙 · 운영 줄 · 'waiting' 색) · `ws-schema-sweep-v5`(검증기 = 스키마) · `guide-page`.
