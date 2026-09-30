@@ -720,7 +720,14 @@ def test_ship_coverage_schema_and_rules_accept_every_honest_state():
     deferred = with_bootstrap(
         coverage_retrying(),
         missing=[
-            {**MISSING_06, "from": "2026-09-30T05:00:00Z", "to": "2026-09-30T06:00:00Z", "state": "retry", "attempts": 0, "error": "deadline"},
+            {
+                **MISSING_06,
+                "from": "2026-09-30T05:00:00Z",
+                "to": "2026-09-30T06:00:00Z",
+                "state": "retry",
+                "attempts": 0,
+                "error": "deadline",
+            },
             {**MISSING_06, "state": "retry", "attempts": 2},
         ],
         hours_loaded=23,
@@ -728,7 +735,10 @@ def test_ship_coverage_schema_and_rules_accept_every_honest_state():
     )
     never_queried = with_bootstrap(
         coverage_partial(),
-        missing=[{**MISSING_06, "from": "2026-09-30T05:00:00Z", "to": "2026-09-30T06:00:00Z", "attempts": 0, "error": "deadline"}, MISSING_06],
+        missing=[
+            {**MISSING_06, "from": "2026-09-30T05:00:00Z", "to": "2026-09-30T06:00:00Z", "attempts": 0, "error": "deadline"},
+            MISSING_06,
+        ],
         hours_loaded=23,
     )
     shrunk = with_bootstrap(coverage(), hours_loaded=24, hours_total=24)
@@ -915,7 +925,12 @@ def test_ship_coverage_schema_rejects(over):
             coverage_retrying(), missing=[{**MISSING_06, "state": "retry", "attempts": 3}]
         ),  # 첫 다시 읽기를 기다리는데(또는 도는 중) 세 번 못 읽었다
         with_bootstrap(
-            {**coverage_retrying(), "bootstrap": {k: v for k, v in coverage_retrying()["bootstrap"].items() if k not in ("next_retry_at", "next_retry")}},
+            {
+                **coverage_retrying(),
+                "bootstrap": {
+                    k: v for k, v in coverage_retrying()["bootstrap"].items() if k not in ("next_retry_at", "next_retry")
+                },
+            },
             missing=[{**MISSING_06, "state": "retry", "attempts": 2}],
         ),  # 첫 차례가 도는 중인데 두 번 못 읽었다
     ],

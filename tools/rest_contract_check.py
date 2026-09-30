@@ -2130,7 +2130,9 @@ def _coverage_missing(b: dict[str, Any], frm: datetime, live: datetime, loaded: 
         if m.get("state") == "retry":
             waiting = True
             if not 0 <= attempts <= min(passes, retries + 1):
-                errs.append(f"bootstrap.missing[{i}] waits for a retry after {attempts} failed reads (0–{min(passes, retries + 1)} by retry {nth or 0})")
+                errs.append(
+                    f"bootstrap.missing[{i}] waits for a retry after {attempts} failed reads (0–{min(passes, retries + 1)} by retry {nth or 0})"
+                )
             if error == "stopped":
                 errs.append(f"bootstrap.missing[{i}] waits for a retry although the bootstrap was stopped")
         elif not 0 <= attempts <= retries + 1:
