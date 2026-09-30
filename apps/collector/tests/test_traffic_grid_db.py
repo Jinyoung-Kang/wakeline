@@ -96,3 +96,36 @@ async def test_concurrent_reader_and_writer_share_one_pool():
 
 def test_select_and_upsert_name_the_v14_columns():
     assert "marine_grid4 (grid_no, lat_min, lon_min, lat_max, lon_max, gid, fetched_at)" in dbmod._MARINE_GRID4_UPSERT
+
+
+async def test_a_450_cell_tile_is_one_queued_write_that_a_nearly_full_queue_keeps():
+    """bbox 타일(ADR-023 2026-10-01 bbox 개정)은 한 번에 수백 칸(확인한 50 km 상자 450칸)을 준다. 쓰기 큐 상한(QUEUE_MAX 500)은 칸이 아니라
+    작업 수다 — 450칸은 작업 하나 · executemany 한 번이고, 큐에 다른 쓰기가 499개 있어도 버려지지 않는다(넘치면 버리는 것은 가장 오래된 작업).
+    지키는 시험(guard): upsert_marine_grid4 는 처음부터 한 번에 한 작업이라 고치기 전 코드에서도 통과한다."""
+    pool = Pool()
+
+    async def factory():
+        return pool
+
+    db = Db(pool_factory=factory)
+    at = datetime(2026, 10, 1, 6, 0, tzinfo=UTC)
+
+    async def other(_pool):
+        return None
+
+    for i in range(dbmod.QUEUE_MAX - 1):
+        db._submit(f"other({i})", other)
+    cells = []
+    for i in range(450):
+        la, lo = round(37.0 + (i // 25) * 0.025, 3), round(126.0 + (i % 25) * 0.025, 3)
+        cells.append(Cell(f"GR4_T{i:04d}", la, lo, round(la + 0.025, 3), round(lo + 0.025, 3), i))
+    db.upsert_marine_grid4(cells, at)
+    assert (db.pending, db.dropped) == (dbmod.QUEUE_MAX, 0)
+    db.start()
+    for _ in range(500):
+        if pool.many:
+            break
+        await asyncio.sleep(0.01)
+    await db.close(drain_s=2)
+    ((sql, rows),) = pool.many
+    assert "marine_grid4" in sql and len(rows) == 450 and db.dropped == 0
