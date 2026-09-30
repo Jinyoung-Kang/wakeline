@@ -9,8 +9,10 @@ tm=20261001 은 비었거나 HTTP 504 였다. 00:05 KST(자정 직후 창 — �
 - 연속 중 목록이 답한 확인 주기는 확인이다 — 확인할 tm 이 없어도 마지막 확인을 옮기고, 목록이 보인 것(가장 새 tm · 마지막 tm 뒤로 실은 tm 수)을 싣는다.
 - 그 주기는 'ok' 가 아니다(저장한 프레임 없음 — 'missing', 오류 글자가 목록에 새 tm 이 없다고 적는다) · 공급자 성공으로 적지 않는다. 연속 밖에서는 전처럼 'ok'.
 - 목록이 실패하면(504 · ReadTimeout) 실행 'error' 이고 마지막 확인 · 목록 필드는 그대로다(확인하지 않았다 — 그러면 '확인 멈춤'이 맞다).
-- KST 자정을 넘어 새 날 목록이 비어 있는 동안 연속의 마지막 tm 이 전날이면 전날 목록도 읽는다(자정 직후 창 00:00–00:14 과 같은 덧붙이는 목록) —
-  빈 새 날 목록을 '파일 없음'으로 세지 않고, 마지막 tm 뒤를 싣는 목록을 계속 확인한다.
+- KST 자정을 넘어 새 날 목록이 비어 있는 동안 연속의 마지막 tm 이 전날이면 전날 목록도 읽는다(자정 직후 창 00:00–00:14 과 같은 전날 목록) —
+  빈 새 날 목록을 '파일 없음'으로 세지 않고, 마지막 tm 뒤를 싣는 목록을 계속 확인한다. 그때 전날 목록은 덧붙이는 목록이 아니라 확인에 필요한
+  목록이다 — 실패하면(504 · 시간 초과) 'error', 예산이 없으면 예산 상태이고 둘 다 마지막 확인 · 목록 필드를 옮기지 않는다(리뷰 2026-10-01 — 전에는
+  오늘 목록만으로 이어가 확인할 tm 이 없는 'missing' · 마지막 확인을 옮겨 수집기가 몇 시간 동안 아무 tm 도 묻지 않았는데 '확인 멈춤'이 뜨지 않았다).
 """
 
 from __future__ import annotations
@@ -142,44 +144,6 @@ async def test_after_kst_midnight_an_empty_new_day_listing_still_checks_the_prev
     assert after["last_success_at"] == before["last_success_at"]  # 저장한 프레임이 없다 — 성공이 아니다
 
 
-async def test_a_check_that_only_reads_the_listing_moves_the_last_check_and_is_not_ok(env, caplog):
-    """확인할 tm 이 없는 확인(새 날 목록은 비었고 전날 목록은 HTTP 504 — 덧붙이는 목록이라 오늘 목록으로 계속한다): 전에는 'ok' · 공급자 성공 ·
-    마지막 확인 그대로. 이제 확인이다 — 마지막 확인을 옮기고 실행은 'missing'(목록에 확인할 tm 이 없다고 적는다), 공급자 성공은 아니다. 전날 목록을
-    읽지 못했으니 '마지막 tm 뒤로 새 tm 없음'은 모른다(빈 값 — 짓지 않는다). 없다는 답을 받은 tm 수 · 마지막 tm 은 그대로다."""
-    from wakeline_collector.http import ProviderHttpError
-
-    mod, r, ctx, clock, runs = env
-    prov, job = await _stalled_streak(mod, ctx, clock)
-    tms_before = job.missing.tms
-    before = await r.hgetall("wakeline:provider:kma_radar")
-    await _run(job, clock, _walk("202610010000", "202610010015"))  # 00:05 확인(창 — 전날 목록 합침)
-    prov.fail["20260930"] = ProviderHttpError(504, "Gateway Time-out")
-    runs.clear()
-    caplog.clear()
-    prov.binaries.clear()
-    clock["now"] = "202610010020"
-    await job.run_once()
-    assert prov.binaries == []
-    assert [run["status"] for run in runs] == ["missing"]
-    assert runs[0]["http_status"] == 200 and runs[0]["records_in"] == 0
-    assert runs[0]["error_text"] == (
-        "no new frame stored — nothing to probe: the KMA listing 20261001 lists no tm "
-        "(tm=202609301950 is on 20260930 — that listing was not read: HTTP 504 Gateway Timeout — Gateway Time-out); "
-        "KMA download has no file since tm=202609301310 "
-        f"({tms_before} tms answered missing, newest tm=202609301950)"
-    )
-    meta = await r.hgetall(mod.KEY_META)
-    assert meta["missing_checked_at"] == _utc("202610010020")
-    assert (meta["missing_list_tm"], meta["missing_list_newer"]) == ("", "")  # 목록이 마지막 tm 의 날을 덮지 못했다 — 모름
-    assert (meta["missing_last_tm"], meta["missing_tms"]) == ("202609301950", str(tms_before))
-    after = await r.hgetall("wakeline:provider:kma_radar")
-    assert after["last_success_at"] == before["last_success_at"]
-    assert after.get("last_error", "") == before.get("last_error", "")  # 호출 실패로 적지 않는다(오늘 목록은 답했다)
-    # 연속이 읽는 전날 목록의 실패는 확인마다 되풀이될 수 있다 — WARN 으로 로그 화면을 채우지 않는다(실행의 오류 글자에 있다)
-    assert not [m for m in _warns(caplog) if "previous-day listing" in m]
-    assert any("previous-day listing 20260930 — HTTP 504" in m for m in _infos(caplog))
-
-
 async def test_an_empty_listing_during_the_streak_says_nothing_is_listed_after_the_last_tm(env):
     """같은 날 목록이 빈 답(200)을 낸 확인: 마지막 tm 의 날을 읽었으니 '마지막 tm 뒤로 새 tm 없음'(0)은 안다 — 가장 새 tm 은 없다(빈 값)."""
     mod, r, ctx, clock, runs = env
@@ -237,6 +201,72 @@ async def test_a_failed_listing_is_an_error_run_and_does_not_move_the_last_check
     await _run(job, clock, ["202610010025", "202610010030", "202610010035"])
     assert [run["status"] for run in runs] == ["waiting", "waiting", "missing"]
     assert (await r.hgetall(mod.KEY_META))["missing_checked_at"] == _utc("202610010035")
+
+
+@pytest.mark.parametrize("error", _list_errors(), ids=lambda e: type(e).__name__)
+async def test_a_failed_previous_day_listing_the_streak_needs_is_an_error_run_and_moves_nothing(env, caplog, error):
+    """리뷰 2026-10-01(중간): 자정을 넘어 새 날 목록이 비었고 연속의 마지막 tm(19:50)이 전날이면 그 뒤를 싣는 목록은 전날 것이다 — 그 목록이
+    504 · 시간 초과면 확인하지 못했다. 전에는 오늘(빈) 목록으로 이어가 확인할 tm 이 없는 'missing'(http 200)을 남기고 마지막 확인을 옮겼다:
+    몇 시간 동안 기상청에 아무 tm 도 묻지 않았는데 '확인 멈춤'이 뜨지 않았고 공급자 last_error 도 비었다. 이제 오늘 목록이 실패한 주기와 같다 —
+    실행 'error'(전날 목록 단계) · 공급자 오류 · WARN, 마지막 확인 · 목록 필드 · 마지막 tm 은 그대로(그러면 45분 뒤 '확인 멈춤'이 맞다)."""
+    mod, r, ctx, clock, runs = env
+    prov, job = await _stalled_streak(mod, ctx, clock)
+    before = await r.hgetall(mod.KEY_META)
+    before_prov = await r.hgetall("wakeline:provider:kma_radar")
+    assert before["missing_checked_at"] == _utc("202609302350")
+    prov.fail["20260930"] = error  # 자정 직후 창(00:05)부터 02:50 까지 전날 목록이 실패한다 — 새 날 목록은 빈 답(200)
+    runs.clear()
+    caplog.clear()
+    prov.binaries.clear()
+    await _run(job, clock, _walk("202610010000", "202610010250"))
+    assert prov.binaries == []  # 확인할 tm 을 모른다 — 한 tm 도 묻지 않았다
+    statuses = [run["status"] for run in runs]
+    assert set(statuses) == {"waiting", "error"} and statuses.count("error") == 12  # 00:05 · 00:20 · … · 02:50(15분마다)
+    errors = [run for run in runs if run["status"] == "error"]
+    http = getattr(error, "status", None)
+    assert all(run["http_status"] == http and "previous-day listing 20260930" in run["error_text"] for run in errors)
+    after = await r.hgetall(mod.KEY_META)
+    assert {k: after[k] for k in mod.MISSING_KEYS} == {k: before[k] for k in mod.MISSING_KEYS}  # 마지막 확인 23:50 그대로
+    prov_h = await r.hgetall("wakeline:provider:kma_radar")
+    assert prov_h["last_success_at"] == before_prov["last_success_at"]
+    assert "previous-day listing 20260930" in prov_h["last_error"] and prov_h["consecutive_failures"] == "12"
+    warns = [m for m in _warns(caplog) if "previous-day listing 20260930" in m]
+    assert len(warns) == 12  # 오늘 목록의 실패와 같게 주기마다 WARN(확인이 멈췄다)
+    # 전날 목록이 다시 답하면 다음 확인 주기(03:05)가 19:50 을 다시 확인한다 — 마지막 확인이 옮겨 가고 실행은 'missing'
+    del prov.fail["20260930"]
+    runs.clear()
+    await _run(job, clock, _walk("202610010255", "202610010305"))
+    assert [run["status"] for run in runs] == ["waiting", "waiting", "missing"] and prov.binaries == ["202609301950"]
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["missing_checked_at"] == _utc("202610010305")
+    assert (meta["missing_list_tm"], meta["missing_list_newer"]) == ("202609301950", "0")
+
+
+async def test_a_previous_day_listing_the_streak_needs_without_budget_is_a_budget_run_and_moves_nothing(env):
+    """같은 경우 전날 목록의 예산 예약이 거절됐다: 전에는 확인할 tm 이 없는 'missing' · 마지막 확인을 옮겼다(오류 글자에 'budget exhausted').
+    이제 확인이 아니다 — 실행은 예산 상태('budget_exhausted') 하나, 마지막 확인 · 목록 필드 그대로, 공급자 성공도 공급자 오류도 아니다."""
+    from test_kma_missing import _refuse_after
+
+    mod, r, ctx, clock, runs = env
+    prov, job = await _stalled_streak(mod, ctx, clock)
+    await _run(job, clock, _walk("202610010000", "202610010015"))  # 00:05 확인(창 — 전날 목록 합침)
+    before = await r.hgetall(mod.KEY_META)
+    before_prov = await r.hgetall("wakeline:provider:kma_radar")
+    assert before["missing_checked_at"] == _utc("202610010005")
+    _refuse_after(ctx, 1)  # 오늘 목록 1 만 — 전날 목록 예약부터 거절(한도 초과 1,000)
+    runs.clear()
+    prov.days.clear()
+    prov.binaries.clear()
+    clock["now"] = "202610010020"
+    await job.run_once()
+    assert prov.days == ["20261001"] and prov.binaries == []  # 전날 목록은 부르지 않았다
+    assert [(run["status"], run.get("http_status")) for run in runs] == [("budget_exhausted", None)]
+    assert runs[0]["error_text"].startswith("daily budget exhausted (used=1000) — previous-day listing 20260930 not read")
+    after = await r.hgetall(mod.KEY_META)
+    assert {k: after[k] for k in mod.MISSING_KEYS} == {k: before[k] for k in mod.MISSING_KEYS}
+    prov_h = await r.hgetall("wakeline:provider:kma_radar")
+    assert prov_h["last_success_at"] == before_prov["last_success_at"]
+    assert prov_h.get("last_error", "") == before_prov.get("last_error", "")  # 예산은 공급자 오류가 아니다
 
 
 # ---- 회복 · 연속 밖 · 여는 순간 · 이어받기 ---------------------------------------------------------------------------------------
@@ -301,10 +331,21 @@ async def test_a_restart_during_a_stalled_listing_carries_the_listing_fields(env
 
 
 async def test_the_hourly_reminder_says_the_listing_has_nothing_new_either(env, caplog):
+    """목록이 자라는 동안(19:50 확인까지 — 확인 전 마지막 tm 뒤로 새 tm 이 있었다)의 알림은 목록을 말하지 않고, 목록이 멈춘 뒤(20:05 확인부터)의 알림은
+    모두 그 까닭도 적는다."""
     mod, r, ctx, clock, runs = env
     caplog.set_level(logging.INFO, logger="job.kma_radar")
-    prov, job = await _stalled_streak(mod, ctx, clock)
-    reminders = [m for m in _warns(caplog) if m.startswith("kma radar: KMA download still has no file")]
-    idle = [m for m in reminders if "the KMA listing has no tm after tm=202609301950 either" in m]
-    assert idle and reminders[-1] in idle  # 목록이 멈춘 뒤의 알림은 그 까닭도 적는다
-    assert not [m for m in reminders if m not in idle and "newest tm=202609301950" in m and "listing" in m]
+    prov = StalledKma(clock, down_from="202609301310", list_until="202609301950")
+    job = mod.KmaRadarJob(prov, ctx)
+
+    def reminders() -> list[str]:
+        return [m for m in _warns(caplog) if m.startswith("kma radar: KMA download still has no file")]
+
+    await _run(job, clock, _walk("202609301100", "202609302000"))
+    growing = reminders()
+    assert growing and not [m for m in growing if "listing" in m]
+    caplog.clear()
+    await _run(job, clock, _walk("202609302005", "202609302355"))
+    stalled = reminders()
+    idle = "; the KMA listing has no tm after tm=202609301950 either (newest listed tm=202609301950)"
+    assert stalled and all(m.endswith(idle) for m in stalled)

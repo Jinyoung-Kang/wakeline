@@ -42,8 +42,9 @@
   전에는 'ok' · http 200 · 마지막 확인 그대로라 웹이 '확인 멈춤'을 잘못 붙였고 운영 LAST SUCCESS 가 프레임 없이 갱신됐다. 확인마다(목록만 읽은 확인 · '파일 없음'
   답을 받은 확인) 목록이 보인 것을 연속에 싣는다: missing_list_tm(읽은 목록의 가장 새 tm — 그 시각 이하, 없으면 빈 값) · missing_list_newer(확인 전 last_tm
   뒤로 실은 tm 수 — 0 이면 목록도 자라지 않았다: 로그 · 오류 글자 · 웹이 '목록에도 … 뒤 새 tm 없음'을 적는다. 읽은 목록이 last_tm 의 날을 덮지 못했으면 빈 값 —
-  짓지 않는다). 연속을 여는 주기는 둘 다 빈 값(첫 확인이 채운다). 목록 호출이 실패한 주기(504 · 시간 초과)는 'error' — 확인하지 않았으니 둘 다 · 마지막
-  확인도 그대로다(그러면 '확인 멈춤'이 맞다). 전날 목록이 429 · 속도 상한이면('throttled') 확인으로 치지 않는다.
+  짓지 않는다). 연속을 여는 주기는 둘 다 빈 값(첫 확인이 채운다). 목록 호출이 실패한 주기(504 · 시간 초과 — 오늘 목록, 그리고 확인에 필요한 전날 목록:
+  아래 'KST 자정 직후')는 'error' — 확인하지 않았으니 둘 다 · 마지막 확인도 그대로다(그러면 '확인 멈춤'이 맞다). 확인에 필요한 전날 목록의 예산 예약이
+  거절된 주기는 예산 상태('budget_exhausted' · 'budget_unavailable'), 전날 목록이 429 · 속도 상한이면 'throttled' — 둘 다 확인으로 치지 않는다.
 - 속도 상한(운영 로그 2026-09-30 — 기상청 HTTP 429 '현재 요청을 처리할 수 없습니다' 네 번, 모두 같은 주기의 앞선 요청 0.1–0.5 s 뒤): KMA 호출은 모두
   호스트 버킷(ratelimit.KMA_APIHUB_RPS 0.5 req/s · burst 1 — 선택값)을 지나 2 s 간격으로 나간다('파일 없음' 연속이 닫힌 뒤 보관 창의 빈 곳을 이어 받는
   묶음 포함). 429 는 HttpClient 가 그 호스트를 멈추고(Retry-After — 초 · HTTP-date — 가 있으면 따른다, 없으면 30 → 60 → 120 → 300 s) 이 작업은 그 주기의
@@ -55,10 +56,14 @@
   다시 받기(아래)의 429 도 같다 — WARN 한 줄 · 남은 다시 받기를 멈추고, 정규 부분이 'ok' 면 실행은 'throttled'(http 429), 아니면 그 상태 그대로
   오류 글자에 덧붙인다. 목록이 답했으니 정규 부분이 'ok' 면 공급자 성공은 적는다.
 - KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다). '파일 없음' 연속의 last_tm 이 전날 이전이고
-  새 날 목록이 아직 그 시각 이하의 tm 을 싣지 않았으면 그 뒤에도 확인하는 주기마다 본다(_streak_needs_prev_day — 운영 2026-10-01: 새 날 목록이 비었거나
-  504 인 동안 last_tm 뒤를 싣는 목록은 전날 것이다. 빈 새 날 목록을 '파일 없음'으로 세지 않는다 — 연속의 tm 수 · 마지막 tm 은 답을 받은 tm 만). 그때
-  확인은 전날의 가장 새 tm 하나다(지금 −10분이 전날 tm 을 모두 넘어 둘째 확인이 첫째와 같다) — 목록 2 + 확인 1 = 주기당 3 그대로. 덧붙이는 목록이라 예산이 없거나
-  실패하면 오늘 목록만으로 주기를 계속한다(연속의 확인이 읽은 전날 목록의 실패는 INFO — 확인마다 되풀이될 수 있다. 까닭은 그 실행의 오류 글자에). 다만 429 · 속도 상한이면 목록의 429 와 같다(리뷰 2026-09-30 — 전에는 WARN 한 줄뿐이고 실행 기록은
+  새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았으면(빈 답) 그 뒤에도 확인하는 주기마다 본다(_streak_needs_prev_day — 운영 2026-10-01: 새 날
+  목록이 비어 있는 동안 last_tm 뒤를 싣는 목록은 전날 것이다. 빈 새 날 목록을 '파일 없음'으로 세지 않는다 — 연속의 tm 수 · 마지막 tm 은 답을 받은 tm 만).
+  새 날 목록 자체가 504 · 시간 초과면 전날 목록을 읽지 않는다 — 목록이 실패한 주기('error' · 아무것도 옮기지 않는다, 확인 간격 × 3 뒤 '확인 멈춤')다. 그때
+  확인은 전날의 가장 새 tm 하나다(지금 −10분이 전날 tm 을 모두 넘어 둘째 확인이 첫째와 같다) — 목록 2 + 확인 1 = 주기당 3 그대로. 이 전날 목록은
+  확인에 필요한 목록이라(자정 직후 창 안이어도) 호출이 실패하면(504 · 시간 초과 — 다시 부르지 않는다) 'error'(전날 목록 단계 · 공급자 오류 · WARN), 예산이
+  없으면 예산 상태 — 둘 다 마지막 확인 · 목록 필드를 옮기지 않는다(리뷰 2026-10-01 — 전에는 오늘 목록만으로 이어가 확인할 tm 이 없는 'missing' 으로 마지막
+  확인을 옮겼다: 수집기가 몇 시간 동안 아무 tm 도 묻지 않았는데 '확인 멈춤'이 뜨지 않았다). 연속과 상관없는 자정 직후 창의 전날 목록은 덧붙이는 목록이라 예산이
+  없거나 실패하면 오늘 목록만으로 주기를 계속한다(실패는 WARN 한 줄). 다만 429 · 속도 상한이면 목록의 429 와 같다(리뷰 2026-09-30 — 전에는 WARN 한 줄뿐이고 실행 기록은
   새 tm 이 없으면 'ok' · http 200, 있으면 쉼 때문에 보내지 않은 바이너리의 'throttled' · http 없음이었다): 이 주기의 KMA 호출(바이너리 · 다시 받기)을
   멈추고 실행은 'throttled'(http 429 · 쉰 초 · Retry-After — 그 전날 목록 단계로)다.
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
@@ -316,16 +321,16 @@ class _ListCheck:
 
     days: tuple[str, ...]  # 읽은 목록의 날(YYYYMMDD, 오름차순 — 오늘, 자정 직후 창이나 새 날 목록이 빈 연속이면 전날도)
     newest: str  # 그 목록의 가장 새 tm(그 시각 이하 — 없으면 빈 값)
-    # 확인 전 last_tm 뒤로 실은 tm 수. 목록이 last_tm 의 날을 덮지 못했으면 None(모름 — '새 tm 없음'이라 하지 않는다)
+    # 확인 전 last_tm 뒤로 실은 tm 수. 목록이 last_tm 의 날을 덮지 못했으면 None(모름 — '새 tm 없음'이라 하지 않는다: last_tm 이 그저께 이전인 연속 —
+    # 수집기는 전날 · 오늘 목록만 읽는다. 확인에 필요한 전날 목록을 읽지 못한 주기는 확인이 아니다 — _listing 이 'error' · 예산 상태로 끝낸다)
     newer: int | None
-    unread: str  # 읽으려 했으나 읽지 못한 전날 목록의 까닭(없으면 빈 값 — 실행 오류 글자에)
 
     @staticmethod
-    def of(listing: list[str], days: tuple[str, ...], now_tm: str, last_tm: str, unread: str) -> _ListCheck:
+    def of(listing: list[str], days: tuple[str, ...], now_tm: str, last_tm: str) -> _ListCheck:
         listed = [tm for tm in listing if tm <= now_tm]
         covered = bool(days) and min(days) <= last_tm[:8]
         newer = sum(1 for tm in listed if tm > last_tm) if covered else None
-        return _ListCheck(days, max(listed, default=""), newer, unread)
+        return _ListCheck(days, max(listed, default=""), newer)
 
     def text(self, last_tm: str) -> str:
         """확인할 tm 이 없던 확인의 한 줄(실행 오류 글자 — 목록이 보인 것만)."""
@@ -333,9 +338,8 @@ class _ListCheck:
         shown = f"newest listed tm={self.newest}" if self.newest else f"the listing {days} lists no tm"
         if self.newer is not None:
             return f"the KMA listing has no tm after tm={last_tm} either ({shown})"
-        why = f": {self.unread}" if self.unread else ""
         has = f"has newest tm={self.newest}" if self.newest else "lists no tm"
-        return f"the KMA listing {days} {has} (tm={last_tm} is on {last_tm[:8]} — that listing was not read{why})"
+        return f"the KMA listing {days} {has} (tm={last_tm} is on {last_tm[:8]} — that listing was not read)"
 
 
 def _gap_expired(to_tm: str) -> bool:
@@ -515,6 +519,14 @@ class _BadFrame(Exception):
 _StepFailed = CallFailed  # 한 단계(목록 · 바이너리 · 저장)의 실패 — retry.CallFailed(단계 · 걸린 시간 · 첫 시도)
 
 
+class _ListingRefused(Exception):
+    """확인에 필요한 전날 목록(_streak_needs_prev_day)의 예산 예약이 거절됐다 — 실행은 예산 상태 하나(status · error_text), 마지막 확인은 그대로."""
+
+    def __init__(self, status: str, error_text: str) -> None:
+        super().__init__(error_text)
+        self.status, self.error_text = status, error_text
+
+
 class KmaRadarJob:
     job_name = "radar_kr"
 
@@ -539,9 +551,8 @@ class KmaRadarJob:
         self.upgrades = 0
         # 이 주기 전날 목록(_listing)의 429 · 속도 상한 — 주기가 KMA 호출을 멈추고 'throttled' 로 적는다(run_once)
         self._prev_day_throttle: _StepFailed | None = None
-        # 이 주기에 읽은 목록의 날(오름차순)과, 읽으려 했으나 읽지 못한 전날 목록의 까닭(_listing — 연속의 확인이 목록이 무엇을 덮었는지 싣는다)
+        # 이 주기에 읽은 목록의 날(오름차순 — _listing: 연속의 확인이 목록이 무엇을 덮었는지 싣는다)
         self._list_days: tuple[str, ...] = ()
-        self._prev_day_unread = ""
 
     async def _frames(self) -> list[dict]:
         raw = await self.ctx.status.redis.get(KEY_FRAMES)
@@ -670,53 +681,70 @@ class KmaRadarJob:
         return n
 
     def _streak_needs_prev_day(self, day: str, now_tm: str, today: list[str]) -> bool:
-        """연속의 확인이 전날 목록도 읽어야 하는가(자정 직후 창 밖): 연속의 last_tm 이 전날 이전이고 새 날 목록이 아직 그 시각 이하의 tm 을 싣지 않았다.
-        운영 2026-10-01: 00:15 KST 뒤 확인은 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — last_tm 뒤를 싣는 목록은 전날 것이다. 이때 확인은 전날의 가장 새 tm
-        하나만 본다(현재 시각 −10분이 전날 tm 을 모두 넘는다 — 둘째 확인이 첫째와 같다): 목록 2 + 확인 1 = 주기당 3(STREAK_CALLS_PER_PROBE 그대로)."""
+        """연속의 확인에 전날 목록이 필요한가(자정 직후 창 안이어도): 연속의 last_tm 이 전날 이전이고 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지
+        않았다. 운영 2026-10-01: 00:15 KST 뒤 확인은 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — last_tm 뒤를 싣는 목록은 전날 것이다. 이때 확인은 전날의
+        가장 새 tm 하나만 본다(현재 시각 −10분이 전날 tm 을 모두 넘는다 — 둘째 확인이 첫째와 같다): 목록 2 + 확인 1 = 주기당 3(STREAK_CALLS_PER_PROBE
+        그대로). 참이면 전날 목록은 덧붙이는 목록이 아니다 — 읽지 못하면 확인이 아니다(_listing)."""
         s = self.missing
         return s is not None and s.last_tm[:8] < day and not any(tm <= now_tm for tm in today)
 
     async def _listing(self):
-        """오늘(KST) 목록. 자정 직후(00:00–00:14)에는 전날 목록도 합친다 — '파일 없음' 연속의 last_tm 이 전날이고 새 날 목록이 아직 비었으면 그 뒤에도
-        (_streak_needs_prev_day). 첫 결과(오늘)를 돌려준다. 읽은 날은 self._list_days 에 남긴다.
-        전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다 — 까닭은
-        self._prev_day_unread: 연속의 확인이면 그 실행의 오류 글자에 싣는다). 실패 로그는 자정 직후 창이면 WARN, 연속의 확인이면 INFO(확인마다 되풀이될 수
-        있다 — 로그 화면을 채우지 않는다).
+        """오늘(KST) 목록. 자정 직후(00:00–00:14)에는 전날 목록도 합친다 — '파일 없음' 연속의 last_tm 이 전날이고 새 날 목록이 아직 그 시각 이하의 tm 을
+        싣지 않았으면 그 뒤에도(_streak_needs_prev_day). 첫 결과(오늘)를 돌려준다. 읽은 날은 self._list_days 에 남긴다.
+        자정 직후 창의 전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다 —
+        실패는 WARN 한 줄). 연속의 확인에 필요한 전날 목록(_streak_needs_prev_day — 창 안이어도)은 덧붙이는 것이 아니다: 그것 없이는 확인할 tm 을 모른다
+        (리뷰 2026-10-01 — 전에는 오늘 목록만으로 이어가 확인할 tm 이 없는 'missing' 으로 마지막 확인을 옮겼다). 호출이 실패하면(504 · 시간 초과 — 다시
+        부르지 않는다) 오늘 목록의 실패와 같게 _StepFailed(전날 목록 단계 — run_once 가 'error'), 예산 예약이 거절되면 _ListingRefused(예산 상태).
         429 · 속도 상한이면 그 실패를 self._prev_day_throttle 에 남긴다 — run_once 가 이 주기의 KMA 호출을 멈추고 'throttled' 로 적는다(로그도 그때 한 줄)."""
         self._prev_day_throttle = None
-        self._list_days, self._prev_day_unread = (), ""
+        self._list_days = ()
         now_kst = kst_now()
         day = now_kst.strftime("%Y%m%d")
         today = await self._call(f"listing {day}", lambda: self.p.file_list(day))
         self._list_days = (day,)
         window = now_kst.hour == 0 and now_kst.minute < PREV_DAY_LIST_MIN
-        if not window and not self._streak_needs_prev_day(day, now_kst.strftime("%Y%m%d%H%M"), today.data):
-            return today
-        ok, used = await self.ctx.budget.reserve(self.p.name, 1)
-        if not ok:
-            why = "unavailable" if used == UNKNOWN else f"exhausted (used={used})"
-            log.info("kma radar: previous-day listing skipped — budget %s", why)
-            self._prev_day_unread = f"budget {why}"
+        needed = self._streak_needs_prev_day(day, now_kst.strftime("%Y%m%d%H%M"), today.data)
+        if not window and not needed:
             return today
         prev_day = (now_kst - timedelta(days=1)).strftime("%Y%m%d")
+        step = f"previous-day listing {prev_day}"
+        if needed:  # 확인에 필요한 목록 — 예산이 없으면 이 주기는 확인이 아니다(WARN 은 _try_reserve)
+            refused = await self._try_reserve()
+            if refused is not None:
+                s = self.missing
+                assert s is not None
+                raise _ListingRefused(
+                    refused[0],
+                    f"{refused[1]} — {step} not read: the missing-file streak's newest tm={s.last_tm} is on {s.last_tm[:8]} and "
+                    f"the listing {day} lists no tm yet — not a check",
+                )
+        else:
+            ok, used = await self.ctx.budget.reserve(self.p.name, 1)
+            if not ok:
+                log.info(
+                    "kma radar: previous-day listing skipped — budget %s",
+                    "unavailable" if used == UNKNOWN else f"exhausted (used={used})",
+                )
+                return today
         t0 = time.monotonic()
         try:
-            prev = await self.p.file_list(prev_day)  # 덧붙이는 목록 — 다시 부르지 않는다(재시도는 오늘 목록·바이너리 몫)
+            # 다시 부르지 않는다(재시도는 오늘 목록·바이너리 몫 — 확인에 필요한 전날 목록은 다음 확인 주기에 다시 읽는다)
+            prev = await self.p.file_list(prev_day)
         except Exception as e:  # noqa: BLE001
             if isinstance(e, NOT_SENT):  # 보내지 않았다 — 예산을 돌려준다(retry.py 와 같은 규칙)
                 await self.ctx.budget.release(self.p.name, 1)
             # 기상청이 호스트를 멈췄다(429) · 속도 상한 — 목록의 429 와 같게 주기가 적는다(WARN · INFO 는 _throttle_text)
             if _throttle(e):
-                self._prev_day_throttle = _StepFailed(f"previous-day listing {prev_day}", e, time.monotonic() - t0)
+                self._prev_day_throttle = _StepFailed(step, e, time.monotonic() - t0)
                 return today
-            log.log(
-                logging.WARNING if window else logging.INFO,
+            if needed:  # 확인에 필요한 목록 — 오늘 목록의 실패와 같다(run_once 가 'error' · 공급자 오류 · WARN)
+                raise _StepFailed(step, e, time.monotonic() - t0) from e
+            log.warning(
                 "kma radar: previous-day listing %s — %s after %.1f s — using today's only",
                 prev_day,
                 describe_error(e),
                 time.monotonic() - t0,
             )
-            self._prev_day_unread = describe_error(e)
             return today
         self._list_days = (prev_day, day)
         today.data = sorted({*prev.data, *today.data})
@@ -752,6 +780,9 @@ class KmaRadarJob:
             else:
                 await self._fail(started, f)
             return
+        except _ListingRefused as b:  # 확인에 필요한 전날 목록의 예산이 없다 — 예산 상태 하나, 마지막 확인은 그대로
+            self.ctx.db.record_run(self.job_name, self.p.name, started, status=b.status, error_text=b.error_text)
+            return
         except Exception as e:  # noqa: BLE001 — 목록 호출 밖(예: 전날 목록 준비)의 예상 밖 오류도 주기 실패로
             await self._fail(started, _StepFailed("listing", e, None))
             return
@@ -780,9 +811,9 @@ class KmaRadarJob:
         if throttle is not None:  # 전날 목록이 429 · 속도 상한 — 바이너리 · 다시 받기도 이번 주기에는 부르지 않는다
             candidates = []
         # 확인하는 연속(이 주기가 여는 연속이 아니다 — 여는 주기의 목록 필드는 모른다: 첫 확인이 채운다)과 이 주기의 목록이 보인 것(계약 v5 §G26 개정 2026-10-01).
-        # 전날 목록이 429 · 속도 상한이면 목록을 다 읽지 못했다 — 확인으로 치지 않는다
+        # 전날 목록이 429 · 속도 상한이면 목록을 다 읽지 못했다 — 확인으로 치지 않는다(확인에 필요한 전날 목록의 그 밖의 실패 · 예산은 _listing 이 주기를 끝냈다)
         streak = self.missing if self._prev_day_throttle is None else None
-        check = _ListCheck.of(listing.data, self._list_days, now_tm, streak.last_tm, self._prev_day_unread) if streak else None
+        check = _ListCheck.of(listing.data, self._list_days, now_tm, streak.last_tm) if streak else None
         checked_before = streak.checked_at if streak else None
         # 끝내 없던 tm 은 후보를 모두 본 뒤에 가린다 — 목록 · 바이너리 오류로 주기가 중간에 끝나도(포기한 tm 을 조용히 잊지 않게)
         try:
