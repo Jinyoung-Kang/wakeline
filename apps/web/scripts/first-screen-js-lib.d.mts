@@ -1,0 +1,22 @@
+// scripts/first-screen-js-lib.mjs 의 형식(시험이 TypeScript 에서 부른다)
+export type Group = "entry" | "dynamic" | "maplibre" | "public";
+export interface FileRef { group: Group; file: string; abs: string }
+export interface Row { group: string; file: string; raw: number; body: number }
+export interface Summary { count: number; raw: number; body: number; groups: Record<string, { count: number; raw: number; body: number }> }
+export interface MeasureArgs { baseUrl: string; serve: number | null; settleMs: number; json: string | null; budget: number | null }
+
+export const GZIP_LEVEL: number;
+export const GZIP_THRESHOLD: number;
+export const KIB: number;
+export const FIRST_SCREEN_PUBLIC_SCRIPTS: readonly string[];
+export function servedBytes(buf: Uint8Array): number;
+export function fmtKiB(b: number): string;
+export function firstScreenFiles(webDir: string): FileRef[];
+export function measureFiles(files: FileRef[]): Row[];
+export function summarize(rows: Row[]): Summary;
+export function budgetVerdict(totalBody: number, budget: number): string | null;
+export function formatReport(rows: Row[], title: string): string;
+export function isScriptResponse(resourceType: string, contentType: string | null | undefined): boolean;
+export function groupOfPath(pathname: string): "maplibre" | "next" | "public";
+export const MEASURE_USAGE: string;
+export function parseMeasureArgs(argv: string[]): MeasureArgs;

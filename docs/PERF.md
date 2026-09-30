@@ -111,9 +111,38 @@ api 메모리(ShipStore)는 정적 정보를 최대 100,000건 쥐고, §G19 뒤
 - 재현: JDK 25 · `-Xmx1g -XX:+UseSerialGC`, 정적 정보 N 건을 배열에 쥔 채 `System.gc()` 6회 뒤 `totalMemory − freeMemory` 의 차(받은 필드는 매번 `new String(…)` 으로 만든 이름 —
   payload 에서 읽은 것과 같다). 처음 판은 통합 커밋 `ed4a0b2` 의 `ShipStatic.java`, 표준 집합은 그다음 판.
 
+## 10. 첫 화면 JS — 저장소 안에서 재현하는 측정(NFR-04, 2026-09-30 KST, 이 브랜치)
+§7·§8 의 값은 Lighthouse 의 `network-requests` 에서 스크립트 transferSize(응답 머리 포함 · edge 경유)를 더한 것이었다 — 재현하려면 스택과 Lighthouse 가 있어야 했다.
+이제 두 도구가 같은 파일 · 같은 바이트를 낸다(시험 `tests/first-screen-js.test.ts`):
+
+- **브라우저 측정** `node scripts/measure-first-screen-js.mjs <기준 주소>` 또는 `--serve 8790`(운영 빌드의 `.next/standalone/server.js` 를 127.0.0.1:8790 에 띄워 재고 끈다).
+  Playwright Chromium(빈 캐시 · 1350×940 · SwiftShader WebGL)으로 `/` 를 열고, 스크립트 요청이 3 s 동안 멎을 때까지 받은 스크립트(워커 포함 · 같은 주소는 한 번)를 모은 뒤
+  주소마다 같은 `Accept-Encoding` 으로 다시 받아 풀지 않은 본문 바이트를 잰다. 같은 출처 밖 이름(배경지도 · 레이더)은 브라우저 DNS 규칙으로 막는다.
+- **바이트 단위 = gzip 본문 바이트(응답 머리 제외)**: 웹 서버(Next 내장 compression — gzip · deflate 만, zlib 기본 수준 6, 1 KiB 미만 무압축)가 압축하고,
+  edge 는 이미 `Content-Encoding` 이 붙은 응답을 다시 압축하지 않는다(nginx gzip 필터) → 배포 스택의 본문 바이트 = 로컬 standalone 서버의 본문 바이트.
+  머리는 경로마다 다르다(edge 가 보안 헤더 · Cache-Control 을 붙인다 — 이 서버 기준 응답당 약 380–850 B)라 뺀다. 옛 Lighthouse 값과 곧바로 견주지 않는다.
+
+**기준선(이 브랜치 시작 `83b4ab2`, 로컬 standalone 서버 — 브라우저 측정과 빌드 결과 계산이 같은 19개 파일 · 554,299 B)**
+
+| 묶음 | 파일 | gzip 본문 | 무엇 |
+|---|---|---|---|
+| MapLibre GL 6.11.2 | 3 | 303,421 B (296.3 KiB) | 메인 146.5 · 공용 143.8 · 워커 6.0 KiB — 지도 라이브러리 |
+| Next · React 실행 코드 | 5 | 133,462 B (130.3 KiB) | Next 의 순수 프레임워크 청크 4개(react-dom 포함 71.6 · 44.1 · 7.4 · 3.6 KiB) + Turbopack 실행기 3.8 KiB |
+| 우리 코드(섞인 청크 3개 속 Next 코드 약 6.7 KB 포함 — 원본 크기 비례로 나눈 추정) | 10 | 113,958 B (111.3 KiB) | 상황판 페이지 청크 34.8 · 머리글(Shell · 통합 검색 · 선박 표) 11.4 · lib/ships 12.4 · 지도 레이어 lib 12.6 · 공용 lib 12.6 · 지도 컴포넌트(동적) 15.3 + 3.3 · 기상청 lib 4.1 · 오류 화면 2.4 + 2.3 KiB |
+| 보간 워커(public) | 1 | 3,458 B (3.4 KiB) | `/interpolate.worker.js` |
+| **합계** | **19** | **554,299 B (541.3 KiB)** | |
+
+- 구성은 `next experimental-analyze -o`(모듈 → 청크 크기) 결과를 빌드 청크에 원본 크기로 맞춰 읽었다(차이 45 B 안 — 같은 청크). Next 순수 청크 5개는 파일 전체가 `node_modules/next` · Turbopack 실행기다.
+- **바닥**: MapLibre 303,421 B + Next · React 실행 코드 133,462 B = **436,883 B(426.6 KiB)** — 우리 코드가 0 B 여도 NFR-04 목표 400 KB(400,000 B · 400 KiB 어느 쪽으로 읽어도)를 넘는다.
+- §8 의 Lighthouse 값(520.6 KiB = 533,094 B, 17건)과 견주기: 그때 커밋 `b9ebfb4` 를 따로 빌드해 같은 도구로 계산하면 16개 · **528,597 B** 다(워커 둘 포함 —
+  §8 의 "파일 16개" 와 같은 수). 남는 4,497 B 는 17건의 응답 머리로 보인다(건당 약 265 B — 추정, Lighthouse transferSize 는 머리를 포함한다).
+  그 뒤 이 브랜치 시작까지 커밋들이 **+25,702 B** 를 더했다(첫 로드 청크 10 → 13개 — 어느 커밋이 얼마인지는 나눠 재지 않았다). 배포 스택은 이 레인에서 재지 않았다(실행 중인 스택을 건드리지 않는다).
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
 make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 전용)
+(cd apps/web && npm run build && npm run measure:first-js -- --serve 8790)   # 첫 화면 JS(브라우저 측정, 운영 빌드를 127.0.0.1:8790 에)
+(cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
 ```
