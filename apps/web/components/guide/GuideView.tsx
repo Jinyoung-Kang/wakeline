@@ -321,7 +321,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 ["연결", <span key="c" className="mono">WS open · WS paused · 탭 숨김 · WS connecting · retry N</span>, <>실시간 연결 상태. 열려 있어도 {RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 ‘수신 없음’, {RX_DEAD_MS / 1000} s 가 되면 다시 연결합니다. ‘paused · 탭 숨김’ 은 탭이 숨겨져 서버에 일시정지를 보낸 상태 — 그동안 화면 값은 멈추고, 탭이 보이면 처음 값부터 다시 받습니다.</>],
                 ["경고", <span key="b" className="mono">FIXTURE MODE · 형식 오류 · AIS 공백 진행 중 N · AIS 공백 n/m 구역 진행 중 N</span>, "따로 붙는 경고(줄 앞쪽). 형식 오류 배지는 눌러서 무엇을 버렸는지 · 어떻게 다시 받는지 봅니다. AIS 공백은 진행 중인 길이를 셉니다 — 일부 구역만 공백이면 가장 이른 구역부터."],
                 ["항공기 수", <span key="a" className="mono">aircraft N</span>, "지금 지도 영역 안의 항공기 수(STALE 포함). 레이어가 꺼져 있거나 아직 받지 않았으면 —."],
-                ["지역 · 전세계", <span key="r" className="mono">region {HEALTH_MARK.ok} lag Ns · world {HEALTH_MARK.ok} lag Ns</span>, <>서버가 보고한 지연. 지역 {REGION_STALE_S} s · 전세계 {GLOBAL_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA. 공급자 · 수집 시각은 상세.</>],
+                ["지역 · 전세계", <span key="r" className="mono">region {HEALTH_MARK.ok} lag Ns · world {HEALTH_MARK.ok} lag Ns</span>, <>서버가 보고한 지연. 지역 {REGION_STALE_S} s · 전세계 {GLOBAL_STALE_S} s 를 넘으면 STALE, 자료가 없으면 NO DATA. 공급자 · 수집 시각은 상세.
+                  수집기가 관심 지역에 쓸 공급자를 하나도 찾지 못하면 region 칩에 ‘공급자 없음’(경고) — 건너뛴 공급자와 까닭 · 가장 먼저 풀리는 때(KST)는 마우스를 올리면.</>],
                 ["AIS", <span key="s" className="mono">AIS {HEALTH_MARK.ok} lag Ns · AIS {HEALTH_MARK.bad} 끊김 · 끊김 n/m 구역</span>, <>선박 스트림 연결과 지연({AIS_LAG_WARN_S} s 를 넘으면 주의). 초당 메시지는 상세.</>],
                 ["AIS 공백", <span key="p" className="mono">AIS 공백 N s · HH:MM KST 끝남</span>, <>끝난 공백은 길이와 끝난 시각 — 끝난 뒤 {AIS_GAP_SHOW_MS / 60_000}분까지 줄에(주의), 그 뒤로는 상세에만. 상세에서도 끝난 지 {AIS_GAP_SHOW_MS / 60_000}분이 지난 공백은 주의 표시 없이 기록으로만 보입니다. 1분이 안 되는 공백도 초로 적습니다.</>],
                 ["SIGMET · 레이더", <span key="g" className="mono">sigmet {HEALTH_MARK.ok} age Ns · radar {HEALTH_MARK.ok} age Ns · KMA {HEALTH_MARK.ok} age Nm</span>, <>마지막 수집 뒤 경과. SIGMET {SIGMET_STALE_S} s · RainViewer {RADAR_STALE_S} s(서버 기준과 같음) · 기상청 {KR_RADAR_STALE_S / 60}분을 넘으면 STALE. 기상청은 최신 프레임이 일부 합성이면 ‘일부 합성’, 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 ‘파일 없음’.</>],
@@ -380,8 +381,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
             <Sec id="ops-dashboard" sub>
               {fig("ops")}
               <Table label="운영 탭" head={["탭", "보는 것"]} rows={[
-                ["providers", `공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음). 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 kma_radar 행 아래에 주황 줄 — 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수 · 마지막 확인(KST). 마지막 확인이 서버 시각으로 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’.`],
-                ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류). 상태 missing(새 tm 이 있었으나 기상청이 ‘파일 없음’ — 저장한 프레임 없음) · quarantined(받았으나 해석할 수 없어 격리)는 주황 — 호출 실패는 아니지만 공급자의 마지막 성공을 갱신하지 않습니다(뜻은 상태에 마우스를 올리면)."],
+                ["providers", `공급자별 마지막 성공 · 지연 · 기록 수 · 연속 실패 · 사용량/한도 · 마지막 오류, 켜고 끄기(원본 DB 와 수집기가 따르는 Redis 미러 — 다르면 경고), 수집기 자동 전환 기록, 예산 창별 사용량(매일 09:00 KST 에 새로 시작하는 창 — KST 로 적음). 위쪽 작업 배지는 작업이 쓰는 공급자 — 쓸 공급자가 하나도 없으면 빨강 ‘region: 공급자 없음 · 시작 시각(KST) 부터’(건너뛴 공급자와 까닭 · 가장 먼저 풀리는 때는 마우스를 올리면). 기상청 내려받기가 ‘파일 없음’으로 답하는 동안 kma_radar 행 아래에 주황 줄 — 없다는 답을 받은 첫 · 마지막 tm · 확인한 tm 수 · 마지막 확인(KST). 마지막 확인이 서버 시각으로 ${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’.`],
+                ["runs", "최근 24 h 작업별 요약과 최근 실행(상태 · HTTP · 소요 · 입력/격리 · 오류). 상태 missing(새 tm 이 있었으나 기상청이 ‘파일 없음’ — 저장한 프레임 없음) · quarantined(받았으나 해석할 수 없어 격리)는 주황 — 호출 실패는 아니지만 공급자의 마지막 성공을 갱신하지 않습니다. throttled(속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 잠시 멈춤, 비었으면 수집기가 보내지 않음)도 주황 — 공급자 오류가 아닙니다(뜻은 상태에 마우스를 올리면)."],
                 ["quality", "규칙별 격리 건수(7일)와 최근 격리."],
                 ["settings · audit · dlq", "운영 설정(판 번호로 충돌 확인), 운영 행동 감사 기록, 처리하지 못한 메시지."],
                 ["pipeline", "파이프라인 손실 지표 — 0 이 아닌 손실 지표가 있으면 탭에 ● 수. AIS 수신 진단(keepalive 왕복 · 이벤트 루프 지연 · 멈춤 · WS 수신 버퍼 · 원문 대기 시간 · 깊이 · 짧은 재연결)도 여기 — 최근 창의 최댓값과 누적 수이고 손실 수가 아니라 색으로 판정하지 않습니다. 창 · 상한 · 시간 초과는 수집기가 고른 값을 응답에서 읽어 ‘수집기 설정’으로 적습니다."],
