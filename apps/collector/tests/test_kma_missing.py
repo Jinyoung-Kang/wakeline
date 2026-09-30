@@ -62,6 +62,11 @@ class OutageKma:
 
 @pytest.fixture
 def env(monkeypatch, caplog):
+    return make_env(monkeypatch, caplog)
+
+
+def make_env(monkeypatch, caplog):
+    """env 의 몸통 — 다른 시험 파일(test_kma_list_idle)도 같은 가짜 시계 · Redis · 실행 기록을 쓴다."""
     from fakes import FakeRedis, make_ctx
 
     from wakeline_collector.jobs import kma_radar as mod
