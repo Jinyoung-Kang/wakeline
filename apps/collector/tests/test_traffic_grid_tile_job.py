@@ -170,7 +170,11 @@ async def test_known_cells_seed_tiles_and_tiles_go_before_lookups():
     assert len(db.calls) == 4 and db.calls[0] == len(grid.cells_in(A.box)) - 2
     assert set(known).isdisjoint({c.grid_no for c in db.upserts[: db.calls[0]]})
     hb = r.kv[HB]
-    assert (hb["traffic_grid_tiles_done"], hb["traffic_grid_tiles_queued"]) == ("3", "0")
+    assert (hb["traffic_grid_tiles_done"], hb["traffic_grid_tiles_queued"], hb["traffic_grid_tiles_persisted"]) == (
+        "3",
+        "0",
+        "yes",
+    )
 
 
 async def test_tiles_share_the_mof_hour_window_and_stop_there_like_lookups():
@@ -514,6 +518,12 @@ async def test_the_tile_map_is_awaited_then_the_fill_goes_on_without_it_and_says
     assert wfs.boxes == [A.box]
     warns = [x.getMessage() for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING]
     assert len(warns) == 1 and "NoPermissionError" in warns[0] and "restart" in warns[0]
+    # heartbeat 가 타일 상태를 정말 적고 있는지 말한다(검토 지적 2026-10-01: /ops 는 '끝 = 재기동 뒤에도 다시 묻지 않음'이라 했지만 NOPERM 동안은 거짓)
+    assert r.kv[HB]["traffic_grid_tiles_persisted"] == "no"
+    r.hgetall, r.hset = real, real_hset  # type: ignore[method-assign]
+    job.tiles.add(FAR, "known", clock())  # 다음 타일이 끝나 적히면 'yes'
+    await job.run_once()
+    assert r.kv[HB]["traffic_grid_tiles_persisted"] == "yes"
     # 틱마다 같은 실패를 쌓지 않는다 — 읽기 · 쓰기 실패는 까닭(예외 이름)이 바뀔 때만 INFO 한 줄
     assert len(lines(caplog, "tile states not readable")) == 1 and len(lines(caplog, "tile state write failed")) == 1
 
@@ -636,6 +646,8 @@ async def test_without_a_tile_source_the_heartbeat_tile_fields_are_empty():
     for f in (
         "tiles_done",
         "tiles_queued",
+        "tiles_persisted",
+        "tiles_resume_at",
         "fill_pass_tiles",
         "fill_pass_tile_cells",
         "fill_pass_tile_stored",

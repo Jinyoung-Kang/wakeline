@@ -58,7 +58,8 @@
   traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · waiting_tiles · hour_window · daily_budget · breaker · operator_off) ·
   traffic_grid_fill_resume_at(다음에 움직이는 때 — 없으면 빈 값) · traffic_grid_fill_pass_at 과 _lookups · _found · _not_found · _off_grid ·
   _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값) · bbox 타일(타일 공급자가 없으면 빈 값): traffic_grid_tiles_done ·
-  traffic_grid_tiles_queued · traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_stored · _tile_splits · _tile_incomplete · _tile_errors.
+  traffic_grid_tiles_queued · traffic_grid_tiles_persisted(yes · no — 끝난 타일이 재기동을 넘는가) · traffic_grid_tiles_resume_at(타일 차단기의 끝) ·
+  traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_stored · _tile_splits · _tile_incomplete · _tile_errors.
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
 PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 연달아 실패 5번 · failed 1일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
@@ -1605,6 +1606,9 @@ class TrafficGridJob:
             # 새 칸 · 나눈 타일 · 오류
             "traffic_grid_tiles_done": "" if tl else str(self.tiles.done_count()),
             "traffic_grid_tiles_queued": "" if tl else str(self.tiles.queued),
+            # 끝난 타일이 재기동을 넘는가(검토 지적 2026-10-01): yes = 상태 해시를 읽었고 마지막 쓰기가 됐다, no = 읽지 못했거나(메모리로만) 마지막
+            # 쓰기가 실패했다(예: redis 를 새 ACL 로 다시 띄우기 전 NOPERM) — 그동안 '끝'은 재기동 뒤 다시 묻는다
+            "traffic_grid_tiles_persisted": "" if tl else ("yes" if self._tiles_loaded and not self._tile_write_error else "no"),
             # 타일 차단기가 쉬는 동안 그 끝(한 칸 조회는 계속할 수 있어 채우기 상태가 'filling' 이어도 타일은 쉰다) — 아니면 빈 값
             "traffic_grid_tiles_resume_at": iso_z(self._tile_pause_until)
             if not tl and self._tile_pause_until is not None and now < self._tile_pause_until
