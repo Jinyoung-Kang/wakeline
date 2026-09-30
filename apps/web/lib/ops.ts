@@ -423,7 +423,7 @@ export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   // 기상청 429(운영 로그 2026-09-30 — jobs/kma_radar.py) · 수집기 속도 상한(jobs/aircraft.py) — 계약 v5 §G14: 공급자 오류는 'error' 만
   throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",
   // 계약 v5 §G26(jobs/kma_radar.py _wait): 기상청 '파일 없음' 연속이 60분을 넘으면 15분마다만 확인한다 — 그 사이 주기
-  waiting: "대기 — 기상청 '파일 없음' 연속이 길어 수집기가 확인 간격을 늘렸고(수집기 선택값 — 간격과 마지막 확인 뒤 지난 분은 오류 글자) 이 주기는 기상청을 부르지 않음. 공급자 오류가 아니다(공급자 last success · last error 를 바꾸지 않는다)",
+  waiting: "대기 — 기상청 '파일 없음' 연속이 길어 수집기가 확인 간격을 늘렸고(수집기 선택값 — 간격과 마지막으로 기상청을 부른 주기 뒤 지난 분은 오류 글자. 목록이 실패한 주기도 세므로 kma_radar 공급자의 '마지막 확인'과 다를 수 있다) 이 주기는 기상청을 부르지 않음. 공급자 오류가 아니다(공급자 last success · last error 를 바꾸지 않는다)",
 };
 
 /**

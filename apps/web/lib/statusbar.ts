@@ -5,7 +5,8 @@
  *   정상이 아닌 칩(주의 · 경고)은 줄에서 빼지 않는다(pinned). 폭이 모자라면 정상 · 모름 칩만 뒤에서부터 '상세 +N' 으로 옮긴다(fitChips) — 잘리지 않는다.
  * - 상세 표(detailRows): 출처 · 수집 시각 · 속도 · 기상청 프레임 · 합성 지점 · 엔진 · 판 · AIS 공백 기록 · 기준 — 줄에서 뺀 것도 모두 여기에 있다.
  * - 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api radar/kr missing): KMA 칩에 "파일 없음"(주의 — 까닭 문장은 title) · 상세에 행 하나.
- *   마지막 확인이 15분(수집기 선택값)을 넘으면 "파일 없음 · 확인 멈춤" — 지금도 그런지 모른다.
+ *   마지막 확인이 확인 간격 × 3(lib/kr-radar KR_MISSING_STALE_PROBES — 아래로 15분, 긴 연속을 15분마다 확인하면 45분 — 계약 v5 §G26)을 넘으면
+ *   "파일 없음 · 확인 멈춤" — 지금도 그런지 모른다.
  *   보관 프레임이 모두 만료돼 '사용 불가'여도 연속을 알면 KMA 칩을 남긴다(나이 STALE 만으로는 까닭을 모른다).
  * - 기준은 모두 이미 있는 값: 지역 60 s · 전세계 300 s(ws-protocol · api StatusService), AIS 120 s(ships), 기상청 900 s(format — api meta),
  *   SIGMET 900 s · 레이더 600 s(api StatusService 의 status.*.stale — SIGMET_STALE_S · RADAR_STALE_S 는 그 값을 옮겨 적은 것, 시험이 서버 코드와 견준다).

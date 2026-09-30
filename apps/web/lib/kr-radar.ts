@@ -97,8 +97,9 @@ export function krTmClock(tm: string | null | undefined): string {
 /** 연속 동안 수집기가 가장 새 tm 과 함께 다시 확인하는 tm 의 나이 하한(분) — 수집기 jobs/kma_radar.py MISSING_RECHECK_S(선택값)와 같다(tests/kma-missing 이 견준다). 설명 글자에만 쓴다. */
 export const KR_MISSING_RECHECK_MIN = 10;
 /**
- * 마지막 확인이 이보다(분) 오래되면 '확인 멈춤' — 수집기 MISSING_CARRY_S(다시 띄운 수집기가 연속을 이어받는 상한, 선택값)와 같다(tests/kma-missing 이 견준다).
- * 연속 동안 수집기는 5분마다 확인한다 — 그보다 오래 확인이 없으면 수집기가 멈췄거나 목록 호출이 실패하는 중이라 연속이 지금도 맞는지 모른다(리뷰 2026-09-30).
+ * '확인 멈춤' 기준의 아래 한계(분) — 수집기 MISSING_CARRY_S(다시 띄운 수집기가 연속을 이어받는 상한의 아래 한계, 선택값)와 같다(tests/kma-missing 이 견준다).
+ * 실제 기준은 확인 간격(api missing.probe_every_s) × KR_MISSING_STALE_PROBES 이고 이 값보다 작지 않다 — 5분마다 확인하는 연속은 15분, 긴 연속을 15분마다
+ * 확인하면 45분(아래 §G26). 그보다 오래 확인이 없으면 수집기가 멈췄거나 목록 호출이 실패하는 중이라 연속이 지금도 맞는지 모른다(리뷰 2026-09-30).
  */
 export const KR_MISSING_CHECK_STALE_MIN = 15;
 /**
