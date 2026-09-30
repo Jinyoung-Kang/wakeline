@@ -11,7 +11,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as F from "@/lib/format";
 import * as T from "@/lib/time";
 import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
@@ -42,12 +42,16 @@ import { parseRoute } from "@/lib/route";
 import { krTmClock } from "@/lib/kr-radar";
 import type { Alert, KrRadar, SigmetProps } from "@/lib/types";
 import AboutPage from "@/app/about/page";
+import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 /** UTC 자정 직전 — KST 로는 다음 날 아침(UTC 날짜가 다른 때 — 예전 두 시간대 표시가 날짜를 둘 붙이던 자리) */
 const LATE = "2026-09-28T23:41:14.906Z";
 /** html 에서 원문(data-raw) 밖의 UTC 흔적 — 글자 · title · aria-label */
 const leaks = (html: string) => htmlUtcLeaks(parseHtml(html));
 
+
+// 탭 내용 · 검색 결과 표 · 범례·정합은 나중에 받는 조각(ADR-026) — 내용을 보려면 미리 받는다(tests/helpers/dashboard-parts)
+beforeAll(preloadDashboardParts);
 describe("dashboard time formatters (lib/time): KST only", () => {
   it("minute form for radar frames: MM-DD HH:MM KST, across the KST and UTC date changes", () => {
     expect(T.fmtKstMinute(LATE, { date: true })).toBe("09-29 08:41 KST");
@@ -271,6 +275,7 @@ describe("dashboard components show KST only (title = the full KST instant)", ()
     parts.push(renderToStaticMarkup(createElement(SidePanelView, { panel: "sigmet", hex: null, sigmet: null, airport: null }))); // SIGMET 목록
     for (const html of parts) expect(leaks(html)).toEqual([]);
     expect(parts.join("")).toContain("KST"); // 시각이 실제로 그려졌다(빈 화면을 통과시키지 않는다)
+    expect(parts.join("")).not.toContain('data-testid="lazy-loading"'); // 탭 내용이 '불러오는 중' 자리가 아니라 실제 카드 · 목록이다(ADR-026)
   });
 });
 

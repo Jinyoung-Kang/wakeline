@@ -4,7 +4,7 @@ import { serverNowMs, useServerData, type ServerData } from "@/lib/store";
 import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
-import { EvidenceCard } from "./EvidenceCard";
+import { EvidenceCardPart } from "./DashboardParts";
 import { fmtKst, fmtKstClock, fmtKstTitle, fmtTimeTitle } from "@/lib/time";
 import { fmtEta, hazardColor } from "@/lib/format";
 import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
@@ -103,7 +103,7 @@ export function AlertPanel() {
               </button>
               {open === a.id ? (
                 <div id={`evidence-${a.id}`} className="px-2 pb-2">
-                  <EvidenceCard a={a} />
+                  <EvidenceCardPart a={a} />
                   <button className="btn mt-1" onClick={() => { select(a.hex); panIfOutside(aircraftPos(a.hex, a)); }} data-testid="alert-open-aircraft">항공기 카드 · 지도에서 보기</button>
                 </div>
               ) : null}

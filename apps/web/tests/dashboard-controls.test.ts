@@ -16,6 +16,7 @@ import { resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { TRAFFIC_LAYERS } from "@/lib/traffic-grid";
 import type { KrRadar, PublicStatus } from "@/lib/types";
+import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 vi.mock("@/lib/maplibre", async (orig) => {
   const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
@@ -77,6 +78,9 @@ const KR = {
   frames: [{ tm: "202609281150", obs_tm: "202609281150", fetched_at: "x", echo_cells: 10, url: "/k/1.png" }, { tm: "202609281200", obs_tm: "202609281200", fetched_at: "x", echo_cells: 12, url: "/k/2.png" }],
 } as unknown as KrRadar;
 
+
+// 탭 내용 · 검색 결과 표 · 범례·정합은 나중에 받는 조각(ADR-026) — 내용을 보려면 미리 받는다(tests/helpers/dashboard-parts)
+beforeAll(preloadDashboardParts);
 describe("layer toggles: button → ui state → the map layers that layer owns", () => {
   it("each of the eight buttons flips aria-pressed and the visibility of its map layers (both ways)", async () => {
     const { MapView } = await import("@/components/MapView");

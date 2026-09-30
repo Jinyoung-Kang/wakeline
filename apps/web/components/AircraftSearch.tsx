@@ -13,11 +13,19 @@ import { sortShipRows, type ShipSort, type ShipSortKey } from "@/lib/ships";
 import { aircraftStates, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import type { AircraftState } from "@/lib/types";
-import { ShipTable } from "./ShipTable";
+import { ShipTablePart } from "./DashboardParts";
 import { AltStack } from "./UnitStack";
 import { RequestIdOf } from "./logs/ErrorNote";
 
 const DEBOUNCE_MS = 250;
+
+/**
+ * 선박 결과 표는 첫 화면 JS 밖(DashboardParts — ADR-026). 검색창에 초점이 오면 미리 받아 결과가 올 때(입력 뒤 DEBOUNCE_MS + 조회)는 이미 있게 한다.
+ * 미리 받기 실패는 여기서 알리지 않는다 — 표를 그릴 때 다시 받고, 그때도 실패하면 그 자리에 까닭과 '다시 시도'를 보이고 보고한다(LazyPart).
+ */
+function preloadShipTable() {
+  ShipTablePart.preload().catch(() => {});
+}
 
 type GroupState = "idle" | "loading" | "done" | "error";
 /** note = 결과와 함께 보일 알림(예: 선박 DB 사용 불가 — 결과가 실시간 목록뿐). error = 실패의 오류 그대로(ApiError 면 요청 id 를 문구에 — 계약 v5 §G5) */
@@ -189,7 +197,7 @@ export function AircraftSearch() {
             if (!normalizeShipQuery(e.target.value)) setShips(IDLE);
             if (!normalizeQuery(e.target.value) && !normalizeShipQuery(e.target.value)) setMsg("");
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => { setOpen(true); preloadShipTable(); }}
           onKeyDown={onKeyDown}
           data-testid="aircraft-search-input"
         />
@@ -272,7 +280,7 @@ export function SearchResultsView({ uid, aircraft, ships, active, now, shipSort,
         {sMsg}{ships.state === "error" ? <RequestIdOf error={ships.error} /> : null}
       </div> : null}
       {rows.length ? (
-        <ShipTable rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" wide
+        <ShipTablePart rows={rows} now={now} sort={shipSort} onSort={onShipSort} testId="ship-search" wide
           listbox={{ id: lists.ships, labelledBy: headId(uid, "ships"), activeMmsi: activeShip, optionId: (m) => optionId(uid, `s-${m}`), onHover: (m) => onHover(nA + rows.findIndex((r) => r.mmsi === m)) }}
           onPick={(r) => { const h = ships.hits.find((x) => x.mmsi === r.mmsi); if (h) onChooseShip(h); }} />
       ) : null}

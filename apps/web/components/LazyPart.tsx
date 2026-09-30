@@ -1,0 +1,119 @@
+"use client";
+import { Component, lazy, Suspense, useState, type ComponentType, type ReactNode } from "react";
+import { describeThrown, reportClientError } from "@/lib/errorReport";
+
+/**
+ * 나중에 받는 화면 조각(ADR-026 — 첫 화면 JS NFR-04). 상황판을 처음 열 때 받는 코드에서 클릭 · 탭 · 펼치기 뒤에만 보이는 화면을 빼고,
+ * 처음 쓸 때 import() 로 받는다(Turbopack 이 조각마다 청크를 따로 만든다 — next/dynamic 이 아니라 React.lazy: 빌드 결과 검사
+ * scripts/check-first-screen-js.mjs 는 `/` 의 next/dynamic 을 첫 그리기에 받는 JS 로 센다).
+ * - 받는 동안: 진행 표시 규칙(lib/busy · globals.css .busy-appear · .busy-bar · .skeleton) 그대로 — 글자(role=status)는 처음부터 DOM 에,
+ *   막대 · 자리 표시는 BUSY_APPEAR_DELAY_MS 뒤에 보인다. 자리 표시는 값처럼 보이지 않는 무늬 없는 막대(aria-hidden).
+ * - 받은 뒤: 조각을 같은 그리기에서 바로 그린다 — 이미 받은 모듈이면 lazy 에 동기 thenable 을 넘겨 기다리지 않는다(번쩍임 없음).
+ * - 받지 못함: 까닭과 '다시 시도'(role=alert)를 보이고 시스템 로그에 보고한다(lib/errorReport — 같은 메시지 60 s 에 1번). 다시 시도는 새 lazy 로 다시 받는다.
+ *   받은 조각 자신의 그리기 오류는 삼키지 않는다 — 경계가 다시 던져 위(app/error.tsx)가 받는다.
+ */
+
+/** 조각의 모듈을 받지 못함(경계가 이것만 잡는다) */
+export class LazyLoadError extends Error {
+  readonly part: string;
+  readonly reason: unknown;
+  constructor(part: string, reason: unknown) {
+    super(`${part} — 화면 코드를 받지 못함: ${describeThrown(reason).message}`);
+    this.name = "LazyLoadError";
+    this.part = part;
+    this.reason = reason;
+  }
+}
+
+type Module<P> = { default: ComponentType<P> };
+
+/**
+ * 이미 받은 모듈을 lazy 에 동기로 넘긴다 — React.lazy 는 then 만 부르고, then 이 곧바로 값을 주면 그 자리에서 Resolved 로 본다(react 19 lazyInitializer).
+ * 형식은 lazy 가 요구하는 Promise 로 적지만 쓰는 것은 then 하나뿐이다.
+ */
+function settled<T>(value: T): Promise<T> {
+  const thenable = { then: (onFulfilled?: (v: T) => unknown) => { onFulfilled?.(value); return thenable; } };
+  return thenable as unknown as Promise<T>;
+}
+
+export interface LazyPartComponent<P extends object> {
+  (props: P): ReactNode;
+  /** 모듈을 미리 받는다(한 번만 — 실패하면 다음 호출이 다시 받는다). 시험 · 의도가 보일 때 미리 받기에 쓴다 */
+  preload(): Promise<void>;
+  readonly label: string;
+}
+
+/** 받는 동안 · 실패 표시의 틀(기본은 패널 안 여백). 조각이 제 자리를 스스로 잡는 경우(떠 있는 패널)에 같은 자리 · 크기를 준다 */
+export interface LazyPartOptions { frameClassName?: string }
+const DEFAULT_FRAME = "p-3 text-[11px]";
+
+/**
+ * label: 화면에 보이는 조각 이름(한국어 — "항공기 카드" 등). load: 조각의 모듈을 받아 컴포넌트를 돌려준다
+ * (예: `() => import("./AircraftCard").then((m) => m.AircraftCard)` — import() 안의 경로는 문자열 그대로 둔다, 번들러가 청크를 찾는 표시다).
+ */
+export function lazyPart<P extends object>(label: string, load: () => Promise<ComponentType<P>>, opts: LazyPartOptions = {}): LazyPartComponent<P> {
+  const frame = opts.frameClassName ?? DEFAULT_FRAME;
+  let loaded: ComponentType<P> | null = null;
+  let pending: Promise<ComponentType<P>> | null = null;
+  const fetchOnce = (): Promise<ComponentType<P>> => (pending ??= load().then(
+    (C) => { loaded = C; return C; },
+    (e: unknown) => { pending = null; throw new LazyLoadError(label, e); },
+  ));
+  const makeLazy = () => lazy<ComponentType<P>>(() => (loaded ? settled<Module<P>>({ default: loaded }) : fetchOnce().then((C) => ({ default: C }))));
+  // 조각마다 lazy 하나(다시 시도하면 새것 — 실패한 lazy 는 실패를 기억한다). 그리기에서 만들지 않는다(같은 형식이어야 상태가 유지된다)
+  const slot = { current: makeLazy() };
+  const retry = () => { slot.current = makeLazy(); };
+
+  function Part(props: P) {
+    const [attempt, setAttempt] = useState(0);
+    const Lazy = slot.current;
+    return (
+      <LoadBoundary key={attempt} label={label} frame={frame} onRetry={() => { retry(); setAttempt((n) => n + 1); }}>
+        <Suspense fallback={<PartLoading label={label} frame={frame} />}>
+          <Lazy {...props} />
+        </Suspense>
+      </LoadBoundary>
+    );
+  }
+  return Object.assign(Part, { preload: () => fetchOnce().then(() => undefined), label });
+}
+
+/** 받는 동안의 자리: 글자는 곧바로(화면 읽기), 막대 · 자리 표시 두 줄은 180 ms 뒤(lib/busy — 선택값) */
+function PartLoading({ label, frame }: { label: string; frame: string }) {
+  return (
+    <div className={frame} data-testid="lazy-loading" data-part={label}>
+      <div role="status" className="text-fg-3">{label} 불러오는 중</div>
+      <div className="busy-appear" data-testid="lazy-progress">
+        <span className="busy-bar mt-1" aria-hidden="true" />
+        <div className="mt-2 flex flex-col gap-1.5" aria-busy="true" aria-hidden="true">
+          <span className="skeleton h-3 w-40" />
+          <span className="skeleton h-2.5 w-56" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface BoundaryProps { label: string; frame: string; onRetry: () => void; children: ReactNode }
+
+class LoadBoundary extends Component<BoundaryProps, { error: unknown }> {
+  state = { error: null as unknown };
+  static getDerivedStateFromError(error: unknown) { return { error }; }
+  componentDidCatch(error: unknown) {
+    if (!(error instanceof LazyLoadError)) return; // 그리기 오류는 위 경계가 보고한다
+    const d = describeThrown(error.reason);
+    reportClientError({ message: `화면 조각을 받지 못함(${error.part}): ${d.message}`, stack: d.stack, component: `lazy:${error.part}` });
+  }
+  render() {
+    const { error } = this.state;
+    if (error == null) return this.props.children;
+    if (!(error instanceof LazyLoadError)) throw error; // 받은 조각의 그리기 오류 — 삼키지 않는다
+    return (
+      <div className={this.props.frame} role="alert" data-testid="lazy-error" data-part={this.props.label}>
+        <div className="text-bad">{this.props.label} — 화면 코드를 받지 못했습니다</div>
+        <div className="mono mt-0.5 break-all text-fg-3">{describeThrown(error.reason).message}</div>
+        <button type="button" className="btn mt-1.5" onClick={this.props.onRetry} data-testid="lazy-retry">다시 시도</button>
+      </div>
+    );
+  }
+}
