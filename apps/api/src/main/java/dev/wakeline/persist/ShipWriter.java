@@ -56,9 +56,8 @@ public class ShipWriter implements SmartLifecycle {
      * 장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다. 실패한 XADD 는 다음 flush 에 다시 싣고 따로 쌓아 재전송하지 않는다) →
      * 9,000 s 에 기본 900개, 하한에서 ≤ 9,002개(창 양 끝 · 종료 때의 마지막 flush 포함). 그래서 10,000(조사 2026-10-01: 예전 1,000 은
      * 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간 트리밍 뒤로는 기본 주기에서 여유가 약 11 % 였고, 주기를 9 s 아래로 줄이면 스트림에 아직 있는
-     * 메시지를 놓았다). DB 장애가 길면 대개 큐
-     * 상한(QUEUE_MAX 행)이 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로 센다). 이 계산은 tools/contract_check.py
-     * (receipt_mark_bounds)가 수집기 상수로 다시 한다 — 상수가 바뀌어 상한을 넘으면 그 검사가 실패한다.
+     * 메시지를 놓았다). DB 장애가 길면 대개 큐 상한(QUEUE_MAX 행)이 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로
+     * 센다). 이 계산은 tools/contract_check.py(receipt_mark_bounds)가 수집기 상수로 다시 한다 — 상수가 바뀌어 상한을 넘으면 그 검사가 실패한다.
      */
     static final int MAX_MARKS = 10_000;
     static final int PERMANENT_ATTEMPTS = 3;
