@@ -135,8 +135,9 @@ public class OpsController {
      * 재시도)이 upto 뒤에 실패해도 가려져, 같은 실패가 공급자에서는 미해결 · 요약에서는 해결로 갈린다. finished_at 이 없으면(실패 시각을 모름) 가리지 않는다.
      * 'error' 만 공급자 오류다 — collector 가 status.failure(last_error)를 쓰는 실행과 같다(throttled · budget_* 는 그대로). 해결은 DB 에서 같은 문장으로
      * 읽는다(캐시 없이 — 요약 자체가 DB 조회라 더 부를 것이 없다).
-     * <p>last_error_text · last_http_status(운영 2026-09-30 — region adsb_fi error 13 중 공급자 해시의 마지막 하나만 까닭이 보였다): 그 행의 가장 최근 실행
-     * (finished_at 이 가장 늦은 것, 모르면 뒤로 — last_at 과 같은 실행)의 오류 글자(수집기가 가려 저장한 그대로 — 원문 시각 'Z' 포함)와 http, 없으면 null(키는 늘 있다).
+     * <p>last_error_text · last_http_status(운영 2026-09-30 — region adsb_fi error 13 중 공급자 해시의 마지막 하나만 까닭이 보였다): ok 가 아닌 행은 그 행의
+     * 가장 최근 실행(finished_at 이 가장 늦은 것, 모르면 뒤로 — last_at 과 같은 실행)의 오류 글자(수집기가 가려 저장한 그대로 — 원문 시각 'Z' 포함)와 http,
+     * 없으면 null. ok 행은 둘 다 null(고르지 않는다 — 요약을 느리게 하지 않게, IngestRunRepository.summary). 키는 늘 있다.
      * summary_since = 요약 창의 시작(UTC ISO — DB 의 now() − 24 h, 요약 문장과 한 트랜잭션) — 창은 started_at &gt; summary_since. 그 값을 since 로 돌려주면 목록이 같은 창의 실행만 싣는다.
      * <p>목록 필터 job · provider · status · since(started_at &gt; since, ISO 순간 — 틀리면 400) · cursor — 모두 선택(없으면 그 조건 없음, 전과 같다).
      */
@@ -151,7 +152,7 @@ public class OpsController {
         // 한 트랜잭션: 창의 시작(summary_since)과 요약 문장이 같은 now() 를 본다
         var summary = tx.execute(st -> ingestRuns.summary(hide));
         for (Map<String, Object> row : summary.rows()) {
-            // 앱 JSON 규칙(NON_NULL)은 Map 의 null 값을 뺀다 — 이 두 키는 늘 싣는다(null = 가장 최근 실행에 글자 · http 가 없음, 키 없음 = 옛 api)
+            // 앱 JSON 규칙(NON_NULL)은 Map 의 null 값을 뺀다 — 이 두 키는 늘 싣는다(null = 가장 최근 실행에 글자 · http 가 없음 또는 ok 행, 키 없음 = 옛 api)
             row.computeIfAbsent("last_error_text", k -> tools.jackson.databind.node.NullNode.getInstance());
             row.computeIfAbsent("last_http_status", k -> tools.jackson.databind.node.NullNode.getInstance());
         }

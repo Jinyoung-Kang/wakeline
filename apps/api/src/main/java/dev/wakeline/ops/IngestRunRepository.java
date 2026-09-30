@@ -61,10 +61,14 @@ public class IngestRunRepository {
     }
 
     /**
-     * job · provider · status 마다 n · last_at · avg_latency_ms 와 last_error_text · last_http_status(그 행의 가장 최근 실행 — finished_at 이 가장 늦은 것,
-     * 같으면 id 가 큰 것, finished_at 을 모르는 실행은 뒤로 — 의 error_text(수집기가 가려 저장한 그대로) · http_status, 없으면 null).
+     * job · provider · status 마다 n · last_at · avg_latency_ms 와 last_error_text · last_http_status. 둘은 ok 가 아닌 행만 — 그 행의 가장 최근 실행
+     * (finished_at 이 가장 늦은 것, 같으면 id 가 큰 것, finished_at 을 모르는 실행은 뒤로)의 error_text(수집기가 가려 저장한 그대로) · http_status, 없으면 null.
+     * ok 행은 둘 다 null(고르지 않는다 — ok 실행은 오류가 아니고 화면도 비운다).
      * 창 = started_at &gt; now() − 24 h. hide 면 활성 provider_error 해결이 있는 공급자의 status 'error' 실행 중 finished_at ≤ upto 를 셈 · 마지막 시각 · 평균 ·
      * 가장 최근 실행 고르기에서 모두 빼고 따로 센다(n 이 0 이 된 행은 없다 — 계약 v5 §G14).
+     * <p>가장 최근 실행은 한 번의 묶음(HashAggregate)에서 고른다: 행마다 [finished_at 의 epoch(모르면 −∞), id] 배열의 max 가 위 순서의 첫 실행이고
+     * (numeric — 마이크로초까지 정확), 묶음 뒤 그 id 로 한 행씩 읽는다(기본 키). row_number() 창 함수로 고르면 창의 모든 행(ok 포함)을 글자 키로 정렬해
+     * 요약이 약 5배 느렸다(리뷰 2026-10-01 — 15 s 마다 부른다 · IngestRunRepositoryDbTest 가 창의 행을 정렬하는 계획을 막는다). 배열은 ok 가 아닌 행에서만 만든다.
      * <p>한 트랜잭션 안에서 부른다(OpsController): now() 는 트랜잭션 시작 시각이라 돌려주는 since 가 요약 문장의 창 시작과 같은 값이다. 창은 문장에
      * now() 식으로 둔다 — 파라미터로 넘기면 여러 번 실행된 뒤의 일반 계획이 창의 크기를 몰라(기본 추정 1/3) 표 전체를 훑을 수 있다(15 s 마다 부른다).
      */
@@ -73,18 +77,19 @@ public class IngestRunRepository {
         var grouped = db.sql("""
                 WITH res AS (SELECT key AS provider, max(upto) AS upto FROM ops_resolution
                              WHERE kind = 'provider_error' AND revoked_at IS NULL GROUP BY key),
-                     r0 AS (SELECT i.id, i.job, i.provider, i.status, i.finished_at, i.latency_ms, i.http_status, i.error_text,
-                                   :hide AND coalesce(i.status = 'error' AND i.finished_at <= res.upto, false) AS hidden
-                            FROM ingest_run i LEFT JOIN res ON res.provider = i.provider
-                            WHERE i.started_at > now() - interval '24 hours'),
-                     r AS (SELECT r0.*, row_number() OVER (PARTITION BY job, provider, status, hidden
-                                                           ORDER BY finished_at DESC NULLS LAST, id DESC) AS rn
-                           FROM r0)
-                SELECT job, provider, status, count(*) FILTER (WHERE NOT hidden) n, max(finished_at) FILTER (WHERE NOT hidden) last_at,
-                       (avg(latency_ms) FILTER (WHERE NOT hidden))::int avg_latency_ms, count(*) FILTER (WHERE hidden) hidden_n,
-                       max(error_text) FILTER (WHERE NOT hidden AND rn = 1) last_error_text,
-                       max(http_status) FILTER (WHERE NOT hidden AND rn = 1) last_http_status
-                FROM r GROUP BY job, provider, status ORDER BY job, provider, status""")
+                     r AS (SELECT i.id, i.job, i.provider, i.status, i.finished_at, i.latency_ms,
+                                  :hide AND coalesce(i.status = 'error' AND i.finished_at <= res.upto, false) AS hidden
+                           FROM ingest_run i LEFT JOIN res ON res.provider = i.provider
+                           WHERE i.started_at > now() - interval '24 hours'),
+                     g AS (SELECT job, provider, status, count(*) FILTER (WHERE NOT hidden) n, max(finished_at) FILTER (WHERE NOT hidden) last_at,
+                                  (avg(latency_ms) FILTER (WHERE NOT hidden))::int avg_latency_ms, count(*) FILTER (WHERE hidden) hidden_n,
+                                  max(ARRAY[coalesce(extract(epoch FROM finished_at), '-Infinity'::numeric), id::numeric])
+                                      FILTER (WHERE NOT hidden AND status <> 'ok') newest
+                           FROM r GROUP BY job, provider, status)
+                SELECT g.job, g.provider, g.status, g.n, g.last_at, g.avg_latency_ms, g.hidden_n,
+                       l.error_text AS last_error_text, l.http_status AS last_http_status
+                FROM g LEFT JOIN ingest_run l ON l.id = (g.newest[2])::bigint
+                ORDER BY g.job, g.provider, g.status""")
                 .param("hide", hide).query().listOfRows();
         List<Map<String, Object>> rows = new ArrayList<>(grouped.size());
         long hidden = 0;

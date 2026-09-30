@@ -1,7 +1,7 @@
 /**
  * 운영 RUNS 요약 행 열기(errors F1 — 운영 2026-09-30: region adsb_fi error 13 중 공급자 해시에 남은 마지막 하나의 까닭만 보였다).
- * GET /api/v1/ops/runs(계약 v5 §G14 개정 2026-10-01): summary_24h 행마다 last_error_text · last_http_status(가장 최근 실행의 원문 · http, 없으면 null —
- * 키가 없으면 옛 api), 응답의 summary_since(요약 창의 시작 — UTC ISO), 목록 필터 job · provider · status · since · cursor.
+ * GET /api/v1/ops/runs(계약 v5 §G14 개정 2026-10-01): summary_24h 행마다 last_error_text · last_http_status(ok 가 아닌 행은 가장 최근 실행의 원문 · http,
+ * 없으면 null · ok 행은 늘 null — 키가 없으면 옛 api), 응답의 summary_since(요약 창의 시작 — UTC ISO), 목록 필터 job · provider · status · since · cursor.
  */
 
 /** 요약 행 하나를 가리키는 열쇠 */

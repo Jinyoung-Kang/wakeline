@@ -71,7 +71,7 @@ test("ops RUNS: a summary row shows its last error and opens its own runs, paged
     items: [], hidden_resolved_errors: 0, summary_since: since,
     summary_24h: [
       { job: "region", provider: "adsb_fi", status: "error", n: 13, avg_latency_ms: 8012, last_at: iso(60_000), last_error_text: timeout, last_http_status: null },
-      { job: "region", provider: "adsb_fi", status: "ok", n: 8000, avg_latency_ms: 250, last_at: iso(5_000), last_error_text: null, last_http_status: 200 },
+      { job: "region", provider: "adsb_fi", status: "ok", n: 8000, avg_latency_ms: 250, last_at: iso(5_000), last_error_text: null, last_http_status: null },
       { job: "traffic_grid_geom", provider: "mof_grid4", status: "budget_exhausted", n: 24, last_at: iso(600_000), last_error_text: grid, last_http_status: null },
     ],
   };

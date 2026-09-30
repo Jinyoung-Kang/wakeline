@@ -52,6 +52,30 @@ class IngestRunRepositoryDbTest {
         return n[0];
     }
 
+    /**
+     * 창 훑기(ingest_run_started 인덱스 — 요약의 24 h 행)에서 위로 올라가며 첫 Aggregate 에 닿기 전에 있는 Sort · Incremental Sort · WindowAgg 마디 —
+     * 있으면 창의 행(운영 약 13,000 · 이 시험 약 6,600)을 모두 정렬한다. 묶은 뒤의 정렬(행 수 = 묶음 수)은 세지 않는다.
+     */
+    static List<String> sortsOfTheWindowRows(String plan) {
+        List<String> out = new java.util.ArrayList<>();
+        java.util.Deque<String> above = new java.util.ArrayDeque<>();
+        java.util.function.Consumer<tools.jackson.databind.JsonNode>[] walk = new java.util.function.Consumer[1];
+        walk[0] = node -> {
+            String type = node.path("Node Type").asString();
+            if ("ingest_run_started".equals(node.path("Index Name").asString())) {
+                for (String t : above) { // 가까운 것부터
+                    if (t.equals("Aggregate")) break;
+                    if (t.equals("Sort") || t.equals("Incremental Sort") || t.equals("WindowAgg")) out.add(t);
+                }
+            }
+            above.push(type);
+            for (var c : node.path("Plans")) walk[0].accept(c);
+            above.pop();
+        };
+        for (var root : DbTestSupport.JSON.readTree(plan)) walk[0].accept(root.path("Plan"));
+        return out;
+    }
+
     @Test
     void theDrillDownListUsesTheJobIndexNotABackwardScanOfTheWholeTable() {
         PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM ingest_run", PlanCapture.Mode.GENERIC);
@@ -82,7 +106,7 @@ class IngestRunRepositoryDbTest {
 
     @Test
     void theSummaryScansOnlyTheLast24HoursAndPicksTheNewestRunsText() {
-        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "row_number()", PlanCapture.Mode.GENERIC);
+        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "hidden_n", PlanCapture.Mode.GENERIC);
         IngestRunRepository repo = new IngestRunRepository(JdbcClient.create(plans.dataSource()));
         // 트랜잭션 없이 부른다: PlanCapture 의 대리 DataSource 는 equals 를 원래 DataSource 에 넘겨, 트랜잭션에 묶인 원래 연결을 쓰면 계획을 잡지 못한다
         // (운영에서는 OpsController 가 한 트랜잭션으로 부른다 — 창의 시작과 요약이 같은 now(), OpsRunsIT)
@@ -91,11 +115,22 @@ class IngestRunRepositoryDbTest {
         // 창은 문장 안의 now() 식이라 일반 계획도 창의 크기를 안다 — 24 h 만 인덱스로(표 전체를 훑지 않는다)
         assertThat(plan).as("summary plan: %s", plan).contains("\"Index Name\": \"ingest_run_started\"");
         assertThat(seqScansOfIngestRun(plan)).as("summary plan: %s", plan).isZero();
+        // 리뷰 2026-10-01: 가장 최근 실행을 row_number() 창 함수로 고르면 창의 모든 행(ok 포함)을 글자 키로 정렬해 요약이 약 5배 느렸다(15 s 마다 부른다) —
+        // 한 번의 묶음(HashAggregate)에서 고르고 그 id 로 한 행씩 읽는다. 창의 행을 정렬하는 마디가 없어야 한다
+        assertThat(sortsOfTheWindowRows("[{\"Plan\":{\"Node Type\":\"Aggregate\",\"Plans\":[{\"Node Type\":\"WindowAgg\",\"Plans\":[{\"Node Type\":\"Sort\","
+                + "\"Plans\":[{\"Node Type\":\"Index Scan\",\"Index Name\":\"ingest_run_started\"}]}]}]}}]")).as("the checker itself").containsExactly("Sort", "WindowAgg");
+        assertThat(sortsOfTheWindowRows(plan)).as("summary plan: %s", plan).isEmpty();
         assertThat(Duration.between(s.since(), Instant.now().minus(Duration.ofHours(24))).abs()).isLessThan(Duration.ofMinutes(1));
         Map<String, Object> err = s.rows().stream().filter(r -> "region".equals(r.get("job")) && "error".equals(r.get("status"))).findFirst().orElseThrow();
         // 가장 최근 error 는 g = 1000(가장 작은 g 가 가장 최근)
         assertThat(err).containsEntry("last_error_text", "HTTP 502 — Bad Gateway 1000").containsEntry("last_http_status", 502);
+        Map<String, Object> budget = s.rows().stream().filter(r -> "budget_exhausted".equals(r.get("status"))).findFirst().orElseThrow();
+        assertThat(budget).containsEntry("last_http_status", 200); // 이 시험 자료는 budget_exhausted 에도 200 을 넣었다 — ok 가 아닌 행은 고른다
+        // ok 행은 고르지 않는다(오류가 아니다 — 고르려면 창의 ok 행도 모두 따져야 한다): 두 키 모두 null(OpsController 가 JSON null 로 싣는다)
         List<Map<String, Object>> ok = s.rows().stream().filter(r -> "ok".equals(r.get("status"))).toList();
-        assertThat(ok).isNotEmpty().allSatisfy(r -> assertThat(r.get("last_error_text")).isNull());
+        assertThat(ok).isNotEmpty().allSatisfy(r -> {
+            assertThat(r.get("last_error_text")).isNull();
+            assertThat(r.get("last_http_status")).isNull();
+        });
     }
 }

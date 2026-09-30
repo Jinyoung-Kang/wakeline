@@ -92,7 +92,8 @@ describe("ops RUNS: the 24 h summary shows each non-ok row's last error; a row o
       items: [],
       summary_24h: [
         { job: "region", provider: "adsb_fi", status: "error", n: 13, avg_latency_ms: 8012, last_at: "2026-09-30T17:58:01Z", last_error_text: TIMEOUT, last_http_status: null },
-        { job: "region", provider: "adsb_fi", status: "ok", n: 8000, avg_latency_ms: 250, last_at: "2026-09-30T18:04:50Z", last_error_text: null, last_http_status: 200 },
+        // ok 행: api 는 고르지 않는다(둘 다 null — 계약 v5 §G14 개정)
+        { job: "region", provider: "adsb_fi", status: "ok", n: 8000, avg_latency_ms: 250, last_at: "2026-09-30T18:04:50Z", last_error_text: null, last_http_status: null },
         { job: "traffic_grid_geom", provider: "mof_grid4", status: "budget_exhausted", n: 24, last_at: "2026-09-30T17:18:11Z", last_error_text: GRID, last_http_status: null },
         // 옛 api(키 없음): 모름 — '글자 없음' 이라고 하지 않는다
         { job: "radar", provider: "rainviewer", status: "error", n: 4, last_at: "2026-09-30T15:25:27Z" },

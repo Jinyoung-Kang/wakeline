@@ -23,8 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 운영 RUNS 가 오래된 오류 실행의 까닭을 보인다(운영 2026-09-30 — region adsb_fi error 13 중 마지막 하나의 글자만 보였다):
  * <ul>
- *   <li>summary_24h 행마다 last_error_text · last_http_status — 그 job · provider · status 의 가장 최근 실행(실패를 기록한 시각 finished_at 이 가장 늦은 것,
- *       모르면 뒤로)의 오류 글자(수집기가 가려 저장한 그대로)와 http. 해결 표시(resolved=hide)가 요약에서 뺀 실행은 고르지 않는다(n · last_at 과 같은 규칙).</li>
+ *   <li>summary_24h 행마다 last_error_text · last_http_status — ok 가 아닌 행은 그 job · provider · status 의 가장 최근 실행(실패를 기록한 시각 finished_at 이
+ *       가장 늦은 것, 모르면 뒤로)의 오류 글자(수집기가 가려 저장한 그대로)와 http, ok 행은 둘 다 null(고르지 않는다). 해결 표시(resolved=hide)가 요약에서 뺀
+ *       실행은 고르지 않는다(n · last_at 과 같은 규칙).</li>
  *   <li>summary_since — 요약의 24 h 창이 시작한 순간(UTC ISO). 그 값을 since 로 돌려주면 같은 창의 실행만 나온다.</li>
  *   <li>GET /ops/runs 의 provider · since 필터(기본 없음 — 전과 같다). 목록(items)은 증거라 해결 표시와 상관없이 그대로 · 커서로 쪽을 넘긴다.</li>
  * </ul>
@@ -84,9 +85,11 @@ class OpsRunsIT extends IntegrationTest {
             assertThat(s.get(P1 + "/error").path("last_error_text").asString())
                     .as("the newest failure time wins; a run whose failure time is unknown is not 'the newest'").isEqualTo("HTTP 502 — Bad Gateway");
             assertThat(s.get(P1 + "/error").path("last_http_status").asInt()).isEqualTo(502);
-            assertThat(s.get(P1 + "/ok").has("last_error_text")).as("the key is there, null for an ok run without text").isTrue();
+            // ok 행은 고르지 않는다(오류가 아니다 — 리뷰 2026-10-01: 고르면 창의 ok 행까지 모두 정렬해 요약이 약 5배 느렸다): 키는 있고 둘 다 null
+            assertThat(s.get(P1 + "/ok").has("last_error_text")).as("the key is there, null for an ok row").isTrue();
             assertThat(s.get(P1 + "/ok").path("last_error_text").isNull()).isTrue();
-            assertThat(s.get(P1 + "/ok").path("last_http_status").asInt()).isEqualTo(200);
+            assertThat(s.get(P1 + "/ok").has("last_http_status")).isTrue();
+            assertThat(s.get(P1 + "/ok").path("last_http_status").isNull()).as("not the ok run's 200 — ok rows are not looked up").isTrue();
             assertThat(s.get(P2 + "/error").path("last_error_text").asString()).isEqualTo("HTTP 429 — Too Many Requests");
             assertThat(s.get(P2 + "/error").path("last_http_status").asInt()).isEqualTo(429);
             assertThat(s.get(P2 + "/budget_exhausted").path("last_error_text").asString()).as("stored text as issued (raw — UTC 'Z' stays)")
