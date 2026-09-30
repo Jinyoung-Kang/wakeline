@@ -507,6 +507,76 @@
 - **수정** 선박 작업은 초기 세트가 기다리는 중이면 돌지 않는다(강제 표시는 남겨 초기 세트의 훅이 한 번 보낸다 — 항공기 팬아웃과 같은 규칙).
   **회귀** `ShipFanoutTest.layersThenSubscribe_sendOneShipsSnapshot…` — 우편함을 손으로 돌려 그 순서를 만들고, 고치기 전 스냅샷 2건으로 실패 · 고친 뒤 1건 + sseq 2 diff.
 
+## #63 선택 항공기 노선 조회(Redis)가 그 WS 세션의 메시지를 붙잡음(#52 '남은 것')
+- **증상**(재현 — `RouteSelectionLookupTest` 첫 시험을 옛 API 로 먼저 써서 옛 `WsHub` 에서 돌림, 레인 커밋 6ccbf1d) 가짜 Redis 가 노선 GET 을 막은 동안 그 세션의
+  pong · 항공기 diff 가 5 s 안에 오지 않았다(`AssertionError: timed out`). 설정값으로는 읽기마다 Redis 명령 상한 3 s(`spring.data.redis.timeout`)를 붙잡고
+  콜사인별 5 s 캐시가 지날 때마다 되풀이한다 — 잰 값이 아니라 설정값이다.
+- **원인** `WsHub.sendSelected`(세션 우편함 작업 — 한 번에 하나)가 `RouteReader.forAircraft` 로 Redis GET `wakeline:route:{CALLSIGN}` 을 그 자리에서 읽었다.
+- **수정**(ADR-025 개정 · 계약 v5 §G21) 우편함은 캐시(`RouteReader.cached` — I/O 없음)만 본다. 답이 캐시에 없으면 selected 를 곧바로 route pending("노선 조회 중")으로
+  보내고, 읽기는 노선 조회 실행기(데몬 스레드 4 — 고른 값 · 대기열 max(256, WS 연결 상한) — 넘치면 읽지 않고 unavailable)에서 한다. api 는 늦어도 물음 뒤
+  Redis 명령 상한(운영 3 s — 설정 식 한 곳 `RedisConfig.COMMAND_TIMEOUT`)에 답을 정하고, 늦게 끝난 읽기는 곧바로 실제 값을 보낸다. 틀은 선박 조회(#52)와 같은
+  `ws.SelectionLookups` 로 옮겨 나눴다(선박 쪽 동작 · 지표 이름은 그대로). 리뷰가 찾은 것: REST 항공기 상세가 대기열에 있는 WS 읽기에 붙으면 Redis 가 멈춘 동안
+  상한 없이 기다렸다 → 명령 상한까지만 기다리고 unavailable(`wakeline_route_read_wait_timeouts_total`), 실행기를 닫을 때 대기열에서 버린 읽기는 거절로 끝낸다
+  (`SingleFlight.abandon`). WS 계약(키 · 값 · 스키마 · 표본)은 그대로 — pending 이 'api 가 수집기의 결과를 읽는 중(≤ 3 s)' 까지 넓어졌고 웹 title 이 그 상한을 적는다.
+- **회귀**(이번 통합에서 모두 통과) `RouteSelectionLookupTest`(16) · `RoutePausedRedisTest`(Testcontainers redis:8-alpine 을 docker pause — 선택 뒤 selected(pending)
+  < 500 ms, 멈춘 동안 ping → pong · diff · heartbeat 한 바퀴마다 < 500 ms, 시험이 고른 명령 상한 1.5 s 에 unavailable(1.4–3.5 s), 같은 동안 REST 도 unavailable(< 2.5 s)을 단언 — 풀면 found) ·
+  `RouteReaderTest`(11) · `RedisConfigTest` · `WsIntegrationTest`(스프링이 만든 허브의 마감 = 속성) · 웹 `route-pending.test.ts`(13 — application.yml 의 값과 대조).
+- **남은 것** heartbeat · 초기 세트의 status 메시지는 여전히 우편함에서 Redis 를 읽는다(`WsHub.statusPayload` → `StatusService.publicStatus` 의 HGETALL 셋, 각 명령 상한
+  3 s — 합 ≤ 9 s, 설정값의 합이고 잰 값은 없다). 연결 맺기 상한은 설정하지 않아 Lettuce 기본 10 s. 이번 통합은 배포 전이라 새 지표(`wakeline_ws_route_lookups_total` 등)의
+  운영 값은 아직 없다.
+
+## #64 기상청 레이더 공개 파일(PUB)이 08:15 KST 부터 없음 — 로그는 5분마다 같은 WARN, 운영은 '성공'
+- **증상**(운영 · 로그 스크린샷 2026-09-30) 08:29 KST 부터 5분마다 `kma radar: tm=… still unavailable after 3 tries — skipped: not gzip: '# file not exist
+  (RDR_CMP_HSR_PUB_<tm>.bin.gz)'` WARN 이 로그 화면을 채웠다. 운영 공급자 표는 실행 'ok' 에 LAST SUCCESS 가 갱신됐고(RECORDS 0 · FAILS 0), 상태 바 KMA 칩은 나이로
+  STALE 만 — 까닭이 어디에도 없었다.
+- **확인**(수집기 컨테이너에서 실제 호출, 09:5x KST, 키는 출력하지 않음 — `docs/review/evidence/kma-partial-observation.txt` 의 2026-09-30 절) 목록 API
+  (`rdr_cmp_file_list.php?cmp=HSR&tm=20260930`, 기본 ext=Y)는 HTTP 200 · 파일 119개 · 종류 EXT 만(마지막 `RDR_CMP_HSR_EXT_202609300950`), ext=K 는 238개 · EXT · KMA.
+  내려받기 API 는 202609300800 · 0810 에 gzip(362,920 · 386,813 B), 202609300815 · 0940 에 HTTP 200 `# file not exist (RDR_CMP_HSR_PUB_<tm>.bin.gz)` — ext=Y · ext=K 를
+  붙여도 같다. 문서의 내려받기 인자는 tm · data · cmp · authKey 와 PUB 파일 이름뿐이다 → 공급자가 공개(PUB) 합성 파일을 내지 않는 것이고 우리 해석 문제가 아니다.
+- **수정**(계약 v5 §G22) 수집기(`jobs/kma_radar.py` `MissingStreak`): tm 이 3번 모두 '파일 없음'이고 더 새 프레임을 저장하지 못했으면 연속을 열고 WARN 한 번, 그 뒤
+  `MISSING_REMIND_S`(60분 — 고른 값)마다 한 번, gzip 이 다시 오면 INFO(공백 길이). 연속 동안은 주기마다 두 tm 만 확인(목록의 가장 새 tm · 첫 tm 이후 10분 넘게 앞선
+  가장 새 tm — 목록이 먼저 싣고 파일이 늦게 생기는 tm 때문) — 예산은 주기당 목록 1 + 확인 2(하루 864 < 한도 1,000 — 설정값의 셈). 새 tm 이 있었는데 저장한 프레임이
+  없으면 실행은 'ok' 가 아니다('missing' · 'budget_exhausted' · 'quarantined')이고 LAST SUCCESS 를 갱신하지 않는다. 연속은 meta · 공급자 해시의 `missing_*` → api
+  `radar_kr.missing`(/radar/kr · /status · WS status) → 웹 KMA 칩 `파일 없음` · 상세 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 표. 웹은 받은 것만 적는다(없다는 답을
+  받은 첫 · 마지막 tm, 확인한 서로 다른 tm 수 — 구간의 tm 이 모두 그만큼이라고 하지 않는다, 기상청 답의 파일 이름, 목록의 종류, 마지막 확인 KST). 마지막 확인이
+  15분(수집기 `MISSING_CARRY_S` — 고른 값, 시험이 견준다)을 넘으면 `확인 멈춤`.
+- **회귀** collector `test_kma_missing.py`(23 — 먼저 써서 옛 코드에서 실패: 17주기 중단에 WARN 15건(이제 2건) · 모든 실행 'ok' · 5분마다 last_success_at 갱신,
+  레인 커밋 e2300d7) · `test_rest_contract_rules` · api `KrRadarMissingTest` · `StatusServiceTest` · `RadarKrIT` · `RestSamplesIT`(표본 `radar_kr_missing` — REST 계약 35종) ·
+  `WsSchemaContractTest`(WS 표본은 세 레인을 합친 뒤 다시 만들었다) · web `kma-missing.test.ts`(14 — 화면의 분이 수집기 상수와 같은지) · `ops-page` · `mapview-lifecycle`.
+- **남은 것** 이번 통합은 배포 전이라 실제 중단에서 WARN 수 · 화면은 아직 보지 않았다. 공개 파일이 언제 돌아올지는 모른다(공급자 쪽).
+
+## #65 창 크기를 바꾸는 동안 브라우저 오류 'ResizeObserver loop completed with undelivered notifications.'
+- **증상**(사용자 로그 2026-09-30 07:10 · 07:35 KST, 경로 "/") 데스크톱 앱의 브라우저 창 크기를 바꾸는 동안 클라이언트 오류 보고 ERROR 두 건.
+- **재현** `e2e/statusbar-resize.spec.ts` — 1440 · 1280 · 1024 · 800 px 를 세 번 오가고 1440 ↔ 480 px 를 8 px 씩 끌며 window 'error' 를 모은다. 이번 통합에서 고치기 전
+  상태 바(`components/StatusBar.tsx` 를 5944b42^ 판으로 바꾼 integ 트리, `next dev` 127.0.0.1:8746 · API 없음 — 자료 없음)로 3번 돌려 3번 모두 실패, 매번 이 오류
+  3건(레인의 같은 하네스에서는 4–5건). 되돌린 뒤 같은 하네스에서 3번 모두 통과.
+- **원인**(레인의 계측 — 커밋 5944b42) 상태 바의 `useOverflow` 가 줄(statusbar-row) 자체를 ResizeObserver 로 보고, 그 콜백 안에서 칩을 상세로 옮긴 결과를 flushSync 로
+  반영했다 — 같은 콜백 안에서 관찰 중인 줄의 높이(두 줄 → 한 줄)와 '+N' 이 붙은 상세 단추 높이(21.75 → 22.75 px)가 바뀌었다. 줄을 보지 않게 한 뒤에도 632 px 에서
+  1건: 칩을 옮기기 전후로 줄 높이가 바뀌어 아래 지도(MapLibre 의 ResizeObserver)가 같은 프레임에 두 번 크기 변화를 받았다.
+- **수정** 줄 대신 폭 탐침(`data-testid="statusbar-width"` — absolute · inset-x-0 · h-0, 줄 폭 그대로 · 높이 0)을 본다. 상세 단추는 높이 고정(h-[22px]), 줄은 옮길 칩을
+  옮기면 들어가는 동안 한 줄(nowrap)이고 고정 항목 · 주의 이상 칩만으로도 넘칠 때만 다음 프레임에 줄을 넘긴다(`pinnedOverflow`). 그 자리 반영은 한 프레임에 한 번.
+  오류 보고기는 그대로다(이 메시지를 거르지 않는다 — 원인을 없앴다).
+- **회귀** `tests/statusbar.test.ts`(27) · E2E `statusbar-resize.spec.ts` — 레인은 `next dev`(자료 없음)에서만 돌렸고, 이번 통합의 `make e2e` 에서 격리된 fixture 스택
+  (자료 있음 — 칩이 더 많다)으로 처음 돌려 통과(15.6 s). 같은 실행에서 `dashboard-layout.spec.ts`(1440×900 · 1280×800 · 1024×768 — 줄 안 넘침 · '+N' · 상세)도 통과.
+
+## #66 AIS keepalive 1011 끊김 두 건 — 원인은 밝히지 못했다, 다음번을 가를 진단과 끊김 로그 수준
+- **증상**(로그 화면 2026-09-30) `ais shard 1 disconnected: client closed (1011 keepalive ping timeout) — reconnecting in 0.9 s` 가 08:41:56 · 08:51:01 KST(ais 컨테이너
+  07:09 KST 기동 뒤 2시간에 2번, 구역 1만). 재연결마다 짧은 수신 공백이 남았다(상태 바 11 s).
+- **가설 시험**(`tests/test_ais_keepalive.py` — 127.0.0.1 가짜 websockets 서버, ping 0.2 s · 시간 초과 0.8 s 로 운영 20 s · 20 s 와 같은 기제, 결과표는 ADR-014 부록 C):
+  소켓을 읽는 코드가 멈추면 수신 버퍼 64(`max_queue`)에서 1011 이 난다. 그러나 우리 수신 태스크는 원문을 대기열에 넣기만 해 정리 태스크를 멈춰도 연결이 유지됐다.
+  ping 이 나가 있는 동안 시간 초과보다 긴 이벤트 루프 멈춤은 1011 을 낼 수 있다 — 콜백 순서에 달려 늘 내지는 않는다(두 순서를 각각 고정). 서버의 늦은 pong 도 1011.
+  이 M1 에서 잰 우리 루프 위 작업(운영 기계 값이 아니다): 정리 40 µs/건 · 선박 2만 척 한 번 인코딩 약 0.11 s — 시간 초과 20 s 와 거리가 멀다.
+- **원인** 밝히지 못했다. 남은 후보는 공급자 쪽 전달 적체로 늦은 pong(#17 에서 한 연결일 때 본 기제)과 프로세스 전체 멈춤(호스트 · Docker VM)이고, 남은 기록으로는
+  가를 수 없다. `max_queue` 64 · keepalive 20 s/20 s 는 그대로 둔다(키워도 위 시험에서 1011 이 줄지 않았다).
+- **바꾼 것**(ADR-014 부록 C · 계약 v5 §G23) 진단 — 최근 60 s 최댓값(고른 창): 이벤트 루프 지연 · 멈춤 수, websockets 수신 버퍼에 남은 프레임(17.x 내부 속성 —
+  고정한 판에서 읽히는지 `test_ais_diag` 가 지킨다), 원문 대기열 대기 시간 · 깊이, keepalive 왕복. 상태 해시 → `GET /api/v1/ops/pipeline` 의 `ais.*`(`AisSignals` 25 필드)
+  → 운영 PIPELINE 행(고른 값은 응답에서 읽어 '수집기 설정' 으로 적고, 색으로 판정하지 않는다 — 어느 것도 손실 수가 아니다). 끊김 로그 수준: 받던 연결이 끊겨 열린
+  공백이 30 s 안에 닫히면 INFO + 누적 수(`reconnects_quick_total` — 운영 '짧은 재연결'), 같은 연결의 30분에 3번째 끊김 · 끊길 때 이미 30 s 넘은 공백 · 데이터 없이
+  끝난 연결 · 30 s 넘게 다시 받지 못함은 WARN. 공백 기록(`ais_gap` · AIS 수신 공백 목록 · 상태 해시)은 로그 수준과 상관없이 그대로다(시험이 단언).
+- **회귀** collector `test_ais_keepalive`(11) · `test_ais_diag`(15) · `test_ais_reconnect_log`(10) · `tools/contract_check.py`(새 필드 모양 · fixture 의 모름 · 구역 최댓값) ·
+  api `OpsPipelineControllerTest` · `OpsPipelineIT` · web `ops-pipeline-ais-diag.test.ts`(7).
+- **남은 것** 다음 1011 이 나면 끊김 로그 한 줄의 맥락(루프 지연 · 수신 버퍼 · keepalive 왕복 · 공급자 지연 p50)으로 후보를 가른다. 배포 전이라 운영 값은 아직 없다.
+
 ## 자동 검사 현황(2026-09-30 KST, 배포 뒤 — 세 레인 통합(#52–#57) · KOMSA 요청 크기(#58) · 재생 목록 배치(#59) · 바탕 지도 범례(#60) · 클라이언트 끊김 로그(#61) · 선박 스냅샷 중복(#62))
 | 층 | 도구 | 수 |
 |---|---|---|
