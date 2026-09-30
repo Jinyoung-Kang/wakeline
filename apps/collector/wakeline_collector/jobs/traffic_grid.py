@@ -35,7 +35,7 @@
   * DB 캐시를 아직 읽지 못했으면 기동 뒤 DB_WAIT_S(10분)까지는 채우지 않는다(이미 아는 칸을 다시 묻지 않게). 그 뒤에는 DB 없이 채우고, DB 가
     돌아오면 읽어 합친다(실시간 경로는 DB 에 의존하지 않는다).
   * 로그(INFO — /logs 에는 WARN 이상만 오른다): 새 regDt 마다 한 줄 — 스냅샷의 몇 칸에 기하가 있는가 · 없는 칸의 까닭(대기 · 해양격자에 없음 ·
-    격자 밖 · 조회 실패 · 대기열이 가득 차 넣지 못함) · 대기열 크기와 새로 넣은 수. 채우기 한 번(다시 시작한 틱 → 멈춘 틱: 시간 창 · 하루 예산 ·
+    격자 밖 · 조회 실패 · 대기열이 가득 차 넣지 못함) · 대기열 크기와 앞 줄 뒤에 새로 넣은 수(같은 regDt 호출에서 넣은 칸 포함). 채우기 한 번(다시 시작한 틱 → 멈춘 틱: 시간 창 · 하루 예산 ·
     차단기 · 운영자 끔 · 물을 칸이 없음)마다 요약 한 줄 — 조회 수 · 결과 · 아는 칸 · 기다리는 칸 · 오늘 쓴 호출 · 멈춘 까닭과 다시 시작하는 때.
 - 발행: 새 regDt 이거나 기하가 늘어 수가 바뀌면(PUBLISH_MIN_INTERVAL_S 에 한 번) SET wakeline:traffic_grid EX 1200. 값은 traffic_grid.build_payload.
   오래됨(regDt 15분 초과) 판정은 api 가 한다. 수집기가 멈추면 20분 뒤 키가 사라진다.
@@ -445,6 +445,7 @@ class TrafficGridJob:
         self._pass: FillPass | None = None  # 열린 채우기 한 번
         self._last_pass: tuple[datetime, FillPass] | None = None  # 이 프로세스에서 마지막으로 끝난 채우기(끝난 때)
         self._new_snapshots = 0  # 이 프로세스가 받은 새 regDt 수(첫 스냅샷 줄에만 대기열이 남지 않는다는 설명을 붙인다)
+        self._queued_unlogged = 0  # 같은 regDt 호출에서 대기열에 넣은 칸 — 다음 스냅샷 줄의 +K 에 더한다
         self._logged_disabled: str | None = None
         self._waiting_logged = False
         self.counts = {"komsa_calls": 0, "wfs_calls": 0, "published": 0}
@@ -626,7 +627,8 @@ class TrafficGridJob:
             self.ctx.db.record_run(
                 self.job_name, p.name, started, status="unchanged", http_status=resp.status, latency_ms=resp.latency_ms
             )
-            self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now)  # 부정 캐시 기한이 지난 칸을 다시 기다림에
+            # 부정 캐시 기한이 지난 칸 · 채우기가 비운 자리에 넣지 못했던 칸을 다시 기다림에 — 넣은 수는 다음 스냅샷 줄이 센다
+            self._queued_unlogged += self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now)
             self._dirty = True  # 같은 값을 다시 실어 TTL 만 늘린다 — api 가 regDt 나이로 '멈춤'을 밝힌다(값이 같아 ETag 도 같다)
             await self._success(resp, len(snap.items))
             return
@@ -634,7 +636,8 @@ class TrafficGridJob:
         self.snapshot, self.fetched_at, self.last_ok = snap, resp.fetched_at, resp.fetched_at
         self.schedule.on_new(snap.reg_dt, now)
         self._new_snapshots += 1
-        added = self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now)
+        added = self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now) + self._queued_unlogged
+        self._queued_unlogged = 0
         self._dirty = True
         self._force_publish = True
         self.ctx.db.record_run(
@@ -655,9 +658,10 @@ class TrafficGridJob:
         self._log_snapshot(snap, added, now)
 
     def _log_snapshot(self, snap: KomsaSnapshot, added: int, now: datetime) -> None:
-        """새 regDt 한 줄: 이 스냅샷의 몇 칸에 기하가 있는가(지도에 그려지는 칸)와 없는 칸의 까닭, 조회 대기열. 대기열 증가는 '처음 본 칸'이 아니라
-        '이 프로세스가 새로 넣은 칸'이다 — 대기열은 메모리라 재기동 뒤 첫 스냅샷은 결과(DB · 부정 캐시)가 없는 칸을 모두 다시 센다(운영 2026-09-30:
-        예전 줄 'N new unknown ids' 가 재기동 직후 1,372 · 그 뒤 스냅샷마다 340–450)."""
+        """새 regDt 한 줄: 이 스냅샷의 몇 칸에 기하가 있는가(지도에 그려지는 칸)와 없는 칸의 까닭, 조회 대기열. 대기열 증가(+K)는 '처음 본 칸'이
+        아니라 '이 프로세스가 앞 스냅샷 줄 뒤에 새로 넣은 칸'이다(그 사이 같은 regDt 호출에서 넣은 칸 포함 — 줄마다 더하면 이 프로세스가 넣은 칸 수).
+        대기열은 메모리라 재기동 뒤 첫 스냅샷은 결과(DB · 부정 캐시)가 없는 칸을 모두 다시 센다(운영 2026-09-30: 예전 줄 'N new unknown ids' 가
+        재기동 직후 1,372 · 그 뒤 스냅샷마다 340–450)."""
         c = self.geometry.coverage((i.grid_id for i in snap.items), now)
         without = len(snap.items) - c["cells"]
         full = f", {c['not_queued']} not queued — queue full at {MAX_TRACKED}" if c["not_queued"] else ""

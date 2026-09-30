@@ -120,6 +120,27 @@ async def test_not_queued_is_unknown_before_any_snapshot(monkeypatch):
     assert r.kv[HB]["traffic_grid_not_queued"] == ""  # 스냅샷을 읽은 적이 없다 — 0 으로 채우지 않는다
 
 
+async def test_ids_queued_at_an_unchanged_poll_are_counted_on_the_next_snapshot_line(monkeypatch, caplog):
+    """같은 regDt(unchanged) 호출도 스냅샷을 다시 읽어 대기열에 넣는다(부정 캐시 기한이 지난 칸 · 채우기가 비운 자리). 전에는 그 수가 어느 줄에도
+    없어, 대기열이 찬 뒤 '+K newly queued' 가 실제로 넣은 수보다 적게 나왔다 — 이제 다음 스냅샷 줄의 K 는 앞 스냅샷 줄 뒤에 넣은 칸 모두다
+    (줄마다 K 를 더하면 이 프로세스가 넣은 칸 수)."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    monkeypatch.setattr(tg, "MAX_TRACKED", 3)
+    items = [("GR4_Q1", 50, 1), ("GR4_Q2", 40, 1), ("GR4_Q3", 30, 1), ("GR4_Q4", 20, 1), ("GR4_Q5", 10, 1)]
+    wfs = FakeWfs({g: WfsResult("found", cell=cell(g, 35.0, 129.0 + i * 0.025)) for i, (g, _v, _d) in enumerate(items)})
+    same = komsa_body(items=items)
+    job, _k, _w, r, clock, _db = setup(same, same, komsa_body("2026-09-29 18:10:05", items), wfs=wfs)
+    r.kv[MOF_HOUR] = {"used": str(tg.MOF_HOURLY_CAP - tg.MOF_GRID4_HOURLY_HEADROOM - 1), "limit": str(tg.MOF_HOURLY_CAP)}
+    await job.run_once()  # Q1 · Q2 · Q3 을 넣고(+3) Q1 을 찾는다 — 자리 하나가 빈다
+    clock.t = job.schedule.next_due
+    await job.run_once()  # 같은 regDt: Q4 가 빈 자리에 들어간다(줄 없음)
+    assert job.geometry.pending == 3
+    clock.t = job.schedule.next_due
+    await job.run_once()  # 새 regDt: 더 넣을 자리가 없다
+    got = lines(caplog, "traffic grid: regDt")
+    assert [re.search(r"\(\+(\d+) newly queued", s).group(1) for s in got] == ["3", "1"]  # type: ignore[union-attr]
+
+
 # ---- 채우기 한 번(pass)마다 INFO 요약 한 줄 ----------------------------------------------------------------------------
 
 
