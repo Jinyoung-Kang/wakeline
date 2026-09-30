@@ -1,5 +1,6 @@
 "use client";
 import { Component, lazy, Suspense, useState, type ComponentType, type ReactNode } from "react";
+import { checkChunk, chunkCheckText, chunkUrlOf, type ChunkCheck } from "@/lib/chunk-probe";
 import { describeThrown, reportClientError } from "@/lib/errorReport";
 
 /**
@@ -9,7 +10,9 @@ import { describeThrown, reportClientError } from "@/lib/errorReport";
  * - 받는 동안: 진행 표시 규칙(lib/busy · globals.css .busy-appear · .busy-bar · .skeleton) 그대로 — 글자(role=status)는 처음부터 DOM 에,
  *   막대 · 자리 표시는 BUSY_APPEAR_DELAY_MS 뒤에 보인다. 자리 표시는 값처럼 보이지 않는 무늬 없는 막대(aria-hidden).
  * - 받은 뒤: 조각을 같은 그리기에서 바로 그린다 — 이미 받은 모듈이면 lazy 에 동기 thenable 을 넘겨 기다리지 않는다(번쩍임 없음).
- * - 받지 못함: 까닭과 '다시 시도'(role=alert)를 보이고 시스템 로그에 보고한다(lib/errorReport — 같은 메시지 60 s 에 1번). 다시 시도는 새 lazy 로 다시 받는다.
+ * - 받지 못함: 까닭(role=alert)을 보이고, 서버에 그 청크가 있는지 한 번 확인해(lib/chunk-probe — HEAD) 그 결과와 함께 시스템 로그에 보고한다
+ *   (lib/errorReport — 같은 메시지 60 s 에 1번). 청크가 서버에 없으면(404 · 410 — 페이지를 연 뒤 새 판이 배포되어 옛 청크가 사라짐) '다시 시도'로는 받을 수
+ *   없으므로 '페이지 새로 고침'만, 그 밖에는 '다시 시도'(새 lazy 로 다시 받는다)를 보인다. 다시 시도가 또 실패하면 두 단추를 함께 보인다.
  *   받은 조각 자신의 그리기 오류는 삼키지 않는다 — 경계가 다시 던져 위(app/error.tsx)가 받는다.
  */
 
@@ -68,7 +71,7 @@ export function lazyPart<P extends object>(label: string, load: () => Promise<Co
     const [attempt, setAttempt] = useState(0);
     const Lazy = slot.current;
     return (
-      <LoadBoundary key={attempt} label={label} frame={frame} onRetry={() => { retry(); setAttempt((n) => n + 1); }}>
+      <LoadBoundary key={attempt} label={label} frame={frame} attempt={attempt} onRetry={() => { retry(); setAttempt((n) => n + 1); }}>
         <Suspense fallback={<PartLoading label={label} frame={frame} />}>
           <Lazy {...props} />
         </Suspense>
@@ -94,25 +97,46 @@ function PartLoading({ label, frame }: { label: string; frame: string }) {
   );
 }
 
-interface BoundaryProps { label: string; frame: string; onRetry: () => void; children: ReactNode }
+interface BoundaryProps { label: string; frame: string; attempt: number; onRetry: () => void; children: ReactNode }
 
-class LoadBoundary extends Component<BoundaryProps, { error: unknown }> {
-  state = { error: null as unknown };
+/** 페이지 새로 고침(새 판의 HTML · 청크를 받는다) */
+function reloadPage() { window.location.reload(); }
+
+class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: ChunkCheck | null }> {
+  state = { error: null as unknown, check: null as ChunkCheck | null };
+  private mounted = false;
   static getDerivedStateFromError(error: unknown) { return { error }; }
+  componentDidMount() { this.mounted = true; }
+  componentWillUnmount() { this.mounted = false; }
   componentDidCatch(error: unknown) {
     if (!(error instanceof LazyLoadError)) return; // 그리기 오류는 위 경계가 보고한다
-    const d = describeThrown(error.reason);
-    reportClientError({ message: `화면 조각을 받지 못함(${error.part}): ${d.message}`, stack: d.stack, component: `lazy:${error.part}` });
+    const origin = typeof location !== "undefined" && typeof location.origin === "string" ? location.origin : null;
+    // 확인이 끝나면 결과와 함께 한 번 보고한다(경계가 이미 사라졌어도 보고는 한다). 확인은 던지지 않지만, 혹시 던져도 보고는 빠지지 않는다
+    const done = (check: ChunkCheck) => {
+      const d = describeThrown(error.reason);
+      reportClientError({ message: `화면 조각을 받지 못함(${error.part}): ${d.message} — 청크 확인: ${chunkCheckText(check)}`, stack: d.stack, component: `lazy:${error.part}` });
+      if (this.mounted) this.setState({ check });
+    };
+    checkChunk(chunkUrlOf(error.reason, origin)).then(done, (e: unknown) => done({ kind: "unknown", why: describeThrown(e).message, url: null }));
   }
   render() {
-    const { error } = this.state;
+    const { error, check } = this.state;
     if (error == null) return this.props.children;
     if (!(error instanceof LazyLoadError)) throw error; // 받은 조각의 그리기 오류 — 삼키지 않는다
+    const missing = check?.kind === "missing";
+    const retried = this.props.attempt > 0;
+    const advice = missing
+      ? " — 이 페이지를 연 뒤 새 판이 배포되면 이렇게 됩니다. 다시 시도로는 받을 수 없으니 페이지를 새로 고치세요."
+      : retried ? " — 다시 시도도 실패했습니다. 계속되면 페이지를 새로 고치세요." : "";
     return (
-      <div className={this.props.frame} role="alert" data-testid="lazy-error" data-part={this.props.label}>
+      <div className={this.props.frame} role="alert" data-testid="lazy-error" data-part={this.props.label} data-check={check?.kind ?? "pending"}>
         <div className="text-bad">{this.props.label} — 화면 코드를 받지 못했습니다</div>
         <div className="mono mt-0.5 break-all text-fg-3">{describeThrown(error.reason).message}</div>
-        <button type="button" className="btn mt-1.5" onClick={this.props.onRetry} data-testid="lazy-retry">다시 시도</button>
+        <div className="mt-0.5 text-fg-2" data-testid="lazy-check">{chunkCheckText(check)}{advice}</div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {missing ? null : <button type="button" className="btn" onClick={this.props.onRetry} data-testid="lazy-retry">다시 시도</button>}
+          {missing || retried ? <button type="button" className="btn" onClick={reloadPage} data-testid="lazy-reload">페이지 새로 고침</button> : null}
+        </div>
       </div>
     );
   }

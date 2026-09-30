@@ -3,7 +3,9 @@
  * - 받는 동안: 진행 표시 규칙(lib/busy · globals.css) 그대로 — 글자(role=status)는 처음부터 DOM 에(화면 읽기 프로그램이 바로 읽는다),
  *   진행 막대 · 자리 표시는 BUSY_APPEAR_DELAY_MS 뒤에 보인다(빨리 받으면 번쩍이지 않는다). 자리 표시는 값처럼 보이지 않는 막대.
  * - 받은 뒤: 같은 그리기에서 바로 그린다(한 번 받은 조각은 다시 기다리지 않는다).
- * - 받지 못함(네트워크 · 배포 교체로 청크가 사라짐): 조용히 비우지 않는다 — 까닭과 '다시 시도'를 보이고 시스템 로그에 한 번 보고한다.
+ * - 받지 못함: 조용히 비우지 않는다 — 까닭을 보이고, 서버에 그 청크가 있는지 한 번 확인해(lib/chunk-probe) 그 결과와 함께 시스템 로그에 한 번 보고한다.
+ *   청크가 서버에 없으면(404 — 페이지를 연 뒤 새 판이 배포됨) '다시 시도'로는 받을 수 없으니 '페이지 새로 고침'을, 있으면 '다시 시도'를 보인다.
+ *   다시 시도가 또 실패하면 두 단추를 함께 보인다.
  *   받은 조각 자신의 그리기 오류는 여기서 삼키지 않고 위(화면 오류 경계 app/error.tsx)로 올린다.
  */
 import type { ComponentType, ReactElement } from "react";
@@ -50,6 +52,19 @@ describe("server render / first render", () => {
 
 describe("mounted (react-dom/client)", () => {
   const dom = installMiniDom();
+  // 청크 확인(HEAD)과 새로 고침은 전역 fetch · location 으로 한다 — 시험이 대역을 둔다
+  const g = globalThis as Record<string, unknown>;
+  const savedFetch = g.fetch;
+  const net = { status: 200 as number | "fail", heads: [] as string[], reloads: 0 };
+  beforeAll(() => {
+    g.location = { origin: "http://localhost:8700", reload: () => { net.reloads++; } };
+    g.fetch = (u: string, init?: RequestInit) => {
+      net.heads.push(`${init?.method ?? "GET"} ${u}`);
+      return net.status === "fail" ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve({ status: net.status } as Response);
+    };
+  });
+  afterAll(() => { g.fetch = savedFetch; delete g.location; });
+  afterEach(() => { net.status = 200; net.heads.length = 0; net.reloads = 0; });
   type Root = import("react-dom/client").Root;
   let React: typeof import("react");
   let createRoot: typeof import("react-dom/client").createRoot;
@@ -64,6 +79,8 @@ describe("mounted (react-dom/client)", () => {
     return null;
   };
   const byId = (id: string) => find((e) => e.getAttribute?.("data-testid") === id);
+  /** 청크 확인(비동기) · 보고가 끝날 때까지 */
+  const settle = async () => { await React.act(async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); }); };
   const click = async (e: MiniElement | null) => {
     const k = Object.keys(e!).find((x) => x.startsWith("__reactProps$"))!;
     await React.act(async () => { (e as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
@@ -80,7 +97,7 @@ describe("mounted (react-dom/client)", () => {
     expect(byId("lazy-loading")).toBeNull();
   });
 
-  it("a chunk that fails to load: the reason and a retry on screen, one report to the system log, retry loads again", async () => {
+  it("a chunk that fails to load while the server still has it: the reason, the check, a retry; one report with the check; retry loads again", async () => {
     let fail = true;
     const Ship = () => createElement("i", { "data-testid": "ship" }, "ok");
     const Part = lazyPart("선박 카드", async () => {
@@ -92,14 +109,52 @@ describe("mounted (react-dom/client)", () => {
     expect(err?.getAttribute("role")).toBe("alert");
     expect(err?.textContent).toContain("선박 카드");
     expect(err?.textContent).toContain("Failed to load chunk /_next/static/chunks/x.js");
+    await settle();
+    expect(net.heads).toEqual(["HEAD /_next/static/chunks/x.js"]);
+    expect(byId("lazy-error")?.getAttribute("data-check")).toBe("present");
+    expect(byId("lazy-error")?.textContent).toContain("서버에 청크가 있음(HTTP 200)");
+    expect(byId("lazy-reload")).toBeNull(); // 처음 실패 — 다시 시도로 충분하다
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({ component: "lazy:선박 카드" });
     expect((reports[0] as { message: string }).message).toContain("Failed to load chunk");
+    expect((reports[0] as { message: string }).message).toContain("청크 확인: 서버에 청크가 있음(HTTP 200)");
     fail = false;
     await click(byId("lazy-retry"));
     expect(byId("ship")?.textContent).toBe("ok");
     expect(byId("lazy-error")).toBeNull();
     expect(reports).toHaveLength(1);
+  });
+
+  it("the chunk is gone from the server (404 — a newer deploy): retry cannot help, so the screen says so and offers a page reload instead", async () => {
+    net.status = 404;
+    const Part = lazyPart("공항 목록", async () => { throw Object.assign(new Error("Failed to load chunk /_next/static/chunks/2fqx8-h0u9z_7.js from module 76195"), { name: "ChunkLoadError" }); });
+    await mount(createElement(Part));
+    await settle();
+    const err = byId("lazy-error");
+    expect(err?.getAttribute("data-check")).toBe("missing");
+    expect(err?.textContent).toContain("서버에 이 청크가 없음(HTTP 404)");
+    expect(err?.textContent).toContain("새 판이 배포");
+    expect(byId("lazy-retry")).toBeNull();
+    expect(byId("lazy-reload")?.textContent).toBe("페이지 새로 고침");
+    expect((reports[0] as { message: string }).message).toContain("청크 확인: 서버에 이 청크가 없음(HTTP 404)");
+    await click(byId("lazy-reload"));
+    expect(net.reloads).toBe(1);
+  });
+
+  it("a retry that fails again (or a check that cannot answer) keeps retry and adds the page reload", async () => {
+    net.status = "fail";
+    const Part = lazyPart("SIGMET 목록", async () => { throw new Error("Failed to load chunk /_next/static/chunks/s.js"); });
+    await mount(createElement(Part));
+    await settle();
+    expect(byId("lazy-error")?.getAttribute("data-check")).toBe("unknown");
+    expect(byId("lazy-error")?.textContent).toContain("청크를 확인하지 못함(TypeError: Failed to fetch)");
+    expect(byId("lazy-reload")).toBeNull();
+    await click(byId("lazy-retry"));
+    await settle();
+    const err = byId("lazy-error");
+    expect(err?.textContent).toContain("다시 시도도 실패했습니다");
+    expect(byId("lazy-retry")).not.toBeNull();
+    expect(byId("lazy-reload")).not.toBeNull();
   });
 
   it("a render error inside a loaded part is not swallowed: it reaches the route error boundary and is not reported as a load failure", async () => {
