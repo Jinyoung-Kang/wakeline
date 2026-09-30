@@ -27,9 +27,11 @@ import java.util.function.Supplier;
  *       오래됐으면 값은 null(수집기가 멈춰 마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
  *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total·stream_budget_trims·stream_retention_s·stream_budget_bytes
  *       (선박 스트림, R-14). 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 diag_window_s 초의 최댓값 loop_lag_max_s(이벤트 루프
- *       지연)·queue_wait_max_s(원문 대기열에 머문 시간)·ws_queue_max(websockets 수신 버퍼에 남은 프레임)·ping_rtt_max_s(keepalive 왕복), 수집기가
- *       고른 상한 ws_queue_limit·ping_timeout_s(잰 값 아님), 누적 loop_stalls_total(지연 ≥ 1 s)·reconnects_quick_total(30 s 안에 다시 받은 끊김 —
- *       수집기는 INFO 로만 남긴다). updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
+ *       지연)·queue_wait_max_s(원문 대기열에 머문 시간 — 지금 기다리는 맨 앞 원문 포함)·queue_depth_max(원문 대기열 깊이)·ws_queue_max(websockets
+ *       수신 버퍼에 남은 프레임)·ping_rtt_max_s(keepalive 왕복), 누적 loop_stalls_total·reconnects_quick_total(끊겨 열린 공백이 회복 창 안에 닫힌
+ *       끊김 — 수집기는 INFO 로만 남긴다). 수집기가 고른 설정(잰 값 아님 — 웹이 숫자를 들고 있지 않게 해시 그대로): ws_queue_limit·queue_limit·
+ *       ping_timeout_s·diag_window_s·reconnect_quick_window_s·reconnect_warn_count·reconnect_warn_window_s·loop_tick_s·loop_stall_s·loop_warn_s·
+ *       loop_warn_every_s. updated_at 이 {@value #AIS_MAX_AGE_S} s 보다 오래됐으면 null.</li>
  *   <li>api: 이 api 프로세스 기동 뒤 누계 — 메모리 큐 넘침으로 버린 항적·선박 행, 강제로 놓은 영수증, DLQ 로 보낸 메시지, 스트림 보존 창 손실
  *       (R-14) 수와 마지막 손실 구간(없으면 null). 영구 손실도 같이: DB 가 거절해(영구 오류) 재시도하지 않고 버린 항적·선박 행, 처리 중 예외로
  *       건너뛴 스트림 메시지, 이벤트 리스너 오류(알림 저장·팬아웃 등). stream_window_s = 항공기·선박 스트림 보존 창(초): 요청 시각 − 첫 엔트리
@@ -84,8 +86,11 @@ public class OpsPipelineController {
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AisSignals(Long droppedTotal, Long quarantinedTotal, Long streamBudgetTrims, Long streamRetentionS, Long streamBudgetBytes,
                              Long logSent, Long logDropped, Long reconnectsQuickTotal, Double loopLagMaxS, Long loopStallsTotal,
-                             Double queueWaitMaxS, Long wsQueueMax, Long wsQueueLimit, Double pingRttMaxS, Double pingTimeoutS, Long diagWindowS) {
-        static final AisSignals UNKNOWN = new AisSignals(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                             Double queueWaitMaxS, Long wsQueueMax, Long wsQueueLimit, Double pingRttMaxS, Double pingTimeoutS, Long diagWindowS,
+                             Long queueDepthMax, Long queueLimit, Double reconnectQuickWindowS, Long reconnectWarnCount, Double reconnectWarnWindowS,
+                             Double loopTickS, Double loopStallS, Double loopWarnS, Double loopWarnEveryS) {
+        static final AisSignals UNKNOWN = new AisSignals(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null);
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -135,7 +140,10 @@ public class OpsPipelineController {
                 count(h.get("stream_retention_s")), count(h.get("stream_budget_bytes")), count(h.get("log_sent")), count(h.get("log_dropped")),
                 count(h.get("reconnects_quick_total")), seconds(h.get("loop_lag_max_s")), count(h.get("loop_stalls_total")),
                 seconds(h.get("queue_wait_max_s")), count(h.get("ws_queue_max")), count(h.get("ws_queue_limit")),
-                seconds(h.get("ping_rtt_max_s")), seconds(h.get("ping_timeout_s")), count(h.get("diag_window_s")));
+                seconds(h.get("ping_rtt_max_s")), seconds(h.get("ping_timeout_s")), count(h.get("diag_window_s")),
+                count(h.get("queue_depth_max")), count(h.get("queue_limit")), seconds(h.get("reconnect_quick_window_s")),
+                count(h.get("reconnect_warn_count")), seconds(h.get("reconnect_warn_window_s")), seconds(h.get("loop_tick_s")),
+                seconds(h.get("loop_stall_s")), seconds(h.get("loop_warn_s")), seconds(h.get("loop_warn_every_s")));
     }
 
     ApiSignals api(Instant now) {

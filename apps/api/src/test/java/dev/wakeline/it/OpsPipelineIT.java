@@ -73,7 +73,8 @@ class OpsPipelineIT extends IntegrationTest {
                 assertThat(none.path("collector").has(f) && none.path("collector").get(f).isNull()).as("collector." + f).isTrue();
             for (String f : new String[]{"dropped_total", "quarantined_total", "stream_budget_trims", "stream_retention_s", "stream_budget_bytes",
                     "log_sent", "log_dropped", "reconnects_quick_total", "loop_lag_max_s", "loop_stalls_total", "queue_wait_max_s", "ws_queue_max",
-                    "ws_queue_limit", "ping_rtt_max_s", "ping_timeout_s", "diag_window_s"})
+                    "ws_queue_limit", "ping_rtt_max_s", "ping_timeout_s", "diag_window_s", "queue_depth_max", "queue_limit", "reconnect_quick_window_s",
+                    "reconnect_warn_count", "reconnect_warn_window_s", "loop_tick_s", "loop_stall_s", "loop_warn_s", "loop_warn_every_s"})
                 assertThat(none.path("ais").has(f) && none.path("ais").get(f).isNull()).as("ais." + f).isTrue();
             JsonNode api = none.path("api");
             for (String f : new String[]{"track_queue_dropped", "ship_queue_dropped", "receipts_force_released", "dlq", "stream_trim_loss_events",
@@ -99,7 +100,18 @@ class OpsPipelineIT extends IntegrationTest {
             // ais 수신 진단(ADR-014 부록 C): 최근 창 최댓값(초는 소수) · 고른 상한 · 누적 수 — JSON 이름 그대로
             ItStack.hset(ais, AIS, Map.of("loop_lag_max_s", "0.03", "ws_queue_max", "3", "ws_queue_limit", "64", "ping_rtt_max_s", "0.31",
                     "ping_timeout_s", "20", "reconnects_quick_total", "2", "diag_window_s", "60"));
+            ItStack.hset(ais, AIS, Map.of("queue_depth_max", "12", "queue_limit", "20000", "reconnect_quick_window_s", "30", "reconnect_warn_count", "3",
+                    "reconnect_warn_window_s", "1800", "loop_tick_s", "0.5", "loop_stall_s", "1", "loop_warn_s", "5", "loop_warn_every_s", "60"));
             JsonNode fresh = b.get("/api/v1/ops/pipeline").json();
+            assertThat(fresh.path("ais").path("queue_depth_max").asLong()).isEqualTo(12);
+            assertThat(fresh.path("ais").path("queue_limit").asLong()).isEqualTo(20000);
+            assertThat(fresh.path("ais").path("reconnect_quick_window_s").asDouble()).isEqualTo(30.0);
+            assertThat(fresh.path("ais").path("reconnect_warn_count").asLong()).isEqualTo(3);
+            assertThat(fresh.path("ais").path("reconnect_warn_window_s").asDouble()).isEqualTo(1800.0);
+            assertThat(fresh.path("ais").path("loop_tick_s").asDouble()).isEqualTo(0.5);
+            assertThat(fresh.path("ais").path("loop_stall_s").asDouble()).isEqualTo(1.0);
+            assertThat(fresh.path("ais").path("loop_warn_s").asDouble()).isEqualTo(5.0);
+            assertThat(fresh.path("ais").path("loop_warn_every_s").asDouble()).isEqualTo(60.0);
             assertThat(fresh.path("ais").path("loop_lag_max_s").asDouble()).isEqualTo(0.03);
             assertThat(fresh.path("ais").path("ws_queue_max").asLong()).isEqualTo(3);
             assertThat(fresh.path("ais").path("ws_queue_limit").asLong()).isEqualTo(64);

@@ -98,6 +98,16 @@ class OpsPipelineControllerTest {
         h.put("ping_rtt_max_s", "0.31");
         h.put("ping_timeout_s", "20");
         h.put("reconnects_quick_total", "2");
+        // 원문 대기열 깊이 · 상한, 수집기가 고른 설정(웹이 숫자를 들고 있지 않게 해시에서 읽는다)
+        h.put("queue_depth_max", "12");
+        h.put("queue_limit", "20000");
+        h.put("reconnect_quick_window_s", "30");
+        h.put("reconnect_warn_count", "3");
+        h.put("reconnect_warn_window_s", "1800");
+        h.put("loop_tick_s", "0.5");
+        h.put("loop_stall_s", "1");
+        h.put("loop_warn_s", "5");
+        h.put("loop_warn_every_s", "60");
     }
 
     @Test
@@ -114,6 +124,15 @@ class OpsPipelineControllerTest {
         assertThat(a.pingRttMaxS()).isEqualTo(0.31);
         assertThat(a.pingTimeoutS()).isEqualTo(20.0);
         assertThat(a.reconnectsQuickTotal()).isEqualTo(2L);
+        assertThat(a.queueDepthMax()).isEqualTo(12L);
+        assertThat(a.queueLimit()).isEqualTo(20000L);
+        assertThat(a.reconnectQuickWindowS()).isEqualTo(30.0);
+        assertThat(a.reconnectWarnCount()).isEqualTo(3L);
+        assertThat(a.reconnectWarnWindowS()).isEqualTo(1800.0);
+        assertThat(a.loopTickS()).isEqualTo(0.5);
+        assertThat(a.loopStallS()).isEqualTo(1.0);
+        assertThat(a.loopWarnS()).isEqualTo(5.0);
+        assertThat(a.loopWarnEveryS()).isEqualTo(60.0);
     }
 
     @Test
@@ -126,13 +145,22 @@ class OpsPipelineControllerTest {
         ais.put("ping_rtt_max_s", "NaN");
         ais.put("ping_timeout_s", "1e400");
         ais.put("ws_queue_max", "3.5");
+        ais.put("queue_depth_max", "-1");
+        ais.put("loop_tick_s", ""); // 루프 측정이 없는 수집기
+        ais.put("reconnect_warn_count", "3.5");
+        ais.put("reconnect_warn_window_s", "1.8e3");
         OpsPipelineController.AisSignals a = controller(metrics()).pipeline().ais();
         assertThat(a.loopLagMaxS()).isNull();
         assertThat(a.queueWaitMaxS()).isNull();
         assertThat(a.pingRttMaxS()).isNull();
         assertThat(a.pingTimeoutS()).isNull();
         assertThat(a.wsQueueMax()).isNull();
+        assertThat(a.queueDepthMax()).isNull();
+        assertThat(a.loopTickS()).isNull();
+        assertThat(a.reconnectWarnCount()).isNull();
+        assertThat(a.reconnectWarnWindowS()).isNull();
         assertThat(a.reconnectsQuickTotal()).isEqualTo(2L);
+        assertThat(a.loopStallS()).isEqualTo(1.0);
 
         putDiagnostics(ais);
         ais.put("updated_at", NOW.minusSeconds(600).toString()); // 멈춘 ais 의 마지막 값은 지금 값이 아니다
@@ -140,6 +168,9 @@ class OpsPipelineControllerTest {
         assertThat(a.loopLagMaxS()).isNull();
         assertThat(a.reconnectsQuickTotal()).isNull();
         assertThat(a.diagWindowS()).isNull();
+        assertThat(a.queueLimit()).isNull();
+        assertThat(a.reconnectQuickWindowS()).isNull();
+        assertThat(a.loopWarnEveryS()).isNull();
     }
 
     @Test
