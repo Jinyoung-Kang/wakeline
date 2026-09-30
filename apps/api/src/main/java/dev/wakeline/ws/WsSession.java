@@ -36,7 +36,7 @@ public final class WsSession {
     public static final int RATE_MAX = 20;
     public static final int RATE_WINDOW_S = 10;
 
-    enum Job { INITIAL, FANOUT, ALERTS, SIGMETS, RADAR, HEARTBEAT, SELECTED, DEMAND, SHIPS, SHIP_SELECTED }
+    enum Job { INITIAL, FANOUT, ALERTS, SIGMETS, RADAR, HEARTBEAT, SELECTED, DEMAND, SHIPS, SHIP_SELECTED, SELECTED_ROUTE }
 
     /** 이 세션에 마지막으로 보낸 선박 표현: 없음 · 개별 선박(ships_snapshot/diff) · 격자(ships_grid, 줌 또는 선박 수 때문). */
     enum ShipsMode { OFF, POINTS, GRID }
@@ -131,6 +131,13 @@ public final class WsSession {
     /** 이 세션이 받은 레이더 프레임 목록(동일성 비교). */
     Object radarSent;
     SelectedSent selectedSent;
+    /**
+     * 선택 항공기 노선 조회(우편함 밖 — 계약 v5 §G21, WsHub.selectedRoute). 이 객체가 지금 세대다 — 결과가 와도 이 객체이고 물음(hex · 콜사인)이 같을 때만
+     * 쓴다. 답이 와도 그 읽기가 끝날 때까지 남는다(같은 물음은 새 읽기를 올리지 않는다). null = 없음.
+     */
+    SelectionLookups.Pending<WsHub.RouteQuestion, RouteInfo> routeLookup;
+    /** 이 세션의 마지막 노선 조회의 읽기가 끝남 — 다음 노선 조회의 읽기는 이것 뒤에 시작한다(세션마다 노선 조회 실행기 작업 하나 이하). */
+    CompletableFuture<Void> routeLookupTail;
     // ---- 선박 전송 상태(우편함 안에서만) ----
     ShipsMode shipsMode = ShipsMode.OFF;
     /** 마지막으로 보낸 선박(mmsi → 보낸 객체). ships_diff 기준. */

@@ -103,6 +103,8 @@ class WsIntegrationTest {
                 Map.entry("wakeline.max-bbox-area-sqdeg", "2500"), Map.entry("wakeline.fixture-mode", "0"),
                 Map.entry("wakeline.schemas-dir", "classpath:schemas"), Map.entry("wakeline.track-retention-hours", "72"),
                 Map.entry("wakeline.summary-retention-days", "30"),
+                // 노선 조회의 답 마감(계약 v5 §G21) = Redis 명령 상한 — 운영 application.yml 과 같은 값
+                Map.entry("spring.data.redis.timeout", "3s"),
                 // ws-resync-world-interval-s 는 비워 @DefaultValue(120) 를 확인한다. 목록은 WAKELINE_ALLOWED_ORIGINS 처럼 쉼표 문자열.
                 Map.entry("wakeline.allowed-origins", "http://localhost:8700, http://127.0.0.1:8700/"))));
         ctx.register(Beans.class, WsHub.class, ShipFanout.class, WakelineWsHandler.class, WebSocketConfig.class);

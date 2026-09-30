@@ -255,7 +255,7 @@ class WsSchemaContractTest {
             realStatus(k);
             Map<String, String> routeCache = new HashMap<>();
             routeCache.put("wakeline:route:SYN081", RouteInfoTest.found("SYN081").toString());
-            k.hub.setRouteSource(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)::forAircraft);
+            k.hub.setRouteSource(RouteLookups.of(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)));
             // 한국 항만 입출항(ADR-022 개정): 색인에 수집기가 실제 전체 기록으로 만든 행(호출부호만 이 선박의 것으로) 21건 — 20건 + 잘림. 색인은 완전 · 새것
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
             index.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-20"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));

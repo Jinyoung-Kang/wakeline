@@ -36,7 +36,7 @@ class RouteAndDestinationWsTest {
 
     @Test void selectedCarriesRoute_andIsResentWhenOnlyTheRouteChanges() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
-            k.hub.setRouteSource(reader()::forAircraft);
+            k.hub.setRouteSource(RouteLookups.of(reader()));
             Instant now = Instant.now();
             AircraftState a = plane("bbb001", "syn736", 50, 10, now);
             k.publish("global", now, a);
@@ -77,7 +77,7 @@ class RouteAndDestinationWsTest {
 
     @Test void focusObservationOfTheSameStateIsResentOnlyWhenTheRouteChanged() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
-            k.hub.setRouteSource(reader()::forAircraft);
+            k.hub.setRouteSource(RouteLookups.of(reader()));
             Instant now = Instant.now();
             AircraftState a = plane("ddd001", "SYN9", 40, -40, now);
             FakeWsSession f = k.subscribed("s", "1.1.1.1"); // 한국 화면 — 대서양 항공기는 팬아웃 범위 밖
@@ -98,7 +98,7 @@ class RouteAndDestinationWsTest {
     /** 계약 v4 §G A-2: 수집기가 묻지 않은 노선(disabled — fixture 모드·운영자가 adsbdb 끔)은 selected.route.status disabled, 조회 시각 없음. */
     @Test void selectedRouteDisabled() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
-            k.hub.setRouteSource(reader()::forAircraft);
+            k.hub.setRouteSource(RouteLookups.of(reader()));
             redis.put("wakeline:route:SYN5", RouteInfoTest.cached("disabled", "SYN5").toString());
             Instant now = Instant.now();
             k.publish("global", now, plane("bbb005", " syn5", 50, 10, now));

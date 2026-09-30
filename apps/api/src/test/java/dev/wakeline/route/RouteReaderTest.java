@@ -1,6 +1,7 @@
 package dev.wakeline.route;
 
 import dev.wakeline.domain.AircraftState;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
 
@@ -9,12 +10,21 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 노선 읽기(계약 v4 §A): 콜사인 정규화(trim·대문자·형식), 콜사인별 5 s 메모리 캐시, Redis 오류 → unavailable, 캐시 상한.
+ * 계약 v5 §G21: 캐시만 보는 {@link RouteReader#cached} · 우편함 밖 {@link RouteReader#loadAsync}(같은 콜사인 한 번 읽기 · 거절은 기억하지 않음).
  * Redis 는 가짜(키 → 값) — 값은 합성.
  */
 class RouteReaderTest {
@@ -102,13 +112,73 @@ class RouteReaderTest {
 
     @Test void cacheIsBounded() {
         for (int i = 0; i < RouteReader.MAX_ENTRIES; i++) reader.forCallsign("CS" + i);
-        assertThat(reader.cached()).isEqualTo(RouteReader.MAX_ENTRIES);
+        assertThat(reader.cachedEntries()).isEqualTo(RouteReader.MAX_ENTRIES);
         reader.forCallsign("FRESH1"); // 모두 5 s 안 — 치울 것이 없으면 비운다
-        assertThat(reader.cached()).isEqualTo(1);
+        assertThat(reader.cachedEntries()).isEqualTo(1);
         for (int i = 0; i < RouteReader.MAX_ENTRIES - 2; i++) reader.forCallsign("DS" + i);
         clock.addAndGet(RouteReader.TTL_MS);
         reader.forCallsign("FRESH2");
         reader.forCallsign("FRESH3"); // 상한에 닿으면 만료된 것만 치운다
-        assertThat(reader.cached()).isEqualTo(2);
+        assertThat(reader.cachedEntries()).isEqualTo(2);
+    }
+
+    /** 계약 v5 §G21: cached 는 Redis 를 읽지 않는다(우편함에서) — 신선한 캐시만, 없거나 지났으면 null. */
+    @Test void cachedNeverReadsRedis() {
+        assertThat(reader.cached("SYN736")).isNull();
+        assertThat(gets).isEmpty();
+        RouteInfo pending = reader.forCallsign("SYN736");
+        assertThat(reader.cached("SYN736")).isSameAs(pending);
+        clock.addAndGet(RouteReader.TTL_MS);
+        assertThat(reader.cached("SYN736")).as("expired").isNull();
+        assertThat(gets).hasSize(1);
+    }
+
+    /**
+     * 같은 콜사인의 동시 읽기는 하나(세션들 · REST): 기다리는 쪽은 진행 중인 읽기의 future 에 붙는다(지표 hit — Redis 를 읽지 않았다). 읽기가 끝나면 결과는
+     * 캐시에 있고 진행 중 표시는 지워진다. 캐시 시각은 읽기가 끝난 때다.
+     */
+    @Test void concurrentLoadsOfOneCallsign_readRedisOnce() throws Exception {
+        CountDownLatch hold = new CountDownLatch(1);
+        List<String> reads = new CopyOnWriteArrayList<>();
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        AtomicLong t = new AtomicLong(1_000_000);
+        RouteReader r = new RouteReader(key -> {
+            reads.add(key);
+            try {
+                hold.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            t.addAndGet(3_000); // 느린 읽기(3 s — 명령 상한만큼)
+            return RouteInfoTest.found("SYN736").toString();
+        }, RouteInfoTest.JSON, t::get, meters);
+        try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+            CompletableFuture<RouteInfo> a = r.loadAsync("SYN736", ex), b = r.loadAsync("SYN736", ex);
+            assertThat(b).as("the same in-flight read").isSameAs(a);
+            assertThat(r.inflight()).isEqualTo(1);
+            hold.countDown();
+            RouteInfo found = a.get(5, TimeUnit.SECONDS);
+            assertThat(found.status()).isEqualTo(RouteInfo.FOUND);
+            assertThat(reads).hasSize(1);
+            assertThat(r.inflight()).isZero();
+            assertThat(meters.counter("wakeline_cache_requests_total", "cache", "route", "result", "miss").count()).isEqualTo(1.0);
+            assertThat(meters.counter("wakeline_cache_requests_total", "cache", "route", "result", "hit").count()).as("the joined load").isEqualTo(1.0);
+            t.addAndGet(RouteReader.TTL_MS - 1);
+            assertThat(r.cached("SYN736")).as("cached from the end of the slow read, not its start").isSameAs(found);
+            assertThat(r.loadAsync("SYN736", ex)).isCompletedWithValue(found);
+            assertThat(reads).hasSize(1);
+        }
+    }
+
+    /** 실행기가 거절하면(대기열 가득 · 종료) future 가 RejectedExecutionException 으로 끝나고 아무것도 기억하지 않는다 — 다음 읽기가 다시 읽는다. */
+    @Test void aRejectedLoadIsNotRemembered() {
+        CompletableFuture<RouteInfo> f = reader.loadAsync("SYN9", r -> { throw new RejectedExecutionException("full"); });
+        assertThat(f).isCompletedExceptionally();
+        assertThat(f.handle((v, e) -> e instanceof CompletionException c ? c.getCause() : e).join()).isInstanceOf(RejectedExecutionException.class);
+        assertThat(reader.inflight()).isZero();
+        assertThat(reader.cached("SYN9")).isNull();
+        assertThat(gets).isEmpty();
+        assertThat(reader.forCallsign("SYN9").status()).as("read now").isEqualTo(RouteInfo.PENDING);
+        assertThat(gets).hasSize(1);
     }
 }
