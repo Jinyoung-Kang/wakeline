@@ -269,6 +269,22 @@ class ShipCoverageTest {
     }
 
     @Test
+    void aReadFailingBecauseOfStopIsNamedStopped_notAConnectionError() throws Exception {
+        FakeSource src = new FakeSource();
+        ShipCoverage[] holder = new ShipCoverage[1];
+        src.failAtRead = 1;
+        src.readError = new SQLException("An I/O error occurred while sending to the backend.", "08006");
+        src.onRead = () -> { if (src.reads.size() == 2) holder[0].stop(); }; // 종료가 읽는 중인 스레드를 깨워 소켓이 닫힌 것처럼
+        ShipCoverage c = new ShipCoverage(src, System::currentTimeMillis, new SimpleMeterRegistry(), 0, 100, 1_000);
+        holder[0] = c;
+        c.start();
+        long until = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (!"failed".equals(c.snapshotNow().bootstrap().state()) && System.nanoTime() < until) Thread.sleep(20);
+        assertThat(c.snapshotNow().bootstrap().error()).isEqualTo("stopped");
+        assertThat(c.snapshotNow().bootstrap().hoursLoaded()).isEqualTo(1);
+    }
+
+    @Test
     void stoppingBeforeTheGraceEndsSkipsTheBootstrap() throws Exception {
         FakeSource src = new FakeSource();
         ShipCoverage c = new ShipCoverage(src, System::currentTimeMillis, new SimpleMeterRegistry(), 60_000, 100, 1_000);

@@ -86,7 +86,9 @@ public class ShipCoverage implements SmartLifecycle {
     private final Counter ignoredMmsi;
     private final Counter bootstrapRows;
     private volatile boolean running;
-    private Thread worker;
+    /** stop() 이 불렸다 — 부트스트랩은 다음 시 조각 앞에서 멈춘다(부르는 스레드에서 직접 돌린 부트스트랩은 멈추지 않는다). */
+    private volatile boolean stopRequested;
+    private volatile Thread worker;
 
     @Autowired
     public ShipCoverage(JdbcCoverageSource source, MeterRegistry meters,
@@ -195,7 +197,7 @@ public class ShipCoverage implements SmartLifecycle {
         String error = null;
         try (CoverageSource.Session s = source.open()) {
             for (long[] c : chunks) {
-                if (!running && worker != null) { error = "stopped"; break; }
+                if (stopRequested) { error = "stopped"; break; }
                 if (loaded > 0 && clock.getAsLong() - t0 > BOOTSTRAP_DEADLINE_MS) { error = "deadline"; break; }
                 List<CoverageSource.Row> batch = new ArrayList<>();
                 s.read(c[0], c[1], batch::add);
@@ -207,7 +209,8 @@ public class ShipCoverage implements SmartLifecycle {
                 bootstrap = new Bootstrap("running", loaded, total, rows, Instant.ofEpochMilli(loadedFrom), null, null);
             }
         } catch (SQLException | RuntimeException e) {
-            error = errorKind(e);
+            // 종료가 읽는 중인 가상 스레드를 깨우면 소켓이 닫혀 연결 오류로 온다 — 까닭은 종료다
+            error = stopRequested ? "stopped" : errorKind(e);
             log.warn("ship coverage bootstrap stopped after {}/{} hours ({}: {}) — counted since {}", loaded, total, error, e.getClass().getSimpleName(),
                     Instant.ofEpochMilli(loadedFrom));
         }
@@ -288,6 +291,7 @@ public class ShipCoverage implements SmartLifecycle {
     @Override
     public void start() {
         running = true;
+        stopRequested = false;
         long wake = startMs + graceMs;
         worker = Thread.ofVirtual().name("ship-coverage-bootstrap").start(() -> {
             try {
@@ -304,7 +308,9 @@ public class ShipCoverage implements SmartLifecycle {
     @Override
     public void stop() {
         running = false;
-        if (worker != null) worker.interrupt();
+        stopRequested = true;
+        Thread w = worker;
+        if (w != null) w.interrupt();
     }
 
     @Override
