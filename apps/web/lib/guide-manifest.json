@@ -2,12 +2,12 @@
   "version": 1,
   "shots": {
     "dashboard": {
-      "file": "dashboard.803ad6779e.webp",
+      "file": "dashboard.40f3893df9.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 168164,
-      "captured_at": "2026-09-30T08:52:46.602Z",
+      "bytes": 147350,
+      "captured_at": "2026-09-30T17:49:55.761Z",
       "variant": "한반도 #6.3/36.1/127.9",
       "callouts": [
         {
@@ -32,7 +32,7 @@
         },
         {
           "n": 5,
-          "x": 26,
+          "x": 15.3,
           "y": 9.6
         },
         {
@@ -58,12 +58,12 @@
       ]
     },
     "traffic": {
-      "file": "traffic.1ef1191ced.webp",
+      "file": "traffic.f52801f086.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 191036,
-      "captured_at": "2026-09-30T08:52:51.919Z",
+      "bytes": 162258,
+      "captured_at": "2026-09-30T17:50:00.740Z",
       "variant": "연안 교통량 #7.2/35.2/128.6",
       "callouts": [
         {
@@ -89,12 +89,12 @@
       ]
     },
     "search": {
-      "file": "search.41e7a4d5ae.webp",
+      "file": "search.0de6ffc4da.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 155932,
-      "captured_at": "2026-09-30T08:52:54.426Z",
+      "bytes": 124296,
+      "captured_at": "2026-09-30T17:50:03.942Z",
       "variant": "검색어 “KAL” — 지금 지도의 호출부호에서 가장 많은 앞 3자",
       "callouts": [
         {
@@ -110,7 +110,7 @@
         {
           "n": 3,
           "x": 41.6,
-          "y": 91.4
+          "y": 97.3
         },
         {
           "n": 4,
@@ -120,13 +120,13 @@
       ]
     },
     "aircraft": {
-      "file": "aircraft.616f7ad0fd.webp",
+      "file": "aircraft.8230507d9e.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 134352,
-      "captured_at": "2026-09-30T08:53:05.358Z",
-      "variant": "FIN79 (461f56) — 한반도 영역에서 가장 높이 나는 항공기",
+      "bytes": 144426,
+      "captured_at": "2026-09-30T17:50:14.094Z",
+      "variant": "GTI537 (aba800) — 한반도 영역에서 가장 높이 나는 항공기",
       "callouts": [
         {
           "n": 1,
@@ -151,12 +151,12 @@
       ]
     },
     "ship": {
-      "file": "ship.d780cd2104.webp",
+      "file": "ship.b921f410a3.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 185684,
-      "captured_at": "2026-09-30T08:53:53.056Z",
+      "bytes": 175742,
+      "captured_at": "2026-09-30T17:51:02.231Z",
       "variant": "도쿄만 #10.6/35.45/139.78",
       "callouts": [
         {
@@ -181,13 +181,39 @@
         }
       ]
     },
-    "port-calls": {
-      "file": "port-calls.0ea458e104.webp",
+    "reception": {
+      "file": "reception.f05f486f23.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 184338,
-      "captured_at": "2026-09-30T08:55:20.968Z",
+      "bytes": 151168,
+      "captured_at": "2026-09-30T17:51:07.297Z",
+      "variant": "관측 수신 범위 #5.3/35.6/129.2 · 칸 2,308개(0.5°) · 이 화면 42개 · 창 09-30 02:00 – 10-01 02:51 KST",
+      "callouts": [
+        {
+          "n": 1,
+          "x": 31.1,
+          "y": 9.6
+        },
+        {
+          "n": 2,
+          "x": 43.2,
+          "y": 13.6
+        },
+        {
+          "n": 3,
+          "x": 55.5,
+          "y": 51.2
+        }
+      ]
+    },
+    "port-calls": {
+      "file": "port-calls.e069c9e8c7.webp",
+      "format": "webp",
+      "width": 1440,
+      "height": 900,
+      "bytes": 176382,
+      "captured_at": "2026-09-30T17:52:35.132Z",
       "variant": "도쿄만 #10.6/35.45/139.78 · 선박 목록 5번째(입출항 결과가 있는 첫 선박)",
       "callouts": [
         {
@@ -213,13 +239,13 @@
       ]
     },
     "alerts": {
-      "file": "alerts.3390813897.webp",
+      "file": "alerts.9caab01b8b.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 184802,
-      "captured_at": "2026-09-30T08:55:31.460Z",
-      "variant": "알림 범위 관심 지역",
+      "bytes": 151222,
+      "captured_at": "2026-09-30T17:52:47.075Z",
+      "variant": "알림 범위 전세계",
       "callouts": [
         {
           "n": 1,
@@ -229,17 +255,17 @@
         {
           "n": 2,
           "x": 74.5,
-          "y": 40.2
+          "y": 39.2
         },
         {
           "n": 3,
           "x": 75,
-          "y": 40.2
+          "y": 39.2
         },
         {
           "n": 4,
           "x": 75,
-          "y": 56.5
+          "y": 54.5
         },
         {
           "n": 5,
@@ -249,12 +275,12 @@
       ]
     },
     "radar": {
-      "file": "radar.01053969d6.webp",
+      "file": "radar.5d22287f19.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 180988,
-      "captured_at": "2026-09-30T08:55:43.134Z",
+      "bytes": 133204,
+      "captured_at": "2026-09-30T17:52:58.813Z",
       "variant": "RainViewer(기상청 프레임 없음)",
       "callouts": [
         {
@@ -275,17 +301,17 @@
         {
           "n": 6,
           "x": 1.5,
-          "y": 80.6
+          "y": 78.7
         }
       ]
     },
     "replay": {
-      "file": "replay.54350040d2.webp",
+      "file": "replay.001659e81a.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 139816,
-      "captured_at": "2026-09-30T08:55:47.382Z",
+      "bytes": 134740,
+      "captured_at": "2026-09-30T17:53:04.072Z",
       "variant": "지도 시각 = 재생 시각",
       "callouts": [
         {
@@ -321,12 +347,12 @@
       ]
     },
     "stats": {
-      "file": "stats.46317edabc.webp",
+      "file": "stats.2bbad36d66.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 70716,
-      "captured_at": "2026-09-30T08:55:51.693Z",
+      "bytes": 73652,
+      "captured_at": "2026-09-30T17:53:05.413Z",
       "variant": null,
       "callouts": [
         {
@@ -357,12 +383,12 @@
       ]
     },
     "airport": {
-      "file": "airport.bb09507f16.webp",
+      "file": "airport.9c1d1cca99.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 73846,
-      "captured_at": "2026-09-30T08:55:53.399Z",
+      "bytes": 76374,
+      "captured_at": "2026-09-30T17:53:07.155Z",
       "variant": "RKSI",
       "callouts": [
         {
@@ -388,12 +414,12 @@
       ]
     },
     "ops": {
-      "file": "ops.53623a730b.webp",
+      "file": "ops.dd33562286.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 68084,
-      "captured_at": "2026-09-30T08:57:25.959Z",
+      "bytes": 45802,
+      "captured_at": "2026-09-30T17:09:11.208Z",
       "variant": "격리 fixture 스택(가짜 자료) · providers 탭 · 가림: 운영자 이름 · 공급자 마지막 오류 · 전환 사유",
       "callouts": [
         {
@@ -419,13 +445,13 @@
       ]
     },
     "logs": {
-      "file": "logs.88412fd420.webp",
+      "file": "logs.64e9ef6972.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 49080,
-      "captured_at": "2026-09-30T08:57:28.031Z",
-      "variant": "격리 fixture 스택 · 목록의 1건은 캡처용 시험 보고(실제 오류 아님) · 기간 24 h · 가림: 운영자 이름 · 로거 · 메시지 · 요청 id",
+      "bytes": 49082,
+      "captured_at": "2026-09-30T17:09:13.210Z",
+      "variant": "격리 fixture 스택 · 목록의 1건은 캡처용 시험 보고(실제 오류 아님) · 기간 24 h · 서비스 전체 · 가림: 운영자 이름 · 로거 · 메시지 · 요청 id",
       "callouts": [
         {
           "n": 1,
