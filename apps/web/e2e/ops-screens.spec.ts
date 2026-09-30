@@ -108,7 +108,7 @@ test("ops RUNS: a summary row shows its last error and opens its own runs, paged
   await expect(rows.nth(0).getByTestId("runs-last-error")).toHaveText(timeout);
   await expect(rows.nth(1).getByTestId("runs-last-error")).toHaveCount(0); // ok 행은 비운다
   await expect(rows.nth(2).getByTestId("runs-last-error")).toHaveText(grid);
-  await expect(rows.nth(2).locator("td").nth(2)).toHaveClass("text-fg-2"); // 예산 거절: 제 중립 색
+  await expect(rows.nth(2).locator("td").nth(2)).toHaveClass("text-warn"); // 예산 거절: 주황 · 제 뜻(title)
   await expect(rows.nth(2).locator("td").nth(2)).toHaveAttribute("title", /공급자 오류가 아니다/);
 
   await rows.nth(0).getByTestId("runs-drill-open").click();

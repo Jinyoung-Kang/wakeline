@@ -127,9 +127,10 @@ describe("ops RUNS: the 24 h summary shows each non-ok row's last error; a row o
     expect(byTestId("runs-last-http", rows[0])).toBeNull(); // http 를 모르면 적지 않는다
     // ok 행은 비운다(http 200 도 적지 않는다)
     expect(byTestId("runs-last-error", rows[1])).toBeNull();
-    // 예산 거절: 원문의 UTC 'Z' 는 그대로(data-raw 안) — 상태는 제 중립 색
+    // 예산 거절: 원문의 UTC 'Z' 는 그대로(data-raw 안) — 상태는 주황 · 제 뜻(title)
     expect(byTestId("runs-last-error", rows[2])!.textContent).toBe(GRID);
-    expect(cells(rows[2])[2].getAttribute("class")).toBe("text-fg-2");
+    expect(cells(rows[2])[2].getAttribute("class")).toBe("text-warn");
+    expect(cells(rows[2])[2].getAttribute("title")).toContain("예산 거절");
     // 옛 api: 모름
     expect(byTestId("runs-last-error-unknown", rows[3])!.textContent).toBe("—");
     expect(byTestId("runs-last-error-unknown", rows[3])!.getAttribute("title")).toContain("api 가 이 화면보다 옛 판");

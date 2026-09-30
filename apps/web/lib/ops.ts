@@ -430,14 +430,16 @@ export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
   // WEB-1(조사 2026-10-01): 예산 거절은 error 와 같게 보였다 — 수집기가 보내지 않은 호출이다(budget.py · 작업마다 record_run)
   budget_exhausted: "예산 거절 — 하루 예산 · 시간 창 · 작업 몫 중 하나가 예약을 거절해 수집기가 호출을 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다). 어느 한도인지는 오류 글자에 있다 — 다시 시작하는 때는 수집기가 적은 경우에만('resumes at …', 원문 시각). 하루 예산은 매일 09:00 KST, 시간 창은 매 정시에 새로 센다",
   budget_unavailable: "예산 저장소 장애 — 수집기가 예산 저장소(Redis)에 예약하지 못해 한도를 모르는 채 호출을 보내지 않았다(fail closed). 공급자 오류는 아니지만 수집기 쪽 고장이다 — 저장소가 돌아올 때까지 이 작업은 자료를 받지 않는다",
+  // jobs/portcalls_index.py(ADR-022 개정): 'status ok · error · incomplete(빈 곳으로 적은 날 · 빈 응답 확인 대기)' — 뜻이 없어 최근 실행에서 빨강으로 보였다
+  incomplete: "빈 곳 — 항만 입출항 색인이 한 항만청의 하루를 끝까지 색인하지 못해 그 날을 빈 곳으로 적었다(응답은 받았으나 쪽 · 건수가 서로 맞지 않거나 색인할 수 없는 기록이 있음), 또는 기록이 있는 날이 0건으로 와 지우지 않고 다시 확인한다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다) — 까닭과 다시 받는 때는 오류 글자(빈 곳은 꼬리 갱신이나 다시 받기가 다시 받는다)",
 };
 
 /**
  * 실행 상태의 성격 — 색은 이것으로 정한다(뜻 글자가 있는지와 떼어 둔다): ok · nodata(자료가 오지 않았지만 공급자 오류는 아니다 — missing · quarantined ·
- * throttled · waiting · unchanged) · budget(예산 거절 — 수집기가 보내지 않았다, 고장이 아니다) · fault(error · budget_unavailable · 모르는 상태).
+ * throttled · waiting · unchanged · incomplete) · budget(예산 거절 — 수집기가 보내지 않았다, 고장이 아니다) · fault(error · budget_unavailable · 모르는 상태).
  */
 export type RunStatusTone = "ok" | "nodata" | "budget" | "fault";
-const NODATA = new Set(["missing", "quarantined", "throttled", "waiting", "unchanged"]);
+const NODATA = new Set(["missing", "quarantined", "throttled", "waiting", "unchanged", "incomplete"]);
 
 export function runStatusTone(status: unknown): RunStatusTone {
   const s = String(status);
@@ -448,14 +450,16 @@ export function runStatusTone(status: unknown): RunStatusTone {
 }
 
 /**
- * 실행 상태 글자색: ok 초록 · nodata 주황 · 예산 거절 중립(회색 — 제 색, 뜻은 title · 어느 한도인지는 오류 글자) · 고장(error · budget_unavailable · 모르는
- * 상태)은 전과 같이 요약(summary) 주황 · 최근 실행(item) 빨강.
+ * 실행 상태 글자색: ok 초록 · nodata 주황 · 예산 거절 주황(뜻은 title · 어느 한도인지는 오류 글자 — 요약의 마지막 오류 칸) · 고장(error · budget_unavailable ·
+ * 모르는 상태)은 전과 같이 요약(summary) 주황 · 최근 실행(item) 빨강.
+ * 예산 거절이 회색이 아닌 까닭(리뷰 2026-10-01): 하루 예산 거절은 그 층을 다음 09:00 KST 까지 비울 수 있다(weather · aircraft · kma_radar) — 색으로 늘 있는
+ * 'unchanged' 보다 조용하게 보이면 안 된다. 시간 창의 거절(늘 있는 속도 맞추기)과는 색으로 가르지 않는다 — 작업 이름 · 글자로 짐작하지 않고 오류 글자가 말한다.
  */
 export function runStatusClass(status: unknown, where: "summary" | "item"): string {
   switch (runStatusTone(status)) {
     case "ok": return "text-ok";
-    case "nodata": return "text-warn";
-    case "budget": return "text-fg-2";
+    case "nodata":
+    case "budget": return "text-warn";
     default: return where === "summary" ? "text-warn" : "text-bad";
   }
 }
