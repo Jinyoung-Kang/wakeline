@@ -1,6 +1,7 @@
 # ADR-025 WS 세션 우편함은 DB 를 기다리지 않는다: 선택 선박 조회는 우편함 밖 실행기와 전용 읽기 풀로
 
-**상태** 채택 · 2026-09-30 · 계약 v5 §G18 · VERIFICATION #51 '남은 것' · 리뷰 뒤 고침(같은 날 — 결정 2 · 4 · 5 · 6, '스레드 · 연결이 묶이는 시간', 대안)
+**상태** 채택 · 2026-09-30 · 계약 v5 §G18 · VERIFICATION #51 '남은 것' · 리뷰 뒤 고침(같은 날 — 결정 2 · 4 · 5 · 6, '스레드 · 연결이 묶이는 시간', 대안) ·
+개정(같은 날 — 계약 v5 §G21: 선택 항공기 노선의 Redis 읽기도 우편함 밖으로, 아래 '개정' 절)
 
 ## 맥락
 - 세션마다 우편함(ADR-008 · REL-2 — `SerialOutbox`)이 전송과 '이 세션에 무엇을 보냈는가' 를 한 번에 하나씩 처리한다. 작업 종류별 단일 비행이라 대기열이
@@ -77,7 +78,8 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
 - **세션의 조회 표시를 답과 함께 지우고 읽는 쪽의 합치기만 둔다**: 같은 키의 되풀이 읽기는 막지만, 마감 뒤의 다시 계산마다 새 마감(5 s)을 기다리며 선박
   상태를 보내지 않고, 한 세션이 선박을 연달아 바꾸면 서로 다른 키의 읽기를 여럿 올린다. 세션이 settled 까지 들고 있고 다음 읽기를 그 뒤에 두는 쪽을 골랐다.
 - **ship_selected 에 '조회 중' 상태를 싣는다**: 스키마 두 사본 · 웹 검증기 · 표본이 늘지만, 사용자에게 보이는 것은 이미 "—" 와 같다.
-- **항공기 `selected` 의 노선(Redis — 3 s 상한, 5 s 캐시)도 같이 옮긴다**: 같은 모양이지만 이 결정의 범위 밖이다(남은 일로 적는다).
+- **항공기 `selected` 의 노선(Redis — 3 s 상한, 5 s 캐시)도 같이 옮긴다**: 같은 모양이지만 이 결정의 범위 밖이다(남은 일로 적는다). → 같은 날 개정
+  (계약 v5 §G21 — 아래 '개정' 절)에서 옮겼다.
 
 ## 결과
 - 지표: `wakeline_ws_ship_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_ship_lookup_seconds` · `wakeline_ws_ship_lookup_queue` ·
@@ -88,3 +90,60 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
   `ReadPoolTest` · `ReadPoolDbTest`(멈춘 서버 → 소켓 5 s).
 - 설정: `wakeline.read-pool.size`(4) · `wakeline.read-pool.connection-timeout-ms`(2,000) — application.yml.
 - 되돌리기: 이 변경의 커밋을 되돌린다 — 읽기가 우편함으로 돌아오고 읽기 풀이 없어진다(스키마 · 데이터 변화 없음).
+
+## 개정(2026-09-30 · 계약 v5 §G21): 선택 항공기 노선의 Redis 읽기도 우편함 밖으로
+사용자 요청 "항공기 노선 조회도 권장 방안으로 진행해" — 위 대안의 마지막 항목(남은 일)을 같은 구조로 옮긴다.
+
+### 맥락
+- `WsHub.sendSelected`(우편함 작업 — 선택 · 팬아웃 · focus 관측 · 초기 세트)가 selected.route(계약 v4 §A)를 `RouteReader.forAircraft` 로 그 자리에서 읽었다:
+  Redis GET `wakeline:route:{CALLSIGN}` — 명령 상한 `spring.data.redis.timeout` 3 s, 콜사인별 5 s 메모리 캐시(실패도 5 s 기억).
+- 그래서 Redis 가 느리거나 닿지 않는 동안 선택 항공기 하나가 그 세션의 pong · 항공기 · 선박 diff · heartbeat 를 읽기 한 번마다 최대 명령 상한(3 s — 연결을
+  새로 맺어야 하면 Lettuce 연결 상한이 더해진다: `spring.data.redis.connect-timeout` 이 없어 lettuce-core 7.5.2 의 `SocketOptions.DEFAULT_CONNECT_TIMEOUT`
+  10 s — 설정값 · 라이브러리 기본값, 잰 값 아님) 붙잡고, 캐시가 지날 때마다 되풀이했다. `RouteSelectionLookupTest` 의 첫 시험이 옛 API 로 먼저 재현했다
+  (GET 을 막은 동안 pong · diff 가 5 s 안에 오지 않음 — timed out).
+
+### 결정
+1. **같은 틀을 나눠 쓴다 — 복사하지 않고 일반화했다.** `ShipLookups` 에서 선박에 매이지 않은 부분(캐시 · 비동기 읽기 출처 `Source`, 답 · 끝남 `Flight`,
+   차례 · wanted · 거절 · 예외 표시 `Reads`, 마감, 지표, 세션 쪽 세대 `Pending`)을 `ws.SelectionLookups` 로 옮기고, `ShipLookups`(두 단계 사슬 — 저장 정적
+   보고 → 입출항)와 `RouteLookups`(한 단계 — 콜사인 → 노선)가 그 위에 제 사슬과 '읽지 못함' 값만 둔다. 까닭: 마감 · settled 순서 · 드롭 셈처럼 틀리기 쉬운
+   순서가 두 벌로 갈라지지 않게. `ShipLookups` 의 동작 · 지표 이름은 그대로다(옮긴 뒤 선박 시험 그대로 통과).
+2. **실행기는 따로 둔다(격벽).** 선박 실행기의 스레드 수는 DB 읽기 풀 연결 수에 맞춘 값이다(스레드마다 연결 하나). Redis 가 멈추면 노선 읽기가 스레드를
+   명령 상한만큼 잡는데, 같은 실행기면 선박 DB 조회 스레드를 잡는다. 노선 실행기: 데몬 스레드 4(`route-lookup-N` — **고른 값, 잰 값 아님**: Lettuce 는
+   연결 하나를 여러 스레드가 나눠 써 스레드 수가 Redis 연결 수와 무관하다. Redis 가 멈춘 동안의 처리량은 4 / 3 s ≈ 1.3 읽기/s 이고 그래도 답은 마감에 나간다),
+   대기열 max(256, `wakeline.ws-max-conn`), 가득 차면 `AbortPolicy` → 읽지 않고 unavailable 로 곧바로 답하고 센다(`outcome=rejected` — 기억하지 않는다).
+3. **우편함은 캐시만 본다.** `RouteReader.cached`(I/O 없음). 없으면 세션의 조회(같은 물음)의 답, 그것도 없으면 조회를 맡기고 selected 를 **곧바로** 보낸다 —
+   route 는 pending("노선 조회 중"), 다만 이 세션에 이미 보낸 같은 물음(같은 항공기 · 같은 콜사인)의 값이 있으면 그 값(5 s 캐시가 지나 다시 읽는 중 — 화면이
+   5 s 마다 "조회 중" 으로 깜박이지 않게). 답이 오면 `SELECTED_ROUTE` 우편함 작업이 다시 계산해 바뀌었으면 보낸다.
+4. **마감 = Redis 명령 상한.** 답은 늦어도 물음 뒤 `spring.data.redis.timeout`(운영 3 s — 설정값, Boot 가 Lettuce 에 묶을 때와 같게 해석; 0 이하 · 해석
+   불가면 기동하지 않는다)에 나간다. 끝나지 않았으면 unavailable("노선 조회 실패" — 계약 v4 §A 의 'Redis 오류'). 읽기는 계속돼 캐시를 채우고, 마감 뒤에 끝나면
+   곧바로 다시 계산해 실제 값을 보낸다.
+5. **세대 · 단일 비행은 선박과 같다.** 물음 = (hex, 정규화한 콜사인). 다른 항공기 · 선택 해제 · 콜사인 바뀜 · 세션 닫힘이면 그 답은 버리고 답을 보내지 않은
+   조회를 센다. 세션의 다음 읽기는 앞 조회가 settled 된 뒤 시작하고 그사이 바뀐 물음은 읽지 않는다(세션마다 실행기 작업 하나 이하 — 대기열이 연결 상한 안에서
+   넘치지 않는다). 같은 콜사인은 세션을 가로질러 Redis 읽기 하나(`RouteReader` 의 `SingleFlight` — REST 항공기 상세도 붙는다). 캐시 시각은 읽기가 끝난 때.
+6. **WS 계약은 그대로**(키 · 값 · 스키마 · 웹 검증기 · 표본 변화 없음). pending 의 뜻만 넓어진다 — '수집기가 아직 쓰지 않음' 에 'api 가 그 결과를 읽는 중'
+   (≤ 3 s)이 더해졌다. 웹의 "노선 조회 중" 설명(title)이 그 읽기와 상한을 적는다(`lib/route.ROUTE_API_READ_BOUND_S` — 시험이 application.yml 과 대조).
+
+### 새 최악(설정값에서 — 잰 값 아님)
+| 경우 | 전 | 후 |
+|---|---|---|
+| 그 세션의 pong · diff · heartbeat ping | 노선 읽기 뒤에 선다(읽기마다 ≤ 3 s, 연결을 새로 맺으면 ≤ 10 + 3 s — 5 s 마다 되풀이) | 노선 읽기를 기다리지 않는다(`RoutePausedRedisTest` 가 멈춘 Redis 에서 각 500 ms 미만을 단언) |
+| 첫 selected(노선이 캐시에 없을 때) | 읽기가 끝날 때 | 곧바로 — route pending |
+| 노선의 답 | 읽기가 끝날 때 | ≤ 3 s(마감), 읽지 못하면 unavailable — 읽기가 끝나면 곧바로 실제 값 |
+| 노선 실행기 포화(4 + max(256, 연결 상한)) | — | 곧바로 unavailable · 센다 — 세션마다 작업 하나 이하라 연결 상한 안에서는 넘치지 않는다 |
+| 스레드 하나를 잡는 시간(읽기 하나) | — | ≤ 3 s(연결이 열려 있을 때) · ≤ 10 + 3 s(연결을 새로 맺을 때) |
+
+**남은 것(이 개정의 범위 밖 — 같은 종류)**: heartbeat · 초기 세트의 status 메시지는 여전히 우편함에서 Redis 를 읽는다 — `WsHub.statusPayload`
+(3 s 캐시)가 허브 전체 잠금(`statusLock`) 안에서 `StatusService.publicStatus` 를 부르고, 그 안의 `safeHash` 셋(collector heartbeat · radar_kr meta · active
+providers — HGETALL)이 각 명령 상한 3 s 를 기다릴 수 있다(설정값의 합 ≤ 9 s, 잰 값 아님). Redis 가 멈춘 동안에는 heartbeat 주기(30 s)마다 한 세션이 그만큼
+만들고 다른 세션의 heartbeat · 초기 세트 작업은 그 잠금을 기다린다 — 노선과 같은 방법(우편함 밖에서 만들고 우편함은 만든 값만 본다)으로 옮길 일이다.
+`spring.data.redis.connect-timeout` 도 설정에 없다(Lettuce 기본 10 s — 모든 Redis 사용자에 걸린다).
+
+### 결과
+- 지표: `wakeline_ws_route_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_route_lookup_seconds` · `wakeline_ws_route_lookup_queue` ·
+  `wakeline_ws_route_lookup_dropped_total` · `wakeline_cache_requests_total{cache=route,result=hit}`(진행 중인 읽기에 붙은 것 포함).
+- 시험: `RouteSelectionLookupTest`(pending 동안 pong · diff · heartbeat 주기 · 마감의 unavailable 과 늦은 실제 값 · 마감 뒤 다시 계산은 새 읽기 없음 · 늦은 답
+  버리기(다른 항공기 · 해제 · 콜사인 바뀜 · 세션 닫힘) · 포화 · 세션을 가로지른 한 읽기 · 항공기를 바꿔도 작업 하나 · 다시 읽는 동안 깜박이지 않음 · 배선) ·
+  `RoutePausedRedisTest`(Testcontainers Redis 를 docker pause — pong · diff · heartbeat 각 < 500 ms, 시험이 고른 명령 상한 1.5 s 에 unavailable, 다시 풀면
+  found) · `RouteReaderTest`(캐시만 읽기 · 한 읽기 · 거절은 기억하지 않음 · 캐시 시각).
+- 되돌리기: 이 개정의 커밋(route 조회 이동 · 웹 설명 · 문서)을 되돌린다 — 노선 읽기가 우편함으로 돌아온다(스키마 · 데이터 · 설정 변화 없음). 공통 틀
+  (`SelectionLookups` 추출)은 선박 조회만으로도 그대로 쓸 수 있다.

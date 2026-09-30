@@ -516,3 +516,46 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     통합(2026-09-30): 찍는 스크립트는 실데이터 스택만 찍고(fixture 8701 은 멈춘다) 실데이터 스택(8700)은 아직 이 판이 아니라 다시 찍지 못했다. 13개 그림이 모두
     UTC · 옛 상태 바를 보여 그림 설명(KST 만 · 칩 + 상세)과 어긋나므로 그림과 manifest 항목을 지웠다 — 설명서는 ‘스크린샷 준비 중’ 자리표시와 그 화면의 설명을 보인다.
     배포 뒤 `node scripts/guide-screenshots.mjs http://localhost:8700 <자격 증명 파일>` 로 다시 찍는다.
+## G. 13차 개정(2026-09-30 · 레인 route · 사용자 요청 "항공기 노선 조회도 권장 방안으로 진행해" — ADR-025 개정) — 선택 항공기 노선 조회도 세션 우편함 밖으로
+- G21(§G18 이 남긴 일 · 계약 v4 §A 의 selected.route · ADR-008 세션 우편함) **선택 항공기 노선의 Redis 읽기는 세션 우편함 밖에서 — selected 는 곧바로 pending,
+  답은 늦어도 Redis 명령 상한에**.
+  - 관찰(코드 — `RouteSelectionLookupTest` 의 첫 시험이 옛 API 로 먼저 재현: GET 을 막은 동안 pong · diff 가 5 s 안에 오지 않음): `WsHub.sendSelected`(우편함
+    작업)가 `RouteReader.forAircraft` 로 Redis GET `wakeline:route:{CALLSIGN}` 을 그 자리에서 읽었다(명령 상한 `spring.data.redis.timeout` 3 s, 콜사인별 5 s
+    캐시 — 실패도 5 s). Redis 가 느리거나 닿지 않는 동안 선택 항공기 하나가 그 세션의 pong · 항공기 · 선박 diff · heartbeat 를 읽기마다 최대 3 s(연결을 새로
+    맺어야 하면 Lettuce 연결 상한이 더해진다 — `spring.data.redis.connect-timeout` 이 없어 lettuce-core 7.5.2 기본 10 s; 설정값 · 라이브러리 기본값의 합, 잰 값
+    아님) 붙잡고, 캐시가 지날 때마다 되풀이했다.
+  - api(`ws.RouteLookups` · `WsHub.selectedRoute` · `route.RouteReader`): 우편함은 `RouteReader.cached`(메모리 — I/O 없음)만 본다. 없으면 세션의 조회(같은
+    물음)의 답, 그것도 없으면 노선 조회 실행기에 맡기고 돌아온다 — 데몬 스레드 4(`route-lookup-N`, **고른 값 — 잰 값 아님**: Lettuce 는 연결 하나를 여러
+    스레드가 나눠 쓴다), 대기열 max(256, `wakeline.ws-max-conn`), 가득 차면 읽지 않고 곧바로 unavailable(`outcome=rejected` — 기억하지 않아 다음 다시 계산이
+    다시 읽는다). 선박 조회 실행기(§G18 — 스레드 = DB 읽기 풀 연결 수)와 따로다: Redis 가 멈춰도 DB 조회 스레드를 잡지 않는다. 결과는 `SELECTED_ROUTE` 우편함
+    작업으로 돌아와 다시 계산하고 바뀌었으면 보낸다.
+  - 틀은 선박 조회와 같은 `ws.SelectionLookups`(§G18 의 `ShipLookups` 에서 선박에 매이지 않은 부분 — 출처 · 답/끝남(Flight) · 차례 · 마감 · 거절/예외 표시 ·
+    지표 · 세션 쪽 세대(Pending) — 을 옮겨 일반화했다. 복사하지 않은 까닭: settled 가 답보다 먼저 · 마감 뒤 끝남이 다시 계산을 부름 · 답을 보내지 않은 조회만
+    셈 같은 순서가 두 벌로 갈라지지 않게). `ShipLookups` 는 선박의 두 단계 사슬과 그 '읽지 못함' 값만 남고 동작 · 지표 이름은 그대로다.
+  - selected(WS — 키 · 값 · 스키마 그대로): 물음(hex · 정규화한 콜사인)의 답이 캐시에 없으면 selected 를 **곧바로** route pending("노선 조회 중")으로 보내고,
+    답이 오면 다시 보낸다. 5 s 캐시가 지나 같은 물음을 다시 읽는 동안은 이 세션에 이미 보낸 값을 그대로 싣는다(found 가 5 s 마다 "조회 중" 으로 깜박이지
+    않는다 — 바뀌었으면 답이 올 때 보낸다). 그래서 **pending 의 뜻이 넓어진다**(계약 v4 §A "캐시 없음(선택 직후)"): 수집기가 아직 쓰지 않았거나, api 가 그
+    결과를 읽는 중(≤ 아래 마감). 웹의 "노선 조회 중" 설명(title — `lib/route.ROUTE_PENDING_TITLE`)이 api 의 읽기와 그 상한을 적는다(`ROUTE_API_READ_BOUND_S`
+    = 3 — `tests/route-pending.test.ts` 가 application.yml 의 값과 대조). 보통 경로 계산값 10 s(웹 `lib/route.ROUTE_NORMAL_PATH_S`)는 그대로다(api 의 다시 읽기 시간은 잰 값이 없어
+    셈에 넣지 않는다 — 상한만 적는다).
+  - 마감: 답은 늦어도 물음 뒤 `spring.data.redis.timeout`(운영 **3 s** — 설정값; Boot 가 Lettuce 명령 상한에 묶을 때와 같게 해석, 0 이하 · 해석 불가면
+    기동하지 않는다)에 나간다. 그때까지 끝나지 않았으면 unavailable("노선 조회 실패" — 계약 v4 §A 에 이미 있는 'Redis 오류'). 읽기는 계속돼 캐시를 채우고,
+    끝나면 곧바로 다시 계산해 실제 값을 보낸다 — 실패를 붙잡아 두지 않는다. 앞 조회를 기다린 시간도 마감에 든다.
+  - 세대 · 단일 비행(§G18 과 같음): 다른 항공기 · 선택 해제 · 같은 항공기의 콜사인 바뀜 · 세션 닫힘이면 진행 중인 조회의 답은 버린다(답을 보내지 않은 조회 —
+    `wakeline_ws_route_lookup_dropped_total`). 세션은 settled 까지 조회를 들고 있어 같은 물음의 다시 계산(항공기 이동 · focus 관측)은 새 읽기를 올리지 않고,
+    다음 물음의 읽기는 앞 조회가 settled 된 뒤 시작한다(그사이 또 바뀌면 읽지 않는다 — `outcome=skipped`) — 세션마다 실행기 작업 하나 이하. 같은 콜사인은
+    세션을 가로질러 Redis 읽기 하나(`RouteReader` 의 `persist.SingleFlight` — REST `/aircraft/{hex}` 도 붙는다). 캐시 시각은 읽기가 끝난 때(느린 읽기 뒤에도
+    5 s 를 온전히).
+  - 새 최악(설정값 — 잰 값 아님): 세션의 pong · diff · heartbeat ping 은 노선 읽기를 기다리지 않는다. 첫 selected 는 곧바로(pending), 노선의 답은 ≤ 3 s.
+    스레드 하나를 잡는 시간 ≤ 3 s(연결이 열려 있을 때) · ≤ 10 + 3 s(연결을 새로 맺을 때). Redis 가 멈춘 동안의 처리량 = 스레드 4 / 3 s — 넘치는 물음은
+    대기열에서 기다리고(세션마다 하나) 답은 여전히 마감에 나간다.
+  - 남은 것(범위 밖 — 같은 종류): heartbeat · 초기 세트의 status 메시지는 여전히 우편함에서 Redis 를 읽는다 — `WsHub.statusPayload`(3 s 캐시)가 허브 전체 잠금
+    (`statusLock`) 안에서 `StatusService.publicStatus` 를 부르고 그 안의 `safeHash` 셋(HGETALL — collector heartbeat · radar_kr meta · active providers)이 각
+    명령 상한 3 s 를 기다릴 수 있다(합 ≤ 9 s — 설정값의 합). Redis 가 멈춘 동안은 heartbeat 주기(30 s)마다 한 세션이 그만큼 만들고 다른 세션은 그 잠금을
+    기다린다. `spring.data.redis.connect-timeout` 도 설정에 없다(Lettuce 기본 10 s).
+  - 지표: `wakeline_ws_route_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_route_lookup_seconds`(물음 → 답) ·
+    `wakeline_ws_route_lookup_queue` · `wakeline_ws_route_lookup_dropped_total` · `wakeline_cache_requests_total{cache=route,result=hit}`(진행 중인 읽기에 붙은
+    것 포함 — miss 는 실제 Redis 읽기). 시험: `RouteSelectionLookupTest`(가짜 Redis 가 GET 을 막음 — pending 동안 pong · diff · heartbeat 주기 · 마감의
+    unavailable 과 늦은 실제 값 · 마감 뒤 다시 계산은 새 읽기 없음 · 늦은 답 버리기 · 포화 · 세션을 가로지른 한 읽기 · 항공기를 바꿔도 작업 하나 · 다시 읽는
+    동안 깜박이지 않음 · 운영 배선) · `RoutePausedRedisTest`(Testcontainers redis:8-alpine 을 docker pause — 각 500 ms 미만을 단언, 시험이 고른 명령 상한
+    1.5 s 에 unavailable, 다시 풀면 found) · `RouteReaderTest` · 웹 `route-pending.test.ts`. ADR-025 '개정' 절.
