@@ -653,7 +653,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G23(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
   - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
     `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
-    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
+    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(40 — 2026-09-30 오후 개정, 전에는 20. 아래 '개정'), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
     (받던 연결이 끊겨 열린 공백 — 마지막 데이터 → 다시 받은 데이터 — 이 30 s 안에 닫힌 횟수, 없앤 구역 포함). `queue_wait_max_s` 에는 지금 맨 앞에서 기다리는 원문의
     머문 시간도 든다(정리 태스크가 멈춰도 모름이 되지 않게). 수집기가 고른 값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다, 초는 지수 없는 십진수):
     `queue_limit`(원문 대기열 건수 상한) · `loop_tick_s`(0.5) · `loop_stall_s`(1) · `loop_warn_s`(5) · `loop_warn_every_s`(60 — 루프 측정이 없는 수집기면 넷 다 빈 값) ·
@@ -678,3 +678,56 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 회귀 막기: collector `test_ais_keepalive`(1011 기제 재현 — 루프 멈춤은 두 콜백 순서를 각각 고정) · `test_ais_diag`(한꺼번에 받은 묶음 · 멈춘 소비자 ·
     고른 값 싣기) · `test_ais_reconnect_log`(공백 길이로 재는 회복 창) · `tools/contract_check.py`(새 필드 모양 · main.py 처럼 만든 fixture 의 모름 · 구역 최댓값),
     api `OpsPipelineControllerTest` · `OpsPipelineIT`, 웹 `tests/ops-pipeline-ais-diag.test.ts`(설명에 숫자를 적지 않음 포함).
+  - **개정(2026-09-30 오후 · 레인 collector — 운영 진단으로 원인을 가름)**: keepalive 시간 초과 20 → 40 s(`ais/client.py` `PING_TIMEOUT_S` — 고른 값), ping 간격 20 s 그대로.
+    근거는 이 절의 진단 필드가 운영 스택에서 보인 값이다: 13:58 KST `ping_rtt_max_s` 12.30 s 일 때 `loop_lag_max_s` 0.02 s · `ws_queue_max` 45/64, 14:03–14:05 KST
+    다섯 표본 왕복 0.58–1.86 s · 루프 0.01 s · 버퍼 14–16/64 · `lag_p50_s` 1.8–7.8 s — 공급자 쪽 연결별 적체(데이터 뒤에 선 pong)이고, 1011(08:41 · 08:51 KST)은
+    공백 5–6 s 와 적체분 손실을 남겼다. 40 s 는 그 왕복 최대 12.30 s 의 약 3.3배로 고른 값이다(부록 A 의 가장 큰 데이터 지연 23.1 s 는 pong 왕복이 아니고, 20 s 를
+    넘은 그 한 번은 20 s 시간 초과가 끊었다 — 스스로 회복한 값으로 인용하지 않는다). 반쯤 열린 연결의 최악 감지 20 + 40 + 3(close) = 63 s(전 43 s) — 데이터 생존은 idle 기한 120 s 가 따로 지킨다. 상태 해시
+    `ping_timeout_s` 가 "40" 이 된다(필드 · 모양 · api · 웹 코드는 그대로 — 설명의 숫자는 응답에서 채운다). 자세한 계산은 ADR-014 부록 C '개정'.
+
+## G. 16차 개정(2026-09-30 오후 · 레인 collector · 운영/로그 스크린샷 — 기상청 429 네 번 · 관심 지역 '공급자 없음' 두 번)
+- G24(§A2 호스트 버킷 · §G14 실행 상태 · §G22 · FR-16 폴백 · R-17 · ADR-011 개정 2026-09-30 오후) **기상청 호스트 속도 상한 · 429 는 'throttled' — 관심 지역 '공급자 없음'은 이름 붙인 상태**.
+  - 기상청(수집기 `ratelimit.py` · `http.py` · `jobs/kma_radar.py`): 429(10:55:56 · 11:26:16 · 13:01:59 · 13:22:09 KST '현재 요청을 처리할 수 없습니다')는 모두 같은 주기의 앞선 KMA
+    요청 0.1–0.5 s 뒤였다 — `apihub.kma.go.kr` 에 호스트 버킷이 없어 수집기 전체 버킷(2 req/s · burst 2)만 지났다. 호스트 버킷 **0.5 req/s · burst 1**(고른 값 —
+    기상청은 초당 한도를 밝히지 않았고 우리가 확인한 문서도 없다. 2 s 는 실패한 가장 긴 간격 0.5 s 의 4배, 한 주기의 최대 13 호출을 줄 세워도 약 24 s / 300 s)을 설정
+    `kma_apihub_rps`(기본 0.5, 상한 1.0)로 둔다. '파일 없음' 연속이 닫힌 뒤 보관 창의 빈 곳을 이어 받는 묶음도 이 간격이다. 429 는 HttpClient 가 그 호스트를 멈추고
+    (Retry-After 초 · HTTP-date 를 따른다 — HTTP-date 는 전에 버렸다. 없으면 30 → 60 → 120 → 300 s) 작업은 그 주기의 KMA 호출을 멈춘다. 실행 기록 `ingest_run.status` =
+    **`throttled`**(http_status 429, error_text 에 단계 · 쉰 초 · Retry-After) — 공급자 오류가 아니므로 공급자 해시 `last_error` · `consecutive_failures` 에 적지 않는다(§G14:
+    공급자 오류는 `'error'` 만). WARN 한 줄. 그 쉼 때문에 보내지 않은 다음 호출(속도 상한 Throttled)도 `throttled`(http 없음) · INFO · 예산을 돌려준다. 그 밖의 속도 상한
+    (대기 · 대기열 상한)은 `throttled` · WARN. 웹 실행 상태 `throttled` 는 주황과 뜻(title — `RUN_STATUS_TITLE`).
+    바이너리 도중 멈춰도 주기 끝은 그대로 지난다: 그 주기의 품질 이벤트 · 격리 수는 `throttled` 실행 기록에, 프레임을 저장했으면 공급자 성공(`last_success_at`), '파일 없음'
+    연속(§G22) 발행, heartbeat. 정규 부분의 다른 까닭('파일 없음' 등)은 오류 글자에 함께. 부분 합성 다시 받기(ADR-021)의 429 도 WARN 한 줄 · 남은 다시 받기를 멈추고, 정규
+    부분이 `ok` 면 실행 `throttled`(http 429), 아니면 그 상태 그대로 오류 글자에 덧붙인다. 설정 `kma_apihub_rps` 는 운영 수집기의 속도 상한에 걸린다(`http.build_limiter` —
+    `main()` 과 `HttpClient()` 가 같은 함수, 리뷰 2026-09-30: 전에는 `main()` 이 넘기지 않아 늘 0.5).
+  - 관심 지역 폴백(`fallback.py` · `jobs/aircraft.py`): 12:14:50 adsb_fi 3회 연속 실패(ConnectError SSLEOFError) → 10분 쉼, adsb_lol(429 미룸 중)이 맡았다가 12:16:22 ·
+    12:22:18 에 429 → 300 s 쉼. 설정값(실패 쉼 600 s · 429 쉼 300 s)과 로그 시각으로 계산한 공급자 없음 = (12:21:22 − 12:16:22) + (12:24:50 − 12:22:18) = 300 + 152 =
+    **452 s**, adsb_fi 는 12:24:50 까지 다시 시도하지 않았다(그 사이 풀렸어도 받지 못했다). 관심 지역에서 '3회 연속 실패' 쉼은 429 미룸처럼 **선호도**다 — 쓸 수 있는
+    공급자(미룸 중인 공급자 포함)가 하나도 없으면 쉬는 공급자를 작업 주기 그대로 다시 시도한다(여럿이면 오래 시도하지 않은 것부터, 운영자 끔 · 일시정지 · 설정 안 됨은 빼고).
+    다시 시도가 실패해도 쉼 끝을 늘리지 않고 새 '3회'를 세지 않는다(쉼마다 WARN 한 번 — 전과 같다 · 실패는 INFO, 공급자 해시 · 실행 기록에는 그대로), 답하면 쉼을 끝낸다.
+    다시 시도하는 동안에도 아래 '공급자 없음' 상태다(일하는 공급자가 없다 — 리뷰 2026-09-30). 전세계 체인은 다시 시도하지 않는다 — FR-16 의 10분 쉼 그대로(전세계
+    공급자는 OpenSky 하나 · 호출마다 크레딧 4 · 실패한 호출도 예산에 남는다). 건너뛰는 까닭의 순서: 설정 안 됨 → 운영자 끔 → 일시정지 → 쉼 → 429 미룸. 새 숫자는 없다
+    (다시 시도 간격 = 작업 주기).
+  - 넘겨받은 직후 adsb.lol 호출 속도: 관심 지역 주기마다 한 번(넘겨받을 때 몰아 부르지 않고 429 를 같은 주기에 다시 부르지 않는다 — adsb.lol 을 부르는 작업은 이것뿐,
+    `test_only_the_aircraft_chain_calls_adsb_lol` 이 소스에서 지킨다).
+    저장소가 인용한 adsb.lol 한도 수치는 없다(README 'dynamic based on the environment load' — ADR-011) — 넘겨받은 뒤 약 1분(9 · 6 호출) 만에 429 인 모양은 VERIFICATION
+    #38 · #42 와 같다. 늦추면 풀리는지 모르므로 속도를 바꾸지 않는다(추정한 한도를 짓지 않는다).
+  - **공급자 없음 상태**(`wakeline:active`, 수집기가 쓴다 — 일하는 공급자가 없다: 고를 공급자가 없거나 쉬는 공급자를 다시 시도하는 중): `{job}_none_since`(UTC ISO — 시작) ·
+    `{job}_none_reason`(건너뛴 공급자와 까닭 — 다시 시도하는 공급자 포함, 가린 뒤 120자) · `{job}_none_next`(가장 먼저 풀리는 때 — 체인 상태의 쉼 끝 · 일시정지 끝, 운영자가
+    켜야 하거나 설정이 없으면 빈 값) · `{job}_none_retry`(그동안 주기마다 다시 시도하는 쉬는 공급자 — 없으면 빈 값, 리뷰 2026-09-30 에 더함). 다시 시도하는 공급자가 바뀌면
+    필드를 다시 쓴다(시작 시각은 그대로). 공급자를 다시 고르거나 다시 시도한 공급자가 답하면 `set_active` 가 넷을 비운다. 작업이 꺼지면(전세계 끔) 꺼진 동안 한 번 넷을
+    비운다(앞선 프로세스가 남긴 값 포함). `{job}`(마지막으로 쓴 공급자)은 그대로 남는다(기록). 전환 기록(`wakeline:events` provider_switch): 시작 때 `<쓰던 공급자> → none`(사유
+    `none — …[ · <공급자> 다시 시도 중]`), 끝날 때 `none → <공급자>`(사유 `recovery — 공급자 없음 N s 끝 · …` — 다시 시도가 답했으면 `· <공급자> 다시 시도 성공`). 로그: 공백마다
+    WARN 한 번 `region: no provider available — skipped: '…'; next: '<공급자> retried each cycle while cooling down (no other provider); <공급자> after N s'`(바뀌는 글은
+    따옴표 안 — 지문 하나), 끝나면 INFO. api 는 이 해시를 그대로 싣는다(`/status` · WS `status` 의 `active_providers` — 문자열 맵, 스키마 그대로 · `/ops/providers`
+    의 `active`) — api 코드 변경 없음.
+  - 웹(`lib/active-provider` — KST 만, 값 그대로, 모르면 쓰지 않는다): 운영 공급자 탭 위쪽 작업 배지가 공급자 없음이면 빨강 `region: 공급자 없음 · 12:16:32 KST 부터`(다시 시도
+    중이면 뒤에 `· adsb_fi 다시 시도 중`, title 앞머리에도 `adsb_fi 다시 시도 중(쉬는 공급자 — 다른 공급자가 없어 주기마다)` · title =
+    `공급자 없음 · … 부터 — 건너뜀: … · 가장 먼저 풀리는 때 12:21:22 KST(수집기 체인 상태) · 마지막으로 쓴 공급자 adsb_lol`, 때를 모르면 `풀리는 때 모름(운영자가 켜거나
+    설정해야 한다)`) — 전에는 초록 `region: adsb_lol`. 한 번도 고르지 못한 작업(전세계 — OpenSky 설정 안 됨)도 공급자 없음이면 배지가 있다. 상태 바 region 칩에 낱말
+    `공급자 없음`(경고 · 줄에 고정, 문장은 title · 상세 행) — 나이 STALE 만으로는 까닭을 몰랐다. 전세계 칩에는 싣지 않는다(OpenSky 는 선택 기능 — ADR-009).
+    수집기가 멈추면 이 값을 지울 주체가 없다 — 지역 피드 나이(STALE)가 함께 보인다.
+  - 회귀 막기: collector `tests/test_kma_throttle.py`(호스트 버킷 · 운영 수집기가 설정으로 만든 속도 상한 · 회복 묶음 간격 · 429 쉼 · Retry-After · 'throttled' · 쉼 안 다음
+    주기 · 도중 429 에도 품질 이벤트 · 성공 · 연속 발행 · heartbeat · 다시 받기 429) · `test_http`(HTTP-date) · `test_kma_radar`(속도 상한은 'throttled') · `test_fallback`(쉬는
+    공급자 다시 시도 · 번갈아 · 운영자 끔은 제외 · 전세계는 다시 시도하지 않음 · 공급자 없음 상태 · 다시 시도 중에도 공급자 없음 · 작업을 끄면 비움 · 로그 흐름 되풀이 —
+    adsb_fi 가 풀린 주기에 받음) · `test_aircraft_job`(해시 · 전환 기록 · 로그 · 다시 시도 중 공급자 없음과 그 끝 · 전세계를 끄면 비움 · adsb.lol 을 부르는 곳은 항공기 체인뿐),
+    web `tests/region-no-provider.test.ts`. 특성 시험 둘(`test_without_the_host_bucket_…` · `test_takeover_calls_adsb_lol_once_per_cycle…`)은 기록이지 회귀 막기가 아니다.

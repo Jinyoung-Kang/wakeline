@@ -132,6 +132,10 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(22)).toContain("기상청 내려받기 '파일 없음' 연속");
     expect(heading(23)).toMatch(/^## G\. 15차 개정\(2026-09-30 · 레인 ais /);
     expect(amendment(23)).toContain("ais 수신 진단");
-    expect(amendment(24)).toBe("");
+    expect(amendment(23)).toContain("keepalive 시간 초과 20 → 40 s"); // 같은 절의 개정(2026-09-30 오후 · 레인 collector) — 새 번호를 쓰지 않았다
+    // 레인 collector(2026-09-30 오후): 기상청 429 · 관심 지역 '공급자 없음' — 16차 · §G24
+    expect(heading(24)).toMatch(/^## G\. 16차 개정\(2026-09-30 오후 · 레인 collector /);
+    expect(amendment(24)).toContain("관심 지역 '공급자 없음'은 이름 붙인 상태");
+    expect(amendment(25)).toBe("");
   });
 });

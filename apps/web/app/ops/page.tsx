@@ -14,6 +14,7 @@ import { OpsLogin } from "@/components/OpsLogin";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
+import { activeJobs, jobBadgeText, jobBadgeTitle } from "@/lib/active-provider";
 import { KstTime } from "@/components/KstTime";
 
 type Any = Record<string, unknown>;
@@ -262,7 +263,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
       <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]">
         {tab === "providers" && prov ? <>
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
-            {Object.entries(prov.active ?? {}).filter(([k]) => !k.includes("_")).map(([job, name]) => <span key={job} className="badge ok">{job}: {name}</span>)}
+            {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
+            {activeJobs(prov.active).map((j) => <span key={j.job} className={`badge ${j.none ? "bad" : "ok"}`} title={jobBadgeTitle(j, providersNowMs(prov))} data-testid={`ops-active-${j.job}`}>{jobBadgeText(j, providersNowMs(prov))}</span>)}
             {Object.entries(prov.collector ?? {}).filter(([k]) => k.endsWith("_at")).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>

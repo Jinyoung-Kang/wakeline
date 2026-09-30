@@ -2,7 +2,8 @@
 
 - `wss://stream.aisstream.io/v0/stream` 에 permessage-deflate(compression="deflate")로 붙고, 붙자마자(1 s 안) 구독을 보낸다.
   구독 = {APIKey, BoundingBoxes, FilterMessageTypes}(문서 확인 2026-09-28). 쓰는 5개 형식만 받아 대역폭·CPU 를 줄인다.
-- 받은 데이터 프레임은 파싱하지 않고 RawQueue 에 넣기만 한다(기다리지 않음). "error" 글자가 든 프레임만 공급자 오류인지 확인하려고 파싱한다(is_provider_error). 메시지 상한 1 MiB(압축 해제 후 크기에 적용), ping 20 s.
+- 받은 데이터 프레임은 파싱하지 않고 RawQueue 에 넣기만 한다(기다리지 않음). "error" 글자가 든 프레임만 공급자 오류인지 확인하려고 파싱한다(is_provider_error). 메시지 상한 1 MiB(압축 해제 후 크기에 적용),
+  keepalive ping 20 s · 시간 초과 40 s(PING_* — ADR-014 부록 C 개정). 반쯤 열린 연결(데이터도 pong 도 없음)은 최악 HALF_OPEN_DETECT_MAX_S(63 s) 안에 끊는다.
 - 공급자 오류 프레임({"error": ...})도 대기열에 넣지만(정리 태스크가 가려서 provider_error 로 기록) 데이터로 세지 않는다 —
   공백을 닫거나 last_msg_at·msgs_total·수신 상태·idle 기한을 바꾸지 않는다(오류만 받고 끊기는 반복은 '회복' 이 아니다).
 - 데이터 메시지가 idle_timeout_s(기본 120 s) 동안 없으면 조용히 멈춘 연결로 보고 다시 붙는다(서버가 close 프레임 없이 끊는 사례 실측).
@@ -49,9 +50,18 @@ logging.getLogger("websockets").setLevel(logging.WARNING)  # DEBUG 는 구독 �
 AIS_URL = "wss://stream.aisstream.io/v0/stream"
 MAX_MESSAGE_BYTES = 1 << 20
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
-# keepalive(고른 값, ADR-014 부록 A 결정 3): 공급자 쪽 지연이 20 s 를 넘으면 다시 붙어 지연을 끊는다.
+# keepalive(고른 값 — 잰 한도가 아니다). ADR-014 부록 A 결정 3: 공급자 쪽 지연이 시간 초과를 넘으면 다시 붙어 지연을 끊는다.
+# 부록 C 개정(2026-09-30 오후): 시간 초과 20 → 40 s. 운영 진단에서 pong 을 늦춘 것은 공급자 쪽 연결별 적체였다 — 13:58 KST ping_rtt_max_s 12.30 s 일 때
+# 루프 지연 0.02 s · 수신 버퍼 45/64, 14:03–14:05 KST RTT 0.58–1.86 s · 루프 0.01 s · 버퍼 14–16/64 · lag_p50_s 1.8–7.8 s. 1011 재연결(08:41 · 08:51 KST)은
+# 공백 5–6 s 를 남기고 공급자 쪽에 쌓인 전달분을 버렸다. 40 s 는 고른 값이다 — 근거는 오늘 잰 keepalive 왕복 최대 12.30 s(그때 루프 0.02 s · 버퍼
+# 45/64 — 공급자 적체)의 약 3.3배. 참고로 부록 A 10분 재측정의 가장 큰 데이터 지연(수신 − time_utc — pong 왕복이 아니다) 23.1 s 는 20 s 를 넘은 한 번이고,
+# 그때 20 s 시간 초과가 끊었다(스스로 회복한 값이 아니다) — 40 s 는 그보다 약 1.7배 위다. 그보다 큰 적체는 여전히 끊는다. ping 간격 20 s 는 그대로
+# (반쯤 열린 연결 최악 = 20 + 40 + 3 = 63 s < idle 기한 120 s).
 PING_INTERVAL_S = 20.0
-PING_TIMEOUT_S = 20.0
+PING_TIMEOUT_S = 40.0
+CLOSE_TIMEOUT_S = 3.0  # 우리가 닫을 때(1011 포함) 상대의 TCP 닫기를 기다리는 상한 — 넘으면 소켓을 끊는다
+# 반쯤 열린 연결(데이터도 pong 도 오지 않음)을 끊기까지의 최악: 마지막 pong 뒤 ping 간격 + 시간 초과 + close 대기(websockets 17.1 keepalive)
+HALF_OPEN_DETECT_MAX_S = PING_INTERVAL_S + PING_TIMEOUT_S + CLOSE_TIMEOUT_S
 # websockets 수신 버퍼 상한(프레임 수, 고른 값): 넣은 뒤 이 수를 넘으면 소켓 읽기를 멈춘다(pause_reading — 16 이하로 줄면 다시 읽음). 한 번 읽은
 # 바이트(asyncio 최대 256 KiB)에 든 프레임은 모두 버퍼에 들어가므로 한꺼번에 받은 묶음(공급자 적체 해소 · 망이 잠깐 끊겼다 이어짐)이나 이벤트 루프
 # 멈춤 뒤에는 상한을 넘는다 — 그 자체는 결함이 아니고 읽기가 잠시 멈췄다는 뜻이다(수신 태스크가 꺼내자마자 대기열에 넣고 기다리지 않으므로 곧 비운다
@@ -127,7 +137,7 @@ class AisStreamClient:
         open_timeout_s: float = 10.0,
         ping_interval_s: float = PING_INTERVAL_S,
         ping_timeout_s: float = PING_TIMEOUT_S,
-        close_timeout_s: float = 3.0,
+        close_timeout_s: float = CLOSE_TIMEOUT_S,
         wall: Callable[[], float] = time.time,
         tag: int = 0,
         label: str = "",
