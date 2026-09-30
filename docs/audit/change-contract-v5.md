@@ -746,6 +746,14 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 까닭(운영/로그 2026-09-30): adsb.lol 은 미룸이 끝나 체인이 돌아올 때마다 약 1–2분 안에 429 였다(05:46 · 11:48 · 12:16/12:22 · 18:24 KST — 2026-09-29 의 11:29:34 복귀 →
     11:30:33 429 와 같은 모양, ADR-011). 돌아올 때마다 WARN 한 줄 · 전환 둘 · 곧 거절할 공급자에게 몇 분. adsb.fi 는 그날 관심 지역을 하루 내내 맡았다(운영 RUNS
     `region adsb_fi ok 7,797`, 오류는 12:14 TLS 묶음뿐 — §G24 의 '공급자 없음' 상태가 다뤘다). adsb.lol 한도 수치는 없다(README 'dynamic') — 속도를 추정해 바꾸지 않는다.
+  - adsb.lol 이 1순위였던 까닭(설계서 v0.2 3.1 · 3.3 · 16절 — ADR-011 '보강 3')과 지금: ① 한도 — '현재 레이트리밋 없음'이 전제였다 → 되풀이되는 429 로 더는 맞지 않는다.
+    ② 이용 조건 — adsb.lol 'ODbL 1.0, 모두에게 공개' · adsb.fi '개인·비상업, 출처 표기' → 이 서비스는 비상업이라 adsb.fi 조건을 지키고, 출처 표기는 둘 다 늘 한다.
+    ③ 수신 범위 — 설계서가 '같은 시각 … 1시간 비교해 1순위를 확정', 'P0 비교 후 1순위 확정'이라 적은 잠정 순서였다 → 같은 시 비교(리뷰가 운영 DB `ingest_run` 을
+    읽기 전용으로 잰 값: `job='region'` · `status='ok'` 3일, 두 공급자가 각각 5번 이상 돈 49시간 — 실행당 항공기 수 adsb.fi 92 · adsb.lol 86)에서 adsb.fi 가 같거나
+    많다. 같은 순간이 아니라 같은 시 안의 비교다. 다시 잴 SQL 은 ADR-011 에 있다.
+  - 배포(운영자가 할 일): 옛 `.env.example` 을 복사한 `.env` 의 `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 는 compose 기본값을 덮고, 수집기는 운영 설정 미러가
+    없을 때(Redis 재기동 뒤 api 가 다시 미러하기까지 60 s 안 등) 이 값을 쓴다 — 그 줄을 `adsb_fi,adsb_lol,opensky` 로 바꾸거나 지우고 `make up`. `make init` 이 옛 값을
+    찾으면 한 줄로 알린다(`tools/init_env.py` `RETIRED_DEFAULTS` — 값은 바꾸지 않는다). /ops 에서 고른 순서는 V17 이 두므로 /ops 설정도 확인한다.
   - 순서(운영 설정 `aircraft_providers` — DB `app_setting` 이 원본, api 가 Redis `wakeline:settings` 로 미러, 수집기가 주기마다 읽는다): 기본값 `adsb_fi,adsb_lol,opensky`.
     수집기 설정 기본값 · `.env.example` · compose 기본값(`${AIRCRAFT_PROVIDERS:-adsb_fi,adsb_lol,opensky}`)이 같다(infra `test_region_chain_default_is_adsb_fi_first_everywhere`).
     **V17**(`V17__region_provider_order_adsb_fi_first.sql`)이 운영 DB 의 값을 옮긴다 — 운영자가 바꾼 적 없고(`updated_by` NULL · `env`) 옛 기본값 그대로일 때만,
@@ -756,7 +764,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 로그: 기동 줄이 설정의 실제 순서를 적는다 — `region chain uses adsb_fi → adsb_lol (aircraft_providers: runtime setting, else .env); opensky is global-only (daily cap 2880
     credits)`(전에는 `adsb_lol → adsb_fi` 고정 글). 웹: /about 의 1 · 2순위 줄 · 운영 설정 `aircraft_providers` 안내(앞이 먼저 · 기본값).
   - 회귀 막기: collector `test_aircraft_job`(기본 순서 · adsb_fi 먼저 → 3회 실패면 adsb.lol 폴백 → 쉼 끝에 1순위 복귀 · 폴백 adsb.lol 의 429 쉼 · 미룸 · 전세계 체인은 그대로 ·
-    기동 줄), api `MigrationDbTest.v17…`(바꾸는 경우 · 두지 않는 경우 · 감사 기록 · 되돌리기), infra `test_compose_policy`(네 곳이 같은 순서).
+    기동 줄), api `MigrationDbTest.v17…`(바꾸는 경우 · 두지 않는 경우 · 감사 기록 · 되돌리기), infra `test_compose_policy`(네 곳이 같은 순서) ·
+    `test_init_env`(옛 순서를 든 .env 는 알리고 값은 두기 · 새 값 · 고른 값 · 주석 · 줄 없음은 알리지 않기).
 - G26(§G22 · §G24 · R-03 · 계약 v2 §A2 예산 · ADR-011 개정 2026-09-30 저녁) **기상청 '파일 없음' 긴 연속은 15분마다 확인 — 그 사이 주기는 부르지 않고 'waiting'**.
   - 까닭(운영 2026-09-30): 기상청이 08:15 KST 부터 모든 바이너리 합성(HSR · HSP · CMX · PPI · CPP PUB)에 'file not exist' 로 답했다(영상 data=img 만 답함) — 알리지 않은
     공급자 장애, 길이 모름. 연속 동안에도 5분마다 목록 1 + 확인 ≤ 2(+ 목록 ReadTimeout 다시 부르기)를 불러 18:34 KST 에 `budget:kma_radar` 417 / 1,000(09:00 KST 에

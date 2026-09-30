@@ -217,6 +217,8 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
 | 같은 모양의 앞선 관찰 | 60분 미룸 뒤 복귀 11:29:34 → 429 11:30:33(2026-09-29) | 이 문서 '수집기 여유 보강' 측정 표 |
 | adsb.fi | 그날 관심 지역을 하루 내내 맡음 — 운영 RUNS `region adsb_fi ok 7,797`, 오류는 12:14 의 TLS 묶음뿐(그때는 §G24 의 '공급자 없음' 상태가 다뤘다) | 운영 화면 RUNS |
 | adsb.lol 한도 | 수치 없음 — README 'Rate limits are dynamic based on the environment load'(github.com/adsblol/api) | 위 '공급자 운용 보강' 인용 |
+| 같은 시(時)의 수신 범위 | 두 공급자가 각각 5번 이상 돈 49시간(그때까지 3일) — 실행당 항공기 수 adsb.fi 92 · adsb.lol 86 | 리뷰(2026-09-30 저녁)가 운영 DB `ingest_run` 을 읽기 전용으로 잰 값(아래 SQL) |
+| 설계서 v0.2 의 순서 | adsb.lol 1순위(레이트리밋 없음 · ODbL 모두에게 공개) · adsb.fi 2순위(초당 1회 · 개인·비상업) — 'P0 비교 후 1순위 확정' | 설계서 3.1 · 3.3 · 16절(아래) |
 
 - 계산: adsb.lol 이 돌아올 때마다 WARN 한 줄 · 전환 둘(adsb_fi → adsb_lol → adsb_fi) · 곧 거절할 공급자에게 1–2분(관심 지역 10 s 주기로 6–12번 호출).
   미룸 사다리(R-17 — 10 → … → 360분)는 이 되풀이를 줄였지만 없애지 못했다(1순위가 돌아오는 것이 규칙이라서).
@@ -227,13 +229,40 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
   운영 DB 는 **V17** 이 옮긴다: 운영자가 바꾼 적 없는 값(`updated_by` NULL · `env`)이 옛 기본값 그대로일 때만, 감사 기록 `SETTING_DEFAULT_V17`(시스템)과
   함께(`MigrationDbTest`). 운영자가 /ops 에서 고른 순서는 그대로 둔다 — 옛 순서가 필요하면 /ops 설정에서 `adsb_lol,adsb_fi,opensky` 로 되돌린다.
   기동 로그의 체인 줄은 이제 설정의 실제 순서를 적는다(전에는 `adsb_lol → adsb_fi` 를 글자로 박아 두었다).
-- adsb.lol 이 1순위였던 까닭: 코드 · ADR · 계약에 적힌 까닭은 없다(설계서 v0.2 의 순서로 보인다 — 이 레인에서 PDF 를 열지 못해 확인하지 못했다). 저장소에 적힌
-  두 공급자의 조건은 라이선스 · 출처 표기 · 속도다(README §9 · /about): adsb.lol ODbL 1.0, adsb.fi 개인 · 비상업 · 초당 1회 이하. 순서를 바꿔도 지키는 것:
-  출처 표기는 순서와 상관없이 둘 다 화면 하단 · /about 에 늘 적는다(`lib/attribution.ts` CREDITS). adsb.fi 초당 1회는 호스트 버킷 0.8 req/s 안이다(관심 지역
-  10 s = 0.1 req/s — 수요 추적이 이 몫을 이미 빼고 계획한다, `jobs/demand._plan`). 하루 예산 40,000 에서 관심 지역 몫 8,640(10 s × 하루 — `demand_budget_reserve_region`)은
-  이미 잡혀 있다. adsb.fi 비상업 조건은 이 서비스(로컬 · 비상업)가 이미 지키고 있었다 — adsb.fi 는 수요 추적과 그날 관심 지역을 맡았다. 상업 · 공개 배포라면
-  adsb.fi 조건 때문에 운영 설정으로 순서를 되돌리거나 adsb.fi 를 꺼야 한다(ADR-009 의 OpenSky 와 같은 성격). 두 공급자의 관심 지역 수신 범위(항공기 수)를 견준
-  측정은 없다.
+- adsb.lol 이 1순위였던 까닭 — 설계서 v0.2(`docs/SkyWx_설계서_로컬개발용_v0.2.pdf`, 2026-09-27 · 저장소가 추적하지 않는 파일이라 이 레인은 원 작업 폴더의 것을
+  읽기만 했다):
+  1. 한도 — 3.1 표: adsb.lol 1순위 '현재 레이트리밋 없음(향후 피더 API 키 예정)', adsb.fi 2순위 '초당 1회'. 3.3 예산표: adsb.lol 8,640회(10 s) · 한도 '명시 없음',
+     adsb.fi 는 '(폴백) ≤ 8,640회'.
+  2. 이용 조건 — 3.1 표: adsb.lol 'ODbL 1.0, 모두에게 공개', adsb.fi '개인·비상업, 출처 표기'.
+  3. 수신 범위 — 설계서는 순서를 재서 정하라고 적었다: '같은 시각 두 API의 결과 수를 1시간 비교해 1순위를 확정하세요'(그 글에서 견줄 두 API 는 adsb.lol · OpenSky),
+     리스크 표 '한반도 커버리지 부족 — P0 비교 후 1순위 확정'. 곧 adsb.lol 1순위는 잰 값으로 확정하기 전의 잠정 순서였다.
+- 그 까닭이 지금 어떤가(순서를 바꿔도 지키는 것):
+  1. 한도의 전제는 더는 맞지 않는다 — adsb.lol 은 체인이 돌아올 때마다 429 다(위 표). 설계서도 README('없음')와 제3자 관측('동적 제한')이 다르다고 적고 '429 처리를
+     전제로 설계'했다. adsb.fi 초당 1회는 호스트 버킷 0.8 req/s 안이다(관심 지역 10 s = 0.1 req/s — 수요 추적이 이 몫을 이미 빼고 계획한다, `jobs/demand._plan`).
+     하루 예산 40,000 에서 관심 지역 몫 8,640(10 s × 하루 — `demand_budget_reserve_region`)은 이미 잡혀 있다.
+  2. 이용 조건은 지킨다 — adsb.fi '개인·비상업'은 이 서비스(설계서 표지 '개인 학습·포트폴리오·비상업')가 이미 지키고 있었다(adsb.fi 는 수요 추적과 그날 관심 지역을
+     맡았다). 출처 표기는 순서와 상관없이 둘 다 화면 하단 · /about 에 늘 적는다(`lib/attribution.ts` CREDITS — README §9). ODbL 의 '모두에게 공개'가 필요해지는
+     때는 상업 · 공개 배포다 — 그때는 운영 설정으로 순서를 되돌리거나 adsb.fi 를 끈다(ADR-009 의 OpenSky 와 같은 성격).
+  3. 수신 범위는 adsb.fi 가 같거나 많다 — 같은 시(時) 비교, 리뷰(2026-09-30 저녁)가 운영 DB `ingest_run` 을 읽기 전용으로 잰 값: `job='region'` · `status='ok'`
+     그때까지 3일, 두 공급자가 각각 5번 이상 돈 시만 — **49시간, 실행당 평균 항공기 수(`records_in`) adsb.fi 92 · adsb.lol 86**. 한계: 같은 시 안이지 같은 순간이
+     아니다(두 공급자가 한 시 안에서 번갈아 맡은 시들이다). 이 레인은 운영 스택을 건드리지 않는 규칙이라 다시 재지 않았다.
+     다시 잴 때의 SQL(이 레인이 쓴 글 — 리뷰가 돌린 글과 같다고 보장하지 않는다. 버리는 컨테이너에서 가짜 행으로 동작만 확인했다):
+     ```sql
+     WITH h AS (
+       SELECT date_trunc('hour', started_at) AS hr, provider, count(*) AS runs, sum(records_in) AS recs
+       FROM ingest_run
+       WHERE job = 'region' AND status = 'ok' AND provider IN ('adsb_fi', 'adsb_lol')
+         AND started_at >= now() - interval '3 days'
+       GROUP BY 1, 2),
+     shared AS (SELECT hr FROM h WHERE runs >= 5 GROUP BY hr HAVING count(*) = 2)
+     SELECT provider, count(*) AS hours, sum(runs) AS runs, round(sum(recs)::numeric / sum(runs), 1) AS records_in_per_run
+     FROM h JOIN shared USING (hr) GROUP BY provider ORDER BY provider;
+     ```
+- 배포(운영자가 할 일 — 저장소는 `.env` 를 추적하지 않는다): `make up` 이 V17 을 싣고 운영 설정을 옮긴다. 옛 `.env.example` 을 복사한 `.env` 에는
+  `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 가 남아 compose 기본값을 덮는다 — 수집기는 운영 설정 미러(Redis `wakeline:settings`)가 없을 때 이 값을 쓴다
+  (`runtime_settings.provider_order` — Redis 를 다시 띄운 뒤 api 가 다시 미러하기까지 60 s 안 등). 그 줄을 `AIRCRAFT_PROVIDERS=adsb_fi,adsb_lol,opensky` 로 바꾸거나 지우고
+  `make up`(바뀐 환경으로 collector 를 다시 만든다). `make init`(make up · ps · logs 가 먼저 부른다)이 옛 값을 찾으면 한 줄로 알린다(`tools/init_env.py`
+  `RETIRED_DEFAULTS` — 값은 바꾸지 않는다, SEC-13 규칙). /ops 에서 순서를 고른 적이 있으면 V17 은 그 값을 두므로 /ops 설정도 확인한다.
 
 ### 기상청 '파일 없음' 긴 연속의 확인 간격(§G26)
 

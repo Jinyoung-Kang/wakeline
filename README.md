@@ -126,6 +126,12 @@ tools/dc build && tools/dc stop api collector && make up   # 빌드 뒤에 멈�
 ```
 멈추지 않고 배포했다면 배포 뒤 운영 API `POST /api/v1/ops/stats/aggregate?day=<KST 날짜>` 로 최근 7일을 다시 셉니다(원본이 남은 계열만 바로잡힙니다). 옛 UTC 날짜 행은 `stats_daily_utc_legacy` · `quality_rule_count_utc_legacy` 에 남고(서비스는 읽지 않음), 교통량 이력은 V16 이 KST 날짜 · KST 시로 옮겨 싣습니다.
 
+### 업그레이드 — V17(관심 지역 순서 adsb.fi 먼저) 을 처음 싣는 배포
+`make up` 이 V17 을 싣고, 운영자가 /ops 에서 바꾼 적 없는 순서만 `adsb_fi,adsb_lol,opensky` 로 옮깁니다(계약 v5 §G25 · ADR-011 '공급자 운용 보강 3'). 옛 `.env.example` 에서 만든 `.env` 에는 `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 가 남아 compose 기본값을 덮습니다 — 수집기는 운영 설정 미러가 없을 때(Redis 를 다시 띄운 뒤 api 가 다시 미러하기까지 60 s 안 등) 이 값을 쓰므로, 그 줄을 바꾸거나 지우고 다시 `make up` 합니다(`make init` 이 옛 값을 찾으면 한 줄로 알려 줍니다 — 값은 바꾸지 않습니다):
+```bash
+sed -i '' 's/^AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky$/AIRCRAFT_PROVIDERS=adsb_fi,adsb_lol,opensky/' .env && make up
+```
+
 ### 백업·복원(PostgreSQL)
 영구 보존 자료(SIGMET·알림·통계·감사 로그·운영자·설정)는 db 볼륨 하나에만 있습니다. `make clean`, Docker Desktop 의 데이터 삭제, PostgreSQL 메이저 업그레이드 전에는 백업을 받으세요.
 ```bash
