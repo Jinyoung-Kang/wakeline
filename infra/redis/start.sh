@@ -10,7 +10,8 @@
 #                    한국 항만 입출항(ADR-022 개정): Redis 키가 없다 — 색인은 DB(port_call)에 있고, 선택마다 쓰던 임대 wakeline:demand:portcalls ·
 #                    캐시 wakeline:portcalls:* 는 없앴다(clsgn 이 거르지 않아 선택마다 묻는 설계를 버렸다). 수집기 · ais 는 두 이름에 닿지 못한다.
 #                    연안 교통량(ADR-023): 두 이름은 루트 키 목록에 없고 셀렉터로만 닿는다(정확한 이름 — 와일드카드 없음) — 스냅샷 wakeline:traffic_grid 는
-#                    SET 만, 부정 캐시 해시 wakeline:traffic_grid:negative 는 HSET·HGETALL 만. 지우기(DEL·HDEL)·만료 바꾸기·모양 바꾸기(XADD·HSET 스냅샷)는
+#                    SET 만, 부정 캐시 해시 wakeline:traffic_grid:negative 와 bbox 타일 상태 해시 wakeline:traffic_grid:tiles(2026-10-01 개정)는
+#                    HSET·HGETALL 만. 지우기(DEL·HDEL)·만료 바꾸기·모양 바꾸기(XADD·HSET 스냅샷)는
 #                    거부된다. SET 에 EX 를 붙이게 강제하는 ACL 은 없다 — 수집기가 늘 EX 1200 을 붙이고, 실제 방어선은 api 의 regDt 나이 판정(stale)이다.
 #                    api 는 wakeline:* 로 읽는다.
 #   wakeline_ais        비밀번호 REDIS_AIS_PASSWORD(ADR-014, 계약 v2 §C). 선박 스트림 wakeline:ships 와 wakeline:ais:* 만 쓰고 wakeline:settings 는 읽기 전용.
@@ -72,11 +73,11 @@ PRODUCER_BASE='resetchannels -@all +hello +ping +info +client|setinfo +client|se
 # EXISTS·GET, 임대 ZRANGEBYSCORE(focus·hot), 예산 Lua SCRIPT LOAD + EVALSHA
 COLLECTOR_CMDS='+xadd +xrevrange +hset +hget +hgetall +hmget +hincrby +hdel +hkeys +exists +get +zrangebyscore +script|load +evalsha'
 # 셀렉터(괄호 한 덩어리 = 인자 하나): SET 은 문자열 키(노선 캐시 SET EX · 레이더 목록·이미지 · 연안 교통량 스냅샷)에만,
-# DEL 은 레이더 목록·이미지에만, EXPIRE 는 예산 키(Lua)와 429 이력 해시에만, 연안 교통량 부정 캐시 해시에는 HSET·HGETALL 만
+# DEL 은 레이더 목록·이미지에만, EXPIRE 는 예산 키(Lua)와 429 이력 해시에만, 연안 교통량 부정 캐시 · 타일 상태 해시에는 HSET·HGETALL 만
 COLLECTOR_SEL_SET='(~wakeline:route:* ~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* ~wakeline:traffic_grid +set)'
 COLLECTOR_SEL_DEL='(~wakeline:radar_kr:frames ~wakeline:radar_kr:frame:* +del)'
 COLLECTOR_SEL_EXPIRE='(~budget:* ~wakeline:provider:*:ratelimit:* +expire)'
-COLLECTOR_SEL_TRAFFIC_NEG='(~wakeline:traffic_grid:negative +hset +hgetall)'
+COLLECTOR_SEL_TRAFFIC_NEG='(~wakeline:traffic_grid:negative ~wakeline:traffic_grid:tiles +hset +hgetall)'
 
 AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings %W~wakeline:logs'
 # ais 가 쓰는 명령: 선박 스트림 XADD, 로그 스트림 XADD(쓰기 전용), 상태 해시 HSET·HGETALL, 설정 HGET·HGETALL — 지우거나 덮어쓰는 명령은 없다

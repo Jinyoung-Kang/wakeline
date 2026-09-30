@@ -186,6 +186,8 @@ ok "SET wakeline:traffic_grid EX 1200"   OK         "${K[@]}" set wakeline:traff
 ok "TTL wakeline:traffic_grid(관리자로 확인)" "^(1[01][0-9]{2}|1200)$" "${D[@]}" ttl wakeline:traffic_grid
 ok "HSET wakeline:traffic_grid:negative" "^[01]$"   "${K[@]}" hset wakeline:traffic_grid:negative GR4_X '{"reason":"not_found","at":"2026-01-01T00:00:00Z"}'
 ok "HGETALL wakeline:traffic_grid:negative" "not_found" "${K[@]}" hgetall wakeline:traffic_grid:negative
+ok "HSET wakeline:traffic_grid:tiles(bbox 타일 상태 — 2026-10-01 개정)" "^[01]$" "${K[@]}" hset wakeline:traffic_grid:tiles 0/28/60 '{"status":"done","at":"2026-01-01T00:00:00Z","cells":201}'
+ok "HGETALL wakeline:traffic_grid:tiles" "done" "${K[@]}" hgetall wakeline:traffic_grid:tiles
 ok "api GET wakeline:traffic_grid(수집기가 쓴 값)" '"v":1' "${A[@]}" get wakeline:traffic_grid
 # 계약 v5 §C2 · §C3: 로그 싱크 — XADD wakeline:logs MAXLEN ~ 3000 * e <json>
 ok "XADD wakeline:logs MAXLEN ~ 3000(로그 싱크)" "^[0-9]+-[0-9]+$" "${K[@]}" xadd wakeline:logs maxlen '~' 3000 '*' e "$(log_event collector)"
@@ -297,6 +299,10 @@ denied "SET 으로 부정 캐시 해시 덮어쓰기"       "${K[@]}" set wakeli
 denied "DEL wakeline:traffic_grid:negative" "${K[@]}" del wakeline:traffic_grid:negative
 denied "HDEL wakeline:traffic_grid:negative(부정 캐시 항목 지우기)" "${K[@]}" hdel wakeline:traffic_grid:negative GR4_X
 denied "HINCRBY wakeline:traffic_grid:negative" "${K[@]}" hincrby wakeline:traffic_grid:negative GR4_Y 1
+denied "DEL wakeline:traffic_grid:tiles"      "${K[@]}" del wakeline:traffic_grid:tiles
+denied "HDEL wakeline:traffic_grid:tiles(끝난 타일 지우기)" "${K[@]}" hdel wakeline:traffic_grid:tiles 0/28/60
+denied "SET 으로 타일 상태 해시 덮어쓰기"     "${K[@]}" set wakeline:traffic_grid:tiles x
+denied "EXPIRE wakeline:traffic_grid:tiles"   "${K[@]}" expire wakeline:traffic_grid:tiles 1
 denied "XADD wakeline:traffic_grid(스트림으로 바꿔 api 가 WRONGTYPE)" "${K[@]}" xadd wakeline:traffic_grid '*' x y
 denied "HSET wakeline:traffic_grid(해시로 바꾸기)" "${K[@]}" hset wakeline:traffic_grid a b
 denied "GET wakeline:traffic_grid(수집기는 읽지 않는다)" "${K[@]}" get wakeline:traffic_grid
