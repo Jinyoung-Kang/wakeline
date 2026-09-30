@@ -140,7 +140,8 @@ def tm5179_to_wgs84(x: float, y: float) -> tuple[float, float]:
 def _lattice(k: int) -> float:
     """k 번째 격자점(k × 0.025°, 소수 셋째 자리로 반올림한 정확한 값) — 같은 k 는 같은 float 객체다. 지구의 격자점은 경도 쪽 14,401개라 캐시가
     모두 담는다(상한은 틀린 입력으로 커지지 않게). 아는 칸 10만 개가 칸마다 float 넷을 새로 만들지 않고 값 수백 개를 나눠 쓴다
-    (ADR-023 2026-10-01 bbox 개정 — 잰 값: 칸당 약 254 B → 약 120 B, test_traffic_grid_geo)."""
+    (ADR-023 2026-10-01 bbox 개정 — 잰 값: 행을 재기 전에 만든 방법으로 칸당 약 254 B → 약 120 B. DB 행처럼 번호 문자열 · gid 까지 세면 10만 칸에
+    약 203 B/칸 — test_traffic_grid_geo)."""
     return round(k * CELL_DEG, 3) + 0.0  # -0.0 → 0.0
 
 
@@ -173,6 +174,12 @@ class Cell:
     gid: int | None = None
 
 
+@functools.lru_cache(maxsize=4096)  # 32 km 타일 하나의 서로 다른 모서리는 약 230개 — 이웃 타일의 경계까지 담고도 약 1 MB
+def _corner_wgs84(x: float, y: float) -> tuple[float, float]:
+    """모서리 하나의 역변환 — 이웃 칸은 모서리를 나눠 쓰므로(타일 안의 안쪽 모서리 하나를 칸 넷이) 한 번만 푼다. 같은 입력 → 같은 값(순수 함수)."""
+    return tm5179_to_wgs84(x, y)
+
+
 def cell_from_ring(grid_no: str, gid: int | None, ring: list[tuple[float, float]]) -> Cell:
     """닫힌 외곽선(EPSG:5179 동거·북거, 점 5개) → 칸. 격자에 맞지 않으면 OffGrid(이유)."""
     if len(ring) != 5:
@@ -183,7 +190,7 @@ def cell_from_ring(grid_no: str, gid: int | None, ring: list[tuple[float, float]
     lons: set[float] = set()
     corners: set[tuple[float, float]] = set()
     for x, y in ring[:4]:
-        lat, lon = tm5179_to_wgs84(x, y)
+        lat, lon = _corner_wgs84(x, y)
         sl, so = snap(lat), snap(lon)
         if sl is None or so is None:
             raise OffGrid(f"corner {lat:.7f},{lon:.7f} is off the 0.025° lattice (tolerance {SNAP_TOL_DEG:g}°)")
@@ -311,15 +318,22 @@ def _feature(f: ET.Element, grid_no: str) -> tuple[WfsResult, Extent | None]:
     geom = _child_local(f, "geom")
     if geom is None:
         raise WfsError("feature without geom")
-    srs = {e.get("srsName") for e in geom.iter() if e.get("srsName") is not None}
+    srs: set[str] = set()
+    polygons: list[ET.Element] = []
+    for e in geom.iter():  # 한 번 훑기(좌표계 표기 · 다각형)
+        v = e.get("srsName")
+        if v is not None:
+            srs.add(v)
+        if _local(e.tag) == "Polygon":
+            polygons.append(e)
     if srs != {EXPECTED_SRS}:
-        raise WfsError(f"unexpected srsName {sorted(s or '' for s in srs) or 'missing'} (expected {EXPECTED_SRS})")
-    polygons = _find_local(geom, "Polygon")
+        raise WfsError(f"unexpected srsName {sorted(srs) or 'missing'} (expected {EXPECTED_SRS})")
     if len(polygons) != 1:
         return WfsResult("off_grid", detail=f"{len(polygons)} polygons, expected 1"), None
-    if _find_local(polygons[0], "interior"):
+    rings = [e for e in polygons[0].iter() if _local(e.tag) in ("interior", "exterior")]
+    if any(_local(e.tag) == "interior" for e in rings):
         return WfsResult("off_grid", detail="polygon has interior rings"), None
-    exterior = _find_local(polygons[0], "exterior")
+    exterior = rings
     pos = _find_local(exterior[0], "posList") if exterior else []
     if len(pos) != 1:
         raise WfsError("exterior ring without exactly one posList")
@@ -415,9 +429,9 @@ def parse_wfs_tile(
         )
     members = [m for e in root.iter() if _local(e.tag) in _MEMBERS for m in e]
     inside = {id(m) for m in members}
-    if any(
-        id(f) not in inside for f in root.iter() if _child_local(f, "grid_no") is not None and _child_local(f, "geom") is not None
-    ):
+    # 지물(grid_no · geom 자식이 있는 요소)은 모두 featureMember(s) 안이어야 한다 — grid_no 자식의 부모만 본다(요소마다 자식을 두 번 훑지 않는다)
+    holders = {id(p): p for p in root.iter() for c in p if _local(c.tag) == "grid_no"}
+    if any(k not in inside and _child_local(p, "geom") is not None for k, p in holders.items()):
         raise WfsError("feature outside featureMember(s)")
     outcome: dict[str, list[tuple[WfsResult, Extent | None]]] = {}
     rejected: list[tuple[str | None, str]] = []

@@ -624,7 +624,7 @@ class TrafficGridJob:
             if rows is None:
                 self._db_next_try = now + timedelta(seconds=DB_RETRY_S)
             else:
-                # 아는 칸이 연안 전체(시뮬레이션 약 10만)로 늘면 읽기 · 검사가 약 0.3 s(잰 값) — 이벤트 루프 밖에서
+                # 아는 칸이 연안 전체(시뮬레이션 약 10만)로 늘면 읽기 · 검사가 약 0.25 s(잰 값) — 이벤트 루프 밖에서
                 ok, bad = await asyncio.to_thread(self.geometry.load_cells, rows)
                 self._db_loaded = True
                 self._dirty = self._dirty or ok > 0
@@ -708,7 +708,7 @@ class TrafficGridJob:
 
     def _known_inside(self, tile: Tile) -> set[str]:
         """아는 칸 가운데 칸 전체가 이 타일 상자 안인 칸(중심이 가장자리에서 KNOWN_MARGIN_M 넘게 안쪽) — 이 타일의 답에 있어야 한다. 후보는 level 0
-        조상의 색인(많아야 약 200칸)이고 칸마다 투영 한 번(약 3 µs)."""
+        조상의 색인(많아야 약 200칸)이고 칸마다 투영 한 번(약 3 µs) — 타일 하나에 약 0.5 ms(잰 값, 180칸)."""
         x0, y0, x1, y1 = tile.box
         m = KNOWN_MARGIN_M
         root = Tile(0, tile.ix >> tile.level, tile.iy >> tile.level)

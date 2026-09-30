@@ -657,7 +657,8 @@ async def test_without_a_tile_source_the_heartbeat_tile_fields_are_empty():
 
 
 async def test_large_loads_run_off_the_event_loop(monkeypatch):
-    """아는 칸 읽기(10만 칸 약 0.3 s — 잰 값)와 아는 칸의 타일 셈(칸마다 투영 약 3 µs)은 이벤트 루프 밖 스레드에서."""
+    """아는 칸 읽기(10만 칸 약 0.25 s — 잰 값)와 아는 칸의 타일 셈(10만 칸 약 0.5–1.2 s — 칸마다 투영 한 번, 끝난 타일이 있으면 네 번 더)은
+    이벤트 루프 밖 스레드에서."""
     names: list[str] = []
     real = tg.asyncio.to_thread
 

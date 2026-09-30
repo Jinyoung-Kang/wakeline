@@ -322,27 +322,40 @@ def test_snapped_lattice_values_are_shared_objects():
 
 
 def test_the_known_cell_map_stays_compact_at_100k_cells():
-    """잰 값(tracemalloc, 이 시험의 합성 칸): 고치기 전 약 254 B/칸(10만 칸 25 MB) — Cell 이 __dict__ 를 갖고 칸마다 float 넷을 새로 만들었다.
-    slots + 격자점 float 공유로 약 120 B/칸. 상한 160 B/칸은 그 사이에 둔다(파이썬 판 차이 여유)."""
+    """잰 값(tracemalloc, 합성 칸 — 행을 DB 에서 온 것처럼 재는 창 안에서 새 문자열 · 새 정수로 만들고, 읽은 뒤 버린다): 10만 칸에 남는 것
+    약 203 B/칸(20.3 MB), 읽는 동안 최고 약 404 B/칸(40 MB — asyncpg Record 는 빼고), 2만 칸이면 약 187 B/칸. 예전 시험은 행(번호 문자열 53 B ·
+    gid 정수 28 B)을 재기 전에 만들어 그 둘을 세지 않았다 — 약 119 B/칸(고치기 전 254 B/칸도 같은 방법의 값)으로 적었다(검토 지적 2026-10-01).
+    상한 240 B/칸 · 최고 480 B/칸은 잰 값 위의 여유(파이썬 판 차이). 수집기 한도 512 MiB."""
     import gc
     import tracemalloc
 
     from wakeline_collector.jobs.traffic_grid import GridGeometry
 
-    rows = []
-    for i in range(20_000):
-        la, lo = 32.0 + (i // 250) * 0.025, 124.0 + (i % 250) * 0.025
-        rows.append((f"GR4_S{i:06d}", la, lo, la + 0.025, lo + 0.025, 100_000 + i))
+    n = 20_000
     gc.collect()
     tracemalloc.start()
     try:
         g = GridGeometry()
+        rows = [
+            (
+                f"GR4_S{i:06d}",
+                32.0 + (i // 250) * 0.025,
+                124.0 + (i % 250) * 0.025,
+                32.025 + (i // 250) * 0.025,
+                124.025 + (i % 250) * 0.025,
+                100_000 + i,
+            )
+            for i in range(n)
+        ]
         ok, bad = g.load_cells(rows)
-        used, _peak = tracemalloc.get_traced_memory()
+        del rows
+        gc.collect()
+        used, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert (ok, bad) == (20_000, 0)
-    assert used / ok < 160, f"{used / ok:.0f} B per known cell"
+    assert (ok, bad) == (n, 0)
+    assert used / ok < 240, f"{used / ok:.0f} B per known cell"
+    assert peak / ok < 480, f"peak {peak / ok:.0f} B per known cell"
     c = g.cells["GR4_S000000"]
     assert not hasattr(c, "__dict__")
     assert c.lat_max is g.cells["GR4_S000250"].lat_min  # 이웃 칸의 경계 값도 같은 객체

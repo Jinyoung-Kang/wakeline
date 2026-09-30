@@ -44,6 +44,25 @@ async def test_read_returns_rows_as_tuples():
     assert await db.read_marine_grid4() == [("GR4_A", 37.45, 126.6, 37.475, 126.625, 3)]
 
 
+async def test_read_converts_rows_off_the_event_loop(monkeypatch):
+    """검토 지적(2026-10-01): 아는 칸이 10만이면 Record → tuple 바꾸기만 약 46 ms 이벤트 루프를 막았다 — 스레드에서(읽은 행 검사 load_cells 와 같이)."""
+    names: list[str] = []
+    real = dbmod.asyncio.to_thread
+
+    async def spy(fn, /, *a, **kw):
+        names.append(fn.__name__)
+        return await real(fn, *a, **kw)
+
+    monkeypatch.setattr(dbmod.asyncio, "to_thread", spy)
+    rows = [{"grid_no": "GR4_A", "lat_min": 37.45, "lon_min": 126.6, "lat_max": 37.475, "lon_max": 126.625, "gid": 3}]
+
+    async def factory():
+        return Pool(rows)
+
+    assert await Db(pool_factory=factory).read_marine_grid4() == [("GR4_A", 37.45, 126.6, 37.475, 126.625, 3)]
+    assert names == ["_marine_grid4_tuples"]
+
+
 async def test_read_is_none_when_the_db_is_unreachable_or_fails():
     async def down():
         raise ConnectionError("db down")

@@ -8,7 +8,8 @@
   해석은 marine_grid.parse_wfs. 키 파라미터 이름의 대소문자가 두 서비스에서 다르다(serviceKey · ServiceKey — 확인한 그대로).
   bbox 타일(ADR-023 2026-10-01 bbox 개정): 같은 주소 ?ServiceKey=&bbox=xmin,ymin,xmax,ymax&srs=EPSG:5179&maxFeatures=1000 — 2026-10-01 실제 호출 두 번의
   모양 그대로(bbox · srs 는 기록한 호출처럼 쉼표 · 쌍점을 인코딩하지 않는다, 키는 한 칸 조회와 같은 인코딩). 상자 안의 칸을 모두 한 응답으로 준다
-  (10 km 28칸 · 50 km 450칸). 해석은 marine_grid.parse_wfs_tile — 32 km 타일 약 10 ms(잰 값)라 이벤트 루프 밖 스레드에서 한다.
+  (10 km 28칸 · 50 km 450칸). 해석은 marine_grid.parse_wfs_tile — 32 km 타일 약 7 ms(잰 값, 합성 응답)라 스레드에서 한다. 스레드도 GIL 을
+  쥐므로 이벤트 루프는 해석 동안 여전히 늦는다 — 잰 값 p99 약 8 ms · 최대 12–18 ms(인라인이면 약 23 ms · ADR-023 bbox 개정 2).
 
 서비스 키: 포털은 '인코딩 키'(퍼센트 인코딩)와 '디코딩 키'를 함께 준다. httpx 가 파라미터를 한 번 인코딩하므로 디코딩 키를 넘겨야 한다 —
 인코딩 키를 그대로 넘기면 %2B 가 %252B 로 두 번 인코딩돼 인증이 실패한다. 그래서 '%' 가 있으면 한 번 풀어 둔다(decode_service_key).

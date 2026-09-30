@@ -181,7 +181,7 @@ async def test_wfs_404_and_error_bodies_are_errors():
 
 async def test_wfs_bbox_sends_the_verified_query_shape_and_parses_off_the_event_loop(monkeypatch):
     """확인한 호출(2026-10-01)의 모양 그대로: ServiceKey(한 칸 조회와 같은 인코딩 — 한 번만) · bbox=xmin,ymin,xmax,ymax(EPSG:5179 m, 쉼표 그대로 —
-    기록한 호출처럼) · srs=EPSG:5179 · maxFeatures=1000. 해석(32 km 타일 약 10 ms — 잰 값)은 이벤트 루프 밖 스레드에서."""
+    기록한 호출처럼) · srs=EPSG:5179 · maxFeatures=1000. 해석(32 km 타일 약 7 ms — 잰 값)은 스레드에서."""
     from wfs_tiles import FakeGrid
 
     from wakeline_collector.providers import data_go_kr
