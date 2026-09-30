@@ -19,11 +19,12 @@ import java.util.function.BooleanSupplier;
  * <ul>
  *   <li>{@link #cached}: 읽는 쪽의 메모리 캐시(콜사인별 5 s)만 본다(우편함에서 — I/O 없음). 읽어야 하면 null.</li>
  *   <li>{@link #load}: 캐시에 없으면 조회 실행기에서 읽는다(같은 콜사인의 동시 읽기는 세션을 가로질러 하나 — RouteReader 의 SingleFlight). 답은 늦어도 마감
- *       {@link #deadlineMs(Duration)} = Redis 명령 상한(spring.data.redis.timeout — 운영 3 s, 설정값)에 온다. 그때까지 끝나지 않았거나 읽지 못했으면
- *       unavailable("노선 조회 실패" — 계약 v4 §A 에 이미 있는 값: Redis 오류). 읽기는 계속돼 캐시를 채운다.</li>
+ *       {@link #deadlineMs(Duration)} = Redis 명령 상한(RedisConfig.COMMAND_TIMEOUT — spring.data.redis.timeout, 운영 3 s, 설정값)에 정해진다. 그때까지 끝나지
+ *       않았거나 읽지 못했으면 unavailable("노선 조회 실패" — 계약 v4 §A 에 이미 있는 값: Redis 오류). 읽기는 계속돼 캐시를 채운다.</li>
  *   <li>실행기(운영): 스레드 {@value #THREADS}(고른 값 — 잰 값 아님. Lettuce 는 연결 하나를 여러 스레드가 나눠 쓰므로 스레드 수는 Redis 연결 수와 무관하다.
- *       Redis 가 멈추면 한 읽기가 스레드를 명령 상한 3 s(연결을 새로 맺어야 하면 연결 상한이 더해진다 — 설정에 없으면 Lettuce 기본 10 s) 잡으므로 그동안
- *       처리량은 스레드 수 / 3 s 다. 그래도 답은 마감에 나간다), 대기열 {@link SelectionLookups#queueFor}(WS 연결 상한 이상 — 세션마다 작업 하나 이하).
+ *       Redis 가 답하지 않으면(멈춤 · 끊긴 줄 모르는 연결) 한 읽기가 스레드를 명령 상한 3 s 잡으므로 그동안 처리량은 스레드 수 / 3 s 다. 공유 연결을 아직
+ *       맺지 못했으면 그 읽기가 연결을 맺는 동안 — Lettuce 기본 연결 상한 10 s, RedisConfig 가 설정하지 않는다 — 더 잡는다. 끊긴 것을 아는 연결에서는 곧바로
+ *       실패한다(REJECT_COMMANDS). 어느 쪽이든 답은 마감에 나간다), 대기열 {@link SelectionLookups#queueFor}(WS 연결 상한 이상 — 세션마다 작업 하나 이하).
  *       선박 조회 실행기(스레드 = DB 읽기 풀 연결 수)와 나눈다 — Redis 가 느려도 DB 조회 스레드를 잡지 않는다.</li>
  *   <li>지표: wakeline_ws_route_lookups_total{outcome=ok|deadline|rejected|error|skipped} · wakeline_ws_route_lookup_seconds ·
  *       wakeline_ws_route_lookup_queue · wakeline_ws_route_lookup_dropped_total.</li>
@@ -53,8 +54,8 @@ final class RouteLookups implements AutoCloseable {
     static ThreadPoolExecutor boundedExecutor(int threads, int queue) { return SelectionLookups.boundedExecutor(THREAD_NAME, threads, queue); }
 
     /**
-     * 답의 마감 = Redis 명령 상한(spring.data.redis.timeout — 한 번의 GET 이 서버를 기다리는 상한). 이보다 늦게 끝나는 것은 연결을 새로 맺는 읽기 · 실행기
-     * 대기열에서 기다린 읽기뿐이다. 0 이하(상한 없음)는 받지 않는다 — 기동하지 않는다(답의 상한을 말할 수 없다).
+     * 답의 마감 = Redis 명령 상한(RedisConfig.COMMAND_TIMEOUT — 한 번의 GET 이 서버를 기다리는 상한). 이보다 늦게 끝나는 것은 공유 연결을 맺으면서 읽는 읽기 ·
+     * 실행기 대기열에서 기다린 읽기뿐이다. 0 이하(상한 없음)는 받지 않는다 — 기동하지 않는다(답의 상한을 말할 수 없다).
      */
     static long deadlineMs(Duration redisCommandTimeout) {
         if (redisCommandTimeout == null || redisCommandTimeout.isNegative() || redisCommandTimeout.isZero())

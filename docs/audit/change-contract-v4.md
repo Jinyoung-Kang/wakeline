@@ -25,8 +25,8 @@ v2·v3 는 그대로 유효하다. 아래 항목만 대체·추가한다. 근거
   검증을 통과하지 못한 공항은 null, 출발·도착 둘 다 없으면 not_found. 문자열은 제어문자 제거·길이 절단.
 - api: WS `selected` 와 REST `GET /api/v1/aircraft/{hex}` 에 `route` 를 싣는다:
   `{status: found|not_found|pending|unavailable|no_callsign, callsign|null, airline|null, origin|null, destination|null, midpoint|null, fetched_at|null, source:"adsbdb"}`.
-  pending = 캐시 없음(선택 직후 — 계약 v5 §G21: api 가 그 캐시를 읽는 중도 pending, 읽기는 늦어도 Redis 명령 상한 3 s), unavailable = 캐시 status error 또는
-  Redis 오류(§G21: 그 상한까지 읽지 못함 포함). api 는 콜사인별로 5 s 메모리 캐시. 값은 다시 검증한다(수집기 값을 믿지 않는다).
+  pending = 캐시 없음(선택 직후 — 계약 v5 §G21: api 가 그 캐시를 읽는 중도 pending, api 는 늦어도 Redis 명령 상한 3 s 에 답을 정한다), unavailable = 캐시
+  status error 또는 Redis 오류(§G21: 그 상한까지 읽지 못함 포함 — REST 가 다른 쪽의 읽기를 그 상한까지 기다렸지만 끝나지 않은 것도). api 는 콜사인별로 5 s 메모리 캐시. 값은 다시 검증한다(수집기 값을 믿지 않는다).
 - 웹 항공기 카드 "노선(콜사인 기준 등록 노선)": 출발·도착 공항(ICAO·IATA·이름·도시·국가), 경유(midpoint), 항공사, **현재 위치와 노선 대권 경로 사이 거리(km, 계산값)**,
   주의 문구 "콜사인에 등록된 정기 노선입니다 — 실제 운항 경로와 다를 수 있습니다", 출처 "adsbdb.com · flight route data © David Taylor, Edinburgh & Jim Mason, Glasgow".
   pending "노선 조회 중", not_found "이 콜사인의 등록 노선 없음", no_callsign "콜사인 없음 — 노선을 찾을 수 없음", unavailable "노선 조회 실패".

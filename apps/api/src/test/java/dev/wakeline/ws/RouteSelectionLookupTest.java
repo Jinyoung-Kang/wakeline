@@ -35,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 선택 항공기 노선(selected.route — 계약 v4 §A)의 Redis 읽기를 세션 우편함 밖에서(계약 v5 §G21 · ADR-025 개정 — §G18 이 남긴 일).
  * <p>관찰(코드, 고치기 전 — 이 파일의 첫 시험이 재현): WsHub.sendSelected 는 세션 우편함(SerialOutbox — 한 번에 하나)에서 돌며 RouteReader.forAircraft 로
  * Redis 를 그 자리에서 읽었다(명령 상한 spring.data.redis.timeout 3 s, 콜사인별 5 s 캐시). Redis 가 느리거나 닿지 않는 동안 선택 항공기 하나가 그 세션의
- * pong · 항공기 · 선박 diff · heartbeat 를 읽기 한 번마다 최대 약 3 s(연결을 새로 맺어야 하면 Lettuce 연결 상한이 더해진다) 붙잡고, 캐시가 지날 때마다(5 s)
+ * pong · 항공기 · 선박 diff · heartbeat 를 읽기 한 번마다 최대 약 3 s(공유 연결을 아직 맺지 못했으면 Lettuce 기본 연결 상한 10 s 가 더해진다) 붙잡고, 캐시가 지날 때마다(5 s)
  * 되풀이했다. 고치기 전 코드에서 첫 시험은 5 s 안에 pong · diff 를 받지 못했다(timed out).
  * <p>고침: 우편함은 캐시만 보고, 읽어야 하면 노선 조회 실행기(RouteLookups — 선박 조회와 같은 틀 SelectionLookups)에 맡긴 뒤 selected 를 곧바로 pending
  * ("노선 조회 중")으로 보낸다. 답은 늦어도 마감(운영: Redis 명령 상한)에 오고 — 읽지 못했으면 unavailable — SELECTED_ROUTE 작업이 다시 계산해 보낸다.

@@ -97,10 +97,18 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
 ### 맥락
 - `WsHub.sendSelected`(우편함 작업 — 선택 · 팬아웃 · focus 관측 · 초기 세트)가 selected.route(계약 v4 §A)를 `RouteReader.forAircraft` 로 그 자리에서 읽었다:
   Redis GET `wakeline:route:{CALLSIGN}` — 명령 상한 `spring.data.redis.timeout` 3 s, 콜사인별 5 s 메모리 캐시(실패도 5 s 기억).
-- 그래서 Redis 가 느리거나 닿지 않는 동안 선택 항공기 하나가 그 세션의 pong · 항공기 · 선박 diff · heartbeat 를 읽기 한 번마다 최대 명령 상한(3 s — 연결을
-  새로 맺어야 하면 Lettuce 연결 상한이 더해진다: `spring.data.redis.connect-timeout` 이 없어 lettuce-core 7.5.2 의 `SocketOptions.DEFAULT_CONNECT_TIMEOUT`
-  10 s — 설정값 · 라이브러리 기본값, 잰 값 아님) 붙잡고, 캐시가 지날 때마다 되풀이했다. `RouteSelectionLookupTest` 의 첫 시험이 옛 API 로 먼저 재현했다
-  (GET 을 막은 동안 pong · diff 가 5 s 안에 오지 않음 — timed out).
+- 그래서 Redis 가 느리거나 답하지 않는 동안 선택 항공기 하나가 그 세션의 pong · 항공기 · 선박 diff · heartbeat 를 읽기 한 번마다 최대 명령 상한만큼 붙잡고,
+  캐시가 지날 때마다 되풀이했다. `RouteSelectionLookupTest` 의 첫 시험이 옛 API 로 먼저 재현했다(GET 을 막은 동안 pong · diff 가 5 s 안에 오지 않음 —
+  timed out).
+- Redis 연결이 어떻게 기다리는가(`config.RedisConfig` — 코드에서 확인, 설정값 · 라이브러리 기본값이지 잰 값이 아니다): 기본 연결은 `RedisConfig` 가 만든
+  `LettuceConnectionFactory` 다. 사용자 정의 팩토리가 있으면 Boot 의 Redis 자동 구성이 물러나므로(spring-boot-data-redis 4.1.1 의
+  `@ConditionalOnMissingBean(RedisConnectionFactory)`), `spring.data.redis.*` 중 `RedisConfig` 가 읽지 않는 키(예: `connect-timeout`)는 효과가 없다.
+  - 명령 상한: `RedisConfig` 가 `spring.data.redis.timeout`(application.yml 3s, 없으면 3s)을 읽어 Lettuce 명령 상한으로 둔다. 연결은 살아 있는데 서버가
+    답하지 않거나(멈춤 · 과부하) 끊긴 줄 모르면(패킷이 사라짐) 명령마다 이만큼 기다린다.
+  - 끊긴 것을 아는 연결: `DisconnectedBehavior.REJECT_COMMANDS` 라 자동 재연결 동안 명령은 기다리지 않고 곧바로 실패한다.
+  - 연결 맺기: 연결 상한은 설정하지 않아 lettuce-core 7.5.2 의 `SocketOptions.DEFAULT_CONNECT_TIMEOUT` 10 s 다. 공유 연결은 처음 쓸 때 맺고
+    (`eagerInitialization` 을 켜지 않았다), 맺지 못했으면 다음 명령이 다시 맺는다 — 그때만 시도마다 ≤ 10 s 가 더해진다. 시도는 팩토리 잠금 안에서
+    하나씩이라(spring-data-redis 4.1.1 `SharedConnection.getConnection` → `doInLock`) 그동안 다른 스레드의 명령은 앞 시도들을 기다린다.
 
 ### 결정
 1. **같은 틀을 나눠 쓴다 — 복사하지 않고 일반화했다.** `ShipLookups` 에서 선박에 매이지 않은 부분(캐시 · 비동기 읽기 출처 `Source`, 답 · 끝남 `Flight`,
@@ -113,37 +121,56 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
    대기열 max(256, `wakeline.ws-max-conn`), 가득 차면 `AbortPolicy` → 읽지 않고 unavailable 로 곧바로 답하고 센다(`outcome=rejected` — 기억하지 않는다).
 3. **우편함은 캐시만 본다.** `RouteReader.cached`(I/O 없음). 없으면 세션의 조회(같은 물음)의 답, 그것도 없으면 조회를 맡기고 selected 를 **곧바로** 보낸다 —
    route 는 pending("노선 조회 중"), 다만 이 세션에 이미 보낸 같은 물음(같은 항공기 · 같은 콜사인)의 값이 있으면 그 값(5 s 캐시가 지나 다시 읽는 중 — 화면이
-   5 s 마다 "조회 중" 으로 깜박이지 않게). 답이 오면 `SELECTED_ROUTE` 우편함 작업이 다시 계산해 바뀌었으면 보낸다.
-4. **마감 = Redis 명령 상한.** 답은 늦어도 물음 뒤 `spring.data.redis.timeout`(운영 3 s — 설정값, Boot 가 Lettuce 에 묶을 때와 같게 해석; 0 이하 · 해석
-   불가면 기동하지 않는다)에 나간다. 끝나지 않았으면 unavailable("노선 조회 실패" — 계약 v4 §A 의 'Redis 오류'). 읽기는 계속돼 캐시를 채우고, 마감 뒤에 끝나면
-   곧바로 다시 계산해 실제 값을 보낸다.
+   5 s 마다 "조회 중" 으로 깜박이지 않게). 답이 오면 `SELECTED_ROUTE` 우편함 작업이 다시 계산해 바뀌었으면 보낸다. 다시 읽는 동안 보던 값을 두는 것은 옮기기
+   전과 같다 — 그때도 다시 읽기가 끝나야 selected 가 나갔으므로 화면은 그동안 보던 값이었다. 그 값은 이 세션이 마지막으로 받은 답이고, 새 답이 오면
+   (unavailable 포함) 늦어도 마감에 정해져 바뀐다. 처음 묻는 물음(다른 항공기 · 바뀐 콜사인)은 늘 pending 부터다.
+4. **마감 = Redis 명령 상한.** api 는 늦어도 물음 뒤 Redis 명령 상한(운영 3 s — 설정값)에 답을 정한다. 설정 식은 한 곳 `RedisConfig.COMMAND_TIMEOUT`
+   (`${spring.data.redis.timeout:3s}`)이고 `RedisConfig.commandTimeout`(Boot 의 Duration 해석과 같은 `DurationStyle` — 단위가 없으면 ms)으로 읽는다 —
+   기본 연결의 Lettuce 명령 상한 · 이 마감(WsHub) · REST 기다림(RouteReader — 아래 7)이 같은 식 · 같은 값이다. 해석할 수 없거나 0 이하면 기동하지 않는다.
+   끝나지 않았으면 unavailable("노선 조회 실패" — 계약 v4 §A 의 'Redis 오류'). 읽기는 계속돼 캐시를 채우고, 마감 뒤에 끝나면 곧바로 다시 계산해 실제 값을
+   보낸다. 정한 답은 `SELECTED_ROUTE` 우편함 작업으로 나가므로 화면에 닿는 때는 그 세션 우편함의 차례다 — Redis 가 멈춘 동안에는 앞선 status 작업(아래
+   '남은 것')이 먼저 기다릴 수 있고, 그 상한은 말하지 않는다.
 5. **세대 · 단일 비행은 선박과 같다.** 물음 = (hex, 정규화한 콜사인). 다른 항공기 · 선택 해제 · 콜사인 바뀜 · 세션 닫힘이면 그 답은 버리고 답을 보내지 않은
    조회를 센다. 세션의 다음 읽기는 앞 조회가 settled 된 뒤 시작하고 그사이 바뀐 물음은 읽지 않는다(세션마다 실행기 작업 하나 이하 — 대기열이 연결 상한 안에서
-   넘치지 않는다). 같은 콜사인은 세션을 가로질러 Redis 읽기 하나(`RouteReader` 의 `SingleFlight` — REST 항공기 상세도 붙는다). 캐시 시각은 읽기가 끝난 때.
+   넘치지 않는다). 같은 콜사인은 세션을 가로질러 Redis 읽기 하나(`RouteReader` 의 `SingleFlight` — REST 항공기 상세도 붙는다, 기다림의 상한은 7). 캐시
+   시각은 읽기가 끝난 때.
 6. **WS 계약은 그대로**(키 · 값 · 스키마 · 웹 검증기 · 표본 변화 없음). pending 의 뜻만 넓어진다 — '수집기가 아직 쓰지 않음' 에 'api 가 그 결과를 읽는 중'
-   (≤ 3 s)이 더해졌다. 웹의 "노선 조회 중" 설명(title)이 그 읽기와 상한을 적는다(`lib/route.ROUTE_API_READ_BOUND_S` — 시험이 application.yml 과 대조).
+   (답은 ≤ 3 s 에 정해진다)이 더해졌다. 웹의 "노선 조회 중" 설명(title)이 그 읽기와 상한을 적고, 그 상한은 api 가 답을 정하는 때이지 화면에 닿는 때가 아니라고
+   적는다(Redis 가 멈춘 동안은 더 걸릴 수 있다 — `lib/route.ROUTE_API_READ_BOUND_S`, 시험이 application.yml · RedisConfig 와 대조).
+7. **(리뷰 뒤) REST 의 기다림에도 상한 · 닫을 때 버린 읽기는 끝낸다.** `SingleFlight` 는 진행 중 표시를 실행기에 올리기 전에 두므로, REST 항공기 상세
+   (`RouteReader.forCallsign`)가 아직 노선 조회 실행기의 대기열에 있는 WS 읽기에 붙을 수 있다 — Redis 가 멈추면 대기열 순서만큼(스레드 4, 한 읽기 ≤ 3 s)
+   상한 없이 기다렸다(시험: 스레드 하나가 멈춘 읽기를 잡은 동안 대기열의 읽기에 붙은 REST 가 8 s 에 timed out). 이제 붙은 쪽은 Redis 명령 상한까지만
+   기다리고 unavailable 로 답하며 센다(`wakeline_route_read_wait_timeouts_total` — 그 읽기는 건드리지 않아 제 값으로 캐시를 채운다). REST 가 표시를 얻었으면
+   전처럼 제 스레드에서 한 번 읽는다(≤ 명령 상한). 또 `SelectionLookups.close`(WsHub.stop)의 `shutdownNow` 가 대기열에서 버린 읽기는 돌지 않아 그 future 가
+   끝나지 않고 표시가 남았다 — 같은 콜사인의 REST 가 끝나지 않는 future 에 붙었다(WsHub 는 Tomcat 의 우아한 종료보다 먼저 멈춘다). 버린 읽기는
+   `SingleFlight.abandon` 으로 거절처럼 끝내고 표시를 지운다(선박 조회도 같은 틀이라 같이 고쳐졌다).
 
 ### 새 최악(설정값에서 — 잰 값 아님)
 | 경우 | 전 | 후 |
 |---|---|---|
-| 그 세션의 pong · diff · heartbeat ping | 노선 읽기 뒤에 선다(읽기마다 ≤ 3 s, 연결을 새로 맺으면 ≤ 10 + 3 s — 5 s 마다 되풀이) | 노선 읽기를 기다리지 않는다(`RoutePausedRedisTest` 가 멈춘 Redis 에서 각 500 ms 미만을 단언) |
+| 그 세션의 pong · diff · heartbeat ping | 노선 읽기 뒤에 선다(읽기마다 ≤ 3 s, 공유 연결을 아직 맺지 못했으면 연결 맺기 — 시도마다 ≤ 10 s, 잠금 안에서 하나씩 — 가 더해진다 — 5 s 마다 되풀이) | 노선 읽기를 기다리지 않는다(`RoutePausedRedisTest` 가 멈춘 Redis 에서 각 500 ms 미만을 단언) |
 | 첫 selected(노선이 캐시에 없을 때) | 읽기가 끝날 때 | 곧바로 — route pending |
-| 노선의 답 | 읽기가 끝날 때 | ≤ 3 s(마감), 읽지 못하면 unavailable — 읽기가 끝나면 곧바로 실제 값 |
+| api 가 노선의 답을 정하는 때 | 읽기가 끝날 때 | ≤ 3 s(마감), 읽지 못하면 unavailable — 읽기가 끝나면 곧바로 실제 값. 화면에 닿는 것은 그 세션 우편함의 차례(Redis 가 멈춘 동안은 status 작업 뒤 — '남은 것') |
+| REST 항공기 상세의 노선 | 제 스레드에서 GET(≤ 3 s — 공유 연결을 맺어야 하면 연결 맺기가 더해진다) | 같음. 다른 쪽의 읽기에 붙으면 ≤ 3 s 기다리고 unavailable · 센다(결정 7) |
 | 노선 실행기 포화(4 + max(256, 연결 상한)) | — | 곧바로 unavailable · 센다 — 세션마다 작업 하나 이하라 연결 상한 안에서는 넘치지 않는다 |
-| 스레드 하나를 잡는 시간(읽기 하나) | — | ≤ 3 s(연결이 열려 있을 때) · ≤ 10 + 3 s(연결을 새로 맺을 때) |
+| 스레드 하나를 잡는 시간(읽기 하나) | — | ≤ 3 s(서버가 답하지 않을 때) · 곧바로(끊긴 것을 아는 연결 — REJECT_COMMANDS) · 공유 연결을 아직 맺지 못했을 때는 연결 맺기(시도마다 ≤ 10 s, 잠금 안에서 하나씩 — 앞 시도들을 기다린다) + 3 s. 어느 쪽이든 WS 답은 마감에, REST 는 붙었으면 ≤ 3 s |
 
 **남은 것(이 개정의 범위 밖 — 같은 종류)**: heartbeat · 초기 세트의 status 메시지는 여전히 우편함에서 Redis 를 읽는다 — `WsHub.statusPayload`
 (3 s 캐시)가 허브 전체 잠금(`statusLock`) 안에서 `StatusService.publicStatus` 를 부르고, 그 안의 `safeHash` 셋(collector heartbeat · radar_kr meta · active
 providers — HGETALL)이 각 명령 상한 3 s 를 기다릴 수 있다(설정값의 합 ≤ 9 s, 잰 값 아님). Redis 가 멈춘 동안에는 heartbeat 주기(30 s)마다 한 세션이 그만큼
 만들고 다른 세션의 heartbeat · 초기 세트 작업은 그 잠금을 기다린다 — 노선과 같은 방법(우편함 밖에서 만들고 우편함은 만든 값만 본다)으로 옮길 일이다.
-`spring.data.redis.connect-timeout` 도 설정에 없다(Lettuce 기본 10 s — 모든 Redis 사용자에 걸린다).
+연결 맺기 상한도 `RedisConfig` 가 설정하지 않는다(Lettuce 기본 10 s — 공유 연결을 맺을 때만, 모든 Redis 사용자에 걸린다). `spring.data.redis.connect-timeout`
+을 적어도 효과가 없다 — `RedisConfig` 가 제 팩토리를 만들어 Boot 의 Redis 자동 구성이 물러나고, `RedisConfig` 는 이 키를 읽지 않는다.
 
 ### 결과
 - 지표: `wakeline_ws_route_lookups_total{outcome=ok|deadline|rejected|error|skipped}` · `wakeline_ws_route_lookup_seconds` · `wakeline_ws_route_lookup_queue` ·
-  `wakeline_ws_route_lookup_dropped_total` · `wakeline_cache_requests_total{cache=route,result=hit}`(진행 중인 읽기에 붙은 것 포함).
+  `wakeline_ws_route_lookup_dropped_total` · `wakeline_cache_requests_total{cache=route,result=hit}`(진행 중인 읽기에 붙은 것 포함) ·
+  `wakeline_route_read_wait_timeouts_total`(REST 가 붙은 읽기를 명령 상한까지 기다렸지만 끝나지 않아 unavailable 로 답한 수 — 결정 7).
 - 시험: `RouteSelectionLookupTest`(pending 동안 pong · diff · heartbeat 주기 · 마감의 unavailable 과 늦은 실제 값 · 마감 뒤 다시 계산은 새 읽기 없음 · 늦은 답
-  버리기(다른 항공기 · 해제 · 콜사인 바뀜 · 세션 닫힘) · 포화 · 세션을 가로지른 한 읽기 · 항공기를 바꿔도 작업 하나 · 다시 읽는 동안 깜박이지 않음 · 배선) ·
-  `RoutePausedRedisTest`(Testcontainers Redis 를 docker pause — pong · diff · heartbeat 각 < 500 ms, 시험이 고른 명령 상한 1.5 s 에 unavailable, 다시 풀면
-  found) · `RouteReaderTest`(캐시만 읽기 · 한 읽기 · 거절은 기억하지 않음 · 캐시 시각).
+  버리기(다른 항공기 · 해제 · 콜사인 바뀜 · 세션 닫힘) · 포화 · 세션을 가로지른 한 읽기 · 항공기를 바꿔도 작업 하나 · 다시 읽는 동안 깜박이지 않음 · 배선 ·
+  명령 상한을 읽는 곳이 모두 `RedisConfig.COMMAND_TIMEOUT` · 닫을 때 버린 읽기는 거절로 끝나고 REST 가 곧바로 제가 읽음) · `WsIntegrationTest`(스프링이 만든
+  허브의 마감 = 속성 2500ms) · `RedisConfigTest`(식 · 해석 · Lettuce 명령 상한) · `RoutePausedRedisTest`(Testcontainers Redis 를 docker pause — pong · diff ·
+  heartbeat 각 < 500 ms, 시험이 고른 명령 상한 1.5 s 에 unavailable, 같은 동안 REST 도 그 안에 unavailable, 다시 풀면 found) · `RouteReaderTest`(캐시만 읽기 ·
+  한 읽기 · 거절은 기억하지 않음 · 캐시 시각 · 대기열의 읽기에 붙은 REST 는 명령 상한에 unavailable · 운영 생성자가 속성에서 상한을 읽음).
 - 되돌리기: 이 개정의 커밋(route 조회 이동 · 웹 설명 · 문서)을 되돌린다 — 노선 읽기가 우편함으로 돌아온다(스키마 · 데이터 · 설정 변화 없음). 공통 틀
   (`SelectionLookups` 추출)은 선박 조회만으로도 그대로 쓸 수 있다.
