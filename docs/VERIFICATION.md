@@ -620,6 +620,16 @@
 - **보안 게이트** gitleaks 가 AIS keepalive 시험의 가짜 aisstream 키(`test-ais-key-keepalive-…`, 커밋 9598eef)에서 실패 — `.env` 의 어떤 값과도 같지 않음을
   스크립트로 확인(값은 출력하지 않음)하고 정확한 지문 한 줄만 허용 목록에 더했다(`infra/tests/test_ci_policy` 가 먼저 실패하게 고친 뒤). 다시 돌려 PASS.
 
+## #69 db 이미지를 직접 빌드(REVIEW-v1 R-63 해결) — 고칠 수 있는 CVE 85 → 0, 실DB 에 그대로 교체
+- **이전** `imresamu/postgis:18-3.6`(2026-02-09 이후 재빌드 없음): 고칠 수 있는 HIGH · CRITICAL 고유 CVE HIGH 76 · CRITICAL 9(Trivy 2026-09-30, OS 142건 + gosu 22건).
+- **수정**(ADR-004 개정) `infra/db/Dockerfile` — 공식 `postgres:18-trixie`(다이제스트) + PGDG `postgresql-18-postgis-3=3.6.*` + `apt-get upgrade` + gosu 삭제 + `USER postgres`.
+  같은 날 Trivy: **0건**. compose 의 db 추가 권한 5개를 없앴고, CI · `make security` 에서 db 도 차단 스캔한다.
+- **시험** `db_image_swap_test.sh` 11/11(이전 이미지 볼륨 → 새 이미지, 추가 권한 없이 · 행 수 · amcheck · PostGIS 갱신 · 도형 연산) · db 권한 36 · 백업 48 · 교체 27 ·
+  api 868(Testcontainers 가 새 이미지).
+- **실DB 교체**(2026-09-30 14:26 KST) 백업 뒤 api · collector 를 멈추고 db 만 새 이미지로 → PostgreSQL 18.1 → 18.6 · uid 999 · `make db-postgis-update` 3.6.1 → 3.6.4
+  (갱신 대기 없음) → 전부 기동. 문자열 열 btree 색인 40개 모두 amcheck 통과(확인 뒤 amcheck 확장은 지움). 선박 검색 · 통계 · 선박 선택(저장 정적 보고 · 입출항) 정상,
+  교체 뒤 api · collector 로그에 WARN · ERROR 없음.
+
 ## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 · 통합 리뷰 수정 뒤 · 배포 전 — 노선 조회 우편함 밖(#63) · 기상청 '파일 없음'(#64) · 상태 바 ResizeObserver(#65) · AIS 수신 진단 · 끊김 로그 수준(#66) · 통합 리뷰(#67))
 | 층 | 도구 | 수 |
 |---|---|---|
