@@ -114,7 +114,7 @@ def _gaps(calls: list[tuple[float, str, str]]) -> list[float]:
 
 
 # ---- 호스트 버킷 -----------------------------------------------------------------------------------------------------------
-def test_default_limiter_has_a_kma_apihub_bucket():
+async def test_default_limiter_has_a_kma_apihub_bucket():
     """고른 값(ADR-011 개정 2026-09-30): apihub.kma.go.kr 0.5 req/s · burst 1 — 기상청은 초당 한도를 밝히지 않았고(우리가 확인한 문서 없음)
     429 는 앞선 요청 0.1–0.5 s 뒤에 났다. 2 s 간격은 그 가장 긴 간격(0.5 s)의 4배다. 수집기 전체 버킷은 그대로."""
     from wakeline_collector.config import Settings
@@ -123,16 +123,19 @@ def test_default_limiter_has_a_kma_apihub_bucket():
     assert lim.host_rps(KMA_HOST) == 0.5 and lim._hosts[KMA_HOST].burst == 1
     assert lim.global_rps == 2.0 and lim.host_rps("opendata.adsb.fi") == 0.8
     assert Settings().kma_apihub_rps == 0.5
-    assert HttpClient().limiter.host_rps(KMA_HOST) == 0.5  # 운영 클라이언트가 설정을 쓴다
+    http = HttpClient()
+    assert http.limiter.host_rps(KMA_HOST) == 0.5  # 운영 클라이언트가 설정을 쓴다
+    await http.aclose()
 
 
 async def test_recovery_backlog_is_paced_by_the_kma_host_bucket(kma):
     """'파일 없음' 연속이 닫힌 다음 주기: 보관 창의 빈 tm 을 MAX_PER_CYCLE 개까지 이어 받는다. 요청 사이 간격은 호스트 버킷(1/rate)보다 짧지 않다.
-    속도는 시험 시간을 줄이려고 20 req/s(50 ms)로 둔다 — 운영 값(0.5 req/s = 2 s)과 같은 경로(default_limiter)를 지난다."""
+    속도는 시험 시간을 줄이려고 10 req/s(100 ms)로 둔다 — 운영 값(0.5 req/s = 2 s)과 같은 경로(default_limiter)를 지난다. 버킷은 허가 사이를 벌린다 —
+    허가에서 보내기까지의 지연이 요청마다 조금 달라 보낸 시각 사이는 20 % 여유를 둔다(버킷 없을 때는 몇 ms)."""
     from wakeline_collector.jobs.kma_radar import MAX_PER_CYCLE, MissingStreak
 
     mod, r, ctx, clock, runs = kma
-    rate = 20.0
+    rate = 10.0
     http = HttpClient(default_limiter(100.0, 0.8, kma_rps=rate))  # 전체 버킷은 넉넉히 — 간격은 기상청 호스트 버킷이 만든다
     server = KmaServer(clock)
     job = mod.KmaRadarJob(KmaRadarProvider(http, "k" * 12), ctx)
@@ -151,7 +154,7 @@ async def test_recovery_backlog_is_paced_by_the_kma_host_bucket(kma):
     bins = [c for c in server.calls if c[1] == "bin"]
     assert len(bins) == MAX_PER_CYCLE  # 이어 받은 묶음
     gaps = _gaps(server.calls)  # 목록 → 바이너리 → … 모든 KMA 요청 사이
-    assert min(gaps) >= 0.9 / rate, gaps
+    assert min(gaps) >= 0.8 / rate, gaps
     assert runs[-1]["status"] == "ok" and runs[-1]["records_in"] == MAX_PER_CYCLE
 
 
