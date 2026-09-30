@@ -242,6 +242,21 @@ async def test_wfs_bbox_refuses_bad_boxes_before_any_call(box):
     await c.aclose()
 
 
+async def test_wfs_bbox_checks_the_answer_against_the_box_it_asked():
+    """검토 지적(2026-10-01): 다른 곳의 칸만 담은 답이 그 타일의 답으로 적혔다 — 공급자는 물은 상자를 해석에 넘긴다(상자와 닿지 않는 칸은 빼고,
+    그런 칸이 과반이면 오류)."""
+    from wfs_tiles import FakeGrid
+
+    c = _client()
+    p = Grid4WfsProvider(c, DECODED)
+    far = FakeGrid().body((960000, 1760000, 992000, 1792000))
+    with respx.mock:
+        respx.get(WFS_URL).mock(return_value=httpx.Response(200, content=far))
+        with pytest.raises(WfsError, match="features invalid"):
+            await p.bbox((896000, 1920000, 928000, 1952000))
+    await c.aclose()
+
+
 async def test_wfs_bbox_oversized_body_is_refused_unparsed():
     c = _client()
     p = Grid4WfsProvider(c, DECODED)

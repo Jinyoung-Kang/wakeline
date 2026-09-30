@@ -12,7 +12,8 @@
   본문이 엄격한 UTF-8 이 아니거나(NUL 포함) 본문 어디든 DOCTYPE·ENTITY 가 있으면 해석하지 않는다(외부 엔티티·확장 공격 — 푼 글자 그대로 보고 그 글자를
   해석한다: _collection), 본문 256 KiB 초과도 해석하지 않는다(지물 하나는 수 KB).
 - bbox 타일(ADR-023 2026-10-01 bbox 개정 — parse_wfs_tile): 한 응답에 여러 지물. 지물마다 한 칸 조회와 같은 검사(_feature)를 하고, 나쁜 지물은
-  그 지물만 뺀다(격자 밖 → off_grid · 모양 오류 → rejected). 모든 지물이 모양 오류면 응답 전체가 오류다(빈 타일로 끝났다고 하지 않는다).
+  그 지물만 뺀다(격자 밖 → off_grid · 모양 오류 · 물은 상자와 닿지 않는 칸 → rejected). 좋은 칸이 없거나 나쁜 지물이 좋은 칸보다 많으면 응답
+  전체가 오류다(빈 타일 · 몇 칸으로 끝났다고 하지 않는다 — 2026-10-01 검토 지적: 모두 격자 밖 · 모두 상자 밖인 응답이 타일을 끝냈다).
   지물 수가 maxFeatures 에 닿았거나 numberOfFeatures 와 다르면 잘렸을 수 있다(truncation — 작업이 타일을 나눈다). 크기 상한은 따로
   MAX_WFS_TILE_BYTES(계산은 아래 상수 설명).
 """
@@ -384,9 +385,28 @@ class WfsTile:
 _MEMBERS = ("featureMembers", "featureMember")
 
 
-def parse_wfs_tile(body: bytes, max_features: int = TILE_MAX_FEATURES) -> WfsTile:
+BOX_TOL_M = 1.0  # 상자와 닿는지 볼 때의 여유(m) — 좌표 끝자리 반올림만. 선택값
+
+
+def _touches(ext: Extent, box: tuple[float, float, float, float]) -> bool:
+    """받은 꼭짓점 범위가 상자와 닿거나 겹친다(닫힌 구간 — 확인한 두 호출의 수는 '겹치는 칸을 모두' 모형과 맞았다)."""
+    return (
+        ext[0] <= box[2] + BOX_TOL_M
+        and ext[2] >= box[0] - BOX_TOL_M
+        and ext[1] <= box[3] + BOX_TOL_M
+        and ext[3] >= box[1] - BOX_TOL_M
+    )
+
+
+def parse_wfs_tile(
+    body: bytes, max_features: int = TILE_MAX_FEATURES, box: tuple[float, float, float, float] | None = None
+) -> WfsTile:
     """getOpnG4sWFS bbox 응답(bbox=…&srs=EPSG:5179&maxFeatures=…) → WfsTile. 응답 전체가 확인한 모양이 아니면 WfsError(크기 초과는 WfsTooLarge).
-    한 칸 조회와 달리 '없는 칸'을 말하지 않는다 — 상자에 없는 번호는 묻지 않았다."""
+    한 칸 조회와 달리 '없는 칸'을 말하지 않는다 — 상자에 없는 번호는 묻지 않았다.
+
+    box(물은 상자, EPSG:5179 m)를 주면 받은 꼭짓점 범위가 상자와 닿지 않는 칸은 뺀다(rejected — 그 상자의 답이 아니다). 나쁜 지물(격자 밖 ·
+    모양 오류 · 상자 밖)이 좋은 칸보다 많거나 좋은 칸이 하나도 없으면 응답 전체가 오류다(검토 지적 2026-10-01: 모두 격자 밖인 응답이 타일을
+    끝내고 번호 수백 개를 격자 밖으로 적었다 · 상자 밖 칸만 담은 응답도 타일을 끝냈다) — 작업은 그 타일을 물러났다가 다시 묻는다."""
     root = _collection(body, MAX_WFS_TILE_BYTES)
     declared_text = root.get("numberOfFeatures")
     if declared_text is None or re.fullmatch(r"\d{1,9}", declared_text) is None:
@@ -424,9 +444,20 @@ def parse_wfs_tile(body: bytes, max_features: int = TILE_MAX_FEATURES) -> WfsTil
             continue
         res, ext = seen[0]
         if res.kind == "found" and res.cell is not None and ext is not None:
+            if box is not None and not _touches(ext, box):
+                rejected.append(
+                    (g, f"outside the requested box {tuple(round(v) for v in box)} (extent {tuple(round(v) for v in ext)})")
+                )
+                continue
             cells.append(TileCell(res.cell, ext))
         else:
             off_grid.append((g, res.detail or "off grid"))
-    if members and not cells and not off_grid:
-        raise WfsError(f"all {len(members)} features rejected — first: {rejected[0][1]}"[:300])
+    bad = len(off_grid) + len(rejected)
+    if members and (not cells or bad > len(cells)):
+        first = (off_grid[0][1] if off_grid else rejected[0][1]) if bad else "no cells"
+        raise WfsError(
+            f"{bad} of {len(members)} features invalid ({len(off_grid)} off grid, {len(rejected)} rejected) — first: {first}"[
+                :300
+            ]
+        )
     return WfsTile(tuple(cells), tuple(off_grid), tuple(rejected), int(declared_text), len(members), max_features)

@@ -64,7 +64,7 @@ class GridWfs:
         if isinstance(a, BaseException):
             raise a
         body = a if isinstance(a, bytes) else self.grid.body(box, omit=self.hidden)
-        return WfsTileLookup(parse_wfs_tile(body), body, 40)
+        return WfsTileLookup(parse_wfs_tile(body, box=box), body, 40)  # 공급자처럼 물은 상자를 넘긴다
 
 
 class CallDb(TGDb):

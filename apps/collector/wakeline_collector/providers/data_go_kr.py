@@ -152,7 +152,7 @@ class Grid4WfsProvider:
         self, box: tuple[int, int, int, int], *, wait_s: float = WFS_WAIT_S, before_send: BeforeSend | None = None
     ) -> WfsTileLookup:
         """상자(EPSG:5179 m — xmin, ymin, xmax, ymax 정수) 안의 칸 모두. 틀린 상자는 보내지 않고 ValueError. 그 밖 실패는 예외 그대로
-        (WfsError · 크기 초과 WfsTooLarge 포함). 칸이 없으면 빈 타일이다(어느 칸도 '없음'이 되지 않는다)."""
+        (WfsError · 크기 초과 WfsTooLarge 포함 — 나쁜 지물 · 상자 밖 칸이 과반이어도 WfsError). 칸이 없으면 빈 타일이다(어느 칸도 '없음'이 되지 않는다)."""
         ok = len(box) == 4 and all(isinstance(v, int) and not isinstance(v, bool) for v in box)
         if not ok or not (0 < box[2] - box[0] <= MAX_TILE_SIDE_M and 0 < box[3] - box[1] <= MAX_TILE_SIDE_M):
             raise ValueError("invalid bbox")
@@ -167,5 +167,7 @@ class Grid4WfsProvider:
             before_send=before_send,
             total_s=WFS_TILE_TOTAL_S,
         )
-        result = await asyncio.to_thread(parse_wfs_tile, resp.body, TILE_MAX_FEATURES)
+        result = await asyncio.to_thread(
+            parse_wfs_tile, resp.body, TILE_MAX_FEATURES, box
+        )  # 물은 상자 — 상자 밖 칸은 그 답이 아니다
         return WfsTileLookup(result, resp.body, resp.latency_ms)

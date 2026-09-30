@@ -156,8 +156,49 @@ def test_a_malformed_grid_no_is_rejected_not_stored():
 def test_every_feature_rejected_is_an_error_not_an_empty_tile():
     """모든 지물이 모양 오류(예: 공급자가 좌표계 표기를 바꿈)면 '칸 없음'이 아니라 오류다 — 빈 타일로 끝났다고 적지 않는다."""
     body = body_of(grid_feats(5), srs="urn:ogc:def:crs:EPSG::5179")
-    with pytest.raises(WfsError, match="all 5 features rejected"):
+    with pytest.raises(WfsError, match="5 of 5 features invalid"):
         parse_wfs_tile(body)
+
+
+def test_a_tile_whose_every_feature_is_off_the_lattice_is_an_error_not_a_done_tile():
+    """검토 지적(2026-10-01): 모든 지물이 격자 밖이어도(예: 좌표가 50 m 밀림 · 다른 투영) 오류가 아니었다 — 타일이 끝났다고 적히고 약 200 번호가
+    격자 밖으로 7일 빠졌다. 칸이 하나도 없으면 오류다(타일은 물러났다가 다시 — 어느 번호도 적지 않는다)."""
+    feats = grid_feats(6)
+    shifted = [feature(g, la, lo, gid, pts=[(x + 50.0, y) for x, y in ring(la, lo)]) for g, la, lo, gid in feats]
+    with pytest.raises(WfsError, match="6 of 6 features invalid"):
+        parse_wfs_tile(collection(shifted))
+
+
+def test_a_tile_where_invalid_features_outnumber_valid_ones_is_an_error():
+    """나쁜 지물이 좋은 지물보다 많으면 그 응답은 확인한 모양의 답이 아니다 — 좋은 몇 칸으로 타일을 끝내지 않는다(선택한 선: 과반)."""
+    feats = grid_feats(7)
+    parts = [feature(g, la, lo, gid) for g, la, lo, gid in feats[:3]]
+    parts += [feature(g, la, lo, gid, pts=[(x + 50.0, y) for x, y in ring(la, lo)]) for g, la, lo, gid in feats[3:]]
+    with pytest.raises(WfsError, match="4 of 7 features invalid"):
+        parse_wfs_tile(collection(parts))
+    ok = [feature(g, la, lo, gid) for g, la, lo, gid in feats[:4]] + parts[4:]
+    t = parse_wfs_tile(collection(ok))  # 4 좋음 · 3 격자 밖 — 나쁜 지물만 뺀다
+    assert len(t.cells) == 4 and len(t.off_grid) == 3
+
+
+def test_cells_outside_the_requested_box_are_rejected_and_a_tile_of_only_those_is_an_error():
+    """검토 지적(2026-10-01): 상자 밖의 칸만 담은 답도 타일을 끝냈다(그 칸들을 그 타일의 답으로 적었다). 상자를 알면 받은 꼭짓점 범위가 상자와
+    닿지 않는 칸은 뺀다(rejected) — 그런 칸이 과반이면 응답 전체가 오류. 가장자리에 걸친 칸은 상자와 닿으므로 받는다."""
+    g = FakeGrid()
+    box = (896000, 1920000, 928000, 1952000)
+    far = (960000, 1760000, 992000, 1792000)
+    with pytest.raises(WfsError, match="features invalid"):
+        parse_wfs_tile(g.body(far), box=box)
+    inside = parse_wfs_tile(g.body(box), box=box)
+    assert len(inside.cells) == len(g.cells_in(box)) and inside.rejected == ()
+    assert any(tc.extent[0] < box[0] < tc.extent[2] for tc in inside.cells)  # 서쪽 가장자리에 걸친 칸도 받는다
+    far_one = g.cells_in(far)[0]
+    mixed = collection(
+        [feature(x, *g.where[x], g.gids[x]) for x in g.cells_in(box)] + [feature(far_one, *g.where[far_one], g.gids[far_one])]
+    )
+    t = parse_wfs_tile(mixed, box=box)
+    assert far_one not in {tc.cell.grid_no for tc in t.cells}
+    assert [(r[0], "outside the requested box" in r[1]) for r in t.rejected] == [(far_one, True)]
 
 
 def test_duplicates_collapse_and_conflicting_duplicates_are_rejected():
