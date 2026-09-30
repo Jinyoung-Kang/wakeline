@@ -770,10 +770,11 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 웹: 레이어 키 `reception`(선택 필드 — 없으면 끔 · 이 브라우저에 기억), 단추 '관측 수신 범위(최근 24 h)'(선박 옆). 켤 때 받는 조각(ADR-026 — `components/ReceptionLayer` ·
     `lib/reception`, `tests/first-screen-lazy.test.ts` 목록에 까닭과 함께): 조회 120 s · ETag · 탭이 보일 때만(다시 보이면 곧바로) · 켜져 있을 때만, 칸은 옅은 파랑
     (`#5fb4e0`) · 채움 불투명도 = 선박 수 구간 1–2 · 3–9 · 10–29 · 30–99 · 100+(0.10 · 0.16 · 0.23 · 0.30 · 0.38 — 표시용 선택), 연안 교통량 아래. 툴팁: 칸 범위 ·
-    선박 · 위치(60 s 창마다 1건) · 마지막 수신 · 창(KST 만). 상태 줄: 칸 수 · 이 화면의 칸 수 · 창(KST), covered 가 full 이 아니면 '창의 일부만 셈 — <since KST> 부터(까닭)'
+    선박 · 위치(선박마다 60 s 에 1건) · 마지막 수신 · 창(KST 만). 상태 줄: 칸 수 · 이 화면의 칸 수 · 창(KST), covered 가 full 이 아니면 '창의 일부만 셈 — <since KST> 부터(까닭)'
     (api 시작 뒤 · 기동 전 기록 읽는 중 N/M시간 · 일부만 읽음 · 읽기 실패 — 종류), 상한 · 형식 오류로 뺀 칸 · 조회 실패. 범례 절: "잰 값: 이 서비스가 최근 24 h 에
-    실제로 선박 위치를 받은 0.5° 칸 … — 구독 범위(점선)가 아니다". 자료가 있으면 선박 칩 설명(title)과 0척 알림 글자에 '이 화면에 관측 수신 칸 N개(최근 24 h)'
-    (AIS 꺼짐(키 없음)이면 덧붙이지 않는다). 설명서 선박 절 · 레이어 단추 · 범례 표. 운영 · 파이프라인 화면은 바꾸지 않았다.
+    실제로 선박 위치를 받은 0.5° 칸 … — 구독 범위(점선)가 아니다", 구간 견본은 지도와 같은 불투명도를 어두운 바다 색(`BASEMAP_WATER`) 위에. 자료가 있으면
+    선박 칩 설명(title)과 0척 알림 글자에 '이 화면에 관측 수신 칸 N개' + 센 구간 — covered = full 이고 조회가 성공했을 때만 '(최근 24 h)', 아니면 실제로 센 구간
+    '(<since KST> 부터만 셈)', 마지막 조회가 실패했으면 '(… · 조회 실패 — 마지막 값)'(창 전체인 척하지 않는다 — 리뷰 2026-09-30). AIS 꺼짐(키 없음)이면 덧붙이지 않는다. 설명서 선박 절 · 레이어 단추 · 범례 표. 운영 · 파이프라인 화면은 바꾸지 않았다.
   - 회귀 막기: api `CoverageGridTest` · `IntIntMapTest` · `ShipCoverageTest` · `CoverageBootstrapDbTest`(Testcontainers) · `ShipCoverageControllerTest` · `ShipCoverageIT` ·
     `ShipWriterTest`(ShipsSampled) · `PipelineEventMulticasterTest` · `OpenApiSnapshotIT`, web `tests/reception.test.ts` · `reception-layer.test.ts` · `reception-wiring.test.ts` · `ships-v4.test.ts` ·
     `guide-page.test.ts` · `e2e-inject.test.ts` · `e2e/ship-coverage.spec.ts`.

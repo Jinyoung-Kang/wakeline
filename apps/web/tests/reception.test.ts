@@ -137,7 +137,7 @@ describe("tooltip and status line — KST only, the reason in words", () => {
     expect(tip.subtitle).toBe("37.0–37.5°N · 126.0–126.5°E");
     expect(tip.rows).toEqual([
       ["선박", "304척"],
-      ["위치", "5,120건(60 s 창마다 1건)"],
+      ["위치", "5,120건(선박마다 60 s 에 1건)"], // 칸마다가 아니라 선박마다(리뷰 2026-09-30 — '60 s 창마다 1건'은 칸에 1건으로 읽혔다)
       ["마지막 수신", "09-30 18:40:01 KST"],
       ["창", "09-29 18:00 – 09-30 18:40 KST"],
     ]);

@@ -12,9 +12,10 @@ import { loadLayers, saveLayers } from "@/lib/prefs";
 import { resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { dashboardMap, layerTip, onReady, registerLayerTip, setDashboardMap } from "@/lib/map-ready";
-import { RECEPTION_BINS, RECEPTION_LAYER_LABEL, RECEPTION_LEGEND_NOTE } from "@/lib/reception-meta";
+import { RECEPTION_BINS, RECEPTION_COLOR, RECEPTION_LAYER_LABEL, RECEPTION_LEGEND_NOTE } from "@/lib/reception-meta";
 import { SHIPS_ZERO_TEXT } from "@/lib/ships";
 import { MapLegendView } from "@/components/MapLegend";
+import { BASEMAP_WATER } from "@/lib/basemap";
 import { LayerPanelView } from "@/components/LayerPanel";
 import { MapChipsView } from "@/components/MapChips";
 
@@ -74,6 +75,11 @@ describe("layer button, part slot, legend and chip", () => {
     expect(t).toContain("표시용 선택");
     expect(t).not.toContain("UTC");
     expect(renderToStaticMarkup(createElement(MapLegendView, { id: "l", layers, radarSource: "rainviewer" }))).not.toContain("legend-reception");
+    // 견본은 지도와 같은 진하기 — 같은 색 · 같은 불투명도를 어두운 바다 색 위에(리뷰 2026-09-30: 2배 진하게 그려 지도의 칸과 달랐다. 수정 전 실패)
+    const scale = on.slice(on.indexOf('data-testid="legend-reception-scale"'));
+    for (const b of RECEPTION_BINS) expect(scale).toContain(`background:${RECEPTION_COLOR};opacity:${b.opacity}"`);
+    expect(scale).toContain(`background:${BASEMAP_WATER}`);
+    expect(t).not.toContain("2배");
     // 선박 레이어의 수신 범위(운영 설정) 설명은 실제로 받은 곳이 이 레이어라고 가리킨다
     const ais = { connected: true, state: "receiving", coverage: [{ s: 18, w: 105, n: 46, e: 150 }] };
     setData({ ais: ais as never });

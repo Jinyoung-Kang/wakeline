@@ -2,7 +2,7 @@
  * 관측 수신 범위(계약 v5 §G27 · ADR-027) — api GET /api/v1/ships/coverage 의 0.5° 칸(이 서비스가 최근 24 h 에 실제로 선박 위치를 받은 곳)을 지도에 옅게
  * 칠한다. 구독 범위(운영 설정 — 선박 레이어의 점선)가 아니다: aisstream.io 는 육상 AIS 수신국이 받은 것만 보내므로 구독해도 수신국이 없는 해역은 비어 있고,
  * 이 레이어가 그것을 잰 값으로 보인다. 레이어를 켤 때만 받는 조각이다(ADR-026 — components/ReceptionLayer).
- * - 값: api 가 센 그대로 — 칸마다 선박 수(창 안 서로 다른 MMSI) · 위치 수(저장과 같은 60 s 창마다 첫 보고) · 마지막 수신. 여기서도 모양을 다시 본다(틀린 칸은
+ * - 값: api 가 센 그대로 — 칸마다 선박 수(창 안 서로 다른 MMSI) · 위치 수(선박마다 60 s 창의 첫 보고 — 저장과 같은 표본) · 마지막 수신. 여기서도 모양을 다시 본다(틀린 칸은
  *   버리고 센다 — 봉투가 틀리면 null 이라 마지막 값을 둔다).
  * - 창 · 덮음: window(지금 시의 시작 − 24 h ~ 응답 시각) · since(이 시각부터 빠짐없이 셌다) · covered(full · partial · since_api_start) — 창 전체를 세지
  *   못했으면 상태 줄 · 툴팁이 그렇다고 적는다(창 전체인 척하지 않는다).
@@ -182,7 +182,7 @@ export function receptionTip(p: Record<string, unknown>, r: Reception | null): T
     subtitle: `${latSpan(lat)} · ${lonSpan(lon)}`,
     rows: [
       ["선박", s == null ? "—" : `${n0(s)}척`],
-      ["위치", n == null ? "—" : `${n0(n)}건(60 s 창마다 1건)`],
+      ["위치", n == null ? "—" : `${n0(n)}건(선박마다 60 s 에 1건)`],
       ["마지막 수신", fmtKst(typeof p.t === "string" ? p.t : null)],
       ["창", windowText(r)],
     ],
