@@ -268,6 +268,16 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     적으므로 공급자의 `last_error_resolved` 와 같은 순간을 본다 — 해결 순간에 진행 중이던 실행이 upto 뒤에 실패하면 두 곳 모두 미해결로 보인다(started_at 으로 보면
     요약만 가려 두 답이 갈린다). finished_at 이 없는 실행(실패 시각을 모름)은 가리지 않는다. 공급자 오류는 `'error'` 만이다(collector 가 `status.failure` 로 `last_error` 를 쓰는 실행과 같다) — ok · throttled · budget_* 행은 그대로.
     실행 목록 `items` 는 증거라 가리지 않는다. 해결은 요약과 같은 문장에서 DB 로 읽는다(캐시 없이). `last_at` 표기는 지금과 같다(ms).
+    - **개정(2026-10-01 · 레인 opsui · 운영 2026-09-30 — /ops 가 region adsb_fi error 13 중 공급자 해시에 남은 마지막 하나의 까닭만 보였다)**:
+      `summary_24h` 행마다 **`last_error_text` · `last_http_status`**(키는 늘 있다 — 없으면 JSON null): status 가 ok 가 아닌 행은 그 job · provider · status 에서
+      hide 가 가리지 않은 실행 중 가장 최근 것(finished_at 이 가장 늦은 것 = `last_at` 의 실행, 같으면 id 가 큰 것, finished_at 을 모르는 실행은 뒤로)의
+      `error_text`(수집기가 가려 저장한 원문 그대로 — 안의 'Z' 시각도 그대로) · `http_status`. **ok 행은 둘 다 null**(고르지 않는다 — ok 실행은 오류가 아니고,
+      고르면 창의 ok 행까지 모두 정렬해 15 s 마다 부르는 요약이 약 5배 느렸다: 리뷰 2026-10-01. 가장 최근 실행은 한 번의 묶음에서 고르고 그 id 로 읽는다 —
+      IngestRunRepositoryDbTest 가 창의 행을 정렬하는 계획을 막는다). 응답에 **`summary_since`**(UTC ISO — 요약 창의 시작 = DB now() − 24 h, 요약 문장과 한 트랜잭션이라 같은 값;
+      창은 `started_at > summary_since`). 목록 필터 **`provider`** · **`since`**(ISO 순간, `started_at > since` — 틀리면 400 `BAD_REQUEST`)를 더한다 — 둘 다 선택,
+      없으면 전과 같다(job · status · cursor · limit · resolved 도 그대로). `since` 가 있으면 창 안의 행을 먼저 고른 뒤 id 역순으로 자른다(드문 status 를 찾느라 30일
+      표를 기본 키 역순으로 훑지 않게 — IngestRunRepositoryDbTest). 웹은 요약 행을 열면 `job · provider · status · since=summary_since` 로 그 행의 실행을 쪽으로
+      싣는다(`next_cursor` 로 더 — 해결 표시와 상관없이 모두, 목록은 증거). 시험: OpsRunsIT · IngestRunRepositoryDbTest · web `tests/ops-runs-drill.test.ts`.
   - 캐시 · 장애: api 는 활성 해결 전체를 **5 s 이하** 캐시하고 쓰기(해결 · 되돌림) 뒤 바로 버린다 — 쓴 운영자의 다음 조회가 바로 반영한다. 캐시를 채우는 읽기와 겹친
     쓰기는 세대 번호로 가려 옛 값이 남지 않는다. 다시 읽기는 한 번에 하나이고, 그동안 다른 요청은 기다리지 않고 같은 세대의 지난 값을 받는다(첫 읽기 · 쓰기 뒤에만
     새 값을 기다린다 — 읽기-쓰기 일관). 다시 읽는 요청 하나의 상한은 풀 연결 대기(hikari `connection-timeout` 5 s) + 문장 3 s(`withQueryTimeout` — 문장만 덮는다)

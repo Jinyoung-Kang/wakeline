@@ -182,12 +182,17 @@ export function fmtReplayBbox(b: Bbox): string {
 
 /** 재생 화면 상태: 지도에 그리는 프레임 · 오류 문구 · 마지막 응답 시간 · 실패한 요청의 요청 id(계약 v5 §C8 — 서버가 준 것만, 없으면 null) */
 export interface ReplayView { frame: ReplayFrame | null; err: string | null; latencyMs: number | null; rid?: string | null }
-export type ReplayEvent = { type: "loaded"; frame: ReplayFrame; latencyMs: number } | { type: "failed"; error: unknown };
+/**
+ * 실패한 요청의 다시 부르기(errors F4): scheduled = Retry-After 뒤 한 번 다시 부른다(ReplayLoader) · retried = 그 한 번도 실패했다(더 부르지 않는다) ·
+ * none = 다시 부르지 않는다(Retry-After 없음 · 다른 상태).
+ */
+export type ReplayRetry = "scheduled" | "retried" | "none";
+export type ReplayEvent = { type: "loaded"; frame: ReplayFrame; latencyMs: number } | { type: "failed"; error: unknown; retry?: ReplayRetry };
 
 /** 요청이 실패하면 이전 프레임을 지운다 — 새 시각 라벨 아래 이전 시각·영역의 항공기를 남기지 않는다(R-05). */
 export function replayReduce(_s: ReplayView, e: ReplayEvent): ReplayView {
   if (e.type === "loaded") return { frame: e.frame, err: null, latencyMs: e.latencyMs, rid: null };
-  return { frame: null, err: replayErrorText(e.error), latencyMs: null, rid: e.error instanceof ApiError ? e.error.requestId : null };
+  return { frame: null, err: replayErrorText(e.error, e.retry ?? "none"), latencyMs: null, rid: e.error instanceof ApiError ? e.error.requestId : null };
 }
 
 /**
@@ -200,12 +205,23 @@ export function replayInspectorMiss(pick: { kind: "aircraft"; hex: string } | { 
   return pick.kind === "aircraft" ? `${pick.hex} — 이 시각(−3분 창)·이 영역에 기록 없음` : "이 시각에 유효하지 않은 SIGMET";
 }
 
-/** 재생 요청 오류 → 한국어 안내(서버 영문 detail 을 그대로 보이지 않는다) */
-export function replayErrorText(e: unknown): string {
+/**
+ * 재생 요청 오류 → 한국어 안내(서버 영문 detail 을 그대로 보이지 않는다).
+ * 503(errors F4 — 운영 2026-09-30 22:55 KST 의 503 UNAVAILABLE + Retry-After 10 이 '서버 오류'로 보였다): api 의 code UNAVAILABLE 은 저장소(DB · Redis)를 잠시
+ * 쓸 수 없다는 뜻이다(ProblemAdvice — 연결 실패 · 풀 대기 · 잠금 · 문장 취소를 모두 싣는다 — 까닭은 말하지 않는다). 기다릴 초는 Retry-After 가 있을 때만
+ * (lib/ops loginErrorText 의 429 와 같은 규칙 — 없으면 '잠시 뒤'). code 가 다른 503 은 저장소라고 말하지 않는다. retry = ReplayLoader 가 한 번 다시 불렀는지.
+ */
+export function replayErrorText(e: unknown, retry: ReplayRetry = "none"): string {
   if (e instanceof ApiError) {
     if (e.status === 422) return "요청 영역이 너무 넓음 — 지도를 확대하세요";
     if (e.status === 400) return "잘못된 요청(시각은 최근 31일 안) — 기록을 불러오지 못함";
     if (e.status === 429) return "요청이 많아 잠시 제한됨 — 잠시 뒤 다시";
+    if (e.status === 503) {
+      const what = e.code === "UNAVAILABLE" ? "데이터 저장소를" : "서버를";
+      const then = retry === "retried" ? "자동으로 한 번 다시 불렀으나 또 실패 · 시각이나 영역을 바꾸면 다시 불러옴"
+        : `${e.retryAfterS != null ? `${e.retryAfterS}초 뒤` : "잠시 뒤"} 다시 시도`;
+      return `${what} 잠시 사용할 수 없음(HTTP 503) — ${then}`;
+    }
     if (e.status >= 500) return `서버 오류(HTTP ${e.status}) — 기록을 불러오지 못함`;
     return `기록을 불러오지 못함(HTTP ${e.status})`;
   }
@@ -295,6 +311,19 @@ const defaultTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
+/** 탭이 보이는가 · 다시 보일 때 부를 것(해제 함수를 돌려준다). document 가 없으면(서버 렌더 · node 시험) 늘 보인다 */
+export type ReplayVisibility = { visible: () => boolean; onVisible: (fn: () => void) => () => void };
+const defaultVisibility: ReplayVisibility = {
+  visible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
+  onVisible: (fn) => {
+    if (typeof document === "undefined") return () => {};
+    const h = () => { if (document.visibilityState !== "hidden") fn(); };
+    document.addEventListener("visibilitychange", h);
+    return () => document.removeEventListener("visibilitychange", h);
+  },
+};
+/** Retry-After 를 받은 503 이면 기다릴 ms, 아니면 null(다시 부르지 않는다) */
+const retryAfterMs = (e: unknown): number | null => (e instanceof ApiError && e.status === 503 && e.retryAfterS != null ? e.retryAfterS * 1000 : null);
 
 /**
  * 재생 요청은 탭당 한 번에 하나만 — 브라우저에서도 서버에서도(보내는 중인 요청은 늘 최대 1개).
@@ -309,12 +338,17 @@ const defaultTimers: Timers = {
  * 기다리는 요청이 실패한 것과 같으면 다시 보내지 않고 실패를 알린다 — 새 응답이 오지 않으므로. 보내는 중인 것과 같은 요청은 다시 보내지 않는다
  * (낡음으로 표시했던 것이면 되살려 그 응답을 그린다).
  * 끊는 것(abort)은 화면을 떠날 때(dispose)만 — 그 뒤로는 이 탭이 재생 요청을 보내지 않는다.
+ * 503 + Retry-After(errors F4 — 저장소를 잠시 쓸 수 없음): 알린 실패가 그 요청이면 Retry-After 뒤 한 번만 같은 (at, bbox) 를 다시 부른다 — 그때 그 요청이 아직
+ * 지금 요청이고(그 사이 schedule · request 가 없었고 보내는 중 · 기다리는 요청이 없다) 탭이 보일 때. 숨은 탭이면 다시 보일 때 같은 조건으로. 다시 부른 요청이
+ * 실패하면 더 부르지 않는다('retried' — 경합 중에 부하를 더하지 않는다). 새 입력 · dispose 는 기다리던 다시 부르기를 지운다.
  */
 export class ReplayLoader {
   private inflight: { r: ReplayReq; ctl: AbortController; stale: boolean } | null = null;
   private queued: ReplayReq | null = null;
   private timer: unknown = null;
   private disposed = false;
+  /** 기다리는 다시 부르기(한 번에 하나) — timer = Retry-After 타이머, unsub = 탭이 다시 보이기를 기다리는 구독 */
+  private retrySlot: { r: ReplayReq; timer: unknown; unsub: (() => void) | null } | null = null;
 
   constructor(
     private readonly fetchFrame: (r: ReplayReq, signal: AbortSignal) => Promise<ReplayFrame>,
@@ -322,17 +356,20 @@ export class ReplayLoader {
     private readonly clock: () => number = () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
     private readonly timers: Timers = defaultTimers,
     private readonly debounceMs = REPLAY_DEBOUNCE_MS,
+    private readonly visibility: ReplayVisibility = defaultVisibility,
   ) {}
 
   /** 입력(슬라이더·재생 틱 등) — 마지막 값만 debounce 뒤에 보낸다 */
   schedule(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
     if (this.disposed) return;
+    this.cancelRetry(); // 무엇인가 바뀌었다 — 실패한 요청은 더 이상 지금 요청이 아니다
     if (this.timer != null) this.timers.clear(this.timer);
     this.timer = this.timers.set(() => { this.timer = null; this.request(r, opts); }, this.debounceMs);
   }
 
   request(r: ReplayReq, opts: ReplayRequestOpts = {}): void {
     if (this.disposed) return;
+    this.cancelRetry();
     const cur = this.inflight;
     if (!cur) { void this.run(r); return; }
     if (sameReq(cur.r, r)) { cur.stale = false; this.queued = null; return; } // 이미 그것을 받는 중(낡음으로 표시했으면 되살린다)
@@ -344,13 +381,37 @@ export class ReplayLoader {
   dispose(): void {
     this.disposed = true;
     this.queued = null;
+    this.cancelRetry();
     if (this.timer != null) { this.timers.clear(this.timer); this.timer = null; }
     const cur = this.inflight;
     this.inflight = null;
     cur?.ctl.abort();
   }
 
-  private async run(r: ReplayReq): Promise<void> {
+  private cancelRetry(): void {
+    const slot = this.retrySlot;
+    if (!slot) return;
+    this.retrySlot = null;
+    if (slot.timer != null) this.timers.clear(slot.timer);
+    slot.unsub?.();
+  }
+
+  /** Retry-After 뒤 한 번: 그 요청이 아직 지금 요청이면 — 탭이 숨었으면 다시 보일 때 */
+  private armRetry(r: ReplayReq, ms: number): void {
+    this.cancelRetry();
+    const slot: { r: ReplayReq; timer: unknown; unsub: (() => void) | null } = { r, timer: null, unsub: null };
+    this.retrySlot = slot;
+    const fire = () => {
+      if (this.retrySlot !== slot) return;
+      if (this.disposed || this.inflight || this.queued || this.timer != null) { this.cancelRetry(); return; } // 다른 요청이 있다 — 그것이 지금 요청
+      if (!this.visibility.visible()) { slot.unsub ??= this.visibility.onVisible(fire); return; }
+      this.cancelRetry();
+      void this.run(r, true);
+    };
+    slot.timer = this.timers.set(() => { slot.timer = null; fire(); }, ms);
+  }
+
+  private async run(r: ReplayReq, retried = false): Promise<void> {
     const me = { r, ctl: new AbortController(), stale: false };
     this.inflight = me;
     const t0 = this.clock();
@@ -359,7 +420,12 @@ export class ReplayLoader {
       if (this.inflight === me && !me.stale && !this.disposed) this.onEvent({ type: "loaded", frame, latencyMs: Math.round(this.clock() - t0) }, r);
     } catch (error) {
       // 낡은 요청은 알리지 않는다. 기다리는 요청이 방금 실패한 것과 같으면(T1 → T2 → T1) 새 응답이 오지 않는다 — 실패를 알린다(R-47)
-      if (this.inflight === me && !me.stale && !this.disposed && (!this.queued || sameReq(this.queued, r))) this.onEvent({ type: "failed", error }, r);
+      if (this.inflight === me && !me.stale && !this.disposed && (!this.queued || sameReq(this.queued, r))) {
+        // 503 + Retry-After 면 한 번 다시 부른다(errors F4) — 다시 부른 요청의 실패는 'retried'(더 부르지 않는다)
+        const wait = retried ? null : retryAfterMs(error);
+        this.onEvent({ type: "failed", error, retry: retried ? "retried" : wait != null ? "scheduled" : "none" }, r);
+        if (wait != null) this.armRetry(r, wait);
+      }
     } finally {
       if (this.inflight === me) {
         this.inflight = null;

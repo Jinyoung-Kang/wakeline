@@ -45,6 +45,7 @@ public class OpsController {
     private final TransactionTemplate tx;
     private final ProviderSwitchService switches;
     private final ResolutionService resolutions;
+    private final IngestRunRepository ingestRuns;
 
     public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit,
                          dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches,
@@ -58,6 +59,7 @@ public class OpsController {
         this.tx = tx;
         this.switches = switches;
         this.resolutions = resolutions;
+        this.ingestRuns = new IngestRunRepository(db);
     }
 
     /**
@@ -124,47 +126,42 @@ public class OpsController {
     }
 
     /**
-     * 수집 실행 기록(items — 증거라 가리지 않는다)과 24 h 요약(summary_24h — job · provider · status 마다 n · last_at · avg_latency_ms).
+     * 수집 실행 기록(items — 증거라 가리지 않는다)과 24 h 요약(summary_24h — job · provider · status 마다 n · last_at · avg_latency_ms ·
+     * last_error_text · last_http_status).
      * 요약은 resolved=hide(기본) | show(계약 v5 §G14): hide 면 활성 provider_error 해결이 있는 공급자의 status 'error' 실행 중 finished_at ≤ upto
-     * (그 공급자의 유효 해결 — upto 가 가장 늦은 것)를 셈 · 마지막 시각 · 평균에서 빼고 hidden_resolved_errors 로 센다(n 이 0 이 된 행은 없다).
+     * (그 공급자의 유효 해결 — upto 가 가장 늦은 것)를 셈 · 마지막 시각 · 평균 · 가장 최근 실행 고르기에서 빼고 hidden_resolved_errors 로 센다(n 이 0 이 된 행은 없다).
      * 기준은 실패를 기록한 시각(finished_at)이다 — collector 는 status.failure(last_error_at = 그때)를 쓴 바로 뒤 record_run(finished_at = 그때)을 적으므로
      * /ops/providers 의 last_error_resolved(upto ≥ last_error_at)와 같은 순간을 본다. started_at 으로 보면 해결 순간에 진행 중이던 실행(단계마다 읽기 8 s ·
      * 재시도)이 upto 뒤에 실패해도 가려져, 같은 실패가 공급자에서는 미해결 · 요약에서는 해결로 갈린다. finished_at 이 없으면(실패 시각을 모름) 가리지 않는다.
      * 'error' 만 공급자 오류다 — collector 가 status.failure(last_error)를 쓰는 실행과 같다(throttled · budget_* 는 그대로). 해결은 DB 에서 같은 문장으로
      * 읽는다(캐시 없이 — 요약 자체가 DB 조회라 더 부를 것이 없다).
+     * <p>last_error_text · last_http_status(운영 2026-09-30 — region adsb_fi error 13 중 공급자 해시의 마지막 하나만 까닭이 보였다): ok 가 아닌 행은 그 행의
+     * 가장 최근 실행(finished_at 이 가장 늦은 것, 모르면 뒤로 — last_at 과 같은 실행)의 오류 글자(수집기가 가려 저장한 그대로 — 원문 시각 'Z' 포함)와 http,
+     * 없으면 null. ok 행은 둘 다 null(고르지 않는다 — 요약을 느리게 하지 않게, IngestRunRepository.summary). 키는 늘 있다.
+     * summary_since = 요약 창의 시작(UTC ISO — DB 의 now() − 24 h, 요약 문장과 한 트랜잭션) — 창은 started_at &gt; summary_since. 그 값을 since 로 돌려주면 목록이 같은 창의 실행만 싣는다.
+     * <p>목록 필터 job · provider · status · since(started_at &gt; since, ISO 순간 — 틀리면 400) · cursor — 모두 선택(없으면 그 조건 없음, 전과 같다).
      */
     @GetMapping("/runs")
-    public Map<String, Object> runs(@RequestParam(required = false) String job, @RequestParam(required = false) String status,
+    public Map<String, Object> runs(@RequestParam(required = false) String job, @RequestParam(required = false) String provider,
+                                    @RequestParam(required = false) String status, @RequestParam(required = false) Instant since,
                                     @RequestParam(required = false) Long cursor, @RequestParam(defaultValue = "50") int limit,
                                     @RequestParam(required = false) String resolved) {
         boolean hide = Resolutions.hide(resolved);
         int n = Math.max(1, Math.min(limit, 200));
-        var rows = db.sql("""
-                SELECT id, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text
-                FROM ingest_run WHERE (:job::text IS NULL OR job = :job) AND (:status::text IS NULL OR status = :status) AND (:cursor::bigint IS NULL OR id < :cursor)
-                ORDER BY id DESC LIMIT :n""").param("job", job).param("status", status).param("cursor", cursor).param("n", n + 1).query().listOfRows();
-        Long next = rows.size() > n ? ((Number) rows.get(n - 1).get("id")).longValue() : null;
-        var grouped = db.sql("""
-                WITH res AS (SELECT key AS provider, max(upto) AS upto FROM ops_resolution
-                             WHERE kind = 'provider_error' AND revoked_at IS NULL GROUP BY key),
-                     r AS (SELECT i.job, i.provider, i.status, i.finished_at, i.latency_ms,
-                                  :hide AND coalesce(i.status = 'error' AND i.finished_at <= res.upto, false) AS hidden
-                           FROM ingest_run i LEFT JOIN res ON res.provider = i.provider
-                           WHERE i.started_at > now() - interval '24 hours')
-                SELECT job, provider, status, count(*) FILTER (WHERE NOT hidden) n, max(finished_at) FILTER (WHERE NOT hidden) last_at,
-                       (avg(latency_ms) FILTER (WHERE NOT hidden))::int avg_latency_ms, count(*) FILTER (WHERE hidden) hidden_n
-                FROM r GROUP BY job, provider, status ORDER BY job, provider, status""").param("hide", hide).query().listOfRows();
-        List<Map<String, Object>> summary = new java.util.ArrayList<>(grouped.size());
-        long hiddenErrors = 0;
-        for (Map<String, Object> row : grouped) {
-            hiddenErrors += ((Number) row.remove("hidden_n")).longValue();
-            if (((Number) row.get("n")).longValue() > 0) summary.add(row); // 모두 해결된 행은 빠진다
+        var page = ingestRuns.runs(new IngestRunRepository.Filter(job, provider, status, since), cursor, n);
+        // 한 트랜잭션: 창의 시작(summary_since)과 요약 문장이 같은 now() 를 본다
+        var summary = tx.execute(st -> ingestRuns.summary(hide));
+        for (Map<String, Object> row : summary.rows()) {
+            // 앱 JSON 규칙(NON_NULL)은 Map 의 null 값을 뺀다 — 이 두 키는 늘 싣는다(null = 가장 최근 실행에 글자 · http 가 없음 또는 ok 행, 키 없음 = 옛 api)
+            row.computeIfAbsent("last_error_text", k -> tools.jackson.databind.node.NullNode.getInstance());
+            row.computeIfAbsent("last_http_status", k -> tools.jackson.databind.node.NullNode.getInstance());
         }
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("items", rows.size() > n ? rows.subList(0, n) : rows);
-        m.put("next_cursor", next);
-        m.put("summary_24h", summary);
-        m.put("hidden_resolved_errors", hiddenErrors);
+        m.put("items", page.items());
+        m.put("next_cursor", page.nextCursor());
+        m.put("summary_24h", summary.rows());
+        m.put("summary_since", summary.since());
+        m.put("hidden_resolved_errors", summary.hiddenResolvedErrors());
         return m;
     }
 

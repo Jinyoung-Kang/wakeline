@@ -6,7 +6,7 @@ import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting, RequestOrder, RUN_STATUS_TITLE,
-  runStatusClass, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
+  runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
@@ -17,6 +17,8 @@ import { statsDay } from "@/lib/stats";
 import { activeJobs, jobBadgeText, jobBadgeTitle } from "@/lib/active-provider";
 import { KstTime } from "@/components/KstTime";
 import { TrafficGridFill } from "@/components/TrafficGridFill";
+import { OpsRunsDrill } from "@/components/OpsRunsDrill";
+import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
 
 type Any = Record<string, unknown>;
 /** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
@@ -26,8 +28,13 @@ interface Providers {
   /** 응답을 만든 서버 시각(UTC ISO) — '파일 없음' 줄의 '확인 멈춤'을 서버 기준 지금으로 판정한다(providersNowMs) */
   generated_at?: unknown;
 }
-/** hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다) */
-interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; mode: ResolvedMode }
+/**
+ * hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다).
+ * summary_since = 요약 창의 시작(UTC ISO — 계약 v5 §G14 개정 2026-10-01): 행을 열면 그 값을 since 로 보낸다(연 때의 요약 창)
+ */
+interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; summary_since?: unknown; mode: ResolvedMode }
+/** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
+interface Drill { k: RunKey; since: string | null }
 /** counted_since = V16 이 격리 수를 KST 날짜로 세기 시작한 순간(UTC ISO) — 그 KST 날짜는 부분 값(lib/ops qualityPartialDay) */
 interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown; counted_since?: unknown }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
@@ -63,6 +70,13 @@ const BUDGET_DAY_TITLE = "공급자 하루 예산의 한 창 — 수집기의 �
 const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 호출 수(그때의 예산 창 — 매일 09:00 KST 초기화) · 실패한 호출 뒤로는 갱신되지 않아 지금 창의 값이 아닐 수 있다 · 창별 값은 아래 Daily budget snapshot";
 /** 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자): api 가 준 글자 그대로(data-raw) — 안의 시각은 수집기가 쓴 형식이고 화면의 KST 로 바꾸지 않는다 */
 const RAW_RECORD_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수집기가 쓴 형식 그대로(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
+/** 요약의 마지막 오류 칸(errors F1 — api last_error_text · last_http_status) */
+const SUMMARY_LAST_ERROR_TITLE = "이 행의 가장 최근 실행(last (KST) 의 실행 — 해결 처리로 요약에서 뺀 실행은 고르지 않는다)의 http 와 오류 글자. "
+  + "글자는 수집기가 가려 저장한 원본 그대로(안의 ‘…Z’ 는 KST 보다 9시간 이르다). ok 행은 비운다. 앞선 실행의 글자는 행을 열어(runs) 본다";
+/** 요약 행을 여는 단추 칸 */
+const SUMMARY_OPEN_TITLE = "행을 열면 그 job · provider · status 의 실행을 지금 요약의 24 h 창(연 때의 창 — 목록은 15 s 새로고침을 따라가지 않는다)에서 최신순으로 50건씩(더 보기) — 해결 처리와 상관없이 모두";
+/** 열린 요약 행의 목록 패널 id(한 번에 하나) */
+const RUNS_DRILL_ID = "runs-drill-panel";
 
 /** 숫자 칸: 고정폭 숫자 + 한 줄("1,225 ms" 가 값 · 단위 두 줄로 갈라지지 않게 — 머리글은 줄바꿈해도 된다) */
 const NUM_CELL = "mono whitespace-nowrap tabular-nums";
@@ -152,6 +166,13 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const [tabErr, setTabErr] = useState<Partial<Record<Tab, unknown>>>({});
   /** 실행 요약의 해결 표시(ADR-024): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
   const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
+  /** 연 요약 행(한 번에 하나) — k 는 연 때 만든 객체 그대로(목록이 15 s 새로고침마다 다시 부르지 않게), since 는 연 때의 summary_since */
+  const [drill, setDrillState] = useState<Drill | null>(null);
+  /** 연 행이 새로 받은 요약에서 빠져 닫은 목록(알림 — 그 응답의 해결 표시와 함께). 행을 열거나 닫거나 알림을 닫으면 지운다 */
+  const [drillGone, setDrillGone] = useState<{ k: RunKey; mode: ResolvedMode } | null>(null);
+  /** 연 행 — 요약 응답을 받을 때 본다(reload 는 한 번 만든 콜백이라 state 대신 ref 로 지금 값을 읽는다) */
+  const drillRef = useRef<Drill | null>(null);
+  const setDrill = useCallback((d: Drill | null) => { drillRef.current = d; setDrillState(d); setDrillGone(null); }, []);
   const runsModeRef = useRef<ResolvedMode>("hide");
   /**
    * 탭마다 요청 순서(lib/ops RequestOrder): 기준 요청(쓰기 뒤 · 해결 표시 토글 · 새로고침 단추) 전에 떠난 요청의 응답은 버리고 — 해결 쓰기 뒤 다시 읽은 값을
@@ -194,7 +215,12 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         });
     };
     load<Providers>("providers", setProv);
-    load<Omit<Runs, "mode">>("runs", (v, mode) => setRuns({ ...v, mode }));
+    load<Omit<Runs, "mode">>("runs", (v, mode) => {
+      setRuns({ ...v, mode });
+      // 연 행이 새 요약에 없으면(창 밖 · 해결로 모두 가려짐) 목록을 닫고 알린다 — 말없이 사라졌다가 행이 돌아오면 저절로 다시 열려 다시 부르지 않게(리뷰 2026-10-01)
+      const d = drillRef.current;
+      if (d && !summaryHasKey(v.summary_24h, d.k)) { drillRef.current = null; setDrillState(null); setDrillGone({ k: d.k, mode }); }
+    });
     load<Quality>("quality", setQuality);
     load<Settings>("settings", setSettings);
     load<{ items: Any[] }>("audit", setAudit);
@@ -313,7 +339,35 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               {runs.mode === "show" ? "해결된 오류 포함(요약에서 빼지 않음)" : `해결 처리로 요약에서 뺀 오류 실행 ${hiddenText(hiddenCount(runs.hidden_resolved_errors))} · 아래 실행 기록(Recent runs)은 가리지 않음`}
             </span>
           </div>
-          <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST)</th></tr></thead><tbody>{runs.summary_24h.map((s, i) => <tr key={i} data-testid="runs-summary-row"><td>{String(s.job)}</td><td>{String(s.provider)}</td><td className={runStatusClass(s.status, "summary")} title={RUN_STATUS_TITLE[String(s.status)]}>{String(s.status)}</td><td className="mono">{String(s.n)}</td><td className={NUM_CELL}>{fmtLatencyMs(s.avg_latency_ms)}</td><TimeCell v={s.last_at} /></tr>)}</tbody></table>
+          {drillGone ? <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-2" role="status" data-testid="runs-drill-gone">
+            <span>{drillGoneText(drillGone.k, drillGone.mode)}</span>
+            <button className={SMALL_BTN} onClick={() => setDrillGone(null)}>알림 닫기</button>
+          </div> : null}
+          <table className="mb-4"><thead><tr><th>job</th><th>provider</th><th>status</th><th>n</th><th>avg latency</th><th>last (KST)</th><th title={SUMMARY_LAST_ERROR_TITLE}>last error (raw)</th><th title={SUMMARY_OPEN_TITLE}>runs</th></tr></thead>
+            <tbody>{runs.summary_24h.map((s, i) => {
+              const key = runKeyOf(s);
+              const kid = key ? runKeyId(key) : null;
+              const open = drill != null && kid != null && runKeyId(drill.k) === kid;
+              const le = summaryLastError(s);
+              const label = `${String(s.job)} · ${String(s.provider)} · ${String(s.status)}`;
+              return <Fragment key={kid ?? `row-${i}`}>
+                <tr data-testid="runs-summary-row"><td>{String(s.job)}</td><td>{String(s.provider)}</td><td className={runStatusClass(s.status, "summary")} title={RUN_STATUS_TITLE[String(s.status)]}>{String(s.status)}</td><td className="mono">{String(s.n)}</td><td className={NUM_CELL}>{fmtLatencyMs(s.avg_latency_ms)}</td><TimeCell v={s.last_at} />
+                  <td className="max-w-[420px]">{runStatusTone(s.status) === "ok" ? null
+                    : !le.known ? <span className="text-fg-3" data-testid="runs-last-error-unknown" title="응답에 마지막 오류 글자(last_error_text)가 없음 — api 가 이 화면보다 옛 판일 수 있음. 행을 열면 실행마다 글자를 본다">—</span>
+                    : le.text == null && le.http == null ? <span className="text-fg-3" title="가장 최근 실행에 오류 글자 · http 가 없음">—</span>
+                    : <div className="flex items-start gap-1.5">
+                        {le.http != null ? <span className="mono whitespace-nowrap text-[10px] text-fg-3" data-testid="runs-last-http">http {le.http}</span> : null}
+                        {le.text != null ? <pre className="mono whitespace-pre-wrap text-[10px] text-fg-2" title={RAW_RECORD_TITLE} data-raw="record" data-testid="runs-last-error">{le.text}</pre> : null}
+                      </div>}</td>
+                  <td><button className={SMALL_BTN} disabled={!key} aria-expanded={open} aria-controls={open ? RUNS_DRILL_ID : undefined} data-testid="runs-drill-open"
+                    aria-label={`${open ? "실행 목록 닫기" : "실행 목록 열기"}: ${label}`} title={SUMMARY_OPEN_TITLE}
+                    onClick={() => key && setDrill(open ? null : { k: key, since: summarySince(runs) })}>{open ? "접기" : "실행"}</button></td>
+                </tr>
+                {open && drill ? <tr><td colSpan={8}>
+                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => setDrill(null)} onAuthMiss={(e) => { void authMiss(e); }} />
+                </td></tr> : null}
+              </Fragment>;
+            })}</tbody></table>
           <div className="label mb-1">Recent runs (errors masked, copy raw)</div>
           <table><thead><tr><th>id</th><th>job</th><th>provider</th><th>started (KST)</th><th>status</th><th>http</th><th>ms</th><th>in / quarantined</th><th>raw_ref</th><th>error</th></tr></thead>
             <tbody>{runs.items.map((r) => <tr key={String(r.id)}><td className="mono">{String(r.id)}</td><td>{String(r.job)}</td><td>{String(r.provider)}</td><TimeCell v={r.started_at} /><td className={runStatusClass(r.status, "item")} title={RUN_STATUS_TITLE[String(r.status)]}>{String(r.status)}</td><td className="mono">{String(r.http_status ?? "")}</td><td className="mono">{r.latency_ms == null ? "—" : String(r.latency_ms)}</td><td className="mono">{String(r.records_in)} / {String(r.records_quarantined)}</td><td className="mono text-fg-3">{String(r.raw_ref ?? "")}</td><td>{r.error_text ? <pre className="mono max-w-[360px] whitespace-pre-wrap text-[10px] text-fg-2" title={RAW_RECORD_TITLE} data-raw="record">{String(r.error_text)}</pre> : null}</td></tr>)}</tbody></table>
