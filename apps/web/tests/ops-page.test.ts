@@ -316,10 +316,11 @@ describe("ops: every tab shows Korean time only; unknown latency is — (not '�
 
     await tab("runs");
     expect(heads()).toEqual(expect.arrayContaining(["last (KST)", "started (KST)", "avg latency", "ms"]));
-    const sum = all((e) => e.tagName === "TR").map((r) => all((e) => e.tagName === "TD", r).map((c) => c.textContent)).filter((c) => c.length === 6);
+    // 요약 행: … · last (KST) · last error(raw — 이 응답에는 last_error_text 키가 없어 error 행은 '—' 모름, ok 행은 비움) · runs(행 열기 — tests/ops-runs-drill)
+    const sum = all((e) => e.getAttribute?.("data-testid") === "runs-summary-row").map((r) => all((e) => e.tagName === "TD", r).map((c) => c.textContent));
     expect(sum).toEqual([
-      ["region", "adsb_lol", "error", "3", "—", "09-29 08:40:21 KST"],
-      ["region", "adsb_fi", "ok", "40", "250 ms", "09-29 08:41:00 KST"],
+      ["region", "adsb_lol", "error", "3", "—", "09-29 08:40:21 KST", "—", "실행"],
+      ["region", "adsb_fi", "ok", "40", "250 ms", "09-29 08:41:00 KST", "", "실행"],
     ]);
     expect(row("7")[3].textContent).toBe("09-29 08:40:21 KST");
     expect(row("7")[6].textContent).toBe("—"); // 머리글이 ms — 모르면 빈칸이 아니라 —
