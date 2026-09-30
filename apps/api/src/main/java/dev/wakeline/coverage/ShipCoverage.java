@@ -254,40 +254,56 @@ public class ShipCoverage implements SmartLifecycle {
 
     // ---- 스냅숏 ----
 
-    /** 지금 응답({@value #SNAPSHOT_MS} ms 안이면 같은 것). */
+    /**
+     * 지금 응답({@value #SNAPSHOT_MS} ms 안이면 같은 것). 지났으면 잠금 안에서 다시 보고 만든다 — 동시에 온 요청들이 차례로 다시 만들지 않고(칸 정렬은 스트림 소비
+     * 스레드와 같은 격자 잠금 안이다) 먼저 만든 것을 함께 쓴다(ETag 도 하나).
+     */
     public Snapshot snapshot() {
         Snapshot s = snapshot;
-        long now = clock.getAsLong();
-        if (s != null && now >= s.generatedAt().toEpochMilli() && now - s.generatedAt().toEpochMilli() < SNAPSHOT_MS) return s;
-        return snapshotNow();
+        if (fresh(s, clock.getAsLong())) return s;
+        synchronized (snapLock) {
+            s = snapshot;
+            long now = clock.getAsLong();
+            return fresh(s, now) ? s : build(now);
+        }
+    }
+
+    private static boolean fresh(Snapshot s, long now) {
+        return s != null && now >= s.generatedAt().toEpochMilli() && now - s.generatedAt().toEpochMilli() < SNAPSHOT_MS;
     }
 
     /** 새로 만든다(시험 · 캐시가 지났을 때). */
     public Snapshot snapshotNow() {
         synchronized (snapLock) {
-            long now = clock.getAsLong();
-            List<CoverageGrid.CellView> cells;
-            long positions, dropped, windowFrom;
-            synchronized (lock) {
-                grid.roll(now);
-                cells = List.copyOf(grid.cells());
-                positions = grid.positions();
-                dropped = grid.dropped();
-                windowFrom = grid.windowFromMs();
-                gauges();
-            }
-            Bootstrap b = bootstrap;
-            long coveredFrom = Math.min(b.loadedFrom().toEpochMilli(), liveFromMs);
-            long since = Math.max(windowFrom, coveredFrom);
-            String covered = since == windowFrom ? "full" : coveredFrom < liveFromMs ? "partial" : "since_api_start";
-            long newest = Long.MIN_VALUE;
-            for (CoverageGrid.CellView c : cells) newest = Math.max(newest, c.lastSeenMs());
-            Snapshot s = new Snapshot("\"o" + Long.toString(++snapshotSeq, 36) + "-" + Long.toString(now, 36) + "\"", Instant.ofEpochMilli(now),
-                    Instant.ofEpochMilli(windowFrom), Instant.ofEpochMilli(since), covered, Instant.ofEpochMilli(startMs), Instant.ofEpochMilli(liveFromMs), b,
-                    cells, positions, dropped, maxCells, maxShipCells, provider, newest == Long.MIN_VALUE ? null : Instant.ofEpochMilli(newest));
-            snapshot = s;
-            return s;
+            return build(clock.getAsLong());
         }
+    }
+
+    /** snapLock 안에서. */
+    private Snapshot build(long now) {
+        // 부트스트랩 상태를 격자 복사보다 먼저 읽는다: 부트스트랩은 시 조각을 합친(잠금) 뒤에 loaded_from 을 올리므로, 여기서 읽은 상태가 말하는 시는 아래 복사본에
+        // 늘 들어 있다 — 복사본에 없는 시까지 '셌다'(since · covered)고 말하지 않는다(더 적게 말할 수는 있다 — 다음 스냅숏이 따라잡는다).
+        Bootstrap b = bootstrap;
+        List<CoverageGrid.CellView> cells;
+        long positions, dropped, windowFrom;
+        synchronized (lock) {
+            grid.roll(now);
+            cells = List.copyOf(grid.cells());
+            positions = grid.positions();
+            dropped = grid.dropped();
+            windowFrom = grid.windowFromMs();
+            gauges();
+        }
+        long coveredFrom = Math.min(b.loadedFrom().toEpochMilli(), liveFromMs);
+        long since = Math.max(windowFrom, coveredFrom);
+        String covered = since == windowFrom ? "full" : coveredFrom < liveFromMs ? "partial" : "since_api_start";
+        long newest = Long.MIN_VALUE;
+        for (CoverageGrid.CellView c : cells) newest = Math.max(newest, c.lastSeenMs());
+        Snapshot s = new Snapshot("\"o" + Long.toString(++snapshotSeq, 36) + "-" + Long.toString(now, 36) + "\"", Instant.ofEpochMilli(now),
+                Instant.ofEpochMilli(windowFrom), Instant.ofEpochMilli(since), covered, Instant.ofEpochMilli(startMs), Instant.ofEpochMilli(liveFromMs), b,
+                cells, positions, dropped, maxCells, maxShipCells, provider, newest == Long.MIN_VALUE ? null : Instant.ofEpochMilli(newest));
+        snapshot = s;
+        return s;
     }
 
     // ---- 생명주기 ----

@@ -16,7 +16,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -268,6 +271,63 @@ class ShipCoverageTest {
         assertThat(d).isNotSameAs(a);
         assertThat(d.cells()).hasSize(1);
         assertThat(d.etag()).isNotEqualTo(a.etag()).startsWith("\"o").endsWith("\"");
+    }
+
+    /**
+     * 리뷰(2026-09-30): 60 s 가 지난 바로 뒤 동시에 온 요청들이 잠금 밖에서 '지났다'고 본 뒤 차례로 스냅숏을 다시 만들었다(칸 전부를 격자 잠금 안에서 정렬 —
+     * 스트림 소비 스레드와 같은 잠금 · 요청마다 다른 ETag). 이제 잠금 안에서 다시 보고, 먼저 만든 것을 함께 쓴다. 시계로 순서를 정해 결정적으로 — 수정 전 실패.
+     */
+    @Test
+    void requestsArrivingTogetherAfterExpiryShareOneRebuild() throws Exception {
+        long t = START + 1_000 + ShipCoverage.SNAPSHOT_MS;
+        CountDownLatch aInside = new CountDownLatch(1), bChecked = new CountDownLatch(1);
+        Thread[] a = new Thread[1], b = new Thread[1];
+        ThreadLocal<int[]> calls = ThreadLocal.withInitial(() -> new int[1]);
+        AtomicLong base = new AtomicLong(START + 1_000);
+        java.util.function.LongSupplier clock = () -> {
+            int n = ++calls.get()[0];
+            Thread me = Thread.currentThread();
+            if (me == a[0] && n == 2) { // A 는 잠금 안(두 번째 시계) — B 가 잠금 밖에서 '지났다'고 볼 때까지 기다린다
+                aInside.countDown();
+                try { bChecked.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+            if (me == b[0] && n == 1) bChecked.countDown(); // B 는 이미 옛 스냅숏을 읽었다
+            return base.get();
+        };
+        ShipCoverage c = new ShipCoverage(new FakeSource(), clock, new SimpleMeterRegistry(), 0, 100, 1_000);
+        ShipCoverage.Snapshot old = c.snapshotNow();
+        base.set(t);
+        AtomicReference<ShipCoverage.Snapshot> ra = new AtomicReference<>(), rb = new AtomicReference<>();
+        a[0] = new Thread(() -> ra.set(c.snapshot()));
+        b[0] = new Thread(() -> rb.set(c.snapshot()));
+        a[0].start();
+        assertThat(aInside.await(5, TimeUnit.SECONDS)).isTrue();
+        b[0].start();
+        a[0].join(5_000);
+        b[0].join(5_000);
+        assertThat(ra.get()).isNotSameAs(old);
+        assertThat(rb.get()).as("the second request uses the rebuild the first one made").isSameAs(ra.get());
+    }
+
+    /**
+     * 리뷰(2026-09-30): 스냅숏이 격자를 복사한 뒤에 부트스트랩 상태를 읽었다 — 그 사이 부트스트랩이 한 시를 합치고 loaded_from 을 올리면 복사본에 없는 시까지
+     * '셌다'(since · covered)고 말할 수 있었다. 이제 상태를 먼저 읽는다(합친 뒤에 올리므로 읽은 상태는 뒤의 복사본에 늘 들어 있다). 그 틈은 잠금을 푼 뒤 volatile 을
+     * 읽기까지 몇 ns 라 결정적으로 되살릴 수 없다 — 이 시험은 동시에 돌리며 '주장 ≤ 자료'를 본다(수정 전에도 대개 통과한다 — 불변식의 기록).
+     */
+    @Test
+    void aSnapshotNeverClaimsHoursItsCellsDoNotHold_whileTheBootstrapRuns() throws Exception {
+        for (int round = 0; round < 20; round++) {
+            FakeSource src = new FakeSource();
+            ShipCoverage c = new ShipCoverage(src, System::currentTimeMillis, new SimpleMeterRegistry(), 0, 100, 1_000);
+            Thread boot = new Thread(c::runBootstrap);
+            boot.start();
+            while (boot.isAlive()) {
+                ShipCoverage.Snapshot s = c.snapshotNow();
+                int ships = s.cells().stream().mapToInt(CoverageGrid.CellView::ships).sum(); // 시 조각마다 서로 다른 선박 하나
+                assertThat(ships).as("round %d: %d hours claimed", round, s.bootstrap().hoursLoaded()).isGreaterThanOrEqualTo(s.bootstrap().hoursLoaded());
+            }
+            boot.join();
+        }
     }
 
     @Test
