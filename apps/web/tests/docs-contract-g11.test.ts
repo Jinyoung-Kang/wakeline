@@ -136,6 +136,9 @@ describe("contract v5 amendment numbers are unique", () => {
     // 레인 collector(2026-09-30 오후): 기상청 429 · 관심 지역 '공급자 없음' — 16차 · §G24
     expect(heading(24)).toMatch(/^## G\. 16차 개정\(2026-09-30 오후 · 레인 collector /);
     expect(amendment(24)).toContain("관심 지역 '공급자 없음'은 이름 붙인 상태");
-    expect(amendment(25)).toBe("");
+    // 레인 collector(2026-09-30 저녁): 관심 지역 순서 adsb.fi → adsb.lol — 17차 · §G25
+    expect(heading(25)).toMatch(/^## G\. 17차 개정\(2026-09-30 저녁 · 레인 collector /);
+    expect(amendment(25)).toContain("관심 지역 기본 순서 adsb.fi → adsb.lol");
+    expect(amendment(26)).toBe("");
   });
 });

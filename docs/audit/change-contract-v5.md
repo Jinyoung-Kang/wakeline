@@ -740,3 +740,20 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     adsb_fi 가 풀린 주기에 받음 · 다시 시도의 429 · 쿨다운이 실패 쉼을 줄이지 않음 · Redis 가 떨군 상태 쓰기를 다음 주기에 다시 씀) · infra `test_compose_policy`(수집기 설정이
     collector 에 닿음 · `KMA_APIHUB_RPS` 기본 0.5) · `test_aircraft_job`(해시 · 전환 기록 · 로그 · 다시 시도 중 공급자 없음과 그 끝 · 전세계를 끄면 비움 · adsb.lol 을 부르는 곳은 항공기 체인뿐),
     web `tests/region-no-provider.test.ts`. 특성 시험 둘(`test_without_the_host_bucket_…` · `test_takeover_calls_adsb_lol_once_per_cycle…`)은 기록이지 회귀 막기가 아니다.
+
+## G. 17차 개정(2026-09-30 저녁 · 레인 collector · 운영/로그 스크린샷 — adsb.lol 429 되풀이 · 기상청 '파일 없음' 긴 연속의 예산)
+- G25(FR-16 폴백 · R-17 · §G24 · ADR-009 · ADR-011 개정 2026-09-30 저녁) **관심 지역 기본 순서 adsb.fi → adsb.lol — adsb.lol 은 폴백으로만**.
+  - 까닭(운영/로그 2026-09-30): adsb.lol 은 미룸이 끝나 체인이 돌아올 때마다 약 1–2분 안에 429 였다(05:46 · 11:48 · 12:16/12:22 · 18:24 KST — 2026-09-29 의 11:29:34 복귀 →
+    11:30:33 429 와 같은 모양, ADR-011). 돌아올 때마다 WARN 한 줄 · 전환 둘 · 곧 거절할 공급자에게 몇 분. adsb.fi 는 그날 관심 지역을 하루 내내 맡았다(운영 RUNS
+    `region adsb_fi ok 7,797`, 오류는 12:14 TLS 묶음뿐 — §G24 의 '공급자 없음' 상태가 다뤘다). adsb.lol 한도 수치는 없다(README 'dynamic') — 속도를 추정해 바꾸지 않는다.
+  - 순서(운영 설정 `aircraft_providers` — DB `app_setting` 이 원본, api 가 Redis `wakeline:settings` 로 미러, 수집기가 주기마다 읽는다): 기본값 `adsb_fi,adsb_lol,opensky`.
+    수집기 설정 기본값 · `.env.example` · compose 기본값(`${AIRCRAFT_PROVIDERS:-adsb_fi,adsb_lol,opensky}`)이 같다(infra `test_region_chain_default_is_adsb_fi_first_everywhere`).
+    **V17**(`V17__region_provider_order_adsb_fi_first.sql`)이 운영 DB 의 값을 옮긴다 — 운영자가 바꾼 적 없고(`updated_by` NULL · `env`) 옛 기본값 그대로일 때만,
+    같은 문장에서 감사 기록(`SETTING_DEFAULT_V17`, 시스템 — user_id NULL) · version + 1. 운영자가 고른 순서는 옛 기본값과 같은 글자여도 그대로다. 머리 주석에 되돌리기 SQL.
+  - 바꾸지 않는 것: 폴백으로 쓰일 때의 adsb.lol 429 쉼(60 → 300 s) · 되풀이 미룸(10 → 360분, R-17) · 이력 보존 · 전환 사유 · '공급자 없음' 상태(§G24) · 전세계 체인
+    (OpenSky 만 지원) · 출처 표기(두 공급자 모두 늘 — `lib/attribution.ts`) · adsb.fi 호스트 버킷 0.8 req/s · 하루 예산 40,000 과 관심 지역 몫 8,640 · 새 숫자 없음.
+    adsb.fi 조건(개인 · 비상업 · 초당 1회)은 이 서비스가 이미 지키고 있다 — 상업 · 공개 배포라면 순서를 운영 설정으로 되돌리거나 adsb.fi 를 끈다(ADR-011 '보강 3').
+  - 로그: 기동 줄이 설정의 실제 순서를 적는다 — `region chain uses adsb_fi → adsb_lol (aircraft_providers: runtime setting, else .env); opensky is global-only (daily cap 2880
+    credits)`(전에는 `adsb_lol → adsb_fi` 고정 글). 웹: /about 의 1 · 2순위 줄 · 운영 설정 `aircraft_providers` 안내(앞이 먼저 · 기본값).
+  - 회귀 막기: collector `test_aircraft_job`(기본 순서 · adsb_fi 먼저 → 3회 실패면 adsb.lol 폴백 → 쉼 끝에 1순위 복귀 · 폴백 adsb.lol 의 429 쉼 · 미룸 · 전세계 체인은 그대로 ·
+    기동 줄), api `MigrationDbTest.v17…`(바꾸는 경우 · 두지 않는 경우 · 감사 기록 · 되돌리기), infra `test_compose_policy`(네 곳이 같은 순서).

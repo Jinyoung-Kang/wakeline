@@ -367,7 +367,7 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   metar_poll_s: { kind: "int", min: 300, max: 7200, unit: "초" },
   region_radius_nm: { kind: "int", min: 50, max: 500, unit: "NM" },
   global_enabled: { kind: "bool" },
-  aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_lol · adsb_fi · opensky 를 쉼표로(예: adsb_lol,adsb_fi)" },
+  aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_fi · adsb_lol · opensky 를 쉼표로 — 앞이 먼저(기본 adsb_fi,adsb_lol,opensky · opensky 는 전세계만)" },
   region_center: {
     kind: "text", pattern: LAT_LON, hint: "위도,경도(예: 36.5,127.8) · |위도| ≤ 85",
     check: (v) => { const [la, lo] = v.split(",").map((x) => Number(x.trim())); return Math.abs(la) > 85 || Math.abs(lo) > 180 ? "위도는 ±85, 경도는 ±180 안이어야 합니다." : null; },
