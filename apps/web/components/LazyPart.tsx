@@ -12,7 +12,7 @@ import { describeThrown, reportClientError } from "@/lib/errorReport";
  * - 받은 뒤: 조각을 같은 그리기에서 바로 그린다 — 이미 받은 모듈이면 lazy 에 동기 thenable 을 넘겨 기다리지 않는다(번쩍임 없음).
  * - 받지 못함: 까닭(role=alert)을 보이고, 서버에 그 청크가 있는지 한 번 확인해(lib/chunk-probe — HEAD) 그 결과와 함께 시스템 로그에 보고한다
  *   (lib/errorReport — 같은 메시지 60 s 에 1번). 청크가 서버에 없으면(404 · 410 — 페이지를 연 뒤 새 판이 배포되어 옛 청크가 사라짐) '다시 시도'로는 받을 수
- *   없으므로 '페이지 새로 고침'만, 그 밖에는 '다시 시도'(새 lazy 로 다시 받는다)를 보인다. 다시 시도가 또 실패하면 두 단추를 함께 보인다.
+ *   없으므로 '페이지 새로고침'만, 그 밖에는 '다시 시도'(새 lazy 로 다시 받는다)를 보인다. 다시 시도가 또 실패하면 두 단추를 함께 보인다.
  *   받은 조각 자신의 그리기 오류는 삼키지 않는다 — 경계가 다시 던져 위(app/error.tsx)가 받는다.
  * - 다시 시도 뒤의 초점: 누른 단추가 사라지므로, 초점이 문서로 떨어졌으면 불러온 조각의 첫 요소(또 실패하면 새 오류의 첫 단추)로 옮긴다 —
  *   키보드 · 화면 읽기 사용자가 패널 안의 자리를 잃지 않게. 사용자가 이미 다른 곳으로 옮겼으면 건드리지 않는다.
@@ -126,7 +126,7 @@ function PartLoading({ label, frame }: { label: string; frame: string }) {
 
 interface BoundaryProps { label: string; frame: string; attempt: number; onRetry: () => void; children: ReactNode }
 
-/** 페이지 새로 고침(새 판의 HTML · 청크를 받는다) */
+/** 페이지 새로고침(새 판의 HTML · 청크를 받는다) */
 function reloadPage() { window.location.reload(); }
 
 class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: ChunkCheck | null }> {
@@ -159,8 +159,8 @@ class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: Chu
     const missing = check?.kind === "missing";
     const retried = this.props.attempt > 0;
     const advice = missing
-      ? " — 이 페이지를 연 뒤 새 판이 배포되면 이렇게 됩니다. 다시 시도로는 받을 수 없으니 페이지를 새로 고치세요."
-      : retried ? " — 다시 시도도 실패했습니다. 계속되면 페이지를 새로 고치세요." : "";
+      ? " — 이 페이지를 연 뒤 새 판이 배포되면 이렇게 됩니다. 다시 시도로는 받을 수 없으니 페이지를 새로고침하세요."
+      : retried ? " — 다시 시도도 실패했습니다. 계속되면 페이지를 새로고침하세요." : "";
     return (
       <div ref={this.alertRef} className={this.props.frame} role="alert" data-testid="lazy-error" data-part={this.props.label} data-check={check?.kind ?? "pending"}>
         <div className="text-bad">{this.props.label} — 화면 코드를 받지 못했습니다</div>
@@ -168,7 +168,7 @@ class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: Chu
         <div className="mt-0.5 text-fg-2" data-testid="lazy-check">{chunkCheckText(check)}{advice}</div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {missing ? null : <button type="button" className="btn" onClick={this.props.onRetry} data-testid="lazy-retry" data-lazy-action="">다시 시도</button>}
-          {missing || retried ? <button type="button" className="btn" onClick={reloadPage} data-testid="lazy-reload" data-lazy-action="">페이지 새로 고침</button> : null}
+          {missing || retried ? <button type="button" className="btn" onClick={reloadPage} data-testid="lazy-reload" data-lazy-action="">페이지 새로고침</button> : null}
         </div>
       </div>
     );

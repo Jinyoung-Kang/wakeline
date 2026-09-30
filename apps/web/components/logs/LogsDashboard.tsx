@@ -23,7 +23,7 @@ import { revokeLogGroup } from "./logGroupTargets";
 type Tab = "logs" | "gaps";
 type View = "list" | "groups";
 type Groups = ReturnType<typeof parseLogGroups>;
-/** 자동 새로 고침(§C7) — 새 항목은 단추로만 반영한다 */
+/** 자동 새로고침(§C7) — 새 항목은 단추로만 반영한다 */
 const REFRESH_MS = 15_000;
 const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };

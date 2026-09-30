@@ -4,7 +4,7 @@
  *   진행 막대 · 자리 표시는 BUSY_APPEAR_DELAY_MS 뒤에 보인다(빨리 받으면 번쩍이지 않는다). 자리 표시는 값처럼 보이지 않는 막대.
  * - 받은 뒤: 같은 그리기에서 바로 그린다(한 번 받은 조각은 다시 기다리지 않는다).
  * - 받지 못함: 조용히 비우지 않는다 — 까닭을 보이고, 서버에 그 청크가 있는지 한 번 확인해(lib/chunk-probe) 그 결과와 함께 시스템 로그에 한 번 보고한다.
- *   청크가 서버에 없으면(404 — 페이지를 연 뒤 새 판이 배포됨) '다시 시도'로는 받을 수 없으니 '페이지 새로 고침'을, 있으면 '다시 시도'를 보인다.
+ *   청크가 서버에 없으면(404 — 페이지를 연 뒤 새 판이 배포됨) '다시 시도'로는 받을 수 없으니 '페이지 새로고침'을, 있으면 '다시 시도'를 보인다.
  *   다시 시도가 또 실패하면 두 단추를 함께 보인다.
  *   받은 조각 자신의 그리기 오류는 여기서 삼키지 않고 위(화면 오류 경계 app/error.tsx)로 올린다.
  */
@@ -52,7 +52,7 @@ describe("server render / first render", () => {
 
 describe("mounted (react-dom/client)", () => {
   const dom = installMiniDom();
-  // 청크 확인(HEAD)과 새로 고침은 전역 fetch · location 으로 한다 — 시험이 대역을 둔다
+  // 청크 확인(HEAD)과 새로고침은 전역 fetch · location 으로 한다 — 시험이 대역을 둔다
   const g = globalThis as Record<string, unknown>;
   const savedFetch = g.fetch;
   const net = { status: 200 as number | "fail", heads: [] as string[], reloads: 0 };
@@ -135,7 +135,7 @@ describe("mounted (react-dom/client)", () => {
     expect(err?.textContent).toContain("서버에 이 청크가 없음(HTTP 404)");
     expect(err?.textContent).toContain("새 판이 배포");
     expect(byId("lazy-retry")).toBeNull();
-    expect(byId("lazy-reload")?.textContent).toBe("페이지 새로 고침");
+    expect(byId("lazy-reload")?.textContent).toBe("페이지 새로고침");
     expect((reports[0] as { message: string }).message).toContain("청크 확인: 서버에 이 청크가 없음(HTTP 404)");
     await click(byId("lazy-reload"));
     expect(net.reloads).toBe(1);

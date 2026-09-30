@@ -344,7 +344,7 @@ export function loginErrorText(e: unknown): string {
   switch (e.status) {
     case 400: return "입력 형식이 올바르지 않습니다 — 아이디를 입력하고 비밀번호는 8자 이상이어야 합니다.";
     case 401: return "아이디 또는 비밀번호가 올바르지 않습니다(5회 실패 시 15분 잠금).";
-    case 403: return "요청이 거부되었습니다(보안 토큰) — 페이지를 새로 고친 뒤 다시 시도하세요.";
+    case 403: return "요청이 거부되었습니다(보안 토큰) — 페이지를 새로고침한 뒤 다시 시도하세요.";
     case 429: return e.retryAfterS != null ? `로그인 시도가 너무 많습니다 — ${e.retryAfterS}초 뒤 다시 시도하세요.` : "로그인 시도가 너무 많습니다 — 잠시 뒤 다시 시도하세요.";
     case 503: return "서버를 일시적으로 사용할 수 없습니다 — 잠시 뒤 다시 시도하세요.";
     default: return e.status >= 500 ? `서버 오류(HTTP ${e.status}) — 잠시 뒤 다시 시도하세요.` : `로그인하지 못했습니다(HTTP ${e.status}).`;
