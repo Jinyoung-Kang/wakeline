@@ -115,7 +115,7 @@ class OpsPipelineControllerTest {
         ais.put("updated_at", NOW.minusSeconds(2).toString());
         putDiagnostics(ais);
         OpsPipelineController.AisSignals a = controller(metrics()).pipeline().ais();
-        assertThat(a.diagWindowS()).isEqualTo(60L);
+        assertThat(a.diagWindowS()).isEqualTo(60.0);
         assertThat(a.loopLagMaxS()).isEqualTo(0.03);
         assertThat(a.loopStallsTotal()).isEqualTo(1L);
         assertThat(a.queueWaitMaxS()).isEqualTo(0.25);
@@ -133,6 +133,20 @@ class OpsPipelineControllerTest {
         assertThat(a.loopStallS()).isEqualTo(1.0);
         assertThat(a.loopWarnS()).isEqualTo(5.0);
         assertThat(a.loopWarnEveryS()).isEqualTo(60.0);
+    }
+
+    /**
+     * 통합 리뷰(2026-09-30): diag_window_s 는 수집기가 고른 초(sink.py _setting — 소수 셋째 자리까지)이고 contract_check 도 초로 본다. api 만 정수로
+     * 읽어 창이 60.5 처럼 소수가 되면 조용히 null(웹은 창을 "—" 로) 이 됐다 — 다른 고른 초와 같이 초로 읽는다.
+     */
+    @Test
+    void aFractionalDiagnosticWindowIsReadAsSecondsLikeTheOtherChosenSeconds() {
+        ais.put("updated_at", NOW.minusSeconds(2).toString());
+        putDiagnostics(ais);
+        ais.put("diag_window_s", "60.5");
+        assertThat(controller(metrics()).pipeline().ais().diagWindowS()).isEqualTo(60.5);
+        ais.put("diag_window_s", "6e1"); // 지수 표기는 다른 초와 같이 모름
+        assertThat(controller(metrics()).pipeline().ais().diagWindowS()).isNull();
     }
 
     @Test

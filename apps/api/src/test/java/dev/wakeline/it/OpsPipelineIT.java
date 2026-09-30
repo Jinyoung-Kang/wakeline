@@ -118,7 +118,7 @@ class OpsPipelineIT extends IntegrationTest {
             assertThat(fresh.path("ais").path("ping_rtt_max_s").asDouble()).isEqualTo(0.31);
             assertThat(fresh.path("ais").path("ping_timeout_s").asDouble()).isEqualTo(20.0);
             assertThat(fresh.path("ais").path("reconnects_quick_total").asLong()).isEqualTo(2);
-            assertThat(fresh.path("ais").path("diag_window_s").asLong()).isEqualTo(60);
+            assertThat(fresh.path("ais").path("diag_window_s").asDouble()).isEqualTo(60.0);
             assertThat(fresh.path("ais").get("queue_wait_max_s").isNull()).as("not written → unknown").isTrue();
             assertThat(fresh.path("collector").path("publish_dropped").asLong()).isEqualTo(3);
             assertThat(fresh.path("collector").path("db_dropped").asLong()).isEqualTo(2);

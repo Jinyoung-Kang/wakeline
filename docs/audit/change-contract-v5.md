@@ -637,7 +637,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - `GET /api/v1/ops/pipeline` 의 `ais` 에 같은 이름(snake_case)으로 싣는다: `reconnects_quick_total` · `loop_lag_max_s` · `loop_stalls_total` · `queue_wait_max_s` ·
     `queue_depth_max` · `queue_limit` · `ws_queue_max` · `ws_queue_limit` · `ping_rtt_max_s` · `ping_timeout_s` · `diag_window_s` · `reconnect_quick_window_s` ·
     `reconnect_warn_count` · `reconnect_warn_window_s` · `loop_tick_s` · `loop_stall_s` · `loop_warn_s` · `loop_warn_every_s`. 같은 신선도 규칙(updated_at 30 s)이고 초는
-    부호 · 지수 없는 십진수만, 수 · 상한은 정수만 — 그 밖은 null. 운영 PIPELINE 탭은 창 · 상한 · 시간 초과를 detail 에 "수집기 설정" 으로 적고, 설명의 고른 숫자
+    부호 · 지수 없는 십진수만, 수 · 상한은 정수만 — 그 밖은 null. `diag_window_s` 도 초다(수집기 `_setting` · contract_check 와 같이 — 통합 리뷰 2026-09-30 에
+    api 만 정수로 읽던 것을 고쳤다: 창이 60.5 처럼 소수가 되면 조용히 null 이었다). 운영 PIPELINE 탭은 창 · 상한 · 시간 초과를 detail 에 "수집기 설정" 으로 적고, 설명의 고른 숫자
     (회복 창 · 되풀이 WARN 기준 · 루프 틱 · 멈춤 · WARN 문턱과 간격)를 응답에서 채운다(모르면 "—"). 색으로 판정하지 않는다: 수신 버퍼가 상한 이상이면
     "상한 도달 — 그때 소켓 읽기가 잠시 멈춤(한꺼번에 받은 묶음 또는 루프 멈춤 — 결함 아님 …)" 을 적을 뿐이다(꺼낸 뒤 남은 수라 상한과 같아도 멈춰 있었다).
     어느 것도 손실 수가 아니다(손실 배지에 들지 않는다).
