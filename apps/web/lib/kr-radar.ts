@@ -6,7 +6,7 @@
  * 어디에도 '완전'이라고 하지 않는다: partial=false 는 "기준 도달"(지난 60분 저장 프레임 중 최대와 같음)일 뿐, 기상청 합성이 완전한지는 자료에 없다.
  * 기준이 그 프레임 하나뿐이면 수집기가 판정을 두지 않는다(REF_MIN_SUPPORT) — "판정 —".
  */
-import { fmtKstMinute, kstWallMs } from "./time";
+import { fmtKst, fmtKstMinute, fmtTimeTitle, kstWallMs, timeParts } from "./time";
 import type { KrRadarFrame } from "./types";
 
 /** 기준 지점 수를 세는 창(분) — 수집기 jobs/kma_radar.py REF_WINDOW_S(선택값)와 같다(tests/kma-partial 이 견준다). 설명 글자에만 쓴다. */
@@ -90,4 +90,60 @@ export function krLayerId(f: Pick<KrRadarFrame, "tm" | "url">): string {
 /** tm(YYYYMMDDHHMM — 기상청이 준 KST 벽시계) → "HH:MM KST"(계약 v5 §G20). 틀리면 "—". */
 export function krTmClock(tm: string | null | undefined): string {
   return fmtKstMinute(kstWallMs(tm));
+}
+
+// ---- 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) ----
+
+/** 연속 한 건(krMissing) — 칩 낱말 · 한 줄 · 여러 줄 설명과 그 조각(상세 행). 값은 모두 api(수집기 확인) 그대로 */
+export interface KrMissingInfo {
+  word: "파일 없음";
+  /** "기상청 내려받기 파일(PUB) 없음 — tm 08:15 KST 부터 20개(마지막 tm 09:50 KST) · 목록에는 EXT · 마지막 확인 09:50:31 KST" */
+  text: string;
+  /** 여러 줄: 무엇 · 첫/마지막 tm · 기상청 답의 파일 · 목록 종류 · 마지막 확인(전체 순간) · 수집기가 하는 일 */
+  title: string;
+  since: string;
+  last: string;
+  tms: number;
+  checkedAt: string;
+  /** 기상청 답의 파일 이름(모르면 null) · 목록 종류 "EXT/KMA"(모르면 null) */
+  file: string | null;
+  listed: string | null;
+}
+
+const MISSING_FILE = /^RDR_CMP_[A-Z]+_([A-Z]+)_\d{12}\.bin\.gz$/;
+const TM = /^\d{12}$/;
+
+/**
+ * api 의 missing(기상청 내려받기 '파일 없음' 연속) → 글자. 핵심 값(첫 tm · 마지막 tm · 수 · 마지막 확인)이 틀리면 null — 일부만으로 까닭을 말하지 않는다.
+ * 파일 이름 · 목록 종류는 기상청 글자 그대로일 때만 쓰고, 모르면 쓰지 않는다(짓지 않는다). 파일 종류(PUB 등)는 기상청 답의 파일 이름에서 읽는다 — 뜻을 풀지 않는다.
+ * tm 은 기상청 KST 벽시계라 그대로 "HH:MM KST"(지금과 KST 날짜가 다르면 날짜도), 마지막 확인은 "HH:MM:SS KST"(마우스를 올리면 연도 · ms).
+ */
+export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
+  if (!m || typeof m !== "object") return null;
+  const o = m as Record<string, unknown>;
+  const since = typeof o.since_tm === "string" && TM.test(o.since_tm) ? o.since_tm : null;
+  const last = typeof o.last_tm === "string" && TM.test(o.last_tm) ? o.last_tm : null;
+  const tms = typeof o.tms === "number" && Number.isInteger(o.tms) && o.tms >= 1 ? o.tms : null;
+  const checkedMs = typeof o.checked_at === "string" && timeParts(o.checked_at) ? Date.parse(o.checked_at) : NaN;
+  const sinceMs = kstWallMs(since), lastMs = kstWallMs(last);
+  if (since == null || last == null || tms == null || !Number.isFinite(checkedMs) || sinceMs == null || lastMs == null || lastMs < sinceMs) return null;
+  const checkedAt = o.checked_at as string;
+  const file = typeof o.file === "string" && MISSING_FILE.test(o.file) ? o.file : null;
+  const kind = file ? MISSING_FILE.exec(file)![1] : null;
+  const kinds = Array.isArray(o.listed) && o.listed.length > 0 && o.listed.every((k) => typeof k === "string" && /^[A-Z]{1,8}$/.test(k)) ? (o.listed as string[]) : null;
+  const listed = kinds ? kinds.join("/") : null;
+  const today = nowMs > 0 ? timeParts(nowMs)?.wall.ymd : undefined;
+  const clock = (ms: number) => fmtKstMinute(ms, { date: timeParts(ms)?.wall.ymd !== today });
+  const checked = fmtKst(checkedMs, { date: timeParts(checkedMs)?.wall.ymd !== today, seconds: true });
+  const head = `기상청 내려받기 파일${kind ? `(${kind})` : ""} 없음`;
+  const text = `${head} — tm ${clock(sinceMs)} 부터 ${tms}개(마지막 tm ${clock(lastMs)})${listed ? ` · 목록에는 ${listed}` : ""} · 마지막 확인 ${checked}`;
+  const title = [
+    `${head} — 기상청 목록에는 tm 이 있는데 내려받기가 '파일 없음'으로 답함(수집기 확인)`,
+    `첫 tm ${clock(sinceMs)} · 마지막 tm ${clock(lastMs)} · 없다고 답한 tm ${tms}개`,
+    file ? `기상청 답의 파일: ${file}` : "기상청 답의 파일 이름 모름",
+    kinds ? `목록의 파일 종류: ${kinds.join(", ")}` : "목록의 파일 종류 모름",
+    `마지막 확인 ${fmtTimeTitle(checkedMs) ?? "—"}`,
+    "그동안 수집기가 주기마다 목록의 가장 새 tm 하나만 확인 — 파일이 다시 오면 이 표시는 사라짐",
+  ].join("\n");
+  return { word: "파일 없음", text, title, since: clock(sinceMs), last: clock(lastMs), tms, checkedAt, file, listed };
 }

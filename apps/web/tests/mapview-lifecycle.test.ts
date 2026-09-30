@@ -314,6 +314,24 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     expect(dom.container.textContent).toContain("1 frames · 5 min");
   });
 
+  // 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api missing): 새 프레임이 오지 않는 까닭 — 쓸 수 있으면 '파일 없음' 표시(문장은 title),
+  // 보관 프레임이 만료돼 쓸 수 없으면 '기상청 레이더 없음' 문장에. 수정 전에는 둘 다 없었다.
+  it("a missing-file streak: a 파일 없음 badge with the sentence while frames are served, and the reason in '기상청 레이더 없음' once they expired", async () => {
+    const missing = { since_tm: "202609280115", last_tm: "202609280125", tms: 3, checked_at: "2026-09-28T01:25:31Z", file: "RDR_CMP_HSR_PUB_202609280125.bin.gz", listed: ["EXT"] };
+    useUi.setState({ radarSource: "kma" });
+    setData({ radarKr: { ...unavailable(), available: true, georeferenced: true, missing,
+      frames: [{ tm: "202609280110", obs_tm: "202609280110", fetched_at: "x", echo_cells: 1, url: "/u" }] } as never });
+    await mountTimeline();
+    const badge = byTestId("kr-frame-missing");
+    expect(badge?.textContent).toBe("파일 없음");
+    expect(badge?.getAttribute("title")).toMatch(/^기상청 내려받기 파일\(PUB\) 없음 — tm (\d\d-\d\d )?01:15 KST 부터 3개/);
+    await act(() => setData({ radarKr: unavailable({ note: "", missing }) as never }));
+    expect(byTestId("kr-frame-missing")).toBeNull();
+    expect(byTestId("radar-kr-unavailable")?.textContent).toMatch(/^기상청 레이더 없음 — 기상청 내려받기 파일\(PUB\) 없음 — tm (\d\d-\d\d )?01:15 KST 부터 3개\(마지막 tm (\d\d-\d\d )?01:25 KST\) · 목록에는 EXT · 마지막 확인 (\d\d-\d\d )?10:25:31 KST · 마지막 수집 09-28 10:31:00 KST$/);
+    await act(() => setData({ radarKr: unavailable({ note: "" }) as never })); // 연속이 닫힘 — 까닭 없음(전과 같다)
+    expect(byTestId("radar-kr-unavailable")?.textContent).toBe("기상청 레이더 없음 · 마지막 수집 09-28 10:31:00 KST");
+  });
+
   // ADR-021: 부분 합성 프레임 — 타임라인이 지금 프레임의 합성 크기를 적고, 부분 합성이면 경고 표시와 문장(툴팁), 프레임 띠에 프레임별 상태
   const krFrames = (until: string) => ({
     ...unavailable(), available: true, georeferenced: true, latest_tm: "202609281210",

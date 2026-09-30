@@ -1,6 +1,7 @@
 /** 운영 화면 보조(순수 함수·주입 가능한 호출). 비인가 ops 호출은 404 로 숨겨지므로(SecurityConfig) 401 과 함께 "세션 없음 후보"로 본다. */
 import { ApiError } from "./api";
 import { fmtDuration } from "./format";
+import { krMissing, type KrMissingInfo } from "./kr-radar";
 import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
 import { fmtKstMinute, fmtTimeTitle, kstDayOf } from "./time";
 
@@ -347,4 +348,40 @@ export function qualityPartialDay(since: unknown): { day: string; text: string; 
     text: `부분 · ${fmtKstMinute(since)} 부터`,
     title: `부분 값 — 격리 수를 KST 날짜로 세기 시작한 ${title} 뒤에 시작한 실행만 들었다(V16). 그 앞의 실행은 V16 전 보관 표(quality_rule_count_utc_legacy — 운영자 psql)에 있다`,
   };
+}
+
+// ---- 수집 실행 상태 · 기상청 '파일 없음' 연속(운영 로그 2026-09-30) ----
+
+/**
+ * 실행 기록 상태의 설명(title) — 수집기가 정한 것만(jobs/kma_radar.py _outcome). ok · error 등 옛 상태는 이름 그대로 읽힌다.
+ * missing = 새 tm 이 목록에 있었으나 저장한 프레임이 없고 기상청 내려받기가 '파일 없음'으로 답한 주기 · quarantined = 받은 자료를 해석할 수 없어 격리만 한 주기.
+ */
+export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
+  missing: "새 tm 이 목록에 있었으나 저장한 프레임 없음 — 기상청 내려받기가 '파일 없음'으로 답함(호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다)",
+  quarantined: "새 tm 을 받았으나 해석할 수 없어 격리 — 저장한 프레임 없음(원본은 raw 에 남는다)",
+};
+
+/**
+ * 실행 상태 글자색: ok 초록 · missing · quarantined 주황(자료가 오지 않았지만 호출 실패는 아니다) · 그 밖(error · throttled · budget_* …)은 전과 같이
+ * 요약(summary) 주황 · 최근 실행(item) 빨강.
+ */
+export function runStatusClass(status: unknown, where: "summary" | "item"): string {
+  const s = String(status);
+  if (s === "ok") return "text-ok";
+  if (s in RUN_STATUS_TITLE) return "text-warn";
+  return where === "summary" ? "text-warn" : "text-bad";
+}
+
+/**
+ * 공급자 해시(수집기 wakeline:provider:kma_radar — /ops/providers 가 그대로 싣는다)의 missing_* 문자열 → 기상청 내려받기 '파일 없음' 연속(lib/kr-radar
+ * krMissing 과 같은 글자). 빈 값 = 닫힌 연속 · 다른 공급자 → null. 해시 값은 api 가 검증하지 않은 수집기 글자라 여기서 형식을 본다(틀리면 null).
+ */
+export function providerMissing(p: Record<string, unknown>, nowMs: number): KrMissingInfo | null {
+  const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
+  if (!str("missing_since_tm")) return null;
+  const tms = /^\d{1,6}$/.test(str("missing_tms")) ? Number(str("missing_tms")) : NaN;
+  return krMissing({
+    since_tm: str("missing_since_tm"), last_tm: str("missing_last_tm"), tms, checked_at: str("missing_checked_at"),
+    file: str("missing_file") || null, listed: str("missing_listed") ? str("missing_listed").split(",") : null,
+  }, nowMs);
 }
