@@ -70,3 +70,14 @@ heartbeat: 0 0 0 0
   202609300940 에 ext=Y · ext=K 를 붙여도 같은 응답(PUB 만 찾는다)
 문서(apihub.kma.go.kr apiList.do?seqApi=5): 목록 API 에 ext(Y 유관기관 포함 · K 기상청만) 인자가 있고, 내려받기 API 는 tm · data(bin/img) · cmp · authKey 와 PUB 파일 이름만 적는다.
 → 기상청이 08:15 KST 부터 공개(PUB) 합성 파일을 내지 않는다(목록에는 EXT · KMA 파일만) — 우리 해석 문제가 아니다.
+
+== 2026-10-01(KST) 00:5x 기상청 목록도 멈춤 — '확인 멈춤'이 거짓으로 뜬 까닭(수집기 컨테이너에서 호출, 키는 출력하지 않음)
+/api/v1/radar/kr missing: since_tm 202609301310 · last_tm 202609301950 · tms 81 · listed [EXT] · probe_every_s 900 · checked_at 2026-09-30T15:05:11Z(00:05 KST)
+  — 상황판 KMA 칩 'STALE 파일 없음 · 확인 멈춤'(checked_at 이 확인 간격 × 3 = 45분보다 오래됨)
+ingest_run radar_kr(운영 DB, 읽기 전용): 23:50 · 00:05 KST 'missing', 00:20 · 00:35 · 00:50 KST 'ok' http 200 error_text 없음, 그 사이 주기 'waiting'
+  — 15분마다 부른 주기는 돌았는데(목록 호출 성공) 연속의 checked_at 은 00:05 KST 에 머물렀다
+목록 API rdr_cmp_file_list.php?cmp=HSR:
+  tm=20260930 → HTTP 200 · 파일 239개 · 마지막 RDR_CMP_HSR_EXT_202609301950(19:50 KST — EXT 도 그 뒤로 없음)
+  tm=20261001 → HTTP 504 · 파일 0
+→ 기상청 쪽: 공개(PUB) 파일은 09-30 08:15 KST 부터, 유관기관(EXT) 목록도 19:50 KST 부터 새 tm 없음, 새 날 목록은 504.
+→ 우리 쪽: 목록에 새 tm 이 없어 확인할 tm 이 없던 주기를 'ok' 로 적고 checked_at 을 고치지 않았다 — 확인은 했는데 '확인 멈춤'으로 보였다(VERIFICATION #87).
