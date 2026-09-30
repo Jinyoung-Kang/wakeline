@@ -688,10 +688,19 @@ class KmaRadarJob:
         s = self.missing
         return s is not None and s.last_tm[:8] < day and not any(tm <= now_tm for tm in today)
 
-    async def _listing(self):
+    @staticmethod
+    def _behind_prev_day(day: str, now_tm: str, today: list[str], have: list[str]) -> bool:
+        """연속이 없어도 전날 목록을 덧붙여 읽는가: 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고, 저장한 프레임이 전날 끝(23:55)에
+        닿지 않았다. 운영 2026-10-01 02:07 KST — 다시 띄운 수집기가 오래된 연속을 버린 뒤 빈 새 날 목록만 읽어 확인할 tm 이 없었고(주기마다 'ok'),
+        연속이 다시 열리지 않았다. 전날 끝까지 받았으면 전날 목록에 새로 받을 것이 없다 — 새 날 목록이 하루 내내 비어도 호출을 늘리지 않는다."""
+        prev_end = (datetime.strptime(day, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d") + "2355"
+        return not any(tm <= now_tm for tm in today) and max(have, default="") < prev_end
+
+    async def _listing(self, have: list[str] | None = None):
         """오늘(KST) 목록. 자정 직후(00:00–00:14)에는 전날 목록도 합친다 — '파일 없음' 연속의 last_tm 이 전날이고 새 날 목록이 아직 그 시각 이하의 tm 을
-        싣지 않았으면 그 뒤에도(_streak_needs_prev_day). 첫 결과(오늘)를 돌려준다. 읽은 날은 self._list_days 에 남긴다.
-        자정 직후 창의 전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다 —
+        싣지 않았으면 그 뒤에도(_streak_needs_prev_day), 연속이 없어도 새 날 목록이 비었고 저장한 프레임(have)이 전날 끝에 닿지 않았으면 그 뒤에도
+        (_behind_prev_day — 덧붙이는 목록). 첫 결과(오늘)를 돌려준다. 읽은 날은 self._list_days 에 남긴다.
+        자정 직후 창 · _behind_prev_day 의 전날 목록은 덧붙이는 것이다 — 예산이 없거나 호출이 실패하면 오늘 목록만 쓴다(주기를 잃지 않고, 실행 기록을 따로 남기지 않는다 —
         실패는 WARN 한 줄). 연속의 확인에 필요한 전날 목록(_streak_needs_prev_day — 창 안이어도)은 덧붙이는 것이 아니다: 그것 없이는 확인할 tm 을 모른다
         (리뷰 2026-10-01 — 전에는 오늘 목록만으로 이어가 확인할 tm 이 없는 'missing' 으로 마지막 확인을 옮겼다). 호출이 실패하면(504 · 시간 초과 — 다시
         부르지 않는다) 오늘 목록의 실패와 같게 _StepFailed(전날 목록 단계 — run_once 가 'error'), 예산 예약이 거절되면 _ListingRefused(예산 상태).
@@ -702,9 +711,11 @@ class KmaRadarJob:
         day = now_kst.strftime("%Y%m%d")
         today = await self._call(f"listing {day}", lambda: self.p.file_list(day))
         self._list_days = (day,)
+        now_tm = now_kst.strftime("%Y%m%d%H%M")
         window = now_kst.hour == 0 and now_kst.minute < PREV_DAY_LIST_MIN
-        needed = self._streak_needs_prev_day(day, now_kst.strftime("%Y%m%d%H%M"), today.data)
-        if not window and not needed:
+        needed = self._streak_needs_prev_day(day, now_tm, today.data)
+        behind = self.missing is None and have is not None and self._behind_prev_day(day, now_tm, today.data, have)
+        if not window and not needed and not behind:
             return today
         prev_day = (now_kst - timedelta(days=1)).strftime("%Y%m%d")
         step = f"previous-day listing {prev_day}"
@@ -773,7 +784,7 @@ class KmaRadarJob:
         if not await self._reserve(started):
             return
         try:
-            listing = await self._listing()
+            listing = await self._listing([f["tm"] for f in stored])
         except _StepFailed as f:
             if _throttle(f.error):
                 await self._throttled(started, f)

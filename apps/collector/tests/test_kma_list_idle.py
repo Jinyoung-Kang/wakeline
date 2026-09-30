@@ -325,6 +325,54 @@ async def test_outside_a_streak_an_empty_new_day_listing_is_ok_and_opens_nothing
     assert (await r.hgetall(mod.KEY_META)).get("missing_since_tm", "") == ""
 
 
+async def test_a_restart_that_dropped_a_stale_streak_reopens_it_from_the_previous_day_listing(env, caplog):
+    """운영 2026-10-01 02:07 KST(배포): 옛 판의 거짓 '확인 멈춤'으로 마지막 확인이 00:05 에 머문 연속을 다시 띄운 수집기가 버렸다(이어받기 상한 45분 밖).
+    연속이 없으니 전날 목록을 읽지 않았고(자정 직후 창 밖), 빈 새 날 목록에는 확인할 tm 이 없어 주기마다 'ok' — 연속이 다시 열리지 않아 웹은
+    '파일 없음' · '목록에도 … 없음'을 적지 못했다. 이제 연속이 없어도 새 날 목록에 아직 tm 이 없고 저장한 프레임이 전날 끝(23:55)에 닿지 않았으면
+    전날 목록도 읽는다(덧붙이는 목록 — 자정 직후 창과 같다): 19:50 쪽 tm 을 받으려 하고, '파일 없음'이 세 번이면 연속이 다시 열린다."""
+    mod, r, ctx, clock, runs = env
+    prov, _ = await _stalled_streak(mod, ctx, clock)
+    meta = await r.hgetall(mod.KEY_META)
+    await r.hset(
+        mod.KEY_META, mapping={"missing_checked_at": _utc("202610010005")}
+    )  # 옛 판: 00:05 뒤로 마지막 확인이 움직이지 않았다
+    again = mod.KmaRadarJob(prov, ctx)
+    runs.clear()
+    prov.days.clear()
+    prov.binaries.clear()
+    clock["now"] = "202610010205"
+    await again.run_once()
+    assert again.missing is None  # 마지막 확인 00:05 — 늦춘 연속의 이어받기 상한 45분 밖이라 버렸다
+    assert "dropped the missing-file streak since tm=202609301310" in " ".join(_infos(caplog))
+    assert sorted(prov.days) == ["20260930", "20261001"]  # 새 날 목록이 비었다 — 전날 목록도 읽는다
+    assert prov.binaries and all(tm.startswith("20260930") and tm <= "202609301950" for tm in prov.binaries)
+    await _run(again, clock, _walk("202610010210", "202610010225"))
+    assert again.missing is not None and again.missing.last_tm == "202609301950"
+    assert "ok" not in [run["status"] for run in runs]  # 저장한 프레임 없이 'ok' 로 끝난 주기가 없다
+    clock["now"] = "202610010230"
+    for t in _walk("202610010230", "202610010330"):
+        clock["now"] = t
+        await again.run_once()
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["missing_last_tm"] == "202609301950"
+    assert (meta["missing_list_tm"], meta["missing_list_newer"]) == ("202609301950", "0")
+    assert _utc("202610010230") <= meta["missing_checked_at"] <= _utc("202610010330")
+
+
+async def test_outside_a_streak_frames_up_to_the_previous_day_end_read_only_the_new_day_listing(env):
+    """덧붙이는 전날 목록은 저장한 프레임이 전날 끝(23:55)에 닿지 않았을 때만 — 받은 프레임이 이미 23:55 까지면 전날 목록에 새로 받을 것이 없다
+    (새 날 목록이 하루 내내 비어 있어도 5분마다 목록 호출을 하나 더 쓰지 않는다)."""
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="209912312355", list_until="202609302355")
+    job = mod.KmaRadarJob(prov, ctx)
+    await _run(job, clock, _walk("202609302300", "202610010030"))
+    for t in _walk("202610010035", "202610010300"):
+        clock["now"] = t
+        prov.days.clear()
+        await job.run_once()
+        assert prov.days == ["20261001"], t
+
+
 async def test_the_cycle_that_opens_the_streak_leaves_the_listing_fields_unknown(env):
     """연속을 여는 주기는 '확인 전 마지막 tm' 이 없다 — 목록 필드는 첫 확인이 채운다(그 전에는 빈 값 — 웹은 '목록에도 … 없음'을 적지 않는다)."""
     mod, r, ctx, clock, runs = env
