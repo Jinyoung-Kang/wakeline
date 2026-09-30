@@ -321,10 +321,12 @@ def test_main_limits_include_kma_radar():
 
 
 async def test_job_stops_cycle_when_rate_limited(kma_env):
-    """속도 상한(429 쿨다운 등)으로 허가를 못 받으면 그 주기는 실패로 기록하고 끝낸다(예외가 스케줄러로 새지 않는다)."""
+    """속도 상한(429 쿨다운 등)으로 허가를 못 받으면 그 주기를 끝낸다(예외가 스케줄러로 새지 않는다). 실행은 'throttled' — 공급자 오류가
+    아니므로 공급자 last_error 에 적지 않는다(2026-09-30 — 전에는 'error' + last_error, 계약 v5 §G14 의 '공급자 오류는 error 만'과 어긋났다)."""
     from wakeline_collector.ratelimit import Throttled
 
     mod, r, ctx, clock = kma_env
+    runs = _recording_runs(ctx)
 
     class Limited(FakeKma):
         async def binary(self, tm):
@@ -334,7 +336,8 @@ async def test_job_stops_cycle_when_rate_limited(kma_env):
     prov = Limited(_tms("202609272000"))
     await mod.KmaRadarJob(prov, ctx).run_once()
     assert len(prov.binaries) == 1
-    assert "throttled" in (await r.hgetall("wakeline:provider:kma_radar"))["last_error"]
+    assert [x["status"] for x in runs] == ["throttled"] and "cooling down 30 s" in runs[0]["error_text"]
+    assert "last_error" not in await r.hgetall("wakeline:provider:kma_radar")
 
 
 # ---- R-03: 목록에 있으나 아직 받을 수 없는 프레임(file not exist)은 일시 상태 -------------------------------------------

@@ -26,6 +26,12 @@
 - 실행 기록 상태(주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
   거절돼 멈췄으면 'budget_exhausted'(· 'budget_unavailable'), '파일 없음' 답이 있었으면 'missing', 해석 불가만이면 'quarantined'. 'ok' 가 아닌 주기는 공급자 성공(last_success_at · last_records)으로 적지 않는다 — 예산 사용량만 적는다
   (운영 화면이 '성공 5분 전 · 기록 0'으로 프레임이 멈춘 것을 가리지 않게).
+- 속도 상한(운영 로그 2026-09-30 — 기상청 HTTP 429 '현재 요청을 처리할 수 없습니다' 네 번, 모두 같은 주기의 앞선 요청 0.1–0.5 s 뒤): KMA 호출은 모두
+  호스트 버킷(ratelimit.KMA_APIHUB_RPS 0.5 req/s · burst 1 — 선택값)을 지나 2 s 간격으로 나간다('파일 없음' 연속이 닫힌 뒤 보관 창의 빈 곳을 이어 받는
+  묶음 포함). 429 는 HttpClient 가 그 호스트를 멈추고(Retry-After — 초 · HTTP-date — 가 있으면 따른다, 없으면 30 → 60 → 120 → 300 s) 이 작업은 그 주기의
+  KMA 호출을 멈춘다(남은 tm · 다시 받기는 다음 주기). 실행은 'throttled'(http 429 · 쉰 초 · Retry-After 를 오류 글자에) — 공급자 오류가 아니므로
+  공급자 last_error 에 적지 않는다(계약 v5 §G14: 공급자 오류는 'error' 만). WARN 한 줄. 쉼 때문에 보내지 않은 호출(속도 상한 Throttled — 다음 주기가
+  쉼 안일 때)도 'throttled' · INFO(이미 알렸다) · 예산을 돌려준다. 그 밖의 속도 상한(대기 상한 · 대기열 상한)은 'throttled' · WARN.
 - KST 자정 직후(00:00–00:14)에는 전날 목록도 본다(전날 23:5x 프레임이 아직 보관 창 안이다). 덧붙이는 목록이라 예산이 없거나
   실패하면 오늘 목록만으로 주기를 계속한다.
 - 목록(frames)과 이미지(frame:{tm}) 일관성: 목록에서 빠진 프레임의 이미지는 지우고, 이미지가 없어진 항목은 목록에서 뺀다.
@@ -85,6 +91,7 @@ from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.kma_grid import read_echo, read_header, render_mercator_png
 from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
+from wakeline_collector.ratelimit import KMA_APIHUB_HOST as KMA_HOST
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
@@ -375,6 +382,11 @@ def _outcome(stored_n: int, missing_n: int, quality: list[tuple[str, str | None,
     return "quarantined", f"no new frame stored — could not read {bad}"
 
 
+def _throttle(e: BaseException) -> bool:
+    """429(공급자가 거절) 또는 속도 상한(Throttled — 보내지 않았다)."""
+    return isinstance(e, Throttled) or (isinstance(e, ProviderHttpError) and e.status == 429)
+
+
 class _BadFrame(Exception):
     """이 tm 의 자료 자체가 해석 불가(폭탄·형식 오류). 다시 받아도 같으므로 건너뛴다."""
 
@@ -459,6 +471,32 @@ class KmaRadarJob:
             log.warning("kma radar: %s — %s", f.step, note)
             return
         log.warning("kma radar: %s", f.log_text())
+
+    async def _throttled(self, started: datetime, f: _StepFailed, stored_n: int) -> None:
+        """429 · 속도 상한(모듈 설명 '속도 상한'): 실행 'throttled' 하나. 공급자 last_error · consecutive_failures 에 적지 않는다(공급자 오류가 아니다).
+        429 는 WARN(HttpClient 가 호스트를 멈춘 초 · Retry-After), 그 쉼 때문에 보내지 않은 호출은 INFO, 그 밖의 속도 상한은 WARN."""
+        e = f.error
+        if isinstance(e, ProviderHttpError):
+            ra = str(e.headers.get("retry-after", "")).strip()[:40]
+            given = (f"Retry-After {ra} s" if ra.isdigit() else f"Retry-After '{ra}'") if ra else "no Retry-After — step backoff"
+            paused = "pause unknown" if e.pause_s is None else f"paused {e.pause_s:.0f} s"
+            note = f"{KMA_HOST} {paused} ({given})"
+            log.warning("kma radar: %s — %s — %s; no more KMA calls this cycle", f.step, describe_error(e), note)
+            http_status: int | None = e.status
+        else:
+            note = "not called — rate limiter"
+            level = logging.INFO if isinstance(e, Throttled) and e.cooldown_s > 0 else logging.WARNING  # 쉼은 429 가 이미 알렸다
+            log.log(level, "kma radar: %s — not called (%s)", f.step, describe_error(e))
+            http_status = None
+        self.ctx.db.record_run(
+            self.job_name,
+            self.p.name,
+            started,
+            status="throttled",
+            http_status=http_status,
+            records_in=stored_n,
+            error_text=f"{f.detail()} · {note}",
+        )
 
     async def _call(self, step: str, fn: Callable[[], Awaitable[ProviderResult]]) -> ProviderResult:
         """step 호출. 실패는 모두 _StepFailed(단계·걸린 시간)로 올린다. 일시 오류면 예산 1 을 예약할 수 있을 때 5 s 뒤 한 번 다시
@@ -557,7 +595,10 @@ class KmaRadarJob:
         try:
             listing = await self._listing()
         except _StepFailed as f:
-            await self._fail(started, f)
+            if _throttle(f.error):
+                await self._throttled(started, f, 0)
+            else:
+                await self._fail(started, f)
             return
         except Exception as e:  # noqa: BLE001 — 목록 호출 밖(예: 전날 목록 준비)의 예상 밖 오류도 주기 실패로
             await self._fail(started, _StepFailed("listing", e, None))
@@ -595,7 +636,11 @@ class KmaRadarJob:
                         missing_n += 1
                         listed = kinds.get(tm)
                         note = self._not_ready_or_missing(tm, err, quality, ",".join(listed) if listed else "", exhausted)
-                    elif isinstance(err, ProviderHttpError | httpx.HTTPError | OSError | Throttled):  # Throttled: 429 쿨다운 등
+                    elif _throttle(err):
+                        # 429(기상청이 거절 — 호스트를 멈췄다) · 속도 상한(보내지 않았다): 이 주기의 KMA 호출을 멈춘다
+                        await self._throttled(started, f, stored_n)
+                        return
+                    elif isinstance(err, ProviderHttpError | httpx.HTTPError | OSError):
                         await self._fail(started, f)
                         return
                     else:

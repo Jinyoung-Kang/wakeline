@@ -2,7 +2,8 @@
 
 모든 외부 호출은 여기를 지나며, 호출 직전에 RateLimiter 허가(수집기 전체 + 호스트별 버킷, 우선순위)를 받는다.
 허가를 받은 뒤 보내기 직전에 호출자의 확인(before_send, 예: 운영자가 공급자를 껐는지)을 한 번 더 거친다 — 아니면 보내지 않는다(SendCancelled).
-429 응답은 그 호스트를 잠시 막는다(모든 호출자 공통) — Retry-After 가 있으면 따른다.
+429 응답은 그 호스트를 잠시 막는다(모든 호출자 공통) — Retry-After 가 있으면 따른다(초 · HTTP-date 둘 다, RFC 9110 §10.2.3). 막은 초는
+ProviderHttpError.pause_s 로 호출자에게 알린다(로그 · 실행 기록에 적는다).
 시간 상한: httpx Timeout(읽기 8 s · 연결 4 s — 호출자가 read_s 로 읽기 제한만 바꿀 수 있다)은 단계마다라서, 조금씩 계속 보내는 응답은 끝나지 않을 수 있다. 그래서 보내기부터
 본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
 속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
@@ -14,6 +15,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -57,12 +59,20 @@ class RequestTimedOut(httpx.TimeoutException):
 
 
 class ProviderHttpError(RuntimeError):
-    def __init__(self, status: int, body_head: str, headers: dict[str, str] | None = None, latency_ms: int | None = None):
+    def __init__(
+        self,
+        status: int,
+        body_head: str,
+        headers: dict[str, str] | None = None,
+        latency_ms: int | None = None,
+        pause_s: float | None = None,
+    ):
         super().__init__(f"HTTP {status}: {body_head[:200]}")
         self.status = status
         self.body_head = body_head[:200]  # 오류 응답의 모양 판별용(예: adsbdb 404 "unknown callsign")
         self.headers = headers or {}
         self.latency_ms = latency_ms
+        self.pause_s = pause_s  # 429 로 그 호스트를 막은 초(RateLimiter.penalize 의 반환값). 429 가 아니면 None
 
 
 # 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
@@ -88,15 +98,26 @@ class FetchResponse:
         self.fetched_at, self.latency_ms = fetched_at, latency_ms
 
 
-def _retry_after_s(headers: dict[str, str]) -> float | None:
+def _retry_after_s(headers: dict[str, str], now: datetime | None = None) -> float | None:
+    """Retry-After(RFC 9110 §10.2.3) → 초. 초(delay-seconds) 또는 HTTP-date. 없거나 · 틀린 모양 · 이미 지난 날짜면 None(단계 백오프).
+    고치기 전에는 날짜 모양을 버렸다(기상청 429 대응 — 2026-09-30)."""
     v = headers.get("retry-after", "").strip()
-    return float(v) if v.isdigit() else None  # HTTP-date 형식은 쓰지 않는다(기본 단계 백오프)
+    if v.isdigit():
+        return float(v)
+    try:
+        at = parsedate_to_datetime(v)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if at is None or at.tzinfo is None:  # 시간대 없는 날짜는 HTTP-date 가 아니다(GMT 가 붙어야 한다)
+        return None
+    left = (at - (now or datetime.now(UTC))).total_seconds()
+    return left if left > 0 else None
 
 
 class HttpClient:
     def __init__(self, limiter: RateLimiter | None = None) -> None:
         self.limiter = limiter or default_limiter(
-            settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.data_go_kr_rps
+            settings.http_global_rps, settings.adsb_fi_rps, settings.adsbdb_rps, settings.data_go_kr_rps, settings.kma_apihub_rps
         )
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S),
@@ -158,10 +179,9 @@ class HttpClient:
         except TimeoutError:
             raise RequestTimedOut(f"{host}: no complete response within {total_s:.0f} s") from None
         latency = int((time.perf_counter() - t0) * 1000)
-        if status == 429:
-            self.limiter.penalize(host, _retry_after_s(headers))
+        pause = self.limiter.penalize(host, _retry_after_s(headers)) if status == 429 else None
         if status >= 400:
-            raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency)
+            raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency, pause)
         return FetchResponse(body, status, headers, datetime.now(UTC), latency)
 
     async def _send(self, method: str, url: str, **kw) -> tuple[bytes, int, dict[str, str]]:
