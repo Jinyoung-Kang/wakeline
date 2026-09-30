@@ -418,7 +418,8 @@ export function qualityPartialDay(since: unknown): { day: string; text: string; 
  * missing = 새 tm 이 목록에 있었으나 저장한 프레임이 없고 기상청 내려받기가 '파일 없음'으로 답한 주기 · quarantined = 받은 자료를 해석할 수 없어 격리만 한 주기.
  */
 export const RUN_STATUS_TITLE: Readonly<Record<string, string>> = {
-  missing: "새 tm 이 목록에 있었으나 저장한 프레임 없음 — 기상청 내려받기가 '파일 없음'으로 답함(호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다)",
+  // 계약 v5 §G26 개정(2026-10-01): '파일 없음' 연속 중 목록만 읽은 확인(확인할 새 tm 이 없다)도 'missing' — 전에는 'ok' 로 공급자 성공을 갱신했다
+  missing: "저장한 프레임 없음 — 새 tm 이 목록에 있었으나 기상청 내려받기가 '파일 없음'으로 답함, 또는 '파일 없음' 연속 중 목록에도 새 tm 이 없던 확인(오류 글자 'nothing to probe: …' — 수집기가 목록만 읽었고 마지막 확인은 옮겼다). 호출 실패는 아니다 · 공급자 last success 를 갱신하지 않는다",
   quarantined: "새 tm 을 받았으나 해석할 수 없어 격리 — 저장한 프레임 없음(원본은 raw 에 남는다)",
   // 기상청 429(운영 로그 2026-09-30 — jobs/kma_radar.py) · 수집기 속도 상한(jobs/aircraft.py) — 계약 v5 §G14: 공급자 오류는 'error' 만
   throttled: "속도 상한 — http 429 면 공급자가 거절해 수집기가 그 호스트를 멈췄고(쉰 초 · Retry-After 는 오류 글자), http 가 비었으면 수집기 속도 상한이 막아 보내지 않았다. 공급자 오류가 아니다(공급자 last error 에 적지 않는다)",
@@ -459,8 +460,10 @@ export function providerMissing(p: Record<string, unknown>, nowMs: number): KrMi
   if (!str("missing_since_tm")) return null;
   const tms = /^\d{1,6}$/.test(str("missing_tms")) ? Number(str("missing_tms")) : NaN;
   const every = /^\d{1,6}$/.test(str("missing_probe_every_s")) ? Number(str("missing_probe_every_s")) : null; // 계약 v5 §G26 — 모르면 null
+  const newer = /^\d{1,6}$/.test(str("missing_list_newer")) ? Number(str("missing_list_newer")) : null; // 계약 v5 §G26 개정 — 모르면 null
   return krMissing({
     since_tm: str("missing_since_tm"), last_tm: str("missing_last_tm"), tms, checked_at: str("missing_checked_at"),
     file: str("missing_file") || null, listed: str("missing_listed") ? str("missing_listed").split(",") : null, probe_every_s: every,
+    list_tm: str("missing_list_tm") || null, list_newer: newer,
   }, nowMs);
 }

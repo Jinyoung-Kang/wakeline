@@ -430,10 +430,11 @@ export function detailRows(i: StatusInput): DetailRow[] {
   if (miss) {
     rows.push({
       key: "kma-missing", name: "기상청 내려받기 파일", health: "warn", state: miss.stale ? "없음 · 확인 멈춤" : "없음",
-      value: `tm ${miss.range} · 확인한 tm ${miss.tms}개 ${miss.tms === 1 ? "" : "모두 "}없음`, valueTitle: miss.title,
+      value: `tm ${miss.range} · 확인한 tm ${miss.tms}개 ${miss.tms === 1 ? "" : "모두 "}없음${miss.listText ? ` · ${miss.listText}` : ""}`, valueTitle: miss.title,
       source: `기상청 답: ${miss.file ? `${miss.file} 없음` : "파일 없음(파일 이름 모름)"}${miss.listed ? ` · 목록에는 ${miss.listed}` : ""} · 마지막 확인 ${kstAt(miss.checkedAt, i.srvNowMs)}`,
       sourceTitle: fullTitle("마지막 확인", miss.checkedAt),
       rule: `목록에 있는 tm 을 내려받기가 '파일 없음'으로 답하는 동안 — ${miss.cadence}`
+        + " · 확인에서 목록이 마지막 tm 뒤로 새 tm 을 싣지 않으면 ‘목록에도 … 뒤 새 tm 없음’(목록만 읽은 확인도 마지막 확인이다)"
         + ` · 파일이 다시 오면 이 행은 사라짐 · 마지막 확인이 ${miss.staleMin}분을 넘으면 확인 멈춤(수집기 선택값)`,
     });
   }

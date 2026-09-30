@@ -112,6 +112,8 @@ export const KR_MISSING_SLOW_EVERY_MIN = 15;
 export const KR_MISSING_STALE_PROBES = 3;
 /** api 가 싣는 확인 간격의 상한(초 — 하루, api KrRadarMissing.MAX_PROBE_EVERY_S) */
 const MAX_PROBE_EVERY_S = 86_400;
+/** api 가 싣는 list_newer 의 상한(여섯 자리 — api KrRadarMissing · schemas/ws list_newer maximum) */
+const MAX_LIST_NEWER = 999_999;
 
 /** 연속 한 건(krMissing) — 칩 낱말 · 한 줄 · 여러 줄 설명과 그 조각(상세 행). 값은 모두 api(수집기 확인) 그대로 */
 export interface KrMissingInfo {
@@ -138,6 +140,13 @@ export interface KrMissingInfo {
   staleMin: number;
   /** 수집기가 연속 동안 하는 일(설명 한 문장 — title · 상태 바 상세 규칙) */
   cadence: string;
+  /**
+   * 마지막 확인에서 읽은 기상청 목록이 last_tm 뒤로 새 tm 을 싣지 않았다(api list_newer 0 — 목록도 자라지 않아 확인할 새 tm 이 없었다, 계약 v5 §G26 개정 2026-10-01).
+   * 모르면(옛 api · 읽은 목록이 last_tm 의 날을 덮지 못함 · 목록의 가장 새 tm 이 last_tm 뒤라 서로 맞지 않음) false
+   */
+  listIdle: boolean;
+  /** listIdle 이면 "기상청 목록에도 19:50 KST 뒤 새 tm 없음"(마지막 tm 이 지금과 다른 KST 날이면 날짜도), 아니면 null */
+  listText: string | null;
 }
 
 const MISSING_FILE = /^RDR_CMP_[A-Z]+_([A-Z]+)_\d{12}\.bin\.gz$/;
@@ -164,6 +173,8 @@ function tmRange(sinceMs: number, lastMs: number, today: string | undefined): st
  * tm 은 기상청 KST 벽시계라 그대로 "HH:MM KST"(지금과 KST 날짜가 다르면 날짜도), 마지막 확인은 "HH:MM:SS KST"(마우스를 올리면 연도 · ms).
  * 마지막 확인이 확인 간격 × KR_MISSING_STALE_PROBES(아래로 KR_MISSING_CHECK_STALE_MIN 분 — 간격을 모르면 그것)를 넘으면(서버 기준 지금 — 모르면 판정하지 않는다)
  * '확인 멈춤'을 붙인다: 수집기가 멈추면 연속을 지울 주체가 없다. 확인 간격(probe_every_s — 계약 v5 §G26)을 알면 한 줄에 'N분마다 확인'을 적는다.
+ * 마지막 확인의 목록이 last_tm 뒤로 새 tm 을 싣지 않았으면(list_newer 0 — 계약 v5 §G26 개정 2026-10-01) 한 줄에 '기상청 목록에도 19:50 KST 뒤 새 tm 없음'을 적는다 —
+ * 수집기는 목록만 읽은 확인도 마지막 확인으로 옮기므로(운영 2026-10-01: 전에는 옮기지 않아 '확인 멈춤'이 잘못 붙었다) '확인 멈춤'은 확인이 정말 멈췄을 때만이다.
  */
 export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
   if (!m || typeof m !== "object") return null;
@@ -186,13 +197,25 @@ export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
   // 수집기의 지금 확인 간격(계약 v5 §G26) — 정수 초 1 … 하루만(틀리면 모름: 전과 같은 글 · 15분 기준)
   const everyS = typeof o.probe_every_s === "number" && Number.isInteger(o.probe_every_s) && o.probe_every_s >= 1 && o.probe_every_s <= MAX_PROBE_EVERY_S
     ? o.probe_every_s : null;
+  // 마지막 확인에서 읽은 목록(계약 v5 §G26 개정 2026-10-01): 가장 새 tm(없으면 목록이 비었다 · 틀리면 모름) · 확인 전 last_tm 뒤로 실은 tm 수(0 = 목록도 자라지
+  // 않았다). 0 인데 목록의 가장 새 tm 이 last_tm 뒤면 서로 맞지 않는다 — '새 tm 없음'을 말하지 않는다
+  const listGiven = o.list_tm != null;
+  const listMs = typeof o.list_tm === "string" && TM.test(o.list_tm) ? kstWallMs(o.list_tm) : null;
+  const newer = typeof o.list_newer === "number" && Number.isInteger(o.list_newer) && o.list_newer >= 0 && o.list_newer <= MAX_LIST_NEWER ? o.list_newer : null;
+  const listIdle = newer === 0 && (listMs == null || listMs <= lastMs);
+  const listText = listIdle ? `기상청 목록에도 ${clock(lastMs)} 뒤 새 tm 없음` : null;
+  const listLine = listIdle
+    ? `마지막 확인에서 읽은 ${listText}${listMs != null ? ` — 목록의 가장 새 tm ${clock(listMs)}(목록이 자라지 않아 확인할 새 tm 이 없음)` : listGiven ? "" : " — 읽은 목록에 tm 없음"}`
+    : newer != null && newer > 0
+      ? `마지막 확인의 목록: ${listMs != null ? `가장 새 tm ${clock(listMs)} · ` : ""}확인 전 마지막 tm 뒤로 ${newer}개를 더 실음`
+      : listMs != null ? `마지막 확인에서 읽은 목록의 가장 새 tm ${clock(listMs)}` : null;
   const staleS = Math.max(KR_MISSING_CHECK_STALE_MIN * 60, everyS == null ? 0 : KR_MISSING_STALE_PROBES * everyS);
   const staleMin = Math.round(staleS / 60);
   const stale = nowMs > 0 && nowMs - checkedMs > staleS * 1000;
   const range = tmRange(sinceMs, lastMs, today);
   const head = `기상청 내려받기 파일${kind ? `(${kind})` : ""} 없음`;
   const counted = `확인한 tm ${tms}개 ${tms === 1 ? "" : "모두 "}없음`;
-  const text = `${head} — tm ${range} · ${counted}${listed ? ` · 목록에는 ${listed}` : ""} · 마지막 확인 ${checked}`
+  const text = `${head} — tm ${range} · ${counted}${listed ? ` · 목록에는 ${listed}` : ""}${listText ? ` · ${listText}` : ""} · 마지막 확인 ${checked}`
     + (everyS != null ? ` · ${everyText(everyS)}마다 확인` : "")
     + (stale ? ` — ${staleMin}분 넘게 다시 확인하지 않음(확인 멈춤)` : "");
   const cadence = everyS != null
@@ -203,12 +226,13 @@ export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
     `첫 tm ${clock(sinceMs)} · 마지막 tm ${clock(lastMs)}(없다는 답을 받은 가장 이른 · 가장 새 tm) · 확인한 서로 다른 tm ${tms}개 ${tms === 1 ? "" : "모두 "}없음 — 확인하지 않은 tm 은 세지 않음`,
     file ? `기상청 답의 파일: ${file}` : "기상청 답의 파일 이름 모름",
     kinds ? `목록의 파일 종류: ${kinds.join(", ")}` : "목록의 파일 종류 모름",
+    ...(listLine ? [listLine] : []),
     `마지막 확인 ${fmtTimeTitle(checkedMs) ?? "—"}`,
     `그동안 ${cadence} — 파일이 다시 오면 이 표시는 사라짐`,
     ...(stale ? [`마지막 확인 뒤 ${staleMin}분 넘게 확인 없음 — 지금도 없는지는 모름(수집기가 멈췄거나 목록 호출이 실패하는 중일 수 있다 · 기준은 수집기 선택값과 같다 — 확인 간격 × ${KR_MISSING_STALE_PROBES}, 아래로 ${KR_MISSING_CHECK_STALE_MIN}분)`] : []),
   ].join("\n");
   return {
     word: stale ? "파일 없음 · 확인 멈춤" : "파일 없음", text, title, range, since: clock(sinceMs), last: clock(lastMs), tms, checkedAt, stale, file, listed,
-    everyS, staleMin, cadence,
+    everyS, staleMin, cadence, listIdle, listText,
   };
 }

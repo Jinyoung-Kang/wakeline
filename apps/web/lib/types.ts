@@ -185,6 +185,8 @@ export interface KrRadarFrame {
  * "file not exist" 로 답한 첫 tm · 마지막 tm(기상청 KST 벽시계 그대로) · 서로 다른 tm 수 · 마지막 확인(UTC ISO — 화면은 KST) · 답의 파일 이름 · 목록 종류.
  * 연속이 없으면 없다. 형식은 lib/kr-radar krMissing 이 다시 본다(REST 는 검증기를 거치지 않는다).
  * probe_every_s: 수집기의 지금 확인 간격(초 — 5분마다면 주기, 연속이 60분을 넘으면 늘린 15분, 계약 v5 §G26). 옛 api 면 없다.
+ * list_tm · list_newer(계약 v5 §G26 개정 2026-10-01 — 운영: 기상청 목록이 19:50 에서 멈추고 새 날 목록이 비었다): 마지막 확인에서 읽은 기상청 목록의 가장 새 tm
+ * (KST 벽시계 — 목록이 비었으면 없다) · 그 목록이 확인 전 last_tm 뒤로 실은 tm 수(0 = 목록도 자라지 않았다 — 읽은 목록이 last_tm 의 날을 덮지 못했으면 없다).
  */
 export interface KrRadarMissing {
   since_tm: string;
@@ -194,6 +196,8 @@ export interface KrRadarMissing {
   file?: string | null;
   listed?: string[] | null;
   probe_every_s?: number | null;
+  list_tm?: string | null;
+  list_newer?: number | null;
 }
 
 export interface KrRadar {

@@ -239,6 +239,8 @@ const RADAR_FRAME = shape({ time: int(0), path: str() }, ["time", "path"]);
 const KR_MISSING = shape({
   since_tm: re(/^[0-9]{12}$/), last_tm: re(/^[0-9]{12}$/), tms: int(1), checked_at: TIME,
   file: re(/^RDR_CMP_[A-Z]+_[A-Z]+_[0-9]{12}\.bin\.gz$/), listed: arrOf(re(/^[A-Z]{1,8}$/), 1, 8), probe_every_s: int(1, 86_400),
+  // 계약 v5 §G26 개정(2026-10-01): 마지막 확인에서 읽은 목록의 가장 새 tm · 그 목록이 확인 전 last_tm 뒤로 실은 tm 수(0 = 목록도 자라지 않았다)
+  list_tm: re(/^[0-9]{12}$/), list_newer: int(0, 999_999),
 }, ["since_tm", "last_tm", "tms", "checked_at"]);
 
 /** $defs/status.status — 화면(상태 바 · 알림 목록 · AIS 배지)이 바로 그리는 값이라 하나라도 틀리면 메시지를 버린다(이전 status 를 둔다) */

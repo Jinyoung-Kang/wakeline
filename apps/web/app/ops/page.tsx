@@ -290,7 +290,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             </tr>
             {/* 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) — 호출은 성공해도 새 프레임이 오지 않는 까닭. 수집기는 그동안 last success 를 갱신하지 않는다 */}
             {miss ? <tr data-testid="provider-missing"><td colSpan={9} className="text-[11px] text-warn" title={miss.title}>
-              <span aria-hidden="true">▲ </span>{miss.text} — 그동안 수집 실행은 &apos;missing&apos;(저장한 프레임 없음), last success 는 프레임을 저장했거나 새 tm 이 없던 마지막 주기</td></tr> : null}
+              <span aria-hidden="true">▲ </span>{miss.text} — 그동안 수집 실행은 &apos;missing&apos;(저장한 프레임 없음 — 목록에도 새 tm 이 없던 확인 포함), last success 는 프레임을 저장했거나 연속 밖에서 새 tm 이 없던 마지막 주기</td></tr> : null}
             {resolveOpen?.at === String(p.name) ? <tr><td colSpan={9}>
               <ResolveConfirm key={resolveOpen.n} id={resolvePanelId(resolveOpen.at)} target={resolveOpen.target} onClose={closeResolve} onChanged={(r) => resolveChanged(r, resolveOpen.n)} onAuthMiss={authMiss} />
             </td></tr> : null}</Fragment>; })}</tbody></table>
