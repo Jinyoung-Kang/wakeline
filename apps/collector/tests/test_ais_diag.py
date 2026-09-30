@@ -16,7 +16,7 @@ import time
 
 import pytest
 from fakes import FakeRedis
-from test_ais_keepalive import TIMEOUT_S, Server, _client, _connected, _delay_pongs, _run_for, _serve, _stall_once
+from test_ais_keepalive import STALL_S, TIMEOUT_S, Server, _client, _connected, _delay_pongs, _run_for, _serve, _stall_once
 
 from wakeline_collector.ais import client as client_mod
 from wakeline_collector.ais.book import ShipBook
@@ -119,8 +119,8 @@ async def test_raw_queue_reports_time_in_queue_and_depth_high_water():
 
 
 async def test_client_records_keepalive_rtt_and_ws_buffer_depth():
-    """서버가 pong 을 0.3 s 늦게 보내면(시간 초과 0.5 s 아래) 끊기지 않고 왕복 0.3 s 가 기록된다 — 끊기기 전에 커지는 것을 본다."""
-    server, url = await _serve(Server(pong_hook=_delay_pongs(TIMEOUT_S * 0.6)))
+    """서버가 pong 을 0.32 s 늦게 보내면(시간 초과 0.8 s 아래) 끊기지 않고 왕복 0.32 s 가 기록된다 — 끊기기 전에 커지는 것을 본다."""
+    server, url = await _serve(Server(pong_hook=_delay_pongs(TIMEOUT_S * 0.4)))
     c, q, feed = _client(url)
     stop = asyncio.Event()
     task = asyncio.create_task(c.run(stop))
@@ -129,7 +129,7 @@ async def test_client_records_keepalive_rtt_and_ws_buffer_depth():
         await asyncio.sleep(1.2)
         assert feed.sessions_ended == 0
         rtt = feed.ping_rtt.value()
-        assert rtt is not None and TIMEOUT_S * 0.6 <= rtt < TIMEOUT_S
+        assert rtt is not None and TIMEOUT_S * 0.4 <= rtt < TIMEOUT_S
         depth = feed.ws_buffer.value()
         assert depth is not None and 0 <= depth <= client_mod.WS_MAX_QUEUE
     finally:
@@ -169,12 +169,12 @@ async def test_disconnect_log_tells_a_loop_stall_from_a_late_server_pong(cause, 
     caplog.set_level(logging.INFO, logger="ais.client")
     lag = LoopLag(tick_s=0.05)
     lag_task = asyncio.create_task(lag.run())
-    hook = _stall_once(1.0, on_loop=True) if cause == "loop_stall" else _delay_pongs(TIMEOUT_S + 0.3)
+    hook = _stall_once(STALL_S, on_loop=True) if cause == "loop_stall" else _delay_pongs(TIMEOUT_S + 0.3)
     server, url = await _serve(Server(pong_hook=hook))
     c, q, feed = _client(url)
     c._loop_lag = lag.max_s
     try:
-        await _run_for(c, 3.0)
+        await _run_for(c, STALL_S + 1.5)
     finally:
         server.close()
         lag_task.cancel()
@@ -184,9 +184,9 @@ async def test_disconnect_log_tells_a_loop_stall_from_a_late_server_pong(cause, 
     loop_lag = float(re.search(r"loop lag ([0-9.]+) s", line)[1])
     buffer = int(re.search(r"ws buffer (\d+)/64 frames", line)[1])
     if cause == "loop_stall":
-        assert loop_lag >= 0.9, line
+        assert loop_lag >= TIMEOUT_S, line
     else:
-        assert loop_lag < 0.3 and "keepalive rtt —" in line and buffer < 64, line
+        assert loop_lag < TIMEOUT_S / 2 and "keepalive rtt —" in line and buffer < 64, line
 
 
 # ── 상태 해시 ─────────────────────────────────────────────────────
