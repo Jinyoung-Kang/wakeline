@@ -124,8 +124,10 @@ function useOverflow(rowRef: React.RefObject<HTMLDivElement | null>, probeRef: R
     if (!observing) return;
     let syncThisFrame = false; // 이 프레임에 이미 그 자리에서 반영했다
     let later = 0; // 다음 프레임에 다시 잴 예약
+    const remeasure = () => { const f = measure(row); if (f) { setHiddenOnly(f.hidden); setWrapOnly(f.wrap); } };
     const nextFrame = () => {
-      if (!later && raf) later = raf(() => { later = 0; const f = measure(row); if (f) { setHiddenOnly(f.hidden); setWrapOnly(f.wrap); } });
+      if (!raf) { remeasure(); return; } // requestAnimationFrame 이 없는 환경(브라우저 밖) — 바로
+      if (!later) later = raf(() => { later = 0; remeasure(); });
     };
     const ro = new ResizeObserver(() => {
       const f = measure(row);
