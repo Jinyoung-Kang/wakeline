@@ -16,7 +16,9 @@
 - LOOP_TICK_S 0.5 s: 루프 지연 표본 간격(sleep 이 늦게 깬 만큼이 지연). 1 s 멈춤을 놓치지 않고, 깨우는 비용은 초당 2번.
 - LOOP_STALL_S 1.0 s: loop_stalls_total 로 세는 지연. 우리 코드의 루프 위 작업은 잰 최악이 약 0.1 s(M1, 선박 2만 척을 한 번에 발행하는
   꺼내기 56 ms + 인코딩 56 ms · 정리 512건 묶음 20 ms — 2026-09-30 측정) — 그 10배.
-- LOOP_WARN_S 5.0 s: WARN 으로 알리는 지연 — keepalive 시간 초과 20 s 의 1/4. 분당 1번까지(수는 모두 센다).
+- LOOP_WARN_S 5.0 s: WARN 으로 알리는 지연 — keepalive 시간 초과 20 s 의 1/4. WARN_EVERY_S 60 s 에 1번까지(수는 모두 센다 — 로그 화면이 한 번의
+  긴 멈춤을 되풀이로 덮지 않게).
+이 고른 값들은 상태 해시(loop_tick_s · loop_stall_s · loop_warn_s · loop_warn_every_s · diag_window_s)에 실어 읽는 쪽이 들고 있지 않게 한다.
 """
 
 from __future__ import annotations
@@ -79,9 +81,10 @@ class LoopLag:
         tick_s: float = LOOP_TICK_S,
         stall_s: float = LOOP_STALL_S,
         warn_s: float = LOOP_WARN_S,
+        warn_every_s: float = WARN_EVERY_S,
         mono: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.tick_s, self.stall_s, self.warn_s = tick_s, stall_s, warn_s
+        self.tick_s, self.stall_s, self.warn_s, self.warn_every_s = tick_s, stall_s, warn_s, warn_every_s
         self._mono = mono
         self.window = WindowMax(mono=mono)
         self.stalls = 0  # 누적(프로세스 시작 이후): 지연 ≥ stall_s 인 표본 수
@@ -93,7 +96,7 @@ class LoopLag:
             self.stalls += 1
         if lag_s >= self.warn_s:
             now = self._mono()
-            if now - self._last_warn >= WARN_EVERY_S:
+            if now - self._last_warn >= self.warn_every_s:
                 self._last_warn = now
                 log.warning(
                     "ais event loop was blocked for %.1f s — nothing was read meanwhile; a keepalive ping outstanding across a stall "

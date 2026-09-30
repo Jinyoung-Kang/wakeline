@@ -508,13 +508,18 @@ def check_ships(env_v: Draft202012Validator) -> int:
         await sink.flush()
         await sink.publish_gaps()
         status = sink.status_fields()
-        # fixture 재생(구역 하나, 구독 영역 없음): 공백에 scope 가 없다
+        # fixture 재생(구역 하나, 구독 영역 없음): 공백에 scope 가 없다. main.py 처럼 루프 지연 측정을 붙인다(두 모드 모두 돈다)
         fcap, fshards, fbook, fq = _CaptureRedis(), ShardSet("fixture"), ShipBook("fixture"), RawQueue()
         fx = fshards.add(None)
+        flag = LoopLag()
+        flag.observe(0.01)
         fsink = AisSink(
-            fcap, book=fbook, shards=fshards, worker=Worker(fq, fbook), queue=fq, provider="fixture", raw_ref="fixture"
-        )  # type: ignore[arg-type]
+            fcap, book=fbook, shards=fshards, worker=Worker(fq, fbook), queue=fq, provider="fixture", raw_ref="fixture",
+            loop_lag=flag,
+        )  # type: ignore[arg-type]  # fmt: skip
         fx.feed.on_subscribed("fixture:ais_east_asia_90s.jsonl", deflate=None, state="replaying")
+        fq.put(b"{}")  # 재생도 원문 대기열을 거친다(replay.py) — 머문 시간 · 깊이는 두 모드 모두 잰다
+        fq.get_nowait()
         fx.feed.on_message(now - 30)
         fx.feed.on_disconnected("ais process restart")
         fx.feed.on_message(now)
@@ -590,21 +595,21 @@ def check_ships(env_v: Draft202012Validator) -> int:
             bad_status.append("bbox")
     # 필드 계약(api ops/pipeline · 웹 PIPELINE 보존 창): 선박 스트림의 시간 트림 목표(초)·바이트 예산 — 정수 문자열
     bad_status += [k for k in ("stream_retention_s", "stream_budget_bytes") if not str(status.get(k, "")).isdigit()]
-    # 진단(ADR-014 부록 C · api ops/pipeline · 웹 PIPELINE): 고른 창·상한·시간 초과와 누적 수는 정수 문자열, 최근 최댓값은 초 소수 2자리 ·
-    # 프레임·건수 정수, 모르면 빈 값(fixture 재생: 연결·루프 측정 없음). shards[] 는 초 수·정수 또는 null
+    # 진단(ADR-014 부록 C · api ops/pipeline · 웹 PIPELINE): 누적 수 · 정수 상한은 정수 문자열, 고른 초는 지수 없는 십진수, 최근 최댓값은 초 소수 2자리 ·
+    # 프레임·건수 정수, 모르면 빈 값. fixture 재생은 연결이 없어 ws_queue_max · ping_rtt_max_s 만 빈 값이다(루프 지연은 두 모드 모두 잰다 — main.py).
+    # shards[] 는 초 수·정수 또는 null
     secs = re.compile(r"\d+\.\d{2}")
-    bad_status += [
-        k
-        for k in ("diag_window_s", "ws_queue_limit", "ping_timeout_s", "loop_stalls_total", "reconnects_quick_total")
-        if not status.get(k, "").isdigit()
-    ]
-    bad_status += [k for k in ("loop_lag_max_s", "queue_wait_max_s", "ping_rtt_max_s") if not secs.fullmatch(status.get(k, ""))]
+    setting = re.compile(r"\d+(\.\d{1,3})?")
+    ints = ("ws_queue_limit", "loop_stalls_total", "reconnects_quick_total", "queue_limit", "reconnect_warn_count")
+    settings = ("diag_window_s", "ping_timeout_s", "loop_tick_s", "loop_stall_s", "loop_warn_s", "loop_warn_every_s")
+    settings += ("reconnect_quick_window_s", "reconnect_warn_window_s")
+    for label, st in (("", status), ("fixture ", fx_status)):
+        bad_status += [label + k for k in ints if not st.get(k, "").isdigit()]
+        bad_status += [label + k for k in settings if not setting.fullmatch(st.get(k, ""))]
+        bad_status += [label + k for k in ("loop_lag_max_s", "queue_wait_max_s") if not secs.fullmatch(st.get(k, ""))]
+    bad_status += [k for k in ("ping_rtt_max_s",) if not secs.fullmatch(status.get(k, ""))]
     bad_status += [k for k in ("queue_depth_max", "ws_queue_max") if not status.get(k, "").isdigit()]
-    bad_status += [
-        f"fixture {k}"
-        for k in ("loop_lag_max_s", "loop_stalls_total", "ping_rtt_max_s", "ws_queue_max")
-        if fx_status.get(k, "?") != ""
-    ]
+    bad_status += [f"fixture {k}" for k in ("ping_rtt_max_s", "ws_queue_max") if fx_status.get(k, "?") != ""]
     if isinstance(view, list) and len(view) == 2:
         if [(v["ping_rtt_max_s"], v["ws_queue_max"]) for v in view] != [(0.31, 2), (None, None)]:
             bad_status.append("shards[] ping_rtt_max_s/ws_queue_max")

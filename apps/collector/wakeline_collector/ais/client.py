@@ -11,7 +11,7 @@
   되풀이(30 분에 3번째부터)·데이터 없이 끝난 연결·공백이 30 s 를 넘음(끊기기 전부터 조용했던 idle 끊김 포함)은 WARN. 공백 기록은 수준과 상관없이 그대로다.
 - 구독 영역이 바뀌면(BboxState) 같은 연결에서 구독을 다시 보낸다 — 5 s 에 한 번까지, 마지막 값만.
 - 진단(diag.py · ADR-014 부록 C): 메시지를 꺼낼 때마다 websockets 수신 버퍼에 남은 프레임 수와 keepalive 왕복(latency 가 바뀌면)을
-  구역의 FeedState 에 남기고, 끊기면 로그에 최근 60 s 최댓값(keepalive 왕복 · 수신 버퍼 · 이벤트 루프 지연 · 대기열 머문 시간)과
+  구역의 FeedState 에 남기고, 끊기면 로그에 최근 60 s 최댓값(keepalive 왕복 · 수신 버퍼 · 이벤트 루프 지연 · 원문 대기열 깊이 · 머문 시간)과
   공급자 지연을 함께 적는다 — 1011 이 루프 멈춤인지, 읽기 멈춤인지, 서버의 늦은 pong 인지 가른다.
 - 이 클래스는 연결(구역) 하나다. 구역이 여럿이면 AisStreamPool(pool.py)이 구역마다 하나씩 띄운다 — Backoff·FeedState·idle 기한·
   재구독 제한은 연결마다 따로, 대기열은 함께(원문에 구역 번호 tag 를 붙인다, 계약 v4 §D).
@@ -252,12 +252,13 @@ class AisStreamClient:
     def diagnosis(self) -> str:
         """끊김 로그에 붙이는 맥락(모르는 값은 —): 최근 창(diag.DIAG_WINDOW_S)의 최댓값과 직전 발행 창의 공급자 지연."""
         f = self.feed
-        buf = f.ws_buffer.value()
+        buf, depth = f.ws_buffer.value(), self.queue.depth_max()
         loop_lag = self._loop_lag() if self._loop_lag is not None else None
         return (
             f"last {DIAG_WINDOW_S:g} s max: keepalive rtt {_num(f.ping_rtt.value())} · ws buffer "
             f"{'—' if buf is None else int(buf)}/{self._connect_kw['max_queue']} frames · loop lag {_num(loop_lag)} · "
-            f"queue wait {_num(self.queue.wait_max_s())}; provider lag p50 {_num(f.lag_p50_s)}"
+            f"queue {'—' if depth is None else depth}/{self.queue.maxsize} msgs, wait {_num(self.queue.wait_max_s())}; "
+            f"provider lag p50 {_num(f.lag_p50_s)}"
         )
 
     async def _read(self, ws: ClientConnection) -> None:

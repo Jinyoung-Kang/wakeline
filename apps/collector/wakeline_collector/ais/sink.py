@@ -8,7 +8,10 @@
   진단(ADR-014 부록 C · diag.py): 최근 diag_window_s(60) 초의 최댓값 — loop_lag_max_s(이벤트 루프 지연) · queue_wait_max_s(원문 대기열에 머문 시간) ·
   queue_depth_max · ws_queue_max(websockets 수신 버퍼에 남은 프레임 — 상한 ws_queue_limit 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은
   묶음이나 루프 멈춤 뒤, 결함 아님) · ping_rtt_max_s(keepalive
-  왕복, 시간 초과 ping_timeout_s) + loop_stalls_total(지연 ≥ 1 s 표본 수, 누적). 상한·창·시간 초과는 고른 설정값(잰 값 아님). 모르면 빈 값.
+  왕복, 시간 초과 ping_timeout_s) + loop_stalls_total(지연 ≥ 1 s 표본 수, 누적). queue_wait_max_s 에는 지금 맨 앞 원문이 기다린 시간도 든다(정리가
+  멈춰도 모름이 되지 않게). 고른 설정값(잰 값 아님 — 읽는 쪽이 숫자를 들고 있지 않게 싣는다): diag_window_s · ws_queue_limit · ping_timeout_s ·
+  queue_limit(원문 대기열 건수 상한) · loop_tick_s · loop_stall_s · loop_warn_s · loop_warn_every_s(루프 측정이 없으면 빈 값) ·
+  reconnect_quick_window_s · reconnect_warn_count · reconnect_warn_window_s(reconnect.py). 초는 지수 없는 십진수. 모르면 빈 값.
   reconnects_quick_total: 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 30 s 안에 닫힌 횟수(누적) — 그 끊김은 INFO 로만 남기므로
   (reconnect.py) 여기서 센다.
 
@@ -35,6 +38,7 @@ from wakeline_collector.ais.client import PING_TIMEOUT_S, WS_MAX_QUEUE
 from wakeline_collector.ais.diag import DIAG_WINDOW_S, LoopLag
 from wakeline_collector.ais.parse import iso_ms
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.reconnect import RECOVER_WINDOW_S, REPEAT_WARN_COUNT, REPEAT_WINDOW_S
 from wakeline_collector.ais.shards import ShardSet
 from wakeline_collector.ais.worker import Worker
 from wakeline_collector.logsink import sink_metrics
@@ -69,6 +73,11 @@ def _secs(v: float | None) -> str:
 
 def _int(v: int | None) -> str:
     return "" if v is None else str(v)
+
+
+def _setting(v: float) -> str:
+    """고른 설정값(초 · 수) — 지수 표기 없는 십진수, 소수 3자리까지("0.5" · "20" · "1800")."""
+    return f"{v:.3f}".rstrip("0").rstrip(".")
 
 
 class AisSink:
@@ -250,6 +259,7 @@ class AisSink:
         last = sh.last_gap() or {}
         opened = sh.gap_open()
         deflate, backoff, rate, lag = sh.deflate, sh.backoff_s, sh.msgs_per_s, sh.lag_p50_s
+        mon = self._loop_lag  # 이벤트 루프 지연 측정(없으면 그 값 · 설정은 모름)
         return {
             "provider": self.provider,
             "fixture": "1" if self.provider == "fixture" else "0",
@@ -283,16 +293,24 @@ class AisSink:
             "evicted_total": str(self.book.evicted),
             "lag_p50_s": "" if lag is None else f"{lag:.1f}",
             # 진단(ADR-014 부록 C): 최근 diag_window_s 초 최댓값 + 고른 상한·시간 초과
-            "diag_window_s": f"{DIAG_WINDOW_S:g}",
-            "loop_lag_max_s": _secs(self._loop_lag.max_s()) if self._loop_lag is not None else "",
-            "loop_stalls_total": str(self._loop_lag.stalls) if self._loop_lag is not None else "",
+            "diag_window_s": _setting(DIAG_WINDOW_S),
+            "loop_lag_max_s": _secs(mon.max_s()) if mon is not None else "",
+            "loop_stalls_total": str(mon.stalls) if mon is not None else "",
+            "loop_tick_s": _setting(mon.tick_s) if mon is not None else "",
+            "loop_stall_s": _setting(mon.stall_s) if mon is not None else "",
+            "loop_warn_s": _setting(mon.warn_s) if mon is not None else "",
+            "loop_warn_every_s": _setting(mon.warn_every_s) if mon is not None else "",
             "queue_wait_max_s": _secs(self.queue.wait_max_s()),
             "queue_depth_max": _int(self.queue.depth_max()),
+            "queue_limit": str(self.queue.maxsize),
             "ws_queue_max": _int(sh.ws_queue_max),
             "ws_queue_limit": str(WS_MAX_QUEUE),
             "ping_rtt_max_s": _secs(sh.ping_rtt_max_s),
-            "ping_timeout_s": f"{PING_TIMEOUT_S:g}",
+            "ping_timeout_s": _setting(PING_TIMEOUT_S),
             "reconnects_quick_total": str(sh.reconnects_quick),
+            "reconnect_quick_window_s": _setting(RECOVER_WINDOW_S),
+            "reconnect_warn_count": str(REPEAT_WARN_COUNT),
+            "reconnect_warn_window_s": _setting(REPEAT_WINDOW_S),
             "shards": orjson.dumps(sh.shards_view()).decode(),
             "published_ships_total": str(self.published_ships),
             "last_publish_at": _iso(self.last_publish_at),

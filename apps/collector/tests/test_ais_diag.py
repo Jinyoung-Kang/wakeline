@@ -33,8 +33,18 @@ from websockets.exceptions import ConnectionClosed
 
 from wakeline_collector.ais import client as client_mod
 from wakeline_collector.ais.book import ShipBook
-from wakeline_collector.ais.diag import BUCKET_S, DIAG_WINDOW_S, LOOP_STALL_S, LOOP_WARN_S, LoopLag, WindowMax
+from wakeline_collector.ais.diag import (
+    BUCKET_S,
+    DIAG_WINDOW_S,
+    LOOP_STALL_S,
+    LOOP_TICK_S,
+    LOOP_WARN_S,
+    WARN_EVERY_S,
+    LoopLag,
+    WindowMax,
+)
 from wakeline_collector.ais.queue import RawQueue
+from wakeline_collector.ais.reconnect import RECOVER_WINDOW_S, REPEAT_WARN_COUNT, REPEAT_WINDOW_S
 from wakeline_collector.ais.shards import SHARD_FIELDS, ShardSet
 from wakeline_collector.ais.sink import AisSink
 from wakeline_collector.ais.worker import Worker
@@ -126,6 +136,24 @@ async def test_raw_queue_reports_time_in_queue_and_depth_high_water():
     for i in range(12):  # 넘쳐 버린 것은 머문 시간에 들어가지 않는다(소비되지 않았다)
         q.put(b"x%d" % i)
     assert q.depth_max() == 10 and q.dropped == 2
+
+
+async def test_queue_wait_includes_the_oldest_item_still_waiting_when_the_consumer_stops():
+    """정리 태스크가 완전히 멈추면 아무것도 꺼내지 않는다 — 꺼낼 때만 재면 창(60 s)이 지난 뒤 '모름' 이 된다(적체가 가장 클 때). 맨 앞(가장 오래
+    기다리는) 원문이 머문 시간도 함께 본다."""
+    clk = Clock()
+    q = RawQueue(10, mono=clk)
+    q.put(b"a")
+    clk.t += 2.0
+    q.put(b"b")
+    assert q.wait_max_s() == pytest.approx(2.0)  # 아직 아무것도 꺼내지 않았다 — 맨 앞 'a' 가 2 s 기다렸다
+    clk.t += DIAG_WINDOW_S + BUCKET_S + 30  # 소비자가 멈춘 채 창보다 오래
+    assert q.wait_max_s() == pytest.approx(DIAG_WINDOW_S + BUCKET_S + 32)
+    assert q.get_nowait() == b"a"
+    assert q.wait_max_s() == pytest.approx(DIAG_WINDOW_S + BUCKET_S + 32)  # 꺼낸 'a' 의 머문 시간(창 안)
+    assert q.get_nowait() == b"b"
+    clk.t += DIAG_WINDOW_S + BUCKET_S
+    assert q.wait_max_s() is None  # 비었고 창 안에 꺼낸 것도 없다 — 모름
 
 
 # ── websockets 수신 버퍼 · keepalive 왕복(가짜 서버) ───────────────
@@ -283,6 +311,31 @@ def test_status_fields_carry_diagnostics_and_unknown_is_empty():
     assert [(v["ping_rtt_max_s"], v["ws_queue_max"]) for v in view] == [(0.31, 3), (4.5, 70)]
 
 
+def test_status_publishes_the_chosen_settings_so_readers_do_not_hard_code_them():
+    """웹 PIPELINE 설명의 숫자(회복 창 · 되풀이 WARN 기준 · 루프 틱 · 멈춤 · WARN 문턱 · 원문 대기열 상한)는 수집기가 고른 값이다 — 상태 해시에 실어
+    읽는 쪽이 들고 있지 않게 한다(바뀌면 따라간다)."""
+    q = RawQueue(123)
+    shards = ShardSet("aisstream")
+    shards.add("18,105,46,150")
+    lag = LoopLag()
+    sink = AisSink(FakeRedis(), book=ShipBook("aisstream"), shards=shards, worker=Worker(q, ShipBook("aisstream")), queue=q,
+                   provider="aisstream", raw_ref="-", loop_lag=lag)  # fmt: skip
+    st = sink.status_fields()
+    assert st["queue_limit"] == "123"
+    assert (st["reconnect_quick_window_s"], st["reconnect_warn_count"], st["reconnect_warn_window_s"]) == (
+        f"{RECOVER_WINDOW_S:g}",
+        str(REPEAT_WARN_COUNT),
+        f"{REPEAT_WINDOW_S:g}",
+    )
+    assert (st["loop_tick_s"], st["loop_stall_s"], st["loop_warn_s"], st["loop_warn_every_s"]) == (
+        f"{LOOP_TICK_S:g}",
+        f"{LOOP_STALL_S:g}",
+        f"{LOOP_WARN_S:g}",
+        f"{WARN_EVERY_S:g}",
+    )
+    assert (st["loop_tick_s"], st["reconnect_warn_window_s"]) == ("0.5", "1800")  # 지수 표기 없음(api 는 십진수만 읽는다)
+
+
 def test_status_without_a_monitor_reports_loop_lag_unknown():
     q = RawQueue(10)
     shards = ShardSet("fixture")
@@ -291,4 +344,10 @@ def test_status_without_a_monitor_reports_loop_lag_unknown():
                    provider="fixture", raw_ref="-")  # fmt: skip
     st = sink.status_fields()
     assert st["loop_lag_max_s"] == "" and st["loop_stalls_total"] == ""
+    assert [st[k] for k in ("loop_tick_s", "loop_stall_s", "loop_warn_s", "loop_warn_every_s")] == [
+        "",
+        "",
+        "",
+        "",
+    ]  # 잴 것이 없다
     assert shards.shards_view()[0]["ping_rtt_max_s"] is None and shards.shards_view()[0]["ws_queue_max"] is None
