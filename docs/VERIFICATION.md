@@ -577,16 +577,16 @@
   api `OpsPipelineControllerTest` · `OpsPipelineIT` · web `ops-pipeline-ais-diag.test.ts`(7).
 - **남은 것** 다음 1011 이 나면 끊김 로그 한 줄의 맥락(루프 지연 · 수신 버퍼 · keepalive 왕복 · 공급자 지연 p50)으로 후보를 가른다. 배포 전이라 운영 값은 아직 없다.
 
-## 자동 검사 현황(2026-09-30 KST, 배포 뒤 — 세 레인 통합(#52–#57) · KOMSA 요청 크기(#58) · 재생 목록 배치(#59) · 바탕 지도 범례(#60) · 클라이언트 끊김 로그(#61) · 선박 스냅샷 중복(#62))
+## 자동 검사 현황(2026-09-30 KST, 세 레인 통합 · 배포 전 — 노선 조회 우편함 밖(#63) · 기상청 '파일 없음'(#64) · 상태 바 ResizeObserver(#65) · AIS 수신 진단 · 끊김 로그 수준(#66))
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,389 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 %(앞 회차 값 — 이번 리뷰에서 수집기 코드는 바뀌지 않았다) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 834 · JaCoCo LINE 96.5 % · BRANCH 85.3 %(하한 95 / 80) |
-| web 단위 | Vitest | 1,142(76 파일) · 커버리지(소스 전체) Lines 91.0 % · Branches 81.6 % |
-| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15) + 가림 · 억제 벡터 — PASSED |
-| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 34종(통계 표본은 실제로 집계한 KST 날짜 — #57, 오늘 응답 `stats_traffic_today` 추가) |
+| collector · ais 단위·통합 | pytest | 1,449 통과(18 건너뜀 — 실 Redis 12건은 CI 와 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 따로 실행, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — CI 는 돌리지 않는다) · 커버리지 97 %(이번 통합에서 잼 — 8,912문 중 246 빠짐) |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물) | 867 · JaCoCo LINE 96.6 % · BRANCH 85.6 %(하한 95 / 80) |
+| web 단위 | Vitest | 1,172(78 파일) · 커버리지(소스 전체) Lines 91.1 % · Branches 81.9 % |
+| 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15 — 세 레인을 합친 뒤 `make ws-samples` 경로로 다시 만듦) + 가림 · 억제 벡터 — PASSED |
+| REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 35종(기상청 '파일 없음' 연속 표본 `radar_kr_missing` 추가 — #64) — PASSED |
 | 인프라 정책 | infra/tests(unittest) | 122 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · **48** · 27 · 12(백업·복원은 이 판 — V16 포함 16개 마이그레이션 · 복원본의 표 수 · ACL 비교 — 으로 다시 돌렸다(#57), 나머지는 마이그레이션을 쓰지 않아 앞 회차 값) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 34 통과(재생 목록 배치 시험 추가 — #59 · 설명서 그림 13장은 배포 뒤 다시 찍음: 11장 실서비스(ko-KR) · 운영 · 로그는 격리 스택, 운영자 정보 가림) |
-| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | PASS(2026-09-30 배포 전 빌드 — gitleaks · Trivy 자체 이미지 3종 · 제3자, db · k6 는 보고만) |
-| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 이번 배포 뒤 228건 · 14종, 형식 오류 0건(korea 세션의 저장 정적 보고 ship_selected 포함 — docs/review/evidence/v5-ws-live-check-2026-09-30.txt) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 12 — 앞 회차 값(#57), 이번 통합에서는 돌리지 않았다(인프라 · 마이그레이션 파일은 바뀌지 않았다) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 35 통과(상태 바 창 크기 시험 `statusbar-resize.spec.ts` 추가 — #65) |
+| 보안 게이트 | `make security`(gitleaks · Trivy 자체 이미지 3종 · 제3자 이미지) | 앞 회차 PASS(2026-09-30 배포 전 빌드) — 이번 통합에서는 돌리지 않았다(의존성 · Dockerfile 은 바뀌지 않았다) |
+| 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 배포 뒤 228건 · 14종, 형식 오류 0건(docs/review/evidence/v5-ws-live-check-2026-09-30.txt) — 이번 통합은 아직 배포하지 않았다 |
