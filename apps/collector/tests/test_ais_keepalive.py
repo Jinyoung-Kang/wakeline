@@ -360,8 +360,9 @@ async def test_server_delaying_pongs_below_the_timeout_keeps_the_connection():
 # 루프(기제 1)도 수신 버퍼(기제 2)도 아니다. 08:41 · 08:51 KST 의 1011 두 번은 공백 5–6 s 를 남기고 공급자 쪽에 쌓인 전달분을 버렸다(재전송 없음).
 # 운영 값을 SCALE 로 줄여 같은 관계(간격 · 시간 초과 · 늦은 pong)를 본다 — websockets keepalive 는 두 값과 pong 도착 시각의 관계로만 판정한다.
 SCALE = 0.02
-# 이 공급자에서 잰 가장 큰 전달 지연 중 스스로 회복한 것(ADR-014 부록 A 10분 재측정 최대 23.1 s — 연결 하나일 때). 20 s 시간 초과는 이만큼 늦은 pong 에 끊었다
-PROVIDER_LAG_RECOVERED_MAX_S = 23.1
+# 이 공급자에서 잰 가장 큰 데이터 지연(ADR-014 부록 A 10분 재측정 최대 23.1 s — 수신 − time_utc, 연결 하나일 때). pong 왕복이 아니다 — 시험은 pong 을 그만큼
+# 늦춰 본다(pong 이 데이터와 같은 줄에 선다는 부록 C 진단을 흉내 낸다). 20 s 를 넘은 한 번이었고 그때 20 s 시간 초과가 끊었다(스스로 회복한 값이 아니다)
+LARGEST_MEASURED_DATA_LAG_S = 23.1
 
 
 def _operating_client(url: str) -> tuple[AisStreamClient, RawQueue, FeedState]:
@@ -375,9 +376,9 @@ def _operating_client(url: str) -> tuple[AisStreamClient, RawQueue, FeedState]:
     return c, q, feed
 
 
-async def test_pong_as_late_as_the_largest_recovered_provider_lag_keeps_the_connection():
+async def test_pong_as_late_as_the_largest_measured_data_lag_keeps_the_connection():
     """고치기 전(시간 초과 20 s)에는 23.1 s 늦은 pong 에 1011 로 끊었다 — 공백 5–6 s + 공급자 쪽 적체분 손실. 데이터는 그동안 계속 왔다."""
-    server, url = await _serve(Server(pong_hook=_delay_pongs(PROVIDER_LAG_RECOVERED_MAX_S * SCALE)))
+    server, url = await _serve(Server(pong_hook=_delay_pongs(LARGEST_MEASURED_DATA_LAG_S * SCALE)))
     c, q, feed = _operating_client(url)
     try:
         await _run_for(c, 2.5)  # 운영 시간으로 약 125 s — keepalive 여러 번
