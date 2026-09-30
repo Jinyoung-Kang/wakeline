@@ -258,6 +258,18 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
      SELECT provider, count(*) AS hours, sum(runs) AS runs, round(sum(recs)::numeric / sum(runs), 1) AS records_in_per_run
      FROM h JOIN shared USING (hr) GROUP BY provider ORDER BY provider;
      ```
+- 같은 호스트의 수요 추적(리뷰 2026-09-30 밤): focus · hot 도 opendata.adsb.fi 를 부른다. 그 호출이 429 를 받으면 호출 제한기가 **호스트 전체**를 막는다(Retry-After,
+  없으면 30 → 60 → 120 → 300 s — `ratelimit.penalize`). 전에는 관심 지역이 그 쿨다운을 '쉼'으로 적어 남은 시간 동안 다음 순위(adsb.lol)로 갔다 — 순서를 바꾼 뒤로는
+  수요 쪽 429 하나마다 전환 둘 · adsb.lol 호출(프로브로 확인: 30 s 쿨다운이면 adsb.lol 2번 · 'fallback — adsb_fi 호출 제한기 429 쿨다운(29 s)'). 고른 규칙:
+  관심 지역은 **쿨다운 + 주기 2번 ≤ 60 s**(api 의 관심 지역 끊김 기준 — `EngineService.REGION_FEED_STALE_S`, 수집기 `REGION_FEED_STALE_S` 가 같은 값인지 시험이
+  본다)이면 같은 공급자로 기다린다 — 그 주기들은 부르지 않고 실행 `throttled`(오류 글 'cooling down N s after HTTP 429'), 전환 · 공급자 없음 상태 없음, 쿨다운이
+  5 s 안으로 줄면 제한기 대기(`REGION_WAIT_S`) 안에서 부른다. 기본 10 s 주기면 15분 안의 첫 429(30 s)는 기다리고, 되풀이된 429(60 → 300 s)는 전처럼 남은
+  쿨다운만 다음 순위가 맡는다(기다리면 자료가 끊김 기준을 넘는다). 전세계는 기다리지 않는다. 수요 호출이 429 를 얼마나 자주 받는지는 재지 않았다 — 배포 뒤
+  운영 RUNS 의 region `throttled`(오류 글 'cooling down') 수와 전환 기록 중 사유 '호출 제한기 429' 인 adsb_fi → adsb_lol 수로 본다(`test_aircraft_job` —
+  기본 순서 · adsb.lol 쓸 수 있음에서 adsb.lol 호출 0 · 되풀이 429 는 폴백).
+- 순서가 바뀌는 순간(V17 배포 창 — api 가 새 순서를 미러하는 동안 수집기는 그대로 · /ops 변경): 체인은 지난 선택의 순위와 건너뛴 공급자를 기억해, 건너뛴 적 없는
+  공급자를 순서 때문에 고르면 전환 사유를 `order — 공급자 순서 변경(aircraft_providers — adsb_fi 1순위)` 로 적는다(전에는 `recovery — adsb_fi 쉼 끝(1순위 복귀)` —
+  쉰 적이 없는데 쉼이 끝났다고 적었다, 리뷰 2026-09-30 밤).
 - 배포(운영자가 할 일 — 저장소는 `.env` 를 추적하지 않는다): `make up` 이 V17 을 싣고 운영 설정을 옮긴다. 옛 `.env.example` 을 복사한 `.env` 에는
   `AIRCRAFT_PROVIDERS=adsb_lol,adsb_fi,opensky` 가 남아 compose 기본값을 덮는다 — 수집기는 운영 설정 미러(Redis `wakeline:settings`)가 없을 때 이 값을 쓴다
   (`runtime_settings.provider_order` — Redis 를 다시 띄운 뒤 api 가 다시 미러하기까지 60 s 안 등). 그 줄을 `AIRCRAFT_PROVIDERS=adsb_fi,adsb_lol,opensky` 로 바꾸거나 지우고
