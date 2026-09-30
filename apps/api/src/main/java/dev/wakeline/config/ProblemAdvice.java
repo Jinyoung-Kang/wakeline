@@ -1,10 +1,12 @@
 package dev.wakeline.config;
 
+import dev.wakeline.logs.LogMasker;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.NonTransientDataAccessResourceException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.RecoverableDataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpHeaders;
@@ -14,6 +16,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
@@ -28,12 +32,15 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
+import java.sql.SQLException;
 import java.util.Locale;
 
 /**
  * 모든 오류를 application/problem+json(RFC 9457)으로. 확장 필드 code · request_id. 스택·내부 메시지는 싣지 않는다.
  * <ul>
- *   <li>DB·Redis 연결 실패·풀 대기 초과·일시 오류 → 503 + Retry-After: 10 (5.1절 'DB 종료·느림', 계약 §2). WARN 한 줄(스택 없음).</li>
+ *   <li>DB·Redis 연결 실패·풀 대기 초과·일시 오류 → 503 + Retry-After: 10 (5.1절 'DB 종료·느림', 계약 §2). WARN 한 줄(스택 없음) — 원인은 예외가
+ *       스스로 말하는 것(SQLSTATE · 예외 종류)만, 그리고 경로 + 쿼리 문자열(가림 규칙을 거쳐) · 걸린 시간을 싣는다(조사 2026-10-01 오류 F3).
+ *       잠금 대기 한도(SQLSTATE 55P03)는 Spring 의 기본 번역이 모르는 부류라 UncategorizedSQLException 으로 오지만 같은 503 이다(예전: 500 + ERROR).</li>
  *   <li>Spring MVC 가 이미 상태를 아는 예외(405·406·415 등, {@link ErrorResponse}) → 그 상태 그대로, 헤더(Allow 등) 유지.
  *       4xx 는 INFO 한 줄 — 익명 요청으로 ERROR 스택을 쏟아내게 할 수 없다(SEC-10).</li>
  *   <li>그 밖의 예외만 500 + ERROR(스택).</li>
@@ -43,6 +50,12 @@ import java.util.Locale;
 @RestControllerAdvice
 public class ProblemAdvice {
     private static final Logger log = LoggerFactory.getLogger(ProblemAdvice.class);
+    /** PostgreSQL SQLSTATE 57014 query_canceled(pgjdbc PSQLState.QUERY_CANCELED) — 쿼리 한도(setQueryTimeout)가 보낸 취소 · 서버 statement_timeout. */
+    static final String QUERY_CANCELED = "57014";
+    /** PostgreSQL SQLSTATE 55P03 lock_not_available — lock_timeout(application.yml 5 s) · NOWAIT. Spring sql-error-codes.xml 의 PostgreSQL cannotAcquireLockCodes. */
+    static final String LOCK_NOT_AVAILABLE = "55P03";
+    /** 로그에 싣는 쿼리 문자열의 상한(코드 포인트). */
+    static final int QUERY_LOG_MAX = 512;
 
     @ExceptionHandler(Problem.class)
     ResponseEntity<ProblemDetail> problem(Problem e, HttpServletRequest req) {
@@ -63,13 +76,63 @@ public class ProblemAdvice {
         return build(HttpStatus.NOT_FOUND, "NOT_FOUND", "not found", "no such resource", req);
     }
 
-    /** 저장소(DB·Redis)를 지금 쓸 수 없다 — 서버 버그가 아니므로 스택 없이 한 줄, 클라이언트에는 재시도 간격을 준다. */
+    /**
+     * 저장소(DB·Redis)를 지금 쓸 수 없다 — 서버 버그가 아니므로 스택 없이 한 줄, 클라이언트에는 재시도 간격을 준다.
+     * 줄: {원인} request_id=… path=… [query="…"] elapsed_ms=…: {예외 종류 ← 가장 안쪽 원인: 메시지}.
+     */
     @ExceptionHandler({DataAccessResourceFailureException.class, NonTransientDataAccessResourceException.class,
             TransientDataAccessException.class, RecoverableDataAccessException.class, CannotCreateTransactionException.class})
     ResponseEntity<ProblemDetail> unavailable(Exception e, HttpServletRequest req) {
-        log.warn("data store unavailable request_id={} path={}: {}", RequestIdFilter.current(req), req.getRequestURI(), brief(e));
+        Long elapsed = RequestIdFilter.elapsedMs(req);
+        log.warn("{} request_id={} path={}{} elapsed_ms={}: {}", cause(e), RequestIdFilter.current(req), req.getRequestURI(), query(req),
+                elapsed == null ? "-" : elapsed, brief(e));
         return withRetryAfter(build(HttpStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "service unavailable",
                 "data store temporarily unavailable; retry later", req), Problem.UNAVAILABLE_RETRY_AFTER_S);
+    }
+
+    /**
+     * Spring 의 기본 예외 번역(SQLExceptionSubclassTranslator → SQLStateSQLExceptionTranslator)이 모르는 SQLSTATE. 잠금 대기 한도(55P03)는 잠시 뒤
+     * 되는 일이라 503(DbTimeoutsIT 가 실제 DB 로 확인 — 예전에는 500 + ERROR 스택). 그 밖의 것은 결함일 수 있어 그대로 500.
+     */
+    @ExceptionHandler(UncategorizedSQLException.class)
+    ResponseEntity<?> uncategorizedSql(UncategorizedSQLException e, HttpServletRequest req) {
+        return LOCK_NOT_AVAILABLE.equals(sqlState(e)) ? unavailable(e, req) : other(e, req);
+    }
+
+    /**
+     * 로그의 첫 마디 — 예외가 스스로 말하는 원인만(SQLSTATE · 예외 종류). 호출부가 알려 준 적 없는 한도나 까닭은 적지 않는다: 57014 는 공개 조회의 3 s
+     * 쿼리 한도일 수도, 서버의 statement_timeout 30 s 일 수도 있다(어느 쪽인지는 뒤따르는 원인 메시지 'due to user request' · 'due to statement
+     * timeout' 과 elapsed_ms 가 말한다). CannotGetJdbcConnectionException 은 풀 대기 초과일 수도 DB 연결 실패일 수도 있다(원인 메시지가 말한다).
+     */
+    static String cause(Throwable e) {
+        String state = sqlState(e);
+        if (QUERY_CANCELED.equals(state)) return "statement cancelled (SQLSTATE " + QUERY_CANCELED + ")";
+        if (LOCK_NOT_AVAILABLE.equals(state)) return "lock not available (SQLSTATE " + LOCK_NOT_AVAILABLE + ")";
+        if (e instanceof CannotGetJdbcConnectionException) return "could not get a DB connection";
+        if (e instanceof QueryTimeoutException) return "query timeout"; // SQLSTATE 없음 — 예: Redis 명령 시간 초과
+        return "data store unavailable";
+    }
+
+    /** 원인 사슬에서 처음 만난 SQLSTATE(없으면 null). */
+    static String sqlState(Throwable e) {
+        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
+            if (c instanceof SQLException s && s.getSQLState() != null) return s.getSQLState();
+        }
+        return null;
+    }
+
+    /**
+     * 로그용 쿼리 문자열(없으면 빈 글자): 무엇을 물었는지 — 공개 API 의 쿼리는 bbox · 시각 · 개수 · 검색어 · 커서다. 그래도 로그 가림 규칙(LogMasker —
+     * 계약 v5 §C5, 싱크로 가는 줄과 같은 규칙)을 거치고, 따옴표 안에 싣는다(로그 지문 — LogEvents.template 이 따옴표 안을 '…' 로 바꾼다 — 이 bbox ·
+     * 시각 값마다 갈리지 않게). {@value #QUERY_LOG_MAX} 코드 포인트에서 자르고 잘라 낸 수를 적는다.
+     */
+    static String query(HttpServletRequest req) {
+        String q = req.getQueryString();
+        if (q == null || q.isEmpty()) return "";
+        String masked = LogMasker.maskAll(q).replace("\"", "%22");
+        int n = masked.codePointCount(0, masked.length());
+        if (n > QUERY_LOG_MAX) masked = masked.substring(0, masked.offsetByCodePoints(0, QUERY_LOG_MAX)) + "…(+" + (n - QUERY_LOG_MAX) + ")";
+        return " query=\"" + masked + "\"";
     }
 
     /** 클라이언트가 이미 연결을 끊어 응답을 쓸 수 없다 — 보낼 것도, 오류로 남길 것도 없다. */
