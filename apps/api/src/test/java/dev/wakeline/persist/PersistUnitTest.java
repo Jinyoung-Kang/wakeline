@@ -5,6 +5,9 @@ import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.AlertStateMachine.Event;
 import dev.wakeline.engine.AlertStateMachine.EventType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -12,7 +15,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** DB 없이 확인하는 저장 규칙: 닫힘 이유, 이전 형식 SIGMET 출처(추정 없음), 내용 비교, 공항 관측 나이. */
+/** DB 없이 확인하는 저장 규칙: 닫힘 이유, 이전 형식 SIGMET 출처(추정 없음), 내용 비교, 공항 관측 나이, 항적 저장기의 종료. */
+@ExtendWith(OutputCaptureExtension.class)
 class PersistUnitTest {
     static final Instant NOW = Instant.parse("2026-09-27T12:00:00Z");
 
@@ -110,6 +114,117 @@ class PersistUnitTest {
             s.assertThat(meters.counter("wakeline_track_rows_total", "result", "dropped").count()).isEqualTo(1.0);
             s.assertThat(meters.counter("wakeline_track_rows_total", "result", "written").count()).as("A counted once, not twice").isEqualTo(1.0);
         });
+    }
+
+    /**
+     * 느린 DB 흉내(항적): 첫 batchUpdate 는 문이 열릴 때까지 막혔다가 커밋한다(firstFails 가 있으면 그것을 던진다 — 예외든 오류든). 그 뒤 쓰기는 성공한다.
+     */
+    static final class GateJdbc extends org.springframework.jdbc.core.JdbcTemplate {
+        final java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1), gate = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.List<String> written = new java.util.concurrent.CopyOnWriteArrayList<>();
+        volatile Throwable firstFails;
+
+        @Override
+        public <T> int[][] batchUpdate(String sql, java.util.Collection<T> args, int batchSize,
+                                       org.springframework.jdbc.core.ParameterizedPreparedStatementSetter<T> pss) {
+            if (calls.incrementAndGet() == 1) {
+                entered.countDown();
+                try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                if (firstFails instanceof RuntimeException r) throw r;
+                if (firstFails instanceof Error err) throw err;
+            }
+            for (T a : args) written.add(((dev.wakeline.domain.AircraftState) a).hex());
+            return new int[0][];
+        }
+    }
+
+    static TrackWriter trackWriter(GateJdbc jdbc, io.micrometer.core.instrument.MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
+        AircraftRepository aircraft = new AircraftRepository(null, null) {
+            @Override public int touch(java.util.Collection<dev.wakeline.domain.AircraftState> states) { return states.size(); }
+        };
+        return new TrackWriter(jdbc, aircraft, meters, backoffStartMs, backoffMaxMs);
+    }
+
+    /**
+     * 리뷰 2026-10-01(ShipWriterTest.aWriteThatOutlastsTheStopWait 의 항적 판): 쓰기 하나가 stop 의 기다림 상한보다 오래 걸리면 stop 은 그렇다고 WARN 하고
+     * 돌아간다. 워커는 마감(stop 요청 + 상한 − 1 s)이 지난 뒤에는 새 배치를 쓰기 시작하지 않는다 — 늦게 끝난 A 만 커밋, B 는 쓰지 않고 ACK 하지 않는다.
+     */
+    @Test
+    void aTrackWriteThatOutlastsTheStopWait_theWorkerStartsNoNewWriteAfterTheDeadline(CapturedOutput out) throws Exception {
+        GateJdbc jdbc = new GateJdbc();
+        var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        TrackWriter tw = trackWriter(jdbc, meters, 5, 10);
+        tw.stopWaitMs = 1_200;
+        tw.start();
+        java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger(), ackB = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.ingest.Receipt(ackB::incrementAndGet);
+        tw.enqueue(java.util.List.of(ac("a00001")), ra);
+        ra.release();
+        assertThat(jdbc.entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        tw.enqueue(java.util.List.of(ac("a00002")), rb);
+        rb.release();
+        long t0 = System.nanoTime();
+        tw.stop();
+        long waitedMs = (System.nanoTime() - t0) / 1_000_000;
+        assertThat(waitedMs).isBetween(1_100L, 5_000L);
+        assertThat(out.getAll()).contains("track writer still busy 1200 ms after stop");
+        jdbc.gate.countDown();
+        long end = System.currentTimeMillis() + 5_000;
+        while (!out.getAll().contains("track flush on shutdown") && System.currentTimeMillis() < end) Thread.sleep(10);
+        assertThat(ackA.get()).isEqualTo(1);
+        assertThat(ackB.get()).isZero();
+        assertThat(jdbc.calls.get()).as("no write started after the deadline").isEqualTo(1);
+        assertThat(out.getAll()).contains("track flush on shutdown: 0 rows written, 1 rows dropped");
+        assertThat(meters.counter("wakeline_track_rows_total", "result", "dropped").count()).isEqualTo(1.0);
+    }
+
+    /** 리뷰 2026-10-01: stop 요청 뒤 진행 중 쓰기가 실패하면 기다림은 없다 — WARN 은 'retry in …' 이 아니라 종료 flush 가 한 번 더 쓴다고 말한다. */
+    @Test
+    void aTrackWriteThatFailsAfterStopWasRequested_theWarnSaysTheShutdownFlushTriesIt(CapturedOutput out) throws Exception {
+        GateJdbc jdbc = new GateJdbc();
+        jdbc.firstFails = new org.springframework.dao.DataAccessResourceFailureException("db restarting");
+        TrackWriter tw = trackWriter(jdbc, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), 2_000, 30_000);
+        tw.start();
+        java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet);
+        tw.enqueue(java.util.List.of(ac("a00001")), ra);
+        ra.release();
+        assertThat(jdbc.entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        java.util.concurrent.CountDownLatch stopped = new java.util.concurrent.CountDownLatch(1);
+        tw.stop(stopped::countDown);
+        jdbc.gate.countDown();
+        assertThat(stopped.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(out.getAll()).contains("track batch (1 rows) failed while stopping — the shutdown flush tries it once more before its deadline (queue 0): "
+                + "org.springframework.dao.DataAccessResourceFailureException: db restarting").doesNotContain("retry in");
+        assertThat(out.getAll()).contains("track flush on shutdown: 1 rows written");
+        assertThat(ackA.get()).isEqualTo(1);
+        assertThat(jdbc.written).containsExactly("a00001");
+    }
+
+    /** 리뷰 2026-10-01: 워커가 오류(Error)로 죽으면 ERROR 한 줄, stop 은 — 쓰는 스레드가 이제 자기뿐이므로 — 남은 행을 직접 쓴다(예전: 조용히 아무것도). */
+    @Test
+    void aTrackWorkerKilledByAnError_logsIt_andStopStillFlushesTheQueuedRows(CapturedOutput out) throws Exception {
+        GateJdbc jdbc = new GateJdbc();
+        jdbc.firstFails = new StackOverflowError("test: the worker dies");
+        jdbc.gate.countDown();
+        TrackWriter tw = trackWriter(jdbc, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), 5, 10);
+        tw.start();
+        java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger(), ackB = new java.util.concurrent.atomic.AtomicInteger();
+        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.ingest.Receipt(ackB::incrementAndGet);
+        tw.enqueue(java.util.List.of(ac("a00001")), ra);
+        ra.release();
+        long end = System.currentTimeMillis() + 5_000;
+        while (!out.getAll().contains("track writer thread died") && System.currentTimeMillis() < end) Thread.sleep(5);
+        assertThat(out.getAll()).contains("track writer thread died (java.lang.StackOverflowError: test: the worker dies)");
+        tw.enqueue(java.util.List.of(ac("a00002")), rb);
+        rb.release();
+        tw.stop();
+        assertThat(jdbc.written).containsExactly("a00001", "a00002");
+        assertThat(ackA.get()).isEqualTo(1);
+        assertThat(ackB.get()).isEqualTo(1);
+        assertThat(tw.pendingMarks()).isZero();
+        assertThat(out.getAll()).contains("track flush on shutdown: 2 rows written");
     }
 
     static dev.wakeline.domain.AircraftState ac(String hex) {

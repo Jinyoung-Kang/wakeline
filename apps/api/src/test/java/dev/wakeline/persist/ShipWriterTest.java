@@ -71,6 +71,8 @@ class ShipWriterTest {
         final AtomicInteger active = new AtomicInteger();
         final AtomicInteger maxActive = new AtomicInteger();
         volatile boolean laterWritesFail = true;
+        /** 첫 쓰기가 문이 열린 뒤 던질 것(예외 또는 오류 — 없으면 커밋). */
+        volatile Throwable firstWriteFails;
 
         @Override public void upsertStatics(List<StaticRow> rows) {
             maxActive.accumulateAndGet(active.incrementAndGet(), Math::max);
@@ -78,6 +80,8 @@ class ShipWriterTest {
                 if (calls.incrementAndGet() == 1) {
                     entered.countDown();
                     try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    if (firstWriteFails instanceof RuntimeException r) throw r;
+                    if (firstWriteFails instanceof Error err) throw err;
                 } else {
                     second.countDown();
                     if (laterWritesFail) throw new DataAccessResourceFailureException("db down");
@@ -342,6 +346,64 @@ class ShipWriterTest {
         assertThat(ackB.get()).isZero();
         assertThat(repo.calls.get()).as("no write started after the deadline").isEqualTo(1);
         assertThat(out.getAll()).contains("ship flush on shutdown: 0 rows written, 1 rows not written");
+    }
+
+    /**
+     * 리뷰 2026-10-01: stop 이 요청된 뒤 진행 중 쓰기가 실패하면 워커는 기다리지 않고 곧바로 종료 flush 로 간다 — 예전 WARN 은 그래도 'retry in 2000 ms'
+     * 라고 했다(2026-09-30 17:58:51 호스트 종료 로그의 그 줄 — 일어나지 않는 기다림). 이제 WARN 은 실제로 일어나는 일을 말한다.
+     */
+    @Test void aWriteThatFailsAfterStopWasRequested_theWarnSaysTheShutdownFlushTriesIt_notARetryDelay(CapturedOutput out) throws Exception {
+        GateRepo repo = new GateRepo();
+        repo.firstWriteFails = new DataAccessResourceFailureException("db restarting");
+        repo.laterWritesFail = false;
+        ShipWriter w = new ShipWriter(repo, null, new SimpleMeterRegistry(), 2_000, 30_000);
+        w.start();
+        AtomicInteger ackA = new AtomicInteger();
+        Receipt ra = new Receipt(ackA::incrementAndGet);
+        w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), false)), ra);
+        ra.release();
+        assertThat(repo.entered.await(5, TimeUnit.SECONDS)).as("the worker is writing batch A").isTrue();
+        CountDownLatch stopped = new CountDownLatch(1);
+        w.stop(stopped::countDown); // stop 요청은 이 스레드에서 바로 — 워커는 아직 A 를 쓰는 중
+        repo.gate.countDown();      // 그 뒤 A 가 실패한다
+        assertThat(stopped.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(out.getAll()).contains("ship batch (1 rows) failed while stopping — the shutdown flush tries it once more before its deadline (queue 0): "
+                + "org.springframework.dao.DataAccessResourceFailureException: db restarting").doesNotContain("retry in");
+        assertThat(out.getAll()).contains("ship flush on shutdown: 1 rows written");
+        assertThat(ackA.get()).isEqualTo(1);
+        assertThat(repo.calls.get()).as("the failed write and the flush's one retry").isEqualTo(2);
+    }
+
+    /**
+     * 리뷰 2026-10-01: 워커가 예외가 아닌 오류(Error — OOM · StackOverflowError 등)로 죽어도 종료는 조용하지 않다. 예전에는 stop 이 죽은 스레드의 join 을
+     * 곧바로 끝내고 flush 도, WARN 도, dropped 도 없었다(종료 flush 가 워커에게로 옮겨 간 뒤). 이제 워커가 죽을 때 ERROR 한 줄, stop 은 — 쓰는 스레드가
+     * 이제 자기뿐이므로 — 남은 행을 직접 쓴다.
+     */
+    @Test void aWorkerKilledByAnError_logsIt_andStopStillFlushesTheQueuedRows(CapturedOutput out) throws Exception {
+        GateRepo repo = new GateRepo();
+        repo.firstWriteFails = new StackOverflowError("test: the worker dies");
+        repo.laterWritesFail = false;
+        repo.gate.countDown();
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(repo, null, meters, 5, 10);
+        w.start();
+        AtomicInteger ackA = new AtomicInteger(), ackB = new AtomicInteger();
+        Receipt ra = new Receipt(ackA::incrementAndGet), rb = new Receipt(ackB::incrementAndGet);
+        w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), false)), ra);
+        ra.release();
+        long end = System.currentTimeMillis() + 5_000;
+        while (!out.getAll().contains("ship writer thread died") && System.currentTimeMillis() < end) Thread.sleep(5);
+        assertThat(out.getAll()).contains("ship writer thread died (java.lang.StackOverflowError: test: the worker dies)");
+        w.enqueue(List.of(new ShipWriter.Pos(pos("440000002", T), false)), rb); // 죽은 뒤에 온 행도 영수증을 잡고 기다린다
+        rb.release();
+        w.stop();
+        assertSoftly(s -> {
+            s.assertThat(repo.positions).extracting(ShipState::mmsi).containsExactly("440000001", "440000002");
+            s.assertThat(ackA.get()).isEqualTo(1);
+            s.assertThat(ackB.get()).isEqualTo(1);
+            s.assertThat(w.pendingMarks()).isZero();
+            s.assertThat(out.getAll()).contains("ship flush on shutdown: 2 rows written");
+        });
     }
 
     @Test void gapsGoThroughTheOrderedWriterWithTheReceipt() {

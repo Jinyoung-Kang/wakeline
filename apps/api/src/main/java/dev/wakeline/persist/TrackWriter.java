@@ -39,7 +39,8 @@ import java.util.concurrent.locks.ReentrantLock;
  *   <li>종료: 스트림 소비·WS going_away 뒤에(phase) 워커가 진행 중 배치를 끝내고 <b>스스로</b> 남은 행을 쓴다(DB 를 쓰는 스레드는 종료 때도
  *       하나 — 조사 2026-10-01: 예전에는 stop 이 2 s 기다린 뒤 다른 스레드가 flush 해 느린 쓰기와 같은 배치를 동시에 썼다). stop 요청 뒤 8 s 가
  *       지나면 새 배치를 쓰기 시작하지 않고, stop 은 최대 9 s 기다린다(lifecycle 단계 한도 10 s 안). 못 쓴 행은 dropped 로 센다. 못 쓴 행의 메시지는
- *       ACK 하지 않는다(다음 기동에서 PEL 로 다시 온다).</li>
+ *       ACK 하지 않는다(다음 기동에서 PEL 로 다시 온다). stop 요청 뒤 실패한 쓰기는 기다리지 않고 종료 flush 가 한 번 더 쓴다. 워커가 오류(Error)로
+ *       죽었으면 ERROR 한 줄을 남기고, 남은 행은 stop 이 쓴다(그때 쓰는 스레드는 stop 하나).</li>
  * </ul>
  * (hex, ts) PK 에 ON CONFLICT DO NOTHING 이라 재처리·재시도로 같은 행이 와도 중복되지 않는다.
  */
@@ -246,8 +247,13 @@ public class TrackWriter implements SmartLifecycle {
 
     /** 워커: 쓰기 루프 → 종료 flush. track_point · aircraft 를 쓰는 스레드는 이것 하나다. */
     private void run() {
-        loop();
-        flush();
+        try {
+            loop();
+            flush();
+        } catch (Error err) {
+            // 예외가 아닌 오류(OOM · StackOverflowError 등)로 끝났다 — 조용히 죽지 않는다. 그 뒤 쌓이는 행은 stop 이 쓴다(쓰는 스레드가 그때는 stop 하나)
+            log.error("track writer thread died ({}) — nothing writes track rows until shutdown; stop() then writes what is queued", err.toString(), err);
+        }
     }
 
     /**
@@ -263,9 +269,14 @@ public class TrackWriter implements SmartLifecycle {
             return;
         }
         try { w.join(stopWaitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        if (w.isAlive())
+        if (w.isAlive()) {
             log.warn("track writer still busy {} ms after stop (a DB write has not returned) — shutdown continues; the writer starts no new batch and logs"
                     + " its own result, and rows it has not written keep their stream messages unacknowledged (re-processed on restart)", stopWaitMs);
+            return;
+        }
+        // 워커는 끝났다 — 보통은 스스로 flush 했으므로 남은 것이 없다(빈 flush 는 아무것도 남기지 않는다). 오류로 죽었다면(run) 남은 행을 여기서 쓴다:
+        // 쓰는 스레드는 이제 이것 하나다(리뷰 2026-10-01 — 예전에는 죽은 워커 뒤로 flush · WARN · dropped 가 없었다)
+        flush();
     }
 
     private void requestStop() {
@@ -305,6 +316,12 @@ public class TrackWriter implements SmartLifecycle {
                 Thread.currentThread().interrupt();
                 return;
             } catch (RuntimeException e) {
+                if (!running) {
+                    // stop 이 이미 요청됐다 — 기다려 다시 시도하지 않는다: 루프를 나가 곧바로 종료 flush 가 이 배치부터 쓴다(마감 안이면)
+                    log.warn("track batch ({} rows) failed while stopping — the shutdown flush tries it once more before its deadline (queue {}): {}",
+                            pending == null ? 0 : pending.rows().size(), queued(), e.toString());
+                    continue;
+                }
                 if (!isPermanent(e)) {
                     log.warn("track batch ({} rows) failed, retry in {} ms (queue {}): {}", pending == null ? 0 : pending.rows().size(), backoff, queued(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
