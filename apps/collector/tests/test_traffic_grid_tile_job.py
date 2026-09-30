@@ -567,6 +567,8 @@ async def test_a_tile_off_grid_feature_writes_no_negative_and_the_one_id_lookup_
     ]
     assert sorted(x[2]["grid_no"] for x in q) == sorted([pending_id, known_id])
     assert all(x[2]["tile"] == "0/28/60" and x[2]["raw_ref"] for x in q)
+    (run,) = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"]
+    assert run["records_quarantined"] == 2  # 타일의 격자 밖 지물도 격리로 센다(부정 캐시에는 적지 않을 뿐)
 
 
 async def test_a_lookup_that_finds_a_cell_a_done_tile_did_not_list_rechecks_that_tile_once(caplog):
@@ -682,3 +684,104 @@ def test_the_collector_wires_bbox_tiles_to_the_same_provider_and_budget():
     other.name = "portmis"  # type: ignore[misc]
     with pytest.raises(ValueError, match="same provider"):
         TrafficGridJob(job.komsa, job.wfs, make_ctx(), tiles=other)
+
+
+# ---- 작업 수준 지킴(검토 지적 2026-10-01 — 지워도 시험이 통과하던 줄: 기하가 바뀐 아는 칸 · failed 타일 · 실행 기록 · heartbeat · 다시 싣기) --------------
+
+
+async def test_a_known_id_whose_tile_geometry_changed_is_stored_again():
+    """같은 번호가 다른 gid · 다른 꼭짓점으로 오면(공급자가 고쳤다) 메모리만이 아니라 marine_grid4 에도 쓴다 — 아니면 재기동 뒤 옛 기하로 돌아간다."""
+    grid = FakeGrid()
+    ids = home(grid, A)
+    same_ring, moved = ids[0], ids[1]
+    la, lo = grid.where[same_ring]
+    la2, lo2 = grid.where[moved]
+    body = tile_body(grid, A.box, moved={same_ring: (la, lo, 999_999), moved: (round(la2 + 0.025, 3), lo2, grid.gids[moved])})
+    job, wfs, r, _c, db = start(grid, [ids[2]], known=[same_ring, moved], wfs=GridWfs(grid, answers={A.box: body}))
+    await job.run_once()
+    stored = {c.grid_no: c for c in db.upserts}
+    assert stored[same_ring].gid == 999_999 == job.geometry.cells[same_ring].gid
+    assert stored[moved].lat_min == round(la2 + 0.025, 3) == job.geometry.cells[moved].lat_min
+    assert set(stored) == set(grid.cells_in(A.box))  # 아는 두 칸도 — 기하가 바뀌었다
+
+
+async def test_five_tile_errors_set_the_tile_aside_for_a_day_in_redis_with_one_warn_and_a_quality_case(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    grid = FakeGrid()
+    wfs = GridWfs(grid, answers={A.box: ProviderHttpError(502, "bad gateway")})
+    k = home(grid, A)[0]
+    job, wfs, r, clock, db = start(grid, [k], known=[k], wfs=wfs)  # 물을 칸 없음 — 타일만
+    for step in (0, *gt.TILE_RETRY_S):
+        clock.advance(step)
+        await job.run_once()
+    assert len(wfs.boxes) == gt.TILE_MAX_FAILURES == 5
+    assert orjson.loads(r.kv[TILES_KEY]["0/28/60"])["status"] == "failed"
+    (warn,) = [x.getMessage() for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING]
+    assert warn.startswith("traffic grid: tile 0/28/60 failed 5 times in a row — set aside for 24 h (last: ") and "502" in warn
+    q = [q for run in db.runs if run[0] == "traffic_grid_geom" for q in run[2].get("quality") or []]
+    assert [x[2]["tile"] for x in q if x[0] == "traffic_grid_tile_failed"] == ["0/28/60"]
+    clock.advance(60)
+    await job.run_once()
+    assert len(wfs.boxes) == 5 and r.kv[HB]["traffic_grid_fill_state"] == "idle"  # 하루 동안 다시 묻지 않는다
+
+
+async def test_a_tick_of_only_failed_tiles_is_recorded_as_an_error():
+    grid = FakeGrid()
+    boom = ProviderHttpError(502, "bad gateway")
+    tiles = [A, FAR]
+    known = [home(grid, t)[0] for t in tiles]
+    job, wfs, r, _c, db = start(grid, known, known=known, wfs=GridWfs(grid, answers={t.box: boom for t in tiles}))
+    await job.run_once()
+    (run,) = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"]
+    assert (run["status"], run["http_status"]) == ("error", 502) and run["error_text"].startswith("2 of 2 calls failed; last: ")
+    assert r.kv["wakeline:provider:mof_grid4"]["last_http_status"] == "502"
+
+
+async def test_with_only_a_tile_waiting_after_an_error_the_heartbeat_says_retry_wait_and_when():
+    grid = FakeGrid()
+    k = home(grid, A)[0]
+    job, wfs, r, clock, _db = start(grid, [k], known=[k], wfs=GridWfs(grid, answers={A.box: ProviderHttpError(503, "busy")}))
+    await job.run_once()
+    nxt = (clock() + timedelta(seconds=gt.TILE_RETRY_S[0])).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert (r.kv[HB]["traffic_grid_fill_state"], r.kv[HB]["traffic_grid_fill_resume_at"]) == ("retry_wait", nxt)
+    assert r.kv[HB]["traffic_grid_tiles_resume_at"] == ""  # 차단기가 아니라 그 타일의 물러나기다
+
+
+async def test_an_oversized_split_alone_in_a_tick_is_one_call_with_a_run_record_and_a_pass():
+    """시간 창에 한 번만 남았을 때 크기 초과로 나눈 호출 하나 — 예산을 쓴 호출이므로 실행 기록 · 채우기 한 번에 센다."""
+    grid = FakeGrid()
+    wfs = GridWfs(grid, answers={A.box: WfsTooLarge("response too large (500000 bytes > 393216)")})
+    job, wfs, r, _c, db = start(grid, [home(grid, A)[1]], known=[home(grid, A)[0]], wfs=wfs)
+    r.kv[MOF_HOUR] = {"used": str(SHARE - 1), "limit": str(tg.MOF_HOURLY_CAP)}
+    await job.run_once()
+    assert wfs.boxes == [A.box] and job.counts["wfs_calls"] == 1
+    assert [kw["status"] for j, _p, kw in db.runs if j == "traffic_grid_geom"] == ["ok", "budget_exhausted"]
+    assert (r.kv[HB]["traffic_grid_fill_pass_tiles"], r.kv[HB]["traffic_grid_fill_pass_tile_splits"]) == ("1", "1")
+
+
+async def test_error_success_error_among_tiles_does_not_trip_the_tile_breaker():
+    grid = FakeGrid()
+    boom = ProviderHttpError(502, "bad gateway")
+    order = [A, FAR, Tile(0, 33, 52), Tile(0, 31, 58)]
+    known = [g for n, t in zip((4, 3, 2, 1), order, strict=True) for g in home(grid, t)[:n]]
+    answers = {A.box: boom, order[2].box: boom, order[3].box: boom}
+    job, wfs, r, _c, _db = start(grid, known[:1], known=known, wfs=GridWfs(grid, answers=answers))
+    await job.run_once()
+    assert wfs.boxes == [t.box for t in order]  # 오류 · 성공 · 오류 · 오류 — 연달아 둘뿐
+    assert job._tile_pause_until is None and r.kv[HB]["traffic_grid_tiles_resume_at"] == ""
+    assert job.tiles.retries()[0] == 3
+
+
+async def test_a_tick_where_only_a_tile_resolved_cells_republishes_the_same_reg_dt():
+    """새 regDt 가 아닌 틱에 타일만 칸을 풀어도 수가 바뀌었으니 다시 싣는다(PUBLISH_MIN_INTERVAL_S 뒤) — 교통을 다시 부르지 않고."""
+    grid = FakeGrid()
+    ids = home(grid, A)
+    wfs = GridWfs(grid, answers={A.box: Throttled("apis.data.go.kr", "no slot")})
+    job, wfs, r, clock, _db = start(grid, ids[:3], known=[ids[0]], wfs=wfs)
+    await job.run_once()
+    assert (snapshot(r)["resolved"], wfs.boxes) == (1, [])
+    del wfs.answers[A.box]
+    clock.advance(tg.PUBLISH_MIN_INTERVAL_S)
+    await job.run_once()
+    assert job.komsa.calls == 1 and wfs.boxes == [A.box]  # type: ignore[attr-defined]
+    assert snapshot(r)["resolved"] == 3
