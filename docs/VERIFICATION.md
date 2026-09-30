@@ -648,11 +648,13 @@
 ## #71 운영 [REFRESH] 단추 이름 → [새로고침](사용자 요청) — 로그 화면의 '새로 고침' 도 같은 낱말로
 - **요청**(2026-09-30) "[운영] 메뉴에서 [REFRESH] 버튼 이름을 [새로고침]으로 변경". 운영 머리글 단추(소스 글자 `refresh` — `.btn` 이 대문자로 보였다)는 이제 `새로고침`이고 title 은
   "모든 탭을 지금 다시 받는다(15 s 주기와 따로)". 동작(onClick)은 그대로다. 같은 뜻인 로그 목록 · AIS 수신 공백 탭의 '새로 고침' 도 `새로고침`(`LogsDashboard` · `AisGapsTable`).
-  app · components 의 단추 글자를 훑어 다른 새로고침 단추는 없었다('다시 시도'는 재시도라 그대로). 운영의 다른 영어 탭 이름은 요청 밖이라 그대로다.
+  app · components 의 단추 글자를 훑어 다른 새로고침 단추는 없었다('다시 시도'는 재시도라 그대로) — 레인 ui 의 소스에서는 맞았지만 레인 js 를 합친 뒤에는 틀린 말이 됐다
+  (조각 오류 화면의 '페이지 새로 고침' 단추 · '페이지를 새로 고치세요' 안내 — #76 에서 '페이지 새로고침' · '새로고침하세요' 로 맞추고 검사를 넓혔다). 운영의 다른 영어 탭 이름은 요청 밖이라 그대로다.
 - 설명서(`GuideView`) 운영: "15 s 마다 모든 탭을 다시 받습니다(곧바로 받으려면 ‘새로고침’)", 로그 '새 항목': "‘새로고침’은 지금 필터로 목록을 곧바로 다시 받습니다(AIS 수신 공백 탭에도 같은 단추)".
-- **시험** `refresh-label.test.ts` 2(단추 글자에 refresh · reload · 새로 고침이 없고 세 화면에 새로고침이 있다) · `logs-page-v5.test.ts` 15(두 탭에서 눌러 다시 받는다) · `ops-page` ·
+- **시험** `refresh-label.test.ts` 2 → #76 에서 3(단추 글자에 refresh · reload · 새로 고침이 **들어 있지** 않고, app · components · lib 소스 어디에도 띄어 쓴 '새로 고침 · 새로 고치-' 가 없고, 세 화면에 새로고침 · 조각 오류에 '페이지 새로고침' 이 있다) · `logs-page-v5.test.ts` 15(두 탭에서 눌러 다시 받는다) · `ops-page` ·
   `resolve-ops-page` 가 새로고침을 누른다 — 레인 ui 가 옛 글자에서 8건이 실패하는 것을 먼저 확인했다.
-- **남은 것** 설명서 그림(ops · logs)은 옛 글자를 보인다 — 스택에서 다시 찍어야 한다(이 통합은 `public/guide` · 그림 목록을 건드리지 않았다).
+- **남은 것** 설명서 그림(ops · logs)은 옛 글자(`REFRESH` · `새로 고침`)를 보였다 — #76 에서 그 두 그림과 목록 항목을 지웠다(§G20 과 같은 규칙: 설명과 어긋나는 그림은 싣지
+  않는다 — 설명서는 ‘스크린샷 준비 중’ 자리표시와 설명). 이 판을 올린 스택에서 `scripts/guide-screenshots.mjs` 로 다시 찍어야 한다.
 
 ## #72 기상청 429 네 번 — 기상청 호스트에 속도 상한이 없었다, 429 는 이제 'throttled'
 - **증상**(사용자 운영/로그 화면 2026-09-30) 기상청 API허브 429 '현재 요청을 처리할 수 없습니다' 10:55:56 · 11:26:16 · 13:01:59 · 13:22:09 KST — 모두 같은 주기의 앞선 KMA 요청
@@ -666,6 +668,8 @@
   남은 다시 받기 멈춤. 웹 실행 상태 `throttled` 는 주황이고 뜻은 title(`RUN_STATUS_TITLE`), 설명서 운영 runs 에도 적었다.
 - **시험** `test_kma_throttle.py` 11(호스트 버킷 · 운영 수집기가 설정으로 만든 상한 · 회복 묶음 간격 · 429 쉼 · Retry-After · 쉼 안 다음 주기 · 도중 429 · 다시 받기 429) · `test_http` 13
   (HTTP-date) · `test_kma_radar` 40. 특성 시험 `test_without_the_host_bucket_…` 은 기록이지 회귀 막기가 아니다.
+- **통합 마무리(#76)** 설정 `KMA_APIHUB_RPS` 는 compose 가 collector 에 넘기지 않아 .env 에 적어도 닿지 않았다 — 이제 넘긴다(`${KMA_APIHUB_RPS:-0.5}` · `.env.example`).
+  KST 00:00–00:14 의 전날 목록 429 도 'throttled'(http 429 · 쉰 초 · Retry-After)이고 그 주기의 KMA 호출을 멈춘다 — 전에는 WARN 한 줄뿐, 실행은 `ok` 였다.
 - **남은 것** 배포 전 — 운영에서 429 가 사라졌는지, 0.5 req/s 가 기상청 한도 안인지는 아직 모른다(한도 수치가 없다).
 
 ## #73 AIS keepalive 시간 초과 20 → 40 s — #66 의 진단이 가른 원인은 공급자 쪽 연결별 전달 적체
@@ -694,6 +698,8 @@
   api 코드는 바뀌지 않았다(해시를 그대로 싣는다). adsb.lol 호출 속도는 바꾸지 않았다 — 한도 수치가 없어(README 'dynamic') 추정해 늦추지 않는다.
 - **시험** `test_fallback` 22(관찰한 흐름을 10 s 격자로 되풀이 — adsb_fi 가 언제 풀렸는지는 로그에 없어 시험이 t = 150 s 로 둔다: 고치기 전 t = 600 s, 고친 뒤 t = 150 s 에 받는다) ·
   `test_aircraft_job` 29 · web `region-no-provider.test.ts` 9. 버리는 컨테이너 실 Redis(collector ACL) 13 통과 — 새 필드도 이미 쓰던 `wakeline:active` 의 HSET 이다(비울 때도 빈 값 HSET).
+- **통합 마무리(#76)** 다시 시도가 받은 429 · 호출 제한기 쿨다운이 600 s 쉼을 덮어 약 60 s 뒤 그 공급자를 정상 공급자로 고르던 것('recovery — … 쉼 끝') — 짧은 쉼은 이제 실패 쉼
+  위에 얹힌다. 공백마다 한 번만 쓰던 공급자 없음 필드 · 회복 쓰기가 Redis 오류로 사라지면 다음 주기에 다시 쓴다.
 - **남은 것** 배포 전 — 운영 화면의 빨강 배지 · 칩은 아직 보지 않았다.
 
 ## #75 첫 화면 JS 목표(NFR-04) — 400 KB 대신 예산 550,000 B, 저장소 안에서 재현하는 측정과 CI 검사(ADR-026 · 사용자가 권장안으로 맡김)
@@ -701,7 +707,7 @@
   단위 = gzip 본문 바이트(응답 머리 제외), 웹 이미지의 Node(24.21.0 · zlib 1.3.2.1-motley-8002e91)로 압축 — 호스트 Node 24.3.0(zlib 1.2.12)으로는 0.41–0.44 % 작다(PERF §10).
 - **값**(웹 이미지의 Node — 레인 js · PERF §10) 기준 `83b4ab2` 19개 **556,719 B**(배포 스택을 브라우저로 잰 값과 파일마다 같다). 그 가운데 MapLibre 304,573 B + Next · React 실행 코드
   133,532 B = 바닥 **438,105 B** — 400 KB 는 지도를 첫 화면에서 빼야만 닿는다. 상호작용 뒤에만 보이는 카드 · 목록 · 알림 근거 · 기상청 범례 · 검색 선박 표를 처음 쓸 때 받게 하고
-  (`React.lazy` — 못 받으면 까닭 · 다시 시도, 새 배포 뒤 청크가 404 면 '페이지 새로 고침') 카드 전용 선박 함수를 `lib/ship-card.ts` 로 옮겨 `40e5582` 18개 **539,966 B**.
+  (`React.lazy` — 못 받으면 까닭 · 다시 시도, 새 배포 뒤 청크가 404 면 '페이지 새로고침' — #76 전 글자 '페이지 새로 고침') 카드 전용 선박 함수를 `lib/ship-card.ts` 로 옮겨 `40e5582` 18개 **539,966 B**.
 - **결정** 예산 **550,000 B** — **고른 값**(처음 정할 때 호스트 zlib 으로 잰 539,430 B 에 약 2 %). CI web job 이 운영 빌드 뒤 `check:first-js -- --in-image`(넘으면 실패)와
   `measure:first-js -- --serve 8790`(두 창 크기의 첫 화면 파일이 빌드 결과 목록과 같아야 한다)를 돌린다. 지도가 처음 다 그려지고 한가하면 조각 9개를 미리 받는다(첫 화면 뒤 — 예산 밖).
 - **통합 뒤 잰 값**(ui · collector 레인의 웹 변경 포함, 2026-09-30 KST) `check:first-js` 호스트 Node 18개 538,481 B. `--in-image --image wakeline-web:local`(이 통합으로 빌드한
@@ -712,18 +718,49 @@
   fixture 재생 중 새 알림이 첫 행이 된 적이 있다).
 - **남은 것** CI 러너(amd64)에서의 값은 아직 없다(첫 CI 실행 로그의 합계를 PERF §10 에 적는다). 조각의 까닭(정말 상호작용 뒤에만 보이는지)은 사람이 목록을 읽어 판단한다.
 
-## 자동 검사 현황(2026-09-30 KST, 세 레인(ui · collector · js) 통합 뒤 · 배포 전 — select 하나에 selected 하나(#70) · 새로고침(#71) · 기상청 호스트 버킷 · 'throttled'(#72) · AIS keepalive 40 s(#73) · 관심 지역 공급자 없음(#74) · 첫 화면 JS 예산(#75) · 앞서 main 에 들어간 db 이미지 직접 빌드(#69) 포함)
+## #76 통합 마무리 리뷰(2026-09-30 · 세 레인 통합 뒤 두 렌즈 — backend-infra · web) — 고친 것마다 새 시험이 고치기 전 코드에서 실패하는 것을 확인했다
+- **`KMA_APIHUB_RPS` 가 수집기에 닿지 않았다**(중간) collector 는 .env 전체를 받지 않고 compose 가 적은 값만 받는다(`Settings` env_file 없음) — compose 에 이 이름이 없어
+  #72 · 계약 §G24 가 운영 설정이라 한 값이 .env 에 적어도 늘 0.5 였다. `infra/compose.yml` 이 `${KMA_APIHUB_RPS:-0.5}` 로 넘기고 `.env.example` 에 적었다(고른 값 0.5 · 상한 1.0).
+  인프라 정책 시험 2: `.env.example` 에 적은 수집기 설정(`Settings` 필드 이름) 17개가 모두 collector 에 닿는다(개발 · 격리 스택) · 기본 0.5 · 바꾼 값이 넘어가고 다른 서비스에는 없다
+  (이름만 비교 — 실패 글에 비밀값이 찍히지 않게).
+- **다시 시도의 429 · 쿨다운이 실패 쉼을 줄였다**(낮음, #74) 3회 연속 실패로 쉬는 공급자를 다시 시도한 호출이 429(또는 호출 제한기 쿨다운)를 받으면 600 s 쉼을 60 s 로 덮어,
+  약 60 s 뒤 그 공급자를 정상 공급자로 골랐다('recovery — 공급자 없음 61 s 끝 · fi 쉼 끝', 그 뒤 실패는 새 '3회'). 이제 실패 쉼(`_fail_until`)은 따로 남고 짧은 쉼은 그 위에
+  얹힌다 — 그동안은 부르지 않고 끝나면 남은 실패 쉼(다시 시도 · 공급자 없음)이 이어진다. 가장 이른 풀림(`_none_next`)은 짧은 쉼의 끝이다.
+- **공급자 없음 필드 쓰기가 한 번 사라지면 공백 내내**(낮음, #74) 공백마다 한 번 쓰고 `ProviderStatus` 가 Redis 오류를 삼켜, 쓰기 한 번(1.5 s 상한)이 실패하면 최대 10분 초록 배지 ·
+  회복 쓰기가 실패하면 빨간 배지가 남았다. `hset_meta` · `set_none` · `set_active` · `clear_none` 이 썼는지 돌려주고, 체인은 다음 주기에 같은 값(시작 · 회복 시각 그대로)으로
+  다시 쓴다. 전세계를 끈 뒤 비우기도 비울 때까지 되풀이한다. 전환 기록은 다시 쓰지 않는다.
+- **전날 목록 429 가 실행 기록에 없었다**(낮음, #72) KST 00:00–00:14 의 전날 목록 429 는 WARN 한 줄뿐이고 실행은 새 tm 이 없으면 `ok`(http 200), 있으면 보내지 않은 바이너리의
+  `throttled`(http 없음 · 'not called — rate limiter')였다. 이제 목록의 429 와 같다: 그 주기의 KMA 호출을 멈추고 `throttled`(http 429 · 쉰 초 · Retry-After · 단계
+  `previous-day listing <날짜>`) · WARN 한 줄. 그 밖의 전날 목록 실패는 전처럼 오늘 목록으로 계속.
+- **새로고침 글자 둘**(중간, #71) 레인 js 를 합친 뒤 조각 오류 화면에 '페이지 새로 고침' 단추와 '페이지를 새로 고치세요' 안내가 있었다(검사는 단추 글자 **전체**가 새로 고침인 것만
+  봤다). '페이지 새로고침' · '새로고침하세요', 운영 · 해결 403 안내 '페이지를 새로고침한 뒤', 주석 셋도 맞췄다. `refresh-label.test.ts` 3: 단추 글자 **안**의 refresh · reload ·
+  새로 고침, app · components · lib 소스 어디든 띄어 쓴 '새로 고침 · 새로 고치- · 새로 고친'을 막는다.
+- **설명서 그림 둘이 옛 글자**(낮음, #71) 운영 그림은 `REFRESH`, 로그 그림은 `새로 고침`(13:47 KST 에 찍음) — 설명은 ‘새로고침’. §G20 과 같은 규칙으로 두 그림과 목록 항목을 지웠다
+  (설명서는 ‘스크린샷 준비 중’ 자리표시 · 설명, 나머지 11개 그대로). README 의 설명서 줄도 틀려 있었다('13개 모두 자리표시') — 고쳤다.
+- **못 받은 조각이 나중에 받아져도 오류 그대로**(낮음, ADR-026) 실패한 lazy 와 경계의 오류는 '다시 시도'를 눌러야 바뀌었다. 조각이 받았는지 구독하고(`useLoaded()` —
+  `useSyncExternalStore`) 받으면 실패한 lazy 를 바꾸고 오류를 보이던 경계는 다시 시도처럼 다시 그린다(초점 규칙 그대로).
+- **검색 콤보박스가 없는 선박 목록을 가리켰다**(낮음) 선박 표 조각을 받는 중 · 받지 못한 동안 aria-controls · aria-activedescendant 가 DOM 에 없는 선박 listbox · option 을 가리키고
+  ↓ · Enter 가 보이지 않는 선박을 열었다. 조각을 받은 뒤에만 선박 줄을 센다.
+- **문서** ADR-026 4 는 여유가 '작은 조각 몇 개'를 잡는다고 했다 — 리뷰가 이 브랜치 사본에서 잰 값(호스트 zlib): 항공기 카드(+알림 근거)를 정적으로 되돌린 판 542,912 B 는 예산
+  안이고 `first-screen-lazy.test.ts` 2건이 잡았다, 조각 작업을 모두 되돌린 판 560,646 B 는 예산 검사가 잡았다 — 잡는 것 · 못 잡는 것을 나눠 적었다. ADR-014 부록 C 결정 1 · #66 에
+  40 s 개정 표시, 리뷰 기록(docs/review)의 NFR-04 두 행에 ADR-026 표시.
+- **시험**(고치기 전 코드에서 실패를 확인) collector `test_fallback` 25(+3) · `test_kma_throttle` 13(+2 — 전날 목록 429 두 경우) · infra `test_compose_policy` +2 · web `refresh-label` 3(+1) ·
+  `lazy-part` 13(+2) · `search-ship-table-unloaded` 1(새 파일).
+- **첫 화면 JS** 이 수정 뒤 웹 이미지의 Node 540,955 B · 여유 9,045 B(+181 B — 조각 구독 · 새로고침 글자), 두 창 모두 빌드 목록과 같은 18개(PERF §10 '통합 마무리 리뷰의 수정 뒤').
+- **남은 것** 배포 전(아래 표). 운영 · 로그 설명서 그림은 이 판을 올린 스택에서 다시 찍는다. CI 러너(amd64)의 첫 화면 JS 값은 여전히 없다.
+
+## 자동 검사 현황(2026-09-30 KST, 세 레인(ui · collector · js) 통합과 통합 마무리 리뷰(#76) 뒤 · 배포 전 — select 하나에 selected 하나(#70) · 새로고침(#71) · 기상청 호스트 버킷 · 'throttled'(#72) · AIS keepalive 40 s(#73) · 관심 지역 공급자 없음(#74) · 첫 화면 JS 예산(#75) · 마무리 리뷰 수정(#76) · 앞서 main 에 들어간 db 이미지 직접 빌드(#69) 포함)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,484 통과(19 건너뜀 — 실 Redis 13건은 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 이번에 따로 돌려 13 통과, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — 이번에도 돌리지 않았다) · 커버리지 97 %(9,127문 중 246 빠짐) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `infra/db` 로 빌드한 `wakeline-db:local`) | 874 · JaCoCo LINE 96.5 %(8,681줄 중 300 빠짐) · BRANCH 85.6 %(하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,246(85 파일) · 커버리지(소스 전체) Lines 91.35 % · Branches 82.05 % |
-| 정적 검사 · 빌드 | ruff check · ruff format --check(바뀐 .py 18개) · tsc --noEmit · eslint · next build | 모두 통과 |
+| collector · ais 단위·통합 | pytest | 1,489 통과(19 건너뜀 — 실 Redis 13건은 아래 '버리는 컨테이너 시험'의 collector 실 Redis 로 이번에 따로 돌려 13 통과, 실 PostgreSQL 6건(test_db_pg_integration.py)은 손으로만 돌리는 선택 시험 — 이번에도 돌리지 않았다) · 커버리지(`--cov=wakeline_collector`) 97 %(9,162문 중 246 빠짐) |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `infra/db` 로 빌드한 `wakeline-db:local`) | 874(이 라운드는 api 코드를 바꾸지 않았다 — `make test-api` 로 다시 돌림) · JaCoCo LINE 96.6 %(8,681줄 중 299 빠짐) · BRANCH 85.6 %(6,295 중 906 빠짐 · 하한 95 / 80 — 검증 통과) |
+| web 단위 | Vitest | 1,250(86 파일) · 커버리지(소스 전체) Lines 91.38 % · Branches 82.1 % |
+| 정적 검사 · 빌드 | ruff check · ruff format --check(통합에서 바뀐 collector .py 18개 + 마무리에서 바뀐 6개) · mypy(collector 77 파일) · tsc --noEmit · eslint · next build | 모두 통과 |
 | 언어 간 계약 | tools/contract_check.py | 스키마 사본 일치 + 실메시지·fixture(받은 정적 필드 — 64척 · 묶음 4가지) + WS 표본(서버 36 · 클라이언트 15 · 17/17 · 10/10 종 — 통합 뒤 `make ws-samples` 경로로 다시 만들어 시각 · `lag_s` 밖 차이 0건, 커밋한 표본 그대로) + 가림 54 · 억제 11 벡터 — PASSED |
 | REST 계약 | tools/rest_contract_check.py | api 통합 시험이 기록한 응답 35종 — PASSED |
-| 인프라 정책 | infra/tests(unittest) | 123 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 11 · 13 — 모두 이번에 돌렸다(`make infra-docker-test` + `infra/tests/collector_redis_test.sh`) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 37 통과(9 파일 — 끝난 뒤 스택 · 볼륨 삭제 확인) |
-| 첫 화면 JS 예산 | `npm run check:first-js`(웹 이미지의 Node) · `measure:first-js -- --serve 8790`(Chromium 두 창) | 540,774 B / 550,000 B(여유 9,226 B — 웹 이미지 Node 24.21.0) · 두 창 모두 빌드 결과 목록과 같은 18개 파일(#75) |
+| 인프라 정책 | infra/tests(unittest) | 125(#76 — 수집기 설정이 collector 에 닿음 · `KMA_APIHUB_RPS` 2 더함) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 · collector 실 Redis | 35 · 291 · 36 · 48 · 27 · 11 · 13 — 모두 #76 뒤에 다시 돌렸다(`make infra-docker-test` + `infra/tests/collector_redis_test.sh` — 상태 쓰기가 썼는지 돌려주는 판을 실 Redis ACL 아래에서) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 37 통과(9 파일 · 2.3 분 — #76 뒤 `make e2e`, 끝난 뒤 스택 · 볼륨 삭제 확인) |
+| 첫 화면 JS 예산 | `npm run check:first-js`(웹 이미지의 Node) · `measure:first-js -- --serve 8790`(Chromium 두 창) | 540,955 B / 550,000 B(여유 9,045 B — `wakeline-web:local` 의 Node 24.21.0 · linux/arm64, #76 뒤. 통합 직후 540,774 B) · 두 창 모두 빌드 결과 목록과 같은 18개 파일 · 호스트 zlib 538,673 B |
 | 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh`(gitleaks · Trivy 자체 이미지 4종 · 제3자 이미지) | PASS(2026-09-30 16:34 KST, `make build` 로 이 통합을 빌드한 뒤) — gitleaks 743 커밋 누출 0 · 자체 api · collector · web · **db**(R-63 뒤 직접 빌드 — 이제 차단, #69) 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis 차단 PASS · k6 보고만(HIGH 2) · Trivy DB 는 오프라인 캐시(2026-09-29 13:11 UTC 판) |
 | 배포 뒤 실메시지 | WS 150 s · 세 세션을 `schemas/ws/server.v1.json` 으로 | 앞 배포 뒤 207건 · 14종, 형식 오류 0건(#68) — 이 통합은 아직 배포하지 않았다 |
