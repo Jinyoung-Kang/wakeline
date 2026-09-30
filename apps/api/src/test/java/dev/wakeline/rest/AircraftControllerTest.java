@@ -14,15 +14,23 @@ import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.nullValue;
@@ -33,17 +41,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 항공기 REST: DB 없이도 실시간 상세는 200(static = null, meta.db_unavailable), 검색은 병합 뷰(전세계 포함)·호출부호,
- * 스냅샷 ETag·Cache-Control public·304.
+ * 스냅샷 ETag·Cache-Control public·304. DB 없이 답한 요청(503 · db_unavailable)도 WARN 한 줄을 남기고, DB 결함은 500 이다.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class AircraftControllerTest {
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
             120, List.of("http://localhost:8700"));
 
-    /** DB 가 내려간 저장소. */
+    /** DB 가 내려간 저장소 — 조회마다 던질 예외를 고른다(기본: 연결을 얻지 못함). */
     static class DbDown extends AircraftRepository {
-        DbDown() { super(null, null); }
-        @Override public Map<String, Object> find(String hex) { throw new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection"); }
-        @Override public List<Map<String, Object>> search(String prefix, int limit) { throw new CannotGetJdbcConnectionException("down"); }
+        final Supplier<RuntimeException> error;
+        DbDown() { this(() -> new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection")); }
+        DbDown(Supplier<RuntimeException> error) { super(null, null); this.error = error; }
+        @Override public Map<String, Object> find(String hex) { throw error.get(); }
+        @Override public List<Map<String, Object>> search(String prefix, int limit) { throw error.get(); }
     }
 
     final SnapshotStore snapshots = new SnapshotStore();
@@ -65,10 +76,58 @@ class AircraftControllerTest {
                 Map.of("71be01", ac("71be01", "KAL081", 37.4, 126.5, now.minusSeconds(3), "adsb_lol"),
                         "71be02", ac("71be02", " syn736 ", 50.0, 10.0, now.minusSeconds(3), "adsb_lol"),
                         "71be03", ac("71be03", null, 50.1, 10.1, now.minusSeconds(3), "adsb_lol"))));
+        mvc = mvc(new DbDown());
+    }
+
+    MockMvc mvc(AircraftRepository repo) {
         EngineService engine = new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry());
         RouteReader routes = new RouteReader(routeCache::get, RouteInfoTest.JSON, System::currentTimeMillis);
-        var controller = new AircraftController(snapshots, engine, new DbDown(), new TrackRepository(null), PROPS, routes);
-        mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ProblemAdvice()).build();
+        var controller = new AircraftController(snapshots, engine, repo, new TrackRepository(null), PROPS, routes);
+        return MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ProblemAdvice()).build();
+    }
+
+    /** 이 클래스가 남긴 ProblemAdvice 의 WARN 줄. */
+    static List<String> warnLines(CapturedOutput out) {
+        return out.getAll().lines().filter(l -> l.contains("WARN") && l.contains("ProblemAdvice")).toList();
+    }
+
+    /**
+     * 리뷰 2026-10-01: 컨트롤러가 DB 오류를 잡아 503 · meta.db_unavailable 로 답하는 길도 WARN 한 줄을 남긴다 — 예전에는 아무 줄도 없었다(예외를 버리고
+     * Problem.unavailable 을 던져 ProblemAdvice 의 unavailable() 을 거치지 않았다). 같은 모양: 예외가 스스로 말하는 원인 · 경로 + 쿼리 · 걸린 시간 ·
+     * 무엇으로 답했는지(503 인지, DB 없이 200 인지). 요청 하나에 한 줄.
+     */
+    @Test
+    void aStatementCancelledOnTheHistoryLookupIsLoggedOnceWhetherTheAnswerIs503Or200(CapturedOutput out) throws Exception {
+        MockMvc m = mvc(new DbDown(() -> new QueryTimeoutException("PreparedStatementCallback; SQL [SELECT hex FROM aircraft WHERE hex = ?]; ERROR: canceling statement due to user request",
+                new SQLException("ERROR: canceling statement due to user request", "57014"))));
+        m.perform(get("/api/v1/aircraft/ffffff")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"))
+                .andExpect(jsonPath("$.code").value("UNAVAILABLE")).andExpect(jsonPath("$.detail").value("aircraft history store unavailable"));
+        List<String> lines = warnLines(out);
+        assertThat(lines).hasSize(1);
+        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/ffffff elapsed_ms=- → 503: ")
+                .contains("canceling statement due to user request");
+        m.perform(get("/api/v1/aircraft/71be01")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
+        m.perform(get("/api/v1/aircraft/search").queryParam("q", "KAL")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
+        lines = warnLines(out);
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(1)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/71be01 elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        assertThat(lines.get(2)).contains("path=/api/v1/aircraft/search query=\"q=KAL\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        assertThat(out.getAll()).doesNotContain("unhandled error");
+    }
+
+    /**
+     * DB 결함(문법 · 권한 — BadSqlGrammarException 등)은 저장소가 잠시 없는 것이 아니다: 503 + Retry-After 나 db_unavailable 로 삼키지 않고 500 + ERROR
+     * (예전: 모든 DataAccessException 을 잡아 '다시 시도하라' 고 답했다 — 결함이 운영 로그에 한 줄도 남지 않았다).
+     */
+    @Test
+    void aDefectInTheHistoryLookupIs500NotDbUnavailable(CapturedOutput out) throws Exception {
+        MockMvc m = mvc(new DbDown(() -> new BadSqlGrammarException("PreparedStatementCallback", "SELECT hex FROM aircraft",
+                new SQLException("ERROR: column \"x\" does not exist", "42703"))));
+        m.perform(get("/api/v1/aircraft/71be01")).andExpect(status().isInternalServerError()).andExpect(header().doesNotExist("Retry-After"));
+        m.perform(get("/api/v1/aircraft/ffffff")).andExpect(status().isInternalServerError()).andExpect(header().doesNotExist("Retry-After"));
+        m.perform(get("/api/v1/aircraft/search").param("q", "KAL")).andExpect(status().isInternalServerError());
+        assertThat(out.getAll().lines().filter(l -> l.contains("unhandled error")).count()).isEqualTo(3);
+        assertThat(warnLines(out)).isEmpty();
     }
 
     @Test

@@ -78,16 +78,56 @@ public class ProblemAdvice {
 
     /**
      * 저장소(DB·Redis)를 지금 쓸 수 없다 — 서버 버그가 아니므로 스택 없이 한 줄, 클라이언트에는 재시도 간격을 준다.
-     * 줄: {원인} request_id=… path=… [query="…"] elapsed_ms=…: {예외 종류 ← 가장 안쪽 원인: 메시지}.
+     * 줄: {원인} request_id=… path=… [query="…"] elapsed_ms=… → 503: {예외 종류 ← 가장 안쪽 원인: 메시지}.
      */
     @ExceptionHandler({DataAccessResourceFailureException.class, NonTransientDataAccessResourceException.class,
             TransientDataAccessException.class, RecoverableDataAccessException.class, CannotCreateTransactionException.class})
     ResponseEntity<ProblemDetail> unavailable(Exception e, HttpServletRequest req) {
-        Long elapsed = RequestIdFilter.elapsedMs(req);
-        log.warn("{} request_id={} path={}{} elapsed_ms={}: {}", cause(e), RequestIdFilter.current(req), req.getRequestURI(), query(req),
-                elapsed == null ? "-" : elapsed, brief(e));
+        warnUnavailable(e, req, ANSWERED_503);
         return withRetryAfter(build(HttpStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "service unavailable",
                 "data store temporarily unavailable; retry later", req), Problem.UNAVAILABLE_RETRY_AFTER_S);
+    }
+
+    /** WARN 줄의 '무엇으로 답했는지': 503(Retry-After). */
+    static final String ANSWERED_503 = "503";
+    /** WARN 줄의 '무엇으로 답했는지': 저장소 없이 200(실시간 결과만 — meta.db_unavailable = true). */
+    static final String ANSWERED_WITHOUT_STORE = "200 without stored data (meta.db_unavailable)";
+
+    /**
+     * 저장소를 지금 쓸 수 없다는 예외인가 — 처리기가 {@link #unavailable} 로 보내는 것과 같은 판정(예외 종류 + 잠금 대기 한도 55P03). 그 밖의 DB 예외
+     * (문법 · 권한 · 제약 등)는 결함일 수 있다 — 500 + ERROR 로 남아야 한다.
+     */
+    public static boolean isUnavailable(Throwable e) {
+        return e instanceof DataAccessResourceFailureException || e instanceof NonTransientDataAccessResourceException
+                || e instanceof TransientDataAccessException || e instanceof RecoverableDataAccessException
+                || e instanceof CannotCreateTransactionException
+                || (e instanceof UncategorizedSQLException && LOCK_NOT_AVAILABLE.equals(sqlState(e)));
+    }
+
+    /**
+     * 컨트롤러가 DB 없이 답할 때(200 + meta.db_unavailable — 실시간 결과만, 계약 §2): 저장소를 못 쓰는 예외면 {@link #unavailable} 과 같은 모양의
+     * WARN 한 줄을 남기고 돌아온다. 그 밖의 예외(결함)는 그대로 던진다 → 500 + ERROR(db_unavailable 로 삼키지 않는다 — 리뷰 2026-10-01).
+     */
+    public static void answeredWithoutStore(RuntimeException e, HttpServletRequest req) {
+        if (!isUnavailable(e)) throw e;
+        warnUnavailable(e, req, ANSWERED_WITHOUT_STORE);
+    }
+
+    /**
+     * 컨트롤러가 DB 없이는 답할 수 없을 때(실시간 상태도 없어 있는지 모른다): 저장소를 못 쓰는 예외면 WARN 한 줄을 남기고 503 Problem(detail ·
+     * Retry-After)을 돌려준다. 그 밖의 예외(결함)는 그대로 돌려준다 — 부르는 쪽이 던진다(→ 500 + ERROR).
+     */
+    public static RuntimeException storeUnavailable(RuntimeException e, HttpServletRequest req, String detail) {
+        if (!isUnavailable(e)) return e;
+        warnUnavailable(e, req, ANSWERED_503);
+        return Problem.unavailable(detail);
+    }
+
+    /** 저장소를 못 써서 503 또는 DB 없이 답한 요청의 WARN 한 줄(스택 없음). */
+    static void warnUnavailable(Throwable e, HttpServletRequest req, String answered) {
+        Long elapsed = RequestIdFilter.elapsedMs(req);
+        log.warn("{} request_id={} path={}{} elapsed_ms={} → {}: {}", cause(e), RequestIdFilter.current(req), req.getRequestURI(), query(req),
+                elapsed == null ? "-" : elapsed, answered, brief(e));
     }
 
     /**

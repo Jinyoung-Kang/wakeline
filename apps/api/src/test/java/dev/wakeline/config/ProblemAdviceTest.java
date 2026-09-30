@@ -101,16 +101,16 @@ class ProblemAdviceTest {
         List<String> lines = warnLines(out);
         org.assertj.core.api.Assertions.assertThat(lines).hasSize(5);
         org.assertj.core.api.Assertions.assertThat(lines.get(0))
-                .contains("statement cancelled (SQLSTATE 57014) request_id=- path=/cancelled query=\"at=2026-09-30T13:55:00Z&bbox=124,33,132,39\" elapsed_ms=-: ")
+                .contains("statement cancelled (SQLSTATE 57014) request_id=- path=/cancelled query=\"at=2026-09-30T13:55:00Z&bbox=124,33,132,39\" elapsed_ms=- → 503: ")
                 .contains("canceling statement due to user request")
                 .doesNotContain("3 s").doesNotContain("limit").doesNotContain("data store unavailable");
-        org.assertj.core.api.Assertions.assertThat(lines.get(1)).contains("lock not available (SQLSTATE 55P03) request_id=- path=/lock-timeout elapsed_ms=-: ")
+        org.assertj.core.api.Assertions.assertThat(lines.get(1)).contains("lock not available (SQLSTATE 55P03) request_id=- path=/lock-timeout elapsed_ms=- → 503: ")
                 .contains("canceling statement due to lock timeout");
-        org.assertj.core.api.Assertions.assertThat(lines.get(2)).contains("could not get a DB connection request_id=- path=/db-down elapsed_ms=-: ")
+        org.assertj.core.api.Assertions.assertThat(lines.get(2)).contains("could not get a DB connection request_id=- path=/db-down elapsed_ms=- → 503: ")
                 .contains("pool timeout");
-        org.assertj.core.api.Assertions.assertThat(lines.get(3)).contains("query timeout request_id=- path=/redis-timeout elapsed_ms=-: ")
+        org.assertj.core.api.Assertions.assertThat(lines.get(3)).contains("query timeout request_id=- path=/redis-timeout elapsed_ms=- → 503: ")
                 .doesNotContain("SQLSTATE");
-        org.assertj.core.api.Assertions.assertThat(lines.get(4)).contains("data store unavailable request_id=- path=/redis-down elapsed_ms=-: ");
+        org.assertj.core.api.Assertions.assertThat(lines.get(4)).contains("data store unavailable request_id=- path=/redis-down elapsed_ms=- → 503: ");
         org.assertj.core.api.Assertions.assertThat(out.getAll()).doesNotContain("unhandled error");
     }
 
