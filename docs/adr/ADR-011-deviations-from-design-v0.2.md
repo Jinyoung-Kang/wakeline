@@ -153,3 +153,38 @@ adsb.lol README(github.com/adsblol/api)는 "Rate limits are dynamic based on the
   `stream_budget_bytes`(항공기 스트림 바이트 예산), `wakeline:ais:status` 에 선박 스트림의 같은 두 필드. 값은 그 프로세스의 `StreamTrim` 이
   실제로 거는 설정(설정값 — 잰 값이 아니다)이고, 모르면 빈 값이다. api 는 이것을 스트림 첫 항목 나이(`stream_window_s`, 잰 값)와 견준다 —
   예산 트림은 손실이 아니라 되읽기 창을 줄이는 것이다(손실은 api `stream_trim_loss_events` > 0 일 때뿐).
+
+## 공급자 운용 보강 2(2026-09-30 오후 · 운영/로그 스크린샷 — 계약 v5 §G24)
+
+본 것(사용자의 운영/로그 화면, 운영 스택 — 이 레인은 망 접근이 없어 다시 재지 않았다)과 고른 것을 나눠 적는다.
+
+### 본 것
+
+| 무엇 | 값 | 출처 |
+|---|---|---|
+| 기상청 429 | 10:55:56 · 11:26:16 · 13:01:59 · 13:22:09 KST, 본문 '현재 요청을 처리할 수 없습니다. 잠시 후 다시 시도해주십시오.' — 모두 같은 주기의 앞선 KMA 요청 0.1–0.5 s 뒤(예: 11:26:16.439 'still unavailable' → 11:26:16.558 429) | 로그 화면 |
+| 기상청 호스트 한도 | 코드에 호스트 버킷 없음 — 수집기 전체 2 req/s · burst 2 만 | `ratelimit.default_limiter` |
+| 관심 지역 공급자 없음 | 12:14:50 adsb_fi 'failed 3x — cooling down'(ConnectError SSLEOFError, opendata.adsb.fi) · adsb_lol 이 맡아 12:16:22 · 12:22:18 에 429('backing off 300 s … no other provider — deferral not applied') · 'region: no provider available' 12:16:32 · 12:22:28 | 로그 화면 |
+
+### 계산한 것(설정값과 로그 시각으로 — 잰 값이 아니다)
+
+- 관심 지역에 공급자가 없던 시간: 실패 쉼 600 s(12:14:50 → 12:24:50) 안에서 adsb_lol 429 쉼 300 s 두 번 — (12:21:22 − 12:16:22) + (12:24:50 − 12:22:18) = 300 + 152 = **452 s**.
+  adsb_fi 는 12:24:50 까지 다시 시도하지 않았다(ConnectError 는 일시적일 수 있는데도). 운영 화면 위쪽 배지는 그동안 초록 `region: adsb_lol`, 상태 바 region 칩은 나이로
+  STALE 만 — '공급자 없음'이라고 적은 곳은 로그 한 줄(까닭 없음)뿐이었다.
+- 넘겨받은 직후 우리 쪽 adsb.lol 호출 속도: 관심 지역 주기(10 s)마다 한 번 — 넘겨받을 때 몰아 부르지 않고 429 를 같은 주기에 다시 부르지 않는다. adsb.lol 을 부르는 작업은
+  이것뿐이다(수요 추적은 adsb.fi, 노선은 adsbdb). 이 문서가 인용한 adsb.lol 한도는 수치가 없다(README 'dynamic based on the environment load') — 넘겨받은 뒤 9번 · 6번 호출
+  (약 1분) 만에 429 인 모양은 #38 · #42 관찰과 같다. 이 속도가 한도를 넘는지는 알 수 없다 — **속도를 추정해 늦추지 않는다**(위 원칙 그대로).
+
+### 고른 것
+
+- **기상청 호스트 버킷 0.5 req/s · burst 1**(`ratelimit.KMA_APIHUB_RPS` · 설정 `kma_apihub_rps` 상한 1.0). 선택값 — 기상청은 초당 한도를 밝히지 않았고 우리가 확인한 문서도
+  없다. 요청 사이 2 s 는 429 가 난 가장 긴 간격(0.5 s)의 4배이고, 한 주기의 최대 호출 13번(목록 1 + 전날 목록 1 + 바이너리 4 + 다시 부르기 5 + 다시 받기 2)을 줄 세워도 약
+  24 s — 주기 300 s 의 8 %. '파일 없음' 연속이 닫힌 뒤 보관 창의 빈 tm 을 이어 받는 묶음(최대 4)도 이 간격이다(`test_recovery_backlog_is_paced_by_the_kma_host_bucket`).
+- 429 는 그 호스트를 멈춘다(모든 호출자 — 원래 그랬다). Retry-After 의 HTTP-date 모양도 따른다(전에는 버리고 단계 백오프만 썼다 — RFC 9110 §10.2.3). 기상청 작업은 그 주기의
+  KMA 호출을 멈추고 실행을 `throttled`(http 429 · 쉰 초 · Retry-After)로 남긴다 — 공급자 오류(`error` · last_error)가 아니다. 속도 상한이 막아 보내지 않은 호출도 `throttled`.
+- **'3회 연속 실패' 쉼도 선호도**(429 미룸과 같은 규칙 — 새 숫자 없음): 쓸 수 있는 공급자가 하나도 없으면 쉬는 공급자를 작업 주기 그대로 다시 시도한다. 부르는 속도는 그
+  공급자가 1순위일 때와 같다(관심 지역 10 s — adsb.fi 호스트 버킷 0.8 req/s 안). 실패해도 쉼 끝 · WARN 수는 전과 같고, 성공하면 쉼을 끝낸다. 위 흐름에서는 adsb_lol 이 쉬는
+  동안 adsb_fi 를 다시 시도하므로 공급자 없음이 0 이 된다(adsb_fi 가 풀린 주기에 곧바로 받는다 — `test_observed_2026_09_30_sequence_leaves_no_provider_less_gap`, 고치기 전
+  10 s 격자로 440 s).
+- **공급자 없음은 이름 붙인 상태**: `wakeline:active` 의 `{job}_none_since` · `_none_reason` · `_none_next`(체인 상태로 정해진 가장 이른 풀림 — 모르면 빈 값), 전환 기록
+  `→ none` · `none →`, WARN 에 까닭과 다음. 운영 배지는 빨강 `region: 공급자 없음 · HH:MM:SS KST 부터`, 상태 바 region 칩에 `공급자 없음`.
