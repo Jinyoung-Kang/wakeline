@@ -25,9 +25,9 @@
   멈추면 지울 주체가 없다 — 웹이 마지막 확인의 나이로 '확인 멈춤'을 적는다(이어받기와 같은 기준 — 5분마다면 15분, 늦춘 연속은 45분). 연속의 tm 수(missing_tms)는 없다는 답을 받은 서로 다른 tm 수 — 확인하지 않은 tm 은 세지 않는다.
 - 긴 연속의 확인 간격(운영 2026-09-30 — 기상청이 08:15 KST 부터 모든 바이너리 합성에 'file not exist' 로 답했고 언제 돌아올지 알리지 않았다. 연속 동안에도
   5분마다 목록 1 + 확인 2 를 불러 18:34 KST 에 예산 417 / 1,000 — 하루가 끝나기 전에 한도를 넘을 속도였다): 연속의 나이(첫 tm 부터 지금까지, KST 벽시계)가
-  MISSING_SLOW_AFTER_S(60분, 선택값) 이상이면 MISSING_SLOW_EVERY_S(15분, 선택값 — 주기가 더 길면 주기)마다만 확인한다. 확인하는 주기는 전과 같다(목록 1 +
+  MISSING_SLOW_AFTER_S(60분, 선택값) 이상이면 MISSING_SLOW_EVERY_S(15분, 선택값) 이상인 주기의 가장 작은 배수(slow_probe_every_s)마다만 확인한다. 확인하는 주기는 전과 같다(목록 1 +
   확인 ≤ 2 — 둘째 확인을 두는 까닭은 위 '늦게 생기는 tm' 그대로다). 그 사이 주기는 기상청을 부르지 않고 실행 'waiting'(http 없음 · 오류 글자에 확인 간격과
-  마지막 확인 뒤 지난 분)을 남긴다 — 'missing' 은 기상청이 그 주기에 '파일 없음'으로 답했다는 뜻이라 쓰지 않는다. 확인 간격은 마지막으로 기상청을 부른
+  마지막으로 기상청을 부른 주기 뒤 지난 분 — 목록이 실패한 주기도 센다)을 남긴다 — 'missing' 은 기상청이 그 주기에 '파일 없음'으로 답했다는 뜻이라 쓰지 않는다. 확인 간격은 마지막으로 기상청을 부른
   주기(목록 예약 — 실패한 목록 포함)부터 센다. 지금 확인 간격은 연속 해시의 missing_probe_every_s(초 — 5분마다면 주기)로 싣는다(웹이 'N분마다 확인'을 적는다).
   파일이 다시 오면(확인하는 주기의 gzip) 연속이 닫히고 다음 주기부터 전처럼 5분마다다. '확인 멈춤'과 이어받기 상한은 확인 간격 × MISSING_STALE_PROBES
   (3, 선택값 — 전의 15분 = 5분 × 3 과 같은 규칙, 아래로는 MISSING_CARRY_S): 늦춘 연속은 45분(missing_carry_s). 이어받은 연속은 마지막 확인에서 간격을
@@ -90,6 +90,7 @@ import base64
 import concurrent.futures
 import functools
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -189,13 +190,21 @@ def streak_probes(
     return sorted({max(open_tms)} | ({older} if older is not None else set()))
 
 
+def slow_probe_every_s(poll_s: int) -> int:
+    """늦춘 확인 간격(초) = MISSING_SLOW_EVERY_S 이상인 주기의 가장 작은 배수. 스케줄러는 실행 뒤 주기 + 지터(≥ 0)를 쉬므로 확인은 마지막 확인에서 15분이
+    지난 뒤 첫 주기에 된다 — 주기가 15분을 나누지 못하면 15분보다 길다(600 s → 1,200 s · 400 s → 1,200 s). 웹의 'N분마다 확인' · 예산 계산이 실제 간격과
+    같게 이 값을 쓴다(리뷰 2026-09-30 밤 — 전에는 max(900, 주기)라 600 s 주기에서 '15분마다'라 적고 실제로는 20분마다였다). 기본 300 s 는 900 그대로."""
+    poll = max(1, poll_s)
+    return math.ceil(MISSING_SLOW_EVERY_S / poll) * poll
+
+
 def streak_probe_every_s(since_tm: str, now_kst: datetime, poll_s: int) -> int:
-    """'파일 없음' 연속의 확인 간격(초): 연속의 나이(첫 tm 부터 now_kst 까지, KST 벽시계)가 MISSING_SLOW_AFTER_S 이상이면 MISSING_SLOW_EVERY_S(주기가 더
-    길면 주기), 아니면 주기(poll_s). 첫 tm 을 읽지 못하면 주기(늦추지 않는다)."""
+    """'파일 없음' 연속의 확인 간격(초): 연속의 나이(첫 tm 부터 now_kst 까지, KST 벽시계)가 MISSING_SLOW_AFTER_S 이상이면 slow_probe_every_s(주기의 배수 —
+    주기가 15분보다 길면 주기), 아니면 주기(poll_s). 첫 tm 을 읽지 못하면 주기(늦추지 않는다)."""
     since = _tm_dt(since_tm)
     if since is None or (now_kst.replace(tzinfo=None) - since).total_seconds() < MISSING_SLOW_AFTER_S:
         return poll_s
-    return max(MISSING_SLOW_EVERY_S, poll_s)
+    return slow_probe_every_s(poll_s)
 
 
 def missing_carry_s(every_s: int) -> float:
@@ -205,8 +214,8 @@ def missing_carry_s(every_s: int) -> float:
 
 def streak_calls_per_day(poll_s: int, *, slow: bool, retries: bool = False) -> int:
     """연속만 이어지는 UTC 하루의 정규 호출 상한(설정값 계산 — 잰 값이 아니다): 확인하는 주기 수(하루 ÷ 확인 간격) × STREAK_CALLS_PER_PROBE.
-    slow = 늦춘 확인 간격(MISSING_SLOW_EVERY_S — 주기가 더 길면 주기), 아니면 주기마다. retries = 일시 오류 다시 부르기(호출마다 한 번)까지 — 최악 두 배."""
-    every = max(MISSING_SLOW_EVERY_S, poll_s) if slow else poll_s
+    slow = 늦춘 확인 간격(slow_probe_every_s — 주기의 배수), 아니면 주기마다. retries = 일시 오류 다시 부르기(호출마다 한 번)까지 — 최악 두 배."""
+    every = slow_probe_every_s(poll_s) if slow else poll_s
     return (86_400 // every) * STREAK_CALLS_PER_PROBE * (2 if retries else 1)
 
 

@@ -719,6 +719,23 @@ async def test_a_long_streak_is_probed_every_15_min_and_the_cycles_between_are_r
     assert not [m for m in _warns(caplog) if "has no file from" in m]  # 새 연속이 아니다
 
 
+@pytest.mark.parametrize(("poll", "every"), [(300, 900), (600, 1200), (400, 1200), (450, 900), (1800, 1800), (60, 900)])
+def test_the_published_slow_interval_is_the_cadence_the_cycles_actually_reach(poll, every):
+    """리뷰 2026-09-30 밤: 확인 간격은 max(900, 주기)로 알렸지만 기다림은 '마지막 확인 뒤 900 s 미만이면 기다린다'라 주기가 15분을 나누지 못하면(600 s)
+    실제로는 1,200 s 마다 확인했다 — 웹은 '15분마다 확인', 예산 계산은 하루 96번. 알리는 값 = 실제 간격: 주기(쉼 ≥ 주기)를 거듭해 처음 900 s 이상이 되는 때."""
+    from wakeline_collector.jobs import kma_radar as mod
+
+    assert mod.slow_probe_every_s(poll) == every
+    since = datetime(2026, 9, 27, 10, 0)
+    assert mod.streak_probe_every_s("202609271000", since + timedelta(minutes=61), poll) == every
+    t, probes = 0, [0]
+    while t < 6 * 3600:  # 스케줄러: 실행 뒤 poll(+ 지터 ≥ 0)을 쉰다 — 지터 0 이 가장 이른 경우
+        t += poll
+        if t - probes[-1] >= every:  # _waiting 과 같은 비교(간격 미만이면 기다린다)
+            probes.append(t)
+    assert {b - a for a, b in zip(probes, probes[1:], strict=False)} == {every}
+
+
 async def test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence(env):
     """설정값 계산(잰 값이 아니다): 연속만 이어지는 UTC 하루의 정규 호출 = 확인하는 주기 수 × (목록 1 + 확인 ≤ 2). 다시 부르기(일시 오류 — 호출마다 한 번)는
     최악 두 배. 전: 5분마다 288 × 3 = 864(최악 1,728 — 한도 1,000 을 넘는다). 뒤: 60분 넘은 연속은 15분마다 96 × 3 = 288(최악 576).
@@ -732,6 +749,7 @@ async def test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence(e
     assert mod.streak_calls_per_day(300, slow=True) == 288
     assert mod.streak_calls_per_day(300, slow=True, retries=True) == 576 < Settings().budget_kma_radar
     assert mod.streak_calls_per_day(1800, slow=True) == 48 * 3  # 주기가 15분보다 길면 주기마다(늦추지 않는다)
+    assert mod.streak_calls_per_day(600, slow=True) == 72 * 3  # 15분을 나누지 못하는 주기 — 실제 간격 20분(아래 시험)
     prov = OutageKma(clock, down_from="202609271215")
     job = await _steady(mod, ctx, clock, prov)
     used = _used(ctx)
