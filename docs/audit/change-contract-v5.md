@@ -522,7 +522,7 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G21(§B1 상태 해시 · §C2 · 계약 v4 §D · ADR-014 부록 C) **ais 수신 진단 — 필드만 더하고 `ais_gap` 의미 · 기존 필드는 그대로**
   - `wakeline:ais:status` 에 더한 필드(문자열, 모르면 빈 값 — 0 으로 채우지 않는다): 최근 `diag_window_s`(60 — 고른 값) 초의 최댓값 `loop_lag_max_s`(이벤트 루프 지연, 초 소수 2자리) ·
     `queue_wait_max_s`(원문 대기열에 머문 시간) · `queue_depth_max`(대기열 깊이) · `ws_queue_max`(websockets 수신 버퍼에 남은 프레임, 구역 최댓값) · `ping_rtt_max_s`(keepalive 왕복,
-    구역 최댓값), 고른 값 `ws_queue_limit`(64 — 넘으면 소켓 읽기 멈춤) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
+    구역 최댓값), 고른 값 `ws_queue_limit`(64 — `ws_queue_max` 가 이 값 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은 묶음이나 루프 멈춤 뒤, 결함 아님) · `ping_timeout_s`(20), 누적 `loop_stalls_total`(루프 지연 ≥ 1 s 표본 수) · `reconnects_quick_total`
     (받던 연결이 끊겨 열린 공백 — 마지막 데이터 → 다시 받은 데이터 — 이 30 s 안에 닫힌 횟수, 없앤 구역 포함). fixture 재생은 연결이 없어 `ws_queue_max` · `ping_rtt_max_s` 가 빈 값이다.
   - `shards[]` 원소에 `ping_rtt_max_s`(초 수 또는 null) · `ws_queue_max`(정수 또는 null)를 끝에 더한다 — 원소 필드 순서는 `SHARD_FIELDS`(contract_check 가 본다).
     api `AisStatus` 는 이 둘을 읽지 않는다(지금 필드만 검사 — 더한 필드가 있어도 구역 정보를 버리지 않는다, `AisStatusTest` · `RestSamplesIT` 표본에 실었다).

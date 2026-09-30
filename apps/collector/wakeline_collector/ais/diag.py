@@ -4,7 +4,8 @@
   1. 이벤트 루프 멈춤(루프 위 CPU 작업 · 프로세스가 멈춤) — ping 이 나가 있는 동안 시간 초과보다 길면 1011 이 날 수 있다(버퍼 크기와 상관없다).
      늘 나지는 않는다: 멈춤이 끝난 뒤 pong 을 읽는 콜백과 시간 초과 콜백의 순서에 달린다(연결마다 다를 수 있다). → LoopLag(loop_lag_max_s · loop_stalls_total)
   2. 소켓을 읽는 코드가 멈춤 — websockets 수신 버퍼가 max_queue 를 넘으면 읽기를 멈춰 pong 도 못 읽는다. 우리 수신 태스크는 기다리지 않으므로
-     정상이면 버퍼가 작다. → 구역별 ws 수신 버퍼 깊이(ws_queue_max, client._read) · 원문 대기열 머문 시간(queue_wait_max_s, RawQueue)
+     곧 비운다. 버퍼가 상한을 넘는 것 자체는 결함이 아니다 — 한 번 읽기에 프레임이 많이 든 묶음(공급자 적체 해소 · 망이 잠깐 끊겼다 이어짐)이나 루프
+     멈춤 뒤에 잠깐 넘는다(test_ais_diag). → 구역별 ws 수신 버퍼 깊이(ws_queue_max, client._read) · 원문 대기열 머문 시간(queue_wait_max_s, RawQueue)
   3. 서버·망이 pong 을 늦게 보냄(공급자 쪽 연결별 적체 — VERIFICATION #17) → 구역별 keepalive 왕복(ping_rtt_max_s) · 공급자 지연(lag_p50_s)
 
 모두 '최근 창의 최댓값' 이다. 표본이 없으면 None(상태 해시 "" — 모름, 0 으로 채우지 않는다).

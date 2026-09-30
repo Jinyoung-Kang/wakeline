@@ -24,10 +24,12 @@ from test_ais_keepalive import (
     _client,
     _connected,
     _delay_pongs,
+    _frames,
     _run_for,
     _serve,
     _stall_client,
 )
+from websockets.exceptions import ConnectionClosed
 
 from wakeline_collector.ais import client as client_mod
 from wakeline_collector.ais.book import ShipBook
@@ -160,6 +162,52 @@ async def test_ws_buffer_depth_is_readable_on_the_pinned_websockets():
             assert frames is not None and len(frames) >= 0
     finally:
         server.close()
+
+
+class Burst(Server):
+    """구독을 받은 뒤 프레임 n 개를 한꺼번에(기다리지 않고) 보내고 연결을 유지한다 — 공급자 적체가 풀리거나 망이 잠깐 끊겼다 이어질 때처럼."""
+
+    def __init__(self, n: int) -> None:
+        super().__init__()
+        self.n = n
+
+    async def handler(self, ws) -> None:
+        await asyncio.wait_for(ws.recv(), 1.0)
+        fs = _frames()
+        try:
+            for i in range(self.n):
+                await ws.send(fs[i % len(fs)])
+            await asyncio.sleep(30)
+        except ConnectionClosed:
+            pass
+
+
+async def test_a_burst_fills_the_ws_buffer_past_its_limit_without_a_loop_stall():
+    """한 번 읽은 바이트(asyncio 는 최대 256 KiB)에 든 프레임은 websockets 가 모두 버퍼에 넣은 뒤 읽기를 멈춘다(상한 64 를 넘으면 pause — 16 이하로 줄면
+    다시 읽음). 그래서 한꺼번에 받은 묶음만으로 버퍼가 상한을 넘는다 — 루프 지연은 작고 연결은 유지된다. ws_queue_max ≥ 상한은 '그때 소켓 읽기가 잠시
+    멈췄다' 는 사실일 뿐 결함이 아니며, 버퍼 값만으로는 루프 멈춤과 한꺼번에 받음을 가르지 못한다(루프 지연과 함께 본다)."""
+    lag = LoopLag(tick_s=0.05)
+    lag_task = asyncio.create_task(lag.run())
+    server, url = await _serve(Burst(600))
+    c, q, feed = _client(url)
+    stop = asyncio.Event()
+    task = asyncio.create_task(c.run(stop))
+    try:
+        end = time.monotonic() + 5.0
+        while feed.msgs_total < 600:
+            assert time.monotonic() < end, feed.msgs_total
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.2)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, 5)
+        server.close()
+        lag_task.cancel()
+        await asyncio.gather(lag_task, return_exceptions=True)
+    depth, loop_lag = feed.ws_buffer.value(), lag.max_s()
+    assert depth is not None and depth > client_mod.WS_MAX_QUEUE, depth  # 상한을 넘었다 — 멈춤 없이
+    assert loop_lag is not None and loop_lag < TIMEOUT_S / 2, loop_lag
+    assert feed.sessions_ended == 0 and feed.connected, feed.last_error
 
 
 async def test_missing_ws_buffer_is_unknown_and_logged_once(caplog):

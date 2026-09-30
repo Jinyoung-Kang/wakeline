@@ -6,7 +6,8 @@
 - 상태 해시 `wakeline:ais:status` 는 5 s 마다 + 상태가 바뀔 때. updated_at 은 프로세스가 살아 있다는 heartbeat(헬스체크가 본다).
   구역이 여럿이면 합계 필드 + shards(JSON 배열) — 합계의 의미는 shards.py 설명.
   진단(ADR-014 부록 C · diag.py): 최근 diag_window_s(60) 초의 최댓값 — loop_lag_max_s(이벤트 루프 지연) · queue_wait_max_s(원문 대기열에 머문 시간) ·
-  queue_depth_max · ws_queue_max(websockets 수신 버퍼에 남은 프레임, 상한 ws_queue_limit 를 넘으면 소켓 읽기 멈춤) · ping_rtt_max_s(keepalive
+  queue_depth_max · ws_queue_max(websockets 수신 버퍼에 남은 프레임 — 상한 ws_queue_limit 이상이면 그때 소켓 읽기가 잠시 멈춰 있었다: 한꺼번에 받은
+  묶음이나 루프 멈춤 뒤, 결함 아님) · ping_rtt_max_s(keepalive
   왕복, 시간 초과 ping_timeout_s) + loop_stalls_total(지연 ≥ 1 s 표본 수, 누적). 상한·창·시간 초과는 고른 설정값(잰 값 아님). 모르면 빈 값.
   reconnects_quick_total: 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 30 s 안에 닫힌 횟수(누적) — 그 끊김은 INFO 로만 남기므로
   (reconnect.py) 여기서 센다.
