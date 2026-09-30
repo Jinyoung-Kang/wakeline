@@ -1,5 +1,5 @@
 "use client";
-import { Component, lazy, Suspense, useState, type ComponentType, type ReactNode } from "react";
+import { Component, createRef, lazy, Suspense, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { checkChunk, chunkCheckText, chunkUrlOf, type ChunkCheck } from "@/lib/chunk-probe";
 import { describeThrown, reportClientError } from "@/lib/errorReport";
 
@@ -14,6 +14,8 @@ import { describeThrown, reportClientError } from "@/lib/errorReport";
  *   (lib/errorReport — 같은 메시지 60 s 에 1번). 청크가 서버에 없으면(404 · 410 — 페이지를 연 뒤 새 판이 배포되어 옛 청크가 사라짐) '다시 시도'로는 받을 수
  *   없으므로 '페이지 새로 고침'만, 그 밖에는 '다시 시도'(새 lazy 로 다시 받는다)를 보인다. 다시 시도가 또 실패하면 두 단추를 함께 보인다.
  *   받은 조각 자신의 그리기 오류는 삼키지 않는다 — 경계가 다시 던져 위(app/error.tsx)가 받는다.
+ * - 다시 시도 뒤의 초점: 누른 단추가 사라지므로, 초점이 문서로 떨어졌으면 불러온 조각의 첫 요소(또 실패하면 새 오류의 첫 단추)로 옮긴다 —
+ *   키보드 · 화면 읽기 사용자가 패널 안의 자리를 잃지 않게. 사용자가 이미 다른 곳으로 옮겼으면 건드리지 않는다.
  */
 
 /** 조각의 모듈을 받지 못함(경계가 이것만 잡는다) */
@@ -73,12 +75,37 @@ export function lazyPart<P extends object>(label: string, load: () => Promise<Co
     return (
       <LoadBoundary key={attempt} label={label} frame={frame} attempt={attempt} onRetry={() => { retry(); setAttempt((n) => n + 1); }}>
         <Suspense fallback={<PartLoading label={label} frame={frame} />}>
+          {attempt > 0 ? <FocusAfterRetry /> : null}
           <Lazy {...props} />
         </Suspense>
       </LoadBoundary>
     );
   }
   return Object.assign(Part, { preload: () => fetchOnce().then(() => undefined), label });
+}
+
+/** 초점이 문서로 떨어졌는가(누른 단추가 사라지면 브라우저는 body 로 옮긴다 — 떼어 낸 요소를 가리키는 환경도 같게 본다) */
+function focusLost(): boolean {
+  const a = document.activeElement;
+  return a == null || a === document.body || a === document.documentElement || !document.contains(a);
+}
+
+/** 다시 시도로 조각을 받은 뒤: 조각의 첫 요소로 초점을 옮긴다(그 순간만 tabindex=-1 — 초점이 떠나면 뗀다). 자리 표시는 보이지 않는 빈 span */
+function FocusAfterRetry() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!ref.current || !focusLost()) return;
+    let n = ref.current.nextSibling;
+    while (n && n.nodeType !== 1) n = n.nextSibling;
+    const el = n as HTMLElement | null;
+    if (!el) return;
+    if (!el.hasAttribute("tabindex")) {
+      el.setAttribute("tabindex", "-1");
+      el.addEventListener("blur", () => el.removeAttribute("tabindex"), { once: true });
+    }
+    el.focus();
+  }, []);
+  return <span ref={ref} hidden />;
 }
 
 /** 받는 동안의 자리: 글자는 곧바로(화면 읽기), 막대 · 자리 표시 두 줄은 180 ms 뒤(lib/busy — 선택값) */
@@ -105,8 +132,14 @@ function reloadPage() { window.location.reload(); }
 class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: ChunkCheck | null }> {
   state = { error: null as unknown, check: null as ChunkCheck | null };
   private mounted = false;
+  private alertRef = createRef<HTMLDivElement>();
   static getDerivedStateFromError(error: unknown) { return { error }; }
   componentDidMount() { this.mounted = true; }
+  /** 다시 시도가 또 실패해 오류가 다시 보일 때(또는 확인 결과로 단추가 바뀔 때) 초점이 떨어졌으면 첫 단추로 */
+  componentDidUpdate() {
+    if (this.props.attempt === 0 || this.state.error == null || !focusLost()) return;
+    this.alertRef.current?.querySelectorAll<HTMLButtonElement>("[data-lazy-action]")[0]?.focus();
+  }
   componentWillUnmount() { this.mounted = false; }
   componentDidCatch(error: unknown) {
     if (!(error instanceof LazyLoadError)) return; // 그리기 오류는 위 경계가 보고한다
@@ -129,13 +162,13 @@ class LoadBoundary extends Component<BoundaryProps, { error: unknown; check: Chu
       ? " — 이 페이지를 연 뒤 새 판이 배포되면 이렇게 됩니다. 다시 시도로는 받을 수 없으니 페이지를 새로 고치세요."
       : retried ? " — 다시 시도도 실패했습니다. 계속되면 페이지를 새로 고치세요." : "";
     return (
-      <div className={this.props.frame} role="alert" data-testid="lazy-error" data-part={this.props.label} data-check={check?.kind ?? "pending"}>
+      <div ref={this.alertRef} className={this.props.frame} role="alert" data-testid="lazy-error" data-part={this.props.label} data-check={check?.kind ?? "pending"}>
         <div className="text-bad">{this.props.label} — 화면 코드를 받지 못했습니다</div>
         <div className="mono mt-0.5 break-all text-fg-3">{describeThrown(error.reason).message}</div>
         <div className="mt-0.5 text-fg-2" data-testid="lazy-check">{chunkCheckText(check)}{advice}</div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {missing ? null : <button type="button" className="btn" onClick={this.props.onRetry} data-testid="lazy-retry">다시 시도</button>}
-          {missing || retried ? <button type="button" className="btn" onClick={reloadPage} data-testid="lazy-reload">페이지 새로 고침</button> : null}
+          {missing ? null : <button type="button" className="btn" onClick={this.props.onRetry} data-testid="lazy-retry" data-lazy-action="">다시 시도</button>}
+          {missing || retried ? <button type="button" className="btn" onClick={reloadPage} data-testid="lazy-reload" data-lazy-action="">페이지 새로 고침</button> : null}
         </div>
       </div>
     );

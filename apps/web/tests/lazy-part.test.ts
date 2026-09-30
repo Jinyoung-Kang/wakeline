@@ -157,6 +157,54 @@ describe("mounted (react-dom/client)", () => {
     expect(byId("lazy-reload")).not.toBeNull();
   });
 
+  describe("keyboard focus after '다시 시도' (the pressed button disappears)", () => {
+    const failing = (label: string, state: { fail: boolean }) => {
+      const Card = () => createElement("section", { "data-testid": "card" }, createElement("button", null, "닫기"));
+      return lazyPart(label, async () => { if (state.fail) throw new Error("Failed to load chunk /_next/static/chunks/c.js"); return Card; });
+    };
+    it("a successful retry moves focus to the loaded part (made focusable for that moment) instead of leaving it on the page body", async () => {
+      const st = { fail: true };
+      await mount(createElement(failing("항공기 카드", st)));
+      await settle();
+      const btn = byId("lazy-retry")!;
+      btn.focus();
+      st.fail = false;
+      await click(btn);
+      const card = byId("card");
+      expect(card).not.toBeNull();
+      expect(dom.document.activeElement).toBe(card);
+      expect(card?.getAttribute("tabindex")).toBe("-1");
+      card!.dispatch("blur"); // 초점이 떠나면 잠시 붙였던 tabindex 를 뗀다(클릭으로 초점이 가는 요소로 남지 않게)
+      expect(card?.hasAttribute("tabindex")).toBe(false);
+    });
+    it("does not take focus from where the user already went", async () => {
+      const st = { fail: true };
+      const elsewhere = dom.document.createElement("input");
+      dom.document.body.appendChild(elsewhere);
+      try {
+        await mount(createElement(failing("공항 카드", st)));
+        await settle();
+        st.fail = false;
+        const btn = byId("lazy-retry")!;
+        elsewhere.focus();
+        await click(btn);
+        expect(byId("card")).not.toBeNull();
+        expect(dom.document.activeElement).toBe(elsewhere);
+      } finally { dom.document.body.removeChild(elsewhere); }
+    });
+    it("a retry that fails again puts focus on the new error's first button", async () => {
+      const st = { fail: true };
+      await mount(createElement(failing("SIGMET 카드", st)));
+      await settle();
+      const btn = byId("lazy-retry")!;
+      btn.focus();
+      await click(btn);
+      await settle();
+      expect(byId("lazy-error")).not.toBeNull();
+      expect(dom.document.activeElement).toBe(byId("lazy-retry"));
+    });
+  });
+
   it("a render error inside a loaded part is not swallowed: it reaches the route error boundary and is not reported as a load failure", async () => {
     const Broken = (): null => { throw new Error("boom in card"); };
     const Part = lazyPart("SIGMET 카드", async () => Broken);
