@@ -618,10 +618,12 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     아직 없어서 연속이 닫히지 않았다(리뷰). 예산 `budget:kma_radar` 주기당 목록 1 + 확인 2 = 하루 864 < 한도 1,000(전에는 목록 1 + 바이너리 4 = 하루 1,440).
     회복 뒤에는 보관 창의 빈 곳을 전처럼 다시 시도하고, 알린 공백 안의 tm 을 포기할 때는 INFO — 알린 공백은 meta 해시에도 남겨 다시 띄운 수집기도 읽는다
     (끝 tm 이 `MISSING_GAP_KEEP_S` 3 h 를 넘으면 버린다). 더 새 프레임은 받았는데 한 tm 만 없으면 연속이 아니다(전처럼 그 tm 에 WARN 한 번).
-    `KMA_APIHUB_KEY` 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 연속 중 목록 호출이 실패하면 실행 'error', 연속과 마지막 확인은 그대로다. 목록 줄의 종류(EXT · KMA …)는 공급자가 파일 이름에서 읽어 tm 마다 싣는다
+    `KMA_APIHUB_KEY` 가 없어 수집하지 않으면 남은 연속 · 알린 공백을 지운다. 연속 중 목록 호출이 실패하면 실행 'error', 연속과 마지막 확인은 그대로다(확인에 필요한
+    전날 목록의 실패 포함 — §G26 끝 2026-10-01 개정). 목록 줄의 종류(EXT · KMA …)는 공급자가 파일 이름에서 읽어 tm 마다 싣는다
     (`parse_file_kinds` — 목록 글자 그대로). 수집기를 다시 띄우면 마지막 확인이 `MISSING_CARRY_S`(15분 — 선택값) 안인 연속만 이어받고, 아니면 지운다.
   - 실행 기록(`ingest_run.status`, 주기마다 하나): 프레임을 저장했거나 새로 받을 tm 이 없으면 `ok`, 새 tm 이 있었는데 저장한 프레임이 없으면 — 바이너리 예약이
-    거절돼 멈췄으면 `budget_exhausted`(· `budget_unavailable`), '파일 없음' 답이 있었으면 `missing`, 해석 불가만이면 `quarantined`(오류 글자 = 마지막 답 · 연속 요약). `ok` 가 아닌 주기는 공급자 해시의 `last_success_at` · `last_records` 를 갱신하지 않는다
+    거절돼 멈췄으면 `budget_exhausted`(· `budget_unavailable`), '파일 없음' 답이 있었으면 `missing`, 해석 불가만이면 `quarantined`(오류 글자 = 마지막 답 · 연속 요약).
+    `missing` 의 뜻은 §G26 끝 2026-10-01 개정이 넓혔다 — 연속 중 목록만 읽은 확인(목록에도 새 tm 없음)도 `missing` 이다. `ok` 가 아닌 주기는 공급자 해시의 `last_success_at` · `last_records` 를 갱신하지 않는다
     (예산 사용량은 쓴다 · `consecutive_failures` 는 호출 실패만 센다 — 그대로).
   - 수집기 해시: `wakeline:radar_kr:meta` 와 `wakeline:provider:kma_radar` 에 `missing_since_tm` · `missing_last_tm` · `missing_tms` · `missing_checked_at`(UTC ISO) ·
     `missing_file` · `missing_listed`("EXT,KMA") — 닫으면 빈 값. 쓰기에 실패하면 다음 주기에 다시 쓴다. meta 해시에만 알린 공백 `missing_gap_from` · `missing_gap_to`
@@ -801,11 +803,52 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     뒤 15분마다 96 × 3 = **288**(최악 576). 늦추기 전 60분(12 주기 × 3 = 36)이 그 하루에 들면 더한다. 모의 하루(12:15 부터 파일 없음)에서 늦춘 뒤 시간마다 12 —
     24 × 12 = 288(`test_budget_arithmetic_of_a_streak_before_and_after_the_slow_cadence`).
   - 대가: 기상청이 돌아온 뒤 알아채기까지 최대 약 15분 + 늦게 생기는 파일이면 10분(전 5분) — 그동안 RainViewer 가 레이더를 맡는다(상태 바 KMA 칩 '파일 없음').
-  - 바꾸지 않는 것: 연속을 여는 규칙(R-03 세 번) · 확인할 tm 고르기(`streak_probes`) · 한 시간마다 WARN · 알린 공백 · 실행 상태 'missing' 의 뜻 · 429 'throttled'(§G24) ·
+  - 바꾸지 않는 것: 연속을 여는 규칙(R-03 세 번) · 확인할 tm 고르기(`streak_probes`) · 한 시간마다 WARN · 알린 공백 · 실행 상태 'missing' 의 뜻(— 2026-10-01 개정(아래)이
+    넓혔다: 목록만 읽은 확인) · 429 'throttled'(§G24) ·
     STALE 기준(900 s) · 부분 합성 다시 받기.
   - 회귀 막기: collector `test_kma_missing`(15분마다 확인 · 그 사이 'waiting' · 해시 간격 · 늦출 때 INFO 한 번 · 예산 산수와 모의 하루 · 늦춘 확인에서 회복 뒤 5분마다 ·
     다시 띄운 수집기 — 이어받기 45분 · 기다림 · 버림), api `KrRadarMissingTest`(간격 · 틀린 값) · `RestSamplesIT` · `WsSchemaContractTest`(표본), web `tests/kma-missing.test.ts`
     (한 줄 · 기준 45분 · 모름 · 수집기 상수 · 상세 규칙 · 운영 줄 · 'waiting' 색) · `ws-schema-sweep-v5`(검증기 = 스키마) · `guide-page`.
+  - **개정(2026-10-01 · 레인 kma · 운영 00:50 KST — 수집기는 확인하는데 KMA 칩이 'STALE 파일 없음 · 확인 멈춤') — §G22 · 이 절을 함께 고친다. 새 번호는 쓰지 않았다**:
+    연속(since tm 202609301310)을 15분마다 확인하는 동안 기상청 목록은 tm=20260930 이 `RDR_CMP_HSR_EXT_202609301950`(19:50 KST)에서 끝났고 tm=20261001 은 비었거나
+    HTTP 504 였다(오케스트레이터가 직접 호출로 확인). 00:05 KST 확인(자정 직후 창 — 전날 목록을 합친다)은 19:50 을 다시 확인해 '파일 없음'을 받았다. 00:20 · 00:35 · 00:50
+    확인은 오늘(빈) 목록만 읽어 확인할 tm 이 없었다 — 실행 `ok` · http 200 · 오류 글자 없음, 공급자 LAST SUCCESS 갱신(08:14 KST 뒤 저장한 프레임이 없는데도),
+    `missing_checked_at` 은 00:05(15:05:11Z)에 머물러 웹이 '확인 멈춤'(확인 간격 × 3 = 45분)을 붙였다.
+    - 목록만 읽은 확인: 연속 중 확인하는 주기에 목록이 답했는데 확인할 tm 이 없으면 그것도 확인이다 — `missing_checked_at` 을 옮기고 실행은 **`missing`**(오류 글자
+      `no new frame stored — nothing to probe: the KMA listing has no tm after tm=… either (…); KMA download has no file since tm=… (N tms answered missing, newest tm=…)`),
+      공급자 성공(`last_success_at` · `last_records`)으로 적지 않는다. 그래서 `missing` 의 뜻을 넓힌다(§G22 · 위 '바꾸지 않는 것'을 이 개정이 고친다): 저장한 프레임이 없고
+      이 주기에 기상청에 물어 연속이 그대로임을 보았다 — 내려받기가 '파일 없음'으로 답했거나, 연속 중 목록에도 새 tm 이 없었다(오류 글자가 가른다). 기상청을 부르지 않은
+      주기는 전처럼 `waiting`. 새 상태를 두지 않은 까닭: 연속의 확인은 어느 쪽이든 '기상청에 새 파일이 없다'는 같은 답이고, 운영 RUNS 요약(상태별 수)이 연속의 확인을 한
+      줄로 센다 — 웹 뜻 글(`RUN_STATUS_TITLE.missing`)은 넓힌 뜻으로 바꿨다. 연속 밖의 '새로 받을 tm 없음'은 전처럼 `ok`.
+    - 목록 실패(504 · ReadTimeout — 일시 오류면 한 번 다시 불러도 실패)는 전처럼 `error` — 확인하지 않았으니 마지막 확인 · 목록 필드 그대로다(그러면 확인 간격 × 3 뒤
+      '확인 멈춤'이 맞다). 확인에 필요한 전날 목록(아래 'KST 자정 넘김')의 504 · 시간 초과도 `error`(전날 목록 단계), 그 예산 예약이 거절되면 예산 상태
+      (`budget_exhausted` · `budget_unavailable`)다. 전날 목록이 429 · 속도 상한(`throttled`)인 주기와 예산 · 429 로 한 tm 도 묻지 못한 주기도 확인으로 치지 않는다.
+    - 필드(두 해시 `wakeline:radar_kr:meta` · `wakeline:provider:kma_radar`): `missing_list_tm`(마지막 확인에서 읽은 목록의 가장 새 tm — 그 시각 이하, 목록이 비었으면
+      빈 값) · `missing_list_newer`(그 목록이 확인 전 `missing_last_tm` 뒤로 실은 tm 수 — `0` 이면 목록도 자라지 않았다. 읽은 목록이 last_tm 의 날을 덮지 못했으면 빈 값
+      — 짓지 않는다). 확인마다(목록만 읽은 확인 · '파일 없음' 답을 받은 확인) 쓰고, 연속을 여는 주기는 빈 값(첫 확인이 채운다), 닫으면 빈 값, 다시 띄운 수집기는
+      이어받는다. api `KrRadarMissing` → `missing.list_tm` · `missing.list_newer`(정수 0–999,999 — 비었으면 키 없음, 틀리면 그 키만 빼고
+      `wakeline_radar_kr_parse_errors_total{field="missing_list_tm" | "missing_list_newer"}`. `list_newer` 0 인데 `list_tm` > `last_tm` 이면 서로 맞지 않아 `list_newer` 를
+      뺀다) — `/radar/kr` · `/status` · WS `status.radar_kr.missing`(`schemas/ws/server.v1.json` · `tools/rest_contract_check.py` `KR_MISSING` 과 같은 교차 검사 ·
+      `lib/ws-validate` `KR_MISSING` · WS 표본). `/ops/providers` 는 공급자 해시를 그대로 싣는다. 로그: 목록이 자라지 않을 때의 한 시간 알림(WARN)은 끝에
+      `; the KMA listing has no tm after tm=… either (newest listed tm=…)` 를 붙인다(그때만 — 따로 한 지문).
+    - KST 자정 넘김: 자정 직후 창(00:00–00:14)의 전날 목록 규칙은 그대로다 — 창 안의 확인 주기는 전날 목록을 합쳐 전날 tm 을 확인한다. 늦춘 확인은 창을 건너뛸 수 있고
+      (확인 간격 15분 + 주기 · 지터), 창 뒤에도 새 날 목록이 비어 있을 수 있다(이날 00:50 까지). 그래서 연속의 last_tm 이 전날 이전이고 새 날 목록이 답했으나 아직 그
+      시각 이하의 tm 을 싣지 않았으면(빈 답) 확인하는 주기가 전날 목록도 읽는다(`_streak_needs_prev_day` — 창 안이어도). 이 전날 목록은 덧붙이는 목록이 아니라 확인에
+      필요한 목록이다(리뷰 2026-10-01): 호출이 실패하면(504 · 시간 초과 — 다시 부르지 않는다) `error`(전날 목록 단계 · 공급자 오류 · WARN), 예산 예약이 거절되면 예산
+      상태 — 둘 다 마지막 확인 · 목록 필드를 옮기지 않는다(처음 구현은 오늘(빈) 목록만으로 이어가 확인할 tm 이 없는 `missing` 으로 마지막 확인을 옮겼다 — 몇 시간 동안
+      아무 tm 도 묻지 않았는데 '확인 멈춤'이 뜨지 않았다). 새 날 목록 자체가 504 · 시간 초과면 전날 목록을 읽지 않는다 — 목록이 실패한 주기(`error` · 아무것도
+      옮기지 않는다 · 확인 간격 × 3 뒤 '확인 멈춤')다. 그때 확인은 전날의 가장 새 tm 하나다(지금 − 10분이 전날 tm 을 모두 넘어 둘째 확인이 첫째와 같다) — 목록 2 + 확인 1
+      = 주기당 3(`STREAK_CALLS_PER_PROBE` · 위 예산 계산 그대로). 빈 새 날 목록은 '파일 없음'이 아니다 — 연속의 tm 수 · 마지막 tm 은 답을 받은 tm 만 센다. 연속과
+      상관없는 자정 직후 창의 전날 목록은 전처럼 덧붙이는 목록이다(실패하면 WARN 한 줄 · 오늘 목록으로 계속). 수집기는 전날 · 오늘 목록만 읽는다 — 연속의 last_tm 이
+      그저께 이전이면 '마지막 tm 뒤로 새 tm 없음'은 모른다(`missing_list_newer` 빈 값).
+    - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): `list_newer` 가 0 이면 한 줄에 `기상청 목록에도 19:50 KST 뒤 새 tm 없음`(마지막 tm 이
+      지금과 다른 KST 날이면 `09-30 19:50 KST`) — KMA 칩 title · 상세 행 값 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 줄(`providerMissing` 이 해시 글자를 본다). title 에
+      목록의 가장 새 tm(없으면 '읽은 목록에 tm 없음'). 모르거나 서로 맞지 않으면 적지 않는다. '확인 멈춤' 기준은 그대로(확인 간격 × 3, 아래로 15분) — 수집기가 목록만 읽은
+      확인도 마지막 확인으로 옮기므로 확인이 정말 멈췄을 때(수집기 멈춤 · 목록 실패 계속)만 붙는다. 운영 줄 · 실행 상태 `missing` 뜻 · 설명서(/guide)도 넓힌 뜻으로.
+    - 회귀 막기(고치기 전 코드에서 실패함을 먼저 봤다): collector `tests/test_kma_list_idle.py`(운영 모양 그대로 — 목록이 멈춘 뒤 확인의 해시 · 자정 넘어 빈 새 날 목록에서
+      전날 목록 · 같은 날 빈 목록 · 목록 실패 504 · ReadTimeout · 확인에 필요한 전날 목록의 504 · ReadTimeout(02:50 까지 `error` 만 · 마지막 확인 그대로 · 회복) · 그
+      예산 거절 · 회복 · 연속 밖 · 여는 주기 · 이어받기 · 한 시간 알림) · `test_rest_contract_rules`
+      (`test_radar_kr_missing_listing_fields`), api `KrRadarMissingTest` · `RestSamplesIT` · `WsSchemaContractTest`(표본), web `tests/kma-list-idle.test.ts` · `tests/ops-page.test.ts`.
 
 ## G. 18차 개정(2026-09-30 저녁 · 레인 coverage · 사용자 질문 "대한민국 영해에 선박 정보가 안 떠 있는 이유" — ADR-027) — 관측 AIS 수신 범위
 같은 저녁 레인 collector 가 17차 개정으로 §G25 · §G26 을 먼저 썼다 — 이 절은 그다음 번호 §G27 이다(처음에 §G26 으로 적어 겹쳤다 — 리뷰 2026-09-30 에서

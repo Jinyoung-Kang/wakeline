@@ -87,4 +87,48 @@ class KrRadarMissingTest {
             assertThat(e).as(bad).containsExactly("missing_probe_every_s");
         }
     }
+
+    /**
+     * 계약 v5 §G26 개정(2026-10-01 — 운영 00:50 KST: 기상청 목록이 19:50 에서 멈췄고 새 날 목록은 비어 확인할 tm 이 없었다): 수집기가 확인마다 목록이 보인 것을
+     * missing_list_tm(읽은 목록의 가장 새 tm — 없으면 빈 값) · missing_list_newer(확인 전 last_tm 뒤로 실은 tm 수 — 0 이면 목록도 자라지 않았다, 모르면 빈 값)로
+     * 싣는다. 공개 missing 에 list_tm · list_newer 로 그대로 — 비었으면 키가 없고 세지 않는다. 틀리면 그 키만 빼고 센다. list_newer 가 0 인데 list_tm 이 last_tm 보다
+     * 새로우면 서로 맞지 않는다(0 은 last_tm 뒤로 싣지 않았다는 뜻) — list_newer 를 빼고 센다(웹이 '목록에도 … 새 tm 없음'을 틀리게 말하지 않게).
+     * 고치기 전(키를 읽지 않음)에는 이 시험이 실패했다.
+     */
+    @Test
+    void whatTheListingShowedAtTheLastCheckPassesThroughAndAWrongValueDropsOnlyThatKey() {
+        List<String> errors = new ArrayList<>();
+        Map<String, Object> m = KrRadarMissing.from(hash(Map.of("missing_probe_every_s", "900", "missing_list_tm", "202609300950", "missing_list_newer", "0")), errors::add);
+        assertThat(errors).isEmpty();
+        assertThat(m).containsEntry("list_tm", "202609300950").containsEntry("list_newer", 0);
+        assertThat(new ArrayList<>(m.keySet())).containsExactly("since_tm", "last_tm", "tms", "checked_at", "file", "listed", "probe_every_s", "list_tm", "list_newer");
+        // 목록이 비었다(가장 새 tm 없음) · 목록이 last_tm 의 날을 덮지 못했다(뒤로 실은 수 모름) — 빈 값은 틀린 값이 아니다
+        Map<String, Object> empty = KrRadarMissing.from(hash(Map.of("missing_list_tm", "", "missing_list_newer", "0")), errors::add);
+        assertThat(empty).doesNotContainKey("list_tm").containsEntry("list_newer", 0);
+        assertThat(KrRadarMissing.from(hash(Map.of("missing_list_tm", "202609300950", "missing_list_newer", "")), errors::add))
+                .containsEntry("list_tm", "202609300950").doesNotContainKey("list_newer");
+        assertThat(KrRadarMissing.from(hash(Map.of()), errors::add)).doesNotContainKeys("list_tm", "list_newer"); // 옛 수집기
+        assertThat(KrRadarMissing.from(hash(Map.of("missing_list_tm", "202609300955", "missing_list_newer", "1")), errors::add))
+                .containsEntry("list_tm", "202609300955").containsEntry("list_newer", 1); // 목록이 자랐다(새 tm 을 확인했다)
+        assertThat(errors).as("unknown (empty or absent) is not wrong").isEmpty();
+        for (Map<String, String> bad : List.of(Map.of("missing_list_tm", "19:50"), Map.of("missing_list_tm", "2026093019500"))) {
+            List<String> e = new ArrayList<>();
+            Map<String, String> over = new HashMap<>(bad);
+            over.put("missing_list_newer", "0");
+            Map<String, Object> w = KrRadarMissing.from(hash(over), e::add);
+            assertThat(w).as(bad.toString()).containsKeys("since_tm", "tms", "list_newer").doesNotContainKey("list_tm");
+            assertThat(e).as(bad.toString()).containsExactly("missing_list_tm");
+        }
+        for (String bad : List.of("-1", "none", "1.0", "1234567")) {
+            List<String> e = new ArrayList<>();
+            Map<String, Object> w = KrRadarMissing.from(hash(Map.of("missing_list_tm", "202609300950", "missing_list_newer", bad)), e::add);
+            assertThat(w).as(bad).containsKeys("since_tm", "tms", "list_tm").doesNotContainKey("list_newer");
+            assertThat(e).as(bad).containsExactly("missing_list_newer");
+        }
+        // 0(뒤로 싣지 않았다)인데 목록의 가장 새 tm 이 last_tm(09:50) 뒤 — 서로 맞지 않는다: '새 tm 없음'을 말하지 않게 list_newer 를 뺀다
+        List<String> e = new ArrayList<>();
+        Map<String, Object> w = KrRadarMissing.from(hash(Map.of("missing_list_tm", "202609300955", "missing_list_newer", "0")), e::add);
+        assertThat(w).containsEntry("list_tm", "202609300955").doesNotContainKey("list_newer");
+        assertThat(e).containsExactly("missing_list_newer");
+    }
 }
