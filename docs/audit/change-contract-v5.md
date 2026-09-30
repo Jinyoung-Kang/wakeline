@@ -1034,20 +1034,29 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
 - G28(§G15 의 격자 기하 부분 · ADR-023 결정 3) **격자 기하는 bbox 타일 먼저 — 한 칸 조회는 타일이 주지 않은 칸만**. 근거 · 계산 · 시뮬레이션 · 확인하지 않은 것은 ADR-023.
   - 외부: 같은 `getOpnG4sWFS` 에 `ServiceKey`(한 칸 조회와 같은 인코딩) · `bbox=xmin,ymin,xmax,ymax`(EPSG:5179 m 정수 — 쉼표 · 쌍점을 인코딩하지 않는다, 기록한 호출 그대로) ·
     `srs=EPSG:5179` · `maxFeatures=1000`. 공급자 · 예산은 `mof_grid4` 그대로 — **호출 하나 = 1**(하루 6,000 · 해양수산부 시간 창 `budget:mof:h:*` 390 중 채우기 몫 290,
-    한 칸 조회와 같이 예약 · 반환). 우선순위 `PRIORITY_BACKFILL`. 응답 상한 384 KiB(넘으면 해석하지 않고 타일을 넷으로), 한 칸 조회 상한 256 KiB 그대로.
-  - 타일: EPSG:5179 원점에 고정한 32 km 정사각형, 잘렸을 수 있으면(지물 수 ≥ maxFeatures · numberOfFeatures ≠ 지물 수 · 크기 초과) 16 → 8 → 4 km 로 나눈다. 어디를
-    묻는지는 받은 기하에서만(아는 칸 중심 · 한 칸 조회로 찾은 칸 · 지금 스냅샷에서 모르던 가장자리 칸의 꼭짓점) — 칸 번호로 위치를 계산하지 않는다. 타일은 어느
-    번호도 '해양격자에 없음'으로 적지 않는다.
+    한 칸 조회와 같이 예약 · 반환). 우선순위 `PRIORITY_BACKFILL`. 응답 상한 384 KiB(넘으면 해석하지 않는다 — 32 km 타일만 넷으로 한 번, 나눈 상자가 또 넘으면
+    오류), 한 칸 조회 상한 256 KiB 그대로. 두 응답 모두 엄격한 UTF-8(NUL 없음)이어야 하고 본문 어디든 DOCTYPE · ENTITY 가 있으면 해석하지 않는다.
+  - 타일: EPSG:5179 원점에 고정한 32 km 정사각형, 잘렸을 수 있으면(지물 수 ≥ maxFeatures · numberOfFeatures ≠ 지물 수 · 칸 전체가 상자 안인 아는 칸이나 그 안에서
+    한 칸 조회가 찾은 칸이 답에 없음 · 32 km 의 크기 초과) 16 → 8 → 4 km 로 나눈다 — 나눈 자식이 부모가 준 칸보다 적은 지물로도 여전히 그러면 더 나누지 않고
+    incomplete. 상자와 닿지 않는 칸은 그 답이 아니다(rejected), 좋은 칸이 없거나 나쁜 지물이 과반이면 응답 전체가 오류(물러나기). 어디를 묻는지는 받은 기하에서만
+    (아는 칸 중심 · 한 칸 조회로 찾은 칸 · 지금 스냅샷에서 모르던 가장자리 칸의 꼭짓점) — 칸 번호로 위치를 계산하지 않는다. 타일은 어느 번호도 부정 캐시에 적지
+    않는다('해양격자에 없음'도 '격자 밖'도 — 격자 밖 지물은 품질 사례 · 원본만, 판정은 한 칸 조회). 차단기는 타일 · 한 칸 조회가 따로 쓴다(같은 규칙 — 연달아 3번이면
+    그 종류만 5 → 10 → 30 → 60분). 기동 때 split 타일의 결과 없는 자식을 다시 넣는다.
   - Redis(collector 가 쓰고 api 는 `~wakeline:*` 로 읽을 수 있다 — 읽지 않는다): `wakeline:traffic_grid:tiles` 해시(키 `level/ix/iy` → `{"status":"done"|"split"|"incomplete"|
     "failed","at","cells"}` — done · split 기한 없음, incomplete · failed 1일, 항목의 `at` 으로 논리 만료). ACL: §G15 의 부정 캐시 셀렉터에 정확한 이름으로 더한다 —
     `(~wakeline:traffic_grid:negative ~wakeline:traffic_grid:tiles +hset +hgetall)`, 루트 키 목록에는 없다(DEL · HDEL · SET · EXPIRE 거부). redis 를 다시 띄워야 적용된다.
-  - heartbeat `wakeline:collector` 필드 더함(타일 공급자가 없으면 빈 값): `traffic_grid_tiles_done` · `traffic_grid_tiles_queued` · `traffic_grid_fill_pass_{tiles,tile_cells,
-    tile_new,tile_stored,tile_splits,tile_errors}`. `traffic_grid_fill_state` 에 `waiting_tiles`(기동 뒤 타일 상태 해시를 읽기 전 — 10분 뒤에는 메모리로만). 기존 필드 · 의미는 그대로
-    (`traffic_grid_fill_pass_lookups` 등은 한 칸 조회만 센다). DB(V14 marine_grid4) · REST · WS 스키마는 바뀌지 않는다.
-  - 품질 사례 규칙 더함: `traffic_grid_tile_feature_rejected` · `traffic_grid_tile_incomplete` · `traffic_grid_tile_failed` · `traffic_grid_tile_missing_cell`(한 칸 조회가 끝난 타일
-    안에서 찾은 칸을 다시 받은 타일도 주지 않았다). 타일의 격자 밖 지물은 기존 `traffic_grid_off_grid`(+ `tile`).
-  - 웹 /ops providers 탭 '연안 교통량 격자 위치' 줄: 'bbox 타일 끝 N · 대기 M' · 마지막 채우기에 '타일 n → 칸 c(새 k · DB 저장 요청 s) · 나눔 x · 오류 e' — heartbeat 가 수로 알렸을 때만
-    (0 으로 채우지 않는다), 시각은 KST 만(§G20). 설명서 · /about 의 '칸마다 한 번'을 고쳤다.
+  - heartbeat `wakeline:collector` 필드 더함(타일 공급자가 없으면 빈 값): `traffic_grid_tiles_done` · `traffic_grid_tiles_queued` · `traffic_grid_tiles_persisted`(`yes` · `no` —
+    끝난 타일이 재기동을 넘는가: 상태 해시를 읽었고 마지막 쓰기가 됐는가) · `traffic_grid_tiles_resume_at`(타일 차단기의 끝, 아니면 빈 값) · `traffic_grid_fill_pass_{tiles,tile_cells,
+    tile_new,tile_stored,tile_splits,tile_incomplete,tile_errors}`(tile_splits = 넷으로 나눈 타일, tile_incomplete = 더 나누지 않고 incomplete 로 둔 타일). `traffic_grid_fill_state` 에
+    `waiting_tiles`(기동 뒤 타일 상태 해시를 읽기 전 — 10분 뒤에는 메모리로만), `breaker` 는 '일이 남은 종류가 차단기로 쉬고 지금 물을 것이 없다'(다른 종류가 물을 수 있으면
+    `filling`), `traffic_grid_fill_resume_at` 은 다시 묻기 · 쉼의 끝 가운데 이른 것. 기존 필드 · 의미는 그대로(`traffic_grid_fill_pass_lookups` 등은 한 칸 조회만 센다). DB(V14
+    marine_grid4) · REST · WS 스키마는 바뀌지 않는다.
+  - 품질 사례 규칙 더함: `traffic_grid_tile_feature_rejected`(상자 밖 칸 포함) · `traffic_grid_tile_incomplete` · `traffic_grid_tile_failed` · `traffic_grid_tile_missing_cell`
+    (`{"tile","missing","grid_nos"}` — 칸 전체가 상자 안인 아는 칸이나 그 안에서 한 칸 조회가 찾은 칸이 타일 답에 없었다). 타일의 격자 밖 지물은 기존 `traffic_grid_off_grid`
+    (+ `tile` · `raw_ref`) — 부정 캐시 항목은 만들지 않는다.
+  - 웹 /ops providers 탭 '연안 교통량 격자 위치' 줄: 'bbox 타일 끝 N · 대기 M'(설명의 '재기동 뒤에도'는 `traffic_grid_tiles_persisted` 가 `yes` 일 때만, `no` 면 '· 진행 기록 저장 안 됨' 경고,
+    타일 차단기면 '· 연달아 오류로 쉼 · 다음 HH:MM KST' 경고) · 마지막 채우기에 '타일 n → 칸 c(새 k · DB 저장 요청 s) · 나눔 x · 미완 i · 오류 e' — heartbeat 가 수로 알렸을 때만
+    (0 으로 채우지 않는다), 시각은 KST 만(§G20). retry_wait · breaker 설명은 칸과 타일을 함께 말한다. 설명서 · /about 의 '칸마다 한 번'을 고쳤다.
   - 회귀 막기: collector `tests/test_traffic_grid_tile_{parse,plan,job,sim}.py` · `test_traffic_grid_providers.py` · `test_traffic_grid_geo.py` · `test_traffic_grid_db.py` ·
     `test_redis_integration.py`, infra `test_redis_acl_rules.py` · `redis_acl_test.sh`, web `tests/ops-traffic-grid-fill.test.ts` · `tests/guide-page.test.ts`.
 
