@@ -9,6 +9,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { KR_MISSING_CHECK_STALE_MIN } from "@/lib/kr-radar";
 import { HEALTH_MARK } from "@/lib/statusbar";
 import { describe, expect, it, vi } from "vitest";
 import { CREDITS } from "@/lib/attribution";
@@ -296,6 +297,20 @@ describe("time examples", () => {
     expect(sec).toContain('<span class="mono whitespace-nowrap">2026-09-29 14:22:11.000 KST</span>');
     // 원문 토큰 밖에는 UTC 가 없다(설명서 전체)
     expect(htmlUtcLeaks(parseHtml(html))).toEqual([]);
+  });
+  // 통합 리뷰(2026-09-30): 6.2 의 운영 탭 표가 이번 통합의 화면(PIPELINE 의 AIS 수신 진단 · 실행 상태 missing/quarantined · kma_radar '파일 없음' 줄)을 말한다
+  it("6.2 names the pipeline tab's AIS receive diagnostics, the missing/quarantined run statuses and the KMA 'file not exist' line", () => {
+    const ops = text(section(render(EMPTY), "ops-dashboard"));
+    expect(ops).toMatch(/AIS 수신 진단/);
+    for (const k of ["keepalive 왕복", "이벤트 루프 지연", "WS 수신 버퍼", "원문 대기 시간", "짧은 재연결"]) expect(ops).toContain(k);
+    expect(ops).toMatch(/손실 수가 아니라 색으로 판정하지 않습니다/);
+    expect(ops).toMatch(/수집기 설정/);
+    expect(ops).toMatch(/missing/);
+    expect(ops).toMatch(/quarantined/);
+    expect(ops).toMatch(/마지막 성공을 갱신하지 않습니다/);
+    expect(ops).toMatch(/kma_radar 행 아래/);
+    expect(ops).toContain(`${KR_MISSING_CHECK_STALE_MIN}분을 넘으면 ‘확인 멈춤’`);
+    expect(ops).not.toMatch(/최근 60 s/); // 창 길이는 수집기 설정 — 설명서가 숫자를 들고 있지 않다
   });
   it("unknown values are shown as — without a unit", () => {
     const t = text(render(EMPTY));
