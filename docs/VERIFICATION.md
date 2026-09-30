@@ -967,5 +967,5 @@
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 448 — 이번 판에서는 다시 돌리지 않았다(인프라 · db 이미지 변경 없음 — 2026-09-30 판의 값) |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 41 통과(2.4 분 — `make e2e`, 끝난 뒤 스택 · 볼륨 삭제) |
 | 첫 화면 JS 예산 | `npm run check:first-js -- --in-image`(웹 이미지의 Node) | 543,497 B / 550,000 B(여유 6,503 B — 18개 파일, 기상청 '목록에도 … 없음' 글 +359 B) |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 02:05 KST, `make build` 뒤) — gitleaks 839 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) |
-| 배포 뒤 실메시지 | 공개 `/api/v1/status` · `/api/v1/radar/kr` | #87 '배포에서 드러난 것' |
+| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 02:05 KST `make build` 뒤, 수집기 · 웹 이미지를 다시 빌드한 뒤 02:55 KST 에 다시 — 배포한 이미지) — gitleaks 842 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만(HIGH 2 — libcrypto3 · libssl3 CVE-2026-14456) |
+| 배포 뒤 확인 | 공개 `/api/v1/status` · `/api/v1/radar/kr` · 설명서 | #87 '배포에서 드러난 것'(02:49 KST 확인에서 `list_tm` 202609301950 · `list_newer` 0 → 칩 '기상청 목록에도 09-30 19:50 KST 뒤 새 tm 없음') · 설명서 14장 모두 배포 스택에서 불러와짐(자리표시 0) |
