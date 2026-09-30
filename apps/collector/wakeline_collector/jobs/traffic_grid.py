@@ -12,7 +12,14 @@
   상한 둘: 메모리 60분 창 HOURLY_CAP(15) · Redis 시간 창(budget:komsa_traffic:h:{UTC 시}, 같은 15 — 재기동 · 두 번째 수집기도 센다). KST 날은 UTC 시
   24개이므로 어느 날 경계로 세어도 하루 360번 이하 — 포털 한도(500) 안. 같은 주기 안 다시 부르기는 하지 않는다(다음 틱이 곧 다시 부른다).
   예산은 엄격(Redis 예산 저장소가 안 되면 부르지 않는다 — budget.DEFAULT_STRICT).
-- 격자 기하(budget:mof_grid4, UTC 날 6,000): 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
+- 격자 기하 — bbox 타일 먼저(ADR-023 2026-10-01 bbox 개정, grid_tiles): WFS bbox 한 번이 32 km 상자 안의 칸을 모두 준다(모형 약 200칸 — 한 칸
+  조회의 수백 배). 물을 타일이 있으면 채우기 몫을 타일에 먼저 쓰고(호출 하나 = 예산 1 — 하루 예산과 해양수산부 시간 창 모두, 한 칸 조회와 같다),
+  타일이 준 칸은 한 칸 조회 대기열에서 빠진다. 타일은 아는 칸(marine_grid4) · 한 칸 조회로 찾은 칸 · 받은 타일의 가장자리에 걸친(지금 스냅샷에서
+  모르던) 칸의 기하에서만 정한다 — 칸 번호로 위치를 짐작하지 않는다. 잘렸을 수 있는 응답(maxFeatures 에 닿음 · numberOfFeatures 와 다름 · 크기 상한
+  초과)은 넷으로 나눠 다시(가장 작은 4 km 도 그러면 incomplete — 1일 뒤). 타일은 어느 번호도 '해양격자에 없음'으로 만들지 않는다(묻지 않은 번호다).
+  끝난 타일은 Redis wakeline:traffic_grid:tiles 에 적어 재기동 뒤 다시 묻지 않는다(읽지 못하면 DB 캐시처럼 DB_WAIT_S 기다린 뒤 메모리로만 — WARN).
+  한 타일의 칸은 DB 쓰기 한 번(쓰기 큐의 작업 하나). 해석은 공급자가 스레드에서, 아는 칸 읽기 · 타일 셈도 스레드에서(이벤트 루프를 막지 않는다).
+- 격자 기하 — 한 칸 조회(budget:mof_grid4, UTC 날 6,000): 물을 타일이 없을 때 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
   많은 칸 먼저), 틱마다 WFS_PER_TICK(15)개 · FILL_MAX_S 안에서, 호스트 버킷(1 req/s — 교통 폴링 · 항만 입출항 색인(ADR-022)과 하나)과
   가장 낮은 우선순위(PRIORITY_BACKFILL — 입출항 색인보다도 낮다)로. 교통 폴링은 PRIORITY_FIXED 라 입출항 색인이 이어져도 먼저 받는다.
   호출마다 해양수산부 시간 창(budget:mof:h:{UTC 시} — 입출항 색인과 함께 센다, providers/data_go_kr.MOF_*)을 먼저 예약하되 입출항 색인 몫
@@ -44,9 +51,10 @@
   traffic_grid_publish_delay_s(배운 발행 지연 — 배우기 전에는 빈 값) · 채우기 진행(ADR-023 2026-10-01 개정 — DB 없이 수렴을 본다):
   traffic_grid_not_found · traffic_grid_off_grid(유효한 부정 캐시) · traffic_grid_not_queued(마지막으로 읽은 스냅샷의 칸 가운데
   대기열이 가득 차 넣지 못한 칸 — 서로 다른 칸 수, 누계가 아니다. 읽기 전 빈 값) ·
-  traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · hour_window · daily_budget · breaker · operator_off) ·
+  traffic_grid_fill_state(filling · idle · retry_wait · waiting_db · waiting_tiles · hour_window · daily_budget · breaker · operator_off) ·
   traffic_grid_fill_resume_at(다음에 움직이는 때 — 없으면 빈 값) · traffic_grid_fill_pass_at 과 _lookups · _found · _not_found · _off_grid ·
-  _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값).
+  _errors(이 프로세스에서 마지막으로 끝난 채우기 한 번 — 없으면 빈 값) · bbox 타일(타일 공급자가 없으면 빈 값): traffic_grid_tiles_done ·
+  traffic_grid_tiles_queued · traffic_grid_fill_pass_tiles · _tile_cells · _tile_new · _tile_splits · _tile_errors.
 - 서비스 키는 공급자 안에만 있다. 오류 문구는 describe_error(가림)를 거친다. fixture 모드는 외부 호출이 없으므로 끈다(state fixture).
 PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계 · WFS_PER_TICK · 부정 캐시 7일 · 연달아 실패 5번 · failed 1일 · 미래 허용 120 s 는
 선택값이다(잰 값이 아니다). 발행 지연은 배운 값(heartbeat)으로만 말한다.
@@ -58,20 +66,28 @@ import asyncio
 import itertools
 import logging
 import time
-from collections import deque
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections import Counter, deque
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import orjson
 
+from wakeline_collector import grid_tiles as gt
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.errors import describe_error
+from wakeline_collector.grid_tiles import Tile, TilePlan, TileState, cell_corners_xy, cell_xy, encode_state
 from wakeline_collector.http import BeforeSend, FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.marine_grid import CELL_DEG, SNAP_TOL_DEG, Cell, lattice_step, snap
-from wakeline_collector.providers.data_go_kr import MOF_GRID4_HOURLY_HEADROOM, MOF_HOUR_WINDOW, MOF_HOURLY_CAP, WfsLookup
+from wakeline_collector.marine_grid import CELL_DEG, SNAP_TOL_DEG, Cell, WfsTooLarge, lattice_step, snap
+from wakeline_collector.providers.data_go_kr import (
+    MOF_GRID4_HOURLY_HEADROOM,
+    MOF_HOUR_WINDOW,
+    MOF_HOURLY_CAP,
+    WfsLookup,
+    WfsTileLookup,
+)
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT
 from wakeline_collector.traffic_grid import GRID_ID_RE, KomsaSnapshot, build_payload, iso_z
@@ -80,6 +96,7 @@ log = logging.getLogger("job.traffic_grid")
 
 SNAPSHOT_KEY = "wakeline:traffic_grid"
 NEGATIVE_KEY = "wakeline:traffic_grid:negative"
+TILES_KEY = "wakeline:traffic_grid:tiles"  # bbox 타일 상태(grid_tiles — 키 "level/ix/iy" → {"status","at","cells"}) — ADR-023 2026-10-01 bbox 개정
 HEARTBEAT_KEY = "wakeline:collector"
 DELAY_FIELD = "traffic_grid_publish_delay_s"  # 배운 발행 지연(위쪽 끝 추정, 초) — 운영 확인 · 재기동 뒤 다시 쓴다
 SNAPSHOT_TTL_S = 1200
@@ -134,6 +151,20 @@ class WfsSource(Protocol):
     def configured(self) -> bool: ...
 
     async def lookup(self, grid_no: str, *, wait_s: float = ..., before_send: BeforeSend | None = None) -> WfsLookup: ...
+
+
+class TileSource(Protocol):
+    """bbox 타일(ADR-023 2026-10-01 bbox 개정) — 한 칸 조회와 같은 서비스 · 같은 예산(이름이 같아야 한다)."""
+
+    name: str
+    cost: int
+
+    @property
+    def configured(self) -> bool: ...
+
+    async def bbox(
+        self, box: tuple[int, int, int, int], *, wait_s: float = ..., before_send: BeforeSend | None = None
+    ) -> WfsTileLookup: ...
 
 
 def _utcnow() -> datetime:
@@ -259,6 +290,9 @@ class GridGeometry:
     @property
     def pending(self) -> int:
         return len(self._pending)
+
+    def is_pending(self, g: str) -> bool:
+        return g in self._pending
 
     def _negative_valid(self, g: str, now: datetime) -> bool:
         n = self.negative.get(g)
@@ -403,6 +437,47 @@ class FillPass:
     off_grid: int = 0
     errors: int = 0
     set_aside: int = 0  # 연달아 ID_MAX_FAILURES 번 실패해 failed 로 뺀 칸
+    # bbox 타일(ADR-023 2026-10-01 bbox 개정) — 한 칸 조회(lookups …)와 따로 센다
+    tiles: int = 0  # 보낸 타일 호출
+    tile_cells: int = 0  # 타일 응답이 준 칸(검사 통과 — 겹치는 타일의 같은 칸은 두 번 센다)
+    tile_new: int = 0  # 그 가운데 처음 안 칸
+    tile_splits: int = 0  # 잘렸을 수 있어 나눈(가장 작은 타일이면 incomplete 로 적은) 타일
+    tile_errors: int = 0
+
+
+@dataclass
+class _Tick:
+    """틱 하나의 채우기 셈(한 칸 조회 · 타일)과 멈춘 까닭."""
+
+    calls: int = 0
+    lookups: int = 0
+    found: list[Cell] = field(default_factory=list)  # 한 칸 조회로 찾은 칸(틱 끝에 한 번 쓴다)
+    not_found: int = 0
+    off_grid: int = 0  # 한 칸 조회
+    gave_up: int = 0
+    tiles: int = 0
+    tile_cells: int = 0
+    tile_new: int = 0
+    tile_off_grid: int = 0
+    tile_splits: int = 0
+    tile_errors: int = 0
+    errors_in_row: int = 0
+    last_error: str | None = None
+    http_status: int | None = None
+    latency: list[int] = field(default_factory=list)
+    quality: list[tuple[str, str | None, dict[str, Any]]] = field(default_factory=list)
+    stop_reason: str | None = None
+    hold_until: datetime | None = None
+    hold_kind: str = ""
+    paused: bool = False
+
+    @property
+    def received(self) -> int:
+        return len(self.found) + self.tile_cells
+
+    @property
+    def succeeded(self) -> int:
+        return self.calls - (self.lookups - len(self.found) - self.not_found - self.off_grid) - self.tile_errors
 
 
 # ---- 작업 ----------------------------------------------------------------------------------------------------------
@@ -418,10 +493,23 @@ class TrafficGridJob:
         wfs: WfsSource,
         ctx: JobContext,
         *,
+        tiles: TileSource | None = None,
         now: Callable[[], datetime] = _utcnow,
         mono: Callable[[], float] = time.monotonic,
     ) -> None:
+        """tiles: bbox 타일을 묻는 공급자(운영은 wfs 와 같은 Grid4WfsProvider — 같은 예산). 없으면 한 칸 조회만 한다."""
+        if tiles is not None and (tiles.name != wfs.name or tiles.cost != wfs.cost):
+            raise ValueError("bbox tiles must be the same provider and budget as the one-id lookup")
         self.komsa, self.wfs, self.ctx = komsa, wfs, ctx
+        self.tile_src = tiles
+        self.tiles = TilePlan()
+        self._tiles_loaded = False  # Redis 의 타일 상태를 읽었다
+        self._tiles_seeded = False  # 아는 칸(marine_grid4)으로 타일을 넣었다
+        self._tiles_warned = False
+        self._tiles_error = ""  # 타일 상태를 읽지 못한 마지막 까닭(예외 이름)
+        self._snapshot_ids: frozenset[str] = (
+            frozenset()
+        )  # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
         self._now, self._mono = now, mono
         self.schedule = KomsaSchedule()
         self.geometry = GridGeometry()
@@ -447,7 +535,7 @@ class TrafficGridJob:
         self._queued_unlogged = 0  # 같은 regDt 호출에서 대기열에 넣은 칸 — 다음 스냅샷 줄의 +K 에 더한다
         self._logged_disabled: str | None = None
         self._waiting_logged = False
-        self.counts = {"komsa_calls": 0, "wfs_calls": 0, "published": 0}
+        self.counts = {"komsa_calls": 0, "wfs_calls": 0, "wfs_tiles": 0, "published": 0}
 
     # ---- 한 틱 --------------------------------------------------------------------------------------------------
     async def run_once(self) -> None:
@@ -502,16 +590,92 @@ class TrafficGridJob:
                     )
             except Exception as e:  # noqa: BLE001 — 다음 틱에 다시(부정 캐시는 부가 — 없어도 동작)
                 log.info("traffic grid: negative cache not readable yet (%s)", type(e).__name__)
-        if self._db_loaded or (self._db_next_try is not None and now < self._db_next_try):
+        if self.tile_src is not None and not self._tiles_loaded:
+            await self._load_tiles(now)
+        if not (self._db_loaded or (self._db_next_try is not None and now < self._db_next_try)):
+            rows = await self.ctx.db.read_marine_grid4()
+            if rows is None:
+                self._db_next_try = now + timedelta(seconds=DB_RETRY_S)
+            else:
+                # 아는 칸이 연안 전체(시뮬레이션 약 10만)로 늘면 읽기 · 검사가 약 0.3 s(잰 값) — 이벤트 루프 밖에서
+                ok, bad = await asyncio.to_thread(self.geometry.load_cells, rows)
+                self._db_loaded = True
+                self._dirty = self._dirty or ok > 0
+                log.info(
+                    "traffic grid: %d grid cells loaded from marine_grid4%s", ok, f" ({bad} invalid rows ignored)" if bad else ""
+                )
+        if self.tile_src is not None and self._db_loaded and not self._tiles_seeded and self._tiles_ready(now):
+            await self._seed_known_tiles(now)
+
+    async def _load_tiles(self, now: datetime) -> None:
+        """타일 상태(Redis 해시) 읽기. 못 읽으면 다음 틱에 다시 — 채우기는 기동 뒤 DB_WAIT_S 까지 기다리고(끝난 타일을 다시 묻지 않게) 그 뒤에는
+        메모리로만 한다(WARN 한 번 — _tiles_ready)."""
+        try:
+            async with asyncio.timeout(REDIS_TIMEOUT_S):
+                fields = await self.ctx.status.redis.hgetall(TILES_KEY)
+        except Exception as e:  # noqa: BLE001 — 기다린 뒤 메모리로(아래)
+            self._tiles_error = type(e).__name__
+            log.info("traffic grid: bbox tile states not readable yet (%s)", self._tiles_error)
             return
-        rows = await self.ctx.db.read_marine_grid4()
-        if rows is None:
-            self._db_next_try = now + timedelta(seconds=DB_RETRY_S)
-            return
-        ok, bad = self.geometry.load_cells(rows)
-        self._db_loaded = True
-        self._dirty = self._dirty or ok > 0
-        log.info("traffic grid: %d grid cells loaded from marine_grid4%s", ok, f" ({bad} invalid rows ignored)" if bad else "")
+        n = self.tiles.load(fields or {})
+        self._tiles_loaded = True
+        by = Counter(s.status for s in self.tiles.states.values() if s.valid(now))
+        log.info(
+            "traffic grid: bbox tiles — %d tile states loaded (%d done, %d split, %d incomplete, %d failed still valid)",
+            n,
+            by["done"],
+            by["split"],
+            by["incomplete"],
+            by["failed"],
+        )
+
+    def _tiles_ready(self, now: datetime) -> bool:
+        """타일을 물어도 되는가: 상태를 읽었거나, 기동 뒤 DB_WAIT_S 가 지났다(그때는 메모리로만 — WARN 한 번)."""
+        if self.tile_src is None:
+            return False
+        if self._tiles_loaded:
+            return True
+        if self._started is not None and (now - self._started).total_seconds() < DB_WAIT_S:
+            return False
+        if not self._tiles_warned:
+            self._tiles_warned = True
+            log.warning(
+                "traffic grid: bbox tile states (%s) not readable for %d s (%s) — tiles go on in memory only, so finished tiles "
+                "are asked again after a restart; a NoPermissionError means the Redis ACL lacks the tiles selector "
+                "(infra/redis/start.sh) — restart redis to load it",
+                TILES_KEY,
+                DB_WAIT_S,
+                self._tiles_error or "unknown",
+            )
+        return True
+
+    def known_tiles(self) -> Counter[Tile]:
+        """아는 칸 중심이 든 가장 작은 타일(split 을 따라)마다 칸 수 — 끝나지 않은 타일만. 모서리 하나라도 끝난 타일 안인 칸은 세지 않는다(그 타일이
+        준, 가장자리에 걸친 칸이다 — 세면 재기동마다 끝난 타일의 이웃을 모두 넣어 바깥으로 번진다). 칸마다 투영 한 번(약 3 µs), 남은 칸은 네 번 더 —
+        스레드에서 부른다."""
+        out: Counter[Tile] = Counter()
+        now = self._now()
+        plan = self.tiles
+        any_state = bool(plan.states)
+        for c in list(self.geometry.cells.values()):
+            t = plan.leaf(*cell_xy(c))
+            if plan.covered(t, now):
+                continue
+            if any_state and any(plan.finished(plan.leaf(x, y), now) for x, y in cell_corners_xy(c)):
+                continue
+            out[t] += 1
+        return out
+
+    async def _seed_known_tiles(self, now: datetime) -> None:
+        self._tiles_seeded = True
+        counts = await asyncio.to_thread(self.known_tiles)
+        added = sum(1 for t, n in counts.most_common() if self.tiles.add(t, "known", now, weight=n))
+        log.info(
+            "traffic grid: bbox tiles — %d tiles queued from %d known cells (%d tiles done)",
+            added,
+            len(self.geometry.cells),
+            self.tiles.done_count(),
+        )
 
     # ---- 교통 ---------------------------------------------------------------------------------------------------
     async def _maybe_fetch(self, now: datetime) -> None:
@@ -633,6 +797,7 @@ class TrafficGridJob:
             return
         raw_ref = await archive(self.ctx.raw, p.name, resp.body, resp.fetched_at)
         self.snapshot, self.fetched_at, self.last_ok = snap, resp.fetched_at, resp.fetched_at
+        self._snapshot_ids = frozenset(i.grid_id for i in snap.items)
         self.schedule.on_new(snap.reg_dt, now)
         self._new_snapshots += 1
         added = self.geometry.observe(((i.grid_id, i.vmtc) for i in snap.items), now) + self._queued_unlogged
@@ -702,17 +867,33 @@ class TrafficGridJob:
     def _waiting_for_db(self, now: datetime) -> bool:
         return not self._db_loaded and self._started is not None and (now - self._started).total_seconds() < DB_WAIT_S
 
+    def _waiting_for_caches(self, now: datetime) -> str:
+        """채우기가 아직 기다리는 캐시 — "db"(marine_grid4) · "tiles"(타일 상태 해시) · ""(기다리지 않는다). 둘 다 기동 뒤 DB_WAIT_S 까지만."""
+        if self._waiting_for_db(now):
+            return "db"
+        if self.tile_src is not None and not self._tiles_ready(now):
+            return "tiles"
+        return ""
+
+    def _tiles_on(self, now: datetime) -> bool:
+        return self.tile_src is not None and self.tile_src.configured and self._tiles_ready(now)
+
+    def _fill_due(self, now: datetime) -> bool:
+        return self.geometry.has_due(now) or (self._tiles_on(now) and self.tiles.has_due(now))
+
     async def _fill(self, now: datetime) -> None:
         w = self.wfs
         if not w.configured:
             return
-        if not self.geometry.pending:
+        if not self.geometry.pending and not self.tiles.queued:
             await self._end_pass(self._idle_reason(now))
             return
-        if self._waiting_for_db(now):
+        waiting = self._waiting_for_caches(now)
+        if waiting:
             if not self._waiting_logged:
                 self._waiting_logged = True
-                log.info("traffic grid: waiting up to %d s for the marine_grid4 cache before WFS lookups", DB_WAIT_S)
+                what = "the marine_grid4 cache" if waiting == "db" else f"the bbox tile states ({TILES_KEY})"
+                log.info("traffic grid: waiting up to %d s for %s before WFS lookups", DB_WAIT_S, what)
             return
         if self._fill_pause_until is not None and now < self._fill_pause_until:
             return
@@ -721,173 +902,364 @@ class TrafficGridJob:
         if await self.ctx.status.is_disabled(w.name):
             await self._end_pass("stopped: mof_grid4 switched off by the operator")
             return
-        batch = self.geometry.due(now, WFS_PER_TICK)
-        if not batch:
+        if not self._fill_due(now):
             await self._end_pass(self._idle_reason(now))
             return
         t0 = self._mono()
-        found: list[Cell] = []
-        quality: list[tuple[str, str | None, dict[str, Any]]] = []
-        calls = errors_in_row = off_grid = not_found = gave_up = 0
-        last_error: str | None = None
-        http_status: int | None = None
-        latency: list[int] = []
+        tk = _Tick()
         started = now
-        stop_reason: str | None = None
-        hold_until: datetime | None = None
-        hold_kind = ""
-        paused = False
-        for g in batch:
+        id_batch: list[str] | None = None
+        for _ in range(WFS_PER_TICK):
             if self._mono() - t0 > FILL_MAX_S:
                 break
-            at = self._now()  # 보내는 때의 UTC 시 창에 센다(채우기가 정시를 넘겨도)
-            # 해양수산부 시간 창 먼저(입출항 색인 몫을 남기고) — 그다음 하루 예산. 하나라도 안 되면 부르지 않는다
-            ok, used, hour = await self.ctx.budget.reserve_hour(
-                w.name, MOF_HOURLY_CAP, w.cost, now=at, window=MOF_HOUR_WINDOW, headroom=MOF_GRID4_HOURLY_HEADROOM
-            )
-            if not ok:
-                if used == UNKNOWN:
-                    stop_reason = "budget store unavailable (fail closed)"
-                else:
-                    hold_until = at.astimezone(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                    hold_kind = "hour_window"
-                    stop_reason = (
-                        f"MOF hourly window: grid share used ({used} of {MOF_HOURLY_CAP} in UTC hour {hour.rsplit(':', 1)[-1]}, "
-                        f"{MOF_GRID4_HOURLY_HEADROOM} left for port calls)"
-                    )
-                break
-            ok, used = await self.ctx.budget.reserve(w.name, w.cost)
-            if not ok:
-                await self.ctx.budget.release_key(hour, w.cost)
-                if used == UNKNOWN:
-                    stop_reason = "budget store unavailable (fail closed)"
-                else:
-                    hold_until = at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                    hold_kind = "daily_budget"
-                    stop_reason = f"daily budget exhausted (used={used})"
-                break
-            sent = False
-
-            async def give_back(hour_key: str = hour) -> None:
-                """보내지 않은 호출: 두 예약(하루 · 시간 창)을 모두 되돌린다."""
-                await self.ctx.budget.release(w.name, w.cost)
-                await self.ctx.budget.release_key(hour_key, w.cost)
-
-            async def before_send() -> bool:
-                nonlocal sent
-                if await self.ctx.status.is_disabled(w.name):
-                    return False
-                sent = True
-                return True
-
-            try:
-                got = await w.lookup(g, before_send=before_send)
-            except asyncio.CancelledError:
-                if not sent:
-                    await asyncio.shield(give_back())
-                raise
-            except NOT_SENT:
-                await give_back()
-                break
-            except Exception as e:  # noqa: BLE001 — HTTP · 응답 모양(WfsError) · 읽기 시간 초과
-                calls += 1
-                errors_in_row += 1
-                last_error = why = describe_error(e)
-                http_status = e.status if isinstance(e, ProviderHttpError) else http_status
-                if self.geometry.failed(g, now):
-                    gave_up += 1
-                    await self._store_negative(g, "failed", now)
-                    quality.append(
-                        ("traffic_grid_lookup_failed", None, {"grid_no": g, "failures": ID_MAX_FAILURES, "last": why[:200]})
-                    )
-                    log.warning(
-                        "traffic grid: %s failed %d lookups in a row — set aside for %d h (last: %s)",
-                        g,
-                        ID_MAX_FAILURES,
-                        FAILED_TTL_S // 3600,
-                        last_error,
-                    )
-                if errors_in_row >= FILL_BREAKER_ERRORS:
-                    self._fill_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._fill_pauses))
-                    self._fill_pauses += 1
-                    paused = True
-                    log.warning(
-                        "traffic grid: %d WFS errors in a row — geometry fill paused until %s (last: %s)",
-                        errors_in_row,
-                        iso_z(self._fill_pause_until),
-                        last_error,
-                    )
+            # 타일 먼저(한 번에 칸 수백 개) — 물을 타일이 없을 때만 한 칸 조회. 한 칸 조회가 찾은 칸의 타일은 곧바로 다음 차례다
+            tile = self.tiles.next_due(now) if self._tiles_on(now) else None
+            g: str | None = None
+            if tile is None:
+                if id_batch is None:
+                    id_batch = self.geometry.due(now, WFS_PER_TICK)
+                while id_batch and not self.geometry.is_pending(id_batch[0]):
+                    id_batch.pop(0)  # 이 틱의 타일이 풀었다
+                if not id_batch:
                     break
-                continue
-            calls += 1
-            errors_in_row = 0
-            if got.latency_ms is not None:
-                latency.append(got.latency_ms)
-            r = got.result
-            if r.kind == "found" and r.cell is not None:
-                self.geometry.resolved(r.cell)
-                found.append(r.cell)
-            elif r.kind == "not_found":
-                not_found += 1
-                self.geometry.mark_negative(g, "not_found", now)
-                await self._store_negative(g, "not_found", now)
+                g = id_batch.pop(0)
+            at = self._now()  # 보내는 때의 UTC 시 창에 센다(채우기가 정시를 넘겨도)
+            hour = await self._reserve(w, at, tk)
+            if hour is None:
+                break
+            if tile is not None:
+                go_on = await self._fetch_tile(tile, hour, now, tk)
             else:
-                off_grid += 1
-                self.geometry.mark_negative(g, "off_grid", now)
-                await self._store_negative(g, "off_grid", now)
-                ref = await archive(self.ctx.raw, w.name, got.body, now)
-                quality.append(("traffic_grid_off_grid", None, {"grid_no": g, "detail": (r.detail or "")[:200], "raw_ref": ref}))
-        self.counts["wfs_calls"] += calls
-        if found:
-            self.ctx.db.upsert_marine_grid4(found, now)
-        if found or not_found or off_grid:
+                assert g is not None
+                go_on = await self._lookup(g, hour, now, tk)
+            if not go_on:
+                break
+        self.counts["wfs_calls"] += tk.calls
+        self.counts["wfs_tiles"] += tk.tiles
+        if tk.found:
+            self.ctx.db.upsert_marine_grid4(tk.found, now)
+        if tk.received or tk.not_found or tk.off_grid or tk.tile_off_grid:
             self._dirty = True
             self._fill_pauses = 0
-        if gave_up:
+        if tk.gave_up:
             self._dirty = True  # pending → failed: 수가 바뀌었다
-        if calls:
-            await self._record_fill(w, started, calls, found, not_found, off_grid, latency, last_error, http_status, quality)
-        if calls or hold_until is not None:
+        if tk.calls:
+            await self._record_fill(w, started, tk)
+        if tk.calls or tk.hold_until is not None:
             ps = self._pass = self._pass or FillPass(started)
-            ps.lookups += calls
-            ps.found += len(found)
-            ps.not_found += not_found
-            ps.off_grid += off_grid
-            ps.errors += calls - len(found) - not_found - off_grid
-            ps.set_aside += gave_up
-        if stop_reason is None:
-            if paused:
+            ps.lookups += tk.lookups
+            ps.found += len(tk.found)
+            ps.not_found += tk.not_found
+            ps.off_grid += tk.off_grid
+            ps.errors += tk.lookups - len(tk.found) - tk.not_found - tk.off_grid
+            ps.set_aside += tk.gave_up
+            ps.tiles += tk.tiles
+            ps.tile_cells += tk.tile_cells
+            ps.tile_new += tk.tile_new
+            ps.tile_splits += tk.tile_splits
+            ps.tile_errors += tk.tile_errors
+        if tk.stop_reason is None:
+            if tk.paused:
                 await self._end_pass(
-                    f"paused: {errors_in_row} WFS errors in a row — geometry fill resumes at "
+                    f"paused: {tk.errors_in_row} WFS errors in a row — geometry fill resumes at "
                     f"{iso_z(self._fill_pause_until or now)}"
                 )
-            elif not self.geometry.has_due(self._now()):
+            elif not self._fill_due(self._now()):
                 await self._end_pass(self._idle_reason(self._now()))
             return  # 그 밖(틱의 상한 · 시간 상한 · 속도 상한으로 보내지 못함)은 다음 틱에 이어서 — 같은 채우기다
-        if hold_until is not None:
+        if tk.hold_until is not None:
             # 다시 셀 때까지 채우지 않는다 — 까닭은 이번에 한 번만, 이 채우기의 요약 줄에 적는다(전에는 틱(30 s)마다 같은 거절을 한 줄씩 쌓았다)
-            self._fill_hold_until, self._fill_hold_kind = hold_until, hold_kind
-            stop_reason = f"{stop_reason} — geometry fill resumes at {iso_z(hold_until)}"
-            await self._end_pass(f"stopped: {stop_reason}")
-        elif calls:
+            self._fill_hold_until, self._fill_hold_kind = tk.hold_until, tk.hold_kind
+            tk.stop_reason = f"{tk.stop_reason} — geometry fill resumes at {iso_z(tk.hold_until)}"
+            await self._end_pass(f"stopped: {tk.stop_reason}")
+        elif tk.calls:
             return  # 예산 저장소 장애 — 이번 틱은 보낸 호출만 적는다(다음 틱에 다시 본다)
         self.ctx.db.record_run(
             self.geom_job_name,
             w.name,
             started,
-            status="budget_unavailable" if hold_until is None else "budget_exhausted",
-            error_text=stop_reason,
+            status="budget_unavailable" if tk.hold_until is None else "budget_exhausted",
+            error_text=tk.stop_reason,
         )
 
+    async def _reserve(self, w: WfsSource, at: datetime, tk: _Tick) -> str | None:
+        """호출 하나(한 칸 조회든 타일이든 예산 1)의 예약: 해양수산부 시간 창 먼저(입출항 색인 몫을 남기고) — 그다음 하루 예산. 하나라도 안 되면 부르지
+        않고 None(까닭은 tk 에). 되면 시간 창 키."""
+        ok, used, hour = await self.ctx.budget.reserve_hour(
+            w.name, MOF_HOURLY_CAP, w.cost, now=at, window=MOF_HOUR_WINDOW, headroom=MOF_GRID4_HOURLY_HEADROOM
+        )
+        if not ok:
+            if used == UNKNOWN:
+                tk.stop_reason = "budget store unavailable (fail closed)"
+            else:
+                tk.hold_until = at.astimezone(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                tk.hold_kind = "hour_window"
+                tk.stop_reason = (
+                    f"MOF hourly window: grid share used ({used} of {MOF_HOURLY_CAP} in UTC hour {hour.rsplit(':', 1)[-1]}, "
+                    f"{MOF_GRID4_HOURLY_HEADROOM} left for port calls)"
+                )
+            return None
+        ok, used = await self.ctx.budget.reserve(w.name, w.cost)
+        if not ok:
+            await self.ctx.budget.release_key(hour, w.cost)
+            if used == UNKNOWN:
+                tk.stop_reason = "budget store unavailable (fail closed)"
+            else:
+                tk.hold_until = at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                tk.hold_kind = "daily_budget"
+                tk.stop_reason = f"daily budget exhausted (used={used})"
+            return None
+        return hour
+
+    async def _send[T](self, w: WfsSource, hour: str, call: Callable[[BeforeSend], Awaitable[T]]) -> T | None:
+        """예약한 호출 하나를 보낸다. 보내지 않은 호출(속도 상한 · 운영자 끔 · 연결 전 실패)은 두 예약을 돌려주고 None, 종료 취소도 보내기 전이면
+        돌려준다. 보낸 뒤의 실패는 예외 그대로(호출자가 센다)."""
+        sent = False
+
+        async def give_back() -> None:
+            await self.ctx.budget.release(w.name, w.cost)
+            await self.ctx.budget.release_key(hour, w.cost)
+
+        async def before_send() -> bool:
+            nonlocal sent
+            if await self.ctx.status.is_disabled(w.name):
+                return False
+            sent = True
+            return True
+
+        try:
+            return await call(before_send)
+        except asyncio.CancelledError:
+            if not sent:
+                await asyncio.shield(give_back())
+            raise
+        except NOT_SENT:
+            await give_back()
+            return None
+
+    def _call_failed(self, e: Exception, tk: _Tick, now: datetime) -> bool:
+        """보낸 호출의 오류 한 번(한 칸 조회 · 타일 공통): 연달아 FILL_BREAKER_ERRORS 번이면 채우기 전체를 쉰다 — 그러면 False(이 틱을 멈춘다)."""
+        tk.calls += 1
+        tk.errors_in_row += 1
+        tk.last_error = describe_error(e)
+        tk.http_status = e.status if isinstance(e, ProviderHttpError) else tk.http_status
+        if tk.errors_in_row >= FILL_BREAKER_ERRORS:
+            self._fill_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._fill_pauses))
+            self._fill_pauses += 1
+            tk.paused = True
+            log.warning(
+                "traffic grid: %d WFS errors in a row — geometry fill paused until %s (last: %s)",
+                tk.errors_in_row,
+                iso_z(self._fill_pause_until),
+                tk.last_error,
+            )
+            return False
+        return True
+
+    async def _lookup(self, g: str, hour: str, now: datetime, tk: _Tick) -> bool:
+        """한 칸 조회 하나. 이 틱을 이어 가면 True."""
+        w = self.wfs
+        try:
+            got = await self._send(w, hour, lambda bs: w.lookup(g, before_send=bs))
+        except Exception as e:  # noqa: BLE001 — HTTP · 응답 모양(WfsError) · 읽기 시간 초과
+            tk.lookups += 1
+            if self.geometry.failed(g, now):
+                tk.gave_up += 1
+                await self._store_negative(g, "failed", now)
+                tk.quality.append(
+                    (
+                        "traffic_grid_lookup_failed",
+                        None,
+                        {"grid_no": g, "failures": ID_MAX_FAILURES, "last": describe_error(e)[:200]},
+                    )
+                )
+                log.warning(
+                    "traffic grid: %s failed %d lookups in a row — set aside for %d h (last: %s)",
+                    g,
+                    ID_MAX_FAILURES,
+                    FAILED_TTL_S // 3600,
+                    describe_error(e),
+                )
+            return self._call_failed(e, tk, now)
+        if got is None:
+            return False
+        tk.calls += 1
+        tk.lookups += 1
+        tk.errors_in_row = 0
+        if got.latency_ms is not None:
+            tk.latency.append(got.latency_ms)
+        r = got.result
+        if r.kind == "found" and r.cell is not None:
+            self.geometry.resolved(r.cell)
+            tk.found.append(r.cell)
+            self._tile_from_lookup(r.cell, now)
+        elif r.kind == "not_found":
+            tk.not_found += 1
+            self.geometry.mark_negative(g, "not_found", now)
+            await self._store_negative(g, "not_found", now)
+        else:
+            tk.off_grid += 1
+            self.geometry.mark_negative(g, "off_grid", now)
+            await self._store_negative(g, "off_grid", now)
+            ref = await archive(self.ctx.raw, w.name, got.body, now)
+            tk.quality.append(("traffic_grid_off_grid", None, {"grid_no": g, "detail": (r.detail or "")[:200], "raw_ref": ref}))
+        return True
+
+    def _tile_from_lookup(self, cell: Cell, now: datetime) -> None:
+        """한 칸 조회로 찾은 칸 → 그 칸(기하의 중심)이 든 타일을 곧바로 다음 차례로. 이미 끝난(done) 타일이면 그 타일이 이 칸을 주지 않았다는
+        뜻이다(DB 쓰기를 잃었거나 서버가 조용히 뺐다) — 이 프로세스에서 한 번 다시 묻는다."""
+        if not self._tiles_on(now):
+            return
+        t = self.tiles.leaf(*cell_xy(cell))
+        if self.tiles.add(t, "lookup", now):
+            return
+        st = self.tiles.states.get(t)
+        if st is not None and st.status == "done" and self.tiles.recheck(t, cell.grid_no, now):
+            log.info("traffic grid: lookup found %s inside finished tile %s — asking that tile once more", cell.grid_no, t.key)
+
+    async def _fetch_tile(self, tile: Tile, hour: str, now: datetime, tk: _Tick) -> bool:
+        """bbox 타일 하나. 이 틱을 이어 가면 True."""
+        src = self.tile_src
+        assert src is not None
+        try:
+            got = await self._send(self.wfs, hour, lambda bs: src.bbox(tile.box, before_send=bs))
+        except WfsTooLarge as e:
+            tk.tiles += 1
+            if tile.level < gt.MAX_LEVEL:
+                # 크기 상한을 넘은 응답은 해석하지 않았다 — 오류가 아니라 '더 작은 상자로'(지물이 모형보다 많거나 크다)
+                tk.calls += 1
+                tk.errors_in_row = 0
+                tk.tile_splits += 1
+                await self._split(tile, str(e), 0, now, tk)
+                return True
+            tk.tile_errors += 1
+            return await self._tile_failed(tile, e, now, tk)
+        except Exception as e:  # noqa: BLE001 — HTTP · 응답 모양(WfsError) · 읽기 시간 초과
+            tk.tiles += 1
+            tk.tile_errors += 1
+            return await self._tile_failed(tile, e, now, tk)
+        if got is None:
+            return False
+        tk.calls += 1
+        tk.tiles += 1
+        tk.errors_in_row = 0
+        if got.latency_ms is not None:
+            tk.latency.append(got.latency_ms)
+        res = got.result
+        x0, y0, x1, y1 = tile.box
+        stored: list[Cell] = []
+        edge: list[tuple[float, float]] = []
+        new = 0
+        for tc in res.cells:
+            c = tc.cell
+            prev = self.geometry.cells.get(c.grid_no)
+            if prev != c:
+                stored.append(c)
+            if prev is None:
+                new += 1
+                ex0, ey0, ex1, ey1 = tc.extent
+                # 이웃 타일은 받은 기하에서만: 지금 스냅샷에서 위치를 모르던 칸이 이 타일의 가장자리에 걸치면 그 꼭짓점이 든 타일
+                if c.grid_no in self._snapshot_ids and (ex0 <= x0 or ey0 <= y0 or ex1 >= x1 or ey1 >= y1):
+                    edge.extend(((ex0, ey0), (ex0, ey1), (ex1, ey0), (ex1, ey1)))
+            self.geometry.resolved(c)
+        if stored:
+            self.ctx.db.upsert_marine_grid4(stored, now)  # 한 타일 = 한 쓰기(쓰기 큐의 작업 하나 — 칸 수와 상관없이)
+        ref: str | None = None
+        if res.off_grid or res.rejected:
+            ref = await archive(self.ctx.raw, self.wfs.name, got.body, now)
+        for g, detail in res.off_grid:
+            tk.tile_off_grid += 1
+            if g not in self.geometry.cells:
+                self.geometry.mark_negative(g, "off_grid", now)
+                await self._store_negative(g, "off_grid", now)
+            tk.quality.append(
+                ("traffic_grid_off_grid", None, {"grid_no": g, "detail": detail[:200], "tile": tile.key, "raw_ref": ref})
+            )
+        for rg, detail in res.rejected:
+            tk.quality.append(
+                (
+                    "traffic_grid_tile_feature_rejected",
+                    None,
+                    {"grid_no": rg, "detail": detail[:200], "tile": tile.key, "raw_ref": ref},
+                )
+            )
+        for x, y in edge:
+            self.tiles.seed_at(x, y, "edge", now)
+        tk.tile_cells += len(res.cells)
+        tk.tile_new += new
+        why = res.truncation
+        if why is not None:
+            tk.tile_splits += 1
+            await self._split(tile, why, len(res.cells), now, tk)
+            return True
+        lost = self.tiles.rechecking(tile)
+        state = self.tiles.finish(tile, "done", len(res.cells), now)
+        await self._store_tile(tile, state)
+        if lost is not None and lost not in {tc.cell.grid_no for tc in res.cells}:
+            log.warning(
+                "traffic grid: tile %s asked again after a lookup found %s inside it — %s still not listed; bbox answers may "
+                "miss cells (the one-id lookup keeps covering such ids)",
+                tile.key,
+                lost,
+                lost,
+            )
+            tk.quality.append(("traffic_grid_tile_missing_cell", None, {"tile": tile.key, "grid_no": lost}))
+        return True
+
+    async def _split(self, tile: Tile, why: str, cells: int, now: datetime, tk: _Tick) -> None:
+        """잘렸을 수 있는 타일: 넷으로 나눠 그 부분을 묻는다(받은 칸은 이미 썼다 — 지물마다 검사를 통과한 실제 기하). 가장 작은 타일이면 incomplete —
+        TILE_FAILED_TTL_S 뒤 다시(그 사이 그 안의 칸은 한 칸 조회가 맡는다). 어느 쪽이든 어느 번호도 '없음'으로 적지 않는다."""
+        if tile.level < gt.MAX_LEVEL:
+            state = self.tiles.finish(tile, "split", cells, now)
+            log.info("traffic grid: tile %s possibly truncated (%s) — split into 4", tile.key, why)
+        else:
+            state = self.tiles.finish(tile, "incomplete", cells, now)
+            log.warning(
+                "traffic grid: tile %s (%d m) still possibly truncated (%s) — marked incomplete for %d h; ids inside go on by one-id lookup",
+                tile.key,
+                tile.size,
+                why,
+                gt.TILE_FAILED_TTL_S // 3600,
+            )
+            tk.quality.append(("traffic_grid_tile_incomplete", None, {"tile": tile.key, "detail": why[:200]}))
+        await self._store_tile(tile, state)
+
+    async def _tile_failed(self, tile: Tile, e: Exception, now: datetime, tk: _Tick) -> bool:
+        """보낸 타일 호출의 오류 한 번: 그 타일만 물러나고(TILE_RETRY_S) 연달아 TILE_MAX_FAILURES 번이면 failed(1일). 차단기는 한 칸 조회와 함께 센다."""
+        if self.tiles.failed(tile, now):
+            await self._store_tile(tile, self.tiles.states[tile])
+            tk.quality.append(
+                (
+                    "traffic_grid_tile_failed",
+                    None,
+                    {"tile": tile.key, "failures": gt.TILE_MAX_FAILURES, "last": describe_error(e)[:200]},
+                )
+            )
+            log.warning(
+                "traffic grid: tile %s failed %d times in a row — set aside for %d h (last: %s)",
+                tile.key,
+                gt.TILE_MAX_FAILURES,
+                gt.TILE_FAILED_TTL_S // 3600,
+                describe_error(e),
+            )
+        return self._call_failed(e, tk, now)
+
     def _idle_reason(self, now: datetime) -> str:
-        if not self.geometry.pending:
-            return "queue empty — every queued id has geometry or a negative-cache entry"
+        if not self.geometry.pending and not self.tiles.queued:
+            base = "queue empty — every queued id has geometry or a negative-cache entry"
+            return base if self.tile_src is None else f"{base}; no tile queued ({self.tiles.done_count()} done)"
         n, nxt = self.geometry.retries()
-        return f"nothing due — {n} waiting for a retry after an error (next at {iso_z(nxt) if nxt else '—'})"
+        if self.tile_src is None:
+            return f"nothing due — {n} waiting for a retry after an error (next at {iso_z(nxt) if nxt else '—'})"
+        tn, tnxt = self.tiles.retries()
+        first = min((t for t in (nxt, tnxt) if t is not None), default=None)
+        return (
+            f"nothing due — {n} ids and {tn} tiles waiting for a retry after an error (next at {iso_z(first) if first else '—'})"
+        )
 
     async def _end_pass(self, how: str) -> None:
         """열린 채우기를 닫고 INFO 한 줄(운영자가 DB 없이 수렴을 본다 — 틱마다가 아니라 채우기 한 번에 한 줄). 열린 채우기가 없으면 아무것도 하지 않는다.
-        시각은 로그가 늘 쓰는 UTC 'Z' 그대로다(화면은 heartbeat 의 *_at 을 KST 로 보인다)."""
+        시각은 로그가 늘 쓰는 UTC 'Z' 그대로다(화면은 heartbeat 의 *_at 을 KST 로 보인다). 타일 절은 타일 공급자가 있을 때만."""
         ps = self._pass
         if ps is None:
             return
@@ -896,9 +1268,17 @@ class TrafficGridJob:
         used, limit = await self.ctx.budget.usage(self.wfs.name)
         retrying, _ = self.geometry.retries()
         nq = self.geometry.not_queued
+        tiles = (
+            ""
+            if self.tile_src is None
+            else (
+                f"{ps.tiles} tiles: {ps.tile_cells} cells listed ({ps.tile_new} new), {ps.tile_splits} split as possibly truncated, "
+                f"{ps.tile_errors} errors; tiles queued {self.tiles.queued}, done {self.tiles.done_count()}; "
+            )
+        )
         log.info(
             "traffic grid: geometry fill pass %s → %s — %d lookups: %d found, %d not in the MOF grid, %d off grid, %d errors "
-            "(%d set aside as failed); %d cells known, %d ids waiting (%d after an error)%s; mof_grid4 today %s of %d (UTC day); %s",
+            "(%d set aside as failed); %s%d cells known, %d ids waiting (%d after an error)%s; mof_grid4 today %s of %d (UTC day); %s",
             iso_z(ps.started),
             iso_z(at),
             ps.lookups,
@@ -907,6 +1287,7 @@ class TrafficGridJob:
             ps.off_grid,
             ps.errors,
             ps.set_aside,
+            tiles,
             len(self.geometry.cells),
             self.geometry.pending,
             retrying,
@@ -926,47 +1307,47 @@ class TrafficGridJob:
             return self._fill_hold_kind, iso_z(self._fill_hold_until)
         if self._fill_pause_until is not None and now < self._fill_pause_until:
             return "breaker", iso_z(self._fill_pause_until)
-        if not self.geometry.pending:
+        if not self.geometry.pending and not self.tiles.queued:
             return "idle", ""
-        if self._waiting_for_db(now):
-            return "waiting_db", ""
-        if not self.geometry.has_due(now):
+        waiting = self._waiting_for_caches(now)
+        if waiting:
+            return ("waiting_db" if waiting == "db" else "waiting_tiles"), ""
+        if not self._fill_due(now):
             _n, nxt = self.geometry.retries()
-            return "retry_wait", iso_z(nxt) if nxt else ""
+            _tn, tnxt = self.tiles.retries()
+            first = min((t for t in (nxt, tnxt) if t is not None), default=None)
+            return "retry_wait", iso_z(first) if first else ""
         return "filling", ""
 
-    async def _record_fill(
-        self,
-        w: WfsSource,
-        started: datetime,
-        calls: int,
-        found: list[Cell],
-        not_found: int,
-        off_grid: int,
-        latency: list[int],
-        last_error: str | None,
-        http_status: int | None,
-        quality: list[tuple[str, str | None, dict[str, Any]]],
-    ) -> None:
-        """보낸 호출이 있던 채우기 한 번의 실행 기록 · 공급자 상태."""
-        succeeded = len(found) + not_found + off_grid
+    async def _record_fill(self, w: WfsSource, started: datetime, tk: _Tick) -> None:
+        """보낸 호출이 있던 채우기 한 번의 실행 기록 · 공급자 상태. records_in = 받은 칸(한 칸 조회로 찾은 칸 + 타일이 준 칸)."""
+        succeeded = tk.succeeded
         self.ctx.db.record_run(
             self.geom_job_name,
             w.name,
             started,
             status="ok" if succeeded else "error",
-            http_status=http_status if not succeeded else 200,
-            latency_ms=round(sum(latency) / len(latency)) if latency else None,
-            records_in=len(found),
-            records_quarantined=off_grid,
-            error_text=f"{calls - succeeded} of {calls} lookups failed; last: {last_error}" if last_error else None,
-            quality=quality,
+            http_status=tk.http_status if not succeeded else 200,
+            latency_ms=round(sum(tk.latency) / len(tk.latency)) if tk.latency else None,
+            records_in=tk.received,
+            records_quarantined=tk.off_grid + tk.tile_off_grid,
+            error_text=f"{tk.calls - succeeded} of {tk.calls} calls failed; last: {tk.last_error}" if tk.last_error else None,
+            quality=tk.quality,
         )
-        if succeeded and latency:
+        if succeeded and tk.latency:
             u, lim = await self.ctx.budget.usage(w.name)
-            await self.ctx.status.success(w.name, at=self._now(), latency_ms=latency[-1], records=len(found), used=u, limit=lim)
-        if last_error:
-            await self.ctx.status.failure(w.name, at=self._now(), error=last_error, http_status=http_status)
+            await self.ctx.status.success(
+                w.name, at=self._now(), latency_ms=tk.latency[-1], records=tk.received, used=u, limit=lim
+            )
+        if tk.last_error:
+            await self.ctx.status.failure(w.name, at=self._now(), error=tk.last_error, http_status=tk.http_status)
+
+    async def _store_tile(self, tile: Tile, state: TileState) -> None:
+        try:
+            async with asyncio.timeout(REDIS_TIMEOUT_S):
+                await self.ctx.status.redis.hset(TILES_KEY, tile.key, encode_state(state))
+        except Exception as e:  # noqa: BLE001 — 메모리에는 남는다(다시 시작하면 그 타일을 다시 물을 뿐)
+            log.info("traffic grid: tile state write failed (%s)", type(e).__name__)
 
     async def _store_negative(self, g: str, reason: str, now: datetime) -> None:
         try:
@@ -1014,6 +1395,7 @@ class TrafficGridJob:
         neg = self.geometry.negative_counts(now)
         fill_state, resume_at = await self._fill_state(now)
         lp = self._last_pass
+        tl = self.tile_src is None  # 타일 공급자 없음 — 타일 필드는 빈 값
         extra = {
             "traffic_grid_state": self.state,
             "traffic_grid_last_ok": iso_z(self.last_ok) if self.last_ok else "",
@@ -1036,6 +1418,15 @@ class TrafficGridJob:
             "traffic_grid_fill_pass_not_found": str(lp[1].not_found) if lp else "",
             "traffic_grid_fill_pass_off_grid": str(lp[1].off_grid) if lp else "",
             "traffic_grid_fill_pass_errors": str(lp[1].errors) if lp else "",
+            # bbox 타일(ADR-023 2026-10-01 bbox 개정 — 타일 공급자가 없으면 빈 값): 끝난 타일 · 대기 타일, 마지막 채우기의 타일 호출 · 받은 칸 ·
+            # 새 칸 · 나눈 타일 · 오류
+            "traffic_grid_tiles_done": "" if tl else str(self.tiles.done_count()),
+            "traffic_grid_tiles_queued": "" if tl else str(self.tiles.queued),
+            "traffic_grid_fill_pass_tiles": str(lp[1].tiles) if lp and not tl else "",
+            "traffic_grid_fill_pass_tile_cells": str(lp[1].tile_cells) if lp and not tl else "",
+            "traffic_grid_fill_pass_tile_new": str(lp[1].tile_new) if lp and not tl else "",
+            "traffic_grid_fill_pass_tile_splits": str(lp[1].tile_splits) if lp and not tl else "",
+            "traffic_grid_fill_pass_tile_errors": str(lp[1].tile_errors) if lp and not tl else "",
             "traffic_grid_calls_komsa": "" if used_k is None else str(used_k),
             "traffic_grid_calls_wfs": "" if used_w is None else str(used_w),
             # 처음 추정(선택값)은 싣지 않는다 — 배운 값만

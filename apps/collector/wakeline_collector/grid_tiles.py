@@ -4,8 +4,9 @@
   32 km 는 모형(칸이 빈틈없이 깔렸다고 본 합성 서버 — 확인한 두 호출 28 · 450칸을 재현, tests/wfs_tiles)으로 176–201칸 · 113–129 KB — 확인한 450칸 ·
   289 KB 응답의 절반 아래다(maxFeatures · 응답 크기의 서버 상한은 확인하지 않았다 — 확인한 범위 안에 머문다).
 - 어디를 묻는가 — 칸의 위치는 WFS 기하(꼭짓점)에서만 온다. 칸 번호의 글자에서 위치를 읽지 않는다(번호 체계는 확인하지 않았다 — 사용자 규칙):
-  ① 아는 칸(marine_grid4)의 중심이 든 타일(칸이 많은 타일 먼저) ② 한 칸 조회로 찾은 칸의 타일 ③ 받은 타일의 가장자리에 걸친 칸 — 지금 스냅샷에서
-  위치를 모르던 칸일 때 — 의 꼭짓점이 든 이웃 타일. 어느 경우든 이미 끝났거나 대기 중인 타일은 다시 넣지 않는다.
+  ① 아는 칸(marine_grid4)의 중심이 든 타일(칸이 많은 타일 먼저) — 모서리 하나라도 끝난 타일 안인 칸은 뺀다(그 타일이 준 칸이다: 타일은 걸친 칸도
+  주므로, 빼지 않으면 재기동마다 끝난 타일의 이웃을 모두 넣어 바깥으로 번져 간다 — 시험으로 찾았다) ② 한 칸 조회로 찾은 칸의 타일 ③ 받은 타일의
+  가장자리에 걸친 칸 — 지금 스냅샷에서 위치를 모르던 칸일 때 — 의 꼭짓점이 든 이웃 타일. 어느 경우든 이미 끝났거나 대기 중인 타일은 다시 넣지 않는다.
 - 순서: 나눈 타일(시작한 상자를 먼저 끝낸다) → 한 칸 조회 · 가장자리 · 다시 묻기(지금 배가 있는 곳) → 아는 칸(칸이 많은 타일 먼저). 같으면 넣은 순서.
   오류가 났던 타일은 처음 묻는 타일 뒤(한 칸 조회와 같은 규칙).
 - 결과(status): done(다시 묻지 않는다) · split(잘렸을 수 있어 넷으로 — 자식이 맡는다) · incomplete(가장 작은 타일(4 km)도 잘렸을 수 있음) ·
@@ -83,6 +84,11 @@ def cell_xy(cell: Cell) -> tuple[float, float]:
     return wgs84_to_tm5179((cell.lat_min + cell.lat_max) / 2, (cell.lon_min + cell.lon_max) / 2)
 
 
+def cell_corners_xy(cell: Cell) -> list[tuple[float, float]]:
+    """칸 네 모서리의 EPSG:5179 좌표 — WFS 가 준 기하에서만."""
+    return [wgs84_to_tm5179(la, lo) for la in (cell.lat_min, cell.lat_max) for lo in (cell.lon_min, cell.lon_max)]
+
+
 @dataclass(frozen=True)
 class TileState:
     status: str  # done · split · incomplete · failed
@@ -129,6 +135,11 @@ class TilePlan:
     def covered(self, t: Tile, now: datetime) -> bool:
         s = self.states.get(t)
         return t in self._queued or (s is not None and s.valid(now))
+
+    def finished(self, t: Tile, now: datetime) -> bool:
+        """유효한 결과가 있다(done · split · 기한 안의 incomplete · failed) — 대기 중인 것은 아니다."""
+        s = self.states.get(t)
+        return s is not None and s.valid(now)
 
     def leaf(self, x: float, y: float) -> Tile:
         """점이 든 가장 작은 타일 — level 0 에서 split 을 따라 내려간다."""

@@ -89,9 +89,25 @@ class FakeGrid:
                     out.append(self.cell_id(i, j))
         return out
 
-    def body(self, box: tuple[float, float, float, float], max_features: int = 1000) -> bytes:
-        ids = self.cells_in(box)[:max_features]
-        return collection([feature(g, *self.where[g], self.gids[g]) for g in ids])
+    def body(
+        self,
+        box: tuple[float, float, float, float],
+        max_features: int = 1000,
+        *,
+        omit: set[str] | frozenset[str] = frozenset(),
+        extra_declared: int = 0,
+    ) -> bytes:
+        """bbox 응답. omit = 서버가 (조용히) 빼는 칸 · extra_declared = numberOfFeatures 를 실제 지물보다 크게(잘림 흉내)."""
+        ids = [g for g in self.cells_in(box) if g not in omit][:max_features]
+        return collection([feature(g, *self.where[g], self.gids[g]) for g in ids], len(ids) + extra_declared)
+
+    def cell(self, g: str):
+        from wakeline_collector.marine_grid import Cell, lattice_step, snap
+
+        la, lo = self.where[g]
+        sl, so = snap(la), snap(lo)
+        assert sl is not None and so is not None
+        return Cell(g, sl, so, lattice_step(sl), lattice_step(so), self.gids[g])
 
 
 def _box_latlon(box: tuple[float, float, float, float]) -> list[tuple[float, float]]:
