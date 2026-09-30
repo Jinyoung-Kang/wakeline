@@ -95,4 +95,14 @@ describe("e2e REST injection for the observed reception layer (contract v5 §G27
     expect(line.text).toBe("칸 3개(0.5°) · 이 화면 2개 · 창 09-29 18:00 – 09-30 18:40 KST");
     expect(line.detail).toBe("창의 일부만 셈 — 09-30 18:35 KST 부터(api 시작 뒤 · 기동 전 기록 읽는 중 0/25시간)");
   });
+  it("the routed body with an hour waiting to be read again: the status line names the missing hour, its reason and the next retry (KST only)", async () => {
+    const { shipCoverageRetryBody } = await import("../e2e/rest-inject");
+    const { parseReception, receptionStatusLine } = await import("@/lib/reception");
+    const now = Date.parse("2026-09-30T09:40:12.345Z");
+    const r = parseReception(shipCoverageRetryBody(now))!;
+    expect(r.covered).toBe("partial");
+    expect(r.bootstrap.missing).toHaveLength(1);
+    expect(receptionStatusLine(r, null, 2).detail).toBe("창의 일부만 셈 — 09-30 16:00 KST 부터(기동 전 기록 24/25시간 읽음 · 빈 시 1시간(09-30 15:00 – 09-30 16:00 KST) "
+      + "다시 읽기 대기 — DB 문장 상한 초과 · 다음 18:40 KST(다시 읽기 1/4))");
+  });
 });

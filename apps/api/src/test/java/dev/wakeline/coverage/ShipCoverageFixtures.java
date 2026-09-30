@@ -21,7 +21,14 @@ public final class ShipCoverageFixtures {
     }
 
     public static ShipCoverage coverage(AtomicLong clock, CoverageSource src, int maxCells) {
-        return new ShipCoverage(src, clock::get, new SimpleMeterRegistry(), 0, maxCells, ShipCoverage.MAX_SHIP_CELLS);
+        ShipCoverage c = new ShipCoverage(src, clock::get, new SimpleMeterRegistry(), 0, maxCells, ShipCoverage.MAX_SHIP_CELLS);
+        c.sleeper = clock::addAndGet; // 다시 읽기 전 기다림 — 가짜 시계를 그만큼 옮긴다
+        return c;
+    }
+
+    /** 다시 읽기 전 기다림마다 onWait 를 부른 뒤(그 순간의 응답을 본다) 가짜 시계를 그만큼 옮긴다. */
+    public static void onRetryWait(ShipCoverage c, AtomicLong clock, Runnable onWait) {
+        c.sleeper = ms -> { onWait.run(); clock.addAndGet(ms); };
     }
 
     /** 부트스트랩을 부르는 스레드에서 한 번. */

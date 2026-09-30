@@ -18,11 +18,16 @@ import java.util.function.Consumer;
  * 관측 수신 격자의 부트스트랩 원천(ADR-027): ship_position 을 시 조각마다 칸 · MMSI 로 묶어 읽는다. 기동 때 한 번(요청 경로 밖)만 쓴다.
  * <ul>
  *   <li><b>연결 하나</b>(풀 없음 — DriverManager): 공유 풀(기록기 · REST — 12)도 선택 조회 전용 풀(ReadPool — 스레드마다 연결 하나, ADR-025)도 쓰지 않는다
- *       — 부트스트랩이 몇 분 걸려도 그 풀의 연결을 잡지 않는다(격벽). 부트스트랩이 끝나면 닫는다. DB 연결 수: api 는 기동 몇 분 동안만 12 + 4 + 1.</li>
+ *       — 부트스트랩이 몇 분 걸려도 그 풀의 연결을 잡지 않는다(격벽 — 재시작 직후 백로그를 쓰는 기록기 · 사용자 조회가 이 읽기를 기다리지 않는다). 한 차례(첫 읽기 ·
+ *       다시 읽기 한 번)가 끝나면 닫는다 — 다시 읽기를 기다리는 동안 잡지 않는다. DB 연결 수: api 는 부트스트랩이 읽는 동안만 12 + 4 + 1.</li>
  *   <li><b>상한</b>(ADR-025 의 읽기 규칙과 같은 모양 — 값은 이 일에 맞춰 고른 것, 잰 값 아님): 서버 statement_timeout {@value #STATEMENT_TIMEOUT_S} s ·
  *       JDBC 문장 상한 같은 값 · pgjdbc socketTimeout {@value #SOCKET_TIMEOUT_S} s(문장 상한 + 2 s — 서버가 멈추거나 망이 끊겨도 끝난다) ·
- *       connectTimeout {@value #CONNECT_TIMEOUT_S} s · loginTimeout {@value #LOGIN_TIMEOUT_S} s. 한 시 조각은 공개 조회(3 s)보다 무거우므로 문장 상한을
- *       10 s 로 둔다 — 넘으면 부트스트랩이 거기서 멈추고 응답이 이어 읽은 부분만 덮었다고 밝힌다(ShipCoverage).</li>
+ *       connectTimeout {@value #CONNECT_TIMEOUT_S} s · loginTimeout {@value #LOGIN_TIMEOUT_S} s. 넘으면 그 시는 나중에 다시 읽는다(ShipCoverage — 1 · 2 · 5 · 10분 뒤).
+ *       문장 상한 30 s 의 근거(2026-09-30 22:49 KST 배포 직후 — 전에는 10 s): 한 시 문장은 한가한 DB 에서 0.44 s(EXPLAIN ANALYZE — ship_position_&lt;날&gt;_ts_idx
+ *       비트맵 스캔, 약 168k 행)인데, 재시작 직후 경합에서 5시간을 29 s(평균 약 5.8 s)에 읽고 여섯째 시가 10 s 를 넘었다 — 10 s 는 경합 중 평균의 두 배도 안 됐다.
+ *       상한에 걸려 취소된 문장은 한 일을 버리고 다시 읽기가 처음부터 다시 하므로, 경합 중에는 짧은 상한이 DB 일을 오히려 늘린다. 30 s 는 이 api 의 다른 배경 문장
+ *       (공유 풀 statement_timeout 30 s — application.yml)과 같은 값이다. 사용자 조회(선택 조회 풀 3 s)를 굶기지 않는다: 이 연결은 그 풀의 것이 아니고(아래 연결 하나),
+ *       한 번에 문장 하나(부트스트랩 가상 스레드 하나)다.</li>
  *   <li><b>읽기 전용</b>: 서버 default_transaction_read_only=on + Connection.setReadOnly — 이 연결로는 쓸 수 없다. 조각마다 읽기 전용 트랜잭션 하나
  *       (커서로 {@value #FETCH_SIZE} 행씩 받는다 — 결과 전체를 드라이버가 한 번에 들지 않게).</li>
  *   <li>문장: 칸 = floor(ST_X · 2) · floor(ST_Y · 2)(격자와 같은 식 — 2 를 곱하는 것은 정확하다), 칸 · MMSI 마다 위치 수와 가장 늦은 ts. ts 조건은
@@ -32,7 +37,7 @@ import java.util.function.Consumer;
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
 public class JdbcCoverageSource implements CoverageSource {
-    public static final int STATEMENT_TIMEOUT_S = 10;
+    public static final int STATEMENT_TIMEOUT_S = 30;
     public static final int SOCKET_TIMEOUT_S = STATEMENT_TIMEOUT_S + 2;
     public static final int CONNECT_TIMEOUT_S = 2;
     public static final int LOGIN_TIMEOUT_S = 5;

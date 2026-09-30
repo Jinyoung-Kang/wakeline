@@ -568,6 +568,8 @@ def coverage(**over):
             "rows": 1234,
             "loaded_from": "2026-09-29T09:00:00Z",
             "finished_at": "2026-09-30T09:38:10.100Z",
+            "missing": [],
+            "retry_backoff_s": [60, 120, 300, 600],
         },
         "generated_at": "2026-09-30T09:40:12.345Z",
         "cells": [
@@ -600,7 +602,15 @@ def coverage_since_start(**over):
     b = coverage(
         since="2026-09-30T09:37:00Z",
         covered="since_api_start",
-        bootstrap={"state": "pending", "hours_loaded": 0, "hours_total": 0, "rows": 0, "loaded_from": "2026-09-30T09:37:00Z"},
+        bootstrap={
+            "state": "pending",
+            "hours_loaded": 0,
+            "hours_total": 0,
+            "rows": 0,
+            "loaded_from": "2026-09-30T09:37:00Z",
+            "missing": [],
+            "retry_backoff_s": [60, 120, 300, 600],
+        },
         cells=[[126.0, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01Z"]],
         cell_count=1,
         positions=3,
@@ -609,23 +619,59 @@ def coverage_since_start(**over):
     return b
 
 
+MISSING_06 = {
+    "from": "2026-09-30T06:00:00Z",
+    "to": "2026-09-30T07:00:00Z",
+    "state": "given_up",
+    "attempts": 5,
+    "error": "statement_timeout",
+}
+
+
 def coverage_partial(**over):
-    """부트스트랩이 세 시(지금 시 + 앞 두 시)만 읽고 문장 상한에 멈춤 — since = 이어 읽은 가장 오래된 시."""
+    """부트스트랩이 06:00–07:00 한 시를 다시 읽기(1 · 2 · 5 · 10분 뒤)에도 문장 상한에 걸려 포기 — 나머지 24시간은 읽었다. since = 빈 시 없이 이어 읽은 가장 오래된 시."""
     b = coverage(
         since="2026-09-30T07:00:00Z",
         covered="partial",
         bootstrap={
             "state": "failed",
-            "hours_loaded": 3,
+            "hours_loaded": 24,
             "hours_total": 25,
             "rows": 40,
             "loaded_from": "2026-09-30T07:00:00Z",
             "error": "statement_timeout",
             "finished_at": "2026-09-30T09:38:10Z",
+            "missing": [MISSING_06],
+            "retry_backoff_s": [60, 120, 300, 600],
         },
     )
     b.update(over)
     return b
+
+
+def coverage_retrying(**over):
+    """2026-09-30 22:49 KST 배포 직후의 경우: 06:00–07:00 이 문장 상한에 걸려 다시 읽기를 기다리는 동안 — 나머지 시는 이어 읽었고, 빈 시와 다음 다시 읽기 시각을 싣는다."""
+    b = coverage(
+        since="2026-09-30T07:00:00Z",
+        covered="partial",
+        bootstrap={
+            "state": "running",
+            "hours_loaded": 24,
+            "hours_total": 25,
+            "rows": 40,
+            "loaded_from": "2026-09-30T07:00:00Z",
+            "missing": [{**MISSING_06, "state": "retry", "attempts": 1}],
+            "retry_backoff_s": [60, 120, 300, 600],
+            "next_retry_at": "2026-09-30T09:39:10Z",
+            "next_retry": 1,
+        },
+    )
+    b.update(over)
+    return b
+
+
+def with_bootstrap(body, **over):
+    return {**body, "bootstrap": {**body["bootstrap"], **over}}
 
 
 def test_ship_coverage_schema_and_rules_accept_every_honest_state():
@@ -638,7 +684,58 @@ def test_ship_coverage_schema_and_rules_accept_every_honest_state():
     )
     empty["meta"]["stale"] = True
     capped = coverage(truncated=True, dropped_positions=7)
-    for b in (coverage(), coverage_since_start(), coverage_partial(), empty, capped):
+    # 첫 차례가 도는 중(빈 시가 이미 있지만 다음 다시 읽기 시각은 그 차례가 끝나야 정한다) · 창 밖으로 나간 빈 시를 뺀 done(읽을 시도 줄었다)
+    first_pass = coverage_retrying(
+        bootstrap={k: v for k, v in coverage_retrying()["bootstrap"].items() if k not in ("next_retry_at", "next_retry")}
+    )
+    # 리뷰 2026-10-01: 차례 마감으로 조회하지 않고 미룬 시는 attempts 0 · deadline(다시 읽기 대기 · 끝내 조회하지 못해 포기), 한 번 못 읽은 뒤 미룬 시는 제 종류 ·
+    # 다시 읽기 차례가 도는 중에 또 못 읽은 시는 attempts = 다음 다시 읽기 번호 + 1
+    deferred = with_bootstrap(
+        coverage_retrying(),
+        missing=[
+            {**MISSING_06, "from": "2026-09-30T05:00:00Z", "to": "2026-09-30T06:00:00Z", "state": "retry", "attempts": 0, "error": "deadline"},
+            {**MISSING_06, "state": "retry", "attempts": 2},
+        ],
+        hours_loaded=23,
+        loaded_from="2026-09-30T07:00:00Z",
+    )
+    never_queried = with_bootstrap(
+        coverage_partial(),
+        missing=[{**MISSING_06, "from": "2026-09-30T05:00:00Z", "to": "2026-09-30T06:00:00Z", "attempts": 0, "error": "deadline"}, MISSING_06],
+        hours_loaded=23,
+    )
+    shrunk = with_bootstrap(coverage(), hours_loaded=24, hours_total=24)
+    stopped = coverage_since_start(
+        bootstrap={
+            **coverage_since_start()["bootstrap"],
+            "state": "failed",
+            "hours_total": 1,
+            "error": "stopped",
+            "finished_at": "2026-09-30T09:38:10Z",
+            "missing": [
+                {
+                    "from": "2026-09-30T09:00:00Z",
+                    "to": "2026-09-30T09:37:00Z",
+                    "state": "given_up",
+                    "attempts": 0,
+                    "error": "stopped",
+                }
+            ],
+        }
+    )
+    for b in (
+        coverage(),
+        coverage_since_start(),
+        coverage_partial(),
+        coverage_retrying(),
+        first_pass,
+        deferred,
+        never_queried,
+        shrunk,
+        stopped,
+        empty,
+        capped,
+    ):
         assert not list(v.iter_errors(b)), (b["covered"], [e.message for e in v.iter_errors(b)])
         assert rcc._ship_coverage(b) == [], (b["covered"], rcc._ship_coverage(b))
     assert any(c.name == "ship_coverage" and not c.recorded_only for c in rcc.CHECKS)
@@ -676,6 +773,23 @@ def test_ship_coverage_schema_and_rules_accept_every_honest_state():
         {"sampling": "all_reports"},
         {"limits": {"max_cells": 16000}},
         {"extra": 1},
+        # 빈 시 · 다시 읽기 간격은 늘 싣는다(계약 v5 §G27 — 2026-09-30 22:49 KST 배포 뒤 개정)
+        {"bootstrap": {k: v for k, v in coverage()["bootstrap"].items() if k != "missing"}},
+        {"bootstrap": {k: v for k, v in coverage()["bootstrap"].items() if k != "retry_backoff_s"}},
+        {"bootstrap": {**coverage()["bootstrap"], "retry_backoff_s": [60, 120]}},  # 고른 간격과 다르다
+        {"bootstrap": {**coverage_partial()["bootstrap"], "missing": [{**MISSING_06, "state": "later"}]}},
+        {
+            "bootstrap": {**coverage_partial()["bootstrap"], "missing": [{**MISSING_06, "error": "canceling statement"}]}
+        },  # 서버 글자
+        {"bootstrap": {**coverage_partial()["bootstrap"], "missing": [{**MISSING_06, "note": "x"}]}},
+        {"bootstrap": {**coverage_partial()["bootstrap"], "missing": [{k: v for k, v in MISSING_06.items() if k != "attempts"}]}},
+        {"bootstrap": {**coverage()["bootstrap"], "next_retry_at": "2026-09-30T09:39:10Z"}},  # done 인데 다시 읽기 시각
+        # 다음 다시 읽기 시각과 그 번호는 함께만 · 번호는 1 ~ 다시 읽기 횟수
+        {"bootstrap": {k: v for k, v in coverage_retrying()["bootstrap"].items() if k != "next_retry"}},
+        {"bootstrap": {k: v for k, v in coverage_retrying()["bootstrap"].items() if k != "next_retry_at"}},
+        {"bootstrap": {**coverage_retrying()["bootstrap"], "next_retry": 0}},
+        {"bootstrap": {**coverage_retrying()["bootstrap"], "next_retry": 5}},
+        {"bootstrap": {**coverage_retrying()["bootstrap"], "next_retry": "1"}},
     ],
 )
 def test_ship_coverage_schema_rejects(over):
@@ -716,6 +830,67 @@ def test_ship_coverage_schema_rejects(over):
         coverage(bootstrap={**coverage()["bootstrap"], "hours_loaded": 24}),  # done 인데 다 읽지 않았다
         coverage(bootstrap={**coverage()["bootstrap"], "loaded_from": "2026-09-30T09:38:00Z"}),  # 셈 시작보다 늦은 loaded_from
         coverage(meta={**coverage()["meta"], "fetched_at": "2026-09-30T09:39:00Z"}),  # 가장 늦은 마지막 수신이 아니다
+        # 빈 시(계약 v5 §G27 — 못 읽은 시는 나중에 다시 읽는다)
+        with_bootstrap(coverage_retrying(), loaded_from="2026-09-30T05:00:00Z"),  # 빈 시를 건너 이어 읽었다고 한다
+        coverage_retrying(
+            since="2026-09-30T05:00:00Z", bootstrap={**coverage_retrying()["bootstrap"], "loaded_from": "2026-09-30T05:00:00Z"}
+        ),
+        with_bootstrap(
+            coverage_retrying(),
+            missing=[
+                {**MISSING_06, "state": "retry", "attempts": 1, "from": "2026-09-29T08:00:00Z", "to": "2026-09-29T09:00:00Z"}
+            ],
+        ),  # 창 밖
+        with_bootstrap(
+            coverage_retrying(),
+            missing=[
+                {**MISSING_06, "state": "retry", "attempts": 1, "from": "2026-09-30T06:00:00Z", "to": "2026-09-30T07:30:00Z"}
+            ],
+        ),  # 한 시보다 길다
+        with_bootstrap(
+            coverage_retrying(),
+            missing=[
+                {**MISSING_06, "state": "retry", "attempts": 1, "from": "2026-09-30T07:00:00Z", "to": "2026-09-30T06:00:00Z"}
+            ],
+        ),  # 끝이 시작보다 이르다
+        with_bootstrap(coverage_retrying(), missing=[{**MISSING_06, "state": "retry", "attempts": 1}] * 2),  # 같은 시 두 번
+        with_bootstrap(
+            coverage_retrying(
+                since="2026-09-30T08:00:00Z",
+                bootstrap={**coverage_retrying()["bootstrap"], "loaded_from": "2026-09-30T08:00:00Z"},
+            ),
+            loaded_from="2026-09-30T08:00:00Z",
+            missing=[
+                {**MISSING_06, "state": "retry", "attempts": 1, "from": "2026-09-30T07:00:00Z", "to": "2026-09-30T08:00:00Z"},
+                {**MISSING_06, "state": "retry", "attempts": 1},
+            ],
+        ),  # 오래된 것부터가 아니다
+        with_bootstrap(
+            coverage_retrying(), missing=[{**MISSING_06, "state": "retry", "attempts": 5}]
+        ),  # 다시 읽기 대기인데 차례를 다 썼다
+        with_bootstrap(
+            coverage_retrying(), missing=[{**MISSING_06, "state": "retry", "attempts": 0}]
+        ),  # 한 번도 못 읽지 않았는데 다시 읽기
+        with_bootstrap(coverage_partial(), missing=[{**MISSING_06, "attempts": 6}]),  # 첫 읽기 + 네 번보다 많다
+        with_bootstrap(
+            coverage_partial(), missing=[{**MISSING_06, "state": "retry", "attempts": 1}]
+        ),  # 끝난 부트스트랩이 다시 읽기를 기다린다
+        with_bootstrap(coverage_retrying(), missing=[]),  # 다시 읽기 시각이 있는데 기다리는 시가 없다
+        with_bootstrap(coverage_retrying(), hours_loaded=25),  # 읽은 시 + 빈 시 > 읽을 시
+        with_bootstrap(coverage(), missing=[MISSING_06]),  # done 인데 빈 시
+        with_bootstrap(coverage_since_start(), missing=[MISSING_06]),  # pending 인데 빈 시
+        with_bootstrap(coverage_retrying(), next_retry_at="2026-09-30T09:36:00Z"),  # 다음 다시 읽기가 api 시작보다 이르다
+        # 리뷰 2026-10-01: 마감(deadline)은 조회하지 않은 시의 까닭 — 못 읽은 횟수와 함께 쓰지 않는다 · 조회하지 않은 시(0번)의 까닭은 마감 · 종료뿐
+        with_bootstrap(coverage_retrying(), missing=[{**MISSING_06, "state": "retry", "attempts": 2, "error": "deadline"}]),
+        with_bootstrap(coverage_partial(), missing=[{**MISSING_06, "attempts": 5, "error": "deadline"}]),
+        with_bootstrap(coverage_partial(), missing=[{**MISSING_06, "attempts": 0}]),  # 0번인데 문장 상한
+        with_bootstrap(
+            coverage_retrying(), missing=[{**MISSING_06, "state": "retry", "attempts": 3}]
+        ),  # 첫 다시 읽기를 기다리는데(또는 도는 중) 세 번 못 읽었다
+        with_bootstrap(
+            {**coverage_retrying(), "bootstrap": {k: v for k, v in coverage_retrying()["bootstrap"].items() if k not in ("next_retry_at", "next_retry")}},
+            missing=[{**MISSING_06, "state": "retry", "attempts": 2}],
+        ),  # 첫 차례가 도는 중인데 두 번 못 읽었다
     ],
 )
 def test_ship_coverage_cross_rules_catch(body):

@@ -69,6 +69,24 @@ export function realDataVerdict(httpStatus, body) {
   return null;
 }
 
+/** 통계 화면의 패널 수(app/stats/page.tsx — FIR · 위험 유형 · 시간대별 항공기 · 알림) */
+export const STATS_PANELS = 4;
+const STATS_STATES = new Set(["loading", "ready", "empty", "error"]);
+
+/**
+ * 통계 화면을 찍을지 — 패널마다의 data-state(app/stats/page.tsx: loading · ready · empty · error)와 글자로 판단한다. panels = [{ id, state, text }].
+ * 네 패널이 다 있지 않거나 모르는 상태면 건너뛴다(화면 모양을 추정하지 않는다), 받지 못한 패널이 있으면 그 패널 · 글자(앞 120자)와 함께 건너뛴다(실패 화면을 싣지 않는다),
+ * 받는 중인 패널이 있으면 기다린다(wait). 모두 받았으면 찍는다(자료 · 빈 상태 문구 — 받은 응답의 실제 상태다).
+ */
+export function statsPanelsVerdict(panels) {
+  if (panels.length !== STATS_PANELS) return { wait: false, skip: `통계 패널 ${panels.length}개(기대 ${STATS_PANELS}) — 화면 모양이 다름` };
+  const odd = panels.find((p) => !STATS_STATES.has(p.state));
+  if (odd) return { wait: false, skip: `통계 패널 ${odd.id} 의 상태가 ${odd.state} — 모르는 상태` };
+  const bad = panels.find((p) => p.state === "error");
+  if (bad) return { wait: false, skip: `통계 패널 ${bad.id} 조회 실패 — ${String(bad.text ?? "").replace(/\s+/g, " ").trim().slice(0, 120)}` };
+  return { wait: panels.some((p) => p.state === "loading"), skip: null };
+}
+
 /** 표 머리글 글자들에서 name 과 글자가 같은 열(공백은 하나로) — 없으면 -1(가릴 열을 못 찾으면 그 스크린샷을 싣지 않는다) */
 export function findColumn(headers, name) {
   const norm = (t) => String(t ?? "").replace(/\s+/g, " ").trim();

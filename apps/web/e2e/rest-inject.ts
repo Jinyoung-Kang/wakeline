@@ -69,7 +69,7 @@ export function shipCoverageBody(nowMs: number) {
     cell_deg: 0.5,
     window: { hours: 24, bucket_s: 3600, from: iso(Math.floor(nowMs / hour) * hour - 24 * hour), to: iso(nowMs) },
     since: iso(liveFrom), covered: "since_api_start", api_started_at: iso(started), live_from: iso(liveFrom),
-    bootstrap: { state: "running", hours_loaded: 0, hours_total: 25, rows: 0, loaded_from: iso(liveFrom) },
+    bootstrap: { state: "running", hours_loaded: 0, hours_total: 25, rows: 0, loaded_from: iso(liveFrom), missing: [], retry_backoff_s: [60, 120, 300, 600] },
     generated_at: iso(nowMs),
     cells: [
       [-30.0, 40.0, 0.5, 2, 3, iso(last - 60_000)],
@@ -80,5 +80,27 @@ export function shipCoverageBody(nowMs: number) {
     sampling: "first_fix_per_60s", note: "관측 수신 — 이 서비스가 받은 AIS 위치의 칸별 집계(구독 범위 아님 · 수신국이 없는 해역은 비어 있다)",
     time_zone: "all times are UTC ISO-8601; window.from is the start of the current UTC hour minus 24 h",
     meta: { provider: "aisstream", fetched_at: iso(last), lag_s: 30, stale: false, generated_at: iso(nowMs), request_id: "e2e-coverage-0001" },
+  };
+}
+
+/**
+ * /api/v1/ships/coverage — 기동 때 한 시를 문장 상한에 걸려 못 읽고 다시 읽기를 기다리는 응답(계약 v5 §G27 개정 — 2026-09-30 22:49 KST 배포 직후의 경우):
+ * api 가 10분 전에 시작해 24/25시간을 읽었고, 셈 시작 시의 3시간 전 시([시작 − 3 h, 시작 − 2 h))가 빠졌다 — 40초 뒤 다시 읽는다(1/4번째). since = 빈 시의 끝(partial).
+ */
+export function shipCoverageRetryBody(nowMs: number) {
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const hour = 3_600_000;
+  const base = shipCoverageBody(nowMs);
+  const started = nowMs - 10 * 60_000;
+  const liveFrom = Math.floor(started / 60_000) * 60_000;
+  const h0 = Math.floor(liveFrom / hour) * hour;
+  return {
+    ...base,
+    since: iso(h0 - 2 * hour), covered: "partial", api_started_at: iso(started), live_from: iso(liveFrom),
+    bootstrap: {
+      state: "running", hours_loaded: 24, hours_total: 25, rows: 4210, loaded_from: iso(h0 - 2 * hour),
+      missing: [{ from: iso(h0 - 3 * hour), to: iso(h0 - 2 * hour), state: "retry", attempts: 1, error: "statement_timeout" }],
+      retry_backoff_s: [60, 120, 300, 600], next_retry_at: iso(nowMs + 40_000), next_retry: 1,
+    },
   };
 }

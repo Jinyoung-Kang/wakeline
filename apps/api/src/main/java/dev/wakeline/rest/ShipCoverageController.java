@@ -24,7 +24,10 @@ import java.util.concurrent.TimeUnit;
  *   <li>cells: [lon0, lat0, 크기(°), 선박 수(창 안 서로 다른 MMSI), 위치 수(60 s 창마다 첫 보고), 마지막 수신(ISO — 초로 내림)] — 남 → 북 · 서 → 동.</li>
  *   <li>window: {hours 24, bucket_s 3600, from(지금 시의 시작 − 24 h), to(= generated_at)}. since: 이 시각부터 to 까지 빠짐없이 셌다. covered: full(since = from) ·
  *       partial(기동 때 DB 부트스트랩이 일부만) · since_api_start(부트스트랩 전 · 실패 — api 시작 뒤 셈만). 창 전체인 척하지 않는다.</li>
- *   <li>bootstrap: state(pending · running · done · failed) · hours_loaded / hours_total · rows · loaded_from · error(failed 일 때 종류만) · finished_at.</li>
+ *   <li>bootstrap: state(pending · running · done · failed) · hours_loaded / hours_total · rows · loaded_from · error(failed 일 때 종류만) · finished_at ·
+ *       missing(창 안의 못 읽은 시 — [{from, to, state(retry · given_up), attempts(읽으려다 실패한 차례 수 — 차례 마감으로 미룬 차례는 세지 않는다), error}],
+ *       오래된 것부터, 늘 있다) · retry_backoff_s(다시 읽기 전 기다림 — 고른 값) · next_retry_at · next_retry(다시 읽기를 기다리는 시의 다음 차례 시각과 그 차례가
+ *       몇 번째 다시 읽기인지 — 정해졌을 때만, 둘이 함께).</li>
  *   <li>truncated = 메모리 상한 때문에 창 안에서 세지 못한 위치가 있다(dropped_positions) · limits = 그 상한.</li>
  *   <li>meta.fetched_at = min(가장 늦은 마지막 수신, generated_at) — 수집기 시계가 빨라도 stale 로 잘못 보이지 않게(칸의 값은 받은 그대로).</li>
  *   <li>캐시: public, max-age=60 — 스냅숏은 60 s 마다 새로 만든다. ETag = 스냅숏마다 다르다(같은 스냅숏의 If-None-Match → 304, 약한 비교 — {@link Etags}).
@@ -40,6 +43,8 @@ public class ShipCoverageController {
     static final int STALE_AFTER_S = 900;
     static final String NOTE = "관측 수신 — 이 서비스가 받은 AIS 위치의 칸별 집계(구독 범위 아님 · 수신국이 없는 해역은 비어 있다)";
     static final String TIME_ZONE = "all times are UTC ISO-8601; window.from is the start of the current UTC hour minus 24 h";
+    /** 다시 읽기 전 기다림(초) — ShipCoverage.RETRY_BACKOFF_MS 그대로(고른 값). */
+    static final List<Long> RETRY_BACKOFF_S = ShipCoverage.RETRY_BACKOFF_MS.stream().map(ms -> ms / 1000).toList();
 
     private final ShipCoverage coverage;
     /** 마지막 스냅숏의 칸 줄(불변) — 스냅숏(ETag)마다 한 번 만든다. 요청마다 다른 것은 meta(request_id · generated_at · lag_s)뿐이다. */
@@ -113,6 +118,22 @@ public class ShipCoverageController {
         m.put("loaded_from", b.loadedFrom());
         if (b.error() != null) m.put("error", b.error());
         if (b.finishedAt() != null) m.put("finished_at", b.finishedAt());
+        List<Map<String, Object>> missing = new ArrayList<>(b.missing().size());
+        for (ShipCoverage.Missing x : b.missing()) {
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("from", x.from());
+            e.put("to", x.to());
+            e.put("state", x.state());
+            e.put("attempts", x.attempts());
+            e.put("error", x.error());
+            missing.add(e);
+        }
+        m.put("missing", missing);
+        m.put("retry_backoff_s", RETRY_BACKOFF_S);
+        if (b.nextRetryAt() != null) {
+            m.put("next_retry_at", b.nextRetryAt());
+            m.put("next_retry", b.nextRetry());
+        }
         return m;
     }
 

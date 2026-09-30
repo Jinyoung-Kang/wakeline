@@ -22,7 +22,7 @@ import {
   AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
-import { STATS_RUN_KST } from "@/lib/stats";
+import { STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST } from "@/lib/stats";
 import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_BULLETIN_LABEL, utcDayWindowKst } from "@/lib/time";
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
 import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
@@ -259,7 +259,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   구독한 영역이고 이 칸은 잰 값입니다 — aisstream 은 육상 수신국이 받은 것만 보내므로 점선 안이어도 수신국이 없는 해역은 칸이 없습니다.
                   칸에 마우스를 올리면 선박 수 · 위치 수(선박마다 60 s 창의 첫 보고 — 많아야 1건, 저장과 같은 표본) · 마지막 표본 수신(KST — 그 창의 첫 보고라 실제 마지막 수신보다
                   60 s 안쪽으로 이를 수 있음) · 창. 서버가 다시 시작한 직후처럼 창을 다 세지 못했으면 상태 줄이 ‘창의 일부만 셈 — … 부터’와 까닭(기동 전 기록을 읽는 중 · 일부만 읽음 ·
-                  읽기 실패)을 적고, 범례도 ‘최근 24 h’ 대신 실제로 센 구간(‘… KST 부터’)을 적습니다(메모리 상한으로 세지 못한 위치가 있으면 그것도). 켜 두면 선박 칩의 설명(마우스를
+                  읽기 실패)을 적고, 서버가 기동 때 읽지 못한 시(DB 가 바쁠 때 등)는 ‘빈 시 1시간 30분(… KST) 다시 읽기 대기 — 까닭 · 다음 … KST(다시 읽기 n/전체)’처럼 그 시의 실제 길이 · 구간과
+                  다음 다시 읽기를(서버가 몇 분 간격으로 다시 읽습니다 — 그동안 나머지 시는 셉니다. 한 번에 읽는 시간이 다 차서 아직 묻지 못한 시는 ‘차례 마감으로 아직 조회하지 않음’),
+                  끝내 읽지 못했으면 ‘포기 — 까닭(n번 못 읽음) · api 재시작 전까지 빈 시’를 적습니다. 범례도 ‘최근 24 h’ 대신 실제로 센 구간(‘… KST 부터’)을 적습니다(메모리 상한으로 세지 못한 위치가 있으면 그것도). 켜 두면 선박 칩의 설명(마우스를
                   올리면)과 0척 알림 글자에 ‘이 화면에 관측 수신 칸 N개(최근 24 h)’가 붙습니다 — 창을 다 세지 못했으면 ‘(… KST 부터만 셈)’처럼 실제로 센 구간을, 조회가 실패했으면
                   마지막 값이라고 적습니다.</li>
               </UL>
@@ -366,7 +368,9 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
               <li><B>SIGMET</B> — 최근 7일 FIR별(상위 24) · 위험 유형별 발표 건수.</li>
               <li><B>시간대별 고유 항공기</B> — 날짜는 KST 날짜이고 막대 이름은 그날의 KST 시(00시 → 23시)입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
               <li><B>알림</B> — 날짜 · 종류별 건수와 평균 체류. † 표시 행은 수정 전 기준으로 판정된 관측 알림이라 이후 날짜와 비교할 수 없습니다.</li>
-              <li><B>비어 있을 때</B> — ‘집계 전’ · ‘집계됨(자료 없음)’ · ‘모름’을 구분해 적습니다.</li>
+              <li><B>비어 있을 때</B> — ‘집계 전’ · ‘집계됨(자료 없음)’ · ‘모름’을 구분해 적습니다. 이 문구는 응답을 받은 패널에만 적습니다.</li>
+              <li><B>받는 중 · 받지 못함</B> — 패널마다 따로입니다. 받는 동안은 ‘{STATS_LOADING_TEXT}’(가는 진행 막대 — {BUSY_APPEAR_DELAY_MS / 1000} s 안에 끝나면 나타나지 않음),
+                받지 못하면 그 패널만 ‘{STATS_FAILED_TEXT}’와 HTTP 상태 · 요청 id · <B>다시 시도</B>(그 패널만 다시 받음)를 보입니다 — 받는 중 · 실패를 ‘자료 없음’으로 적지 않습니다.</li>
             </UL>
           </Sec>
 

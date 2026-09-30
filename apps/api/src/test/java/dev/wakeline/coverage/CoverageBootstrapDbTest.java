@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,7 +26,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 관측 수신 격자의 부트스트랩(ADR-027)을 실제 PostGIS(운영과 같은 이미지 · 같은 마이그레이션 · api 계정 wakeline_api)로: 시 조각 문장이 칸 · MMSI 로 묶는지,
- * 격자에 옮긴 값이 넣은 행과 같은지, 셈 시작 뒤의 행은 읽지 않는지, 연결이 읽기 전용인지, 문장 상한(잠금 대기 포함)이 문장을 끝내는지, 연결 실패의 종류.
+ * 격자에 옮긴 값이 넣은 행과 같은지, 셈 시작 뒤의 행은 읽지 않는지, 연결이 읽기 전용인지, 문장 상한(잠금 대기 포함)이 문장을 끝내고 그 시를 나중에 다시 읽는지,
+ * 연결 실패의 종류.
  * 다른 DB 시험과 섞이지 않게 제 DB(wakeline_cov)를 쓴다.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -121,35 +123,88 @@ class CoverageBootstrapDbTest {
         }
     }
 
+    /**
+     * 문장 상한이 잠금을 기다리는 문장을 끝내고(종류 statement_timeout), 부트스트랩은 멈추지 않고 그 시를 나중에 다시 읽는다 — 잠금이 풀린 뒤 다시 읽어 다 센다
+     * (2026-09-30 22:49 KST 배포 직후: 재시작 직후 경합에서 한 시가 상한을 넘자 부트스트랩이 멈췄다). 한 차례의 마감은 가짜 시계로 당겨 첫 시 뒤 나머지를 다음
+     * 차례로 미룬다(시험이 시마다 1 s 를 기다리지 않게). 수정 전 실패(첫 시간 초과에서 멈췄다).
+     */
     @Test
-    void theStatementLimitEndsAStatementThatWaitsOnALock_andTheBootstrapNamesIt() throws Exception {
+    void theStatementLimitEndsAStatementThatWaitsOnALock_andTheHourIsReadAgainOnceTheLockIsGone() throws Exception {
         long now = System.currentTimeMillis();
+        Instant cut = Instant.ofEpochMilli(Math.floorDiv(now, 60_000L) * 60_000L);
+        insert("440000021", 35.1, 129.05, cut.minusSeconds(2 * 3_600));
         try (Connection admin = DriverManager.getConnection(DbTestSupport.jdbcUrl(DB), "postgres", DbTestSupport.ROOT_PW)) {
             admin.setAutoCommit(false);
             try (Statement st = admin.createStatement()) {
                 st.execute("LOCK TABLE ship_position IN ACCESS EXCLUSIVE MODE"); // 이 트랜잭션이 끝날 때까지 읽기도 기다린다
             }
+            AtomicLong clock = new AtomicLong(now);
+            AtomicBoolean locked = new AtomicBoolean(true);
             JdbcCoverageSource slow = new JdbcCoverageSource(DbTestSupport.jdbcUrl(DB), "wakeline_api", DbTestSupport.API_PW, 1);
-            ShipCoverage c = new ShipCoverage(slow, System::currentTimeMillis, new SimpleMeterRegistry(), 0, 100, 1_000, now);
+            CoverageSource src = () -> {
+                CoverageSource.Session in = slow.open();
+                return new CoverageSource.Session() {
+                    @Override
+                    public void read(long fromMs, long toMs, java.util.function.Consumer<CoverageSource.Row> sink) throws SQLException {
+                        try {
+                            in.read(fromMs, toMs, sink);
+                        } finally {
+                            if (locked.get()) clock.addAndGet(ShipCoverage.BOOTSTRAP_DEADLINE_MS + 1); // 잠긴 동안은 한 시 뒤 차례 마감
+                        }
+                    }
+
+                    @Override public void close() throws SQLException { in.close(); }
+                };
+            };
+            ShipCoverage c = new ShipCoverage(src, clock::get, new SimpleMeterRegistry(), 0, 100, 1_000, now);
+            List<ShipCoverage.Snapshot> waiting = new ArrayList<>();
+            c.sleeper = ms -> {
+                waiting.add(c.snapshotNow());
+                if (locked.getAndSet(false)) {
+                    try { admin.rollback(); } catch (SQLException e) { throw new IllegalStateException(e); }
+                }
+                clock.addAndGet(ms);
+            };
             long t0 = System.nanoTime();
             c.runBootstrap();
             long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(ms).as("ended by the 1 s statement limit, not by the lock").isLessThan(10_000);
+            assertThat(waiting).hasSize(1);
+            ShipCoverage.Snapshot w = waiting.getFirst();
+            assertThat(w.bootstrap().state()).isEqualTo("running");
+            assertThat(w.bootstrap().hoursLoaded()).isZero();
+            assertThat(w.bootstrap().missing().getLast().error()).as("the newest hour hit the statement limit").isEqualTo("statement_timeout");
+            assertThat(w.bootstrap().missing()).hasSize(w.bootstrap().hoursTotal());
+            assertThat(w.bootstrap().missing().subList(0, w.bootstrap().hoursTotal() - 1)).allSatisfy(m -> assertThat(m.error()).isEqualTo("deadline"));
+            assertThat(w.covered()).isEqualTo("since_api_start");
             ShipCoverage.Snapshot s = c.snapshotNow();
-            assertThat(s.bootstrap().state()).isEqualTo("failed");
-            assertThat(s.bootstrap().error()).isEqualTo("statement_timeout");
-            assertThat(s.bootstrap().hoursLoaded()).isZero();
-            assertThat(s.covered()).isEqualTo("since_api_start");
-            assertThat(ms).as("ended by the 1 s statement limit, not by the lock").isLessThan(5_000);
-            admin.rollback();
+            assertThat(s.bootstrap().state()).isEqualTo("done");
+            assertThat(s.bootstrap().missing()).isEmpty();
+            assertThat(s.bootstrap().rows()).isEqualTo(1);
+            assertThat(s.covered()).isEqualTo("full");
+            assertThat(s.cells()).extracting(CoverageGrid.CellView::lon0, CoverageGrid.CellView::lat0).containsExactly(org.assertj.core.groups.Tuple.tuple(129.0, 35.0));
         }
+    }
+
+    @Test
+    void theBackgroundReadHasItsOwnThirtySecondLimit_notThePublicThreeSecondOne() {
+        assertThat(JdbcCoverageSource.STATEMENT_TIMEOUT_S).isEqualTo(30);
+        assertThat(JdbcCoverageSource.SOCKET_TIMEOUT_S).isEqualTo(32);
+        java.util.Properties p = source().properties();
+        assertThat(p.getProperty("options")).contains("statement_timeout=30s").contains("default_transaction_read_only=on");
+        assertThat(p.getProperty("socketTimeout")).isEqualTo("32");
     }
 
     @Test
     void anUnreachableDatabaseIsAConnectionFailure() {
         String url = "jdbc:postgresql://127.0.0.1:1/" + DB; // 닫힌 포트
-        ShipCoverage c = new ShipCoverage(new JdbcCoverageSource(url, "wakeline_api", DbTestSupport.API_PW), System::currentTimeMillis,
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        ShipCoverage c = new ShipCoverage(new JdbcCoverageSource(url, "wakeline_api", DbTestSupport.API_PW), clock::get,
                 new SimpleMeterRegistry(), 0, 100, 1_000);
+        c.sleeper = clock::addAndGet; // 다시 읽기 전 기다림(1 · 2 · 5 · 10분)은 가짜 시계로
         c.runBootstrap();
+        assertThat(c.snapshotNow().bootstrap().state()).isEqualTo("failed");
         assertThat(c.snapshotNow().bootstrap().error()).isEqualTo("connection");
+        assertThat(c.snapshotNow().bootstrap().missing()).isNotEmpty().allSatisfy(m -> assertThat(m.state()).isEqualTo("given_up"));
     }
 }

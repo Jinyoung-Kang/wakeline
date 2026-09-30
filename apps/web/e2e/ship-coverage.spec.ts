@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { shipCoverageBody } from "./rest-inject";
+import { shipCoverageBody, shipCoverageRetryBody } from "./rest-inject";
 
 /**
  * 관측 수신 범위 레이어(계약 v5 §G27 · ADR-027) — /api/v1/ships/coverage 를 이 시험이 대신 답한다(route — 스택의 수신 상태와 무관하게 결정적).
@@ -54,3 +54,20 @@ test("observed reception layer: off by default, one routed fetch when turned on,
   await page.waitForTimeout(500);
   expect(calls.count).toBe(1);
 });
+
+test("observed reception layer: an hour the api could not read yet is named in the status line with its reason and the next retry (KST only)", async ({ page }) => {
+  // 계약 v5 §G27 개정(2026-09-30 22:49 KST 배포 직후 — 부트스트랩이 시간 초과 하나로 멈췄다): 못 읽은 시는 나중에 다시 읽고, 그동안 응답 · 상태 줄이 빈 시를 말한다
+  await page.route(/^https?:\/\/(?!localhost[:/]|127\.0\.0\.1[:/])/, (r) => r.abort());
+  const now = Date.now();
+  await page.route(/\/api\/v1\/ships\/coverage$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(shipCoverageRetryBody(now)) }));
+  await page.addInitScript(() => { try { localStorage.removeItem("wakeline.layers"); } catch { /* 저장소 없음 */ } });
+  await page.goto("/#6/36.5000/127.8000");
+  const btn = page.getByTestId("layer-reception");
+  await expect(btn).toBeVisible({ timeout: 20_000 });
+  await btn.click();
+  const detail = page.getByTestId("reception-status-detail");
+  await expect(detail).toContainText("기동 전 기록 24/25시간 읽음", { timeout: 20_000 });
+  await expect(detail).toContainText(/빈 시 1시간\(\d\d-\d\d \d\d:00 – \d\d-\d\d \d\d:00 KST\) 다시 읽기 대기 — DB 문장 상한 초과 · 다음 \d\d:\d\d KST\(다시 읽기 1\/4\)/);
+  await expect(page.getByTestId("reception-status")).not.toContainText("UTC");
+});
+
