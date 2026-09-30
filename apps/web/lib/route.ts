@@ -48,13 +48,25 @@ export const ROUTE_STATUS_TEXT: Record<Exclude<RouteStatus, "found">, string> = 
  * 콜사인을 처음 읽을 때 "조회 중"이면 그 값을 5 s 동안 그대로 준다) + 다음 selected 전송(WsHub 는 수집기의 집중 추적 관측마다 selected 를 보낸다 —
  * 관측 주기 collector jobs/demand FOCUS_INTERVAL_S 5 s, WsHub "≈ 5 s") = 10 s. 수집기는 임대에 적힌 콜사인을 다음 틱(TICK_S 1 s)에 곧바로 노선 조회에
  * 넘기므로(FOCUS_INTERVAL_S 는 같은 콜사인을 다시 넘기기까지의 간격), 조회가 캐시 5 s 안에 끝나면 결과는 이 계산값 안에 보인다. adsbdb 응답 시간은 잰 값이 없어
- * 셈에 넣지 않았다. 넘으면 "보통 경로 계산값보다 오래 걸림"을 한 번 알린다 — 상한은 말하지 않는다
+ * 셈에 넣지 않았다. 캐시가 지난 뒤 api 가 Redis 를 다시 읽는 시간도 잰 값이 없어 넣지 않았다(계약 v5 §G21 — 우편함 밖에서 읽고 답이 오는 즉시 selected 를
+ * 보낸다. 상한은 아래 ROUTE_API_READ_BOUND_S). 넘으면 "보통 경로 계산값보다 오래 걸림"을 한 번 알린다 — 상한은 말하지 않는다
  * (수집기의 조회 대기열은 동시 2개라 여러 항공기를 고르면 기다림에 상한이 없다). tests/route-pending.test.ts 가 서버 코드의 값과 경로를 읽어 대조한다.
  */
 export const ROUTE_NORMAL_PATH_S = 10;
 export const ROUTE_SLOW_AFTER_S = ROUTE_NORMAL_PATH_S;
 export const ROUTE_SLOW_TEXT = `보통 경로 계산값(${ROUTE_NORMAL_PATH_S} s)보다 오래 걸림`;
-export const ROUTE_PENDING_TITLE = "수집기가 선택한 항공기의 콜사인을 adsbdb 에 묻는 중입니다. api 가 “조회 중”을 5 s 동안 캐시하고, "
+/**
+ * api 가 수집기의 노선 결과(Redis)를 읽는 한 번의 상한(초) — api 의 Redis 명령 상한 spring.data.redis.timeout(application.yml 3s, 설정값 · 측정값 아님).
+ * 계약 v5 §G21: 이 읽기는 세션 우편함 밖에서 돌고, selected 는 곧바로 "조회 중"으로 나간다. api 는 늦어도 이 값 안에 답을 정한다(읽지 못하면 "노선 조회
+ * 실패"). 이 값은 화면에 닿는 상한이 아니다 — 답은 그 연결의 전송 차례(세션 우편함)로 나가고, Redis 가 멈춘 동안에는 같은 연결의 상태 메시지(heartbeat ·
+ * 초기 세트의 status — 아직 우편함에서 Redis 를 읽는다, §G21 '남은 것')가 먼저 기다릴 수 있다(그 상한은 말하지 않는다).
+ * tests/route-pending.test.ts 가 서버 설정 파일의 값과 대조한다.
+ */
+export const ROUTE_API_READ_BOUND_S = 3;
+export const ROUTE_PENDING_TITLE = "수집기가 선택한 항공기의 콜사인을 adsbdb 에 묻는 중이거나, api 가 그 결과(Redis)를 읽는 중입니다. "
+  + `api 는 그 읽기의 답을 늦어도 ${ROUTE_API_READ_BOUND_S} s(api 의 Redis 명령 상한 — 설정값) 안에 정하고, 읽지 못하면 “${ROUTE_STATUS_TEXT.unavailable}”로 바뀝니다. `
+  + "Redis 가 멈춘 동안에는 그 답이 화면에 닿기까지 더 걸릴 수 있습니다(같은 연결의 상태 메시지가 먼저 Redis 를 기다립니다). "
+  + "api 가 “조회 중”을 5 s 동안 캐시하고, "
   + "선택 항공기 갱신(selected)은 집중 추적 관측마다(약 5 s) 옵니다 — 조회가 그 사이에 끝나면 결과는 10 s 안에 보입니다(서버 설정으로 셈한 계산값, 측정값 아님). "
   + "수집기는 adsbdb 호출 한도(0.5 req/s, 대기 최대 10 s)와 응답(읽기 제한 8 s)을 기다릴 수 있고, 부르지 못하거나 실패하면 “노선 조회 실패”로 바뀝니다.";
 export type RoutePendingPhase = "normal" | "slow";

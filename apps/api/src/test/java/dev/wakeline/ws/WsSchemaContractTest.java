@@ -255,7 +255,7 @@ class WsSchemaContractTest {
             realStatus(k);
             Map<String, String> routeCache = new HashMap<>();
             routeCache.put("wakeline:route:SYN081", RouteInfoTest.found("SYN081").toString());
-            k.hub.setRouteSource(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)::forAircraft);
+            k.hub.setRouteSource(RouteLookups.of(new RouteReader(routeCache::get, RouteInfoTest.JSON, new AtomicLong(1_000_000)::get)));
             // 한국 항만 입출항(ADR-022 개정): 색인에 수집기가 실제 전체 기록으로 만든 행(호출부호만 이 선박의 것으로) 21건 — 20건 + 잘림. 색인은 완전 · 새것
             PortCallFixtures.FakeSource index = new PortCallFixtures.FakeSource();
             index.coverage = PortCallFixtures.fullCoverage(java.time.LocalDate.parse("2026-08-20"), java.time.LocalDate.parse("2026-09-29"), PC_NOW.minusSeconds(600));
@@ -395,8 +395,8 @@ class WsSchemaContractTest {
             PortCallReader error = new PortCallReader(broken, List::of, PC_NOW::toEpochMilli);
             PortCallReader off = new PortCallReader(full, () -> List.of("no_key", PC_NOW.minusSeconds(20).toString()), PC_NOW::toEpochMilli);
             // 운영처럼 저장 정적 보고도 읽는다 — 위치만 받은 선박(440000008)은 DB 에도 없다(static_source none)
-            k.shipFanout.setStoredStaticSource(ShipLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
-            k.shipFanout.setPortCallSource(ShipLookups.Source.memory(st -> {
+            k.shipFanout.setStoredStaticSource(SelectionLookups.Source.memory(m -> StoredStaticReader.Lookup.NONE));
+            k.shipFanout.setPortCallSource(SelectionLookups.Source.memory(st -> {
                 String cs = st == null ? null : st.callSign();
                 if ("D7AC".equals(cs)) return error.forStatic(st);
                 if ("D7AD".equals(cs)) return off.forStatic(st);
