@@ -83,6 +83,8 @@ HSR 합성은 tm 마다 일찍 올라오고 레이더 지점이 보고하는 대
 - 최신 프레임을 바꿔도 meta `fetched_at`(STALE 시계)은 그대로다 — 기상청이 새 tm 을 올리지 않으면서 마지막 tm 만 채우는 경우에도 STALE 은 새 tm 을
   마지막으로 받은 뒤 15분에 뜬다(시험: `test_a_stalled_latest_tm_still_goes_stale_while_its_partial_frame_keeps_being_upgraded`). 패널의 "수신"(최신
   프레임의 `fetched_at`)은 보이는 영상을 받은 시각이라 STALE 툴팁의 시각보다 늦을 수 있다.
+- (2026-10-01 · 레인 kma 7차) 같은 시계를 다시 받기 밖에서도 지킨다: `_store` 는 앞선 latest_tm 보다 새 tm 을 저장할 때만 `fetched_at` 을 옮기고, 영상 TTL(3 h)보다
+  오래된 tm 은 저장하지 않고 이미 파일이 있던 옛 tm 은 다시 받지 않는다 — 목록이 멈췄는데 파일은 있을 때 만료된 옛 프레임을 다시 받아 STALE 을 가렸다(ADR-011 끝 절).
 - meta `stations` 의 뜻이 코드 목록 → 지점 수로 바뀌었다(코드는 `station_ids`). 배포 직후 옛 값은 공개 상태에서 모름으로 빠지고 다음 저장 때 바뀐다.
   이 변경 전 프레임(최대 1 h 보관)은 "합성 —" 으로 보인다.
 - `/ops` PIPELINE 화면은 새 heartbeat 필드를 따로 그리지 않는다(`/ops/providers` 의 원본 해시에만 있다).

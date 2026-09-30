@@ -4,6 +4,11 @@
 - 예산: budget:kma_radar(한도 settings.budget_kma_radar)로 목록·바이너리 호출을 모두 예약한다. Redis 가 안 되면 호출하지 않는다.
 - 후보: 보관 창(현재 이하 목록의 최신 12개) 안에서 아직 저장되지 않은 tm 중 최신 4개(R-03). 저장된 최신보다 오래됐어도
   창 안의 빈 프레임(늦게 생긴 프레임·일시 오류로 놓친 프레임)은 채우고, 창보다 오래된 프레임은 받지 않는다.
+- 옛 tm(지금에서 영상 TTL FRAME_TTL_S = 3 h 넘게 지난 tm — 도전 2026-10-01 · 레인 kma 7차): 목록이 멈췄는데 파일은 있으면 영상이 만료된 뒤 보관 창의 옛 tm 을
+  다시 받아 저장했고, meta fetched_at(STALE 시계 — latest_tm 을 처음 저장한 시각)을 지금으로 옮겨 몇 시간 지난 영상이 STALE 없이 보였다(3 h 마다 되풀이).
+  이제 (1) 옛 tm 중 이미 파일이 있던 tm(meta latest_tm 이하 · 이 프로세스가 받아 본 옛 tm 이하)은 고르지 않는다 — 받아 본 적 없는 옛 tm 은 고른다(다시 띄운
+  수집기가 버린 연속을 R-03 으로 다시 여는 길). (2) gzip 을 받은 옛 tm(연속의 확인 — 목록이 멈춘 동안의 옛 tm)은 연속을 닫되 저장하지 않는다(보이지 않는다 ·
+  INFO 한 줄). (3) meta fetched_at 은 앞선 latest_tm 보다 새 tm 을 저장할 때만 옮긴다(같은 tm 을 다시 받은 것은 새 프레임이 아니다).
 - 목록에 있으나 바이너리가 아직 없는 tm("file not exist" 등 gzip 아닌 응답)은 일시 상태다. tm 마다 MAX_NOT_READY_TRIES 번까지
   다음 주기에 다시 받고, 그래도 없으면 품질 이벤트(kma_radar_missing)를 남기고 건너뛴다. 해석 불가(_BadFrame·크기 초과)만 바로 제외한다.
 - '파일 없음' 연속(운영 로그 2026-09-30 — 목록은 EXT 로 계속 싣는데 내려받기는 08:15 KST 부터 모든 tm 에 "file not exist (RDR_CMP_HSR_PUB_…)"):
@@ -369,14 +374,24 @@ def _listed_text(listed: str) -> str:
     return listed.replace(",", "/") if listed else "kinds unknown"
 
 
+def old_tm_cut(now_tm: str) -> str:
+    """영상 보관 한계의 tm: 지금(KST 벽시계)에서 FRAME_TTL_S(3 h) 전. 이 tm 이하는 '옛 tm' — 영상 TTL 이 지나 만료됐을 나이다(저장한 때 ≥ tm).
+    지금을 읽지 못하면 빈 글자(아무 tm 도 옛 tm 이 아니다)."""
+    now = _tm_dt(now_tm)
+    return (now - timedelta(seconds=FRAME_TTL_S)).strftime("%Y%m%d%H%M") if now is not None else ""
+
+
 def select_candidates(
-    listing: list[str], stored: list[str], now_tm: str, bad: set[str] | frozenset[str] = frozenset()
+    listing: list[str], stored: list[str], now_tm: str, bad: set[str] | frozenset[str] = frozenset(), known: str = ""
 ) -> list[str]:
     """보관 창(현재 시각 이하 목록의 최신 KEEP_FRAMES 개) 안에서 아직 저장되지 않은 tm 중 최신 MAX_PER_CYCLE 개(오름차순).
-    창보다 오래된 tm 은 받아도 곧바로 밀려나므로 고르지 않는다."""
+    창보다 오래된 tm 은 받아도 곧바로 밀려나므로 고르지 않는다. 옛 tm(old_tm_cut 이하) 중 known(파일이 있던 가장 새 tm — meta latest_tm · 이 프로세스가
+    받아 본 옛 tm) 이하도 고르지 않는다: 목록이 멈췄는데 파일은 있으면 만료된 옛 프레임을 3 h 마다 다시 받아 새것처럼 보였다(도전 2026-10-01). known 보다
+    새 옛 tm 은 고른다 — 받아 본 적이 없는 tm 이라 '파일 없음'이면 R-03 이 연속을 연다(다시 띄운 수집기가 버린 연속을 다시 여는 길, _behind_prev_day)."""
     window = sorted({tm for tm in listing if tm <= now_tm})[-KEEP_FRAMES:]
     have = set(stored)
-    return [tm for tm in window if tm not in have and tm not in bad][-MAX_PER_CYCLE:]
+    cut = old_tm_cut(now_tm)
+    return [tm for tm in window if tm not in have and tm not in bad and not (tm <= cut and tm <= known)][-MAX_PER_CYCLE:]
 
 
 def _tm_dt(tm: object) -> datetime | None:
@@ -567,6 +582,8 @@ class KmaRadarJob:
         self.partial_stored = 0
         self.refetch_attempts = 0
         self.upgrades = 0
+        # 이 프로세스가 gzip 을 받았으나 영상 보관(3 h)보다 오래돼 저장하지 않은 가장 새 tm — 그 이하의 옛 tm 은 다시 고르지 않는다(select_candidates known)
+        self._old_seen = ""
         # 이 주기 전날 목록(_listing)의 429 · 속도 상한 — 주기가 KMA 호출을 멈추고 'throttled' 로 적는다(run_once)
         self._prev_day_throttle: _StepFailed | None = None
         # 이 주기에 읽은 목록의 날(오름차순 — _listing: 연속의 확인이 목록이 무엇을 덮었는지 싣는다)
@@ -861,6 +878,7 @@ class KmaRadarJob:
             await self._fail(started, _StepFailed("listing", e, None))
             return
         now_tm = kst_now().strftime("%Y%m%d%H%M")
+        old_cut = old_tm_cut(now_tm)  # 이 tm 이하는 영상 보관(3 h)보다 오래됐다 — 받아도 보이지 않는다(아래)
         kinds: dict = listing.extra.get("kinds") or {}
         have = [f["tm"] for f in stored]
         if self.missing is not None:
@@ -868,7 +886,8 @@ class KmaRadarJob:
             parse_bad = {tm for tm, why in self._bad.items() if why == "parse"}
             candidates = streak_probes(listing.data, have, now_tm, self.missing.since_tm, parse_bad)
         else:
-            candidates = select_candidates(listing.data, have, now_tm, frozenset(self._bad))
+            known = max(await self._latest_stored(), self._old_seen)
+            candidates = select_candidates(listing.data, have, now_tm, frozenset(self._bad), known)
         self._last_answer = None
         # 파일이 있던 가장 새 tm(저장된 것 · 이 주기에 gzip 을 받은 것) — 끝내 없는 tm 이 이보다 오래됐으면 그 tm 하나만 빠진 것이다(연속이 아니다)
         newest = max(have, default="")
@@ -915,6 +934,17 @@ class KmaRadarJob:
                     continue
                 self._file_back(tm)  # gzip 을 받았다 — '파일 없음' 연속이 있으면 닫는다(해석은 그다음 일)
                 newest = max(newest, tm)  # 이 tm 의 파일은 있다(해석하지 못해도 — '파일 없음' 과 다르다)
+                if tm <= old_cut:
+                    # 영상 보관(3 h)보다 오래된 tm(연속의 확인이 목록이 멈춘 동안 옛 tm 을 묻는다 — 파일이 돌아왔다): 저장하지 않는다. 저장하면 새 latest_tm 으로
+                    # meta fetched_at(STALE 시계)을 지금으로 옮겨 몇 시간 지난 영상이 STALE 없이 보였다(도전 2026-10-01). 그 이하의 옛 tm 은 다시 고르지 않는다
+                    self._old_seen = max(self._old_seen, tm)
+                    self._not_ready.pop(tm, None)
+                    log.info(
+                        "kma radar: tm=%s has a file but is older than the %d h image retention — not stored (not shown as a frame)",
+                        tm,
+                        FRAME_TTL_S // 3600,
+                    )
+                    continue
                 try:
                     await self._store(tm, res)
                 except _BadFrame as e:
@@ -990,6 +1020,11 @@ class KmaRadarJob:
         if not stored_n:
             await ctx.status.hset_meta(KEY_META, {"checked_at": _iso(datetime.now(UTC)), "status": "200", "note": ""})
         await self._heartbeat(partial_now)
+
+    async def _latest_stored(self) -> str:
+        """meta 해시의 latest_tm(이 작업이 저장한 가장 새 tm — 프레임이 모두 만료돼도 남는다, 다시 띄워도 읽는다). 없거나 틀리면 빈 글자."""
+        v = await self.ctx.status.redis.hget(KEY_META, "latest_tm")
+        return v if isinstance(v, str) and _tm_dt(v) is not None else ""
 
     async def _heartbeat(self, partial_now: int | None) -> None:
         await self.ctx.status.heartbeat(
@@ -1421,6 +1456,7 @@ class KmaRadarJob:
             raise _BadFrame(f"{type(e).__name__}: {e} (raw={raw_ref})") from e
         r = ctx.status.redis
         now = datetime.now(UTC)
+        prev_latest, prev_fetched = await r.hmget(KEY_META, "latest_tm", "fetched_at")  # STALE 시계를 옮길지(아래)
         await r.set(KEY_FRAME.format(tm=tm), base64.b64encode(png).decode("ascii"), ex=FRAME_TTL_S)
         frames = [f for f in await self._frames() if f["tm"] != tm]
         entry: dict = {
@@ -1459,7 +1495,11 @@ class KmaRadarJob:
         # 헤더 값·fetched_at 은 latest_tm 프레임을 설명한다. 보관 창 안의 오래된 빈 곳을 채운 경우(R-03)에는 그대로 둔다 —
         # 옛 프레임 값으로 덮으면 meta 가 latest_tm 과 다른 프레임을 설명하고, fetched_at 이 새로 보여 STALE 이 가려진다.
         if frames[-1]["tm"] == tm:
-            mapping |= self._header_meta(header, meta) | {"fetched_at": _iso(res.fetched_at)}
+            mapping |= self._header_meta(header, meta)
+            # fetched_at(STALE 시계 — latest_tm 을 처음 저장한 시각)은 앞선 latest_tm 보다 새 tm 일 때만 옮긴다: 같은(또는 더 옛) tm 을 다시 받은 것은 새 프레임이
+            # 아니다(영상이 사라져 다시 받은 최신 tm — 전에는 다시 받은 시각으로 옮겨 새 tm 이 오지 않는 동안 STALE 이 늦어졌다, 도전 2026-10-01)
+            if not prev_fetched or _tm_dt(prev_latest) is None or tm > str(prev_latest):
+                mapping["fetched_at"] = _iso(res.fetched_at)
         await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
         log.info(
             "kma radar: tm=%s %s stations=%d%s echo cells=%d png=%d B (%d frames)",

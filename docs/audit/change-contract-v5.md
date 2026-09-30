@@ -886,6 +886,12 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
         않았다. 주기 길이 상한은 그대로(545 s — 이 주기는 확인이 둘 이하라 85 + 85 + 2 × 85 + 80 = 420 s). 시험 `test_kma_list_idle.py` +5(고치기 전 실패 — 시간 초과 뒤
         다시 불러 확인 · 다시 부르기 예산 거절은 `error` · 429 는 다시 부르지 않음 · INFO 한 줄 · UTC 하루 모의)와 기존 시험 셋에 호출 수 단언(504 는 한 번 · 새 날
         목록이 빈 주기와 자정 직후 창은 한 번), `test_kma_missing`(예산 산수 867 · 289 · 578).
+      - **목록이 멈췄는데 파일은 있을 때 — 옛 tm(2026-10-01 · 레인 kma 7차 — 도전 'missed')**: 영상 TTL(3 h)이 지나 만료된 옛 프레임을 보관 창에서 다시 골라 받고 meta
+        `fetched_at`(STALE 시계 — api `meta.stale` · 웹 KMA STALE)을 지금으로 옮기던 것을 막는다: 지금에서 3 h 넘은 tm 중 이미 파일이 있던 tm(meta `latest_tm` 이하 ·
+        받아 본 옛 tm 이하)은 고르지 않고, gzip 을 받은 옛 tm(연속의 확인)은 연속을 닫되 저장하지 않으며(INFO `tm=… has a file but is older than the 3 h image retention —
+        not stored`), `fetched_at` 은 앞선 `latest_tm` 보다 새 tm 을 저장할 때만 옮긴다. api · 웹 · 스키마 변경 없음(값의 뜻 그대로 — '최신 tm 첫 수집'). 받아 본 적 없는
+        옛 tm 은 전처럼 고른다(연속을 다시 여는 R-03). 시험 `test_kma_list_idle.py` +3(고치기 전 실패 — 19:55–03:00 다시 받기 24번 · 최신 tm 을 다시 받아 옮긴 STALE 시계 ·
+        5 h 지난 tm 의 gzip 을 새 latest_tm 으로 저장).
     - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): `list_newer` 가 0 이면 한 줄에 `기상청 목록에도 19:50 KST 뒤 새 tm 없음`(마지막 tm 이
       지금과 다른 KST 날이면 `09-30 19:50 KST`) — KMA 칩 title · 상세 행 값 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 줄(`providerMissing` 이 해시 글자를 본다). title 에
       목록의 가장 새 tm(없으면 '읽은 목록에 tm 없음'). 모르거나 서로 맞지 않으면 적지 않는다. '확인 멈춤' 기준은 그대로(확인 간격 × 3, 아래로 15분) — 수집기가 목록만 읽은

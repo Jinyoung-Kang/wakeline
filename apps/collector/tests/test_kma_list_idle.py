@@ -733,3 +733,97 @@ async def test_a_utc_day_of_slow_streak_checks_where_every_first_attempt_times_o
     assert mod.streak_calls_per_day(300, slow=True, retries=True) == (96 * 3 + 1) * 2 == 578
     assert used <= 578 < 1000
     assert checks_after_midnight == 36  # 00:00–08:45 KST 15분마다 — 한 번도 잃지 않았다
+
+
+# ---- 목록이 멈췄는데 파일은 있을 때 — 옛 tm 을 새것처럼 보이지 않는다(도전 'missed' 2026-10-01 — 레인 kma 7차) --------------------------------
+# 도전이 본 것(고치기 전 코드, scratch): 목록이 19:50 에서 멈추고 파일은 받을 수 있는 동안 영상(TTL 3 h)이 만료되면 select_candidates 가 보관 창(목록의 최신 12개)의
+# 옛 tm 을 다시 골라 받고, _store 가 meta fetched_at(= latest_tm 을 처음 저장한 시각 — api meta.stale · 웹 KMA STALE 의 시계, lib/format isKrRadarStale)을 지금으로
+# 옮겼다: 19:50 프레임이 3 h 넘게 지났는데 STALE 이 15분 동안 사라지고, 실행은 'ok' · 기록 수 > 0 · 공급자 성공. 3 h 마다 되풀이(목록이 멈춘 동안 끝없이).
+def _track_images(mod, r, stored_at: dict[str, str], gone: set[str], now: str) -> None:
+    """영상 키가 새로 생기면(처음 · 다시 받음) 그 시각을 적는다 — FakeRedis 의 TTL 은 실제 시계라 가짜 시계로 만료를 흉내 낸다."""
+    for k in [k for k in r.kv if k.startswith("wakeline:radar_kr:frame:")]:
+        tm = k.rsplit(":", 1)[1]
+        if tm not in stored_at or tm in gone:
+            stored_at[tm] = now
+            gone.discard(tm)
+
+
+def _expire_due(mod, r, stored_at: dict[str, str], gone: set[str], now: str) -> None:
+    for tm, at in stored_at.items():
+        if (
+            tm not in gone
+            and (datetime.strptime(now, "%Y%m%d%H%M") - datetime.strptime(at, "%Y%m%d%H%M")).total_seconds() >= mod.FRAME_TTL_S
+        ):
+            r.expire_now(mod.KEY_FRAME.format(tm=tm))
+            gone.add(tm)
+
+
+async def test_a_stalled_listing_with_files_present_never_re_downloads_expired_frames_nor_refreshes_the_stale_clock(env):
+    """고치기 전: 21:55 부터 만료된 옛 tm(18:55 …)을 하나씩 다시 받았고, 22:50 에 19:50 을 다시 받아 meta fetched_at 이 지금이 됐다(STALE 이 사라짐) —
+    자정 뒤에는 새 날 목록이 빈 주기의 전날 목록으로 같은 12개를 또 받았다."""
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="209912312355", list_until="202609301950")  # 파일은 늘 있다 — 목록만 19:50 에서 멈춘다
+    job = mod.KmaRadarJob(prov, ctx)
+    stored_at: dict[str, str] = {}
+    gone: set[str] = set()
+    for t in _walk("202609301700", "202609301950"):
+        clock["now"] = t
+        await job.run_once()
+        _track_images(mod, r, stored_at, gone, t)
+    first = await r.hgetall(mod.KEY_META)
+    assert first["latest_tm"] == "202609301950" and first["available"] == "1"
+    prov.binaries.clear()
+    runs.clear()
+    for t in _walk("202609301955", "202610010300"):
+        clock["now"] = t
+        _expire_due(mod, r, stored_at, gone, t)
+        await job.run_once()
+        _track_images(mod, r, stored_at, gone, t)
+    assert prov.binaries == []  # 영상 보관(3 h)보다 오래된, 이미 받았던 tm 은 다시 받지 않는다
+    meta = await r.hgetall(mod.KEY_META)
+    assert (
+        meta["fetched_at"] == first["fetched_at"]
+    )  # STALE 시계는 19:50 을 처음 저장한 때 그대로 — api meta.stale · 웹 STALE 이 뜬다
+    assert meta["latest_tm"] == "202609301950" and meta["available"] == "0"  # 옛 프레임은 모두 만료됐다(보이지 않는다)
+    assert {run["records_in"] for run in runs} == {0}
+
+
+async def test_re_storing_the_latest_tm_does_not_move_the_stale_clock(env):
+    """보관 창 안(3 h 안)의 최신 tm 영상이 사라져(Redis 가 잃었다 등) 다시 받아도 새 프레임이 아니다 — meta fetched_at(STALE 시계)은 그 tm 을 처음 저장한
+    때 그대로다. 고치기 전: 다시 받은 시각으로 옮겨 새 tm 이 오지 않는 동안에도 STALE 이 늦어졌다."""
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="209912312355", list_until="202609302000")
+    job = mod.KmaRadarJob(prov, ctx)
+    await _run(job, clock, _walk("202609301900", "202609302000"))
+    first = await r.hgetall(mod.KEY_META)
+    assert first["latest_tm"] == "202609302000"
+    r.expire_now(mod.KEY_FRAME.format(tm="202609302000"))
+    prov.binaries.clear()
+    await _run(job, clock, ["202609302005"])
+    assert prov.binaries == ["202609302000"]  # 보관 창 안이라 다시 받는다(영상이 없다)
+    meta = await r.hgetall(mod.KEY_META)
+    assert meta["latest_tm"] == "202609302000" and meta["available"] == "1"
+    assert meta["fetched_at"] == first["fetched_at"]
+
+
+async def test_a_file_back_for_a_tm_older_than_the_image_retention_closes_the_streak_but_is_not_shown(env, caplog):
+    """'파일 없음' 연속(13:10 부터) 중 목록은 19:50 에서 멈췄다. 01:00 에 기상청 내려받기가 돌아왔는데 목록은 그대로다 — 다음 확인이 19:50(5 h 넘게 지남)의
+    gzip 을 받는다. 파일이 돌아왔으니 연속은 닫지만, 영상 보관(3 h)보다 오래된 tm 은 저장하지 않는다(보이지 않는다 — meta latest_tm · fetched_at 그대로, STALE).
+    고치기 전: 19:50 을 새 latest_tm 으로 저장하고 fetched_at 을 지금으로 옮겨 5 h 지난 영상이 15분 동안 STALE 없이 보였다. 그 뒤로 옛 tm 을 더 받지 않는다."""
+    mod, r, ctx, clock, runs = env
+    prov, job = await _stalled_streak(mod, ctx, clock)
+    await _run(job, clock, _walk("202610010000", "202610010055"))
+    _expire_frames(mod, r)  # 11:00–13:05 프레임은 벌써 만료됐다(가짜 시계)
+    before = await r.hgetall(mod.KEY_META)
+    assert before["latest_tm"] == "202609301305"
+    prov.down_from = "209912312355"  # 내려받기가 돌아왔다 — 목록은 여전히 19:50 에서 멈춤
+    prov.binaries.clear()
+    runs.clear()
+    caplog.clear()
+    await _run(job, clock, _walk("202610010100", "202610010200"))
+    assert job.missing is None
+    assert prov.binaries == ["202609301950"]  # 확인 한 번 — 그 뒤 옛 tm 을 더 받지 않는다
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["latest_tm"], meta["fetched_at"]) == (before["latest_tm"], before["fetched_at"])
+    assert meta["available"] == "0" and all(meta[k] == "" for k in mod.MISSING_KEYS)
+    assert any("tm=202609301950 has a file but is older than the 3 h image retention — not stored" in m for m in _infos(caplog))
