@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import orjson
 import pytest
 import respx
 
@@ -272,3 +273,118 @@ async def test_next_cycle_inside_the_pause_is_not_sent_and_is_throttled_too(kma,
     msgs = [(x.levelno, x.getMessage()) for x in caplog.records if x.name == "job.kma_radar"]
     assert [lv for lv, _m in msgs if lv >= logging.WARNING] == [] and any("not called" in m for _lv, m in msgs)
     await http.aclose()
+
+
+async def test_kma_429_mid_cycle_keeps_what_the_cycle_already_did(kma):
+    """429 로 주기가 중간에 멈춰도 그 주기가 이미 한 일은 남긴다(리뷰 2026-09-30 — 고치기 전에는 곧바로 return 해서 잃었다):
+    이미 포기한 tm 의 품질 이벤트(kma_radar_missing — _mark_bad 로 다시 받지 않으니 영영 잃었다) · 그 주기에 연 '파일 없음' 연속의 발행
+    (Retry-After 가 길면 다음 주기도 멈춰 10분까지 화면에 없었다) · heartbeat. 실행은 'throttled'(http 429) 그대로."""
+    mod, r, ctx, clock, runs = kma
+    http = HttpClient(default_limiter(100.0, 0.8, kma_rps=50.0))
+    server = KmaServer(clock)
+    tms = _tms("202609271100")
+    server.down.add(tms[-4])  # 10:45 — 이번이 세 번째 '파일 없음' → 포기(품질 이벤트) · 더 새 파일이 없어 연속을 연다
+    server.reject[tms[-3]] = (429, {"Retry-After": "120"})
+    job = mod.KmaRadarJob(KmaRadarProvider(http, "k" * 12), ctx)
+    job._not_ready[tms[-4]] = mod.MAX_NOT_READY_TRIES - 1
+    with respx.mock:
+        respx.get(LIST_URL).mock(side_effect=server.listing)
+        respx.get(FILE_URL).mock(side_effect=server.binary)
+        await job.run_once()
+    await http.aclose()
+    assert [c[2] for c in server.calls if c[1] == "bin"] == [tms[-4], tms[-3]]
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["status"] == "throttled" and run["http_status"] == 429 and run["records_in"] == 0
+    assert [q[0] for q in run["quality"]] == ["kma_radar_missing"] and run["quality"][0][2]["tm"] == tms[-4]
+    assert run["records_quarantined"] == 1
+    assert "HTTP 429" in run["error_text"] and f"tm={tms[-4]}" in run["error_text"]  # 429 와 그 주기의 '파일 없음' 까닭 둘 다
+    meta = await r.hgetall(mod.KEY_META)
+    assert job.missing is not None and meta.get("missing_since_tm") == tms[-4]  # 연 연속을 같은 주기에 싣는다
+    assert (await r.hgetall("wakeline:collector")).get("radar_kr_at")  # heartbeat
+    h = await r.hgetall("wakeline:provider:kma_radar")
+    assert "last_success_at" not in h and "last_error" not in h  # 저장한 프레임 없음 — 성공이 아니다 · 공급자 오류도 아니다
+
+
+async def test_kma_429_after_a_stored_frame_still_records_the_provider_success(kma):
+    """프레임 하나를 저장한 뒤 429: 실행은 'throttled' 지만 공급자는 그 프레임을 내줬다 — last_success_at · last_records 를 적는다(리뷰 2026-09-30)."""
+    mod, r, ctx, clock, runs = kma
+    http = HttpClient(default_limiter(100.0, 0.8, kma_rps=50.0))
+    server = KmaServer(clock)
+    tms = _tms("202609271100")
+    server.reject[tms[-3]] = (429, {"Retry-After": "120"})
+    with respx.mock:
+        respx.get(LIST_URL).mock(side_effect=server.listing)
+        respx.get(FILE_URL).mock(side_effect=server.binary)
+        await mod.KmaRadarJob(KmaRadarProvider(http, "k" * 12), ctx).run_once()
+    await http.aclose()
+    assert runs[0]["status"] == "throttled" and runs[0]["records_in"] == 1
+    h = await r.hgetall("wakeline:provider:kma_radar")
+    assert h.get("last_success_at") and h.get("last_records") == "1" and "last_error" not in h
+
+
+def _stored_partial_frames(mod, tms: list[str]) -> list[dict]:
+    """보관 창을 모두 채운 12 프레임 — 가장 새 두 tm 이 부분 합성(다시 받기 대상: 10분 전에 받음 > 간격 4분)."""
+    fetched = (datetime(2026, 9, 27, 2, 0, tzinfo=UTC) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    exp = (datetime.now(UTC) + timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    return [{"tm": t, "fetched_at": fetched, "expires_at": exp, "stations": 5, "partial": t >= tms[-2]} for t in tms]
+
+
+async def test_kma_429_on_the_partial_frame_refetch_is_a_throttled_run_with_one_warning(kma, caplog):
+    """다시 받기(ADR-021) 중 429: 고치기 전에는 INFO 한 줄로 삼키고 실행을 'ok'(http 200)로 남겼다 — 로그 화면(WARN 이상)에도, 실행 표에도 보이지
+    않았다(리뷰 2026-09-30 · 운영 로그 11:26:16 의 모양: 'still unavailable' 직후 429). 고친 뒤: WARN 한 줄(쉰 초 · Retry-After) · 남은 다시 받기를
+    멈춘다 · 정규 부분이 'ok' 면 실행은 'throttled'(http 429). 목록은 답했으니 공급자 성공은 그대로 적는다."""
+    mod, r, ctx, clock, runs = kma
+    caplog.set_level(logging.INFO, logger="job.kma_radar")
+    tms = _tms("202609271100")[-12:]
+    await r.set(mod.KEY_FRAMES, orjson.dumps(_stored_partial_frames(mod, tms)).decode())
+    for t in tms:
+        await r.set(mod.KEY_FRAME.format(tm=t), "x")
+    http = HttpClient(default_limiter(100.0, 0.8, kma_rps=50.0))
+    server = KmaServer(clock)
+    for t in tms[-2:]:
+        server.reject[t] = (429, {"Retry-After": "120"})
+    job = mod.KmaRadarJob(KmaRadarProvider(http, "k" * 12), ctx)
+    job._loaded = True
+    with respx.mock:
+        respx.get(LIST_URL).mock(side_effect=server.listing)
+        respx.get(FILE_URL).mock(side_effect=server.binary)
+        await job.run_once()
+    await http.aclose()
+    assert [(c[1], c[2]) for c in server.calls] == [("list", "20260927"), ("bin", tms[-2])]
+    assert job.refetch_attempts == 1  # 429 뒤로는 다시 받기를 시도하지 않는다(쉼 안의 호출을 줄 세우지 않는다)
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["status"] == "throttled" and run["http_status"] == 429 and run["records_in"] == 0
+    assert (
+        f"refetch tm={tms[-2]}" in run["error_text"] and "HTTP 429" in run["error_text"] and "paused 120 s" in run["error_text"]
+    )
+    warns = [x.getMessage() for x in caplog.records if x.name == "job.kma_radar" and x.levelno >= logging.WARNING]
+    assert len(warns) == 1 and f"refetch tm={tms[-2]}" in warns[0] and "HTTP 429" in warns[0] and "Retry-After 120 s" in warns[0]
+    h = await r.hgetall("wakeline:provider:kma_radar")
+    assert h.get("last_success_at") and "last_error" not in h
+    assert (await r.hgetall("wakeline:collector")).get("radar_kr_refetches") == "1"
+
+
+async def test_kma_429_on_the_refetch_after_a_missing_cycle_keeps_the_missing_status_and_names_the_429(kma):
+    """정규 부분이 'ok' 가 아니면(새 tm 이 '파일 없음') 그 상태가 주기의 답이다 — 다시 받기 429 는 오류 글자에 덧붙인다(버리지 않는다)."""
+    mod, r, ctx, clock, runs = kma
+    tms = _tms("202609271100")[-12:]
+    await r.set(mod.KEY_FRAMES, orjson.dumps(_stored_partial_frames(mod, tms[:-1])).decode())
+    for t in tms[:-1]:
+        await r.set(mod.KEY_FRAME.format(tm=t), "x")
+    http = HttpClient(default_limiter(100.0, 0.8, kma_rps=50.0))
+    server = KmaServer(clock)
+    server.down.add(tms[-1])
+    server.reject[tms[-3]] = (429, {"Retry-After": "120"})  # 부분 합성(tms[-3] 는 이 목록에서 뒤에서 둘째)
+    job = mod.KmaRadarJob(KmaRadarProvider(http, "k" * 12), ctx)
+    job._loaded = True
+    with respx.mock:
+        respx.get(LIST_URL).mock(side_effect=server.listing)
+        respx.get(FILE_URL).mock(side_effect=server.binary)
+        await job.run_once()
+    await http.aclose()
+    run = runs[0]
+    assert run["status"] == "missing" and run["http_status"] == 200
+    assert run["error_text"].startswith("no new frame stored") and f"refetch tm={tms[-3]}" in run["error_text"]
+    assert "HTTP 429" in run["error_text"]
