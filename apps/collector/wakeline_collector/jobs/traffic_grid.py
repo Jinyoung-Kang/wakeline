@@ -39,8 +39,9 @@
     결과는 잊지 않는다 — 크기는 Redis 해시만큼). Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 덮어쓴다).
   * 오류(HTTP · 응답 모양 · 시간 초과): 그 칸만 5분 → 30분 → 2시간 → 6시간 뒤 다시. ID_MAX_FAILURES(5)번 연달아 실패하면 failed —
     부정 캐시에 적고(FAILED_TTL_S, 1일 뒤 처음부터 다시) 스냅샷에 pending 이 아니라 failed 로 센다(품질 사례 traffic_grid_lookup_failed).
-    실패한 적이 있는 칸은 새 칸 뒤에 묻는다. 한 틱에서 연달아 FILL_BREAKER_ERRORS(3)번 실패하면 채우기 전체를 5분 → 10분 → 30분 → 1시간
-    쉰다(키 · 서비스 장애에 예산을 쓰지 않게).
+    실패한 적이 있는 칸은 새 칸 뒤에 묻는다. 한 틱에서 연달아 FILL_BREAKER_ERRORS(3)번 실패하면 한 칸 조회를 5분 → 10분 → 30분 → 1시간
+    쉰다(키 · 서비스 장애에 예산을 쓰지 않게 — 타일 공급자가 없으면 곧 채우기 전체). 타일은 같은 규칙의 차단기를 따로 쓴다(2026-10-01 검토 지적,
+    high: 함께 세면 bbox 만 고장 나도 늘 먼저인 타일이 차단기 주기마다 호출을 먼저 써 한 칸 조회가 굶었다) — 타일이 쉬는 동안 한 칸 조회가 몫을 쓴다.
   * 보내지 않은 호출(속도 상한 · 운영자 끔 · 연결 전 실패 · 종료 취소)은 예산을 돌려주고 그 틱의 채우기를 멈춘다.
   * DB 캐시를 아직 읽지 못했으면 기동 뒤 DB_WAIT_S(10분)까지는 채우지 않는다(이미 아는 칸을 다시 묻지 않게). 그 뒤에는 DB 없이 채우고, DB 가
     돌아오면 읽어 합친다(실시간 경로는 DB 에 의존하지 않는다).
@@ -476,7 +477,8 @@ class _Tick:
     tile_splits: int = 0
     tile_incomplete: int = 0
     tile_errors: int = 0
-    errors_in_row: int = 0
+    errors_in_row: int = 0  # 한 칸 조회의 연달은 오류(이 틱)
+    tile_errors_in_row: int = 0  # 타일의 연달은 오류(이 틱) — 차단기는 따로(검토 지적 2026-10-01)
     last_error: str | None = None
     http_status: int | None = None
     latency: list[int] = field(default_factory=list)
@@ -484,7 +486,8 @@ class _Tick:
     stop_reason: str | None = None
     hold_until: datetime | None = None
     hold_kind: str = ""
-    paused: bool = False
+    paused: bool = False  # 이 틱에 한 칸 조회 차단기가 걸렸다
+    tile_paused: bool = False  # 이 틱에 타일 차단기가 걸렸다
 
     @property
     def received(self) -> int:
@@ -545,8 +548,11 @@ class TrafficGridJob:
         self._dirty = False
         self._published_at: datetime | None = None
         self._force_publish = False
-        self._fill_pause_until: datetime | None = None
+        self._fill_pause_until: datetime | None = None  # 한 칸 조회 차단기(타일 공급자가 없으면 곧 채우기 전체)
         self._fill_pauses = 0
+        # 타일 차단기(검토 지적 2026-10-01, high): bbox 만 고장 나면 타일이 늘 먼저라 한 칸 조회가 약 10일 동안 0번이었다 — 타일 오류는 타일만 쉬게 한다
+        self._tile_pause_until: datetime | None = None
+        self._tile_pauses = 0
         self._fill_hold_until: datetime | None = None  # 시간 창 · 하루 예산이 다시 셀 때(다음 UTC 시 · 날)까지 채우지 않는다
         self._fill_hold_kind = ""  # hour_window · daily_budget
         self._pass: FillPass | None = None  # 열린 채우기 한 번
@@ -927,8 +933,39 @@ class TrafficGridJob:
     def _tiles_on(self, now: datetime) -> bool:
         return self.tile_src is not None and self.tile_src.configured and self._tiles_ready(now)
 
+    def _lookups_paused(self, now: datetime) -> bool:
+        return self._fill_pause_until is not None and now < self._fill_pause_until
+
+    def _tiles_paused(self, now: datetime) -> bool:
+        return self._tile_pause_until is not None and now < self._tile_pause_until
+
+    def _tiles_open(self, now: datetime) -> bool:
+        return self._tiles_on(now) and not self._tiles_paused(now)
+
     def _fill_due(self, now: datetime) -> bool:
-        return self.geometry.has_due(now) or (self._tiles_on(now) and self.tiles.has_due(now))
+        """지금 물을 것이 있는가 — 쉬는(차단기) 종류는 빼고."""
+        return (not self._lookups_paused(now) and self.geometry.has_due(now)) or (
+            self._tiles_open(now) and self.tiles.has_due(now)
+        )
+
+    def _next_move(self, now: datetime) -> tuple[bool, datetime | None]:
+        """(일이 남은 종류 가운데 차단기로 쉬는 것이 있는가, 다음에 무엇이든 움직이는 때 — 모르면 None). 종류(한 칸 조회 · 타일)마다: 지금 묻을 것이
+        있으면 지금, 아니면 가장 이른 다시 묻기, 쉬는 중이면 그 끝보다 이르지 않게."""
+        paused = False
+        nexts: list[datetime] = []
+        kinds = [(self.geometry.pending > 0, self._fill_pause_until, self.geometry.has_due(now), self.geometry.retries()[1])]
+        if self._tiles_on(now):
+            kinds.append((self.tiles.queued > 0, self._tile_pause_until, self.tiles.has_due(now), self.tiles.retries()[1]))
+        for has_work, pause_end, due_now, retry_at in kinds:
+            if not has_work:
+                continue
+            t = now if due_now else retry_at
+            if pause_end is not None and now < pause_end:
+                paused = True
+                t = pause_end if t is None else max(t, pause_end)
+            if t is not None:
+                nexts.append(t)
+        return paused, min(nexts, default=None)
 
     async def _fill(self, now: datetime) -> None:
         w = self.wfs
@@ -943,8 +980,6 @@ class TrafficGridJob:
                 self._waiting_logged = True
                 what = "the marine_grid4 cache" if waiting == "db" else f"the bbox tile states ({TILES_KEY})"
                 log.info("traffic grid: waiting up to %d s for %s before WFS lookups", DB_WAIT_S, what)
-            return
-        if self._fill_pause_until is not None and now < self._fill_pause_until:
             return
         if self._fill_hold_until is not None and now < self._fill_hold_until:
             return
@@ -962,9 +997,11 @@ class TrafficGridJob:
             if self._mono() - t0 > FILL_MAX_S:
                 break
             # 타일 먼저(한 번에 칸 수백 개) — 물을 타일이 없을 때만 한 칸 조회. 한 칸 조회가 찾은 칸의 타일은 곧바로 다음 차례다
-            tile = self.tiles.next_due(now) if self._tiles_on(now) else None
+            tile = self.tiles.next_due(now) if self._tiles_open(now) else None
             g: str | None = None
             if tile is None:
+                if self._lookups_paused(now):
+                    break
                 if id_batch is None:
                     id_batch = self.geometry.due(now, WFS_PER_TICK)
                 while id_batch and not self.geometry.is_pending(id_batch[0]):
@@ -989,7 +1026,10 @@ class TrafficGridJob:
             self.ctx.db.upsert_marine_grid4(tk.found, now)
         if tk.received or tk.not_found or tk.off_grid or tk.tile_off_grid:
             self._dirty = True
-            self._fill_pauses = 0
+        if tk.found or tk.not_found or tk.off_grid:
+            self._fill_pauses = 0  # 한 칸 조회가 답을 받았다 — 다음 차단기는 처음 단계부터
+        if tk.tiles > tk.tile_errors:
+            self._tile_pauses = 0  # 타일이 답을 받았다
         if tk.gave_up:
             self._dirty = True  # pending → failed: 수가 바뀌었다
         if tk.calls:
@@ -1010,13 +1050,25 @@ class TrafficGridJob:
             ps.tile_incomplete += tk.tile_incomplete
             ps.tile_errors += tk.tile_errors
         if tk.stop_reason is None:
-            if tk.paused:
-                await self._end_pass(
-                    f"paused: {tk.errors_in_row} WFS errors in a row — geometry fill resumes at "
-                    f"{iso_z(self._fill_pause_until or now)}"
-                )
-            elif not self._fill_due(self._now()):
-                await self._end_pass(self._idle_reason(self._now()))
+            later = self._now()
+            if not self._fill_due(later):
+                # 차단기가 이 틱에 걸렸고 다른 종류도 지금 물을 것이 없다 — 채우기 한 번이 끝난다(다른 종류가 이어 가면 끝나지 않는다)
+                if tk.paused or tk.tile_paused:
+                    what = " and ".join(
+                        x
+                        for x, on in (
+                            (
+                                f"{tk.errors_in_row} {'WFS' if self.tile_src is None else 'one-id lookup'} errors in a row",
+                                tk.paused,
+                            ),
+                            (f"{FILL_BREAKER_ERRORS} bbox tile errors in a row", tk.tile_paused),
+                        )
+                        if on
+                    )
+                    resume = self._fill_pause_until if self.tile_src is None else self._next_move(later)[1]
+                    await self._end_pass(f"paused: {what} — geometry fill resumes at {iso_z(resume or later)}")
+                else:
+                    await self._end_pass(self._idle_reason(later))
             return  # 그 밖(틱의 상한 · 시간 상한 · 속도 상한으로 보내지 못함)은 다음 틱에 이어서 — 같은 채우기다
         if tk.hold_until is not None:
             # 다시 셀 때까지 채우지 않는다 — 까닭은 이번에 한 번만, 이 채우기의 요약 줄에 적는다(전에는 틱(30 s)마다 같은 거절을 한 줄씩 쌓았다)
@@ -1088,22 +1140,46 @@ class TrafficGridJob:
             await give_back()
             return None
 
-    def _call_failed(self, e: Exception, tk: _Tick, now: datetime) -> bool:
-        """보낸 호출의 오류 한 번(한 칸 조회 · 타일 공통): 연달아 FILL_BREAKER_ERRORS 번이면 채우기 전체를 쉰다 — 그러면 False(이 틱을 멈춘다)."""
+    def _call_failed(self, e: Exception, tk: _Tick, now: datetime, *, tile: bool = False) -> bool:
+        """보낸 호출의 오류 한 번. 차단기는 종류마다 따로(검토 지적 2026-10-01, high — 전에는 함께 세어 bbox 만 고장 나도 한 칸 조회가 굶었다):
+        - 한 칸 조회가 한 틱에서 연달아 FILL_BREAKER_ERRORS 번이면 한 칸 조회를 쉰다(5분 → 10분 → 30분 → 1시간) — 그러면 False(이 틱을 멈춘다 —
+          한 칸 조회를 골랐다면 물을 타일이 없었다). 타일 공급자가 없으면 곧 채우기 전체다.
+        - 타일이 연달아 그만큼이면 타일만 쉰다(같은 단계) — True(이 틱의 남은 호출은 한 칸 조회가 쓴다)."""
         tk.calls += 1
-        tk.errors_in_row += 1
         tk.last_error = describe_error(e)
         tk.http_status = e.status if isinstance(e, ProviderHttpError) else tk.http_status
+        if tile:
+            tk.tile_errors_in_row += 1
+            if tk.tile_errors_in_row >= FILL_BREAKER_ERRORS and not self._tiles_paused(now):
+                self._tile_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._tile_pauses))
+                self._tile_pauses += 1
+                tk.tile_paused = True
+                log.warning(
+                    "traffic grid: %d bbox tile errors in a row — tiles paused until %s, one-id lookups go on (last: %s)",
+                    tk.tile_errors_in_row,
+                    iso_z(self._tile_pause_until),
+                    tk.last_error,
+                )
+            return True
+        tk.errors_in_row += 1
         if tk.errors_in_row >= FILL_BREAKER_ERRORS:
             self._fill_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._fill_pauses))
             self._fill_pauses += 1
             tk.paused = True
-            log.warning(
-                "traffic grid: %d WFS errors in a row — geometry fill paused until %s (last: %s)",
-                tk.errors_in_row,
-                iso_z(self._fill_pause_until),
-                tk.last_error,
-            )
+            if self.tile_src is None:
+                log.warning(
+                    "traffic grid: %d WFS errors in a row — geometry fill paused until %s (last: %s)",
+                    tk.errors_in_row,
+                    iso_z(self._fill_pause_until),
+                    tk.last_error,
+                )
+            else:
+                log.warning(
+                    "traffic grid: %d one-id lookup errors in a row — one-id lookups paused until %s, bbox tiles go on (last: %s)",
+                    tk.errors_in_row,
+                    iso_z(self._fill_pause_until),
+                    tk.last_error,
+                )
             return False
         return True
 
@@ -1186,7 +1262,7 @@ class TrafficGridJob:
                 # 상자에 약 200칸(≈ 130 KB — 계산)뿐이라 나눈 16 km 상자가 또 넘으면 서버가 상자를 무시하거나 다른 것을 준다(검토 지적 2026-10-01 —
                 # 예전에는 4 km 까지 21번을 쓰고서야 오류였다)
                 tk.calls += 1
-                tk.errors_in_row = 0
+                tk.tile_errors_in_row = 0
                 await self._split(tile, str(e), 0, None, now, tk)
                 return True
             tk.tile_errors += 1
@@ -1202,7 +1278,7 @@ class TrafficGridJob:
             return False
         tk.calls += 1
         tk.tiles += 1
-        tk.errors_in_row = 0
+        tk.tile_errors_in_row = 0
         if got.latency_ms is not None:
             tk.latency.append(got.latency_ms)
         res = got.result
@@ -1314,7 +1390,7 @@ class TrafficGridJob:
         await self._store_tile(tile, state)
 
     async def _tile_failed(self, tile: Tile, e: Exception, now: datetime, tk: _Tick) -> bool:
-        """보낸 타일 호출의 오류 한 번: 그 타일만 물러나고(TILE_RETRY_S) 연달아 TILE_MAX_FAILURES 번이면 failed(1일). 차단기는 한 칸 조회와 함께 센다."""
+        """보낸 타일 호출의 오류 한 번: 그 타일만 물러나고(TILE_RETRY_S) 연달아 TILE_MAX_FAILURES 번이면 failed(1일). 차단기는 타일 것만 센다(_call_failed)."""
         if self.tiles.failed(tile, now):
             await self._store_tile(tile, self.tiles.states[tile])
             tk.quality.append(
@@ -1331,7 +1407,7 @@ class TrafficGridJob:
                 gt.TILE_FAILED_TTL_S // 3600,
                 describe_error(e),
             )
-        return self._call_failed(e, tk, now)
+        return self._call_failed(e, tk, now, tile=True)
 
     def _idle_reason(self, now: datetime) -> str:
         if not self.geometry.pending and not self.tiles.queued:
@@ -1340,10 +1416,19 @@ class TrafficGridJob:
         n, nxt = self.geometry.retries()
         if self.tile_src is None:
             return f"nothing due — {n} waiting for a retry after an error (next at {iso_z(nxt) if nxt else '—'})"
-        tn, tnxt = self.tiles.retries()
-        first = min((t for t in (nxt, tnxt) if t is not None), default=None)
+        tn, _tnxt = self.tiles.retries()
+        _paused, first = self._next_move(now)
+        pauses = "".join(
+            f"; {what} paused after errors in a row until {iso_z(until)}"
+            for what, until, on in (
+                ("one-id lookups", self._fill_pause_until, self._lookups_paused(now) and self.geometry.pending > 0),
+                ("bbox tiles", self._tile_pause_until, self._tiles_paused(now) and self.tiles.queued > 0),
+            )
+            if on and until is not None
+        )
         return (
-            f"nothing due — {n} ids and {tn} tiles waiting for a retry after an error (next at {iso_z(first) if first else '—'})"
+            f"nothing due — {n} ids and {tn} tiles waiting for a retry after an error{pauses} "
+            f"(next at {iso_z(first) if first else '—'})"
         )
 
     async def _end_pass(self, how: str) -> None:
@@ -1396,18 +1481,19 @@ class TrafficGridJob:
             return "operator_off", ""
         if self._fill_hold_until is not None and now < self._fill_hold_until:
             return self._fill_hold_kind, iso_z(self._fill_hold_until)
-        if self._fill_pause_until is not None and now < self._fill_pause_until:
-            return "breaker", iso_z(self._fill_pause_until)
+        # 차단기는 종류마다 따로다 — 다른 종류가 지금 물을 수 있으면 'filling'(쉬는 종류는 heartbeat traffic_grid_tiles_resume_at · 로그 WARN 이 말한다),
+        # 일이 남은 종류가 쉬고 지금 물을 것이 없으면 'breaker' · 다음에 무엇이든 움직이는 때(다시 묻기 · 쉼의 끝 가운데 이른 것)
+        due = self._fill_due(now)
+        paused, nxt = self._next_move(now)
+        if paused and not due:
+            return "breaker", iso_z(nxt) if nxt else ""
         if not self.geometry.pending and not self.tiles.queued:
             return "idle", ""
         waiting = self._waiting_for_caches(now)
         if waiting:
             return ("waiting_db" if waiting == "db" else "waiting_tiles"), ""
-        if not self._fill_due(now):
-            _n, nxt = self.geometry.retries()
-            _tn, tnxt = self.tiles.retries()
-            first = min((t for t in (nxt, tnxt) if t is not None), default=None)
-            return "retry_wait", iso_z(first) if first else ""
+        if not due:
+            return "retry_wait", iso_z(nxt) if nxt else ""
         return "filling", ""
 
     async def _record_fill(self, w: WfsSource, started: datetime, tk: _Tick) -> None:
@@ -1519,6 +1605,10 @@ class TrafficGridJob:
             # 새 칸 · 나눈 타일 · 오류
             "traffic_grid_tiles_done": "" if tl else str(self.tiles.done_count()),
             "traffic_grid_tiles_queued": "" if tl else str(self.tiles.queued),
+            # 타일 차단기가 쉬는 동안 그 끝(한 칸 조회는 계속할 수 있어 채우기 상태가 'filling' 이어도 타일은 쉰다) — 아니면 빈 값
+            "traffic_grid_tiles_resume_at": iso_z(self._tile_pause_until)
+            if not tl and self._tile_pause_until is not None and now < self._tile_pause_until
+            else "",
             "traffic_grid_fill_pass_tiles": str(lp[1].tiles) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_cells": str(lp[1].tile_cells) if lp and not tl else "",
             "traffic_grid_fill_pass_tile_new": str(lp[1].tile_new) if lp and not tl else "",

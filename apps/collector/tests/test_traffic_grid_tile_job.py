@@ -21,7 +21,7 @@ from wakeline_collector.grid_tiles import Tile, cell_xy, tile_at
 from wakeline_collector.http import ProviderHttpError, SendCancelled
 from wakeline_collector.jobs import traffic_grid as tg
 from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, TILES_KEY, TrafficGridJob
-from wakeline_collector.marine_grid import WfsResult, WfsTooLarge, parse_wfs_tile
+from wakeline_collector.marine_grid import WfsError, WfsResult, WfsTooLarge, parse_wfs_tile
 from wakeline_collector.providers.data_go_kr import WfsLookup, WfsTileLookup
 from wakeline_collector.ratelimit import Throttled
 
@@ -387,17 +387,54 @@ async def test_an_oversized_tile_is_split_not_counted_as_an_error():
     assert r.kv[HB]["traffic_grid_fill_state"] == "idle" and snapshot(r)["resolved"] == 2
 
 
-async def test_tile_errors_back_off_per_tile_and_trip_the_breaker():
+async def test_tile_errors_back_off_per_tile_and_trip_the_tile_breaker_while_lookups_go_on(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
     grid = FakeGrid()
     boom = ProviderHttpError(502, "bad gateway")
     tiles = [A, FAR, Tile(0, 33, 52), Tile(0, 31, 58)]
     known = [home(grid, t)[0] for t in tiles]
     wfs = GridWfs(grid, answers={t.box: boom for t in tiles})
-    job, wfs, r, clock, _db = start(grid, [home(grid, A)[4]], known=known, wfs=wfs)
+    job, wfs, r, clock, db = start(grid, [home(grid, A)[4]], known=known, wfs=wfs)
     await job.run_once()
-    assert len(wfs.boxes) == tg.FILL_BREAKER_ERRORS and wfs.asked == []
-    assert r.kv[HB]["traffic_grid_fill_state"] == "breaker"
+    assert len(wfs.boxes) == tg.FILL_BREAKER_ERRORS and wfs.asked == [home(grid, A)[4]]
     assert job.tiles.retries()[0] == tg.FILL_BREAKER_ERRORS
+    (warn,) = [x.getMessage() for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING]
+    assert warn.startswith(
+        "traffic grid: 3 bbox tile errors in a row — tiles paused until 2026-09-29T09:11:15Z, one-id lookups go on"
+    )
+    # 물을 칸이 없고 타일만 쉰다 — 채우기 상태는 차단기, 다음은 타일이 다시 시작하는 때
+    assert (r.kv[HB]["traffic_grid_fill_state"], r.kv[HB]["traffic_grid_fill_resume_at"]) == ("breaker", "2026-09-29T09:11:15Z")
+    assert r.kv[HB]["traffic_grid_tiles_resume_at"] == "2026-09-29T09:11:15Z"
+    (run,) = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"]
+    assert (run["status"], run["http_status"]) == ("ok", 200)  # 한 칸 조회 하나가 성공했다 — 호출 넷 중 셋 실패
+    assert run["error_text"].startswith("3 of 4 calls failed; last: ")
+
+
+async def test_a_broken_bbox_does_not_starve_working_one_id_lookups():
+    """검토 지적(2026-10-01, high): 타일은 늘 먼저이고 차단기를 한 칸 조회와 함께 썼다 — bbox 만 고장 나면(OGC 예외 · HTML · 시간 초과) 새 타일이
+    차단기 주기마다 호출 셋을 먼저 써 한 칸 조회는 약 10일 동안 0번이었다(합성 재현: 타일 20개 · 24시간 동안 조회 0). 타일에는 따로 차단기를 두고,
+    타일이 쉬는 동안 한 칸 조회가 시간 몫을 쓴다."""
+    grid = FakeGrid()
+
+    class BrokenBbox(GridWfs):
+        async def bbox(self, box, *, wait_s=5.0, before_send=None):
+            self.answers[box] = WfsError("ServiceExceptionReport — InvalidParameterValue: bbox")
+            return await super().bbox(box, wait_s=wait_s, before_send=before_send)
+
+    known_tiles = [Tile(0, 28 + dx, 58 + dy) for dx in range(5) for dy in range(4)]
+    known = [home(grid, t)[0] for t in known_tiles]
+    pending = [home(grid, Tile(0, 40 + k, 50))[0] for k in range(20)]
+    job, wfs, r, clock, _db = start(grid, pending, known=known, wfs=BrokenBbox(grid))
+    for _ in range(4):
+        await job.run_once()
+        clock.advance(30)
+    assert sorted(wfs.asked) == sorted(pending) and snapshot(r)["resolved"] == 20
+    assert len(wfs.boxes) == tg.FILL_BREAKER_ERRORS  # 타일은 쉬는 중 — 쉬는 동안 다시 묻지 않는다
+    # 한 시간: 타일은 차단기 주기마다 셋(5 · 10 · 30분 쉼), 한 칸 조회는 막히지 않았다 — 어느 UTC 시에도 몫 안
+    for _ in range(116):
+        await job.run_once()
+        clock.advance(30)
+    assert 3 < len(wfs.boxes) <= 4 * tg.FILL_BREAKER_ERRORS and int(r.kv[MOF_HOUR]["used"]) <= SHARE
 
 
 # ---- 한 번만 · 재기동 --------------------------------------------------------------------------------------------------------------
