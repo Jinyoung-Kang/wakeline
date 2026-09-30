@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
+    "measure:first-js": "node scripts/measure-first-screen-js.mjs",
+    "check:first-js": "node scripts/check-first-screen-js.mjs",
     "prebuild": "node scripts/copy-maplibre-worker.mjs",
     "predev": "node scripts/copy-maplibre-worker.mjs"
   },

@@ -6,12 +6,8 @@ import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-sp
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AMBIGUOUS_TEXT, aisBadge, bboxTouchesCoverage, fmtDestPlace, gapAppliesTo, mergeStatusGaps, NO_ORIGIN_TEXT, parseScopeText, normalizeDestination, parseAisStatus,
-  parseDestinationInfo, pickDestinationInfo, shipDestinationLines, shipOriginText, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE, SHIPS_ZERO_AIS_DOWN_TEXT,
-  SHIPS_ZERO_AIS_UNKNOWN_TEXT, SHIPS_ZERO_RANGE_UNKNOWN_TEXT, SHIPS_ZERO_TEXT, shipsChip, shipsGapSuffix, statusOpenGapFor, zeroShipsReason, type AisStatus,
-  type ShipsChipInput, type ShipTrack,
-} from "@/lib/ships";
+import { AMBIGUOUS_TEXT, aisBadge, bboxTouchesCoverage, fmtDestPlace, gapAppliesTo, mergeStatusGaps, NO_ORIGIN_TEXT, parseScopeText, normalizeDestination, parseAisStatus, parseDestinationInfo, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_AIS_UNKNOWN_TEXT, SHIPS_ZERO_RANGE_UNKNOWN_TEXT, SHIPS_ZERO_TEXT, shipsChip, shipsGapSuffix, statusOpenGapFor, zeroShipsReason, type AisStatus, type ShipsChipInput, type ShipTrack } from "@/lib/ships";
+import { pickDestinationInfo, shipDestinationLines, shipOriginText } from "@/lib/ship-card";
 import { addShipLayers, SHIP_GRID_RADIUS_EXPR, SHIP_GRID_STYLE } from "@/lib/ship-layers";
 import { shipGridTip } from "@/lib/tooltip";
 import { attributionText, CREDITS, mapAttributionHtml } from "@/lib/attribution";

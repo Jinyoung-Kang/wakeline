@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { createPropertyExpression, latest } from "@maplibre/maplibre-gl-style-spec";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { aircraftStates, resetData, setData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
@@ -29,11 +29,15 @@ import * as pipelineView from "@/components/OpsPipeline";
 import type { Alert } from "@/lib/types";
 import { subscriptionBbox } from "@/lib/viewport";
 import { fmtReplayBbox, REPLAY_MAX_AREA_SQDEG, replayQueryBbox, replayReduce, type ReplayFrame } from "@/lib/replay";
+import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 const area = (b: number[]) => (b[2] - b[0]) * (b[3] - b[1]);
 /** 서버(Bbox.parse)와 같은 방식: 문자열 네 숫자 → 면적 */
 const serverArea = (s: string) => area(s.split(",").map(Number));
 
+
+// 탭 내용 · 검색 결과 표 · 범례·정합은 나중에 받는 조각(ADR-026) — 내용을 보려면 미리 받는다(tests/helpers/dashboard-parts)
+beforeAll(preloadDashboardParts);
 describe("R-05 replay request area and stale frame", () => {
   it("a zoomed-out screen (the review's 90,10,170,60 = 4000 sq°) is cut to the server cap around the map centre, keeping the aspect", () => {
     const view = subscriptionBbox(90, 10, 170, 60, Infinity, 127.8); // 수정 전 ReplayMap 이 그대로 보내던 값

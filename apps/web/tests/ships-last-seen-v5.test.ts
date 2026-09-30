@@ -5,17 +5,21 @@
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { notLiveText, sortShipRows, type ShipRow } from "@/lib/ships";
 import { parseShipSearchResponse, shipChoice, shipRowFromHit } from "@/lib/search";
 import { resetData, setData } from "@/lib/store";
 import { ShipTable } from "@/components/ShipTable";
 import { SearchResultsView } from "@/components/AircraftSearch";
 import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
+import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
 const NOW = Date.parse("2026-09-28T03:00:00Z");
 
+
+// 탭 내용 · 검색 결과 표 · 범례·정합은 나중에 받는 조각(ADR-026) — 내용을 보려면 미리 받는다(tests/helpers/dashboard-parts)
+beforeAll(preloadDashboardParts);
 describe("v5-G4 last reception of a ship that is not live", () => {
   beforeEach(() => resetData());
   afterEach(() => resetData());
