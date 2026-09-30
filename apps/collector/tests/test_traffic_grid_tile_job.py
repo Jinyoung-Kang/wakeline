@@ -13,7 +13,7 @@ import pytest
 from fakes import FakeRedis, make_ctx
 from redis.exceptions import NoPermissionError
 from test_traffic_grid_job import Clock, FakeKomsa, TGDb, komsa_body, snapshot
-from wfs_tiles import FakeGrid, extent
+from wfs_tiles import FakeGrid, collection, extent, feature, ring
 
 from wakeline_collector import grid_tiles as gt
 from wakeline_collector.budget import day_key
@@ -356,6 +356,47 @@ async def test_a_tile_never_marks_an_id_not_found_only_a_lookup_does():
     await job.run_once()
     assert wfs.boxes == [A.box] and wfs.asked == [ghost]
     assert orjson.loads(r.kv[NEGATIVE_KEY][ghost])["reason"] == "not_found"
+
+
+def tile_body(
+    grid: FakeGrid, box, *, shifted: set[str] = frozenset(), moved: dict | None = None, declared_extra: int = 0
+) -> bytes:
+    """상자 안의 칸 모두(합성 서버) — shifted = 꼭짓점을 동쪽으로 50 m 민 칸(격자 밖), moved = 번호 → (위도, 경도, gid) 다른 기하로 주는 칸."""
+    feats = []
+    for g in grid.cells_in(box):
+        la, lo = grid.where[g]
+        gid = grid.gids[g]
+        if moved and g in moved:
+            la, lo, gid = moved[g]
+        pts = [(x + 50.0, y) for x, y in ring(la, lo)] if g in shifted else None
+        feats.append(feature(g, la, lo, gid, pts=pts))
+    return collection(feats, len(feats) + declared_extra)
+
+
+async def test_a_tile_off_grid_feature_writes_no_negative_and_the_one_id_lookup_gives_the_verdict():
+    """검토 지적(2026-10-01): 타일의 격자 밖 지물이 그 번호를 7일 부정 캐시에 넣어 한 칸 조회(확인한 길)에서 뺐다 — 한 번의 이상한 답(밀린 좌표 ·
+    가장자리를 잘라 준 기하)이 번호 수백 개를 일주일 뺀다. 타일의 격자 밖 판정은 품질 사례 · 원본 보관만 하고 번호는 기다리게 둔다(한 칸 조회가
+    판정한다). 아는 칸이 격자 밖으로 오면 아는 기하를 그대로 둔다."""
+    grid = FakeGrid()
+    ids = home(grid, A)
+    pending_id, known_id = ids[3], ids[4]
+    body = tile_body(grid, A.box, shifted={pending_id, known_id})
+    wfs = GridWfs(grid, answers={A.box: body})
+    job, wfs, r, _c, db = start(grid, [ids[1], pending_id, known_id], known=[ids[0], known_id], wfs=wfs)
+    await job.run_once()
+    assert NEGATIVE_KEY not in r.kv or not ({pending_id, known_id} & set(r.kv[NEGATIVE_KEY]))
+    assert wfs.boxes == [A.box] and wfs.asked == [pending_id]  # 한 칸 조회가 판정한다(합성 서버는 그 칸을 준다)
+    assert job.geometry.cells[known_id] == grid.cell(known_id)  # marine_grid4 의 기하 그대로
+    assert snapshot(r)["resolved"] == 3
+    q = [
+        q
+        for run in db.runs
+        if run[0] == "traffic_grid_geom"
+        for q in run[2].get("quality") or []
+        if q[0] == "traffic_grid_off_grid"
+    ]
+    assert sorted(x[2]["grid_no"] for x in q) == sorted([pending_id, known_id])
+    assert all(x[2]["tile"] == "0/28/60" and x[2]["raw_ref"] for x in q)
 
 
 async def test_a_lookup_that_finds_a_cell_a_done_tile_did_not_list_rechecks_that_tile_once(caplog):

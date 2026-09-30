@@ -16,7 +16,8 @@
   조회의 수백 배). 물을 타일이 있으면 채우기 몫을 타일에 먼저 쓰고(호출 하나 = 예산 1 — 하루 예산과 해양수산부 시간 창 모두, 한 칸 조회와 같다),
   타일이 준 칸은 한 칸 조회 대기열에서 빠진다. 타일은 아는 칸(marine_grid4) · 한 칸 조회로 찾은 칸 · 받은 타일의 가장자리에 걸친(지금 스냅샷에서
   모르던) 칸의 기하에서만 정한다 — 칸 번호로 위치를 짐작하지 않는다. 잘렸을 수 있는 응답(maxFeatures 에 닿음 · numberOfFeatures 와 다름 · 크기 상한
-  초과)은 넷으로 나눠 다시(가장 작은 4 km 도 그러면 incomplete — 1일 뒤). 타일은 어느 번호도 '해양격자에 없음'으로 만들지 않는다(묻지 않은 번호다).
+  초과)은 넷으로 나눠 다시(가장 작은 4 km 도 그러면 incomplete — 1일 뒤). 타일은 어느 번호도 부정 캐시에 적지 않는다 — '해양격자에 없음'(묻지 않은
+  번호다)도, '격자 밖'도(타일의 격자 밖 지물은 품질 사례 · 원본만 남기고 그 번호는 한 칸 조회가 판정한다 — 2026-10-01 검토 지적).
   끝난 타일은 Redis wakeline:traffic_grid:tiles 에 적어 재기동 뒤 다시 묻지 않는다(읽지 못하면 DB 캐시처럼 DB_WAIT_S 기다린 뒤 메모리로만 — WARN).
   한 타일의 칸은 DB 쓰기 한 번(쓰기 큐의 작업 하나). 해석은 공급자가 스레드에서, 아는 칸 읽기 · 타일 셈도 스레드에서(이벤트 루프를 막지 않는다).
 - 격자 기하 — 한 칸 조회(budget:mof_grid4, UTC 날 6,000): 물을 타일이 없을 때 모르는 grid_id 만, 한 칸에 WFS 한 번, 처음 본 순서대로(같은 스냅샷 안에서는 척수가
@@ -512,6 +513,8 @@ class TrafficGridJob:
         self._tiles_warned = False
         self._tiles_error = ""  # 타일 상태를 읽지 못한 마지막 까닭(예외 이름)
         self._tile_write_error = ""  # 타일 상태를 쓰지 못한 마지막 까닭(성공하면 비운다)
+        # 타일이 격자 밖으로 준 번호(이 프로세스) — 한 칸 조회가 그 번호를 찾아도 타일을 다시 묻지 않는다(타일은 그 번호를 주었다 — 기하가 다를 뿐)
+        self._tile_off_grid_ids: set[str] = set()
         # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
         self._snapshot_ids: frozenset[str] = frozenset()
         self._now, self._mono = now, mono
@@ -1120,6 +1123,9 @@ class TrafficGridJob:
         if self.tiles.add(t, "lookup", now):
             return
         st = self.tiles.states.get(t)
+        if cell.grid_no in self._tile_off_grid_ids:
+            # 타일은 이 번호를 주었다(격자 밖 기하로 — 품질 사례 · 원본에 남았다). 확인한 한 칸 조회의 기하를 쓰고 타일은 다시 묻지 않는다
+            return
         if st is not None and st.status == "done" and self.tiles.recheck(t, cell.grid_no, now):
             log.info("traffic grid: lookup found %s inside finished tile %s — asking that tile once more", cell.grid_no, t.key)
 
@@ -1174,10 +1180,11 @@ class TrafficGridJob:
         if res.off_grid or res.rejected:
             ref = await archive(self.ctx.raw, self.wfs.name, got.body, now)
         for g, detail in res.off_grid:
+            # 부정 캐시에 적지 않는다(검토 지적 2026-10-01): 타일의 격자 밖 판정은 품질 사례 · 원본 보관만 — 그 번호는 기다리게 두고 한 칸 조회(확인한
+            # 길)가 판정한다. 한 번의 이상한 답(밀린 좌표 · 가장자리를 잘라 준 기하)이 번호 수백 개를 일주일 빼지 않게. 아는 칸은 아는 기하 그대로
             tk.tile_off_grid += 1
-            if g not in self.geometry.cells:
-                self.geometry.mark_negative(g, "off_grid", now)
-                await self._store_negative(g, "off_grid", now)
+            if len(self._tile_off_grid_ids) < MAX_TRACKED:
+                self._tile_off_grid_ids.add(g)
             tk.quality.append(
                 ("traffic_grid_off_grid", None, {"grid_no": g, "detail": detail[:200], "tile": tile.key, "raw_ref": ref})
             )
