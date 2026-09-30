@@ -1,0 +1,53 @@
+== 2026-10-01(KST) 02:58–03:05 호스트(Mac) 재시작 — 운영/로그 화면의 AIS 공백 · Hikari WARN 의 원인 확인(오케스트레이터 · 읽기 전용, 비밀값 없음)
+last reboot / last shutdown (wtmp):
+reboot time                                Thu Oct  1 03:03
+
+sysctl kern.boottime: { sec = 1790791384, usec = 7324 } Thu Oct  1 03:03:04 2026
+macOS DiagnosticReports: shutdown_stall_2026-10-01-030214 (바이너리 spindump — 내용은 읽지 않음)
+pmset -g log: 2026-10-01 03:03:47 powerd process is started · 03:03:49 Display is turned on
+
+docker inspect (StartedAt · RestartCount · OOMKilled):
+  wakeline-ais-1 started=2026-09-30T18:05:50.942008263Z restarts=0 oom=false
+  wakeline-api-1 started=2026-09-30T18:05:45.673596636Z restarts=0 oom=false
+  wakeline-db-1 started=2026-09-30T18:05:46.057501511Z restarts=0 oom=false
+  wakeline-collector-1 started=2026-09-30T18:05:45.896131094Z restarts=0 oom=false
+  wakeline-redis-1 started=2026-09-30T18:05:45.322735677Z restarts=0 oom=false
+  wakeline-web-1 started=2026-09-30T18:05:45.449035011Z restarts=0 oom=false
+  wakeline-edge-1 started=2026-09-30T18:05:56.833838252Z restarts=0 oom=false
+
+db (docker logs):
+  2026-09-30 17:58:44.753 UTC [16] LOG:  checkpoint starting: shutdown immediate
+  2026-09-30 17:58:45.187 UTC [1] LOG:  database system is shut down
+  2026-09-30 18:05:46.423 UTC [19] LOG:  database system was shut down at 2026-09-30 17:58:45 UTC
+  2026-09-30 18:05:46.439 UTC [1] LOG:  database system is ready to accept connections
+
+api (docker logs, UTC):
+  2026-09-30T17:58:43.536Z  WARN 7 --- [wakeline-api] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@45ae6046 (This connection has been closed.). Possibly consider using 
+  2026-09-30T17:58:46.637Z  WARN 7 --- [wakeline-api] [    ship-writer] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5e60e528 (This connection has been closed.). Possibly consider using 
+  2026-09-30T17:58:46.657Z  WARN 7 --- [wakeline-api] [    ship-writer] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@7d531083 (This connection has been closed.). Possibly consider using 
+  2026-09-30T17:58:48.650Z  WARN 7 --- [wakeline-api] [ioEventLoop-8-2] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [redis/<unresolved>:6379]: Connection refused (connect failed): redis/10.77.0.50:6379
+  2026-09-30T17:58:48.650Z  WARN 7 --- [wakeline-api] [ioEventLoop-8-3] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [redis/<unresolved>:6379]: Connection refused (connect failed): redis/10.77.0.50:6379
+  2026-09-30T17:58:48.888Z  WARN 7 --- [wakeline-api] [       log-sink] dev.wakeline.logs.LogSink                : log sink: XADD wakeline:logs failed, keeping 1 entries queued and retrying with backoff: org.springframework.data.redis.RedisSystemException: Redis
+  2026-09-30T17:58:51.651Z  WARN 7 --- [wakeline-api] [    ship-writer] dev.wakeline.persist.ShipWriter          : ship batch (31 rows) failed, retry in 2000 ms (queue 0): org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connectio
+  2026-09-30T17:58:51.749Z  WARN 7 --- [wakeline-api] [ioEventLoop-9-2] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [redis/<unresolved>:6379]: java.nio.channels.ClosedChannelException
+  2026-09-30T17:58:56.659Z  WARN 7 --- [wakeline-api] [hip-writer-stop] dev.wakeline.persist.ShipWriter          : ship flush failed: org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+
+ais (docker logs, UTC):
+  2026-09-30 13:49:02,987 INFO ais.shards: carrying over an open AIS gap from the previous run (ais process stopped, shard 1)
+  2026-09-30 13:49:02,987 INFO ais.shards: carrying over an open AIS gap from the previous run (ais process stopped, shard 2)
+  2026-09-30 13:49:04,536 INFO ais.sink: ais gap published: 2026-09-30T13:48:53.960Z → 2026-09-30T13:49:04.408Z (ais process stopped) scope=-90,-180,90,0
+  2026-09-30 13:49:04,537 INFO ais.sink: ais gap published: 2026-09-30T13:48:53.931Z → 2026-09-30T13:49:04.426Z (ais process stopped) scope=-90,45,90,180
+  2026-09-30 17:58:46,670 INFO ais.main: ais stopped
+  2026-09-30 18:05:51,673 INFO ais.shards: carrying over an open AIS gap from the previous run (ais process stopped, shard 1)
+  2026-09-30 18:05:51,673 INFO ais.shards: carrying over an open AIS gap from the previous run (ais process stopped, shard 2)
+  2026-09-30 18:05:53,147 INFO ais.sink: ais gap published: 2026-09-30T17:58:43.334Z → 2026-09-30T18:05:53.079Z (ais process stopped) scope=-90,-180,90,0
+  2026-09-30 18:05:53,155 INFO ais.sink: ais gap published: 2026-09-30T17:58:43.190Z → 2026-09-30T18:05:53.153Z (ais process stopped) scope=-90,45,90,180
+
+collector (docker logs, UTC):
+  2026-09-30 17:57:43,047 INFO job.aircraft: region: adsb_fi failed (ReadTimeout — read 제한 8 s 초과 (opendata.adsb.fi))
+  2026-09-30 17:58:01,383 INFO job.aircraft: region: adsb_fi failed (ReadTimeout — read 제한 8 s 초과 (opendata.adsb.fi))
+  2026-09-30 17:58:43,490 INFO main: collector stopped
+  2026-09-30 18:05:47,351 INFO main: wakeline collector starting (fixture_mode=False)
+
+→ 호스트가 02:58:43 KST 에 종료를 시작(Docker 가 모든 컨테이너를 한꺼번에 멈춤 — compose 순서 없음), 03:02 종료 · 03:03 부팅 · 03:05:45 컨테이너 재시작.
+  db 는 깨끗한 빠른 종료(충돌 복구 없음). api 의 Hikari WARN 은 db 종료 뒤 풀의 연결 확인, ShipWriter 는 '31행을 쓰지 못함 — 스트림 메시지는 대기로 남아 재시작 뒤 다시 처리'라고 적었다(이 문구가 틀릴 수 있는 종료 경합은 조사에서 찾아 따로 고친다). AIS 공백 사유 'ais process stopped' · 경계는 맞다.
