@@ -29,7 +29,19 @@ const LAZY_PARTS: Record<string, string> = {
 /** 조각과 함께만 오는 모듈(첫 화면의 정적 그래프에 없어야 한다) */
 const CARRIED_BY_PARTS: Record<string, string> = {
   "components/PortCallsSection.tsx": "선박 카드 안",
+  "lib/ship-card.ts": "선박 카드 · 선박 표의 표시 함수와 문구(저장 정적 보고 문구 · ETA · 크기 · 흘수 · 목적지 줄 · 공백 요약 · 선박 목록)",
 };
+
+/**
+ * lib/ships 에서 카드 · 표에서만 쓰던 것(lib/ship-card 로 옮김 — 첫 화면 JS 에서 빠진다). lib/ships 는 수신 검증 · 지도 · 상태 줄 · 검색이 쓰므로 첫 화면에 있다 —
+ * 이 이름들이 다시 lib/ships 에 생기면 첫 화면에 다시 실린다.
+ */
+const SHIP_CARD_ONLY = [
+  "STORED_STATIC_TITLE", "STORED_STATIC_FIELDS_TEXT", "STORED_STATIC_PORT_CALLS_TEXT", "STORED_STATIC_PORT_CALLS_UNREAD_TEXT", "STORED_STATIC_UNAVAILABLE_TEXT",
+  "storedPortCallsNote", "staticProvenance", "fmtShipEta", "fmtShipSize", "fmtDraught", "NAV_STATUS_SHORT", "navStatusShort", "POSITION_SOURCE_LABEL",
+  "positionSourceLabel", "imoField", "fmtShipType", "pickDestinationInfo", "shipOriginText", "shipDestinationLines", "SHIP_TRACK_WINDOW_MS", "gapSummary",
+  "gapDurationS", "LAST_SEEN_TITLE", "SHIP_SORT_DEFAULT", "shipRowFromLite", "shipList",
+];
 const INTERACTION_ONLY: Record<string, string> = { ...LAZY_PARTS, ...CARRIED_BY_PARTS };
 
 /**
@@ -102,6 +114,14 @@ describe("first screen of '/' carries no interaction-only UI", () => {
       expect(lazyGraph).toContain(mod);
     });
   }
+  it("card-only ship helpers live in lib/ship-card (carried by the ship card and table), not in lib/ships (first screen)", () => {
+    const ships = readFileSync(resolve(ROOT, "lib/ships.ts"), "utf8");
+    const exported = (src: string) => new Set([...src.matchAll(/^export (?:const|function|type|interface) (\w+)/gm)].map((m) => m[1]));
+    const inShips = exported(ships);
+    expect(SHIP_CARD_ONLY.filter((n) => inShips.has(n)), "lib/ships 에 다시 생긴 카드 전용 이름").toEqual([]);
+    const card = exported(readFileSync(resolve(ROOT, "lib/ship-card.ts"), "utf8"));
+    expect(SHIP_CARD_ONLY.filter((n) => !card.has(n))).toEqual([]);
+  });
   it("every import() in DashboardParts is a listed interaction-only part with its reason, and every listed part is one", () => {
     expect(dynamicTargets(["components/DashboardParts.tsx"]).sort(), "DashboardParts 의 조각 = LAZY_PARTS(까닭이 적힌 것) — 조각을 더하면 LAZY_PARTS 에 언제 보이는지 적는다")
       .toEqual(Object.keys(LAZY_PARTS).sort());

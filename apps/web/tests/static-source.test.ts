@@ -15,11 +15,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
 import { fmtDuration } from "@/lib/format";
-import {
-  staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT,
-  STORED_STATIC_TIME_LABEL,
-  STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipStatic,
-} from "@/lib/ships";
+import { STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type ShipStatic } from "@/lib/ships";
+import { staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT } from "@/lib/ship-card";
 import { resetData, setData } from "@/lib/store";
 import { validateServerMessage, type ShipSelectedMsg } from "@/lib/ws-validate";
 import { utcLeaks } from "./helpers/kst-only";

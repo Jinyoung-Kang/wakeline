@@ -4,14 +4,8 @@ import { apiGet } from "@/lib/api";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtRangeTitle } from "@/lib/time";
 import { ageS, fmtDuration, fmtSogDual } from "@/lib/format";
-import {
-  fmtDraught, fmtShipEta, LAST_SEEN_TITLE, notLiveText, fmtShipSize, fmtShipType, GAP_BREAK_MIN_MS, gapDurationS, gapSummary, imoField, isMmsi, navStatusLabel,
-  parseDestinationInfo, parseShipState, parseShipStatic, pickDestinationInfo, positionBadge, positionSourceLabel, ROT_LABEL, SHIP_CATEGORY_CODES,
-  SHIP_CATEGORIES, SHIP_SORT_DEFAULT, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIP_TRACK_WINDOW_MS, shipAgeS, shipCategory, shipDestinationLines, shipList, shipOriginText, shipRotation, shipRowFromLite, shipsChip, SHIPS_RULE_TEXT, sortShipRows,
-  staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_LABEL, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TIME_LABEL,
-  STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT,
-  type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic, type StaticSource,
-} from "@/lib/ships";
+import { notLiveText, GAP_BREAK_MIN_MS, isMmsi, navStatusLabel, parseDestinationInfo, parseShipState, parseShipStatic, positionBadge, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, shipAgeS, shipCategory, shipRotation, shipsChip, SHIPS_RULE_TEXT, sortShipRows, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic, type StaticSource } from "@/lib/ships";
+import { fmtDraught, fmtShipEta, LAST_SEEN_TITLE, fmtShipSize, fmtShipType, gapDurationS, gapSummary, imoField, pickDestinationInfo, positionSourceLabel, SHIP_SORT_DEFAULT, SHIP_TRACK_WINDOW_MS, shipDestinationLines, shipList, shipOriginText, shipRowFromLite, staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT } from "@/lib/ship-card";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";

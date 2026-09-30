@@ -35,7 +35,8 @@ import { SidePanelView } from "@/components/SidePanel";
 import { LayerPanel } from "@/components/LayerPanel";
 import { wsInvalidText } from "@/components/WsInvalidBadge";
 import { airportTip, shipTrackPointTip, sigmetTip } from "@/lib/tooltip";
-import { fmtSavedAt, fmtShipEta, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
+import { fmtSavedAt, notLiveText, shipTrackFeatures, type ShipRow } from "@/lib/ships";
+import { fmtShipEta } from "@/lib/ship-card";
 import { trackFeatureCollection } from "@/lib/track";
 import { focusChip, parseDemand } from "@/lib/demand";
 import { parseRoute } from "@/lib/route";
@@ -350,13 +351,13 @@ describe("only lib/time builds clock strings (one shared formatter) and no scree
    * 일부러 lib/time 밖에서 만드는 곳 — 파일마다 줄 수까지 고정해, 같은 파일에 새로 생겨도 걸린다.
    * - 복사 · 내려받기 형식(ISO +09:00): lib/log-line(머리 줄) · lib/logs(텍스트 · 파일 이름)
    * - 오류 화면 시각 칸(KST ISO — 오류 경계 청크는 lib/kst · lib/log-line 만 싣는다, PERF §8)
-   * - 선박 ETA(선원 입력 월 · 일 · 시 · 분, 연도 없음 — 순간이 아니라 lib/time 에 넣을 수 없다 — "MM-DD HH:MM KST" 네 줄)
+   * - 선박 ETA(선원 입력 월 · 일 · 시 · 분, 연도 없음 — 순간이 아니라 lib/time 에 넣을 수 없다 — "MM-DD HH:MM KST" 네 줄, lib/ship-card)
    */
   const ALLOWED: Record<string, number> = {
     [join("lib", "log-line.ts")]: 1,
     [join("lib", "logs.ts")]: 2,
     [join("components", "logs", "ErrorScreen.tsx")]: 1,
-    [join("lib", "ships.ts")]: 4,
+    [join("lib", "ship-card.ts")]: 4, // 선박 ETA — lib/ships 에서 카드 전용 모듈로 옮겼다(ADR-026)
   };
   /** 한국어 화면 글이 UTC 를 말하는 줄(주석 밖) — 계약 v5 §G20: 화면은 KST 만 */
   const KOREAN_UTC = /[\uAC00-\uD7A3][^"'`\n]*\bUTC\b|\bUTC\b[^"'`\n]*[\uAC00-\uD7A3]/;

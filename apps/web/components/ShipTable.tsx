@@ -1,10 +1,8 @@
 "use client";
 import { fmtKstTitle } from "@/lib/time";
 import { fmtDuration } from "@/lib/format";
-import {
-  fmtSavedAt, LAST_SEEN_TITLE, navStatusLabel, navStatusShort, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, shipRowAgeS, type ShipRow, type ShipSort,
-  type ShipSortKey,
-} from "@/lib/ships";
+import { fmtSavedAt, navStatusLabel, SHIP_CATEGORY_CODES, SHIP_CATEGORY_COLOR, SHIP_CATEGORY_LABEL, shipRowAgeS, type ShipRow, type ShipSort, type ShipSortKey } from "@/lib/ships";
+import { LAST_SEEN_TITLE, navStatusShort } from "@/lib/ship-card";
 import { SogStack } from "./UnitStack";
 
 const COLS: { key: ShipSortKey; label: string; title: string; className?: string }[] = [
