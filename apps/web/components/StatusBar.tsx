@@ -132,6 +132,9 @@ function useOverflow(rowRef: React.RefObject<HTMLDivElement | null>, probeRef: R
     const ro = new ResizeObserver(() => {
       const f = measure(row);
       if (!f) return;
+      // 잴 수 있게 됐다(첫 측정이 폭 0 — 숨김 · 배치 전 — 이었어도). 옮길 칩이 없어 아래에서 끝나도 잰 줄로 둔다(리뷰 2026-09-30: 전에는 칩 모음이
+      // 바뀔 때까지 data-measured 가 없고 경고 칩의 줄바꿈도 막혀 잘렸다). 이미 참이면 React 가 다시 그리지 않는다
+      setMeasured(true);
       if (f.wrap !== current.current.wrap) nextFrame(); // 줄 높이가 바뀌는 일 — 다음 프레임에
       if (sameSet(current.current.hidden, f.hidden)) return;
       if (syncThisFrame && raf) { nextFrame(); return; }

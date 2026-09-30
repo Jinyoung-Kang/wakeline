@@ -422,6 +422,26 @@ describe("details disclosure: a button with aria-expanded; opens and closes by m
       delete proto.clientWidth;
     }
   });
+  it("a row first mounted without layout (width 0) is marked measured by the first ResizeObserver measure even when nothing has to move (review 2026-09-30)", async () => {
+    const observers: { cb: () => void; targets: unknown[] }[] = [];
+    vi.stubGlobal("ResizeObserver", class { targets: unknown[] = []; constructor(public cb: () => void) { observers.push(this); } observe(t: unknown) { this.targets.push(t); } unobserve() {} disconnect() { this.targets = []; } });
+    let rowW = 0; // display:none 조상 안에 붙은 상태 — 첫 측정(layout effect)은 재지 않는다
+    const proto = MiniElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, "offsetWidth", { configurable: true, get() { return 60; } });
+    Object.defineProperty(proto, "clientWidth", { configurable: true, get(this: MiniElement) { return this.getAttribute("data-testid") === "statusbar-row" ? rowW : 0; } });
+    vi.stubGlobal("getComputedStyle", () => ({ columnGap: "8px", paddingLeft: "12px", paddingRight: "12px" }));
+    try {
+      await mount();
+      expect(byId("statusbar-row")!.getAttribute("data-measured")).toBeNull();
+      rowW = 4000; // 보이게 됐다 — 넉넉해서 옮길 칩이 없다(옮김 결과는 처음과 같다)
+      await React.act(async () => { observers[observers.length - 1].cb(); });
+      expect(byId("statusbar-row")!.getAttribute("data-measured")).toBe("true");
+      expect(byId("statusbar-details-toggle")!.textContent).not.toContain("+");
+    } finally {
+      delete proto.offsetWidth;
+      delete proto.clientWidth;
+    }
+  });
   it("before the first measurement (server HTML, before hydration) the row is one clipped line — it never paints two or three lines and then shrinks (harness at 390 px: 75 → 30 px)", async () => {
     const row = byTestId(bar(), "statusbar-row")!;
     const cls = row.attrs.class ?? "";
