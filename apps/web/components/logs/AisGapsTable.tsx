@@ -35,7 +35,7 @@ export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: Lo
         <div className="flex gap-1" role="group" aria-label="기간">
           {PERIODS.map((p) => <button key={p} type="button" className="btn normal-case!" aria-pressed={period === p} onClick={() => setPeriod(p)}>{LOG_PERIOD_LABEL[p]}</button>)}
         </div>
-        <button type="button" className="btn" onClick={() => setTick((t) => t + 1)}>새로 고침</button>
+        <button type="button" className="btn" onClick={() => setTick((t) => t + 1)}>새로고침</button>
         {data ? (
           <span className="text-fg-3">
             기간 <KstRange a={data.from} b={data.to} /> · 끝난 공백 <span className="mono">{closed}</span>건

@@ -249,7 +249,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtKstClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
           </button>
         ))}</div>
-        <button className="btn" onClick={refresh}>refresh</button>
+        <button className="btn" onClick={refresh} title="모든 탭을 지금 다시 받는다(15 s 주기와 따로)">새로고침</button>
         <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${tabPath(tab, runsMode)})의 마지막 성공 응답 시각(KST) — 15 s 마다 다시 요청${lastOk[tab] ? ` · ${fmtTimeTitle(lastOk[tab])}` : ""}`} data-testid="ops-last-ok">갱신 {fmtKstClock(lastOk[tab])}</span>
         {err || TABS.some((t) => tabErr[t]) ? (
           <span className="text-[11px] text-bad" role="alert">

@@ -386,7 +386,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 ["settings · audit · dlq", "운영 설정(판 번호로 충돌 확인), 운영 행동 감사 기록, 처리하지 못한 메시지."],
                 ["pipeline", "파이프라인 손실 지표 — 0 이 아닌 손실 지표가 있으면 탭에 ● 수. AIS 수신 진단(keepalive 왕복 · 이벤트 루프 지연 · 멈춤 · WS 수신 버퍼 · 원문 대기 시간 · 깊이 · 짧은 재연결)도 여기 — 최근 창의 최댓값과 누적 수이고 손실 수가 아니라 색으로 판정하지 않습니다. 창 · 상한 · 시간 초과는 수집기가 고른 값을 응답에서 읽어 ‘수집기 설정’으로 적습니다."],
               ]} />
-              <P>15 s 마다 모든 탭을 다시 받습니다. 탭마다 마지막 성공 시각{ref("ops", 2)}을 따로 두고, 한 탭만 실패해도 그 탭에 ‘갱신 실패’와 이유가 붙습니다.
+              <P>15 s 마다 모든 탭을 다시 받습니다(곧바로 받으려면 ‘새로고침’). 탭마다 마지막 성공 시각{ref("ops", 2)}을 따로 두고, 한 탭만 실패해도 그 탭에 ‘갱신 실패’와 이유가 붙습니다.
                 공공데이터포털 공급자 셋(portmis — 항만 입출항 · komsa_traffic · mof_grid4 — 연안 교통량)도 여기서 상태를 보고 켜고 끕니다.</P>
               <h4 className="mt-4 mb-1 text-[12.5px] font-semibold">공급자 오류 해결 표시</h4>
               <UL>
@@ -408,7 +408,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>보기</B>{ref("logs", 3)} — 목록(최신 순) / 묶음(같은 지문 fp 끼리, 건수 · 처음 · 마지막).</li>
                 <li><B>상세</B> — 전체 메시지 · 예외 · 스택 · 같은 지문 묶음 통계 · 같은 요청 id 의 다른 항목. 화면의 오류 문구에 붙은 요청 id 로 여기서 같은 요청을 찾습니다.</li>
                 <li><B>복사 · 내려받기</B> — 보이는 목록 복사, <span className="mono">.txt</span>(시각 KST), <span className="mono">.ndjson</span>(api 가 준 그대로 — ts 는 서버 형식 “…Z”).</li>
-                <li><B>새 항목</B> — 15 s 마다 확인해 ‘새 항목 N건’ 단추를 띄웁니다. 누를 때만 목록이 바뀝니다(읽는 중에 줄이 밀리지 않게).</li>
+                <li><B>새 항목</B> — 15 s 마다 확인해 ‘새 항목 N건’ 단추를 띄웁니다. 누를 때만 목록이 바뀝니다(읽는 중에 줄이 밀리지 않게). ‘새로고침’은 지금 필터로 목록을 곧바로 다시 받습니다(AIS 수신 공백 탭에도 같은 단추).</li>
                 <li><B>AIS 수신 공백</B> — 두 번째 탭. AIS 수신이 끊긴 구간의 기록.</li>
               </UL>
               <h4 className="mt-4 mb-1 text-[12.5px] font-semibold">해결 표시 — 지우지 않고 가린다</h4>
