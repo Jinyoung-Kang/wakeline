@@ -956,3 +956,35 @@ async def test_a_stalled_listing_without_a_streak_is_a_missing_run_with_the_reas
     assert (meta["latest_tm"], meta["note"], meta["available"]) == ("202610010305", "", "1")
     assert any(m.startswith("kma radar: the KMA listing has a tm after tm=202609301950 again") for m in _infos(caplog))
     assert not _warns(caplog)
+
+
+# ---- '옛 tm' 의 경계는 영상 보관 3 h 다(리뷰 2026-10-01 · 레인 kma 8차 · 낮음 — 문서에 적은 뜻을 시험으로 못 박는다) -----------------------------------------
+async def test_a_tm_inside_the_3_h_retention_becoming_the_latest_is_stored_with_its_store_time_as_the_stale_clock(env):
+    """연속(13:10 부터) 중 목록은 19:50 에서 멈췄고 22:30 에 내려받기가 돌아왔다. 22:35 확인이 19:50(2 h 45 min 전 — 영상 보관 3 h 안)의 gzip 을 받아 새 latest_tm
+    으로 저장한다 — 제때 받았어도 아직 보였을 나이다. meta fetched_at(웹 '최신 tm 첫 수집' · api meta.stale · 웹 STALE 의 시계)은 그 저장 시각(22:35)이다 — 19:50 을
+    처음 저장한 때가 그때라 그대로 적는다(앞선 13:05 의 시각으로 두면 '최신 tm 첫 수집'이 19:50 을 받은 적 없는 시각을 말한다 — 고르지 않은 수). 그래서 22:35 부터
+    15분은 STALE 이 없고(나이 0 부터), 그 뒤로 웹 STALE 과 목록 멈춤 'missing' 이 함께 뜬다. 3 h 를 넘은 tm 은 저장하지 않는다 — 22:40 에는 19:45 만 받고 19:40
+    이하(그때 이미 3 h 넘음)는 고르지 않는다."""
+    mod, r, ctx, clock, runs = env
+    prov = StalledKma(clock, down_from="202609301310", list_until="202609301950")
+    job = mod.KmaRadarJob(prov, ctx)
+    await _run(job, clock, _walk("202609301100", "202609302225"))
+    assert job.missing is not None and (await r.hget(mod.KEY_META, "latest_tm")) == "202609301305"
+    prov.down_from = "209912312355"  # 22:30 — 내려받기가 돌아왔다(목록은 여전히 19:50 에서 멈춤)
+    prov.binaries.clear()
+    runs.clear()
+    got: dict[str, tuple[str, int, str]] = {}
+    for t in _walk("202609302230", "202609302300"):
+        clock["now"] = t
+        await job.run_once()
+        got[t] = (runs[-1]["status"], runs[-1]["records_in"], runs[-1].get("error_text") or "")
+    assert got["202609302230"][0] == "waiting"  # 늦춘 연속의 기다림(다음 확인 22:35)
+    assert got["202609302235"][:2] == ("ok", 1) and job.missing is None
+    assert got["202609302240"][:2] == ("ok", 1)  # 19:45 — 보관 창의 빈 곳(3 h 안)
+    assert prov.binaries == ["202609301950", "202609301945"]  # 19:40 이하는 22:40 에 이미 3 h 넘었다 — 고르지 않는다
+    meta = await r.hgetall(mod.KEY_META)
+    assert (meta["latest_tm"], meta["fetched_at"]) == ("202609301950", _utc("202609302235"))  # 19:50 을 처음 저장한 시각
+    assert [got[t][0] for t in ("202609302245", "202609302250")] == ["ok", "ok"]  # 첫 저장 뒤 15분까지
+    assert got["202609302255"][0] == "missing" and got["202609302255"][2].endswith(
+        "newest frame tm=202609301950 first stored 20 min ago"
+    )

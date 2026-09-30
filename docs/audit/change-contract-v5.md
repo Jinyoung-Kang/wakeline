@@ -849,7 +849,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
       그저께 이전이면 '마지막 tm 뒤로 새 tm 없음'은 모른다(`missing_list_newer` 빈 값).
     - 연속이 없을 때의 KST 자정 넘김(배포 2026-10-01 02:07 KST 에 본 것): 다시 띄운 수집기가 옛 판의 거짓 '확인 멈춤'으로 마지막 확인이 00:05 에 머문 연속을 이어받기
       상한(45분) 밖이라 버렸고, 연속이 없으니 창 밖에서는 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — 주기마다 `ok`, 연속이 다시 열리지 않았다. 이제 연속이 없어도 새 날
-      목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고 저장한 프레임이 전날 끝(23:55)에 닿지 않았으면 전날 목록을 **덧붙여** 읽는다(`_behind_prev_day` — 자정 직후
+      목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고 저장한 프레임이 전날 끝(23:55)에 닿지 않았으면(레인 kma 8차부터 저장했거나 받아 본 가장 새 tm — meta
+      `latest_tm` 포함: 아래 '전날 끝에 닿았는가') 전날 목록을 **덧붙여** 읽는다(`_behind_prev_day` — 자정 직후
       창과 같은 덧붙이는 목록: 실패하면 WARN 한 줄 · 예산이 없으면 INFO · 오늘 목록으로 계속). 그러면 전날의 보관 창 tm 을 받으려 하고, 없으면 R-03 세 번 뒤 연속이
       다시 열린다(모의: 두 주기 × 호출 6 = 목록 2 + 받기 4, 그 뒤 15분마다 3). 전날 끝까지 받았으면 읽지 않는다 — 새 날 목록이 하루 내내 비어도 5분마다 호출을 늘리지
       않는다. 시험 `test_kma_list_idle.py` +2(다시 띄운 수집기가 연속을 다시 연다 — 고치기 전 실패 · 전날 끝까지 받았으면 새 날 목록만).
@@ -897,6 +898,41 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
         not stored`), `fetched_at` 은 앞선 `latest_tm` 보다 새 tm 을 저장할 때만 옮긴다. api · 웹 · 스키마 변경 없음(값의 뜻 그대로 — '최신 tm 첫 수집'). 받아 본 적 없는
         옛 tm 은 전처럼 고른다(연속을 다시 여는 R-03). 시험 `test_kma_list_idle.py` +3(고치기 전 실패 — 19:55–03:00 다시 받기 24번 · 최신 tm 을 다시 받아 옮긴 STALE 시계 ·
         5 h 지난 tm 의 gzip 을 새 latest_tm 으로 저장).
+        - **'옛 tm' 의 뜻과 웹이 실제로 보이는 것(2026-10-01 · 레인 kma 8차 — 리뷰)**: '옛 tm' 은 지금(KST 벽시계)에서 **영상 보관 3 h(`FRAME_TTL_S`) 넘게 지난 tm**
+          이다 — 그보다 짧게 지난 tm 은 옛 tm 이 아니다. 목록이 멈춘 뒤 파일이 돌아와 3 h 안의 tm(예: 22:35 에 19:50 — 2 h 45 min 전)이 새 `latest_tm` 이 되면 저장해
+          보이고(제때 받았어도 아직 보였을 나이), `fetched_at` 은 그 저장 시각이다 — 그 tm 을 처음 저장한 때가 그때라 '최신 tm 첫 수집'이 그대로 적는다. 그래서 그 뒤
+          15분은 KMA 칩 나이가 0 부터이고 STALE 이 없다(그 뒤 STALE · 아래 '목록 멈춤' `missing` 이 함께). 고르지 않은 수: 그런 tm 에서 앞선 `fetched_at` 을 두기 —
+          '최신 tm 첫 수집'이 그 tm 을 받은 적 없는 시각(앞선 latest_tm 의 저장 시각)을 말하게 된다(짓는 값). 3 h 를 넘은 tm 은 저장하지 않는다(위). 시험
+          `test_kma_list_idle.py` +1(경계를 못 박는다 — 22:35 에 19:50 저장 · `fetched_at` 22:35 · 22:40 에 19:45 만 · 22:55 `missing`).
+          앞 절의 '웹(값 그대로 — STALE 은 이제 제때 뜬다)'은 프레임이 남은 처음 3 h 에만 맞았다. 프레임이 모두 만료되면(`available` 0 · 연속 없음) 상태 바의 KMA 칩은
+          STALE 과 함께 사라지고(`lib/statusbar` — 프레임이나 '파일 없음' 연속이 있을 때만 칩, 바꾸지 않았다) 패널은 `사용 불가 — 아직 수집되지 않음 (HTTP 200)` 이었다 —
+          아래 '연속 밖의 목록 멈춤'이 까닭을 note 로 싣는다.
+      - **전날 끝에 닿았는가 — 저장했거나 받아 본 tm(2026-10-01 · 레인 kma 8차 — 리뷰)**: `_behind_prev_day` 의 '저장한 프레임이 전날 끝(23:55)에 닿지 않았다'를 Redis 에
+        남은 프레임만으로 보던 것을 고친다 — 프레임은 저장 3 h 뒤 만료되고 옛 tm 은 다시 받지 않으므로(앞 절), 23:55 까지 받은 뒤 새 날 목록이 빈 채 03:00 이 지나면
+        주기마다 받을 것이 없는 전날 목록(모든 tm ≤ latest_tm 23:55 · 3 h 넘음)을 필요한 목록으로 읽었고 그 목록이 한 번 멈추면 `error`(WARN · 공급자 실패)였다(리뷰 모의
+        00:00–06:00 · 전날 목록 ReadTimeout 두 번: 전날 목록 41번 · `error` 2 · WARN 2 — 레인 7차 앞 판은 5번). 이제 이 작업이 저장했거나 파일을 받아 본 가장 새 tm(남은 프레임 · meta `latest_tm` — 프레임이
+        만료돼도 남는다 · 받아 본 옛 tm)으로 본다. 다시 띄운 수집기가 버린 연속을 다시 여는 길은 그대로(latest_tm 13:05 < 23:55). 예산 거절 오류 글자는 `… (newest
+        stored tm=<latest_tm>)`(프레임이 만료됐어도 — 전에는 `none stored`). 시험 `test_kma_list_idle.py` +1(고치기 전 실패 — 02:55 부터 전날 목록 · `error`).
+      - **연속 밖의 목록 멈춤 — `missing` · meta note(2026-10-01 · 레인 kma 8차 — 리뷰)**: '파일 없음' 연속이 없고(파일은 받을 수 있다), 읽은 목록(그 시각 이하)이 이
+        작업이 저장했거나 파일을 받아 본 가장 새 tm 뒤로 새 tm 을 싣지 않은 채 meta `fetched_at`(그 latest_tm 을 처음 저장한 시각 — STALE 시계)이 900 s(`LIST_IDLE_AFTER_S`
+        — 웹 · api 의 KMA STALE 기준과 같은 값, 선택값) 넘게 지났으면 받을 새 tm 이 없는 주기도 `ok` 가 아니라 `missing` 이다: 오류 글자 `no new frame stored — the KMA
+        listing <날[+날]> has no tm after tm=<tm> (newest listed tm=<tm> | no tm listed); newest frame tm=<latest_tm> first stored N min ago`(받아 본 옛 tm 이면 `; tm=… has
+        a file but is older than the 3 h image retention — not stored` 를 붙인다), http 200 · 기록 0 · 공급자 성공 아님(`last_success_at` 그대로 — 예산 사용량만).
+        meta `note` = `기상청 목록에 tm <tm>(KST) 뒤 새 tm 없음`(tm 만 — 주기마다 바뀌는 값은 넣지 않는다), 목록이 다시 자라면 빈 값. WARN 은 멈춤마다 한 번 `kma radar:
+        no new frame — …` + 60분(`MISSING_REMIND_S`)마다 `kma radar: still no new frame — …`, 끝나면 INFO `the KMA listing has a tm after tm=… again`. 목록 실패 ·
+        429 · 예산으로 멈춘 주기는 판정하지 않는다. 전에는 목록이 멈추고 파일은 있는 동안 주기마다 `ok` · 기록 0 · 공급자 성공 · WARN 없음이었다(리뷰 모의 19:50 멈춤 →
+        다음 날 12:00: 194 주기 모두 `ok` · WARN 0 · note 빈 값 · 23:00 뒤 `available` 1 인 주기 0 — §G22 가 연속 안에서 없앤 모양).
+        - api: `/radar/kr` 의 ETag 에 `note` 를 넣는다(`WeatherController.radarKr`) — 전에는 note 만 바뀌면(프레임은 이미 만료 · status 200 · latest_tm 그대로) 304 라
+          웹(fetch 기본 캐시 — 브라우저가 If-None-Match 로 다시 확인)이 옛 까닭을 붙잡았다. 응답 필드 · 스키마 변경 없음. 시험 `RadarKrIT.aChangedNoteAloneChangesTheEtag`
+          (고치기 전 실패 — 304).
+        - 웹이 실제로 보이는 것(값은 api 그대로 — 웹 코드는 운영 설명 한 줄만 바꿨다): 프레임이 남은 동안(저장 뒤 3 h) 상태 바 KMA 칩 `age …` + STALE(`fetched_at` 나이
+          > 15분)와 패널 STALE. 프레임이 모두 만료되면(`available` false · 연속 없음) 상태 바에는 KMA 칩이 없고(`lib/statusbar` 규칙 그대로 — 프레임이나 연속이 있을
+          때만), 레이더 패널은 `사용 불가 — 기상청 목록에 tm 202609301950(KST) 뒤 새 tm 없음 (HTTP 200)`, 상세 표의 `레이더 · 기상청` 행은 상태 `사용 불가` · 출처 칸에 같은
+          note, 범례는 `기상청 레이더 사용 불가`(까닭 없음 — 범례는 '파일 없음' 연속만 적는다). 운영: RUNS `missing`(설명 `RUN_STATUS_TITLE.missing` 에 이 경우를 더했다) ·
+          공급자 LAST SUCCESS 가 멈춤 · /logs WARN. 칩을 까닭과 함께 남길지는 웹 규칙을 바꾸는 제품 결정이라 이 레인에서 하지 않았다.
+        - 시험: collector `test_kma_list_idle.py` +1 · 기존 2 고침(고치기 전 실패 — 19:55–03:00 `ok` 3 뒤 `missing` · 20:05 뒤 공급자 성공 없음 · WARN 1 + 알림 6 · 만료 뒤
+          note · 목록이 자라면 `ok` · note 지움, 빈 새 날 목록은 23:55 첫 저장 뒤 15분까지만 `ok`, 옛 tm 의 gzip 로 연속이 닫힌 뒤 주기는 멈춤 `missing`), api
+          `RadarKrIT` +1, web `tests/kma-list-idle.test.ts` +1(운영 설명).
     - 웹(KST 만 · 값은 api 그대로 · 모르면 쓰지 않는다 — `lib/kr-radar krMissing`): `list_newer` 가 0 이면 한 줄에 `기상청 목록에도 19:50 KST 뒤 새 tm 없음`(마지막 tm 이
       지금과 다른 KST 날이면 `09-30 19:50 KST`) — KMA 칩 title · 상세 행 값 · 레이더 패널 · 범례 · 타임라인 · 운영 공급자 줄(`providerMissing` 이 해시 글자를 본다). title 에
       목록의 가장 새 tm(없으면 '읽은 목록에 tm 없음'). 모르거나 서로 맞지 않으면 적지 않는다. '확인 멈춤' 기준은 그대로(확인 간격 × 3, 아래로 15분) — 수집기가 목록만 읽은
