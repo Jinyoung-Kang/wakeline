@@ -324,14 +324,28 @@ async def test_the_tile_map_is_awaited_then_the_fill_goes_on_without_it_and_says
             raise NoPermissionError("NOPERM this user has no permissions to access one of the keys used as arguments")
         return await real(key)
 
+    real_hset = r.hset
+
+    async def hset(key, *a, **kw):
+        if key == TILES_KEY:
+            raise NoPermissionError("NOPERM this user has no permissions to access one of the keys used as arguments")
+        return await real_hset(key, *a, **kw)
+
     r.hgetall = hgetall  # type: ignore[method-assign]
-    await job.run_once()
+    r.hset = hset  # type: ignore[method-assign]
+    for _ in range(5):
+        await job.run_once()
+        clock.advance(30)
     assert wfs.boxes == [] and wfs.asked == [] and r.kv[HB]["traffic_grid_fill_state"] == "waiting_tiles"
     clock.advance(tg.DB_WAIT_S)
-    await job.run_once()
+    for _ in range(3):
+        await job.run_once()
+        clock.advance(30)
     assert wfs.boxes == [A.box]
     warns = [x.getMessage() for x in caplog.records if x.name == LOGGER and x.levelno == logging.WARNING]
     assert len(warns) == 1 and "NoPermissionError" in warns[0] and "restart" in warns[0]
+    # 틱마다 같은 실패를 쌓지 않는다 — 읽기 · 쓰기 실패는 까닭(예외 이름)이 바뀔 때만 INFO 한 줄
+    assert len(lines(caplog, "tile states not readable")) == 1 and len(lines(caplog, "tile state write failed")) == 1
 
 
 async def test_a_tile_never_marks_an_id_not_found_only_a_lookup_does():

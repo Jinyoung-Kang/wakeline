@@ -507,6 +507,7 @@ class TrafficGridJob:
         self._tiles_seeded = False  # 아는 칸(marine_grid4)으로 타일을 넣었다
         self._tiles_warned = False
         self._tiles_error = ""  # 타일 상태를 읽지 못한 마지막 까닭(예외 이름)
+        self._tile_write_error = ""  # 타일 상태를 쓰지 못한 마지막 까닭(성공하면 비운다)
         self._snapshot_ids: frozenset[str] = (
             frozenset()
         )  # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
@@ -614,8 +615,9 @@ class TrafficGridJob:
             async with asyncio.timeout(REDIS_TIMEOUT_S):
                 fields = await self.ctx.status.redis.hgetall(TILES_KEY)
         except Exception as e:  # noqa: BLE001 — 기다린 뒤 메모리로(아래)
+            if type(e).__name__ != self._tiles_error:  # 틱마다 같은 실패를 쌓지 않는다 — 까닭이 바뀔 때만
+                log.info("traffic grid: bbox tile states not readable yet (%s) — retried every tick", type(e).__name__)
             self._tiles_error = type(e).__name__
-            log.info("traffic grid: bbox tile states not readable yet (%s)", self._tiles_error)
             return
         n = self.tiles.load(fields or {})
         self._tiles_loaded = True
@@ -1346,8 +1348,14 @@ class TrafficGridJob:
         try:
             async with asyncio.timeout(REDIS_TIMEOUT_S):
                 await self.ctx.status.redis.hset(TILES_KEY, tile.key, encode_state(state))
+            self._tile_write_error = ""
         except Exception as e:  # noqa: BLE001 — 메모리에는 남는다(다시 시작하면 그 타일을 다시 물을 뿐)
-            log.info("traffic grid: tile state write failed (%s)", type(e).__name__)
+            if type(e).__name__ != self._tile_write_error:  # 타일마다 같은 실패를 쌓지 않는다 — 까닭이 바뀔 때만
+                log.info(
+                    "traffic grid: tile state write failed (%s) — finished tiles stay in memory and are asked again after a restart",
+                    type(e).__name__,
+                )
+            self._tile_write_error = type(e).__name__
 
     async def _store_negative(self, g: str, reason: str, now: datetime) -> None:
         try:
