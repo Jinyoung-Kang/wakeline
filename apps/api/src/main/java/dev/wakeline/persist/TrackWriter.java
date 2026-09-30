@@ -64,12 +64,15 @@ public class TrackWriter implements SmartLifecycle {
      * 오래 죽어 있을 때 표식과 PEL 이 끝없이 늘지 않게. 상한으로 놓는 것이 이미 스트림에서 지워져 PEL 로 되살릴 수 없는 메시지뿐이도록, 보존 창에 들 수
      * 있는 메시지 수 이상으로 잡는다. wakeline:aircraft 는 시간으로 자른다(MINID ~ 지금 − 2.5 h = 9,000 s, collector publisher.py — 바이트 예산은
      * 창을 줄일 뿐이다). 9,000 s 의 메시지 수를 설정의 가장 짧은 주기로 세면(수집기 코드의 상수):
-     * 관심 지역 ≤ 1,800(region_poll_s 하한 5 s — runtime_settings.py REGION_POLL_RANGE_S; 기본 10 s 면 900) · 전세계 ≤ 150(하한 60 s; 기본 120 s 면 75) ·
-     * focus ≤ 2,572(5 s 마다 + 새 hex 의 빠른 첫 조회는 5 s 에 한 번 · 앞 조회 2 s 뒤부터 → 7 s 에 최대 2번, 한 번에 hex ≤ 50 = 메시지 1개 —
-     * jobs/demand.py) · hot ≤ 2,400(셀 ≤ 6 개가 30 s 마다 + 새 셀의 즉시 첫 조회 30 s 에 2번) = 6,922. 그래서 10,000.
+     * 관심 지역 ≤ 1,801(region_poll_s 하한 5 s — runtime_settings.py REGION_POLL_RANGE_S; 기본 10 s 면 900) · 전세계 ≤ 151(하한 60 s; 기본 120 s 면 75) ·
+     * focus ≤ 2,882(정기 5 s + 새 hex 의 빠른 첫 조회 — 앞 조회 2 s 뒤부터, 빠른 것끼리 5 s; 지금 상수로는 7 s 에 2번 = 2,572 지만 상수가 바뀌어도
+     * 맞는 식으로 센다. 한 번에 hex ≤ 50 = 메시지 1개 — jobs/demand.py) · hot ≤ 2,408(창 30 s 마다 그때 있던 셀 ≤ 6 개가 한 번 + 새 셀의 즉시 첫 조회
+     * 30 s 에 2번) · 수집기 Publisher 의 재전송 큐 ≤ 1,000(QUEUE_MAX — Redis 장애 뒤 새 ID 로 다시 XADD. 못 보낸 발행을 대신하므로 보통은 늘지
+     * 않지만 보수적으로 더한다) = 8,242. 그래서 10,000.
      * 조사 2026-10-01: 예전 1,000 은 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간 트리밍 뒤로는 기본 주기의 관심 지역 · 전세계(975)만으로 여유가
      * 약 3 % 였고, focus 임대가 하나라도 있으면(5 s 마다 → 1,800 더) 스트림에 아직 있는 메시지를 놓았다. DB 장애가 길면 대개 큐 상한(50,000 행)이
-     * 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로 센다). 계산: PersistUnitTest.
+     * 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로 센다). 이 계산은 tools/contract_check.py(receipt_mark_bounds)가
+     * 수집기 상수로 다시 한다 — 상수가 바뀌어 상한을 넘으면 그 검사가 실패한다.
      */
     static final int MAX_MARKS = 10_000;
     static final long STATIC_BACKOFF_MS = 30_000;

@@ -12,6 +12,7 @@ import gzip
 import io
 import json
 import logging
+import math
 import re
 import sys
 from datetime import UTC, datetime
@@ -27,6 +28,7 @@ from referencing import Registry, Resource  # noqa: E402
 
 from wakeline_collector.ais.bbox import SCOPE_RE, format_bboxes, parse_shards  # noqa: E402
 from wakeline_collector.ais.book import STATE_FIELDS, ShipBook  # noqa: E402
+from wakeline_collector.ais.config import AisSettings  # noqa: E402
 from wakeline_collector.ais.diag import LoopLag  # noqa: E402
 from wakeline_collector.ais.parse import (  # noqa: E402
     POSITION_CLASS,
@@ -39,15 +41,27 @@ from wakeline_collector.ais.parse import (  # noqa: E402
 )
 from wakeline_collector.ais.queue import RawQueue  # noqa: E402
 from wakeline_collector.ais.shards import SHARD_FIELDS, ShardSet  # noqa: E402
-from wakeline_collector.ais.sink import AisSink  # noqa: E402
+from wakeline_collector.ais.sink import CHUNK, AisSink  # noqa: E402
 from wakeline_collector.ais.worker import Worker  # noqa: E402
-from wakeline_collector.demand import HotCell, parse_cell_key  # noqa: E402
-from wakeline_collector.jobs.demand import focus_payload, hot_payload  # noqa: E402
+from wakeline_collector.demand import MAX_FOCUS_HEXES, MAX_HOT_CELLS, HotCell, parse_cell_key  # noqa: E402
+from wakeline_collector.jobs.demand import (  # noqa: E402
+    FOCUS_BATCH,
+    FOCUS_FAST_EVERY_S,
+    FOCUS_INTERVAL_S,
+    FOCUS_MIN_GAP_S,
+    HOT_LEVELS_S,
+    HOT_NEW_BURST,
+    HOT_NEW_WINDOW_S,
+    focus_payload,
+    hot_payload,
+)
 from wakeline_collector.logsink import ENTRY_MAX_BYTES, LogSink  # noqa: E402
 from wakeline_collector.masking import _SECRETS, LOG_LIMIT, install_log_masking, mask, register_secrets  # noqa: E402
 from wakeline_collector.models import Sigmet  # noqa: E402
 from wakeline_collector.normalize import from_readsb  # noqa: E402
-from wakeline_collector.publisher import Publisher  # noqa: E402
+from wakeline_collector.publisher import QUEUE_MAX as PUBLISHER_QUEUE_MAX  # noqa: E402
+from wakeline_collector.publisher import STREAM_RETENTION_S, Publisher  # noqa: E402
+from wakeline_collector.runtime_settings import RuntimeSettings  # noqa: E402
 from wakeline_collector.sigmet_parse import parse_airsigmet, parse_isigmet  # noqa: E402
 
 SCHEMAS = ROOT / "schemas"
@@ -192,6 +206,8 @@ def main() -> int:
     failures += check_logs()
     # 7. WS 메시지(계약 v5 §E1 · ADR-020): api 시험이 실제 빌더로 만든 웹 fixture 를 Python 으로도 같은 스키마로
     failures += check_ws_samples()
+    # 8. api 영수증 표식 상한(ShipWriter · TrackWriter MAX_MARKS) ≥ 스트림 보존 창에 들 수 있는 메시지 수 — 수집기 상수에서 센다
+    failures += check_receipt_mark_caps()
     print("contract check:", "FAILED" if failures else "PASSED")
     return 1 if failures else 0
 
@@ -704,6 +720,75 @@ WS_SCHEMAS = SCHEMAS / "ws"
 WS_SAMPLES = ROOT / "apps" / "web" / "tests" / "fixtures" / "ws-samples.v1.json"
 # RFC 3339 날짜-시간(시간대 필수). 이 환경의 FormatChecker 는 date-time 을 보지 않는다(rfc3339 검사기 없음) — WS 검사에만 직접 건다
 RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
+
+
+JAVA_PERSIST = ROOT / "apps" / "api" / "src" / "main" / "java" / "dev" / "wakeline" / "persist"
+
+
+def _java_max_marks(name: str) -> int | None:
+    m = re.search(r"static final int MAX_MARKS = ([0-9_]+);", (JAVA_PERSIST / name).read_text())
+    return int(m.group(1).replace("_", "")) if m else None
+
+
+def _field_floor(model: type, name: str) -> float:
+    """pydantic 설정 필드의 하한(ge) — 운영자가 줄 수 있는 가장 짧은 주기."""
+    for meta in model.model_fields[name].metadata:  # type: ignore[attr-defined]
+        ge = getattr(meta, "ge", None)
+        if ge is not None:
+            return float(ge)
+    raise AssertionError(f"{model.__name__}.{name} has no lower bound")
+
+
+def receipt_mark_bounds() -> dict[str, int]:
+    """보존 창(MINID ~ 지금 − STREAM_RETENTION_S) 안에 들 수 있는 메시지 수의 상한 — 설정의 가장 짧은 주기로, 수집기 코드의 상수에서 센다.
+    api 는 메시지마다 표식 하나를 잡는다(ShipWriter · TrackWriter). 두 Java 클래스의 MAX_MARKS 설명이 같은 계산을 글로 적는다.
+    - 선박(wakeline:ships, 'ships'): ais sink 는 ais_flush_s(하한 = 설정 ge)마다 XADD 한 번(바뀐 선박 · 정적 정보가 CHUNK 를 넘을 때만 나눈다 —
+      장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다). XADD 실패는 다음 flush 에 다시 싣는다(따로 쌓는 재전송 큐가 없다). + 끝 flush 1.
+      ais_gap 메시지는 순서 큐(OrderedWriter)로 가 ShipWriter 표식을 잡지 않는다.
+    - 항공기(wakeline:aircraft): 관심 지역 · 전세계 = 주기 하한마다 1(RuntimeSettings 가 거는 하한을 그대로 읽는다),
+      focus = 시작 사이 간격이 정기(FOCUS_INTERVAL_S) 또는 빠른 첫 조회(FOCUS_MIN_GAP_S, 빠른 것끼리는 FOCUS_FAST_EVERY_S)이므로
+      runs ≤ 1 + W/INTERVAL + (W/FAST_EVERY + 1)·max(0, 1 − MIN_GAP/INTERVAL), 한 번에 hex ≤ MAX_FOCUS_HEXES → ceil(/FOCUS_BATCH) 개,
+      hot = 창 [a, a+30 s) 의 정규 조회는 그때 살아 있던 셀(≤ MAX_HOT_CELLS)마다 한 번 + 새 셀의 즉시 조회 HOT_NEW_BURST / HOT_NEW_WINDOW_S,
+      + Publisher 의 재전송 큐(QUEUE_MAX — Redis 장애 뒤 새 ID 로 다시 XADD, 보수적으로 더한다)."""
+    w = float(STREAM_RETENTION_S)
+    rt = RuntimeSettings(None)  # type: ignore[arg-type]
+    rt._cache = {"region_poll_s": "0", "global_poll_s": "0"}  # 운영자가 줄 수 있는 가장 짧은 값 → 코드가 거는 하한
+    region = math.ceil(w / rt.region_poll_s) + 1
+    global_ = math.ceil(w / rt.global_poll_s) + 1
+    fast = math.ceil(w / FOCUS_FAST_EVERY_S) + 1
+    focus_runs = 1 + math.ceil(w / FOCUS_INTERVAL_S) + math.ceil(fast * max(0.0, 1 - FOCUS_MIN_GAP_S / FOCUS_INTERVAL_S))
+    focus = focus_runs * math.ceil(MAX_FOCUS_HEXES / FOCUS_BATCH)
+    hot = MAX_HOT_CELLS * (math.ceil(w / min(HOT_LEVELS_S)) + 1) + HOT_NEW_BURST * (math.ceil(w / HOT_NEW_WINDOW_S) + 1)
+    ships = math.ceil(w / _field_floor(AisSettings, "ais_flush_s")) + 1 + 1
+    return {
+        "ships": ships,
+        "aircraft": region + global_ + focus + hot + PUBLISHER_QUEUE_MAX,
+        "region": region,
+        "global": global_,
+        "focus": focus,
+        "hot": hot,
+        "resend": PUBLISHER_QUEUE_MAX,
+    }
+
+
+def check_receipt_mark_caps() -> int:
+    """api 의 영수증 표식 상한(MAX_MARKS)으로 놓는(XACK) 것은 이미 스트림에서 지워진 메시지뿐이어야 한다 — 아직 스트림에 있는 메시지를 놓으면 행이
+    DB 에 닿기 전에 재시작 때 PEL 로 되살릴 기회를 잃는다. 그래서 MAX_MARKS ≥ 보존 창의 메시지 수. 수집기 상수가 바뀌면 여기서 걸린다(리뷰 2026-10-01 —
+    Java 쪽 시험은 숫자를 그대로 적어 두어 이 어긋남을 잡지 못했다)."""
+    b = receipt_mark_bounds()
+    ship_cap, track_cap = _java_max_marks("ShipWriter.java"), _java_max_marks("TrackWriter.java")
+    problems = []
+    if ship_cap is None or ship_cap < b["ships"]:
+        problems.append(f"ShipWriter.MAX_MARKS {ship_cap} < {b['ships']} ship messages in the retention window")
+    if track_cap is None or track_cap < b["aircraft"]:
+        problems.append(f"TrackWriter.MAX_MARKS {track_cap} < {b['aircraft']} aircraft messages in the retention window")
+    print(
+        f"{'FAIL' if problems else 'ok  '} api receipt mark caps cover the {STREAM_RETENTION_S / 3600:g} h stream retention "
+        f"(ship messages ≤ {b['ships']}, ShipWriter.MAX_MARKS {ship_cap}; aircraft messages ≤ region {b['region']} + global {b['global']}"
+        f" + focus {b['focus']} + hot {b['hot']} + resend {b['resend']} = {b['aircraft']}, TrackWriter.MAX_MARKS {track_cap}; ais CHUNK {CHUNK})"
+        + (f": {problems}" if problems else "")
+    )
+    return bool(problems)
 
 
 def _ws_format_checker() -> FormatChecker:

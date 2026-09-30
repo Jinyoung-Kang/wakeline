@@ -52,10 +52,13 @@ public class ShipWriter implements SmartLifecycle {
      * 풀리지 않은 표식(= ACK 를 기다리는 선박 메시지) 상한. 넘으면 가장 오래된 것부터 놓는다(wakeline_ship_receipts_forced_total) — DB 가 오래 죽어
      * 있을 때 표식과 PEL 이 끝없이 늘지 않게. 상한으로 놓는 것이 이미 스트림에서 지워진 메시지뿐이도록 보존 창에 들 수 있는 메시지 수 이상으로 잡는다:
      * wakeline:ships 는 시간으로 자른다(MINID ~ 지금 − 2.5 h = 9,000 s, collector publisher.py STREAM_RETENTION_S — 바이트 예산은 창을 줄일 뿐이다).
-     * ais 는 ais_flush_s(기본 10 s, 설정 하한 1 s — ais/config.py)마다 XADD 한 번(바뀐 선박 · 정적 정보가 CHUNK 5,000 건을 넘을 때만 나눈다) →
-     * 9,000 s 에 기본 900개, 하한에서 9,000개. 그래서 10,000(조사 2026-10-01: 예전 1,000 은 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간
-     * 트리밍 뒤로는 기본 주기에서 여유가 약 11 % 였고, 주기를 9 s 아래로 줄이면 스트림에 아직 있는 메시지를 놓았다). DB 장애가 길면 대개 큐
-     * 상한(QUEUE_MAX 행)이 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로 센다). 계산: PersistUnitTest.
+     * ais 는 ais_flush_s(기본 10 s, 설정 하한 1 s — ais/config.py)마다 XADD 한 번(바뀐 선박 · 정적 정보가 CHUNK 5,000 건을 넘을 때만 나눈다 —
+     * 장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다. 실패한 XADD 는 다음 flush 에 다시 싣고 따로 쌓아 재전송하지 않는다) →
+     * 9,000 s 에 기본 900개, 하한에서 ≤ 9,002개(창 양 끝 · 종료 때의 마지막 flush 포함). 그래서 10,000(조사 2026-10-01: 예전 1,000 은
+     * 'MAXLEN ~200 보다 훨씬 크다' 가 근거였다 — 시간 트리밍 뒤로는 기본 주기에서 여유가 약 11 % 였고, 주기를 9 s 아래로 줄이면 스트림에 아직 있는
+     * 메시지를 놓았다). DB 장애가 길면 대개 큐
+     * 상한(QUEUE_MAX 행)이 먼저 걸린다 — 행이 모두 넘쳐 버려진 메시지는 그때 놓인다(result=dropped 로 센다). 이 계산은 tools/contract_check.py
+     * (receipt_mark_bounds)가 수집기 상수로 다시 한다 — 상수가 바뀌어 상한을 넘으면 그 검사가 실패한다.
      */
     static final int MAX_MARKS = 10_000;
     static final int PERMANENT_ATTEMPTS = 3;
