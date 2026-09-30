@@ -158,8 +158,10 @@ resultCode 오류 · 포털 XML 오류 · regDt · 항목별 거절 · 겹침 ·
 `rest_contract_check` · `RolePrivilegesDbTest`(V14) · `LogMaskerTest`(같은 벡터) · OpenAPI 스냅샷, 인프라 `test_redis_acl_rules.py`(셀렉터 모양) ·
 `redis_acl_test.sh`(HDEL · HINCRBY · XADD · HSET · GET 거부) · `test_compose_policy.py`, 웹 `tests/traffic-grid.test.ts`(시계로 본 오래됨 · 다시 보일 때 조회 ·
 위치 조회 실패) · `tests/mapview-traffic-grid.test.ts`(조회 실패 뒤 오래된 값 안 그림 · 오래되는 순간 비움).
-2026-10-01 개정: 수집기 `tests/test_traffic_grid_fill.py`(스냅샷 줄 · 채우기 요약 줄 · heartbeat · 부정 캐시 상한 · 재기동 · 한정된 칸 모형에서 수렴) ·
-`tests/test_db_pg_integration.py`(실제 WFS 응답을 해석한 칸이 V14 에 저장되고 다음 기동이 되살림 — 선택 실행), 웹 `tests/ops-traffic-grid-fill.test.ts`.
+2026-10-01 개정: 수집기 `tests/test_traffic_grid_fill.py`(스냅샷 줄 · 같은 regDt 호출에서 넣은 칸도 +K · 넣지 못한 칸은 서로 다른 칸 수 · 채우기 요약 줄 ·
+heartbeat 의 채우기 상태(daily_budget · waiting_db 포함) · failed 로 뺀 수 · 부정 캐시는 기한이 지난 항목만 비움 · 재기동 · 한정된 칸 모형에서 수렴) ·
+`tests/test_db_pg_integration.py`(실제 WFS 응답을 해석한 칸이 V14 에 저장되고 다음 기동이 되살림 — 선택 실행), 웹 `tests/ops-traffic-grid-fill.test.ts`
+(heartbeat 가 오래됐거나 꺼짐이면 수를 보이지 않음) · `tests/guide-page.test.ts`(설명서가 끝나는 때를 말하지 않음).
 
 ## 개정(2026-10-01) — 격자 위치 채우기: 끝나는 때를 말하지 않는다 · 스냅샷 줄이 무엇을 세는지 · 채우기마다 요약(운영 로그)
 운영 질문: 채우기가 수렴하는가. 아래 '잰 것'은 운영 스택의 수집기 · api · db 표준 출력(2026-09-30 UTC, 오케스트레이터가 읽어 넘김)이고,
@@ -178,36 +180,66 @@ resultCode 오류 · 포털 XML 오류 · regDt · 항목별 거절 · 겹침 ·
 - 두 기동 사이에는 조회가 한 번도 나갈 수 없었다: 17:18:11Z 부터 18:00Z 까지는 시간 창에 막혀 쉬었고, 18:00Z 전에 호스트가 멈췄다(17:58:4xZ — 설사
   그 뒤까지 살았어도 Redis 가 거절해 두 예산이 엄격이라 부르지 않는다). 그래서 7,303 · 502 가 같은 것은 결과가 남지 않는다는 증거가 아니다.
   18시 창의 290 은 18:05:59Z 의 DB 읽기 **뒤에** 쓴 것이다. 찾은 칸은 틱마다 `marine_grid4` 에 upsert(V14 CHECK 를 통과하는 값 — 실 PostgreSQL 시험
-  `test_db_pg_integration`), 해양격자에 없는 칸 · 격자 밖은 Redis 부정 캐시에 적는다(코드 · 시험).
+  `test_db_pg_integration`), 해양격자에 없는 칸 · 격자 밖은 Redis 부정 캐시에 적는다(코드 · 시험). 단서: upsert 는 수집기의 DB 쓰기 큐를 거친다 — DB
+  장애 동안 500건을 넘으면 오래된 쓰기부터, DB 가 거절하거나 거듭 실패한 쓰기도 버리고 다시 보내지 않는다(heartbeat `db_dropped` · /logs WARN
+  `db: write queue full … dropping oldest` · `db: … rejected … dropped`). 그렇게 버려진 칸은 그 프로세스의 메모리에만 남아 다음 기동 뒤 한 번 더
+  묻는다(조회 하나). 확인: 이어지는 두 기동의 `N grid cells loaded from marine_grid4` 차이 = 그 사이 요약 줄들의 found 합(버린 쓰기가 없을 때).
 - 결과가 있는 칸 7,303 + 502 = 7,805 > 본 스냅샷 중 가장 큰 6,422 — 배가 있는 칸은 스냅샷마다 바뀌어, 시간이 지나며 나타나는 칸이 스냅샷 하나보다
   많다. 그 전체 수는 잰 적이 없다 → **채우기가 끝나는 때는 계산할 수 없다**(위 결정 3 · 결과의 '약 18 · 22시간' 철회).
 - K(예전 'new unknown ids')는 `GridGeometry.observe` 가 이 프로세스의 메모리 대기열에 **새로 넣은** 칸 수다: 기하도(DB 에서 읽은 것 + 이 프로세스가
-  찾은 것) 유효한 부정 캐시도 없고 대기열에도 없는 칸. 한 프로세스 안에서 한 칸은 한 번만 센다(부정 캐시 기한이 지나면 다시) — 같은 칸을 스냅샷마다
-  세는 것이 아니다. 대기열은 재기동하면 비므로, 재기동 뒤 첫 스냅샷은 결과가 없는 칸을 모두 다시 센다(1,372). 결과가 있는 칸은 다시 묻지 않는다.
-- K 가 스냅샷마다 340–450 이면 시간당 4,080–5,400칸이 대기열에 새로 들어오고 조회는 시간당 많아야 290 — 대기열은 줄지 않고 상한 20,000(MAX_TRACKED)에
-  닿는다(20,000 ÷ 5,400–4,080 ≈ 3.7–4.9시간 — 그 속도가 이어질 때). 상한을 넘은 칸은 넣지 않고 다음에 보일 때 넣는다 — 전에는 수만 세고 어디에도
-  보이지 않았다(이제 스냅샷 줄 · 요약 줄 · heartbeat `traffic_grid_not_queued`).
-- 하루: 24 × 290 = 6,960 > 하루 예산 6,000 — 쉬지 않고 채우면 UTC 날마다 6,000 ÷ 290 ≈ 20.7시간째(빠르면 05:41 KST)부터 다음 UTC 날(09:00 KST)까지
-  하루 예산에서도 멈춘다(`daily budget exhausted (used=6000) — geometry fill resumes at <다음 UTC 날>`). 설계대로다(포털 한도 — 결정 1).
+  찾은 것) 유효한 부정 캐시도 없고 대기열에도 없는 칸. 한 프로세스 안에서 한 칸은 대기열을 떠나기 전에는 다시 세지 않는다(부정 캐시 기한이 지나면
+  다시) — 코드로는 같은 칸을 스냅샷마다 세는 것이 아니다(운영 로그로는 아직 확인하지 못했다 — 아래 열린 항목). 대기열은 재기동하면 비므로, 재기동 뒤
+  첫 스냅샷은 결과가 없는 칸을 모두 다시 센다(1,372). 결과가 있는 칸은 다시 묻지 않는다. 같은 regDt 호출(unchanged)도 대기열에 넣는데 예전에는 그 수가
+  어느 줄에도 없었다 — 이제 다음 스냅샷 줄의 K 에 더한다(K = 앞 스냅샷 줄 뒤에 넣은 칸 모두).
+- 모형(코드에서 읽은 것): 대기열은 결과로만 준다(찾음 · 해양격자에 없음 · 격자 밖 · failed 로 뺌 — 조회는 시간당 많아야 290; DB 캐시를 늦게 읽으면 그때
+  한 번 더 준다). 그래서 한 프로세스 안에서 채우기 한 번 앞뒤의 두 스냅샷 줄 사이 L 의 변화 = 그 사이 줄들의 ΣK − 그 요약 줄의 (f + nf + og + s)다.
+  K 가 줄마다 340–450 으로 이어지면(새 regDt 는 시간당 12번) L 은 첫 줄(약 1,372) 뒤 시간당 12 × K − 290 = 3,790–5,110 늘어
+  (20,000 − 1,372) ÷ (3,790–5,110) ≈ 3.6–4.9시간에 상한 20,000(MAX_TRACKED)에 닿는다. 그 뒤로는 K ≤ 앞 줄 뒤의 조회 수다 — 한 시의 몫은 정시에
+  한꺼번에 나가므로(틱마다 15, 30 s) 정시 직후 두세 줄에만 줄마다 많아야 150(5분에 10틱), 잰 속도(아래 — 한 시 몫 약 12분)로는 약 120 이고 나머지 줄은 0.
+  상한을 넘은 칸은 넣지 않고 다음에 보일 때 넣는다 — 전에는 수만 세고 어디에도 보이지 않았다(이제 스냅샷 줄 · 요약 줄 · heartbeat
+  `traffic_grid_not_queued` — 마지막으로 읽은 스냅샷에서 넣지 못한 서로 다른 칸 수).
+- **열린 항목 — 잰 K 가 모형과 맞지 않는다(풀지 못했다)**: 잰 K 는 줄마다 약 340–450 이 하루 내내다. 알려진 재기동은 08:49Z(17:49 KST 재배포 — 조사
+  기록), 17:18Z, 18:05Z 이고, 08:49Z → 17:18Z 가 한 프로세스(8.5시간)였다면 위 모형대로는 기동 뒤 4.9시간 안에 K 가 떨어졌어야 한다. 13:48Z(22:48 KST)
+  배포가 수집기를 다시 시작했는지는 모른다(조사 기록의 모르는 것 — 그랬다면 두 프로세스는 약 5.0 · 3.5시간이라, 어긋남은 5.0시간 프로세스의
+  마지막 약 0.1–1.4시간으로 줄어든다). 확인하기 전까지 K 가 무엇을 세는지의 답은 코드 · 시험 · 합성 모형에서 나온 것이고, **채우기가 옳게 동작한다고
+  말하지 않는다**. 확인 방법(새 스냅샷 줄 — 첫 줄의 'first snapshot since this process started' 로 프로세스의 시작을 안다): K 가 340 이상으로 이어지는
+  프로세스는 기동 뒤 약 5시간 안에
+  `lookup queue L` 이 20000 에 닿고, 그 뒤 K 는 정시 직후 두세 줄의 약 120 이하 · 나머지 줄 0 이어야 한다. L = 20000 인데 K ≥ 340 인 줄이 나오거나,
+  채우기 한 번 앞뒤에서 L 의 변화가 ΣK − (f + nf + og + s) 와 다르면 모형이 틀렸다(다른 무엇이 대기열에 다시 넣는다) — 그때 다시 조사한다.
+  08:49Z–17:18Z 수집기 로그를 다시 읽을 수 있으면 먼저 그것으로 본다(예전 줄에는 L 이 없어 K 와 재기동만 볼 수 있다).
+- 하루: 24 × 290 = 6,960 > 하루 예산 6,000 — 쉬지 않고 채우면 UTC 날마다 하루 예산에서도 멈춘다(`daily budget exhausted (used=6000) — geometry fill
+  resumes at <다음 UTC 날>`). 설계대로다(포털 한도 — 결정 1). 멈추는 때: 한 시의 몫은 정시에 한꺼번에 나가므로, 앞 20시간(00–19Z)이 모두 몫 290 을
+  채웠다면(5,800) 남은 200 은 20:00Z 부터 틱 14번(15개씩 — 6.5분 이상)에, 잰 속도(18Z 시: 18:05:59Z 기동 → 18:18:17Z 에 창 290 — 입출항 호출 포함 약
+  12분)로는 약 8분에 나간다 → 빨라야 약 20:07–20:10Z(05:07–05:10 KST)부터 다음 UTC 날(09:00 KST)까지. 입출항 호출이 앞 시들의 290 안에서 몫을
+  나눠 썼거나 물을 칸이 떨어진 시가 있으면 더 늦거나 멈추지 않는다. (처음 적은 '빠르면 05:41 KST' 는 조회가 시간 안에 고르게 나간다고 본 틀린
+  계산이었다 — 검토 지적.)
 - 다시 묻는 규칙: 찾음 → 다시 묻지 않음. 해양격자에 없음 · 격자 밖 → 7일 뒤(보일 때만 — 칸마다 7일에 많아야 한 번). 오류 → 5분 · 30분 · 2시간 · 6시간
   뒤, 연달아 5번이면 failed(1일). 실패 횟수는 메모리라 재기동하면 처음부터이고, 대기열에 처음 묻는 칸이 남아 있는 동안 다시 물을 칸은 그 뒤에
   선다(결정 3의 순서) — 계속 오류인 칸은 대기열이 긴 동안 프로세스마다 약 한 번 묻는다. 요약 줄의 errors 로 보인다(값이 크면 후속).
-- 잘못 하나를 고쳤다: 메모리 부정 캐시가 20,000 에 닿으면 새 부정 결과를 적지 않고 대기열에서만 뺐다 — 그 칸은 보일 때마다 다시 물었다. 이제 기한이
-  지난 항목, 없으면 가장 먼저 끝나는 항목을 비우고 적는다. Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 덮어쓴다) — 기동 줄은
-  유효한 항목(까닭별)과 기한이 지난 항목을 나눠 적는다.
+- 잠재 결함 하나를 고쳤다(운영 증상의 원인은 아니다): 메모리 부정 캐시가 20,000 에 닿으면 새 부정 결과를 적지 않고 대기열에서만 뺐다 — 그 칸은 보일
+  때마다 다시 물었을 것이다. 잰 크기는 502항목(2026-09-30 두 기동 — 채우기는 2026-09-29 부터)이라 운영에서는 닿지 않은 경로다. 첫 고침은 기한이 지난
+  항목이 없으면 가장 먼저 끝나는 **유효한** 항목을 비웠다 — 그 칸도 다시 묻는다(검토 지적). 이제 기한이 지난 항목만 모두 비우고 유효한 항목은 상한을
+  넘어도 남긴다(크기는 Redis 해시만큼 — 기동 때도 상한 없이 읽는다). Redis 해시는 줄지 않는다(수집기 ACL 에 HDEL 이 없다 — 다시 물으면 덮어쓴다) —
+  기동 줄은 유효한 항목(까닭별)과 기한이 지난 항목을 나눠 적는다.
 
 **보이게 한 것(DB 없이 수렴을 본다)**
 - 스냅샷 줄: `regDt … — N cells (R rejected): A with geometry, B without (P waiting for a lookup, NF not in the MOF grid, OG off grid, F lookup failed[,
   Q not queued — queue full at 20000]); lookup queue L (+K newly queued[ — first snapshot since this process started: the queue is not kept across
-  restarts, so ids queued before a restart are counted again])` — A ÷ N 이 지도에 그려지는 몫이다.
+  restarts, so ids queued before a restart are counted again])` — A ÷ N 이 지도에 그려지는 몫이다. Q 는 이 스냅샷에서 넣지 못한 서로 다른 칸 수,
+  K 는 앞 스냅샷 줄 뒤에 넣은 칸 수(같은 regDt 호출에서 넣은 칸 포함 — 한 프로세스의 줄마다 더하면 그 프로세스가 넣은 칸 수).
 - 채우기 한 번(다시 시작한 틱 → 멈춘 틱)마다 INFO 한 줄: `geometry fill pass <시작> → <끝> — n lookups: f found, nf not in the MOF grid, og off grid,
-  e errors (s set aside as failed); C cells known, W ids waiting (r after an error)[, q not queued since start — queue full at 20000]; mof_grid4 today u of
-  6000 (UTC day); <stopped: … — geometry fill resumes at … | paused: … | stopped: mof_grid4 switched off by the operator | queue empty — … | nothing due — …>`.
+  e errors (s set aside as failed); C cells known, W ids waiting (r after an error)[, q of the latest snapshot's cells not queued (queue limit 20000)];
+  mof_grid4 today u of 6000 (UTC day); <stopped: … — geometry fill resumes at … | paused: … | stopped: mof_grid4 switched off by the operator | queue empty — … | nothing due — …>`.
   시간 창 · 하루 예산으로 쉬면 시간마다 한 줄이다(따로 적던 '… resumes at …' 줄을 합쳤다). 시각은 로그가 늘 쓰는 UTC 'Z' 그대로.
-  수렴은 이렇게 읽는다: 줄마다 C 가 f 만큼 늘고, A ÷ N 이 오르고, W · q 가 줄면 따라잡는 중 — W 가 늘고 q 가 쌓이면 새 칸이 조회보다 빨리 나타난다.
+  q 는 마지막으로 읽은 스냅샷에서 대기열이 가득 차 넣지 못한 서로 다른 칸 수다(누계가 아니다 — 처음 적은 'q not queued since start' 는 부를 때마다
+  거절을 더해 칸이 아니라 거절 횟수였다: 검토 지적). 수렴은 이렇게 읽는다: 줄마다 C 가 f 만큼 늘고, A ÷ N 이 오르고, W · q 가 줄면 따라잡는 중 —
+  W 가 늘고 q 가 0 보다 크면 새 칸이 조회보다 빨리 나타난다.
 - 운영 화면 providers 탭 한 줄 '연안 교통량 격자 위치'(heartbeat 그대로 — 웹은 수를 만들지 않는다, 모르면 "—", 시각은 KST): 그려지는 칸 / 스냅샷 칸 ·
-  위치 확인 · 조회 대기 · 대기열 가득 차 못 넣음(주황) · 해양격자에 없음 · 격자 검사 실패 · 위치 조회 실패 · 오늘 조회 · 상태와 다음 때(시간 몫 · 하루 예산은
-  계획한 쉼이라 흐린 색, 연달아 오류 · 운영자 끔은 주황) · 마지막 채우기 한 번(웹 `tests/ops-traffic-grid-fill.test.ts`).
+  위치 확인 · 조회 대기 · 대기열이 가득 차 못 넣은 칸(마지막 스냅샷 — 0 보다 크면 주황) · 해양격자에 없음 · 격자 검사 실패 · 위치 조회 실패 · 오늘 조회 ·
+  상태와 다음 때(시간 몫 · 하루 예산은 계획한 쉼이라 흐린 색, 연달아 오류 · 운영자 끔은 주황) · 마지막 채우기 한 번(웹 `tests/ops-traffic-grid-fill.test.ts`).
+  collector 해시는 HSET 으로만 쓰이고 지워지지 않는다(키 없음 · fixture 로 도는 수집기는 `traffic_grid_state` 만 쓴다) — 그래서 수는 heartbeat
+  `traffic_grid_at` 이 서버 시각(응답의 `generated_at`)으로 120 s 안(api `TrafficGridReader` 와 같은 선)이고 상태가 active · operator_off 일 때만 보인다.
+  아니면 'heartbeat 오래됨 — 마지막 <KST>' · '꺼짐 — …' · 판정할 수 없음만 적는다(검토 지적: 멈춘 수집기의 '조회 중'과 수가 그대로 남았다).
 - heartbeat(`/ops/providers` 의 collector 해시): 위 결정 5 목록의 채우기 진행 필드. `traffic_grid_fill_state` = filling · idle · retry_wait · waiting_db ·
   hour_window · daily_budget · breaker · operator_off, `…_resume_at` = 다음에 움직이는 때(없으면 빈 값), `…_fill_pass_*` = 이 프로세스에서 마지막으로 끝난 채우기.
 - 버린 대안: **최신 스냅샷의 칸 먼저 묻기** — 지금 그려질 칸을 먼저 채우지만, 한 번 보이고 사라지는 칸에 조회를 쓴다. 잰 근거가 없어 순서는 그대로

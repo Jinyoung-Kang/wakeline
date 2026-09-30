@@ -300,8 +300,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     heartbeat `wakeline:collector` 필드 `traffic_grid_state`(active · no_key · fixture · operator_off) · `traffic_grid_last_ok` · `traffic_grid_reg_dt` ·
     `traffic_grid_resolved` · `traffic_grid_unresolved` · `traffic_grid_cells_known` · `traffic_grid_pending` · `traffic_grid_failed` · `traffic_grid_calls_komsa` ·
     `traffic_grid_calls_wfs` · `traffic_grid_publish_delay_s`(배운 발행 지연 — 배우기 전 빈 값)(모르면 빈 값) · `traffic_grid_at` · `traffic_grid_lag_s` ·
-    채우기 진행(2026-10-01 — ADR-023 개정, 모르면 빈 값): `traffic_grid_not_found` · `traffic_grid_off_grid`(유효한 부정 캐시) · `traffic_grid_not_queued`(대기열
-    상한으로 넣지 못한 칸, 기동 뒤 누계) · `traffic_grid_fill_state`(filling · idle · retry_wait · waiting_db · hour_window · daily_budget · breaker · operator_off) ·
+    채우기 진행(2026-10-01 — ADR-023 개정, 모르면 빈 값): `traffic_grid_not_found` · `traffic_grid_off_grid`(유효한 부정 캐시) · `traffic_grid_not_queued`(마지막으로
+    읽은 스냅샷의 칸 가운데 대기열 상한으로 넣지 못한 칸 — 서로 다른 칸 수, 누계 아님) · `traffic_grid_fill_state`(filling · idle · retry_wait · waiting_db · hour_window · daily_budget · breaker · operator_off) ·
     `traffic_grid_fill_resume_at` · `traffic_grid_fill_pass_at` · `traffic_grid_fill_pass_{lookups,found,not_found,off_grid,errors}`(마지막으로 끝난 채우기 한 번).
     ACL: 두 이름은 collector 루트 키 목록에 없고 셀렉터로만 — `~wakeline:traffic_grid` SET, `~wakeline:traffic_grid:negative` HSET · HGETALL(EX 는 ACL 로
     강제할 수 없다 — api 의 regDt 나이 판정이 방어선).

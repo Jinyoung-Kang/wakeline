@@ -284,6 +284,31 @@ async def test_the_daily_budget_stop_ends_a_pass_and_the_heartbeat_says_daily_bu
     assert len(wfs.asked) == 2 and r.kv[HB]["traffic_grid_fill_state"] == "daily_budget"
 
 
+async def test_a_saturated_fill_reaches_the_daily_budget_minutes_after_20z_because_each_hour_goes_out_in_one_burst(caplog):
+    """ADR-023 2026-10-01 개정의 계산을 실제 작업으로: 한 시의 몫(290)은 정시에 한꺼번에 나간다(틱마다 WFS_PER_TICK, 30 s). UTC 날 내내 물을 칸이
+    있고 앞 20시간이 모두 290 을 채우면(5,800) 남은 200 은 20:00Z 부터 틱 14번에 나가 20:06:30Z 에 하루 예산(6,000)에서 멈춘다 — 이것이 가장 이른
+    때다(실제 호출은 호스트 버킷 1 req/s · 입출항 호출 때문에 더 느리다). 검토 지적: 처음 적은 '빠르면 05:41 KST'(20:41Z)는 조회가 시간 안에 고르게
+    나간다고 본 틀린 계산이었다."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    items = [(f"GR4_D{i:05d}", 1, 1.0) for i in range(6_100)]  # 하루 몫보다 많이 — 모두 해양격자에 없음(가짜 WFS 의 기본 답)
+    job, _k, wfs, r, clock, _db = setup(komsa_body(items=items))
+    clock.t = datetime(2026, 9, 30, 0, 0, 0, tzinfo=UTC)
+    per_hour: dict[int, int] = {}
+    while clock() < datetime(2026, 9, 30, 21, 0, tzinfo=UTC):
+        n = len(wfs.asked)
+        await job.run_once()
+        per_hour[clock().hour] = per_hour.get(clock().hour, 0) + len(wfs.asked) - n
+        hold = job._fill_hold_until
+        clock.t = hold if hold is not None and hold > clock() else clock.t + timedelta(seconds=30)  # 쉬는 동안은 건너뛴다
+    assert per_hour == {**dict.fromkeys(range(20), 290), 20: 200}
+    last = lines(caplog, "geometry fill pass")[-1]
+    assert last.startswith("traffic grid: geometry fill pass 2026-09-30T20:00:00Z → 2026-09-30T20:06:30Z — 200 lookups:")
+    assert last.endswith(
+        "mof_grid4 today 6000 of 6000 (UTC day); stopped: daily budget exhausted (used=6000) — "
+        "geometry fill resumes at 2026-10-01T00:00:00Z"
+    )
+
+
 async def test_the_heartbeat_says_waiting_db_until_the_marine_grid4_cache_is_read_or_the_wait_ends():
     job, _k, wfs, r, clock, db = setup()
     db.rows = None  # DB 에 닿지 못한다
