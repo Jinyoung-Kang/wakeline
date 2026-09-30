@@ -92,4 +92,27 @@ class ReceiptBatchQueueTest {
         assertThat(b.n.get()).isZero();
         assertThat(q.poll()).isNull();
     }
+
+    /**
+     * 조사 2026-10-01(종료 F3): 종료 flush 가 꺼낸 배치는 쓰기 전에는 '끝난' 행이 아니다. 예전 poll 은 '큐를 떠난 마지막 번호'를 옮겨서, 그 뒤 진행 중
+     * 배치가 끝나면(resolved — 늦게 커밋한 워커) flush 가 꺼내기만 하고 쓰지 못한 배치의 영수증까지 놓았다 → XACK · 행은 없음(조용한 손실).
+     */
+    @Test void aBatchPolledByTheShutdownFlushIsNotReleasedWhenTheOutstandingBatchResolves() throws Exception {
+        ReceiptBatchQueue<Integer> q = new ReceiptBatchQueue<>(100, 10, 2);
+        Acked a = new Acked(), b = new Acked();
+        Receipt ra = a.receipt(), rb = b.receipt();
+        q.add(List.of(1, 2), ra);
+        q.add(List.of(3, 4), rb);
+        releaseProducer(ra, rb);
+        assertThat(q.next(0).items()).containsExactly(1, 2); // 워커가 쓰는 중
+        var polled = q.poll();                               // 종료 flush 가 꺼냈다(아직 쓰지 않음)
+        assertThat(polled.items()).containsExactly(3, 4);
+        q.resolved();                                        // 워커의 쓰기가 커밋됐다
+        assertThat(a.n.get()).isEqualTo(1);
+        assertThat(b.n.get()).as("rows 3-4 were polled by the flush but never written").isZero();
+        assertThat(q.settledUpTo()).as("only the committed rows are settled").isEqualTo(2);
+        q.releaseUpTo(polled.lastSeq());                     // flush 가 쓴 뒤에야
+        assertThat(b.n.get()).isEqualTo(1);
+        assertThat(q.settledUpTo()).isEqualTo(4);
+    }
 }

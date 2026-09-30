@@ -115,7 +115,7 @@ final class ReceiptBatchQueue<T> {
         lock.lock();
         try {
             if (queue.isEmpty() && waitMs > 0) notEmpty.await(waitMs, TimeUnit.MILLISECONDS);
-            Batch<T> b = take();
+            Batch<T> b = take(true);
             if (b != null) outstandingFrom = b.firstSeq();
             return b;
         } finally {
@@ -123,17 +123,22 @@ final class ReceiptBatchQueue<T> {
         }
     }
 
-    /** 종료 flush 용: 기다리지 않고 한 배치(진행 중 표시 없이 — 호출자가 {@link #releaseUpTo} 로 놓는다). */
+    /**
+     * 종료 flush 용: 기다리지 않고 한 배치(진행 중 표시 없이 — 호출자가 쓴 뒤 {@link #releaseUpTo} 로 놓는다). 꺼낸 행은 아직 '끝난' 행이 아니다:
+     * '큐를 떠난 마지막 번호'를 옮기지 않는다 — 옮기면 그 뒤의 {@link #resolved}(진행 중이던 배치의 늦은 커밋)가 쓰지 않은 이 배치의 영수증까지
+     * 놓았다(조사 2026-10-01 종료 F3 — XACK 되고 행은 없다). TrackWriter.drainForFlush 와 같은 규칙.
+     */
     Batch<T> poll() {
         lock.lock();
         try {
-            return take();
+            return take(false);
         } finally {
             lock.unlock();
         }
     }
 
-    private Batch<T> take() {
+    /** 잠금 안에서: 한 배치를 꺼낸다. advanceLeft = 꺼낸 행을 '큐를 떠난' 것으로 친다(진행 중 배치로 가져갈 때만 — 끝나면 resolved 가 놓는다). */
+    private Batch<T> take(boolean advanceLeft) {
         if (queue.isEmpty()) return null;
         List<T> rows = new ArrayList<>(Math.min(batch, queue.size()));
         long first = queue.peekFirst().seq(), last = first;
@@ -142,7 +147,7 @@ final class ReceiptBatchQueue<T> {
             rows.add(r.item());
             last = r.seq();
         }
-        left = Math.max(left, last);
+        if (advanceLeft) left = Math.max(left, last);
         return new Batch<>(first, last, rows);
     }
 
@@ -159,11 +164,16 @@ final class ReceiptBatchQueue<T> {
         done.forEach(Receipt::release);
     }
 
-    /** 종료 flush: seq 까지 쓴 행의 메시지 영수증만 놓는다(그 뒤는 ACK 하지 않아 다음 기동에서 다시 처리된다). */
+    /**
+     * 종료 flush: seq 까지의 행을 썼다 — 그 메시지 영수증만 놓는다(그 뒤는 ACK 하지 않아 다음 기동에서 다시 처리된다). flush 는 진행 중이던 배치부터
+     * 번호 순서로 쓰므로 seq 까지가 '끝난' 행이 된다(진행 중 배치가 그 안에 들면 진행 중 표시도 지운다).
+     */
     void releaseUpTo(long seq) {
         List<Receipt> done = new ArrayList<>();
         lock.lock();
         try {
+            left = Math.max(left, seq);
+            if (outstandingFrom > 0 && outstandingFrom <= seq) outstandingFrom = 0;
             while (!marks.isEmpty() && marks.peekFirst().seq() <= seq) done.add(marks.pollFirst().receipt());
         } finally {
             lock.unlock();
