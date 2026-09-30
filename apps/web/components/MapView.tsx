@@ -118,9 +118,12 @@ function geo(map: maplibregl.Map, id: string) {
 /**
  * 상황판 지도(클라이언트 컴포넌트). WS 구독은 지도 뷰포트(bbox·zoom)를 따라간다.
  * 보간은 Web Worker(바뀐 것이 있을 때만 post) → 이 컴포넌트는 setData 만 한다. 탭이 숨겨지면 구독을 멈춘다.
+ * onFirstLoad: 지도가 처음 다 그려졌을 때(MapLibre 'load' — 한 번) — 상황판은 여기서 첫 화면 뒤 미리 받기를 시작한다(ADR-026).
  */
-export function MapView() {
+export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   const el = useRef<HTMLDivElement>(null);
+  const onFirstLoadRef = useRef(onFirstLoad);
+  useEffect(() => { onFirstLoadRef.current = onFirstLoad; }, [onFirstLoad]);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const clientRef = useRef<WakelineWsClient | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -362,6 +365,7 @@ export function MapView() {
     }, AIRPORTS_RECHECK_MS);
 
     map.on("load", () => {
+      onFirstLoadRef.current?.();
       addBaseLayers(map);
       addShipLayers(map);
       addTrafficGridLayers(map, RADAR_SLOT); // 연안 교통량(ADR-023) — 레이더 · SIGMET · 항공기 · 선박 아래

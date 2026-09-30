@@ -79,6 +79,18 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(rec.api).toContain("/api/v1/airports?watched=true");
   });
 
+  it("tells the page once when the map has loaded for the first time (the first screen is complete — ADR-026 prefetch starts there)", async () => {
+    let calls = 0;
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(MapView, { onFirstLoad: () => { calls++; } })); });
+    const map = FakeMap.instances[FakeMap.instances.length - 1];
+    expect(calls).toBe(0); // 스타일 · load 전
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    expect(calls).toBe(1);
+    await act(() => { map.fire("style.load"); });
+    expect(calls).toBe(1);
+  });
+
   it("keeps the visible map bounds (unwrapped, as MapLibre gives them) for the list-selection pan check (R-08)", async () => {
     await mount();
     // FakeMap.getBounds() = 120,30,135,43 — 구독 bbox(WS 대역이 기록)와 별도로, 화면 그대로

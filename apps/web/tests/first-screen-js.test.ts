@@ -9,8 +9,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
+import { LEGEND_OPEN_MIN_WIDTH } from "@/lib/prefs";
 import {
-  budgetVerdict, compressorLabel, dockerExitCode, FIRST_SCREEN_JS_BUDGET, FIRST_SCREEN_PUBLIC_SCRIPTS, firstScreenFiles, formatReport, GZIP_THRESHOLD, groupOfPath, inImageArgs,
+  budgetVerdict, classifyScripts, compareWithBuild, compressorLabel, dockerExitCode, MEASURE_VIEWPORTS, FIRST_SCREEN_JS_BUDGET, FIRST_SCREEN_PUBLIC_SCRIPTS, firstScreenFiles, formatReport, GZIP_THRESHOLD, groupOfPath, inImageArgs,
   isScriptResponse, measureFiles, parseCheckArgs, parseMeasureArgs, runCheck, servedBytes, summarize, webImageNode,
 } from "../scripts/first-screen-js-lib.mjs";
 
@@ -146,6 +147,37 @@ describe("browser measurement helpers", () => {
     expect(groupOfPath("/maplibre/6.11.2/maplibre-gl.mjs")).toBe("maplibre");
     expect(groupOfPath("/_next/static/chunks/a.js")).toBe("next");
     expect(groupOfPath("/interpolate.worker.js")).toBe("public");
+  });
+  it("first screen = scripts requested before the page's 'after first screen' mark; only app chunks after it are set apart (MapLibre · workers always count)", () => {
+    const B = "http://127.0.0.1:8790";
+    const seen = [`${B}/_next/static/chunks/entry.js`, `${B}/_next/static/chunks/card.js`, `${B}/maplibre/6.11.2/maplibre-gl-worker.mjs`, `${B}/_next/static/chunks/late.js`, `${B}/_next/static/chunks/unknown.js`];
+    const entries = [
+      { name: `${B}/_next/static/chunks/entry.js`, startTime: 100 },
+      { name: `${B}/_next/static/chunks/card.js`, startTime: 5000 },
+      { name: `${B}/maplibre/6.11.2/maplibre-gl-worker.mjs`, startTime: 6000 },
+      { name: `${B}/_next/static/chunks/late.js`, startTime: 4000 },
+    ];
+    expect(classifyScripts(seen, entries, 4000)).toEqual({
+      [`${B}/_next/static/chunks/entry.js`]: "first",
+      [`${B}/_next/static/chunks/card.js`]: "after",
+      [`${B}/maplibre/6.11.2/maplibre-gl-worker.mjs`]: "first", // 지도 라이브러리 · 워커는 늘 첫 화면으로 센다(보수적)
+      [`${B}/_next/static/chunks/late.js`]: "after",
+      [`${B}/_next/static/chunks/unknown.js`]: "first", // 시각을 모르면 첫 화면으로 센다(적게 세지 않는다)
+    });
+    // 표시가 없으면(지도가 load 되지 않음 등) 모두 첫 화면
+    expect(Object.values(classifyScripts(seen, entries, null))).toEqual(["first", "first", "first", "first", "first"]);
+  });
+  it("with a local build, the browser's first-screen files must be exactly the build-output list (what the CI guard counts)", () => {
+    const build = ["/_next/static/chunks/a.js", "/maplibre/6.11.2/maplibre-gl.mjs", "/interpolate.worker.js"];
+    expect(compareWithBuild(build, [...build].reverse())).toEqual({ extra: [], missing: [] });
+    // 예: import() 조각이 첫 그리기에 쓰이면 빌드 결과 검사가 세지 않는 청크를 첫 화면에 받는다
+    expect(compareWithBuild(build, [...build, "/_next/static/chunks/legend.js"])).toEqual({ extra: ["/_next/static/chunks/legend.js"], missing: [] });
+    expect(compareWithBuild(build, build.slice(1))).toEqual({ extra: [], missing: ["/_next/static/chunks/a.js"] });
+  });
+  it("measures two windows: Lighthouse's desktop size and one wide enough that the legend starts open (the worst case counts)", () => {
+    expect(MEASURE_VIEWPORTS.map((v) => v.width)).toContain(1350);
+    expect(MEASURE_VIEWPORTS.some((v) => v.width >= LEGEND_OPEN_MIN_WIDTH)).toBe(true);
+    for (const v of MEASURE_VIEWPORTS) expect(v.why.length).toBeGreaterThan(0);
   });
   it("arguments: a base URL or a local server on 127.0.0.1:8790–8799, never both", () => {
     expect(parseMeasureArgs(["http://localhost:8700/"])).toEqual({ baseUrl: "http://localhost:8700", serve: null, settleMs: 3000, json: null, budget: null });

@@ -28,3 +28,7 @@ export function inImageArgs(webDir: string, image: string): string[];
 export const CHECK_USAGE: string;
 export function parseCheckArgs(argv: string[]): { inImage: boolean; image: string | null };
 export function dockerExitCode(status: number | null, signal: string | null): 0 | 1 | 2;
+export const AFTER_FIRST_SCREEN_MARK: string;
+export function classifyScripts(urls: string[], entries: { name: string; startTime: number }[], markStart: number | null): Record<string, "first" | "after">;
+export function compareWithBuild(buildFiles: string[], browserFiles: string[]): { extra: string[]; missing: string[] };
+export const MEASURE_VIEWPORTS: readonly { width: number; height: number; why: string }[];

@@ -199,6 +199,40 @@ export function groupOfPath(pathname) {
   return "public";
 }
 
+/**
+ * 첫 화면의 끝(components/DashboardParts 의 AFTER_FIRST_SCREEN_MARK 와 같은 이름 — tests/parts-prefetch.test.ts): 상황판은 지도가 처음 다 그려지고
+ * 브라우저가 한가할 때 이 performance mark 를 남긴 뒤 카드 · 목록 조각을 미리 받는다. 그 요청은 첫 화면 JS 가 아니다.
+ */
+export const AFTER_FIRST_SCREEN_MARK = "wakeline:after-first-screen";
+
+/**
+ * 받은 스크립트를 첫 화면(first) · 첫 화면 뒤(after)로 가른다. after 는 앱 청크(/_next/)가 표시 뒤에 요청된 경우뿐 — 페이지의 Resource Timing
+ * 시작 시각(markStart 와 같은 시계)으로 본다. MapLibre · 워커 · 시각을 모르는 요청 · 표시가 없을 때는 모두 first(적게 세지 않는다).
+ */
+export function classifyScripts(urls, entries, markStart) {
+  const start = new Map();
+  for (const e of entries) if (!start.has(e.name)) start.set(e.name, e.startTime);
+  const out = {};
+  for (const u of urls) {
+    const t = start.get(u);
+    const app = new URL(u).pathname.startsWith("/_next/");
+    out[u] = markStart != null && app && t != null && t >= markStart ? "after" : "first";
+  }
+  return out;
+}
+
+/** 브라우저가 첫 화면에 받은 파일(경로) ↔ 빌드 결과 목록(firstScreenFiles 의 file). 다르면 빌드 결과 검사(CI)가 첫 화면을 다르게 센다는 뜻이다 */
+export function compareWithBuild(buildFiles, browserFiles) {
+  const b = new Set(buildFiles), r = new Set(browserFiles);
+  return { extra: [...r].filter((f) => !b.has(f)).sort(), missing: [...b].filter((f) => !r.has(f)).sort() };
+}
+
+/** 측정 창 크기 — 둘 다 재고 큰 값을 판정에 쓴다(선택값: Lighthouse 데스크톱 크기, 범례가 처음부터 펼쳐지는 폭 lib/prefs LEGEND_OPEN_MIN_WIDTH 이상) */
+export const MEASURE_VIEWPORTS = [
+  { width: 1350, height: 940, why: "Lighthouse 데스크톱(PERF §7·§8 의 옛 측정과 같은 크기)" },
+  { width: 1700, height: 1000, why: "넓은 창 — 범례가 처음부터 펼쳐진다(1600 px 이상, lib/prefs)" },
+];
+
 export const MEASURE_USAGE =
   "사용법: node scripts/measure-first-screen-js.mjs [기준 주소] [--serve <포트 8790–8799>] [--settle <ms>] [--json <파일>] [--budget <바이트>]\n" +
   "  기준 주소: 이미 떠 있는 서버(예: 배포 스택 http://localhost:8700). --serve 를 주면 .next/standalone 서버를 127.0.0.1:<포트> 에 띄워 재고 끈다.";
