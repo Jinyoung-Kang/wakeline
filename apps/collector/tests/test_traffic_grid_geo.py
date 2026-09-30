@@ -273,3 +273,41 @@ def test_bad_gid_is_unknown_not_invented():
     body = FIX.read_text().replace("<ofbd-DB:gid>167305</ofbd-DB:gid>", "<ofbd-DB:gid>x1</ofbd-DB:gid>").encode()
     r = parse_wfs(body, "GR4_F2K41_C3")
     assert r.kind == "found" and r.cell is not None and r.cell.gid is None
+
+
+# ---- 아는 칸 지도의 메모리(ADR-023 2026-10-01 bbox 개정) -------------------------------------------------------------------------
+# bbox 타일은 한 번에 수백 칸을 준다 — 아는 칸이 스냅샷 크기(수천)가 아니라 연안 전체(시뮬레이션 약 10만)로 는다. 수집기 한도는 512 MiB 다.
+
+
+def test_snapped_lattice_values_are_shared_objects():
+    """같은 격자점은 같은 float 객체 하나 — 칸 10만 개가 위도 · 경도 값 수백 개를 나눠 쓴다(칸마다 float 넷을 새로 만들지 않는다)."""
+    a, b = snap(37.45), snap(37.4500000004)
+    assert a == b == 37.45 and a is b
+    assert snap(126.6) is snap(126.5999999996)
+
+
+def test_the_known_cell_map_stays_compact_at_100k_cells():
+    """잰 값(tracemalloc, 이 시험의 합성 칸): 고치기 전 약 254 B/칸(10만 칸 25 MB) — Cell 이 __dict__ 를 갖고 칸마다 float 넷을 새로 만들었다.
+    slots + 격자점 float 공유로 약 120 B/칸. 상한 160 B/칸은 그 사이에 둔다(파이썬 판 차이 여유)."""
+    import gc
+    import tracemalloc
+
+    from wakeline_collector.jobs.traffic_grid import GridGeometry
+
+    rows = []
+    for i in range(20_000):
+        la, lo = 32.0 + (i // 250) * 0.025, 124.0 + (i % 250) * 0.025
+        rows.append((f"GR4_S{i:06d}", la, lo, la + 0.025, lo + 0.025, 100_000 + i))
+    gc.collect()
+    tracemalloc.start()
+    try:
+        g = GridGeometry()
+        ok, bad = g.load_cells(rows)
+        used, _peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert (ok, bad) == (20_000, 0)
+    assert used / ok < 160, f"{used / ok:.0f} B per known cell"
+    c = g.cells["GR4_S000000"]
+    assert not hasattr(c, "__dict__")
+    assert c.lat_max is g.cells["GR4_S000250"].lat_min  # 이웃 칸의 경계 값도 같은 객체

@@ -70,7 +70,7 @@ from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.errors import describe_error
 from wakeline_collector.http import BeforeSend, FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.marine_grid import CELL_DEG, SNAP_TOL_DEG, Cell, snap
+from wakeline_collector.marine_grid import CELL_DEG, SNAP_TOL_DEG, Cell, lattice_step, snap
 from wakeline_collector.providers.data_go_kr import MOF_GRID4_HOURLY_HEADROOM, MOF_HOUR_WINDOW, MOF_HOURLY_CAP, WfsLookup
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT
@@ -371,9 +371,7 @@ class GridGeometry:
                 bad += 1
                 continue
             assert sl is not None and so is not None
-            self.resolved(
-                Cell(g, sl, so, round(sl + CELL_DEG, 3), round(so + CELL_DEG, 3), gid if isinstance(gid, int) else None)
-            )
+            self.resolved(Cell(g, sl, so, lattice_step(sl), lattice_step(so), gid if isinstance(gid, int) else None))
             ok += 1
         return ok, bad
 

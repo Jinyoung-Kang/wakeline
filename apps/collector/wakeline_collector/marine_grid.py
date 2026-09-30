@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import math
 import re
 import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 를 먼저 거절하고, 크기 상한을 둔 뒤에만 해석한다(parse_wfs)
@@ -118,21 +119,34 @@ def tm5179_to_wgs84(x: float, y: float) -> tuple[float, float]:
 # ---- 격자 맞춤 ----
 
 
+@functools.lru_cache(maxsize=16_384)
+def _lattice(k: int) -> float:
+    """k 번째 격자점(k × 0.025°, 소수 셋째 자리로 반올림한 정확한 값) — 같은 k 는 같은 float 객체다. 지구의 격자점은 경도 쪽 14,401개라 캐시가
+    모두 담는다(상한은 틀린 입력으로 커지지 않게). 아는 칸 10만 개가 칸마다 float 넷을 새로 만들지 않고 값 수백 개를 나눠 쓴다
+    (ADR-023 2026-10-01 bbox 개정 — 잰 값: 칸당 약 254 B → 약 120 B, test_traffic_grid_geo)."""
+    return round(k * CELL_DEG, 3) + 0.0  # -0.0 → 0.0
+
+
 def snap(v: float) -> float | None:
-    """v 가 0.025° 배수에서 SNAP_TOL_DEG 안이면 그 배수(소수 셋째 자리로 반올림한 정확한 값), 아니면 None."""
+    """v 가 0.025° 배수에서 SNAP_TOL_DEG 안이면 그 배수(소수 셋째 자리로 반올림한 정확한 값 — 공유 객체), 아니면 None."""
     if not math.isfinite(v):
         return None
     k = round(v / CELL_DEG)
     if abs(v - k * CELL_DEG) > SNAP_TOL_DEG:
         return None
-    return round(k * CELL_DEG, 3) + 0.0  # -0.0 → 0.0
+    return _lattice(k)
+
+
+def lattice_step(v: float) -> float:
+    """격자점 v(snap 이 돌려준 값)의 다음 격자점(v + 0.025°) — 공유 객체."""
+    return _lattice(round(v / CELL_DEG) + 1)
 
 
 class OffGrid(ValueError):
     """기하가 0.025° 격자 한 칸이 아니다 — 격리한다(지도에 쓰지 않는다)."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Cell:
     grid_no: str
     lat_min: float
