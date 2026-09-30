@@ -547,3 +547,176 @@ def test_radar_kr_missing_file_streak_rules():
     assert any(c.name == "radar_kr_missing" and c.recorded_only for c in rcc.CHECKS)
     assert list(Draft202012Validator(rcc.SCHEMAS["radar_kr_missing"]).iter_errors({}))  # required missing
     assert "missing" in str(rcc.SCHEMAS["status_ais"]["allOf"])
+
+
+# ---- 관측 수신 범위(계약 v5 §G26 · ADR-027) — GET /api/v1/ships/coverage ----
+
+
+def coverage(**over):
+    """부트스트랩이 끝난 뒤의 정직한 응답(창 전체를 덮음). 시각은 UTC ISO — 마지막 수신은 초로 내린 값."""
+    body = {
+        "cell_deg": 0.5,
+        "window": {"hours": 24, "bucket_s": 3600, "from": "2026-09-29T09:00:00Z", "to": "2026-09-30T09:40:12.345Z"},
+        "since": "2026-09-29T09:00:00Z",
+        "covered": "full",
+        "api_started_at": "2026-09-30T09:37:25.500Z",
+        "live_from": "2026-09-30T09:37:00Z",
+        "bootstrap": {
+            "state": "done",
+            "hours_loaded": 25,
+            "hours_total": 25,
+            "rows": 1234,
+            "loaded_from": "2026-09-29T09:00:00Z",
+            "finished_at": "2026-09-30T09:38:10.100Z",
+        },
+        "generated_at": "2026-09-30T09:40:12.345Z",
+        "cells": [
+            [139.5, 35.0, 0.5, 12, 40, "2026-09-30T08:59:59Z"],
+            [126.0, 37.0, 0.5, 304, 5120, "2026-09-30T09:40:01Z"],
+        ],
+        "cell_count": 2,
+        "positions": 5160,
+        "truncated": False,
+        "dropped_positions": 0,
+        "limits": {"max_cells": 16000, "max_ship_cells": 200000},
+        "sampling": "first_fix_per_60s",
+        "note": "관측 수신 — 이 서비스가 받은 AIS 위치의 칸별 집계(구독 범위 아님 · 수신국이 없는 해역은 비어 있다)",
+        "time_zone": "all times are UTC ISO-8601",
+        "meta": {
+            "provider": "aisstream",
+            "fetched_at": "2026-09-30T09:40:01Z",
+            "lag_s": 11.3,
+            "stale": False,
+            "generated_at": "2026-09-30T09:40:12.400Z",
+            "request_id": "abcdef0123456789",
+        },
+    }
+    body.update(over)
+    return body
+
+
+def coverage_since_start(**over):
+    """부트스트랩 전(api 시작 뒤 셈만) — since = 셈 시작."""
+    b = coverage(
+        since="2026-09-30T09:37:00Z",
+        covered="since_api_start",
+        bootstrap={"state": "pending", "hours_loaded": 0, "hours_total": 0, "rows": 0, "loaded_from": "2026-09-30T09:37:00Z"},
+        cells=[[126.0, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01Z"]],
+        cell_count=1,
+        positions=3,
+    )
+    b.update(over)
+    return b
+
+
+def coverage_partial(**over):
+    """부트스트랩이 세 시(지금 시 + 앞 두 시)만 읽고 문장 상한에 멈춤 — since = 이어 읽은 가장 오래된 시."""
+    b = coverage(
+        since="2026-09-30T07:00:00Z",
+        covered="partial",
+        bootstrap={
+            "state": "failed",
+            "hours_loaded": 3,
+            "hours_total": 25,
+            "rows": 40,
+            "loaded_from": "2026-09-30T07:00:00Z",
+            "error": "statement_timeout",
+            "finished_at": "2026-09-30T09:38:10Z",
+        },
+    )
+    b.update(over)
+    return b
+
+
+def test_ship_coverage_schema_and_rules_accept_every_honest_state():
+    v = Draft202012Validator(rcc.SCHEMAS["ship_coverage"], format_checker=rcc.FORMATS)
+    empty = coverage_since_start(
+        cells=[],
+        cell_count=0,
+        positions=0,
+        meta={k: x for k, x in coverage()["meta"].items() if k not in ("fetched_at", "lag_s")},
+    )
+    empty["meta"]["stale"] = True
+    capped = coverage(truncated=True, dropped_positions=7)
+    for b in (coverage(), coverage_since_start(), coverage_partial(), empty, capped):
+        assert not list(v.iter_errors(b)), (b["covered"], [e.message for e in v.iter_errors(b)])
+        assert rcc._ship_coverage(b) == [], (b["covered"], rcc._ship_coverage(b))
+    assert any(c.name == "ship_coverage" and not c.recorded_only for c in rcc.CHECKS)
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"cell_deg": 1.0},
+        {"window": {"hours": 12, "bucket_s": 3600, "from": "2026-09-29T09:00:00Z", "to": "2026-09-30T09:40:12.345Z"}},
+        {"covered": "complete"},
+        {"cells": [[126.0, 37.0, 0.5, 0, 3, "2026-09-30T09:40:01Z"]]},  # 선박 0척인 칸은 싣지 않는다
+        {"cells": [[126.0, 37.0, 0.5, 3, 3]]},  # 마지막 수신이 없다
+        {"cells": [[126.0, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01"]]},  # 시간대 없는 시각
+        {"cells": [[180.0, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01Z"]]},  # 180 은 칸의 시작이 될 수 없다
+        {
+            "bootstrap": {
+                "state": "failed",
+                "hours_loaded": 0,
+                "hours_total": 0,
+                "rows": 0,
+                "loaded_from": "2026-09-30T09:37:00Z",
+            }
+        },  # 실패인데 종류가 없다
+        {
+            "bootstrap": {
+                "state": "done",
+                "hours_loaded": 25,
+                "hours_total": 25,
+                "rows": 1,
+                "loaded_from": "2026-09-29T09:00:00Z",
+                "error": "x",
+            }
+        },
+        {"sampling": "all_reports"},
+        {"limits": {"max_cells": 16000}},
+        {"extra": 1},
+    ],
+)
+def test_ship_coverage_schema_rejects(over):
+    v = Draft202012Validator(rcc.SCHEMAS["ship_coverage"], format_checker=rcc.FORMATS)
+    assert list(v.iter_errors(coverage(**over))), over
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        coverage(covered="partial"),  # since 가 창의 시작인데 전체가 아니라고 한다
+        coverage(since="2026-09-30T07:00:00Z"),  # 창 전체를 덮지 않았는데 full
+        coverage_since_start(covered="full"),
+        coverage_since_start(since="2026-09-30T09:00:00Z"),  # 셈 시작보다 앞선 since(부트스트랩이 읽지 않았다)
+        coverage_partial(since="2026-09-30T08:00:00Z"),  # 부트스트랩이 이어 읽은 곳과 다른 since
+        coverage(
+            window={"hours": 24, "bucket_s": 3600, "from": "2026-09-29T10:00:00Z", "to": "2026-09-30T09:40:12.345Z"}
+        ),  # 창의 시작 ≠ 지금 시 − 24 h
+        coverage(
+            window={"hours": 24, "bucket_s": 3600, "from": "2026-09-29T09:00:00Z", "to": "2026-09-30T09:41:00Z"}
+        ),  # to ≠ generated_at
+        coverage(live_from="2026-09-30T09:37:30Z"),  # 셈 시작이 분 경계가 아니다
+        coverage(live_from="2026-09-30T09:35:00Z"),  # 셈 시작이 api 시작 분보다 이르다
+        coverage(cells=[[126.25, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01Z"]], cell_count=1, positions=3),  # 0.5° 격자점 아님
+        coverage(cells=[[126.0, 37.0, 0.5, 4, 3, "2026-09-30T09:40:01Z"]], cell_count=1, positions=3),  # 선박 > 위치
+        coverage(cells=[[126.0, 37.0, 0.5, 3, 3, "2026-09-29T08:59:59Z"]], cell_count=1, positions=3),  # 창 밖의 마지막 수신
+        coverage(cells=[[126.0, 37.0, 0.5, 3, 3, "2026-09-30T09:50:01Z"]], cell_count=1, positions=3),  # 응답보다 5분 넘게 미래
+        coverage(cells=[[126.0, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01.500Z"]], cell_count=1, positions=3),  # 초로 내리지 않았다
+        coverage(
+            cells=[[126.0, 37.0, 0.5, 304, 5120, "2026-09-30T09:40:01Z"], [139.5, 35.0, 0.5, 12, 40, "2026-09-30T08:59:59Z"]]
+        ),  # 남 → 북이 아님
+        coverage(cells=[[126.0, 37.0, 0.5, 3, 3, "2026-09-30T09:40:01Z"]] * 2, cell_count=2, positions=6),  # 같은 칸 두 번
+        coverage(cell_count=3),
+        coverage(positions=5161),
+        coverage(truncated=True),  # 빠진 위치가 없는데 잘렸다고 한다
+        coverage(dropped_positions=3),  # 빠진 위치가 있는데 잘리지 않았다고 한다
+        coverage(limits={"max_cells": 1, "max_ship_cells": 200000}),  # 상한보다 많은 칸
+        coverage(bootstrap={**coverage()["bootstrap"], "hours_loaded": 24}),  # done 인데 다 읽지 않았다
+        coverage(bootstrap={**coverage()["bootstrap"], "loaded_from": "2026-09-30T09:38:00Z"}),  # 셈 시작보다 늦은 loaded_from
+        coverage(meta={**coverage()["meta"], "fetched_at": "2026-09-30T09:39:00Z"}),  # 가장 늦은 마지막 수신이 아니다
+    ],
+)
+def test_ship_coverage_cross_rules_catch(body):
+    assert rcc._ship_coverage(body), body
