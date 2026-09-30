@@ -133,6 +133,8 @@ public class WeatherController {
      * 프레임마다 합성 지점 수 · 코드 · 기준 · 부분 합성 · 다시 받기 기록(ADR-021 — KrRadarFrames 가 검증), 최상위는 최신 프레임의 같은 값.
      * 목록은 PNG 키가 아직 남아 있는 프레임만 싣는다 — 목록 키가 프레임(TTL 3 h)보다 오래 남아도 없는 이미지를 '있다' 고 하지 않는다(REL-19).
      * available·georeferenced 는 수집기가 쓸 수 있다고 표시했고 실제 프레임이 하나 이상 있을 때만 true. ETag = 응답을 결정하는 값들의 해시.
+     * missing = 기상청 내려받기 '파일 없음' 연속(KrRadarMissing — 목록에는 있는데 내려받기가 없다고 답한 첫 tm · 수 · 마지막 확인 · 파일 이름 · 목록 종류).
+     * 연속이 없으면 키가 없다. 프레임이 그대로여도 연속이 갱신되면 ETag 가 바뀐다.
      */
     @GetMapping("/radar/kr")
     public ResponseEntity<Map<String, Object>> radarKr(HttpServletRequest req) {
@@ -156,9 +158,10 @@ public class WeatherController {
         tools.jackson.databind.JsonNode coordinates = h.get("coordinates") == null ? null : parseJson("coordinates", String.valueOf(h.get("coordinates")));
         int[] imageSize = imageSize(h.get("width"), h.get("height"));
         boolean available = "1".equals(h.get("available")) && !frames.isEmpty() && coordinates != null && imageSize != null;
+        Map<String, Object> missing = KrRadarMissing.from(h, this::radarParseError);
         // 프레임은 tm 뿐 아니라 내용 전체(받은 시각 · 지점 수 · partial · URL 버전) — 같은 tm 을 다시 받아 바꿔도 304 로 옛 값을 붙잡지 않는다(ADR-021)
         String etag = "\"k" + Integer.toHexString(java.util.Objects.hash(h.get("fetched_at"), h.get("latest_tm"), h.get("available"), h.get("status"),
-                h.get("coordinates"), h.get("width"), h.get("height"), frames)) + "\"";
+                h.get("coordinates"), h.get("width"), h.get("height"), frames, missing)) + "\"";
         CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
         if (etag.equals(req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         Map<String, Object> m = new LinkedHashMap<>();
@@ -177,6 +180,7 @@ public class WeatherController {
         m.putAll(KrRadarFrames.latest(frames)); // 최신 프레임의 합성 지점 수 · 코드 · 기준 · partial(모르면 키 없음, ADR-021)
         m.put("image_size", imageSize);
         m.put("frames", frames);
+        if (missing != null) m.put("missing", missing);
         m.put("time_zone", "KST(UTC+9) for tm; fetched_at is UTC");
         m.put("attribution", "기상청 API허브 레이더 합성자료(HSR) · 투영·격자 정의: 기상기후데이터위키");
         Instant fetched = h.get("fetched_at") == null ? null : StatusService.isoInstant(h.get("fetched_at"));
