@@ -6,8 +6,14 @@
 - KEY_FRAMES(JSON list, 오래된 → 최신): 프레임 항목. 키 TTL = 가장 새 이미지의 남은 TTL(expires_at) — 수집기가 멈추면 이미지와 함께 만료된다.
 - KEY_FRAME(base64 PNG, TTL FRAME_TTL_S): 프레임 이미지.
 
-Redis 오류(RedisError · OSError)는 삼키지 않고 올린다 — 작업이 단계별로 'error' 실행 하나로 적는다(D2 · collector-review F1: 전에는 redis-py 예외가
-스케줄러까지 올라가 그 주기의 실행 기록 · 품질 사례를 잃었다). 쓰는 순서(이미지 → meta → 목록)도 작업이 정한다(_store · _note_refetch).
+Redis 오류(RedisError · OSError)는 삼키지 않고 올린다 — 그 뜻은 작업이 정한다: run_once 의 except (RedisError, OSError) 와 _redis_failed 가 단계별로
+'error' 실행 하나로 적는다(D2 · collector-review F1: 전에는 redis-py 예외가 스케줄러까지 올라가 그 주기의 실행 기록 · 품질 사례를 잃었다).
+쓰는 순서도 작업이 정한다 — 둘이 다르다:
+- _store(새 프레임): 이미지 → meta → 목록 → 목록에서 빠진 옛 이미지 DEL. 어디서 실패해도 목록이 meta(latest_tm · fetched_at — STALE 시계)보다
+  앞서지 않는다. DEL 만 실패한 것은 저장 실패가 아니다(WARN — 남은 이미지는 TTL 로 만료).
+- _note_refetch(이미 목록에 있는 프레임을 다시 받음): (바꿀 때만) 이미지 → 목록 → meta. 그래도 D2 에 안전하다 — 그 tm 은 이미 목록에 있고 이미지도
+  있으며, meta 에는 최신 프레임의 헤더 값 · 지점 필드만 쓰고 latest_tm · fetched_at 은 바꾸지 않는다. meta 쓰기만 실패하면 그 값들이 다음 저장 ·
+  다시 받기까지 앞선 값으로 남는다.
 """
 
 from __future__ import annotations

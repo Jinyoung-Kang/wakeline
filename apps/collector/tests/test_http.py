@@ -332,3 +332,49 @@ async def test_a_redirect_without_a_location_says_so():
 
     assert describe_error(ei.value) == "HTTP 302 Found — redirect to (no Location) — not followed"  # 운영 last_error · 실행 기록
     await c.aclose()
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["/portal/maint.do?authKey=FAKE-KEY&page=1", "maint.do?serviceKey=FAKE-KEY", "?authKey=FAKE-KEY"],
+    ids=["absolute path", "relative path", "query only"],
+)
+async def test_a_relative_redirect_names_the_request_host_and_never_the_path_or_query(location):
+    """CTO 리뷰 2026-10: 상대 Location(같은 호스트 — RFC 9110 은 요청 URI 에 맞춰 푼다)은 urlparse(...).hostname 이 None 이라
+    'redirect to (no Location)' 으로 적혀 Location 이 있었다는 것을 숨겼다. 이제 요청 호스트와 '상대 Location' — 경로 · 쿼리(키)는 여전히 싣지 않는다."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(return_value=httpx.Response(302, headers={"Location": location}))
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to api.rainviewer.com (relative Location — same host) — not followed"
+    from wakeline_collector.errors import describe_error
+
+    shown = describe_error(ei.value)
+    assert shown == "HTTP 302 Found — redirect to api.rainviewer.com (relative Location — same host) — not followed"
+    assert not any(x in shown or x in str(ei.value) for x in ("maint", "portal", "FAKE-KEY", "authKey", "serviceKey", "?"))
+    await c.aclose()
+
+
+async def test_a_protocol_relative_redirect_names_its_own_host():
+    """'//host/…' 는 상대 참조지만 호스트가 있다 — 그 호스트를 싣는다(같은 호스트라고 하지 않는다)."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(
+            return_value=httpx.Response(302, headers={"Location": "//portal.example/maint.do?authKey=FAKE-KEY"})
+        )
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to portal.example — not followed"
+    await c.aclose()
+
+
+async def test_a_location_with_a_scheme_but_no_host_is_not_called_relative_or_missing():
+    """'https:///…' 는 상대 참조가 아니다(스킴이 있다) — 같은 호스트라고도, Location 이 없다고도 하지 않는다. 경로 · 쿼리는 싣지 않는다."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(return_value=httpx.Response(302, headers={"Location": "https:///maint.do?authKey=FAKE-KEY"}))
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to (Location without a host) — not followed"
+    await c.aclose()

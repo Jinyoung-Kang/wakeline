@@ -4,7 +4,14 @@
   entry     실행 진입 — main · ais.main · health · __main__ · tools
   jobs      조율 — 예약 → 어댑터 호출 → 규칙으로 판정 → 어댑터로 쓰기
   adapters  입출력 — Redis · HTTP(providers 포함) · Postgres · 파일 · 환경 변수(config)
-  rules     순수 규칙 — 입출력 없음(모델 · 파서 · 판정)
+  rules     규칙(모델 · 파서 · 판정) — 어댑터를 import 하지 않는다: Redis · HTTP · DB · 파일 · 환경 변수에 스스로 닿지 않는다(입출력은 부르는
+            쪽이 주거나 주입한다). 입출력이 하나도 없다는 뜻은 아니다:
+            - KERNEL 의 실행 도우미는 asyncio 위에서 돈다 — scheduler(작업 루프 · asyncio.wait_for) · ratelimit(asyncio future · 타이머) ·
+              retry(잠들고 · 로그를 남기고 · 주입받은 입출력 호출을 부른다) · diag.LoopLag.run(끝없이 도는 태스크 — WARN 이 로그 싱크로 간다).
+            - 규칙 모듈도 logging 으로 로그를 남긴다(normalize · chain_state · ais.shards · ais.reconnect …) — WARN 이상은 진입이 붙인 logsink 가
+              Redis 로 보낸다. ais 규칙은 asyncio 이벤트 · 큐 · 타이머를 쓴다(ais.bbox · ais.queue · ais.feed · ais.shards · ais.reconnect).
+            이 가드가 세는 것은 패키지 안 import 뿐이다 — 표준 · 외부 라이브러리 import(os · redis · httpx …)는 세지 않는다(errors · http_errors 는
+            httpx 를 예외 형으로만 쓴다).
 
 규칙:
 1. 어느 모듈도 자기 층보다 위 층을 import 하지 않는다.
@@ -44,11 +51,11 @@ RULE_FEATURES: dict[str, str] = {
     "budget_rules": KERNEL,
     "textutil": KERNEL,
     "timeutil": KERNEL,
-    "diag": KERNEL,
-    "retry": KERNEL,
+    "diag": KERNEL,  # LoopLag.run 은 실행 도우미(모듈 설명 rules — asyncio 위에서 돈다)
+    "retry": KERNEL,  # 실행 도우미(모듈 설명 rules — asyncio 위에서 돈다)
     "chain_state": KERNEL,
-    "ratelimit": KERNEL,
-    "scheduler": KERNEL,
+    "ratelimit": KERNEL,  # 실행 도우미(모듈 설명 rules — asyncio 위에서 돈다)
+    "scheduler": KERNEL,  # 실행 도우미(모듈 설명 rules — asyncio 위에서 돈다)
     "normalize": "aircraft",
     "quality": "aircraft",
     "sigmet_parse": "weather",

@@ -367,8 +367,8 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts tests/perf-alert-panel.test.ts tests/perf-search-clock.test.ts -t measure)   # §11 웹 렌더 작업(시간)
 (cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts)                                                              # §11 P6(범례 선택자)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
-(cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §11 공급자 체인의 운영자 끔 읽기(스택 없이)
-(cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
-(cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §11 기상청 격자 해석 · PNG 시간 · 최고 메모리
-(cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §11 수요 추적의 루프 위 정규화(루프 위 · 스레드)
+(cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §12 공급자 체인의 운영자 끔 읽기(스택 없이)
+(cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §12 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
+(cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §12 기상청 격자 해석 · PNG 시간 · 최고 메모리
+(cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §12 수요 추적의 루프 위 정규화(루프 위 · 스레드)
 ```
