@@ -1,0 +1,49 @@
+{
+ "ok": true,
+ "cases": [
+  {
+   "n": 4,
+   "statuses": {
+    "401": 4
+   },
+   "failed_count": 4,
+   "locked": false,
+   "login_failed_audit": 4,
+   "reasons": {
+    "bad_password": 4
+   },
+   "account_locked_audit": 0,
+   "ok": true
+  },
+  {
+   "n": 5,
+   "statuses": {
+    "401": 5
+   },
+   "failed_count": 0,
+   "locked": true,
+   "login_failed_audit": 5,
+   "reasons": {
+    "bad_password": 5
+   },
+   "account_locked_audit": 1,
+   "correct_password_while_locked": 401,
+   "ok": true
+  },
+  {
+   "n": 8,
+   "statuses": {
+    "401": 8
+   },
+   "failed_count": 0,
+   "locked": true,
+   "login_failed_audit": 8,
+   "reasons": {
+    "bad_password": 8
+   },
+   "account_locked_audit": 1,
+   "correct_password_while_locked": 401,
+   "ok": true
+  }
+ ]
+}

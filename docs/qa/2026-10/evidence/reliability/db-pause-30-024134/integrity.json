@@ -1,0 +1,101 @@
+{
+ "window": [
+  1790876434935,
+  1790876572107
+ ],
+ "dlq_in_window": 0,
+ "aircraft": {
+  "entries": 14,
+  "expected_rows": 1643,
+  "missing_rows": 0,
+  "missing_sample": [],
+  "missing_by_second": {}
+ },
+ "ships": {
+  "entries": 14,
+  "expected_windows": 597,
+  "missing_windows": 0,
+  "missing_sample": [],
+  "late_windows": 13,
+  "late_windows_without_row": 0,
+  "duplicate_windows": 0,
+  "duplicate_sample": []
+ },
+ "sigmet": {
+  "entries": 1,
+  "expected_ids": 132,
+  "missing_ids": 0,
+  "missing_sample": []
+ },
+ "ais_gap": {
+  "expected": 0,
+  "missing": 0,
+  "missing_sample": []
+ },
+ "groups": {
+  "wakeline:aircraft": {
+   "pending": 1,
+   "lag": 0,
+   "last_delivered": "1790876587364-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  },
+  "wakeline:sigmet": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1790876464322-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": false
+  },
+  "wakeline:radar": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1790876534708-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": false
+  },
+  "wakeline:ships": {
+   "pending": 1,
+   "lag": 0,
+   "last_delivered": "1790876587801-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  }
+ },
+ "metrics": {
+  "wakeline_persist_queue": 0.0,
+  "wakeline_persist_tasks_total{kind=\"alert\",result=\"ok\"}": 278.0,
+  "wakeline_persist_tasks_total{kind=\"alert_reconcile\",result=\"ok\"}": 1.0,
+  "wakeline_persist_tasks_total{kind=\"sigmet_set\",result=\"ok\"}": 2.0,
+  "wakeline_ship_queue": 0.0,
+  "wakeline_ship_receipts_forced_total": 0.0,
+  "wakeline_ship_rows_total{result=\"downsampled\"}": 104.0,
+  "wakeline_ship_rows_total{result=\"dropped\"}": 237.0,
+  "wakeline_ship_rows_total{result=\"failed\"}": 0.0,
+  "wakeline_ship_rows_total{result=\"out_of_range\"}": 0.0,
+  "wakeline_ship_rows_total{result=\"written\"}": 1224.0,
+  "wakeline_stream_messages_total{result=\"apply_error\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"ok\"}": 74.0,
+  "wakeline_stream_messages_total{result=\"rejected\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"stale_skipped\"}": 5.0,
+  "wakeline_stream_messages_total{result=\"trimmed\"}": 0.0,
+  "wakeline_stream_unacked": 0.0,
+  "wakeline_track_queue": 0.0,
+  "wakeline_track_receipts_forced_total": 0.0,
+  "wakeline_track_rows_total{result=\"dropped\"}": 0.0,
+  "wakeline_track_rows_total{result=\"failed\"}": 0.0,
+  "wakeline_track_rows_total{result=\"written\"}": 4176.0
+ },
+ "defects": {
+  "aircraft_rows_lost": 0,
+  "ship_windows_lost": 0,
+  "ship_windows_duplicated": 0,
+  "sigmet_ids_lost": 0,
+  "ais_gaps_lost": 0,
+  "groups_not_drained": {}
+ }
+}

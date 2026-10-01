@@ -1,0 +1,124 @@
+{"t": 1790876598.931, "path": "/healthz", "status": 200, "retry_after": null, "ms": 49, "health": "ok", "reasons": null}
+{"t": 1790876598.931, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 65, "db_unavailable": null}
+{"t": 1790876598.932, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 65}
+{"t": 1790876598.932, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 72}
+{"t": 1790876602.936, "path": "/healthz", "status": 200, "retry_after": null, "ms": 34, "health": "ok", "reasons": null}
+{"t": 1790876602.937, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 34}
+{"t": 1790876602.936, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 37, "db_unavailable": null}
+{"t": 1790876602.937, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 38}
+{"t": 1790876606.956, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 111}
+{"t": 1790876606.952, "path": "/healthz", "status": 200, "retry_after": null, "ms": 119, "health": "ok", "reasons": null}
+{"t": 1790876606.954, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 123, "db_unavailable": null}
+{"t": 1790876606.955, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 160}
+{"t": 1790876610.974, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 184}
+{"t": 1790876610.954, "path": "/healthz", "status": 200, "retry_after": null, "ms": 204, "health": "ok", "reasons": null}
+{"t": 1790876610.967, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 191, "db_unavailable": null}
+{"t": 1790876610.971, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 312}
+{"t": 1790876614.956, "path": "/healthz", "status": 200, "retry_after": null, "ms": 21, "health": "ok", "reasons": null}
+{"t": 1790876614.959, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 19}
+{"t": 1790876614.959, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 22, "db_unavailable": null}
+{"t": 1790876618.957, "path": "/healthz", "status": 200, "retry_after": null, "ms": 24, "health": "ok", "reasons": null}
+{"t": 1790876618.959, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 24}
+{"t": 1790876618.958, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 31, "db_unavailable": null}
+{"t": 1790876614.959, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5043, "code": "UNAVAILABLE"}
+{"t": 1790876622.966, "path": "/healthz", "status": 200, "retry_after": null, "ms": 31, "health": "ok", "reasons": null}
+{"t": 1790876622.969, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 30, "db_unavailable": null}
+{"t": 1790876622.97, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 30}
+{"t": 1790876618.959, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5036, "code": "UNAVAILABLE"}
+{"t": 1790876626.971, "path": "/healthz", "status": 200, "retry_after": null, "ms": 56, "health": "ok", "reasons": null}
+{"t": 1790876626.974, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 54, "db_unavailable": null}
+{"t": 1790876626.979, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 50}
+{"t": 1790876622.97, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5042, "code": "UNAVAILABLE"}
+{"t": 1790876630.973, "path": "/healthz", "status": 200, "retry_after": null, "ms": 10, "health": "ok", "reasons": null}
+{"t": 1790876630.975, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 23, "db_unavailable": null}
+{"t": 1790876630.981, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 19}
+{"t": 1790876626.975, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5045, "code": "UNAVAILABLE"}
+{"t": 1790876634.982, "path": "/healthz", "status": 200, "retry_after": null, "ms": 13, "health": "ok", "reasons": null}
+{"t": 1790876634.984, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 15}
+{"t": 1790876634.983, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 26, "db_unavailable": null}
+{"t": 1790876630.979, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5022, "code": "UNAVAILABLE"}
+{"t": 1790876638.985, "path": "/healthz", "status": 200, "retry_after": null, "ms": 17, "health": "ok", "reasons": null}
+{"t": 1790876638.987, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 15}
+{"t": 1790876638.986, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 16, "db_unavailable": null}
+{"t": 1790876634.984, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5073, "code": "UNAVAILABLE"}
+{"t": 1790876642.99, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 230, "db_unavailable": null}
+{"t": 1790876642.99, "path": "/healthz", "status": 200, "retry_after": null, "ms": 235, "health": "ok", "reasons": null}
+{"t": 1790876642.991, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 242}
+{"t": 1790876638.986, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5026, "code": "UNAVAILABLE"}
+{"t": 1790876646.994, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 274}
+{"t": 1790876646.994, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 278, "db_unavailable": null}
+{"t": 1790876646.993, "path": "/healthz", "status": 200, "retry_after": null, "ms": 285, "health": "ok", "reasons": null}
+{"t": 1790876642.991, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5236, "code": "UNAVAILABLE"}
+{"t": 1790876650.998, "path": "/healthz", "status": 200, "retry_after": null, "ms": 51, "health": "ok", "reasons": null}
+{"t": 1790876650.999, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 51, "db_unavailable": null}
+{"t": 1790876651.0, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 51}
+{"t": 1790876646.994, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5326, "code": "UNAVAILABLE"}
+{"t": 1790876655.003, "path": "/healthz", "status": 200, "retry_after": null, "ms": 15, "health": "ok", "reasons": null}
+{"t": 1790876655.005, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 15}
+{"t": 1790876655.003, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 16, "db_unavailable": null}
+{"t": 1790876650.999, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5103, "code": "UNAVAILABLE"}
+{"t": 1790876659.025, "path": "/healthz", "status": 200, "retry_after": null, "ms": 74, "health": "ok", "reasons": null}
+{"t": 1790876659.038, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 97}
+{"t": 1790876659.034, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 102, "db_unavailable": null}
+{"t": 1790876655.004, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5027, "code": "UNAVAILABLE"}
+{"t": 1790876663.06, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 211}
+{"t": 1790876663.025, "path": "/healthz", "status": 200, "retry_after": null, "ms": 247, "health": "ok", "reasons": null}
+{"t": 1790876663.042, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 326, "db_unavailable": null}
+{"t": 1790876659.035, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5087, "code": "UNAVAILABLE"}
+{"t": 1790876667.029, "path": "/healthz", "status": 200, "retry_after": null, "ms": 12, "health": "ok", "reasons": null}
+{"t": 1790876667.03, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 17}
+{"t": 1790876667.029, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 19, "db_unavailable": null}
+{"t": 1790876663.045, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5196, "code": "UNAVAILABLE"}
+{"t": 1790876671.034, "path": "/healthz", "status": 200, "retry_after": null, "ms": 20, "health": "ok", "reasons": null}
+{"t": 1790876671.035, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 20}
+{"t": 1790876671.035, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 20, "db_unavailable": null}
+{"t": 1790876667.03, "path": "/api/v1/alerts/history", "status": 503, "retry_after": "10", "ms": 5025, "code": "UNAVAILABLE"}
+{"t": 1790876671.035, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 3314}
+{"t": 1790876675.039, "path": "/healthz", "status": 200, "retry_after": null, "ms": 7, "health": "ok", "reasons": null}
+{"t": 1790876675.04, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 16, "db_unavailable": null}
+{"t": 1790876675.04, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 16}
+{"t": 1790876675.04, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 20}
+{"t": 1790876679.046, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 215, "db_unavailable": null}
+{"t": 1790876679.043, "path": "/healthz", "status": 200, "retry_after": null, "ms": 221, "health": "ok", "reasons": null}
+{"t": 1790876679.05, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 215}
+{"t": 1790876679.046, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 988}
+{"t": 1790876683.046, "path": "/healthz", "status": 200, "retry_after": null, "ms": 42, "health": "ok", "reasons": null}
+{"t": 1790876683.047, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 42, "db_unavailable": null}
+{"t": 1790876683.049, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 41}
+{"t": 1790876683.048, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 62}
+{"t": 1790876687.059, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 71}
+{"t": 1790876687.058, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 75, "db_unavailable": null}
+{"t": 1790876687.057, "path": "/healthz", "status": 200, "retry_after": null, "ms": 74, "health": "ok", "reasons": null}
+{"t": 1790876687.059, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 93}
+{"t": 1790876691.066, "path": "/healthz", "status": 200, "retry_after": null, "ms": 131, "health": "ok", "reasons": null}
+{"t": 1790876691.07, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 128, "db_unavailable": null}
+{"t": 1790876691.079, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 120}
+{"t": 1790876691.074, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 150}
+{"t": 1790876695.07, "path": "/healthz", "status": 200, "retry_after": null, "ms": 25, "health": "ok", "reasons": null}
+{"t": 1790876695.08, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 28}
+{"t": 1790876695.077, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 33, "db_unavailable": null}
+{"t": 1790876695.079, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 104}
+{"t": 1790876699.076, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 49}
+{"t": 1790876699.074, "path": "/healthz", "status": 200, "retry_after": null, "ms": 58, "health": "ok", "reasons": null}
+{"t": 1790876699.075, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 149, "db_unavailable": null}
+{"t": 1790876699.075, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 205}
+{"t": 1790876703.077, "path": "/healthz", "status": 200, "retry_after": null, "ms": 264, "health": "ok", "reasons": null}
+{"t": 1790876703.08, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 272}
+{"t": 1790876703.079, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 280, "db_unavailable": null}
+{"t": 1790876703.079, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 350}
+{"t": 1790876707.114, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 168}
+{"t": 1790876707.088, "path": "/healthz", "status": 200, "retry_after": null, "ms": 208, "health": "ok", "reasons": null}
+{"t": 1790876707.095, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 230, "db_unavailable": null}
+{"t": 1790876707.105, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 256}
+{"t": 1790876711.093, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 146}
+{"t": 1790876711.086, "path": "/healthz", "status": 200, "retry_after": null, "ms": 158, "health": "ok", "reasons": null}
+{"t": 1790876711.088, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 189, "db_unavailable": null}
+{"t": 1790876711.091, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 205}
+{"t": 1790876715.147, "path": "/healthz", "status": 200, "retry_after": null, "ms": 334, "health": "ok", "reasons": null}
+{"t": 1790876715.175, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 310, "db_unavailable": null}
+{"t": 1790876715.225, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 263}
+{"t": 1790876715.195, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 538}
+{"t": 1790876719.101, "path": "/api/v1/ships?bbox=120,30,135,40", "status": 200, "retry_after": null, "ms": 52}
+{"t": 1790876719.101, "path": "/api/v1/aircraft?bbox=124,33,132,39", "status": 200, "retry_after": null, "ms": 55, "db_unavailable": null}
+{"t": 1790876719.099, "path": "/healthz", "status": 200, "retry_after": null, "ms": 58, "health": "ok", "reasons": null}
+{"t": 1790876719.101, "path": "/api/v1/alerts/history", "status": 200, "retry_after": null, "ms": 63}

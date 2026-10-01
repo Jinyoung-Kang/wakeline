@@ -1,0 +1,1 @@
+2026-10-01T17:51:23.909Z  WARN 7 --- [wakeline-api] [cat-handler-724] [rid:99bf7297a32b3e7ff642cb73331b06cd] dev.wakeline.platform.web.RateLimiter    : rate limiter unavailable — the 'api' limit is open until Redis answers (the edge limit still applies; counted in wakeline_rate_limiter_errors_total): org.springframework.data.redis.RedisSystemException: Redis exception
