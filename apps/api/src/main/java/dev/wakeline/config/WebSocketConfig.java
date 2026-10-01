@@ -38,7 +38,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        OriginAllowList origins = new OriginAllowList(props.allowedOrigins());
+        OriginAllowList origins = new OriginAllowList(props.originPatterns());
         registry.addHandler(handler, "/ws/v1")
                 .addInterceptors(origins, new ClientIpInterceptor(props.trustedProxy()))
                 // Spring 의 Origin 검사도 같은 목록을 쓰게 한다(목록 안의 교차 출처 Origin 이 same-origin 검사로 거절되지 않게)
