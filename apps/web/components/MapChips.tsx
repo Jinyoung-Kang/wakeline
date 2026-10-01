@@ -1,6 +1,6 @@
 "use client";
 import { useNow, useServerNow } from "@/lib/clock";
-import { mapDemandChip, type Chip } from "@/lib/demand";
+import { mapDemandChip, mapDemandStatus, type Chip } from "@/lib/demand";
 import { countShipsIn, filterGridCells, SHIP_CATEGORIES, shipsChip, shipsChipStatus, shipsGapSuffix, type ShipCategory, type ShipsChipFilter } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { isRxFresh } from "@/lib/ws-protocol";
@@ -59,8 +59,8 @@ export function MapChipsView({ hex, shipsOn, shipCats = SHIP_CATEGORIES, basemap
   const shipView = ships.mode === "off" ? { ...ships, mode: "waiting" as const } : ships;
   const ship = shipsOn ? shipsChip(shipView, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, filter: chipFilter(ships, shipCats), observed }) : null;
   const gap = shipsGapSuffix(ais);
-  if (!chip && !ship && !basemapFailed) return null;
-  // 칸 전체를 aria-live 로 두지 않는다 — 칩 글자의 수(척 · 칸 · N분째)가 바뀔 때마다 다시 읽혔다(web-review B7). 화면 낭독기에는 선박 상태가 바뀔 때만(결정 3)
+  // 칸 전체를 aria-live 로 두지 않는다 — 칩 글자의 수(척 · 칸 · N분째)가 바뀔 때마다 다시 읽혔다(web-review B7). 화면 낭독기에는 수요 · 선박 상태가 바뀔 때만(결정 3).
+  // 두 알림 영역은 칩이 없어도 빈 채로 둔다 — 글자와 함께 생기는 영역은 대부분의 화면 낭독기가 읽지 않아 첫 상태(수신 대기 · 집중 추적 대기 …)가 빠졌다
   return (
     <div className="flex min-w-0 flex-col items-start gap-1" data-testid="map-chips">
       {basemapFailed ? <BasemapNotice /> : null}
@@ -70,9 +70,10 @@ export function MapChipsView({ hex, shipsOn, shipCats = SHIP_CATEGORIES, basemap
           <span className={`badge normal-case! ${ship.warn ? "warn" : ""}`} data-testid="ships-chip" data-mode={ships.mode} title={ship.title}>
             {ship.text}{gap}
           </span>
-          <span className="sr-only" role="status" data-testid="ships-chip-status">{shipsChipStatus(shipView, { bbox: viewport?.bbox ?? null, ais }, ship.warn, gap !== "")}</span>
         </div>
       ) : null}
+      <span className="sr-only" role="status" data-testid="demand-chip-status">{chip ? mapDemandStatus(demand, hex) : ""}</span>
+      <span className="sr-only" role="status" data-testid="ships-chip-status">{ship ? shipsChipStatus(shipView, { bbox: viewport?.bbox ?? null, ais }, ship.warn, gap !== "") : ""}</span>
     </div>
   );
 }

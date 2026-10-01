@@ -721,6 +721,24 @@ describe("ops write failures stay until the next write or a dismiss (web-review 
     await click(button("알림 닫기", byTestId("settings-error")!));
     expect(byTestId("settings-error")).toBeNull();
   });
+
+  // 설정 폼은 settings 탭에서만 그려진다 — 실패 문구가 폼 안에 있으면 다른 탭에 다녀오는 것만으로 사라졌다(리뷰 cto-2026-10 최종)
+  it("a failed settings save stays when the operator looks at another tab and comes back", async () => {
+    putStatus = 503;
+    stub();
+    await mount();
+    await click(byTestId("ops-tab-settings"));
+    await React.act(async () => { propsOf(find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!).onChange({ target: { value: "15" } }); });
+    await click(button("save"));
+    expect(byTestId("settings-error")?.textContent).toContain("region_poll_s: 저장 실패(HTTP 503)");
+    await click(byTestId("ops-tab-providers"));
+    expect(byTestId("settings-error")).toBeNull(); // 설정 탭에서만 보인다
+    await click(byTestId("ops-tab-settings"));
+    expect(byTestId("settings-error")?.textContent ?? "").toContain("region_poll_s: 저장 실패(HTTP 503)");
+    expect(byTestId("settings-error")?.textContent).toContain("feedface0000cafe");
+    await click(button("알림 닫기", byTestId("settings-error")!));
+    expect(byTestId("settings-error")).toBeNull();
+  });
 });
 
 /**
@@ -757,5 +775,53 @@ describe("ops providers: switch history that could not be read is a warning, not
       root = null;
       await React.act(async () => { r.unmount(); });
     }
+  });
+});
+
+/**
+ * DLQ 탭(리뷰 cto-2026-10 최종): /ops/dlq 는 Redis 를 읽지 못하면 빈 items 와 함께 "error":"redis unavailable" 를 싣는다 — 탭은 그것을 무시하고
+ * '스키마 검증에 실패한 메시지가 없습니다.' 를 보였다(읽지 못함이 없음과 같아 보였다). providers 탭의 자동 전환 기록(api A4)과 같은 경고 줄로 가른다.
+ */
+describe("ops dlq: a list that could not be read is a warning, not 'no messages'", () => {
+  const mountDlq = async (dlq: Record<string, unknown>) => {
+    const data: Record<string, unknown> = { ...BODY, "/api/v1/ops/dlq": dlq };
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in data ? data[url] : { detail: "no such resource" }), { status: url in data ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    const tab = byTestId("ops-tab-dlq")!;
+    const k = Object.keys(tab).find((x) => x.startsWith("__reactProps$"))!;
+    await React.act(async () => { (tab as unknown as Record<string, { onClick: () => void }>)[k].onClick(); });
+    await settle();
+  };
+  const NONE = "스키마 검증에 실패한 메시지가 없습니다.";
+  const dash = () => byTestId("ops-dashboard")!.textContent;
+  it("an error with an empty list says the list could not be read (role=alert), with the api's reason as given — not 'none'", async () => {
+    await mountDlq({ items: [], error: "redis unavailable" });
+    const w = byTestId("dlq-error");
+    expect(w?.textContent ?? "").toBe("스키마 검증 실패 메시지(DLQ)를 읽지 못함(api: redis unavailable) — 목록이 비어 있어도 ‘없음’이 아니다. 15 s 마다 다시 읽는다");
+    expect(w!.getAttribute("role")).toBe("alert");
+    expect(w!.getAttribute("class")).toContain("text-warn");
+    expect(dash()).not.toContain(NONE);
+  });
+  it("an error that is not a string still warns (reason unknown — nothing is made up)", async () => {
+    await mountDlq({ items: [], error: { code: 1 } });
+    expect(byTestId("dlq-error")?.textContent ?? "").toBe("스키마 검증 실패 메시지(DLQ)를 읽지 못함(api: 이유 모름) — 목록이 비어 있어도 ‘없음’이 아니다. 15 s 마다 다시 읽는다");
+    expect(dash()).not.toContain(NONE);
+  });
+  it("no error (absent, null or empty) → no warning: an empty list is 'none', a list is a table", async () => {
+    for (const extra of [{}, { error: null }, { error: "" }]) {
+      await mountDlq({ items: [], ...extra });
+      expect(byTestId("dlq-error"), JSON.stringify(extra)).toBeNull();
+      expect(dash()).toContain(NONE);
+      const r = root!;
+      root = null;
+      await React.act(async () => { r.unmount(); });
+    }
+    await mountDlq({ items: [{ stream_id: "1-0", at: "2026-09-28T14:59:59Z", source_stream: "wakeline:aircraft", kind: "schema", reason: "bad", payload_head: "{}" }] });
+    expect(byTestId("dlq-error")).toBeNull();
+    expect(dash()).toContain("wakeline:aircraft");
+    expect(dash()).not.toContain(NONE);
   });
 });

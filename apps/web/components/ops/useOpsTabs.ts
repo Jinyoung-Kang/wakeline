@@ -23,6 +23,8 @@ export interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors
 /** counted_since = V16 이 격리 수를 KST 날짜로 세기 시작한 순간(UTC ISO) — 그 KST 날짜는 부분 값(lib/ops qualityPartialDay) */
 export interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown; counted_since?: unknown }
 export interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
+/** error = api 가 DLQ(wakeline:dlq)를 읽지 못함(그때 items 는 빈 목록 — lib/ops dlqReadError) */
+export interface Dlq { items: Any[]; error?: unknown }
 /** 탭 = 엔드포인트 하나(경로는 lib/endpoints/ops — 실행 요약은 해결 표시를 늘 명시한다). 화면의 탭 단추도 이 순서 */
 export const OPS_TABS: readonly OpsTab[] = ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"];
 /** 탭마다 요청 순서(lib/ops RequestOrder) — 대시보드마다 하나 */
@@ -43,7 +45,7 @@ export function useOpsTabs({ onLeave, onRuns }: { onLeave: (note: string | null)
   const [quality, setQuality] = useState<Quality | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [audit, setAudit] = useState<{ items: Any[] } | null>(null);
-  const [dlq, setDlq] = useState<{ items: Any[] } | null>(null);
+  const [dlq, setDlq] = useState<Dlq | null>(null);
   const [pipeline, setPipeline] = useState<unknown>(null);
   /** 마지막 오류(문구 + ApiError 면 요청 id — 계약 v5 §C8) */
   const [err, setErr] = useState<unknown>(null);
@@ -88,7 +90,7 @@ export function useOpsTabs({ onLeave, onRuns }: { onLeave: (note: string | null)
     load<Quality>("quality", setQuality);
     load<Settings>("settings", setSettings);
     load<{ items: Any[] }>("audit", setAudit);
-    load<{ items: Any[] }>("dlq", setDlq);
+    load<Dlq>("dlq", setDlq);
     load<unknown>("pipeline", setPipeline);
   }, [onLeave, onRuns]);
   const refresh = useCallback(() => reload(), [reload]);

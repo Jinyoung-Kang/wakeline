@@ -118,3 +118,21 @@ export function mapDemandChip(d: DemandInfo | null, selectedHex: string | null, 
   if (selectedHex) return focusChip(d, selectedHex, nowMs);
   return hotChip(d);
 }
+
+/**
+ * 화면 낭독기에 알릴 지도 수요 칩의 상태(PLAN §5 결정 3 — 지도 칩은 상태가 바뀔 때만 알린다): 상태마다 고정 글자라 상태가 바뀔 때만 글자가 바뀐다.
+ * 주기 · 경과 분 · 반경은 넣지 않는다(경과 분은 1분마다 바뀐다) — 자세한 값은 보이는 칩과 그 title.
+ */
+const FOCUS_STATUS: Record<FocusState, string> = {
+  active: "집중 추적 중", pending: "집중 추적 대기", throttled: "집중 추적 호출 상한으로 지연", not_found: "집중 추적 대상 — 공급자에서 찾지 못함",
+  error: "집중 추적 오류", disabled: "집중 추적 중지 · 공급자 꺼짐(운영자)", expired_session_cap: "집중 추적 30분 상한 — 다시 선택하면 이어짐", limited: "추적 변경 제한 — 잠시 뒤 반영",
+};
+const HOT_STATUS: Record<HotState, string> = {
+  active: "핫 리전 갱신 중", pending: "핫 리전 대기", throttled: "핫 리전 호출 상한으로 지연", covered_by_region: "관심 지역 수집 범위 안",
+  error: "핫 리전 조회 오류", disabled: "핫 리전 중지 · 공급자 꺼짐(운영자)", limited: "핫 리전 변경 제한 — 잠시 뒤 반영",
+};
+/** 지도 수요 칩의 알림 글자 — mapDemandChip 과 같은 고르기(선택 항공기면 그 hex 의 집중 추적, 없으면 핫 리전). 보일 칩이 없으면 "" */
+export function mapDemandStatus(d: DemandInfo | null, selectedHex: string | null): string {
+  if (selectedHex) return d?.focus && d.focus.hex === selectedHex ? FOCUS_STATUS[d.focus.state] : "";
+  return d?.hot ? HOT_STATUS[d.hot.state] : "";
+}
