@@ -156,5 +156,9 @@ restore: ## 백업 복원: make restore f=backups/<파일>.dump confirm=wakeline
 rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비밀번호 교체(DB·.env 함께) → 이어서 make up · sync=1 이면 .env 의 지금 값을 DB 에 맞춤(어긋남 복구) · 격리 스택은 같은 .env 를 읽으므로 P=wakeline-e2e sync=1 만
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' python3 tools/db_rotate_passwords.py $(if $(filter 1,$(sync)),--sync,)
 
-print-%: ## 변수 값 출력 (CI 용, 예: make -s print-K6_IMAGE)
+# 변수 값 출력(CI · 보안 게이트 · 정책 시험용, 예: make -s print-K6_IMAGE). 허용 목록의 고정 설정만 — make 는 환경변수도 변수로 읽으므로
+# 아무 이름이나 받으면 셸 · CI 에 export 된 비밀값까지 찍는다(I-8). 늘릴 때는 비밀값이 아닌지 확인하고 이름을 더한다(test_scripts_policy.py).
+PRINTABLE_VARS := K6_IMAGE ISO_ENV
+.PHONY: $(addprefix print-,$(PRINTABLE_VARS))
+$(addprefix print-,$(PRINTABLE_VARS)): print-%:
 	@echo '$($*)'
