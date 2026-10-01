@@ -56,6 +56,11 @@ const BUDGET_DAY_TITLE = "공급자 하루 예산의 한 창 — 수집기의 �
 const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 호출 수(그때의 예산 창 — 매일 09:00 KST 초기화) · 실패한 호출 뒤로는 갱신되지 않아 지금 창의 값이 아닐 수 있다 · 창별 값은 아래 Daily budget snapshot";
 /** 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자): api 가 준 글자 그대로(data-raw) — 안의 시각은 수집기가 쓴 형식이고 화면의 KST 로 바꾸지 않는다 */
 const RAW_RECORD_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수집기가 쓴 형식 그대로(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
+/**
+ * 감사의 before · after 칸(QA-311): api 가 기록한 변경 전 · 후 값(JSON 글자) 그대로 — 안의 시각은 서버 형식 UTC('…Z')라 다른 원본 칸처럼 data-raw ·
+ * 머리글 "(raw)" · 이 툴팁으로 KST 규칙의 예외임을 밝힌다(계약 v5 §G20). 글자는 바꾸지 않는다
+ */
+const AUDIT_RAW_TITLE = "api 가 기록한 변경 전 · 후 값(JSON) 그대로(바꾸지 않음) — 안의 시각은 서버 형식(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
 /** 요약의 마지막 오류 칸(errors F1 — api last_error_text · last_http_status) */
 const SUMMARY_LAST_ERROR_TITLE = "이 행의 가장 최근 실행(last (KST) 의 실행 — 해결 처리로 요약에서 뺀 실행은 고르지 않는다)의 http 와 오류 글자. "
   + "글자는 수집기가 가려 저장한 원본 그대로(안의 ‘…Z’ 는 KST 보다 9시간 이르다). ok 행은 비운다. 앞선 실행의 글자는 행을 열어(runs) 본다";
@@ -122,7 +127,7 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
  * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
  * 시각은 KST 만(계약 v5 §G20, lib/time) 날짜 포함 — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
  * 표 칸은 KST "MM-DD HH:MM:SS"(머리글 "(KST)"), 그 밖의 자리는 "… KST", title 에 연도 · ms 까지의 KST. 일 단위 집계의 날짜는 아래 표마다 그 기준을 적는다.
- * 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자)은 api 가 준 글자 그대로(data-raw) — 안의 시각을 바꾸지 않고 머리글이 "(raw)" 를 말한다.
+ * 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자 · 감사 before · after)은 api 가 준 글자 그대로(data-raw) — 안의 시각을 바꾸지 않고 머리글이 "(raw)" 를 말한다.
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
@@ -351,8 +356,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           {auditPages.reset ? <div className="mb-1 text-[11px] text-warn" role="status" data-testid="audit-reset">
             앞서 이어 받은 기록은 접었다 — 그 사이 새 기록이 한 쪽({AUDIT_PAGE_LIMIT}건) 넘게 쌓여 사이를 이어 붙일 수 없음. 최신 {AUDIT_PAGE_LIMIT}건부터 다시 보인다
           </div> : null}
-          <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
-            <tbody>{auditPages.rows.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table>
+          <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th title={AUDIT_RAW_TITLE}>before (raw)</th><th title={AUDIT_RAW_TITLE}>after (raw)</th><th>ip</th><th>request</th></tr></thead>
+            <tbody>{auditPages.rows.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td>
+              <td className="mono text-fg-3" data-raw="record" title={a.before == null ? undefined : AUDIT_RAW_TITLE}>{String(a.before ?? "")}</td><td className="mono" data-raw="record" title={a.after == null ? undefined : AUDIT_RAW_TITLE}>{String(a.after ?? "")}</td>
+              <td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table>
           {auditPages.err ? <div className="mt-1 text-[11px] text-bad" role="alert" data-testid="audit-more-failed"><ErrorNote prefix="앞선 감사 기록을 불러오지 못함(보인 행은 그대로) — " error={auditPages.err} /></div> : null}
           {auditPages.next != null ? (
             <button ref={auditMore} className="btn mt-1 normal-case!" onClick={() => { rescue(() => [auditMore.current, tabBody.current]); void auditPages.more(); }}

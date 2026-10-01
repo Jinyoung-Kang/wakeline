@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { installMiniDom } from "./helpers/mini-dom";
 import { mounter, propsOf } from "./helpers/mount";
 import { AUDIT_PAGE_LIMIT, auditCursor, auditPagePath, auditView, mergeAuditRows } from "@/lib/ops-audit";
+import { domUtcLeaks } from "./helpers/kst-only";
 
 describe("lib/ops-audit: cursor, path, merge, view", () => {
   it("cursor: a positive integer only; the next page asks for ids below it, 50 at a time", () => {
@@ -146,5 +147,30 @@ describe("ops audit tab: says how many rows it shows, pages with the cursor, kee
     expect(ids()).toEqual([3, 2, 1]);
     expect(m.byTestId("audit-more")).toBeNull();
     expect(m.byTestId("audit-count")!.textContent).toBe("최신순 3건 — 처음 기록까지 모두");
+  });
+});
+
+/**
+ * QA-311 — 감사의 before · after 칸은 api 가 기록한 JSON 글자(안의 시각은 '…Z' = UTC)인데, 같은 화면의 다른 원본 칸(격리 detail · DLQ payload · 실행 오류)과 달리
+ * 원본 표시(data-raw · 머리글 "(raw)" · 툴팁)가 없어 UTC 시각을 KST 로 읽게 했다(계약 v5 §G20 — 원문은 글자 그대로, 표시로 예외를 밝힌다).
+ */
+describe("ops audit before/after are marked as raw like the other raw columns (QA-311)", () => {
+  it("headers say (raw) with the UTC note; cells are data-raw and keep the api's text unchanged; nothing else leaks UTC", async () => {
+    const before = JSON.stringify({ id: 3, key: "opensky", upto: "2026-10-01T17:54:22Z", resolved_at: "2026-10-01T17:56:09.181606Z" });
+    const after = JSON.stringify({ id: 3, revoked_at: "2026-10-01T17:56:09.814402Z" });
+    stub(() => json(200, { items: [{ ...row(70, "UNRESOLVE"), target: "provider_error:opensky", before, after }, row(69)], next_cursor: null }));
+    await open();
+    const ths = m.findAll((e) => e.tagName === "TH").map((e) => [e.textContent, e.getAttribute("title") ?? ""] as const);
+    for (const name of ["before (raw)", "after (raw)"]) {
+      const th = ths.find(([t]) => t === name);
+      expect(th, name).toBeDefined();
+      expect(th![1]).toContain("‘…Z’ 는 KST 보다 9시간 이르다");
+    }
+    const tds = m.findAll((e) => e.tagName === "TR").map((tr) => m.findAll((c) => c.tagName === "TD", tr)).filter((t) => t.length);
+    expect(tds[0][4].textContent).toBe(before);
+    expect(tds[0][5].textContent).toBe(after);
+    expect([tds[0][4].getAttribute("data-raw"), tds[0][5].getAttribute("data-raw")]).toEqual(["record", "record"]);
+    expect(tds[1][4].getAttribute("title")).toBeNull(); // 값이 없는 칸(null)에는 툴팁을 달지 않는다
+    expect(domUtcLeaks(m.byTestId("ops-dashboard")!)).toEqual([]);
   });
 });
