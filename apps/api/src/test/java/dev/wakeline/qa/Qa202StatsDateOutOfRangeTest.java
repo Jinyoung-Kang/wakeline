@@ -27,6 +27,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  *   <li>from = to = +999999999-12-31: 범위 검사 {@code f.plusDays(92)} 가 DateTimeException(HistoryController.range).</li>
  *   <li>to = -999999999-01-01(from 없음): 기본 from {@code t.minusDays(7)} 이 DateTimeException.</li>
  *   <li>+300000 년 이틀: 범위 검사는 통과하고 StatsRepository.days 의 generate_series(date → timestamp)가 'date out of range for timestamp'.</li>
+ *   <li>/stats/traffic day = +6000000-01-01: 검사 없이 DB 로 가서 'date out of range'(PostgreSQL date 상한 5874897 AD).</li>
  * </ul>
  * 실제 PostGIS 에 진짜 StatsRepository 로 묻는다 — 격리 스택 A 에서 같은 요청이 500 이었다.
  */
@@ -59,6 +60,7 @@ class Qa202StatsDateOutOfRangeTest {
             "/api/v1/stats/alerts | from=+999999999-12-31&to=+999999999-12-31",
             "/api/v1/stats/alerts | to=-999999999-01-01",
             "/api/v1/stats/alerts | from=+300000-01-01&to=+300000-01-02",
+            "/api/v1/stats/traffic | day=+6000000-01-01",
     })
     void outOfRangeDateIsAClientErrorNotA500(String path, String query) throws Exception {
         MvcResult r = mvc.perform(req(path, query)).andReturn();
