@@ -87,7 +87,7 @@ class IngestHealthTest {
      */
     @Test
     void healthStatesAndTheirHttpCodesWithAndWithoutARegionSnapshot() {
-        var http = new org.springframework.boot.health.actuate.endpoint.SimpleHttpCodeStatusMapper();
+        var http = org.springframework.boot.health.actuate.endpoint.HttpCodeStatusMapper.getDefault();
         org.springframework.boot.health.contributor.Health starting = health.health();
         assertThat(starting.getStatus()).isEqualTo(Status.UNKNOWN);
         assertThat(http.getStatusCode(starting.getStatus())).isEqualTo(200);
