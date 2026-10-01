@@ -4,21 +4,21 @@ import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.aircraft.web.AircraftJson;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine;
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.engine.PredictionAvailability;
 import dev.wakeline.geo.Bbox;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteReader;
 import dev.wakeline.status.StatusService;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.AlertStateMachine;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.PredictionAvailability;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import dev.wakeline.weather.web.SigmetGeoJson;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -446,13 +446,13 @@ public class WsHub implements SmartLifecycle {
     }
 
     @EventListener
-    public void onSigmets(IngestEvents.SigmetsUpdated e) {
+    public void onSigmets(WeatherEvents.SigmetsUpdated e) {
         pushSigmets();
     }
 
     /** 유효시간 만료로 활성 SIGMET 이 줄었을 때(새 수신 없이) — 버전이 올라 있으므로 모든 구독 세션에 다시 보낸다(REL-13). */
     @EventListener
-    public void onSigmetsExpired(IngestEvents.SigmetsExpired e) {
+    public void onSigmetsExpired(WeatherEvents.SigmetsExpired e) {
         pushSigmets();
     }
 
@@ -461,7 +461,7 @@ public class WsHub implements SmartLifecycle {
     }
 
     @EventListener
-    public void onRadar(IngestEvents.RadarUpdated e) {
+    public void onRadar(WeatherEvents.RadarUpdated e) {
         for (WsSession s : sessions.values()) if (s.subscribed()) s.schedule(WsSession.Job.RADAR, () -> runRadar(s, false));
     }
 

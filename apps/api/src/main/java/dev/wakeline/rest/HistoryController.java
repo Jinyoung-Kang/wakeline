@@ -6,7 +6,7 @@ import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.persist.MaintenanceJobs;
-import dev.wakeline.persist.SigmetRepository;
+import dev.wakeline.weather.data.SigmetRepository;
 import dev.wakeline.persist.StatsRepository;
 import dev.wakeline.aircraft.data.TrackRepository;
 import dev.wakeline.status.StatusService;

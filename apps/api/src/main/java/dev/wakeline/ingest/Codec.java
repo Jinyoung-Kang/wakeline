@@ -2,7 +2,7 @@ package dev.wakeline.ingest;
 
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.GeoJson;
-import dev.wakeline.domain.SigmetRecord;
+import dev.wakeline.weather.core.SigmetRecord;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;

@@ -1,8 +1,9 @@
 package dev.wakeline.it;
 
 import dev.wakeline.aircraft.core.AircraftEvents;
-import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.WeatherEvents;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.aop.support.AopUtils;
@@ -41,11 +42,11 @@ class ListenerWiringIT extends IntegrationTest {
     /** 이벤트 → 그 이벤트를 받는 dev.wakeline 리스너(집합 — 순서는 아래 시험이 따로 본다). */
     static final Map<Class<?>, Set<String>> EXPECTED = Map.ofEntries(
             entry(AircraftEvents.SnapshotUpdated.class, Set.of("EngineService#onSnapshot", "TrackWriter#onSnapshot", "WsHub#onSnapshot")),
-            entry(IngestEvents.SigmetsUpdated.class, Set.of("EngineService#onSigmets", "WsHub#onSigmets")),
-            entry(IngestEvents.SigmetsExpired.class, Set.of("WsHub#onSigmetsExpired")),
-            entry(IngestEvents.RadarUpdated.class, Set.of("WsHub#onRadar")),
+            entry(WeatherEvents.SigmetsUpdated.class, Set.of("EngineService#onSigmets", "WsHub#onSigmets")),
+            entry(WeatherEvents.SigmetsExpired.class, Set.of("WsHub#onSigmetsExpired")),
+            entry(WeatherEvents.RadarUpdated.class, Set.of("WsHub#onRadar")),
             entry(AircraftEvents.AircraftBacklog.class, Set.of("TrackWriter#onBacklog")),
-            entry(IngestEvents.SigmetSetReceived.class, Set.of("SigmetRepository#onSigmetSet")),
+            entry(WeatherEvents.SigmetSetReceived.class, Set.of("SigmetRepository#onSigmetSet")),
             entry(IngestEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
             entry(IngestEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
             entry(IngestEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),
@@ -77,7 +78,7 @@ class ListenerWiringIT extends IntegrationTest {
     @Test
     void everyPipelineEventHasExactlyTheListenersItHasToday() throws Exception {
         Set<Class<?>> events = new TreeSet<>(java.util.Comparator.comparing(Class::getName));
-        Stream.of(AircraftEvents.class, IngestEvents.class, EngineEvents.class).flatMap(c -> Stream.of(c.getDeclaredClasses())).filter(Class::isRecord).forEach(events::add);
+        Stream.of(AircraftEvents.class, WeatherEvents.class, IngestEvents.class, EngineEvents.class).flatMap(c -> Stream.of(c.getDeclaredClasses())).filter(Class::isRecord).forEach(events::add);
         assertThat(events).as("every pipeline event record is listed here (a new event needs its listeners pinned)")
                 .containsExactlyInAnyOrderElementsOf(EXPECTED.keySet());
         for (Class<?> e : events)

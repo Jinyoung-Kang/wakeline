@@ -1,12 +1,9 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.SigmetStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static dev.wakeline.engine.TestData.box;
+import static dev.wakeline.weather.core.TestData.box;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** 엔진 통합(실시계): 스코프가 섞인 실행에서도 서로 다른 관측만 세고, SIGMET 만료는 이벤트로 알린다. */
@@ -52,10 +49,10 @@ class EngineServiceTest {
     @Test void singleGlobalObservation_reJudgedByRegionCycles_doesNotEnter() {
         Instant now = Instant.now();
         var st = sigmets.replace(now, "awc_isigmet", Map.of("A", sig("A", now.minusSeconds(3600), now.plusSeconds(3600))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         publish("global", now.minusSeconds(5), at("b00001", 36, 127, now.minusSeconds(8), "opensky"));
         for (int i = 0; i < 4; i++) publish("region", now.plusMillis(i), at("c00001", 38.5, 127, now, "adsb_lol"));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         assertThat(alertEvents()).doesNotContain(AlertStateMachine.EventType.ENTERED);
         // 다음 global 관측(seen_at 이 바뀜)이 여전히 안이면 그때 확정
         publish("global", now.plusMillis(10), at("b00001", 36, 127.2, now.minusSeconds(1), "opensky"));
@@ -72,7 +69,7 @@ class EngineServiceTest {
     @Test void dh2_frozenRegion_freshGlobalObservationsAreJudged() {
         Instant now = Instant.now();
         var st = sigmets.replace(now, "awc_isigmet", Map.of("A", sig("A", now.minusSeconds(3600), now.plusSeconds(3600))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         publish("region", now.minusSeconds(100), at("e00001", 36, 127, now.minusSeconds(100), "adsb_fi")); // 100 s 전에 멈춤(60 s 넘음)
         publish("global", now.minusSeconds(40), at("e00001", 36, 127.1, now.minusSeconds(40), "opensky"));
         publish("global", now.minusSeconds(30), at("e00001", 36, 127.2, now.minusSeconds(30), "opensky"));
@@ -86,7 +83,7 @@ class EngineServiceTest {
     @Test void focusObservations_areJudgedLikeRegion() {
         Instant now = Instant.now();
         var st = sigmets.replace(now, "awc_isigmet", Map.of("A", sig("A", now.minusSeconds(3600), now.plusSeconds(3600))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         for (int i = 0; i < 2; i++) {
             Snapshot f = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", now.minusSeconds(10 - 5L * i), now, "-",
                     Map.of("e00002", at("e00002", 36, 127 + i * 0.01, now.minusSeconds(10 - 5L * i), "adsb_fi")));
@@ -101,19 +98,19 @@ class EngineServiceTest {
         var st = sigmets.replace(now, "awc_isigmet", Map.of(
                 "SHORT", sig("SHORT", now.minusSeconds(3600), now.plusMillis(200)),
                 "LONG", sig("LONG", now.minusSeconds(3600), now.plusSeconds(3600))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         engine.rebuildForExpiry();
-        assertThat(events).noneMatch(e -> e instanceof IngestEvents.SigmetsExpired);
+        assertThat(events).noneMatch(e -> e instanceof WeatherEvents.SigmetsExpired);
         Thread.sleep(300);
         engine.rebuildForExpiry();
-        var ex = events.stream().filter(e -> e instanceof IngestEvents.SigmetsExpired).map(e -> (IngestEvents.SigmetsExpired) e).toList();
+        var ex = events.stream().filter(e -> e instanceof WeatherEvents.SigmetsExpired).map(e -> (WeatherEvents.SigmetsExpired) e).toList();
         assertThat(ex).hasSize(1);
         assertThat(ex.getFirst().expiredIds()).containsExactly("SHORT");
         assertThat(ex.getFirst().state().version()).isGreaterThan(st.version());
         assertThat(sigmets.state().version()).isEqualTo(ex.getFirst().state().version());
         assertThat(engine.indexSize()).isEqualTo(1);
         engine.rebuildForExpiry(); // 바뀐 것 없음 → 다시 알리지 않는다
-        assertThat(events.stream().filter(e -> e instanceof IngestEvents.SigmetsExpired)).hasSize(1);
+        assertThat(events.stream().filter(e -> e instanceof WeatherEvents.SigmetsExpired)).hasSize(1);
     }
 
     @Test void predictionAvailability_forSelectedAircraft() {
@@ -128,7 +125,7 @@ class EngineServiceTest {
     @Test void expiryCheck_closesAlertsOfExpiredSigmets_withoutNewSnapshots() throws Exception {
         Instant now = Instant.now();
         var st = sigmets.replace(now, "awc_isigmet", Map.of("E", sig("E", now.minusSeconds(3600), now.plusMillis(1_500))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         publish("region", now, at("e00001", 36, 127, now.minusSeconds(2), "adsb_lol"));
         publish("region", now.plusMillis(1), at("e00001", 36, 127.01, now.minusSeconds(1), "adsb_lol"));
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
@@ -137,7 +134,7 @@ class EngineServiceTest {
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED, AlertStateMachine.EventType.SIGMET_ENDED);
         var ended = events.stream().filter(e -> e instanceof EngineEvents.AlertsChanged).flatMap(e -> ((EngineEvents.AlertsChanged) e).events().stream())
                 .filter(e -> e.type() == AlertStateMachine.EventType.SIGMET_ENDED).findFirst().orElseThrow().alert();
-        assertThat(ended.closeReason()).isEqualTo(dev.wakeline.domain.Alert.CLOSE_SIGMET_ENDED);
+        assertThat(ended.closeReason()).isEqualTo(dev.wakeline.weather.core.Alert.CLOSE_SIGMET_ENDED);
         assertThat(ended.leftAt()).isEqualTo(now.plusMillis(1_500));
         assertThat(ended.evidence()).containsEntry("end_cause", "expired");
         assertThat(engine.activeAlerts("observed")).isEmpty();
@@ -148,20 +145,20 @@ class EngineServiceTest {
         Instant now = Instant.now();
         var st = sigmets.replace(now, "awc_isigmet", Map.of("W", sig("W", now.minusSeconds(3600), now.plusSeconds(3600)),
                 "K", sig("K", now.minusSeconds(3600), now.plusSeconds(3600))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st));
         publish("region", now, at("e00002", 36, 127, now.minusSeconds(2), "adsb_lol"));
         publish("region", now.plusMillis(1), at("e00002", 36, 127.01, now.minusSeconds(1), "adsb_lol"));
         assertThat(engine.activeAlerts("observed")).hasSize(2); // W 와 K 는 같은 폴리곤
         Instant f2 = now.plusMillis(5);
         var st2 = sigmets.replace(f2, "awc_isigmet", Map.of("K", sig("K", now.minusSeconds(3600), now.plusSeconds(3600))));
-        engine.onSigmets(new IngestEvents.SigmetsUpdated(st2));
+        engine.onSigmets(new WeatherEvents.SigmetsUpdated(st2));
         var ended = events.stream().filter(e -> e instanceof EngineEvents.AlertsChanged).flatMap(e -> ((EngineEvents.AlertsChanged) e).events().stream())
                 .filter(e -> e.type() == AlertStateMachine.EventType.SIGMET_ENDED).toList();
         assertThat(ended).singleElement().satisfies(e -> {
             assertThat(e.alert().sigmetId()).isEqualTo("W");
             assertThat(e.alert().evidence()).containsEntry("end_cause", "withdrawn");
         });
-        assertThat(engine.activeAlerts("observed")).extracting(dev.wakeline.domain.Alert::sigmetId).containsExactly("K");
+        assertThat(engine.activeAlerts("observed")).extracting(dev.wakeline.weather.core.Alert::sigmetId).containsExactly("K");
     }
 
     /** API-CONC-2: 판정 주기의 예외는 엔진 안에서 가둔다 — 이벤트 발행자(스트림 소비)로 새지 않고, 세고, 다음 주기는 정상. */
@@ -178,7 +175,7 @@ class EngineServiceTest {
         Instant now = Instant.now();
         org.assertj.core.api.Assertions.assertThatCode(() -> e.onSnapshot(new AircraftEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region"))))
                 .doesNotThrowAnyException();
-        org.assertj.core.api.Assertions.assertThatCode(() -> e.onSigmets(new IngestEvents.SigmetsUpdated(sigmets.replace(now, "awc_isigmet", Map.of()))))
+        org.assertj.core.api.Assertions.assertThatCode(() -> e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(now, "awc_isigmet", Map.of()))))
                 .doesNotThrowAnyException();
         assertThat(meters.counter("wakeline_engine_errors_total").count()).isEqualTo(2.0);
         explode.set(false);

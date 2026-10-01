@@ -4,7 +4,7 @@ import dev.wakeline.aircraft.web.AircraftJson;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.engine.PredictionAvailability;
+import dev.wakeline.weather.core.PredictionAvailability;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.portcalls.PortCallsInfo;
 import dev.wakeline.route.RouteInfo;

@@ -1,17 +1,17 @@
-package dev.wakeline.persist;
+package dev.wakeline.weather.data;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine.Event;
-import dev.wakeline.engine.AlertStateMachine.EventType;
-import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.geo.GeoJson;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.AlertStateMachine.Event;
+import dev.wakeline.weather.core.AlertStateMachine.EventType;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,14 +77,14 @@ class WeatherPersistDbTest {
     }
 
     /** 스트림 순서의 SIGMET 세트 한 벌(이력 저장 이벤트). */
-    static IngestEvents.SigmetSetReceived set(Instant fetched, SigmetRecord... recs) {
+    static WeatherEvents.SigmetSetReceived set(Instant fetched, SigmetRecord... recs) {
         return set(fetched, dev.wakeline.platform.support.Receipt.NONE, recs);
     }
 
-    static IngestEvents.SigmetSetReceived set(Instant fetched, dev.wakeline.platform.support.Receipt receipt, SigmetRecord... recs) {
+    static WeatherEvents.SigmetSetReceived set(Instant fetched, dev.wakeline.platform.support.Receipt receipt, SigmetRecord... recs) {
         Map<String, SigmetRecord> m = new LinkedHashMap<>();
         for (SigmetRecord r : recs) m.put(r.id(), fetchedAt(r, fetched));
-        return new IngestEvents.SigmetSetReceived(fetched, "awc", m, receipt);
+        return new WeatherEvents.SigmetSetReceived(fetched, "awc", m, receipt);
     }
 
     static Alert observed(long id, String hex, String sig, Instant entered) {

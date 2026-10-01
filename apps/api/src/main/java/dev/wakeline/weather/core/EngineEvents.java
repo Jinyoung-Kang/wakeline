@@ -1,6 +1,5 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
-import dev.wakeline.domain.Alert;
 import dev.wakeline.platform.support.PipelineEvent;
 
 import java.util.List;

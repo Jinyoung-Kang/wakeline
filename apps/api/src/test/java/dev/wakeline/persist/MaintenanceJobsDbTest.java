@@ -1,12 +1,13 @@
 package dev.wakeline.persist;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.geo.GeoJson;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;
 import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.data.SigmetRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -4,6 +4,9 @@ import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -128,13 +131,13 @@ class StreamConsumerTest {
         consumer.process(envelope(StreamConsumer.S_SIGMET, "sigmet", "-", T, sigmetPayload("NEW:1:1", T)), true);
         assertThat(sigmets.state()).isSameAs(st);
         assertThat(sigmets.state().byId()).containsOnlyKeys("NEW:1:1");
-        assertThat(events.stream().filter(e -> e instanceof IngestEvents.SigmetsUpdated)).hasSize(1);
+        assertThat(events.stream().filter(e -> e instanceof WeatherEvents.SigmetsUpdated)).hasSize(1);
         // API-CONC-1: 이력 이벤트는 백로그·중복까지 스트림 순서대로 모두 나간다(중복 판단은 저장기가 수신 시각으로 한다)
-        var history = events.stream().filter(e -> e instanceof IngestEvents.SigmetSetReceived).map(e -> (IngestEvents.SigmetSetReceived) e).toList();
-        assertThat(history).extracting(IngestEvents.SigmetSetReceived::fetchedAt).containsExactly(T, T.minusSeconds(300), T);
+        var history = events.stream().filter(e -> e instanceof WeatherEvents.SigmetSetReceived).map(e -> (WeatherEvents.SigmetSetReceived) e).toList();
+        assertThat(history).extracting(WeatherEvents.SigmetSetReceived::fetchedAt).containsExactly(T, T.minusSeconds(300), T);
         assertThat(history.get(1).byId()).containsOnlyKeys("OLD:1:1");
         // 이력 이벤트가 실시간 갱신보다 먼저 — 세트의 SIGMET 행이 그 세트로 만든 알림보다 먼저 순서 큐에 들어간다
-        assertThat(events.indexOf(history.getFirst())).isLessThan(events.indexOf(events.stream().filter(e -> e instanceof IngestEvents.SigmetsUpdated).findFirst().orElseThrow()));
+        assertThat(events.indexOf(history.getFirst())).isLessThan(events.indexOf(events.stream().filter(e -> e instanceof WeatherEvents.SigmetsUpdated).findFirst().orElseThrow()));
     }
 
     @Test void olderRadarEntry_isIgnored() throws Exception {
@@ -143,7 +146,7 @@ class StreamConsumerTest {
         var fr = radar.frames();
         consumer.process(envelope(StreamConsumer.S_RADAR, "radar", "-", T.minusSeconds(600), p), true);
         assertThat(radar.frames()).isSameAs(fr);
-        assertThat(events.stream().filter(e -> e instanceof IngestEvents.RadarUpdated)).hasSize(1);
+        assertThat(events.stream().filter(e -> e instanceof WeatherEvents.RadarUpdated)).hasSize(1);
     }
 
     @Test void sigmetStore_republishBumpsVersionKeepsContent() {

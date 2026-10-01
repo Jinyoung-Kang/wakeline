@@ -1,6 +1,5 @@
-package dev.wakeline.ingest;
+package dev.wakeline.weather.core;
 
-import dev.wakeline.domain.SigmetRecord;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;

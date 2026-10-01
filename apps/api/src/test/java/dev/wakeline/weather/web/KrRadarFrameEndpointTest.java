@@ -1,4 +1,4 @@
-package dev.wakeline.rest;
+package dev.wakeline.weather.web;
 
 import dev.wakeline.platform.web.ProblemAdvice;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

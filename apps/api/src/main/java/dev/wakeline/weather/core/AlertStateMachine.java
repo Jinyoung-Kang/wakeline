@@ -1,8 +1,6 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
 
 import java.time.Duration;
 import java.time.Instant;

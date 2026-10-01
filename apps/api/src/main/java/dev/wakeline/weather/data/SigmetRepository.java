@@ -1,12 +1,12 @@
-package dev.wakeline.persist;
+package dev.wakeline.weather.data;
 
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.geo.GeoJson;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.WeatherEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -65,7 +65,7 @@ public class SigmetRepository {
 
     @EventListener
     @Order(Ordered.HIGHEST_PRECEDENCE)
-    public void onSigmetSet(IngestEvents.SigmetSetReceived e) {
+    public void onSigmetSet(WeatherEvents.SigmetSetReceived e) {
         if (e.fetchedAt() == null || !e.fetchedAt().isAfter(lastSetAt)) return; // 이미 저장한 세트(재전달·중복) — 영수증을 잡지 않는다(곧 ACK)
         lastSetAt = e.fetchedAt();
         Instant fetched = e.fetchedAt();

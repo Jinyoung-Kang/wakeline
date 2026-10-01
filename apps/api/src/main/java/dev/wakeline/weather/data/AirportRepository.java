@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.weather.data;
 
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.platform.data.Sql;

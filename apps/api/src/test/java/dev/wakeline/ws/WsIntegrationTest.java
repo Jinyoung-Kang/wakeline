@@ -1,9 +1,9 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.platform.config.AppProperties;
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.SigmetStore;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.status.StatusService;
 import io.micrometer.core.instrument.MeterRegistry;

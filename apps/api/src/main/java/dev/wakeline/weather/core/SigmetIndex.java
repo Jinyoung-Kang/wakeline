@@ -1,7 +1,6 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import dev.wakeline.geo.GeoJson;
-import dev.wakeline.domain.SigmetRecord;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;

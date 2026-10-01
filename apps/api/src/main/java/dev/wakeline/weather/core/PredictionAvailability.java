@@ -1,4 +1,4 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 /**
  * 한 항공기에 대해 진입 예측(dead reckoning)을 할 수 있는가(계약 §1 "selected".prediction).

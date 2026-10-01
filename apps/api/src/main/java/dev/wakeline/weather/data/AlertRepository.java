@@ -1,9 +1,9 @@
-package dev.wakeline.persist;
+package dev.wakeline.weather.data;
 
-import dev.wakeline.domain.Alert;
-import dev.wakeline.engine.AlertStateMachine;
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.ingest.SigmetStore;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.AlertStateMachine;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.MeterRegistry;

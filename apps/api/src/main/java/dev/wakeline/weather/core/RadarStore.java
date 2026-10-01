@@ -1,4 +1,4 @@
-package dev.wakeline.ingest;
+package dev.wakeline.weather.core;
 
 import org.springframework.stereotype.Component;
 

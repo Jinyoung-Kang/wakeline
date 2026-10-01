@@ -8,8 +8,11 @@ import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -783,16 +786,16 @@ public class StreamConsumer implements SmartLifecycle {
 
     private void sigmet(Map<String, String> f, Map<String, SigmetRecord> set, Instant fetchedAt, Receipt receipt, boolean persistHistory) {
         // 이력: 새 세트든 백로그든 스트림 순서대로(실시간 반영보다 먼저 — 이 세트의 SIGMET 행이 이 세트로 만든 알림보다 먼저 저장된다)
-        if (persistHistory) events.publishEvent(new IngestEvents.SigmetSetReceived(fetchedAt, f.get("provider"), set, receipt));
+        if (persistHistory) events.publishEvent(new WeatherEvents.SigmetSetReceived(fetchedAt, f.get("provider"), set, receipt));
         if (!fetchedAt.isAfter(sigmets.state().fetchedAt())) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
         SigmetStore.State st = sigmets.replaceIfNewer(fetchedAt, f.get("provider"), set);
         if (st == null) { staleSkipped.increment(); return; }
-        events.publishEvent(new IngestEvents.SigmetsUpdated(st));
+        events.publishEvent(new WeatherEvents.SigmetsUpdated(st));
     }
 
     private void radar(RadarStore.Frames fr) {
         if (!radar.replaceIfNewer(fr)) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
-        events.publishEvent(new IngestEvents.RadarUpdated(fr));
+        events.publishEvent(new WeatherEvents.RadarUpdated(fr));
     }
 
     /** 마지막 XREADGROUP 응답 뒤 지난 시간(ms). 아직 한 번도 읽지 않았으면 -1. */

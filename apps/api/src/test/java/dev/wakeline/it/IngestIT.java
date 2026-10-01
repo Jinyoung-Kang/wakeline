@@ -1,10 +1,10 @@
 package dev.wakeline.it;
 
-import dev.wakeline.domain.Alert;
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.ingest.RadarStore;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.ingest.SchemaValidator;
-import dev.wakeline.ingest.SigmetStore;
+import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.ingest.StreamConsumer;
 import io.micrometer.core.instrument.MeterRegistry;

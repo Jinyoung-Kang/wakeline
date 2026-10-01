@@ -249,9 +249,9 @@ class OpsDbTest {
     /** 실제 상태 서비스(빈 스토어)를 쓰는 운영 컨트롤러 — /ops/providers 처럼 공개 상태도 읽는 응답용. */
     OpsController opsWithStatus(StringRedisTemplate r, AuditService a) {
         var snapshots = new dev.wakeline.aircraft.core.SnapshotStore();
-        var sigmets = new dev.wakeline.ingest.SigmetStore();
-        var status = new dev.wakeline.status.StatusService(snapshots, sigmets, new dev.wakeline.ingest.RadarStore(),
-                new dev.wakeline.engine.EngineService(snapshots, sigmets, e -> { }, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), r, PROPS);
+        var sigmets = new dev.wakeline.weather.core.SigmetStore();
+        var status = new dev.wakeline.status.StatusService(snapshots, sigmets, new dev.wakeline.weather.core.RadarStore(),
+                new dev.wakeline.weather.core.EngineService(snapshots, sigmets, e -> { }, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), r, PROPS);
         return new OpsController(status, api, r, settings(r), a, new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx()), DbTestSupport.apiTx(),
                 switches(r), new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
     }

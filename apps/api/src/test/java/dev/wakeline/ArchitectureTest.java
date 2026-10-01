@@ -46,7 +46,7 @@ class ArchitectureTest {
             "controller-data-access|ops.OpsController|org.springframework.data.redis.core",
             "controller-data-access|ops.OpsController|org.springframework.jdbc.core.simple",
             "controller-data-access|ops.OpsPipelineController|org.springframework.data.redis.core",
-            "controller-data-access|rest.WeatherController|org.springframework.data.redis.core");
+            "controller-data-access|weather.web.WeatherController|org.springframework.data.redis.core");
 
     record Src(String cls, String pkg, boolean controller, Set<String> refs) {}
 

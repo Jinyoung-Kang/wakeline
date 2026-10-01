@@ -1,9 +1,9 @@
-package dev.wakeline.persist;
+package dev.wakeline.weather.data;
 
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine.Event;
-import dev.wakeline.engine.AlertStateMachine.EventType;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.AlertStateMachine.Event;
+import dev.wakeline.weather.core.AlertStateMachine.EventType;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

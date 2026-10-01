@@ -1,4 +1,4 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import org.junit.jupiter.api.Test;
 

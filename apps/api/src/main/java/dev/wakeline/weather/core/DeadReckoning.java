@@ -1,4 +1,4 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 /** 구면 dead reckoning(10.1절 서버판). 1 kt = 1,852 m/h, R = 6,371 km. */
 public final class DeadReckoning {

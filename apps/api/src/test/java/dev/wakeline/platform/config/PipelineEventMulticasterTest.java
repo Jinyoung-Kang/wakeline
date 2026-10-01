@@ -1,8 +1,9 @@
 package dev.wakeline.platform.config;
 
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.platform.support.PipelineEvent;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
@@ -24,7 +25,7 @@ class PipelineEventMulticasterTest {
     final PipelineEventMulticaster m = new PipelineEventMulticaster(new DefaultListableBeanFactory(), () -> meters);
     final List<String> calls = new ArrayList<>();
 
-    static final IngestEvents.RadarUpdated RADAR = new IngestEvents.RadarUpdated(new RadarStore.Frames("h", 1, List.of(), Instant.EPOCH, "x"));
+    static final WeatherEvents.RadarUpdated RADAR = new WeatherEvents.RadarUpdated(new RadarStore.Frames("h", 1, List.of(), Instant.EPOCH, "x"));
 
     @Test
     void failingListenerDoesNotSkipTheOthers() {
@@ -82,12 +83,12 @@ class PipelineEventMulticasterTest {
 
     static class Target {
         @EventListener
-        public void onRadar(IngestEvents.RadarUpdated e) { }
+        public void onRadar(WeatherEvents.RadarUpdated e) { }
     }
 
     @Test
     void listenerNamesAreShortAndBounded() throws Exception {
-        var adapter = new ApplicationListenerMethodAdapter("t", Target.class, Target.class.getMethod("onRadar", IngestEvents.RadarUpdated.class));
+        var adapter = new ApplicationListenerMethodAdapter("t", Target.class, Target.class.getMethod("onRadar", WeatherEvents.RadarUpdated.class));
         assertThat(PipelineEventMulticaster.listenerName(adapter)).isEqualTo("PipelineEventMulticasterTest$Target#onRadar");
         ApplicationListener<PayloadApplicationEvent<?>> plain = e -> { };
         assertThat(PipelineEventMulticaster.listenerName(plain)).isNotBlank();

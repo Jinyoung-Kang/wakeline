@@ -1,7 +1,7 @@
 package dev.wakeline.weather.web;
 
 import dev.wakeline.geo.GeoJson;
-import dev.wakeline.domain.SigmetRecord;
+import dev.wakeline.weather.core.SigmetRecord;
 
 import java.time.Instant;
 import java.util.ArrayList;

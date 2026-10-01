@@ -1,8 +1,7 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.GeoJson;
-import dev.wakeline.domain.SigmetRecord;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;

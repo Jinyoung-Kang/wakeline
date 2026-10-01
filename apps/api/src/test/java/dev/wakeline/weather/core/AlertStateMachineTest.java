@@ -1,8 +1,6 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -12,8 +10,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static dev.wakeline.engine.AlertStateMachine.EventType.*;
-import static dev.wakeline.engine.TestData.*;
+import static dev.wakeline.weather.core.AlertStateMachine.EventType.*;
+import static dev.wakeline.weather.core.TestData.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**

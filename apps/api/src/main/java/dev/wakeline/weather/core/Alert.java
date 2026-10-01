@@ -1,4 +1,4 @@
-package dev.wakeline.domain;
+package dev.wakeline.weather.core;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;

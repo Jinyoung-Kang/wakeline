@@ -4,9 +4,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonRawValue;
 import dev.wakeline.aircraft.web.AircraftJson;
-import dev.wakeline.domain.Alert;
+import dev.wakeline.weather.core.Alert;
 import dev.wakeline.domain.DestinationInfo;
-import dev.wakeline.engine.PredictionAvailability;
+import dev.wakeline.weather.core.PredictionAvailability;
 import dev.wakeline.portcalls.PortCallsInfo;
 import dev.wakeline.route.RouteInfo;
 

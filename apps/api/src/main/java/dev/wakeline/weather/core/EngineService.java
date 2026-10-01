@@ -1,12 +1,8 @@
-package dev.wakeline.engine;
+package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.SnapshotStore;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.SigmetStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -88,7 +84,7 @@ public class EngineService {
     }
 
     @EventListener
-    public void onSigmets(IngestEvents.SigmetsUpdated e) {
+    public void onSigmets(WeatherEvents.SigmetsUpdated e) {
         Instant now = Instant.now();
         synchronized (lock) {
             index.set(build(e.state(), now));
@@ -140,7 +136,7 @@ public class EngineService {
             published = sigmets.republish();
         }
         log.info("sigmet expiry: {} expired, {} active — index rebuilt, sigmets v{}", expired.size(), activeSigmetIds.size(), published.version());
-        events.publishEvent(new IngestEvents.SigmetsExpired(published, Set.copyOf(expired)));
+        events.publishEvent(new WeatherEvents.SigmetsExpired(published, Set.copyOf(expired)));
         run(now); // 만료된 경보의 알림을 지금 닫는다(SIGMET_ENDED) — 새 스냅샷이 없어도(피드 장애 중)
     }
 
