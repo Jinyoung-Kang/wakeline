@@ -209,7 +209,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
         <span className="label mr-2">Operations</span>
-        <div className="flex gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
+        {/* 좁은 화면(375 · 320 px)에서는 탭 줄이 줄바꿈한다 — 전에는 한 줄로 화면 밖에 넘쳐 audit · dlq · pipeline 을 누를 수 없었다(QA-302, WCAG 1.4.10) */}
+        <div className="flex min-w-0 flex-wrap gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
           <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>
             {t}{t === "pipeline" && losses ? <span className="ml-1 text-bad" title="0 이 아닌 손실 지표 수">● {losses}</span> : null}
             {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtKstClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
