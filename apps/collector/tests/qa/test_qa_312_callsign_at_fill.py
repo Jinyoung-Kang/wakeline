@@ -32,3 +32,9 @@ def test_qa_312_all_at_callsign_is_unknown():
     s = from_readsb(_ac("@@@@@@@@"), "adsb_fi", NOW)
     assert s is not None
     assert s.callsign is None  # '@' 채움 = 값 없음 → 화면은 '—'
+
+
+def test_qa_312_trailing_at_fill_is_trimmed_and_real_callsigns_are_kept():
+    assert from_readsb(_ac("KAL123@@"), "adsb_fi", NOW).callsign == "KAL123"
+    assert from_readsb(_ac("AAR701  "), "adsb_fi", NOW).callsign == "AAR701"
+    assert from_readsb(_ac(""), "adsb_fi", NOW).callsign is None
