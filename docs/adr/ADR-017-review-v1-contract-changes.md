@@ -64,7 +64,7 @@
 | S1 | 운영 변경 요청의 CSRF 토큰을 `X-CSRF-Token` 헤더에서만 읽는다. `_csrf` 요청 파라미터(쿼리 · 폼 본문)는 받지 않는다(`SecurityConfig.HeaderOnlyCsrfTokenRequestHandler`) | 쿠키는 포트를 가리지 않는다. 다른 localhost 포트의 페이지가 CSRF 쿠키 값을 `_csrf` 로 실은 단순 POST(사전 요청 없음)로 운영 변경을 실행할 수 있었다(재현: 200) | `_csrf` 로 보내던 클라이언트는 403. 저장소 안에는 없다. 되돌리기: `csrf.spa()` |
 | S1b | `/api/v1/ops/**` 의 GET · HEAD · OPTIONS · TRACE 가 아닌 요청(로그인 포함)은 출처를 본다(`OpsOriginFilter`, CsrfFilter 앞). `Origin` 이 허용 목록에 없거나 `Sec-Fetch-Site` 가 `same-origin` 이 아니면 **403 `ORIGIN_NOT_ALLOWED`**(RFC 9457). 둘 다 없으면 통과하고 CSRF 검사가 뒤따른다 | S1 과 같은 공격 면을 브라우저가 붙이는 헤더로 한 겹 더 막는다. 같은 호스트의 다른 포트는 same-site 라 SameSite 쿠키로는 못 막는다 | 새 오류 코드 하나. 허용 목록은 WS 핸드셰이크와 같다(`wakeline.allowed-origins`). 단 이 검사는 **정확한 origin 만** 쓴다 — `*` 가 든 Spring origin 패턴(`http://localhost:[*]` · `**` 등)은 WS 에만 쓰고 여기서는 빼며 WARN 을 남긴다(최종 리뷰: 패턴 하나가 다른 포트를 모두 열었다). 되돌리기: 필터 빼기 |
 | S1c | 허용 목록 뒤에 개발용 출처를 더하는 opt-in `EXTRA_ALLOWED_ORIGINS`(→ `wakeline.extra-allowed-origins`). 기본은 빈 값. 격리 스택(`make e2e` · `ISO_ENV`)은 늘 빈 값으로 덮는다 | `next dev`(다른 포트)로 화면을 띄우면 S1b 때문에 운영 쓰기가 막힌다 | 비우면 영향 없음. 운영 배포에서는 비워 둔다 |
-| S14 | 로그인에 성공하면 세션 ID 와 함께 CSRF 토큰도 새로 만든다 | 로그인 전에 다른 포트의 페이지가 심어 둔 토큰 쿠키를 로그인 뒤에도 쓸 수 있었다 | 로그인 응답이 새 CSRF 쿠키를 준다. 화면은 요청마다 쿠키를 다시 읽는다 |
+| S14 | 로그인에 성공하면 세션 ID 와 함께 CSRF 토큰도 새로 만든다 | 로그인 전에 다른 포트의 페이지가 심어 둔 토큰 쿠키를 로그인 뒤에도 쓸 수 있었다 | 로그인 응답이 새 CSRF 쿠키를 준다. 화면은 요청마다 쿠키를 다시 읽는다. **한계**(최종 리뷰): 같은 이름 · 더 좁은 경로로 심은 쿠키(`Path=/api/v1/ops`)는 다른 쿠키라 남고, 브라우저가 그것을 먼저 보내 서버가 그 값을 쓴다 — 화면은 그 쿠키를 읽지 못해 운영 쓰기가 403 이 된다(서비스 거부, 이 브랜치 전부터). 그 값으로 다른 출처가 쓰기를 하는 것은 S1 · S1b 가 막는다 |
 | S3 | 로그아웃(`DELETE /api/v1/ops/session`)은 비밀번호 표식 비교(R-95)를 건너뛴다. 절대 수명 검사는 그대로다 | DB 장애 중에 로그아웃이 503 으로 막혀 세션이 최대 8 h 살아 있었다. 권한을 줄이는 요청에 실패-닫힘 규칙을 적용한 것이 원인이었다 | 다른 운영 요청은 여전히 503 |
 | S8 | `--create-ops-user` 는 `--password-stdin` 으로만 비밀번호를 받는다. 환경 변수 `WAKELINE_OPS_PASSWORD` 경로는 없앴다(사용자 결정 5) | 계약 §7(stdin 만)과 어긋났다. `docker exec -e` 로 넘긴 값은 argv · 프로세스 환경에 보인다 | 없이 실행하면 종료 코드 2 와 안내. `make ops-user` 는 원래 stdin 을 쓴다 |
 
@@ -73,7 +73,7 @@
 |---|---|---|---|
 | S13 | `/api/v1/status` 와 WS `status` 의 `active_providers` 는 정해 둔 필드만 싣는다: `{job}` · `{job}_since` · `{job}_reason` · `{job}_none_since` · `{job}_none_reason` · `{job}_none_next` · `{job}_none_retry`(job ∈ region · global) | 수집기 해시 `wakeline:active` 를 통째로 내보내서, 수집기가 나중에 쓰는 필드가 저절로 공개될 수 있었다 | 지금 쓰는 필드는 같다. WS 계약 샘플에서 시험용 `hot` 항목만 빠졌다 |
 | A3 | `GET /api/v1/radar/kr/{tm}.png`: Redis 장애는 **503 + `Retry-After`**, 값이 없으면 404, base64 가 아닌 값은 404 와 함께 `wakeline_radar_kr_parse_errors_total{field="frame_png"}` 를 센다(사용자 결정 6) | 장애가 '그림 없음'(404)으로 보였고, 깨진 값은 500 이 되었다(R-72 위반) | 프레임 목록(`/radar/kr`)은 Redis 오류를 '프레임 없음'으로 보는 동작 그대로 |
-| S4 | WS `subscribe` 의 `zoom` 을 실수로 읽고 0–24 로 자른다 | int 범위 밖 숫자(`1e10` 등) 하나로 익명 클라이언트가 ERROR 스택 로그와 1011 종료를 반복해서 만들 수 있었다 | 범위 안 값의 결과는 같다 |
+| S4 | WS `subscribe` 의 `zoom` 을 실수로 읽고 0–24 로 자른다 | int 범위 밖 숫자(`1e10` 등) 하나로 익명 클라이언트가 ERROR 스택 로그와 1011 종료를 반복해서 만들 수 있었다 | 범위 안 값의 결과는 같다. **한계**(최종 리뷰): double 범위를 넘는 정수(309자리 이상)는 Jackson 이 실수로도 읽지 못해 그 연결만 1002 로 닫힌다(WARN 분당 1줄) — 자르지 않는다 |
 
 ### 6.3 인프라(§4 에 더함)
 | ID | 변경 | 이유 | 되돌리기 |
