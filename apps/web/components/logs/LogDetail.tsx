@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { logGroups, logsPage } from "@/lib/endpoints/logs";
+import { useApiResource } from "@/lib/use-api-resource";
 import { fmtIsoKst } from "@/lib/time";
 import {
   DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, groupCountText, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_LABEL,
@@ -35,35 +36,26 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   const [wrap, setWrap] = useState(true);
   const { open: confirm, show, close, closeIf, panelId, openerProps } = useResolveSlot();
   const setConfirm = (t: ResolveTarget) => show("entry", t);
-  const [related, setRelated] = useState<{ items: LogEntry[]; more: boolean } | null>(null);
-  const [relatedErr, setRelatedErr] = useState<unknown>(null);
-  const [fpStats, setFpStats] = useState<{ g: LogGroup | null; scanTruncated: boolean | null } | null>(null);
-  const [fpErr, setFpErr] = useState<unknown>(null);
   /*
    * 두 훑기(서버가 스트림을 최대 4,200 건 훑는다)는 그 값이 바뀔 때만 다시 한다 — 항목 객체가 바뀌었다고(해결 쓰기 뒤 낙관적 표시 · 다시 읽은 항목) 두 번 하지 않는다.
    * resolvedId = 이 항목의 해결(없으면 null): 해결 · 되돌림으로 바뀌면 한 번 다시 읽는다(묶음 통계는 가림을 따르고, 같은 요청 id 항목의 "해결됨" 표시도 바뀔 수 있다).
+   * 결과는 그 조건(열쇠)의 것만 보인다(lib/use-api-resource): 다시 읽는 동안 앞 조건의 수 · 목록 · 오류를 새 머리글 아래 두지 않고 '불러오는 중…'.
    */
   const key = entryKey(entry);
   const { request_id: rid, fp, service, level } = entry;
   const resolvedId = entry.resolved?.id ?? null;
+  /** 401/404 는 세션 확인(끊긴 요청은 아니다) */
+  const authCheck = (signal: AbortSignal) => (e: unknown): never => { if (!signal.aborted && isAuthMiss(e)) void onAuthMiss(e); throw e; };
   // 같은 요청 id 의 다른 항목 — 해결 여부와 무관하게 모두(resolved=show), 목록의 해결 표시를 따르지 않는다
-  useEffect(() => {
-    if (!rid) return;
-    let live = true;
-    logsPage({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid, resolved: "show" }, Date.now(), { limit: RELATED_LIMIT })
-      .then((p) => { if (!live) return; setRelated({ items: p.items.filter((x) => entryKey(x) !== key), more: p.nextCursor != null || p.scanTruncated === true }); setRelatedErr(null); })
-      .catch((e: unknown) => { if (!live) return; setRelatedErr(e); if (isAuthMiss(e)) onAuthMiss(e); });
-    return () => { live = false; };
-  }, [key, rid, resolvedId, onAuthMiss]);
+  const relatedRes = useApiResource(rid ? JSON.stringify([key, rid, resolvedId]) : null, (signal) =>
+    logsPage({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid: rid!, resolved: "show" }, Date.now(), { limit: RELATED_LIMIT }, { signal })
+      .then((p) => ({ items: p.items.filter((x) => entryKey(x) !== key), more: p.nextCursor != null || p.scanTruncated === true }), authCheck(signal)));
   // 같은 지문 묶음 통계 — 목록의 해결 표시(resolvedMode)를 따른다
-  useEffect(() => {
-    if (!fp) return;
-    let live = true;
-    logGroups({ services: [service], level, period, resolved: resolvedMode }, Date.now())
-      .then((g) => { if (!live) return; setFpStats({ g: g.groups.find((x) => x.fp === fp) ?? null, scanTruncated: g.scanTruncated }); setFpErr(null); })
-      .catch((e: unknown) => { if (!live) return; setFpErr(e); if (isAuthMiss(e)) onAuthMiss(e); });
-    return () => { live = false; };
-  }, [fp, service, level, period, resolvedMode, resolvedId, onAuthMiss]);
+  const fpRes = useApiResource(fp ? JSON.stringify([fp, service, level, period, resolvedMode, resolvedId]) : null, (signal) =>
+    logGroups({ services: [service], level, period, resolved: resolvedMode }, Date.now(), { signal })
+      .then((g): { g: LogGroup | null; scanTruncated: boolean | null } => ({ g: g.groups.find((x) => x.fp === fp) ?? null, scanTruncated: g.scanTruncated }), authCheck(signal)));
+  const related = relatedRes.data, relatedErr = relatedRes.error;
+  const fpStats = fpRes.data, fpErr = fpRes.error;
   const upto = uptoOf(entry.ts);
   const res = entry.resolved;
   // 해결됨 · 해결되지 않음의 단추는 같은 자리의 하나(같은 DOM 요소) — 해결 · 되돌린 뒤 초점이 그 단추에 남는다

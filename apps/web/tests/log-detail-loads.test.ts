@@ -146,3 +146,52 @@ describe("log detail: same fingerprint group (characterization)", () => {
     expect([calls.filter((c) => c.startsWith("/api/v1/ops/logs/groups?")).length, calls.filter((c) => c.startsWith("/api/v1/ops/logs?")).length]).toEqual([2, 2]);
   });
 });
+
+// 상세의 두 목록은 지금 화면이 묻는 것의 답만 보인다(useApiResource 의 열쇠별 결과): 해결 표시 · 기간을 바꾸면 머리글은 곧바로 새 값을 말하는데
+// 숫자는 앞 값이었다(새 머리글 아래 다른 조건의 수). 해결 처리 뒤 다시 읽는 동안에도 해결 전 목록을 지금 것처럼 두지 않는다. 앞 읽기의 실패도 새 읽기에 남기지 않는다.
+describe("log detail: the lists show only the answer for what is on screen", () => {
+  type Hold = { url: string; answer: (r: Response) => void };
+  function holding() {
+    const held: Hold[] = [];
+    const calls = stub((url) => new Promise<Response>((answer) => { held.push({ url, answer }); }) as never);
+    const answer = (prefix: string, r: Response) => { const h = held.filter((x) => x.url.startsWith(prefix)).at(-1)!; h.answer(r); };
+    return { calls, answer };
+  }
+  it("another resolved mode: '불러오는 중…' under the new heading until its answer — not the previous mode's numbers", async () => {
+    const { answer } = holding();
+    const entry = entryOf();
+    await render(entry);
+    answer("/api/v1/ops/logs/groups?", json(200, { groups: [group({ count: 17 })] }));
+    await m.settle();
+    expect(fpText()).toContain("항목 17건");
+    await render(entry, { resolvedMode: "show" });
+    await m.settle();
+    expect(dom.container.textContent).toContain("해결된 항목 포함");
+    expect(fpText()).toBe("불러오는 중…");
+    answer("/api/v1/ops/logs/groups?", json(200, { groups: [group({ count: 20 })] }));
+    await m.settle();
+    expect(fpText()).toContain("항목 20건");
+  });
+  it("after a resolution the same-request list re-reads with '불러오는 중…', not the list from before the resolution", async () => {
+    const { answer } = holding();
+    await render(entryOf());
+    answer("/api/v1/ops/logs?", json(200, { items: [raw(T(1)), raw(T(2), { message: "other one" })], next_cursor: null }));
+    await m.settle();
+    expect(m.allByTestId("log-related")).toHaveLength(1);
+    await render(entryOf({ resolved: { id: 12, upto: "2026-09-29T01:59:00Z", resolved_by: "op" } }));
+    await m.settle();
+    expect(m.allByTestId("log-related")).toHaveLength(0);
+    expect(relatedBlock()).toContain("불러오는 중…");
+  });
+  it("a failed read's error is not shown while the next read (another period) loads", async () => {
+    const { answer } = holding();
+    const entry = entryOf();
+    await render(entry);
+    answer("/api/v1/ops/logs/groups?", json(503, { detail: "down", request_id: "9999888877776666" }));
+    await m.settle();
+    expect(fpText()).toContain("9999888877776666");
+    await render(entry, { period: "24h" });
+    await m.settle();
+    expect(fpText()).toBe("불러오는 중…");
+  });
+});
