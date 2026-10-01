@@ -7,16 +7,7 @@ import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { KstTime } from "@/components/KstTime";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
-
-interface Latest {
-  obs_time: string; raw: string; provider?: string; flight_cat?: string | null; flight_cat_source?: string | null; taf_raw?: string | null;
-  ceiling_ft?: number | null; ceiling_state?: string | null; vis_raw?: string | null; obs_age_s?: number | null; stale?: boolean | null;
-}
-interface Wx {
-  airport: { icao: string; name?: string; country?: string; elev_ft?: number; lat: number; lon: number };
-  latest: Latest | null;
-  history: { obs_time: string; flight_cat?: string | null; wind_dir?: number | null; wind_kt?: number | null; vis_sm?: number | null; vis_raw?: string | null; ceiling_ft?: number | null; temp_c?: number | null }[];
-}
+import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G20, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
@@ -26,10 +17,15 @@ interface Wx {
 export default function AirportPage({ params }: { params: Promise<{ icao: string }> }) {
   const { icao } = use(params);
   const code = icao.toUpperCase();
-  const [wx, setWx] = useState<Wx | null>(null);
+  const [wx, setWx] = useState<AirportWx | null>(null);
   const [err, setErr] = useState<{ text: string; error: unknown } | null>(null);
   const now = useNow(30_000);
-  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e: unknown) => setErr({ text: airportErrorText(e, code), error: e })); }, [code]);
+  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다
+  useEffect(() => {
+    apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(code)}/wx`)
+      .then((body) => { const x = parseWx(body); if (x) setWx(x); else setErr({ text: `${WX_UNREADABLE}.`, error: null }); })
+      .catch((e: unknown) => setErr({ text: airportErrorText(e, code), error: e }));
+  }, [code]);
   const m = wx?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
