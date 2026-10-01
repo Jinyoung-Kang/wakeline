@@ -337,6 +337,27 @@ class SecurityIT extends IntegrationTest {
         assertThat(other.cookies).doesNotContainKey("WAKELINE_SESSION");
     }
 
+    /**
+     * S14(I-4): 로그인은 세션 ID 와 함께 CSRF 토큰도 새로 만든다. 다른 포트의 페이지가 로그인 전에 심어 둔(쿠키 던지기) 값은 로그인 뒤에 쓸 수 없다.
+     * 다시 로그인해도 새 토큰이다.
+     */
+    @Test
+    void loginIssuesAFreshCsrfToken() {
+        users.upsert("it-rotate", PW);
+        Browser b = new Browser();
+        b.cookies.put("WAKELINE_CSRF", "planted-before-login");
+        assertThat(b.login("it-rotate", PW).status()).isEqualTo(200);
+        assertThat(b.csrf()).as("token after login").isNotBlank().isNotEqualTo("planted-before-login");
+        String path = "/api/v1/ops/providers/rainviewer/enable";
+        assertProblem(b.send("POST", path, null, headers("X-CSRF-Token", "planted-before-login")), 403, "CSRF_INVALID", path);
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+        String first = b.csrf();
+        assertThat(b.login("it-rotate", PW, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(b.csrf()).as("token after logging in again").isNotEqualTo(first);
+        assertProblem(b.send("POST", path, null, headers("X-CSRF-Token", first)), 403, "CSRF_INVALID", path);
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+    }
+
     // ---------- 세션 절대 수명(R-54) ----------
 
     /**

@@ -21,6 +21,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,7 +33,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 운영자 로그인(6.3절): BCrypt 검증 → LOGIN 감사 기록 → 세션 ID 교체 → Redis 세션(유휴 8 h, 로그인부터 절대 8 h — R-54) → HttpOnly·SameSite=Strict 쿠키 + CSRF 쿠키.
+ * 운영자 로그인(6.3절): BCrypt 검증 → LOGIN 감사 기록 → 세션 ID 교체 → Redis 세션(유휴 8 h, 로그인부터 절대 8 h — R-54) → HttpOnly·SameSite=Strict 쿠키 + 새 CSRF 쿠키.
  * 감사 기록이 세션보다 먼저다(API-CONC-6): 기록이 실패하면(DB 장애) 세션을 만들지 않고 503 — 감사 기록 없는 인증 세션은 생기지 않는다.
  * 로그아웃은 반대로 세션 종료가 우선이다: 감사 기록 실패와 무관하게 세션을 무효화한다(권한을 줄이는 쪽은 실패하지 않게).
  */
@@ -49,10 +50,12 @@ public class OpsSessionController {
     private final Counter auditFailures;
 
     private final OpsSessionRegistry sessions;
+    private final CsrfTokenRepository csrfTokens;
 
     public OpsSessionController(OpsUserService users, SecurityContextRepository contextRepository, AuditService audit, RateLimiter limiter, AppProperties props,
-                                MeterRegistry meters, OpsSessionRegistry sessions) {
+                                MeterRegistry meters, OpsSessionRegistry sessions, CsrfTokenRepository csrfTokens) {
         this.users = users;
+        this.csrfTokens = csrfTokens;
         this.sessions = sessions;
         this.contextRepository = contextRepository;
         this.audit = audit;
@@ -110,6 +113,9 @@ public class OpsSessionController {
         req.getSession().setAttribute(OpsSessionLifetimeFilter.CREDENTIAL, result.credential());
         // 절대 수명(R-54)의 기준 — 유휴 연장과 무관하게 로그인 시각부터 센다. 다시 로그인하면 새로 시작한다.
         req.getSession().setAttribute(OpsSessionLifetimeFilter.AUTH_AT, System.currentTimeMillis());
+        // CSRF 토큰도 새로(리뷰 cto-2026-10 S14) — 세션 ID 처럼: 로그인 전에 심어 둔 값(다른 포트의 페이지가 던진 쿠키)을 로그인 뒤에 쓰지 못하게.
+        // 화면은 요청마다 쿠키를 다시 읽는다(웹 lib/api.ts csrfToken).
+        csrfTokens.saveToken(csrfTokens.generateToken(req), req, res);
         return ResponseEntity.ok(Map.of("username", user.username(), "role", user.role()));
     }
 
