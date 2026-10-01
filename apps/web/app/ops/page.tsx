@@ -12,6 +12,7 @@ import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, R
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
 import { OpsLogin } from "@/components/OpsLogin";
 import { useOpsSession } from "@/components/ops/useOpsSession";
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { OpsSessionError } from "@/components/ops/OpsSessionError";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
@@ -228,9 +229,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const refresh = useCallback(() => reload(), [reload]);
   useEffect(() => {
     const first = setTimeout(refresh, 0);
-    const t = setInterval(() => reload(undefined, true), 15_000);
-    return () => { clearTimeout(first); clearInterval(t); };
-  }, [refresh, reload]);
+    return () => clearTimeout(first);
+  }, [refresh]);
+  // 15 s 주기는 탭이 보일 때만 — 숨긴 탭에서 엔드포인트 7개를 분당 28번 부르지 않는다. 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12)
+  useVisibleInterval(() => reload(undefined, true), 15_000);
   const toggleRunsMode = () => {
     const next: ResolvedMode = runsModeRef.current === "show" ? "hide" : "show";
     runsModeRef.current = next;

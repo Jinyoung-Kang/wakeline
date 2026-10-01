@@ -19,6 +19,7 @@ import { LogGroupsTable } from "./LogGroupsTable";
 import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { revokeLogGroup } from "./logGroupTargets";
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 
 type Tab = "logs" | "gaps";
 type View = "list" | "groups";
@@ -167,11 +168,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       if (my === loadSeq.current) fail(e);
     }
   }, [view, filter, page, groups, fail]);
-  useEffect(() => {
-    if (tab !== "logs") return;
-    const t = setInterval(() => void poll(), REFRESH_MS);
-    return () => clearInterval(t);
-  }, [tab, poll]);
+  // 탭이 보일 때만, 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12). poll 이 바뀌어도(쪽을 넘김 · 새 항목 반영) 주기를 다시 걸지 않는다(B13)
+  useVisibleInterval(() => void poll(), tab === "logs" ? REFRESH_MS : null);
 
   /**
    * 상세 열기 번호 — #id= 링크 · 줄 · 닫기마다 오른다. 먼저 누른 #id= 항목의 늦은 답이 나중에 연 상세를 덮지 않게(마지막 것만 — web-review B14,
