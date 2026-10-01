@@ -1,0 +1,99 @@
+{
+ "t0_ms": 1790878848536,
+ "public_reads": [
+  {
+   "path": "/api/v1/aircraft/71bf50/track",
+   "status": 503,
+   "retry_after": "10",
+   "s": 3.03
+  },
+  {
+   "path": "/api/v1/aircraft/71aa64/track",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.03
+  },
+  {
+   "path": "/api/v1/aircraft/86d8cc/track",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.03
+  },
+  {
+   "path": "/api/v1/aircraft/71bf56/track",
+   "status": 503,
+   "retry_after": "10",
+   "s": 3.04
+  },
+  {
+   "path": "/api/v1/aircraft/71bf54/track",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.03
+  },
+  {
+   "path": "/api/v1/aircraft/71bf53/track",
+   "status": 503,
+   "retry_after": "10",
+   "s": 3.03
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T18%3A18%3A48Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 3.04
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T18%3A18%3A48Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 3.02
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T18%3A18%3A48Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.02
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T18%3A18%3A48Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 3.02
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T18%3A18%3A48Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.02
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T18%3A18%3A48Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.02
+  }
+ ],
+ "live_paths_during_lock": [
+  {
+   "path": "/healthz",
+   "status": 200,
+   "retry_after": null,
+   "s": 0.01
+  },
+  {
+   "path": "/api/v1/aircraft?bbox=124,33,132,39",
+   "status": 200,
+   "retry_after": null,
+   "s": 0.01
+  },
+  {
+   "path": "/api/v1/status",
+   "status": 200,
+   "retry_after": null,
+   "s": 0.01
+  }
+ ],
+ "bad": 0,
+ "slow_live": 0
+}

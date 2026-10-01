@@ -3,7 +3,7 @@
 # 회복 후 스트림 ↔ DB 무결성(tools/qa/stream_db_integrity.py)을 대조한다. 결함(손실 · 중복 · 남은 PEL)이면 종료 코드 1.
 #
 #   bash tools/qa/rel_fault.sh <시나리오> [증거 폴더]
-#   시나리오: api-kill | api-restart | api-stop-<초> | api-kill-blocked | db-pause-<초> | db-stop-<초> | redis-pause-<초> | redis-restart | redis-crash | collector-restart | collector-crash
+#   시나리오: api-kill | api-restart | api-stop-<초> | api-kill-blocked | db-pause-<초> | db-stop-<초> | redis-pause-<초> | redis-restart | redis-crash | collector-restart | collector-crash | collector-stop-<초>
 #
 # 운영 스택(wakeline · 8700)과 스택 A(wakeline-e2e)에는 쓰지 않는다 — 프로젝트 이름을 고정한다. psql · redis-cli 는 컨테이너 안에서(비밀번호가 명령행에 없다).
 set -uo pipefail
@@ -36,7 +36,7 @@ trap 'exit 130' INT TERM
 
 T0=$(ms); T0S=$(python3 -c "print($T0/1000)")
 log "scenario $SC — t0=$T0 health=$(health) snapshot_version=$(snapver)"
-python3 tools/qa/probe.py --base "$B" --seconds 400 --out "$OUT/probe.jsonl" &
+python3 tools/qa/probe.py --base "$B" --seconds 600 --out "$OUT/probe.jsonl" &
 PROBE=$!
 sleep 15
 FAULT_AT=$(ms)
@@ -75,6 +75,8 @@ SQL
     log "docker restart collector"; docker restart "$(c collector)" >/dev/null ;;
   collector-crash)
     log "kill -9 collector"; crash collector ;;
+  collector-stop-*)
+    s=${SC#collector-stop-}; log "docker stop collector ${s}s (/healthz 가 region_feed_lag 를 말하는지)"; docker stop "$(c collector)" >/dev/null; sleep "$s"; docker start "$(c collector)" >/dev/null; log "collector started" ;;
   *) echo "unknown scenario $SC" >&2; exit 2 ;;
 esac
 FAULT_END=$(ms)
