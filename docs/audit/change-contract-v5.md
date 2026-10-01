@@ -1125,3 +1125,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     `<이름> must not contain control characters`). 예전: NUL 은 PostgreSQL 이 거절해 500 + ERROR 스택이었다(공개 검색은 같은 입력을 400 `BAD_QUERY` 로 막는다).
     그 밖의 값 · 의미(같은 값의 실행만, 없으면 조건 없음)는 그대로. 웹(/ops RUNS)은 고른 값만 보낸다 — 화면 변화 없음.
   - 회귀 막기: api `Qa205OpsRunsFilterNulTest` · `ParamsTest`.
+- G35(계약 §1 의 '클라이언트 메시지 ≤ 4 KB' · `schemas/ws/client.v1.json` · ADR-008 · QA-204 · ADR-017 §6.2 QA-204) **WS 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트**
+  - `/ws/v1` 의 텍스트 메시지 하나가 UTF-8 로 4,096 바이트를 넘으면 서버가 **1009**(reason `message too big`)로 닫는다 — 글자 수와 상관없다(한글 · 이모지 등
+    여러 바이트 글자도 바이트로 센다). 예전: Tomcat 의 상한(setTextMessageSizeLimit)이 디코딩한 글자(UTF-16) 수라 3바이트 글자로 채운 메시지는 4,096 글자
+    = 약 12 KB 까지 받았다(ASCII 는 그때도 4,097 바이트에서 1009). 4,096 바이트 이하는 그대로 받는다. 웹이 보내는 메시지는 수백 바이트다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa204WsMessageLimitIsCharsNotBytesTest`(실제 Tomcat) · `RateAndLimitTest.handler_messageOver4096Utf8Bytes_closes1009EvenWithFewCharacters`.

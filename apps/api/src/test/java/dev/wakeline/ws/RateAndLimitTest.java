@@ -110,6 +110,35 @@ class RateAndLimitTest {
         }
     }
 
+    /**
+     * QA-204: 메시지 상한 4 KB 는 UTF-8 바이트다(계약 v5 §G35). 정확히 4,096 바이트(3바이트 글자 섞음)는 받고, 4,097 바이트는 글자 수가 4,096 보다 훨씬
+     * 적어도 1009 로 닫는다 — 예전에는 Tomcat 의 글자 상한만 있어 약 12 KB 까지 받았다.
+     */
+    @Test void handler_messageOver4096Utf8Bytes_closes1009EvenWithFewCharacters() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            FakeWsSession f = k.connect("s", "2.2.2.3");
+            k.msg(f, "{\"type\":\"hello\",\"proto\":1}");
+            String head = "{\"type\":\"ping\",\"pad\":\"", tail = "\"}";
+            String exact = head + "가".repeat(1357) + "a" + tail; // 22 + 4,071 + 1 + 2 = 4,096 바이트 · 1,382 글자
+            assertThat(exact.getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(4096);
+            assertThat(WakelineWsHandler.utf8Length(exact)).isEqualTo(4096);
+            int before = f.sent.size();
+            k.msg(f, exact);
+            assertThat(f.closedWith).as("4,096 bytes is within the limit").isNull();
+            assertThat(f.sent.subList(before, f.sent.size())).anySatisfy(m -> assertThat(m).contains("\"pong\""));
+            k.msg(f, head + "가".repeat(1357) + "ab" + tail); // 4,097 바이트
+            assertThat(f.closedWith).isNotNull();
+            assertThat(f.closedWith.getCode()).isEqualTo(1009);
+            assertThat(f.closedWith.getReason()).isEqualTo("message too big");
+            int after = f.sent.size();
+            k.msg(f, "{\"type\":\"ping\"}"); // 닫는 중 수신은 무시
+            assertThat(f.sent).hasSize(after);
+        }
+        // 2 · 3 · 4 바이트 글자(서로게이트 쌍)와 짝 없는 서로게이트(3)
+        assertThat(WakelineWsHandler.utf8Length("aé가😀")).isEqualTo(1 + 2 + 3 + 4).isEqualTo("aé가😀".getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        assertThat(WakelineWsHandler.utf8Length("\uD83D")).isEqualTo(3);
+    }
+
     @Test void handler_21stMessageWithin10s_closes1008RateLimit() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             FakeWsSession f = k.connect("s", "2.2.2.2");

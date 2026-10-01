@@ -36,6 +36,11 @@ public class WakelineWsHandler extends TextWebSocketHandler {
     public static final String ATTR_IP = "wakeline.ip";
     /** Tomcat 세션별 블로킹 전송 시간 제한(ms, Long) — 기본 20 s 를 설계 5.1 의 5 s 로. */
     static final String TOMCAT_BLOCKING_SEND_TIMEOUT = "org.apache.tomcat.websocket.BLOCKING_SEND_TIMEOUT";
+    /**
+     * 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트(계약 v5 §G35). Tomcat 의 setTextMessageSizeLimit 은 디코딩한 글자(UTF-16) 수라 3바이트 글자로
+     * 채우면 약 12 KB 까지 받았다(QA-204) — 그 상한은 첫 거름으로 두고(UTF-8 바이트 ≥ UTF-16 글자라 4,096 바이트 이하 메시지를 막지 않는다),
+     * 받은 메시지의 UTF-8 길이를 다시 재어 넘으면 같은 1009(너무 큼)로 닫는다.
+     */
     static final int MAX_MESSAGE_BYTES = 4096;
     static final int MAX_ZOOM = 24;
     private static final Pattern HEX = Pattern.compile("^[0-9a-f]{6}$");
@@ -92,6 +97,7 @@ public class WakelineWsHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession raw, TextMessage message) {
         WsSession s = byId.get(raw.getId());
         if (s == null || s.isClosing() || s.inboundBlocked) return;
+        if (utf8Length(message.getPayload()) > MAX_MESSAGE_BYTES) { hub.tooBig(s); return; } // Tomcat 의 글자 상한을 지나온 큰 메시지
         if (!s.inbound.tryAcquire(System.nanoTime())) { hub.rateLimited(s); return; }
         JsonNode m;
         try {
@@ -119,6 +125,21 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         } catch (RuntimeException e) {
             badMessage(s, type, e);
         }
+    }
+
+    /** UTF-8 로 보낸 바이트 수(서로게이트 쌍 = 4바이트) — 받은 글자를 다시 인코딩하지 않고 센다. */
+    static int utf8Length(CharSequence s) {
+        int n = 0;
+        for (int i = 0, len = s.length(); i < len; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) n += 1;
+            else if (c < 0x800) n += 2;
+            else if (Character.isHighSurrogate(c) && i + 1 < len && Character.isLowSurrogate(s.charAt(i + 1))) {
+                n += 4;
+                i++;
+            } else n += 3;
+        }
+        return n;
     }
 
     /** 클라이언트 메시지 처리 중 예외의 WARN 간격 — 그사이의 것은 세어 다음 WARN 에 싣는다(DEBUG 한 줄씩). */

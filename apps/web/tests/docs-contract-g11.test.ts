@@ -167,6 +167,9 @@ describe("contract v5 amendment numbers are unique", () => {
     // QA 2026-10 고치기: 운영 실행 목록 필터의 제어 문자 — 같은 22차 · §G34
     expect(heading(34)).toMatch(/^## G\. 22차 개정\(/);
     expect(amendment(34)).toContain("`GET /api/v1/ops/runs` 의 `job` · `provider` · `status` 에 제어 문자가 있으면 400 `BAD_FILTER`");
-    expect(amendment(35)).toBe("");
+    // QA 2026-10 고치기: WS 클라이언트 메시지 상한은 UTF-8 바이트 — 같은 22차 · §G35
+    expect(heading(35)).toMatch(/^## G\. 22차 개정\(/);
+    expect(amendment(35)).toContain("WS 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트");
+    expect(amendment(36)).toBe("");
   });
 });
