@@ -9,7 +9,8 @@ WARN·ERROR 로그는 가려서 wakeline:logs 로도 보낸다(계약 v5 §C2 ·
 
 이벤트 루프 지연(collector-review §4 'Enabler (D0)'): LoopLag(diag.py — ais 와 같은 측정)를 LOOP_TICK_S 마다 재어 heartbeat 에 싣는다 —
 loop_lag_max_s(최근 60 s 의 최댓값, 초 — 표본이 없으면 빈 값) · loop_stalls_total(지연 ≥ 1 s 표본 수, 기동 뒤 누계) · loop_tick_s. 5 s 넘게 막히면
-WARN(분에 한 번까지). 이 측정이 끝나도 작업은 계속한다(작업 태스크가 아니다 — 멈출 때 취소한다).
+WARN(분에 한 번까지). 이 측정이 끝나도 작업은 계속한다(작업 태스크가 아니다 — 멈출 때 취소한다). 고른 값(창 diag_window_s · 멈춤 기준 loop_stall_s ·
+WARN 문턱 loop_warn_s · 간격 loop_warn_every_s · loop_tick_s)도 ais 상태 해시와 같은 이름 · 형식으로 싣는다(loop_lag_settings — 읽는 쪽이 숫자를 들고 있지 않게).
 
 종료(SIGTERM, COL-4): 진행 중 작업을 SHUTDOWN_GRACE_S 동안 끝내게 두고, 남은 작업은 취소한 뒤 DB 쓰기 큐를 DB_DRAIN_S 안에서 비우고,
 남은 로그 항목을 logsink.CLOSE_S 안에서 보낸다. 합계(18 + 4 + 4 + 0.5 s)는 compose stop_grace_period(30 s) 안이다 — 그래야 SIGKILL 전에
@@ -73,6 +74,23 @@ log = logging.getLogger("main")
 # 확률은 0.5 s 간격에서 4 %, 0.1 s 에서 20 % — 60 s 창 안에 그런 멈춤이 몇 번이면 대개 잡힌다. 깨우기는 초당 10번(비용 — docs/PERF.md §12)
 LOOP_TICK_S = 0.1
 LOOP_CONTEXT = "jobs, timers and publishing waited meanwhile"  # 수집기 루프 멈춤 WARN 이 덧붙이는 말
+
+
+def _chosen_s(v: float) -> str:
+    """고른 초(잰 값 아님) — 지수 표기 없는 십진수, 소수 3자리까지("0.1" · "60"). ais 상태 해시(ais/sink.py _setting)와 같은 형식."""
+    return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
+def loop_lag_settings(lag: LoopLag) -> dict[str, str]:
+    """heartbeat 의 루프 지연 고른 값(ais 상태 해시와 같은 이름): 표본 간격 · loop_lag_max_s 의 창 · loop_stalls_total 의 기준 · WARN 문턱과 간격.
+    운영 PIPELINE 탭이 설명 · 창을 이 값으로 채운다(웹이 숫자를 들고 있지 않다 — 계약 v5 §G23 의 ais 와 같은 규칙)."""
+    return {
+        "loop_tick_s": _chosen_s(lag.tick_s),
+        "diag_window_s": _chosen_s(lag.window.window_s),
+        "loop_stall_s": _chosen_s(lag.stall_s),
+        "loop_warn_s": _chosen_s(lag.warn_s),
+        "loop_warn_every_s": _chosen_s(lag.warn_every_s),
+    }
 
 
 def traffic_grid_job(http: HttpClient, key: str, ctx: JobContext) -> TrafficGridJob:
@@ -190,10 +208,10 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             # F6: 원천 보관 · 정리 실패(기동 뒤 누계 — 0 이 아니면 /data/raw 가 가득 찼거나 읽기 전용이다)
             "raw_unsaved": str(raw.unsaved),
             "raw_purge_failed": str(raw.purge_failed),
-            # D0: 이벤트 루프 지연 — ais 상태 해시와 같은 이름(최근 60 s 최댓값 · 지연 ≥ 1 s 표본 누계 · 표본 간격)
+            # D0: 이벤트 루프 지연 — ais 상태 해시와 같은 이름(최근 60 s 최댓값 · 지연 ≥ 1 s 표본 누계 · 고른 값: 표본 간격 · 창 · 멈춤 기준 · WARN)
             "loop_lag_max_s": "" if (lag := loop_lag.max_s()) is None else f"{lag:.3f}",
             "loop_stalls_total": str(loop_lag.stalls),
-            "loop_tick_s": f"{loop_lag.tick_s:g}",
+            **loop_lag_settings(loop_lag),
         }
         if tracker is not None:
             m.update(tracker.metrics())
