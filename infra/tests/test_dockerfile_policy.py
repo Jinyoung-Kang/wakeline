@@ -189,5 +189,27 @@ class RootDockerignoreTest(unittest.TestCase):
                     self.assertFalse([f for f in files if dockerignore_excludes(f, self.patterns)], "COPY 하는 파일을 빼면 빌드가 깨진다")
 
 
+class WebDockerignoreTest(unittest.TestCase):
+    """최종 리뷰: web 은 apps/web 을 빌드 컨텍스트로 쓰고(compose build: ../apps/web) 빌드 단계가 COPY . . 를 한다. 개발자가 apps/web 에 둔
+    .env* (next dev 의 .env.local 등)가 빌드 단계 · 캐시에 들어가지 않게 그 .dockerignore 가 뺀다 — 그러면서 빌드가 쓰는 파일은 빼지 않는다."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        f = ROOT / "apps" / "web" / ".dockerignore"
+        cls.patterns = [ln.strip() for ln in f.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def test_env_files_are_excluded(self):
+        for path in (".env", ".env.local", ".env.development.local", ".env.production", ".env.production.local", "node_modules/next/package.json", ".next/BUILD_ID"):
+            with self.subTest(path=path):
+                self.assertTrue(dockerignore_excludes(path, self.patterns), "빌드 컨텍스트에서 빠져야 한다")
+
+    def test_build_inputs_are_kept(self):
+        tracked = subprocess.run(["git", "ls-files", "apps/web"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
+        inputs = [f.removeprefix("apps/web/") for f in tracked if f.startswith(("apps/web/app/", "apps/web/components/", "apps/web/lib/", "apps/web/public/"))]
+        inputs += ["package.json", "package-lock.json", "next.config.ts", "tsconfig.json"]
+        self.assertGreater(len(inputs), 100)
+        self.assertEqual([f for f in inputs if dockerignore_excludes(f, self.patterns)], [], "빌드가 쓰는 파일을 빼면 빌드가 깨진다")
+
+
 if __name__ == "__main__":
     unittest.main()

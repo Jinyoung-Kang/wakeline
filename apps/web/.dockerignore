@@ -4,3 +4,5 @@ playwright-report
 test-results
 e2e
 tests
+# 비밀값: next dev 용 .env.local 등이 빌드 단계(COPY . .) · 빌드 캐시에 들어가지 않게(최종 리뷰). 값은 compose 가 실행 때 넘긴다
+.env*
