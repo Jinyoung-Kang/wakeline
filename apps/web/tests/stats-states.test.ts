@@ -52,11 +52,17 @@ const FIR = "/api/v1/stats/sigmet?group=fir";
 const HAZ = "/api/v1/stats/sigmet?group=hazard";
 const TRAFFIC = (d: string) => `/api/v1/stats/traffic?day=${d}`;
 const ALERTS = "/api/v1/stats/alerts";
+/**
+ * 최근 7일 응답의 날짜별 집계(api StatsRepository.days — 범위 [오늘−7, 오늘] KST 날짜, 오늘은 늘 false). 7일 응답에는 최상위 aggregated 가 없다
+ * (REST 계약 stats_sigmet · stats_alerts — 전에는 이 대역이 api 가 주지 않는 최상위 aggregated 를 지어 넣어 QA-308 의 길을 덮었다)
+ */
+const WEEK = (past: boolean) => ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28"]
+  .map((day) => ({ day, aggregated: past })).concat([{ day: "2026-09-29", aggregated: false }]);
 const OK: Record<string, unknown> = {
-  [FIR]: { items: [{ day: DAY, dim: "RKRR", value: 4 }], days: [], aggregated: true, ...Z },
-  [HAZ]: { items: [], days: [], aggregated: true, ...Z },
+  [FIR]: { group: "fir", items: [{ day: DAY, dim: "RKRR", value: 4 }], days: WEEK(true), ...Z },
+  [HAZ]: { group: "hazard", items: [], days: WEEK(true), ...Z },
   [TRAFFIC(DAY)]: { day: DAY, items: [{ day: DAY, dim: "00", value: 3 }], aggregated: true, scope: null, region: null, ...Z },
-  [ALERTS]: { items: [], days: [], aggregated: false, ...Z },
+  [ALERTS]: { items: [], days: WEEK(false), ...Z },
 };
 const json = (body: unknown, status = 200, type = "application/json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
 const FAIL_503 = () => json({ detail: "stats unavailable", code: "STORE_UNAVAILABLE", request_id: "feedface0000beef" }, 503, "application/problem+json");

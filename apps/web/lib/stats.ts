@@ -3,7 +3,8 @@
  * - day: api 는 KST 날짜 "YYYY-MM-DD" 를 준다(계약 v5 §G20 — 응답 day_zone "Asia/Seoul", ADR-017 R-45 의 날짜 문자열). 날짜 문자열이 아닌 값
  *   (옛 응답의 "UTC 자정 시각" 문자열 — UTC 날짜였다 · 다른 시간대 JVM 의 자정)은 날짜를 단정하지 않는다("—") — 다른 하루를 KST 날짜로 보이지 않는다.
  * - day_zone: KST 날짜로 셌다고 밝힌 응답만 그린다(statsZoneOk) — 밝히지 않은 응답(옛 api — UTC 날짜 집계)은 그리지 않고 그렇다고 말한다.
- * - aggregated: 집계 전(false)·집계됨(true)·모름(필드 없음). 빈 목록을 "자료 없음"으로 단정하지 않는다.
+ * - aggregated: 집계 전(false)·집계됨(true)·모름(필드 없음). 빈 목록을 "자료 없음"으로 단정하지 않는다. 하루 응답(교통량)은 최상위 aggregated,
+ *   최근 7일 응답(SIGMET · 알림)은 날짜별 days[].aggregated(api StatsRepository.days — 최상위 aggregated 는 없다, QA-308)로 읽는다(statsDays).
  */
 import { preFixHysteresis } from "./chart";
 import { fmtDuration } from "./format";
@@ -79,6 +80,39 @@ export function statsEmptyText(aggregated: boolean | undefined, day: string | nu
   return `자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 매일 ${STATS_RUN_KST}).`;
 }
 
+/** 최근 7일 응답의 날짜별 집계 여부 — 지난 날(오늘 KST 전)만: done = 집계됨, pending = 집계 전(날짜순, KST 날짜 "YYYY-MM-DD") */
+export interface StatsDays { done: string[]; pending: string[] }
+
+/**
+ * 최근 7일 응답(/stats/sigmet · /stats/alerts)의 days[] — api StatsRepository.days: 범위 [오늘−7, 오늘](KST 날짜)의 날마다 {day, aggregated}(날짜순,
+ * REST 계약 STATS_DAYS). 오늘은 끝나지 않아 늘 집계 전이라 빼고 지난 7일만 본다. days 가 없거나 한 줄이라도 모양이 틀리면 null(모름 — 짐작하지 않는다).
+ * (전에는 최상위 aggregated 만 읽었는데 7일 응답에는 그 필드가 없어, 지난 7일이 모두 집계됐어도 '구분할 수 없습니다'라고 했다 — QA-308)
+ */
+export function statsDays(resp: unknown, today: string): StatsDays | null {
+  const days = typeof resp === "object" && resp !== null ? (resp as { days?: unknown }).days : undefined;
+  if (!Array.isArray(days)) return null;
+  const out: StatsDays = { done: [], pending: [] };
+  for (const d of days) {
+    const day = typeof d === "object" && d !== null ? statsDay((d as { day?: unknown }).day) : null;
+    const agg = typeof d === "object" && d !== null ? (d as { aggregated?: unknown }).aggregated : undefined;
+    if (day == null || typeof agg !== "boolean") return null;
+    if (today && day >= today) continue;
+    (agg ? out.done : out.pending).push(day);
+  }
+  return out.done.length + out.pending.length ? out : null;
+}
+
+/**
+ * 최근 7일 패널의 빈 상태 문구(행이 하나도 없을 때): 지난 날이 모두 집계됨 → '자료 없음(집계됨)', 모두 집계 전 → 다음 집계 뒤 채워짐,
+ * 섞여 있으면 둘을 나눠 말한다(집계 전 날짜를 KST 날짜 MM-DD 로). 날짜별 집계를 모르면(null) '구분할 수 없음'.
+ */
+export function statsWeekEmptyText(s: StatsDays | null, today: string): string {
+  if (!s) return statsEmptyText(undefined, null, today);
+  if (!s.pending.length) return statsEmptyText(true, null, today);
+  if (!s.done.length) return statsEmptyText(false, null, today);
+  return `집계된 ${s.done.length}일에는 자료가 없습니다 · 집계 전 ${s.pending.length}일(KST ${s.pending.map((d) => d.slice(5)).join(" · ")})은 다음 ${STATS_RUN_KST} 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기).`;
+}
+
 // ---- 패널마다의 받기 상태 ----
 
 /**
@@ -90,6 +124,10 @@ export type StatsLoad<T = unknown> = { status: "loading" } | { status: "loaded";
 /** 받은 응답의 집계 여부(R-45 aggregated) — KST 날짜로 셌다고 밝힌 응답만, 그 밖(받는 중 · 실패 · 옛 응답)은 undefined(모름) */
 export function flagOf(l: StatsLoad): boolean | undefined {
   return l.status === "loaded" && statsZoneOk(l.resp) ? aggregatedFlag(l.resp) : undefined;
+}
+/** 받은 최근 7일 응답의 날짜별 집계(statsDays) — KST 날짜로 셌다고 밝힌 응답만, 그 밖은 null(모름) */
+export function daysOf(l: StatsLoad, today: string): StatsDays | null {
+  return l.status === "loaded" && statsZoneOk(l.resp) ? statsDays(l.resp, today) : null;
 }
 /** 받았지만 KST 날짜로 셌다고 밝히지 않은 응답(옛 api — UTC 날짜 집계) */
 export function zoneBad(l: StatsLoad): boolean {

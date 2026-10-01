@@ -25,7 +25,7 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 
 describe("stats bars: summed per dimension, largest first, top 24 (characterization)", () => {
   it("FIR rows over several days add up per FIR; 30 FIRs → the 24 largest", async () => {
-    const Z = { day_zone: "Asia/Seoul", aggregated: true };
+    const Z = { day_zone: "Asia/Seoul" }; // 7일 응답에는 최상위 aggregated 가 없다(날짜별 days[] — QA-308)
     const firs = Array.from({ length: 30 }, (_, i) => ({ day: "2026-09-27", dim: `F${String(i).padStart(2, "0")}`, value: i + 1 }));
     const items = [...firs, { day: "2026-09-26", dim: "F00", value: 100 }, { day: "2026-09-25", dim: "F01", value: 50 }];
     vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-28T16:00:00Z") });

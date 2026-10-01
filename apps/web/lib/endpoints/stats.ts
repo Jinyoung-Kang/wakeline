@@ -8,7 +8,8 @@ import type { TrafficRegion } from "@/lib/chart";
 type Opts = { signal?: AbortSignal };
 
 export type StatsRow = { day: string; dim: string; value: number; metric?: string; hour?: string };
-export type StatsItems = { items: StatsRow[]; aggregated?: unknown; day_zone?: unknown };
+/** aggregated = 하루 응답(교통량)의 집계 여부 · days = 최근 7일 응답(SIGMET · 알림)의 날짜별 집계 여부 [{day, aggregated}] — 화면이 lib/stats 로 읽는다 */
+export type StatsItems = { items: StatsRow[]; aggregated?: unknown; days?: unknown; day_zone?: unknown };
 export type TrafficStats = StatsItems & { scope?: string | null; region?: TrafficRegion | null };
 
 /** 최근 7일 SIGMET 발표 수 — FIR 별 · 위험 유형별 */
