@@ -11,9 +11,8 @@ import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layers";
 import {
-  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, isMmsi, selectedShipFeatures, selectedShipLabel, selectedShipPos, shipCategory, mergeStatusGaps,
-  shipFeatures, shipTrackFeatures, shipTrackPointFeatures,
-  type ShipTrack,
+  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, selectedShipFeatures, selectedShipPos, shipCategory, mergeStatusGaps,
+  shipFeatures, shipTrackFeatures, shipTrackPointFeatures, type ShipTrack,
 } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
 import { WakelineWsClient } from "@/lib/ws";
@@ -24,10 +23,10 @@ import { mapAttributionControl } from "@/lib/map-attribution";
 import { krLayerId, parseKrRadar } from "@/lib/kr-radar";
 import { reportClientError } from "@/lib/errorReport";
 import { layerTip, onReady, setDashboardMap } from "@/lib/map-ready";
-import { RECEPTION_FILL_LAYER } from "@/lib/reception-meta";
 import { EtagPoller, POLL_NONE } from "@/lib/etag-poller";
-import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
-import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
+import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficStaleAt } from "@/lib/traffic-grid";
+import { renderTip, type AirportProps } from "@/lib/tooltip";
+import { clickAction, hoverKey as pointKey, pickByPriority, tipFor, visiblePickLayers, type TipContext } from "@/lib/map-pointer";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
@@ -46,12 +45,6 @@ const parseAirports = (fc: unknown): GeoJSON.Feature<GeoJSON.Point, AirportProps
   const features = typeof fc === "object" && fc !== null ? (fc as { features?: unknown }).features : null;
   return Array.isArray(features) ? features.filter((f): f is GeoJSON.Feature<GeoJSON.Point, AirportProps> => typeof f?.properties?.icao === "string") : null;
 };
-/**
- * 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET > 연안 교통량 격자(ADR-023) >
- * 관측 수신 칸(ADR-027 — 켤 때 받는 조각이 레이어 · 툴팁을 붙인다, lib/map-ready)
- */
-const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-track-point", "ship-grid-circle", "airport-circle", "sigmet-fill", "traffic-grid-fill",
-  RECEPTION_FILL_LAYER] as const;
 /** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
 const SHIP_STALE_CHECK_MS = 30_000;
 /** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
@@ -77,8 +70,6 @@ function drawShipTrack(map: maplibregl.Map, track: ShipTrack) {
   geo(map, "ship-track-points")?.setData(shipTrackPointFeatures(track));
 }
 
-/** 항적 점 툴팁의 선박 이름(모르면 MMSI — lib/ships selectedShipLabel) */
-const shipLabel = (mmsi: string | null) => selectedShipLabel(mmsi, getData().shipSelected, shipStates);
 
 function geo(map: maplibregl.Map, id: string) {
   return map.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -237,13 +228,18 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       src.setData({ type: "FeatureCollection", features });
     };
 
-    /** 보이는 레이어에서 우선순위대로 한 개 */
+    /** 보이는 레이어에서 우선순위대로 한 개(lib/map-pointer) */
     const pick = (pt: maplibregl.PointLike) => {
-      const present = PICK_LAYERS.filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
-      if (!present.length) return null;
-      const hits = map.queryRenderedFeatures(pt, { layers: [...present] });
-      for (const l of PICK_LAYERS) { const h = hits.find((x) => x.layer.id === l); if (h) return h; }
-      return null;
+      const present = visiblePickLayers(map);
+      return present.length ? pickByPriority(map.queryRenderedFeatures(pt, { layers: present })) : null;
+    };
+    /** 툴팁에 쓰는 지금 값 */
+    const tipContext = (now: number): TipContext => {
+      const d = getData();
+      return {
+        now, selected: d.selected, aircraft: aircraftStates, ships: shipStates, shipSelected: d.shipSelected, selectedShip: useUi.getState().selectedShip,
+        airports: airportFeatures, sigmets: d.sigmets, shipsCellDeg: d.ships.cell_deg, trafficGrid: d.trafficGrid.data, layerTip,
+      };
     };
 
     // ---- 호버 툴팁(GAP-26): 항공기 > 선박 > 선박 격자 > 공항 > SIGMET. rAF 로 묶어 이동당 한 번만 조회. 내용은 텍스트 노드로만. ----
@@ -260,43 +256,10 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       const f = pick(e.point);
       map.getCanvas().style.cursor = f ? "pointer" : "";
       if (!f) { popup.remove(); hoverKey = ""; return; }
-      const p = (f.properties ?? {}) as Record<string, unknown>;
       const now = serverNowMs(Date.now());
-      const key = `${f.layer.id}:${String(p.hex ?? p.mmsi ?? p.icao ?? p.id ?? p.g ?? (f.geometry.type === "Point" ? f.geometry.coordinates.join(",") : ""))}`;
+      const key = pointKey(f);
       if (key !== hoverKey || now - hoverAt > 1000) {
-        let tip: Tip | null = null;
-        if (f.layer.id === "aircraft-symbol") {
-          const hex = String(p.hex);
-          const sel = getData().selected;
-          const st = sel && sel.hex === hex && sel.state ? sel.state : aircraftStates.get(hex);
-          tip = aircraftTip({
-            hex, callsign: (p.callsign as string) ?? null, alt_ft: typeof p.alt_ft === "number" ? p.alt_ft : null, stale: p.stale === true, estimated: p.estimated === true,
-            emergency: p.emergency === true, age_unknown: p.age_unknown === true, on_ground: typeof p.on_ground === "boolean" ? p.on_ground : null,
-            track_deg: typeof p.track_deg === "number" ? p.track_deg : null,
-          }, st, now);
-        } else if (f.layer.id === "ship-symbol") {
-          const st = shipStates.get(String(p.mmsi));
-          if (st) tip = shipTip(st, now);
-        } else if (f.layer.id === "ship-selected-icon") {
-          const m = String(p.mmsi);
-          const sel = getData().shipSelected;
-          const st = (sel && sel.mmsi === m ? sel.state : null) ?? shipStates.get(m);
-          if (st) tip = shipTip(st, now);
-        } else if (f.layer.id === "ship-track-point") {
-          tip = shipTrackPointTip(p, shipLabel(useUi.getState().selectedShip));
-        } else if (f.layer.id === "ship-grid-circle") {
-          tip = shipGridTip(p, getData().ships.cell_deg);
-        } else if (f.layer.id === "airport-circle") {
-          const ap = airportFeatures.find((x) => x.properties.icao === p.icao);
-          if (ap) tip = airportTip(ap.properties, now);
-        } else if (f.layer.id === "traffic-grid-fill") {
-          tip = trafficGridTip(p, getData().trafficGrid.data);
-        } else if (layerTip(f.layer.id)) {
-          tip = layerTip(f.layer.id)!(p); // 켤 때 받는 레이어 조각이 등록한 툴팁(관측 수신 칸)
-        } else {
-          const sg = getData().sigmets?.features.find((x) => x.properties.id === p.id);
-          if (sg) tip = sigmetTip({ ...sg.properties, inside: p.inside === true }, now);
-        }
+        const tip = tipFor(f.layer.id, (f.properties ?? {}) as Record<string, unknown>, tipContext(now));
         if (!tip) { popup.remove(); hoverKey = ""; return; }
         popup.setDOMContent(renderTip(tip));
         hoverKey = key;
@@ -351,24 +314,17 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       map.on("mouseout", hideTip);
       map.on("dragstart", hideTip);
       map.on("click", (e: maplibregl.MapMouseEvent) => {
-        const f = pick(e.point);
-        const id = f?.layer.id;
-        if (id === "aircraft-symbol") { select(String(f!.properties?.hex)); return; }
-        if (id === "ship-symbol") { const m = String(f!.properties?.mmsi); if (isMmsi(m)) selectShip(m); return; }
-        if (id === "ship-selected-icon" || id === "ship-track-point") return; // 이미 선택된 선박·그 항적
-        if (id === "ship-grid-circle" && f!.geometry.type === "Point") {
-          // 격자 칸을 누르면 그 칸으로 확대 — 줌 7 이상에서 서버가 개별 선박을 보낸다(화면 안 5,000척 이하일 때 — 계약 v4 §C)
-          const [lon, lat] = f!.geometry.coordinates as [number, number];
-          const opts = { center: [lon, lat] as [number, number], zoom: Math.min(12, Math.max(7, map.getZoom() + 2)) };
+        const a = clickAction(pick(e.point), map.getZoom()); // lib/map-pointer — 이미 선택된 선박 · 그 항적은 그대로(keep)
+        if (a.kind === "aircraft") select(a.hex);
+        else if (a.kind === "ship") selectShip(a.mmsi);
+        else if (a.kind === "zoom") {
+          // 격자 칸을 누르면 그 칸으로 확대(움직임 줄이기 설정이면 바로)
+          const opts = { center: a.center, zoom: a.zoom };
           const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
           if (reduce) map.jumpTo(opts); else map.easeTo({ ...opts, duration: 800, essential: true });
-          return;
-        }
-        if (id === "airport-circle") { selectAirport(String(f!.properties?.icao)); return; }
-        if (id === "sigmet-fill") { selectSigmet(String(f!.properties?.id)); return; }
-        // 빈 곳 클릭 = 선택 해제(집중 추적도 멈춘다)
-        select(null);
-        selectShip(null);
+        } else if (a.kind === "airport") selectAirport(a.icao);
+        else if (a.kind === "sigmet") selectSigmet(a.id);
+        else if (a.kind === "clear") { select(null); selectShip(null); } // 빈 곳 클릭 = 선택 해제(집중 추적도 멈춘다)
       });
     });
 

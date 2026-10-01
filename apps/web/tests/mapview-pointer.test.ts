@@ -17,6 +17,7 @@ import type { AircraftState, RenderState } from "@/lib/types";
 import { selectedShipLabel, selectedShipPos, type ShipLite } from "@/lib/ships";
 import { aircraftFeatureCollection, airportLayerFeatures, syncFrames } from "@/lib/maplayers";
 import { sigmetLayerData } from "@/lib/sigmet";
+import { clickAction, hoverKey, pickByPriority, PICK_LAYERS, tipFor, visiblePickLayers, type TipContext } from "@/lib/map-pointer";
 
 const rec = vi.hoisted(() => ({ tips: [] as unknown[], workers: [] as { onmessage: ((ev: unknown) => void) | null }[] }));
 
@@ -324,5 +325,49 @@ describe("the moved map data helpers, directly (web-review §3.3)", () => {
     expect(map.getLayoutProperty("b", "visibility")).toBe("none");
     syncFrames(map as never, ["b"], [], new Map(), 0.7);
     expect(map.layerIds("")).toEqual([]);
+  });
+});
+
+describe("lib/map-pointer, directly (web-review §3.3)", () => {
+  const ctx = (o: Partial<TipContext> = {}): TipContext => ({
+    now: NOW, selected: null, aircraft: new Map(), ships: new Map(), shipSelected: null, selectedShip: null, airports: [], sigmets: null, shipsCellDeg: null,
+    trafficGrid: null, layerTip: () => undefined, ...o,
+  });
+  it("visiblePickLayers · pickByPriority", () => {
+    const map = new FakeMap({});
+    map.addLayer({ id: "sigmet-fill", type: "fill" });
+    map.addLayer({ id: "aircraft-symbol", type: "symbol", layout: { visibility: "none" } });
+    map.addLayer({ id: "airport-circle", type: "circle" });
+    expect(visiblePickLayers(map as never)).toEqual(["airport-circle", "sigmet-fill"]);
+    expect(pickByPriority([{ layer: { id: "sigmet-fill" } }, { layer: { id: "airport-circle" } }])).toEqual({ layer: { id: "airport-circle" } });
+    expect(pickByPriority([{ layer: { id: "other" } }])).toBeNull();
+    expect(PICK_LAYERS[0]).toBe("aircraft-symbol");
+  });
+  it("hoverKey: layer + the first id-like property, else the point's coordinates", () => {
+    expect(hoverKey({ layer: { id: "ship-symbol" }, properties: { mmsi: "440000001", hex: "abc" }, geometry: { type: "Point", coordinates: [1, 2] } })).toBe("ship-symbol:abc");
+    expect(hoverKey({ layer: { id: "ship-track-point" }, properties: { ts: 1 }, geometry: { type: "Point", coordinates: [1, 2] } })).toBe("ship-track-point:1,2");
+    expect(hoverKey({ layer: { id: "sigmet-fill" }, properties: null, geometry: { type: "Polygon", coordinates: [] } })).toBe("sigmet-fill:");
+  });
+  it("tipFor: no tip for a ship, airport or SIGMET that is not in the current data; a registered layer tip comes before the SIGMET lookup", () => {
+    expect(tipFor("ship-symbol", { mmsi: "440000001" }, ctx())).toBeNull();
+    expect(tipFor("ship-selected-icon", { mmsi: "440000001" }, ctx())).toBeNull();
+    expect(tipFor("airport-circle", { icao: "RKSI" }, ctx())).toBeNull();
+    expect(tipFor("sigmet-fill", { id: "S1" }, ctx())).toBeNull();
+    const t = { title: "x", rows: [], flags: [] };
+    expect(tipFor("sigmet-fill", { id: "S1" }, ctx({ layerTip: (id) => (id === "sigmet-fill" ? () => t : undefined) }))).toBe(t);
+  });
+  it("clickAction", () => {
+    const f = (id: string, properties: Record<string, unknown> = {}, geometry: GeoJSON.Geometry = { type: "Point", coordinates: [129, 35] }) => ({ layer: { id }, properties, geometry });
+    expect(clickAction(f("aircraft-symbol", { hex: "abc" }), 6)).toEqual({ kind: "aircraft", hex: "abc" });
+    expect(clickAction(f("ship-symbol", { mmsi: "440000001" }), 6)).toEqual({ kind: "ship", mmsi: "440000001" });
+    expect(clickAction(f("ship-symbol", { mmsi: "1" }), 6)).toEqual({ kind: "keep" });
+    expect(clickAction(f("ship-track-point"), 6)).toEqual({ kind: "keep" });
+    expect([clickAction(f("ship-grid-circle"), 3), clickAction(f("ship-grid-circle"), 6), clickAction(f("ship-grid-circle"), 11)].map((a) => (a.kind === "zoom" ? a.zoom : a.kind)))
+      .toEqual([7, 8, 12]);
+    expect(clickAction(f("ship-grid-circle", {}, { type: "Polygon", coordinates: [] }), 6)).toEqual({ kind: "clear" });
+    expect(clickAction(f("airport-circle", { icao: "RKSI" }), 6)).toEqual({ kind: "airport", icao: "RKSI" });
+    expect(clickAction(f("sigmet-fill", { id: "S1" }), 6)).toEqual({ kind: "sigmet", id: "S1" });
+    expect(clickAction(f("traffic-grid-fill", { g: "c" }), 6)).toEqual({ kind: "clear" });
+    expect(clickAction(null, 6)).toEqual({ kind: "clear" });
   });
 });
