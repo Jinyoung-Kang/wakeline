@@ -1120,3 +1120,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 예전: 검색은 등록번호 앞부분으로도 찾지만 실시간 항목은 lite(등록번호 · 기종 없음)라, "B-99" 로 찾은 줄에 맞은 근거가 없고 웹 검색 목록의 등록번호 칸은
     서버가 아는 값을 '—' 로 그렸다. 웹은 이미 두 종류 모두에서 `registration` · `type_code` 를 읽는다(`lib/search.ts` `parseSearchResponse`) — 웹 변경 없음.
   - 회귀 막기: api `Qa206AircraftSearchHidesRegistrationTest`, REST 계약 표본 `aircraft_search`(`tools/rest_contract_check.py` 의 실시간 항목 스키마).
+- G34(§G14 의 실행 목록 · QA-205 · QA-002) **`GET /api/v1/ops/runs` 의 `job` · `provider` · `status` 에 제어 문자가 있으면 400 `BAD_FILTER`**
+  - 세 자유 글자 필터는 SQL 매개변수로 간다. 제어 문자(유니코드 Cc — NUL · 줄바꿈 · 탭 포함)가 있으면 저장소에 닿기 전에 400 `BAD_FILTER` problem+json(detail
+    `<이름> must not contain control characters`). 예전: NUL 은 PostgreSQL 이 거절해 500 + ERROR 스택이었다(공개 검색은 같은 입력을 400 `BAD_QUERY` 로 막는다).
+    그 밖의 값 · 의미(같은 값의 실행만, 없으면 조건 없음)는 그대로. 웹(/ops RUNS)은 고른 값만 보낸다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa205OpsRunsFilterNulTest` · `ParamsTest`.

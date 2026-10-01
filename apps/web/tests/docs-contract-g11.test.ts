@@ -164,6 +164,9 @@ describe("contract v5 amendment numbers are unique", () => {
     // QA 2026-10 고치기: 항공기 검색 실시간 항목의 등록번호 — 같은 22차 · §G33
     expect(heading(33)).toMatch(/^## G\. 22차 개정\(/);
     expect(amendment(33)).toContain("`GET /api/v1/aircraft/search` 의 실시간 항목에 `registration` · `type_code`");
-    expect(amendment(34)).toBe("");
+    // QA 2026-10 고치기: 운영 실행 목록 필터의 제어 문자 — 같은 22차 · §G34
+    expect(heading(34)).toMatch(/^## G\. 22차 개정\(/);
+    expect(amendment(34)).toContain("`GET /api/v1/ops/runs` 의 `job` · `provider` · `status` 에 제어 문자가 있으면 400 `BAD_FILTER`");
+    expect(amendment(35)).toBe("");
   });
 });

@@ -1,5 +1,6 @@
 package dev.wakeline.ops;
 
+import dev.wakeline.platform.web.Params;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.status.StatusService;
 import dev.wakeline.settings.SettingsService;
@@ -146,7 +147,8 @@ public class OpsController {
      * 가장 최근 실행(finished_at 이 가장 늦은 것, 모르면 뒤로 — last_at 과 같은 실행)의 오류 글자(수집기가 가려 저장한 그대로 — 원문 시각 'Z' 포함)와 http,
      * 없으면 null. ok 행은 둘 다 null(고르지 않는다 — 요약을 느리게 하지 않게, IngestRunRepository.summary). 키는 늘 있다.
      * summary_since = 요약 창의 시작(UTC ISO — DB 의 now() − 24 h, 요약 문장과 한 트랜잭션) — 창은 started_at &gt; summary_since. 그 값을 since 로 돌려주면 목록이 같은 창의 실행만 싣는다.
-     * <p>목록 필터 job · provider · status · since(started_at &gt; since, ISO 순간 — 틀리면 400) · cursor — 모두 선택(없으면 그 조건 없음, 전과 같다).
+     * <p>목록 필터 job · provider · status(제어 문자가 있으면 400 BAD_FILTER — 계약 v5 §G34) · since(started_at &gt; since, ISO 순간 — 틀리면 400) · cursor
+     * — 모두 선택(없으면 그 조건 없음, 전과 같다).
      */
     @GetMapping("/runs")
     public Map<String, Object> runs(@RequestParam(required = false) String job, @RequestParam(required = false) String provider,
@@ -155,7 +157,8 @@ public class OpsController {
                                     @RequestParam(required = false) String resolved) {
         boolean hide = Resolutions.hide(resolved);
         int n = Math.max(1, Math.min(limit, 200));
-        var page = ingestRuns.runs(new IngestRunRepository.Filter(job, provider, status, since), cursor, n);
+        var page = ingestRuns.runs(new IngestRunRepository.Filter(Params.filterText("job", job), Params.filterText("provider", provider),
+                Params.filterText("status", status), since), cursor, n);
         // 한 트랜잭션: 창의 시작(summary_since)과 요약 문장이 같은 now() 를 본다
         var summary = tx.execute(st -> ingestRuns.summary(hide));
         for (Map<String, Object> row : summary.rows()) {
