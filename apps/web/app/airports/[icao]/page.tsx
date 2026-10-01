@@ -7,16 +7,7 @@ import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { KstTime } from "@/components/KstTime";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
-
-interface Latest {
-  obs_time: string; raw: string; provider?: string; flight_cat?: string | null; flight_cat_source?: string | null; taf_raw?: string | null;
-  ceiling_ft?: number | null; ceiling_state?: string | null; vis_raw?: string | null; obs_age_s?: number | null; stale?: boolean | null;
-}
-interface Wx {
-  airport: { icao: string; name?: string; country?: string; elev_ft?: number; lat: number; lon: number };
-  latest: Latest | null;
-  history: { obs_time: string; flight_cat?: string | null; wind_dir?: number | null; wind_kt?: number | null; vis_sm?: number | null; vis_raw?: string | null; ceiling_ft?: number | null; temp_c?: number | null }[];
-}
+import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G20, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
@@ -26,10 +17,22 @@ interface Wx {
 export default function AirportPage({ params }: { params: Promise<{ icao: string }> }) {
   const { icao } = use(params);
   const code = icao.toUpperCase();
-  const [wx, setWx] = useState<Wx | null>(null);
+  const [wx, setWx] = useState<AirportWx | null>(null);
   const [err, setErr] = useState<{ text: string; error: unknown } | null>(null);
   const now = useNow(30_000);
-  useEffect(() => { apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(code)}/wx`).then(setWx).catch((e: unknown) => setErr({ text: airportErrorText(e, code), error: e })); }, [code]);
+  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다.
+  // 성공한 답은 앞선 실패를 지운다 · 떠난(정리된) 요청의 답은 쓰지 않는다 — 개발 모드는 조회를 두 번 해 첫 실패와 이력이 함께 보였다(web-review B17)
+  useEffect(() => {
+    let live = true;
+    apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(code)}/wx`)
+      .then((body) => {
+        if (!live) return;
+        const x = parseWx(body);
+        if (x) { setWx(x); setErr(null); } else setErr({ text: `${WX_UNREADABLE}.`, error: null });
+      })
+      .catch((e: unknown) => { if (live) setErr({ text: airportErrorText(e, code), error: e }); });
+    return () => { live = false; };
+  }, [code]);
   const m = wx?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
@@ -39,6 +42,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
     <div className="h-full overflow-y-auto p-4">
       <h1 className="label mb-2">Airport weather · {code}</h1>
       {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
+      {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
       {wx ? <>
         <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

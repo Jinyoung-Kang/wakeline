@@ -3,6 +3,7 @@
  * - 지도는 version 이 바뀔 때만 다시 그린다: 304 · 같은 ETag 면 version 을 올리지 않는다(같은 ETag 면 받은 본문도 앞 값 그대로).
  * - 숨긴 탭에서는 부르지 않고, 다시 보이면 곧바로 부른다(마지막 확인이 visibleMinGapMs 안이면 빼고 — 탭을 빨리 오갈 때 몰아 부르지 않게).
  * - 동시에 두 번 부르지 않는다. 실패(HTTP · 망 · 형식)는 마지막 값을 두고 error 에 적는다 — 지난 값을 조용히 지금처럼 두지 않는다.
+ * - stop() 은 진행 중인 요청을 끊고, 그 뒤에 도착한 답은 발행하지 않는다(세대 번호) — 레이어를 껐다 켜면 옛 폴러의 늦은 답이 새 상태를 덮지 않는다.
  */
 
 export interface PollState<T> { data: T | null; etag: string | null; error: string | null; version: number; checkedAt: number | null }
@@ -25,12 +26,17 @@ export interface EtagPollerSpec<T> {
   parse: (x: unknown) => T | null;
   intervalMs: number;
   visibleMinGapMs: number;
+  /** Accept 머리(기본 application/json) — GeoJSON 으로 답하는 엔드포인트(감시 공항)는 그 형식을 받는다고 말해야 한다(아니면 406) */
+  accept?: string;
 }
 
 export class EtagPoller<T> {
   private timer: ReturnType<typeof setInterval> | null = null;
   private unwatch: (() => void) | null = null;
   private inflight = false;
+  /** stop() 마다 오른다 — 앞 세대의 요청은 끝나도 발행하지 않는다 */
+  private gen = 0;
+  private ctl: AbortController | null = null;
   private state: PollState<T>;
 
   constructor(
@@ -60,26 +66,38 @@ export class EtagPoller<T> {
     this.timer = null;
     this.unwatch?.();
     this.unwatch = null;
+    this.gen++;
+    this.ctl?.abort();
+    this.ctl = null;
+    this.inflight = false;
   }
 
   async poll(): Promise<void> {
     if (this.inflight) return;
     this.inflight = true;
+    const gen = this.gen;
+    const ctl = new AbortController();
+    this.ctl = ctl;
+    const current = () => gen === this.gen;
     try {
-      const headers: Record<string, string> = { Accept: "application/json" };
+      const headers: Record<string, string> = { Accept: this.spec.accept ?? "application/json" };
       if (this.state.etag && this.state.data) headers["If-None-Match"] = this.state.etag;
-      const res = await this.fetcher(this.spec.url, { headers, credentials: "same-origin" });
+      const res = await this.fetcher(this.spec.url, { headers, credentials: "same-origin", signal: ctl.signal });
+      if (!current()) return;
       if (res.status === 304) { this.set({ error: null, checkedAt: this.now() }, false); return; }
       if (!res.ok) { this.set({ error: `HTTP ${res.status}`, checkedAt: this.now() }, false); return; }
       const etag = res.headers.get("ETag");
-      const parsed = this.spec.parse(await res.json());
+      const body: unknown = await res.json();
+      if (!current()) return;
+      const parsed = this.spec.parse(body);
       if (!parsed) { this.set({ error: "응답 형식 오류", checkedAt: this.now() }, false); return; }
       const same = etag != null && etag === this.state.etag;
       this.set({ data: same ? this.state.data : parsed, etag, error: null, checkedAt: this.now() }, !same);
     } catch (e) {
-      this.set({ error: e instanceof Error ? e.message : String(e), checkedAt: this.now() }, false);
+      if (current()) this.set({ error: e instanceof Error ? e.message : String(e), checkedAt: this.now() }, false);
     } finally {
-      this.inflight = false;
+      // 멈춘 뒤 다시 켠 폴러의 요청이 진행 중일 수 있다 — 옛 세대의 끝이 그 잠금을 풀면 겹쳐 부른다
+      if (current()) { this.inflight = false; this.ctl = null; }
     }
   }
 

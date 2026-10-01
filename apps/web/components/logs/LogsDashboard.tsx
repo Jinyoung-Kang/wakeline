@@ -19,6 +19,7 @@ import { LogGroupsTable } from "./LogGroupsTable";
 import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { revokeLogGroup } from "./logGroupTargets";
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 
 type Tab = "logs" | "gaps";
 type View = "list" | "groups";
@@ -83,6 +84,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const [detail, setDetail] = useState<LogEntry | null>(null);
   const [detailMiss, setDetailMiss] = useState<{ id: string; error: unknown } | null>(null);
   const [loading, setLoading] = useState(false);
+  /** '이전 항목 더 보기'가 받는 중인 커서 — 단추를 바쁨으로 보인다 */
+  const [moreCursor, setMoreCursor] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -90,6 +93,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const rowResolve = useResolveSlot();
   /** 목록·묶음을 새로 불러올 때마다 올린다 — 늦게 온 이전 필터의 응답(또는 그 사이의 자동 확인)을 버린다 */
   const loadSeq = useRef(0);
+  /** 받는 중인 '더 보기' 커서(같은 프레임의 두 번째 누름도 막는다 — 상태는 다음 렌더에야 보인다) */
+  const moreFor = useRef<string | null>(null);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
 
   /** ops 호출 실패: 문구로 보이고, 401/404 면 세션을 확인해 만료일 때만 로그인으로 */
@@ -163,21 +168,26 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       if (my === loadSeq.current) fail(e);
     }
   }, [view, filter, page, groups, fail]);
-  useEffect(() => {
-    if (tab !== "logs") return;
-    const t = setInterval(() => void poll(), REFRESH_MS);
-    return () => clearInterval(t);
-  }, [tab, poll]);
+  // 탭이 보일 때만, 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12). poll 이 바뀌어도(쪽을 넘김 · 새 항목 반영) 주기를 다시 걸지 않는다(B13)
+  useVisibleInterval(() => void poll(), tab === "logs" ? REFRESH_MS : null);
 
+  /**
+   * 상세 열기 번호 — #id= 링크 · 줄 · 닫기마다 오른다. 먼저 누른 #id= 항목의 늦은 답이 나중에 연 상세를 덮지 않게(마지막 것만 — web-review B14,
+   * 해결 뒤 다시 읽기의 rereadSeq 와 같은 규칙)
+   */
+  const openSeq = useRef(0);
   const openById = useCallback(async (id: string, stream: LogStreamName | null = null) => {
+    const my = ++openSeq.current;
     setDetailMiss(null);
     try {
       const v = await apiGet<unknown>(logItemUrl(id, stream));
+      if (my !== openSeq.current) return;
       const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
       const e = parseLogEntry(raw);
       if (e) setDetail(e);
       else setDetailMiss({ id, error: new Error("항목 형식이 스키마와 맞지 않음") });
     } catch (e) {
+      if (my !== openSeq.current) return;
       setDetailMiss({ id, error: e });
       if (isAuthMiss(e)) authMiss(e);
     }
@@ -235,15 +245,21 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setPage((p) => (p ? { ...p, items: applyPending(p.items, pending.items) } : p));
     setPending(NO_PENDING);
   };
+  /** 다음 쪽은 커서 하나에 한 번만 — 받는 동안 다시 누르면 같은 쪽이 두 번 붙어 숨김 · 건너뜀 합계가 부풀었다. 붙일 때도 그 커서의 쪽일 때만 */
   const loadMore = async () => {
-    if (!page?.nextCursor) return;
+    const cursor = page?.nextCursor;
+    if (!page || !cursor || moreFor.current === cursor) return;
+    moreFor.current = cursor;
+    setMoreCursor(cursor);
     const my = loadSeq.current;
     try {
-      const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor: page.nextCursor })));
+      const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor })));
       if (my !== loadSeq.current) return;
-      setPage((prev) => (prev ? { ...appendLogPage(prev, p), at: prev.at } : prev));
+      setPage((prev) => (prev && prev.nextCursor === cursor ? { ...appendLogPage(prev, p), at: prev.at } : prev));
     } catch (e) {
-      fail(e);
+      if (my === loadSeq.current) fail(e);
+    } finally {
+      if (moreFor.current === cursor) { moreFor.current = null; setMoreCursor(null); }
     }
   };
   /** 목록 표(grid)에 초점이 있을 때만 — 다른 요소(단추 · 입력)에서 올라온 키는 그 요소의 것이다 */
@@ -256,8 +272,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       setSelId(entryKey(items[i]));
     } else if (e.key === "Enter" && selIdx >= 0) {
       e.preventDefault();
-      setDetail(items[selIdx]);
-      setDetailMiss(null);
+      openEntry(items[selIdx]);
     } else if (e.key === "c" || e.key === "C") {
       const it = selIdx >= 0 ? items[selIdx] : detail;
       if (it) { e.preventDefault(); void copy("항목 텍스트", logText(it)); }
@@ -282,8 +297,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setTab("logs"); setView("list"); setDraftRid(rid); setRidError(null);
     setFilter((f) => ({ ...f, rid, period: "7d" }));
   }, []);
-  const openEntry = useCallback((e: LogEntry) => { setDetail(e); setDetailMiss(null); }, []);
-  const closeDetail = useCallback(() => { setDetail(null); setDetailMiss(null); }, []);
+  const openEntry = useCallback((e: LogEntry) => { openSeq.current++; setDetail(e); setDetailMiss(null); }, []);
+  const closeDetail = useCallback(() => { openSeq.current++; setDetail(null); setDetailMiss(null); }, []);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
 
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
@@ -477,7 +492,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                 </div>
               ) : null}
               {page?.nextCursor ? (
-                <button type="button" className="btn m-2" onClick={() => void loadMore()} title={`cursor ${page.nextCursor}`}>이전 항목 더 보기</button>
+                <button type="button" className="btn m-2" onClick={() => void loadMore()} title={`cursor ${page.nextCursor}`}
+                  disabled={moreCursor === page.nextCursor} aria-busy={moreCursor === page.nextCursor || undefined}>이전 항목 더 보기</button>
               ) : page && items.length ? <div className="p-2 text-[11px] text-fg-3">끝 — 다음 커서 없음</div> : null}
             </> : groups ? (
               groups.groups.length ? (

@@ -1143,13 +1143,28 @@ function observedSpan(o: ShipsChipObserved): string {
  */
 export interface ShipsChipObserved { cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean }
 
+/**
+ * 화면 낭독기에 알릴 선박 칩의 상태(PLAN §5 결정 3 · web-review B7) — 모드(개별 · 격자 · 수신 대기 · 0척과 그 까닭)와 경고(전송 상한 · AIS 공백)가
+ * 바뀔 때만 글자가 바뀐다. 수(척 · 칸)는 넣지 않는다: 선박 메시지(10 s 이상 간격)마다 수가 바뀌어 다시 읽혔다. 자세한 수는 보이는 칩과 그 title.
+ */
+export function shipsChipStatus(v: ShipsChipInput, ctx: { bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis }, warn: boolean, gap: boolean): string {
+  if (v.mode === "off") return "";
+  const why = v.mode !== "waiting" && (v.mode === "points" ? v.count : v.total) === 0 ? zeroShipsReason(ctx.ais, ctx.bbox) : null;
+  const head = v.mode === "waiting" ? (ctx.ais?.state === "disabled" ? AIS_OFF_TEXT : "선박 수신 대기")
+    : why ? (why === "off" ? AIS_OFF_TEXT : ZERO_SHIPS[why].text)
+    : v.mode === "points" ? "선박 개별 표시(AIS)" : "선박 격자로 묶어 표시";
+  return `${head}${warn ? " · 전송 상한" : ""}${gap ? " · AIS 공백 중" : ""}`;
+}
+
+const AIS_OFF_TEXT = "선박 없음 · AIS 꺼짐(키 없음)";
+
 function chipBody(
   v: ShipsChipInput,
   ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis; filter?: ShipsChipFilter | null },
 ): { text: string; title: string; warn: boolean } | null {
   if (v.mode === "off") return null;
   const aisOff = ctx.ais?.state === "disabled";
-  const aisOffText = "선박 없음 · AIS 꺼짐(키 없음)";
+  const aisOffText = AIS_OFF_TEXT;
   if (v.mode === "waiting") return { text: aisOff ? aisOffText : "선박 수신 대기", title: SHIPS_RULE_TEXT, warn: false };
   const inView = v.mode === "points" ? v.count : v.total;
   if (inView === 0) {

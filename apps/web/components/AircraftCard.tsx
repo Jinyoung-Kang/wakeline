@@ -4,6 +4,7 @@ import { apiGet } from "@/lib/api";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useElapsedSince, useNow, useServerNow } from "@/lib/clock";
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
@@ -172,10 +173,8 @@ export function AircraftCard({ hex }: { hex: string }) {
   const demand = useServerData((x) => x.demand);
   const conn = useServerData((x) => x.conn);
   const lastRxAt = useServerData((x) => x.lastRxAt);
-  useEffect(() => {
-    const t = setInterval(() => setRefresh((n) => n + 1), DETAIL_REFRESH_MS);
-    return () => clearInterval(t);
-  }, [hex]);
+  // 30 s 다시 받기는 탭이 보일 때만, 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12)
+  useVisibleInterval(() => setRefresh((n) => n + 1), DETAIL_REFRESH_MS);
   useEffect(() => {
     let live = true;
     apiGet<Detail>(`/api/v1/aircraft/${encodeURIComponent(hex)}`)

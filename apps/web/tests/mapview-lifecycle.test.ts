@@ -9,13 +9,20 @@ import { useUi } from "@/lib/ui-store";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { fmtKstMinute } from "@/lib/time";
 
-const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[] }));
+const rec = vi.hoisted(() => ({
+  calls: [] as string[], api: [] as string[], replies: {} as Record<string, () => Promise<unknown>>, reports: [] as string[],
+  fetches: [] as { url: string; accept: string | undefined }[], fetchReplies: {} as Record<string, () => Promise<Response>>,
+}));
 
 vi.mock("@/lib/maplibre", async (orig) => {
   const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
   return { ...(await orig<typeof import("@/lib/maplibre")>()), maplibre: () => fake, loadMaplibre: async () => fake };
 });
-vi.mock("@/lib/api", () => ({ apiGet: (p: string) => { rec.api.push(p); return new Promise(() => {}); } }));
+vi.mock("@/lib/api", () => ({ apiGet: (p: string) => { rec.api.push(p); return rec.replies[p]?.() ?? new Promise(() => {}); } }));
+vi.mock("@/lib/errorReport", async (orig) => ({
+  ...(await orig<typeof import("@/lib/errorReport")>()),
+  reportClientError: (e: { message: string }) => { rec.reports.push(e.message); return "sent"; },
+}));
 vi.mock("@/lib/ws", () => ({
   WakelineWsClient: class {
     constructor() { rec.calls.push("client:new"); }
@@ -64,8 +71,23 @@ async function mount() {
 }
 async function act(fn: () => void) { await React.act(async () => { fn(); }); }
 
-beforeEach(() => { rec.calls.length = 0; rec.api.length = 0; FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true); });
-afterEach(async () => { if (root) { const r = root; root = null; await React.act(async () => { r.unmount(); }); } });
+beforeEach(() => {
+  rec.calls.length = 0; rec.api.length = 0; rec.replies = {}; rec.reports.length = 0; rec.fetches.length = 0; rec.fetchReplies = {};
+  FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true);
+  // 조회기(lib/etag-poller)는 fetch 로 부른다 — 답을 정하지 않은 경로는 끝나지 않는다(apiGet 대역과 같게)
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    rec.fetches.push({ url, accept: (init?.headers as Record<string, string> | undefined)?.Accept });
+    return rec.fetchReplies[url]?.() ?? new Promise(() => {});
+  });
+});
+afterEach(async () => { if (root) { const r = root; root = null; await React.act(async () => { r.unmount(); }); } vi.unstubAllGlobals(); dom.document.hidden = false; });
+/** 그 경로의 답(200 JSON) — apiGet 과 fetch 어느 쪽으로 불러도 */
+function reply(url: string, body: unknown) {
+  rec.replies[url] = async () => body;
+  rec.fetchReplies[url] = async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+/** 그 경로로 나간 요청 수(apiGet · fetch) */
+const asked = (url: string) => rec.api.filter((p) => p === url).length + rec.fetches.filter((f) => f.url === url).length;
 
 describe("MapView lifecycle (R-01: live data does not wait for the external basemap style)", () => {
   it("starts the worker, WS connection, viewport subscription and REST polls before the map style loads", async () => {
@@ -75,8 +97,8 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(rec.calls).toContain("connect");
     expect(rec.calls).toContain("worker:start");
     expect(rec.calls).toContain("subscribe");
-    expect(rec.api).toContain("/api/v1/radar/kr");
-    expect(rec.api).toContain("/api/v1/airports?watched=true");
+    expect(asked("/api/v1/radar/kr")).toBe(1);
+    expect(asked("/api/v1/airports?watched=true")).toBe(1);
   });
 
   it("tells the page once when the map has loaded for the first time (the first screen is complete — ADR-026 prefetch starts there)", async () => {
@@ -224,6 +246,120 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(rec.calls).toContain("worker:terminate");
     expect(map.removed).toBe(true);
     expect(getData().conn).toBe("closed");
+  });
+});
+
+/**
+ * StrictMode(next dev — next.config reactStrictMode: true)는 효과를 마운트 → 정리 → 마운트로 두 번 돌린다. 지도 effect 의 정리가 첫 지도를 지우고 두 번째
+ * 지도를 만든다. '이미 그림' 기록(SIGMET · AIS 범위)이 첫 지도의 것으로 남으면 두 번째 지도에 그리지 않았다(web-review B8 — cacheComponents 의 Activity 도 같다).
+ */
+describe("MapView under StrictMode: what is drawn belongs to the map that drew it (web-review B8)", () => {
+  async function mountStrict() {
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(React.StrictMode, null, React.createElement(MapView))); });
+    expect(FakeMap.instances).toHaveLength(2);
+    expect(FakeMap.instances[0].removed).toBe(true);
+    const map = FakeMap.instances[1];
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    return map;
+  }
+  const SIGMETS = { type: "FeatureCollection", features: [{ type: "Feature", properties: { id: "S1", valid_from: "2026-09-28T00:00:00Z", valid_to: "2099-01-01T00:00:00Z" }, geometry: { type: "Polygon", coordinates: [[[126, 35], [128, 35], [128, 37], [126, 35]]] } }] };
+
+  it("SIGMETs already in the store (as when returning to /) are drawn on the surviving map", async () => {
+    setData({ sigmets: SIGMETS as never, alerts: new Map() });
+    const map = await mountStrict();
+    expect((map.getSource("sigmets")!.data as { features: unknown[] }).features).toHaveLength(1);
+  });
+
+  it("the AIS coverage outline is drawn on the surviving map", async () => {
+    useUi.setState({ layers: { ...initialUi.layers, ships: true } });
+    setData({ ais: { connected: true, lag_s: 1, msgs_per_s: 10, gap_open_since: null, last_gap: null, state: "ok", coverage: [{ s: 33, w: 124, n: 39, e: 132 }], received_at: 1 } as never });
+    const map = await mountStrict();
+    expect((map.getSource("ship-coverage")!.data as { features: unknown[] }).features.length).toBeGreaterThan(0);
+  });
+});
+
+/** /api/v1/radar/kr 본문은 parseKrRadar 를 거친다(web-review B10) — 틀린 본문은 store 에 넣지 않고 마지막 값을 둔다. WS 처럼 보고한다(lib/errorReport) */
+describe("MapView KR radar poll validates the body (web-review B10)", () => {
+  const FRAME = { tm: "202609300810", obs_tm: "202609300810", fetched_at: "2026-09-29T23:13:40Z", echo_cells: 12, url: "/api/v1/radar/kr/202609300810.png?v=1" };
+  const GOOD = { available: true, latest_tm: "202609300810", georeferenced: true, coordinates: null, legend: null, frames: [FRAME], attribution: "기상청", meta: { fetched_at: "2026-09-29T23:13:40Z", stale: false } };
+  const settle = () => React.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+  it("a readable body goes to the store", async () => {
+    reply("/api/v1/radar/kr", GOOD);
+    await mount();
+    await settle();
+    expect(getData().radarKr?.frames).toEqual([FRAME]);
+    expect(rec.reports).toEqual([]);
+  });
+
+  it("a body without frames keeps the last value (the dashboard does not fall over) and is reported", async () => {
+    const last = { ...GOOD, latest_tm: "202609300800" };
+    setData({ radarKr: last as never });
+    reply("/api/v1/radar/kr", { available: true, latest_tm: "202609281200" });
+    await mount();
+    await settle();
+    expect(getData().radarKr).toBe(last);
+    expect(rec.reports).toHaveLength(1);
+    expect(rec.reports[0]).toContain("/api/v1/radar/kr");
+  });
+});
+
+/**
+ * 기상청 레이더 · 감시 공항 조회(web-review B9): 진행 중이면 겹쳐 부르지 않고(응답이 멈추면 5분 뒤 6개가 쌓였다), 숨긴 탭에서는 부르지 않으며,
+ * 다시 보이면 곧바로 부른다(lib/etag-poller — 연안 교통량 · 관측 수신 범위와 같은 규칙). 공항 응답이 틀리면 마지막 목록을 둔다.
+ */
+describe("MapView KR radar and watched-airport polls (web-review B9)", () => {
+  const KR = "/api/v1/radar/kr";
+  const AP = "/api/v1/airports?watched=true";
+  const FRAME = { tm: "202609300810", obs_tm: "202609300810", fetched_at: "2026-09-29T23:13:40Z", echo_cells: 12, url: "/api/v1/radar/kr/202609300810.png?v=1" };
+  const KR_BODY = { available: true, latest_tm: "202609300810", georeferenced: true, coordinates: null, legend: null, frames: [FRAME], attribution: "기상청", meta: { fetched_at: "2026-09-29T23:13:40Z", stale: false } };
+  const airport = (icao: string) => ({ type: "Feature", id: icao, geometry: { type: "Point", coordinates: [126.4, 37.4] }, properties: { icao, flight_cat: "VFR", obs_time: "2026-09-29T23:00:00Z" } });
+  const flush = () => React.act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-29T23:15:00Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a hung request is not stacked: after 30 min still one KR request (was 31) and one airports request (was 7)", async () => {
+    await mount();
+    await act(() => { vi.advanceTimersByTime(30 * 60_000); });
+    expect(asked(KR)).toBe(1);
+    expect(asked(AP)).toBe(1);
+  });
+
+  it("nothing is asked while the tab is hidden; shown again, KR is asked at once (not up to 60 s later)", async () => {
+    reply(KR, KR_BODY);
+    reply(AP, { type: "FeatureCollection", features: [airport("RKSI")] });
+    await mount();
+    await flush();
+    expect(asked(KR)).toBe(1);
+    dom.document.hidden = true;
+    await act(() => { vi.advanceTimersByTime(10 * 60_000); });
+    expect(asked(KR)).toBe(1);
+    expect(asked(AP)).toBe(1);
+    dom.document.hidden = false;
+    await act(() => { dom.document.dispatch("visibilitychange"); });
+    await flush();
+    expect(asked(KR)).toBe(2);
+    expect(asked(AP)).toBe(2);
+  });
+
+  it("the airports request accepts GeoJSON (the api answers application/geo+json)", async () => {
+    await mount();
+    const f = rec.fetches.find((x) => x.url === AP);
+    expect(f?.accept ?? "").toContain("application/geo+json");
+  });
+
+  it("an unreadable airports answer keeps the last list on the map (it used to empty it)", async () => {
+    reply(AP, { type: "FeatureCollection", features: [airport("RKSI"), airport("RKSS")] });
+    const map = await mount();
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    await flush();
+    expect((map.getSource("airports")!.data as { features: unknown[] }).features).toHaveLength(2);
+    reply(AP, { type: "FeatureCollection", features: "none" });
+    await act(() => { vi.advanceTimersByTime(5 * 60_000); });
+    await flush();
+    expect(asked(AP)).toBe(2);
+    expect((map.getSource("airports")!.data as { features: unknown[] }).features).toHaveLength(2);
   });
 });
 

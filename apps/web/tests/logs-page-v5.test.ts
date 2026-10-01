@@ -386,3 +386,111 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
     expect(domUtcLeaks(dom.container)).toEqual([]);
   });
 });
+
+describe("/logs: '이전 항목 더 보기' while its page is on the way (web-review B1)", () => {
+  const PAGE1 = { items: [entry(T(1)), entry(T(2))], next_cursor: T(2), scanned: 10, scan_truncated: false, invalid: 1, hidden_resolved: 2 };
+  const OLDER = { items: [entry(T(10))], next_cursor: null, scanned: 5, scan_truncated: false, invalid: 4, hidden_resolved: 3 };
+  /** 커서가 붙은 요청(더 보기)은 응답을 붙잡아 둔다 — 단추를 두 번 누르는 사이에 도착하지 않게 */
+  function stubHeld(older: ((r: Response) => void)[], page1: unknown = PAGE1) {
+    calls.length = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/ops/session") return json(200, { username: "op" });
+      if (url.startsWith("/api/v1/ops/logs?") && url.includes("cursor=")) return new Promise<Response>((r) => older.push((x) => r(x)));
+      if (url.startsWith("/api/v1/ops/logs?")) return json(200, page1);
+      return json(404, {});
+    });
+  }
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  it("a double click appends that page once: the hidden and skipped sums count 2 pages, not 3", async () => {
+    const older: ((r: Response) => void)[] = [];
+    stubHeld(older);
+    await open();
+    const more = button("이전 항목 더 보기")!;
+    await React.act(async () => { void propsOf(more).onClick(); void propsOf(more).onClick(); });
+    expect(calls.filter((c) => c.includes("cursor="))).toHaveLength(1);
+    for (const r of older) r(json(200, OLDER));
+    await settle();
+    expect(allByTestId("log-row")).toHaveLength(3);
+    expect(byTestId("logs-hidden-resolved")!.textContent).toBe("해결 처리로 숨김 5건(불러온 2쪽 합계)");
+    expect(byTestId("logs-skipped")!.textContent).toBe("형식 오류로 건너뜀(불러온 2쪽 합계): api 5 · 화면 0");
+  });
+
+  it("the button says it is busy (disabled · aria-busy) until that page arrives, then can load the next one", async () => {
+    const older: ((r: Response) => void)[] = [];
+    stubHeld(older);
+    await open();
+    await React.act(async () => { void propsOf(button("이전 항목 더 보기")!).onClick(); });
+    const busy = button("이전 항목 더 보기")!;
+    expect(busy.getAttribute("disabled")).not.toBeNull();
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    older[0](json(200, { ...OLDER, next_cursor: T(10) }));
+    await settle();
+    const again = button("이전 항목 더 보기")!;
+    expect(again.getAttribute("disabled")).toBeNull();
+    expect(again.getAttribute("aria-busy")).toBeNull();
+    await React.act(async () => { void propsOf(again).onClick(); });
+    expect(calls.filter((c) => c.includes("cursor="))).toHaveLength(2);
+    expect(calls.at(-1)).toContain(`cursor=${encodeURIComponent(T(10))}`);
+  });
+});
+
+describe("/logs: the latest #id= link (or row) is the one left open (web-review B14)", () => {
+  const A = T(5);
+  const B = T(6);
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  /** 항목 A 의 답은 붙잡아 둔다(늦게 온다), B 는 바로 */
+  function stubItems(heldA: ((r: Response) => void)[]) {
+    calls.length = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url === "/api/v1/ops/session") return json(200, { username: "op" });
+      if (url === `/api/v1/ops/logs/${A}`) return new Promise<Response>((r) => heldA.push(r));
+      if (url === `/api/v1/ops/logs/${B}`) return json(200, { item: entry(B) });
+      if (url.startsWith("/api/v1/ops/logs?")) return json(200, FIRST);
+      return json(404, { detail: "no such resource" });
+    });
+  }
+  /** 같은 화면에서 누른 #id= 링크(hashchange) — 최소 DOM 의 window 는 전역 객체라 듣는 함수를 잡아 둔다 */
+  function captureHashChange() {
+    const listeners = new Map<string, (e: unknown) => void>();
+    vi.stubGlobal("addEventListener", (t: string, l: (e: unknown) => void) => { listeners.set(t, l); });
+    vi.stubGlobal("removeEventListener", () => {});
+    return async (hash: string) => {
+      (globalThis.location as unknown as { hash: string }).hash = hash;
+      await React.act(async () => { listeners.get("hashchange")!({ type: "hashchange" }); });
+    };
+  }
+  /** 열린 상세의 항목 시각(KST) — 항목마다 다르다(같은 요청 id 목록의 다른 항목 글자와 섞이지 않게 이것으로 본다) */
+  const openTime = () => byTestId("log-detail-time")?.textContent ?? "";
+  const kstOf = (id: string) => new Date(Number(id.split("-")[0]) + 9 * 3600_000).toISOString().replace("Z", "+09:00");
+
+  it("two #id= links in a row: the first item's late answer does not replace the second", async () => {
+    const heldA: ((r: Response) => void)[] = [];
+    stubItems(heldA);
+    const go = captureHashChange();
+    await open();
+    await go(`#id=${A}`);
+    await go(`#id=${B}`);
+    await settle();
+    expect(openTime()).toBe(kstOf(B));
+    heldA[0](json(200, { item: entry(A) }));
+    await settle();
+    expect(openTime()).toBe(kstOf(B));
+  });
+
+  it("a row opened while a #id= item is still loading stays open", async () => {
+    const heldA: ((r: Response) => void)[] = [];
+    stubItems(heldA);
+    const go = captureHashChange();
+    await open();
+    await go(`#id=${A}`);
+    await click(allByTestId("log-row")[0]); // T(1)
+    expect(openTime()).toBe(kstOf(T(1)));
+    heldA[0](json(200, { item: entry(A) }));
+    await settle();
+    expect(openTime()).toBe(kstOf(T(1)));
+  });
+});

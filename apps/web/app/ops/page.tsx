@@ -5,12 +5,15 @@ import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting, RequestOrder, RUN_STATUS_TITLE,
-  runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
+  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, providerSwitchPath, rebaseSetting, RequestOrder,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingPath, settingSpec, signOut, withProviderResolutions, type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
 import { OpsLogin } from "@/components/OpsLogin";
+import { useOpsSession } from "@/components/ops/useOpsSession";
+import { useVisibleInterval } from "@/lib/use-visible-interval";
+import { OpsSessionError } from "@/components/ops/OpsSessionError";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
@@ -140,12 +143,8 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
-  const [me, setMe] = useState<{ username: string } | null>(null);
-  const [checked, setChecked] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => { apiGet<{ username: string }>(OPS_SESSION_PATH).then(setMe).catch(() => setMe(null)).finally(() => setChecked(true)); }, []);
-  const leave = useCallback((note: string | null) => { setNotice(note); setMe(null); }, []);
-  const login = useCallback((u: { username: string }) => { setNotice(null); setMe(u); }, []);
+  const { me, checked, notice, error, leave, login, retry } = useOpsSession();
+  if (checked && error) return <OpsSessionError title="운영" error={error} onRetry={retry} />;
   if (!checked) return <div className="p-4 text-fg-3"><h1 className="sr-only">운영</h1>…</div>;
   return <><h1 className="sr-only">운영{me ? "" : " — 로그인"}</h1>{me ? <OpsDashboard me={me} onLeave={leave} /> : <OpsLogin onLogin={login} notice={notice} />}</>;
 }
@@ -230,9 +229,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const refresh = useCallback(() => reload(), [reload]);
   useEffect(() => {
     const first = setTimeout(refresh, 0);
-    const t = setInterval(() => reload(undefined, true), 15_000);
-    return () => { clearTimeout(first); clearInterval(t); };
-  }, [refresh, reload]);
+    return () => clearTimeout(first);
+  }, [refresh]);
+  // 15 s 주기는 탭이 보일 때만 — 숨긴 탭에서 엔드포인트 7개를 분당 28번 부르지 않는다. 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12)
+  useVisibleInterval(() => reload(undefined, true), 15_000);
   const toggleRunsMode = () => {
     const next: ResolvedMode = runsModeRef.current === "show" ? "hide" : "show";
     runsModeRef.current = next;
@@ -260,8 +260,25 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const losses = pipelineLossCount(pipeline);
   /** 마지막 토글 결과(R-94): DB 원본에 커밋됐어도 Redis 미러에 실패했으면(mirrored=false) 수집기는 아직 이전 값을 따른다 — 경고로 보인다 */
   const [switchNote, setSwitchNote] = useState<SwitchNote | null>(null);
+  /**
+   * 응답을 기다리는 공급자 켜고 끄기 — 공급자마다 한 번만(두 번 누르면 POST 두 번 · 감사 행 두 개였다). ref 는 같은 프레임의 두 번째 누름을,
+   * state 는 단추의 바쁨(disabled · aria-busy)을 맡는다
+   */
+  const switching = useRef(new Set<string>());
+  const [busySwitch, setBusySwitch] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 마지막 켜고 끄기 실패(PLAN §5 결정 4): 다음 쓰기나 '알림 닫기' 전까지 둔다 — 15 s 주기 · 새로고침 단추가 지우지 않는다(지우면 공급자가 꺼지지 않았다는 것을
+   * 놓친다, web-review B4). 세션 만료(401/404 + 세션 확인도 401/404)면 로그인으로
+   */
+  const [switchErr, setSwitchErr] = useState<{ name: string; action: "enable" | "disable"; error: unknown } | null>(null);
   const toggle = async (name: string, action: "enable" | "disable") => {
-    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", `/api/v1/ops/providers/${name}/${action}`))); refresh(); } catch (e) { fail(e); }
+    if (switching.current.has(name)) return;
+    switching.current.add(name);
+    setBusySwitch(new Set(switching.current));
+    setSwitchErr(null);
+    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", providerSwitchPath(name, action)))); refresh(); }
+    catch (e) { setSwitchErr({ name, action, error: e }); if (isAuthMiss(e)) void authMiss(e); }
+    finally { switching.current.delete(name); setBusySwitch(new Set(switching.current)); }
   };
   const switchMsg = liveNote(switchNote, prov?.provider_switch); // 주기 미러가 맞췄으면 경고를 내린다
   const differs = mirrorDiffers(prov?.provider_switch);
@@ -300,6 +317,12 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <TrafficGridFill collector={prov.collector} nowMs={providersNowMs(prov)} />
           <div role="status" aria-live="polite">{switchMsg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="switch-ok">{switchMsg.text}</div> : null}</div>
           {switchMsg && !switchMsg.ok ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-unmirrored">{switchMsg.text}</div> : null}
+          {switchErr ? (
+            <div className="mb-2 flex flex-wrap items-center gap-x-2 text-[11px] text-bad" role="alert" data-testid="switch-error">
+              <ErrorNote prefix={`${switchErr.name} ${switchErr.action === "disable" ? "끄기" : "켜기"} 실패 — `} error={switchErr.error} />
+              <button className={SMALL_BTN} onClick={() => setSwitchErr(null)}>알림 닫기</button>
+            </div>
+          ) : null}
           {differs.length ? (
             <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-mirror-differs">
               Redis 미러가 DB 원본과 다름 — 수집기는 Redis 값을 따른다: {differs.join(", ")} · api 가 60 s 주기로 원본을 다시 미러한다
@@ -309,14 +332,15 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           {(() => { const s = parseResolutionState(prov.resolution_state); return s && s !== "ok" ? <div className="mb-2 text-[11px] text-warn" data-testid="ops-resolution-state">{RESOLUTION_STATE_TEXT[s]}</div> : null; })()}
           <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th title={LAST_ERROR_TITLE}>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1";
-              const miss = providerMissing(p, providersNowMs(prov)); return <Fragment key={String(p.name)}><tr>
+              const busy = busySwitch.has(String(p.name)); const miss = providerMissing(p, providersNowMs(prov)); return <Fragment key={String(p.name)}><tr>
               <td className="mono">{String(p.name)}{off ? <span className="badge bad ml-1" title={sw?.disabled != null ? "원본(DB) 기준" : "Redis 미러 기준(원본 행 없음)"}>disabled</span> : null}</td>
               <TimeCell v={p.last_success_at} /><td className={NUM_CELL}>{fmtLatencyMs(p.last_latency_ms)}</td><td className={NUM_CELL}>{String(p.last_records ?? "—")}</td>
               <td className={`${NUM_CELL} ${Number(p.consecutive_failures) > 0 ? "text-warn" : ""}`}>{String(p.consecutive_failures ?? "—")}</td>
               <td className={NUM_CELL} title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className={NUM_CELL}>{String(p.budget_remaining ?? "—")}</td>
               <ProviderErrorCell p={p} onOpen={(target) => showResolve(String(p.name), target)} opener={resolveOpener(String(p.name))} />
               <td className="whitespace-nowrap" title={cell.title} data-testid="provider-switch"><span className="mono">{cell.source}</span> <span className={`badge ${cell.tone}`}>{cell.mirror}</span>{" "}
-                {off ? <button className="btn" onClick={() => toggle(String(p.name), "enable")}>enable</button> : <button className="btn" onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
+                {off ? <button className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => toggle(String(p.name), "enable")}>enable</button>
+                  : <button className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
             </tr>
             {/* 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) — 호출은 성공해도 새 프레임이 오지 않는 까닭. 수집기는 그동안 last success 를 갱신하지 않는다 */}
             {miss ? <tr data-testid="provider-missing"><td colSpan={9} className="text-[11px] text-warn" title={miss.title}>
@@ -396,15 +420,23 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
   // 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다
   const [msg, setMsg] = useState<{ ok: boolean; text: string; error?: unknown } | null>(null);
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
+  /**
+   * 응답을 기다리는 저장 — 키마다 한 번만. 같은 If-Match 로 PUT 이 두 번 나가면 첫 번째가 저장되고 두 번째가 409 라 저장됐는데 '다른 곳에서 바뀜' 을 보였다.
+   * ref 는 같은 프레임의 두 번째 누름을, state 는 단추의 바쁨(disabled · aria-busy)을 맡는다
+   */
+  const saving = useRef(new Set<string>());
+  const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
   const drop = (k: string) => setEdit((e) => { const c = { ...e }; delete c[k]; return c; });
   const save = async (k: string) => {
     const ed = edit[k];
-    if (ed === undefined) return;
+    if (ed === undefined || saving.current.has(k)) return;
     // 서버 검증 규칙(SettingsService.validate)을 보내기 전에 — 규칙을 모르는 키는 서버가 검사
     const parsed = parseSetting(k, ed.value);
     if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ ok: false, text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
     setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
-    try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value: parsed.value }, { "If-Match": settingIfMatch(ed) }); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
+    saving.current.add(k);
+    setBusy(new Set(saving.current));
+    try { await apiSend("PUT", settingPath(k), { value: parsed.value }, { "If-Match": settingIfMatch(ed) }); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);
       const conflict = e instanceof ApiError && e.status === 409;
@@ -413,6 +445,9 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
         : e instanceof ApiError ? `저장 실패(HTTP ${e.status})` : "서버에 연결할 수 없습니다(네트워크)";
       setMsg({ ok: false, text: `${k}: ${text}`, error: e });
       if (conflict) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
+    } finally {
+      saving.current.delete(k);
+      setBusy(new Set(saving.current));
     }
   };
   return (
@@ -420,7 +455,9 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
-      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} /></div> : null}
+      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
+        {/* 실패는 다음 저장이나 이 단추 전까지 남는다(PLAN §5 결정 4) — 15 s 새로고침이 지우지 않는다 */}
+        <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST)</th><th></th></tr></thead>
         <tbody>{items.map((s) => {
           const ed = edit[s.key];
@@ -437,7 +474,8 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
               ) : null}
             </td>
             <td className="mono">{s.version}</td><td className="text-fg-3"><span className="mono">{s.updated_by ?? "—"}</span> <KstTime v={s.updated_at} variant="cell" /></td>
-            <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict} title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
+            <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict || busy.has(s.key)} aria-busy={busy.has(s.key) || undefined}
+              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
         })}</tbody></table>
     </div>
   );

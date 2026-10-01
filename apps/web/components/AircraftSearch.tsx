@@ -107,7 +107,10 @@ export function AircraftSearch() {
     return () => { clearTimeout(t); ctl.abort(); };
   }, [qa, qs]);
 
+  /** 선택 번호(항공기 · 선박 공통) — 항공기 상세를 기다리는 동안 다른 것을 고르면 늦게 온 답은 지도를 옮기지도 문구를 덮지도 않는다(web-review B3) */
+  const choice = useRef(0);
   const chooseAircraft = useCallback(async (h: SearchHit) => {
+    const my = ++choice.current;
     setOpen(false);
     select(h.hex);
     let pos: [number, number] | null = h.live && h.lon != null && h.lat != null ? [h.lon, h.lat] : null;
@@ -117,6 +120,7 @@ export function AircraftSearch() {
         const d = await apiGet<{ state: AircraftState | null }>(`/api/v1/aircraft/${encodeURIComponent(h.hex)}`);
         if (d.state && Number.isFinite(d.state.lat) && Number.isFinite(d.state.lon)) pos = [d.state.lon, d.state.lat];
       } catch { /* 위치 모름 */ }
+      if (my !== choice.current) return; // 기다리는 사이 다른 것을 골랐다
     }
     const name = h.callsign ?? h.hex;
     if (pos) { requestFlyTo(pos[0], pos[1], 8); setMsg(`${name} 선택 — 지도 이동`); }
@@ -124,6 +128,7 @@ export function AircraftSearch() {
   }, [select, requestFlyTo]);
 
   const chooseShip = useCallback((h: ShipHit) => {
+    choice.current++;
     setOpen(false);
     // 선박 레이어가 꺼져 있으면 켠다 — 선택 표시·항적은 선박 레이어에 그린다(설정은 이 브라우저에 저장)
     const ui = useUi.getState();
