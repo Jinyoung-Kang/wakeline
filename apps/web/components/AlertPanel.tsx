@@ -153,14 +153,17 @@ const ETA_FROZEN_TITLE: Record<Exclude<AlertListState, "live">, string> = {
   disconnected: "연결이 끊겨 갱신되지 않음 — 이미 해제됐을 수 있습니다",
 };
 
-/** 예측 ETA(추정) — 이 배지만 1 s 마다 다시 그린다. 목록이 갱신되지 않는 동안(live 가 아님)은 카운트다운하지 않는다. */
+/**
+ * 예측 ETA(추정) — 이 배지만 1 s 마다 다시 그린다. 목록이 갱신되지 않는 동안(live 가 아님)은 카운트다운하지 않는다.
+ * 남은 시간은 배지의 대문자(.badge uppercase)에서 뺀다 — "9m 55s" 가 "9M 55S" 로 바뀌어(화면 · 접근성 이름) 미터 m 과 헷갈렸다(QA-310).
+ */
 function EtaBadge({ a, state }: { a: Alert; state: AlertListState }) {
   const now = useServerNow(1000);
   const judged = typeof a.evidence?.judged_at === "string" ? a.evidence.judged_at : null;
   const frozen = state !== "live";
   return (
     <span className="badge est ml-auto" title={state === "live" ? `판정 ${fmtKstTitle(judged)} · 현재 속도·방위 직선 외삽` : ETA_FROZEN_TITLE[state]} data-testid="alert-eta">
-      추정 ETA {frozen ? "—" : fmtEta(now ? etaRemainingS(a, now) : a.eta_s)}
+      추정 ETA {frozen ? "—" : <span className="normal-case">{fmtEta(now ? etaRemainingS(a, now) : a.eta_s)}</span>}
     </span>
   );
 }
