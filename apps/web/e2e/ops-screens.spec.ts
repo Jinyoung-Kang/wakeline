@@ -39,7 +39,8 @@ test("ops: PIPELINE shows the AIS receive diagnostics with the collector's chose
   await page.getByTestId("ops-tab-pipeline").click();
   const pipe = page.getByTestId("ops-pipeline");
   await expect(pipe).toBeVisible();
-  const row = (k: string) => pipe.locator(`tr[data-key="${k}"]`);
+  // AIS 수신 진단 행 — 수집기 묶음에도 같은 이름의 지표(loop_lag_max_s · loop_stalls_total — 계약 v5 §G29)가 있어 묶음으로 좁힌다
+  const row = (k: string) => pipe.locator(`tr[data-key="${k}"]`).filter({ hasText: "ais(선박 수신)" });
   for (const k of ["ping_rtt_max_s", "loop_lag_max_s", "loop_stalls_total", "ws_queue_max", "queue_wait_max_s", "queue_depth_max", "reconnects_quick_total"]) await expect(row(k)).toHaveCount(1);
   await expect(row("ping_rtt_max_s")).toContainText("0.31 s");
   await expect(row("ping_rtt_max_s")).toContainText("최근 90 s 최대 · 시간 초과 25 s — 수집기 설정");
