@@ -456,9 +456,18 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
 | 조건 | 전세계 bbox: 맞춤 계획 · 실행 · 버퍼 | 전세계: validAt | 한국 bbox: 맞춤 계획 · 실행 · 버퍼 | 한국: validAt |
 |---|---|---|---|---|
 | 전 `valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t` | Seq Scan(200,000행) · 17.2–20.9 ms · 6,205 | **30.0–31.5 ms**(일반 계획 = 도형 GIST 비트맵으로 전세계) | 도형 GIST 비트맵 · 12.2–18.3 ms · 7,538–7,740 | 13.1–13.7 ms |
+| 뒤 `… AND valid_to > :t AND …` — 지금 · 1일 · 7일 전 | `sigmet_valid` 비트맵 · **0.55–0.91 ms · 121–152** | **1.4–3.1 ms** | `sigmet_valid` ∧ 도형 GIST · 3.9–6.2 ms · 1,425–1,600 | 4.4–6.1 ms |
+| 뒤 — 30일 전(받는 범위의 끝) | `sigmet_valid` 비트맵(병렬) · 12.4–18.9 ms · 314–345 | 13.6–16.6 ms | 같은 꼴 · 3.9–4.3 ms · 1,548–1,700 | 5.0–6.0 ms |
 
 - 결과 행은 시각마다 119–156건(전세계) · 5–13건(한국). 인덱스 `sigmet_valid (valid_to, valid_from)` 는 어느 계획도 쓰지 못한다 — 조건이 `valid_to` 를 직접
   묶지 않는다.
+- 고친 것(쿼리만 — 마이그레이션 없음): `valid_to > :t` 를 더했다. 원래 조건에 이미 들어 있다 — 쓰기 길이 `withdrawn_at < valid_to` 를 지키므로(철회 표시는
+  `valid_to > 세트 시각` 인 행에만 그 시각을 쓰고, `valid_to` 를 바꾸는 upsert 는 늘 `withdrawn_at` 을 지운다 — 이 표를 쓰는 길은 그 둘뿐, 수집기 역할은 이 표에
+  권한이 없다). 그래서 결과는 같다 — `WeatherPersistDbTest.replayPredicateWithTheImpliedValidToBoundSelectsExactlyWhatTheOriginalPredicateSelects` 가 실제
+  쓰기 길(세트 · 철회 · 다시 나타남 · 만료 늘이기/줄이기)로 만든 표에서 불변식과, 경계(발효 · 만료 · 철회 ± 1 s)를 포함한 약 700 시각의 결과가 원래 조건과
+  같음을 본다(바꾸기 전 SQL 에서도 통과).
+- 이제 `sigmet_valid` 가 `valid_to > :t` 로 범위를 좁혀, 최근 시각의 전세계 재생은 표 크기와 거의 상관없이 1–3 ms 다(전: 표 전체를 훑어 30 ms — 표가 자랄수록
+  늘었다). 받는 범위 끝(30일 전)은 그 뒤에 끝난 경보를 모두 훑어 13–17 ms 로 아직 크지만 전의 절반이다.
 
 ## 재현
 ```bash
