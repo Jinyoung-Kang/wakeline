@@ -26,6 +26,8 @@ export interface EtagPollerSpec<T> {
   parse: (x: unknown) => T | null;
   intervalMs: number;
   visibleMinGapMs: number;
+  /** Accept 머리(기본 application/json) — GeoJSON 으로 답하는 엔드포인트(감시 공항)는 그 형식을 받는다고 말해야 한다(아니면 406) */
+  accept?: string;
 }
 
 export class EtagPoller<T> {
@@ -78,7 +80,7 @@ export class EtagPoller<T> {
     this.ctl = ctl;
     const current = () => gen === this.gen;
     try {
-      const headers: Record<string, string> = { Accept: "application/json" };
+      const headers: Record<string, string> = { Accept: this.spec.accept ?? "application/json" };
       if (this.state.etag && this.state.data) headers["If-None-Match"] = this.state.etag;
       const res = await this.fetcher(this.spec.url, { headers, credentials: "same-origin", signal: ctl.signal });
       if (!current()) return;

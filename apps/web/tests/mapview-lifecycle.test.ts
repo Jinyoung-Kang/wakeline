@@ -9,7 +9,10 @@ import { useUi } from "@/lib/ui-store";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { fmtKstMinute } from "@/lib/time";
 
-const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[], replies: {} as Record<string, () => Promise<unknown>>, reports: [] as string[] }));
+const rec = vi.hoisted(() => ({
+  calls: [] as string[], api: [] as string[], replies: {} as Record<string, () => Promise<unknown>>, reports: [] as string[],
+  fetches: [] as { url: string; accept: string | undefined }[], fetchReplies: {} as Record<string, () => Promise<Response>>,
+}));
 
 vi.mock("@/lib/maplibre", async (orig) => {
   const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
@@ -68,8 +71,23 @@ async function mount() {
 }
 async function act(fn: () => void) { await React.act(async () => { fn(); }); }
 
-beforeEach(() => { rec.calls.length = 0; rec.api.length = 0; rec.replies = {}; rec.reports.length = 0; FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true); });
-afterEach(async () => { if (root) { const r = root; root = null; await React.act(async () => { r.unmount(); }); } });
+beforeEach(() => {
+  rec.calls.length = 0; rec.api.length = 0; rec.replies = {}; rec.reports.length = 0; rec.fetches.length = 0; rec.fetchReplies = {};
+  FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true);
+  // 조회기(lib/etag-poller)는 fetch 로 부른다 — 답을 정하지 않은 경로는 끝나지 않는다(apiGet 대역과 같게)
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    rec.fetches.push({ url, accept: (init?.headers as Record<string, string> | undefined)?.Accept });
+    return rec.fetchReplies[url]?.() ?? new Promise(() => {});
+  });
+});
+afterEach(async () => { if (root) { const r = root; root = null; await React.act(async () => { r.unmount(); }); } vi.unstubAllGlobals(); dom.document.hidden = false; });
+/** 그 경로의 답(200 JSON) — apiGet 과 fetch 어느 쪽으로 불러도 */
+function reply(url: string, body: unknown) {
+  rec.replies[url] = async () => body;
+  rec.fetchReplies[url] = async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+/** 그 경로로 나간 요청 수(apiGet · fetch) */
+const asked = (url: string) => rec.api.filter((p) => p === url).length + rec.fetches.filter((f) => f.url === url).length;
 
 describe("MapView lifecycle (R-01: live data does not wait for the external basemap style)", () => {
   it("starts the worker, WS connection, viewport subscription and REST polls before the map style loads", async () => {
@@ -79,8 +97,8 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
     expect(rec.calls).toContain("connect");
     expect(rec.calls).toContain("worker:start");
     expect(rec.calls).toContain("subscribe");
-    expect(rec.api).toContain("/api/v1/radar/kr");
-    expect(rec.api).toContain("/api/v1/airports?watched=true");
+    expect(asked("/api/v1/radar/kr")).toBe(1);
+    expect(asked("/api/v1/airports?watched=true")).toBe(1);
   });
 
   it("tells the page once when the map has loaded for the first time (the first screen is complete — ADR-026 prefetch starts there)", async () => {
@@ -268,7 +286,7 @@ describe("MapView KR radar poll validates the body (web-review B10)", () => {
   const settle = () => React.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
   it("a readable body goes to the store", async () => {
-    rec.replies["/api/v1/radar/kr"] = async () => GOOD;
+    reply("/api/v1/radar/kr", GOOD);
     await mount();
     await settle();
     expect(getData().radarKr?.frames).toEqual([FRAME]);
@@ -278,12 +296,70 @@ describe("MapView KR radar poll validates the body (web-review B10)", () => {
   it("a body without frames keeps the last value (the dashboard does not fall over) and is reported", async () => {
     const last = { ...GOOD, latest_tm: "202609300800" };
     setData({ radarKr: last as never });
-    rec.replies["/api/v1/radar/kr"] = async () => ({ available: true, latest_tm: "202609281200" });
+    reply("/api/v1/radar/kr", { available: true, latest_tm: "202609281200" });
     await mount();
     await settle();
     expect(getData().radarKr).toBe(last);
     expect(rec.reports).toHaveLength(1);
     expect(rec.reports[0]).toContain("/api/v1/radar/kr");
+  });
+});
+
+/**
+ * 기상청 레이더 · 감시 공항 조회(web-review B9): 진행 중이면 겹쳐 부르지 않고(응답이 멈추면 5분 뒤 6개가 쌓였다), 숨긴 탭에서는 부르지 않으며,
+ * 다시 보이면 곧바로 부른다(lib/etag-poller — 연안 교통량 · 관측 수신 범위와 같은 규칙). 공항 응답이 틀리면 마지막 목록을 둔다.
+ */
+describe("MapView KR radar and watched-airport polls (web-review B9)", () => {
+  const KR = "/api/v1/radar/kr";
+  const AP = "/api/v1/airports?watched=true";
+  const FRAME = { tm: "202609300810", obs_tm: "202609300810", fetched_at: "2026-09-29T23:13:40Z", echo_cells: 12, url: "/api/v1/radar/kr/202609300810.png?v=1" };
+  const KR_BODY = { available: true, latest_tm: "202609300810", georeferenced: true, coordinates: null, legend: null, frames: [FRAME], attribution: "기상청", meta: { fetched_at: "2026-09-29T23:13:40Z", stale: false } };
+  const airport = (icao: string) => ({ type: "Feature", id: icao, geometry: { type: "Point", coordinates: [126.4, 37.4] }, properties: { icao, flight_cat: "VFR", obs_time: "2026-09-29T23:00:00Z" } });
+  const flush = () => React.act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-29T23:15:00Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a hung request is not stacked: after 30 min still one KR request (was 31) and one airports request (was 7)", async () => {
+    await mount();
+    await act(() => { vi.advanceTimersByTime(30 * 60_000); });
+    expect(asked(KR)).toBe(1);
+    expect(asked(AP)).toBe(1);
+  });
+
+  it("nothing is asked while the tab is hidden; shown again, KR is asked at once (not up to 60 s later)", async () => {
+    reply(KR, KR_BODY);
+    reply(AP, { type: "FeatureCollection", features: [airport("RKSI")] });
+    await mount();
+    await flush();
+    expect(asked(KR)).toBe(1);
+    dom.document.hidden = true;
+    await act(() => { vi.advanceTimersByTime(10 * 60_000); });
+    expect(asked(KR)).toBe(1);
+    expect(asked(AP)).toBe(1);
+    dom.document.hidden = false;
+    await act(() => { dom.document.dispatch("visibilitychange"); });
+    await flush();
+    expect(asked(KR)).toBe(2);
+    expect(asked(AP)).toBe(2);
+  });
+
+  it("the airports request accepts GeoJSON (the api answers application/geo+json)", async () => {
+    await mount();
+    const f = rec.fetches.find((x) => x.url === AP);
+    expect(f?.accept ?? "").toContain("application/geo+json");
+  });
+
+  it("an unreadable airports answer keeps the last list on the map (it used to empty it)", async () => {
+    reply(AP, { type: "FeatureCollection", features: [airport("RKSI"), airport("RKSS")] });
+    const map = await mount();
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    await flush();
+    expect((map.getSource("airports")!.data as { features: unknown[] }).features).toHaveLength(2);
+    reply(AP, { type: "FeatureCollection", features: "none" });
+    await act(() => { vi.advanceTimersByTime(5 * 60_000); });
+    await flush();
+    expect(asked(AP)).toBe(2);
+    expect((map.getSource("airports")!.data as { features: unknown[] }).features).toHaveLength(2);
   });
 });
 

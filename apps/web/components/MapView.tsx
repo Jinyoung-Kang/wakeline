@@ -26,18 +26,27 @@ import { krLayerId, parseKrRadar } from "@/lib/kr-radar";
 import { reportClientError } from "@/lib/errorReport";
 import { layerTip, onReady, setDashboardMap } from "@/lib/map-ready";
 import { RECEPTION_FILL_LAYER } from "@/lib/reception-meta";
+import { EtagPoller, POLL_NONE } from "@/lib/etag-poller";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
-import type { RenderState, SigmetCollection } from "@/lib/types";
+import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 /** SIGMET 만료 재검사 주기(새 메시지가 없어도 만료된 경보를 지운다) */
 const SIGMET_EXPIRY_CHECK_MS = 30_000;
-/** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다. */
+/** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다 — 다시 보일 때는 마지막 확인이 그보다 오래면 곧바로 */
 const AIRPORTS_REFRESH_MS = 300_000;
 const AIRPORTS_RECHECK_MS = 60_000;
+/** 기상청 레이더 재조회 · 다시 보일 때 곧바로 부르지 않는 간격(탭을 빨리 오갈 때 몰아 부르지 않게 — 연안 교통량 · 관측 수신 범위와 같다) */
+const KR_POLL_MS = 60_000;
+const KR_VISIBLE_MIN_GAP_MS = 10_000;
+/** 감시 공항 응답(GeoJSON) → 그릴 수 있는 지점. 모양이 틀리면 null — 조회기가 마지막 목록을 둔다(전에는 비웠다) */
+const parseAirports = (fc: unknown): GeoJSON.Feature<GeoJSON.Point, AirportProps>[] | null => {
+  const features = typeof fc === "object" && fc !== null ? (fc as { features?: unknown }).features : null;
+  return Array.isArray(features) ? features.filter((f): f is GeoJSON.Feature<GeoJSON.Point, AirportProps> => typeof f?.properties?.icao === "string") : null;
+};
 /**
  * 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET > 연안 교통량 격자(ADR-023) >
  * 관측 수신 칸(ADR-027 — 켤 때 받는 조각이 레이어 · 툴팁을 붙인다, lib/map-ready)
@@ -258,7 +267,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
 
     // ---- 공항 레이어(GAP-14): 5분마다 재조회, 1분마다 METAR 경과로 "오래됨"(> 2 h) 재계산 ----
     let airportFeatures: GeoJSON.Feature<GeoJSON.Point, AirportProps>[] = [];
-    let airportsFetchedAt = 0;
     let airportsKey = "";
     const applyAirports = () => {
       const src = geo(map, "airports");
@@ -269,12 +277,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       if (key === airportsKey) return;
       airportsKey = key;
       src.setData({ type: "FeatureCollection", features });
-    };
-    const pollAirports = () => {
-      airportsFetchedAt = Date.now();
-      apiGet<GeoJSON.FeatureCollection<GeoJSON.Point, AirportProps>>("/api/v1/airports?watched=true")
-        .then((fc) => { airportFeatures = Array.isArray(fc.features) ? fc.features.filter((f) => f.properties && typeof f.properties.icao === "string") : []; applyAirports(); })
-        .catch(() => { /* 실패하면 마지막 값을 유지하고 경과로 "오래됨"을 드러낸다 */ applyAirports(); });
     };
 
     /** 보이는 레이어에서 우선순위대로 한 개 */
@@ -351,19 +353,29 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     worker.postMessage({ type: "start" });
     client.connect();
     subscribeViewport();
-    // 본문은 parseKrRadar 로 검사한다(web-review B10) — 읽을 수 없으면 마지막 값을 두고 WS 처럼 보고한다(시스템 로그 web-client)
-    const pollKr = () => apiGet<unknown>("/api/v1/radar/kr").then((body) => {
-      const d = parseKrRadar(body);
-      if (d) setData({ radarKr: d });
-      else reportClientError({ message: "rest: malformed /api/v1/radar/kr body ignored — the last value is kept", component: "components/MapView.tsx" });
-    }).catch(() => {});
-    pollKr();
-    const krTimer = setInterval(() => { if (!document.hidden) pollKr(); }, 60_000); // 숨긴 탭에서는 받지 않는다
-    pollAirports();
-    const apTimer = setInterval(() => {
-      if (document.hidden) return;
-      if (Date.now() - airportsFetchedAt >= AIRPORTS_REFRESH_MS) pollAirports(); else applyAirports();
-    }, AIRPORTS_RECHECK_MS);
+    // 기상청 레이더 · 감시 공항은 조회기(lib/etag-poller)로: 진행 중이면 겹쳐 부르지 않고(응답이 멈추면 쌓였다 — web-review B9), 숨긴 탭에서는 부르지 않으며,
+    // 다시 보이면 곧바로 부른다. 실패하거나 본문이 틀리면 마지막 값을 둔다. 내용이 바뀌었을 때(version)만 store · 지도에 넣는다
+    // 레이더 본문은 parseKrRadar 로 검사한다(web-review B10) — 읽을 수 없으면 WS 처럼 보고한다(시스템 로그 web-client)
+    let krSeen = 0;
+    const krPoller = new EtagPoller<KrRadar>({
+      url: "/api/v1/radar/kr", intervalMs: KR_POLL_MS, visibleMinGapMs: KR_VISIBLE_MIN_GAP_MS,
+      parse: (body) => {
+        const d = parseKrRadar(body);
+        if (!d) reportClientError({ message: "rest: malformed /api/v1/radar/kr body ignored — the last value is kept", component: "components/MapView.tsx" });
+        return d;
+      },
+    }, (st) => { if (st.version !== krSeen) { krSeen = st.version; setData({ radarKr: st.data }); } }, { ...POLL_NONE, data: getData().radarKr });
+    let apSeen = 0;
+    const apPoller = new EtagPoller({
+      url: "/api/v1/airports?watched=true", accept: "application/geo+json, application/json", parse: parseAirports,
+      intervalMs: AIRPORTS_REFRESH_MS, visibleMinGapMs: AIRPORTS_RECHECK_MS,
+    }, (st) => {
+      if (st.version !== apSeen) { apSeen = st.version; airportFeatures = st.data ?? []; }
+      applyAirports(); // 실패해도 — 마지막 값의 경과로 "오래됨"을 드러낸다
+    });
+    krPoller.start();
+    apPoller.start();
+    const apTimer = setInterval(() => { if (!document.hidden) applyAirports(); }, AIRPORTS_RECHECK_MS);
 
     map.on("load", () => {
       onFirstLoadRef.current?.();
@@ -413,7 +425,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       useUi.getState().setBasemapFailed(false); // 떠난 지도의 상태를 남기지 않는다
       clearTimeout(styleTimer);
       if (moveTimer) clearTimeout(moveTimer);
-      clearInterval(krTimer);
+      krPoller.stop();
+      apPoller.stop();
       clearInterval(apTimer);
       if (hoverRaf) cancelAnimationFrame(hoverRaf);
       popup.remove();
