@@ -43,6 +43,7 @@ RULE_FEATURES: dict[str, str] = {
     "send_outcome": KERNEL,
     "budget_rules": KERNEL,
     "textutil": KERNEL,
+    "timeutil": KERNEL,
     "retry": KERNEL,
     "chain_state": KERNEL,
     "ratelimit": KERNEL,

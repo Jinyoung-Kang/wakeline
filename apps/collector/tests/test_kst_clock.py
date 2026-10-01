@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from wakeline_collector.kma_rules import gap_expired, old_tm_cut, select_refetch, streak_probe_every_s
-from wakeline_collector.providers.kma_radar import kst_now
+from wakeline_collector.timeutil import kst_now
 
 KST_TZ = timezone(timedelta(hours=9))
 INSTANTS = [

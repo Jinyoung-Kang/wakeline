@@ -29,7 +29,8 @@ import orjson
 
 from wakeline_collector.config import settings
 from wakeline_collector.masking import mask
-from wakeline_collector.portcalls import Coverage, PortCallRow, kst_date, merge_day
+from wakeline_collector.portcalls import Coverage, PortCallRow, merge_day
+from wakeline_collector.timeutil import kst_date
 
 log = logging.getLogger("db")
 

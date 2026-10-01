@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from wakeline_collector.budget_rules import regular_headroom
 from wakeline_collector.http_errors import ProviderHttpError
 from wakeline_collector.ratelimit import Throttled
+from wakeline_collector.timeutil import kst_wall_to_utc
 
 KEEP_FRAMES = 12
 MAX_PER_CYCLE = 4
@@ -430,7 +431,7 @@ def refetch_headroom(now: datetime, poll_s: float) -> int:
 def refetch_until(tm: str) -> str | None:
     """이 tm 을 다시 받을 수 있는 마지막 순간(UTC ISO): tm(KST) + REFETCH_MAX_AGE_S. 웹이 '기한까지 다시 받기 대상'과 '기한 지남'을 가른다."""
     t = tm_dt(tm)
-    return None if t is None else iso((t - timedelta(hours=9)).replace(tzinfo=UTC) + timedelta(seconds=REFETCH_MAX_AGE_S))
+    return None if t is None else iso(kst_wall_to_utc(t) + timedelta(seconds=REFETCH_MAX_AGE_S))
 
 
 def latest_station_fields(frames: list[dict]) -> dict[str, str]:

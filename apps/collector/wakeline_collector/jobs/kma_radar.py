@@ -195,12 +195,13 @@ from wakeline_collector.kma_store import KEY_FRAME as KEY_FRAME
 from wakeline_collector.kma_store import KEY_FRAMES as KEY_FRAMES
 from wakeline_collector.kma_store import KEY_META, KmaStore
 from wakeline_collector.models import ProviderResult
-from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
+from wakeline_collector.providers.kma_radar import KmaRadarProvider
 from wakeline_collector.ratelimit import KMA_APIHUB_HOST as KMA_HOST
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
 from wakeline_collector.status import AUX_TIMEOUT_S
+from wakeline_collector.timeutil import kst_now  # 시험이 이 모듈의 kst_now 를 바꿔 끼운다
 
 log = logging.getLogger("job.kma_radar")
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다

@@ -9,7 +9,8 @@ import pytest
 from PIL import Image
 
 from wakeline_collector.kma_grid import HEADER_BYTES, NULL_OUTSIDE, parse_header, read_echo, render_mercator_png
-from wakeline_collector.providers.kma_radar import kst_now, parse_file_list
+from wakeline_collector.providers.kma_radar import parse_file_list
+from wakeline_collector.timeutil import kst_now
 
 FIX = Path(__file__).resolve().parents[3] / "fixtures" / "kma_rdr_cmp_head.bin"
 

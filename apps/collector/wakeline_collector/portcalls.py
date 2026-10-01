@@ -15,10 +15,11 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 가 있는 문서는 파싱 전에 거절한다(아래 _xml_text)
 from dataclasses import dataclass, fields
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from wakeline_collector.masking import mask
 from wakeline_collector.textutil import clean_text
+from wakeline_collector.timeutil import kst_date
 
 SOURCE = "해양수산부 선박운항정보(PORT-MIS)"
 WINDOW_DAYS = 30  # 색인이 늘 덮으려는 창: 오늘(KST) − 30일 ~ 오늘
@@ -45,8 +46,6 @@ PORT_AUTHORITIES: tuple[tuple[str, str], ...] = (
     ("810", "마산"),
     ("820", "울산"),
 )
-
-KST = timedelta(hours=9)  # 한국 표준시는 UTC+9 고정(일광 절약 시간 없음)
 
 
 class PortCallParseError(ValueError):
@@ -161,12 +160,6 @@ ENTRY, EXIT = "입항", "출항"
 _TIME_TAG = {ENTRY: "etryptDt", EXIT: "tkoffDt"}  # 종류마다 시각 필드가 다르다(확인한 그대로 — 출항 detail 에는 etryptDt 가 없다)
 _KEY_PART_RE = re.compile(r"^[0-9A-Za-z]{1,16}$")  # 입항년도 · 입항횟수 — 모양만(실제 예 "2026" · "005")
 _SHORT_CODE_RE = re.compile(r"^[A-Z0-9]{1,10}$")  # 국적 코드 · 선종 코드(실제 예 "MH" · "14")
-KST_TZ = timezone(KST)
-
-
-def kst_date(at: datetime) -> date:
-    """이 순간의 KST 날짜(UTC+9 고정)."""
-    return at.astimezone(KST_TZ).date()
 
 
 @dataclass(frozen=True)
