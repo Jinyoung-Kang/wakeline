@@ -48,7 +48,7 @@ class OpsPipelineControllerTest {
     OpsPipelineController controller(StreamMetrics metrics) {
         StaticListableBeanFactory beans = new StaticListableBeanFactory();
         if (metrics != null) beans.addBean("streamMetrics", metrics);
-        return new OpsPipelineController(redis(), new SimpleMeterRegistry(), beans.getBeanProvider(StreamConsumer.class),
+        return new OpsPipelineController(new PipelineSignals(redis()), new SimpleMeterRegistry(), beans.getBeanProvider(StreamConsumer.class),
                 beans.getBeanProvider(StreamMetrics.class), () -> NOW);
     }
 

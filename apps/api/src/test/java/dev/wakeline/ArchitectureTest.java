@@ -40,7 +40,6 @@ class ArchitectureTest {
     /** Class-level imports inside package cycles. 0 since the end of phase 1 — any package cycle fails. */
     static final int MAX_CYCLE_EDGES = 0;
     static final Set<String> KNOWN = Set.of(
-            "controller-data-access|ops.OpsPipelineController|org.springframework.data.redis.core",
             "controller-data-access|weather.web.WeatherController|org.springframework.data.redis.core");
 
     record Src(String cls, String pkg, boolean controller, Set<String> refs) {}

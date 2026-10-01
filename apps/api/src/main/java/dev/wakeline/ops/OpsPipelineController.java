@@ -6,7 +6,6 @@ import dev.wakeline.ingest.StreamMetrics;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -43,7 +42,8 @@ import java.util.function.Supplier;
  *       (같은 지문 10 s 억제로 따로 싣지 않고 다른 항목의 suppressed 에 실은 수 — 손실이 아니라 묶음 요약. 다음 항목이 오지 않으면 창이 닫힐 때
  *       마지막 억제 발생이 항목이 된다 — §G9)까지.</li>
  * </ul>
- * null = 모름(해시·필드가 없거나 형식이 틀림 · heartbeat 가 오래됨 · Redis 를 읽지 못함). 0 으로 채우지 않는다. 해시는 읽기만 한다.
+ * null = 모름(해시·필드가 없거나 형식이 틀림 · heartbeat 가 오래됨 · Redis 를 읽지 못함). 0 으로 채우지 않는다. 해시는 읽기만 한다 —
+ * 읽기는 {@link PipelineSignals}(ADR-028 — 컨트롤러는 Redis 를 쓰지 않는다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
@@ -56,21 +56,21 @@ public class OpsPipelineController {
     /** 미래로 이보다 틀어진 시각은 믿지 않는다. */
     static final long MAX_FUTURE_S = 60;
 
-    private final StringRedisTemplate redis;
+    private final PipelineSignals signals;
     private final MeterRegistry meters;
     private final ObjectProvider<StreamConsumer> consumer;
     private final ObjectProvider<StreamMetrics> streams;
     private final Supplier<Instant> clock;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
+    public OpsPipelineController(PipelineSignals signals, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
                                  ObjectProvider<StreamMetrics> streams) {
-        this(redis, meters, consumer, streams, Instant::now);
+        this(signals, meters, consumer, streams, Instant::now);
     }
 
-    OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
+    OpsPipelineController(PipelineSignals signals, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
                           ObjectProvider<StreamMetrics> streams, Supplier<Instant> clock) {
-        this.redis = redis;
+        this.signals = signals;
         this.meters = meters;
         this.consumer = consumer;
         this.streams = streams;
@@ -114,7 +114,7 @@ public class OpsPipelineController {
     }
 
     CollectorSignals collector(Instant now) {
-        Map<Object, Object> h = hash("wakeline:collector");
+        Map<Object, Object> h = signals.collector();
         Double age = null;
         Instant newest = null;
         for (var e : h.entrySet()) {
@@ -133,7 +133,7 @@ public class OpsPipelineController {
     }
 
     AisSignals ais(Instant now) {
-        Map<Object, Object> h = hash("wakeline:ais:status");
+        Map<Object, Object> h = signals.ais();
         Instant hb = time(h.get("updated_at"));
         long ageS = hb == null ? Long.MAX_VALUE : (now.toEpochMilli() - hb.toEpochMilli()) / 1000;
         if (hb == null || ageS > AIS_MAX_AGE_S || ageS < -MAX_FUTURE_S) return AisSignals.UNKNOWN;
@@ -178,15 +178,6 @@ public class OpsPipelineController {
         double sum = 0;
         for (Counter c : search.counters()) sum += c.count();
         return (long) sum;
-    }
-
-    private Map<Object, Object> hash(String key) {
-        try {
-            Map<Object, Object> h = redis.opsForHash().entries(key);
-            return h == null ? Map.of() : h;
-        } catch (RuntimeException e) {
-            return Map.of(); // Redis 를 읽지 못하면 모두 모름
-        }
     }
 
     /** 0 이상의 정수 문자열만. 아니면 null(모름). */
