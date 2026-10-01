@@ -108,7 +108,6 @@ ALLOWED: set[tuple[str, str, str]] = {
     ("fallback", "status", "layer"),  # 3B-7 chain_state — 판정 상태기계가 Redis 어댑터를 품는다
     ("fallback", "chain_store", "layer"),  # 3B-7
     ("portcalls", "route", "feature"),  # 3B-3 textutil.clean_text
-    ("ais.sink", "publisher._size", "private"),  # 3B-2 publisher.entry_size
 }
 
 
