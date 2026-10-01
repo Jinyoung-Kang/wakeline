@@ -14,7 +14,9 @@ import { trafficGridTip } from "@/lib/traffic-grid";
 import { registerLayerTip } from "@/lib/map-ready";
 import { RECEPTION_FILL_LAYER } from "@/lib/reception-meta";
 import type { AircraftState, RenderState } from "@/lib/types";
-import type { ShipLite } from "@/lib/ships";
+import { selectedShipLabel, selectedShipPos, type ShipLite } from "@/lib/ships";
+import { aircraftFeatureCollection, airportLayerFeatures, syncFrames } from "@/lib/maplayers";
+import { sigmetLayerData } from "@/lib/sigmet";
 
 const rec = vi.hoisted(() => ({ tips: [] as unknown[], workers: [] as { onmessage: ((ev: unknown) => void) | null }[] }));
 
@@ -276,5 +278,51 @@ describe("map sources drawn from data (characterization)", () => {
     await settle();
     expect(sets).toBe(1);
     expect((src.data as GeoJSON.FeatureCollection).features.map((f) => [f.properties!.id, f.properties!.inside])).toEqual([["S1", false], ["S3", false], ["S4", true]]);
+  });
+});
+
+describe("the moved map data helpers, directly (web-review §3.3)", () => {
+  it("aircraftFeatureCollection: one point per render state; selected only for the given hex", () => {
+    const st = { hex: "aaaaaa", lat: 1, lon: 2, alt_ft: null, track_deg: null, callsign: null, estimated: false, stale: false, age_unknown: false, on_ground: null, emergency: false } as RenderState;
+    expect(aircraftFeatureCollection([st], null).features[0]).toMatchObject({ id: "aaaaaa", properties: { selected: false }, geometry: { coordinates: [2, 1] } });
+    expect(aircraftFeatureCollection([st], "aaaaaa").features[0].properties!.selected).toBe(true);
+    expect(aircraftFeatureCollection([], "aaaaaa").features).toEqual([]);
+  });
+  it("airportLayerFeatures: stale per METAR age; the key changes only with what is drawn", () => {
+    const f = (obs: string) => ({ type: "Feature" as const, geometry: { type: "Point" as const, coordinates: [1, 2] }, properties: { icao: "RKSI", flight_cat: "IFR", obs_time: obs } });
+    const fresh = airportLayerFeatures([f(iso(NOW - 60_000))], NOW), old = airportLayerFeatures([f(iso(NOW - 60_000))], NOW + 3 * 3600_000);
+    expect([fresh.features[0].properties.stale, old.features[0].properties.stale]).toEqual([false, true]);
+    expect(fresh.key).not.toBe(old.key);
+    expect(airportLayerFeatures([f(iso(NOW - 60_000))], NOW + 1_000).key).toBe(fresh.key);
+  });
+  it("sigmetLayerData: inside for observed alerts of SIGMETs in force; the key ignores alert ids of SIGMETs not drawn", () => {
+    const POLY = { type: "MultiPolygon", coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 0]]]] };
+    const fc = { type: "FeatureCollection", features: [{ type: "Feature", properties: { id: "S1", valid_from: iso(NOW - 1), valid_to: iso(NOW + 1_000) }, geometry: POLY }] } as never;
+    const a = sigmetLayerData(fc, [{ kind: "OBSERVED", sigmet_id: "S1" }], NOW);
+    expect(a.fc.features[0].properties!.inside).toBe(true);
+    expect(sigmetLayerData(fc, [{ kind: "PREDICTED", sigmet_id: "S1" }], NOW).fc.features[0].properties!.inside).toBe(false);
+    expect(sigmetLayerData(fc, [{ kind: "OBSERVED", sigmet_id: "S1" }, { kind: "OBSERVED", sigmet_id: "S9" }], NOW).key).toBe(a.key);
+  });
+  it("selectedShipPos / selectedShipLabel: the WS selected ship (same MMSI) first, then the listed copy", () => {
+    const listed = new Map([["440000001", { lat: 1, lon: 2, name: "LISTED" }]]);
+    expect(selectedShipPos("440000001", { mmsi: "440000001", state: { lat: 5, lon: 6 } }, listed)).toEqual({ lat: 5, lon: 6 });
+    expect(selectedShipPos("440000001", { mmsi: "440000002", state: { lat: 5, lon: 6 } }, listed)).toEqual({ lat: 1, lon: 2 });
+    expect(selectedShipPos("440000009", null, listed)).toBeNull();
+    expect(selectedShipPos(null, null, listed)).toBeNull();
+    expect(selectedShipLabel("440000001", { mmsi: "440000001", state: null, static: { name: "STATIC" } }, listed)).toBe("STATIC");
+    expect(selectedShipLabel("440000009", null, listed)).toBe("MMSI 440000009");
+    expect(selectedShipLabel(null, null, listed)).toBeNull();
+  });
+  it("syncFrames: only shown frames get a layer; hidden ones are switched off; frames that left the list are removed", () => {
+    const map = new FakeMap({});
+    const frame = (id: string) => ({ id, add: (m: unknown) => (m as FakeMap).addLayer({ id, type: "raster", layout: { visibility: "none" } }) });
+    let ids = syncFrames(map as never, [], [frame("a"), frame("b")], new Map([[1, "current"]]), 0.7);
+    expect([ids, map.layerIds(""), map.getLayer("b")!.paint["raster-opacity"], map.getLayoutProperty("b", "visibility")]).toEqual([["a", "b"], ["b"], 0.7, "visible"]);
+    ids = syncFrames(map as never, ids, [frame("b")], new Map([[0, "preload"]]), 0.7);
+    expect([ids, map.getLayer("b")!.paint["raster-opacity"]]).toEqual([["b"], 0]);
+    syncFrames(map as never, ["b", "gone"], [frame("b")], new Map(), 0.7);
+    expect(map.getLayoutProperty("b", "visibility")).toBe("none");
+    syncFrames(map as never, ["b"], [], new Map(), 0.7);
+    expect(map.layerIds("")).toEqual([]);
   });
 });
