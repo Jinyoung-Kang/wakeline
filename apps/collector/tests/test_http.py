@@ -273,3 +273,31 @@ async def test_the_client_asks_only_for_the_encodings_it_inflates_within_the_cap
     c = HttpClient()
     assert c._client.headers["accept-encoding"] == "gzip, deflate"
     await c.aclose()
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        (Throttled("opendata.adsb.fi", "no slot within 4.0 s"), "throttled"),
+        (httpx.PoolTimeout("pool full"), "not_sent"),
+        (httpx.ProxyError("proxy refused"), "not_sent"),
+        (HostNotAllowed("evil.example"), "not_sent"),
+        (httpmod.SendCancelled("api.adsb.lol"), "not_sent"),
+        (httpx.InvalidURL("bad url"), "not_sent"),
+        (httpx.UnsupportedProtocol("ftp"), "not_sent"),
+        (httpx.ConnectError("refused"), "failed_before_send"),
+        (httpx.ConnectTimeout("connect"), "failed_before_send"),
+        (httpx.ReadTimeout("read"), "sent"),
+        (httpmod.RequestTimedOut("api.adsb.lol: no complete response within 30 s"), "sent"),
+        (ProviderHttpError(503, "down"), "sent"),
+        (ValueError("unexpected shape"), "sent"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else type(v).__name__,
+)
+def test_one_send_classifier_for_every_job(error, outcome):
+    """R-65 · F7(PLAN C3): '보내지 않음' 판정이 작업마다 달랐다(풀 대기 초과를 공급자 실패로 세고 예산을 돌려주지 않았다 · 기상 작업은 속도 상한을
+    공급자 실패로 적었다). 한 곳에서 가른다 — throttled · not_sent(우리 쪽 까닭)는 공급자 실패가 아니고, failed_before_send(연결 실패 · 토큰)는
+    공급자 실패지만 예산은 돌려준다. sent 만 예산을 쓴다."""
+    from wakeline_collector.http import classify_send
+
+    assert classify_send(error) == outcome

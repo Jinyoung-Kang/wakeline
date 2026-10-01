@@ -18,12 +18,13 @@ import zlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import Literal
 from urllib.parse import urlparse
 
 import httpx
 
 from wakeline_collector.config import Settings, settings
-from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
+from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, Throttled, default_limiter
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
 DEFAULT_TOTAL_S = 30.0  # 요청 전체(보내기 ~ 본문 끝) 기본 상한. 관심 지역·KMA 는 호출자가 따로 준다(R-67).
@@ -82,17 +83,47 @@ class ProviderHttpError(RuntimeError):
         self.pause_s = pause_s  # 429 로 그 호스트를 막은 초(RateLimiter.penalize 의 반환값). 429 가 아니면 None
 
 
-# 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
-NOT_SENT_ERRORS: tuple[type[Exception], ...] = (
+class PreSendFailed(RuntimeError):
+    """요금이 드는 요청 앞의 준비 호출(OpenSky 토큰 발급)이 실패해 그 요청을 보내지 않았다 — 예산은 돌려주고, 공급자 실패로는 센다(classify_send).
+    status = 준비 호출의 HTTP 상태(있으면 — 호출자가 429 · 401 을 그대로 다룬다)."""
+
+    def __init__(self, step: str, error: BaseException) -> None:
+        super().__init__(f"{step} failed: {type(error).__name__}: {error}")
+        self.step, self.error = step, error
+        self.status = error.status if isinstance(error, ProviderHttpError) else None
+
+
+# 우리 쪽 까닭으로 보내지 않았다(허용 호스트 아님 · 보내기 직전 취소 · URL · 연결 풀 대기 초과 · 프록시) — 공급자 실패가 아니다(classify_send)
+NOT_SENT_LOCAL: tuple[type[Exception], ...] = (
     HostNotAllowed,
     SendCancelled,
     httpx.InvalidURL,
     httpx.UnsupportedProtocol,
     httpx.PoolTimeout,
     httpx.ProxyError,
-    httpx.ConnectError,
-    httpx.ConnectTimeout,
 )
+# 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
+NOT_SENT_ERRORS: tuple[type[Exception], ...] = (*NOT_SENT_LOCAL, httpx.ConnectError, httpx.ConnectTimeout, PreSendFailed)
+
+SendOutcome = Literal["sent", "failed_before_send", "not_sent", "throttled"]
+
+
+def classify_send(e: BaseException) -> SendOutcome:
+    """공급자 호출 하나의 실패를 가른다 — 모든 작업이 이 판정을 쓴다(R-65 · F7: 전에는 작업마다 달라 연결 풀 대기 초과를 공급자 실패로 세고 예산을
+    돌려주지 않았고, 기상 작업은 속도 상한을 공급자 실패로 적었다).
+    - throttled: 속도 상한(Throttled)이 막았다 — 보내지 않았다. 예산을 돌려주고 공급자 실패가 아니다(실행 'throttled').
+    - not_sent: 우리 쪽 까닭으로 보내지 않았다(NOT_SENT_LOCAL) — 예산을 돌려주고 공급자 실패가 아니다.
+    - failed_before_send: 공급자 쪽이 보내기 전에 실패했다(연결 실패 · 연결 시간 초과 · 준비 호출 PreSendFailed) — 예산을 돌려주되 공급자 실패로
+      센다(폴백 · 3번 쉬기가 그대로 일한다).
+    - sent: 그 밖 — 보낸 것으로 센다(예산 그대로 · 공급자 실패)."""
+    if isinstance(e, Throttled):
+        return "throttled"
+    if isinstance(e, NOT_SENT_LOCAL):
+        return "not_sent"
+    if isinstance(e, NOT_SENT_ERRORS):
+        return "failed_before_send"
+    return "sent"
+
 
 BeforeSend = Callable[[], Awaitable[bool]]
 

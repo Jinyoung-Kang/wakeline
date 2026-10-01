@@ -12,13 +12,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import httpx
-
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.errors import describe_error
 from wakeline_collector.fallback import ProviderChain
-from wakeline_collector.http import ProviderHttpError
+from wakeline_collector.http import PreSendFailed, ProviderHttpError, classify_send
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import AircraftState
 from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb, readsb_reference_time
@@ -222,13 +220,19 @@ class AircraftJob:
 
     async def _on_fetch_error(self, name: str, cost: int, started: datetime, e: Exception) -> None:
         ctx = self.ctx
-        if isinstance(e, Throttled):
+        kind = classify_send(e)
+        if isinstance(e, Throttled):  # kind 'throttled'
             await self._on_throttled(name, cost, started, e)
             return
-        http_status = e.status if isinstance(e, ProviderHttpError) else None
-        if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
-            await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
+        if kind != "sent" and cost:  # 보내지 않았다 — 공급자 쪽 사용량도 없다(연결 실패 · 토큰 실패 · 우리 쪽 까닭 — R-65)
+            await ctx.budget.release(name, cost)
         why = describe_error(e)
+        if kind == "not_sent":
+            # 우리 쪽 까닭(연결 풀 대기 초과 · 프록시 · 허용 호스트 아님 · 보내기 직전 취소) — 공급자에 닿지도 않았다: 공급자 상태 · 3번 규칙에 넣지 않는다
+            ctx.db.record_run(self.job_name, name, started, status="error", error_text=f"not sent — {why}")
+            log.info("%s: %s not called (%s)", self.scope, name, why)
+            return
+        http_status = e.status if isinstance(e, ProviderHttpError | PreSendFailed) else None
         self._last_error = (name, why)
         retried = self.chain.probing(name)  # 3회 연속 실패로 쉬는 중이지만 다른 공급자가 없어 다시 시도한 호출
         await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
