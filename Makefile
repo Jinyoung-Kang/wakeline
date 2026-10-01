@@ -12,7 +12,7 @@ NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest ws-samples e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -92,6 +92,9 @@ contract-rest: ## Java→Python REST 계약 검사 — api 통합 테스트(Rest
 
 ws-samples: ## WS 메시지 표본 다시 만들기(계약 v5 §E1) — api 시험이 실제 빌더로 만들어 schemas/ws 로 검증한 뒤 apps/web/tests/fixtures/ws-samples.v1.json 에 쓴다(커밋)
 	cd apps/api && ./gradlew test --tests 'dev.wakeline.ws.WsSchemaContractTest' -PupdateWsSamples
+
+readme-images: ## README 그림 내보내기 — 설명서 캡처(apps/web/public/guide · lib/guide-manifest.json)를 docs/images/<이름>.webp 로 복사, 설정(apps/web/lib/readme-images.json)에 없는 그림 파일은 지움. 먼저 guide-screenshots 로 찍는다(dry=1 이면 계획만)
+	cd apps/web && node scripts/readme-images.mjs $(if $(dry),--dry-run,)
 
 # 실패하면 스택을 지우기 전에 상태·로그를 남긴다(CI 에서 원인을 볼 수 있게). E2E_KEEP=1 이면 스택을 남긴다.
 e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 스택·볼륨 삭제. 개발 스택(8700)은 건드리지 않는다

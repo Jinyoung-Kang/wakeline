@@ -78,6 +78,36 @@
       ]
     },
     {
+      "id": "world",
+      "section": "dashboard-map",
+      "path": "/#1.6/30/60",
+      "title": "전세계 보기 — 축소한 지도의 항공기",
+      "alt": "세계 지도로 축소한 상황판(줌 1.6): 지도 위 전세계 항공기 기호, 위쪽 상태 바의 aircraft 수와 world · region 칩, 오른쪽 알림 패널",
+      "callouts": [
+        {
+          "n": 1,
+          "label": "항공기 수",
+          "text": "상태 바 aircraft — 구독 영역 안 항공기 수(여러 피드를 합친 목록 · 같은 항공기는 가장 최근 관측 하나). 화면이 날짜 변경선을 넘으면 그 위도 띠 전체를 셉니다(2.2).",
+          "target": "[data-testid=\"aircraft-count\"]",
+          "anchor": "l"
+        },
+        {
+          "n": 2,
+          "label": "전세계 피드",
+          "text": "world 칩 — 전세계 피드의 지연. 오래되면 STALE, 피드가 없으면 ‘—’(2.10).",
+          "target": "[data-testid=\"global-lag-badge\"]",
+          "anchor": "l"
+        },
+        {
+          "n": 3,
+          "label": "관심 지역 피드",
+          "text": "region 칩 — 고정 관심 지역(한반도) 피드의 지연. 전세계 피드와 따로 갱신됩니다(2.10).",
+          "target": "[data-testid=\"lag-badge\"]",
+          "anchor": "l"
+        }
+      ]
+    },
+    {
       "id": "traffic",
       "section": "dashboard-layers",
       "path": "/#7.2/35.2/128.6",
@@ -184,6 +214,36 @@
           "label": "집중 추적 칩",
           "text": "지도 왼쪽 위에도 같은 상태가 보입니다.",
           "target": "[data-testid=\"demand-map-chip\"]",
+          "anchor": "l"
+        }
+      ]
+    },
+    {
+      "id": "hot",
+      "section": "dashboard-aircraft",
+      "path": "/#8.2/35.55/139.9",
+      "title": "핫 리전 — 관심 지역 밖을 확대하면 따로 조회",
+      "alt": "관심 지역 밖 도쿄 부근을 줌 8.2 로 확대한 상황판: 지도 왼쪽 위의 핫 리전 칩, 지도 위 항공기 기호, 위쪽 상태 바의 aircraft 수와 region 칩",
+      "callouts": [
+        {
+          "n": 1,
+          "label": "핫 리전 칩",
+          "text": "서버가 보고한 핫 리전 상태 · 주기 · 반경. ‘갱신’은 수집기가 이 칸을 최근에 실제로 조회했다는 뜻입니다(2.5).",
+          "target": "[data-testid=\"demand-map-chip\"]",
+          "anchor": "l"
+        },
+        {
+          "n": 2,
+          "label": "항공기 수",
+          "text": "상태 바 aircraft — 지도 영역 안 항공기 수(핫 리전과 다른 피드를 합친 목록 · 같은 항공기는 가장 최근 관측 하나).",
+          "target": "[data-testid=\"aircraft-count\"]",
+          "anchor": "l"
+        },
+        {
+          "n": 3,
+          "label": "관심 지역 피드",
+          "text": "region 칩 — 고정 관심 지역(한반도) 피드. 이 화면은 그 밖이라 핫 리전이 따로 조회합니다.",
+          "target": "[data-testid=\"lag-badge\"]",
           "anchor": "l"
         }
       ]

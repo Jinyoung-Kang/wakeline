@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "images": [
+    { "name": "dashboard", "shot": "dashboard" },
+    { "name": "aircraft", "shot": "aircraft" },
+    { "name": "ship", "shot": "ship" },
+    { "name": "port-calls", "shot": "port-calls" },
+    { "name": "traffic", "shot": "traffic" },
+    { "name": "reception", "shot": "reception" },
+    { "name": "alerts", "shot": "alerts" },
+    { "name": "radar", "shot": "radar" },
+    { "name": "search", "shot": "search" },
+    { "name": "world", "shot": "world" },
+    { "name": "hot", "shot": "hot" },
+    { "name": "replay", "shot": "replay" },
+    { "name": "stats", "shot": "stats" },
+    { "name": "airport", "shot": "airport" },
+    { "name": "ops", "shot": "ops", "fixture": true },
+    { "name": "logs", "shot": "logs", "fixture": true }
+  ]
+}

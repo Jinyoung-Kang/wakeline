@@ -1,4 +1,4 @@
-// 설명서(/guide) 스크린샷: node scripts/guide-screenshots.mjs <기준 주소> <자격 증명 파일> [--only id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]
+// 설명서(/guide) 스크린샷: node scripts/guide-screenshots.mjs <기준 주소> <자격 증명 파일> [--only id,… | --skip id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]
 //
 // 배포된 실데이터 스택(예: http://localhost:8700)에서 lib/guide-shots.json 의 스크린샷을 1440×900(배율 1)으로 찍어
 // public/guide/<id>.<내용 해시>.webp 로 저장하고(브라우저가 WebP 로 못 바꾸면 PNG), lib/guide-manifest.json 을 갱신한다. 그다음 web 을 다시 빌드해야 화면에 나온다.
@@ -6,27 +6,26 @@
 // - 운영 · 로그 화면은 /ops 로그인이 필요하다: 자격 증명은 인자로 받은 파일에서만 읽는다(인자 값 · 환경 변수로 받지 않는다). 끝나면 sign out.
 // - 로컬 스택만 찍는다(로그인 정보를 보낸다).
 // - 실데이터 확인: 찍기 전과 다 찍은 뒤(manifest 를 쓰기 전) 두 번 /api/v1/status 를 읽어, 확실히 실데이터일 때만 진행한다 — FIXTURE MODE(가짜 자료)이거나
-//   수집 모드를 모르면(heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춘다. 모든 스크린샷(상황판 밖 재생 · 통계 · 공항 · 운영 · 로그 포함)에 적용된다(--allow-fixture 로만 무시).
+//   수집 모드를 모르면(heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춘다. 모든 스크린샷(상황판 밖 재생 · 통계 · 공항 · 운영 · 로그 포함)에 적용된다(--allow-fixture 로만 무시 —
+//   그때는 모든 캡처 조건 맨 앞에 'fixture 스택(가짜 자료)' · '수집 모드 모름(…)' 을 붙인다: 설명서 그림 아래와 README 캡션이 밝히게, README 내보내기가 확인).
 // - 조회 오류가 보이는 화면(오류 문구 · 요청 id)은 싣지 않는다 — 건너뛰고 이유를 보고한다.
 // - 가림(계획의 masks): 설명서는 로그인 없이 누구나 본다. 운영 · 로그 화면은 운영자 이름과 운영 정보 · 브라우저가 보낸 글자가 든 열(마지막 오류 · 전환 사유 ·
 //   로거 · 메시지 · 요청 id)을 회색 상자로 가려 찍고, 무엇을 가렸는지 캡처 조건에 적는다. 가릴 자리를 하나라도 찾지 못하면 그 스크린샷을 싣지 않는다.
 // - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
+// - 화면에서 읽은 값을 캡처 조건에 적는 그림(world · hot — 칩 글자 · 항공기 수)은 찍기 직전과 직후에 두 번 읽어 같을 때만 싣는다(READ_TRIES 번까지 다시).
+// - 판정 · 상한 있는 기다림 · 전후 읽기 · 스택 확인은 guide-capture-lib.mjs 의 함수가 한다(시험이 동작으로 본다) — 이 파일은 브라우저를 움직이고 그 함수를 부른다.
 // - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
 import { chromium } from "@playwright/test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
-  statsPanelsVerdict,
+  anchorPoint, awaitReading, checkLocalBase, checkStack, credentialFileWarning, ERROR_MARKS, Fatal, findColumn, hashedName, MAP_PROBE, mapProbeInPage, maskedVariant, mergeManifest, parseArgs,
+  parseCredentials, READINGS, selectShots, shootStable, sizeReport, Skip, STACK_UNCHECKED, staleFiles, statsPanelsVerdict, withStackNote,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-/** 이 스크린샷을 건너뛴다(이유와 함께) — 다른 스크린샷은 계속 */
-class Skip extends Error {}
-/** 전체를 멈춘다 */
-class Fatal extends Error {}
 
 let args;
 try { args = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
@@ -34,11 +33,8 @@ try { args = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.mes
 const BASE = (() => { try { return checkLocalBase(args.baseUrl); } catch (e) { console.error(e.message); process.exit(2); } })();
 const plan = JSON.parse(readFileSync(join(WEB, "lib/guide-shots.json"), "utf8"));
 const planIds = plan.shots.map((s) => s.id);
-if (args.only) {
-  const unknown = args.only.filter((id) => !planIds.includes(id));
-  if (unknown.length) { console.error(`--only: 계획에 없는 스크린샷 ${unknown.join(", ")} (있는 것: ${planIds.join(", ")})`); process.exit(2); }
-}
-const shots = plan.shots.filter((s) => !args.only || args.only.includes(s.id));
+const picked = (() => { try { return selectShots(planIds, args); } catch (e) { console.error(e.message); process.exit(2); } })();
+const shots = plan.shots.filter((s) => picked.includes(s.id));
 const VP = plan.viewport;
 const OUT = args.outDir ? resolve(args.outDir) : join(WEB, "public/guide");
 const MANIFEST = args.outDir ? join(OUT, "guide-manifest.json") : join(WEB, "lib/guide-manifest.json");
@@ -89,17 +85,21 @@ async function openMap(path) {
   // 연결이 열린 뒤(LayerPanel 이 저장된 켜짐을 읽은 뒤) 끈다 — 앞 그림이 켠 레이어를 이 그림에 남기지 않는다
   for (const id of OVERLAY_LAYERS) await setPressed(id, false);
 }
-/** 실데이터 스택인지 /api/v1/status 로 확인(찍기 전 · 다 찍은 뒤). 아니면 전체를 멈춘다 */
+/**
+ * 스택 확인 결과(checkStack — lib). stack.note = --allow-fixture 로 실데이터가 아닌 스택을 찍을 때의 표시(예 "fixture 스택(가짜 자료)") — 모든 캡처 조건 맨 앞에
+ * 붙는다: 설명서 그림 아래와 README 캡션이 그 그림이 가짜 자료임을 밝히게(README 내보내기가 이 표시로 확인한다).
+ */
+let stack = STACK_UNCHECKED;
+/** GET /api/v1/status — 답을 그대로 넘긴다(판단은 checkStack) */
+const fetchStatus = async () => {
+  const r = await page.request.get(`${BASE}/api/v1/status`, { timeout: 15_000 });
+  return { code: r.status(), body: await r.json().catch(() => null) };
+};
+/**
+ * 실데이터 스택인지 확인(찍기 전 · 다 찍은 뒤) — checkStack: --allow-fixture 여도 묻고, 아니면 Fatal(--allow-fixture 면 표시), 두 번의 표시가 다르면 Fatal.
+ */
 async function assertRealData(when) {
-  if (args.allowFixture) return;
-  let code = 0, body = null;
-  try {
-    const r = await page.request.get(`${BASE}/api/v1/status`, { timeout: 15_000 });
-    code = r.status();
-    body = await r.json().catch(() => null);
-  } catch { /* 응답 없음 → code 0 */ }
-  const why = realDataVerdict(code, body);
-  if (why) throw new Fatal(`${when}: ${why} — 가짜 자료가 설명서에 실리지 않게 이번 결과를 버리고 멈춤(실데이터 스택에서 다시 찍거나 --allow-fixture)`);
+  stack = await checkStack({ fetchStatus, allowFixture: args.allowFixture, state: stack, when });
 }
 async function setPressed(testId, on) {
   const b = page.getByTestId(testId);
@@ -109,6 +109,9 @@ async function setLegend(open) {
   const b = page.getByTestId("legend-toggle");
   if ((await b.getAttribute("aria-expanded")) !== String(open)) await b.click();
 }
+/** 지도 화면의 판정 재료(world 칩 상태 · 지도 칩 · aircraft 수) — 브라우저 안에서 lib 의 mapProbeInPage 를 돌린다(판정은 lib 의 worldReading · hotReading) */
+const probeMap = () => page.evaluate(mapProbeInPage, MAP_PROBE);
+
 /** 한반도 지도 영역의 실시간 항공기(서버가 준 값 그대로) */
 async function koreaAircraft() {
   const r = await page.request.get(`${BASE}/api/v1/aircraft?bbox=${KOREA_BBOX}`);
@@ -143,6 +146,15 @@ const RECIPES = {
     await setLegend(true);
     await wait(10_000); // 스냅샷 · 레이더 타일 · 선박 격자
     return `한반도 ${shot.path.slice(1)}`;
+  },
+  async world(shot) {
+    // 전세계 보기(줌 1.6 — 서버가 넓은 구독을 받는 줌 5 이하, 핫 리전 줌 미만): 서버는 구독 영역의 병합 목록(전세계 · 관심 지역 피드 등)을 보낸다.
+    // 상태 바 world 칩이 정상(전세계 피드가 있고 오래되지 않음)이고 aircraft 가 1 이상일 때까지 기다리고(READINGS.world — 상한 · 정착 시간),
+    // 아니면 건너뛴다(worldReading). 캡처 조건 = 찍기 전후에 읽은 항공기 수(같을 때만 — 돌려준 읽기 함수로 shootStable 이 본다)
+    await openMap(shot.path);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    return awaitReading(READINGS.world, { path: shot.path, probe: probeMap });
   },
   async traffic(shot) {
     // 연안 교통량(ADR-023): 레이어를 켜면 곧바로 조회한다 — 상태 줄이 '불러오는 중'을 벗어날 때까지 기다리고, 칸을 그리는 상태(기준 …)일 때만 찍는다
@@ -207,6 +219,16 @@ const RECIPES = {
     await page.getByTestId("aircraft-card").waitFor();
     await wait(9_000); // 지도 이동 · 상세 · 노선 · 집중 추적 첫 보고
     return `${String(t.callsign).trim()} (${t.hex}) — 한반도 영역에서 가장 높이 나는 항공기`;
+  },
+  async hot(shot) {
+    // 핫 리전(ADR-013): 관심 지역 밖(도쿄)을 줌 ≥ 7 로 열고 아무것도 고르지 않으면 서버가 화면 중심 칸을 수집기에 맡긴다. 지도 칩이 '핫 리전 … 갱신'이 되고
+    // aircraft 가 1 이상일 때까지 기다리고(READINGS.hot — 상한 HOT_WAIT_MS, 그 뒤 WS 차분 한 주기를 넘게 정착), 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역
+    // 안이면 마지막 칩 글자와 함께 건너뛴다(hotReading). '갱신'이 증명하는 것은 이 칸의 핫 리전 조회가 최근에 성공했다는 서버 보고까지다(받은 항공기가 0 대여도
+    // active) — 지도의 어느 항공기가 핫 리전으로 받은 것인지는 아니다(aircraft 는 여러 피드를 합친 목록의 수). 캡처 조건 = 찍기 전후에 읽은 칩 글자 · 항공기 수(같을 때만)
+    await openMap(shot.path);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    return awaitReading(READINGS.hot, { path: shot.path, probe: probeMap });
   },
   async ship(shot) {
     // 계획의 위치(부산항 부근)에 선박이 없으면 수신국이 많은 도쿄만으로 — 어디서 찍었는지 조건에 적는다
@@ -462,13 +484,15 @@ for (const shot of fatal ? [] : shots) {
   try {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
     console.log(`… ${shot.id}`);
-    const condition = await recipe(shot);
+    const got = await recipe(shot);
+    // 레시피가 읽기 함수를 돌려주면 캡처 조건은 화면 값이다(칩 글자 · 항공기 수) — 찍기 직전과 직후에 읽어 같을 때만 싣는다(shootStable — WS 차분이 10 s 마다 와 값이 바뀔 수 있다)
+    const read = typeof got === "function" ? got : null;
     await assertNoErrors();
     const mask = await maskLocators(shot);
-    const variant = maskedVariant(condition, (shot.masks ?? []).map((m) => m.label));
     await page.evaluate(() => document.fonts?.ready);
-    const positions = await measure(shot.callouts);
-    const png = await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR });
+    const { shot: taken, reading } = await shootStable(read, async () => ({ positions: await measure(shot.callouts), png: await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR }) }));
+    const { positions, png } = taken;
+    const variant = maskedVariant(withStackNote(stack.note, read ? reading : got), (shot.masks ?? []).map((m) => m.label));
     const enc = await encode(png);
     const file = hashedName(shot.id, enc.bytes, enc.format);
     writeFileSync(join(OUT, file), enc.bytes);
