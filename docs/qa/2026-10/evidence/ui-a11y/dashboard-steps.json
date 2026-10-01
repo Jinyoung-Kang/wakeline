@@ -1,0 +1,1239 @@
+{
+  "blockedExternalHosts": {
+    "tiles.openfreemap.org": 1,
+    "tilecache.rainviewer.com": 401
+  },
+  "steps": [
+    {
+      "name": "search: '/' focuses the input",
+      "ok": true,
+      "focus": {
+        "tag": "input#_R_35b_-input",
+        "name": "",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "aircraft-search-input",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "search: type KAL (debounced)",
+      "ok": true,
+      "focus": {
+        "tag": "input#_R_35b_-input",
+        "name": "",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "aircraft-search-input",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "9992 GET /api/v1/aircraft/search?q=KAL",
+        "9994 GET /api/v1/ships/search?q=KAL&limit=10"
+      ]
+    },
+    {
+      "name": "search: ArrowDown + Enter opens aircraft card",
+      "ok": true,
+      "note": "panel aircraft pressed=true",
+      "focus": {
+        "tag": "input#_R_35b_-input",
+        "name": "",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "aircraft-search-input",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "11790 GET /api/v1/aircraft/71c081/track",
+        "11791 GET /api/v1/aircraft/71c081"
+      ],
+      "axe": []
+    },
+    {
+      "name": "card: Escape (does it close the card?)",
+      "ok": true,
+      "note": "close button still visible=true",
+      "focus": {
+        "tag": "button",
+        "name": "닫기",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "card: click 닫기 — where does focus go?",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-radar (1st)",
+      "ok": true,
+      "note": "pressed true → false",
+      "focus": {
+        "tag": "button",
+        "name": "레이더",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-radar",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-radar (restore)",
+      "ok": true,
+      "note": "pressed → true",
+      "focus": {
+        "tag": "button",
+        "name": "레이더",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-radar",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-sigmet (1st)",
+      "ok": true,
+      "note": "pressed true → false",
+      "focus": {
+        "tag": "button",
+        "name": "SIGMET",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-sigmet",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-sigmet (restore)",
+      "ok": true,
+      "note": "pressed → true",
+      "focus": {
+        "tag": "button",
+        "name": "SIGMET",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-sigmet",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-aircraft (1st)",
+      "ok": true,
+      "note": "pressed true → false",
+      "focus": {
+        "tag": "button",
+        "name": "항공기",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-aircraft",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-aircraft (restore)",
+      "ok": true,
+      "note": "pressed → true",
+      "focus": {
+        "tag": "button",
+        "name": "항공기",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-aircraft",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-ships (1st)",
+      "ok": true,
+      "note": "pressed false → true",
+      "focus": {
+        "tag": "button",
+        "name": "선박",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-ships",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "layer toggle layer-ships (restore)",
+      "ok": true,
+      "note": "pressed → false",
+      "focus": {
+        "tag": "button",
+        "name": "선박",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-ships",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-reception (1st)",
+      "ok": true,
+      "note": "pressed false → true",
+      "focus": {
+        "tag": "button",
+        "name": "관측 수신 범위(최근 24 h)",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-reception",
+        "inViewport": true
+      },
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 429 ()"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "429 GET /api/v1/ships/coverage"
+      ],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "36927 GET /api/v1/ships/coverage"
+      ],
+      "axe": []
+    },
+    {
+      "name": "layer toggle layer-reception (restore)",
+      "ok": true,
+      "note": "pressed → false",
+      "focus": {
+        "tag": "button",
+        "name": "관측 수신 범위(최근 24 h)",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-reception",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-airports (1st)",
+      "ok": true,
+      "note": "pressed true → false",
+      "focus": {
+        "tag": "button",
+        "name": "공항",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-airports",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-airports (restore)",
+      "ok": true,
+      "note": "pressed → true",
+      "focus": {
+        "tag": "button",
+        "name": "공항",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-airports",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-tracks (1st)",
+      "ok": true,
+      "note": "pressed true → false",
+      "focus": {
+        "tag": "button",
+        "name": "항적",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-tracks",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-tracks (restore)",
+      "ok": true,
+      "note": "pressed → true",
+      "focus": {
+        "tag": "button",
+        "name": "항적",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-tracks",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-prediction (1st)",
+      "ok": true,
+      "note": "pressed true → false",
+      "focus": {
+        "tag": "button",
+        "name": "예측(추정)",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-prediction",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-prediction (restore)",
+      "ok": true,
+      "note": "pressed → true",
+      "focus": {
+        "tag": "button",
+        "name": "예측(추정)",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-prediction",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "layer toggle layer-traffic (1st)",
+      "ok": true,
+      "note": "pressed false → true",
+      "focus": {
+        "tag": "button",
+        "name": "연안 교통량(KOMSA)",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "layer-traffic",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "55505 GET /api/v1/traffic/grid"
+      ],
+      "axe": []
+    },
+    {
+      "name": "layer toggle layer-traffic (restore)",
+      "ok": true,
+      "note": "pressed → false",
+      "focus": {
+        "tag": "button",
+        "name": "연안 교통량(KOMSA)",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-traffic",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "legend open",
+      "ok": true,
+      "note": "expanded=true",
+      "focus": {
+        "tag": "button",
+        "name": "범례 ▾",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "legend-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "60582 GET /api/v1/radar/kr"
+      ],
+      "axe": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "wcag": [
+            "wcag2aa",
+            "wcag143"
+          ],
+          "count": 4,
+          "examples": [
+            {
+              "target": "span[title=\"0 ft · 0 m\"] > .text-fg-3\\/80",
+              "html": "<span class=\"text-fg-3/80\">0 m</span>",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.19 (foreground color: #727982, background color: #111418, font size: 6.8pt (9px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": "span[title=\"10k ft · 3,048 m\"] > .text-fg-3\\/80",
+              "html": "<span class=\"text-fg-3/80\">3,048 m</span>",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.19 (foreground color: #727982, background color: #111418, font size: 6.8pt (9px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": "span[title=\"FL250 · 7,620 m\"] > .text-fg-3\\/80",
+              "html": "<span class=\"text-fg-3/80\">7,620 m</span>",
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.19 (foreground color: #727982, background color: #111418, font size: 6.8pt (9px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "scrollable-region-focusable",
+          "impact": "serious",
+          "wcag": [
+            "wcag2a",
+            "wcag211",
+            "wcag213"
+          ],
+          "count": 1,
+          "examples": [
+            {
+              "target": "#map-legend",
+              "html": "<div id=\"map-legend\" class=\"panel max-h-full w-[264px] max-w-full overflow-y-auto text-[11px] text-fg-2\" data-testid=\"map-legend\" role=\"region\" aria-label=\"지도 범례\">",
+              "summary": "Fix any of the following:\n  Element should have focusable content\n  Element should be focusable"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "legend: Escape",
+      "ok": true,
+      "note": "expanded=true",
+      "focus": {
+        "tag": "button",
+        "name": "범례 ▾",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "legend-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "legend close (click)",
+      "ok": true,
+      "note": "expanded=false",
+      "focus": {
+        "tag": "button",
+        "name": "범례 ▸",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "legend-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "tab aircraft (no selection)",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "aircraft",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "tab-aircraft",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "tab ship (layer off → 선박 켜기)",
+      "ok": true,
+      "note": "clicked 선박 켜기",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "ship list: zoom out to see ships",
+      "ok": true,
+      "note": "rows=39",
+      "focus": {
+        "tag": "button",
+        "name": "Zoom out",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "ship list: filter by text",
+      "ok": true,
+      "note": "rows with 'A'=0",
+      "focus": {
+        "tag": "input",
+        "name": "선박 이름 또는 MMSI 로 거르기",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "ship-list-filter",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "ship list: sort by each header (twice)",
+      "ok": true,
+      "note": "ship-list-sort-cat:descending, ship-list-sort-name:descending, ship-list-sort-mmsi:descending, ship-list-sort-sog:ascending, ship-list-sort-nav:descending, ship-list-sort-age:ascending",
+      "focus": {
+        "tag": "button",
+        "name": "경과 ▲",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "ship-list-sort-age",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "ship list: open first ship card (keyboard Enter on row button)",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "80284 GET /api/v1/ships/440002180/track?from=2026-10-01T11%3A53%3A42.749Z&to=2026-10-01T17%3A53%3A42.749Z",
+        "80286 GET /api/v1/ships/440002180"
+      ],
+      "axe": []
+    },
+    {
+      "name": "ship card: track hours buttons",
+      "ok": true,
+      "note": "ship-track-hours-6=true, ship-track-hours-12=true, ship-track-hours-24=true",
+      "focus": {
+        "tag": "button",
+        "name": "6 h",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ship-track-hours-6",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "84669 GET /api/v1/ships/440002180/track?from=2026-10-01T05%3A53%3A47.127Z&to=2026-10-01T17%3A53%3A47.127Z",
+        "85458 GET /api/v1/ships/440002180/track?from=2026-09-30T17%3A53%3A47.922Z&to=2026-10-01T17%3A53%3A47.922Z",
+        "86445 GET /api/v1/ships/440002180/track?from=2026-10-01T11%3A53%3A48.910Z&to=2026-10-01T17%3A53%3A48.910Z"
+      ]
+    },
+    {
+      "name": "ship card: close (keyboard) — focus after?",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "ship layer: restore off",
+      "ok": true,
+      "note": "pressed=false",
+      "focus": {
+        "tag": "button",
+        "name": "선박",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "layer-ships",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "tab sigmet (list)",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "sigmet",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "tab-sigmet",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "sigmet list: open first",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "93846 GET /api/v1/sigmets/RKRR%3AFX1%3A1790875224"
+      ],
+      "axe": []
+    },
+    {
+      "name": "sigmet card: close (keyboard)",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "tab airport (list)",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "airport",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "tab-airport",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "98031 GET /api/v1/airports?watched=true"
+      ],
+      "axe": []
+    },
+    {
+      "name": "airport list: open first",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "100288 GET /api/v1/airports/RJDB/wx"
+      ],
+      "axe": []
+    },
+    {
+      "name": "airport card: close (keyboard)",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "103648 GET /api/v1/airports?watched=true"
+      ]
+    },
+    {
+      "name": "tab alerts",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "alerts",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "tab-alerts",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "alerts scope world",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "전세계 45",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "alerts-scope-world",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "alerts scope region",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "관심 지역",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "alerts-scope-region",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "alert toggle: open evidence",
+      "ok": true,
+      "note": "expanded=true",
+      "focus": {
+        "tag": "button",
+        "name": "AAR702, ICE SEV, RKRR, FL1805,486 m, INSIDE — 경보 안",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "alert-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "alert evidence: open aircraft card (keyboard)",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "110438 GET /api/v1/aircraft/71bf54/track",
+        "110439 GET /api/v1/aircraft/71bf54"
+      ]
+    },
+    {
+      "name": "back to alerts: evidence still open?",
+      "ok": true,
+      "note": "expanded toggles=1",
+      "focus": {
+        "tag": "button",
+        "name": "alerts",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "tab-alerts",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "alert toggle: close evidence",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "AAR702, ICE SEV, RKRR, FL1805,486 m, INSIDE — 경보 안",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "alert-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "radar source KMA",
+      "ok": true,
+      "note": "disabled title=수집 전",
+      "focus": {
+        "tag": "button",
+        "name": "AAR702, ICE SEV, RKRR, FL1805,486 m, INSIDE — 경보 안",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "alert-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "radar source RainViewer",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "RainViewer",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "radar-src-rv",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "radar play",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "레이더 애니메이션 정지",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "radar-play",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "120653 GET /api/v1/radar/kr"
+      ]
+    },
+    {
+      "name": "radar pause",
+      "ok": true,
+      "note": "pressed=false",
+      "focus": {
+        "tag": "button",
+        "name": "레이더 애니메이션 재생",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "radar-play",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "radar slider ← ← (keyboard)",
+      "ok": true,
+      "note": "value=2 valuetext=10-02 01:10 KST",
+      "focus": {
+        "tag": "input",
+        "name": "레이더 프레임",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "radar latest",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "latest",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "radar-latest",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "radar 범례·정합 open",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "범례·정합",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "kr-radar-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "radar 범례·정합 close",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "범례·정합",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "kr-radar-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "statusbar details open",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "상세 ▴",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "statusbar-details-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "statusbar details: Escape (focus returns?)",
+      "ok": true,
+      "note": "expanded=false",
+      "focus": {
+        "tag": "button",
+        "name": "상세 ▾",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "statusbar-details-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "map zoom in",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "Zoom in",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "map zoom out",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "Zoom out",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "idle 30 s (poll cadence / duplicates)",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "Zoom out",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    }
+  ]
+}

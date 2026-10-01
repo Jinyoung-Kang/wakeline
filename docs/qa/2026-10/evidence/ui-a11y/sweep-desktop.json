@@ -1,0 +1,319 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "blockedExternalHosts": {
+    "tiles.openfreemap.org": 2,
+    "tilecache.rainviewer.com": 26
+  },
+  "results": [
+    {
+      "route": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 54,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "603 GET /api/v1/radar/kr",
+        "604 GET /api/v1/airports?watched=true"
+      ],
+      "longTasks": {
+        "count": 17,
+        "maxMs": 1874,
+        "totalMs": 4407
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/replay",
+      "title": "이력 재생 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 2,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "11414 GET /api/v1/replay?at=2026-10-01T17%3A15%3A43.157Z&bbox=124%2C33%2C132%2C39"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/stats",
+      "title": "통계 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "21685 GET /api/v1/stats/sigmet?group=fir",
+        "21689 GET /api/v1/stats/sigmet?group=hazard",
+        "21691 GET /api/v1/stats/alerts",
+        "21692 GET /api/v1/stats/traffic?day=2026-10-01"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/RKSI",
+      "title": "공항 기상 이력 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "27978 GET /api/v1/airports/RKSI/wx"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/ZZZZ",
+      "title": "공항 기상 이력 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET http://localhost:8701/api/v1/airports/ZZZZ/wx"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "34310 GET /api/v1/airports/ZZZZ/wx"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/abc",
+      "title": "공항 기상 이력 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 400 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "400 GET http://localhost:8701/api/v1/airports/ABC/wx"
+      ],
+      "failedRequests": [
+        "net::ERR_ABORTED GET http://localhost:8701/logs?_rsc=S6Q3wI6NXhrDA22E"
+      ],
+      "duplicates": [],
+      "apiRequests": [
+        "40699 GET /api/v1/airports/ABC/wx"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/ops",
+      "title": "운영 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET http://localhost:8701/api/v1/ops/session"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "47029 GET /api/v1/ops/session"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/logs",
+      "title": "시스템 로그 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET http://localhost:8701/api/v1/ops/session"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "53274 GET /api/v1/ops/session"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/about",
+      "title": "출처·한계 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": [
+        {
+          "id": "scrollable-region-focusable",
+          "impact": "serious",
+          "wcag": [
+            "wcag2a",
+            "wcag211",
+            "wcag213"
+          ],
+          "count": 1,
+          "help": "Scrollable region must have keyboard access",
+          "examples": [
+            {
+              "target": ".overflow-y-auto",
+              "html": "<div class=\"h-full overflow-y-auto p-4 text-[12px]\">",
+              "summary": "Fix any of the following:\n  Element should have focusable content\n  Element should be focusable"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "route": "/guide",
+      "title": "설명서 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 1440,
+        "scrollWidth": 1440,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    }
+  ]
+}

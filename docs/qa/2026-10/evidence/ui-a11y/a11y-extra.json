@@ -1,0 +1,639 @@
+{
+  "zoom200-640x400": {
+    "/": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/replay": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/stats": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/airports/RKSI": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/about": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/guide": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/ops": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    }
+  },
+  "reflow-320x256": {
+    "/": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "button[data-testid=tab-airport].btn.flex-1.border-0",
+            "right": 341,
+            "w": 74
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "canvas \"실시간 항공기·위험기상 지도. 화살표 키로 이동, +/- 로 확대. 항공\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom in\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom out\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button[tab-airport] \"airport\" — 오른쪽이 잘림(right 341 > 320)",
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    },
+    "/replay": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "canvas \"Map\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom in\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom out\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    },
+    "/stats": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    },
+    "/airports/RKSI": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    },
+    "/about": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    },
+    "/guide": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    },
+    "/ops": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 529,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 325,
+            "w": 315
+          },
+          {
+            "sel": "span",
+            "right": 325,
+            "w": 282
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 326,
+            "w": 316
+          },
+          {
+            "sel": "span",
+            "right": 326,
+            "w": 263
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 529,
+            "w": 519
+          },
+          {
+            "sel": "span",
+            "right": 341,
+            "w": 269
+          },
+          {
+            "sel": "span.inline-block.whitespace-nowrap",
+            "right": 338,
+            "w": 329
+          },
+          {
+            "sel": "span",
+            "right": 338,
+            "w": 147
+          },
+          {
+            "sel": "a.text-fg-2.hover:text-fg",
+            "right": 338,
+            "w": 138
+          }
+        ]
+      },
+      "clipped": [
+        "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 209, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+      ]
+    }
+  },
+  "ops-signed-in-375": {
+    "overflow": {
+      "innerWidth": 375,
+      "scrollWidth": 529,
+      "overflow": true,
+      "offenders": [
+        {
+          "sel": "div.flex.gap-1",
+          "right": 511,
+          "w": 502
+        },
+        {
+          "sel": "button[data-testid=ops-tab-audit].btn",
+          "right": 383,
+          "w": 59
+        },
+        {
+          "sel": "span.inline-block.whitespace-nowrap",
+          "right": 529,
+          "w": 519
+        },
+        {
+          "sel": "span",
+          "right": 529,
+          "w": 188
+        },
+        {
+          "sel": "a.text-fg-2.hover:text-fg",
+          "right": 457,
+          "w": 107
+        }
+      ]
+    },
+    "clipped": [
+      "button[ops-tab-audit] \"audit\" — 오른쪽이 잘림(right 383 > 375)",
+      "button[ops-tab-dlq] \"dlq\" — 창 밖(x 386 · y 62, 창 375×812, 페이지 스크롤 없음)",
+      "button[ops-tab-pipeline] \"pipeline\" — 창 밖(x 436 · y 62, 창 375×812, 페이지 스크롤 없음)",
+      "a \"해양수산부 해양격자 4단계\" — 오른쪽이 잘림(right 457 > 375)"
+    ],
+    "tabs": [
+      "ops-tab-providers x=10..100",
+      "ops-tab-runs x=103..158",
+      "ops-tab-quality x=162..236",
+      "ops-tab-settings x=239..321",
+      "ops-tab-audit x=324..383",
+      "ops-tab-dlq x=386..433",
+      "ops-tab-pipeline x=436..511"
+    ]
+  },
+  "ops-signed-in-320": {
+    "clipped": [
+      "button[ops-tab-audit] \"audit\" — 창 밖(x 324 · y 62, 창 320×640, 페이지 스크롤 없음)",
+      "button[ops-tab-dlq] \"dlq\" — 창 밖(x 386 · y 62, 창 320×640, 페이지 스크롤 없음)",
+      "button[ops-tab-pipeline] \"pipeline\" — 창 밖(x 436 · y 62, 창 320×640, 페이지 스크롤 없음)",
+      "a \"해양수산부 해양격자 4단계\" — 창 밖(x 350 · y 593, 창 320×640, 페이지 스크롤 없음)",
+      "a \"OpenStreetMap contributors\" — 오른쪽이 잘림(right 338 > 320)"
+    ]
+  },
+  "liveRegionsAX": [
+    {
+      "role": "alert",
+      "text": ""
+    },
+    {
+      "role": "generic",
+      "text": ""
+    },
+    {
+      "role": "status",
+      "text": ""
+    },
+    {
+      "role": "status",
+      "text": "배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)"
+    },
+    {
+      "role": "status",
+      "text": ""
+    },
+    {
+      "role": "status",
+      "text": ""
+    }
+  ],
+  "searchSelect": {
+    "statusBeforeSelect": "항공기 20건 · 선박 일치하는 선박 없음",
+    "statusAfterSelect": "KAL2065 선택 — 지도 이동",
+    "activeElement": "aircraft-search-input",
+    "cardOpen": true,
+    "liveRegionsAfter": [
+      {
+        "role": "alert",
+        "text": ""
+      },
+      {
+        "role": "generic",
+        "text": "KAL2065 선택 — 지도 이동"
+      },
+      {
+        "role": "status",
+        "text": "노선 조회 중|· |KAL2065"
+      },
+      {
+        "role": "status",
+        "text": "배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)"
+      },
+      {
+        "role": "status",
+        "text": "집중 추적 대기"
+      },
+      {
+        "role": "status",
+        "text": ""
+      }
+    ]
+  },
+  "lang": {
+    "/": {
+      "html": "ko",
+      "h1": [
+        "H1:실시간 상황판 — 항공기·선박·위험기상 지도와 알림"
+      ],
+      "elementsWithLangEn": 0
+    },
+    "/stats": {
+      "html": "ko",
+      "h1": [
+        "H1:STATISTICS",
+        "H2:SIGMET BY FIR (7D, TOP 24)",
+        "H2:SIGMET BY HAZARD (7D)",
+        "H2:DISTINCT AIRCRAFT BY HOUR (KST)",
+        "H2:ALERTS BY KIND (7D) · AVG DWELL"
+      ],
+      "elementsWithLangEn": 0
+    },
+    "/about": {
+      "html": "ko",
+      "h1": [
+        "H1:DATA SOURCES · LICENSES",
+        "H2:한계 · 정직성 규칙",
+        "H2:DESIGN"
+      ],
+      "elementsWithLangEn": 0
+    },
+    "/airports/RKSI": {
+      "html": "ko",
+      "h1": [
+        "H1:AIRPORT WEATHER · RKSI"
+      ],
+      "elementsWithLangEn": 0
+    }
+  }
+}
