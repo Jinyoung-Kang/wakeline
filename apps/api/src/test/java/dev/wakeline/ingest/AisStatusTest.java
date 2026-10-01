@@ -66,7 +66,7 @@ class AisStatusTest {
 
     @Test void inputDown_openGapStaleHeartbeatDisconnectedOrStalledPipeline() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         assertThat(st.inputDown(NOW_MS)).as("nothing known").isTrue();
         st.update(healthy(NOW.minusSeconds(3)));
         assertThat(st.inputDown(NOW_MS)).as("no ships message applied yet").isTrue();
@@ -86,15 +86,15 @@ class AisStatusTest {
     }
 
     @Test void refreshFailureKeepsThePreviousValue() {
-        AisStatus st = new AisStatus(new StringRedisTemplate(), new ShipStore()); // 연결 팩토리 없음 → 읽기 실패
+        AisStatus st = new AisStatus(new ShipStore());
         st.update(healthy(NOW));
-        st.refresh();
+        new AisStatusReader(new StringRedisTemplate(), st).refresh(); // 연결 팩토리 없음 → 읽기 실패
         assertThat(st.current().provider()).isEqualTo("aisstream");
     }
 
     @Test void publicView_shapeAndHonesty() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         assertThat(st.publicView(NOW_MS)).as("AIS never seen").isNull();
 
         st.update(healthy(NOW.minusSeconds(3)));
@@ -154,7 +154,7 @@ class AisStatusTest {
     /** 계약 v3 §A: state·coverage 는 connected 처럼 heartbeat 가 30 s 안일 때만(죽은 수집기의 마지막 값을 지금 값으로 말하지 않는다). */
     @Test void publicView_stateAndCoverage_onlyWhileTheHeartbeatIsFresh() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         Map<Object, Object> h = healthy(NOW.minusSeconds(3));
         h.put("bbox", "18,105,46,150");
         st.update(h);
@@ -240,7 +240,7 @@ class AisStatusTest {
      */
     @Test void coverage_isOnlyTheShardsActuallySubscribed() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         // aisstream 키 없음 → 설정의 구역 하나가 disabled, 구독 없음(bbox 빈 값)
         Map<Object, Object> disabled = sharded(NOW.minusSeconds(3), shard("18,105,46,150", "disabled", false, null, null));
         disabled.put("state", "disabled");
@@ -290,7 +290,7 @@ class AisStatusTest {
     /** 계약 v4 §D: publicView.shards = [{coverage, state, connected, gap_open_since}] — heartbeat 가 30 s 안일 때만, 모르는 값은 키 없음. */
     @Test void publicView_shards_onlyWhileTheHeartbeatIsFresh() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         st.update(sharded(NOW.minusSeconds(3), shard(AMERICAS, "receiving", true, null, null),
                 shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)")));
         Map<String, Object> v = st.publicView(NOW_MS);
@@ -320,7 +320,7 @@ class AisStatusTest {
      * 없는데 합계가 끊김이면·합계와 구역이 어긋나면 전체.
      */
     @Test void freeze_onlyTheShardsThatAreDown() {
-        AisStatus st = new AisStatus(new StringRedisTemplate(), liveStore(NOW_MS - 5_000));
+        AisStatus st = new AisStatus(liveStore(NOW_MS - 5_000));
         String amOk = shard(AMERICAS, "receiving", true, null, null);
         String apGap = shard(ASIA_PACIFIC, "backoff", false, "2026-09-28T02:58:00Z", "server closed (1006)");
 
@@ -360,7 +360,7 @@ class AisStatusTest {
         assertThat(st.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.ALL);
 
         // api 가 ships 메시지를 2분 넘게 받지 못함 → 전체
-        AisStatus stalled = new AisStatus(new StringRedisTemplate(), liveStore(NOW_MS - AisStatus.STALL_MS - 1_000));
+        AisStatus stalled = new AisStatus(liveStore(NOW_MS - AisStatus.STALL_MS - 1_000));
         stalled.update(sharded(NOW.minusSeconds(3), amOk, apGap));
         assertThat(stalled.freeze(NOW_MS)).isEqualTo(ShipStore.Freeze.ALL);
     }
@@ -393,7 +393,7 @@ class AisStatusTest {
     /** 계약 v4 §D: 스위퍼는 끊긴 구역의 선박만 남기고 다른 구역의 오래된 선박은 뺀다. */
     @Test void sweeperExpiresShipsOutsideTheDownShards() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         List<Object> events = new java.util.ArrayList<>();
         ShipSweeper sw = new ShipSweeper(ships, st, events::add, new SimpleMeterRegistry());
         ships.apply(List.of(ShipStoreTest.pos("440000001", 35, 129, NOW.minusSeconds(40 * 60)), ShipStoreTest.pos("366000001", 40, -70, NOW.minusSeconds(40 * 60))),
@@ -406,7 +406,7 @@ class AisStatusTest {
 
     @Test void sweeperFreezesWhileDownAndPublishesRemovals() {
         ShipStore ships = new ShipStore();
-        AisStatus st = new AisStatus(new StringRedisTemplate(), ships);
+        AisStatus st = new AisStatus(ships);
         List<Object> events = new java.util.ArrayList<>();
         ShipSweeper sw = new ShipSweeper(ships, st, events::add, new SimpleMeterRegistry());
         ships.apply(List.of(ShipStoreTest.pos("440000001", 35, 129, NOW.minusSeconds(40 * 60))), List.of(), NOW, "aisstream", NOW_MS);
@@ -418,7 +418,7 @@ class AisStatusTest {
         assertThat(e.removed()).containsExactly("440000001");
         assertThat(e.states()).isEmpty();
         assertThat(e.receipt()).isSameAs(Receipt.NONE);
-        sw.refreshStatus(); // 연결 팩토리 없음 — 조용히 이전 값
+        new AisStatusReader(new StringRedisTemplate(), st).refresh(); // 연결 팩토리 없음 — 조용히 이전 값
         assertThat(st.current().present()).isTrue();
     }
 }

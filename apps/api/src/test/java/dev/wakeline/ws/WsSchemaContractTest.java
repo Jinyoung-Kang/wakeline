@@ -12,6 +12,7 @@ import dev.wakeline.weather.core.AlertStateMachine;
 import dev.wakeline.weather.core.EngineEvents;
 import dev.wakeline.weather.core.EngineService;
 import dev.wakeline.ingest.AisStatus;
+import dev.wakeline.ingest.AisStatusReader;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.platform.support.Receipt;
@@ -166,8 +167,8 @@ class WsSchemaContractTest {
         StringRedisTemplate redis = new StringRedisTemplate() {
             @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations) hash; }
         };
-        AisStatus ais = new AisStatus(redis, k.ships);
-        ais.refresh();
+        AisStatus ais = new AisStatus(k.ships);
+        new AisStatusReader(redis, ais).refresh();
         DemandStats demand = new DemandStats();
         demand.update(new DemandStats.Counts(1, 1, 1, 1, 1, 1));
         EngineService engine = new EngineService(k.snapshots, k.sigmets, e -> { }, k.meters);

@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 /**
- * 선박 상태의 주기 작업(ADR-014): 수집기 상태 해시 읽기(5 s) · 실시간 목록 만료(30 s). 둘 다 스케줄러 스레드 — 스트림 소비·WS 를 막지 않는다.
+ * 선박 상태의 주기 작업(ADR-014): 실시간 목록 만료(30 s) — 스케줄러 스레드라 스트림 소비·WS 를 막지 않는다. 수집기 상태 해시 읽기(5 s)는
+ * {@link AisStatusReader}.
  * 만료로 빠진 선박은 ShipsUpdated(removed)로 알린다(WS 가 diff·격자에서 뺀다). 수신이 끊긴 동안은 빼지 않는다({@link AisStatus#freeze} —
  * 수신 상태를 모르면 전체, 구역 정보가 있으면 끊긴 구역의 상자 안만, 계약 v4 §D).
  */
@@ -33,9 +34,6 @@ public class ShipSweeper {
         Gauge.builder("wakeline_ais_input_down", this, s -> s.inputDown ? 1 : 0)
                 .description("AIS 수신이 끊겼거나 확인할 수 없는 곳이 있음(1, 전체 또는 일부 구역) — 그곳 선박의 만료를 멈춘다").register(meters);
     }
-
-    @Scheduled(initialDelay = 1_000, fixedDelay = 5_000)
-    public void refreshStatus() { ais.refresh(); }
 
     @Scheduled(initialDelay = 30_000, fixedDelay = 30_000)
     public void sweep() { sweep(System.currentTimeMillis()); }

@@ -3,9 +3,6 @@ package dev.wakeline.ingest;
 import dev.wakeline.domain.AisBboxes;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.AisScope;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -20,7 +17,8 @@ import java.util.Set;
 
 /**
  * ais 수집기의 상태 해시(wakeline:ais:status, 계약 v2 §B1)를 읽어 검증한 값 — 화면의 AIS 배지(status.sources.ais)와 선박 만료의 '수신 끊김'
- * 판단에 쓴다. 해시는 수집기가 5 s 마다(상태가 바뀌면 바로) 쓰고 api 는 {@link ShipSweeper} 가 5 s 마다 한 번 읽는다(요청·세션마다 읽지 않는다).
+ * 판단에 쓴다. 해시는 수집기가 5 s 마다(상태가 바뀌면 바로) 쓰고 api 는 {@link AisStatusReader} 가 5 s 마다 한 번 읽어 {@link #update} 로 넘긴다
+ * (요청·세션마다 읽지 않는다). 이 클래스는 Redis 를 모른다 — 읽은 해시를 검사하고 판단만 한다.
  * <ul>
  *   <li>값은 믿지 않고 형식을 검사한다: 시각은 시간대가 있는 ISO 만, 숫자는 유한·0 이상, 문자열은 200자까지. 틀린 값은 null(모름).</li>
  *   <li>수집기의 연결 상태(connected)는 heartbeat(updated_at)가 30 s 안일 때만 '지금' 값으로 쓴다 — 수집기가 죽었으면 마지막 값이 '연결됨'
@@ -31,7 +29,6 @@ import java.util.Set;
  */
 @Component
 public class AisStatus {
-    private static final Logger log = LoggerFactory.getLogger(AisStatus.class);
     public static final String KEY = "wakeline:ais:status";
     /** 수집기는 5 s 마다 쓴다 — 이보다 오래되면 수집기 상태를 '지금' 값으로 보지 않는다. */
     static final long HEARTBEAT_MAX_AGE_MS = 30_000;
@@ -86,28 +83,17 @@ public class AisStatus {
         }
     }
 
-    private final StringRedisTemplate redis;
     private final ShipStore ships;
     private volatile Feed feed = Feed.ABSENT;
 
-    public AisStatus(StringRedisTemplate redis, ShipStore ships) {
-        this.redis = redis;
+    public AisStatus(ShipStore ships) {
         this.ships = ships;
     }
 
     public Feed current() { return feed; }
 
-    /** 해시를 한 번 읽는다(스케줄러 스레드). 실패하면 이전 값을 둔다. */
-    public void refresh() {
-        try {
-            update(redis.opsForHash().entries(KEY));
-        } catch (RuntimeException e) {
-            log.debug("ais status unavailable: {}", e.toString());
-        }
-    }
-
-    /** 읽은 해시로 바꾼다(빈 해시 = 수집기 상태 없음). */
-    void update(Map<Object, Object> hash) { feed = parse(hash); }
+    /** 읽은 해시로 바꾼다(빈 해시 = 수집기 상태 없음). 읽기는 {@link AisStatusReader} — 실패하면 부르지 않아 이전 값이 남는다. */
+    public void update(Map<Object, Object> hash) { feed = parse(hash); }
 
     /** 상태 해시의 last_gap_scope: 형식이 맞는 구역 하나면 그 구역, 비었거나 틀리면 구역 없음(모든 선박에 적용 — 추정해 좁히지 않는다). */
     static AisScope gapScope(String text) {

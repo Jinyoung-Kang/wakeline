@@ -14,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.QueryTimeoutException;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.test.web.servlet.MockMvc;
@@ -146,7 +145,7 @@ class ShipControllerTest {
 
     final ShipStore store = new ShipStore();
     final FakeRepo repo = new FakeRepo();
-    final AisStatus ais = new AisStatus(new StringRedisTemplate(), store);
+    final AisStatus ais = new AisStatus(store);
     MockMvc mvc;
 
     @BeforeEach
