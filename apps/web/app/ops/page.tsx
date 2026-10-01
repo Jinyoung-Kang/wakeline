@@ -266,11 +266,18 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
    */
   const switching = useRef(new Set<string>());
   const [busySwitch, setBusySwitch] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 마지막 켜고 끄기 실패(PLAN §5 결정 4): 다음 쓰기나 '알림 닫기' 전까지 둔다 — 15 s 주기 · 새로고침 단추가 지우지 않는다(지우면 공급자가 꺼지지 않았다는 것을
+   * 놓친다, web-review B4). 세션 만료(401/404 + 세션 확인도 401/404)면 로그인으로
+   */
+  const [switchErr, setSwitchErr] = useState<{ name: string; action: "enable" | "disable"; error: unknown } | null>(null);
   const toggle = async (name: string, action: "enable" | "disable") => {
     if (switching.current.has(name)) return;
     switching.current.add(name);
     setBusySwitch(new Set(switching.current));
-    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", providerSwitchPath(name, action)))); refresh(); } catch (e) { fail(e); }
+    setSwitchErr(null);
+    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", providerSwitchPath(name, action)))); refresh(); }
+    catch (e) { setSwitchErr({ name, action, error: e }); if (isAuthMiss(e)) void authMiss(e); }
     finally { switching.current.delete(name); setBusySwitch(new Set(switching.current)); }
   };
   const switchMsg = liveNote(switchNote, prov?.provider_switch); // 주기 미러가 맞췄으면 경고를 내린다
@@ -310,6 +317,12 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <TrafficGridFill collector={prov.collector} nowMs={providersNowMs(prov)} />
           <div role="status" aria-live="polite">{switchMsg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="switch-ok">{switchMsg.text}</div> : null}</div>
           {switchMsg && !switchMsg.ok ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-unmirrored">{switchMsg.text}</div> : null}
+          {switchErr ? (
+            <div className="mb-2 flex flex-wrap items-center gap-x-2 text-[11px] text-bad" role="alert" data-testid="switch-error">
+              <ErrorNote prefix={`${switchErr.name} ${switchErr.action === "disable" ? "끄기" : "켜기"} 실패 — `} error={switchErr.error} />
+              <button className={SMALL_BTN} onClick={() => setSwitchErr(null)}>알림 닫기</button>
+            </div>
+          ) : null}
           {differs.length ? (
             <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="switch-mirror-differs">
               Redis 미러가 DB 원본과 다름 — 수집기는 Redis 값을 따른다: {differs.join(", ")} · api 가 60 s 주기로 원본을 다시 미러한다
@@ -442,7 +455,9 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
-      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} /></div> : null}
+      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
+        {/* 실패는 다음 저장이나 이 단추 전까지 남는다(PLAN §5 결정 4) — 15 s 새로고침이 지우지 않는다 */}
+        <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST)</th><th></th></tr></thead>
         <tbody>{items.map((s) => {
           const ed = edit[s.key];

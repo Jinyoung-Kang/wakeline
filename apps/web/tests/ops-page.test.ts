@@ -632,3 +632,93 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
     expect(button("disable")!.getAttribute("aria-busy")).toBeNull();
   });
 });
+
+/**
+ * 운영 쓰기 실패 문구(web-review B4 · PLAN §5 결정 4): 공급자 켜고 끄기 · 설정 저장의 실패는 다음 쓰기나 '알림 닫기' 전까지 남는다.
+ * 15 s 주기 새로고침(과 새로고침 단추)이 지우면 운영자가 공급자가 꺼지지 않았다는 것을 놓친다.
+ */
+describe("ops write failures stay until the next write or a dismiss (web-review B4, decision 4)", () => {
+  beforeAll(() => { (dom.document as unknown as { cookie: string }).cookie = "WAKELINE_CSRF=t"; });
+  const json = (status: number, body: unknown, type = "application/json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
+  const find = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container): MiniElement | null => {
+    if (pred(from)) return from;
+    for (const c of from.childNodes) { const f = c instanceof MiniElement ? find(pred, c) : null; if (f) return f; }
+    return null;
+  };
+  const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
+    const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
+    return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
+  };
+  const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent === text, from);
+  const click = async (e: MiniElement | null) => { expect(e).not.toBeNull(); await React.act(async () => { await propsOf(e!).onClick(); }); await settle(); };
+  const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsb_fi" }], provider_switch: [{ provider: "adsb_fi", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
+  const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
+  let postStatus = 500;
+  let putStatus = 500;
+  function stub() {
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST") return postStatus === 200
+        ? json(200, { provider: "adsb_fi", disabled: true, version: 2, updated_at: "2026-09-28T23:41:20Z", mirrored: true })
+        : json(postStatus, { detail: "switch store unavailable", request_id: "feedface0000beef" }, "application/problem+json");
+      if (method === "PUT") return json(putStatus, { detail: "settings store unavailable", request_id: "feedface0000cafe" }, "application/problem+json");
+      if (url === "/api/v1/ops/providers") return json(200, PROVIDERS);
+      if (url === "/api/v1/ops/settings") return json(200, SETTINGS);
+      return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
+    });
+  }
+  const mount = async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-28T23:41:14Z") });
+    vi.stubGlobal("self", globalThis);
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+  };
+
+  it("a failed provider disable stays through the 15 s reload and the reload button, and goes away with '알림 닫기'", async () => {
+    postStatus = 500;
+    stub();
+    await mount();
+    await click(button("disable"));
+    const shown = () => byTestId("switch-error")?.textContent ?? "";
+    expect(byTestId("switch-error")?.getAttribute("role")).toBe("alert");
+    expect(shown()).toContain("adsb_fi 끄기 실패");
+    expect(shown()).toContain("switch store unavailable");
+    expect(shown()).toContain("feedface0000beef");
+    await React.act(async () => { vi.advanceTimersByTime(15_000); });
+    await settle();
+    expect(shown()).toContain("switch store unavailable");
+    await click(button("새로고침"));
+    expect(shown()).toContain("switch store unavailable");
+    await click(button("알림 닫기", byTestId("switch-error")!));
+    expect(byTestId("switch-error")).toBeNull();
+  });
+
+  it("the next write replaces the failure: a successful toggle clears it", async () => {
+    postStatus = 500;
+    stub();
+    await mount();
+    await click(button("disable"));
+    expect(byTestId("switch-error")).not.toBeNull();
+    postStatus = 200;
+    await click(button("disable"));
+    expect(byTestId("switch-error")).toBeNull();
+    expect(byTestId("switch-ok")?.textContent).toContain("adsb_fi 끔");
+  });
+
+  it("a failed settings save stays through the 15 s reload and can be dismissed", async () => {
+    putStatus = 503;
+    stub();
+    await mount();
+    await click(byTestId("ops-tab-settings"));
+    await React.act(async () => { propsOf(find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!).onChange({ target: { value: "15" } }); });
+    await click(button("save"));
+    expect(byTestId("settings-error")?.textContent).toContain("region_poll_s: 저장 실패(HTTP 503)");
+    await React.act(async () => { vi.advanceTimersByTime(15_000); });
+    await settle();
+    expect(byTestId("settings-error")?.textContent).toContain("region_poll_s: 저장 실패(HTTP 503)");
+    await click(button("알림 닫기", byTestId("settings-error")!));
+    expect(byTestId("settings-error")).toBeNull();
+  });
+});
