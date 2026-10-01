@@ -314,8 +314,8 @@ export function shipFeatures(ships: Iterable<ShipLite>, selected: string | null,
   return { type: "FeatureCollection", features };
 }
 
-/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것 */
-function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
+/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것(선택 선박 표시 · 선박 카드) */
+export function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
   if (!a || !b) return a ?? b;
   const ta = a.seen_at ? Date.parse(a.seen_at) : NaN, tb = b.seen_at ? Date.parse(b.seen_at) : NaN;
   return !Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta) ? b : a;

@@ -4,9 +4,42 @@
  * 여기 있어야 하는 이름은 tests/first-screen-lazy.test.ts 의 SHIP_CARD_ONLY 가 본다.
  */
 import {
-  aisText, type AisGap, type DestinationInfo, type DestPlace, FLAG_STATE_NO_MIN, fmtDestPlace, NO_ORIGIN_TEXT, normalizeDestination,
-  type PositionSource, SHIP_CATEGORY_LABEL, shipCategory, type ShipCategory, type ShipLite, type ShipRow, type ShipSort, type ShipStatic, type StaticSource,
+  aisText, type AisGap, type DestinationInfo, type DestPlace, FLAG_STATE_NO_MIN, fmtDestPlace, NO_ORIGIN_TEXT, normalizeDestination, parseDestinationInfo, parseShipState,
+  parseShipStatic, type PositionSource, SHIP_CATEGORY_LABEL, shipCategory, type ShipCategory, type ShipLite, type ShipRow, type ShipSort, type ShipState, type ShipStatic,
+  type StaticSource,
 } from "./ships";
+
+// ---- REST /ships/{mmsi} 상세(카드) ----
+
+/**
+ * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
+ * (보존 72 h 안 — 없으면 null), last_seen_at = 실시간이 아닐 때의 마지막 수신 기록(계약 v5 §G4 — 없으면 null). 계약 v5 §B3 카드 행.
+ * static_source = 정적 정보의 출처(계약 v5 §G17 — live · stored, static 이 있을 때만), static_updated_at = stored 일 때 저장 행의 updated_at.
+ */
+export interface ShipDetail {
+  mmsi: string; state: ShipState | null; static: ShipStatic | null; static_source: StaticSource | null; static_updated_at: string | null;
+  destination_info: DestinationInfo | null; db_unavailable: boolean;
+  first_recorded_at: string | null; last_position_at: string | null; last_seen_at: string | null;
+}
+
+const isoOrNull = (v: unknown) => (typeof v === "string" && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? v : null);
+
+/** REST /ships/{mmsi} 응답 검증(모양이 다르면 null — 모르는 값을 채우지 않는다) */
+export function parseShipDetail(mmsi: string, r: unknown): ShipDetail {
+  const o = typeof r === "object" && r !== null ? (r as Record<string, unknown>) : {};
+  const st = parseShipState(typeof o.state === "object" && o.state !== null ? { mmsi, ...(o.state as object) } : null);
+  const sx = parseShipStatic(typeof o.static === "object" && o.static !== null ? { mmsi, ...(o.static as object) } : null);
+  const meta = typeof o.meta === "object" && o.meta !== null ? (o.meta as Record<string, unknown>) : {};
+  const stat = sx?.mmsi === mmsi ? sx : null;
+  // 출처는 정적 정보가 있을 때만, 시각은 stored 일 때만(REST 는 live · stored 뿐 — 그 밖은 모름)
+  const source: StaticSource | null = stat && (o.static_source === "live" || o.static_source === "stored") ? o.static_source : null;
+  return {
+    mmsi, state: st?.mmsi === mmsi ? st : null, static: stat, static_source: source,
+    static_updated_at: source === "stored" ? isoOrNull(o.static_updated_at) : null,
+    destination_info: parseDestinationInfo(o.destination_info), db_unavailable: meta.db_unavailable === true,
+    first_recorded_at: isoOrNull(o.first_recorded_at), last_position_at: isoOrNull(o.last_position_at), last_seen_at: isoOrNull(o.last_seen_at),
+  };
+}
 
 // ---- 저장된 정적 보고 문구(계약 v5 §G17 · §G19) ----
 
