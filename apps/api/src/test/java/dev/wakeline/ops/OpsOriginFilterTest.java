@@ -65,6 +65,22 @@ class OpsOriginFilterTest {
         assertThat(run(dev, "POST", ops, "http://localhost:3000", "same-site")).isEqualTo(403);
     }
 
+    /**
+     * 최종 리뷰: 허용 목록은 WS 핸드셰이크와 같아 Spring origin 패턴도 받는다. 그러나 운영 변경에서는 패턴 하나("http://localhost:[*]" · "**" · "http://*")가
+     * S1b 가 막으려는 다른 포트 · 다른 사이트를 모두 연다 — 운영 변경은 정확한 origin 만 받는다(패턴 항목은 이 검사에서 빼고 WARN).
+     */
+    @Test
+    void originPatternsNeverOpenOpsChanges() throws Exception {
+        String ops = "/api/v1/ops/providers/opensky/disable";
+        OpsOriginFilter patterned = new OpsOriginFilter(AppPropertiesTest.props(List.of("http://localhost:8700", "http://localhost:[*]"),
+                List.of("**", "http://*", "*://*", "http://localhost:3000")).originPatterns());
+        assertThat(run(patterned, "POST", ops, "http://localhost:9999", null)).as("port pattern").isEqualTo(403);
+        assertThat(run(patterned, "POST", ops, "http://evil.example", null)).as("'**' · 'http://*'").isEqualTo(403);
+        assertThat(run(patterned, "POST", ops, "https://evil.example", null)).as("'*://*'").isEqualTo(403);
+        assertThat(run(patterned, "POST", ops, "http://localhost:8700", "same-origin")).as("exact entries still pass").isZero();
+        assertThat(run(patterned, "POST", ops, "http://localhost:3000", "same-origin")).isZero();
+    }
+
     @Test
     void safeMethodsAndPublicPathsAreNotChecked() throws Exception {
         for (String m : List.of("GET", "HEAD", "OPTIONS", "TRACE"))
