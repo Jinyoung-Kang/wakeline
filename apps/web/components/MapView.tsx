@@ -10,13 +10,9 @@ import { maplibre } from "@/lib/maplibre";
 import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layers";
-import {
-  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, selectedShipFeatures, selectedShipPos, shipCategory, mergeStatusGaps,
-  shipFeatures, shipTrackFeatures, shipTrackPointFeatures, type ShipTrack,
-} from "@/lib/ships";
+import { aisCoverageFeatures, filterGridCells, gridFeatures, selectedShipFeatures, shipCategory, shipFeatures } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
 import { WakelineWsClient } from "@/lib/ws";
-import { aircraftTrack, shipTrack as fetchShipTrack } from "@/lib/endpoints/tracks";
 import { sigmetLayerData } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
@@ -27,7 +23,7 @@ import { EtagPoller, POLL_NONE } from "@/lib/etag-poller";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficStaleAt } from "@/lib/traffic-grid";
 import type { AirportProps } from "@/lib/tooltip";
 import { useMapPointer } from "./map/useMapPointer";
-import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, type TrackPt } from "@/lib/track";
+import { useSelectionTracks, type LiveFeed } from "./map/useSelectionTracks";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
@@ -47,29 +43,6 @@ const parseAirports = (fc: unknown): GeoJSON.Feature<GeoJSON.Point, AirportProps
 };
 /** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
 const SHIP_STALE_CHECK_MS = 30_000;
-/** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
-const SHIP_PENDING_MAX = 500;
-
-type LiveTrackPt = Parameters<typeof appendShipTrack>[1];
-type ShipTrackRef = { mmsi: string | null; track: ShipTrack; pending: LiveTrackPt[]; loaded: boolean; anchor: number | null; sinceMs: number };
-const emptyShipTrack = (mmsi: string | null, anchor: number | null = null, sinceMs = 0): ShipTrackRef => ({ mmsi, track: { segs: [], gaps: [] }, pending: [], loaded: false, anchor, sinceMs });
-
-/** 선택 선박의 가장 최근 위치(WS ship_selected → 지도 목록 사본 — lib/ships selectedShipPos). 모르면 null */
-const shipPos = (mmsi: string | null) => selectedShipPos(mmsi, getData().shipSelected, shipStates);
-
-/** 선택 선박 항적 요약(카드의 공백 목록·구간 수)을 스토어에 — 같은 선박일 때만, 불러오기 상태·오류는 그대로 */
-function publishShipTrack(ref: ShipTrackRef) {
-  const cur = getData().shipTrack;
-  if (!cur || cur.mmsi !== ref.mmsi) return;
-  setData({ shipTrack: { ...cur, gaps: ref.track.gaps.slice(), gapsTruncated: ref.track.gapsTruncated === true, segments: ref.track.segs.length } });
-}
-
-/** 선택 선박 항적(선 + 호버 점)을 지도에 */
-function drawShipTrack(map: maplibregl.Map, track: ShipTrack) {
-  geo(map, "ship-track")?.setData(shipTrackFeatures(track));
-  geo(map, "ship-track-points")?.setData(shipTrackPointFeatures(track));
-}
-
 
 function geo(map: maplibregl.Map, id: string) {
   return map.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -85,14 +58,13 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   const onFirstLoadRef = useRef(onFirstLoad);
   useEffect(() => { onFirstLoadRef.current = onFirstLoad; }, [onFirstLoad]);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const clientRef = useRef<WakelineWsClient | null>(null);
-  const workerRef = useRef<Worker | null>(null);
+  /** 이 지도의 실시간 피드(WS 클라이언트 · 워커 · 예측선 갱신) — 지도 생성 effect 가 채우고 정리할 때 비운다 */
+  const feed = useRef<LiveFeed | null>(null);
   const radarLayers = useRef<string[]>([]);
   const sigmets = useServerData((d) => d.sigmets);
   const alerts = useServerData((d) => d.alerts);
   const radar = useServerData((d) => d.radar);
   const radarKr = useServerData((d) => d.radarKr);
-  const selectedInfo = useServerData((d) => d.selected);
   const ships = useServerData((d) => d.ships);
   const shipSelected = useServerData((d) => d.shipSelected);
   const ais = useServerData((d) => d.ais);
@@ -104,27 +76,19 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   const radarOpacity = useUi((s) => s.radarOpacity);
   const selectedHex = useUi((s) => s.selectedHex);
   const selectedShip = useUi((s) => s.selectedShip);
-  const selectShip = useUi((s) => s.selectShip);
   const shipCats = useUi((s) => s.shipCats);
-  const shipTrackHours = useUi((s) => s.shipTrackHours);
   const radarPlaying = useUi((s) => s.radarPlaying);
   const flyTo = useUi((s) => s.flyTo);
   /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
   const flyHandled = useRef(useUi.getState().flyTo?.id ?? 0);
   const selectedRef = useRef<string | null>(null);
   useEffect(() => { selectedRef.current = selectedHex; }, [selectedHex]);
-  /** 예측선 갱신(입력이 바뀌었을 때만 setData) — 지도 생성 effect 가 채운다 */
-  const refreshPrediction = useRef<() => void>(() => {});
-  /** 선택 항공기 항적: REST 한 번 + WS selected 로 연장 */
-  const track = useRef<{ hex: string | null; pts: TrackPt[]; pending: TrackPt[]; loaded: boolean }>({ hex: null, pts: [], pending: [], loaded: false });
   const sigmetApplied = useRef<{ fc: SigmetCollection | null; key: string }>({ fc: null, key: "" });
   /** RainViewer 커버리지 소스의 host · 기상청 레이더 경계 키 · 그린 AIS 수신 범위 키 — 위 레이더 레이어 목록 · sigmetApplied 와 함께 '이 지도에 그린 것'의 기록 */
   const coverageHost = useRef<string | null>(null);
   const krCoordsKey = useRef("");
   const coverageKey = useRef("");
   const [sigClock, setSigClock] = useState(0);
-  /** 선택 선박 항적: REST 한 번 + WS ship_selected 로 연장(AIS 공백·15분 틈은 점선) */
-  const shipTrack = useRef<ShipTrackRef>(emptyShipTrack(null));
   const [shipClock, setShipClock] = useState(0);
   /** 지금 그린 감시 공항 — 공항 툴팁(포인터 Hook)이 읽는다. 지도를 만들 때 비우고 조회기가 채운다 */
   const airports = useRef<GeoJSON.Feature<GeoJSON.Point, AirportProps>[]>([]);
@@ -168,12 +132,10 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
 
     // 번들러(Turbopack)가 .ts 워커를 자산으로 취급하므로 순수 JS 워커를 public 에 둔다(tests/worker-sync 가 TS 구현과 일치를 검사).
     const worker = new Worker("/interpolate.worker.js");
-    workerRef.current = worker;
     const client = new WakelineWsClient(worker);
-    clientRef.current = client;
 
     let predKey: string | null = null;
-    refreshPrediction.current = () => {
+    const refreshPrediction = () => {
       const src = geo(map, "prediction");
       if (!src) return;
       const d = getData();
@@ -186,6 +148,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       predKey = key;
       src.setData({ type: "FeatureCollection", features: targets.map((t) => predictionFeature(t, now)).filter((f): f is NonNullable<typeof f> => f != null) });
     };
+    feed.current = { client, worker, refreshPrediction };
 
     // 워커는 바뀐 것이 있을 때만 보낸다 → 받은 렌더를 잃지 않도록 마지막 것을 보관했다가 레이어가 준비되면 적용한다.
     let lastRender: RenderState[] | null = null;
@@ -193,7 +156,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       const src = geo(map, "aircraft");
       if (!src || !lastRender) return;
       src.setData(aircraftFeatureCollection(lastRender, selectedRef.current));
-      refreshPrediction.current();
+      refreshPrediction();
     };
     worker.onmessage = (ev: MessageEvent<{ type: string; states: RenderState[] }>) => {
       if (ev.data.type !== "render") return;
@@ -297,9 +260,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       krCoordsKey.current = "";
       radarLayers.current = [];
       krLayers.current = [];
-      workerRef.current = null;
-      clientRef.current = null;
-      refreshPrediction.current = () => {};
+      feed.current = null;
       setData({ conn: "closed" });
     };
   }, []);
@@ -328,7 +289,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   }, [sigmets, alerts, sigClock]);
 
   // ---- 예측선: 알림(PREDICTED 추가·해제)이 바뀌면 다시 계산 ----
-  useEffect(() => { refreshPrediction.current(); }, [alerts]);
+  useEffect(() => { feed.current?.refreshPrediction(); }, [alerts]);
 
   // ---- 레이더(PERF-12): 현재 프레임만 visible, 재생 중에는 다음 프레임을 불투명도 0 으로 미리 받는다. 소스는 필요할 때 만든다. ----
   useEffect(() => {
@@ -451,12 +412,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     return () => clearTimeout(t);
   }, [trafficVersion, layers.traffic]);
 
-  // ---- 서버에 켜진 레이어 알림(선박은 켠 세션에만 온다). 선박을 끄면 선택도 해제 ----
-  useEffect(() => {
-    clientRef.current?.setLayers(layers.aircraft, layers.ships);
-    if (!layers.ships && useUi.getState().selectedShip) selectShip(null);
-  }, [layers.aircraft, layers.ships, selectShip]);
-
   // ---- 선박·격자 그리기: 서버 메시지(ships.version)·선택·STALE 재계산(30 s) ----
   useEffect(() => {
     const t = setInterval(() => setShipClock(Date.now()), SHIP_STALE_CHECK_MS);
@@ -494,66 +449,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     onReady(map, "ship-filter", () => { if (map.getLayer("ship-symbol")) map.setFilter("ship-symbol", filter); });
   }, [shipCats]);
 
-  // ---- 선택 선박: WS select_ship(선택이 바뀔 때만) ----
-  useEffect(() => { clientRef.current?.selectShip(selectedShip); }, [selectedShip]);
-
-  // ---- 선택 선박 항적: REST 한 번(기간 6·12·24 h — 바꾸면 다시), 이후 ship_selected 로 연장 ----
-  useEffect(() => {
-    // 이어 붙일 기준: 선택한 순간 알던 선박의 마지막 관측 시각(REST 구간 끝 시각을 서버가 주지 않을 때만 쓴다)
-    const lite = selectedShip ? shipStates.get(selectedShip) : undefined;
-    const anchor = lite?.seen_at ? Date.parse(lite.seen_at) : NaN;
-    const to = serverNowMs(Date.now());
-    const from = to - shipTrackHours * 3600_000; // 기간(계약 v5 §B3): 6 · 12 · 24 h
-    shipTrack.current = emptyShipTrack(selectedShip, Number.isNaN(anchor) ? null : anchor, from);
-    setData({ shipTrack: selectedShip ? { mmsi: selectedShip, loaded: false, error: null, gaps: [], gapsTruncated: false, segments: 0, fromMs: from, hours: shipTrackHours } : null });
-    const map = mapRef.current;
-    if (!map) return;
-    onReady(map, "ship-track", () => drawShipTrack(map, { segs: [], gaps: [] }));
-    if (!selectedShip) return;
-    let cancelled = false;
-    const finish = (track: ShipTrack, error: string | null, requestId: string | null = null) => {
-      const ref = shipTrack.current;
-      if (cancelled || ref.mmsi !== selectedShip) return;
-      // REST 공백(scope 포함)과 상태 공백을 이 선박 위치로 가른다 — 다른 구역의 공백은 이 선박 카드·연결선에 넣지 않는다(계약 v4 §G)
-      mergeStatusGaps(track, getData().ais, ref.sinceMs, shipPos(selectedShip));
-      for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
-      shipTrack.current = { ...ref, track, pending: [], loaded: true };
-      setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, requestId, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from, hours: shipTrackHours } });
-      onReady(map, "ship-track", () => drawShipTrack(map, track));
-    };
-    fetchShipTrack(selectedShip, from, to)
-      .then((t) => finish(t, null))
-      // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다. 요청 id 는 카드의 문구에(계약 v5 §G5)
-      .catch((e: unknown) => { const t = trackError(e); finish({ segs: [], gaps: [] }, t.error, t.requestId); });
-    return () => { cancelled = true; };
-  }, [selectedShip, shipTrackHours]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    const ref = shipTrack.current;
-    const st = shipSelected?.state;
-    if (!map || !shipSelected || shipSelected.mmsi !== ref.mmsi || !st?.seen_at) return;
-    const ts = Date.parse(st.seen_at);
-    if (Number.isNaN(ts)) return;
-    // 호버 점에 받은 속력·침로·선수방위·항해 상태도(계약 v5 §B3)
-    const p = { ts, lon: st.lon, lat: st.lat, sog_kn: st.sog_kn, cog_deg: st.cog_deg, heading_deg: st.heading_deg, nav_status: st.nav_status };
-    if (!ref.loaded) { if (ref.pending.length < SHIP_PENDING_MAX) ref.pending.push(p); return; }
-    const segs = ref.track.segs.length;
-    const merged = mergeStatusGaps(ref.track, getData().ais, ref.sinceMs, { lat: st.lat, lon: st.lon });
-    const appended = appendShipTrack(ref.track, p, ref.anchor);
-    if (merged || appended) onReady(map, "ship-track", () => drawShipTrack(map, ref.track));
-    if (merged || ref.track.segs.length !== segs) publishShipTrack(ref);
-  }, [shipSelected]);
-
-  // ---- AIS 상태가 바뀌면(공백 열림·닫힘) 선택 선박 항적의 공백 목록도 바로 고친다 — 닫힌 공백을 "진행 중"으로 남기지 않는다 ----
-  useEffect(() => {
-    const map = mapRef.current;
-    const ref = shipTrack.current;
-    if (!map || !ref.mmsi || !ref.loaded || !mergeStatusGaps(ref.track, ais, ref.sinceMs, shipPos(ref.mmsi))) return;
-    onReady(map, "ship-track", () => drawShipTrack(map, ref.track));
-    publishShipTrack(ref);
-  }, [ais]);
-
   // ---- 선박 수신 범위(계약 v3 §A): 선박 레이어가 켜져 있고 status 가 범위를 줄 때만 경계 점선. 모르면 그리지 않는다 ----
   const coverage = ais?.coverage ?? null;
   useEffect(() => {
@@ -566,38 +461,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     onReady(map, "ship-coverage", () => geo(map, "ship-coverage")?.setData(fc));
   }, [coverage, layers.ships]);
 
-  // ---- 선택 항공기: WS select + 항적(REST 한 번, 이후 selected 로 연장) ----
-  useEffect(() => {
-    clientRef.current?.select(selectedHex);
-    workerRef.current?.postMessage({ type: "invalidate" }); // 선택 강조를 바로 다시 그린다
-    track.current = { hex: selectedHex, pts: [], pending: [], loaded: false };
-    const map = mapRef.current;
-    if (!map) return;
-    onReady(map, "tracks", () => { geo(map, "tracks")?.setData(EMPTY_FC); refreshPrediction.current(); });
-    if (!selectedHex) return;
-    let cancelled = false;
-    const finish = (rest: TrackPt[]) => {
-      if (cancelled || track.current.hex !== selectedHex) return;
-      const pts = mergeTrack(rest, track.current.pending);
-      track.current = { hex: selectedHex, pts, pending: [], loaded: true };
-      onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
-    };
-    aircraftTrack(selectedHex)
-      .then((pts) => finish(pts))
-      .catch(() => finish([])); // DB 기록이 없거나(전세계 항공기) DB 장애 → 실시간 관측만으로 잇는다
-    return () => { cancelled = true; };
-  }, [selectedHex]);
-
-  useEffect(() => {
-    refreshPrediction.current();
-    const map = mapRef.current;
-    const t = track.current;
-    if (!map || !selectedInfo || selectedInfo.hex !== t.hex) return;
-    const p = pointFromState(selectedInfo.state);
-    if (!p) return;
-    if (!t.loaded) { appendTrackPoint(t.pending, p); return; }
-    if (appendTrackPoint(t.pts, p)) onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(t.pts)));
-  }, [selectedInfo]);
+  // ---- 선택 항적: WS 선택 · 켜진 레이어 알림, 항공기 · 선박 항적(components/map/useSelectionTracks) ----
+  useSelectionTracks(dashMap, feed);
 
   return <div ref={el} className="h-full w-full" data-testid="map" />;
 }
