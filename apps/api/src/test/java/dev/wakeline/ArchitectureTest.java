@@ -23,9 +23,10 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Package rules, checked from source (no ArchUnit, no new dependency): imports + fully qualified references in src/main/java.
- * Ratchet: KNOWN lists today's rule violations and MAX_CYCLE_EDGES today's cycle size. A new violation fails; a KNOWN entry
- * that disappeared also fails (delete it), and so does a cycle count below the constant (lower it) — the numbers only go down.
+ * Package rules (ADR-028 · CTO review 2026-10 api §2.1), checked from source (no ArchUnit, no new dependency): imports + fully qualified
+ * references in src/main/java. The rule names are in violations() and in ADR-028.
+ * Ratchet: KNOWN lists the violations accepted for now and MAX_CYCLE_EDGES the imports inside package cycles. A new violation fails; a
+ * KNOWN entry that disappeared also fails (delete it), and so does a cycle count below the constant (lower it) — the numbers only go down.
  */
 class ArchitectureTest {
     static final Path MAIN = Path.of("src/main/java");
@@ -36,9 +37,7 @@ class ArchitectureTest {
     static final List<String> WEB_APIS = List.of("jakarta.servlet", "org.springframework.web", "org.springframework.http",
             "org.apache.catalina", "org.apache.tomcat");
 
-    /** Flip to true in the commit that empties ingest of state stores (end of the feature moves). */
-    static final boolean INGEST_IS_ADAPTER_ONLY = false;
-    /** Number of class-level imports inside package cycles today. May only go down; 0 at the end of phase 1. */
+    /** Class-level imports inside package cycles. 0 since the end of phase 1 — any package cycle fails. */
     static final int MAX_CYCLE_EDGES = 0;
     static final Set<String> KNOWN = Set.of(
             "controller-data-access|ops.OpsController|org.springframework.data.redis.connection",
@@ -104,7 +103,7 @@ class ArchitectureTest {
                 }
                 String t = rel(to);
                 if (t.equals(from)) continue;
-                // target layout (vacuous until the packages exist)
+                // target layout (ADR-028)
                 if (under(from, "platform") && !under(t, "platform") && !t.equals("geo")) v.add("platform-imports-feature|" + who + "|" + t);
                 if (from.equals("geo")) v.add("geo-imports|" + who + "|" + t);
                 if (from.endsWith(".core") && !(t.endsWith(".core") || t.equals("geo") || t.equals("platform.support")))
@@ -114,11 +113,9 @@ class ArchitectureTest {
                     v.add("data-imports-outer|" + who + "|" + t);
                 if (under(t, "ws") && !under(from, "ws")) v.add("only-ws-imports-ws|" + who + "|" + t);
                 if (under(from, "ops") && under(t, "logs")) v.add("ops-imports-logs|" + who + "|" + t);
-                if (INGEST_IS_ADAPTER_ONLY && under(t, "ingest") && !Set.of("ingest", "ops", "status").contains(feature(from)))
+                // ingest is the stream adapter (no state stores): only ops and status read it (pipeline signals, ingest health)
+                if (under(t, "ingest") && !Set.of("ingest", "ops", "status").contains(feature(from)))
                     v.add("ingest-is-an-adapter|" + who + "|" + t);
-                // current layout, until the technical packages are gone
-                // geo (Bbox · Geo · GeoJson, moved out of domain) imports nothing, so domain → geo cannot close a cycle
-                if (from.equals("domain") && !t.equals("geo")) v.add("domain-imports|" + who + "|" + t);
             }
         }
         return v;
