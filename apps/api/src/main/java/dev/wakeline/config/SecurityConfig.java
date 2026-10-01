@@ -13,17 +13,22 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfException;
+import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.csrf.CsrfTokenRequestHandler;
+import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.firewall.RequestRejectedHandler;
 import org.springframework.session.web.http.CookieSerializer;
 import org.springframework.session.web.http.DefaultCookieSerializer;
+import org.springframework.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.function.Supplier;
 
 /**
- * 보안(6.2절 api 층). 공개 경로 허용, /api/v1/ops/** 는 ROLE_OPS + 세션 + CSRF(쿠키 WAKELINE_CSRF → 헤더 X-CSRF-Token).
+ * 보안(6.2절 api 층). 공개 경로 허용, /api/v1/ops/** 는 ROLE_OPS + 세션 + CSRF(쿠키 WAKELINE_CSRF → 헤더 X-CSRF-Token — 헤더에서만 받는다).
  * 비인가는 404(존재 여부 비공개), CSRF 실패는 403. 세션 쿠키 WAKELINE_SESSION: HttpOnly · SameSite=Strict.
  * 운영 세션은 유휴 한도와 별개로 로그인부터 절대 수명(wakeline.ops-session-max-age, 8 h)이 지나면 끝난다({@link OpsSessionLifetimeFilter}).
  */
@@ -49,7 +54,7 @@ public class SecurityConfig {
                         .requestMatchers(ApiPaths.OPS).hasRole("OPS")
                         .anyRequest().permitAll())
                 // CSRF 는 세션 쿠키로 인증되는 ops 변경 요청에만 적용한다. 공개 API 는 쿠키 인증이 없으므로 대상이 아니다.
-                .csrf(c -> c.spa().csrfTokenRepository(csrfRepository)
+                .csrf(c -> c.csrfTokenRepository(csrfRepository).csrfTokenRequestHandler(new HeaderOnlyCsrfTokenRequestHandler())
                         // 경로는 인가와 같은 매처로 판단한다(ApiPaths) — 원문 URI 앞부분이면 /api/v1/%6Fps/… 가 CSRF 없이 운영 변경을 했다
                         .ignoringRequestMatchers(req -> !ApiPaths.OPS.matches(req) || "GET".equals(req.getMethod())
                                 || (ApiPaths.OPS_LOGIN.matches(req) && !hasCookie(req, SESSION_COOKIE))))
@@ -101,6 +106,29 @@ public class SecurityConfig {
 
     private static void problem(jakarta.servlet.http.HttpServletResponse res, HttpServletRequest req, int status, String code, String title, String detail) throws java.io.IOException {
         ProblemJson.write(res, req, status, code, title, detail);
+    }
+
+    /**
+     * CSRF 토큰은 X-CSRF-Token 헤더에서만 읽는다(리뷰 cto-2026-10 S1). csrf.spa() 의 처리기는 헤더가 없으면 _csrf 요청 파라미터(쿼리 · 폼 본문)로도
+     * 받았다 — 쿠키는 포트를 가리지 않아 다른 localhost 포트의 페이지가 쿠키 값으로 사전 요청 없는 단순 POST(폼 · no-cors fetch)를 만들어 운영 변경을
+     * 실행할 수 있었다. 사용자 헤더는 교차 출처에서 사전 요청 없이는 붙일 수 없다. 화면(웹 lib/api.ts)은 쿠키 값을 그대로 헤더로 보낸다.
+     * 요청마다 토큰을 읽어 쿠키를 내주는 것은 spa() 와 같다(가림 처리기 · 속성 이름 null — 토큰이 없으면 첫 응답이 쿠키를 만든다).
+     */
+    static final class HeaderOnlyCsrfTokenRequestHandler implements CsrfTokenRequestHandler {
+        private final XorCsrfTokenRequestAttributeHandler attributes = new XorCsrfTokenRequestAttributeHandler();
+
+        HeaderOnlyCsrfTokenRequestHandler() { attributes.setCsrfRequestAttributeName(null); }
+
+        @Override
+        public void handle(HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response, Supplier<CsrfToken> token) {
+            attributes.handle(request, response, token);
+        }
+
+        @Override
+        public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken token) {
+            String header = request.getHeader(token.getHeaderName());
+            return StringUtils.hasText(header) ? header : null;
+        }
     }
 
     @Bean

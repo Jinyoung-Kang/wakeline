@@ -273,6 +273,36 @@ class SecurityIT extends IntegrationTest {
         assertThat(audit("SETTING_UPDATE", "ais_bboxes")).isEqualTo(1);
     }
 
+    // ---------- CSRF: 토큰은 헤더에서만 (리뷰 cto-2026-10 S1) ----------
+
+    /** Spring 의 XOR 처리기가 받아들이던 토큰 모양: base64url(가림 바이트 ‖ 가림 XOR 토큰) — 가림을 0 으로 하면 토큰 바이트 그대로다. */
+    static String maskedToken(String token) {
+        byte[] t = token.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] m = new byte[t.length * 2];
+        System.arraycopy(t, 0, m, t.length, t.length);
+        return java.util.Base64.getUrlEncoder().encodeToString(m);
+    }
+
+    /**
+     * S1: 다른 localhost 포트의 페이지는 CSRF 쿠키를 읽을 수 있고(쿠키는 포트를 가리지 않는다) 사용자 헤더 없는 단순 POST 는 사전 요청 없이 보낸다.
+     * 토큰을 _csrf 요청 파라미터(쿼리 · 폼 본문)로도 받으면 그 페이지가 운영 변경을 운영자 이름으로 실행했다. 토큰은 X-CSRF-Token 헤더에서만 받는다.
+     */
+    @Test
+    void theCsrfTokenIsAcceptedFromTheHeaderOnlyNeverFromTheCsrfParameter() {
+        users.upsert("it-csrf-param", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-csrf-param", PW).status()).isEqualTo(200);
+        String path = "/api/v1/ops/providers/rainviewer/enable";
+        String masked = maskedToken(b.csrf());
+        long before = audit("PROVIDER_ENABLE", "rainviewer");
+        assertProblem(b.send("POST", path + "?_csrf=" + masked, null, Map.of()), 403, "CSRF_INVALID", path);
+        assertProblem(b.send("POST", path, "_csrf=" + masked, headers("Content-Type", "application/x-www-form-urlencoded")), 403, "CSRF_INVALID", path);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        // 헤더(쿠키 값 그대로 — 웹 lib/api.ts 가 보내는 모양)는 된다
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 1);
+    }
+
     // ---------- 세션 절대 수명(R-54) ----------
 
     /**
