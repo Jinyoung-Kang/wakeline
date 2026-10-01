@@ -67,8 +67,9 @@ export default function StatsPage() {
           head={<>
             <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
               onChange={(e) => { const p = statsPickDay(e.target.value, maxDay); if (p) { setDay(p.day); setClamped(p.clamped); } }} /></div>
-            {/* 미래 날짜는 조회하지 않는다 — 최근 집계 날짜로 되돌리고 그렇다고 말한다(QA-309). 패널 상태와 상관없이 머리에 */}
-            <div role="status" className="text-[11px] text-warn" id="stats-day-note" data-testid="stats-day-clamped">{clamped ? STATS_FUTURE_DAY_NOTE : ""}</div>
+            {/* 미래 날짜는 조회하지 않는다 — 최근 집계 날짜로 되돌리고 그렇다고 말한다(QA-309). 패널 상태와 상관없이 머리에.
+                role=status 가 아니라 aria-live: 패널의 status 는 받기 상태('불러오는 중') 하나다 */}
+            <div aria-live="polite" className="text-[11px] text-warn" id="stats-day-note" data-testid="stats-day-clamped">{clamped ? STATS_FUTURE_DAY_NOTE : ""}</div>
           </>}>
           <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid="traffic-scope">범위: {scope.text}</div>
           <BarChart id="chart-traffic" title={`${day}(KST 날짜) 시각별(KST) 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" />
