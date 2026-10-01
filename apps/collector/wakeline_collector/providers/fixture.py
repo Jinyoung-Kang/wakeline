@@ -25,6 +25,33 @@ def _load(name: str) -> Any:
     return orjson.loads((Path(settings.fixtures_dir) / name).read_bytes())
 
 
+# 경계에서 0.5 NM 안쪽까지만 간다(5자리 반올림으로 반경 밖에 찍히지 않게)
+_EDGE_MARGIN_NM = 0.5
+
+
+def _along(lat: float, lon: float, trk: float, x_nm: float) -> tuple[float, float]:
+    """(lat, lon) 에서 방위 trk 로 부호 있는 거리 x_nm(음수면 반대 방위)만큼 간 곳. dead_reckon 은 속도(kt) × 시간(s)이라 x kt × 3600 s = x NM."""
+    return dead_reckon(lat, lon, trk if x_nm >= 0 else (trk + 180) % 360, abs(x_nm), 3600.0)
+
+
+def _to_edge(lat: float, lon: float, trk: float, clat: float, clon: float, radius_nm: float) -> float:
+    """(lat, lon) 에서 방위 trk 로 가면 관심 지역(clat, clon 반경 radius_nm)을 벗어나기 전까지의 거리(NM, 경계 여유를 뺀 값). 시작이 밖이면 0.
+    반경이 지구에 비해 작아 대원이 지역 안을 지나는 구간은 하나다 — 두 배씩 늘려 처음 밖인 곳을 찾고 그 사이를 이분한다."""
+
+    def outside(x: float) -> bool:
+        return haversine_nm(clat, clon, *_along(lat, lon, trk, x)) > radius_nm
+
+    if outside(0.0):
+        return 0.0
+    lo, hi = 0.0, 5.0
+    while not outside(hi):
+        lo, hi = hi, hi * 2
+    for _ in range(32):
+        mid = (lo + hi) / 2
+        lo, hi = (lo, mid) if outside(mid) else (mid, hi)
+    return max(0.0, lo - _EDGE_MARGIN_NM)
+
+
 class FixtureAircraftProvider:
     name = "fixture"
     supports_region = True
@@ -38,6 +65,10 @@ class FixtureAircraftProvider:
         self._base = _load("adsb_lol_region.json")
 
     def _moved(self, lat: float, lon: float, radius_nm: int) -> dict[str, Any]:
+        """관심 지역 안에서 왕복시킨다(데모가 비지 않도록): 항공기는 기록된 방위의 대원 위를 경계까지 가면 돌아서 반대편 경계까지 간다 — 위치는 끊기지 않고
+        (position_jump 없음), 보고 방위(track)는 지금 움직이는 쪽이다. QA-210(QA 2026-10): 전에는 밖으로 나간 위치만 원래 자리에서 반대로 같은 거리를
+        보내 시간이 지나면 그쪽도 반경 밖이 되었고(기동 55분 뒤 250 NM 안 127 → 52대), 방위는 그대로라 지도의 기체가 진행 방향과 반대를 가리켰다.
+        시작이 이미 지역 밖이면(운영자가 지역을 좁힘) 기록된 위치에 둔다."""
         dt = time.time() - self._t0
         ac_out = []
         for ac in self._base.get("ac", []):
@@ -45,13 +76,19 @@ class FixtureAircraftProvider:
                 ac_out.append(ac)
                 continue
             a = dict(ac)
-            gs, trk = a.get("gs"), a.get("track", a.get("calc_track"))
+            key = "track" if "track" in a else "calc_track"
+            gs, trk = a.get("gs"), a.get(key)
             if a.get("alt_baro") != "ground" and gs and trk is not None:
-                # 관심 지역 밖으로 나가면 반대편에서 다시 들어오게 방위를 뒤집는다(데모가 비지 않도록)
-                la, lo = dead_reckon(a["lat"], a["lon"], trk, gs, dt)
-                if haversine_nm(lat, lon, la, lo) > radius_nm:
-                    la, lo = dead_reckon(a["lat"], a["lon"], (trk + 180) % 360, gs, dt)
-                a["lat"], a["lon"] = round(la, 5), round(lo, 5)
+                fwd = _to_edge(a["lat"], a["lon"], trk, lat, lon, radius_nm)
+                back = _to_edge(a["lat"], a["lon"], (trk + 180) % 360, lat, lon, radius_nm)
+                chord = fwd + back
+                if chord > 0:
+                    s = (back + gs * dt / 3600.0) % (2 * chord)  # 뒤쪽 경계에서 잰 왕복 위치
+                    heading = trk
+                    if s > chord:  # 앞쪽 경계에서 돌아오는 중
+                        s, heading = 2 * chord - s, (trk + 180) % 360
+                    la, lo = _along(a["lat"], a["lon"], trk, s - back)
+                    a["lat"], a["lon"], a[key] = round(la, 5), round(lo, 5), round(heading, 2)
             a["seen_pos"] = 1.0
             ac_out.append(a)
         return {"ac": ac_out, "now": int(time.time() * 1000), "total": len(ac_out)}
