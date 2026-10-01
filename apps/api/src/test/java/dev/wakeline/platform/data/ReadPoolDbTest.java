@@ -47,6 +47,10 @@ class ReadPoolDbTest {
                 while (!server.isClosed()) {
                     try {
                         Socket client = server.accept();
+                        if (frozen) { // 멈춘 서버: TCP 는 받지만(커널) 답하지 않는다 — 새 연결(취소 요청)도 그렇다
+                            sockets.add(client);
+                            continue;
+                        }
                         Socket upstream = new Socket(host, port);
                         sockets.add(client);
                         sockets.add(upstream);
@@ -89,6 +93,40 @@ class ReadPoolDbTest {
             frozen = false;
             server.close();
             for (Socket s : sockets) closeQuietly(s);
+        }
+    }
+
+    /**
+     * 문장 상한(setQueryTimeout — Sql.publicRead 가 거는 3 s)의 취소는 새 연결로 서버에 보낸다. 서버가 멈췄으면 그 취소도 답을 받지 못하고, pgjdbc 는 문장을
+     * 돌려주기 전에 취소가 끝나기를 기다린다 — 기본 cancelSignalTimeout 10 s 면 소켓 상한(5 s)이 지나도 3 + 10 = 13 s 동안 조회 스레드가 묶였다(QA-104 와
+     * 같은 원인). 취소에 1 s(연결 · 읽기 각각)까지만 쓰면 소켓 상한 안에 끝난다.
+     */
+    @Test void aCancelThatCannotReachAFrozenServer_doesNotOutlastTheSocketTimeout() throws Exception {
+        DbTestSupport.start();
+        ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor();
+        try (FreezingProxy proxy = new FreezingProxy(DbTestSupport.host(), DbTestSupport.port());
+             HikariDataSource ds = new HikariDataSource(ReadPool.config("jdbc:postgresql://127.0.0.1:" + proxy.port() + "/wakeline", "wakeline_api",
+                     DbTestSupport.API_PW, 1, ReadPool.DEFAULT_CONNECTION_TIMEOUT_MS, new SimpleMeterRegistry()));
+             Connection c = ds.getConnection();
+             Statement st = c.createStatement()) {
+            st.setQueryTimeout(Sql.PUBLIC_READ_TIMEOUT_S);
+            assertThat(one(st)).isEqualTo(1);
+            proxy.frozen = true;
+            long t0 = System.nanoTime();
+            CompletableFuture<Object> read = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return one(st);
+                } catch (SQLException e) {
+                    return e;
+                }
+            }, runner);
+            Object out = read.get(30, TimeUnit.SECONDS);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(out).isInstanceOf(SQLException.class);
+            assertThat(ms).as("the out-of-band cancel must not hold the read past the socket timeout (%d s)", ReadPool.SOCKET_TIMEOUT_S)
+                    .isLessThan(ReadPool.SOCKET_TIMEOUT_S * 1000L + 1_000);
+        } finally {
+            runner.shutdownNow();
         }
     }
 

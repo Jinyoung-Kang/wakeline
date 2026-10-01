@@ -29,7 +29,10 @@ class PublicReadGateTest {
     static final class FakePool extends org.springframework.jdbc.datasource.AbstractDataSource {
         final AtomicInteger open = new AtomicInteger();
         final AtomicInteger closed = new AtomicInteger();
+        /** 빌린 연결에 걸린 망 상한(ms, 마지막 값 — 없으면 -1). */
+        final AtomicInteger networkTimeoutMs = new AtomicInteger(-1);
         volatile boolean fail;
+        volatile boolean failNetworkTimeout;
 
         @Override
         public Connection getConnection() throws SQLException {
@@ -38,6 +41,10 @@ class PublicReadGateTest {
             return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class}, (p, m, a) -> {
                 if (m.getName().equals("close")) closed.incrementAndGet();
                 if (m.getName().equals("isClosed")) return false;
+                if (m.getName().equals("setNetworkTimeout")) {
+                    if (failNetworkTimeout) throw new java.sql.SQLFeatureNotSupportedException("no network timeout");
+                    networkTimeoutMs.set((Integer) a[1]);
+                }
                 return null;
             });
         }
@@ -111,6 +118,20 @@ class PublicReadGateTest {
         assertThat((System.nanoTime() - t0) / 1_000_000).isBetween(900L, 3_000L);
         c.close();
         assertThat(rejected()).isEqualTo(1.0);
+    }
+
+    /** QA-104: 공개 조회가 빌린 연결에는 소켓 읽기 상한(문장 상한 + 1 s)이 걸린다. 걸지 못하면 연결을 돌려주고 허가를 놓고 실패한다. */
+    @Test
+    void aPublicReadConnectionCarriesTheSocketTimeout() throws Exception {
+        PublicReadGate gate = new PublicReadGate(1, 0, 12, meters);
+        DataSource ds = gate.guard(pool);
+        Connection a = ds.getConnection();
+        assertThat(pool.networkTimeoutMs.get()).isEqualTo(4_000).isEqualTo(Sql.PUBLIC_READ_SOCKET_TIMEOUT_S * 1000);
+        a.close();
+        pool.failNetworkTimeout = true;
+        assertThatThrownBy(ds::getConnection).isInstanceOf(java.sql.SQLFeatureNotSupportedException.class);
+        assertThat(pool.closed.get()).as("the borrowed connection went back to the pool").isEqualTo(2);
+        assertThat(gate.inUse()).isZero();
     }
 
     @Test

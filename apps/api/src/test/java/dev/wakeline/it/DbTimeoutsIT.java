@@ -37,11 +37,35 @@ class DbTimeoutsIT extends IntegrationTest {
 
     @Autowired OpsUserService users;
     @Autowired MeterRegistry meters;
+    @Autowired org.springframework.context.ApplicationContext ctx;
 
     @Test
     void apiConnectionsCarryStatementAndLockTimeouts() {
         assertThat(db.sql("SHOW statement_timeout").query(String.class).single()).isEqualTo("30s");
         assertThat(db.sql("SHOW lock_timeout").query(String.class).single()).isEqualTo("5s");
+    }
+
+    /**
+     * QA-104: 공개 조회가 빌린 공유 풀 연결에는 소켓 읽기 상한 4 s(문장 상한 3 s + 1 s)가 걸리고, 풀에 돌려주면 Hikari 가 풀 기본(0 = 상한 없음)으로
+     * 되돌린다 — 같은 연결을 기록기 · 정기 작업이 빌려도 긴 문장(statement_timeout 30 s)이 소켓 상한에 끊기지 않는다. 문장 상한의 취소(새 연결)는
+     * 연결 · 읽기 1 s 씩만 기다린다(cancelSignalTimeout — 기본 10 s 면 멈춘 서버에서 13 s).
+     */
+    @Test
+    void aPublicReadConnectionHasASocketTimeoutThatTheWritersDoNotInherit() throws Exception {
+        javax.sql.DataSource shared = ctx.getBean(javax.sql.DataSource.class);
+        assertThat(((com.zaxxer.hikari.HikariDataSource) shared).getDataSourceProperties().getProperty("cancelSignalTimeout"))
+                .isEqualTo(String.valueOf(dev.wakeline.platform.data.Sql.CANCEL_SIGNAL_TIMEOUT_S));
+        javax.sql.DataSource publicReads = new PublicReadGate(1, 0, 12, meters).guard(shared);
+        Object physical;
+        try (Connection c = publicReads.getConnection()) {
+            assertThat(c.getNetworkTimeout()).isEqualTo(dev.wakeline.platform.data.Sql.PUBLIC_READ_SOCKET_TIMEOUT_S * 1000);
+            physical = ((org.springframework.jdbc.datasource.ConnectionProxy) c).getTargetConnection().unwrap(Connection.class); // Hikari 프록시 → 드라이버 연결
+        }
+        // Hikari 는 같은 스레드에 방금 돌려받은 연결을 먼저 준다 — 그 연결의 상한이 되돌아갔는지 본다
+        try (Connection w = shared.getConnection()) {
+            assertThat(w.unwrap(Connection.class)).as("same physical connection").isSameAs(physical);
+            assertThat(w.getNetworkTimeout()).as("writers borrow it back without the public read socket timeout").isZero();
+        }
     }
 
     @Test
