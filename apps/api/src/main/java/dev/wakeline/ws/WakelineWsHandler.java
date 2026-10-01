@@ -179,8 +179,8 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         if (bbox == null) { hub.error(s, "BAD_BBOX", "bbox must be [lomin,lamin,lomax,lamax] within range"); return; }
         JsonNode z = m.path("zoom");
         // 범위 안전하게 읽는다(리뷰 cto-2026-10 S4): Jackson 3 의 asInt() 는 int 밖의 수(1e10 · 2^31 · 큰 정수)면 던진다 — 익명 클라이언트가 ERROR 스택과
-        // 1011 종료를 만들었다. double 로 읽어 0–24 로 자르면 범위 안의 값은 예전과 같고(소수는 버림) 밖의 값은 끝으로 간다.
-        int zoom = z.isNumber() ? (int) Math.max(0, Math.min(MAX_ZOOM, z.asDouble())) : 7;
+        // 1011 종료를 만들었다. double 로 읽어 0–24 로 자르면 범위 안의 값은 예전과 같고(소수는 버림) 밖의 값은 끝으로 간다(double 밖의 정수도 — number()).
+        int zoom = z.isNumber() ? (int) Math.max(0, Math.min(MAX_ZOOM, number(z))) : 7;
         if (bbox.area() > props.maxBboxAreaSqdeg() && zoom > 5) {
             hub.error(s, "BBOX_TOO_LARGE", "bbox area exceeds limit; zoom out to ≤ 5 for world view");
             return;
@@ -198,10 +198,17 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         for (int i = 0; i < 4; i++) {
             JsonNode n = b.get(i);
             if (n == null || !n.isNumber()) return null;
-            v[i] = n.asDouble();
+            v[i] = number(n);
         }
         return Bbox.checked(v[0], v[1], v[2], v[3]); // REST 와 같은 규칙(유한 · 범위 · 최소 < 최대, R-16)
     }
+
+    /**
+     * JSON 숫자 → double(유한하지 않을 수 있다 — 그 뒤 규칙이 판단한다: bbox 는 유한 · 범위 검사로 BAD_BBOX, zoom 은 0–24 로 자름). Jackson 3 의
+     * asDouble() 은 double 로 나타낼 수 없는 정수(309자리 이상 — BigIntegerNode)에서 던져, 그 메시지가 처리기의 마지막 그물(BAD_MESSAGE · 1002)로 갔다
+     * (QA-203 — bbox 원소, zoom 은 ADR-017 §6.2 S4 의 알려진 한계였다). Number.doubleValue() 는 범위 밖을 ±Infinity 로 준다.
+     */
+    static double number(JsonNode n) { return n.numberValue().doubleValue(); }
 
     /**
      * 선택(계약 §1) — 선택은 집중 추적 수요가 된다(계약 v2 §A1). 같은 hex 를 다시 선택해도 선택 시각을 새로 잡는다
