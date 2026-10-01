@@ -16,7 +16,7 @@ const runtimeImports = (src: string) => [...src.matchAll(/^import\s+(?!type\b)[^
 
 describe("MapLibre is loaded once from public (R-02)", () => {
   it("dashboard modules import maplibre-gl only as types (no bundled copy of the shared chunk)", () => {
-    const files = ["components/MapView.tsx", "app/page.tsx", ...readdirSync(new URL("lib/", root)).filter((f) => f.endsWith(".ts")).map((f) => `lib/${f}`)];
+    const files = ["components/MapView.tsx", "app/page.tsx", ...readdirSync(new URL("components/map/", root)).map((f) => `components/map/${f}`), ...readdirSync(new URL("lib/", root)).filter((f) => f.endsWith(".ts")).map((f) => `lib/${f}`)];
     const offenders = files.flatMap((f) => runtimeImports(read(f)).map((i) => `${f}: ${i}`));
     expect(offenders).toEqual([]);
   });

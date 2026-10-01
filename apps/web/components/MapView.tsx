@@ -22,11 +22,11 @@ import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { krLayerId, parseKrRadar } from "@/lib/kr-radar";
 import { reportClientError } from "@/lib/errorReport";
-import { layerTip, onReady, setDashboardMap } from "@/lib/map-ready";
+import { onReady, setDashboardMap, useDashboardMap } from "@/lib/map-ready";
 import { EtagPoller, POLL_NONE } from "@/lib/etag-poller";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficStaleAt } from "@/lib/traffic-grid";
-import { renderTip, type AirportProps } from "@/lib/tooltip";
-import { clickAction, hoverKey as pointKey, pickByPriority, tipFor, visiblePickLayers, type TipContext } from "@/lib/map-pointer";
+import type { AirportProps } from "@/lib/tooltip";
+import { useMapPointer } from "./map/useMapPointer";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
@@ -103,9 +103,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   const radarFrameIndex = useUi((s) => s.radarFrameIndex);
   const radarOpacity = useUi((s) => s.radarOpacity);
   const selectedHex = useUi((s) => s.selectedHex);
-  const select = useUi((s) => s.select);
-  const selectSigmet = useUi((s) => s.selectSigmet);
-  const selectAirport = useUi((s) => s.selectAirport);
   const selectedShip = useUi((s) => s.selectedShip);
   const selectShip = useUi((s) => s.selectShip);
   const shipCats = useUi((s) => s.shipCats);
@@ -129,6 +126,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   /** 선택 선박 항적: REST 한 번 + WS ship_selected 로 연장(AIS 공백·15분 틈은 점선) */
   const shipTrack = useRef<ShipTrackRef>(emptyShipTrack(null));
   const [shipClock, setShipClock] = useState(0);
+  /** 지금 그린 감시 공항 — 공항 툴팁(포인터 Hook)이 읽는다. 지도를 만들 때 비우고 조회기가 채운다 */
+  const airports = useRef<GeoJSON.Feature<GeoJSON.Point, AirportProps>[]>([]);
 
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
@@ -217,56 +216,15 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     });
 
     // ---- 공항 레이어(GAP-14): 5분마다 재조회, 1분마다 METAR 경과로 "오래됨"(> 2 h) 재계산 ----
-    let airportFeatures: GeoJSON.Feature<GeoJSON.Point, AirportProps>[] = [];
+    airports.current = [];
     let airportsKey = "";
     const applyAirports = () => {
       const src = geo(map, "airports");
       if (!src) return;
-      const { features, key } = airportLayerFeatures(airportFeatures, serverNowMs(Date.now()));
+      const { features, key } = airportLayerFeatures(airports.current, serverNowMs(Date.now()));
       if (key === airportsKey) return;
       airportsKey = key;
       src.setData({ type: "FeatureCollection", features });
-    };
-
-    /** 보이는 레이어에서 우선순위대로 한 개(lib/map-pointer) */
-    const pick = (pt: maplibregl.PointLike) => {
-      const present = visiblePickLayers(map);
-      return present.length ? pickByPriority(map.queryRenderedFeatures(pt, { layers: present })) : null;
-    };
-    /** 툴팁에 쓰는 지금 값 */
-    const tipContext = (now: number): TipContext => {
-      const d = getData();
-      return {
-        now, selected: d.selected, aircraft: aircraftStates, ships: shipStates, shipSelected: d.shipSelected, selectedShip: useUi.getState().selectedShip,
-        airports: airportFeatures, sigmets: d.sigmets, shipsCellDeg: d.ships.cell_deg, trafficGrid: d.trafficGrid.data, layerTip,
-      };
-    };
-
-    // ---- 호버 툴팁(GAP-26): 항공기 > 선박 > 선박 격자 > 공항 > SIGMET. rAF 로 묶어 이동당 한 번만 조회. 내용은 텍스트 노드로만. ----
-    const popup = new ml.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
-    let hoverKey = "";
-    let hoverAt = 0;
-    let hoverRaf = 0;
-    let hoverEvt: maplibregl.MapMouseEvent | null = null;
-    const hideTip = () => { popup.remove(); hoverKey = ""; hoverEvt = null; map.getCanvas().style.cursor = ""; };
-    const doHover = () => {
-      hoverRaf = 0;
-      const e = hoverEvt;
-      if (!e) return;
-      const f = pick(e.point);
-      map.getCanvas().style.cursor = f ? "pointer" : "";
-      if (!f) { popup.remove(); hoverKey = ""; return; }
-      const now = serverNowMs(Date.now());
-      const key = pointKey(f);
-      if (key !== hoverKey || now - hoverAt > 1000) {
-        const tip = tipFor(f.layer.id, (f.properties ?? {}) as Record<string, unknown>, tipContext(now));
-        if (!tip) { popup.remove(); hoverKey = ""; return; }
-        popup.setDOMContent(renderTip(tip));
-        hoverKey = key;
-        hoverAt = now;
-      }
-      popup.setLngLat(e.lngLat);
-      if (!popup.isOpen()) popup.addTo(map);
     };
 
     // ---- 실시간 데이터(R-01): 지도 스타일(외부 호스트)을 기다리지 않고 바로 시작한다. 구독 bbox 는 지도 생성 직후부터 알 수 있다.
@@ -291,7 +249,7 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       url: "/api/v1/airports?watched=true", accept: "application/geo+json, application/json", parse: parseAirports,
       intervalMs: AIRPORTS_REFRESH_MS, visibleMinGapMs: AIRPORTS_RECHECK_MS,
     }, (st) => {
-      if (st.version !== apSeen) { apSeen = st.version; airportFeatures = st.data ?? []; }
+      if (st.version !== apSeen) { apSeen = st.version; airports.current = st.data ?? []; }
       applyAirports(); // 실패해도 — 마지막 값의 경과로 "오래됨"을 드러낸다
     });
     krPoller.start();
@@ -310,22 +268,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       map.addControl(mapAttributionControl(ml, mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) })), "bottom-right");
       applyRender();
       applyAirports();
-      map.on("mousemove", (e: maplibregl.MapMouseEvent) => { hoverEvt = e; if (!hoverRaf) hoverRaf = requestAnimationFrame(doHover); });
-      map.on("mouseout", hideTip);
-      map.on("dragstart", hideTip);
-      map.on("click", (e: maplibregl.MapMouseEvent) => {
-        const a = clickAction(pick(e.point), map.getZoom()); // lib/map-pointer — 이미 선택된 선박 · 그 항적은 그대로(keep)
-        if (a.kind === "aircraft") select(a.hex);
-        else if (a.kind === "ship") selectShip(a.mmsi);
-        else if (a.kind === "zoom") {
-          // 격자 칸을 누르면 그 칸으로 확대(움직임 줄이기 설정이면 바로)
-          const opts = { center: a.center, zoom: a.zoom };
-          const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-          if (reduce) map.jumpTo(opts); else map.easeTo({ ...opts, duration: 800, essential: true });
-        } else if (a.kind === "airport") selectAirport(a.icao);
-        else if (a.kind === "sigmet") selectSigmet(a.id);
-        else if (a.kind === "clear") { select(null); selectShip(null); } // 빈 곳 클릭 = 선택 해제(집중 추적도 멈춘다)
-      });
     });
 
     const onVisibility = () => {
@@ -342,8 +284,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       krPoller.stop();
       apPoller.stop();
       clearInterval(apTimer);
-      if (hoverRaf) cancelAnimationFrame(hoverRaf);
-      popup.remove();
       client.close();
       worker.terminate();
       setDashboardMap(null); // 지우기 전에 — 조각이 지운 지도에 그리지 않게
@@ -362,8 +302,11 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       refreshPrediction.current = () => {};
       setData({ conn: "closed" });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ---- 포인터: 호버 툴팁 · 클릭(components/map/useMapPointer) — 지도는 상황판 지도 손잡이(lib/map-ready)로 받는다 ----
+  const dashMap = useDashboardMap();
+  useMapPointer(dashMap, airports);
 
   // ---- SIGMET 만료 재검사 타이머 ----
   useEffect(() => {
