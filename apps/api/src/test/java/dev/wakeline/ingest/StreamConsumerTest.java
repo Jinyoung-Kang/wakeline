@@ -219,6 +219,28 @@ class StreamConsumerTest {
         assertThat(c.acked).hasSize(1);
     }
 
+    /**
+     * 리뷰 cto-2026-10 P1(api-review §4 P1): 처리 시간 지표 wakeline_stream_process_seconds 를 메시지 종류(kind) · 범위(scope)로 나눈다 — 120 s 에 한 번
+     * 오는 전세계 메시지(10,000대, 약 84 ms)가 관심 지역 · hot · focus 메시지의 p95 에 묻혀 운영에서 보이지 않았다. 값은 봉투 검증(스키마 enum)을 지난
+     * 것뿐이라 수가 묶인다. 검증 실패(DLQ)는 전처럼 재지 않는다.
+     */
+    @Test void processTimer_isTaggedByKindAndScope() throws Exception {
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        RecordingConsumer c = new RecordingConsumer(new SnapshotStore(), e -> { }, meters);
+        c.handle(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "region", T, aircraftPayload("a00020", T)));
+        c.handle(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "global", T.plusSeconds(1), aircraftPayload("a00021", T.plusSeconds(1))));
+        c.handle(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "global", T.plusSeconds(2), aircraftPayload("a00022", T.plusSeconds(2))));
+        c.handle(envelope(StreamConsumer.S_SIGMET, "sigmet", "-", T, sigmetPayload("NEW:1:1", T)));
+        c.handle(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "region", T.plusSeconds(3), "{\"states\":[{\"hex\":\"zz\"}]}")); // DLQ
+        assertThat(meters.find("wakeline_stream_process_seconds").tags("kind", "aircraft", "scope", "region").timer())
+                .as("region timer").isNotNull().extracting(io.micrometer.core.instrument.Timer::count).isEqualTo(1L);
+        assertThat(meters.find("wakeline_stream_process_seconds").tags("kind", "aircraft", "scope", "global").timer().count()).isEqualTo(2);
+        assertThat(meters.find("wakeline_stream_process_seconds").tags("kind", "sigmet", "scope", "-").timer().count()).isEqualTo(1);
+        assertThat(meters.find("wakeline_stream_process_seconds").timers()).as("one timer per seen kind/scope, nothing for the rejected message")
+                .extracting(t -> t.getId().getTag("kind") + "/" + t.getId().getTag("scope"))
+                .containsExactlyInAnyOrder("aircraft/region", "aircraft/global", "sigmet/-");
+    }
+
     /** XACK 실패(Redis 장애)는 ACK 를 되돌려 두고 예외를 올린다 — 루프가 재시도하고, 다음 flush 가 빠짐없이 보낸다. */
     @Test void ackFailure_isRequeuedAndRetried() throws Exception {
         java.util.concurrent.atomic.AtomicBoolean redisDown = new java.util.concurrent.atomic.AtomicBoolean(true);

@@ -656,4 +656,115 @@ class LogReaderTest {
         assertThat(reader.get("1-0", null, resolvedUpTo(30))).isNull();
         assertThat(reader.get(old).get("resolved").isNull()).as("without resolutions: explicit null").isTrue();
     }
+
+    // ---------- 해석한 항목 캐시(리뷰 cto-2026-10 P3 · api-review §4 P5) ----------
+
+    /** 폴링이 같은 항목을 다시 훑어도 다시 해석하지 않는다 — 새 항목은 보이고, 해결 표시는 그때의 해결 기록대로(캐시한 노드는 바뀌지 않는다). */
+    @Test
+    void decodedEntriesAreReusedWhileNewEntriesAndCurrentResolutionsStillShow() {
+        Instant t = Instant.parse("2026-10-01T00:00:00Z");
+        for (int i = 0; i < 50; i++) stream.add(t.toEpochMilli() + i, 0, event(t.plusMillis(i), "api", "ERROR", "L", "m" + i, "00000000000000aa", null, null, 0));
+        for (int i = 0; i < 20; i++) client.add(t.toEpochMilli() + i, 1, event(t.plusMillis(i), "web-client", "ERROR", "browser", "c" + i, "00000000000000bb", null, null, 0));
+        var all = new LogReader.Filter(Set.of(), Set.of(), null, null, null, null, null);
+        assertThat(reader.groups(all).scanned()).isEqualTo(70);
+        assertThat(reader.decodeCount()).isEqualTo(70);
+        assertThat(reader.list(all, null, 100).items()).hasSize(70);
+        assertThat(reader.groups(all).groups()).hasSize(2);
+        assertThat(reader.decodeCount()).as("the same entries are not decoded again").isEqualTo(70);
+
+        // 새 항목: 보이고, 그것만 해석한다
+        stream.add(t.toEpochMilli() + 100, 0, event(t.plusMillis(100), "api", "WARN", "L", "fresh", "00000000000000cc", null, null, 0));
+        var page = reader.list(all, null, 100);
+        assertThat(page.items().getFirst().path("message").asString()).isEqualTo("fresh");
+        assertThat(reader.decodeCount()).isEqualTo(71);
+
+        // 해결 표시: 요청마다 그때의 해결 기록 — 가렸다가, 해결이 없어지면 다시 보이고 resolved 는 null(캐시한 노드에 붙지 않았다)
+        LogReader.Resolved r = new LogReader.Resolved(7, t.plusSeconds(1), "ops");
+        LogReader.Resolver aa = fp -> "00000000000000aa".equals(fp) ? r : null;
+        var hidden = reader.list(all, null, 100, aa, true);
+        assertThat(hidden.hiddenResolved()).isEqualTo(50);
+        assertThat(hidden.items()).hasSize(21);
+        var shown = reader.list(all, null, 100, aa, false);
+        assertThat(shown.items().stream().filter(n -> n.path("resolved").path("id").asLong() == 7)).hasSize(50);
+        var none = reader.list(all, null, 100, LogReader.Resolver.NONE, true);
+        assertThat(none.items()).hasSize(71).allSatisfy(n -> assertThat(n.get("resolved").isNull()).isTrue());
+        assertThat(shown.items().stream().filter(n -> n.path("resolved").path("id").asLong() == 7))
+                .as("a page already returned is not changed by a later request (the cached node is shared)").hasSize(50);
+        assertThat(reader.groups(all, aa, false).groups()).filteredOn(g -> "00000000000000aa".equals(g.fp())).singleElement()
+                .satisfies(g -> assertThat(g.resolved()).isEqualTo(r));
+        assertThat(reader.groups(all, LogReader.Resolver.NONE, false).groups()).allSatisfy(g -> assertThat(g.resolved()).isNull());
+        String sid = (t.toEpochMilli() + 10) + "-0";
+        assertThat(reader.get(sid, LogStream.SERVER, aa).path("resolved").path("id").asLong()).isEqualTo(7);
+        assertThat(reader.get(sid, LogStream.SERVER, LogReader.Resolver.NONE).get("resolved").isNull()).isTrue();
+        assertThat(reader.decodeCount()).isEqualTo(71);
+    }
+
+    /**
+     * 두 스트림이 가득(각 keepMax — 한 번 훑는 상한 4,200)인 채 폴링마다 새 항목 몇 건이 들어오고(트림이 오래된 것을 자른다) 새 항목만 해석한다 — 캐시는
+     * 스트림처럼 가장 작은 id 부터 버린다. 가장 오래 쓰지 않은 것부터 버리면 최신 순으로 훑는 다음 폴링이 바로 쓸 항목부터 버려 4,200건을 모두 다시
+     * 해석했다(측정에서 찾음).
+     */
+    @Test
+    void fullStreamsWithAFewNewEntriesPerPollDecodeOnlyTheNewOnes() {
+        Instant t = Instant.parse("2026-10-01T00:00:00Z");
+        int ns = (int) LogStream.SERVER.keepMax(), nc = (int) LogStream.CLIENT.keepMax();
+        for (int i = 0; i < ns; i++) stream.add(t.toEpochMilli() + i, 0, event(t.plusMillis(i), "api", "WARN", "L", "m" + i, "00000000000000aa", null, null, 0));
+        for (int i = 0; i < nc; i++) client.add(t.toEpochMilli() + i, 1, event(t.plusMillis(i), "web-client", "ERROR", "b", "c" + i, "00000000000000bb", null, null, 0));
+        var all = new LogReader.Filter(Set.of(), Set.of(), null, null, null, null, null);
+        assertThat(reader.groups(all).scanned()).isEqualTo(LogReader.SCAN_MAX);
+        assertThat(reader.decodeCount()).isEqualTo(LogReader.SCAN_MAX);
+        int next = ns;
+        for (int poll = 0; poll < 3; poll++) {
+            long before = reader.decodeCount();
+            for (int i = 0; i < 10; i++, next++) stream.add(t.toEpochMilli() + next, 0, event(t.plusMillis(next), "api", "WARN", "L", "m" + next, "00000000000000aa", null, null, 0));
+            while (stream.entries.size() > ns) stream.entries.pollFirstEntry(); // XADD … MAXLEN ~ 가 남기는 수(keepMax 이하)로 자른다
+            var g = reader.groups(all);
+            assertThat(g.scanned()).isEqualTo(LogReader.SCAN_MAX);
+            assertThat(reader.decodeCount() - before).as("poll %d decodes only the new entries", poll).isEqualTo(10);
+        }
+    }
+
+    /** 같은 스트림 · id 에 다른 원문(스트림을 지우고 같은 id 로 다시 실었을 때)은 다시 해석한다. 맞지 않는 항목도 기억해 다시 검증하지 않는다. */
+    @Test
+    void aDifferentEntryUnderTheSameIdIsDecodedAgain() {
+        Instant t = Instant.parse("2026-10-01T00:00:00Z");
+        String id = stream.add(t.toEpochMilli(), 0, event(t, "api", "ERROR", "L", "before", "00000000000000aa", null, null, 0));
+        stream.add(t.toEpochMilli(), 1, "{\"not\":\"a log event\"}");
+        var all = new LogReader.Filter(Set.of(), Set.of(), null, null, null, null, null);
+        assertThat(reader.list(all, null, 10).items()).extracting(n -> n.path("message").asString()).containsExactly("before");
+        assertThat(reader.list(all, null, 10).invalid()).isEqualTo(1);
+        assertThat(reader.decodeCount()).isEqualTo(2);
+        stream.entries.put(MemStream.id(id), event(t, "api", "ERROR", "L", "after", "00000000000000aa", null, null, 0));
+        assertThat(reader.list(all, null, 10).items()).extracting(n -> n.path("message").asString()).containsExactly("after");
+        assertThat(reader.get(id, LogStream.SERVER, LogReader.Resolver.NONE).path("message").asString()).isEqualTo("after");
+        assertThat(reader.decodeCount()).isEqualTo(3);
+    }
+
+    /** 캐시 상한: 항목 수 · 원문 글자 합을 넘으면 가장 작은 id(스트림이 먼저 자르는 것)부터 버린다. 상한보다 큰 원문은 담지 않는다. */
+    @Test
+    void theDecodedCacheIsBoundedAndDropsTheSmallestIdsFirst() {
+        LogReader.Decoded d = new LogReader.Decoded(3, 100);
+        d.put("1-0", "x".repeat(30), null);
+        d.put("2-0", "y".repeat(30), null);
+        d.put("3-0", "z".repeat(30), null);
+        assertThat(d.get("1-0", "x".repeat(30))).isNotNull(); // 최근에 썼어도
+        d.put("4-0", "w".repeat(30), null);
+        assertThat(d.size()).isEqualTo(3);
+        assertThat(d.get("1-0", "x".repeat(30))).as("the smallest id goes first").isNull();
+        assertThat(d.get("2-0", "y".repeat(30))).isNotNull();
+        d.put("5-0", "v".repeat(60), null); // 글자 합 30 × 3 + 60 > 100 → 2-0, 3-0 이 빠진다
+        assertThat(d.chars()).isEqualTo(90);
+        assertThat(d.get("3-0", "z".repeat(30))).isNull();
+        assertThat(d.get("4-0", "w".repeat(30))).isNotNull();
+        assertThat(d.get("5-0", "v".repeat(60))).isNotNull();
+        d.put("0-9", "s".repeat(20), null); // 가장 작은 id 가 넘치게 하면 그것이 빠진다
+        assertThat(d.get("0-9", "s".repeat(20))).isNull();
+        assertThat(d.get("5-0", "v".repeat(60))).isNotNull();
+        d.put("6-0", "u".repeat(101), null);
+        assertThat(d.get("6-0", "u".repeat(101))).isNull();
+        assertThat(d.get("5-0", "v".repeat(59) + "!")).as("same length, other content").isNull();
+        assertThat(d.get("not-an-id", "v")).isNull();
+        d.put("not-an-id", "v", null);
+        assertThat(d.size()).isEqualTo(2);
+    }
 }

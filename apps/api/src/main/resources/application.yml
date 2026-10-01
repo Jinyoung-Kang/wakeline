@@ -10,7 +10,7 @@ spring:
     username: wakeline_api
     password: ${DB_API_PASSWORD:}
     hikari:
-      maximum-pool-size: 12
+      maximum-pool-size: 12              # 공개 조회는 이 가운데 6개까지 — 나머지는 기록기 몫(PublicReadGate · wakeline.public-reads.*, 리뷰 cto-2026-10 D6)
       connection-timeout: 5000
       data-source-properties:
         ApplicationName: wakeline-api

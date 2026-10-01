@@ -227,6 +227,58 @@ class WeatherPersistDbTest {
         assertThat(sigmetRow("A").get("raw_text")).isEqualTo("RAW-A amended");
     }
 
+    /**
+     * 리뷰 cto-2026-10 P4(api-review §4 P7): 재생 조회 validAt 은 {@code valid_to > :t} 를 함께 건다(인덱스 sigmet_valid 의 앞 열 — 표는 지우지 않아 자란다).
+     * 그 조건은 원래 조건 {@code coalesce(withdrawn_at, valid_to) > :t} 에 이미 들어 있다 — 쓰기 길이 withdrawn_at < valid_to 를 지키므로:
+     * 철회 표시(markWithdrawn)는 valid_to > 세트 시각인 행에만 withdrawn_at = 세트 시각을 쓰고, valid_to 를 바꾸는 upsert 는 늘 withdrawn_at 을 지운다.
+     * 여기서는 실제 쓰기 길(onSigmetSet → persistSet: upsert · 철회 표시 · 다시 나타남 · valid_to 늘이기/줄이기)로 만든 표에서 그 불변식과,
+     * 경계 시각(발효 · 만료 · 철회 ± 1 s)을 포함한 모든 시각에 validAt 이 원래 조건만으로 고른 것과 같은지 본다.
+     */
+    @Test
+    void replayPredicateWithTheImpliedValidToBoundSelectsExactlyWhatTheOriginalPredicateSelects() {
+        java.util.Random rnd = new java.util.Random(20261001);
+        Instant start = T0.minus(2, ChronoUnit.DAYS);
+        List<SigmetRecord> pool = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            Instant from = start.plusSeconds(rnd.nextInt(36 * 3600));
+            pool.add(sig("P" + i, "awc_isigmet", "RAW-" + i, from, from.plusSeconds(3600 + rnd.nextInt(5 * 3600))));
+        }
+        java.util.Set<String> gone = new java.util.HashSet<>();
+        for (Instant f = start; f.isBefore(T0); f = f.plusSeconds(600)) {
+            List<SigmetRecord> in = new java.util.ArrayList<>();
+            for (int i = 0; i < pool.size(); i++) {
+                SigmetRecord s = pool.get(i);
+                if (rnd.nextInt(40) == 0) { // 발표 내용이 바뀐다: 만료를 늘이거나 줄인다(이미 철회 표시가 있어도)
+                    Instant to = s.validTo().plusSeconds((rnd.nextInt(7) - 3) * 1800L);
+                    if (to.isAfter(s.validFrom())) pool.set(i, s = sig(s.id(), s.provider(), s.rawText(), s.validFrom(), to));
+                }
+                if (rnd.nextInt(30) == 0) { if (!gone.add(s.id())) gone.remove(s.id()); } // 빠졌다가(철회) 다시 나타난다
+                boolean feed = !f.isBefore(s.validFrom().minusSeconds(1800)) && f.isBefore(s.validTo());
+                if (feed && !gone.contains(s.id())) in.add(s);
+            }
+            if (in.isEmpty()) continue; // 공급자가 세트에 없으면 철회를 판단하지 않는다 — 빈 세트는 보내지 않는다
+            sigmets.onSigmetSet(set(f, in.toArray(SigmetRecord[]::new)));
+            writer.drainNow();
+        }
+        assertThat(admin.sql("SELECT count(*) FROM sigmet WHERE withdrawn_at IS NOT NULL").query(Long.class).single()).as("some withdrawals").isPositive();
+        assertThat(admin.sql("SELECT count(*) FROM sigmet WHERE withdrawn_at IS NOT NULL AND withdrawn_at >= valid_to").query(Long.class).single())
+                .as("the write paths keep withdrawn_at before valid_to").isZero();
+
+        java.util.TreeSet<Instant> ats = new java.util.TreeSet<>();
+        for (Instant t = start.minusSeconds(3600); t.isBefore(T0.plusSeconds(6 * 3600)); t = t.plusSeconds(600)) ats.add(t);
+        for (var r : admin.sql("SELECT valid_from, valid_to, withdrawn_at FROM sigmet").query().listOfRows())
+            for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) {
+                Instant x = Sql.toInstant(r.get(k));
+                if (x != null) for (long d = -1; d <= 1; d++) ats.add(x.plusSeconds(d));
+            }
+        for (Instant t : ats) {
+            List<Object> original = admin.sql("""
+                    SELECT id FROM sigmet WHERE valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t ORDER BY fir_id, series_id""")
+                    .param("t", Sql.ts(t)).query().singleColumn();
+            assertThat(sigmets.validAt(t).stream().map(m -> m.get("id")).toList()).as("at %s", t).isEqualTo(original);
+        }
+    }
+
     @Test
     void oneInvalidSigmetDoesNotBlockTheRestOfTheSet() {
         var bad = sig("BAD", "awc_isigmet", "bad", T0, T0.minusSeconds(60)); // valid_to < valid_from — DB 제약 위반

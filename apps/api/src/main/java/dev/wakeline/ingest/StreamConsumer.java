@@ -142,7 +142,12 @@ public class StreamConsumer implements SmartLifecycle {
     private final Counter shipsRejectedCap;
     private final Counter shipsRejectedFuture;
     private final Counter gapScopeInvalid;
-    private final Timer processTimer;
+    /**
+     * 처리 시간(검증 · 해석 · 반영 — 소비 스레드가 이 메시지에 쓴 시간)을 메시지 종류(kind) · 범위(scope)마다 따로(리뷰 cto-2026-10 P1 · api-review §4 P1:
+     * 하나뿐이던 지표에서는 120 s 에 한 번 오는 전세계 메시지 — 10,000대, 약 84 ms — 가 관심 지역 · hot · focus 의 p95 에 묻혔다). 값은 봉투 검증
+     * (stream_envelope.v1 의 kind · scope enum)을 지난 것뿐이라 수가 묶인다(kind 5 × scope 6 이하 — 실제로는 aircraft × 4 · sigmet · radar · ships · ais_gap).
+     */
+    private final Map<String, Timer> processTimers = new ConcurrentHashMap<>();
     /** durable 해진 메시지 — 소비 스레드가 모아 XACK 한다. */
     private final ConcurrentLinkedQueue<Ack> acks = new ConcurrentLinkedQueue<>();
     /** 영수증이 아직 풀리지 않은 메시지(stream/id) — 같은 프로세스 안에서 PEL 재처리가 진행 중인 메시지를 다시 처리하지 않게. */
@@ -202,7 +207,6 @@ public class StreamConsumer implements SmartLifecycle {
                 .description("seen_at 이 5분 넘게 미래라 받지 않은 보고").register(meters);
         this.gapScopeInvalid = Counter.builder("wakeline_ais_gap_scope_invalid_total")
                 .description("ais_gap 의 scope 가 구역 규칙(AisBboxes)에 맞지 않아 구역 없음(모든 곳에 적용)으로 받은 공백").register(meters);
-        this.processTimer = Timer.builder("wakeline_stream_process_seconds").publishPercentiles(0.5, 0.95).register(meters);
         meters.gauge("wakeline_stream_unacked", inFlight, Set::size);
     }
 
@@ -563,13 +567,21 @@ public class StreamConsumer implements SmartLifecycle {
         try {
             apply(p, receipt, true);
             processed.increment();
-            processTimer.record(Duration.ofNanos(System.nanoTime() - t0));
+            processTimer(p).record(Duration.ofNanos(System.nanoTime() - t0));
         } catch (RuntimeException e) {
             applyErrors.increment();
             log.error("message {} from {} passed validation but could not be applied (not dead-lettered): {}", id, stream, e.toString(), e);
         } finally {
             receipt.release(); // 소비자 자신의 보유 — 비동기 저장이 없으면 여기서 바로 ACK 대기열로
         }
+    }
+
+    /** 이 메시지의 처리 시간 지표(kind · scope — {@link #processTimers}). */
+    private Timer processTimer(Parsed p) {
+        String scope = p.fields().get("scope");
+        return processTimers.computeIfAbsent(p.kind() + "/" + scope, k -> Timer.builder("wakeline_stream_process_seconds")
+                .description("검증을 지난 스트림 메시지 하나를 해석 · 반영하는 데 소비 스레드가 쓴 시간(메시지 종류 · 범위별)")
+                .tag("kind", p.kind()).tag("scope", scope == null ? "-" : scope).publishPercentiles(0.5, 0.95).register(meters));
     }
 
     /** durable 해진 메시지를 스트림별로 모아 XACK(소비 스레드 전용). 실패하면 되돌려 두고 예외를 올린다(루프가 재시도). */

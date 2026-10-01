@@ -204,12 +204,16 @@ public class SigmetRepository {
     /**
      * 재생: 시각 t 에 유효했던(발효 후, 철회·만료 전) 경보 중 bbox 와 겹치는 것(R-26, GIST sigmet_geom_gist). 도형이 없는 경보(좌표 없음)는
      * 위치를 모르므로 뺄 수 없어 남긴다. base/top 출처는 계약 값만 내보내고 DB 전용 'unknown' 하한은 null.
+     * <p>{@code valid_to > :t} 는 {@code coalesce(withdrawn_at, valid_to) > :t} 에 이미 들어 있다 — 쓰기 길이 withdrawn_at &lt; valid_to 를 지킨다
+     * ({@link #markWithdrawn} 은 valid_to &gt; 세트 시각인 행에만 withdrawn_at = 세트 시각을 쓰고, valid_to 를 바꾸는 {@link #upsert} 는 늘 withdrawn_at 을
+     * 지운다 — 이 표를 쓰는 길은 이 둘뿐이다). 결과는 같고 인덱스 sigmet_valid(valid_to, valid_from)를 쓸 수 있게 한다 — 경보는 지우지 않아 표가 자란다
+     * (리뷰 cto-2026-10 P4 · 측정 docs/PERF.md §13, 같은 결과 — WeatherPersistDbTest).</p>
      */
     public List<Map<String, Object>> validAt(Instant at, Bbox b) {
         return Sql.publicRead(db, "replay.sigmet", """
                 SELECT id, fir_id, fir_name, hazard, qualifier, base_ft, top_ft, base_source, top_source, valid_from, valid_to, withdrawn_at,
                        excluded_reason, raw_text, provider, ST_AsGeoJSON(geom)::text geometry
-                FROM sigmet WHERE valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t
+                FROM sigmet WHERE valid_from <= :t AND valid_to > :t AND coalesce(withdrawn_at, valid_to) > :t
                   AND (geom IS NULL OR geom && ST_MakeEnvelope(:lomin, :lamin, :lomax, :lamax, 4326))
                 ORDER BY fir_id, series_id""")
                 .param("t", Sql.ts(at)).param("lomin", b.lomin()).param("lamin", b.lamin()).param("lomax", b.lomax()).param("lamax", b.lamax())
