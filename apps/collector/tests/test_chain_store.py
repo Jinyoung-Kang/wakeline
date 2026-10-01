@@ -12,7 +12,7 @@ import pytest
 from fakes import FakeRedis
 from test_fallback import FakeStatus, P
 
-from wakeline_collector import fallback
+from wakeline_collector import chain_state, fallback
 from wakeline_collector.chain_store import ChainStateStore
 from wakeline_collector.fallback import RATE_LIMIT_RESET_S, ProviderChain
 
@@ -259,8 +259,8 @@ def test_stage_is_capped_in_memory(monkeypatch):
         clk.advance(1)
     assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 6 * 3600
     # 쉼(4단계 · 300 s)·미룸(8단계 · 360분)이 모두 상한에 닿는 단계
-    assert fallback.STAGE_MAX == len(fallback.RATE_LIMIT_HOLD_S) + 1 == 8
-    assert chain._rate_limited["a"] == fallback.STAGE_MAX
+    assert chain_state.STAGE_MAX == len(chain_state.RATE_LIMIT_HOLD_S) + 1 == 8
+    assert chain._rate_limited["a"] == chain_state.STAGE_MAX
 
 
 def test_hold_ladder_extends_to_six_hours_and_backoff_is_unchanged(monkeypatch):
@@ -285,8 +285,8 @@ def test_hold_ladder_extends_to_six_hours_and_backoff_is_unchanged(monkeypatch):
         (300, 360),
         (300, 360),
     ]
-    assert fallback.RATE_LIMIT_RESET_S == 900 and fallback.BACKOFF_MAX_S == 300
-    assert fallback.SAVED_MAX_AHEAD_S == 6 * 3600 + 60  # 저장 기록의 먼 미래 상한도 새 최대 미룸을 따른다
+    assert fallback.RATE_LIMIT_RESET_S == 900 and chain_state.BACKOFF_MAX_S == 300
+    assert chain_state.SAVED_MAX_AHEAD_S == 6 * 3600 + 60  # 저장 기록의 먼 미래 상한도 새 최대 미룸을 따른다
 
 
 @pytest.mark.asyncio
@@ -312,7 +312,7 @@ async def test_restored_oversized_stage_is_clamped(monkeypatch, caplog):
     assert any("stage 8," in m for m in caplog.messages)
     assert chain.record_rate_limited("a") == 300 and chain.hold_s("a") == 6 * 3600
     await chain.persist("a")
-    assert r.kv[KEY]["stage"] == str(fallback.STAGE_MAX)
+    assert r.kv[KEY]["stage"] == str(chain_state.STAGE_MAX)
 
 
 def test_saved_hold_length_outside_the_known_range_is_malformed():
@@ -341,7 +341,7 @@ async def test_restored_six_hour_hold_is_kept_across_a_restart(monkeypatch):
     r = FakeRedis()
     chain, _ = _chain(r, clk)
     await chain.pick(["a", "b"])
-    for _ in range(fallback.STAGE_MAX):
+    for _ in range(chain_state.STAGE_MAX):
         chain.record_rate_limited("a")
         clk.advance(1)
     await chain.persist("a")

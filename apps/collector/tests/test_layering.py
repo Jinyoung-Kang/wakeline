@@ -14,7 +14,8 @@
 5. 다른 모듈의 비공개 이름(_x)을 import 하지 않는다.
 6. ais 패키지는 격벽이다(ais/__init__.py): ais 밖에서는 AIS_SHARED 만 import 한다.
 
-오늘의 위반(collector-review §1.4)은 ALLOWED 에 적었다. 새 위반은 실패하고, 고친 위반이 ALLOWED 에 남아도 실패한다 — 목록은 줄어들기만 한다.
+Phase 0 의 위반(collector-review §1.4)은 ALLOWED 에 적었고 Phase 3B 에서 모두 고쳐 지금은 비었다. 새 위반은 실패하고, 고친 위반이 ALLOWED 에
+남아도 실패한다 — 목록은 줄어들기만 한다.
 새 모듈은 층(과 규칙 모듈이면 기능)을 정해야 한다 — 정하지 않으면 실패한다. 함수 안의(늦은) import 도 센다.
 """
 
@@ -43,7 +44,7 @@ RULE_FEATURES: dict[str, str] = {
     "budget_rules": KERNEL,
     "textutil": KERNEL,
     "retry": KERNEL,
-    "fallback": KERNEL,
+    "chain_state": KERNEL,
     "ratelimit": KERNEL,
     "scheduler": KERNEL,
     "normalize": "aircraft",
@@ -85,6 +86,7 @@ LAYERS: dict[str, str] = {m: RULES for m in RULE_FEATURES} | {
     "budget": ADAPTERS,
     "status": ADAPTERS,
     "chain_store": ADAPTERS,
+    "fallback": ADAPTERS,
     "publisher": ADAPTERS,
     "runtime_settings": ADAPTERS,
     "demand": ADAPTERS,
@@ -106,12 +108,9 @@ JOBS_SHARED = {"jobs", "jobs.context"}
 JOBS_DESIGNED = {("jobs.demand", "jobs.route")}  # 선택 항공기 노선 조회를 demand 가 이어 부른다(collector-review §2.1)
 AIS_SHARED = {"geo", "masking", "logsink", "publisher", "redis_retry"}
 
-# 오늘의 위반(collector-review §1.4 의 1 · 2 · 3 · 4 · 6 — PLAN §2.4 의 '6곳', retry 는 import 둘) — (import 하는 모듈, import 되는 것, 규칙).
-# 고치면 지운다(PLAN Phase 3B).
-ALLOWED: set[tuple[str, str, str]] = {
-    ("fallback", "status", "layer"),  # 3B-7 chain_state — 판정 상태기계가 Redis 어댑터를 품는다
-    ("fallback", "chain_store", "layer"),  # 3B-7
-}
+# 허용하는 위반 — (import 하는 모듈, import 되는 것, 규칙). PLAN Phase 0 의 7건(collector-review §1.4 의 1 · 2 · 3 · 4 · 6)은 Phase 3B 에서 모두
+# 고쳤다(http_errors · send_outcome · budget_rules · publisher.envelope/entry_size · textutil · chain_state). 새 위반을 여기 더하지 않는다 — 고친다.
+ALLOWED: set[tuple[str, str, str]] = set()
 
 
 def _modules(root: Path) -> dict[str, Path]:
