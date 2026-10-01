@@ -2,12 +2,12 @@
   "version": 1,
   "shots": {
     "dashboard": {
-      "file": "dashboard.40f3893df9.webp",
+      "file": "dashboard.983c6efd68.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 147350,
-      "captured_at": "2026-09-30T17:49:55.761Z",
+      "bytes": 137522,
+      "captured_at": "2026-10-01T03:43:36.602Z",
       "variant": "한반도 #6.3/36.1/127.9",
       "callouts": [
         {
@@ -57,13 +57,39 @@
         }
       ]
     },
-    "traffic": {
-      "file": "traffic.9073a50d4f.webp",
+    "world": {
+      "file": "world.3b4f72f4f9.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 175452,
-      "captured_at": "2026-10-01T00:13:23.695Z",
+      "bytes": 157954,
+      "captured_at": "2026-10-01T03:43:44.300Z",
+      "variant": "전세계 #1.6/30/60 · 상태 바 aircraft 6281(구독 영역 안)",
+      "callouts": [
+        {
+          "n": 1,
+          "x": 6.6,
+          "y": 5.3
+        },
+        {
+          "n": 2,
+          "x": 22.4,
+          "y": 5.3
+        },
+        {
+          "n": 3,
+          "x": 14.1,
+          "y": 5.3
+        }
+      ]
+    },
+    "traffic": {
+      "file": "traffic.0e4d86ed66.webp",
+      "format": "webp",
+      "width": 1440,
+      "height": 900,
+      "bytes": 172928,
+      "captured_at": "2026-10-01T03:43:49.227Z",
       "variant": "연안 교통량 #7.2/35.2/128.6",
       "callouts": [
         {
@@ -89,13 +115,13 @@
       ]
     },
     "search": {
-      "file": "search.0de6ffc4da.webp",
+      "file": "search.63e77edf07.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 124296,
-      "captured_at": "2026-09-30T17:50:03.942Z",
-      "variant": "검색어 “KAL” — 지금 지도의 호출부호에서 가장 많은 앞 3자",
+      "bytes": 119346,
+      "captured_at": "2026-10-01T03:43:51.592Z",
+      "variant": "검색어 “JJA” — 지금 지도의 호출부호에서 가장 많은 앞 3자",
       "callouts": [
         {
           "n": 1,
@@ -110,7 +136,7 @@
         {
           "n": 3,
           "x": 41.6,
-          "y": 97.3
+          "y": 78
         },
         {
           "n": 4,
@@ -120,13 +146,13 @@
       ]
     },
     "aircraft": {
-      "file": "aircraft.8230507d9e.webp",
+      "file": "aircraft.b6fc90e4d5.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 144426,
-      "captured_at": "2026-09-30T17:50:14.094Z",
-      "variant": "GTI537 (aba800) — 한반도 영역에서 가장 높이 나는 항공기",
+      "bytes": 84574,
+      "captured_at": "2026-10-01T03:44:01.605Z",
+      "variant": "JAL92 (86da1e) — 한반도 영역에서 가장 높이 나는 항공기",
       "callouts": [
         {
           "n": 1,
@@ -150,13 +176,39 @@
         }
       ]
     },
-    "ship": {
-      "file": "ship.b921f410a3.webp",
+    "hot": {
+      "file": "hot.e7ca8a5420.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 175742,
-      "captured_at": "2026-09-30T17:51:02.231Z",
+      "bytes": 123988,
+      "captured_at": "2026-10-01T03:44:23.273Z",
+      "variant": "도쿄 #8.2/35.55/139.9 · 지도 칩 ‘핫 리전 30초 갱신(반경 100 NM)’ · 상태 바 aircraft 80",
+      "callouts": [
+        {
+          "n": 1,
+          "x": 4.2,
+          "y": 12.6
+        },
+        {
+          "n": 2,
+          "x": 6.6,
+          "y": 5.3
+        },
+        {
+          "n": 3,
+          "x": 13.2,
+          "y": 5.3
+        }
+      ]
+    },
+    "ship": {
+      "file": "ship.25d03f3b19.webp",
+      "format": "webp",
+      "width": 1440,
+      "height": 900,
+      "bytes": 179970,
+      "captured_at": "2026-10-01T03:45:10.778Z",
       "variant": "도쿄만 #10.6/35.45/139.78",
       "callouts": [
         {
@@ -172,7 +224,7 @@
         {
           "n": 3,
           "x": 75,
-          "y": 95.1
+          "y": 90.1
         },
         {
           "n": 4,
@@ -182,13 +234,13 @@
       ]
     },
     "reception": {
-      "file": "reception.f05f486f23.webp",
+      "file": "reception.16f42d6db3.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 151168,
-      "captured_at": "2026-09-30T17:51:07.297Z",
-      "variant": "관측 수신 범위 #5.3/35.6/129.2 · 칸 2,308개(0.5°) · 이 화면 42개 · 창 09-30 02:00 – 10-01 02:51 KST",
+      "bytes": 155364,
+      "captured_at": "2026-10-01T03:45:15.729Z",
+      "variant": "관측 수신 범위 #5.3/35.6/129.2 · 칸 2,291개(0.5°) · 이 화면 58개 · 창 09-30 12:00 – 10-01 12:45 KST",
       "callouts": [
         {
           "n": 1,
@@ -208,23 +260,23 @@
       ]
     },
     "port-calls": {
-      "file": "port-calls.e069c9e8c7.webp",
+      "file": "port-calls.cde062db6b.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 176382,
-      "captured_at": "2026-09-30T17:52:35.132Z",
-      "variant": "도쿄만 #10.6/35.45/139.78 · 선박 목록 5번째(입출항 결과가 있는 첫 선박)",
+      "bytes": 198058,
+      "captured_at": "2026-10-01T03:47:22.338Z",
+      "variant": "선박 검색 “AZAMARA PURSUIT” 첫 결과 — 부산항 부근 · 도쿄만 후보 8척에 입출항 결과 없음",
       "callouts": [
         {
           "n": 1,
           "x": 75,
-          "y": 58.6
+          "y": 57
         },
         {
           "n": 3,
           "x": 75,
-          "y": 62.3
+          "y": 60.7
         },
         {
           "n": 4,
@@ -239,13 +291,13 @@
       ]
     },
     "alerts": {
-      "file": "alerts.9caab01b8b.webp",
+      "file": "alerts.c6d7b9324d.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 151222,
-      "captured_at": "2026-09-30T17:52:47.075Z",
-      "variant": "알림 범위 전세계",
+      "bytes": 129720,
+      "captured_at": "2026-10-01T03:47:32.693Z",
+      "variant": "알림 범위 관심 지역",
       "callouts": [
         {
           "n": 1,
@@ -275,13 +327,13 @@
       ]
     },
     "radar": {
-      "file": "radar.5d22287f19.webp",
+      "file": "radar.6b8f3a27e1.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 133204,
-      "captured_at": "2026-09-30T17:52:58.813Z",
-      "variant": "RainViewer(기상청 프레임 없음)",
+      "bytes": 144470,
+      "captured_at": "2026-10-01T03:47:44.458Z",
+      "variant": "기상청 HSR",
       "callouts": [
         {
           "n": 1,
@@ -299,19 +351,29 @@
           "y": 94.1
         },
         {
+          "n": 4,
+          "x": 49.6,
+          "y": 94.1
+        },
+        {
+          "n": 5,
+          "x": 59.6,
+          "y": 94.1
+        },
+        {
           "n": 6,
           "x": 1.5,
-          "y": 78.7
+          "y": 40.2
         }
       ]
     },
     "replay": {
-      "file": "replay.001659e81a.webp",
+      "file": "replay.f758bec13b.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 134740,
-      "captured_at": "2026-09-30T17:53:04.072Z",
+      "bytes": 133566,
+      "captured_at": "2026-10-01T03:47:48.100Z",
       "variant": "지도 시각 = 재생 시각",
       "callouts": [
         {
@@ -352,7 +414,7 @@
       "width": 1440,
       "height": 900,
       "bytes": 73652,
-      "captured_at": "2026-09-30T17:53:05.413Z",
+      "captured_at": "2026-10-01T03:47:49.351Z",
       "variant": null,
       "callouts": [
         {
@@ -383,12 +445,12 @@
       ]
     },
     "airport": {
-      "file": "airport.9c1d1cca99.webp",
+      "file": "airport.d816271a21.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 76374,
-      "captured_at": "2026-09-30T17:53:07.155Z",
+      "bytes": 71584,
+      "captured_at": "2026-10-01T03:47:51.053Z",
       "variant": "RKSI",
       "callouts": [
         {
