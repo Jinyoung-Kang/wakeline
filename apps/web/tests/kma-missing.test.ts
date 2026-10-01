@@ -78,7 +78,7 @@ describe("krMissing: the collector's missing-file streak in words (KST, values a
     expect(krMissing(MISS, 0)!.stale).toBe(false); // 지금을 모르면 판정하지 않는다
   });
   it("the minutes named on screen are the collector's choices (MISSING_RECHECK_S · MISSING_CARRY_S)", () => {
-    const py = readFileSync(new URL("../../collector/wakeline_collector/jobs/kma_radar.py", import.meta.url), "utf8");
+    const py = readFileSync(new URL("../../collector/wakeline_collector/kma_rules.py", import.meta.url), "utf8");
     expect(Number(/^MISSING_RECHECK_S = (\d+) \* 60\b/m.exec(py)?.[1])).toBe(KR_MISSING_RECHECK_MIN);
     expect(Number(/^MISSING_CARRY_S = (\d+) \* 60\b/m.exec(py)?.[1])).toBe(KR_MISSING_CHECK_STALE_MIN);
   });
@@ -253,7 +253,7 @@ describe("§G26: the collector's probe interval says 'N분마다 확인' and set
     }
   });
   it("the numbers are the collector's choices (MISSING_SLOW_AFTER_S · MISSING_SLOW_EVERY_S · MISSING_STALE_PROBES)", () => {
-    const py = readFileSync(new URL("../../collector/wakeline_collector/jobs/kma_radar.py", import.meta.url), "utf8");
+    const py = readFileSync(new URL("../../collector/wakeline_collector/kma_rules.py", import.meta.url), "utf8");
     expect(Number(/^MISSING_SLOW_AFTER_S = (\d+) \* 60\b/m.exec(py)?.[1])).toBe(KR_MISSING_SLOW_AFTER_MIN);
     expect(Number(/^MISSING_SLOW_EVERY_S = (\d+) \* 60\b/m.exec(py)?.[1])).toBe(KR_MISSING_SLOW_EVERY_MIN);
     expect(Number(/^MISSING_STALE_PROBES = (\d+)\b/m.exec(py)?.[1])).toBe(KR_MISSING_STALE_PROBES);

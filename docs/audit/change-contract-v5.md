@@ -1063,3 +1063,27 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 회귀 막기: collector `tests/test_traffic_grid_tile_{parse,plan,job,sim}.py` · `test_traffic_grid_providers.py` · `test_traffic_grid_geo.py` · `test_traffic_grid_db.py` ·
     `test_redis_integration.py`, infra `test_redis_acl_rules.py` · `redis_acl_test.sh`, web `tests/ops-traffic-grid-fill.test.ts` · `tests/guide-page.test.ts`.
 
+## G. 20차 개정(2026-10-01 · CTO 리뷰 cto-2026-10 · 레인 web — 리뷰가 더한 운영 신호를 /ops 에 보인다: 수집기 루프 지연 D0 · 원천 보관 실패 F6 · api A4)
+- G29(§G23 · R-18) **수집기 이벤트 루프 지연 · 원천 보관 실패를 `/ops/pipeline` 의 collector 묶음에 — 필드만 더하고 기존 필드 · 의미는 그대로**
+  - heartbeat `wakeline:collector`(수집기가 쓰는 값, 문자열): 이미 있던 `loop_lag_max_s`(최근 창의 최댓값, 초 소수 **3자리** — 수십 ms 를 본다, 표본 전이면 빈 값) ·
+    `loop_stalls_total`(지연 ≥ `loop_stall_s` 표본 수, 기동 뒤 누계) · `loop_tick_s`(0.1) · `raw_unsaved`(원천 보관에 쓰지 못한 응답 본문) · `raw_purge_failed`(보관 기한이
+    지난 파일을 지우지 못했거나 디렉터리를 읽지 못한 수) — 둘 다 기동 뒤 누계. **더한 것**: 고른 값 `diag_window_s`(60 — `loop_lag_max_s` 의 창) · `loop_stall_s`(1) ·
+    `loop_warn_s`(5) · `loop_warn_every_s`(60). ais 상태 해시(§G23)와 같은 이름 · 같은 형식(지수 없는 십진수, 소수 3자리까지)이고 값은 그 프로세스의 `LoopLag` 가
+    실제로 쓰는 것이다(`main.py loop_lag_settings`) — 읽는 쪽이 숫자를 들고 있지 않게 싣는다.
+  - `GET /api/v1/ops/pipeline` 의 `collector` 에 같은 이름(snake_case)으로 더한다: `loop_lag_max_s` · `loop_stalls_total` · `loop_tick_s` · `diag_window_s` · `loop_stall_s` ·
+    `loop_warn_s` · `loop_warn_every_s` · `raw_unsaved` · `raw_purge_failed`. 다른 collector 필드와 같은 허용 목록 · 같은 규칙: 초는 부호 · 지수 없는 십진수만, 수는 정수만,
+    heartbeat 가 120 s 보다 오래됐거나 필드가 없거나 빈 값 · 형식 오류면 null — 키는 늘 있다(다른 pipeline 필드와 같이 명시적 null). REST 표본(`RestSamplesIT`)에는
+    `/ops/pipeline` 이 없어 `rest_contract_check` 표본은 바뀌지 않는다.
+  - 웹 `/ops` PIPELINE 의 collector 묶음 행: `raw_unsaved` '원천 보관 실패'(손실 — 0 이 아니면 빨강, 탭의 손실 배지에 든다: 수집 · 발행은 계속되지만 그 원본을 다시 볼 수
+    없다, raw_ref `unsaved:…`) · `raw_purge_failed` '원천 보관 정리 실패'(누계 — 손실 아님, 색 없음) · `loop_lag_max_s` '이벤트 루프 지연'(진단 — 값은 수집기가 싣는
+    소수 3자리, detail `최근 {diag_window_s} s 최대`, keepalive 는 ais 연결의 것이라 적지 않는다, 색으로 판정하지 않는다) · `loop_stalls_total` '이벤트 루프 멈춤'(누계).
+    설명의 숫자(표본 간격 · 멈춤 기준 · WARN 문턱과 간격)는 응답의 고른 값으로 채운다(모르면 `—`). WARN 간격 '분에 한 번까지'(raw_store.py `WARN_EVERY_S`)는 응답에
+    없어 글자로 적고 시험이 소스와 견준다(로그 싱크 상한과 같은 방식).
+  - 회귀 막기: collector `test_main.py::test_the_collector_heartbeat_carries_the_loop_lag_chosen_values`, api `OpsPipelineControllerTest` · `OpsPipelineIT`,
+    웹 `tests/ops-pipeline-collector-loop.test.ts` · `tests/guide-page.test.ts`.
+- G30(리뷰 cto-2026-10 A4) **`GET /api/v1/ops/providers` 의 `error` — 자동 전환 기록을 읽지 못함**
+  - 수집기 자동 전환(`wakeline:events`)을 Redis 장애로 읽지 못하면 응답 맨 위에 `"error": "redis unavailable"` 을 싣고 `switches` 는 빈 목록이다(`/ops/dlq` 와 같은
+    모양). 읽었으면 `error` 키가 없다. 다른 키 · 의미는 그대로 — 전에는 빈 목록뿐이라 '전환 없음' 과 같아 보였다(api `OpsDbTest.providersSaysWhenTheSwitchEventsCouldNotBeRead`).
+  - 웹 providers 탭: 'Provider switches (collector 자동 전환)' 아래 경고 줄(role=alert, 주황) `수집기 자동 전환 기록을 읽지 못함(api: <까닭 그대로>) — 아래 표가 비어
+    있어도 ‘전환 없음’이 아니다. 15 s 마다 다시 읽는다`. 까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다.
+    회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`.

@@ -169,13 +169,13 @@ describe("KMA panel, status bar and legend never present a partial composite as 
 
 describe("the words on screen follow the collector's choices", () => {
   it("the reference window named on screen is the collector's REF_WINDOW_S (a choice, not a measurement)", () => {
-    const py = readFileSync(new URL("../../collector/wakeline_collector/jobs/kma_radar.py", import.meta.url), "utf8");
+    const py = readFileSync(new URL("../../collector/wakeline_collector/kma_rules.py", import.meta.url), "utf8");
     const m = /^REF_WINDOW_S = (\d+) \* 60\b/m.exec(py);
     expect(m).not.toBeNull();
     expect(Number(m![1])).toBe(KR_REF_WINDOW_MIN);
   });
   it("the '기준 도달' support named on screen is the collector's REF_MIN_SUPPORT (a choice)", () => {
-    const py = readFileSync(new URL("../../collector/wakeline_collector/jobs/kma_radar.py", import.meta.url), "utf8");
+    const py = readFileSync(new URL("../../collector/wakeline_collector/kma_rules.py", import.meta.url), "utf8");
     const m = /^REF_MIN_SUPPORT = (\d+)\b/m.exec(py);
     expect(m).not.toBeNull();
     expect(Number(m![1])).toBe(KR_REF_MIN_SUPPORT);

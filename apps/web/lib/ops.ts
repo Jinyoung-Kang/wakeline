@@ -70,8 +70,14 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["collector", "publish_dropped", "스트림 발행 드롭", "loss", "Redis 스트림에 싣지 못하고 버린 수집 묶음(로컬 큐 상한) — 누적"],
   ["collector", "db_dropped", "DB 기록 드롭", "loss", "수집 기록(실행 이력 등)을 DB 에 쓰지 못하고 버린 건수 — 누적"],
   ["collector", "db_pending", "DB 기록 대기", "queue", "아직 DB 에 쓰지 않은 기록 수(지금 값) — 손실 아님"],
+  // 원천 보관(F6 — raw_store.py): 실패는 수집을 막지 않지만 세고 WARN 을 남긴다. 분 간격(WARN_EVERY_S)은 응답에 없어 글자로 적는다 — 시험이 raw_store.py 와 견준다
+  ["collector", "raw_unsaved", "원천 보관 실패", "loss", "원천 보관(수집기 raw 볼륨 — 받은 응답 본문을 그대로 두는 곳)에 쓰지 못한 응답 본문 — 누적(collector 시작 이후). 수집 · 발행은 계속되지만 그 응답의 원본을 다시 볼 수 없다(raw_ref 가 'unsaved:…'(예외 이름)로 남는다). 0 이 아니면 볼륨이 가득 찼거나 읽기 전용이다 — 수집기가 WARN 을 남긴다(분에 한 번까지, 그때까지의 누계와 함께)"],
+  ["collector", "raw_purge_failed", "원천 보관 정리 실패", "count", "보관 기한이 지난 원천 파일을 지우지 못했거나 디렉터리를 읽지 못한 수 — 누적(collector 시작 이후). 손실 아님: 지우지 못한 파일이 볼륨에 남을 뿐이다(쌓여 볼륨이 차면 원천 보관 실패로 이어진다). 수집기가 WARN 을 남긴다(분에 한 번까지, 그때까지의 누계와 함께)"],
   ["collector", "stream_budget_trims", "항공기 스트림 예산 트림", "count", `바이트 예산 때문에 항공기 스트림을 보존 목표(시간)보다 일찍 자른 발행 수 — 누적. ${TRIM_NOT_LOSS}`],
   ["collector", "stream_window_s.aircraft", "항공기 스트림 보존 창", "window", ""],
+  // 이벤트 루프 지연(collector-review D0 — ais 와 같은 측정 · 같은 말): 창 · 표본 간격 · 멈춤 기준 · WARN 문턱과 간격은 heartbeat 의 고른 값(fillSettings · diagRow)
+  ["collector", "loop_lag_max_s", "이벤트 루프 지연", "diag", "수집기 이벤트 루프가 {loop_tick_s} s(수집기 고른 값) 잠든 뒤 늦게 깬 만큼 — 그동안 수집 작업 · 타이머 · 스트림 발행이 기다렸다(루프를 막은 일 — 정규화 등). 깨는 순간에 걸친 막힘만 잡히므로 짧은 막힘은 일부만 보인다. 수집기는 수십 ms 를 보려고 소수 3자리로 싣는다"],
+  ["collector", "loop_stalls_total", "이벤트 루프 멈춤", "count", "이벤트 루프가 {loop_stall_s} s(수집기 고른 값) 이상 늦게 깬 횟수 — 누적(collector 시작 이후). {loop_warn_s} s 이상이면 수집기가 WARN 을 남긴다({loop_warn_every_s} s 에 1번까지 — 수는 모두 센다, 수집기 고른 값)"],
   ["collector", "log_sent", "시스템 로그 전송", "count", "시스템 로그 스트림(wakeline:logs)에 실은 WARN·ERROR 항목 — 누적"],
   ["collector", "log_dropped", "시스템 로그 버림", "loss", "wakeline:logs 에 싣지 못하고 버린 WARN·ERROR 항목 — 대기열 상한(500건 · 2 MiB) 초과 · 항목을 만들지 못함(8 KiB 에 맞추지 못함 포함) · 억제 중에 지문 표에서 밀려난 발생(억제 수까지) — 누적. 0 이 아니면 /logs 에 없는 오류가 있다(컨테이너 표준 출력에는 남음)"],
   ["collector", "heartbeat_age_s", "heartbeat 경과", "age", "collector 가 마지막으로 상태를 보고한 뒤 지난 시간"],
@@ -79,8 +85,8 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["ais", "quarantined_total", "AIS 격리", "quarantine", "품질 규칙으로 걸러낸 메시지(지도에 표시 안 함) — 누적"],
   ["ais", "stream_budget_trims", "선박 스트림 예산 트림", "count", `바이트 예산 때문에 선박 스트림을 보존 목표(시간)보다 일찍 자른 발행 수 — 누적. ${TRIM_NOT_LOSS}`],
   ["ais", "stream_window_s.ships", "선박 스트림 보존 창", "window", ""],
-  // 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 창 최댓값은 aisDiagRow 가 창 · 상한 · 시간 초과(수집기 설정)와 함께 적는다.
-  // 설명의 {필드} 는 응답(수집기 상태 해시)의 고른 값으로 채운다(fillAisSettings — 웹은 숫자를 들고 있지 않다, 모르면 "—"). {필드/60} 은 분
+  // 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 창 최댓값은 diagRow 가 창 · 상한 · 시간 초과(수집기 설정)와 함께 적는다.
+  // 설명의 {필드} 는 응답(그 행 묶음의 수집기 상태 해시)의 고른 값으로 채운다(fillSettings — 웹은 숫자를 들고 있지 않다, 모르면 "—"). {필드/60} 은 분
   ["ais", "reconnects_quick_total", "짧은 재연결", "count", "받던 연결이 끊겨 열린 AIS 수신 공백(마지막 메시지 → 다시 받은 메시지)이 {reconnect_quick_window_s} s(수집기 고른 값) 안에 닫힌 끊김 수 — 누적(ais 시작 이후). 로그 수준과 상관없이 공백 길이로 센다. 공백은 그대로 기록된다(선박 패널 · 공백 목록). 회복 줄은 INFO 라 로그 화면에 오르지 않고 끊김 줄도 대개 INFO 다 — 같은 연결이 {reconnect_warn_window_s/60}분에 {reconnect_warn_count}번째부터 끊긴 것(되풀이, 수집기 고른 값)과 그 사이 데이터 없이 끝난 재연결 시도는 WARN 으로 오르지만, 공백이 창 안에 닫히면 여기에도 센다. 끊기기 전부터 조용해 공백이 이미 창을 넘음(idle 끊김 등) · 공백이 창을 넘도록 다시 받지 못함은 WARN 으로 오르고 여기에 세지 않는다. 손실 수가 아니다(공백이 손실 구간)"],
   ["ais", "ping_rtt_max_s", "keepalive 왕복", "diag", "keepalive ping 을 보내고 pong 을 받기까지(websockets latency) — 시간 초과를 넘으면 수집기가 1011 로 끊고 다시 붙는다. 이 값과 공급자 지연이 커지는데 루프 지연 · 수신 버퍼가 작으면 공급자 쪽(연결별 전달 적체)이 늦은 것이다. 시간 초과를 넘은 ping 은 왕복을 잴 수 없어 여기에 들지 않는다"],
   ["ais", "loop_lag_max_s", "이벤트 루프 지연", "diag", "수집기 이벤트 루프가 {loop_tick_s} s(수집기 고른 값) 잠든 뒤 늦게 깬 만큼 — 그동안 소켓을 읽지 못한다. ping 이 나가 있는 동안 keepalive 시간 초과보다 길게 멈추면 그 연결이 1011 로 끊길 수 있다(멈춤이 끝난 뒤 콜백 순서에 따라 끊기지 않기도 하고 구역마다 다를 수 있다)"],
@@ -121,9 +127,9 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
 export function pipelineRows(resp: unknown): PipelineRow[] {
   const r = obj(resp);
   return PIPELINE_SPEC.map(([group, key, label, kind, spec]) => {
-    const title = group === "ais" ? fillAisSettings(spec, obj(r.ais)) : spec;
+    const title = fillSettings(spec, obj(r[group]));
     if (kind === "window") return streamWindowRow(r, group, key, label);
-    if (kind === "diag") return aisDiagRow(r, group, key, label, title);
+    if (kind === "diag") return diagRow(r, group, key, label, title);
     const value = count(obj(r[group])[key]);
     const text = value == null ? "—" : kind === "age" ? fmtDuration(value) : value.toLocaleString("en-US");
     const tone = kind !== "loss" || value == null ? "muted" : value > 0 ? "bad" : "ok";
@@ -186,10 +192,10 @@ function streamWindowRow(r: Record<string, unknown>, group: PipelineGroup, key: 
 }
 
 /**
- * ais 설명의 {필드} 자리에 응답의 수집기 설정값(고른 값)을 넣는다 — 숫자를 웹에 적어 두면 수집기가 바꿀 때 조용히 어긋난다. {필드/60} 은 분 단위.
- * 모르는 값(없음 · 형식 오류)은 "—".
+ * 설명의 {필드} 자리에 그 행 묶음(collector · ais) 응답의 수집기 설정값(고른 값)을 넣는다 — 숫자를 웹에 적어 두면 수집기가 바꿀 때 조용히 어긋난다.
+ * {필드/60} 은 분 단위. 모르는 값(없음 · 형식 오류)은 "—". 자리는 소문자 · 밑줄 이름만이다(api 설명의 {result=sent} 같은 글자는 그대로 둔다).
  */
-function fillAisSettings(title: string, src: Record<string, unknown>): string {
+function fillSettings(title: string, src: Record<string, unknown>): string {
   return title.replace(/\{([a-z_]+)(\/60)?\}/g, (_m, k: string, perMin: string | undefined) => {
     const v = count(src[k]);
     return fmtSetting(v == null ? null : perMin ? v / 60 : v);
@@ -199,22 +205,24 @@ function fillAisSettings(title: string, src: Record<string, unknown>): string {
 /** 수신 버퍼가 상한 이상일 때 적는 사실(판정 아님 — 한꺼번에 받은 묶음에서도 생긴다) */
 const WS_BUFFER_AT_LIMIT = "상한 도달 — 그때 소켓 읽기가 잠시 멈춤(한꺼번에 받은 묶음 또는 루프 멈춤 — 결함 아님, 루프 지연과 함께 본다)";
 
-/** 초 값 "0.31 s"(소수 2자리 — 수집기가 싣는 자릿수). 모르면 "—" */
-const fmtSecs = (v: number | null): string => (v == null ? "—" : `${v.toFixed(2)} s`);
+/** 초 값 "0.31 s" — 수집기가 싣는 자릿수(ais 상태 해시 소수 2자리 · collector heartbeat 3자리). 모르면 "—" */
+const fmtSecs = (v: number | null, digits = 2): string => (v == null ? "—" : `${v.toFixed(digits)} s`);
+/** 최근 최댓값을 싣는 자릿수: collector heartbeat 는 loop_lag_max_s 를 소수 3자리로(수십 ms 를 본다 — docs/PERF.md §12), ais 는 2자리 */
+const DIAG_DIGITS: Record<PipelineGroup, number> = { collector: 3, ais: 2, api: 2 };
 /** 창 · 시간 초과 같은 설정 초 "60"(정수면 정수로). 모르면 "—" */
 const fmtSetting = (v: number | null): string => (v == null ? "—" : String(Number.isInteger(v) ? v : Number(v.toFixed(2))));
 
 /**
- * ais 수신 진단 행(ADR-014 부록 C): 최근 diag_window_s 초의 최댓값. 창 · 상한(ws 수신 버퍼 · 원문 대기열) · keepalive 시간 초과는 수집기가 고른 값이라
+ * 진단 행 — ais 수신 진단(ADR-014 부록 C) · collector 이벤트 루프 지연(D0): 최근 diag_window_s 초의 최댓값(창은 그 행 묶음의 응답에서). 창 · 상한(ws 수신 버퍼 · 원문 대기열) · keepalive 시간 초과는 수집기가 고른 값이라
  * 응답에서 읽어 detail 에 "수집기 설정" 으로 적는다(웹이 숫자를 지어내지 않는다). 색으로 판정하지 않는다(muted — 운영자가 시간 초과 · 상한과 견준다).
  * 수신 버퍼가 상한 이상이면(꺼낸 뒤 남은 수 — websockets 는 '> 상한' 에서 멈추므로 상한과 같아도 그때 읽기가 멈춰 있었다) 그 사실만 state 에 적는다:
  * 한꺼번에 받은 묶음에서도 생기는 일이라 결함 표시(주황)가 아니다. 모르면 "—".
  */
-function aisDiagRow(r: Record<string, unknown>, group: PipelineGroup, key: string, label: string, title: string): PipelineRow {
+function diagRow(r: Record<string, unknown>, group: PipelineGroup, key: string, label: string, title: string): PipelineRow {
   const src = obj(r[group]);
   const value = count(src[key]);
   const win = `최근 ${fmtSetting(count(src.diag_window_s))} s 최대`;
-  let detail = win, text = fmtSecs(value), state: string | null = null;
+  let detail = win, text = fmtSecs(value, DIAG_DIGITS[group]), state: string | null = null;
   const tone: PipelineRow["tone"] = "muted";
   if (key === "ws_queue_max") {
     const limit = count(src.ws_queue_limit);
@@ -229,7 +237,7 @@ function aisDiagRow(r: Record<string, unknown>, group: PipelineGroup, key: strin
     detail = `${win}(지금 기다리는 원문 포함)`;
   } else if (key === "ping_rtt_max_s") {
     detail = `${win} · 시간 초과 ${fmtSetting(count(src.ping_timeout_s))} s — 수집기 설정`;
-  } else if (key === "loop_lag_max_s") {
+  } else if (key === "loop_lag_max_s" && group === "ais") { // keepalive 는 ais 수신 연결의 것
     detail = `${win} · keepalive 시간 초과 ${fmtSetting(count(src.ping_timeout_s))} s — 수집기 설정`;
   }
   return { group, key, label, title, value, text, tone, kind: "diag", detail, state };
@@ -471,6 +479,18 @@ export function runStatusClass(status: unknown, where: "summary" | "item"): stri
     case "budget": return "text-warn";
     default: return where === "summary" ? "text-warn" : "text-bad";
   }
+}
+
+/**
+ * /ops/providers 의 수집기 자동 전환 기록(switches — 수집기 wakeline:events)을 api 가 읽지 못했다는 표시: 응답 맨 위 error(리뷰 cto-2026-10 A4 —
+ * 예: "redis unavailable", /ops/dlq 와 같은 모양). 그때 switches 는 빈 목록이라 그대로 두면 '전환 없음' 과 같아 보인다 — 경고 줄 글자를 돌려준다.
+ * error 가 없거나 null · 빈 글자면 null(경고 없음). 까닭은 api 가 준 글자 그대로, 글자가 아니면 '이유 모름'(지어내지 않는다).
+ */
+export function switchHistoryError(resp: unknown): string | null {
+  const e = obj(resp).error;
+  if (e == null || e === "") return null;
+  const why = typeof e === "string" ? e : "이유 모름";
+  return `수집기 자동 전환 기록을 읽지 못함(api: ${why}) — 아래 표가 비어 있어도 ‘전환 없음’이 아니다. 15 s 마다 다시 읽는다`;
 }
 
 /**

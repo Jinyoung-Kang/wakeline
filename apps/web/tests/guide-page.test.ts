@@ -338,6 +338,18 @@ describe("time examples", () => {
     expect(htmlUtcLeaks(parseHtml(html))).toEqual([]);
   });
   // 통합 리뷰(2026-09-30): 6.2 의 운영 탭 표가 이번 통합의 화면(PIPELINE 의 AIS 수신 진단 · 실행 상태 missing/quarantined · kma_radar '파일 없음' 줄)을 말한다
+  // 리뷰 cto-2026-10 A4: 자동 전환 기록을 읽지 못하면 빈 표가 아니라 경고 — 설명서도 그렇게 말한다
+  it("6.2 says an unreadable automatic-switch history is a warning, not an empty list", () => {
+    const ops = text(section(render(EMPTY), "ops-dashboard"));
+    expect(ops).toContain("수집기 자동 전환 기록(api 가 읽지 못하면 ‘읽지 못함’ 경고 — 빈 표가 ‘전환 없음’은 아님)");
+  });
+  // CTO 리뷰 2026-10(collector D0 · F6): PIPELINE 의 collector 묶음에 이벤트 루프 지연 · 멈춤과 원천 보관 실패 · 정리 실패 행이 생겼다
+  it("6.2 names the pipeline tab's collector event-loop lag and raw-archive rows, and which of them is a loss", () => {
+    const ops = text(section(render(EMPTY), "ops-dashboard"));
+    expect(ops).toContain("collector 이벤트 루프 지연 · 멈춤");
+    expect(ops).toContain("원천 보관 실패(손실 — 그 응답의 원본을 다시 볼 수 없음, 0 이 아니면 빨강)");
+    expect(ops).toContain("원천 보관 정리 실패(손실 아님)");
+  });
   it("6.2 names the pipeline tab's AIS receive diagnostics, the missing/quarantined run statuses and the KMA 'file not exist' line", () => {
     const ops = text(section(render(EMPTY), "ops-dashboard"));
     expect(ops).toMatch(/AIS 수신 진단/);

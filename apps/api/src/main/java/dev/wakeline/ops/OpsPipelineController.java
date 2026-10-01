@@ -22,7 +22,10 @@ import java.util.function.Supplier;
  *   <li>collector: 수집기 heartbeat 해시(wakeline:collector)의 publish_dropped·db_dropped·db_pending(수집기 프로세스 기동 뒤 누계·현재 대기 수)
  *       ·stream_budget_trims(R-14: 바이트 예산 때문에 항공기 스트림을 보존 창보다 일찍 자른 XADD 수, 기동 뒤 누계 — 창을 줄일 뿐 손실이 아니다.
  *       손실은 api 의 stream_trim_loss_events)·stream_retention_s(항공기 스트림 시간 트림 목표, 초 — 수집기 설정)·stream_budget_bytes(항공기
- *       스트림 바이트 예산 — 수집기 설정). heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다
+ *       스트림 바이트 예산 — 수집기 설정). 이벤트 루프 지연(collector-review D0 — ais 와 같은 이름 · 같은 형식 규칙): 최근 diag_window_s 초의
+ *       최댓값 loop_lag_max_s · 누적 loop_stalls_total(지연 ≥ loop_stall_s 표본 수), 수집기가 고른 설정 loop_tick_s · diag_window_s · loop_stall_s ·
+ *       loop_warn_s · loop_warn_every_s. 원천 보관(F6): raw_unsaved(보관하지 못한 응답 본문) · raw_purge_failed(지우거나 읽지 못한 파일 · 디렉터리),
+ *       기동 뒤 누계. heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다
  *       오래됐으면 값은 null(수집기가 멈춰 마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
  *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total·stream_budget_trims·stream_retention_s·stream_budget_bytes
  *       (선박 스트림, R-14). 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 diag_window_s 초의 최댓값 loop_lag_max_s(이벤트 루프
@@ -82,7 +85,14 @@ public class OpsPipelineController {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record CollectorSignals(Long publishDropped, Long dbDropped, Long dbPending, Long streamBudgetTrims, Long streamRetentionS,
-                                   Long streamBudgetBytes, Double heartbeatAgeS, Long logSent, Long logDropped) {}
+                                   Long streamBudgetBytes, Double heartbeatAgeS, Long logSent, Long logDropped, Double loopLagMaxS,
+                                   Long loopStallsTotal, Double loopTickS, Double diagWindowS, Double loopStallS, Double loopWarnS,
+                                   Double loopWarnEveryS, Long rawUnsaved, Long rawPurgeFailed) {
+        /** heartbeat 가 오래됐거나 없을 때: 나이만 싣는다(모르면 null). */
+        static CollectorSignals unknown(Double age) {
+            return new CollectorSignals(null, null, null, null, null, null, age, null, null, null, null, null, null, null, null, null, null, null);
+        }
+    }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AisSignals(Long droppedTotal, Long quarantinedTotal, Long streamBudgetTrims, Long streamRetentionS, Long streamBudgetBytes,
@@ -126,10 +136,12 @@ public class OpsPipelineController {
             double s = (now.toEpochMilli() - newest.toEpochMilli()) / 1000.0;
             if (s >= -MAX_FUTURE_S) age = Math.round(Math.max(0, s) * 10) / 10.0;
         }
-        if (age == null || age > COLLECTOR_MAX_AGE_S) return new CollectorSignals(null, null, null, null, null, null, age, null, null);
+        if (age == null || age > COLLECTOR_MAX_AGE_S) return CollectorSignals.unknown(age);
         return new CollectorSignals(count(h.get("publish_dropped")), count(h.get("db_dropped")), count(h.get("db_pending")),
                 count(h.get("stream_budget_trims")), count(h.get("stream_retention_s")), count(h.get("stream_budget_bytes")), age,
-                count(h.get("log_sent")), count(h.get("log_dropped")));
+                count(h.get("log_sent")), count(h.get("log_dropped")), seconds(h.get("loop_lag_max_s")), count(h.get("loop_stalls_total")),
+                seconds(h.get("loop_tick_s")), seconds(h.get("diag_window_s")), seconds(h.get("loop_stall_s")), seconds(h.get("loop_warn_s")),
+                seconds(h.get("loop_warn_every_s")), count(h.get("raw_unsaved")), count(h.get("raw_purge_failed")));
     }
 
     AisSignals ais(Instant now) {

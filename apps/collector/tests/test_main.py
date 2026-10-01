@@ -562,3 +562,32 @@ async def test_the_collector_heartbeat_reports_its_event_loop_lag(monkeypatch):
     hb = r.kv["wakeline:collector"]
     assert float(hb["loop_lag_max_s"]) >= 0 and hb["loop_stalls_total"].isdigit() and float(hb["loop_tick_s"]) > 0
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "collector-loop-lag"]
+
+
+async def test_the_collector_heartbeat_carries_the_loop_lag_chosen_values(monkeypatch):
+    """운영 PIPELINE 탭(collector 묶음)이 루프 지연 행의 창 · 멈춤 기준 · WARN 문턱과 간격을 숫자로 들고 있지 않게(ais 상태 해시와 같은 이름 · 같은 형식 —
+    계약 v5 §G23: 고른 값은 잰 값이 아니라 수집기가 싣는다, 초는 지수 없는 십진수): diag_window_s(loop_lag_max_s 의 창) · loop_stall_s(loop_stalls_total 의
+    기준) · loop_warn_s · loop_warn_every_s, 그리고 loop_tick_s. 값은 이 프로세스의 LoopLag 가 실제로 쓰는 것이다."""
+    import re
+
+    from wakeline_collector import diag
+    from wakeline_collector import main as mainmod
+
+    r = await _run_collector_until(monkeypatch, lambda r: r.kv.get("wakeline:collector", {}).get("loop_lag_max_s"), enabled=False)
+    hb = r.kv["wakeline:collector"]
+    chosen = {
+        "diag_window_s": diag.DIAG_WINDOW_S,
+        "loop_tick_s": mainmod.LOOP_TICK_S,
+        "loop_stall_s": diag.LOOP_STALL_S,
+        "loop_warn_s": diag.LOOP_WARN_S,
+        "loop_warn_every_s": diag.WARN_EVERY_S,
+    }
+    for k, v in chosen.items():
+        assert re.fullmatch(r"\d+(\.\d{1,3})?", hb.get(k, "")), (k, hb.get(k))
+        assert float(hb[k]) == v, (k, hb[k])
+    assert (
+        hb["diag_window_s"] == "60"
+        and hb["loop_tick_s"] == "0.1"
+        and hb["loop_stall_s"] == "1"
+        and hb["loop_warn_every_s"] == "60"
+    )
