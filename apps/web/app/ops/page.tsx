@@ -183,6 +183,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
    * 놓친다, web-review B4). 세션 만료(401/404 + 세션 확인도 401/404)면 로그인으로
    */
   const [switchErr, setSwitchErr] = useState<{ name: string; action: "enable" | "disable"; error: unknown } | null>(null);
+  /**
+   * 설정 저장의 마지막 결과 문구(PLAN §5 결정 4 — 실패는 다음 저장이나 '알림 닫기' 전까지). 폼은 settings 탭에서만 그려지므로 대시보드에 둔다 —
+   * 폼 안에 두면 다른 탭에 다녀오는 것만으로 실패가 사라졌다(리뷰 cto-2026-10 최종)
+   */
+  const [settingsMsg, setSettingsMsg] = useState<SettingsMsg | null>(null);
   const toggle = async (name: string, action: "enable" | "disable") => {
     if (switching.current.has(name)) return;
     switching.current.add(name);
@@ -318,7 +323,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <table><thead><tr><th>at (KST)</th><th>run</th><th>rule</th><th>hex</th><th title={`격리 규칙이 남긴 detail JSON — ${RAW_RECORD_TITLE}`}>detail (raw)</th></tr></thead><tbody>{quality.recent.map((r) => <tr key={String(r.id)}><TimeCell v={r.created_at} /><td className="mono">{String(r.run_id)}</td><td>{String(r.rule)}</td><td className="mono">{String(r.hex ?? "")}</td><td className="mono text-fg-3" data-raw="record">{String(r.detail)}</td></tr>)}</tbody></table>
         </> : null}
         {tab === "pipeline" && pipeline ? <OpsPipeline data={pipeline} /> : null}
-        {tab === "settings" && settings ? <SettingsForm items={settings.items} onSaved={refresh} onAuthMiss={fail} /> : null}
+        {tab === "settings" && settings ? <SettingsForm items={settings.items} msg={settingsMsg} setMsg={setSettingsMsg} onSaved={refresh} onAuthMiss={fail} /> : null}
         {tab === "audit" && audit ? <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
           <tbody>{audit.items.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
         {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at (KST)</th><th>stream</th><th>kind</th><th>reason</th><th title={`스트림 메시지 앞 200자 — ${RAW_RECORD_TITLE}`}>payload head (raw)</th></tr></thead>
@@ -328,11 +333,15 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   );
 }
 
-function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]; onSaved: () => void; onAuthMiss: (e: unknown) => void }) {
+/** 설정 저장의 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다 */
+type SettingsMsg = { ok: boolean; text: string; error?: unknown };
+
+/** msg · setMsg = 결과 문구 — 대시보드가 갖는다(탭을 오가도 실패가 남게 — PLAN §5 결정 4) */
+function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
+  items: Settings["items"]; msg: SettingsMsg | null; setMsg: (m: SettingsMsg | null) => void; onSaved: () => void; onAuthMiss: (e: unknown) => void;
+}) {
   // 편집 값과 편집을 시작할 때 본 version(R-35): 15 s 새로고침이 version 을 바꿔도 저장은 처음 본 version 으로 If-Match 한다
   const [edit, setEdit] = useState<Record<string, SettingEdit>>({});
-  // 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다
-  const [msg, setMsg] = useState<{ ok: boolean; text: string; error?: unknown } | null>(null);
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
   /**
    * 응답을 기다리는 저장 — 키마다 한 번만. 같은 If-Match 로 PUT 이 두 번 나가면 첫 번째가 저장되고 두 번째가 409 라 저장됐는데 '다른 곳에서 바뀜' 을 보였다.
@@ -370,7 +379,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
       <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
       {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
-        {/* 실패는 다음 저장이나 이 단추 전까지 남는다(PLAN §5 결정 4) — 15 s 새로고침이 지우지 않는다 */}
+        {/* 실패는 다음 저장이나 이 단추 전까지 남는다(PLAN §5 결정 4) — 15 s 새로고침도, 다른 탭에 다녀오는 것도 지우지 않는다(문구는 대시보드에) */}
         <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST)</th><th></th></tr></thead>
         <tbody>{items.map((s) => {

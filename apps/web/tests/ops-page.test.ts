@@ -721,6 +721,24 @@ describe("ops write failures stay until the next write or a dismiss (web-review 
     await click(button("알림 닫기", byTestId("settings-error")!));
     expect(byTestId("settings-error")).toBeNull();
   });
+
+  // 설정 폼은 settings 탭에서만 그려진다 — 실패 문구가 폼 안에 있으면 다른 탭에 다녀오는 것만으로 사라졌다(리뷰 cto-2026-10 최종)
+  it("a failed settings save stays when the operator looks at another tab and comes back", async () => {
+    putStatus = 503;
+    stub();
+    await mount();
+    await click(byTestId("ops-tab-settings"));
+    await React.act(async () => { propsOf(find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!).onChange({ target: { value: "15" } }); });
+    await click(button("save"));
+    expect(byTestId("settings-error")?.textContent).toContain("region_poll_s: 저장 실패(HTTP 503)");
+    await click(byTestId("ops-tab-providers"));
+    expect(byTestId("settings-error")).toBeNull(); // 설정 탭에서만 보인다
+    await click(byTestId("ops-tab-settings"));
+    expect(byTestId("settings-error")?.textContent ?? "").toContain("region_poll_s: 저장 실패(HTTP 503)");
+    expect(byTestId("settings-error")?.textContent).toContain("feedface0000cafe");
+    await click(button("알림 닫기", byTestId("settings-error")!));
+    expect(byTestId("settings-error")).toBeNull();
+  });
 });
 
 /**
