@@ -156,7 +156,7 @@ describe("map overlays share one layout: toolbar row, then a left status column 
   it("the dashboard page renders the chips only through the overlay (once), and the basemap-failed notice joins the left column", () => {
     const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
     expect(page).not.toMatch(/<MapChips\b/);
-    const map = readFileSync(new URL("../components/MapView.tsx", import.meta.url), "utf8");
+    const map = readFileSync(new URL("../components/map/useMapLifecycle.ts", import.meta.url), "utf8");
     expect(map).not.toContain('data-testid="basemap-failed"');
     const html = renderToStaticMarkup(createElement(MapChipsView, { hex: null, shipsOn: false, basemapFailed: true }));
     expect(html).toContain('data-testid="basemap-failed"');

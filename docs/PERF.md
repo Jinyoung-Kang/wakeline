@@ -244,6 +244,64 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 (`apps/web/tests/first-screen-js.test.ts` 가 순서와 인자를 본다), 이어서 같은 빌드를 127.0.0.1:8790 에 띄워 브라우저 첫 화면 파일이 빌드 결과 목록과 같은지 본다
 (import() 조각이 첫 그리기에 쓰이면 바이트 검사가 세지 못한다 — ADR-026 5). 배포 스택은 `npm run measure:first-js -- http://localhost:8700` 으로 잰다(위 '배포 스택에서 확인').
 
+## 11. 웹 렌더 작업 — 저장소 안에서 재는 전후(CTO 리뷰 2026-10 Phase 4, web-review §4)
+환경: Apple M1 · Node v24.3.0 · vitest 5 의 **React 19.3 개발 빌드** · 최소 DOM(`tests/helpers/mini-dom`) · 합성 자료. 값은 React `<Profiler>` 의 `actualDuration` 합(브라우저의
+스타일 · 레이아웃 · MapLibre 는 들어 있지 않다 — 상대 크기로 읽는다). **CI 가 보는 것은 횟수(커밋 · 다시 계산)** 이고 결정적이다. 시간은 `WAKELINE_PERF=1` 일 때만 잰다
+(같은 시험 파일의 `measure` — 7번 중 가운데 값, 처음 3번은 JIT 데우기로 버림). 두 번 돌린 값을 함께 적었다.
+
+**P2 — 화면 안 선박 목록(`ShipList`, 선박 탭 · 선택 없음)**: 경과 칸 때문에 1 s 마다 다시 그리면서 화면 안 선박 전부를 거르고(`shipList`) 정렬(`sortShipRows`)한 뒤 50줄만 보였다.
+이제 거르기는 선박 메시지 · 거르기 글자 · 선종 필터가 바뀔 때만, 정렬은 그것과 정렬이 바뀔 때만 — 시계를 따라가는 것은 경과 정렬뿐이다(`useMemo`).
+시험 `tests/perf-ship-list.test.ts`: 이름 정렬에서 시계 10번 → 커밋 10 · 거르기 0 · 정렬 0(전: 10 · 10), 경과 정렬 → 정렬 10 · 거르기 0, 선박 메시지 → 각 1.
+
+| 시계 10번(10 s)의 React 작업 | 전 | 후 |
+|---|---|---|
+| 1,000척 · 이름 정렬 | 18.4 · 16.8 ms | 12.3 · 14.3 ms |
+| 5,000척 · 이름 정렬 | 37.5 · 37.5 ms | 12.2 · 16.2 ms |
+| 10,000척 · 이름 정렬 | 65.1 · 71.0 ms | **12.1 · 13.8 ms** |
+| 1,000척 · 경과 정렬 | 20.2 · 22.9 ms | 17.5 · 21.7 ms |
+| 5,000척 · 경과 정렬 | 59.8 · 55.6 ms | 39.4 · 44.3 ms |
+| 10,000척 · 경과 정렬 | 113.4 · 139.1 ms | **77.0 · 86.0 ms** |
+
+- 이름 정렬(기본)은 선박 수와 상관없이 50줄을 다시 그리는 값만 남는다(10,000척에서 틱당 약 6.8 → 1.3 ms). 경과 정렬은 거르기만 빠진다(약 −30 %).
+- 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts -t measure`. 전 = 커밋 `6bda549`(이 변경의 부모).
+
+**P1 — 숨긴 알림 패널(`AlertPanel`, 오른쪽 패널의 다른 탭을 보는 동안)**: R-08 로 마운트된 채 숨겨 두는데, 예측 행마다의 ETA 배지(1 s 시계)가 숨긴 동안에도 1초마다
+다시 그려졌다. 이제 내용은 React 19.3 `<Activity mode="hidden">` 아래 — 상태(펼친 행 · 범위)와 DOM 은 남고 효과(시계 · 스토어 구독)는 떼어 숨긴 동안 0번, 다시 보이면 그 순간의
+값으로 그린다. 겉 상자(`data-testid="alert-panel"`)는 Activity 밖이라 서버 렌더에도 늘 있다(숨긴 Activity 의 내용은 서버가 그리지 않는다).
+시험 `tests/perf-alert-panel.test.ts`: 보일 때 시계 10번 → 커밋 10, 숨긴 동안 → **0**(전: 10), 다시 보이면 줄어든 ETA · 펼친 행 그대로.
+
+| 시계 10번(10 s)의 React 작업 | 보일 때(전 · 후 — 같은 일) | 숨긴 동안 전 | 숨긴 동안 후 |
+|---|---|---|---|
+| 예측 50행 | 1.8 · 2.1 → 2.1 · 1.8 ms | 2.1 · 6.5 ms(커밋 10) | **0 ms(커밋 0)** |
+| 예측 225행 | 16.1 · 9.5 → 9.1 · 10.8 ms | 10.4 · 10.9 ms(커밋 10) | **0 ms(커밋 0)** |
+| 예측 525행 | 22.7 · 37.0 → 21.3 · 20.3 ms | 49.9 · 28.4 ms(커밋 10) | **0 ms(커밋 0)** |
+
+- 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-alert-panel.test.ts -t measure`. 전 = 커밋 `f4ba9d0`.
+
+**P5 — 상단 통합 검색(`AircraftSearch`, 늘 마운트된 머리 줄)**: 결과가 닫혀 있어도 1 s 시계를 구독해 1초마다 다시 그렸다. 시계는 결과(선박 표의 경과)를 보일 때만 필요하다 —
+이제 `useServerNow(1000, 결과가 보이는가)`(lib/clock `useNow` 의 active — 구독하지 않으면 렌더할 때 마지막 값을 읽는다). 선박을 고를 때의 '지금'은 고른 순간에 읽는다.
+시험 `tests/perf-search-clock.test.ts`(상황판처럼 다른 1 s 시계 구독자가 있는 채로): 닫힘 → 시계 10번에 커밋 **0**(전: 10), 결과 열림 → 10, Esc 로 닫으면 다시 0.
+
+| 시계 10번(10 s)의 React 작업 | 전 | 후 |
+|---|---|---|
+| 결과 닫힘 | 2.05 · 2.11 ms(커밋 10) | **0 ms(커밋 0)** |
+| 결과 열림(항공기 1 · 선박 10) | 24.97 · 31.46 ms(커밋 10) | 39.57 · 27.23 ms(커밋 10 — 같은 일, 흔들림) |
+
+- 작다(틱당 약 0.2 ms) — 늘 마운트된 자리라 없앴다. 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-search-clock.test.ts -t measure`. 전 = 커밋 `c6e22c0`.
+
+**P6 — 범례(`MapLegend`)의 `hasCoverage` 선택자: 재고 바꾸지 않음.** 스토어가 바뀔 때마다(`setData` — WS diff 마다) 선택자가 AIS 수신 범위의 GeoJSON 을 만들어
+불(참/거짓)만 본다(값이 같으면 다시 그리지 않는다 — 일은 선택자 안에서만). 범례가 열려 있을 때만 마운트된다.
+`tests/perf/map-legend.bench.ts`(`vitest bench` — `vitest run` 은 집지 않는다), 한 번 부를 때의 평균(두 번 돌림):
+
+| 수신 범위 상자 | GeoJSON 을 만드는 지금 | 참조만 읽을 때(바꾼다면) |
+|---|---|---|
+| 1개(`.env.example` AIS_BBOXES) | 1.4 · 1.4 µs | 0.00003 µs |
+| 2개(운영 설정 예 — 두 연결) | 1.5 · 1.6 µs | 〃 |
+| 5개 | 6.3 · 6.9 µs | 〃 |
+
+- 스토어 변경 한 번에 약 1.5 µs — 같은 변경에 상태 바 한 번 다시 그리기가 0.12 ms(web-review §4 P6)라 그 1 % 남짓이다. 줄일 것이 없다고 보고 **바꾸지 않았다**
+  (계획 Phase 4: 이득이 측정되지 않으면 하지 않는다). 재현: `cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts`.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -251,5 +309,7 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && npm run build && npm run check:first-js -- --in-image)      # 첫 화면 JS 예산(빌드 결과에서 계산 · 웹 이미지의 Node — CI 와 같다. 호스트 Node 로는 인자 없이)
 (cd apps/web && npm run build && npm run measure:first-js -- --serve 8790)   # 첫 화면 JS(브라우저 측정, 운영 빌드를 127.0.0.1:8790 에)
 (cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
+(cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts tests/perf-alert-panel.test.ts tests/perf-search-clock.test.ts -t measure)   # §11 웹 렌더 작업(시간)
+(cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts)                                                              # §11 P6(범례 선택자)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
 ```

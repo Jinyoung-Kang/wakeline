@@ -1,7 +1,7 @@
 /**
  * 선택 항적 REST(web-review §3.1) — 상황판 지도(components/MapView)만 부른다. 항공기 · 선박 모듈(./aircraft · lib/search)과 나눠 둔 까닭: 이 함수들이
  * 싣는 항적 코드(lib/track)는 지도 묶음에만 있으면 된다 — 검색이 실린 첫 로드 묶음으로 옮기지 않는다(첫 화면 JS 예산).
- * 함수마다 { signal } 을 받아 그대로 넘기고, 경로 조각은 ./path 로 인코딩하고("." · ".." 는 요청하지 않고 거절), 파싱한 값을 돌려준다.
+ * 함수마다 { signal } 을 받아 그대로 넘기고, 경로 조각은 ./path 로 인코딩하고(빈 값 · "." · ".." 는 요청하지 않고 거절), 파싱한 값을 돌려준다.
  */
 import { apiGet } from "@/lib/api";
 import { pathSegment } from "./path";

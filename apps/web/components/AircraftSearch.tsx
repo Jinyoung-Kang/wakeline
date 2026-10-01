@@ -9,7 +9,7 @@ import {
   type SearchHit, type ShipHit,
 } from "@/lib/search";
 import type { ShipSort, ShipSortKey } from "@/lib/ships";
-import { aircraftStates, shipStates } from "@/lib/store";
+import { aircraftStates, serverNowMs, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { ShipTablePart } from "./DashboardParts";
 import { AltStack } from "./UnitStack";
@@ -53,9 +53,11 @@ export function AircraftSearch() {
   const select = useUi((s) => s.select);
   const selectShip = useUi((s) => s.selectShip);
   const requestFlyTo = useUi((s) => s.requestFlyTo);
-  const now = useServerNow(1000);
   const qa = normalizeQuery(text);
   const qs = normalizeShipQuery(text);
+  const showList = open && (qa != null || qs != null);
+  // 1 s 시계(결과의 선박 경과)는 결과를 보일 때만 구독한다 — 닫혀 있으면 머리 줄을 1 s 마다 다시 그리지 않는다(web-review §4 P5, docs/PERF.md §11)
+  const now = useServerNow(1000, showList);
 
   // "/" 단축키 — 입력 중이 아닐 때만
   useEffect(() => {
@@ -121,11 +123,12 @@ export function AircraftSearch() {
     if (!ui.layers.ships) { ui.toggleLayer("ships"); saveLayers(useUi.getState().layers); }
     selectShip(h.mmsi);
     const listed = shipStates.get(h.mmsi);
-    const c = shipChoice(h, listed ? { lat: listed.lat, lon: listed.lon } : null, now);
+    // 고른 순간의 서버 기준 시각 — 결과가 닫혀 있으면 시계를 구독하지 않으므로 마지막 렌더의 값이 오래됐을 수 있다(전에는 마지막 1 s 틱)
+    const c = shipChoice(h, listed ? { lat: listed.lat, lon: listed.lon } : null, serverNowMs(Date.now()));
     // 줌 9: 줌 7 이상이면 서버가 개별 선박을 보낸다(화면 안 5,000척 이하 — 계약 v4 §C)
     if (c.fly) requestFlyTo(c.fly[0], c.fly[1], 9);
     setMsg(c.message);
-  }, [selectShip, requestFlyTo, now]);
+  }, [selectShip, requestFlyTo]);
 
   // 선박 표 조각(ShipTablePart)이 아직 오지 않았거나 받지 못했으면 선박 listbox · option 이 DOM 에 없다 — 그동안 선박 줄은 키보드 이동 · Enter ·
   // aria-controls · aria-activedescendant 에 넣지 않는다(보이지 않는 줄을 고르거나 없는 id 를 가리키지 않게 — 리뷰 2026-09-30). 받으면 다시 그린다.
@@ -155,7 +158,6 @@ export function AircraftSearch() {
   };
 
   const onShipSort = (k: ShipSortKey) => setShipSort((cur) => (cur?.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
-  const showList = open && (qa != null || qs != null);
   const activeId = showList && active >= 0 && active < total ? optionId(uid, active < aircraft.hits.length ? `a-${aircraft.hits[active].hex}` : `s-${navRows[active - aircraft.hits.length].mmsi}`) : undefined;
   // 팝업 = 두 listbox(항공기 · 선박 — 묶음 제목이 이름). 선박 listbox 는 결과가 있고 선박 표 조각을 받았을 때만 있다(없는 id 를 가리키지 않게)
   const lists = searchListIds(uid);

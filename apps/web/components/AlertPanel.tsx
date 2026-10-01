@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { Activity, useMemo, useState } from "react";
 import { serverNowMs, useServerData, type ServerData } from "@/lib/store";
 import { useNow, useRxFresh, useServerNow } from "@/lib/clock";
 import type { Alert } from "@/lib/types";
@@ -18,8 +18,19 @@ import { AltStack } from "./UnitStack";
  * 목록을 아직 받지 못했으면 "없음"이라고 하지 않고 "수신 대기", 연결이 끊겼으면 마지막 목록임을 밝히고 ETA 를 멈춘다(DH-9).
  * 이 연결의 목록에 빠진 것이 있으면(계약 v5 §E2 — 형식 오류로 버린 알림 메시지 · 배치 틈) 수는 "—", "일부 누락"을 밝히고 ETA 를 멈춘다.
  * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15). 고도 칸 둘째 줄은 m(계약 v5 §A2).
+ * active = 이 패널이 보이는가(상황판 오른쪽 패널의 탭). 다른 탭을 보는 동안에도 마운트된 채 남지만(R-08 — 펼친 근거 · 범위 · 스크롤을 지킨다) 내용은
+ * React <Activity mode="hidden"> 아래에 둔다: 상태 · DOM 은 남고 효과(1 s 시계 · 스토어 구독)는 떼어 숨긴 동안 다시 그리지 않으며, 다시 보이면 그 순간의 값으로
+ * 그린다(web-review §4 P1 — 숨긴 패널의 ETA 배지가 1초마다 다시 그려졌다, docs/PERF.md §11). 겉 상자는 Activity 밖이라 서버 렌더에도 늘 있다.
  */
-export function AlertPanel() {
+export function AlertPanel({ active = true }: { active?: boolean }) {
+  return (
+    <div className="flex h-full flex-col" data-testid="alert-panel">
+      <Activity mode={active ? "visible" : "hidden"}><AlertPanelBody /></Activity>
+    </div>
+  );
+}
+
+function AlertPanelBody() {
   const alerts = useServerData((d) => d.alerts);
   const lastEvent = useServerData((d) => d.lastEvent);
   const conn = useServerData((d) => d.conn);
@@ -40,7 +51,7 @@ export function AlertPanel() {
   const countsKnown = alertsVersion != null && !regionPending;
   const regionText = "관심 지역(중심 " + (status?.region?.center?.join(", ") ?? "—") + ", 반경 " + (status?.region?.radius_nm ?? "—") + " NM)에서 ";
   return (
-    <div className="flex h-full flex-col" data-testid="alert-panel">
+    <>
       <div className="row">
         <span className="label">Alerts</span>
         <div className="flex items-center gap-2">
@@ -99,7 +110,7 @@ export function AlertPanel() {
         ))}
         {list.some((a) => a.kind === "PREDICTED") ? <div className="px-2 py-1 text-[10px] text-fg-3">예측 행의 고도(<span className="est-val">보라 점선</span>) = 진입 시 고도 추정값 · ETA 도 추정</div> : null}
       </div>
-    </div>
+    </>
   );
 }
 

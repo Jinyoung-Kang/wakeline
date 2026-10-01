@@ -1,13 +1,13 @@
 "use client";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { logGroups, logItem, logsPage } from "@/lib/endpoints/logs";
+import { logItem, logsPage } from "@/lib/endpoints/logs";
 import { opsSession, signOutRequest } from "@/lib/endpoints/ops";
 import { copyText, downloadText } from "@/lib/copy";
 import { fmtKstClock, fmtTimeTitle } from "@/lib/time";
 import {
-  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, initialLogsState, logGroupsSig, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SCAN_MAX, LOG_SERVICES,
-  LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logsFileName, logsNdjson, logsText, logText, LOGS_PAGE, LOGS_PAGE_MAX, parseLogGroups, parseLogsHash, pendingEntries,
+  DEFAULT_LOG_FILTER, entryKey, initialLogsState, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SCAN_MAX, LOG_SERVICES,
+  LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logsFileName, logsNdjson, logsText, logText, LOGS_PAGE_MAX, parseLogsHash,
   validRid, withGroupResolutions, type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
 } from "@/lib/logs";
 import { classifyOpsError, isAuthMiss, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
@@ -19,16 +19,12 @@ import { LogGroupsTable } from "./LogGroupsTable";
 import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { revokeLogGroup } from "./logGroupTargets";
-import { useVisibleInterval } from "@/lib/use-visible-interval";
+import { useLogFeed, type LogView } from "./useLogFeed";
 
 type Tab = "logs" | "gaps";
-type View = "list" | "groups";
-type Groups = ReturnType<typeof parseLogGroups>;
-/** 자동 새로고침(§C7) — 새 항목은 단추로만 반영한다 */
-const REFRESH_MS = 15_000;
+type View = LogView;
 const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };
-const NO_PENDING = { items: [] as LogEntry[], more: false };
 const n = (v: number) => v.toLocaleString("en-US");
 /** 목록 줄의 DOM id — 표(grid)의 aria-activedescendant 가 가리킨다. 항목 키(stream:id — 같은 id 가 두 스트림에 있을 수 있다, §G2)에서 ':' 만 바꾼다 */
 const rowDomId = (key: string) => `log-row-${key.replace(":", "-")}`;
@@ -69,102 +65,25 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const [draftQ, setDraftQ] = useState(init.filter.q);
   const [draftRid, setDraftRid] = useState(init.filter.rid);
   const [ridError, setRidError] = useState<string | null>(null);
-  /** at = 이 목록을 요청한 시각(기간의 기준 — "더 보기"도 같은 기준) */
-  const [page, setPage] = useState<(LogPage & { at: number }) | null>(null);
-  const [pending, setPending] = useState(NO_PENDING);
-  const [groups, setGroups] = useState<Groups | null>(null);
-  const [freshGroups, setFreshGroups] = useState<Groups | null>(null);
   /** 고른 줄의 항목 키(entryKey — stream:id) */
   const [selId, setSelId] = useState<string | null>(null);
   const [detail, setDetail] = useState<LogEntry | null>(null);
   const [detailMiss, setDetailMiss] = useState<{ id: string; error: unknown } | null>(null);
-  const [loading, setLoading] = useState(false);
-  /** '이전 항목 더 보기'가 받는 중인 커서 — 단추를 바쁨으로 보인다 */
-  const [moreCursor, setMoreCursor] = useState<string | null>(null);
-  const [err, setErr] = useState<unknown>(null);
-  const [lastOk, setLastOk] = useState<number | null>(null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   /** 목록 줄의 되돌리기 확인(해결된 항목이 보일 때 — 그 줄 아래, 한 번에 하나) */
   const rowResolve = useResolveSlot();
-  /** 목록·묶음을 새로 불러올 때마다 올린다 — 늦게 온 이전 필터의 응답(또는 그 사이의 자동 확인)을 버린다 */
-  const loadSeq = useRef(0);
-  /** 받는 중인 '더 보기' 커서(같은 프레임의 두 번째 누름도 막는다 — 상태는 다음 렌더에야 보인다) */
-  const moreFor = useRef<string | null>(null);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
-
-  /** ops 호출 실패: 문구로 보이고, 401/404 면 세션을 확인해 만료일 때만 로그인으로 */
-  const fail = useCallback((e: unknown) => {
-    setErr(e);
-    if (!isAuthMiss(e)) return;
-    void classifyOpsError(e, () => opsSession()).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
-  }, [onLeave]);
+  /** 목록을 새로 받으면 고른 줄은 그 목록에 있을 때만 남는다 */
+  const keepSelection = useCallback((p: LogPage) => setSelId((s) => (s && p.items.some((e) => entryKey(e) === s) ? s : null)), []);
+  /** 목록 · 묶음 · 새 항목 대기열 · 더 보기 · 15 s 자동 확인 · 마지막 성공 시각 · 오류(./useLogFeed) */
+  const { page, pending, groups, setGroups, freshGroups, loading, moreCursor, err, lastOk, fail, load, loadMore, showPending, showFreshGroups } =
+    useLogFeed(view, filter, { active: tab === "logs", onLeave, onList: keepSelection });
   /** 상세의 조회 · 해결 쓰기가 401/404 일 때 — 세션 확인만(문구는 부른 쪽이 보인다). 만료면 로그인으로 */
   const authMiss = useCallback(async (e: unknown) => {
     const k = await classifyOpsError(e, () => opsSession());
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
-
-  const load = useCallback(async (v: View, f: LogFilter) => {
-    const my = ++loadSeq.current;
-    const at = Date.now();
-    setLoading(true);
-    try {
-      if (v === "list") {
-        const p = await logsPage(f, at);
-        if (my !== loadSeq.current) return;
-        setPage({ ...p, at });
-        setPending(NO_PENDING);
-        setSelId((s) => (s && p.items.some((e) => entryKey(e) === s) ? s : null));
-      } else {
-        const g = await logGroups(f, at);
-        if (my !== loadSeq.current) return;
-        setGroups(g);
-        setFreshGroups(null);
-      }
-      setErr(null);
-      setLastOk(Date.now());
-    } catch (e) {
-      if (my === loadSeq.current) fail(e);
-    } finally {
-      if (my === loadSeq.current) setLoading(false);
-    }
-  }, [fail]);
-
-  // 필터·보기가 바뀌면 다시 불러온다(첫 요청은 다음 틱 — 개발 모드 이중 실행에서 한 번만)
-  useEffect(() => {
-    if (tab !== "logs") return;
-    const t = setTimeout(() => void load(view, filter), 0);
-    return () => clearTimeout(t);
-  }, [tab, view, filter, load]);
-
-  /** 자동 확인: 첫 쪽을 다시 받아 보이는 맨 위보다 새 항목만 대기열에(목록은 그대로). 묶음 보기는 바뀌었는지만 */
-  const poll = useCallback(async () => {
-    const my = loadSeq.current;
-    try {
-      if (view === "list") {
-        const p = await logsPage(filter, Date.now());
-        if (my !== loadSeq.current) return;
-        if (!page?.items.length) {
-          // 보이는 줄이 없으면 움직일 것도 없다 — 바로 보인다
-          setPage({ ...p, at: Date.now() });
-          setPending(NO_PENDING);
-        } else {
-          setPending(pendingEntries(page.items, p.items, LOGS_PAGE));
-        }
-      } else {
-        const g = await logGroups(filter, Date.now());
-        if (my !== loadSeq.current) return;
-        setFreshGroups(logGroupsSig(g) !== logGroupsSig(groups) ? g : null);
-      }
-      setErr(null);
-      setLastOk(Date.now());
-    } catch (e) {
-      if (my === loadSeq.current) fail(e);
-    }
-  }, [view, filter, page, groups, fail]);
-  // 탭이 보일 때만, 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12). poll 이 바뀌어도(쪽을 넘김 · 새 항목 반영) 주기를 다시 걸지 않는다(B13)
-  useVisibleInterval(() => void poll(), tab === "logs" ? REFRESH_MS : null);
 
   /**
    * 상세 열기 번호 — #id= 링크 · 줄 · 닫기마다 오른다. 먼저 누른 #id= 항목의 늦은 답이 나중에 연 상세를 덮지 않게(마지막 것만 — web-review B14,
@@ -233,28 +152,6 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     const truncated = p.nextCursor != null || p.scanTruncated === true || (g.count != null && p.items.length < g.count);
     return groupText(g, p.items, { truncated });
   });
-  const showPending = () => {
-    if (pending.more) { void load("list", filter); return; } // 새 항목이 한 쪽을 넘음 — 사이가 비지 않게 처음부터
-    setPage((p) => (p ? { ...p, items: applyPending(p.items, pending.items) } : p));
-    setPending(NO_PENDING);
-  };
-  /** 다음 쪽은 커서 하나에 한 번만 — 받는 동안 다시 누르면 같은 쪽이 두 번 붙어 숨김 · 건너뜀 합계가 부풀었다. 붙일 때도 그 커서의 쪽일 때만 */
-  const loadMore = async () => {
-    const cursor = page?.nextCursor;
-    if (!page || !cursor || moreFor.current === cursor) return;
-    moreFor.current = cursor;
-    setMoreCursor(cursor);
-    const my = loadSeq.current;
-    try {
-      const p = await logsPage(filter, page.at, { cursor });
-      if (my !== loadSeq.current) return;
-      setPage((prev) => (prev && prev.nextCursor === cursor ? { ...appendLogPage(prev, p), at: prev.at } : prev));
-    } catch (e) {
-      if (my === loadSeq.current) fail(e);
-    } finally {
-      if (moreFor.current === cursor) { moreFor.current = null; setMoreCursor(null); }
-    }
-  };
   /** 목록 표(grid)에 초점이 있을 때만 — 다른 요소(단추 · 입력)에서 올라온 키는 그 요소의 것이다 */
   const onKey = (e: React.KeyboardEvent) => {
     if (e.target !== e.currentTarget) return;
@@ -329,7 +226,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         if (r.op === "revoke" && r.complete) setDetail((d) => (d && entryKey(d) === entryKey(open) ? { ...d, resolved: null } : d));
       });
     }
-  }, [load]);
+  }, [load, setGroups]);
 
   return (
     <div className="flex h-full flex-col" data-testid="logs-dashboard">
@@ -419,7 +316,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             {groups?.scanTruncated ? <span className="text-warn">스캔 상한({n(LOG_SCAN_MAX)}건 — 두 스트림 합)에서 잘림 — 묶음·건수가 기간의 일부만</span> : null}
             {groups?.invalid ? <span className="text-warn">형식 오류 묶음 {groups.invalid}개 건너뜀</span> : null}
             {groups ? <HiddenLine show={filter.resolved === "show"} hidden={groups.hiddenResolved} pages={1} state={groups.resolutionState} /> : null}
-            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={() => { setGroups(freshGroups); setFreshGroups(null); }}>묶음에 새 항목 — 반영</button> : null}
+            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={showFreshGroups}>묶음에 새 항목 — 반영</button> : null}
             <span className="text-fg-3">묶음 보기는 서비스·수준·기간만 적용(글자 검색·요청 id·지문 제외)</span>
           </>}
           <span role="status" aria-live="polite" data-testid="logs-note" className={note?.ok === false ? "text-bad" : "text-ok"}>{note?.text ?? ""}</span>

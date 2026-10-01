@@ -196,7 +196,7 @@ describe("connection chip", () => {
     expect(c.title).toContain("탭이 숨겨져");
     expect(c.title).toContain("resume");
     // lib/ws 의 pause 는 visibilitychange(document.hidden)에서만 불린다 — 이 설명이 맞는지 코드로 확인
-    const map = readFileSync(new URL("../components/MapView.tsx", import.meta.url), "utf8");
+    const map = readFileSync(new URL("../components/map/useLiveFeed.ts", import.meta.url), "utf8");
     expect(map).toMatch(/if \(document\.hidden\) \{ client\.pause\(\);/);
   });
   it("open but silent past 45 s says '수신 없음'; retries are counted", () => {
