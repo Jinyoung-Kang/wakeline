@@ -32,12 +32,15 @@
      - KERNEL 의 실행 도우미는 asyncio 위에서 돈다: `scheduler`(작업 루프 · `asyncio.wait_for`) · `ratelimit`(asyncio future · 타이머) · `retry`(잠들고 · 로그를 남기고 · 주입받은 입출력 호출을 부른다) · `diag.LoopLag.run`(끝없이 도는 태스크 — WARN 이 로그 싱크로 간다).
      - 규칙 모듈도 `logging` 으로 로그를 남긴다(`normalize` · `chain_state` · `ais.shards` · `ais.reconnect` …). WARN 이상은 진입이 붙인 `logsink` 가 Redis 로 보낸다. ais 규칙은 asyncio 이벤트 · 큐 · 타이머를 쓴다.
      - 가드는 패키지 안 import 만 센다. 표준 · 외부 라이브러리 import 는 세지 않는다(`errors` · `http_errors` 는 httpx 를 예외 형으로만 쓴다).
-3. **가드는 `apps/collector/tests/test_layering.py`.** 표준 라이브러리 `ast` 만 쓰고, 함수 안의 늦은 import 도 센다. 규칙은 다섯 가지다:
-   - 위 층을 import 하지 않는다.
-   - 작업 사이에는 `jobs.context` 만 쓴다(설계상 `jobs.demand → jobs.route` 는 허용).
-   - 다른 모듈의 비공개 이름(`_x`)을 쓰지 않는다.
-   - `ais` 는 격벽이라, 밖에서는 정해 둔 공유 모듈만 쓴다.
-   - 새 모듈은 반드시 층(과 기능)을 정한다.
+3. **가드는 `apps/collector/tests/test_layering.py`.** 표준 라이브러리 `ast` 만 쓰고, 함수 안의 늦은 import 도 센다. 규칙은 여섯 가지다(가드 설명의 번호와 같다):
+   1. 위 층을 import 하지 않는다.
+   2. 작업 사이에는 `jobs.context` 만 쓴다(설계상 `jobs.demand → jobs.route` 는 허용).
+   3. entry 모듈은 같은 패키지의 `__main__` 만 import 한다.
+   4. 규칙 모듈은 KERNEL 이나 같은 기능의 규칙만 import 한다(위 2).
+   5. 다른 모듈의 비공개 이름(`_x`)을 import 하지 않는다.
+   6. `ais` 는 격벽이라, 밖에서는 정해 둔 공유 모듈만 쓴다.
+
+   그리고 새 모듈은 반드시 층(과 기능)을 정한다 — 정하지 않으면 실패한다.
 
    허용 목록 `ALLOWED` 는 처음 7개로 시작해 **지금은 비었다**. 고친 위반이 목록에 남아 있어도 실패한다.
 4. **떼어 낸 모듈.** 모두 동작을 바꾸지 않는 커밋으로 옮겼고, 기존 시험은 import 줄만 바뀌었다.
