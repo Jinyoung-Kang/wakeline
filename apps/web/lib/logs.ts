@@ -8,6 +8,7 @@
  * resolution_state. 요청은 resolved=hide|show 를 늘 명시한다(기본 hide — 해결 처리한 지문의 upto 이하 항목을 빼고 뺀 수를 알린다).
  */
 import { REQUEST_ID_RE } from "./api";
+import { pathSegment } from "./endpoints/path";
 import { isoKst } from "./kst";
 import { logHeaderLine } from "./log-line";
 import { hiddenCount, parseResolutionState, parseResolvedRef, type ResolutionState, type ResolvedMode, type ResolvedRef } from "./resolutions";
@@ -242,8 +243,8 @@ export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period" 
   return `${LOGS_PATH}/groups?${p}`;
 }
 
-/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2) */
-export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${encodeURIComponent(id)}${stream ? `?stream=${stream}` : ""}`;
+/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2). id 는 경로 조각("." · ".." 는 던진다 — lib/endpoints/path) */
+export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${pathSegment(id)}${stream ? `?stream=${stream}` : ""}`;
 
 /** /logs#rid=… · #id=…(&stream=…) · #fp=… (오류 문구의 "로그 보기" · 항목 링크). 형식이 틀린 값은 버린다 */
 export function parseLogsHash(hash: string): { rid?: string; id?: string; stream?: LogStreamName; fp?: string } {

@@ -18,7 +18,7 @@ export function logGroups(f: Parameters<typeof logGroupsUrl>[0], at: number, o?:
   return apiGet<unknown>(logGroupsUrl(f, at), o).then((v) => parseLogGroups(v));
 }
 /** 항목 하나(§C4) — 스키마와 맞지 않으면 null(부른 쪽이 '형식이 맞지 않음'을 보인다) */
-export function logItem(id: string, stream: LogStreamName | null, o?: Opts): Promise<LogEntry | null> {
+export async function logItem(id: string, stream: LogStreamName | null, o?: Opts): Promise<LogEntry | null> {
   return apiGet<unknown>(logItemUrl(id, stream), o).then((v) => parseLogItemResponse(v));
 }
 /** AIS 수신 공백(공개 GET /api/v1/ais/gaps — §C7 탭). fromIso = 기간의 시작(UTC ISO) */

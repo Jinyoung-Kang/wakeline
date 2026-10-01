@@ -51,11 +51,11 @@ export function runsDrill(k: RunKey, since: string | null, cursor: number | null
 // ---- 쓰기 ----
 
 /** 공급자 켜기 · 끄기(R-94) — 응답은 DB 원본 반영과 Redis 미러 여부 */
-export function setProviderEnabled(name: string, on: boolean): Promise<ToggleResult> {
+export async function setProviderEnabled(name: string, on: boolean): Promise<ToggleResult> {
   return apiSend<ToggleResult>("POST", providerSwitchPath(name, on ? "enable" : "disable"));
 }
 /** 설정 저장(R-35) — ifMatch = 편집을 시작할 때 본 version(lib/ops settingIfMatch). 다른 곳에서 바뀌었으면 409 */
-export function saveSetting(key: string, value: unknown, ifMatch: string): Promise<unknown> {
+export async function saveSetting(key: string, value: unknown, ifMatch: string): Promise<unknown> {
   return apiSend("PUT", settingPath(key), { value }, { "If-Match": ifMatch });
 }
 /** 해결 처리 하나(ADR-024) — 201 본문을 읽는다(형식이 틀리면 null) */
