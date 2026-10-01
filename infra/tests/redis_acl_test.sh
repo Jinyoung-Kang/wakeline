@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Redis ACL 회귀 시험 (SEC-5 · 계약 §6 · 계약 v2 §C · 계약 v3 §D · 계약 v5 §C3 · §G2 · ADR-023).
-# compose 와 같은 방식(redis 사용자 999·read-only 루트 FS·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
+# compose 와 같은 방식(redis 사용자 999·read-only 루트 FS + tmpfs /tmp·cap_drop ALL·no-new-privileges·infra/redis/start.sh)으로
 # 버리는 redis 컨테이너를 띄우고, wakeline_api / wakeline_collector / wakeline_ais 가 필요한 명령·키만 쓸 수 있는지 확인한다.
 # 마지막으로 REDIS_AIS_PASSWORD 없이 한 번 더 띄워 wakeline_ais 가 빈 비밀번호로 열리지 않는지 본다.
 # 개발·E2E 스택은 건드리지 않는다. 사용: bash infra/tests/redis_acl_test.sh   (docker 필요)
@@ -19,7 +19,7 @@ start_redis() { # start_redis <컨테이너 이름> <추가 docker run 인자...
   local name=$1; shift
   docker run -d --name "$name" \
     --user 999:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
-    -v /data \
+    -v /data --tmpfs /tmp:size=1m \
     -v "$ROOT/infra/redis/redis.conf:/etc/redis/redis.conf:ro" \
     -v "$ROOT/infra/redis/start.sh:/etc/redis/start.sh:ro" \
     -e REDIS_PASSWORD="$ADMIN_PW" -e REDIS_API_PASSWORD="$API_PW" -e REDIS_COLLECTOR_PASSWORD="$COL_PW" "$@" \
@@ -408,6 +408,23 @@ else fails=$((fails+1)); echo "  FAIL  uid=$uid CapEff=$caps NoNewPrivs=$nnp mod
 out="$(docker exec "$C" sh -c 'touch /etc/x 2>&1; echo rc=$?')"
 if grep -q "Read-only" <<<"$out"; then passes=$((passes+1)); echo "  ok    root FS read-only"; else fails=$((fails+1)); echo "  FAIL  root FS writable: $out"; fi
 ok "AOF 기록(/data 볼륨 쓰기)" "aof_enabled:1" "${D[@]}" info persistence
+
+echo "[비밀번호 — redis-server 명령행이 아니라 ACL 파일(S7): 해시만 · 0600 · tmpfs]"
+# compose 와 같은 tmpfs /tmp 에 start.sh 가 쓴 파일 하나 — 권한 600 · 소유자 redis(999) · 파일 시스템 tmpfs
+aclinfo="$(docker exec "$C" sh -c 'set -- /tmp/wakeline-users.acl.*; [ "$#" = 1 ] && [ -f "$1" ] && stat -c "%a %u" "$1" && awk "\$2 == \"/tmp\" {print \$3}" /proc/mounts' 2>&1 || true)"
+if [ "$aclinfo" = $'600 999\ntmpfs' ]; then passes=$((passes+1)); echo "  ok    ACL 파일 1개 · 0600 · redis 소유 · tmpfs"
+else fails=$((fails+1)); echo "  FAIL  ACL 파일 → $aclinfo"; fi
+acltext="$(docker exec "$C" sh -c 'cat /tmp/wakeline-users.acl.*' 2>&1 || true)"
+logs="$(docker logs "$C" 2>&1 || true)"
+leak=""
+for pw in "$ADMIN_PW" "$API_PW" "$COL_PW" "$AIS_PW"; do
+  grep -qF -- "$pw" <<<"$acltext" && leak="$leak acl"
+  grep -qF -- "$pw" <<<"$logs" && leak="$leak log"
+done
+users="$(grep -Eo '^user [a-z_]+ on #[0-9a-f]{64} ' <<<"$acltext" | awk '{print $2}' | sort | tr '\n' ' ')"
+if [ -z "$leak" ] && [ "$users" = "default wakeline_ais wakeline_api wakeline_collector " ]; then
+  passes=$((passes+1)); echo "  ok    ACL 파일 · 기동 로그에 평문 비밀번호 없음(사용자 4명 모두 #SHA-256)"
+else fails=$((fails+1)); echo "  FAIL  평문 비밀번호:${leak:- 없음} · 해시 사용자: $users"; fi
 
 echo "[REDIS_AIS_PASSWORD 없음 — wakeline_ais 를 만들지 않는다(빈 비밀번호로 열리지 않음)]"
 start_redis "$C2"

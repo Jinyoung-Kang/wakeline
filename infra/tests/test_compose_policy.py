@@ -254,6 +254,14 @@ class ComposePolicyTest(unittest.TestCase):
         self.assertTrue(mounts["/etc/redis/redis.conf"]["read_only"])
         self.assertEqual(mounts["/data"]["type"], "volume")
 
+    def test_redis_acl_file_lives_on_tmpfs(self):
+        """S7: start.sh 는 ACL 파일(해시만, 0600)을 /tmp 에 쓴다 — 루트 FS 는 read-only 라 tmpfs 가 있어야 기동하고,
+        데이터 볼륨(/data — AOF, 백업 대상이 될 수 있다)에는 두지 않는다. 컨테이너가 멈추면 사라진다."""
+        for cfg in (self.dev, self.iso):
+            r = self.svc("redis", cfg)
+            self.assertTrue(r.get("read_only"))
+            self.assertTrue([t for t in r.get("tmpfs", []) if t.split(":", 1)[0] == "/tmp"], "redis 에 tmpfs /tmp")
+
     # --- R-90 · R-06: api 설정값이 .env 에서 실제로 전달된다(application.yml 기본값만 있고 compose 가 넘기지 않으면 바꿀 방법이 없다) ---
     def test_api_cookie_secure_and_alert_retention_pass_through(self):
         env = self.svc("api")["environment"]

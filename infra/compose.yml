@@ -260,6 +260,7 @@ services:
     init: true                                   # api 와 같은 이유
     user: "999:1000"                           # 이미지의 redis 사용자. 처음부터 비root 라 엔트리포인트의 권한 강하가 필요 없다
     entrypoint: ["sh", "/etc/redis/start.sh"]  # ACL 사용자 생성 후 redis-server 실행(비밀번호는 명령행이 아니라 환경변수로)
+    tmpfs: ["/tmp:size=1m"]                      # start.sh 의 ACL 파일(비밀번호 해시만, 0600 — redis-server 에는 --aclfile 경로만 넘긴다)
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 가 .env 에 없습니다 — make init}   # default(관리) — 헬스체크·운영 redis-cli 전용
       REDIS_API_PASSWORD: ${REDIS_API_PASSWORD:?REDIS_API_PASSWORD 가 .env 에 없습니다 — make init}

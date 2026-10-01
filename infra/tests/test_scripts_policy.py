@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import unittest
@@ -182,6 +183,36 @@ class SecretsNotOnArgvTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrintHelperTest(unittest.TestCase):
+    """I-8: `make print-<변수>` 는 허용 목록의 고정 설정만 출력한다. make 는 환경변수도 변수로 읽으므로, 아무 이름이나 받으면
+    셸 · CI 에 export 된 비밀값(REDIS_PASSWORD · 토큰 …)을 그대로 찍는다."""
+
+    PROBE = "probe-value-not-a-real-secret"
+
+    def make_print(self, var: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, **(extra_env or {})}
+        return subprocess.run(["make", "-s", "--no-print-directory", f"print-{var}"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    def test_environment_and_other_make_variables_do_not_print(self):
+        for var in ("WAKELINE_PRINT_PROBE", "REDIS_PASSWORD", "COMPOSE", "PATH"):
+            with self.subTest(var=var):
+                r = self.make_print(var, {"WAKELINE_PRINT_PROBE": self.PROBE, "REDIS_PASSWORD": self.PROBE})
+                self.assertNotEqual(r.returncode, 0, "허용 목록 밖의 이름은 실패")
+                self.assertNotIn(self.PROBE, r.stdout + r.stderr)
+
+    def test_every_print_use_is_allow_listed_and_works(self):
+        files = [ROOT / ".github" / "workflows" / "ci.yml", *(ROOT / "tools").glob("*.sh"), *(ROOT / "infra" / "tests").glob("*.py"),
+                 *(ROOT / "perf").glob("*.sh")]
+        used = {v for f in files if f != Path(__file__).resolve() for v in re.findall(r"(?<![-\w])print-([A-Za-z0-9_]+)", f.read_text())}
+        self.assertEqual(used, {"K6_IMAGE", "ISO_ENV"}, "쓰는 곳(CI · 보안 게이트 · 정책 시험)")
+        for var in sorted(used):
+            with self.subTest(var=var):
+                r = self.make_print(var)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(r.stdout.strip())
+        self.assertRegex(self.make_print("K6_IMAGE").stdout.strip(), r"^grafana/k6:[\w.-]+@sha256:[0-9a-f]{64}$")
 
 
 class PortableShellTest(unittest.TestCase):
