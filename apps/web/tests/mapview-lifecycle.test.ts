@@ -227,6 +227,36 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
   });
 });
 
+/**
+ * StrictMode(next dev — next.config reactStrictMode: true)는 효과를 마운트 → 정리 → 마운트로 두 번 돌린다. 지도 effect 의 정리가 첫 지도를 지우고 두 번째
+ * 지도를 만든다. '이미 그림' 기록(SIGMET · AIS 범위)이 첫 지도의 것으로 남으면 두 번째 지도에 그리지 않았다(web-review B8 — cacheComponents 의 Activity 도 같다).
+ */
+describe("MapView under StrictMode: what is drawn belongs to the map that drew it (web-review B8)", () => {
+  async function mountStrict() {
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(React.StrictMode, null, React.createElement(MapView))); });
+    expect(FakeMap.instances).toHaveLength(2);
+    expect(FakeMap.instances[0].removed).toBe(true);
+    const map = FakeMap.instances[1];
+    await act(() => { map.fire("style.load"); map.fire("load"); });
+    return map;
+  }
+  const SIGMETS = { type: "FeatureCollection", features: [{ type: "Feature", properties: { id: "S1", valid_from: "2026-09-28T00:00:00Z", valid_to: "2099-01-01T00:00:00Z" }, geometry: { type: "Polygon", coordinates: [[[126, 35], [128, 35], [128, 37], [126, 35]]] } }] };
+
+  it("SIGMETs already in the store (as when returning to /) are drawn on the surviving map", async () => {
+    setData({ sigmets: SIGMETS as never, alerts: new Map() });
+    const map = await mountStrict();
+    expect((map.getSource("sigmets")!.data as { features: unknown[] }).features).toHaveLength(1);
+  });
+
+  it("the AIS coverage outline is drawn on the surviving map", async () => {
+    useUi.setState({ layers: { ...initialUi.layers, ships: true } });
+    setData({ ais: { connected: true, lag_s: 1, msgs_per_s: 10, gap_open_since: null, last_gap: null, state: "ok", coverage: [{ s: 33, w: 124, n: 39, e: 132 }], received_at: 1 } as never });
+    const map = await mountStrict();
+    expect((map.getSource("ship-coverage")!.data as { features: unknown[] }).features.length).toBeGreaterThan(0);
+  });
+});
+
 describe("MapView KMA radar layers (R-11)", () => {
   const kr = (available: boolean) => ({
     available, latest_tm: "202609281200", georeferenced: true, legend: null, attribution: "기상청", meta: { fetched_at: "2026-09-28T03:00:00Z", stale: false },

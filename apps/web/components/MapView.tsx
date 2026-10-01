@@ -149,6 +149,10 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   /** 선택 항공기 항적: REST 한 번 + WS selected 로 연장 */
   const track = useRef<{ hex: string | null; pts: TrackPt[]; pending: TrackPt[]; loaded: boolean }>({ hex: null, pts: [], pending: [], loaded: false });
   const sigmetApplied = useRef<{ fc: SigmetCollection | null; key: string }>({ fc: null, key: "" });
+  /** RainViewer 커버리지 소스의 host · 기상청 레이더 경계 키 · 그린 AIS 수신 범위 키 — 위 레이더 레이어 목록 · sigmetApplied 와 함께 '이 지도에 그린 것'의 기록 */
+  const coverageHost = useRef<string | null>(null);
+  const krCoordsKey = useRef("");
+  const coverageKey = useRef("");
   const [sigClock, setSigClock] = useState(0);
   /** 선택 선박 항적: REST 한 번 + WS ship_selected 로 연장(AIS 공백·15분 틈은 점선) */
   const shipTrack = useRef<ShipTrackRef>(emptyShipTrack(null));
@@ -412,6 +416,14 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       setDashboardMap(null); // 지우기 전에 — 조각이 지운 지도에 그리지 않게
       map.remove();
       mapRef.current = null;
+      // '이 지도에 그린 것'의 기록은 지도와 함께 버린다 — 다음 지도(StrictMode 의 두 번째 마운트 · 다시 마운트)에는 아무것도 그려져 있지 않다.
+      // 남기면 같은 SIGMET · AIS 범위를 '이미 그림'으로 건너뛰어 새 지도에 그리지 않았다(web-review B8)
+      sigmetApplied.current = { fc: null, key: "" };
+      coverageKey.current = "";
+      coverageHost.current = null;
+      krCoordsKey.current = "";
+      radarLayers.current = [];
+      krLayers.current = [];
       workerRef.current = null;
       clientRef.current = null;
       refreshPrediction.current = () => {};
@@ -468,7 +480,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   }, [radar, radarFrameIndex, radarOpacity, layers.radar, radarSource, radarPlaying]);
 
   // ---- RainViewer 커버리지 마스크(GAP-15): 레이더가 RainViewer 일 때만. 커버리지 밖 = 회색 베일, 안 · 에코 없음 = 투명 ----
-  const coverageHost = useRef<string | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -489,7 +500,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
 
   // ---- 기상청 레이더(FR-31): 재투영된 PNG 를 image source 로. 좌표는 서버가 문서 기반 LCC 정의로 계산한 웹 메르카토르 경계 ----
   // image source 는 추가하는 순간 PNG 를 받으므로 보일 프레임만 지연 추가한다(PERF-12). 경계가 바뀌면 다시 만든다.
-  const krCoordsKey = useRef("");
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -679,7 +689,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   }, [ais]);
 
   // ---- 선박 수신 범위(계약 v3 §A): 선박 레이어가 켜져 있고 status 가 범위를 줄 때만 경계 점선. 모르면 그리지 않는다 ----
-  const coverageKey = useRef("");
   const coverage = ais?.coverage ?? null;
   useEffect(() => {
     const map = mapRef.current;
