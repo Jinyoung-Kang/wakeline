@@ -1,6 +1,7 @@
 "use client";
 import { use } from "react";
 import { airportWx } from "@/lib/endpoints/weather";
+import { ScrollRegion } from "@/components/ScrollRegion";
 import { useApiResource } from "@/lib/use-api-resource";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
@@ -31,7 +32,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   const stale = m && nowMs ? isMetarStale(m, nowMs) : false;
   const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
-    <div className="h-full overflow-y-auto p-4">
+    <ScrollRegion label={`${code} 공항 기상 이력`} main className="h-full overflow-y-auto p-4">
       <h1 className="label mb-2">Airport weather · {code}</h1>
       {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
       {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
@@ -66,6 +67,6 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
             {wx.history.some((h) => h.vis_raw == null && h.vis_sm != null) ? " * = 원문 없이 파싱한 숫자(하한 표기 “+” 를 잃었을 수 있음)." : ""}</div>
         </section>
       </> : null}
-    </div>
+    </ScrollRegion>
   );
 }

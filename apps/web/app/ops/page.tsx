@@ -27,6 +27,7 @@ import { OpsRunsDrill } from "@/components/OpsRunsDrill";
 import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
 import { AUDIT_PAGE_LIMIT } from "@/lib/ops-audit";
 import { useFocusRescue } from "@/lib/use-focus-rescue";
+import { useScrollFocusable } from "@/lib/use-scroll-focusable";
 
 type Any = Record<string, unknown>;
 /** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
@@ -165,6 +166,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   const auditMore = useRef<HTMLButtonElement>(null);
   const drillOpener = useRef<HTMLElement | null>(null);
   const rescue = useFocusRescue(10_000);
+  const tabScroll = useScrollFocusable<HTMLDivElement>();
+  const tabBodyRef = useCallback((el: HTMLDivElement | null) => { tabBody.current = el; return tabScroll(el); }, [tabScroll]);
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
   const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf, panelId: resolvePanelId, openerProps: resolveOpener } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
@@ -236,7 +239,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         ) : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
       </div>
-      <div ref={tabBody} tabIndex={-1} className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" role="region" aria-label={`${tab} 탭`} data-testid="ops-tab-body">
+      {/* 탭 본문: 넘칠 때만 Tab 정지점(QA-305 — quality · audit · pipeline 은 글자뿐이라 키보드로 스크롤할 길이 없었다), 아니면 -1(초점 되살리기 자리) */}
+      <div ref={tabBodyRef} className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" role="region" aria-label={`${tab} 탭`} data-testid="ops-tab-body">
         {tab === "providers" && prov ? <>
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}

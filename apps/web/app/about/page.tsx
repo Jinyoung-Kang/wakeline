@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ScrollRegion } from "@/components/ScrollRegion";
 
 export const metadata: Metadata = { title: "출처·한계" };
 
@@ -19,7 +20,7 @@ export default function AboutPage() {
     ["배경지도", "OpenFreeMap + MapLibre GL JS", "OpenMapTiles · OpenStreetMap contributors · BSD-3"],
   ];
   return (
-    <div className="h-full overflow-y-auto p-4 text-[12px]">
+    <ScrollRegion label="출처·한계 본문" main className="h-full overflow-y-auto p-4 text-[12px]">
       <h1 className="label mb-2">Data sources · licenses</h1>
       <table className="mb-4"><thead><tr><th scope="col">역할</th><th scope="col">서비스</th><th scope="col">조건</th></tr></thead><tbody>{rows.map((r) => <tr key={r[0]}><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td></tr>)}</tbody></table>
       <h2 className="label mb-2">한계 · 정직성 규칙</h2>
@@ -45,6 +46,6 @@ export default function AboutPage() {
       </ul>
       <h2 className="label mt-4 mb-2">Design</h2>
       <p className="text-fg-2">설계서(docs/SkyWx_설계서_로컬개발용_v0.2.pdf — 이전 이름 SkyWx 시절 원본, ADR-015), ADR(docs/adr), 검증 기록(docs/VERIFICATION.md), 성능 측정(docs/PERF.md)은 저장소에 있습니다.</p>
-    </div>
+    </ScrollRegion>
   );
 }

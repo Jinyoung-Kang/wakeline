@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState, type ReactNode } from "react";
 import { useApiResource } from "@/lib/use-api-resource";
+import { ScrollRegion } from "@/components/ScrollRegion";
 import { alertStats, sigmetStats, trafficStats, type StatsItems, type StatsRow, type TrafficStats } from "@/lib/endpoints/stats";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
@@ -49,7 +50,7 @@ export default function StatsPage() {
   const today = todayKst(openedAt);
   const maxDay = yesterdayKst(openedAt);
   return (
-    <div className="h-full overflow-y-auto p-4">
+    <ScrollRegion label="통계 본문" main className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-3"><h1 className="label">Statistics</h1><span className="text-[11px] text-fg-3" title="api 집계 작업은 매일 03:30 KST 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)">매일 {STATS_RUN_KST} 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
       {zoneErr ? <div className="mb-3 text-[11px] text-warn" role="alert" data-testid="stats-zone-error">{STATS_ZONE_ERROR}</div> : null}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -74,7 +75,7 @@ export default function StatsPage() {
           </div> : null}
         </Panel>
       </div>
-    </div>
+    </ScrollRegion>
   );
 }
 

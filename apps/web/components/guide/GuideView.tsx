@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { KstTime } from "@/components/KstTime";
+import { ScrollRegion } from "@/components/ScrollRegion";
 import { creditGroups } from "@/lib/attribution";
 import { KR_RADAR_STALE_S, METAR_STALE_S } from "@/lib/format";
 import {
@@ -89,12 +90,13 @@ function Sec({ id, sub = false, children }: { id: string; sub?: boolean; childre
 /** 표(머리글 · 줄) — 설명서의 표는 모두 이 모양 */
 function Table({ head, rows, label }: { head: string[]; rows: React.ReactNode[][]; label: string }) {
   return (
-    <div className="g-table">
+    // 좁은 화면에서는 표가 가로로 넘친다(min-width 560 px) — 넘칠 때만 Tab 으로 들어가 화살표로 스크롤(QA-305)
+    <ScrollRegion label={`표: ${label}`} className="g-table">
       <table aria-label={label}>
         <thead><tr>{head.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
         <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody>
       </table>
-    </div>
+    </ScrollRegion>
   );
 }
 
@@ -126,7 +128,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
   const ready = PLAN.shots.filter((s) => manifest.shots[s.id]).length;
   const metarToken = fmtZuluToken(METAR_AT);
   return (
-    <div className="h-full overflow-y-auto" data-testid="guide" data-guide-scroll="">
+    <ScrollRegion label="설명서 본문" main className="h-full overflow-y-auto" data-testid="guide" data-guide-scroll="">
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
         {/* 글줄은 읽기 좋은 폭(860 px)까지, 그림 · 표는 더 넓게 — 스크린샷의 작은 글자가 덜 줄어들게 */}
@@ -523,6 +525,6 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           </footer>
         </article>
       </div>
-    </div>
+    </ScrollRegion>
   );
 }
