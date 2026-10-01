@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fakes import FakeRedis
+from redis.exceptions import NoScriptError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from wakeline_collector.budget import UNKNOWN, Budget, day_key, hour_key
 
@@ -77,3 +79,51 @@ async def test_a_shared_hour_window_counts_several_providers_and_lets_the_lower_
     # 입출항 색인(ADR-022 개정)은 기다리는 사람이 없는 배경 작업이다 — 셀 수 없으면 부르지 않는다(엄격)
     assert (await b.reserve_hour("portmis", 4, now=t, window="mof"))[:2] == (False, UNKNOWN)
     assert await b.reserve("portmis") == (False, UNKNOWN)
+
+
+class _Scripts(FakeRedis):
+    """SCRIPT LOAD 마다 새 sha · forget() 뒤에는 그 sha 를 모른다(NoScriptError — 재시작 · SCRIPT FLUSH 와 같은 모양) · lose 번 응답을 잃는다(스크립트는
+    돌았는데 응답을 받기 전에 시간 초과)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.known: set[str] = set()
+        self.loads = 0
+        self.lose = 0
+
+    async def script_load(self, script: str) -> str:
+        self.loads += 1
+        sha = f"sha{self.loads}"
+        self.known.add(sha)
+        return sha
+
+    def forget(self) -> None:
+        self.known.clear()
+
+    async def evalsha(self, sha, *args, **kwargs):
+        if sha not in self.known:
+            raise NoScriptError("No matching script. Please use EVAL.")
+        out = await super().evalsha(sha, *args, **kwargs)
+        if self.lose:
+            self.lose -= 1
+            raise RedisTimeoutError("Timeout reading from socket")
+        return out
+
+
+async def test_a_reply_lost_after_the_script_ran_does_not_reserve_twice():
+    """F4(collector-review · PLAN D4): _eval 은 EVALSHA 가 어떤 예외로 실패해도 스크립트를 다시 올리고 한 번 더 실행했다 — 스크립트는 돌았고 응답만
+    잃은 시간 초과면 두 번 예약했다(OpenSky 는 그때마다 4크레딧). 다시 실행하는 것은 서버가 스크립트를 모를 때(NoScriptError)뿐이다."""
+    r = _Scripts()
+    r.lose = 1
+    b = Budget(r, {"opensky": 4000})  # type: ignore[arg-type]
+    assert await b.reserve("opensky", 4) == (False, UNKNOWN)  # 결과를 모른다 — 엄격한 공급자는 부르지 않는다
+    assert r.kv[day_key("opensky")]["used"] == "4"  # 한 번만 예약됐다(전에는 8)
+
+
+async def test_a_forgotten_script_is_loaded_again_once():
+    r = _Scripts()
+    b = Budget(r, {"adsb_fi": 10})  # type: ignore[arg-type]
+    assert await b.reserve("adsb_fi") == (True, 1)
+    r.forget()  # Redis 재시작 · SCRIPT FLUSH
+    assert await b.reserve("adsb_fi") == (True, 2)
+    assert r.loads == 2

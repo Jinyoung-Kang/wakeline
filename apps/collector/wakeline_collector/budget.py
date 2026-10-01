@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
+from redis.exceptions import NoScriptError
 
 log = logging.getLogger("budget")
 
@@ -86,7 +87,9 @@ class Budget:
             self._sha = await self._r.script_load(RESERVE_LUA)
         try:
             ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, ttl_s, headroom)
-        except Exception:  # noqa: BLE001 — NOSCRIPT 등: 재로드 후 1회 재시도
+        except NoScriptError:
+            # 서버가 스크립트를 모른다(재시작 · SCRIPT FLUSH) — 다시 올리고 한 번만 더. 그 밖의 오류(시간 초과 · 연결 끊김)에는 다시 부르지 않는다:
+            # 스크립트가 이미 돌고 응답만 잃었을 수 있어 두 번 예약한다(F4 — OpenSky 는 4크레딧씩). 호출자가 사용량 UNKNOWN 으로 받는다(reserve)
             self._sha = await self._r.script_load(RESERVE_LUA)
             ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, ttl_s, headroom)
         return int(ok), int(used)

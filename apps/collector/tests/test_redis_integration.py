@@ -68,6 +68,15 @@ async def test_budget_lua_headroom_on_real_redis(admin, collector):
     assert 0 < await admin.ttl(day_key("itest")) <= 48 * 3600
 
 
+async def test_a_flushed_budget_script_is_loaded_again_under_the_collector_acl(admin, collector):
+    """F4: _eval 은 NoScriptError 에만 스크립트를 다시 올린다 — 실제 Redis 의 NOSCRIPT 응답이 redis-py 에서 그 예외로 오고, 다시 올리기(SCRIPT LOAD)가
+    수집기 ACL 안에서 된다."""
+    b = Budget(collector, {"itest": 5})
+    assert await b.reserve("itest") == (True, 1)
+    await admin.script_flush()
+    assert await b.reserve("itest") == (True, 2)
+
+
 async def test_poller_reads_leases_and_collector_cannot_write_them(admin, collector):
     now = time.time() * 1000
     await admin.zadd(HOT_KEY, {"35.5:139.5:150": now + 60_000, "22.0:114.0:100": now - 1})
