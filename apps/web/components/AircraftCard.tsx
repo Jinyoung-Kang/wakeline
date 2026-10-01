@@ -8,7 +8,8 @@ import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
-import type { AircraftState, PredictionReason } from "@/lib/types";
+import { EMERGENCY_SQUAWKS, newerState, qualityLabel, REASON_LABEL } from "@/lib/aircraft-card";
+import type { AircraftState } from "@/lib/types";
 import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtVrateDual } from "@/lib/format";
 import {
   EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
@@ -21,25 +22,6 @@ import { KstTime } from "./KstTime";
 
 /** 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다. */
 const DETAIL_REFRESH_MS = 30_000;
-const EMERGENCY_SQUAWKS: ReadonlySet<string> = new Set(["7500", "7600", "7700"]);
-const REASON_LABEL: Record<PredictionReason, string> = {
-  turning: "선회 중(최근 트랙 변화 > 15°)", slow: "저속", on_ground: "지상", no_track: "속도/방위 없음", stale: "수신 지연",
-};
-
-/** 관측 시각(seen_at)이 더 새로운 상태. 같거나 비교할 수 없으면 앞의 것(REST full). */
-function newerState(a: AircraftState | null, b: AircraftState | null): AircraftState | null {
-  if (!a || !b) return a ?? b;
-  const ta = seenAtMs(a.seen_at), tb = seenAtMs(b.seen_at);
-  return tb != null && (ta == null || tb > ta) ? b : a;
-}
-
-function qualityLabel(q: number | null | undefined) {
-  if (q == null) return "—";
-  if (q === 0) return "0 · 통과";
-  if (q === 1) return "1 · 경고(속도/방위 없음 → 보간 안 함)";
-  return String(q);
-}
-
 function AirportLine({ a }: { a: RouteAirport }) {
   return (
     <span className="flex flex-col items-end">

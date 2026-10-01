@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { installMiniDom } from "./helpers/mini-dom";
 import { mounter } from "./helpers/mount";
 import { aircraftStates, resetData, setData } from "@/lib/store";
+import { EMERGENCY_SQUAWKS, newerState, qualityLabel, REASON_LABEL } from "@/lib/aircraft-card";
 import type { AircraftState, SelectedInfo } from "@/lib/types";
 
 const dom = installMiniDom();
@@ -100,5 +101,26 @@ describe("aircraft card: REST detail vs map snapshot copy (characterization)", (
   it("without a squawk the REST detail's emergency flag marks EMERGENCY", async () => {
     await mountWith({ ...ST, squawk: null }, null, { emergency: true });
     expect(m.find((e) => e.tagName === "SPAN" && e.getAttribute("class") === "mono text-bad")?.textContent).toBe("— EMERGENCY");
+  });
+});
+
+describe("lib/aircraft-card (moved out of the card, web-review §3.3)", () => {
+  it("qualityLabel", () => {
+    expect([0, 1, 2, -1, null, undefined].map(qualityLabel)).toEqual(["0 · 통과", "1 · 경고(속도/방위 없음 → 보간 안 함)", "2", "-1", "—", "—"]);
+  });
+  it("EMERGENCY_SQUAWKS and REASON_LABEL", () => {
+    expect([...EMERGENCY_SQUAWKS].sort()).toEqual(["7500", "7600", "7700"]);
+    expect(Object.keys(REASON_LABEL).sort()).toEqual(["no_track", "on_ground", "slow", "stale", "turning"]);
+  });
+  it("newerState: the later observation; ties and unreadable times keep the first; one missing gives the other", () => {
+    const a = { ...ST, callsign: "A", seen_at: iso(T0) }, b = { ...ST, callsign: "B", seen_at: iso(T0 + 1) };
+    expect(newerState(a, b)?.callsign).toBe("B");
+    expect(newerState(b, a)?.callsign).toBe("B");
+    expect(newerState(a, { ...b, seen_at: iso(T0) })?.callsign).toBe("A");
+    expect(newerState({ ...a, seen_at: null }, b)?.callsign).toBe("B");
+    expect(newerState(a, { ...b, seen_at: "nope" })?.callsign).toBe("A");
+    expect(newerState(null, b)?.callsign).toBe("B");
+    expect(newerState(a, null)?.callsign).toBe("A");
+    expect(newerState(null, null)).toBeNull();
   });
 });

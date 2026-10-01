@@ -34,6 +34,7 @@ const CARRIED_BY_PARTS: Record<string, string> = {
   "lib/reception.ts": "관측 수신 범위 레이어 조각(응답 검증 · 조회 · 칸 그리기 · 화면 안 칸 수 · 툴팁 · 상태 줄)",
   "lib/airport-wx.ts": "공항 카드(공항을 고른 뒤) · 공항 기상 이력 화면의 응답 모양과 검사",
   "lib/endpoints/ship-detail.ts": "선박 카드의 REST 상세 조회(선박을 고른 뒤)",
+  "lib/aircraft-card.ts": "항공기 카드의 행 규칙(품질 · 비상 squawk · 예측 까닭 · 더 새 관측) — 항공기를 고른 뒤",
   "lib/endpoints/weather.ts": "공항 카드 · 공항 탭 · SIGMET 카드의 REST 조회(고르거나 탭을 연 뒤)",
 };
 
