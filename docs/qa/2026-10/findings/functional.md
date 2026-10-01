@@ -56,7 +56,7 @@
 - **재현 시험**: `apps/api/src/test/java/dev/wakeline/qa/Qa207StatsBcDateRunsAwayTest.java` — 실패:
   `[/api/v1/stats/sigmet → 503 after 3364 ms {"detail":"data store temporarily unavailable; retry later",…,"code":"UNAVAILABLE"…}] expected: 400 but was: 503`(alerts 도 같음, 3226 ms).
 
-### QA-201 · 보통 · 기능(입력 검증 · 오류 처리)
+### QA-201 · 보통 · 기능(입력 검증 · 오류 처리) — 보안 영역과 겹침(익명 ERROR 로그 넘침, SEC-10)
 - **환경**: 공통. 공개 4경로는 익명, 운영 3경로는 `qa-b` 세션.
 - **재현 절차**:
   ```bash
@@ -84,7 +84,7 @@
   `[/api/v1/aircraft/71be01/track?from=+300000-01-01T00:00:00Z&to=+300000-01-01T01:00:00Z → 500 {"detail":"unexpected error",…,"code":"INTERNAL"…}] expected: 400 but was: 500`,
   `[/api/v1/ops/logs?since=+1000000000-12-31T23:59:59Z → 500 …]`(원인 `java.lang.ArithmeticException: long overflow`).
 
-### QA-202 · 보통 · 기능(입력 검증 · 오류 처리)
+### QA-202 · 보통 · 기능(입력 검증 · 오류 처리) — 보안 영역과 겹침(익명 ERROR 로그 넘침, SEC-10)
 - **환경**: 공통. 공개 3경로는 익명, 재집계는 `qa-b`.
 - **재현 절차**:
   ```bash
@@ -179,7 +179,7 @@
 - **실제 결과**: 기동 55–57분 뒤 250 NM 안 **127 → 52대**, 가장 먼 것 654 NM(계속 멀어진다). `780de6` 은 track 249.98(서남서)인데 10 s 에 경도 +0.044° — 동북동으로 움직인다(보고 방위와 반대).
   지도의 기체 아이콘이 진행 방향과 반대를 가리키고, 오래 띄운 데모 · QA 스택은 한반도 위가 점점 빈다(같은 스택을 쓰는 화면 · 알림 시험의 기대도 시간에 따라 달라진다).
 - **증거**: `evidence/functional/qa-210-fixture-drift.txt`.
-- **의심 원인**: `apps/collector/wakeline_collector/providers/fixture.py:41-56`(`_moved` — 지역 밖이면 `dead_reckon(원래 위치, trk + 180, gs, dt)` 로 원래 자리에서 같은 경과 시간만큼 반대로 보낸다 —
+- **의심 원인**: `apps/collector/wakeline_collector/providers/fixture.py:40-57`(`_moved` — 53행 — 지역 밖이면 `dead_reckon(원래 위치, trk + 180, gs, dt)` 로 원래 자리에서 같은 경과 시간만큼 반대로 보낸다 —
   그 위치도 곧 반경 밖이 되고, `a["track"]` 은 그대로 둔다). 왕복(경과 시간을 지역 지름 왕복 주기로 접기)하고 뒤집을 때 track 도 바꿔야 한다.
 - **재현 시험**: `apps/collector/tests/qa/test_qa_210_fixture_aircraft_leave_region.py` — 실패:
   `AssertionError: 81/127 fixture aircraft are outside the 250 NM region after 1 h (farthest [('4ba94e', 681), ('a96f37', 658), ('48ae20', 653)])`,
