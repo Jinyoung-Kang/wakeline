@@ -7,7 +7,7 @@ import { useUi } from "@/lib/ui-store";
 import { EvidenceCardPart } from "./DashboardParts";
 import { fmtKst, fmtKstClock, fmtKstTitle, fmtTimeTitle } from "@/lib/time";
 import { fmtEta, hazardColor } from "@/lib/format";
-import { alertListState, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
+import { alertListState, alertsInScope, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
 
@@ -33,20 +33,8 @@ export function AlertPanel() {
   const all = useMemo(() => [...alerts.values()], [alerts]);
   // 관심 지역 설정(status.region)을 아직 받지 못했으면 범위를 모른다 — 전세계 목록을 '관심 지역'으로 보이지 않고 기다린다(R-09)
   const regionPending = scope === "region" && status == null;
-  // 관심 지역 = 서버 설정의 중심·반경(설정값이 없으면 전체). 항공기 위치는 evidence.position([lat, lon]) 또는 없음 → 전세계 뷰에서만 표시
-  const list = useMemo(() => {
-    if (scope === "region" && status == null) return [];
-    const center = status?.region?.center, radius = status?.region?.radius_nm;
-    const inRegion = (a: (typeof all)[number]) => {
-      if (!center || !radius) return true;
-      const pos = (a.evidence as { position?: number[] }).position;
-      if (!pos) return false;
-      const dLat = (pos[0] - center[0]) * 60, dLon = (pos[1] - center[1]) * 60 * Math.cos((center[0] * Math.PI) / 180);
-      return Math.hypot(dLat, dLon) <= radius;
-    };
-    return all.filter((a) => scope === "world" || inRegion(a))
-      .sort((a, b) => (a.kind === b.kind ? b.entered_at.localeCompare(a.entered_at) : a.kind === "OBSERVED" ? -1 : 1));
-  }, [all, scope, status]);
+  // 관심 지역 = 서버 설정의 중심·반경(설정값이 없으면 전체). 위치가 없는 알림은 전세계 뷰에서만(lib/alerts alertsInScope)
+  const list = useMemo(() => alertsInScope(all, scope, status), [all, scope, status]);
   const observed = list.filter((a) => a.kind === "OBSERVED").length;
   // 목록을 받기 전·관심 지역을 모를 때 수는 모름("—") — 0 이라고 하지 않는다(R-09)
   const countsKnown = alertsVersion != null && !regionPending;

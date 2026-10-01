@@ -1,5 +1,5 @@
-import { apiGet } from "./api";
-import { isMmsi, notLiveText, parseCategory, shipCategory, type ShipCategory, type ShipLite, type ShipRow } from "./ships";
+import { ApiError, apiGet } from "./api";
+import { isMmsi, notLiveText, parseCategory, shipCategory, sortShipRows, type ShipCategory, type ShipLite, type ShipRow, type ShipSort } from "./ships";
 
 /**
  * 항공기 검색(GAP-12) 순수 로직 — GET /api/v1/aircraft/search?q= (hex·호출부호·등록번호 접두사, ≤ 20건).
@@ -165,6 +165,20 @@ export function shipRowFromHit(h: ShipHit, listed: Pick<ShipLite, "nav_status"> 
     mmsi: h.mmsi, name: h.name, category: h.category, sog_kn: h.sog_kn, nav_status: h.live ? listed?.nav_status ?? null : null, live: h.live, seen_at: h.seen_at,
     last_position_at: h.last_position_at, last_seen_at: h.last_seen_at,
   };
+}
+
+/** 선박 검색 결과의 표시 순서: 정렬을 고르기 전에는 서버 순서(실시간 먼저), 고르면 표 규칙(lib/ships sortShipRows). listed = 지도 목록 사본(항해 상태) */
+export function shipRows(hits: ShipHit[], sort: ShipSort | null, now: number, listed: ReadonlyMap<string, Pick<ShipLite, "nav_status">>): ShipRow[] {
+  const rows = hits.map((h) => shipRowFromHit(h, listed.get(h.mmsi)));
+  return sort ? sortShipRows(rows, sort, now) : rows;
+}
+
+/** 검색 실패 문구(묶음마다 — what = "항공기" · "선박") — 404 는 서버가 아직 그 검색을 지원하지 않는 경우(구 api) */
+export function searchFailText(what: string, e: unknown): string {
+  if (e instanceof ApiError && e.status === 429) return "요청이 많아 잠시 제한됨 — 잠시 후 다시";
+  if (e instanceof ApiError && e.status === 404) return `${what} 검색을 쓸 수 없음(HTTP 404 — 서버가 지원하지 않음)`;
+  if (e instanceof ApiError && e.status === 400) return `${what} 검색어 형식이 맞지 않음(HTTP 400)`;
+  return `${what} 검색 실패 (${(e as Error).message})`;
 }
 
 /**

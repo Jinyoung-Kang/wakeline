@@ -1,15 +1,14 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ApiError } from "@/lib/api";
 import { aircraftDetail } from "@/lib/endpoints/aircraft";
 import { useServerNow } from "@/lib/clock";
 import { fmtKst, fmtKstTitle } from "@/lib/time";
 import { saveLayers } from "@/lib/prefs";
 import {
-  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, searchAircraft, searchShips, SHIP_SEARCH_DB_NOTE, shipChoice, shipRowFromHit,
+  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, searchAircraft, searchFailText, searchShips, SHIP_SEARCH_DB_NOTE, shipChoice, shipRows as rowsOf,
   type SearchHit, type ShipHit,
 } from "@/lib/search";
-import { sortShipRows, type ShipSort, type ShipSortKey } from "@/lib/ships";
+import type { ShipSort, ShipSortKey } from "@/lib/ships";
 import { aircraftStates, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { ShipTablePart } from "./DashboardParts";
@@ -31,19 +30,8 @@ type GroupState = "idle" | "loading" | "done" | "error";
 export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string; error?: unknown }
 const IDLE = { hits: [], state: "idle" as const, msg: "" };
 
-/** 검색 실패 문구(묶음마다) — 404 는 서버가 아직 그 검색을 지원하지 않는 경우(구 api) */
-function failText(what: string, e: unknown): string {
-  if (e instanceof ApiError && e.status === 429) return "요청이 많아 잠시 제한됨 — 잠시 후 다시";
-  if (e instanceof ApiError && e.status === 404) return `${what} 검색을 쓸 수 없음(HTTP 404 — 서버가 지원하지 않음)`;
-  if (e instanceof ApiError && e.status === 400) return `${what} 검색어 형식이 맞지 않음(HTTP 400)`;
-  return `${what} 검색 실패 (${(e as Error).message})`;
-}
-
-/** 선박 검색 결과의 표시 순서: 정렬을 고르기 전에는 서버 순서(실시간 먼저), 고르면 표 규칙(lib/ships sortShipRows) */
-function shipRows(hits: ShipHit[], sort: ShipSort | null, now: number) {
-  const rows = hits.map((h) => shipRowFromHit(h, shipStates.get(h.mmsi)));
-  return sort ? sortShipRows(rows, sort, now) : rows;
-}
+/** 선박 검색 결과의 표시 순서(lib/search shipRows — 항해 상태는 지도 목록 사본에서) */
+const shipRows = (hits: ShipHit[], sort: ShipSort | null, now: number) => rowsOf(hits, sort, now, shipStates);
 
 /**
  * 상단 통합 검색(GAP-12 · 계약 v5 §B3): 항공기(호출부호·hex·등록번호 접두사 2–10자)와 선박(선명·호출부호 앞부분 · MMSI · IMO, 2–40자)을 함께 찾는다.
@@ -91,7 +79,7 @@ export function AircraftSearch() {
         setAircraft((g) => ({ ...g, state: "loading" }));
         searchAircraft(qa, { signal: ctl.signal })
           .then((h) => { setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e), error: e }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: searchFailText("항공기", e), error: e }); });
       } else setAircraft(IDLE);
       if (qs) {
         setShips((g) => ({ ...g, state: "loading" }));
@@ -99,7 +87,7 @@ export function AircraftSearch() {
           .then(({ hits: h, dbUnavailable }) => {
             setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: dbUnavailable ? SHIP_SEARCH_DB_NOTE : undefined });
           })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e), error: e }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: searchFailText("선박", e), error: e }); });
       } else setShips(IDLE);
     }, DEBOUNCE_MS);
     return () => { clearTimeout(t); ctl.abort(); };
