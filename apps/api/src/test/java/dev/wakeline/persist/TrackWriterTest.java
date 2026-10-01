@@ -1,63 +1,18 @@
 package dev.wakeline.persist;
 
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine.Event;
-import dev.wakeline.engine.AlertStateMachine.EventType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** DB 없이 확인하는 저장 규칙: 닫힘 이유, 이전 형식 SIGMET 출처(추정 없음), 내용 비교, 공항 관측 나이, 항적 저장기의 종료. */
+/** DB 없이 확인하는 항적 저장기(TrackWriter) 규칙: 종료 때 쓰는 스레드는 하나, 마감, 워커의 죽음, 표식 상한, SQLState 없는 오류. PersistUnitTest 에서 나눴다. */
 @ExtendWith(OutputCaptureExtension.class)
-class PersistUnitTest {
+class TrackWriterTest {
     static final Instant NOW = Instant.parse("2026-09-27T12:00:00Z");
-
-    static Alert alert(String reason) {
-        return new Alert(1, "OBSERVED", "abc123", null, "S", null, null, null, NOW, NOW, reason, null, null, null, Map.of(), false);
-    }
-
-    @Test
-    void closeReasonFollowsTheEngineThenTheEventType() {
-        assertThat(AlertRepository.closeReason(new Event(EventType.LOST, alert("signal_lost")))).isEqualTo("signal_lost");
-        assertThat(AlertRepository.closeReason(new Event(EventType.LOST, alert(null)))).isEqualTo("signal_lost");
-        assertThat(AlertRepository.closeReason(new Event(EventType.LEFT, alert(null)))).isEqualTo("left");
-        assertThat(AlertRepository.closeReason(new Event(EventType.PREDICTION_CLEARED, alert(null)))).isEqualTo("prediction_cleared");
-    }
-
-    @Test
-    void legacySigmetSourcesAreDeterministicOnly() {
-        var zero = new SigmetRecord("A", "X", null, null, "1", "TS", null, 0, null, NOW, NOW.plusSeconds(60), null, "no_polygon", null, null, null, "r", "p", NOW);
-        var band = new SigmetRecord("B", "X", null, null, "1", "TS", null, 3000, 20000, NOW, NOW.plusSeconds(60), null, "no_polygon", null, null, null, "r", "p", NOW);
-        assertThat(SigmetRepository.dbBaseSource(zero)).isEqualTo("unknown");
-        assertThat(SigmetRepository.dbTopSource(zero)).isEqualTo("unknown");
-        assertThat(SigmetRepository.dbBaseSource(band)).isEqualTo("json");
-        assertThat(SigmetRepository.dbTopSource(band)).isEqualTo("json");
-        // 수신 시각만 다른 같은 경보는 같은 내용
-        var later = new SigmetRecord("A", "X", null, null, "1", "TS", null, 0, null, NOW, NOW.plusSeconds(60), null, "no_polygon", null, null, null, "r", "p",
-                NOW.plusSeconds(300));
-        assertThat(SigmetRepository.contentOf(later)).isEqualTo(SigmetRepository.contentOf(zero));
-    }
-
-    @Test
-    void airportObservationAge() {
-        Map<String, Object> fresh = new LinkedHashMap<>(Map.of("obs_time", NOW.minusSeconds(600)));
-        assertThat(AirportRepository.withAge(fresh, NOW)).containsEntry("obs_age_s", 600L).containsEntry("stale", false);
-        Map<String, Object> old = new LinkedHashMap<>(Map.of("obs_time", NOW.minusSeconds(7_201)));
-        assertThat(AirportRepository.withAge(old, NOW)).containsEntry("stale", true);
-        Map<String, Object> none = new LinkedHashMap<>();
-        none.put("obs_time", null);
-        Map<String, Object> r = AirportRepository.withAge(none, NOW);
-        assertThat(r.get("obs_age_s")).isNull();
-        assertThat(r.get("stale")).isNull(); // 관측이 없으면 '오래됨' 도 '최신' 도 아니다
-    }
 
     /**
      * 조사 2026-10-01(종료): 항적 저장기도 종료 flush 를 워커가 한다 — 워커의 쓰기가 stop 의 예전 기다림(2 s)보다 오래 걸려도 다른 스레드가 같은 배치를

@@ -51,7 +51,7 @@ class RetentionDbTest {
     }
 
     MaintenanceJobs jobs() {
-        return new MaintenanceJobs(api, PersistDbTest.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, PersistDbTest.PROPS),
+        return new MaintenanceJobs(api, DbTestSupport.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, DbTestSupport.PROPS),
                 DbTestSupport.apiTx());
     }
 

@@ -39,13 +39,13 @@ class StatsAggregationDbTest {
     }
 
     MaintenanceJobs jobs() {
-        return new MaintenanceJobs(api, PersistDbTest.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, PersistDbTest.PROPS),
+        return new MaintenanceJobs(api, DbTestSupport.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, DbTestSupport.PROPS),
                 DbTestSupport.apiTx());
     }
 
     /** 시계를 고정한 잡(보존 경계 · '오늘' 이 이 시계를 따른다) */
     MaintenanceJobs jobs(Clock clock) {
-        return new MaintenanceJobs(api, PersistDbTest.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, PersistDbTest.PROPS),
+        return new MaintenanceJobs(api, DbTestSupport.PROPS, new RegionSettings(new StringRedisTemplate(), api, DbTestSupport.JSON, DbTestSupport.PROPS),
                 DbTestSupport.apiTx(), MaintenanceJobs.DEFAULT_ALERT_RETENTION_DAYS, clock);
     }
 

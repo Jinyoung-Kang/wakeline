@@ -312,8 +312,8 @@ class ShipPersistDbTest {
         String old = "ship_position_" + LocalDate.now(ZoneOffset.UTC).minusDays(10).format(DateTimeFormatter.BASIC_ISO_DATE);
         LocalDate d = LocalDate.now(ZoneOffset.UTC).minusDays(10);
         DbTestSupport.exec("wakeline", "CREATE TABLE IF NOT EXISTS " + old + " PARTITION OF ship_position FOR VALUES FROM ('" + d + "') TO ('" + d.plusDays(1) + "')");
-        MaintenanceJobs jobs = new MaintenanceJobs(DbTestSupport.apiClient(), PersistDbTest.PROPS,
-                new RegionSettings(new org.springframework.data.redis.core.StringRedisTemplate(), DbTestSupport.apiClient(), DbTestSupport.JSON, PersistDbTest.PROPS),
+        MaintenanceJobs jobs = new MaintenanceJobs(DbTestSupport.apiClient(), DbTestSupport.PROPS,
+                new RegionSettings(new org.springframework.data.redis.core.StringRedisTemplate(), DbTestSupport.apiClient(), DbTestSupport.JSON, DbTestSupport.PROPS),
                 DbTestSupport.apiTx());
         jobs.ensurePartitions();
         String ahead = "ship_position_" + LocalDate.now(ZoneOffset.UTC).plusDays(3).format(DateTimeFormatter.BASIC_ISO_DATE);
