@@ -254,6 +254,56 @@ class ListIdle:
         return f"기상청 목록에 tm {self.tm}(KST) 뒤 새 tm 없음"
 
 
+def streak_needs_prev_day(missing: MissingStreak | None, day: str, now_tm: str, today: list[str]) -> bool:
+    """연속의 확인에 전날 목록이 필요한가(자정 직후 창 안이어도): 연속의 last_tm 이 전날 이전이고 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지
+    않았다. 운영 2026-10-01: 00:15 KST 뒤 확인은 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — last_tm 뒤를 싣는 목록은 전날 것이다. 이때 확인은 전날의
+    가장 새 tm 하나만 본다(현재 시각 −10분이 전날 tm 을 모두 넘는다 — 둘째 확인이 첫째와 같다): 목록 2 + 확인 1 = 주기당 3(STREAK_CALLS_PER_PROBE
+    그대로 — 자정 직후 00:00–00:09 만 확인 둘일 수 있다: streak_calls_per_day 의 +1). 참이면 전날 목록은 덧붙이는 목록이 아니다 — 읽지 못하면 확인이
+    아니다(_listing — 일시 오류면 한 번 다시 부른다)."""
+    return missing is not None and missing.last_tm[:8] < day and not any(tm <= now_tm for tm in today)
+
+
+def prev_end(day: str) -> str:
+    """전날 끝 tm(전날 23:55 — 5분 생산 주기의 마지막)."""
+    return (datetime.strptime(day, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d") + "2355"
+
+
+def behind_prev_day(day: str, now_tm: str, today: list[str], reached: str) -> bool:
+    """연속이 없어도 전날 목록을 읽는가: 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고, 이 작업이 저장했거나 파일을 받아 본 가장 새
+    tm(reached — Redis 에 남은 프레임 · meta latest_tm · 받아 본 옛 tm)이 전날 끝(23:55)에 닿지 않았다. 운영 2026-10-01 02:07 KST — 다시 띄운 수집기가
+    오래된 연속을 버린 뒤 빈 새 날 목록만 읽어 확인할 tm 이 없었고(주기마다 'ok'), 연속이 다시 열리지 않았다. 전날 끝까지 받았으면 전날 목록에 새로 받을
+    것이 없다 — 새 날 목록이 하루 내내 비어도 호출을 늘리지 않는다. reached 는 Redis 에 남은 프레임만이 아니다(리뷰 2026-10-01 · 레인 kma 8차): 프레임은
+    저장 3 h 뒤 만료되고 옛 tm 은 다시 받지 않으므로(select_candidates), 남은 프레임만 보면 03:00 뒤 주기마다 받을 것이 없는 전날 목록을 필요한 목록으로
+    읽어 그 목록이 한 번 멈추면 'error' 였다.
+    참이면 그 주기가 읽을 것은 전날 목록뿐이다 — 덧붙이는 목록이 아니라 필요한 목록이다(_listing: 실패 'error' · 예산 없음 예산 상태 — 리뷰 2026-10-01,
+    운영 02:23:54 KST 에 전날 목록이 ReadTimeout 인 주기가 'ok' · 공급자 성공으로 남았다)."""
+    return not any(tm <= now_tm for tm in today) and reached < prev_end(day)
+
+
+def list_idle(
+    listing: list[str],
+    now_tm: str,
+    latest: str,
+    fetched: datetime | None,
+    now: datetime,
+    *,
+    missing: MissingStreak | None,
+    old_seen: str,
+    days: tuple[str, ...],
+) -> ListIdle | None:
+    """연속 밖의 목록 멈춤인가(ListIdle): 연속이 없고, 읽은 목록(그 시각 이하)이 이 작업이 저장했거나 파일을 받아 본 가장 새 tm 뒤로 새 tm 을 싣지 않고,
+    meta fetched_at(latest 를 처음 저장한 시각)이 LIST_IDLE_AFTER_S 넘게 지났다. 저장한 것이 없거나 시각을 모르면(음수 — 시계가 어긋났다 포함) None.
+    now = 지금(UTC), old_seen = 이 작업이 gzip 을 받았으나 영상 보관보다 오래돼 저장하지 않은 가장 새 tm, days = 읽은 목록의 날."""
+    if missing is not None or not latest or fetched is None:
+        return None
+    seen = max(latest, old_seen)
+    listed = [tm for tm in listing if tm <= now_tm]
+    age = (now - fetched).total_seconds()
+    if any(tm > seen for tm in listed) or not LIST_IDLE_AFTER_S < age:
+        return None
+    return ListIdle(seen, max(listed, default=""), days, latest, age)
+
+
 def gap_expired(to_tm: str, now_kst: datetime) -> bool:
     """알린 공백의 끝 tm(KST 벽시계)이 now_kst(KST 벽시계) 기준 MISSING_GAP_KEEP_S 보다 오래됐는가(형식이 틀려도 참 — 버린다)."""
     t = tm_dt(to_tm)
@@ -412,3 +462,54 @@ def outcome(stored_n: int, missing_n: int, quality: list[tuple[str, str | None, 
 def is_throttle(e: BaseException) -> bool:
     """429(공급자가 거절) 또는 속도 상한(Throttled — 보내지 않았다)."""
     return isinstance(e, Throttled) or (isinstance(e, ProviderHttpError) and e.status == 429)
+
+
+@dataclass(frozen=True)
+class CycleStatus:
+    """한 주기의 실행 기록(상태 · 오류 글자 · http 상태)과 공급자 성공(last_success_at · last_records)으로 적는가."""
+
+    status: str
+    error_text: str | None
+    http_status: int | None
+    succeeded: bool
+
+
+def cycle_status(
+    stored_n: int,
+    missing_n: int,
+    quality: list[tuple[str, str | None, dict]],
+    note: str,
+    *,
+    list_only: bool,
+    budget_stop: tuple[str, str] | None,
+    idle: ListIdle | None,
+    http_status: int | None,
+    stop: tuple[str, int | None] | None = None,
+    regular_stopped: bool = False,
+) -> CycleStatus:
+    """주기 끝의 실행 기록 하나(작업 모듈 설명 '실행 기록 상태' · '목록만 읽은 확인' · '연속 밖의 목록 멈춤' · '속도 상한'). 차례대로:
+    - outcome: 프레임을 저장했거나 새로 받을 tm 이 없으면 'ok', 아니면 'missing'(note) · 'quarantined'.
+    - list_only: 연속 중 목록만 읽은 확인 — 저장한 프레임이 없고 기상청에 새 파일도 없다: 'ok'(공급자 성공)가 아니라 'missing'(계약 v5 §G26 개정).
+    - budget_stop: 새 tm 이 있었는데 바이너리 예약이 거절돼 하나도 저장하지 못했다 — 성공이 아니다, 예산 상태(리뷰 2026-09-30).
+    - idle: 연속 밖의 목록 멈춤(ListIdle — 주기를 끝까지 본 주기만 부르는 쪽이 구한다): 받을 새 tm 이 없는 주기도 'ok' 가 아니라 'missing'. 전에는 목록이
+      멈추고 파일은 있는 동안 'ok' · 기록 0 · 공급자 성공이었고, 3 h 뒤 프레임이 만료되면 웹은 KMA 칩을 숨기고 '아직 수집되지 않음'이라 적었다.
+    - succeeded(공급자 성공): 프레임을 저장했거나, 정규 부분이 멈추지 않고(regular_stopped 아님) 'ok' 로 끝났다 — 다시 받기의 429 는 목록 · 정규 부분의
+      답을 지우지 않는다.
+    - stop: 이 주기의 KMA 호출을 멈춘 429 · 속도 상한의 (오류 글자, http 상태). 정규 부분이 멈췄거나(regular_stopped) 다른 문제가 없었으면 주기의 답은
+      'throttled', 아니면 정규 부분의 상태('파일 없음' 등)가 답이고 그 글을 덧붙인다."""
+    status, error_text = outcome(stored_n, missing_n, quality, note)
+    if list_only:
+        status, error_text = "missing", f"no new frame stored — {note}"
+    if budget_stop is not None and not stored_n:
+        status, error_text = budget_stop[0], budget_stop[1] + (f" — {note}" if note else "")
+    if idle is not None and status == "ok" and not stored_n:
+        status, error_text = "missing", f"no new frame stored — {idle.text()}"
+    succeeded = stored_n > 0 or (status == "ok" and not regular_stopped)
+    if stop is not None:
+        text, stop_http = stop
+        if regular_stopped or status == "ok":
+            error_text = text if error_text is None else f"{text} · {status}: {error_text}"
+            status, http_status = "throttled", stop_http
+        else:
+            error_text = f"{error_text} · {text}"
+    return CycleStatus(status, error_text, http_status, succeeded)

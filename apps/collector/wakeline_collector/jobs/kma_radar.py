@@ -155,7 +155,6 @@ from wakeline_collector.kma_rules import (
     FRAME_TTL_S,
     GAP_KEYS,
     KEEP_FRAMES,
-    LIST_IDLE_AFTER_S,
     MAX_BAD,
     MAX_NOT_READY_TRIES,
     MISSING_FILE_RE,
@@ -170,19 +169,23 @@ from wakeline_collector.kma_rules import (
     ListIdle,
     MissingStreak,
     annotate_partial,
+    behind_prev_day,
+    cycle_status,
     gap_expired,
     is_throttle,
     iso,
     latest_station_fields,
+    list_idle,
     listed_text,
     missing_carry_s,
     old_tm_cut,
-    outcome,
     parse_iso,
+    prev_end,
     refetch_until,
     select_candidates,
     select_refetch,
     site_count,
+    streak_needs_prev_day,
     streak_probe_every_s,
     streak_probes,
     tm_dt,
@@ -427,30 +430,11 @@ class KmaRadarJob:
         return n
 
     def _streak_needs_prev_day(self, day: str, now_tm: str, today: list[str]) -> bool:
-        """연속의 확인에 전날 목록이 필요한가(자정 직후 창 안이어도): 연속의 last_tm 이 전날 이전이고 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지
-        않았다. 운영 2026-10-01: 00:15 KST 뒤 확인은 빈 새 날 목록만 읽어 확인할 tm 이 없었다 — last_tm 뒤를 싣는 목록은 전날 것이다. 이때 확인은 전날의
-        가장 새 tm 하나만 본다(현재 시각 −10분이 전날 tm 을 모두 넘는다 — 둘째 확인이 첫째와 같다): 목록 2 + 확인 1 = 주기당 3(STREAK_CALLS_PER_PROBE
-        그대로 — 자정 직후 00:00–00:09 만 확인 둘일 수 있다: streak_calls_per_day 의 +1). 참이면 전날 목록은 덧붙이는 목록이 아니다 — 읽지 못하면 확인이
-        아니다(_listing — 일시 오류면 한 번 다시 부른다)."""
-        s = self.missing
-        return s is not None and s.last_tm[:8] < day and not any(tm <= now_tm for tm in today)
+        """kma_rules.streak_needs_prev_day — 이 작업의 연속으로."""
+        return streak_needs_prev_day(self.missing, day, now_tm, today)
 
-    @staticmethod
-    def _prev_end(day: str) -> str:
-        """전날 끝 tm(전날 23:55 — 5분 생산 주기의 마지막)."""
-        return (datetime.strptime(day, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d") + "2355"
-
-    @classmethod
-    def _behind_prev_day(cls, day: str, now_tm: str, today: list[str], reached: str) -> bool:
-        """연속이 없어도 전날 목록을 읽는가: 새 날 목록이 답했으나 아직 그 시각 이하의 tm 을 싣지 않았고, 이 작업이 저장했거나 파일을 받아 본 가장 새
-        tm(reached — Redis 에 남은 프레임 · meta latest_tm · 받아 본 옛 tm)이 전날 끝(23:55)에 닿지 않았다. 운영 2026-10-01 02:07 KST — 다시 띄운 수집기가
-        오래된 연속을 버린 뒤 빈 새 날 목록만 읽어 확인할 tm 이 없었고(주기마다 'ok'), 연속이 다시 열리지 않았다. 전날 끝까지 받았으면 전날 목록에 새로 받을
-        것이 없다 — 새 날 목록이 하루 내내 비어도 호출을 늘리지 않는다. reached 는 Redis 에 남은 프레임만이 아니다(리뷰 2026-10-01 · 레인 kma 8차): 프레임은
-        저장 3 h 뒤 만료되고 옛 tm 은 다시 받지 않으므로(select_candidates), 남은 프레임만 보면 03:00 뒤 주기마다 받을 것이 없는 전날 목록을 필요한 목록으로
-        읽어 그 목록이 한 번 멈추면 'error' 였다.
-        참이면 그 주기가 읽을 것은 전날 목록뿐이다 — 덧붙이는 목록이 아니라 필요한 목록이다(_listing: 실패 'error' · 예산 없음 예산 상태 — 리뷰 2026-10-01,
-        운영 02:23:54 KST 에 전날 목록이 ReadTimeout 인 주기가 'ok' · 공급자 성공으로 남았다)."""
-        return not any(tm <= now_tm for tm in today) and reached < cls._prev_end(day)
+    _prev_end = staticmethod(prev_end)
+    _behind_prev_day = staticmethod(behind_prev_day)
 
     def _prev_day_why(self, day: str, needed: bool, stored: str) -> str:
         """필요한 전날 목록을 읽지 못한 주기의 오류 글자 뒷부분 — 왜 필요한 목록인지(연속 · 목록 · 저장한 프레임 · 받아 본 옛 tm 이 보인 것만).
@@ -718,32 +702,26 @@ class KmaRadarJob:
             partial_now, refetch_stop = await self._refetch_partial()
         else:  # 호스트가 멈췄다 — 다시 받기도 이번 주기에는 하지 않는다(부분 합성 수만 센다)
             partial_now, refetch_stop = await self._partial_count(), None
-        status, error_text = outcome(stored_n, missing_n, quality, note)
-        if list_only:  # 연속 중 목록만 읽은 확인 — 저장한 프레임이 없고 기상청에 새 파일도 없다: 'ok'(공급자 성공)가 아니라 'missing'(계약 v5 §G26 개정)
-            status, error_text = "missing", f"no new frame stored — {note}"
-        # 새 tm 이 있었는데 예산이 없어 하나도 저장하지 못했다 — 성공이 아니다(리뷰 2026-09-30)
-        if budget_stop is not None and not stored_n:
-            status, error_text = budget_stop[0], budget_stop[1] + (f" — {note}" if note else "")
         # 연속 밖의 목록 멈춤(리뷰 2026-10-01 · 레인 kma 8차 — 계약 v5 §G26): 주기를 끝까지 보았으면(429 · 예산으로 멈추지 않았다) 목록이 저장했거나 받아 본 가장
-        # 새 tm 뒤로 새 tm 을 싣는지 본다. LIST_IDLE_AFTER_S 넘게 없으면 받을 새 tm 이 없는 주기도 'ok'(공급자 성공)가 아니라 'missing' — 전에는 목록이 멈추고 파일은
-        # 있는 동안 'ok' · 기록 0 · 공급자 성공이었고, 3 h 뒤 프레임이 만료되면 웹은 KMA 칩을 숨기고 '아직 수집되지 않음'이라 적었다(까닭은 meta note — 아래)
+        # 새 tm 뒤로 새 tm 을 싣는지 본다(판정 · 실행 상태는 kma_rules.cycle_status, 까닭은 meta note — 아래)
         idle = None
         if throttle is None and budget_stop is None:
             idle = self._list_idle(listing.data, now_tm, latest, fetched)
             self._note_idle(idle, listing.data, now_tm)
-        if idle is not None and status == "ok" and not stored_n:
-            status, error_text = "missing", f"no new frame stored — {idle.text()}"
-        # 공급자 성공: 프레임을 저장했거나, 정규 부분이 멈추지 않고 'ok' 로 끝났다(다시 받기의 429 는 목록 · 정규 부분의 답을 지우지 않는다)
-        succeeded = stored_n > 0 or (status == "ok" and throttle is None)
-        http_status = listing.http_status
         stop = throttle or refetch_stop
-        if stop is not None:
-            text, stop_http = self._throttle_text(stop)
-            if throttle is not None or status == "ok":  # 정규 부분이 멈췄거나 다른 문제가 없었다 — 주기의 답은 'throttled'
-                error_text = text if error_text is None else f"{text} · {status}: {error_text}"
-                status, http_status = "throttled", stop_http
-            else:  # 정규 부분의 상태('파일 없음' 등)가 주기의 답이다 — 다시 받기의 429 는 덧붙인다
-                error_text = f"{error_text} · {text}"
+        cycle = cycle_status(
+            stored_n,
+            missing_n,
+            quality,
+            note,
+            list_only=list_only,
+            budget_stop=budget_stop,
+            idle=idle,
+            http_status=listing.http_status,
+            stop=self._throttle_text(stop) if stop is not None else None,
+            regular_stopped=throttle is not None,
+        )
+        status, error_text, http_status, succeeded = cycle.status, cycle.error_text, cycle.http_status, cycle.succeeded
         ctx.db.record_run(
             self.job_name,
             self.p.name,
@@ -781,16 +759,10 @@ class KmaRadarJob:
         return latest, parse_iso(f) if latest else None
 
     def _list_idle(self, listing: list[str], now_tm: str, latest: str, fetched: datetime | None) -> ListIdle | None:
-        """연속 밖의 목록 멈춤인가(ListIdle): 연속이 없고, 읽은 목록(그 시각 이하)이 이 작업이 저장했거나 파일을 받아 본 가장 새 tm 뒤로 새 tm 을 싣지 않고,
-        meta fetched_at(latest 를 처음 저장한 시각)이 LIST_IDLE_AFTER_S 넘게 지났다. 저장한 것이 없거나 시각을 모르면(음수 — 시계가 어긋났다 포함) None."""
-        if self.missing is not None or not latest or fetched is None:
-            return None
-        seen = max(latest, self._old_seen)
-        listed = [tm for tm in listing if tm <= now_tm]
-        age = (_now() - fetched).total_seconds()
-        if any(tm > seen for tm in listed) or not LIST_IDLE_AFTER_S < age:
-            return None
-        return ListIdle(seen, max(listed, default=""), self._list_days, latest, age)
+        """kma_rules.list_idle — 이 작업의 연속 · 받아 본 옛 tm · 읽은 목록의 날과 지금(_now)으로."""
+        return list_idle(
+            listing, now_tm, latest, fetched, _now(), missing=self.missing, old_seen=self._old_seen, days=self._list_days
+        )
 
     def _note_idle(self, idle: ListIdle | None, listing: list[str], now_tm: str) -> None:
         """목록 멈춤의 로그: 시작에 WARN 한 번, 그 뒤 MISSING_REMIND_S 마다 한 번(선택값 — '파일 없음' 연속의 알림과 같은 간격), 목록이 다시 자라면 INFO 한 줄.
