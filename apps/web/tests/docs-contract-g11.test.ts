@@ -161,6 +161,9 @@ describe("contract v5 amendment numbers are unique", () => {
     // QA 2026-10 고치기(2026-10-02 · 레인 api): 시각 · 날짜 파라미터의 범위 — 22차 · §G32
     expect(heading(32)).toMatch(/^## G\. 22차 개정\(2026-10-02 · QA 2026-10 고치기 · 레인 api /);
     expect(amendment(32)).toContain("시각 · 날짜 파라미터의 범위 — 밖이면 400");
-    expect(amendment(33)).toBe("");
+    // QA 2026-10 고치기: 항공기 검색 실시간 항목의 등록번호 — 같은 22차 · §G33
+    expect(heading(33)).toMatch(/^## G\. 22차 개정\(/);
+    expect(amendment(33)).toContain("`GET /api/v1/aircraft/search` 의 실시간 항목에 `registration` · `type_code`");
+    expect(amendment(34)).toBe("");
   });
 });

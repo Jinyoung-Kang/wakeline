@@ -1114,3 +1114,9 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 웹은 이 범위 밖의 값을 보내지 않는다(서버 시계 · 달력 입력) — 화면 변화 없음.
   - 회귀 막기: api `TimeParamsTest` · `Qa207StatsBcDateRunsAwayTest` · `Qa201TimeParamOutOfRangeTest` · `Qa201OpsTimeParamOutOfRangeTest` · `Qa202StatsDateOutOfRangeTest` ·
     `Qa208AggregateBcDayWritesInfinityTest`, 격리 스택 점검 `tools/qa/qa_001_outofrange_time.py`.
+- G33(계약 §2 의 항공기 검색 · QA-206 · ADR-017 §6.2 QA-206) **`GET /api/v1/aircraft/search` 의 실시간 항목에 `registration` · `type_code`**
+  - 실시간 항목(`live: true`)은 지금까지의 lite 필드에 실시간 상태의 `registration`(등록번호) · `type_code`(기종 코드)를 더한다 — 상태가 아는 것만, 모르면 키가
+    없다(다른 lite 필드와 같은 규칙, 지어내지 않는다). DB 항목(`live: false`)은 그대로(`hex` · `registration` · `type_code` · `last_seen`).
+  - 예전: 검색은 등록번호 앞부분으로도 찾지만 실시간 항목은 lite(등록번호 · 기종 없음)라, "B-99" 로 찾은 줄에 맞은 근거가 없고 웹 검색 목록의 등록번호 칸은
+    서버가 아는 값을 '—' 로 그렸다. 웹은 이미 두 종류 모두에서 `registration` · `type_code` 를 읽는다(`lib/search.ts` `parseSearchResponse`) — 웹 변경 없음.
+  - 회귀 막기: api `Qa206AircraftSearchHidesRegistrationTest`, REST 계약 표본 `aircraft_search`(`tools/rest_contract_check.py` 의 실시간 항목 스키마).
