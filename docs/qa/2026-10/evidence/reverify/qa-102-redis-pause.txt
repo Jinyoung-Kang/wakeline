@@ -1,0 +1,6 @@
+QA-102 re-verification on stack A (fixed build :qa-fix), 2026-10-02 06:2x KST
+docker pause wakeline-e2e-redis-1, logged-in qa-b session cookie (Path=/api), then:
+  GET /api/v1/status                      -> 200  Retry-After -   12.07 s  (public path: no session-store access; slow = Redis command timeouts in the status reads — see reliability 개선 제안 3)
+  GET /api/v1/aircraft?bbox=120,30,135,45 -> 406                   3.04 s  (request sent Accept: application/json only — /aircraft answers application/geo+json; not related)
+  GET /api/v1/ops/settings                -> 503  Retry-After 10  3.02 s  (before the fix: 500 + three ERROR stacks)
+docker unpause; /healthz ok afterwards.
