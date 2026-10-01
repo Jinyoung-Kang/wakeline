@@ -24,6 +24,8 @@ import java.util.function.IntFunction;
  * 자격 확인(R-95 후속): 세션은 로그인 때 확인한 비밀번호 해시의 표식({@link #CREDENTIAL})에 묶인다. 운영 요청마다 사용자의 지금 표식과 비교해
  * 다르거나(비밀번호 교체) 사용자가 없거나 표식이 없는 세션은 끝낸다. 교체 때의 세션 목록 삭제(OpsSessionRegistry.revokeAll)는 로그인과
  * 경합하면 방금 만든 세션을 놓칠 수 있다 — 이 비교는 순서와 무관하다. DB 를 읽지 못하면 세션은 두고 503(모름 — 끝내지도, 통과시키지도 않는다).
+ * 로그아웃(DELETE /api/v1/ops/session)은 자격 비교를 하지 않는다(리뷰 cto-2026-10 S3): 권한을 줄이는 요청이라 확인할 것이 없고, DB 장애 중에도 세션을
+ * 끝낼 수 있어야 한다(예전에는 503 으로 막혀 세션이 최대 8 h 남았다). 절대 수명 검사는 로그아웃에도 그대로다.
  */
 public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
     /** 로그인 시각(epoch ms, Long) 세션 속성. 세션 역직렬화 허용 목록(java.lang.Long)에 이미 있다. */
@@ -58,7 +60,7 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain) throws ServletException, IOException {
         HttpSession s = req.getSession(false);
         if (s != null && expired(s, clock.millis())) s.invalidate();
-        else if (s != null && currentCredential != null && s.getAttribute(USER_ID) instanceof Integer uid) {
+        else if (s != null && currentCredential != null && !ApiPaths.OPS_LOGOUT.matches(req) && s.getAttribute(USER_ID) instanceof Integer uid) {
             Optional<String> now;
             try {
                 now = currentCredential.apply(uid);

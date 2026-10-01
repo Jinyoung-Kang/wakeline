@@ -112,6 +112,37 @@ class OpsSessionLifetimeFilterTest {
         assertThat(kept.isInvalid()).as("unknown is not a logout").isFalse();
     }
 
+    /**
+     * 리뷰 cto-2026-10 S3(B4): 로그아웃은 권한을 줄이는 요청이다 — 자격 확인(DB)을 하지 않는다. 예전에는 DB 장애 중 로그아웃이 503 으로 막혀 세션이 계속
+     * 유효했다(OpsSessionController: 로그아웃은 실패하지 않게). 절대 수명은 그대로 본다(지난 세션은 끝내고 익명으로 — 컨트롤러가 204).
+     */
+    @Test
+    void logoutReachesTheControllerWhenTheCredentialLookupFails() throws Exception {
+        OpsSessionLifetimeFilter down = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
+                uid -> { throw new IllegalStateException("db down"); });
+        MockHttpSession s = sessionLoggedInAgo(Duration.ofMinutes(5));
+        s.setAttribute(OpsSessionLifetimeFilter.USER_ID, 7);
+        s.setAttribute(OpsSessionLifetimeFilter.CREDENTIAL, "tag");
+        MockHttpServletRequest logout = request("/api/v1/ops/session", s);
+        logout.setMethod("DELETE");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        down.doFilter(logout, res, chain);
+        assertThat(res.getStatus()).as("not 503").isEqualTo(200);
+        assertThat(chain.getRequest()).as("the controller invalidates the session").isNotNull();
+        assertThat(s.isInvalid()).isFalse();
+        // 다른 운영 요청은 그대로 503(모름 — 끝내지도 통과시키지도 않는다), 지난 세션의 로그아웃은 수명 검사가 끝낸다
+        MockHttpServletResponse other = new MockHttpServletResponse();
+        down.doFilter(request("/api/v1/ops/session", s), other, new MockFilterChain());
+        assertThat(other.getStatus()).isEqualTo(503);
+        MockHttpSession old = sessionLoggedInAgo(Duration.ofHours(9));
+        old.setAttribute(OpsSessionLifetimeFilter.USER_ID, 7);
+        MockHttpServletRequest lateLogout = request("/api/v1/ops/session", old);
+        lateLogout.setMethod("DELETE");
+        down.doFilter(lateLogout, new MockHttpServletResponse(), new MockFilterChain());
+        assertThat(old.isInvalid()).isTrue();
+    }
+
     @Test
     void maxAgeMustBePositive() {
         assertThatThrownBy(() -> new OpsSessionLifetimeFilter(Duration.ZERO, Clock.systemUTC())).isInstanceOf(IllegalArgumentException.class);
