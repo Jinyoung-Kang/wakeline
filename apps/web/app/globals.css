@@ -42,6 +42,8 @@ a { color: inherit; }
 .badge.ok { border-color: #1f6b48; color: var(--color-ok); }
 .badge.warn { border-color: #7a5a1a; color: var(--color-warn); }
 .badge.bad { border-color: #7a2a2d; color: var(--color-bad); }
+/* 고른 줄(배경 #1c2a3f — 로그 목록 · 선박 표)의 bad 배지: --color-bad 는 4.41:1 이라 AA 미달 → 조금 밝은 같은 빨강 4.81:1(QA-306) */
+[aria-selected="true"] .badge.bad { color: #f06a6e; }
 .badge.est { border-color: #5a3f8c; color: var(--color-est); border-style: dashed; }
 /*
   상태 바 칩(lib/statusbar · components/StatusBar): 이름 · 상태 모양(■ 정상 ▲ 주의 ✕ 경고 □ 모름) · 값 · 상태 낱말.

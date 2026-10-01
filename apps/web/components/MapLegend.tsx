@@ -132,12 +132,12 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
           <li className="pb-1">
             <div className="h-2 w-full" style={{ background: grad }} role="img"
               aria-label={`고도 색 램프: 0 ft(0 m) 녹색, 10,000 ft(${altM(10000)}) 파랑, FL250(${altM(25000)}) 하늘색, FL400(${altM(40000)}) 이상 흰색`} />
-            {/* 눈금 두 줄: ft(FL) 아래 m — 한 줄로 쓰면 이웃 눈금과 겹친다 */}
+            {/* 눈금 두 줄: ft(FL) 아래 m — 한 줄로 쓰면 이웃 눈금과 겹친다. 위계는 밝기로(ft = fg-2, m = fg-3 5.87:1) — m 을 fg-3 의 80 % 로 흐리게 하면 4.19:1 로 AA 미달이었다(QA-306) */}
             <div className="relative mt-0.5 h-6 text-[9px] text-fg-3 mono" data-testid="legend-alt-ticks">
               {ALT_TICKS.map((t, i) => (
                 <span key={t.ft} title={`${t.ft} · ${t.m}`} className={`absolute flex flex-col leading-tight ${i === 0 ? "items-start" : i === ALT_TICKS.length - 1 ? "items-end" : "items-center"}`}
                   style={i === 0 ? { left: 0 } : i === ALT_TICKS.length - 1 ? { right: 0 } : { left: `${(t.at / ALT_MAX) * 100}%`, transform: "translateX(-50%)" }}>
-                  <span>{t.ft}</span><span className="text-fg-3/80">{t.m}</span>
+                  <span className="text-fg-2">{t.ft}</span><span>{t.m}</span>
                 </span>
               ))}
             </div>
