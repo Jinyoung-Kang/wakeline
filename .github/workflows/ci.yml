@@ -109,9 +109,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: "policy tests (.env 생성 · compose 해석(개발·격리) — 권한 축소 · Redis ACL 사용자 · 비밀값 분리 · 다이제스트 고정 · CI 스캔 범위)"
         run: make -s test-infra
-      - name: container tests (edge Host 허용 목록·비root · Redis ACL(api·collector·ais) · db 권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원)
+      # 수집기 SQL 의 실제 PostgreSQL 대조(collector_pg_test.sh)가 uv 로 pytest 를 돌린다 — 위 setup-uv
+      - name: container tests (edge Host 허용 목록·비root · Redis ACL(api·collector·ais) · db 권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 수집기 SQL)
         run: make -s infra-docker-test
 
   e2e:

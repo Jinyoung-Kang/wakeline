@@ -3,11 +3,9 @@
 가짜 풀(test_db_writer.py)로는 확인할 수 없는 것 — record_run 의 실제 SQL(열·인자 순서, ON CONFLICT (run_key) 대상, 형 변환)이 asyncpg
 (uuid.UUID 인자)로 V12 스키마에서 돈다는 것, 그리고 COMMIT 이 서버에 반영된 뒤 응답을 잃은 재시도(R-91, 계약 v5 §D2)가 실제 DB 에서도
 실행 기록 · 품질 사례 · 규칙별 건수를 한 번만 남긴다는 것. api 쪽 MigrationDbTest 는 V12 의 제약을 손으로 쓴 문장으로 확인한다 — 이 시험은 db.py 자체를 돌린다.
-실행(버리는 컨테이너 — 개발 스택의 DB 가 아니다. 시험 행은 지우지 않는다: 수집기 계정에는 DELETE 권한이 없다):
-  docker run --rm -d --name wl-pgtest -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=root -e DB_MIGRATOR_PASSWORD=mig \
-      -e DB_API_PASSWORD=api -e DB_COLLECTOR_PASSWORD=col -v "$PWD/infra/db/init:/docker-entrypoint-initdb.d:ro" wakeline-db:local   # make build(또는 docker build -t wakeline-db:local infra/db) 뒤
-  (cd apps/api && DB_HOST=127.0.0.1 DB_PORT=55432 DB_NAME=wakeline DB_MIGRATOR_PASSWORD=mig ./gradlew -q bootRun --args=--migrate)
-  WAKELINE_TEST_PG_URL=postgresql://wakeline_collector:col@127.0.0.1:55432/wakeline uv run pytest tests/test_db_pg_integration.py
+실행: `make test-collector-db`(= bash infra/tests/collector_pg_test.sh — make infra-docker-test 에도 들어 있다). 버리는 컨테이너(운영과 같은 db 이미지
+wakeline-db:local · 임의 포트 · 임의 비밀번호 — 개발 스택의 DB 가 아니다)에 api 의 마이그레이션을 migrator 계정으로 올리고 이 파일을 수집기 계정으로 돌린다.
+건너뛴 시험이 하나라도 있으면 실패다. 시험 행은 지우지 않는다(수집기 계정에는 DELETE 권한이 없다 — 컨테이너째 버린다).
 """
 
 from __future__ import annotations
