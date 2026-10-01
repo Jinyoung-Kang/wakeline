@@ -543,3 +543,92 @@ describe("fmtLatencyMs: a latency cell never shows the unit without a value", ()
     for (const v of [null, undefined, "", " ", "abc", -1, Number.NaN, Number.POSITIVE_INFINITY, {}]) expect(fmtLatencyMs(v)).toBe("—");
   });
 });
+
+/**
+ * 운영 쓰기의 진행 중 막기(web-review B2): 설정 '저장'과 공급자 켜고 끄기는 되돌릴 수 없는 쓰기다(If-Match version 을 쓰고 감사 행을 남긴다).
+ * 응답 전에 두 번 누르면 요청이 두 번 나가 저장은 됐는데 화면은 409 "다른 곳에서 바뀜" 을 보였다. 단추는 응답까지 바쁨(disabled · aria-busy).
+ */
+describe("ops writes in flight: one request per click burst (web-review B2)", () => {
+  beforeAll(() => { (dom.document as unknown as { cookie: string }).cookie = "WAKELINE_CSRF=t"; });
+  const json = (status: number, body: unknown, type = "application/json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
+  const find = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container): MiniElement | null => {
+    if (pred(from)) return from;
+    for (const c of from.childNodes) { const f = c instanceof MiniElement ? find(pred, c) : null; if (f) return f; }
+    return null;
+  };
+  const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
+    const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
+    return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
+  };
+  const button = (text: string) => find((e) => e.tagName === "BUTTON" && e.textContent === text);
+  const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
+  const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsbdb" }], provider_switch: [{ provider: "adsbdb", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
+  /** 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황 */
+  function stubHeldWrites(writes: { method: string; url: string; reply: (r: Response) => void }[]) {
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method !== "GET") return new Promise<Response>((r) => writes.push({ method, url, reply: r }));
+      if (url === "/api/v1/ops/settings") return json(200, SETTINGS);
+      if (url === "/api/v1/ops/providers") return json(200, PROVIDERS);
+      return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
+    });
+  }
+  const mount = async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-28T23:41:14Z") });
+    vi.stubGlobal("self", globalThis);
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+  };
+  const editRegionPoll = async (v: string) => {
+    await React.act(async () => { propsOf(byTestId("ops-tab-settings")!).onClick(); });
+    await settle();
+    await React.act(async () => { propsOf(find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!).onChange({ target: { value: v } }); });
+  };
+
+  it("a double click on save sends one PUT and keeps the success message", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void }[] = [];
+    stubHeldWrites(writes);
+    await mount();
+    await editRegionPoll("15");
+    const save = button("save")!;
+    await React.act(async () => { void propsOf(save).onClick(); void propsOf(save).onClick(); });
+    expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s"]);
+    writes[0].reply(json(200, {}));
+    writes[1]?.reply(json(409, { detail: "version mismatch" }, "application/problem+json"));
+    await settle();
+    expect(byTestId("settings-error")).toBeNull();
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+  });
+
+  it("save says it is busy (disabled · aria-busy) until its PUT answers", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void }[] = [];
+    stubHeldWrites(writes);
+    await mount();
+    await editRegionPoll("15");
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(button("save")!.getAttribute("disabled")).not.toBeNull();
+    expect(button("save")!.getAttribute("aria-busy")).toBe("true");
+    writes[0].reply(json(400, { detail: "region_poll_s out of range" }, "application/problem+json"));
+    await settle();
+    expect(byTestId("settings-error")?.textContent).toContain("서버가 값을 거절했습니다");
+    expect(button("save")!.getAttribute("aria-busy")).toBeNull();
+    expect(button("save")!.getAttribute("disabled")).toBeNull(); // 편집 값이 남아 있다 — 고쳐 다시 저장할 수 있다
+  });
+
+  it("a double click on a provider's disable sends one POST; the switch is busy until the answer", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void }[] = [];
+    stubHeldWrites(writes);
+    await mount();
+    const off = button("disable")!;
+    await React.act(async () => { void propsOf(off).onClick(); void propsOf(off).onClick(); });
+    expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["POST /api/v1/ops/providers/adsbdb/disable"]);
+    expect(button("disable")!.getAttribute("disabled")).not.toBeNull();
+    expect(button("disable")!.getAttribute("aria-busy")).toBe("true");
+    writes[0].reply(json(200, { provider: "adsbdb", disabled: true, version: 2, updated_at: "2026-09-28T23:41:15Z", mirrored: true }));
+    await settle();
+    expect(byTestId("switch-ok")?.textContent).toContain("adsbdb 끔");
+    expect(button("disable")!.getAttribute("aria-busy")).toBeNull();
+  });
+});
