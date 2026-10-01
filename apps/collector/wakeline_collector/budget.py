@@ -15,9 +15,12 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterable
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from redis.asyncio import Redis
+from redis.exceptions import NoScriptError
 
 log = logging.getLogger("budget")
 
@@ -35,9 +38,26 @@ redis.call('EXPIRE', KEYS[1], ARGV[3])
 return {1, used}
 """
 
+# 돌려주기(F3): 그 키가 있고 사용량이 cost 이상일 때만 뺀다 — 키를 만들지 않고(TTL 없는 키가 noeviction 에 남지 않게) 음수로 내리지 않는다
+RELEASE_LUA = """
+local used = tonumber(redis.call('HGET', KEYS[1], 'used'))
+local cost = tonumber(ARGV[1])
+if not used or used < cost then
+  return 0
+end
+redis.call('HINCRBY', KEYS[1], 'used', -cost)
+return 1
+"""
+
 UNKNOWN = -1  # 예약 결과의 사용량을 알 수 없음(Redis 장애)
 # 공공데이터포털 세 서비스: 포털 하루 한도(ADR-023) · 입출항 색인(ADR-022 개정 — 기다리는 사람이 없는 배경 작업이라 셀 수 없으면 부르지 않는다)
 DEFAULT_STRICT = frozenset({"opensky", "kma_radar", "komsa_traffic", "mof_grid4", "portmis"})
+
+
+# 이 태스크가 공급자마다 마지막으로 예약한 하루 키(F3) — release 가 그 키에 돌려준다. 예약과 돌려주기는 같은 태스크에서 짝을 이룬다(보내지 않은
+# 호출 · 다시 부르기 — 예약 바로 뒤). asyncio 태스크는 저마다 문맥을 가지므로 다른 작업의 예약과 섞이지 않는다(자정을 사이에 둔 두 작업도 제 날에).
+# 값은 바꾸지 않고 새 dict 로만 갈아 끼운다(태스크가 만든 자식 태스크와 dict 를 함께 쓰지 않게)
+_RESERVED: ContextVar[dict[str, str] | None] = ContextVar("wakeline_budget_reserved", default=None)
 
 
 def day_key(provider: str, now: datetime | None = None) -> str:
@@ -69,7 +89,7 @@ class Budget:
         self._r = redis
         self._limits = limits
         self._strict = frozenset(strict)
-        self._sha: str | None = None
+        self._shas: dict[str, str] = {}  # 스크립트 → SCRIPT LOAD 한 sha
         self._last_log = 0.0
 
     def limit(self, provider: str) -> int:
@@ -81,26 +101,35 @@ class Budget:
             self._last_log = now
             log.warning("budget %s failed (%s) — redis unavailable?", what, type(e).__name__)
 
-    async def _eval(self, key: str, cost: int, limit: int, headroom: int, ttl_s: int = 48 * 3600) -> tuple[int, int]:
-        if self._sha is None:
-            self._sha = await self._r.script_load(RESERVE_LUA)
+    async def _script(self, script: str, key: str, *args: int) -> Any:
+        sha = self._shas.get(script)
+        if sha is None:
+            sha = self._shas[script] = await self._r.script_load(script)
         try:
-            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, ttl_s, headroom)
-        except Exception:  # noqa: BLE001 — NOSCRIPT 등: 재로드 후 1회 재시도
-            self._sha = await self._r.script_load(RESERVE_LUA)
-            ok, used = await self._r.evalsha(self._sha, 1, key, cost, limit, ttl_s, headroom)
+            return await self._r.evalsha(sha, 1, key, *args)
+        except NoScriptError:
+            # 서버가 스크립트를 모른다(재시작 · SCRIPT FLUSH) — 다시 올리고 한 번만 더. 그 밖의 오류(시간 초과 · 연결 끊김)에는 다시 부르지 않는다:
+            # 스크립트가 이미 돌고 응답만 잃었을 수 있어 두 번 예약한다(F4 — OpenSky 는 4크레딧씩). 호출자가 사용량 UNKNOWN 으로 받는다(reserve)
+            sha = self._shas[script] = await self._r.script_load(script)
+            return await self._r.evalsha(sha, 1, key, *args)
+
+    async def _eval(self, key: str, cost: int, limit: int, headroom: int, ttl_s: int = 48 * 3600) -> tuple[int, int]:
+        ok, used = await self._script(RESERVE_LUA, key, cost, limit, ttl_s, headroom)
         return int(ok), int(used)
 
     async def reserve(self, provider: str, cost: int = 1, *, headroom: int = 0) -> tuple[bool, int]:
         """(허용 여부, 예약 후 사용량). 한도 초과면 사용량은 그대로. Redis 장애면 사용량 UNKNOWN(-1).
         headroom > 0 이면 한도 - headroom 을 넘는 예약을 거절한다(한도가 0 = 무제한이면 무시)."""
+        key = day_key(provider)
         try:
-            ok, used = await self._eval(day_key(provider), cost, self.limit(provider), max(0, headroom))
-            return bool(ok), used
+            ok, used = await self._eval(key, cost, self.limit(provider), max(0, headroom))
         except Exception as e:  # noqa: BLE001
-            self._sha = None
+            self._shas.clear()
             self._warn("reserve", e)
             return provider not in self._strict, UNKNOWN
+        if ok:
+            _RESERVED.set({**(_RESERVED.get() or {}), provider: key})  # 돌려줄 때 이 날 키에(release)
+        return bool(ok), used
 
     async def reserve_hour(
         self,
@@ -121,7 +150,7 @@ class Budget:
             ok, used = await self._eval(key, cost, limit, max(0, headroom), HOUR_TTL_S)
             return bool(ok), used, key
         except Exception as e:  # noqa: BLE001
-            self._sha = None
+            self._shas.clear()
             self._warn("reserve", e)
             return provider not in self._strict, UNKNOWN, key
 
@@ -133,9 +162,12 @@ class Budget:
             self._warn("release", e)
 
     async def release(self, provider: str, cost: int = 1) -> None:
-        """예약했지만 호출하지 못한 몫을 되돌린다."""
+        """예약했지만 호출하지 못한 몫을 그 예약의 하루 키에 되돌린다 — 00:00Z 를 넘겨도 예약한 날에서 뺀다(F3: 전에는 돌려줄 때의 날 키에서 빼
+        새 날이 used=-1 · TTL 없는 키가 됐다). 이 태스크가 그 공급자를 예약한 적이 없으면 오늘 키. 키가 없거나 사용량이 cost 보다 적으면 아무것도
+        하지 않는다(RELEASE_LUA)."""
+        key = (_RESERVED.get() or {}).get(provider) or day_key(provider)
         try:
-            await self._r.hincrby(day_key(provider), "used", -cost)
+            await self._script(RELEASE_LUA, key, cost)
         except Exception as e:  # noqa: BLE001
             self._warn("release", e)
 

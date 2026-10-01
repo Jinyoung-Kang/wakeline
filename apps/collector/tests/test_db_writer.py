@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import asyncpg
+import orjson
 import pytest
 
 from wakeline_collector import db as dbmod
@@ -162,6 +164,33 @@ async def test_queue_overflow_drops_oldest(monkeypatch):
 def test_quality_rows_sample_cap():
     rows, per_rule = quality_rows([("a", "h1", {"x": 1})] * 30 + [("b", None, {})])
     assert len([r for r in rows if r[0] == "a"]) == 20 and per_rule == {"a": 30, "b": 1}
+
+
+def test_quality_detail_strings_are_masked_before_they_are_stored(monkeypatch):
+    """보안 검토 L-2(2026-10-01): 품질 사례 detail 은 가리지 않고 저장돼 /ops '상세(원문)' 칸에 그대로 보였다 — 공급자 응답 앞부분 · 예외 글자가
+    실린다(예: kma_radar_parse 의 "not gzip: '<응답 80 B>'"). error_text 처럼 모든 글자 값을 masking.mask 로 가린다(중첩 값 포함 · 키 · 숫자는 그대로)."""
+    from wakeline_collector import masking
+
+    monkeypatch.setattr(masking, "_SECRETS", {"VeryS3cretKmaKey"})
+    detail = {
+        "tm": "202610010900",
+        "error": 'ValueError: not gzip: \'{"authKey": "abc123def456"} VeryS3cretKmaKey\'',
+        "raw": {"url": "https://apihub.kma.go.kr/x?authKey=k3yk3yk3y&tm=1", "heads": ["serviceKey=zzz999yyy", 7]},
+        "tries": 3,
+        "partial": None,
+    }
+    rows, per_rule = quality_rows([("kma_radar_parse", None, detail)])
+    stored = rows[0][2]
+    for secret in ("abc123def456", "VeryS3cretKmaKey", "k3yk3yk3y", "zzz999yyy"):
+        assert secret not in stored
+    assert orjson.loads(stored) == {
+        "tm": "202610010900",
+        "error": masking.mask(detail["error"], None),
+        "raw": {"url": "https://apihub.kma.go.kr/x?authKey=***&tm=1", "heads": ["serviceKey=***", 7]},
+        "tries": 3,
+        "partial": None,
+    }
+    assert per_rule == {"kma_radar_parse": 1} and detail["raw"]["heads"][0] == "serviceKey=zzz999yyy"  # 넘긴 dict 는 그대로
 
 
 def test_metrics_shape():
@@ -444,3 +473,67 @@ async def test_each_run_gets_its_own_run_key():
     assert len(keys) == 2 and keys[0] != keys[1]
     assert all(isinstance(k, uuid.UUID) and k.version == 4 for k in keys)
     await db.close()
+
+
+class _SizedPool:
+    """asyncpg 풀처럼 연결이 max_size 개 — 다 쓰이면 acquire 가 차례(FIFO)로 기다린다. 직접 읽기(fetch)는 slow 가 풀릴 때까지 연결을 쥐고(느린 DB),
+    첫 쓰기(execute)는 연결을 잠시 쥔 뒤 일시 오류로 끝난다(문장 시간 초과 — QueryCanceled)."""
+
+    def __init__(self, max_size: int) -> None:
+        self._free = asyncio.Semaphore(max_size)
+        self.slow = asyncio.Event()
+        self.executed = 0
+        self.probes = 0
+
+    @asynccontextmanager
+    async def acquire(self):
+        async with self._free:
+            yield self
+
+    async def fetch(self, sql, *args):
+        async with self.acquire():
+            await self.slow.wait()
+            return []
+
+    async def fetchval(self, sql, *args):  # writer 의 생존 확인(SELECT 1)
+        async with self.acquire():
+            self.probes += 1
+            return 1
+
+    async def execute(self, sql, *args):
+        async with self.acquire():
+            self.executed += 1
+            if self.executed == 1:
+                await asyncio.sleep(0.1)
+                raise asyncpg.QueryCanceledError("canceling statement due to statement timeout")
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_direct_reads_on_a_slow_db_do_not_starve_the_writers_liveness_probe(monkeypatch, caplog):
+    """F10(collector-review · PLAN C5 — 확인 시험): 풀은 'writer 1 + 생존 확인 1'(max_size=2)로 잡혔는데 같은 풀을 직접 읽기 · 트랜잭션(입출항 색인
+    범위 · 하루 트랜잭션 · 격자 기하 marine_grid4)도 쓴다. DB 가 느린 동안 writer 의 쓰기가 일시 오류로 끝나는 사이 두 직접 사용자가 연결 둘을 쥐면,
+    이어지는 생존 확인(SELECT 1)이 연결을 얻지 못해 DB 가 응답하는데도 '닿지 않음'(db_ok=0)으로 적고 그 시도를 세지 않은 채 물러났다.
+    풀 크기는 _create_pool 이 asyncpg 에 넘기는 값 그대로다."""
+
+    async def create_pool(**kw):
+        return _SizedPool(kw["max_size"])
+
+    monkeypatch.setattr(dbmod.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(dbmod, "OP_TIMEOUT_S", 0.6)
+    monkeypatch.setattr(dbmod, "PROBE_TIMEOUT_S", 0.2)
+    db = Db()  # 운영과 같은 풀 공장(_create_pool)
+    pool = await db._ensure_pool()
+    db.start()
+    db.upsert_budget_day("adsb_fi", datetime.now(UTC), 1, 10)  # writer 가 연결 하나를 쥔다(0.1 s 뒤 일시 오류)
+    await asyncio.sleep(0.02)
+    readers = [asyncio.create_task(db.read_marine_grid4()), asyncio.create_task(db.read_port_call_coverage())]
+    await asyncio.sleep(0.45)  # 쓰기 실패(0.1 s) + 생존 확인 상한(0.2 s) 뒤 — 읽기는 아직 느린 DB 를 기다린다(0.6 s)
+    try:
+        assert pool.probes == 1  # 생존 확인이 연결을 얻었다 — DB 는 응답한다: 이 작업의 일시 오류로 세고 곧 다시 쓴다
+        assert (pool.executed, db.pending, db.dropped, db.metrics()["db_ok"]) == (2, 0, 0, "1")
+    finally:
+        pool.slow.set()
+        await asyncio.gather(*readers)
+        await db.close(drain_s=1)

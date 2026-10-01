@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -9,7 +10,7 @@ from typing import Any
 
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from wakeline_collector.budget import Budget
+from wakeline_collector.budget import RELEASE_LUA, Budget
 from wakeline_collector.db import Db
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.publisher import Publisher
@@ -24,6 +25,7 @@ class FakeRedis:
         self.ttl: dict[str, float] = {}
         self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
         self.down = False
+        self._scripts: dict[str, str] = {}  # sha → 스크립트(SCRIPT LOAD)
         self._seq = 0
         self.clock = clock  # 있으면 스트림 ID 를 Redis 처럼 '<ms>-<seq>' 로 만든다(MINID 트리밍 시험용)
 
@@ -180,13 +182,24 @@ class FakeRedis:
         items = [e for e in reversed(self.streams.get(stream, [])) if within(e[0], max, True) and within(e[0], min, False)]
         return items[:count] if count else items
 
-    # scripting (budget.RESERVE_LUA 와 같은 의미)
+    # scripting (budget.RESERVE_LUA · RELEASE_LUA 와 같은 의미)
     async def script_load(self, script: str) -> str:
         self._check()
-        return "sha"
+        sha = hashlib.sha1(script.encode()).hexdigest()  # noqa: S324 — Redis 의 스크립트 이름(보안 용도 아님)
+        self._scripts[sha] = script
+        return sha
 
-    async def evalsha(self, sha: str, numkeys: int, key: str, cost: int, limit: int, ttl: int, headroom: int = 0):
+    async def evalsha(self, sha: str, numkeys: int, key: str, *args: int):
         self._check()
+        if self._scripts.get(sha) == RELEASE_LUA:
+            (cost,) = args
+            h = self.kv.get(key)
+            if not isinstance(h, dict) or "used" not in h or int(h["used"]) < cost:
+                return 0  # 키를 만들지 않고 음수로 내리지 않는다
+            h["used"] = str(int(h["used"]) - cost)
+            return 1
+        cost, limit, _ttl, *rest = args
+        headroom = rest[0] if rest else 0
         h = self.kv.setdefault(key, {})
         used = int(h.get("used", 0))
         if limit > 0 and used + cost > limit - headroom:

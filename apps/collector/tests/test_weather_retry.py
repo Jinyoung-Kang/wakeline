@@ -266,7 +266,9 @@ async def test_http_errors_throttling_and_bad_shapes_are_never_retried(no_wait, 
     # 보낸 호출은 예산 1 — 속도 상한이 막은 호출(Throttled)은 보내지 않았으므로 돌려준다
     assert (await ctx.budget.usage("rainviewer"))[0] == (0 if isinstance(error, Throttled) else 1)
     warns = _warnings(caplog)
-    assert len(warns) == 1 and warns[0].startswith("radar/rainviewer failed: frames — "), warns
+    # 속도 상한은 공급자 실패가 아니다(R-65) — 'not called' 로 적는다
+    lead = "radar/rainviewer not called: frames — " if isinstance(error, Throttled) else "radar/rainviewer failed: frames — "
+    assert len(warns) == 1 and warns[0].startswith(lead), warns
     assert "retried" not in warns[0]
 
 
@@ -518,3 +520,37 @@ class _Always(list):
 
     def pop(self, _i: int = -1):  # type: ignore[override]
         return self._make()
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [(Throttled("api.rainviewer.com", "no slot within 10.0 s"), "throttled"), (httpx.PoolTimeout("pool full"), "error")],
+    ids=["throttled", "pool"],
+)
+async def test_a_call_that_was_not_sent_is_not_a_provider_failure(no_wait, error, status):
+    """R-65 · F7: 속도 상한(Throttled)이 막은 기상 호출은 실행 'throttled' 이고, 우리 쪽 까닭(연결 풀 대기 초과)으로 보내지 않은 호출은 'error'(보내지
+    않음) — 둘 다 공급자 실패가 아니다. 전에는 status.failure(공급자 last_error · 연속 실패 수) · 실행 'error' 였다."""
+    from wakeline_collector.jobs.weather import RadarJob
+
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"rainviewer": RV_BUDGET})
+    runs = _runs(ctx)
+    await RadarJob(FlakyRadar([error, error]), ctx).run_once()
+    (run,) = runs
+    assert run["status"] == status
+    assert ("not sent — " in run["error_text"]) is (status == "error")
+    h = await r.hgetall("wakeline:provider:rainviewer")
+    assert "consecutive_failures" not in h and "last_error" not in h
+    assert (await ctx.budget.usage("rainviewer"))[0] == 0
+
+
+async def test_a_sent_attempt_that_failed_before_a_throttled_retry_is_still_a_provider_failure(no_wait):
+    """첫 시도는 보낸 뒤 시간 초과(공급자 탓), 다시 부르기는 속도 상한이 막았다 — 그 주기는 공급자 실패다(실행 'error' · 상태 해시)."""
+    from wakeline_collector.jobs.weather import RadarJob
+
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"rainviewer": RV_BUDGET})
+    runs = _runs(ctx)
+    await RadarJob(FlakyRadar([_read_timeout(RV_URL), Throttled("api.rainviewer.com", "no slot")]), ctx).run_once()
+    assert [x["status"] for x in runs] == ["error"]
+    assert (await r.hgetall("wakeline:provider:rainviewer"))["consecutive_failures"] == "1"

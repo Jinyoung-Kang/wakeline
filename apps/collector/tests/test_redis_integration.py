@@ -68,6 +68,37 @@ async def test_budget_lua_headroom_on_real_redis(admin, collector):
     assert 0 < await admin.ttl(day_key("itest")) <= 48 * 3600
 
 
+async def test_a_flushed_budget_script_is_loaded_again_under_the_collector_acl(admin, collector):
+    """F4: _eval 은 NoScriptError 에만 스크립트를 다시 올린다 — 실제 Redis 의 NOSCRIPT 응답이 redis-py 에서 그 예외로 오고, 다시 올리기(SCRIPT LOAD)가
+    수집기 ACL 안에서 된다."""
+    b = Budget(collector, {"itest": 5})
+    assert await b.reserve("itest") == (True, 1)
+    await admin.script_flush()
+    assert await b.reserve("itest") == (True, 2)
+
+
+async def test_a_give_back_after_utc_midnight_leaves_no_ttl_less_key_on_real_redis(admin, collector, monkeypatch):
+    """F3: 돌려주기는 예약한 날 키에 · 키를 만들지 않고 음수로 내리지 않는다(RELEASE_LUA) — 수집기 ACL 아래 실제 Redis 에서."""
+    from wakeline_collector import budget as budget_mod
+
+    day1, day2 = datetime(2026, 10, 1, 23, 59, 59, tzinfo=UTC), datetime(2026, 10, 2, 0, 0, 4, tzinfo=UTC)
+    real = budget_mod.day_key
+    clock = [day1]
+    monkeypatch.setattr(budget_mod, "day_key", lambda p, now=None: real(p, now or clock[0]))
+    k1, k2 = real("itest", day1), real("itest", day2)
+    await admin.delete(k1, k2)
+    try:
+        b = Budget(collector, {"itest": 5})
+        assert await b.reserve("itest") == (True, 1)
+        clock[0] = day2
+        await b.release("itest")
+        await b.release("itest")  # 돌려줄 몫이 없다
+        assert await admin.hget(k1, "used") == "0" and not await admin.exists(k2)
+        assert 0 < await admin.ttl(k1) <= 48 * 3600
+    finally:
+        await admin.delete(k1, k2)
+
+
 async def test_poller_reads_leases_and_collector_cannot_write_them(admin, collector):
     now = time.time() * 1000
     await admin.zadd(HOT_KEY, {"35.5:139.5:150": now + 60_000, "22.0:114.0:100": now - 1})

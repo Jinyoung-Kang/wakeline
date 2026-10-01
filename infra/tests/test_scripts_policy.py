@@ -259,3 +259,30 @@ class ReadmeFactsTest(unittest.TestCase):
         audit = ROOT / "docs/audit"
         latest = max([1] + [int(m.group(1)) for p in audit.glob("change-contract-v*.md") if (m := re.match(r"change-contract-v(\d+)\.md", p.name))])
         self.assertIn(f"변경 계약 v1–v{latest}", self.readme)
+
+
+class CollectorPostgresTest(unittest.TestCase):
+    """collector-review F2(PLAN C7): 수집기의 실 PostgreSQL 대조 시험(tests/test_db_pg_integration.py)이 어디서도 돌지 않았다. 버리는 컨테이너
+    시험(collector_pg_test.sh)이 make test-collector-db · make infra-docker-test 에 묶여 있고, 건너뛰면 실패하고, 운영과 같은 db 이미지 · api 의
+    Flyway 마이그레이션을 migrator 계정으로 쓰며, 비밀번호를 argv 에 두지 않는다."""
+
+    def test_wired_into_make(self):
+        self.assertIn("bash infra/tests/collector_pg_test.sh", recipe("test-collector-db"))
+        self.assertIn("bash infra/tests/collector_pg_test.sh", recipe("infra-docker-test"))
+        self.assertRegex(MAKEFILE, r"(?m)^\.PHONY:.*\btest-collector-db\b")
+
+    def test_script_runs_the_real_tests_against_the_api_schema(self):
+        t = (ROOT / "infra" / "tests" / "collector_pg_test.sh").read_text()
+        self.assertIn("tests/test_db_pg_integration.py", t)
+        self.assertRegex(t, r"grep -q[^\n]*skipped", "건너뛴 시험이 있으면 실패")
+        self.assertIn("infra/compose.yml", t, "compose 의 db 이미지")
+        self.assertIn("apps/api/src/main/resources/db/migration", t)
+        self.assertIn("-U wakeline_migrator", t, "api --migrate 와 같은 계정")
+        self.assertIn("--single-transaction", t, "Flyway 처럼 파일마다 한 트랜잭션")
+        self.assertIn("ON_ERROR_STOP=1", t)
+        self.assertIn("wakeline_collector:", t, "시험은 수집기 계정으로")
+        self.assertIn("trap cleanup EXIT", t)
+        for n, line in enumerate(t.splitlines(), 1):
+            if not line.lstrip().startswith("#"):
+                with self.subTest(line=n):
+                    self.assertNotRegex(line, r"-e\s+[A-Za-z_]*PASSWORD[A-Za-z_]*=", "비밀번호 값은 환경으로(-e NAME)")

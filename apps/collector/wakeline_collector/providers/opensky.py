@@ -11,7 +11,7 @@ from datetime import datetime
 
 import orjson
 
-from wakeline_collector.http import HttpClient, ProviderHttpError
+from wakeline_collector.http import HttpClient, PreSendFailed, ProviderHttpError, classify_send
 from wakeline_collector.models import BudgetInfo, ProviderResult
 
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"  # noqa: S105 — URL, not a secret
@@ -40,13 +40,20 @@ class OpenSkyProvider:
     async def _bearer(self) -> str:
         if self._token and time.time() < self._token_exp - 60:
             return self._token
-        resp = await self._http.post_form(
-            TOKEN_URL, {"grant_type": "client_credentials", "client_id": self._id, "client_secret": self._secret}
-        )
-        tok = orjson.loads(resp.body)
-        self._token = tok["access_token"]
-        self._token_exp = time.time() + float(tok.get("expires_in", 1800))
-        return self._token
+        try:
+            resp = await self._http.post_form(
+                TOKEN_URL, {"grant_type": "client_credentials", "client_id": self._id, "client_secret": self._secret}
+            )
+            tok = orjson.loads(resp.body)
+            token = str(tok["access_token"])
+            exp = time.time() + float(tok.get("expires_in", 1800))
+        except Exception as e:
+            if classify_send(e) in ("throttled", "not_sent"):
+                raise  # 우리 쪽 까닭 — 작업이 그대로 다룬다(속도 상한 · 보내지 않음)
+            # 토큰을 받지 못했다 — 상태 조회(4크레딧)는 보내지 않았다: 작업이 예산을 돌려주고 공급자 실패로 센다(R-65 · F7)
+            raise PreSendFailed("opensky token request", e) from e
+        self._token, self._token_exp = token, exp
+        return token
 
     async def _states(self, params: dict | None) -> ProviderResult:
         token = await self._bearer()

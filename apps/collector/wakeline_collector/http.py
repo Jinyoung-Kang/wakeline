@@ -7,21 +7,24 @@ ProviderHttpError.pause_s 로 호출자에게 알린다(로그 · 실행 기록�
 시간 상한: httpx Timeout(읽기 8 s · 연결 4 s — 호출자가 read_s 로 읽기 제한만 바꿀 수 있다)은 단계마다라서, 조금씩 계속 보내는 응답은 끝나지 않을 수 있다. 그래서 보내기부터
 본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
 속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
+크기 상한(http_max_bytes)은 푼 바이트로 잰다 — gzip · deflate 본문은 httpx 에 맡기지 않고 직접 풀며, 푸는 동안 상한 + 1 바이트에서 멈춘다(_Inflate).
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+import zlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import Literal
 from urllib.parse import urlparse
 
 import httpx
 
 from wakeline_collector.config import Settings, settings
-from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
+from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, Throttled, default_limiter
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
 DEFAULT_TOTAL_S = 30.0  # 요청 전체(보내기 ~ 본문 끝) 기본 상한. 관심 지역·KMA 는 호출자가 따로 준다(R-67).
@@ -40,6 +43,11 @@ ALLOWED_HOSTS = frozenset(
         "apis.data.go.kr",  # 공공데이터포털 — 한국 항만 입출항 색인(ADR-022 PORT-MIS) · 연안 교통량(ADR-023). 호스트 버킷 하나를 나눠 쓴다
     }
 )
+
+
+# 받는 Content-Encoding — 상한 안에서 직접 푸는 것만 부른다(_Inflate). httpx 기본값과 같다(brotli · zstandard 가 없을 때) — 그것들이 깔려도
+# 부르는 인코딩이 늘지 않게 적어 둔다
+ACCEPT_ENCODING = "gzip, deflate"
 
 
 class HostNotAllowed(RuntimeError):
@@ -75,19 +83,85 @@ class ProviderHttpError(RuntimeError):
         self.pause_s = pause_s  # 429 로 그 호스트를 막은 초(RateLimiter.penalize 의 반환값). 429 가 아니면 None
 
 
-# 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
-NOT_SENT_ERRORS: tuple[type[Exception], ...] = (
+class PreSendFailed(RuntimeError):
+    """요금이 드는 요청 앞의 준비 호출(OpenSky 토큰 발급)이 실패해 그 요청을 보내지 않았다 — 예산은 돌려주고, 공급자 실패로는 센다(classify_send).
+    status = 준비 호출의 HTTP 상태(있으면 — 호출자가 429 · 401 을 그대로 다룬다)."""
+
+    def __init__(self, step: str, error: BaseException) -> None:
+        super().__init__(f"{step} failed: {type(error).__name__}: {error}")
+        self.step, self.error = step, error
+        self.status = error.status if isinstance(error, ProviderHttpError) else None
+
+
+# 우리 쪽 까닭으로 보내지 않았다(허용 호스트 아님 · 보내기 직전 취소 · URL · 연결 풀 대기 초과 · 프록시) — 공급자 실패가 아니다(classify_send)
+NOT_SENT_LOCAL: tuple[type[Exception], ...] = (
     HostNotAllowed,
     SendCancelled,
     httpx.InvalidURL,
     httpx.UnsupportedProtocol,
     httpx.PoolTimeout,
     httpx.ProxyError,
-    httpx.ConnectError,
-    httpx.ConnectTimeout,
 )
+# 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
+NOT_SENT_ERRORS: tuple[type[Exception], ...] = (*NOT_SENT_LOCAL, httpx.ConnectError, httpx.ConnectTimeout, PreSendFailed)
+
+SendOutcome = Literal["sent", "failed_before_send", "not_sent", "throttled"]
+
+
+def classify_send(e: BaseException) -> SendOutcome:
+    """공급자 호출 하나의 실패를 가른다 — 모든 작업이 이 판정을 쓴다(R-65 · F7: 전에는 작업마다 달라 연결 풀 대기 초과를 공급자 실패로 세고 예산을
+    돌려주지 않았고, 기상 작업은 속도 상한을 공급자 실패로 적었다).
+    - throttled: 속도 상한(Throttled)이 막았다 — 보내지 않았다. 예산을 돌려주고 공급자 실패가 아니다(실행 'throttled').
+    - not_sent: 우리 쪽 까닭으로 보내지 않았다(NOT_SENT_LOCAL) — 예산을 돌려주고 공급자 실패가 아니다.
+    - failed_before_send: 공급자 쪽이 보내기 전에 실패했다(연결 실패 · 연결 시간 초과 · 준비 호출 PreSendFailed) — 예산을 돌려주되 공급자 실패로
+      센다(폴백 · 3번 쉬기가 그대로 일한다).
+    - sent: 그 밖 — 보낸 것으로 센다(예산 그대로 · 공급자 실패)."""
+    if isinstance(e, Throttled):
+        return "throttled"
+    if isinstance(e, NOT_SENT_LOCAL):
+        return "not_sent"
+    if isinstance(e, NOT_SENT_ERRORS):
+        return "failed_before_send"
+    return "sent"
+
 
 BeforeSend = Callable[[], Awaitable[bool]]
+
+
+class _Inflate:
+    """gzip · deflate 본문을 한 번에 max_out 바이트까지만 푼다(보안 검토 L-7: httpx 는 받은 청크(최대 64 KiB)를 한 번에 풀어, 작은 압축 본문이
+    수십 MiB 로 다 펼쳐진 뒤에야 크기 상한을 쟀다). deflate 는 httpx 와 같게 zlib 머리가 있는 것을 먼저, 첫 청크에서 틀리면 머리 없는 것으로."""
+
+    def __init__(self, coding: str) -> None:
+        self.coding = coding
+        self._z = zlib.decompressobj(zlib.MAX_WBITS | 16 if coding == "gzip" else zlib.MAX_WBITS)
+        self._first = True
+
+    def decode(self, data: bytes, max_out: int) -> bytes:
+        first, self._first = self._first, False
+        try:
+            return self._z.decompress(data, max_out)
+        except zlib.error as e:
+            if first and self.coding == "deflate":
+                self._z = zlib.decompressobj(-zlib.MAX_WBITS)
+                return self.decode(data, max_out)
+            raise httpx.DecodingError(str(e)) from e
+
+    def flush(self) -> bytes:
+        try:
+            return self._z.flush()
+        except zlib.error as e:
+            raise httpx.DecodingError(str(e)) from e
+
+
+def _inflater(headers: httpx.Headers) -> _Inflate | None:
+    """응답의 Content-Encoding → 푸는 것(gzip · deflate 하나), 아니면 None(identity · 모르는 인코딩 — httpx 처럼 받은 그대로 둔다). 둘 이상 겹친
+    인코딩은 부르지 않았다(ACCEPT_ENCODING) — 풀지 않고 DecodingError."""
+    codings = [v.strip().lower() for v in headers.get_list("content-encoding", split_commas=True)]
+    known = [c for c in codings if c in ("gzip", "deflate")]
+    if len(known) > 1:
+        raise httpx.DecodingError(f"stacked Content-Encoding {', '.join(codings)[:60]!r} — not decoded")
+    return _Inflate(known[0]) if known else None
 
 
 class FetchResponse:
@@ -126,7 +200,7 @@ class HttpClient:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S),
             follow_redirects=False,
-            headers={"User-Agent": settings.http_user_agent, "Accept": "application/json"},
+            headers={"User-Agent": settings.http_user_agent, "Accept": "application/json", "Accept-Encoding": ACCEPT_ENCODING},
             http2=False,
             limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
         )
@@ -184,17 +258,39 @@ class HttpClient:
             raise RequestTimedOut(f"{host}: no complete response within {total_s:.0f} s") from None
         latency = int((time.perf_counter() - t0) * 1000)
         pause = self.limiter.penalize(host, _retry_after_s(headers)) if status == 429 else None
+        if 300 <= status < 400:
+            # 리다이렉트는 따라가지 않는다(허용 호스트 — 위). 성공으로 해석기에 넘기면 'JSON 아님' · '모양 이상'으로 적혀 까닭을 숨겼다(F11) — HTTP 오류로.
+            # 본문 대신 Location 의 호스트만 싣는다(경로 · 쿼리에 키가 있을 수 있다)
+            target = urlparse(headers.get("location", "")).hostname or "(no Location)"
+            raise ProviderHttpError(status, f"redirect to {target} — not followed", headers, latency)
         if status >= 400:
             raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency, pause)
         return FetchResponse(body, status, headers, datetime.now(UTC), latency)
 
     async def _send(self, method: str, url: str, **kw) -> tuple[bytes, int, dict[str, str]]:
+        """본문을 받는다 — 크기 상한은 푼 바이트로 잰다. 압축 본문은 받은 청크(aiter_raw)를 직접 풀되 한 번에 '남은 상한 + 1' 바이트까지만 —
+        넘는 순간 ResponseTooLarge(펼친 것 전체를 메모리에 만들지 않는다)."""
+        limit = settings.http_max_bytes
         async with self._client.stream(method, url, **kw) as resp:
+            inflate = _inflater(resp.headers)
             chunks: list[bytes] = []
             size = 0
-            async for chunk in resp.aiter_bytes():
+            async for raw in resp.aiter_raw():
+                chunk = raw if inflate is None else inflate.decode(raw, limit - size + 1)
                 size += len(chunk)
-                if size > settings.http_max_bytes:
-                    raise ResponseTooLarge(f"{size} bytes > {settings.http_max_bytes}")
+                if size > limit:
+                    raise ResponseTooLarge(_too_large(size, limit, inflate))
                 chunks.append(chunk)
+            if inflate is not None:
+                tail = inflate.flush()
+                size += len(tail)
+                if size > limit:
+                    raise ResponseTooLarge(_too_large(size, limit, inflate))
+                chunks.append(tail)
             return b"".join(chunks), resp.status_code, {k.lower(): v for k, v in resp.headers.items()}
+
+
+def _too_large(size: int, limit: int, inflate: _Inflate | None) -> str:
+    if inflate is None:
+        return f"{size} bytes > {limit}"
+    return f"more than {limit} bytes once {inflate.coding}-decoded — stopped inflating"

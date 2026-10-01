@@ -238,6 +238,9 @@ async def test_focus_budget_share_exhausted_is_throttled_not_called(monkeypatch)
         (ProviderHttpError(429, "slow down"), "throttled", False),
         (ProviderHttpError(500, "boom"), "error", False),
         (httpx.ConnectError("refused"), "error", True),
+        (httpx.ConnectTimeout("connect"), "error", True),
+        (httpx.PoolTimeout("pool full"), "error", True),  # R-65: 보내지 않았다 — 전에는 예산을 쓴 것으로 남겼다
+        (httpx.ProxyError("proxy refused"), "error", True),
         (ValueError("unexpected readsb response shape"), "error", False),
     ],
 )

@@ -32,13 +32,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-import httpx
-
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.demand import Demand, DemandPoller, DemandStatus, HotCell, status_value
 from wakeline_collector.errors import describe_error
-from wakeline_collector.http import ProviderHttpError
+from wakeline_collector.http import ProviderHttpError, classify_send
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.models import AircraftState, ProviderResult
@@ -397,16 +395,16 @@ class DemandTracker:
             return None, "throttled", why, started
         try:
             return await call(), None, None, started
-        except Throttled as e:
-            await self._release()  # 호출하지 않았다
-            self.counts["throttled"] += 1
-            return None, "throttled", _err(e), started
         except Exception as e:  # noqa: BLE001 — 공급자 실패는 상태로 드러내고 다음 주기에 다시
+            kind = classify_send(e)
+            if kind != "sent":
+                await self._release()  # 보내지 않았다(속도 상한 · 연결 실패 · 연결 풀 대기 초과 등 — http.classify_send, R-65)
+            if kind == "throttled":
+                self.counts["throttled"] += 1
+                return None, "throttled", _err(e), started
             http_status = e.status if isinstance(e, ProviderHttpError) else None
-            if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout):
-                await self._release()
             self.counts["errors"] += 1
-            why = describe_error(e)
+            why = describe_error(e) if kind != "not_sent" else f"not sent — {describe_error(e)}"
             self.ctx.db.record_run(job, self.provider.name, started, status="error", http_status=http_status, error_text=why)
             log.info("%s: %s failed (%s)", job, self.provider.name, why)
             return None, "throttled" if http_status == 429 else "error", _err(e), started

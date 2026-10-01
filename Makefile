@@ -12,7 +12,7 @@ NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -64,13 +64,16 @@ test-api: ## Java 단위·통합 테스트 + JaCoCo 커버리지 보고서·검�
 test-collector: ## Python 단위 테스트
 	cd apps/collector && uv run pytest -q
 
+test-collector-db: ## 수집기 SQL 을 실제 PostgreSQL(api 의 Flyway 마이그레이션 · 수집기 계정)에 대조 — 버리는 컨테이너(db 이미지 wakeline-db:local 은 make build · infra-docker-test 가 만든다)
+	bash infra/tests/collector_pg_test.sh
+
 test-web: ## 프론트 단위 테스트
 	cd apps/web && npm test
 
 test-infra: ## 인프라 정책 시험(.env 생성 · compose 해석(개발·격리): 권한 축소·ACL 사용자·비밀값 분리·다이제스트 고정 · CI 스캔 범위) — 컨테이너를 띄우지 않는다
 	python3 -m unittest discover -s infra/tests -v
 
-infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체 · 이전 이미지 → 새 이미지 교체) 동작 시험 — 개발 스택은 건드리지 않는다
+infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체 · 이전 이미지 → 새 이미지 교체) · 수집기 SQL(실제 PostgreSQL) 동작 시험 — 개발 스택은 건드리지 않는다
 	$(COMPOSE) build db   # R-63: db 이미지는 infra/db 에서 직접 빌드한다(레지스트리에 없다) — db 시험이 이 태그를 쓴다
 	bash infra/tests/edge_test.sh
 	bash infra/tests/redis_acl_test.sh
@@ -78,6 +81,7 @@ infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·�
 	bash infra/tests/db_backup_test.sh
 	bash infra/tests/db_rotate_test.sh
 	bash infra/tests/db_image_swap_test.sh
+	bash infra/tests/collector_pg_test.sh
 
 # 원격 CI 가 없어도 ci.yml 의 security·third-party-images 와 같은 기준으로 막는다(R-07). 스캐너는 다이제스트 고정·네트워크 없음·docker.sock 없음(tools/scan_lib.sh).
 # 의존성 감사는 ci.yml 의 web·collector job 과 같은 명령(tools/dependency_audit.sh, S2) — 레지스트리·취약점 DB 에 닿아야 하고, 돌리지 못하면 실패다.

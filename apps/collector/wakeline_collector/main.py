@@ -139,8 +139,9 @@ def make_redis(s: Settings) -> Redis:
     )
 
 
-async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> None:
-    """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
+async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> int:
+    """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer).
+    돌려주는 값 = 프로세스 종료 코드: 0 정상 종료, 1 작업 태스크가 예상 밖으로 끝났다(run_until_stopped — ais 와 같다, compose 가 다시 띄운다)."""
     fixture = settings.fixture_mode
     configure_logging(secret_values(settings))
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
@@ -151,6 +152,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
+    raw = RawStore()
     tracker: DemandTracker | None = None
     portcalls: PortCallIndexJob | None = None
     logsink: LogSink | None = None
@@ -173,6 +175,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "http_throttled": str(limiter.throttled),
             # 계약 v5 §C2: 로그 싱크가 wakeline:logs 로 보낸 수 · 대기열 상한으로 버린 수(기동 뒤 누계, 끄면 빈 값)
             **sink_metrics(logsink),
+            # F6: 원천 보관 · 정리 실패(기동 뒤 누계 — 0 이 아니면 /data/raw 가 가득 찼거나 읽기 전용이다)
+            "raw_unsaved": str(raw.unsaved),
+            "raw_purge_failed": str(raw.purge_failed),
         }
         if tracker is not None:
             m.update(tracker.metrics())
@@ -184,7 +189,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         budget=Budget(redis, limits),
         db=db,
         publisher=publisher,
-        raw=RawStore(),
+        raw=raw,
         status=ProviderStatus(redis, metrics=metrics),
         rt=RuntimeSettings(redis),
         fixture=fixture,
@@ -239,6 +244,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             loop.add_signal_handler(sig, stop.set)
 
     logsink = start_log_sink("collector", redis, enabled=settings.log_sink_enabled)  # MaskFilter(configure_logging) 뒤에 붙인다
+    crashed = False
     try:
         await ctx.rt.refresh()
         if not fixture:  # 운영 설정(Redis 미러)을 읽은 뒤 — 실제로 쓸 순서
@@ -259,20 +265,28 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         if tracker is not None:
             jobs["demand"] = tracker.run(stop)
         tasks = [asyncio.create_task(c, name=f"job:{name}") for name, c in jobs.items()]  # 로그 항목 context.task
-        await run_until_stopped(tasks, stop, grace_s=SHUTDOWN_GRACE_S)
+        crashed = await run_until_stopped(tasks, stop, grace_s=SHUTDOWN_GRACE_S)
     finally:
         await http.aclose()
         await db.close(drain_s=DB_DRAIN_S)
         await close_log_sink(logsink)  # 루트 로거에서 떼고 남은 항목을 보낸다(Redis 를 닫기 전에)
         await redis.aclose()
         log.info("collector stopped")
+    return 1 if crashed else 0
 
 
-async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event, *, grace_s: float) -> None:
-    """stop 이 켜질 때까지(또는 작업이 모두 끝날 때까지) 기다린 뒤, 진행 중 작업을 grace_s 동안 끝내게 두고 남은 것은 취소한다(COL-4)."""
+async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event, *, grace_s: float) -> bool:
+    """stop 이 켜질 때까지(또는 작업이 모두 끝날 때까지) 기다린 뒤, 진행 중 작업을 grace_s 동안 끝내게 두고 남은 것은 취소한다(COL-4).
+    돌려주는 값: 작업 태스크가 stop 전에 끝났는가(예상 밖 — 어느 태스크인지 · 까닭(예외는 스택까지)을 ERROR 로 남긴다. F5: 전에는 아무것도 남기지 않고
+    0 으로 끝났다 — asyncio 의 'exception was never retrieved' 는 로그 싱크를 뗀 뒤에야 나와 로그 화면에 닿지 않았다)."""
     stopper = asyncio.create_task(stop.wait())
+    crashed = False
     try:
-        await asyncio.wait([stopper, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        done, _pending = await asyncio.wait([stopper, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        if stopper not in done:
+            crashed = True
+            for t in done:
+                _log_unexpected_end(t)
         stop.set()  # 작업 하나가 예상 밖으로 끝났어도 나머지를 정리한다
         _done, pending = await asyncio.wait(tasks, timeout=grace_s)
         if pending:
@@ -282,3 +296,10 @@ async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event,
             await asyncio.gather(*pending, return_exceptions=True)
     finally:
         stopper.cancel()
+    return crashed
+
+
+def _log_unexpected_end(t: asyncio.Task[Any]) -> None:
+    exc = None if t.cancelled() else t.exception()  # 꺼내 둔다 — asyncio 가 나중에 'never retrieved' 를 따로 내지 않게
+    why = "cancelled" if t.cancelled() else "returned" if exc is None else repr(exc)
+    log.error("%s ended unexpectedly (%s) — stopping the collector, exit 1", t.get_name(), why, exc_info=exc)
