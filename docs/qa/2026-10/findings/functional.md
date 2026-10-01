@@ -219,7 +219,7 @@
 - **기간 규칙**: 항공기 · 선박 항적 24 h(정확히 24 h 200, +1 s 400), AIS 공백 31일, 알림 이력 30일, 통계 92일(정확히 92 200, 93 400), 재생 31일(−2분 200 · +2분 400) · 미래 60 s, 역순 · 같음 400.
 - **검색**: `/aircraft/search` 2–10자 `[A-Z0-9-]`(1 · 11자 · 따옴표 · 유니코드 · 이모지 400), ≤ 20건, 실시간 먼저. `/ships/search` 2–40자 · limit 1–20(0 · 21 · 2^31 → 400), 13키 · `count` · 정확 일치 → 최근 보고 순.
 - **값 정확성(fixture 대비)**: 항공기 127대 — `alt_ft`(ft) · `gs_kt`(kt) · `track_deg`(deg) · `vrate_fpm`(ft/min) · squawk · 호출부호가 `adsb_lol_region.json` 그대로, fixture 에 없는 값은 키 없음.
-  선박 376척 — 선수방위 511(133척) · 침로 360(25척) → 키 없음, SOG(kt) · 선수방위가 보고값 중 하나, ETA 월 0 · 일 0 · 시 24 · 분 60 → 그 칸만 없음(25척 상세), 크기(m) · 흘수(m) · 선명 그대로.
+  선박 376척 — 선수방위 511(133척) · 침로 360(25척) → 키 없음(SOG 102.3 은 fixture 484줄에 없어 `apps/collector/wakeline_collector/ais/parse.py` 의 `SOG_NA` 규칙으로만 확인), SOG(kt) · 선수방위가 보고값 중 하나, ETA 월 0 · 일 0 · 시 24 · 분 60 → 그 칸만 없음(25척 상세), 크기(m) · 흘수(m) · 선명 그대로.
   공개 응답의 ISO 시각 938개 모두 UTC `Z`(`reg_dt_kst` 같은 KST 필드는 이름이 밝힘 — 계약 v5 §G20). 웹의 선박 ETA KST 변환(`lib/ship-card.ts` `etaKst` — 2월 28일 · 29일 · 12월 31일 넘김)도 코드로 확인.
 - **알림 이력 쪽 넘김**: 3시간 창 706건을 limit 25(29쪽)와 limit 200(4쪽)으로 끝까지 — 겹침 · 빠짐 없음, id 내림차순, `entered_at` ∈ [from, to], hex 필터(대문자 입력) 정상.
 - **재생 · 통계**: 5분 전 → `source: track_point`, 항공기 89대 모두 at ± 3분 · bbox 안, radar 있음 / 3시간 전 radar null(RainViewer 2시간). 통계 기본 범위 KST 8일 · `day_zone: Asia/Seoul` · 오늘 `aggregated: false`.
