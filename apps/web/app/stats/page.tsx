@@ -1,20 +1,16 @@
 "use client";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { apiGet } from "@/lib/api";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { alertStats, sigmetStats, trafficStats, type StatsItems, type StatsRow, type TrafficStats } from "@/lib/endpoints/stats";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
-import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, trafficScopeLabel, type TrafficRegion } from "@/lib/chart";
+import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, trafficScopeLabel } from "@/lib/chart";
 import {
   aggregatedFlag, alertStatsRows, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState,
   statsZoneOk, todayKst, TRAFFIC_SOURCE, yesterdayKst, type StatsLoad, type StatsPanelState,
 } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
 import { KstTime } from "@/components/KstTime";
-
-type Row = { day: string; dim: string; value: number; metric?: string; hour?: string };
-type ItemsResp = { items: Row[]; aggregated?: unknown; day_zone?: unknown };
-type TrafficResp = ItemsResp & { scope?: string | null; region?: TrafficRegion | null };
 
 /**
  * 통계(FR-24): FIR별 SIGMET · 시간대별 트래픽 · 알림 건수. api 가 매일 03:30 KST 에 전날(KST 날짜)을 센다(계약 v5 §G20 — stats_daily 의 날 = KST 날짜).
@@ -29,21 +25,21 @@ type TrafficResp = ItemsResp & { scope?: string | null; region?: TrafficRegion |
  * 빈 상태 문구는 받은 응답에만. 패널마다 data-state(loading · ready · empty · error). SIGMET · 알림(최근 7일)은 한 번, 교통량은 날짜마다 받는다.
  */
 export default function StatsPage() {
-  const fir = useLoad<ItemsResp>("/api/v1/stats/sigmet?group=fir");
-  const haz = useLoad<ItemsResp>("/api/v1/stats/sigmet?group=hazard");
-  const alerts = useLoad<ItemsResp>("/api/v1/stats/alerts");
+  const fir = useLoad("fir", () => sigmetStats("fir"));
+  const haz = useLoad("hazard", () => sigmetStats("hazard"));
+  const alerts = useLoad("alerts", () => alertStats());
   /** 화면을 연 시각(서버 기준 추정) — 오늘·어제(KST 날짜 — 집계 단위) 계산용 */
   const [openedAt] = useState(() => serverNowMs(Date.now()));
   // 오늘은 아직 집계되지 않는다(매일 03:30 KST 에 전날을 집계) — 기본·최대는 어제(KST 날짜)
   const [day, setDay] = useState(() => yesterdayKst(openedAt));
-  // 날짜를 빨리 바꾸면 늦게 온 이전 날짜 응답은 버린다(useLoad — 주소가 바뀌면 그 응답을 쓰지 않는다)
-  const traffic = useLoad<TrafficResp>(`/api/v1/stats/traffic?day=${encodeURIComponent(day)}`);
+  // 날짜를 빨리 바꾸면 늦게 온 이전 날짜 응답은 버린다(useLoad — 열쇠가 바뀌면 그 응답을 쓰지 않는다)
+  const traffic = useLoad<TrafficStats>(`traffic|${day}`, () => trafficStats(day));
   // KST 날짜라고 밝힌 응답의 행만 — 밝히지 않은 응답은 그리지 않고 집계 여부도 모름으로 둔다(빈 상태가 "자료 없음" 으로 단정하지 않게)
-  const rowsOf = (l: StatsLoad<ItemsResp>): Row[] => (l.status === "loaded" && statsZoneOk(l.resp) ? l.resp.items : []);
+  const rowsOf = (l: StatsLoad<StatsItems>): StatsRow[] => (l.status === "loaded" && statsZoneOk(l.resp) ? l.resp.items : []);
   const agg = { fir: flagOf(fir.load), haz: flagOf(haz.load), traffic: flagOf(traffic.load), alerts: flagOf(alerts.load) };
   /** KST 날짜로 셌다고 밝히지 않은 응답(옛 api)이 있었는가 — 있으면 그 패널을 그리지 않고 위에서 한 번 말한다 */
   const zoneErr = [fir, haz, traffic, alerts].some((p) => zoneBad(p.load));
-  const top = (rows: Row[]) => { const m = new Map<string, number>(); for (const r of rows) m.set(r.dim, (m.get(r.dim) ?? 0) + Number(r.value)); return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 24); };
+  const top = (rows: StatsRow[]) => { const m = new Map<string, number>(); for (const r of rows) m.set(r.dim, (m.get(r.dim) ?? 0) + Number(r.value)); return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 24); };
   const firRows = rowsOf(fir.load), hazRows = rowsOf(haz.load), trafficRows = rowsOf(traffic.load);
   const hours = hourlyRowsKst(trafficRows, day);
   const t = traffic.load.status === "loaded" ? traffic.load.resp : null;
@@ -83,30 +79,32 @@ export default function StatsPage() {
 }
 
 /** 받은 응답의 집계 여부(R-45 aggregated) — KST 날짜로 셌다고 밝힌 응답만, 그 밖(받는 중 · 실패 · 옛 응답)은 undefined(모름) */
-function flagOf(l: StatsLoad<ItemsResp>): boolean | undefined {
+function flagOf(l: StatsLoad<StatsItems>): boolean | undefined {
   return l.status === "loaded" && statsZoneOk(l.resp) ? aggregatedFlag(l.resp) : undefined;
 }
 /** 받았지만 KST 날짜로 셌다고 밝히지 않은 응답(옛 api — UTC 날짜 집계) */
-function zoneBad(l: StatsLoad<ItemsResp>): boolean {
+function zoneBad(l: StatsLoad<StatsItems>): boolean {
   return l.status === "loaded" && !statsZoneOk(l.resp);
 }
 
 /**
- * 요청 하나의 받기 상태(패널마다 따로). 주소가 바뀌거나 다시 시도하면 새로 받고, 그동안은 곧바로 '받는 중'이다 — 끝난 결과는 그 요청의 열쇠(시도 번호 · 주소)와 함께
- * 두어, 열쇠가 다르면(이전 날짜 · 이전 시도) 쓰지 않는다. 늦게 온 이전 응답은 버린다.
+ * 요청 하나의 받기 상태(패널마다 따로). 열쇠(무엇을 받는가 — 패널 · 날짜)가 바뀌거나 다시 시도하면 새로 받고, 그동안은 곧바로 '받는 중'이다 — 끝난 결과는
+ * 그 요청의 열쇠(시도 번호 · 열쇠)와 함께 두어, 열쇠가 다르면(이전 날짜 · 이전 시도) 쓰지 않는다. 늦게 온 이전 응답은 버린다.
+ * request 는 그때의 열쇠로 부르는 lib/endpoints/stats 함수(렌더마다 새 함수여도 열쇠가 같으면 다시 받지 않는다).
  */
-function useLoad<T>(url: string): { load: StatsLoad<T>; retry: () => void } {
+function useLoad<T>(what: string, request: () => Promise<T>): { load: StatsLoad<T>; retry: () => void } {
   const [attempt, setAttempt] = useState(0);
-  const key = `${attempt}|${url}`;
+  const key = `${attempt}|${what}`;
   const [done, setDone] = useState<{ key: string; load: StatsLoad<T> } | null>(null);
+  const send = useEffectEvent(request);
   useEffect(() => {
     let live = true;
-    apiGet<T>(url).then(
+    send().then(
       (resp) => { if (live) setDone({ key, load: { status: "loaded", resp } }); },
       (error: unknown) => { if (live) setDone({ key, load: { status: "failed", error } }); },
     );
     return () => { live = false; };
-  }, [key, url]);
+  }, [key]);
   return { load: done?.key === key ? done.load : { status: "loading" }, retry: () => setAttempt((n) => n + 1) };
 }
 

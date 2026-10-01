@@ -261,7 +261,9 @@ describe("the page wires the loader: fetch gets the abort signal; user moves sup
   it("source check", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../app/replay/page.tsx", import.meta.url), "utf8");
-    expect(src).toMatch(/apiGet<ReplayFrame>\(replayApiPath\(r\), \{ signal \}\)/);
+    // 요청은 lib/endpoints/replay 의 replayFrame 이 보낸다(web-review §3.1) — 페이지는 로더의 signal 을 넘기고, 그 함수가 apiGet 에 그대로 넘긴다
+    expect(src).toMatch(/replayFrame\(r, \{ signal \}\)/);
+    expect(readFileSync(new URL("../lib/endpoints/replay.ts", import.meta.url), "utf8")).toMatch(/apiGet<ReplayFrame>\(replayApiPath\(r\), o\)/);
     expect(src).toMatch(/\.schedule\(\{ at, bbox \}, \{ supersede: !playingRef\.current \}\)/);
     expect(src).not.toMatch(/setTimeout\(\(\) => loader\.current\?\.request/); // 페이지의 따로 된 debounce 는 없앴다(로더 하나가 맡는다)
   });

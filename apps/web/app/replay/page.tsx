@@ -1,10 +1,10 @@
 "use client";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { replayFrame } from "@/lib/endpoints/replay";
 import {
-  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayApiPath, replayAtLabel, replayInspectorMiss, replayRange,
-  replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayFrame, type ReplayRange,
+  fromKstInput, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, replayAtLabel, replayInspectorMiss, replayRange,
+  replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
 import type { ReplayPick } from "@/components/ReplayMap";
@@ -45,7 +45,7 @@ export default function ReplayPage() {
   useEffect(() => { playingRef.current = playing; }, [playing]);
   useEffect(() => {
     const l = new ReplayLoader(
-      (r, signal) => apiGet<ReplayFrame>(replayApiPath(r), { signal }),
+      (r, signal) => replayFrame(r, { signal }),
       (e) => dispatch(e),
     );
     loader.current = l;

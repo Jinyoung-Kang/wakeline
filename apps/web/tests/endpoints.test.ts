@@ -15,6 +15,8 @@ import { searchAircraft, searchShips } from "@/lib/search";
 import { aircraftTrack, shipTrack } from "@/lib/endpoints/tracks";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { airportWx, sigmetInside, watchedAirports } from "@/lib/endpoints/weather";
+import { alertStats, sigmetStats, trafficStats } from "@/lib/endpoints/stats";
+import { replayFrame } from "@/lib/endpoints/replay";
 
 beforeEach(() => { rec.calls.length = 0; rec.body = undefined; rec.error = null; });
 const paths = () => rec.calls.map((c) => c.path);
@@ -112,5 +114,30 @@ describe("weather endpoints (lazy-only module)", () => {
     expect(paths()).toEqual(["/api/v1/sigmets/RKRR%201%232"]);
     rec.body = { aircraft_inside: "71be19" };
     expect(await sigmetInside("x")).toBeNull();
+  });
+});
+
+describe("stats endpoints", () => {
+  it("the four panel paths (the day is encoded); signal passed through; the body is returned as is", async () => {
+    const ctl = new AbortController();
+    rec.body = { items: [], day_zone: "Asia/Seoul" };
+    expect(await sigmetStats("fir", { signal: ctl.signal })).toEqual({ items: [], day_zone: "Asia/Seoul" });
+    await sigmetStats("hazard");
+    await alertStats();
+    await trafficStats("2026-09-27");
+    await trafficStats("x&y=1");
+    expect(paths()).toEqual(["/api/v1/stats/sigmet?group=fir", "/api/v1/stats/sigmet?group=hazard", "/api/v1/stats/alerts",
+      "/api/v1/stats/traffic?day=2026-09-27", "/api/v1/stats/traffic?day=x%26y%3D1"]);
+    expect((rec.calls[0].init as { signal: AbortSignal }).signal).toBe(ctl.signal);
+  });
+});
+
+describe("replay endpoint", () => {
+  it("replayApiPath (UTC instant, encoded bbox) with the loader's signal", async () => {
+    const ctl = new AbortController();
+    rec.body = { at: "2026-09-28T15:10:00Z", aircraft: [], sigmets: [], source: "track_point" };
+    await replayFrame({ at: Date.parse("2026-09-28T15:10:00Z"), bbox: "124,33,132,39" }, { signal: ctl.signal });
+    expect(paths()).toEqual(["/api/v1/replay?at=2026-09-28T15%3A10%3A00.000Z&bbox=124%2C33%2C132%2C39"]);
+    expect((rec.calls[0].init as { signal: AbortSignal }).signal).toBe(ctl.signal);
   });
 });
