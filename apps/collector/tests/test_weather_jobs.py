@@ -201,6 +201,36 @@ async def test_r42_radar_provider_failure_publishes_nothing_and_records_error():
     assert "radar_at" not in await r.hgetall("wakeline:collector")  # 실패한 주기는 heartbeat 를 쓰지 않는다
 
 
+async def test_radar_with_an_unexpected_tile_host_publishes_nothing_and_records_an_explicit_error():
+    """보안 검토 L-6: 허용하지 않은 타일 host(또는 path)면 아무것도 발행하지 않고(api 는 앞서 받은 프레임을 그대로 쓴다) 실행 'error' ·
+    공급자 last_error 에 까닭을 적는다."""
+    import httpx
+    import respx
+
+    from wakeline_collector.http import HttpClient
+    from wakeline_collector.jobs.weather import RadarJob
+    from wakeline_collector.providers.rainviewer import URL, RainViewerProvider
+    from wakeline_collector.publisher import STREAM_RADAR
+    from wakeline_collector.ratelimit import RateLimiter
+
+    body = orjson.loads((FIX / "rainviewer_weather_maps.json").read_bytes()) | {"host": "https://tiles.evil.example"}
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"rainviewer": 1000})
+    runs: list[dict] = []
+    ctx.db.record_run = lambda job, provider, started, **kw: runs.append(kw)  # type: ignore[method-assign]
+    http = HttpClient(RateLimiter(100, 100, {}))
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, json=body))
+        await RadarJob(RainViewerProvider(http), ctx).run_once()
+    await http.aclose()
+    assert STREAM_RADAR not in r.streams and ctx.db.names == []  # type: ignore[attr-defined]
+    ((run),) = runs
+    assert run["status"] == "error" and "unexpected rainviewer tile host 'https://tiles.evil.example'" in run["error_text"]
+    st = await r.hgetall("wakeline:provider:rainviewer")
+    assert st["consecutive_failures"] == "1" and "rainviewer tile host" in st["last_error"]
+    assert "radar_at" not in await r.hgetall("wakeline:collector")
+
+
 async def test_r42_metar_run_once_writes_airports_before_metar_and_isolates_bad_items():
     from wakeline_collector.jobs.weather import MetarJob
 
