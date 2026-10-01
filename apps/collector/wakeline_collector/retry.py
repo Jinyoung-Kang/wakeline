@@ -6,7 +6,7 @@ RainViewer)도 같은 규칙을 쓴다.
   등 — 은 다시 부르지 않는다.
 - 실패한 호출마다 한 번, RETRY_DELAY_S 뒤. 그 전에 예산 1 을 따로 예약한다(reserve) — 예약하지 못하면 다시 부르지 않는다(INFO 한 줄).
   기상 작업은 이 예약에 여유(headroom)를 둔다 — 남은 하루의 정규 주기 몫을 남기고만 다시 부른다(jobs/weather.py retry_headroom).
-- 보내지 않은 시도(NOT_SENT: http.NOT_SENT_ERRORS — 연결 전 실패 · 연결 풀 대기 초과 등 — 와 속도 상한 Throttled)는 시도마다
+- 보내지 않은 시도(NOT_SENT: http_errors.NOT_SENT_ERRORS — 연결 전 실패 · 연결 풀 대기 초과 등 — 와 속도 상한 Throttled)는 시도마다
   release() 로 예산 1 을 돌려준다(첫 시도 몫은 호출자가 예약한 것, 다시 부른 몫은 reserve 가 예약한 것). aircraft · route 작업과 같은
   규칙이다 — 연결조차 못 한 긴 장애에서 예산이 쌓여 바닥나지 않게. 보낸 뒤의 실패(읽기 시간 초과 · 전체 상한 RequestTimedOut ·
   프로토콜 오류)는 보낸 호출로 센다(과대 집계는 안전 쪽).
@@ -28,7 +28,8 @@ import httpx
 
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.errors import LIMIT, describe_error
-from wakeline_collector.http import NOT_SENT_ERRORS, classify_send
+from wakeline_collector.http import classify_send
+from wakeline_collector.http_errors import NOT_SENT_ERRORS
 from wakeline_collector.ratelimit import Throttled
 
 RETRY_DELAY_S = 5.0  # 일시 오류 뒤 다시 부르기 전 기다림(선택값). 다시 부르기는 실패한 호출마다 한 번

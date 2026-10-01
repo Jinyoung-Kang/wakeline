@@ -8,6 +8,7 @@ ProviderHttpError.pause_s 로 호출자에게 알린다(로그 · 실행 기록�
 본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
 속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
 크기 상한(http_max_bytes)은 푼 바이트로 잰다 — gzip · deflate 본문은 httpx 에 맡기지 않고 직접 풀며, 푸는 동안 상한 + 1 바이트에서 멈춘다(_Inflate).
+실패의 종류(HostNotAllowed · ProviderHttpError · NOT_SENT_ERRORS …)는 순수 모듈 http_errors 에 있고 여기서 같은 이름으로 다시 내보낸다.
 """
 
 from __future__ import annotations
@@ -24,6 +25,14 @@ from urllib.parse import urlparse
 import httpx
 
 from wakeline_collector.config import Settings, settings
+from wakeline_collector.http_errors import NOT_SENT_ERRORS as NOT_SENT_ERRORS
+from wakeline_collector.http_errors import NOT_SENT_LOCAL as NOT_SENT_LOCAL
+from wakeline_collector.http_errors import HostNotAllowed as HostNotAllowed
+from wakeline_collector.http_errors import PreSendFailed as PreSendFailed
+from wakeline_collector.http_errors import ProviderHttpError as ProviderHttpError
+from wakeline_collector.http_errors import RequestTimedOut as RequestTimedOut
+from wakeline_collector.http_errors import ResponseTooLarge as ResponseTooLarge
+from wakeline_collector.http_errors import SendCancelled as SendCancelled
 from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, Throttled, default_limiter
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
@@ -49,61 +58,6 @@ ALLOWED_HOSTS = frozenset(
 # 부르는 인코딩이 늘지 않게 적어 둔다
 ACCEPT_ENCODING = "gzip, deflate"
 
-
-class HostNotAllowed(RuntimeError):
-    pass
-
-
-class ResponseTooLarge(RuntimeError):
-    pass
-
-
-class SendCancelled(RuntimeError):
-    """보내기 직전 확인(before_send)이 거절했다 — 요청을 보내지 않았다."""
-
-
-class RequestTimedOut(httpx.TimeoutException):
-    """요청 전체 시간 상한(total_s)을 넘었다. 보낸 뒤일 수 있으므로 보낸 호출로 센다(NOT_SENT_ERRORS 에 넣지 않는다)."""
-
-
-class ProviderHttpError(RuntimeError):
-    def __init__(
-        self,
-        status: int,
-        body_head: str,
-        headers: dict[str, str] | None = None,
-        latency_ms: int | None = None,
-        pause_s: float | None = None,
-    ):
-        super().__init__(f"HTTP {status}: {body_head[:200]}")
-        self.status = status
-        self.body_head = body_head[:200]  # 오류 응답의 모양 판별용(예: adsbdb 404 "unknown callsign")
-        self.headers = headers or {}
-        self.latency_ms = latency_ms
-        self.pause_s = pause_s  # 429 로 그 호스트를 막은 초(RateLimiter.penalize 의 반환값). 429 가 아니면 None
-
-
-class PreSendFailed(RuntimeError):
-    """요금이 드는 요청 앞의 준비 호출(OpenSky 토큰 발급)이 실패해 그 요청을 보내지 않았다 — 예산은 돌려주고, 공급자 실패로는 센다(classify_send).
-    status = 준비 호출의 HTTP 상태(있으면 — 호출자가 429 · 401 을 그대로 다룬다)."""
-
-    def __init__(self, step: str, error: BaseException) -> None:
-        super().__init__(f"{step} failed: {type(error).__name__}: {error}")
-        self.step, self.error = step, error
-        self.status = error.status if isinstance(error, ProviderHttpError) else None
-
-
-# 우리 쪽 까닭으로 보내지 않았다(허용 호스트 아님 · 보내기 직전 취소 · URL · 연결 풀 대기 초과 · 프록시) — 공급자 실패가 아니다(classify_send)
-NOT_SENT_LOCAL: tuple[type[Exception], ...] = (
-    HostNotAllowed,
-    SendCancelled,
-    httpx.InvalidURL,
-    httpx.UnsupportedProtocol,
-    httpx.PoolTimeout,
-    httpx.ProxyError,
-)
-# 요청을 보내기 전에 난 실패(보내지 않았다 → 호출자는 예산을 되돌린다). 쓰기·읽기 도중 실패는 보낸 것으로 친다(과대 집계는 안전 쪽).
-NOT_SENT_ERRORS: tuple[type[Exception], ...] = (*NOT_SENT_LOCAL, httpx.ConnectError, httpx.ConnectTimeout, PreSendFailed)
 
 SendOutcome = Literal["sent", "failed_before_send", "not_sent", "throttled"]
 

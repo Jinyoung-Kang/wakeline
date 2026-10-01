@@ -38,6 +38,7 @@ RULE_FEATURES: dict[str, str] = {
     "masking": KERNEL,
     "gz": KERNEL,
     "errors": KERNEL,
+    "http_errors": KERNEL,
     "retry": KERNEL,
     "fallback": KERNEL,
     "ratelimit": KERNEL,
@@ -102,7 +103,6 @@ AIS_SHARED = {"geo", "masking", "logsink", "publisher", "redis_retry"}
 # 오늘의 위반(collector-review §1.4 의 1 · 2 · 3 · 4 · 6 — PLAN §2.4 의 '6곳', retry 는 import 둘) — (import 하는 모듈, import 되는 것, 규칙).
 # 고치면 지운다(PLAN Phase 3B).
 ALLOWED: set[tuple[str, str, str]] = {
-    ("errors", "http", "layer"),  # 3B-1 http_errors 로 뗀다
     ("retry", "http", "layer"),  # 3B-1 NOT_SENT_ERRORS 를 http_errors 로
     ("retry", "budget", "layer"),  # budget.UNKNOWN 하나 때문
     ("fallback", "status", "layer"),  # 3B-7 chain_state — 판정 상태기계가 Redis 어댑터를 품는다
