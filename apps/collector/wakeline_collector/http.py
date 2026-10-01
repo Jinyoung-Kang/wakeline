@@ -124,6 +124,21 @@ def _retry_after_s(headers: dict[str, str], now: datetime | None = None) -> floa
     return left if left > 0 else None
 
 
+def _redirect_target(location: str, host: str) -> str:
+    """3xx 오류 글자에 싣는 Location 의 호스트 — 경로 · 쿼리는 싣지 않는다(키가 있을 수 있다). 상대 Location(스킴 · 호스트 없음)은 요청 URI 에 맞춰
+    풀리므로(RFC 9110 §10.2.2) 요청 호스트와 '상대'라고 적는다 — 전에는 hostname 이 None 이라 '(no Location)' 으로 적혀 Location 이 있었다는 것을
+    숨겼다(CTO 리뷰 2026-10). '//host/…'(호스트가 있는 상대 참조)는 그 호스트."""
+    loc = location.strip()
+    if not loc:
+        return "(no Location)"
+    p = urlparse(loc)
+    if p.hostname:
+        return p.hostname
+    if not p.scheme and not p.netloc:
+        return f"{host} (relative Location — same host)"
+    return "(Location without a host)"  # 스킴은 있는데 호스트가 없다(예: 'https:///…') — 같은 호스트라고 하지 않는다
+
+
 def build_limiter(s: Settings) -> RateLimiter:
     """설정의 속도 상한(수집기 전체 · 호스트 버킷)으로 만든 RateLimiter — 수집기 main() 과 HttpClient() 의 기본값이 같은 함수를 쓴다
     (리뷰 2026-09-30: main.py 가 kma_apihub_rps 를 넘기지 않아 설정을 바꿔도 기본 0.5 였다)."""
@@ -196,8 +211,8 @@ class HttpClient:
         pause = self.limiter.penalize(host, _retry_after_s(headers)) if status == 429 else None
         if 300 <= status < 400:
             # 리다이렉트는 따라가지 않는다(허용 호스트 — 위). 성공으로 해석기에 넘기면 'JSON 아님' · '모양 이상'으로 적혀 까닭을 숨겼다(F11) — HTTP 오류로.
-            # 본문 대신 Location 의 호스트만 싣는다(경로 · 쿼리에 키가 있을 수 있다)
-            target = urlparse(headers.get("location", "")).hostname or "(no Location)"
+            # 본문 대신 Location 의 호스트만 싣는다(경로 · 쿼리에 키가 있을 수 있다 — _redirect_target)
+            target = _redirect_target(headers.get("location", ""), host)
             raise ProviderHttpError(status, f"redirect to {target} — not followed", headers, latency)
         if status >= 400:
             raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency, pause)
