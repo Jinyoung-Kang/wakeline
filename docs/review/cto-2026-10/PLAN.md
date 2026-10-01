@@ -1,7 +1,8 @@
 # Wakeline 코드 리뷰 결과와 개선 계획 (2026-10-01)
 
 - 기준 커밋: `main` `e0e1eba` — 작업 브랜치 `review/cto-2026-10`
-- 상태: **계획 — 승인 대기**. 승인 전에는 코드를 바꾸지 않는다.
+- 상태: **완료**(2026-10-02). 2026-10-01 승인 — §5 의 결정 여덟 가지 모두 권장안. 결과와 증거: [VERIFICATION #97–#102](../../VERIFICATION.md) · [PERF](../../PERF.md) §11–§13 ·
+  [ADR-017 §6](../../adr/ADR-017-review-v1-contract-changes.md) · [ADR-028](../../adr/ADR-028-api-package-boundaries.md) · [ADR-029](../../adr/ADR-029-web-data-access.md) · [ADR-030](../../adr/ADR-030-collector-layering.md). 아래는 승인 때의 계획 그대로다(기준 `e0e1eba` 의 파일:줄).
 - 근거 원문(영어, 파일:줄 · 재현 테스트 · 측정값 포함):
   [api-review.md](api-review.md) · [web-review.md](web-review.md) · [collector-review.md](collector-review.md) · [security-review.md](security-review.md)
 
