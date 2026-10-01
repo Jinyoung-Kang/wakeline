@@ -16,18 +16,19 @@ from test_traffic_grid_job import CELLS, FakeWfs, setup
 from test_traffic_grid_tile_job import FAR, GridWfs, home, start
 from wfs_tiles import FakeGrid
 
+from wakeline_collector import traffic_grid_plan as plan
 from wakeline_collector.grid_tiles import Tile
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs import traffic_grid as tg
-from wakeline_collector.jobs.traffic_grid import _Tick
 from wakeline_collector.marine_grid import WfsResult
+from wakeline_collector.traffic_grid_plan import Tick as _Tick
 
 BOOM = ProviderHttpError(502, "bad gateway")
 LADDER_S = [300, 600, 1800, 3600, 3600, 3600]  # 쉼마다(처음부터) — 1시간에서 멈춘다
 
 
 def test_the_ladder_settings():
-    assert tg.FILL_BREAKER_ERRORS == 3 and tg.FILL_PAUSE_S == (300, 600, 1800, 3600)
+    assert tg.FILL_BREAKER_ERRORS == 3 and plan.FILL_PAUSE_S == (300, 600, 1800, 3600)
 
 
 def test_one_id_lookup_breaker_climbs_5_10_30_60_min_and_stops_the_tick():

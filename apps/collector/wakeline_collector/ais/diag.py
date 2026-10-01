@@ -22,103 +22,31 @@
   루프 건강 신호다 — 잰 최악 0.1 s 의 50배). WARN_EVERY_S 60 s 에 1번까지(수는 모두 센다 — 로그 화면이 한 번의
   긴 멈춤을 되풀이로 덮지 않게).
 이 고른 값들은 상태 해시(loop_tick_s · loop_stall_s · loop_warn_s · loop_warn_every_s · diag_window_s)에 실어 읽는 쪽이 들고 있지 않게 한다.
+WindowMax · LoopLag 와 고른 값은 수집기와 함께 쓰는 diag 모듈에 있고 여기서 다시 내보낸다(LoopLag 은 ais 의 WARN 글 · 로거를 붙인 것).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import math
-import time
-from collections import deque
-from collections.abc import Callable
+from typing import Any
+
+from wakeline_collector.diag import BUCKET_S as BUCKET_S
+from wakeline_collector.diag import DIAG_WINDOW_S as DIAG_WINDOW_S
+from wakeline_collector.diag import LOOP_STALL_S as LOOP_STALL_S
+from wakeline_collector.diag import LOOP_TICK_S as LOOP_TICK_S
+from wakeline_collector.diag import LOOP_WARN_S as LOOP_WARN_S
+from wakeline_collector.diag import WARN_EVERY_S as WARN_EVERY_S
+from wakeline_collector.diag import LoopLag as SharedLoopLag
+from wakeline_collector.diag import WindowMax as WindowMax
 
 log = logging.getLogger("ais.diag")
 
-DIAG_WINDOW_S = 60.0
-BUCKET_S = 5.0
-LOOP_TICK_S = 0.5
-LOOP_STALL_S = 1.0
-LOOP_WARN_S = 5.0
-WARN_EVERY_S = 60.0
+# ais 의 루프 멈춤 WARN 이 덧붙이는 말 — 그동안 무엇이 멈췄고 무엇이 날 수 있는지(위 1)
+STALL_CONTEXT = "nothing was read meanwhile; a keepalive ping outstanding across a stall longer than its timeout can end in 1011"
 
 
-class WindowMax:
-    """최근 window_s 초의 최댓값. bucket_s 칸마다 최댓값 하나만 둔다(칸 수로 메모리 고정). 표본이 없으면 None(모름)."""
+class LoopLag(SharedLoopLag):
+    """ais 프로세스의 루프 지연(diag.LoopLag) — WARN 은 1011 맥락을 붙여 ais.diag 로거로(로그 지문이 공유 전과 같다)."""
 
-    __slots__ = ("window_s", "bucket_s", "_mono", "_buckets")
-
-    def __init__(
-        self, window_s: float = DIAG_WINDOW_S, bucket_s: float = BUCKET_S, *, mono: Callable[[], float] = time.monotonic
-    ) -> None:
-        if not (0 < bucket_s <= window_s):
-            raise ValueError("need 0 < bucket_s <= window_s")
-        self.window_s, self.bucket_s, self._mono = window_s, bucket_s, mono
-        self._buckets: deque[list[float]] = deque(maxlen=math.ceil(window_s / bucket_s) + 1)  # [칸 시작, 최댓값]
-
-    def add(self, value: float) -> None:
-        now = self._mono()
-        start = now - now % self.bucket_s
-        b = self._buckets
-        if b and b[-1][0] == start:
-            if value > b[-1][1]:
-                b[-1][1] = value
-        else:
-            b.append([start, value])
-
-    def value(self) -> float | None:
-        cutoff = self._mono() - self.window_s - self.bucket_s  # 칸 시작 기준 — 창 안에 조금이라도 걸친 칸까지
-        best: float | None = None
-        for start, m in self._buckets:
-            if start > cutoff and (best is None or m > best):
-                best = m
-        return best
-
-
-class LoopLag:
-    """이벤트 루프 지연: tick_s 마다 잠들고, 늦게 깬 만큼(실제 경과 − tick_s)을 표본으로 둔다. 프로세스에 하나(구역이 모두 같은 루프)."""
-
-    def __init__(
-        self,
-        *,
-        tick_s: float = LOOP_TICK_S,
-        stall_s: float = LOOP_STALL_S,
-        warn_s: float = LOOP_WARN_S,
-        warn_every_s: float = WARN_EVERY_S,
-        mono: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self.tick_s, self.stall_s, self.warn_s, self.warn_every_s = tick_s, stall_s, warn_s, warn_every_s
-        self._mono = mono
-        self.window = WindowMax(mono=mono)
-        self.stalls = 0  # 누적(프로세스 시작 이후): 지연 ≥ stall_s 인 표본 수
-        self._last_warn = float("-inf")
-
-    def observe(self, lag_s: float) -> None:
-        self.window.add(lag_s)
-        if lag_s >= self.stall_s:
-            self.stalls += 1
-        if lag_s >= self.warn_s:
-            now = self._mono()
-            if now - self._last_warn >= self.warn_every_s:
-                self._last_warn = now
-                log.warning(
-                    "ais event loop was blocked for %.1f s — nothing was read meanwhile; a keepalive ping outstanding across a stall "
-                    "longer than its timeout can end in 1011 (%d stall(s) >= %g s since start)",
-                    lag_s,
-                    self.stalls,
-                    self.stall_s,
-                )
-
-    def max_s(self) -> float | None:
-        return self.window.value()
-
-    async def run(self) -> None:
-        """취소될 때까지. 한 표본의 예상 밖 오류는 남기고 계속 잰다(진단이 수신을 멈추지 않게 — main 은 이 태스크의 죽음을 기다리지 않는다)."""
-        loop = asyncio.get_running_loop()
-        while True:
-            t0 = loop.time()
-            await asyncio.sleep(self.tick_s)
-            try:
-                self.observe(max(0.0, loop.time() - t0 - self.tick_s))
-            except Exception:  # noqa: BLE001 — 진단 오류로 태스크가 조용히 멈추지 않게(ERROR 로 남기고 계속)
-                log.exception("ais loop lag sample failed")
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(label="ais", context=STALL_CONTEXT, logger=log, **kw)

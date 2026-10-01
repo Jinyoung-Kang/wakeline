@@ -47,9 +47,9 @@ from wakeline_collector.publisher import (
     STREAM_BUDGET_BYTES,
     STREAM_RETENTION_S,
     STREAM_SHIPS,
-    Publisher,
     StreamTrim,
-    _size,
+    entry_size,
+    envelope,
     limit_fields,
 )
 
@@ -104,7 +104,6 @@ class AisSink:
         self._redact = redact or (lambda s: mask(s) or "")
         self._wall, self._mono = wall, mono
         self._log_metrics = log_metrics or (lambda: sink_metrics(None))  # 싱크가 없으면 빈 값(모름) — 지난 실행의 값도 덮는다
-        self._env = Publisher(redis)  # envelope 형식(gzip+base64 JSON)만 빌려 쓴다 — 이 Publisher 의 로컬 큐는 쓰지 않는다
         # 선박 스트림은 시간으로 자른다(R-14: 2.5 h, 바이트 예산 — publisher.py 설명). 이 프로세스가 유일한 발행자다.
         self._trim = StreamTrim(STREAM_RETENTION_S, STREAM_BUDGET_BYTES[STREAM_SHIPS], clock=lambda: self._wall())
         self._last_warn = 0.0
@@ -174,7 +173,7 @@ class AisSink:
                 "part": i + 1,
                 "parts": parts,
             }
-            env = self._env.envelope(
+            env = envelope(
                 kind="ships",
                 scope="ships",
                 provider=self.provider,
@@ -200,7 +199,7 @@ class AisSink:
         return sent
 
     async def _xadd(self, env: dict[str, str]) -> None:
-        size = _size(env)
+        size = entry_size(env)
         args = self._trim.xadd_args(size)
         await self._r.xadd(STREAM_SHIPS, env, **args)  # type: ignore[arg-type]
         self._trim.record(size, args)
@@ -229,7 +228,7 @@ class AisSink:
         n = 0
         while pending:
             ev = pending[0]
-            env = self._env.envelope(
+            env = envelope(
                 kind="ais_gap",
                 scope="ships",
                 provider=self.provider,

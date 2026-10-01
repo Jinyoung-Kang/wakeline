@@ -20,7 +20,7 @@ import re
 
 import httpx
 
-from wakeline_collector.http import ProviderHttpError, RequestTimedOut
+from wakeline_collector.http_errors import ProviderHttpError, RequestTimedOut
 from wakeline_collector.masking import mask
 
 BODY_HEAD = 120  # HTML 이 아닌 오류 본문에서 덧붙이는 앞부분 글자 수

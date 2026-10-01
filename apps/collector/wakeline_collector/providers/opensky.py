@@ -11,8 +11,9 @@ from datetime import datetime
 
 import orjson
 
-from wakeline_collector.http import HttpClient, PreSendFailed, ProviderHttpError, classify_send
+from wakeline_collector.http import HttpClient, PreSendFailed, ProviderHttpError
 from wakeline_collector.models import BudgetInfo, ProviderResult
+from wakeline_collector.send_outcome import classify_send
 
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"  # noqa: S105 — URL, not a secret
 STATES_URL = "https://opensky-network.org/api/states/all"

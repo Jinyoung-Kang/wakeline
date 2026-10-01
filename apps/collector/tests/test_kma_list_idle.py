@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from test_kma_missing import KST, OutageKma, _infos, _warns, make_env
 
+from wakeline_collector import kma_rules
 from wakeline_collector.models import ProviderResult
 
 
@@ -745,7 +746,7 @@ async def test_a_utc_day_of_slow_streak_checks_where_every_first_attempt_times_o
             checks_after_midnight += 1
             assert prov.days.count("20260930") == 2, t  # 확인에 필요한 전날 목록 — 첫 시도 시간 초과 뒤 다시 불러 읽었다
     used = (await ctx.budget.usage("kma_radar"))[0] - before
-    assert mod.streak_calls_per_day(300, slow=True, retries=True) == (96 * 3 + 1) * 2 == 578
+    assert kma_rules.streak_calls_per_day(300, slow=True, retries=True) == (96 * 3 + 1) * 2 == 578
     assert used <= 578 < 1000
     assert checks_after_midnight == 36  # 00:00–08:45 KST 15분마다 — 한 번도 잃지 않았다
 

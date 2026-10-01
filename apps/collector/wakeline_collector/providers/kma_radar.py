@@ -11,23 +11,17 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
 
 from wakeline_collector.http import HttpClient
 from wakeline_collector.models import ProviderResult
 
 LIST_URL = "https://apihub.kma.go.kr/api/typ01/url/rdr_cmp_file_list.php"
 FILE_URL = "https://apihub.kma.go.kr/api/typ04/url/rdr_cmp_file.php"
-KST = timedelta(hours=9)
 KMA_TOTAL_S = 40.0  # 요청 전체 상한(R-67) — 바이너리(약 1 MB) 실측 최대 25 s
 # 읽기 제한(청크 사이 기다림)은 KMA 호출만 15 s — 선택값이다(KMA 응답 간격을 잰 값이 아니다). 기본 8 s(settings.http_timeout_s)에서
 # 'ReadTimeout' 이 잦았다(운영 로그 2026-09-29: 5분 주기 약 27회 중 약 7회). 전체 상한 KMA_TOTAL_S 는 그대로 둔다.
 KMA_READ_S = 15.0
 _LINE = re.compile(r"RDR_CMP_([A-Z]+)_([A-Z]+)_(\d{12})\.bin\.gz")
-
-
-def kst_now(now_utc: datetime | None = None) -> datetime:
-    return (now_utc or datetime.now(UTC)) + KST
 
 
 def parse_file_list(text: str, cmp: str) -> list[str]:

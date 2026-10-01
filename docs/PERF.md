@@ -302,6 +302,61 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 - 스토어 변경 한 번에 약 1.5 µs — 같은 변경에 상태 바 한 번 다시 그리기가 0.12 ms(web-review §4 P6)라 그 1 % 남짓이다. 줄일 것이 없다고 보고 **바꾸지 않았다**
   (계획 Phase 4: 이득이 측정되지 않으면 하지 않는다). 재현: `cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts`.
 
+## 12. 수집기 — 구조 개선 · Phase 4(2026-10-01, CTO 리뷰 collector-review §4 · PLAN Phase 3B/4)
+
+이 기계(M1 · CPython 3.13 · 스택 없이 — 외부 호출 · Redis 없음). 스크립트는 `apps/collector/tests/perf/`(pytest 가 모으지 않는다), 시험은 `apps/collector/tests/`.
+
+**공급자 체인의 운영자 끔 읽기(PLAN 3B-7)** — `tests/perf/chain_disabled_reads.py`: 가짜 상태의 읽기 하나가 50 ms 를 기다린다(Redis 가 멈춘 동안
+AUX_TIMEOUT_S 1.5 s 로 끊기는 HGET 의 모형). 관심 지역 체인(공급자 a · b), 다섯 번의 가운데 값.
+
+| 주기 | 전(`9394300`): 읽기 · 기다림 | 뒤: 읽기 · 기다림 |
+|---|---|---|
+| normal(pick — a) | 1 · 51.0 ms(1.02 번) | 2 · 51.3 ms(1.03 번) |
+| first_disabled(운영자가 a 를 껐다 — b) | 2 · 102.4 ms(2.05 번) | 2 · 51.2 ms(1.02 번) |
+| after_429(pick a → 429 → peek b) | 3 · 153.3 ms(3.07 번) | 2 · 51.3 ms(1.03 번) |
+
+뒤: pick 이 설정된 후보의 운영자 끔을 함께(`asyncio.gather`) 한 번 읽고 같은 주기의 peek 은 그것을 다시 쓴다. Redis 가 멈추면 429 주기의 읽기 기다림이
+최악 약 4.6 s → 1.5 s(1.5 s × 3 → × 1). 평상시에는 HGET 이 주기당 1 → 2(함께 — 기다림은 같다). 고르는 결과는 같다(test_fallback · test_chain_store ·
+test_aircraft_job 그대로 통과).
+
+**수집기 이벤트 루프 지연 지표(D0 — PLAN Phase 4-1)** — `tests/perf/loop_lag_sampling.py`: 수집기 heartbeat 의 loop_lag_max_s · loop_stalls_total · loop_tick_s
+(diag.LoopLag — ais 와 같은 측정)의 표본 간격을 골랐다. 표본기는 늦게 깬 만큼을 재므로 막힘이 깨는 순간에 걸려야 보인다.
+
+| 표본 간격 | 표본기 비용(빈 루프) | 20 ms 막힘이 약 0.5 s 마다 — 60 s 창의 최댓값(씨앗 셋) | 약 5 s 마다(demand focus 주기 모형) |
+|---|---|---|---|
+| 0.5 s(ais) | 0.26 CPU ms/s | 37.0 · 19.9 · 20.1 ms | 7.2 · 7.3 · 17.1 ms |
+| 0.1 s(수집기 — 고른 값) | 1.23–1.51 CPU ms/s | 19.1 · 24.1 · 21.0 ms | 13.5 · 10.2 · 28.5 ms |
+
+드문 막힘은 0.5 s 간격이면 막힌 길이의 일부만 보였다. 20 ms 를 넘는 값은 이 기계의 다른 일(개발 스택)이 더한 지연이다 — 운영에서도 지표는 루프가 실제로
+겪은 지연이다. 0.1 s 의 비용은 한 코어의 약 0.15 %.
+
+**기상청 레이더 격자의 정수 임계값(D3 · collector-review F9 — PLAN Phase 4-2)** — `tests/perf/kma_render.py`: 실제 헤더(2305 × 2881)에 합성 격자(시험의
+synthetic_grid(1)), 운영 폭 1152. 세 번 돌린 값.
+
+| | 전(`4a0fede` — float32 임계값) | 뒤(정수 임계값 dbz_threshold) |
+|---|---|---|
+| render_mercator_png 한 번 | 182–216 ms · 최고점 +73.4 MiB | 167–178 ms · 최고점 +23.3 MiB |
+| 에코 셀 수 식만(참고) | float32 16.4–32.5 ms · +57.0 MiB | int16 4.6–8.1 ms · +12.7 MiB(같은 수 659,549) |
+
+같은 결과: 모든 int16 값에서 정수 비교 = 실수 식(색 구간 · min_dbz · 경계 근처 · 범위 밖 23가지 — test_kma_grid_output), 합성 격자 세 개의 PNG
+바이트 · echo_cells · observed_cells 가 전과 같다(같은 시험의 고정값). 해석은 전용 스레드에서 돌므로(_DECODE_POOL) 이벤트 루프가 아니라 프레임당
+CPU 와 수집기 RSS 최고점(컨테이너 512 MiB)이 준다.
+
+**수요 추적의 루프 위 정규화(D2 — PLAN Phase 4, collector-review §4 P2)** — `tests/perf/demand_on_loop.py`: 응답 하나 → normalize.readsb_batch(정규화 +
+게이트) → hot_payload + envelope(orjson · gzip · base64). 항공기는 fixtures/adsb_lol_region.json(127대)의 hex 를 바꿔 늘렸고 응답 시각을 지금으로 옮겨
+모두 게이트를 지난다(그러지 않으면 낡은 위치로 모두 버려 일을 적게 잰다). 100번씩, 세 번 돌린 범위. 루프 지연 = 1 ms 표본기가 본 늦음.
+
+| 항공기 | 일 한 번 p50 · p99 | 루프 위(지금): 지연 p99 · 최대 | 전용 스레드 하나: 지연 p99 · 최대 |
+|---|---|---|---|
+| 127 | 2.0–2.1 · 3.9–7.7 ms | 1.8–3.6 · 2.2–6.7 ms | 2.2–6.7 · 3.9–8.0 ms |
+| 300 | 4.6–5.3 · 5.9–14.6 ms | 6.2–6.3 · 9.2–26.5 ms | 4.5–5.0 · 4.8–14.4 ms |
+| 600 | 9.5–9.8 · 23.4–27.5 ms | 10.6–10.9 · 12.3–17.0 ms | 8.5–8.9 · 19.8–21.7 ms |
+
+결정: **옮기지 않는다**(계획의 조건 — 루프 지연 20 ms 이상 — 에 닿지 않는다). 루프 지연 p99 는 600대에서도 약 11 ms 이고, 스레드로 옮겨도 p99 가 거의 같고
+최대는 오히려 같거나 컸다 — 일이 순수 파이썬(pydantic)이라 GIL 을 5 ms 마다 넘겨받아도 루프가 함께 기다린다(전세계 정규화의 15–19 ms 와 같은 까닭).
+focus 는 한 번에 50대 이하, hot 셀은 관심 지역 전체 고정본(127대)보다 작다. 덧붙여 hot 셀은 셀마다 태스크라 스레드로 옮기면 공유 게이트(hot_gate)를
+잠가야 한다. 운영에서 heartbeat loop_lag_max_s 가 20 ms 를 자주 넘으면 다시 본다(그때는 게이트 정규화를 덜 쓰는 쪽 — 리뷰 §4 P1 의 'dict 를 바로 만든다').
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -312,4 +367,8 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts tests/perf-alert-panel.test.ts tests/perf-search-clock.test.ts -t measure)   # §11 웹 렌더 작업(시간)
 (cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts)                                                              # §11 P6(범례 선택자)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
+(cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §11 공급자 체인의 운영자 끔 읽기(스택 없이)
+(cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
+(cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §11 기상청 격자 해석 · PNG 시간 · 최고 메모리
+(cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §11 수요 추적의 루프 위 정규화(루프 위 · 스레드)
 ```

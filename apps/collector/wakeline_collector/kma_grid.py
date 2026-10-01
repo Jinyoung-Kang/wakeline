@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import io
+import math
 import struct
 import zlib
 from dataclasses import dataclass
@@ -183,6 +184,22 @@ def _pixel_map(nx: int, ny: int, width: int) -> _PixelMap:
     return _PixelMap(height, inside, flat_idx)
 
 
+def dbz_threshold(min_dbz: float) -> int:
+    """격자 값(dBZ×100, int16) v 가 'float32(v) / 100 ≥ min_dbz' 인 가장 작은 v — 정수 비교 grid ≥ 이 값이 그 실수 식과 같은 칸을 고른다
+    (collector-review F9: 실수 식은 격자 전체를 float32 로 두 번 복사했다 — 2305 × 2881 에서 +57 MiB). ⌈min_dbz × 100⌉ 에서 시작해 실수 식(float32 —
+    전과 같은 계산)으로 경계를 한 칸씩 확인하므로 어떤 min_dbz 에서도 같다. 어느 int16 도 넘지 못하면 32768."""
+
+    def meets(v: int) -> bool:
+        return bool(np.float32(v) / np.float32(100.0) >= np.float32(min_dbz))
+
+    t = max(-32768, min(32768, math.ceil(min_dbz * 100)))
+    while t > -32768 and meets(t - 1):
+        t -= 1
+    while t <= 32767 and not meets(t):
+        t += 1
+    return t
+
+
 def render_mercator_png(
     h: Header, grid: np.ndarray, width: int = 1152, min_dbz: float = 5.0, mask_alpha: int = 22
 ) -> tuple[bytes, dict]:
@@ -199,9 +216,9 @@ def render_mercator_png(
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
     observed = vals > NULL_OUTSIDE  # 관측 반경 안(에코 없음 포함)
     rgba[observed] = (90, 90, 90, mask_alpha)
-    dbz = vals.astype(np.float32) / 100.0
+    floor = dbz_threshold(min_dbz)  # 정수 임계값(dbz_threshold) — 실수 식과 같은 픽셀, float32 복사 없이
     for lo, color in DBZ_STOPS:
-        rgba[(dbz >= lo) & (dbz >= min_dbz)] = color
+        rgba[vals >= max(dbz_threshold(lo), floor)] = color
     img = Image.fromarray(rgba, "RGBA")
     out = io.BytesIO()
     img.save(out, format="PNG", compress_level=6)  # optimize=True 는 프레임당 수백 ms 를 더 쓴다
@@ -217,7 +234,7 @@ def render_mercator_png(
         "grid": {"nx": h.nx, "ny": h.ny, "res_m": RES_M, "ref": [REF_COL, REF_ROW]},
         "min_dbz": min_dbz,
         "legend": [[lo, list(c[:3])] for lo, c in DBZ_STOPS],
-        "echo_cells": int(((grid > DISPLAY_MIN) & (grid.astype(np.float32) / 100.0 >= min_dbz)).sum()),
+        "echo_cells": int(((grid > DISPLAY_MIN) & (grid >= floor)).sum()),
         "observed_cells": int((grid > NULL_OUTSIDE).sum()),
     }
     return out.getvalue(), meta

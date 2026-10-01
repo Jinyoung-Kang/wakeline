@@ -25,13 +25,14 @@ from wakeline_collector.budget import UNKNOWN, regular_headroom
 from wakeline_collector.errors import describe_error
 from wakeline_collector.flight_category import assess_ceiling, flight_category, parse_visibility_sm
 from wakeline_collector.geo import boxes_around
-from wakeline_collector.http import ProviderHttpError, classify_send
+from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import Sigmet
 from wakeline_collector.publisher import STREAM_RADAR, STREAM_SIGMET, decode_payload
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import CallFailed, call_retry_once
+from wakeline_collector.send_outcome import classify_send
 from wakeline_collector.sigmet_parse import parse_airsigmet, parse_isigmet
 
 log = logging.getLogger("job.weather")
@@ -108,7 +109,7 @@ async def _guard(ctx: JobContext, job: str, provider: str, cost: int, coro_facto
         kind = classify_send(f.error)
         first_failed = f.first is not None and classify_send(f.first[0]) in ("sent", "failed_before_send")
         if kind in ("throttled", "not_sent") and not first_failed:
-            # 보내지 않았다(속도 상한 · 우리 쪽 까닭 — http.classify_send, R-65): 공급자 실패가 아니다 — 공급자 last_error · 연속 실패 수에 넣지 않는다.
+            # 보내지 않았다(속도 상한 · 우리 쪽 까닭 — classify_send, R-65): 공급자 실패가 아니다 — 공급자 last_error · 연속 실패 수에 넣지 않는다.
             # 예산은 _call 이 돌려줬다. 429 쿨다운 때문이면 INFO(429 를 받은 쪽이 이미 알렸다)
             why = f.detail()
             status = "throttled" if kind == "throttled" else "error"

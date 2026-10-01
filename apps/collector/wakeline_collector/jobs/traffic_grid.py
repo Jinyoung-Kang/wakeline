@@ -68,12 +68,10 @@ PUBLISH_DELAY_S · DELAY_* · LEARN_SLACK_S · HOURLY_CAP · 물러나기 단계
 from __future__ import annotations
 
 import asyncio
-import itertools
 import logging
 import time
-from collections import Counter, deque
-from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from collections import Counter
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -85,7 +83,7 @@ from wakeline_collector.errors import describe_error
 from wakeline_collector.grid_tiles import Tile, TilePlan, TileState, cell_corners_xy, cell_xy, encode_state
 from wakeline_collector.http import BeforeSend, FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.marine_grid import CELL_DEG, SNAP_TOL_DEG, Cell, WfsTooLarge, lattice_step, snap
+from wakeline_collector.marine_grid import Cell, WfsTooLarge
 from wakeline_collector.providers.data_go_kr import (
     MOF_GRID4_HOURLY_HEADROOM,
     MOF_HOUR_WINDOW,
@@ -95,7 +93,20 @@ from wakeline_collector.providers.data_go_kr import (
 )
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import NOT_SENT
-from wakeline_collector.traffic_grid import GRID_ID_RE, KomsaSnapshot, build_payload, iso_z
+from wakeline_collector.traffic_grid import KomsaSnapshot, build_payload, iso_z
+from wakeline_collector.traffic_grid_plan import (
+    FAILED_TTL_S,
+    FILL_BREAKER_ERRORS,
+    HOURLY_CAP,
+    ID_MAX_FAILURES,
+    MAX_TRACKED,
+    UNCHANGED_BACKOFF_S,
+    Breaker,
+    FillPass,
+    KomsaSchedule,
+    Tick,
+)
+from wakeline_collector.traffic_grid_plan import GridGeometry as PlanGeometry
 
 log = logging.getLogger("job.traffic_grid")
 
@@ -105,32 +116,9 @@ TILES_KEY = "wakeline:traffic_grid:tiles"  # bbox 타일 상태(grid_tiles — �
 HEARTBEAT_KEY = "wakeline:collector"
 DELAY_FIELD = "traffic_grid_publish_delay_s"  # 배운 발행 지연(위쪽 끝 추정, 초) — 운영 확인 · 재기동 뒤 다시 쓴다
 SNAPSHOT_TTL_S = 1200
-PERIOD_S = 300  # 공급자 갱신 주기(확인: 5분마다 새 자료)
-# 발행 지연(regDt 뒤 그 자료가 응답에 나오기까지) — 잰 적이 없어 관측으로 배운다. 아래 넷은 선택값이다.
-PUBLISH_DELAY_S = 60  # 처음 추정(배운 값이 없을 때)
-DELAY_MIN_S = 30  # 배운 값의 아래 끝
-# 위 끝: regDt + 주기 + 이 값 + 틱이 오래됨(900 s) 안에 들게. 이보다 늦게 나오는 공급자는 어차피 자주 '멈춤'이다
-DELAY_MAX_S = 540
-# 한 번에 받은 주기마다 추정을 이만큼 줄여 본다(공급자가 빨라지면 따라간다 — 틀리면 이른 호출 한 번으로 다시 잰다)
-DELAY_DECAY_S = 3
-# 이른 호출 뒤 받은 때까지의 폭이 이보다 넓으면 (아래 끝 + 이 값)으로 좁힌다(긴 물러나기 · 실패가 끼면 위쪽 끝이 헐겁다)
-LEARN_SLACK_S = 90
-MIN_SPACING_S = 120  # 새 regDt 를 받은 뒤 다음 호출까지 최소 간격
-HOURLY_CAP = 15  # 어느 한 시간이든(메모리 — 60분 창) · 어느 UTC 시든(Redis — 재기동을 넘어) 교통 호출 상한
-UNCHANGED_BACKOFF_S = (60, 60, 60, 120, 240, 480, 900)  # 같은 regDt: 처음 세 번은 짧게(발행이 늦을 뿐), 그 뒤는 멈춘 공급자
-FAIL_BACKOFF_S = (60, 120, 240, 480, 900)
 PUBLISH_FUTURE_SKEW_S = 120  # 수집기 시계보다 이보다 더 앞선 regDt 는 받지 않는다(시계 차이는 허용)
-SKIP_RETRY_S = 600  # 예산 소진 · 예산 저장소 장애 뒤 다시 볼 때
 WFS_PER_TICK = 15
 FILL_MAX_S = 15.0  # 한 틱의 채우기 시간 상한(종료 유예 18 s 안)
-FILL_BREAKER_ERRORS = 3
-FILL_PAUSE_S = (300, 600, 1800, 3600)
-ID_RETRY_S = (300, 1800, 7200, 21600)
-ID_MAX_FAILURES = 5  # 한 칸이 연달아 이만큼 실패하면 failed — FAILED_TTL_S 동안 묻지 않는다(약 8.6시간에 걸친 다섯 번)
-NEGATIVE_TTL_S = 7 * 86400
-FAILED_TTL_S = 86400
-NEGATIVE_REASONS = ("not_found", "off_grid", "failed")
-MAX_TRACKED = 20_000  # 조회 대기열 상한 · 부정 캐시(메모리)가 이만큼이면 기한이 지난 항목을 비운다(유효한 항목은 남긴다)
 DB_RETRY_S = 60
 DB_WAIT_S = 600
 PUBLISH_MIN_INTERVAL_S = 30
@@ -180,322 +168,11 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _step(steps: tuple[int, ...], n: int) -> int:
-    return steps[min(n, len(steps) - 1)]
-
-
-# ---- 교통 호출 일정 ----------------------------------------------------------------------------------------------------
-
-
-class KomsaSchedule:
-    """다음에 부를 시각(regDt + 주기 + 배운 발행 지연) · 물러나기 · 시간당 상한(메모리 60분 창 — Redis 시간 창은 작업이 따로 센다).
-
-    발행 지연 배우기: 이른 호출(같은 regDt — unchanged) 뒤 새 regDt 를 받으면 그 regDt 의 지연은 (마지막 이른 호출 − regDt, 받은 때 − regDt] 안이다.
-    위쪽 끝(받은 때 − regDt)을 쓰되 max(아래 끝, 지금 추정) + LEARN_SLACK_S 를 넘지 않게 좁히고(폭이 넓으면 위쪽 끝이 헐겁다), 지금 추정보다 줄이지는
-    않는다(이른 호출은 추정이 짧았다는 증거). 이른 호출 없이 받은 주기는 추정을 DELAY_DECAY_S 씩 줄여 보기만 한다 — 첫 호출 · 실패 뒤 받은 regDt 의
-    나이는 지연이 아니므로(그 regDt 가 언제 나왔는지 모른다) 추정을 늘리는 데 쓰지 않는다. 24시간 공급자 모형 시험: test_traffic_grid_job.
-    """
+class GridGeometry(PlanGeometry):
+    """traffic_grid_plan.GridGeometry 에 이 모듈의 대기열 상한 MAX_TRACKED 를 준 것(만들 때 읽는다 — 시험이 이 모듈의 값을 바꿔 끼운다)."""
 
     def __init__(self) -> None:
-        self.next_due: datetime | None = None  # None = 지금
-        self.last_reg_dt: datetime | None = None
-        self.delay_s = float(PUBLISH_DELAY_S)
-        self.delay_learned = False  # 관측(이른 호출 뒤 받음)이나 재기동 전 값에서 왔는가 — 아니면 처음 추정(선택값)일 뿐
-        self._early_at: datetime | None = None  # 이 주기의 마지막 이른 호출(unchanged) 시각
-        self._calls: deque[datetime] = deque()
-        self._fails = 0
-        self._unchanged = 0
-
-    def due(self, now: datetime) -> bool:
-        return (self.next_due is None or now >= self.next_due) and self.calls_last_hour(now) < HOURLY_CAP
-
-    def calls_last_hour(self, now: datetime) -> int:
-        while self._calls and (now - self._calls[0]).total_seconds() >= 3600:
-            self._calls.popleft()
-        return len(self._calls)
-
-    def called(self, now: datetime) -> None:
-        self._calls.append(now)
-
-    def restore_delay(self, value: float) -> bool:
-        """재기동 뒤 heartbeat 에 남은 배운 지연을 다시 쓴다. 범위 밖이면 쓰지 않는다."""
-        if DELAY_MIN_S <= value <= DELAY_MAX_S:
-            self.delay_s = float(value)
-            self.delay_learned = True
-            return True
-        return False
-
-    def on_new(self, reg_dt: datetime, now: datetime) -> None:
-        reg = reg_dt.astimezone(UTC)
-        seen = (now - reg).total_seconds()  # 이 regDt 를 처음 본 나이 — 발행 지연의 위쪽 끝
-        if self.last_reg_dt is not None:
-            if self._early_at is not None:
-                # 이른 호출은 지금 추정이 짧았다는 증거 — 줄이지 않는다. 받은 regDt 가 기다리던 것보다 뒤의 것이면(상한 · 실패로 한 주기를 건너뜀)
-                # 아래 끝이 약하므로 max(아래 끝, 지금 추정) + LEARN_SLACK_S 로 좁힌다
-                low = max(0.0, (self._early_at - reg).total_seconds())  # 그때는 아직 없었다
-                est = min(seen, max(low, self.delay_s) + LEARN_SLACK_S)
-                self.delay_s = min(max(est, self.delay_s, float(DELAY_MIN_S)), float(DELAY_MAX_S))
-                self.delay_learned = True
-            else:
-                self.delay_s = max(float(DELAY_MIN_S), min(self.delay_s, seen) - DELAY_DECAY_S)
-        self._early_at = None
-        self._fails = self._unchanged = 0
-        self.last_reg_dt = reg_dt
-        expected = reg + timedelta(seconds=PERIOD_S + self.delay_s)
-        # 시계가 어긋나 regDt 가 미래이거나 아주 오래됐어도 [지금 + 최소 간격, 지금 + 주기 × 2] 안에서
-        self.next_due = min(max(expected, now + timedelta(seconds=MIN_SPACING_S)), now + timedelta(seconds=2 * PERIOD_S))
-
-    def on_unchanged(self, now: datetime) -> None:
-        self._fails = 0
-        self._early_at = now
-        self.next_due = now + timedelta(seconds=_step(UNCHANGED_BACKOFF_S, self._unchanged))
-        self._unchanged += 1
-
-    def on_failure(self, now: datetime) -> None:
-        self.next_due = now + timedelta(seconds=_step(FAIL_BACKOFF_S, self._fails))
-        self._fails += 1
-
-    def on_skipped(self, now: datetime, until: datetime | None = None) -> None:
-        self.next_due = until if until is not None and until > now else now + timedelta(seconds=SKIP_RETRY_S)
-
-
-# ---- 격자 기하 ---------------------------------------------------------------------------------------------------------
-
-
-@dataclass
-class _Pending:
-    seq: int
-    next_try: datetime | None = None
-    failures: int = 0
-
-
-@dataclass(frozen=True)
-class Negative:
-    reason: str  # not_found · off_grid(NEGATIVE_TTL_S) · failed(FAILED_TTL_S)
-    at: datetime
-
-    @property
-    def expires(self) -> datetime:
-        return self.at + timedelta(seconds=FAILED_TTL_S if self.reason == "failed" else NEGATIVE_TTL_S)
-
-    def valid(self, now: datetime) -> bool:
-        return now < self.expires
-
-
-class GridGeometry:
-    """grid_id → 칸. 모르는 칸은 처음 본 순서로 기다리고(실패한 적이 있는 칸은 뒤로), 없는 칸 · 격자에 맞지 않는 칸은 부정 캐시(기한
-    NEGATIVE_TTL_S), 조회가 ID_MAX_FAILURES 번 연달아 실패한 칸은 failed(기한 FAILED_TTL_S — 확인 중으로 세지 않는다).
-    대기열(_pending)은 이 프로세스의 메모리다 — 다시 시작하면 비고, 결과(칸 → DB marine_grid4, 부정 → Redis)만 남는다."""
-
-    def __init__(self) -> None:
-        self.cells: dict[str, Cell] = {}
-        self.negative: dict[str, Negative] = {}
-        self._pending: dict[str, _Pending] = {}
-        self._seq = itertools.count()
-        # 마지막 observe(스냅샷 한 번 읽기 — 새 regDt 든 같은 regDt 든)에서 대기열이 가득 차(MAX_TRACKED) 넣지 못한 서로 다른 칸 수. 읽은 적이
-        # 없으면 None. 누계가 아니다(검토 지적: 예전 dropped 는 부를 때마다 거절을 더해 '칸'이 아니라 '거절 횟수'였다) — 다음에 보일 때 자리가 있으면 넣는다
-        self.not_queued: int | None = None
-
-    @property
-    def pending(self) -> int:
-        return len(self._pending)
-
-    def is_pending(self, g: str) -> bool:
-        return g in self._pending
-
-    def _negative_valid(self, g: str, now: datetime) -> bool:
-        n = self.negative.get(g)
-        return n is not None and n.valid(now)
-
-    def observe(self, items: Iterable[tuple[str, int]], now: datetime) -> int:
-        """스냅샷의 (grid_id, 척수) — 기하도 유효한 부정 캐시도 없고 대기열에도 없는 칸을 대기열에 넣는다(척수가 많은 칸 먼저 번호).
-        새로 넣은 수 — '처음 본 칸'이 아니라 '이 프로세스가 새로 넣은 칸'이다(재기동하면 대기열이 비어 다시 센다)."""
-        added = 0
-        refused: set[str] = set()
-        for g, _v in sorted(items, key=lambda t: (-t[1], t[0])):
-            if g in self.cells or g in self._pending or self._negative_valid(g, now):
-                continue
-            if len(self._pending) >= MAX_TRACKED:
-                refused.add(g)
-                continue
-            self._pending[g] = _Pending(next(self._seq))
-            added += 1
-        self.not_queued = len(refused)
-        return added
-
-    def due(self, now: datetime, limit: int) -> list[str]:
-        """묻을 때가 된 칸 — 실패 횟수가 적은 칸 먼저(오래 실패한 칸이 새 칸 앞에서 차단기를 걸지 않게), 같으면 처음 본 순서."""
-        ready = [(p.failures, p.seq, g) for g, p in self._pending.items() if p.next_try is None or p.next_try <= now]
-        return [g for _f, _s, g in sorted(ready)[:limit]]
-
-    def has_due(self, now: datetime) -> bool:
-        return any(p.next_try is None or p.next_try <= now for p in self._pending.values())
-
-    def retries(self) -> tuple[int, datetime | None]:
-        """오류 뒤 다시 물을 차례를 기다리는 칸 수와 그중 가장 이른 때."""
-        waits = [p.next_try for p in self._pending.values() if p.failures and p.next_try is not None]
-        return sum(1 for p in self._pending.values() if p.failures), min(waits, default=None)
-
-    def coverage(self, grid_ids: Iterable[str], now: datetime) -> dict[str, int]:
-        """스냅샷 칸들을 나눈다: cells(기하 있음) · pending(대기열) · not_found · off_grid · failed(유효한 부정 캐시) ·
-        not_queued(대기열이 가득 차 넣지 못함)."""
-        out = dict.fromkeys(("cells", "pending", "not_found", "off_grid", "failed", "not_queued"), 0)
-        for g in grid_ids:
-            if g in self.cells:
-                out["cells"] += 1
-            elif g in self._pending:
-                out["pending"] += 1
-            elif (n := self.negative.get(g)) is not None and n.valid(now):
-                out[n.reason] += 1
-            else:
-                out["not_queued"] += 1
-        return out
-
-    def resolved(self, cell: Cell) -> None:
-        self.cells[cell.grid_no] = cell
-        self._pending.pop(cell.grid_no, None)
-        self.negative.pop(cell.grid_no, None)
-
-    def mark_negative(self, grid_no: str, reason: str, now: datetime) -> None:
-        """부정 결과는 늘 적는다. 메모리가 MAX_TRACKED 에 닿으면 기한이 지난 항목만 모두 비운다(보이면 어차피 다시 묻는다) — 유효한 항목은 상한을
-        넘어도 남긴다: 크기는 Redis 해시만큼이다(load_negative 도 상한 없이 읽는다). 전에는 상한에서 적지 않고 대기열에서만 뺐고(다음에 보일
-        때마다 다시 물었다), 첫 고침은 가장 먼저 끝나는 유효한 항목을 비웠다(그 칸을 다시 물었다). 운영에서는 닿지 않는 경로다
-        (2026-09-30 기동 때 502항목 — ADR-023 2026-10-01 개정)."""
-        self._pending.pop(grid_no, None)
-        if grid_no not in self.negative and len(self.negative) >= MAX_TRACKED:
-            for g in [g for g, n in self.negative.items() if not n.valid(now)]:
-                del self.negative[g]
-        self.negative[grid_no] = Negative(reason, now)
-
-    def failed(self, grid_no: str, now: datetime) -> bool:
-        """조회 오류 한 번. ID_MAX_FAILURES 번째면 failed 로 옮기고 True(호출자가 Redis 에 적는다), 아니면 물러나기만."""
-        p = self._pending.get(grid_no)
-        if p is None:
-            return False
-        p.failures += 1
-        if p.failures >= ID_MAX_FAILURES:
-            self.mark_negative(grid_no, "failed", now)
-            return True
-        p.next_try = now + timedelta(seconds=_step(ID_RETRY_S, p.failures - 1))
-        return False
-
-    def negative_counts(self, now: datetime) -> dict[str, int]:
-        """유효한 부정 캐시 — 까닭별 수(not_found · off_grid · failed)."""
-        out = dict.fromkeys(NEGATIVE_REASONS, 0)
-        for n in self.negative.values():
-            if n.valid(now):
-                out[n.reason] += 1
-        return out
-
-    def failed_count(self, now: datetime) -> int:
-        return self.negative_counts(now)["failed"]
-
-    def reasons(self, now: datetime) -> dict[str, str]:
-        return {g: n.reason for g, n in self.negative.items() if n.valid(now)}
-
-    def load_cells(self, rows: Iterable[tuple[Any, ...]]) -> tuple[int, int]:
-        """DB 행(grid_no, lat_min, lon_min, lat_max, lon_max, gid) → 칸. 격자 검사를 다시 한다(틀린 행은 쓰지 않는다). (넣은 수, 버린 수)."""
-        ok = bad = 0
-        for row in rows:
-            try:
-                g, la0, lo0, la1, lo1, gid = row
-                sl, so = snap(float(la0)), snap(float(lo0))
-                valid = (
-                    isinstance(g, str)
-                    and GRID_ID_RE.fullmatch(g) is not None
-                    and sl is not None
-                    and so is not None
-                    and abs(float(la1) - float(la0) - CELL_DEG) <= SNAP_TOL_DEG
-                    and abs(float(lo1) - float(lo0) - CELL_DEG) <= SNAP_TOL_DEG
-                )
-            except (TypeError, ValueError):
-                valid = False
-            if not valid:
-                bad += 1
-                continue
-            assert sl is not None and so is not None
-            self.resolved(Cell(g, sl, so, lattice_step(sl), lattice_step(so), gid if isinstance(gid, int) else None))
-            ok += 1
-        return ok, bad
-
-    def load_negative(self, fields: dict[Any, Any]) -> int:
-        """Redis 해시(grid_no → {"reason","at"}) → 부정 캐시. 형식이 틀린 항목은 버린다(다시 물으면 된다)."""
-        n = 0
-        for key, raw in fields.items():
-            g = key.decode() if isinstance(key, bytes) else str(key)
-            try:
-                v = orjson.loads(raw)
-                reason, at = v["reason"], datetime.fromisoformat(str(v["at"]).replace("Z", "+00:00"))
-            except (orjson.JSONDecodeError, KeyError, TypeError, ValueError):
-                continue
-            if reason in NEGATIVE_REASONS and at.tzinfo is not None and GRID_ID_RE.fullmatch(g) and g not in self.cells:
-                self.negative[g] = Negative(reason, at)
-                self._pending.pop(g, None)
-                n += 1
-        return n
-
-
-@dataclass
-class FillPass:
-    """채우기 한 번 — 다시 시작한 틱부터 멈춘 틱(시간 창 · 하루 예산 · 차단기 · 운영자 끔 · 물을 칸이 없음)까지 보낸 조회와 결과."""
-
-    started: datetime
-    lookups: int = 0
-    found: int = 0
-    not_found: int = 0
-    off_grid: int = 0
-    errors: int = 0
-    set_aside: int = 0  # 연달아 ID_MAX_FAILURES 번 실패해 failed 로 뺀 칸
-    # bbox 타일(ADR-023 2026-10-01 bbox 개정) — 한 칸 조회(lookups …)와 따로 센다
-    tiles: int = 0  # 보낸 타일 호출
-    tile_cells: int = 0  # 타일 응답이 준 칸(검사 통과 — 겹치는 타일의 같은 칸은 두 번 센다)
-    tile_new: int = 0  # 그 가운데 처음 안 칸
-    tile_stored: int = (
-        0  # DB(marine_grid4) 쓰기 큐에 넣은 칸 — 새 칸 · 기하가 바뀐 칸(쓰기는 비동기 — 버려지면 heartbeat db_dropped)
-    )
-    tile_splits: int = 0  # 잘렸을 수 있어 넷으로 나눈 타일
-    # 잘렸을 수 있지만 더 나누지 않고 incomplete 로 둔 타일(가장 작은 4 km · 부모보다 적은 지물로도 여전히)
-    tile_incomplete: int = 0
-    tile_errors: int = 0
-
-
-@dataclass
-class _Tick:
-    """틱 하나의 채우기 셈(한 칸 조회 · 타일)과 멈춘 까닭."""
-
-    calls: int = 0
-    lookups: int = 0
-    found: list[Cell] = field(default_factory=list)  # 한 칸 조회로 찾은 칸(틱 끝에 한 번 쓴다)
-    not_found: int = 0
-    off_grid: int = 0  # 한 칸 조회
-    gave_up: int = 0
-    tiles: int = 0
-    tile_cells: int = 0
-    tile_new: int = 0
-    tile_stored: int = 0
-    tile_off_grid: int = 0
-    tile_splits: int = 0
-    tile_incomplete: int = 0
-    tile_errors: int = 0
-    errors_in_row: int = 0  # 한 칸 조회의 연달은 오류(이 틱)
-    tile_errors_in_row: int = 0  # 타일의 연달은 오류(이 틱) — 차단기는 따로(검토 지적 2026-10-01)
-    last_error: str | None = None
-    http_status: int | None = None
-    latency: list[int] = field(default_factory=list)
-    quality: list[tuple[str, str | None, dict[str, Any]]] = field(default_factory=list)
-    stop_reason: str | None = None
-    hold_until: datetime | None = None
-    hold_kind: str = ""
-    paused: bool = False  # 이 틱에 한 칸 조회 차단기가 걸렸다
-    tile_paused: bool = False  # 이 틱에 타일 차단기가 걸렸다
-
-    @property
-    def received(self) -> int:
-        return len(self.found) + self.tile_cells
-
-    @property
-    def succeeded(self) -> int:
-        return self.calls - (self.lookups - len(self.found) - self.not_found - self.off_grid) - self.tile_errors
+        super().__init__(max_tracked=MAX_TRACKED)
 
 
 # ---- 작업 ----------------------------------------------------------------------------------------------------------
@@ -534,7 +211,7 @@ class TrafficGridJob:
         # 마지막으로 읽은 스냅샷의 칸 — 가장자리 칸이 '지금 배가 있는 모르는 칸'인지 본다
         self._snapshot_ids: frozenset[str] = frozenset()
         self._now, self._mono = now, mono
-        self.schedule = KomsaSchedule()
+        self.schedule = KomsaSchedule(UNCHANGED_BACKOFF_S)
         self.geometry = GridGeometry()
         self.snapshot: KomsaSnapshot | None = None
         self.fetched_at: datetime | None = None
@@ -548,11 +225,9 @@ class TrafficGridJob:
         self._dirty = False
         self._published_at: datetime | None = None
         self._force_publish = False
-        self._fill_pause_until: datetime | None = None  # 한 칸 조회 차단기(타일 공급자가 없으면 곧 채우기 전체)
-        self._fill_pauses = 0
+        self._lookup_breaker = Breaker()  # 한 칸 조회 차단기(타일 공급자가 없으면 곧 채우기 전체)
         # 타일 차단기(검토 지적 2026-10-01, high): bbox 만 고장 나면 타일이 늘 먼저라 한 칸 조회가 약 10일 동안 0번이었다 — 타일 오류는 타일만 쉬게 한다
-        self._tile_pause_until: datetime | None = None
-        self._tile_pauses = 0
+        self._tile_breaker = Breaker()
         self._fill_hold_until: datetime | None = None  # 시간 창 · 하루 예산이 다시 셀 때(다음 UTC 시 · 날)까지 채우지 않는다
         self._fill_hold_kind = ""  # hour_window · daily_budget
         self._pass: FillPass | None = None  # 열린 채우기 한 번
@@ -564,6 +239,40 @@ class TrafficGridJob:
         self.counts = {"komsa_calls": 0, "wfs_calls": 0, "wfs_tiles": 0, "published": 0}
 
     # ---- 한 틱 --------------------------------------------------------------------------------------------------
+
+    # 차단기 상태(쉼 끝 · 걸린 수) — heartbeat · 요약 줄 · 시험이 읽고 쓴다
+    @property
+    def _fill_pause_until(self) -> datetime | None:
+        return self._lookup_breaker.until
+
+    @_fill_pause_until.setter
+    def _fill_pause_until(self, v: datetime | None) -> None:
+        self._lookup_breaker.until = v
+
+    @property
+    def _fill_pauses(self) -> int:
+        return self._lookup_breaker.pauses
+
+    @_fill_pauses.setter
+    def _fill_pauses(self, v: int) -> None:
+        self._lookup_breaker.pauses = v
+
+    @property
+    def _tile_pause_until(self) -> datetime | None:
+        return self._tile_breaker.until
+
+    @_tile_pause_until.setter
+    def _tile_pause_until(self, v: datetime | None) -> None:
+        self._tile_breaker.until = v
+
+    @property
+    def _tile_pauses(self) -> int:
+        return self._tile_breaker.pauses
+
+    @_tile_pauses.setter
+    def _tile_pauses(self, v: int) -> None:
+        self._tile_breaker.pauses = v
+
     async def run_once(self) -> None:
         now = self._now()
         if self._started is None:
@@ -934,10 +643,10 @@ class TrafficGridJob:
         return self.tile_src is not None and self.tile_src.configured and self._tiles_ready(now)
 
     def _lookups_paused(self, now: datetime) -> bool:
-        return self._fill_pause_until is not None and now < self._fill_pause_until
+        return self._lookup_breaker.paused(now)
 
     def _tiles_paused(self, now: datetime) -> bool:
-        return self._tile_pause_until is not None and now < self._tile_pause_until
+        return self._tile_breaker.paused(now)
 
     def _tiles_open(self, now: datetime) -> bool:
         return self._tiles_on(now) and not self._tiles_paused(now)
@@ -990,7 +699,7 @@ class TrafficGridJob:
             await self._end_pass(self._idle_reason(now))
             return
         t0 = self._mono()
-        tk = _Tick()
+        tk = Tick()
         started = now
         id_batch: list[str] | None = None
         for _ in range(WFS_PER_TICK):
@@ -1027,9 +736,9 @@ class TrafficGridJob:
         if tk.received or tk.not_found or tk.off_grid or tk.tile_off_grid:
             self._dirty = True
         if tk.found or tk.not_found or tk.off_grid:
-            self._fill_pauses = 0  # 한 칸 조회가 답을 받았다 — 다음 차단기는 처음 단계부터
+            self._lookup_breaker.reset()  # 한 칸 조회가 답을 받았다 — 다음 차단기는 처음 단계부터
         if tk.tiles > tk.tile_errors:
-            self._tile_pauses = 0  # 타일이 답을 받았다
+            self._tile_breaker.reset()  # 타일이 답을 받았다
         if tk.gave_up:
             self._dirty = True  # pending → failed: 수가 바뀌었다
         if tk.calls:
@@ -1085,7 +794,7 @@ class TrafficGridJob:
             error_text=tk.stop_reason,
         )
 
-    async def _reserve(self, w: WfsSource, at: datetime, tk: _Tick) -> str | None:
+    async def _reserve(self, w: WfsSource, at: datetime, tk: Tick) -> str | None:
         """호출 하나(한 칸 조회든 타일이든 예산 1)의 예약: 해양수산부 시간 창 먼저(입출항 색인 몫을 남기고) — 그다음 하루 예산. 하나라도 안 되면 부르지
         않고 None(까닭은 tk 에). 되면 시간 창 키."""
         ok, used, hour = await self.ctx.budget.reserve_hour(
@@ -1140,7 +849,7 @@ class TrafficGridJob:
             await give_back()
             return None
 
-    def _call_failed(self, e: Exception, tk: _Tick, now: datetime, *, tile: bool = False) -> bool:
+    def _call_failed(self, e: Exception, tk: Tick, now: datetime, *, tile: bool = False) -> bool:
         """보낸 호출의 오류 한 번. 차단기는 종류마다 따로(검토 지적 2026-10-01, high — 전에는 함께 세어 bbox 만 고장 나도 한 칸 조회가 굶었다):
         - 한 칸 조회가 한 틱에서 연달아 FILL_BREAKER_ERRORS 번이면 한 칸 조회를 쉰다(5분 → 10분 → 30분 → 1시간) — 그러면 False(이 틱을 멈춘다 —
           한 칸 조회를 골랐다면 물을 타일이 없었다). 타일 공급자가 없으면 곧 채우기 전체다.
@@ -1151,39 +860,37 @@ class TrafficGridJob:
         if tile:
             tk.tile_errors_in_row += 1
             if tk.tile_errors_in_row >= FILL_BREAKER_ERRORS and not self._tiles_paused(now):
-                self._tile_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._tile_pauses))
-                self._tile_pauses += 1
+                until = self._tile_breaker.trip(now)
                 tk.tile_paused = True
                 log.warning(
                     "traffic grid: %d bbox tile errors in a row — tiles paused until %s, one-id lookups go on (last: %s)",
                     tk.tile_errors_in_row,
-                    iso_z(self._tile_pause_until),
+                    iso_z(until),
                     tk.last_error,
                 )
             return True
         tk.errors_in_row += 1
         if tk.errors_in_row >= FILL_BREAKER_ERRORS:
-            self._fill_pause_until = now + timedelta(seconds=_step(FILL_PAUSE_S, self._fill_pauses))
-            self._fill_pauses += 1
+            until = self._lookup_breaker.trip(now)
             tk.paused = True
             if self.tile_src is None:
                 log.warning(
                     "traffic grid: %d WFS errors in a row — geometry fill paused until %s (last: %s)",
                     tk.errors_in_row,
-                    iso_z(self._fill_pause_until),
+                    iso_z(until),
                     tk.last_error,
                 )
             else:
                 log.warning(
                     "traffic grid: %d one-id lookup errors in a row — one-id lookups paused until %s, bbox tiles go on (last: %s)",
                     tk.errors_in_row,
-                    iso_z(self._fill_pause_until),
+                    iso_z(until),
                     tk.last_error,
                 )
             return False
         return True
 
-    async def _lookup(self, g: str, hour: str, now: datetime, tk: _Tick) -> bool:
+    async def _lookup(self, g: str, hour: str, now: datetime, tk: Tick) -> bool:
         """한 칸 조회 하나. 이 틱을 이어 가면 True."""
         w = self.wfs
         try:
@@ -1249,7 +956,7 @@ class TrafficGridJob:
         if st is not None and st.status == "done" and self.tiles.recheck(t, cell.grid_no, now):
             log.info("traffic grid: lookup found %s inside finished tile %s — asking that tile once more", cell.grid_no, t.key)
 
-    async def _fetch_tile(self, tile: Tile, hour: str, now: datetime, tk: _Tick) -> bool:
+    async def _fetch_tile(self, tile: Tile, hour: str, now: datetime, tk: Tick) -> bool:
         """bbox 타일 하나. 이 틱을 이어 가면 True."""
         src = self.tile_src
         assert src is not None
@@ -1349,7 +1056,7 @@ class TrafficGridJob:
         await self._store_tile(tile, state)
         return True
 
-    async def _split(self, tile: Tile, why: str, cells: int, members: int | None, now: datetime, tk: _Tick) -> None:
+    async def _split(self, tile: Tile, why: str, cells: int, members: int | None, now: datetime, tk: Tick) -> None:
         """잘렸을 수 있는 타일: 넷으로 나눠 그 부분을 묻는다(받은 칸은 이미 썼다 — 지물마다 검사를 통과한 실제 기하). 가장 작은 타일이면 incomplete —
         TILE_FAILED_TTL_S 뒤 다시(그 사이 그 안의 칸은 한 칸 조회가 맡는다). 어느 쪽이든 어느 번호도 '없음'으로 적지 않는다.
 
@@ -1389,7 +1096,7 @@ class TrafficGridJob:
             tk.quality.append(("traffic_grid_tile_incomplete", None, {"tile": tile.key, "detail": why[:300]}))
         await self._store_tile(tile, state)
 
-    async def _tile_failed(self, tile: Tile, e: Exception, now: datetime, tk: _Tick) -> bool:
+    async def _tile_failed(self, tile: Tile, e: Exception, now: datetime, tk: Tick) -> bool:
         """보낸 타일 호출의 오류 한 번: 그 타일만 물러나고(TILE_RETRY_S) 연달아 TILE_MAX_FAILURES 번이면 failed(1일). 차단기는 타일 것만 센다(_call_failed)."""
         if self.tiles.failed(tile, now):
             await self._store_tile(tile, self.tiles.states[tile])
@@ -1496,7 +1203,7 @@ class TrafficGridJob:
             return "retry_wait", iso_z(nxt) if nxt else ""
         return "filling", ""
 
-    async def _record_fill(self, w: WfsSource, started: datetime, tk: _Tick) -> None:
+    async def _record_fill(self, w: WfsSource, started: datetime, tk: Tick) -> None:
         """보낸 호출이 있던 채우기 한 번의 실행 기록 · 공급자 상태. records_in = 받은 칸(한 칸 조회로 찾은 칸 + 타일이 준 칸)."""
         succeeded = tk.succeeded
         self.ctx.db.record_run(

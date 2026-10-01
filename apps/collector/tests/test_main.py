@@ -550,3 +550,15 @@ def test_portmis_params_are_validated_before_they_reach_the_url():
         with pytest.raises(ValueError):
             p.params(**(ok | bad))
     assert not PortMisProvider(HttpClient(), "  ").configured
+
+
+async def test_the_collector_heartbeat_reports_its_event_loop_lag(monkeypatch):
+    """collector-review §4 'Enabler (D0)' · PLAN Phase 4-1: 수집기에는 이벤트 루프 지연 지표가 없어 루프를 막는 작업(전세계 정규화의 GIL 멈춤 · 루프 위
+    demand 정규화)을 운영에서 판단할 수 없었다. heartbeat(wakeline:collector)에 ais 상태 해시와 같은 이름으로 싣는다: loop_lag_max_s(최근 60 s 의 최댓값,
+    초 — 표본이 없으면 빈 값) · loop_stalls_total(지연 ≥ 1 s 표본 수, 기동 뒤 누계) · loop_tick_s(표본 간격 — 읽는 쪽이 해상도를 안다). 멈추면 측정도 끝난다."""
+    import asyncio
+
+    r = await _run_collector_until(monkeypatch, lambda r: r.kv.get("wakeline:collector", {}).get("loop_lag_max_s"), enabled=False)
+    hb = r.kv["wakeline:collector"]
+    assert float(hb["loop_lag_max_s"]) >= 0 and hb["loop_stalls_total"].isdigit() and float(hb["loop_tick_s"]) > 0
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "collector-loop-lag"]
