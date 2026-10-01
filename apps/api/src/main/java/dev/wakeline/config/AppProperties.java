@@ -38,8 +38,9 @@ public record AppProperties(
     public static final List<String> DEFAULT_ALLOWED_ORIGINS = List.of("http://localhost:8700", "http://127.0.0.1:8700");
 
     /**
-     * 허용 Origin 목록을 정리한 것(WS 핸드셰이크 — ws.OriginAllowList). 항목은 정확한 origin("http://localhost:8700") 또는 Spring origin 패턴
-     * ("http://localhost:[*]").
+     * 허용 Origin 목록을 정리한 것 — WS 핸드셰이크(ws.OriginAllowList)와 운영 변경 요청의 출처 검사({@link OpsOriginFilter})가 같은 목록을 쓴다.
+     * 항목은 정확한 origin("http://localhost:8700") 또는 Spring origin 패턴("http://localhost:[*]"). 화면을 다른 주소로 열면(예: `next dev` 의
+     * http://localhost:3000 — /api 를 스택으로 넘긴다) 그 주소를 WAKELINE_ALLOWED_ORIGINS 에 더해야 운영 변경(쓰기)이 된다.
      */
     public List<String> originPatterns() { return normalizeOrigins(allowedOrigins); }
 

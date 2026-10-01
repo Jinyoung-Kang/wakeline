@@ -303,6 +303,40 @@ class SecurityIT extends IntegrationTest {
         assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 1);
     }
 
+    /**
+     * S1: 운영 변경 요청(GET 아님)은 브라우저가 붙이는 출처 헤더를 본다 — Origin 이 허용 목록(wakeline.allowed-origins, WS 와 같은 목록)에 없거나
+     * Sec-Fetch-Site 가 same-origin 이 아니면 올바른 CSRF 헤더가 있어도 403. 둘 다 없으면(curl · 시험 — 브라우저가 아니라 피해자의 쿠키가 없다) 그대로.
+     */
+    @Test
+    void opsChangesFromAnotherOriginAreRefusedEvenWithAValidCsrfHeader() {
+        users.upsert("it-origin", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-origin", PW).status()).isEqualTo(200);
+        String path = "/api/v1/ops/providers/rainviewer/enable";
+        long before = audit("PROVIDER_ENABLE", "rainviewer");
+        // 다른 포트 · 다른 호스트 · 불투명 출처(null), 같은 사이트의 다른 출처(Sec-Fetch-Site: same-site = 다른 포트), 교차 사이트
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "http://localhost:9999")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "http://evil.example")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "null")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Sec-Fetch-Site", "same-site")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Sec-Fetch-Site", "cross-site")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", ORIGIN, "Sec-Fetch-Site", "same-site")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("PUT", "/api/v1/ops/settings/region_poll_s", "{\"value\":15}", b.withCsrf("If-Match", "1", "Origin", "http://localhost:9999")),
+                403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/settings/region_poll_s");
+        assertProblem(b.send("DELETE", "/api/v1/ops/session", null, b.withCsrf("Sec-Fetch-Site", "cross-site")), 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/session");
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        // 허용된 출처(두 주소 모두) + same-origin · 출처 헤더 없음(브라우저가 아닌 클라이언트)은 된다. 읽기(GET)는 출처를 보지 않는다
+        assertThat(b.send("POST", path, null, b.withCsrf("Origin", ORIGIN, "Sec-Fetch-Site", "same-origin")).status()).isEqualTo(200);
+        assertThat(b.send("POST", path, null, b.withCsrf("Origin", "http://127.0.0.1:8700")).status()).isEqualTo(200);
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(b.send("GET", "/api/v1/ops/providers", null, headers("Origin", "http://localhost:9999", "Sec-Fetch-Site", "cross-site")).status()).isEqualTo(200);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 3);
+        // 로그인도 — 다른 출처의 페이지가 운영자 브라우저를 남의 계정으로 로그인시키지 못한다(세션 쿠키가 없어 CSRF 면제인 요청)
+        Browser other = new Browser();
+        assertProblem(other.login("it-origin", PW, headers("Origin", "http://localhost:9999")), 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/session");
+        assertThat(other.cookies).doesNotContainKey("WAKELINE_SESSION");
+    }
+
     // ---------- 세션 절대 수명(R-54) ----------
 
     /**

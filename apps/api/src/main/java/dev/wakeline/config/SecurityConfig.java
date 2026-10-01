@@ -13,6 +13,7 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfException;
+import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.CsrfTokenRequestHandler;
 import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
@@ -29,7 +30,7 @@ import java.util.function.Supplier;
 
 /**
  * 보안(6.2절 api 층). 공개 경로 허용, /api/v1/ops/** 는 ROLE_OPS + 세션 + CSRF(쿠키 WAKELINE_CSRF → 헤더 X-CSRF-Token — 헤더에서만 받는다).
- * 비인가는 404(존재 여부 비공개), CSRF 실패는 403. 세션 쿠키 WAKELINE_SESSION: HttpOnly · SameSite=Strict.
+ * 비인가는 404(존재 여부 비공개), CSRF 실패는 403, 허용 목록 밖 출처의 운영 변경 요청도 403({@link OpsOriginFilter}). 세션 쿠키 WAKELINE_SESSION: HttpOnly · SameSite=Strict.
  * 운영 세션은 유휴 한도와 별개로 로그인부터 절대 수명(wakeline.ops-session-max-age, 8 h)이 지나면 끝난다({@link OpsSessionLifetimeFilter}).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
@@ -44,11 +45,13 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain api(HttpSecurity http, SecurityContextRepository contextRepository, CookieCsrfTokenRepository csrfRepository,
                             @Value("${wakeline.ops-session-max-age:8h}") Duration opsSessionMaxAge,
-                            dev.wakeline.ops.OpsUserService opsUsers) throws Exception {
+                            dev.wakeline.ops.OpsUserService opsUsers, AppProperties props) throws Exception {
         http
                 // 절대 수명(R-54): 보안 컨텍스트를 세션에서 읽기 전에 오래된 운영 세션을 끝낸다 → 익명 → 404
                 // 자격 확인(R-95 후속): 비밀번호가 바뀐 뒤의 세션도 같은 자리에서 끝낸다
                 .addFilterBefore(new OpsSessionLifetimeFilter(opsSessionMaxAge, Clock.systemUTC(), opsUsers::currentCredentialTag), SecurityContextHolderFilter.class)
+                // 출처 검사(S1): 허용 목록 밖 Origin · same-origin 이 아닌 Sec-Fetch-Site 의 운영 변경 요청은 CSRF 검사 전에 403
+                .addFilterBefore(new OpsOriginFilter(props.originPatterns()), CsrfFilter.class)
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(ApiPaths.OPS_LOGIN).permitAll()
                         .requestMatchers(ApiPaths.OPS).hasRole("OPS")

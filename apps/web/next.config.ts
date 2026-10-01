@@ -27,6 +27,8 @@ const nextConfig: NextConfig = {
   },
   // API·WS 는 edge(nginx)가 api 로 직접 보내므로 여기서는 프록시하지 않는다.
   // 로컬 `next dev` 로 화면만 띄울 때만 아래 rewrite 를 쓴다(스택은 compose 로 떠 있어야 함).
+  // 운영 변경(쓰기)은 api 가 브라우저 Origin 을 허용 목록(WAKELINE_ALLOWED_ORIGINS)으로 검사한다 — next dev 의 주소(http://localhost:3000)를
+  // 그 목록에 더하지 않으면 403 ORIGIN_NOT_ALLOWED 다(읽기는 된다). WS(/ws/v1)는 이 rewrite 를 타지 않는다.
   async rewrites() {
     if (process.env.NODE_ENV !== "development") return [];
     const api = process.env.API_INTERNAL_URL ?? "http://localhost:8700";

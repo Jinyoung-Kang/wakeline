@@ -23,7 +23,9 @@ class SecurityCookieConfigTest {
             .withConfiguration(AutoConfigurations.of(SecurityAutoConfiguration.class, ServletWebSecurityAutoConfiguration.class))
             .withUserConfiguration(SecurityConfig.class)
             // 필터 체인이 운영 세션 자격 확인(R-95)에 쓰는 서비스 — 쿠키 시험에서는 호출되지 않는다
-            .withBean(dev.wakeline.ops.OpsUserService.class, () -> org.mockito.Mockito.mock(dev.wakeline.ops.OpsUserService.class));
+            .withBean(dev.wakeline.ops.OpsUserService.class, () -> org.mockito.Mockito.mock(dev.wakeline.ops.OpsUserService.class))
+            // 운영 변경 요청의 출처 검사(S1)가 쓰는 허용 Origin 목록
+            .withBean(AppProperties.class, () -> AppPropertiesTest.props(java.util.List.of("http://localhost:8700")));
 
     /** [세션 쿠키 Set-Cookie, CSRF 쿠키 Set-Cookie] */
     static String[] setCookies(ApplicationContext ctx) {
