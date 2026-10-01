@@ -25,8 +25,10 @@
 | QA-204 | 낮음 | WS 메시지 상한이 '4 KB' 가 아니라 4,096 글자(UTF-16) — 12 KB 까지 받는다 | `Qa204WsMessageLimitIsCharsNotBytesTest` |
 | QA-205 | 낮음 | 운영 `/ops/runs` 의 job · provider · status 에 NUL → 500 + ERROR 스택 | `Qa205OpsRunsFilterNulTest` |
 | QA-208 | 낮음 | 운영 재집계가 4713 BC 앞 날을 받아 `day = -infinity` 행을 쓴다(응답 · 감사와 다른 값) | `Qa208AggregateBcDayWritesInfinityTest` |
+| QA-209 | 낮음 | `/client-errors` 가 브라우저 시각의 연도 0 · 기원전을 다른 기원후 연도로 바꿔 저장(`yyyy` = 기원 안 연도) | `Qa209ClientErrorTsYearOfEraTest` |
+| QA-210 | 낮음 | fixture 모드 항공기가 시간이 지나면 관심 지역을 영영 떠나고, 뒤집힌 항공기는 보고 방위와 반대로 움직인다(데모 · E2E · QA 스택) | `apps/collector/tests/qa/test_qa_210_fixture_aircraft_leave_region.py` |
 
-재현 시험은 모두 지금 실패한다(아래 '재현 시험' 의 실패 글). 실행: `cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa20*'` — 9 클래스 · 30 사례, 2026-10-02 03:1x KST 실행 결과 `30 tests completed, 30 failed`(34 s, Docker 필요).
+재현 시험은 모두 지금 실패한다(아래 '재현 시험' 의 실패 글). 실행: `cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa20*'` — QA-201–208 의 9 클래스 · 30 사례는 함께 돌려 `30 tests completed, 30 failed`(34 s, Docker 필요), QA-209 는 `2 tests completed, 2 failed`(Docker 없이), QA-210 은 `cd apps/collector && uv run --offline pytest tests/qa -q` → `2 failed`.
 
 ## 결함
 
@@ -151,6 +153,37 @@
 - **증거**: `evidence/functional/qa-208-aggregate-bc-day.txt`, `writes-20261001T175918Z.md`.
 - **의심 원인**: `OpsController.java:65-72`(오늘 이전만 검사) → `MaintenanceJobs.aggregateDay`(`:331-` — `:d` 로 LocalDate 를 그대로) · pgjdbc 의 4713 BC 앞 LocalDate → `-infinity` 변환.
 - **재현 시험**: `Qa208AggregateBcDayWritesInfinityTest` — 실패: `[POST ?day=-5000-01-01 → 200 {"day":"-5000-01-01"}; rows with day = -infinity: 1] expected: 400 but was: 200`.
+
+### QA-209 · 낮음 · 기능(로그 값)
+- **환경**: 공통(익명 `POST /api/v1/client-errors`), 저장된 항목은 `qa-b` 로 `/ops/logs` 에서 확인.
+- **재현 절차**:
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"message":"QA ts min","path":"/qa","ts":"-999999999-01-01T00:00:00Z"}' http://localhost:8701/api/v1/client-errors
+  # 운영 세션으로 GET /api/v1/ops/logs?service=web-client&q=QA → 그 항목의 context.client_ts
+  ```
+- **기대 결과**: `context.client_ts` = 받은 순간 그대로(`-999999999-01-01T00:00:00.000Z` · 연도 0 은 `0000-…`) — 또는 그런 ts 를 400 으로 거절.
+- **실제 결과**: 204 뒤 `client_ts` = **`+1000000000-01-01T00:00:00.000Z`**(기원전이 먼 미래로), `0000-06-01T00:00:00Z` → `0001-06-01T00:00:00.000Z`. 운영자가 보는 '브라우저 시각' 이 받은 값과 다르다.
+  (브라우저의 `toISOString()` 은 이런 값을 만들지 않는다 — 시계가 틀렸거나 직접 보낸 요청만, 그래서 낮음.)
+- **증거**: 스택 A `/ops/logs`(stream client) 항목 `1790877502765-0` — `"message": "QA-func probe — ts min", "context": {"client_ts": "+1000000000-01-01T00:00:00.000Z", …}`(보낸 ts `-999999999-01-01T00:00:00Z`,
+  `writes-20261001T175918Z.md` 의 `ts_year_min: 204`).
+- **의심 원인**: `ClientErrorController.java:67`(`DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")` — `y` 는 year-of-era, 기원을 찍지 않는다. `uuuu` 이거나 `DateTimeFormatter.ISO_INSTANT` 여야 한다).
+  같은 형식기가 `LogEvents.java:55` 에도 있지만 서버의 지금 시각만 쓰므로 닿지 않는다.
+- **재현 시험**: `Qa209ClientErrorTsYearOfEraTest`(2사례) — 실패: `expected: "0000-06-01T00:00:00.000Z" but was: "0001-06-01T00:00:00.000Z"`,
+  `expected: "-999999999-01-01T00:00:00.000Z" but was: "+1000000000-01-01T00:00:00.000Z"`.
+
+### QA-210 · 낮음 · 기능(fixture 모드 값 — `make demo` · E2E · QA 스택)
+- **환경**: 스택 A(fixture 모드 — 수집기 `FixtureAircraftProvider`), 기동 2026-10-01T17:15Z.
+- **재현 절차**: 스택을 1시간 가까이 둔 뒤
+  `curl -s 'http://localhost:8701/api/v1/aircraft?bbox=100,15,155,60'` 의 항공기 중 관심 지역(36.5,127.8 · 250 NM) 안의 수를 센다. 같은 hex 를 10 s 간격으로 두 번 읽어 위치 변화의 방향과 `track_deg` 를 견준다.
+- **기대 결과**: 공급자 설명대로 "관심 지역 밖으로 나가면 반대편에서 다시 들어오게"(데모가 비지 않도록) — 항공기는 지역 안에 남고, 보이는 방위(track)와 움직임이 같다.
+- **실제 결과**: 기동 55–57분 뒤 250 NM 안 **127 → 52대**, 가장 먼 것 654 NM(계속 멀어진다). `780de6` 은 track 249.98(서남서)인데 10 s 에 경도 +0.044° — 동북동으로 움직인다(보고 방위와 반대).
+  지도의 기체 아이콘이 진행 방향과 반대를 가리키고, 오래 띄운 데모 · QA 스택은 한반도 위가 점점 빈다(같은 스택을 쓰는 화면 · 알림 시험의 기대도 시간에 따라 달라진다).
+- **증거**: `evidence/functional/qa-210-fixture-drift.txt`.
+- **의심 원인**: `apps/collector/wakeline_collector/providers/fixture.py:41-56`(`_moved` — 지역 밖이면 `dead_reckon(원래 위치, trk + 180, gs, dt)` 로 원래 자리에서 같은 경과 시간만큼 반대로 보낸다 —
+  그 위치도 곧 반경 밖이 되고, `a["track"]` 은 그대로 둔다). 왕복(경과 시간을 지역 지름 왕복 주기로 접기)하고 뒤집을 때 track 도 바꿔야 한다.
+- **재현 시험**: `apps/collector/tests/qa/test_qa_210_fixture_aircraft_leave_region.py` — 실패:
+  `AssertionError: 81/127 fixture aircraft are outside the 250 NM region after 1 h (farthest [('4ba94e', 681), ('a96f37', 658), ('48ae20', 653)])`,
+  `AssertionError: 10 fixture aircraft move opposite to their reported track (hex, track, moved): [('71c591', 237.15, 58), ('899068', 194.47, 15), ('781de5', 247.84, 69)]`.
 
 ## 미확인
 1. **항적 요청 두 건의 2.1–2.2 s**(`aircraft.track` `from=…23:59:60Z` · `stepS=1`, 17:31–17:33Z) — 같은 요청을 다시 재면 6–17 ms. 같은 때 다른 에이전트 · 내 Gradle 시험이 돌았다. 재현 못 함 → 성능 단계에서.
