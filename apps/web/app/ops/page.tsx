@@ -11,6 +11,7 @@ import {
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
 import { OpsLogin } from "@/components/OpsLogin";
+import { useOpsSession } from "@/components/ops/useOpsSession";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
@@ -140,12 +141,7 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
-  const [me, setMe] = useState<{ username: string } | null>(null);
-  const [checked, setChecked] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => { apiGet<{ username: string }>(OPS_SESSION_PATH).then(setMe).catch(() => setMe(null)).finally(() => setChecked(true)); }, []);
-  const leave = useCallback((note: string | null) => { setNotice(note); setMe(null); }, []);
-  const login = useCallback((u: { username: string }) => { setNotice(null); setMe(u); }, []);
+  const { me, checked, notice, leave, login } = useOpsSession();
   if (!checked) return <div className="p-4 text-fg-3"><h1 className="sr-only">운영</h1>…</div>;
   return <><h1 className="sr-only">운영{me ? "" : " — 로그인"}</h1>{me ? <OpsDashboard me={me} onLeave={leave} /> : <OpsLogin onLogin={login} notice={notice} />}</>;
 }
