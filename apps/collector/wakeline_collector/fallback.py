@@ -45,6 +45,7 @@ STAGE_MAX(8 — 쉼·미룸이 모두 가장 긴 값인 단계)에서 멈춘다.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -84,52 +85,31 @@ class ProviderChain(ChainState):
         self._store = store
         self._restored = store is None
         self._status = status
+        self._disabled: frozenset[str] | None = None  # 운영자가 끈 공급자 — 이 주기의 pick 이 읽었다(_evaluate)
 
-    async def _evaluate(self, order: list[str], need_global: bool) -> Choice:
-        """고를 공급자와 건너뛴 [(이름, 종류, 까닭)]. 상태를 바꾸지 않는다(처음 한 번은 저장된 429 이력을 되살린다).
-        까닭의 순서: 설정 안 됨 → 운영자 끔 → 일시정지 → 쉼(429 · 실패 · 예산 …) → 429 미룸. 모두 건너뛰면 미룸 중인 공급자(mode "held"),
-        그것도 없으면 3회 연속 실패로 쉬는 공급자(mode "probe" — 오래 시도하지 않은 것부터, 관심 지역만)를 고른다."""
+    async def _read_disabled(self, order: list[str], need_global: bool) -> frozenset[str]:
+        """이 범위의 설정된 후보 가운데 운영자가 끈 공급자 — 후보마다 is_disabled 를 한꺼번에 기다린다(Redis 가 멈춰도 AUX_TIMEOUT_S 한 번 —
+        전에는 후보마다 차례로 기다렸다). Redis 오류면 ProviderStatus 가 마지막으로 읽은 값을 준다(전과 같다)."""
+        names = [n for n in self._candidates(order, need_global) if getattr(self._providers[n], "configured", True) is not False]
+        flags = await asyncio.gather(*(self._status.is_disabled(n) for n in names))
+        self._disabled = frozenset(n for n, off in zip(names, flags, strict=True) if off)
+        return self._disabled
+
+    async def _evaluate(self, order: list[str], need_global: bool, *, fresh: bool = True) -> Choice:
+        """chain_state.choose — 처음 한 번은 저장된 429 이력을 되살린다. 운영자 끔은 주기마다 한 번 읽는다: pick(fresh)이 읽고, 같은 주기의
+        peek 은 그것을 다시 쓴다(읽은 적이 없으면 읽는다). 전에는 pick · peek 마다 후보마다 HGET 을 차례로 기다렸다(429 주기에 3번 —
+        tests/perf/chain_disabled_reads.py)."""
         if not self._restored:
             await self._restore()
-        now = time.monotonic()
-        skipped: list[tuple[str, str, str]] = []
-        held: list[str] = []
-        probes: list[str] = []
-        ranked = self._candidates(order, need_global)
-        for name in ranked:
-            p = self._providers[name]
-            if getattr(p, "configured", True) is False:
-                skipped.append((name, "config", "설정 안 됨"))
-                continue
-            if await self._status.is_disabled(name):
-                skipped.append((name, "disabled", "운영자 끔"))
-                continue
-            if self.paused(p, datetime.now(UTC)):
-                skipped.append((name, "paused", "일시정지(크레딧/예산)"))
-                continue
-            rest = self._rest(name, now)
-            if rest is not None:
-                in_hold = self._hold_until.get(name, 0.0) > now
-                skipped.append((name, "hold" if in_hold else "down", rest[2]))
-                # 3회 연속 실패 쉼 — 다른 공급자가 하나도 없을 때만 다시 시도(전세계는 쉼 그대로 — 모듈 설명). 그 위에 얹힌 짧은 쉼 동안은 부르지 않는다
-                if rest[1] == "fail" and not need_global:
-                    probes.append(name)
-                continue
-            if self._hold_until.get(name, 0.0) > now:
-                held.append(name)  # 되풀이된 429 — 다른 공급자가 없을 때만
-                skipped.append((name, "hold", self._hold_why.get(name, "429 반복 → 뒤로 미룸")))
-                continue
-            return Choice(name, skipped)
-        if held:
-            return Choice(held[0], [x for x in skipped if x[0] != held[0]], "held")
-        if probes:
-            name = min(probes, key=lambda n: (self._probed_at.get(n, -math.inf), ranked.index(n)))
-            return Choice(name, [x for x in skipped if x[0] != name], "probe", tuple(skipped))
-        return Choice(None, skipped)
+        disabled = self._disabled
+        if fresh or disabled is None:
+            disabled = await self._read_disabled(order, need_global)
+        return self.choose(order, need_global, disabled, datetime.now(UTC))
 
     async def peek(self, order: list[str], *, need_global: bool = False) -> str | None:
-        """다음 pick 이 고를 공급자 이름(상태·사유를 기록하지 않는다). 로그에 '다음에 무엇을 하는지'를 적을 때 쓴다."""
-        return (await self._evaluate(order, need_global)).name
+        """다음 pick 이 고를 공급자 이름(상태·사유를 기록하지 않는다). 로그에 '다음에 무엇을 하는지'를 적을 때 쓴다 — 운영자 끔은 이 주기의 pick 이
+        읽은 것으로 본다."""
+        return (await self._evaluate(order, need_global, fresh=False)).name
 
     async def pick(self, order: list[str], *, need_global: bool = False) -> Any | None:
         """이번 주기에 부를 공급자(없으면 None). 쉬는 공급자를 다시 시도하는 것(mode "probe")도 돌려주지만 상태는 '공급자 없음'이다 —

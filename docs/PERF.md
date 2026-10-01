@@ -244,6 +244,23 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 (`apps/web/tests/first-screen-js.test.ts` 가 순서와 인자를 본다), 이어서 같은 빌드를 127.0.0.1:8790 에 띄워 브라우저 첫 화면 파일이 빌드 결과 목록과 같은지 본다
 (import() 조각이 첫 그리기에 쓰이면 바이트 검사가 세지 못한다 — ADR-026 5). 배포 스택은 `npm run measure:first-js -- http://localhost:8700` 으로 잰다(위 '배포 스택에서 확인').
 
+## 11. 수집기 — 구조 개선 · Phase 4(2026-10-01, CTO 리뷰 collector-review §4 · PLAN Phase 3B/4)
+
+이 기계(M1 · CPython 3.13 · 스택 없이 — 외부 호출 · Redis 없음). 스크립트는 `apps/collector/tests/perf/`(pytest 가 모으지 않는다), 시험은 `apps/collector/tests/`.
+
+**공급자 체인의 운영자 끔 읽기(PLAN 3B-7)** — `tests/perf/chain_disabled_reads.py`: 가짜 상태의 읽기 하나가 50 ms 를 기다린다(Redis 가 멈춘 동안
+AUX_TIMEOUT_S 1.5 s 로 끊기는 HGET 의 모형). 관심 지역 체인(공급자 a · b), 다섯 번의 가운데 값.
+
+| 주기 | 전(`9394300`): 읽기 · 기다림 | 뒤: 읽기 · 기다림 |
+|---|---|---|
+| normal(pick — a) | 1 · 51.0 ms(1.02 번) | 2 · 51.3 ms(1.03 번) |
+| first_disabled(운영자가 a 를 껐다 — b) | 2 · 102.4 ms(2.05 번) | 2 · 51.2 ms(1.02 번) |
+| after_429(pick a → 429 → peek b) | 3 · 153.3 ms(3.07 번) | 2 · 51.3 ms(1.03 번) |
+
+뒤: pick 이 설정된 후보의 운영자 끔을 함께(`asyncio.gather`) 한 번 읽고 같은 주기의 peek 은 그것을 다시 쓴다. Redis 가 멈추면 429 주기의 읽기 기다림이
+최악 약 4.6 s → 1.5 s(1.5 s × 3 → × 1). 평상시에는 HGET 이 주기당 1 → 2(함께 — 기다림은 같다). 고르는 결과는 같다(test_fallback · test_chain_store ·
+test_aircraft_job 그대로 통과).
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -252,4 +269,5 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && npm run build && npm run measure:first-js -- --serve 8790)   # 첫 화면 JS(브라우저 측정, 운영 빌드를 127.0.0.1:8790 에)
 (cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
+(cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §11 공급자 체인의 운영자 끔 읽기(스택 없이)
 ```

@@ -1,4 +1,4 @@
-"""공급자 폴백 체인(FR-16 · R-17)의 상태기계 — 순수 규칙(입출력 없음: 시계는 인자로 받는다). 규칙과 까닭은 fallback 모듈 설명에 있다.
+"""공급자 폴백 체인(FR-16 · R-17)의 상태기계 — 순수 규칙(입출력 없음: 시계 · 운영자가 끈 공급자는 인자로 받는다). 규칙과 까닭은 fallback 모듈 설명에 있다.
 fallback.ProviderChain 이 이 상태기계 위에 Redis 상태 쓰기(wakeline:active · 전환 기록) · 429 이력 저장(chain_store) · 되살리기를 얹는다.
 """
 
@@ -88,7 +88,7 @@ def parse_saved(row: dict[str, str], now_wall: float) -> tuple[_Saved | None, st
 
 @dataclass(frozen=True)
 class Choice:
-    """고르기(ProviderChain._evaluate)의 결과: 고를 공급자(없으면 None) · 건너뛴 [(이름, 종류, 까닭)](고른 것 제외) · 고른 방식(None 정상 · "held" 429 미룸 중이나
+    """choose 의 결과: 고를 공급자(없으면 None) · 건너뛴 [(이름, 종류, 까닭)](고른 것 제외) · 고른 방식(None 정상 · "held" 429 미룸 중이나
     다른 공급자 없음 · "probe" 3회 연속 실패로 쉬는 중이나 다른 공급자 없음 — 공급자 없음 상태) · probe 면 그 공급자를 포함한 건너뛴 목록(순위 순)."""
 
     name: str | None
@@ -99,8 +99,8 @@ class Choice:
 
 class ChainState:
     """공급자 폴백 체인의 상태기계(fallback 모듈 설명의 규칙 — 3회 연속 실패 쉼 · 429 백오프와 미룸 · 공급자 없음 · 전환 사유). 입출력이 없다:
-    시계는 mono(단조) · now(UTC 벽시계)로 받는다. 고르기(운영자가 끈 공급자를 읽는다) · Redis 쓰기 · 429 이력 저장 · 되살리기는
-    fallback.ProviderChain 이 맡는다."""
+    운영자가 끈 공급자는 고를 때 인자(disabled)로 받고, 시계는 mono(단조) · now_w(UTC 벽시계)로 받는다. 운영자 끔 읽기 · Redis 쓰기 · 429 이력
+    저장 · 되살리기는 fallback.ProviderChain 이 맡는다."""
 
     def __init__(
         self,
@@ -344,3 +344,43 @@ class ChainState:
     @property
     def current(self) -> str | None:
         return self._current
+
+    def choose(self, order: list[str], need_global: bool, disabled: frozenset[str], now_w: datetime) -> Choice:
+        """고를 공급자와 건너뛴 [(이름, 종류, 까닭)]. 상태를 바꾸지 않는다. disabled = 운영자가 끈 공급자(부르는 쪽이 읽었다), now_w = 지금(UTC).
+        까닭의 순서: 설정 안 됨 → 운영자 끔 → 일시정지 → 쉼(429 · 실패 · 예산 …) → 429 미룸. 모두 건너뛰면 미룸 중인 공급자(mode "held"),
+        그것도 없으면 3회 연속 실패로 쉬는 공급자(mode "probe" — 오래 시도하지 않은 것부터, 관심 지역만)를 고른다."""
+        now = self._mono()
+        skipped: list[tuple[str, str, str]] = []
+        held: list[str] = []
+        probes: list[str] = []
+        ranked = self._candidates(order, need_global)
+        for name in ranked:
+            p = self._providers[name]
+            if getattr(p, "configured", True) is False:
+                skipped.append((name, "config", "설정 안 됨"))
+                continue
+            if name in disabled:
+                skipped.append((name, "disabled", "운영자 끔"))
+                continue
+            if self.paused(p, now_w):
+                skipped.append((name, "paused", "일시정지(크레딧/예산)"))
+                continue
+            rest = self._rest(name, now)
+            if rest is not None:
+                in_hold = self._hold_until.get(name, 0.0) > now
+                skipped.append((name, "hold" if in_hold else "down", rest[2]))
+                # 3회 연속 실패 쉼 — 다른 공급자가 하나도 없을 때만 다시 시도(전세계는 쉼 그대로 — 모듈 설명). 그 위에 얹힌 짧은 쉼 동안은 부르지 않는다
+                if rest[1] == "fail" and not need_global:
+                    probes.append(name)
+                continue
+            if self._hold_until.get(name, 0.0) > now:
+                held.append(name)  # 되풀이된 429 — 다른 공급자가 없을 때만
+                skipped.append((name, "hold", self._hold_why.get(name, "429 반복 → 뒤로 미룸")))
+                continue
+            return Choice(name, skipped)
+        if held:
+            return Choice(held[0], [x for x in skipped if x[0] != held[0]], "held")
+        if probes:
+            name = min(probes, key=lambda n: (self._probed_at.get(n, -math.inf), ranked.index(n)))
+            return Choice(name, [x for x in skipped if x[0] != name], "probe", tuple(skipped))
+        return Choice(None, skipped)

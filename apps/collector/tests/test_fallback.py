@@ -707,3 +707,48 @@ async def test_stand_down_says_whether_it_cleared_the_fields(monkeypatch):
     assert await chain.stand_down() is False  # 부르는 쪽(aircraft)이 다음 주기에 다시 부른다
     r.down = False
     assert await chain.stand_down() is True
+
+
+class _CountingStatus(FakeStatus):
+    """운영자 끔 읽기를 센다. together 개가 함께 기다리기 시작해야 답한다 — 차례로 읽으면 첫 읽기가 시간 초과로 실패한다."""
+
+    def __init__(self, together: int = 1):
+        super().__init__()
+        self.reads: list[str] = []
+        self._together, self._started = together, 0
+        self._all = None
+
+    async def is_disabled(self, name):
+        import asyncio
+
+        self._all = self._all or asyncio.Event()
+        self.reads.append(name)
+        self._started += 1
+        if self._started % self._together == 0:
+            self._all.set()
+        await asyncio.wait_for(self._all.wait(), 1.0)
+        if self._started % self._together == 0:
+            self._all = asyncio.Event()
+        return await super().is_disabled(name)
+
+
+@pytest.mark.asyncio
+async def test_a_cycle_reads_the_operator_switches_once_and_together():
+    """PLAN 3B-7 · collector-review §3: 운영자 끔(공급자마다 HGET — Redis 가 멈추면 하나에 AUX_TIMEOUT_S 1.5 s)은 주기마다 한 번 — pick 이 설정된
+    후보 모두를 함께 읽고(설정 안 된 공급자는 읽지 않는다), 같은 주기의 peek(429 경고의 'next:')은 그것을 다시 쓴다. 전에는 pick · peek 마다 후보마다
+    차례로 기다려 429 주기에 세 번(tests/perf/chain_disabled_reads.py). 고르는 결과는 같다."""
+    c = P("c")
+    c.configured = False
+    st = _CountingStatus(together=2)
+    chain = ProviderChain("region", {"a": P("a"), "b": P("b"), "c": c}, st)
+    order = ["c", "a", "b"]
+    assert (await chain.pick(order)).name == "a"
+    assert sorted(st.reads) == ["a", "b"]  # 함께(together=2 — 차례로면 시간 초과), 설정 안 된 c 는 읽지 않는다
+    await chain.on_rate_limited("a")
+    assert await chain.peek(order) == "b"  # 이 주기의 읽기를 다시 쓴다
+    assert sorted(st.reads) == ["a", "b"]
+    st.disabled.add("b")  # 운영자가 b 를 껐다 — 다음 주기(pick)가 다시 읽는다
+    assert await chain.pick(order) is None  # a 는 429 로 쉬고 b 는 꺼졌다
+    assert sorted(st.reads) == ["a", "a", "b", "b"]
+    got = chain.choose(order, False, frozenset({"b"}), datetime.now(UTC))  # 순수 고르기 — 끈 공급자는 인자로
+    assert (got.name, [(n, k) for n, k, _w in got.skipped]) == (None, [("c", "config"), ("a", "down"), ("b", "disabled")])
