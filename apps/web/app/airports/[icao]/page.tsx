@@ -20,11 +20,18 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   const [wx, setWx] = useState<AirportWx | null>(null);
   const [err, setErr] = useState<{ text: string; error: unknown } | null>(null);
   const now = useNow(30_000);
-  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다
+  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다.
+  // 성공한 답은 앞선 실패를 지운다 · 떠난(정리된) 요청의 답은 쓰지 않는다 — 개발 모드는 조회를 두 번 해 첫 실패와 이력이 함께 보였다(web-review B17)
   useEffect(() => {
+    let live = true;
     apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(code)}/wx`)
-      .then((body) => { const x = parseWx(body); if (x) setWx(x); else setErr({ text: `${WX_UNREADABLE}.`, error: null }); })
-      .catch((e: unknown) => setErr({ text: airportErrorText(e, code), error: e }));
+      .then((body) => {
+        if (!live) return;
+        const x = parseWx(body);
+        if (x) { setWx(x); setErr(null); } else setErr({ text: `${WX_UNREADABLE}.`, error: null });
+      })
+      .catch((e: unknown) => { if (live) setErr({ text: airportErrorText(e, code), error: e }); });
+    return () => { live = false; };
   }, [code]);
   const m = wx?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
@@ -35,6 +42,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
     <div className="h-full overflow-y-auto p-4">
       <h1 className="label mb-2">Airport weather · {code}</h1>
       {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
+      {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
       {wx ? <>
         <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

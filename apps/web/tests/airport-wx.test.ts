@@ -68,3 +68,40 @@ describe("airport card and history page with an unreadable body", () => {
     expect(dom.container.textContent).toContain("Incheon Intl (—, 126.441)");
   });
 });
+
+/**
+ * 공항 기상 이력 화면의 상태(web-review B17 · PLAN W17): 받는 동안 빈 화면이 아니라 '불러오는 중', 그리고 오류는 성공한 답이 지운다 —
+ * 개발 모드(StrictMode)는 조회를 두 번 하므로 첫 요청의 실패와 둘째 요청의 이력이 함께 보였다.
+ */
+describe("airport history page: loading and error states (web-review B17)", () => {
+  it("says it is loading until the answer comes", async () => {
+    vi.stubGlobal("self", globalThis);
+    let answer!: (r: Response) => void;
+    vi.stubGlobal("fetch", () => new Promise<Response>((r) => { answer = r; }));
+    const AirportPage = (await import("@/app/airports/[icao]/page")).default;
+    await m.render(m.React.createElement(m.React.Suspense, { fallback: null }, m.React.createElement(AirportPage, { params: Promise.resolve({ icao: "rksi" }) })));
+    await m.settle();
+    const status = m.byTestId("airport-wx-loading");
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.textContent).toBe("RKSI 기상 이력 불러오는 중…");
+    answer(json(BODY));
+    await m.settle();
+    expect(m.byTestId("airport-wx-loading")).toBeNull();
+    expect(dom.container.textContent).toContain("Incheon Intl");
+  });
+
+  it("a later successful answer clears an earlier failure (StrictMode asks twice)", async () => {
+    vi.stubGlobal("self", globalThis);
+    let n = 0;
+    vi.stubGlobal("fetch", async () => (++n === 1
+      ? new Response(JSON.stringify({ detail: "db down", request_id: "dbdbdbdbdbdbdbdb" }), { status: 503, headers: { "Content-Type": "application/problem+json" } })
+      : json(BODY)));
+    const AirportPage = (await import("@/app/airports/[icao]/page")).default;
+    await m.render(m.React.createElement(m.React.Suspense, { fallback: null }, m.React.createElement(AirportPage, { params: Promise.resolve({ icao: "rksi" }) })), { strict: true });
+    await m.settle();
+    await m.settle();
+    expect(n).toBe(2);
+    expect(dom.container.textContent).toContain("Incheon Intl");
+    expect(m.find((e) => e.getAttribute("role") === "alert")?.textContent ?? null).toBeNull();
+  });
+});
