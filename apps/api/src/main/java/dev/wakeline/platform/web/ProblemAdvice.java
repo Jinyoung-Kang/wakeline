@@ -1,6 +1,7 @@
 package dev.wakeline.platform.web;
 
 import dev.wakeline.platform.support.LogMasker;
+import io.lettuce.core.RedisLoadingException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,7 @@ import org.springframework.dao.NonTransientDataAccessResourceException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.RecoverableDataAccessException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -44,7 +46,8 @@ import java.util.regex.Pattern;
  *       스스로 말하는 것(SQLSTATE · 예외 종류)만, 그리고 경로 + 쿼리 문자열(가림 규칙을 거쳐) · 걸린 시간 · 공개 조회면 끊긴 문장의 이름과 그 한도
  *       (호출부의 이름표 — Sql.publicRead)를 싣는다(조사 2026-10-01 오류 F3). 컨트롤러가 DB 없이 답하는 길(503 · meta.db_unavailable)도 같은 줄을
  *       남긴다({@link #storeUnavailable} · {@link #answeredWithoutStore}).
- *       잠금 대기 한도(SQLSTATE 55P03)는 Spring 의 기본 번역이 모르는 부류라 UncategorizedSQLException 으로 오지만 같은 503 이다(예전: 500 + ERROR).</li>
+ *       잠금 대기 한도(SQLSTATE 55P03)는 Spring 의 기본 번역이 모르는 부류라 UncategorizedSQLException 으로 오지만 같은 503 이다(예전: 500 + ERROR).
+ *       Redis 가 기동하며 데이터를 읽는 동안의 LOADING 답도 분류되지 않은 RedisSystemException 으로 오지만 같은 503 이다.</li>
  *   <li>Spring MVC 가 이미 상태를 아는 예외(405·406·415 등, {@link ErrorResponse}) → 그 상태 그대로, 헤더(Allow 등) 유지.
  *       4xx 는 INFO 한 줄 — 익명 요청으로 ERROR 스택을 쏟아내게 할 수 없다(SEC-10).</li>
  *   <li>그 밖의 예외만 500 + ERROR(스택).</li>
@@ -105,7 +108,22 @@ public class ProblemAdvice {
         return e instanceof DataAccessResourceFailureException || e instanceof NonTransientDataAccessResourceException
                 || e instanceof TransientDataAccessException || e instanceof RecoverableDataAccessException
                 || e instanceof CannotCreateTransactionException
-                || (e instanceof UncategorizedSQLException && LOCK_NOT_AVAILABLE.equals(sqlState(e)));
+                || (e instanceof UncategorizedSQLException && LOCK_NOT_AVAILABLE.equals(sqlState(e))) || redisLoading(e);
+    }
+
+    /**
+     * Redis 가 기동하며 AOF 를 읽는 동안 명령마다 '-LOADING' 으로 답한다(appendonly — 배포 때 redis 를 다시 만들면 매번). Lettuce 는 RedisLoadingException
+     * 으로, Spring Data Redis 의 번역은 분류되지 않은 RedisSystemException 으로 감싼다 — 잠시 뒤 되는 일이라 503(리뷰 cto-2026-10 최종 리뷰: 레이더 프레임
+     * 영상이 500 + ERROR 스택이었다). 다른 Redis 명령 오류(WRONGTYPE 등)는 결함일 수 있어 그대로 500.
+     */
+    static boolean redisLoading(Throwable e) {
+        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) if (c instanceof RedisLoadingException) return true;
+        return false;
+    }
+
+    @ExceptionHandler(RedisSystemException.class)
+    ResponseEntity<?> redisSystem(RedisSystemException e, HttpServletRequest req) {
+        return redisLoading(e) ? unavailable(e, req) : other(e, req);
     }
 
     /**
@@ -176,6 +194,7 @@ public class ProblemAdvice {
         String state = sqlState(e);
         if (QUERY_CANCELED.equals(state)) return "statement cancelled (SQLSTATE " + QUERY_CANCELED + ")";
         if (LOCK_NOT_AVAILABLE.equals(state)) return "lock not available (SQLSTATE " + LOCK_NOT_AVAILABLE + ")";
+        if (redisLoading(e)) return "redis loading its dataset";
         String withState = state == null ? "" : " (SQLSTATE " + state + ")";
         if (e instanceof CannotGetJdbcConnectionException) return "could not get a DB connection" + withState;
         if (e instanceof CannotCreateTransactionException) return "could not open a DB connection for a transaction" + withState;

@@ -4,7 +4,9 @@ import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.weather.data.KrRadarReader;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import io.lettuce.core.RedisLoadingException;
 import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.connection.lettuce.LettuceExceptionConverter;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.web.servlet.MockMvc;
@@ -60,6 +62,15 @@ class KrRadarFrameEndpointTest {
     @Test
     void aRedisOutageIs503WithRetryAfterNotAMissingFrame() throws Exception {
         mvc(k -> { throw new RedisConnectionFailureException("redis down"); })
+                .perform(get("/api/v1/radar/kr/" + TM + ".png"))
+                .andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"))
+                .andExpect(jsonPath("$.code").value("UNAVAILABLE"));
+    }
+
+    /** Redis 가 다시 켜지며 데이터를 읽는 동안(LOADING)도 일시 장애다 — 503(최종 리뷰: 예전 수정 뒤 500 + ERROR 스택이었다) */
+    @Test
+    void redisLoadingItsDatasetIs503WithRetryAfter() throws Exception {
+        mvc(k -> { throw new LettuceExceptionConverter().convert(new RedisLoadingException("LOADING Redis is loading the dataset in memory")); })
                 .perform(get("/api/v1/radar/kr/" + TM + ".png"))
                 .andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"))
                 .andExpect(jsonPath("$.code").value("UNAVAILABLE"));

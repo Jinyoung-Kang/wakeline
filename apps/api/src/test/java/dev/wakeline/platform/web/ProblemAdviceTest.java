@@ -5,7 +5,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.converter.HttpMessageNotWritableException;
+import io.lettuce.core.RedisCommandExecutionException;
+import io.lettuce.core.RedisLoadingException;
 import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.connection.lettuce.LettuceExceptionConverter;
 import org.springframework.http.MediaType;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
@@ -41,6 +44,14 @@ class ProblemAdviceTest {
             throw new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection", new SQLTransientConnectionException("pool timeout"));
         }
         @GetMapping("/redis-down") String redisDown() { throw new RedisConnectionFailureException("redis down"); }
+        // Redis 가 기동하며 AOF 를 읽는 동안 명령마다 '-LOADING' 으로 답한다 — Spring Data Redis 의 Lettuce 번역(그대로 씀)이 만드는 모양
+        @GetMapping("/redis-loading") String redisLoading() {
+            throw new LettuceExceptionConverter().convert(new RedisLoadingException("LOADING Redis is loading the dataset in memory"));
+        }
+        // 다른 Redis 명령 오류(예: 키의 형이 다름)는 결함일 수 있다 — 503 으로 삼키지 않는다
+        @GetMapping("/redis-wrongtype") String redisWrongType() {
+            throw new LettuceExceptionConverter().convert(new RedisCommandExecutionException("WRONGTYPE Operation against a key holding the wrong kind of value"));
+        }
         // pgjdbc: 쿼리 한도(setQueryTimeout)가 보낸 취소 · 서버 statement_timeout 모두 SQLSTATE 57014 — Spring 은 QueryTimeoutException 으로 번역한다
         @GetMapping("/cancelled") String cancelled() {
             throw new QueryTimeoutException("PreparedStatementCallback; SQL [SELECT 1]; ERROR: canceling statement due to user request",
@@ -99,6 +110,22 @@ class ProblemAdviceTest {
         mvc.perform(get("/redis-down")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
         mvc.perform(get("/unavailable")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
         mvc.perform(get("/limited")).andExpect(status().isTooManyRequests()).andExpect(header().string("Retry-After", "42"));
+    }
+
+    /**
+     * 리뷰 cto-2026-10 최종 리뷰: Redis 가 다시 켜지며 AOF 를 읽는 동안(배포 때 redis 를 다시 만든다 — ADR-017 §6.3) 명령마다 LOADING 으로 답한다.
+     * Lettuce 번역은 이것을 분류되지 않은 RedisSystemException 으로 준다 — 저장소를 잠시 못 쓰는 것이므로 503 + Retry-After(계약 §2), 다른 명령 오류는 500.
+     */
+    @Test
+    void redisLoadingItsDatasetIs503_otherRedisCommandErrorsAreStill500(CapturedOutput out) throws Exception {
+        mvc.perform(get("/redis-loading")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"))
+                .andExpect(content().string(containsString("UNAVAILABLE")));
+        org.assertj.core.api.Assertions.assertThat(out.getAll()).contains("redis loading its dataset request_id=- path=/redis-loading")
+                .doesNotContain("unhandled error request_id=- path=/redis-loading");
+        org.assertj.core.api.Assertions.assertThat(ProblemAdvice.isUnavailable(new LettuceExceptionConverter().convert(
+                new RedisLoadingException("LOADING Redis is loading the dataset in memory")))).isTrue();
+        mvc.perform(get("/redis-wrongtype")).andExpect(status().isInternalServerError()).andExpect(header().doesNotExist("Retry-After"));
+        org.assertj.core.api.Assertions.assertThat(out.getAll()).contains("unhandled error request_id=- path=/redis-wrongtype");
     }
 
     /**
