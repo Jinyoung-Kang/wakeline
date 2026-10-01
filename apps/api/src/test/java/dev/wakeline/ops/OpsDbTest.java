@@ -244,6 +244,30 @@ class OpsDbTest {
                 new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
     }
 
+    /** 실제 상태 서비스(빈 스토어)를 쓰는 운영 컨트롤러 — /ops/providers 처럼 공개 상태도 읽는 응답용. */
+    OpsController opsWithStatus(StringRedisTemplate r, AuditService a) {
+        var snapshots = new dev.wakeline.ingest.SnapshotStore();
+        var sigmets = new dev.wakeline.ingest.SigmetStore();
+        var status = new dev.wakeline.rest.StatusService(snapshots, sigmets, new dev.wakeline.ingest.RadarStore(),
+                new dev.wakeline.engine.EngineService(snapshots, sigmets, e -> { }, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), r, PROPS);
+        return new OpsController(status, api, r, settings(r), a, new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx()), DbTestSupport.apiTx(),
+                switches(r), new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
+    }
+
+    /**
+     * 리뷰 cto-2026-10 A4(B10): 수집기 자동 전환(wakeline:events)을 Redis 장애로 읽지 못하면 빈 목록과 함께 error — '전환 없음' 과 구별된다(같은 컨트롤러의
+     * /ops/dlq 와 같은 모양). 예전에는 빈 목록뿐이었다.
+     */
+    @Test
+    void providersSaysWhenTheSwitchEventsCouldNotBeRead() {
+        Map<String, Object> down = opsWithStatus(deadRedis, audit).providers();
+        assertThat(down).containsEntry("error", "redis unavailable");
+        assertThat((List<?>) down.get("switches")).isEmpty();
+        Map<String, Object> up = opsWithStatus(redis, audit).providers();
+        assertThat(up).doesNotContainKey("error").containsKeys("providers", "active", "collector", "switches", "budget_days", "budget_day_zone",
+                "provider_switch", "resolution_state", "generated_at");
+    }
+
     static final OpsAuthentication ALICE = new OpsAuthentication(new OpsUserService.User(1, "alice", "OPS"), List.of(new SimpleGrantedAuthority("ROLE_OPS")));
 
     void alice() { admin.sql("INSERT INTO ops_user (id, username, password_hash) VALUES (1, 'alice', 'x')").update(); }

@@ -43,7 +43,7 @@ class ClientErrorControllerTest {
         final Map<String, Long> counts = new HashMap<>();
         final AtomicBoolean redisDown = new AtomicBoolean();
 
-        MemLimiter() { super(null); }
+        MemLimiter() { super(null, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()); }
 
         @Override
         public long[] hitStrict(String bucket, String ip, int windowS) {

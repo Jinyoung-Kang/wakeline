@@ -97,16 +97,29 @@ public class OpsController {
             p.put("last_error_resolved", r != null && r.covers(OpsPipelineController.time(p.get("last_error_at"))));
         }
         List<Map<String, Object>> switchEvents = new java.util.ArrayList<>(); // collector 의 자동 전환(wakeline:events)
+        String switchesError = null;
         try {
             List<MapRecord<String, Object, Object>> recs = redis.opsForStream().reverseRange("wakeline:events", Range.unbounded(), Limit.limit().count(20));
             if (recs != null) for (var r : recs) switchEvents.add(new LinkedHashMap<>(castMap(r.getValue())));
-        } catch (RuntimeException ignored) { }
+        } catch (RuntimeException e) {
+            // 읽지 못한 것을 '전환 없음' 과 구별한다 — /ops/dlq 와 같은 error 필드(리뷰 cto-2026-10 A4 — 예전에는 빈 목록뿐이었다)
+            switchesError = "redis unavailable";
+        }
         var budgets = db.sql("SELECT provider, to_char(day, 'YYYY-MM-DD') AS day, calls, limit_value FROM provider_budget_day WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7 ORDER BY 2 DESC, provider").query().listOfRows();
         // provider_switch: 켜고 끄기의 원본(DB)과 collector 가 따르는 Redis 미러를 공급자마다 나란히(R-94) — providers 의 disabled 는 미러 값이다
         // generated_at: 이 응답을 만든 서버 시각 — 운영 화면이 수집기 시각(missing_checked_at 등)의 나이를 브라우저 시계가 아니라 서버 기준으로 잰다(계약 v5 §G22)
-        return Map.of("providers", list, "active", status.publicStatus().get("active_providers"), "collector", status.collectorHeartbeat(),
-                "switches", switchEvents, "budget_days", budgets, "budget_day_zone", "UTC", "provider_switch", switches.states(), "resolution_state", res.state().label(),
-                "generated_at", Instant.now());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("providers", list);
+        m.put("active", status.publicStatus().get("active_providers"));
+        m.put("collector", status.collectorHeartbeat());
+        m.put("switches", switchEvents);
+        if (switchesError != null) m.put("error", switchesError);
+        m.put("budget_days", budgets);
+        m.put("budget_day_zone", "UTC");
+        m.put("provider_switch", switches.states());
+        m.put("resolution_state", res.state().label());
+        m.put("generated_at", Instant.now());
+        return m;
     }
 
     /**
