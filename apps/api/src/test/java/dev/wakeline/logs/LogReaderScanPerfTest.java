@@ -67,7 +67,10 @@ class LogReaderScanPerfTest {
             bytes += e.length();
         }
         out.add(String.format("entries %,d server + %,d client · %,d chars of JSON", SERVER, CLIENT, bytes));
-        rows(out, "memory", new LogReader(server, client));
+        LogReader mem = new LogReader(server, client);
+        rows(out, "memory", mem);
+        out.add(String.format("memory | decoded-entry cache after a full scan: %,d entries · heap retained about %.1f MB (used heap after GC, with vs without)",
+                SERVER + CLIENT, retainedMb(server, client)));
 
         try (GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:8-alpine")).withExposedPorts(6379)) {
             redis.start();
@@ -78,7 +81,16 @@ class LogReaderScanPerfTest {
                 StringRedisTemplate t = new StringRedisTemplate(f);
                 for (int i = 0; i < SERVER; i++) t.opsForStream().add(LogStream.SERVER.key(), Map.of("e", server(base, i)));
                 for (int i = 0; i < CLIENT; i++) t.opsForStream().add(LogStream.CLIENT.key(), Map.of("e", client(base, i)));
-                rows(out, "redis", new LogReader(t));
+                LogReader r = new LogReader(t);
+                rows(out, "redis", r);
+                // 실제 폴링: 앞 폴링 뒤로 새 항목 10건이 LogSink 처럼(XADD … MAXLEN ~ 3000) 실렸다
+                int[] n = {0};
+                out.add(row("redis", "groups, 10 new entries since the last poll", median(() -> {
+                    for (int i = 0; i < 10; i++)
+                        t.opsForStream().add(org.springframework.data.redis.connection.stream.MapRecord.create(LogStream.SERVER.key(),
+                                Map.of("e", server(base, SERVER + n[0]++))), LogStream.SERVER.xaddOptions());
+                    return r.groups(ALL, LogReader.Resolver.NONE, true).scanned();
+                })));
                 LogReader.Source s = LogReader.redisSource(t, LogStream.SERVER), c = LogReader.redisSource(t, LogStream.CLIENT);
                 out.add(row("redis", "XREVRANGE only (both streams, 200 per call)", median(() -> readAll(s) + readAll(c))));
             } finally {
@@ -98,6 +110,27 @@ class LogReaderScanPerfTest {
         out.add(row(where, "list first page, no filter (100 of 4,200)", median(() -> r.list(ALL, null, 100, none, true).items().size())));
         out.add(row(where, "list, filter matching nothing (full scan)", median(() -> r.list(NOTHING, null, 100, none, true).scanned())));
         out.add(row(where, "groups (full scan)", median(() -> r.groups(ALL, none, true).groups().size())));
+    }
+
+    /** 캐시가 잡는 힙(대략): 같은 스트림을 한 번 끝까지 훑은 읽기 하나를 쥔 채 GC 한 뒤의 사용량 − 버린 뒤 GC 한 뒤의 사용량. */
+    static double retainedMb(LogReader.Source server, LogReader.Source client) {
+        Runtime rt = Runtime.getRuntime();
+        LogReader r = new LogReader(server, client);
+        r.groups(ALL);
+        gc();
+        long with = rt.totalMemory() - rt.freeMemory();
+        assertThat(r.decodeCount()).isEqualTo(SERVER + CLIENT); // 쥐고 있다
+        r = null;
+        gc();
+        long without = rt.totalMemory() - rt.freeMemory();
+        return (with - without) / 1e6;
+    }
+
+    static void gc() {
+        for (int i = 0; i < 3; i++) {
+            System.gc();
+            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
     }
 
     static int readAll(LogReader.Source s) {
