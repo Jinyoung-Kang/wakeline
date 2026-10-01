@@ -148,7 +148,9 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         Bbox bbox = parseBbox(m.path("bbox"));
         if (bbox == null) { hub.error(s, "BAD_BBOX", "bbox must be [lomin,lamin,lomax,lamax] within range"); return; }
         JsonNode z = m.path("zoom");
-        int zoom = z.isNumber() ? Math.max(0, Math.min(MAX_ZOOM, z.asInt())) : 7;
+        // 범위 안전하게 읽는다(리뷰 cto-2026-10 S4): Jackson 3 의 asInt() 는 int 밖의 수(1e10 · 2^31 · 큰 정수)면 던진다 — 익명 클라이언트가 ERROR 스택과
+        // 1011 종료를 만들었다. double 로 읽어 0–24 로 자르면 범위 안의 값은 예전과 같고(소수는 버림) 밖의 값은 끝으로 간다.
+        int zoom = z.isNumber() ? (int) Math.max(0, Math.min(MAX_ZOOM, z.asDouble())) : 7;
         if (bbox.area() > props.maxBboxAreaSqdeg() && zoom > 5) {
             hub.error(s, "BBOX_TOO_LARGE", "bbox area exceeds limit; zoom out to ≤ 5 for world view");
             return;
