@@ -387,7 +387,9 @@ def test_region_feed_stale_limit_matches_the_api():
 
     from wakeline_collector.jobs import aircraft as mod
 
-    java = (Path(__file__).resolve().parents[3] / "apps/api/src/main/java/dev/wakeline/weather/core/EngineService.java").read_text()
+    java = (
+        Path(__file__).resolve().parents[3] / "apps/api/src/main/java/dev/wakeline/weather/core/EngineService.java"
+    ).read_text()
     m = re.search(r"REGION_FEED_STALE_S\s*=\s*(\d+);", java)
     assert m and int(m.group(1)) == mod.REGION_FEED_STALE_S
 
