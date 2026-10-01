@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -15,7 +15,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** 허용 Origin 목록 정리(SEC-7) — WS 핸드셰이크(OriginAllowList)가 쓰는 목록. */
-class AppPropertiesTest {
+public class AppPropertiesTest {
     @Test void originPatterns_dropWildcardAndBlanks_fallBackToDefaultWhenEmpty() {
         assertThat(AppProperties.normalizeOrigins(Arrays.asList(" http://a:1/ ", "*", "", null, "http://a:1"))).containsExactly("http://a:1");
         assertThat(AppProperties.normalizeOrigins(List.of("*"))).isEqualTo(AppProperties.DEFAULT_ALLOWED_ORIGINS);
@@ -51,11 +51,11 @@ class AppPropertiesTest {
         return Binder.get(e).bind("wakeline", AppProperties.class).get();
     }
 
-    static AppProperties props(List<String> origins) {
+    public static AppProperties props(List<String> origins) {
         return props(origins, List.of());
     }
 
-    static AppProperties props(List<String> origins, List<String> extra) {
+    public static AppProperties props(List<String> origins, List<String> extra) {
         return new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, origins, extra);
     }
 }

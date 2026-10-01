@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;

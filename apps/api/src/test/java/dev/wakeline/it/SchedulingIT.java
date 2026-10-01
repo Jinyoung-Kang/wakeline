@@ -26,7 +26,7 @@ class SchedulingIT extends IntegrationTest {
     @Test
     void poolIsLargerThanTheNumberOfScheduledJobs() {
         assertThat(scheduledTasks.getScheduledTasks()).isNotEmpty();
-        assertThat(scheduledTasks.getScheduledTasks().size()).isLessThan(dev.wakeline.config.SchedulingConfig.POOL_SIZE);
+        assertThat(scheduledTasks.getScheduledTasks().size()).isLessThan(dev.wakeline.platform.config.SchedulingConfig.POOL_SIZE);
         assertThat(scheduler).isInstanceOf(org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler.class);
         // 앱의 @Scheduled 작업이 실제로 이 풀에 걸려 있다
         var pool = ((org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler) scheduler).getScheduledThreadPoolExecutor();

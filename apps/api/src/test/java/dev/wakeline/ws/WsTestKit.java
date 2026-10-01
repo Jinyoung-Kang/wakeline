@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.engine.PredictionAvailability;

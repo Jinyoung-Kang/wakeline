@@ -1,6 +1,6 @@
 package dev.wakeline.persist;
 
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.platform.web.ProblemAdvice;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.core.simple.JdbcClient;

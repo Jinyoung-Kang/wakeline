@@ -1,5 +1,10 @@
 package dev.wakeline.config;
 
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ApiPaths;
+import dev.wakeline.platform.web.ProblemErrorReportValve;
+import dev.wakeline.platform.web.ProblemJson;
+import dev.wakeline.platform.web.RequestIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;

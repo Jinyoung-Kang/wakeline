@@ -1,7 +1,7 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.SigmetStore;

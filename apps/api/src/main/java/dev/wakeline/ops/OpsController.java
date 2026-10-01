@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.rest.StatusService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.data.domain.Range;

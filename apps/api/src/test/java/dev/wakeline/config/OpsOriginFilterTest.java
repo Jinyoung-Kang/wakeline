@@ -1,5 +1,6 @@
 package dev.wakeline.config;
 
+import dev.wakeline.platform.config.AppPropertiesTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;

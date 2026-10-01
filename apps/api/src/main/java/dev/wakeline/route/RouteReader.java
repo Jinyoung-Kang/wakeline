@@ -1,6 +1,6 @@
 package dev.wakeline.route;
 
-import dev.wakeline.config.RedisConfig;
+import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.persist.SingleFlight;
 import io.micrometer.core.instrument.Counter;

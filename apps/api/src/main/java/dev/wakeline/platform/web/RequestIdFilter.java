@@ -1,5 +1,6 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
+import dev.wakeline.platform.config.AppProperties;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

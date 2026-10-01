@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
 import org.apache.catalina.Valve;
 import org.apache.catalina.core.StandardHost;

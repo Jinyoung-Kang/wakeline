@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.config;
 
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;

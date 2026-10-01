@@ -1,7 +1,7 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.domain.Bbox;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.HashOperations;

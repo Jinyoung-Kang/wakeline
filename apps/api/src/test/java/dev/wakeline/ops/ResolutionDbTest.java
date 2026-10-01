@@ -1,7 +1,7 @@
 package dev.wakeline.ops;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;

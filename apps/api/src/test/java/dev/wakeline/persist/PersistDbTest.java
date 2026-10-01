@@ -1,7 +1,7 @@
 package dev.wakeline.persist;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.Bbox;

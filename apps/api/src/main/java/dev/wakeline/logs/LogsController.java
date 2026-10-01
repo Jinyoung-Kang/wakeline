@@ -1,6 +1,6 @@
 package dev.wakeline.logs;
 
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.ops.Resolution;
 import dev.wakeline.ops.ResolutionService;
 import dev.wakeline.ops.Resolutions;

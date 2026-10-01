@@ -1,9 +1,10 @@
 package dev.wakeline.logs;
 
 import ch.qos.logback.classic.LoggerContext;
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ProblemAdvice;
-import dev.wakeline.config.RateLimiter;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.support.LogMasker;
+import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.platform.web.RateLimiter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -1,7 +1,8 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.Meta;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.persist.MaintenanceJobs;
 import dev.wakeline.persist.SigmetRepository;

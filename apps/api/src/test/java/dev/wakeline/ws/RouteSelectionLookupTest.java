@@ -561,10 +561,10 @@ class RouteSelectionLookupTest {
      * 않는다. application.yml 의 값은 3 s.
      */
     @Test void theDeadlineComesFromTheRedisCommandTimeout() throws Exception {
-        assertThat(RouteLookups.deadlineMs(dev.wakeline.config.RedisConfig.commandTimeout("3s"))).as("as Boot binds a Duration property").isEqualTo(3_000);
-        assertThat(dev.wakeline.config.RedisConfig.commandTimeout("2500")).as("no unit = ms, like Boot").isEqualTo(Duration.ofMillis(2_500));
+        assertThat(RouteLookups.deadlineMs(dev.wakeline.platform.config.RedisConfig.commandTimeout("3s"))).as("as Boot binds a Duration property").isEqualTo(3_000);
+        assertThat(dev.wakeline.platform.config.RedisConfig.commandTimeout("2500")).as("no unit = ms, like Boot").isEqualTo(Duration.ofMillis(2_500));
         for (String bad : new String[] {"${spring.data.redis.timeout}", "0s", "-1s"})
-            assertThatThrownBy(() -> dev.wakeline.config.RedisConfig.commandTimeout(bad)).as(bad).isInstanceOf(IllegalStateException.class)
+            assertThatThrownBy(() -> dev.wakeline.platform.config.RedisConfig.commandTimeout(bad)).as(bad).isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("spring.data.redis.timeout");
         assertThat(RouteLookups.deadlineMs(Duration.ofSeconds(3))).isEqualTo(3_000);
         assertThat(RouteLookups.deadlineMs(Duration.ofMillis(1_500))).isEqualTo(1_500);
@@ -582,14 +582,14 @@ class RouteSelectionLookupTest {
      * "${spring.data.redis.timeout}" 을 읽어, 그 속성이 없는 구성(Redis 는 기본 3 s 로 도는)에서 허브가 기동하지 못했다.
      */
     @Test void everyReaderOfTheRedisCommandTimeout_usesTheOneConfigExpression() throws Exception {
-        assertThat(valueOf(WsHub.class.getConstructors())).as("WsHub").isEqualTo(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT);
-        assertThat(valueOf(RouteReader.class.getConstructors())).as("RouteReader").isEqualTo(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT);
-        java.lang.reflect.Method factory = dev.wakeline.config.RedisConfig.class.getDeclaredMethod("redisConnectionFactory",
+        assertThat(valueOf(WsHub.class.getConstructors())).as("WsHub").isEqualTo(dev.wakeline.platform.config.RedisConfig.COMMAND_TIMEOUT);
+        assertThat(valueOf(RouteReader.class.getConstructors())).as("RouteReader").isEqualTo(dev.wakeline.platform.config.RedisConfig.COMMAND_TIMEOUT);
+        java.lang.reflect.Method factory = dev.wakeline.platform.config.RedisConfig.class.getDeclaredMethod("redisConnectionFactory",
                 String.class, int.class, String.class, String.class, String.class);
         assertThat(java.util.Arrays.stream(factory.getParameters()).map(p -> p.getAnnotation(org.springframework.beans.factory.annotation.Value.class))
                 .filter(java.util.Objects::nonNull).map(org.springframework.beans.factory.annotation.Value::value).toList())
-                .as("RedisConfig — the Lettuce command timeout").contains(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT);
-        assertThat(dev.wakeline.config.RedisConfig.COMMAND_TIMEOUT).isEqualTo("${spring.data.redis.timeout:3s}");
+                .as("RedisConfig — the Lettuce command timeout").contains(dev.wakeline.platform.config.RedisConfig.COMMAND_TIMEOUT);
+        assertThat(dev.wakeline.platform.config.RedisConfig.COMMAND_TIMEOUT).isEqualTo("${spring.data.redis.timeout:3s}");
     }
 
     /** @Autowired 생성자에서 spring.data.redis.timeout 을 읽는 @Value 의 식. */

@@ -1,6 +1,5 @@
-package dev.wakeline.rest;
+package dev.wakeline.platform.web;
 
-import dev.wakeline.config.RequestIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.time.Instant;

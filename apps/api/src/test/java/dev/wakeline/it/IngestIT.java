@@ -392,6 +392,6 @@ class IngestIT extends IntegrationTest {
     @Test
     void contextUsesTheListenerIsolatingMulticaster() {
         assertThat(context.getBean(org.springframework.context.support.AbstractApplicationContext.APPLICATION_EVENT_MULTICASTER_BEAN_NAME))
-                .isInstanceOf(dev.wakeline.config.PipelineEventMulticaster.class);
+                .isInstanceOf(dev.wakeline.platform.config.PipelineEventMulticaster.class);
     }
 }

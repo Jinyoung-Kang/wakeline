@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
 import jakarta.servlet.http.HttpServletRequest;
 

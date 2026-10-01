@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 
 import java.util.HashMap;
 import java.util.List;

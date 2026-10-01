@@ -1,8 +1,8 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ProblemAdvice;
-import dev.wakeline.config.RateLimiter;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.platform.web.RateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

@@ -1,6 +1,6 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.coverage.CoverageSource;
 import dev.wakeline.coverage.ShipCoverage;
 import dev.wakeline.coverage.ShipCoverageFixtures;

@@ -1,6 +1,6 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.domain.Bbox;
 import dev.wakeline.domain.DestinationInfo;
 import dev.wakeline.domain.DestinationParser;

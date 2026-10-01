@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

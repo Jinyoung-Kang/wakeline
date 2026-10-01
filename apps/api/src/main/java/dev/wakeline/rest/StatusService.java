@@ -1,6 +1,6 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.demand.DemandStats;
 import dev.wakeline.ops.RegionSettings;
 import org.springframework.beans.factory.annotation.Autowired;

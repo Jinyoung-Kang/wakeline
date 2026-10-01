@@ -1,5 +1,7 @@
 package dev.wakeline.config;
 
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.config.AppPropertiesTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration;

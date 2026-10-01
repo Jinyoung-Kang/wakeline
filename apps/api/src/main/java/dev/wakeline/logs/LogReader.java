@@ -1,6 +1,7 @@
 package dev.wakeline.logs;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import dev.wakeline.platform.support.LogMasker;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Range;
 import org.springframework.data.domain.Range.Bound;

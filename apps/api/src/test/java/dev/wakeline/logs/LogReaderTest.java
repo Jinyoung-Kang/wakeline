@@ -1,5 +1,6 @@
 package dev.wakeline.logs;
 
+import dev.wakeline.platform.support.LogMasker;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 

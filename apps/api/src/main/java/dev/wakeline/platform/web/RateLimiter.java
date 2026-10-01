@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;

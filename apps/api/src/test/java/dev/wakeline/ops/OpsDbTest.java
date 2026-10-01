@@ -1,8 +1,8 @@
 package dev.wakeline.ops;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.persist.MaintenanceJobs;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;

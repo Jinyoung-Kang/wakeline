@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.config;
 
 import io.lettuce.core.ClientOptions;
 import org.springframework.beans.factory.annotation.Qualifier;

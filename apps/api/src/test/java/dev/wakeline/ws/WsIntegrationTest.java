@@ -1,6 +1,6 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.config.WebSocketConfig;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;

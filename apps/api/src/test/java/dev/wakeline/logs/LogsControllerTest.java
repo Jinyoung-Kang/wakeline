@@ -1,6 +1,6 @@
 package dev.wakeline.logs;
 
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.ops.Resolution;
 import dev.wakeline.ops.Resolutions;
 import org.junit.jupiter.api.BeforeEach;

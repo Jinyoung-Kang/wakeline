@@ -1,5 +1,7 @@
 package dev.wakeline.rest;
 
+import dev.wakeline.platform.web.Etags;
+import dev.wakeline.platform.web.Meta;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;

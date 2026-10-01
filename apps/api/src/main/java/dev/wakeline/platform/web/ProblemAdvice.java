@@ -1,6 +1,6 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
-import dev.wakeline.logs.LogMasker;
+import dev.wakeline.platform.support.LogMasker;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

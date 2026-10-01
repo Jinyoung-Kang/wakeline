@@ -1,10 +1,10 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ClientIp;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ClientIp;
 import dev.wakeline.config.OpsSessionLifetimeFilter;
-import dev.wakeline.config.Problem;
-import dev.wakeline.config.RateLimiter;
+import dev.wakeline.platform.web.Problem;
+import dev.wakeline.platform.web.RateLimiter;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;

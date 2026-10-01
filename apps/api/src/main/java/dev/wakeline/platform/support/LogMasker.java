@@ -1,4 +1,4 @@
-package dev.wakeline.logs;
+package dev.wakeline.platform.support;
 
 import java.util.Comparator;
 import java.util.List;
@@ -92,7 +92,7 @@ public final class LogMasker {
     public static int secretCount() { return SECRETS.size(); }
 
     /** 시험용: 등록한 값을 모두 지운다. */
-    static synchronized void clearSecrets() { SECRETS.clear(); }
+    public static synchronized void clearSecrets() { SECRETS.clear(); }
 
     /** {@link #DEFAULT_LIMIT} 코드 포인트까지. */
     public static String mask(String text) { return mask(text, DEFAULT_LIMIT); }
@@ -183,7 +183,7 @@ public final class LogMasker {
     }
 
     /** 앞에서 n 코드 포인트(서로게이트 쌍을 가르지 않는다). */
-    static String cut(String s, int n) {
+    public static String cut(String s, int n) {
         if (s.length() <= n) return s;
         if (s.codePointCount(0, s.length()) <= n) return s;
         return s.substring(0, s.offsetByCodePoints(0, n));

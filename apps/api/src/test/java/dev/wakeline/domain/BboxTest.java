@@ -1,6 +1,6 @@
 package dev.wakeline.domain;
 
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

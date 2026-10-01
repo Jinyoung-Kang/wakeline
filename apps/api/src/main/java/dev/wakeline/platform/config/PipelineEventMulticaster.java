@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.config;
 
 import dev.wakeline.platform.support.PipelineEvent;
 import io.micrometer.core.instrument.Counter;

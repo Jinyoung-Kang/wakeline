@@ -1,5 +1,7 @@
 package dev.wakeline.config;
 
+import dev.wakeline.platform.web.ApiPaths;
+import dev.wakeline.platform.web.ProblemJson;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

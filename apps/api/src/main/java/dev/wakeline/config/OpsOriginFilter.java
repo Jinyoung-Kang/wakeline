@@ -1,5 +1,8 @@
 package dev.wakeline.config;
 
+import dev.wakeline.platform.web.ApiPaths;
+import dev.wakeline.platform.web.ProblemJson;
+import dev.wakeline.platform.web.RequestIdFilter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,7 +31,7 @@ public class OpsOriginFilter extends OncePerRequestFilter {
     private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS", "TRACE");
     private final CorsConfiguration allowed = new CorsConfiguration();
 
-    /** @param originPatterns 정리한 허용 목록({@link AppProperties#originPatterns()}) */
+    /** @param originPatterns 정리한 허용 목록({@link dev.wakeline.platform.config.AppProperties#originPatterns()}) */
     public OpsOriginFilter(List<String> originPatterns) {
         allowed.setAllowedOriginPatterns(originPatterns);
     }

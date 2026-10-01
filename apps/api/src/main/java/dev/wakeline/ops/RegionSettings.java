@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.domain.Bbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

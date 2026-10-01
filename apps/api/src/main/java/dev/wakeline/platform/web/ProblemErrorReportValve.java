@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.platform.web;
 
 import org.apache.catalina.Lifecycle;
 import org.apache.catalina.Valve;

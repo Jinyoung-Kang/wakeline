@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.RedisConfig;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.Bbox;

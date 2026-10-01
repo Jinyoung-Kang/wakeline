@@ -1,5 +1,7 @@
 package dev.wakeline.config;
 
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ClientIp;
 import dev.wakeline.ws.OriginAllowList;
 import dev.wakeline.ws.WakelineWsHandler;
 import jakarta.servlet.http.HttpServletRequest;
