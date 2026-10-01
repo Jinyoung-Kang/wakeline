@@ -19,7 +19,7 @@
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 4,750건(pytest 1,729 · collector 실 Redis 14 · JUnit 968 · Vitest 1,413 · Playwright E2E 43 · 인프라 정책 129 · 버리는 컨테이너 시험 454 — 2026-10-01 bbox 타일 채우기 · README 그림 통합 뒤 모두 실행) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 97건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 543,507 B(gzip 본문 · 워커 포함 · 웹 이미지의 Node 로 압축 — 클릭 뒤에만 보이는 카드·목록과 그 선박 표시 함수를 첫 화면 뒤로 옮겨 556,719 → 539,966 B, 세 레인 통합 뒤 540,774 B, 통합 마무리 뒤 540,955 B(배포 스택에서도 같은 값), 두 레인(collector · coverage) 통합 뒤 542,767 B · 그 리뷰의 수정 뒤 543,138 B, 2026-10-01 기상청 '목록에도 … 없음' 글 뒤 543,497 B, 네 레인 통합 뒤 543,507 B(빌드 결과). 예산 550,000 B, ADR-026: 400 KB 는 MapLibre 약 305 KB + Next·React 약 130 KB 인 바닥 때문에 지도를 빼야만 닿는다 · CI 가 빌드 결과를 웹 이미지의 Node 로, 첫 화면 파일 목록을 브라우저로 검사) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 28건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 29건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
