@@ -369,6 +369,12 @@ heartbeat 의 채우기 상태(daily_budget · waiting_db 포함) · failed 로 
   `SELECT count(DISTINCT (floor(ST_X(p) / 32000), floor(ST_Y(p) / 32000))) FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint((lon_min + lon_max) / 2,
   (lat_min + lat_max) / 2), 4326), 5179) AS p FROM marine_grid4) s;` — 배포 직후(끝난 타일이 없을 때) 기동 줄의 N 과 같아야 한다.
 
+**확인한 것(2026-10-01 09:2x KST, 실제 호출 네 번 — 증거 `docs/review/evidence/public-data-apis-2026-10-01-bbox.txt`)** 아래 '확인하지 않은 것'의 세 항목을 닫는다:
+`numberOfFeatures` 는 돌려준 수다(maxFeatures=10 → 10, 같은 상자 전체는 28) — 잘림은 이 수로 알 수 없고 'maxFeatures 에 닿음' · '아는 칸이 답에 없음'이 잡는다(위 규칙
+그대로 — 수가 다름은 생기지 않는 방어로 남는다). 상자 가장자리를 가로지르는 칸은 잘리지 않고 칸 전체가 온다(한 칸 조회와 posList 가 같다) — 겹치는 칸 모형이 맞다.
+100 km 상자(maxFeatures=5000)에 1,575칸 · 1.01 MB — 1,575 까지 상한 없음(32 km 타일 ≤ 약 200 은 훨씬 아래). 그 상자는 육지를 포함하고 칸 수가 상자를 덮는 수(약 1,620, 계산)에
+가까워 격자가 육지에도 깔린 것으로 보인다(칸마다 확인하지 않음).
+
 **확인하지 않은 것**
 - `maxFeatures` 의 상한 · 서버의 응답 크기 상한 · 서버가 조용히 자르는지 — 450 까지는 다 왔다. 32 km 타일(≤ 약 200)은 그 아래에 머물도록 고른 크기다.
 - `numberOfFeatures` 가 '돌려준 수'인지 '맞는 전체 수'인지 — 어느 쪽이든 지물 수와 다르면 나눈다(뜻이 달라 늘 어긋나면 위 4 의 묶음으로 타일 하나에 5번).
