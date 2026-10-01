@@ -17,16 +17,18 @@ const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: LogPeriod; onFilterRid?: (rid: string) => void }) {
   const [period, setPeriod] = useState<LogPeriod>(initialPeriod);
   const [data, setData] = useState<ReturnType<typeof aisGapRows> | null>(null);
-  const [err, setErr] = useState<unknown>(null);
+  /** 마지막 실패 — 기간으로 묶는다: 다른 기간을 불러오는 동안 앞 기간의 실패(요청 id)를 보이지 않게(web-review B17, 공항 카드와 같은 규칙) */
+  const [failed, setFailed] = useState<{ period: LogPeriod; error: unknown } | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
     const from = new Date(Date.now() - LOG_PERIODS[period]).toISOString();
     apiGet<unknown>(`/api/v1/ais/gaps?${new URLSearchParams({ from })}`)
-      .then((v) => { if (live) { setData(aisGapRows(v)); setErr(null); } })
-      .catch((e: unknown) => { if (live) setErr(e); });
+      .then((v) => { if (live) { setData(aisGapRows(v)); setFailed(null); } })
+      .catch((e: unknown) => { if (live) setFailed({ period, error: e }); });
     return () => { live = false; };
   }, [period, tick]);
+  const err = failed && failed.period === period ? failed.error : null;
   const closed = data ? data.rows.filter((r) => !r.open).length : null;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" data-testid="ais-gaps">
