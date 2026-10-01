@@ -1,11 +1,11 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.platform.support.StreamPrerequisite;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.connection.stream.StreamInfo;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -29,16 +29,19 @@ import java.util.UUID;
  * <ul>
  *   <li>인스턴스 임대: Redis {@value #KEY} = 이 인스턴스 id(PX {@code ttl}, 5 s 마다 갱신). 프로세스가 죽으면 TTL 안에 풀린다.</li>
  *   <li>기동(fail fast): 다른 인스턴스가 쥐고 있으면 풀리기를 {@code startupWait}(죽은 이전 프로세스의 임대가 만료되는 시간보다 길게) 기다리고,
- *       그래도 살아 있으면 기동을 멈춘다. 스트림 소비·임대 작성보다 먼저 시작한다(낮은 SmartLifecycle phase).
- *       Redis 를 쓸 수 없으면 확인하지 못한 채 기동한다(WARN) — Redis 장애로 api 를 못 띄우게 하지 않는다. 갱신이 이어서 잡는다.</li>
- *   <li>실행 중: 갱신 때 다른 인스턴스가 쥐고 있으면 ERROR(1분에 한 번) + {@code wakeline_api_instance_conflict} = 1.</li>
+ *       그래도 살아 있으면 기동을 멈춘다. 스트림 소비·임대 작성보다 먼저 시작한다 — 소비자가 이것에 의존한다({@link StreamPrerequisite}, QA-100:
+ *       예전에는 phase 만 믿어 소비자가 이것보다 먼저 시작할 수 있었다).
+ *       Redis 를 쓸 수 없으면 확인하지 못한 채 기동한다(WARN) — Redis 장애로 api 를 못 띄우게 하지 않는다. 갱신이 이어서 잡는다.
+ *       소비자는 임대를 쥐고 있을 때만 읽는다({@link #readyForStream()}) — 확인하지 못한 채 기동했으면 갱신이 임대를 잡을 때까지 읽지 않는다.</li>
+ *   <li>실행 중: 갱신 때 다른 인스턴스가 쥐고 있으면 ERROR(1분에 한 번) + {@code wakeline_api_instance_conflict} = 1, 이 프로세스의 소비자는
+ *       임대를 다시 잡을 때까지 읽지 않는다(두 프로세스가 같은 소비자 이름으로 한 PEL 을 나눠 읽지 않게).</li>
  *   <li>그룹 {@value StreamConsumer#GROUP} 에 다른 이름의 소비자가 최근 활동했으면 WARN(30 s 주기) — 이름을 바꾼 두 번째 소비자.</li>
  *   <li>정상 종료: 자기 임대만 지운다 — 바로 다시 띄워도 기다리지 않는다.</li>
  * </ul>
  */
 @Profile("!cli & !migrate")
 @Component
-public final class SingleInstanceGuard implements SmartLifecycle {
+public final class SingleInstanceGuard implements StreamPrerequisite {
     private static final Logger log = LoggerFactory.getLogger(SingleInstanceGuard.class);
     public static final String KEY = "wakeline:api:instance";
     /** 1 = 내 임대 연장, 2 = 비어 있어 새로 잡음, 0 = 다른 인스턴스가 쥐고 있음. */
@@ -61,6 +64,8 @@ public final class SingleInstanceGuard implements SmartLifecycle {
     private final Duration startupWait;
     private final Duration pollInterval;
     private volatile boolean running;
+    /** 이 프로세스가 임대를 쥐고 있다(마지막 확인 기준 — Redis 오류로 확인하지 못한 갱신은 바꾸지 않는다). */
+    private volatile boolean leaseHeld;
     private volatile boolean conflict;
     private volatile long conflictLoggedMs;
 
@@ -106,6 +111,7 @@ public final class SingleInstanceGuard implements SmartLifecycle {
                 return;
             }
             if (r != 0) {
+                leaseHeld = true;
                 running = true;
                 log.info("api instance lease {} held by {}", KEY, instanceId);
                 return;
@@ -138,6 +144,7 @@ public final class SingleInstanceGuard implements SmartLifecycle {
             return;
         }
         conflict = r == 0;
+        leaseHeld = !conflict;
         if (conflict) {
             long now = System.currentTimeMillis();
             if (now - conflictLoggedMs >= LOG_INTERVAL_MS) {
@@ -180,6 +187,7 @@ public final class SingleInstanceGuard implements SmartLifecycle {
     public void stop() {
         if (!running) return;
         running = false;
+        leaseHeld = false;
         try {
             redis.execute(RELEASE, List.of(KEY), instanceId);
         } catch (RuntimeException e) {
@@ -189,6 +197,10 @@ public final class SingleInstanceGuard implements SmartLifecycle {
 
     @Override
     public boolean isRunning() { return running; }
+
+    /** 소비자가 읽어도 되는가: 돌고 있고 임대를 쥐고 있다(R-79 — 임대 없이 기동했거나 다른 인스턴스가 가져갔으면 읽지 않는다). */
+    @Override
+    public boolean readyForStream() { return running && leaseHeld; }
 
     /** 스트림 소비자(MAX-10)·WS 허브(MAX-100)·선박 팬아웃(MAX-150)보다 먼저 시작하고 나중에 멈춘다. */
     @Override

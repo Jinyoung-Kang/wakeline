@@ -365,4 +365,55 @@ class StreamConsumerTest {
         assertThat(ev.getLast()).isInstanceOf(AircraftEvents.AircraftBacklog.class);
         assertThat(((AircraftEvents.AircraftBacklog) ev.getLast()).scope()).isEqualTo("focus");
     }
+
+    /** 선행 구성 요소 자리(저장기 · 가드): 준비 여부를 시험이 바꾼다. */
+    static final class FakePrerequisite implements dev.wakeline.platform.support.StreamPrerequisite {
+        volatile boolean ready;
+        @Override public void start() { }
+        @Override public void stop() { }
+        @Override public boolean isRunning() { return ready; }
+    }
+
+    /**
+     * QA-100 · R-79: 소비자는 선행 구성 요소(저장기 · 인스턴스 가드)가 모두 준비됐을 때만 스트림을 읽는다 — 준비 전에는 Redis 를 건드리지 않고 기다리고,
+     * 읽는 중에 하나가 준비되지 않으면(가드가 임대를 잃음) 읽기를 멈추고 다시 기다린다.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Test void readsTheStreamsOnlyWhileEveryPrerequisiteIsReady() throws Exception {
+        AtomicInteger redisCalls = new AtomicInteger(), reads = new AtomicInteger();
+        org.springframework.data.redis.core.StreamOperations ops = org.mockito.Mockito.mock(org.springframework.data.redis.core.StreamOperations.class,
+                org.mockito.Mockito.withSettings().stubOnly().defaultAnswer(inv -> {
+                    if (inv.getMethod().getName().equals("read")) {
+                        reads.incrementAndGet();
+                        Thread.sleep(10); // XREADGROUP BLOCK 자리
+                        return List.of();
+                    }
+                    return org.mockito.Answers.RETURNS_DEFAULTS.answer(inv);
+                }));
+        org.springframework.data.redis.core.StringRedisTemplate redis = org.mockito.Mockito.mock(org.springframework.data.redis.core.StringRedisTemplate.class,
+                org.mockito.Mockito.withSettings().stubOnly().defaultAnswer(inv -> {
+                    redisCalls.incrementAndGet();
+                    return inv.getMethod().getName().equals("opsForStream") ? ops : null;
+                }));
+        FakePrerequisite writer = new FakePrerequisite();
+        StreamConsumer c = new StreamConsumer(redis, new SchemaValidator(), new SnapshotStore(), new SigmetStore(), new RadarStore(),
+                new dev.wakeline.ships.core.ShipStore(), null, e -> { }, JsonMapper.builder().build(), new SimpleMeterRegistry(), List.of(writer));
+        c.start();
+        try {
+            Thread.sleep(300);
+            assertThat(redisCalls.get()).as("no stream access before the writers run").isZero();
+            writer.ready = true;
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (reads.get() == 0 && System.nanoTime() < deadline) Thread.sleep(20);
+            assertThat(reads.get()).as("reads once every prerequisite is ready").isPositive();
+            writer.ready = false;
+            Thread.sleep(200); // 진행 중 읽기 하나가 끝나고 소비 루프를 나간다
+            int stopped = reads.get();
+            Thread.sleep(300);
+            assertThat(reads.get()).as("no reads while a prerequisite is not ready").isEqualTo(stopped);
+        } finally {
+            c.stop();
+        }
+        assertThat(c.isRunning()).isFalse();
+    }
 }

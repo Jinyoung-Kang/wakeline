@@ -4,7 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.wakeline.platform.support.Receipt;
-import org.springframework.context.SmartLifecycle;
+import dev.wakeline.platform.support.StreamPrerequisite;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.BlockingQueue;
@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 쓰기 작업을 하지 않는다
 @Component
-public class OrderedWriter implements SmartLifecycle {
+public class OrderedWriter implements StreamPrerequisite {
     private static final Logger log = LoggerFactory.getLogger(OrderedWriter.class);
     /** 종료 순서: 스트림 소비(MAX-10) → WS going_away(MAX-100) → 이 큐·항적 flush(MAX-200) → Tomcat(MAX-1024). */
     public static final int PHASE = Integer.MAX_VALUE - 200;

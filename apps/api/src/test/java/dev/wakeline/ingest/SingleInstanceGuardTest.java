@@ -71,12 +71,14 @@ class SingleInstanceGuardTest {
         SingleInstanceGuard first = guard(redis, "first"), second = guard(redis, "second");
         first.start();
         assertThat(first.isRunning()).isTrue();
+        assertThat(first.readyForStream()).as("the consumer may read once the lease is held").isTrue();
         assertThat(redis.opsForValue().get(SingleInstanceGuard.KEY)).isEqualTo("first");
         assertThat(redis.getExpire(SingleInstanceGuard.KEY)).isBetween(1L, 15L);
 
         assertThatThrownBy(second::start).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("another api instance").hasMessageContaining("first").hasMessageContaining("api-1");
         assertThat(second.isRunning()).isFalse();
+        assertThat(second.readyForStream()).isFalse();
         assertThat(second.conflict()).isTrue();
 
         // 정상 종료는 자기 임대만 푼다 → 다음 인스턴스가 곧바로 뜬다
@@ -109,12 +111,19 @@ class SingleInstanceGuardTest {
         assertThat(redis.getExpire(SingleInstanceGuard.KEY)).isGreaterThan(2L);
         assertThat(g.conflict()).isFalse();
 
+        assertThat(g.readyForStream()).isTrue();
         redis.opsForValue().set(SingleInstanceGuard.KEY, "intruder", Duration.ofSeconds(15));
         g.renew();
         assertThat(g.conflict()).isTrue();
+        assertThat(g.readyForStream()).as("the consumer stops reading while another instance holds the lease (R-79)").isFalse();
         g.renew(); // 1분 안의 반복은 로그 없이
         assertThat(redis.opsForValue().get(SingleInstanceGuard.KEY)).isEqualTo("intruder");
+        redis.delete(SingleInstanceGuard.KEY); // 다른 인스턴스가 사라짐 → 다음 갱신이 다시 잡는다
+        g.renew();
+        assertThat(g.readyForStream()).isTrue();
+        redis.opsForValue().set(SingleInstanceGuard.KEY, "intruder", Duration.ofSeconds(15));
         g.stop(); // 남의 임대는 지우지 않는다
+        assertThat(g.readyForStream()).isFalse();
         assertThat(redis.opsForValue().get(SingleInstanceGuard.KEY)).isEqualTo("intruder");
     }
 
@@ -123,7 +132,9 @@ class SingleInstanceGuardTest {
         SingleInstanceGuard g = guard(new StringRedisTemplate(dead), "offline");
         g.start();
         assertThat(g.isRunning()).isTrue();
+        assertThat(g.readyForStream()).as("started without confirming the lease — the consumer waits for a renewal to take it").isFalse();
         g.renew();
+        assertThat(g.readyForStream()).isFalse();
         g.stop();
         assertThat(g.foreignConsumers()).isEmpty();
         assertThat(g.getPhase()).isLessThan(Integer.MAX_VALUE - 150);
